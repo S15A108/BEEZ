@@ -1,0 +1,32 @@
+# 운영: 환경변수 필수(기본값 없음), compose 자동 기동 끔, 헬스 상세 숨김
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  docker:
+    compose:
+      enabled: false
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+springdoc:
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+
+logging:
+  level:
+    com.beez: INFO
+    org.hibernate.SQL: WARN
+
+beez:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  ai:
+    base-url: ${AI_BASE_URL}
+    internal-token: ${AI_INTERNAL_TOKEN}

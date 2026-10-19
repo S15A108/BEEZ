@@ -1,0 +1,7 @@
+# 로컬 개발: SQL 로그, 상세 헬스
+logging:
+  level:
+    com.beez: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+    org.flywaydb: INFO

@@ -1,0 +1,26 @@
+# 로컬 개발용 PostgreSQL + pgvector.
+# `./gradlew bootRun` 시 spring-boot-docker-compose 가 이 파일을 찾아 자동으로 띄운다 (Docker Desktop 필요).
+services:
+  postgres:
+    # pg17 태그는 움직이므로 digest 로 고정 (2026-10-19 기준 pgvector/pgvector:pg17). 올릴 때 테스트의 DockerImageName 도 같이 바꾼다
+    image: pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    container_name: beez-postgres
+    labels:
+      # 이미지 이름이 postgres 가 아니므로 Spring 에게 Postgres 서비스임을 알려 준다
+      org.springframework.boot.service-connection: postgres
+    environment:
+      POSTGRES_DB: beez
+      POSTGRES_USER: beez
+      POSTGRES_PASSWORD: beez
+    ports:
+      - "5432:5432"
+    volumes:
+      - beez-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U beez -d beez"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  beez-pgdata:
