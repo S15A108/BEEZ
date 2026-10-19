@@ -1,6 +1,6 @@
 # frontend
 
-S15A108 웹 클라이언트입니다. 이 문서의 규칙은 `frontend/` 안에만 적용됩니다. 브랜치, 커밋, PR 같은 팀 공통 규칙은 팀 공용 문서를 따릅니다.
+S15A108 웹 클라이언트입니다. 이 문서의 규칙은 `frontend/` 안에만 적용됩니다. 브랜치, 커밋, PR 같은 팀 공통 규칙은 [팀 협업 컨벤션](../docs/collaboration-convention.md)을 따릅니다. 도구와 구조를 이렇게 정한 이유는 [결정 기록](docs/decisions.md)에 있습니다.
 
 ## 기술 스택
 
@@ -83,6 +83,8 @@ frontend/
 ├─ .vscode/            # 추천 확장, 저장 시 포맷
 ├─ CLAUDE.md           # Claude Code 작업 지침
 ├─ e2e/                # Playwright 테스트 (*.spec.ts)
+├─ docs/
+│  └─ decisions.md    # 결정 기록: 무엇을 왜 골랐고 왜 뺐는지
 ├─ playwright.config.ts
 ├─ components.json     # shadcn 설정
 ├─ eslint.config.js, .prettierrc
