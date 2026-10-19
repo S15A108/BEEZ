@@ -79,7 +79,7 @@ frontend/
 │  ├─ lib/
 │  │  └─ utils.ts      # cn() 클래스 병합 (shadcn)
 │  └─ assets/          # import해서 쓰는 이미지, 폰트
-├─ .claude/skills/     # Claude Code 스킬 (fe-verify, three-scene)
+├─ .claude/skills/     # Claude Code 스킬 (fe-feature, fe-api, fe-verify, fe-review, fe-commit-pr, three-scene)
 ├─ .vscode/            # 추천 확장, 저장 시 포맷
 ├─ CLAUDE.md           # Claude Code 작업 지침
 ├─ e2e/                # Playwright 테스트 (*.spec.ts)
