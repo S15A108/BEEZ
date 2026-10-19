@@ -237,9 +237,11 @@ docs: Update installation guide
 ### 승인 후 자동 병합
 
 - 저장소의 Allow auto-merge를 활성화한다.
-- PR 작성자가 각 PR에서 Enable auto-merge를 선택하고 Merge commit 방식으로 예약한다.
+- `Enable PR auto-merge` Actions가 일반 PR의 Merge commit 자동 병합을 예약한다. 전용 Secret 등록과 워크플로의 dev 병합이 선행되어야 한다.
+- 설정 전 또는 Actions 실패 시 PR 작성자가 Enable auto-merge를 선택해 수동 예약한다.
+- 설정과 기존 PR 적용 방법은 [PR 자동 병합 가이드](pr-auto-merge.md)를 따른다.
 - 승인 1명 및 나머지 보호 조건이 충족되면 GitHub가 자동 병합한다.
-- 저장소 기능을 켜는 것만으로 새 PR 전체에 자동 병합이 예약되지는 않는다.
+- 저장소 기능만 켜서는 자동 예약되지 않으며, 예약용 Actions가 성공했는지 확인한다.
 - 자동 병합은 승인·미해결 대화·필수 검사 조건을 우회하지 않는다.
 - 새 커밋으로 승인이 취소되면 다시 승인을 받아야 한다.
 - 자동 병합 후에도 GitLab 동기화 성공 여부는 Actions에서 별도로 확인한다.
@@ -331,7 +333,7 @@ GitLab 자동 동기화
 | GitHub 동기화 설정 PR #1 | main 병합 완료, dev 생성 및 동기화 확인 완료 |
 | main·dev 브랜치 보호 | PR 필수, 승인 1명, 미해결 대화 해결, 새 커밋 시 기존 승인 취소 |
 | 병합 방식 | Squash 비활성화, 팀 기본 방식 Merge commit |
-| 승인 후 자동 병합 | 저장소 기능 활성화, 각 PR에서 예약 필요 |
+| 승인 후 자동 병합 | 저장소 기능 활성화. 자동 예약용 Actions 추가, 전용 Secret 등록 및 dev 병합 필요 |
 | PR 템플릿 | PR #3에 추가, main 병합 후 새 PR에 자동 표시 |
 | Jira 자동화 규칙 3개 | 활성화 |
 | GitLab–Jira 연동 | 관리자 검토 대기 |
