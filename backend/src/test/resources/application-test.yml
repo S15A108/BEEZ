@@ -1,0 +1,11 @@
+# 테스트 프로필: Testcontainers 가 datasource 를 주입하므로 DB 설정 없음.
+# ai 서버는 닫힌 포트로 두어 ai_reachable=false 경로를 검증한다.
+beez:
+  ai:
+    base-url: http://127.0.0.1:1
+    connect-timeout: 500ms
+    read-timeout: 500ms
+
+logging:
+  level:
+    com.beez: INFO

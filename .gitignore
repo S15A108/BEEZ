@@ -1,0 +1,42 @@
+# --- secrets / local ---
+.env
+.env.*
+!.env.example
+*.local
+
+# --- Java / Gradle (backend) ---
+backend/.gradle/
+backend/build/
+backend/out/
+backend/bin/
+!backend/gradle/wrapper/gradle-wrapper.jar
+*.class
+*.log
+
+# --- Python (ai) ---
+ai/.venv/
+ai/venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node (frontend) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# --- IDE / OS ---
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# --- data ---
+*.db
+*.db-wal
+*.db-shm

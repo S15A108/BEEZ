@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: beez-backend
+  profiles:
+    default: local                # 아무것도 지정 안 하면 local
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/beez}
+    username: ${DB_USERNAME:beez}
+    password: ${DB_PASSWORD:beez}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate          # 스키마는 Flyway 가 만든다. 엔티티와 어긋나면 기동 실패.
+    open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 100
+        jdbc.time_zone: UTC       # 시각은 UTC(Instant/timestamptz) 로 저장, 표시는 프론트가 한다
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE      # 프로토타입 API 와 동일 (decision_refs, task_id …)
+    default-property-inclusion: non_null
+
+  docker:
+    compose:
+      file: compose.yaml
+      lifecycle-management: start-only   # 서버를 껐다 켜도 DB 는 유지
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  info:
+    build:
+      enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %5p [%X{requestId:-}] %-32.32logger{32} : %m%n"
+  level:
+    com.beez: INFO
+
+beez:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  ai:
+    base-url: ${AI_BASE_URL:http://localhost:8000}
+    internal-token: ${AI_INTERNAL_TOKEN:change-me}
+    connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${AI_READ_TIMEOUT:20s}

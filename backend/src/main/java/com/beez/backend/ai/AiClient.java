@@ -1,0 +1,52 @@
+package com.beez.backend.ai;
+
+import com.beez.backend.config.BeezProperties;
+import java.net.http.HttpClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+/**
+ * FastAPI AI 서버 호출 전용 클라이언트.
+ * 원칙: ai 는 텍스트·임베딩·실행 증거만 돌려준다. 판정·상태 변경은 절대 이 응답으로 결정하지 않는다.
+ * 모델 호출이 실패하면 호출한 쪽이 템플릿으로 폴백하고 origin 을 정직하게 기록한다 (프로토타입 llm.ts 와 동일).
+ */
+@Component
+public class AiClient {
+
+    private static final Logger log = LoggerFactory.getLogger(AiClient.class);
+
+    private final RestClient rest;
+
+    public AiClient(BeezProperties props) {
+        BeezProperties.Ai ai = props.ai();
+        HttpClient http = HttpClient.newBuilder().connectTimeout(ai.connectTimeout()).build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
+        factory.setReadTimeout(ai.readTimeout());
+        this.rest = RestClient.builder()
+                .baseUrl(ai.baseUrl())
+                .requestFactory(factory)
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + ai.internalToken())
+                .defaultHeader(HttpHeaders.ACCEPT, "application/json")
+                .build();
+    }
+
+    /** ai 서버 생존 확인. 실패해도 예외를 던지지 않는다 (ai 가 꺼져 있어도 backend 는 동작해야 한다). */
+    public boolean ping() {
+        try {
+            rest.get().uri("/health").retrieve().toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.debug("ai server unreachable: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** 이후 lead/review/embeddings 호출이 공통으로 쓸 RestClient. */
+    protected RestClient rest() {
+        return rest;
+    }
+}
