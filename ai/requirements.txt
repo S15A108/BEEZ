@@ -1,0 +1,26 @@
+
+# FastAPI 서버
+fastapi
+uvicorn[standard]
+
+# 환경변수 및 설정 관리
+pydantic-settings
+
+# HTTP 통신
+httpx
+
+# 로깅 및 요청 추적
+structlog
+asgi-correlation-id
+
+# AI / LLM
+langgraph
+openai
+anthropic
+
+# 테스트
+pytest
+pytest-asyncio
+
+# 코드 품질
+ruff
