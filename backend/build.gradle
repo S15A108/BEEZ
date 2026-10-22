@@ -64,8 +64,29 @@ springBoot {
     buildInfo()   // /actuator/info 에 빌드 정보 노출
 }
 
+// 테스트 계층 분리.
+//  - test            : 빠른 층(단위·슬라이스). PR 마다 돈다. Docker 불필요. 시간 예산 60초.
+//  - integrationTest : 느린 층(@Tag("integration") — SpringBootTest + Testcontainers). Docker 필요.
+//                      PR 에서는 핵심만, 전체는 dev 머지 후 돈다. `build`/`check` 에는 포함하지 않는다.
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'integration'
+    }
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'Runs @Tag("integration") tests (Spring context + Testcontainers). Docker required.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+    shouldRunAfter tasks.named('test')
     testLogging {
         events 'passed', 'skipped', 'failed'
         exceptionFormat 'full'
