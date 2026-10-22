@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,7 +21,9 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * 실제 Postgres(pgvector) 에서 컨텍스트 로드 + Flyway 마이그레이션, 그리고 전역 설정이 실제 HTTP 응답에 반영되는지 확인한다.
  * Boot 4 에서 테스트 전용 어노테이션 패키지가 많이 바뀌어, 의도적으로 JDK HttpClient 로 실제 포트를 때린다. Docker 필요.
+ * 느린 층이므로 "integration" 태그 — `./gradlew test` 에서는 제외되고 `./gradlew integrationTest` 로만 돈다.
  */
+@Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @Testcontainers
