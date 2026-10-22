@@ -27,7 +27,8 @@ sequenceDiagram
   W->>B: PATCH /api/human/design-items/*
   L->>W: 초안 승인 (PLN-08)
   W->>B: POST /api/human/baselines (승인 권한 검사)
-  B-->>B: 트랜잭션: 항목 버전 APPROVED → baseline v1 + baseline_item 스냅샷 (PLN-09, NFR-04)
+  B-->>B: 같은 트랜잭션: project 행 FOR UPDATE → 항목 버전·문서 버전 APPROVED → baseline v1 + baseline_item + baseline_document → current_baseline_id (PLN-09, NFR-04, DOC-08)
+  Note over B: baseline_document가 빠지면 현재 승인 문서 조회와 청크 검색 대상이 비므로 최초 발행에도 반드시 포함
   B-->>B: activity_event(BASELINE_PUBLISHED)
   L->>W: 팀원 초대 (MEM-01) · 역할·담당 영역 (MEM-04·05)
   M->>W: 초대 수락 (MEM-02) → 에이전트 토큰 발급 (ACC-05)
@@ -54,14 +55,15 @@ sequenceDiagram
   Note over C: 작업 시작 (CLAUDE.md 규칙)
   C->>M: get_development_context(projectId, request, taskId?)
   M->>S: 승인 설계 조회 (taskId 연결 항목 + 의존 항목 + 미확정)
-  S-->>C: JSON {설계 항목, 제약, 미확정, 출처, baseline v}
+  S->>DB: dev_context_packet(불변) + dev_context_packet_ref(포함한 항목 버전) 저장 · context_access_log
+  S-->>C: JSON {packetId, 설계 항목(키·버전), 제약, 미확정, 출처, baseline v}
   Note over C: 계획 수립
-  C->>M: upsert_task_plan(taskId?, 목표, 범위, 접근, reads[], changes[], unlinked[], noContractChange?, 완료 기준, expectedRevision?)
-  M->>S: task · task_plan_revision(n) 저장 (충돌 시 409)
+  C->>M: upsert_task_plan(taskId?, packetId?, 목표, 범위, 접근, reads[], changes[], unlinked[], noContractChange?, 완료 기준, expectedRevision?)
+  M->>S: task · task_plan_revision(n, context_packet_id) · task_plan_design_ref 저장 (충돌 시 409, packetId 없으면 "근거 패킷 없음" 표시)
   S-->>C: {taskId, planRevision n}
 
   C->>M: validate_task_plan(taskId, planRevision n)
-  M->>S: validation 생성 · validation_design_ref(참조 항목 버전) 저장 (입력 스냅샷 해시로 설계 대조 결과 재사용)
+  M->>S: validation 생성 · validation_design_ref(판정에 쓴 항목 버전) · validation_task_ref 저장. 근거 패킷은 리비전 → context_packet_id로 추적 (입력 스냅샷 해시로 설계 대조 결과 재사용)
   S->>R: 동기 규칙 검사
   R->>DB: 필수 칸·항목 ID 확인 · 구조화 계약 대조 · 같은 항목 CHANGES인 열린 작업 조회
   alt 규칙만으로 판정 끝남 (PASS / NEEDS_INPUT / NEEDS_REVIEW)

@@ -19,13 +19,15 @@
 | 표시 키 전역 UK | `(project_id, key)` UK |
 | 보완 질문·답변 저장 위치 없음 | `planning_question` |
 | 회의 원문·참여 상태 없음 | `meeting_participant`, `meeting_entry`. MTG-01~03은 `change_comment` 재사용 |
-| 컨텍스트 패킷 보존 (TRC-03) | `dev_context_packet` + `dev_context_packet_ref`. 검증이 패킷을 참조 |
+| 컨텍스트 패킷 보존 (TRC-03) | `get_development_context` 호출 시 `dev_context_packet`(불변) + `dev_context_packet_ref` 저장. **계획 리비전이 패킷을 참조** (`task_plan_revision.context_packet_id`, NULL = 근거 패킷 없음). 검증은 판정 기준을 `validation_design_ref`에 따로 남기고, 근거 패킷은 리비전을 통해 추적 |
+| `context_record` 구조 (find/read/write_context) | 수정 = 새 리비전 행(불변). `UNIQUE(previous_id)`로 같은 리비전을 두 사람이 동시에 고치면 두 번째가 거부(409). 참조 버전은 `context_record_ref`로 저장해 조회 시 현재 기준과 비교("과거 버전" 표시) |
+| 최초 발행의 문서 스냅샷 | v1 발행에도 `baseline_document` 생성 (02 F1) |
 | 워커 실행 소유권 | `validation_job.lease_token`, `validation_run.lease_token`, `validation.current_attempt` (fencing) |
 | current 포인터 이중 관리 | **`design_item.current_approved_version_id`, `document.current_approved_version_id` 삭제.** 현재 버전은 `project.current_baseline_id` → `baseline_item` / `baseline_document` 조인으로만 구한다. `task.baseline_id`, `task.latest_validation_id`도 삭제 |
 | 단순 FK는 소속을 보장하지 않음 | `(id, parent_id)` 복합 FK로 소유 관계 보장 (아래 4절) |
 | 불변성이 문장뿐 | 트리거로 UPDATE 차단 (승인 항목 버전 본문, 기준 설계, 계획 리비전·참조, 검증 참조, 승인, 완료 보고, 패킷) |
 
-## 1. 테이블과 소유자 (42개)
+## 1. 테이블과 소유자 (43개)
 
 | 묶음 | 테이블 | 소유 |
 |---|---|---|
@@ -33,11 +35,11 @@
 | B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, design_item_dependency, planning_question | 오서현 |
 | B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, approval, meeting, meeting_participant, meeting_entry | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
-| C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
+| C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |
 | D. 운영 공통 | notification, activity_event, mcp_audit_log | 전진 |
 
-공통: `id BIGINT GENERATED ALWAYS AS IDENTITY`, `created_at`·`updated_at TIMESTAMPTZ`, enum은 TEXT + CHECK, 구조화 데이터는 JSONB, 물리 삭제 없음. 연결 테이블(`baseline_item`, `baseline_document`, `design_item_dependency`, `task_plan_design_ref`, `task_dependency`, `validation_design_ref`, `validation_task_ref`, `dev_context_packet_ref`, `meeting_participant`)은 복합 PK 예외.
+공통: `id BIGINT GENERATED ALWAYS AS IDENTITY`, `created_at`·`updated_at TIMESTAMPTZ`, enum은 TEXT + CHECK, 구조화 데이터는 JSONB, 물리 삭제 없음. 연결 테이블(`baseline_item`, `baseline_document`, `design_item_dependency`, `task_plan_design_ref`, `task_dependency`, `validation_design_ref`, `validation_task_ref`, `dev_context_packet_ref`, `context_record_ref`, `meeting_participant`)은 복합 PK 예외.
 
 ## 2. 핵심 관계 — 설계 · 계획 · 검증
 
@@ -63,7 +65,7 @@ erDiagram
   validation ||--o{ validation_task_ref : "대조한 다른 작업 리비전"
   design_item_version ||--o{ validation_design_ref : ""
   task_plan_revision ||--o{ validation_task_ref : ""
-  dev_context_packet |o--o{ validation : "당시 패킷"
+  dev_context_packet |o--o{ task_plan_revision : "계획의 근거 패킷"
   validation ||--o| validation_job : "큐"
   validation ||--o{ validation_run : "시도"
   validation ||--o{ validation_finding : ""
@@ -116,6 +118,7 @@ erDiagram
     int revision_no "UK(task_id, revision_no)"
     jsonb unlinked "신규, 미연결 내용"
     boolean no_contract_change "명시적 선언"
+    bigint context_packet_id FK "NULL = 근거 패킷 없음"
     text input_hash
   }
   task_plan_design_ref {
@@ -130,7 +133,6 @@ erDiagram
     bigint task_id FK
     bigint plan_revision_id FK "그 작업의 리비전 (복합 FK)"
     bigint baseline_id FK "당시 기준, 이력용"
-    bigint context_packet_id FK
     text status "NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR"
     text input_snapshot_hash "설계 대조 재사용 키"
     int current_attempt "늦은 결과 차단"
@@ -194,12 +196,53 @@ erDiagram
   meeting ||--o{ meeting_participant : ""
   meeting ||--o{ meeting_entry : "분석 대상 텍스트"
 
+  project ||--o{ dev_context_packet : ""
   dev_context_packet ||--o{ dev_context_packet_ref : "포함한 항목 버전"
   project ||--o{ context_record : "공유 작업 기록"
+  context_record ||--o{ context_record_ref : "참조 항목 버전"
+  dev_context_packet |o--o{ context_record : "작성 당시 패킷"
   agent_token ||--o{ context_access_log : ""
   project ||--o{ notification : ""
   project ||--o{ activity_event : ""
   agent_token ||--o{ mcp_audit_log : ""
+
+  dev_context_packet {
+    bigint id PK
+    bigint project_id FK
+    bigint task_id FK "선택"
+    bigint agent_token_id FK
+    text request "자연어 개발 요청"
+    bigint baseline_id FK "조회 당시 기준"
+    jsonb content "항목, 제약, 미확정, 출처"
+    text content_hash
+  }
+  dev_context_packet_ref {
+    bigint packet_id PK
+    bigint design_item_id PK
+    bigint design_item_version_id FK
+  }
+  context_record {
+    bigint id PK
+    bigint project_id FK
+    bigint root_id FK "첫 리비전 id"
+    bigint previous_id FK "UK, 동시 수정 거부"
+    int revision_no
+    bigint task_id FK
+    bigint plan_revision_id FK "작성 당시 계획"
+    bigint source_packet_id FK "작성 당시 패킷"
+    bigint author_account_id FK
+    bigint author_token_id FK "NULL = 웹에서 작성"
+    text kind "DECISION, PROGRESS, ISSUE, HANDOVER"
+    text visibility "SHARED, PRIVATE"
+    text summary "find 대상"
+    text detail
+    vector embedding
+  }
+  context_record_ref {
+    bigint record_id PK
+    bigint design_item_id PK
+    bigint design_item_version_id FK
+  }
 ```
 
 ![나머지 관계](erd-others.png)
@@ -245,6 +288,10 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 | 무관한 설계 변경 후 시작 (D4·D5 충돌 해결) | `validation_design_ref` 버전 비교 | 이전 기준 PASS로 시작 성공 ✓ |
 | 변경 항목을 CHANGES한 진행 중 작업 | 발행 트랜잭션에서 STALE + WAITING | WAITING(REVALIDATION) ✓ |
 | 변경 항목을 READS한 작업 | 같은 경로 | 시작 전이면 시작 거부, 진행 중이면 WAITING ✓ |
+| 최초 발행에 문서 스냅샷 포함 | 발행 트랜잭션에서 `baseline_document` 생성 | v1 문서 스냅샷 생성 ✓ |
+| 패킷 불변, 계획 리비전이 패킷 참조 | 트리거 · FK | 수정 거부, 연결 확인 ✓ |
+| `context_record` 같은 리비전 동시 수정 | `UNIQUE(previous_id)` | 두 번째 거부 ✓ |
+| `context_record` 리비전 불변, 최신·과거 버전 판별 | 트리거 · 후속 없는 행 · 현재 기준 비교 | 수정 거부, "과거 버전" 표시 ✓ |
 
 `try_start`, `publish_change` 테스트 함수는 서비스 로직을 SQL로 옮긴 **프로토타입**이다. 실제 구현은 Java 서비스에 두고, 이 시나리오를 Testcontainers 통합 테스트로 옮긴다.
 
