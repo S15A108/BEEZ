@@ -1,0 +1,89 @@
+# PR 검증 CI.
+# 바뀐 영역(backend / frontend / ai)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
+# 전체 결과를 대표한다. 룰셋의 "필수 상태 검사"에는 ci-gate 만 등록한다 —
+# 영역 잡은 건너뛸 수 있어서 직접 등록하면 문서만 바꾼 PR 이 영원히 대기한다.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+# 같은 PR 에 커밋을 연달아 올리면 이전 실행은 취소한다. 러너 시간 절약.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1) 무엇이 바뀌었는지 판정. 결과는 outputs 로 아래 잡들의 if 조건에 쓰인다.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+
+  # 2) backend: 빠른 층(test) → 느린 층(integrationTest, Testcontainers).
+  #    느린 층은 현재 1클래스뿐이라 PR 에서도 돌린다. 늘어나면 PR 용 태그를 따로 둔다.
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Gradle 래퍼·의존성·빌드 캐시를 실행 간에 보존한다 (첫 실행만 느리다).
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit & slice tests
+        run: ./gradlew test --console=plain
+
+      - name: Integration tests (Testcontainers)
+        run: ./gradlew integrationTest --console=plain
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: backend/build/reports/tests/
+          retention-days: 7
+
+  # 3) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
+  ci-gate:
+    needs: [changes, backend]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Evaluate results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"result": *"(failure|cancelled)"'; then
+            echo "::error::One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped."
