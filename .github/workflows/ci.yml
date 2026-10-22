@@ -17,9 +17,10 @@ permissions:
   contents: read
 
 # 같은 PR 에 커밋을 연달아 올리면 이전 실행은 취소한다. 러너 시간 절약.
+# dev/main 푸시 실행은 취소하지 않는다 — 그 실행이 Gradle 캐시를 저장하는 유일한 경로다.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # 1) 무엇이 바뀌었는지 판정. 결과는 outputs 로 아래 잡들의 if 조건에 쓰인다.
