@@ -2,6 +2,9 @@
 # 바뀐 영역(backend / frontend / ai)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
 # 전체 결과를 대표한다. 룰셋의 "필수 상태 검사"에는 ci-gate 만 등록한다 —
 # 영역 잡은 건너뛸 수 있어서 직접 등록하면 문서만 바꾼 PR 이 영원히 대기한다.
+#
+# 러너는 ubuntu-latest 대신 버전을 고정한다. latest 는 예고 없이 다음 Ubuntu 로 넘어가
+# 어느 날 갑자기 환경이 바뀔 수 있다. 올릴 때는 여기서 의도적으로 올린다.
 name: CI
 
 on:
@@ -20,13 +23,16 @@ concurrency:
 
 jobs:
   # 1) 무엇이 바뀌었는지 판정. 결과는 outputs 로 아래 잡들의 if 조건에 쓰인다.
+  #    워크플로 파일 자체가 바뀌면 세 영역 모두 다시 돈다.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      ai: ${{ steps.filter.outputs.ai }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -34,27 +40,33 @@ jobs:
             backend:
               - 'backend/**'
               - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            ai:
+              - 'ai/**'
+              - '.github/workflows/ci.yml'
 
   # 2) backend: 빠른 층(test) → 느린 층(integrationTest, Testcontainers).
   #    느린 층은 현재 1클래스뿐이라 PR 에서도 돌린다. 늘어나면 PR 용 태그를 따로 둔다.
   backend:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       # Gradle 래퍼·의존성·빌드 캐시를 실행 간에 보존한다 (첫 실행만 느리다).
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       - name: Unit & slice tests
         run: ./gradlew test --console=plain
@@ -64,17 +76,73 @@ jobs:
 
       - name: Upload test reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: backend-test-reports
           path: backend/build/reports/tests/
           retention-days: 7
 
-  # 3) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
+  # 3) frontend: 저장소의 `npm run check` 그대로 (lint → prettier 검사 → vitest → 빌드).
+  #    Node 는 package.json engines(>=24 <25) 와 맞춘다. Playwright E2E 는 여기서 돌리지 않는다.
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ci 는 lockfile 그대로 설치하고 lockfile 이 package.json 과 어긋나면 실패한다.
+      - name: Install
+        run: npm ci
+
+      - name: Lint, format check, test, build
+        run: npm run check
+
+  # 4) ai: ruff(정적 검사) → pytest. Python 은 서버(Ubuntu 24.04)의 3.12 와 맞춘다.
+  ai:
+    needs: changes
+    if: needs.changes.outputs.ai == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ai
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ai/requirements.txt
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Pytest
+        run: pytest -q
+
+  # 5) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
   ci-gate:
-    needs: [changes, backend]
+    needs: [changes, backend, frontend, ai]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Evaluate results
