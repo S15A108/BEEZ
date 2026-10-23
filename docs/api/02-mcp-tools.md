@@ -158,6 +158,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
 
@@ -262,6 +264,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `not_found` | 승인본 또는 지정 버전 없음 |
 
@@ -329,7 +333,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | --- | --- | --- | --- |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 현재 기준 |
 | `items` | [PublishedChange[]](00-common.md#schema-publishedchange) | Y | 발행 변경 이력 |
-| `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | N | 작업 관련 검증 유효성 |
+| `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | Y | 호출자 작업의 검증 유효성 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
 | `next_cursor` | `string` | N | 다음 조회 cursor |
 
@@ -376,6 +380,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `invalid_version` | 음수 또는 현재보다 큰 기준 번호 |
 
@@ -394,7 +400,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 - 발행된 승인 변경만 반환한다. pending 제안을 승인된 변경으로 표시하지 않는다.
 - 페이지 마지막까지 읽은 뒤 기준 번호를 갱신한다. 실패를 변경 없음으로 처리하지 않는다.
-- 작업을 지정하면 검증 현재성을 포함한다.
+- 작업을 지정하면 그 작업, 지정하지 않으면 호출자의 열린 작업 전체의 검증 현재성을 포함한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -531,6 +537,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 기준 변경 |
 
@@ -632,6 +640,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
@@ -757,6 +767,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `not_found` | 객체 또는 접근 권한 없음 |
 
@@ -886,6 +898,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 같은 이전 리비전의 후속 기록 존재 |
 
@@ -1040,6 +1054,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 리비전 경합 |
 | 409 | `dependency_cycle` | 선행 순환 |
@@ -1153,6 +1169,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 현재 계획 아님 |
 
@@ -1170,7 +1188,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 #### 처리 규칙
 
 - 검증을 관리하고 RUNNING이면 동일 validation_id를 get_validation으로 조회한다.
-- 규칙으로 즉시 완료할 수 있으며 최종 PASS 판정은 backend가 한다. 판정표 Q02.
+- 규칙으로 즉시 완료할 수 있으며 판정은 [공통 6절 판정표](00-common.md#검증시작)를 따른다. 빈 입력은 NEEDS_INPUT, 명확한 계약 불일치·CHANGES 점유는 NEEDS_REVIEW다. AI가 finding을 내지 않은 것만으로는 PASS가 아니다.
 - AI 실패는 ERROR다. 규칙 finding을 AI가 해제하지 못한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -1260,6 +1278,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
@@ -1367,6 +1387,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `invalid_transition` | ERROR가 아니거나 이미 재실행 |
 
@@ -1415,9 +1437,9 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `plan_revision_id` | `ID` | Y | 현재 계획 |
 | `expected_lock_version` | `integer` | Y | 조회한 lock_version |
 | `validation_id` | `ID` | N | START/RESUME 필수 |
-| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAIT이면 필수 |
+| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY` | N | WAIT이면 필수. WAIT는 IN_PROGRESS에서만 가능. REVALIDATION은 시스템 전용이라 지정하면 400 invalid_transition |
 | `summary` | `string` | N | 진행/완료 요약 |
-| `delta` | `object[]` | N | 완료 시 계획 대비 변경. Q03 |
+| `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
@@ -1557,8 +1579,12 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `version_conflict` | 참조 설계 변경 |
+| 409 | `revision_conflict` | 계획·상태 경합 |
+| 409 | `dependency_not_completed` | 선행 미완료 |
 | 409 | `task_conflict` | 점유 충돌 |
 | 409 | `validation_not_passed` | 유효 PASS 없음 |
 
@@ -1576,8 +1602,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 #### 처리 규칙
 
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
-- 같은 task/validation START는 기존 결과다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
-- 완료 델타가 있으면 보고를 보존하고 재검증 경로로 전환한다. 자동 완료 Q03.
+- 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
+- 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

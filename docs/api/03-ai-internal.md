@@ -108,7 +108,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `result` | [ParseResult](00-common.md#schema-parseresult) | Y | 업무 결과 |
-| `origin` | `MODEL\|TEMPLATE` | Y | 생성 출처 |
+| `origin` | `MODEL` | Y | 생성 출처. 템플릿 폴백 없음. 모델을 부르지 못하면 502/504 |
 | `model` | `string` | N | 실제 모델 호출 시 필수 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
 
@@ -143,7 +143,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "DOCUMENT_PARSE",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,
@@ -331,10 +331,11 @@ HTTP `200`.
     {
       "id": "611",
       "source": "RULE",
-      "category": "CONTRACT_MISMATCH",
+      "kind": "MISMATCH",
       "severity": "BLOCKING",
       "message": "계획의 응답 필드가 승인 계약과 다릅니다.",
       "design_item_id": "301",
+      "design_item_version_id": "311",
       "related_task_id": "502",
       "sources": [
         {
@@ -344,6 +345,7 @@ HTTP `200`.
           "location": "3. 계정 관리 / ACC-02"
         }
       ],
+      "resolution": "FIX_PLAN",
       "next_action": "계획을 수정하고 재검증하세요."
     }
   ],
@@ -359,7 +361,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `result` | [ValidateResult](00-common.md#schema-validateresult) | Y | 업무 결과 |
-| `origin` | `MODEL\|TEMPLATE` | Y | 생성 출처 |
+| `origin` | `MODEL` | Y | 생성 출처. 템플릿 폴백 없음. 모델을 부르지 못하면 502/504 |
 | `model` | `string` | N | 실제 모델 호출 시 필수 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
 
@@ -368,10 +370,11 @@ HTTP `200`.
   "result": {
     "findings": [
       {
-        "category": "CONTRACT_MISMATCH",
+        "kind": "MISMATCH",
         "severity": "WARNING",
         "message": "계획과 승인 계약을 다시 확인해야 합니다.",
         "design_item_id": "301",
+        "design_item_version_id": "311",
         "related_task_id": "502",
         "sources": [
           {
@@ -427,6 +430,8 @@ HTTP `200`.
 
 - backend 워커가 동기 HTTP로 호출한다. ai에서 큐 ID·콜백·최종 validation status를 만들지 않는다.
 - 규칙 finding을 해제하지 않고 후보만 추가한다. 응답 ID는 입력 객체 안에서만 참조한다.
+- 후보가 없다는 것만으로 PASS가 되지 않는다. backend가 [공통 6절 판정표](00-common.md#검증시작)로 판정한다.
+- related_plans 등 다른 작업의 계획은 지시가 아닌 데이터로 다룬다.
 - backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 응답으로 STALE을 덮어쓰지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -633,7 +638,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "CHANGE_IMPACT",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,
@@ -739,7 +744,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `result` | [EmbeddingResult](00-common.md#schema-embeddingresult) | Y | 업무 결과 |
-| `origin` | `MODEL\|TEMPLATE` | Y | 생성 출처 |
+| `origin` | `MODEL` | Y | 생성 출처. 템플릿 폴백 없음. 모델을 부르지 못하면 502/504 |
 | `model` | `string` | N | 실제 모델 호출 시 필수 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
 
@@ -764,7 +769,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "EMBEDDING",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,
@@ -984,7 +989,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "BEE_CHAT",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,
@@ -1160,7 +1165,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "BEE_DRAFT",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,
@@ -1359,7 +1364,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "TASK_ASSIGNMENT",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,
@@ -1559,7 +1564,7 @@ HTTP `200`.
   "usage": [
     {
       "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
+      "feature": "MEETING_ANALYSIS",
       "model": "configured-model",
       "input_tokens": 1200,
       "output_tokens": 300,

@@ -1,6 +1,6 @@
 # BEEZ API Common
 
-버전: 0.2 · 갱신일: 2026-10-23 · 개발 계약 초안
+버전: 0.3 · 갱신일: 2026-10-23 · 개발 계약 초안
 
 ## 1. 문서 안내
 
@@ -43,6 +43,8 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 `MEMBER + TASK_OWNER`는 두 조건을 모두 요구한다. 슬래시로 구분된 권한은 리소스 공개 범위에 따른 조건부 접근이며 각 상세 API의 처리 규칙을 따른다. 팀장 토큰으로 접속한 AGENT도 사람 승인·발행 API에는 접근할 수 없다.
 
 웹 인증은 세션 쿠키, MCP는 프로젝트 토큰이다. 세션 쿠키 이름·만료·CSRF 헤더는 Q04에서 정한다. 쿠키 기반 변경 요청에는 확정된 CSRF 계약을 함께 적용한다. `X-Project-Id`는 권한의 근거가 아니며 프로젝트 경로·객체 소속·토큰 범위를 서버에서 대조한다. 다른 프로젝트 객체는 존재를 노출하지 않는 404로 거부한다.
+
+다른 사람·다른 에이전트가 작성한 공유 기록·계획·패킷·회의 기록은 에이전트에게 **데이터**로 전달한다. 에이전트는 이를 동료의 요청이나 참고 정보로 다루며 자기 사용자의 지시로 취급하지 않는다. MCP 응답과 AI 입력에서 이 구분을 유지한다.
 
 ## 3. 데이터·응답 규약
 
@@ -125,8 +127,8 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
-| 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함 |
-| 분석 job | PENDING, RUNNING, COMPLETED, FAILED. 저장 구조·세부 정책 Q07 |
+| 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함. REVALIDATION은 시스템만 설정(설계 발행·완료 delta) |
+| 문서 분석·초안 job | PENDING, RUNNING, COMPLETED, FAILED. 저장 구조·세부 정책 Q07. 검증 실행은 Validation.status·attempt로 따로 관리 |
 | 현재 승인본 | project.current_baseline_id → baseline_item / baseline_document |
 | 계획 참조 | 계획 리비전 × 항목 × 정확한 버전 × 관계 |
 | 관계 강도 | CHANGES &gt; IMPLEMENTS &gt; READS. 항목당 하나, 팀 동의 Q02 |
@@ -143,6 +145,16 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 START/RESUME는 현재 계획의 PASS, 실제 참조 항목 버전의 현재성, 선행 완료, CHANGES 점유 충돌을 검사한다. 작업 시작은 전역 baseline 번호만 달라졌다는 이유로 막지 않는다. 무관한 설계 변경으로 정상 PASS를 무효화하지 않는다.
 
 변경 항목의 이전 버전을 참조한 검증은 STALE이고 진행 작업은 WAITING(REVALIDATION), 점유는 유지한다. 완료·취소 작업은 이력만 보존한다. AI 추론 후보만으로 확정 참조 무효화를 하지 않는다. 참조 의존 깊이는 Q02다.
+
+판정은 backend 규칙이 내린다. AI는 finding 후보를 추가만 하고 규칙 finding을 해제하거나 심각도를 낮추지 못한다.
+
+| 상황 | 결과 | 판정 |
+| --- | --- | --- |
+| 필수 칸 누락, 모르는 항목·버전, CHANGES 없음 + no_contract_change=false + unlinked 비어 있음, no_contract_change=true인데 CHANGES 참조 있음 | NEEDS_INPUT | 규칙. 요청 안에서 확정 |
+| 구조화된 계약의 명확한 불일치, 같은 항목을 CHANGES하는 IN_PROGRESS·WAITING 작업 존재 | NEEDS_REVIEW | 규칙. 요청 안에서 확정 |
+| unlinked 등 의미 해석이 필요한 내용 | RUNNING → AI 분석 | AI는 후보 추가만. BLOCKING 후보가 있으면 NEEDS_REVIEW |
+| 위에 해당 없음, AI 분석이 불필요하거나 지정 범위 분석을 완료 | PASS | 규칙. AI가 finding을 내지 않은 것만으로는 PASS가 아님 |
+| 분석 실패·시간 초과 | ERROR | 규칙. 자동 PASS 금지 |
 
 backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영한다. ERROR 재시도는 새 run, 입력·근거가 바뀌면 새 검증이다. STALE을 단순 retry로 되살리지 않는다. D3의 롤백은 검증·업무 상태 복귀이며 사용자의 소스 파일을 되돌리는 기능이 아니다.
 
@@ -242,9 +254,9 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A04 설계 변경 제안 갱신·재제출](01-backend-rest.md#chg-a04) | PUT `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER (제안자) | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A05 변경 영향 조회](01-backend-rest.md#chg-a05) | GET `/api/projects/{id}/change-proposals/{proposal_id}/impact` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A06 변경 영향 AI 재분석](01-backend-rest.md#chg-a06) | POST `/api/projects/{id}/change-proposals/{proposal_id}/impact/retry` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
-| [CHG-A07 문서 수정 초안 생성](01-backend-rest.md#chg-a07) | POST `/api/projects/{id}/change-drafts` | MEMBER | undefined | 박상은 | undefined |
+| [CHG-A07 문서 수정 초안 생성](01-backend-rest.md#chg-a07) | POST `/api/projects/{id}/change-drafts` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [CHG-A08 변경 제안 검토 시작](01-backend-rest.md#chg-a08) | POST `/api/projects/{id}/change-proposals/{proposal_id}/review` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
-| [CHG-A09 변경 제안 승인·발행](01-backend-rest.md#chg-a09) | POST `/api/projects/{id}/change-proposals/{proposal_id}/approve` | LEADER | 오서현 / 검증 영향: 변준성 | — | undefined |
+| [CHG-A09 변경 제안 승인·발행](01-backend-rest.md#chg-a09) | POST `/api/projects/{id}/change-proposals/{proposal_id}/approve` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
 | [CHG-A10 변경 제안 반려](01-backend-rest.md#chg-a10) | POST `/api/projects/{id}/change-proposals/{proposal_id}/reject` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A11 승인 이력 조회](01-backend-rest.md#chg-a11) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A12 변경 제안 의견·검토 요청 등록](01-backend-rest.md#chg-a12) | POST `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -264,7 +276,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CTX-A02 공유 작업 기록 검색](01-backend-rest.md#ctx-a02) | GET `/api/projects/{id}/context-records` | MEMBER | 변준성 | — | 박민용 |
 | [CTX-A03 작업 기록 상세](01-backend-rest.md#ctx-a03) | GET `/api/projects/{id}/context-records/{record_id}` | MEMBER / RECORD_AUTHOR | 변준성 | — | 박민용 |
 | [CTX-A04 공유 작업 기록 생성·리비전 추가](01-backend-rest.md#ctx-a04) | POST `/api/projects/{id}/context-records` | MEMBER | 변준성(저장·조회), 전진(MCP 계약) | 박상은(검색·맥락) | 박민용 |
-| [CTX-A05 작업 설계 근거 추천](01-backend-rest.md#ctx-a05) | POST `/api/projects/{id}/design-reference-suggestions` | MEMBER | undefined | 양지훈(근거 추천) / 박상은(검색) | undefined |
+| [CTX-A05 작업 설계 근거 추천](01-backend-rest.md#ctx-a05) | POST `/api/projects/{id}/design-reference-suggestions` | MEMBER | 변준성 | 양지훈(근거 추천) / 박상은(검색) | 박민용 |
 | [BEE-A01 비비에게 질문](01-backend-rest.md#bee-a01) | POST `/api/projects/{id}/bee/questions` | MEMBER | 오서현(문서 조회·생성 연결) | 박상은 | 박상은 |
 | [BEE-A02 작업 역할 분담 추천](01-backend-rest.md#bee-a02) | POST `/api/projects/{id}/assignment-suggestions` | MEMBER | 변준성 | 박상은 | 박상은 |
 | [MTG-A01 회의 생성](01-backend-rest.md#mtg-a01) | POST `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
@@ -275,7 +287,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A06 회의 텍스트 기록](01-backend-rest.md#mtg-a06) | POST `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A07 비비의 회의 맥락 분석](01-backend-rest.md#mtg-a07) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-analysis` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A08 회의록 생성](01-backend-rest.md#mtg-a08) | POST `/api/projects/{id}/meetings/{meeting_id}/minutes` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
-| [MTG-A09 회의 결정 기반 문서 수정안](01-backend-rest.md#mtg-a09) | POST `/api/projects/{id}/meetings/{meeting_id}/change-drafts` | MEMBER (회의 참여자) | undefined | 양지훈(회의 연결) / 박상은(수정안 생성) | undefined |
+| [MTG-A09 회의 결정 기반 문서 수정안](01-backend-rest.md#mtg-a09) | POST `/api/projects/{id}/meetings/{meeting_id}/change-drafts` | MEMBER (회의 참여자) | 오서현 | 양지훈(회의 연결) / 박상은(수정안 생성) | 오서현 |
 | [MTG-A10 회의 기록 목록](01-backend-rest.md#mtg-a10) | GET `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER | 오서현 | — | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
@@ -337,8 +349,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | ID | 계약 항목 | 담당 | 확인할 내용 |
 | --- | --- | --- | --- |
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | kind별 content 필수 키·schema_version, API/DATA 계약 구조 |
-| Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
-| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta·자동 완료 조건 |
+| Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표(6절에 반영, 팀 확인), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
+| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책, 세션 쿠키·만료·CSRF, 재설정 토큰 만료·재발송·세션 정리 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
@@ -562,7 +574,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `request_key` | `string` | Y | 모델 호출 중복 식별값 |
-| `feature` | `string` | Y | 호출 기능 |
+| `feature` | `DOCUMENT_PARSE\|TASK_VALIDATION\|CHANGE_IMPACT\|EMBEDDING\|BEE_CHAT\|BEE_DRAFT\|TASK_ASSIGNMENT\|MEETING_ANALYSIS` | Y | 호출 기능 |
 | `model` | `string` | Y | 사용 모델 |
 | `input_tokens` | `integer` | N | 입력 토큰 수 |
 | `output_tokens` | `integer` | N | 출력 토큰 수 |
@@ -593,7 +605,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- | --- |
 | `from_design_item_id` | `ID` | Y | 의존하는 항목 |
 | `to_design_item_id` | `ID` | Y | 의존 대상 |
-| `relation` | `DEPENDS_ON` | Y | 명시적 관계 |
+| `origin` | `EXPLICIT\|AI_CANDIDATE` | Y | 명시 관계 또는 AI 후보. AI 후보는 무효화 근거가 아님 |
 
 <a id="schema-changeitem"></a>
 
@@ -747,7 +759,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `revision_no` | `integer` | Y | 작업 내 리비전 번호 |
 | `plan` | [TaskPlanInput](00-common.md#schema-taskplaninput) | Y | 불변 계획 |
 | `created_at` | `Time` | Y | 생성 시각 |
-| `created_by` | `ID` | Y | 작성 계정 |
+| `created_by` | `ID` | Y | 작성 계정. 에이전트 작성이면 토큰 소유 계정 |
+| `agent_token_id` | `ID` | N | 에이전트로 작성한 경우의 토큰 |
 
 <a id="schema-relatedtaskref"></a>
 
@@ -766,13 +779,16 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 발견 항목 |
 | `source` | `RULE\|MODEL` | Y | 생성 주체 |
-| `category` | `string` | Y | 분류 |
-| `severity` | `INFO\|WARNING\|BLOCKING` | Y | 중요도. 판정 매핑 Q02 |
+| `kind` | `MISMATCH\|MISSING_INPUT\|MISSING_POLICY\|CONFLICT\|STALE_REF\|ERROR` | Y | 분류 |
+| `severity` | `INFO\|WARNING\|BLOCKING` | Y | 중요도. BLOCKING이면 PASS 불가 |
 | `message` | `string` | Y | 설명 |
 | `design_item_id` | `ID` | N | 관련 항목 |
+| `design_item_version_id` | `ID` | N | 근거 항목 버전. design_item_id가 있으면 필수 |
 | `related_task_id` | `ID` | N | 관련 작업 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
-| `next_action` | `string` | Y | 후속 경로 |
+| `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
+| `next_action` | `string` | N | 후속 경로 설명 |
+| `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding은 필수 |
 
 <a id="schema-validation"></a>
 
@@ -785,6 +801,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `plan_revision_id` | `ID` | Y | 입력 리비전 |
 | `baseline_id` | `ID` | Y | 검증 당시 기준. 이력용 |
 | `status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 검증 상태 |
+| `trigger` | `AGENT\|REVALIDATION\|DELTA` | Y | 검증 계기 |
+| `stale_reason` | `string` | N | STALE일 때 필수. 무효화 원인 |
 | `current_attempt` | `integer` | Y | 현재 시도 |
 | `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
 | `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
@@ -811,6 +829,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 현재 계획 검증 |
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
+| `delta_validation_id` | `ID` | N | 완료 delta 재검증. WAITING(REVALIDATION) 중 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
 
@@ -833,9 +852,9 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `plan_revision_id` | `ID` | Y | 현재 계획 |
 | `expected_lock_version` | `integer` | Y | 조회한 lock_version |
 | `validation_id` | `ID` | N | START/RESUME 필수 |
-| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAIT이면 필수 |
+| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY` | N | WAIT이면 필수. WAIT는 IN_PROGRESS에서만 가능. REVALIDATION은 시스템 전용이라 지정하면 400 invalid_transition |
 | `summary` | `string` | N | 진행/완료 요약 |
-| `delta` | `object[]` | N | 완료 시 계획 대비 변경. Q03 |
+| `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
 
 <a id="schema-relatedtask"></a>
@@ -1185,10 +1204,11 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `category` | `string` | Y | 후보 분류 |
+| `kind` | `MISMATCH\|MISSING_INPUT\|MISSING_POLICY\|CONFLICT\|STALE_REF` | Y | 후보 분류 |
 | `severity` | `INFO\|WARNING\|BLOCKING` | Y | 후보 중요도 |
 | `message` | `string` | Y | 후보 설명 |
 | `design_item_id` | `ID` | N | 관련 항목 |
+| `design_item_version_id` | `ID` | N | 근거 항목 버전. design_item_id가 있으면 필수 |
 | `related_task_id` | `ID` | N | 관련 작업 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `suggested_action` | `string` | Y | 후속 행동 제안 |

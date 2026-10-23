@@ -1,4 +1,4 @@
-# BEEZ ERD v1.0 (최종본)
+# BEEZ ERD v1.1 (최종본)
 
 > ![핵심 관계](erd-core.png)
 >
@@ -26,6 +26,18 @@
 | current 포인터 이중 관리 | **`design_item.current_approved_version_id`, `document.current_approved_version_id` 삭제.** 현재 버전은 `project.current_baseline_id` → `baseline_item` / `baseline_document` 조인으로만 구한다. `task.baseline_id`, `task.latest_validation_id`도 삭제 |
 | 단순 FK는 소속을 보장하지 않음 | `(id, parent_id)` 복합 FK로 소유 관계 보장 (아래 4절) |
 | 불변성이 문장뿐 | 트리거로 UPDATE 차단 (승인 항목 버전 본문, 기준 설계, 계획 리비전·참조, 검증 참조, 승인, 완료 보고, 패킷) |
+
+## 0-1. v1.1 — API 명세와 이름 맞춤
+
+API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 맞췄다. 테이블 수(43)와 관계는 그대로이고, 불변식 시나리오 21개는 다시 돌려 모두 통과했다.
+
+| 테이블 | 바뀐 것 |
+|---|---|
+| `task` | `waiting_reason` = `INPUT`, `APPROVAL`, `DEPENDENCY`, `REVALIDATION`(시스템만 설정) |
+| `task_plan_revision` | `title` 필수, `included_scope`·`excluded_scope`·`dependency_task_ids` 스냅샷 추가, `acceptance` → `completion_criteria`, `created_by_account_id` 필수(에이전트 작성이면 토큰 소유 계정) + `created_by_token_id` 선택 |
+| `validation_finding` | `source`(`RULE`·`MODEL`), `kind`(`MISMATCH`·`MISSING_INPUT`·`MISSING_POLICY`·`CONFLICT`·`STALE_REF`·`ERROR`), `severity`(`INFO`·`WARNING`·`BLOCKING`), `design_item_version_id`, `sources`, `resolution`(`FIX_PLAN`·`PROPOSE_CHANGE`·`HUMAN_REVIEW`·`RETRY`), `next_action` |
+| `task_completion_report` | `summary`, `completion_checks` 추가 |
+| `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS` |
 
 ## 1. 테이블과 소유자 (43개)
 
