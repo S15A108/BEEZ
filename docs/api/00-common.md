@@ -1,0 +1,1376 @@
+# BEEZ API Common
+
+버전: 0.2 · 갱신일: 2026-10-23 · 개발 계약 초안
+
+## 1. 문서 안내
+
+BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·데이터·책임 경계를 정의한다.
+
+| 문서 | 범위 |
+| --- | --- |
+| [Backend REST](01-backend-rest.md) | 웹 → backend의 API별 요청·응답·오류·처리 규칙 |
+| [MCP Tools](02-mcp-tools.md) | Claude Code → backend /mcp의 도구별 계약 |
+| [AI Internal](03-ai-internal.md) | backend → ai의 분석·생성·임베딩 계약 |
+
+기준 자료: [요구사항](../BEEZ_요구사항_명세서.md), [업무 분담안](../BEEZ_업무분담안.md), [아키텍처](../design/01-system-architecture.md), [시스템 플로우](../design/02-system-flow.md), [ERD](../design/03-erd.md), [기획서](../BEEZ_기획서.md).
+
+상세 문서의 상태는 계약의 검토 수준이다. `설계 초안`은 업무 API의 구현 완료를 뜻하지 않는다. `담당자 검토`·`합의 필요`는 해당 절 또는 9절의 미결 정책을 확인해야 한다. 지정 경로는 아키텍처·플로우를 유지하고, 그 밖의 상세 경로·DTO는 이 계약의 개발 초안이다. API별 중첩 타입은 10절 공통 스키마로 연결된다.
+
+### Base URL
+
+| 구간 | 로컬 기준 | 경로 |
+| --- | --- | --- |
+| 웹 → backend | http://localhost:8080 | /api/** |
+| 에이전트 → backend | http://localhost:8080 | /mcp |
+| backend → ai | http://localhost:8000 또는 AI_BASE_URL | /v1/** |
+
+운영 주소는 배포 설정을 따른다. 예제의 `beez.example`·토큰·ID·해시는 설명용 값이다. 파일 업로드는 multipart, 다운로드는 원본 MIME, 나머지는 JSON을 기본으로 한다.
+
+## 2. 인증·권한
+
+| 표기 | 충족 조건 | 추가 제한 |
+| --- | --- | --- |
+| PUBLIC | 세션 없이 접근 가능 | 가입·로그인·재설정·초대 미리보기·기동 확인 등 지정 경로 |
+| USER | 유효한 사람 로그인 세션 | 프로젝트 멤버십을 뜻하지 않음. 본인 정보는 세션에서 식별 |
+| MEMBER | USER이며 대상 프로젝트의 활성 멤버 | 프로젝트 팀장도 포함 |
+| LEADER | MEMBER이며 현재 역할이 LEADER | 승인·발행·팀 관리는 사람 세션 필수 |
+| TASK_OWNER | MEMBER이며 해당 작업의 현재 담당자 | 팀장도 담당자가 아니면 자동 대리 권한 없음. 개입 정책 Q02 |
+| RECORD_AUTHOR | MEMBER이며 해당 기록의 작성자 | PRIVATE 읽기·기록 수정에 적용 |
+| AGENT | 유효한 프로젝트별 에이전트 Bearer 토큰 | 매 호출 현재 멤버십·객체 소속·도구별 담당자 검사 |
+| INTERNAL_SERVICE | 내부 서비스 Bearer 인증 통과 | AI 내부 경로만. 사람·에이전트 토큰으로 대체 불가 |
+| BEE | 비비가 생성·분석한 결과의 처리 주체 | 로그인 역할이나 승인 자격이 아님. 내부 인증·기능 범위로 제한 |
+
+`MEMBER + TASK_OWNER`는 두 조건을 모두 요구한다. 슬래시로 구분된 권한은 리소스 공개 범위에 따른 조건부 접근이며 각 상세 API의 처리 규칙을 따른다. 팀장 토큰으로 접속한 AGENT도 사람 승인·발행 API에는 접근할 수 없다.
+
+웹 인증은 세션 쿠키, MCP는 프로젝트 토큰이다. 세션 쿠키 이름·만료·CSRF 헤더는 Q04에서 정한다. 쿠키 기반 변경 요청에는 확정된 CSRF 계약을 함께 적용한다. `X-Project-Id`는 권한의 근거가 아니며 프로젝트 경로·객체 소속·토큰 범위를 서버에서 대조한다. 다른 프로젝트 객체는 존재를 노출하지 않는 404로 거부한다.
+
+## 3. 데이터·응답 규약
+
+| 항목 | 형식·처리 |
+| --- | --- |
+| JSON 키 | snake_case |
+| ID | BIGINT 식별자를 십진 문자열로 전달. 예: "101". 계정·멤버·세션·버전 ID는 서로 다름 |
+| 번호 | version_no, revision_no, lock_version, attempt는 정수. ID와 구분 |
+| Time | UTC ISO 8601. 예: 2026-10-23T03:00:00Z |
+| enum | ERD에 정의된 대문자 값. API별 추가 상태는 계약 초안 |
+| 성공 | 리소스 또는 해당 API의 객체를 직접 반환. success/data 봉투를 추가하지 않음 |
+| 선택 응답 속성 | 값이 없으면 생략. 빈 목록은 [] |
+| PATCH | 생략은 유지. null 해제는 개별 필드에서 허용한 경우만. 하나 이상의 허용 필드 필요 |
+| 읽기 기본값 | 문서 버전 생략은 현재 기준 설계의 승인본. 초안으로 자동 대체하지 않음 |
+| 작성·승인자 | 클라이언트가 입력하지 않고 인증 주체에서 결정 |
+| 요청 추적 | X-Request-Id를 응답하고 backend→ai까지 전달 |
+| 비밀값 | 비밀번호·토큰 평문·개인 대화 원문·저장 경로는 로그·목록에서 제외 |
+
+필드표의 Y는 필수, N은 선택이다. 조건부 필수는 설명에 명시한다. 객체 배열의 상세 필드는 타입 링크에서 확인한다. `content`·`unlinked`·`delta`의 미확정 구조는 임의 키를 영구 허용하는 계약이 아니라 Q01~03의 검토 대상이다.
+
+### 성공·실패 예시
+
+```json
+{"id":"101","name":"BEEZ"}
+```
+
+```json
+{"error":{"code":"version_conflict","message":"조회한 기준이 변경되었습니다. 최신 내용을 확인하세요."}}
+```
+
+204는 본문이 없다. 오류 본문은 기본 `error.code/message`다. AI 내부 실패의 선택적 usage는 [AI 문서](03-ai-internal.md)의 사용량 계약에 한정하며 웹으로 그대로 전달하지 않는다.
+
+### 페이지
+
+- 요청: `cursor?: string`, `limit?: integer`(기본 20, 최대 100).
+- 응답: `items: T[]`, `has_more: boolean`, `next_cursor?: string`.
+- 기본 정렬: `created_at DESC, id DESC`. cursor는 서버의 불투명 식별값이며 숫자 offset으로 해석하지 않는다.
+- 권한·프로젝트 필터는 페이지·검색·집계 전에 적용한다. 후속 페이지도 같은 필터를 사용한다.
+- 변경 Pull의 기준 번호는 모든 페이지를 읽기 전에 현재 최신 번호로 올리지 않는다.
+
+## 4. HTTP·오류
+
+| 상태 | 공통 의미 | 대표 code |
+| --- | --- | --- |
+| 200 | 조회·처리 성공 또는 요청 중 검증 완료 | — |
+| 201 | 리소스 생성 | — |
+| 202 | 처리 접수. 완료를 의미하지 않음 | — |
+| 204 | 본문 없는 성공 | — |
+| 400 | 형식·필수·업무 입력 오류 | invalid_json, validation_failed, invalid_transition |
+| 401 | 로그인·에이전트·내부 인증 실패 | unauthenticated, token_revoked |
+| 403 | 역할·소유 조건 미충족 | forbidden |
+| 404 | 리소스 없음 또는 소속 비노출 | not_found |
+| 405 | 지원하지 않는 메서드 | method_not_allowed |
+| 409 | 현재 상태·버전·중복·의존 충돌 | version_conflict, revision_conflict, baseline_conflict |
+| 410 | 링크 만료 | invitation_expired, reset_token_expired |
+| 413 | 파일 용량 초과 | file_too_large |
+| 415 | 본문·파일 형식 불가 | unsupported_media_type |
+| 429 | 호출 제한 | rate_limited |
+| 500 | 내부 오류 | internal |
+| 502 | AI·모델 실패 | ai_unavailable, model_unavailable |
+| 504 | 분석 시간 초과 | ai_timeout, model_timeout |
+
+현재 backend의 공통 오류 응답과 snake_case 설정을 따른다. 신규 업무 code·페이지·문자열 ID는 구현 시 이 계약과 맞춘다. 검증이 NEEDS_INPUT/NEEDS_REVIEW/ERROR로 저장된 경우는 HTTP 전송 실패와 구분한다. 409 뒤에는 최신 리소스를 다시 조회한다.
+
+## 5. 멱등성·동시성
+
+- 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
+- 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
+- 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
+- START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
+- 작업 변경은 expected_revision_no/expected_lock_version, 제안 변경은 expected_updated_at, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
+- 시작·재개와 문서 발행은 프로젝트 잠금 아래 재검사한다. 모델 호출 중 DB 잠금을 잡고 기다리지 않는다.
+- 공유 기록은 previous_id를 잇는 새 불변 리비전이다. 같은 이전 리비전의 두 번째 수정은 충돌이다.
+
+## 6. 상태·버전·발행
+
+| 대상 | 값·주요 조건 |
+| --- | --- |
+| 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
+| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계 |
+| 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
+| 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
+| 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함 |
+| 분석 job | PENDING, RUNNING, COMPLETED, FAILED. 저장 구조·세부 정책 Q07 |
+| 현재 승인본 | project.current_baseline_id → baseline_item / baseline_document |
+| 계획 참조 | 계획 리비전 × 항목 × 정확한 버전 × 관계 |
+| 관계 강도 | CHANGES &gt; IMPLEMENTS &gt; READS. 항목당 하나, 팀 동의 Q02 |
+| 완료 | 담당자의 자기 보고. 코드 품질·테스트 검증 완료와 구분 |
+
+### 기준 설계 발행
+
+초기 문서와 AI 생성 항목은 DRAFT다. 팀장이 검토한 원문·항목 버전을 승인하면 문서·항목 상태, baseline 두 스냅샷과 현재 포인터를 원자적으로 발행한다. 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면 409이며 최신 기준으로 제안을 갱신해 검토한다.
+
+변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 성공 커밋 뒤 알림·활동은 중복 식별값으로 처리한다. 이벤트 전달 실패는 이미 완료한 발행을 다시 생성하는 이유가 아니다. D7·전달 유실 방지 세부는 Q03이다.
+
+### 검증·시작
+
+START/RESUME는 현재 계획의 PASS, 실제 참조 항목 버전의 현재성, 선행 완료, CHANGES 점유 충돌을 검사한다. 작업 시작은 전역 baseline 번호만 달라졌다는 이유로 막지 않는다. 무관한 설계 변경으로 정상 PASS를 무효화하지 않는다.
+
+변경 항목의 이전 버전을 참조한 검증은 STALE이고 진행 작업은 WAITING(REVALIDATION), 점유는 유지한다. 완료·취소 작업은 이력만 보존한다. AI 추론 후보만으로 확정 참조 무효화를 하지 않는다. 참조 의존 깊이는 Q02다.
+
+backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영한다. ERROR 재시도는 새 run, 입력·근거가 바뀌면 새 검증이다. STALE을 단순 retry로 되살리지 않는다. D3의 롤백은 검증·업무 상태 복귀이며 사용자의 소스 파일을 되돌리는 기능이 아니다.
+
+## 7. 책임·공통 서비스
+
+| 기능 | 서버·AI 담당 | 화면·연결 담당 |
+| --- | --- | --- |
+| 계정·프로젝트·팀·연결 | 전진 | 박민용 |
+| 작업·검증·관계·비용 조회 | 변준성 / 분석 AI 양지훈 | 박민용 / 검증 상태관리 양지훈 |
+| 문서·기획·변경·승인 | 오서현 / 파싱·검색·생성 AI 박상은 / 영향 AI 양지훈 | 오서현 |
+| 비비 대화·역할 추천 | 박상은 / 문서 BE 오서현·배정 BE 변준성 연결 검토 | 박상은 |
+| 회의 | 오서현 BE / 양지훈 AI / 수정 모듈 박상은 | 오서현 |
+| MCP | 전진 진입점·인증·감사 / 각 업무 서비스 소유자 | 전진 도구 연결 |
+| 알림·활동 | 도메인이 대상·내용 결정 / 전진 저장·중복 방지·조회 | 박민용 |
+| 대시보드 | 각 도메인 소유 조회 API | 박민용이 화면에서 조합 |
+| 공통 LLM | 양지훈 공통 호출·오류·출처·사용량 / 각 AI 담당 프롬프트·검증 | 각 기능 담당 |
+
+대시보드의 문서·변경 현황은 오서현, 작업·검증·관계·비용은 변준성, 연결·타임라인은 전진이 제공한다. 에이전트의 연결과 현재 작업은 별도 API로 조회한다. API별 세부 책임은 아래 목록에 표기한다.
+
+### 공통 서비스 데이터
+
+아래는 도메인 서비스 간 전달 계약이다. 별도 공개 REST endpoint나 메시지 브로커를 의미하지 않는다.
+
+| 전달 정보 | 필수 필드 | 선택·조건 |
+| --- | --- | --- |
+| 활동 이벤트 | event_key, project_id, actor_type, type, target_type, target_id, occurred_at | 사람·에이전트 행위에는 actor_account_id 필수. 시스템 행위자는 actor_type=BEE 등으로 식별하고 계정 ID 생략 |
+| 알림 요청 | notification_key, project_id, recipient_account_id, type, title, body, target_type, target_id | 개인별 읽음 시각은 알림 서비스에서 관리 |
+| LLM 호출 사용량 | request_key, feature, project_id, model, failed, latency_ms, tokens_known | task_id, validation_id, attempt, input_tokens, output_tokens, estimated_cost_amount, currency |
+| 검증 실행 기록 | validation_id, plan_revision_id, attempt, analyzer_version, latency_ms, cache_hit | usage_request_keys, error_code |
+
+비용 조회는 실제 모델 호출 식별값으로 중복 제거한다. 작업 미연결 문서 분석·대화도 프로젝트·기능별 합계에 포함한다. 공급자 사용량을 모르면 unknown을 보존하고 추정 비용과 실제 청구값을 혼용하지 않는다.
+
+## 8. API 목록
+
+### Backend REST
+
+| 명세 ID·상세 | Method / Path | 권한 | BE | AI | FE |
+| --- | --- | --- | --- | --- | --- |
+| [ACC-A01 회원가입](01-backend-rest.md#acc-a01) | POST `/api/auth/register` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A02 로그인](01-backend-rest.md#acc-a02) | POST `/api/auth/login` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A03 로그아웃](01-backend-rest.md#acc-a03) | POST `/api/auth/logout` | USER | 전진 | — | 박민용 |
+| [ACC-A04 내 계정 조회](01-backend-rest.md#acc-a04) | GET `/api/me` | USER | 전진 | — | 박민용 |
+| [ACC-A05 프로필 수정](01-backend-rest.md#acc-a05) | PATCH `/api/me` | USER | 전진 | — | 박민용 |
+| [ACC-A06 비밀번호 변경](01-backend-rest.md#acc-a06) | PUT `/api/me/password` | USER | 전진 | — | 박민용 |
+| [ACC-A07 비밀번호 재설정 메일 요청](01-backend-rest.md#acc-a07) | POST `/api/auth/password/forgot` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A08 재설정 링크 확인](01-backend-rest.md#acc-a08) | POST `/api/auth/password/reset/verify` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A09 비밀번호 재설정](01-backend-rest.md#acc-a09) | POST `/api/auth/password/reset` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A10 회원 탈퇴](01-backend-rest.md#acc-a10) | POST `/api/me/withdraw` | USER | 전진 | — | 박민용 |
+| [PRJ-A01 프로젝트 생성](01-backend-rest.md#prj-a01) | POST `/api/projects` | USER | 전진 | — | 박민용 |
+| [PRJ-A02 참여 프로젝트 목록](01-backend-rest.md#prj-a02) | GET `/api/projects` | USER | 전진 | — | 박민용 |
+| [PRJ-A03 프로젝트 상세](01-backend-rest.md#prj-a03) | GET `/api/projects/{id}` | MEMBER | 전진 | — | 박민용 |
+| [PRJ-A04 프로젝트 정보 수정](01-backend-rest.md#prj-a04) | PATCH `/api/projects/{id}` | LEADER | 전진 | — | 박민용 |
+| [PRJ-A05 프로젝트 삭제](01-backend-rest.md#prj-a05) | DELETE `/api/projects/{id}` | LEADER | 전진 | — | 박민용 |
+| [PRJ-A06 초기 설정 현황](01-backend-rest.md#prj-a06) | GET `/api/projects/{id}/onboarding` | MEMBER | 전진 | — | 박민용 |
+| [MEM-A01 팀원 초대 생성](01-backend-rest.md#mem-a01) | POST `/api/projects/{id}/invitations` | LEADER | 전진 | — | 박민용 |
+| [MEM-A02 초대 목록](01-backend-rest.md#mem-a02) | GET `/api/projects/{id}/invitations` | LEADER | 전진 | — | 박민용 |
+| [MEM-A03 초대 폐기](01-backend-rest.md#mem-a03) | DELETE `/api/projects/{id}/invitations/{invitation_id}` | LEADER | 전진 | — | 박민용 |
+| [MEM-A04 초대 미리보기](01-backend-rest.md#mem-a04) | POST `/api/invitations/preview` | PUBLIC | 전진 | — | 박민용 |
+| [MEM-A05 초대 수락](01-backend-rest.md#mem-a05) | POST `/api/invitations/accept` | USER | 전진 | — | 박민용 |
+| [MEM-A06 팀원 목록](01-backend-rest.md#mem-a06) | GET `/api/projects/{id}/members` | MEMBER | 전진 | — | 박민용 |
+| [MEM-A07 팀원 담당 영역·표시 수정](01-backend-rest.md#mem-a07) | PATCH `/api/projects/{id}/members/{member_id}` | LEADER | 전진 | — | 박민용 |
+| [MEM-A08 팀장 위임](01-backend-rest.md#mem-a08) | POST `/api/projects/{id}/leadership-transfer` | LEADER | 전진 | — | 박민용 |
+| [MEM-A09 팀원 제외](01-backend-rest.md#mem-a09) | POST `/api/projects/{id}/members/{member_id}/remove` | LEADER | 전진 | — | 박민용 |
+| [MEM-A10 프로젝트 나가기](01-backend-rest.md#mem-a10) | POST `/api/projects/{id}/leave` | MEMBER | 전진 | — | 박민용 |
+| [AGT-A01 에이전트 토큰 발급](01-backend-rest.md#agt-a01) | POST `/api/projects/{id}/agent-tokens` | MEMBER, 본인 소유 객체 | 전진 | — | 박민용 |
+| [AGT-A02 내 에이전트 토큰 목록](01-backend-rest.md#agt-a02) | GET `/api/me/agent-tokens` | USER | 전진 | — | 박민용 |
+| [AGT-A03 에이전트 토큰 폐기](01-backend-rest.md#agt-a03) | DELETE `/api/agent-tokens/{id}` | USER, 본인 소유 객체 | 전진 | — | 박민용 |
+| [AGT-A04 에이전트 연결 안내](01-backend-rest.md#agt-a04) | GET `/api/projects/{id}/agent-connection-guide` | MEMBER | 전진 | — | 박민용 |
+| [AGT-A05 에이전트 연결 현황 목록](01-backend-rest.md#agt-a05) | GET `/api/projects/{id}/agents` | MEMBER | 전진 | — | 박민용 |
+| [AGT-A06 에이전트 연결 상세](01-backend-rest.md#agt-a06) | GET `/api/projects/{id}/agents/{agent_session_id}` | MEMBER | 전진 | — | 박민용 |
+| [DOC-A01 초기 문서 업로드](01-backend-rest.md#doc-a01) | POST `/api/projects/{id}/documents` | LEADER | 오서현 | 박상은 | 오서현 |
+| [DOC-A02 문서 목록](01-backend-rest.md#doc-a02) | GET `/api/projects/{id}/documents` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A03 문서 원문 조회](01-backend-rest.md#doc-a03) | GET `/api/projects/{id}/documents/{document_id}` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A04 원본 파일 다운로드](01-backend-rest.md#doc-a04) | GET `/api/projects/{id}/documents/{document_id}/versions/{version_no}/file` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A05 문서 버전 목록](01-backend-rest.md#doc-a05) | GET `/api/projects/{id}/documents/{document_id}/versions` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A06 문서 버전 비교](01-backend-rest.md#doc-a06) | GET `/api/projects/{id}/documents/{document_id}/diff` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A07 문서 분류 수정](01-backend-rest.md#doc-a07) | PATCH `/api/projects/{id}/documents/{document_id}` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A01 문서 분석 상태·결과 조회](01-backend-rest.md#pln-a01) | GET `/api/projects/{id}/documents/{document_id}/analysis` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [PLN-A02 문서 분석 재시도](01-backend-rest.md#pln-a02) | POST `/api/projects/{id}/documents/{document_id}/analysis/retry` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A03 기획 보완 질문 목록](01-backend-rest.md#pln-a03) | GET `/api/projects/{id}/planning-questions` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [PLN-A04 기획 보완 질문 답변](01-backend-rest.md#pln-a04) | PATCH `/api/projects/{id}/planning-questions/{question_id}` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A05 답변을 반영한 설계 초안 생성](01-backend-rest.md#pln-a05) | POST `/api/projects/{id}/design-drafts` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A06 설계 항목 목록](01-backend-rest.md#pln-a06) | GET `/api/projects/{id}/design-items` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [PLN-A07 설계 항목 초안 추가](01-backend-rest.md#pln-a07) | POST `/api/projects/{id}/design-items` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A08 설계 항목 초안 수정](01-backend-rest.md#pln-a08) | PATCH `/api/human/design-items/{id}` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A09 설계 항목 초안 제외](01-backend-rest.md#pln-a09) | DELETE `/api/human/design-items/{id}` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A10 최초 기준 설계 승인·발행](01-backend-rest.md#pln-a10) | POST `/api/human/baselines` | LEADER | 오서현 | 박상은 | 오서현 |
+| [DOC-A08 현재 기준 설계 조회](01-backend-rest.md#doc-a08) | GET `/api/projects/{id}/baselines/current` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A09 기준 설계 이력 목록](01-backend-rest.md#doc-a09) | GET `/api/projects/{id}/baselines` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A10 기준 설계 특정 버전 조회](01-backend-rest.md#doc-a10) | GET `/api/projects/{id}/baselines/{version_no}` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A11 문서·설계 검색](01-backend-rest.md#doc-a11) | GET `/api/projects/{id}/search` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [TRC-A01 설계 항목 의존관계 조회](01-backend-rest.md#trc-a01) | GET `/api/projects/{id}/design-items/{item_id}/dependencies` | MEMBER | 변준성 | — | 박민용 |
+| [DOC-A12 변경용 원문 파일 업로드](01-backend-rest.md#doc-a12) | POST `/api/projects/{id}/documents/{document_id}/draft-versions` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A03 설계 변경 제안 상세·비교](01-backend-rest.md#chg-a03) | GET `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A04 설계 변경 제안 갱신·재제출](01-backend-rest.md#chg-a04) | PUT `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER (제안자) | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A05 변경 영향 조회](01-backend-rest.md#chg-a05) | GET `/api/projects/{id}/change-proposals/{proposal_id}/impact` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A06 변경 영향 AI 재분석](01-backend-rest.md#chg-a06) | POST `/api/projects/{id}/change-proposals/{proposal_id}/impact/retry` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A07 문서 수정 초안 생성](01-backend-rest.md#chg-a07) | POST `/api/projects/{id}/change-drafts` | MEMBER | undefined | 박상은 | undefined |
+| [CHG-A08 변경 제안 검토 시작](01-backend-rest.md#chg-a08) | POST `/api/projects/{id}/change-proposals/{proposal_id}/review` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A09 변경 제안 승인·발행](01-backend-rest.md#chg-a09) | POST `/api/projects/{id}/change-proposals/{proposal_id}/approve` | LEADER | 오서현 / 검증 영향: 변준성 | — | undefined |
+| [CHG-A10 변경 제안 반려](01-backend-rest.md#chg-a10) | POST `/api/projects/{id}/change-proposals/{proposal_id}/reject` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A11 승인 이력 조회](01-backend-rest.md#chg-a11) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A12 변경 제안 의견·검토 요청 등록](01-backend-rest.md#chg-a12) | POST `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A13 변경 제안 의견 목록](01-backend-rest.md#chg-a13) | GET `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [TSK-A01 작업 계획 등록](01-backend-rest.md#tsk-a01) | POST `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
+| [TSK-A02 작업 목록](01-backend-rest.md#tsk-a02) | GET `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
+| [TSK-A03 작업 상세](01-backend-rest.md#tsk-a03) | GET `/api/projects/{id}/tasks/{task_id}` | MEMBER | 변준성 | — | 박민용 |
+| [TSK-A04 작업 계획 새 리비전 저장](01-backend-rest.md#tsk-a04) | POST `/api/projects/{id}/tasks/{task_id}/plan-revisions` | MEMBER + TASK_OWNER | 변준성 | — | 박민용 |
+| [TSK-A05 작업 계획 리비전 이력](01-backend-rest.md#tsk-a05) | GET `/api/projects/{id}/tasks/{task_id}/plan-revisions` | MEMBER | 변준성 | — | 박민용 |
+| [TSK-A06 작업 담당자 변경](01-backend-rest.md#tsk-a06) | PATCH `/api/projects/{id}/tasks/{task_id}/assignee` | LEADER | 변준성 | — | 박민용 |
+| [VAL-A01 작업 검증 접수](01-backend-rest.md#val-a01) | POST `/api/projects/{id}/tasks/{task_id}/validations` | MEMBER + TASK_OWNER | 변준성 | 양지훈 | 박민용 |
+| [VAL-A02 검증 결과 조회](01-backend-rest.md#val-a02) | GET `/api/projects/{id}/validations/{validation_id}` | MEMBER | 변준성 | 양지훈 | 박민용 |
+| [VAL-A03 작업 검증 이력](01-backend-rest.md#val-a03) | GET `/api/projects/{id}/tasks/{task_id}/validations` | MEMBER | 변준성 | 양지훈 | 박민용 |
+| [VAL-A04 검증 실행 재시도](01-backend-rest.md#val-a04) | POST `/api/projects/{id}/validations/{validation_id}/retry` | MEMBER + TASK_OWNER | 변준성 | 양지훈 | 박민용 |
+| [TSK-A07 작업 상태 보고](01-backend-rest.md#tsk-a07) | POST `/api/projects/{id}/tasks/{task_id}/state-events` | MEMBER + TASK_OWNER | 변준성 | — | 박민용 |
+| [CTX-A01 개발 컨텍스트 패킷 조회](01-backend-rest.md#ctx-a01) | GET `/api/projects/{id}/context-packets/{packet_id}` | MEMBER | 변준성 | — | 박민용 |
+| [CTX-A02 공유 작업 기록 검색](01-backend-rest.md#ctx-a02) | GET `/api/projects/{id}/context-records` | MEMBER | 변준성 | — | 박민용 |
+| [CTX-A03 작업 기록 상세](01-backend-rest.md#ctx-a03) | GET `/api/projects/{id}/context-records/{record_id}` | MEMBER / RECORD_AUTHOR | 변준성 | — | 박민용 |
+| [CTX-A04 공유 작업 기록 생성·리비전 추가](01-backend-rest.md#ctx-a04) | POST `/api/projects/{id}/context-records` | MEMBER | 변준성(저장·조회), 전진(MCP 계약) | 박상은(검색·맥락) | 박민용 |
+| [CTX-A05 작업 설계 근거 추천](01-backend-rest.md#ctx-a05) | POST `/api/projects/{id}/design-reference-suggestions` | MEMBER | undefined | 양지훈(근거 추천) / 박상은(검색) | undefined |
+| [BEE-A01 비비에게 질문](01-backend-rest.md#bee-a01) | POST `/api/projects/{id}/bee/questions` | MEMBER | 오서현(문서 조회·생성 연결) | 박상은 | 박상은 |
+| [BEE-A02 작업 역할 분담 추천](01-backend-rest.md#bee-a02) | POST `/api/projects/{id}/assignment-suggestions` | MEMBER | 변준성 | 박상은 | 박상은 |
+| [MTG-A01 회의 생성](01-backend-rest.md#mtg-a01) | POST `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
+| [MTG-A02 회의 목록](01-backend-rest.md#mtg-a02) | GET `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
+| [MTG-A03 회의 상세](01-backend-rest.md#mtg-a03) | GET `/api/projects/{id}/meetings/{meeting_id}` | MEMBER | 오서현 | 양지훈 | 오서현 |
+| [MTG-A04 회의 참여 요청](01-backend-rest.md#mtg-a04) | POST `/api/projects/{id}/meetings/{meeting_id}/participants` | MEMBER | 오서현 | 양지훈 | 오서현 |
+| [MTG-A05 회의 참여 응답](01-backend-rest.md#mtg-a05) | PATCH `/api/projects/{id}/meetings/{meeting_id}/participation` | MEMBER (초대 대상 본인) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A06 회의 텍스트 기록](01-backend-rest.md#mtg-a06) | POST `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A07 비비의 회의 맥락 분석](01-backend-rest.md#mtg-a07) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-analysis` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A08 회의록 생성](01-backend-rest.md#mtg-a08) | POST `/api/projects/{id}/meetings/{meeting_id}/minutes` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A09 회의 결정 기반 문서 수정안](01-backend-rest.md#mtg-a09) | POST `/api/projects/{id}/meetings/{meeting_id}/change-drafts` | MEMBER (회의 참여자) | undefined | 양지훈(회의 연결) / 박상은(수정안 생성) | undefined |
+| [MTG-A10 회의 기록 목록](01-backend-rest.md#mtg-a10) | GET `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER | 오서현 | — | 오서현 |
+| [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
+| [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
+| [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
+| [MON-V01 검증 상태 현황](01-backend-rest.md#mon-v01) | GET `/api/projects/{id}/validations/summary` | MEMBER | 변준성 | — | 박민용 |
+| [MON-A02 프로젝트 AI 사용량·추정 비용](01-backend-rest.md#mon-a02) | GET `/api/projects/{id}/usage` | MEMBER | 변준성 | — | 박민용 |
+| [MON-A03 작업·설계·검증 관계](01-backend-rest.md#mon-a03) | GET `/api/projects/{id}/relations` | MEMBER | 변준성 | — | 박민용 |
+| [MON-A04 프로젝트 활동 타임라인](01-backend-rest.md#mon-a04) | GET `/api/projects/{id}/activities` | MEMBER | 전진 | — | 박민용 |
+| [MON-A05 에이전트 현재 작업 현황](01-backend-rest.md#mon-a05) | GET `/api/projects/{id}/agents/work-status` | MEMBER | 변준성 | — | 박민용 |
+| [NTF-A01 내 알림함](01-backend-rest.md#ntf-a01) | GET `/api/me/notifications` | USER | 전진 | — | 박민용 |
+| [NTF-A02 알림 읽음 처리](01-backend-rest.md#ntf-a02) | POST `/api/me/notifications/read` | USER | 전진 | — | 박민용 |
+| [SYS-A01 backend 기동 확인](01-backend-rest.md#sys-a01) | GET `/api/ping` | PUBLIC | 전진 | — | — |
+| [SYS-A02 backend·AI 연결 확인](01-backend-rest.md#sys-a02) | GET `/api/system/status` | USER | 전진 | — | — |
+
+### MCP
+
+| 명세 ID·상세 | 도구 | 업무 서비스·연결 | AI |
+| --- | --- | --- | --- |
+| [MCP-01](02-mcp-tools.md#mcp-01) | `get_development_context` | 전진(도구) / 업무 저장: 변준성 | 박상은(검색·의존 설계·JSON) |
+| [MCP-02](02-mcp-tools.md#mcp-02) | `get_document` | 전진(도구) / 오서현(문서) | — |
+| [MCP-03](02-mcp-tools.md#mcp-03) | `get_design_changes` | 전진(도구) / 변준성(변경·최신성) | — |
+| [MCP-04](02-mcp-tools.md#mcp-04) | `propose_design_change` | 전진(도구) / 오서현(제안) | 양지훈(영향 분석) |
+| [MCP-05](02-mcp-tools.md#mcp-05) | `find_context` | 전진(도구 계약) / 변준성(최소 저장·조회) | 박상은(검색) |
+| [MCP-06](02-mcp-tools.md#mcp-06) | `read_context` | 전진(도구) / 변준성(업무) | — |
+| [MCP-07](02-mcp-tools.md#mcp-07) | `write_context` | 전진(도구 계약) / 변준성(업무) | 박상은(맥락 정책) |
+| [MCP-10](02-mcp-tools.md#mcp-10) | `upsert_task_plan` | 전진(도구) / 변준성(업무) | — |
+| [MCP-11](02-mcp-tools.md#mcp-11) | `validate_task_plan` | 전진(도구) / 변준성(실행·상태·저장) | 양지훈(분석) |
+| [MCP-13](02-mcp-tools.md#mcp-13) | `get_validation` | 전진(도구) / 변준성(조회) | — |
+| [MCP-14](02-mcp-tools.md#mcp-14) | `retry_validation` | 전진(도구) / 변준성(재시도) | 양지훈(실패 정보) |
+| [MCP-12](02-mcp-tools.md#mcp-12) | `report_task_state` | 전진(도구) / 변준성(전이·점유) | — |
+
+### AI Internal
+
+| 명세 ID·상세 | Method / Path | 호출 BE | AI |
+| --- | --- | --- | --- |
+| [AI-A01 문서 파싱·설계 항목 추출](03-ai-internal.md#ai-a01) | POST `/v1/parse` | 오서현 | 박상은 |
+| [AI-A02 작업 계획 의미 분석](03-ai-internal.md#ai-a02) | POST `/v1/validate` | 변준성 | 양지훈 |
+| [AI-A03 변경 영향·담당자 분석](03-ai-internal.md#ai-a03) | POST `/v1/impact` | 오서현 / 작업 조회: 변준성 | 양지훈 |
+| [AI-A04 텍스트 임베딩](03-ai-internal.md#ai-a04) | POST `/v1/embeddings` | 오서현(문서 접근) / 변준성(맥락 연계) | 박상은 |
+| [AI-A05 비비 설계 질의 응답](03-ai-internal.md#ai-a05) | POST `/v1/bee/chat` | 오서현(문서 연결) | 박상은 |
+| [AI-A06 기획·문서 수정 초안 생성](03-ai-internal.md#ai-a06) | POST `/v1/bee/draft` | 오서현 | 박상은 / 회의 연결: 양지훈 |
+| [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
+| [AI-A08 회의 질문·요약·결정 추출](03-ai-internal.md#ai-a08) | POST `/v1/bee/meeting-analysis` | 오서현 | 양지훈 |
+
+### 확장 후보
+
+| 요구사항 | 목적 | 예상 계약 | 담당 |
+| --- | --- | --- | --- |
+| GIT-01~06, TRC-08 | 저장소·PR·diff·코멘트 | /api/projects/{id}/github/** | 미정 |
+| PLN-10~12 | API·ERD·화면 설계 초안 생성 | POST /api/projects/{id}/design-generations | 미정 |
+| DOC-14 | 추가 자료 첨부 | POST /api/projects/{id}/attachments | 미정 |
+| MTG-07 | 회의 음성 입력 | POST /api/projects/{id}/meetings/{meeting_id}/audio | 미정 |
+| AGT-08·09 | 다중 에이전트·추가 클라이언트 | 기존 token/session·MCP 계약 확장 | 미정 |
+| 확장 CTX | 고급 패킷·공유 기록 | 기본 MCP 계약 확장 | 미정 |
+| NTF-07·08 | 실시간 전파·로컬 제어 | 별도 전송·실행 제어 계약 | 미정 |
+
+## 9. 검토 항목
+
+| ID | 계약 항목 | 담당 | 확인할 내용 |
+| --- | --- | --- | --- |
+| Q01 | 항목 본문 스키마 | 오서현·박상은 | kind별 content 필수 키·schema_version, API/DATA 계약 구조 |
+| Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
+| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta·자동 완료 조건 |
+| Q04 | 계정·세션 | 전진 | 비밀번호 정책, 세션 쿠키·만료·CSRF, 재설정 토큰 만료·재발송·세션 정리 |
+| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화 |
+| Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
+| Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
+| Q08 | 초안·제안 충돌 | 오서현 | 초안 해시·조회 범위·해시 발급, 초안 편집·삭제, expected_updated_at 정밀도 |
+| Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
+| Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
+| Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, timeout·retry·lease, 모델·임베딩 차원, 출력 검증·입력 크기 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현 |
+| Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부 |
+
+## 10. 공통 스키마
+
+필드 타입의 링크는 중첩 객체의 상세 정의다. 예제는 상세 API에 제시한다. 선택 필드와 조건부 필수의 설명을 함께 적용한다. ID·Time·object는 3절 형식이다.
+
+<a id="schema-account"></a>
+
+### Account
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 계정 ID |
+| `email` | `string` | Y | 가입 이메일 |
+| `name` | `string` | Y | 표시 이름 |
+| `avatar` | `string` | N | 아바타 식별값 또는 URL |
+| `created_at` | `Time` | Y | 가입 시각 |
+
+<a id="schema-baselinesummary"></a>
+
+### BaselineSummary
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 기준 설계 ID |
+| `version_no` | `integer` | Y | 프로젝트 내 기준 설계 번호 |
+| `created_at` | `Time` | Y | 발행 시각 |
+
+<a id="schema-project"></a>
+
+### Project
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `name` | `string` | Y | 프로젝트 이름 |
+| `description` | `string` | N | 프로젝트 설명 |
+| `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
+| `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `updated_at` | `Time` | Y | 최종 갱신 시각 |
+
+<a id="schema-member"></a>
+
+### Member
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 멤버 ID |
+| `account_id` | `ID` | Y | 계정 ID |
+| `name` | `string` | Y | 표시 이름 |
+| `role` | `LEADER\|MEMBER` | Y | 프로젝트 역할 |
+| `domain` | `string` | N | 담당 영역 |
+| `role_label` | `string` | N | 프로젝트 내 역할 라벨 |
+| `color` | `string` | N | 표시 색상 |
+| `agent_connected` | `boolean` | Y | 에이전트 연결 관측 여부 |
+
+<a id="schema-invitation"></a>
+
+### Invitation
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 초대 ID |
+| `project_id` | `ID` | Y | 대상 프로젝트 |
+| `invited_email` | `string` | N | 주소를 지정한 초대의 대상 |
+| `expires_at` | `Time` | Y | 만료 시각 |
+| `accepted_at` | `Time` | N | 수락 시각 |
+| `revoked_at` | `Time` | N | 폐기 시각 |
+
+<a id="schema-agenttoken"></a>
+
+### AgentToken
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 토큰 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `label` | `string` | N | 토큰 이름 |
+| `created_at` | `Time` | Y | 발급 시각 |
+| `revoked_at` | `Time` | N | 폐기 시각 |
+| `last_used_at` | `Time` | N | 마지막 사용 |
+
+<a id="schema-source"></a>
+
+### Source
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 근거 문서 |
+| `document_version_id` | `ID` | Y | 정확한 문서 버전 |
+| `version_no` | `integer` | Y | 문서 버전 번호 |
+| `location` | `string` | Y | 원문 항목 위치 |
+
+<a id="schema-documentversion"></a>
+
+### DocumentVersion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 문서 버전 ID |
+| `document_id` | `ID` | Y | 문서 ID |
+| `version_no` | `integer` | Y | 문서 내 버전 번호 |
+| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태 |
+| `file_name` | `string` | Y | 원본 파일명 |
+| `media_type` | `string` | Y | MIME |
+| `content_hash` | `string` | Y | 원본 해시 |
+| `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
+| `created_at` | `Time` | Y | 생성 시각 |
+
+<a id="schema-document"></a>
+
+### Document
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 문서 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 문서 유형 |
+| `title` | `string` | Y | 문서 제목 |
+| `domain` | `string` | N | 분류 |
+| `approved_version` | [DocumentVersion](00-common.md#schema-documentversion) | N | 현재 기준의 승인본 |
+| `latest_draft` | [DocumentVersion](00-common.md#schema-documentversion) | N | 최신 미승인 초안 |
+
+<a id="schema-designitemversion"></a>
+
+### DesignItemVersion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 항목 버전 ID |
+| `design_item_id` | `ID` | Y | 항목 ID |
+| `key` | `string` | Y | 서버 발급 프로젝트 내 표시 키 |
+| `kind` | `REQUIREMENT\|API_CONTRACT\|DATA_CONTRACT\|POLICY\|CONSTRAINT` | Y | 항목 종류 |
+| `version_no` | `integer` | Y | 항목 버전 번호 |
+| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 항목 버전 상태 |
+| `schema_version` | `integer` | Y | 본문 스키마 버전 |
+| `content` | `object` | Y | kind별 본문 구조. Q01 검토 대상 |
+| `source` | [Source](00-common.md#schema-source) | N | 원문 출처 |
+| `content_hash` | `string` | N | DRAFT 본문 경합 검사 해시 |
+
+<a id="schema-documentref"></a>
+
+### DocumentRef
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 문서 ID |
+| `document_version_id` | `ID` | Y | 문서 버전 ID |
+
+<a id="schema-versionref"></a>
+
+### VersionRef
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `design_item_id` | `ID` | Y | 항목 ID |
+| `design_item_version_id` | `ID` | Y | 항목 버전 ID |
+
+<a id="schema-designref"></a>
+
+### DesignRef
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `design_item_id` | `ID` | Y | 항목 ID |
+| `design_item_version_id` | `ID` | Y | 항목 버전 ID |
+| `relation` | `READS\|IMPLEMENTS\|CHANGES` | Y | 계획 관계 |
+| `proposed_content` | `object` | N | CHANGES에서 필수. 나머지 관계는 생략 |
+
+<a id="schema-validationdesignref"></a>
+
+### ValidationDesignRef
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `design_item_id` | `ID` | Y | 항목 ID |
+| `design_item_version_id` | `ID` | Y | 항목 버전 ID |
+| `relation` | `READS\|IMPLEMENTS\|CHANGES\|DEPENDENCY` | Y | 검증 참조 관계 |
+
+<a id="schema-baseline"></a>
+
+### Baseline
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 기준 설계 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `version_no` | `integer` | Y | 프로젝트 내 기준 번호 |
+| `documents` | [DocumentRef[]](00-common.md#schema-documentref) | Y | 정확한 발행 문서 버전 |
+| `items` | [VersionRef[]](00-common.md#schema-versionref) | Y | 정확한 발행 항목 버전 |
+| `approved_by` | `ID` | Y | 승인한 사람 계정 |
+| `created_at` | `Time` | Y | 발행 시각 |
+
+<a id="schema-planningquestion"></a>
+
+### PlanningQuestion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 질문 ID |
+| `question` | `string` | Y | 보완 질문 |
+| `source` | [Source](00-common.md#schema-source) | N | 출처 |
+| `answer` | `string` | N | 답변 |
+| `answered_by` | `ID` | N | 답변 계정 |
+| `answered_at` | `Time` | N | 답변 시각 |
+
+<a id="schema-usage"></a>
+
+### Usage
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `request_key` | `string` | Y | 모델 호출 중복 식별값 |
+| `feature` | `string` | Y | 호출 기능 |
+| `model` | `string` | Y | 사용 모델 |
+| `input_tokens` | `integer` | N | 입력 토큰 수 |
+| `output_tokens` | `integer` | N | 출력 토큰 수 |
+| `latency_ms` | `integer` | Y | 호출 지연 ms |
+| `failed` | `boolean` | Y | 실패 여부 |
+| `estimated_cost_amount` | `string` | N | 추정 비용. 단가 없으면 생략 |
+| `currency` | `string` | N | 통화 |
+| `tokens_known` | `boolean` | Y | 공급자 토큰 수를 확인함. false이면 모르는 값을 0으로 만들지 않음 |
+
+<a id="schema-generation"></a>
+
+### Generation
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `origin` | `MODEL\|TEMPLATE` | Y | 생성 출처 |
+| `model` | `string` | N | 실제 호출 시 필수 모델 |
+| `text` | `string` | Y | 응답 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `unresolved` | `string[]` | Y | 미확정 사항 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
+
+<a id="schema-designdependency"></a>
+
+### DesignDependency
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `from_design_item_id` | `ID` | Y | 의존하는 항목 |
+| `to_design_item_id` | `ID` | Y | 의존 대상 |
+| `relation` | `DEPENDS_ON` | Y | 명시적 관계 |
+
+<a id="schema-changeitem"></a>
+
+### ChangeItem
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `operation` | `CREATE\|UPDATE\|RETIRE` | Y | 변경 종류 |
+| `design_item_id` | `ID` | N | UPDATE/RETIRE 필수 항목 |
+| `base_design_item_version_id` | `ID` | N | UPDATE/RETIRE 필수 기준 버전 |
+| `kind` | `REQUIREMENT\|API_CONTRACT\|DATA_CONTRACT\|POLICY\|CONSTRAINT` | N | CREATE 필수 종류 |
+| `schema_version` | `integer` | N | CREATE/UPDATE 필수 구조 버전 |
+| `proposed_content` | `object` | N | CREATE/UPDATE 필수 본문 |
+
+<a id="schema-documentchange"></a>
+
+### DocumentChange
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 문서 |
+| `base_document_version_id` | `ID` | Y | 기준 원문 버전 |
+| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나 |
+| `proposed_document_version_id` | `ID` | N | 업로드한 DRAFT 버전. after_content와 배타적 |
+
+<a id="schema-changeproposalinput"></a>
+
+### ChangeProposalInput
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `base_baseline_id` | `ID` | Y | 제안 기준 |
+| `title` | `string` | Y | 제안 제목 |
+| `reason` | `string` | Y | 변경 이유 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `validation_id` | `ID` | N | 관련 검증 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
+| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
+
+<a id="schema-changeproposal"></a>
+
+### ChangeProposal
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 제안 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `base_baseline_id` | `ID` | Y | 제안 기준 |
+| `title` | `string` | Y | 제안 제목 |
+| `reason` | `string` | Y | 변경 이유 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `validation_id` | `ID` | N | 관련 검증 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
+| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
+| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
+| `proposer_account_id` | `ID` | Y | 제안 계정 |
+| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
+| `current_baseline_id` | `ID` | Y | 현재 기준 |
+| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
+| `published_baseline_id` | `ID` | N | 발행된 기준 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `updated_at` | `Time` | Y | 최종 갱신 |
+| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
+
+<a id="schema-approval"></a>
+
+### Approval
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 승인 이력 |
+| `proposal_id` | `ID` | Y | 제안 |
+| `approved_by` | `ID` | Y | 승인 계정 |
+| `approved_at` | `Time` | Y | 승인 시각 |
+| `baseline_id` | `ID` | Y | 발행 기준 |
+
+<a id="schema-changecomment"></a>
+
+### ChangeComment
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 의견 ID |
+| `proposal_id` | `ID` | Y | 제안 |
+| `author_account_id` | `ID` | Y | 작성 계정 |
+| `kind` | `COMMENT\|REVIEW_REQUEST` | Y | 의견 종류 |
+| `body` | `string` | Y | 의견 본문 |
+| `created_at` | `Time` | Y | 작성 시각 |
+
+<a id="schema-explicitimpact"></a>
+
+### ExplicitImpact
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | Y | 연결 작업 |
+| `member_id` | `ID` | Y | 담당 멤버 |
+| `design_item_id` | `ID` | Y | 변경 항목 |
+| `validation_id` | `ID` | N | 영향 검증 |
+
+<a id="schema-impactcandidate"></a>
+
+### ImpactCandidate
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | N | 후보 작업 |
+| `member_id` | `ID` | N | 후보 담당자 |
+| `design_item_id` | `ID` | N | 후보 항목 |
+| `reason` | `string` | Y | 후보 근거 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+
+<a id="schema-changeimpact"></a>
+
+### ChangeImpact
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `explicit` | [ExplicitImpact[]](00-common.md#schema-explicitimpact) | Y | 명시 관계 영향 |
+| `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | AI 영향 후보 |
+| `analysis_status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | AI 분석 상태 |
+| `generation` | [Generation](00-common.md#schema-generation) | N | 분석 설명 |
+| `error_code` | `string` | N | 실패 원인 |
+
+<a id="schema-taskplaninput"></a>
+
+### TaskPlanInput
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `title` | `string` | Y | 작업 제목 |
+| `goal` | `string` | Y | 작업 목표 |
+| `included_scope` | `string[]` | Y | 포함 범위 |
+| `excluded_scope` | `string[]` | Y | 제외 범위 |
+| `approach` | `string` | Y | 접근 방식 |
+| `completion_criteria` | `string[]` | Y | 완료 기준 |
+| `dependency_task_ids` | `ID[]` | Y | 선행 작업 |
+| `design_refs` | [DesignRef[]](00-common.md#schema-designref) | Y | 확정 참조 |
+| `unlinked` | `object[]` | Y | 미연결 내용. 세부 항목 Q02 |
+| `no_contract_change` | `boolean` | Y | 계약 변경 없음의 명시적 선언 |
+| `context_packet_id` | `ID` | N | 근거 패킷. 없으면 근거 패킷 없음 표시 |
+
+<a id="schema-taskplanrevision"></a>
+
+### TaskPlanRevision
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 계획 리비전 ID |
+| `task_id` | `ID` | Y | 작업 |
+| `revision_no` | `integer` | Y | 작업 내 리비전 번호 |
+| `plan` | [TaskPlanInput](00-common.md#schema-taskplaninput) | Y | 불변 계획 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `created_by` | `ID` | Y | 작성 계정 |
+
+<a id="schema-relatedtaskref"></a>
+
+### RelatedTaskRef
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | Y | 관련 작업 |
+| `plan_revision_id` | `ID` | Y | 대조한 계획 리비전 |
+
+<a id="schema-finding"></a>
+
+### Finding
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 발견 항목 |
+| `source` | `RULE\|MODEL` | Y | 생성 주체 |
+| `category` | `string` | Y | 분류 |
+| `severity` | `INFO\|WARNING\|BLOCKING` | Y | 중요도. 판정 매핑 Q02 |
+| `message` | `string` | Y | 설명 |
+| `design_item_id` | `ID` | N | 관련 항목 |
+| `related_task_id` | `ID` | N | 관련 작업 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `next_action` | `string` | Y | 후속 경로 |
+
+<a id="schema-validation"></a>
+
+### Validation
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 검증 ID |
+| `task_id` | `ID` | Y | 작업 |
+| `plan_revision_id` | `ID` | Y | 입력 리비전 |
+| `baseline_id` | `ID` | Y | 검증 당시 기준. 이력용 |
+| `status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 검증 상태 |
+| `current_attempt` | `integer` | Y | 현재 시도 |
+| `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
+| `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
+| `findings` | [Finding[]](00-common.md#schema-finding) | Y | 발견 항목 |
+| `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
+| `created_at` | `Time` | Y | 접수 시각 |
+| `finished_at` | `Time` | N | 완료 시각 |
+| `error_code` | `string` | N | ERROR 원인 |
+
+<a id="schema-taskdetail"></a>
+
+### TaskDetail
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 작업 ID |
+| `key` | `string` | Y | 표시 키 |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `assignee_member_id` | `ID` | Y | 담당 멤버 |
+| `status` | `DRAFT\|READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | Y | 작업 상태 |
+| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAITING일 때만 포함 |
+| `lock_version` | `integer` | Y | 상태 충돌 검사 번호 |
+| `current_plan_revision` | [TaskPlanRevision](00-common.md#schema-taskplanrevision) | Y | 현재 계획 |
+| `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 현재 계획 검증 |
+| `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
+| `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `updated_at` | `Time` | Y | 갱신 시각 |
+
+<a id="schema-completioncheck"></a>
+
+### CompletionCheck
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `criterion` | `string` | Y | 완료 기준 |
+| `met` | `boolean` | Y | 충족 여부 |
+
+<a id="schema-taskstateinput"></a>
+
+### TaskStateInput
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `event` | `START\|RESUME\|WAIT\|COMPLETED\|CANCEL` | Y | 전이 이벤트 |
+| `plan_revision_id` | `ID` | Y | 현재 계획 |
+| `expected_lock_version` | `integer` | Y | 조회한 lock_version |
+| `validation_id` | `ID` | N | START/RESUME 필수 |
+| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAIT이면 필수 |
+| `summary` | `string` | N | 진행/완료 요약 |
+| `delta` | `object[]` | N | 완료 시 계획 대비 변경. Q03 |
+| `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+
+<a id="schema-relatedtask"></a>
+
+### RelatedTask
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | Y | 관련 작업 |
+| `plan_revision_id` | `ID` | Y | 대조한 계획 리비전 |
+| `status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | Y | 관련 작업 상태 |
+
+<a id="schema-contextpacket"></a>
+
+### ContextPacket
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 패킷 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `task_id` | `ID` | N | 연결 작업 |
+| `baseline_id` | `ID` | Y | 조회 당시 기준 |
+| `request` | `string` | Y | 개발 요청 |
+| `design_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 승인 설계 |
+| `constraints` | `string[]` | Y | 제약 |
+| `unresolved` | `string[]` | Y | 미확정 항목 |
+| `related_tasks` | [RelatedTask[]](00-common.md#schema-relatedtask) | Y | 관련 작업 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `content_hash` | `string` | Y | 패킷 해시 |
+
+<a id="schema-contextrecordinput"></a>
+
+### ContextRecordInput
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `previous_id` | `ID` | N | 수정 대상 리비전. 최초 생성은 생략 |
+| `task_id` | `ID` | N | 연결 작업 |
+| `plan_revision_id` | `ID` | N | 당시 계획 |
+| `source_packet_id` | `ID` | N | 근거 패킷 |
+| `kind` | `DECISION\|PROGRESS\|ISSUE\|HANDOVER` | Y | 기록 종류 |
+| `visibility` | `SHARED\|PRIVATE` | Y | 공유 범위 |
+| `summary` | `string` | Y | 검색용 공유 요약 |
+| `detail` | `string` | Y | 명시적으로 제출한 상세 기록 |
+| `design_refs` | [VersionRef[]](00-common.md#schema-versionref) | Y | 당시 참조 버전 |
+
+<a id="schema-contextrecordsummary"></a>
+
+### ContextRecordSummary
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 기록 리비전 ID |
+| `root_id` | `ID` | Y | 최초 리비전 ID |
+| `revision_no` | `integer` | Y | 리비전 번호 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `kind` | `DECISION\|PROGRESS\|ISSUE\|HANDOVER` | Y | 종류 |
+| `summary` | `string` | Y | 공유 요약 |
+| `author_account_id` | `ID` | Y | 작성 계정 |
+| `visibility` | `SHARED\|PRIVATE` | Y | 공유 범위 |
+| `is_latest_revision` | `boolean` | Y | 최신 기록 리비전 |
+| `references_current` | `boolean` | Y | 참조 설계의 현재성 |
+| `created_at` | `Time` | Y | 작성 시각 |
+
+<a id="schema-contextrecord"></a>
+
+### ContextRecord
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 기록 리비전 ID |
+| `root_id` | `ID` | Y | 최초 리비전 ID |
+| `revision_no` | `integer` | Y | 리비전 번호 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `kind` | `DECISION\|PROGRESS\|ISSUE\|HANDOVER` | Y | 종류 |
+| `summary` | `string` | Y | 공유 요약 |
+| `author_account_id` | `ID` | Y | 작성 계정 |
+| `visibility` | `SHARED\|PRIVATE` | Y | 공유 범위 |
+| `is_latest_revision` | `boolean` | Y | 최신 기록 리비전 |
+| `references_current` | `boolean` | Y | 참조 설계의 현재성 |
+| `created_at` | `Time` | Y | 작성 시각 |
+| `previous_id` | `ID` | N | 수정 대상 리비전. 최초 생성은 생략 |
+| `plan_revision_id` | `ID` | N | 당시 계획 |
+| `source_packet_id` | `ID` | N | 근거 패킷 |
+| `detail` | `string` | Y | 명시적으로 제출한 상세 기록 |
+| `design_refs` | [VersionRef[]](00-common.md#schema-versionref) | Y | 당시 참조 버전 |
+
+<a id="schema-agentconnection"></a>
+
+### AgentConnection
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 에이전트 세션 ID |
+| `member_id` | `ID` | Y | 소유 멤버 |
+| `connected` | `boolean` | Y | 최근 연결 관측 |
+| `last_report_at` | `Time` | N | 마지막 통신 시각 |
+| `status_check_required` | `boolean` | Y | 보고 지연으로 확인 필요 |
+
+<a id="schema-agentwork"></a>
+
+### AgentWork
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `member_id` | `ID` | Y | 멤버 ID |
+| `agent_session_id` | `ID` | N | 연결 세션 |
+| `current_task_id` | `ID` | N | 명시 보고된 작업 |
+| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태 |
+| `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 작업 검증 상태 |
+| `waiting_reason` | `string` | N | 대기 사유 |
+
+<a id="schema-requireddocument"></a>
+
+### RequiredDocument
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 필수 종류 |
+| `uploaded` | `boolean` | Y | 업로드됨 |
+| `approved` | `boolean` | Y | 승인됨 |
+
+<a id="schema-documentanalysis"></a>
+
+### DocumentAnalysis
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_version_id` | `ID` | Y | 분석 원본 버전 |
+| `status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | 분석 상태 |
+| `items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 추출 항목 초안 |
+| `questions` | [PlanningQuestion[]](00-common.md#schema-planningquestion) | Y | 보완 질문 |
+| `error_code` | `string` | N | 실패 원인 |
+
+<a id="schema-searchhit"></a>
+
+### SearchHit
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `type` | `DOCUMENT_CHUNK\|DESIGN_ITEM` | Y | 결과 종류 |
+| `id` | `ID` | Y | 결과 ID |
+| `title` | `string` | Y | 결과 제목 |
+| `snippet` | `string` | Y | 일부 본문 |
+| `source` | [Source](00-common.md#schema-source) | Y | 승인 근거 |
+| `design_item_id` | `ID` | N | 관련 항목 |
+| `score` | `number` | N | 유사도. 확정 근거가 아님 |
+
+<a id="schema-participant"></a>
+
+### Participant
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `member_id` | `ID` | Y | 참여 멤버 |
+| `status` | `INVITED\|ACCEPTED\|DECLINED` | Y | 참여 상태 |
+
+<a id="schema-meetingentry"></a>
+
+### MeetingEntry
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 기록 ID |
+| `meeting_id` | `ID` | Y | 회의 ID |
+| `kind` | `TEXT\|BEE_ANALYSIS\|MINUTES` | Y | 기록 종류 |
+| `text` | `string` | Y | 기록 본문 |
+| `author_account_id` | `ID` | N | 작성 계정. 시스템 생성은 생략 |
+| `through_entry_id` | `ID` | N | 분석 마지막 입력 기록 |
+| `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거 |
+| `created_at` | `Time` | Y | 작성 시각 |
+
+<a id="schema-meeting"></a>
+
+### Meeting
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 회의 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `title` | `string` | Y | 제목 |
+| `change_proposal_id` | `ID` | N | 연결 제안 |
+| `participants` | [Participant[]](00-common.md#schema-participant) | Y | 참여자 |
+| `created_at` | `Time` | Y | 생성 시각 |
+
+<a id="schema-actionitem"></a>
+
+### ActionItem
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `text` | `string` | Y | 후속 행동 |
+| `member_id` | `ID` | N | 추천 담당자 |
+
+<a id="schema-meetingminutes"></a>
+
+### MeetingMinutes
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 저장된 MINUTES 기록 |
+| `summary` | `string` | Y | 요약 |
+| `decisions` | `string[]` | Y | 합의 내용 |
+| `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 후속 조치 |
+| `unresolved` | `string[]` | Y | 미확정 항목 |
+
+<a id="schema-assignmentsuggestion"></a>
+
+### AssignmentSuggestion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | Y | 작업 |
+| `member_id` | `ID` | Y | 추천 멤버 |
+| `reason` | `string` | Y | 추천 이유 |
+
+<a id="schema-relationnode"></a>
+
+### RelationNode
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 객체 ID |
+| `type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 노드 종류 |
+| `label` | `string` | Y | 표시 이름 |
+
+<a id="schema-relationedge"></a>
+
+### RelationEdge
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `from_id` | `ID` | Y | 시작 객체 |
+| `from_type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 시작 종류 |
+| `to_id` | `ID` | Y | 도착 객체 |
+| `to_type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 도착 종류 |
+| `relation` | `string` | Y | 관계 |
+| `confirmed` | `boolean` | Y | 명시적 확정 관계 |
+
+<a id="schema-activity"></a>
+
+### Activity
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 활동 ID |
+| `type` | `string` | Y | 이벤트 종류 |
+| `actor_account_id` | `ID` | N | 행위 계정 |
+| `task_id` | `ID` | N | 대상 작업 |
+| `change_proposal_id` | `ID` | N | 대상 제안 |
+| `baseline_id` | `ID` | N | 대상 기준 |
+| `result` | `string` | Y | 결과 |
+| `created_at` | `Time` | Y | 발생 시각 |
+
+<a id="schema-notification"></a>
+
+### Notification
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 알림 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `type` | `string` | Y | 종류 |
+| `title` | `string` | Y | 제목 |
+| `body` | `string` | Y | 알림 내용 |
+| `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING` | Y | 이동 대상 종류 |
+| `target_id` | `ID` | Y | 이동 대상 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `read_at` | `Time` | N | 읽은 시각 |
+
+<a id="schema-usagebucket"></a>
+
+### UsageBucket
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `key` | `string` | Y | 집계 구분 값 |
+| `input_tokens` | `integer` | Y | 입력 토큰 |
+| `output_tokens` | `integer` | Y | 출력 토큰 |
+| `call_count` | `integer` | Y | 모델 호출 수 |
+| `estimated_cost_amount` | `string` | N | 추정 비용 |
+
+<a id="schema-usagesummary"></a>
+
+### UsageSummary
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `from` | `Time` | Y | 집계 시작. 포함 |
+| `to` | `Time` | Y | 집계 끝. 미포함 |
+| `input_tokens` | `integer` | Y | 총 입력 토큰 |
+| `output_tokens` | `integer` | Y | 총 출력 토큰 |
+| `call_count` | `integer` | Y | 중복 제거한 호출 수 |
+| `estimated_cost_amount` | `string` | N | 추정 비용. 단가 없으면 생략 |
+| `currency` | `string` | N | 통화 |
+| `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
+| `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
+| `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |
+
+<a id="schema-changeditem"></a>
+
+### ChangedItem
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `design_item_id` | `ID` | Y | 항목 |
+| `before_version_id` | `ID` | N | 변경 전. 신규면 생략 |
+| `after_version_id` | `ID` | N | 변경 후. 폐기면 생략 |
+
+<a id="schema-publishedchange"></a>
+
+### PublishedChange
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 발행 기준 |
+| `proposal_id` | `ID` | Y | 발행 제안 |
+| `changed_items` | [ChangedItem[]](00-common.md#schema-changeditem) | Y | 항목별 전후 버전 |
+| `affected_task_ids` | `ID[]` | Y | 영향 작업 |
+
+<a id="schema-validationvalidity"></a>
+
+### ValidationValidity
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `validation_id` | `ID` | Y | 검증 |
+| `status` | `PASS\|STALE\|ERROR\|RUNNING\|NEEDS_INPUT\|NEEDS_REVIEW` | Y | 현재 유효 상태 |
+| `reason` | `string` | N | 현재성 설명 |
+
+<a id="schema-designchanges"></a>
+
+### DesignChanges
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 현재 기준 |
+| `items` | [PublishedChange[]](00-common.md#schema-publishedchange) | Y | 발행 변경 이력 |
+| `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | N | 작업 관련 검증 유효성 |
+| `has_more` | `boolean` | Y | 다음 페이지 존재 |
+| `next_cursor` | `string` | N | 다음 조회 cursor |
+
+<a id="schema-findingcandidate"></a>
+
+### FindingCandidate
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `category` | `string` | Y | 후보 분류 |
+| `severity` | `INFO\|WARNING\|BLOCKING` | Y | 후보 중요도 |
+| `message` | `string` | Y | 후보 설명 |
+| `design_item_id` | `ID` | N | 관련 항목 |
+| `related_task_id` | `ID` | N | 관련 작업 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `suggested_action` | `string` | Y | 후속 행동 제안 |
+
+<a id="schema-parseditem"></a>
+
+### ParsedItem
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `candidate_key` | `string` | Y | AI 결과 내 임시 키. 최종 ID 아님 |
+| `kind` | `REQUIREMENT\|API_CONTRACT\|DATA_CONTRACT\|POLICY\|CONSTRAINT` | Y | 항목 종류 |
+| `schema_version` | `integer` | Y | 본문 구조 버전 |
+| `content` | `object` | Y | kind별 본문 Q01 |
+| `location` | `string` | Y | 원문 위치 |
+
+<a id="schema-promptquestion"></a>
+
+### PromptQuestion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `question` | `string` | Y | 보완 질문 |
+| `location` | `string` | Y | 근거 위치 |
+
+<a id="schema-embeddingtext"></a>
+
+### EmbeddingText
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `key` | `string` | Y | 요청 안에서 유일한 텍스트 키 |
+| `text` | `string` | Y | 임베딩 대상 텍스트 |
+
+<a id="schema-embeddingvector"></a>
+
+### EmbeddingVector
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `key` | `string` | Y | 입력 텍스트 키 |
+| `embedding` | `number[]` | Y | 모델 차원과 같은 길이의 벡터 |
+
+<a id="schema-documentcount"></a>
+
+### DocumentCount
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 문서 종류 |
+| `draft_count` | `integer` | Y | 미승인 초안 수 |
+| `approved_count` | `integer` | Y | 현재 승인 문서 수 |
+
+<a id="schema-statecount"></a>
+
+### StateCount
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `status` | `string` | Y | 해당 API가 집계하는 상태 |
+| `count` | `integer` | Y | 건수 |
+
+<a id="schema-waitingcount"></a>
+
+### WaitingCount
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `waiting_reason` | `string` | Y | 대기 이유 |
+| `count` | `integer` | Y | 건수 |
+
+<a id="schema-designsuggestion"></a>
+
+### DesignSuggestion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `design_item_version` | [DesignItemVersion](00-common.md#schema-designitemversion) | Y | 추천 승인 항목 |
+| `reason` | `string` | Y | 추천 근거 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+
+<a id="schema-dependencycandidate"></a>
+
+### DependencyCandidate
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `from_design_item_id` | `ID` | Y | 의존 후보 시작 항목 |
+| `to_design_item_id` | `ID` | Y | 의존 후보 대상 |
+| `reason` | `string` | Y | 후보 근거 |
+| `confirmed` | `boolean` | Y | 확정 관계가 아님 |
+
+<a id="schema-comparison"></a>
+
+### Comparison
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `target_type` | `DOCUMENT\|DESIGN_ITEM` | Y | 비교 대상 |
+| `target_id` | `ID` | Y | 대상 |
+| `format` | `TEXT\|FILE\|STRUCTURED` | Y | 비교 형식 |
+| `base_content` | `object\|string` | N | 기준 본문. FILE에서는 생략 |
+| `current_content` | `object\|string` | N | 현재 본문. FILE에서는 생략 |
+| `proposed_content` | `object\|string` | N | 수정안. FILE에서는 생략 |
+| `diff` | `string` | N | 텍스트/구조 차이. FILE은 생략 |
+| `base_document_version_id` | `ID` | N | FILE 기준 버전 |
+| `proposed_document_version_id` | `ID` | N | FILE 수정안 버전 |
+
+<a id="schema-parseresult"></a>
+
+### ParseResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `items` | [ParsedItem[]](00-common.md#schema-parseditem) | Y | 임시 키를 가진 설계 후보 |
+| `questions` | [PromptQuestion[]](00-common.md#schema-promptquestion) | Y | 보완 질문 |
+| `missing_candidates` | `string[]` | Y | 누락 검토 후보 |
+
+<a id="schema-validateresult"></a>
+
+### ValidateResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `findings` | [FindingCandidate[]](00-common.md#schema-findingcandidate) | Y | 의미 분석 후보 |
+
+<a id="schema-impactresult"></a>
+
+### ImpactResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | 영향·담당자 후보 |
+
+<a id="schema-embeddingresult"></a>
+
+### EmbeddingResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `model` | `string` | Y | 사용 임베딩 모델 |
+| `dimension` | `integer` | Y | 벡터 차원. 아래 예시는 설명용 3 |
+| `vectors` | [EmbeddingVector[]](00-common.md#schema-embeddingvector) | Y | 입력 key별 벡터 |
+
+<a id="schema-chatresult"></a>
+
+### ChatResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `text` | `string` | Y | 설계 기반 답변 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `unresolved` | `string[]` | Y | 미확정 |
+| `next_actions` | `string[]` | Y | 권장 후속 행동 |
+
+<a id="schema-draftresult"></a>
+
+### DraftResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `after_content` | `string` | Y | 미승인 수정 원문 |
+| `reason` | `string` | Y | 생성 이유 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `unresolved` | `string[]` | Y | 미확정 |
+
+<a id="schema-assignmentsresult"></a>
+
+### AssignmentsResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `suggestions` | [AssignmentSuggestion[]](00-common.md#schema-assignmentsuggestion) | Y | 담당 후보와 이유 |
+
+<a id="schema-meetinganalysisresult"></a>
+
+### MeetingAnalysisResult
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `text` | `string` | Y | 질문 또는 요약 |
+| `decisions` | `string[]` | Y | 결정 요약 |
+| `unresolved` | `string[]` | Y | 미확정 |
+| `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 후속 조치 |
+| `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
