@@ -6143,7 +6143,7 @@ HTTP `202`.
 문서 수정 초안 생성 기능을 제공한다.
 
 관련 요구사항: BEE-08  
-담당: BE: undefined / AI: 박상은 / FE: undefined  
+담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
 상태: 설계 초안
 
 #### 인증
@@ -6412,7 +6412,7 @@ HTTP `200`.
 변경 제안 승인·발행 기능을 제공한다.
 
 관련 요구사항: APR-01·03~05  
-담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: undefined  
+담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
 상태: 설계 초안
 
 #### 인증
@@ -6550,6 +6550,7 @@ HTTP `200`.
 - 사람 세션의 현재 LEADER만 허용하며 프로젝트 잠금 후 제안·현재 기준을 재검사한다.
 - 문서·항목 버전, baseline과 두 스냅샷, 승인 이력, PUBLISHED, 현재 포인터를 원자적으로 저장한다.
 - 같은 트랜잭션에서 변준성 서비스가 관련 검증 STALE·진행 작업 WAITING(REVALIDATION)을 반영한다. 하나라도 실패하면 전체 롤백한다.
+- 관련 검증 = 변경 항목의 이전 버전을 design_refs(READS·IMPLEMENTS·CHANGES)에 가진 PASS·RUNNING 검증이다. stale_reason을 남긴다. RUNNING 검증의 늦은 결과는 반영되지 않는다. 시작 전 작업은 상태를 유지하고 IN_PROGRESS 작업만 WAITING(REVALIDATION)으로 바꾼다.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
 - 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
 
@@ -8054,6 +8055,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 현재 계획·상태 변경 |
+| 409 | `baseline_missing` | 발행된 기준 설계 없음 |
 
 ```json
 {
@@ -8068,7 +8070,8 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 
 - 검증 입력·설계·관련 작업 참조 스냅샷을 고정한다.
 - 의미 분석이 필요하면 backend 큐/워커로 접수하고 RUNNING을 반환한다. 조회는 VAL-A02다.
-- 필수 칸 누락·구조 계약 불일치·작업 겹침 판정표는 Q02다. AI 실패는 ERROR다.
+- 판정은 [공통 6절 판정표](00-common.md#검증시작)를 따른다. NEEDS_INPUT·NEEDS_REVIEW로 확정되는 경우는 요청 안에서 응답한다. AI는 finding을 추가만 하며 AI 실패는 ERROR다.
+- 현재 기준 설계가 없으면 409 `baseline_missing`이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8460,9 +8463,9 @@ HTTP `202`.
 | `plan_revision_id` | `ID` | Y | 현재 계획 |
 | `expected_lock_version` | `integer` | Y | 조회한 lock_version |
 | `validation_id` | `ID` | N | START/RESUME 필수 |
-| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAIT이면 필수 |
+| `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY` | N | WAIT이면 필수. WAIT는 IN_PROGRESS에서만 가능. REVALIDATION은 시스템 전용이라 지정하면 400 invalid_transition |
 | `summary` | `string` | N | 진행/완료 요약 |
-| `delta` | `object[]` | N | 완료 시 계획 대비 변경. Q03 |
+| `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
 
 ```json
@@ -8666,9 +8669,11 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 
 #### 처리 규칙
 
-- START/RESUME는 validation_id가 필수다. 프로젝트 잠금 후 현재 계획 PASS·참조 최신성·선행 완료·CHANGES 점유를 검사하고 전이한다.
-- WAIT는 사유 필수다. CANCEL은 큐 취소·점유 해제·늦은 결과 차단을 수행한다.
-- COMPLETED는 불변 완료 보고를 저장한다. delta가 있으면 재검증 경로이며 자동 완료 정책은 Q03이다.
+- START/RESUME는 validation_id가 필수다. 먼저 같은 (task_id, validation_id)의 기존 START 결과가 있으면 그대로 반환하고, 그다음 expected_lock_version을 검사한다.
+- 프로젝트 행을 잠근 뒤 현재 계획 PASS, 참조 최신성(검증 design_refs의 버전 = 현재 baseline_item 버전), 선행 완료, 같은 항목 CHANGES 점유를 검사하고 전이한다. 전역 baseline 번호는 비교하지 않는다.
+- WAIT는 IN_PROGRESS에서만 가능하며 사유 필수다. REVALIDATION은 시스템 전용이라 지정하면 400 `invalid_transition`이다.
+- 사람 세션의 LEADER는 보고가 끊긴 작업을 CANCEL할 수 있다(AC-14). 그 밖의 전이는 담당자만 한다. CANCEL은 큐 취소·점유 해제·늦은 결과 차단을 수행한다.
+- COMPLETED는 불변 완료 보고를 저장한다. delta가 있으면 WAITING(REVALIDATION)으로 두고 trigger=DELTA 검증을 접수하며 응답에 delta_validation_id를 포함한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -9170,7 +9175,7 @@ HTTP `201`.
 작업 설계 근거 추천 기능을 제공한다.
 
 관련 요구사항: TRC-04·06  
-담당: BE: undefined / AI: 양지훈(근거 추천) / 박상은(검색) / FE: undefined  
+담당: BE: 변준성 / AI: 양지훈(근거 추천) / 박상은(검색) / FE: 박민용  
 상태: 담당자 검토
 
 #### 인증
@@ -10373,7 +10378,7 @@ HTTP `200`.
 회의 결정 기반 문서 수정안 기능을 제공한다.
 
 관련 요구사항: MTG-09  
-담당: BE: undefined / AI: 양지훈(회의 연결) / 박상은(수정안 생성) / FE: undefined  
+담당: BE: 오서현 / AI: 양지훈(회의 연결) / 박상은(수정안 생성) / FE: 오서현  
 상태: 설계 초안
 
 #### 인증
