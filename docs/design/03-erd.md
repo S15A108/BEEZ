@@ -2,7 +2,7 @@
 
 > ![핵심 관계](erd-core.png)
 >
-> 이 설계는 PostgreSQL 16 + pgvector에서 DDL과 불변식 시나리오로 검증했다. DDL은 Flyway 마이그레이션(`backend/src/main/resources/db/migration`)으로 들어간다.
+> 이 설계는 PostgreSQL + pgvector에서 DDL과 불변식 시나리오 21개로 검증했다. DDL은 `backend/src/main/resources/db/migration/V2__init_schema.sql`에 있다. 머지된 마이그레이션 파일은 수정하지 않고, 구조 변경은 새 번호(V3__...) 파일로 추가한다.
 
 ## 0. v0.2 → v1.0 에서 바뀐 것
 
