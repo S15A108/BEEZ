@@ -9,6 +9,9 @@ test('첫 화면이 콘솔 에러 없이 뜬다', async ({ page }) => {
 
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { name: 'S15A108' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'BEEZ', exact: true }),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: '로그인하기 →' })).toBeVisible()
   expect(errors).toEqual([])
 })
