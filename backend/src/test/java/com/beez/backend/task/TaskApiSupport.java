@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -29,7 +29,7 @@ class TaskApiSupport {
             PasswordEncoderFactories.createDelegatingPasswordEncoder().encode(AccessFixtures.PASSWORD);
 
     private final Supplier<ApiClient> newClient;
-    private final Map<Long, ApiClient> sessions = new HashMap<>();
+    private final Map<Long, ApiClient> sessions = new ConcurrentHashMap<>();   // 동시 START 테스트가 여러 스레드에서 부른다
     private final DataSource dataSource;
     final JdbcClient jdbc;
 
