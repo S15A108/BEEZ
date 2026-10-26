@@ -1,0 +1,180 @@
+package com.beez.backend.task.service;
+
+import com.beez.backend.task.entity.Task;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+
+/**
+ * 시작 게이트 — START/RESUME 전에 네 가지를 검사한다 (docs/design/04-task-lifecycle.md §3, 설계 D4).
+ *
+ * <p><b>반드시 project 행을 잠근 뒤(ProjectDesignLookup.lockProject) 같은 트랜잭션에서 부른다.</b>
+ * 그래야 두 작업이 동시에 들어와도 G4(같은 항목 CHANGES 점유)가 경쟁 상태에서 맞다.
+ *
+ * <p>네 가지를 모두 검사하고 실패를 모아서 돌려준다. 에이전트는 왕복이 비싸서 한 번에 다 알려준다.
+ */
+@Component
+public class StartGate {
+
+    /** 실패 하나. code 는 명세 TSK-A07 오류 코드 */
+    public record Failure(String code, String message) {
+    }
+
+    public record Result(List<Failure> failures) {
+        public boolean passed() {
+            return failures.isEmpty();
+        }
+
+        /** 첫 실패 코드를 HTTP 응답 코드로 쓴다 */
+        public Failure first() {
+            return failures.get(0);
+        }
+
+        public String combinedMessage() {
+            StringBuilder sb = new StringBuilder();
+            for (Failure f : failures) {
+                if (sb.length() > 0) {
+                    sb.append(" / ");
+                }
+                sb.append(f.message());
+            }
+            return sb.toString();
+        }
+    }
+
+    private final JdbcClient jdbc;
+
+    public StartGate(JdbcClient jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    public Result evaluate(Task task, Long validationId) {
+        List<Failure> failures = new ArrayList<>();
+        checkValidationPassed(task, validationId, failures);
+        checkReferencesCurrent(task, validationId, failures);
+        checkDependenciesCompleted(task, failures);
+        checkNoChangesConflict(task, failures);
+        return new Result(failures);
+    }
+
+    /** G1: validation_id 가 이 작업의 현재 리비전에 대한 PASS 인가 */
+    private void checkValidationPassed(Task task, Long validationId, List<Failure> failures) {
+        List<Map<String, Object>> rows = jdbc.sql("""
+                        select task_id, plan_revision_id, status from validation where id = :id
+                        """)
+                .param("id", validationId)
+                .query()
+                .listOfRows();
+        if (rows.isEmpty()) {
+            failures.add(new Failure("validation_not_passed", "검증을 찾을 수 없습니다 (validation_id=" + validationId + ")"));
+            return;
+        }
+        Map<String, Object> v = rows.get(0);
+        long vTask = ((Number) v.get("task_id")).longValue();
+        long vRevision = ((Number) v.get("plan_revision_id")).longValue();
+        String status = (String) v.get("status");
+        if (vTask != task.getId()) {
+            failures.add(new Failure("validation_not_passed", "다른 작업의 검증입니다"));
+            return;
+        }
+        if (task.getCurrentPlanRevisionId() == null || vRevision != task.getCurrentPlanRevisionId()) {
+            failures.add(new Failure("validation_not_passed", "현재 계획(리비전)에 대한 검증이 아닙니다"));
+            return;
+        }
+        if (!"PASS".equals(status)) {
+            failures.add(new Failure("validation_not_passed", "검증 상태가 PASS 가 아닙니다 (현재 " + status + ")"));
+        }
+    }
+
+    /**
+     * G2: 검증이 본 (항목, 버전) 이 지금 현재 baseline 의 버전과 모두 같은가.
+     * 전역 baseline 번호는 비교하지 않는다 — 내가 참조한 항목만 본다.
+     */
+    private void checkReferencesCurrent(Task task, Long validationId, List<Failure> failures) {
+        List<Map<String, Object>> stale = jdbc.sql("""
+                        select r.design_item_id, r.design_item_version_id as seen, bi.design_item_version_id as current
+                          from validation_design_ref r
+                          left join project p on p.id = :projectId
+                          left join baseline_item bi on bi.baseline_id = p.current_baseline_id
+                                                    and bi.design_item_id = r.design_item_id
+                         where r.validation_id = :validationId
+                           and (bi.design_item_version_id is null or bi.design_item_version_id <> r.design_item_version_id)
+                        """)
+                .param("projectId", task.getProjectId())
+                .param("validationId", validationId)
+                .query()
+                .listOfRows();
+        if (!stale.isEmpty()) {
+            StringBuilder items = new StringBuilder();
+            for (Map<String, Object> row : stale) {
+                if (items.length() > 0) {
+                    items.append(", ");
+                }
+                items.append(row.get("design_item_id"));
+            }
+            failures.add(new Failure("version_conflict", "설계 참조가 오래됨 (design_item_id: " + items + ")"));
+        }
+    }
+
+    /** G3: BLOCKS 선행 작업이 전부 COMPLETED 인가 */
+    private void checkDependenciesCompleted(Task task, List<Failure> failures) {
+        List<String> pending = jdbc.sql("""
+                        select t.key
+                          from task_dependency d
+                          join task t on t.id = d.depends_on_task_id
+                         where d.task_id = :taskId
+                           and d.kind = 'BLOCKS'
+                           and t.status <> 'COMPLETED'
+                         order by t.key
+                        """)
+                .param("taskId", task.getId())
+                .query(String.class)
+                .list();
+        if (!pending.isEmpty()) {
+            failures.add(new Failure("dependency_not_completed", "선행 작업 미완료: " + String.join(", ", pending)));
+        }
+    }
+
+    /**
+     * G4: 이 계획이 CHANGES 하는 항목을, 다른 IN_PROGRESS/WAITING 작업의 현재 계획도 CHANGES 하고 있는가.
+     * READS/IMPLEMENTS 끼리는 충돌이 아니다. 충돌 상대의 키·담당자를 응답에 넣어 조율할 수 있게 한다 (AC-04).
+     */
+    private void checkNoChangesConflict(Task task, List<Failure> failures) {
+        if (task.getCurrentPlanRevisionId() == null) {
+            return;
+        }
+        List<Map<String, Object>> conflicts = jdbc.sql("""
+                        select distinct t.key, t.assignee_member_id, r.design_item_id
+                          from task t
+                          join task_plan_design_ref r on r.plan_revision_id = t.current_plan_revision_id
+                         where t.project_id = :projectId
+                           and t.id <> :taskId
+                           and t.status in ('IN_PROGRESS', 'WAITING')
+                           and r.relation = 'CHANGES'
+                           and r.design_item_id in (
+                                 select mine.design_item_id
+                                   from task_plan_design_ref mine
+                                  where mine.plan_revision_id = :revisionId
+                                    and mine.relation = 'CHANGES')
+                         order by t.key
+                        """)
+                .param("projectId", task.getProjectId())
+                .param("taskId", task.getId())
+                .param("revisionId", task.getCurrentPlanRevisionId())
+                .query()
+                .listOfRows();
+        if (!conflicts.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (Map<String, Object> c : conflicts) {
+                if (sb.length() > 0) {
+                    sb.append(", ");
+                }
+                sb.append(c.get("key")).append("(담당 member ").append(c.get("assignee_member_id"))
+                        .append(", design_item ").append(c.get("design_item_id")).append(")");
+            }
+            failures.add(new Failure("task_conflict", "같은 설계 항목을 변경 중인 작업이 있습니다: " + sb));
+        }
+    }
+}

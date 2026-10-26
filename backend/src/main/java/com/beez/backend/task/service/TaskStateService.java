@@ -1,0 +1,229 @@
+package com.beez.backend.task.service;
+
+import com.beez.backend.common.access.Membership;
+import com.beez.backend.common.access.ProjectAccessChecker;
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.task.dto.TaskDetailResponse;
+import com.beez.backend.task.dto.TaskStateInput;
+import com.beez.backend.task.entity.Task;
+import com.beez.backend.task.entity.TaskCompletionReport;
+import com.beez.backend.task.entity.TaskEvent;
+import com.beez.backend.task.entity.TaskStatus;
+import com.beez.backend.task.entity.WaitingReason;
+import com.beez.backend.task.event.TaskStateChangedEvent;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
+import com.beez.backend.task.repository.TaskRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * TSK-A07 작업 상태 보고 (START·RESUME·WAIT·COMPLETED·CANCEL). MCP report_task_state 도 이 메서드를 부른다.
+ *
+ * <p>처리 순서 (명세 TSK-A07 처리 규칙, 04-task-lifecycle.md §2·§3):
+ * <ol>
+ *   <li>멤버십 → 권한(담당자 / CANCEL 은 사람 LEADER 도)</li>
+ *   <li>project 행 FOR UPDATE — 같은 프로젝트의 전이를 한 줄로 세운다</li>
+ *   <li>작업 조회 (잠금 뒤에 읽어야 다른 요청이 방금 바꾼 상태를 본다)</li>
+ *   <li>멱등 확인 — lock_version 비교보다 먼저</li>
+ *   <li>expected_lock_version · plan_revision_id 비교 → 409 revision_conflict</li>
+ *   <li>전이 표 → 금지면 400 invalid_transition</li>
+ *   <li>START/RESUME 는 시작 게이트 4조건 → 실패 코드로 409</li>
+ *   <li>전이 적용, 커밋 뒤 이벤트</li>
+ * </ol>
+ */
+@Service
+public class TaskStateService {
+
+    private final TaskRepository tasks;
+    private final TaskCompletionReportRepository reports;
+    private final ProjectAccessChecker access;
+    private final ProjectDesignLookup designLookup;
+    private final TaskTransitionPolicy policy;
+    private final StartGate startGate;
+    private final TaskQueryService query;
+    private final ApplicationEventPublisher events;
+    private final JdbcClient jdbc;
+    private final Clock clock;
+
+    public TaskStateService(TaskRepository tasks, TaskCompletionReportRepository reports, ProjectAccessChecker access,
+                            ProjectDesignLookup designLookup, TaskTransitionPolicy policy, StartGate startGate,
+                            TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc) {
+        this.tasks = tasks;
+        this.reports = reports;
+        this.access = access;
+        this.designLookup = designLookup;
+        this.policy = policy;
+        this.startGate = startGate;
+        this.query = query;
+        this.events = events;
+        this.jdbc = jdbc;
+        this.clock = Clock.systemUTC();
+    }
+
+    @Transactional
+    public TaskDetailResponse report(CallerContext caller, Long projectId, Long taskId, TaskStateInput in) {
+        Membership membership = access.requireMember(caller, projectId);
+        validateShape(in);
+
+        // 2) 프로젝트 잠금. 이 뒤에 읽는 작업 상태가 "지금" 상태다.
+        boolean exists = designLookup.lockProject(projectId);
+        if (!exists) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "프로젝트를 찾을 수 없습니다");
+        }
+        Task task = requireTask(projectId, taskId);
+        requirePermission(caller, membership, task, in.event());
+
+        // 4) 멱등 — 같은 보고가 다시 오면 현재 상태 그대로 200. lock_version 비교보다 먼저 (명세 TSK-A07)
+        //    START 는 "같은 (task_id, validation_id) 로 이미 시작했는가" 로 본다. 응답 유실 뒤 재전송이 새 시작이 되면 안 된다.
+        if (in.event() == TaskEvent.START && in.validationId().equals(task.getStartedValidationId())) {
+            return query.toDetail(task);
+        }
+        TaskTransitionPolicy.Verdict verdict = policy.check(task.getStatus(), in.event());
+        if (verdict == TaskTransitionPolicy.Verdict.IDEMPOTENT) {
+            if (in.event() == TaskEvent.START) {
+                // 진행 중인데 다른 검증으로 START 를 또 보냄 — 멱등이 아니라 충돌
+                throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
+                        "이미 다른 검증(" + task.getStartedValidationId() + ")으로 시작된 작업입니다");
+            }
+            return query.toDetail(task);
+        }
+
+        // 5) 충돌 검사 (Integer 끼리는 == 로 비교하면 안 된다 → equals)
+        if (!task.getLockVersion().equals(in.expectedLockVersion())) {
+            throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
+                    "작업 상태가 이미 바뀌었습니다 (현재 lock_version=" + task.getLockVersion() + ")");
+        }
+        if (task.getCurrentPlanRevisionId() == null || !task.getCurrentPlanRevisionId().equals(in.planRevisionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
+                    "현재 계획이 아닙니다 (현재 plan_revision_id=" + task.getCurrentPlanRevisionId() + ")");
+        }
+
+        // 6) 전이 표
+        if (verdict == TaskTransitionPolicy.Verdict.FORBIDDEN) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition",
+                    task.getStatus() + " 상태에서는 " + in.event() + " 할 수 없습니다");
+        }
+
+        // 7) 시작 게이트
+        if (in.event().needsStartGate()) {
+            StartGate.Result gate = startGate.evaluate(task, in.validationId());
+            if (!gate.passed()) {
+                throw new ApiException(HttpStatus.CONFLICT, gate.first().code(), gate.combinedMessage());
+            }
+        }
+
+        // 8) 적용
+        TaskStatus from = task.getStatus();
+        Instant now = Instant.now(clock);
+        switch (in.event()) {
+            case START -> task.start(in.validationId(), now);
+            case RESUME -> task.resume(in.validationId());
+            case WAIT -> task.holdFor(in.waitingReason());
+            case COMPLETED -> complete(task, in, caller, now);
+            case CANCEL -> cancel(task, now);
+        }
+        tasks.saveAndFlush(task);
+
+        events.publishEvent(new TaskStateChangedEvent(projectId, taskId, from, task.getStatus(), in.event(),
+                caller.accountId(), "task:" + taskId + ":lock:" + task.getLockVersion() + ":" + in.event()));
+        return query.toDetail(task);
+    }
+
+    // ------------------------------------------------------------------
+
+    /** 이벤트별 필수 값. 상태를 보기 전에 모양만으로 거를 수 있는 것 */
+    private void validateShape(TaskStateInput in) {
+        if (in.event().needsStartGate() && in.validationId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", in.event() + " 에는 validation_id 가 필요합니다");
+        }
+        if (in.event() == TaskEvent.WAIT) {
+            if (in.waitingReason() == null) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "WAIT 에는 waiting_reason 이 필요합니다");
+            }
+            if (in.waitingReason().isSystemOnly()) {
+                // REVALIDATION 은 시스템만. 에이전트가 사유를 바꿔치기해 재검증 없이 RESUME 하는 길을 막는다
+                throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition", "REVALIDATION 은 시스템 전용 사유입니다");
+            }
+        }
+    }
+
+    /**
+     * 담당자 본인만. 예외: CANCEL 은 사람 세션의 LEADER 도 가능 (AC-14 보고 끊긴 작업 정리).
+     * 팀장의 에이전트 토큰은 남의 작업을 취소하지 못한다.
+     */
+    private void requirePermission(CallerContext caller, Membership membership, Task task, TaskEvent event) {
+        boolean isAssignee = membership.memberId().equals(task.getAssigneeMemberId());
+        if (isAssignee) {
+            return;
+        }
+        if (event == TaskEvent.CANCEL && caller.isHuman() && membership.isLeader()) {
+            return;
+        }
+        throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "담당자만 작업 상태를 바꿀 수 있습니다");
+    }
+
+    private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
+        List<Map<String, Object>> delta = in.delta();
+        if (delta == null) {
+            delta = new ArrayList<>();
+        }
+        List<Map<String, Object>> checks = in.completionChecks();
+        if (checks == null) {
+            checks = new ArrayList<>();
+        }
+        reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
+                checks, caller.agentTokenId()));
+        if (delta.isEmpty()) {
+            task.complete(now);
+        } else {
+            // 계획과 다른 점이 있다 → 재검증 대기. delta 검증(trigger=DELTA) 접수는 S15P31A108-59 에서 붙인다.
+            task.holdForRevalidation();
+        }
+    }
+
+    /**
+     * CANCEL: 큐 취소·점유 해제·늦은 결과 차단 (명세 TSK-A07).
+     * - 진행 중인 검증 job 은 CANCELLED
+     * - 끝나지 않았거나 쓸 수 있던 검증은 STALE(TASK_CANCELLED). RUNNING 도 STALE 로 바꾸면 워커의 결과 반영
+     *   (WHERE status='RUNNING') 이 0 행이 되어 늦은 결과가 자연히 버려진다 (D6 fencing)
+     */
+    private void cancel(Task task, Instant now) {
+        jdbc.sql("""
+                        update validation_job j
+                           set status = 'CANCELLED', lease_token = null, lease_until = null, updated_at = now()
+                          from validation v
+                         where j.validation_id = v.id
+                           and v.task_id = :taskId
+                           and j.status in ('QUEUED', 'LEASED')
+                        """)
+                .param("taskId", task.getId())
+                .update();
+        jdbc.sql("""
+                        update validation
+                           set status = 'STALE', stale_reason = 'TASK_CANCELLED', updated_at = now()
+                         where task_id = :taskId
+                           and status in ('NOT_RUN', 'RUNNING', 'PASS', 'NEEDS_INPUT', 'NEEDS_REVIEW')
+                        """)
+                .param("taskId", task.getId())
+                .update();
+        task.cancel(now);
+    }
+
+    private Task requireTask(Long projectId, Long taskId) {
+        Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
+        if (task.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "작업을 찾을 수 없습니다");
+        }
+        return task.get();
+    }
+}
