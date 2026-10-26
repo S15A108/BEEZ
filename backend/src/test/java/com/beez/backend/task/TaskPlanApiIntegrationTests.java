@@ -254,6 +254,72 @@ class TaskPlanApiIntegrationTests {
         assertThat(stillStarted).isEqualTo(validationId);
     }
 
+    @Test
+    void addRevision_concurrentWithSameExpectedNo_oneWins_otherIs409() throws Exception {
+        HttpResponse<String> created = api.post(tasksPath(), api.planJson("v1", api.readsRef("API-01"), "[]"), member);
+        long taskId = TaskApiSupport.longField(created.body(), "id");
+        int lockVersion = (int) TaskApiSupport.longField(created.body(), "lock_version");
+        String path = tasksPath() + "/" + taskId + "/plan-revisions";
+
+        // 같은 expected_revision_no=1 로 두 요청을 동시에 보낸다
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<java.util.concurrent.Future<HttpResponse<String>>> futures = new java.util.ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            String body = revisionJson("동시 " + i, api.readsRef("API-02"), 1, lockVersion);
+            futures.add(pool.submit(() -> {
+                go.await();
+                return api.post(path, body, member);
+            }));
+        }
+        go.countDown();
+        int created201 = 0;
+        int conflict409 = 0;
+        for (java.util.concurrent.Future<HttpResponse<String>> f : futures) {
+            HttpResponse<String> r = f.get();
+            if (r.statusCode() == 201) {
+                created201++;
+            } else if (r.statusCode() == 409 && r.body().contains("\"code\":\"revision_conflict\"")) {
+                conflict409++;
+            } else {
+                throw new AssertionError("예상 밖 응답: " + r.statusCode() + " " + r.body());
+            }
+        }
+        pool.shutdown();
+
+        assertThat(created201).isEqualTo(1);
+        assertThat(conflict409).isEqualTo(1);
+        Integer revisions = api.jdbc.sql("select count(*) from task_plan_revision where task_id = :t").param("t", taskId)
+                .query(Integer.class).single();
+        assertThat(revisions).isEqualTo(2);
+    }
+
+    @Test
+    void addRevision_dependencyCycle_is409DependencyCycle() throws Exception {
+        HttpResponse<String> first = api.post(tasksPath(), api.planJson("T1", api.readsRef("API-01"), "[]"), member);
+        long t1 = TaskApiSupport.longField(first.body(), "id");
+        int t1Lock = (int) TaskApiSupport.longField(first.body(), "lock_version");
+        // T2 는 T1 을 선행으로 둔다
+        HttpResponse<String> second = api.post(tasksPath(), api.planJson("T2", api.readsRef("API-02"), "[" + t1 + "]"), member);
+        assertThat(second.statusCode()).isEqualTo(201);
+        long t2 = TaskApiSupport.longField(second.body(), "id");
+
+        // T1 이 T2 를 선행으로 두려 하면 순환 → 409 dependency_cycle (명세 TSK-A04)
+        HttpResponse<String> res = api.post(tasksPath() + "/" + t1 + "/plan-revisions",
+                revisionJsonWithDeps("T1 v2", api.readsRef("API-01"), "[" + t2 + "]", 1, t1Lock), member);
+        assertThat(res.statusCode()).isEqualTo(409);
+        assertThat(res.body()).contains("\"code\":\"dependency_cycle\"");
+    }
+
+    @Test
+    void designRef_whenNoBaselinePublished_is400() throws Exception {
+        String refs = api.readsRef("API-01"); // 기준을 지우기 전에 참조 JSON 을 만든다
+        api.jdbc.sql("update project set current_baseline_id = null where id = :p").param("p", projectId).update();
+        HttpResponse<String> res = api.post(tasksPath(), api.planJson("기준 없음", refs, "[]"), member);
+        assertThat(res.statusCode()).isEqualTo(400);
+        assertThat(res.body()).contains("\"code\":\"validation_failed\"");
+    }
+
     // ------------------------------------------------------------------
     // 조회
     // ------------------------------------------------------------------
@@ -329,10 +395,10 @@ class TaskPlanApiIntegrationTests {
         HttpResponse<String> byMember = api.patch(tasksPath() + "/" + taskId + "/assignee", body, member);
         assertThat(byMember.statusCode()).isEqualTo(403);
 
-        // 팀장의 에이전트 토큰이라도 사람이 아니면 거절 (human_only)
+        // 팀장의 에이전트 토큰이라도 사람이 아니면 거절 (403 forbidden)
         HttpResponse<String> byLeaderAgent = api.patchAsAgent(tasksPath() + "/" + taskId + "/assignee", body, leader, api.leaderAgentTokenId());
         assertThat(byLeaderAgent.statusCode()).isEqualTo(403);
-        assertThat(byLeaderAgent.body()).contains("\"code\":\"human_only\"");
+        assertThat(byLeaderAgent.body()).contains("\"code\":\"forbidden\"").contains("사람만");
 
         HttpResponse<String> byLeader = api.patch(tasksPath() + "/" + taskId + "/assignee", body, leader);
         assertThat(byLeader.statusCode()).isEqualTo(200);
@@ -342,7 +408,12 @@ class TaskPlanApiIntegrationTests {
     // ------------------------------------------------------------------
 
     private String revisionJson(String title, String refsJson, int expectedRevisionNo, int expectedLockVersion) {
-        String plan = api.planJson(title, refsJson, "[]").trim();
+        return revisionJsonWithDeps(title, refsJson, "[]", expectedRevisionNo, expectedLockVersion);
+    }
+
+    private String revisionJsonWithDeps(String title, String refsJson, String depsJson, int expectedRevisionNo,
+                                        int expectedLockVersion) {
+        String plan = api.planJson(title, refsJson, depsJson).trim();
         // 마지막 '}' 앞에 충돌 검사 필드 두 개를 끼워 넣는다
         String withoutClose = plan.substring(0, plan.lastIndexOf('}'));
         return withoutClose + ",\n  \"expected_revision_no\": " + expectedRevisionNo

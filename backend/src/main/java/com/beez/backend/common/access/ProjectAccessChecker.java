@@ -52,7 +52,8 @@ public class ProjectAccessChecker {
     public Membership requireHumanLeader(CallerContext caller, Long projectId) {
         Membership membership = requireMember(caller, projectId);
         if (!caller.isHuman()) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "human_only", "이 동작은 사람만 할 수 있습니다");
+            // 명세 오류 코드는 403 forbidden 하나다 (human_only 는 명세에 없음). 사유는 메시지로만 구분한다
+            throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "이 동작은 사람만 할 수 있습니다");
         }
         if (!membership.isLeader()) {
             throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "팀장만 할 수 있습니다");
