@@ -33,12 +33,25 @@ spring:
       file: compose.yaml
       lifecycle-management: start-only   # 서버를 껐다 켜도 DB 는 유지
 
+  # 계정은 DB(account)에서 직접 확인한다. 기본 인메모리 사용자(+생성 비밀번호 로그)를 만들지 않는다.
+  autoconfigure:
+    exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
   error:
     include-message: never
     include-stacktrace: never
+  # 웹 세션 (Q04 제안안). 서버 메모리 세션이라 재시작하면 모두 로그아웃된다 — 세션 정리가 필요한 후속 PR 에서 JDBC 로 옮긴다.
+  servlet:
+    session:
+      timeout: 2h                 # 마지막 요청 후 2시간
+      tracking-modes: cookie      # URL 에 ;jsessionid 를 붙이지 않는다
+      cookie:
+        name: BEEZ_SESSION
+        http-only: true
+        same-site: lax            # 다른 사이트에서 보낸 POST 에는 쿠키가 실리지 않는다 (CSRF 1차 방어)
 
 management:
   endpoints:
