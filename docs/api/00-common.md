@@ -1,6 +1,6 @@
 # BEEZ API Common
 
-버전: 0.3 · 갱신일: 2026-10-23 · 개발 계약 초안
+버전: 0.4 · 갱신일: 2026-10-26 · 개발 계약 초안
 
 ## 1. 문서 안내
 
@@ -146,15 +146,27 @@ START/RESUME는 현재 계획의 PASS, 실제 참조 항목 버전의 현재성,
 
 변경 항목의 이전 버전을 참조한 검증은 STALE이고 진행 작업은 WAITING(REVALIDATION), 점유는 유지한다. 완료·취소 작업은 이력만 보존한다. AI 추론 후보만으로 확정 참조 무효화를 하지 않는다. 참조 의존 깊이는 Q02다.
 
-판정은 backend 규칙이 내린다. AI는 finding 후보를 추가만 하고 규칙 finding을 해제하거나 심각도를 낮추지 못한다.
+판정은 backend 규칙이 내린다. AI는 finding 후보를 추가만 하고 규칙 finding을 해제하거나 심각도를 낮추지 못한다. 규칙만으로 NEEDS_INPUT/NEEDS_REVIEW가 확정되면 그 결과를 반환하고 검증 AI를 접수하지 않는다. 아래 AI 결과 매핑은 의미 분석이 필요해 RUNNING으로 접수한 실행에 적용한다.
 
 | 상황 | 결과 | 판정 |
 | --- | --- | --- |
 | 필수 칸 누락, 모르는 항목·버전, CHANGES 없음 + no_contract_change=false + unlinked 비어 있음, no_contract_change=true인데 CHANGES 참조 있음 | NEEDS_INPUT | 규칙. 요청 안에서 확정 |
 | 구조화된 계약의 명확한 불일치, 같은 항목을 CHANGES하는 IN_PROGRESS·WAITING 작업 존재 | NEEDS_REVIEW | 규칙. 요청 안에서 확정 |
-| unlinked 등 의미 해석이 필요한 내용 | RUNNING → AI 분석 | AI는 후보 추가만. BLOCKING 후보가 있으면 NEEDS_REVIEW |
-| 위에 해당 없음, AI 분석이 불필요하거나 지정 범위 분석을 완료 | PASS | 규칙. AI가 finding을 내지 않은 것만으로는 PASS가 아님 |
-| 분석 실패·시간 초과 | ERROR | 규칙. 자동 PASS 금지 |
+| unlinked 등 의미 해석이 필요한 내용 | RUNNING → AI 분석 | backend가 필요한 검사 목록 `checks`를 고정한다. AI는 검사 수행 결과와 finding 후보만 반환 |
+| 의미 분석을 완료했고 필수 계획 정보의 누락(`MISSING_INPUT`)만 남음 | NEEDS_INPUT | 규칙. AI가 발견한 경우에도 작업자가 보완. 필수 누락 후보는 BLOCKING |
+| 의미 분석을 완료했고 설계 결정이 필요한 `MISSING_POLICY` 또는 BLOCKING 불일치·충돌 후보가 있음 | NEEDS_REVIEW | 규칙. 검토·설계 결정이 필요한 문제를 보완 요청과 함께 표시 |
+| 위에 해당 없음, AI 분석이 불필요하거나 지정 범위 분석을 전부 완료 | PASS | 규칙. AI 경로는 COMPLETE, 검사 키의 완전한 대응, 출력·근거 검증을 모두 충족해야 함 |
+| 분석 실패·시간 초과·출력 계약 위반·의미 분석의 일부 미검사(PARTIAL) | ERROR | 규칙. 자동 PASS 금지. 미검사 사유를 기록하고 보완된 입력은 새 검증으로 접수 |
+
+S15P31A108-107의 검사 수행 범위·판정 매핑은 **변준성 합의 전 검토안**이다. `COMPLETE/PARTIAL`은 `/v1/validate` 결과의 수행 범위 표시이며 Validation.status나 문서 파싱·색인 job 상태에 새 enum을 추가하지 않는다.
+
+- 최신성·실행 소유권 검사를 먼저 적용한다. 이미 STALE이거나 attempt·lease가 다른 실행에는 AI 결과·오류로 상태를 덮어쓰지 않는다.
+- AI 응답의 `checked_keys`와 `unassessed[].check_key`는 요청 `checks[].key`를 누락·중복 없이 정확히 나눠야 한다. 잘못된 대응·근거 참조·잘린 출력은 분석 성공이 아니라 ERROR다. COMPLETE 표시 자체가 분석 품질이나 작업 코드의 정확성을 보증하지 않는다.
+- `PARTIAL`은 모델 분석 후 근거 부족 또는 지원하지 못한 내용이 확인되어 필요한 검사를 수행하지 못한 경우다. 미검사 사유가 `EVIDENCE_INSUFFICIENT`면 `error_code=ai_evidence_insufficient`, `UNSUPPORTED_CONTENT`면 `ai_unsupported_content`로 기록한다. 두 사유가 함께 있으면 `ai_analysis_incomplete`다. 부분 AI 후보는 진단용이며 정상 분석 결과로 반영하지 않는다. 기존 규칙 finding은 유지한다.
+- `MISSING_INPUT`은 작업자가 보완할 **필수 계획 정보**가 부족한 경우다. `MISSING_POLICY`는 원문에 결정되지 않았다고 명시되었거나, backend가 정한 정책 확인 범위에서 정책 부재를 확인한 경우에만 사용한다. 두 종류의 필수 누락 후보는 BLOCKING이다. 단순한 선택 정보 제안을 필수 누락으로 분류하지 않는다.
+- 검색·전달된 근거에 정책이 없다는 사실만으로 `MISSING_POLICY`를 만들지 않는다. 근거가 충분하지 않으면 미검사 사유 `EVIDENCE_INSUFFICIENT`로 남긴다. backend의 원문·검색 조회 장애는 실행 ERROR이며 작업자의 입력 부족으로 바꾸지 않는다.
+- 기존 규칙의 NEEDS_REVIEW는 유지한다. AI 후보에 검토 필요와 계획 보완이 함께 있으면 NEEDS_REVIEW를 우선하고 보완할 내용도 함께 표시한다. AI의 STALE_REF는 backend의 버전 재확인 대상이며, 후보만으로 확정 참조를 무효화하지 않는다.
+- AI는 `related_task_id`를 입력 범위에서 참조한다. backend가 해당 작업의 현재 담당자를 확인해 후속 행동과 연결한다. AI가 멤버 ID를 생성하거나 담당자를 배정하지 않는다.
 
 backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영한다. ERROR 재시도는 새 run, 입력·근거가 바뀌면 새 검증이다. STALE을 단순 retry로 되살리지 않는다. D3의 롤백은 검증·업무 상태 복귀이며 사용자의 소스 파일을 되돌리는 기능이 아니다.
 
@@ -348,8 +360,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 | ID | 계약 항목 | 담당 | 확인할 내용 |
 | --- | --- | --- | --- |
-| Q01 | 항목 본문 스키마 | 오서현·박상은 | kind별 content 필수 키·schema_version, API/DATA 계약 구조 |
-| Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표(6절에 반영, 팀 확인), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
+| Q01 | 항목 본문 스키마 | 오서현·박상은 | kind별 content 필수 키·schema_version, API/DATA 계약 구조. 107의 비교 예시는 최종 본문 스키마를 선점하지 않음 |
+| Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책, 세션 쿠키·만료·CSRF, 재설정 토큰 만료·재발송·세션 정리 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화 |
@@ -358,7 +370,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q08 | 초안·제안 충돌 | 오서현 | 초안 해시·조회 범위·해시 발급, 초안 편집·삭제, expected_updated_at 정밀도 |
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
-| Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, timeout·retry·lease, 모델·임베딩 차원, 출력 검증·입력 크기 |
+| Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
 | Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부 |
 
@@ -453,6 +465,63 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `document_version_id` | `ID` | Y | 정확한 문서 버전 |
 | `version_no` | `integer` | Y | 문서 버전 번호 |
 | `location` | `string` | Y | 원문 항목 위치 |
+
+<a id="schema-validationtextlocator"></a>
+
+### ValidationTextLocator
+
+107의 검증 원문 입력 전용이다. PR #18의 `SourceLocator` 행 규칙을 재사용하며 기존 Source의 표시용 location을 대체하지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `type` | `text_lines` | Y | 정규화된 텍스트의 행 범위 |
+| `start_line` | `integer` | Y | 1부터 시작하는 시작 행 |
+| `end_line` | `integer` | Y | 마지막 행 포함. start_line 이상 |
+
+<a id="schema-validationevidence"></a>
+
+### ValidationEvidence
+
+backend가 권한·원문 버전·범위를 확인하고 복사한 불변 근거다. 기존 [RAG 개발 계획](../superpowers/plans/2026-10-26-document-rag-development.md)의 RetrievedEvidence를 검증 요청으로 연결한다. AI가 저장소·벡터 DB를 다시 조회하지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `evidence_id` | `string` | Y | 요청 안에서 유일한 근거 키 |
+| `design_item_version_id` | `ID` | Y | approved_items 안의 승인 항목 버전 |
+| `source` | [Source](00-common.md#schema-source) | Y | 정확한 문서 버전과 표시 위치 |
+| `locator` | [ValidationTextLocator](00-common.md#schema-validationtextlocator) | Y | 원문을 복원할 범위 |
+| `text` | `string` | Y | locator의 원문 발췌. 각 행의 LF를 포함한 정확한 문자열 |
+| `text_hash` | `string` | Y | 전체 정규화 원문의 SHA-256, 소문자 16진수 64자리. 발췌 자체의 해시가 아님 |
+| `normalization_version` | `utf8-lf-v1` | Y | 선두 BOM 제거, CRLF/CR → LF. trim·NFKC 금지 |
+
+backend는 승인 항목과 원문 출처의 연결 및 조회 허용 범위를 검사한다. 원문 bytes의 `content_hash`와 정규화 원문의 `text_hash`는 서로 다른 값일 수 있다. 원문 또는 항목이 승인됐다는 이유로 연결된 다른 데이터까지 자동 승인된 것으로 간주하지 않는다. 사람이 편집한 승인 content와 원문이 다르면 구조화 계약 비교의 기준은 승인 content이며 원문과의 충돌도 명시한다. 수동 입력·기존 승인 항목을 사용할 수 있으므로 자동 설계 항목 추출은 선행 조건이 아니다. 원문 RAG만 준비되고 비교할 승인 항목이 없는 경우에는 항목 대조를 수행한 것으로 간주하지 않는다.
+
+<a id="schema-validationcheck"></a>
+
+### ValidationCheck
+
+backend가 계획·승인 참조·관련 작업과 검증 규칙으로 정한 의미 검사 단위다. 사용자나 LLM이 검사 범위를 줄이지 못한다. 키는 요청 안에서 유일하며 ID는 요청의 객체 집합 안에서만 참조한다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `key` | `string` | Y | 요청 안에서 유일한 검사 키 |
+| `kind` | `PLAN_COMPLETENESS\|DESIGN_ALIGNMENT\|RELATED_PLAN_CONFLICT` | Y | 계획 정보·승인 설계 정합성·관련 계획 충돌 검사 |
+| `design_item_version_ids` | `ID[]` | Y | 이 검사에서 읽을 approved_items의 버전 ID. 해당 없으면 [] |
+| `related_plan_revision_ids` | `ID[]` | Y | 이 검사에서 읽을 related_plans의 리비전 ID. 해당 없으면 [] |
+
+DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에는 하나 이상의 다른 작업 리비전이 필요하다. `checks=[]`인 요청은 보내지 않으며, 의미 분석이 불필요하면 backend가 규칙 판정으로 종료한다. 구체적인 필수 검사 선정은 Q02에서 합의하고 실행 스냅샷에 고정한다.
+
+<a id="schema-unassessedvalidationcheck"></a>
+
+### UnassessedValidationCheck
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `check_key` | `string` | Y | 요청 checks에 존재하는 미검사 키 |
+| `reason` | `EVIDENCE_INSUFFICIENT\|UNSUPPORTED_CONTENT` | Y | 의미 분석 후 확인된 근거 부족·미지원 내용 |
+| `message` | `string` | Y | 검사하지 못한 내용과 필요한 추가 근거·조치 |
+
+이 reason은 검증 분석 결과의 진단이며 `validation_finding.kind`나 문서·색인 상태 enum에 추가하지 않는다. 알려진 입력 형식·참조·지원 버전 오류는 호출 전 422로 거부하고, 모델 실패·timeout·잘못된 출력을 이 진단으로 숨기지 않는다.
 
 <a id="schema-documentversion"></a>
 
@@ -1204,6 +1273,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
+| `check_key` | `string` | Y | 완료한 검사 키. ValidateResult.checked_keys 안에 있어야 함 |
 | `kind` | `MISMATCH\|MISSING_INPUT\|MISSING_POLICY\|CONFLICT\|STALE_REF` | Y | 후보 분류 |
 | `severity` | `INFO\|WARNING\|BLOCKING` | Y | 후보 중요도 |
 | `message` | `string` | Y | 후보 설명 |
@@ -1211,7 +1281,10 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `design_item_version_id` | `ID` | N | 근거 항목 버전. design_item_id가 있으면 필수 |
 | `related_task_id` | `ID` | N | 관련 작업 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+| `evidence_ids` | `string[]` | Y | 요청 evidence의 참조 키. content·계획만으로 확인한 경우 [] |
 | `suggested_action` | `string` | Y | 후속 행동 제안 |
+
+sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처만 참조한다. evidence_ids가 있으면 그 근거의 source도 sources에 포함한다. 원문 근거가 없는 필수 계획 누락은 sources/evidence_ids=[]로 표현할 수 있고 누락된 계획 내용을 message에 명시한다. 후속 경로·현재 담당자·최종 판정·영구 ID는 backend가 연결한다.
 
 <a id="schema-parseditem"></a>
 
@@ -1333,7 +1406,14 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
+| `analysis_status` | `COMPLETE\|PARTIAL` | Y | 요청된 의미 검사의 수행 범위. 최종 검증 판정이나 문서 파싱 상태가 아님 |
+| `checked_keys` | `string[]` | Y | 분류·근거 검사까지 수행한 요청 검사 키 |
+| `unassessed` | [UnassessedValidationCheck[]](00-common.md#schema-unassessedvalidationcheck) | Y | 수행하지 못한 요청 검사와 이유 |
 | `findings` | [FindingCandidate[]](00-common.md#schema-findingcandidate) | Y | 의미 분석 후보 |
+
+checked_keys와 unassessed의 키는 요청 checks를 정확히 분할하고, findings는 checked_keys에 속한 검사에서만 반환한다. unassessed가 비면 COMPLETE, 하나라도 있으면 PARTIAL이다. COMPLETE는 검사를 마쳤다는 뜻이므로 MISSING_INPUT·MISSING_POLICY나 불일치 후보가 있어도 가능하다. 빈 findings만으로 PASS를 판정하지 않는다.
+
+HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. backend는 구조·검사 키·ID·출처를 검증하고 6절 판정표를 적용한다. 이 검토안은 API DTO의 진단 필드이며 DDL의 finding 종류·실행 상태를 변경하지 않는다. 실행과 연결한 상세 응답·미검사 이유의 영속 보존 방식은 Q11/검증 BE 구현에서 합의하며, 기존 validation.error_code와 validation_run.error로 실패 원인을 추적할 수 있어야 한다.
 
 <a id="schema-impactresult"></a>
 
