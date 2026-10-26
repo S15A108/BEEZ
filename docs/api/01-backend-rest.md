@@ -1,6 +1,6 @@
 # BEEZ Backend REST API
 
-버전: 0.2 · 갱신일: 2026-10-23 · 개발 계약 초안
+버전: 0.3 · 갱신일: 2026-10-26 · 개발 계약 초안
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -8397,21 +8397,22 @@ HTTP `202`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `invalid_transition` | ERROR가 아니거나 이미 재실행 중 |
+| 409 | `invalid_transition` | ERROR가 아니거나 현재 실패 실행의 오류가 RETRY 대상이 아님, 또는 이미 재실행 중 |
 | 409 | `revision_conflict` | 입력·참조 변경 |
 
 ```json
 {
   "error": {
     "code": "invalid_transition",
-    "message": "ERROR가 아니거나 이미 재실행 중"
+    "message": "현재 실패 실행이 재시도 대상이 아니거나 이미 재실행 중입니다."
   }
 }
 ```
 
 #### 처리 규칙
 
-- ERROR 검증에 대해 같은 validation의 새 validation_run을 생성한다.
+- ERROR 검증 중 현재 실패 attempt의 ERROR finding이 RETRY인 경우에만 같은 validation의 새 validation_run을 생성한다. 과거 실행의 RETRY finding으로 허용하지 않는다.
+- 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 409 invalid_transition이다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. FE 버튼 표시와 별개로 서버도 같은 제한을 검사한다.
 - STALE 또는 입력 변경은 새 검증을 생성해야 한다.
 - lease/attempt가 맞는 RUNNING 결과만 반영한다. 늦은 결과를 폐기하더라도 실제 비용은 기록한다.
 

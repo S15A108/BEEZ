@@ -248,7 +248,7 @@ HTTP `200`.
 
 사람이 편집한 승인 `content`는 구조화 계약의 기준이다. 원문과 다르면 차이를 명시하며 원문으로 승인 내용을 덮어쓰지 않는다. 항목의 출처가 연결됐다는 사실만으로 원문 승인까지 추정하지 않는다. 수동 입력·기존 승인 항목을 사용할 수 있고, 자동 설계 항목 추출(-128/후속 E2)의 완료를 전제로 하지 않는다.
 
-아래는 실제 모델 실행 결과가 아닌 고정 연동 예시다. 대상 작업은 `no_contract_change=true`를 선언했지만 접근 방식에 토큰 전달 변경을 적어, 의미 분석에서 불일치와 다른 작업 영향을 찾는 상황이다. 관련 작업은 대상 501과 다른 작업 502의 계획 리비전 512다.
+아래는 실제 모델 실행 결과가 아닌 고정 연동 예시다. 대상 작업은 `no_contract_change=true`를 선언했지만 접근 방식에 토큰 전달 변경을 적어, 의미 분석에서 불일치와 다른 작업 영향을 찾는 상황이다. 관련 작업은 대상 501과 다른 작업 502의 계획 리비전 512다. 작업 502의 READS 소비 관계를 관련 계획에 포함하는 범위와 `checks` 선정 기준은 Q02 확인 사항이다. 이 예시는 분석 입출력 검토용이며, AI 호출 대상·관련 계획 선정 정책의 합의 완료를 뜻하지 않는다.
 
 ```json
 {
@@ -445,6 +445,10 @@ HTTP `200`.
 
 `analysis_status=COMPLETE`는 지정 검사를 수행했다는 뜻이며 문제가 없다는 뜻이 아니다. `unassessed=[]`일 때만 COMPLETE다. HTTP 200 COMPLETE/PARTIAL은 모두 실제 모델 호출 후에만 반환하며 model/usage가 필요하다. 형식상 유효한 입력을 의미 분석한 뒤 판단 근거 부족·미지원 내용으로 미검사 항목이 남으면 PARTIAL과 사유를 반환한다. PARTIAL은 검증 수행 범위용 메타데이터이며 문서 파싱·색인 job 상태를 바꾸지 않는다. 실행 실패·시간 초과·잘린 모델 출력은 PARTIAL 성공 응답으로 바꾸지 않는다.
 
+검증 호출의 `usage[].request_key`는 `llm-validate-{validation_id}-attempt-{n}-call-{k}`로 실제 호출 순번을 포함한다. 같은 실행에서 모델을 두 번 호출하면 서로 다른 k를 사용하고 동일 validation/attempt 범위에서 k를 재사용하지 않는다. 같은 실제 호출의 usage 전송만 재시도할 때는 같은 key를 유지하고, 모델을 다시 호출하면 새 key를 부여한다.
+
+`checks`, `checked_keys`, `unassessed`는 적용 attempt/run과 함께 `validation.summary` JSONB에 보존하는 안을 기준으로 저장 위치·매핑을 -159에서 확정한다. 실패는 `validation_run.error`와 BE가 생성하는 `kind=ERROR` finding으로 추적한다. `validation.error_code`라는 기존 DB 컬럼을 가정하지 않으며, 응답 DTO의 `error_code`가 필요하면 BE가 실행·finding 정보로 조립한다. 후보의 `check_key`·`evidence_ids` 영속화 구조와 마이그레이션 번호는 -159의 새 마이그레이션(리뷰 제안: V3)에서 확정하고, 이번 문서 PR에는 DDL을 추가하지 않는다.
+
 ```json
 {
   "result": {
@@ -503,7 +507,7 @@ HTTP `200`.
   "model": "configured-model",
   "usage": [
     {
-      "request_key": "llm-validate-601-attempt-1",
+      "request_key": "llm-validate-601-attempt-1-call-1",
       "feature": "TASK_VALIDATION",
       "model": "configured-model",
       "latency_ms": 1800,
@@ -542,7 +546,8 @@ HTTP `200`.
 - `MISSING_INPUT`은 작성자가 보완해야 하는 필수 계획 정보 누락이며 BLOCKING으로 반환한다. COMPLETE일 때 BE가 NEEDS_INPUT으로 연결한다. 선택적인 개선 제안을 필수 입력 누락으로 분류하지 않는다.
 - `MISSING_POLICY`는 원문에 미정으로 명시되었거나 합의한 정책 확인 범위에서 부재를 확인한 경우에만 BLOCKING으로 반환하고 NEEDS_REVIEW로 연결한다. 전달 근거가 부족하면 정책 부재를 단정하지 않고 `unassessed.reason=EVIDENCE_INSUFFICIENT`로 구분한다.
 - 다른 BLOCKING 불일치·충돌도 NEEDS_REVIEW다. 검토 필요와 입력 부족이 함께 있거나 기존 규칙이 검토 필요로 결정했으면 NEEDS_REVIEW를 유지하고 보완 내용도 표시한다. AI의 STALE_REF는 BE 최신성 재확인 신호이며 추론만으로 STALE을 확정하지 않는다.
-- PARTIAL은 PASS 불가다. BE는 사유에 따라 `ai_evidence_insufficient`, `ai_unsupported_content`, 두 사유가 섞였으면 `ai_analysis_incomplete`로 ERROR를 기록하고 부분 AI 후보는 진단 이력에만 남긴다. 정상 finding 적용이나 부분 성공 저장으로 취급하지 않는다. 이 사유는 DB finding kind에 추가하지 않는다.
+- PARTIAL은 PASS 불가다. BE는 미검사 사유를 실패 실행에 남기고 ERROR를 기록하며, 부분 AI 후보는 진단 이력에만 남긴다. BE가 생성하는 ERROR finding의 `resolution=HUMAN_REVIEW`로 근거 보완·지원 범위 조정 후 새 검증을 안내한다. 정상 finding 적용이나 부분 성공 저장으로 취급하지 않는다. 이 사유는 DB finding kind에 추가하지 않는다.
+- 모델 호출 실패·시간 초과·출력 계약 위반은 BE가 ERROR finding을 만들고 `resolution=RETRY`로 기존 VAL-A04의 재시도 경로를 안내한다. ERROR finding은 AI 후보가 아니라 BE가 생성하는 실행 실패 기록이다. 최신 실패 attempt에 HUMAN_REVIEW가 하나라도 있으면 VAL-A04를 거부하며, 과거 attempt의 RETRY finding으로 이를 허용하지 않는다.
 - AI가 담당 멤버 ID를 생성하지 않는다. BE가 `related_task_id`로 현재 담당자를 조회해 FE에 전달한다.
 - related_plans 등 다른 작업의 계획은 지시가 아닌 데이터로 다룬다.
 - backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 응답으로 STALE을 덮어쓰지 않는다.
@@ -551,7 +556,7 @@ HTTP `200`.
 
 - `execution_budget_ms`는 요청 안의 모든 모델 호출과 결과 검증에 적용한다. 호출 전 입력 한도를 검사하고, 초과한 입력을 조용히 잘라 분석하지 않는다. 예산 안에 끝내지 못하면 504다.
 - BE HTTP 제한시간은 AI가 예산 초과 오류와 usage를 전달할 여유를 두고 설정한다. 예시의 30000ms는 설명용이며 서비스 SLA·운영 기본값의 확정이 아니다. 예산 상한·전달 여유·lease 갱신 방식은 Q11에서 합의한다.
-- 검증 경로의 AI/모델 SDK 자동 재시도는 끈다. 초기 BE도 자동 재시도하지 않고 [VAL-A04](01-backend-rest.md#val-a04)의 명시적 ERROR 재시도로 새 run/attempt를 만든다. 입력·근거가 달라지면 새 검증이다. 후속 자동 재시도는 오류별 대상·횟수·전체 예산을 Q11에서 확정한 뒤 추가한다.
+- 검증 경로의 AI/모델 SDK 자동 재시도는 끈다. 초기 BE도 자동 재시도하지 않고 [VAL-A04](01-backend-rest.md#val-a04)의 명시적 ERROR 재시도로 새 run/attempt를 만든다. 재시도는 최신 실패 attempt가 RETRY 경로인 경우에만 가능하며 HUMAN_REVIEW가 있으면 거부한다. 입력·근거 보완 또는 지원 범위 조정 후에는 새 검증이다. 후속 자동 재시도는 오류별 대상·횟수·전체 예산을 Q11에서 확정한 뒤 추가한다.
 - 성공·실패 모두 실제 모델 호출별 usage를 남긴다. SDK/BE 중첩 재시도로 호출을 숨기거나 중복 합산하지 않고, 사용량을 모르면 tokens_known=false로 기록한다. 연결이 끊긴 뒤에도 실제 호출 비용은 기존 실행 이력에 보존한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)

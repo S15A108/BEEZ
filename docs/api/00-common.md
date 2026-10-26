@@ -162,13 +162,13 @@ S15P31A108-107의 검사 수행 범위·판정 매핑은 **변준성 합의 전 
 
 - 최신성·실행 소유권 검사를 먼저 적용한다. 이미 STALE이거나 attempt·lease가 다른 실행에는 AI 결과·오류로 상태를 덮어쓰지 않는다.
 - AI 응답의 `checked_keys`와 `unassessed[].check_key`는 요청 `checks[].key`를 누락·중복 없이 정확히 나눠야 한다. 잘못된 대응·근거 참조·잘린 출력은 분석 성공이 아니라 ERROR다. COMPLETE 표시 자체가 분석 품질이나 작업 코드의 정확성을 보증하지 않는다.
-- `PARTIAL`은 모델 분석 후 근거 부족 또는 지원하지 못한 내용이 확인되어 필요한 검사를 수행하지 못한 경우다. 미검사 사유가 `EVIDENCE_INSUFFICIENT`면 `error_code=ai_evidence_insufficient`, `UNSUPPORTED_CONTENT`면 `ai_unsupported_content`로 기록한다. 두 사유가 함께 있으면 `ai_analysis_incomplete`다. 부분 AI 후보는 진단용이며 정상 분석 결과로 반영하지 않는다. 기존 규칙 finding은 유지한다.
+- `PARTIAL`은 모델 분석 후 근거 부족 또는 지원하지 못한 내용이 확인되어 필요한 검사를 수행하지 못한 경우다. backend는 현재 실패 실행에 `kind=ERROR`, `resolution=HUMAN_REVIEW`인 finding을 만들고 미검사 사유와 필요한 근거 보완을 기록한다. 모델 실패·timeout·출력 계약 위반은 `kind=ERROR`, `resolution=RETRY`로 구분한다. 이 ERROR finding은 backend가 생성하며 AI의 FindingCandidate 종류에 ERROR를 추가하지 않는다. 부분 AI 후보는 진단용이며 정상 분석 결과로 반영하지 않는다. 기존 규칙 finding은 유지한다.
 - `MISSING_INPUT`은 작업자가 보완할 **필수 계획 정보**가 부족한 경우다. `MISSING_POLICY`는 원문에 결정되지 않았다고 명시되었거나, backend가 정한 정책 확인 범위에서 정책 부재를 확인한 경우에만 사용한다. 두 종류의 필수 누락 후보는 BLOCKING이다. 단순한 선택 정보 제안을 필수 누락으로 분류하지 않는다.
 - 검색·전달된 근거에 정책이 없다는 사실만으로 `MISSING_POLICY`를 만들지 않는다. 근거가 충분하지 않으면 미검사 사유 `EVIDENCE_INSUFFICIENT`로 남긴다. backend의 원문·검색 조회 장애는 실행 ERROR이며 작업자의 입력 부족으로 바꾸지 않는다.
 - 기존 규칙의 NEEDS_REVIEW는 유지한다. AI 후보에 검토 필요와 계획 보완이 함께 있으면 NEEDS_REVIEW를 우선하고 보완할 내용도 함께 표시한다. AI의 STALE_REF는 backend의 버전 재확인 대상이며, 후보만으로 확정 참조를 무효화하지 않는다.
 - AI는 `related_task_id`를 입력 범위에서 참조한다. backend가 해당 작업의 현재 담당자를 확인해 후속 행동과 연결한다. AI가 멤버 ID를 생성하거나 담당자를 배정하지 않는다.
 
-backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영한다. ERROR 재시도는 새 run, 입력·근거가 바뀌면 새 검증이다. STALE을 단순 retry로 되살리지 않는다. D3의 롤백은 검증·업무 상태 복귀이며 사용자의 소스 파일을 되돌리는 기능이 아니다.
+backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영한다. 같은 validation의 새 run으로 재시도할 수 있는 것은 **현재 실패 attempt의 ERROR finding이 RETRY인 경우**다. 현재 실행에 HUMAN_REVIEW가 하나라도 있으면 재시도를 거부하고 근거·지원 범위를 보완해 새 검증을 만든다. 과거 attempt의 RETRY finding을 재시도 근거로 쓰지 않는다. FE는 같은 resolution으로 버튼을 결정하고 REST·MCP도 이를 서버에서 검사한다. 현재 판정용 DTO의 ERROR finding은 current_attempt에 해당하는 실행의 것으로 한정하고 과거 실행 오류는 이력으로 구분한다. 입력·근거가 바뀌면 새 검증이며 STALE을 단순 retry로 되살리지 않는다. D3의 롤백은 검증·업무 상태 복귀이며 사용자의 소스 파일을 되돌리는 기능이 아니다.
 
 ## 7. 책임·공통 서비스
 
@@ -653,6 +653,8 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `currency` | `string` | N | 통화 |
 | `tokens_known` | `boolean` | Y | 공급자 토큰 수를 확인함. false이면 모르는 값을 0으로 만들지 않음 |
 
+`llm_usage.request_key`는 실제 모델 호출 한 건을 식별하는 유일 키다. 검증 호출은 `llm-validate-{validation_id}-attempt-{n}-call-{k}`로 만들어 동일 실행 안에서도 실제 호출마다 k를 증가시킨다. 같은 실제 호출 기록을 중복 전달할 때만 같은 키를 재사용한다. 입력 요청의 request_key를 여러 실제 호출의 usage key로 그대로 재사용하지 않는다.
+
 <a id="schema-generation"></a>
 
 ### Generation
@@ -857,7 +859,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
 | `next_action` | `string` | N | 후속 경로 설명 |
-| `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding은 필수 |
+| `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding 또는 kind=ERROR이면 필수. 현재 실패 attempt와 연결 |
 
 <a id="schema-validation"></a>
 
@@ -1413,7 +1415,9 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 
 checked_keys와 unassessed의 키는 요청 checks를 정확히 분할하고, findings는 checked_keys에 속한 검사에서만 반환한다. unassessed가 비면 COMPLETE, 하나라도 있으면 PARTIAL이다. COMPLETE는 검사를 마쳤다는 뜻이므로 MISSING_INPUT·MISSING_POLICY나 불일치 후보가 있어도 가능하다. 빈 findings만으로 PASS를 판정하지 않는다.
 
-HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. backend는 구조·검사 키·ID·출처를 검증하고 6절 판정표를 적용한다. 이 검토안은 API DTO의 진단 필드이며 DDL의 finding 종류·실행 상태를 변경하지 않는다. 실행과 연결한 상세 응답·미검사 이유의 영속 보존 방식은 Q11/검증 BE 구현에서 합의하며, 기존 validation.error_code와 validation_run.error로 실패 원인을 추적할 수 있어야 한다.
+HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. backend는 구조·검사 키·ID·출처를 검증하고 6절 판정표를 적용한다. 이 검토안은 API DTO의 진단 필드이며 DDL의 finding 종류·실행 상태를 변경하지 않는다.
+
+저장 위치와 매핑은 **S15P31A108-159에서 확정**한다. Q02 리뷰의 저장안은 checks·checked_keys·unassessed를 적용 attempt/run과 함께 기존 `validation.summary` JSONB에 보관하고, 실패 원인을 `validation_run.error`와 해당 실행의 ERROR finding으로 추적하는 것이다. `validation`에는 error_code DB 컬럼이 없으며 외부 Validation DTO의 error_code를 DB 컬럼으로 가정하지 않는다. 응답에 필요하면 현재 실패 run·finding에서 조립한다. FindingCandidate.check_key·evidence_ids도 현재 validation_finding에 컬럼이 없으므로 -159의 새 마이그레이션(리뷰 제안: V3)에서 영속화 구조와 번호를 확정한다. 이번 문서 변경은 기존 V2 DDL을 수정하지 않는다.
 
 <a id="schema-impactresult"></a>
 

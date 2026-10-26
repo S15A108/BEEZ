@@ -5,7 +5,7 @@
   "cases": [
     {
       "name": "compatible",
-      "description": "본문 토큰을 유지하도록 계획을 바꾸어 세 검사를 모두 수행하고 추가 문제 후보가 없는 상황이다.",
+      "description": "본문 토큰을 유지하도록 계획을 바꾸어 세 검사를 모두 수행하고 추가 문제 후보가 없는 상황이다. 서로 다른 두 모델 호출의 사용량 항목을 합성해 호출별 고유 키를 보여준다.",
       "request_patch": [
         {
           "op": "replace",
@@ -54,10 +54,18 @@
         "model": "configured-model",
         "usage": [
           {
-            "request_key": "llm-validate-602-attempt-1",
+            "request_key": "llm-validate-602-attempt-1-call-1",
             "feature": "TASK_VALIDATION",
             "model": "configured-model",
             "latency_ms": 1800,
+            "failed": false,
+            "tokens_known": false
+          },
+          {
+            "request_key": "llm-validate-602-attempt-1-call-2",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 900,
             "failed": false,
             "tokens_known": false
           }
@@ -127,7 +135,7 @@
         "model": "configured-model",
         "usage": [
           {
-            "request_key": "llm-validate-601-attempt-1",
+            "request_key": "llm-validate-601-attempt-1-call-1",
             "feature": "TASK_VALIDATION",
             "model": "configured-model",
             "latency_ms": 1800,
@@ -199,7 +207,7 @@
         "model": "configured-model",
         "usage": [
           {
-            "request_key": "llm-validate-603-attempt-1",
+            "request_key": "llm-validate-603-attempt-1-call-1",
             "feature": "TASK_VALIDATION",
             "model": "configured-model",
             "latency_ms": 1800,
@@ -330,7 +338,7 @@
         "model": "configured-model",
         "usage": [
           {
-            "request_key": "llm-validate-604-attempt-1",
+            "request_key": "llm-validate-604-attempt-1-call-1",
             "feature": "TASK_VALIDATION",
             "model": "configured-model",
             "latency_ms": 1800,
@@ -340,7 +348,7 @@
         ]
       },
       "expected_backend_status": "ERROR",
-      "expected_error_code": "ai_evidence_insufficient"
+      "expected_error_finding_resolution": "HUMAN_REVIEW"
     },
     {
       "name": "timeout",
@@ -365,7 +373,7 @@
         },
         "usage": [
           {
-            "request_key": "llm-validate-605-attempt-1",
+            "request_key": "llm-validate-605-attempt-1-call-1",
             "feature": "TASK_VALIDATION",
             "model": "configured-model",
             "latency_ms": 30000,
@@ -374,7 +382,8 @@
           }
         ]
       },
-      "expected_backend_status": "ERROR"
+      "expected_backend_status": "ERROR",
+      "expected_error_finding_resolution": "RETRY"
     },
     {
       "name": "invalid_model_output",
@@ -399,7 +408,7 @@
         },
         "usage": [
           {
-            "request_key": "llm-validate-606-attempt-1",
+            "request_key": "llm-validate-606-attempt-1-call-1",
             "feature": "TASK_VALIDATION",
             "model": "configured-model",
             "latency_ms": 1800,
@@ -408,7 +417,8 @@
           }
         ]
       },
-      "expected_backend_status": "ERROR"
+      "expected_backend_status": "ERROR",
+      "expected_error_finding_resolution": "RETRY"
     }
   ]
 }
