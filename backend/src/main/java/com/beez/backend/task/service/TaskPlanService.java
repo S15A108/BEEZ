@@ -114,6 +114,14 @@ public class TaskPlanService {
     public TaskDetailResponse addRevision(CallerContext caller, Long projectId, Long taskId, TaskPlanInput plan,
                                           int expectedRevisionNo, int expectedLockVersion) {
         Membership membership = access.requireMember(caller, projectId);
+        // 프로젝트 행을 먼저 잠근다. 같은 작업의 계획을 동시에 고치면 두 번째 요청은 여기서 기다렸다가
+        // 아래 revision_no 비교에서 409 revision_conflict 를 받는다 (잠그지 않으면 UNIQUE(task_id, revision_no) 위반이 400 으로 샌다).
+        // 잠금 순서를 상태 보고(START 등)와 같은 "프로젝트 → 작업" 으로 맞춰 교착을 피하고,
+        // 진행 중 계획 변경과 다른 작업의 START 가 엇갈려 같은 항목을 함께 CHANGES 점유하는 틈도 막는다.
+        boolean exists = designLookup.lockProject(projectId);
+        if (!exists) {
+            throw NotFound.because("project_missing project=" + projectId);
+        }
         Task task = requireTask(projectId, taskId);
         requireAssignee(task, membership);
 
@@ -185,9 +193,6 @@ public class TaskPlanService {
      * </ul>
      */
     private ResolvedRefs resolveDesignRefs(Long projectId, List<DesignRefInput> inputs) {
-        if (!inputs.isEmpty()) {
-            designLookup.requireCurrentBaseline(projectId);
-        }
         // LinkedHashMap: 들어온 순서를 유지한다 (응답에서 순서가 뒤섞이지 않게)
         Map<Long, DesignRefInput> strongest = new LinkedHashMap<>();
         for (DesignRefInput in : inputs) {
@@ -225,7 +230,11 @@ public class TaskPlanService {
         return new ResolvedRefs(new ArrayList<>(strongest.values()), versionByItem, relationByItem);
     }
 
-    /** 선행 작업: 같은 프로젝트, 자기 자신 아님, A↔B 1단계 순환 아님. 위반은 400 validation_failed */
+    /**
+     * 선행 작업 검사 (명세 TSK-A01·A04 오류표).
+     * 자기 자신·다른 프로젝트 작업은 400 validation_failed, A↔B 1단계 순환은 409 dependency_cycle.
+     * 더 긴 순환(A→B→C→A) 탐지는 미결(04-task-lifecycle.md §6).
+     */
     private void validateDependencies(Long projectId, Long taskId, List<Long> dependencyTaskIds) {
         if (dependencyTaskIds.isEmpty()) {
             return;
@@ -241,7 +250,7 @@ public class TaskPlanService {
         // 1단계 순환: 내가 B 를 선행으로 두려는데, B 가 이미 나를 선행으로 두고 있으면 거부
         for (TaskDependency reverse : dependencies.findByDependsOnTaskId(taskId)) {
             if (unique.contains(reverse.getTaskId())) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                throw new ApiException(HttpStatus.CONFLICT, "dependency_cycle",
                         "선행 관계가 순환합니다 (task_id=" + reverse.getTaskId() + ")");
             }
         }
