@@ -370,9 +370,9 @@ class TaskStateApiIntegrationTests {
         // 마지막 보고를 1시간 전으로 돌림 (임계값 기본 30분)
         api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", t[0]).update();
 
-        // 팀장의 에이전트 토큰 → 사람이 아니므로 끊긴 작업이라도 403
+        // 팀장 본인의 에이전트 토큰 → 사람이 아니므로 끊긴 작업이라도 403
         HttpResponse<String> byAgent = api.postAsAgent(tasksPath() + "/" + t[0] + "/state-events",
-                stateJson("CANCEL", t[1], lock, null, null), leader, api.agentTokenId());
+                stateJson("CANCEL", t[1], lock, null, null), leader, api.leaderAgentTokenId());
         assertThat(byAgent.statusCode()).isEqualTo(403);
 
         // 사람 팀장 → 취소됨
@@ -388,15 +388,60 @@ class TaskStateApiIntegrationTests {
         HttpResponse<String> cancelAgain = report(t[0], stateJson("CANCEL", t[1], lock, null, null), leader);
         assertThat(cancelAgain.statusCode()).isEqualTo(200);
 
-        // 담당자가 같은 (task, validation) 으로 START 재전송 → 기존 결과(CANCELLED) 그대로
+        // 취소된 작업에 START → START 멱등은 IN_PROGRESS 일 때만이라 금지 전이 400 (같은 검증이든 새 검증이든)
         HttpResponse<String> restart = report(t[0], stateJson("START", t[1], lock + 1, v, null), member);
-        assertThat(restart.statusCode()).isEqualTo(200);
-        assertThat(TaskApiSupport.stringField(restart.body(), "status")).isEqualTo("CANCELLED");
-        // 다른 검증으로 새로 시작하려는 시도는 금지 전이 → 400
-        long v2 = passValidation(t[0], t[1]);
-        HttpResponse<String> again = report(t[0], stateJson("START", t[1], lock + 1, v2, null), member);
-        assertThat(again.statusCode()).isEqualTo(400);
-        assertThat(again.body()).contains("\"code\":\"invalid_transition\"");
+        assertThat(restart.statusCode()).isEqualTo(400);
+        assertThat(restart.body()).contains("\"code\":\"invalid_transition\"");
+    }
+
+    @Test
+    void cancel_waitingTaskIsNotStalled_evenAfterThreshold() throws Exception {
+        long[] t = createTask("승인 대기", api.readsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        long lock = TaskApiSupport.longField(started.body(), "lock_version");
+        HttpResponse<String> waiting = report(t[0], stateJson("WAIT", t[1], lock, null, "\"waiting_reason\":\"APPROVAL\""), member);
+        long lock2 = TaskApiSupport.longField(waiting.body(), "lock_version");
+        api.jdbc.sql("update task set updated_at = now() - interval '3 hour' where id = :t").param("t", t[0]).update();
+
+        // 대기 중에는 보고가 멈추는 게 정상 → 팀장도 취소 불가 (§4.1)
+        HttpResponse<String> res = report(t[0], stateJson("CANCEL", t[1], lock2, null, null), leader);
+        assertThat(res.statusCode()).isEqualTo(403);
+    }
+
+    @Test
+    void planChange_whileWaitingForDependency_keepsReason_andResumeNeedsNewPass() throws Exception {
+        long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        long lock = TaskApiSupport.longField(started.body(), "lock_version");
+        HttpResponse<String> waiting = report(t[0], stateJson("WAIT", t[1], lock, null, "\"waiting_reason\":\"DEPENDENCY\""), member);
+        long lock2 = TaskApiSupport.longField(waiting.body(), "lock_version");
+
+        // 대기 중에 계획 변경 (S2 는 IN_PROGRESS 만 상태를 바꾼다)
+        String plan = api.planJson("A v2", api.readsRef("API-02"), "[]").trim();
+        String body = plan.substring(0, plan.lastIndexOf('}'))
+                + ", \"expected_revision_no\": 1, \"expected_lock_version\": " + lock2 + "}";
+        HttpResponse<String> changed = api.post(tasksPath() + "/" + t[0] + "/plan-revisions", body, member);
+        assertThat(changed.statusCode()).as(changed.body()).isEqualTo(201);
+        assertThat(TaskApiSupport.stringField(changed.body(), "status")).isEqualTo("WAITING");
+        assertThat(TaskApiSupport.stringField(changed.body(), "waiting_reason")).isEqualTo("DEPENDENCY");
+        String vs = api.jdbc.sql("select status from validation where id = :v").param("v", v).query(String.class).single();
+        assertThat(vs).isEqualTo("STALE");
+
+        // 옛 PASS 로 RESUME → 새 리비전엔 PASS 가 없으므로 409
+        long newRevision = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t[0])
+                .query(Long.class).single();
+        long lock3 = TaskApiSupport.longField(changed.body(), "lock_version");
+        HttpResponse<String> resume = report(t[0], stateJson("RESUME", newRevision, lock3, v, null), member);
+        assertThat(resume.statusCode()).isEqualTo(409);
+        assertThat(resume.body()).contains("\"code\":\"validation_not_passed\"");
+
+        // 새 리비전 PASS 로 RESUME → 진행
+        long v2 = passValidation(t[0], newRevision);
+        HttpResponse<String> ok = report(t[0], stateJson("RESUME", newRevision, lock3, v2, null), member);
+        assertThat(ok.statusCode()).as(ok.body()).isEqualTo(200);
+        assertThat(TaskApiSupport.stringField(ok.body(), "status")).isEqualTo("IN_PROGRESS");
     }
 
     @Test

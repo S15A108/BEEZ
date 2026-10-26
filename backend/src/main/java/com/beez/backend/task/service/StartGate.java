@@ -59,26 +59,30 @@ public class StartGate {
         return new Result(failures);
     }
 
-    /** G1: validation_id 가 이 작업의 현재 리비전에 대한 PASS 인가 */
+    /**
+     * G1: validation_id 가 이 작업의 현재 리비전에 대한 PASS 인가.
+     * -172 합의 5번: 번호로 먼저 찾고 비교하지 않고, "이 번호 + 이 작업" 으로 찾는다.
+     * 작업은 이미 프로젝트 조건으로 찾은 것이라 프로젝트 소속도 함께 보장된다.
+     * 다른 작업의 검증과 없는 검증은 같은 응답이다.
+     */
     private void checkValidationPassed(Task task, Long validationId, List<Failure> failures) {
         List<Map<String, Object>> rows = jdbc.sql("""
-                        select task_id, plan_revision_id, status from validation where id = :id
+                        select plan_revision_id, status
+                          from validation
+                         where id = :id
+                           and task_id = :taskId
                         """)
                 .param("id", validationId)
+                .param("taskId", task.getId())
                 .query()
                 .listOfRows();
         if (rows.isEmpty()) {
-            failures.add(new Failure("validation_not_passed", "검증을 찾을 수 없습니다 (validation_id=" + validationId + ")"));
+            failures.add(new Failure("validation_not_passed", "이 작업의 검증을 찾을 수 없습니다 (validation_id=" + validationId + ")"));
             return;
         }
         Map<String, Object> v = rows.get(0);
-        long vTask = ((Number) v.get("task_id")).longValue();
         long vRevision = ((Number) v.get("plan_revision_id")).longValue();
         String status = (String) v.get("status");
-        if (vTask != task.getId()) {
-            failures.add(new Failure("validation_not_passed", "다른 작업의 검증입니다"));
-            return;
-        }
         if (task.getCurrentPlanRevisionId() == null || vRevision != task.getCurrentPlanRevisionId()) {
             failures.add(new Failure("validation_not_passed", "현재 계획(리비전)에 대한 검증이 아닙니다"));
             return;

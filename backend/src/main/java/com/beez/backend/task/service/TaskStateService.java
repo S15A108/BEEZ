@@ -1,6 +1,7 @@
 package com.beez.backend.task.service;
 
 import com.beez.backend.common.access.Membership;
+import com.beez.backend.common.access.NotFound;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -86,14 +87,18 @@ public class TaskStateService {
         // 2) 프로젝트 잠금. 이 뒤에 읽는 작업 상태가 "지금" 상태다.
         boolean exists = designLookup.lockProject(projectId);
         if (!exists) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "프로젝트를 찾을 수 없습니다");
+            throw NotFound.because("project_missing project=" + projectId);
         }
         Task task = requireTask(projectId, taskId);
         requirePermission(caller, membership, task, in.event());
 
         // 4) 멱등 — 같은 보고가 다시 오면 현재 상태 그대로 200. lock_version 비교보다 먼저 (명세 TSK-A07)
-        //    START 는 "같은 (task_id, validation_id) 로 이미 시작했는가" 로 본다. 응답 유실 뒤 재전송이 새 시작이 되면 안 된다.
-        if (in.event() == TaskEvent.START && in.validationId().equals(task.getStartedValidationId())) {
+        //    START: 현재 IN_PROGRESS 이고 같은 validation_id 로 시작한 경우만 (명세 "기존 START 결과 반환").
+        //    RESUME 에는 상태 기반 멱등이 없다 — 시작 때 PASS 로 다시 RESUME 하는 경로(WAIT 후 재개)를 막지 않기 위해.
+        //    RESUME 재전송은 Idempotency-Key 가 처리한다 (04-task-lifecycle.md §2.1·§3).
+        if (in.event() == TaskEvent.START
+                && task.getStatus() == TaskStatus.IN_PROGRESS
+                && in.validationId().equals(task.getStartedValidationId())) {
             return query.toDetail(task);
         }
         //    delta 있는 COMPLETED 재전송: 이미 WAITING(REVALIDATION) 이고 현재 계획의 완료 보고가 있으면 같은 결과(202)를 돌려준다
@@ -194,12 +199,13 @@ public class TaskStateService {
     }
 
     /**
-     * 보고가 끊긴 작업: IN_PROGRESS·WAITING 이고 마지막 보고 이후 stalledAfter 가 지났다.
+     * 보고가 끊긴 작업: <b>IN_PROGRESS</b> 이고 마지막 보고 이후 stalledAfter 가 지났다 (04-task-lifecycle.md §4.1, 담당자 결정).
+     * WAITING 은 보고가 멈추는 게 정상이라 넣지 않는다 — 넣으면 팀장 승인을 기다리는 작업까지 팀장이 취소할 수 있게 된다.
      * 마지막 보고 = 에이전트 세션의 last_report_at 과 작업의 마지막 변경 시각 중 늦은 쪽.
      * (greatest 는 Postgres 함수로, NULL 은 무시하고 가장 큰 값을 돌려준다)
      */
     private boolean isStalled(Task task) {
-        if (!task.getStatus().isOccupied()) {
+        if (task.getStatus() != TaskStatus.IN_PROGRESS) {
             return false;
         }
         // Postgres 드라이버는 timestamptz 를 OffsetDateTime 으로 읽는다 (Instant 로 바로는 못 읽음)
@@ -285,7 +291,7 @@ public class TaskStateService {
     private Task requireTask(Long projectId, Long taskId) {
         Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
         if (task.isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "작업을 찾을 수 없습니다");
+            throw NotFound.because("task_not_in_project task=" + taskId + " project=" + projectId);
         }
         return task.get();
     }
