@@ -10,7 +10,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
-/** 전이 표 전수 검사 — docs/design/04-task-lifecycle.md §2 와 글자 하나까지 같아야 한다. 6 상태 × 5 이벤트 = 30 칸. */
+/** 전이 표 전수 검사 — docs/design/04-task-lifecycle.md §2.1 과 글자 하나까지 같아야 한다. 6 상태 × 5 이벤트 = 30 칸. */
 class TaskTransitionPolicyTest {
 
     private final TaskTransitionPolicy policy = new TaskTransitionPolicy();

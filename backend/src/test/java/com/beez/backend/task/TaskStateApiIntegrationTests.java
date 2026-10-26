@@ -339,26 +339,43 @@ class TaskStateApiIntegrationTests {
 
         String extra = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"응답에 nickname 추가\"}]";
         HttpResponse<String> res = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
-        assertThat(res.statusCode()).as(res.body()).isEqualTo(200);
+        // 명세 TSK-A07: delta 가 있어 검증을 접수한 경우 202
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(202);
         assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("WAITING");
         assertThat(TaskApiSupport.stringField(res.body(), "waiting_reason")).isEqualTo("REVALIDATION");
         Boolean hasDelta = api.jdbc.sql("select has_delta from task_completion_report where task_id = :t").param("t", t[0])
                 .query(Boolean.class).single();
         assertThat(hasDelta).isTrue();
+
+        // 응답을 잃어버려 같은 완료 보고를 다시 보냄 → 같은 결과(202), 완료 보고는 1건 그대로
+        HttpResponse<String> again = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
+        assertThat(again.statusCode()).as(again.body()).isEqualTo(202);
+        Integer reportCount = api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0])
+                .query(Integer.class).single();
+        assertThat(reportCount).isEqualTo(1);
     }
 
     @Test
-    void cancel_byOtherMember_is403_butHumanLeaderCan_andAgentOfLeaderCannot() throws Exception {
+    void cancel_leaderOnlyWhenStalled_agentOfLeaderNever() throws Exception {
         long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
         long v = passValidation(t[0], t[1]);
         report(t[0], stateJson("START", t[1], t[2], v, null), member);
         long lock = api.jdbc.sql("select lock_version from task where id = :t").param("t", t[0]).query(Long.class).single();
 
-        // 팀장의 에이전트 토큰(여기선 member 토큰을 leader 계정에 붙여 흉내) → 사람이 아니므로 403
+        // 방금 보고가 있었던 작업 → 팀장(사람)도 취소 불가 (AC-14 는 "보고가 끊긴 작업"만)
+        HttpResponse<String> fresh = report(t[0], stateJson("CANCEL", t[1], lock, null, null), leader);
+        assertThat(fresh.statusCode()).isEqualTo(403);
+        assertThat(fresh.body()).contains("보고가 끊긴");
+
+        // 마지막 보고를 1시간 전으로 돌림 (임계값 기본 30분)
+        api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", t[0]).update();
+
+        // 팀장의 에이전트 토큰 → 사람이 아니므로 끊긴 작업이라도 403
         HttpResponse<String> byAgent = api.postAsAgent(tasksPath() + "/" + t[0] + "/state-events",
                 stateJson("CANCEL", t[1], lock, null, null), leader, api.agentTokenId());
         assertThat(byAgent.statusCode()).isEqualTo(403);
 
+        // 사람 팀장 → 취소됨
         HttpResponse<String> byLeader = report(t[0], stateJson("CANCEL", t[1], lock, null, null), leader);
         assertThat(byLeader.statusCode()).as(byLeader.body()).isEqualTo(200);
         assertThat(TaskApiSupport.stringField(byLeader.body(), "status")).isEqualTo("CANCELLED");
@@ -367,15 +384,27 @@ class TaskStateApiIntegrationTests {
         String vs = api.jdbc.sql("select status from validation where id = :v").param("v", v).query(String.class).single();
         assertThat(vs).isEqualTo("STALE");
 
-        // 취소 뒤 같은 (task, validation) 으로 START 재전송 → "기존 결과 반환" (멱등). 상태는 그대로 CANCELLED
+        // 팀장이 같은 취소를 다시 보냄 → 멱등 200
+        HttpResponse<String> cancelAgain = report(t[0], stateJson("CANCEL", t[1], lock, null, null), leader);
+        assertThat(cancelAgain.statusCode()).isEqualTo(200);
+
+        // 담당자가 같은 (task, validation) 으로 START 재전송 → 기존 결과(CANCELLED) 그대로
         HttpResponse<String> restart = report(t[0], stateJson("START", t[1], lock + 1, v, null), member);
         assertThat(restart.statusCode()).isEqualTo(200);
         assertThat(TaskApiSupport.stringField(restart.body(), "status")).isEqualTo("CANCELLED");
         // 다른 검증으로 새로 시작하려는 시도는 금지 전이 → 400
         long v2 = passValidation(t[0], t[1]);
-        HttpResponse<String> fresh = report(t[0], stateJson("START", t[1], lock + 1, v2, null), member);
-        assertThat(fresh.statusCode()).isEqualTo(400);
-        assertThat(fresh.body()).contains("\"code\":\"invalid_transition\"");
+        HttpResponse<String> again = report(t[0], stateJson("START", t[1], lock + 1, v2, null), member);
+        assertThat(again.statusCode()).isEqualTo(400);
+        assertThat(again.body()).contains("\"code\":\"invalid_transition\"");
+    }
+
+    @Test
+    void cancel_byOtherMember_is403() throws Exception {
+        long[] t = createTask("A", api.readsRef("API-01"), "[]", leader);
+        // 담당자가 아닌 일반 멤버 → 끊긴 작업이어도 팀장이 아니므로 403
+        HttpResponse<String> res = report(t[0], stateJson("CANCEL", t[1], t[2], null, null), member);
+        assertThat(res.statusCode()).isEqualTo(403);
     }
 
     @Test

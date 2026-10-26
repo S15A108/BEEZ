@@ -15,11 +15,14 @@ import com.beez.backend.task.event.TaskStateChangedEvent;
 import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.repository.TaskRepository;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -55,9 +58,13 @@ public class TaskStateService {
     private final JdbcClient jdbc;
     private final Clock clock;
 
+    /** 보고가 끊겼다고 보는 시간. 값은 미결(04-task-lifecycle.md §6) — 기본 30분, 설정 beez.task.stalled-after 로 바꾼다 */
+    private final Duration stalledAfter;
+
     public TaskStateService(TaskRepository tasks, TaskCompletionReportRepository reports, ProjectAccessChecker access,
                             ProjectDesignLookup designLookup, TaskTransitionPolicy policy, StartGate startGate,
-                            TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc) {
+                            TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc,
+                            @Value("${beez.task.stalled-after:PT30M}") Duration stalledAfter) {
         this.tasks = tasks;
         this.reports = reports;
         this.access = access;
@@ -68,6 +75,7 @@ public class TaskStateService {
         this.events = events;
         this.jdbc = jdbc;
         this.clock = Clock.systemUTC();
+        this.stalledAfter = stalledAfter;
     }
 
     @Transactional
@@ -86,6 +94,10 @@ public class TaskStateService {
         // 4) 멱등 — 같은 보고가 다시 오면 현재 상태 그대로 200. lock_version 비교보다 먼저 (명세 TSK-A07)
         //    START 는 "같은 (task_id, validation_id) 로 이미 시작했는가" 로 본다. 응답 유실 뒤 재전송이 새 시작이 되면 안 된다.
         if (in.event() == TaskEvent.START && in.validationId().equals(task.getStartedValidationId())) {
+            return query.toDetail(task);
+        }
+        //    delta 있는 COMPLETED 재전송: 이미 WAITING(REVALIDATION) 이고 현재 계획의 완료 보고가 있으면 같은 결과(202)를 돌려준다
+        if (in.event() == TaskEvent.COMPLETED && isAwaitingDeltaValidation(task)) {
             return query.toDetail(task);
         }
         TaskTransitionPolicy.Verdict verdict = policy.check(task.getStatus(), in.event());
@@ -158,8 +170,9 @@ public class TaskStateService {
     }
 
     /**
-     * 담당자 본인만. 예외: CANCEL 은 사람 세션의 LEADER 도 가능 (AC-14 보고 끊긴 작업 정리).
-     * 팀장의 에이전트 토큰은 남의 작업을 취소하지 못한다.
+     * 담당자 본인만 (04-task-lifecycle.md §4.1).
+     * 예외: 사람 세션의 LEADER 는 <b>보고가 끊긴 작업</b>만 CANCEL 할 수 있다 (AC-14, TSK-A07 처리 규칙).
+     * 팀장의 에이전트 토큰은 남의 작업을 취소하지 못한다. 그 밖의 팀장 개입은 미결(§6).
      */
     private void requirePermission(CallerContext caller, Membership membership, Task task, TaskEvent event) {
         boolean isAssignee = membership.memberId().equals(task.getAssigneeMemberId());
@@ -167,9 +180,59 @@ public class TaskStateService {
             return;
         }
         if (event == TaskEvent.CANCEL && caller.isHuman() && membership.isLeader()) {
-            return;
+            // 이미 취소된 작업에 대한 재전송은 멱등 처리로 넘긴다
+            if (task.getStatus() == TaskStatus.CANCELLED) {
+                return;
+            }
+            if (isStalled(task)) {
+                return;
+            }
+            throw new ApiException(HttpStatus.FORBIDDEN, "forbidden",
+                    "팀장은 보고가 끊긴 작업만 취소할 수 있습니다 (마지막 보고 후 " + stalledAfter.toMinutes() + "분)");
         }
         throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "담당자만 작업 상태를 바꿀 수 있습니다");
+    }
+
+    /**
+     * 보고가 끊긴 작업: IN_PROGRESS·WAITING 이고 마지막 보고 이후 stalledAfter 가 지났다.
+     * 마지막 보고 = 에이전트 세션의 last_report_at 과 작업의 마지막 변경 시각 중 늦은 쪽.
+     * (greatest 는 Postgres 함수로, NULL 은 무시하고 가장 큰 값을 돌려준다)
+     */
+    private boolean isStalled(Task task) {
+        if (!task.getStatus().isOccupied()) {
+            return false;
+        }
+        // Postgres 드라이버는 timestamptz 를 OffsetDateTime 으로 읽는다 (Instant 로 바로는 못 읽음)
+        OffsetDateTime lastReport = jdbc.sql("""
+                        select greatest(t.updated_at,
+                                        (select max(s.last_report_at) from agent_session s where s.current_task_id = t.id))
+                          from task t
+                         where t.id = :taskId
+                        """)
+                .param("taskId", task.getId())
+                .query(OffsetDateTime.class)
+                .single();
+        Instant threshold = Instant.now(clock).minus(stalledAfter);
+        return lastReport.toInstant().isBefore(threshold);
+    }
+
+    /** delta 있는 완료 보고를 이미 받아 DELTA 검증을 기다리는 중인가 (S3 이후 상태) */
+    private boolean isAwaitingDeltaValidation(Task task) {
+        if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
+            return false;
+        }
+        Integer count = jdbc.sql("""
+                        select count(*)
+                          from task_completion_report
+                         where task_id = :taskId
+                           and plan_revision_id = :revisionId
+                           and has_delta = true
+                        """)
+                .param("taskId", task.getId())
+                .param("revisionId", task.getCurrentPlanRevisionId())
+                .query(Integer.class)
+                .single();
+        return count > 0;
     }
 
     private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {

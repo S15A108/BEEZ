@@ -9,7 +9,7 @@ import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
- * 상태 전이 표 (docs/design/04-task-lifecycle.md §2). DB 없이 순수 자바.
+ * 요청 전이 표 (docs/design/04-task-lifecycle.md §2.1). 서버가 바꾸는 시스템 전이(§2.2)는 여기 없다. DB 없이 순수 자바.
  *
  * <p>결과를 세 가지로 돌려주고 예외는 던지지 않는다 — 표 전체를 단위 테스트로 전수 검사하기 쉽게.
  * <ul>

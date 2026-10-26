@@ -6,7 +6,11 @@ import com.beez.backend.task.dto.TaskStateInput;
 import com.beez.backend.task.service.TaskStateService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.beez.backend.task.entity.TaskEvent;
+import com.beez.backend.task.entity.TaskStatus;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,10 +29,19 @@ public class TaskStateController {
         this.stateService = stateService;
     }
 
+    /**
+     * 응답 코드: 보통 200. COMPLETED 인데 delta 가 있어 WAITING(REVALIDATION) 으로 간 경우만 202
+     * (명세 TSK-A07 "delta 가 있어 검증을 접수한 경우", 04-task-lifecycle.md §2.1 ※).
+     */
     @Operation(summary = "TSK-A07 작업 상태 보고 (START·RESUME·WAIT·COMPLETED·CANCEL)")
     @PostMapping("/state-events")
-    public TaskDetailResponse report(CallerContext caller, @PathVariable("id") Long projectId,
-                                     @PathVariable("task_id") Long taskId, @Valid @RequestBody TaskStateInput body) {
-        return stateService.report(caller, projectId, taskId, body);
+    public ResponseEntity<TaskDetailResponse> report(CallerContext caller, @PathVariable("id") Long projectId,
+                                                     @PathVariable("task_id") Long taskId,
+                                                     @Valid @RequestBody TaskStateInput body) {
+        TaskDetailResponse result = stateService.report(caller, projectId, taskId, body);
+        if (body.event() == TaskEvent.COMPLETED && result.status() == TaskStatus.WAITING) {
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(result);
+        }
+        return ResponseEntity.ok(result);
     }
 }
