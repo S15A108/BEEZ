@@ -265,7 +265,9 @@ public class TaskStateService {
         if (delta.isEmpty()) {
             task.complete(now);
         } else {
-            // 계획과 다른 점이 있다 → 재검증 대기. delta 검증(trigger=DELTA) 접수는 S15P31A108-59 에서 붙인다.
+            // 계획과 다른 점이 있다 → 재검증 대기.
+            // -159 에서 바꿀 순서: DELTA 검증을 먼저 만들고 → 그 번호를 넣어 완료 보고를 저장한다.
+            // 완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다.
             task.holdForRevalidation();
         }
     }

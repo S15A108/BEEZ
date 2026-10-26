@@ -52,8 +52,11 @@ public class StartGate {
 
     public Result evaluate(Task task, Long validationId) {
         List<Failure> failures = new ArrayList<>();
-        checkValidationPassed(task, validationId, failures);
-        checkReferencesCurrent(task, validationId, failures);
+        boolean ownValidation = checkValidationPassed(task, validationId, failures);
+        // G2 는 그 검증이 이 작업 것일 때만 본다. 남의 검증이면 G1 이 이미 거절했고, 그 내용을 더 읽지 않는다
+        if (ownValidation) {
+            checkReferencesCurrent(task, validationId, failures);
+        }
         checkDependenciesCompleted(task, failures);
         checkNoChangesConflict(task, failures);
         return new Result(failures);
@@ -64,8 +67,10 @@ public class StartGate {
      * -172 합의 5번: 번호로 먼저 찾고 비교하지 않고, "이 번호 + 이 작업" 으로 찾는다.
      * 작업은 이미 프로젝트 조건으로 찾은 것이라 프로젝트 소속도 함께 보장된다.
      * 다른 작업의 검증과 없는 검증은 같은 응답이다.
+     *
+     * @return 이 작업의 검증이 있으면 true (PASS 여부와 상관없이). false 면 G2 를 건너뛴다
      */
-    private void checkValidationPassed(Task task, Long validationId, List<Failure> failures) {
+    private boolean checkValidationPassed(Task task, Long validationId, List<Failure> failures) {
         List<Map<String, Object>> rows = jdbc.sql("""
                         select plan_revision_id, status
                           from validation
@@ -77,29 +82,34 @@ public class StartGate {
                 .query()
                 .listOfRows();
         if (rows.isEmpty()) {
-            failures.add(new Failure("validation_not_passed", "이 작업의 검증을 찾을 수 없습니다 (validation_id=" + validationId + ")"));
-            return;
+            // 요청한 번호를 메시지에 되풀이하지 않는다. 없는 번호와 남의 번호의 응답이 글자까지 같아야 한다
+            failures.add(new Failure("validation_not_passed", "이 작업의 검증을 찾을 수 없습니다"));
+            return false;
         }
         Map<String, Object> v = rows.get(0);
         long vRevision = ((Number) v.get("plan_revision_id")).longValue();
         String status = (String) v.get("status");
         if (task.getCurrentPlanRevisionId() == null || vRevision != task.getCurrentPlanRevisionId()) {
             failures.add(new Failure("validation_not_passed", "현재 계획(리비전)에 대한 검증이 아닙니다"));
-            return;
+            return true;
         }
         if (!"PASS".equals(status)) {
             failures.add(new Failure("validation_not_passed", "검증 상태가 PASS 가 아닙니다 (현재 " + status + ")"));
         }
+        return true;
     }
 
     /**
      * G2: 검증이 본 (항목, 버전) 이 지금 현재 baseline 의 버전과 모두 같은가.
      * 전역 baseline 번호는 비교하지 않는다 — 내가 참조한 항목만 본다.
+     * evaluate 에서 G1 이 "이 작업의 검증" 을 찾았을 때만 부른다. 쿼리에도 task_id 조건을 걸어
+     * 이 메서드만 따로 불려도 남의 검증이 본 설계 항목이 섞이지 않게 한다 (-172 합의 3·5번).
      */
     private void checkReferencesCurrent(Task task, Long validationId, List<Failure> failures) {
         List<Map<String, Object>> stale = jdbc.sql("""
                         select r.design_item_id, r.design_item_version_id as seen, bi.design_item_version_id as current
                           from validation_design_ref r
+                          join validation v on v.id = r.validation_id and v.task_id = :taskId
                           left join project p on p.id = :projectId
                           left join baseline_item bi on bi.baseline_id = p.current_baseline_id
                                                     and bi.design_item_id = r.design_item_id
@@ -107,6 +117,7 @@ public class StartGate {
                            and (bi.design_item_version_id is null or bi.design_item_version_id <> r.design_item_version_id)
                         """)
                 .param("projectId", task.getProjectId())
+                .param("taskId", task.getId())
                 .param("validationId", validationId)
                 .query()
                 .listOfRows();

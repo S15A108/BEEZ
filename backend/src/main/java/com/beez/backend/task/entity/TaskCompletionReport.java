@@ -50,7 +50,10 @@ public class TaskCompletionReport extends BaseTimeEntity {
     @Column(name = "completion_checks", nullable = false, updatable = false)
     private List<Map<String, Object>> completionChecks;
 
-    /** 델타 검증(trigger=DELTA). 검증 실행(S15P31A108-59)에서 채운다 */
+    /**
+     * 델타 검증(trigger=DELTA). 이 테이블은 UPDATE 금지(트리거)라 나중에 채울 수 없다.
+     * 검증 접수(S15P31A108-159)가 들어오면 DELTA 검증을 먼저 만들고 그 번호를 넣어 보고를 저장한다. 지금은 비어 있다.
+     */
     @Column(name = "delta_validation_id", updatable = false)
     private Long deltaValidationId;
 

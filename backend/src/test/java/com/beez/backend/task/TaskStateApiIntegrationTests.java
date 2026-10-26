@@ -166,6 +166,24 @@ class TaskStateApiIntegrationTests {
     }
 
     @Test
+    void start_withOtherProjectsValidation_looksSameAsMissing() throws Exception {
+        long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
+        api.runSql("fixtures/other-project-validation.sql");
+        Long otherValidation = api.jdbc.sql("""
+                        select v.id from validation v join task t on t.id = v.task_id join project p on p.id = t.project_id
+                         where p.name = 'Q'
+                        """).query(Long.class).single();
+
+        HttpResponse<String> foreign = report(t[0], stateJson("START", t[1], t[2], otherValidation, null), member);
+        HttpResponse<String> missing = report(t[0], stateJson("START", t[1], t[2], 999999L, null), member);
+
+        assertThat(foreign.statusCode()).isEqualTo(409);
+        assertThat(foreign.body()).contains("\"code\":\"validation_not_passed\"");
+        // 남의 검증 번호와 없는 번호의 응답이 글자까지 같다 = Q 검증의 내용(설계 항목·최신성)이 하나도 안 섞였다
+        assertThat(foreign.body()).isEqualTo(missing.body());
+    }
+
+    @Test
     void start_withoutValidationId_is400() throws Exception {
         long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
         HttpResponse<String> res = report(t[0], stateJson("START", t[1], t[2], null, null), member);
