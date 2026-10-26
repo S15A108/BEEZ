@@ -1,5 +1,6 @@
 package com.beez.backend.task.api;
 
+import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.dto.AddPlanRevisionRequest;
 import com.beez.backend.task.dto.ChangeAssigneeRequest;
@@ -95,7 +96,7 @@ public class TaskController {
     public TaskDetailResponse changeAssignee(CallerContext caller, @PathVariable("id") Long projectId,
                                              @PathVariable("task_id") Long taskId,
                                              @Valid @RequestBody ChangeAssigneeRequest body) {
-        return assigneeService.changeAssignee(caller, projectId, taskId, body.assigneeMemberId(),
+        return assigneeService.changeAssignee(caller, projectId, taskId, Ids.parse(body.assigneeMemberId(), "assignee_member_id"),
                 body.expectedLockVersion());
     }
 }

@@ -5,7 +5,6 @@ import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.NotFound;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.task.dto.DesignRefInput;
 import com.beez.backend.task.dto.TaskDetailResponse;
 import com.beez.backend.task.dto.TaskPlanInput;
 import com.beez.backend.task.entity.DependencyKind;
@@ -75,8 +74,9 @@ public class TaskPlanService {
     // TSK-A01 작업 생성 = 작업 행 + 첫 계획 리비전. 끝나면 READY.
     // ------------------------------------------------------------------
     @Transactional
-    public TaskDetailResponse createTask(CallerContext caller, Long projectId, TaskPlanInput plan) {
+    public TaskDetailResponse createTask(CallerContext caller, Long projectId, TaskPlanInput input) {
         Membership membership = access.requireMember(caller, projectId);
+        PlanCommand plan = PlanCommand.from(input); // 문자열 ID → Long (형식 오류 400)
 
         // 1) 프로젝트 행 잠금 → 표시 키 발급이 겹치지 않게. UNIQUE(project_id, key) 가 최후 방어.
         boolean exists = designLookup.lockProject(projectId);
@@ -111,9 +111,10 @@ public class TaskPlanService {
     // TSK-A04 계획 리비전 추가. 덮어쓰지 않고 새 행.
     // ------------------------------------------------------------------
     @Transactional
-    public TaskDetailResponse addRevision(CallerContext caller, Long projectId, Long taskId, TaskPlanInput plan,
+    public TaskDetailResponse addRevision(CallerContext caller, Long projectId, Long taskId, TaskPlanInput input,
                                           int expectedRevisionNo, int expectedLockVersion) {
         Membership membership = access.requireMember(caller, projectId);
+        PlanCommand plan = PlanCommand.from(input); // 문자열 ID → Long (형식 오류 400)
         // 프로젝트 행을 먼저 잠근다. 같은 작업의 계획을 동시에 고치면 두 번째 요청은 여기서 기다렸다가
         // 아래 revision_no 비교에서 409 revision_conflict 를 받는다 (잠그지 않으면 UNIQUE(task_id, revision_no) 위반이 400 으로 샌다).
         // 잠금 순서를 상태 보고(START 등)와 같은 "프로젝트 → 작업" 으로 맞춰 교착을 피하고,
@@ -192,10 +193,10 @@ public class TaskPlanService {
      *   <li>항목이 현재 baseline 에 없으면 400, 보낸 버전이 현재 버전과 다르면 409 version_conflict</li>
      * </ul>
      */
-    private ResolvedRefs resolveDesignRefs(Long projectId, List<DesignRefInput> inputs) {
+    private ResolvedRefs resolveDesignRefs(Long projectId, List<PlanCommand.Ref> inputs) {
         // LinkedHashMap: 들어온 순서를 유지한다 (응답에서 순서가 뒤섞이지 않게)
-        Map<Long, DesignRefInput> strongest = new LinkedHashMap<>();
-        for (DesignRefInput in : inputs) {
+        Map<Long, PlanCommand.Ref> strongest = new LinkedHashMap<>();
+        for (PlanCommand.Ref in : inputs) {
             boolean hasContent = in.proposedContent() != null && !in.proposedContent().isEmpty();
             if (in.relation() == PlanRelation.CHANGES && !hasContent) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
@@ -205,7 +206,7 @@ public class TaskPlanService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
                         "proposed_content 는 CHANGES 에서만 보냅니다 (design_item_id=" + in.designItemId() + ")");
             }
-            DesignRefInput existing = strongest.get(in.designItemId());
+            PlanCommand.Ref existing = strongest.get(in.designItemId());
             if (existing == null || in.relation().isStrongerThan(existing.relation())) {
                 strongest.put(in.designItemId(), in);
             }
@@ -213,7 +214,7 @@ public class TaskPlanService {
 
         Map<Long, Long> versionByItem = new HashMap<>();
         Map<Long, PlanRelation> relationByItem = new HashMap<>();
-        for (DesignRefInput in : strongest.values()) {
+        for (PlanCommand.Ref in : strongest.values()) {
             Optional<Long> current = designLookup.currentVersionIdOf(projectId, in.designItemId());
             if (current.isEmpty()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
@@ -256,7 +257,7 @@ public class TaskPlanService {
         }
     }
 
-    private TaskPlanRevision saveRevision(Task task, int revisionNo, TaskPlanInput plan, ResolvedRefs resolved,
+    private TaskPlanRevision saveRevision(Task task, int revisionNo, PlanCommand plan, ResolvedRefs resolved,
                                           CallerContext caller) {
         String inputHash = hasher.hash(plan, resolved.versionByItem(), resolved.relationByItem());
         TaskPlanRevision revision = TaskPlanRevision.builder()
@@ -279,7 +280,7 @@ public class TaskPlanService {
         revision = revisions.save(revision);
 
         List<TaskPlanDesignRef> refRows = new ArrayList<>();
-        for (DesignRefInput in : resolved.refs()) {
+        for (PlanCommand.Ref in : resolved.refs()) {
             refRows.add(new TaskPlanDesignRef(revision.getId(), in.designItemId(),
                     resolved.versionByItem().get(in.designItemId()), in.relation(), in.proposedContent()));
         }
@@ -313,7 +314,7 @@ public class TaskPlanService {
     }
 
     /** 정리된 참조 목록과, 항목별 확정 버전·관계 */
-    private record ResolvedRefs(List<DesignRefInput> refs, Map<Long, Long> versionByItem,
+    private record ResolvedRefs(List<PlanCommand.Ref> refs, Map<Long, Long> versionByItem,
                                 Map<Long, PlanRelation> relationByItem) {
     }
 }

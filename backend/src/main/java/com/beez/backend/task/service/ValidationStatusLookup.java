@@ -15,6 +15,10 @@ public class ValidationStatusLookup {
 
     public static final String NOT_RUN = "NOT_RUN";
 
+    /** 명세 validation_status 값 (DDL validation.status CHECK 와 같음) */
+    public static final java.util.Set<String> ALL = java.util.Set.of(
+            "NOT_RUN", "RUNNING", "PASS", "NEEDS_INPUT", "NEEDS_REVIEW", "STALE", "ERROR");
+
     private final JdbcClient jdbc;
 
     public ValidationStatusLookup(JdbcClient jdbc) {
@@ -39,6 +43,28 @@ public class ValidationStatusLookup {
                 .query(String.class)
                 .optional()
                 .orElse(NOT_RUN);
+    }
+
+    /**
+     * 현재 계획의 최신 검증 상태가 status 인 작업 번호들 (검증이 없으면 NOT_RUN 으로 본다).
+     * 목록 조회에서 페이지를 자르기 전에 필터로 쓴다.
+     */
+    public List<Long> taskIdsWithStatus(Long projectId, String status) {
+        return jdbc.sql("""
+                        select t.id
+                          from task t
+                         where t.project_id = :projectId
+                           and coalesce((select v.status
+                                           from validation v
+                                          where v.task_id = t.id
+                                            and v.plan_revision_id = t.current_plan_revision_id
+                                          order by v.id desc
+                                          limit 1), 'NOT_RUN') = :status
+                        """)
+                .param("projectId", projectId)
+                .param("status", status)
+                .query(Long.class)
+                .list();
     }
 
     /** 여러 작업을 한 번에. 목록 조회에서 N+1 을 피한다. key = task_id */

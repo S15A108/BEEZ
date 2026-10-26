@@ -105,7 +105,7 @@ class AccessRulesIntegrationTests {
         int lock = api.jdbc.sql("select lock_version from task where id = :t").param("t", taskId).query(Integer.class).single();
 
         HttpResponse<String> res = api.patch(tasksPath() + "/" + taskId + "/assignee",
-                "{\"assignee_member_id\": " + memberId + ", \"expected_lock_version\": " + lock + "}", leader);
+                "{\"assignee_member_id\": \"" + memberId + "\", \"expected_lock_version\": " + lock + "}", leader);
         assertThat(res.statusCode()).isEqualTo(400);
     }
 
@@ -158,8 +158,8 @@ class AccessRulesIntegrationTests {
         Long otherPacket = api.jdbc.sql("select max(id) from dev_context_packet").query(Long.class).single();
 
         String plan = api.planJson("남의 패킷", api.readsRef("API-01"), "[]").trim();
-        String withPacket = plan.substring(0, plan.lastIndexOf('}')) + ", \"context_packet_id\": " + otherPacket + "}";
-        String withMissing = plan.substring(0, plan.lastIndexOf('}')) + ", \"context_packet_id\": 999999}";
+        String withPacket = plan.substring(0, plan.lastIndexOf('}')) + ", \"context_packet_id\": \"" + otherPacket + "\"}";
+        String withMissing = plan.substring(0, plan.lastIndexOf('}')) + ", \"context_packet_id\": \"999999\"}";
 
         HttpResponse<String> foreign = api.post(tasksPath(), withPacket, member);
         HttpResponse<String> missing = api.post(tasksPath(), withMissing, member);

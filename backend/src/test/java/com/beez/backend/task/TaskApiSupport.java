@@ -149,7 +149,7 @@ class TaskApiSupport {
 
     String readsRef(String key) {
         return """
-                [{"design_item_id": %d, "design_item_version_id": %d, "relation": "READS"}]
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "READS"}]
                 """.formatted(designItemId(key), currentVersionId(key));
     }
 
@@ -161,6 +161,10 @@ class TaskApiSupport {
             throw new AssertionError(field + " 없음: " + json);
         }
         int start = i + marker.length();
+        // ID 는 문자열("5"), 번호는 숫자(5) — 둘 다 읽는다
+        if (start < json.length() && json.charAt(start) == '"') {
+            start++;
+        }
         int end = start;
         while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
             end++;
