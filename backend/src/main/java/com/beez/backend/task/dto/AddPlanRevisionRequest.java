@@ -1,0 +1,32 @@
+package com.beez.backend.task.dto;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * TSK-A04 요청 = 계획 입력 + 충돌 검사용 번호 두 개.
+ * record 는 상속이 안 되어 TaskPlanInput 필드를 다시 적고 {@link #toPlanInput()} 으로 바꾼다.
+ */
+public record AddPlanRevisionRequest(
+        @NotBlank String title,
+        @NotBlank String goal,
+        @NotNull List<String> includedScope,
+        @NotNull List<String> excludedScope,
+        @NotBlank String approach,
+        @NotNull List<String> completionCriteria,
+        @NotNull List<Long> dependencyTaskIds,
+        @NotNull @Valid List<DesignRefInput> designRefs,
+        @NotNull List<Map<String, Object>> unlinked,
+        @NotNull Boolean noContractChange,
+        Long contextPacketId,
+        @NotNull Integer expectedRevisionNo,
+        @NotNull Integer expectedLockVersion
+) {
+    public TaskPlanInput toPlanInput() {
+        return new TaskPlanInput(title, goal, includedScope, excludedScope, approach, completionCriteria,
+                dependencyTaskIds, designRefs, unlinked, noContractChange, contextPacketId);
+    }
+}
