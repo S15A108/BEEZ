@@ -2,7 +2,7 @@
 -- 번호는 IDENTITY 가 매기므로 고정하지 않고, 테스트는 이름(email, key)으로 조회해 번호를 얻는다.
 --
 -- 계정: leader@test (팀장), member@test (팀원), outsider@test (프로젝트 밖)
--- 프로젝트 1개, 설계 항목 API-01(v1), API-02(v1), baseline v1 에 둘 다 포함. 에이전트 토큰은 member 소유.
+-- 프로젝트 1개, 설계 항목 API-01(v1), API-02(v1), baseline v1 에 둘 다 포함. 에이전트 토큰은 member·leader 각 1개.
 
 insert into account (email, password_hash, display_name) values
   ('leader@test', 'x', '팀장'),
@@ -19,6 +19,8 @@ select p.id, a.id, 'MEMBER' from project p, account a where p.name = 'P' and a.e
 
 insert into agent_token (project_id, account_id, name, token_hash)
 select p.id, a.id, 'member-laptop', 'hash-member' from project p, account a where p.name = 'P' and a.email = 'member@test';
+insert into agent_token (project_id, account_id, name, token_hash)
+select p.id, a.id, 'leader-laptop', 'hash-leader' from project p, account a where p.name = 'P' and a.email = 'leader@test';
 
 insert into design_item (project_id, key, kind)
 select id, 'API-01', 'API_CONTRACT' from project where name = 'P';

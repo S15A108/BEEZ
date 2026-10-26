@@ -1,6 +1,7 @@
 package com.beez.backend.task.service;
 
 import com.beez.backend.common.access.ProjectAccessChecker;
+import com.beez.backend.common.access.NotFound;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.dto.TaskDetailResponse;
@@ -34,7 +35,7 @@ public class TaskAssigneeService {
         access.requireHumanLeader(caller, projectId);
         Optional<Task> found = tasks.findByIdAndProjectId(taskId, projectId);
         if (found.isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "작업을 찾을 수 없습니다");
+            throw NotFound.because("task_not_in_project task=" + taskId + " project=" + projectId);
         }
         Task task = found.get();
         if (task.getLockVersion() != expectedLockVersion) {

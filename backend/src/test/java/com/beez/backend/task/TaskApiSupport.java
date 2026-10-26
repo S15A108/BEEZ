@@ -75,8 +75,14 @@ class TaskApiSupport {
                 """).param("k", key).query(Long.class).single();
     }
 
+    /** member 소유 토큰 */
     Long agentTokenId() {
         return jdbc.sql("select id from agent_token where name = 'member-laptop'").query(Long.class).single();
+    }
+
+    /** leader 소유 토큰 */
+    Long leaderAgentTokenId() {
+        return jdbc.sql("select id from agent_token where name = 'leader-laptop'").query(Long.class).single();
     }
 
     // ---- HTTP ----
@@ -95,6 +101,10 @@ class TaskApiSupport {
 
     HttpResponse<String> patchAsAgent(String path, String json, Long accountId, Long tokenId) throws Exception {
         return send(builder(path, accountId, tokenId).method("PATCH", HttpRequest.BodyPublishers.ofString(json)));
+    }
+
+    HttpResponse<String> getAsAgent(String path, Long accountId, Long tokenId) throws Exception {
+        return send(builder(path, accountId, tokenId).GET());
     }
 
     HttpResponse<String> get(String path, Long accountId) throws Exception {

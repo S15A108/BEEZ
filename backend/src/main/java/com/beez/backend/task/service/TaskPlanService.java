@@ -2,6 +2,7 @@ package com.beez.backend.task.service;
 
 import com.beez.backend.common.access.Membership;
 import com.beez.backend.common.access.ProjectAccessChecker;
+import com.beez.backend.common.access.NotFound;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.dto.DesignRefInput;
@@ -79,7 +80,7 @@ public class TaskPlanService {
         // 1) 프로젝트 행 잠금 → 표시 키 발급이 겹치지 않게. UNIQUE(project_id, key) 가 최후 방어.
         boolean exists = designLookup.lockProject(projectId);
         if (!exists) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "프로젝트를 찾을 수 없습니다");
+            throw NotFound.because("project_missing project=" + projectId);
         }
         String key = nextTaskKey(projectId);
 
@@ -206,7 +207,7 @@ public class TaskPlanService {
             Optional<Long> current = designLookup.currentVersionIdOf(projectId, in.designItemId());
             if (current.isEmpty()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
-                        "현재 기준 설계에 없는 항목입니다 (design_item_id=" + in.designItemId() + ")");
+                        "현재 기준 설계에 없거나 폐기된 항목입니다 (design_item_id=" + in.designItemId() + ")");
             }
             if (!current.get().equals(in.designItemVersionId())) {
                 throw new ApiException(HttpStatus.CONFLICT, "version_conflict",
@@ -285,7 +286,7 @@ public class TaskPlanService {
     private Task requireTask(Long projectId, Long taskId) {
         Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
         if (task.isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "작업을 찾을 수 없습니다");
+            throw NotFound.because("task_not_in_project task=" + taskId + " project=" + projectId);
         }
         return task.get();
     }

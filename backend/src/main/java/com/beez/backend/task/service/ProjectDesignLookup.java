@@ -28,7 +28,8 @@ public class ProjectDesignLookup {
      * @return 프로젝트 행이 있으면 true
      */
     public boolean lockProject(Long projectId) {
-        Optional<Long> row = jdbc.sql("select id from project where id = :id for update")
+        // 삭제된(archived) 프로젝트는 잠그지 않는다 → 호출자가 404 로 처리
+        Optional<Long> row = jdbc.sql("select id from project where id = :id and archived_at is null for update")
                 .param("id", projectId)
                 .query(Long.class)
                 .optional();
@@ -44,17 +45,19 @@ public class ProjectDesignLookup {
     }
 
     /**
-     * 현재 baseline 에서 설계 항목의 버전 id.
+     * 현재 baseline 에서 설계 항목의 버전 id. 폐기된 항목(design_item.retired_at)은 없는 것으로 본다.
      *
-     * @return 항목이 현재 baseline 에 없으면 비어 있음
+     * @return 항목이 현재 baseline 에 없거나 폐기됐으면 비어 있음
      */
     public Optional<Long> currentVersionIdOf(Long projectId, Long designItemId) {
         return jdbc.sql("""
                         select bi.design_item_version_id
                           from project p
                           join baseline_item bi on bi.baseline_id = p.current_baseline_id
+                          join design_item di on di.id = bi.design_item_id and di.project_id = p.id
                          where p.id = :projectId
                            and bi.design_item_id = :itemId
+                           and di.retired_at is null
                         """)
                 .param("projectId", projectId)
                 .param("itemId", designItemId)

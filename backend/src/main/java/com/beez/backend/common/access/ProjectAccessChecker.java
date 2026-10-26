@@ -8,13 +8,19 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
 /**
- * "이 호출자가 이 프로젝트의 활성 멤버인가"를 확인한다.
+ * "이 호출자가 이 프로젝트의 활성 멤버인가"를 확인한다. 서비스 메서드 첫 줄에서 부른다.
  *
- * <p>계정·프로젝트·멤버 엔티티(S15P31A108-68·69, 전진)가 아직 없어 {@code project_member} 테이블을 SQL 로 직접 읽는다.
- * 그 엔티티가 들어와도 이 클래스 안쪽만 바꾸면 되고, 서비스 쪽 호출은 그대로다.
+ * <p>ERD 의 소프트 삭제 칸을 모두 본다 (행을 지우지 않고 시각·플래그로 표시하는 방식).
+ * <ul>
+ *   <li>{@code project.archived_at} — 삭제된 프로젝트 → 404</li>
+ *   <li>{@code account.deleted_at} — 탈퇴한 계정 → 404</li>
+ *   <li>{@code project_member.active} — 제외·나간 팀원 → 404</li>
+ *   <li>{@code agent_token.revoked_at} + 토큰의 프로젝트·계정 — 폐기됐거나 남의/다른 프로젝트 토큰 → 401</li>
+ * </ul>
+ * 응답 코드는 -172 합의안: 존재를 숨겨야 하는 것은 404, 인증 문제는 401, 같은 프로젝트 안 권한 부족은 403.
  *
- * <p>JdbcClient 는 Spring 이 제공하는 짧은 SQL 실행 도구다. {@code sql(...)} 에 문장을 쓰고 {@code param(...)} 으로 ? 자리를 채운 뒤
- * {@code query(...)} 로 결과를 꺼낸다. 엔티티 없이 한두 줄 조회할 때 쓴다.
+ * <p>계정·프로젝트·멤버 엔티티(전진)가 아직 없어 SQL 로 직접 읽는다. 공통 권한 검사(-170)가 들어오면 이 클래스를 그쪽으로 합친다.
+ * JdbcClient 는 Spring 이 제공하는 짧은 SQL 실행 도구다: {@code sql(...)} 에 문장, {@code param(...)} 으로 :이름 자리를 채운다.
  */
 @Component
 public class ProjectAccessChecker {
@@ -26,12 +32,16 @@ public class ProjectAccessChecker {
     }
 
     /**
-     * 멤버가 아니면 404 {@code not_found}. (명세: "리소스가 없거나 프로젝트 소속·접근 권한이 없음" 은 404 로 숨긴다)
+     * 활성 멤버만 통과. 에이전트 호출이면 토큰도 확인한다.
+     * 실패 사유는 로그에만 남기고 응답은 하나로 통일한다 ({@link NotFound}).
      */
     public Membership requireMember(CallerContext caller, Long projectId) {
+        if (caller.agentTokenId() != null) {
+            requireUsableToken(caller, projectId);
+        }
         Optional<Membership> found = findMembership(caller.accountId(), projectId);
         if (found.isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "프로젝트를 찾을 수 없거나 접근 권한이 없습니다");
+            throw NotFound.because("not_member_or_project_gone project=" + projectId + " account=" + caller.accountId());
         }
         return found.get();
     }
@@ -50,13 +60,18 @@ public class ProjectAccessChecker {
         return membership;
     }
 
+    /** 활성 멤버십. 프로젝트 삭제·계정 탈퇴·멤버 제외 중 하나라도 해당하면 비어 있다 */
     public Optional<Membership> findMembership(Long accountId, Long projectId) {
         return jdbc.sql("""
-                        select id, role
-                          from project_member
-                         where project_id = :projectId
-                           and account_id = :accountId
-                           and active = true
+                        select pm.id, pm.role
+                          from project_member pm
+                          join project p on p.id = pm.project_id
+                          join account a on a.id = pm.account_id
+                         where pm.project_id = :projectId
+                           and pm.account_id = :accountId
+                           and pm.active = true
+                           and p.archived_at is null
+                           and a.deleted_at is null
                         """)
                 .param("projectId", projectId)
                 .param("accountId", accountId)
@@ -64,19 +79,47 @@ public class ProjectAccessChecker {
                 .optional();
     }
 
-    /** 특정 멤버 번호가 이 프로젝트의 활성 멤버인지. 담당자 지정·변경 때 쓴다. */
+    /** 특정 멤버 번호가 이 프로젝트의 활성 멤버인지 (담당자 지정·변경). 같은 소프트 삭제 조건을 쓴다 */
     public boolean isActiveMember(Long memberId, Long projectId) {
         Integer count = jdbc.sql("""
                         select count(*)
-                          from project_member
-                         where id = :memberId
-                           and project_id = :projectId
-                           and active = true
+                          from project_member pm
+                          join project p on p.id = pm.project_id
+                          join account a on a.id = pm.account_id
+                         where pm.id = :memberId
+                           and pm.project_id = :projectId
+                           and pm.active = true
+                           and p.archived_at is null
+                           and a.deleted_at is null
                         """)
                 .param("memberId", memberId)
                 .param("projectId", projectId)
                 .query(Integer.class)
                 .single();
         return count > 0;
+    }
+
+    /**
+     * 에이전트 토큰이 이 계정·이 프로젝트 것이고 폐기되지 않았는지. 아니면 401.
+     * 토큰은 프로젝트별로 발급되므로(ERD agent_token.project_id) 다른 프로젝트 경로로 쓰면 거절한다.
+     * 진짜 토큰 인증(-170)이 들어와도 서비스 쪽 마지막 방어로 남긴다.
+     */
+    private void requireUsableToken(CallerContext caller, Long projectId) {
+        Integer count = jdbc.sql("""
+                        select count(*)
+                          from agent_token t
+                         where t.id = :tokenId
+                           and t.account_id = :accountId
+                           and t.project_id = :projectId
+                           and t.revoked_at is null
+                        """)
+                .param("tokenId", caller.agentTokenId())
+                .param("accountId", caller.accountId())
+                .param("projectId", projectId)
+                .query(Integer.class)
+                .single();
+        if (count == 0) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "token_revoked", "에이전트 토큰이 유효하지 않습니다");
+        }
     }
 }

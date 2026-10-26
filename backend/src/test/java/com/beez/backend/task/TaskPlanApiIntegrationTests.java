@@ -330,7 +330,7 @@ class TaskPlanApiIntegrationTests {
         assertThat(byMember.statusCode()).isEqualTo(403);
 
         // 팀장의 에이전트 토큰이라도 사람이 아니면 거절 (human_only)
-        HttpResponse<String> byLeaderAgent = api.patchAsAgent(tasksPath() + "/" + taskId + "/assignee", body, leader, api.agentTokenId());
+        HttpResponse<String> byLeaderAgent = api.patchAsAgent(tasksPath() + "/" + taskId + "/assignee", body, leader, api.leaderAgentTokenId());
         assertThat(byLeaderAgent.statusCode()).isEqualTo(403);
         assertThat(byLeaderAgent.body()).contains("\"code\":\"human_only\"");
 
