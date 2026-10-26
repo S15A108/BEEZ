@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * TSK-A04 요청 = 계획 입력 + 충돌 검사용 번호 두 개.
+ * TSK-A04 요청 = 계획 입력 + 충돌 검사용 번호 두 개. 번호(revision_no·lock_version)는 ID 가 아니라 정수.
  * record 는 상속이 안 되어 TaskPlanInput 필드를 다시 적고 {@link #toPlanInput()} 으로 바꾼다.
  */
 public record AddPlanRevisionRequest(
@@ -17,11 +17,11 @@ public record AddPlanRevisionRequest(
         @NotNull List<String> excludedScope,
         @NotBlank String approach,
         @NotNull List<String> completionCriteria,
-        @NotNull List<Long> dependencyTaskIds,
+        @NotNull List<String> dependencyTaskIds,
         @NotNull @Valid List<DesignRefInput> designRefs,
         @NotNull List<Map<String, Object>> unlinked,
         @NotNull Boolean noContractChange,
-        Long contextPacketId,
+        String contextPacketId,
         @NotNull Integer expectedRevisionNo,
         @NotNull Integer expectedLockVersion
 ) {

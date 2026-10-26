@@ -77,6 +77,10 @@ class TaskPlanApiIntegrationTests {
         assertThat(body).contains("\"relation\":\"READS\"");
         // snake_case 로 나가는지
         assertThat(body).contains("\"current_plan_revision\"").doesNotContain("currentPlanRevision");
+        // ID 는 십진 문자열, 번호는 정수 (명세 00-common 3절)
+        assertThat(body).contains("\"id\":\"").contains("\"project_id\":\"").contains("\"assignee_member_id\":\"")
+                .contains("\"lock_version\":").doesNotContain("\"lock_version\":\"")
+                .contains("\"revision_no\":1");
     }
 
     @Test
@@ -107,7 +111,7 @@ class TaskPlanApiIntegrationTests {
     @Test
     void create_changesWithoutProposedContent_is400() throws Exception {
         String refs = """
-                [{"design_item_id": %d, "design_item_version_id": %d, "relation": "CHANGES"}]
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "CHANGES"}]
                 """.formatted(api.designItemId("API-01"), api.currentVersionId("API-01"));
         HttpResponse<String> res = api.post(tasksPath(), api.planJson("변경", refs, "[]"), member);
 
@@ -119,7 +123,7 @@ class TaskPlanApiIntegrationTests {
     void create_withStaleVersion_is409VersionConflict() throws Exception {
         long wrongVersion = api.currentVersionId("API-01") + 999;
         String refs = """
-                [{"design_item_id": %d, "design_item_version_id": %d, "relation": "READS"}]
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "READS"}]
                 """.formatted(api.designItemId("API-01"), wrongVersion);
         HttpResponse<String> res = api.post(tasksPath(), api.planJson("낡은 참조", refs, "[]"), member);
 
@@ -133,8 +137,8 @@ class TaskPlanApiIntegrationTests {
         long version = api.currentVersionId("API-01");
         String refs = """
                 [
-                  {"design_item_id": %d, "design_item_version_id": %d, "relation": "READS"},
-                  {"design_item_id": %d, "design_item_version_id": %d, "relation": "CHANGES",
+                  {"design_item_id": "%d", "design_item_version_id": "%d", "relation": "READS"},
+                  {"design_item_id": "%d", "design_item_version_id": "%d", "relation": "CHANGES",
                    "proposed_content": {"method": "GET", "path": "/users", "response": {"memberId": "long"}}}
                 ]
                 """.formatted(item, version, item, version);
@@ -149,7 +153,7 @@ class TaskPlanApiIntegrationTests {
 
     @Test
     void create_withSelfOrForeignDependency_is400() throws Exception {
-        HttpResponse<String> res = api.post(tasksPath(), api.planJson("없는 선행", api.readsRef("API-01"), "[99999]"), member);
+        HttpResponse<String> res = api.post(tasksPath(), api.planJson("없는 선행", api.readsRef("API-01"), "[\"99999\"]"), member);
 
         assertThat(res.statusCode()).isEqualTo(400);
         assertThat(res.body()).contains("\"code\":\"validation_failed\"");
@@ -300,13 +304,13 @@ class TaskPlanApiIntegrationTests {
         long t1 = TaskApiSupport.longField(first.body(), "id");
         int t1Lock = (int) TaskApiSupport.longField(first.body(), "lock_version");
         // T2 는 T1 을 선행으로 둔다
-        HttpResponse<String> second = api.post(tasksPath(), api.planJson("T2", api.readsRef("API-02"), "[" + t1 + "]"), member);
+        HttpResponse<String> second = api.post(tasksPath(), api.planJson("T2", api.readsRef("API-02"), "[\"" + t1 + "\"]"), member);
         assertThat(second.statusCode()).isEqualTo(201);
         long t2 = TaskApiSupport.longField(second.body(), "id");
 
         // T1 이 T2 를 선행으로 두려 하면 순환 → 409 dependency_cycle (명세 TSK-A04)
         HttpResponse<String> res = api.post(tasksPath() + "/" + t1 + "/plan-revisions",
-                revisionJsonWithDeps("T1 v2", api.readsRef("API-01"), "[" + t2 + "]", 1, t1Lock), member);
+                revisionJsonWithDeps("T1 v2", api.readsRef("API-01"), "[\"" + t2 + "\"]", 1, t1Lock), member);
         assertThat(res.statusCode()).isEqualTo(409);
         assertThat(res.body()).contains("\"code\":\"dependency_cycle\"");
     }
@@ -318,6 +322,38 @@ class TaskPlanApiIntegrationTests {
         HttpResponse<String> res = api.post(tasksPath(), api.planJson("기준 없음", refs, "[]"), member);
         assertThat(res.statusCode()).isEqualTo(400);
         assertThat(res.body()).contains("\"code\":\"validation_failed\"");
+    }
+
+    @Test
+    void create_withNonNumericId_is400() throws Exception {
+        String refs = """
+                [{"design_item_id": "abc", "design_item_version_id": "1", "relation": "READS"}]
+                """;
+        HttpResponse<String> res = api.post(tasksPath(), api.planJson("형식", refs, "[]"), member);
+        assertThat(res.statusCode()).isEqualTo(400);
+        assertThat(res.body()).contains("design_item_id");
+    }
+
+    @Test
+    void list_validationStatusFilter_isAppliedBeforePaging() throws Exception {
+        // T-1 은 PASS, T-2·T-3 은 검증 없음(NOT_RUN). 최신순 limit=1 이면 PASS 는 첫 페이지에 와야 한다
+        HttpResponse<String> c1 = api.post(tasksPath(), api.planJson("1", api.readsRef("API-01"), "[]"), member);
+        api.post(tasksPath(), api.planJson("2", api.readsRef("API-01"), "[]"), member);
+        api.post(tasksPath(), api.planJson("3", api.readsRef("API-01"), "[]"), member);
+        long t1 = TaskApiSupport.longField(c1.body(), "id");
+        Long rev = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t1).query(Long.class).single();
+        Long baseline = api.jdbc.sql("select current_baseline_id from project where id = :p").param("p", projectId).query(Long.class).single();
+        api.jdbc.sql("""
+                        insert into validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash, rule_version)
+                        values (:t, :r, :b, 'PASS', 'AGENT', 's', 'r1')
+                        """).param("t", t1).param("r", rev).param("b", baseline).update();
+
+        HttpResponse<String> pass = api.get(tasksPath() + "?validation_status=PASS&limit=1", leader);
+        assertThat(pass.body()).contains("\"key\":\"T-1\"").contains("\"has_more\":false");
+        HttpResponse<String> notRun = api.get(tasksPath() + "?validation_status=NOT_RUN&limit=1", leader);
+        assertThat(notRun.body()).contains("\"key\":\"T-3\"").contains("\"has_more\":true");
+        HttpResponse<String> bad = api.get(tasksPath() + "?validation_status=FOO", leader);
+        assertThat(bad.statusCode()).isEqualTo(400);
     }
 
     // ------------------------------------------------------------------
@@ -366,8 +402,8 @@ class TaskPlanApiIntegrationTests {
         int v1 = body.indexOf("\"revision_no\":1");
         assertThat(v2).isGreaterThanOrEqualTo(0);
         assertThat(v1).isGreaterThan(v2); // 최신 순
-        assertThat(body).contains("\"design_item_id\":" + api.designItemId("API-01"));
-        assertThat(body).contains("\"design_item_id\":" + api.designItemId("API-02"));
+        assertThat(body).contains("\"design_item_id\":\"" + api.designItemId("API-01") + "\"");
+        assertThat(body).contains("\"design_item_id\":\"" + api.designItemId("API-02") + "\"");
     }
 
     @Test
@@ -389,7 +425,7 @@ class TaskPlanApiIntegrationTests {
         long taskId = TaskApiSupport.longField(created.body(), "id");
         long lockVersion = TaskApiSupport.longField(created.body(), "lock_version");
         String body = """
-                {"assignee_member_id": %d, "expected_lock_version": %d}
+                {"assignee_member_id": "%d", "expected_lock_version": %d}
                 """.formatted(api.memberId("leader@test"), lockVersion);
 
         HttpResponse<String> byMember = api.patch(tasksPath() + "/" + taskId + "/assignee", body, member);

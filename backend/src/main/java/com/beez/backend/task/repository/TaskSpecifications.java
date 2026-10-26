@@ -28,6 +28,11 @@ public final class TaskSpecifications {
         return (root, query, cb) -> cb.equal(root.get("assigneeMemberId"), assigneeMemberId);
     }
 
+    /** 미리 골라 둔 작업 번호 안에서만 (validation_status 필터) */
+    public static Specification<Task> idIn(java.util.List<Long> ids) {
+        return (root, query, cb) -> root.get("id").in(ids);
+    }
+
     /** 커서 = 이전 페이지 마지막 id. 그보다 작은 것만 */
     public static Specification<Task> idBefore(Long cursor) {
         if (cursor == null) {

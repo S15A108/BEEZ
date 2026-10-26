@@ -1,6 +1,5 @@
 package com.beez.backend.task.service;
 
-import com.beez.backend.task.dto.TaskPlanInput;
 import com.beez.backend.task.entity.PlanRelation;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -23,7 +22,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class PlanInputHasher {
 
-    public String hash(TaskPlanInput plan, Map<Long, Long> resolvedVersionByItem, Map<Long, PlanRelation> relationByItem) {
+    public String hash(PlanCommand plan, Map<Long, Long> resolvedVersionByItem, Map<Long, PlanRelation> relationByItem) {
         // TreeMap: 키 순서가 항상 같다 → 같은 내용이면 같은 문자열
         Map<String, Object> canonical = new TreeMap<>();
         canonical.put("goal", plan.goal());

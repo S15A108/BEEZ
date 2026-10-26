@@ -2,8 +2,8 @@ package com.beez.backend.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.beez.backend.task.dto.TaskPlanInput;
 import com.beez.backend.task.entity.PlanRelation;
+import com.beez.backend.task.service.PlanCommand;
 import com.beez.backend.task.service.PlanInputHasher;
 import java.util.List;
 import java.util.Map;
@@ -14,8 +14,8 @@ class PlanInputHasherTest {
 
     private final PlanInputHasher hasher = new PlanInputHasher();
 
-    private TaskPlanInput plan(String title, List<String> scope, List<Long> deps) {
-        return new TaskPlanInput(title, "목표", scope, List.of(), "방법", List.of("완료"), deps, List.of(),
+    private PlanCommand plan(String title, List<String> scope, List<Long> deps) {
+        return new PlanCommand(title, "목표", scope, List.of(), "방법", List.of("완료"), deps, List.of(),
                 List.of(Map.of("kind", "NEW", "text", "새 화면")), false, null);
     }
 

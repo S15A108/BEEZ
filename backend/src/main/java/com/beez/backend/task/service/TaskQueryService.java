@@ -71,6 +71,18 @@ public class TaskQueryService {
                 .and(TaskSpecifications.statusIs(status))
                 .and(TaskSpecifications.assigneeIs(assigneeMemberId))
                 .and(TaskSpecifications.idBefore(cursorId));
+        // validation_status 필터도 페이지를 자르기 전에 건다 (명세 00-common 3절 "필터는 페이지·검색·집계 전")
+        if (validationStatus != null) {
+            if (!ValidationStatusLookup.ALL.contains(validationStatus)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                        "validation_status 값이 올바르지 않습니다: " + validationStatus);
+            }
+            List<Long> matching = validationLookup.taskIdsWithStatus(projectId, validationStatus);
+            if (matching.isEmpty()) {
+                return PageResponse.of(new ArrayList<>(), false, null);
+            }
+            spec = spec.and(TaskSpecifications.idIn(matching));
+        }
         // limit+1 개를 읽는다. 다 차면 다음 페이지가 있다는 뜻.
         List<Task> rows = tasks.findAll(spec, PageRequest.of(0, size + 1, Sort.by(Sort.Direction.DESC, "id"))).getContent();
 
@@ -82,17 +94,6 @@ public class TaskQueryService {
             page = rows;
         }
         List<TaskDetailResponse> items = toDetails(page);
-
-        // validation_status 필터는 DB 가 아니라 조립 후 거른다 (검증 테이블 조인은 -59 에서 정리). 이 경우 has_more 는 근사치다.
-        if (validationStatus != null) {
-            List<TaskDetailResponse> filtered = new ArrayList<>();
-            for (TaskDetailResponse d : items) {
-                if (validationStatus.equals(d.validationStatus())) {
-                    filtered.add(d);
-                }
-            }
-            items = filtered;
-        }
         String nextCursor = null;
         if (hasMore && !page.isEmpty()) {
             nextCursor = String.valueOf(page.get(page.size() - 1).getId());
