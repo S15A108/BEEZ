@@ -1,4 +1,4 @@
-# BEEZ 작업 생명주기 정책 v1.3
+# BEEZ 작업 생명주기 정책 v1.4
 
 > 티켓 S15P31A108-157. 작업(task)의 상태·전이·담당·선행 작업·동시 시작 방지 규칙을 한 곳에 모은다.
 > 코드(-156 계획 서비스, -158 상태 전이)는 이 문서를 그대로 구현한다. 바뀌면 문서를 먼저 고친다.
@@ -56,8 +56,8 @@
 |---|---|---|---|---|---|
 | S1 | 설계 발행 — 작업이 참조한 항목의 이전 버전이 바뀜 | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 관련 검증 STALE | 유지 | REST CHG 발행 처리 규칙("IN_PROGRESS 작업만"), 00-common 6절, D5 |
 | S2 | 진행 중 계획 변경 (TSK-A04) | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 이전 검증 STALE | 유지 | REST TSK-A04 처리 규칙("진행 중 계획 변경") |
-| S3 | delta 있는 COMPLETED 보고 | IN_PROGRESS | **WAITING(REVALIDATION)** + DELTA 검증 접수, `202` | 유지 | REST TSK-A07 |
-| S4 | DELTA 검증이 PASS | WAITING(REVALIDATION) | **COMPLETED** | 해제 | REST TSK-A07 |
+| S3 | delta 있는 COMPLETED 보고 | IN_PROGRESS | **WAITING(REVALIDATION)**, `202`. 순서: DELTA 검증을 **먼저** 접수 → 그 ID 를 넣어 완료 보고 저장 (`task_completion_report` 는 UPDATE 금지라 나중에 채울 수 없음) | 유지 | REST TSK-A07, ERD task_completion_report |
+| S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 마지막 완료 보고의 `delta_validation_id` 가 이 검증일 때만 | **COMPLETED** | 해제 | REST TSK-A07 |
 
 IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검증만 STALE** 로 둔다.
 - READY: START 때 G1·G2 가 걸러낸다.
@@ -185,6 +185,7 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 
 ## 변경 이력
 
+- v1.4 (2026-10-26) 리뷰 반영(전진). S3 저장 순서(DELTA 검증 → 완료 보고)와 S4 적용 조건(아직 WAITING(REVALIDATION)·같은 delta 검증일 때만) 명시(§2.2).
 - v1.3 (2026-10-26) 선행 순환 응답을 명세대로 409 dependency_cycle 로 정정(§4.2).
 - v1.2 (2026-10-26) 리뷰 반영(전진) 2차. START 멱등을 "IN_PROGRESS + 같은 validation_id" 로 좁히고 RESUME 는 멱등 단계 제외(§2.1·§3), S1·S2 대상을 명세대로 IN_PROGRESS 만으로(§2.2), DELTA+STALE 출구 추가(§2.3), "보고가 끊긴 작업"을 IN_PROGRESS 로 한정하고 담당자 결정으로 표시(§4.1).
 - v1.1 (2026-10-26) 리뷰 반영(전진). 시스템 전이 표(§2.2)와 WAITING(REVALIDATION) 출구(§2.3) 추가, COMPLETED 를 delta 유무로 200/202 분리, 팀장 CANCEL 을 "보고 끊긴 작업"으로 좁힘, 담당자 변경을 명세대로 "사람 팀장만", 비멤버 응답 404 로 정정.
