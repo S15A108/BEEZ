@@ -72,6 +72,16 @@ public class ProjectAccessChecker {
         return new ProjectActor(accountId, member.getId(), projectId, member.getRole(), actorType, agentTokenId);
     }
 
+    /**
+     * 사람 세션의 팀장만 통과 (승인·발행·팀 관리, 담당자 변경). 팀장 토큰으로 접속한 에이전트도 403 이다 (00-common 2절).
+     * 비멤버 404 → 팀장 아님 403 → 에이전트 403 순으로 본다.
+     */
+    public ProjectActor requireHumanLeader(CallerContext caller, long projectId) {
+        ProjectActor actor = requireMember(caller, projectId, ProjectRole.LEADER);
+        actor.requireHuman();
+        return actor;
+    }
+
     /** 멤버 번호가 이 프로젝트의 활성 멤버인지 (담당자 지정·변경 대상 확인). */
     public boolean isActiveMember(long memberId, long projectId) {
         return members.isActiveMember(memberId, projectId);
