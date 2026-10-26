@@ -27,6 +27,12 @@ public final class AccessErrors {
         return new ApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", UNAUTHENTICATED_MESSAGE);
     }
 
+    /** 401. 폐기됐거나 호출 계정의 것이 아닌 에이전트 토큰. reason 은 로그에만. */
+    public static ApiException tokenRevoked(String reason) {
+        log.info("access denied status=401 reason={}", reason);
+        return new ApiException(HttpStatus.UNAUTHORIZED, "token_revoked", UNAUTHENTICATED_MESSAGE);
+    }
+
     /**
      * 404. 존재를 숨겨야 하는 모든 거부. reason 예: project_missing, not_member, cross_project, private_record.
      * 객체 소속 확인 예: {@code repo.findByIdAndProjectId(id, projectId).orElseThrow(() -> AccessErrors.notFound("cross_project"))}

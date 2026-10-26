@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.beez.backend.auth.agent.AgentTokenException;
 import com.beez.backend.auth.agent.AgentTokenVerifier;
+import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.project.ProjectRole;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
@@ -25,7 +26,10 @@ import org.springframework.web.bind.annotation.RestController;
 @Import(ProjectAccessIntegrationTest.ProbeConfig.class)
 class ProjectAccessIntegrationTest extends IntegrationTestSupport {
 
-    /** "agent-{accountId}-{projectId}" 형식만 통과시키는 토큰 대역. 실제 검증은 -175. */
+    /**
+     * "agent-{accountId}-{projectId}-{tokenId}" 형식만 통과시키는 토큰 검증 대역. 실제 검증은 -175.
+     * 폐기 여부는 보지 않는다 — 필터가 놓친 폐기 토큰을 권한 검사가 막는지 확인하기 위해서다.
+     */
     static final String VALID_PREFIX = "agent-";
 
     @TestConfiguration
@@ -44,7 +48,7 @@ class ProjectAccessIntegrationTest extends IntegrationTestSupport {
                     throw new AgentTokenException("token_revoked", "stub");
                 }
                 String[] parts = raw.split("-");
-                return new AgentPrincipal(Long.parseLong(parts[1]), Long.parseLong(parts[2]), 77L);
+                return new AgentPrincipal(Long.parseLong(parts[1]), Long.parseLong(parts[2]), Long.parseLong(parts[3]));
             };
         }
     }
@@ -59,18 +63,18 @@ class ProjectAccessIntegrationTest extends IntegrationTestSupport {
         }
 
         @GetMapping("/api/test-probe/projects/{id}")
-        ProjectActor member(@PathVariable long id) {
-            return access.requireMember(id);
+        ProjectActor member(CallerContext caller, @PathVariable long id) {
+            return access.requireMember(caller, id);
         }
 
         @GetMapping("/api/test-probe/projects/{id}/leader")
-        ProjectActor leader(@PathVariable long id) {
-            return access.requireMember(id, ProjectRole.LEADER);
+        ProjectActor leader(CallerContext caller, @PathVariable long id) {
+            return access.requireMember(caller, id, ProjectRole.LEADER);
         }
 
         @GetMapping("/mcp/test-probe/projects/{id}")
-        ProjectActor agent(@PathVariable long id) {
-            return access.requireMember(id);
+        ProjectActor agent(CallerContext caller, @PathVariable long id) {
+            return access.requireMember(caller, id);
         }
     }
 
@@ -151,23 +155,53 @@ class ProjectAccessIntegrationTest extends IntegrationTestSupport {
         assertThat(revoked.body()).contains("\"code\":\"token_revoked\"");
     }
 
+    private static String bearer(long accountId, long projectId, long tokenId) {
+        return "Bearer " + VALID_PREFIX + accountId + "-" + projectId + "-" + tokenId;
+    }
+
     @Test
     void mcp_agentActor_isScopedToItsTokenProject() {
         var p = fixtures().projectWithLeader();
         var other = fixtures().projectWithLeader();
-        String token = "Bearer " + VALID_PREFIX + p.leaderAccountId() + "-" + p.projectId();
+        long tokenId = fixtures().agentToken(p.projectId(), p.leaderAccountId());
+        String token = bearer(p.leaderAccountId(), p.projectId(), tokenId);
 
         HttpResponse<String> own = client().get("/mcp/test-probe/projects/" + p.projectId(), "Authorization", token);
         assertThat(own.statusCode()).isEqualTo(200);
-        assertThat(own.body()).contains("\"actor_type\":\"AGENT\"").contains("\"agent_token_id\":77");
+        assertThat(own.body()).contains("\"actor_type\":\"AGENT\"").contains("\"agent_token_id\":" + tokenId);
 
         assertNotFound(client().get("/mcp/test-probe/projects/" + other.projectId(), "Authorization", token));
     }
 
     @Test
+    void mcp_tokenRevokedInDb_is401_evenIfTheFilterLetItThrough() {
+        var p = fixtures().projectWithLeader();
+        long tokenId = fixtures().agentToken(p.projectId(), p.leaderAccountId());
+        fixtures().revokeToken(tokenId);
+
+        HttpResponse<String> res = client().get("/mcp/test-probe/projects/" + p.projectId(), "Authorization",
+                bearer(p.leaderAccountId(), p.projectId(), tokenId));
+        assertThat(res.statusCode()).isEqualTo(401);
+        assertThat(res.body()).contains("\"code\":\"token_revoked\"");
+    }
+
+    @Test
+    void withdrawnAccount_is404_evenWithActiveMemberRow() {
+        var p = fixtures().projectWithLeader();
+        long bob = fixtures().account();
+        fixtures().member(p.projectId(), bob, ProjectRole.MEMBER);
+        ApiClient bobClient = loginAs(bob);
+
+        fixtures().withdraw(bob);
+
+        assertNotFound(bobClient.get("/api/test-probe/projects/" + p.projectId()));
+    }
+
+    @Test
     void agentToken_onWebApi_is401() {
         var p = fixtures().projectWithLeader();
-        String token = "Bearer " + VALID_PREFIX + p.leaderAccountId() + "-" + p.projectId();
+        long tokenId = fixtures().agentToken(p.projectId(), p.leaderAccountId());
+        String token = bearer(p.leaderAccountId(), p.projectId(), tokenId);
 
         HttpResponse<String> res = client().get("/api/test-probe/projects/" + p.projectId(), "Authorization", token);
         assertThat(res.statusCode()).isEqualTo(401);

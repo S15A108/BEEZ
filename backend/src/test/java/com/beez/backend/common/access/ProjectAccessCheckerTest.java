@@ -7,7 +7,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.beez.backend.common.access.AgentTokenScopes.TokenScope;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.project.ProjectMember;
 import com.beez.backend.project.ProjectMemberRepository;
 import com.beez.backend.project.ProjectRepository;
@@ -15,37 +17,33 @@ import com.beez.backend.project.ProjectRole;
 import com.beez.backend.support.TestActors;
 import java.util.List;
 import java.util.Optional;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
 
 /** -172 참고 2 "검사 순서"의 판정표. 응답 매핑이 바뀌면 이 테스트가 먼저 알려 준다. */
 class ProjectAccessCheckerTest {
 
     private static final long PROJECT = 10L;
     private static final long ACCOUNT = 1L;
+    private static final long TOKEN = 3L;
+
+    private static final CallerContext HUMAN = CallerContext.human(ACCOUNT);
+    private static final CallerContext AGENT = CallerContext.agent(ACCOUNT, TOKEN);
 
     private final ProjectMemberRepository members = mock(ProjectMemberRepository.class);
     private final ProjectRepository projects = mock(ProjectRepository.class);
-    private final ProjectAccessChecker checker = new ProjectAccessChecker(members, projects);
-
-    @AfterEach
-    void clear() {
-        SecurityContextHolder.clearContext();
-    }
-
-    private static void loginAs(Object principal) {
-        SecurityContextHolder.getContext()
-                .setAuthentication(UsernamePasswordAuthenticationToken.authenticated(principal, null, List.of()));
-    }
+    private final AgentTokenScopes tokens = mock(AgentTokenScopes.class);
+    private final ProjectAccessChecker checker = new ProjectAccessChecker(members, projects, tokens);
 
     private void givenMembership(long accountId, long memberId, ProjectRole role) {
         ProjectMember m = mock(ProjectMember.class);
         when(m.getId()).thenReturn(memberId);
         when(m.getRole()).thenReturn(role);
         when(members.findActiveMembership(PROJECT, accountId)).thenReturn(Optional.of(m));
+    }
+
+    private void givenToken(long projectId, boolean revoked) {
+        when(tokens.find(TOKEN, ACCOUNT)).thenReturn(Optional.of(new TokenScope(projectId, revoked)));
     }
 
     private static void assertStatus(Runnable call, HttpStatus status, String code) {
@@ -57,20 +55,19 @@ class ProjectAccessCheckerTest {
     }
 
     @Test
-    void noAuthentication_is401() {
-        assertStatus(() -> checker.requireMember(PROJECT), HttpStatus.UNAUTHORIZED, "unauthenticated");
-        assertStatus(checker::requireUser, HttpStatus.UNAUTHORIZED, "unauthenticated");
+    void noCaller_is401() {
+        assertStatus(() -> checker.requireMember(null, PROJECT), HttpStatus.UNAUTHORIZED, "unauthenticated");
+        assertStatus(() -> checker.requireUser(null), HttpStatus.UNAUTHORIZED, "unauthenticated");
     }
 
     @Test
     void nonMember_andMissingProject_get_theSame404() {
-        loginAs(new SessionUser(ACCOUNT));
         when(members.findActiveMembership(anyLong(), anyLong())).thenReturn(Optional.empty());
 
         when(projects.existsByIdAndArchivedAtIsNull(PROJECT)).thenReturn(true);
-        ApiException notMember = catchApi(() -> checker.requireMember(PROJECT));
+        ApiException notMember = catchApi(() -> checker.requireMember(HUMAN, PROJECT));
         when(projects.existsByIdAndArchivedAtIsNull(PROJECT)).thenReturn(false);
-        ApiException missing = catchApi(() -> checker.requireMember(PROJECT));
+        ApiException missing = catchApi(() -> checker.requireMember(HUMAN, PROJECT));
 
         assertThat(notMember.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(List.of(notMember.getCode(), notMember.getMessage()))
@@ -79,39 +76,47 @@ class ProjectAccessCheckerTest {
 
     @Test
     void member_onLeaderOnlyCall_is403() {
-        loginAs(new SessionUser(ACCOUNT));
         givenMembership(ACCOUNT, 5L, ProjectRole.MEMBER);
 
-        assertStatus(() -> checker.requireMember(PROJECT, ProjectRole.LEADER), HttpStatus.FORBIDDEN, "forbidden");
+        assertStatus(() -> checker.requireMember(HUMAN, PROJECT, ProjectRole.LEADER), HttpStatus.FORBIDDEN, "forbidden");
     }
 
     @Test
     void leader_passesBothLevels_andActorCarriesIds() {
-        loginAs(new SessionUser(ACCOUNT));
         givenMembership(ACCOUNT, 5L, ProjectRole.LEADER);
 
-        assertThat(checker.requireMember(PROJECT)).isEqualTo(
+        assertThat(checker.requireMember(HUMAN, PROJECT)).isEqualTo(
                 new ProjectActor(ACCOUNT, 5L, PROJECT, ProjectRole.LEADER, ActorType.HUMAN, null));
-        assertThat(checker.requireMember(PROJECT, ProjectRole.LEADER).isLeader()).isTrue();
+        assertThat(checker.requireMember(HUMAN, PROJECT, ProjectRole.LEADER).isLeader()).isTrue();
     }
 
     @Test
-    void agent_forAnotherProjectThanItsToken_is404_withoutDbLookup() {
-        loginAs(new AgentPrincipal(ACCOUNT, 99L, 3L));
+    void agent_forAnotherProjectThanItsToken_is404_beforeMembershipLookup() {
+        givenToken(99L, false);
 
-        assertStatus(() -> checker.requireMember(PROJECT), HttpStatus.NOT_FOUND, "not_found");
+        assertStatus(() -> checker.requireMember(AGENT, PROJECT), HttpStatus.NOT_FOUND, "not_found");
+        verifyNoInteractions(members, projects);
+    }
+
+    @Test
+    void agent_withRevokedOrSomeoneElsesToken_is401() {
+        givenToken(PROJECT, true);
+        assertStatus(() -> checker.requireMember(AGENT, PROJECT), HttpStatus.UNAUTHORIZED, "token_revoked");
+
+        when(tokens.find(TOKEN, ACCOUNT)).thenReturn(Optional.empty());
+        assertStatus(() -> checker.requireMember(AGENT, PROJECT), HttpStatus.UNAUTHORIZED, "token_revoked");
         verifyNoInteractions(members, projects);
     }
 
     @Test
     void agent_withActiveMembership_isAgentActor_butNotAUser() {
-        loginAs(new AgentPrincipal(ACCOUNT, PROJECT, 3L));
+        givenToken(PROJECT, false);
         givenMembership(ACCOUNT, 5L, ProjectRole.MEMBER);
 
-        assertThat(checker.requireMember(PROJECT)).isEqualTo(
-                new ProjectActor(ACCOUNT, 5L, PROJECT, ProjectRole.MEMBER, ActorType.AGENT, 3L));
+        assertThat(checker.requireMember(AGENT, PROJECT)).isEqualTo(
+                new ProjectActor(ACCOUNT, 5L, PROJECT, ProjectRole.MEMBER, ActorType.AGENT, TOKEN));
         // 에이전트 토큰으로 사람 전용(USER) API 를 부를 수 없다
-        assertStatus(checker::requireUser, HttpStatus.UNAUTHORIZED, "unauthenticated");
+        assertStatus(() -> checker.requireUser(AGENT), HttpStatus.UNAUTHORIZED, "unauthenticated");
     }
 
     @Test

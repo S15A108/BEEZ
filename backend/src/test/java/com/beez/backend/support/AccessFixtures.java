@@ -13,6 +13,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * long bobMember = fixtures.member(p.projectId(), bob, ProjectRole.MEMBER);
  * fixtures.removeMember(bobMember);                           // 제외·나가기
  * fixtures.archiveProject(p.projectId());                     // 삭제
+ * long token = fixtures.agentToken(p.projectId(), bob);       // 에이전트 토큰 행 (멤버만 가질 수 있다)
  * </pre>
  */
 public final class AccessFixtures {
@@ -76,5 +77,22 @@ public final class AccessFixtures {
     /** 프로젝트 삭제 (PRJ-A05) 상태로 만든다. */
     public void archiveProject(long projectId) {
         jdbc.update("UPDATE project SET archived_at = now() WHERE id = ?", projectId);
+    }
+
+    /** 계정 탈퇴 (ACC-A10) 상태로 만든다. */
+    public void withdraw(long accountId) {
+        jdbc.update("UPDATE account SET deleted_at = now(), email = NULL WHERE id = ?", accountId);
+    }
+
+    /** 에이전트 토큰 행. 해시는 임의값이다 — 실제 발급·검증은 -175. */
+    public long agentToken(long projectId, long accountId) {
+        return jdbc.queryForObject(
+                "INSERT INTO agent_token (project_id, account_id, name, token_hash) VALUES (?, ?, ?, ?) RETURNING id",
+                Long.class, projectId, accountId, "fixture-token", "hash-" + UUID.randomUUID());
+    }
+
+    /** 토큰 폐기 (ACC-05, AGT-06) 상태로 만든다. */
+    public void revokeToken(long tokenId) {
+        jdbc.update("UPDATE agent_token SET revoked_at = now() WHERE id = ?", tokenId);
     }
 }

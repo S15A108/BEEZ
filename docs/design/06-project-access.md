@@ -3,9 +3,19 @@
 작성: 전진 · Jira: S15P31A108-170 · 기준: [구현 순서·접근 거부 기준](05-build-order-and-access-policy.md) 참고 2
 
 모든 프로젝트 API는 **서비스 메서드 첫 줄**에서 `ProjectAccessChecker`를 호출한다. 컨트롤러·필터에서 따로 검사하지 않는다.
-코드는 `backend/src/main/java/com/beez/backend/common/access/`에 있다.
+호출자는 `CallerContext`(계정·토큰·사람/에이전트)로 서비스에 **인자로 넘긴다**. REST와 MCP 어댑터가 같은 서비스를 부르기 위해서다.
+코드는 `backend/src/main/java/com/beez/backend/common/access/`(권한 검사)와 `common/auth/`(호출자)에 있다.
 
 ## 1. 호출
+
+컨트롤러는 메서드 인자에 `CallerContext`를 두기만 하면 된다. 로그인한 세션(또는 MCP 토큰)에서 자동으로 채워진다(`SecurityCallerResolver`). MCP 어댑터처럼 컨트롤러가 아닌 곳은 `SecurityCallerResolver.current()`로 얻는다.
+
+```java
+@GetMapping("/{task_id}")
+public TaskDetail get(CallerContext caller, @PathVariable("id") long projectId, @PathVariable("task_id") long taskId) {
+    return taskService.get(caller, projectId, taskId);
+}
+```
 
 ```java
 @Service
@@ -14,28 +24,28 @@ public class TaskService {
     private final ProjectAccessChecker access;
     private final TaskRepository tasks;
 
-    public TaskDetail get(long projectId, long taskId) {
-        ProjectActor actor = access.requireMember(projectId);          // ① 멤버인가 (팀장 포함)
+    public TaskDetail get(CallerContext caller, long projectId, long taskId) {
+        ProjectActor actor = access.requireMember(caller, projectId);  // ① 멤버인가 (팀장 포함)
         Task task = tasks.findByIdAndProjectId(taskId, projectId)      // ② ID와 프로젝트 ID를 함께 조건으로
                 .orElseThrow(() -> AccessErrors.notFound("cross_project_or_missing task=" + taskId));
         ...
     }
 
-    public void cancel(long projectId, long taskId) {
-        ProjectActor actor = access.requireMember(projectId);
+    public void cancel(CallerContext caller, long projectId, long taskId) {
+        ProjectActor actor = access.requireMember(caller, projectId);
         actor.requireHuman();                                          // 에이전트면 403
         ...
     }
 
-    public void report(long projectId, long taskId, ...) {
-        ProjectActor actor = access.requireMember(projectId);
+    public void report(CallerContext caller, long projectId, long taskId, ...) {
+        ProjectActor actor = access.requireMember(caller, projectId);
         Task task = ...;
         actor.requireMemberId(task.getAssigneeMemberId());             // 담당자가 아니면 403 (팀장도)
         ...
     }
 
-    public void approve(long projectId, ...) {
-        ProjectActor actor = access.requireMember(projectId, ProjectRole.LEADER);  // 팀장 아니면 403
+    public void approve(CallerContext caller, long projectId, ...) {
+        ProjectActor actor = access.requireMember(caller, projectId, ProjectRole.LEADER);  // 팀장 아니면 403
         actor.requireHuman();
         ...
     }
@@ -44,9 +54,10 @@ public class TaskService {
 
 | 메서드 | 쓰는 곳 | 실패 |
 | --- | --- | --- |
-| `requireMember(projectId)` | MEMBER API | 비로그인 401, 프로젝트 없음·삭제·비멤버 404 |
-| `requireMember(projectId, LEADER)` | LEADER API | 위 + 팀장 아님 403 |
-| `requireUser()` | 프로젝트와 무관한 본인 API(`/api/me` 등) | 비로그인·에이전트 401 |
+| `requireMember(caller, projectId)` | MEMBER API | 비로그인 401, 폐기·남의 토큰 401 `token_revoked`, 다른 프로젝트 토큰·프로젝트 없음·삭제·비멤버·탈퇴 계정 404 |
+| `requireMember(caller, projectId, LEADER)` | LEADER API | 위 + 팀장 아님 403 |
+| `requireUser(caller)` | 프로젝트와 무관한 본인 API(`/api/me` 등) | 비로그인·에이전트 401 |
+| `isActiveMember(memberId, projectId)` | 담당자 지정·변경 대상 확인 | — (true/false) |
 | `actor.requireHuman()` | 승인·발행·팀 관리, 에이전트 CANCEL | 에이전트 403 |
 | `actor.requireMemberId(id)` | TASK_OWNER·RECORD_AUTHOR | 다른 멤버 403 |
 
@@ -80,11 +91,13 @@ public class TaskService {
 **서비스 단위 테스트** — `ProjectAccessChecker`를 mock하고 `TestActors`로 주체를 만든다.
 
 ```java
-when(access.requireMember(PROJECT_ID)).thenReturn(TestActors.member(PROJECT_ID, 7L));
-when(access.requireMember(PROJECT_ID)).thenThrow(AccessErrors.notFound("not_member"));
+when(access.requireMember(any(), eq(PROJECT_ID))).thenReturn(TestActors.member(PROJECT_ID, 7L));
+when(access.requireMember(any(), eq(PROJECT_ID))).thenThrow(AccessErrors.notFound("not_member"));
 ```
 
-**통합 테스트** — `IntegrationTestSupport`를 상속한다. `fixtures()`가 계정·프로젝트·멤버를 SQL로 넣고, `client()`가 로그인 세션을 가진 HTTP 클라이언트를 만든다. 프로젝트·초대 API(-173·-174)가 나오기 전에도 쓸 수 있다.
+서비스를 직접 부를 때 호출자는 `CallerContext.human(accountId)` / `CallerContext.agent(accountId, tokenId)`로 만든다.
+
+**통합 테스트** — `IntegrationTestSupport`를 상속한다. `fixtures()`가 계정·프로젝트·멤버·에이전트 토큰을 SQL로 넣고, `client()`가 로그인 세션을 가진 HTTP 클라이언트를 만든다. 프로젝트·초대 API(-173·-174)가 나오기 전에도 쓸 수 있다.
 
 ```java
 class TaskIntegrationTest extends IntegrationTestSupport {
@@ -109,6 +122,6 @@ class TaskIntegrationTest extends IntegrationTestSupport {
 | `/mcp/**` | `Authorization: Bearer <프로젝트 토큰>` | 검증 본체는 -175/-176. 그 전에는 모든 토큰 401 |
 | 그 밖 | 없음 | `/actuator/health`, `/actuator/info`, Swagger·OpenAPI만 열림 |
 
-에이전트 토큰으로 `/api/**`를 부르면 401이다. 멤버십·역할은 캐시 없이 매 요청 조회하므로, 제외·위임 직후 다음 요청부터 막힌다.
+에이전트 토큰으로 `/api/**`를 부르면 401이다(에이전트는 MCP 전용). 멤버십·역할은 캐시 없이 매 요청 조회하므로, 제외·위임 직후 다음 요청부터 막힌다. 에이전트 호출은 권한 검사가 토큰 행도 다시 읽어, 필터를 지난 뒤 폐기된 토큰도 막는다.
 
 세션(Q04 제안안): 마지막 요청 후 2시간 만료, `HttpOnly`, `SameSite=Lax`, 운영 `Secure`, CSRF 토큰 없음. 서버 메모리 세션이라 재시작하면 다시 로그인해야 한다.

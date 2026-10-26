@@ -1,5 +1,6 @@
 package com.beez.backend.account;
 
+import com.beez.backend.common.auth.CallerContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,7 +20,7 @@ public class MeController {
 
     @Operation(summary = "내 계정 조회 (ACC-A04)")
     @GetMapping
-    public AccountResponse me() {
-        return AccountResponse.from(accounts.getMe());
+    public AccountResponse me(CallerContext caller) {
+        return AccountResponse.from(accounts.getMe(caller));
     }
 }
