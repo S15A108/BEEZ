@@ -86,4 +86,4 @@ Sprint3 = 10-26~10-31, Sprint4 = 11-02~11-09, Sprint5 = 11-10~11-15. 티켓은 `
 - 열린 작업이 남은 팀원의 제외·나가기는 409 `active_tasks_exist`, `reassign_to_member_id`로 인계 대상 지정 — Backend REST MEM-A09·A10
 - 에이전트는 MCP 전용. REST API는 모두 세션 인증(Cookie)이고 Bearer 토큰을 받는 REST API는 없다 — Backend REST 각 API "인증", [시스템 아키텍처](01-system-architecture.md)
 
-합의가 끝나면 1·3·4번 규칙을 API Common 2절에도 옮겨 기준을 한 곳으로 모은다. 남은 문서 정리: Backend REST CTX-A03에 "비작성자 PRIVATE는 404" 명시, MCP-06의 404 메시지 통일(변준성), Backend REST 오류표의 401 문구 "세션 또는 에이전트 인증" → "세션 인증"(전진).
+합의가 끝나면 1·3·4번 규칙을 API Common 2절에도 옮겨 기준을 한 곳으로 모은다. 남은 문서 정리: Backend REST CTX-A03에 "비작성자 PRIVATE는 404" 명시, MCP-06의 404 메시지 통일(변준성), [작업 생명주기](04-task-lifecycle.md) 6절 "제외된 팀원의 진행 중 작업" 행을 4번(409 `active_tasks_exist` 인계)과 Q05로 정리(변준성), Backend REST 오류표의 401 문구 "세션 또는 에이전트 인증" → "세션 인증"(전진).
