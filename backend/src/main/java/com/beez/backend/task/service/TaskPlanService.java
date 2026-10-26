@@ -14,6 +14,7 @@ import com.beez.backend.task.entity.Task;
 import com.beez.backend.task.entity.TaskDependency;
 import com.beez.backend.task.entity.TaskPlanDesignRef;
 import com.beez.backend.task.entity.TaskPlanRevision;
+import com.beez.backend.task.entity.TaskStatus;
 import com.beez.backend.task.repository.TaskDependencyRepository;
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
@@ -140,12 +141,16 @@ public class TaskPlanService {
 
         TaskPlanRevision revision = saveRevision(task, currentRevisionNo + 1, plan, resolved, caller);
         replaceDependencies(projectId, taskId, plan.dependencyTaskIds());
-        boolean wasOccupied = task.getStatus().isOccupied();
+        TaskStatus before = task.getStatus();
         task.applyNewPlanRevision(revision.getId(), plan.title());
 
-        // 진행 중 계획 변경: 이전 검증 STALE, WAITING(REVALIDATION), 점유 유지 (명세 TSK-A04 처리 규칙)
-        if (wasOccupied) {
+        // 계획이 바뀌었으니 이전 검증은 쓸 수 없다 (점유 중인 작업만 의미 있음. READY 는 G1 이 리비전으로 거른다)
+        // 상태는 IN_PROGRESS 만 WAITING(REVALIDATION) 으로 (명세 TSK-A04 "진행 중 계획 변경", 04-task-lifecycle.md §2.2 S2).
+        // WAITING(INPUT·APPROVAL·DEPENDENCY) 은 원래 사유를 덮어쓰지 않는다 — RESUME 때 G1 이 새 PASS 를 요구한다.
+        if (before.isOccupied()) {
             validationLookup.markStaleForTask(taskId, "PLAN_CHANGED");
+        }
+        if (before == TaskStatus.IN_PROGRESS) {
             task.holdForRevalidation();
         }
         tasks.saveAndFlush(task);
