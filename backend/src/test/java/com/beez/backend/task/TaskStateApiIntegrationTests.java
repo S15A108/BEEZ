@@ -100,10 +100,10 @@ class TaskStateApiIntegrationTests {
     private String stateJson(String event, long revisionId, long lock, Long validationId, String extra) {
         StringBuilder sb = new StringBuilder("{");
         sb.append("\"event\":\"").append(event).append("\",");
-        sb.append("\"plan_revision_id\":").append(revisionId).append(",");
+        sb.append("\"plan_revision_id\":\"").append(revisionId).append("\",");
         sb.append("\"expected_lock_version\":").append(lock);
         if (validationId != null) {
-            sb.append(",\"validation_id\":").append(validationId);
+            sb.append(",\"validation_id\":\"").append(validationId).append("\"");
         }
         if (extra != null) {
             sb.append(",").append(extra);
@@ -118,7 +118,7 @@ class TaskStateApiIntegrationTests {
 
     private String changesRef(String key) {
         return """
-                [{"design_item_id": %d, "design_item_version_id": %d, "relation": "CHANGES",
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "CHANGES",
                   "proposed_content": {"method":"GET","path":"/x","response":{"memberId":"long"}}}]
                 """.formatted(api.designItemId(key), api.currentVersionId(key));
     }
@@ -213,7 +213,7 @@ class TaskStateApiIntegrationTests {
     @Test
     void start_withIncompleteBlockingDependency_is409() throws Exception {
         long[] dep = createTask("선행", api.readsRef("API-01"), "[]", member);
-        long[] t = createTask("후행", api.readsRef("API-02"), "[" + dep[0] + "]", member);
+        long[] t = createTask("후행", api.readsRef("API-02"), "[\"" + dep[0] + "\"]", member);
         long v = passValidation(t[0], t[1]);
 
         HttpResponse<String> res = report(t[0], stateJson("START", t[1], t[2], v, null), member);
@@ -328,6 +328,19 @@ class TaskStateApiIntegrationTests {
         // 완료 보고 재전송 → 멱등 200
         HttpResponse<String> again = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
         assertThat(again.statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void completed_withMalformedCompletionCheck_is400() throws Exception {
+        long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        long lock = TaskApiSupport.longField(started.body(), "lock_version");
+        // met 누락 (명세 CompletionCheck: criterion·met 필수)
+        String extra = "\"completion_checks\":[{\"criterion\":\"테스트 통과\"}]";
+        HttpResponse<String> res = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
+        assertThat(res.statusCode()).isEqualTo(400);
+        assertThat(res.body()).contains("\"code\":\"validation_failed\"");
     }
 
     @Test

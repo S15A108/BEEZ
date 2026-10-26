@@ -4,7 +4,9 @@ import com.beez.backend.common.access.Membership;
 import com.beez.backend.common.access.NotFound;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.task.dto.CompletionCheck;
 import com.beez.backend.task.dto.TaskDetailResponse;
 import com.beez.backend.task.dto.TaskStateInput;
 import com.beez.backend.task.entity.Task;
@@ -83,6 +85,8 @@ public class TaskStateService {
     public TaskDetailResponse report(CallerContext caller, Long projectId, Long taskId, TaskStateInput in) {
         Membership membership = access.requireMember(caller, projectId);
         validateShape(in);
+        Long validationId = Ids.parse(in.validationId(), "validation_id");
+        Long planRevisionId = Ids.parse(in.planRevisionId(), "plan_revision_id");
 
         // 2) 프로젝트 잠금. 이 뒤에 읽는 작업 상태가 "지금" 상태다.
         boolean exists = designLookup.lockProject(projectId);
@@ -98,7 +102,7 @@ public class TaskStateService {
         //    RESUME 재전송은 Idempotency-Key 가 처리한다 (04-task-lifecycle.md §2.1·§3).
         if (in.event() == TaskEvent.START
                 && task.getStatus() == TaskStatus.IN_PROGRESS
-                && in.validationId().equals(task.getStartedValidationId())) {
+                && validationId.equals(task.getStartedValidationId())) {
             return query.toDetail(task);
         }
         //    delta 있는 COMPLETED 재전송: 이미 WAITING(REVALIDATION) 이고 현재 계획의 완료 보고가 있으면 같은 결과(202)를 돌려준다
@@ -120,7 +124,7 @@ public class TaskStateService {
             throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
                     "작업 상태가 이미 바뀌었습니다 (현재 lock_version=" + task.getLockVersion() + ")");
         }
-        if (task.getCurrentPlanRevisionId() == null || !task.getCurrentPlanRevisionId().equals(in.planRevisionId())) {
+        if (task.getCurrentPlanRevisionId() == null || !task.getCurrentPlanRevisionId().equals(planRevisionId)) {
             throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
                     "현재 계획이 아닙니다 (현재 plan_revision_id=" + task.getCurrentPlanRevisionId() + ")");
         }
@@ -133,7 +137,7 @@ public class TaskStateService {
 
         // 7) 시작 게이트
         if (in.event().needsStartGate()) {
-            StartGate.Result gate = startGate.evaluate(task, in.validationId());
+            StartGate.Result gate = startGate.evaluate(task, validationId);
             if (!gate.passed()) {
                 throw new ApiException(HttpStatus.CONFLICT, gate.first().code(), gate.combinedMessage());
             }
@@ -143,8 +147,8 @@ public class TaskStateService {
         TaskStatus from = task.getStatus();
         Instant now = Instant.now(clock);
         switch (in.event()) {
-            case START -> task.start(in.validationId(), now);
-            case RESUME -> task.resume(in.validationId());
+            case START -> task.start(validationId, now);
+            case RESUME -> task.resume(validationId);
             case WAIT -> task.holdFor(in.waitingReason());
             case COMPLETED -> complete(task, in, caller, now);
             case CANCEL -> cancel(task, now);
@@ -246,9 +250,15 @@ public class TaskStateService {
         if (delta == null) {
             delta = new ArrayList<>();
         }
-        List<Map<String, Object>> checks = in.completionChecks();
-        if (checks == null) {
-            checks = new ArrayList<>();
+        // 완료 기준 확인은 형식 검사를 거친 CompletionCheck 로 받고, 저장(JSONB)은 {criterion, met} 로 한다
+        List<Map<String, Object>> checks = new ArrayList<>();
+        if (in.completionChecks() != null) {
+            for (CompletionCheck c : in.completionChecks()) {
+                Map<String, Object> row = new java.util.LinkedHashMap<>();
+                row.put("criterion", c.criterion());
+                row.put("met", c.met());
+                checks.add(row);
+            }
         }
         reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
                 checks, caller.agentTokenId()));
