@@ -57,8 +57,10 @@ class AuthFlowIntegrationTest extends IntegrationTestSupport {
         assertThat(client().post("/api/auth/register", registerJson(email, "secret-pass-1")).statusCode())
                 .isEqualTo(201);
 
-        HttpResponse<String> dup = client().post("/api/auth/register", registerJson(email.toUpperCase(), "secret-pass-1"));
-        assertThat(dup.statusCode()).isEqualTo(409);
+        // 대소문자·앞뒤 공백만 다른 이메일 → 같은 계정으로 보고 409 (409 는 email UNIQUE 제약 이름으로 판정한다)
+        HttpResponse<String> dup = client().post("/api/auth/register",
+                registerJson("  " + email.toUpperCase() + " ", "secret-pass-1"));
+        assertThat(dup.statusCode()).as(dup.body()).isEqualTo(409);
         assertThat(dup.body()).contains("\"code\":\"email_already_exists\"");
     }
 

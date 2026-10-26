@@ -5,6 +5,9 @@ import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.api.ApiException;
 import java.util.Locale;
 import java.util.Optional;
+import org.hibernate.exception.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -14,6 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
 /** 회원가입(ACC-A01)·자격 증명 확인(ACC-A02). 세션 발급은 웹 계층(AuthController) 몫이다. */
 @Service
 public class AuthService {
+
+    /** V2 account.email UNIQUE 의 Postgres 기본 제약 이름 */
+    private static final String EMAIL_UNIQUE = "account_email_key";
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final AccountRepository accounts;
     private final PasswordEncoder encoder;
@@ -34,19 +42,41 @@ public class AuthService {
             // 중복 판정은 account.email UNIQUE 에 맡긴다 — 미리 조회하면 동시 가입 사이에 틈이 생긴다
             return accounts.saveAndFlush(account);
         } catch (DataIntegrityViolationException e) {
-            throw new ApiException(HttpStatus.CONFLICT, "email_already_exists", "이미 등록된 이메일");
+            if (violates(e, EMAIL_UNIQUE)) {
+                throw new ApiException(HttpStatus.CONFLICT, "email_already_exists", "이미 등록된 이메일");
+            }
+            throw e;   // 다른 제약 위반은 공통 처리(GlobalExceptionHandler)로 보낸다
         }
+    }
+
+    private static boolean violates(DataIntegrityViolationException e, String constraint) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConstraintViolationException c) {
+                return constraint.equalsIgnoreCase(c.getConstraintName());
+            }
+        }
+        return false;
     }
 
     /** 이메일·비밀번호가 맞는 활성 계정. 틀리면 가입 여부와 관계없이 같은 401. */
     @Transactional(readOnly = true)
     public Account authenticate(String email, String password) {
         Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(normalizeEmail(email));
-        boolean matches = encoder.matches(password, found.map(Account::getPasswordHash).orElse(dummyHash));
+        boolean matches = matches(password, found.map(Account::getPasswordHash).orElse(dummyHash));
         if (found.isEmpty() || !matches) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "invalid_credentials", "이메일 또는 비밀번호 불일치");
         }
         return found.get();
+    }
+
+    /** 저장된 해시를 읽을 수 없으면({bcrypt} 같은 접두어 없음·NULL — SQL 시드 등) 불일치로 본다. 500 으로 새지 않게 한다. */
+    private boolean matches(String raw, String storedHash) {
+        try {
+            return encoder.matches(raw, storedHash);
+        } catch (IllegalArgumentException e) {
+            log.warn("unreadable password hash, treated as mismatch: {}", e.getMessage());
+            return false;
+        }
     }
 
     /** 대소문자·앞뒤 공백만 다른 이메일을 같은 계정으로 본다. */

@@ -42,6 +42,11 @@ public class AuthController {
             @NotBlank @Email @Size(max = 254) String email,
             @NotNull String password,
             @NotBlank @Size(max = 50) String name) {
+
+        /** @Email 검증 전에 앞뒤 공백을 지운다 — 붙여 넣은 " a@b.com " 이 가입만 400 이 되지 않게 (로그인은 서비스에서 정규화) */
+        public RegisterRequest {
+            email = email == null ? null : email.trim();
+        }
     }
 
     public record LoginRequest(@NotBlank String email, @NotBlank String password) {

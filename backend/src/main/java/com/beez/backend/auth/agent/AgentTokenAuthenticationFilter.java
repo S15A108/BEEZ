@@ -35,7 +35,8 @@ public class AgentTokenAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
         String header = req.getHeader(HttpHeaders.AUTHORIZATION);
-        if (header == null || !header.startsWith(BEARER)) {
+        // 스킴 이름은 대소문자를 가리지 않는다 (RFC 9110 11.1) — "bearer xxx" 도 토큰이다
+        if (header == null || !header.regionMatches(true, 0, BEARER, 0, BEARER.length())) {
             chain.doFilter(req, res);
             return;
         }
