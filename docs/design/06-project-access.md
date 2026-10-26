@@ -45,8 +45,7 @@ public class TaskService {
     }
 
     public void approve(CallerContext caller, long projectId, ...) {
-        ProjectActor actor = access.requireMember(caller, projectId, ProjectRole.LEADER);  // 팀장 아니면 403
-        actor.requireHuman();
+        ProjectActor actor = access.requireHumanLeader(caller, projectId);  // 팀장 아니면 403, 팀장 토큰이어도 에이전트면 403
         ...
     }
 }
@@ -55,7 +54,8 @@ public class TaskService {
 | 메서드 | 쓰는 곳 | 실패 |
 | --- | --- | --- |
 | `requireMember(caller, projectId)` | MEMBER API | 비로그인 401, 폐기·남의 토큰 401 `token_revoked`, 다른 프로젝트 토큰·프로젝트 없음·삭제·비멤버·탈퇴 계정 404 |
-| `requireMember(caller, projectId, LEADER)` | LEADER API | 위 + 팀장 아님 403 |
+| `requireMember(caller, projectId, LEADER)` | LEADER API (에이전트도 허용하는 경우) | 위 + 팀장 아님 403 |
+| `requireHumanLeader(caller, projectId)` | 승인·발행·팀 관리·담당자 변경 (00-common 2절 "사람 세션 필수") | 위 + 팀장 아님 403, 에이전트 403 |
 | `requireUser(caller)` | 프로젝트와 무관한 본인 API(`/api/me` 등) | 비로그인·에이전트 401 |
 | `isActiveMember(memberId, projectId)` | 담당자 지정·변경 대상 확인 | — (true/false) |
 | `actor.requireHuman()` | 승인·발행·팀 관리, 에이전트 CANCEL | 에이전트 403 |
@@ -83,6 +83,7 @@ public class TaskService {
 | 같은 프로젝트 안 역할·소유 조건 | `AccessErrors.forbidden("...")` | 403 `forbidden` |
 
 인자 문자열은 **서버 로그에만** 남는다(`com.beez.access` 로거, 요청 ID와 함께). 응답 메시지는 사유와 관계없이 같다.
+-156 초안의 `NotFound.because(...)`와 `Membership`은 없어졌다. 각각 `AccessErrors.notFound(...)`와 `ProjectActor`를 쓴다.
 
 목록·검색에서 다른 프로젝트 ID를 필터로 받으면 오류 없이 0건이다. 권한 조건은 페이지·집계 **전**에 쿼리에 넣는다.
 
@@ -96,6 +97,7 @@ when(access.requireMember(any(), eq(PROJECT_ID))).thenThrow(AccessErrors.notFoun
 ```
 
 서비스를 직접 부를 때 호출자는 `CallerContext.human(accountId)` / `CallerContext.agent(accountId, tokenId)`로 만든다.
+에이전트는 REST로 부를 수 없으므로(401) 에이전트 규칙은 통합 테스트에서도 서비스를 직접 불러 확인한다(예: `task/AccessRulesIntegrationTests`). 옛 임시 헤더(`X-Beez-Account-Id`)는 없어졌다.
 
 **통합 테스트** — `IntegrationTestSupport`를 상속한다. `fixtures()`가 계정·프로젝트·멤버·에이전트 토큰을 SQL로 넣고, `client()`가 로그인 세션을 가진 HTTP 클라이언트를 만든다. 프로젝트·초대 API(-173·-174)가 나오기 전에도 쓸 수 있다.
 
