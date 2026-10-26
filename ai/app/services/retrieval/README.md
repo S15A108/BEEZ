@@ -1,6 +1,6 @@
 # 원문 청킹·임베딩 준비 (#129)
 
-`prepare_document_index`는 #127의 `SourceDocument`를 구조별로 나누고, 주입한 임베딩 공급자로 벡터를 생성·검증하여 `PreparedIndex`를 반환한다. 현재는 공급자와 독립적인 내부 구현이다. 실제 GMS 어댑터·모델 토크나이저·HTTP 라우터·벡터 DB 저장은 아직 연결하지 않았다. 이 타입을 합의된 외부 API 계약이나 #129 전체 완료로 취급하지 않는다.
+`prepare_document_index`는 #127의 `SourceDocument`를 구조별로 나누고, 주입한 임베딩 공급자로 벡터를 생성·검증하여 `PreparedIndex`를 반환한다. GMS 어댑터·실제 토크나이저와 기존 AI-A04 `POST /v1/embeddings`를 구현했다. 청킹 HTTP API·벡터 DB 저장·검색은 아직 연결하지 않았다. `PreparedIndex`는 내부 타입이며, BE 통합이나 #129 전체 인수 완료를 뜻하지 않는다.
 
 ## 입력과 처리 흐름
 
@@ -12,7 +12,37 @@ SourceDocument
   → BE의 실행·버전 검증 및 원자적 색인 발행
 ```
 
-`EmbeddingProvider`는 한 번의 실제 API 호출을 구현한다. `TokenCounter`는 선택한 임베딩 모델의 정확한 토크나이저 ID·입력 한도·토큰 수 계산을 제공해야 한다. 테스트용 byte/문자 카운터는 운영 토크나이저가 아니다. 파싱·청킹 단계에서는 생성형 LLM을 호출하지 않는다.
+`EmbeddingProvider`는 한 번의 실제 API 호출을 구현한다. 운영 `EmbeddingTokenCounter`는 `tiktoken==0.14.0`의 `cl100k_base`를 사용한다. `<|endoftext|>` 같은 문자열도 일반 원문으로 세며 잘못된 Unicode는 거부한다. 테스트용 byte/문자 카운터는 운영 토크나이저가 아니다. 파싱·청킹 단계에서는 생성형 LLM을 호출하지 않는다.
+
+## 선택한 모델과 GMS 연결
+
+2026-10-26 기준 사용자 선택은 **비비 기본 `gpt-6-luna`, 복잡한 분석 보조 `gpt-6.1-sol`**이다. 설정에 기록했으며 답변 생성·자동 모델 전환은 #129에 구현하지 않는다.
+
+임베딩은 **`text-embedding-3-small`, 1024차원, cosine, identity-v1**을 초기 AI 프로필로 선택했다. GMS의 공개 모델 목록과 가이드에서 활성 상태·호출 규격을 확인하고 실제 1024차원 반환도 검증했다. 1024차원은 현재 저장소에 맞춘 초기값이며 BE와 프로필을 고정한 후 색인을 저장해야 한다. 모델·차원·토크나이저·문맥 정책을 바꾸면 새 색인으로 취급한다. 벡터 차원 축소 자체가 입력 토큰 비용을 줄이지는 않는다.
+
+- 호출: `POST https://gms.ssafy.io/gmsapi/api.openai.com/v1/embeddings`
+- 인증: `Authorization: Bearer {GMS_KEY}`. 호출 주소는 코드에서 고정하며 리다이렉트·환경 프록시를 사용하지 않는다.
+- 요청: 모델, 문자열 배열 `input`, `dimensions`, `encoding_format=float`.
+- 응답의 `data[].index`를 입력 key로 매핑한다. 모델명·개수·중복 index·차원·숫자·사용량을 검증하고 원본 응답/키를 오류 메시지에 넣지 않는다. 응답 크기는 8 MiB로 제한한다.
+- GMS 가이드의 small 입력 단가는 0.0002크레딧/토큰이다. 화면의 `0.001 Credit`은 예상 평균 호출 사용량이다. 실제 사용량은 공급자의 `usage`를 기록하며 API 응답에 임의 USD 비용을 붙이지 않는다. 운영 단가는 바뀔 수 있다.
+
+출처: [GMS small 가이드](https://gms.ssafy.io/web/public/guide/text-embedding-3-small), [공개 모델·단가 목록](https://gms.ssafy.io/api/v1/common-codes/models), [OpenAI 임베딩 규격](https://developers.openai.com/api/reference/resources/embeddings/methods/create).
+
+## 로컬 실행과 내부 API
+
+`ai/.env.example`을 참고해 Git에서 제외되는 `ai/.env`에 `GMS_KEY`를 설정한다. HTTP 호출에는 BE와 공유한 **별도 `AI_INTERNAL_TOKEN`**도 필요하다. 키를 채팅·소스·로그에 넣지 않는다. 설정을 바꾸면 서버를 다시 시작한다. `GMS_EMBEDDING_DIMENSION`은 1~1536 범위에서 설정할 수 있지만 한 배포에서는 고정한다. 요청의 model/dimension이 배포 프로필과 다르면 422로 거부한다.
+
+`ai/`에서 다음을 실행한다. 토크나이저 최초 준비에는 공개 어휘 파일 다운로드가 필요하며 모델 비용은 들지 않는다. 배포 이미지나 CI 준비 단계에서 미리 캐시한다. 지속 캐시가 필요하면 프로세스 환경변수 `TIKTOKEN_CACHE_DIR`에 쓰기 가능한 경로를 지정한다.
+
+```text
+python -m pip install -r requirements.txt
+python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+`POST /v1/embeddings`는 기존 [AI-A04 계약](../../../../docs/api/03-ai-internal.md#ai-a04)의 project_id/request_key/texts와 선택 model/dimension을 받는다. `result`, `origin=MODEL`, `model`, 실제 호출별 `usage`를 반환한다. 현재 identity 전처리는 문서와 질의가 같으므로 purpose 필드 없이 같은 API를 사용할 수 있다. purpose가 필요한 모델을 도입하면 계약 확장이 먼저 필요하다.
+
+내부 인증 누락/불일치는 401, 필드 형식 오류는 400, 중복 key·빈 텍스트·토큰 한도·프로필 위반은 422, 공급자 오류/출력 검증 실패는 502, 타임아웃은 504다. 실패 시 `result`를 반환하지 않고 실제 호출이 있었으면 선택적 usage만 보존한다. 외부 API에서는 모르는 토큰 필드를 생략한다. `X-Request-Id`를 전달하거나 생성한다. 프로젝트 멤버십·원문 버전 권한은 BE가 검증한다. AI 내부 토큰은 사용자/에이전트 토큰을 대신 받는 경로가 아니다. 배포 프록시에서도 본문 크기·동시 요청 수를 제한해야 한다.
 
 ## 청킹과 근거 계약
 
@@ -39,12 +69,11 @@ SourceDocument
 
 `index_key`는 청크 manifest와 전체 임베딩 프로필을 함께 반영한다. 차원이 같아도 모델이 바뀌면 다른 색인이다. `PreparedIndex`는 **저장 준비 결과**이며 READY나 승인 상태가 아니다. BE는 프로젝트 권한·문서 버전·실행 ID를 확인하고 전체 청크/벡터 저장 성공 후 색인을 발행해야 한다. 승인 baseline, 재실행 충돌, 검색 시 사용할 색인 세대의 선택은 별도 BE/검색 계약이다.
 
-## 모델 연결 전 남은 작업
+## 남은 통합 작업
 
-1. GMS의 임베딩 지원 모델·엔드포인트·차원 옵션·인증·사용량/크레딧 차감 단위를 확인한다. 답변 생성용 GPT 모델과 임베딩 모델을 구분한다.
-2. 확인한 모델의 실제 토크나이저와 GMS 어댑터를 연결하고 작은 입력으로 응답 매핑·벡터 차원·사용량을 검증한다.
-3. BE와 외부 요청/응답·오류 매핑·원문 offset 규약·실행/버전 검증·색인 발행 계약을 확정한다.
-4. 실제 문서의 검색 품질·비용을 측정한 뒤 청크 크기와 문맥 보강 정책을 정한다. 변경되지 않은 임베딩 입력의 재사용은 프로젝트 범위·입력 해시·전체 모델 프로필을 함께 검증하도록 별도로 연결한다.
+1. BE와 내부 인증 설정 및 임베딩 프로필을 고정하고 실제 AI-A04 호출을 연결한다.
+2. 신규 청킹 API·원문 offset·실행/버전 검증·원자적 색인 발행 계약을 확정하고 저장·검색까지 통합한다.
+3. 실제 문서의 검색 품질·비용을 측정한 뒤 청크 크기와 문맥 보강 정책을 정한다. 변경되지 않은 임베딩 입력의 재사용은 프로젝트 범위·입력 해시·전체 모델 프로필을 함께 검증하도록 별도로 연결한다.
 
 ## 검증
 
@@ -56,4 +85,8 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
-`test_chunking.py`, `test_embeddings.py`, `test_document_pipeline_contract.py`에서 원문 범위 보존, 긴 표/문맥 예산, 엔드포인트 경계, Unicode 위치, 배치 누락·중복·차원 오류, 재시도·사용량, 마지막 배치 실패 시 전체 미반영을 검증한다. 공급자 대역을 사용하며 실제 GMS 호출 비용이나 한국어 검색 품질을 검증한 결과는 아니다.
+`test_chunking.py`, `test_embeddings.py`, `test_document_pipeline_contract.py`는 원문 범위 보존, 긴 표/문맥 예산, 엔드포인트 경계, Unicode 위치, 배치 누락·중복·차원 오류, 재시도·사용량, 마지막 배치 실패 시 전체 미반영을 검증한다. `test_gms_embeddings.py`와 `test_embeddings_api.py`는 실제 토크나이저·모의 GMS HTTP 응답·내부 인증·기존 API 계약을 검증한다. pytest에서는 유료 모델을 호출하지 않는다.
+
+로컬 Windows 최종 검증은 `python -m pytest -q -o asyncio_default_test_loop_scope=session`으로 134개가 통과했다. 기본 실행에서는 표준 `socket.socketpair()` 생성 자체의 간헐적 WinError 10014를 별도 재현했으며, 테스트/제품 코드를 우회하지 않고 이벤트 루프 재사용 옵션으로 확인했다. Linux CI는 기본 pytest 설정을 유지한다.
+
+실제 연결 확인은 별도 명령 `python -m scripts.smoke_gms_embeddings`로 실행한다. 합성 문장 2개, 최대 입력 1,000토큰, API 호출 1회, 재시도 없음으로 제한했다. 2026-10-26 실행 결과: `text-embedding-3-small`, 1024차원 벡터 2개, 입력 38토큰/출력 0토큰, 공개 입력 단가 기준 예상 0.0076크레딧. 계정 잔액 차감 대조나 한국어 검색 품질 평가를 수행한 결과는 아니다.
