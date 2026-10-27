@@ -84,7 +84,9 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 검증
 
-#130의 재색인·READY·rollback 합성 fixture는 [별도 계약안](../../../../docs/design/document-index-refresh-contract-S15P31A108-130.md)과 `scripts.generate_retrieval_handoff`에서 제공한다. #129의 실행 모듈에 의존하며 실제 BE/DB 시험과 C/D 품질·성능 측정은 아직 남아 있다.
+#130의 재색인·READY·rollback 합성 fixture는 [별도 계약안](../../../../docs/design/document-index-refresh-contract-S15P31A108-130.md)과 `scripts.generate_retrieval_handoff`에서 제공한다. #129의 실행 모듈에 의존하며 실제 BE/DB 통합 C/D 시험은 아직 남아 있다.
+
+#130의 AI 독립 평가 실행기는 [evaluations 안내](../../../evaluations/README.md)에 있다. 고정/구조 청킹과 문맥 보강 비교, 모의 승인 경합, 제한된 실제 GMS 측정 및 결과 요약을 지원한다. 운영 BE/DB 경로와 분리하며 [평가 기록](../../../../docs/experiments/document-rag-evaluation-S15P31A108-130.md)에 실행 범위·수치·공동 작업 잔여분을 기록한다.
 
 `ai/`에서 실행한다.
 
