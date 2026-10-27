@@ -47,23 +47,41 @@ class Answer(BaseModel):
 
 
 def parse_response(payload):
+    if not isinstance(payload, dict):
+        raise TypeError("malformed_response_envelope")
     if payload.get("status") != "completed":
         raise ValueError("incomplete_response")
     model = payload.get("model", "")
-    if model != MODEL and not model.startswith(MODEL + "-"):
+    if not isinstance(model, str) or (
+        model != MODEL and not model.startswith(MODEL + "-")
+    ):
         raise ValueError("response_model_mismatch")
     parts = []
-    for item in payload.get("output", []):
+    output = payload.get("output")
+    if not isinstance(output, list):
+        raise TypeError("malformed_response_output")
+    for item in output:
+        if not isinstance(item, dict):
+            raise TypeError("malformed_response_item")
         if item.get("type") == "message" and item.get("role") == "assistant":
-            for content in item.get("content", []):
+            contents = item.get("content")
+            if not isinstance(contents, list):
+                raise ValueError("malformed_response_content")
+            for content in contents:
+                if not isinstance(content, dict):
+                    raise TypeError("malformed_response_content")
                 if content.get("type") == "refusal":
                     raise ValueError("model_refusal")
                 if content.get("type") == "output_text":
+                    if not isinstance(content.get("text"), str):
+                        raise ValueError("malformed_response_text")
                     parts.append(content["text"])
     return Answer.model_validate_json("".join(parts)).model_dump()
 
 
 def response_usage(payload):
+    if not isinstance(payload, dict):
+        return None
     usage = payload.get("usage")
     if not isinstance(usage, dict):
         return None
@@ -172,10 +190,13 @@ async def _answer(client, key, prompt, report, path, budget, price, row):
                 if size > 1_048_576:
                     raise ValueError("response_size_limit")
                 chunks.append(chunk)
+            try:
+                payload = json.loads(b"".join(chunks))
+            except (ValueError, UnicodeError):
+                payload = {}
             if response.status_code != 200:
                 # Do not copy provider error bodies/headers into reports or logs.
                 raise RuntimeError(f"GMS HTTP {response.status_code}")
-            payload = json.loads(b"".join(chunks))
         row["raw_response"] = payload
         answer = parse_response(payload)
         call["failed"] = False
@@ -194,15 +215,54 @@ async def _answer(client, key, prompt, report, path, budget, price, row):
         write_report(path, report)
 
 
+def recover_rows(report):
+    questions = {q["id"]: q for q in report["questions"]}
+    chunks = {c["id"]: c for items in report["indexes"].values() for c in items}
+    for row in report["rows"]:
+        if row["status"] != "ok" and "raw_response" in row:
+            try:
+                answer = parse_response(row["raw_response"])
+                evidence = [chunks[key] for key in row["evidence_ids"]]
+                row.update(
+                    status="ok",
+                    answer=answer,
+                    scores=answer_scores(
+                        questions[row["question_id"]], answer, evidence
+                    ),
+                    recovered_from_checkpoint=True,
+                )
+            except (ValueError, KeyError, TypeError):
+                row["error"] = "saved_output_validation_failed"
+
+
 async def run_live(report, counter, path):
+    if report.get("status") == "completed":
+        raise ValueError("Completed experiment must not be repeated")
     settings = Settings()
     if settings.gms_key is None or not settings.gms_key.get_secret_value().strip():
         raise ValueError("GMS_KEY missing; set ai/.env without printing it")
     if settings.bee_default_model != MODEL:
         raise ValueError("Configured answer model differs from evaluation protocol")
-    budget = CallBudget()
+    recover_rows(report)
+    completed = {row["id"] for row in report["rows"]}
+    if len(completed) != len(report["rows"]):
+        raise ValueError("Duplicate checkpoint rows")
+    budget = CallBudget(
+        calls=len(report["calls"]),
+        estimated_credits=sum(
+            (c.get("estimated_credits") or 0) + c.get("reserved_credits_if_unknown", 0)
+            for c in report["calls"]
+        ),
+    )
     report["status"] = "running"
-    report["metadata"]["started_utc"] = datetime.now(UTC).isoformat()
+    report["metadata"].setdefault("started_utc", datetime.now(UTC).isoformat())
+    report["metadata"].setdefault("sessions", []).append(
+        {
+            "started_utc": datetime.now(UTC).isoformat(),
+            "prior_rows": len(report["rows"]),
+            "prior_calls": len(report["calls"]),
+        }
+    )
     report["metadata"]["instructions"] = INSTRUCTIONS
     report["metadata"]["embedding_reuse"] = (
         "Identical texts deduplicated across modes and repetitions; physical shared calls and per-mode logical tokens reported separately. Query vectors cached for all runs."
@@ -228,6 +288,8 @@ async def run_live(report, counter, path):
                     for v in prices[model].values()
                 ):
                     raise ValueError("Unrecognized public model pricing")
+            if report["metadata"].get("public_prices", prices) != prices:
+                raise ValueError("Public pricing changed; resume refused")
             report["metadata"].update(
                 public_prices=prices,
                 price_source=MODELS_URL,
@@ -282,8 +344,11 @@ async def run_live(report, counter, path):
             for repetition in range(3):
                 for mode, chunks in report["indexes"].items():
                     for question in queries:
+                        row_id = f"{repetition}:{mode}:{question['id']}"
+                        if row_id in completed:
+                            continue
                         row = {
-                            "id": f"{repetition}:{mode}:{question['id']}",
+                            "id": row_id,
                             "mode": mode,
                             "question_id": question["id"],
                             "repetition": repetition,
@@ -360,6 +425,7 @@ async def run_live(report, counter, path):
         StopIteration,
         httpx.HTTPError,
         EmbeddingError,
+        OSError,
     ) as exc:
         report["status"] = "stopped"
         report["error"] = {

@@ -2,8 +2,13 @@
 
 import asyncio
 
+SNAPSHOTS = {
+    "b1": {"allowed_versions": ["201"], "value": "10 MB"},
+    "b2": {"allowed_versions": ["202"], "value": "30 MB"},
+}
 
-def validate_trace(trace):
+
+def validate_trace(trace, snapshots=None):
     if trace["outcome"] != "answered":
         return (
             ["discarded_answer_exposed"]
@@ -11,7 +16,13 @@ def validate_trace(trace):
             else []
         )
     errors = []
-    allowed = set(trace["allowed_versions"])
+    # Trusted evaluation oracle is separate from the trace being graded.
+    snapshot = (SNAPSHOTS if snapshots is None else snapshots).get(
+        trace.get("validated_baseline")
+    )
+    if snapshot is None:
+        return ["missing_or_unknown_final_validation"]
+    allowed = set(snapshot["allowed_versions"])
     for key, error in (
         ("retrieved_versions", "retrieval_version_mismatch"),
         ("model_input_versions", "model_input_version_mismatch"),
@@ -19,7 +30,7 @@ def validate_trace(trace):
     ):
         if not trace[key] or not set(trace[key]) <= allowed:
             errors.append(error)
-    if trace["answer_value"] != trace["expected_value"]:
+    if trace["answer_value"] != snapshot["value"]:
         errors.append("answer_content_mismatch")
     if not trace["validated_baseline"]:
         errors.append("missing_final_validation")

@@ -157,6 +157,145 @@ def test_unknown_usage_retains_budget_reservation_and_malformed_usage_is_unknown
     ) == {"input_tokens": 4, "output_tokens": 2}
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"status": "completed", "model": None},
+        {"status": "completed", "model": "gpt-6-luna", "output": [None]},
+    ],
+)
+def test_malformed_response_envelopes_are_recordable_failures(payload):
+    live = importlib.import_module("evaluations.live")
+    with pytest.raises((ValueError, TypeError)):
+        live.parse_response(payload)
+
+
+def test_consistency_cannot_relabel_old_policy_as_new_validated_baseline():
+    c = importlib.import_module("evaluations.consistency")
+    trace = {
+        "outcome": "answered",
+        "validated_baseline": "b2",
+        "allowed_versions": ["201"],
+        "retrieved_versions": ["201"],
+        "model_input_versions": ["201"],
+        "citation_versions": ["201"],
+        "answer_value": "10 MB",
+        "expected_value": "10 MB",
+    }
+    violations = c.validate_trace(trace)
+    assert "answer_content_mismatch" in violations
+    assert "retrieval_version_mismatch" in violations
+
+
+def test_checkpoint_retries_transient_windows_replace_denial(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+
+    m = subject()
+    original = Path.replace
+    attempts = []
+
+    def transient(path, target):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise PermissionError("transient sharing violation")
+        return original(path, target)
+
+    monkeypatch.setattr(Path, "replace", transient)
+    destination = tmp_path / "checkpoint.json"
+    m.write_report(destination, {"status": "completed"})
+    assert json.loads(destination.read_text(encoding="utf-8"))["status"] == "completed"
+
+
+def test_resume_recovers_saved_paid_output_without_changing_question_or_evidence():
+    live = importlib.import_module("evaluations.live")
+    report = {
+        "questions": [{"id": "q", "gold": [], "required": []}],
+        "indexes": {"fixed": []},
+        "rows": [
+            {
+                "id": "0:fixed:q",
+                "mode": "fixed",
+                "question_id": "q",
+                "status": "error",
+                "evidence_ids": [],
+                "raw_response": {
+                    "model": "gpt-6-luna",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": '{"status":"insufficient","answer":"없음","citations":[]}',
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    live.recover_rows(report)
+    assert report["rows"][0]["status"] == "ok"
+    assert report["rows"][0]["scores"]["abstention_correct"] is True
+
+
+def test_summary_keeps_planned_denominator_and_marks_zero_denominator_na():
+    summary = importlib.import_module("evaluations.summarize")
+    report = {
+        "status": "stopped",
+        "metadata": {"repetitions": 3, "dataset_id": "test"},
+        "questions": [{"id": "q", "gold": [1]}],
+        "indexes": {"fixed": []},
+        "rows": [
+            {"mode": "fixed", "question_id": "q", "id": "0:fixed:q", "status": "error"}
+        ],
+        "calls": [],
+        "consistency": [],
+    }
+    rendered = summary.summarize(report)
+    assert "0/3" in rendered
+    assert "0/0" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_http_failure_preserves_valid_usage_without_provider_body(tmp_path):
+    import httpx
+    from pydantic import SecretStr
+
+    live = importlib.import_module("evaluations.live")
+    m = subject()
+    report, row = {"calls": []}, {"id": "q"}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                500,
+                json={
+                    "error": "DO-NOT-STORE",
+                    "usage": {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9},
+                },
+            )
+        )
+    ) as client:
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            await live._answer(
+                client,
+                SecretStr("test-only"),
+                "question",
+                report,
+                tmp_path / "result.json",
+                m.CallBudget(),
+                {"inputPrice": 0.001, "outputPrice": 0.005},
+                row,
+            )
+    assert report["calls"][0]["usage"] == {"input_tokens": 7, "output_tokens": 2}
+    assert "DO-NOT-STORE" not in (tmp_path / "result.json").read_text(encoding="utf-8")
+
+
 @pytest.mark.asyncio
 async def test_live_runner_records_every_row_and_actual_usage_without_network(
     tmp_path, monkeypatch

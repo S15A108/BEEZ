@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -281,15 +282,27 @@ def write_report(path, report):
         json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
-    temporary.replace(path)
+    for attempt in range(5):
+        try:
+            temporary.replace(path)
+            break
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Explicitly continue a stopped checkpoint; never repeat existing generation rows",
+    )
     args = parser.parse_args()
-    if args.output.exists():
+    if args.output.exists() and not args.resume:
         raise ValueError(
             "Output already exists; use a new path to preserve paid results"
         )
@@ -330,6 +343,47 @@ async def main():
         "calls": [],
         "status": "dry_run",
     }
+    if args.resume:
+        if not args.live:
+            raise ValueError("Resume requires explicit --live")
+        previous = json.loads(args.output.read_text(encoding="utf-8"))
+        if previous["status"] == "completed":
+            raise ValueError("Completed experiment must not be repeated")
+        protocol_keys = (
+            "tokenizer_id",
+            "chunk_max_tokens",
+            "overlap",
+            "top_k",
+            "context_max_chunks",
+            "context_max_tokens",
+            "repetitions",
+            "max_output_tokens",
+            "max_calls",
+            "max_estimated_credits",
+        )
+        if (
+            any(
+                previous["metadata"][key] != report["metadata"][key]
+                for key in protocol_keys
+            )
+            or previous["metadata"].get("instructions") != INSTRUCTIONS
+        ):
+            raise ValueError(
+                "Checkpoint prompt/budget/protocol changed; resume refused"
+            )
+        if (
+            previous["indexes"] != report["indexes"]
+            or previous["questions"] != report["questions"]
+            or previous["metadata"]["source_hashes"]
+            != report["metadata"]["source_hashes"]
+        ):
+            raise ValueError("Checkpoint corpus/protocol changed; resume refused")
+        previous["metadata"].setdefault("resume_runner_hashes", []).append(
+            report["metadata"]["runner_hashes"]
+        )
+        # Re-run only the free reference C checks under the corrected validator.
+        previous["consistency"] = report["consistency"]
+        report = previous
     write_report(args.output, report)
     if args.live:
         from evaluations.live import run_live
