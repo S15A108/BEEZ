@@ -5,11 +5,9 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.beez.backend.ai.AiClient;
-import com.beez.backend.common.auth.SessionAccountIdentity;
 import com.beez.backend.config.BeezProperties;
 import com.beez.backend.document.service.DocumentIndexWorker;
 import com.beez.backend.document.support.SeaweedTestContainer;
-import jakarta.servlet.http.HttpServletRequest;
 import java.io.ByteArrayOutputStream;
 import java.net.*;
 import java.net.http.*;
@@ -24,7 +22,6 @@ import org.springframework.context.annotation.*;
 import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.*;
-import org.springframework.web.bind.annotation.*;
 import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -33,7 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"beez.document.worker-enabled=false", "beez.document.embedding-profile=test-profile", "beez.document.embedding-model=test-model"})
+        properties = {"beez.cors.allowed-origins=https://app.beez.test", "beez.document.worker-enabled=false", "beez.document.embedding-profile=test-profile", "beez.document.embedding-model=test-model"})
 @ActiveProfiles("test")
 @Testcontainers
 @Import(DocumentApiIntegrationTest.Support.class)
@@ -52,7 +49,9 @@ class DocumentApiIntegrationTest {
     @Autowired AiClient ai;
     @Autowired software.amazon.awssdk.services.s3.S3Client storageClient;
     long leader, member, project;
-    String base, csrf;
+    static final String TRUSTED_ORIGIN = "https://app.beez.test";
+    static final String PASSWORD = "document-test-123";
+    String base;
     HttpClient http;
     final byte[] content = "\uFEFF# 요구사항\r\nREQ-01: 로그인한 멤버만 조회한다.\r\n".getBytes(StandardCharsets.UTF_8);
 
@@ -61,12 +60,12 @@ class DocumentApiIntegrationTest {
                 assertThat(storageClient.headBucket(software.amazon.awssdk.services.s3.model.HeadBucketRequest.builder()
                         .bucket(SeaweedTestContainer.BUCKET).build())).isNotNull());
         jdbc.update("UPDATE document_processing SET status='FAILED',source_status='FAILED',index_status='FAILED',error_code='test_reset',lease_token=null,lease_until=null WHERE status IN ('PENDING','RUNNING')");
-        leader = jdbc.queryForObject("INSERT INTO account(display_name) VALUES ('leader') RETURNING id", Long.class);
-        member = jdbc.queryForObject("INSERT INTO account(display_name) VALUES ('member') RETURNING id", Long.class);
-        project = jdbc.queryForObject("INSERT INTO project(name,owner_account_id) VALUES ('documents',?) RETURNING id", Long.class, leader);
-        jdbc.update("INSERT INTO project_member(project_id,account_id,role) VALUES (?,?,'LEADER'),(?,?,'MEMBER')", project, leader, project, member);
         base = "http://localhost:" + env.getProperty("local.server.port");
         http = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
+        leader = register("leader");
+        member = register("member");
+        project = jdbc.queryForObject("INSERT INTO project(name,owner_account_id) VALUES ('documents',?) RETURNING id", Long.class, leader);
+        jdbc.update("INSERT INTO project_member(project_id,account_id,role) VALUES (?,?,'LEADER'),(?,?,'MEMBER')", project, leader, project, member);
         reset(ai);
         when(ai.documentChunks(anyMap())).thenAnswer(invocation -> {
             Map<String, Object> input = invocation.getArgument(0);
@@ -92,14 +91,21 @@ class DocumentApiIntegrationTest {
                 Map.of("model", "test-model", "dimension", dimension, "embedding_profile_id", "test-profile", "purpose", input.get("purpose"),
                         "vectors", texts.stream().map(t -> Map.of("key", t.get("key"), "embedding", vector)).toList()));
     }
-    void login(long account) throws Exception {
-        send("POST", "/__document_test/session/" + account, "", false);
-        csrf = JSON.readTree(send("GET", "/api/session/csrf", null, false).body()).get("csrf_token").asText();
+    long register(String name) throws Exception {
+        var body = JSON.writeValueAsString(Map.of("email", UUID.randomUUID() + "@documents.test", "password", PASSWORD, "name", name));
+        var response = send("POST", "/api/auth/register", body, false);
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        return JSON.readTree(response.body()).get("id").asLong();
     }
-    HttpResponse<String> send(String method, String path, String body, boolean mutation) throws Exception {
+    void login(long account) throws Exception {
+        String email = jdbc.queryForObject("SELECT email FROM account WHERE id=?", String.class, account);
+        var response = send("POST", "/api/auth/login", JSON.writeValueAsString(Map.of("email", email, "password", PASSWORD)), false);
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+    }
+    HttpResponse<String> send(String method, String path, String body, boolean trustedOrigin) throws Exception {
         var builder = HttpRequest.newBuilder(URI.create(base + path));
         if (!method.equals("GET")) builder.header("Idempotency-Key", UUID.randomUUID().toString());
-        if (mutation) builder.header("X-CSRF-Token", csrf);
+        if (trustedOrigin) builder.header("Origin", TRUSTED_ORIGIN);
         if (body != null) builder.header("Content-Type", "application/json");
         return http.send(builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
@@ -111,6 +117,9 @@ class DocumentApiIntegrationTest {
         return multipart(path, key, bytes, fields, false);
     }
     HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields, boolean multiple) throws Exception {
+        return multipart(path, key, bytes, fields, multiple, TRUSTED_ORIGIN);
+    }
+    HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields, boolean multiple, String origin) throws Exception {
         String boundary = "beez-fixture-boundary";
         var out = new ByteArrayOutputStream();
         for (var field : fields.entrySet()) out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field.getKey() + "\"\r\n\r\n" + field.getValue() + "\r\n").getBytes(StandardCharsets.UTF_8));
@@ -118,8 +127,10 @@ class DocumentApiIntegrationTest {
         out.write(bytes);
         if (multiple) out.write(("\r\n--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"second.md\"\r\n\r\nsecond").getBytes(StandardCharsets.UTF_8));
         out.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
-        return http.send(HttpRequest.newBuilder(URI.create(base + path)).header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                .header("Idempotency-Key", key).header("X-CSRF-Token", csrf).POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray())).build(), HttpResponse.BodyHandlers.ofString());
+        var builder = HttpRequest.newBuilder(URI.create(base + path)).header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .header("Idempotency-Key", key);
+        if (origin != null) builder.header("Origin", origin);
+        return http.send(builder.POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray())).build(), HttpResponse.BodyHandlers.ofString());
     }
     JsonNode uploaded() throws Exception {
         var response = upload(UUID.randomUUID().toString(), content, "REQUIREMENTS");
@@ -157,7 +168,7 @@ class DocumentApiIntegrationTest {
         assertThat(send("GET", path + "/diff?from_version=1&to_version=1", null, false).body()).contains("\"diff\":\"\"");
     }
 
-    @Test void rejectsHeaderSpoofingMissingCsrfNonLeaderAndRemovedMember() throws Exception {
+    @Test void rejectsHeaderSpoofingMissingOriginNonLeaderAndRemovedMember() throws Exception {
         var document = uploaded(); String path = "/api/projects/" + project + "/documents/" + document.get("id").asText();
         var anonymous = HttpClient.newHttpClient();
         var spoofed = anonymous.send(HttpRequest.newBuilder(URI.create(base + path + "?version_no=1")).header("X-Beez-Account-Id", Long.toString(leader)).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -251,6 +262,67 @@ class DocumentApiIntegrationTest {
         }
     }
 
+    @Test void acceptsTrustedRefererWithoutTokenAndRejectsMissingOrBadSource() throws Exception {
+        var document = uploaded();
+        String path = "/api/projects/" + project + "/documents/" + document.get("id").asText();
+        var refererOnly = http.send(HttpRequest.newBuilder(URI.create(base + path))
+                .header("Content-Type", "application/json").header("Idempotency-Key", UUID.randomUUID().toString())
+                .header("Referer", TRUSTED_ORIGIN + "/documents")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString("{\"domain\":\"referer-accepted\"}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(refererOnly.statusCode()).withFailMessage(refererOnly.body()).isEqualTo(200);
+        var rejected = send("PATCH", path, "{\"domain\":\"rejected\"}", false);
+        assertThat(rejected.statusCode()).isEqualTo(403);
+        assertThat(rejected.body()).contains("request_origin_rejected");
+        assertThat(send("GET", "/api/projects/" + project + "/documents", null, false).body()).contains("referer-accepted");
+        var badReferer = http.send(HttpRequest.newBuilder(URI.create(base + path))
+                .header("Content-Type", "application/json").header("Idempotency-Key", UUID.randomUUID().toString())
+                .header("Referer", "https://evil.test/documents")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString("{\"domain\":\"rejected\"}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(badReferer.statusCode()).isEqualTo(403);
+    }
+
+    @Test void multipartWithoutTrustedOriginIsRejectedBeforeStorage() throws Exception {
+        int filesBefore = originalCount();
+        for (String origin : new String[] { null, "null", "https://evil.test" }) {
+            var response = multipart("/api/projects/" + project + "/documents", UUID.randomUUID().toString(), content,
+                    Map.of("kind", "PLAN", "title", "blocked"), false, origin);
+            assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(403);
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document WHERE project_id=?", Integer.class, project)).isZero();
+        assertThat(originalCount()).isEqualTo(filesBefore);
+    }
+
+    @Test void logoutInvalidatesTheDocumentSessionAndDedicatedCsrfEndpointIsRemoved() throws Exception {
+        assertThat(send("GET", "/api/session/csrf", null, false).statusCode()).isEqualTo(404);
+        assertThat(send("POST", "/api/auth/logout", null, false).statusCode()).isEqualTo(204);
+        assertThat(send("GET", "/api/projects/" + project + "/documents", null, false).statusCode()).isEqualTo(401);
+    }
+
+    @Test void failedDraftCommandRollsBackNewOriginalAndKeepsApprovedSource() throws Exception {
+        var document = uploaded();
+        long id = document.get("id").asLong(), version = document.get("latest_draft").get("id").asLong();
+        publish(id, version);
+        int filesBefore = originalCount();
+        jdbc.execute("ALTER TABLE document_http_command ADD CONSTRAINT fixture_reject_draft CHECK (operation NOT LIKE 'draft:%') NOT VALID");
+        try {
+            var response = multipart("/api/projects/" + project + "/documents/" + id + "/draft-versions",
+                    UUID.randomUUID().toString(), "# changed".getBytes(StandardCharsets.UTF_8),
+                    Map.of("base_document_version_id", Long.toString(version)));
+            assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(400);
+            assertThat(originalCount()).isEqualTo(filesBefore);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE document_id=?", Integer.class, id)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM document_processing WHERE document_version_id IN (SELECT id FROM document_version WHERE document_id=?)", Integer.class, id)).isEqualTo(1);
+            var downloaded = http.send(HttpRequest.newBuilder(URI.create(base + "/api/projects/" + project
+                    + "/documents/" + id + "/versions/1/file")).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(downloaded.statusCode()).isEqualTo(200);
+            assertThat(downloaded.body()).containsExactly(content);
+        } finally {
+            jdbc.execute("ALTER TABLE document_http_command DROP CONSTRAINT fixture_reject_draft");
+        }
+    }
+
     int originalCount() {
         return storageClient.listObjectsV2(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder()
                 .bucket(SeaweedTestContainer.BUCKET).build()).contents().size();
@@ -259,14 +331,5 @@ class DocumentApiIntegrationTest {
     @TestConfiguration
     static class Support {
         @Bean @Primary AiClient testAi(BeezProperties properties) { return mock(AiClient.class); }
-        @Bean SessionFixture sessionFixture() { return new SessionFixture(); }
-    }
-    // Test context only. No account-ID login endpoint exists in product sources.
-    @RestController static class SessionFixture {
-        @PostMapping("/__document_test/session/{id}") Map<String, Boolean> session(HttpServletRequest request, @PathVariable long id) {
-            request.getSession(true).invalidate();
-            request.getSession(true).setAttribute(SessionAccountIdentity.ACCOUNT_ATTRIBUTE, id);
-            return Map.of("ok", true);
-        }
     }
 }

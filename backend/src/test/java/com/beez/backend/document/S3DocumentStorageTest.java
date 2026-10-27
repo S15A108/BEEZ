@@ -9,7 +9,11 @@ import com.beez.backend.document.storage.S3DocumentStorage;
 import java.io.IOException;
 import java.net.URI;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -50,6 +54,20 @@ class S3DocumentStorageTest {
         when(client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .thenThrow(S3Exception.builder().statusCode(403).message("denied").build());
         assertThatThrownBy(() -> storage.store(new byte[] {65}, "txt")).isInstanceOf(IOException.class);
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void uncertainPutLogsOnlyItsKeyAndCauseAndDoesNotDeleteAnInflightWrite(CapturedOutput output) {
+        when(client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenThrow(SdkClientException.builder().message("sensitive diagnostic").build());
+        assertThatThrownBy(() -> storage.store("private contents".getBytes(java.nio.charset.StandardCharsets.UTF_8), "md"))
+                .isInstanceOf(IOException.class);
+        var request = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(client).putObject(request.capture(), any(RequestBody.class));
+        verify(client, never()).deleteObject(any(DeleteObjectRequest.class));
+        assertThat(output.getAll()).contains("reconcile original_key=" + request.getValue().key(), "SdkClientException")
+                .doesNotContain("sensitive diagnostic", "private contents");
     }
 
     @Test void configurationRejectsMissingCredentialsAndNeverPrintsSecrets() {

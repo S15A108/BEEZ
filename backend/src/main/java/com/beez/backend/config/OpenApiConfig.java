@@ -7,9 +7,6 @@ import org.springframework.context.annotation.Configuration;
 
 /** /swagger-ui.html · /v3/api-docs. 운영에서는 SWAGGER_ENABLED=true 일 때만 열린다. */
 @Configuration
-@io.swagger.v3.oas.annotations.security.SecurityScheme(
-        name = "DocumentCsrf", type = io.swagger.v3.oas.annotations.enums.SecuritySchemeType.APIKEY,
-        in = io.swagger.v3.oas.annotations.enums.SecuritySchemeIn.HEADER, paramName = "X-CSRF-Token")
 @OpenAPIDefinition(
         info = @Info(
                 title = "BEEZ API",

@@ -199,7 +199,14 @@ public class DocumentApplicationService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCompletion(int status) {
                 if (status == STATUS_ROLLED_BACK) {
-                    try { storage.delete(storageKey); } catch (IOException e) { org.slf4j.LoggerFactory.getLogger(DocumentApplicationService.class).error("Orphan original_key={}", storageKey); }
+                    try { storage.delete(storageKey); }
+                    catch (IOException | RuntimeException e) {
+                        org.slf4j.LoggerFactory.getLogger(DocumentApplicationService.class)
+                                .error("Draft rollback cleanup failed; orphan_key={}, cause={}", storageKey, e.getClass().getSimpleName());
+                    }
+                } else if (status == STATUS_UNKNOWN) {
+                    org.slf4j.LoggerFactory.getLogger(DocumentApplicationService.class)
+                            .error("Draft commit outcome unknown; reconcile original_key={}", storageKey);
                 }
             }
         });

@@ -22,7 +22,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Not auto-wired/exposed until real access adapter, limits and kind policy are agreed (batch B). */
+/** Registration core; the application service supplies its authenticated project access adapter. */
 public final class DocumentRegistrationService {
     public enum KindPolicy { SINGLE_PER_KIND, ALLOW_MULTIPLE }
 
