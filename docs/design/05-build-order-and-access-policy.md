@@ -67,7 +67,11 @@ Sprint3 = 10-26~10-31, Sprint4 = 11-02~11-09, Sprint5 = 11-10~11-15. 티켓은 `
 
 - 인증은 Spring Security가 경로별로 나눈다(`/api/**` 세션, `/mcp` 토큰, 그 밖은 헬스체크·문서만).
 - 서비스는 호출자를 `CallerContext`(계정·토큰·사람/에이전트) 인자로 받는다. REST는 컨트롤러 인자로 자동 주입되고, MCP 어댑터도 같은 값을 넘겨 같은 서비스를 부른다.
-- 서비스 첫 줄에서 `ProjectAccessChecker.requireMember(caller, projectId[, LEADER])`를 호출한다. 반환값 `ProjectActor`에 `accountId`·`memberId`·`role`·행위자 종류·`agentTokenId`가 있어 담당자 판정과 작성자 기록에 쓴다. 사람 전용은 `actor.requireHuman()`, 담당자·작성자 조건은 `actor.requireMemberId(id)`. 자세한 사용법은 -170에서 추가하는 06 문서.
+- 서비스 첫 줄에서 `ProjectAccessChecker.requireMember(caller, projectId[, LEADER])`를 호출한다. 반환값 `ProjectActor`에 `accountId`·`memberId`·`role`·행위자 종류·`agentTokenId`가 있어 담당자 판정과 작성자 기록에 쓴다. 사람 전용은 `actor.requireHuman()`. 담당자와 작성자는 기준 ID가 다르다.
+  - 담당자는 **멤버 ID**로 본다. `task.assignee_member_id`를 `actor.requireMemberId(id)`로 확인한다.
+  - 작성자는 **계정 ID**로 본다. 작성자 칸이 모두 계정 ID(`context_record`·`change_comment`·`meeting_entry`의 `author_account_id`, `task_plan_revision.created_by_account_id`)라서 `actor.accountId()`와 비교한다. 멤버 ID와 섞으면 본인 기록이 막히거나, 값이 우연히 같은 다른 사람이 통과한다.
+  - 남의 PRIVATE 기록을 조회하면 403이 아니라 404다(합의 3번). 작성자 비교는 조회 쿼리 조건(`visibility = 'SHARED' OR author_account_id = ?`)으로 걸고, 403 작성자 검사는 SHARED처럼 이미 보이는 기록을 수정할 때만 쓴다.
+  - 자세한 사용법은 -170에서 추가하는 06 문서.
 - `project_id` 칸이 없는 테이블(`validation`, `task_plan_revision` 등)은 상위 객체와 조인한다. 예: `JOIN task t ON t.id = v.task_id WHERE v.id = ? AND t.project_id = ?`.
 - 검증 워커는 접수 시점 권한으로 실행을 끝내고 결과를 저장한다. 그 결과를 쓰는 다음 요청(작업 시작 등)에서 권한을 다시 검사한다.
 - 비비·RAG 응답은 다르다. BE가 최종 반환 직전에 현재 멤버십·검색 범위·baseline을 다시 확인하고, 생성 중 baseline이 바뀌었으면 그 답변을 버린다([RAG 개발 계획](../superpowers/plans/2026-10-26-document-rag-development.md) Task 5).
