@@ -310,7 +310,7 @@ class LLMClient:
         deadline = time.monotonic() + snapshot.timeout_seconds
         usages: list[LLMUsage] = []
         for index, call_key in enumerate(snapshot.call_keys):
-            remaining = deadline - time.monotonic()
+            remaining = min(snapshot.timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
                 raise LLMError("model_timeout", tuple(usages)) from None
             started = time.monotonic()
@@ -371,7 +371,7 @@ class LLMClient:
             )
             if not can_retry:
                 raise LLMError(code, tuple(usages)) from None
-            remaining = deadline - time.monotonic()
+            remaining = min(snapshot.timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
                 raise LLMError("model_timeout", tuple(usages)) from None
             delay = min(0.1 * (2**index), remaining)
