@@ -5,6 +5,7 @@ import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.contextaccess.service.ContextAccessRecorder;
 import com.beez.backend.designchange.dto.BaselineSummaryResponse;
 import com.beez.backend.designchange.dto.ChangedItemResponse;
 import com.beez.backend.designchange.dto.DesignChangesQuery;
@@ -54,13 +55,16 @@ public class DesignChangesService {
 
     private final ProjectAccessChecker access;
     private final JdbcClient jdbc;
+    private final ContextAccessRecorder accessLog;
 
-    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc) {
+    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc, ContextAccessRecorder accessLog) {
         this.access = access;
         this.jdbc = jdbc;
+        this.accessLog = accessLog;
     }
 
-    @Transactional(readOnly = true)
+    /** 읽기 전용이 아닌 이유: 조회 이력(-165)을 같은 트랜잭션에 남긴다 */
+    @Transactional
     public DesignChangesResponse getChanges(CallerContext caller, Long projectId, DesignChangesQuery in) {
         ProjectActor actor = access.requireMember(caller, projectId);
 
@@ -134,6 +138,14 @@ public class DesignChangesService {
         }
 
         List<ValidationValidityResponse> validity = findValidationValidity(projectId, actor.memberId(), taskId);
+
+        // 조회 이력 (CTX-05·06): 어느 기준 설계를 기준으로 변경을 봤는지. task_id 는 이 프로젝트에 있는 작업일 때만 (FK)
+        Long loggedTaskId = null;
+        if (taskId != null && taskExistsInProject(projectId, taskId)) {
+            loggedTaskId = taskId;
+        }
+        accessLog.record(actor, loggedTaskId, "get_design_changes", ContextAccessRecorder.KIND_BASELINE,
+                current.id(), current.id(), null);
         return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
     }
 
@@ -302,6 +314,12 @@ public class DesignChangesService {
             out.add(new ValidationValidityResponse(Ids.str(((Number) row.get("id")).longValue()), status, reason));
         }
         return out;
+    }
+
+    private boolean taskExistsInProject(Long projectId, Long taskId) {
+        Integer count = jdbc.sql("select count(*) from task where id = :t and project_id = :p")
+                .param("t", taskId).param("p", projectId).query(Integer.class).single();
+        return count > 0;
     }
 
     // ---- 변환 ----

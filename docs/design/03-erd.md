@@ -216,6 +216,7 @@ erDiagram
   context_record ||--o{ context_record_ref : "참조 항목 버전"
   dev_context_packet |o--o{ context_record : "작성 당시 패킷"
   agent_token ||--o{ context_access_log : ""
+  account ||--o{ context_access_log : "호출 계정 (V5)"
   project ||--o{ notification : ""
   project ||--o{ activity_event : ""
   agent_token ||--o{ mcp_audit_log : ""
