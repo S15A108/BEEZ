@@ -54,7 +54,7 @@
 
 | # | 계기 | 대상 | 결과 | 점유 | 근거 |
 |---|---|---|---|---|---|
-| S1 | 설계 발행 — 작업이 참조한 항목의 이전 버전이 바뀜 | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 관련 검증 STALE. 바뀐 항목·영향 작업은 get_design_changes(-164)의 `DesignChangeQueries` 와 **같은 쿼리**로 뽑는다 (응답의 영향 작업과 STALE 대상이 어긋나지 않게) | 유지 | REST CHG 발행 처리 규칙("IN_PROGRESS 작업만"), 00-common 6절, D5 |
+| S1 | 설계 발행 — 작업이 참조한 항목의 이전 버전이 바뀜 | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 관련 검증 STALE. 바뀐 항목과 WAITING 으로 바꿀 작업은 get_design_changes(-164)의 `DesignChangeQueries` 와 **같은 쿼리**로 뽑는다. STALE 대상은 REST CHG 발행 규칙대로 `validation_design_ref` 에서 직접 찾는다(작업 상태·현재 계획으로 거르지 않음). 폐기 항목은 새 baseline_item 에서 **뺀다**(발행 -194 계약; G2 도 스냅샷 비교만 함) | 유지 | REST CHG 발행 처리 규칙("IN_PROGRESS 작업만"), 00-common 6절, D5 |
 | S2 | 진행 중 계획 변경 (TSK-A04) | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 이전 검증 STALE | 유지 | REST TSK-A04 처리 규칙("진행 중 계획 변경") |
 | S3 | delta 있는 COMPLETED 보고 | IN_PROGRESS | **WAITING(REVALIDATION)**, `202`. 순서: DELTA 검증을 **먼저** 접수 → 그 ID 를 넣어 완료 보고 저장 (`task_completion_report` 는 UPDATE 금지라 나중에 채울 수 없음) | 유지 | REST TSK-A07, ERD task_completion_report |
 | S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 마지막 완료 보고의 `delta_validation_id` 가 이 검증일 때만 | **COMPLETED** | 해제 | REST TSK-A07 |
@@ -185,7 +185,7 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 
 ## 변경 이력
 
-- v1.5 (2026-10-27) S1 의 영향 범위를 -164 `DesignChangeQueries` 와 공유한다고 명시(§2.2). 리뷰 반영(전진).
+- v1.5 (2026-10-27) S1: 바뀐 항목·WAITING 대상은 -164 `DesignChangeQueries` 재사용, STALE 대상은 validation_design_ref 기준, 폐기는 스냅샷 제외로 명시(§2.2). 리뷰 반영(전진).
 - v1.4 (2026-10-26) 리뷰 반영(전진). S3 저장 순서(DELTA 검증 → 완료 보고)와 S4 적용 조건(아직 WAITING(REVALIDATION)·같은 delta 검증일 때만) 명시(§2.2).
 - v1.3 (2026-10-26) 선행 순환 응답을 명세대로 409 dependency_cycle 로 정정(§4.2).
 - v1.2 (2026-10-26) 리뷰 반영(전진) 2차. START 멱등을 "IN_PROGRESS + 같은 validation_id" 로 좁히고 RESUME 는 멱등 단계 제외(§2.1·§3), S1·S2 대상을 명세대로 IN_PROGRESS 만으로(§2.2), DELTA+STALE 출구 추가(§2.3), "보고가 끊긴 작업"을 IN_PROGRESS 로 한정하고 담당자 결정으로 표시(§4.1).

@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ol>
  *   <li>since_version=0 은 "처음 연결"로 보고 현재 기준과 가장 최근 변경 한 건만 준다 (Jira "과거 전체 반환 안 함")</li>
  *   <li>첫 발행(v1)은 변경이 아니라 시작점이라 목록에서 뺀다. 제안 없이 발행된 기준은 proposal_id 를 생략한다</li>
+ *   <li>폐기 = 새 기준의 baseline_item 에서 빠짐 (발행 -194 계약, {@link DesignChangeQueries}). retired_at 시각으로 추정하지 않는다</li>
  *   <li>기준 설계가 한 번도 없으면 409 baseline_missing (-156 ProjectDesignLookup 과 같은 코드)</li>
  *   <li>영향 작업 = 변경 전 버전을 현재 계획이 참조하는(READS·IMPLEMENTS·CHANGES), 완료·취소되지 않은 작업. 기준은 {@link DesignChangeQueries}</li>
  *   <li>검증이 한 번도 없는 작업은 validation_validity 에 넣지 않는다 (명세 상태 목록에 NOT_RUN 이 없고 validation_id 가 필수)</li>

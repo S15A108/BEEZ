@@ -286,29 +286,6 @@ class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void retiredFlag_whileStillInSnapshot_isReportedOnceAsRetirement() {
-        Long api01v1 = api.currentVersionId("API-01");
-        Long api02v1 = api.currentVersionId("API-02");
-        // v2: API-02 만 수정하고 API-01 은 스냅샷에 그대로 둔 채 폐기 표시
-        publish(2, Map.of("API-01", api01v1, "API-02", newVersion("API-02", 2)));
-        api.jdbc.sql("update design_item set retired_at = (select published_at from baseline where project_id = :p and version_no = 2) where key = 'API-01'")
-                .param("p", projectId).update();
-        // v3: 또 API-02 만 수정, API-01 은 여전히 스냅샷에 있음
-        publish(3, Map.of("API-01", api01v1, "API-02", newVersion("API-02", 3)));
-
-        DesignChangesResponse res = call(asMember, 1, null, null, null);
-
-        PublishedChangeResponse v3 = res.items().get(0);
-        PublishedChangeResponse v2 = res.items().get(1);
-        ChangedItemResponse retired = find(v2.changedItems(), String.valueOf(api.designItemId("API-01")));
-        assertThat(retired.beforeVersionId()).isEqualTo(String.valueOf(api01v1));
-        assertThat(retired.afterVersionId()).isNull();
-        // v3 에서는 폐기가 다시 나오지 않는다
-        assertThat(v3.changedItems()).extracting(ChangedItemResponse::designItemId)
-                .doesNotContain(String.valueOf(api.designItemId("API-01")));
-    }
-
-    @Test
     void affectedTasks_excludeCompleted_andIncludeChangesProposer() throws Exception {
         long reads = createTask("읽는 작업", "API-01", member);
         long proposes = createTaskWithRefs("제안한 작업", api.changesRef("API-01"), leader);
