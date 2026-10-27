@@ -47,6 +47,6 @@ python -c "import asyncio,pytest; asyncio.set_event_loop_policy(asyncio.WindowsS
 
 `consistency.py`의 Event barrier가 검색 후/생성 후 최종 검사 전/최종 검사 후 승인 변경 순서를 제어한다. 검증기는 trace 안의 자체 기대값을 믿지 않고 별도 `SNAPSHOTS`에서 승인 버전과 정책값을 얻는다. BE trace를 검사할 때는 권위 있는 시험 fixture에서 별도로 만든 `snapshots`를 `validate_trace(trace, snapshots)`에 전달한다. trace가 주장한 허용 버전/정답을 그대로 oracle로 넣으면 안 된다.
 
-이 실행의 모의 C 6개와 기존 handoff 26개는 실제 PostgreSQL의 트랜잭션·rollback·권한 격리·늦은 attempt 차단 검증을 대신하지 않는다. BE 담당은 실제 저장/검색 구현 후 동일 fixture의 SQL 결과와 승인 경합 trace를 제공하고, AI 담당은 검색→모델 입력→최종 답변/인용 및 최종 검증 baseline을 대조한다.
+이 실행의 모의 C 6개와 기존 handoff 26개는 실제 PostgreSQL의 트랜잭션·rollback·권한 격리·늦은 attempt 차단 검증을 대신하지 않는다. [BE 후속 #213](https://ssafy.atlassian.net/browse/S15P31A108-213) 담당이 저장/검색을 구현하고 동일 fixture의 SQL 결과·승인 경합 trace·검색→모델 입력→최종 답변/인용을 검증한다. 필요한 AI 인터페이스 변경은 별도 변경 티켓에서 추적한다. #130은 실행 가능한 도구·결과·인계 자료와 dev 병합을 기준으로 완료하며 BE 통합 대기를 종료 조건으로 두지 않는다.
 
-실측 결과와 남은 공동 작업은 [#130 평가 기록](../../docs/experiments/document-rag-evaluation-S15P31A108-130.md)에 있다.
+실측 결과와 BE 후속 인계 범위는 [#130 평가 기록](../../docs/experiments/document-rag-evaluation-S15P31A108-130.md)에 있다.

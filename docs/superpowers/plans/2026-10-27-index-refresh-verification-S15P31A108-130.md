@@ -25,9 +25,9 @@
 - [x] Validate key sets, source spans, dimensions, API-A04 envelopes, profile and scenario references.
 - [x] Verify full AI suite and scope separation after moving the files.
 
-## Remaining #130 work
+## BE follow-up #213
 
-BE ownership/DTO/manifest agreement, real PostgreSQL atomicity/isolation tests, C/D measurements and recorded quality/cost/latency results are still required. Passing synthetic Python tests does not close the ticket.
+User scope decision on 2026-10-27 supersedes the former shared completion gate: #130 covers AI fixtures/tools, development measurements and handoff, then closes after its PR merges to dev. BE ownership/DTO/manifest implementation, real PostgreSQL atomicity/isolation and operational C/D tests continue in S15P31A108-213 and do not block #130 closure. See the current #130 proposal and PR handoff body for acceptance criteria. Synthetic tests remain explicitly distinct from actual DB results.
 
 ## Ledger
 
