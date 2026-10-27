@@ -137,6 +137,21 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
                 .hasMessageContaining("append-only");
     }
 
+    @Test
+    void foreignTaskOrBaselineId_isRejectedByDatabase_evenWithoutServiceCheck() {
+        api.jdbc.sql("insert into project (name, owner_account_id) values ('Q', :a)").param("a", leader).update();
+        Long other = api.jdbc.sql("select id from project where name = 'Q'").query(Long.class).single();
+        api.jdbc.sql("insert into task (project_id, key, title, status) values (:p, 'T-1', 'q', 'DRAFT')").param("p", other).update();
+        Long otherTask = api.jdbc.sql("select id from task where project_id = :p").param("p", other).query(Long.class).single();
+
+        // 서비스를 거치지 않고 직접 넣어도 V5 복합 FK 가 막는다
+        assertThatThrownBy(() -> api.jdbc.sql("""
+                        insert into context_access_log (project_id, account_id, task_id, tool, target_kind)
+                        values (:p, :a, :t, 'x', 'BASELINE')
+                        """).param("p", projectId).param("a", member).param("t", otherTask).update())
+                .hasMessageContaining("fk_context_access_log_task");
+    }
+
     // ---- 조회 API (CTX-A06) ----
 
     private String path() {

@@ -3,6 +3,9 @@ package com.beez.backend.contextaccess.service;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.contextaccess.entity.ContextAccessLog;
 import com.beez.backend.contextaccess.repository.ContextAccessLogRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
  * REST CTX-A01 패킷 조회, CTX-A03 기록 상세. 검색 목록(MCP-05, CTX-A02)은 감사 기록(mcp_audit_log, -177)이 덮으므로 여기서는 남기지 않는다.
  *
  * <p><b>남기지 않는 것.</b> 요청 문장, 기록 원문, 토큰 값. 인자에 문자열 내용이 없고 번호만 받는다 (MCP 규약 "토큰·비밀번호·개인 대화 원문은 기록하지 않는다").
+ *
+ * <p><b>소속 확인.</b> 작업 번호는 여기서 "이 프로젝트 것인지" 확인하고 아니면 비워서 저장한다 — 호출 지점마다 확인을 반복하지 않는다.
+ * 기준·토큰·작업은 V5 복합 FK((id, project_id))가 DB 에서도 막는다.
  */
 @Service
 public class ContextAccessRecorder {
@@ -26,15 +32,19 @@ public class ContextAccessRecorder {
     public static final String KIND_PACKET = "PACKET";
     public static final String KIND_CONTEXT_RECORD = "CONTEXT_RECORD";
 
-    private final ContextAccessLogRepository logs;
+    private static final Logger log = LoggerFactory.getLogger(ContextAccessRecorder.class);
 
-    public ContextAccessRecorder(ContextAccessLogRepository logs) {
+    private final ContextAccessLogRepository logs;
+    private final JdbcClient jdbc;
+
+    public ContextAccessRecorder(ContextAccessLogRepository logs, JdbcClient jdbc) {
         this.logs = logs;
+        this.jdbc = jdbc;
     }
 
     /**
      * @param actor      권한 검사를 통과한 호출자 (계정·토큰 번호를 여기서 꺼낸다)
-     * @param taskId     관련 작업. 이 프로젝트에 실제로 있는 번호만 넣는다 (FK). 없으면 null
+     * @param taskId     관련 작업. 이 프로젝트 작업이 아니면(다른 프로젝트·없는 번호) 비워서 저장한다
      * @param tool       도구·API 이름 (예: "get_design_changes")
      * @param targetKind {@link #KIND_BASELINE} 등
      * @param targetId   본 대상 번호
@@ -44,8 +54,23 @@ public class ContextAccessRecorder {
     @Transactional(propagation = Propagation.MANDATORY)
     public ContextAccessLog record(ProjectActor actor, Long taskId, String tool, String targetKind, Long targetId,
                                    Long baselineId, Long packetId) {
-        ContextAccessLog log = ContextAccessLog.of(actor.projectId(), actor.accountId(), actor.agentTokenId(), taskId,
+        Long taskInProject = null;
+        if (taskId != null) {
+            if (taskBelongsTo(actor.projectId(), taskId)) {
+                taskInProject = taskId;
+            } else {
+                // 호출자 쪽에서 걸렀어야 할 번호. 섞어 저장하지 않고 비운다 (FK 도 막는다)
+                log.warn("context access: task {} is not in project {}, recorded without task", taskId, actor.projectId());
+            }
+        }
+        ContextAccessLog row = ContextAccessLog.of(actor.projectId(), actor.accountId(), actor.agentTokenId(), taskInProject,
                 tool, targetKind, targetId, baselineId, packetId);
-        return logs.save(log);
+        return logs.save(row);
+    }
+
+    private boolean taskBelongsTo(Long projectId, Long taskId) {
+        Integer count = jdbc.sql("select count(*) from task where id = :t and project_id = :p")
+                .param("t", taskId).param("p", projectId).query(Integer.class).single();
+        return count > 0;
     }
 }
