@@ -67,7 +67,7 @@ public class ProjectAccessChecker {
                         (projects.existsByIdAndArchivedAtIsNull(projectId) ? "not_member" : "project_missing") + who));
 
         if (!member.getRole().satisfies(required)) {
-            throw AccessErrors.forbidden("role_required_" + required.name().toLowerCase() + who);
+            throw AccessErrors.forbidden("role_required_" + required.name().toLowerCase() + who, "팀장만 할 수 있습니다");
         }
         return new ProjectActor(accountId, member.getId(), projectId, member.getRole(), actorType, agentTokenId);
     }

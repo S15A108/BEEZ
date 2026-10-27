@@ -196,10 +196,11 @@ public class TaskStateService {
             if (isStalled(task)) {
                 return;
             }
-            throw new ApiException(HttpStatus.FORBIDDEN, "forbidden",
+            throw AccessErrors.forbidden("leader_cancel_not_stalled task=" + task.getId(),
                     "팀장은 보고가 끊긴 작업만 취소할 수 있습니다 (마지막 보고 후 " + stalledAfter.toMinutes() + "분)");
         }
-        throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "담당자만 작업 상태를 바꿀 수 있습니다");
+        throw AccessErrors.forbidden("not_assignee task=" + task.getId() + " member=" + actor.memberId(),
+                "담당자만 작업 상태를 바꿀 수 있습니다");
     }
 
     /**

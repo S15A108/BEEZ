@@ -78,7 +78,13 @@ class ProjectAccessCheckerTest {
     void member_onLeaderOnlyCall_is403() {
         givenMembership(ACCOUNT, 5L, ProjectRole.MEMBER);
 
-        assertStatus(() -> checker.requireMember(HUMAN, PROJECT, ProjectRole.LEADER), HttpStatus.FORBIDDEN, "forbidden");
+        // -172 합의 3: 403 은 code 하나에 사유 메시지를 담는다 (404 와 달리 숨기지 않는다)
+        assertThat(catchApi(() -> checker.requireMember(HUMAN, PROJECT, ProjectRole.LEADER)))
+                .satisfies(e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getCode()).isEqualTo("forbidden");
+                    assertThat(e.getMessage()).isEqualTo("팀장만 할 수 있습니다");
+                });
     }
 
     @Test
@@ -124,6 +130,8 @@ class ProjectAccessCheckerTest {
         assertStatus(() -> TestActors.agent(PROJECT, 5L, 3L).requireHuman(), HttpStatus.FORBIDDEN, "forbidden");
         // 팀장도 담당자가 아니면 자동 통과하지 않는다 (00-common 2절 TASK_OWNER)
         assertStatus(() -> TestActors.leader(PROJECT, 5L).requireMemberId(6L), HttpStatus.FORBIDDEN, "forbidden");
+        // 담당자가 비어 있는 작업도 403 (task.assignee_member_id 는 NULL 허용)
+        assertStatus(() -> TestActors.member(PROJECT, 5L).requireMemberId(null), HttpStatus.FORBIDDEN, "forbidden");
     }
 
     private static ApiException catchApi(Runnable call) {

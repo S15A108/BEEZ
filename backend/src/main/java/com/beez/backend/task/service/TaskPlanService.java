@@ -308,9 +308,7 @@ public class TaskPlanService {
 
     /** 계획 변경은 담당자 본인만 (사람 세션이든 그 사람의 에이전트 토큰이든 멤버 번호가 같으면 본인) */
     private void requireAssignee(Task task, ProjectActor actor) {
-        if (!Long.valueOf(actor.memberId()).equals(task.getAssigneeMemberId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "담당자만 계획을 바꿀 수 있습니다");
-        }
+        actor.requireMemberId(task.getAssigneeMemberId(), "담당자만 계획을 바꿀 수 있습니다");
     }
 
     /** 정리된 참조 목록과, 항목별 확정 버전·관계 */
