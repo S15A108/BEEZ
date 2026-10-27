@@ -59,14 +59,15 @@ public class TaskService {
 | `requireUser(caller)` | 프로젝트와 무관한 본인 API(`/api/me` 등) | 비로그인·에이전트 401 |
 | `isActiveMember(memberId, projectId)` | 담당자 지정·변경 대상 확인 | — (true/false) |
 | `actor.requireHuman()` | 승인·발행·팀 관리, 에이전트 CANCEL | 에이전트 403 |
-| `actor.requireMemberId(id)` | TASK_OWNER·RECORD_AUTHOR | 다른 멤버 403 |
+| `actor.requireMemberId(memberId[, 메시지])` | TASK_OWNER (담당자 칸은 **멤버 ID**) | 다른 멤버·담당자 없음 403 |
+| `actor.accountId()`와 비교 | RECORD_AUTHOR (작성자 칸은 **계정 ID**) | 아래 "작성자 검사" |
 
 `ProjectActor`에 담긴 값:
 
 | 필드 | 쓰임 |
 | --- | --- |
-| `accountId` | 계정 |
-| `memberId` | 작업 담당자 판정, 작성자 기록(`*_member_id` 칸) |
+| `accountId` | 계정. 작성자 기록·판정(`author_account_id`, `created_by_account_id` 등 작성자 칸은 모두 계정 ID) |
+| `memberId` | 작업 담당자 판정(`task.assignee_member_id`) |
 | `projectId` | 검사를 통과한 프로젝트 |
 | `role` | `LEADER` / `MEMBER` |
 | `actorType` | `HUMAN`(웹 세션) / `AGENT`(MCP 토큰) |
@@ -80,9 +81,21 @@ public class TaskService {
 | --- | --- | --- |
 | 다른 프로젝트 객체, 없는 ID | `AccessErrors.notFound("cross_project ...")` | 404 `not_found` |
 | 남의 PRIVATE 기록 | `AccessErrors.notFound("private_record ...")` | 404 `not_found` |
-| 같은 프로젝트 안 역할·소유 조건 | `AccessErrors.forbidden("...")` | 403 `forbidden` |
+| 같은 프로젝트 안 역할·소유 조건 | `AccessErrors.forbidden("로그용 사유", "사용자 메시지")` | 403 `forbidden` |
 
-인자 문자열은 **서버 로그에만** 남는다(`com.beez.access` 로거, 요청 ID와 함께). 응답 메시지는 사유와 관계없이 같다.
+`reason` 인자는 **서버 로그에만** 남는다(`com.beez.access` 로거, 요청 ID와 함께). 응답 메시지는 [05 문서](05-build-order-and-access-policy.md) 합의 3번대로 나뉜다.
+- **404는 하나로 통일**한다. 사유와 관계없이 "리소스가 없거나 프로젝트 소속·접근 권한이 없음"이다(존재를 숨김).
+- **403은 사유 메시지**를 담는다(예: "팀장만 할 수 있습니다", "담당자만 계획을 바꿀 수 있습니다"). 같은 프로젝트 멤버에게만 가는 응답이라 숨기지 않는다. FE는 메시지가 아니라 code `forbidden`으로 분기한다.
+
+**작성자 검사 (RECORD_AUTHOR).** 작성자 칸(`context_record`·`change_comment`·`meeting_entry`의 `author_account_id`, `task_plan_revision.created_by_account_id`)은 모두 **계정 ID**라서 `actor.accountId()`와 비교한다. `memberId`와 섞지 않는다.
+- 남의 PRIVATE 기록 **조회**는 403이 아니라 **404**다. 작성자 비교를 조회 쿼리 조건으로 건다: `WHERE ... AND (visibility = 'SHARED' OR author_account_id = :accountId)`. 검색 결과·개수에서도 빠진다.
+- 403 작성자 검사는 SHARED처럼 **이미 보이는 기록을 수정**할 때만 쓴다.
+  ```java
+  if (record.getAuthorAccountId() != actor.accountId()) {
+      throw AccessErrors.forbidden("not_author record=" + record.getId(), "작성자만 수정할 수 있습니다");
+  }
+  ```
+  아직 사용처가 없어 `ProjectActor`에 전용 메서드를 두지 않았다. 첫 사용처(-95·-110)가 생길 때 필요하면 추가한다.
 -156 초안의 `NotFound.because(...)`와 `Membership`은 없어졌다. 각각 `AccessErrors.notFound(...)`와 `ProjectActor`를 쓴다.
 
 목록·검색에서 다른 프로젝트 ID를 필터로 받으면 오류 없이 0건이다. 권한 조건은 페이지·집계 **전**에 쿼리에 넣는다.
