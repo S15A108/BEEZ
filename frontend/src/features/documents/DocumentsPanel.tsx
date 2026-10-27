@@ -165,9 +165,11 @@ export function DocumentsPanel({
                           <button
                             type="button"
                             className="text-left font-medium underline-offset-4 hover:underline"
-                            onClick={() =>
-                              openPane('documents', hit.source.document_id)
-                            }
+                            disabled={!hit.source}
+                            onClick={() => {
+                              if (hit.source)
+                                openPane('documents', hit.source.document_id)
+                            }}
                           >
                             {hit.title}
                           </button>
@@ -175,8 +177,9 @@ export function DocumentsPanel({
                             {hit.snippet}
                           </p>
                           <small className="mt-2 block text-muted-foreground">
-                            문서 #{hit.source.document_id} · v
-                            {hit.source.version_no} · {hit.source.location}
+                            {hit.source
+                              ? `문서 #${hit.source.document_id} · v${hit.source.version_no} · ${hit.source.location}`
+                              : '문서 출처 없이 승인된 설계 항목'}
                           </small>
                         </li>
                       ))}
@@ -259,6 +262,13 @@ export function DocumentsPanel({
             key={`${projectId}:${selected}`}
             projectId={projectId}
             documentId={selected}
+            initialVersionNo={
+              documents.data?.items.find((item) => item.id === selected)
+                ?.approved_version
+                ? undefined
+                : documents.data?.items.find((item) => item.id === selected)
+                    ?.latest_draft?.version_no
+            }
           />
         ) : (
           <EmptyState>
@@ -335,7 +345,7 @@ function UploadDocumentDialog({
             원본 파일을 보관하고 분석을 준비해요. 등록한 문서는 승인 전 초안으로
             남아요.
             {apiMode === 'mock' &&
-              ' 예시 환경에서는 .md·.markdown·.txt 파일을 지원하며, 분석은 실제 AI 호출 없이 처리해요.'}
+              ' 예시 환경의 분석은 실제 AI 호출 없이 처리해요.'}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -380,6 +390,9 @@ function UploadDocumentDialog({
           </div>
           <div className="grid gap-2">
             <Label htmlFor="document-file">원본 파일</Label>
+            <p className="text-xs text-muted-foreground">
+              UTF-8 .md/.txt · 파일 1 MiB 이하 · 텍스트 10만 문자 이하
+            </p>
             <Controller
               name="file"
               control={control}
@@ -387,7 +400,7 @@ function UploadDocumentDialog({
                 <Input
                   id="document-file"
                   type="file"
-                  accept={apiMode === 'mock' ? '.md,.markdown,.txt' : undefined}
+                  accept=".md,.txt"
                   name={field.name}
                   ref={field.ref}
                   onBlur={field.onBlur}
@@ -419,9 +432,11 @@ function UploadDocumentDialog({
 function DocumentDetail({
   projectId,
   documentId,
+  initialVersionNo,
 }: {
   projectId: string
   documentId: string
+  initialVersionNo?: number
 }) {
   const action = useProjectAction(projectId)
   const [versionNo, setVersionNo] = useState<number>()
@@ -432,9 +447,17 @@ function DocumentDetail({
     to_version: number
   }>()
   const document = useQuery({
-    queryKey: ['projects', projectId, 'document', documentId, versionNo],
+    queryKey: [
+      'projects',
+      projectId,
+      'document',
+      documentId,
+      versionNo ?? initialVersionNo,
+    ],
     queryFn: () =>
-      documentsApi.get(projectId, documentId, { version_no: versionNo }),
+      documentsApi.get(projectId, documentId, {
+        version_no: versionNo ?? initialVersionNo,
+      }),
   })
   const versions = useQuery({
     queryKey: ['projects', projectId, 'document-versions', documentId],

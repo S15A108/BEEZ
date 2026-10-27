@@ -206,7 +206,8 @@ describe('documented REST mock adapter', () => {
 
   it('uploads a real multipart text file and exposes its draft analysis', async () => {
     await login()
-    const result = await documentsApi.upload('102', {
+    const project = await projectsApi.create({ name: '문서 업로드 검증' })
+    const result = await documentsApi.upload(project.id, {
       file: new File(
         ['# 새로운 기획\n사용자가 예약을 만든다.'],
         'planning.md',
@@ -219,16 +220,19 @@ describe('documented REST mock adapter', () => {
     const version = result.document.latest_draft!
     expect(
       (
-        await planningApi.analysis('102', result.document.id, {
+        await planningApi.analysis(project.id, result.document.id, {
           document_version_id: version.id,
         })
       ).status,
     ).toBe('COMPLETED')
     expect(
-      (await planningApi.questions('102', { document_version_id: version.id }))
-        .items,
+      (
+        await planningApi.questions(project.id, {
+          document_version_id: version.id,
+        })
+      ).items,
     ).toHaveLength(1)
-    const file = await documentsApi.download('102', result.document.id, 1)
+    const file = await documentsApi.download(project.id, result.document.id, 1)
     expect(file).toBeInstanceOf(Blob)
   })
 
