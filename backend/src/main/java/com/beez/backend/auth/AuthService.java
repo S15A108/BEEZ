@@ -4,7 +4,6 @@ import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.api.ApiException;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 import java.util.Optional;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -39,7 +38,7 @@ public class AuthService {
     @Transactional
     public Account register(String email, String password, String name) {
         PasswordPolicy.check(password);
-        Account account = Account.register(normalizeEmail(email), encoder.encode(password), name.trim());
+        Account account = Account.register(Account.normalizeEmail(email), encoder.encode(password), name.trim());
         try {
             // 중복 판정은 account.email UNIQUE 에 맡긴다 — 미리 조회하면 동시 가입 사이에 틈이 생긴다
             return accounts.saveAndFlush(account);
@@ -68,7 +67,7 @@ public class AuthService {
             encoder.matches(DUMMY_RAW, dummyHash);
             throw invalidCredentials();
         }
-        Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(normalizeEmail(email));
+        Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(Account.normalizeEmail(email));
         boolean matches = matches(password, found.map(Account::getPasswordHash).orElse(dummyHash));
         if (found.isEmpty() || !matches) {
             throw invalidCredentials();
@@ -88,10 +87,5 @@ public class AuthService {
             log.warn("unreadable password hash, treated as mismatch: {}", e.getMessage());
             return false;
         }
-    }
-
-    /** 대소문자·앞뒤 공백만 다른 이메일을 같은 계정으로 본다. 초대 대상 이메일(MEM-A01)도 이 규칙으로 저장·비교한다. */
-    public static String normalizeEmail(String email) {
-        return email.trim().toLowerCase(Locale.ROOT);
     }
 }

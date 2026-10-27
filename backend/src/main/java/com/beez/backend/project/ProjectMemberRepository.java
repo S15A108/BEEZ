@@ -44,8 +44,16 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
 
     /**
      * accountIds 중 에이전트가 연결된 계정 (Member.agent_connected). 폐기 안 된 토큰에 agent_session 이 있으면 연결로 본다
-     * (-173 A06 합의, -178 에서 재조정). 토큰 엔티티는 -175 라 SQL 로 읽는다.
+     * (-173 A06 합의, -178 에서 재조정). 빈 목록이면 쿼리하지 않는다 — {@code in ()} 은 SQL 문법 오류다.
      */
+    default List<Long> agentConnectedAccountIds(long projectId, Collection<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return List.of();
+        }
+        return findAgentConnectedAccountIds(projectId, accountIds);
+    }
+
+    /** {@link #agentConnectedAccountIds} 로만 부른다. 토큰 엔티티는 -175 라 SQL 로 읽는다. */
     @Query(value = """
             select distinct t.account_id
               from agent_token t

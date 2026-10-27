@@ -2,12 +2,10 @@ package com.beez.backend.invitation;
 
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
-import com.beez.backend.auth.AuthService;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
-import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.common.auth.SecretTokens;
@@ -62,7 +60,11 @@ public class InvitationService {
     @Transactional
     public CreatedInvitationResponse create(CallerContext caller, long projectId, CreateInvitationRequest req) {
         ProjectActor actor = access.requireHumanLeader(caller, projectId);
-        String email = req.email() == null ? null : AuthService.normalizeEmail(req.email());
+        // 본문 없이 보내도 링크 초대다 (email 은 선택 필드뿐)
+        String email = null;
+        if (req != null && req.email() != null) {
+            email = Account.normalizeEmail(req.email());
+        }
         if (email != null) {
             Optional<Account> invitee = accounts.findByEmailAndDeletedAtIsNull(email);
             if (invitee.isPresent() && members.findActiveMembership(projectId, invitee.get().getId()).isPresent()) {
@@ -80,25 +82,15 @@ public class InvitationService {
     public PageResponse<InvitationResponse> list(CallerContext caller, long projectId, String cursor, Integer limit) {
         access.requireHumanLeader(caller, projectId);
         int size = PageResponse.normalizeLimit(limit);
-        long beforeId = Long.MAX_VALUE;
-        if (cursor != null && !cursor.isBlank()) {
-            beforeId = Ids.parse(cursor, "cursor");
-        }
-        List<Invitation> rows = invitations.findPage(projectId, beforeId, PageRequest.of(0, size + 1));
-        boolean hasMore = rows.size() > size;
-        List<Invitation> page = rows;
-        if (hasMore) {
-            page = rows.subList(0, size);
-        }
-        List<InvitationResponse> items = new ArrayList<>();
-        for (Invitation i : page) {
-            items.add(InvitationResponse.of(i));
-        }
-        String nextCursor = null;
-        if (hasMore) {
-            nextCursor = Ids.str(page.get(page.size() - 1).getId());
-        }
-        return PageResponse.of(items, hasMore, nextCursor);
+        List<Invitation> rows = invitations.findPage(projectId, PageResponse.beforeId(cursor),
+                PageRequest.of(0, size + 1));
+        return PageResponse.fromRows(rows, size, Invitation::getId, page -> {
+            List<InvitationResponse> items = new ArrayList<>();
+            for (Invitation i : page) {
+                items.add(InvitationResponse.of(i));
+            }
+            return items;
+        });
     }
 
     /**
@@ -171,7 +163,7 @@ public class InvitationService {
         member = members.saveAndFlush(member);
         invitation.accept(me.getId(), now);
 
-        boolean agentConnected = !members.findAgentConnectedAccountIds(project.getId(), List.of(me.getId())).isEmpty();
+        boolean agentConnected = !members.agentConnectedAccountIds(project.getId(), List.of(me.getId())).isEmpty();
         return new AcceptedInvitationResponse(projectService.toResponse(project, ProjectRole.MEMBER),
                 MemberResponse.of(member, me, agentConnected));
     }

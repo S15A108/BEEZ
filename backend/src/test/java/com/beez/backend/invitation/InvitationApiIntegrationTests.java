@@ -10,6 +10,8 @@ import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -34,11 +36,13 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
         var p = fixtures().projectWithLeader();
         ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
 
-        HttpResponse<String> created = leader.post(invitations(p.projectId()), "{}");
+        // email 은 선택이라 본문 없이도 링크 초대가 만들어진다
+        HttpResponse<String> created = leader.post(invitations(p.projectId()), null);
         assertThat(created.statusCode()).isEqualTo(201);
         String token = tokenOf(created);
 
-        JsonNode preview = read(client().post("/api/invitations/preview", tokenBody(token)));
+        // 복사한 링크에 붙은 앞뒤 공백·줄바꿈은 무시한다
+        JsonNode preview = read(client().post("/api/invitations/preview", "{\"token\":\" " + token + "\\n\"}"));
         assertThat(preview.get("project_name").asString()).isEqualTo("fixture-project");
         assertThat(preview.get("login_required").asBoolean()).isTrue();
 
@@ -103,6 +107,15 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
         ApiClient outsider = loginAsNewAccount();
         String path = invitations(p.projectId());
         String invitationId = read(leader.post(path, "{}")).get("invitation").get("id").asString();
+        String newerId = read(leader.post(path, "{}")).get("invitation").get("id").asString();
+
+        // 목록은 id 내림차순 커서
+        JsonNode first = read(leader.get(path + "?limit=1"));
+        assertThat(first.get("has_more").asBoolean()).isTrue();
+        assertThat(first.get("items").get(0).get("id").asString()).isEqualTo(newerId);
+        JsonNode second = read(leader.get(path + "?limit=1&cursor=" + first.get("next_cursor").asString()));
+        assertThat(second.get("items").get(0).get("id").asString()).isEqualTo(invitationId);
+        assertThat(second.get("has_more").asBoolean()).isFalse();
 
         assertThat(member.post(path, "{}").statusCode()).isEqualTo(403);
         assertThat(member.get(path).statusCode()).isEqualTo(403);
@@ -185,7 +198,10 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
                 Boolean.class, bobMember)).isTrue();
     }
 
-    /** 깨지면: 같은 링크를 동시에 누르면 둘 다 들어온다 — 순서대로 누를 때만 1회 사용이 지켜진다 (행 잠금). */
+    /**
+     * 깨지면: 같은 링크를 동시에 누르면 둘 다 들어온다 — 순서대로 누를 때만 1회 사용이 지켜진다 (행 잠금).
+     * 공용 ForkJoinPool 은 2코어에서 스레드 1개라 요청이 순서대로 가 잠금이 없어도 통과한다. 그래서 전용 스레드 풀을 쓴다.
+     */
     @Test
     void concurrentAccept_onlyOneWins() throws Exception {
         var p = fixtures().projectWithLeader();
@@ -194,18 +210,24 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
         List<ApiClient> users = List.of(loginAsNewAccount(), loginAsNewAccount(), loginAsNewAccount());
 
         CountDownLatch start = new CountDownLatch(1);
-        List<CompletableFuture<Integer>> calls = users.stream()
-                .map(u -> CompletableFuture.supplyAsync(() -> {
-                    try {
-                        start.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                    return u.post("/api/invitations/accept", tokenBody(token)).statusCode();
-                }))
-                .toList();
-        start.countDown();
-        List<Integer> statuses = calls.stream().map(CompletableFuture::join).toList();
+        ExecutorService pool = Executors.newFixedThreadPool(users.size());
+        List<Integer> statuses;
+        try {
+            List<CompletableFuture<Integer>> calls = users.stream()
+                    .map(u -> CompletableFuture.supplyAsync(() -> {
+                        try {
+                            start.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return u.post("/api/invitations/accept", tokenBody(token)).statusCode();
+                    }, pool))
+                    .toList();
+            start.countDown();
+            statuses = calls.stream().map(CompletableFuture::join).toList();
+        } finally {
+            pool.shutdown();
+        }
 
         assertThat(statuses).containsExactlyInAnyOrder(200, 409, 409);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM project_member WHERE project_id = ?", Integer.class,

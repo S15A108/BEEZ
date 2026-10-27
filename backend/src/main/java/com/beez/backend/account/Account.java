@@ -8,6 +8,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.Locale;
 
 /** 계정 (V2 account). 탈퇴하면 email 이 NULL 이 되고 deleted_at 이 찍힌다 (ACC-A10, 후속 PR). */
 @Entity
@@ -41,6 +42,13 @@ public class Account extends BaseTimeEntity {
         a.passwordHash = passwordHash;
         a.displayName = displayName;
         return a;
+    }
+
+    /**
+     * 대소문자·앞뒤 공백만 다른 이메일을 같은 계정으로 본다. 가입·로그인(AuthService)과 초대 대상(MEM-A01)이 같은 규칙을 쓴다.
+     */
+    public static String normalizeEmail(String email) {
+        return email.trim().toLowerCase(Locale.ROOT);
     }
 
     public Long getId() {

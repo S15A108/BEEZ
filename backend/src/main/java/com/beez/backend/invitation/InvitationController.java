@@ -34,7 +34,7 @@ public class InvitationController {
     @PostMapping("/api/projects/{id}/invitations")
     @ResponseStatus(HttpStatus.CREATED)
     public CreatedInvitationResponse create(CallerContext caller, @PathVariable("id") Long projectId,
-                                            @Valid @RequestBody CreateInvitationRequest body) {
+                                            @Valid @RequestBody(required = false) CreateInvitationRequest body) {
         return invitations.create(caller, projectId, body);
     }
 

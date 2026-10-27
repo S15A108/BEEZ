@@ -62,19 +62,15 @@ public class ProjectService {
     public PageResponse<ProjectResponse> listMine(CallerContext caller, String cursor, Integer limit) {
         Account me = access.requireUser(caller);
         int size = PageResponse.normalizeLimit(limit);
-        long beforeId = Long.MAX_VALUE;
         // 빈 cursor 는 첫 페이지 (작업 목록 TaskQueryService.parseCursor 와 같게)
-        if (cursor != null && !cursor.isBlank()) {
-            beforeId = Ids.parse(cursor, "cursor");
-        }
+        long beforeId = PageResponse.beforeId(cursor);
         // limit+1 개를 읽는다. 다 차면 다음 페이지가 있다는 뜻.
         List<MyProjectRow> rows = projects.findMyProjects(me.getId(), beforeId, PageRequest.of(0, size + 1));
-        boolean hasMore = rows.size() > size;
-        List<MyProjectRow> page = rows;
-        if (hasMore) {
-            page = rows.subList(0, size);
-        }
+        return PageResponse.fromRows(rows, size, row -> row.project().getId(), this::toItems);
+    }
 
+    /** 한 페이지의 프로젝트 응답. 기준 설계 요약은 페이지 단위로 한 번에 읽는다. */
+    private List<ProjectResponse> toItems(List<MyProjectRow> page) {
         List<Long> baselineIds = new ArrayList<>();
         for (MyProjectRow row : page) {
             if (row.project().getCurrentBaselineId() != null) {
@@ -87,11 +83,7 @@ public class ProjectService {
             Project p = row.project();
             items.add(ProjectResponse.of(p, row.role(), baselines.get(p.getCurrentBaselineId())));
         }
-        String nextCursor = null;
-        if (hasMore) {
-            nextCursor = Ids.str(page.get(page.size() - 1).project().getId());
-        }
-        return PageResponse.of(items, hasMore, nextCursor);
+        return items;
     }
 
     /** PRJ-A03 */
