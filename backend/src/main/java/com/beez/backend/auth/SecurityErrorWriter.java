@@ -31,7 +31,10 @@ public class SecurityErrorWriter implements AuthenticationEntryPoint, AccessDeni
     @Override
     public void commence(HttpServletRequest req, HttpServletResponse res, AuthenticationException e) throws IOException {
         String code = (e instanceof AgentTokenException agent) ? agent.getCode() : "unauthenticated";
-        write(res, HttpStatus.UNAUTHORIZED, code, AccessErrors.UNAUTHENTICATED_MESSAGE);
+        // /mcp 는 토큰, 그 밖(/api/** 등)은 세션 인증 실패다. 문구는 AccessErrors 의 두 상수를 따른다
+        boolean agentPath = e instanceof AgentTokenException || req.getRequestURI().startsWith("/mcp");
+        write(res, HttpStatus.UNAUTHORIZED, code,
+                agentPath ? AccessErrors.AGENT_UNAUTHENTICATED_MESSAGE : AccessErrors.UNAUTHENTICATED_MESSAGE);
     }
 
     @Override

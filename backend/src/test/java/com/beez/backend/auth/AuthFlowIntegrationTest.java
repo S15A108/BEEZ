@@ -21,7 +21,8 @@ class AuthFlowIntegrationTest extends IntegrationTestSupport {
         HttpResponse<String> res = client().get("/api/me");
 
         assertThat(res.statusCode()).isEqualTo(401);
-        assertThat(res.body()).contains("\"code\":\"unauthenticated\"");
+        // REST 는 세션 인증뿐이라 명세 오류표 문구도 "세션 인증" (-172: 에이전트는 MCP 전용)
+        assertThat(res.body()).contains("\"code\":\"unauthenticated\"").contains("세션 인증이 유효하지 않음");
         assertThat(res.headers().allValues("Set-Cookie")).isEmpty();
     }
 

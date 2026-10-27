@@ -148,7 +148,8 @@ class ProjectAccessIntegrationTest extends IntegrationTestSupport {
     void mcp_withoutToken_or_withRejectedToken_is401() {
         HttpResponse<String> noToken = client().get("/mcp/test-probe/projects/1");
         assertThat(noToken.statusCode()).isEqualTo(401);
-        assertThat(noToken.body()).contains("\"code\":\"unauthenticated\"");
+        assertThat(noToken.body()).contains("\"code\":\"unauthenticated\"")
+                .contains(AccessErrors.AGENT_UNAUTHENTICATED_MESSAGE);
 
         HttpResponse<String> revoked = client().get("/mcp/test-probe/projects/1", "Authorization", "Bearer revoked");
         assertThat(revoked.statusCode()).isEqualTo(401);

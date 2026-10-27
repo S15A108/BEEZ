@@ -14,7 +14,10 @@ import org.springframework.http.HttpStatus;
  */
 public final class AccessErrors {
 
-    public static final String UNAUTHENTICATED_MESSAGE = "세션 또는 에이전트 인증이 유효하지 않음";
+    /** REST(/api/**) 401. 에이전트는 MCP 전용이라 REST 인증은 모두 세션이다 (-172, Backend REST 오류표 문구) */
+    public static final String UNAUTHENTICATED_MESSAGE = "세션 인증이 유효하지 않음";
+    /** MCP(/mcp) 토큰 401. MCP Tools 명세 문구를 정할 때까지 옛 문구를 유지한다 — 바꿀 때 여기만 고친다 */
+    public static final String AGENT_UNAUTHENTICATED_MESSAGE = "세션 또는 에이전트 인증이 유효하지 않음";
     public static final String NOT_FOUND_MESSAGE = "리소스가 없거나 프로젝트 소속·접근 권한이 없음";
     /** 필터 단계 403 처럼 사유를 알 수 없을 때만 쓰는 기본 문구 */
     public static final String FORBIDDEN_MESSAGE = "해당 역할·소유 조건을 충족하지 않음";
@@ -24,15 +27,20 @@ public final class AccessErrors {
     private AccessErrors() {
     }
 
-    /** 401. 세션 없음·만료, 에이전트 토큰 무효, 에이전트 토큰으로 /api/** 호출. */
+    /** 401. 세션 없음·만료, 에이전트 토큰으로 /api/** 호출. */
     public static ApiException unauthenticated() {
         return new ApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", UNAUTHENTICATED_MESSAGE);
+    }
+
+    /** 401. 에이전트 호출인데 토큰 정보가 없음. */
+    public static ApiException agentUnauthenticated() {
+        return new ApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", AGENT_UNAUTHENTICATED_MESSAGE);
     }
 
     /** 401. 폐기됐거나 호출 계정의 것이 아닌 에이전트 토큰. reason 은 로그에만. */
     public static ApiException tokenRevoked(String reason) {
         log.info("access denied status=401 reason={}", reason);
-        return new ApiException(HttpStatus.UNAUTHORIZED, "token_revoked", UNAUTHENTICATED_MESSAGE);
+        return new ApiException(HttpStatus.UNAUTHORIZED, "token_revoked", AGENT_UNAUTHENTICATED_MESSAGE);
     }
 
     /**

@@ -93,7 +93,7 @@ public class ProjectAccessChecker {
      */
     private void requireTokenFor(long accountId, Long agentTokenId, long projectId) {
         if (agentTokenId == null) {
-            throw AccessErrors.unauthenticated();
+            throw AccessErrors.agentUnauthenticated();
         }
         AgentTokenScopes.TokenScope scope = tokens.find(agentTokenId, accountId)
                 .orElseThrow(() -> AccessErrors.tokenRevoked("token_missing token=" + agentTokenId));
