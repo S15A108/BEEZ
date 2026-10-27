@@ -16,8 +16,8 @@ public final class AccessErrors {
 
     /** REST(/api/**) 401. 에이전트는 MCP 전용이라 REST 인증은 모두 세션이다 (-172, Backend REST 오류표 문구) */
     public static final String UNAUTHENTICATED_MESSAGE = "세션 인증이 유효하지 않음";
-    /** MCP(/mcp) 토큰 401. MCP Tools 명세 문구를 정할 때까지 옛 문구를 유지한다 — 바꿀 때 여기만 고친다 */
-    public static final String AGENT_UNAUTHENTICATED_MESSAGE = "세션 또는 에이전트 인증이 유효하지 않음";
+    /** MCP(/mcp) 토큰 401. MCP 는 토큰 인증뿐이라 MCP Tools 명세 오류표와 같은 문구 */
+    public static final String AGENT_UNAUTHENTICATED_MESSAGE = "에이전트 토큰이 유효하지 않음";
     public static final String NOT_FOUND_MESSAGE = "리소스가 없거나 프로젝트 소속·접근 권한이 없음";
     /** 필터 단계 403 처럼 사유를 알 수 없을 때만 쓰는 기본 문구 */
     public static final String FORBIDDEN_MESSAGE = "해당 역할·소유 조건을 충족하지 않음";
