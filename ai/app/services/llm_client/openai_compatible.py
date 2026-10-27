@@ -4,6 +4,10 @@ Compatibility depends on the configured provider and model; this adapter does
 not prescribe an endpoint, model, provider pricing, or feature prompt.
 """
 
+import math
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from typing import Self
 from urllib.parse import urlsplit
 
 import httpx
@@ -54,6 +58,25 @@ def _tokens(body: object) -> tuple[int | None, int | None]:
     return incoming, outgoing
 
 
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Parse a provider's Retry-After delay without trusting invalid values."""
+    if not value:
+        return None
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            delay = (retry_at - datetime.now(UTC)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if not math.isfinite(delay) or delay < 0:
+        return None
+    return delay
+
+
 class OpenAICompatibleProvider:
     """Send one HTTP attempt to an explicitly configured endpoint."""
 
@@ -76,7 +99,24 @@ class OpenAICompatibleProvider:
             raise ValueError("Invalid LLM credential configuration.")
         self._endpoint = endpoint
         self._api_key = api_key
-        self._transport = transport
+        # The provider owns this client and closes its transport in aclose().
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            trust_env=False,
+            transport=transport,
+        )
+
+    async def aclose(self) -> None:
+        """Close the shared HTTP client after all callers have finished."""
+        await self._client.aclose()
+
+    async def __aenter__(self) -> Self:
+        if self._client.is_closed:
+            raise RuntimeError("The LLM provider has already been closed.")
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        await self.aclose()
 
     async def complete(
         self, request: LLMRequest, *, timeout_seconds: float
@@ -95,15 +135,12 @@ class OpenAICompatibleProvider:
             payload.update(request.model_options)
         headers = {"Authorization": f"Bearer {self._api_key}"}
         try:
-            async with httpx.AsyncClient(
+            response = await self._client.post(
+                self._endpoint,
+                headers=headers,
+                json=payload,
                 timeout=timeout_seconds,
-                follow_redirects=False,
-                trust_env=False,
-                transport=self._transport,
-            ) as client:
-                response = await client.post(
-                    self._endpoint, headers=headers, json=payload
-                )
+            )
         except httpx.TimeoutException:
             raise ProviderError("model_timeout", retryable=True) from None
         except httpx.HTTPError:
@@ -130,6 +167,10 @@ class OpenAICompatibleProvider:
             kwargs["model"] = None
             if status in {408, 504}:
                 raise ProviderError("model_timeout", retryable=True, **kwargs)
+            if status in {429, 503}:
+                kwargs["retry_after_seconds"] = _retry_after_seconds(
+                    response.headers.get("Retry-After")
+                )
             raise ProviderError(
                 "model_unavailable",
                 retryable=(status == 429 or status >= 500),
@@ -138,17 +179,9 @@ class OpenAICompatibleProvider:
 
         if not isinstance(body, dict):
             raise ProviderError("invalid_output", **kwargs)
-        # Providers must not be able to leak the credential or prompt through
-        # a metadata field which callers may store or log as a model name.
-        if reported_model is not None and (
-            self._api_key in reported_model
-            or any(
-                len(message.content) >= 4
-                and message.content in reported_model
-                and reported_model != request.model
-                for message in request.messages
-            )
-        ):
+        # Never expose a credential supplied in an untrusted metadata field.
+        # The client separately accepts only explicitly configured model names.
+        if reported_model is not None and self._api_key in reported_model:
             kwargs["model"] = None
             raise ProviderError("invalid_output", **kwargs)
         choices = body.get("choices")

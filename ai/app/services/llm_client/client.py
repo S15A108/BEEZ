@@ -374,7 +374,24 @@ class LLMClient:
             remaining = min(snapshot.timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
                 raise LLMError("model_timeout", tuple(usages)) from None
-            delay = min(0.1 * (2**index), remaining)
+            delay = 0.1 * (2**index)
+            retry_after = getattr(failure, "retry_after_seconds", None)
+            if isinstance(retry_after, (int, float)) and not isinstance(
+                retry_after, bool
+            ):
+                try:
+                    retry_after = float(retry_after)
+                except OverflowError:
+                    retry_after = None
+                if (
+                    retry_after is not None
+                    and math.isfinite(retry_after)
+                    and retry_after >= 0
+                ):
+                    delay = max(delay, retry_after)
+            # Never start another attempt if its wait alone consumes the budget.
+            if delay >= remaining:
+                raise LLMError("model_timeout", tuple(usages)) from None
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:

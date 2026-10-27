@@ -18,6 +18,7 @@ class ProviderError(Exception):
         code: str,
         *,
         retryable: bool = False,
+        retry_after_seconds: float | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         model: str | None = None,
@@ -27,6 +28,7 @@ class ProviderError(Exception):
         super().__init__("The LLM provider request failed.")
         self.code = code
         self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.model = model
