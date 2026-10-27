@@ -1,0 +1,368 @@
+package com.beez.backend.designchange.service;
+
+import com.beez.backend.common.access.Membership;
+import com.beez.backend.common.access.ProjectAccessChecker;
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.api.Ids;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.designchange.dto.BaselineSummaryResponse;
+import com.beez.backend.designchange.dto.ChangedItemResponse;
+import com.beez.backend.designchange.dto.DesignChangesQuery;
+import com.beez.backend.designchange.dto.DesignChangesResponse;
+import com.beez.backend.designchange.dto.PublishedChangeResponse;
+import com.beez.backend.designchange.dto.ValidationValidityResponse;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * MCP-03 get_design_changes (S15P31A108-164). "마지막으로 본 기준 번호 이후에 발행된 설계 변경"과 내 작업 검증의 유효성을 돌려준다.
+ * 도구 등록은 전진(-179)이 하고, 이 서비스는 REST 없이 MCP 어댑터와 report_task_state(MCP-12 응답 changes)에서 쓴다.
+ *
+ * <p>근거: 02-mcp-tools MCP-03 요청·응답·오류표·처리 규칙, 00-common 3절 페이지, ERD baseline·baseline_item.
+ * 설계·기준 설계 테이블은 오서현 영역이라 엔티티 없이 JdbcClient 로 읽기만 한다 (-156 과 같은 방식).
+ *
+ * <p>정한 것 (문서에 없거나 서로 달라서 담당자 결정으로 적용. 04 생명주기 §6 처럼 명세 반영 요청 대상):
+ * <ol>
+ *   <li>since_version=0 은 "처음 연결"로 보고 현재 기준과 가장 최근 변경 한 건만 준다 (Jira "과거 전체 반환 안 함")</li>
+ *   <li>첫 발행(v1)은 변경이 아니라 시작점이라 목록에서 뺀다. 제안 없이 발행된 기준은 proposal_id 를 생략한다</li>
+ *   <li>기준 설계가 한 번도 없으면 409 baseline_missing (-156 ProjectDesignLookup 과 같은 코드)</li>
+ *   <li>영향 작업 = 변경 전 버전을 현재 계획이 참조하는, 취소되지 않은 같은 프로젝트의 작업</li>
+ *   <li>검증이 한 번도 없는 작업은 validation_validity 에 넣지 않는다 (명세 상태 목록에 NOT_RUN 이 없고 validation_id 가 필수)</li>
+ *   <li>task_id 를 주면 그 작업이 영향받은 변경만, 검증 유효성도 그 작업만. 다른 프로젝트 작업이면 404 가 아니라 빈 결과(-172 참고 2)</li>
+ * </ol>
+ */
+@Service
+public class DesignChangesService {
+
+    public static final int DEFAULT_LIMIT = 20;
+    public static final int MAX_LIMIT = 100;
+
+    /** 담당자의 "열린 작업": 끝나지 않은 상태 (04 생명주기 §1 상태 표에서 COMPLETED·CANCELLED 제외) */
+    private static final List<String> OPEN_STATUSES = List.of("DRAFT", "READY", "IN_PROGRESS", "WAITING");
+
+    /**
+     * 기준 N 과 바로 앞 기준 N-1 의 baseline_item 을 비교해 "바뀐 항목"을 뽑는 공통 SQL 조각 (WITH 절에 넣어 쓴다).
+     * 수정 = 두 기준에 다 있는데 버전이 다름 / 신규 = N 에만 있음(before 없음) / 폐기 = N-1 에만 있음(after 없음).
+     * 영향 작업 = 바뀐 항목의 "변경 전 버전"을 현재 계획이 참조하는, 취소되지 않은 같은 프로젝트의 작업.
+     */
+    private static final String CHANGED_AND_AFFECTED = """
+            changed as (
+                select cur.id as baseline_id, cur.version_no, x.design_item_id, x.before_version_id, x.after_version_id
+                  from baseline cur
+                  join baseline prev on prev.project_id = cur.project_id and prev.version_no = cur.version_no - 1
+                  cross join lateral (
+                      select ai.design_item_id,
+                             pi.design_item_version_id as before_version_id,
+                             ai.design_item_version_id as after_version_id
+                        from baseline_item ai
+                        left join baseline_item pi on pi.baseline_id = prev.id and pi.design_item_id = ai.design_item_id
+                       where ai.baseline_id = cur.id
+                         and (pi.design_item_version_id is null or pi.design_item_version_id <> ai.design_item_version_id)
+                      union all
+                      select pi.design_item_id, pi.design_item_version_id, null
+                        from baseline_item pi
+                       where pi.baseline_id = prev.id
+                         and not exists (select 1 from baseline_item ai
+                                          where ai.baseline_id = cur.id and ai.design_item_id = pi.design_item_id)
+                  ) x
+                 where cur.project_id = :projectId
+            ),
+            affected as (
+                select c.baseline_id, t.id as task_id
+                  from changed c
+                  join task_plan_design_ref r on r.design_item_id = c.design_item_id
+                                             and r.design_item_version_id = c.before_version_id
+                  join task t on t.project_id = :projectId
+                             and t.current_plan_revision_id = r.plan_revision_id
+                             and t.status <> 'CANCELLED'
+            )
+            """;
+
+    private final ProjectAccessChecker access;
+    private final JdbcClient jdbc;
+
+    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc) {
+        this.access = access;
+        this.jdbc = jdbc;
+    }
+
+    @Transactional(readOnly = true)
+    public DesignChangesResponse getChanges(CallerContext caller, Long projectId, DesignChangesQuery in) {
+        Membership membership = access.requireMember(caller, projectId);
+
+        if (in.sinceVersion() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "since_version 은 필수입니다");
+        }
+        int since = in.sinceVersion();
+        Long taskId = Ids.parse(in.taskId(), "task_id");
+        int limit = normalizeLimit(in.limit());
+
+        // 현재 기준. 없으면 발행이 한 번도 안 된 프로젝트
+        BaselineRow latest = findCurrentBaseline(projectId)
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "baseline_missing", "승인된 기준 설계가 아직 없습니다"));
+
+        // 오류표: 음수 또는 현재보다 큰 기준 번호 → 400 invalid_version
+        if (since < 0 || since > latest.versionNo()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_version", "음수 또는 현재보다 큰 기준 번호");
+        }
+
+        // 첫 페이지 시점의 최신 번호(ceiling)를 cursor 에 고정한다. 페이지 도중 새 발행이 생겨도 목록이 흔들리지 않는다
+        int ceiling = latest.versionNo();
+        Integer before = null;
+        if (in.cursor() != null && !in.cursor().isBlank()) {
+            ChangesCursor cursor = ChangesCursor.decode(in.cursor());
+            cursor.requireSameQuery(since, taskId);
+            ceiling = cursor.ceiling();
+            before = cursor.lastVersion();
+        }
+        // since=0 은 "처음 연결": 현재 기준과 가장 최근 변경 하나만 (정한 것 1)
+        int effectiveSince = since;
+        if (since == 0) {
+            effectiveSince = ceiling - 1;
+        }
+
+        BaselineRow current = latest;
+        if (ceiling != latest.versionNo()) {
+            // cursor 가 가리키는 당시 기준으로 고정 (공통 3절)
+            current = findBaselineByVersion(projectId, ceiling).orElse(latest);
+        }
+
+        List<BaselineRow> page = findBaselinePage(projectId, effectiveSince, ceiling, before, taskId, limit + 1);
+        boolean hasMore = page.size() > limit;
+        if (hasMore) {
+            page = page.subList(0, limit);
+        }
+
+        List<Long> baselineIds = new ArrayList<>();
+        for (BaselineRow b : page) {
+            baselineIds.add(b.id());
+        }
+        Map<Long, List<ChangedItemResponse>> changedByBaseline = findChangedItems(projectId, baselineIds);
+        Map<Long, List<String>> affectedByBaseline = findAffectedTasks(projectId, baselineIds);
+
+        List<PublishedChangeResponse> items = new ArrayList<>();
+        for (BaselineRow b : page) {
+            List<ChangedItemResponse> changed = changedByBaseline.get(b.id());
+            if (changed == null) {
+                changed = List.of();
+            }
+            List<String> affected = affectedByBaseline.get(b.id());
+            if (affected == null) {
+                affected = List.of();
+            }
+            items.add(new PublishedChangeResponse(toSummary(b), Ids.str(b.changeProposalId()), changed, affected));
+        }
+
+        String nextCursor = null;
+        if (hasMore) {
+            int lastVersion = page.get(page.size() - 1).versionNo();
+            nextCursor = new ChangesCursor(ceiling, lastVersion, since, taskId).encode();
+        }
+
+        List<ValidationValidityResponse> validity = findValidationValidity(projectId, membership.memberId(), taskId);
+        return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
+    }
+
+    // ---- 조회 ----
+
+    /** baseline 한 줄. publishedAt 이 응답의 created_at */
+    private record BaselineRow(Long id, int versionNo, Timestamp publishedAt, Long changeProposalId) {
+    }
+
+    private static final String BASELINE_COLUMNS = "b.id, b.version_no, b.published_at, b.change_proposal_id";
+
+    private Optional<BaselineRow> findCurrentBaseline(Long projectId) {
+        return jdbc.sql("select " + BASELINE_COLUMNS + """
+                          from project p
+                          join baseline b on b.id = p.current_baseline_id
+                         where p.id = :projectId
+                           and p.archived_at is null
+                        """)
+                .param("projectId", projectId)
+                .query(this::toBaselineRow)
+                .optional();
+    }
+
+    private Optional<BaselineRow> findBaselineByVersion(Long projectId, int versionNo) {
+        return jdbc.sql("select " + BASELINE_COLUMNS + """
+                          from baseline b
+                         where b.project_id = :projectId
+                           and b.version_no = :versionNo
+                        """)
+                .param("projectId", projectId)
+                .param("versionNo", versionNo)
+                .query(this::toBaselineRow)
+                .optional();
+    }
+
+    /**
+     * 페이지에 넣을 기준들. since 초과 ~ ceiling 이하, v1 제외, 최신 번호부터.
+     * task_id 가 있으면 "그 작업이 영향받은 발행"만 — 권한·필터는 페이지를 자르기 전에 건다(공통 3절).
+     */
+    private List<BaselineRow> findBaselinePage(Long projectId, int since, int ceiling, Integer before, Long taskId, int fetch) {
+        StringBuilder sql = new StringBuilder("with " + CHANGED_AND_AFFECTED
+                + " select " + BASELINE_COLUMNS + """
+                  from baseline b
+                 where b.project_id = :projectId
+                   and b.version_no > :since
+                   and b.version_no <= :ceiling
+                   and b.version_no > 1
+                """);
+        if (before != null) {
+            sql.append(" and b.version_no < :before ");
+        }
+        if (taskId != null) {
+            sql.append(" and exists (select 1 from affected a where a.baseline_id = b.id and a.task_id = :taskId) ");
+        }
+        sql.append(" order by b.version_no desc limit :fetch ");
+
+        JdbcClient.StatementSpec spec = jdbc.sql(sql.toString())
+                .param("projectId", projectId)
+                .param("since", since)
+                .param("ceiling", ceiling)
+                .param("fetch", fetch);
+        if (before != null) {
+            spec = spec.param("before", before);
+        }
+        if (taskId != null) {
+            spec = spec.param("taskId", taskId);
+        }
+        return spec.query(this::toBaselineRow).list();
+    }
+
+    /** 페이지 안 기준들의 바뀐 항목을 한 번에 읽어 기준별로 묶는다 (기준마다 따로 조회하지 않는다) */
+    private Map<Long, List<ChangedItemResponse>> findChangedItems(Long projectId, List<Long> baselineIds) {
+        Map<Long, List<ChangedItemResponse>> out = new HashMap<>();
+        if (baselineIds.isEmpty()) {
+            return out;
+        }
+        List<Map<String, Object>> rows = jdbc.sql("with " + CHANGED_AND_AFFECTED + """
+                        select baseline_id, design_item_id, before_version_id, after_version_id
+                          from changed
+                         where baseline_id in (:ids)
+                         order by version_no desc, design_item_id
+                        """)
+                .param("projectId", projectId)
+                .param("ids", baselineIds)
+                .query()
+                .listOfRows();
+        for (Map<String, Object> row : rows) {
+            Long baselineId = ((Number) row.get("baseline_id")).longValue();
+            if (!out.containsKey(baselineId)) {
+                out.put(baselineId, new ArrayList<>());
+            }
+            out.get(baselineId).add(new ChangedItemResponse(
+                    Ids.str(longOrNull(row.get("design_item_id"))),
+                    Ids.str(longOrNull(row.get("before_version_id"))),
+                    Ids.str(longOrNull(row.get("after_version_id")))));
+        }
+        return out;
+    }
+
+    private Map<Long, List<String>> findAffectedTasks(Long projectId, List<Long> baselineIds) {
+        Map<Long, List<String>> out = new HashMap<>();
+        if (baselineIds.isEmpty()) {
+            return out;
+        }
+        List<Map<String, Object>> rows = jdbc.sql("with " + CHANGED_AND_AFFECTED + """
+                        select distinct baseline_id, task_id
+                          from affected
+                         where baseline_id in (:ids)
+                         order by baseline_id, task_id
+                        """)
+                .param("projectId", projectId)
+                .param("ids", baselineIds)
+                .query()
+                .listOfRows();
+        for (Map<String, Object> row : rows) {
+            Long baselineId = ((Number) row.get("baseline_id")).longValue();
+            if (!out.containsKey(baselineId)) {
+                out.put(baselineId, new ArrayList<>());
+            }
+            out.get(baselineId).add(Ids.str(((Number) row.get("task_id")).longValue()));
+        }
+        return out;
+    }
+
+    /**
+     * 검증 유효성. task_id 가 있으면 그 작업(이 프로젝트 것일 때만), 없으면 호출자가 담당인 열린 작업 전부.
+     * 작업마다 현재 계획 리비전의 가장 최근 검증 한 건. 검증이 없는 작업은 빠진다 (정한 것 5).
+     */
+    private List<ValidationValidityResponse> findValidationValidity(Long projectId, Long memberId, Long taskId) {
+        String latestValidation = """
+                join lateral (
+                    select v.id, v.status, v.stale_reason
+                      from validation v
+                     where v.task_id = t.id
+                       and v.plan_revision_id = t.current_plan_revision_id
+                     order by v.id desc
+                     limit 1
+                ) v on true
+                """;
+        JdbcClient.StatementSpec spec;
+        if (taskId != null) {
+            spec = jdbc.sql("select v.id, v.status, v.stale_reason from task t " + latestValidation + """
+                             where t.project_id = :projectId
+                               and t.id = :taskId
+                            """)
+                    .param("projectId", projectId)
+                    .param("taskId", taskId);
+        } else {
+            spec = jdbc.sql("select v.id, v.status, v.stale_reason from task t " + latestValidation + """
+                             where t.project_id = :projectId
+                               and t.assignee_member_id = :memberId
+                               and t.status in (:open)
+                             order by t.id
+                            """)
+                    .param("projectId", projectId)
+                    .param("memberId", memberId)
+                    .param("open", OPEN_STATUSES);
+        }
+        List<ValidationValidityResponse> out = new ArrayList<>();
+        for (Map<String, Object> row : spec.query().listOfRows()) {
+            String status = (String) row.get("status");
+            String reason = null;
+            if ("STALE".equals(status)) {
+                reason = (String) row.get("stale_reason");
+            }
+            out.add(new ValidationValidityResponse(Ids.str(((Number) row.get("id")).longValue()), status, reason));
+        }
+        return out;
+    }
+
+    // ---- 변환 ----
+
+    private BaselineRow toBaselineRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        Long proposal = rs.getObject("change_proposal_id", Long.class);
+        return new BaselineRow(rs.getLong("id"), rs.getInt("version_no"), rs.getTimestamp("published_at"), proposal);
+    }
+
+    private static BaselineSummaryResponse toSummary(BaselineRow b) {
+        return new BaselineSummaryResponse(Ids.str(b.id()), b.versionNo(), b.publishedAt().toInstant());
+    }
+
+    private static Long longOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        return ((Number) value).longValue();
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit < 1) {
+            return DEFAULT_LIMIT;
+        }
+        if (limit > MAX_LIMIT) {
+            return MAX_LIMIT;
+        }
+        return limit;
+    }
+}
