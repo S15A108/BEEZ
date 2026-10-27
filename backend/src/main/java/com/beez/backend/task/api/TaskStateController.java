@@ -1,0 +1,47 @@
+package com.beez.backend.task.api;
+
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.task.dto.TaskDetailResponse;
+import com.beez.backend.task.dto.TaskStateInput;
+import com.beez.backend.task.service.TaskStateService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import com.beez.backend.task.entity.TaskEvent;
+import com.beez.backend.task.entity.TaskStatus;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/** TSK-A07 작업 상태 보고. 규칙은 전부 TaskStateService 에 있다 (MCP report_task_state 와 공유). */
+@Tag(name = "task", description = "작업 계획·조회 (TSK)")
+@RestController
+@RequestMapping("/api/projects/{id}/tasks/{task_id}")
+public class TaskStateController {
+
+    private final TaskStateService stateService;
+
+    public TaskStateController(TaskStateService stateService) {
+        this.stateService = stateService;
+    }
+
+    /**
+     * 응답 코드: 보통 200. COMPLETED 인데 delta 가 있어 WAITING(REVALIDATION) 으로 간 경우만 202
+     * (명세 TSK-A07 "delta 가 있어 검증을 접수한 경우", 04-task-lifecycle.md §2.1 ※).
+     */
+    @Operation(summary = "TSK-A07 작업 상태 보고 (START·RESUME·WAIT·COMPLETED·CANCEL)")
+    @PostMapping("/state-events")
+    public ResponseEntity<TaskDetailResponse> report(CallerContext caller, @PathVariable("id") Long projectId,
+                                                     @PathVariable("task_id") Long taskId,
+                                                     @Valid @RequestBody TaskStateInput body) {
+        TaskDetailResponse result = stateService.report(caller, projectId, taskId, body);
+        if (body.event() == TaskEvent.COMPLETED && result.status() == TaskStatus.WAITING) {
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(result);
+        }
+        return ResponseEntity.ok(result);
+    }
+}

@@ -1,0 +1,436 @@
+{
+  "synthetic_fixture": true,
+  "description": "검증 AI 계약 검토용 합성 예시. 실제 모델 실행·사용량 실측·현재 BE 판정 구현의 실행 결과가 아니다.",
+  "base_request": "request.json",
+  "cases": [
+    {
+      "name": "compatible",
+      "description": "본문 토큰을 유지하도록 계획을 바꾸어 세 검사를 모두 수행하고 추가 문제 후보가 없는 상황이다. 서로 다른 두 모델 호출의 사용량 항목을 합성해 호출별 고유 키를 보여준다.",
+      "request_patch": [
+        {
+          "op": "replace",
+          "path": "/request_key",
+          "value": "ai-a02-request-compatible"
+        },
+        {
+          "op": "replace",
+          "path": "/validation_id",
+          "value": "602"
+        },
+        {
+          "op": "replace",
+          "path": "/input_snapshot_hash",
+          "value": "sha256:validation-input-compatible"
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/id",
+          "value": "513"
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/revision_no",
+          "value": 2
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/plan/approach",
+          "value": "로그인 성공 응답 본문에 accessToken과 userId를 승인 계약대로 반환한다."
+        }
+      ],
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "design-api-login",
+            "related-task-502"
+          ],
+          "unassessed": [],
+          "findings": []
+        },
+        "origin": "MODEL",
+        "model": "configured-model",
+        "usage": [
+          {
+            "request_key": "llm-validate-602-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 1800,
+            "failed": false,
+            "tokens_known": false
+          },
+          {
+            "request_key": "llm-validate-602-attempt-1-call-2",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 900,
+            "failed": false,
+            "tokens_known": false
+          }
+        ]
+      },
+      "expected_backend_status": "PASS",
+      "expected_validation_run_status": "OK"
+    },
+    {
+      "name": "mismatch",
+      "description": "기준 입력 그대로 분석한다. 응답 본문의 토큰을 제거하는 계획과 이를 사용하는 FE 계획의 불일치를 발견한다.",
+      "request_patch": [],
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "design-api-login",
+            "related-task-502"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "design-api-login",
+              "kind": "MISMATCH",
+              "severity": "BLOCKING",
+              "message": "승인 계약은 응답 본문에 accessToken을 반환하지만 계획은 해당 필드를 제거하고 쿠키로만 전달한다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "인증 API / POST /api/auth/login / 성공 응답"
+                }
+              ],
+              "evidence_ids": [
+                "evidence-login-response"
+              ],
+              "suggested_action": "응답 본문의 accessToken을 유지하도록 계획을 보완하거나, 계약 변경이 필요하면 변경 제안과 팀장 승인을 요청하세요."
+            },
+            {
+              "check_key": "related-task-502",
+              "kind": "CONFLICT",
+              "severity": "BLOCKING",
+              "message": "작업 502의 계획은 응답 본문의 accessToken을 읽으므로 작업 501의 변경 계획과 충돌한다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "related_task_id": "502",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "인증 API / POST /api/auth/login / 성공 응답"
+                }
+              ],
+              "evidence_ids": [
+                "evidence-login-response"
+              ],
+              "suggested_action": "작업 501과 502의 담당자가 토큰 전달 방식에 합의하고 필요한 계획 수정 또는 설계 변경 제안을 진행하세요."
+            }
+          ]
+        },
+        "origin": "MODEL",
+        "model": "configured-model",
+        "usage": [
+          {
+            "request_key": "llm-validate-601-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 1800,
+            "failed": false,
+            "tokens_known": false
+          }
+        ]
+      },
+      "expected_backend_status": "NEEDS_REVIEW",
+      "expected_validation_run_status": "OK"
+    },
+    {
+      "name": "missing_plan_input",
+      "description": "계획에 토큰 전달 방식이 적혀 있지 않다는 필수 정보 누락을 확인하고 작성자 보완을 요청한다. 검사를 수행한 결과이므로 COMPLETE다.",
+      "request_patch": [
+        {
+          "op": "replace",
+          "path": "/request_key",
+          "value": "ai-a02-request-missing-plan-input"
+        },
+        {
+          "op": "replace",
+          "path": "/validation_id",
+          "value": "603"
+        },
+        {
+          "op": "replace",
+          "path": "/input_snapshot_hash",
+          "value": "sha256:validation-input-missing-plan-input"
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/id",
+          "value": "514"
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/revision_no",
+          "value": 2
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/plan/approach",
+          "value": "로그인 성공 시 인증 결과를 반환한다. 토큰 전달 방식은 계획에 작성하지 않았다."
+        }
+      ],
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "design-api-login",
+            "related-task-502"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "plan-completeness",
+              "kind": "MISSING_INPUT",
+              "severity": "BLOCKING",
+              "message": "계획에 로그인 토큰을 어떤 위치로 전달할지 적혀 있지 않아 승인 계약을 따르는 접근 방식인지 확인할 수 없다.",
+              "sources": [],
+              "evidence_ids": [],
+              "suggested_action": "작업 501 담당자가 토큰 전달 방식을 계획에 명시한 새 리비전을 등록하고 다시 검증하세요."
+            }
+          ]
+        },
+        "origin": "MODEL",
+        "model": "configured-model",
+        "usage": [
+          {
+            "request_key": "llm-validate-603-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 1800,
+            "failed": false,
+            "tokens_known": false
+          }
+        ]
+      },
+      "expected_backend_status": "NEEDS_INPUT",
+      "expected_validation_run_status": "OK"
+    },
+    {
+      "name": "insufficient_evidence",
+      "description": "별도 검증 입력의 승인 항목 버전 312에는 메서드·경로·설명만 있고 응답 세부 정보와 원문 발췌가 없다. 요청 형식은 유효하지만 모델이 계획 확인 후 나머지 두 비교의 근거 부족을 보고한다.",
+      "request_patch": [
+        {
+          "op": "replace",
+          "path": "/request_key",
+          "value": "ai-a02-request-insufficient-evidence"
+        },
+        {
+          "op": "replace",
+          "path": "/validation_id",
+          "value": "604"
+        },
+        {
+          "op": "replace",
+          "path": "/input_snapshot_hash",
+          "value": "sha256:validation-input-insufficient-evidence"
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/id",
+          "value": "515"
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/revision_no",
+          "value": 2
+        },
+        {
+          "op": "replace",
+          "path": "/plan_revision/plan/design_refs/0/design_item_version_id",
+          "value": "312"
+        },
+        {
+          "op": "replace",
+          "path": "/approved_items/0/id",
+          "value": "312"
+        },
+        {
+          "op": "replace",
+          "path": "/approved_items/0/version_no",
+          "value": 2
+        },
+        {
+          "op": "replace",
+          "path": "/approved_items/0/content",
+          "value": {
+            "method": "POST",
+            "path": "/api/auth/login",
+            "description": "이메일·비밀번호 로그인"
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/related_plans/0/id",
+          "value": "516"
+        },
+        {
+          "op": "replace",
+          "path": "/related_plans/0/revision_no",
+          "value": 2
+        },
+        {
+          "op": "replace",
+          "path": "/related_plans/0/plan/design_refs/0/design_item_version_id",
+          "value": "312"
+        },
+        {
+          "op": "replace",
+          "path": "/checks/1/design_item_version_ids",
+          "value": [
+            "312"
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/checks/2/design_item_version_ids",
+          "value": [
+            "312"
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/checks/2/related_plan_revision_ids",
+          "value": [
+            "516"
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/evidence",
+          "value": []
+        }
+      ],
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [
+            "plan-completeness"
+          ],
+          "unassessed": [
+            {
+              "check_key": "design-api-login",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "승인 항목 312의 응답 필드와 원문 발췌가 없어 토큰 전달 위치를 계약과 대조하지 못했다."
+            },
+            {
+              "check_key": "related-task-502",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "관련 계획이 기대하는 응답 구조를 확인할 계약 근거가 없어 계약을 매개로 한 충돌 비교를 수행하지 못했다."
+            }
+          ],
+          "findings": []
+        },
+        "origin": "MODEL",
+        "model": "configured-model",
+        "usage": [
+          {
+            "request_key": "llm-validate-604-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 1800,
+            "failed": false,
+            "tokens_known": false
+          }
+        ]
+      },
+      "expected_backend_status": "ERROR",
+      "expected_validation_run_status": "ERROR",
+      "expected_validation_error_code": "ai_evidence_insufficient",
+      "expected_error_finding_source": "MODEL",
+      "expected_error_finding_resolution": "HUMAN_REVIEW"
+    },
+    {
+      "name": "timeout",
+      "description": "업무 입력은 유효하지만 실제 모델 호출이 요청 예산을 초과했다는 실행 상황의 임시 응답이다. timeout을 PARTIAL 성공으로 반환하지 않는다.",
+      "request_patch": [
+        {
+          "op": "replace",
+          "path": "/request_key",
+          "value": "ai-a02-request-timeout"
+        },
+        {
+          "op": "replace",
+          "path": "/validation_id",
+          "value": "605"
+        }
+      ],
+      "http_status": 504,
+      "response": {
+        "error": {
+          "code": "model_timeout",
+          "message": "요청의 분석 시간 예산 안에 모델 호출을 완료하지 못했습니다."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-605-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 30000,
+            "failed": true,
+            "tokens_known": false
+          }
+        ]
+      },
+      "expected_backend_status": "ERROR",
+      "expected_validation_run_status": "TIMEOUT",
+      "expected_validation_error_code": "ai_timeout",
+      "expected_error_finding_source": "MODEL",
+      "expected_error_finding_resolution": "RETRY"
+    },
+    {
+      "name": "invalid_model_output",
+      "description": "모델의 실제 출력이 스키마·검사 범위·참조 검증을 통과하지 못했다는 실행 상황이다. 원본 모델 출력은 응답에 노출하지 않는다.",
+      "request_patch": [
+        {
+          "op": "replace",
+          "path": "/request_key",
+          "value": "ai-a02-request-invalid-output"
+        },
+        {
+          "op": "replace",
+          "path": "/validation_id",
+          "value": "606"
+        }
+      ],
+      "http_status": 502,
+      "response": {
+        "error": {
+          "code": "model_unavailable",
+          "message": "모델 출력이 검증 응답 계약을 충족하지 않습니다."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-606-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "configured-model",
+            "latency_ms": 1800,
+            "failed": true,
+            "tokens_known": false
+          }
+        ]
+      },
+      "expected_backend_status": "ERROR",
+      "expected_validation_run_status": "ERROR",
+      "expected_validation_error_code": "ai_unavailable",
+      "expected_error_finding_source": "MODEL",
+      "expected_error_finding_resolution": "RETRY"
+    }
+  ]
+}
