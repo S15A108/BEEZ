@@ -1,6 +1,6 @@
 # BEEZ MCP Tools
 
-버전: 0.2 · 갱신일: 2026-10-23 · 개발 계약 초안
+버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
 
 Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한다. [공통 규약·권한·담당자](00-common.md)와 [동일 업무 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -1135,7 +1135,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
 
 ```json
 {
@@ -1243,7 +1243,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
 
 ```json
 {
@@ -1321,7 +1321,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `validation_id` | `ID` | Y | ERROR 검증 |
+| `validation_id` | `ID` | Y | 현재 실패 attempt의 ERROR finding이 RETRY인 ERROR 검증 |
 | `expected_attempt` | `integer` | Y | 현재 시도 |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
@@ -1353,7 +1353,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
 
 ```json
 {
@@ -1390,7 +1390,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `invalid_transition` | ERROR가 아니거나 이미 재실행 |
+| 409 | `invalid_transition` | ERROR가 아니거나 현재 실패 실행의 오류가 RETRY 대상이 아님, 또는 이미 재실행 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1398,14 +1398,16 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 {
   "error": {
     "code": "invalid_transition",
-    "message": "ERROR가 아니거나 이미 재실행"
+    "message": "현재 실패 실행이 재시도 대상이 아니거나 이미 재실행 중입니다."
   }
 }
 ```
 
 #### 처리 규칙
 
-- 같은 validation의 새 run을 접수한다. STALE·입력 변경은 새 검증을 요청한다.
+- 현재 실패 attempt의 ERROR finding이 RETRY인 경우에만 같은 validation의 새 run을 접수한다. 과거 실행의 RETRY finding으로 허용하지 않는다.
+- 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 invalid_transition으로 거부한다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. REST와 같은 서비스 규칙을 적용한다.
+- STALE·입력 변경은 새 검증을 요청한다.
 - 기존 attempt·lease의 늦은 결과는 반영하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
