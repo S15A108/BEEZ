@@ -49,4 +49,14 @@ public class AiClient {
     protected RestClient rest() {
         return rest;
     }
+
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> documentChunks(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/document-chunks").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> documentEmbeddings(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/embeddings").body(input).retrieve().body(java.util.Map.class);
+    }
 }
