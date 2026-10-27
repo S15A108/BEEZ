@@ -84,6 +84,8 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 검증
 
+#130의 재색인·READY·rollback 합성 fixture는 [별도 계약안](../../../../docs/design/document-index-refresh-contract-S15P31A108-130.md)과 `scripts.generate_retrieval_handoff`에서 제공한다. #129의 실행 모듈에 의존하며 실제 BE/DB 시험과 C/D 품질·성능 측정은 아직 남아 있다.
+
 `ai/`에서 실행한다.
 
 ```text
