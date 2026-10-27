@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -28,6 +29,9 @@ class ProjectApiIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ProjectAccessChecker access;
+
+    @Autowired
+    JdbcTemplate jdbc;
 
     /** 깨지면: 생성자가 팀장이 아니거나 멤버십이 안 생겨 자기 프로젝트를 못 본다 (PRJ-A01 처리 규칙). */
     @Test
@@ -110,6 +114,26 @@ class ProjectApiIntegrationTests extends IntegrationTestSupport {
         List<String> seen = new ArrayList<>(ids(first));
         seen.addAll(ids(second));
         assertThat(seen).containsExactly(mine.get(2), mine.get(1), mine.get(0));
+        // 빈 cursor 는 첫 페이지 (작업 목록과 같은 동작)
+        assertThat(ids(read(me.get("/api/projects?limit=2&cursor=")))).isEqualTo(ids(first));
+    }
+
+    /** 깨지면: 기준 설계가 발행된 프로젝트의 목록·상세가 500 이 나거나 current_baseline 이 빠진다 (00-common Project). */
+    @Test
+    void publishedProject_showsCurrentBaseline_inListAndDetail() {
+        var p = fixtures().projectWithLeader();
+        long baselineId = jdbc.queryForObject(
+                "INSERT INTO baseline (project_id, version_no, published_by) VALUES (?, 1, ?) RETURNING id",
+                Long.class, p.projectId(), p.leaderAccountId());
+        jdbc.update("UPDATE project SET current_baseline_id = ? WHERE id = ?", baselineId, p.projectId());
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+
+        JsonNode detail = read(leader.get("/api/projects/" + p.projectId())).get("current_baseline");
+        assertThat(detail.get("id").asString()).isEqualTo(String.valueOf(baselineId));
+        assertThat(detail.get("version_no").asInt()).isEqualTo(1);
+        assertThat(detail.has("created_at")).isTrue();
+        JsonNode listed = read(leader.get("/api/projects")).get("items").get(0).get("current_baseline");
+        assertThat(listed.get("id").asString()).isEqualTo(String.valueOf(baselineId));
     }
 
     private ApiClient loginAsNewAccount() {

@@ -64,7 +64,8 @@ public class ProjectService {
         Account me = access.requireUser(caller);
         int size = normalizeLimit(limit);
         long beforeId = Long.MAX_VALUE;
-        if (cursor != null) {
+        // 빈 cursor 는 첫 페이지 (작업 목록 TaskQueryService.parseCursor 와 같게)
+        if (cursor != null && !cursor.isBlank()) {
             beforeId = Ids.parse(cursor, "cursor");
         }
         // limit+1 개를 읽는다. 다 차면 다음 페이지가 있다는 뜻.
@@ -98,8 +99,10 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public ProjectResponse get(CallerContext caller, long projectId) {
         ProjectActor actor = access.requireMember(caller, projectId);
+        // 권한 검사와 이 조회 사이에 삭제가 커밋됐을 수 있어 archived_at 을 다시 본다
         Project project = projects.findById(projectId)
-                .orElseThrow(() -> AccessErrors.notFound("project_missing project=" + projectId));
+                .filter(p -> p.getArchivedAt() == null)
+                .orElseThrow(() -> AccessErrors.notFound("project_archived_or_missing project=" + projectId));
         return toResponse(project, actor.role());
     }
 
