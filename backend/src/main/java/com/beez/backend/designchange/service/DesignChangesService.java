@@ -33,8 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <ol>
  *   <li>since_version=0 은 "처음 연결"로 보고 현재 기준과 가장 최근 변경 한 건만 준다 (Jira "과거 전체 반환 안 함")</li>
  *   <li>첫 발행(v1)은 변경이 아니라 시작점이라 목록에서 뺀다. 제안 없이 발행된 기준은 proposal_id 를 생략한다</li>
+ *   <li>폐기 = 새 기준의 baseline_item 에서 빠짐 (발행 -194 계약, {@link DesignChangeQueries}). retired_at 시각으로 추정하지 않는다</li>
  *   <li>기준 설계가 한 번도 없으면 409 baseline_missing (-156 ProjectDesignLookup 과 같은 코드)</li>
- *   <li>영향 작업 = 변경 전 버전을 현재 계획이 참조하는, 취소되지 않은 같은 프로젝트의 작업</li>
+ *   <li>영향 작업 = 변경 전 버전을 현재 계획이 참조하는(READS·IMPLEMENTS·CHANGES), 완료·취소되지 않은 작업. 기준은 {@link DesignChangeQueries}</li>
  *   <li>검증이 한 번도 없는 작업은 validation_validity 에 넣지 않는다 (명세 상태 목록에 NOT_RUN 이 없고 validation_id 가 필수)</li>
  *   <li>task_id 를 주면 그 작업이 영향받은 변경만, 검증 유효성도 그 작업만. 다른 프로젝트 작업이면 404 가 아니라 빈 결과(-172 참고 2)</li>
  * </ol>
@@ -48,43 +49,8 @@ public class DesignChangesService {
     /** 담당자의 "열린 작업": 끝나지 않은 상태 (04 생명주기 §1 상태 표에서 COMPLETED·CANCELLED 제외) */
     private static final List<String> OPEN_STATUSES = List.of("DRAFT", "READY", "IN_PROGRESS", "WAITING");
 
-    /**
-     * 기준 N 과 바로 앞 기준 N-1 의 baseline_item 을 비교해 "바뀐 항목"을 뽑는 공통 SQL 조각 (WITH 절에 넣어 쓴다).
-     * 수정 = 두 기준에 다 있는데 버전이 다름 / 신규 = N 에만 있음(before 없음) / 폐기 = N-1 에만 있음(after 없음).
-     * 영향 작업 = 바뀐 항목의 "변경 전 버전"을 현재 계획이 참조하는, 취소되지 않은 같은 프로젝트의 작업.
-     */
-    private static final String CHANGED_AND_AFFECTED = """
-            changed as (
-                select cur.id as baseline_id, cur.version_no, x.design_item_id, x.before_version_id, x.after_version_id
-                  from baseline cur
-                  join baseline prev on prev.project_id = cur.project_id and prev.version_no = cur.version_no - 1
-                  cross join lateral (
-                      select ai.design_item_id,
-                             pi.design_item_version_id as before_version_id,
-                             ai.design_item_version_id as after_version_id
-                        from baseline_item ai
-                        left join baseline_item pi on pi.baseline_id = prev.id and pi.design_item_id = ai.design_item_id
-                       where ai.baseline_id = cur.id
-                         and (pi.design_item_version_id is null or pi.design_item_version_id <> ai.design_item_version_id)
-                      union all
-                      select pi.design_item_id, pi.design_item_version_id, null
-                        from baseline_item pi
-                       where pi.baseline_id = prev.id
-                         and not exists (select 1 from baseline_item ai
-                                          where ai.baseline_id = cur.id and ai.design_item_id = pi.design_item_id)
-                  ) x
-                 where cur.project_id = :projectId
-            ),
-            affected as (
-                select c.baseline_id, t.id as task_id
-                  from changed c
-                  join task_plan_design_ref r on r.design_item_id = c.design_item_id
-                                             and r.design_item_version_id = c.before_version_id
-                  join task t on t.project_id = :projectId
-                             and t.current_plan_revision_id = r.plan_revision_id
-                             and t.status <> 'CANCELLED'
-            )
-            """;
+    /** 바뀐 항목·영향 작업 SQL 조각. -163 과 공유하므로 {@link DesignChangeQueries} 에 둔다 */
+    private static final String CHANGED_AND_AFFECTED = DesignChangeQueries.CHANGED_AND_AFFECTED;
 
     private final ProjectAccessChecker access;
     private final JdbcClient jdbc;

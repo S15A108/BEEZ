@@ -266,6 +266,49 @@ class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
         assertThat(res.validationValidity().get(0).validationId()).isEqualTo(String.valueOf(passId));
     }
 
+    // ---- 리뷰 반영: 번호 건너뜀·폐기 표시·영향 작업 범위 ----
+
+    @Test
+    void gapInVersionNumbers_comparesWithNearestLowerBaseline() {
+        Long api02v1 = api.currentVersionId("API-02");
+        Long api01v2 = newVersion("API-01", 2);
+        publish(2, Map.of("API-01", api01v2, "API-02", api02v1));
+        Long api01v4 = newVersion("API-01", 4);
+        publish(4, Map.of("API-01", api01v4, "API-02", api02v1));   // v3 없음
+
+        DesignChangesResponse res = call(asMember, 2, null, null, null);
+
+        assertThat(res.items()).hasSize(1);
+        assertThat(res.items().get(0).baseline().versionNo()).isEqualTo(4);
+        ChangedItemResponse c = find(res.items().get(0).changedItems(), String.valueOf(api.designItemId("API-01")));
+        assertThat(c.beforeVersionId()).isEqualTo(String.valueOf(api01v2));
+        assertThat(c.afterVersionId()).isEqualTo(String.valueOf(api01v4));
+    }
+
+    @Test
+    void affectedTasks_excludeCompleted_andIncludeChangesProposer() throws Exception {
+        long reads = createTask("읽는 작업", "API-01", member);
+        long proposes = createTaskWithRefs("제안한 작업", api.changesRef("API-01"), leader);
+        long completed = createTask("완료된 작업", "API-01", member);
+        long startedValidation = insertValidation(completed, "PASS", null);
+        api.jdbc.sql("update task set status = 'COMPLETED', started_validation_id = :v, completed_at = now() where id = :t")
+                .param("v", startedValidation).param("t", completed).update();
+
+        publish(2, Map.of("API-01", newVersion("API-01", 2), "API-02", api.currentVersionId("API-02")));
+
+        DesignChangesResponse res = call(asMember, 1, null, null, null);
+        assertThat(res.items()).hasSize(1);
+        assertThat(res.items().get(0).affectedTaskIds())
+                .containsExactlyInAnyOrder(String.valueOf(reads), String.valueOf(proposes))
+                .doesNotContain(String.valueOf(completed));
+    }
+
+    private long createTaskWithRefs(String title, String refsJson, Long account) throws Exception {
+        HttpResponse<String> created = api.post("/api/projects/" + projectId + "/tasks", api.planJson(title, refsJson, "[]"), account);
+        assertThat(created.statusCode()).isEqualTo(201);
+        return TaskApiSupport.longField(created.body(), "id");
+    }
+
     // ---- 접근 ----
 
     @Test
