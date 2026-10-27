@@ -41,7 +41,7 @@ class SourceLocator(FrozenModel):
 
 
 class SourceContainer(FrozenModel):
-    kind: Literal["list_item", "blockquote"]
+    kind: Literal["bullet_list", "ordered_list", "list_item", "blockquote"]
     locator: SourceLocator
 
 

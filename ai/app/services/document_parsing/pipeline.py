@@ -28,6 +28,7 @@ MAX_RESULT_BYTES = 2_097_152
 def _coverage(
     lines: list[str], blocks: list[SourceBlock], exclusions: list[ExcludedRange]
 ) -> tuple[ExcludedRange, ...]:
+    result = list(exclusions)
     owners = [False] * len(lines)
     for item in (*blocks, *exclusions):
         locator = item.locator
@@ -60,7 +61,7 @@ def _coverage(
                 SourceLocator(start_line=index + 1, end_line=index + 1),
             )
         if run_start is not None and reason != run_reason:
-            exclusions.append(
+            result.append(
                 ExcludedRange(
                     locator=SourceLocator(start_line=run_start + 1, end_line=index),
                     reason=run_reason,
@@ -70,13 +71,13 @@ def _coverage(
         if run_start is None and reason is not None:
             run_start, run_reason = index, reason
     if run_start is not None:
-        exclusions.append(
+        result.append(
             ExcludedRange(
                 locator=SourceLocator(start_line=run_start + 1, end_line=len(lines)),
                 reason=run_reason,
             )
         )
-    return tuple(sorted(exclusions, key=lambda x: x.locator.start_line))
+    return tuple(sorted(result, key=lambda x: x.locator.start_line))
 
 
 def parse_source(source: SourceInput) -> SourceDocument:
