@@ -71,7 +71,8 @@
           }
         ]
       },
-      "expected_backend_status": "PASS"
+      "expected_backend_status": "PASS",
+      "expected_validation_run_status": "OK"
     },
     {
       "name": "mismatch",
@@ -144,7 +145,8 @@
           }
         ]
       },
-      "expected_backend_status": "NEEDS_REVIEW"
+      "expected_backend_status": "NEEDS_REVIEW",
+      "expected_validation_run_status": "OK"
     },
     {
       "name": "missing_plan_input",
@@ -216,7 +218,8 @@
           }
         ]
       },
-      "expected_backend_status": "NEEDS_INPUT"
+      "expected_backend_status": "NEEDS_INPUT",
+      "expected_validation_run_status": "OK"
     },
     {
       "name": "insufficient_evidence",
@@ -348,6 +351,9 @@
         ]
       },
       "expected_backend_status": "ERROR",
+      "expected_validation_run_status": "ERROR",
+      "expected_validation_error_code": "ai_evidence_insufficient",
+      "expected_error_finding_source": "MODEL",
       "expected_error_finding_resolution": "HUMAN_REVIEW"
     },
     {
@@ -383,6 +389,9 @@
         ]
       },
       "expected_backend_status": "ERROR",
+      "expected_validation_run_status": "TIMEOUT",
+      "expected_validation_error_code": "ai_timeout",
+      "expected_error_finding_source": "MODEL",
       "expected_error_finding_resolution": "RETRY"
     },
     {
@@ -418,6 +427,9 @@
         ]
       },
       "expected_backend_status": "ERROR",
+      "expected_validation_run_status": "ERROR",
+      "expected_validation_error_code": "ai_unavailable",
+      "expected_error_finding_source": "MODEL",
       "expected_error_finding_resolution": "RETRY"
     }
   ]

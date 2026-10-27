@@ -1,6 +1,6 @@
 # BEEZ API Common
 
-버전: 0.4 · 갱신일: 2026-10-26 · 개발 계약 초안
+버전: 0.5 · 갱신일: 2026-10-27 · 개발 계약 초안
 
 ## 1. 문서 안내
 
@@ -162,13 +162,55 @@ S15P31A108-107의 검사 수행 범위·판정 매핑은 **변준성 합의 전 
 
 - 최신성·실행 소유권 검사를 먼저 적용한다. 이미 STALE이거나 attempt·lease가 다른 실행에는 AI 결과·오류로 상태를 덮어쓰지 않는다.
 - AI 응답의 `checked_keys`와 `unassessed[].check_key`는 요청 `checks[].key`를 누락·중복 없이 정확히 나눠야 한다. 잘못된 대응·근거 참조·잘린 출력은 분석 성공이 아니라 ERROR다. COMPLETE 표시 자체가 분석 품질이나 작업 코드의 정확성을 보증하지 않는다.
-- `PARTIAL`은 모델 분석 후 근거 부족 또는 지원하지 못한 내용이 확인되어 필요한 검사를 수행하지 못한 경우다. backend는 현재 실패 실행에 `kind=ERROR`, `resolution=HUMAN_REVIEW`인 finding을 만들고 미검사 사유와 필요한 근거 보완을 기록한다. 모델 실패·timeout·출력 계약 위반은 `kind=ERROR`, `resolution=RETRY`로 구분한다. 이 ERROR finding은 backend가 생성하며 AI의 FindingCandidate 종류에 ERROR를 추가하지 않는다. 부분 AI 후보는 진단용이며 정상 분석 결과로 반영하지 않는다. 기존 규칙 finding은 유지한다.
+- `PARTIAL`은 모델 분석 후 근거 부족 또는 지원하지 못한 내용이 확인되어 필요한 검사를 수행하지 못한 경우다. backend는 현재 실패 실행에 `source=MODEL`, `kind=ERROR`, `resolution=HUMAN_REVIEW`인 finding을 만들고 미검사 사유와 필요한 근거 보완을 기록한다. 모델 실패·timeout·출력 계약 위반 및 BE 원문·검색 조회 장애, 워커 중단, lease 만료는 `source=MODEL`, `kind=ERROR`, `resolution=RETRY`로 구분한다. 이 ERROR finding은 backend가 생성하며 AI의 FindingCandidate 종류에 ERROR를 추가하지 않는다. 부분 AI 후보는 진단용이며 정상 분석 결과로 반영하지 않는다. 기존 규칙 finding은 유지한다. 실행 상태·실패 코드·원자적 종결은 [검증 실행 오류 규약](#validation-execution-errors)을 따른다.
 - `MISSING_INPUT`은 작업자가 보완할 **필수 계획 정보**가 부족한 경우다. `MISSING_POLICY`는 원문에 결정되지 않았다고 명시되었거나, backend가 정한 정책 확인 범위에서 정책 부재를 확인한 경우에만 사용한다. 두 종류의 필수 누락 후보는 BLOCKING이다. 단순한 선택 정보 제안을 필수 누락으로 분류하지 않는다.
 - 검색·전달된 근거에 정책이 없다는 사실만으로 `MISSING_POLICY`를 만들지 않는다. 근거가 충분하지 않으면 미검사 사유 `EVIDENCE_INSUFFICIENT`로 남긴다. backend의 원문·검색 조회 장애는 실행 ERROR이며 작업자의 입력 부족으로 바꾸지 않는다.
 - 기존 규칙의 NEEDS_REVIEW는 유지한다. AI 후보에 검토 필요와 계획 보완이 함께 있으면 NEEDS_REVIEW를 우선하고 보완할 내용도 함께 표시한다. AI의 STALE_REF는 backend의 버전 재확인 대상이며, 후보만으로 확정 참조를 무효화하지 않는다.
 - AI는 `related_task_id`를 입력 범위에서 참조한다. backend가 해당 작업의 현재 담당자를 확인해 후속 행동과 연결한다. AI가 멤버 ID를 생성하거나 담당자를 배정하지 않는다.
 
 backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영한다. 같은 validation의 새 run으로 재시도할 수 있는 것은 **현재 실패 attempt의 ERROR finding이 RETRY인 경우**다. 현재 실행에 HUMAN_REVIEW가 하나라도 있으면 재시도를 거부하고 근거·지원 범위를 보완해 새 검증을 만든다. 과거 attempt의 RETRY finding을 재시도 근거로 쓰지 않는다. FE는 같은 resolution으로 버튼을 결정하고 REST·MCP도 이를 서버에서 검사한다. 현재 판정용 DTO의 ERROR finding은 current_attempt에 해당하는 실행의 것으로 한정하고 과거 실행 오류는 이력으로 구분한다. 입력·근거가 바뀌면 새 검증이며 STALE을 단순 retry로 되살리지 않는다. D3의 롤백은 검증·업무 상태 복귀이며 사용자의 소스 파일을 되돌리는 기능이 아니다.
+
+<a id="validation-execution-errors"></a>
+
+### 검증 실행 오류·상태 매핑
+
+**`validation.status=ERROR`로 전이하는 모든 경로에서 backend는 현재 실패 attempt에 연결된 `source=MODEL`, `kind=ERROR`, `severity=BLOCKING` finding을 최소 하나 생성해야 한다.** `validation_run_id`는 필수이며, 해당 run의 validation_id와 attempt가 대상 검증의 현재 실행인지 BE가 검사한다. V2 DDL의 `source='RULE' OR validation_run_id IS NOT NULL` 제약을 적용받도록 ERROR finding에 RULE을 사용하지 않는다. 여기서 MODEL은 분석 실행 경로의 오류 분류이며 BE가 생성한 오류도 포함한다. 실제 모델 호출 여부는 origin/usage와 별도로 판단하며, 호출이 없으면 모델 응답이나 usage를 만들어내지 않는다.
+
+의미 분석을 RUNNING으로 접수하면 BE는 현재 attempt를 할당하고 **원문·검색 조회 전에 해당 attempt의 MODEL run을 확보**한다. 복구 시 run이 없으면 같은 attempt의 실행 기록을 먼저 확보하고 finding을 연결한다. `UNIQUE(validation_id, attempt)`를 지키며 같은 attempt에 오류용 run을 추가 생성하지 않는다.
+
+일반 워커는 현재 `RUNNING`·`current_attempt`·job/run lease 소유권을 확인하고, **run 종결·ERROR finding 생성·validation ERROR 전이·job 실패 정리**를 한 트랜잭션으로 반영한다. job은 실패 종결 시 lease 정보를 해제해 V2 제약을 만족시킨다. 기록 실패 시 상태 전이도 롤백한다. 워커 중단·lease 만료는 lease 회수 권한을 확보한 복구 주체가 잠금 또는 조건부 갱신으로 같은 검사를 수행해 종결하며, 사람이 retry를 요청하기 전에 RETRY finding을 남긴다. 복구가 같은 실패를 다시 관측해도 이미 종결된 run을 덮어쓰거나 finding을 중복 생성하지 않는다. 이미 STALE·새 attempt·다른 실행 소유권으로 넘어간 경우 늦은 결과로 현재 상태를 바꾸지 않는다.
+
+아래는 **현재 유효한 실행**의 상태 매핑이다. HTTP 상태는 backend가 AI에서 받은 상태이며, 오류 finding은 모두 BE가 생성한다.
+
+| 실행 결과·장애 | validation_run.status | Validation.status | ERROR finding resolution |
+| --- | --- | --- | --- |
+| 유효한 HTTP 200 COMPLETE, 출력·검사 범위·근거 검증 통과 | OK | 기존 규칙에 따라 PASS / NEEDS_INPUT / NEEDS_REVIEW | ERROR finding 없음 |
+| AI HTTP 504 또는 BE→AI 호출 시간 초과 | TIMEOUT | ERROR | RETRY |
+| AI HTTP 502·호출 실패 | ERROR | ERROR | RETRY |
+| 잘린 출력·JSON·검사 키·ID·근거 등 출력 계약 위반 | ERROR | ERROR | RETRY |
+| 유효한 HTTP 200 PARTIAL | ERROR | ERROR | HUMAN_REVIEW |
+| BE 원문·검색 조회 장애 | ERROR | ERROR | RETRY |
+| 워커 중단·lease 만료·그 밖의 BE 실행 오류 | ERROR | ERROR | RETRY |
+| 이전 attempt/lease의 늦은 결과, 이미 STALE 등으로 무효화 | 해당 run이 아직 RUNNING이면 DISCARDED, 이미 종결됐으면 유지 | 현재 상태 유지 | 현재 실행의 ERROR finding을 만들지 않음 |
+
+만료된 **현재** 실행을 회수해 ERROR/RETRY로 종결하는 경로와, 그 뒤 도착한 예전 워커 응답을 폐기하는 경로를 구분한다. run의 OK는 분석 수행 성공이며 검증 PASS와 다르다. PARTIAL은 HTTP 200이어도 run.ERROR이고, 부분 후보를 정상 결과로 반영하지 않는다.
+
+`Validation.error_code`는 **ERROR일 때 필수이고 다른 상태에서는 생략하는 DTO 필드**다. BE가 현재 실패 attempt의 정규화된 오류 분류에서 아래 코드 하나를 조립한다. DB의 validation 컬럼을 뜻하지 않으며 상세 저장 키·summary/run/finding 매핑은 -159에서 확정한다. 사람이 읽는 `validation_run.error` 문장을 임의로 파싱해 코드를 추측하지 않는다. 재시도 허용 여부는 이 코드 대신 현재 ERROR finding의 `resolution`으로 결정한다.
+
+| Validation.error_code | 조건 | ERROR finding resolution |
+| --- | --- | --- |
+| `ai_evidence_insufficient` | PARTIAL의 미검사 사유가 EVIDENCE_INSUFFICIENT만 있음 | HUMAN_REVIEW |
+| `ai_unsupported_content` | PARTIAL의 미검사 사유가 UNSUPPORTED_CONTENT만 있음 | HUMAN_REVIEW |
+| `ai_analysis_incomplete` | PARTIAL에 위 두 미검사 사유가 함께 있음 | HUMAN_REVIEW |
+| `ai_timeout` | AI HTTP 504 또는 BE→AI 호출 시간 초과 | RETRY |
+| `ai_unavailable` | AI HTTP 502·호출 실패 | RETRY |
+| `ai_invalid_output` | BE가 직접 확인한 잘린 응답·형식·검사 키·ID·근거 등 출력 계약 위반 | RETRY |
+| `evidence_fetch_failed` | BE 원문·검색 조회 장애 | RETRY |
+| `validation_worker_interrupted` | 복구 주체가 확인한 워커 중단 | RETRY |
+| `validation_lease_expired` | 현재 실행 lease 만료 회수 | RETRY |
+| `validation_execution_failed` | 위 항목으로 분류되지 않는 BE 실행 오류 | RETRY |
+
+한 실행에서 여러 장애가 관측되면 원자적 종결에 성공한 실패 원인의 코드 하나를 사용한다. 후속·늦은 결과가 코드를 바꾸지 않으며, PARTIAL의 여러 미검사 사유는 위 표의 단독/혼합 규칙으로 분류한다. AI가 내부 출력 오류를 이미 HTTP 502/model_unavailable로 정규화해 반환한 경우 DTO는 ai_unavailable이다. BE가 받은 응답의 계약 위반을 직접 확인했을 때만 ai_invalid_output으로 분류하며 오류 메시지 문장으로 세부 코드를 추측하지 않는다. AI HTTP 오류의 `error.code`와 웹·MCP의 전송 오류 `error.code`는 각각 기존 전송 계약을 유지한다.
 
 ## 7. 책임·공통 서비스
 
@@ -849,7 +891,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 발견 항목 |
-| `source` | `RULE\|MODEL` | Y | 생성 주체 |
+| `source` | `RULE\|MODEL` | Y | 규칙·분석 경로 구분. BE가 만드는 kind=ERROR finding도 MODEL |
 | `kind` | `MISMATCH\|MISSING_INPUT\|MISSING_POLICY\|CONFLICT\|STALE_REF\|ERROR` | Y | 분류 |
 | `severity` | `INFO\|WARNING\|BLOCKING` | Y | 중요도. BLOCKING이면 PASS 불가 |
 | `message` | `string` | Y | 설명 |
@@ -859,7 +901,9 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
 | `next_action` | `string` | N | 후속 경로 설명 |
-| `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding 또는 kind=ERROR이면 필수. 현재 실패 attempt와 연결 |
+| `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding이면 필수이며, kind=ERROR는 현재 실패 attempt의 run을 참조 |
+
+kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과 현재 실패 attempt에 속한 run을 반드시 참조한다. BE가 생성하는 실행 오류이며 실제 모델 호출 여부와 구분한다. 모든 ERROR 전이·복구·재시도 규칙은 [검증 실행 오류 규약](#validation-execution-errors)을 따른다.
 
 <a id="schema-validation"></a>
 
@@ -881,7 +925,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
 
 <a id="schema-taskdetail"></a>
 
@@ -1417,7 +1461,7 @@ checked_keys와 unassessed의 키는 요청 checks를 정확히 분할하고, fi
 
 HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. backend는 구조·검사 키·ID·출처를 검증하고 6절 판정표를 적용한다. 이 검토안은 API DTO의 진단 필드이며 DDL의 finding 종류·실행 상태를 변경하지 않는다.
 
-저장 위치와 매핑은 **S15P31A108-159에서 확정**한다. Q02 리뷰의 저장안은 checks·checked_keys·unassessed를 적용 attempt/run과 함께 기존 `validation.summary` JSONB에 보관하고, 실패 원인을 `validation_run.error`와 해당 실행의 ERROR finding으로 추적하는 것이다. `validation`에는 error_code DB 컬럼이 없으며 외부 Validation DTO의 error_code를 DB 컬럼으로 가정하지 않는다. 응답에 필요하면 현재 실패 run·finding에서 조립한다. FindingCandidate.check_key·evidence_ids도 현재 validation_finding에 컬럼이 없으므로 -159의 새 마이그레이션(리뷰 제안: V3)에서 영속화 구조와 번호를 확정한다. 이번 문서 변경은 기존 V2 DDL을 수정하지 않는다.
+저장 위치와 매핑은 **S15P31A108-159에서 확정**한다. Q02 리뷰의 저장안은 checks·checked_keys·unassessed를 적용 attempt/run과 함께 기존 `validation.summary` JSONB에 보관하고, 실패 원인을 `validation_run.error`와 해당 실행의 source=MODEL·kind=ERROR finding으로 추적하는 것이다. `validation`에는 error_code DB 컬럼이 없으며 외부 Validation DTO의 error_code는 [검증 실행 오류 규약](#validation-execution-errors)에 따라 현재 실패 attempt의 정규화된 분류에서 조립한다. FindingCandidate.check_key·evidence_ids도 현재 validation_finding에 컬럼이 없으므로 -159의 새 마이그레이션에서 영속화 구조를 확정한다. 마이그레이션 번호는 다른 변경과 겹치지 않도록 -159에서 머지 직전에 정한다. 이번 문서 변경은 기존 V2 DDL을 수정하지 않는다.
 
 <a id="schema-impactresult"></a>
 

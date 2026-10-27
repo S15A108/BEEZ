@@ -1,6 +1,6 @@
 # BEEZ MCP Tools
 
-버전: 0.3 · 갱신일: 2026-10-26 · 개발 계약 초안
+버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
 
 Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한다. [공통 규약·권한·담당자](00-common.md)와 [동일 업무 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -1135,7 +1135,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
 
 ```json
 {
@@ -1243,7 +1243,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
 
 ```json
 {
@@ -1353,7 +1353,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
-| `error_code` | `string` | N | ERROR 원인 |
+| `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
 
 ```json
 {

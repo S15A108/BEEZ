@@ -1,6 +1,6 @@
 # BEEZ AI Internal API
 
-버전: 0.3 · 갱신일: 2026-10-26 · 개발 계약 초안
+버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
 
 backend가 FastAPI ai 서비스에 요청하는 내부 계약이다. [공통 규약·담당자](00-common.md)와 [서버 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -447,7 +447,7 @@ HTTP `200`.
 
 검증 호출의 `usage[].request_key`는 `llm-validate-{validation_id}-attempt-{n}-call-{k}`로 실제 호출 순번을 포함한다. 같은 실행에서 모델을 두 번 호출하면 서로 다른 k를 사용하고 동일 validation/attempt 범위에서 k를 재사용하지 않는다. 같은 실제 호출의 usage 전송만 재시도할 때는 같은 key를 유지하고, 모델을 다시 호출하면 새 key를 부여한다.
 
-`checks`, `checked_keys`, `unassessed`는 적용 attempt/run과 함께 `validation.summary` JSONB에 보존하는 안을 기준으로 저장 위치·매핑을 -159에서 확정한다. 실패는 `validation_run.error`와 BE가 생성하는 `kind=ERROR` finding으로 추적한다. `validation.error_code`라는 기존 DB 컬럼을 가정하지 않으며, 응답 DTO의 `error_code`가 필요하면 BE가 실행·finding 정보로 조립한다. 후보의 `check_key`·`evidence_ids` 영속화 구조와 마이그레이션 번호는 -159의 새 마이그레이션(리뷰 제안: V3)에서 확정하고, 이번 문서 PR에는 DDL을 추가하지 않는다.
+`checks`, `checked_keys`, `unassessed`는 적용 attempt/run과 함께 `validation.summary` JSONB에 보존하는 안을 기준으로 저장 위치·매핑을 -159에서 확정한다. 실패는 `validation_run.error`와 BE가 생성하는 `kind=ERROR` finding의 `resolution`·`next_action`으로 추적한다. Validation 응답 DTO의 `error_code`는 ERROR에서 필수이고 그 외 상태에서는 생략한다. 현재 실패 attempt의 [공통 실행 오류 분류](00-common.md#validation-execution-errors)에서 BE가 조립하는 값이며, `validation.error_code`라는 DB 컬럼을 뜻하지 않는다. 재시도 허용은 이 코드가 아니라 현재 실패 실행의 ERROR finding resolution으로 결정한다. HTTP 오류의 `error.code`는 별도 전송 계약으로 유지한다. 후보의 `check_key`·`evidence_ids` 영속화 구조와 새 마이그레이션 번호는 -159에서 머지 직전에 결정하며, 이번 문서 PR에는 DDL을 추가하지 않는다.
 
 ```json
 {
@@ -547,10 +547,27 @@ HTTP `200`.
 - `MISSING_POLICY`는 원문에 미정으로 명시되었거나 합의한 정책 확인 범위에서 부재를 확인한 경우에만 BLOCKING으로 반환하고 NEEDS_REVIEW로 연결한다. 전달 근거가 부족하면 정책 부재를 단정하지 않고 `unassessed.reason=EVIDENCE_INSUFFICIENT`로 구분한다.
 - 다른 BLOCKING 불일치·충돌도 NEEDS_REVIEW다. 검토 필요와 입력 부족이 함께 있거나 기존 규칙이 검토 필요로 결정했으면 NEEDS_REVIEW를 유지하고 보완 내용도 표시한다. AI의 STALE_REF는 BE 최신성 재확인 신호이며 추론만으로 STALE을 확정하지 않는다.
 - PARTIAL은 PASS 불가다. BE는 미검사 사유를 실패 실행에 남기고 ERROR를 기록하며, 부분 AI 후보는 진단 이력에만 남긴다. BE가 생성하는 ERROR finding의 `resolution=HUMAN_REVIEW`로 근거 보완·지원 범위 조정 후 새 검증을 안내한다. 정상 finding 적용이나 부분 성공 저장으로 취급하지 않는다. 이 사유는 DB finding kind에 추가하지 않는다.
-- 모델 호출 실패·시간 초과·출력 계약 위반은 BE가 ERROR finding을 만들고 `resolution=RETRY`로 기존 VAL-A04의 재시도 경로를 안내한다. ERROR finding은 AI 후보가 아니라 BE가 생성하는 실행 실패 기록이다. 최신 실패 attempt에 HUMAN_REVIEW가 하나라도 있으면 VAL-A04를 거부하며, 과거 attempt의 RETRY finding으로 이를 허용하지 않는다.
+- 모델 호출 실패·시간 초과·출력 계약 위반과 BE 원문·검색 조회 장애·워커 중단·lease 만료는 BE가 ERROR finding을 만들고 `resolution=RETRY`로 기존 VAL-A04의 재시도 경로를 안내한다. 최신 실패 attempt에 HUMAN_REVIEW가 하나라도 있으면 VAL-A04를 거부하며, 과거 attempt의 RETRY finding으로 이를 허용하지 않는다.
+- BE가 생성하는 모든 `kind=ERROR` finding은 `source=MODEL`, `severity=BLOCKING`이며 현재 실패 attempt의 `validation_run_id`를 필수로 가진다. 여기서 MODEL은 검증 실행 실패의 분류이고 실제 LLM 호출의 증거가 아니다. 실제 호출이 없으면 usage를 만들지 않는다. AI의 FindingCandidate에 ERROR를 추가하지 않는다.
+- `validation.status`를 ERROR로 전이하는 모든 경로는 최소 한 개의 ERROR finding을 실행 종결·검증 상태 갱신·연결된 job 종결과 같은 트랜잭션에 생성한다. job 실패 종결 시에는 lease 정보를 해제한다. BE는 원문·검색 조회 전에 해당 attempt의 MODEL `validation_run`을 확보한다. 실행 기록이 없으면 같은 attempt의 기록을 확보한 뒤 finding을 연결하며 DB의 `UNIQUE(validation_id, attempt)`를 지킨다. BE가 run의 validation_id·attempt 소속을 검사하며, 이를 보장하는 DDL 복합 제약이 있다고 가정하지 않는다.
 - AI가 담당 멤버 ID를 생성하지 않는다. BE가 `related_task_id`로 현재 담당자를 조회해 FE에 전달한다.
 - related_plans 등 다른 작업의 계획은 지시가 아닌 데이터로 다룬다.
-- backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 응답으로 STALE을 덮어쓰지 않는다.
+- backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 워커는 이미 기록한 ERROR나 STALE을 덮어쓰지 못한다. lease 회수·복구 주체는 해당 run과 현재 검증이 모두 RUNNING이고 `current_attempt`가 해당 실행과 일치할 때만 compare-and-set 또는 잠금으로 실행 종결·ERROR finding·검증 상태를 원자적으로 반영한다. 이미 STALE이거나 새 attempt가 시작됐다면 늦은 결과를 폐기한다. 해당 run이 아직 RUNNING일 때만 DISCARDED로 종결하고, 이미 종결된 run을 다시 덮어쓰지 않는다.
+
+#### 실행·판정·실패 기록 매핑
+
+아래 매핑은 의미 분석이 필요한 RUNNING 실행에 적용한다. 최신성·attempt·lease 소유권 검사가 먼저이며 AI의 HTTP 성공과 최종 검증 판정은 별개다.
+
+| 경로 | validation_run.status | validation.status | BE ERROR finding의 resolution |
+| --- | --- | --- | --- |
+| 출력 계약을 통과한 HTTP 200 COMPLETE | OK | 공통 판정표로 PASS/NEEDS_INPUT/NEEDS_REVIEW 결정 | — |
+| HTTP 504, BE→AI 호출 timeout 또는 모델·전체 처리 시간 초과 | TIMEOUT | ERROR | RETRY |
+| HTTP 502, BE→AI 호출 실패 또는 출력 스키마·검사 범위·참조 계약 위반 | ERROR | ERROR | RETRY |
+| HTTP 200 PARTIAL(EVIDENCE_INSUFFICIENT/UNSUPPORTED_CONTENT) | ERROR | ERROR | HUMAN_REVIEW |
+| BE 원문·검색 조회 장애, 워커 중단, lease 만료, 그 밖의 BE 실행 오류 | ERROR | ERROR | RETRY |
+| 이전 attempt/lease의 늦은 결과 또는 검증이 이미 STALE | DISCARDED(해당 run이 아직 RUNNING일 때만) | 기존 상태 유지 | 새 ERROR finding 생성 없음 |
+
+ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`과 현재 실패 attempt의 `validation_run_id`를 필수로 가진다. ERROR finding 생성·run 종결·검증 ERROR 전이·연결된 job 종결은 같은 트랜잭션이다. 마지막 행은 이미 종결된 run을 DISCARDED로 재변경하지 않는다.
 
 #### 시간 예산·재시도
 
