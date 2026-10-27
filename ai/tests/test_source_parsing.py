@@ -6,9 +6,18 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.documents import SourceDocument, SourceInput, SourceLocator
+from app.schemas.documents import (
+    ExcludedRange,
+    SourceDocument,
+    SourceInput,
+    SourceLocator,
+)
 from app.services.document_parsing.errors import SourceParsingError
-from app.services.document_parsing.pipeline import parse_source, resolve_source
+from app.services.document_parsing.pipeline import (
+    _coverage,
+    parse_source,
+    resolve_source,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "parsing"
 
@@ -237,6 +246,15 @@ def test_ragged_table_is_not_silently_truncated_or_padded(row):
     assert exc.value.locator.start_line == 3
 
 
+def test_table_column_limit_error_identifies_header_line():
+    header = "| " + " | ".join(["Column"] * 129) + " |\n"
+    delimiter = "| " + " | ".join(["---"] * 129) + " |\n"
+    with pytest.raises(SourceParsingError) as exc:
+        parse_source(source_for("# Document\n\n" + header + delimiter))
+    assert exc.value.code == "document_limit_exceeded"
+    assert exc.value.locator == SourceLocator(start_line=3, end_line=3)
+
+
 def test_unclosed_fence_is_rejected_but_code_is_never_executed_or_html_parsed():
     with pytest.raises(SourceParsingError) as exc:
         parse_source(source_for('```json\n{"key": 1}'))
@@ -385,6 +403,24 @@ def test_large_blank_run_is_one_explicit_range_not_thousands_of_records():
     assert len(document.excluded_ranges) == 1
     assert document.excluded_ranges[0].locator.end_line == 90_001
     assert_complete_coverage(document)
+
+
+def test_coverage_preserves_input_exclusions():
+    content = "# Policy\n\n---\n\nbody\n\n"
+    document = parse_source(source_for(content))
+    thematic_break = ExcludedRange(
+        locator=SourceLocator(start_line=3, end_line=3), reason="thematic_break"
+    )
+    exclusions = [thematic_break]
+
+    result = _coverage(
+        content.splitlines(keepends=True), list(document.blocks), exclusions
+    )
+
+    assert exclusions == [thematic_break]
+    assert [
+        (item.locator.start_line, item.locator.end_line, item.reason) for item in result
+    ] == [(2, 2, "blank"), (3, 3, "thematic_break"), (4, 4, "blank"), (6, 6, "blank")]
 
 
 def test_metadata_expansion_has_an_output_budget():

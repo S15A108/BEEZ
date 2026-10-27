@@ -76,7 +76,11 @@ def _strict_table(state: StateBlock, start: int, end: int, silent: bool) -> bool
     # silently drops extra cells and pads missing cells; neither is safe evidence.
     width = len(_cells(getLine(state, start)))
     if width > MAX_TABLE_COLUMNS:
-        raise SourceParsingError("document_limit_exceeded", "Too many table columns.")
+        raise SourceParsingError(
+            "document_limit_exceeded",
+            "Too many table columns.",
+            SourceLocator(start_line=start + 1, end_line=start + 1),
+        )
     for line_no in range(start + 2, state.line):
         if len(_cells(getLine(state, line_no))) != width:
             raise SourceParsingError(
