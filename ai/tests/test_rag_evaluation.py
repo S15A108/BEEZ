@@ -388,3 +388,56 @@ async def test_live_runner_records_every_row_and_actual_usage_without_network(
     assert report["budget"][
         "estimated_credits_including_unknown_reservations"
     ] == pytest.approx(0.155)
+
+
+@pytest.mark.asyncio
+async def test_resume_profile_change_is_rejected_before_paid_dispatch(
+    tmp_path, monkeypatch
+):
+    import httpx
+
+    from app.core.config import Settings
+
+    m = subject()
+    live = importlib.import_module("evaluations.live")
+    counter, docs, spec = m.load_dataset()
+    report = {
+        "metadata": {"embedding_profile": {"dimension": 1024}},
+        "indexes": {"fixed": m.make_chunks(docs, "fixed", counter)[:1]},
+        "questions": spec["questions"][:1],
+        "rows": [],
+        "calls": [],
+    }
+
+    def response(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "modelName": model,
+                        "isActive": True,
+                        "inputPrice": 0.001,
+                        "outputPrice": 0.005,
+                    }
+                    for model in ("gpt-6-luna", "text-embedding-3-small")
+                ],
+            )
+        return httpx.Response(500, json={"error": "must-not-dispatch"})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        live.httpx,
+        "AsyncClient",
+        lambda **kw: original(transport=httpx.MockTransport(response), **kw),
+    )
+    monkeypatch.setattr(
+        live,
+        "Settings",
+        lambda: Settings(
+            _env_file=None, gms_key="test-only", gms_embedding_dimension=3
+        ),
+    )
+    await live.run_live(report, counter, tmp_path / "result.json")
+    assert report["status"] == "stopped"
+    assert report["calls"] == []

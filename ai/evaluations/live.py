@@ -296,6 +296,10 @@ async def run_live(report, counter, path):
                 cost_basis="Public per-token estimate, no account balance reconciliation or cache discount claim",
             )
             profile = embedding_profile(settings)
+            if report["metadata"].get(
+                "embedding_profile", profile.model_dump(mode="json")
+            ) != profile.model_dump(mode="json"):
+                raise ValueError("Embedding profile changed; resume refused")
             report["metadata"]["embedding_profile"] = profile.model_dump(mode="json")
             provider = _MeteredEmbedding(
                 GmsEmbeddingProvider(client, settings.gms_key),
