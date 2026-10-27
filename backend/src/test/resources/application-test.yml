@@ -6,6 +6,13 @@ spring:
 
 # ai 서버는 닫힌 포트로 두어 ai_reachable=false 경로를 검증한다.
 beez:
+  document:
+    worker-enabled: false
+    object-storage:
+      endpoint: http://127.0.0.1:1
+      bucket: beez-documents
+      access-key: fixture-access
+      secret-key: fixture-secret
   ai:
     base-url: http://127.0.0.1:1
     connect-timeout: 500ms

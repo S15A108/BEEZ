@@ -25,6 +25,7 @@ repositories {
 
 ext {
     springdocVersion = '3.1.1'   // Spring Boot 4 대응 라인
+    awsSdkVersion = '2.57.3'
 }
 
 dependencies {
@@ -42,6 +43,14 @@ dependencies {
 
     // OpenAPI 문서 (/swagger-ui.html, /v3/api-docs)
     implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+
+    // S3-compatible API: explicit SeaweedFS endpoint, not an implicit AWS connection.
+    implementation platform("software.amazon.awssdk:bom:${awsSdkVersion}")
+    implementation('software.amazon.awssdk:s3') {
+        exclude group: 'software.amazon.awssdk', module: 'apache-client'
+        exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
+    }
+    implementation 'software.amazon.awssdk:url-connection-client'
 
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
     runtimeOnly 'org.postgresql:postgresql'
