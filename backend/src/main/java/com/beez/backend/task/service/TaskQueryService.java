@@ -4,7 +4,7 @@ import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.task.dto.PageResponse;
+import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.task.dto.TaskDetailResponse;
 import com.beez.backend.task.dto.TaskPlanRevisionResponse;
 import com.beez.backend.task.entity.Task;
