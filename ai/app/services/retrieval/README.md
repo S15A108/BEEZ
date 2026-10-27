@@ -80,6 +80,8 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 2. 신규 청킹 API·원문 offset·실행/버전 검증·원자적 색인 발행 계약을 확정하고 저장·검색까지 통합한다.
 3. 실제 문서의 검색 품질·비용을 측정한 뒤 청크 크기와 문맥 보강 정책을 정한다. 변경되지 않은 임베딩 입력의 재사용은 프로젝트 범위·입력 해시·전체 모델 프로필을 함께 검증하도록 별도로 연결한다.
 
+BE 검토 자료는 [문서 색인·검색 연동 계약안](../../../../docs/design/document-retrieval-integration-proposal.md)에 있다. 제안 청킹 요청/응답, 현재 AI-A04 연결, 실행 소유권·원자적 발행·권한 필터와 합의 항목을 정리했다. `python -m scripts.generate_retrieval_handoff --output <경로>/retrieval-handoff.json`으로 문서 4개·BE 시나리오 26개의 합성 검증 packet을 생성한다. 이전 READY와 새 후보를 구분하며 실제 DB 보장이나 모델 검색 품질을 검증한 결과는 아니다.
+
 ## 검증
 
 `ai/`에서 실행한다.
@@ -92,6 +94,6 @@ python -m ruff format --check .
 
 `test_chunking.py`, `test_embeddings.py`, `test_document_pipeline_contract.py`는 원문 범위 보존, 긴 표/문맥 예산, 엔드포인트 경계, Unicode 위치, 배치 누락·중복·차원 오류, 재시도·사용량, 마지막 배치 실패 시 전체 미반영을 검증한다. `test_gms_embeddings.py`와 `test_embeddings_api.py`는 실제 토크나이저·모의 GMS HTTP 응답·내부 인증·기존 API 계약을 검증한다. pytest에서는 유료 모델을 호출하지 않는다.
 
-2026-10-27 리뷰 반영 후 Windows / Python 3.12.12에서 기본 `python -m pytest -q`와 세션 루프 옵션 실행 모두 150개가 통과했다. 이전 환경에서 표준 `socket.socketpair()` 생성 자체의 간헐적 WinError 10014를 재현한 이력이 있어, 같은 환경 문제가 발생하면 `-o asyncio_default_test_loop_scope=session`으로 확인할 수 있다. Linux CI는 기본 pytest 설정을 유지한다.
+2026-10-27 리뷰·연동 계약 fixture 반영 후 Windows / Python 3.12.12에서 기본 `python -m pytest -q` 156개가 통과했다. 이전 환경에서 표준 `socket.socketpair()` 생성 자체의 간헐적 WinError 10014를 재현한 이력이 있어, 같은 환경 문제가 발생하면 `-o asyncio_default_test_loop_scope=session`으로 확인할 수 있다. Linux CI는 기본 pytest 설정을 유지한다.
 
 실제 연결 확인은 별도 명령 `python -m scripts.smoke_gms_embeddings`로 실행한다. 합성 문장 2개, 최대 입력 1,000토큰, API 호출 1회, 재시도 없음으로 제한했다. 2026-10-26 실행 결과: `text-embedding-3-small`, 1024차원 벡터 2개, 입력 38토큰/출력 0토큰, 공개 입력 단가 기준 예상 0.0076크레딧. 계정 잔액 차감 대조나 한국어 검색 품질 평가를 수행한 결과는 아니다.

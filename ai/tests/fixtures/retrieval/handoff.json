@@ -1,0 +1,52 @@
+{
+  "fixture_version": "beez-retrieval-handoff-v1",
+  "projects": [
+    {"id": "101", "current_baseline_id": "10002"},
+    {"id": "102", "current_baseline_id": "20001"}
+  ],
+  "memberships": [
+    {"account_id": "11", "member_id": "111", "project_id": "101", "active": true},
+    {"account_id": "12", "member_id": "112", "project_id": "101", "active": false},
+    {"account_id": "21", "member_id": "121", "project_id": "102", "active": true}
+  ],
+  "baselines": [
+    {"id": "10001", "project_id": "101", "document_version_ids": ["201"]},
+    {"id": "10002", "project_id": "101", "document_version_ids": ["202"]},
+    {"id": "20001", "project_id": "102", "document_version_ids": ["401"]}
+  ],
+  "documents": [
+    {"id": "201", "document_id": "1001", "project_id": "101", "version_no": 1, "status": "SUPERSEDED", "document_type": "REQ_SPEC", "kind": "REQUIREMENTS", "vector_seed": [1.0, 0.0], "content": "# Upload policy\r\n\r\n## Limit\r\n\r\nThe upload limit is 10 MB.\r\n\r\n## Retry\r\n\r\nUploads can be retried.\r\n"},
+    {"id": "202", "document_id": "1001", "project_id": "101", "version_no": 2, "status": "APPROVED", "document_type": "REQ_SPEC", "kind": "REQUIREMENTS", "vector_seed": [0.8, 0.6], "content": "# Upload policy\n\n## Limit\n\nThe upload limit is 30 MB.\n\n## Retry\n\nUploads can be retried.\n"},
+    {"id": "203", "document_id": "1001", "project_id": "101", "version_no": 3, "status": "DRAFT", "document_type": "REQ_SPEC", "kind": "REQUIREMENTS", "vector_seed": [1.0, 0.0], "content": "# Upload policy\n\n## Limit\n\nThe upload limit is 50 MB.\n\n## Retry\n\nUploads can be retried.\n"},
+    {"id": "401", "document_id": "1002", "project_id": "102", "version_no": 1, "status": "APPROVED", "document_type": "REQ_SPEC", "kind": "REQUIREMENTS", "vector_seed": [1.0, 0.0], "content": "# Upload policy\n\n## Limit\n\nThe upload limit is 30 MB.\n\n## Retry\n\nUploads can be retried.\n"}
+  ],
+  "run": {"id": "501", "project_id": "101", "document_version_id": "202", "attempt": 2, "lease_token": "00000000-0000-0000-0000-000000000002", "status": "RUNNING"},
+  "scenarios": [
+    {"id": "search-current", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "APPROVED", "limit": 1}, "expected": {"outcome": "ok", "document_version_ids": ["202"]}},
+    {"id": "search-review-old", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "DOCUMENT_REVIEW", "document_version_ids": ["201"], "limit": 1}, "expected": {"outcome": "ok", "document_version_ids": ["201"]}},
+    {"id": "search-review-draft", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "DOCUMENT_REVIEW", "document_version_ids": ["203"], "limit": 1}, "expected": {"outcome": "ok", "document_version_ids": ["203"]}},
+    {"id": "search-project-b", "kind": "search", "input": {"account_id": "21", "project_id": "102", "mode": "APPROVED", "limit": 1}, "expected": {"outcome": "ok", "document_version_ids": ["401"]}},
+    {"id": "search-inactive-member", "kind": "search", "input": {"account_id": "12", "project_id": "101", "mode": "APPROVED", "limit": 1}, "expected": {"outcome": "not_found", "document_version_ids": []}},
+    {"id": "search-not-member", "kind": "search", "input": {"account_id": "21", "project_id": "101", "mode": "APPROVED", "limit": 1}, "expected": {"outcome": "not_found", "document_version_ids": []}},
+    {"id": "search-not-ready", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "APPROVED", "limit": 1}, "mutation": "remove_current_ready_manifest", "expected": {"outcome": "index_not_ready", "document_version_ids": []}},
+    {"id": "search-different-profile", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "APPROVED", "limit": 1}, "mutation": "change_active_model_keep_dimension", "expected": {"outcome": "profile_mismatch", "document_version_ids": []}},
+    {"id": "search-normal-empty-filter", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "APPROVED", "filter_document_version_id": "999999", "limit": 1}, "expected": {"outcome": "no_matches", "document_version_ids": []}},
+    {"id": "search-during-reindex", "kind": "search", "input": {"account_id": "11", "project_id": "101", "mode": "APPROVED", "limit": 1}, "mutation": "start_reindex_keep_current_ready", "expected": {"outcome": "ok", "document_version_ids": ["202"]}},
+    {"id": "publish-complete", "kind": "publish", "document_version_id": "202", "expected": {"outcome": "published", "ready_unchanged": false}},
+    {"id": "publish-old-attempt", "kind": "publish", "document_version_id": "202", "mutation": "result_attempt_1", "expected": {"outcome": "discarded", "ready_unchanged": true}},
+    {"id": "publish-old-lease", "kind": "publish", "document_version_id": "202", "mutation": "result_lease_00000000-0000-0000-0000-000000000001", "expected": {"outcome": "discarded", "ready_unchanged": true}},
+    {"id": "publish-cancelled-run", "kind": "publish", "document_version_id": "202", "mutation": "cancel_current_run", "expected": {"outcome": "discarded", "ready_unchanged": true}},
+    {"id": "publish-other-project", "kind": "publish", "document_version_id": "202", "mutation": "use_project_102_version_401_artifact", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-source-hash", "kind": "publish", "document_version_id": "202", "mutation": "replace_content_hash_with_zeroes", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-text-hash", "kind": "publish", "document_version_id": "202", "mutation": "replace_text_hash_with_zeroes", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-missing-vector", "kind": "publish", "document_version_id": "202", "mutation": "drop_first_vector", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-duplicate-key", "kind": "publish", "document_version_id": "202", "mutation": "duplicate_first_chunk_key", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-wrong-dimension", "kind": "publish", "document_version_id": "202", "mutation": "remove_one_vector_component", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-different-model", "kind": "publish", "document_version_id": "202", "mutation": "change_result_model_keep_dimension", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-nonfinite-vector", "kind": "publish", "document_version_id": "202", "mutation": "replace_vector_component_with_nan_in_test_memory", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-zero-vector", "kind": "publish", "document_version_id": "202", "mutation": "zero_all_vector_components", "expected": {"outcome": "rejected", "ready_unchanged": true}},
+    {"id": "publish-storage-rollback", "kind": "publish", "document_version_id": "202", "mutation": "fail_after_first_chunk_insert", "expected": {"outcome": "rolled_back", "ready_unchanged": true}},
+    {"id": "publish-partial-ai-failure", "kind": "publish", "document_version_id": "202", "mutation": "embedding_failure_without_prepared_result", "expected": {"outcome": "not_dispatched", "ready_unchanged": true}},
+    {"id": "publish-replay", "kind": "publish", "document_version_id": "202", "mutation": "replay_same_completed_publication", "expected": {"outcome": "already_published", "ready_unchanged": true}}
+  ]
+}
