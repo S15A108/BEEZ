@@ -1,6 +1,6 @@
 # BEEZ AI Internal API
 
-버전: 0.2 · 갱신일: 2026-10-23 · 개발 계약 초안
+버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
 
 backend가 FastAPI ai 서비스에 요청하는 내부 계약이다. [공통 규약·담당자](00-common.md)와 [서버 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -196,7 +196,9 @@ HTTP `200`.
 
 관련 요구사항: BEE-05, TRC-07, MCP-11  
 담당: BE: 변준성 / AI: 양지훈 / FE: —  
-상태: 내부 계약 초안
+상태: 내부 계약 검토안(S15P31A108-107, 변준성 합의 전)
+
+검토 범위는 검증 요청·분석 결과·실패 응답과 개발용 예시다. 공통 스키마와 [상황별 고정 JSON](examples/validation/README.md)을 함께 검토한다. 문서·예시 공유와 변준성의 합의가 107번 완료 조건이며, 이 문서 갱신만으로 API 구현·팀 합의가 완료되지는 않는다.
 
 #### 인증
 
@@ -232,11 +234,26 @@ HTTP `200`.
 | `rule_findings` | [Finding[]](00-common.md#schema-finding) | Y | 규칙 검사 결과 |
 | `unresolved` | `string[]` | Y | 미확정 정책 |
 | `input_snapshot_hash` | `string` | Y | 전체 분석 입력 해시 |
+| `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
+| `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
+| `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
+
+`checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
+
+`content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
+
+`approved_items[].content`는 해당 검사의 비교에 필요한 필드를 포함해야 한다. API 요청·응답 필드, 타입, 필수 여부 등 kind별 필수 키·지원 범위는 Q01에서 확정하며, 아래 content는 비교 흐름을 설명하는 예시이지 Q01의 최종 스키마가 아니다. 미지원 본문을 조용히 생략한 뒤 검사 완료로 처리하지 않는다. `unlinked`의 상세 형식은 Q02에서 함께 확정한다.
+
+`evidence`는 기존 RAG `RetrievedEvidence`를 BE가 승인 항목 버전·`Source`와 연결해 만든 요청 스냅샷이다. PR #18의 원문 파서·locator를 재사용하며 AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
+
+사람이 편집한 승인 `content`는 구조화 계약의 기준이다. 원문과 다르면 차이를 명시하며 원문으로 승인 내용을 덮어쓰지 않는다. 항목의 출처가 연결됐다는 사실만으로 원문 승인까지 추정하지 않는다. 수동 입력·기존 승인 항목을 사용할 수 있고, 자동 설계 항목 추출(-128/후속 E2)의 완료를 전제로 하지 않는다.
+
+아래는 실제 모델 실행 결과가 아닌 고정 연동 예시다. 대상 작업은 `no_contract_change=true`를 선언했지만 접근 방식에 토큰 전달 변경을 적어, 의미 분석에서 불일치와 다른 작업 영향을 찾는 상황이다. 관련 작업은 대상 501과 다른 작업 502의 계획 리비전 512다. 작업 502의 READS 소비 관계를 관련 계획에 포함하는 범위와 `checks` 선정 기준은 Q02 확인 사항이다. 이 예시는 분석 입출력 검토용이며, AI 호출 대상·관련 계획 선정 정책의 합의 완료를 뜻하지 않는다.
 
 ```json
 {
   "project_id": "101",
-  "request_key": "ai-a02-request-1",
+  "request_key": "ai-a02-request-mismatch",
   "validation_id": "601",
   "attempt": 1,
   "plan_revision": {
@@ -244,17 +261,17 @@ HTTP `200`.
     "task_id": "501",
     "revision_no": 1,
     "plan": {
-      "title": "로그인 화면 구현",
-      "goal": "승인 계약대로 로그인 화면을 연결한다.",
+      "title": "로그인 API 구현",
+      "goal": "승인 계약대로 로그인 API를 구현한다.",
       "included_scope": [
-        "로그인 폼과 오류 표시"
+        "POST /api/auth/login 구현"
       ],
       "excluded_scope": [
         "회원가입"
       ],
-      "approach": "승인 API 계약을 사용한다.",
+      "approach": "로그인 성공 응답의 body.accessToken을 제거하고 Set-Cookie로만 전달한다.",
       "completion_criteria": [
-        "로그인 성공 시 프로젝트 목록으로 이동"
+        "로그인 성공 시 인증 결과를 반환한다."
       ],
       "dependency_task_ids": [],
       "design_refs": [
@@ -268,7 +285,7 @@ HTTP `200`.
       "no_contract_change": true,
       "context_packet_id": "701"
     },
-    "created_at": "2026-10-23T03:00:00Z",
+    "created_at": "2026-10-26T03:00:00Z",
     "created_by": "11"
   },
   "approved_items": [
@@ -283,74 +300,133 @@ HTTP `200`.
       "content": {
         "method": "POST",
         "path": "/api/auth/login",
-        "description": "이메일·비밀번호 로그인"
+        "description": "이메일·비밀번호 로그인",
+        "request_fields": [
+          {
+            "name": "email",
+            "location": "body",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "password",
+            "location": "body",
+            "type": "string",
+            "required": true
+          }
+        ],
+        "responses": [
+          {
+            "status_code": "200",
+            "fields": [
+              {
+                "name": "accessToken",
+                "location": "body",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "userId",
+                "location": "body",
+                "type": "integer",
+                "required": true
+              }
+            ]
+          }
+        ]
       },
       "source": {
         "document_id": "201",
         "document_version_id": "211",
         "version_no": 1,
-        "location": "3. 계정 관리 / ACC-02"
+        "location": "인증 API / POST /api/auth/login / 성공 응답"
       }
     }
   ],
   "related_plans": [
     {
-      "id": "511",
-      "task_id": "501",
+      "id": "512",
+      "task_id": "502",
       "revision_no": 1,
       "plan": {
-        "title": "로그인 화면 구현",
-        "goal": "승인 계약대로 로그인 화면을 연결한다.",
+        "title": "로그인 화면 연동",
+        "goal": "로그인 API의 승인 응답을 화면에서 사용한다.",
         "included_scope": [
-          "로그인 폼과 오류 표시"
+          "로그인 화면 및 API 응답 연동"
         ],
         "excluded_scope": [
-          "회원가입"
+          "회원가입 화면"
         ],
-        "approach": "승인 API 계약을 사용한다.",
+        "approach": "로그인 성공 응답 본문의 accessToken을 읽어 다음 요청에 사용한다.",
         "completion_criteria": [
-          "로그인 성공 시 프로젝트 목록으로 이동"
+          "응답 본문의 accessToken을 읽어 인증 요청을 보낼 수 있다."
         ],
         "dependency_task_ids": [],
         "design_refs": [
           {
             "design_item_id": "301",
             "design_item_version_id": "311",
-            "relation": "IMPLEMENTS"
+            "relation": "READS"
           }
         ],
         "unlinked": [],
         "no_contract_change": true,
-        "context_packet_id": "701"
+        "context_packet_id": "702"
       },
-      "created_at": "2026-10-23T03:00:00Z",
-      "created_by": "11"
+      "created_at": "2026-10-26T03:00:00Z",
+      "created_by": "12"
     }
   ],
-  "rule_findings": [
-    {
-      "id": "611",
-      "source": "RULE",
-      "kind": "MISMATCH",
-      "severity": "BLOCKING",
-      "message": "계획의 응답 필드가 승인 계약과 다릅니다.",
-      "design_item_id": "301",
-      "design_item_version_id": "311",
-      "related_task_id": "502",
-      "sources": [
-        {
-          "document_id": "201",
-          "document_version_id": "211",
-          "version_no": 1,
-          "location": "3. 계정 관리 / ACC-02"
-        }
-      ],
-      "resolution": "FIX_PLAN",
-      "next_action": "계획을 수정하고 재검증하세요."
-    }
-  ],
+  "rule_findings": [],
   "unresolved": [],
-  "input_snapshot_hash": "sha256:validation-input"
+  "checks": [
+    {
+      "key": "plan-completeness",
+      "kind": "PLAN_COMPLETENESS",
+      "design_item_version_ids": [],
+      "related_plan_revision_ids": []
+    },
+    {
+      "key": "design-api-login",
+      "kind": "DESIGN_ALIGNMENT",
+      "design_item_version_ids": [
+        "311"
+      ],
+      "related_plan_revision_ids": []
+    },
+    {
+      "key": "related-task-502",
+      "kind": "RELATED_PLAN_CONFLICT",
+      "design_item_version_ids": [
+        "311"
+      ],
+      "related_plan_revision_ids": [
+        "512"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "evidence-login-response",
+      "design_item_version_id": "311",
+      "source": {
+        "document_id": "201",
+        "document_version_id": "211",
+        "version_no": 1,
+        "location": "인증 API / POST /api/auth/login / 성공 응답"
+      },
+      "locator": {
+        "type": "text_lines",
+        "start_line": 3,
+        "end_line": 8
+      },
+      "text": "### 성공 응답\n상태 코드: 200\n| 필드 | 타입 | 필수 | 설명 |\n| --- | --- | --- | --- |\n| accessToken | string | 예 | 발급한 접근 토큰 |\n| userId | integer | 예 | 사용자 식별자 |\n",
+      "text_hash": "6cc7fd2817a76191efd014ccdf0d78926e59182d172c922a9ab2b8a2c302c5bb",
+      "normalization_version": "utf8-lf-v1"
+    }
+  ],
+  "execution_budget_ms": 30000,
+  "input_snapshot_hash": "sha256:validation-input-mismatch"
 }
 ```
 
@@ -362,17 +438,53 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `result` | [ValidateResult](00-common.md#schema-validateresult) | Y | 업무 결과 |
 | `origin` | `MODEL` | Y | 생성 출처. 템플릿 폴백 없음. 모델을 부르지 못하면 502/504 |
-| `model` | `string` | N | 실제 모델 호출 시 필수 |
-| `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
+| `model` | `string` | Y | 실제 호출한 모델 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | Y | 실제 모델 호출별 사용량 |
+
+`result`는 `analysis_status`, `checked_keys`, `unassessed`, `findings`를 모두 반환한다. 요청 `checks[].key`는 `checked_keys`와 `unassessed[].check_key`에 누락·중복 없이 정확히 한 번씩 나타나야 한다. finding은 `checked_keys`에 있는 `check_key`에만 연결하고, `evidence_ids`·항목·작업·출처는 입력 집합에서만 참조한다.
+
+`analysis_status=COMPLETE`는 지정 검사를 수행했다는 뜻이며 문제가 없다는 뜻이 아니다. `unassessed=[]`일 때만 COMPLETE다. HTTP 200 COMPLETE/PARTIAL은 모두 실제 모델 호출 후에만 반환하며 model/usage가 필요하다. 형식상 유효한 입력을 의미 분석한 뒤 판단 근거 부족·미지원 내용으로 미검사 항목이 남으면 PARTIAL과 사유를 반환한다. PARTIAL은 검증 수행 범위용 메타데이터이며 문서 파싱·색인 job 상태를 바꾸지 않는다. 실행 실패·시간 초과·잘린 모델 출력은 PARTIAL 성공 응답으로 바꾸지 않는다.
+
+검증 호출의 `usage[].request_key`는 `llm-validate-{validation_id}-attempt-{n}-call-{k}`로 실제 호출 순번을 포함한다. 같은 실행에서 모델을 두 번 호출하면 서로 다른 k를 사용하고 동일 validation/attempt 범위에서 k를 재사용하지 않는다. 같은 실제 호출의 usage 전송만 재시도할 때는 같은 key를 유지하고, 모델을 다시 호출하면 새 key를 부여한다.
+
+`checks`, `checked_keys`, `unassessed`는 적용 attempt/run과 함께 `validation.summary` JSONB에 보존하는 안을 기준으로 저장 위치·매핑을 -159에서 확정한다. 실패는 `validation_run.error`와 BE가 생성하는 `kind=ERROR` finding의 `resolution`·`next_action`으로 추적한다. Validation 응답 DTO의 `error_code`는 ERROR에서 필수이고 그 외 상태에서는 생략한다. 현재 실패 attempt의 [공통 실행 오류 분류](00-common.md#validation-execution-errors)에서 BE가 조립하는 값이며, `validation.error_code`라는 DB 컬럼을 뜻하지 않는다. 재시도 허용은 이 코드가 아니라 현재 실패 실행의 ERROR finding resolution으로 결정한다. HTTP 오류의 `error.code`는 별도 전송 계약으로 유지한다. 후보의 `check_key`·`evidence_ids` 영속화 구조와 새 마이그레이션 번호는 -159에서 머지 직전에 결정하며, 이번 문서 PR에는 DDL을 추가하지 않는다.
 
 ```json
 {
   "result": {
+    "analysis_status": "COMPLETE",
+    "checked_keys": [
+      "plan-completeness",
+      "design-api-login",
+      "related-task-502"
+    ],
+    "unassessed": [],
     "findings": [
       {
+        "check_key": "design-api-login",
         "kind": "MISMATCH",
-        "severity": "WARNING",
-        "message": "계획과 승인 계약을 다시 확인해야 합니다.",
+        "severity": "BLOCKING",
+        "message": "승인 계약은 응답 본문에 accessToken을 반환하지만 계획은 해당 필드를 제거하고 쿠키로만 전달한다.",
+        "design_item_id": "301",
+        "design_item_version_id": "311",
+        "sources": [
+          {
+            "document_id": "201",
+            "document_version_id": "211",
+            "version_no": 1,
+            "location": "인증 API / POST /api/auth/login / 성공 응답"
+          }
+        ],
+        "evidence_ids": [
+          "evidence-login-response"
+        ],
+        "suggested_action": "응답 본문의 accessToken을 유지하도록 계획을 보완하거나, 계약 변경이 필요하면 변경 제안과 팀장 승인을 요청하세요."
+      },
+      {
+        "check_key": "related-task-502",
+        "kind": "CONFLICT",
+        "severity": "BLOCKING",
+        "message": "작업 502의 계획은 응답 본문의 accessToken을 읽으므로 작업 501의 변경 계획과 충돌한다.",
         "design_item_id": "301",
         "design_item_version_id": "311",
         "related_task_id": "502",
@@ -381,10 +493,13 @@ HTTP `200`.
             "document_id": "201",
             "document_version_id": "211",
             "version_no": 1,
-            "location": "3. 계정 관리 / ACC-02"
+            "location": "인증 API / POST /api/auth/login / 성공 응답"
           }
         ],
-        "suggested_action": "계획을 보완하세요."
+        "evidence_ids": [
+          "evidence-login-response"
+        ],
+        "suggested_action": "작업 501과 502의 담당자가 토큰 전달 방식에 합의하고 필요한 계획 수정 또는 설계 변경 제안을 진행하세요."
       }
     ]
   },
@@ -392,16 +507,12 @@ HTTP `200`.
   "model": "configured-model",
   "usage": [
     {
-      "request_key": "llm-validate-601-attempt-1",
+      "request_key": "llm-validate-601-attempt-1-call-1",
       "feature": "TASK_VALIDATION",
       "model": "configured-model",
-      "input_tokens": 1200,
-      "output_tokens": 300,
       "latency_ms": 1800,
       "failed": false,
-      "estimated_cost_amount": "0.0042",
-      "currency": "USD",
-      "tokens_known": true
+      "tokens_known": false
     }
   ]
 }
@@ -413,9 +524,9 @@ HTTP `200`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 입력 타입·필수 값 오류 |
 | 401 | `invalid_internal_token` | 내부 인증 실패 |
-| 422 | `invalid_ai_input` | 본문 업무 구조 부적합 |
-| 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
-| 504 | `model_timeout` | 모델 시간 초과 |
+| 422 | `invalid_ai_input` | 본문 업무 구조·검사 참조·근거 구조 부적합 또는 호출 전 입력/컨텍스트 한도 초과 |
+| 502 | `model_unavailable` | 외부 모델 호출 실패, 잘린 출력 또는 출력 스키마·검사 범위·참조 검증 실패 |
+| 504 | `model_timeout` | 모델 또는 AI 전체 처리 예산 초과 |
 
 ```json
 {
@@ -429,10 +540,41 @@ HTTP `200`.
 #### 처리 규칙
 
 - backend 워커가 동기 HTTP로 호출한다. ai에서 큐 ID·콜백·최종 validation status를 만들지 않는다.
-- 규칙 finding을 해제하지 않고 후보만 추가한다. 응답 ID는 입력 객체 안에서만 참조한다.
-- 후보가 없다는 것만으로 PASS가 되지 않는다. backend가 [공통 6절 판정표](00-common.md#검증시작)로 판정한다.
+- 규칙 finding을 유지하고 AI 후보만 추가한다. 규칙 finding의 해제·심각도 하향·중복 합산을 하지 않는다. 응답 ID는 입력 객체 안에서만 참조한다.
+- backend가 스키마, checks의 완전한 분할, 근거·버전·참조를 검사한 뒤 [공통 6절 판정표](00-common.md#검증시작)로 판정한다. 빈 findings만으로 PASS가 되지 않는다.
+- 규칙만으로 NEEDS_INPUT/NEEDS_REVIEW가 확정된 요청은 해당 결과를 바로 반환한다. 아래 AI 응답 매핑은 의미 분석이 필요한 RUNNING 실행에 적용하며, 확정 규칙 결과를 AI 응답으로 다시 판정하지 않는다.
+- `MISSING_INPUT`은 작성자가 보완해야 하는 필수 계획 정보 누락이며 BLOCKING으로 반환한다. COMPLETE일 때 BE가 NEEDS_INPUT으로 연결한다. 선택적인 개선 제안을 필수 입력 누락으로 분류하지 않는다.
+- `MISSING_POLICY`는 원문에 미정으로 명시되었거나 합의한 정책 확인 범위에서 부재를 확인한 경우에만 BLOCKING으로 반환하고 NEEDS_REVIEW로 연결한다. 전달 근거가 부족하면 정책 부재를 단정하지 않고 `unassessed.reason=EVIDENCE_INSUFFICIENT`로 구분한다.
+- 다른 BLOCKING 불일치·충돌도 NEEDS_REVIEW다. 검토 필요와 입력 부족이 함께 있거나 기존 규칙이 검토 필요로 결정했으면 NEEDS_REVIEW를 유지하고 보완 내용도 표시한다. AI의 STALE_REF는 BE 최신성 재확인 신호이며 추론만으로 STALE을 확정하지 않는다.
+- PARTIAL은 PASS 불가다. BE는 미검사 사유를 실패 실행에 남기고 ERROR를 기록하며, 부분 AI 후보는 진단 이력에만 남긴다. BE가 생성하는 ERROR finding의 `resolution=HUMAN_REVIEW`로 근거 보완·지원 범위 조정 후 새 검증을 안내한다. 정상 finding 적용이나 부분 성공 저장으로 취급하지 않는다. 이 사유는 DB finding kind에 추가하지 않는다.
+- 모델 호출 실패·시간 초과·출력 계약 위반과 BE 원문·검색 조회 장애·워커 중단·lease 만료는 BE가 ERROR finding을 만들고 `resolution=RETRY`로 기존 VAL-A04의 재시도 경로를 안내한다. 최신 실패 attempt에 HUMAN_REVIEW가 하나라도 있으면 VAL-A04를 거부하며, 과거 attempt의 RETRY finding으로 이를 허용하지 않는다.
+- BE가 생성하는 모든 `kind=ERROR` finding은 `source=MODEL`, `severity=BLOCKING`이며 현재 실패 attempt의 `validation_run_id`를 필수로 가진다. 여기서 MODEL은 검증 실행 실패의 분류이고 실제 LLM 호출의 증거가 아니다. 실제 호출이 없으면 usage를 만들지 않는다. AI의 FindingCandidate에 ERROR를 추가하지 않는다.
+- `validation.status`를 ERROR로 전이하는 모든 경로는 최소 한 개의 ERROR finding을 실행 종결·검증 상태 갱신·연결된 job 종결과 같은 트랜잭션에 생성한다. job 실패 종결 시에는 lease 정보를 해제한다. BE는 원문·검색 조회 전에 해당 attempt의 MODEL `validation_run`을 확보한다. 실행 기록이 없으면 같은 attempt의 기록을 확보한 뒤 finding을 연결하며 DB의 `UNIQUE(validation_id, attempt)`를 지킨다. BE가 run의 validation_id·attempt 소속을 검사하며, 이를 보장하는 DDL 복합 제약이 있다고 가정하지 않는다.
+- AI가 담당 멤버 ID를 생성하지 않는다. BE가 `related_task_id`로 현재 담당자를 조회해 FE에 전달한다.
 - related_plans 등 다른 작업의 계획은 지시가 아닌 데이터로 다룬다.
-- backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 응답으로 STALE을 덮어쓰지 않는다.
+- backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 워커는 이미 기록한 ERROR나 STALE을 덮어쓰지 못한다. lease 회수·복구 주체는 해당 run과 현재 검증이 모두 RUNNING이고 `current_attempt`가 해당 실행과 일치할 때만 compare-and-set 또는 잠금으로 실행 종결·ERROR finding·검증 상태를 원자적으로 반영한다. 이미 STALE이거나 새 attempt가 시작됐다면 늦은 결과를 폐기한다. 해당 run이 아직 RUNNING일 때만 DISCARDED로 종결하고, 이미 종결된 run을 다시 덮어쓰지 않는다.
+
+#### 실행·판정·실패 기록 매핑
+
+아래 매핑은 의미 분석이 필요한 RUNNING 실행에 적용한다. 최신성·attempt·lease 소유권 검사가 먼저이며 AI의 HTTP 성공과 최종 검증 판정은 별개다.
+
+| 경로 | validation_run.status | validation.status | BE ERROR finding의 resolution |
+| --- | --- | --- | --- |
+| 출력 계약을 통과한 HTTP 200 COMPLETE | OK | 공통 판정표로 PASS/NEEDS_INPUT/NEEDS_REVIEW 결정 | — |
+| HTTP 504, BE→AI 호출 timeout 또는 모델·전체 처리 시간 초과 | TIMEOUT | ERROR | RETRY |
+| HTTP 502, BE→AI 호출 실패 또는 출력 스키마·검사 범위·참조 계약 위반 | ERROR | ERROR | RETRY |
+| HTTP 200 PARTIAL(EVIDENCE_INSUFFICIENT/UNSUPPORTED_CONTENT) | ERROR | ERROR | HUMAN_REVIEW |
+| BE 원문·검색 조회 장애, 워커 중단, lease 만료, 그 밖의 BE 실행 오류 | ERROR | ERROR | RETRY |
+| 이전 attempt/lease의 늦은 결과 또는 검증이 이미 STALE | DISCARDED(해당 run이 아직 RUNNING일 때만) | 기존 상태 유지 | 새 ERROR finding 생성 없음 |
+
+ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`과 현재 실패 attempt의 `validation_run_id`를 필수로 가진다. ERROR finding 생성·run 종결·검증 ERROR 전이·연결된 job 종결은 같은 트랜잭션이다. 마지막 행은 이미 종결된 run을 DISCARDED로 재변경하지 않는다.
+
+#### 시간 예산·재시도
+
+- `execution_budget_ms`는 요청 안의 모든 모델 호출과 결과 검증에 적용한다. 호출 전 입력 한도를 검사하고, 초과한 입력을 조용히 잘라 분석하지 않는다. 예산 안에 끝내지 못하면 504다.
+- BE HTTP 제한시간은 AI가 예산 초과 오류와 usage를 전달할 여유를 두고 설정한다. 예시의 30000ms는 설명용이며 서비스 SLA·운영 기본값의 확정이 아니다. 예산 상한·전달 여유·lease 갱신 방식은 Q11에서 합의한다.
+- 검증 경로의 AI/모델 SDK 자동 재시도는 끈다. 초기 BE도 자동 재시도하지 않고 [VAL-A04](01-backend-rest.md#val-a04)의 명시적 ERROR 재시도로 새 run/attempt를 만든다. 재시도는 최신 실패 attempt가 RETRY 경로인 경우에만 가능하며 HUMAN_REVIEW가 있으면 거부한다. 입력·근거 보완 또는 지원 범위 조정 후에는 새 검증이다. 후속 자동 재시도는 오류별 대상·횟수·전체 예산을 Q11에서 확정한 뒤 추가한다.
+- 성공·실패 모두 실제 모델 호출별 usage를 남긴다. SDK/BE 중첩 재시도로 호출을 숨기거나 중복 합산하지 않고, 사용량을 모르면 tokens_known=false로 기록한다. 연결이 끊긴 뒤에도 실제 호출 비용은 기존 실행 이력에 보존한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
