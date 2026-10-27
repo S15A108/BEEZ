@@ -7,6 +7,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.beez.backend.account.Account;
+import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.access.AgentTokenScopes.TokenScope;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -33,7 +35,8 @@ class ProjectAccessCheckerTest {
     private final ProjectMemberRepository members = mock(ProjectMemberRepository.class);
     private final ProjectRepository projects = mock(ProjectRepository.class);
     private final AgentTokenScopes tokens = mock(AgentTokenScopes.class);
-    private final ProjectAccessChecker checker = new ProjectAccessChecker(members, projects, tokens);
+    private final AccountRepository accounts = mock(AccountRepository.class);
+    private final ProjectAccessChecker checker = new ProjectAccessChecker(members, projects, tokens, accounts);
 
     private void givenMembership(long accountId, long memberId, ProjectRole role) {
         ProjectMember m = mock(ProjectMember.class);
@@ -62,6 +65,7 @@ class ProjectAccessCheckerTest {
 
     @Test
     void nonMember_andMissingProject_get_theSame404() {
+        when(accounts.findByIdAndDeletedAtIsNull(ACCOUNT)).thenReturn(Optional.of(mock(Account.class)));
         when(members.findActiveMembership(anyLong(), anyLong())).thenReturn(Optional.empty());
 
         when(projects.existsByIdAndArchivedAtIsNull(PROJECT)).thenReturn(true);
@@ -123,6 +127,16 @@ class ProjectAccessCheckerTest {
                 new ProjectActor(ACCOUNT, 5L, PROJECT, ProjectRole.MEMBER, ActorType.AGENT, TOKEN));
         // 에이전트 토큰으로 사람 전용(USER) API 를 부를 수 없다
         assertStatus(() -> checker.requireUser(AGENT), HttpStatus.UNAUTHORIZED, "unauthenticated");
+        assertThat(catchApi(() -> checker.requireUser(AGENT)).getMessage()).isEqualTo(AccessErrors.AGENT_UNAUTHENTICATED_MESSAGE);
+    }
+
+    @Test
+    void withdrawnAccountsSession_is401_notHiddenAs404() {
+        // 탈퇴한 계정의 세션이 남아 있으면 프로젝트 API 도 /api/me 처럼 401 (세션 자체가 무효)
+        when(members.findActiveMembership(anyLong(), anyLong())).thenReturn(Optional.empty());
+        when(accounts.findByIdAndDeletedAtIsNull(ACCOUNT)).thenReturn(Optional.empty());
+
+        assertStatus(() -> checker.requireMember(HUMAN, PROJECT), HttpStatus.UNAUTHORIZED, "unauthenticated");
     }
 
     @Test

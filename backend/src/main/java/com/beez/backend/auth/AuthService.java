@@ -3,6 +3,7 @@ package com.beez.backend.auth;
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.api.ApiException;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Optional;
 import org.hibernate.exception.ConstraintViolationException;
@@ -26,12 +27,13 @@ public class AuthService {
     private final AccountRepository accounts;
     private final PasswordEncoder encoder;
     /** 없는 이메일에도 같은 시간만큼 해시 비교를 해서, 응답 시간으로 가입 여부가 드러나지 않게 한다. */
+    private static final String DUMMY_RAW = "beez-timing-equalizer-0";
     private final String dummyHash;
 
     public AuthService(AccountRepository accounts, PasswordEncoder encoder) {
         this.accounts = accounts;
         this.encoder = encoder;
-        this.dummyHash = encoder.encode("beez-timing-equalizer-0");
+        this.dummyHash = encoder.encode(DUMMY_RAW);
     }
 
     @Transactional
@@ -62,11 +64,20 @@ public class AuthService {
     @Transactional(readOnly = true)
     public Account authenticate(String email, String password) {
         Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(normalizeEmail(email));
+        if (password.getBytes(StandardCharsets.UTF_8).length > PasswordPolicy.MAX_BYTES) {
+            // 가입 정책상 나올 수 없는 길이라 무조건 불일치. bcrypt 는 이 길이를 받지 않으므로 더미 비교로 응답 시간만 맞춘다
+            encoder.matches(DUMMY_RAW, dummyHash);
+            throw invalidCredentials();
+        }
         boolean matches = matches(password, found.map(Account::getPasswordHash).orElse(dummyHash));
         if (found.isEmpty() || !matches) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "invalid_credentials", "이메일 또는 비밀번호 불일치");
+            throw invalidCredentials();
         }
         return found.get();
+    }
+
+    private static ApiException invalidCredentials() {
+        return new ApiException(HttpStatus.UNAUTHORIZED, "invalid_credentials", "이메일 또는 비밀번호 불일치");
     }
 
     /** 저장된 해시를 읽을 수 없으면({bcrypt} 같은 접두어 없음·NULL — SQL 시드 등) 불일치로 본다. 500 으로 새지 않게 한다. */

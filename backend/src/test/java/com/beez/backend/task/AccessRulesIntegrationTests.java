@@ -69,11 +69,12 @@ class AccessRulesIntegrationTests extends IntegrationTestSupport {
     // ---- account.deleted_at ----
 
     @Test
-    void withdrawnAccount_isNotFound() throws Exception {
+    void withdrawnAccount_is401() throws Exception {
         api.jdbc.sql("update account set deleted_at = now(), email = null where id = :a").param("a", member).update();
 
+        // 이미 로그인한 세션으로 다시 부른다. 탈퇴로 세션이 무효라 401 (-170 리뷰 반영, 이전에는 404)
         HttpResponse<String> res = api.get(tasksPath() + "/" + taskId, member);
-        assertThat(res.statusCode()).isEqualTo(404);
+        assertThat(res.statusCode()).isEqualTo(401);
     }
 
     // ---- project_member.active ----

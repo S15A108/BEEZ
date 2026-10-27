@@ -1,5 +1,6 @@
 package com.beez.backend.common.access;
 
+import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.project.ProjectMember;
 import com.beez.backend.project.ProjectMemberRepository;
@@ -23,18 +24,26 @@ public class ProjectAccessChecker {
     private final ProjectMemberRepository members;
     private final ProjectRepository projects;
     private final AgentTokenScopes tokens;
+    private final AccountRepository accounts;
 
     public ProjectAccessChecker(ProjectMemberRepository members, ProjectRepository projects,
-                                AgentTokenScopes tokens) {
+                                AgentTokenScopes tokens, AccountRepository accounts) {
         this.members = members;
         this.projects = projects;
         this.tokens = tokens;
+        this.accounts = accounts;
     }
 
-    /** USER 권한(프로젝트와 무관한 본인 API). 사람 세션의 계정 ID. 에이전트·비로그인은 401. */
+    /**
+     * USER 권한(프로젝트와 무관한 본인 API). 사람 세션의 계정 ID. 비로그인은 401.
+     * 에이전트도 401 이다 — 에이전트는 MCP 전용이라 REST 의 USER API 를 부를 인증이 없다 (-172 참고 2의 1).
+     */
     public long requireUser(CallerContext caller) {
-        if (caller == null || !caller.isHuman()) {
+        if (caller == null) {
             throw AccessErrors.unauthenticated();
+        }
+        if (!caller.isHuman()) {
+            throw AccessErrors.agentUnauthenticated();
         }
         return caller.accountId();
     }
@@ -50,7 +59,7 @@ public class ProjectAccessChecker {
      */
     public ProjectActor requireMember(CallerContext caller, long projectId, ProjectRole required) {
         if (caller == null || caller.accountId() == null) {
-            throw AccessErrors.unauthenticated();
+            throw caller != null && !caller.isHuman() ? AccessErrors.agentUnauthenticated() : AccessErrors.unauthenticated();
         }
         long accountId = caller.accountId();
         ActorType actorType = ActorType.HUMAN;
@@ -63,8 +72,7 @@ public class ProjectAccessChecker {
 
         String who = " project=" + projectId + " account=" + accountId;
         ProjectMember member = members.findActiveMembership(projectId, accountId)
-                .orElseThrow(() -> AccessErrors.notFound(
-                        (projects.existsByIdAndArchivedAtIsNull(projectId) ? "not_member" : "project_missing") + who));
+                .orElseThrow(() -> denyWithoutMembership(caller.isHuman(), accountId, projectId, who));
 
         if (!member.getRole().satisfies(required)) {
             throw AccessErrors.forbidden("role_required_" + required.name().toLowerCase() + who, "팀장만 할 수 있습니다");
@@ -80,6 +88,19 @@ public class ProjectAccessChecker {
         ProjectActor actor = requireMember(caller, projectId, ProjectRole.LEADER);
         actor.requireHuman();
         return actor;
+    }
+
+    /**
+     * 활성 멤버십이 없을 때의 거부. 실패할 때만 부르므로 성공 경로의 쿼리는 늘지 않는다.
+     * 사람 세션인데 계정이 탈퇴했으면 세션 자체가 무효라 401 ({@code /api/me} 의 AccountService.getMe 와 같은 판정).
+     * 그 밖은 존재를 숨기는 404.
+     */
+    private RuntimeException denyWithoutMembership(boolean human, long accountId, long projectId, String who) {
+        if (human && accounts.findByIdAndDeletedAtIsNull(accountId).isEmpty()) {
+            return AccessErrors.unauthenticated();
+        }
+        return AccessErrors.notFound(
+                (projects.existsByIdAndArchivedAtIsNull(projectId) ? "not_member" : "project_missing") + who);
     }
 
     /** 멤버 번호가 이 프로젝트의 활성 멤버인지 (담당자 지정·변경 대상 확인). */

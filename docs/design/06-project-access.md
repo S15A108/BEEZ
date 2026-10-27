@@ -53,7 +53,7 @@ public class TaskService {
 
 | 메서드 | 쓰는 곳 | 실패 |
 | --- | --- | --- |
-| `requireMember(caller, projectId)` | MEMBER API | 비로그인 401, 폐기·남의 토큰 401 `token_revoked`, 다른 프로젝트 토큰·프로젝트 없음·삭제·비멤버·탈퇴 계정 404 |
+| `requireMember(caller, projectId)` | MEMBER API | 비로그인·탈퇴 계정의 세션 401, 폐기·남의 토큰 401 `token_revoked`, 다른 프로젝트 토큰·프로젝트 없음·삭제·비멤버 404 |
 | `requireMember(caller, projectId, LEADER)` | LEADER API (에이전트도 허용하는 경우) | 위 + 팀장 아님 403 |
 | `requireHumanLeader(caller, projectId)` | 승인·발행·팀 관리·담당자 변경 (00-common 2절 "사람 세션 필수") | 위 + 팀장 아님 403, 에이전트 403 |
 | `requireUser(caller)` | 프로젝트와 무관한 본인 API(`/api/me` 등) | 비로그인·에이전트 401 |
@@ -61,6 +61,8 @@ public class TaskService {
 | `actor.requireHuman()` | 승인·발행·팀 관리, 에이전트 CANCEL | 에이전트 403 |
 | `actor.requireMemberId(memberId[, 메시지])` | TASK_OWNER (담당자 칸은 **멤버 ID**) | 다른 멤버·담당자 없음 403 |
 | `actor.accountId()`와 비교 | RECORD_AUTHOR (작성자 칸은 **계정 ID**) | 아래 "작성자 검사" |
+
+`requireUser`가 에이전트를 403이 아니라 **401**로 막는 이유: 에이전트는 MCP 전용이라 REST의 USER API를 부를 인증 수단 자체가 없다(05 참고 2의 1번 "에이전트 토큰으로 `/api/**` 호출 → 401"). 이때 문구는 에이전트용(`AGENT_UNAUTHENTICATED_MESSAGE`)이다.
 
 `ProjectActor`에 담긴 값:
 

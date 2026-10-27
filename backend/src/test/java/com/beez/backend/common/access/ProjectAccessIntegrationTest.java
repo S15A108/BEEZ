@@ -187,7 +187,7 @@ class ProjectAccessIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void withdrawnAccount_is404_evenWithActiveMemberRow() {
+    void withdrawnAccountsSession_is401_evenWithActiveMemberRow() {
         var p = fixtures().projectWithLeader();
         long bob = fixtures().account();
         fixtures().member(p.projectId(), bob, ProjectRole.MEMBER);
@@ -195,7 +195,10 @@ class ProjectAccessIntegrationTest extends IntegrationTestSupport {
 
         fixtures().withdraw(bob);
 
-        assertNotFound(bobClient.get("/api/test-probe/projects/" + p.projectId()));
+        // 탈퇴로 세션이 무효가 되었으니 404(존재 숨김)가 아니라 401 — /api/me 와 같은 판정
+        HttpResponse<String> res = bobClient.get("/api/test-probe/projects/" + p.projectId());
+        assertThat(res.statusCode()).isEqualTo(401);
+        assertThat(res.body()).contains("\"code\":\"unauthenticated\"").contains(AccessErrors.UNAUTHENTICATED_MESSAGE);
     }
 
     @Test
