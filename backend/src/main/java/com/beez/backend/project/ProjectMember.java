@@ -11,7 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 
-/** 프로젝트 멤버십 (V2 project_member). 제외·나가기는 active=false + left_at. 초대·위임 API 는 -174 에서 넓힌다. */
+/** 프로젝트 멤버십 (V2 project_member). 제외·나가기는 active=false + left_at. 생성자 팀장 멤버십은 -173, 초대·위임 API 는 -174. */
 @Entity
 @Table(name = "project_member")
 public class ProjectMember extends BaseTimeEntity {
@@ -35,6 +35,16 @@ public class ProjectMember extends BaseTimeEntity {
     private Instant leftAt;
 
     protected ProjectMember() {
+    }
+
+    /** 프로젝트를 만든 사람의 팀장 멤버십 (PRJ-A01). */
+    public static ProjectMember leader(long projectId, long accountId) {
+        ProjectMember m = new ProjectMember();
+        m.projectId = projectId;
+        m.accountId = accountId;
+        m.role = ProjectRole.LEADER;
+        m.active = true;
+        return m;
     }
 
     public Long getId() {
