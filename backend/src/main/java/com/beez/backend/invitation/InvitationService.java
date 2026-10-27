@@ -163,7 +163,9 @@ public class InvitationService {
         member = members.saveAndFlush(member);
         invitation.accept(me.getId(), now);
 
-        boolean agentConnected = !members.agentConnectedAccountIds(project.getId(), List.of(me.getId())).isEmpty();
+        // 새 멤버십엔 토큰이 있을 수 없다 (agent_token 이 멤버십 행을 참조). 되살린 멤버십만 예전 토큰을 본다
+        boolean agentConnected = existing.isPresent()
+                && !members.agentConnectedAccountIds(project.getId(), List.of(me.getId())).isEmpty();
         return new AcceptedInvitationResponse(projectService.toResponse(project, ProjectRole.MEMBER),
                 MemberResponse.of(member, me, agentConnected));
     }
