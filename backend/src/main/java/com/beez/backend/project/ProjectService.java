@@ -52,7 +52,8 @@ public class ProjectService {
     @Transactional
     public ProjectResponse create(CallerContext caller, CreateProjectRequest req) {
         Account me = access.requireUser(caller);
-        Project project = projects.save(Project.create(requireName(req.name()), blankToNull(req.description()), me.getId()));
+        Project project = projects.save(
+                Project.create(requireName(req.name()), normalizeDescription(req.description()), me.getId()));
         members.save(ProjectMember.leader(project.getId(), me.getId()));
         events.publishEvent(new ProjectCreatedEvent(project.getId(), me.getId()));
         return ProjectResponse.of(project, ProjectRole.LEADER, null);
@@ -118,7 +119,7 @@ public class ProjectService {
             project.rename(requireName(req.name()));
         }
         if (req.description() != null) {
-            project.changeDescription(blankToNull(req.description()));
+            project.changeDescription(normalizeDescription(req.description()));
         }
         // updated_at 은 flush 때 채워지므로 응답 전에 내보낸다
         projects.saveAndFlush(project);
@@ -133,7 +134,8 @@ public class ProjectService {
     public void delete(CallerContext caller, long projectId, DeleteProjectRequest req) {
         access.requireHumanLeader(caller, projectId);
         Project project = lockActive(projectId);
-        if (!project.getName().equals(req.confirmName())) {
+        // 저장된 이름은 앞뒤 공백을 뺀 값이라 확인 입력도 같은 규칙으로 비교한다
+        if (!project.getName().equals(req.confirmName().strip())) {
             throw new ApiException(HttpStatus.CONFLICT, "confirmation_mismatch", "프로젝트 이름이 일치하지 않습니다");
         }
         Instant now = Instant.now();
@@ -189,12 +191,20 @@ public class ProjectService {
         return name;
     }
 
-    /** 공백뿐인 설명은 "설명 없음"(null)으로 저장한다. PATCH 에서는 "" 이 설명 지우기다. */
-    private static String blankToNull(String raw) {
+    /**
+     * 앞뒤 공백을 뺀 설명. 공백뿐이면 "설명 없음"(null) — PATCH 에서는 "" 이 설명 지우기다.
+     * 길이는 이름과 같이 공백을 뺀 뒤 본다. 2000자를 넘으면 400.
+     */
+    private static String normalizeDescription(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
-        return raw.strip();
+        String description = raw.strip();
+        if (description.length() > DESCRIPTION_MAX) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    "description: " + DESCRIPTION_MAX + "자 이하로 입력해야 합니다");
+        }
+        return description;
     }
 
     private static int normalizeLimit(Integer limit) {

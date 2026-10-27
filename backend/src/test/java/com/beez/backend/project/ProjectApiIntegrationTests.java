@@ -70,6 +70,10 @@ class ProjectApiIntegrationTests extends IntegrationTestSupport {
         assertThat(outsider.patch(path, "{\"name\":\"바꿈\"}").statusCode()).isEqualTo(404);
 
         assertThat(leader.patch(path, "{}").statusCode()).isEqualTo(400);
+        // 설명 길이는 앞뒤 공백을 뺀 뒤 2000자까지
+        String full = "가".repeat(2000);
+        assertThat(leader.patch(path, "{\"description\":\"  " + full + "  \"}").statusCode()).isEqualTo(200);
+        assertThat(leader.patch(path, "{\"description\":\"" + full + "가\"}").statusCode()).isEqualTo(400);
         leader.patch(path, "{\"description\":\"설명\"}");
         JsonNode updated = read(leader.patch(path, "{\"name\":\"새 이름\",\"description\":\"\"}"));
         assertThat(updated.get("name").asString()).isEqualTo("새 이름");
@@ -88,7 +92,8 @@ class ProjectApiIntegrationTests extends IntegrationTestSupport {
         assertThat(mismatch.statusCode()).isEqualTo(409);
         assertThat(mismatch.body()).contains("confirmation_mismatch");
 
-        assertThat(leader.delete(path, "{\"confirm_name\":\"fixture-project\"}").statusCode()).isEqualTo(204);
+        // 확인 입력도 이름처럼 앞뒤 공백을 빼고 비교한다
+        assertThat(leader.delete(path, "{\"confirm_name\":\"  fixture-project \"}").statusCode()).isEqualTo(204);
         assertThat(leader.get(path).statusCode()).isEqualTo(404);
         assertThat(ids(read(leader.get("/api/projects")))).doesNotContain(String.valueOf(p.projectId()));
         assertThatThrownBy(() -> access.requireMember(CallerContext.agent(p.leaderAccountId(), token), p.projectId()))
