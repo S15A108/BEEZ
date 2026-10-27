@@ -141,6 +141,14 @@ public class TaskApiSupport {
                 """.formatted(title, dependencyIdsJson, refsJson);
     }
 
+    /** 항목을 CHANGES 로 참조하는 계획 (변경 후 내용 포함) */
+    public String changesRef(String key) {
+        return """
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "CHANGES",
+                  "proposed_content": {"method":"GET","path":"/x","response":{"memberId":"long"}}}]
+                """.formatted(designItemId(key), currentVersionId(key));
+    }
+
     public String readsRef(String key) {
         return """
                 [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "READS"}]
