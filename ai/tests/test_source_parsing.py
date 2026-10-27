@@ -170,7 +170,12 @@ def test_nested_list_quote_and_reference_definitions_are_not_lost():
         b for b in document.blocks if "예외:" in resolve_source(document, b.locator)
     )
     assert nested.block_type == "list_item"
-    assert len(nested.container_path) == 2
+    assert [c.kind for c in nested.container_path] == [
+        "bullet_list",
+        "list_item",
+        "bullet_list",
+        "list_item",
+    ]
     assert any(
         b.container_path and b.container_path[-1].kind == "blockquote"
         for b in document.blocks

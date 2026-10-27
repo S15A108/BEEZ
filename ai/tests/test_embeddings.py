@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 
@@ -293,7 +294,7 @@ async def test_total_deadline_stops_retry_before_another_call():
             "req",
             provider,
             Counter(),
-            policy=EmbeddingPolicy(total_timeout_seconds=0.01, retry_delay_seconds=0.1),
+            policy=EmbeddingPolicy(total_timeout_seconds=1.0, retry_delay_seconds=2.0),
         )
     assert exc.value.code == "embedding_timeout"
     assert len(provider.calls) == 1
@@ -310,3 +311,74 @@ async def test_repeated_dispatch_does_not_reuse_actual_call_usage_key():
         texts("input"), profile(), "same-request", provider, Counter()
     )
     assert first.usage[0].request_key != second.usage[0].request_key
+
+
+@pytest.mark.asyncio
+async def test_token_validation_allows_the_event_loop_to_progress():
+    loop = asyncio.get_running_loop()
+    released = threading.Event()
+
+    class ResponsiveCounter(Counter):
+        def count(self, text):
+            loop.call_soon_threadsafe(released.set)
+            if not released.wait(1):
+                raise ValueError("The event loop could not release token validation")
+            return super().count(text)
+
+    result = await embed_texts(
+        texts("input"), profile(), "req", Provider(), ResponsiveCounter()
+    )
+    assert result.vectors[0].key == "k0"
+
+
+@pytest.mark.asyncio
+async def test_token_validation_uses_the_total_deadline_before_provider_calls():
+    released = threading.Event()
+    provider = Provider()
+
+    class BlockingCounter(Counter):
+        def count(self, text):
+            released.wait(1)
+            return super().count(text)
+
+    try:
+        with pytest.raises(EmbeddingError) as exc:
+            await embed_texts(
+                texts("input"),
+                profile(),
+                "req",
+                provider,
+                BlockingCounter(),
+                policy=EmbeddingPolicy(total_timeout_seconds=0.01),
+            )
+        assert exc.value.code == "embedding_timeout"
+        assert exc.value.usage == ()
+        assert provider.calls == []
+    finally:
+        released.set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_token_validation_never_dispatches_a_provider_call():
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    released = threading.Event()
+    provider = Provider()
+
+    class BlockingCounter(Counter):
+        def count(self, text):
+            loop.call_soon_threadsafe(started.set)
+            released.wait(1)
+            return super().count(text)
+
+    task = asyncio.create_task(
+        embed_texts(texts("input"), profile(), "req", provider, BlockingCounter())
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert provider.calls == []
+    finally:
+        released.set()

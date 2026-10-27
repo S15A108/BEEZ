@@ -174,11 +174,19 @@ async def embed_texts(
         raise EmbeddingError(
             "invalid_embedding_input", "Invalid request key or purpose."
         )
-    batches = _batches(texts, profile, policy, token_counter)
+    deadline = time.monotonic() + policy.total_timeout_seconds
+    try:
+        async with asyncio.timeout(policy.total_timeout_seconds):
+            batches = await asyncio.to_thread(
+                _batches, texts, profile, policy, token_counter
+            )
+    except TimeoutError as exc:
+        raise EmbeddingError(
+            "embedding_timeout", "Token validation exhausted the total budget."
+        ) from exc
     usage: list[EmbeddingUsage] = []
     vectors = {}
     invocation_id = uuid4().hex
-    deadline = time.monotonic() + policy.total_timeout_seconds
     for batch_no, batch in enumerate(batches):
         for attempt in range(1, policy.max_attempts + 1):
             remaining = deadline - time.monotonic()

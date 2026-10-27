@@ -257,3 +257,66 @@ def test_chunk_count_limit_does_not_return_partial_batch():
             document_for("x" * 100), profile(max_tokens=10, max_chunks=2), ByteCounter()
         )
     assert exc.value.code == "chunk_limit_exceeded"
+
+
+def test_sibling_list_items_share_chunks_and_keep_item_spans():
+    document = document_for("# Policy\n\n" + "".join(f"- Rule {i}\n" for i in range(5)))
+    batch = build_chunks(document, profile(), ByteCounter())
+    list_chunks = [chunk for chunk in batch.chunks if "- Rule" in chunk.text]
+    assert len(list_chunks) == 1
+    assert len(list_chunks[0].source_spans) == 5
+    assert_coverage(document, batch)
+
+
+def test_many_short_list_items_fit_the_default_chunk_limit():
+    document = document_for(
+        "# Requirements\n\n" + "".join(f"- Requirement {i:04d}\n" for i in range(1500))
+    )
+    batch = build_chunks(document, profile(), ByteCounter())
+    assert len(batch.chunks) < 100
+    assert all(chunk.token_count <= 600 for chunk in batch.chunks)
+    assert [span.block_id for chunk in batch.chunks for span in chunk.source_spans] == [
+        block.block_id for block in document.blocks
+    ]
+
+
+def test_nested_siblings_merge_within_their_own_parent_item():
+    document = document_for(
+        "- Parent A\n  - child A1\n  - child A2\n"
+        "- Parent B\n  - child B1\n  - child B2\n"
+    )
+    batch = build_chunks(document, profile(), ByteCounter())
+    assert any("child A1" in c.text and "child A2" in c.text for c in batch.chunks)
+    assert any("child B1" in c.text and "child B2" in c.text for c in batch.chunks)
+    assert all(not ("child A" in c.text and "child B" in c.text) for c in batch.chunks)
+    assert_coverage(document, batch)
+
+
+@pytest.mark.parametrize("separator", ["\n---\n\n", "\nparagraph\n\n"])
+def test_separate_lists_keep_separate_boundaries(separator):
+    document = document_for(
+        "- first A\n- first B\n" + separator + "- second A\n- second B\n"
+    )
+    batch = build_chunks(document, profile(), ByteCounter())
+    assert any("first A" in c.text and "first B" in c.text for c in batch.chunks)
+    assert any("second A" in c.text and "second B" in c.text for c in batch.chunks)
+    assert all(not ("first A" in c.text and "second A" in c.text) for c in batch.chunks)
+    assert_coverage(document, batch)
+
+
+def test_list_types_and_quote_ranges_remain_boundaries():
+    document = document_for(
+        "- bullet A\n- bullet B\n\n1. ordered A\n2. ordered B\n\n"
+        "> - quoted A\n> - quoted B\n\nplain\n\n> - other quote\n"
+    )
+    batch = build_chunks(document, profile(), ByteCounter())
+    assert any("bullet A" in c.text and "bullet B" in c.text for c in batch.chunks)
+    assert any("ordered A" in c.text and "ordered B" in c.text for c in batch.chunks)
+    assert any("quoted A" in c.text and "quoted B" in c.text for c in batch.chunks)
+    assert all(
+        not ("bullet A" in c.text and "ordered A" in c.text) for c in batch.chunks
+    )
+    assert all(
+        not ("quoted A" in c.text and "other quote" in c.text) for c in batch.chunks
+    )
+    assert_coverage(document, batch)

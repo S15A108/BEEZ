@@ -138,7 +138,7 @@ jobs:
 
       # Download the public vocabulary before tests; no model call or GMS key.
       - name: Prepare embedding tokenizer
-        run: python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+        run: python -m scripts.prepare_tokenizer
 
       - name: Pytest
         run: pytest -q

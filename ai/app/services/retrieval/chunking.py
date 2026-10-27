@@ -14,7 +14,7 @@ from app.schemas.retrieval import (
 from app.services.document_parsing.normalization import source_lines, text_digest
 from app.services.retrieval.errors import RetrievalError
 
-CHUNKER_VERSION = "beez-structure/1.0.0"
+CHUNKER_VERSION = "beez-structure/1.1.0"
 MAX_TOKEN_CHECKS = 20_000
 MAX_BATCH_BYTES = 8_388_608
 
@@ -261,7 +261,16 @@ def build_chunks(
             if block.block_type == "table_header"
             else block.table_header_id
         )
-        boundary = (block.heading_path, table_id, block.container_path)
+        containers = block.container_path
+        # Siblings share the list root, while nested lists retain their parent
+        # item. Older snapshots without list roots keep their original boundary.
+        if (
+            len(containers) >= 2
+            and containers[-1].kind == "list_item"
+            and containers[-2].kind in {"bullet_list", "ordered_list"}
+        ):
+            containers = containers[:-1]
+        boundary = (block.heading_path, table_id, containers)
         if boundary != current_boundary:
             flush()
             current_boundary = boundary
