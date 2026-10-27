@@ -1,6 +1,6 @@
 package com.beez.backend.designchange.service;
 
-import com.beez.backend.common.access.Membership;
+import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
@@ -96,7 +96,7 @@ public class DesignChangesService {
 
     @Transactional(readOnly = true)
     public DesignChangesResponse getChanges(CallerContext caller, Long projectId, DesignChangesQuery in) {
-        Membership membership = access.requireMember(caller, projectId);
+        ProjectActor actor = access.requireMember(caller, projectId);
 
         if (in.sinceVersion() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "since_version 은 필수입니다");
@@ -167,7 +167,7 @@ public class DesignChangesService {
             nextCursor = new ChangesCursor(ceiling, lastVersion, since, taskId).encode();
         }
 
-        List<ValidationValidityResponse> validity = findValidationValidity(projectId, membership.memberId(), taskId);
+        List<ValidationValidityResponse> validity = findValidationValidity(projectId, actor.memberId(), taskId);
         return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
     }
 

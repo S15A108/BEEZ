@@ -1,7 +1,7 @@
 package com.beez.backend.task.service;
 
-import com.beez.backend.common.access.Membership;
-import com.beez.backend.common.access.NotFound;
+import com.beez.backend.common.access.ProjectActor;
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
@@ -83,7 +83,7 @@ public class TaskStateService {
 
     @Transactional
     public TaskDetailResponse report(CallerContext caller, Long projectId, Long taskId, TaskStateInput in) {
-        Membership membership = access.requireMember(caller, projectId);
+        ProjectActor actor = access.requireMember(caller, projectId);
         validateShape(in);
         Long validationId = Ids.parse(in.validationId(), "validation_id");
         Long planRevisionId = Ids.parse(in.planRevisionId(), "plan_revision_id");
@@ -91,10 +91,10 @@ public class TaskStateService {
         // 2) 프로젝트 잠금. 이 뒤에 읽는 작업 상태가 "지금" 상태다.
         boolean exists = designLookup.lockProject(projectId);
         if (!exists) {
-            throw NotFound.because("project_missing project=" + projectId);
+            throw AccessErrors.notFound("project_missing project=" + projectId);
         }
         Task task = requireTask(projectId, taskId);
-        requirePermission(caller, membership, task, in.event());
+        requirePermission(caller, actor, task, in.event());
 
         // 4) 멱등 — 같은 보고가 다시 오면 현재 상태 그대로 200. lock_version 비교보다 먼저 (명세 TSK-A07)
         //    START: 현재 IN_PROGRESS 이고 같은 validation_id 로 시작한 경우만 (명세 "기존 START 결과 반환").
@@ -183,12 +183,12 @@ public class TaskStateService {
      * 예외: 사람 세션의 LEADER 는 <b>보고가 끊긴 작업</b>만 CANCEL 할 수 있다 (AC-14, TSK-A07 처리 규칙).
      * 팀장의 에이전트 토큰은 남의 작업을 취소하지 못한다. 그 밖의 팀장 개입은 미결(§6).
      */
-    private void requirePermission(CallerContext caller, Membership membership, Task task, TaskEvent event) {
-        boolean isAssignee = membership.memberId().equals(task.getAssigneeMemberId());
+    private void requirePermission(CallerContext caller, ProjectActor actor, Task task, TaskEvent event) {
+        boolean isAssignee = Long.valueOf(actor.memberId()).equals(task.getAssigneeMemberId());
         if (isAssignee) {
             return;
         }
-        if (event == TaskEvent.CANCEL && caller.isHuman() && membership.isLeader()) {
+        if (event == TaskEvent.CANCEL && caller.isHuman() && actor.isLeader()) {
             // 이미 취소된 작업에 대한 재전송은 멱등 처리로 넘긴다
             if (task.getStatus() == TaskStatus.CANCELLED) {
                 return;
@@ -196,10 +196,11 @@ public class TaskStateService {
             if (isStalled(task)) {
                 return;
             }
-            throw new ApiException(HttpStatus.FORBIDDEN, "forbidden",
+            throw AccessErrors.forbidden("leader_cancel_not_stalled task=" + task.getId(),
                     "팀장은 보고가 끊긴 작업만 취소할 수 있습니다 (마지막 보고 후 " + stalledAfter.toMinutes() + "분)");
         }
-        throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "담당자만 작업 상태를 바꿀 수 있습니다");
+        throw AccessErrors.forbidden("not_assignee task=" + task.getId() + " member=" + actor.memberId(),
+                "담당자만 작업 상태를 바꿀 수 있습니다");
     }
 
     /**
@@ -303,7 +304,7 @@ public class TaskStateService {
     private Task requireTask(Long projectId, Long taskId) {
         Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
         if (task.isEmpty()) {
-            throw NotFound.because("task_not_in_project task=" + taskId + " project=" + projectId);
+            throw AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId);
         }
         return task.get();
     }

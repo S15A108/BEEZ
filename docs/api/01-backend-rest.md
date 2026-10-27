@@ -356,13 +356,13 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -436,13 +436,13 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -527,14 +527,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -604,7 +604,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `current_password_mismatch` | 현재 비밀번호 불일치 |
 
@@ -926,7 +926,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `invalid_credentials` | 비밀번호 불일치 |
 | 409 | `project_membership_remaining` | 참여 프로젝트가 남아 있음 |
@@ -1026,14 +1026,14 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1119,13 +1119,13 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1209,14 +1209,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1311,7 +1311,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1320,7 +1320,7 @@ HTTP `200`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1390,7 +1390,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1480,14 +1480,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1573,7 +1573,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1664,7 +1664,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -1672,7 +1672,7 @@ HTTP `200`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1732,7 +1732,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -1740,7 +1740,7 @@ HTTP `204`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -1926,7 +1926,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `invitation_used` | 이미 소비된 초대 |
 | 409 | `already_member` | 이미 참여 |
@@ -2021,14 +2021,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -2124,7 +2124,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -2133,7 +2133,7 @@ HTTP `200`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -2233,7 +2233,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -2315,7 +2315,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -2397,7 +2397,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `leader_transfer_required` | 팀장은 위임 선행 |
@@ -2503,7 +2503,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `agent_limit_reached` | 활성 연결 수 정책 위반(Q06) |
@@ -2594,13 +2594,13 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -2659,14 +2659,14 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -2742,14 +2742,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -2831,14 +2831,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -2915,14 +2915,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3027,7 +3027,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -3135,14 +3135,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3241,7 +3241,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 404 | `baseline_not_published` | 승인본 조회 시 현재 기준 없음 |
 
@@ -3318,14 +3318,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3412,14 +3412,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3501,14 +3501,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3608,7 +3608,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -3617,7 +3617,7 @@ HTTP `200`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3729,14 +3729,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -3822,7 +3822,7 @@ HTTP `202`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -3921,14 +3921,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -4021,7 +4021,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -4122,7 +4122,7 @@ HTTP `202`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -4233,14 +4233,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -4355,7 +4355,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -4364,7 +4364,7 @@ HTTP `201`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -4475,7 +4475,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -4549,7 +4549,7 @@ HTTP `204`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 409 | `version_conflict` | 승인본·경합·참조 충돌 |
@@ -4671,7 +4671,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_exists` | 이미 최초 발행됨 |
@@ -4774,7 +4774,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 404 | `baseline_not_published` | 아직 발행하지 않음 |
 
@@ -4861,14 +4861,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -4958,14 +4958,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -5059,7 +5059,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 502 | `ai_unavailable` | 의미 검색 임베딩 장애 |
 | 504 | `ai_timeout` | 검색 모델 시간 초과 |
@@ -5153,14 +5153,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -5260,7 +5260,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `version_conflict` | 기준 원문이 현재 승인본과 다름 |
@@ -5430,7 +5430,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 기준 baseline이 현재와 다름 |
@@ -5552,14 +5552,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -5674,14 +5674,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -5842,7 +5842,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 갱신 기준이 현재가 아님 |
@@ -5979,14 +5979,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -6112,7 +6112,7 @@ HTTP `202`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 409 | `analysis_running` | 이미 분석 중 |
 
@@ -6238,7 +6238,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `version_conflict` | 기준 변경 |
@@ -6379,7 +6379,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -6527,7 +6527,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -6677,7 +6677,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -6765,7 +6765,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
@@ -6867,7 +6867,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
@@ -6875,7 +6875,7 @@ HTTP `201`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -6959,14 +6959,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -7128,7 +7128,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `dependency_cycle` | 선행 순환 |
@@ -7284,14 +7284,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -7436,14 +7436,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -7610,7 +7610,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -7730,14 +7730,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -7894,7 +7894,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -8050,7 +8050,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -8166,14 +8166,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -8274,14 +8274,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -8393,7 +8393,7 @@ HTTP `202`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -8649,7 +8649,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -8794,14 +8794,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -8892,14 +8892,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -9002,7 +9002,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -9010,7 +9010,7 @@ HTTP `200`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -9143,7 +9143,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 같은 previous_id에 이미 후속 리비전 있음 |
@@ -9266,7 +9266,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 502 | `ai_unavailable` | 추천 실패 |
@@ -9387,7 +9387,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 502 | `ai_unavailable` | 응답·폴백 모두 실패 |
@@ -9514,7 +9514,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 502 | `ai_unavailable` | 분석 실패 |
@@ -9625,7 +9625,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
@@ -9633,7 +9633,7 @@ HTTP `201`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -9721,14 +9721,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -9811,14 +9811,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -9914,7 +9914,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
@@ -9922,7 +9922,7 @@ HTTP `200`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -10016,7 +10016,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `not_invited` | 참여 요청 대상이 아님 |
@@ -10116,7 +10116,7 @@ HTTP `201`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
@@ -10124,7 +10124,7 @@ HTTP `201`.
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -10234,7 +10234,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 502 | `ai_unavailable` | 분석 실패 |
@@ -10346,7 +10346,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 502 | `ai_unavailable` | 요약 실패 |
@@ -10469,7 +10469,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `version_conflict` | 원문 기준 변경 |
@@ -10564,14 +10564,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -10650,14 +10650,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -10735,14 +10735,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -10821,14 +10821,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -10904,14 +10904,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11025,14 +11025,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11122,14 +11122,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11215,14 +11215,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11305,14 +11305,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11397,13 +11397,13 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11481,14 +11481,14 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```
@@ -11636,13 +11636,13 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 
 ```json
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "세션 인증이 유효하지 않음"
   }
 }
 ```

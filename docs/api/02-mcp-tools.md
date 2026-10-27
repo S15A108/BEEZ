@@ -157,7 +157,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -263,7 +263,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -379,7 +379,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -536,7 +536,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -639,7 +639,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -650,7 +650,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "에이전트 토큰이 유효하지 않음"
   }
 }
 ```
@@ -766,7 +766,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -897,7 +897,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1053,7 +1053,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1168,7 +1168,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1277,7 +1277,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1288,7 +1288,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 {
   "error": {
     "code": "unauthenticated",
-    "message": "세션 또는 에이전트 인증이 유효하지 않음"
+    "message": "에이전트 토큰이 유효하지 않음"
   }
 }
 ```
@@ -1386,7 +1386,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
@@ -1580,7 +1580,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 | 업무 상태 | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 또는 에이전트 인증이 유효하지 않음 |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |

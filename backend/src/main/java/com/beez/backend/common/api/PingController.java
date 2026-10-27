@@ -6,7 +6,7 @@ import java.time.Instant;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 기동 확인용. 인증 없이 열려 있는 유일한 비즈니스 경로로 둔다. */
+/** 기동 확인용(SYS-A01 PUBLIC). 배포 확인에 쓰므로 인증 없이 연다 — SecurityConfig.PUBLIC_API. */
 @Tag(name = "system")
 @RestController
 public class PingController {

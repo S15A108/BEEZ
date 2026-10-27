@@ -2,47 +2,24 @@ package com.beez.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.ApiClient;
+import com.beez.backend.support.IntegrationTestSupport;
 import java.net.http.HttpResponse;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.core.env.Environment;
-import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 /**
  * 실제 Postgres(pgvector) 에서 컨텍스트 로드 + Flyway 마이그레이션, 그리고 전역 설정이 실제 HTTP 응답에 반영되는지 확인한다.
- * Boot 4 에서 테스트 전용 어노테이션 패키지가 많이 바뀌어, 의도적으로 JDK HttpClient 로 실제 포트를 때린다. Docker 필요.
  * 느린 층이므로 "integration" 태그 — `./gradlew test` 에서는 제외되고 `./gradlew integrationTest` 로만 돈다.
  */
-@Tag("integration")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-@Testcontainers
-class BeezBackendApplicationTests {
+class BeezBackendApplicationTests extends IntegrationTestSupport {
 
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer postgres = new PostgreSQLContainer(
-            DockerImageName.parse("pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d").asCompatibleSubstituteFor("postgres"));
+    private HttpResponse<String> get(String path) {
+        return client().get(path);
+    }
 
-    @Autowired
-    Environment env;
-
-    private final HttpClient http = HttpClient.newHttpClient();
-
-    private HttpResponse<String> get(String path) throws Exception {
-        String port = env.getProperty("local.server.port");
-        HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
-        return http.send(req, HttpResponse.BodyHandlers.ofString());
+    private ApiClient loggedIn() {
+        return client().login(fixtures().emailOf(fixtures().account()), AccessFixtures.PASSWORD);
     }
 
     @Test
@@ -50,7 +27,7 @@ class BeezBackendApplicationTests {
     }
 
     @Test
-    void ping_returnsSnakeCaseJson_andRequestIdHeader() throws Exception {
+    void ping_returnsSnakeCaseJson_andRequestIdHeader() {
         HttpResponse<String> res = get("/api/ping");
         assertThat(res.statusCode()).isEqualTo(200);
         assertThat(res.body()).contains("\"ok\":true").contains("\"started_at\"").contains("\"server_time\"");
@@ -59,28 +36,32 @@ class BeezBackendApplicationTests {
     }
 
     @Test
-    void unknownApiPath_returnsErrorEnvelope() throws Exception {
-        HttpResponse<String> res = get("/api/does-not-exist");
+    void unknownApiPath_returnsErrorEnvelope_401BeforeLogin_404After() {
+        HttpResponse<String> anonymous = get("/api/does-not-exist");
+        assertThat(anonymous.statusCode()).isEqualTo(401);
+        assertThat(anonymous.body()).contains("\"error\"").contains("\"code\":\"unauthenticated\"");
+
+        HttpResponse<String> res = loggedIn().get("/api/does-not-exist");
         assertThat(res.statusCode()).isEqualTo(404);
         assertThat(res.body()).contains("\"error\"").contains("\"code\":\"not_found\"");
     }
 
     @Test
-    void systemStatus_isOk_evenWhenAiServerIsDown() throws Exception {
-        HttpResponse<String> res = get("/api/system/status");
+    void systemStatus_isOk_evenWhenAiServerIsDown() {
+        HttpResponse<String> res = loggedIn().get("/api/system/status");
         assertThat(res.statusCode()).isEqualTo(200);
         assertThat(res.body()).contains("\"ok\":true").contains("\"ai_reachable\":false");
     }
 
     @Test
-    void actuatorHealth_isUp() throws Exception {
+    void actuatorHealth_isUp() {
         HttpResponse<String> res = get("/actuator/health");
         assertThat(res.statusCode()).isEqualTo(200);
         assertThat(res.body()).contains("\"status\":\"UP\"");
     }
 
     @Test
-    void openApiDocs_areServed() throws Exception {
+    void openApiDocs_areServed() {
         HttpResponse<String> res = get("/v3/api-docs");
         assertThat(res.statusCode()).isEqualTo(200);
         assertThat(res.body()).contains("\"title\":\"BEEZ API\"").contains("/api/ping");

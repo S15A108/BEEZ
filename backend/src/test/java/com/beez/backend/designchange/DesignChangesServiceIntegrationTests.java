@@ -10,43 +10,22 @@ import com.beez.backend.designchange.dto.DesignChangesQuery;
 import com.beez.backend.designchange.dto.DesignChangesResponse;
 import com.beez.backend.designchange.dto.PublishedChangeResponse;
 import com.beez.backend.designchange.service.DesignChangesService;
+import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /**
  * MCP-03 get_design_changes 를 서비스 직접 호출로 확인한다 (REST 경로가 명세에 없다).
  * 기준 설계 발행(오서현 -194)이 아직 없어 발행은 SQL 로 흉내 낸다: 새 항목 버전 → baseline + baseline_item → 제안 PUBLISHED.
  */
-@Tag("integration")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-@Testcontainers
-class DesignChangesServiceIntegrationTests {
-
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer postgres = new PostgreSQLContainer(
-            DockerImageName.parse("pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d")
-                    .asCompatibleSubstituteFor("postgres"));
-
-    @Autowired
-    Environment env;
+class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     DataSource dataSource;
@@ -62,7 +41,7 @@ class DesignChangesServiceIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        api = new TaskApiSupport(Integer.parseInt(env.getProperty("local.server.port")), dataSource);
+        api = new TaskApiSupport(this::client, dataSource);
         api.resetAndLoadFixture();
         projectId = api.projectId();
         leader = api.accountId("leader@test");
