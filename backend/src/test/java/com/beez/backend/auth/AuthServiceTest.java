@@ -48,5 +48,7 @@ class AuthServiceTest {
                             e -> org.assertj.core.api.Assertions.assertThat(e.getCode()).isEqualTo("invalid_credentials"));
         }
         verify(encoder, never()).matches(eq(tooLong), any());
+        // 정책상 나올 수 없는 길이라 계정 조회도 하지 않는다
+        verify(accounts, never()).findByEmailAndDeletedAtIsNull(any());
     }
 }

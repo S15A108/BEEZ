@@ -1,5 +1,6 @@
 package com.beez.backend.common.access;
 
+import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.project.ProjectMember;
@@ -35,17 +36,18 @@ public class ProjectAccessChecker {
     }
 
     /**
-     * USER 권한(프로젝트와 무관한 본인 API). 사람 세션의 계정 ID. 비로그인은 401.
+     * USER 권한(프로젝트와 무관한 본인 API). 사람 세션의 활성(탈퇴하지 않은) 계정을 돌려준다.
+     * 비로그인·탈퇴한 계정의 세션은 401. 계정을 돌려주므로 호출하는 쪽이 같은 계정을 다시 조회하지 않아도 된다.
      * 에이전트도 401 이다 — 에이전트는 MCP 전용이라 REST 의 USER API 를 부를 인증이 없다 (-172 참고 2의 1).
      */
-    public long requireUser(CallerContext caller) {
-        if (caller == null) {
-            throw AccessErrors.unauthenticated();
-        }
-        if (!caller.isHuman()) {
+    public Account requireUser(CallerContext caller) {
+        if (caller != null && !caller.isHuman()) {
             throw AccessErrors.agentUnauthenticated();
         }
-        return caller.accountId();
+        if (caller == null || caller.accountId() == null) {
+            throw AccessErrors.unauthenticated();
+        }
+        return accounts.findByIdAndDeletedAtIsNull(caller.accountId()).orElseThrow(AccessErrors::unauthenticated);
     }
 
     /** MEMBER 권한. 팀장도 통과한다. */

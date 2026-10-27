@@ -1,6 +1,5 @@
 package com.beez.backend.account;
 
-import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.auth.CallerContext;
 import org.springframework.stereotype.Service;
@@ -11,17 +10,14 @@ import org.springframework.transaction.annotation.Transactional;
 public class AccountService {
 
     private final ProjectAccessChecker access;
-    private final AccountRepository accounts;
 
-    public AccountService(ProjectAccessChecker access, AccountRepository accounts) {
+    public AccountService(ProjectAccessChecker access) {
         this.access = access;
-        this.accounts = accounts;
     }
 
     @Transactional(readOnly = true)
     public Account getMe(CallerContext caller) {
-        long accountId = access.requireUser(caller);
-        // 다른 브라우저에서 탈퇴한 계정의 세션이 남아 있어도 401
-        return accounts.findByIdAndDeletedAtIsNull(accountId).orElseThrow(AccessErrors::unauthenticated);
+        // 탈퇴한 계정의 세션(다른 브라우저 등)은 requireUser 가 401 로 막는다
+        return access.requireUser(caller);
     }
 }

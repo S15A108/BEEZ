@@ -63,12 +63,12 @@ public class AuthService {
     /** 이메일·비밀번호가 맞는 활성 계정. 틀리면 가입 여부와 관계없이 같은 401. */
     @Transactional(readOnly = true)
     public Account authenticate(String email, String password) {
-        Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(normalizeEmail(email));
         if (password.getBytes(StandardCharsets.UTF_8).length > PasswordPolicy.MAX_BYTES) {
-            // 가입 정책상 나올 수 없는 길이라 무조건 불일치. bcrypt 는 이 길이를 받지 않으므로 더미 비교로 응답 시간만 맞춘다
+            // 가입 정책상 나올 수 없는 길이라 계정을 찾지 않고 바로 불일치. bcrypt 는 이 길이를 받지 않으므로 더미 비교로 응답 시간만 맞춘다
             encoder.matches(DUMMY_RAW, dummyHash);
             throw invalidCredentials();
         }
+        Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(normalizeEmail(email));
         boolean matches = matches(password, found.map(Account::getPasswordHash).orElse(dummyHash));
         if (found.isEmpty() || !matches) {
             throw invalidCredentials();

@@ -140,6 +140,22 @@ class ProjectAccessCheckerTest {
     }
 
     @Test
+    void requireUser_withdrawnAccountsSession_is401() {
+        // requireUser 만 부르는 USER API(/api/me, 초대 수락 등)도 탈퇴 계정의 세션을 막아야 한다
+        when(accounts.findByIdAndDeletedAtIsNull(ACCOUNT)).thenReturn(Optional.empty());
+
+        assertThat(catchApi(() -> checker.requireUser(HUMAN))).satisfies(e -> {
+            assertThat(e.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+            assertThat(e.getMessage()).isEqualTo(AccessErrors.UNAUTHENTICATED_MESSAGE);
+        });
+    }
+
+    @Test
+    void requireUser_humanCallerWithoutAccountId_is401_not500() {
+        assertStatus(() -> checker.requireUser(CallerContext.human(null)), HttpStatus.UNAUTHORIZED, "unauthenticated");
+    }
+
+    @Test
     void actorHelpers_denyAgentsAndOtherMembers_with403() {
         assertStatus(() -> TestActors.agent(PROJECT, 5L, 3L).requireHuman(), HttpStatus.FORBIDDEN, "forbidden");
         // 팀장도 담당자가 아니면 자동 통과하지 않는다 (00-common 2절 TASK_OWNER)

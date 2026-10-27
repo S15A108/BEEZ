@@ -56,7 +56,7 @@ public class TaskService {
 | `requireMember(caller, projectId)` | MEMBER API | 비로그인·탈퇴 계정의 세션 401, 폐기·남의 토큰 401 `token_revoked`, 다른 프로젝트 토큰·프로젝트 없음·삭제·비멤버 404 |
 | `requireMember(caller, projectId, LEADER)` | LEADER API (에이전트도 허용하는 경우) | 위 + 팀장 아님 403 |
 | `requireHumanLeader(caller, projectId)` | 승인·발행·팀 관리·담당자 변경 (00-common 2절 "사람 세션 필수") | 위 + 팀장 아님 403, 에이전트 403 |
-| `requireUser(caller)` | 프로젝트와 무관한 본인 API(`/api/me` 등) | 비로그인·에이전트 401 |
+| `requireUser(caller)` → 활성 `Account` | 프로젝트와 무관한 본인 API(`/api/me`, 초대 수락 등) | 비로그인·탈퇴 계정의 세션·에이전트 401 |
 | `isActiveMember(memberId, projectId)` | 담당자 지정·변경 대상 확인 | — (true/false) |
 | `actor.requireHuman()` | 승인·발행·팀 관리, 에이전트 CANCEL | 에이전트 403 |
 | `actor.requireMemberId(memberId[, 메시지])` | TASK_OWNER (담당자 칸은 **멤버 ID**) | 다른 멤버·담당자 없음 403 |
