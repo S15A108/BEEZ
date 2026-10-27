@@ -25,6 +25,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(e.getStatus()).body(ApiErrorResponse.of(e.getCode(), e.getMessage()));
     }
 
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleUploadSize(Exception e) {
+        return ResponseEntity.status(413).body(ApiErrorResponse.of("file_too_large", "파일 1 MiB·요청 전체 2 MiB를 초과했습니다."));
+    }
+
+    @ExceptionHandler({org.springframework.web.bind.MissingServletRequestParameterException.class,
+            org.springframework.web.bind.MissingRequestHeaderException.class,
+            org.springframework.web.multipart.support.MissingServletRequestPartException.class})
+    public ResponseEntity<ApiErrorResponse> handleMissingInput(Exception e) {
+        return ResponseEntity.badRequest().body(ApiErrorResponse.of("validation_failed", "필수 요청 값이 누락되었습니다."));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiErrorResponse> handleValidation(MethodArgumentNotValidException e) {
         String message = e.getBindingResult().getFieldErrors().stream()
@@ -60,7 +72,7 @@ public class GlobalExceptionHandler {
     /** DB 제약(FK·UNIQUE·CHECK) 위반. 서비스가 미리 거르지 못한 잘못된 참조 → 400. 500 으로 새지 않게 한다 */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiErrorResponse> handleIntegrity(DataIntegrityViolationException e) {
-        log.warn("data integrity violation: {}", e.getMostSpecificCause().getMessage());
+        log.warn("data integrity violation: {}", e.getMostSpecificCause().getClass().getSimpleName());
         return ResponseEntity.badRequest()
                 .body(ApiErrorResponse.of("validation_failed", "참조하는 데이터가 없거나 제약 조건에 어긋납니다"));
     }
