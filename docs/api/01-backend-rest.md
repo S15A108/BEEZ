@@ -2956,7 +2956,13 @@ HTTP `200`.
 | 접수 | 문서/버전·영속 분석 작업·멱등 응답을 같은 DB 트랜잭션으로 저장 후 201/PENDING. AI 완료/승인을 뜻하지 않음 |
 | 재시도 | Idempotency-Key 필수. 같은 사용자/프로젝트/동작/키·입력은 24시간 같은 응답, 입력이 다르면 409 idempotency_conflict |
 
-문서 API는 서버 인증 세션의 사용자와 현재 멤버십을 검사하며 X-Beez-Account-Id 헤더를 허용하지 않는다. 변경 요청에는 GET /api/session/csrf에서 발급받은 X-CSRF-Token이 필수(실패 403 csrf_failed)다. 업로드/분류/실패 분석 재시도는 사람 LEADER, 조회/다운로드/변경용 업로드는 현재 MEMBER다.
+문서 API는 공통 로그인(PR #22)의 세션과 CallerContext로 사용자를 식별하고 현재 멤버십을 검사한다. X-Beez-Account-Id 헤더와 문서 전용 세션 속성으로 인증하지 않는다. 문서 전용 CSRF 토큰은 사용하지 않으며 GET /api/session/csrf는 제공하지 않는다. 업로드/분류/실패 분석 재시도는 사람 LEADER, 조회/다운로드/변경용 업로드는 현재 MEMBER다.
+
+문서 변경 요청(DOC-A01·A07·A12, PLN-A02)은 Origin을 먼저 검사하고, 헤더 자체가 없을 때만 Referer의 출처를 검사한다. scheme·host·유효 port는 beez.cors.allowed-origins(CORS_ALLOWED_ORIGINS)의 명시적 HTTP(S) origin과 정확히 일치해야 한다. Origin: null·빈 값·중복·잘못된 형식·미허용 출처는 Referer로 우회하지 못한다. 출처가 둘 다 없거나 검증에 실패하면 403 request_origin_rejected이며 저장·변경을 수행하지 않는다. GET 조회에는 이 검사를 요구하지 않는다. 브라우저가 헤더를 전송하므로 FE가 Origin을 직접 설정하거나 토큰을 선조회하지 않는다.
+
+공통 CORS 처리에서 먼저 차단된 요청도 403이지만 그 응답 본문은 공통 CORS 구현을 따른다. request_origin_rejected는 문서 출처 검사가 반환하는 오류 코드다.
+
+로컬 Swagger에서 변경 요청을 시험할 때는 Swagger 화면의 실제 origin(예: http://localhost:8080)도 CORS_ALLOWED_ORIGINS에 명시해야 한다. curl·통합 테스트 등 브라우저 밖의 클라이언트는 유효 세션 쿠키와 허용된 Origin 또는 Referer를 함께 보낸다. 이는 사용자 인증을 대신하지 않는다. CORS 허용 목록의 와일드카드·경로·접미사 일치는 허용하지 않는다. 공통 로그인·SecurityConfig·다른 도메인의 정책은 이 변경에서 수정하지 않는다.
 
 한도는 413 file_too_large, 미지원 확장자는 415 unsupported_media_type, UTF-8/빈 입력 등은 400 validation_failed다. DOC-A12에도 같은 정책을 적용한다. 프록시 한도는 인프라 담당에게 별도 전달하며 배포 설정은 변경하지 않는다.
 
@@ -5203,7 +5209,7 @@ HTTP `200`.
 
 ## DOC-A12. 변경용 원문 파일 업로드
 
-DOC-A01의 확정 입력·저장·세션/CSRF·멱등 정책을 적용한다. base_document_version_id는 같은 문서의 현재 baseline에 속한 정확한 승인 버전이어야 한다. 승인본이 없거나 오래된 기준이면 409 version_conflict. 새 DRAFT/영속 분석 작업을 원자적으로 생성하고 기존 승인 원본을 보존한다. file_name은 생성 다운로드 이름이다.
+DOC-A01의 확정 입력·저장·공통 세션/요청 출처·멱등 정책을 적용한다. base_document_version_id는 같은 문서의 현재 baseline에 속한 정확한 승인 버전이어야 한다. 승인본이 없거나 오래된 기준이면 409 version_conflict. 새 DRAFT/영속 분석 작업을 원자적으로 생성하고 기존 승인 원본을 보존한다. file_name은 생성 다운로드 이름이다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/draft-versions`
 
