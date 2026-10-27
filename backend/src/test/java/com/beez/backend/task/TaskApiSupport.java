@@ -22,7 +22,7 @@ import org.springframework.security.crypto.factory.PasswordEncoderFactories;
  * HTTP 메서드의 accountId 는 "그 계정으로 로그인한 세션"이다 — 계정마다 한 번 로그인해 세션을 재사용한다. null 이면 비로그인.
  * 에이전트는 MCP 전용이라 REST 로 부를 수 없다(401). 에이전트 규칙은 서비스를 직접 불러 확인한다.
  */
-class TaskApiSupport {
+public class TaskApiSupport {
 
     /** 픽스처 계정은 모두 {@link AccessFixtures#PASSWORD} 로 로그인한다. bcrypt 는 느려서 한 번만 만든다 */
     private static final String PASSWORD_HASH =
@@ -31,9 +31,9 @@ class TaskApiSupport {
     private final Supplier<ApiClient> newClient;
     private final Map<Long, ApiClient> sessions = new ConcurrentHashMap<>();   // 동시 START 테스트가 여러 스레드에서 부른다
     private final DataSource dataSource;
-    final JdbcClient jdbc;
+    public final JdbcClient jdbc;
 
-    TaskApiSupport(Supplier<ApiClient> newClient, DataSource dataSource) {
+    public TaskApiSupport(Supplier<ApiClient> newClient, DataSource dataSource) {
         this.newClient = newClient;
         this.dataSource = dataSource;
         this.jdbc = JdbcClient.create(dataSource);
@@ -41,14 +41,14 @@ class TaskApiSupport {
 
     // ---- 데이터 준비 ----
 
-    void resetAndLoadFixture() {
+    public void resetAndLoadFixture() {
         runSql("fixtures/project-reset.sql");
         runSql("fixtures/project-basic.sql");
         jdbc.sql("update account set password_hash = :h").param("h", PASSWORD_HASH).update();
         sessions.clear();
     }
 
-    void runSql(String classpath) {
+    public void runSql(String classpath) {
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
             String sql = new String(new ClassPathResource(classpath).getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             st.execute(sql);
@@ -57,25 +57,25 @@ class TaskApiSupport {
         }
     }
 
-    Long accountId(String email) {
+    public Long accountId(String email) {
         return jdbc.sql("select id from account where email = :e").param("e", email).query(Long.class).single();
     }
 
-    Long projectId() {
+    public Long projectId() {
         return jdbc.sql("select id from project where name = 'P'").query(Long.class).single();
     }
 
-    Long memberId(String email) {
+    public Long memberId(String email) {
         return jdbc.sql("""
                 select pm.id from project_member pm join account a on a.id = pm.account_id where a.email = :e
                 """).param("e", email).query(Long.class).single();
     }
 
-    Long designItemId(String key) {
+    public Long designItemId(String key) {
         return jdbc.sql("select id from design_item where key = :k").param("k", key).query(Long.class).single();
     }
 
-    Long currentVersionId(String key) {
+    public Long currentVersionId(String key) {
         return jdbc.sql("""
                 select bi.design_item_version_id
                   from baseline_item bi
@@ -86,28 +86,28 @@ class TaskApiSupport {
     }
 
     /** member 소유 토큰 */
-    Long agentTokenId() {
+    public Long agentTokenId() {
         return jdbc.sql("select id from agent_token where name = 'member-laptop'").query(Long.class).single();
     }
 
     /** leader 소유 토큰 */
-    Long leaderAgentTokenId() {
+    public Long leaderAgentTokenId() {
         return jdbc.sql("select id from agent_token where name = 'leader-laptop'").query(Long.class).single();
     }
 
     // ---- HTTP ----
 
-    HttpResponse<String> post(String path, String json, Long accountId) {
+    public HttpResponse<String> post(String path, String json, Long accountId) {
         return as(accountId).post(path, json);
     }
 
-    HttpResponse<String> patch(String path, String json, Long accountId) {
+    public HttpResponse<String> patch(String path, String json, Long accountId) {
         ApiClient client = as(accountId);
         return client.send(client.request(path, "Content-Type", "application/json")
                 .method("PATCH", HttpRequest.BodyPublishers.ofString(json)));
     }
 
-    HttpResponse<String> get(String path, Long accountId) {
+    public HttpResponse<String> get(String path, Long accountId) {
         return as(accountId).get(path);
     }
 
@@ -124,7 +124,7 @@ class TaskApiSupport {
     // ---- 요청 본문 ----
 
     /** 가장 단순한 계획: API-01 을 READS. 선행 없음 */
-    String planJson(String title, String refsJson, String dependencyIdsJson) {
+    public String planJson(String title, String refsJson, String dependencyIdsJson) {
         return """
                 {
                   "title": "%s",
@@ -141,14 +141,14 @@ class TaskApiSupport {
                 """.formatted(title, dependencyIdsJson, refsJson);
     }
 
-    String readsRef(String key) {
+    public String readsRef(String key) {
         return """
                 [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "READS"}]
                 """.formatted(designItemId(key), currentVersionId(key));
     }
 
     /** 응답 JSON 에서 "field": 123 꼴의 숫자 값을 꺼낸다. 라이브러리 없이 테스트용으로만 */
-    static long longField(String json, String field) {
+    public static long longField(String json, String field) {
         String marker = "\"" + field + "\":";
         int i = json.indexOf(marker);
         if (i < 0) {
@@ -166,7 +166,7 @@ class TaskApiSupport {
         return Long.parseLong(json.substring(start, end));
     }
 
-    static String stringField(String json, String field) {
+    public static String stringField(String json, String field) {
         String marker = "\"" + field + "\":\"";
         int i = json.indexOf(marker);
         if (i < 0) {
