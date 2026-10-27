@@ -22,7 +22,7 @@ from app.schemas.documents import (
 from app.services.document_parsing.errors import SourceParsingError
 
 PARSER_PROFILE = "markdown-v1"
-PARSER_VERSION = f"beez-markdown/1.0.0+markdown-it-py/{version('markdown-it-py')}"
+PARSER_VERSION = f"beez-markdown/1.1.0+markdown-it-py/{version('markdown-it-py')}"
 MAX_AST_NODES = 10_000
 MAX_AST_DEPTH = 32
 MAX_TABLE_COLUMNS = 128
@@ -76,7 +76,11 @@ def _strict_table(state: StateBlock, start: int, end: int, silent: bool) -> bool
     # silently drops extra cells and pads missing cells; neither is safe evidence.
     width = len(_cells(getLine(state, start)))
     if width > MAX_TABLE_COLUMNS:
-        raise SourceParsingError("document_limit_exceeded", "Too many table columns.")
+        raise SourceParsingError(
+            "document_limit_exceeded",
+            "Too many table columns.",
+            SourceLocator(start_line=start + 1, end_line=start + 1),
+        )
     for line_no in range(start + 2, state.line):
         if len(_cells(getLine(state, line_no))) != width:
             raise SourceParsingError(
@@ -186,14 +190,24 @@ def parse_markdown(
         )
 
     for index, token in enumerate(tokens):
-        if token.type in {"list_item_open", "blockquote_open"}:
+        if token.type in {
+            "bullet_list_open",
+            "ordered_list_open",
+            "list_item_open",
+            "blockquote_open",
+        }:
             containers.append(
                 SourceContainer(
                     kind=token.type.removesuffix("_open"), locator=_locator(token)
                 )
             )
             heading_snapshots.append(headings.copy())
-        elif token.type in {"list_item_close", "blockquote_close"}:
+        elif token.type in {
+            "bullet_list_close",
+            "ordered_list_close",
+            "list_item_close",
+            "blockquote_close",
+        }:
             containers.pop()
             headings = heading_snapshots.pop()
         elif token.type == "heading_open":

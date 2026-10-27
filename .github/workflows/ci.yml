@@ -136,6 +136,10 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      # Download the public vocabulary before tests; no model call or GMS key.
+      - name: Prepare embedding tokenizer
+        run: python -m scripts.prepare_tokenizer
+
       - name: Pytest
         run: pytest -q
 
