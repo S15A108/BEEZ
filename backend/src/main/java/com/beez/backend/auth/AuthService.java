@@ -90,8 +90,8 @@ public class AuthService {
         }
     }
 
-    /** 대소문자·앞뒤 공백만 다른 이메일을 같은 계정으로 본다. */
-    static String normalizeEmail(String email) {
+    /** 대소문자·앞뒤 공백만 다른 이메일을 같은 계정으로 본다. 초대 대상 이메일(MEM-A01)도 이 규칙으로 저장·비교한다. */
+    public static String normalizeEmail(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
     }
 }

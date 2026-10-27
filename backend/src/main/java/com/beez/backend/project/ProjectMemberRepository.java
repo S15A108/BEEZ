@@ -1,5 +1,7 @@
 package com.beez.backend.project;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -36,4 +38,22 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
                and a.deletedAt is null
             """)
     boolean isActiveMember(@Param("memberId") long memberId, @Param("projectId") long projectId);
+
+    /** 활성이든 아니든 이 프로젝트에서 이 계정의 멤버십 행 (초대 수락 시 되살릴지 판단). */
+    Optional<ProjectMember> findByProjectIdAndAccountId(long projectId, long accountId);
+
+    /**
+     * accountIds 중 에이전트가 연결된 계정 (Member.agent_connected). 폐기 안 된 토큰에 agent_session 이 있으면 연결로 본다
+     * (-173 A06 합의, -178 에서 재조정). 토큰 엔티티는 -175 라 SQL 로 읽는다.
+     */
+    @Query(value = """
+            select distinct t.account_id
+              from agent_token t
+              join agent_session s on s.agent_token_id = t.id
+             where t.project_id = :projectId
+               and t.revoked_at is null
+               and t.account_id in (:accountIds)
+            """, nativeQuery = true)
+    List<Long> findAgentConnectedAccountIds(@Param("projectId") long projectId,
+                                            @Param("accountIds") Collection<Long> accountIds);
 }

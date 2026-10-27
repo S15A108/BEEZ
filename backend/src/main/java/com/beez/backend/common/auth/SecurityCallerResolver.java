@@ -4,6 +4,7 @@ import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.AgentPrincipal;
 import com.beez.backend.common.access.SessionUser;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.Optional;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -26,14 +27,19 @@ public class SecurityCallerResolver implements CallerResolver {
 
     /** 현재 요청 스레드의 호출자. 인증 정보가 없으면 401. */
     public static CallerContext current() {
+        return find().orElseThrow(AccessErrors::unauthenticated);
+    }
+
+    /** 현재 요청 스레드의 호출자. PUBLIC 경로처럼 로그인이 선택인 곳에서 쓴다 (초대 미리보기 MEM-A04). */
+    public static Optional<CallerContext> find() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Object principal = auth == null ? null : auth.getPrincipal();
         if (principal instanceof SessionUser user) {
-            return CallerContext.human(user.accountId());
+            return Optional.of(CallerContext.human(user.accountId()));
         }
         if (principal instanceof AgentPrincipal agent) {
-            return CallerContext.agent(agent.accountId(), agent.agentTokenId());
+            return Optional.of(CallerContext.agent(agent.accountId(), agent.agentTokenId()));
         }
-        throw AccessErrors.unauthenticated();
+        return Optional.empty();
     }
 }

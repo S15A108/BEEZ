@@ -12,7 +12,7 @@ import org.springframework.validation.annotation.Validated;
 /** application.yml 의 beez.* 설정. 기동 시 검증되어 빠진 값이 있으면 바로 실패한다. */
 @Validated
 @ConfigurationProperties(prefix = "beez")
-public record BeezProperties(@Valid @NotNull Cors cors, @Valid @NotNull Ai ai) {
+public record BeezProperties(@Valid @NotNull Cors cors, @Valid @NotNull Ai ai, @Valid @NotNull Invitation invitation) {
 
     public record Cors(@NotEmpty List<String> allowedOrigins) {
     }
@@ -23,5 +23,12 @@ public record BeezProperties(@Valid @NotNull Cors cors, @Valid @NotNull Ai ai) {
             @NotBlank String internalToken,
             @NotNull Duration connectTimeout,
             @NotNull Duration readTimeout) {
+    }
+
+    /**
+     * 팀원 초대 링크 (MEM-A01). 링크는 프론트 화면 주소라 baseUrl 은 프론트 오리진이다.
+     * 만료 7일·1회 사용은 Q05 제안값이다.
+     */
+    public record Invitation(@NotBlank String baseUrl, @NotNull Duration ttl) {
     }
 }
