@@ -4,7 +4,7 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.dto.AddPlanRevisionRequest;
 import com.beez.backend.task.dto.ChangeAssigneeRequest;
-import com.beez.backend.task.dto.PageResponse;
+import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.task.dto.TaskDetailResponse;
 import com.beez.backend.task.dto.TaskPlanInput;
 import com.beez.backend.task.dto.TaskPlanRevisionResponse;

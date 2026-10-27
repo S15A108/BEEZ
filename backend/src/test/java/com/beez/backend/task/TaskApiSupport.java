@@ -3,7 +3,6 @@ package com.beez.backend.task;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
 import java.io.IOException;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
@@ -102,9 +101,7 @@ public class TaskApiSupport {
     }
 
     public HttpResponse<String> patch(String path, String json, Long accountId) {
-        ApiClient client = as(accountId);
-        return client.send(client.request(path, "Content-Type", "application/json")
-                .method("PATCH", HttpRequest.BodyPublishers.ofString(json)));
+        return as(accountId).patch(path, json);
     }
 
     public HttpResponse<String> get(String path, Long accountId) {

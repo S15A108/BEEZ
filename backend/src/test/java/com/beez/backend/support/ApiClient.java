@@ -44,6 +44,19 @@ public final class ApiClient {
                 .POST(json == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(json)));
     }
 
+    public HttpResponse<String> patch(String path, String json, String... headers) {
+        return send(request(path, headers)
+                .header("Content-Type", "application/json")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(json)));
+    }
+
+    /** 본문이 있는 DELETE (PRJ-A05 confirm_name 처럼). */
+    public HttpResponse<String> delete(String path, String json, String... headers) {
+        return send(request(path, headers)
+                .header("Content-Type", "application/json")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString(json)));
+    }
+
     public HttpResponse<String> send(HttpRequest.Builder builder) {
         try {
             return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
