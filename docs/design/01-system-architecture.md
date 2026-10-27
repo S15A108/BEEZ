@@ -62,7 +62,7 @@ flowchart LR
 | 웹 → backend `/api/**` | REST + JSON(snake_case) | 세션 쿠키 (Spring Security) | 확정·승인 = **사람 세션 + 현재 LEADER**. 팀장의 에이전트 토큰도 승인 불가 |
 | backend → ai `/v1/**` | REST, 동기 (짧은 생성) / 비동기(검증) | `Authorization: Bearer AI_INTERNAL_TOKEN`, `X-Request-Id` 전달 | 타임아웃·오류 시 backend가 ERROR/템플릿 처리(NFR-06·12) |
 | 검증 워커 → ai `/v1/validate` | REST 동기 호출 (워커가 응답을 받아 저장) | 내부 토큰 | **검증용 콜백 없음.** 비동기 주체는 backend 하나 |
-| 문서 파일 | 로컬 볼륨(MVP), backend만 접근 | – | `storage_key` + 원본 해시. 서버 이전 시 객체 저장소 (합의 필요) |
+| 문서 파일 | SeaweedFS S3 bucket(로컬 Docker·배포 동일), backend만 접근 | – | `storage_key` + 원본 해시. 로컬은 Compose named volume, 실제 배포 환경/영속 볼륨은 인프라 적용 필요 |
 | backend ↔ Postgres | JDBC (JPA + 네이티브 벡터 쿼리) | – | 스키마는 Flyway만. backend 외 접근 금지 |
 
 ## 3. 핵심 설계 결정
