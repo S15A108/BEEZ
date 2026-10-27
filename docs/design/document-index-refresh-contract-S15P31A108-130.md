@@ -2,16 +2,20 @@
 
 관련: [S15P31A108-130](https://ssafy.atlassian.net/browse/S15P31A108-130) · 담당: 박상은 · **제안 v0.1, BE 합의 전**
 
-#130의 담당 범위는 **AI 검증 도구·fixture·개발용 실제 GMS 평가·BE 인계 산출물**이다. 2026-10-27 사용자 요청으로 실제 BE 저장/검색·DB 통합 검증을 [BE 후속 #213](https://ssafy.atlassian.net/browse/S15P31A108-213)으로 분리했다. 아래 저장/READY/검색 규칙은 BE가 이어받을 구현 요구사항이며 #130 종료를 막는 공동 작업 조건이 아니다. [평가 기록](../experiments/document-rag-evaluation-S15P31A108-130.md)에 수치·실패·비용·제한을 남겼다.
+#130의 담당 범위는 **AI 검증 도구·fixture·개발용 실제 GMS 평가·BE 인계 산출물**이다. 실제 BE 저장/검색 구현은 오서현 담당의 기존 `feature/backend-document-upload-S15P31A108-192` 브랜치에서 진행 중이다. 아래 저장/READY/검색 규칙은 기존 BE 구현과 대조할 인계 요구사항이며 #130 종료를 막는 공동 작업 조건이 아니다. [평가 기록](../experiments/document-rag-evaluation-S15P31A108-130.md)에 수치·실패·비용·제한을 남겼다.
 
 청킹 DTO·AI-A04·검색 결과 규약은 [#129 계약안](document-chunking-search-contract-S15P31A108-129.md)을 따른다. 이 브랜치는 최신 dev에서 시작하고 미병합 PR #21의 AI 모듈을 의존성 merge로 연결했다. #21 병합 후 dev 기준으로 #130 변경만 남는지 확인하고 별도 PR을 생성한다.
 
 ## 1. 산출물 인계와 책임
 
 - AI: 전체 청크·벡터·key·hash·profile을 검증한 PreparedIndex, 검증 시나리오·검색 전략·품질 평가 자료를 제공한다. DB에 직접 접속하지 않는다.
-- BE 후속 #213: 원본·버전·멤버십·승인 범위, run/attempt/lease·SOURCE/INDEX 상태, migration/manifest·벡터 저장·원자적 발행·검색 SQL 및 실제 DB 통합 시험을 구현한다. BE에서 인수 담당자를 정하며 AI 담당의 #130 완료와 분리한다.
+- 기존 BE 담당은 오서현이다. 확인한 #192 브랜치 `DocumentIndexWorker`와 V3 migration에 run/attempt/lease·SOURCE/INDEX·청크/벡터 저장·manifest 교체·벡터 SQL 검색이 존재한다. 구현 존재와 계약 호환/실제 통합 시험 완료는 구분한다. 기존 BE 티켓의 담당·범위·상태나 이슈 연결은 변경하지 않는다.
 - #130 담당은 실행 가능한 입력 packet·검증기·개발용 측정 결과·실패 사례·인터페이스 제안을 인계하면 구현 책임을 마친다. BE의 구현 완료·별도 담당 배정·운영 품질 승인까지 기다리지 않는다. 인터페이스 자체의 추가 변경이 필요하면 별도 변경 티켓으로 추적한다.
-- 문서 업로드·발행 #100과의 연결, AI 전체 90초/공급자 호출별20초와 BE 기본 read timeout20초 차이의 처리는 #213에서 정한다. AI 응답 DTO를 변경하지 않는 전용 timeout 또는 작업 접수 방식부터 검토한다.
+- 기존 BE 구현과 연결할 때 AI 전체 90초/공급자 호출별20초와 BE 기본 read timeout20초 차이를 대조한다. 공개 DTO 자체의 변경은 별도 구현 범위에서 다루며 이 문서가 확정된 양쪽 계약을 대신하지 않는다.
+
+### 확인된 계약 차이
+
+2026-10-27 #192 `f3362fe`와 AI #129 `d34530f` 기준이다. BE는 `/v1/document-chunks`를 호출하지만 AI에는 해당 HTTP 라우터가 아직 없고 내부 청킹 모듈만 있다. BE의 청킹 입력은 `normalization_profile`, `md-structure-v1` 및 행 locator 기반 결과를 기대하며 AI 제안은 `normalization_version`/`parser_profile`, `structure-v1`, manifest와 source_spans 기반이다. BE 임베딩 요청의 `embedding_profile_id`/`purpose`는 현재 AI-A04 요청 스키마에서 허용하지 않고, AI 응답에도 그 필드가 없다. 따라서 현재 상태를 즉시 연결 가능한 완성 계약으로 표시하지 않는다. 상세 대조와 재현 근거는 PR 인계 본문에 기록한다. AI HTTP/API 구현 보완이 필요하면 해당 구현 작업에서 추적하며 #130의 평가 산출물 완료와 구분한다.
 
 ## 2. 전체 배치 발행 제안
 
@@ -65,7 +69,7 @@ Python 시험은 artifact/schema·근거·key·차원·재현성·case 참조를
 - [x] 별도 baseline oracle과 Event barrier를 사용하는 C 모의 실행 6개·검증기 제공. 실제 DB 시험과 구분.
 - [x] Markdown 4종·12질문 × 고정/구조·보강 off/on ×3회 D 개발용 실제 GMS 실행, 144개 답변·usage·Recall/MRR·인용/보류·비용/지연·실패 및 잠정 설정 기록.
 - [x] 실행·재개·한도·검증 명령과 코드/데이터 provenance 제공. 전체 AI 테스트 175개 및 Ruff 통과 기록.
-- [x] BE가 이어받을 DTO·상태·저장/검색·timeout·실제 통합 검증 요구사항을 #213 및 PR 인계 본문에 명시.
+- [x] 기존 BE 구현의 담당·근거·DTO/청킹 라우터 차이와 상태·저장/검색·timeout·실제 통합 검증 요구사항을 PR 인계 본문에 명시.
 - [ ] #130 PR이 리뷰 조건을 충족해 dev에 병합됨. 이 조건을 충족하면 #130을 완료 처리한다.
 
-실제 DB/운영 경로 시험, 운영 자료·정답 라벨 검토 및 품질/지연 합격선은 #213과 관련 후속 작업의 완료 조건이다. 수행하지 않은 시험을 성공으로 표시하지 않으며, 해당 후속 작업이 미완료여도 #130은 위 자체 완료 조건과 dev 병합 기준으로 닫을 수 있다.
+실제 DB/운영 경로 시험, 운영 자료·정답 라벨 검토 및 품질/지연 합격선은 이후 통합 검증 사항이다. 기존 BE 작업의 책임을 새 티켓으로 이전하지 않으며 수행하지 않은 시험을 성공으로 표시하지 않는다. #130은 위 자체 완료 조건과 dev 병합 기준으로 닫을 수 있다.

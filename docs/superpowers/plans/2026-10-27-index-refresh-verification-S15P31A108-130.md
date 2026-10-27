@@ -25,9 +25,9 @@
 - [x] Validate key sets, source spans, dimensions, API-A04 envelopes, profile and scenario references.
 - [x] Verify full AI suite and scope separation after moving the files.
 
-## BE follow-up #213
+## Existing BE implementation and scope correction
 
-User scope decision on 2026-10-27 supersedes the former shared completion gate: #130 covers AI fixtures/tools, development measurements and handoff, then closes after its PR merges to dev. BE ownership/DTO/manifest implementation, real PostgreSQL atomicity/isolation and operational C/D tests continue in S15P31A108-213 and do not block #130 closure. See the current #130 proposal and PR handoff body for acceptance criteria. Synthetic tests remain explicitly distinct from actual DB results.
+User scope decision on 2026-10-27 supersedes the former shared completion gate: #130 covers AI fixtures/tools, development measurements and handoff, then closes after its PR merges to dev. A later read of existing BE branch feature/backend-document-upload-S15P31A108-192 (f3362fe) confirmed the worker, migration, vector storage/search and explicit owner Oh Seohyun. Creating #213 as an unowned new BE task was a mistake; it is not an implementation dependency. Preserve existing BE tickets and use the PR handoff for concrete contract differences and later integration checks. Synthetic tests remain distinct from actual DB results.
 
 ## Ledger
 
