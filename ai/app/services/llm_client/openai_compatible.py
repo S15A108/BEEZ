@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .errors import ProviderError
+from .errors import ProviderError, ProviderNotStartedError
 from .models import LLMRequest, ProviderResponse
 
 
@@ -121,6 +121,11 @@ class OpenAICompatibleProvider:
     async def complete(
         self, request: LLMRequest, *, timeout_seconds: float
     ) -> ProviderResponse:
+        # The HTTP client is already closed, so no request can have started.
+        # An error during post() must not use this preflight classification:
+        # the request may already have been sent or reached the provider.
+        if self._client.is_closed:
+            raise ProviderNotStartedError()
         payload = {
             "model": request.model,
             "messages": [

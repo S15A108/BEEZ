@@ -6,6 +6,17 @@ from decimal import Decimal
 from .models import LLMUsage
 
 
+class ProviderNotStartedError(Exception):
+    """The provider rejected an attempt before any HTTP request could start.
+
+    Adapters should raise this only when they can guarantee no call began.
+    The client may then preserve earlier usage without adding a new entry.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("The LLM provider is unavailable before the request.")
+
+
 class ProviderError(Exception):
     """Provider failure with only sanitized, optionally reported usage.
 
@@ -56,10 +67,10 @@ class LLMError(Exception):
 
 
 class LLMCancelledError(asyncio.CancelledError):
-    """Propagated cancellation with usage records known or attempted so far.
+    """Legacy exception retained for compatibility with existing imports.
 
-    A caller that records cancellation can persist these records before
-    re-raising. A cancelled in-flight call has unknown tokens, not zero tokens.
+    The current client propagates the original ``asyncio.CancelledError``
+    with usage attached to its ``llm_usage`` attribute instead.
     """
 
     def __init__(self, usage: tuple[LLMUsage, ...]) -> None:

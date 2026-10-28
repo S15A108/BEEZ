@@ -67,7 +67,7 @@ async with OpenAICompatibleProvider(endpoint=endpoint, api_key=api_key) as provi
 - 검증은 `llm-validate-{validation_id}-attempt-{n}-call-{k}`를 사용하고 `max_attempts=1`이다. 명시적 재시도는 BE가 새 attempt로 접수한다. 일반 기능도 재시도 횟수와 전체 시간 예산을 명시해야 한다.
 - 자동 재시도가 허용된 호출에서 공급자의 429 또는 503 응답에 유효한 `Retry-After`가 있으면 기본 대기 시간과 이 값 중 더 긴 시간만큼 기다린다. 대기 시간이 남은 전체 시간 예산 이상이면 추가 호출 없이 `model_timeout`으로 끝내고 기존 사용량을 보존한다. 검증 호출은 자동 재시도하지 않는다.
 - 성공 결과와 `LLMError.usage`는 해당 요청의 실제 호출별 usage를 보존한다. 실패한 호출도 기록하며, 호출이 시작되지 않은 입력·설정 오류에는 usage를 만들지 않는다. 전송 중 시간 초과로 응답을 받지 못하면 토큰은 미확인이다.
-- 실행 취소는 `asyncio.CancelledError`의 하위 타입인 `LLMCancelledError`로 전파하며 그때까지 확인한 usage를 담는다. 호출자가 기록을 처리하더라도 취소를 다시 전파해야 한다. 네트워크 단절이나 외부 timeout으로 AI 응답 자체가 전달되지 않으면 BE가 호출·사용량 미확인을 별도로 기록하며, 정확히 한 번의 모델 호출을 보장하지 않는다.
+- 실행 취소는 원래 `asyncio.CancelledError`에 `llm_usage`를 담아 그대로 전파한다. 호출자가 기록을 처리하더라도 취소를 다시 전파해야 한다. 기존 `LLMCancelledError` 심볼은 호환을 위해 남아 있지만 클라이언트가 더 이상 발생시키지 않으므로 해당 예외와 `.usage`를 사용하는 호출자는 이전해야 한다. 네트워크 단절이나 외부 timeout으로 AI 응답 자체가 전달되지 않으면 BE가 호출·사용량 미확인을 별도로 기록하며, 정확히 한 번의 모델 호출을 보장하지 않는다.
 - 토큰을 둘 다 확인할 수 없는 경우 `tokens_known=false`로 표시하고 두 값을 생략한다. 알려진 0은 유지한다. 가격 설정 또는 공급자가 제공한 비용 정보가 없으면 비용·통화를 함께 생략한다. `Pricing`은 호출자가 명시적으로 전달한 단가를 사용하며 기본 가격표가 없다.
 - V2의 `llm_usage` 저장 범위에 맞춰 토큰은 32비트 정수 범위, 비용은 `NUMERIC(12,6)`을 따른다. 비용은 소수 여섯 자리로 반올림하며 범위를 넘거나 양수 비용이 0으로 반올림되는 경우 비용·통화를 생략하고 usage는 보존한다.
 - 호출자가 제공한 단가로 추정할 때는 실제 응답 모델이 요청 모델과 일치하는 경우만 계산한다. 허용된 별칭이라도 다르면 부정확한 가격 추정을 피하기 위해 비용을 생략한다.
@@ -77,30 +77,30 @@ async with OpenAICompatibleProvider(endpoint=endpoint, api_key=api_key) as provi
 
 ### 외부 시간 제한과 사용량
 
-`generate()`의 자체 시간 제한에 걸리면 `LLMError`의 `code`는 `model_timeout`이며 `error.usage`에서 호출별 기록을 확인한다. `asyncio.timeout()` 또는 `asyncio.wait_for()`를 바깥에 적용하면 시간 제한으로 인한 취소를 클라이언트가 `LLMCancelledError`로 전파할 수 있다. Python 3.12에서는 이 하위 타입이 `TimeoutError`로 바뀌지 않고 그대로 전파된다. 다음 예시는 같은 프로세스의 호출자가 기록을 처리하는 방법이다.
+`generate()`의 자체 시간 제한에 걸리면 `LLMError`의 `code`는 `model_timeout`이며 `error.usage`에서 호출별 기록을 확인한다. `asyncio.timeout()` 또는 `asyncio.wait_for()`를 바깥에 적용하면 표준 동작에 따라 `TimeoutError`가 발생한다. 같은 프로세스의 호출자는 예외의 원인인 `CancelledError.llm_usage`에서 확인된 기록을 얻을 수 있다.
 
 ```python
 import asyncio
 
-from app.services.llm_client import LLMCancelledError, LLMError
+from app.services.llm_client import LLMError
 
 try:
     async with asyncio.timeout(budget):
         result = await client.generate(request)
-except LLMCancelledError as exc:
-    usage = exc.usage  # 직접 취소 또는 외부 시간 제한 시 기록 처리
-    raise  # 취소를 반드시 전파한다.
 except TimeoutError as exc:
-    # 다른 런타임에서 취소가 TimeoutError로 변환된 경우를 방어적으로 처리한다.
     cause = exc.__cause__
-    usage = cause.usage if isinstance(cause, LLMCancelledError) else ()
+    usage = getattr(cause, "llm_usage", ())
+    # usage와 요청 맥락을 기록할 수 있다.
+    raise
+except asyncio.CancelledError as exc:
+    usage = getattr(exc, "llm_usage", ())  # 직접 취소는 처리 후 다시 전파한다.
     raise
 except LLMError as exc:
     usage = exc.usage  # generate() 자체 시간 제한과 기타 공통 오류
     raise
 ```
 
-`asyncio.wait_for(client.generate(request), timeout=budget)`도 같은 방식으로 취소 예외를 처리한다. `TimeoutError`의 원인은 런타임에 따라 방어적으로 확인할 수 있지만, 원인이나 사용량이 없다고 호출이 없었다고 단정할 수 없다. 토큰을 받기 전에 취소되면 사용량의 토큰은 미확인이다. 프로세스 종료나 네트워크 단절로 AI 응답이 BE에 도착하지 않은 경우 이 예외만으로 BE가 사용량을 복구할 수는 없다.
+`asyncio.wait_for(client.generate(request), timeout=budget)`도 같은 방식으로 시간 초과와 사용량을 처리한다. 원인이나 사용량이 없다고 호출이 없었다고 단정할 수 없다. 토큰을 받기 전에 취소되면 사용량의 토큰은 미확인이다. 프로세스 종료나 네트워크 단절로 AI 응답이 BE에 도착하지 않은 경우 이 예외만으로 BE가 사용량을 복구할 수는 없다.
 
 기능 담당자가 공통 응답 수신 후 직접 작성한 업무 검증에 실패한 경우에는 `raise response.invalid_output_error() from None`으로 실제 호출 usage를 보존하면서 마지막 호출을 실패로 표시할 수 있다. 여러 번의 독립 호출을 합쳐 검증하는 기능은 앞선 호출의 usage를 `previous_usage`로 전달한다. 검증 내용과 HTTP 응답 판정은 각 기능의 책임이다.
 

@@ -477,10 +477,11 @@ def test_cancellation_is_propagated_to_caller():
         task.cancel()
         with pytest.raises(asyncio.CancelledError) as caught:
             await task
-        assert len(caught.value.usage) == 1
-        assert caught.value.usage[0].request_key == "llm-chat-1-call-1"
-        assert caught.value.usage[0].failed is True
-        assert caught.value.usage[0].tokens_known is False
+        assert type(caught.value) is asyncio.CancelledError
+        assert len(caught.value.llm_usage) == 1
+        assert caught.value.llm_usage[0].request_key == "llm-chat-1-call-1"
+        assert caught.value.llm_usage[0].failed is True
+        assert caught.value.llm_usage[0].tokens_known is False
 
     run(cancel_started_call())
 
@@ -509,11 +510,11 @@ def test_cancellation_of_a_retry_retains_previous_and_current_call_usage():
         with pytest.raises(asyncio.CancelledError) as caught:
             await task
         assert provider.calls == 2
-        assert [usage.request_key for usage in caught.value.usage] == [
+        assert [usage.request_key for usage in caught.value.llm_usage] == [
             "retry-call-1",
             "retry-call-2",
         ]
-        assert all(usage.failed for usage in caught.value.usage)
+        assert all(usage.failed for usage in caught.value.llm_usage)
 
     run(cancel_retry())
 

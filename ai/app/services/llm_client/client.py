@@ -9,7 +9,7 @@ import time
 from decimal import ROUND_HALF_UP, Decimal, DecimalException
 from typing import Any, Protocol
 
-from .errors import LLMCancelledError, LLMError, ProviderError
+from .errors import LLMError, ProviderError, ProviderNotStartedError
 from .models import (
     LLMContext,
     LLMMessage,
@@ -323,7 +323,7 @@ class LLMClient:
                     result = _result(snapshot, response)
                     if time.monotonic() >= deadline:
                         raise TimeoutError()
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 usages.append(
                     _usage(
                         snapshot,
@@ -334,9 +334,13 @@ class LLMClient:
                         response,
                     )
                 )
-                raise LLMCancelledError(tuple(usages)) from None
+                exc.llm_usage = tuple(usages)
+                raise
             except TimeoutError:
                 failure = ProviderError("model_timeout", retryable=True)
+            except ProviderNotStartedError:
+                # This attempt never started; retain earlier attempts only.
+                raise LLMError("model_unavailable", tuple(usages)) from None
             except ProviderError as exc:
                 failure = exc
             except Exception:  # noqa: BLE001
@@ -394,7 +398,8 @@ class LLMClient:
                 raise LLMError("model_timeout", tuple(usages)) from None
             try:
                 await asyncio.sleep(delay)
-            except asyncio.CancelledError:
-                raise LLMCancelledError(tuple(usages)) from None
+            except asyncio.CancelledError as exc:
+                exc.llm_usage = tuple(usages)
+                raise
 
         raise LLMError("model_unavailable", tuple(usages)) from None
