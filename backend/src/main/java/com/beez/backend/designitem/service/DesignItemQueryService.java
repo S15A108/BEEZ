@@ -13,6 +13,7 @@ import com.beez.backend.designitem.dto.DesignItemPageResponse;
 import com.beez.backend.designitem.dto.DesignItemResponse;
 import com.beez.backend.designitem.dto.DesignItemSourceResponse;
 import com.beez.backend.designitem.repository.DesignItemRepository;
+import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.validation.DesignContentValidator;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -29,11 +30,14 @@ public class DesignItemQueryService {
     private final DesignItemRepository items;
     private final ProjectAccessChecker access;
     private final DesignSnapshotService snapshots;
+    private final DesignProjectRepository projects;
 
-    public DesignItemQueryService(DesignItemRepository items, ProjectAccessChecker access, DesignSnapshotService snapshots) {
+    public DesignItemQueryService(DesignItemRepository items, ProjectAccessChecker access, DesignSnapshotService snapshots,
+                                 DesignProjectRepository projects) {
         this.items = items;
         this.access = access;
         this.snapshots = snapshots;
+        this.projects = projects;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -44,10 +48,14 @@ public class DesignItemQueryService {
                 || (kind != null && !DesignContentValidator.KINDS.contains(kind)) || limit < 1 || limit > 100) {
             throw invalid("목록 필터가 올바르지 않습니다.");
         }
-        if (source != null) {
-            requireSource(project, source);
+        // A list filter does not establish ownership: the project-scoped query returns no foreign rows.
+        // Creation still uses requireSource to reject an invalid source reference.
+        if (source != null && source < 1) {
+            throw invalid("document_version_id는 양의 정수 ID여야 합니다.");
         }
-        String snapshot = snapshots.hash(project);
+        boolean approved = "APPROVED".equals(status);
+        Long baseline = approved && cursor == null ? projects.currentBaselineId(project) : null;
+        String snapshot = approved ? null : snapshots.hash(project);
         String selection = hash(Arrays.asList(project, status, kind, source));
         long after = 0;
         if (cursor != null) {
@@ -60,18 +68,31 @@ public class DesignItemQueryService {
                 if (parts.length != 3 || (after = Long.parseLong(parts[0])) < 1 || !parts[2].equals(selection)) {
                     throw new IllegalArgumentException();
                 }
+                if (approved) {
+                    if (!parts[1].startsWith("baseline:")) {
+                        throw new IllegalArgumentException();
+                    }
+                    baseline = Long.parseLong(parts[1].substring("baseline:".length()));
+                    if (baseline < 1) {
+                        throw new IllegalArgumentException();
+                    }
+                }
             } catch (IllegalArgumentException e) {
                 throw invalid("목록 cursor가 올바르지 않습니다.");
             }
-            if (!parts[1].equals(snapshot)) {
+            if (approved && !projects.baselineBelongsToProject(project, baseline)) {
+                throw invalid("목록 cursor가 올바르지 않습니다.");
+            }
+            if (!approved && !parts[1].equals(snapshot)) {
                 throw conflict("draft_changed");
             }
         }
-        var rows = items.findPage(project, status, kind, source, after, limit + 1);
+        var rows = items.findPage(project, status, kind, source, after, limit + 1, baseline);
         boolean more = rows.size() > limit;
         var page = more ? rows.subList(0, limit) : rows;
+        String pageToken = approved ? "baseline:" + baseline : snapshot;
         String next = more ? Base64.getUrlEncoder().withoutPadding().encodeToString(
-                (page.getLast().get("id") + "|" + snapshot + "|" + selection).getBytes(StandardCharsets.UTF_8)) : null;
+                (page.getLast().get("id") + "|" + pageToken + "|" + selection).getBytes(StandardCharsets.UTF_8)) : null;
         return new DesignItemPageResponse(page.stream().map(this::view).toList(), more, next,
                 "DRAFT".equals(status) ? snapshot : null);
     }

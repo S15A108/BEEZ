@@ -44,7 +44,7 @@ public class DesignItemCommandService {
     public DesignItemResponse create(CallerContext caller, long project, CreateDesignItemRequest input, String key) {
         locks.leader(caller, project);
         Long source = Ids.parse(input.sourceDocumentVersionId(), "source_document_version_id");
-        // Preserve numeric IDs and null fields in persisted fingerprints from before the DTO refactor.
+        // Hash normalized command input with parsed IDs and explicit optional fields.
         var command = new HashMap<String, Object>();
         command.put("kind", input.kind());
         command.put("schema_version", input.schemaVersion());

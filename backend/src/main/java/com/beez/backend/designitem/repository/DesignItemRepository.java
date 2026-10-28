@@ -21,18 +21,22 @@ public class DesignItemRepository {
         this.jdbc = jdbc;
     }
 
-    public List<Map<String, Object>> findPage(long project, String status, String kind, Long source, long after, int size) {
+    public List<Map<String, Object>> findPage(long project, String status, String kind, Long source, long after, int size,
+                                             Long baseline) {
         var parameters = new HashMap<String, Object>();
         parameters.put("project", project);
         parameters.put("status", status);
         parameters.put("after", after);
         parameters.put("limit", size);
-        String filter = " WHERE i.project_id=:project AND i.retired_at IS NULL AND v.status=:status AND v.id>:after";
+        String filter = " WHERE i.project_id=:project AND v.id>:after";
         if ("APPROVED".equals(status)) {
+            parameters.put("baseline", baseline);
             filter += """
-                     AND EXISTS (SELECT 1 FROM project p JOIN baseline_item bi ON bi.baseline_id=p.current_baseline_id
-                                  WHERE p.id=:project AND bi.design_item_version_id=v.id)
+                     AND EXISTS (SELECT 1 FROM baseline b JOIN baseline_item bi ON bi.baseline_id=b.id
+                                  WHERE b.project_id=:project AND b.id=:baseline AND bi.design_item_version_id=v.id)
                     """;
+        } else {
+            filter += " AND i.retired_at IS NULL AND v.status=:status";
         }
         if (kind != null) {
             filter += " AND i.kind=:kind";

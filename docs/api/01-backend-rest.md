@@ -4278,6 +4278,8 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 잘못된 목록 필터·커서·document_version_id 형식 |
+| 409 | `draft_changed` | DRAFT 페이지 사이 전체 초안이 변경됨 |
 
 ```json
 {
@@ -4289,6 +4291,8 @@ HTTP `200`.
 ```
 
 #### 처리 규칙
+
+- 목록의 유효한 양수 document_version_id가 다른 프로젝트에 속하거나 존재하지 않으면 200/빈 목록이다. 0·음수·잘못된 형식은 400이다. APPROVED 커서는 첫 baseline에 고정하고 DRAFT 커서는 전체 초안 변경을 검사한다.
 
 - 페이지 필터에 맞는 항목을 반환한다. 기본 조회는 현재 baseline 항목이다.
 - DRAFT 조회에서 kind/source 필터·페이지와 무관한 전체 프로젝트 초안 스냅샷을 제공한다. 최초 발행 시 정확한 전체 문서·항목 ID 집합과 함께 다시 대조한다.
@@ -4403,7 +4407,10 @@ HTTP `201`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류, Idempotency-Key 형식 오류 |
+| 409 | `baseline_exists` | 이미 최초 발행됨. 이후 변경은 변경 제안 사용 |
+| 409 | `idempotency_conflict` | 같은 요청 키로 다른 입력 전송 |
+| 403 | `request_origin_rejected` | Origin/Referer가 누락되었거나 허용된 출처와 일치하지 않음 |
 
 ```json
 {
@@ -4527,6 +4534,8 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `version_conflict` | 버전·본문 경합 또는 승인본 수정 |
+| 409 | `baseline_exists` | 이미 최초 발행됨. 이후 변경은 변경 제안 사용 |
+| 403 | `request_origin_rejected` | Origin/Referer가 누락되었거나 허용된 출처와 일치하지 않음 |
 
 ```json
 {
@@ -4602,6 +4611,9 @@ HTTP `204`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 409 | `version_conflict` | 승인본·경합·참조 충돌 |
+| 400 | `validation_failed` | 대상 버전 또는 expected_content_hash 누락·형식 오류 |
+| 409 | `baseline_exists` | 이미 최초 발행됨. 이후 변경은 변경 제안 사용 |
+| 403 | `request_origin_rejected` | Origin/Referer가 누락되었거나 허용된 출처와 일치하지 않음 |
 
 ```json
 {
@@ -4728,6 +4740,10 @@ HTTP `201`.
 | 409 | `baseline_exists` | 이미 최초 발행됨 |
 | 409 | `draft_changed` | 검토 후 초안 변경 |
 | 400 | `required_documents_missing` | 필수 문서 누락 |
+| 404 | `not_found` | 프로젝트가 없거나 접근 권한이 없음 |
+| 409 | `analysis_not_completed` | 필수 문서 4종의 색인 미준비·실패·불일치 |
+| 409 | `idempotency_conflict` | 같은 요청 키로 다른 입력 전송 |
+| 403 | `request_origin_rejected` | Origin/Referer가 누락되었거나 허용된 출처와 일치하지 않음 |
 
 ```json
 {
@@ -4739,6 +4755,8 @@ HTTP `201`.
 ```
 
 #### 처리 규칙
+
+- 발행 대상 본문이 null·빈 문자열·공백뿐이면 400 validation_failed로 거절한다.
 
 - 현재 사람 팀장의 권한과 문서·항목 소속을 검사한다.
 - 프로젝트 잠금 후 현재 baseline 부재·전체 초안 해시·정확한 전체 대상 집합·필수 문서 4종을 확인한다. 중복 ID/일부 제출/검토 후 변경은 409 draft_changed다.

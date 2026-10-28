@@ -39,17 +39,17 @@ class DesignItemDtoContractTest {
     }
 
     @Test
-    void renamedResponseRecordsReadPersistedResponsesAndPreserveOptionalFields() {
-        String persisted = """
+    void responseJsonUsesSnakeCaseAndPreservesOptionalFields() {
+        String responseJson = """
                 {"id":"311","design_item_id":"301","key":"REQ-001","kind":"REQUIREMENT",
                  "version_no":1,"status":"DRAFT","schema_version":1,"content":{"description":"조회"},
                  "source":{"document_id":"201","document_version_id":"211","version_no":1,"location":"1절"},
                  "content_hash":"hash"}
                 """;
-        var response = JSON.readValue(persisted, DesignItemResponse.class);
+        var response = JSON.readValue(responseJson, DesignItemResponse.class);
         assertThat(response.designItemId()).isEqualTo("301");
         assertThat(response.source()).isEqualTo(new DesignItemSourceResponse("201", "211", 1, "1절"));
-        assertThat(JSON.readTree(JSON.writeValueAsString(response))).isEqualTo(JSON.readTree(persisted));
+        assertThat(JSON.readTree(JSON.writeValueAsString(response))).isEqualTo(JSON.readTree(responseJson));
         var withoutSource = new DesignItemResponse("311", "301", "REQ-001", "REQUIREMENT", 1,
                 "DRAFT", 1, Map.of("description", "조회"), null, "hash");
         assertThat(JSON.readTree(JSON.writeValueAsString(withoutSource)).has("source")).isFalse();

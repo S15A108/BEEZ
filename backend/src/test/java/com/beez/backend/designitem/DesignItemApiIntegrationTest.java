@@ -49,32 +49,6 @@ class DesignItemApiIntegrationTest extends IntegrationTestSupport {
         leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
     }
 
-    @Test
-    void legacyNumericFingerprintAndStoredSnakeCaseResponseRemainReplayable() {
-        long document = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'PLAN','legacy',?) RETURNING id",
-                Long.class, p.projectId(), p.leaderAccountId());
-        long source = jdbc.queryForObject("""
-                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text)
-                VALUES(?,1,'DRAFT','legacy.md','hash','legacy') RETURNING id
-                """, Long.class, document);
-        var input = new CreateDesignItemRequest("REQUIREMENT", 1, Map.of("description", "legacy"), Long.toString(source), null);
-        var created = commands.create(actor, p.projectId(), input, "legacy-key");
-        // Exact canonical JSON used by the previous nested record, including nullable source fields.
-        String legacyJson = "{\"content\":{\"description\":\"legacy\"},\"kind\":\"REQUIREMENT\","
-                + "\"schema_version\":1,\"source_document_version_id\":" + source + ",\"source_location\":null}";
-        String fingerprint;
-        try {
-            fingerprint = "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(legacyJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-        jdbc.update("UPDATE design_http_command SET fingerprint=? WHERE project_id=? AND request_key='legacy-key'",
-                fingerprint, p.projectId());
-        assertThat(commands.create(actor, p.projectId(), input, "legacy-key")).isEqualTo(created);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM design_item WHERE project_id=?", Integer.class, p.projectId()))
-                .isEqualTo(1);
-    }
     String path() { return "/api/projects/" + p.projectId() + "/design-items"; }
     JsonNode json(HttpResponse<String> response, int status) {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(status);

@@ -118,6 +118,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 발행은 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 즉시 삭제 스케줄러는 없다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
 - 작업 변경은 expected_revision_no/expected_lock_version, 제안 변경은 expected_updated_at, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
@@ -420,7 +421,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
-| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10은 §5의 24시간·design_http_command 범위 한정 결정 적용 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부 |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.

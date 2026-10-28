@@ -79,7 +79,15 @@ public final class DesignJson {
     }
 
     public static ApiException conflict(String code) {
-        return new ApiException(HttpStatus.CONFLICT, code, code);
+        String message = switch (code) {
+            case "draft_changed" -> "검토한 문서나 설계 항목이 변경되었습니다. 다시 조회하고 검토해 주세요.";
+            case "version_conflict" -> "초안이 변경되었거나 수정할 수 없는 상태입니다. 최신 내용을 확인해 주세요.";
+            case "baseline_exists" -> "이미 기준 설계가 발행되었습니다. 이후 변경은 변경 제안으로 요청해 주세요.";
+            case "idempotency_conflict" -> "같은 요청 키로 다른 내용이 전송되었습니다. 새 요청 키로 다시 시도해 주세요.";
+            case "analysis_not_completed" -> "문서 4종의 색인이 아직 준비되지 않았습니다. 분석 상태를 확인해 주세요.";
+            default -> "현재 상태에서는 요청을 처리할 수 없습니다. 최신 정보를 확인해 주세요.";
+        };
+        return new ApiException(HttpStatus.CONFLICT, code, message);
     }
 
     private DesignJson() {

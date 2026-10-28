@@ -35,4 +35,9 @@ public class DesignProjectRepository {
         return jdbc.sql("UPDATE project SET current_baseline_id=:baseline,updated_at=now() WHERE id=:project AND current_baseline_id IS NULL")
                 .params(Map.of("baseline", baseline, "project", project)).update();
     }
+
+    public boolean baselineBelongsToProject(long project, long baseline) {
+        return jdbc.sql("SELECT id FROM baseline WHERE id=:baseline AND project_id=:project")
+                .params(Map.of("baseline", baseline, "project", project)).query(Long.class).optional().isPresent();
+    }
 }
