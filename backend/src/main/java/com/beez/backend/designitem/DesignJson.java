@@ -1,0 +1,52 @@
+package com.beez.backend.designitem;
+
+import com.beez.backend.common.api.ApiException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.OffsetDateTime;
+import java.util.*;
+import org.springframework.http.HttpStatus;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
+
+/** Stable JSON, independent of object member order, for optimistic concurrency and snapshots. */
+final class DesignJson {
+    static final JsonMapper JSON = JsonMapper.builder().build();
+    static String canonical(Object value) {
+        String result = JSON.writeValueAsString(ordered(JSON.convertValue(value, Object.class), 0));
+        if (result.getBytes(StandardCharsets.UTF_8).length > 1_048_576) throw invalid("설계 본문이 너무 큽니다.");
+        return result;
+    }
+    private static Object ordered(Object value, int depth) {
+        if (depth > 32) throw invalid("설계 본문 중첩이 너무 깊습니다.");
+        if (value instanceof Map<?, ?> map) {
+            var result = new TreeMap<String, Object>();
+            for (var entry : map.entrySet()) {
+                if (!(entry.getKey() instanceof String key) || key.isBlank()) throw invalid("JSON 필드명이 필요합니다.");
+                result.put(key, ordered(entry.getValue(), depth + 1));
+            }
+            return result;
+        }
+        if (value instanceof List<?> list) return list.stream().map(v -> ordered(v, depth + 1)).toList();
+        if (value == null || value instanceof String || value instanceof Boolean || value instanceof Number) return value;
+        throw invalid("JSON 본문 형식이 올바르지 않습니다.");
+    }
+    static String hash(Object value) {
+        try {
+            return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(canonical(value).getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+    }
+    static Map<String, Object> object(Object value) {
+        return JSON.readValue(value.toString(), new TypeReference<Map<String, Object>>() { });
+    }
+    static long id(Map<String, Object> row, String name) { return ((Number) row.get(name)).longValue(); }
+    static String time(Object value) {
+        if (value instanceof java.sql.Timestamp ts) return ts.toInstant().toString();
+        if (value instanceof OffsetDateTime time) return time.toInstant().toString();
+        return value.toString();
+    }
+    static ApiException invalid(String message) { return new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", message); }
+    static ApiException conflict(String code) { return new ApiException(HttpStatus.CONFLICT, code, code); }
+    private DesignJson() { }
+}
