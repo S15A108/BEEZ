@@ -12,7 +12,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 
 class DocumentRequestOriginVerifierTest {
     private final DocumentRequestOriginVerifier verifier = new DocumentRequestOriginVerifier(
-            new BeezProperties(new BeezProperties.Cors(List.of("https://app.beez.test")), null));
+            new BeezProperties(new BeezProperties.Cors(List.of("https://app.beez.test")), null, null));
 
     @Test void acceptsTrustedOriginWithoutToken() {
         var request = request("Origin", "https://APP.beez.test:443");
@@ -57,7 +57,7 @@ class DocumentRequestOriginVerifierTest {
 
     @Test void rejectsWildcardConfiguration() {
         assertThatThrownBy(() -> new DocumentRequestOriginVerifier(
-                new BeezProperties(new BeezProperties.Cors(List.of("*")), null)))
+                new BeezProperties(new BeezProperties.Cors(List.of("*")), null, null)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
