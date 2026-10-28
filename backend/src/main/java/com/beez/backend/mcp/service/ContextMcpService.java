@@ -20,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * MCP 컨텍스트 도구(MCP-01·05·06·07)가 부르는 업무 서비스 (S15P31A108-166). 계약은 docs/design/07-mcp-service-contract.md.
+ * MCP 컨텍스트 도구(MCP-01·05·06·07)가 부르는 업무 서비스 (S15P31A108-166). 계약은 docs/design/08-mcp-service-contract.md.
  * 규칙은 ContextPacketService·ContextRecordService 에 있고, 여기서는 도구 인수 모양을 맞춘다.
  */
 @Service

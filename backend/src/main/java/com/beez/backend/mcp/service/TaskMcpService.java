@@ -20,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * MCP 작업 도구가 부르는 업무 서비스 (S15P31A108-166). 계약은 docs/design/07-mcp-service-contract.md.
+ * MCP 작업 도구가 부르는 업무 서비스 (S15P31A108-166). 계약은 docs/design/08-mcp-service-contract.md.
  * 규칙은 전부 REST 와 같은 서비스(-156 TaskPlanService, -158 TaskStateService, -164 DesignChangesService)에 있고,
  * 여기서는 도구 인수 모양에 맞추는 일만 한다:
  * <ul>
