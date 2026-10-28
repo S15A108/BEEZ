@@ -202,6 +202,11 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                           분석 상태를 불러오지 못했어요.
                         </p>
                       )}
+                      {analysis?.data?.message && (
+                        <p className="text-xs text-muted-foreground">
+                          {analysis.data.message}
+                        </p>
+                      )}
                       {analysis?.data?.status === 'FAILED' &&
                         isLeader &&
                         version && (

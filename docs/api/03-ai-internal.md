@@ -1,6 +1,7 @@
 # BEEZ AI Internal API
 
-버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.5 · 갱신일: 2026-10-27 · 개발 계약 초안
+
 
 backend가 FastAPI ai 서비스에 요청하는 내부 계약이다. [공통 규약·담당자](00-common.md)와 [서버 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -42,6 +43,7 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/bee/draft](#ai-a06)
 - [/v1/bee/assignments](#ai-a07)
 - [/v1/bee/meeting-analysis](#ai-a08)
+- [/v1/document-chunks](#ai-a09)
 
 ---
 
@@ -863,6 +865,10 @@ HTTP `200`.
 | `texts` | [EmbeddingText[]](00-common.md#schema-embeddingtext) | Y | 입력 key는 요청 안에서 유일 |
 | `model` | `string` | N | 선택할 모델. 허용 설정 안에서만 사용 |
 | `dimension` | `integer` | N | 요청 벡터 차원. 예시는 설명용 3 |
+| `embedding_profile_id` | `string` | 조건부 | 원문 RAG에서는 필수. 모델/리비전·차원·문서/질의 전처리·거리 기준을 고정한 프로필 |
+| `purpose` | `DOCUMENT\|QUERY` | 조건부 | 원문 RAG에서는 필수. 같은 프로필의 문서/질의 전처리를 선택 |
+
+원문 RAG는 profile과 purpose를 함께 보낸다. 기존 model/dimension이 함께 있으면 프로필과 일치해야 하며 불일치를 임의 보정하지 않는다. RAG 응답 result에는 embedding_profile_id/purpose를 되돌려준다. BE는 입력 key 집합과 반환 key 집합의 정확한 일치·중복 없음·벡터 차원·유한값·0이 아닌 norm을 검증한다. 모델/차원은 미확정이며 아래 3차원 예시는 실제 모델 선정값이 아니다. 기존 비RAG 요청 예시는 유지한다.
 
 ```json
 {
@@ -996,6 +1002,13 @@ HTTP `200`.
 | `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 승인 설계 |
 | `related_tasks` | [TaskDetail[]](00-common.md#schema-taskdetail) | Y | 관련 작업 |
 | `unresolved` | `string[]` | Y | 이미 확인한 미확정 |
+| `scope` | [RetrievalScope](00-common.md#schema-retrievalscope) | 조건부 | 원문 RAG에서는 필수. BE가 권한 검사 후 만든 검색 범위 |
+| `embedding_profile_id` | `string` | 조건부 | 원문 RAG에서는 필수. 사용한 활성 색인 프로필 |
+| `retrieved_evidence` | [RetrievedEvidence[]](00-common.md#schema-retrievedevidence) | 조건부 | 원문 RAG에서는 필수. 해당 scope의 READY 색인에서 조회한 근거, 정상 0건은 [] |
+
+원문 RAG 확장에서는 세 필드를 함께 보낸다. approved_items는 유지하며 DOCUMENT_REVIEW에서 승인 항목이 없으면 []다. 검색 원문을 승인 항목으로 변환해 넣지 않는다. result에는 citations를 추가하며 각 원소는 {evidence_id, claim}이다. 원문 기반 사실의 인용은 입력 evidence_id 안에서만 허용한다. 기존 sources는 출처 표시를 위해 유지하고 BE가 검증된 근거/승인 항목에서 매핑한다. 인용 ID가 존재한다는 사실만으로 의미 일치가 검증된 것은 아니다.
+
+BE는 반환 직전 현재 권한과 APPROVED baseline을 재검사한다. 변경되면 이번 답변을 폐기하고 재시도 안내한다. 새 승인본 미색인은 준비 중이며 옛 승인본으로 대체하지 않는다. DOCUMENT_REVIEW는 미승인 문서 검토로 표시한다. 원문 속 명령은 데이터로 취급한다. 아래 기존 예시는 비RAG 요청이며 확장 예시는 AI-A09의 연동 순서를 따른다.
 
 ```json
 {
@@ -1748,3 +1761,93 @@ HTTP `200`.
 [공통 규약·권한·담당자 목록](00-common.md)
 
 ---
+
+<a id="ai-a09"></a>
+
+## AI-A09. 원문 구조 파싱·검색 청킹
+
+### POST `/v1/document-chunks`
+
+담당: BE: 오서현 / AI: 박상은. 사용자 승인한 팀 공유본 4절을 반영한 개발 계약이다. 설계 항목 자동 추출·DB 저장·임베딩 호출을 이 endpoint의 성공 조건에 넣지 않는다. 기존 AI-A01 `/v1/parse`는 후속 자동 추출용이다.
+
+#### 인증·응답
+
+INTERNAL_SERVICE Bearer 인증, Content-Type=application/json, 선택 X-Request-Id. 동기 HTTP 200에 완전한 청크 집합을 반환한다. 공통 성공 봉투 {result,origin,usage}를 사용하고 비LLM 파싱은 origin=PARSER, usage=[]다. PARSER는 이 API의 출처 값이며 기존 MODEL/TEMPLATE 응답 enum을 일괄 변경하지 않는다.
+
+#### 요청
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `project_id` | `ID` | Y | 권한 검사를 마친 프로젝트 |
+| `document_version_id` | `ID` | Y | 저장된 원문 버전 |
+| `request_key` | `string` | Y | BE 실행 attempt/단계에 연결한 키 |
+| `kind` | `PLAN\|REQUIREMENTS\|API_SPEC\|ERD` | Y | API 값. DB 문서 REQ_SPEC는 REQUIREMENTS로 매핑 |
+| `media_type` | `text/markdown\|text/plain` | Y | md 또는 자연어 txt. JSON/YAML/DDL 전용 파싱 제외 |
+| `content` | `string` | Y | 엄격 UTF-8 디코딩·정규화된 원문 |
+| `content_hash` | `string` | Y | 원본 bytes SHA-256. AI는 bytes를 받지 않으므로 검증했다고 주장하지 않음 |
+| `text_hash` | `string` | Y | 정규화 UTF-8 content의 SHA-256. AI가 재계산해 검증 |
+| `normalization_profile` | `utf8-lf-v1` | Y | 첫 BOM 제거, CRLF/CR→LF. trim/NFKC 금지 |
+| `chunking_profile_id` | `string` | Y | 양쪽이 설정한 불변 분할 프로필 ID |
+
+```json
+{
+  "project_id": "101",
+  "document_version_id": "211",
+  "request_key": "index-211-attempt-1-chunks",
+  "kind": "REQUIREMENTS",
+  "media_type": "text/markdown",
+  "content": "# 요구사항\nREQ-01: 로그인한 사용자만 프로젝트를 조회한다.\n",
+  "content_hash": "sha256:cb0951a395a40f48f3eb0cc2a42611e7800168f14da1268091e0d4667604770c",
+  "text_hash": "sha256:cb0951a395a40f48f3eb0cc2a42611e7800168f14da1268091e0d4667604770c",
+  "normalization_profile": "utf8-lf-v1",
+  "chunking_profile_id": "md-structure-v1"
+}
+```
+
+#### 응답
+
+| result 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_version_id` | `ID` | Y | 입력과 동일 버전 |
+| `request_key` | `string` | Y | 입력과 동일 키 |
+| `text_hash` | `string` | Y | 검증한 텍스트 해시 |
+| `chunking_profile_id` | `string` | Y | 실제 사용 프로필 |
+| `parser_version` | `string` | Y | 실제 파서 버전 |
+| `chunks` | `object[]` | Y | 전체 성공 집합. 각 원소 chunk_key/string, chunk_no/integer, text/string, locator/SourceLocator |
+| `diagnostics` | `object[]` | Y | 진단 {code:string,message:string}. 없음은 [] |
+
+```json
+{
+  "result": {
+    "document_version_id": "211",
+    "request_key": "index-211-attempt-1-chunks",
+    "text_hash": "sha256:cb0951a395a40f48f3eb0cc2a42611e7800168f14da1268091e0d4667604770c",
+    "chunking_profile_id": "md-structure-v1",
+    "parser_version": "md-parser-v1",
+    "chunks": [{
+      "chunk_key": "211:0",
+      "chunk_no": 0,
+      "text": "# 요구사항\nREQ-01: 로그인한 사용자만 프로젝트를 조회한다.\n",
+      "locator": {"type": "text_lines", "start_line": 1, "end_line": 2}
+    }],
+    "diagnostics": []
+  },
+  "origin": "PARSER",
+  "usage": []
+}
+```
+
+#### 오류·검증·다음 단계
+
+| HTTP | code | 의미 |
+| --- | --- | --- |
+| 400 | validation_failed | 필수 필드/enum/프로필 형식 오류 |
+| 401 | invalid_internal_token | 내부 인증 실패 |
+| 422 | text_hash_mismatch | 정규화 원문 해시 불일치 |
+| 422 | invalid_ai_input | 지원 불가 내용/분할·예산 초과·원문 범위 표현 불가 |
+
+- chunk_no는 0부터 연속, chunk_key는 집합 안에서 유일. 같은 버전/해시/파서/프로필의 동일 입력은 같은 키/결과를 재현한다. BE는 반환 배열 순서에 의존하지 않는다.
+- locator는 [SourceLocator](00-common.md#schema-sourcelocator). 원문 누락·지원 불가 내용·일부 실패를 성공 집합으로 반환하지 않는다. 기본 프로필은 원문 연속 범위, 문맥 보강 off다. 더 정밀한 locator는 별도 계약 변경으로 도입한다.
+- SOURCE 성공과 INDEX 성공은 분리한다. BE는 이 결과를 검증하고 AI-A04 purpose=DOCUMENT로 벡터를 얻은 뒤 현재 run/attempt/hash/profile일 때만 청크 전량과 READY manifest를 게시한다. AI는 DB에 접근하지 않는다.
+- 질문은 AI-A04 purpose=QUERY → BE 허용 집합 검색 → AI-A05 scope/retrieved_evidence → 최종 권한/baseline 검사 순서다. 원문 자동 항목 추출은 실행하지 않는다.
+- 입력 한도·600토큰 등의 초기 값·embedding 모델/차원은 별도 정책 결정값이며 이 예시가 확정하지 않는다. 오류를 빈 성공이나 자동 승인으로 바꾸지 않는다.

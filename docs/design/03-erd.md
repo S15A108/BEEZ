@@ -53,6 +53,8 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |
 | D. 운영 공통 | notification, activity_event, mcp_audit_log | 전진 |
 
+2026-10-27 담당 보완: 위 C' 중 원문 RAG의 document_chunk DB 저장/벡터 SQL 검색과 run/manifest·실행 상태 BE 구현은 사용자 지정으로 **오서현**이 맡는다. 박상은은 청킹·임베딩·검색 전략/컨텍스트·답변 AI를 맡고, 나머지 개발 컨텍스트/MCP 담당은 기존 구분을 따른다. 이 보완은 스키마 변경이나 신규 migration 적용을 뜻하지 않는다.
+
 공통: `id BIGINT GENERATED ALWAYS AS IDENTITY`, `created_at`·`updated_at TIMESTAMPTZ`, enum은 TEXT + CHECK, 구조화 데이터는 JSONB, 물리 삭제 없음. 연결 테이블(`baseline_item`, `baseline_document`, `design_item_dependency`, `task_plan_design_ref`, `task_dependency`, `validation_design_ref`, `validation_task_ref`, `dev_context_packet_ref`, `context_record_ref`, `meeting_participant`)은 복합 PK 예외.
 
 ## 2. 핵심 관계 — 설계 · 계획 · 검증
@@ -315,4 +317,4 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 - 임베딩 차원 N — 지금은 `vector(1024)` 임시값
 - `design_item_dependency`를 무효화에서 몇 단계까지 따라갈지 (제안 1단계)
 - 계획 참조의 "가장 강한 관계 하나" 규칙에 팀 동의
-- 문서 파일 저장소 (MVP 로컬 볼륨)
+- 문서 파일 저장소: 2026-10-27 SeaweedFS S3로 통일. DB storage_key 유지, 로컬도 Docker SeaweedFS 사용. 실제 배포 환경/영속 볼륨은 인프라 적용 필요.

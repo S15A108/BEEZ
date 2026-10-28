@@ -1,6 +1,6 @@
 # BEEZ Backend REST API
 
-버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.5 · 갱신일: 2026-10-27 · 개발 계약 초안
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -2939,6 +2939,31 @@ HTTP `200`.
 
 ## DOC-A01. 초기 문서 업로드
 
+#### 확정 업로드 정책 — 2026-10-27
+
+| 항목 | 확정 규칙 |
+| --- | --- |
+| 입력 | .md/.txt, 엄격 UTF-8. JSON/YAML/DDL 전용 파싱은 후속 |
+| 한도 | 파일당 1 MiB(1,048,576 bytes), 정규화 후 100,000 Unicode code points. 요청당 파일 1개, multipart 전체 2 MiB |
+| 검증 | 빈/공백뿐인 원문, 잘못된 UTF-8, 개행/탭 외 바이너리 제어 문자 거부. 사용자 Content-Type만 신뢰하지 않음 |
+| 정규화 | 첫 BOM 제거, CRLF/CR→LF. trim/NFKC 금지. 원본/정규화 텍스트 해시는 별개 |
+| 중복 | 프로젝트별 PLAN/REQUIREMENTS/API_SPEC/ERD 논리 문서 각 1개. 동일 종류 새 등록은 409 document_kind_exists |
+| 수정 | 원본 덮어쓰기 금지. DOC-A12에서 현재 승인본을 기준으로 새 DRAFT 생성 |
+| 저장 | 로컬 개발·배포 모두 SeaweedFS 비공개 S3 bucket. 로컬은 Docker volume에 영속 저장한다. UUID storage_key 유지, DB에는 원문 텍스트·버전 저장. 경로/자격증명 외부 노출 금지 |
+| 다운로드 | 원본 bytes, attachment. 원본명 대신 document-{document_id}-v{version_no}.{md\|txt} 생성 이름 |
+| 접수 | 문서/버전·영속 분석 작업·멱등 응답을 같은 DB 트랜잭션으로 저장 후 201/PENDING. AI 완료/승인을 뜻하지 않음 |
+| 재시도 | Idempotency-Key 필수. 같은 사용자/프로젝트/동작/키·입력은 24시간 같은 응답, 입력이 다르면 409 idempotency_conflict |
+
+문서 API는 공통 로그인(PR #22)의 세션과 CallerContext로 사용자를 식별하고 현재 멤버십을 검사한다. X-Beez-Account-Id 헤더와 문서 전용 세션 속성으로 인증하지 않는다. 문서 전용 CSRF 토큰은 사용하지 않으며 GET /api/session/csrf는 제공하지 않는다. 업로드/분류/실패 분석 재시도는 사람 LEADER, 조회/다운로드/변경용 업로드는 현재 MEMBER다.
+
+문서 변경 요청(DOC-A01·A07·A12, PLN-A02)은 Origin을 먼저 검사하고, 헤더 자체가 없을 때만 Referer의 출처를 검사한다. scheme·host·유효 port는 beez.cors.allowed-origins(CORS_ALLOWED_ORIGINS)의 명시적 HTTP(S) origin과 정확히 일치해야 한다. Origin: null·빈 값·중복·잘못된 형식·미허용 출처는 Referer로 우회하지 못한다. 출처가 둘 다 없거나 검증에 실패하면 403 request_origin_rejected이며 저장·변경을 수행하지 않는다. GET 조회에는 이 검사를 요구하지 않는다. 브라우저가 헤더를 전송하므로 FE가 Origin을 직접 설정하거나 토큰을 선조회하지 않는다.
+
+공통 CORS 처리에서 먼저 차단된 요청도 403이지만 그 응답 본문은 공통 CORS 구현을 따른다. request_origin_rejected는 문서 출처 검사가 반환하는 오류 코드다.
+
+로컬 Swagger에서 변경 요청을 시험할 때는 Swagger 화면의 실제 origin(예: http://localhost:8080)도 CORS_ALLOWED_ORIGINS에 명시해야 한다. curl·통합 테스트 등 브라우저 밖의 클라이언트는 유효 세션 쿠키와 허용된 Origin 또는 Referer를 함께 보낸다. 이는 사용자 인증을 대신하지 않는다. CORS 허용 목록의 와일드카드·경로·접미사 일치는 허용하지 않는다. 공통 로그인·SecurityConfig·다른 도메인의 정책은 이 변경에서 수정하지 않는다.
+
+한도는 413 file_too_large, 미지원 확장자는 415 unsupported_media_type, UTF-8/빈 입력 등은 400 validation_failed다. DOC-A12에도 같은 정책을 적용한다. 프록시 한도는 인프라 담당에게 별도 전달하며 배포 설정은 변경하지 않는다.
+
 ### POST `/api/projects/{id}/documents`
 
 초기 문서 업로드 기능을 제공한다.
@@ -3012,7 +3037,7 @@ HTTP `201`.
       "document_id": "201",
       "version_no": 1,
       "status": "DRAFT",
-      "file_name": "requirements.md",
+      "file_name": "document-201-v1.md",
       "media_type": "text/markdown",
       "content_hash": "sha256:example-document-hash",
       "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -3048,7 +3073,7 @@ HTTP `201`.
 
 - 현재 팀장이 원문을 등록한다. 업로드 성공은 승인·분석 완료를 뜻하지 않는다.
 - document와 DRAFT document_version을 저장하고 분석을 접수한다.
-- 파일 형식·용량과 같은 kind 복수 등록 정책은 Q07이다.
+- 파일 형식·용량·중복 등록은 이 절의 확정 업로드 정책을 따른다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -3119,7 +3144,7 @@ HTTP `200`.
         "document_id": "201",
         "version_no": 1,
         "status": "APPROVED",
-        "file_name": "requirements.md",
+        "file_name": "document-201-v1.md",
         "media_type": "text/markdown",
         "content_hash": "sha256:example-document-hash",
         "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -3216,7 +3241,7 @@ HTTP `200`.
       "document_id": "201",
       "version_no": 1,
       "status": "APPROVED",
-      "file_name": "requirements.md",
+      "file_name": "document-201-v1.md",
       "media_type": "text/markdown",
       "content_hash": "sha256:example-document-hash",
       "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -3228,7 +3253,7 @@ HTTP `200`.
     "document_id": "201",
     "version_no": 1,
     "status": "APPROVED",
-    "file_name": "requirements.md",
+    "file_name": "document-201-v1.md",
     "media_type": "text/markdown",
     "content_hash": "sha256:example-document-hash",
     "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -3397,7 +3422,7 @@ HTTP `200`.
       "document_id": "201",
       "version_no": 1,
       "status": "APPROVED",
-      "file_name": "requirements.md",
+      "file_name": "document-201-v1.md",
       "media_type": "text/markdown",
       "content_hash": "sha256:example-document-hash",
       "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -3595,7 +3620,7 @@ HTTP `200`.
     "document_id": "201",
     "version_no": 1,
     "status": "APPROVED",
-    "file_name": "requirements.md",
+    "file_name": "document-201-v1.md",
     "media_type": "text/markdown",
     "content_hash": "sha256:example-document-hash",
     "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -3633,6 +3658,8 @@ HTTP `200`.
 <a id="pln-a01"></a>
 
 ## PLN-A01. 문서 분석 상태·결과 조회
+
+2026-10-27 원문 RAG 구현: status는 전체 실행 상태다. source_status/index_status(PENDING/RUNNING/READY/FAILED), attempt, message를 추가한다. COMPLETED는 청킹·임베딩·청크/manifest 원자적 게시 완료다. 자동 추출은 후속이므로 items/questions는 []이며 미도입 EXTRACTION을 대기/실패로 표시하지 않는다. SOURCE 성공 뒤 임베딩 실패는 READY/FAILED로 구분한다. 진행 문구는 ‘분석 중입니다.’다. 아래 자동 추출 예시는 후속 기능이며 현재 원문 RAG 완료 조건과 구분한다.
 
 ### GET `/api/projects/{id}/documents/{document_id}/analysis`
 
@@ -3752,6 +3779,10 @@ HTTP `200`.
 <a id="pln-a02"></a>
 
 ## PLN-A02. 문서 분석 재시도
+
+2026-10-27 원문 RAG 구현: FAILED만 새 attempt로 재접수한다. PENDING/RUNNING은 409 analysis_running, 완료 실행은 409 analysis_not_failed다. 같은 멱등 키는 같은 응답이다. 원본·사람 수정·승인 항목은 변경하지 않는다. lease 만료/서버 재시작 복구는 새 attempt/lease로 늦은 응답을 차단한다. 모델 미설정은 embedding_profile_not_configured, AI/출력 검증 실패는 상태 error_code로 기록한다.
+
+lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/analysis/retry`
 
@@ -4982,6 +5013,8 @@ HTTP `200`.
 
 ## DOC-A11. 문서·설계 검색
 
+SEMANTIC 검색은 프로젝트·현재 baseline의 정확한 승인 버전·embedding profile·domain·kind로 허용 청크를 MATERIALIZED CTE에 확정한 뒤 거리순 정확 검색을 수행한다. 전역 HNSW 후보의 사후 필터링에 의존하지 않는다. 동일 거리에서는 청크 ID로 정렬하고, 검색 전후 baseline이 바뀌면 baseline_changed로 거절한다.
+
 ### GET `/api/projects/{id}/search`
 
 문서·설계 검색 기능을 제공한다.
@@ -5076,7 +5109,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 현재 승인본만 검색하고 권한·프로젝트 필터를 검색 전에 적용한다.
-- 키워드는 오서현, 의미 검색·색인은 박상은이 담당한다.
+- BE 키워드·벡터 저장/검색·실행/manifest는 오서현, 청킹·임베딩·검색 전략 AI는 박상은 담당이다. KEYWORD는 현재 baseline의 문서/항목을 검색해 DOCUMENT/DESIGN_ITEM을, SEMANTIC은 READY 청크의 DOCUMENT_CHUNK를 반환한다. 원문 키워드 검색은 색인과 독립적이다. 출처 없는 HUMAN 승인 항목은 source를 생략한다.
 - 검색 실패를 빈 결과로 표시하지 않는다. 유사도와 승인 근거를 구분한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -5178,6 +5211,10 @@ HTTP `200`.
 
 ## DOC-A12. 변경용 원문 파일 업로드
 
+DOC-A01의 확정 입력·저장·공통 세션/요청 출처·멱등 정책을 적용한다. base_document_version_id는 같은 문서의 현재 baseline에 속한 정확한 승인 버전이어야 한다. 승인본이 없거나 오래된 기준이면 409 version_conflict. 새 DRAFT/영속 분석 작업을 원자적으로 생성하고 기존 승인 원본을 보존한다. file_name은 생성 다운로드 이름이다.
+
+화면의 ‘수정 초안 작성’은 현재 승인본을 조회할 때만 활성화한다. 최초 승인 전에는 제한 사유를 표시하고, 과거 버전 또는 DRAFT 조회 중에는 현재 승인본으로 이동할 수 있게 한다. 편집 중 baseline이 변경되면 서버의 version_conflict 검사를 그대로 적용한다.
+
 ### POST `/api/projects/{id}/documents/{document_id}/draft-versions`
 
 변경용 원문 파일 업로드 기능을 제공한다.
@@ -5236,7 +5273,7 @@ HTTP `201`.
 | `document_id` | `ID` | Y | 문서 ID |
 | `version_no` | `integer` | Y | 문서 내 버전 번호 |
 | `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태 |
-| `file_name` | `string` | Y | 원본 파일명 |
+| `file_name` | `string` | Y | 생성 다운로드명 |
 | `media_type` | `string` | Y | MIME |
 | `content_hash` | `string` | Y | 원본 해시 |
 | `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
@@ -5248,7 +5285,7 @@ HTTP `201`.
   "document_id": "201",
   "version_no": 2,
   "status": "DRAFT",
-  "file_name": "requirements.md",
+  "file_name": "document-201-v1.md",
   "media_type": "text/markdown",
   "content_hash": "sha256:example-document-hash",
   "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
@@ -9407,6 +9444,15 @@ HTTP `200`.
 - 현재 승인 설계·관련 작업을 읽고 출처와 미확정 사항을 함께 응답한다.
 - 모델 장애 시 템플릿 응답은 origin=TEMPLATE다. 실제 사용량을 만든 것으로 표시하지 않는다.
 - 장기 대화 저장은 이 API 계약에 포함하지 않는다. 공유할 판단은 기록 API로 제출한다.
+
+#### 원문 RAG 확장 — 2026-10-27
+
+BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-A09](03-ai-internal.md#ai-a09)를 따른다. 이 절은 원문 RAG 연동 시 적용할 확장 계약이며 현재 구현 완료를 뜻하지 않는다.
+
+- 요청에 `mode?: APPROVED|DOCUMENT_REVIEW`(기본 APPROVED), `document_version_ids?: ID[]`를 추가한다. DOCUMENT_REVIEW는 명시 목록 필수이며 BE가 현재 접근 권한을 재검사한다. APPROVED는 사용자 목록을 받지 않고 현재 baseline에서 정한다.
+- RAG 응답은 기존 text/sources/unresolved/usage에 `mode`, `document_version_ids`, APPROVED의 `baseline_id`를 추가한다. DOCUMENT_REVIEW 답변은 미승인 검토임을 표시한다. 내부 citations는 허용 evidence 집합으로 검증 후 기존 Source 형식에 매핑한다.
+- 미색인/프로필 미준비는 HTTP 409 `index_not_ready`, 최종 검사에서 baseline 변경은 HTTP 409 `baseline_changed`. 예전 승인본으로 대체하거나 자동 무한 재생성하지 않는다. 정상 검색 0건은 오류와 구분하고 근거 부족을 안내한다.
+- 기존 FE 계약은 확장 구현 시 함께 반영한다. 업로드/분석 상태 계약과 아직 미합의인 업로드 정책은 이 변경으로 덮어쓰지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
