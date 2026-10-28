@@ -1,4 +1,4 @@
-package com.beez.backend.task.dto;
+package com.beez.backend.common.api;
 
 import java.util.List;
 

@@ -1,10 +1,10 @@
 package com.beez.backend.task.service;
 
 import com.beez.backend.common.access.ProjectAccessChecker;
-import com.beez.backend.common.access.NotFound;
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.task.dto.PageResponse;
+import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.task.dto.TaskDetailResponse;
 import com.beez.backend.task.dto.TaskPlanRevisionResponse;
 import com.beez.backend.task.entity.Task;
@@ -218,7 +218,7 @@ public class TaskQueryService {
     private Task requireTask(Long projectId, Long taskId) {
         Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
         if (task.isEmpty()) {
-            throw NotFound.because("task_not_in_project task=" + taskId + " project=" + projectId);
+            throw AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId);
         }
         return task.get();
     }

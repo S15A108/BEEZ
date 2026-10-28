@@ -1,43 +1,40 @@
 package com.beez.backend.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.task.dto.TaskPlanInput;
+import com.beez.backend.task.service.TaskAssigneeService;
+import com.beez.backend.task.service.TaskPlanService;
 import java.net.http.HttpResponse;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.core.env.Environment;
-import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
+import org.springframework.http.HttpStatus;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * S15P31A108-156 작업 계획 등록·수정·조회. 실제 Postgres(pgvector pg17) + Flyway 위에서 HTTP 로 검증한다.
  * 규칙 출처: docs/design/04-task-lifecycle.md §4, docs/api/01-backend-rest.md TSK-A01~A06.
+ * 에이전트 호출은 MCP 전용이라 REST 로 보낼 수 없어(401), MCP 어댑터(-176)처럼 서비스를 직접 부른다.
  */
-@Tag("integration")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-@Testcontainers
-class TaskPlanApiIntegrationTests {
-
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer postgres = new PostgreSQLContainer(
-            DockerImageName.parse("pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d")
-                    .asCompatibleSubstituteFor("postgres"));
-
-    @Autowired
-    Environment env;
+class TaskPlanApiIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     DataSource dataSource;
+
+    @Autowired
+    ObjectMapper json;
+
+    @Autowired
+    TaskPlanService planService;
+
+    @Autowired
+    TaskAssigneeService assigneeService;
 
     TaskApiSupport api;
     Long projectId;
@@ -47,7 +44,7 @@ class TaskPlanApiIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        api = new TaskApiSupport(Integer.parseInt(env.getProperty("local.server.port")), dataSource);
+        api = new TaskApiSupport(this::client, dataSource);
         api.resetAndLoadFixture();
         projectId = api.projectId();
         leader = api.accountId("leader@test");
@@ -101,7 +98,7 @@ class TaskPlanApiIntegrationTests {
     }
 
     @Test
-    void create_withoutCallerHeader_is401() throws Exception {
+    void create_withoutLogin_is401() throws Exception {
         HttpResponse<String> res = api.post(tasksPath(), api.planJson("익명", api.readsRef("API-01"), "[]"), null);
 
         assertThat(res.statusCode()).isEqualTo(401);
@@ -161,12 +158,13 @@ class TaskPlanApiIntegrationTests {
 
     @Test
     void create_asAgent_recordsTokenOnRevision() throws Exception {
-        HttpResponse<String> res = api.postAsAgent(tasksPath(), api.planJson("에이전트 작성", api.readsRef("API-01"), "[]"),
-                member, api.agentTokenId());
+        TaskPlanInput input = json.readValue(api.planJson("에이전트 작성", api.readsRef("API-01"), "[]"), TaskPlanInput.class);
 
-        assertThat(res.statusCode()).isEqualTo(201);
-        assertThat(TaskApiSupport.longField(res.body(), "agent_token_id")).isEqualTo(api.agentTokenId());
-        assertThat(TaskApiSupport.longField(res.body(), "created_by")).isEqualTo(member);
+        String body = json.writeValueAsString(
+                planService.createTask(CallerContext.agent(member, api.agentTokenId()), projectId, input));
+
+        assertThat(TaskApiSupport.longField(body, "agent_token_id")).isEqualTo(api.agentTokenId());
+        assertThat(TaskApiSupport.longField(body, "created_by")).isEqualTo(member);
     }
 
     // ------------------------------------------------------------------
@@ -431,10 +429,13 @@ class TaskPlanApiIntegrationTests {
         HttpResponse<String> byMember = api.patch(tasksPath() + "/" + taskId + "/assignee", body, member);
         assertThat(byMember.statusCode()).isEqualTo(403);
 
-        // 팀장의 에이전트 토큰이라도 사람이 아니면 거절 (403 forbidden)
-        HttpResponse<String> byLeaderAgent = api.patchAsAgent(tasksPath() + "/" + taskId + "/assignee", body, leader, api.leaderAgentTokenId());
-        assertThat(byLeaderAgent.statusCode()).isEqualTo(403);
-        assertThat(byLeaderAgent.body()).contains("\"code\":\"forbidden\"").contains("사람만");
+        // 팀장의 에이전트 토큰이라도 사람이 아니면 거절 (403 forbidden). 메시지는 AccessErrors 로 통일
+        assertThatThrownBy(() -> assigneeService.changeAssignee(CallerContext.agent(leader, api.leaderAgentTokenId()),
+                projectId, taskId, api.memberId("leader@test"), (int) lockVersion))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getCode()).isEqualTo("forbidden");
+                });
 
         HttpResponse<String> byLeader = api.patch(tasksPath() + "/" + taskId + "/assignee", body, leader);
         assertThat(byLeader.statusCode()).isEqualTo(200);

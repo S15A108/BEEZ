@@ -1,8 +1,8 @@
 package com.beez.backend.task.service;
 
-import com.beez.backend.common.access.Membership;
+import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.access.ProjectAccessChecker;
-import com.beez.backend.common.access.NotFound;
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.dto.TaskDetailResponse;
@@ -75,13 +75,13 @@ public class TaskPlanService {
     // ------------------------------------------------------------------
     @Transactional
     public TaskDetailResponse createTask(CallerContext caller, Long projectId, TaskPlanInput input) {
-        Membership membership = access.requireMember(caller, projectId);
+        ProjectActor actor = access.requireMember(caller, projectId);
         PlanCommand plan = PlanCommand.from(input); // 문자열 ID → Long (형식 오류 400)
 
         // 1) 프로젝트 행 잠금 → 표시 키 발급이 겹치지 않게. UNIQUE(project_id, key) 가 최후 방어.
         boolean exists = designLookup.lockProject(projectId);
         if (!exists) {
-            throw NotFound.because("project_missing project=" + projectId);
+            throw AccessErrors.notFound("project_missing project=" + projectId);
         }
         String key = nextTaskKey(projectId);
 
@@ -92,7 +92,7 @@ public class TaskPlanService {
         }
 
         // 3) 작업 저장 (DRAFT). 담당자 = 호출자의 멤버 번호 (명세 TSK-A01)
-        Task task = tasks.save(Task.create(projectId, key, plan.title(), membership.memberId()));
+        Task task = tasks.save(Task.create(projectId, key, plan.title(), actor.memberId()));
 
         // 4) 선행 작업 검증은 task id 가 생긴 뒤에 (자기 자신 검사 때문)
         validateDependencies(projectId, task.getId(), plan.dependencyTaskIds());
@@ -113,7 +113,7 @@ public class TaskPlanService {
     @Transactional
     public TaskDetailResponse addRevision(CallerContext caller, Long projectId, Long taskId, TaskPlanInput input,
                                           int expectedRevisionNo, int expectedLockVersion) {
-        Membership membership = access.requireMember(caller, projectId);
+        ProjectActor actor = access.requireMember(caller, projectId);
         PlanCommand plan = PlanCommand.from(input); // 문자열 ID → Long (형식 오류 400)
         // 프로젝트 행을 먼저 잠근다. 같은 작업의 계획을 동시에 고치면 두 번째 요청은 여기서 기다렸다가
         // 아래 revision_no 비교에서 409 revision_conflict 를 받는다 (잠그지 않으면 UNIQUE(task_id, revision_no) 위반이 400 으로 샌다).
@@ -121,10 +121,10 @@ public class TaskPlanService {
         // 진행 중 계획 변경과 다른 작업의 START 가 엇갈려 같은 항목을 함께 CHANGES 점유하는 틈도 막는다.
         boolean exists = designLookup.lockProject(projectId);
         if (!exists) {
-            throw NotFound.because("project_missing project=" + projectId);
+            throw AccessErrors.notFound("project_missing project=" + projectId);
         }
         Task task = requireTask(projectId, taskId);
-        requireAssignee(task, membership);
+        requireAssignee(task, actor);
 
         if (task.getStatus().isClosed()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition",
@@ -301,16 +301,14 @@ public class TaskPlanService {
     private Task requireTask(Long projectId, Long taskId) {
         Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
         if (task.isEmpty()) {
-            throw NotFound.because("task_not_in_project task=" + taskId + " project=" + projectId);
+            throw AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId);
         }
         return task.get();
     }
 
     /** 계획 변경은 담당자 본인만 (사람 세션이든 그 사람의 에이전트 토큰이든 멤버 번호가 같으면 본인) */
-    private void requireAssignee(Task task, Membership membership) {
-        if (!membership.memberId().equals(task.getAssigneeMemberId())) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "forbidden", "담당자만 계획을 바꿀 수 있습니다");
-        }
+    private void requireAssignee(Task task, ProjectActor actor) {
+        actor.requireMemberId(task.getAssigneeMemberId(), "담당자만 계획을 바꿀 수 있습니다");
     }
 
     /** 정리된 참조 목록과, 항목별 확정 버전·관계 */

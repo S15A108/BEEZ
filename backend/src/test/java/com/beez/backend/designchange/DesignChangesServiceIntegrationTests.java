@@ -10,43 +10,22 @@ import com.beez.backend.designchange.dto.DesignChangesQuery;
 import com.beez.backend.designchange.dto.DesignChangesResponse;
 import com.beez.backend.designchange.dto.PublishedChangeResponse;
 import com.beez.backend.designchange.service.DesignChangesService;
+import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 /**
  * MCP-03 get_design_changes 를 서비스 직접 호출로 확인한다 (REST 경로가 명세에 없다).
  * 기준 설계 발행(오서현 -194)이 아직 없어 발행은 SQL 로 흉내 낸다: 새 항목 버전 → baseline + baseline_item → 제안 PUBLISHED.
  */
-@Tag("integration")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-@Testcontainers
-class DesignChangesServiceIntegrationTests {
-
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer postgres = new PostgreSQLContainer(
-            DockerImageName.parse("pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d")
-                    .asCompatibleSubstituteFor("postgres"));
-
-    @Autowired
-    Environment env;
+class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     DataSource dataSource;
@@ -62,7 +41,7 @@ class DesignChangesServiceIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        api = new TaskApiSupport(Integer.parseInt(env.getProperty("local.server.port")), dataSource);
+        api = new TaskApiSupport(this::client, dataSource);
         api.resetAndLoadFixture();
         projectId = api.projectId();
         leader = api.accountId("leader@test");
@@ -285,6 +264,49 @@ class DesignChangesServiceIntegrationTests {
         assertThat(res.items().get(0).baseline().versionNo()).isEqualTo(3);
         assertThat(res.validationValidity()).hasSize(1);
         assertThat(res.validationValidity().get(0).validationId()).isEqualTo(String.valueOf(passId));
+    }
+
+    // ---- 리뷰 반영: 번호 건너뜀·폐기 표시·영향 작업 범위 ----
+
+    @Test
+    void gapInVersionNumbers_comparesWithNearestLowerBaseline() {
+        Long api02v1 = api.currentVersionId("API-02");
+        Long api01v2 = newVersion("API-01", 2);
+        publish(2, Map.of("API-01", api01v2, "API-02", api02v1));
+        Long api01v4 = newVersion("API-01", 4);
+        publish(4, Map.of("API-01", api01v4, "API-02", api02v1));   // v3 없음
+
+        DesignChangesResponse res = call(asMember, 2, null, null, null);
+
+        assertThat(res.items()).hasSize(1);
+        assertThat(res.items().get(0).baseline().versionNo()).isEqualTo(4);
+        ChangedItemResponse c = find(res.items().get(0).changedItems(), String.valueOf(api.designItemId("API-01")));
+        assertThat(c.beforeVersionId()).isEqualTo(String.valueOf(api01v2));
+        assertThat(c.afterVersionId()).isEqualTo(String.valueOf(api01v4));
+    }
+
+    @Test
+    void affectedTasks_excludeCompleted_andIncludeChangesProposer() throws Exception {
+        long reads = createTask("읽는 작업", "API-01", member);
+        long proposes = createTaskWithRefs("제안한 작업", api.changesRef("API-01"), leader);
+        long completed = createTask("완료된 작업", "API-01", member);
+        long startedValidation = insertValidation(completed, "PASS", null);
+        api.jdbc.sql("update task set status = 'COMPLETED', started_validation_id = :v, completed_at = now() where id = :t")
+                .param("v", startedValidation).param("t", completed).update();
+
+        publish(2, Map.of("API-01", newVersion("API-01", 2), "API-02", api.currentVersionId("API-02")));
+
+        DesignChangesResponse res = call(asMember, 1, null, null, null);
+        assertThat(res.items()).hasSize(1);
+        assertThat(res.items().get(0).affectedTaskIds())
+                .containsExactlyInAnyOrder(String.valueOf(reads), String.valueOf(proposes))
+                .doesNotContain(String.valueOf(completed));
+    }
+
+    private long createTaskWithRefs(String title, String refsJson, Long account) throws Exception {
+        HttpResponse<String> created = api.post("/api/projects/" + projectId + "/tasks", api.planJson(title, refsJson, "[]"), account);
+        assertThat(created.statusCode()).isEqualTo(201);
+        return TaskApiSupport.longField(created.body(), "id");
     }
 
     // ---- 접근 ----

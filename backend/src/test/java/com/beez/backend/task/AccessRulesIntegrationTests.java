@@ -1,44 +1,32 @@
 package com.beez.backend.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.beez.backend.common.access.NotFound;
+import com.beez.backend.common.access.AccessErrors;
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.task.service.TaskQueryService;
 import java.net.http.HttpResponse;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.core.env.Environment;
-import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
+import org.springframework.http.HttpStatus;
 
 /**
  * ERD 소프트 삭제 칸과 -172 접근 거부 기준을 HTTP 로 확인한다.
  * project.archived_at / account.deleted_at / project_member.active / agent_token.revoked_at / design_item.retired_at
+ * 에이전트 토큰 규칙은 MCP 어댑터(-176)처럼 서비스를 직접 불러 확인한다 (에이전트는 REST 로 401).
  */
-@Tag("integration")
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-@Testcontainers
-class AccessRulesIntegrationTests {
-
-    @Container
-    @ServiceConnection
-    static final PostgreSQLContainer postgres = new PostgreSQLContainer(
-            DockerImageName.parse("pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d")
-                    .asCompatibleSubstituteFor("postgres"));
-
-    @Autowired
-    Environment env;
+class AccessRulesIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     DataSource dataSource;
+
+    @Autowired
+    TaskQueryService queryService;
 
     TaskApiSupport api;
     Long projectId;
@@ -48,7 +36,7 @@ class AccessRulesIntegrationTests {
 
     @BeforeEach
     void setUp() throws Exception {
-        api = new TaskApiSupport(Integer.parseInt(env.getProperty("local.server.port")), dataSource);
+        api = new TaskApiSupport(this::client, dataSource);
         api.resetAndLoadFixture();
         projectId = api.projectId();
         leader = api.accountId("leader@test");
@@ -75,17 +63,18 @@ class AccessRulesIntegrationTests {
         assertThat(byLeader.statusCode()).isEqualTo(404);
         assertThat(byMember.statusCode()).isEqualTo(404);
         // 삭제된 프로젝트와 없는 프로젝트가 응답으로 구분되지 않는다
-        assertThat(byLeader.body()).isEqualTo(missingTask.body()).contains(NotFound.MESSAGE);
+        assertThat(byLeader.body()).isEqualTo(missingTask.body()).contains(AccessErrors.NOT_FOUND_MESSAGE);
     }
 
     // ---- account.deleted_at ----
 
     @Test
-    void withdrawnAccount_isNotFound() throws Exception {
+    void withdrawnAccount_is401() throws Exception {
         api.jdbc.sql("update account set deleted_at = now(), email = null where id = :a").param("a", member).update();
 
+        // 이미 로그인한 세션으로 다시 부른다. 탈퇴로 세션이 무효라 401 (-170 리뷰 반영, 이전에는 404)
         HttpResponse<String> res = api.get(tasksPath() + "/" + taskId, member);
-        assertThat(res.statusCode()).isEqualTo(404);
+        assertThat(res.statusCode()).isEqualTo(401);
     }
 
     // ---- project_member.active ----
@@ -113,20 +102,25 @@ class AccessRulesIntegrationTests {
 
     @Test
     void revokedToken_is401() throws Exception {
-        Long token = api.agentTokenId();
-        assertThat(api.getAsAgent(tasksPath() + "/" + taskId, member, token).statusCode()).isEqualTo(200);
+        CallerContext agent = CallerContext.agent(member, api.agentTokenId());
+        assertThat(queryService.getTask(agent, projectId, taskId).id()).isEqualTo(String.valueOf(taskId));
 
-        api.jdbc.sql("update agent_token set revoked_at = now() where id = :t").param("t", token).update();
-        HttpResponse<String> res = api.getAsAgent(tasksPath() + "/" + taskId, member, token);
-        assertThat(res.statusCode()).isEqualTo(401);
-        assertThat(res.body()).contains("\"code\":\"token_revoked\"");
+        api.jdbc.sql("update agent_token set revoked_at = now() where id = :t").param("t", api.agentTokenId()).update();
+        assertDenied(() -> queryService.getTask(agent, projectId, taskId), HttpStatus.UNAUTHORIZED, "token_revoked");
     }
 
     @Test
     void someoneElsesToken_is401() throws Exception {
         // leader 계정으로 member 의 토큰을 씀
-        HttpResponse<String> res = api.getAsAgent(tasksPath() + "/" + taskId, leader, api.agentTokenId());
-        assertThat(res.statusCode()).isEqualTo(401);
+        CallerContext stolen = CallerContext.agent(leader, api.agentTokenId());
+        assertDenied(() -> queryService.getTask(stolen, projectId, taskId), HttpStatus.UNAUTHORIZED, "token_revoked");
+    }
+
+    private static void assertDenied(Runnable call, HttpStatus status, String code) {
+        assertThatThrownBy(call::run).isInstanceOfSatisfying(ApiException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(status);
+            assertThat(e.getCode()).isEqualTo(code);
+        });
     }
 
     // ---- design_item.retired_at ----

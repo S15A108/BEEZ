@@ -1,32 +1,39 @@
 package com.beez.backend.task;
 
-import com.beez.backend.common.auth.HeaderCallerResolver;
+import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.ApiClient;
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 
 /**
- * 통합 테스트 공통 도우미. 기존 BeezBackendApplicationTests 와 같은 방식(실제 포트 + JDK HttpClient)을 쓴다.
- * 호출자는 임시 헤더(HeaderCallerResolver, test 프로필)로 지정한다.
+ * 작업 통합 테스트 공통 도우미. 실제 포트 + 세션 로그인(-170)으로 호출한다.
+ * HTTP 메서드의 accountId 는 "그 계정으로 로그인한 세션"이다 — 계정마다 한 번 로그인해 세션을 재사용한다. null 이면 비로그인.
+ * 에이전트는 MCP 전용이라 REST 로 부를 수 없다(401). 에이전트 규칙은 서비스를 직접 불러 확인한다.
  */
 public class TaskApiSupport {
 
-    private final HttpClient http = HttpClient.newHttpClient();
-    private final String baseUrl;
+    /** 픽스처 계정은 모두 {@link AccessFixtures#PASSWORD} 로 로그인한다. bcrypt 는 느려서 한 번만 만든다 */
+    private static final String PASSWORD_HASH =
+            PasswordEncoderFactories.createDelegatingPasswordEncoder().encode(AccessFixtures.PASSWORD);
+
+    private final Supplier<ApiClient> newClient;
+    private final Map<Long, ApiClient> sessions = new ConcurrentHashMap<>();   // 동시 START 테스트가 여러 스레드에서 부른다
     private final DataSource dataSource;
     public final JdbcClient jdbc;
 
-    public TaskApiSupport(int port, DataSource dataSource) {
-        this.baseUrl = "http://localhost:" + port;
+    public TaskApiSupport(Supplier<ApiClient> newClient, DataSource dataSource) {
+        this.newClient = newClient;
         this.dataSource = dataSource;
         this.jdbc = JdbcClient.create(dataSource);
     }
@@ -36,6 +43,8 @@ public class TaskApiSupport {
     public void resetAndLoadFixture() {
         runSql("fixtures/project-reset.sql");
         runSql("fixtures/project-basic.sql");
+        jdbc.sql("update account set password_hash = :h").param("h", PASSWORD_HASH).update();
+        sessions.clear();
     }
 
     public void runSql(String classpath) {
@@ -87,44 +96,26 @@ public class TaskApiSupport {
 
     // ---- HTTP ----
 
-    public HttpResponse<String> post(String path, String json, Long accountId) throws Exception {
-        return send(builder(path, accountId, null).POST(HttpRequest.BodyPublishers.ofString(json)));
+    public HttpResponse<String> post(String path, String json, Long accountId) {
+        return as(accountId).post(path, json);
     }
 
-    public HttpResponse<String> postAsAgent(String path, String json, Long accountId, Long tokenId) throws Exception {
-        return send(builder(path, accountId, tokenId).POST(HttpRequest.BodyPublishers.ofString(json)));
+    public HttpResponse<String> patch(String path, String json, Long accountId) {
+        return as(accountId).patch(path, json);
     }
 
-    public HttpResponse<String> patch(String path, String json, Long accountId) throws Exception {
-        return send(builder(path, accountId, null).method("PATCH", HttpRequest.BodyPublishers.ofString(json)));
+    public HttpResponse<String> get(String path, Long accountId) {
+        return as(accountId).get(path);
     }
 
-    public HttpResponse<String> patchAsAgent(String path, String json, Long accountId, Long tokenId) throws Exception {
-        return send(builder(path, accountId, tokenId).method("PATCH", HttpRequest.BodyPublishers.ofString(json)));
-    }
-
-    public HttpResponse<String> getAsAgent(String path, Long accountId, Long tokenId) throws Exception {
-        return send(builder(path, accountId, tokenId).GET());
-    }
-
-    public HttpResponse<String> get(String path, Long accountId) throws Exception {
-        return send(builder(path, accountId, null).GET());
-    }
-
-    private HttpRequest.Builder builder(String path, Long accountId, Long tokenId) {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(baseUrl + path))
-                .header("Content-Type", "application/json");
-        if (accountId != null) {
-            b.header(HeaderCallerResolver.ACCOUNT_HEADER, String.valueOf(accountId));
+    /** 이 계정으로 로그인한 세션. 테스트 안에서 탈퇴·제외시킨 뒤에도 같은 세션으로 다음 요청을 보낼 수 있다 */
+    private ApiClient as(Long accountId) {
+        if (accountId == null) {
+            return newClient.get();
         }
-        if (tokenId != null) {
-            b.header(HeaderCallerResolver.AGENT_TOKEN_HEADER, String.valueOf(tokenId));
-        }
-        return b;
-    }
-
-    private HttpResponse<String> send(HttpRequest.Builder b) throws Exception {
-        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+        return sessions.computeIfAbsent(accountId, id -> newClient.get().login(
+                jdbc.sql("select email from account where id = :a").param("a", id).query(String.class).single(),
+                AccessFixtures.PASSWORD));
     }
 
     // ---- 요청 본문 ----
@@ -145,6 +136,14 @@ public class TaskApiSupport {
                   "no_contract_change": true
                 }
                 """.formatted(title, dependencyIdsJson, refsJson);
+    }
+
+    /** 항목을 CHANGES 로 참조하는 계획 (변경 후 내용 포함) */
+    public String changesRef(String key) {
+        return """
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "CHANGES",
+                  "proposed_content": {"method":"GET","path":"/x","response":{"memberId":"long"}}}]
+                """.formatted(designItemId(key), currentVersionId(key));
     }
 
     public String readsRef(String key) {
