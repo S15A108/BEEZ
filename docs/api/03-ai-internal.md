@@ -594,6 +594,10 @@ ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`�
 담당: BE: 오서현 / 작업 조회: 변준성 / AI: 양지훈 / FE: —  
 상태: 내부 계약 초안
 
+**#188 구현 제안 — BE 계약 협의 필요:** 기존 필드를 유지하면서 요청의 변경 사유 `reason`, 결과의 근거 상태 `result.evidence_status`, 후보의 `validation_id`를 추가한다. `validation_id`는 전달된 작업의 검증 ID만 사용할 수 있다. 근거 상태는 제공된 입력에 대한 평가이며 관련 작업이나 관계 전체가 검색됐다는 보장은 아니다. AI 결과와 BE의 규칙 후보·관계 경로는 별도로 보존한다. #197 저장 및 외부 API 형식은 이 제안만으로 확정하지 않는다.
+
+현재 V2의 `change_proposal_item`은 변경안의 `schema_version`을 보관하지 않는다. AI는 계약에 따라 CREATE·UPDATE의 `schema_version`을 필수로 검증하므로 BE는 값을 추측해 호출하지 않고 미평가로 처리한다. #195에서 정확한 버전의 저장·전달 방식을 합의해야 한다. 구조화 출력 `json_schema`는 공급자가 지원할 때 선택하며 기본값은 `json_object`다.
+
 #### 인증
 
 `INTERNAL_SERVICE`. 내부 Bearer 토큰으로 인증한다. 외부 사용자 세션이나 에이전트 토큰은 허용하지 않는다.
@@ -621,6 +625,7 @@ ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`�
 | `project_id` | `ID` | Y | 권한 검사를 완료한 프로젝트 |
 | `request_key` | `string` | Y | backend가 부여한 분석 요청 식별값. LLM별 실제 호출 key의 기준 |
 | `proposal_id` | `ID` | Y | 분석 제안 |
+| `reason` | `string` | N | 변경 제안 사유. #188 제안 필드 |
 | `changes` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 대상 항목 변경 |
 | `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 관련 승인 설계 |
 | `explicit_dependencies` | [DesignDependency[]](00-common.md#schema-designdependency) | Y | 확정 관계 |
@@ -757,6 +762,8 @@ HTTP `200`.
 | `model` | `string` | N | 실제 모델 호출 시 필수 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
 
+#188 제안 결과의 `result.evidence_status`는 `SUFFICIENT` 또는 `INSUFFICIENT`다. 승인된 기존 내용·변경안·작업 계획·문서 근거가 부족하면 `INSUFFICIENT`로 표현한다. `candidates`가 비어 있어도 프로젝트 전체에 영향이 없음을 의미하지 않는다. 후보에는 입력된 작업의 검증을 식별하기 위한 `validation_id`가 선택적으로 포함될 수 있다. 기존 `ImpactResult`·`ImpactCandidate` 공통 DTO 반영 및 #197 저장 방법은 담당자 합의가 필요하다.
+
 ```json
 {
   "result": {
@@ -802,6 +809,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 입력 타입·필수 값 오류 |
 | 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 413 | `invalid_ai_input` | #188 제안: 설정된 요청 본문 크기 초과 |
 | 422 | `invalid_ai_input` | 본문 업무 구조 부적합 |
 | 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
 | 504 | `model_timeout` | 모델 시간 초과 |
