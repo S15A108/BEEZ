@@ -92,10 +92,10 @@ async function upload(
   const file = context.form?.get('file')
   if (!(file instanceof Blob))
     fail(400, 'validation_failed', '원문 파일을 선택해 주세요.')
-  if (file.size > 10 * 1024 * 1024)
-    fail(413, 'file_too_large', '예시 파일은 10MB 이하여야 해요.')
+  if (file.size > 1024 * 1024)
+    fail(413, 'file_too_large', '파일은 1 MiB 이하여야 해요.')
   const fileName = file instanceof File ? file.name : 'document.md'
-  if (!/\.(md|markdown|txt)$/i.test(fileName))
+  if (!/\.(md|txt)$/i.test(fileName))
     fail(
       415,
       'unsupported_media_type',
@@ -104,6 +104,8 @@ async function upload(
   const content = await textOf(file)
   if (!content.trim())
     fail(400, 'validation_failed', '원문 내용이 비어 있어요.')
+  if ([...content].length > 100_000)
+    fail(413, 'file_too_large', '텍스트는 10만 문자 이하여야 해요.')
   let document = existingId
     ? findById(project.documents, existingId)
     : undefined
@@ -111,6 +113,10 @@ async function upload(
     const base = String(context.form?.get('base_document_version_id') ?? '')
     expectValue(document.approved_version?.id, base)
   } else {
+    if (
+      project.documents.some((item) => item.kind === context.form?.get('kind'))
+    )
+      fail(409, 'document_kind_exists', '같은 종류의 문서가 이미 있어요.')
     document = documentSchema.parse({
       id: nextId(context.database),
       project_id: project.project.id,

@@ -20,6 +20,7 @@ anthropic
 
 # Markdown 원문 구조 파싱 (프로필 변경 시 fixture 검증)
 markdown-it-py==4.2.0
+tiktoken==0.14.0
 
 # 테스트
 pytest

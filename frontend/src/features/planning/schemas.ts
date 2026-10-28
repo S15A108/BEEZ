@@ -13,6 +13,10 @@ export const analysisResponseSchema = z.object({
   items: common.designItemVersionSchema.array(),
   questions: common.planningQuestionSchema.array(),
   error_code: z.string().optional(),
+  source_status: z.enum(['PENDING', 'RUNNING', 'READY', 'FAILED']).optional(),
+  index_status: z.enum(['PENDING', 'RUNNING', 'READY', 'FAILED']).optional(),
+  attempt: z.number().int().positive().optional(),
+  message: z.string().optional(),
 })
 export type AnalysisResponse = z.infer<typeof analysisResponseSchema>
 
