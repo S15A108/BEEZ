@@ -4,6 +4,34 @@
 >
 > 이 설계는 PostgreSQL + pgvector에서 DDL과 불변식 시나리오 21개로 검증했다. DDL은 `backend/src/main/resources/db/migration/V2__init_schema.sql`에 있다. 머지된 마이그레이션 파일은 수정하지 않고, 구조 변경은 새 번호(V3__...) 파일로 추가한다.
 
+> 2026-10-28 / 194 추가: [문서별 검토·승인 구조](../api/01-backend-rest.md#document-review-workflow)는 V6에 추가한다. 문서별 승인본과 개발 기준 baseline을 구분하며, 아래 V2 도식은 신규 검토 테이블을 포함하지 않는다. 현재 개발 기준은 계속 project.current_baseline_id로 정한다. 문서 관리 화면은 별도 승인된 문서 버전을 조회할 수 있고, 해당 승인이 baseline 생성을 뜻하지 않는다.
+
+### V6 추가 관계
+
+| 테이블 | 참조·역할 |
+| --- | --- |
+| document_working_copy | document당 1개, owner account/초기 version/기준 version, 내용·revision·편집 상태 |
+| document_bee_review_request | document/account/request_key 실행 멱등성, 완료·실패·usage |
+| document_bee_review | working copy의 입력 revision/참고 스냅샷·검토 결과·usage |
+| document_bee_suggestion | review별 원문/대체문/설명과 작성자의 처리 선택 |
+| document_review_submission | document와 정확한 version/review를 연결하는 불변 제출. review/document 복합 FK, document/revision UNIQUE, 대기 제출 1개 |
+| notification (기존 재사용) | submission별 작성자 수신 결과. ref_kind=DOCUMENT_REVIEW_SUBMISSION, 반려 사유는 불변 submission 참조 |
+| document_original_cleanup | 참조가 바뀐 작성 파일의 영속 정리 큐. 제출 원본 참조는 삭제하지 않음 |
+
+문서별 승인에서는 document_version과 submission의 결정을 한 트랜잭션으로 저장한다. 최초 baseline 생성에서는 이 승인 기록을 고치지 않고 baseline 참조·수동 항목 승인·현재 기준 포인터를 한 트랜잭션으로 저장한다. 미제출 working copy와 제출 본문은 별도이며, 제출 후 DB 트리거로 본문 변경을 막는다.
+
+<a id="document-review-storage"></a>
+
+### 문서 검토 저장·원본 보존
+
+V6은 working copy, 비비 실행/결과/제안, 제출, 작성 원본 정리 큐를 추가한다. 작성자 알림과 모델 사용량은 기존 notification/llm_usage를 재사용한다. 195의 change_proposal 리비전 컬럼을 미리 넣지 않는다. 미병합 194의 V6에 통합하며 기존 V2~V5 migration은 변경하지 않는다.
+
+파일 원본은 private object storage에 보관한다. 직접 편집/제안 반영의 제출 파일은 정규화 UTF-8 본문으로 생성한다. 파일 재업로드 후 내용 편집이 없으면 재업로드한 원본 bytes를 보존한다. content_hash는 원본 bytes, text_hash는 정규화 본문을 나타낸다. 파일 PUT은 트랜잭션 밖, DB 참조·제출·멱등 응답은 한 트랜잭션이다. 실패 시 새 원본은 기존 보상 규칙으로 정리한다.
+
+더 이상 참조하지 않는 작성 파일은 영속 cleanup 큐에 넣는다. 정리 worker는 문서 버전/working copy 참조를 확인한 후 트랜잭션 밖에서 삭제한다. 제출·반려·승인 이력의 원본은 유지한다. 정리 실패는 재시도하며 `worker-enabled` 설정을 따른다.
+
+첫 제출에서 내부 v1의 내용을 고정할 때 색인 processing을 먼저 잠그고 attempt/lease를 교체한다. 이전 작업의 늦은 청크는 활성 결과가 되지 않는다. 새 본문의 색인이 완료되기 전에는 baseline을 생성할 수 없다.
+
 ## 0. v0.2 → v1.0 에서 바뀐 것
 
 | 리뷰 지적 | 결정 |
@@ -315,7 +343,7 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 
 ## 6. 남은 결정
 
-194 보완: 수동 항목 5종 content v1·DRAFT 편집·REJECTED 제외·전체 스냅샷·문서 4종 색인 후 최초 발행은 [확정 계약](07-initial-design-baseline.md)을 따른다. V6 design_http_command는 등록/최초 발행의 사용자·프로젝트·동작별 멱등 응답을 저장한다. 기존 V2~V5는 수정하지 않는다.
+194 보완: 수동 항목 5종 content v1·DRAFT 편집·REJECTED 제외·전체 스냅샷·문서 4종 색인 후 최초 발행은 [확정 계약](../api/01-backend-rest.md#pln-a10)을 따른다. V6 design_http_command는 등록/최초 발행의 사용자·프로젝트·동작별 멱등 응답을 저장한다. 기존 V2~V5는 수정하지 않는다.
 
 - 수동 항목 content v1은 194에서 확정. 자동 생성·확장 스키마는 오서현·박상은 검토
 - 임베딩 차원 N — 지금은 `vector(1024)` 임시값
