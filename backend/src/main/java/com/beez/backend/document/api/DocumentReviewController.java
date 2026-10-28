@@ -97,9 +97,4 @@ public class DocumentReviewController {
         return reviews.submission(caller, projectId, documentId, submissionId);
     }
 
-    @GetMapping("/document-review-notifications")
-    @Operation(summary = "작성자 본인의 문서 검토 결과 알림")
-    public List<DocumentReviewNotificationResponse> notifications(CallerContext caller, @PathVariable long projectId) {
-        return reviews.notifications(caller, projectId);
-    }
 }

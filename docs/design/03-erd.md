@@ -15,7 +15,6 @@
 | document_bee_review | working copy의 입력 revision/참고 스냅샷·검토 결과·usage |
 | document_bee_suggestion | review별 원문/대체문/설명과 작성자의 처리 선택 |
 | document_review_submission | document와 정확한 version/review를 연결하는 불변 제출. review/document 복합 FK, document/revision UNIQUE, 대기 제출 1개 |
-| notification (기존 재사용) | submission별 작성자 수신 결과. ref_kind=DOCUMENT_REVIEW_SUBMISSION, 반려 사유는 불변 submission 참조 |
 | document_original_cleanup | 참조가 바뀐 작성 파일의 영속 정리 큐. 제출 원본 참조는 삭제하지 않음 |
 
 문서별 승인에서는 document_version과 submission의 결정을 한 트랜잭션으로 저장한다. 최초 baseline 생성에서는 이 승인 기록을 고치지 않고 baseline 참조·수동 항목 승인·현재 기준 포인터를 한 트랜잭션으로 저장한다. 미제출 working copy와 제출 본문은 별도이며, 제출 후 DB 트리거로 본문 변경을 막는다.
@@ -24,7 +23,7 @@
 
 ### 문서 검토 저장·원본 보존
 
-V6은 working copy, 비비 실행/결과/제안, 제출, 작성 원본 정리 큐를 추가한다. 작성자 알림과 모델 사용량은 기존 notification/llm_usage를 재사용한다. 195의 change_proposal 리비전 컬럼을 미리 넣지 않는다. 미병합 194의 V6에 통합하며 기존 V2~V5 migration은 변경하지 않는다.
+V6은 working copy, 비비 실행/결과/제안, 제출, 작성 원본 정리 큐를 추가한다. 모델 사용량은 기존 llm_usage를 재사용한다. 문서 검토 알림은 전진 담당 공통 서비스 연동 TODO이며 문서 도메인은 notification에 직접 저장하지 않는다. 알림 대상 타입·중복 키·전달 보장은 담당자 계약 확정 후 반영한다. 195의 change_proposal 리비전 컬럼을 미리 넣지 않는다. 미병합 194의 V6에 통합하며 기존 V2~V5 migration은 변경하지 않는다.
 
 파일 원본은 private object storage에 보관한다. 직접 편집/제안 반영의 제출 파일은 정규화 UTF-8 본문으로 생성한다. 파일 재업로드 후 내용 편집이 없으면 재업로드한 원본 bytes를 보존한다. content_hash는 원본 bytes, text_hash는 정규화 본문을 나타낸다. 파일 PUT은 트랜잭션 밖, DB 참조·제출·멱등 응답은 한 트랜잭션이다. 실패 시 새 원본은 기존 보상 규칙으로 정리한다.
 

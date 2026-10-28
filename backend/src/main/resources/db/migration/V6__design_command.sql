@@ -79,7 +79,7 @@ CREATE TABLE document_review_submission (
   UNIQUE(document_id,revision)
 );
 CREATE UNIQUE INDEX ux_document_pending_submission ON document_review_submission(document_id) WHERE status='SUBMITTED';
--- Approval/rejection delivery reuses the existing notification table.
+-- 문서 검토 알림은 공통 알림 서비스 연동 후 제공한다. 문서 도메인은 notification에 직접 저장하지 않는다.
 CREATE FUNCTION protect_document_submission() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF OLD.status <> 'SUBMITTED' OR

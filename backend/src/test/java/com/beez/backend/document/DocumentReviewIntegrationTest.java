@@ -109,8 +109,8 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         code(() -> reviews.decide(author, project.projectId(), document, Long.parseLong(submission.id()), new DocumentDecisionRequest("APPROVE", null)), "forbidden");
         code(() -> reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), new DocumentDecisionRequest("REJECT", " ")), "validation_failed");
         reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), new DocumentDecisionRequest("REJECT", "누락 항목을 추가해 주세요."));
-        assertThat(reviews.notifications(author, project.projectId()).getFirst().rejectionReason()).contains("누락 항목");
-        assertThat(reviews.notifications(leader, project.projectId())).isEmpty();
+        assertThat(reviews.submission(author, project.projectId(), document, Long.parseLong(submission.id()))
+                .submission().rejectionReason()).contains("누락 항목");
         code(() -> reviews.submit(author, project.projectId(), document, new DocumentSubmissionRequest(copy().revision(), review.id()), "stale"), "review_stale");
         reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(copy().revision(), "# 보완\n로그인한다.", "plan.md"));
         var nextReview = review();
@@ -264,7 +264,8 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         }
         assertThat(baselines.publish(leader, request, "button").documents()).hasSize(4);
         assertThat(baselines.publish(leader, request, "button").versionNo()).isEqualTo(1);
-        assertThat(reviews.notifications(author, project.projectId())).hasSize(4);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM notification WHERE project_id=?", Integer.class,
+                project.projectId())).isZero();
         code(() -> reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "우회 변경", "plan.md")), "change_proposal_required");
         assertThat(reviews.decide(leader, project.projectId(), Long.parseLong(last.documentId()), Long.parseLong(last.id()),
                 new DocumentDecisionRequest("APPROVE", null)).status()).isEqualTo("APPROVED");

@@ -195,23 +195,6 @@ public class DocumentReviewRepository {
             jdbc.sql("UPDATE document_working_copy SET base_version_id=:version WHERE document_id=:document")
                     .params(Map.of("document", document, "version", version)).update();
         }
-        jdbc.sql("""
-                INSERT INTO notification(project_id,recipient_account_id,type,title,body,ref_kind,ref_id,dedupe_key)
-                SELECT project_id,:recipient,:type,:title,:body,'DOCUMENT_REVIEW_SUBMISSION',:id,:dedupe
-                FROM document WHERE id=:document ON CONFLICT(dedupe_key) DO NOTHING
-                """).params(Map.of("document", document, "id", id(submission, "id"), "recipient", submission.get("submitted_by"),
-                        "type", "DOCUMENT_REVIEW_" + status, "title", "APPROVED".equals(status) ? "문서가 승인되었습니다." : "문서가 반려되었습니다.",
-                        "body", reason == null ? "검토 요청한 문서가 승인되었습니다." : reason,
-                        "dedupe", "document-review-submission:" + id(submission, "id"))).update();
-    }
-
-    public List<Map<String, Object>> notifications(long project, long account) {
-        return rows("""
-                SELECT n.id,n.ref_id AS submission_id,n.created_at,s.document_id,s.status,s.rejection_reason FROM notification n
-                JOIN document_review_submission s ON s.id=n.ref_id JOIN document d ON d.id=s.document_id
-                WHERE n.ref_kind='DOCUMENT_REVIEW_SUBMISSION' AND n.project_id=:project
-                  AND d.project_id=:project AND n.recipient_account_id=:account ORDER BY n.id DESC
-                """, Map.of("project", project, "account", account));
     }
 
     public Optional<String> replay(long project, long actor, String operation, String key, String fingerprint) {

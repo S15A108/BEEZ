@@ -299,6 +299,7 @@ public class DocumentReviewService {
             if (previous.isPresent()) return JSON.readValue(previous.get(), DocumentSubmissionResponse.class);
             validateSubmission(project, document, copy, input.expectedRevision(), review);
             long submission = repository.submit(copy, review, original.reference(), source.contentHash(), source.textHash());
+            // [TODO] 전진님 공통 알림 서비스 계약 확정 후 팀장 검토 요청 알림 로직 넣기. 수신자·중복 키·전달 보장을 합의한다.
             var response = submissionView(repository.submission(project, document, submission).orElseThrow());
             repository.remember(project, caller.accountId(), operation, key, fingerprint, response);
             return response;
@@ -332,6 +333,7 @@ public class DocumentReviewService {
         var copy = copy(project, document);
         if (!"SUBMITTED".equals(copy.get("status")) || id(copy, "revision") != id(row, "revision")) throw conflict("version_conflict");
         repository.decide(row, caller.accountId(), state, reason);
+        // [TODO] 전진님 공통 알림 서비스 계약 확정 후 등록자 승인·반려 알림 로직 넣기. 제출 ID·결정·반려 사유를 전달한다.
         return submissionView(repository.submission(project, document, submission).orElseThrow());
     }
 
@@ -348,14 +350,6 @@ public class DocumentReviewService {
         var row = repository.submission(project, document, submission).orElseThrow(() -> AccessErrors.notFound("document_submission_missing"));
         return new DocumentSubmissionDetailResponse(submissionView(row), repository.submittedContent(id(row, "document_version_id")),
                 reviewView(repository.review(document, id(row, "bee_review_id")).orElseThrow()));
-    }
-
-    @Transactional(readOnly = true)
-    public List<DocumentReviewNotificationResponse> notifications(CallerContext caller, long project) {
-        member(caller, project);
-        return repository.notifications(project, caller.accountId()).stream().map(r -> new DocumentReviewNotificationResponse(
-                r.get("id").toString(), r.get("document_id").toString(), r.get("submission_id").toString(),
-                r.get("status").toString(), (String) r.get("rejection_reason"), time(r.get("created_at")))).toList();
     }
 
     private DocumentWorkingCopyResponse view(Map<String, Object> row) {

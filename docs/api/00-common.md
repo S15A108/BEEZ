@@ -143,7 +143,11 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 ### 기준 설계 발행
 
-초기 문서와 AI 생성 항목은 DRAFT다. 팀장이 검토한 원문·항목 버전을 승인하면 문서·항목 상태, baseline 두 스냅샷과 현재 포인터를 원자적으로 발행한다. 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면 409이며 최신 기준으로 제안을 갱신해 검토한다.
+초기 문서 버전과 수동 설계 항목은 DRAFT다. 최초 baseline 전에는 등록자가 문서를 보완하고 비비 검토·제안 처리를 마친 뒤 제출한다. 팀장은 문서별로 승인 또는 사유를 포함한 반려를 하며, 문서 승인 트랜잭션에서 해당 문서 버전과 제출의 결정 상태를 저장한다. 이때 baseline을 생성하지 않는다.
+
+필수 문서 4종의 승인·색인이 모두 완료되면 팀장이 별도 버튼으로 최초 baseline을 생성한다. project 행 잠금 아래 승인 문서·색인과 전체 검토 집합을 재확인하고, 수동 항목 승인·baseline_item·baseline_document·현재 포인터를 한 트랜잭션으로 저장한다. 이미 완료한 문서별 승인 상태를 이 단계에서 다시 변경하지 않는다.
+
+최초 발행 이후 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면 409이며 최신 기준으로 제안을 갱신해 검토한다.
 
 변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 성공 커밋 뒤 알림·활동은 중복 식별값으로 처리한다. 이벤트 전달 실패는 이미 완료한 발행을 다시 생성하는 이유가 아니다. D7·전달 유실 방지 세부는 Q03이다.
 
@@ -318,7 +322,6 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A19 문서 검토 요청 목록](01-backend-rest.md#doc-a19) | GET `/api/projects/{id}/document-review-submissions` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A20 문서 검토 제출 상세](01-backend-rest.md#doc-a20) | GET `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A21 문서별 승인·반려](01-backend-rest.md#doc-a21) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/decision` | HUMAN LEADER | 오서현 | — | 오서현 |
-| [DOC-A22 내 문서 검토 결과 알림](01-backend-rest.md#doc-a22) | GET `/api/projects/{id}/document-review-notifications` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A03 설계 변경 제안 상세·비교](01-backend-rest.md#chg-a03) | GET `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -698,19 +701,6 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `submission` | [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmission) | Y | 제출/결정 메타데이터 |
 | `content` | `string` | Y | 제출 당시 불변 본문 |
 | `review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | Y | 해당 제출에 연결한 검토 자료 |
-
-<a id="schema-documentreviewnotification"></a>
-
-### DocumentReviewNotification
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 알림 ID |
-| `document_id` | `ID` | Y | 대상 문서 |
-| `submission_id` | `ID` | Y | 결정한 제출 |
-| `status` | `APPROVED\|REJECTED` | Y | 결정 상태 |
-| `rejection_reason` | `string` | N | 반려 사유 |
-| `created_at` | `Time` | Y | 결과 알림 생성 시각 |
 
 <a id="schema-designitem-content-v1"></a>
 
