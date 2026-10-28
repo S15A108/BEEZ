@@ -71,13 +71,64 @@ public class DesignChangesService {
         if (in.sinceVersion() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "since_version 은 필수입니다");
         }
-        int since = in.sinceVersion();
         Long taskId = Ids.parse(in.taskId(), "task_id");
-        int limit = normalizeLimit(in.limit());
 
         // 현재 기준. 없으면 발행이 한 번도 안 된 프로젝트
         BaselineRow latest = findCurrentBaseline(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "baseline_missing", "승인된 기준 설계가 아직 없습니다"));
+        return build(actor, projectId, latest, in.sinceVersion(), true, taskId, in.cursor(), normalizeLimit(in.limit()),
+                "get_design_changes");
+    }
+
+    /**
+     * report_task_state(MCP-12) 응답의 changes. 그 작업의 <b>현재 계획을 세운 시점의 기준 설계 이후</b> 발행된 변경과
+     * 그 작업 검증의 유효성 (S15P31A108-166 결정). 명세 MCP-12 는 기준점을 정하지 않는다.
+     * <ul>
+     *   <li>계획이 근거 패킷을 가리키면 그 패킷의 기준 번호</li>
+     *   <li>아니면 계획 리비전 작성 시각 이전에 발행된 마지막 기준 번호 (그때 발행이 없었으면 0 — 모든 변경)</li>
+     * </ul>
+     * 처음 연결 규칙(since=0 → 최근 1건)은 쓰지 않는다. 기준 설계가 한 번도 없으면 null (호출자가 changes 를 비운다).
+     * 호출자는 이미 권한 검사를 통과한 actor 를 넘긴다. 조회 이력도 남긴다.
+     */
+    @Transactional
+    public DesignChangesResponse changesSincePlan(ProjectActor actor, Long projectId, Long taskId) {
+        Optional<BaselineRow> latest = findCurrentBaseline(projectId);
+        if (latest.isEmpty()) {
+            return null;
+        }
+        int since = planBaselineVersion(projectId, taskId);
+        if (since > latest.get().versionNo()) {
+            since = latest.get().versionNo();
+        }
+        return build(actor, projectId, latest.get(), since, false, taskId, null, DEFAULT_LIMIT, "report_task_state");
+    }
+
+    /** 현재 계획의 기준 번호. 패킷이 있으면 패킷 기준, 없으면 리비전 작성 시각 이전 마지막 발행. 없으면 0 */
+    private int planBaselineVersion(Long projectId, Long taskId) {
+        Optional<Integer> version = jdbc.sql("""
+                        select coalesce(
+                                 (select b.version_no from dev_context_packet k join baseline b on b.id = k.baseline_id
+                                   where k.id = r.context_packet_id and k.project_id = :projectId),
+                                 (select max(b.version_no) from baseline b
+                                   where b.project_id = :projectId and b.published_at <= r.created_at),
+                                 0)
+                          from task t
+                          join task_plan_revision r on r.id = t.current_plan_revision_id
+                         where t.id = :taskId and t.project_id = :projectId
+                        """)
+                .param("projectId", projectId)
+                .param("taskId", taskId)
+                .query(Integer.class)
+                .optional();
+        if (version.isEmpty()) {
+            return 0;
+        }
+        return version.get();
+    }
+
+    private DesignChangesResponse build(ProjectActor actor, Long projectId, BaselineRow latest, int since,
+                                        boolean firstConnectRule, Long taskId, String cursorText, int limit,
+                                        String tool) {
 
         // 오류표: 음수 또는 현재보다 큰 기준 번호 → 400 invalid_version
         if (since < 0 || since > latest.versionNo()) {
@@ -87,15 +138,15 @@ public class DesignChangesService {
         // 첫 페이지 시점의 최신 번호(ceiling)를 cursor 에 고정한다. 페이지 도중 새 발행이 생겨도 목록이 흔들리지 않는다
         int ceiling = latest.versionNo();
         Integer before = null;
-        if (in.cursor() != null && !in.cursor().isBlank()) {
-            ChangesCursor cursor = ChangesCursor.decode(in.cursor());
+        if (cursorText != null && !cursorText.isBlank()) {
+            ChangesCursor cursor = ChangesCursor.decode(cursorText);
             cursor.requireSameQuery(since, taskId);
             ceiling = cursor.ceiling();
             before = cursor.lastVersion();
         }
         // since=0 은 "처음 연결": 현재 기준과 가장 최근 변경 하나만 (정한 것 1)
         int effectiveSince = since;
-        if (since == 0) {
+        if (firstConnectRule && since == 0) {
             effectiveSince = ceiling - 1;
         }
 
@@ -140,7 +191,7 @@ public class DesignChangesService {
         List<ValidationValidityResponse> validity = findValidationValidity(projectId, actor.memberId(), taskId);
 
         // 조회 이력 (CTX-05·06): 어느 기준 설계를 기준으로 변경을 봤는지. 작업 소속 확인은 recorder 가 한다
-        accessLog.record(actor, taskId, "get_design_changes", ContextAccessRecorder.KIND_BASELINE,
+        accessLog.record(actor, taskId, tool, ContextAccessRecorder.KIND_BASELINE,
                 current.id(), current.id(), null);
         return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
     }
