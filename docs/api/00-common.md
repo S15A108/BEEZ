@@ -1,8 +1,10 @@
 # BEEZ API Common
 
-버전: 0.6 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.7 · 갱신일: 2026-10-28 · 개발 계약 초안
 
 2026-10-27: 원문 RAG의 SourceLocator·RetrievalScope·RetrievedEvidence를 추가했다. 관련 내부 호출은 AI-A09와 AI-A04/05 확장을 따른다. 기존 문서/승인 상태나 비RAG 계약을 일괄 변경하지 않는다.
+
+2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
 ## 1. 문서 안내
 
@@ -333,6 +335,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CTX-A03 작업 기록 상세](01-backend-rest.md#ctx-a03) | GET `/api/projects/{id}/context-records/{record_id}` | MEMBER / RECORD_AUTHOR | 변준성 | — | 박민용 |
 | [CTX-A04 공유 작업 기록 생성·리비전 추가](01-backend-rest.md#ctx-a04) | POST `/api/projects/{id}/context-records` | MEMBER | 변준성(저장·조회), 전진(MCP 계약) | 박상은(검색·맥락) | 박민용 |
 | [CTX-A05 작업 설계 근거 추천](01-backend-rest.md#ctx-a05) | POST `/api/projects/{id}/design-reference-suggestions` | MEMBER | 변준성 | 양지훈(근거 추천) / 박상은(검색) | 박민용 |
+| [CTX-A06 컨텍스트 조회 이력](01-backend-rest.md#ctx-a06) | GET `/api/projects/{id}/context-access-logs` | LEADER | 변준성 | — | 박민용 |
 | [BEE-A01 비비에게 질문](01-backend-rest.md#bee-a01) | POST `/api/projects/{id}/bee/questions` | MEMBER | 오서현(문서 조회·생성 연결) | 박상은 | 박상은 |
 | [BEE-A02 작업 역할 분담 추천](01-backend-rest.md#bee-a02) | POST `/api/projects/{id}/assignment-suggestions` | MEMBER | 변준성 | 박상은 | 박상은 |
 | [MTG-A01 회의 생성](01-backend-rest.md#mtg-a01) | POST `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
@@ -1020,6 +1023,25 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `summary` | `string` | Y | 검색용 공유 요약 |
 | `detail` | `string` | Y | 명시적으로 제출한 상세 기록 |
 | `design_refs` | [VersionRef[]](00-common.md#schema-versionref) | Y | 당시 참조 버전 |
+
+<a id="schema-contextaccesslog"></a>
+
+### ContextAccessLog
+
+누가 어떤 설계 버전·패킷·기록을 봤는지 (ERD context_access_log, CTX-05·06). 원문·토큰 값은 없다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 이력 ID |
+| `account_id` | `ID` | Y | 호출 계정. 에이전트면 토큰 소유 계정 |
+| `agent_token_id` | `ID` | N | 에이전트 호출이면 토큰. 사람 세션은 생략 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `tool` | `string` | Y | 도구·API 이름. 예: get_design_changes, get_development_context, CTX-A01 |
+| `target_kind` | `BASELINE\|PACKET\|CONTEXT_RECORD` | Y | 본 대상의 종류 |
+| `target_id` | `ID` | N | 본 대상 |
+| `baseline_id` | `ID` | N | 그때 참조한 기준 설계 |
+| `packet_id` | `ID` | N | 봤거나 만든 패킷 |
+| `accessed_at` | `Time` | Y | 조회 시각 |
 
 <a id="schema-contextrecordsummary"></a>
 

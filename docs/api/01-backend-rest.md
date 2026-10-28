@@ -1,6 +1,6 @@
 # BEEZ Backend REST API
 
-버전: 0.5 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.6 · 갱신일: 2026-10-28 · 개발 계약 초안
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -92,6 +92,7 @@
 - [CTX-A03 작업 기록 상세](#ctx-a03)
 - [CTX-A04 공유 작업 기록 생성·리비전 추가](#ctx-a04)
 - [CTX-A05 작업 설계 근거 추천](#ctx-a05)
+- [CTX-A06 컨텍스트 조회 이력](#ctx-a06)
 - [BEE-A01 비비에게 질문](#bee-a01)
 - [BEE-A02 작업 역할 분담 추천](#bee-a02)
 - [MTG-A01 회의 생성](#mtg-a01)
@@ -9331,6 +9332,107 @@ HTTP `200`.
 
 - 추천과 확정 관계를 구분한다. 추천 조회는 계획·검증 상태를 바꾸지 않는다.
 - 확정 시 새 계획 리비전에 참조를 기록하고 필요하면 재검증한다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="ctx-a06"></a>
+
+## CTX-A06. 컨텍스트 조회 이력
+
+### GET `/api/projects/{id}/context-access-logs`
+
+누가 어떤 설계 버전·패킷·기록을 봤는지 이력을 조회한다. 도구 호출 감사 기록(mcp_audit_log, MCP-08·09)과 다르다 — 그쪽은 호출·결과·지연, 여기는 **본 대상과 참조 버전**이다.
+
+관련 요구사항: CTX-05·06  
+담당: BE: 변준성 / AI: — / FE: 박민용  
+상태: 담당자 제안 (S15P31A108-165)
+
+#### 인증
+
+`LEADER`. 세션 인증과 역할·소유 조건을 검사한다. 사람 세션의 팀장만 조회할 수 있다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+
+#### Query Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | N | 작업 필터. 없거나 다른 프로젝트 작업이면 0건 |
+| `tool` | `string` | N | 도구·API 이름 필터. 예: `get_design_changes` |
+| `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
+| `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
+
+#### Request
+
+없음.
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `items` | [ContextAccessLog[]](00-common.md#schema-contextaccesslog) | Y | 최신순 |
+| `has_more` | `boolean` | Y | 다음 페이지 존재 |
+| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환 |
+
+```json
+{
+  "items": [
+    {
+      "id": "901",
+      "account_id": "11",
+      "agent_token_id": "31",
+      "task_id": "501",
+      "tool": "get_design_changes",
+      "target_kind": "BASELINE",
+      "target_id": "401",
+      "baseline_id": "401",
+      "accessed_at": "2026-10-27T03:00:00Z"
+    }
+  ],
+  "has_more": false
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+
+```json
+{
+  "error": {
+    "code": "forbidden",
+    "message": "팀장만 할 수 있습니다"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 기록 지점: 설계 내용을 돌려주는 조회 — `get_development_context`(패킷 생성), `read_context`, `get_design_changes`, CTX-A01, CTX-A03. 검색 목록(`find_context`, CTX-A02)은 감사 기록이 덮으므로 남기지 않는다.
+- 조회와 같은 트랜잭션에서 기록한다. 조회가 성공하면 이력이 반드시 한 건 있다.
+- 호출 계정은 항상 기록한다. 에이전트 호출이면 토큰 소유 계정과 토큰 번호를 함께 남긴다.
+- 요청 문장·기록 원문·토큰 값은 기록하지 않는다. 번호만 남긴다.
+- 이력은 수정·삭제하지 않는다. 작업·기준·토큰은 같은 프로젝트 것만 저장한다(DB 복합 FK). 다른 프로젝트 작업 번호가 오면 작업 칸을 비워 저장한다.
+- 필터는 페이지를 자르기 전에 건다. 다른 프로젝트의 `task_id`는 오류 없이 0건이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

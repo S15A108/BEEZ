@@ -5,6 +5,7 @@ import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.contextaccess.service.ContextAccessRecorder;
 import com.beez.backend.designchange.dto.BaselineSummaryResponse;
 import com.beez.backend.designchange.dto.ChangedItemResponse;
 import com.beez.backend.designchange.dto.DesignChangesQuery;
@@ -54,13 +55,16 @@ public class DesignChangesService {
 
     private final ProjectAccessChecker access;
     private final JdbcClient jdbc;
+    private final ContextAccessRecorder accessLog;
 
-    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc) {
+    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc, ContextAccessRecorder accessLog) {
         this.access = access;
         this.jdbc = jdbc;
+        this.accessLog = accessLog;
     }
 
-    @Transactional(readOnly = true)
+    /** 읽기 전용이 아닌 이유: 조회 이력(-165)을 같은 트랜잭션에 남긴다 */
+    @Transactional
     public DesignChangesResponse getChanges(CallerContext caller, Long projectId, DesignChangesQuery in) {
         ProjectActor actor = access.requireMember(caller, projectId);
 
@@ -134,6 +138,10 @@ public class DesignChangesService {
         }
 
         List<ValidationValidityResponse> validity = findValidationValidity(projectId, actor.memberId(), taskId);
+
+        // 조회 이력 (CTX-05·06): 어느 기준 설계를 기준으로 변경을 봤는지. 작업 소속 확인은 recorder 가 한다
+        accessLog.record(actor, taskId, "get_design_changes", ContextAccessRecorder.KIND_BASELINE,
+                current.id(), current.id(), null);
         return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
     }
 
