@@ -74,7 +74,11 @@ public class BaselinePublishService {
                 || !sameIds(itemVersions, drafts) || !snapshots.hash(project).equals(input.draftSnapshotHash())) {
             throw conflict("draft_changed");
         }
+        if (baselines.hasUnapprovedWorkingCopies(project)) throw conflict("document_not_approved");
         for (var document : documents) {
+            if (!"APPROVED".equals(document.get("status"))) {
+                throw conflict("document_not_approved");
+            }
             if (document.get("content_text") == null || document.get("content_text").toString().isBlank()) {
                 throw invalid("문서 본문이 필요합니다.");
             }
@@ -96,10 +100,6 @@ public class BaselinePublishService {
         long baselineId = id(baseline, "id");
         for (var document : documents) {
             long version = id(document, "id");
-            int changed = baselines.approveDocument(version, caller.accountId());
-            if (changed != 1) {
-                throw conflict("draft_changed");
-            }
             baselines.insertDocumentRef(baselineId, project, id(document, "document_id"), version);
         }
         for (var draft : drafts) {

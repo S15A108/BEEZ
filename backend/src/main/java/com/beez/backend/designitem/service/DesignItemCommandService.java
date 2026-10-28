@@ -29,15 +29,18 @@ public class DesignItemCommandService {
     private final DesignCommandService commands;
     private final DesignContentValidator content;
     private final DesignItemQueryService queries;
+    private final DesignSnapshotService snapshots;
 
     public DesignItemCommandService(DesignItemRepository items, BaselineRepository baselines, DesignProjectLock locks,
-                                    DesignCommandService commands, DesignContentValidator content, DesignItemQueryService queries) {
+                                    DesignCommandService commands, DesignContentValidator content, DesignItemQueryService queries,
+                                    DesignSnapshotService snapshots) {
         this.items = items;
         this.baselines = baselines;
         this.locks = locks;
         this.commands = commands;
         this.content = content;
         this.queries = queries;
+        this.snapshots = snapshots;
     }
 
     @Transactional
@@ -87,6 +90,18 @@ public class DesignItemCommandService {
         requireInitial(project);
         var current = editable(project, item, version, input.expectedContentHash());
         String title = content.validate(current.kind(), current.schemaVersion(), input.content());
+        if (Boolean.TRUE.equals(input.replaceSource())) {
+            if (input.expectedDraftSnapshotHash() == null || !input.expectedDraftSnapshotHash().equals(snapshots.hash(project))) {
+                throw conflict("draft_changed");
+            }
+            Long source = Ids.parse(input.sourceDocumentVersionId(), "source_document_version_id");
+            if (source != null) queries.requireSource(project, source);
+            else if (input.sourceLocation() != null) throw invalid("source_location에는 원문 버전이 필요합니다.");
+            items.updateDraftSource(item, version, source,
+                    source == null || input.sourceLocation() == null ? null : canonical(Map.of("location", input.sourceLocation())));
+        } else if (input.sourceDocumentVersionId() != null || input.sourceLocation() != null) {
+            throw invalid("출처 변경에는 replace_source=true가 필요합니다.");
+        }
         int changed = items.updateDraft(item, version, title, canonical(input.content()), hash(input.content()), input.expectedContentHash());
         if (changed != 1) {
             throw conflict("version_conflict");

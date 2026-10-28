@@ -18,12 +18,15 @@ public class BaselineRepository {
                 .param("project", project).query(Long.class).optional().isPresent();
     }
 
-    public List<Map<String, Object>> findLatestDraftDocuments(long project) {
+    public List<Map<String, Object>> findLatestDocuments(long project) {
         return jdbc.sql("""
                 SELECT DISTINCT ON (d.id) d.id AS document_id,d.type,v.id,v.version_no,v.status,
                        v.content_hash,v.content_text,v.parent_version_id
                   FROM document d JOIN document_version v ON v.document_id=d.id
-                 WHERE d.project_id=:project AND v.status='DRAFT'
+                 WHERE d.project_id=:project AND v.status IN ('DRAFT','APPROVED')
+                   AND (NOT EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id)
+                        OR EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id AND w.initial_version_id=v.id)
+                        OR EXISTS (SELECT 1 FROM document_review_submission s WHERE s.document_version_id=v.id))
                  ORDER BY d.id,v.version_no DESC
                 """).param("project", project).query().listOfRows();
     }
@@ -33,11 +36,14 @@ public class BaselineRepository {
                 .params(Map.of("project", project, "actor", actor)).query().singleRow();
     }
 
-    public int approveDocument(long version, long actor) {
-        return jdbc.sql("""
-                UPDATE document_version SET status='APPROVED',approved_by=:actor,approved_at=now(),
-                       updated_at=now(),lock_version=lock_version+1 WHERE id=:id AND status='DRAFT'
-                """).params(Map.of("actor", actor, "id", version)).update();
+    public List<Map<String, Object>> workingCopyStates(long project) {
+        return jdbc.sql("SELECT w.document_id,w.revision,w.status FROM document_working_copy w JOIN document d ON d.id=w.document_id WHERE d.project_id=:project ORDER BY w.document_id")
+                .param("project", project).query().listOfRows();
+    }
+
+    public boolean hasUnapprovedWorkingCopies(long project) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM document_working_copy w JOIN document d ON d.id=w.document_id WHERE d.project_id=:project AND w.status<>'APPROVED')")
+                .param("project", project).query(Boolean.class).single();
     }
 
     public int approveItem(long version) {

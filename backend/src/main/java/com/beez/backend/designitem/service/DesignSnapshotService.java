@@ -24,7 +24,7 @@ public class DesignSnapshotService {
     }
 
     public List<Map<String, Object>> documents(long project) {
-        return baselines.findLatestDraftDocuments(project);
+        return baselines.findLatestDocuments(project);
     }
 
     public List<Map<String, Object>> items(long project) {
@@ -33,7 +33,7 @@ public class DesignSnapshotService {
 
     public String hash(long project) {
         var docs = documents(project).stream().map(r -> List.of(r.get("document_id"), r.get("type"),
-                r.get("id"), r.get("content_hash"))).toList();
+                r.get("id"), r.get("content_hash"), r.get("status"))).toList();
         var items = items(project).stream().map(r -> {
             var source = r.get("source_document_version_id");
             var locator = r.get("source_locator");
@@ -43,6 +43,6 @@ public class DesignSnapshotService {
         }).toList();
         Long baseline = projects.currentBaselineId(project);
         return DesignJson.hash(Map.of("project_id", project, "baseline_id", baseline == null ? "" : baseline,
-                "documents", docs, "items", items));
+                "documents", docs, "items", items, "working_copies", baselines.workingCopyStates(project)));
     }
 }

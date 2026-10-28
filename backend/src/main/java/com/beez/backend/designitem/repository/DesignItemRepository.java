@@ -114,6 +114,13 @@ public class DesignItemRepository {
                 """).params(Map.of("version", version, "item", item, "hash", expectedHash)).update();
     }
 
+    public void updateDraftSource(long item, long version, Long source, String locator) {
+        var params = new HashMap<String, Object>();
+        params.put("item", item); params.put("version", version); params.put("source", source); params.put("locator", locator);
+        jdbc.sql("UPDATE design_item_version SET source_document_version_id=:source,source_locator=cast(:locator AS jsonb),updated_at=now() WHERE design_item_id=:item AND id=:version AND status='DRAFT'")
+                .params(params).update();
+    }
+
     public boolean isActive(long item) {
         return jdbc.sql("SELECT id FROM design_item WHERE id=:item AND retired_at IS NULL")
                 .param("item", item).query(Long.class).optional().isPresent();

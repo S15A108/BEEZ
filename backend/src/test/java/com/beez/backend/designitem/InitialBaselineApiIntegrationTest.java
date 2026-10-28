@@ -90,6 +90,20 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_document WHERE baseline_id=?", Integer.class, result.path("id").asLong())).isEqualTo(4);
     }
 
+    @Test void baselineButtonCannotApproveUnapprovedDocumentsAndDoesNotChangeDocumentApprovalHistory() throws Exception {
+        var docs = documents(true);
+        var item = create("별도 생성");
+        long version = docs.getFirst();
+        jdbc.update("UPDATE document_version SET status='DRAFT',approved_at=null WHERE id=?", version);
+        var request = input(docs, List.of(Long.parseLong(item.id())));
+        assertThat(json(publish(request, "not-approved"), 409).path("error").path("code").asText()).isEqualTo("document_not_approved");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline WHERE project_id=?", Integer.class, p.projectId())).isZero();
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_by=?,approved_at=now() WHERE id=?", p.leaderAccountId(), version);
+        String approvedAt = jdbc.queryForObject("SELECT approved_at::text FROM document_version WHERE id=?", String.class, version);
+        json(publish(input(docs, List.of(Long.parseLong(item.id()))), "separate-button"), 201);
+        assertThat(jdbc.queryForObject("SELECT approved_at::text FROM document_version WHERE id=?", String.class, version)).isEqualTo(approvedAt);
+    }
+
     @Test void completeItemSetHashAndSourceVersionAreValidatedBeforeApproval() throws Exception {
         var docs = documents(true);
         var first = create("첫 항목");
@@ -116,7 +130,7 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
             assertThatThrownBy(() -> baselines.publish(actor, input, "rollback")).isInstanceOf(RuntimeException.class);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline WHERE project_id=?", Integer.class, p.projectId())).isZero();
             assertThat(jdbc.queryForObject("SELECT status FROM design_item_version WHERE id=?", String.class, Long.parseLong(item.id()))).isEqualTo("DRAFT");
-            assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version v JOIN document d ON d.id=v.document_id WHERE d.project_id=? AND v.status='APPROVED'", Integer.class, p.projectId())).isZero();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version v JOIN document d ON d.id=v.document_id WHERE d.project_id=? AND v.status='APPROVED'", Integer.class, p.projectId())).isEqualTo(4);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM design_http_command WHERE project_id=? AND operation='initial-baseline'", Integer.class, p.projectId())).isZero();
         } finally { jdbc.execute("ALTER TABLE project DROP CONSTRAINT " + constraint); }
         assertThat(baselines.publish(actor, input, "rollback").versionNo()).isEqualTo(1);
@@ -194,10 +208,25 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
                 """, Long.class, source);
         jdbc.update("INSERT INTO document_processing(document_version_id,status,text_hash) SELECT ?, 'PENDING',text_hash FROM document_processing WHERE document_version_id=?", next, source);
         ready(next);
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now() WHERE id=?", next);
         var currentDocs = new ArrayList<>(docs); currentDocs.set(0, next);
         var input = input(currentDocs, List.of(Long.parseLong(item.id())));
         assertThat(json(publish(input, "old-source"), 400).path("error").path("code").asText()).isEqualTo("validation_failed");
         assertThat(jdbc.queryForObject("SELECT id FROM document WHERE id=?", Long.class, document)).isEqualTo(document);
+        var changed = commands.update(actor, Long.parseLong(item.designItemId()), new UpdateDesignItemRequest(
+                Long.toString(p.projectId()), item.id(), item.content(), item.contentHash(), true,
+                Long.toString(next), "2절", queries.list(actor, p.projectId(), "DRAFT", null, null, null, 100).draftSnapshotHash()));
+        assertThat(changed.key()).isEqualTo(item.key());
+        assertThat(changed.source().documentVersionId()).isEqualTo(Long.toString(next));
+        codeStaleSourceEdit(item, next);
+        json(publish(input(currentDocs, List.of(Long.parseLong(item.id()))), "fixed-source"), 201);
+    }
+
+    private void codeStaleSourceEdit(DesignItemResponse item, long next) {
+        assertThatThrownBy(() -> commands.update(actor, Long.parseLong(item.designItemId()), new UpdateDesignItemRequest(
+                Long.toString(p.projectId()), item.id(), item.content(), item.contentHash(), true,
+                Long.toString(next), "이전 화면", "stale-snapshot")))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("draft_changed"));
     }
 
     private List<Long> documents(boolean completed) throws Exception {
@@ -208,8 +237,8 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
             String text = "# " + type + "\n내용";
             String hash = "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
             long version = jdbc.queryForObject("""
-                    INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by)
-                    VALUES(?,1,'DRAFT',?,?,?,?) RETURNING id
+                    INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_at)
+                    VALUES(?,1,'APPROVED',?,?,?,?,now()) RETURNING id
                     """, Long.class, document, UUID.randomUUID() + ".md", hash, text, p.leaderAccountId());
             jdbc.update("INSERT INTO document_processing(document_version_id,status,text_hash) VALUES(?,'PENDING',?)", version, hash);
             result.add(version);

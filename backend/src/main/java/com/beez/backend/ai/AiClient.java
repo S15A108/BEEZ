@@ -59,4 +59,10 @@ public class AiClient {
     public java.util.Map<String, Object> documentEmbeddings(java.util.Map<String, Object> input) {
         return rest.post().uri("/v1/embeddings").body(input).retrieve().body(java.util.Map.class);
     }
+
+    /** BE adapter contract; AI feature implementation belongs to the AI owner. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
+    }
 }
