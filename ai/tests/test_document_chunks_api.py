@@ -133,6 +133,44 @@ def test_chunk_http_contract_and_authentication(client):
     assert data["result"]["chunks"][0]["source_spans"]
 
 
+def test_be_prefixed_hashes_are_accepted_and_text_hash_is_echoed(client):
+    payload = chunk_request("# 계약\n\n원문\n")
+    bare = client.post(
+        "/v1/document-chunks",
+        json=payload,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert bare.status_code == 200
+    payload["content_hash"] = "sha256:" + payload["content_hash"]
+    payload["text_hash"] = "sha256:" + payload["text_hash"]
+    response = client.post(
+        "/v1/document-chunks",
+        json=payload,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["text_hash"] == payload["text_hash"]
+    assert response.json()["result"]["manifest"]["text_hash"] == payload[
+        "text_hash"
+    ].removeprefix("sha256:")
+    assert (
+        response.json()["result"]["manifest"]["expected_chunk_keys"]
+        == bare.json()["result"]["manifest"]["expected_chunk_keys"]
+    )
+
+
+def test_be_prefixed_incorrect_text_hash_is_rejected(client):
+    payload = chunk_request("# 계약\n")
+    payload["text_hash"] = "sha256:" + "0" * 64
+    response = client.post(
+        "/v1/document-chunks",
+        json=payload,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_ai_input"
+
+
 def test_published_fixture_matches_http_contract(client):
     fixtures = Path(__file__).resolve().parents[2] / "docs/api/examples/document-chunks"
     payload = json.loads((fixtures / "request.json").read_text(encoding="utf-8"))

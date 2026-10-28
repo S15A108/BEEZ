@@ -30,8 +30,8 @@
 | kind | PLAN / REQUIREMENTS / API_SPEC / ERD. BE의 REQ_SPEC는 REQUIREMENTS로 변환한다. |
 | media_type | text/markdown만 허용. text/plain 등은 명시적으로 거부한다. |
 | content | 원문을 엄격하게 UTF-8 디코딩한 문자열. 원본 BOM/CRLF를 전달할 수 있다. |
-| content_hash | 원본 bytes SHA-256. 운반만 하며 BE가 원본과 대조한다. |
-| text_hash | utf8-lf-v1 정규화 원문의 UTF-8 SHA-256. AI가 다시 계산해 대조한다. |
+| content_hash | 원본 bytes SHA-256. 64자리 소문자 hex 또는 `sha256:` 접두사 형식. 운반만 하며 BE가 원본과 대조한다. |
+| text_hash | utf8-lf-v1 정규화 원문의 UTF-8 SHA-256. 같은 두 형식을 허용하고 AI가 다시 계산해 대조한다. |
 | normalization_profile | utf8-lf-v1만 허용. 내부 normalization_version으로 매핑한다. |
 | parser_profile | 생략 시 markdown-v1. 다른 값은 거부한다. |
 | chunking_profile_id | 서버 등록값 md-structure-v1만 허용한다. |
@@ -46,6 +46,8 @@
 - 요청의 `project_id`, `document_version_id`, `request_key`, `text_hash`, `normalization_profile`, `chunking_profile_id`
 - 실제 `parser_version`, 내부 전체 `manifest`, `excluded_ranges`, parser `diagnostics`
 - `chunks`: 내부 RetrievalChunk의 모든 필드와 표시용 `locator`
+
+`result.text_hash`는 BE의 대조를 위해 요청값의 접두사를 보존한다. 내부 manifest의 해시는 접두사 없는 64자리로 정규화하며, 두 표기법은 동일 청크 식별자를 생성한다.
 
 `chunks[].locator`는 첫 span의 시작 행부터 마지막 span의 끝 행까지를 가리키는 표시용 범위다. **이 범위의 전체 행을 이어 붙여 text를 복원하면 안 된다.** 한 행 안에서 분할된 청크끼리는 표시용 locator가 겹칠 수 있다.
 

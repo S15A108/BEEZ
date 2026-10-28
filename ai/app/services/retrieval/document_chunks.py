@@ -33,8 +33,8 @@ def render_document_chunks(body: DocumentChunksRequest, counter: TokenCounter) -
             kind=body.kind,
             media_type=body.media_type,
             content=body.content,
-            content_hash=body.content_hash,
-            text_hash=body.text_hash,
+            content_hash=body.content_hash.removeprefix("sha256:"),
+            text_hash=body.text_hash.removeprefix("sha256:"),
             normalization_version=body.normalization_profile,
             parser_profile=body.parser_profile,
         )

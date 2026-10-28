@@ -1,6 +1,8 @@
+from typing import Annotated
+
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.documents import Sha256
+ExternalSha256 = Annotated[str, Field(pattern=r"^(?:sha256:)?[0-9a-f]{64}$")]
 
 
 class DocumentChunksRequest(BaseModel):
@@ -12,8 +14,8 @@ class DocumentChunksRequest(BaseModel):
     kind: str
     media_type: str
     content: str
-    content_hash: Sha256
-    text_hash: Sha256
+    content_hash: ExternalSha256
+    text_hash: ExternalSha256
     normalization_profile: str
     parser_profile: str = "markdown-v1"
     chunking_profile_id: str
