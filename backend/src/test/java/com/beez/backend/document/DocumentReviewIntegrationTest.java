@@ -202,6 +202,12 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         String path = "/api/projects/" + project.projectId() + "/documents/" + document;
         String body = "{\"expected_revision\":1,\"content\":\"HTTP edit\",\"file_name\":\"plan.md\"}";
         assertThat(authorClient.patch(path + "/working-copy", body).statusCode()).isEqualTo(403);
+        var invalid = authorClient.patch(path + "/working-copy",
+                "{\"expected_revision\":0,\"content\":\"\",\"file_name\":\"\"}", "Origin", "https://app.beez.test");
+        assertThat(invalid.statusCode()).isEqualTo(400);
+        var invalidError = DesignJson.JSON.readTree(invalid.body()).path("error");
+        assertThat(invalidError.path("code").asText()).isEqualTo("validation_failed");
+        assertThat(invalidError.path("message").asText()).containsPattern("[가-힣]");
         var edited = authorClient.patch(path + "/working-copy", body, "Origin", "https://app.beez.test");
         assertThat(edited.statusCode()).withFailMessage(edited.body()).isEqualTo(200);
         assertThat(DesignJson.JSON.readTree(edited.body()).path("owner_account_id").asText()).isEqualTo(author.accountId().toString());

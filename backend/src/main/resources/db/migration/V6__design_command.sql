@@ -86,7 +86,7 @@ BEGIN
      (NEW.document_id,NEW.document_version_id,NEW.submitted_by,NEW.revision,NEW.bee_review_id,NEW.content_hash,NEW.submitted_at)
        IS DISTINCT FROM
      (OLD.document_id,OLD.document_version_id,OLD.submitted_by,OLD.revision,OLD.bee_review_id,OLD.content_hash,OLD.submitted_at) THEN
-    RAISE EXCEPTION 'document submission is immutable';
+    RAISE EXCEPTION '제출 이력은 변경할 수 없습니다.';
   END IF;
   RETURN NEW;
 END $$;
@@ -99,7 +99,7 @@ BEGIN
      (NEW.document_id,NEW.version_no,NEW.storage_key,NEW.content_hash,NEW.content_text,NEW.created_by,NEW.parent_version_id)
        IS DISTINCT FROM
      (OLD.document_id,OLD.version_no,OLD.storage_key,OLD.content_hash,OLD.content_text,OLD.created_by,OLD.parent_version_id) THEN
-    RAISE EXCEPTION 'submitted document content is immutable';
+    RAISE EXCEPTION '제출한 문서 내용은 변경할 수 없습니다.';
   END IF;
   RETURN NEW;
 END $$;
@@ -112,7 +112,7 @@ BEGIN
      (NEW.content_text,NEW.file_name,NEW.revision,NEW.owner_account_id,NEW.initial_version_id,NEW.document_id,NEW.storage_key)
        IS DISTINCT FROM
      (OLD.content_text,OLD.file_name,OLD.revision,OLD.owner_account_id,OLD.initial_version_id,OLD.document_id,OLD.storage_key) THEN
-    RAISE EXCEPTION 'pending working copy is locked';
+    RAISE EXCEPTION '팀장 검토를 요청한 작성 내용은 잠겨 있습니다.';
   END IF;
   RETURN NEW;
 END $$;
