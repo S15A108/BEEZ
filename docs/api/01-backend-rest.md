@@ -3782,6 +3782,8 @@ HTTP `200`.
 
 2026-10-27 원문 RAG 구현: FAILED만 새 attempt로 재접수한다. PENDING/RUNNING은 409 analysis_running, 완료 실행은 409 analysis_not_failed다. 같은 멱등 키는 같은 응답이다. 원본·사람 수정·승인 항목은 변경하지 않는다. lease 만료/서버 재시작 복구는 새 attempt/lease로 늦은 응답을 차단한다. 모델 미설정은 embedding_profile_not_configured, AI/출력 검증 실패는 상태 error_code로 기록한다.
 
+lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
+
 ### POST `/api/projects/{id}/documents/{document_id}/analysis/retry`
 
 문서 분석 재시도 기능을 제공한다.
@@ -5011,6 +5013,8 @@ HTTP `200`.
 
 ## DOC-A11. 문서·설계 검색
 
+SEMANTIC 검색은 프로젝트·현재 baseline의 정확한 승인 버전·embedding profile·domain·kind로 허용 청크를 MATERIALIZED CTE에 확정한 뒤 거리순 정확 검색을 수행한다. 전역 HNSW 후보의 사후 필터링에 의존하지 않는다. 동일 거리에서는 청크 ID로 정렬하고, 검색 전후 baseline이 바뀌면 baseline_changed로 거절한다.
+
 ### GET `/api/projects/{id}/search`
 
 문서·설계 검색 기능을 제공한다.
@@ -5208,6 +5212,8 @@ HTTP `200`.
 ## DOC-A12. 변경용 원문 파일 업로드
 
 DOC-A01의 확정 입력·저장·공통 세션/요청 출처·멱등 정책을 적용한다. base_document_version_id는 같은 문서의 현재 baseline에 속한 정확한 승인 버전이어야 한다. 승인본이 없거나 오래된 기준이면 409 version_conflict. 새 DRAFT/영속 분석 작업을 원자적으로 생성하고 기존 승인 원본을 보존한다. file_name은 생성 다운로드 이름이다.
+
+화면의 ‘수정 초안 작성’은 현재 승인본을 조회할 때만 활성화한다. 최초 승인 전에는 제한 사유를 표시하고, 과거 버전 또는 DRAFT 조회 중에는 현재 승인본으로 이동할 수 있게 한다. 편집 중 baseline이 변경되면 서버의 version_conflict 검사를 그대로 적용한다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/draft-versions`
 

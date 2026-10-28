@@ -22,6 +22,11 @@ import org.springframework.context.annotation.*;
 import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.*;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import com.beez.backend.document.storage.DocumentStorage;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.testcontainers.junit.jupiter.*;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -47,6 +52,7 @@ class DocumentApiIntegrationTest {
     @Autowired Environment env;
     @Autowired DocumentIndexWorker worker;
     @Autowired AiClient ai;
+    @MockitoSpyBean DocumentStorage documentStorage;
     @Autowired software.amazon.awssdk.services.s3.S3Client storageClient;
     long leader, member, project;
     static final String TRUSTED_ORIGIN = "https://app.beez.test";
@@ -67,6 +73,7 @@ class DocumentApiIntegrationTest {
         project = jdbc.queryForObject("INSERT INTO project(name,owner_account_id) VALUES ('documents',?) RETURNING id", Long.class, leader);
         jdbc.update("INSERT INTO project_member(project_id,account_id,role) VALUES (?,?,'LEADER'),(?,?,'MEMBER')", project, leader, project, member);
         reset(ai);
+        reset(documentStorage);
         when(ai.documentChunks(anyMap())).thenAnswer(invocation -> {
             Map<String, Object> input = invocation.getArgument(0);
             String text = input.get("content").toString();
@@ -225,6 +232,62 @@ class DocumentApiIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT content_text FROM document_version WHERE id=?", String.class, version)).contains("REQ-01");
     }
 
+    @Test void semanticSearchKeepsExactScopedResultsWithManyCloserForeignAndHistoricalChunks() throws Exception {
+        var document = uploaded();
+        long id = document.get("id").asLong(), old = document.get("latest_draft").get("id").asLong();
+        worker.runOnce(); publish(id, old);
+        var draft = multipart("/api/projects/" + project + "/documents/" + id + "/draft-versions", UUID.randomUUID().toString(), content,
+                Map.of("base_document_version_id", Long.toString(old)));
+        long current = JSON.readTree(draft.body()).get("id").asLong();
+        worker.runOnce(); publish(id, current);
+        jdbc.update("UPDATE document_chunk SET text='allowed-0',embedding=(ARRAY[1.0,0.1]::double precision[] || array_fill(0.0::double precision,ARRAY[1022]))::vector WHERE document_version_id=?", current);
+        jdbc.update("""
+                INSERT INTO document_chunk(document_version_id,chunk_no,text,locator,embedding)
+                SELECT ?,g,'allowed-'||g,'{"type":"text_lines","start_line":1,"end_line":1}'::jsonb,
+                  (ARRAY[1.0,(g+1)/10.0]::double precision[] || array_fill(0.0::double precision,ARRAY[1022]))::vector
+                FROM generate_series(1,11) g
+                """, current);
+        jdbc.update("UPDATE document_index_manifest SET chunk_count=12 WHERE document_version_id=?", current);
+        long foreignProject = jdbc.queryForObject("INSERT INTO project(name,owner_account_id) VALUES ('foreign-search',?) RETURNING id", Long.class, leader);
+        long foreignDocument = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES (?,'REQ_SPEC','foreign',?) RETURNING id", Long.class, foreignProject, leader);
+        long foreignVersion = jdbc.queryForObject("INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash) VALUES (?,1,'DRAFT','fixture.md','fixture') RETURNING id", Long.class, foreignDocument);
+        // All noise is closer to the query than every permitted chunk.
+        for (long excluded : List.of(old, foreignVersion)) {
+            jdbc.update("""
+                    INSERT INTO document_chunk(document_version_id,chunk_no,text,locator,embedding)
+                    SELECT ?,g,'excluded-'||g,'{"type":"text_lines","start_line":1,"end_line":1}'::jsonb,
+                      (ARRAY[1.0]::double precision[] || array_fill(0.0::double precision,ARRAY[1023]))::vector
+                    FROM generate_series(1,512) g
+                    """, excluded);
+        }
+        jdbc.update("INSERT INTO document_index_manifest(document_version_id,attempt,text_hash,embedding_profile_id,chunking_profile_id,parser_version,chunk_count) VALUES (?,1,'fixture','other-profile','fixture','fixture',512)", foreignVersion);
+        jdbc.execute("ANALYZE document_chunk");
+        String path = "/api/projects/" + project + "/search?q=scope&mode=SEMANTIC&domain=account&kind=REQUIREMENTS&limit=5";
+        var ids = new HashSet<String>();
+        String cursor = null;
+        for (int page = 0; page < 3; page++) {
+            var response = send("GET", path + (cursor == null ? "" : "&cursor=" + URLEncoder.encode(cursor, StandardCharsets.UTF_8)), null, false);
+            assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+            var result = JSON.readTree(response.body());
+            assertThat(result.get("items").size()).isEqualTo(page < 2 ? 5 : 2);
+            int index = page * 5;
+            for (var hit : result.get("items")) {
+                assertThat(hit.get("snippet").asText()).isEqualTo("allowed-" + index++);
+                assertThat(hit.get("source").get("document_version_id").asLong()).isEqualTo(current);
+                assertThat(ids.add(hit.get("id").asText())).isTrue();
+            }
+            assertThat(result.get("has_more").asBoolean()).isEqualTo(page < 2);
+            cursor = page < 2 ? result.get("next_cursor").asText() : null;
+        }
+        assertThat(ids).hasSize(12);
+        assertThat(JSON.readTree(send("GET", path.replace("domain=account", "domain=other"), null, false).body()).get("items").size()).isZero();
+        assertThat(JSON.readTree(send("GET", path.replace("kind=REQUIREMENTS", "kind=PLAN"), null, false).body()).get("items").size()).isZero();
+        jdbc.update("UPDATE document_index_manifest SET embedding_profile_id='other-profile' WHERE document_version_id=?", current);
+        var mismatch = send("GET", path, null, false);
+        assertThat(mismatch.statusCode()).isEqualTo(409);
+        assertThat(mismatch.body()).contains("index_not_ready");
+    }
+
     @Test void rejectsMalformedTextAndOversizedMultipartWithoutPersistingAnything() throws Exception {
         assertThat(multipart("/api/projects/" + project + "/documents", UUID.randomUUID().toString(), content,
                 Map.of("kind", "PLAN", "title", "중복 파일"), true).statusCode()).isEqualTo(400);
@@ -248,6 +311,110 @@ class DocumentApiIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_chunk WHERE document_version_id=?", Integer.class, version)).isZero();
         worker.runOnce();
         assertThat(jdbc.queryForObject("SELECT attempt FROM document_index_manifest WHERE document_version_id=?", Integer.class, version)).isEqualTo(3);
+    }
+
+    @Test void expiredLeaseStopsAfterTwoRecoveriesAndExplicitRetryResetsBudget() throws Exception {
+        var document = uploaded();
+        long id = document.get("id").asLong(), version = document.get("latest_draft").get("id").asLong();
+        // Simulate repeated process loss after a claim: no publish/failure callback occurs.
+        for (int recovery = 0; recovery < 2; recovery++) {
+            jdbc.update("UPDATE document_processing SET status='RUNNING',source_status='RUNNING',lease_token=?,lease_until=now()-interval '1 minute' WHERE document_version_id=?", UUID.randomUUID(), version);
+            assertThat(worker.runOnce()).isTrue();
+            assertThat(jdbc.queryForObject("SELECT automatic_recoveries FROM document_processing WHERE document_version_id=?", Integer.class, version)).isEqualTo(recovery + 1);
+        }
+        jdbc.update("UPDATE document_processing SET status='RUNNING',source_status='READY',index_status='RUNNING',lease_token=?,lease_until=now()-interval '1 minute' WHERE document_version_id=?", UUID.randomUUID(), version);
+        clearInvocations(ai);
+        assertThat(worker.runOnce()).isFalse();
+        assertThat(worker.runOnce()).isFalse();
+        verifyNoInteractions(ai);
+        var failed = jdbc.queryForMap("SELECT * FROM document_processing WHERE document_version_id=?", version);
+        assertThat(failed).containsEntry("status", "FAILED").containsEntry("source_status", "READY")
+                .containsEntry("index_status", "FAILED").containsEntry("error_code", "lease_recovery_exhausted")
+                .containsEntry("attempt", 3).containsEntry("lease_token", null).containsEntry("lease_until", null);
+        assertThat(jdbc.queryForObject("SELECT parse_status FROM document_version WHERE id=?", String.class, version)).isEqualTo("OK");
+        var retry = send("POST", "/api/projects/" + project + "/documents/" + id + "/analysis/retry",
+                "{\"document_version_id\":\"" + version + "\"}", true);
+        assertThat(retry.statusCode()).withFailMessage(retry.body()).isEqualTo(202);
+        assertThat(jdbc.queryForObject("SELECT automatic_recoveries FROM document_processing WHERE document_version_id=?", Integer.class, version)).isZero();
+        assertThat(jdbc.queryForObject("SELECT attempt FROM document_processing WHERE document_version_id=?", Integer.class, version)).isEqualTo(4);
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
+    }
+
+    @Test void uploadPutHasNoTransactionAndDoesNotBlockProjectForeignKeyInsert() throws Exception {
+        assertPutAllowsForeignKeyInsert(() -> upload(UUID.randomUUID().toString(), content, "REQUIREMENTS"));
+    }
+
+    @Test void draftPutHasNoTransactionAndRechecksBaselineAfterPut() throws Exception {
+        var document = uploaded();
+        long id = document.get("id").asLong(), version = document.get("latest_draft").get("id").asLong();
+        publish(id, version);
+        int originals = originalCount();
+        doAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            Object result = invocation.callRealMethod();
+            jdbc.update("UPDATE project SET current_baseline_id=null WHERE id=?", project);
+            return result;
+        }).when(documentStorage).store(any(), anyString());
+        var response = multipart("/api/projects/" + project + "/documents/" + id + "/draft-versions", UUID.randomUUID().toString(), content,
+                Map.of("base_document_version_id", Long.toString(version)));
+        assertThat(response.statusCode()).isEqualTo(409);
+        assertThat(response.body()).contains("version_conflict");
+        assertThat(originalCount()).isEqualTo(originals);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE document_id=?", Integer.class, id)).isEqualTo(1);
+    }
+
+    @Test void draftPutDoesNotBlockProjectForeignKeyInsert() throws Exception {
+        var document = uploaded();
+        long id = document.get("id").asLong(), version = document.get("latest_draft").get("id").asLong();
+        publish(id, version);
+        assertPutAllowsForeignKeyInsert(() -> multipart("/api/projects/" + project + "/documents/" + id + "/draft-versions",
+                UUID.randomUUID().toString(), content, Map.of("base_document_version_id", Long.toString(version))));
+    }
+
+    void assertPutAllowsForeignKeyInsert(java.util.concurrent.Callable<HttpResponse<String>> request) throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            entered.countDown();
+            assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+            return invocation.callRealMethod();
+        }).when(documentStorage).store(any(), anyString());
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var upload = executor.submit(request);
+            try {
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                var insert = executor.submit(() -> jdbc.update("INSERT INTO document_http_command(project_id,account_id,operation,request_key,fingerprint,response) VALUES (?,?,'fk-probe',?,'probe','{}'::jsonb)", project, leader, UUID.randomUUID().toString()));
+                assertThat(insert.get(3, TimeUnit.SECONDS)).isEqualTo(1);
+            } finally { release.countDown(); }
+            var response = upload.get(15, TimeUnit.SECONDS);
+            assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        }
+    }
+
+    @Test void concurrentIdempotentUploadsKeepOnlyOneOriginalAndJob() throws Exception {
+        int originals = originalCount();
+        var entered = new CountDownLatch(2);
+        var release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            entered.countDown();
+            assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+            return invocation.callRealMethod();
+        }).when(documentStorage).store(any(), anyString());
+        String key = UUID.randomUUID().toString();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> upload(key, content, "REQUIREMENTS"));
+            var second = executor.submit(() -> upload(key, content, "REQUIREMENTS"));
+            try { assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue(); }
+            finally { release.countDown(); }
+            var a = first.get(15, TimeUnit.SECONDS); var b = second.get(15, TimeUnit.SECONDS);
+            assertThat(a.statusCode()).withFailMessage(a.body()).isEqualTo(201);
+            assertThat(b.statusCode()).withFailMessage(b.body()).isEqualTo(201);
+            assertThat(JSON.readTree(a.body())).isEqualTo(JSON.readTree(b.body()));
+        }
+        assertThat(originalCount()).isEqualTo(originals + 1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_processing r JOIN document_version v ON v.id=r.document_version_id JOIN document d ON d.id=v.document_id WHERE d.project_id=?", Integer.class, project)).isEqualTo(1);
     }
 
     @Test void databaseFailureAfterRegistrationRollsBackFileDocumentAndJob() throws Exception {

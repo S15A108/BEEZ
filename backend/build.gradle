@@ -53,7 +53,7 @@ dependencies {
     implementation 'software.amazon.awssdk:url-connection-client'
 
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
-    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.postgresql:postgresql' // Structured constraint diagnostics; never log server detail/message.
 
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'

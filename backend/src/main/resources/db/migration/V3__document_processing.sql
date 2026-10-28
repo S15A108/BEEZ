@@ -3,6 +3,7 @@ CREATE UNIQUE INDEX ux_document_project_type ON document(project_id, type);
 CREATE TABLE document_processing (
   document_version_id BIGINT PRIMARY KEY REFERENCES document_version(id),
   attempt INT NOT NULL DEFAULT 1 CHECK (attempt > 0),
+  automatic_recoveries INT NOT NULL DEFAULT 0 CHECK (automatic_recoveries BETWEEN 0 AND 2),
   status TEXT NOT NULL CHECK (status IN ('PENDING','RUNNING','COMPLETED','FAILED')),
   source_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (source_status IN ('PENDING','RUNNING','READY','FAILED')),
   index_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (index_status IN ('PENDING','RUNNING','READY','FAILED')),

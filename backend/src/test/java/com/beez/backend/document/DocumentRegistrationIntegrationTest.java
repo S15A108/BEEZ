@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.*;
 import com.beez.backend.document.repository.DocumentRepository;
 import com.beez.backend.document.repository.DocumentVersionRepository;
 import com.beez.backend.document.service.DocumentRegistrationService;
-import com.beez.backend.document.service.DocumentRegistrationService.KindPolicy;
 import com.beez.backend.document.support.InMemoryDocumentStorage;
 import com.beez.backend.document.validation.DocumentInputValidator;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +16,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -38,12 +38,35 @@ class DocumentRegistrationIntegrationTest {
     @Autowired JdbcTemplate jdbc;
 
     @Test
+    void documentCommandLockDoesNotBlockProjectForeignKeyChecks() throws Exception {
+        long actor = jdbc.queryForObject("INSERT INTO account(display_name) VALUES ('fk-lock-test') RETURNING id", Long.class);
+        long project = jdbc.queryForObject("INSERT INTO project(name,owner_account_id) VALUES ('fk-lock-test',?) RETURNING id", Long.class, actor);
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var command = executor.submit(() -> new TransactionTemplate(transactions).execute(tx -> {
+                assertThat(documents.lockProject(project)).isEqualTo(project);
+                locked.countDown();
+                try { assertThat(release.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue(); }
+                catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new IllegalStateException(error); }
+                return true;
+            }));
+            try {
+                assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var insert = executor.submit(() -> jdbc.update("INSERT INTO document(project_id,type,title,created_by) VALUES (?,'PLAN','parallel',?)", project, actor));
+                assertThat(insert.get(3, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(1);
+            } finally { release.countDown(); }
+            assertThat(command.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
     void concurrentSingleKindRegistrationsCommitOnlyOneDraft() throws Exception {
         long actor = jdbc.queryForObject("INSERT INTO account(display_name) VALUES ('race-test') RETURNING id", Long.class);
         long project = jdbc.queryForObject("INSERT INTO project(name, owner_account_id) VALUES ('race-test', ?) RETURNING id", Long.class, actor);
         var storage = new InMemoryDocumentStorage();
         var service = new DocumentRegistrationService(new DocumentInputValidator(4096, 1000), storage,
-                id -> actor, documents, versions, transactions, KindPolicy.SINGLE_PER_KIND);
+                id -> actor, documents, versions, transactions);
         var start = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.Callable<String> register = () -> {
             start.await();
@@ -73,7 +96,7 @@ class DocumentRegistrationIntegrationTest {
         long project = jdbc.queryForObject("INSERT INTO project(name, owner_account_id) VALUES ('doc-test', ?) RETURNING id", Long.class, actor);
         var storage = new InMemoryDocumentStorage();
         var service = new DocumentRegistrationService(new DocumentInputValidator(4096, 1000), storage,
-                id -> actor, documents, versions, transactions, KindPolicy.SINGLE_PER_KIND);
+                id -> actor, documents, versions, transactions);
         byte[] bytes = "\uFEFF# 요구사항\r\n조회 권한 😀\r\n".getBytes(StandardCharsets.UTF_8);
         var result = service.register(new DocumentRegistrationService.Input(project, DocumentKind.REQUIREMENTS,
                 "Requirements", "account", "requirements.md", bytes));

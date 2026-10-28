@@ -567,13 +567,34 @@ function DocumentDetail({
               </EmptyState>
             )}
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="outline" onClick={() => setEditing(true)}>
+              <Button
+                variant="outline"
+                disabled={
+                  !data.document.approved_version ||
+                  data.document.approved_version.id !== data.version.id
+                }
+                onClick={() => setEditing(true)}
+              >
                 수정 초안 작성
               </Button>
               <p className="text-xs text-muted-foreground">
-                v{data.version.version_no}을 기준으로 새 초안을 보관해요. 승인된
-                본문은 바꾸지 않아요.
+                {!data.document.approved_version
+                  ? '최초 승인 후 수정 초안을 작성할 수 있어요.'
+                  : data.document.approved_version.id !== data.version.id
+                    ? '현재 승인본에서 수정 초안을 작성해 주세요.'
+                    : `v${data.version.version_no}을 기준으로 새 초안을 보관해요. 승인된 본문은 바꾸지 않아요.`}
               </p>
+              {data.document.approved_version &&
+                data.document.approved_version.id !== data.version.id && (
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      setVersionNo(data.document.approved_version?.version_no)
+                    }
+                  >
+                    현재 승인본 보기
+                  </Button>
+                )}
             </div>
             {action.error && (
               <p className="text-sm text-destructive" role="alert">

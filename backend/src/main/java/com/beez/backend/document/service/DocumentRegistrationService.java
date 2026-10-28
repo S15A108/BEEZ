@@ -10,97 +10,69 @@ import com.beez.backend.document.repository.DocumentVersionRepository;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.document.validation.DocumentInputValidator;
 import com.beez.backend.document.validation.NormalizedDocument;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.Objects;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Registration core; the application service supplies its authenticated project access adapter. */
+/** Registration core; one logical document per project/kind (DOC-A01). */
 public final class DocumentRegistrationService {
-    public enum KindPolicy { SINGLE_PER_KIND, ALLOW_MULTIPLE }
-
     public record Input(long projectId, DocumentKind kind, String title, String domain,
                         String filename, byte[] bytes) { }
     public record StoredDraft(long documentId, long documentVersionId, int versionNo, String textHash) { }
 
-    private static final Logger log = LoggerFactory.getLogger(DocumentRegistrationService.class);
     private final DocumentInputValidator validator;
-    private final DocumentStorage storage;
+    private final DocumentOriginalWriter originals;
     private final ProjectDocumentAccess access;
     private final DocumentRepository documents;
     private final DocumentVersionRepository versions;
     private final TransactionTemplate transaction;
-    private final KindPolicy policy;
 
     public DocumentRegistrationService(DocumentInputValidator validator, DocumentStorage storage,
             ProjectDocumentAccess access, DocumentRepository documents, DocumentVersionRepository versions,
-            PlatformTransactionManager manager, KindPolicy policy) {
+            PlatformTransactionManager manager) {
         this.validator = Objects.requireNonNull(validator);
-        this.storage = Objects.requireNonNull(storage);
+        this.originals = new DocumentOriginalWriter(storage, manager);
         this.access = Objects.requireNonNull(access);
         this.documents = Objects.requireNonNull(documents);
         this.versions = Objects.requireNonNull(versions);
-        this.policy = Objects.requireNonNull(policy);
         transaction = new TransactionTemplate(manager);
-        transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
-        transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     }
 
     public StoredDraft register(Input input) {
+        DocumentOriginalWriter.requireNoTransaction();
+        validateInput(input);
+        byte[] bytes = input.bytes().clone();
+        NormalizedDocument source = validator.validate(input.filename(), bytes);
+        transaction.executeWithoutResult(tx -> checkRegistration(input));
+        return originals.write(bytes, source.extension(), original -> persist(input, source, original));
+    }
+
+    static void validateInput(Input input) {
         if (input == null || input.projectId() <= 0 || input.kind() == null
                 || input.title() == null || input.title().isBlank() || input.bytes() == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "Project, kind, title and file required");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "프로젝트, 문서 종류, 제목과 파일은 필수입니다.");
         }
-        // Defensive copy binds validation, hashes and storage to the same bytes.
-        byte[] bytes = input.bytes().clone();
-        return Objects.requireNonNull(transaction.execute(tx -> {
-            if (documents.lockProject(input.projectId()) == null) {
-                throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "Project unavailable");
-            }
-            long actor = access.requireCurrentLeader(input.projectId());
-            if (actor <= 0) {
-                throw new IllegalStateException("Access adapter must return an authenticated account");
-            }
-            if (policy == KindPolicy.SINGLE_PER_KIND
-                    && documents.existsByProjectIdAndKind(input.projectId(), input.kind())) {
-                throw new ApiException(HttpStatus.CONFLICT, "document_kind_exists", "Document kind already registered");
-            }
-            NormalizedDocument source = validator.validate(input.filename(), bytes);
-            String key;
-            try {
-                key = storage.store(bytes, source.extension());
-            } catch (IOException e) {
-                throw new UncheckedIOException("Original file storage failed", e);
-            }
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCompletion(int status) {
-                    if (status == STATUS_ROLLED_BACK) {
-                        try {
-                            storage.delete(key);
-                        } catch (IOException | RuntimeException cleanupError) {
-                            // No raw path/content in logs; correlation ID is attached by RequestIdFilter.
-                            log.error("Document rollback cleanup failed; orphan_key={}, cause={}",
-                                    key, cleanupError.getClass().getSimpleName());
-                        }
-                    } else if (status == STATUS_UNKNOWN) {
-                        // Commit outcome uncertain: preserve original until DB references are reconciled.
-                        log.error("Document commit outcome unknown; reconcile original_key={}", key);
-                    }
-                }
-            });
-            Document document = documents.saveAndFlush(new Document(input.projectId(), input.kind(),
-                    input.title(), input.domain(), actor));
-            DocumentVersion version = versions.saveAndFlush(DocumentVersion.initialDraft(document.getId(),
-                    key, source.contentHash(), source.text(), actor));
-            return new StoredDraft(document.getId(), version.getId(), version.getVersionNo(), source.textHash());
-        }));
+    }
+
+    long checkRegistration(Input input) {
+        long actor = access.requireCurrentLeader(input.projectId());
+        if (actor <= 0) throw new IllegalStateException("권한 검사 어댑터는 인증된 계정 ID를 반환해야 합니다.");
+        if (documents.existsByProjectIdAndKind(input.projectId(), input.kind())) {
+            throw new ApiException(HttpStatus.CONFLICT, "document_kind_exists", "이미 등록된 문서 종류입니다.");
+        }
+        return actor;
+    }
+
+    /** Shares the publication transaction with job and idempotency response storage. */
+    StoredDraft persist(Input input, NormalizedDocument source, DocumentOriginalWriter.Original original) {
+        if (documents.lockProject(input.projectId()) == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "프로젝트를 찾을 수 없습니다.");
+        }
+        long actor = checkRegistration(input);
+        Document document = documents.saveAndFlush(new Document(input.projectId(), input.kind(), input.title(), input.domain(), actor));
+        DocumentVersion version = versions.saveAndFlush(DocumentVersion.initialDraft(document.getId(),
+                original.reference(), source.contentHash(), source.text(), actor));
+        return new StoredDraft(document.getId(), version.getId(), version.getVersionNo(), source.textHash());
     }
 }

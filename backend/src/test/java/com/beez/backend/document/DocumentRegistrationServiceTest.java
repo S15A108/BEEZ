@@ -11,7 +11,6 @@ import com.beez.backend.document.port.ProjectDocumentAccess;
 import com.beez.backend.document.repository.DocumentRepository;
 import com.beez.backend.document.repository.DocumentVersionRepository;
 import com.beez.backend.document.service.DocumentRegistrationService;
-import com.beez.backend.document.service.DocumentRegistrationService.KindPolicy;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.document.validation.DocumentInputValidator;
 import java.io.IOException;
@@ -21,6 +20,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class DocumentRegistrationServiceTest {
     final DocumentStorage storage = mock(DocumentStorage.class);
@@ -36,7 +36,7 @@ class DocumentRegistrationServiceTest {
         when(access.requireCurrentLeader(101)).thenReturn(1L);
         when(storage.store(any(), eq("md"))).thenReturn("opaque-key.md");
         service = new DocumentRegistrationService(new DocumentInputValidator(1024, 1024), storage,
-                access, documents, versions, transactions, KindPolicy.SINGLE_PER_KIND);
+                access, documents, versions, transactions);
     }
 
     DocumentRegistrationService.Input input() {
@@ -46,7 +46,7 @@ class DocumentRegistrationServiceTest {
 
     @Test
     void deniesUnauthorizedBeforeAnyFileOrDocumentWrite() {
-        when(access.requireCurrentLeader(101)).thenThrow(new ApiException(HttpStatus.FORBIDDEN, "forbidden", "Leader required"));
+        when(access.requireCurrentLeader(101)).thenThrow(new ApiException(HttpStatus.FORBIDDEN, "forbidden", "팀장 권한이 필요합니다."));
         assertThatThrownBy(() -> service.register(input())).isInstanceOf(ApiException.class);
         verifyNoInteractions(storage, versions);
         verify(documents, never()).saveAndFlush(any());
@@ -61,16 +61,31 @@ class DocumentRegistrationServiceTest {
     }
 
     @Test
+    void putRunsOutsideTransactionAndFinalChecksRunAfterPut() throws Exception {
+        when(storage.store(any(), eq("md"))).thenAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            verify(documents, never()).lockProject(anyLong());
+            // Another request registered the kind after the preflight.
+            when(documents.existsByProjectIdAndKind(101, DocumentKind.REQUIREMENTS)).thenReturn(true);
+            return "opaque-key.md";
+        });
+        assertThatThrownBy(() -> service.register(input())).isInstanceOfSatisfying(ApiException.class,
+                e -> assertThat(e.getCode()).isEqualTo("document_kind_exists"));
+        verify(storage).delete("opaque-key.md");
+        verify(versions, never()).saveAndFlush(any());
+    }
+
+    @Test
     void rollsBackAndCleansFileAfterDatabaseFailure() throws Exception {
-        when(documents.saveAndFlush(any())).thenThrow(new IllegalStateException("DB failure"));
-        assertThatThrownBy(() -> service.register(input())).hasMessage("DB failure");
+        when(documents.saveAndFlush(any())).thenThrow(new IllegalStateException("DB 처리에 실패했습니다."));
+        assertThatThrownBy(() -> service.register(input())).hasMessage("DB 처리에 실패했습니다.");
         verify(storage).delete("opaque-key.md");
         assertThat(transactions.rolledBack).isTrue();
     }
 
     @Test
     void fileStorageFailureDoesNotCreateDatabaseRecords() throws Exception {
-        when(storage.store(any(), eq("md"))).thenThrow(new IOException("disk unavailable"));
+        when(storage.store(any(), eq("md"))).thenThrow(new IOException("저장소를 사용할 수 없습니다."));
         assertThatThrownBy(() -> service.register(input())).isInstanceOf(java.io.UncheckedIOException.class);
         verify(documents, never()).saveAndFlush(any());
         verifyNoInteractions(versions);
@@ -78,9 +93,9 @@ class DocumentRegistrationServiceTest {
 
     @Test
     void preservesPrimaryDatabaseFailureWhenCleanupAlsoFails() throws Exception {
-        when(documents.saveAndFlush(any())).thenThrow(new IllegalStateException("DB failure"));
-        doThrow(new IOException("cleanup failed")).when(storage).delete(any());
-        assertThatThrownBy(() -> service.register(input())).hasMessage("DB failure");
+        when(documents.saveAndFlush(any())).thenThrow(new IllegalStateException("DB 처리에 실패했습니다."));
+        doThrow(new IOException("보상 삭제에 실패했습니다.")).when(storage).delete(any());
+        assertThatThrownBy(() -> service.register(input())).hasMessage("DB 처리에 실패했습니다.");
         assertThat(transactions.rolledBack).isTrue();
     }
 
@@ -93,18 +108,21 @@ class DocumentRegistrationServiceTest {
         when(version.getVersionNo()).thenReturn(1);
         when(documents.saveAndFlush(any())).thenReturn(document);
         when(versions.saveAndFlush(any())).thenReturn(version);
-        transactions.failCommit = true;
-        assertThatThrownBy(() -> service.register(input())).hasMessage("Commit outcome unknown");
+        // The preflight commits first; fail only the publication commit after PUT.
+        transactions.failOnCommit = 2;
+        assertThatThrownBy(() -> service.register(input())).hasMessage("커밋 결과를 확인할 수 없습니다.");
+        verify(storage).store(any(), eq("md"));
         verify(storage, never()).delete(any());
     }
 
     static class TestTransactions extends AbstractPlatformTransactionManager {
         boolean rolledBack;
-        boolean failCommit;
+        int commits;
+        int failOnCommit = Integer.MAX_VALUE;
         @Override protected Object doGetTransaction() { return new Object(); }
         @Override protected void doBegin(Object tx, TransactionDefinition definition) { }
         @Override protected void doCommit(DefaultTransactionStatus status) {
-            if (failCommit) throw new org.springframework.transaction.TransactionSystemException("Commit outcome unknown");
+            if (++commits == failOnCommit) throw new org.springframework.transaction.TransactionSystemException("커밋 결과를 확인할 수 없습니다.");
         }
         @Override protected void doRollback(DefaultTransactionStatus status) { rolledBack = true; }
     }

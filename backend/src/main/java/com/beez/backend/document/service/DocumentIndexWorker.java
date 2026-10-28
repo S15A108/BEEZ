@@ -51,13 +51,27 @@ public class DocumentIndexWorker {
     public void poll() {
         if (!properties.workerEnabled()) return;
         try { runOnce(); }
-        catch (RuntimeException error) { LoggerFactory.getLogger(getClass()).error("Document worker failed: {}", error.getClass().getSimpleName()); }
+        catch (RuntimeException error) { LoggerFactory.getLogger(getClass()).error("문서 분석 작업 처리 중 오류가 발생했습니다. 예외 종류={}", error.getClass().getSimpleName()); }
     }
 
     public boolean runOnce() {
         var job = tx.execute(status -> {
-            // Restart/crash recovery creates a new attempt before any expired worker can publish.
-            jdbc.sql("UPDATE document_processing SET attempt=attempt+1,status='PENDING',source_status='PENDING',index_status='PENDING',lease_token=null,lease_until=null,error_code=null,updated_at=now() WHERE status='RUNNING' AND lease_until<now()")
+            // At most two automatic recoveries per explicitly requested execution.
+            jdbc.sql("""
+                    WITH exhausted AS (
+                      UPDATE document_processing SET status='FAILED',
+                        source_status=CASE WHEN source_status='READY' THEN 'READY' ELSE 'FAILED' END,
+                        index_status='FAILED',error_code='lease_recovery_exhausted',
+                        lease_token=null,lease_until=null,updated_at=now()
+                      WHERE status='RUNNING' AND lease_until<=now() AND automatic_recoveries>=2
+                      RETURNING document_version_id,source_status
+                    )
+                    UPDATE document_version v SET parse_status=CASE WHEN e.source_status='READY' THEN 'OK' ELSE 'FAILED' END,
+                      parse_error='lease_recovery_exhausted'
+                    FROM exhausted e WHERE v.id=e.document_version_id
+                    """).update();
+            // Incrementing attempt and replacing the lease fence excludes late workers.
+            jdbc.sql("UPDATE document_processing SET attempt=attempt+1,automatic_recoveries=automatic_recoveries+1,status='PENDING',source_status='PENDING',index_status='PENDING',lease_token=null,lease_until=null,error_code=null,updated_at=now() WHERE status='RUNNING' AND lease_until<=now() AND automatic_recoveries<2")
                     .update();
             var pending = rows("""
                     SELECT r.*,v.content_text,v.content_hash,v.document_id,d.project_id,d.type,v.storage_key
@@ -191,7 +205,7 @@ public class DocumentIndexWorker {
             return Objects.requireNonNull(response);
         } catch (RestClientResponseException error) {
             try { usage(job, error.getResponseBodyAs(Map.class), (System.nanoTime() - start) / 1_000_000); }
-            catch (RuntimeException ignored) { LoggerFactory.getLogger(getClass()).warn("AI error usage unavailable"); }
+            catch (RuntimeException ignored) { LoggerFactory.getLogger(getClass()).warn("AI 호출 실패 응답의 사용량 정보를 기록할 수 없습니다."); }
             throw error;
         }
     }
@@ -252,9 +266,12 @@ public class DocumentIndexWorker {
                 "dimension", properties.embeddingDimension(), "texts", List.of(Map.of("key", "query", "text", query)));
         var embeddings = vectors(call(Map.of("project_id", project), queryInput, true), "QUERY");
         if (!embeddings.keySet().equals(Set.of("query"))) throw invalid("invalid_embedding_keys");
+        // Materialize the allowed set before distance ordering: global HNSW post-filtering
+        // can otherwise underfill results when most nearest chunks belong to another scope.
         String sql = """
-                SELECT c.id,c.text,c.locator::text AS locator,d.title,d.id AS document_id,v.id AS document_version_id,v.version_no,
-                1-(c.embedding <=> cast(:vector AS vector)) AS score FROM baseline_document b
+                WITH allowed_chunks AS MATERIALIZED (
+                SELECT c.id,c.text,c.locator::text AS locator,c.embedding,d.title,d.id AS document_id,v.id AS document_version_id,v.version_no
+                FROM baseline_document b
                 JOIN document d ON d.id=b.document_id AND d.project_id=:project
                 JOIN document_version v ON v.id=b.document_version_id AND v.document_id=d.id
                 JOIN document_index_manifest m ON m.document_version_id=v.id AND m.embedding_profile_id=:profile
@@ -265,7 +282,9 @@ public class DocumentIndexWorker {
                 "vector", embeddings.get("query"), "limit", limit + 1, "offset", offset));
         if (domain != null) { sql += " AND d.domain=:domain"; params.put("domain", domain); }
         if (kind != null) { sql += " AND d.type=:kind"; params.put("kind", kind.equals("REQUIREMENTS") ? "REQ_SPEC" : kind); }
-        var found = rows(sql + " ORDER BY c.embedding <=> cast(:vector AS vector),c.id LIMIT :limit OFFSET :offset", params);
+        var found = rows(sql + " ) SELECT a.id,a.text,a.locator,a.title,a.document_id,a.document_version_id,a.version_no,"
+                + "1-(a.embedding <=> cast(:vector AS vector)) AS score FROM allowed_chunks a"
+                + " ORDER BY a.embedding <=> cast(:vector AS vector),a.id LIMIT :limit OFFSET :offset", params);
         Long finalBaseline = jdbc.sql("SELECT current_baseline_id FROM project WHERE id=:project").param("project", project).query(Long.class).single();
         if (!baseline.equals(finalBaseline)) throw conflict("baseline_changed");
         boolean more = found.size() > limit; int nextOffset = offset + limit;

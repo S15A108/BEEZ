@@ -9,7 +9,7 @@ import org.springframework.data.repository.query.Param;
 public interface DocumentRepository extends JpaRepository<Document, Long> {
     boolean existsByProjectIdAndKind(long projectId, DocumentKind kind);
 
-    /** Serializes initial registrations without introducing an unapproved schema constraint. */
-    @Query(value = "SELECT id FROM project WHERE id = :projectId FOR UPDATE", nativeQuery = true)
+    /** Serializes document commands and baseline changes without blocking project FK checks. */
+    @Query(value = "SELECT id FROM project WHERE id = :projectId FOR NO KEY UPDATE", nativeQuery = true)
     Long lockProject(@Param("projectId") long projectId);
 }

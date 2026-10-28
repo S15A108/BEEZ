@@ -10,15 +10,14 @@ import com.beez.backend.document.repository.*;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.document.validation.DocumentInputValidator;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class DocumentApplicationService {
@@ -29,6 +28,8 @@ public class DocumentApplicationService {
     private final DocumentStorage storage;
     private final DocumentInputValidator validator;
     private final PlatformTransactionManager transactions;
+    private final TransactionTemplate transaction;
+    private final DocumentOriginalWriter originals;
     private final DocumentIndexWorker worker;
 
     public DocumentApplicationService(JdbcClient jdbc, ProjectAccessChecker access, DocumentRepository documents,
@@ -36,6 +37,8 @@ public class DocumentApplicationService {
             PlatformTransactionManager transactions, DocumentIndexWorker worker) {
         this.jdbc = jdbc; this.access = access; this.documents = documents; this.versions = versions;
         this.storage = storage; this.validator = validator; this.transactions = transactions; this.worker = worker;
+        this.transaction = new TransactionTemplate(transactions);
+        this.originals = new DocumentOriginalWriter(storage, transactions);
     }
 
     private List<Map<String, Object>> rows(String sql, Map<String, ?> parameters) {
@@ -112,21 +115,34 @@ public class DocumentApplicationService {
                 .param("id", version).param("hash", textHash).update();
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.NEVER)
     public Map<String, Object> upload(CallerContext caller, long project, DocumentKind kind, String title,
             String domain, String filename, byte[] bytes, String key) {
-        access.requireHumanLeader(caller, project); lock(project);
-        var source = validator.validate(filename, bytes);
+        access.requireHumanLeader(caller, project);
+        var input = new DocumentRegistrationService.Input(project, kind, title, domain, filename, bytes);
+        DocumentRegistrationService.validateInput(input);
+        byte[] originalBytes = bytes.clone();
+        var source = validator.validate(filename, originalBytes);
         String fp = fingerprint(Arrays.asList(kind, title, domain, source.extension(), source.contentHash()));
-        var previous = replay(caller, project, "upload", key, fp);
-        if (previous.isPresent()) return previous.get();
         var registration = new DocumentRegistrationService(validator, storage,
                 id -> { access.requireHumanLeader(caller, id); return caller.accountId(); }, documents, versions,
-                transactions, DocumentRegistrationService.KindPolicy.SINGLE_PER_KIND);
-        var saved = registration.register(new DocumentRegistrationService.Input(project, kind, title, domain, filename, bytes));
-        enqueue(saved.documentVersionId(), saved.textHash());
-        var response = Map.<String, Object>of("document", documentView(document(project, saved.documentId())), "analysis_status", "PENDING");
-        return remember(caller, project, "upload", key, fp, response);
+                transactions);
+        var previous = transaction.execute(tx -> {
+            access.requireHumanLeader(caller, project);
+            var response = replay(caller, project, "upload", key, fp);
+            if (response.isEmpty()) registration.checkRegistration(input);
+            return response;
+        });
+        if (previous.isPresent()) return previous.get();
+        return originals.write(originalBytes, source.extension(), original -> {
+            lock(project); access.requireHumanLeader(caller, project);
+            var concurrent = replay(caller, project, "upload", key, fp);
+            if (concurrent.isPresent()) return concurrent.get();
+            var saved = registration.persist(input, source, original);
+            enqueue(saved.documentVersionId(), saved.textHash());
+            var response = Map.<String, Object>of("document", documentView(document(project, saved.documentId())), "analysis_status", "PENDING");
+            return remember(caller, project, "upload", key, fp, response);
+        });
     }
 
     public Map<String, Object> list(CallerContext caller, long project, DocumentKind kind, String domain, String cursor, int limit) {
@@ -184,35 +200,35 @@ public class DocumentApplicationService {
         return remember(caller, project, operation, key, fp, documentView(document(project, id)));
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.NEVER)
     public Map<String, Object> draft(CallerContext caller, long project, long id, long base,
             String filename, byte[] bytes, String key) {
-        access.requireMember(caller, project); lock(project); access.requireMember(caller, project); document(project, id);
-        var source = validator.validate(filename, bytes);
+        access.requireMember(caller, project); document(project, id);
+        byte[] originalBytes = bytes.clone();
+        var source = validator.validate(filename, originalBytes);
         String operation = "draft:" + id, fp = fingerprint(List.of(base, source.extension(), source.contentHash()));
-        var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
-        var current = approved(id).orElseThrow(() -> conflict("version_conflict"));
-        if (number(current, "id") != base) throw conflict("version_conflict");
-        int no = jdbc.sql("SELECT coalesce(max(version_no),0)+1 FROM document_version WHERE document_id=:id").param("id", id).query(Integer.class).single();
-        String storageKey;
-        try { storageKey = storage.store(bytes, source.extension()); } catch (IOException e) { throw new UncheckedIOException(e); }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCompletion(int status) {
-                if (status == STATUS_ROLLED_BACK) {
-                    try { storage.delete(storageKey); }
-                    catch (IOException | RuntimeException e) {
-                        org.slf4j.LoggerFactory.getLogger(DocumentApplicationService.class)
-                                .error("Draft rollback cleanup failed; orphan_key={}, cause={}", storageKey, e.getClass().getSimpleName());
-                    }
-                } else if (status == STATUS_UNKNOWN) {
-                    org.slf4j.LoggerFactory.getLogger(DocumentApplicationService.class)
-                            .error("Draft commit outcome unknown; reconcile original_key={}", storageKey);
-                }
-            }
+        var previous = transaction.execute(tx -> {
+            access.requireMember(caller, project); document(project, id);
+            var response = replay(caller, project, operation, key, fp);
+            if (response.isEmpty()) requireCurrentBase(id, base);
+            return response;
         });
-        var saved = versions.saveAndFlush(DocumentVersion.draft(id, no, storageKey, source.contentHash(), source.text(), caller.accountId(), base));
-        enqueue(saved.getId(), source.textHash());
-        return remember(caller, project, operation, key, fp, versionView(version(id, saved.getId()), true));
+        if (previous.isPresent()) return previous.get();
+        return originals.write(originalBytes, source.extension(), original -> {
+            lock(project); access.requireMember(caller, project); document(project, id);
+            var concurrent = replay(caller, project, operation, key, fp);
+            if (concurrent.isPresent()) return concurrent.get();
+            requireCurrentBase(id, base);
+            int no = jdbc.sql("SELECT coalesce(max(version_no),0)+1 FROM document_version WHERE document_id=:id").param("id", id).query(Integer.class).single();
+            var saved = versions.saveAndFlush(DocumentVersion.draft(id, no, original.reference(), source.contentHash(), source.text(), caller.accountId(), base));
+            enqueue(saved.getId(), source.textHash());
+            return remember(caller, project, operation, key, fp, versionView(version(id, saved.getId()), true));
+        });
+    }
+
+    private void requireCurrentBase(long document, long base) {
+        var current = approved(document).orElseThrow(() -> conflict("version_conflict"));
+        if (number(current, "id") != base) throw conflict("version_conflict");
     }
 
     public Map<String, Object> analysis(CallerContext caller, long project, long id, long version) {
@@ -237,7 +253,7 @@ public class DocumentApplicationService {
         var run = one("SELECT * FROM document_processing WHERE document_version_id=:id FOR UPDATE", Map.of("id", version));
         if (List.of("PENDING", "RUNNING").contains(run.get("status"))) throw conflict("analysis_running");
         if (!"FAILED".equals(run.get("status"))) throw conflict("analysis_not_failed");
-        jdbc.sql("UPDATE document_processing SET attempt=attempt+1,status='PENDING',source_status='PENDING',index_status='PENDING',error_code=null,lease_token=null,lease_until=null,updated_at=now() WHERE document_version_id=:id")
+        jdbc.sql("UPDATE document_processing SET attempt=attempt+1,automatic_recoveries=0,status='PENDING',source_status='PENDING',index_status='PENDING',error_code=null,lease_token=null,lease_until=null,updated_at=now() WHERE document_version_id=:id")
                 .param("id", version).update();
         return remember(caller, project, operation, key, fp, analysis(caller, project, id, version));
     }
