@@ -313,7 +313,10 @@ ssh-keygen -lf ~/.ssh/authorized_keys   # 해당 줄이 빠졌는지 확인
 | 사람 | 키 주석 | 지문(SHA256) | 등록일 | 비고 |
 |---|---|---|---|---|
 | (SSAFY 발급 pem) | `K15A108T` | `gyxx69moGPDbCgcLE4raOFKPMFC897n+1h16OTdKKSk` (RSA 2048) | 서버 생성 시 | 복구용, 인프라 담당만 보관 |
-| 전진 | `tripcraft-oracle` | `GXWeV8/5Ii2K5dimBqa++Rzt3IDINa9eMjJuuC6S4HI` (ED25519) | 2026-10-23 | 인프라 담당 일상 접속 |
+| 전진 | `jin@beez` | `GXWeV8/5Ii2K5dimBqa++Rzt3IDINa9eMjJuuC6S4HI` (ED25519) | 2026-10-23 | 인프라 담당 일상 접속 |
+| 변준성 | `junseong@beez` | `7+AklsyKb1BbSkoWVA1+EXk94jA06IHPz0bkrXnfKVg` (ED25519) | 2026-10-23 | |
+| 양지훈 | `jihun@beez` | `a38FEGUfSAkJYz+lBpTgAUJ3Yu1MU4OFovCd5hVntU4` (ED25519) | 2026-10-23 | |
+| 오서현 | `hyunneee@beez` | `wPxrYytLwezLKLmg1kdjPkyK+BI2BB3zXXz2k1aXfIg` (ED25519) | 2026-10-23 | |
 
 공개키 지문은 비밀이 아닙니다. 공개키에서 계산되는 값이고, 공개키 자체가
 공개를 전제로 합니다.
