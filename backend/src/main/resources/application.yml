@@ -103,3 +103,6 @@ beez:
     internal-token: ${AI_INTERNAL_TOKEN:change-me}
     connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${AI_READ_TIMEOUT:20s}
+  invitation:
+    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 초대 링크 = {base-url}/invite?token=…
+    ttl: ${INVITE_TTL:7d}
