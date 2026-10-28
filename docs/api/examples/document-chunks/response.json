@@ -1,0 +1,96 @@
+{
+  "result": {
+    "contract_version": "document-chunks-v1",
+    "project_id": "101",
+    "document_version_id": "202",
+    "request_key": "chunk-fixture-1",
+    "text_hash": "779a45402b1c019fc9a2f5b8ea2edc9bd203af5816833f233b743261eb0ea86c",
+    "normalization_profile": "utf8-lf-v1",
+    "chunking_profile_id": "md-structure-v1",
+    "parser_version": "beez-markdown/1.1.0+markdown-it-py/4.2.0",
+    "manifest": {
+      "project_id": "101",
+      "document_version_id": "202",
+      "content_hash": "779a45402b1c019fc9a2f5b8ea2edc9bd203af5816833f233b743261eb0ea86c",
+      "text_hash": "779a45402b1c019fc9a2f5b8ea2edc9bd203af5816833f233b743261eb0ea86c",
+      "normalization_version": "utf8-lf-v1",
+      "parser_profile": "markdown-v1",
+      "parser_version": "beez-markdown/1.1.0+markdown-it-py/4.2.0",
+      "chunker_version": "beez-structure/1.1.0",
+      "chunking_profile": {
+        "profile_id": "md-structure-v1",
+        "tokenizer_id": "tiktoken:0.14.0:cl100k_base:ordinary-v1",
+        "max_tokens": 600,
+        "include_headings": false,
+        "include_table_headers": false,
+        "max_chunks": 1024
+      },
+      "expected_chunk_keys": [
+        "chk_b1cfc331baebf7a37cf0b7385bbb5bb1df04e6858d7f764a391f519c315dbdd3"
+      ]
+    },
+    "excluded_ranges": [
+      {
+        "locator": {
+          "type": "text_lines",
+          "start_line": 2,
+          "end_line": 2
+        },
+        "reason": "blank"
+      }
+    ],
+    "diagnostics": [],
+    "chunks": [
+      {
+        "chunk_key": "chk_b1cfc331baebf7a37cf0b7385bbb5bb1df04e6858d7f764a391f519c315dbdd3",
+        "chunk_no": 0,
+        "document_version_id": "202",
+        "text": "# 로그인\n사용자는 로그인한다. 😀\n",
+        "source_spans": [
+          {
+            "block_id": "blk_4d6135dcc97bfd94c517f16796932faff6e41eeb36f30441abf278a692ac5b25",
+            "start_offset": 0,
+            "end_offset": 6,
+            "locator": {
+              "type": "text_lines",
+              "start_line": 1,
+              "end_line": 1
+            }
+          },
+          {
+            "block_id": "blk_5ee2e62c079f8afa94834d07067896e99738ac05f9fda277a16182d9715a4b97",
+            "start_offset": 7,
+            "end_offset": 21,
+            "locator": {
+              "type": "text_lines",
+              "start_line": 3,
+              "end_line": 3
+            }
+          }
+        ],
+        "context_refs": [
+          {
+            "block_id": "blk_4d6135dcc97bfd94c517f16796932faff6e41eeb36f30441abf278a692ac5b25",
+            "role": "heading",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 1,
+              "end_line": 1
+            },
+            "text_hash": "f2fe725933b94599e61cfa50648b2dc5d64d639890bdd91bb8318ca6dee75348",
+            "applied": false
+          }
+        ],
+        "embedding_text": "# 로그인\n사용자는 로그인한다. 😀\n",
+        "token_count": 16,
+        "locator": {
+          "type": "text_lines",
+          "start_line": 1,
+          "end_line": 3
+        }
+      }
+    ]
+  },
+  "origin": "PARSER",
+  "usage": []
+}

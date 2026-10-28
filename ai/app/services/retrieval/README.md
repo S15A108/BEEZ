@@ -1,6 +1,6 @@
 # 원문 청킹·임베딩 준비 (#129)
 
-`prepare_document_index`는 #127의 `SourceDocument`를 구조별로 나누고, 주입한 임베딩 공급자로 벡터를 생성·검증하여 `PreparedIndex`를 반환한다. GMS 어댑터·실제 토크나이저와 기존 AI-A04 `POST /v1/embeddings`를 구현했다. 청킹 HTTP API·벡터 DB 저장·검색은 아직 연결하지 않았다. `PreparedIndex`는 내부 타입이며, BE 통합이나 #129 전체 인수 완료를 뜻하지 않는다.
+`prepare_document_index`는 #127의 `SourceDocument`를 구조별로 나누고, 주입한 임베딩 공급자로 벡터를 생성·검증하여 `PreparedIndex`를 반환한다. #214는 청킹 HTTP API 및 AI-A04 임베딩 프로필·용도 확장을 제공한다. 벡터 DB 저장·검색은 BE 통합이 필요하다. `PreparedIndex`는 내부 타입이며 BE 통합 완료를 뜻하지 않는다.
 
 ## 입력과 처리 흐름
 
@@ -44,7 +44,9 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 `TIKTOKEN_CACHE_DIR`은 `.env`의 모델 설정이 아니라 준비 명령과 서버 프로세스 양쪽에 전달하는 환경변수다. 지정하지 않으면 tiktoken의 기본 임시 캐시 경로를 사용한다. `TIKTOKEN_CACHE_DIR=""`로 캐시를 끄는 설정은 런타임에서 거부한다. 배포·로컬 실행 모두 준비 명령과 서버의 경로·사용자가 달라지지 않게 한다.
 
-`POST /v1/embeddings`는 기존 [AI-A04 계약](../../../../docs/api/03-ai-internal.md#ai-a04)의 project_id/request_key/texts와 선택 model/dimension을 받는다. `result`, `origin=MODEL`, `model`, 실제 호출별 `usage`를 반환한다. 현재 identity 전처리는 문서와 질의가 같으므로 purpose 필드 없이 같은 API를 사용할 수 있다. purpose가 필요한 모델을 도입하면 계약 확장이 먼저 필요하다.
+`POST /v1/embeddings`는 기존 [AI-A04 계약](../../../../docs/api/03-ai-internal.md#ai-a04)의 project_id/request_key/texts와 선택 model/dimension을 받는다. 추가로 embedding_profile_id와 DOCUMENT/QUERY purpose를 함께 전달할 수 있으며 서버 실제 프로필과 대조한다. 둘 다 생략한 기존 호출의 응답 형식과 document 기본 동작은 유지한다. `result`, `origin=MODEL`, `model`, 실제 호출별 `usage`를 반환한다.
+
+`POST /v1/document-chunks`는 모델 호출 없이 문서별 청크와 정확한 source_spans, 제외 범위, manifest를 반환한다. 상세 요청·오류와 BE 변경 사항은 [청킹 HTTP 계약](../../../../docs/api/03-ai-internal.md#document-chunks)을 따른다.
 
 내부 인증 누락/불일치는 401, 필드 형식 오류는 400, 중복 key·빈 텍스트·토큰 한도·프로필 위반은 422, 공급자 오류/출력 검증 실패는 502, 타임아웃은 504다. 실패 시 `result`를 반환하지 않고 실제 호출이 있었으면 선택적 usage만 보존한다. 외부 API에서는 모르는 토큰 필드를 생략한다. `X-Request-Id`를 전달하거나 생성한다. 프로젝트 멤버십·원문 버전 권한은 BE가 검증한다. AI 내부 토큰은 사용자/에이전트 토큰을 대신 받는 경로가 아니다. 배포 프록시에서도 본문 크기·동시 요청 수를 제한해야 한다.
 
@@ -76,10 +78,10 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 남은 통합 작업
 
-#129의 DTO·역할·검색 결과 계약안은 [청킹·검색 연동 계약안](../../../../docs/design/document-chunking-search-contract-S15P31A108-129.md)에 있다. AI 모듈 구현과 실제 BE/DB 연동 완료를 구분하며, run/attempt·READY 교체·롤백·색인 성능 측정은 [#130](https://ssafy.atlassian.net/browse/S15P31A108-130)에서 별도로 진행한다.
+#129의 DTO·역할·검색 결과 계약안은 [청킹·검색 연동 계약안](../../../../docs/design/document-chunking-search-contract-S15P31A108-129.md)에 있다. AI 구현과 실제 BE/DB 연동 완료를 구분한다. run/attempt·READY 교체·롤백과 실제 DB 검증은 BE 구현 범위다.
 
 1. BE와 내부 인증 설정 및 임베딩 프로필을 고정하고 실제 AI-A04 호출을 연결한다.
-2. 신규 청킹 API·원문 offset·실행/버전 검증·원자적 색인 발행 계약을 확정하고 저장·검색까지 통합한다.
+2. BE의 전체 행 검증을 source_spans/excluded_ranges 검증으로 변경하고 원문 offset 저장·검색과 원자적 색인 발행을 통합한다.
 3. 실제 문서의 검색 품질·비용을 측정한 뒤 청크 크기와 문맥 보강 정책을 정한다. 변경되지 않은 임베딩 입력의 재사용은 프로젝트 범위·입력 해시·전체 모델 프로필을 함께 검증하도록 별도로 연결한다.
 
 ## 검증
