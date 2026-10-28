@@ -1,6 +1,8 @@
 # BEEZ MCP Tools
 
-버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.5 · 갱신일: 2026-10-28 · 개발 계약 초안
+
+2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 문서함 승인·회의 끝내기로 바뀐 문서도 get_design_changes가 돌려주고, 기준 v1 전에는 작업 계획을 받지 않는다. 바뀐 부분은 '수정안 요청'으로 표시했다.
 
 Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한다. [공통 규약·권한·담당자](00-common.md)와 [동일 업무 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -401,6 +403,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 발행된 승인 변경만 반환한다. pending 제안을 승인된 변경으로 표시하지 않는다.
 - 페이지 마지막까지 읽은 뒤 기준 번호를 갱신한다. 실패를 변경 없음으로 처리하지 않는다.
 - 작업을 지정하면 그 작업, 지정하지 않으면 호출자의 열린 작업 전체의 검증 현재성을 포함한다.
+- (수정안 요청) 공용 문서함 승인(DOC-A21)과 회의 끝내기(MTG-A13)로 바뀐 문서도 발행 변경으로 돌려준다. PublishedChange.source로 출처를 구분한다. 기준 버전을 올리는지는 Q16이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -558,6 +561,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 현재 기준과 소속을 검사하고 제안만 생성한다.
 - 에이전트의 팀장 소유 여부와 관계없이 이 도구로 승인·발행하지 않는다.
 - 서버 REST CHG-A01과 같은 업무 검증을 사용한다.
+- (수정안 요청) 에이전트가 올린 제안에는 agent{agent_session_id, name, member_id}를 채워 변경 제안 화면이 에이전트 이름과 연결한 팀원을 보인다. 항목은 proposed_text 문장 하나로 보낼 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1059,6 +1063,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 리비전 경합 |
 | 409 | `dependency_cycle` | 선행 순환 |
+| 409 | `baseline_required` | 기준 v1 발행 전 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1076,6 +1081,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 생성 시 본인 작업을 만들고 수정 시 본인 담당·현재 계획/상태를 검사한다.
 - 수정은 불변 새 리비전이다. 진행 중 수정은 STALE·WAITING(REVALIDATION)이며 점유 유지다.
 - design_refs는 항목당 가장 강한 관계 하나로 확정한다. 입력·정규화 세부 Q02.
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_required다(REST TSK-A01과 같음).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1606,6 +1612,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (수정안 요청) summary는 AgentWork.last_summary로 HUD·대시보드에 원문 그대로 보인다. AI로 다시 요약하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
