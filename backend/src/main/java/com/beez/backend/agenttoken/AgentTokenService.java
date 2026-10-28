@@ -9,7 +9,6 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.common.auth.SecretTokens;
-import com.beez.backend.project.ProjectMember;
 import com.beez.backend.project.ProjectMemberRepository;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -64,18 +63,20 @@ public class AgentTokenService {
         actor.requireHuman();
         String label = normalizeLabel(req == null ? null : req.label());
 
-        ProjectMember member = members.findForUpdate(actor.memberId())
-                .filter(ProjectMember::isActive)
-                .orElseThrow(() -> AccessErrors.notFound("not_member project=" + projectId
-                        + " account=" + actor.accountId()));
-        long active = tokens.countByProjectIdAndAccountIdAndRevokedAtIsNull(projectId, member.getAccountId());
+        // 잠근 뒤 활성 여부는 쿼리로 다시 본다. requireMember 가 같은 멤버십을 이미 읽어 두어서, 잠금 조회는 옛 상태의
+        // 엔티티를 돌려준다 — 잠금을 기다리는 사이 커밋된 제외를 엔티티로는 못 본다 (InvitationRepository 와 같은 함정)
+        members.findForUpdate(actor.memberId());
+        if (!members.isActiveMember(actor.memberId(), projectId)) {
+            throw AccessErrors.notFound("not_member project=" + projectId + " account=" + actor.accountId());
+        }
+        long active = tokens.countByProjectIdAndAccountIdAndRevokedAtIsNull(projectId, actor.accountId());
         if (active >= config.maxActiveTokens()) {
             throw new ApiException(HttpStatus.CONFLICT, "agent_limit_reached",
                     "활성 토큰은 프로젝트당 " + config.maxActiveTokens() + "개까지입니다. 쓰지 않는 토큰을 폐기한 뒤 다시 발급하세요");
         }
 
         String raw = SecretTokens.generate();
-        AgentToken token = tokens.save(AgentToken.issue(projectId, member.getAccountId(), label, SecretTokens.hash(raw)));
+        AgentToken token = tokens.save(AgentToken.issue(projectId, actor.accountId(), label, SecretTokens.hash(raw)));
         return new IssuedAgentTokenResponse(AgentTokenResponse.of(token), raw, config.mcpUrl(), CLAUDE_MD_SNIPPET);
     }
 
