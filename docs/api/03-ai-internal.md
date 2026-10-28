@@ -20,7 +20,7 @@ backend가 FastAPI ai 서비스에 요청하는 내부 계약이다. [공통 규
 
 HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출이 발생한 뒤 실패했으면 내부 응답에 선택적 `usage: Usage[]`를 추가해 실패 호출 비용도 보존한다. backend는 외부 응답에는 공통 오류만 내보낸다. 모델 timeout으로 응답 자체를 받지 못한 경우 호출 사실과 사용량 미확인을 별도로 기록하며 0토큰으로 단정하지 않는다.
 
-대화·설명은 backend의 템플릿 폴백을 허용하고 origin=TEMPLATE로 구분한다. 검증 실패는 ERROR, 파싱 실패는 FAILED다. 빈 성공이나 자동 PASS로 바꾸지 않는다. 현재 ai 구현의 health 외 업무 API·내부 인증·공통 오류 처리는 구현 대상이다.
+대화·설명은 backend의 템플릿 폴백을 허용하고 origin=TEMPLATE로 구분한다. 검증 실패는 ERROR, 파싱 실패는 FAILED다. 빈 성공이나 자동 PASS로 바꾸지 않는다. AI-A04와 문서 청킹은 구현되며 다른 업무 API의 구현 상태는 각 항목을 확인한다.
 
 ## 운영 상태 확인
 
@@ -38,6 +38,7 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/validate](#ai-a02)
 - [/v1/impact](#ai-a03)
 - [/v1/embeddings](#ai-a04)
+- [/v1/document-chunks](#document-chunks)
 - [/v1/bee/chat](#ai-a05)
 - [/v1/bee/draft](#ai-a06)
 - [/v1/bee/assignments](#ai-a07)
@@ -863,6 +864,10 @@ HTTP `200`.
 | `texts` | [EmbeddingText[]](00-common.md#schema-embeddingtext) | Y | 입력 key는 요청 안에서 유일 |
 | `model` | `string` | N | 선택할 모델. 허용 설정 안에서만 사용 |
 | `dimension` | `integer` | N | 요청 벡터 차원. 예시는 설명용 3 |
+| `embedding_profile_id` | `string` | 조건부 | 서버의 실제 `gms-small-{dimension}-v1`과 일치해야 한다. purpose와 함께 생략하거나 함께 전송 |
+| `purpose` | `DOCUMENT\|QUERY` | 조건부 | embedding_profile_id와 함께 전송. null 불가 |
+
+두 확장 필드를 생략한 기존 요청과 응답은 기존 형식을 유지한다. 확장 요청의 result에는 실제 `embedding_profile_id`와 `purpose`가 추가된다. profile/model/dimension이 서버 설정과 다르면 공급자를 호출하기 전에 422다. 문서에는 청킹 결과의 `embedding_text`를, 질의에는 질의 텍스트를 사용한다.
 
 ```json
 {
@@ -874,8 +879,10 @@ HTTP `200`.
       "text": "이메일·비밀번호로 로그인한다."
     }
   ],
-  "model": "configured-embedding-model",
-  "dimension": 3
+  "model": "text-embedding-3-small",
+  "dimension": 3,
+  "embedding_profile_id": "gms-small-3-v1",
+  "purpose": "DOCUMENT"
 }
 ```
 
@@ -893,8 +900,10 @@ HTTP `200`.
 ```json
 {
   "result": {
-    "model": "configured-embedding-model",
+    "model": "text-embedding-3-small",
     "dimension": 3,
+    "embedding_profile_id": "gms-small-3-v1",
+    "purpose": "DOCUMENT",
     "vectors": [
       {
         "key": "chunk-1",
@@ -907,18 +916,16 @@ HTTP `200`.
     ]
   },
   "origin": "MODEL",
-  "model": "configured-model",
+  "model": "text-embedding-3-small",
   "usage": [
     {
-      "request_key": "llm-validate-601-attempt-1",
+      "request_key": "ai-a04-request-1:emb:example:0:1",
       "feature": "EMBEDDING",
-      "model": "configured-model",
-      "input_tokens": 1200,
-      "output_tokens": 300,
-      "latency_ms": 1800,
+      "model": "text-embedding-3-small",
+      "input_tokens": 12,
+      "output_tokens": 0,
+      "latency_ms": 100,
       "failed": false,
-      "estimated_cost_amount": "0.0042",
-      "currency": "USD",
       "tokens_known": true
     }
   ]
@@ -949,8 +956,52 @@ HTTP `200`.
 - 벡터는 backend가 저장한다. ai가 DB나 로컬 저장소를 직접 접근하지 않는다.
 - key 집합·개수·유한 숫자·차원을 backend가 검증한다. 임베딩 모델·차원·문서 분할 계약 Q11.
 - 예제의 3차원은 숫자 배열 형식 설명용이다. 운영 차원을 정하는 값이 아니다.
+- 전체 처리 예산은 90초, 공급자 호출당 20초다. BE read timeout은 100초 이상 또는 비동기 접수 방식으로 별도 결정해야 한다. 연결 종료가 공급자의 처리·과금 취소를 보장하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="document-chunks"></a>
+
+## 문서 청킹: POST `/v1/document-chunks` (#214)
+
+상태: AI 구현 계약. BE 담당자의 계약 합의 및 실제 DB 통합은 별도다. `Authorization: Bearer {AI_INTERNAL_TOKEN}` 필수, `X-Request-Id` 선택. 모델 호출과 GMS 키는 필요 없다. BE가 프로젝트 권한과 문서 소속을 검증한다.
+
+| 요청 필드 | 규칙 |
+| --- | --- |
+| `project_id`, `document_version_id` | 양의 십진 문자열, 최대 19자리 |
+| `request_key` | 1~128자 상관관계 키. 저장 또는 멱등성 보장은 BE 책임 |
+| `kind` | `PLAN`, `REQUIREMENTS`, `API_SPEC`, `ERD` |
+| `media_type` | `text/markdown`만 허용 |
+| `content` | 엄격히 UTF-8 디코딩한 원문 문자열. BOM/CRLF 허용 |
+| `content_hash` | 원본 바이트의 SHA-256 소문자 hex. BE가 원본과 대조 |
+| `text_hash` | 정규화 텍스트 UTF-8의 SHA-256 소문자 hex. AI가 대조 |
+| `normalization_profile` | `utf8-lf-v1`: 맨 앞 BOM 제거, CRLF/CR을 LF로 변환 |
+| `parser_profile` | 선택. 생략 시 `markdown-v1` |
+| `chunking_profile_id` | `md-structure-v1` |
+
+추가 필드는 거부한다. 고정 청킹 프로필은 로컬 tiktoken, 청크당 600토큰, 최대 1,024청크이며 heading/table 문맥 보강은 꺼져 있다. 같은 입력·문서 버전·실제 프로필과 파서/청커 버전은 같은 chunk key를 만든다.
+
+성공 응답은 `result`, `origin: "PARSER"`, `usage: []`다. result는 `contract_version: "document-chunks-v1"`, 요청 식별자·text_hash·프로필, `parser_version`, `manifest`, `excluded_ranges`, `diagnostics`, `chunks`를 포함한다. manifest에는 실제 전체 청킹 프로필 및 예상 청크 key 목록이 있다. 각 청크에는 `chunk_key`, `chunk_no`, `document_version_id`, `text`, `embedding_text`, `token_count`, `source_spans`, `context_refs`, 표시용 `locator`가 있다.
+
+`source_spans`의 시작·끝은 정규화 문자열의 Unicode code point 0-based, 끝 제외다. span별 `locator`는 1-based 행 양끝 포함이다. Java에서는 UTF-16 인덱스로 변환한 뒤 원문을 자른다. `text`는 span별 원문 조각을 순서대로 결합한 값이다. 청크의 `locator`는 첫 span부터 마지막 span까지의 **표시 범위**이며 전체 행을 결합해 text를 복원하면 안 된다. 한 행 안에서 분할한 청크들은 이 표시 범위가 겹칠 수 있다. `excluded_ranges`는 빈 행, 구분선, 컨테이너 표시 등 청크에 속하지 않는 원문을 명시한다.
+
+`context_refs`는 heading/table header의 위치·해시와 문맥 적용 여부를 제공한다. 인용 근거는 원문 span이며 임베딩에는 `embedding_text`를 사용한다. 요청·응답의 실행 가능한 예시는 [청킹 계약 fixture](examples/document-chunks/)에 있다.
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | JSON·필드 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 413 | `file_too_large` | 실제 HTTP body 8 MiB 또는 content UTF-8 1 MiB 초과 |
+| 415 | `unsupported_media_type` | 미지원 kind/media_type |
+| 422 | `invalid_ai_input` | 해시·프로필·문법, 정규화 100,000자·파서·청크·최종 응답 8 MiB 한도 실패 |
+| 503 | `processing_unavailable` | 로컬 토크나이저 이용 불가 |
+| 504 | `processing_timeout` | JSON 검증·처리 10초 초과 |
+
+오류는 `error.code/message` 및 선택적 `details.reason/locator`이며 부분 결과는 반환하지 않는다. 원문·키는 오류에 포함하지 않는다. 시간 초과 후 작업 스레드가 잠시 계속될 수 있으므로 프록시에서 동시성 및 요청 크기를 제한한다.
+
+**BE 인계:** 기존 worker의 전체 행 복원 및 모든 비빈 행 포함 검사를 span·excluded_ranges 기반 검증으로 교체한다. manifest key·개수·scope·해시·프로필, 범위 순서/중복/coverage, 원문 복원을 확인하고 source span과 context 참조의 저장·검색 매핑을 결정한다. 문서 임베딩은 `embedding_text`, 질의는 같은 전체 임베딩 프로필을 사용한다. worker/lease/READY 원자적 발행, read timeout, 실제 DB 통합 검증은 BE에서 이어간다.
 
 ---
 

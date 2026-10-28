@@ -106,18 +106,30 @@ async def create_embeddings(
     provider: Annotated[GmsEmbeddingProvider, Depends(get_provider)],
 ) -> EmbeddingResponse:
     profile = embedding_profile(settings)
-    if (body.model is not None and body.model != profile.model) or (
-        body.dimension is not None and body.dimension != profile.dimension
+    if (
+        (body.model is not None and body.model != profile.model)
+        or (body.dimension is not None and body.dimension != profile.dimension)
+        or (
+            body.embedding_profile_id is not None
+            and body.embedding_profile_id != profile.profile_id
+        )
     ):
         raise HTTPException(422, detail="invalid_ai_input")
-    # BE authenticates project access. Identity preprocessing is identical for
-    # document and query inputs, so the existing AI-A04 payload needs no extension.
     result = await embed_texts(
-        tuple(body.texts), profile, body.request_key, provider, counter
+        tuple(body.texts),
+        profile,
+        body.request_key,
+        provider,
+        counter,
+        purpose="query" if body.purpose == "QUERY" else "document",
     )
     return EmbeddingResponse(
         result=EmbeddingApiResult(
-            model=profile.model, dimension=profile.dimension, vectors=result.vectors
+            model=profile.model,
+            dimension=profile.dimension,
+            vectors=result.vectors,
+            embedding_profile_id=profile.profile_id if body.purpose else None,
+            purpose=body.purpose,
         ),
         model=profile.model,
         usage=result.usage,

@@ -105,6 +105,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 429 | 호출 제한 | rate_limited |
 | 500 | 내부 오류 | internal |
 | 502 | AI·모델 실패 | ai_unavailable, model_unavailable |
+| 503 | 처리 기반 이용 불가 | processing_unavailable |
 | 504 | 분석 시간 초과 | ai_timeout, model_timeout |
 
 현재 backend의 공통 오류 응답과 snake_case 설정을 따른다. 신규 업무 code·페이지·문자열 ID는 구현 시 이 계약과 맞춘다. 검증이 NEEDS_INPUT/NEEDS_REVIEW/ERROR로 저장된 경우는 HTTP 전송 실패와 구분한다. 409 뒤에는 최신 리소스를 다시 조회한다.
@@ -381,6 +382,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AI-A02 작업 계획 의미 분석](03-ai-internal.md#ai-a02) | POST `/v1/validate` | 변준성 | 양지훈 |
 | [AI-A03 변경 영향·담당자 분석](03-ai-internal.md#ai-a03) | POST `/v1/impact` | 오서현 / 작업 조회: 변준성 | 양지훈 |
 | [AI-A04 텍스트 임베딩](03-ai-internal.md#ai-a04) | POST `/v1/embeddings` | 오서현(문서 접근) / 변준성(맥락 연계) | 박상은 |
+| [문서 청킹](03-ai-internal.md#document-chunks) | POST `/v1/document-chunks` | 오서현(문서 접근) | 박상은 |
 | [AI-A05 비비 설계 질의 응답](03-ai-internal.md#ai-a05) | POST `/v1/bee/chat` | 오서현(문서 연결) | 박상은 |
 | [AI-A06 기획·문서 수정 초안 생성](03-ai-internal.md#ai-a06) | POST `/v1/bee/draft` | 오서현 | 박상은 / 회의 연결: 양지훈 |
 | [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
@@ -1480,6 +1482,8 @@ HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. bac
 | `model` | `string` | Y | 사용 임베딩 모델 |
 | `dimension` | `integer` | Y | 벡터 차원. 아래 예시는 설명용 3 |
 | `vectors` | [EmbeddingVector[]](00-common.md#schema-embeddingvector) | Y | 입력 key별 벡터 |
+| `embedding_profile_id` | `string` | 조건부 | 확장 요청에서 실제 서버 프로필 ID |
+| `purpose` | `DOCUMENT\|QUERY` | 조건부 | 확장 요청에서 요청 용도 |
 
 <a id="schema-chatresult"></a>
 
