@@ -4,6 +4,7 @@ import json
 import time
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, ConfigDict
@@ -122,8 +123,12 @@ class _MeteredEmbedding:
             "request_key": request_key,
             "model": profile.model,
             "failed": True,
+            "call_id": str(uuid4()),
+            "status": "pending",
+            "reserved_credits_if_unknown": reserved,
         }
         self.report["calls"].append(call)
+        write_report(self.path, self.report)
         try:
             result = await self.inner.embed(texts, profile, purpose, request_key)
             usage = result.usage
@@ -145,6 +150,7 @@ class _MeteredEmbedding:
             actual = cost(raw, self.price)
             self.budget.settle(reserved, actual)
             call.update(
+                status="settled",
                 usage=raw,
                 estimated_credits=actual,
                 reserved_credits_if_unknown=reserved if actual is None else 0,
@@ -159,8 +165,17 @@ async def _answer(client, key, prompt, report, path, budget, price, row):
         "inputPrice"
     ] + 512 * price["outputPrice"]
     budget.reserve(reserved)
-    call = {"stage": "generation", "model": MODEL, "row": row["id"], "failed": True}
+    call = {
+        "stage": "generation",
+        "model": MODEL,
+        "row": row["id"],
+        "failed": True,
+        "call_id": str(uuid4()),
+        "status": "pending",
+        "reserved_credits_if_unknown": reserved,
+    }
     report["calls"].append(call)
+    write_report(path, report)
     started, payload = time.perf_counter(), {}
     try:
         async with client.stream(
@@ -206,6 +221,7 @@ async def _answer(client, key, prompt, report, path, budget, price, row):
         actual = cost(usage, price)
         budget.settle(reserved, actual)
         call.update(
+            status="settled",
             usage=usage,
             estimated_credits=actual,
             reserved_credits_if_unknown=reserved if actual is None else 0,

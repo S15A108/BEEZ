@@ -83,10 +83,12 @@ def test_consistency_validator_catches_stale_content_under_new_citation():
         "answer_value": "10 MB",
         "expected_value": "30 MB",
     }
-    assert "answer_content_mismatch" in m.validate_trace(trace)
+    assert "answer_content_mismatch" in m.validate_trace(trace, expected_baseline="b2")
     trace["answer_value"] = "30 MB"
     trace["citation_versions"] = ["201"]
-    assert "citation_version_mismatch" in m.validate_trace(trace)
+    assert "citation_version_mismatch" in m.validate_trace(
+        trace, expected_baseline="b2"
+    )
 
 
 def test_retry_trace_must_not_expose_discarded_answer():
@@ -183,7 +185,7 @@ def test_consistency_cannot_relabel_old_policy_as_new_validated_baseline():
         "answer_value": "10 MB",
         "expected_value": "10 MB",
     }
-    violations = c.validate_trace(trace)
+    violations = c.validate_trace(trace, expected_baseline="b2")
     assert "answer_content_mismatch" in violations
     assert "retrieval_version_mismatch" in violations
 
@@ -297,8 +299,9 @@ async def test_http_failure_preserves_valid_usage_without_provider_body(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
 async def test_live_runner_records_every_row_and_actual_usage_without_network(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, resume
 ):
     import httpx
 
@@ -315,6 +318,36 @@ async def test_live_runner_records_every_row_and_actual_usage_without_network(
         "rows": [],
         "calls": [],
     }
+
+    if resume:
+        report["rows"].append(
+            {
+                "id": f"0:fixed:{spec['questions'][0]['id']}",
+                "mode": "fixed",
+                "question_id": spec["questions"][0]["id"],
+                "status": "error",
+            }
+        )
+        report["calls"].append(
+            {
+                "stage": "generation",
+                "failed": True,
+                "call_id": "interrupted",
+                "status": "pending",
+                "row": report["rows"][0]["id"],
+                "reserved_credits_if_unknown": 1.0,
+            }
+        )
+        report["calls"].append(
+            {
+                "stage": "document",
+                "failed": True,
+                "call_id": "interrupted-embedding",
+                "status": "pending",
+                "request_key": "batch",
+                "reserved_credits_if_unknown": 0.5,
+            }
+        )
 
     def respond(request):
         if request.method == "GET":
@@ -383,11 +416,18 @@ async def test_live_runner_records_every_row_and_actual_usage_without_network(
     await live.run_live(report, counter, tmp_path / "result.json")
     assert report["status"] == "completed"
     assert len(report["rows"]) == 3
-    assert all(row["scores"]["required_fact_match"] is False for row in report["rows"])
-    assert report["budget"]["calls"] == 5
+    assert all(
+        row["scores"]["required_fact_match"] is False
+        for row in report["rows"]
+        if row["status"] == "ok"
+    )
+    assert sum(row["status"] == "ok" for row in report["rows"]) == (2 if resume else 3)
+    assert report["budget"]["calls"] == (6 if resume else 5)
+    call_ids = [call["call_id"] for call in report["calls"]]
+    assert len(call_ids) == len(set(call_ids))
     assert report["budget"][
         "estimated_credits_including_unknown_reservations"
-    ] == pytest.approx(0.155)
+    ] == pytest.approx(1.61 if resume else 0.155)
 
 
 @pytest.mark.asyncio
@@ -441,3 +481,140 @@ async def test_resume_profile_change_is_rejected_before_paid_dispatch(
     await live.run_live(report, counter, tmp_path / "result.json")
     assert report["status"] == "stopped"
     assert report["calls"] == []
+
+
+@pytest.mark.asyncio
+async def test_paid_generation_is_checkpointed_before_dispatch(tmp_path):
+    import json
+
+    import httpx
+    from pydantic import SecretStr
+
+    live = importlib.import_module("evaluations.live")
+    m = subject()
+    row = {"id": "0:fixed:q", "status": "error"}
+    report = {"calls": [], "rows": [row]}
+    path = tmp_path / "result.json"
+    observed = []
+    m.write_report(path, {"calls": [], "rows": []})
+
+    def handler(request):
+        observed.append(json.loads(path.read_text(encoding="utf-8")))
+        return httpx.Response(500, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RuntimeError):
+            await live._answer(
+                client,
+                SecretStr("test"),
+                "question",
+                report,
+                path,
+                m.CallBudget(),
+                {"inputPrice": 0.001, "outputPrice": 0.005},
+                row,
+            )
+    saved = observed[0]
+    assert saved["rows"][0]["id"] == row["id"]
+    call = saved["calls"][0]
+    assert call["row"] == row["id"]
+    assert call["call_id"]
+    assert call["status"] == "pending"
+    assert call["reserved_credits_if_unknown"] > 0
+
+
+@pytest.mark.asyncio
+async def test_paid_embedding_is_checkpointed_before_dispatch(tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    live = importlib.import_module("evaluations.live")
+    m = subject()
+    path = tmp_path / "result.json"
+    report = {"calls": [], "rows": []}
+    observed = []
+    m.write_report(path, {"calls": [], "rows": []})
+
+    class Provider:
+        async def embed(self, texts, profile, purpose, request_key):
+            observed.append(json.loads(path.read_text(encoding="utf-8")))
+            raise RuntimeError("simulated interruption")
+
+    metered = live._MeteredEmbedding(
+        Provider(),
+        m.CallBudget(),
+        report,
+        {"inputPrice": 0.001, "outputPrice": 0},
+        path,
+        SimpleNamespace(count=lambda _: 3),
+    )
+    with pytest.raises(RuntimeError):
+        await metered.embed(
+            [SimpleNamespace(text="text")],
+            SimpleNamespace(model="m"),
+            "document",
+            "batch-1",
+        )
+    call = observed[0]["calls"][0]
+    assert call["request_key"] == "batch-1"
+    assert call["call_id"]
+    assert call["status"] == "pending"
+    assert call["reserved_credits_if_unknown"] == pytest.approx(0.003)
+
+
+def test_stale_baseline_before_final_check_is_rejected_independently():
+    c = importlib.import_module("evaluations.consistency")
+    trace = {
+        "outcome": "answered",
+        "validated_baseline": "b1",
+        "retrieved_versions": ["201"],
+        "model_input_versions": ["201"],
+        "citation_versions": ["201"],
+        "answer_value": "10 MB",
+    }
+    assert "final_baseline_mismatch" in c.validate_trace(trace, expected_baseline="b2")
+    assert c.validate_trace(trace, expected_baseline="b1") == []
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_failure_prevents_paid_generation(tmp_path, monkeypatch):
+    import httpx
+    from pydantic import SecretStr
+
+    live = importlib.import_module("evaluations.live")
+    calls = []
+
+    def fail_write(*args):
+        raise OSError("checkpoint unavailable")
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200)
+
+    monkeypatch.setattr(live, "write_report", fail_write)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(OSError, match="checkpoint unavailable"):
+            await live._answer(
+                client,
+                SecretStr("test"),
+                "prompt",
+                {"calls": []},
+                tmp_path / "result.json",
+                subject().CallBudget(),
+                {"inputPrice": 0.001, "outputPrice": 0.005},
+                {"id": "q"},
+            )
+    assert calls == []
+
+
+def test_answered_trace_requires_independent_expected_baseline():
+    c = importlib.import_module("evaluations.consistency")
+    trace = {
+        "outcome": "answered",
+        "validated_baseline": "b1",
+        "retrieved_versions": ["201"],
+        "model_input_versions": ["201"],
+        "citation_versions": ["201"],
+        "answer_value": "10 MB",
+    }
+    assert c.validate_trace(trace) == ["missing_or_unknown_expected_baseline"]

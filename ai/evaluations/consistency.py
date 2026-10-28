@@ -8,7 +8,7 @@ SNAPSHOTS = {
 }
 
 
-def validate_trace(trace, snapshots=None):
+def validate_trace(trace, snapshots=None, *, expected_baseline=None):
     if trace["outcome"] != "answered":
         return (
             ["discarded_answer_exposed"]
@@ -16,12 +16,12 @@ def validate_trace(trace, snapshots=None):
             else []
         )
     errors = []
-    # Trusted evaluation oracle is separate from the trace being graded.
-    snapshot = (SNAPSHOTS if snapshots is None else snapshots).get(
-        trace.get("validated_baseline")
-    )
+    # The expected baseline comes from the test fixture, never from the trace.
+    snapshot = (SNAPSHOTS if snapshots is None else snapshots).get(expected_baseline)
     if snapshot is None:
-        return ["missing_or_unknown_final_validation"]
+        return ["missing_or_unknown_expected_baseline"]
+    if trace.get("validated_baseline") != expected_baseline:
+        errors.append("final_baseline_mismatch")
     allowed = set(snapshot["allowed_versions"])
     for key, error in (
         ("retrieved_versions", "retrieval_version_mismatch"),
@@ -40,6 +40,10 @@ def validate_trace(trace, snapshots=None):
 async def _case(case_id, change_at=None, initial="b1", ready=True):
     reached, released = asyncio.Event(), asyncio.Event()
     current = initial
+    # Oracle derives from the test schedule, independently of the trace.
+    expected_baseline = (
+        "b2" if change_at in {"after_search", "before_final"} else initial
+    )
     events = []
     trace = {
         "id": case_id,
@@ -82,7 +86,7 @@ async def _case(case_id, change_at=None, initial="b1", ready=True):
                 )
             await checkpoint("after_final")
         trace["current_baseline_at_delivery"] = current
-        trace["violations"] = validate_trace(trace)
+        trace["violations"] = validate_trace(trace, expected_baseline=expected_baseline)
         return trace
     finally:
         if mutation:

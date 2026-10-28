@@ -21,13 +21,13 @@ python -m evaluations.summarize <경로>/live.json --output <경로>/summary.md
 
 ## 중단 후 재개
 
-원시 응답·usage를 호출마다 체크포인트에 저장한다. Windows의 일시적 파일 교체 거부는 짧은 로컬 재시도로 처리한다. 같은 출력에 동시에 두 실행기를 실행하지 않는다. 프로세스가 종료됐음을 확인한 뒤 명시적으로 재개한다.
+유료 요청 전에 호출 ID, 미확정 예약액, 생성 행을 체크포인트에 기록한다. 저장에 실패하면 요청을 보내지 않는다. 응답 후 원시 응답·usage와 정산 결과를 저장한다. Windows의 일시적 파일 교체 거부는 짧은 로컬 재시도로 처리한다. 같은 출력에 동시에 두 실행기를 실행하지 않는다. 프로세스가 종료됐음을 확인한 뒤 명시적으로 재개한다.
 
 ```text
 python -m evaluations.document_rag --live --resume --output <기존 경로>/live.json
 ```
 
-기존 생성 행은 성공/실패 여부에 관계없이 재호출하지 않는다. 원시 성공 응답이 저장된 행은 네트워크 없이 채점을 복구한다. 공유 임베딩 풀은 다시 생성하므로 추가 호출·비용도 기존 사용량에 합산한다. 원문·질문·청킹·프롬프트·한도·공개 단가가 바뀌면 재개를 거부한다. 이미 완료된 측정은 재개할 수 없다.
+기존 생성 행은 성공/실패 여부에 관계없이 재호출하지 않는다. 원시 성공 응답이 저장된 행은 네트워크 없이 채점을 복구한다. 중단 시 미확정 호출은 기존 예약액을 유지한다. 생성 행은 재호출하지 않으며 결과를 확인할 수 없으면 실패 행으로 남는다. 공유 임베딩 풀은 다시 생성하므로 미확정 호출이 이미 공급자에 도착했을 가능성이 있고, 새 호출과 비용은 기존 예약액에 더한다. 호출 ID는 각 물리 호출을 구분한다. 원문·질문·청킹·프롬프트·한도·공개 단가가 바뀌면 재개를 거부한다. 이미 완료된 측정은 재개할 수 없다.
 
 ## 점수와 원문
 
@@ -45,7 +45,7 @@ Windows의 기존 Proactor `socketpair()` 초기화가 간헐적 WinError 10014�
 python -c "import asyncio,pytest; asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy()); raise SystemExit(pytest.main(['-q','-o','asyncio_default_test_loop_scope=session']))"
 ```
 
-`consistency.py`의 Event barrier가 검색 후/생성 후 최종 검사 전/최종 검사 후 승인 변경 순서를 제어한다. 검증기는 trace 안의 자체 기대값을 믿지 않고 별도 `SNAPSHOTS`에서 승인 버전과 정책값을 얻는다. BE trace를 검사할 때는 권위 있는 시험 fixture에서 별도로 만든 `snapshots`를 `validate_trace(trace, snapshots)`에 전달한다. trace가 주장한 허용 버전/정답을 그대로 oracle로 넣으면 안 된다.
+`consistency.py`의 Event barrier가 검색 후/생성 후 최종 검사 전/최종 검사 후 승인 변경 순서를 제어한다. 검증기는 trace 안의 자체 기대값을 믿지 않고 별도 `SNAPSHOTS`에서 승인 버전과 정책값을 얻는다. BE trace를 검사할 때는 권위 있는 시험 fixture에서 별도로 만든 `snapshots`와 최종 검사 시점의 `expected_baseline`을 `validate_trace(trace, snapshots, expected_baseline=...)`에 전달한다. 검증 이후 승인 변경은 이 기준을 바꾸지 않는다. trace가 주장한 허용 버전/정답을 그대로 oracle로 넣으면 안 된다.
 
 이 실행의 모의 C 6개와 기존 handoff 26개는 실제 PostgreSQL의 트랜잭션·rollback·권한 격리·늦은 attempt 차단 검증을 대신하지 않는다. BE 저장/검색·실행 상태 구현은 오서현 담당의 기존 `feature/backend-document-upload-S15P31A108-192` 브랜치에 존재한다. 이 자료는 기존 구현의 계약·SQL 결과·승인 경합·검색→모델 입력→최종 답변/인용을 대조하는 데 사용한다. 필요한 AI 인터페이스 변경은 해당 구현 작업에서 추적한다. #130은 실행 가능한 도구·결과·인계 자료와 dev 병합을 기준으로 완료하며 BE 통합 대기를 종료 조건으로 두지 않는다.
 
