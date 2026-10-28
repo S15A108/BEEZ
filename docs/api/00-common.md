@@ -409,14 +409,14 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 | ID | 계약 항목 | 담당 | 확인할 내용 |
 | --- | --- | --- | --- |
-| Q01 | 항목 본문 스키마 | 오서현·박상은 | kind별 content 필수 키·schema_version, API/DATA 계약 구조. 107의 비교 예시는 최종 본문 스키마를 선점하지 않음 |
+| Q01 | 항목 본문 스키마 | 오서현·박상은 | 194의 수동 항목 5종 v1은 [확정 계약](../design/07-initial-design-baseline.md#1-항목-본문-v1--q01). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책, 세션 쿠키·만료·CSRF, 재설정 토큰 만료·재발송·세션 정리 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
-| Q08 | 초안·제안 충돌 | 오서현 | 초안 해시·조회 범위·해시 발급, 초안 편집·삭제, expected_updated_at 정밀도 |
+| Q08 | 초안·제안 충돌 | 오서현 | 194의 전체 초안 해시·편집·제외는 [확정 계약](../design/07-initial-design-baseline.md). 후속 제안 expected_updated_at 정밀도는 별도 검토 |
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
@@ -617,7 +617,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `version_no` | `integer` | Y | 항목 버전 번호 |
 | `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 항목 버전 상태 |
 | `schema_version` | `integer` | Y | 본문 스키마 버전 |
-| `content` | `object` | Y | kind별 본문 구조. Q01 검토 대상 |
+| `content` | `object` | Y | [5종 v1 본문](../design/07-initial-design-baseline.md). 모든 종류에 description 필수, API는 method/path, DATA는 entity/fields 추가 필수 |
 | `source` | [Source](00-common.md#schema-source) | N | 원문 출처 |
 | `content_hash` | `string` | N | DRAFT 본문 경합 검사 해시 |
 

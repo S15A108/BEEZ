@@ -4191,6 +4191,8 @@ HTTP `202`.
 
 ## PLN-A06. 설계 항목 목록
 
+194 확정: DRAFT 조회의 draft_snapshot_hash는 필터/페이지와 무관한 전체 프로젝트 문서·활성 초안 스냅샷이다. 페이지 간 변경은 409 draft_changed, cursor 필터 변경은 400 validation_failed. [계산·상태 계약](../design/07-initial-design-baseline.md)을 따른다.
+
 ### GET `/api/projects/{id}/design-items`
 
 설계 항목 목록 기능을 제공한다.
@@ -4289,8 +4291,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 페이지 필터에 맞는 항목을 반환한다. 기본 조회는 현재 baseline 항목이다.
-- DRAFT 조회에서 페이지 cursor를 제외한 동일 선택 범위의 전체 스냅샷 해시를 제공한다. 최초 발행 전 다시 대조한다.
-- 정확한 해시 대상·계산 방식은 Q08이다.
+- DRAFT 조회에서 kind/source 필터·페이지와 무관한 전체 프로젝트 초안 스냅샷을 제공한다. 최초 발행 시 정확한 전체 문서·항목 ID 집합과 함께 다시 대조한다.
+- 해시 대상과 계산 방식은 [194 계약](../design/07-initial-design-baseline.md#3-전체-검토-스냅샷)을 따른다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -4299,6 +4301,8 @@ HTTP `200`.
 <a id="pln-a07"></a>
 
 ## PLN-A07. 설계 항목 초안 추가
+
+194 확정: 최초 발행 전 HUMAN LEADER만 등록한다. 5종 content v1·서버 key·출처 검증은 [공통 계약](../design/07-initial-design-baseline.md)을 따른다. Idempotency-Key 필수, 허용 Origin/Referer 검사를 적용한다. 동일 키 입력 충돌은 409 idempotency_conflict, 기존 baseline은 409 baseline_exists다.
 
 ### POST `/api/projects/{id}/design-items`
 
@@ -4423,6 +4427,8 @@ HTTP `201`.
 
 ## PLN-A08. 설계 항목 초안 수정
 
+194 확정: 최초 발행 전 DRAFT 행을 같은 버전 ID에서 갱신하고 content_hash를 재계산한다. 모든 변경에 허용 Origin/Referer 검사를 적용한다. 본문 스키마·권한·발행 이후 제한은 [공통 계약](../design/07-initial-design-baseline.md)을 따른다.
+
 ### PATCH `/api/human/design-items/{id}`
 
 설계 항목 초안 수정 기능을 제공한다.
@@ -4544,6 +4550,8 @@ HTTP `200`.
 
 ## PLN-A09. 설계 항목 초안 제외
 
+194 확정: 최초 발행 전 DRAFT를 REJECTED로 보관하고 기본 초안/발행 대상에서 제외한다. 복원은 후속이다. 허용 Origin/Referer·현재 사람 팀장·버전/해시를 검사한다. 최초 발행 이후에는 409 baseline_exists, 승인 항목 폐기는 변경 제안 RETIRE를 사용한다.
+
 ### DELETE `/api/human/design-items/{id}`
 
 설계 항목 초안 제외 기능을 제공한다.
@@ -4616,6 +4624,8 @@ HTTP `204`.
 <a id="pln-a10"></a>
 
 ## PLN-A10. 최초 기준 설계 승인·발행
+
+194 사용자 확정: 필수 문서 4종의 색인 게시가 모두 완료돼야 발행한다. 자동 추출은 요구하지 않는다. 검토한 최신 문서 4종과 전체 활성 수동 초안(1개 이상), 전체 draft_snapshot_hash를 제출한다. Idempotency-Key와 허용 Origin/Referer 검사를 적용한다. [발행·트랜잭션 상세](../design/07-initial-design-baseline.md#4-최초-승인발행)를 따른다.
 
 ### POST `/api/human/baselines`
 
@@ -4731,7 +4741,8 @@ HTTP `201`.
 #### 처리 규칙
 
 - 현재 사람 팀장의 권한과 문서·항목 소속을 검사한다.
-- 프로젝트 잠금 후 현재 baseline 부재·초안 해시·필수 문서 4종·분석 상태를 확인한다.
+- 프로젝트 잠금 후 현재 baseline 부재·전체 초안 해시·정확한 전체 대상 집합·필수 문서 4종을 확인한다. 중복 ID/일부 제출/검토 후 변경은 409 draft_changed다.
+- 각 문서의 COMPLETED·SOURCE/INDEX READY, 현재 attempt/hash/profile의 manifest와 실제 임베딩 청크 게시를 검사한다. 색인 미준비/실패/불일치는 409 analysis_not_completed다. 질문·자동 항목 추출 완료는 선행 조건이 아니다.
 - 문서/항목 승인, baseline_item·baseline_document, 현재 baseline 포인터를 한 트랜잭션으로 발행한다.
 - 이후 변경은 변경 제안 승인 API로 처리한다.
 

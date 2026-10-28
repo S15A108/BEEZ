@@ -19,17 +19,19 @@ sequenceDiagram
   B-->>B: project · member(LEADER) · 비비 인스턴스 생성 (BEE-01)
   L->>W: 필수 문서 4종 업로드 (기획안·ERD·요구사항·API) (DOC-01)
   W->>B: POST /api/projects/{id}/documents
-  B-->>B: document · document_version(DRAFT) 저장
-  B->>A: POST /v1/parse (문서 원문, 유형)
-  A-->>B: 설계 항목 후보 + 원문 위치 + 누락/보완 질문 (PLN-02~05)
-  B-->>B: design_item · design_item_version(DRAFT) 생성, 질문 저장
-  L->>W: 보완 질문 답변 · 항목 추가/수정/삭제 (PLN-05·07)
-  W->>B: PATCH /api/human/design-items/*
+  B-->>B: document · document_version(DRAFT) · 영속 분석 접수 저장
+  B->>A: POST /v1/document-chunks → /v1/embeddings
+  A-->>B: 원문 청크·임베딩·근거 메타
+  B-->>B: 청크/manifest 전량 게시 → SOURCE/INDEX READY
+  Note over W,A: 자동 질문·설계 후보/답변 기반 생성은 별도 후속. 원문 색인 완료와 구분
+  L->>W: 수동 항목 추가·수정·발행 제외 (PLN-07)
+  W->>B: POST design-items / PATCH·DELETE human/design-items
+  B-->>W: 전체 draft_snapshot_hash와 항목 버전·본문 해시
   L->>W: 초안 승인 (PLN-08)
-  W->>B: POST /api/human/baselines (승인 권한 검사)
+  W->>B: POST /api/human/baselines (전체 검토 집합·해시, 문서 4종 색인 완료 확인)
   B-->>B: 같은 트랜잭션: project 행 FOR UPDATE → 항목 버전·문서 버전 APPROVED → baseline v1 + baseline_item + baseline_document → current_baseline_id (PLN-09, NFR-04, DOC-08)
   Note over B: baseline_document가 빠지면 현재 승인 문서 조회와 청크 검색 대상이 비므로 최초 발행에도 반드시 포함
-  B-->>B: activity_event(BASELINE_PUBLISHED)
+  Note over B: activity_event(BASELINE_PUBLISHED) 연동은 후속 104. 저장 성공과 전달 완료 구분
   L->>W: 팀원 초대 (MEM-01) · 역할·담당 영역 (MEM-04·05)
   M->>W: 초대 수락 (MEM-02) → 에이전트 토큰 발급 (ACC-05)
   W-->>M: MCP 설정값 · CLAUDE.md 템플릿 · 절차 안내 (AGT-04)

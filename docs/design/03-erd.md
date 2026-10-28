@@ -47,6 +47,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 |---|---|---|
 | A. 계정·프로젝트·에이전트 | account, project, project_member, invitation, agent_token, agent_session | 전진 |
 | B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, design_item_dependency, planning_question | 오서현 |
+| B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
 | B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, approval, meeting, meeting_participant, meeting_entry | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
 | C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
@@ -314,7 +315,9 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 
 ## 6. 남은 결정
 
-- 항목 본문 `content` 스키마 (`kind`별, 특히 API 계약) — 오서현·박상은
+194 보완: 수동 항목 5종 content v1·DRAFT 편집·REJECTED 제외·전체 스냅샷·문서 4종 색인 후 최초 발행은 [확정 계약](07-initial-design-baseline.md)을 따른다. V6 design_http_command는 등록/최초 발행의 사용자·프로젝트·동작별 멱등 응답을 저장한다. 기존 V2~V5는 수정하지 않는다.
+
+- 수동 항목 content v1은 194에서 확정. 자동 생성·확장 스키마는 오서현·박상은 검토
 - 임베딩 차원 N — 지금은 `vector(1024)` 임시값
 - `design_item_dependency`를 무효화에서 몇 단계까지 따라갈지 (제안 1단계)
 - 계획 참조의 "가장 강한 관계 하나" 규칙에 팀 동의
