@@ -1,13 +1,11 @@
 package com.beez.backend.project;
 
 import jakarta.persistence.LockModeType;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -39,17 +37,4 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
             """)
     List<MyProjectRow> findMyProjects(@Param("accountId") long accountId, @Param("beforeId") long beforeId,
                                       Pageable pageable);
-
-    /**
-     * 프로젝트 삭제와 같은 트랜잭션에서 그 프로젝트의 토큰을 모두 폐기한다 (-172 합의 4).
-     * 토큰 엔티티는 -175 에서 만든다. 그 전까지 SQL 로 쓴다 (AgentTokenScopes 와 같은 이유).
-     */
-    @Modifying(flushAutomatically = true)
-    @Query(value = """
-            update agent_token
-               set revoked_at = :now, updated_at = :now
-             where project_id = :projectId
-               and revoked_at is null
-            """, nativeQuery = true)
-    int revokeAllTokens(@Param("projectId") long projectId, @Param("now") Instant now);
 }

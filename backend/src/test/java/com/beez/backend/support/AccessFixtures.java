@@ -84,7 +84,7 @@ public final class AccessFixtures {
         jdbc.update("UPDATE account SET deleted_at = now(), email = NULL WHERE id = ?", accountId);
     }
 
-    /** 에이전트 토큰 행. 해시는 임의값이다 — 실제 발급·검증은 -175. */
+    /** 에이전트 토큰 행. 해시는 임의값이라 /mcp 에서 쓸 수 없다 — 쓸 토큰은 발급 API(AGT-A01)로 받는다. */
     public long agentToken(long projectId, long accountId) {
         return jdbc.queryForObject(
                 "INSERT INTO agent_token (project_id, account_id, name, token_hash) VALUES (?, ?, ?, ?) RETURNING id",
