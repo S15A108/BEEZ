@@ -1,4 +1,12 @@
 # 로컬 개발: SQL 로그, 상세 헬스
+beez:
+  document:
+    object-storage:
+      endpoint: ${DOCUMENT_S3_ENDPOINT:http://127.0.0.1:8333}
+      bucket: ${DOCUMENT_S3_BUCKET:beez-documents}
+      access-key: ${DOCUMENT_S3_ACCESS_KEY:beez-local-access}
+      secret-key: ${DOCUMENT_S3_SECRET_KEY:beez-local-secret}
+
 logging:
   level:
     com.beez: DEBUG

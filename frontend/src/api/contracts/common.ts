@@ -684,11 +684,11 @@ export const documentAnalysisSchema = z.object({
 export type DocumentAnalysis = z.infer<typeof documentAnalysisSchema>
 
 export const searchHitSchema = z.object({
-  type: z.enum(['DOCUMENT_CHUNK', 'DESIGN_ITEM']),
+  type: z.enum(['DOCUMENT', 'DOCUMENT_CHUNK', 'DESIGN_ITEM']),
   id: idSchema,
   title: z.string(),
   snippet: z.string(),
-  source: sourceSchema,
+  source: sourceSchema.optional(),
   design_item_id: idSchema.optional(),
   score: z.number().finite().optional(),
 })

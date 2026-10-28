@@ -1,6 +1,8 @@
 # BEEZ API Common
 
-버전: 0.5 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.6 · 갱신일: 2026-10-27 · 개발 계약 초안
+
+2026-10-27: 원문 RAG의 SourceLocator·RetrievalScope·RetrievedEvidence를 추가했다. 관련 내부 호출은 AI-A09와 AI-A04/05 확장을 따른다. 기존 문서/승인 상태나 비RAG 계약을 일괄 변경하지 않는다.
 
 ## 1. 문서 안내
 
@@ -418,6 +420,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부 |
 
+Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
+
 ## 10. 공통 스키마
 
 필드 타입의 링크는 중첩 객체의 상세 정의다. 예제는 상세 API에 제시한다. 선택 필드와 조건부 필수의 설명을 함께 적용한다. ID·Time·object는 3절 형식이다.
@@ -577,7 +581,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `document_id` | `ID` | Y | 문서 ID |
 | `version_no` | `integer` | Y | 문서 내 버전 번호 |
 | `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태 |
-| `file_name` | `string` | Y | 원본 파일명 |
+| `file_name` | `string` | Y | document-{id}-v{version_no}.{md\|txt} 생성 다운로드명 |
 | `media_type` | `string` | Y | MIME |
 | `content_hash` | `string` | Y | 원본 해시 |
 | `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
@@ -1113,11 +1117,11 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `type` | `DOCUMENT_CHUNK\|DESIGN_ITEM` | Y | 결과 종류 |
+| `type` | `DOCUMENT\|DOCUMENT_CHUNK\|DESIGN_ITEM` | Y | 원문 키워드/청크 의미/승인 항목 결과 |
 | `id` | `ID` | Y | 결과 ID |
 | `title` | `string` | Y | 결과 제목 |
 | `snippet` | `string` | Y | 일부 본문 |
-| `source` | [Source](00-common.md#schema-source) | Y | 승인 근거 |
+| `source` | [Source](00-common.md#schema-source) | N | 원문 근거. 출처 없는 HUMAN 승인 항목은 생략 |
 | `design_item_id` | `ID` | N | 관련 항목 |
 | `score` | `number` | N | 유사도. 확정 근거가 아님 |
 
@@ -1495,6 +1499,7 @@ HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. bac
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `unresolved` | `string[]` | Y | 미확정 |
 | `next_actions` | `string[]` | Y | 권장 후속 행동 |
+| `citations` | `object[]` | 조건부 | 원문 RAG 필수. 각 원소 {evidence_id: string, claim: string}. 입력 근거 집합 밖 ID 금지, 인용 없음은 [] |
 
 <a id="schema-draftresult"></a>
 
@@ -1525,4 +1530,45 @@ HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. bac
 | `decisions` | `string[]` | Y | 결정 요약 |
 | `unresolved` | `string[]` | Y | 미확정 |
 | `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 후속 조치 |
+
+<a id="schema-sourcelocator"></a>
+
+### SourceLocator — 원문 RAG
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `type` | `text_lines` | Y | md/txt MVP. JSON Pointer는 입력 확장 시 별도 도입 |
+| `start_line` | `integer` | Y | utf8-lf-v1 정규화 텍스트의 1-based 시작 행 |
+| `end_line` | `integer` | Y | 끝 행 포함, start_line 이상 |
+
+기본 청크는 원문의 연속 행 범위다. 긴 한 행/분리 범위 등의 정확한 locator 확장이 필요하면 조용히 누락하거나 잘못된 정밀도를 표시하지 말고 invalid_ai_input 진단으로 실패시킨다. 행 개수·해시·청크 원문 일치 검증을 함께 수행한다. 파서 블록 구조는 내부 구현이고 BE 저장 청크의 최소 계약과 구분한다.
+
+<a id="schema-retrievalscope"></a>
+
+### RetrievalScope
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `mode` | `APPROVED\|DOCUMENT_REVIEW` | Y | 개발 기준 답변 또는 명시 문서 검토 |
+| `document_version_ids` | `ID[]` | Y | BE 권한 검사로 결정한 정확한 문서 버전 집합 |
+| `baseline_id` | `ID` | 조건부 | APPROVED 필수, DOCUMENT_REVIEW에서는 생략 |
+
+APPROVED의 허용 집합은 project.current_baseline_id의 baseline_document/baseline_item에서 정한다. DOCUMENT_REVIEW는 명시 버전만 허용하고 미승인 검토로 표시한다. 사용자 입력 목록은 권한 증명이 아니다. 필수 4종 READY를 모두 요구할지의 가용성 정책은 후속 합의이며, 일부 검색 결과를 전체 기준의 완전한 답변으로 표시하지 않는다.
+
+<a id="schema-retrievedevidence"></a>
+
+### RetrievedEvidence
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `evidence_id` | `string` | Y | 이번 답변 입력 집합에서 유일한 근거 ID |
+| `document_id` | `ID` | Y | 소속 문서 |
+| `document_version_id` | `ID` | Y | scope 안의 정확한 버전 |
+| `version_no` | `integer` | Y | 문서의 버전 번호 |
+| `chunk_key` | `string` | Y | 파싱/임베딩 대응 키 |
+| `text` | `string` | Y | 전달할 원문 청크 |
+| `locator` | [SourceLocator](#schema-sourcelocator) | Y | 정규화 원문 위치 |
+| `embedding_profile_id` | `string` | Y | 검색에 사용한 동일 활성 프로필 |
+
+DB 저장·권한/승인 SQL 필터·실행/manifest 담당은 오서현, 파싱·청킹·embedding profile/검색 전략·답변은 박상은이다. SQL은 허용 집합/READY/프로필을 먼저 제한한 뒤 top-k를 계산한다. 전역 top-k 후 사후 필터로 대체하지 않는다. 재시도 attempt/hash/profile 검증과 청크 전량+READY 게시를 원자적으로 묶으며 새 DB 구조는 후속 migration으로 별도 반영한다.
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |

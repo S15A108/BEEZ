@@ -30,8 +30,6 @@ public class ProjectService {
 
     static final int NAME_MAX = 100;
     static final int DESCRIPTION_MAX = 2000;
-    private static final int DEFAULT_LIMIT = 20;
-    private static final int MAX_LIMIT = 100;
 
     private final ProjectAccessChecker access;
     private final ProjectRepository projects;
@@ -63,20 +61,16 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public PageResponse<ProjectResponse> listMine(CallerContext caller, String cursor, Integer limit) {
         Account me = access.requireUser(caller);
-        int size = normalizeLimit(limit);
-        long beforeId = Long.MAX_VALUE;
+        int size = PageResponse.normalizeLimit(limit);
         // 빈 cursor 는 첫 페이지 (작업 목록 TaskQueryService.parseCursor 와 같게)
-        if (cursor != null && !cursor.isBlank()) {
-            beforeId = Ids.parse(cursor, "cursor");
-        }
+        long beforeId = PageResponse.beforeId(cursor);
         // limit+1 개를 읽는다. 다 차면 다음 페이지가 있다는 뜻.
         List<MyProjectRow> rows = projects.findMyProjects(me.getId(), beforeId, PageRequest.of(0, size + 1));
-        boolean hasMore = rows.size() > size;
-        List<MyProjectRow> page = rows;
-        if (hasMore) {
-            page = rows.subList(0, size);
-        }
+        return PageResponse.fromRows(rows, size, row -> row.project().getId(), this::toItems);
+    }
 
+    /** 한 페이지의 프로젝트 응답. 기준 설계 요약은 페이지 단위로 한 번에 읽는다. */
+    private List<ProjectResponse> toItems(List<MyProjectRow> page) {
         List<Long> baselineIds = new ArrayList<>();
         for (MyProjectRow row : page) {
             if (row.project().getCurrentBaselineId() != null) {
@@ -89,11 +83,7 @@ public class ProjectService {
             Project p = row.project();
             items.add(ProjectResponse.of(p, row.role(), baselines.get(p.getCurrentBaselineId())));
         }
-        String nextCursor = null;
-        if (hasMore) {
-            nextCursor = Ids.str(page.get(page.size() - 1).project().getId());
-        }
-        return PageResponse.of(items, hasMore, nextCursor);
+        return items;
     }
 
     /** PRJ-A03 */
@@ -155,7 +145,10 @@ public class ProjectService {
         return project;
     }
 
-    private ProjectResponse toResponse(Project project, ProjectRole myRole) {
+    /**
+     * 프로젝트 응답(기준 설계 요약 포함). 권한 검사는 하지 않는다 — 검사를 끝낸 호출자만 쓴다 (초대 수락 MEM-A05).
+     */
+    public ProjectResponse toResponse(Project project, ProjectRole myRole) {
         BaselineSummaryResponse baseline = null;
         if (project.getCurrentBaselineId() != null) {
             baseline = baselineSummaries(List.of(project.getCurrentBaselineId())).get(project.getCurrentBaselineId());
@@ -205,12 +198,5 @@ public class ProjectService {
                     "description: " + DESCRIPTION_MAX + "자 이하로 입력해야 합니다");
         }
         return description;
-    }
-
-    private static int normalizeLimit(Integer limit) {
-        if (limit == null || limit < 1) {
-            return DEFAULT_LIMIT;
-        }
-        return Math.min(limit, MAX_LIMIT);
     }
 }

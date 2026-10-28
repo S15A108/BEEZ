@@ -28,6 +28,11 @@ spring:
     property-naming-strategy: SNAKE_CASE      # 프로토타입 API 와 동일 (decision_refs, task_id …)
     default-property-inclusion: non_null
 
+  servlet:
+    multipart:
+      max-file-size: 1MB
+      max-request-size: 2MB
+
   docker:
     compose:
       file: compose.yaml
@@ -79,6 +84,18 @@ logging:
     com.beez: INFO
 
 beez:
+  document:
+    object-storage:
+      endpoint: ${DOCUMENT_S3_ENDPOINT:}
+      region: ${DOCUMENT_S3_REGION:us-east-1}
+      bucket: ${DOCUMENT_S3_BUCKET:}
+      access-key: ${DOCUMENT_S3_ACCESS_KEY:}
+      secret-key: ${DOCUMENT_S3_SECRET_KEY:}
+    worker-enabled: ${DOCUMENT_WORKER_ENABLED:true}
+    poll-millis: ${DOCUMENT_POLL_MILLIS:2000}
+    embedding-profile: ${DOCUMENT_EMBEDDING_PROFILE:unconfigured}
+    embedding-model: ${DOCUMENT_EMBEDDING_MODEL:unconfigured}
+    embedding-dimension: 1024
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   ai:
@@ -86,3 +103,6 @@ beez:
     internal-token: ${AI_INTERNAL_TOKEN:change-me}
     connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${AI_READ_TIMEOUT:20s}
+  invitation:
+    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 초대 링크 = {base-url}/invite?token=…
+    ttl: ${INVITE_TTL:7d}
