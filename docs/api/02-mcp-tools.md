@@ -1466,6 +1466,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | --- | --- | --- | --- |
 | `task` | [TaskDetail](00-common.md#schema-taskdetail) | Y | 처리된 작업 |
 | `changes` | [DesignChanges](00-common.md#schema-designchanges) | Y | 관련 변경과 유효성 요약 |
+| `changes_since_version` | `integer` | N | `changes`를 계산한 기준 번호. `changes`가 있으면 반환 |
 
 ```json
 {
@@ -1572,7 +1573,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
       }
     ],
     "has_more": false
-  }
+  },
+  "changes_since_version": 1
 }
 ```
 
@@ -1607,6 +1609,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
+- `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

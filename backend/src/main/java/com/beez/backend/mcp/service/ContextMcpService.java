@@ -15,6 +15,8 @@ import com.beez.backend.context.dto.SavePacketArgs;
 import com.beez.backend.context.dto.WriteContextArgs;
 import com.beez.backend.context.service.ContextPacketService;
 import com.beez.backend.context.service.ContextRecordService;
+import com.beez.backend.mcp.dto.GetDevelopmentContextArgs;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,9 +38,22 @@ public class ContextMcpService {
         this.records = records;
     }
 
-    /** MCP-01 get_development_context 의 업무 저장. 패킷 내용 구성(박상은)이 끝난 결과를 받는다 */
-    public ContextPacketResponse saveDevelopmentContext(CallerContext caller, Long projectId, SavePacketArgs args) {
-        return packets.save(caller, projectId, args);
+    /**
+     * MCP-01 get_development_context. 어댑터는 도구 인수만 넘기고, 패킷 구성과 저장은 여기서 한다.
+     *
+     * <p>패킷 내용 구성(승인 설계 검색·의존 설계 확장·미확정·관련 작업·근거)은 박상은 모듈(-131·-132)이 맡는다.
+     * 그 모듈이 아직 없어 지금은 구성 결과를 빈 목록으로 저장한다. 모듈이 붙으면 아래 "구성" 자리에서 호출하고,
+     * 무엇을 주고받을지는 그때 함께 정한다 (계약 문서 3절).
+     */
+    public ContextPacketResponse getDevelopmentContext(CallerContext caller, Long projectId, GetDevelopmentContextArgs args) {
+        if (args == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "arguments 는 필수입니다");
+        }
+        // 구성: 박상은 모듈 연결 전까지 빈 결과
+        SavePacketArgs composed = new SavePacketArgs(args.request(), args.projectId(), args.taskId(),
+                List.of(), List.of(), List.of(), List.of(), List.of());
+        // 권한·인수 검사(@NotBlank request 포함)·저장·조회 이력은 패킷 저장 서비스가 한다
+        return packets.save(caller, projectId, composed);
     }
 
     /** MCP-05 find_context */
@@ -65,7 +80,7 @@ public class ContextMcpService {
         throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "type 은 PACKET 또는 RECORD 입니다");
     }
 
-    /** MCP-07 write_context */
+    /** MCP-07 write_context. idempotency_key 는 필수 확인만 한다 — 같은 키로 재시도하면 기록이 한 번 더 생긴다(Q12 전 알려진 한계) */
     public ContextRecordResponse writeContext(CallerContext caller, Long projectId, WriteContextArgs args) {
         return records.write(caller, projectId, args);
     }

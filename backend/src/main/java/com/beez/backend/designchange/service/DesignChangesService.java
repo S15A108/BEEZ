@@ -10,6 +10,7 @@ import com.beez.backend.designchange.dto.BaselineSummaryResponse;
 import com.beez.backend.designchange.dto.ChangedItemResponse;
 import com.beez.backend.designchange.dto.DesignChangesQuery;
 import com.beez.backend.designchange.dto.DesignChangesResponse;
+import com.beez.backend.designchange.dto.PlanChangesResponse;
 import com.beez.backend.designchange.dto.PublishedChangeResponse;
 import com.beez.backend.designchange.dto.ValidationValidityResponse;
 import java.sql.Timestamp;
@@ -89,9 +90,12 @@ public class DesignChangesService {
      * </ul>
      * 처음 연결 규칙(since=0 → 최근 1건)은 쓰지 않는다. 기준 설계가 한 번도 없으면 null (호출자가 changes 를 비운다).
      * 호출자는 이미 권한 검사를 통과한 actor 를 넘긴다. 조회 이력도 남긴다.
+     *
+     * <p>계산에 쓴 기준 번호(sinceVersion)도 함께 돌려준다. 다음 페이지가 있으면 에이전트가
+     * get_design_changes(since_version=이 값, task_id=같은 작업, cursor=next_cursor)로 이어 본다 (리뷰 반영).
      */
     @Transactional
-    public DesignChangesResponse changesSincePlan(ProjectActor actor, Long projectId, Long taskId) {
+    public PlanChangesResponse changesSincePlan(ProjectActor actor, Long projectId, Long taskId) {
         Optional<BaselineRow> latest = findCurrentBaseline(projectId);
         if (latest.isEmpty()) {
             return null;
@@ -100,7 +104,9 @@ public class DesignChangesService {
         if (since > latest.get().versionNo()) {
             since = latest.get().versionNo();
         }
-        return build(actor, projectId, latest.get(), since, false, taskId, null, DEFAULT_LIMIT, "report_task_state");
+        DesignChangesResponse changes = build(actor, projectId, latest.get(), since, false, taskId, null, DEFAULT_LIMIT,
+                "report_task_state");
+        return new PlanChangesResponse(since, changes);
     }
 
     /** 현재 계획의 기준 번호. 패킷이 있으면 패킷 기준, 없으면 리비전 작성 시각 이전 마지막 발행. 없으면 0 */
@@ -138,15 +144,18 @@ public class DesignChangesService {
         // 첫 페이지 시점의 최신 번호(ceiling)를 cursor 에 고정한다. 페이지 도중 새 발행이 생겨도 목록이 흔들리지 않는다
         int ceiling = latest.versionNo();
         Integer before = null;
-        if (cursorText != null && !cursorText.isBlank()) {
+        boolean continuing = cursorText != null && !cursorText.isBlank();
+        if (continuing) {
             ChangesCursor cursor = ChangesCursor.decode(cursorText);
             cursor.requireSameQuery(since, taskId);
             ceiling = cursor.ceiling();
             before = cursor.lastVersion();
         }
-        // since=0 은 "처음 연결": 현재 기준과 가장 최근 변경 하나만 (정한 것 1)
+        // since=0 은 "처음 연결": 현재 기준과 가장 최근 변경 하나만 (정한 것 1).
+        // 이어 보기(cursor)에는 적용하지 않는다. 처음 연결 결과는 1건이라 다음 페이지가 없고,
+        // since=0 cursor 는 report_task_state(계획 당시 발행 없음 → 0)가 만든 것이라 전체 범위를 이어야 한다
         int effectiveSince = since;
-        if (firstConnectRule && since == 0) {
+        if (firstConnectRule && since == 0 && !continuing) {
             effectiveSince = ceiling - 1;
         }
 

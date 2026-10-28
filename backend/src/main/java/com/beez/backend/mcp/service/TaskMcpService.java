@@ -6,7 +6,7 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.InputValidator;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.designchange.dto.DesignChangesResponse;
+import com.beez.backend.designchange.dto.PlanChangesResponse;
 import com.beez.backend.designchange.service.DesignChangesService;
 import com.beez.backend.mcp.dto.ReportTaskStateArgs;
 import com.beez.backend.mcp.dto.ReportTaskStateResult;
@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>프로젝트는 토큰에서 정한 값을 어댑터가 넘긴다 (02-mcp-tools "연결과 인증")</li>
  *   <li>컨트롤러를 거치지 않으므로 DTO 검증 표시를 {@link InputValidator} 로 직접 적용한다</li>
- *   <li>idempotency_key 는 필수 확인만 한다 (Q12 확정 전, 다른 PR 과 같음)</li>
+ *   <li>idempotency_key 는 필수 확인만 한다 (Q12 확정 전, 다른 PR 과 같음). 같은 키로 재시도하면 작업·리비전이 한 번 더 생긴다 — 알려진 한계</li>
  * </ul>
  */
 @Service
@@ -88,7 +88,11 @@ public class TaskMcpService {
         TaskDetailResponse task = stateService.report(caller, projectId, taskId, state);
         // 권한은 report 안에서 이미 확인했다. 변경 조회 이력에 쓸 호출자 정보를 얻으려고 한 번 더 부른다 (캐시 없이 같은 결과)
         ProjectActor actor = access.requireMember(caller, projectId);
-        DesignChangesResponse changes = designChanges.changesSincePlan(actor, projectId, taskId);
-        return new ReportTaskStateResult(task, changes);
+        PlanChangesResponse planChanges = designChanges.changesSincePlan(actor, projectId, taskId);
+        if (planChanges == null) {
+            // 기준 설계가 한 번도 없는 프로젝트: changes 생략
+            return new ReportTaskStateResult(task, null, null);
+        }
+        return new ReportTaskStateResult(task, planChanges.changes(), planChanges.sinceVersion());
     }
 }

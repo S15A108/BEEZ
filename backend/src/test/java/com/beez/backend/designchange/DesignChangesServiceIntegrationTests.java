@@ -364,6 +364,22 @@ class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void sinceZeroCursor_continuesWholeRange_notFirstConnectRule() {
+        // report_task_state 는 발행 전에 세운 계획이면 since=0 으로 cursor 를 만든다. 이어 볼 때 "처음 연결(최근 1건)"을 적용하면 안 된다
+        Long api02v1 = api.currentVersionId("API-02");
+        for (int v = 2; v <= 5; v++) {
+            publish(v, Map.of("API-01", newVersion("API-01", v), "API-02", api02v1));
+        }
+        // 첫 페이지가 v5·v4 였던 since=0 조회의 cursor (ChangesCursor 형식: 버전|ceiling|마지막 번호|since|작업)
+        String cursor = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("v1|5|4|0|".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        DesignChangesResponse second = call(asMember, 0, null, cursor, 2);
+        assertThat(second.items()).extracting(c -> c.baseline().versionNo()).containsExactly(3, 2);
+        assertThat(second.hasMore()).isFalse();
+    }
+
+    @Test
     void cursor_fromDifferentQuery_orMalformed_is400() {
         Long api02v1 = api.currentVersionId("API-02");
         for (int v = 2; v <= 4; v++) {

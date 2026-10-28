@@ -16,6 +16,8 @@ import com.beez.backend.context.dto.VersionRefDto;
 import com.beez.backend.context.dto.WriteContextArgs;
 import com.beez.backend.context.entity.ContextRecordKind;
 import com.beez.backend.context.entity.Visibility;
+import com.beez.backend.context.service.ContextPacketService;
+import com.beez.backend.mcp.dto.GetDevelopmentContextArgs;
 import com.beez.backend.mcp.service.ContextMcpService;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
@@ -28,8 +30,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 /**
- * MCP-01(업무 저장)·05·06·07 업무 서비스 (S15P31A108-166). 서비스 직접 호출.
- * 패킷 내용 구성(박상은 -131·-132)은 아직 없어 구성 결과를 테스트가 만들어 넘긴다.
+ * MCP-01·05·06·07 업무 서비스 (S15P31A108-166). 서비스 직접 호출.
+ * 패킷 내용 구성(박상은 -131·-132)은 아직 없어, 도구 입구는 빈 구성으로 저장하는지 보고
+ * 구성 결과가 있을 때의 저장 규칙은 패킷 저장 서비스에 구성 결과를 직접 넣어 확인한다.
  */
 class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
@@ -38,6 +41,9 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ContextMcpService mcp;
+
+    @Autowired
+    ContextPacketService packets;
 
     TaskApiSupport api;
     Long projectId;
@@ -76,17 +82,44 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void savePacket_storesImmutablePacketWithRefs_andLogsAccess() {
+    void getDevelopmentContext_adapterPassesToolArgsOnly_savesPacketWithEmptyCompositionForNow() {
+        ContextPacketResponse packet = mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("로그인 화면 구현", String.valueOf(projectId), null));
+
+        assertThat(packet.request()).isEqualTo("로그인 화면 구현");
+        assertThat(packet.baselineId()).isNotNull();
+        assertThat(packet.designItems()).isEmpty();      // 구성 모듈(박상은) 연결 전
+        assertThat(count("select count(*) from context_access_log where tool = 'get_development_context' and target_kind = 'PACKET'"))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void getDevelopmentContext_rules() {
+        // 웹(사람 세션)은 패킷을 만들지 않는다 (CTX-A01)
+        assertDenied(() -> mcp.getDevelopmentContext(CallerContext.human(member), projectId,
+                new GetDevelopmentContextArgs("x", null, null)), HttpStatus.FORBIDDEN, "forbidden");
+        // 요청 문장 필수
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs(" ", null, null)), HttpStatus.BAD_REQUEST, "validation_failed");
+        // project_id 인수가 토큰 프로젝트와 다름
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("x", String.valueOf(projectId + 99), null)), HttpStatus.NOT_FOUND, "not_found");
+        // 기준 설계가 없는 프로젝트
+        api.jdbc.sql("update project set current_baseline_id = null where id = :p").param("p", projectId).update();
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("x", null, null)), HttpStatus.NOT_FOUND, "baseline_not_published");
+    }
+
+    @Test
+    void savePacket_withComposition_storesImmutablePacketWithRefs() {
         String v = String.valueOf(api.currentVersionId("API-01"));
-        ContextPacketResponse packet = mcp.saveDevelopmentContext(memberAgent, projectId, packetArgs(List.of(v)));
+        ContextPacketResponse packet = packets.save(memberAgent, projectId, packetArgs(List.of(v)));
 
         assertThat(packet.designItems()).hasSize(1);
         assertThat(packet.designItems().get(0).key()).isEqualTo("API-01");
         assertThat(packet.constraints()).containsExactly("본문 토큰 유지");
         assertThat(packet.contentHash()).hasSize(64);
         assertThat(count("select count(*) from dev_context_packet_ref")).isEqualTo(1);
-        assertThat(count("select count(*) from context_access_log where tool = 'get_development_context' and target_kind = 'PACKET'"))
-                .isEqualTo(1);
 
         ReadContextResult read = mcp.readContext(memberAgent, projectId, "PACKET", packet.id());
         assertThat(read.packet().contentHash()).isEqualTo(packet.contentHash());
@@ -94,22 +127,10 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void savePacket_rules() {
-        String v = String.valueOf(api.currentVersionId("API-01"));
-        // 웹(사람 세션)은 패킷을 만들지 않는다 (CTX-A01)
-        assertDenied(() -> mcp.saveDevelopmentContext(CallerContext.human(member), projectId, packetArgs(List.of(v))),
-                HttpStatus.FORBIDDEN, "forbidden");
-        // 현재 기준 설계에 없는 버전
+    void savePacket_versionsMustBeInCurrentBaseline() {
         String unpublished = String.valueOf(api.newVersion("API-01", 2));
-        assertDenied(() -> mcp.saveDevelopmentContext(memberAgent, projectId, packetArgs(List.of(unpublished))),
+        assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(List.of(unpublished))),
                 HttpStatus.BAD_REQUEST, "validation_failed");
-        // project_id 인수가 토큰 프로젝트와 다름
-        assertDenied(() -> mcp.saveDevelopmentContext(memberAgent, projectId, new SavePacketArgs("x", String.valueOf(projectId + 99),
-                null, List.of(), List.of(), List.of(), List.of(), List.of())), HttpStatus.NOT_FOUND, "not_found");
-        // 기준 설계가 없는 프로젝트
-        api.jdbc.sql("update project set current_baseline_id = null where id = :p").param("p", projectId).update();
-        assertDenied(() -> mcp.saveDevelopmentContext(memberAgent, projectId, packetArgs(List.of())),
-                HttpStatus.NOT_FOUND, "baseline_not_published");
     }
 
     // ---- MCP-07·06·05 공유 기록 ----
