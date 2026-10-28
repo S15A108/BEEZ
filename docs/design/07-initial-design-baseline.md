@@ -60,3 +60,9 @@ PLN-A06의 DRAFT 응답은 필터·페이지와 무관한 프로젝트 전체 `d
 - 동시 key 발급·동시 편집·멱등 발행·중간 DB 실패의 전체 rollback.
 
 관련 API: [PLN-A06~10](../api/01-backend-rest.md#pln-a06), [공통 스키마](../api/00-common.md#schema-designitemversion).
+
+## 6. 구현 계층
+
+194 도메인은 기존 backend 패턴에 맞춰 api(컨트롤러), dto(개별 Request/Response), service(권한·정책·트랜잭션), repository(JdbcClient SQL), validation(본문 검증), support(JSON·해시)로 구분한다. Java DTO 필드는 camelCase, ID는 String이며 외부 JSON은 공통 snake_case 설정을 유지한다. 내부 ID는 공통 Ids로 변환한다.
+
+프로젝트 잠금·권한 재확인·원자적 발행의 트랜잭션과 목록 repeatable-read는 서비스에 유지한다. repository는 같은 트랜잭션에서 SQL을 실행하며 독립 커밋을 만들지 않는다. DTO 분리 이전의 멱등 fingerprint는 숫자 ID와 null 출처 필드를 포함한 기존 입력 형식을 유지하므로 저장된 재요청 응답을 그대로 재사용한다. 이 구조 변경에 신규 migration은 필요하지 않다.

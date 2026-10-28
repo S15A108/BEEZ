@@ -1,28 +1,39 @@
 package com.beez.backend.designitem;
 
 import static org.assertj.core.api.Assertions.*;
-
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.designitem.dto.CreateDesignItemRequest;
+import com.beez.backend.designitem.dto.DesignItemResponse;
+import com.beez.backend.designitem.service.DesignItemCommandService;
+import com.beez.backend.designitem.service.DesignItemQueryService;
 import com.beez.backend.project.ProjectRole;
-import com.beez.backend.support.*;
+import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.ApiClient;
+import com.beez.backend.support.IntegrationTestSupport;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.*;
-import java.util.concurrent.*;
-import org.junit.jupiter.api.*;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.JsonNode;
 
 @TestPropertySource(properties = {"beez.cors.allowed-origins=https://app.beez.test", "beez.document.embedding-profile=design-test"})
 class DesignItemApiIntegrationTest extends IntegrationTestSupport {
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = JsonMapper.builder().propertyNamingStrategy(tools.jackson.databind.PropertyNamingStrategies.SNAKE_CASE).build();
     private static final String ORIGIN = "https://app.beez.test";
     @Autowired JdbcTemplate jdbc;
     @Autowired DesignItemCommandService commands;
@@ -37,13 +48,40 @@ class DesignItemApiIntegrationTest extends IntegrationTestSupport {
         actor = CallerContext.human(p.leaderAccountId());
         leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
     }
+
+    @Test
+    void legacyNumericFingerprintAndStoredSnakeCaseResponseRemainReplayable() {
+        long document = jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'PLAN','legacy',?) RETURNING id",
+                Long.class, p.projectId(), p.leaderAccountId());
+        long source = jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text)
+                VALUES(?,1,'DRAFT','legacy.md','hash','legacy') RETURNING id
+                """, Long.class, document);
+        var input = new CreateDesignItemRequest("REQUIREMENT", 1, Map.of("description", "legacy"), Long.toString(source), null);
+        var created = commands.create(actor, p.projectId(), input, "legacy-key");
+        // Exact canonical JSON used by the previous nested record, including nullable source fields.
+        String legacyJson = "{\"content\":{\"description\":\"legacy\"},\"kind\":\"REQUIREMENT\","
+                + "\"schema_version\":1,\"source_document_version_id\":" + source + ",\"source_location\":null}";
+        String fingerprint;
+        try {
+            fingerprint = "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(legacyJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        jdbc.update("UPDATE design_http_command SET fingerprint=? WHERE project_id=? AND request_key='legacy-key'",
+                fingerprint, p.projectId());
+        assertThat(commands.create(actor, p.projectId(), input, "legacy-key")).isEqualTo(created);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM design_item WHERE project_id=?", Integer.class, p.projectId()))
+                .isEqualTo(1);
+    }
     String path() { return "/api/projects/" + p.projectId() + "/design-items"; }
     JsonNode json(HttpResponse<String> response, int status) {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(status);
         return JSON.readTree(response.body());
     }
-    DesignItemDtos.Item create(String description) {
-        return commands.create(actor, p.projectId(), new DesignItemDtos.Create("REQUIREMENT", 1,
+    DesignItemResponse create(String description) {
+        return commands.create(actor, p.projectId(), new CreateDesignItemRequest("REQUIREMENT", 1,
                 Map.of("description", description), null, null), UUID.randomUUID().toString());
     }
     @Test void actualLoginCrudRetainsExtraFieldsDetectsStaleEditAndKeepsExcludedHistory() {
@@ -78,13 +116,13 @@ class DesignItemApiIntegrationTest extends IntegrationTestSupport {
             var content = new HashMap<String, Object>(); content.put("description", "항목 " + kind);
             if (kind.equals("API_CONTRACT")) { content.put("method", "POST"); content.put("path", "/api/login"); }
             if (kind.equals("DATA_CONTRACT")) { content.put("entity", "account"); content.put("fields", List.of(Map.of("name", "id", "type", "bigint"))); }
-            json(leader.post(path(), JSON.writeValueAsString(new DesignItemDtos.Create(kind, 1, content, null, null)),
+            json(leader.post(path(), JSON.writeValueAsString(new CreateDesignItemRequest(kind, 1, content, null, null)),
                     "Origin", ORIGIN, "Idempotency-Key", kind), 201);
         }
-        var invalid = List.of(new DesignItemDtos.Create("REQUIREMENT", 1, Map.of(), null, null),
-                new DesignItemDtos.Create("POLICY", 2, Map.of("description", "x"), null, null),
-                new DesignItemDtos.Create("API_CONTRACT", 1, Map.of("description", "x", "method", "post", "path", "/login"), null, null),
-                new DesignItemDtos.Create("DATA_CONTRACT", 1, Map.of("description", "x", "entity", "account", "fields", "not-array"), null, null));
+        var invalid = List.of(new CreateDesignItemRequest("REQUIREMENT", 1, Map.of(), null, null),
+                new CreateDesignItemRequest("POLICY", 2, Map.of("description", "x"), null, null),
+                new CreateDesignItemRequest("API_CONTRACT", 1, Map.of("description", "x", "method", "post", "path", "/login"), null, null),
+                new CreateDesignItemRequest("DATA_CONTRACT", 1, Map.of("description", "x", "entity", "account", "fields", "not-array"), null, null));
         for (var body : invalid) json(leader.post(path(), JSON.writeValueAsString(body), "Origin", ORIGIN, "Idempotency-Key", UUID.randomUUID().toString()), 400);
     }
 
@@ -92,7 +130,7 @@ class DesignItemApiIntegrationTest extends IntegrationTestSupport {
         long member = fixtures().account();
         fixtures().member(p.projectId(), member, ProjectRole.MEMBER);
         var memberClient = client().login(fixtures().emailOf(member), AccessFixtures.PASSWORD);
-        String body = JSON.writeValueAsString(new DesignItemDtos.Create("POLICY", 1, Map.of("description", "정책"), null, null));
+        String body = JSON.writeValueAsString(new CreateDesignItemRequest("POLICY", 1, Map.of("description", "정책"), null, null));
         json(memberClient.post(path(), body, "Origin", ORIGIN, "Idempotency-Key", "member"), 403);
         json(leader.post(path(), body, "Idempotency-Key", "no-origin"), 403);
         json(client().post(path(), body, "Origin", ORIGIN, "Idempotency-Key", "anonymous"), 401);
@@ -101,33 +139,33 @@ class DesignItemApiIntegrationTest extends IntegrationTestSupport {
         json(foreignClient.get(path() + "?status=DRAFT"), 404);
         long token = fixtures().agentToken(p.projectId(), p.leaderAccountId());
         assertThatThrownBy(() -> commands.create(CallerContext.agent(p.leaderAccountId(), token), p.projectId(),
-                new DesignItemDtos.Create("POLICY", 1, Map.of("description", "정책"), null, null), "agent"))
+                new CreateDesignItemRequest("POLICY", 1, Map.of("description", "정책"), null, null), "agent"))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus().value()).isEqualTo(403));
-        var source = new DesignItemDtos.Create("POLICY", 1, Map.of("description", "정책"), Long.MAX_VALUE, "1절");
+        var source = new CreateDesignItemRequest("POLICY", 1, Map.of("description", "정책"), Long.toString(Long.MAX_VALUE), "1절");
         json(leader.post(path(), JSON.writeValueAsString(source), "Origin", ORIGIN, "Idempotency-Key", "foreign-source"), 404);
         fixtures().removeMember(p.leaderMemberId());
         json(leader.post(path(), body, "Origin", ORIGIN, "Idempotency-Key", "removed"), 404);
     }
 
     @Test void concurrentCreatesDoNotDuplicateKeysOrIdempotentResults() throws Exception {
-        var body = new DesignItemDtos.Create("REQUIREMENT", 1, Map.of("description", "동시 추가"), null, null);
+        var body = new CreateDesignItemRequest("REQUIREMENT", 1, Map.of("description", "동시 추가"), null, null);
         try (var pool = Executors.newFixedThreadPool(4)) {
             var gate = new CountDownLatch(1);
-            var calls = new ArrayList<Future<DesignItemDtos.Item>>();
+            var calls = new ArrayList<Future<DesignItemResponse>>();
             for (int i = 0; i < 4; i++) {
                 String key = i < 2 ? "same" : "other-" + i;
                 calls.add(pool.submit(() -> { gate.await(); return commands.create(actor, p.projectId(), body, key); }));
             }
             gate.countDown();
-            var result = new ArrayList<DesignItemDtos.Item>();
+            var result = new ArrayList<DesignItemResponse>();
             for (var call : calls) result.add(call.get(20, TimeUnit.SECONDS));
             assertThat(result.get(0)).isEqualTo(result.get(1));
-            assertThat(result.stream().map(DesignItemDtos.Item::key).distinct()).hasSize(3);
+            assertThat(result.stream().map(DesignItemResponse::key).distinct()).hasSize(3);
         }
     }
 
     @Test void roleDemotedWhileWaitingForProjectLockCannotUseCachedLeaderMembership() throws Exception {
-        var body = new DesignItemDtos.Create("POLICY", 1, Map.of("description", "권한 재검사"), null, null);
+        var body = new CreateDesignItemRequest("POLICY", 1, Map.of("description", "권한 재검사"), null, null);
         try (var pool = Executors.newSingleThreadExecutor()) {
             Future<String> waiting = new TransactionTemplate(transactions).execute(tx -> {
                 jdbc.queryForObject("SELECT id FROM project WHERE id=? FOR UPDATE", Long.class, p.projectId());

@@ -1,28 +1,42 @@
 package com.beez.backend.designitem;
 
 import static org.assertj.core.api.Assertions.*;
-
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.project.ProjectRole;
-import com.beez.backend.support.*;
+import com.beez.backend.designitem.dto.CreateDesignItemRequest;
+import com.beez.backend.designitem.dto.DesignItemResponse;
+import com.beez.backend.designitem.dto.PublishInitialBaselineRequest;
+import com.beez.backend.designitem.dto.UpdateDesignItemRequest;
+import com.beez.backend.designitem.service.BaselinePublishService;
+import com.beez.backend.designitem.service.DesignItemCommandService;
+import com.beez.backend.designitem.service.DesignItemQueryService;
+import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.ApiClient;
+import com.beez.backend.support.IntegrationTestSupport;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.*;
-import java.util.concurrent.*;
-import org.junit.jupiter.api.*;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.JsonNode;
 
 @TestPropertySource(properties = {"beez.cors.allowed-origins=https://app.beez.test", "beez.document.embedding-profile=design-test"})
 class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = JsonMapper.builder().propertyNamingStrategy(tools.jackson.databind.PropertyNamingStrategies.SNAKE_CASE).build();
     private static final String ORIGIN = "https://app.beez.test";
     @Autowired JdbcTemplate jdbc;
     @Autowired DesignItemCommandService commands;
@@ -43,15 +57,15 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(status);
         return JSON.readTree(response.body());
     }
-    DesignItemDtos.Item create(String description) {
-        return commands.create(actor, p.projectId(), new DesignItemDtos.Create("REQUIREMENT", 1,
+    DesignItemResponse create(String description) {
+        return commands.create(actor, p.projectId(), new CreateDesignItemRequest("REQUIREMENT", 1,
                 Map.of("description", description), null, null), UUID.randomUUID().toString());
     }
-    DesignItemDtos.Publish input(List<Long> docs, List<Long> ids) {
-        return new DesignItemDtos.Publish(p.projectId(), docs, ids,
-                queries.list(actor, p.projectId(), "DRAFT", null, null, null, 100).draft_snapshot_hash());
+    PublishInitialBaselineRequest input(List<Long> docs, List<Long> ids) {
+        return new PublishInitialBaselineRequest(Long.toString(p.projectId()), docs.stream().map(String::valueOf).toList(), ids.stream().map(String::valueOf).toList(),
+                queries.list(actor, p.projectId(), "DRAFT", null, null, null, 100).draftSnapshotHash());
     }
-    HttpResponse<String> publish(DesignItemDtos.Publish input, String key) {
+    HttpResponse<String> publish(PublishInitialBaselineRequest input, String key) {
         return leader.post("/api/human/baselines", JSON.writeValueAsString(input), "Origin", ORIGIN, "Idempotency-Key", key);
     }
 
@@ -70,8 +84,8 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
         assertThat(json(publish(input, "new-key"), 409).path("error").path("code").asText()).isEqualTo("baseline_exists");
         assertThat(json(leader.get("/api/projects/" + p.projectId() + "/baselines/current"), 200)).isEqualTo(result);
         assertThat(json(leader.get(path()), 200).path("items").get(0).path("status").asText()).isEqualTo("APPROVED");
-        assertThatThrownBy(() -> commands.update(actor, Long.parseLong(item.design_item_id()),
-                new DesignItemDtos.Update(p.projectId(), Long.parseLong(item.id()), Map.of("description", "변경"), item.content_hash())))
+        assertThatThrownBy(() -> commands.update(actor, Long.parseLong(item.designItemId()),
+                new UpdateDesignItemRequest(Long.toString(p.projectId()), item.id(), Map.of("description", "변경"), item.contentHash())))
                 .isInstanceOf(ApiException.class);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_document WHERE baseline_id=?", Integer.class, result.path("id").asLong())).isEqualTo(4);
     }
@@ -83,9 +97,9 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
         var partial = input(docs, List.of(Long.parseLong(first.id())));
         assertThat(json(publish(partial, "partial"), 409).path("error").path("code").asText()).isEqualTo("draft_changed");
         var full = input(docs, List.of(Long.parseLong(first.id()), Long.parseLong(second.id())));
-        commands.update(actor, Long.parseLong(first.design_item_id()), new DesignItemDtos.Update(p.projectId(), Long.parseLong(first.id()), Map.of("description", "수정"), first.content_hash()));
+        commands.update(actor, Long.parseLong(first.designItemId()), new UpdateDesignItemRequest(Long.toString(p.projectId()), first.id(), Map.of("description", "수정"), first.contentHash()));
         assertThat(json(publish(full, "stale"), 409).path("error").path("code").asText()).isEqualTo("draft_changed");
-        commands.exclude(actor, p.projectId(), Long.parseLong(second.design_item_id()), Long.parseLong(second.id()), second.content_hash());
+        commands.exclude(actor, p.projectId(), Long.parseLong(second.designItemId()), Long.parseLong(second.id()), second.contentHash());
         var current = input(docs, List.of(Long.parseLong(first.id())));
         var baseline = json(publish(current, "current"), 201);
         assertThat(baseline.path("items").size()).isEqualTo(1);
@@ -105,7 +119,7 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
             assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version v JOIN document d ON d.id=v.document_id WHERE d.project_id=? AND v.status='APPROVED'", Integer.class, p.projectId())).isZero();
             assertThat(jdbc.queryForObject("SELECT count(*) FROM design_http_command WHERE project_id=? AND operation='initial-baseline'", Integer.class, p.projectId())).isZero();
         } finally { jdbc.execute("ALTER TABLE project DROP CONSTRAINT " + constraint); }
-        assertThat(baselines.publish(actor, input, "rollback").version_no()).isEqualTo(1);
+        assertThat(baselines.publish(actor, input, "rollback").versionNo()).isEqualTo(1);
     }
 
     @Test void concurrentPublishCreatesOneBaselineAndTwoEditorsCannotOverwriteEachOther() throws Exception {
@@ -117,8 +131,8 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
             for (String description : List.of("수정 A", "수정 B")) calls.add(pool.submit(() -> {
                 gate.await();
                 try {
-                    commands.update(actor, Long.parseLong(item.design_item_id()), new DesignItemDtos.Update(p.projectId(),
-                            Long.parseLong(item.id()), Map.of("description", description), item.content_hash()));
+                    commands.update(actor, Long.parseLong(item.designItemId()), new UpdateDesignItemRequest(Long.toString(p.projectId()),
+                            item.id(), Map.of("description", description), item.contentHash()));
                     return "OK";
                 } catch (ApiException e) { return e.getCode(); }
             }));
@@ -137,14 +151,14 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
 
     @Test void duplicateIdsMissingDocumentsOrChangedIdempotentInputCannotPublish() throws Exception {
         var item = create("초안");
-        var missing = new DesignItemDtos.Publish(p.projectId(), List.of(1L), List.of(Long.parseLong(item.id())), "hash");
+        var missing = new PublishInitialBaselineRequest(Long.toString(p.projectId()), List.of("1"), List.of(item.id()), "hash");
         assertThat(json(publish(missing, "missing"), 400).path("error").path("code").asText()).isEqualTo("required_documents_missing");
         var docs = documents(true);
         var duplicates = input(docs, List.of(Long.parseLong(item.id()), Long.parseLong(item.id())));
         json(publish(duplicates, "duplicate"), 409);
-        var body = new DesignItemDtos.Create("REQUIREMENT", 1, Map.of("description", "최초"), null, null);
+        var body = new CreateDesignItemRequest("REQUIREMENT", 1, Map.of("description", "최초"), null, null);
         commands.create(actor, p.projectId(), body, "conflict");
-        assertThatThrownBy(() -> commands.create(actor, p.projectId(), new DesignItemDtos.Create("REQUIREMENT", 1,
+        assertThatThrownBy(() -> commands.create(actor, p.projectId(), new CreateDesignItemRequest("REQUIREMENT", 1,
                 Map.of("description", "다른 입력"), null, null), "conflict"))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("idempotency_conflict"));
     }
@@ -169,11 +183,11 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
     @Test void sourceMapsToExactDocumentAndAnOldSourceCannotEnterNewDocumentSnapshot() throws Exception {
         var docs = documents(true);
         long source = docs.getFirst();
-        var item = commands.create(actor, p.projectId(), new DesignItemDtos.Create("POLICY", 1,
-                Map.of("description", "출처 항목"), source, "1절"), "source");
-        assertThat(item.source().document_version_id()).isEqualTo(Long.toString(source));
+        var item = commands.create(actor, p.projectId(), new CreateDesignItemRequest("POLICY", 1,
+                Map.of("description", "출처 항목"), Long.toString(source), "1절"), "source");
+        assertThat(item.source().documentVersionId()).isEqualTo(Long.toString(source));
         assertThat(item.source().location()).isEqualTo("1절");
-        long document = Long.parseLong(item.source().document_id());
+        long document = Long.parseLong(item.source().documentId());
         long next = jdbc.queryForObject("""
                 INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,parent_version_id)
                 SELECT document_id,2,'DRAFT','replacement.md',content_hash,content_text,created_by,id FROM document_version WHERE id=? RETURNING id

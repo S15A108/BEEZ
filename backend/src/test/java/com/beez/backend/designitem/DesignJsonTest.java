@@ -1,9 +1,11 @@
 package com.beez.backend.designitem;
 
 import static org.assertj.core.api.Assertions.*;
-
 import com.beez.backend.common.api.ApiException;
-import java.util.*;
+import com.beez.backend.designitem.support.DesignJson;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class DesignJsonTest {
