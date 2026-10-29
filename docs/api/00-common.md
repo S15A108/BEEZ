@@ -105,7 +105,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 404 | 리소스 없음 또는 소속 비노출 | not_found |
 | 405 | 지원하지 않는 메서드 | method_not_allowed |
 | 409 | 현재 상태·버전·중복·의존 충돌 | version_conflict, revision_conflict, baseline_conflict |
-| 410 | 링크 만료 | invitation_expired, reset_token_expired. 수정안 요청: 초대는 404 not_found로 합치고(MEM-A04·A05), 재설정 링크(ACC-A09)는 폐지 예정이라 새 화면에서는 쓰지 않는다 |
+| 410 | 링크 만료 | invitation_expired, reset_token_expired. 수정안 요청: 초대는 만료 없는 자동 참여(Q05)라 invitation_expired를 쓰지 않고 쓸 수 없는 초대는 404 not_found(MEM-A04)다. 재설정 링크(ACC-A09)는 폐지 예정이다 |
 | 413 | 파일 용량 초과 | file_too_large |
 | 415 | 본문·파일 형식 불가 | unsupported_media_type |
 | 429 | 호출 제한 | rate_limited. 인증 코드를 여러 번 틀린 경우만 too_many_attempts(ACC-A12, 수정안 요청) |
