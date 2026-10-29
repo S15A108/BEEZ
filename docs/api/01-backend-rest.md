@@ -70,6 +70,7 @@
 - [DOC-A10 기준 설계 특정 버전 조회](#doc-a10)
 - [DOC-A11 문서·설계 검색](#doc-a11)
 - [TRC-A01 설계 항목 의존관계 조회](#trc-a01)
+- [TRC-A02 설계 항목 의존관계 이력 조회](#trc-a02)
 - [DOC-A12 변경용 원문 파일 업로드](#doc-a12)
 - [DOC-A13 문서 작성 내용 조회](#doc-a13)
 - [DOC-A14 문서 작성 내용 수정](#doc-a14)
@@ -5661,7 +5662,7 @@ HTTP `200`.
 
 관련 요구사항: DOC-13, TRC-01·06  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 반영안 (S15P31A108-167)
 
 #### 인증
 
@@ -5694,22 +5695,29 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `items` | [DesignDependency[]](00-common.md#schema-designdependency) | Y | 확정 관계 |
-| `candidates` | [DependencyCandidate[]](00-common.md#schema-dependencycandidate) | Y | 미확정 후보 |
+| `relation_set_revision` | `integer` | Y | 조회 시점의 관계 집합 리비전. 관계 변경이 한 번도 없으면 0 |
+| `items` | [DesignDependency[]](00-common.md#schema-designdependency) | Y | 이 항목이 한쪽 끝인 확정·재확인 필요 관계 (`from`, `to` 순) |
+| `candidates` | [DependencyCandidate[]](00-common.md#schema-dependencycandidate) | Y | 이 항목이 한쪽 끝인 미확정 후보 |
 
 ```json
 {
+  "relation_set_revision": 3,
   "items": [
     {
       "from_design_item_id": "301",
       "to_design_item_id": "302",
-      "relation": "DEPENDS_ON"
+      "relation": "DEPENDS_ON",
+      "origin": "EXPLICIT",
+      "status": "CONFIRMED",
+      "reason": "로그인 API 의 토큰 만료가 인증 정책을 따른다",
+      "confirmed_by": "11",
+      "confirmed_at": "2026-10-29T09:00:00Z"
     }
   ],
   "candidates": [
     {
-      "from_design_item_id": "301",
-      "to_design_item_id": "302",
+      "from_design_item_id": "303",
+      "to_design_item_id": "301",
       "reason": "동일 데이터 필드를 사용합니다.",
       "confirmed": false
     }
@@ -5721,6 +5729,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | `item_id` 형식 오류 |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -5737,6 +5746,113 @@ HTTP `200`.
 
 - 확정 관계와 추천 근거는 구분한다. 단순 조회로 관계를 확정하지 않는다.
 - 확정 관계 변경은 변경 제안으로 처리하며 작업 관계는 계획 리비전을 통해 관리한다.
+- 양방향을 모두 준다: 이 항목이 의존하는 관계(`from` = 이 항목)와 이 항목에 의존하는 관계(`to` = 이 항목).
+- `items`는 `CONFIRMED`(확정)와 `NEEDS_RECHECK`(연결 항목이 바뀌어 팀장 재확인 필요)다. 재확인 필요는 규칙의 확정 근거로 쓰지 않는다. 해제(`RELEASED`)·거절(`REJECTED`)은 목록에 없고 [TRC-A02](#trc-a02) 이력에만 남는다.
+- `items`와 `candidates`는 한 번의 조회(같은 시점)로 읽어 나눈다. 그 사이 후보가 확정돼 두 목록 모두에서 빠지는 일이 없다.
+- 리비전은 목록보다 먼저 읽는다. 그 사이 변경이 커밋되면 목록이 더 새로울 수는 있지만 리비전보다 오래되지는 않는다.
+- 관계 저장·이력·리비전 규칙은 [관계 저장 서비스 계약](../design/09-relation-service-contract.md)을 따른다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="trc-a02"></a>
+
+## TRC-A02. 설계 항목 의존관계 이력 조회
+
+### GET `/api/projects/{id}/design-items/{item_id}/dependencies/history`
+
+설계 항목 의존관계의 과거 근거·수정 이력을 조회한다.
+
+관련 요구사항: TRC-01·06, DOC-13  
+담당: BE: 변준성 / AI: — / FE: 박민용  
+상태: BE 구현 반영안 (S15P31A108-167)
+
+#### 인증
+
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `item_id` | `ID` | Y | 설계 항목 ID |
+
+#### Query Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
+| `limit` | `integer` | N | 기본 20, 최대 100 |
+
+#### Request
+
+없음.
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `items` | [DependencyHistory[]](00-common.md#schema-dependencyhistory) | Y | 이 항목이 한쪽 끝인 관계 변경. 최신순 |
+| `has_more` | `boolean` | Y | 다음 페이지 여부 |
+| `next_cursor` | `string` | N | 다음 페이지 커서 |
+
+```json
+{
+  "items": [
+    {
+      "id": "52",
+      "from_design_item_id": "301",
+      "to_design_item_id": "302",
+      "action": "MARK_RECHECK",
+      "origin": "EXPLICIT",
+      "status": "NEEDS_RECHECK",
+      "baseline_id": "8",
+      "from_design_item_version_id": "411",
+      "to_design_item_version_id": "415",
+      "change_proposal_id": "21",
+      "relation_set_revision": 4,
+      "reason": "정책 변경",
+      "actor_account_id": "11",
+      "created_at": "2026-10-29T09:30:00Z"
+    }
+  ],
+  "has_more": false
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | `item_id`·`cursor`·`limit` 형식 오류 |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "리소스가 없거나 프로젝트 소속·접근 권한이 없음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 이력은 불변이다. 한 행 = 관계 한 쌍의 한 번 변경 (확정·재확인 표시·유지·해제·후보 추가·후보 거절).
+- 확정·유지 행은 유효 기준과 그 기준의 양 끝 항목 버전, 근거, 확인자·시각을 반드시 가진다. 재확인 표시·해제는 항목이 기준에서 빠졌을 수 있어 버전이 없을 수 있다.
+- `relation_set_revision`은 확정 관계 집합을 바꾼 변경이 만든 리비전이다. 후보 추가·거절은 집합을 바꾸지 않아 없다.
+- 과거 근거는 이 이력의 기준·항목 버전으로 복원한다. 현재 관계는 [TRC-A01](#trc-a01)에서 본다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13806,7 +13922,7 @@ HTTP `200`.
 
 관련 요구사항: MON-06  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 반영안 (S15P31A108-167)
 
 #### 인증
 
@@ -13860,7 +13976,8 @@ HTTP `200`.
       "to_id": "301",
       "to_type": "DESIGN_ITEM",
       "relation": "IMPLEMENTS",
-      "confirmed": true
+      "confirmed": true,
+      "design_item_version_id": "411"
     }
   ]
 }
@@ -13870,6 +13987,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | `task_id`·`design_item_id`가 모두 없음, ID 형식 오류 |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -13884,8 +14002,12 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 최소 하나의 기준 ID를 받아 기본 관계를 조회하는 계약이다.
+- 최소 하나의 기준 ID를 받아 기본 관계를 조회하는 계약이다. 둘 다 주면 두 결과를 합치고 같은 노드·간선은 한 번만 준다.
 - 명시 관계와 AI 후보는 confirmed로 구분한다. 과거 관계는 당시 계획·버전과 연결한다.
+- 기준이 작업이면: 현재 계획 리비전의 설계 참조(`READS`·`IMPLEMENTS`·`CHANGES`), 작업 간 선후(`BLOCKS`·`RELATES`), 현재 계획 리비전의 가장 최근 검증(`VALIDATED_BY`)과 그 검증이 본 설계 항목·대조한 작업(`COMPARED_WITH`), 이 작업에서 나온 변경 제안(`PROPOSED_FROM`).
+- 기준이 설계 항목이면: 설계 의존(`DEPENDS_ON`, 확정·재확인 필요·후보), 현재 계획이 이 항목을 참조하는 작업, 이 항목을 바꾸려는 진행 중 변경 제안(`UPDATE`·`RETIRE`. 새 항목을 만드는 `CREATE`는 아직 항목 번호가 없어 나오지 않음).
+- 설계 의존 간선은 `status`를 함께 주고, `confirmed`는 `CONFIRMED`일 때만 true다. 계획·검증의 참조 간선은 그때 본 항목 버전을 `design_item_version_id`로 준다.
+- 다른 프로젝트 객체는 번호로도 노출하지 않는다. 관계 변경 이력은 [TRC-A02](#trc-a02)에서 본다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

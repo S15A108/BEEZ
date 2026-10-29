@@ -19,6 +19,18 @@
 
 문서별 승인에서는 document_version과 submission의 결정을 한 트랜잭션으로 저장한다. 최초 baseline 생성에서는 이 승인 기록을 고치지 않고 baseline 참조·수동 항목 승인·현재 기준 포인터를 한 트랜잭션으로 저장한다. 미제출 working copy와 제출 본문은 별도이며, 제출 후 DB 트리거로 본문 변경을 막는다.
 
+<a id="design-relation-history"></a>
+
+### V9 설계 의존관계 상태·이력 (S15P31A108-167)
+
+| 테이블 | 참조·역할 |
+| --- | --- |
+| design_item_dependency (칸 추가) | `status`(EXPLICIT: CONFIRMED·NEEDS_RECHECK·RELEASED / AI_CANDIDATE: CANDIDATE·REJECTED), `reason`. 물리 삭제 대신 해제·거절 상태. CONFIRMED 는 확인자·시각 필수 |
+| design_item_dependency_history | 쌍 단위 변경 한 줄씩 (불변). 유효 기준·양 끝 항목 버전·근거·확인자·변경 제안·관계 집합 리비전. 확정·유지는 기준과 버전 필수 |
+| design_relation_set | 프로젝트별 관계 집합 리비전. 확정 관계 집합이 바뀌는 호출마다 1 증가, 행 없음 = 0 |
+
+관계 확정·이력·조회는 변준성 담당이다 (#40 합의: 진입점 오서현, 저장 서비스 변준성). 진입점은 발행·변경 승인 트랜잭션 안에서 [관계 저장 서비스](09-relation-service-contract.md)를 한 번 부르고, 실패하면 함께 롤백된다. 판정·무효화는 D5 그대로 직접 참조만 쓰고 이 관계를 따라가지 않는다.
+
 <a id="document-review-storage"></a>
 
 ### 문서 검토 저장·원본 보존
@@ -73,7 +85,8 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | 묶음 | 테이블 | 소유 |
 |---|---|---|
 | A. 계정·프로젝트·에이전트 | account, project, project_member, invitation, agent_token, agent_session | 전진 |
-| B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, design_item_dependency, planning_question | 오서현 |
+| B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, planning_question | 오서현 |
+| B. 설계 의존관계·이력 | design_item_dependency, design_item_dependency_history (V9), design_relation_set (V9) | 변준성 (진입점은 오서현, #40 합의) |
 | B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
 | B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, approval, meeting, meeting_participant, meeting_entry | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
@@ -97,6 +110,8 @@ erDiagram
   design_item_version ||--o{ baseline_item : ""
   document_version ||--o{ baseline_document : ""
   design_item ||--o{ design_item_dependency : "from / to"
+  design_item ||--o{ design_item_dependency_history : "from / to (V9, 불변)"
+  project ||--o| design_relation_set : "관계 집합 리비전 (V9)"
 
   task ||--o{ task_plan_revision : "불변 리비전"
   task |o--|| task_plan_revision : "current_plan_revision_id"
@@ -346,6 +361,6 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 
 - 수동 항목 content v1은 194에서 확정. 자동 생성·확장 스키마는 오서현·박상은 검토
 - 임베딩 차원 N — 지금은 `vector(1024)` 임시값
-- `design_item_dependency`를 무효화에서 몇 단계까지 따라갈지 (제안 1단계)
+- `design_item_dependency`를 무효화에서 몇 단계까지 따라갈지 → #40 합의: 판정·무효화는 D5 직접 참조만, 변경 영향 후보는 확정 관계 1단계 + 작업 계획 참조
 - 계획 참조의 "가장 강한 관계 하나" 규칙에 팀 동의
 - 문서 파일 저장소: 2026-10-27 SeaweedFS S3로 통일. DB storage_key 유지, 로컬도 Docker SeaweedFS 사용. 실제 배포 환경/영속 볼륨은 인프라 적용 필요.
