@@ -185,10 +185,7 @@ public class ProjectMemberService {
     /** 프로젝트 행을 잠근 뒤 요청자가 아직 팀장인지 다시 본다 (MEM-A08 "요청 처리 시점의 팀장 권한 재확인"). */
     private void lockProjectAsLeader(long projectId, ProjectActor actor) {
         projectService.lockActive(projectId);
-        if (!members.isActiveLeader(actor.memberId(), projectId)) {
-            throw AccessErrors.forbidden("leader_changed project=" + projectId + " member=" + actor.memberId(),
-                    "팀장만 할 수 있습니다");
-        }
+        access.requireLeaderAfterLock(actor);
     }
 
     /** 이 프로젝트의 활성 멤버십 행을 잠그고 지금 값으로 읽는다. 없거나 다른 프로젝트·비활성이면 404. */

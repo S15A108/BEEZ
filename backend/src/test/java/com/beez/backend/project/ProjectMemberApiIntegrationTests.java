@@ -6,9 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +20,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -255,6 +262,32 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
+     * 깨지면: 팀장 위임이 커밋되는 동안 프로젝트 잠금을 기다린 팀장 전용 요청이 이미 팀장이 아닌 사람으로 처리된다
+     * (MEM-A08 "요청 처리 시점의 팀장 권한 재확인"). 대상은 담당자 변경(TSK-A06)·표시 수정(MEM-A07)·프로젝트 수정·삭제(PRJ-A04·A05).
+     * 잠금을 쥔 트랜잭션에서 위임을 흉내 내 커밋해, 겹치는 순서를 매번 똑같이 만든다.
+     */
+    @Test
+    void leaderOnlyRequests_waitingOnLock_areRejectedAfterTransfer() throws Exception {
+        long task = createTaskAsMember("담당 변경 대상");
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        String projectPath = "/api/projects/" + projectId;
+        ApiClient leaderClient = client().login("leader@test", AccessFixtures.PASSWORD);
+
+        assertCode(whileLeadershipMoves(leaderMemberId, memberMemberId,
+                () -> changeAssignee(task, leaderMemberId)), 403, "forbidden");
+        assertThat(taskRow(task)).endsWith("|" + memberMemberId);
+        assertCode(whileLeadershipMoves(leaderMemberId, memberMemberId,
+                () -> api.patch(membersPath() + "/" + memberMemberId, "{\"domain\":\"x\"}", leader)), 403, "forbidden");
+        assertCode(whileLeadershipMoves(leaderMemberId, memberMemberId,
+                () -> api.patch(projectPath, "{\"name\":\"이전 팀장\"}", leader)), 403, "forbidden");
+        assertCode(whileLeadershipMoves(leaderMemberId, memberMemberId,
+                () -> leaderClient.delete(projectPath, "{\"confirm_name\":\"P\"}")), 403, "forbidden");
+        assertThat(api.jdbc.sql("select name || '|' || (archived_at is null) from project where id = :p")
+                .param("p", projectId).query(String.class).single()).isEqualTo("P|true");
+    }
+
+    /**
      * 깨지면: 토큰 발급과 제외가 겹칠 때 제외 뒤에도 폐기 안 된 토큰이 남는다 — 두 쪽이 같은 멤버십 행을 잠그는 약속이 빠졌다
      * (-172 합의 4). 겹치는 순간을 매번 만들 수는 없어서, 어느 순서로 끝나도 결과가 같은지를 본다.
      */
@@ -357,6 +390,54 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     private String validationRow(long validationId) {
         return api.jdbc.sql("select status || '|' || coalesce(stale_reason, 'null') from validation where id = :v")
                 .param("v", validationId).query(String.class).single();
+    }
+
+    /**
+     * 프로젝트 행을 잠근 별도 트랜잭션을 열어 둔 채 request 를 보내고, request 가 그 잠금에서 기다리는 것을 확인한 뒤
+     * 같은 트랜잭션에서 팀장을 from → to 로 바꿔 커밋한다(위임 MEM-A08 흉내). request 의 응답을 돌려주고 역할은 원래대로 되돌린다.
+     */
+    private HttpResponse<String> whileLeadershipMoves(long from, long to, Supplier<HttpResponse<String>> request)
+            throws Exception {
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (Connection lock = dataSource.getConnection()) {
+            lock.setAutoCommit(false);
+            try (PreparedStatement ps = lock.prepareStatement("select id from project where id = ? for update")) {
+                ps.setLong(1, projectId);
+                ps.executeQuery();
+            }
+            Future<HttpResponse<String>> pending = pool.submit(request::get);
+            awaitBlockedOnLock();
+            // 활성 팀장은 하나(ux_member_one_leader)라 내리는 쪽이 먼저다
+            try (PreparedStatement ps = lock.prepareStatement("update project_member set role = ? where id = ?")) {
+                ps.setString(1, "MEMBER");
+                ps.setLong(2, from);
+                ps.executeUpdate();
+                ps.setString(1, "LEADER");
+                ps.setLong(2, to);
+                ps.executeUpdate();
+            }
+            lock.commit();
+            HttpResponse<String> res = pending.get(10, TimeUnit.SECONDS);
+            api.jdbc.sql("update project_member set role = 'MEMBER' where id = :m").param("m", to).update();
+            api.jdbc.sql("update project_member set role = 'LEADER' where id = :m").param("m", from).update();
+            return res;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** 다른 세션이 행 잠금을 기다릴 때까지 (최대 10초). 기다리지 않으면 그 요청이 프로젝트 행을 잠그지 않는다는 뜻이다 */
+    private void awaitBlockedOnLock() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (api.jdbc.sql("""
+                        select count(*) from pg_stat_activity
+                         where wait_event_type = 'Lock' and datname = current_database()
+                        """).query(Long.class).single() == 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("요청이 프로젝트 행 잠금에서 기다리지 않았다");
+            }
+            Thread.sleep(20);
+        }
     }
 
     private static void await(CountDownLatch latch) {
