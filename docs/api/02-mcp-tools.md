@@ -1,6 +1,8 @@
 # BEEZ MCP Tools
 
-버전: 0.5 · 갱신일: 2026-10-28 · 개발 계약 초안
+버전: 0.6 · 갱신일: 2026-10-29 · 개발 계약 초안
+
+2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 기준 v1 전에는 작업 계획을 받지 않는다. 기준 v1 뒤 문서 변경은 회의 결과를 포함해 모두 변경 제안 발행이라 get_design_changes 계약은 그대로다. 바뀐 부분은 '수정안 요청'으로 표시했다.
 
 Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한다. [공통 규약·권한·담당자](00-common.md)와 [동일 업무 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -559,6 +561,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 현재 기준과 소속을 검사하고 제안만 생성한다.
 - 에이전트의 팀장 소유 여부와 관계없이 이 도구로 승인·발행하지 않는다.
 - 서버 REST CHG-A01과 같은 업무 검증을 사용한다.
+- (수정안 요청) 에이전트가 올린 제안에는 agent{agent_session_id, name, member_id}를 채워 변경 제안 화면이 에이전트 이름과 연결한 팀원을 보인다. 항목은 proposed_text 문장 하나로 보낼 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1062,6 +1065,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 409 | `revision_conflict` | 리비전 경합 |
 | 409 | `dependency_cycle` | 선행 순환 |
 | 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
+| 409 | `baseline_missing` | 기준 v1 발행 전 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1079,6 +1083,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 생성 시 본인 작업을 만들고 수정 시 본인 담당·현재 계획/상태를 검사한다.
 - 수정은 불변 새 리비전이다. 진행 중 수정은 STALE·WAITING(REVALIDATION)이며 점유 유지다.
 - design_refs는 항목당 가장 강한 관계 하나로 확정한다. 입력·정규화 세부 Q02.
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing이다(REST TSK-A01·구현과 같음).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1614,6 +1619,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
 - `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
+- (수정안 요청) summary는 AgentWork.last_summary로 HUD·대시보드에 원문 그대로 보인다. AI로 다시 요약하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

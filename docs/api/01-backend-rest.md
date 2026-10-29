@@ -1,6 +1,10 @@
 # BEEZ Backend REST API
 
-버전: 0.6 · 갱신일: 2026-10-28 · 개발 계약 초안
+버전: 0.7 · 갱신일: 2026-10-29 · 개발 계약 초안
+
+2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, MEM-A11, DOC-A22~A24, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. 문서 검토·승인(DOC-A13~A21)과 최초 기준 생성(PLN-A10)은 PR #37 계약을 그대로 두고 화면에 더 필요한 것만 그 절에 붙였다. ACC-A08·A09와 MTG-A01·A05·A07·A08·A09는 폐지 예정이다. MTG-A04는 팀장과 회의 참여자가 관련자를 직접 추가하는 API로 남긴다. 기준 v1 뒤의 문서 변경은 회의 결과를 포함해 모두 변경 제안으로 간다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q24다.
+
+2026-10-29: 초대 자동 참여를 정했다(Q05). 수락 버튼은 없고, 초대받은 사람이 그 이메일로 로그인·가입할 때 대기 초대가 멤버십이 된다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다.
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -14,10 +18,13 @@
 - [ACC-A04 내 계정 조회](#acc-a04)
 - [ACC-A05 프로필 수정](#acc-a05)
 - [ACC-A06 비밀번호 변경](#acc-a06)
-- [ACC-A07 비밀번호 재설정 메일 요청](#acc-a07)
-- [ACC-A08 재설정 링크 확인](#acc-a08)
-- [ACC-A09 비밀번호 재설정](#acc-a09)
+- [ACC-A07 임시 비밀번호 발급](#acc-a07)
+- [ACC-A08 재설정 링크 확인 (폐지 예정)](#acc-a08)
+- [ACC-A09 비밀번호 재설정 (폐지 예정)](#acc-a09)
 - [ACC-A10 회원 탈퇴](#acc-a10)
+- [ACC-A11 가입 인증 코드 보내기](#acc-a11)
+- [ACC-A12 가입 인증 코드 확인](#acc-a12)
+- [ACC-A13 탈퇴 가능 여부](#acc-a13)
 - [PRJ-A01 프로젝트 생성](#prj-a01)
 - [PRJ-A02 참여 프로젝트 목록](#prj-a02)
 - [PRJ-A03 프로젝트 상세](#prj-a03)
@@ -34,6 +41,7 @@
 - [MEM-A08 팀장 위임](#mem-a08)
 - [MEM-A09 팀원 제외](#mem-a09)
 - [MEM-A10 프로젝트 나가기](#mem-a10)
+- [MEM-A11 초대 다시 보내기](#mem-a11)
 - [AGT-A01 에이전트 토큰 발급](#agt-a01)
 - [AGT-A02 내 에이전트 토큰 목록](#agt-a02)
 - [AGT-A03 에이전트 토큰 폐기](#agt-a03)
@@ -72,6 +80,9 @@
 - [DOC-A19 문서 검토 요청 목록](#doc-a19)
 - [DOC-A20 문서 검토 제출 상세](#doc-a20)
 - [DOC-A21 문서별 승인·반려](#doc-a21)
+- [DOC-A22 보완 제안에 대해 비비와 대화](#doc-a22)
+- [DOC-A23 비비에게 직접 보완 요청](#doc-a23)
+- [DOC-A24 팀장 검토 요청 취소](#doc-a24)
 - [CHG-A01 설계 변경 제안 생성](#chg-a01)
 - [CHG-A02 설계 변경 제안 목록](#chg-a02)
 - [CHG-A03 설계 변경 제안 상세·비교](#chg-a03)
@@ -85,6 +96,8 @@
 - [CHG-A11 승인 이력 조회](#chg-a11)
 - [CHG-A12 변경 제안 의견·검토 요청 등록](#chg-a12)
 - [CHG-A13 변경 제안 의견 목록](#chg-a13)
+- [CHG-A14 승인 미리 보기](#chg-a14)
+- [CHG-A15 변경 제안 거두기](#chg-a15)
 - [TSK-A01 작업 계획 등록](#tsk-a01)
 - [TSK-A02 작업 목록](#tsk-a02)
 - [TSK-A03 작업 상세](#tsk-a03)
@@ -104,16 +117,21 @@
 - [CTX-A06 컨텍스트 조회 이력](#ctx-a06)
 - [BEE-A01 비비에게 질문](#bee-a01)
 - [BEE-A02 작업 역할 분담 추천](#bee-a02)
-- [MTG-A01 회의 생성](#mtg-a01)
+- [BEE-A03 비비 답변 피드백](#bee-a03)
+- [BEE-A04 비비 현재 상태](#bee-a04)
+- [MTG-A01 회의 생성 (폐지 예정)](#mtg-a01)
 - [MTG-A02 회의 목록](#mtg-a02)
 - [MTG-A03 회의 상세](#mtg-a03)
 - [MTG-A04 회의 참여 요청](#mtg-a04)
-- [MTG-A05 회의 참여 응답](#mtg-a05)
+- [MTG-A05 회의 참여 응답 (폐지 예정)](#mtg-a05)
 - [MTG-A06 회의 텍스트 기록](#mtg-a06)
-- [MTG-A07 비비의 회의 맥락 분석](#mtg-a07)
-- [MTG-A08 회의록 생성](#mtg-a08)
-- [MTG-A09 회의 결정 기반 문서 수정안](#mtg-a09)
+- [MTG-A07 비비의 회의 맥락 분석 (폐지 예정)](#mtg-a07)
+- [MTG-A08 회의록 생성 (폐지 예정)](#mtg-a08)
+- [MTG-A09 회의 결정 기반 문서 수정안 (폐지 예정)](#mtg-a09)
 - [MTG-A10 회의 기록 목록](#mtg-a10)
+- [MTG-A11 비비 회의 정리](#mtg-a11)
+- [MTG-A12 회의 정리 수정 요청](#mtg-a12)
+- [MTG-A13 회의 끝내기](#mtg-a13)
 - [MON-D01 문서 승인 현황](#mon-d01)
 - [MON-C01 변경 제안 현황](#mon-c01)
 - [MON-T01 작업 상태 현황](#mon-t01)
@@ -122,6 +140,8 @@
 - [MON-A03 작업·설계·검증 관계](#mon-a03)
 - [MON-A04 프로젝트 활동 타임라인](#mon-a04)
 - [MON-A05 에이전트 현재 작업 현황](#mon-a05)
+- [MON-A06 내 접속 상태 보고](#mon-a06)
+- [MON-A07 팀원 접속 현황](#mon-a07)
 - [NTF-A01 내 알림함](#ntf-a01)
 - [NTF-A02 알림 읽음 처리](#ntf-a02)
 - [SYS-A01 backend 기동 확인](#sys-a01)
@@ -139,7 +159,7 @@
 
 관련 요구사항: ACC-01  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -166,8 +186,9 @@
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `email` | `string` | Y | 가입할 이메일 |
-| `password` | `string` | Y | 비밀번호. 정책 Q04 |
+| `password` | `string` | Y | 비밀번호. 영문·숫자·특수문자를 모두 포함한 8~128자(기본안, Q04) |
 | `name` | `string` | Y | 표시 이름 |
+| `verified_token` | `string` | Y | ACC-A12에서 받은 가입 인증 토큰. 수정안 요청 |
 
 ```json
 {
@@ -205,6 +226,8 @@ HTTP `201`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `email_already_exists` | 이미 등록된 이메일 |
+| 400 | `password_policy_violation` | 비밀번호 규칙 위반. 어긴 조건은 `error.details.violations` |
+| 400 | `email_not_verified` | 인증 토큰이 없거나 만료됐거나 다른 이메일의 토큰 |
 
 ```json
 {
@@ -219,6 +242,9 @@ HTTP `201`.
 
 - 계정 생성과 이메일 유일성 검사를 원자적으로 처리한다.
 - 가입 응답으로 로그인 세션을 만들지 않는다. 로그인 API를 별도로 호출한다.
+- (수정안 요청) 가입 전에 ACC-A11·A12로 이메일을 인증한다. `verified_token`의 이메일과 요청 email이 같아야 하고, 토큰은 가입 성공 때 소비한다.
+- (수정안 요청) 비밀번호 규칙은 ACC-A06·임시 비밀번호와 같다. 화면도 같은 규칙으로 미리 검사하지만 최종 판정은 서버다.
+- (수정안 요청 · 자동 참여, Q05 정함) 가입하면 그 이메일로 대기(PENDING) 중인 초대를 멤버십으로 바꾸고 초대의 `accepted_at`을 채운다. 규칙은 ACC-A02 로그인과 같다. 인증한 이메일(verified_token)로만 바꾸므로 ACC-A11·A12와 같이 또는 그 뒤에 배포한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -234,7 +260,7 @@ HTTP `201`.
 
 관련 요구사항: ACC-02  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -261,6 +287,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `email` | `string` | Y | 가입 이메일 |
 | `password` | `string` | Y | 비밀번호 |
+| `remember_me` | `boolean` | N | 로그인 유지. 기본 false. 수정안 요청 |
 
 ```json
 {
@@ -280,6 +307,7 @@ HTTP `200`.
 | `name` | `string` | Y | 표시 이름 |
 | `avatar` | `string` | N | 아바타 식별값 또는 URL |
 | `created_at` | `Time` | Y | 가입 시각 |
+| `must_change_password` | `boolean` | Y | 임시 비밀번호로 로그인했으면 true. 수정안 화면에는 강제 이동이 없고 캔버스 메모가 권하는 안전장치다(Q04). 수정안 요청 |
 
 ```json
 {
@@ -303,6 +331,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 401 | `invalid_credentials` | 이메일 또는 비밀번호 불일치 |
+| 401 | `temporary_password_expired` | 유효 기간이 지난 임시 비밀번호 |
 
 ```json
 {
@@ -317,6 +346,10 @@ HTTP `200`.
 
 - 성공하면 세션 쿠키를 발급한다. 응답 본문에는 에이전트 토큰이나 JWT를 넣지 않는다.
 - 실패 메시지로 이메일 가입 여부를 구분하지 않는다.
+- (수정안 요청) remember_me가 true면 세션 만료를 늘린다. 두 경우의 기간은 Q04다.
+- (수정안 요청) 임시 비밀번호(ACC-A07)로 로그인하면 must_change_password=true다. 바꾸기 전에 다른 API를 막을지는 Q04다.
+- (수정안 요청 · 자동 참여, Q05 정함) 로그인에 성공하면 그 계정 이메일(대소문자 무시)로 대기(PENDING) 중인 초대를 멤버십으로 바꾸고 초대의 `accepted_at`을 채운다. 팀장이 제외(MEM-A09)한 멤버십은 MEMBER로 되살린다. 스스로 나간(MEM-A10) 멤버십이 있는 프로젝트의 초대는 바꾸지 않고 대기로 둔다(MEM-A05로만 참여).
+- (수정안 요청 · 자동 참여, Q05 정함) 이메일만 보고 참여시키므로 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 인증 없이 남의 이메일로 가입한 계정이 초대를 가져가지 않게 하려는 것이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -568,7 +601,7 @@ HTTP `200`.
 
 관련 요구사항: ACC-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -595,7 +628,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `current_password` | `string` | Y | 현재 비밀번호 |
-| `new_password` | `string` | Y | 새 비밀번호 |
+| `new_password` | `string` | Y | 새 비밀번호. ACC-A01과 같은 규칙 |
 
 ```json
 {
@@ -617,6 +650,7 @@ HTTP `204`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `current_password_mismatch` | 현재 비밀번호 불일치 |
+| 400 | `password_policy_violation` | 비밀번호 규칙 위반 |
 
 ```json
 {
@@ -631,6 +665,7 @@ HTTP `204`.
 
 - 비밀번호 해시를 갱신한다. 다른 세션 종료 정책은 Q04다.
 - 비밀번호·인증정보를 응답이나 로그에 남기지 않는다.
+- (수정안 요청) 임시 비밀번호로 로그인한 사람은 current_password에 임시 비밀번호를 보낸다. 성공하면 must_change_password가 풀린다. 변경 뒤 완료 화면 없이 회원 설정으로 돌아간다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -638,15 +673,15 @@ HTTP `204`.
 
 <a id="acc-a07"></a>
 
-## ACC-A07. 비밀번호 재설정 메일 요청
+## ACC-A07. 임시 비밀번호 발급
 
 ### POST `/api/auth/password/forgot`
 
-비밀번호 재설정 메일 요청 기능을 제공한다.
+이름·이메일을 확인해 임시 비밀번호를 메일로 보낸다(수정안 B안 확정, 지금은 재설정 링크).
 
 관련 요구사항: ACC-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영(B안 임시 비밀번호)
 
 #### 인증
 
@@ -671,11 +706,13 @@ HTTP `204`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `email` | `string` | Y | 재설정을 요청할 이메일 |
+| `email` | `string` | Y | 가입 이메일 |
+| `name` | `string` | Y | 가입 때 쓴 표시 이름. 앞뒤 공백을 빼고 비교. 수정안 요청 |
 
 ```json
 {
-  "email": "member@example.com"
+  "email": "member@example.com",
+  "name": "김동료"
 }
 ```
 
@@ -698,6 +735,7 @@ HTTP `202`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 429 | `rate_limited` | 같은 이메일·IP의 요청 횟수 초과 |
 
 ```json
 {
@@ -711,7 +749,9 @@ HTTP `202`.
 #### 처리 규칙
 
 - 이메일 존재 여부에 관계없이 같은 202 응답을 반환한다.
-- 링크는 유효기간과 1회 사용 조건을 가진다. 만료시간·재발송 제한은 Q04다.
+- (수정안 요청) 재설정 링크 대신 임시 비밀번호를 메일로 보낸다. 이름과 이메일이 모두 맞을 때만 발급하고, 맞지 않아도 같은 202 응답을 준다.
+- (수정안 요청) 임시 비밀번호는 ACC-A01 비밀번호 규칙을 만족하고 짧은 유효 기간을 가진다. 메일에는 '로그인한 뒤 회원 설정에서 비밀번호를 바꾸세요'를 넣는다. 길이·유효 기간·발송 한도·기존 비밀번호와 세션 처리는 Q04다.
+- (수정안 요청) 메일에 비밀번호가 평문으로 남으므로 첫 로그인 때 변경을 강제한다(ACC-A02 must_change_password).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -719,7 +759,7 @@ HTTP `202`.
 
 <a id="acc-a08"></a>
 
-## ACC-A08. 재설정 링크 확인
+## ACC-A08. 재설정 링크 확인 (폐지 예정)
 
 ### POST `/api/auth/password/reset/verify`
 
@@ -727,7 +767,7 @@ HTTP `202`.
 
 관련 요구사항: ACC-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -797,6 +837,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 유효성 확인만 수행하며 토큰을 소비하지 않는다.
+- (수정안 요청) 비밀번호 찾기를 임시 비밀번호(ACC-A07)로 정해 이 API와 메일 링크로 여는 재설정 화면(SCR-02)을 없앤다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -804,7 +845,7 @@ HTTP `200`.
 
 <a id="acc-a09"></a>
 
-## ACC-A09. 비밀번호 재설정
+## ACC-A09. 비밀번호 재설정 (폐지 예정)
 
 ### POST `/api/auth/password/reset`
 
@@ -812,7 +853,7 @@ HTTP `200`.
 
 관련 요구사항: ACC-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -876,6 +917,7 @@ HTTP `204`.
 
 - 새 비밀번호 저장과 토큰 소비를 같은 트랜잭션으로 처리한다.
 - 다른 세션 정리 정책은 Q04다.
+- (수정안 요청) 비밀번호 찾기를 임시 비밀번호(ACC-A07)로 정해 이 API와 메일 링크로 여는 재설정 화면(SCR-02)을 없앤다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -891,7 +933,7 @@ HTTP `204`.
 
 관련 요구사항: ACC-06  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -939,7 +981,7 @@ HTTP `204`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `invalid_credentials` | 비밀번호 불일치 |
-| 409 | `project_membership_remaining` | 참여 프로젝트가 남아 있음 |
+| 409 | `leader_of_team_projects` | 다른 활성 팀원이 있는 프로젝트의 팀장. `error.details.blocked_projects`에 [BlockedProject[]](00-common.md#schema-blockedproject) |
 
 ```json
 {
@@ -952,9 +994,272 @@ HTTP `204`.
 
 #### 처리 규칙
 
-- 모든 프로젝트를 나간 후 가능하다. 팀장인 프로젝트는 위임이 선행되어야 한다.
+- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 회원 탈퇴 화면의 기본안은 팀원으로 참여한 프로젝트에서 자동으로 빠지고, 혼자 쓰는 프로젝트는 함께 삭제하며, 팀 프로젝트에 남긴 문서와 작업 기록은 보존이다. 확정은 Q05다.
 - 계정 개인정보는 제거·익명화하고 토큰 전부 폐기·세션 종료를 처리한다.
 - 작업·편집·사용량 이력은 탈퇴한 사용자로 보존한다.
+- (수정안 요청) 판정은 탈퇴 요청 때 서버가 다시 한다. 화면을 연 뒤 팀원 수가 바뀌어도 ACC-A13 결과를 믿지 않는다. 탈퇴 뒤 완료 화면 없이 랜딩으로 간다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="acc-a11"></a>
+
+## ACC-A11. 가입 인증 코드 보내기
+
+### POST `/api/auth/email-verifications`
+
+회원가입 전에 이메일로 인증 코드를 보낸다.
+
+관련 요구사항: ACC-01 (화면 SCR-01-v2-register)  
+담당: BE: 전진 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`PUBLIC`. 세션 없이 호출할 수 있다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+없음.
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `email` | `string` | Y | 가입할 이메일 |
+
+```json
+{
+  "email": "member@example.com"
+}
+```
+
+#### Response
+
+HTTP `201`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `expires_at` | `Time` | Y | 코드 만료 시각. 화면은 이 값으로 남은 시간을 셈 |
+| `resend_available_at` | `Time` | Y | 다시 받기가 가능한 시각 |
+
+```json
+{
+  "verification_id": "41",
+  "expires_at": "2026-10-28T03:05:00Z",
+  "resend_available_at": "2026-10-28T03:01:00Z"
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `email_already_exists` | 이미 등록된 이메일 |
+| 429 | `rate_limited` | 발송 횟수 초과 |
+
+```json
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "필수 필드·타입·허용 값 오류"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 코드 유효 시간은 5분이다(기본안). 다시 받으면 새 인증 요청을 만들고 이전 코드는 바로 무효다.
+- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다.
+- 코드는 해시로만 저장하고 응답·로그에 남기지 않는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="acc-a12"></a>
+
+## ACC-A12. 가입 인증 코드 확인
+
+### POST `/api/auth/email-verifications/{verification_id}/confirm`
+
+메일로 받은 코드를 확인하고 회원가입에 쓸 1회용 토큰을 준다.
+
+관련 요구사항: ACC-01 (화면 SCR-01-v2-register, SCR-01-v2-register-code)  
+담당: BE: 전진 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`PUBLIC`. 세션 없이 호출할 수 있다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `verification_id` | `ID` | Y | 인증 요청 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `code` | `string` | Y | 메일로 받은 6자리 코드 |
+
+```json
+{
+  "code": "483920"
+}
+```
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `verified_token` | `string` | Y | ACC-A01에 넣는 1회용 토큰 |
+| `email` | `string` | Y | 인증된 이메일 |
+| `expires_at` | `Time` | Y | 토큰 만료 시각 |
+
+```json
+{
+  "verified_token": "evt_example",
+  "email": "member@example.com",
+  "expires_at": "2026-10-28T03:35:00Z"
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 400 | `verification_code_mismatch` | 코드 불일치. `error.details.remaining_attempts`에 남은 시도 |
+| 404 | `not_found` | 없는 인증 요청 |
+| 410 | `verification_expired` | 코드 만료 또는 다시 받기로 무효 |
+| 429 | `too_many_attempts` | 틀린 입력 횟수 초과. 새 코드 필요 |
+
+```json
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "필수 필드·타입·허용 값 오류"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 틀린 입력 횟수를 제한한다(값은 Q04). 넘으면 이 인증 요청은 끝나고 코드를 새로 받아야 한다.
+- 성공하면 코드를 소비한다. verified_token은 유효 기간이 짧고 가입 성공 때 소비된다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="acc-a13"></a>
+
+## ACC-A13. 탈퇴 가능 여부
+
+### GET `/api/me/withdrawal-check`
+
+탈퇴 페이지가 막는 프로젝트와 이유를 보여 주도록 판정 결과를 미리 준다.
+
+관련 요구사항: ACC-06 (화면 SCR-05-v2-withdraw)  
+담당: BE: 전진 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`USER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+없음.
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `can_withdraw` | `boolean` | Y | 지금 탈퇴할 수 있는지 |
+| `blocked_projects` | [BlockedProject[]](00-common.md#schema-blockedproject) | Y | 탈퇴를 막는 프로젝트. 없으면 [] |
+
+```json
+{
+  "can_withdraw": false,
+  "blocked_projects": [
+    {
+      "project_id": "101",
+      "name": "BEEZ",
+      "my_role": "LEADER",
+      "member_count": 4
+    }
+  ]
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- ACC-A10과 같은 판정을 쓴다. 본인 말고 활성 팀원이 있는 프로젝트의 팀장이면 막힌다.
+- 화면은 막힌 프로젝트마다 팀장 위임(MEM-A08) 또는 프로젝트 삭제(PRJ-A05)로 잇는다. 할 일이 남으면 탈퇴 버튼을 끈다.
+- 결과는 참고용이다. 최종 판정은 ACC-A10이 요청 시점에 다시 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -970,7 +1275,7 @@ HTTP `204`.
 
 관련 요구사항: PRJ-01, BEE-01  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -997,8 +1302,9 @@ HTTP `204`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `name` | `string` | Y | 프로젝트명 |
-| `description` | `string` | N | 설명 |
+| `name` | `string` | Y | 프로젝트명. 1~40자 |
+| `description` | `string` | N | 설명. 0~300자 |
+| `design` | `glass\|brick\|modern\|tower\|wood` | N | 건물 디자인. 생성 때 생략하면 glass. 수정안 요청 |
 
 ```json
 {
@@ -1017,6 +1323,8 @@ HTTP `201`.
 | `name` | `string` | Y | 프로젝트 이름 |
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
+| `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 수정안 요청 |
+| `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 시각 |
@@ -1052,6 +1360,8 @@ HTTP `201`.
 
 - project와 생성자의 LEADER 멤버십을 함께 생성한다.
 - 비비의 프로젝트별 논리 인스턴스를 초기화한다. AI가 별도 사용자를 생성하는 것은 아니다.
+- (수정안 요청) design을 서버에 저장해 팀원 모두에게 같은 건물을 보인다. 지금 화면은 브라우저에만 저장해 다른 기기·팀원에게는 기본 디자인으로 보인다.
+- (수정안 요청) 이름 1~40자, 소개 0~300자, design은 정해진 값만 받는다. 위반은 400 validation_failed다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1067,7 +1377,7 @@ HTTP `201`.
 
 관련 요구사항: PRJ-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1144,6 +1454,7 @@ HTTP `200`.
 
 - 현재 계정이 활성 멤버인 프로젝트만 페이지 처리 전에 필터링한다.
 - 삭제 프로젝트는 노출하지 않는다.
+- (수정안 요청) 각 항목에 design·member_count를 넣어 도시 화면이 추가 호출 없이 건물을 그린다. '준비 중'과 '기준 v1'은 기존 current_baseline 유무로 구분한다. 프로젝트 시작은 PLN-A10 최초 기준 생성이며 따로 시작 상태를 두지 않는다. 검색·정렬은 화면에서 처리하고 `q`·`sort` 파라미터는 필요해지면 추가한다. 부지 번호 저장은 Q22다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1159,7 +1470,7 @@ HTTP `200`.
 
 관련 요구사항: PRJ-02  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1195,6 +1506,8 @@ HTTP `200`.
 | `name` | `string` | Y | 프로젝트 이름 |
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
+| `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 수정안 요청 |
+| `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 시각 |
@@ -1249,7 +1562,7 @@ HTTP `200`.
 
 관련 요구사항: PRJ-02  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1277,8 +1590,10 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `name` | `string` | N | 이름 |
-| `description` | `string` | N | 설명 |
+| `name` | `string` | N | 이름. 1~40자 |
+| `description` | `string` | N | 설명. 0~300자 |
+| `design` | `glass\|brick\|modern\|tower\|wood` | N | 건물 디자인. 생성 때 생략하면 glass. 수정안 요청 |
+| `expected_updated_at` | `Time` | N | 조회한 updated_at. 보내면 낙관적 충돌 검사. 수정안 요청 |
 
 ```json
 {
@@ -1297,6 +1612,8 @@ HTTP `200`.
 | `name` | `string` | Y | 프로젝트 이름 |
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
+| `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 수정안 요청 |
+| `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 시각 |
@@ -1325,6 +1642,7 @@ HTTP `200`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `version_conflict` | expected_updated_at이 현재와 다름 |
 
 ```json
 {
@@ -1339,6 +1657,7 @@ HTTP `200`.
 
 - 하나 이상의 변경 필드가 필요하다.
 - 멤버십·기준 설계·작업 상태는 이 요청으로 바꾸지 않는다.
+- (수정안 요청) 팀장이 바꾼 이름·디자인은 팀원이 다시 불러올 때 반영하고 활동 기록에 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1354,7 +1673,7 @@ HTTP `200`.
 
 관련 요구사항: PRJ-05  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1405,6 +1724,7 @@ HTTP `204`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `confirmation_mismatch` | 이름 확인 실패 |
+| 409 | `members_exist` | 본인 말고 활성 팀원이 있음. 팀장 위임(MEM-A08) 뒤 나가기(MEM-A10)로 안내 |
 
 ```json
 {
@@ -1419,6 +1739,7 @@ HTTP `204`.
 
 - 프로젝트를 soft delete하고 멤버·에이전트의 일반 접근을 차단한다.
 - 원본·버전·감사 이력을 물리 삭제하지 않는다.
+- (수정안 요청) 본인 말고 활성 팀원이 있으면 이름이 맞아도 409 members_exist로 거절한다. 혼자 쓰는 프로젝트만 삭제한다. 판정은 요청 시점에 다시 한다. MEM-A10의 leader_transfer_required와 같은 흐름이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1434,7 +1755,7 @@ HTTP `204`.
 
 관련 요구사항: PRJ-04  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1506,6 +1827,8 @@ HTTP `200`.
 
 - 필수 kind 4종의 업로드·승인을 각각 표시한다.
 - 문서 등록·팀 구성·연결 안내에 사용하며 자동 승인하지 않는다.
+- (수정안 요청) required_documents[]에 document_id·latest_version_id·working_copy_status·index_ready를 넣어 팀장 시작 가이드가 문서별 검토·승인 단계와 '기준 만들기' 가능 여부를 그린다.
+- (수정안 요청) 4종이 모두 승인·색인되면 팀장이 PLN-A10으로 기준 v1을 만든다(Q15). 그 전에는 변경 제안·작업 계획을 받지 않는다(CHG-A01·TSK-A01 baseline_missing).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1521,7 +1844,7 @@ HTTP `200`.
 
 관련 요구사항: MEM-01  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1551,6 +1874,8 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `email` | `string` | N | 지정하면 해당 이메일로 초대 |
+| `emails` | `string[]` | N | 여러 이메일을 한 번에 초대하고 서버가 메일을 보냄. email과 둘 중 하나. 최대 개수는 Q05. 수정안 요청 |
+| `message` | `string` | N | '함께 보낼 말'. 초대 메일에 넣음. 수정안 요청 |
 
 ```json
 {
@@ -1566,6 +1891,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `invitation` | [Invitation](00-common.md#schema-invitation) | Y | 초대 메타데이터 |
 | `invite_url` | `string` | Y | 초대 링크 |
+| `results` | `object[]` | N | emails로 요청하면 이메일별 {email, status: INVITED\|ALREADY_MEMBER\|ALREADY_INVITED, invitation_id?}. 가입한 이메일이든 아니든 새 초대는 INVITED다. 이때 invitation·invite_url은 생략. 수정안 요청(Q05) |
 
 ```json
 {
@@ -1588,6 +1914,7 @@ HTTP `201`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `already_member` | 이미 활성 멤버 |
+| 429 | `rate_limited` | 메일 발송 한도 초과 |
 
 ```json
 {
@@ -1604,6 +1931,10 @@ HTTP `201`.
 - 만료는 생성 후 7일, 수락 1회로 끝난다(Q05 제안값, -174). 같은 이메일의 대기 초대가 있어도 새로 만든다.
 - `email`은 앞뒤 공백을 빼고 소문자로 저장한다. 그 이메일의 계정이 이미 활성 멤버면 409 `already_member`.
 - 링크의 비밀 토큰을 목록·로그에 그대로 노출하지 않는다.
+- (수정안 요청 · 자동 참여, Q05 정함) emails로 요청하면 이메일마다 대기(PENDING) 초대를 만들고 메일을 보낸다. 초대할 때는 멤버십을 만들지 않는다. 초대받은 사람이 그 이메일로 로그인(ACC-A02)·가입(ACC-A01)하거나, 로그인한 채 메일 링크를 열 때(MEM-A05) 만든다. 응답으로 그 이메일의 가입 여부를 알 수 없게 한다. 만료는 두지 않고, 잘못 보낸 초대는 MEM-A03으로 취소한다.
+- (수정안 요청) emails로 요청하면 서버가 초대 메일을 보낸다. 메일에는 초대한 사람·프로젝트와 '프로젝트로 가기' 버튼만 있고, 버튼은 프로젝트 주소(`/projects/{id}?invite={token}`)로 간다. 로그인하지 않았으면 로그인·가입을 거쳐 그 프로젝트로 간다. 링크 토큰은 메일에만 담는다. 문구·발신 주소·발송 한도는 Q05다.
+- (수정안 요청) 원치 않는 초대로 들어온 사람은 프로젝트 나가기(MEM-A10)로 빠진다. 끝난 멤버십이 있는 사람을 다시 초대하면, 팀장이 제외(MEM-A09)한 사람은 로그인·가입할 때 그 멤버십을 MEMBER로 되살린다. 스스로 나간(MEM-A10) 사람은 로그인만으로 되살리지 않고 메일 링크를 직접 열었을 때(MEM-A05)만 되살린다. 담당 영역·라벨·색상은 비운다.
+- (수정안 요청) 화면은 링크 복사 대신 메일 보내기만 쓴다. email·invite_url 방식은 기존 호환으로 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1619,7 +1950,7 @@ HTTP `201`.
 
 관련 요구사항: MEM-01  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1644,6 +1975,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
+| `status` | `PENDING\|ACCEPTED\|REVOKED\|EXPIRED` | N | 상태 필터. 설정 › 팀의 '아직 로그인 전' 줄은 PENDING(초대받은 사람이 아직 로그인·가입하지 않음). 초대는 만료가 없어 EXPIRED가 생기지 않음. 수정안 요청 |
 
 #### Request
 
@@ -1693,6 +2025,7 @@ HTTP `200`.
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
 - 대기·수락·폐기·만료 초대를 모두 id 내림차순으로 돌려준다. 상태는 `accepted_at`·`revoked_at`·`expires_at`으로 구분한다.
+- (수정안 요청) '아직 로그인 전' 줄의 '메일 다시 보내기'는 MEM-A11, '초대 취소'는 MEM-A03이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1762,6 +2095,7 @@ HTTP `204`.
 
 - 폐기 후 링크 수락을 거부한다. 본 프로젝트의 이미 폐기된 초대는 재요청 204다.
 - 이미 수락된 초대는 바꾸지 않고 204다. 들어온 팀원을 내보내는 것은 [MEM-A09](#mem-a09)다.
+- (수정안 요청 · 자동 참여, Q05 정함) 대기 초대를 취소하면 그 이메일로 로그인·가입해도 팀원이 되지 않는다. 잘못 보낸 초대는 이것으로 거둔다.
 - 다른 프로젝트의 초대 ID는 404다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -1778,7 +2112,7 @@ HTTP `204`.
 
 관련 요구사항: MEM-02  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1818,8 +2152,12 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `project_name` | `string` | Y | 프로젝트명 |
-| `expires_at` | `Time` | Y | 만료 시각 |
-| `login_required` | `boolean` | Y | 수락 시 로그인 필요 |
+| `expires_at` | `Time` | N | 만료 시각. 초대는 만료가 없어 생략(Q05) |
+| `login_required` | `boolean` | Y | 프로젝트를 열려면 로그인 필요 |
+| `inviter` | `object` | Y | 초대한 팀장 {name, email}. 수정안 요청 |
+| `project_description` | `string` | N | 프로젝트 소개. 화면은 두 줄 넘으면 말줄임. 수정안 요청 |
+| `invited_email` | `string` | N | 이메일을 지정한 초대면 그 주소. 수정안 요청 |
+| `account_matches` | `boolean` | N | 로그인 상태면 로그인 계정이 초대 대상과 맞는지. 다르면 화면이 프로젝트를 열지 않고 다시 로그인하게 함. 수정안 요청 |
 
 ```json
 {
@@ -1835,7 +2173,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `not_found` | 무효 초대 |
-| 410 | `invitation_expired` | 만료 |
+| 410 | `invitation_expired` | 만료. 수정안 요청: 404 `not_found`로 합침 |
 
 ```json
 {
@@ -1851,6 +2189,8 @@ HTTP `200`.
 - 프로젝트명·만료 안내에 필요한 최소 정보만 반환한다.
 - 초대를 소비하거나 멤버십을 만들지 않는다.
 - 없는 토큰·폐기·이미 수락·삭제된 프로젝트의 초대는 모두 404, 만료는 410이다. 404 메시지는 공통 문구로 같다(사유는 서버 로그에만). `login_required`는 요청에 로그인 세션이 없으면 `true`다.
+- (수정안 요청) 만료도 404로 합쳐 유효하지 않은 초대(기간 지남·취소·프로젝트 삭제·잘못된 링크)를 not-found 결과 하나로 준다. 화면은 원인을 알리지 않고 '페이지를 찾을 수 없어요'를 보인다. 통신 실패만 따로 다시 불러오기를 둔다.
+- (수정안 요청 · 자동 참여, Q05 정함) 메일 링크(`/projects/{id}?invite={token}`)를 연 화면이 부른다. 조회만 하고 멤버십은 만들지 않는다. 로그인 상태이고 account_matches=true면 화면이 버튼 없이 바로 MEM-A05를 부르고, 이미 팀원이면 바로 프로젝트를 연다. 로그인할 때 이미 멤버십이 된 초대도 404가 아니라 정상 응답을 준다. 로그아웃 상태면 초대한 사람·프로젝트를 보여 주고 로그인·가입으로 보낸 뒤 이 링크로 돌아온다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1866,7 +2206,7 @@ HTTP `200`.
 
 관련 요구사항: MEM-02  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -1945,9 +2285,9 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `not_found` | 무효 초대(없는 토큰·폐기·삭제된 프로젝트·다른 이메일 지정) |
-| 409 | `invitation_used` | 이미 소비된 초대 |
+| 409 | `invitation_used` | 이미 소비된 초대. 수정안 요청: 404로 합침 |
 | 409 | `already_member` | 이미 참여 |
-| 410 | `invitation_expired` | 만료 |
+| 410 | `invitation_expired` | 만료. 수정안 요청: 404로 합침 |
 
 ```json
 {
@@ -1964,6 +2304,8 @@ HTTP `200`.
 - 이메일 지정 초대는 같은 이메일(대소문자 무시) 계정만 수락할 수 있다. 다르면 무효 초대와 같은 404다(Q05 제안, -174).
 - 이미 활성 멤버면 409 `already_member`이고 초대는 소비되지 않는다.
 - 제외·나가기로 끝난 멤버십이 있으면 새로 만들지 않고 그 멤버십을 MEMBER로 되살린다. 담당 영역·라벨·색상은 비운다.
+- (수정안 요청) 유효하지 않은 초대는 MEM-A04와 같이 404 하나로 준다. already_member는 그대로 두고 화면은 그 프로젝트로 보낸다.
+- (수정안 요청 · 자동 참여, Q05 정함) 이미 로그인한 채 메일 링크를 열면 화면이 MEM-A04로 account_matches를 확인한 뒤 버튼 없이 이 API를 부른다. 수락 화면은 없다. 스스로 나간 사람이 다시 초대받았을 때는 이 API로만 다시 참여한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -2354,6 +2696,7 @@ HTTP `204`.
 
 - 같은 프로젝트의 활성 대상·인계 대상을 확인한다.
 - 멤버십 종료 후 기존 토큰의 접근을 즉시 거부한다. 작업 소유권 처리 세부는 Q05다.
+- (수정안 요청 · 자동 참여, Q05 정함) 제외한 사람을 다시 초대하면 그 사람이 로그인·가입할 때 멤버십을 MEMBER로 되살린다(ACC-A02). 서버는 멤버십이 끝난 이유(제외·나가기)를 구분해 둔다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -2435,6 +2778,94 @@ HTTP `204`.
 
 - 현재 호출자의 멤버십만 종료한다.
 - 종료한 멤버십으로 발급한 토큰은 즉시 사용할 수 없다.
+- (수정안 요청 · 자동 참여, Q05 정함) 스스로 나간 멤버십은 다시 초대받아도 로그인만으로 되살리지 않는다. 메일 링크를 직접 열어 MEM-A05로 참여할 때만 되살린다. 서버는 멤버십이 끝난 이유(제외·나가기)를 구분해 둔다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mem-a11"></a>
+
+## MEM-A11. 초대 다시 보내기
+
+### POST `/api/projects/{id}/invitations/{invitation_id}/resend`
+
+대기 중인 초대의 메일을 새 링크로 다시 보낸다.
+
+관련 요구사항: MEM-01 (화면 SCR-06-v2-settings-invited)  
+담당: BE: 전진 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`LEADER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `invitation_id` | `ID` | Y | 초대 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `invitation` | [Invitation](00-common.md#schema-invitation) | Y | 갱신한 초대 |
+
+```json
+{
+  "invitation": {
+    "id": "31",
+    "project_id": "101",
+    "invited_email": "member@example.com",
+    "expires_at": "2026-11-04T03:00:00Z"
+  }
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `invitation_not_pending` | 이미 수락·폐기된 초대 |
+| 429 | `rate_limited` | 발송 한도 초과 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 새 토큰을 만들어 메일을 다시 보낸다. 이전 링크는 바로 무효다. 초대는 만료가 없어 만료를 다시 잡지 않는다(Q05).
+- 링크 토큰은 응답에 넣지 않는다. 발송 한도는 Q05다.
+- 이메일을 지정한 초대만 다시 보낼 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -2888,7 +3319,7 @@ HTTP `200`.
 
 관련 요구사항: MON-07  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -2956,6 +3387,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 관측 임계값을 넘기면 status_check_required를 표시한다. 자동 완료·점유 해제는 하지 않는다.
+- (수정안 요청) 연결 확인 화면은 이 API를 다시 읽어 결과를 보인다. 실패면 last_error_code로 이유와 할 일을 한 줄로, 성공이면 마지막 보고 시각을 보인다.
+- (수정안 요청) 연결 확인 실패는 활동(MON-A04)에도 남긴다. 대시보드는 '연결 확인 실패 · 토큰 폐기됨'을 에이전트의 최근 활동으로 보인다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -2996,7 +3429,7 @@ HTTP `200`.
 
 관련 요구사항: PLN-01, DOC-01  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -3084,7 +3517,7 @@ HTTP `201`.
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 413 | `file_too_large` | 용량 초과 |
 | 415 | `unsupported_media_type` | 지원하지 않는 형식 |
-| 409 | `document_kind_exists` | 동일 종류 등록 제한(Q07) |
+| 409 | `document_kind_exists` | 동일 종류 등록 제한(Q07). 복수 허용은 Q20 |
 
 ```json
 {
@@ -3100,6 +3533,8 @@ HTTP `201`.
 - 현재 팀장이 원문을 등록한다. 업로드 성공은 승인·분석 완료를 뜻하지 않는다.
 - document와 DRAFT document_version을 저장하고 분석을 접수한다.
 - 파일 형식·용량·중복 등록은 이 절의 확정 업로드 정책을 따른다.
+- (수정안 요청) 화면은 업로드 직후 DOC-A16 비비 검토를 부른다. 검토 없이 제출(DOC-A18)할 수 없으므로 검토를 건너뛰는 옵션은 없다.
+- (수정안 요청) 화면은 .md만 받는다. 정책의 .txt 허용은 그대로 두고 화면 문구를 맞춘다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -3115,7 +3550,7 @@ HTTP `201`.
 
 관련 요구사항: DOC-02  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -3140,6 +3575,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | N | 종류 |
 | `domain` | `string` | N | 영역 |
+| `stage` | `IN_PROGRESS\|CURRENT` | N | 진행 중(비비 검토·수정 제안 확인·승인 대기·반려됨) / 현재 기준 문서. 수정안 요청 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -3201,6 +3637,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- (수정안 요청) IN_PROGRESS는 작성 건(DOC-A13)이 EDITING·SUBMITTED·REJECTED인 문서, CURRENT는 현재 기준에 들어 있는 승인본이다. 승인되면 진행 중에서 빠지고 현재 문서로 옮겨진다.
+- (수정안 요청) 각 문서에 `preview_text`(본문 앞부분 300자)를 넣어 썸네일 보기가 미리보기를 그린다. 이미지 썸네일은 나중이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -3497,7 +3935,7 @@ HTTP `200`.
 
 관련 요구사항: DOC-09, CHG-04  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -3521,8 +3959,9 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `from_version` | `integer` | Y | 변경 전 문서 버전 |
+| `from_version` | `integer` | N | 변경 전 문서 버전. compare=VERSIONS면 필수 |
 | `to_version` | `integer` | Y | 변경 후 문서 버전 |
+| `compare` | `VERSIONS\|UPLOAD_TO_REQUEST\|REJECTED_TO_REQUEST` | N | 비교 종류. 기본 VERSIONS(from→to). UPLOAD_TO_REQUEST는 처음 올린 원본→지금 작성 내용 또는 제출본, REJECTED_TO_REQUEST는 반려된 제출→다시 낸 제출(DOC-A20의 제출 본문). 수정안 요청 |
 
 #### Request
 
@@ -3537,6 +3976,7 @@ HTTP `200`.
 | `to_version` | `integer` | Y | 변경 후 번호 |
 | `format` | `TEXT\|FILE` | Y | 비교 종류 |
 | `diff` | `string` | N | 텍스트 차이. 바이너리는 생략 |
+| `lines` | [DiffLine[]](00-common.md#schema-diffline) | N | 줄 단위 비교. 텍스트면 필수. 수정안 요청 |
 | `before_hash` | `string` | Y | 변경 전 해시 |
 | `after_hash` | `string` | Y | 변경 후 해시 |
 
@@ -3571,6 +4011,7 @@ HTTP `200`.
 
 - 서버가 두 원문을 읽어 비교한다. 클라이언트의 before 본문을 신뢰하지 않는다.
 - 바이너리는 버전·해시와 각 버전 다운로드로 비교한다.
+- (수정안 요청) 팀장 승인 화면의 '변경 내용'은 lines로 그린다. 추가는 초록, 삭제는 빨강이고 비비 제안으로 바뀐 줄에는 분류(예: 비비 제안 · 누락)를 붙인다. 문서 상세의 버전 비교는 이 화면으로 옮겼다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -4692,7 +5133,7 @@ HTTP `204`.
 
 관련 요구사항: PLN-08·09, DOC-08  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -4816,6 +5257,8 @@ HTTP `201`.
 부족한 필수 문서는 400 required_documents_missing, 문서 미승인은 409 document_not_approved, 기존 baseline은 409 baseline_exists, 전체 집합/해시 불일치는 409 draft_changed다. baseline의 published_by/published_at을 응답의 approved_by/created_at으로 매핑한다. 문서별 승인 이력과 baseline 생성 이력은 별개로 보존된다.
 
 최초 발행에는 과거 baseline이 없으므로 기존 검증을 무효화하지 않는다. 변경 후 승인·발행·재검증은 CHG-A09 계약을 따른다. 타임라인 활동 이벤트 연결은 후속 104 범위로 유지하며 이 PR의 저장 성공을 이벤트 전달 완료로 보지 않는다.
+
+- (수정안 요청) 화면은 공용 문서함에서 필수 4종이 모두 승인·색인되면 팀장에게 '기준 만들기' 버튼을 보이고 이 API를 부른다. 팀원에게는 '팀장이 기준을 만들면 변경 제안과 작업 계획을 시작할 수 있어요'를 보인다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -5313,7 +5756,7 @@ DOC-A01의 확정 입력·저장·공통 세션/요청 출처·멱등 정책을 
 
 관련 요구사항: DOC-06·07, CHG-02  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -5409,6 +5852,7 @@ HTTP `201`.
 
 - 새 파일을 DRAFT로 저장하고 변경 제안에 연결할 버전 ID를 반환한다.
 - 현재 승인본은 바뀌지 않는다. 사용되지 않은 업로드의 정리 기준은 Q07이다.
+- (수정안 요청) 기준 v1 전에는 DOC-A01처럼 DOC-A16 검토 → DOC-A18 제출 → DOC-A21 승인으로 반영한다. 기준 v1 뒤에는 이 API로 올린 DRAFT를 변경 제안(CHG-A01 documents[].proposed_document_version_id)에 연결하고 CHG-A09 승인으로 반영한다(Q14).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -5813,6 +6257,9 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 - 문서/account/요청 키의 실행 기록을 저장한다. 같은 입력·완료 키는 결과를 재사용하고 실행 중이면 review_in_progress다. 실패한 키는 자동 재호출하지 않고 새 키로 재시도한다. 10분 지난 실행은 다음 같은 키 요청에서 실패 처리한다.
 - 실제 MODEL 결과·usage·대상 식별값을 검증한다. 색인 완료나 템플릿 결과를 검토 완료로 대신하지 않는다.
 - AI 내부 경로·입출력은 담당자 합의 대기다. 이 절은 FE→BE의 현재 구현 계약이며 실제 AI 연결 완료를 뜻하지 않는다.
+- (수정안 요청) 기준 v1 전에는 화면이 DOC-A01·A12로 등록한 직후 이 API를 불러 검토를 시작한다. 검토 없이 DOC-A18로 제출할 수 없으므로 검토를 건너뛰는 경로는 없다. 기준 v1 뒤에는 이 API가 409 change_proposal_required이므로, DOC-A12로 올린 DRAFT는 등록 직후 검토하지 않고 변경 제안(CHG-A01 documents[].proposed_document_version_id)에 연결한다.
+- (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다. 지금처럼 동기 호출이면 화면은 진행률 없이 기다림만 보인다(Q19).
+- (수정안 요청) 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 rejection_submission_id로 고른다. 그 rejection_reason과 함께 AI-A10에 mode=RERUN으로 넣고, 아니면 REVIEW다. 화면은 제출을 고르지 않는다. 비비가 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만들고, 팀장은 문단을 고르지 않는다.
 
 #### 후속 PR에 적용할 검토 정책 — 정책 확정, 계약 확장 미구현
 
@@ -5871,6 +6318,7 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 | --- | --- | --- | --- |
 | `expected_revision` | `integer` | Y | 현재 작성 리비전 |
 | `decision` | `APPLY\|SKIP` | Y | 반영하기 또는 넘기기 |
+| `replacement_text` | `string` | N | APPLY일 때만. 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영할 때 그 문장. 생략하면 제안의 replacement_text. 수정안 요청 |
 
 ```json
 {
@@ -5946,6 +6394,8 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - 현재 본문·참고 승인본과 검토가 일치해야 한다. 직접 편집/재업로드 또는 참고 승인본 변경 시 재검토한다.
 - APPLY는 현재 본문에서 original_text가 유일하게 일치할 때 replacement_text로 바꾸고 작성 revision과 검토 resolved_revision을 갱신한다. 겹친 제안이 일치하지 않으면 review_stale다.
 - SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 제안을 처리한 뒤 다시 고치거나 팀장에게 제출한다.
+- (수정안 요청) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고, 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 결정과 함께 남긴다. 지금 dev 구현은 저장된 replacement_text만 쓰므로 BE 변경이 필요하다.
+- (수정안 요청) 화면에는 반영한 문단의 '되돌리기'가 있다. 처리한 선택을 덮어쓰지 않는 지금 규칙과 맞지 않으므로, `decision=REVERT`로 받을지 화면에서 뺄지 정해야 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6053,6 +6503,8 @@ HTTP `201`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 - 원본 PUT은 트랜잭션 밖에서, 문서 버전·분석 접수·제출·잠금·멱등 응답은 한 트랜잭션에서 저장한다. 원본 보존 규칙은 DOC-A01과 ERD를 따른다.
 - 같은 작성자/프로젝트/동작/키·입력은 document_http_command의 24시간 응답을 재사용한다. 제출 이력은 캐시 만료로 삭제하지 않는다.
 - 반려 후 같은 document_id의 작성 건을 보완·재검토해 새 제출로 요청한다. 이전 제출·반려 사유는 보존한다. 이미 승인한 내용을 수정 없이 중복 제출할 수 없다.
+- (수정안 요청) 제출하면 팀장에게 알림을 보내고 팀장의 '지금 할 일'에 '문서 승인 요청'으로 띄운다. 반려 뒤 다시 낸 제출은 submissions 이력으로 알아보고 '반려 사유를 반영해 다시 요청'을 보인다.
+- (수정안 요청) 제출 전 최종본 확인 화면은 처음 올린 원본과 지금 작성 내용을 DOC-A06 `compare=UPLOAD_TO_REQUEST`로 비교한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6358,6 +6810,297 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 - REJECT는 사유가 필수다. 같은 작성 건을 다시 열고 revision을 증가시켜 이전 검토를 무효화한다. 작성자가 DOC-A14~18로 보완·재검토·재제출한다.
 - 같은 결정·사유 재요청은 기존 결과를 반환한다. 종결한 제출을 다른 결정으로 뒤집지 않는다. 반려 사유는 이전 제출에 그대로 남는다.
 - 승인·반려 결과와 반려 사유는 제출 이력에 보존하며 DOC-A19·A20으로 조회한다. 알림 전달은 전진 담당 공통 알림 서비스 계약 확정 후 연동한다(TODO). 현재 문서 도메인은 notification에 직접 저장하거나 전용 알림 조회 API를 제공하지 않는다. 최초 baseline은 모든 문서의 승인·색인 완료 후 PLN-A10의 별도 버튼으로 생성한다.
+- (수정안 요청) 승인하면 화면은 완료 화면 없이 목록으로 돌아간다. 승인·반려 알림(DOCUMENT_VERSION)은 작성자에게 꼭 필요해 지금의 알림 TODO를 이 화면 전에 연결해야 한다.
+- (수정안 요청) 팀장 화면의 '변경 내용'은 DOC-A06 `compare=REJECTED_TO_REQUEST`(반려된 제출 → 다시 낸 제출) 또는 UPLOAD_TO_REQUEST로 그린다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="doc-a22"></a>
+
+## DOC-A22. 보완 제안에 대해 비비와 대화
+
+### POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages`
+
+제안 카드 아래 채팅으로 그 제안에 대해 비비와 상의한다.
+
+관련 요구사항: DOC-01 (화면 PNL-02-m-review-5582)  
+담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER (사람·등록자)`. 현재 프로젝트의 활성 멤버십과 객체 소속을 검사한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `document_id` | `ID` | Y | 문서 ID |
+| `review_id` | `ID` | Y | 비비 검토 결과 ID |
+| `suggestion_id` | `ID` | Y | 보완 제안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `text` | `string` | Y | 비비에게 보낼 말 |
+
+```json
+{
+  "text": "읽음 처리 대신 확인 시각을 남기는 건 어때?"
+}
+```
+
+#### Response
+
+HTTP `201`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `message` | [ReviewMessage](00-common.md#schema-reviewmessage) | Y | 저장한 내 메시지 |
+| `reply` | [ReviewMessage](00-common.md#schema-reviewmessage) | Y | 비비의 답. 다른 대체문이면 proposed_text |
+
+```json
+{
+  "message": {
+    "id": "9101",
+    "author_kind": "HUMAN",
+    "text": "읽음 처리 대신 확인 시각을 남기는 건 어때?",
+    "created_at": "2026-10-28T03:00:00Z"
+  },
+  "reply": {
+    "id": "9102",
+    "author_kind": "BEE",
+    "text": "확인 시각도 요구사항과 맞습니다. 이렇게 바꿀 수 있어요.",
+    "proposed_text": "알림 목록을 조회하고, 열람한 알림에는 확인 시각을 기록한다.",
+    "created_at": "2026-10-28T03:00:02Z"
+  }
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값·ID/revision·허용 값 오류 |
+| 401 | `unauthenticated` | 세션 인증 무효 |
+| 403 | `forbidden` | 사람·등록자 조건 불충족 |
+| 404 | `not_found` | 프로젝트 접근 불가 또는 문서/검토/제안 소속 불일치 |
+| 409 | `submission_locked` | 팀장 검토 요청 후 내용이 잠긴 상태 |
+| 409 | `review_stale` | 본문 또는 참고 승인본 변경 |
+| 502 | `invalid_ai_output` | 비비 결과 검증 실패 |
+| 503 | `review_unavailable` | 비비 호출 장애 |
+
+```json
+{
+  "error": {
+    "code": "review_stale",
+    "message": "본문 또는 참고 승인본 변경"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 비비가 제안의 이유·근거를 설명하거나 다른 대체문을 낸다(AI-A10 DISCUSS). 본문은 바꾸지 않는다.
+- 다른 대체문으로 반영하려면 DOC-A17 APPLY에 replacement_text를 함께 보낸다.
+- 대화는 그 제안의 messages에 남고 DOC-A13·A20의 검토 결과로 함께 조회한다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="doc-a23"></a>
+
+## DOC-A23. 비비에게 직접 보완 요청
+
+### POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests`
+
+본문 아래 '비비에게 직접 요청하기'로 새 보완 제안을 받는다.
+
+관련 요구사항: DOC-01 (화면 PNL-02-m-review-5582)  
+담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER (사람·등록자)`. 현재 프로젝트의 활성 멤버십과 객체 소속을 검사한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `document_id` | `ID` | Y | 문서 ID |
+| `review_id` | `ID` | Y | 지금 작성 내용의 비비 검토 결과 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `expected_revision` | `integer` | Y | 지금 작성 리비전 |
+| `text` | `string` | Y | 요청 내용 |
+
+```json
+{
+  "expected_revision": 3,
+  "text": "오류 표에 권한 없음(403) 행을 추가해 줘."
+}
+```
+
+#### Response
+
+HTTP `201`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `suggestion` | [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion) | Y | origin=DIRECT_REQUEST, decision=PENDING인 새 제안 |
+
+```json
+{
+  "suggestion": {
+    "id": "9001",
+    "explanation": "요청대로 오류 표에 403 행을 추가합니다.",
+    "original_text": "| 401 | `unauthenticated` | 로그인이 필요함 |",
+    "replacement_text": "| 401 | `unauthenticated` | 로그인이 필요함 |\n| 403 | `forbidden` | 다른 사람의 알림을 읽으려 함 |",
+    "decision": "PENDING",
+    "category": "OMISSION",
+    "severity": "MINOR",
+    "origin": "DIRECT_REQUEST"
+  }
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값·ID/revision·허용 값 오류 |
+| 401 | `unauthenticated` | 세션 인증 무효 |
+| 403 | `forbidden` | 사람·등록자 조건 불충족 |
+| 404 | `not_found` | 프로젝트 접근 불가 또는 문서/검토 소속 불일치 |
+| 409 | `version_conflict` | 작성 revision이 오래됨 |
+| 409 | `submission_locked` | 팀장 검토 요청 후 내용이 잠긴 상태 |
+| 409 | `review_stale` | 본문 또는 참고 승인본 변경 |
+| 502 | `invalid_ai_output` | 비비 결과 검증 실패 |
+| 503 | `review_unavailable` | 비비 호출 장애 |
+
+```json
+{
+  "error": {
+    "code": "submission_locked",
+    "message": "팀장 검토 요청 후 내용이 잠긴 상태"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 비비가 요청을 반영한 제안 하나를 만들어 같은 검토의 suggestions에 붙인다(AI-A10 REQUEST). original_text는 지금 본문에서 한 곳과만 일치해야 한다(DOC-A17 APPLY와 같은 규칙).
+- 새 제안도 반영 또는 넘겨야 DOC-A18로 제출할 수 있다.
+- (수정안 요청) replacement_text가 ""이면 original_text를 지운다. 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡아 순서만 바꾼 replacement_text로 낸다(AI-A10).
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="doc-a24"></a>
+
+## DOC-A24. 팀장 검토 요청 취소
+
+### POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/withdraw`
+
+팀장이 결정하기 전에 제출을 거두고 작성 내용을 다시 고칠 수 있게 한다.
+
+관련 요구사항: DOC-01 (화면 PNL-02-m-review 최종본 확인)  
+담당: BE: 오서현 / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER (사람·등록자)`. 현재 프로젝트의 활성 멤버십과 객체 소속을 검사한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `document_id` | `ID` | Y | 문서 ID |
+| `submission_id` | `ID` | Y | 제출 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반환. status=EDITING이다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증 무효 |
+| 403 | `forbidden` | 사람·등록자 조건 불충족 |
+| 404 | `not_found` | 프로젝트 접근 불가 또는 문서/제출 소속 불일치 |
+| 409 | `submission_decided` | 팀장이 이미 승인·반려함 |
+
+```json
+{
+  "error": {
+    "code": "submission_decided",
+    "message": "팀장이 이미 승인·반려함"
+  }
+}
+```
+
+#### 처리 규칙
+
+- SUBMITTED인 자기 제출만 거둔다. 제출은 지우지 않고 WITHDRAWN 같은 종결 상태로 이력에 남기며, 작성 건은 EDITING으로 돌아가 revision을 올린다.
+- 제출 잠금(DOC-A14 submission_locked)과 맞추려면 제출 상태 값을 하나 더 두어야 한다. 이 API를 둘지, 반려만으로 다시 열지는 오서현과 정한다.
+- 팀장에게 간 알림은 남지만 열면 지금 상태를 보인다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6373,7 +7116,7 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 
 관련 요구사항: CHG-01·02  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -6407,6 +7150,8 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
+| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
 
@@ -6455,7 +7200,7 @@ HTTP `201`.
 | `validation_id` | `ID` | N | 관련 검증 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
+| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
 | `proposer_account_id` | `ID` | Y | 제안 계정 |
 | `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
 | `current_baseline_id` | `ID` | Y | 현재 기준 |
@@ -6464,6 +7209,9 @@ HTTP `201`.
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 |
 | `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
+| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
+| `previous_proposal_id` | `ID` | N | 이전 제안. 수정안 요청 |
+| `agent` | `object` | N | AGENT 제출이면 {agent_session_id, name, member_id}. 수정안 요청 |
 
 ```json
 {
@@ -6512,6 +7260,7 @@ HTTP `201`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 기준 baseline이 현재와 다름 |
+| 409 | `baseline_missing` | 기준 v1 발행 전 |
 
 ```json
 {
@@ -6527,6 +7276,8 @@ HTTP `201`.
 - items/documents 중 하나 이상 변경이 필요하다. UPDATE/RETIRE의 기준 버전 소속을 검사한다.
 - 문서 변경의 after_content와 proposed_document_version_id는 둘 중 하나다.
 - 명시 관계의 영향 대상·알림을 먼저 처리하고 AI 심층 영향 분석은 별도로 실행한다.
+- (수정안 요청) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 기준 v1 뒤의 문서 변경도 이 API의 documents로 올린다(after_content 또는 DOC-A12로 올린 DRAFT의 proposed_document_version_id). 기준 뒤 공용 문서함의 DOC-A14~A18·A21은 409 change_proposal_required다.
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6542,7 +7293,7 @@ HTTP `201`.
 
 관련 요구사항: CHG-07  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -6565,7 +7316,11 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | N | 상태 필터 |
+| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | N | 상태 필터 |
+| `scope` | `DESIGN_ITEMS\|DOCUMENTS` | N | 설계 항목 제안만 / 문서 제안만. 변경 제안 창은 DESIGN_ITEMS. 수정안 요청 |
+| `group` | `IN_PROGRESS\|PUBLISHED\|REJECTED` | N | 목록 탭 '진행 중 · 발행됨 · 반려'. 진행 중은 PROPOSED·IN_REVIEW·APPROVED. 탭마다 개수가 필요하면 MON-C01을 씀. 수정안 요청 |
+| `q` | `string` | N | 제목·항목 번호 검색어. 수정안 요청 |
+| `sort` | `latest\|status` | N | 최신순(기본)·상태순. 수정안 요청 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -6645,6 +7400,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- (수정안 요청) 목록은 한 줄 요약이고 상세는 개요·바뀌는 내용·영향·의견 탭에서 CHG-A03·A05·A13으로 읽는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6660,7 +7416,7 @@ HTTP `200`.
 
 관련 요구사항: CHG-04·07  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -6695,6 +7451,7 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | Y | 제안 |
 | `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 기준·현재·수정안 비교 |
+| `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. 수정안 요청 |
 
 ```json
 {
@@ -6768,6 +7525,7 @@ HTTP `200`.
 
 - 기준·현재·제안 내용을 각각 구분해 표시한다.
 - 바이너리는 텍스트 본문 대신 버전 ID·해시로 표시하며 실제 파일 다운로드로 확인한다.
+- (수정안 요청) 바뀌는 내용 탭은 항목마다 한 줄로 접고, 펼치면 기준 문장과 제안 문장을 −/+로 보인다. 문장은 item_texts에서 읽는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6923,7 +7681,7 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `baseline_conflict` | 갱신 기준이 현재가 아님 |
+| 409 | `baseline_conflict` | 재제출의 base_baseline_id가 현재 기준이 아님 |
 | 409 | `proposal_changed` | 동시 수정 |
 | 409 | `invalid_transition` | 승인·발행·반려 완료 제안 |
 
@@ -6938,9 +7696,10 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- PROPOSED/IN_REVIEW 상태만 갱신하며 결과 상태는 PROPOSED다.
+- 제출한 제안(PROPOSED·IN_REVIEW)은 편집을 잠근다. 반려된(REJECTED) 제안만 같은 제안 번호에서 고쳐 새 revision으로 재제출하며 결과 상태는 PROPOSED다(현재 구현 기준).
 - 현재 원문을 읽고 수정한 최종본을 제출한다. 영향·관련자 정보를 다시 확인한다.
-- 이전 제출·검토 내용은 이력으로 보존한다. 제안 내용 변경을 승인 없이 발행하지 않는다.
+- 이전 제출 내용과 검토·반려·결정 이력은 보존한다. 제안 내용 변경을 승인 없이 발행하지 않는다.
+- (수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'(CHG-A10)한 뒤 최신 기준으로 재제출한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7613,6 +8372,7 @@ HTTP `200`.
 | 409 | `proposal_changed` | 검토 뒤 제안 변경 |
 | 409 | `invalid_transition` | 반려 등 승인 불가 |
 | 500 | `internal` | 발행 트랜잭션 실패 |
+| 409 | `analysis_not_completed` | 제안에 연결한 문서 버전의 색인 미준비·실패·불일치 |
 
 ```json
 {
@@ -7631,6 +8391,8 @@ HTTP `200`.
 - 관련 검증 = 변경 항목의 이전 버전을 design_refs(READS·IMPLEMENTS·CHANGES)에 가진 PASS·RUNNING 검증이다. stale_reason을 남긴다. RUNNING 검증의 늦은 결과는 반영되지 않는다. 시작 전 작업은 상태를 유지하고 IN_PROGRESS 작업만 WAITING(REVALIDATION)으로 바꾼다.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
 - 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
+- (수정안 요청) requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
+- (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때 원문 저장과 청킹·임베딩 작업(document_processing)이 함께 생긴다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7774,7 +8536,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 반려 사유와 검토 이력을 보존한다.
-- 반려 후 재제출은 새 제안 생성 계약으로 두며 기존 제안을 덮어쓰지 않는다.
+- 반려 후에는 같은 제안 번호에서 CHG-A04로 고쳐 새 revision으로 재제출한다. 이전 제출 내용과 반려 사유는 덮어쓰지 않는다.
+- (수정안 요청) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채운다. 제안자는 CHG-A04로 최신 기준에 맞춰 재제출하거나 CHG-A15로 거둔다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8057,6 +8820,205 @@ HTTP `200`.
 
 ---
 
+<a id="chg-a14"></a>
+
+## CHG-A14. 승인 미리 보기
+
+### GET `/api/projects/{id}/change-proposals/{proposal_id}/approval-preview`
+
+승인하면 같이 바뀌는 기준 항목·검증·작업을 저장 없이 미리 계산한다.
+
+관련 요구사항: CHG-05 (화면 PNL-04-v2-approve)  
+담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`LEADER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `proposal_id` | `ID` | Y | 변경 제안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `next_baseline_version_no` | `integer` | Y | 발행될 기준 번호 |
+| `baseline_items` | `object[]` | Y | 새 기준에 들어갈 항목 {design_item_id, title, version_no} |
+| `validations_to_stale` | `object[]` | Y | '다시 검증 필요'가 될 검증 {validation_id, task_id, task_title} |
+| `tasks_to_wait` | `object[]` | Y | '대기 · 재검증'이 될 진행 중 작업 {task_id, title, assignee_member_id} |
+| `unchanged` | `object` | Y | 그대로인 것 {items, documents}. 화면 '나머지 항목 1개와 문서 4개는 v1 그대로' |
+| `unreviewed` | `object` | Y | 확인하지 않은 것 {ai_candidates, open_review_requests}. 화면 'AI 영향 후보 1개 · 답하지 않은 검토 요청 1개' |
+
+```json
+{
+  "next_baseline_version_no": 2,
+  "baseline_items": [
+    {
+      "design_item_id": "701",
+      "title": "REQ-001 프로젝트 목록 빈 화면 안내",
+      "version_no": 2
+    }
+  ],
+  "validations_to_stale": [
+    {
+      "validation_id": "601",
+      "task_id": "502",
+      "task_title": "TASK-002"
+    }
+  ],
+  "tasks_to_wait": [
+    {
+      "task_id": "503",
+      "title": "TASK-003",
+      "assignee_member_id": "23"
+    }
+  ]
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_conflict` | 제안 기준이 현재와 다름(requires_refresh) |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- CHG-A09와 같은 규칙으로 계산하되 아무것도 저장하지 않는다.
+- 승인 확인 화면에서만 쓴다. 그사이 기준이나 제안이 바뀌면 CHG-A09가 기존 규칙대로 거절하고 화면은 다시 확인하라고 안내한다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="chg-a15"></a>
+
+## CHG-A15. 변경 제안 거두기
+
+### POST `/api/projects/{id}/change-proposals/{proposal_id}/withdraw`
+
+제안자가 스스로 제안을 끝낸다.
+
+관련 요구사항: CHG-07 (화면 PNL-04-v2-changes)  
+담당: BE: 오서현 / AI: — / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER (제안자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `proposal_id` | `ID` | Y | 변경 제안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `expected_updated_at` | `Time` | Y | 조회한 제안 updated_at |
+
+```json
+{
+  "expected_updated_at": "2026-10-28T03:00:00Z"
+}
+```
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | Y | status=WITHDRAWN인 제안 |
+
+```json
+{
+  "proposal": {
+    "id": "71",
+    "status": "WITHDRAWN",
+    "updated_at": "2026-10-28T03:01:00Z"
+  }
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `invalid_transition` | 이미 승인·발행·거둠 |
+| 409 | `version_conflict` | expected_updated_at이 현재와 다름 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- PROPOSED·IN_REVIEW·REJECTED 제안을 거둔다. 반려된 제안을 다시 내지 않기로 할 때도 거둔다. 거둔 제안은 고칠 수 없고 다시 올리면 새 제안이다(previous_proposal_id).
+- 검토 요청을 받은 팀원에게 알린다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
 <a id="tsk-a01"></a>
 
 ## TSK-A01. 작업 계획 등록
@@ -8067,7 +9029,7 @@ HTTP `200`.
 
 관련 요구사항: TSK-01, MCP-10  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 담당자 검토
+상태: 담당자 검토 · 수정안 요청 반영
 
 #### 인증
 
@@ -8104,7 +9066,7 @@ HTTP `200`.
 | `completion_criteria` | `string[]` | Y | 완료 기준 |
 | `dependency_task_ids` | `ID[]` | Y | 선행 작업 |
 | `design_refs` | [DesignRef[]](00-common.md#schema-designref) | Y | 확정 참조 |
-| `unlinked` | `object[]` | Y | 미연결 내용. 세부 항목 Q02 |
+| `unlinked` | `object[]` | Y | 미연결 내용. 세부 항목 Q02. 수정안 요청: 줄마다 문장 하나라 `{text}` 배열로 확정 |
 | `no_contract_change` | `boolean` | Y | 계약 변경 없음의 명시적 선언 |
 | `context_packet_id` | `ID` | N | 근거 패킷. 없으면 근거 패킷 없음 표시 |
 
@@ -8210,6 +9172,7 @@ HTTP `201`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `dependency_cycle` | 선행 순환 |
+| 409 | `baseline_missing` | 기준 v1 발행 전 |
 
 ```json
 {
@@ -8225,6 +9188,7 @@ HTTP `201`.
 - 호출자의 멤버 ID를 담당자로 초기화한다. ID·표시 키는 서버 발급이다.
 - 첫 불변 계획 리비전과 설계 참조를 저장하고 READY로 둔다. READY 자체는 시작 승인 상태가 아니다.
 - 의존 작업은 같은 프로젝트여야 하며 자기 자신·순환은 거부한다.
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다. 팀원 시작 가이드와 설계 관계 빈 화면이 이 규칙을 전제로 한다(Q22).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8992,6 +9956,7 @@ HTTP `200`.
 
 - 현재 사람 팀장만 담당자를 바꾼다. 진행 중 점유·인계·재검증 정책은 Q02다.
 - 이전 작업 판단·패킷·검증을 새 담당자가 조회할 수 있게 유지한다.
+- (수정안 요청) 바뀐 담당자에게 TASK 알림을 보낸다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10479,7 +11444,7 @@ HTTP `200`.
 
 관련 요구사항: BEE-02~04·07  
 담당: BE: 오서현(문서 조회·생성 연결) / AI: 박상은 / FE: 박상은  
-상태: 서버 연결 담당 검토
+상태: 서버 연결 담당 검토 · 수정안 요청 반영
 
 #### 인증
 
@@ -10510,6 +11475,7 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `question` | `string` | Y | 프로젝트 설계 질문 |
 | `task_id` | `ID` | N | 관련 작업 |
+| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 찾는 범위. 기본 APPROVED. INCLUDE_DRAFTS는 원문 RAG 확장의 DOCUMENT_REVIEW에 대응. 수정안 요청 |
 
 ```json
 {
@@ -10530,6 +11496,9 @@ HTTP `200`.
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `unresolved` | `string[]` | Y | 미확정 사항 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
+| `answer_id` | `ID` | Y | 답변 ID. BEE-A03 피드백에 씀. 수정안 요청 |
+| `citations` | [BeeCitation[]](00-common.md#schema-beecitation) | Y | 본문 [n]과 잇는 근거 문단. 없으면 []. 수정안 요청 |
+| `grounded` | `boolean` | Y | 근거를 하나 이상 찾았는지. 수정안 요청 |
 
 ```json
 {
@@ -10595,6 +11564,12 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 - RAG 응답은 기존 text/sources/unresolved/usage에 `mode`, `document_version_ids`, APPROVED의 `baseline_id`를 추가한다. DOCUMENT_REVIEW 답변은 미승인 검토임을 표시한다. 내부 citations는 허용 evidence 집합으로 검증 후 기존 Source 형식에 매핑한다.
 - 미색인/프로필 미준비는 HTTP 409 `index_not_ready`, 최종 검사에서 baseline 변경은 HTTP 409 `baseline_changed`. 예전 승인본으로 대체하거나 자동 무한 재생성하지 않는다. 정상 검색 0건은 오류와 구분하고 근거 부족을 안내한다.
 - 기존 FE 계약은 확장 구현 시 함께 반영한다. 업로드/분석 상태 계약과 아직 미합의인 업로드 정책은 이 변경으로 덮어쓰지 않는다.
+
+#### 화면 수정안 요청 — 2026-10-28
+
+- 비비 대화 모달(단축 바 가운데)은 답 속 번호가 오른쪽 '이 답의 근거' 문단과 이어지고 찾은 문장을 칠해서 보인다. citations는 내부 citations(evidence_id, claim)를 검증한 뒤 문서·버전·행 범위·인용 문장으로 바꾼 것이다.
+- 근거를 하나도 찾지 못하면 grounded=false와 '찾지 못했어요' 고정 답을 주고 짐작해 답하지 않는다.
+- 답변마다 answer_id를 발급해 BEE-A03 피드백과 잇는다. 대화 본문은 저장하지 않는다(Q13).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10726,9 +11701,171 @@ HTTP `200`.
 
 ---
 
+<a id="bee-a03"></a>
+
+## BEE-A03. 비비 답변 피드백
+
+### POST `/api/projects/{id}/bee/answers/{answer_id}/feedback`
+
+답변마다 '도움이 됐어요 / 근거가 틀려요'를 남긴다.
+
+관련 요구사항: BEE-02 (화면 PNL-12-v2-bibi-hotbar)  
+담당: BE: 오서현 / AI: 박상은 / FE: 박상은  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `answer_id` | `ID` | Y | BEE-A01 answer_id |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `rating` | `HELPFUL\|WRONG_SOURCE` | Y | 도움이 됐어요 / 근거가 틀려요 |
+| `comment` | `string` | N | 덧붙일 말 |
+
+```json
+{
+  "rating": "WRONG_SOURCE"
+}
+```
+
+#### Response
+
+HTTP `204`.
+
+응답 본문 없음.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 본인이 받은 답변에만 남긴다. 같은 답변에 다시 보내면 덮어쓴다.
+- 대화 본문은 저장하지 않는다. 피드백에는 답변 ID·근거 문서 버전만 남긴다. 활용 방법은 Q13이다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="bee-a04"></a>
+
+## BEE-A04. 비비 현재 상태
+
+### GET `/api/projects/{id}/bee/status`
+
+HUD 팀 목록의 비비 줄에 비비가 지금 하는 일을 보여 준다.
+
+관련 요구사항: MON-07 (화면 SCR-06-v2-workspace-hotbar)  
+담당: BE: 오서현 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `activity` | `DOCUMENT_REVIEW\|MEETING\|IDLE` | Y | 지금 하는 일 |
+| `target_type` | `DOCUMENT_VERSION\|MEETING` | N | 대상 종류 |
+| `target_id` | `ID` | N | 대상 |
+| `label` | `string` | N | 표시 문구. 예: '알림 API 명세서 검토 중' |
+
+```json
+{
+  "activity": "DOCUMENT_REVIEW",
+  "target_type": "DOCUMENT_VERSION",
+  "target_id": "212",
+  "label": "알림 API 명세서 검토 중"
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 진행 중인 문서 검토(DOC-A16 실행 중)나 OPEN 회의에서 계산한다. 여러 개면 가장 최근 것 하나를 준다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
 <a id="mtg-a01"></a>
 
-## MTG-A01. 회의 생성
+## MTG-A01. 회의 생성 (폐지 예정)
 
 ### POST `/api/projects/{id}/meetings`
 
@@ -10736,7 +11873,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-04  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -10802,7 +11939,7 @@ HTTP `201`.
   "participants": [
     {
       "member_id": "21",
-      "status": "ACCEPTED"
+      "status": "JOINED"
     }
   ],
   "created_at": "2026-10-23T03:00:00Z"
@@ -10830,6 +11967,8 @@ HTTP `201`.
 
 - 변경 제안 협의와 같은 참여자·기록·알림 구조를 사용한다.
 - 관련자 근거 없이 전체 팀원을 자동 호출하지 않는다.
+- (수정안 요청) 사람은 회의를 만들지 않는다. 서버가 작업 충돌을 감지하면 회의를 연다. 기준 v1 뒤에만 연다(작업은 기준 뒤에만 생긴다, TSK-A01 baseline_missing). 기본안: AI-A02 검증에서 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT가 나오면 origin=BEE_CONFLICT 회의를 만들고, 참여자는 팀장, 그 작업 담당자, 충돌한 설계 항목의 담당 영역 팀원(화면 예: '최팀원 · 화면 문구')이고, 첫 기록은 작업·문서 칩(refs)을 단 비비의 CONFLICT_BRIEF다(Q17).
+- (수정안 요청) 같은 작업 묶음에 OPEN 회의가 있으면 새로 만들지 않는다. 참여자에게 MEETING 알림을 보낸다. 이 API는 내부 생성 경로로 바꾸거나 없앤다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10845,7 +11984,7 @@ HTTP `201`.
 
 관련 요구사항: MTG-04  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -10870,6 +12009,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
+| `status` | `OPEN\|CLOSED` | N | 회의 상태 필터. 수정안 요청 |
 
 #### Request
 
@@ -10895,7 +12035,7 @@ HTTP `200`.
       "participants": [
         {
           "member_id": "21",
-          "status": "ACCEPTED"
+          "status": "JOINED"
         }
       ],
       "created_at": "2026-10-23T03:00:00Z"
@@ -10911,6 +12051,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -10924,6 +12065,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- (수정안 요청) 회의가 없으면 화면은 '회의가 없어요'와 비비가 회의를 연다는 안내만 보인다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10988,7 +12131,7 @@ HTTP `200`.
   "participants": [
     {
       "member_id": "21",
-      "status": "ACCEPTED"
+      "status": "JOINED"
     }
   ],
   "created_at": "2026-10-23T03:00:00Z"
@@ -11001,6 +12144,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -11014,6 +12158,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 기록은 MTG-A10으로 페이지 조회한다. 회의 상세에 무제한 전체 기록을 포함하지 않는다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11025,15 +12170,15 @@ HTTP `200`.
 
 ### POST `/api/projects/{id}/meetings/{meeting_id}/participants`
 
-회의 참여 요청 기능을 제공한다.
+회의 참여 요청 기능을 제공한다. 화면에서는 회의실 참여자 줄의 '관련자 추가'다(수정안 요청).
 
 관련 요구사항: MTG-05  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 수정안 요청
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER (팀장 또는 회의 참여자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
 
 #### Headers
 
@@ -11059,13 +12204,15 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `member_ids` | `ID[]` | Y | 요청 대상 활성 멤버 |
+| `member_ids` | `ID[]` | Y | 추가할 활성 멤버 |
+| `reason` | `string` | N | 부르는 이유. 추가된 사람의 알림에 함께 보낸다. 수정안 요청 |
 
 ```json
 {
   "member_ids": [
     "22"
-  ]
+  ],
+  "reason": "초대 링크 오류 응답도 같이 맞춰야 해서 불러요."
 }
 ```
 
@@ -11091,7 +12238,13 @@ HTTP `200`.
   "participants": [
     {
       "member_id": "21",
-      "status": "ACCEPTED"
+      "status": "JOINED",
+      "role": "LEADER"
+    },
+    {
+      "member_id": "22",
+      "status": "JOINED",
+      "added_by_member_id": "21"
     }
   ],
   "created_at": "2026-10-23T03:00:00Z"
@@ -11105,6 +12258,8 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `meeting_closed` | 끝난 회의 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -11119,6 +12274,11 @@ HTTP `200`.
 
 - 이미 초대한 대상은 중복 생성하지 않는다.
 - 참여 요청 알림의 대상·내용은 회의 서비스가 정해 공통 알림 서비스로 전달한다.
+- (수정안 요청) 비비가 연 회의의 참여자는 팀장과 충돌 작업 담당자로 정해지고 수락 절차 없이 참여한다.
+- (수정안 요청) 비비가 부른 사람 말고 더 부를 팀원은 팀장이나 이 회의 참여자가 이 API로 추가한다. 화면은 '관련자 추가' 창이다.
+- (수정안 요청) 추가한 사람은 수락 절차 없이 바로 `JOINED`로 참여하고 `target_type=MEETING` 알림을 받는다. `reason`이 있으면 알림에 함께 보낸다.
+- (수정안 요청) 참여자에 `added_by_member_id`를 남겨 화면이 '이팀장이 추가'처럼 누가 불렀는지 보여 준다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11126,7 +12286,7 @@ HTTP `200`.
 
 <a id="mtg-a05"></a>
 
-## MTG-A05. 회의 참여 응답
+## MTG-A05. 회의 참여 응답 (폐지 예정)
 
 ### PATCH `/api/projects/{id}/meetings/{meeting_id}/participation`
 
@@ -11134,7 +12294,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-05  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -11163,11 +12323,11 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `status` | `ACCEPTED\|DECLINED` | Y | 참여 의사 |
+| `status` | `JOINED\|DECLINED` | Y | 참여 의사 |
 
 ```json
 {
-  "status": "ACCEPTED"
+  "status": "JOINED"
 }
 ```
 
@@ -11193,7 +12353,7 @@ HTTP `200`.
   "participants": [
     {
       "member_id": "21",
-      "status": "ACCEPTED"
+      "status": "JOINED"
     }
   ],
   "created_at": "2026-10-23T03:00:00Z"
@@ -11221,6 +12381,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 본인의 참여 상태만 변경한다. 다른 멤버의 참여 의사를 대신 입력하지 않는다.
+- (수정안 요청) 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람 모두 수락 절차가 없어 이 API를 쓰지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11236,7 +12397,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-06·08  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -11307,6 +12468,8 @@ HTTP `201`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `meeting_closed` | 끝난 회의 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -11321,6 +12484,8 @@ HTTP `201`.
 
 - 회의 참여 상태를 검사하고 사람의 텍스트 기록을 저장한다.
 - TEXT 기록과 AI 분석·회의록을 entry kind로 구분한다.
+- (수정안 요청) 끝난 회의(status=CLOSED)에는 기록을 받지 않는다. 응답 기록에는 author_kind·author_member_id·author_name을 넣어 화면이 내 말은 오른쪽, 다른 사람은 이름과 함께 왼쪽, 비비는 노란 말풍선으로 그린다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11328,7 +12493,7 @@ HTTP `201`.
 
 <a id="mtg-a07"></a>
 
-## MTG-A07. 비비의 회의 맥락 분석
+## MTG-A07. 비비의 회의 맥락 분석 (폐지 예정)
 
 ### POST `/api/projects/{id}/meetings/{meeting_id}/bee-analysis`
 
@@ -11336,7 +12501,7 @@ HTTP `201`.
 
 관련 요구사항: MTG-06  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -11441,6 +12606,7 @@ HTTP `200`.
 
 - 해당 회의의 through_entry_id까지 입력을 고정하고 질문·누락 후보를 반환한다.
 - 결과는 BEE_ANALYSIS 기록으로 저장하되 설계를 직접 바꾸지 않는다.
+- (수정안 요청) 팀장만 부르는 비비 회의 정리(MTG-A11)로 대체한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11448,7 +12614,7 @@ HTTP `200`.
 
 <a id="mtg-a08"></a>
 
-## MTG-A08. 회의록 생성
+## MTG-A08. 회의록 생성 (폐지 예정)
 
 ### POST `/api/projects/{id}/meetings/{meeting_id}/minutes`
 
@@ -11456,7 +12622,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-08  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -11553,6 +12719,7 @@ HTTP `200`.
 
 - 텍스트 기록을 요약해 MINUTES entry로 저장한다.
 - 결정·후속 행동·미확정을 구분한다. MTG-08의 전사 입력 범위는 Q09다.
+- (수정안 요청) 회의록 화면은 없앴다. 정리는 MTG-A11이 SUMMARY 기록으로 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11560,7 +12727,7 @@ HTTP `200`.
 
 <a id="mtg-a09"></a>
 
-## MTG-A09. 회의 결정 기반 문서 수정안
+## MTG-A09. 회의 결정 기반 문서 수정안 (폐지 예정)
 
 ### POST `/api/projects/{id}/meetings/{meeting_id}/change-drafts`
 
@@ -11568,7 +12735,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-09  
 담당: BE: 오서현 / AI: 양지훈(회의 연결) / 박상은(수정안 생성) / FE: 오서현  
-상태: 설계 초안
+상태: 폐지 예정 · 수정안 요청
 
 #### 인증
 
@@ -11677,6 +12844,7 @@ HTTP `200`.
 
 - 양지훈의 회의 분석에서 박상은의 문서 수정 모듈을 재사용한다.
 - 결과는 미승인 초안이다. 변경 제안·사람 팀장 승인을 거쳐 발행한다.
+- (수정안 요청) 이 API 대신 회의 끝내기(MTG-A13)가 회의 결과로 변경 제안을 만든다. 변경 제안과 사람 팀장 승인을 거친다는 위 규칙은 그대로다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11692,7 +12860,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-04·06·08  
 담당: BE: 오서현 / AI: — / FE: 오서현  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -11718,6 +12886,7 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
+| `after_entry_id` | `ID` | N | 이 기록 뒤의 새 기록만 오래된 순으로. 대화 화면 폴링용. 수정안 요청 |
 
 #### Request
 
@@ -11754,6 +12923,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -11767,6 +12937,393 @@ HTTP `200`.
 #### 처리 규칙
 
 - TEXT·BEE_ANALYSIS·MINUTES를 구분해 페이지로 반환한다.
+- (수정안 요청) CONFLICT_BRIEF·SUMMARY 기록도 함께 돌려준다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mtg-a11"></a>
+
+## MTG-A11. 비비 회의 정리
+
+### POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary`
+
+'비비에게 검토 요청'으로 회의 대화를 충돌·결정·바뀔 문서·할 일로 정리한다.
+
+관련 요구사항: MTG-06·08 (화면 PNL-06-v2-bibi-review, PNL-06-v2-meetings-member)  
+담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`LEADER (회의 참여자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `meeting_id` | `ID` | Y | 회의 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `through_entry_id` | `ID` | Y | 정리에 쓸 마지막 기록 |
+
+```json
+{
+  "through_entry_id": "918"
+}
+```
+
+#### Response
+
+HTTP `201`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 정리 ID |
+| `meeting_id` | `ID` | Y | 회의 |
+| `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 회의 기록에 남긴 SUMMARY 기록 |
+| `through_entry_id` | `ID` | Y | 정리에 쓴 마지막 기록 |
+| `conflicts` | `string[]` | Y | 충돌 |
+| `decisions` | `object[]` | Y | 결정 {text, decided_by_member_id?} |
+| `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | Y | 바뀔 문서와 줄, 근거 발언 |
+| `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 할 일 |
+| `previous_summary_id` | `ID` | N | 수정 요청으로 다시 만든 정리면 이전 정리 |
+| `generation` | [Generation](00-common.md#schema-generation) | Y | AI 생성 근거 |
+| `created_at` | `Time` | Y | 생성 시각 |
+
+```json
+{
+  "id": "951",
+  "meeting_id": "901",
+  "through_entry_id": "918",
+  "conflicts": [
+    "TASK-002와 TASK-003이 초대 만료 기간을 다르게 가정함"
+  ],
+  "decisions": [
+    {"text": "초대 만료는 7일로 통일", "decided_by_member_id": "21"}
+  ],
+  "document_changes": [
+    {
+      "document_id": "203",
+      "base_version_id": "231",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 40,
+        "end_line": 40
+      },
+      "before": "초대는 3일 뒤 만료된다.",
+      "after": "초대는 7일 뒤 만료된다.",
+      "evidence_entry_ids": [
+        "915",
+        "917"
+      ]
+    }
+  ],
+  "action_items": [
+    {
+      "text": "TASK-003 만료 상수 수정",
+      "member_id": "23"
+    }
+  ],
+  "created_at": "2026-10-28T03:00:00Z"
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `meeting_closed` | 끝난 회의 |
+| 502 | `ai_unavailable` | AI 응답 실패 |
+| 504 | `ai_timeout` | 시간 초과 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 팀장만 부른다. 팀원 화면은 버튼을 끄고 '팀장만 요청할 수 있어요'를 보이며, 서버도 403으로 거절한다.
+- 대화를 바탕으로 정리해 SUMMARY 기록으로 남기고 노란 말풍선으로 보인다(AI-A08 SUMMARY).
+- document_changes.after는 회의를 끝내면 만들어지는 변경 제안에 들어갈 문장이고, 근거 발언은 이 회의의 실제 기록 ID만 쓴다.
+- 문서와 설계를 직접 바꾸지 않는다. 회의를 끝내면(MTG-A13) 이 정리로 변경 제안을 만든다.
+- (수정안 요청) document_changes[].base_version_id는 정리할 때 현재 기준의 그 문서 승인본이다. MTG-A13이 이 값으로 정리 뒤 기준 변경을 확인한다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mtg-a12"></a>
+
+## MTG-A12. 회의 정리 수정 요청
+
+### POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise`
+
+정리가 틀리면 팀장이 고칠 점을 적어 비비에게 다시 정리하게 한다.
+
+관련 요구사항: MTG-08 (화면 PNL-06-v2-bibi-review)  
+담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`LEADER (회의 참여자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `meeting_id` | `ID` | Y | 회의 ID |
+| `summary_id` | `ID` | Y | 고칠 정리 |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `feedback` | `string` | Y | 고칠 점 |
+
+```json
+{
+  "feedback": "만료 기간은 7일이 아니라 14일로 정했어."
+}
+```
+
+#### Response
+
+HTTP `201`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 정리 ID |
+| `meeting_id` | `ID` | Y | 회의 |
+| `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 회의 기록에 남긴 SUMMARY 기록 |
+| `through_entry_id` | `ID` | Y | 정리에 쓴 마지막 기록 |
+| `conflicts` | `string[]` | Y | 충돌 |
+| `decisions` | `object[]` | Y | 결정 {text, decided_by_member_id?} |
+| `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | Y | 바뀔 문서와 줄, 근거 발언 |
+| `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 할 일 |
+| `previous_summary_id` | `ID` | N | 수정 요청으로 다시 만든 정리면 이전 정리 |
+| `generation` | [Generation](00-common.md#schema-generation) | Y | AI 생성 근거 |
+| `created_at` | `Time` | Y | 생성 시각 |
+
+```json
+{
+  "id": "952",
+  "meeting_id": "901",
+  "through_entry_id": "918",
+  "conflicts": [
+    "TASK-002와 TASK-003이 초대 만료 기간을 다르게 가정함"
+  ],
+  "decisions": [
+    {"text": "초대 만료는 7일로 통일", "decided_by_member_id": "21"}
+  ],
+  "document_changes": [
+    {
+      "document_id": "203",
+      "base_version_id": "231",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 40,
+        "end_line": 40
+      },
+      "before": "초대는 3일 뒤 만료된다.",
+      "after": "초대는 7일 뒤 만료된다.",
+      "evidence_entry_ids": [
+        "915",
+        "917"
+      ]
+    }
+  ],
+  "action_items": [
+    {
+      "text": "TASK-003 만료 상수 수정",
+      "member_id": "23"
+    }
+  ],
+  "created_at": "2026-10-28T03:00:00Z",
+  "previous_summary_id": "951"
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `meeting_closed` | 끝난 회의 |
+| 409 | `summary_outdated` | 최신 정리가 아님 |
+| 502 | `ai_unavailable` | AI 응답 실패 |
+| 504 | `ai_timeout` | 시간 초과 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 이전 정리와 피드백을 입력으로 다시 정리한다. 새 정리가 최신이 되고 이전 정리는 기록에 남는다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mtg-a13"></a>
+
+## MTG-A13. 회의 끝내기
+
+### POST `/api/projects/{id}/meetings/{meeting_id}/close`
+
+팀장이 비비 정리를 확인하고 회의를 끝낸다. 회의 결과로 변경 제안이 만들어진다. 제안자는 회의를 끝낸 팀장이고 문안은 비비 정리(MTG-A11)다. 문서와 기준은 팀장이 그 제안을 승인(CHG-A09)할 때 바뀐다.
+
+관련 요구사항: MTG-09 (화면 PNL-06-v2-draft, PNL-06-v2-draft-result)  
+담당: BE: 오서현 / AI: 박상은(제안 문안) / FE: 오서현  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`LEADER (회의 참여자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `meeting_id` | `ID` | Y | 회의 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `summary_id` | `ID` | Y | 팀장이 확인한 최신 정리 |
+
+```json
+{
+  "summary_id": "951"
+}
+```
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `meeting` | [Meeting](00-common.md#schema-meeting) | Y | status=CLOSED인 회의 |
+| `change_proposal_id` | `ID` | N | 회의 결과로 만든 변경 제안(제안자 = 회의를 끝낸 팀장). 정리에 바꿀 문서·설계 항목이 없으면 생략 |
+| `notified_member_ids` | `ID[]` | Y | 알림을 받은 관련 작업 담당자 |
+
+```json
+{
+  "meeting": {
+    "id": "901",
+    "status": "CLOSED",
+    "closed_at": "2026-10-28T04:00:00Z"
+  },
+  "change_proposal_id": "71",
+  "notified_member_ids": [
+    "23"
+  ]
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `summary_outdated` | 정리 뒤 새 기록이 있거나, 최신 정리가 아니거나, 정리에 쓴 문서 버전이 지금 기준과 다름 |
+| 409 | `meeting_closed` | 이미 끝난 회의 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+
+```json
+{
+  "error": {
+    "code": "summary_outdated",
+    "message": "정리 뒤 새 기록이 있거나 최신 정리가 아님"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 한 트랜잭션에서 회의를 CLOSED로 바꾸고, 정리의 document_changes와 결정으로 변경 제안을 만든다. 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
+- (수정안 요청) 끝내기 전에 정리의 document_changes[].base_version_id가 지금 기준의 그 문서 승인본과 같은지 다시 확인한다. 정리 뒤 다른 변경 제안이 발행돼 기준이 바뀌었으면 409 summary_outdated로 회의를 끝내지 않는다. 화면은 '정리한 뒤 기준이 바뀌었어요'를 안내하고, 팀장이 비비에게 다시 정리(MTG-A11)를 요청한다. 아직 발행되지 않은 다른 제안은 기준이 아니므로 여기서 막지 않고, 승인할 때 CHG-A09의 requires_refresh 규칙을 따른다.
+- 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
+- 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다(Q24 정함).
+- task_ids의 담당자에게 회의 결과가 변경 제안으로 올라갔다고 알리고 활동에 남긴다.
+- 끝난 회의는 읽기만 한다(MTG-A06 409 meeting_closed).
+- 회의 결과는 공용 문서함의 비비 검토·제출(DOC-A16·A18)을 거치지 않는다. 비비 회의 정리(MTG-A11)와 변경 제안 검토(CHG-A08)가 검토를 맡는다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12122,7 +13679,7 @@ HTTP `200`.
 
 관련 요구사항: MON-05, NFR-09  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -12169,6 +13726,8 @@ HTTP `200`.
 | `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
 | `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
 | `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |
+| `by_agent` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 에이전트별. 웹 직접 호출은 key WEB. 수정안 요청 |
+| `by_day` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 한국 시간 날짜별. 수정안 요청 |
 
 ```json
 {
@@ -12231,6 +13790,7 @@ HTTP `200`.
 - 작업에 연결되지 않은 문서 분석·대화 호출도 전체·기능별 집계에 포함한다.
 - request_key로 같은 모델 호출을 한 번만 합산하고 실패·재시도도 실제 호출만큼 반영한다.
 - 추정 비용과 사용량을 구분한다. 단가가 없으면 비용을 생략하고 0원으로 표시하지 않는다.
+- (수정안 요청) by_agent는 caller=AGENT 호출을 agent_session_id별로, 웹에서 직접 한 호출(문서 분석·비비 질문·회의 분석)을 key WEB 한 줄로 묶는다. by_day는 한국 시간 날짜별이고 대시보드의 '날짜별 AI 호출' 막대가 쓴다. 비용을 팀장만 볼지는 Q21이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12341,7 +13901,7 @@ HTTP `200`.
 
 관련 요구사항: MON-08  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -12365,6 +13925,10 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `type` | `string` | N | 이벤트 유형 |
+| `actor_type` | `HUMAN\|AGENT\|BEE\|SYSTEM` | N | 행위자 종류 필터. 수정안 요청 |
+| `member_id` | `ID` | N | 사람 또는 그 멤버의 에이전트 필터. 수정안 요청 |
+| `agent_session_id` | `ID` | N | 에이전트 필터. 수정안 요청 |
+| `change_proposal_id` | `ID` | N | 한 변경 제안의 지나온 길(올림·검토 시작·검토 요청·의견·승인). 수정안 요청 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -12419,6 +13983,7 @@ HTTP `200`.
 
 - 각 도메인이 생성한 활동을 공통 중복 식별값으로 저장·조회한다.
 - 이벤트 종류와 처리 결과를 별도로 표시한다.
+- (수정안 요청) 활동 타임라인은 사람과 에이전트를 아바타로 나눠 전체 / 사람 / 에이전트별로 보인다. Activity의 actor_type·agent_session_id·actor_name으로 그린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12514,6 +14079,175 @@ HTTP `200`.
 
 ---
 
+<a id="mon-a06"></a>
+
+## MON-A06. 내 접속 상태 보고
+
+### PUT `/api/projects/{id}/presence`
+
+워크스페이스를 연 동안 내 위치를 주기적으로 보고한다.
+
+관련 요구사항: MON-07 (화면 SCR-06-v2-workspace-hotbar)  
+담당: BE: 전진 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `zone` | `string` | N | 사무실 안 위치. 허용 값은 FE와 합의 |
+| `seat` | `string` | N | 자리 식별값 |
+| `panel` | `string` | N | 열어 둔 메뉴. 공개 여부는 Q18 |
+| `activity` | `object` | N | 지금 하는 일 {action: VIEWING\|EDITING, target_type, target_id}. HUD의 '변경 제안 검토 중', 'TASK-002 계획 작성 중' |
+
+```json
+{
+  "zone": "desk",
+  "seat": "A-3"
+}
+```
+
+#### Response
+
+HTTP `204`.
+
+응답 본문 없음.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 클라이언트가 워크스페이스를 연 동안 일정 주기로 보낸다. 주기와 TTL은 Q18이다.
+- 마지막 보고가 TTL 안이면 online이다. 탭을 닫으면 보고가 끊겨 TTL 뒤 오프라인이 된다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mon-a07"></a>
+
+## MON-A07. 팀원 접속 현황
+
+### GET `/api/projects/{id}/presence`
+
+HUD 팀 목록에 팀원마다 접속 점과 위치를 보인다.
+
+관련 요구사항: MON-07 (화면 SCR-06-v2-workspace-hotbar)  
+담당: BE: 전진 / AI: — / FE: 박민용  
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `items` | [Presence[]](00-common.md#schema-presence) | Y | 활성 멤버마다 하나 |
+
+```json
+{
+  "items": [
+    {
+      "member_id": "22",
+      "online": true,
+      "last_seen_at": "2026-10-28T03:00:00Z",
+      "zone": "desk",
+      "seat": "A-3"
+    }
+  ]
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "세션 인증이 유효하지 않음"
+  }
+}
+```
+
+#### 처리 규칙
+
+- 같은 프로젝트 활성 멤버만 돌려준다.
+- 사람이 하는 일은 TSK-A02(진행 중 작업), 에이전트는 MON-A05로 프론트가 합친다.
+- 전송은 폴링으로 시작한다. SSE·WebSocket은 Q18이다.
+- (수정안 요청) 오프라인이면 마지막 위치·하는 일과 last_seen_at을 그대로 준다. 화면은 '오프라인 · 1시간 전 · TASK-002 계획 작성 중'처럼 보인다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
 <a id="ntf-a01"></a>
 
 ## NTF-A01. 내 알림함
@@ -12524,7 +14258,7 @@ HTTP `200`.
 
 관련 요구사항: NTF-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -12562,6 +14296,7 @@ HTTP `200`.
 | `items` | [Notification[]](00-common.md#schema-notification) | Y | 조회된 항목 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
 | `next_cursor` | `string` | N | 다음 페이지가 있으면 반환 |
+| `unread_count` | `integer` | Y | project_id 범위의 읽지 않은 알림 수. unread·cursor와 상관없음. 벨 배지. 수정안 요청 |
 
 ```json
 {
@@ -12599,6 +14334,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 세션 계정 수신 알림만 반환한다. 읽음과 문제 해결 상태는 다르다.
+- (수정안 요청) 새 알림: 비비 문서 검토 끝남(등록자), 문서 승인 요청(팀장), 문서 승인·반려(등록자), 회의가 끝나 문서가 바뀜(관련 작업 담당자)은 DOCUMENT_VERSION. 기준 v1 생김(활성 팀원)은 BASELINE, 비비가 연 회의(참여자)는 MEETING, 작업 담당자 변경(새 담당자)은 TASK, 회의에 새 기록이 올라옴(다른 참여자)은 MEETING.
+- (수정안 요청) 대상이 지워졌거나 권한이 없으면 화면은 404를 받고 '찾을 수 없어요'를 보인 뒤 그 알림을 읽음 처리한다(기본안).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12614,7 +14351,7 @@ HTTP `200`.
 
 관련 요구사항: NTF-03  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: 설계 초안 · 수정안 요청 반영
 
 #### 인증
 
@@ -12641,7 +14378,9 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `ids` | `ID[]` | Y | 읽음 처리할 본인 알림 |
+| `ids` | `ID[]` | N | 읽음 처리할 본인 알림. all과 둘 중 하나 |
+| `all` | `boolean` | N | true면 본인 알림 전체(또는 project_id 범위)를 읽음 처리. 수정안 요청 |
+| `project_id` | `ID` | N | all=true일 때 범위. 수정안 요청 |
 
 ```json
 {
@@ -12685,6 +14424,7 @@ HTTP `200`.
 
 - 모든 ID의 본인 소유를 검사한 뒤 일괄 처리한다. 타인 ID는 404이며 부분 처리하지 않는다.
 - 이미 읽은 알림은 유지하고 다시 요청해도 중복 갱신하지 않는다.
+- (수정안 요청) '모두 읽음'은 이동 없이 all=true로 읽음 처리하고 벨 배지를 지운다. 알림 하나를 누르면 그 ID만 읽음 처리한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

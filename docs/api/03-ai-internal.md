@@ -1,6 +1,10 @@
 # BEEZ AI Internal API
 
-버전: 0.5 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.6 · 갱신일: 2026-10-29 · 개발 계약 초안
+
+2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 비비 필수 문서 검토 AI-A10을 추가하고 AI-A08에 회의 정리(SUMMARY)를 더했다. 바뀐 부분은 '수정안 요청'으로 표시했다.
+
+2026-10-29: AI-A10을 dev BE 문서 검토 호출의 경로(`/v1/document-reviews`)·입출력·검증에 맞췄다. 화면에 더 필요한 mode·steps·reply·category·severity·evidence는 '수정안 요청' 확장 필드다.
 
 
 backend가 FastAPI ai 서비스에 요청하는 내부 계약이다. [공통 규약·담당자](00-common.md)와 [서버 REST 계약](01-backend-rest.md)을 참조한다.
@@ -44,6 +48,7 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/bee/assignments](#ai-a07)
 - [/v1/bee/meeting-analysis](#ai-a08)
 - [/v1/document-chunks](#ai-a09)
+- [/v1/document-reviews](#ai-a10)
 
 ---
 
@@ -555,6 +560,8 @@ HTTP `200`.
 - AI가 담당 멤버 ID를 생성하지 않는다. BE가 `related_task_id`로 현재 담당자를 조회해 FE에 전달한다.
 - related_plans 등 다른 작업의 계획은 지시가 아닌 데이터로 다룬다.
 - backend는 attempt·lease·RUNNING 조건을 검사해 결과를 반영한다. 늦은 워커는 이미 기록한 ERROR나 STALE을 덮어쓰지 못한다. lease 회수·복구 주체는 해당 run과 현재 검증이 모두 RUNNING이고 `current_attempt`가 해당 실행과 일치할 때만 compare-and-set 또는 잠금으로 실행 종결·ERROR finding·검증 상태를 원자적으로 반영한다. 이미 STALE이거나 새 attempt가 시작됐다면 늦은 결과를 폐기한다. 해당 run이 아직 RUNNING일 때만 DISCARDED로 종결하고, 이미 종결된 run을 다시 덮어쓰지 않는다.
+- (수정안 요청) RELATED_PLAN_CONFLICT 검사의 BLOCKING CONFLICT(related_task_id 있음)는 BE가 비비 회의를 여는 근거로 쓸 수 있다(Q17). message는 팀장이 바로 이해할 한국어 한두 문장으로 쓰고, BE가 회의 첫 기록(CONFLICT_BRIEF)으로 옮긴다.
+- (수정안 요청) severity=BLOCKING finding은 next_action(고칠 방법 한 줄)을 반드시 채운다. 작업 현황 화면이 막힌 항목마다 보여 준다.
 
 #### 실행·판정·실패 기록 매핑
 
@@ -1184,6 +1191,8 @@ HTTP `200`.
 
 - 문서·정확한 버전·위치를 근거로 답하고 정보 부족과 검색 실패를 구분한다.
 - AI 실패 시 backend가 템플릿을 반환할 수 있다. 모델 실행처럼 origin을 기록하지 않는다.
+- (수정안 요청) BE는 citations의 evidence_id를 BeeCitation(문서·버전·행 범위·인용 문장)으로 바꿔 화면의 [n] 표시와 잇는다. 본문에 [n]을 AI가 넣을지 BE가 claim 순서로 붙일지는 박상은·오서현이 정한다.
+- (수정안 요청) 근거를 찾지 못하면 citations=[]와 unresolved로 답하고 짐작해 답하지 않는다. BE는 grounded=false로 표시한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1602,10 +1611,14 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `project_id` | `ID` | Y | 권한 검사를 완료한 프로젝트 |
 | `request_key` | `string` | Y | backend가 부여한 분석 요청 식별값. LLM별 실제 호출 key의 기준 |
-| `mode` | `QUESTIONS\|MINUTES` | Y | 분석 목적 |
+| `mode` | `QUESTIONS\|MINUTES\|SUMMARY` | Y | 분석 목적. SUMMARY는 수정안 요청 |
 | `entries` | [MeetingEntry[]](00-common.md#schema-meetingentry) | Y | 회의 입력 스냅샷 |
 | `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 관련 승인 설계 |
 | `change_proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | N | 관련 제안 |
+| `related_tasks` | [TaskDetail[]](00-common.md#schema-taskdetail) | N | SUMMARY 필수. 충돌한 작업. 수정안 요청 |
+| `documents` | `object[]` | N | SUMMARY 필수. 관련 승인 문서 {document_id, document_version_id, text(utf8-lf-v1 정규화 원문)}. 수정안 요청 |
+| `previous_summary` | [MeetingSummary](00-common.md#schema-meetingsummary) | N | 수정 요청이면 이전 정리. 수정안 요청 |
+| `feedback` | `string` | N | 수정 요청이면 팀장이 쓴 고칠 점. 수정안 요청 |
 
 ```json
 {
@@ -1760,6 +1773,9 @@ HTTP `200`.
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
 - 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
+- (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
+- (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
+- (수정안 요청) QUESTIONS·MINUTES는 회의실 수정안에서 쓰지 않는다(MTG-A07·A08 폐지 예정).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1814,3 +1830,199 @@ HTTP `200`.
 
 
 SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 검증하고 현재 run/attempt/hash/profile일 때만 READY를 발행한다. 질문 경로는 AI-A04 QUERY → BE 허용 집합 검색 → AI-A05 scope/retrieved_evidence → 최종 권한/baseline 검사 순서다. AI는 DB에 접근하지 않으며 이 API에서 설계 항목을 자동 추출하지 않는다.
+
+---
+
+<a id="ai-a10"></a>
+
+## AI-A10. 문서 검토·수정 제안
+
+### POST `/v1/document-reviews`
+
+공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. PR #37은 AI 내부 연동을 담당자 합의 대기로 두었으므로 AI 구현 전에 이 절로 합의한다.
+
+관련 요구사항: DOC-01·08 (화면 PNL-02-m-review-*)  
+담당: BE: 오서현 / AI: 박상은 / FE: —  
+상태: BE 호출·검증 구현 · AI 구현 전 · 확장 필드는 수정안 요청 (협의 필요)
+
+#### 인증
+
+`INTERNAL_SERVICE`. 내부 Bearer 토큰으로 인증한다. 외부 사용자 세션이나 에이전트 토큰은 허용하지 않는다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Authorization | Bearer {AI_INTERNAL_TOKEN} |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+없음.
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `project_id` | `ID` | Y | 권한 검사를 마친 프로젝트 |
+| `document_id` | `ID` | Y | 검토 대상 문서 |
+| `revision` | `integer` | Y | 검토할 작성 리비전(DocumentWorkingCopy.revision) |
+| `kind` | `string` | Y | 대상 문서 종류(API_SPEC·ERD·REQ_SPEC 등) |
+| `content` | `string` | Y | 지금 작성 내용. 정규화한 본문 텍스트 |
+| `request_key` | `string` | Y | BE가 호출마다 새로 만드는 분석 요청 식별값(`document-review-{document_id}-{uuid}`) |
+| `reference_hash` | `string` | Y | 참고 승인본 집합 해시. 응답에 그대로 돌려준다 |
+| `unavailable_references` | `string[]` | Y | API_SPEC·ERD·REQ_SPEC 중 승인본이 없어 비교하지 못하는 종류 |
+| `references` | [DocumentReviewReference[]](00-common.md#schema-documentreviewreference) | Y | 같은 프로젝트의 현재 승인본. 미승인 문서는 넣지 않는다. 없으면 [] |
+| `mode` | `REVIEW\|RERUN\|DISCUSS\|REQUEST` | N | 수정안 요청. 없으면 REVIEW. 등록 검토 / 반려 뒤 재검토 / 제안 대화 / 직접 요청 |
+| `rejection_submission_id` | `ID` | N | 수정안 요청. RERUN 필수. 사유를 읽을 반려 제출(DOC-A16 선택 규칙) |
+| `rejection_reason` | `string` | N | 수정안 요청. RERUN 필수. 그 제출의 반려 사유 원문 |
+| `suggestion` | [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion) | N | 수정안 요청. DISCUSS 필수. 대화 대상 제안 |
+| `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | 수정안 요청. DISCUSS 필수. 지금까지의 대화와 새 메시지 |
+| `request_text` | `string` | N | 수정안 요청. REQUEST 필수. '비비에게 직접 요청하기' 내용 |
+
+```json
+{
+  "project_id": "101",
+  "document_id": "201",
+  "revision": 3,
+  "kind": "API_SPEC",
+  "content": "# 알림 API 명세서\n\n## GET /api/notifications\n알림 목록을 조회한다.\n\n## 오류\n| HTTP | code | 상황 |\n| --- | --- | --- |\n| 401 | `unauthenticated` | 로그인이 필요함 |\n",
+  "request_key": "document-review-201-0f8e5c2a-7b3d-4c1e-9a6f-2d8b7e4c1a90",
+  "reference_hash": "sha256:5d41402abc4b2a76b9719d911017c592ae7f2c1b3d4e5f60718293a4b5c6d7e8",
+  "unavailable_references": ["API_SPEC"],
+  "references": [
+    {
+      "document_id": "203",
+      "document_version_id": "231",
+      "kind": "ERD",
+      "version_no": 1,
+      "content": "# ERD\n\nnotification(id, account_id, read_at)\n"
+    },
+    {
+      "document_id": "204",
+      "document_version_id": "241",
+      "kind": "REQ_SPEC",
+      "version_no": 2,
+      "content": "# 요구사항 명세서\n\nREQ-007 사용자가 알림을 열면 읽음으로 표시한다.\n"
+    }
+  ]
+}
+```
+
+#### Response
+
+HTTP `200`.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `result` | `object` | Y | 아래 result 필드 |
+| `origin` | `MODEL` | Y | 실제 모델 결과만 받는다. TEMPLATE이면 BE가 버린다 |
+| `model` | `string` | N | 공통 성공 본문의 모델 이름. BE 검증은 usage[].model을 본다 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | Y | 실제 모델 호출 기록 1~20개. failed=false이고 model이 있는 항목이 1개 이상. feature=BEE_DRAFT. request_key는 입력 request_key이거나 `{request_key}-`로 시작 |
+
+result 필드:
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 입력 그대로 |
+| `revision` | `integer` | Y | 입력 그대로 |
+| `reference_hash` | `string` | Y | 입력 그대로 |
+| `request_key` | `string` | Y | 입력 그대로 |
+| `summary` | `string` | Y | 검토 요약. 비어 있지 않은 10,000자 이하 |
+| `suggestions` | `object[]` | Y | 보완 제안 0~30개. 없으면 [] |
+| `suggestions[].explanation` | `string` | Y | 보완 이유. 비어 있지 않은 10,000자 이하 |
+| `suggestions[].original_text` | `string` | Y | 바꿀 원문. 비어 있지 않고 입력 content 안에 정확히 한 번 나온다 |
+| `suggestions[].replacement_text` | `string` | Y | 대체문. 100,000자 이하. 빈 문자열이면 original_text를 지운다 |
+| `suggestions[].category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 수정안 요청. 누락·일관성·가독성·반려 사유 반영 |
+| `suggestions[].severity` | `MAJOR\|MINOR` | N | 수정안 요청 |
+| `suggestions[].evidence` | `object[]` | N | 수정안 요청. 근거 [{document_version_id, quote}]. document_version_id는 입력 references 안의 버전이고 quote는 그 버전 content에 그대로 있는 문장 |
+| `steps` | `object[]` | N | 수정안 요청. DocumentBeeReview.steps와 같은 {label, description, result} |
+| `reply` | `object` | N | 수정안 요청. DISCUSS 필수. {text, proposed_text?} |
+
+```json
+{
+  "result": {
+    "document_id": "201",
+    "revision": 3,
+    "reference_hash": "sha256:5d41402abc4b2a76b9719d911017c592ae7f2c1b3d4e5f60718293a4b5c6d7e8",
+    "request_key": "document-review-201-0f8e5c2a-7b3d-4c1e-9a6f-2d8b7e4c1a90",
+    "summary": "요구사항 REQ-007의 읽음 처리 조건이 빠져 있어 1건을 제안합니다. 승인된 API 명세서가 없어 그 비교는 하지 못했습니다.",
+    "suggestions": [
+      {
+        "explanation": "요구사항 REQ-007의 읽음 처리 조건이 빠졌습니다.",
+        "original_text": "알림 목록을 조회한다.",
+        "replacement_text": "알림 목록을 조회하고, 사용자가 연 알림은 읽음으로 표시한다.",
+        "category": "OMISSION",
+        "severity": "MAJOR",
+        "evidence": [
+          {
+            "document_version_id": "241",
+            "quote": "REQ-007 사용자가 알림을 열면 읽음으로 표시한다."
+          }
+        ]
+      }
+    ],
+    "steps": [
+      {"label": "문서 읽기", "description": "작성 내용을 문단으로 나눕니다", "result": "문단 3개"},
+      {"label": "승인된 API 명세서와 비교", "description": "같은 종류의 승인본과 맞춰 봅니다", "result": "승인본 없음"},
+      {"label": "ERD와 맞춰 보기", "description": "테이블·필드와 맞춰 봅니다", "result": "어긋남 없음"},
+      {"label": "요구사항과 비교", "description": "요구사항이 빠지지 않았는지 봅니다", "result": "빠진 조건 1개"},
+      {"label": "수정 제안 정리", "description": "바꿀 문장을 정리합니다", "result": "제안 1개"}
+    ]
+  },
+  "origin": "MODEL",
+  "model": "example-model",
+  "usage": [
+    {
+      "request_key": "document-review-201-0f8e5c2a-7b3d-4c1e-9a6f-2d8b7e4c1a90-call-1",
+      "feature": "BEE_DRAFT",
+      "model": "example-model",
+      "input_tokens": 1830,
+      "output_tokens": 412,
+      "latency_ms": 2140,
+      "failed": false,
+      "tokens_known": true
+    }
+  ]
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 입력 타입·필수 값 오류 |
+| 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 422 | `invalid_ai_input` | 본문 업무 구조 부적합 또는 입력 크기 초과 |
+| 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
+| 504 | `model_timeout` | 모델 시간 초과 |
+
+```json
+{
+  "error": {
+    "code": "model_timeout",
+    "message": "모델 시간 초과"
+  }
+}
+```
+
+#### 처리 규칙
+
+- BE는 응답을 이렇게 검증한다(validateResult). origin=MODEL, usage 조건, result의 document_id·revision·reference_hash·request_key가 입력과 같음, summary·suggestions 개수와 필드, original_text가 content 안에 정확히 한 번. 하나라도 어기면 BE가 결과 전체를 버리고 DOC-A16에서 502 invalid_ai_output을 낸다.
+- TEMPLATE 결과는 받지 않는다. 모델을 부르지 못했으면 오류(502·504)로 돌려주고 BE가 503 review_unavailable로 알린다. 템플릿 결과로 검토 완료를 대신하지 않는다는 DOC-A16 정책이며, 이 문서 첫머리의 대화 템플릿 폴백은 AI-A10에 쓰지 않는다. DISCUSS도 같다.
+- original_text로 위치를 잡고 행 번호를 쓰지 않는다. 앞 제안을 반영해도 뒤 제안이 어긋나지 않는다(DOC-A17 APPLY 규칙). replacement_text는 그 원문을 그대로 바꿀 문장이다. 반영·저장·승인은 BE와 사람이 한다.
+- 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡고 순서를 바꾼 문장을 replacement_text로 낸다.
+- (수정안 요청) evidence는 입력 references 안의 버전만 쓴다. quote가 그 버전 content에 없으면 잘못된 출력이다. BE는 references의 document_id·version_no를 붙이고 quote를 location에 넣어 DocumentReviewSuggestion.sources로 옮긴다.
+- (수정안 요청) 지금 BE는 summary와 제안의 explanation·original_text·replacement_text만 저장한다. category·severity·evidence·steps·reply를 화면에 보이려면 BE 저장을 넓혀야 한다.
+- (수정안 요청) mode별 결과: REVIEW·RERUN은 suggestions 목록, REQUEST는 suggestions 1개다. DISCUSS는 reply가 필수이고 suggestions는 []다. 네 mode 모두 result의 식별값 4개와 summary를 돌려준다.
+- (수정안 요청) steps는 BE가 DOC-A16의 단계 표시(DocumentBeeReview.steps)에 쓴다. REVIEW 기본: 문서 읽기 → 승인된 API 명세서와 비교 → ERD와 맞춰 보기 → 요구사항과 비교 → 수정 제안 정리. RERUN: 반려 사유 읽기 → 관련 문단 찾기 → ERD와 맞춰 보기 → 수정 제안 정리. 비교할 승인본이 없는 단계는 result에 그 사유를 쓴다.
+- (수정안 요청) RERUN은 BE가 DOC-A16 선택 규칙으로 고른 rejection_submission_id와 그 rejection_reason을 넣는다. 비비는 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만든다. 팀장은 문단을 고르지 않는다.
+- 이 문서의 동기 응답 원칙을 따른다. 실제 단계별 진행률을 보이려면 BE가 단계마다 나눠 부르거나 스트리밍이 필요하며, 방식은 Q19다.
+- 입력 크기·비용 상한과 실패 때 재시도는 Q11·Q19다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
