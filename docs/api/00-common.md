@@ -425,7 +425,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AI-A06 기획·문서 수정 초안 생성](03-ai-internal.md#ai-a06) | POST `/v1/bee/draft` | 오서현 | 박상은 / 회의 연결: 양지훈 |
 | [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
 | [AI-A08 회의 질문·요약·결정 추출](03-ai-internal.md#ai-a08) | POST `/v1/bee/meeting-analysis` | 오서현 | 양지훈 |
-| [AI-A10 문서 검토·수정 제안](03-ai-internal.md#ai-a10) | POST `/v1/bee/document-review` | 오서현 | 박상은 |
+| [AI-A10 문서 검토·수정 제안](03-ai-internal.md#ai-a10) | POST `/v1/document-reviews` | 오서현 | 박상은 |
 
 ### 확장 후보
 
@@ -719,7 +719,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 보완 제안과 선택 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | Y | 검증한 실제 모델 호출 사용량 |
 | `steps` | `object[]` | N | 단계별 {label, description, result}. 화면의 'n단계 / 5단계'와 '문단 4개' 같은 단계 결과. PR #37 후속의 단계별 상태와 같은 것. 수정안 요청 |
-| `rejection_submission_id` | `ID` | N | 반려 뒤 검토면 반려된 제출. 비비가 그 rejection_reason을 입력으로 읽는다. 수정안 요청 |
+| `rejection_submission_id` | `ID` | N | 반려 뒤 검토면 서버가 고른 반려 제출(DOC-A16 선택 규칙). 비비가 그 rejection_reason을 입력으로 읽는다. 수정안 요청 |
 
 <a id="schema-documentreviewsubmission"></a>
 

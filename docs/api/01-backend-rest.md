@@ -6255,7 +6255,7 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 - AI 내부 경로·입출력은 담당자 합의 대기다. 이 절은 FE→BE의 현재 구현 계약이며 실제 AI 연결 완료를 뜻하지 않는다.
 - (수정안 요청) 화면은 DOC-A01·A12로 등록한 직후 이 API를 불러 검토를 시작한다. 검토 없이 DOC-A18로 제출할 수 없으므로 검토를 건너뛰는 경로는 없다.
 - (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다. 지금처럼 동기 호출이면 화면은 진행률 없이 기다림만 보인다(Q19).
-- (수정안 요청) 반려된 뒤의 검토는 그 제출의 rejection_reason을 비비 입력에 넣는다(rejection_submission_id). 비비가 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만들고, 팀장은 문단을 고르지 않는다.
+- (수정안 요청) 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 rejection_submission_id로 고른다. 그 rejection_reason과 함께 AI-A10에 mode=RERUN으로 넣고, 아니면 REVIEW다. 화면은 제출을 고르지 않는다. 비비가 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만들고, 팀장은 문단을 고르지 않는다.
 
 #### 후속 PR에 적용할 검토 정책 — 정책 확정, 계약 확장 미구현
 
@@ -6968,7 +6968,7 @@ HTTP `201`.
 ```json
 {
   "expected_revision": 3,
-  "text": "오류 코드 표를 맨 아래로 옮겨 줘."
+  "text": "오류 표에 권한 없음(403) 행을 추가해 줘."
 }
 ```
 
@@ -6984,11 +6984,11 @@ HTTP `201`.
 {
   "suggestion": {
     "id": "9001",
-    "explanation": "요청대로 오류 코드 표를 문서 끝으로 옮깁니다.",
-    "original_text": "## 오류 코드\n| code | 설명 |",
-    "replacement_text": "",
+    "explanation": "요청대로 오류 표에 403 행을 추가합니다.",
+    "original_text": "| 401 | `unauthenticated` | 로그인이 필요함 |",
+    "replacement_text": "| 401 | `unauthenticated` | 로그인이 필요함 |\n| 403 | `forbidden` | 다른 사람의 알림을 읽으려 함 |",
     "decision": "PENDING",
-    "category": "READABILITY",
+    "category": "OMISSION",
     "severity": "MINOR",
     "origin": "DIRECT_REQUEST"
   }
@@ -7022,6 +7022,7 @@ HTTP `201`.
 
 - 비비가 요청을 반영한 제안 하나를 만들어 같은 검토의 suggestions에 붙인다(AI-A10 REQUEST). original_text는 지금 본문에서 한 곳과만 일치해야 한다(DOC-A17 APPLY와 같은 규칙).
 - 새 제안도 반영 또는 넘겨야 DOC-A18로 제출할 수 있다.
+- (수정안 요청) replacement_text가 ""이면 original_text를 지운다. 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡아 순서만 바꾼 replacement_text로 낸다(AI-A10).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8366,6 +8367,7 @@ HTTP `200`.
 | 409 | `proposal_changed` | 검토 뒤 제안 변경 |
 | 409 | `invalid_transition` | 반려 등 승인 불가 |
 | 500 | `internal` | 발행 트랜잭션 실패 |
+| 409 | `analysis_not_completed` | 제안에 연결한 문서 버전의 색인 미준비·실패·불일치 |
 
 ```json
 {
@@ -8385,6 +8387,7 @@ HTTP `200`.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
 - 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
 - (수정안 요청) requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
+- (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때 원문 저장과 청킹·임베딩 작업(document_processing)이 함께 생긴다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
