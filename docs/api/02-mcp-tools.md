@@ -162,7 +162,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
-| 503 | `processing_unavailable` | 컨텍스트 구성 모듈 미연결. 패킷을 저장하지 않는다 ([서비스 연결 계약](../design/08-mcp-service-contract.md)) |
+| 503 | `context_not_ready` | 컨텍스트 구성 모듈 미연결·색인 미준비. 패킷을 저장하지 않는다. 검색을 마쳤는데 근거가 0건이면 오류가 아니라 정상 응답의 `unresolved`로 표시한다 ([서비스 연결 계약](../design/08-mcp-service-contract.md)) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 

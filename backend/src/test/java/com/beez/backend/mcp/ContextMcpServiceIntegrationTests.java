@@ -86,7 +86,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         // 구성 모듈(박상은) 연결 전: 빈 패킷을 "근거 없음"처럼 주지 않고 503, 저장도 하지 않는다
         assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
                 new GetDevelopmentContextArgs("로그인 화면 구현", String.valueOf(projectId), null)),
-                HttpStatus.SERVICE_UNAVAILABLE, "processing_unavailable");
+                HttpStatus.SERVICE_UNAVAILABLE, "context_not_ready");
         assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
 
