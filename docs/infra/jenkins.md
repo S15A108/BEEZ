@@ -393,10 +393,11 @@ JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설�
 ```bash
 read -rsp "new password: " P && echo && \
   if [[ "$P" =~ ^[A-Za-z0-9._~+=@%-]{20,}$ ]]; then \
-    NEW=$(sudo grep -v '^JENKINS_ADMIN_PASSWORD=' /etc/jenkins/casc.env; printf 'JENKINS_ADMIN_PASSWORD=%s' "$P") && \
-    printf '%s\n' "$NEW" | sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && \
-    sudo systemctl restart jenkins && echo changed; \
-  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P NEW
+    REST=$(sudo grep -v '^JENKINS_ADMIN_PASSWORD=' /etc/jenkins/casc.env) && \
+    grep -q '^JENKINS_ADMIN_ID=' <<< "$REST" && grep -q '^JENKINS_DEPLOY_PASSWORD=' <<< "$REST" && \
+    printf '%s\nJENKINS_ADMIN_PASSWORD=%s\n' "$REST" "$P" | sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && \
+    sudo systemctl restart jenkins && echo changed || echo "실패: casc.env 읽기·항목(ID·DEPLOY) 또는 재시작을 확인"; \
+  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P REST
 ```
 
 허용 문자는 2단계의 "비밀번호 문자 제한"과 같습니다.
@@ -404,8 +405,12 @@ read -rsp "new password: " P && echo && \
 - **관리자 비밀번호 줄만 바꾸고 나머지 줄은 그대로 둡니다.** 파일을 통째로
   새로 쓰면 `JENKINS_DEPLOY_PASSWORD`가 지워지고, JCasC가 `github-actions`를
   빈 비밀번호로 다시 만듭니다(-123 이전 명령은 파일 전체를 다시 썼습니다).
-- 바꾼 내용을 먼저 변수에 담은 뒤 씁니다. 같은 파일을 읽으면서 바로 쓰면
+- 나머지 줄을 먼저 변수에 담은 뒤 씁니다. 같은 파일을 읽으면서 바로 쓰면
   다 읽기 전에 파일이 비워질 수 있습니다.
+- **읽기가 실패하면 쓰지 않습니다.** `sudo grep`이 실패하거나(인증 실패, 경로
+  오타) 읽은 내용에 `JENKINS_ADMIN_ID`·`JENKINS_DEPLOY_PASSWORD`가 없으면 거기서
+  멈춥니다. 그냥 이어 쓰면 비밀번호 한 줄만 남은 파일로 덮어써 관리자 ID까지
+  사라집니다.
 
 JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화면에서 바꾼
 비밀번호는 재시작하면 이 파일 값으로 돌아갑니다.

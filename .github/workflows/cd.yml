@@ -112,7 +112,11 @@ jobs:
           JENKINS_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
         run: |
           # API 토큰으로 부르면 CSRF 토큰(crumb)이 필요 없다. 접수되면 201 이 온다
+          # --retry: 연결 실패와 일시 오류(429·502·503·504 등, Jenkins 재시작 중)면 10초 간격으로 3번 더 시도한다.
+          #   같은 요청이 두 번 들어가도 같은 SHA 를 다시 배포할 뿐이다(재배포는 바뀐 것이 없으면 컨테이너를 건드리지 않는다)
+          # --max-time: Jenkins 가 응답하지 않을 때 잡이 3분 내내 붙잡히지 않게 한 번에 30초까지만 기다린다
           code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            --max-time 30 --retry 3 --retry-delay 10 --retry-connrefused \
             -u "github-actions:${JENKINS_TOKEN}" \
             --data-urlencode "GIT_SHA=${GITHUB_SHA}" \
             --data-urlencode "DEPLOY_ENV=dev" \

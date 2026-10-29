@@ -26,7 +26,7 @@ jenkins:
   # 권한 (matrix-auth, S15P31A108-123). 적힌 것만 허용하고, 로그인하지 않으면 아무것도 볼 수 없다.
   #   관리자: 전부.
   #   github-actions: 전체에서는 읽기만. 실행 권한은 beez-deploy 잡에만 준다(아래 jobs 의 authorizationMatrix).
-  #   GitHub 시크릿에 든 토큰이 새도 할 수 있는 일은 "GHCR 에 이미 있는 SHA 로 배포"뿐이다.
+  #   GitHub 시크릿에 든 토큰이 새도 할 수 있는 일은 "dev 에 들어온 커밋 중 하나로 다시 배포"뿐이다(아래 jobs 의 refspec).
   # (예전 설정 loggedInUsersCanDoAnything 은 로그인한 계정이면 누구나 관리자였다 — 계정이 둘이 되며 바꿨다)
   authorizationStrategy:
     projectMatrix:
@@ -55,13 +55,16 @@ unclassified:
 # Jenkinsfile 은 저장소에서 "배포할 SHA 그 커밋"으로 읽는다 → 브랜치 지정에 GIT_SHA 파라미터를 넣는다.
 #   ^${GIT_SHA} : JCasC 의 변수 치환을 피하는 표기. Jenkins 에는 ${GIT_SHA} 로 들어가 빌드할 때 파라미터 값으로 바뀐다.
 #   lightweight(false) : 파라미터가 든 브랜치 지정은 전체 체크아웃에서만 펼쳐진다.
-# 환경 중립: 환경·타깃은 파라미터다. 운영을 붙일 때 선택지만 늘린다(prod, ssh 타깃).
+# 받는 범위를 dev 브랜치로 묶는다(refspec + honorRefspec, 태그 받지 않음). 그래서 GIT_SHA 는 dev 에 들어온(PR 리뷰를 거친) 커밋만 된다.
+#   묶지 않으면 아무 브랜치·태그의 커밋을 넣을 수 있고, 그 커밋의 Jenkinsfile 이 jenkins(docker 그룹 = 사실상 root)로 실행된다.
+#   이 설정을 바꾼 뒤에는 서버의 잡 작업 폴더(/var/lib/jenkins/workspace/beez-deploy*)를 한 번 지운다 — 예전에 받아 둔 커밋이 남는다.
+# 환경 중립: 환경·타깃은 파라미터다. 운영을 붙일 때 선택지와 받는 브랜치(main)를 늘린다(prod, ssh 타깃).
 jobs:
   - script: |
       pipelineJob('beez-deploy') {
         description('커밋 SHA 하나의 이미지 셋(backend·ai·frontend-dist)을 배포한다. GitHub Actions(cd.yml)가 부른다. 런북: docs/infra/cd.md')
         parameters {
-          stringParam('GIT_SHA', '', '배포할 커밋 SHA 40자. 그 커밋의 이미지가 GHCR 에 있어야 한다')
+          stringParam('GIT_SHA', '', '배포할 커밋 SHA 40자. dev 에 있는 커밋이어야 하고, 그 커밋의 이미지가 GHCR 에 있어야 한다')
           choiceParam('DEPLOY_ENV', ['dev'], '환경. 서버의 /opt/beez/.env.<환경> 을 쓴다')
           choiceParam('TARGET', ['local'], '배포할 서버. local = 이 서버')
         }
@@ -83,8 +86,19 @@ jobs:
           cpsScm {
             scm {
               git {
-                remote { url('https://github.com/S15A108/BEEZ.git') }
+                remote {
+                  url('https://github.com/S15A108/BEEZ.git')
+                  refspec('+refs/heads/dev:refs/remotes/origin/dev')
+                }
                 branch('^${GIT_SHA}')
+                extensions {
+                  // 처음 받을 때도 위 refspec 만 받고(honorRefspec), 태그는 받지 않는다(태그로 다른 커밋을 끌어오지 못하게)
+                  cloneOptions {
+                    honorRefspec(true)
+                    noTags(true)
+                    shallow(false)
+                  }
+                }
               }
             }
             scriptPath('infra/deploy/Jenkinsfile')

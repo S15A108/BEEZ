@@ -177,7 +177,9 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
 
 1. 프론트 포장 이미지에서 dist를 꺼내 `releases/<sha>`에 둡니다. 이미 있으면
    건너뜁니다. 아직 전환하지 않습니다.
-2. backend·ai(와 digest로 고정한 postgres·seaweedfs) 이미지를 받습니다.
+2. backend·ai 이미지를 받습니다. digest로 고정한 postgres·seaweedfs는 매번
+   묻지 않고, 서버에 없을 때만 다음 단계가 받습니다(Docker Hub 장애·요청
+   제한에 배포가 묶이지 않게).
 3. `docker compose up -d --no-build --remove-orphans --wait`로 바뀐
    컨테이너만 교체하고, healthcheck가 있는 서비스가 healthy가 될 때까지 최대
    240초 기다립니다. backend의 healthcheck는 `/actuator/health`입니다.
@@ -190,6 +192,11 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   버전으로 바뀐 상태**이므로, 로그 맨 앞의 "직전 backend 이미지" SHA로 다시
   배포해 되돌립니다.
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
+- **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
+  다른 배포가 돌고 있으면 최대 10분 기다립니다. Jenkins 잡의 동시 실행 금지는
+  잡 안에서만 막으므로, 손 배포와 Jenkins 배포가 겹치는 경우를 여기서 막습니다.
+- Jenkins에서 중단하거나 15분 시간 초과로 끝나도(SIGTERM) 꺼내기용 컨테이너와
+  임시 폴더를 지우고 끝납니다.
 - `scratch` 이미지에는 실행 명령이 없어 `docker create`가 `no command
   specified`로 거부합니다. 실행하지 않으므로 더미 명령(`noop`)을 줍니다.
 - `docker cp`는 파일 주인을 실행한 사용자로 만듭니다. 꺼낸 뒤 배포 폴더
@@ -240,6 +247,29 @@ readlink /var/www/beez/current
   같은 커밋에서 오고, 예전 SHA로 롤백하면 절차도 그 시절 것으로 돌아갑니다.
 - 짧은 SHA나 브랜치 이름을 넣으면 체크아웃한 커밋과 달라 `Checkout`
   단계에서 멈춥니다.
+
+### 받는 범위를 dev로 묶는 이유
+
+잡의 git 설정은 `refs/heads/dev`만 받고(refspec + `honorRefspec`), 태그는 받지
+않습니다(`noTags`). 그래서 **`GIT_SHA`는 dev에 들어온 커밋만** 됩니다. dev에
+없는 커밋을 넣으면 `Couldn't find any revision to build`로 멈춥니다(2026-10-29
+로컬 확인).
+
+묶지 않으면 저장소 아무 브랜치·태그의 커밋을 넣을 수 있고, **그 커밋의
+Jenkinsfile이 jenkins 계정(docker 그룹 = 사실상 root)으로 실행됩니다.** 이미지가
+없어도 Jenkinsfile은 먼저 돕니다. 토큰이 새고 그 사람이 브랜치 하나를 push할
+수 있으면 서버를 장악할 수 있다는 뜻입니다. dev는 PR 리뷰를 거쳐야 들어가므로
+이 경로가 막힙니다.
+
+- 이 설정을 바꾼 뒤에는 서버의 잡 작업 폴더를 한 번 지웁니다. 예전에 받아 둔
+  다른 브랜치의 커밋이 남아 있으면 그 SHA를 찾을 수 있습니다.
+
+  ```bash
+  sudo rm -rf /var/lib/jenkins/workspace/beez-deploy /var/lib/jenkins/workspace/beez-deploy@*
+  ```
+
+- 그래서 **머지 전 작업 브랜치를 Jenkins로 배포해 볼 수 없습니다.** 브랜치에서
+  배포를 시험할 때는 "손으로 배포·롤백"으로 합니다.
 - 화면에서 잡 설정을 고치면 다음 재시작 때 JCasC 정의로 돌아갑니다. 바꿀 때는
   저장소 파일을 고칩니다.
 - 플러그인은 적게 씁니다. 선언형 파이프라인 대신 스크립트형(`node { }`)이라
@@ -311,7 +341,9 @@ GitHub에는 관리자 토큰을 두지 않습니다. 전용 계정 `github-acti
 | 잡 설정 보기·고치기, 관리 화면, 스크립트 콘솔 | 403 |
 | 잡 삭제, 새 잡 만들기 | 403 |
 
-토큰이 새도 할 수 있는 일은 "GHCR에 이미 있는 SHA로 배포"까지입니다.
+토큰이 새도 할 수 있는 일은 "dev에 들어온 커밋 중 하나로 다시 배포"까지입니다.
+배포 잡이 받는 범위를 dev 브랜치로 묶었기 때문입니다(아래 "받는 범위를 dev로
+묶는 이유").
 `github-actions`의 비밀번호는 `/etc/jenkins/casc.env`의
 `JENKINS_DEPLOY_PASSWORD`(무작위, 출력하지 않음)이고 토큰을 만들 때만
 씁니다([Jenkins 런북](jenkins.md) 2단계).
@@ -359,7 +391,7 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
 | 바뀌는 것 | A: t3a 추가 | B: 이 서버를 main으로 |
 |---|---|---|
 | env 파일 | 새 서버에 `/opt/beez/.env.prod`(서버 준비 1~3 다시) | 이 서버에 `/opt/beez/.env.prod` 추가, 또는 `.env.dev`를 운영 값으로 |
-| Jenkins 잡 파라미터 | `DEPLOY_ENV`에 `prod`, `TARGET`에 운영 서버(ssh) 선택지 추가 | `DEPLOY_ENV`에 `prod` 추가 |
+| Jenkins 잡 | `DEPLOY_ENV`에 `prod`, `TARGET`에 운영 서버(ssh) 선택지 추가, 운영 잡은 받는 범위를 `main`으로 | `DEPLOY_ENV`에 `prod` 추가, 운영 잡은 받는 범위를 `main`으로 |
 | 배포 대상 | ssh 타깃 구현(Jenkinsfile의 `TARGET` 분기, 운영 서버 deploy 사용자·키) — **유일한 코드 추가** | 없음 |
 | GitHub | Environment `prod`(main만, 시크릿 `JENKINS_API_TOKEN`), `cd.yml` 트리거에 `main` + 환경 이름을 브랜치로 고름 | 같음 |
 | DNS | `beez.ai.kr` A 레코드 → t3a | `beez.ai.kr` A 레코드 → 이 서버 |

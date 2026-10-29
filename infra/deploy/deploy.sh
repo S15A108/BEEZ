@@ -31,6 +31,11 @@ COMPOSE_FILE=$(cd "$(dirname "$0")/.." && pwd)/compose.yaml   # 같은 SHA 의 i
 
 [[ -r $ENV_FILE ]] || { echo "env 파일을 읽을 수 없음: $ENV_FILE" >&2; exit 2; }
 
+# 한 번에 하나만 배포한다. Jenkins 잡의 동시 실행 금지는 잡 안에서만 막으므로, 손 배포와 겹치는 경우를 여기서 막는다.
+# 잠금 파일은 jenkins·ubuntu 가 같이 쓰는 배포 폴더(beez-deploy 그룹 쓰기)에 둔다. Nginx 는 current/ 만 서빙해 보이지 않는다
+exec 9> "$WEB_ROOT/.deploy.lock"
+flock -w 600 9 || { echo "다른 배포가 10분 넘게 진행 중이라 멈춤" >&2; exit 3; }
+
 # compose.yaml 의 image: ${BACKEND_IMAGE}·${AI_IMAGE} 에 들어간다
 export BACKEND_IMAGE=$REGISTRY/beez-backend:$SHA
 export AI_IMAGE=$REGISTRY/beez-ai:$SHA
@@ -47,6 +52,9 @@ cleanup() {
     [[ -n $tmp ]] && rm -rf "$tmp" || true
 }
 trap cleanup EXIT
+# Jenkins 의 중단·시간 초과는 SIGTERM 으로 끝낸다. 신호로 끝나면 EXIT 처리가 돌지 않으므로 exit 로 바꿔 EXIT 처리를 태운다
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # 컨테이너가 없을 때 docker inspect 가 빈 줄을 찍고 실패하므로, id 가 있을 때만 묻는다
 previous=없음
@@ -79,9 +87,10 @@ else
     cid=
 fi
 
-# 2) backend·ai(와 고정된 postgres·seaweedfs) 이미지 받기
+# 2) backend·ai 이미지 받기. digest 로 고정한 postgres·seaweedfs 는 매번 묻지 않는다(Docker Hub 장애·요청 제한에 배포가 묶이지 않게).
+#    서버에 아직 없으면 아래 up 이 받는다
 log "이미지 받기"
-compose pull --quiet
+compose pull --quiet backend ai
 
 # 3) 바뀐 컨테이너만 교체하고, healthcheck 가 있는 서비스(postgres·ai·backend)가 healthy 가 될 때까지 기다린다.
 #    backend 의 healthcheck 는 /actuator/health 다 (compose.yaml). 첫 기동은 Flyway 마이그레이션 때문에 오래 걸린다
