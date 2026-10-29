@@ -103,6 +103,64 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         assertThat(commands.resubmit(author,project.projectId(),id,resubmission(second,"세번째 보완"),"third").revision()).isEqualTo(3);
     }
 
+    long taskWithPlanRef(String key) {
+        // Task CHECKs require a current plan (and a started validation for COMPLETED), so statuses are set afterwards.
+        long task=jdbc.queryForObject("INSERT INTO task(project_id,key,title,status) VALUES(?,?,?,'DRAFT') RETURNING id",
+                Long.class,project.projectId(),key,key);
+        long plan=jdbc.queryForObject("""
+                INSERT INTO task_plan_revision(task_id,revision_no,title,goal,input_hash,created_by_account_id)
+                VALUES(?,1,?,?,'h',?) RETURNING id
+                """,Long.class,task,key,key,author.accountId());
+        jdbc.update("UPDATE task SET current_plan_revision_id=? WHERE id=?",plan,task);
+        jdbc.update("INSERT INTO task_plan_design_ref(plan_revision_id,design_item_id,design_item_version_id,relation) VALUES(?,?,?,'READS')",
+                plan,item,itemVersion);
+        return task;
+    }
+    long validationFor(long task, long plan) {
+        long validation=jdbc.queryForObject("""
+                INSERT INTO validation(task_id,plan_revision_id,baseline_id,status,trigger,input_snapshot_hash,rule_version)
+                VALUES(?,?,?,'PASS','AGENT','h','1') RETURNING id
+                """,Long.class,task,plan,baseline);
+        jdbc.update("INSERT INTO validation_design_ref(validation_id,design_item_id,design_item_version_id,relation) VALUES(?,?,?,'READS')",
+                validation,item,itemVersion);
+        return validation;
+    }
+    long currentPlan(long task) { return jdbc.queryForObject("SELECT current_plan_revision_id FROM task WHERE id=?",Long.class,task); }
+
+    @Test void explicitCandidatesSkipClosedTasksAndValidationsOfOldPlans() {
+        long open=taskWithPlanRef("T-open");
+        long done=taskWithPlanRef("T-done");
+        long cancelled=taskWithPlanRef("T-cancelled");
+        long oldPlan=currentPlan(open);
+        long oldValidation=validationFor(open,oldPlan);
+        long newPlan=jdbc.queryForObject("""
+                INSERT INTO task_plan_revision(task_id,revision_no,title,goal,input_hash,created_by_account_id)
+                VALUES(?,2,'T-open','T-open','h2',?) RETURNING id
+                """,Long.class,open,author.accountId());
+        jdbc.update("INSERT INTO task_plan_design_ref(plan_revision_id,design_item_id,design_item_version_id,relation) VALUES(?,?,?,'READS')",
+                newPlan,item,itemVersion);
+        jdbc.update("UPDATE task SET current_plan_revision_id=? WHERE id=?",newPlan,open);
+        long currentValidation=validationFor(open,newPlan);
+        long doneValidation=validationFor(done,currentPlan(done));
+        jdbc.update("UPDATE task SET status='READY' WHERE id=?",open);
+        jdbc.update("UPDATE task SET status='COMPLETED',started_validation_id=? WHERE id=?",doneValidation,done);
+        jdbc.update("UPDATE task SET status='CANCELLED' WHERE id=?",cancelled);
+        Proposal p=create("candidates");
+        var candidates=queries.detail(author,project.projectId(),Long.parseLong(p.id()),null).explicitCandidates();
+        assertThat(candidates).filteredOn(c -> c.targetType().equals("TASK")).extracting(c -> c.targetId())
+                .containsExactly(""+open);
+        assertThat(candidates).filteredOn(c -> c.targetType().equals("VALIDATION")).extracting(c -> c.targetId())
+                .containsExactly(""+currentValidation)
+                .doesNotContain(""+oldValidation,""+doneValidation);
+    }
+
+    @Test void approvalRevisionHasNoDefaultSoDecisionsMustNameTheReviewedRevision() {
+        assertThat(jdbc.queryForObject("""
+                SELECT column_default FROM information_schema.columns
+                WHERE table_schema=current_schema() AND table_name='approval' AND column_name='proposal_revision_no'
+                """,String.class)).isNull();
+    }
+
     @Test void documentOnlyChangeAndExplicitCandidatesHaveStableBaseDiffAfterBaselineMoves() {
         Proposal p=create("diff");
         var detail=queries.detail(author,project.projectId(),Long.parseLong(p.id()),null);

@@ -197,11 +197,14 @@ public class ProposalRepository {
                   UNION
                   SELECT 'TASK',t.id,r.design_item_id,t.assignee_member_id FROM task t
                   JOIN task_plan_design_ref r ON r.plan_revision_id=t.current_plan_revision_id
-                  WHERE t.project_id=:project AND r.design_item_id IN (SELECT design_item_id FROM affected)
+                  WHERE t.project_id=:project AND t.status NOT IN ('COMPLETED','CANCELLED')
+                    AND r.design_item_id IN (SELECT design_item_id FROM affected)
                   UNION
                   SELECT 'VALIDATION',v.id,r.design_item_id,t.assignee_member_id FROM validation_design_ref r
-                  JOIN validation v ON v.id=r.validation_id JOIN task t ON t.id=v.task_id
-                  WHERE t.project_id=:project AND r.design_item_id IN (SELECT design_item_id FROM affected)
+                  JOIN validation v ON v.id=r.validation_id
+                  JOIN task t ON t.id=v.task_id AND v.plan_revision_id=t.current_plan_revision_id
+                  WHERE t.project_id=:project AND t.status NOT IN ('COMPLETED','CANCELLED')
+                    AND r.design_item_id IN (SELECT design_item_id FROM affected)
                   UNION
                   SELECT 'DOCUMENT',d.document_id,b.design_item_id,NULL::bigint FROM baseline_item b
                   JOIN design_item_version v ON v.id=b.design_item_version_id

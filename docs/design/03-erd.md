@@ -355,7 +355,7 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 | change_proposal_item | 최신 제출의 항목 투영. schema_version 추가. 과거 항목은 불변 revision.snapshot으로 조회. 188은 이 명시적 스키마 버전을 읽어야 하며 현재 값 추측 금지 |
 | change_proposal_document | 리비전별 문서 기준/제안 version 연결. 프로젝트·문서 소속 복합 FK. after_content 입력은 snapshot에 보존하고 제안 version은 null |
 | document_version.change_proposal_id | 업로드 DRAFT의 제안 귀속. 연결 후 본문·해시·파일·부모·등록자·귀속 변경 금지. 과거 리비전에서 사용한 연결도 유지 |
-| approval | proposal_revision_no 추가, UNIQUE(proposal, revision), 제출 리비전 FK. 기존 제안당 UNIQUE 제거. 기존 결정 UPDATE 금지는 유지 |
+| approval | proposal_revision_no 추가, UNIQUE(proposal, revision), 제출 리비전 FK. 기존 제안당 UNIQUE 제거. 기존 행 이관용 DEFAULT 1은 채운 뒤 제거해 새 결정은 검토한 리비전을 반드시 지정한다. 기존 결정 UPDATE 금지는 유지 |
 | design_http_command | CHG-A01/A04/A15의 24시간 응답 보존 재사용. 프로젝트/계정/동작/사람 또는 토큰으로 범위 구분 |
 
 기존 제안은 당시 확인 가능한 데이터로 legacy 리비전 1을 보존한다. 과거에 저장하지 않았던 proposed schema_version·문서 본문을 추측해서 채우지 않는다. legacy 해시는 PostgreSQL JSONB 직렬화 바이트로 고정하고, 새 제출 해시는 키 정렬 canonical JSON의 SHA-256으로 생성한다. 클라이언트는 반환된 해시를 그대로 사용한다.

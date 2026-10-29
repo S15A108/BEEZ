@@ -70,6 +70,8 @@ CREATE TRIGGER trg_proposal_document_immutable BEFORE UPDATE OR DELETE ON change
 
 -- Decisions belong to a submitted revision, so resubmission retains every rejection.
 ALTER TABLE approval ADD COLUMN proposal_revision_no INT NOT NULL DEFAULT 1;
+-- DEFAULT 1 is only the legacy backfill. New decisions must name the reviewed revision explicitly.
+ALTER TABLE approval ALTER COLUMN proposal_revision_no DROP DEFAULT;
 ALTER TABLE approval DROP CONSTRAINT approval_change_proposal_id_key;
 ALTER TABLE approval ADD CONSTRAINT ux_approval_revision UNIQUE(change_proposal_id,proposal_revision_no);
 ALTER TABLE approval ADD CONSTRAINT fk_approval_revision FOREIGN KEY(change_proposal_id,proposal_revision_no)
