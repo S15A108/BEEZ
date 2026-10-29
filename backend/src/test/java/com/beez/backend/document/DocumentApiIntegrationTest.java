@@ -44,7 +44,8 @@ class DocumentApiIntegrationTest {
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(DockerImageName.parse(
             "pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d").asCompatibleSubstituteFor("postgres"));
     static final JsonMapper JSON = JsonMapper.builder().build();
-    // 테스트 JVM 에서 한 번 띄워 함께 쓴다(버킷 준비까지 끝난 상태로 돌아온다). 원본 개수는 시험마다 시작 전 대비로만 비교한다
+    // Shared across the test JVM and returned once the bucket is ready. The bucket is shared, so object counts
+    // are compared against this test's own starting count only.
     static final SeaweedTestContainer seaweed = SeaweedTestContainer.shared();
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
         registry.add("beez.document.object-storage.endpoint", seaweed::endpoint);

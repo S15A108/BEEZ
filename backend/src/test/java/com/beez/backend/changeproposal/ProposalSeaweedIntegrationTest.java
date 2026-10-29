@@ -20,7 +20,8 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 
 /** The text-change path against a real S3-compatible store (SeaweedFS), not the in-memory stand-in. */
 class ProposalSeaweedIntegrationTest extends IntegrationTestSupport {
-    // 테스트 JVM 에서 한 번 띄워 함께 쓴다(버킷 준비까지 끝난 상태로 돌아온다). 원본 개수는 시험마다 시작 전 대비로만 비교한다
+    // Shared across the test JVM and returned once the bucket is ready. The bucket is shared, so object counts
+    // are compared against this test's own starting count only.
     static final SeaweedTestContainer seaweed = SeaweedTestContainer.shared();
     @DynamicPropertySource static void storageEndpoint(DynamicPropertyRegistry registry) {
         registry.add("beez.document.object-storage.endpoint", seaweed::endpoint);

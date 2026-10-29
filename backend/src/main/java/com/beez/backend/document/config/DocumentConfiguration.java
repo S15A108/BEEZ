@@ -20,6 +20,11 @@ public class DocumentConfiguration {
 
     @Bean(destroyMethod = "close")
     software.amazon.awssdk.services.s3.S3Client documentS3Client(DocumentObjectStorageProperties properties) {
+        return s3Client(properties);
+    }
+
+    /** The one place the SeaweedFS client is configured; tests (SeaweedTestContainer) reuse it to probe readiness. */
+    public static software.amazon.awssdk.services.s3.S3Client s3Client(DocumentObjectStorageProperties properties) {
         return software.amazon.awssdk.services.s3.S3Client.builder()
                 .endpointOverride(properties.endpoint())
                 .region(software.amazon.awssdk.regions.Region.of(properties.region()))
