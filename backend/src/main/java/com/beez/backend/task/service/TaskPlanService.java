@@ -83,6 +83,11 @@ public class TaskPlanService {
         if (!exists) {
             throw AccessErrors.notFound("project_missing project=" + projectId);
         }
+        // 팀원 제외·나가기(MEM-A09·A10)도 이 행을 잠근다. 잠그기 전에 그쪽이 커밋됐으면 호출자는 이미 멤버가 아니다 —
+        // 그대로 만들면 나간 사람이 담당인 열린 작업이 남는다
+        if (!access.isActiveMember(actor.memberId(), projectId)) {
+            throw AccessErrors.notFound("member_left project=" + projectId + " member=" + actor.memberId());
+        }
         String key = nextTaskKey(projectId);
 
         // 2) 입력 검증 (DB 에 닿기 전에 400 으로 거른다)
