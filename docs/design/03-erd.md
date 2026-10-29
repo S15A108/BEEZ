@@ -235,7 +235,9 @@ erDiagram
   baseline ||--o{ change_proposal : "base_baseline_id"
   change_proposal ||--o{ change_proposal_item : "CREATE, UPDATE, RETIRE"
   change_proposal ||--o{ change_comment : "의견, 검토 요청, 결정"
-  change_proposal ||--o| approval : "제안당 1건"
+  change_proposal ||--o{ change_proposal_revision : "불변 제출 리비전"
+  change_proposal_revision ||--o| approval : "리비전당 결정 1건"
+  change_proposal_revision ||--o{ change_proposal_document : "기준/제안 문서 버전"
   change_proposal |o--o{ meeting : ""
   meeting ||--o{ meeting_participant : ""
   meeting ||--o{ meeting_entry : "분석 대상 텍스트"
@@ -341,6 +343,26 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 `try_start`, `publish_change` 테스트 함수는 서비스 로직을 SQL로 옮긴 **프로토타입**이다. 실제 구현은 Java 서비스에 두고, 이 시나리오를 Testcontainers 통합 테스트로 옮긴다.
 
 ## 6. 남은 결정
+
+### V10 변경 제안 제출·반려 후 재제출
+
+195는 기존 V2~V6을 수정하지 않고 `V10__change_proposal_revisions.sql`로 추가한다. V7~V9는 선행 PR을 위한 번호이며 병합·운영 적용 순서를 확인해야 한다. 이 번호 선택은 다른 PR의 최종 번호를 변경하거나 운영 적용을 허가하는 의미가 아니다.
+
+| 저장 대상 | 계약 |
+| --- | --- |
+| change_proposal | title·revision_no 추가. 최초 PROPOSED, 제출 후 잠금. REJECTED에서 같은 ID/key로 다음 리비전을 제출. WITHDRAWN·withdrawn_by/at·previous_proposal_id 추가, 거둔 제안은 변경 불가. 이전 제안은 같은 프로젝트·작성 계정의 WITHDRAWN만 연결 |
+| change_proposal_revision | PK(proposal, revision). 같은 프로젝트 제안·기준 baseline FK. 입력·해석된 원문·제출자/토큰·해시·시각 저장. UPDATE/DELETE 금지 |
+| change_proposal_item | 최신 제출의 항목 투영. schema_version 추가. 과거 항목은 불변 revision.snapshot으로 조회. 188은 이 명시적 스키마 버전을 읽어야 하며 현재 값 추측 금지 |
+| change_proposal_document | 리비전별 문서 기준/제안 version 연결. 프로젝트·문서 소속 복합 FK. after_content 입력은 snapshot에 보존하고 제안 version은 null |
+| document_version.change_proposal_id | 업로드 DRAFT의 제안 귀속. 연결 후 본문·해시·파일·부모·등록자·귀속 변경 금지. 과거 리비전에서 사용한 연결도 유지 |
+| approval | proposal_revision_no 추가, UNIQUE(proposal, revision), 제출 리비전 FK. 기존 제안당 UNIQUE 제거. 기존 결정 UPDATE 금지는 유지 |
+| design_http_command | CHG-A01/A04/A15의 24시간 응답 보존 재사용. 프로젝트/계정/동작/사람 또는 토큰으로 범위 구분 |
+
+기존 제안은 당시 확인 가능한 데이터로 legacy 리비전 1을 보존한다. 과거에 저장하지 않았던 proposed schema_version·문서 본문을 추측해서 채우지 않는다. legacy 해시는 PostgreSQL JSONB 직렬화 바이트로 고정하고, 새 제출 해시는 키 정렬 canonical JSON의 SHA-256으로 생성한다. 클라이언트는 반환된 해시를 그대로 사용한다.
+
+실제 명령은 project → 현재 멤버/계정 → 에이전트 토큰 순서로 잠근다. 생성·재제출·리비전·현재 항목 투영·문서 연결·멱등 응답은 한 트랜잭션이다. 외부 파일/AI 호출은 없다. 현재 baseline과 기준 버전을 확인하며 제출만으로 설계·작업 상태를 바꾸지 않는다. 최종 심사 API와 발행은 198에서 구현한다.
+
+원문이 변경돼도 기준은 제출 당시 버전이다. [CHG-A03](../api/01-backend-rest.md#chg-a03)의 diff는 기준→제안이며 현재 승인본 차이는 별도 표시한다. 반려 이력은 리비전별 결정에서 조회한다. 거두기는 승인/반려 approval로 저장하지 않으며 제안 행에 작성 계정·시각을 남기고 원문·revision/hash를 유지한다. 이전 제안 연결은 복합 프로젝트 FK와 INSERT 트리거로 검사한다. #197의 규칙/AI 후보·관계 집합 revision·발행별 분석 상태는 담당 계약 확정 후 별도 migration으로 추가하며 V10에 선반영하지 않는다.
 
 194 보완: 수동 항목 5종 content v1·DRAFT 편집·REJECTED 제외·전체 스냅샷·문서 4종 색인 후 최초 발행은 [확정 계약](../api/01-backend-rest.md#pln-a10)을 따른다. V6 design_http_command는 등록/최초 발행의 사용자·프로젝트·동작별 멱등 응답을 저장한다. 기존 V2~V5는 수정하지 않는다.
 
