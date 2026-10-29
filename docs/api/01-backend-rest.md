@@ -306,7 +306,7 @@ HTTP `200`.
 | `name` | `string` | Y | 표시 이름 |
 | `avatar` | `string` | N | 아바타 식별값 또는 URL |
 | `created_at` | `Time` | Y | 가입 시각 |
-| `must_change_password` | `boolean` | Y | 임시 비밀번호로 로그인했으면 true. 화면은 비밀번호 변경으로 보냄. 수정안 요청 |
+| `must_change_password` | `boolean` | Y | 임시 비밀번호로 로그인했으면 true. 수정안 화면에는 강제 이동이 없고 캔버스 메모가 권하는 안전장치다(Q04). 수정안 요청 |
 
 ```json
 {
@@ -991,7 +991,7 @@ HTTP `204`.
 
 #### 처리 규칙
 
-- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 그 프로젝트들을 지울지·남길지·자동으로 빠질지는 Q05다.
+- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 회원 탈퇴 화면의 기본안은 팀원으로 참여한 프로젝트에서 자동으로 빠지고, 혼자 쓰는 프로젝트는 함께 삭제하며, 팀 프로젝트에 남긴 문서와 작업 기록은 보존이다. 확정은 Q05다.
 - 계정 개인정보는 제거·익명화하고 토큰 전부 폐기·세션 종료를 처리한다.
 - 작업·편집·사용량 이력은 탈퇴한 사용자로 보존한다.
 - (수정안 요청) 판정은 탈퇴 요청 때 서버가 다시 한다. 화면을 연 뒤 팀원 수가 바뀌어도 ACC-A13 결과를 믿지 않는다. 탈퇴 뒤 완료 화면 없이 랜딩으로 간다.
@@ -1127,7 +1127,7 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `code` | `string` | Y | 메일로 받은 코드 |
+| `code` | `string` | Y | 메일로 받은 6자리 코드 |
 
 ```json
 {
@@ -2057,6 +2057,7 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `email` | `string` | N | 지정하면 해당 이메일로 초대 |
 | `emails` | `string[]` | N | 여러 이메일을 한 번에 초대하고 서버가 메일을 보냄. email과 둘 중 하나. 최대 개수는 Q05. 수정안 요청 |
+| `message` | `string` | N | '함께 보낼 말'. 초대 메일에 넣음. 수정안 요청 |
 
 ```json
 {
@@ -3647,6 +3648,7 @@ HTTP `200`.
 
 - 관측 임계값을 넘기면 status_check_required를 표시한다. 자동 완료·점유 해제는 하지 않는다.
 - (수정안 요청) 연결 확인 화면은 이 API를 다시 읽어 결과를 보인다. 실패면 last_error_code로 이유와 할 일을 한 줄로, 성공이면 마지막 보고 시각을 보인다.
+- (수정안 요청) 연결 확인 실패는 활동(MON-A04)에도 남긴다. 대시보드는 '연결 확인 실패 · 토큰 폐기됨'을 에이전트의 최근 활동으로 보인다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6104,6 +6106,8 @@ HTTP `200`.
 | `eta_seconds` | `integer` | N | 남은 시간 추정 |
 | `counts` | `object` | N | COMPLETED면 {major, minor} |
 | `open_count` | `integer` | Y | 아직 처리하지 않은 제안 수 |
+| `applied_count` | `integer` | Y | 반영한 제안 수 |
+| `steps` | `object[]` | Y | 단계별 {label, description, result}. 예: '문서 읽기 · 문단 4개' |
 | `error_code` | `string` | N | FAILED 원인 |
 
 ```json
@@ -7370,6 +7374,7 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | N | 상태 필터 |
 | `scope` | `DESIGN_ITEMS\|DOCUMENTS` | N | 설계 항목 제안만 / 문서 제안만. 변경 제안 창은 DESIGN_ITEMS. 수정안 요청 |
+| `group` | `IN_PROGRESS\|PUBLISHED\|REJECTED` | N | 목록 탭 '진행 중 · 발행됨 · 반려'. 진행 중은 PROPOSED·IN_REVIEW·APPROVED. 탭마다 개수가 필요하면 MON-C01을 씀. 수정안 요청 |
 | `q` | `string` | N | 제목·항목 번호 검색어. 수정안 요청 |
 | `sort` | `latest\|status` | N | 최신순(기본)·상태순. 수정안 요청 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
@@ -8914,6 +8919,8 @@ HTTP `200`.
 | `baseline_items` | `object[]` | Y | 새 기준에 들어갈 항목 {design_item_id, title, version_no} |
 | `validations_to_stale` | `object[]` | Y | '다시 검증 필요'가 될 검증 {validation_id, task_id, task_title} |
 | `tasks_to_wait` | `object[]` | Y | '대기 · 재검증'이 될 진행 중 작업 {task_id, title, assignee_member_id} |
+| `unchanged` | `object` | Y | 그대로인 것 {items, documents}. 화면 '나머지 항목 1개와 문서 4개는 v1 그대로' |
+| `unreviewed` | `object` | Y | 확인하지 않은 것 {ai_candidates, open_review_requests}. 화면 'AI 영향 후보 1개 · 답하지 않은 검토 요청 1개' |
 
 ```json
 {
@@ -12011,7 +12018,7 @@ HTTP `201`.
 
 - 변경 제안 협의와 같은 참여자·기록·알림 구조를 사용한다.
 - 관련자 근거 없이 전체 팀원을 자동 호출하지 않는다.
-- (수정안 요청) 사람은 회의를 만들지 않는다. 서버가 작업 충돌을 감지하면 회의를 연다. 기본안: AI-A02 검증에서 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT가 나오면 origin=BEE_CONFLICT 회의를 만들고, 참여자는 팀장과 그 작업 담당자, 첫 기록은 비비의 CONFLICT_BRIEF다(Q17).
+- (수정안 요청) 사람은 회의를 만들지 않는다. 서버가 작업 충돌을 감지하면 회의를 연다. 기본안: AI-A02 검증에서 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT가 나오면 origin=BEE_CONFLICT 회의를 만들고, 참여자는 팀장, 그 작업 담당자, 충돌한 설계 항목의 담당 영역 팀원(화면 예: '최팀원 · 화면 문구')이고, 첫 기록은 작업·문서 칩(refs)을 단 비비의 CONFLICT_BRIEF다(Q17).
 - (수정안 요청) 같은 작업 묶음에 OPEN 회의가 있으면 새로 만들지 않는다. 참여자에게 MEETING 알림을 보낸다. 이 API는 내부 생성 경로로 바꾸거나 없앤다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -13025,7 +13032,7 @@ HTTP `201`.
 | `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 회의 기록에 남긴 SUMMARY 기록 |
 | `through_entry_id` | `ID` | Y | 정리에 쓴 마지막 기록 |
 | `conflicts` | `string[]` | Y | 충돌 |
-| `decisions` | `string[]` | Y | 결정 |
+| `decisions` | `object[]` | Y | 결정 {text, decided_by_member_id?} |
 | `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | Y | 바뀔 문서와 줄, 근거 발언 |
 | `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 할 일 |
 | `previous_summary_id` | `ID` | N | 수정 요청으로 다시 만든 정리면 이전 정리 |
@@ -13041,7 +13048,7 @@ HTTP `201`.
     "TASK-002와 TASK-003이 초대 만료 기간을 다르게 가정함"
   ],
   "decisions": [
-    "초대 만료는 7일로 통일"
+    {"text": "초대 만료는 7일로 통일", "decided_by_member_id": "21"}
   ],
   "document_changes": [
     {
@@ -13162,7 +13169,7 @@ HTTP `201`.
 | `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 회의 기록에 남긴 SUMMARY 기록 |
 | `through_entry_id` | `ID` | Y | 정리에 쓴 마지막 기록 |
 | `conflicts` | `string[]` | Y | 충돌 |
-| `decisions` | `string[]` | Y | 결정 |
+| `decisions` | `object[]` | Y | 결정 {text, decided_by_member_id?} |
 | `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | Y | 바뀔 문서와 줄, 근거 발언 |
 | `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 할 일 |
 | `previous_summary_id` | `ID` | N | 수정 요청으로 다시 만든 정리면 이전 정리 |
@@ -13178,7 +13185,7 @@ HTTP `201`.
     "TASK-002와 TASK-003이 초대 만료 기간을 다르게 가정함"
   ],
   "decisions": [
-    "초대 만료는 7일로 통일"
+    {"text": "초대 만료는 7일로 통일", "decided_by_member_id": "21"}
   ],
   "document_changes": [
     {
@@ -14147,6 +14154,7 @@ HTTP `200`.
 | `zone` | `string` | N | 사무실 안 위치. 허용 값은 FE와 합의 |
 | `seat` | `string` | N | 자리 식별값 |
 | `panel` | `string` | N | 열어 둔 메뉴. 공개 여부는 Q18 |
+| `activity` | `object` | N | 지금 하는 일 {action: VIEWING\|EDITING, target_type, target_id}. HUD의 '변경 제안 검토 중', 'TASK-002 계획 작성 중' |
 
 ```json
 {
@@ -14267,6 +14275,7 @@ HTTP `200`.
 - 같은 프로젝트 활성 멤버만 돌려준다.
 - 사람이 하는 일은 TSK-A02(진행 중 작업), 에이전트는 MON-A05로 프론트가 합친다.
 - 전송은 폴링으로 시작한다. SSE·WebSocket은 Q18이다.
+- (수정안 요청) 오프라인이면 마지막 위치·하는 일과 last_seen_at을 그대로 준다. 화면은 '오프라인 · 1시간 전 · TASK-002 계획 작성 중'처럼 보인다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -14358,7 +14367,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 세션 계정 수신 알림만 반환한다. 읽음과 문제 해결 상태는 다르다.
-- (수정안 요청) 새 알림: 비비 문서 검토 끝남(등록자), 문서 승인 요청(팀장), 문서 승인·반려(등록자), 회의가 끝나 문서가 바뀜(관련 작업 담당자)은 DOCUMENT_VERSION. 기준 v1 생김(활성 팀원)은 BASELINE, 비비가 연 회의(참여자)는 MEETING, 작업 담당자 변경(새 담당자)은 TASK.
+- (수정안 요청) 새 알림: 비비 문서 검토 끝남(등록자), 문서 승인 요청(팀장), 문서 승인·반려(등록자), 회의가 끝나 문서가 바뀜(관련 작업 담당자)은 DOCUMENT_VERSION. 기준 v1 생김(활성 팀원)은 BASELINE, 비비가 연 회의(참여자)는 MEETING, 작업 담당자 변경(새 담당자)은 TASK, 회의에 새 기록이 올라옴(다른 참여자)은 MEETING.
 - (수정안 요청) 대상이 지워졌거나 권한이 없으면 화면은 404를 받고 '찾을 수 없어요'를 보인 뒤 그 알림을 읽음 처리한다(기본안).
 
 [공통 규약·권한·담당자 목록](00-common.md)

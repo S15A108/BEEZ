@@ -443,7 +443,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
-| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도, 보내자마자 자동 참여시킬지(캔버스 메모 note-ax681p, 수정안은 수락 화면 유지), 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지 |
+| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도, 보내자마자 자동 참여시킬지(캔버스 메모 note-ax681p와 설정 › 팀원 초대 문구 '같은 이메일로 로그인하면 바로 이 프로젝트로 들어와요'는 자동 참여, 초대 수락 화면과 초대 보낸 뒤 문구는 수락 필요), 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
 | Q08 | 초안·제안 충돌 | 오서현 | 초안 해시·조회 범위·해시 발급, 초안 편집·삭제, expected_updated_at 정밀도 |
@@ -452,9 +452,9 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
 | Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부(수정안 기본안: 창을 연 동안만), '근거가 틀려요' 피드백 활용, 자주 묻는 질문 칩의 출처 |
-| Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 수정안은 공용 문서함 안에서 비비 검토 → 팀장 승인을 끝낸다. 기본안은 문서 버전 하위 API(DOC-A13~A23)다. 변경 제안(DocumentChange)에 얹을지, 추천안(문서함은 승인본 읽기, 새 버전은 변경 제안)으로 갈지 정한다 |
-| Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 기획 분석 화면이 빠져 PLN-A10의 항목 버전·초안 해시를 검토할 화면이 없다. 기본안: 필수 4종이 모두 승인되면 승인 문서에서 자동 추출한 항목을 그대로 넣어 기준 v1을 발행하고, 이후 변경 제안으로 고친다 |
-| Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 기준 v1 뒤 문서 승인(DOC-A21)과 회의 끝내기(MTG-A13)가 기준 버전을 올리는지, 관련 검증을 STALE로·진행 중 작업을 WAITING(REVALIDATION)으로 바꾸는지, 영향 분석을 돌리는지. 기본안: 변경 제안 승인(CHG-A09)과 같은 규칙. 잘못 반영된 회의 결과는 새 문서 버전으로 되돌린다 |
+| Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 수정안은 공용 문서함 안에서 비비 검토 → 팀장 승인을 끝낸다. 다만 변경 제안 보드끼리 어긋난다: 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'는 추천안 쪽이고, 새 변경 제안·반려 확인 화면은 '설계 항목만, 문서는 공용 문서함에서'다. 기본안은 문서 버전 하위 API(DOC-A13~A23)다. 변경 제안(DocumentChange)에 얹을지, 추천안(문서함은 승인본 읽기, 새 버전은 변경 제안)으로 갈지 정한다 |
+| Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 기획 분석 화면이 빠져 PLN-A10의 항목 버전·초안 해시를 검토할 화면이 없다. 기본안: 필수 4종이 모두 승인되면 승인 문서에서 자동 추출한 항목을 그대로 넣어 기준 v1을 발행하고, 이후 변경 제안으로 고친다. 승인 이력 화면도 기준 v1을 '공용 문서함에서 문서 4종 승인 · 문서 4 · 설계 항목 2'로 보인다 |
+| Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 기준 v1 뒤 문서 승인(DOC-A21)과 회의 끝내기(MTG-A13)가 기준 버전을 올리는지, 관련 검증을 STALE로·진행 중 작업을 WAITING(REVALIDATION)으로 바꾸는지, 영향 분석을 돌리는지. 기본안: 변경 제안 승인(CHG-A09)과 같은 규칙. 문서함 화면은 승인되면 '알림 API 명세서 v1이 팀의 기준 버전이 됐어요'라고 보여 기준이 바뀌는 쪽이다. 잘못 반영된 회의 결과는 새 문서 버전으로 되돌린다 |
 | Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지 |
 | Q18 | 접속·위치 공개 | 전진·박민용 | 사람의 위치를 '사무실 안 자리'까지만 보일지 열어 둔 메뉴까지 보일지, 보고 주기·TTL, 폴링·SSE·WebSocket 중 전송 수단(NTF-07 확장 후보와 함께) |
 | Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | 비교 대상(승인 문서, 기준이 없으면 함께 올린 초안), 단계 이름과 목표 소요 시간, 실패 때 재시도 한도와 팀장 우회 여부(기본안: 우회 없음), 업로드마다 드는 AI 비용 상한 |
@@ -522,6 +522,7 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `role_label` | `string` | N | 프로젝트 내 역할 라벨 |
 | `color` | `string` | N | 표시 색상 |
 | `agent_connected` | `boolean` | Y | 에이전트 연결 관측 여부 |
+| `agent_status` | `CONNECTED\|CHECK_REQUIRED\|NOT_CONNECTED` | Y | 팀 목록·HUD의 '연결됨·연결 미확인·연결 전'. CHECK_REQUIRED는 AgentConnection.status_check_required. 수정안 요청 |
 
 <a id="schema-invitation"></a>
 
@@ -546,8 +547,8 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `project_id` | `ID` | Y | 프로젝트 |
 | `label` | `string` | N | 토큰 이름 |
 | `created_at` | `Time` | Y | 발급 시각 |
-| `expires_at` | `Time` | N | 만료 시각. 만료 정책(Q06)이 없으면 생략. 수정안 요청 |
-| `scopes` | `string[]` | Y | 쓸 수 있는 범위. 지금은 이 프로젝트의 MCP 도구 전체(`mcp:project`). 수정안 요청 |
+| `expires_at` | `Time` | N | 만료 시각. 화면 예시는 발급 3개월 뒤. 만료 정책(Q06)이 없으면 생략. 수정안 요청 |
+| `scopes` | `string[]` | Y | 쓸 수 있는 범위. 발급 화면은 '작업 계획·기록·설계 조회'처럼 사람이 읽는 말로 보임. 값 목록은 Q06. 수정안 요청 |
 | `revoked_at` | `Time` | N | 폐기 시각 |
 | `last_used_at` | `Time` | N | 마지막 사용 |
 
@@ -1223,7 +1224,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 참여 멤버 |
 | `status` | `INVITED\|ACCEPTED\|DECLINED` | Y | 참여 상태. 비비가 연 회의의 참여자는 ACCEPTED로 만든다(수정안 요청). DB의 JOINED와 값 이름을 맞춘다 |
-| `role` | `LEADER\|TASK_OWNER` | N | 비비가 부른 이유. 수정안 요청 |
+| `role` | `LEADER\|TASK_OWNER\|DOMAIN_OWNER` | N | 비비가 부른 이유. 화면 예: '팀장 · TASK-001', 'TASK-002', '화면 문구'(담당 영역). 수정안 요청 |
 
 <a id="schema-meetingentry"></a>
 
@@ -1239,6 +1240,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `author_account_id` | `ID` | N | 작성 계정. 시스템 생성은 생략 |
 | `author_member_id` | `ID` | N | HUMAN이면 작성 멤버. 수정안 요청 |
 | `author_name` | `string` | N | HUMAN이면 표시 이름. 수정안 요청 |
+| `refs` | `object[]` | N | 비비 기록이 가리키는 대상 [{type: TASK\|DESIGN_ITEM\|DOCUMENT_VERSION, id, label}]. 화면은 칩으로 보임. 수정안 요청 |
 | `through_entry_id` | `ID` | N | 분석 마지막 입력 기록 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거 |
 | `created_at` | `Time` | Y | 작성 시각 |
@@ -1415,6 +1417,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `eta_seconds` | `integer` | N | 남은 시간 추정. 모르면 생략 |
 | `counts` | `object` | N | COMPLETED면 {major: integer, minor: integer} |
 | `open_count` | `integer` | Y | 아직 반영·넘기기를 하지 않은 제안 수 |
+| `applied_count` | `integer` | Y | 반영한 제안 수. 시작 가이드의 '고칠 곳 n개 반영' |
+| `steps` | `object[]` | Y | 단계별 {label, description, result}. 화면은 단계마다 '문단 4개', '필드 5개'처럼 결과를 보임 |
 | `error_code` | `string` | N | FAILED 원인 |
 | `started_at` | `Time` | N | 시작 시각 |
 | `completed_at` | `Time` | N | 끝난 시각 |
@@ -1493,7 +1497,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 회의 기록에 남긴 SUMMARY 기록 |
 | `through_entry_id` | `ID` | Y | 정리에 쓴 마지막 기록 |
 | `conflicts` | `string[]` | Y | 충돌 |
-| `decisions` | `string[]` | Y | 결정 |
+| `decisions` | `object[]` | Y | 결정 {text, decided_by_member_id?}. 화면은 '이팀장이 정함'처럼 정한 사람을 붙임 |
 | `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | Y | 바뀔 문서와 줄 |
 | `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 할 일 |
 | `previous_summary_id` | `ID` | N | 수정 요청으로 다시 만든 정리면 이전 정리 |
@@ -1516,6 +1520,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `title` | `string` | Y | 문서 제목 |
 | `locator` | [SourceLocator](#schema-sourcelocator) | Y | 근거 행 범위 |
 | `quote` | `string` | Y | 칠해서 보여 줄 근거 문장 |
+| `section_title` | `string` | N | 근거가 든 절 제목. 화면 예: '3.2 초대 정책' |
 | `claim` | `string` | N | AI가 이 근거로 뒷받침한 주장 |
 
 <a id="schema-presence"></a>
@@ -1532,6 +1537,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `zone` | `string` | N | 사무실 안 위치. 예: desk, meeting_room, lounge |
 | `seat` | `string` | N | 자리 식별값 |
 | `panel` | `string` | N | 열어 둔 메뉴. 공개 범위는 Q18 |
+| `activity` | `object` | N | 지금 하는 일 {action: VIEWING\|EDITING, target_type, target_id, label}. 화면 예: '변경 제안 검토 중', 'TASK-002 계획 작성 중'. 오프라인이면 마지막 값 |
 
 <a id="schema-guidestate"></a>
 
@@ -1558,7 +1564,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `project_id` | `ID` | Y | 프로젝트 |
 | `name` | `string` | Y | 프로젝트 이름 |
 | `my_role` | `LEADER` | Y | 탈퇴자의 역할. 지금 기준에서는 팀장만 막힘 |
-| `member_count` | `integer` | Y | 활성 멤버 수(본인 포함) |
+| `member_count` | `integer` | Y | 본인 말고 활성 팀원 수. 화면 '팀장 · 팀원 1명' |
 
 <a id="schema-changeditem"></a>
 
