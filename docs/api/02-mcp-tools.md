@@ -1,6 +1,6 @@
 # BEEZ MCP Tools
 
-버전: 0.4 · 갱신일: 2026-10-27 · 개발 계약 초안
+버전: 0.5 · 갱신일: 2026-10-28 · 개발 계약 초안
 
 Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한다. [공통 규약·권한·담당자](00-common.md)와 [동일 업무 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -162,6 +162,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
+| 503 | `context_not_ready` | 컨텍스트 구성 모듈 미연결·색인 미준비. 패킷을 저장하지 않는다. 검색을 마쳤는데 근거가 0건이면 오류가 아니라 정상 응답의 `unresolved`로 표시한다 ([서비스 연결 계약](../design/08-mcp-service-contract.md)) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -916,6 +917,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 같은 이전 리비전의 후속 기록 존재 |
+| 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1073,6 +1075,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 리비전 경합 |
 | 409 | `dependency_cycle` | 선행 순환 |
+| 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1479,7 +1482,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `task` | [TaskDetail](00-common.md#schema-taskdetail) | Y | 처리된 작업 |
-| `changes` | [DesignChanges](00-common.md#schema-designchanges) | Y | 관련 변경과 유효성 요약 |
+| `changes` | [DesignChanges](00-common.md#schema-designchanges) | N | 관련 변경과 유효성 요약. 기준 설계가 한 번도 없으면 생략 |
+| `changes_since_version` | `integer` | N | `changes`를 계산한 기준 번호. `changes`가 있으면 반환 |
 
 ```json
 {
@@ -1586,7 +1590,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
       }
     ],
     "has_more": false
-  }
+  },
+  "changes_since_version": 1
 }
 ```
 
@@ -1603,6 +1608,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 409 | `dependency_not_completed` | 선행 미완료 |
 | 409 | `task_conflict` | 점유 충돌 |
 | 409 | `validation_not_passed` | 유효 PASS 없음 |
+| 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1620,6 +1626,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
+- `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

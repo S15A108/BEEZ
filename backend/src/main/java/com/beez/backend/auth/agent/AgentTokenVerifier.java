@@ -3,8 +3,8 @@ package com.beez.backend.auth.agent;
 import com.beez.backend.common.access.AgentPrincipal;
 
 /**
- * /mcp Bearer 토큰 검증. 본체(해시 조회·폐기 확인·멤버십 확인·last_used_at 갱신)는 -175/-176 에서 구현한다.
- * 그 전까지는 {@link RejectingAgentTokenVerifier} 가 모든 토큰을 거부한다.
+ * /mcp Bearer 토큰 검증. 구현은 {@link com.beez.backend.agenttoken.StoredAgentTokenVerifier}
+ * (해시 조회·폐기 확인·멤버십 확인·last_used_at 갱신, -175).
  */
 public interface AgentTokenVerifier {
 

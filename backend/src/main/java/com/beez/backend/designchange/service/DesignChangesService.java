@@ -10,6 +10,7 @@ import com.beez.backend.designchange.dto.BaselineSummaryResponse;
 import com.beez.backend.designchange.dto.ChangedItemResponse;
 import com.beez.backend.designchange.dto.DesignChangesQuery;
 import com.beez.backend.designchange.dto.DesignChangesResponse;
+import com.beez.backend.designchange.dto.PlanChangesResponse;
 import com.beez.backend.designchange.dto.PublishedChangeResponse;
 import com.beez.backend.designchange.dto.ValidationValidityResponse;
 import java.sql.Timestamp;
@@ -36,7 +37,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>첫 발행(v1)은 변경이 아니라 시작점이라 목록에서 뺀다. 제안 없이 발행된 기준은 proposal_id 를 생략한다</li>
  *   <li>폐기 = 새 기준의 baseline_item 에서 빠짐 (발행 -194 계약, {@link DesignChangeQueries}). retired_at 시각으로 추정하지 않는다</li>
  *   <li>기준 설계가 한 번도 없으면 409 baseline_missing (-156 ProjectDesignLookup 과 같은 코드)</li>
- *   <li>영향 작업 = 변경 전 버전을 현재 계획이 참조하는(READS·IMPLEMENTS·CHANGES), 완료·취소되지 않은 작업. 기준은 {@link DesignChangeQueries}</li>
+ *   <li>영향 작업 = 변경 전 버전 또는 그보다 옛 버전을 현재 계획이 참조하는(READS·IMPLEMENTS·CHANGES) 작업. affected_task_ids 는
+ *       완료·취소를 빼고, task_id 를 지정한 목록은 상태와 무관하게 그 작업이 영향받은 변경을 준다. 기준은 {@link DesignChangeQueries}</li>
  *   <li>검증이 한 번도 없는 작업은 validation_validity 에 넣지 않는다 (명세 상태 목록에 NOT_RUN 이 없고 validation_id 가 필수)</li>
  *   <li>task_id 를 주면 그 작업이 영향받은 변경만, 검증 유효성도 그 작업만. 다른 프로젝트 작업이면 404 가 아니라 빈 결과(-172 참고 2)</li>
  * </ol>
@@ -71,13 +73,69 @@ public class DesignChangesService {
         if (in.sinceVersion() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "since_version 은 필수입니다");
         }
-        int since = in.sinceVersion();
         Long taskId = Ids.parse(in.taskId(), "task_id");
-        int limit = normalizeLimit(in.limit());
 
         // 현재 기준. 없으면 발행이 한 번도 안 된 프로젝트
         BaselineRow latest = findCurrentBaseline(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "baseline_missing", "승인된 기준 설계가 아직 없습니다"));
+        return build(actor, projectId, latest, in.sinceVersion(), true, taskId, in.cursor(), normalizeLimit(in.limit()),
+                "get_design_changes");
+    }
+
+    /**
+     * report_task_state(MCP-12) 응답의 changes. 그 작업의 <b>현재 계획을 세운 시점의 기준 설계 이후</b> 발행된 변경과
+     * 그 작업 검증의 유효성 (S15P31A108-166 결정). 명세 MCP-12 는 기준점을 정하지 않는다.
+     * 기준점은 계획 저장 당시 기준 설계(근거 패킷이 더 옛 기준이면 그 기준). 자세한 규칙은 planBaselineVersion.
+     * 처음 연결 규칙(since=0 → 최근 1건)은 쓰지 않는다. 기준 설계가 한 번도 없으면 null (호출자가 changes 를 비운다).
+     * 호출자는 이미 권한 검사를 통과한 actor 를 넘긴다. 조회 이력도 남긴다.
+     *
+     * <p>계산에 쓴 기준 번호(sinceVersion)도 함께 돌려준다. 다음 페이지가 있으면 에이전트가
+     * get_design_changes(since_version=이 값, task_id=같은 작업, cursor=next_cursor)로 이어 본다 (리뷰 반영).
+     */
+    @Transactional
+    public PlanChangesResponse changesSincePlan(ProjectActor actor, Long projectId, Long taskId) {
+        Optional<BaselineRow> latest = findCurrentBaseline(projectId);
+        if (latest.isEmpty()) {
+            return null;
+        }
+        int since = planBaselineVersion(projectId, taskId);
+        if (since > latest.get().versionNo()) {
+            since = latest.get().versionNo();
+        }
+        DesignChangesResponse changes = build(actor, projectId, latest.get(), since, false, taskId, null, DEFAULT_LIMIT,
+                "report_task_state");
+        return new PlanChangesResponse(since, changes);
+    }
+
+    /**
+     * 현재 계획의 기준 번호. 계획 저장 때 남긴 기준(task_plan_revision.base_baseline_id)과, 근거 패킷이 있으면 그 패킷의 기준 중
+     * <b>더 옛 번호</b>를 쓴다 (계획이 옛 패킷을 보고 쓰였으면 그 이후 변경도 보여 준다). 둘 다 없으면 0 — 모든 변경.
+     * 시각을 비교해 추정하지 않는다: 리비전 시각(앱)과 발행 시각(DB)의 시계가 어긋나면 변경이 빠진다 (리뷰 반영).
+     */
+    private int planBaselineVersion(Long projectId, Long taskId) {
+        Optional<Integer> version = jdbc.sql("""
+                        select least(
+                                 coalesce((select b.version_no from baseline b
+                                            where b.id = r.base_baseline_id and b.project_id = :projectId), 0),
+                                 coalesce((select b.version_no from dev_context_packet k join baseline b on b.id = k.baseline_id
+                                            where k.id = r.context_packet_id and k.project_id = :projectId), 2147483647))
+                          from task t
+                          join task_plan_revision r on r.id = t.current_plan_revision_id
+                         where t.id = :taskId and t.project_id = :projectId
+                        """)
+                .param("projectId", projectId)
+                .param("taskId", taskId)
+                .query(Integer.class)
+                .optional();
+        if (version.isEmpty()) {
+            return 0;
+        }
+        return version.get();
+    }
+
+    private DesignChangesResponse build(ProjectActor actor, Long projectId, BaselineRow latest, int since,
+                                        boolean firstConnectRule, Long taskId, String cursorText, int limit,
+                                        String tool) {
 
         // 오류표: 음수 또는 현재보다 큰 기준 번호 → 400 invalid_version
         if (since < 0 || since > latest.versionNo()) {
@@ -87,15 +145,18 @@ public class DesignChangesService {
         // 첫 페이지 시점의 최신 번호(ceiling)를 cursor 에 고정한다. 페이지 도중 새 발행이 생겨도 목록이 흔들리지 않는다
         int ceiling = latest.versionNo();
         Integer before = null;
-        if (in.cursor() != null && !in.cursor().isBlank()) {
-            ChangesCursor cursor = ChangesCursor.decode(in.cursor());
+        boolean continuing = cursorText != null && !cursorText.isBlank();
+        if (continuing) {
+            ChangesCursor cursor = ChangesCursor.decode(cursorText);
             cursor.requireSameQuery(since, taskId);
             ceiling = cursor.ceiling();
             before = cursor.lastVersion();
         }
-        // since=0 은 "처음 연결": 현재 기준과 가장 최근 변경 하나만 (정한 것 1)
+        // since=0 은 "처음 연결": 현재 기준과 가장 최근 변경 하나만 (정한 것 1).
+        // 이어 보기(cursor)에는 적용하지 않는다. 처음 연결 결과는 1건이라 다음 페이지가 없고,
+        // since=0 cursor 는 report_task_state(계획 당시 발행 없음 → 0)가 만든 것이라 전체 범위를 이어야 한다
         int effectiveSince = since;
-        if (since == 0) {
+        if (firstConnectRule && since == 0 && !continuing) {
             effectiveSince = ceiling - 1;
         }
 
@@ -140,7 +201,7 @@ public class DesignChangesService {
         List<ValidationValidityResponse> validity = findValidationValidity(projectId, actor.memberId(), taskId);
 
         // 조회 이력 (CTX-05·06): 어느 기준 설계를 기준으로 변경을 봤는지. 작업 소속 확인은 recorder 가 한다
-        accessLog.record(actor, taskId, "get_design_changes", ContextAccessRecorder.KIND_BASELINE,
+        accessLog.record(actor, taskId, tool, ContextAccessRecorder.KIND_BASELINE,
                 current.id(), current.id(), null);
         return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
     }
@@ -250,6 +311,7 @@ public class DesignChangesService {
                         select distinct baseline_id, task_id
                           from affected
                          where baseline_id in (:ids)
+                           and task_status not in ('COMPLETED', 'CANCELLED')
                          order by baseline_id, task_id
                         """)
                 .param("projectId", projectId)

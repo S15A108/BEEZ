@@ -13,13 +13,13 @@ import java.util.Map;
 public record TaskPlanInput(
         @NotBlank String title,
         @NotBlank String goal,
-        @NotNull List<String> includedScope,
-        @NotNull List<String> excludedScope,
+        @NotNull List<@NotNull String> includedScope,
+        @NotNull List<@NotNull String> excludedScope,
         @NotBlank String approach,
-        @NotNull List<String> completionCriteria,
-        @NotNull List<String> dependencyTaskIds,
-        @NotNull @Valid List<DesignRefInput> designRefs,
-        @NotNull List<Map<String, Object>> unlinked,
+        @NotNull List<@NotNull String> completionCriteria,
+        @NotNull List<@NotBlank String> dependencyTaskIds,
+        @NotNull List<@NotNull @Valid DesignRefInput> designRefs,
+        @NotNull List<@NotNull Map<String, Object>> unlinked,
         @NotNull Boolean noContractChange,
         String contextPacketId
 ) {

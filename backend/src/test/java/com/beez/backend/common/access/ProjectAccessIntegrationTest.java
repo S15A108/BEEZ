@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 class ProjectAccessIntegrationTest extends IntegrationTestSupport {
 
     /**
-     * "agent-{accountId}-{projectId}-{tokenId}" 형식만 통과시키는 토큰 검증 대역. 실제 검증은 -175.
+     * "agent-{accountId}-{projectId}-{tokenId}" 형식만 통과시키는 토큰 검증 대역. 실제 검증은 AgentTokenApiIntegrationTests.
      * 폐기 여부는 보지 않는다 — 필터가 놓친 폐기 토큰을 권한 검사가 막는지 확인하기 위해서다.
      */
     static final String VALID_PREFIX = "agent-";

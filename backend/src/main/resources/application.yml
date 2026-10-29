@@ -106,3 +106,6 @@ beez:
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 초대 링크 = {base-url}/invite?token=…
     ttl: ${INVITE_TTL:7d}
+  agent:
+    mcp-url: ${MCP_URL:http://localhost:8080/mcp}   # 토큰 발급 응답의 연결 URL (AGT-A01)
+    max-active-tokens: ${AGENT_MAX_ACTIVE_TOKENS:5}  # 프로젝트당 한 계정의 폐기 안 된 토큰 수 (Q06)
