@@ -80,7 +80,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 
-## 1. 테이블과 소유자 (43개)
+## 1. 테이블과 소유자 (44개)
 
 | 묶음 | 테이블 | 소유 |
 |---|---|---|
@@ -88,7 +88,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, planning_question | 오서현 |
 | B. 설계 의존관계·이력 | design_item_dependency, design_item_dependency_history (V9), design_relation_set (V9) | 변준성 (진입점은 오서현, #40 합의) |
 | B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
-| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, approval, meeting, meeting_participant, meeting_entry | 오서현 |
+| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target, approval, meeting, meeting_participant, meeting_entry | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
 | C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |
@@ -249,8 +249,10 @@ erDiagram
   project ||--o{ change_proposal : ""
   baseline ||--o{ change_proposal : "base_baseline_id"
   change_proposal ||--o{ change_proposal_item : "CREATE, UPDATE, RETIRE"
-  change_proposal ||--o{ change_comment : "의견, 검토 요청, 결정"
+  change_proposal ||--o{ change_comment : "의견, 검토 요청, 결정 (proposal_revision_no = 보고 쓴 제출 리비전)"
+  change_comment ||--o{ change_comment_target : "검토 요청 대상·관련 멤버(계정)"
   change_proposal ||--o{ change_proposal_revision : "불변 제출 리비전"
+  change_proposal_revision ||--o{ change_comment : "의견이 귀속된 리비전"
   change_proposal_revision ||--o| approval : "리비전당 결정 1건"
   change_proposal_revision ||--o{ change_proposal_document : "기준/제안 문서 버전"
   change_proposal |o--o{ meeting : ""
