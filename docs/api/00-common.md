@@ -16,7 +16,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | [MCP Tools](02-mcp-tools.md) | Claude Code → backend /mcp의 도구별 계약 |
 | [AI Internal](03-ai-internal.md) | backend → ai의 분석·생성·임베딩 계약 |
 
-기준 자료: [요구사항](../BEEZ_요구사항_명세서.md), [업무 분담안](../BEEZ_업무분담안.md), [아키텍처](../design/01-system-architecture.md), [시스템 플로우](../design/02-system-flow.md), [ERD](../design/03-erd.md), [기획서](../BEEZ_기획서.md).
+기준 자료: 요구사항 명세서·업무 분담안·기획서와 [아키텍처](../design/01-system-architecture.md), [시스템 플로우](../design/02-system-flow.md), [ERD](../design/03-erd.md). 기획 원문은 별도 참고 자료이며 공용 API 계약은 이 문서와 위 API 명세에 정리한다.
 
 상세 문서의 상태는 계약의 검토 수준이다. `설계 초안`은 업무 API의 구현 완료를 뜻하지 않는다. `담당자 검토`·`합의 필요`는 해당 절 또는 9절의 미결 정책을 확인해야 한다. 지정 경로는 아키텍처·플로우를 유지하고, 그 밖의 상세 경로·DTO는 이 계약의 개발 초안이다. API별 중첩 타입은 10절 공통 스키마로 연결된다.
 
@@ -118,6 +118,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성은 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
 - 작업 변경은 expected_revision_no/expected_lock_version, 제안 변경은 expected_updated_at, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
@@ -129,19 +130,24 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 대상 | 값·주요 조건 |
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
+| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토 |
 | 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
 | 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함. REVALIDATION은 시스템만 설정(설계 발행·완료 delta) |
 | 문서 분석·초안 job | PENDING, RUNNING, COMPLETED, FAILED. 저장 구조·세부 정책 Q07. 검증 실행은 Validation.status·attempt로 따로 관리 |
-| 현재 승인본 | project.current_baseline_id → baseline_item / baseline_document |
+| 현재 개발 기준 | project.current_baseline_id → baseline_item / baseline_document. 문서 관리 화면의 개별 승인본과 구분 |
 | 계획 참조 | 계획 리비전 × 항목 × 정확한 버전 × 관계 |
 | 관계 강도 | CHANGES &gt; IMPLEMENTS &gt; READS. 항목당 하나, 팀 동의 Q02 |
 | 완료 | 담당자의 자기 보고. 코드 품질·테스트 검증 완료와 구분 |
 
 ### 기준 설계 발행
 
-초기 문서와 AI 생성 항목은 DRAFT다. 팀장이 검토한 원문·항목 버전을 승인하면 문서·항목 상태, baseline 두 스냅샷과 현재 포인터를 원자적으로 발행한다. 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면 409이며 최신 기준으로 제안을 갱신해 검토한다.
+초기 문서 버전과 수동 설계 항목은 DRAFT다. 최초 baseline 전에는 등록자가 문서를 보완하고 비비 검토·제안 처리를 마친 뒤 제출한다. 팀장은 문서별로 승인 또는 사유를 포함한 반려를 하며, 문서 승인 트랜잭션에서 해당 문서 버전과 제출의 결정 상태를 저장한다. 이때 baseline을 생성하지 않는다.
+
+필수 문서 4종의 승인·색인이 모두 완료되면 팀장이 별도 버튼으로 최초 baseline을 생성한다. project 행 잠금 아래 승인 문서·색인과 전체 검토 집합을 재확인하고, 수동 항목 승인·baseline_item·baseline_document·현재 포인터를 한 트랜잭션으로 저장한다. 이미 완료한 문서별 승인 상태를 이 단계에서 다시 변경하지 않는다.
+
+최초 발행 이후 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면 409이며 최신 기준으로 제안을 갱신해 검토한다.
 
 변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 성공 커밋 뒤 알림·활동은 중복 식별값으로 처리한다. 이벤트 전달 실패는 이미 완료한 발행을 다시 생성하는 이유가 아니다. D7·전달 유실 방지 세부는 Q03이다.
 
@@ -284,13 +290,13 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AGT-A04 에이전트 연결 안내](01-backend-rest.md#agt-a04) | GET `/api/projects/{id}/agent-connection-guide` | MEMBER | 전진 | — | 박민용 |
 | [AGT-A05 에이전트 연결 현황 목록](01-backend-rest.md#agt-a05) | GET `/api/projects/{id}/agents` | MEMBER | 전진 | — | 박민용 |
 | [AGT-A06 에이전트 연결 상세](01-backend-rest.md#agt-a06) | GET `/api/projects/{id}/agents/{agent_session_id}` | MEMBER | 전진 | — | 박민용 |
-| [DOC-A01 초기 문서 업로드](01-backend-rest.md#doc-a01) | POST `/api/projects/{id}/documents` | LEADER | 오서현 | 박상은 | 오서현 |
+| [DOC-A01 초기 문서 업로드](01-backend-rest.md#doc-a01) | POST `/api/projects/{id}/documents` | HUMAN MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A02 문서 목록](01-backend-rest.md#doc-a02) | GET `/api/projects/{id}/documents` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A03 문서 원문 조회](01-backend-rest.md#doc-a03) | GET `/api/projects/{id}/documents/{document_id}` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A04 원본 파일 다운로드](01-backend-rest.md#doc-a04) | GET `/api/projects/{id}/documents/{document_id}/versions/{version_no}/file` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A05 문서 버전 목록](01-backend-rest.md#doc-a05) | GET `/api/projects/{id}/documents/{document_id}/versions` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A06 문서 버전 비교](01-backend-rest.md#doc-a06) | GET `/api/projects/{id}/documents/{document_id}/diff` | MEMBER | 오서현 | 박상은 | 오서현 |
-| [DOC-A07 문서 분류 수정](01-backend-rest.md#doc-a07) | PATCH `/api/projects/{id}/documents/{document_id}` | LEADER | 오서현 | 박상은 | 오서현 |
+| [DOC-A07 문서 분류 수정](01-backend-rest.md#doc-a07) | PATCH `/api/projects/{id}/documents/{document_id}` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
 | [PLN-A01 문서 분석 상태·결과 조회](01-backend-rest.md#pln-a01) | GET `/api/projects/{id}/documents/{document_id}/analysis` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [PLN-A02 문서 분석 재시도](01-backend-rest.md#pln-a02) | POST `/api/projects/{id}/documents/{document_id}/analysis/retry` | LEADER | 오서현 | 박상은 | 오서현 |
 | [PLN-A03 기획 보완 질문 목록](01-backend-rest.md#pln-a03) | GET `/api/projects/{id}/planning-questions` | MEMBER | 오서현 | 박상은 | 오서현 |
@@ -300,13 +306,22 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [PLN-A07 설계 항목 초안 추가](01-backend-rest.md#pln-a07) | POST `/api/projects/{id}/design-items` | LEADER | 오서현 | 박상은 | 오서현 |
 | [PLN-A08 설계 항목 초안 수정](01-backend-rest.md#pln-a08) | PATCH `/api/human/design-items/{id}` | LEADER | 오서현 | 박상은 | 오서현 |
 | [PLN-A09 설계 항목 초안 제외](01-backend-rest.md#pln-a09) | DELETE `/api/human/design-items/{id}` | LEADER | 오서현 | 박상은 | 오서현 |
-| [PLN-A10 최초 기준 설계 승인·발행](01-backend-rest.md#pln-a10) | POST `/api/human/baselines` | LEADER | 오서현 | 박상은 | 오서현 |
+| [PLN-A10 최초 기준 설계 생성](01-backend-rest.md#pln-a10) | POST `/api/human/baselines` | LEADER | 오서현 | 박상은 | 오서현 |
 | [DOC-A08 현재 기준 설계 조회](01-backend-rest.md#doc-a08) | GET `/api/projects/{id}/baselines/current` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A09 기준 설계 이력 목록](01-backend-rest.md#doc-a09) | GET `/api/projects/{id}/baselines` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A10 기준 설계 특정 버전 조회](01-backend-rest.md#doc-a10) | GET `/api/projects/{id}/baselines/{version_no}` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A11 문서·설계 검색](01-backend-rest.md#doc-a11) | GET `/api/projects/{id}/search` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [TRC-A01 설계 항목 의존관계 조회](01-backend-rest.md#trc-a01) | GET `/api/projects/{id}/design-items/{item_id}/dependencies` | MEMBER | 변준성 | — | 박민용 |
 | [DOC-A12 변경용 원문 파일 업로드](01-backend-rest.md#doc-a12) | POST `/api/projects/{id}/documents/{document_id}/draft-versions` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [DOC-A13 문서 작성 내용 조회](01-backend-rest.md#doc-a13) | GET `/api/projects/{id}/documents/{document_id}/working-copy` | HUMAN MEMBER | 오서현 | — | 오서현 |
+| [DOC-A14 문서 작성 내용 수정](01-backend-rest.md#doc-a14) | PATCH `/api/projects/{id}/documents/{document_id}/working-copy` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
+| [DOC-A15 문서 보완 파일 재업로드](01-backend-rest.md#doc-a15) | POST `/api/projects/{id}/documents/{document_id}/working-copy/file` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
+| [DOC-A16 문서 비비 검토 요청](01-backend-rest.md#doc-a16) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
+| [DOC-A17 문서 보완 제안 반영·넘기기](01-backend-rest.md#doc-a17) | PATCH `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
+| [DOC-A18 문서 팀장 검토 요청·재제출](01-backend-rest.md#doc-a18) | POST `/api/projects/{id}/documents/{document_id}/review-submissions` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
+| [DOC-A19 문서 검토 요청 목록](01-backend-rest.md#doc-a19) | GET `/api/projects/{id}/document-review-submissions` | HUMAN MEMBER | 오서현 | — | 오서현 |
+| [DOC-A20 문서 검토 제출 상세](01-backend-rest.md#doc-a20) | GET `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}` | HUMAN MEMBER | 오서현 | — | 오서현 |
+| [DOC-A21 문서별 승인·반려](01-backend-rest.md#doc-a21) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/decision` | HUMAN LEADER | 오서현 | — | 오서현 |
 | [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A03 설계 변경 제안 상세·비교](01-backend-rest.md#chg-a03) | GET `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -409,18 +424,18 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 | ID | 계약 항목 | 담당 | 확인할 내용 |
 | --- | --- | --- | --- |
-| Q01 | 항목 본문 스키마 | 오서현·박상은 | kind별 content 필수 키·schema_version, API/DATA 계약 구조. 107의 비교 예시는 최종 본문 스키마를 선점하지 않음 |
+| Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책, 세션 쿠키·만료·CSRF, 재설정 토큰 만료·재발송·세션 정리 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
-| Q08 | 초안·제안 충돌 | 오서현 | 초안 해시·조회 범위·해시 발급, 초안 편집·삭제, expected_updated_at 정밀도 |
+| Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 후속 제안 expected_updated_at 정밀도는 별도 검토 |
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
-| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10은 §5의 24시간·design_http_command 범위 한정 결정 적용 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부 |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
@@ -601,8 +616,109 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 문서 유형 |
 | `title` | `string` | Y | 문서 제목 |
 | `domain` | `string` | N | 분류 |
-| `approved_version` | [DocumentVersion](00-common.md#schema-documentversion) | N | 현재 기준의 승인본 |
+| `approved_version` | [DocumentVersion](00-common.md#schema-documentversion) | N | 문서별 최신 승인본. 개발 기준 baseline과 별개이며 baseline 생성 전에도 존재 가능 |
 | `latest_draft` | [DocumentVersion](00-common.md#schema-documentversion) | N | 최신 미승인 초안 |
+
+<a id="schema-documentworkingcopy"></a>
+
+### DocumentWorkingCopy
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 문서 ID |
+| `owner_account_id` | `ID` | Y | 등록한 사람 계정 |
+| `revision` | `integer` | Y | 작성 내용의 양수 리비전 |
+| `status` | `EDITING\|SUBMITTED\|APPROVED\|REJECTED` | Y | 작성 건 상태 |
+| `content` | `string` | Y | 정규화 본문 |
+| `file_name` | `string` | Y | 작성 파일명 |
+| `latest_review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | N | 마지막 비비 검토 결과 |
+| `submissions` | [DocumentReviewSubmission[]](00-common.md#schema-documentreviewsubmission) | Y | 제출 이력, 최신 ID 순 |
+
+<a id="schema-documentreviewreference"></a>
+
+### DocumentReviewReference
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 참고 문서 ID |
+| `document_version_id` | `ID` | Y | 검토 당시 승인 버전 |
+| `kind` | `string` | Y | 비교 문서 종류 |
+| `version_no` | `integer` | Y | 버전 번호 |
+| `content` | `string` | Y | 검토 당시 참고 본문 |
+
+<a id="schema-documentreviewsuggestion"></a>
+
+### DocumentReviewSuggestion
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 보완 제안 ID |
+| `explanation` | `string` | Y | 누락/보완 이유 |
+| `original_text` | `string` | Y | 변경할 원문 구간 |
+| `replacement_text` | `string` | Y | 제안 대체문. 빈 문자열 허용 |
+| `decision` | `PENDING\|APPLIED\|SKIPPED` | Y | 작성자 처리 상태 |
+
+<a id="schema-documentbeereview"></a>
+
+### DocumentBeeReview
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 검토 결과 ID |
+| `input_revision` | `integer` | Y | 검토한 작성 리비전 |
+| `resolved_revision` | `integer` | Y | 같은 검토의 제안 반영을 포함한 리비전 |
+| `reference_hash` | `string` | Y | 검토 당시 참고 승인본 집합 식별 해시 |
+| `summary` | `string` | Y | 검토 요약 |
+| `unavailable_references` | `string[]` | Y | 승인 비교 자료가 없는 문서 종류 |
+| `references` | [DocumentReviewReference[]](00-common.md#schema-documentreviewreference) | Y | 당시 참고 자료 |
+| `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 보완 제안과 선택 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | Y | 검증한 실제 모델 호출 사용량 |
+
+<a id="schema-documentreviewsubmission"></a>
+
+### DocumentReviewSubmission
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 불변 제출 ID |
+| `document_id` | `ID` | Y | 같은 작성 건의 문서 ID |
+| `document_version_id` | `ID` | Y | 제출한 정확한 문서 버전 |
+| `submitted_by` | `ID` | Y | 제출한 작성자 계정 |
+| `revision` | `integer` | Y | 제출 당시 작성 리비전 |
+| `status` | `SUBMITTED\|APPROVED\|REJECTED` | Y | 심사 상태 |
+| `content_hash` | `string` | Y | 제출 원본 bytes의 해시 |
+| `submitted_at` | `Time` | Y | 제출 시각 |
+| `decided_by` | `ID` | N | 심사한 팀장 계정 |
+| `decided_at` | `Time` | N | 결정 시각 |
+| `rejection_reason` | `string` | N | 반려 상태일 때 필수인 사유 |
+
+<a id="schema-documentreviewsubmissiondetail"></a>
+
+### DocumentReviewSubmissionDetail
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `submission` | [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmission) | Y | 제출/결정 메타데이터 |
+| `content` | `string` | Y | 제출 당시 불변 본문 |
+| `review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | Y | 해당 제출에 연결한 검토 자료 |
+
+<a id="schema-designitem-content-v1"></a>
+
+### DesignItemContent v1
+
+`schema_version=1`, JSON 객체의 `description`은 모든 종류에서 필수인 비어 있지 않은 문자열이다. 화면 표시 문장과 DB `design_item_version.title`에 같은 값을 사용한다. 원문 출처가 없는 사람이 합의한 항목도 등록할 수 있으며 origin=HUMAN이다.
+
+| kind | 필수 content 필드 | 예 |
+| --- | --- | --- |
+| REQUIREMENT | description | 로그인한 사용자는 참여 프로젝트를 조회한다. |
+| POLICY | description | 프로젝트 삭제는 인간 팀장만 수행한다. |
+| CONSTRAINT | description | 문서 업로드는 파일당 1 MiB 이하이다. |
+| API_CONTRACT | description, method, path | method=GET, path=/api/projects |
+| DATA_CONTRACT | description, entity, fields | entity=account, fields=[{"name":"id","type":"bigint"}] |
+
+- description은 10,000자 이하. API method는 대문자 GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS/TRACE, path는 `/`로 시작하고 공백·제어 문자·쿼리·fragment가 없는 2,000자 이하 경로다.
+- DATA_CONTRACT의 entity는 비어 있지 않은 문자열, fields는 배열이다. 배열 원소의 세부 스키마는 이 버전에서 강제하지 않는다. 추가 JSON 필드는 보존한다.
+- 다른 schema_version·미지원 kind·잘못된 필수 필드는 400 validation_failed. JSON 최대 크기는 canonical UTF-8 1 MiB, 중첩 깊이는 32다.
 
 <a id="schema-designitemversion"></a>
 
@@ -617,7 +733,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `version_no` | `integer` | Y | 항목 버전 번호 |
 | `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 항목 버전 상태 |
 | `schema_version` | `integer` | Y | 본문 스키마 버전 |
-| `content` | `object` | Y | kind별 본문 구조. Q01 검토 대상 |
+| `content` | `object` | Y | [5종 v1 본문](00-common.md#schema-designitem-content-v1). 모든 종류에 description 필수, API는 method/path, DATA는 entity/fields 추가 필수 |
 | `source` | [Source](00-common.md#schema-source) | N | 원문 출처 |
 | `content_hash` | `string` | N | DRAFT 본문 경합 검사 해시 |
 
