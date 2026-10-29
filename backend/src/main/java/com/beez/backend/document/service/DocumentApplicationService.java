@@ -196,8 +196,7 @@ public class DocumentApplicationService {
         access.requireMember(caller, project); document(project, id);
         var a = versionNumber(id, from); var b = versionNumber(id, to);
         String aText = Objects.toString(a.get("content_text"), ""); String bText = Objects.toString(b.get("content_text"), "");
-        // Full before/after blocks preserve exact content, including a missing final newline.
-        String difference = aText.equals(bText) ? "" : "--- version " + from + "\n" + aText + "\n+++ version " + to + "\n" + bText;
+        String difference = com.beez.backend.common.diff.LineDiff.compare(aText, bText);
         return Map.of("from_version", from, "to_version", to, "format", "TEXT", "diff", difference,
                 "before_hash", a.get("content_hash"), "after_hash", b.get("content_hash"));
     }

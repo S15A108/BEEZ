@@ -1,10 +1,12 @@
 # BEEZ API Common
 
-버전: 0.7 · 갱신일: 2026-10-28 · 개발 계약 초안
+버전: 0.8 · 갱신일: 2026-10-29 · 개발 계약 초안
 
 2026-10-27: 원문 RAG의 SourceLocator·RetrievalScope·RetrievedEvidence를 추가했다. 관련 내부 호출은 AI-A09와 AI-A04/05 확장을 따른다. 기존 문서/승인 상태나 비RAG 계약을 일괄 변경하지 않는다.
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
+
+2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q24에 올렸다. 기준 v1 뒤의 문서 변경은 dev처럼 모두 변경 제안으로 간다.
 
 ## 1. 문서 안내
 
@@ -102,11 +104,11 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 403 | 역할·소유 조건 미충족 | forbidden |
 | 404 | 리소스 없음 또는 소속 비노출 | not_found |
 | 405 | 지원하지 않는 메서드 | method_not_allowed |
-| 409 | 현재 상태·버전·중복·의존 충돌 | version_conflict, revision_conflict, baseline_conflict |
-| 410 | 링크 만료 | invitation_expired, reset_token_expired |
+| 409 | 현재 상태·버전·중복·의존 충돌 | version_conflict, revision_conflict, baseline_conflict, baseline_missing(기준 v1 전) |
+| 410 | 링크 만료 | invitation_expired, reset_token_expired. 수정안 요청: 초대는 만료 없는 자동 참여(Q05)라 invitation_expired를 쓰지 않고 쓸 수 없는 초대는 404 not_found(MEM-A04)다. 재설정 링크(ACC-A09)는 폐지 예정이다 |
 | 413 | 파일 용량 초과 | file_too_large |
 | 415 | 본문·파일 형식 불가 | unsupported_media_type |
-| 429 | 호출 제한 | rate_limited |
+| 429 | 호출 제한 | rate_limited. 인증 코드를 여러 번 틀린 경우만 too_many_attempts(ACC-A12, 수정안 요청) |
 | 500 | 내부 오류 | internal |
 | 502 | AI·모델 실패 | ai_unavailable, model_unavailable |
 | 503 | 처리 기반 이용 불가 | processing_unavailable |
@@ -118,10 +120,10 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
-- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성은 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
-- 작업 변경은 expected_revision_no/expected_lock_version, 제안 변경은 expected_updated_at, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
+- 작업 변경은 expected_revision_no/expected_lock_version, 제안 재제출·후속 심사 계약은 expected_revision/expected_snapshot_hash, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
 - 시작·재개와 문서 발행은 프로젝트 잠금 아래 재검사한다. 모델 호출 중 DB 잠금을 잡고 기다리지 않는다.
 - 공유 기록은 previous_id를 잇는 새 불변 리비전이다. 같은 이전 리비전의 두 번째 수정은 충돌이다.
 
@@ -131,7 +133,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
 | 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토 |
-| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계 |
+| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
 | 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함. REVALIDATION은 시스템만 설정(설계 발행·완료 delta) |
@@ -147,7 +149,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 필수 문서 4종의 승인·색인이 모두 완료되면 팀장이 별도 버튼으로 최초 baseline을 생성한다. project 행 잠금 아래 승인 문서·색인과 전체 검토 집합을 재확인하고, 수동 항목 승인·baseline_item·baseline_document·현재 포인터를 한 트랜잭션으로 저장한다. 이미 완료한 문서별 승인 상태를 이 단계에서 다시 변경하지 않는다.
 
-최초 발행 이후 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면 409이며 최신 기준으로 제안을 갱신해 검토한다.
+최초 발행 이후 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면(requires_refresh) 409 baseline_conflict다. 수정안 요청: 제출한 제안은 잠겨 있으므로 팀장은 승인하지 못하고 '기준이 바뀌어 반려'(CHG-A10)하며, 제안자는 반려 뒤 CHG-A04로 최신 기준에 맞춰 재제출하거나 CHG-A15로 거둔다.
 
 변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 성공 커밋 뒤 알림·활동은 중복 식별값으로 처리한다. 이벤트 전달 실패는 이미 완료한 발행을 다시 생성하는 이유가 아니다. D7·전달 유실 방지 세부는 Q03이다.
 
@@ -247,7 +249,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- |
 | 활동 이벤트 | event_key, project_id, actor_type, type, target_type, target_id, occurred_at | 사람·에이전트 행위에는 actor_account_id 필수. 시스템 행위자는 actor_type=BEE 등으로 식별하고 계정 ID 생략 |
 | 알림 요청 | notification_key, project_id, recipient_account_id, type, title, body, target_type, target_id | 개인별 읽음 시각은 알림 서비스에서 관리 |
-| LLM 호출 사용량 | request_key, feature, project_id, model, failed, latency_ms, tokens_known | task_id, validation_id, attempt, input_tokens, output_tokens, estimated_cost_amount, currency |
+| LLM 호출 사용량 | request_key, feature, project_id, model, failed, latency_ms, tokens_known, caller | task_id, validation_id, attempt, input_tokens, output_tokens, estimated_cost_amount, currency. caller는 AGENT·WEB이고 AGENT면 agent_session_id 필수 |
 | 검증 실행 기록 | validation_id, plan_revision_id, attempt, analyzer_version, latency_ms, cache_hit | usage_request_keys, error_code |
 
 비용 조회는 실제 모델 호출 식별값으로 중복 제거한다. 작업 미연결 문서 분석·대화도 프로젝트·기능별 합계에 포함한다. 공급자 사용량을 모르면 unknown을 보존하고 추정 비용과 실제 청구값을 혼용하지 않는다.
@@ -264,10 +266,13 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [ACC-A04 내 계정 조회](01-backend-rest.md#acc-a04) | GET `/api/me` | USER | 전진 | — | 박민용 |
 | [ACC-A05 프로필 수정](01-backend-rest.md#acc-a05) | PATCH `/api/me` | USER | 전진 | — | 박민용 |
 | [ACC-A06 비밀번호 변경](01-backend-rest.md#acc-a06) | PUT `/api/me/password` | USER | 전진 | — | 박민용 |
-| [ACC-A07 비밀번호 재설정 메일 요청](01-backend-rest.md#acc-a07) | POST `/api/auth/password/forgot` | PUBLIC | 전진 | — | 박민용 |
-| [ACC-A08 재설정 링크 확인](01-backend-rest.md#acc-a08) | POST `/api/auth/password/reset/verify` | PUBLIC | 전진 | — | 박민용 |
-| [ACC-A09 비밀번호 재설정](01-backend-rest.md#acc-a09) | POST `/api/auth/password/reset` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A07 임시 비밀번호 발급](01-backend-rest.md#acc-a07) | POST `/api/auth/password/forgot` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A08 재설정 링크 확인 (폐지 예정)](01-backend-rest.md#acc-a08) | POST `/api/auth/password/reset/verify` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A09 비밀번호 재설정 (폐지 예정)](01-backend-rest.md#acc-a09) | POST `/api/auth/password/reset` | PUBLIC | 전진 | — | 박민용 |
 | [ACC-A10 회원 탈퇴](01-backend-rest.md#acc-a10) | POST `/api/me/withdraw` | USER | 전진 | — | 박민용 |
+| [ACC-A11 가입 인증 코드 보내기](01-backend-rest.md#acc-a11) | POST `/api/auth/email-verifications` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A12 가입 인증 코드 확인](01-backend-rest.md#acc-a12) | POST `/api/auth/email-verifications/{verification_id}/confirm` | PUBLIC | 전진 | — | 박민용 |
+| [ACC-A13 탈퇴 가능 여부](01-backend-rest.md#acc-a13) | GET `/api/me/withdrawal-check` | USER | 전진 | — | 박민용 |
 | [PRJ-A01 프로젝트 생성](01-backend-rest.md#prj-a01) | POST `/api/projects` | USER | 전진 | — | 박민용 |
 | [PRJ-A02 참여 프로젝트 목록](01-backend-rest.md#prj-a02) | GET `/api/projects` | USER | 전진 | — | 박민용 |
 | [PRJ-A03 프로젝트 상세](01-backend-rest.md#prj-a03) | GET `/api/projects/{id}` | MEMBER | 전진 | — | 박민용 |
@@ -284,6 +289,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MEM-A08 팀장 위임](01-backend-rest.md#mem-a08) | POST `/api/projects/{id}/leadership-transfer` | LEADER | 전진 | — | 박민용 |
 | [MEM-A09 팀원 제외](01-backend-rest.md#mem-a09) | POST `/api/projects/{id}/members/{member_id}/remove` | LEADER | 전진 | — | 박민용 |
 | [MEM-A10 프로젝트 나가기](01-backend-rest.md#mem-a10) | POST `/api/projects/{id}/leave` | MEMBER | 전진 | — | 박민용 |
+| [MEM-A11 초대 다시 보내기](01-backend-rest.md#mem-a11) | POST `/api/projects/{id}/invitations/{invitation_id}/resend` | LEADER | 전진 | — | 박민용 |
 | [AGT-A01 에이전트 토큰 발급](01-backend-rest.md#agt-a01) | POST `/api/projects/{id}/agent-tokens` | MEMBER, 본인 소유 객체 | 전진 | — | 박민용 |
 | [AGT-A02 내 에이전트 토큰 목록](01-backend-rest.md#agt-a02) | GET `/api/me/agent-tokens` | USER | 전진 | — | 박민용 |
 | [AGT-A03 에이전트 토큰 폐기](01-backend-rest.md#agt-a03) | DELETE `/api/agent-tokens/{id}` | USER, 본인 소유 객체 | 전진 | — | 박민용 |
@@ -312,6 +318,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A10 기준 설계 특정 버전 조회](01-backend-rest.md#doc-a10) | GET `/api/projects/{id}/baselines/{version_no}` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A11 문서·설계 검색](01-backend-rest.md#doc-a11) | GET `/api/projects/{id}/search` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [TRC-A01 설계 항목 의존관계 조회](01-backend-rest.md#trc-a01) | GET `/api/projects/{id}/design-items/{item_id}/dependencies` | MEMBER | 변준성 | — | 박민용 |
+| [TRC-A02 설계 항목 의존관계 이력 조회](01-backend-rest.md#trc-a02) | GET `/api/projects/{id}/design-items/{item_id}/dependencies/history` | MEMBER | 변준성 | — | 박민용 |
 | [DOC-A12 변경용 원문 파일 업로드](01-backend-rest.md#doc-a12) | POST `/api/projects/{id}/documents/{document_id}/draft-versions` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A13 문서 작성 내용 조회](01-backend-rest.md#doc-a13) | GET `/api/projects/{id}/documents/{document_id}/working-copy` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A14 문서 작성 내용 수정](01-backend-rest.md#doc-a14) | PATCH `/api/projects/{id}/documents/{document_id}/working-copy` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
@@ -322,6 +329,9 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A19 문서 검토 요청 목록](01-backend-rest.md#doc-a19) | GET `/api/projects/{id}/document-review-submissions` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A20 문서 검토 제출 상세](01-backend-rest.md#doc-a20) | GET `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A21 문서별 승인·반려](01-backend-rest.md#doc-a21) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/decision` | HUMAN LEADER | 오서현 | — | 오서현 |
+| [DOC-A22 보완 제안에 대해 비비와 대화](01-backend-rest.md#doc-a22) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
+| [DOC-A23 비비에게 직접 보완 요청](01-backend-rest.md#doc-a23) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
+| [DOC-A24 팀장 검토 요청 취소](01-backend-rest.md#doc-a24) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/withdraw` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
 | [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A03 설계 변경 제안 상세·비교](01-backend-rest.md#chg-a03) | GET `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -335,6 +345,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A11 승인 이력 조회](01-backend-rest.md#chg-a11) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A12 변경 제안 의견·검토 요청 등록](01-backend-rest.md#chg-a12) | POST `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A13 변경 제안 의견 목록](01-backend-rest.md#chg-a13) | GET `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
+| [CHG-A14 승인 미리 보기](01-backend-rest.md#chg-a14) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval-preview` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
+| [CHG-A15 변경 제안 거두기](01-backend-rest.md#chg-a15) | POST `/api/projects/{id}/change-proposals/{proposal_id}/withdraw` | MEMBER (제안자) | 오서현 | — | 오서현 |
 | [TSK-A01 작업 계획 등록](01-backend-rest.md#tsk-a01) | POST `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A02 작업 목록](01-backend-rest.md#tsk-a02) | GET `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A03 작업 상세](01-backend-rest.md#tsk-a03) | GET `/api/projects/{id}/tasks/{task_id}` | MEMBER | 변준성 | — | 박민용 |
@@ -354,16 +366,21 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CTX-A06 컨텍스트 조회 이력](01-backend-rest.md#ctx-a06) | GET `/api/projects/{id}/context-access-logs` | LEADER | 변준성 | — | 박민용 |
 | [BEE-A01 비비에게 질문](01-backend-rest.md#bee-a01) | POST `/api/projects/{id}/bee/questions` | MEMBER | 오서현(문서 조회·생성 연결) | 박상은 | 박상은 |
 | [BEE-A02 작업 역할 분담 추천](01-backend-rest.md#bee-a02) | POST `/api/projects/{id}/assignment-suggestions` | MEMBER | 변준성 | 박상은 | 박상은 |
-| [MTG-A01 회의 생성](01-backend-rest.md#mtg-a01) | POST `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
+| [BEE-A03 비비 답변 피드백](01-backend-rest.md#bee-a03) | POST `/api/projects/{id}/bee/answers/{answer_id}/feedback` | MEMBER | 오서현 | 박상은 | 박상은 |
+| [BEE-A04 비비 현재 상태](01-backend-rest.md#bee-a04) | GET `/api/projects/{id}/bee/status` | MEMBER | 오서현 | — | 박민용 |
+| [MTG-A01 회의 생성 (폐지 예정)](01-backend-rest.md#mtg-a01) | POST `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
 | [MTG-A02 회의 목록](01-backend-rest.md#mtg-a02) | GET `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
 | [MTG-A03 회의 상세](01-backend-rest.md#mtg-a03) | GET `/api/projects/{id}/meetings/{meeting_id}` | MEMBER | 오서현 | 양지훈 | 오서현 |
-| [MTG-A04 회의 참여 요청](01-backend-rest.md#mtg-a04) | POST `/api/projects/{id}/meetings/{meeting_id}/participants` | MEMBER | 오서현 | 양지훈 | 오서현 |
-| [MTG-A05 회의 참여 응답](01-backend-rest.md#mtg-a05) | PATCH `/api/projects/{id}/meetings/{meeting_id}/participation` | MEMBER (초대 대상 본인) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A04 회의 참여 요청](01-backend-rest.md#mtg-a04) | POST `/api/projects/{id}/meetings/{meeting_id}/participants` | MEMBER (팀장 또는 회의 참여자. 수정안 요청) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A05 회의 참여 응답 (폐지 예정)](01-backend-rest.md#mtg-a05) | PATCH `/api/projects/{id}/meetings/{meeting_id}/participation` | MEMBER (초대 대상 본인) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A06 회의 텍스트 기록](01-backend-rest.md#mtg-a06) | POST `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
-| [MTG-A07 비비의 회의 맥락 분석](01-backend-rest.md#mtg-a07) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-analysis` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
-| [MTG-A08 회의록 생성](01-backend-rest.md#mtg-a08) | POST `/api/projects/{id}/meetings/{meeting_id}/minutes` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
-| [MTG-A09 회의 결정 기반 문서 수정안](01-backend-rest.md#mtg-a09) | POST `/api/projects/{id}/meetings/{meeting_id}/change-drafts` | MEMBER (회의 참여자) | 오서현 | 양지훈(회의 연결) / 박상은(수정안 생성) | 오서현 |
+| [MTG-A07 비비의 회의 맥락 분석 (폐지 예정)](01-backend-rest.md#mtg-a07) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-analysis` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A08 회의록 생성 (폐지 예정)](01-backend-rest.md#mtg-a08) | POST `/api/projects/{id}/meetings/{meeting_id}/minutes` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A09 회의 결정 기반 문서 수정안 (폐지 예정)](01-backend-rest.md#mtg-a09) | POST `/api/projects/{id}/meetings/{meeting_id}/change-drafts` | MEMBER (회의 참여자) | 오서현 | 양지훈(회의 연결) / 박상은(수정안 생성) | 오서현 |
 | [MTG-A10 회의 기록 목록](01-backend-rest.md#mtg-a10) | GET `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER | 오서현 | — | 오서현 |
+| [MTG-A11 비비 회의 정리](01-backend-rest.md#mtg-a11) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
+| [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | 박상은(제안 문안) | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
@@ -372,6 +389,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MON-A03 작업·설계·검증 관계](01-backend-rest.md#mon-a03) | GET `/api/projects/{id}/relations` | MEMBER | 변준성 | — | 박민용 |
 | [MON-A04 프로젝트 활동 타임라인](01-backend-rest.md#mon-a04) | GET `/api/projects/{id}/activities` | MEMBER | 전진 | — | 박민용 |
 | [MON-A05 에이전트 현재 작업 현황](01-backend-rest.md#mon-a05) | GET `/api/projects/{id}/agents/work-status` | MEMBER | 변준성 | — | 박민용 |
+| [MON-A06 내 접속 상태 보고](01-backend-rest.md#mon-a06) | PUT `/api/projects/{id}/presence` | MEMBER | 전진 | — | 박민용 |
+| [MON-A07 팀원 접속 현황](01-backend-rest.md#mon-a07) | GET `/api/projects/{id}/presence` | MEMBER | 전진 | — | 박민용 |
 | [NTF-A01 내 알림함](01-backend-rest.md#ntf-a01) | GET `/api/me/notifications` | USER | 전진 | — | 박민용 |
 | [NTF-A02 알림 읽음 처리](01-backend-rest.md#ntf-a02) | POST `/api/me/notifications/read` | USER | 전진 | — | 박민용 |
 | [SYS-A01 backend 기동 확인](01-backend-rest.md#sys-a01) | GET `/api/ping` | PUBLIC | 전진 | — | — |
@@ -407,6 +426,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AI-A06 기획·문서 수정 초안 생성](03-ai-internal.md#ai-a06) | POST `/v1/bee/draft` | 오서현 | 박상은 / 회의 연결: 양지훈 |
 | [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
 | [AI-A08 회의 질문·요약·결정 추출](03-ai-internal.md#ai-a08) | POST `/v1/bee/meeting-analysis` | 오서현 | 양지훈 |
+| [AI-A10 문서 검토·수정 제안](03-ai-internal.md#ai-a10) | POST `/v1/document-reviews` | 오서현 | 박상은 |
 
 ### 확장 후보
 
@@ -419,6 +439,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | AGT-08·09 | 다중 에이전트·추가 클라이언트 | 기존 token/session·MCP 계약 확장 | 미정 |
 | 확장 CTX | 고급 패킷·공유 기록 | 기본 MCP 계약 확장 | 미정 |
 | NTF-07·08 | 실시간 전파·로컬 제어 | 별도 전송·실행 제어 계약 | 미정 |
+| PRJ-04 시작 가이드 상태 | 가이드를 봤음·숨김·'기준 문서 읽었어요'를 기기 사이에 맞춤. 지금은 FE가 계정·프로젝트별로 브라우저에 저장 | GET·PATCH /api/projects/{id}/me/guide-state | 전진 |
 
 ## 9. 검토 항목
 
@@ -427,16 +448,27 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
-| Q04 | 계정·세션 | 전진 | 비밀번호 정책, 세션 쿠키·만료·CSRF, 재설정 토큰 만료·재발송·세션 정리 |
-| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화 |
+| Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
+| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 남은 것: 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
-| Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 후속 제안 expected_updated_at 정밀도는 별도 검토 |
+| Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 변경 제안은 CHG-A04의 expected_revision/expected_snapshot_hash로 대조 |
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
-| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10은 §5의 24시간·design_http_command 범위 한정 결정 적용 |
-| Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10·CHG-A01/04/15는 §5의 24시간·design_http_command 범위 한정 결정 적용 |
+| Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부(수정안 기본안: 창을 연 동안만), '근거가 틀려요' 피드백 활용, 자주 묻는 질문 칩의 출처 |
+| Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
+| Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
+| Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 정함(2026-10-29, dev 기준): 기준 v1 뒤 문서 변경은 변경 제안 승인(CHG-A09)으로만 반영되고 승인마다 기준 v2, v3이 생긴다. 재검증·영향 분석도 CHG-A09 규칙 그대로다. 회의 결과도 회의 끝내기(MTG-A13)가 변경 제안을 만들 뿐 문서를 바로 바꾸지 않는다. 잘못 반영된 결과는 새 변경 제안으로 되돌린다 |
+| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김) |
+| Q18 | 접속·위치 공개 | 전진·박민용 | 사람의 위치를 '사무실 안 자리'까지만 보일지 열어 둔 메뉴까지 보일지, 보고 주기·TTL, 폴링·SSE·WebSocket 중 전송 수단(NTF-07 확장 후보와 함께) |
+| Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | PR #37 DOC-A16의 검토 정책(승인본만 참고, 참고 자료가 없어 비교하지 못한 단계는 사유를 보이고 제출 허용, 모델 실패는 새 요청 키로 재시도)을 따른다. 남은 것: 단계 이름과 목표 소요 시간, 단계 진행을 보이려면 검토를 동기 호출로 둘지 접수 후 조회로 바꿀지, 업로드마다 드는 AI 비용 상한 |
+| Q20 | 같은 종류 문서 여러 개 | 오서현·박상은 | DOC-A01 확정 정책은 종류마다 문서 1개다. 수정안 예시('알림 API 명세서'를 두 번째 API 명세서로 등록)는 복수 등록이 필요하다. 허용하면 필수 4종 충족은 '그 종류에 승인 문서가 하나 이상'으로 판정한다 |
+| Q21 | 대시보드 비용·집계 | 변준성·전진 | 비용을 팀장만 볼지(지금 MEMBER), 에이전트를 토큰별로 셀지 팀원별로 묶을지, 프로젝트 전체 관계 그래프가 필요한지 |
+| Q22 | 화면 상태 저장 | 전진·변준성·박민용 | 가이드 표시 상태는 브라우저 저장으로 정함(서버 저장은 8절 확장 후보). 시작 가이드 종료 조건(팀장 = 발행+초대, 팀원 = 에이전트 연결+첫 계획), 팀장을 넘겨받은 사람에게 가이드를 다시 띄울지, 기준 발행 전 팀원이 할 수 있는 일, 도시 부지 번호를 멤버십별로 서버에 둘지와 부지 상한 |
+| Q23 | 변경 제안 검토 시작 | 오서현 | 승인 전에 IN_REVIEW(CHG-A08)를 꼭 거칠지, 팀장이 제안을 열면 자동으로 할지(기본안: 자동) |
+| Q24 | 회의에서 나온 변경 제안의 제안자 | 오서현·박상은 | 정함(2026-10-29): 회의 끝내기(MTG-A13)로 만든 제안의 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다. actor_type에 BEE를 더하지 않는다 |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
 
@@ -476,6 +508,8 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `name` | `string` | Y | 프로젝트 이름 |
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
+| `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 팀원 모두의 도시·워크스페이스에 같이 보임. 수정안 요청 |
+| `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 시각 |
@@ -494,6 +528,7 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `role_label` | `string` | N | 프로젝트 내 역할 라벨 |
 | `color` | `string` | N | 표시 색상 |
 | `agent_connected` | `boolean` | Y | 에이전트 연결 관측 여부 |
+| `agent_status` | `CONNECTED\|CHECK_REQUIRED\|NOT_CONNECTED` | Y | 팀 목록·HUD의 '연결됨·연결 미확인·연결 전'. CHECK_REQUIRED는 AgentConnection.status_check_required. 수정안 요청 |
 
 <a id="schema-invitation"></a>
 
@@ -504,8 +539,8 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `id` | `ID` | Y | 초대 ID |
 | `project_id` | `ID` | Y | 대상 프로젝트 |
 | `invited_email` | `string` | N | 주소를 지정한 초대의 대상 |
-| `expires_at` | `Time` | Y | 만료 시각 |
-| `accepted_at` | `Time` | N | 수락 시각 |
+| `expires_at` | `Time` | N | 만료 시각. 초대는 만료가 없다(Q05 정함). 수정안 요청 |
+| `accepted_at` | `Time` | N | 팀원이 된 시각. 초대받은 사람이 로그인·가입할 때나 메일 링크로 참여(MEM-A05)할 때 채움(Q05). 수정안 요청 |
 | `revoked_at` | `Time` | N | 폐기 시각 |
 
 <a id="schema-agenttoken"></a>
@@ -518,6 +553,8 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `project_id` | `ID` | Y | 프로젝트 |
 | `label` | `string` | N | 토큰 이름 |
 | `created_at` | `Time` | Y | 발급 시각 |
+| `expires_at` | `Time` | N | 만료 시각. 화면 예시는 발급 3개월 뒤. 만료 정책(Q06)이 없으면 생략. 수정안 요청 |
+| `scopes` | `string[]` | N | 쓸 수 있는 범위. 지금은 값이 하나뿐이라 생략하고 Q06이 정해지면 채운다. 화면 문구('이 프로젝트의 MCP 도구 전체')는 FE가 고정으로 보인다. 수정안 요청 |
 | `revoked_at` | `Time` | N | 폐기 시각 |
 | `last_used_at` | `Time` | N | 마지막 사용 |
 
@@ -598,11 +635,13 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `id` | `ID` | Y | 문서 버전 ID |
 | `document_id` | `ID` | Y | 문서 ID |
 | `version_no` | `integer` | Y | 문서 내 버전 번호 |
-| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태 |
+| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태. 문서함 반려는 버전을 REJECTED로 바꾸지 않고 제출(DocumentReviewSubmission.status)에 남긴다. REJECTED는 6절의 미채택이다 |
 | `file_name` | `string` | Y | document-{id}-v{version_no}.{md\|txt} 생성 다운로드명 |
 | `media_type` | `string` | Y | MIME |
 | `content_hash` | `string` | Y | 원본 해시 |
 | `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
+| `created_by` | `ID` | Y | 올린 계정 |
+| `is_current_baseline` | `boolean` | Y | 현재 기준에 들어 있는 버전. 수정안 요청 |
 | `created_at` | `Time` | Y | 생성 시각 |
 
 <a id="schema-document"></a>
@@ -618,6 +657,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `domain` | `string` | N | 분류 |
 | `approved_version` | [DocumentVersion](00-common.md#schema-documentversion) | N | 문서별 최신 승인본. 개발 기준 baseline과 별개이며 baseline 생성 전에도 존재 가능 |
 | `latest_draft` | [DocumentVersion](00-common.md#schema-documentversion) | N | 최신 미승인 초안 |
+| `preview_text` | `string` | N | 본문 앞부분 300자. 썸네일 보기 미리보기. 수정안 요청 |
 
 <a id="schema-documentworkingcopy"></a>
 
@@ -657,6 +697,11 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `original_text` | `string` | Y | 변경할 원문 구간 |
 | `replacement_text` | `string` | Y | 제안 대체문. 빈 문자열 허용 |
 | `decision` | `PENDING\|APPLIED\|SKIPPED` | Y | 작성자 처리 상태 |
+| `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
+| `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
+| `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
+| `sources` | [Source[]](00-common.md#schema-source) | N | 근거가 된 참고 승인본 위치. 수정안 요청 |
+| `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | 이 제안에 대한 비비와의 대화(DOC-A22). 수정안 요청 |
 
 <a id="schema-documentbeereview"></a>
 
@@ -673,6 +718,8 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `references` | [DocumentReviewReference[]](00-common.md#schema-documentreviewreference) | Y | 당시 참고 자료 |
 | `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 보완 제안과 선택 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | Y | 검증한 실제 모델 호출 사용량 |
+| `steps` | `object[]` | N | 단계별 {label, description, result}. 화면의 'n단계 / 5단계'와 '문단 4개' 같은 단계 결과. PR #37 후속의 단계별 상태와 같은 것. 수정안 요청 |
+| `rejection_submission_id` | `ID` | N | 반려 뒤 검토면 서버가 고른 반려 제출(DOC-A16 선택 규칙). 비비가 그 rejection_reason을 입력으로 읽는다. 수정안 요청 |
 
 <a id="schema-documentreviewsubmission"></a>
 
@@ -843,7 +890,12 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `from_design_item_id` | `ID` | Y | 의존하는 항목 |
 | `to_design_item_id` | `ID` | Y | 의존 대상 |
+| `relation` | `DEPENDS_ON` | Y | 관계 종류. MVP 는 하나 |
 | `origin` | `EXPLICIT\|AI_CANDIDATE` | Y | 명시 관계 또는 AI 후보. AI 후보는 무효화 근거가 아님 |
+| `status` | `CONFIRMED\|NEEDS_RECHECK` | Y | 확정 또는 재확인 필요(연결 항목이 바뀜). 재확인 필요는 규칙의 확정 근거가 아님 |
+| `reason` | `string` | N | 확정·유지 근거 |
+| `confirmed_by` | `ID` | N | 마지막으로 확정·유지한 계정 |
+| `confirmed_at` | `datetime` | N | 마지막 확정·유지 시각 |
 
 <a id="schema-changeitem"></a>
 
@@ -855,8 +907,9 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `design_item_id` | `ID` | N | UPDATE/RETIRE 필수 항목 |
 | `base_design_item_version_id` | `ID` | N | UPDATE/RETIRE 필수 기준 버전 |
 | `kind` | `REQUIREMENT\|API_CONTRACT\|DATA_CONTRACT\|POLICY\|CONSTRAINT` | N | CREATE 필수 종류 |
-| `schema_version` | `integer` | N | CREATE/UPDATE 필수 구조 버전 |
-| `proposed_content` | `object` | N | CREATE/UPDATE 필수 본문 |
+| `schema_version` | `integer` | N | CREATE/UPDATE에서 proposed_content를 보내면 필수 구조 버전 |
+| `proposed_content` | `object` | N | CREATE/UPDATE 본문. proposed_text만 오면 서버가 채움(Q01) |
+| `proposed_text` | `string` | N | 사람이 쓴 문장 하나. CREATE/UPDATE에서 proposed_content와 둘 중 하나 필수. 수정안 요청 |
 
 <a id="schema-documentchange"></a>
 
@@ -866,12 +919,14 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 문서 |
 | `base_document_version_id` | `ID` | Y | 기준 원문 버전 |
-| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나 |
+| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나. 서버가 DOC-A12와 같은 규칙으로 정규화해 새 DRAFT 문서 버전과 색인 작업을 만든다 |
 | `proposed_document_version_id` | `ID` | N | 업로드한 DRAFT 버전. after_content와 배타적 |
 
 <a id="schema-changeproposalinput"></a>
 
 ### ChangeProposalInput
+
+신규 생성에만 선택 previous_proposal_id(ID)를 받는다. 같은 프로젝트·작성 계정의 WITHDRAWN 제안만 연결한다. 반려된 제안은 새로 생성하지 않고 CHG-A04로 재제출한다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -880,6 +935,8 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
+| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
 
@@ -890,23 +947,52 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 제안 ID |
+| `key` | `string` | Y | 프로젝트에 표시할 제안 키 |
+| `revision` | `integer` | Y | 제출 리비전 번호 |
+| `snapshot_hash` | `string` | Y | 불변 제출 스냅샷 SHA-256 |
 | `project_id` | `ID` | Y | 프로젝트 |
 | `base_baseline_id` | `ID` | Y | 제안 기준 |
 | `title` | `string` | Y | 제안 제목 |
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
+| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경 |
+| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
 | `proposer_account_id` | `ID` | Y | 제안 계정 |
 | `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
+| `agent` | `object` | N | AGENT 제출이면 {agent_session_id, name(토큰 label), member_id}. 수정안 요청 |
 | `current_baseline_id` | `ID` | Y | 현재 기준 |
 | `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
 | `published_baseline_id` | `ID` | N | 발행된 기준 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 |
 | `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
+| `previous_proposal_id` | `ID` | N | 같은 작성자가 거둔 이전 제안. 반려 후 재제출과 구분 |
+| `withdrawn_by` | `ID` | N | WITHDRAWN일 때 거둔 계정 |
+| `withdrawn_at` | `Time` | N | WITHDRAWN일 때 거둔 시각 |
+
+<a id="schema-resolveddocumentchange"></a>
+
+### ResolvedDocumentChange
+
+DocumentChange 입력을 해석한 응답이다. document_id, base_document_version_id, proposed_document_version_id, after_content, content_hash가 모두 필수다. proposed_document_version_id는 항상 반환한다. 업로드를 선택했으면 그 DRAFT 버전이고, after_content로 제출했으면 서버가 만든 DRAFT 버전이다. after_content는 DOC-A12와 같은 정규화를 적용한 저장 본문이며 content_hash는 그 UTF-8 바이트의 SHA-256이다.
+
+<a id="schema-changeproposalsummary"></a>
+
+### ChangeProposalSummary
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 제안 ID |
+| `key` | `string` | Y | 제안 키 |
+| `title` | `string` | Y | 제목 |
+| `status` | `string` | Y | 제안 상태 |
+| `revision` | `integer` | Y | 최신 제출 번호 |
+| `base_baseline_id` | `ID` | Y | 기준 설계 |
+| `proposer_account_id` | `ID` | Y | 제안 계정 |
+| `updated_at` | `Time` | Y | 갱신 시각 |
 
 <a id="schema-approval"></a>
 
@@ -982,7 +1068,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `completion_criteria` | `string[]` | Y | 완료 기준 |
 | `dependency_task_ids` | `ID[]` | Y | 선행 작업 |
 | `design_refs` | [DesignRef[]](00-common.md#schema-designref) | Y | 확정 참조 |
-| `unlinked` | `object[]` | Y | 미연결 내용. 세부 항목 Q02 |
+| `unlinked` | `object[]` | Y | 미연결 내용. 세부 항목 Q02. 수정안 요청: 화면은 줄마다 문장 하나를 입력하므로 `{text: string}` 배열로 확정 |
 | `no_contract_change` | `boolean` | Y | 계약 변경 없음의 명시적 선언 |
 | `context_packet_id` | `ID` | N | 근거 패킷. 없으면 근거 패킷 없음 표시 |
 
@@ -1025,7 +1111,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `related_task_id` | `ID` | N | 관련 작업 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
-| `next_action` | `string` | N | 후속 경로 설명 |
+| `next_action` | `string` | N | 후속 경로 설명. severity=BLOCKING이면 필수: 작업 현황 화면이 막힌 항목마다 고칠 방법을 한 줄로 보여 줌(수정안 요청) |
 | `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding이면 필수이며, kind=ERROR는 현재 실패 attempt의 run을 참조 |
 
 kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과 현재 실패 attempt에 속한 run을 반드시 참조한다. BE가 생성하는 실행 오류이며 실제 모델 호출 여부와 구분한다. 모든 ERROR 전이·복구·재시도 규칙은 [검증 실행 오류 규약](#validation-execution-errors)을 따른다.
@@ -1213,6 +1299,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `connected` | `boolean` | Y | 최근 연결 관측 |
 | `last_report_at` | `Time` | N | 마지막 통신 시각 |
 | `status_check_required` | `boolean` | Y | 보고 지연으로 확인 필요 |
+| `last_error_code` | `token_revoked\|token_expired\|membership_ended\|no_report` | N | 마지막 연결 실패 원인. 연결 확인 화면이 이유와 할 일을 보여 줌. 수정안 요청 |
 
 <a id="schema-agentwork"></a>
 
@@ -1222,10 +1309,14 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 멤버 ID |
 | `agent_session_id` | `ID` | N | 연결 세션 |
+| `agent_name` | `string` | N | 토큰 label. 수정안 요청 |
 | `current_task_id` | `ID` | N | 명시 보고된 작업 |
+| `task_title` | `string` | N | 보고된 작업 제목. 수정안 요청 |
 | `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태 |
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 작업 검증 상태 |
 | `waiting_reason` | `string` | N | 대기 사유 |
+| `last_summary` | `string` | N | MCP-12 `summary` 원문. AI로 다시 요약하지 않음. 수정안 요청 |
+| `reported_at` | `Time` | N | 마지막 작업 보고 시각. 수정안 요청 |
 
 <a id="schema-requireddocument"></a>
 
@@ -1236,6 +1327,10 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 필수 종류 |
 | `uploaded` | `boolean` | Y | 업로드됨 |
 | `approved` | `boolean` | Y | 승인됨 |
+| `document_id` | `ID` | N | 올린 문서. 수정안 요청 |
+| `latest_version_id` | `ID` | N | 검토 중이거나 마지막으로 올린 버전. 수정안 요청 |
+| `working_copy_status` | `EDITING\|SUBMITTED\|APPROVED\|REJECTED` | N | 그 문서의 작성 건 상태([DocumentWorkingCopy](#schema-documentworkingcopy)). 수정안 요청 |
+| `index_ready` | `boolean` | N | 색인 완료. 4종 모두 승인·색인이면 팀장에게 '기준 만들기'(PLN-A10)를 켠다. 수정안 요청 |
 
 <a id="schema-documentanalysis"></a>
 
@@ -1270,7 +1365,9 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 참여 멤버 |
-| `status` | `INVITED\|ACCEPTED\|DECLINED` | Y | 참여 상태 |
+| `status` | `INVITED\|JOINED\|DECLINED` | Y | 참여 상태. DB `meeting_participant.status`와 같은 값이다(예전 명세의 ACCEPTED를 JOINED로 바꿈). 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람은 JOINED로 만든다. 수정안 요청 |
+| `role` | `LEADER\|TASK_OWNER\|DOMAIN_OWNER` | N | 비비가 부른 이유. 화면 예: '팀장 · TASK-001', 'TASK-002', '화면 문구'(담당 영역). 관련자 추가로 들어온 사람은 생략. 수정안 요청 |
+| `added_by_member_id` | `ID` | N | 관련자 추가(MTG-A04)로 이 사람을 부른 멤버. 화면 예: '이팀장이 추가'. 비비가 부른 사람은 생략. 수정안 요청 |
 
 <a id="schema-meetingentry"></a>
 
@@ -1280,9 +1377,13 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 기록 ID |
 | `meeting_id` | `ID` | Y | 회의 ID |
-| `kind` | `TEXT\|BEE_ANALYSIS\|MINUTES` | Y | 기록 종류 |
+| `kind` | `TEXT\|BEE_ANALYSIS\|MINUTES\|CONFLICT_BRIEF\|SUMMARY` | Y | 기록 종류. CONFLICT_BRIEF(비비가 회의를 열며 쓴 첫 메시지)·SUMMARY(MTG-A11 정리)는 수정안 요청 |
 | `text` | `string` | Y | 기록 본문 |
+| `author_kind` | `HUMAN\|BEE` | Y | 작성자 종류. DB `meeting_entry.author_kind`와 같음. 수정안 요청 |
 | `author_account_id` | `ID` | N | 작성 계정. 시스템 생성은 생략 |
+| `author_member_id` | `ID` | N | HUMAN이면 작성 멤버. 수정안 요청 |
+| `author_name` | `string` | N | HUMAN이면 표시 이름. 수정안 요청 |
+| `refs` | `object[]` | N | 비비 기록이 가리키는 대상 [{type: TASK\|DESIGN_ITEM\|DOCUMENT_VERSION, id, label}]. 화면은 칩으로 보임. 수정안 요청 |
 | `through_entry_id` | `ID` | N | 분석 마지막 입력 기록 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거 |
 | `created_at` | `Time` | Y | 작성 시각 |
@@ -1297,6 +1398,12 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `project_id` | `ID` | Y | 프로젝트 |
 | `title` | `string` | Y | 제목 |
 | `change_proposal_id` | `ID` | N | 연결 제안 |
+| `origin` | `BEE_CONFLICT\|HUMAN` | Y | 연 주체. 수정안은 BEE_CONFLICT만 만든다. 수정안 요청 |
+| `task_ids` | `ID[]` | Y | 충돌한 작업. 수정안 요청 |
+| `conflict_summary` | `string` | N | 비비가 정리한 충돌 한 줄. 수정안 요청 |
+| `status` | `OPEN\|CLOSED` | Y | 회의 상태. DB `meeting.status`와 같음. 수정안 요청 |
+| `closed_at` | `Time` | N | 끝낸 시각. 수정안 요청 |
+| `closed_by` | `ID` | N | 끝낸 팀장 계정. 수정안 요청 |
 | `participants` | [Participant[]](00-common.md#schema-participant) | Y | 참여자 |
 | `created_at` | `Time` | Y | 생성 시각 |
 
@@ -1351,8 +1458,10 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `from_type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 시작 종류 |
 | `to_id` | `ID` | Y | 도착 객체 |
 | `to_type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 도착 종류 |
-| `relation` | `string` | Y | 관계 |
-| `confirmed` | `boolean` | Y | 명시적 확정 관계 |
+| `relation` | `string` | Y | 관계 ([MON-A03 처리 규칙](01-backend-rest.md#mon-a03)) |
+| `confirmed` | `boolean` | Y | 명시적 확정 관계. 설계 의존은 `CONFIRMED`일 때만 true |
+| `status` | `CONFIRMED\|NEEDS_RECHECK\|CANDIDATE` | N | 설계 의존(`DEPENDS_ON`) 간선의 상태 |
+| `design_item_version_id` | `ID` | N | 계획·검증이 그때 본 설계 항목 버전 |
 
 <a id="schema-activity"></a>
 
@@ -1362,7 +1471,10 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 활동 ID |
 | `type` | `string` | Y | 이벤트 종류 |
+| `actor_type` | `HUMAN\|AGENT\|BEE\|SYSTEM` | Y | 행위자 종류. 공통 서비스 데이터의 actor_type. 수정안 요청 |
 | `actor_account_id` | `ID` | N | 행위 계정 |
+| `agent_session_id` | `ID` | N | AGENT면 세션. 수정안 요청 |
+| `actor_name` | `string` | N | 사람 이름 또는 토큰 label. 수정안 요청 |
 | `task_id` | `ID` | N | 대상 작업 |
 | `change_proposal_id` | `ID` | N | 대상 제안 |
 | `baseline_id` | `ID` | N | 대상 기준 |
@@ -1380,8 +1492,9 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `type` | `string` | Y | 종류 |
 | `title` | `string` | Y | 제목 |
 | `body` | `string` | Y | 알림 내용 |
-| `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING` | Y | 이동 대상 종류 |
+| `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING\|DOCUMENT_VERSION` | Y | 이동 대상 종류. DOCUMENT_VERSION은 수정안 요청 |
 | `target_id` | `ID` | Y | 이동 대상 |
+| `document_id` | `ID` | N | DOCUMENT_VERSION이면 소속 문서. 수정안 요청 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `read_at` | `Time` | N | 읽은 시각 |
 
@@ -1392,6 +1505,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `key` | `string` | Y | 집계 구분 값 |
+| `label` | `string` | N | 표시 이름. by_agent는 토큰 label 또는 '웹 직접 호출'. 수정안 요청 |
 | `input_tokens` | `integer` | Y | 입력 토큰 |
 | `output_tokens` | `integer` | Y | 출력 토큰 |
 | `call_count` | `integer` | Y | 모델 호출 수 |
@@ -1413,6 +1527,116 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
 | `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
 | `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |
+| `by_agent` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 에이전트별. key는 agent_session_id, 웹에서 직접 한 호출(문서 분석·비비 질문·회의 분석)은 key `WEB` 한 줄. 수정안 요청 |
+| `by_day` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 날짜별. key는 한국 시간 기준 YYYY-MM-DD. 호출이 없는 날은 0으로 채움. 수정안 요청 |
+
+<a id="schema-reviewmessage"></a>
+
+### ReviewMessage
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 메시지 ID |
+| `author_kind` | `HUMAN\|BEE` | Y | 작성자 |
+| `text` | `string` | Y | 본문 |
+| `proposed_text` | `string` | N | 비비가 대화 중 낸 다른 대체문. 그 문장으로 반영하려면 DOC-A17에 replacement_text로 보낸다 |
+| `created_at` | `Time` | Y | 작성 시각 |
+
+<a id="schema-diffline"></a>
+
+### DiffLine
+
+수정안 요청. DOC-A06 비교 결과의 한 줄이다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `op` | `ADD\|DEL\|SAME` | Y | 추가·삭제·같음 |
+| `text` | `string` | Y | 그 줄의 원문 |
+| `suggestion_id` | `ID` | N | 비비 제안을 반영해 생긴 줄이면 그 제안 |
+| `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | suggestion_id가 있으면 그 분류 |
+
+<a id="schema-meetingdocumentchange"></a>
+
+### MeetingDocumentChange
+
+수정안 요청. 회의를 끝낼 때 문서에 들어갈 변경 한 건이다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 바꿀 문서 |
+| `base_version_id` | `ID` | Y | 정리할 때 현재 기준의 그 문서 승인본. 회의를 끝낼 때(MTG-A13) 지금 기준과 다시 맞춰 본다 |
+| `locator` | [SourceLocator](#schema-sourcelocator) | Y | 바꿀 행 범위 |
+| `before` | `string` | Y | 지금 문장 |
+| `after` | `string` | Y | 회의를 끝내면 만들어지는 변경 제안(MTG-A13)에 들어갈 문장 |
+| `evidence_entry_ids` | `ID[]` | Y | 근거 발언. 이 회의의 실제 기록 ID만 |
+
+<a id="schema-meetingsummary"></a>
+
+### MeetingSummary
+
+수정안 요청. 팀장이 요청한 비비의 회의 정리다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 정리 ID |
+| `meeting_id` | `ID` | Y | 회의 |
+| `entry` | [MeetingEntry](00-common.md#schema-meetingentry) | Y | 회의 기록에 남긴 SUMMARY 기록 |
+| `through_entry_id` | `ID` | Y | 정리에 쓴 마지막 기록 |
+| `conflicts` | `string[]` | Y | 충돌 |
+| `decisions` | `object[]` | Y | 결정 {text, decided_by_member_id?}. 화면은 '이팀장이 정함'처럼 정한 사람을 붙임 |
+| `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | Y | 바뀔 문서와 줄 |
+| `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 할 일 |
+| `previous_summary_id` | `ID` | N | 수정 요청으로 다시 만든 정리면 이전 정리 |
+| `feedback` | `string` | N | 수정 요청 때 팀장이 쓴 고칠 점 |
+| `generation` | [Generation](00-common.md#schema-generation) | Y | AI 생성 근거 |
+| `created_at` | `Time` | Y | 생성 시각 |
+
+<a id="schema-beecitation"></a>
+
+### BeeCitation
+
+수정안 요청. 비비 답변의 [n] 표시와 이어지는 근거 문단이다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `n` | `integer` | Y | 답변 본문의 [n] 번호 |
+| `document_id` | `ID` | Y | 문서 |
+| `document_version_id` | `ID` | Y | 정확한 버전 |
+| `version_no` | `integer` | Y | 버전 번호 |
+| `title` | `string` | Y | 문서 제목 |
+| `locator` | [SourceLocator](#schema-sourcelocator) | Y | 근거 행 범위 |
+| `quote` | `string` | Y | 칠해서 보여 줄 근거 문장 |
+| `section_title` | `string` | N | 근거가 든 절 제목. 화면 예: '3.2 초대 정책' |
+| `claim` | `string` | N | AI가 이 근거로 뒷받침한 주장 |
+
+<a id="schema-presence"></a>
+
+### Presence
+
+수정안 요청. 워크스페이스 HUD의 팀원 접속 상태다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `member_id` | `ID` | Y | 멤버 |
+| `online` | `boolean` | Y | TTL 안에 보고가 있었는지 |
+| `last_seen_at` | `Time` | N | 마지막 보고 시각 |
+| `zone` | `string` | N | 사무실 안 위치. 예: desk, meeting_room, lounge |
+| `seat` | `string` | N | 자리 식별값 |
+| `panel` | `string` | N | 열어 둔 메뉴. 공개 범위는 Q18 |
+| `activity` | `object` | N | 지금 하는 일 {action: VIEWING\|EDITING, target_type, target_id, label}. 화면 예: '변경 제안 검토 중', 'TASK-002 계획 작성 중'. 오프라인이면 마지막 값 |
+
+<a id="schema-blockedproject"></a>
+
+### BlockedProject
+
+수정안 요청. 회원 탈퇴를 막는 프로젝트다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `name` | `string` | Y | 프로젝트 이름 |
+| `my_role` | `LEADER` | Y | 탈퇴자의 역할. 지금 기준에서는 팀장만 막힘 |
+| `member_count` | `integer` | Y | 본인 말고 활성 팀원 수. 화면 '팀장 · 팀원 1명' |
 
 <a id="schema-changeditem"></a>
 
@@ -1564,6 +1788,27 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | `reason` | `string` | Y | 후보 근거 |
 | `confirmed` | `boolean` | Y | 확정 관계가 아님 |
 
+<a id="schema-dependencyhistory"></a>
+
+### DependencyHistory
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 이력 ID |
+| `from_design_item_id` | `ID` | Y | 의존하는 항목 |
+| `to_design_item_id` | `ID` | Y | 의존 대상 |
+| `action` | `CONFIRM\|MARK_RECHECK\|KEEP\|RELEASE\|ADD_CANDIDATE\|REJECT_CANDIDATE` | Y | 변경 종류 |
+| `origin` | `EXPLICIT\|AI_CANDIDATE` | Y | 변경 뒤 출처 |
+| `status` | `CONFIRMED\|NEEDS_RECHECK\|RELEASED\|CANDIDATE\|REJECTED` | Y | 변경 뒤 상태 |
+| `baseline_id` | `ID` | N | 유효 기준. 확정·유지는 필수 |
+| `from_design_item_version_id` | `ID` | N | 유효 기준의 from 항목 버전. 확정·유지는 필수 |
+| `to_design_item_version_id` | `ID` | N | 유효 기준의 to 항목 버전. 확정·유지는 필수 |
+| `change_proposal_id` | `ID` | N | 관련 변경 제안 |
+| `relation_set_revision` | `integer` | N | 이 변경이 만든 관계 집합 리비전. 후보 추가·거절은 없음 |
+| `reason` | `string` | N | 근거. 재확인 표시 외에는 필수 |
+| `actor_account_id` | `ID` | Y | 변경한 계정 |
+| `created_at` | `datetime` | Y | 변경 시각 |
+
 <a id="schema-comparison"></a>
 
 ### Comparison
@@ -1571,11 +1816,12 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `target_type` | `DOCUMENT\|DESIGN_ITEM` | Y | 비교 대상 |
-| `target_id` | `ID` | Y | 대상 |
+| `target_id` | `ID` | N | 기존 대상. CREATE 항목은 발행 전 ID가 없어 null |
 | `format` | `TEXT\|FILE\|STRUCTURED` | Y | 비교 형식 |
 | `base_content` | `object\|string` | N | 기준 본문. FILE에서는 생략 |
 | `current_content` | `object\|string` | N | 현재 본문. FILE에서는 생략 |
 | `proposed_content` | `object\|string` | N | 수정안. FILE에서는 생략 |
+| `current_changed` | `boolean` | Y | 기준과 현재 내용이 다름. 기준→제안 diff와 별개 |
 | `diff` | `string` | N | 텍스트/구조 차이. FILE은 생략 |
 | `base_document_version_id` | `ID` | N | FILE 기준 버전 |
 | `proposed_document_version_id` | `ID` | N | FILE 수정안 버전 |
@@ -1668,6 +1914,8 @@ HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. bac
 | `decisions` | `string[]` | Y | 결정 요약 |
 | `unresolved` | `string[]` | Y | 미확정 |
 | `action_items` | [ActionItem[]](00-common.md#schema-actionitem) | Y | 후속 조치 |
+| `conflicts` | `string[]` | N | SUMMARY 필수. 충돌. 수정안 요청 |
+| `document_changes` | [MeetingDocumentChange[]](00-common.md#schema-meetingdocumentchange) | N | SUMMARY 필수. 바뀔 문서와 줄. 수정안 요청 |
 
 <a id="schema-sourcelocator"></a>
 

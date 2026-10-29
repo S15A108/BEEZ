@@ -1,0 +1,35 @@
+# Jenkins 설정 코드 (JCasC, S15P31A108-126).
+# 서버 위치: /etc/jenkins/casc/jenkins.yaml. Jenkins 가 켜질 때마다 이 파일대로 설정을 덮어쓴다.
+# 화면에서 바꾼 보안 설정은 재시작하면 이 파일 값으로 돌아간다 — 바꿀 때는 이 파일을 고친다.
+#
+# 비밀값은 여기에 쓰지 않는다. ${...} 는 서버의 /etc/jenkins/casc.env(root 전용)에서 systemd 가 넘겨준다.
+# 환경 중립: 서버 역할(dev/prod)을 적지 않는다. 주소는 jenkins.beez.ai.kr 하나뿐이다.
+
+jenkins:
+  systemMessage: "BEEZ Jenkins. 설정은 저장소 infra/jenkins/casc/jenkins.yaml 로 관리합니다."
+  # 배포 잡만 돌리므로 동시 실행은 2개면 충분하다
+  numExecutors: 2
+
+  # 로그인 계정: Jenkins 자체 사용자 DB. 가입 화면을 막고 관리자 1명으로 시작한다
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  # 권한: 로그인한 사람만 모든 것을 할 수 있고, 로그인하지 않으면 아무것도 볼 수 없다
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+  # 외부 에이전트 접속 포트를 쓰지 않는다 (빌드는 이 서버의 내장 실행기만 쓴다)
+  slaveAgentPort: -1
+
+  # CSRF 방어(crumb)는 현재 Jenkins 코어에서 항상 켜져 있어 따로 적지 않는다.
+  # (예전 예제의 crumbIssuer.standard.excludeClientIPFromCrumb 는 지금 코어에 없는 항목이라 적으면 기동이 실패한다)
+
+unclassified:
+  # 알림·링크에 쓰이는 공개 주소. Nginx 뒤 HTTPS 주소를 적는다
+  location:
+    url: "https://jenkins.beez.ai.kr/"

@@ -1,0 +1,6 @@
+# Jenkins 플러그인 목록 (S15P31A108-126). jenkins-plugin-manager 로 설치한다 — 설치 절차는 docs/infra/jenkins.md.
+# 직접 쓰는 것만 적고 버전을 고정한다. 의존 플러그인은 도구가 이 코어 버전에 맞는 것을 함께 받는다.
+# 배포 잡용 플러그인(파이프라인 등)은 S15P31A108-123 에서 추가한다.
+
+# 보안·계정 설정을 casc/jenkins.yaml 로 관리
+configuration-as-code:2140.v00e72b_047734

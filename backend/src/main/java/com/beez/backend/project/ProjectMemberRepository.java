@@ -1,9 +1,11 @@
 package com.beez.backend.project;
 
+import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -39,6 +41,14 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
             """)
     boolean isActiveMember(@Param("memberId") long memberId, @Param("projectId") long projectId);
 
+    /**
+     * 멤버십 행을 잠그고 읽는다 (SELECT … FOR UPDATE). 토큰 발급(AGT-A01)이 이걸로 줄을 세워 동시 발급이 한도를 넘지 않게 한다.
+     * 제외·나가기(-212)도 같은 행을 잠그면, 발급과 겹쳐도 제외 뒤에 폐기 안 된 토큰이 남지 않는다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select m from ProjectMember m where m.id = :id")
+    Optional<ProjectMember> findForUpdate(@Param("id") long id);
+
     /** 활성이든 아니든 이 프로젝트에서 이 계정의 멤버십 행 (초대 수락 시 되살릴지 판단). */
     Optional<ProjectMember> findByProjectIdAndAccountId(long projectId, long accountId);
 
@@ -53,7 +63,7 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
         return findAgentConnectedAccountIds(projectId, accountIds);
     }
 
-    /** {@link #agentConnectedAccountIds} 로만 부른다. 토큰 엔티티는 -175 라 SQL 로 읽는다. */
+    /** {@link #agentConnectedAccountIds} 로만 부른다. agent_session 엔티티가 아직 없어 SQL 로 읽는다. */
     @Query(value = """
             select distinct t.account_id
               from agent_token t
