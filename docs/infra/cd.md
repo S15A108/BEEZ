@@ -193,7 +193,9 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   배포해 되돌립니다.
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
 - **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
-  다른 배포가 돌고 있으면 최대 10분 기다립니다. Jenkins 잡의 동시 실행 금지는
+  다른 배포가 돌고 있으면 최대 5분 기다리고, 그래도 안 끝나면 컨테이너를
+  건드리기 전에 실패로 끝납니다. Jenkins 잡의 15분 상한이 잠금 대기까지 세므로,
+  기다린 뒤에도 배포할 시간이 10분 남게 했습니다. Jenkins 잡의 동시 실행 금지는
   잡 안에서만 막으므로, 손 배포와 Jenkins 배포가 겹치는 경우를 여기서 막습니다.
 - Jenkins에서 중단하거나 15분 시간 초과로 끝나도(SIGTERM) 꺼내기용 컨테이너와
   임시 폴더를 지우고 끝납니다.
@@ -272,6 +274,16 @@ Jenkinsfile이 jenkins 계정(docker 그룹 = 사실상 root)으로 실행됩니
   `sudo rm -rf …@*`라고 쓰면 ubuntu 셸이 먼저 펼치려다 `/var/lib/jenkins`(750)를
   읽지 못해 글자 그대로 넘기고, 아무것도 지우지 않습니다.
 
+- **지운 뒤에는 막혔는지 확인합니다.** 지우기가 조용히 실패하면 받는 범위를
+  묶어도 예전 커밋으로 배포할 수 있기 때문입니다.
+  1. 서버: `sudo sh -c 'ls -d /var/lib/jenkins/workspace/beez-deploy*'`가
+     `No such file or directory`면 지워진 것입니다(다음 빌드 전까지).
+  2. Jenkins 화면: `beez-admin`으로 Build with Parameters에 **dev에 없는
+     커밋**을 넣습니다(예: 작업 브랜치에만 있던
+     `1531d05fe926f94270db1cac84bb922902a74f62`). `Couldn't find any revision
+     to build`로 실패해야 정상입니다. 서버는 바뀌지 않습니다. 배포 단계까지
+     가면 작업 폴더가 남아 있는 것이니 다시 지웁니다.
+
 - 그래서 **머지 전 작업 브랜치를 Jenkins로 배포해 볼 수 없습니다.** 브랜치에서
   배포를 시험할 때는 "손으로 배포·롤백"으로 합니다.
 - 화면에서 잡 설정을 고치면 다음 재시작 때 JCasC 정의로 돌아갑니다. 바꿀 때는
@@ -297,8 +309,10 @@ with Parameters** → `GIT_SHA`에 40자 SHA → Build. 롤백은 예전 SHA를 
 띄워 봅니다.**
 
 ```bash
-# 로컬 PC(Git Bash)
-scp /c/git/BEEZ/infra/jenkins/plugins.txt /c/git/BEEZ/infra/jenkins/casc/jenkins.yaml beez:/tmp/
+# 로컬 PC(Git Bash) — 반영할 커밋을 고정해 보낸다(작업 폴더가 다른 브랜치여도 같은 파일)
+C=<반영할 커밋>
+git -C /c/git/BEEZ show "$C:infra/jenkins/plugins.txt" | ssh beez 'cat > /tmp/plugins.txt'
+git -C /c/git/BEEZ show "$C:infra/jenkins/casc/jenkins.yaml" | ssh beez 'cat > /tmp/jenkins.yaml'
 # 서버 — 플러그인 설치 도구는 Jenkins 런북 4단계와 같다(체크섬 확인)
 sudo install -D -m 600 /etc/jenkins/casc/jenkins.yaml /var/backups/jenkins/jenkins.yaml.before-$(date +%Y%m%d-%H%M) && \
 sudo systemctl stop jenkins && \
@@ -317,6 +331,8 @@ rm -f /tmp/plugins.txt /tmp/jenkins.yaml
   새로 깐 플러그인은 그대로 둬도 됩니다.
 - `unresolved`가 나오면 `casc.env`에 없는 변수를 쓴 것입니다. JCasC는 빈
   문자열로 넣고 계속 뜹니다.
+- **받는 범위(refspec)를 바꿨으면** `systemctl start` 전에 잡 작업 폴더도
+  지우고, 켠 뒤 위 "받는 범위를 dev로 묶는 이유"의 확인 두 가지를 합니다.
 
 ## Actions → Jenkins 호출
 
@@ -330,6 +346,7 @@ rm -f /tmp/plugins.txt /tmp/jenkins.yaml
 | 응답 | 뜻 |
 |---|---|
 | 201 | 접수됨 |
+| 000 | 연결 실패·시간 초과(재시도 3번까지 실패). Jenkins·Nginx가 떠 있는지 확인 |
 | 401 | 토큰이 틀렸거나 폐기됨 → 아래 "토큰 발급·교체" |
 | 403 / 404 | `github-actions`에 이 잡 권한이 없음 → JCasC의 `authorizationMatrix` |
 | 429 | Nginx 요청 제한. 1분 뒤 Actions에서 다시 실행 |
