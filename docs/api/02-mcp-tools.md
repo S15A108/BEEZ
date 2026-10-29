@@ -162,6 +162,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
+| 503 | `processing_unavailable` | 컨텍스트 구성 모듈 미연결. 패킷을 저장하지 않는다 ([서비스 연결 계약](../design/08-mcp-service-contract.md)) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -902,6 +903,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 같은 이전 리비전의 후속 기록 존재 |
+| 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1059,6 +1061,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 리비전 경합 |
 | 409 | `dependency_cycle` | 선행 순환 |
+| 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1591,6 +1594,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 409 | `dependency_not_completed` | 선행 미완료 |
 | 409 | `task_conflict` | 점유 충돌 |
 | 409 | `validation_not_passed` | 유효 PASS 없음 |
+| 409 | `idempotency_conflict` | 같은 idempotency_key로 다른 입력 전송. 같은 입력이면 처음 결과를 반환 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 

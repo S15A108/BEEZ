@@ -19,3 +19,16 @@ ALTER TABLE context_record
   ADD CONSTRAINT fk_context_record_token    FOREIGN KEY (author_token_id, project_id)  REFERENCES agent_token(id, project_id);
 
 -- 걸지 못하는 것 (코드에서 확인): task_plan_revision.context_packet_id 와 *_ref 표의 설계 항목은 표에 project_id 칸이 없다.
+
+-- MCP 변경 도구(upsert_task_plan·report_task_state·write_context)의 같은 키 재시도 응답 (공통 5절, S15P31A108-166 리뷰 반영).
+-- 키 범위는 계정·프로젝트·동작, 24시간 보존. 문서·설계 항목의 *_http_command 와 같은 방식(Q12 범위 한정 결정).
+CREATE TABLE mcp_command (
+  project_id  BIGINT NOT NULL REFERENCES project(id),
+  account_id  BIGINT NOT NULL REFERENCES account(id),
+  operation   TEXT NOT NULL,
+  request_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  response    JSONB NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
+  PRIMARY KEY (project_id, account_id, operation, request_key)
+);

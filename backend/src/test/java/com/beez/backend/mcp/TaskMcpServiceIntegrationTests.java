@@ -208,6 +208,47 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void upsert_sameKeyRetry_returnsFirstTask_andDifferentInputIs409() {
+        UpsertTaskPlanArgs args = new UpsertTaskPlanArgs(plan("A", "API-01"), null, null, null, "k-same");
+        TaskDetailResponse first = mcp.upsertTaskPlan(agent, projectId, args);
+        // 응답을 잃고 같은 키·같은 입력으로 다시 보냄 → 같은 작업, 새 작업 없음
+        TaskDetailResponse again = mcp.upsertTaskPlan(agent, projectId, args);
+        assertThat(again.id()).isEqualTo(first.id());
+        Integer tasks = api.jdbc.sql("select count(*) from task where project_id = :p").param("p", projectId)
+                .query(Integer.class).single();
+        assertThat(tasks).isEqualTo(1);
+
+        // 같은 키에 다른 입력 → 409
+        assertDenied(() -> mcp.upsertTaskPlan(agent, projectId,
+                new UpsertTaskPlanArgs(plan("B", "API-02"), null, null, null, "k-same")),
+                HttpStatus.CONFLICT, "idempotency_conflict");
+    }
+
+    @Test
+    void report_sameKeyRetry_returnsFirstResult_insteadOfConflict() {
+        TaskDetailResponse task = create("A");
+        long pass = api.passValidation(Long.parseLong(task.id()));
+        ReportTaskStateResult started = report(task, TaskEvent.START, pass, null, "s1");
+        // 같은 키·같은 입력 재시도: 상태가 이미 바뀌었어도 처음 결과를 준다 (경합 409 가 아님)
+        ReportTaskStateResult again = report(task, TaskEvent.START, pass, null, "s1");
+        assertThat(again.task().status()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(again.task().lockVersion()).isEqualTo(started.task().lockVersion());
+    }
+
+    @Test
+    void report_cancel_stillReturnsChangesSinceThePlan() {
+        TaskDetailResponse task = create("A");
+        // 계획(v1 기준) 이후 API-01 이 v2 로 바뀜
+        api.publish(2, Map.of("API-01", api.newVersion("API-01", 2), "API-02", api.currentVersionId("API-02")));
+
+        ReportTaskStateResult cancelled = report(task, TaskEvent.CANCEL, null, null, "c1");
+        assertThat(cancelled.task().status()).isEqualTo(TaskStatus.CANCELLED);
+        // 취소된 작업이어도 그 작업 기준 변경은 보여 준다
+        assertThat(cancelled.changes().items()).hasSize(1);
+        assertThat(cancelled.changes().items().get(0).baseline().versionNo()).isEqualTo(2);
+    }
+
+    @Test
     void report_requiresTaskIdAndIdempotencyKey_andKeepsStateRules() {
         TaskDetailResponse task = create("A");
         assertDenied(() -> mcp.reportTaskState(agent, projectId, new ReportTaskStateArgs(null, TaskEvent.START,

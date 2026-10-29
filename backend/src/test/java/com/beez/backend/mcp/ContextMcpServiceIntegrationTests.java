@@ -82,32 +82,38 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void getDevelopmentContext_adapterPassesToolArgsOnly_savesPacketWithEmptyCompositionForNow() {
-        ContextPacketResponse packet = mcp.getDevelopmentContext(memberAgent, projectId,
-                new GetDevelopmentContextArgs("로그인 화면 구현", String.valueOf(projectId), null));
-
-        assertThat(packet.request()).isEqualTo("로그인 화면 구현");
-        assertThat(packet.baselineId()).isNotNull();
-        assertThat(packet.designItems()).isEmpty();      // 구성 모듈(박상은) 연결 전
-        assertThat(count("select count(*) from context_access_log where tool = 'get_development_context' and target_kind = 'PACKET'"))
-                .isEqualTo(1);
+    void getDevelopmentContext_withoutCompositionModule_is503_andSavesNothing() {
+        // 구성 모듈(박상은) 연결 전: 빈 패킷을 "근거 없음"처럼 주지 않고 503, 저장도 하지 않는다
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("로그인 화면 구현", String.valueOf(projectId), null)),
+                HttpStatus.SERVICE_UNAVAILABLE, "processing_unavailable");
+        assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
 
     @Test
-    void getDevelopmentContext_rules() {
+    void getDevelopmentContext_checksCallerAndArgsFirst() {
         // 웹(사람 세션)은 패킷을 만들지 않는다 (CTX-A01)
         assertDenied(() -> mcp.getDevelopmentContext(CallerContext.human(member), projectId,
                 new GetDevelopmentContextArgs("x", null, null)), HttpStatus.FORBIDDEN, "forbidden");
         // 요청 문장 필수
         assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
                 new GetDevelopmentContextArgs(" ", null, null)), HttpStatus.BAD_REQUEST, "validation_failed");
+        // 프로젝트 멤버가 아님
+        Long outsider = api.accountId("outsider@test");
+        assertDenied(() -> mcp.getDevelopmentContext(CallerContext.human(outsider), projectId,
+                new GetDevelopmentContextArgs("x", null, null)), HttpStatus.NOT_FOUND, "not_found");
+    }
+
+    @Test
+    void savePacket_rules() {
+        // 구성 결과가 생긴 뒤의 저장 규칙은 패킷 저장 서비스에서 확인한다
         // project_id 인수가 토큰 프로젝트와 다름
-        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
-                new GetDevelopmentContextArgs("x", String.valueOf(projectId + 99), null)), HttpStatus.NOT_FOUND, "not_found");
+        assertDenied(() -> packets.save(memberAgent, projectId, new SavePacketArgs("x", String.valueOf(projectId + 99),
+                null, List.of(), List.of(), List.of(), List.of(), List.of())), HttpStatus.NOT_FOUND, "not_found");
         // 기준 설계가 없는 프로젝트
         api.jdbc.sql("update project set current_baseline_id = null where id = :p").param("p", projectId).update();
-        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
-                new GetDevelopmentContextArgs("x", null, null)), HttpStatus.NOT_FOUND, "baseline_not_published");
+        assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(List.of())),
+                HttpStatus.NOT_FOUND, "baseline_not_published");
     }
 
     @Test
@@ -162,6 +168,25 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         ReadContextResult old = mcp.readContext(memberAgent, projectId, "RECORD", first.id());
         assertThat(old.record().isLatestRevision()).isFalse();
         assertThat(count("select count(*) from context_access_log where target_kind = 'CONTEXT_RECORD'")).isEqualTo(1);
+    }
+
+    @Test
+    void write_sameKeyRetry_returnsFirstResult_andDifferentInputIs409() {
+        WriteContextArgs args = record(null, Visibility.SHARED, "재시도");
+        ContextRecordResponse first = mcp.writeContext(memberAgent, projectId, args);
+        // 응답을 잃고 같은 키·같은 입력으로 다시 보냄 → 처음 결과, 기록은 하나
+        ContextRecordResponse again = mcp.writeContext(memberAgent, projectId, args);
+        assertThat(again.id()).isEqualTo(first.id());
+        assertThat(again.revisionNo()).isEqualTo(first.revisionNo());
+        assertThat(count("select count(*) from context_record")).isEqualTo(1);
+
+        // 같은 키에 다른 입력 → 409
+        WriteContextArgs changed = new WriteContextArgs(null, null, null, null, ContextRecordKind.ISSUE, Visibility.SHARED,
+                "재시도", "상세", List.of(), "k-재시도");
+        assertDenied(() -> mcp.writeContext(memberAgent, projectId, changed), HttpStatus.CONFLICT, "idempotency_conflict");
+        // 다른 사람은 같은 키를 써도 따로 처리된다 (키 범위 = 계정·프로젝트·동작)
+        ContextRecordResponse leaders = mcp.writeContext(leaderAgent, projectId, args);
+        assertThat(leaders.id()).isNotEqualTo(first.id());
     }
 
     @Test

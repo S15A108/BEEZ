@@ -1,5 +1,6 @@
 package com.beez.backend.mcp.service;
 
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
@@ -16,7 +17,7 @@ import com.beez.backend.context.dto.WriteContextArgs;
 import com.beez.backend.context.service.ContextPacketService;
 import com.beez.backend.context.service.ContextRecordService;
 import com.beez.backend.mcp.dto.GetDevelopmentContextArgs;
-import java.util.List;
+import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,28 +33,39 @@ public class ContextMcpService {
     private final ContextPacketService packets;
     private final ContextRecordService records;
 
-    public ContextMcpService(ProjectAccessChecker access, ContextPacketService packets, ContextRecordService records) {
+    private final McpCommandStore commands;
+
+    private static final String OP_WRITE = "write_context";
+
+    public ContextMcpService(ProjectAccessChecker access, ContextPacketService packets, ContextRecordService records,
+                             McpCommandStore commands) {
         this.access = access;
         this.packets = packets;
         this.records = records;
+        this.commands = commands;
     }
 
     /**
      * MCP-01 get_development_context. 어댑터는 도구 인수만 넘기고, 패킷 구성과 저장은 여기서 한다.
      *
      * <p>패킷 내용 구성(승인 설계 검색·의존 설계 확장·미확정·관련 작업·근거)은 박상은 모듈(-131·-132)이 맡는다.
-     * 그 모듈이 아직 없어 지금은 구성 결과를 빈 목록으로 저장한다. 모듈이 붙으면 아래 "구성" 자리에서 호출하고,
-     * 무엇을 주고받을지는 그때 함께 정한다 (계약 문서 3절).
+     * 그 모듈이 붙기 전에는 <b>503 processing_unavailable</b> 을 주고 패킷을 저장하지 않는다 (리뷰 반영).
+     * 빈 구성으로 저장·반환하면 호출자가 "근거 없음"으로 읽는다 — 명세 MCP-01 "검색 실패와 근거 없음은 구분한다".
+     * 모듈이 붙으면 아래 자리에서 구성 결과로 {@link SavePacketArgs} 를 만들어 {@link ContextPacketService#save} 를 부른다.
+     * 권한(404·사람 세션 403)과 인수(400) 확인은 지금도 먼저 한다.
      */
     public ContextPacketResponse getDevelopmentContext(CallerContext caller, Long projectId, GetDevelopmentContextArgs args) {
-        if (args == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "arguments 는 필수입니다");
+        ProjectActor actor = access.requireMember(caller, projectId);
+        if (!actor.isAgent()) {
+            // CTX-A01: 웹에서 임의 패킷을 만들지 않는다
+            throw AccessErrors.forbidden("packet_human_caller", "개발 컨텍스트 패킷은 에이전트 도구로만 만듭니다");
         }
-        // 구성: 박상은 모듈 연결 전까지 빈 결과
-        SavePacketArgs composed = new SavePacketArgs(args.request(), args.projectId(), args.taskId(),
-                List.of(), List.of(), List.of(), List.of(), List.of());
-        // 권한·인수 검사(@NotBlank request 포함)·저장·조회 이력은 패킷 저장 서비스가 한다
-        return packets.save(caller, projectId, composed);
+        if (args == null || args.request() == null || args.request().isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "request 는 필수입니다");
+        }
+        // 구성: 박상은 모듈 연결 전. 연결되면 구성 결과로 packets.save(caller, projectId, composed) 를 부른다
+        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "processing_unavailable",
+                "개발 컨텍스트 구성 모듈이 아직 연결되지 않았습니다");
     }
 
     /** MCP-05 find_context */
@@ -80,8 +92,20 @@ public class ContextMcpService {
         throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "type 은 PACKET 또는 RECORD 입니다");
     }
 
-    /** MCP-07 write_context. idempotency_key 는 필수 확인만 한다 — 같은 키로 재시도하면 기록이 한 번 더 생긴다(Q12 전 알려진 한계) */
+    /** MCP-07 write_context. 같은 키·같은 입력은 처음 결과, 다른 입력은 409 idempotency_conflict (공통 5절) */
+    @Transactional
     public ContextRecordResponse writeContext(CallerContext caller, Long projectId, WriteContextArgs args) {
-        return records.write(caller, projectId, args);
+        ProjectActor actor = access.requireMember(caller, projectId);
+        if (args == null || args.idempotencyKey() == null || args.idempotencyKey().isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "idempotency_key 는 필수입니다");
+        }
+        Optional<ContextRecordResponse> previous = commands.replay(projectId, actor.accountId(), OP_WRITE,
+                args.idempotencyKey(), args, ContextRecordResponse.class);
+        if (previous.isPresent()) {
+            return previous.get();
+        }
+        ContextRecordResponse result = records.write(caller, projectId, args);
+        commands.save(projectId, actor.accountId(), OP_WRITE, args.idempotencyKey(), args, result);
+        return result;
     }
 }

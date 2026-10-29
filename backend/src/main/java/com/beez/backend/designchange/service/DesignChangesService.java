@@ -37,7 +37,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>첫 발행(v1)은 변경이 아니라 시작점이라 목록에서 뺀다. 제안 없이 발행된 기준은 proposal_id 를 생략한다</li>
  *   <li>폐기 = 새 기준의 baseline_item 에서 빠짐 (발행 -194 계약, {@link DesignChangeQueries}). retired_at 시각으로 추정하지 않는다</li>
  *   <li>기준 설계가 한 번도 없으면 409 baseline_missing (-156 ProjectDesignLookup 과 같은 코드)</li>
- *   <li>영향 작업 = 변경 전 버전을 현재 계획이 참조하는(READS·IMPLEMENTS·CHANGES), 완료·취소되지 않은 작업. 기준은 {@link DesignChangeQueries}</li>
+ *   <li>영향 작업 = 변경 전 버전 또는 그보다 옛 버전을 현재 계획이 참조하는(READS·IMPLEMENTS·CHANGES) 작업. affected_task_ids 는
+ *       완료·취소를 빼고, task_id 를 지정한 목록은 상태와 무관하게 그 작업이 영향받은 변경을 준다. 기준은 {@link DesignChangeQueries}</li>
  *   <li>검증이 한 번도 없는 작업은 validation_validity 에 넣지 않는다 (명세 상태 목록에 NOT_RUN 이 없고 validation_id 가 필수)</li>
  *   <li>task_id 를 주면 그 작업이 영향받은 변경만, 검증 유효성도 그 작업만. 다른 프로젝트 작업이면 404 가 아니라 빈 결과(-172 참고 2)</li>
  * </ol>
@@ -310,6 +311,7 @@ public class DesignChangesService {
                         select distinct baseline_id, task_id
                           from affected
                          where baseline_id in (:ids)
+                           and task_status not in ('COMPLETED', 'CANCELLED')
                          order by baseline_id, task_id
                         """)
                 .param("projectId", projectId)

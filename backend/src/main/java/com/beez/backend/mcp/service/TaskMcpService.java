@@ -15,6 +15,7 @@ import com.beez.backend.task.dto.TaskDetailResponse;
 import com.beez.backend.task.dto.TaskStateInput;
 import com.beez.backend.task.service.TaskPlanService;
 import com.beez.backend.task.service.TaskStateService;
+import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>프로젝트는 토큰에서 정한 값을 어댑터가 넘긴다 (02-mcp-tools "연결과 인증")</li>
  *   <li>컨트롤러를 거치지 않으므로 DTO 검증 표시를 {@link InputValidator} 로 직접 적용한다</li>
- *   <li>idempotency_key 는 필수 확인만 한다 (Q12 확정 전, 다른 PR 과 같음). 같은 키로 재시도하면 작업·리비전이 한 번 더 생긴다 — 알려진 한계</li>
+ *   <li>idempotency_key: 같은 키·같은 입력은 처음 결과, 다른 입력은 409 idempotency_conflict ({@link McpCommandStore})</li>
  * </ul>
  */
 @Service
@@ -37,14 +38,19 @@ public class TaskMcpService {
     private final DesignChangesService designChanges;
     private final ProjectAccessChecker access;
     private final InputValidator validator;
+    private final McpCommandStore commands;
+
+    private static final String OP_UPSERT = "upsert_task_plan";
+    private static final String OP_REPORT = "report_task_state";
 
     public TaskMcpService(TaskPlanService planService, TaskStateService stateService, DesignChangesService designChanges,
-                          ProjectAccessChecker access, InputValidator validator) {
+                          ProjectAccessChecker access, InputValidator validator, McpCommandStore commands) {
         this.planService = planService;
         this.stateService = stateService;
         this.designChanges = designChanges;
         this.access = access;
         this.validator = validator;
+        this.commands = commands;
     }
 
     /**
@@ -57,16 +63,28 @@ public class TaskMcpService {
         validator.requireIdempotencyKey(args.idempotencyKey());
         validator.check(args.plan(), "plan");
 
+        // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 재요청도 현재 권한을 먼저 확인한다
+        ProjectActor actor = access.requireMember(caller, projectId);
+        Optional<TaskDetailResponse> previous = commands.replay(projectId, actor.accountId(), OP_UPSERT,
+                args.idempotencyKey(), args, TaskDetailResponse.class);
+        if (previous.isPresent()) {
+            return previous.get();
+        }
+
+        TaskDetailResponse result;
         if (args.taskId() == null) {
-            return planService.createTask(caller, projectId, args.plan());
+            result = planService.createTask(caller, projectId, args.plan());
+        } else {
+            Long taskId = Ids.parse(args.taskId(), "task_id");
+            if (args.expectedRevisionNo() == null || args.expectedLockVersion() == null) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                        "수정 시 expected_revision_no 와 expected_lock_version 은 필수입니다");
+            }
+            result = planService.addRevision(caller, projectId, taskId, args.plan(),
+                    args.expectedRevisionNo(), args.expectedLockVersion());
         }
-        Long taskId = Ids.parse(args.taskId(), "task_id");
-        if (args.expectedRevisionNo() == null || args.expectedLockVersion() == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
-                    "수정 시 expected_revision_no 와 expected_lock_version 은 필수입니다");
-        }
-        return planService.addRevision(caller, projectId, taskId, args.plan(),
-                args.expectedRevisionNo(), args.expectedLockVersion());
+        commands.save(projectId, actor.accountId(), OP_UPSERT, args.idempotencyKey(), args, result);
+        return result;
     }
 
     /**
@@ -85,14 +103,24 @@ public class TaskMcpService {
                 args.validationId(), args.waitingReason(), args.summary(), args.delta(), args.completionChecks());
         validator.check(state, "arguments");
 
-        TaskDetailResponse task = stateService.report(caller, projectId, taskId, state);
-        // 권한은 report 안에서 이미 확인했다. 변경 조회 이력에 쓸 호출자 정보를 얻으려고 한 번 더 부른다 (캐시 없이 같은 결과)
+        // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 재요청도 현재 권한을 먼저 확인한다
         ProjectActor actor = access.requireMember(caller, projectId);
+        Optional<ReportTaskStateResult> previous = commands.replay(projectId, actor.accountId(), OP_REPORT,
+                args.idempotencyKey(), args, ReportTaskStateResult.class);
+        if (previous.isPresent()) {
+            return previous.get();
+        }
+
+        TaskDetailResponse task = stateService.report(caller, projectId, taskId, state);
+        ReportTaskStateResult result;
         PlanChangesResponse planChanges = designChanges.changesSincePlan(actor, projectId, taskId);
         if (planChanges == null) {
             // 기준 설계가 한 번도 없는 프로젝트: changes 생략
-            return new ReportTaskStateResult(task, null, null);
+            result = new ReportTaskStateResult(task, null, null);
+        } else {
+            result = new ReportTaskStateResult(task, planChanges.changes(), planChanges.sinceVersion());
         }
-        return new ReportTaskStateResult(task, planChanges.changes(), planChanges.sinceVersion());
+        commands.save(projectId, actor.accountId(), OP_REPORT, args.idempotencyKey(), args, result);
+        return result;
     }
 }
