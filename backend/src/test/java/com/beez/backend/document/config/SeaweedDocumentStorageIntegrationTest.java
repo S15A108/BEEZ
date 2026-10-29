@@ -8,20 +8,17 @@ import com.beez.backend.document.support.SeaweedTestContainer;
 import java.net.URI;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.*;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.testcontainers.junit.jupiter.*;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Tag("integration")
-@Testcontainers
 class SeaweedDocumentStorageIntegrationTest {
-    @Container static final SeaweedTestContainer seaweed = new SeaweedTestContainer();
+    // 테스트 JVM 에서 한 번 띄워 함께 쓴다(버킷 준비까지 끝난 상태로 돌아온다)
+    static final SeaweedTestContainer seaweed = SeaweedTestContainer.shared();
 
     @Test void authenticatedSeaweedRoundtripAndExistingKeyReadUseConfiguredBackend() {
         String endpoint = "http://" + seaweed.getHost() + ":" + seaweed.getMappedPort(8333);
@@ -36,8 +33,6 @@ class SeaweedDocumentStorageIntegrationTest {
             var storage = context.getBean(DocumentStorage.class);
             assertThat(storage).isInstanceOf(S3DocumentStorage.class);
             var client = context.getBean(S3Client.class);
-            org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(30)).ignoreExceptions().untilAsserted(() ->
-                    assertThat(client.headBucket(HeadBucketRequest.builder().bucket("beez-documents").build())).isNotNull());
             byte[] original = "\uFEFF# 문서\r\n원본을 보존한다.\r\n".getBytes(StandardCharsets.UTF_8);
             String key = storage.store(original, "md");
             assertThat(storage.read(key)).containsExactly(original);

@@ -8,7 +8,6 @@ import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.document.support.SeaweedTestContainer;
 import com.beez.backend.support.IntegrationTestSupport;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,13 +16,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 
 /** The text-change path against a real S3-compatible store (SeaweedFS), not the in-memory stand-in. */
 class ProposalSeaweedIntegrationTest extends IntegrationTestSupport {
-    static final SeaweedTestContainer seaweed = new SeaweedTestContainer();
-    static { seaweed.start(); }
+    // 테스트 JVM 에서 한 번 띄워 함께 쓴다(버킷 준비까지 끝난 상태로 돌아온다). 원본 개수는 시험마다 시작 전 대비로만 비교한다
+    static final SeaweedTestContainer seaweed = SeaweedTestContainer.shared();
     @DynamicPropertySource static void storageEndpoint(DynamicPropertyRegistry registry) {
         registry.add("beez.document.object-storage.endpoint", seaweed::endpoint);
     }
@@ -36,8 +34,6 @@ class ProposalSeaweedIntegrationTest extends IntegrationTestSupport {
     CallerContext author;
 
     @BeforeEach void setup() {
-        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(30)).ignoreExceptions().untilAsserted(() ->
-                assertThat(s3.headBucket(HeadBucketRequest.builder().bucket(SeaweedTestContainer.BUCKET).build())).isNotNull());
         var project = fixtures().projectWithLeader();
         projectId = project.projectId();
         author = CallerContext.human(project.leaderAccountId());
