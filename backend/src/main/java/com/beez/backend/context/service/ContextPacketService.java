@@ -4,27 +4,26 @@ import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.api.CanonicalJson;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.InputValidator;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.context.dto.ContextPacketResponse;
+import com.beez.backend.context.dto.DesignItemVersionResponse;
 import com.beez.backend.context.dto.RelatedTaskDto;
 import com.beez.backend.context.dto.SavePacketArgs;
 import com.beez.backend.context.dto.SourceDto;
 import com.beez.backend.context.entity.DevContextPacket;
 import com.beez.backend.context.repository.DevContextPacketRepository;
 import com.beez.backend.contextaccess.service.ContextAccessRecorder;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 개발 컨텍스트 패킷 저장·조회 (MCP-01 업무 저장, MCP-06 PACKET, S15P31A108-166).
@@ -41,14 +40,16 @@ public class ContextPacketService {
     private final DevContextPacketRepository packets;
     private final ContextLookup lookup;
     private final ContextAccessRecorder accessLog;
+    private final ObjectMapper json;
 
     public ContextPacketService(ProjectAccessChecker access, InputValidator validator, DevContextPacketRepository packets,
-                                ContextLookup lookup, ContextAccessRecorder accessLog) {
+                                ContextLookup lookup, ContextAccessRecorder accessLog, ObjectMapper json) {
         this.access = access;
         this.validator = validator;
         this.packets = packets;
         this.lookup = lookup;
         this.accessLog = accessLog;
+        this.json = json;
     }
 
     @Transactional
@@ -74,6 +75,9 @@ public class ContextPacketService {
 
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("design_item_version_ids", versionIds);
+        // 반환할 승인 설계를 저장 시점 그대로 넣는다. 나중에 그 버전이 SUPERSEDED 가 되어도 같은 패킷은 같은 내용을 돌려준다 (리뷰 반영)
+        // convertValue: 응답 객체를 JSON 과 같은 Map 으로 바꾼다
+        content.put("design_items", json.convertValue(lookup.designItemVersions(versionIds), List.class));
         content.put("constraints", args.constraints());
         content.put("unresolved", args.unresolved());
         content.put("related_tasks", relatedTasksToMaps(args.relatedTasks()));
@@ -81,6 +85,7 @@ public class ContextPacketService {
 
         DevContextPacket packet = packets.saveAndFlush(DevContextPacket.create(projectId, taskId, actor.agentTokenId(),
                 args.request(), baselineId, content, hash(args.request(), baselineId, content)));
+        // ↑ 해시는 요청·기준·content(설계 스냅샷 포함)의 정규 JSON. 저장하는 값과 해시 입력이 같다
         lookup.insertPacketRefs(packet.getId(), versionIds);
         accessLog.record(actor, taskId, "get_development_context", ContextAccessRecorder.KIND_PACKET,
                 packet.getId(), baselineId, packet.getId());
@@ -101,9 +106,10 @@ public class ContextPacketService {
 
     private ContextPacketResponse toResponse(DevContextPacket p) {
         Map<String, Object> c = p.getContent();
-        List<Long> versionIds = new ArrayList<>();
-        for (Object v : listOf(c.get("design_item_version_ids"))) {
-            versionIds.add(((Number) v).longValue());
+        // 저장 시점 스냅샷을 그대로 돌려준다 (다시 조회하지 않는다)
+        List<DesignItemVersionResponse> designItems = new ArrayList<>();
+        for (Object o : listOf(c.get("design_items"))) {
+            designItems.add(json.convertValue(o, DesignItemVersionResponse.class));
         }
         List<RelatedTaskDto> related = new ArrayList<>();
         for (Object o : listOf(c.get("related_tasks"))) {
@@ -117,7 +123,7 @@ public class ContextPacketService {
                     ((Number) m.get("version_no")).intValue(), (String) m.get("location")));
         }
         return new ContextPacketResponse(Ids.str(p.getId()), Ids.str(p.getProjectId()), Ids.str(p.getTaskId()),
-                Ids.str(p.getBaselineId()), p.getRequest(), lookup.designItemVersions(versionIds),
+                Ids.str(p.getBaselineId()), p.getRequest(), designItems,
                 stringsOf(c.get("constraints")), stringsOf(c.get("unresolved")), related, sources, p.getCreatedAt(),
                 p.getContentHash());
     }
@@ -167,13 +173,16 @@ public class ContextPacketService {
      * 패킷 해시: 요청·기준·내용을 정해진 순서로 이어 붙인 문자열의 SHA-256.
      * content 는 넣은 순서가 고정된 LinkedHashMap 이고 목록 순서도 구성 모듈이 준 순서 그대로라, 같은 입력이면 같은 해시다.
      */
-    private static String hash(String request, Long baselineId, Map<String, Object> content) {
-        String canonical = "request=" + request + "\nbaseline=" + baselineId + "\ncontent=" + content;
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(canonical.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 을 쓸 수 없습니다", e);
-        }
+    /**
+     * 패킷 해시 = {request, baseline_id, content} 의 정규 JSON SHA-256 ({@link CanonicalJson}).
+     * Map.toString() 을 쓰면 constraints=["a, b"] 와 ["a", "b"] 가 같은 문자열이 되어 다른 패킷이 같은 해시를 갖는다 (리뷰 반영).
+     */
+    private String hash(String request, Long baselineId, Map<String, Object> content) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("request", request);
+        input.put("baseline_id", baselineId);
+        input.put("content", content);
+        return CanonicalJson.sha256(json, input);
+    }
     }
 }

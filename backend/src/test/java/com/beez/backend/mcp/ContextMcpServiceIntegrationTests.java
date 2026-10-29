@@ -133,6 +133,30 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void savedPacket_keepsDesignStateAtSaveTime_evenAfterVersionIsSuperseded() {
+        Long v = api.currentVersionId("API-01");
+        ContextPacketResponse saved = packets.save(memberAgent, projectId, packetArgs(List.of(String.valueOf(v))));
+        assertThat(saved.designItems().get(0).status()).isEqualTo("APPROVED");
+
+        // 나중에 그 버전이 SUPERSEDED 가 되어도
+        api.jdbc.sql("update design_item_version set status = 'SUPERSEDED' where id = :v").param("v", v).update();
+
+        ReadContextResult read = mcp.readContext(memberAgent, projectId, "PACKET", saved.id());
+        assertThat(read.packet().designItems().get(0).status()).isEqualTo("APPROVED");
+        assertThat(read.packet().designItems()).isEqualTo(saved.designItems());
+        assertThat(read.packet().contentHash()).isEqualTo(saved.contentHash());
+    }
+
+    @Test
+    void packetHash_keepsListAndStringBoundaries() {
+        SavePacketArgs joined = new SavePacketArgs("같은 요청", null, null, List.of(), List.of("a, b"), List.of(), List.of(), List.of());
+        SavePacketArgs split = new SavePacketArgs("같은 요청", null, null, List.of(), List.of("a", "b"), List.of(), List.of(), List.of());
+        String h1 = packets.save(memberAgent, projectId, joined).contentHash();
+        String h2 = packets.save(memberAgent, projectId, split).contentHash();
+        assertThat(h1).hasSize(64).isNotEqualTo(h2);
+    }
+
+    @Test
     void savePacket_versionsMustBeInCurrentBaseline() {
         String unpublished = String.valueOf(api.newVersion("API-01", 2));
         assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(List.of(unpublished))),
@@ -187,6 +211,15 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         // 다른 사람은 같은 키를 써도 따로 처리된다 (키 범위 = 계정·프로젝트·동작)
         ContextRecordResponse leaders = mcp.writeContext(leaderAgent, projectId, args);
         assertThat(leaders.id()).isNotEqualTo(first.id());
+    }
+
+    @Test
+    void write_nullInsideDesignRefs_is400() {
+        List<VersionRefDto> refs = new java.util.ArrayList<>();
+        refs.add(null);
+        WriteContextArgs args = new WriteContextArgs(null, null, null, null, ContextRecordKind.DECISION, Visibility.SHARED,
+                "널 참조", "상세", refs, "k-null");
+        assertDenied(() -> mcp.writeContext(memberAgent, projectId, args), HttpStatus.BAD_REQUEST, "validation_failed");
     }
 
     @Test

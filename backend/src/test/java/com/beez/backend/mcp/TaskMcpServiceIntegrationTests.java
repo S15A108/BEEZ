@@ -236,6 +236,23 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void sameKeyRetry_afterAssigneeChanged_isForbiddenForThePreviousAssignee() {
+        TaskDetailResponse task = create("A");
+        UpsertTaskPlanArgs revise = new UpsertTaskPlanArgs(plan("A2", "API-02"), task.id(), 1, task.lockVersion(), "k-revise");
+        TaskDetailResponse revised = mcp.upsertTaskPlan(agent, projectId, revise);
+        long pass = api.passValidation(Long.parseLong(revised.id()));
+        report(revised, TaskEvent.START, pass, null, "s1");
+
+        // 그 사이 담당자가 팀장으로 바뀜
+        api.jdbc.sql("update task set assignee_member_id = :m where id = :t")
+                .param("m", api.memberId("leader@test")).param("t", Long.parseLong(task.id())).update();
+
+        // 이전 담당자가 같은 키로 재시도해도 저장된 결과를 주지 않는다
+        assertDenied(() -> mcp.upsertTaskPlan(agent, projectId, revise), HttpStatus.FORBIDDEN, "forbidden");
+        assertDenied(() -> report(revised, TaskEvent.START, pass, null, "s1"), HttpStatus.FORBIDDEN, "forbidden");
+    }
+
+    @Test
     void report_cancel_stillReturnsChangesSinceThePlan() {
         TaskDetailResponse task = create("A");
         // 계획(v1 기준) 이후 API-01 이 v2 로 바뀜

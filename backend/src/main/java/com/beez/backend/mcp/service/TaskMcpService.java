@@ -1,5 +1,6 @@
 package com.beez.backend.mcp.service;
 
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
@@ -12,6 +13,8 @@ import com.beez.backend.mcp.dto.ReportTaskStateArgs;
 import com.beez.backend.mcp.dto.ReportTaskStateResult;
 import com.beez.backend.mcp.dto.UpsertTaskPlanArgs;
 import com.beez.backend.task.dto.TaskDetailResponse;
+import com.beez.backend.task.entity.Task;
+import com.beez.backend.task.repository.TaskRepository;
 import com.beez.backend.task.dto.TaskStateInput;
 import com.beez.backend.task.service.TaskPlanService;
 import com.beez.backend.task.service.TaskStateService;
@@ -39,18 +42,21 @@ public class TaskMcpService {
     private final ProjectAccessChecker access;
     private final InputValidator validator;
     private final McpCommandStore commands;
+    private final TaskRepository tasks;
 
     private static final String OP_UPSERT = "upsert_task_plan";
     private static final String OP_REPORT = "report_task_state";
 
     public TaskMcpService(TaskPlanService planService, TaskStateService stateService, DesignChangesService designChanges,
-                          ProjectAccessChecker access, InputValidator validator, McpCommandStore commands) {
+                          ProjectAccessChecker access, InputValidator validator, McpCommandStore commands,
+                          TaskRepository tasks) {
         this.planService = planService;
         this.stateService = stateService;
         this.designChanges = designChanges;
         this.access = access;
         this.validator = validator;
         this.commands = commands;
+        this.tasks = tasks;
     }
 
     /**
@@ -68,6 +74,10 @@ public class TaskMcpService {
         Optional<TaskDetailResponse> previous = commands.replay(projectId, actor.accountId(), OP_UPSERT,
                 args.idempotencyKey(), args, TaskDetailResponse.class);
         if (previous.isPresent()) {
+            if (args.taskId() != null) {
+                // 계획 수정 재시도: 그 사이 담당자가 바뀌었으면 이전 담당자에게 결과를 주지 않는다 (TaskPlanService 와 같은 규칙)
+                requireCurrentAssignee(actor, projectId, Ids.parse(args.taskId(), "task_id"), "담당자만 계획을 바꿀 수 있습니다");
+            }
             return previous.get();
         }
 
@@ -108,6 +118,8 @@ public class TaskMcpService {
         Optional<ReportTaskStateResult> previous = commands.replay(projectId, actor.accountId(), OP_REPORT,
                 args.idempotencyKey(), args, ReportTaskStateResult.class);
         if (previous.isPresent()) {
+            // 상태 보고 재시도: 지금도 그 작업의 담당자여야 한다 (TaskStateService 와 같은 규칙. MCP 는 에이전트만이라 팀장 취소 예외 없음)
+            requireCurrentAssignee(actor, projectId, taskId, "담당자만 작업 상태를 바꿀 수 있습니다");
             return previous.get();
         }
 
@@ -122,5 +134,17 @@ public class TaskMcpService {
         }
         commands.save(projectId, actor.accountId(), OP_REPORT, args.idempotencyKey(), args, result);
         return result;
+    }
+
+    /**
+     * 같은 키 재시도에서 저장된 결과를 주기 전에 현재 작업 권한을 다시 본다 (공통 5절 "재요청도 현재 권한을 확인한다").
+     * 다른 프로젝트·없는 작업은 404, 담당자가 아니면 403.
+     */
+    private void requireCurrentAssignee(ProjectActor actor, Long projectId, Long taskId, String message) {
+        Optional<Task> task = tasks.findByIdAndProjectId(taskId, projectId);
+        if (task.isEmpty()) {
+            throw AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId);
+        }
+        actor.requireMemberId(task.get().getAssigneeMemberId(), message);
     }
 }

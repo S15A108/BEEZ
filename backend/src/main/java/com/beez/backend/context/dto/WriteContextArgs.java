@@ -17,7 +17,7 @@ public record WriteContextArgs(
         @NotNull Visibility visibility,
         @NotBlank String summary,
         @NotBlank String detail,
-        @NotNull @Valid List<VersionRefDto> designRefs,
+        @NotNull List<@NotNull @Valid VersionRefDto> designRefs,
         String idempotencyKey
 ) {
 }

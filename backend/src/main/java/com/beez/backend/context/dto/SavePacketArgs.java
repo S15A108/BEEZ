@@ -14,10 +14,10 @@ public record SavePacketArgs(
         @NotBlank String request,
         String projectId,
         String taskId,
-        @NotNull List<String> designItemVersionIds,
-        @NotNull List<String> constraints,
-        @NotNull List<String> unresolved,
-        @NotNull @Valid List<RelatedTaskDto> relatedTasks,
-        @NotNull @Valid List<SourceDto> sources
+        @NotNull List<@NotBlank String> designItemVersionIds,
+        @NotNull List<@NotNull String> constraints,
+        @NotNull List<@NotNull String> unresolved,
+        @NotNull List<@NotNull @Valid RelatedTaskDto> relatedTasks,
+        @NotNull List<@NotNull @Valid SourceDto> sources
 ) {
 }

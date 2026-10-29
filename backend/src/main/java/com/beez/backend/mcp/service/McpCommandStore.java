@@ -1,12 +1,7 @@
 package com.beez.backend.mcp.service;
 
 import com.beez.backend.common.api.ApiException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.List;
+import com.beez.backend.common.api.CanonicalJson;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -95,7 +90,7 @@ public class McpCommandStore {
                 .single();
     }
 
-    /** 입력에서 요청 키를 뺀 나머지를 키 순서대로 정렬한 JSON 의 SHA-256. 필드 순서만 다른 재요청은 같은 입력이다 */
+    /** 입력에서 요청 키를 뺀 나머지의 정규 JSON SHA-256 ({@link CanonicalJson}). 필드 순서만 다른 재요청은 같은 입력이다 */
     String fingerprint(Object input) {
         // convertValue: 객체를 Map·List 로 바꾼다 (이름은 응답과 같은 규칙)
         Object tree = json.convertValue(input, Object.class);
@@ -108,31 +103,6 @@ public class McpCommandStore {
             copy.remove("idempotencyKey");
             tree = copy;
         }
-        String canonical = json.writeValueAsString(sorted(tree));
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(canonical.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 을 쓸 수 없습니다", e);
-        }
-    }
-
-    /** Map 은 키 순서로 정렬(TreeMap), List 는 순서 유지. 안쪽까지 같은 규칙 */
-    private static Object sorted(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> out = new TreeMap<>();
-            for (Map.Entry<?, ?> e : map.entrySet()) {
-                out.put(String.valueOf(e.getKey()), sorted(e.getValue()));
-            }
-            return out;
-        }
-        if (value instanceof List<?> list) {
-            List<Object> out = new ArrayList<>();
-            for (Object item : list) {
-                out.add(sorted(item));
-            }
-            return out;
-        }
-        return value;
+        return CanonicalJson.sha256(json, tree);
     }
 }
