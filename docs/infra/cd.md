@@ -265,8 +265,12 @@ Jenkinsfile이 jenkins 계정(docker 그룹 = 사실상 root)으로 실행됩니
   다른 브랜치의 커밋이 남아 있으면 그 SHA를 찾을 수 있습니다.
 
   ```bash
-  sudo rm -rf /var/lib/jenkins/workspace/beez-deploy /var/lib/jenkins/workspace/beez-deploy@*
+  sudo sh -c 'rm -rf /var/lib/jenkins/workspace/beez-deploy /var/lib/jenkins/workspace/beez-deploy@*'
   ```
+
+  `sudo sh -c '…'`로 감싸야 `@*`가 root 권한으로 펼쳐집니다. 그냥
+  `sudo rm -rf …@*`라고 쓰면 ubuntu 셸이 먼저 펼치려다 `/var/lib/jenkins`(750)를
+  읽지 못해 글자 그대로 넘기고, 아무것도 지우지 않습니다.
 
 - 그래서 **머지 전 작업 브랜치를 Jenkins로 배포해 볼 수 없습니다.** 브랜치에서
   배포를 시험할 때는 "손으로 배포·롤백"으로 합니다.
