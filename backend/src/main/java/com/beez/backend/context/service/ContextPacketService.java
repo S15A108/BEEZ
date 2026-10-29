@@ -68,7 +68,7 @@ public class ContextPacketService {
         if (taskId != null) {
             lookup.requireTaskInProject(projectId, taskId);
         }
-        Long baselineId = lookup.currentBaselineId(projectId)
+        Long baselineId = lookup.lockCurrentBaselineId(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음"));
         List<Long> versionIds = Ids.parseAll(args.designItemVersionIds(), "design_item_version_ids");
         lookup.requireVersionsInBaseline(projectId, baselineId, versionIds);

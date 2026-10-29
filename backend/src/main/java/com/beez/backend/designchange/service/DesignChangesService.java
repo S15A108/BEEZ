@@ -85,10 +85,7 @@ public class DesignChangesService {
     /**
      * report_task_state(MCP-12) 응답의 changes. 그 작업의 <b>현재 계획을 세운 시점의 기준 설계 이후</b> 발행된 변경과
      * 그 작업 검증의 유효성 (S15P31A108-166 결정). 명세 MCP-12 는 기준점을 정하지 않는다.
-     * <ul>
-     *   <li>계획이 근거 패킷을 가리키면 그 패킷의 기준 번호</li>
-     *   <li>아니면 계획 리비전 작성 시각 이전에 발행된 마지막 기준 번호 (그때 발행이 없었으면 0 — 모든 변경)</li>
-     * </ul>
+     * 기준점은 계획 저장 당시 기준 설계(근거 패킷이 더 옛 기준이면 그 기준). 자세한 규칙은 planBaselineVersion.
      * 처음 연결 규칙(since=0 → 최근 1건)은 쓰지 않는다. 기준 설계가 한 번도 없으면 null (호출자가 changes 를 비운다).
      * 호출자는 이미 권한 검사를 통과한 actor 를 넘긴다. 조회 이력도 남긴다.
      *
@@ -110,15 +107,18 @@ public class DesignChangesService {
         return new PlanChangesResponse(since, changes);
     }
 
-    /** 현재 계획의 기준 번호. 패킷이 있으면 패킷 기준, 없으면 리비전 작성 시각 이전 마지막 발행. 없으면 0 */
+    /**
+     * 현재 계획의 기준 번호. 계획 저장 때 남긴 기준(task_plan_revision.base_baseline_id)과, 근거 패킷이 있으면 그 패킷의 기준 중
+     * <b>더 옛 번호</b>를 쓴다 (계획이 옛 패킷을 보고 쓰였으면 그 이후 변경도 보여 준다). 둘 다 없으면 0 — 모든 변경.
+     * 시각을 비교해 추정하지 않는다: 리비전 시각(앱)과 발행 시각(DB)의 시계가 어긋나면 변경이 빠진다 (리뷰 반영).
+     */
     private int planBaselineVersion(Long projectId, Long taskId) {
         Optional<Integer> version = jdbc.sql("""
-                        select coalesce(
-                                 (select b.version_no from dev_context_packet k join baseline b on b.id = k.baseline_id
-                                   where k.id = r.context_packet_id and k.project_id = :projectId),
-                                 (select max(b.version_no) from baseline b
-                                   where b.project_id = :projectId and b.published_at <= r.created_at),
-                                 0)
+                        select least(
+                                 coalesce((select b.version_no from baseline b
+                                            where b.id = r.base_baseline_id and b.project_id = :projectId), 0),
+                                 coalesce((select b.version_no from dev_context_packet k join baseline b on b.id = k.baseline_id
+                                            where k.id = r.context_packet_id and k.project_id = :projectId), 2147483647))
                           from task t
                           join task_plan_revision r on r.id = t.current_plan_revision_id
                          where t.id = :taskId and t.project_id = :projectId

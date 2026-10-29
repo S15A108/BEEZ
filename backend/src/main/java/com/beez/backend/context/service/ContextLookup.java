@@ -53,6 +53,16 @@ public class ContextLookup {
         }
     }
 
+    /**
+     * 패킷 저장용: 프로젝트 행을 공유 잠금(FOR SHARE)으로 잡고 현재 기준을 읽는다 (리뷰 반영).
+     * 발행(-194)은 같은 행을 FOR UPDATE 로 잠그므로, 패킷 저장이 끝날 때까지 새 발행이 끼어들지 못하고
+     * 발행 중이면 끝날 때까지 기다린다. 그래서 패킷의 기준 ID 와 설계 버전 상태가 같은 시점 것이 된다.
+     */
+    public Optional<Long> lockCurrentBaselineId(Long projectId) {
+        return jdbc.sql("select current_baseline_id from project where id = :p and current_baseline_id is not null for share")
+                .param("p", projectId).query(Long.class).optional();
+    }
+
     public Optional<Long> currentBaselineId(Long projectId) {
         return jdbc.sql("select current_baseline_id from project where id = :p and current_baseline_id is not null")
                 .param("p", projectId).query(Long.class).optional();

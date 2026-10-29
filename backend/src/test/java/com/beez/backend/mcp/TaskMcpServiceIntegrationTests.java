@@ -252,6 +252,38 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void upsert_nullInsidePlanLists_is400() {
+        List<DesignRefInput> refs = new ArrayList<>();
+        refs.add(null);
+        TaskPlanInput withNullRef = new TaskPlanInput("A", "목표", List.of("a"), List.of(), "방법", List.of("테스트 통과"),
+                List.of(), refs, List.of(), true, null);
+        assertDenied(() -> mcp.upsertTaskPlan(agent, projectId, new UpsertTaskPlanArgs(withNullRef, null, null, null, "k-null")),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+    }
+
+    @Test
+    void report_usesBaselineSavedWithThePlan_notClockComparison() {
+        TaskDetailResponse task = create("A");
+        // 계획 뒤에 발행됐지만 발행 시각이 계획 시각보다 앞선 것처럼 찍힌 경우 (앱·DB 시계 어긋남 흉내)
+        Long leader = api.accountId("leader@test");
+        api.jdbc.sql("insert into baseline (project_id, version_no, published_by, published_at) values (:p, 2, :a, now() - interval '1 hour')")
+                .param("p", projectId).param("a", leader).update();
+        Long v2 = api.jdbc.sql("select id from baseline where project_id = :p and version_no = 2").param("p", projectId)
+                .query(Long.class).single();
+        Long api01v2 = api.newVersion("API-01", 2);
+        Long api02v1 = api.currentVersionId("API-02");
+        for (Map.Entry<String, Long> e : Map.of("API-01", api01v2, "API-02", api02v1).entrySet()) {
+            api.jdbc.sql("insert into baseline_item (baseline_id, project_id, design_item_id, design_item_version_id) values (:b, :p, :i, :v)")
+                    .param("b", v2).param("p", projectId).param("i", api.designItemId(e.getKey())).param("v", e.getValue()).update();
+        }
+        api.jdbc.sql("update project set current_baseline_id = :b where id = :p").param("b", v2).param("p", projectId).update();
+
+        ReportTaskStateResult cancelled = report(task, TaskEvent.CANCEL, null, null, "c-clock");
+        assertThat(cancelled.changesSinceVersion()).isEqualTo(1);   // 계획 저장 당시 기준(v1)
+        assertThat(cancelled.changes().items()).extracting(c -> c.baseline().versionNo()).containsExactly(2);
+    }
+
+    @Test
     void report_cancel_stillReturnsChangesSinceThePlan() {
         TaskDetailResponse task = create("A");
         // 계획(v1 기준) 이후 API-01 이 v2 로 바뀜

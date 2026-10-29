@@ -26,7 +26,7 @@ public record TaskStateInput(
         String validationId,
         WaitingReason waitingReason,
         String summary,
-        List<Map<String, Object>> delta,
-        @Valid List<CompletionCheck> completionChecks
+        List<@NotNull Map<String, Object>> delta,
+        List<@NotNull @Valid CompletionCheck> completionChecks
 ) {
 }

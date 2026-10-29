@@ -32,3 +32,8 @@ CREATE TABLE mcp_command (
   expires_at  TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
   PRIMARY KEY (project_id, account_id, operation, request_key)
 );
+
+-- 계획 리비전을 저장할 때의 현재 기준 설계 (S15P31A108-166 리뷰 반영). NULL = 그때 발행된 기준이 없었음.
+-- report_task_state 의 "계획 이후 변경" 기준점. 리비전 시각(앱)과 발행 시각(DB)을 비교해 추정하면 시계가 어긋날 때 변경이 빠진다.
+-- task_plan_revision 은 UPDATE 금지(불변) 표라 INSERT 때만 채운다.
+ALTER TABLE task_plan_revision ADD COLUMN base_baseline_id BIGINT REFERENCES baseline(id);

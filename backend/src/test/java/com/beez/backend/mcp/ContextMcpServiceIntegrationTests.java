@@ -157,6 +157,55 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void savePacket_waitsForConcurrentPublish_andSeesTheNewBaseline() throws Exception {
+        Long v1 = api.currentVersionId("API-01");
+        Long api02v1 = api.currentVersionId("API-02");
+        Long leader = api.accountId("leader@test");
+        // 새 기준 v2 를 미리 만들어 두고(아직 현재 기준 아님), 발행 트랜잭션에서 현재 기준만 바꾼다
+        Long api01v2 = api.newVersion("API-01", 2);
+        api.jdbc.sql("insert into baseline (project_id, version_no, published_by) values (:p, 2, :a)")
+                .param("p", projectId).param("a", leader).update();
+        Long v2 = api.jdbc.sql("select id from baseline where project_id = :p and version_no = 2").param("p", projectId)
+                .query(Long.class).single();
+        for (Map.Entry<String, Long> e : Map.of("API-01", api01v2, "API-02", api02v1).entrySet()) {
+            api.jdbc.sql("insert into baseline_item (baseline_id, project_id, design_item_id, design_item_version_id) values (:b, :p, :i, :v)")
+                    .param("b", v2).param("p", projectId).param("i", api.designItemId(e.getKey())).param("v", e.getValue()).update();
+        }
+
+        try (java.sql.Connection publish = dataSource.getConnection()) {
+            publish.setAutoCommit(false);
+            // 발행처럼 프로젝트 행을 FOR UPDATE 로 잡는다
+            try (java.sql.PreparedStatement st = publish.prepareStatement("select id from project where id = ? for update")) {
+                st.setLong(1, projectId);
+                st.executeQuery();
+            }
+            // 발행 도중에 v1 으로 패킷 저장을 시도
+            java.util.concurrent.CompletableFuture<ContextPacketResponse> save = java.util.concurrent.CompletableFuture.supplyAsync(
+                    () -> packets.save(memberAgent, projectId, packetArgs(List.of(String.valueOf(v1)))));
+            Thread.sleep(500);
+            assertThat(save).isNotDone();   // 발행이 끝날 때까지 기다린다
+
+            try (java.sql.PreparedStatement st = publish.prepareStatement(
+                    "update design_item_version set status = 'SUPERSEDED' where id = ?")) {
+                st.setLong(1, v1);
+                st.executeUpdate();
+            }
+            try (java.sql.PreparedStatement st = publish.prepareStatement("update project set current_baseline_id = ? where id = ?")) {
+                st.setLong(1, v2);
+                st.setLong(2, projectId);
+                st.executeUpdate();
+            }
+            publish.commit();
+
+            // 발행 뒤의 기준(v2)으로 판단한다: v1 은 이제 현재 기준에 없으므로 400. 옛 기준 ID + SUPERSEDED 패킷이 생기지 않는다
+            assertThatThrownBy(() -> save.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(ApiException.class)
+                    .satisfies(e -> assertThat(((ApiException) e.getCause()).getCode()).isEqualTo("validation_failed"));
+        }
+        assertThat(count("select count(*) from dev_context_packet")).isZero();
+    }
+
+    @Test
     void savePacket_versionsMustBeInCurrentBaseline() {
         String unpublished = String.valueOf(api.newVersion("API-01", 2));
         assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(List.of(unpublished))),
