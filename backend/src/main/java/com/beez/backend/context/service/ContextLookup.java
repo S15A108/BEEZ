@@ -194,19 +194,47 @@ public class ContextLookup {
     }
 
     /**
-     * 패킷 근거(Source) 확인: 문서 버전이 그 문서의 것이고, 문서가 이 프로젝트 것이며, 버전 번호가 맞는지. 아니면 400.
-     * 불변 패킷에 다른 프로젝트 ID 가 영구히 남지 않게 한다 (리뷰 반영).
+     * 패킷 근거(Source) 확인: 그 문서 버전이 패킷의 기준 설계(baseline_document)에 들어 있는 버전이어야 한다. 아니면 400.
+     * 같은 프로젝트라도 미승인 버전이나 지난 기준의 버전이 "현재 승인 근거"처럼 불변 패킷에 남지 않게 한다 (리뷰 반영).
+     * baseline_document 는 기준 설계마다 문서당 승인 버전 하나를 적어 둔 표다. 버전 번호도 그 버전의 실제 번호와 같아야 한다.
      */
-    public void requireSourceInProject(Long projectId, Long documentId, Long documentVersionId, Integer versionNo) {
+    public void requireSourceInBaseline(Long projectId, Long baselineId, Long documentId, Long documentVersionId,
+                                        Integer versionNo) {
         Integer found = jdbc.sql("""
-                        select count(*) from document_version v join document d on d.id = v.document_id
-                         where v.id = :v and d.id = :d and d.project_id = :p and v.version_no = :n
+                        select count(*)
+                          from baseline_document b
+                          join document_version v on v.id = b.document_version_id and v.document_id = b.document_id
+                         where b.baseline_id = :b and b.project_id = :p
+                           and b.document_id = :d and b.document_version_id = :v and v.version_no = :n
                         """)
-                .param("v", documentVersionId).param("d", documentId).param("p", projectId).param("n", versionNo)
+                .param("b", baselineId).param("p", projectId).param("d", documentId).param("v", documentVersionId)
+                .param("n", versionNo)
                 .query(Integer.class).single();
         if (found == 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
-                    "sources 에 이 프로젝트의 문서 버전이 아닌 것이 있습니다: " + documentId + "/" + documentVersionId);
+                    "sources 에 현재 승인 기준의 문서 버전이 아닌 것이 있습니다: " + documentId + "/" + documentVersionId);
+        }
+    }
+
+    /**
+     * 패킷 관련 작업(RelatedTask) 확인: 작업이 이 프로젝트 것이고(아니면 404), 넘어온 계획 리비전·상태가 그 작업의
+     * <b>지금</b> 계획 리비전·상태와 같아야 한다(아니면 400). 지난 계획이나 바뀐 상태가 현재 관련 작업처럼 저장되지 않게 한다.
+     * 작업 행을 공유 잠금(FOR SHARE)으로 읽어, 패킷 저장이 끝날 때까지 그 작업의 상태·계획이 바뀌지 않게 한다.
+     */
+    public void requireRelatedTaskCurrent(Long projectId, Long taskId, Long planRevisionId, String status) {
+        List<Map<String, Object>> rows = jdbc.sql("""
+                        select status, current_plan_revision_id from task where id = :t and project_id = :p for share
+                        """)
+                .param("t", taskId).param("p", projectId).query().listOfRows();
+        if (rows.isEmpty()) {
+            throw AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId);
+        }
+        Object currentStatus = rows.get(0).get("status");
+        Object currentRevision = rows.get(0).get("current_plan_revision_id");
+        boolean sameRevision = currentRevision != null && ((Number) currentRevision).longValue() == planRevisionId;
+        if (!status.equals(currentStatus) || !sameRevision) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    "related_tasks 의 계획 리비전·상태가 작업의 현재 값과 다릅니다: task " + taskId);
         }
     }
 

@@ -81,19 +81,18 @@ public class ContextPacketService {
         List<Long> versionIds = Ids.parseAll(args.designItemVersionIds(), "design_item_version_ids");
         lookup.requireVersionsInBaseline(projectId, baselineId, versionIds);
 
-        // 구성 결과의 관련 작업·근거도 이 프로젝트 것인지 확인한다. 불변 패킷에 남의 ID 가 영구히 남지 않게 (리뷰 반영)
+        // 구성 결과의 관련 작업·근거도 확인한다. 불변 패킷에 남의 ID 나 지난 값이 "현재"처럼 영구히 남지 않게 (리뷰 반영)
         for (RelatedTaskDto t : args.relatedTasks()) {
             Long relatedTaskId = Ids.parse(t.taskId(), "related_tasks.task_id");
             Long relatedRevisionId = Ids.parse(t.planRevisionId(), "related_tasks.plan_revision_id");
-            lookup.requireTaskInProject(projectId, relatedTaskId);
-            lookup.requirePlanRevisionOfTask(relatedTaskId, relatedRevisionId);
             if (!RELATED_TASK_STATUSES.contains(t.status())) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
                         "related_tasks.status 는 READY·IN_PROGRESS·WAITING·COMPLETED·CANCELLED 중 하나입니다: " + t.status());
             }
+            lookup.requireRelatedTaskCurrent(projectId, relatedTaskId, relatedRevisionId, t.status());
         }
         for (SourceDto src : args.sources()) {
-            lookup.requireSourceInProject(projectId, Ids.parse(src.documentId(), "sources.document_id"),
+            lookup.requireSourceInBaseline(projectId, baselineId, Ids.parse(src.documentId(), "sources.document_id"),
                     Ids.parse(src.documentVersionId(), "sources.document_version_id"), src.versionNo());
         }
 

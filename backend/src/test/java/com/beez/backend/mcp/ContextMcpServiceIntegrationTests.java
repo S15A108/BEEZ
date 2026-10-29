@@ -33,7 +33,7 @@ import org.springframework.http.HttpStatus;
 
 /**
  * MCP-01·05·06·07 업무 서비스 (S15P31A108-166). 서비스 직접 호출.
- * 패킷 내용 구성(박상은 -131·-132)은 아직 없어, 도구 입구는 빈 구성으로 저장하는지 보고
+ * 패킷 내용 구성(박상은 -131·-132)은 아직 없어, 도구 입구는 503 으로 아무것도 저장하지 않는지 보고
  * 구성 결과가 있을 때의 저장 규칙은 패킷 저장 서비스에 구성 결과를 직접 넣어 확인한다.
  */
 class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
@@ -233,6 +233,105 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
                 List.of(new SourceDto("999999", "999999", 1, "1장")));
         assertDenied(() -> packets.save(memberAgent, projectId, foreignSource), HttpStatus.BAD_REQUEST, "validation_failed");
         assertThat(count("select count(*) from dev_context_packet")).isZero();
+    }
+
+    private SavePacketArgs withRelated(Long taskId, Long planRevisionId, String status) {
+        return new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(),
+                List.of(new RelatedTaskDto(String.valueOf(taskId), String.valueOf(planRevisionId), status)), List.of());
+    }
+
+    private SavePacketArgs withSource(Long documentId, Long documentVersionId, int versionNo) {
+        return new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(), List.of(),
+                List.of(new SourceDto(String.valueOf(documentId), String.valueOf(documentVersionId), versionNo, "1장")));
+    }
+
+    private Long currentPlanRevisionId(Long taskId) {
+        return api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", taskId)
+                .query(Long.class).single();
+    }
+
+    @Test
+    void savePacket_relatedTasksMustMatchTheTasksCurrentPlanAndStatus() throws Exception {
+        String tasks = "/api/projects/" + projectId + "/tasks";
+        var created = api.post(tasks, api.planJson("로그인 API", api.readsRef("API-01"), "[]"), member);
+        assertThat(created.statusCode()).isEqualTo(201);
+        Long taskId = api.jdbc.sql("select id from task where project_id = :p and key = 'T-1'").param("p", projectId)
+                .query(Long.class).single();
+        Long revision1 = currentPlanRevisionId(taskId);
+
+        // 작업의 지금 계획·상태 그대로 → 저장된다
+        assertThat(packets.save(memberAgent, projectId, withRelated(taskId, revision1, "READY")).relatedTasks()).hasSize(1);
+        // 상태가 작업의 지금 상태와 다르면 → 400
+        assertDenied(() -> packets.save(memberAgent, projectId, withRelated(taskId, revision1, "IN_PROGRESS")),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+
+        // 계획 리비전 2 를 올린 뒤, 지난 리비전 1 을 관련 작업으로 넘기면 → 400
+        String plan = api.planJson("로그인 API v2", api.readsRef("API-02"), "[]").trim();
+        String body = plan.substring(0, plan.lastIndexOf('}'))
+                + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": "
+                + com.beez.backend.task.TaskApiSupport.longField(created.body(), "lock_version") + "\n}";
+        assertThat(api.post(tasks + "/" + taskId + "/plan-revisions", body, member).statusCode()).isEqualTo(201);
+        Long revision2 = currentPlanRevisionId(taskId);
+        assertThat(revision2).isNotEqualTo(revision1);
+        // 상태는 지금 값으로 맞추고 리비전만 지난 것을 넘긴다
+        String statusNow = api.jdbc.sql("select status from task where id = :t").param("t", taskId).query(String.class).single();
+        assertDenied(() -> packets.save(memberAgent, projectId, withRelated(taskId, revision1, statusNow)),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+        assertThat(packets.save(memberAgent, projectId, withRelated(taskId, revision2, statusNow)).relatedTasks()).hasSize(1);
+        assertThat(count("select count(*) from dev_context_packet")).isEqualTo(2);
+    }
+
+    /** 문서 버전 하나. approved 면 APPROVED(승인 시각 있음), 아니면 DRAFT */
+    private Long documentVersion(Long documentId, int versionNo, boolean approved) {
+        String sql = "insert into document_version (document_id, version_no, status, storage_key, content_hash) "
+                + "values (:d, :n, 'DRAFT', :k, :h) returning id";
+        if (approved) {
+            sql = "insert into document_version (document_id, version_no, status, storage_key, content_hash, approved_at) "
+                    + "values (:d, :n, 'APPROVED', :k, :h, now()) returning id";
+        }
+        return api.jdbc.sql(sql).param("d", documentId).param("n", versionNo)
+                .param("k", "doc/" + documentId + "/v" + versionNo).param("h", "h-" + documentId + "-" + versionNo)
+                .query(Long.class).single();
+    }
+
+    /** 기준 설계에 문서의 승인 버전을 넣는다 (발행이 baseline_document 에 적는 것과 같다) */
+    private void putDocumentInBaseline(Long baselineId, Long documentId, Long documentVersionId) {
+        api.jdbc.sql("""
+                        insert into baseline_document (baseline_id, project_id, document_id, document_version_id)
+                        values (:b, :p, :d, :v)
+                        """)
+                .param("b", baselineId).param("p", projectId).param("d", documentId).param("v", documentVersionId).update();
+    }
+
+    @Test
+    void savePacket_sourcesMustBeDocumentVersionsOfTheCurrentBaseline() {
+        Long doc = api.jdbc.sql("insert into document (project_id, type, title, created_by) values (:p, 'API_SPEC', 'API 명세', :a) returning id")
+                .param("p", projectId).param("a", leader).query(Long.class).single();
+        Long approved1 = documentVersion(doc, 1, true);
+        Long draft2 = documentVersion(doc, 2, false);
+        Long baseline1 = api.jdbc.sql("select current_baseline_id from project where id = :p").param("p", projectId)
+                .query(Long.class).single();
+        putDocumentInBaseline(baseline1, doc, approved1);
+
+        // 현재 기준에 들어 있는 승인 버전 → 저장된다
+        assertThat(packets.save(memberAgent, projectId, withSource(doc, approved1, 1)).sources()).hasSize(1);
+        // 같은 프로젝트의 미승인 버전 → 400
+        assertDenied(() -> packets.save(memberAgent, projectId, withSource(doc, draft2, 2)),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+        // 버전 번호가 실제 번호와 다름 → 400
+        assertDenied(() -> packets.save(memberAgent, projectId, withSource(doc, approved1, 2)),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+
+        // 새 기준 v2 에서 문서 버전 3 이 승인됨 → 버전 1 은 지난 기준의 버전
+        Long api01 = api.currentVersionId("API-01");
+        Long api02 = api.currentVersionId("API-02");
+        Long approved3 = documentVersion(doc, 3, true);
+        Long baseline2 = api.publish(2, Map.of("API-01", api01, "API-02", api02));
+        putDocumentInBaseline(baseline2, doc, approved3);
+        assertDenied(() -> packets.save(memberAgent, projectId, withSource(doc, approved1, 1)),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+        assertThat(packets.save(memberAgent, projectId, withSource(doc, approved3, 3)).sources()).hasSize(1);
+        assertThat(count("select count(*) from dev_context_packet")).isEqualTo(2);
     }
 
     @Test
