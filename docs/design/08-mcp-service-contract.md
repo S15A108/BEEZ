@@ -12,7 +12,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 | 프로젝트 | 토큰의 프로젝트 번호를 `projectId` 인수로 넘긴다. 도구 인수의 `project_id`는 서비스가 같은지만 본다(다르면 not_found) | MCP Tools "연결과 인증" |
 | 입력 검증 | 서비스가 DTO 검증 표시(@NotBlank 등)를 직접 적용한다(`InputValidator`). 어댑터는 JSON → 인수 객체 변환만 한다 | 컨트롤러를 거치지 않으므로 |
 | 오류 | 서비스는 `ApiException(상태, code, message)`을 던진다. 어댑터는 `code`·`message`를 도구 실패 결과로 옮긴다. 숫자 상태는 REST 대응 의미 | MCP Tools "업무 오류" |
-| `idempotency_key` | 변경 도구(MCP-10·12·07)는 필수(비면 400). 키 범위는 계정·프로젝트·동작. 같은 키·같은 입력은 처음 결과를 그대로, 다른 입력은 409 `idempotency_conflict`. 재요청도 현재 권한을 먼저 확인한다(작업 대상 도구는 현재 담당자인지까지). 결과는 `mcp_command`(V7)에 24시간 보존 — 문서·설계 항목의 `*_http_command`와 같은 범위 한정 결정 | 공통 5절, Q12 |
+| `idempotency_key` | 변경 도구(MCP-10·12·07)는 필수(비면 400). 키 범위는 계정·프로젝트·동작. 같은 키·같은 입력은 처음 결과를 그대로, 다른 입력은 409 `idempotency_conflict`. 재요청도 현재 권한을 먼저 확인한다(작업 대상 도구는 현재 담당자인지까지). 결과는 `mcp_command`(V8)에 24시간 보존 — 문서·설계 항목의 `*_http_command`와 같은 범위 한정 결정 | 공통 5절, Q12 |
 | 트랜잭션 | 서비스 메서드 하나 = 트랜잭션 하나. 어댑터는 트랜잭션을 열지 않는다 | — |
 | 조회 이력 | 설계 내용을 돌려주는 도구는 서비스 안에서 `context_access_log`에 남긴다. 어댑터가 따로 남기지 않는다 | -165, REST CTX-A06 |
 | 감사 기록 | `mcp_audit_log`는 어댑터(-177) 몫. 서비스는 남기지 않는다 | MCP-08·09 |
@@ -28,7 +28,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 
 - MCP-10: `task_id`가 없으면 새 작업(TSK-A01), 있으면 새 계획 리비전(TSK-A04). 수정이면 `expected_revision_no`·`expected_lock_version` 필수(없으면 400). 나머지 규칙·오류는 REST TSK-A01·A04와 같다.
 - MCP-12: 전이 규칙·오류는 REST TSK-A07과 같다. REST의 202(완료 델타 → 재검증 대기)는 도구 결과에서 구분하지 않는다 — `task.status`·`waiting_reason`으로 본다.
-- MCP-12 `changes`: 그 작업의 **현재 계획을 세운 시점의 기준 설계 이후** 발행된 변경과 그 작업 검증의 유효성이다. 기준점은 계획 리비전을 저장할 때 남긴 당시 기준 설계(`task_plan_revision.base_baseline_id`, V7)이고, 근거 패킷이 더 옛 기준이면 그 기준이다. 시각 비교로 추정하지 않는다(앱·DB 시계가 어긋나면 변경이 빠진다). 명세 MCP-12에 기준점이 없어 담당자 결정으로 정했다(명세 반영 요청). 기준 설계가 한 번도 없는 프로젝트면 `changes`와 `changes_since_version`을 생략한다.
+- MCP-12 `changes`: 그 작업의 **현재 계획을 세운 시점의 기준 설계 이후** 발행된 변경과 그 작업 검증의 유효성이다. 기준점은 계획 리비전을 저장할 때 남긴 당시 기준 설계(`task_plan_revision.base_baseline_id`, V8)이고, 근거 패킷이 더 옛 기준이면 그 기준이다. 시각 비교로 추정하지 않는다(앱·DB 시계가 어긋나면 변경이 빠진다). 명세 MCP-12에 기준점이 없어 담당자 결정으로 정했다(명세 반영 요청). 기준 설계가 한 번도 없는 프로젝트면 `changes`와 `changes_since_version`을 생략한다.
 - MCP-12 이어 보기: `changes`는 20건 단위로 자른다. `changes.has_more=true`이면 MCP-03 `get_design_changes`를 `since_version = changes_since_version`, `task_id = 같은 작업`, `cursor = changes.next_cursor`로 부른다. 이 cursor에는 since=0이어도 "처음 연결(최근 1건)" 규칙을 적용하지 않는다.
 - 영향 작업 기준(MCP-03·12 공통, 리뷰 반영): 계획이 바뀐 항목의 **변경 전 버전 또는 그보다 옛 버전**을 참조하면 영향이다(버전 번호 비교). 계획이 v1을 참조하면 v1→v2, v2→v3 발행이 모두 잡힌다. `affected_task_ids`는 완료·취소 작업을 빼고, `task_id`를 지정한 목록(MCP-12 `changes` 포함)은 작업 상태와 무관하게 그 작업이 영향받은 변경을 준다.
 
@@ -46,7 +46,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 - MCP-06: 다른 프로젝트·남의 비공개는 없는 것과 같은 404. 조회 이력을 남긴다.
 - MCP-07: 수정은 `previous_id`를 잇는 새 불변 리비전이다. 남의 공유 기록 수정은 403, 남의 비공개는 404, 같은 이전 판의 두 번째 수정은 409 `revision_conflict`. 작성자 비교는 계정 ID. `design_refs`는 이 프로젝트 항목의 실제 버전이어야 한다(승인 여부는 보지 않음 — 당시 참조 그대로).
 
-## 4. DB가 지키는 것 (V7)
+## 4. DB가 지키는 것 (V8)
 
 다른 프로젝트 번호가 섞이지 않게 묶음 FK를 건다: 기록의 근거 패킷·이전 판·첫 판·작성 토큰, 패킷의 토큰. `*_ref` 표와 `task_plan_revision.context_packet_id`는 project_id 칸이 없어 서비스가 확인한다.
 

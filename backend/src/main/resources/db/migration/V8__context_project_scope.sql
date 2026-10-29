@@ -1,7 +1,7 @@
 -- S15P31A108-166 컨텍스트 패킷·공유 기록(MCP-01·05~07)을 처음 쓰기 전에, 번호가 "이 프로젝트 것"인지 DB 가 지키게 한다.
 -- V2 는 단일 FK(packet(id), context_record(id), agent_token(id))만 있어 다른 프로젝트 번호가 오류 없이 들어간다 (-165 리뷰와 같은 문제).
 -- 두 표 모두 아직 쓰는 코드가 없어 행이 없다 — 지금 거는 게 가장 싸다.
--- 번호(V7)는 머지 직전 dev 기준으로 다시 확인한다.
+-- 번호(V8)는 머지 직전 dev 기준으로 다시 확인한다.
 
 -- 묶음 FK 의 대상이 되도록 (번호, 프로젝트) 유일 조건
 ALTER TABLE dev_context_packet ADD CONSTRAINT uq_dev_context_packet_project UNIQUE (id, project_id);

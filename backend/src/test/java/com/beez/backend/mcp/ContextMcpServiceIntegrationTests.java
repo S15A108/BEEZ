@@ -333,7 +333,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
                 Visibility.SHARED, "진행", "상세", List.of(), "k");
         assertDenied(() -> mcp.writeContext(memberAgent, projectId, args), HttpStatus.NOT_FOUND, "not_found");
 
-        // 서비스를 거치지 않아도 V7 묶음 FK 가 막는다
+        // 서비스를 거치지 않아도 V8 묶음 FK 가 막는다
         assertThatThrownBy(() -> api.jdbc.sql("""
                         insert into context_record (project_id, revision_no, source_packet_id, author_account_id, kind, visibility, summary)
                         values (:p, 1, :k, :a, 'PROGRESS', 'SHARED', 's')

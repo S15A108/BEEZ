@@ -16,7 +16,7 @@ import tools.jackson.databind.ObjectMapper;
  * <ul>
  *   <li>키 범위: 인증 사용자(계정)·프로젝트·동작. 같은 키·같은 입력이면 저장해 둔 결과를 그대로 돌려주고,
  *       같은 키·다른 입력이면 409 idempotency_conflict</li>
- *   <li>보존 24시간·저장 표 mcp_command (V7). 문서 업로드·설계 항목(document_http_command·design_http_command)과 같은 방식이며
+ *   <li>보존 24시간·저장 표 mcp_command (V8). 문서 업로드·설계 항목(document_http_command·design_http_command)과 같은 방식이며
  *       Q12 전체 결정 전의 범위 한정 결정이다. 만료 행은 같은 키가 다시 올 때 지운다</li>
  *   <li>같은 키가 동시에 오면 {@link #lock} 으로 한 줄로 세운다. 그래서 두 번째 요청은 첫 요청이 커밋한 결과를 본다</li>
  * </ul>

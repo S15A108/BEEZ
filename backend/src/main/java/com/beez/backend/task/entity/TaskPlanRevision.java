@@ -89,7 +89,7 @@ public class TaskPlanRevision extends BaseTimeEntity {
     private Long contextPacketId;
 
     /**
-     * 이 계획을 저장할 때의 현재 기준 설계 (V7, -166 리뷰 반영). NULL = 그때 발행된 기준이 없었음.
+     * 이 계획을 저장할 때의 현재 기준 설계 (V8, -166 리뷰 반영). NULL = 그때 발행된 기준이 없었음.
      * 계획 저장은 프로젝트 행을 잠근 채 읽으므로 발행과 겹쳐도 정확하다. "계획 이후 변경"(report_task_state)의 기준점.
      * 시각 비교로 추정하지 않는 이유: 리비전 시각(앱)과 발행 시각(DB)의 시계가 어긋나면 변경이 빠진다.
      */
