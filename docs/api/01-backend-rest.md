@@ -7200,7 +7200,7 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 - 문서 입력 after_content/proposed_document_version_id는 배타적이다. 업로드 경로는 본인이 올린 DRAFT·동일 문서·동일 parent 기준 버전을 검사한다. DOC-A12 업로드만으로 제출된 것은 아니다.
 - after_content로 제출하면(CHG-A01·A04, 같은 서비스를 호출하는 MTG-A13 포함) 서버가 본문을 DOC-A12와 같은 규칙으로 정규화해 원문 저장소에 저장하고, 같은 DB 트랜잭션에서 기준 문서 버전을 부모로 하는 DRAFT 문서 버전과 색인 작업(document_processing, PENDING)을 만들어 제안에 귀속시킨다. 응답과 모든 리비전 조회는 그 버전을 proposed_document_version_id로 항상 돌려준다. 저장소 쓰기는 DB 트랜잭션 밖에서 먼저 하며, 트랜잭션이 실패하거나 멱등 재요청이면 올린 원문을 삭제해 남기지 않는다. 색인 실패의 자동 복구(최대 2회)와 FAILED 재시도(PLN-A02)는 기존 문서와 같고, 색인 완료 확인은 CHG-A09가 한다.
 - 제출된 업로드 버전은 제안에 귀속되며 원문·해시·부모·등록자를 변경할 수 없다. 같은 제안의 후속 리비전에서 재사용할 수 있지만 다른 제안에 연결할 수 없다. 제외된 과거 수정본 연결도 이력으로 보존한다. 미연결 DRAFT는 자동 제출·삭제하지 않는다.
-- 직접 입력 본문은 비어 있지 않은 100,000자·1 MiB 이내 텍스트이며 저장 전에 BOM 제거와 CR/LF→LF 정규화를 적용한다(DOC-A12와 같다). 정규화한 결과가 기준 본문과 같으면 변경으로 보지 않는다. 원본 파일 업로드도 같은 규약이다. 요청 및 저장 스냅샷 전체의 canonical JSON은 각각 1 MiB 이내다.
+- 직접 입력 본문은 비어 있지 않은 100,000자·1 MiB 이내 텍스트이며 저장 전에 BOM 제거와 CR/LF→LF 정규화를 적용한다(DOC-A12와 같다). 정규화한 결과가 기준 본문과 같으면 400 validation_failed다. 변경이 없는 문서는 documents에서 뺀다(불필요한 버전·색인 작업을 만들지 않는다). 원본 파일 업로드도 같은 규약이다. 요청 및 저장 스냅샷 전체의 canonical JSON은 각각 1 MiB 이내다.
 - project 행을 잠근 뒤 활성 멤버·계정·토큰을 다시 검사한다. 제안·현재 항목 투영·불변 리비전·문서 연결·멱등 응답을 한 트랜잭션에서 저장한다. 제출만으로 baseline·작업 상태를 바꾸지 않는다.
 - CHG-A01/A04/A15는 design_http_command의 24시간 응답 보존을 재사용한다. 프로젝트·계정·동작·사람/에이전트 토큰별 요청 키를 분리하고 재요청 시 현재 권한을 검사한다.
 - 제출 후 잠금이다. 승인·검토 시작·반려·발행 명령은 198, 의견·검토 요청은 196, 심층 영향 분석·저장은 188·197이 담당한다. 알림은 공통 서비스 연동 TODO이며 직접 INSERT하지 않는다.
@@ -8101,7 +8101,7 @@ HTTP `200`.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
 - 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
 - (수정안 요청) requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
-- (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때 원문 저장과 청킹·임베딩 작업(document_processing)이 함께 생긴다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
+- (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12952,7 +12952,7 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 한 트랜잭션에서 회의를 CLOSED로 바꾸고, 정리의 document_changes와 결정으로 변경 제안을 만든다. 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
+- 정리의 document_changes와 결정으로 변경 제안을 먼저 만들고, 성공하면 회의를 CLOSED로 바꾼다. 문서 변경이 있는 제안은 원문을 저장소에 올리므로 회의 종료와 제안 생성을 한 DB 트랜잭션으로 묶지 않는다(제안 생성은 외부 트랜잭션 안에서 호출할 수 없다). 제안 생성이 성공한 뒤 회의 종료가 실패해 다시 시도하면 같은 Idempotency-Key로 같은 제안을 돌려받는다(보존 24시간). 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
 - (수정안 요청) 끝내기 전에 정리의 document_changes[].base_version_id가 지금 기준의 그 문서 승인본과 같은지 다시 확인한다. 정리 뒤 다른 변경 제안이 발행돼 기준이 바뀌었으면 409 summary_outdated로 회의를 끝내지 않는다. 화면은 '정리한 뒤 기준이 바뀌었어요'를 안내하고, 팀장이 비비에게 다시 정리(MTG-A11)를 요청한다. 아직 발행되지 않은 다른 제안은 기준이 아니므로 여기서 막지 않고, 승인할 때 CHG-A09의 requires_refresh 규칙을 따른다.
 - 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
 - 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다(Q24 정함).
