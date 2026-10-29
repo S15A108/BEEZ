@@ -121,6 +121,33 @@ public class ProposalRepository {
                 """, Map.of("project", project, "document", document, "version", version));
     }
 
+    /** File extension (md/txt) of a document version in this project, used to name a stored proposal text. */
+    public Optional<String> versionExtension(long project, long document, long version) {
+        return jdbc.sql("""
+                SELECT v.storage_key FROM document_version v JOIN document d ON d.id=v.document_id
+                WHERE d.project_id=:project AND d.id=:document AND v.id=:version
+                """).param("project", project).param("document", document).param("version", version)
+                .query(String.class).optional().map(key -> key.endsWith(".md") ? "md" : "txt");
+    }
+
+    /**
+     * Registers the proposed text as a DRAFT version of the document (same shape as a DOC-A12 upload) and queues its
+     * indexing. Callers hold the project lock, so version numbers cannot collide.
+     */
+    public long createDraftVersion(long document, long parent, String storageKey, String contentHash, String text,
+            String textHash, long creator) {
+        long version = jdbc.sql("""
+                INSERT INTO document_version(document_id,version_no,status,parse_status,storage_key,content_hash,content_text,
+                  created_by,parent_version_id)
+                SELECT :document,coalesce(max(version_no),0)+1,'DRAFT','PENDING',:key,:hash,:content,:creator,:parent
+                FROM document_version WHERE document_id=:document RETURNING id
+                """).param("document", document).param("key", storageKey).param("hash", contentHash)
+                .param("content", text).param("creator", creator).param("parent", parent).query(Long.class).single();
+        jdbc.sql("INSERT INTO document_processing(document_version_id,status,text_hash) VALUES(:version,'PENDING',:hash)")
+                .param("version", version).param("hash", textHash).update();
+        return version;
+    }
+
     public long create(long project, CallerContext caller, Input input) {
         return jdbc.sql("""
                 WITH allocated AS (SELECT nextval(pg_get_serial_sequence('change_proposal','id')) AS id)

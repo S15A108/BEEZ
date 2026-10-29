@@ -15,12 +15,30 @@ import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import com.beez.backend.document.storage.DocumentStorage;
+import java.io.IOException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+@Import(ProposalIntegrationTest.Support.class)
 class ProposalIntegrationTest extends IntegrationTestSupport {
+    /** Object storage stand-in: the test endpoint is a closed port, and we need to see which originals remain. */
+    static class MemoryStorage implements DocumentStorage {
+        final Map<String, byte[]> objects=new ConcurrentHashMap<>();
+        @Override public String store(byte[] bytes, String extension) { String key="proposal-test/"+UUID.randomUUID()+"."+extension; objects.put(key,bytes.clone()); return key; }
+        @Override public byte[] read(String key) throws IOException { byte[] bytes=objects.get(key); if(bytes==null) throw new IOException("missing "+key); return bytes.clone(); }
+        @Override public void delete(String key) { objects.remove(key); }
+    }
+    @TestConfiguration static class Support {
+        @Bean @Primary MemoryStorage memoryStorage() { return new MemoryStorage(); }
+    }
+    @Autowired MemoryStorage storage;
     @Autowired ProposalCommandService commands;
     @Autowired ProposalQueryService queries;
     @Autowired JdbcTemplate jdbc;
@@ -31,6 +49,7 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
     static final String ORIGIN = "http://localhost:5173";
 
     @BeforeEach void setup() {
+        storage.objects.clear();
         project=fixtures().projectWithLeader(); author=CallerContext.human(project.leaderAccountId());
         baseline=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,1,?) RETURNING id",
                 Long.class, project.projectId(), author.accountId());
@@ -161,6 +180,78 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
                 """,String.class)).isNull();
     }
 
+    @Test void textChangeBecomesDraftVersionWithIndexJobInTheSameCommit() {
+        Proposal p=commands.create(author,project.projectId(),input("첫째\r\n수정\r\n끝\r\n"),"text-version");
+        var change=p.documents().getFirst();
+        assertThat(change.proposedDocumentVersionId()).isNotBlank();
+        assertThat(change.afterContent()).isEqualTo("첫째\n수정\n끝\n"); // normalized exactly like a DOC-A12 upload
+        long created=Long.parseLong(change.proposedDocumentVersionId());
+        var row=jdbc.queryForMap("SELECT * FROM document_version WHERE id=?",created);
+        assertThat(row.get("status")).isEqualTo("DRAFT");
+        assertThat(row.get("version_no")).isEqualTo(2);
+        assertThat(((Number)row.get("parent_version_id")).longValue()).isEqualTo(version);
+        assertThat(((Number)row.get("created_by")).longValue()).isEqualTo(author.accountId());
+        assertThat(((Number)row.get("change_proposal_id")).longValue()).isEqualTo(Long.parseLong(p.id()));
+        assertThat(row.get("content_text")).isEqualTo("첫째\n수정\n끝\n");
+        assertThat(row.get("content_hash")).isEqualTo(change.contentHash());
+        String storageKey=(String)row.get("storage_key");
+        assertThat(storageKey).endsWith(".md");
+        assertThat(storage.objects.get(storageKey)).isEqualTo("첫째\n수정\n끝\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        var job=jdbc.queryForMap("SELECT status,text_hash FROM document_processing WHERE document_version_id=?",created);
+        assertThat(job.get("status")).isEqualTo("PENDING");
+        assertThat(job.get("text_hash")).isEqualTo(change.contentHash());
+        assertThat(jdbc.queryForObject("SELECT proposed_document_version_id FROM change_proposal_document WHERE change_proposal_id=?",
+                Long.class,Long.parseLong(p.id()))).isEqualTo(created);
+        assertThat(queries.detail(author,project.projectId(),Long.parseLong(p.id()),null).proposal().documents().getFirst()
+                .proposedDocumentVersionId()).isEqualTo(""+created);
+        assertThat(jdbc.queryForObject("SELECT content_text FROM document_version WHERE id=?",String.class,version)).contains("이전");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_processing WHERE document_version_id=?",Integer.class,version)).isZero();
+    }
+
+    @Test void replayStoresNoAnotherVersionOrOriginal() {
+        Proposal p=create("replay-text");
+        assertThat(create("replay-text")).isEqualTo(p);
+        assertThat(storage.objects).hasSize(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE document_id=?",Integer.class,document)).isEqualTo(2);
+    }
+
+    @Test void resubmissionStoresANewVersionAndKeepsEarlierRevisionsVersion() {
+        Proposal first=create("v1"); long id=Long.parseLong(first.id()); reject(first);
+        Proposal second=commands.resubmit(author,project.projectId(),id,resubmission(first,"두번째 본문"),"v2");
+        String firstVersion=first.documents().getFirst().proposedDocumentVersionId();
+        String secondVersion=second.documents().getFirst().proposedDocumentVersionId();
+        assertThat(secondVersion).isNotBlank().isNotEqualTo(firstVersion);
+        assertThat(queries.detail(author,project.projectId(),id,1).proposal().documents().getFirst().proposedDocumentVersionId()).isEqualTo(firstVersion);
+        assertThat(storage.objects).hasSize(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE change_proposal_id=? AND status='DRAFT'",Integer.class,id)).isEqualTo(2);
+    }
+
+    @Test void invalidOrUnauthorizedTextIsRejectedBeforeAnyOriginalIsStored() {
+        error(() -> commands.create(author,project.projectId(),input("제어\u0001문자"),"control"),"validation_failed");
+        error(() -> commands.create(author,project.projectId(),input("  \n"),"blank"),"validation_failed");
+        error(() -> commands.create(CallerContext.human(fixtures().projectWithLeader().leaderAccountId()),project.projectId(),input("외부"),"foreign"),"not_found");
+        Input missing=new Input(""+baseline,"제목","사유",null,null,List.of(),
+                List.of(new DocumentChange("999999999",""+version,"본문",null)),null,null,null);
+        error(() -> commands.create(author,project.projectId(),missing,"missing-document"),"not_found");
+        var empty=fixtures().projectWithLeader();
+        error(() -> commands.create(CallerContext.human(empty.leaderAccountId()),empty.projectId(),input("변경"),"no-baseline"),"baseline_missing");
+        assertThat(storage.objects).isEmpty();
+        Proposal p=create("locked-base"); long id=Long.parseLong(p.id());
+        int stored=storage.objects.size();
+        error(() -> commands.resubmit(author,project.projectId(),id,resubmission(p,"잠긴 제안"),"locked"),"proposal_locked");
+        Input value=resubmission(p,"오래된 요청");
+        error(() -> commands.resubmit(author,project.projectId(),id,new Input(value.baseBaselineId(),value.title(),value.reason(),null,null,
+                value.items(),value.documents(),9,value.expectedSnapshotHash(),null),"stale"),"version_conflict");
+        assertThat(storage.objects).hasSize(stored);
+    }
+
+    @Test void textEqualToBaseAfterNormalizationIsNoChangeAndLeavesNothingBehind() {
+        error(() -> commands.create(author,project.projectId(),input("첫째\r\n이전\r\n끝\r\n"),"same-as-base"),"validation_failed");
+        assertThat(storage.objects).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE document_id=?",Integer.class,document)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isZero();
+    }
+
     @Test void documentOnlyChangeAndExplicitCandidatesHaveStableBaseDiffAfterBaselineMoves() {
         Proposal p=create("diff");
         var detail=queries.detail(author,project.projectId(),Long.parseLong(p.id()),null);
@@ -168,8 +259,8 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         assertThat(detail.explicitCandidates()).anyMatch(c -> c.targetType().equals("DESIGN_ITEM") && c.targetId().equals(""+item));
         long newVersion=jdbc.queryForObject("""
                 INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,approved_at)
-                VALUES(?,2,'APPROVED','new.md','new-hash','별도 승인 내용',now()) RETURNING id
-                """,Long.class,document);
+                VALUES(?,(SELECT max(version_no)+1 FROM document_version WHERE document_id=?),'APPROVED','new.md','new-hash','별도 승인 내용',now()) RETURNING id
+                """,Long.class,document,document);
         long next=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,2,?) RETURNING id",Long.class,project.projectId(),author.accountId());
         jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)",next,project.projectId(),document,newVersion);
         jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?",next,project.projectId());
@@ -232,6 +323,7 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         long token=fixtures().agentToken(project.projectId(),member);
         Proposal agent=commands.create(CallerContext.agent(member,token),project.projectId(),input("에이전트 수정안"),"agent");
         assertThat(agent.actorType()).isEqualTo("AGENT");
+        assertThat(agent.documents().getFirst().proposedDocumentVersionId()).isNotBlank();
         fixtures().revokeToken(token);
         error(() -> commands.create(CallerContext.agent(member,token),project.projectId(),input("에이전트 수정안"),"agent"),"token_revoked");
         long outsiderDoc=jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'PLAN','외부',?) RETURNING id",Long.class,foreign.projectId(),foreign.leaderAccountId());
@@ -286,16 +378,28 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
             Future<Proposal> a=pool.submit(task), b=pool.submit(task); start.countDown();
             assertThat(a.get(15,TimeUnit.SECONDS)).isEqualTo(b.get(15,TimeUnit.SECONDS));
             assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isEqualTo(1);
+            assertThat(storage.objects).hasSize(1);
         }
     }
 
-    @Test void transactionFailureRollsBackProposalAndIdempotentResponse() {
-        var tx=new TransactionTemplate(transactions);
-        assertThatThrownBy(() -> tx.executeWithoutResult(s -> { create("rollback"); throw new IllegalStateException("failure injection"); }))
-                .isInstanceOf(IllegalStateException.class);
+    @Test void transactionFailureRollsBackProposalVersionIndexJobAndStoredOriginal() {
+        // Fails while the revision row is inserted, i.e. after the DRAFT version, its index job and the object exist.
+        jdbc.execute("CREATE OR REPLACE FUNCTION fail_revision_for_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'failure injection'; END $$");
+        jdbc.execute("CREATE TRIGGER trg_fail_revision_for_test BEFORE INSERT ON change_proposal_revision FOR EACH ROW WHEN (NEW.project_id="
+                +project.projectId()+") EXECUTE FUNCTION fail_revision_for_test()");
+        try {
+            assertThatThrownBy(() -> create("rollback")).isInstanceOf(RuntimeException.class).hasMessageContaining("failure injection");
+        } finally {
+            jdbc.execute("DROP TRIGGER trg_fail_revision_for_test ON change_proposal_revision");
+        }
         assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM design_http_command WHERE project_id=?",Integer.class,project.projectId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE document_id=? AND id<>?",Integer.class,document,version)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_processing p JOIN document_version v ON v.id=p.document_version_id WHERE v.document_id=?",
+                Integer.class,document)).isZero();
+        assertThat(storage.objects).isEmpty();
         assertThat(create("rollback").status()).isEqualTo("PROPOSED");
+        assertThat(storage.objects).hasSize(1);
     }
 
     @Test void membershipRemovedWhileWaitingForProjectLockCannotSubmit() throws Exception {
@@ -453,7 +557,7 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         assertThat(client.post(path+"/"+p.id()+"/withdraw",body,"Idempotency-Key","rest-withdraw").statusCode()).isEqualTo(403);
         var result=client.post(path+"/"+p.id()+"/withdraw",body,"Origin",ORIGIN,"Idempotency-Key","rest-withdraw");
         assertThat(result.statusCode()).withFailMessage(result.body()).isEqualTo(200);
-        assertThat(result.body()).startsWith("{\"proposal\":{").contains("WITHDRAWN","withdrawn_at");
+        assertThat(result.body()).startsWith("{\"id\":").doesNotContain("\"proposal\":{").contains("WITHDRAWN","withdrawn_at");
         assertThat(client.get(path+"?group=IN_PROGRESS").body()).contains("\"items\":[]");
         assertThat(client.get(path+"?group=UNKNOWN").statusCode()).isEqualTo(400);
     }
@@ -493,7 +597,14 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
                     try {Thread.sleep(20);} catch(InterruptedException e) {Thread.currentThread().interrupt();throw new RuntimeException(e);}
                 }
                 assertThat(blocked).isTrue();
-                commands.resubmit(author,project.projectId(),id,resubmission(p,"동시에 보완한 내용"),"new-revision");
+                // Uploading a text needs to start outside a DB transaction, so this winner submits a prepared draft.
+                long draft=jdbc.queryForObject("""
+                        INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,parent_version_id)
+                        VALUES(?,(SELECT max(version_no)+1 FROM document_version WHERE document_id=?),'DRAFT','race.md','race-hash','첫째\n동시에 보완한 내용\n끝\n',?,?) RETURNING id
+                        """,Long.class,document,document,author.accountId(),version);
+                Input value=resubmission(p,"unused");
+                commands.resubmit(author,project.projectId(),id,new Input(value.baseBaselineId(),value.title(),value.reason(),null,null,List.of(),
+                        List.of(new DocumentChange(""+document,""+version,null,""+draft)),p.revision(),p.snapshotHash(),null),"new-revision");
             });
             assertThatThrownBy(() -> waiting.get().get(10,TimeUnit.SECONDS))
                     .isInstanceOfSatisfying(ExecutionException.class,e -> {

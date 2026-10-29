@@ -45,11 +45,11 @@ public class ProposalController {
     }
     @PostMapping("/{proposalId}/withdraw")
     @Operation(summary = "CHG-A15 제출한 변경 제안 거두기")
-    public WithdrawResponse withdraw(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+    public Proposal withdraw(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
                              @PathVariable long proposalId, @RequestBody WithdrawRequest input,
                              @RequestHeader("Idempotency-Key") String key) {
         origins.requireTrustedOrigin(request);
-        return new WithdrawResponse(commands.withdraw(caller, projectId, proposalId, input, key));
+        return commands.withdraw(caller, projectId, proposalId, input, key);
     }
     @GetMapping("/{proposalId}")
     @Operation(summary = "CHG-A03 변경 제안 상세·비교")

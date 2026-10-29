@@ -57,7 +57,7 @@ CREATE TABLE change_proposal_document (
   project_id BIGINT NOT NULL,
   document_id BIGINT NOT NULL,
   base_document_version_id BIGINT NOT NULL,
-  proposed_document_version_id BIGINT,
+  proposed_document_version_id BIGINT NOT NULL,
   PRIMARY KEY (change_proposal_id,revision_no,document_id),
   FOREIGN KEY (change_proposal_id,revision_no) REFERENCES change_proposal_revision(change_proposal_id,revision_no),
   FOREIGN KEY (change_proposal_id,project_id) REFERENCES change_proposal(id,project_id),

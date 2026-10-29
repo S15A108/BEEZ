@@ -13,10 +13,18 @@ import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.service.DesignCommandService;
 import com.beez.backend.designitem.validation.DesignContentValidator;
+import com.beez.backend.document.service.DocumentOriginalWriter;
+import com.beez.backend.document.service.DocumentOriginalWriter.Original;
+import com.beez.backend.document.storage.DocumentStorage;
+import com.beez.backend.document.validation.DocumentInputValidator;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.Function;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class ProposalCommandService {
@@ -27,26 +35,42 @@ public class ProposalCommandService {
     private final DesignContentValidator contents;
     private final DesignCommandService idempotency;
     private final ProposalQueryService queries;
+    private final DocumentInputValidator documentInputs;
+    private final DocumentOriginalWriter originals;
+    private final TransactionTemplate transaction;
     public ProposalCommandService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository repository,
-            ProposalValidator validator, DesignContentValidator contents, DesignCommandService idempotency, ProposalQueryService queries) {
+            ProposalValidator validator, DesignContentValidator contents, DesignCommandService idempotency, ProposalQueryService queries,
+            DocumentInputValidator documents, DocumentStorage storage, PlatformTransactionManager manager) {
         this.access=access; this.projects=projects; this.repository=repository; this.validator=validator;
-        this.contents=contents; this.idempotency=idempotency; this.queries=queries;
+        this.contents=contents; this.idempotency=idempotency; this.queries=queries; this.documentInputs=documents;
+        this.originals=new DocumentOriginalWriter(storage, manager); this.transaction=new TransactionTemplate(manager);
     }
 
-    @Transactional
+    /** A proposed text that must be stored as a document version before the proposal transaction starts. */
+    private record Staged(String text, String textHash, byte[] bytes, String extension) { }
+    private record Stage(List<Staged> files, Map<Integer, Integer> byDocument) {
+        List<DocumentOriginalWriter.Payload> payloads() {
+            return files.stream().map(file -> new DocumentOriginalWriter.Payload(file.bytes(), file.extension())).toList();
+        }
+    }
+
     public Proposal create(CallerContext caller, long project, Input input, String key) {
-        lock(caller, project); validator.validate(input, false);
+        preflight(caller, project, input, false);
         String operation = operation(caller, "create");
+        var replayed = replayed(project, caller, operation, key, input);
+        if (replayed.isPresent()) return replayed.get();
+        requirePrevious(caller, project, input);
+        Stage stage = stage(project, input);
+        return publish(stage, stored -> createLocked(caller, project, input, key, operation, stage, stored));
+    }
+
+    private Proposal createLocked(CallerContext caller, long project, Input input, String key, String operation,
+            Stage stage, List<Original> stored) {
+        lock(caller, project);
         var replay = idempotency.replay(project, caller.accountId(), operation, key, input, Proposal.class);
         if (replay.isPresent()) return replay.get();
-        if (input.previousProposalId() != null) {
-            var previous = repository.proposal(project, Long.parseLong(input.previousProposalId()));
-            if (id(previous, "proposer_account_id") != caller.accountId())
-                throw AccessErrors.forbidden("proposal_author_required", "본인이 거둔 제안만 새 제안에 연결할 수 있습니다.");
-            if (!"WITHDRAWN".equals(previous.get("status")))
-                throw error("invalid_transition", "거둔 제안만 새 제안에 연결할 수 있습니다. 반려된 제안은 같은 번호에서 재제출해 주세요.");
-        }
-        Snapshot snapshot = resolve(caller, project, null, input);
+        requirePrevious(caller, project, input);
+        Snapshot snapshot = resolve(caller, project, null, input, stage, stored);
         long proposal = repository.create(project, caller, snapshot.input());
         repository.saveRevision(project, proposal, 1, caller, snapshot, hash(snapshot));
         Proposal response = queries.current(project, proposal);
@@ -55,15 +79,62 @@ public class ProposalCommandService {
         return response;
     }
 
-    @Transactional
     public Proposal resubmit(CallerContext caller, long project, long proposal, Input input, String key) {
-        lock(caller, project); validator.validate(input, true);
-        var current = repository.proposal(project, proposal);
-        if (id(current, "proposer_account_id") != caller.accountId())
-            throw AccessErrors.forbidden("proposal_author_required", "제안한 담당자만 반려 내용을 보완해 재제출할 수 있습니다.");
+        preflight(caller, project, input, true);
         String operation = operation(caller, "resubmit:" + proposal);
+        var current = repository.proposal(project, proposal);
+        requireAuthor(current, caller);
+        var replayed = replayed(project, caller, operation, key, input);
+        if (replayed.isPresent()) return replayed.get();
+        // Reject stale or locked requests before any original is written to storage.
+        requireResubmittable(current, input);
+        Stage stage = stage(project, input);
+        return publish(stage, stored -> resubmitLocked(caller, project, proposal, input, key, operation, stage, stored));
+    }
+
+    private Proposal resubmitLocked(CallerContext caller, long project, long proposal, Input input, String key, String operation,
+            Stage stage, List<Original> stored) {
+        lock(caller, project);
+        var current = repository.proposal(project, proposal);
+        requireAuthor(current, caller);
         var replay = idempotency.replay(project, caller.accountId(), operation, key, input, Proposal.class);
         if (replay.isPresent()) return replay.get();
+        requireResubmittable(current, input);
+        Snapshot snapshot = resolve(caller, project, proposal, input, stage, stored);
+        int revision = Math.addExact(input.expectedRevision(), 1);
+        repository.advance(proposal, snapshot.input());
+        repository.saveRevision(project, proposal, revision, caller, snapshot, hash(snapshot));
+        Proposal response = queries.current(project, proposal);
+        idempotency.save(project, caller.accountId(), operation, key, input, response);
+        return response;
+    }
+
+    /** Cheap checks before any original is written: membership first, then input shape. */
+    private void preflight(CallerContext caller, long project, Input input, boolean update) {
+        if (project < 1) throw invalid("프로젝트 ID는 양수여야 합니다.");
+        access.requireMember(caller, project);
+        validator.validate(input, update);
+    }
+
+    private Optional<Proposal> replayed(long project, CallerContext caller, String operation, String key, Input input) {
+        return transaction.execute(status -> idempotency.replay(project, caller.accountId(), operation, key, input, Proposal.class));
+    }
+
+    private void requirePrevious(CallerContext caller, long project, Input input) {
+        if (input.previousProposalId() == null) return;
+        var previous = repository.proposal(project, Long.parseLong(input.previousProposalId()));
+        if (id(previous, "proposer_account_id") != caller.accountId())
+            throw AccessErrors.forbidden("proposal_author_required", "본인이 거둔 제안만 새 제안에 연결할 수 있습니다.");
+        if (!"WITHDRAWN".equals(previous.get("status")))
+            throw error("invalid_transition", "거둔 제안만 새 제안에 연결할 수 있습니다. 반려된 제안은 같은 번호에서 재제출해 주세요.");
+    }
+
+    private static void requireAuthor(Map<String, Object> current, CallerContext caller) {
+        if (id(current, "proposer_account_id") != caller.accountId())
+            throw AccessErrors.forbidden("proposal_author_required", "제안한 담당자만 반려 내용을 보완해 재제출할 수 있습니다.");
+    }
+
+    private static void requireResubmittable(Map<String, Object> current, Input input) {
         if (((Number) current.get("revision_no")).intValue() != input.expectedRevision()
                 || !current.get("snapshot_hash").equals(input.expectedSnapshotHash()))
             throw error("version_conflict", "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요.");
@@ -71,13 +142,44 @@ public class ProposalCommandService {
             throw error("proposal_locked", "제출한 제안은 잠겨 있습니다. 반려된 뒤에만 보완해 재제출할 수 있습니다.");
         if (current.get("rejection_reason") == null)
             throw error("proposal_decision_missing", "반려 결정 이력을 확인할 수 없습니다. 담당자에게 확인해 주세요.");
-        Snapshot snapshot = resolve(caller, project, proposal, input);
-        int revision = Math.addExact(input.expectedRevision(), 1);
-        repository.advance(proposal, snapshot.input());
-        repository.saveRevision(project, proposal, revision, caller, snapshot, hash(snapshot));
-        Proposal response = queries.current(project, proposal);
-        idempotency.save(project, caller.accountId(), operation, key, input, response);
-        return response;
+    }
+
+    /**
+     * Normalizes every after_content text exactly like a DOC-A12 upload (BOM, CR/LF) so the stored version, its index
+     * hash and the compared text are identical. Nothing is written here.
+     */
+    private Stage stage(long project, Input input) {
+        var files = new ArrayList<Staged>();
+        var byDocument = new HashMap<Integer, Integer>();
+        if (input.documents().stream().noneMatch(doc -> doc.afterContent() != null)) return new Stage(files, byDocument);
+        // Report a missing or moved baseline before touching storage, as the transactional check would.
+        requireCurrentBaseline(project, requiredId(input.baseBaselineId(), "base_baseline_id"));
+        for (int index = 0; index < input.documents().size(); index++) {
+            DocumentChange doc = input.documents().get(index);
+            if (doc.afterContent() == null) continue;
+            String extension = repository.versionExtension(project, requiredId(doc.documentId(), "document_id"),
+                    requiredId(doc.baseDocumentVersionId(), "base_document_version_id"))
+                    .orElseThrow(() -> AccessErrors.notFound("proposal_reference_missing"));
+            var text = documentInputs.validate("document." + extension, doc.afterContent().getBytes(StandardCharsets.UTF_8));
+            byte[] bytes = text.text().getBytes(StandardCharsets.UTF_8);
+            byDocument.put(index, files.size());
+            files.add(new Staged(text.text(), text.textHash(), bytes, extension));
+        }
+        return new Stage(files, byDocument);
+    }
+
+    /** Originals go to storage outside the DB transaction; the proposal rows and the versions commit together. */
+    private <T> T publish(Stage stage, Function<List<Original>, T> body) {
+        if (stage.files().isEmpty()) return transaction.execute(status -> body.apply(List.of()));
+        return originals.writeAll(stage.payloads(), body);
+    }
+
+    private void requireCurrentBaseline(long project, long baseline) {
+        if (projects.currentBaselineId(project) == null)
+            throw error("baseline_missing", "최초 기준 설계를 생성한 뒤 변경 제안을 제출해 주세요.");
+        if (!projects.baselineBelongsToProject(project, baseline)) throw AccessErrors.notFound("proposal_baseline_missing");
+        if (!Objects.equals(projects.currentBaselineId(project), baseline))
+            throw error("baseline_conflict", "현재 기준 설계가 변경되었습니다. 최신 기준으로 제안을 다시 검토해 주세요.");
     }
 
     private void lock(CallerContext caller, long project) {
@@ -109,13 +211,9 @@ public class ProposalCommandService {
         return response;
     }
 
-    private Snapshot resolve(CallerContext caller, long project, Long proposal, Input input) {
+    private Snapshot resolve(CallerContext caller, long project, Long proposal, Input input, Stage stage, List<Original> stored) {
         long baseline = requiredId(input.baseBaselineId(), "base_baseline_id");
-        if (projects.currentBaselineId(project) == null)
-            throw error("baseline_missing", "최초 기준 설계를 생성한 뒤 변경 제안을 제출해 주세요.");
-        if (!projects.baselineBelongsToProject(project, baseline)) throw AccessErrors.notFound("proposal_baseline_missing");
-        if (!Objects.equals(projects.currentBaselineId(project), baseline))
-            throw error("baseline_conflict", "현재 기준 설계가 변경되었습니다. 최신 기준으로 제안을 다시 검토해 주세요.");
+        requireCurrentBaseline(project, baseline);
         repository.requireRelated(project, Ids.parse(input.taskId(), "task_id"), Ids.parse(input.validationId(), "validation_id"));
         var items = new ArrayList<Item>();
         var existingIds = new HashSet<Long>();
@@ -140,13 +238,25 @@ public class ProposalCommandService {
                     item.schemaVersion(), item.proposedContent()));
         }
         var documents = new ArrayList<ResolvedDocument>();
-        for (DocumentChange doc : input.documents()) {
+        for (int index = 0; index < input.documents().size(); index++) {
+            DocumentChange doc = input.documents().get(index);
             long document = requiredId(doc.documentId(), "document_id");
             long version = requiredId(doc.baseDocumentVersionId(), "base_document_version_id");
             var base = repository.baseDocument(project, baseline, document);
             if (id(base, "id") != version) throw error("baseline_conflict", "문서의 기준 버전이 기준 설계와 일치하지 않습니다.");
             String after = doc.afterContent();
-            if (doc.proposedDocumentVersionId() != null) {
+            String proposedVersion = doc.proposedDocumentVersionId();
+            if (proposedVersion == null) {
+                // Every document change gets its own DRAFT version and an indexing job, in this transaction, so
+                // CHG-A09 can check one rule (index readiness) for upload and direct-text changes alike.
+                Integer at = stage.byDocument().get(index);
+                if (at == null) throw error("baseline_conflict", "기준 문서가 변경되었습니다. 최신 기준으로 다시 제출해 주세요.");
+                Staged file = stage.files().get(at);
+                long created = repository.createDraftVersion(document, version, stored.get(at).reference(), file.textHash(),
+                        file.text(), file.textHash(), caller.accountId());
+                proposedVersion = Long.toString(created);
+                after = file.text();
+            } else {
                 var draft = repository.draft(project, document, requiredId(doc.proposedDocumentVersionId(), "proposed_document_version_id"));
                 if (!"DRAFT".equals(draft.get("status")) || draft.get("parent_version_id") == null
                         || id(draft, "parent_version_id") != version)
@@ -158,9 +268,9 @@ public class ProposalCommandService {
                 after = (String) draft.get("content_text");
             }
             ProposalValidator.documentText(after);
-            // Preserve exact supplied text; uploading files already applies the document normalizer.
+            // `after` is already normalized like a DOC-A12 upload, so equal text means no change.
             if (!Objects.equals(base.get("content_text"), after)) changed = true;
-            documents.add(new ResolvedDocument(doc.documentId(), doc.baseDocumentVersionId(), doc.proposedDocumentVersionId(), after,
+            documents.add(new ResolvedDocument(doc.documentId(), doc.baseDocumentVersionId(), proposedVersion, after,
                     textHash(after)));
         }
         if (!changed) throw invalid("기준과 다른 문서 또는 설계 항목 변경이 하나 이상 필요합니다.");

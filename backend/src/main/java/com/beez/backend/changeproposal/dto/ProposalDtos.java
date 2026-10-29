@@ -14,7 +14,6 @@ public final class ProposalDtos {
                         List<Item> items, List<DocumentChange> documents,
                         Integer expectedRevision, String expectedSnapshotHash, String previousProposalId) { }
     public record WithdrawRequest(Integer expectedRevision, String expectedSnapshotHash) { }
-    public record WithdrawResponse(Proposal proposal) { }
     public record ResolvedDocument(String documentId, String baseDocumentVersionId,
                                    String proposedDocumentVersionId, String afterContent, String contentHash) { }
     public record Snapshot(Input input, List<ResolvedDocument> documents, boolean legacy) { }
