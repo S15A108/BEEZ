@@ -6,7 +6,7 @@
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
-2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황, 시작 가이드 상태가 새로 들어갔다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q23에 올렸다.
+2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q23에 올렸다.
 
 ## 1. 문서 안내
 
@@ -273,8 +273,6 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [PRJ-A04 프로젝트 정보 수정](01-backend-rest.md#prj-a04) | PATCH `/api/projects/{id}` | LEADER | 전진 | — | 박민용 |
 | [PRJ-A05 프로젝트 삭제](01-backend-rest.md#prj-a05) | DELETE `/api/projects/{id}` | LEADER | 전진 | — | 박민용 |
 | [PRJ-A06 초기 설정 현황](01-backend-rest.md#prj-a06) | GET `/api/projects/{id}/onboarding` | MEMBER | 전진 | — | 박민용 |
-| [PRJ-A07 내 시작 가이드 상태](01-backend-rest.md#prj-a07) | GET `/api/projects/{id}/me/guide-state` | MEMBER | 전진 | — | 박민용 |
-| [PRJ-A08 내 시작 가이드 상태 저장](01-backend-rest.md#prj-a08) | PATCH `/api/projects/{id}/me/guide-state` | MEMBER | 전진 | — | 박민용 |
 | [MEM-A01 팀원 초대 생성](01-backend-rest.md#mem-a01) | POST `/api/projects/{id}/invitations` | LEADER | 전진 | — | 박민용 |
 | [MEM-A02 초대 목록](01-backend-rest.md#mem-a02) | GET `/api/projects/{id}/invitations` | LEADER | 전진 | — | 박민용 |
 | [MEM-A03 초대 폐기](01-backend-rest.md#mem-a03) | DELETE `/api/projects/{id}/invitations/{invitation_id}` | LEADER | 전진 | — | 박민용 |
@@ -286,7 +284,6 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MEM-A09 팀원 제외](01-backend-rest.md#mem-a09) | POST `/api/projects/{id}/members/{member_id}/remove` | LEADER | 전진 | — | 박민용 |
 | [MEM-A10 프로젝트 나가기](01-backend-rest.md#mem-a10) | POST `/api/projects/{id}/leave` | MEMBER | 전진 | — | 박민용 |
 | [MEM-A11 초대 다시 보내기](01-backend-rest.md#mem-a11) | POST `/api/projects/{id}/invitations/{invitation_id}/resend` | LEADER | 전진 | — | 박민용 |
-| [MEM-A12 내 대기 초대 목록](01-backend-rest.md#mem-a12) | GET `/api/me/invitations` | USER | 전진 | — | 박민용 |
 | [AGT-A01 에이전트 토큰 발급](01-backend-rest.md#agt-a01) | POST `/api/projects/{id}/agent-tokens` | MEMBER, 본인 소유 객체 | 전진 | — | 박민용 |
 | [AGT-A02 내 에이전트 토큰 목록](01-backend-rest.md#agt-a02) | GET `/api/me/agent-tokens` | USER | 전진 | — | 박민용 |
 | [AGT-A03 에이전트 토큰 폐기](01-backend-rest.md#agt-a03) | DELETE `/api/agent-tokens/{id}` | USER, 본인 소유 객체 | 전진 | — | 박민용 |
@@ -434,6 +431,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | AGT-08·09 | 다중 에이전트·추가 클라이언트 | 기존 token/session·MCP 계약 확장 | 미정 |
 | 확장 CTX | 고급 패킷·공유 기록 | 기본 MCP 계약 확장 | 미정 |
 | NTF-07·08 | 실시간 전파·로컬 제어 | 별도 전송·실행 제어 계약 | 미정 |
+| PRJ-04 시작 가이드 상태 | 가이드를 봤음·숨김·'기준 문서 읽었어요'를 기기 사이에 맞춤. 지금은 FE가 계정·프로젝트별로 브라우저에 저장 | GET·PATCH /api/projects/{id}/me/guide-state | 전진 |
+| MEM-02 내 대기 초대 목록 | 초대받고 나중에 가입한 사람에게 받은 초대를 모아 보여 줌(캔버스 메모의 대기열). 지금 화면은 초대 링크 토큰을 회원가입 뒤까지 들고 가 MEM-A05로 수락 | GET /api/me/invitations | 전진 |
 
 ## 9. 검토 항목
 
@@ -460,7 +459,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | 비교 대상(승인 문서, 기준이 없으면 함께 올린 초안), 단계 이름과 목표 소요 시간, 실패 때 재시도 한도와 팀장 우회 여부(기본안: 우회 없음), 업로드마다 드는 AI 비용 상한 |
 | Q20 | 같은 종류 문서 여러 개 | 오서현·박상은 | DOC-A01 확정 정책은 종류마다 문서 1개다. 수정안 예시('알림 API 명세서'를 두 번째 API 명세서로 등록)는 복수 등록이 필요하다. 허용하면 필수 4종 충족은 '그 종류에 승인 문서가 하나 이상'으로 판정한다 |
 | Q21 | 대시보드 비용·집계 | 변준성·전진 | 비용을 팀장만 볼지(지금 MEMBER), 에이전트를 토큰별로 셀지 팀원별로 묶을지, 프로젝트 전체 관계 그래프가 필요한지 |
-| Q22 | 화면 상태 저장 | 전진·변준성·박민용 | 시작 가이드 종료 조건(팀장 = 발행+초대, 팀원 = 에이전트 연결+첫 계획), 팀장을 넘겨받은 사람에게 가이드를 다시 띄울지, 기준 발행 전 팀원이 할 수 있는 일, 도시 부지 번호를 멤버십별로 서버에 둘지와 부지 상한 |
+| Q22 | 화면 상태 저장 | 전진·변준성·박민용 | 가이드 표시 상태는 브라우저 저장으로 정함(서버 저장은 8절 확장 후보). 시작 가이드 종료 조건(팀장 = 발행+초대, 팀원 = 에이전트 연결+첫 계획), 팀장을 넘겨받은 사람에게 가이드를 다시 띄울지, 기준 발행 전 팀원이 할 수 있는 일, 도시 부지 번호를 멤버십별로 서버에 둘지와 부지 상한 |
 | Q23 | 변경 제안 검토 시작 | 오서현 | 승인 전에 IN_REVIEW(CHG-A08)를 꼭 거칠지, 팀장이 제안을 열면 자동으로 할지(기본안: 자동) |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
@@ -1538,20 +1537,6 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `seat` | `string` | N | 자리 식별값 |
 | `panel` | `string` | N | 열어 둔 메뉴. 공개 범위는 Q18 |
 | `activity` | `object` | N | 지금 하는 일 {action: VIEWING\|EDITING, target_type, target_id, label}. 화면 예: '변경 제안 검토 중', 'TASK-002 계획 작성 중'. 오프라인이면 마지막 값 |
-
-<a id="schema-guidestate"></a>
-
-### GuideState
-
-수정안 요청. 계정·프로젝트별 시작 가이드 상태다.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `tour_seen_at` | `Time` | N | 공용 가이드(환영·둘러보기)를 보거나 건너뛴 시각 |
-| `leader_guide_closed_at` | `Time` | N | 팀장 시작 가이드를 숨기거나 끝낸 시각 |
-| `member_guide_closed_at` | `Time` | N | 팀원 시작 가이드를 숨기거나 끝낸 시각 |
-| `baseline_read_at` | `Time` | N | 팀원이 '기준 설계 읽기'를 체크한 시각 |
-| `updated_at` | `Time` | Y | 마지막 변경 |
 
 <a id="schema-blockedproject"></a>
 

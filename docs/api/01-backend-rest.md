@@ -2,7 +2,7 @@
 
 버전: 0.7 · 갱신일: 2026-10-28 · 개발 계약 초안
 
-2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, PRJ-A07·A08, MEM-A11·A12, DOC-A13~A23, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. ACC-A08·A09와 MTG-A01·A04·A05·A07·A08·A09는 폐지 예정이다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q23이다.
+2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, MEM-A11, DOC-A13~A23, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. ACC-A08·A09와 MTG-A01·A04·A05·A07·A08·A09는 폐지 예정이다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q23이다.
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -29,8 +29,6 @@
 - [PRJ-A04 프로젝트 정보 수정](#prj-a04)
 - [PRJ-A05 프로젝트 삭제](#prj-a05)
 - [PRJ-A06 초기 설정 현황](#prj-a06)
-- [PRJ-A07 내 시작 가이드 상태](#prj-a07)
-- [PRJ-A08 내 시작 가이드 상태 저장](#prj-a08)
 - [MEM-A01 팀원 초대 생성](#mem-a01)
 - [MEM-A02 초대 목록](#mem-a02)
 - [MEM-A03 초대 폐기](#mem-a03)
@@ -42,7 +40,6 @@
 - [MEM-A09 팀원 제외](#mem-a09)
 - [MEM-A10 프로젝트 나가기](#mem-a10)
 - [MEM-A11 초대 다시 보내기](#mem-a11)
-- [MEM-A12 내 대기 초대 목록](#mem-a12)
 - [AGT-A01 에이전트 토큰 발급](#agt-a01)
 - [AGT-A02 내 에이전트 토큰 목록](#agt-a02)
 - [AGT-A03 에이전트 토큰 폐기](#agt-a03)
@@ -1838,184 +1835,6 @@ HTTP `200`.
 
 ---
 
-<a id="prj-a07"></a>
-
-## PRJ-A07. 내 시작 가이드 상태
-
-### GET `/api/projects/{id}/me/guide-state`
-
-공용 가이드·역할별 시작 가이드를 봤는지 계정·프로젝트별로 돌려준다.
-
-관련 요구사항: PRJ-04 (화면 SCR-06-v2-tour-welcome, SCR-06-v2-workspace-preparing, SCR-06-v2-workspace-member)  
-담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 수정안 요청 (협의 필요)
-
-#### 인증
-
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
-
-#### Headers
-
-| 헤더 | 값·설명 |
-| --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-
-#### Path Parameters
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 프로젝트 ID |
-
-#### Query Parameters
-
-없음.
-
-#### Request
-
-없음.
-
-#### Response
-
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `tour_seen_at` | `Time` | N | 공용 가이드를 보거나 건너뛴 시각 |
-| `leader_guide_closed_at` | `Time` | N | 팀장 시작 가이드를 숨기거나 끝낸 시각 |
-| `member_guide_closed_at` | `Time` | N | 팀원 시작 가이드를 숨기거나 끝낸 시각 |
-| `baseline_read_at` | `Time` | N | '기준 설계 읽기'를 체크한 시각 |
-| `updated_at` | `Time` | N | 마지막 변경. 저장한 적이 없으면 생략 |
-
-```json
-{
-  "tour_seen_at": "2026-10-28T03:00:00Z",
-  "updated_at": "2026-10-28T03:00:00Z"
-}
-```
-
-#### Error
-
-| HTTP | code | 상황 |
-| --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-
-```json
-{
-  "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
-  }
-}
-```
-
-#### 처리 규칙
-
-- 기기를 바꿔도 가이드가 다시 뜨지 않도록 서버에 둔다. 가이드 단계 자체는 PRJ-A06으로 계산한다.
-- 저장한 적이 없으면 모든 시각을 생략한 객체를 돌려준다.
-
-[공통 규약·권한·담당자 목록](00-common.md)
-
----
-
-<a id="prj-a08"></a>
-
-## PRJ-A08. 내 시작 가이드 상태 저장
-
-### PATCH `/api/projects/{id}/me/guide-state`
-
-가이드를 보거나 숨기거나 끝낸 것, '기준 설계 읽기' 체크를 저장한다.
-
-관련 요구사항: PRJ-04 (화면 SCR-06-v2-tour-welcome, SCR-06-v2-workspace-member)  
-담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 수정안 요청 (협의 필요)
-
-#### 인증
-
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
-
-#### Headers
-
-| 헤더 | 값·설명 |
-| --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
-| Content-Type | application/json |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
-
-#### Path Parameters
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 프로젝트 ID |
-
-#### Query Parameters
-
-없음.
-
-#### Request
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `tour_seen` | `boolean` | N | true면 지금 시각을 기록, false면 지움 |
-| `leader_guide_closed` | `boolean` | N | 팀장 가이드. 현재 팀장만 |
-| `member_guide_closed` | `boolean` | N | 팀원 가이드 |
-| `baseline_read` | `boolean` | N | '기준 설계 읽기' 체크 |
-
-```json
-{
-  "tour_seen": true
-}
-```
-
-#### Response
-
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `tour_seen_at` | `Time` | N | 공용 가이드를 보거나 건너뛴 시각 |
-| `leader_guide_closed_at` | `Time` | N | 팀장 시작 가이드를 숨기거나 끝낸 시각 |
-| `member_guide_closed_at` | `Time` | N | 팀원 시작 가이드를 숨기거나 끝낸 시각 |
-| `baseline_read_at` | `Time` | N | '기준 설계 읽기'를 체크한 시각 |
-| `updated_at` | `Time` | N | 마지막 변경. 저장한 적이 없으면 생략 |
-
-```json
-{
-  "tour_seen_at": "2026-10-28T03:00:00Z",
-  "updated_at": "2026-10-28T03:00:00Z"
-}
-```
-
-#### Error
-
-| HTTP | code | 상황 |
-| --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-
-```json
-{
-  "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
-  }
-}
-```
-
-#### 처리 규칙
-
-- 공통 PATCH 규약대로 하나 이상의 필드가 필요하다.
-- leader_guide_closed는 현재 팀장만 바꾼다. 다른 멤버는 403이다.
-- 가이드 종료 조건과 팀장을 넘겨받은 사람에게 다시 띄울지는 Q22다.
-
-[공통 규약·권한·담당자 목록](00-common.md)
-
----
-
 <a id="mem-a01"></a>
 
 ## MEM-A01. 팀원 초대 생성
@@ -2411,8 +2230,7 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `token` | `string` | N | 초대 토큰. invitation_id와 둘 중 하나 |
-| `invitation_id` | `ID` | N | MEM-A12에서 고른 대기 초대. 로그인 계정 이메일이 초대 이메일과 같을 때만. 수정안 요청 |
+| `token` | `string` | Y | 초대 토큰 |
 
 ```json
 {
@@ -2484,7 +2302,7 @@ HTTP `200`.
 - 이미 활성 멤버면 409 `already_member`이고 초대는 소비되지 않는다.
 - 제외·나가기로 끝난 멤버십이 있으면 새로 만들지 않고 그 멤버십을 MEMBER로 되살린다. 담당 영역·라벨·색상은 비운다.
 - (수정안 요청) 유효하지 않은 초대는 MEM-A04와 같이 404 하나로 준다. already_member는 그대로 두고 화면은 그 프로젝트로 보낸다.
-- (수정안 요청) 로그아웃 상태에서 초대를 열고 회원가입을 거쳐도 같은 토큰으로 이 API를 부른다. 가입한 이메일로 온 대기 초대는 MEM-A12로 다시 보여 준다.
+- (수정안 요청) 로그아웃 상태에서 초대를 열고 회원가입을 거쳐도 같은 토큰으로 이 API를 부른다. 가입한 사람에게 받은 초대를 모아 보여 주는 목록은 확장 후보(00-common 8절)다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -3043,96 +2861,6 @@ HTTP `200`.
 - 새 토큰을 만들어 메일을 다시 보내고 만료를 지금부터 7일로 다시 잡는다. 이전 링크는 바로 무효다.
 - 링크 토큰은 응답에 넣지 않는다. 발송 한도는 Q05다.
 - 이메일을 지정한 초대만 다시 보낼 수 있다.
-
-[공통 규약·권한·담당자 목록](00-common.md)
-
----
-
-<a id="mem-a12"></a>
-
-## MEM-A12. 내 대기 초대 목록
-
-### GET `/api/me/invitations`
-
-로그인한 계정의 이메일로 온 대기 초대를 보여 준다.
-
-관련 요구사항: MEM-02 (화면 SCR-03-v2-invite-logged-out)  
-담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 수정안 요청 (협의 필요)
-
-#### 인증
-
-`USER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
-
-#### Headers
-
-| 헤더 | 값·설명 |
-| --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-
-#### Path Parameters
-
-없음.
-
-#### Query Parameters
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
-| `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
-
-#### Request
-
-없음.
-
-#### Response
-
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `items` | `object[]` | Y | 대기 초대 {invitation_id, project_name, inviter{name, email}, expires_at} |
-| `has_more` | `boolean` | Y | 다음 페이지 존재 |
-| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환 |
-
-```json
-{
-  "items": [
-    {
-      "invitation_id": "31",
-      "project_name": "BEEZ",
-      "inviter": {
-        "name": "이팀장",
-        "email": "leader@example.com"
-      },
-      "expires_at": "2026-11-04T03:00:00Z"
-    }
-  ],
-  "has_more": false
-}
-```
-
-#### Error
-
-| HTTP | code | 상황 |
-| --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-
-```json
-{
-  "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
-  }
-}
-```
-
-#### 처리 규칙
-
-- 로그인 계정 이메일(대소문자 무시)로 지정된, 만료 전·미수락·미폐기 초대만 돌려준다.
-- 초대받고 회원가입한 사람에게 가입·로그인 직후 이어서 보여 준다. 수락은 MEM-A05에 invitation_id를 보낸다.
-- 링크 토큰은 돌려주지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
