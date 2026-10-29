@@ -138,8 +138,9 @@ public class ProjectService {
 
     /**
      * 행을 잠그고 읽은 뒤 삭제 여부를 다시 본다. 권한 검사와 잠금 사이에 다른 요청이 삭제를 끝냈을 수 있다.
+     * 팀원 관리(ProjectMemberService)도 같은 행을 이걸로 잠가, 수정·삭제와 팀원 변경이 한 줄로 선다.
      */
-    private Project lockActive(long projectId) {
+    Project lockActive(long projectId) {
         Project project = projects.findForUpdate(projectId)
                 .orElseThrow(() -> AccessErrors.notFound("project_missing project=" + projectId));
         if (project.getArchivedAt() != null) {

@@ -12,6 +12,7 @@ import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.service.TaskHandoverService;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -29,8 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * MEM-A06 ~ A10 팀원 목록·표시 수정·팀장 위임·제외·나가기 (S15P31A108-212). 권한 검사는 각 메서드 첫 줄.
  * <p>
- * 잠금 순서는 프로젝트 행 → 멤버십 행. 위임·제외·나가기는 프로젝트 행을 잠가 서로 줄을 세우고(위임과 제외가 겹쳐 새 팀장이 제외되는 일),
- * 바꿀 멤버십 행도 잠근다. 토큰 발급(AGT-A01)이 멤버십 행만 잠그므로, 제외·나가기 뒤에 폐기 안 된 토큰이 남지 않는다.
+ * 잠금 순서는 프로젝트 행 → 멤버십 행. 변경 요청은 모두 프로젝트 행을 잠가 서로 줄을 세우고(위임과 제외가 겹쳐 새 팀장이 제외되는 일),
+ * 바꿀 멤버십 행도 잠근다. 토큰 발급(AGT-A01)이 멤버십 행을, 작업 생성·담당자 변경이 프로젝트 행을 잠그므로
+ * 제외·나가기 뒤에 폐기 안 된 토큰이나 나간 사람이 담당인 열린 작업이 남지 않는다.
  * 잠근 뒤에는 {@link #lockMember} 로 행을 다시 읽는다 — 권한 검사가 먼저 읽어 둔 엔티티는 잠금 조회에서 옛 상태 그대로 돌아온다.
  */
 @Service
@@ -40,18 +42,18 @@ public class ProjectMemberService {
     private static final Pattern COLOR = Pattern.compile("#[0-9A-Fa-f]{6}");
 
     private final ProjectAccessChecker access;
-    private final ProjectRepository projects;
+    private final ProjectService projectService;
     private final ProjectMemberRepository members;
     private final AccountRepository accounts;
     private final AgentTokenRepository tokens;
     private final TaskHandoverService handover;
     private final EntityManager em;
 
-    public ProjectMemberService(ProjectAccessChecker access, ProjectRepository projects, ProjectMemberRepository members,
-                                AccountRepository accounts, AgentTokenRepository tokens, TaskHandoverService handover,
-                                EntityManager em) {
+    public ProjectMemberService(ProjectAccessChecker access, ProjectService projectService,
+                                ProjectMemberRepository members, AccountRepository accounts, AgentTokenRepository tokens,
+                                TaskHandoverService handover, EntityManager em) {
         this.access = access;
-        this.projects = projects;
+        this.projectService = projectService;
         this.members = members;
         this.accounts = accounts;
         this.tokens = tokens;
@@ -72,7 +74,7 @@ public class ProjectMemberService {
     /** MEM-A07. 담당 영역·라벨·색상만 바꾼다. 역할은 위임(MEM-A08)으로만 바뀐다. */
     @Transactional
     public MemberResponse update(CallerContext caller, long projectId, long memberId, UpdateMemberRequest req) {
-        access.requireHumanLeader(caller, projectId);
+        ProjectActor actor = access.requireHumanLeader(caller, projectId);
         if (req.domain() == null && req.roleLabel() == null && req.color() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "변경할 필드가 하나 이상 필요합니다");
         }
@@ -81,7 +83,8 @@ public class ProjectMemberService {
         String roleLabel = normalizeText(req.roleLabel(), "role_label");
         String color = normalizeColor(req.color());
 
-        // 나가기·제외와 같은 멤버십 행을 잠가 줄을 세운다. 프로젝트 행은 잠그지 않는다 — 역할을 바꾸지 않아 위임과 겹쳐도 무방하다.
+        // 위임과 줄을 세워 팀장 권한을 다시 본다 — 위임이 먼저 커밋되면 이전 팀장의 수정은 403 (완료 조건 "위임 직후 403")
+        lockProjectAsLeader(projectId, actor);
         ProjectMember target = lockMember(memberId, projectId);
         target.changeDisplay(
                 req.domain() == null ? target.getArea() : domain,
@@ -143,7 +146,7 @@ public class ProjectMemberService {
     public void leave(CallerContext caller, long projectId, EndMembershipRequest req) {
         ProjectActor actor = access.requireMember(caller, projectId);
         Long reassignTo = reassignTarget(req);
-        lockActiveProject(projectId);
+        projectService.lockActive(projectId);
         ProjectMember me = lockMember(actor.memberId(), projectId);
         end(me, reassignTo, MembershipEndReason.LEFT);
     }
@@ -179,16 +182,9 @@ public class ProjectMemberService {
     // 잠금
     // ------------------------------------------------------------------
 
-    /** 프로젝트 행을 잠그고, 삭제됐으면 404. 권한 검사와 잠금 사이에 삭제가 커밋됐을 수 있다. */
-    private void lockActiveProject(long projectId) {
-        projects.findForUpdate(projectId)
-                .filter(p -> p.getArchivedAt() == null)
-                .orElseThrow(() -> AccessErrors.notFound("project_archived_or_missing project=" + projectId));
-    }
-
     /** 프로젝트 행을 잠근 뒤 요청자가 아직 팀장인지 다시 본다 (MEM-A08 "요청 처리 시점의 팀장 권한 재확인"). */
     private void lockProjectAsLeader(long projectId, ProjectActor actor) {
-        lockActiveProject(projectId);
+        projectService.lockActive(projectId);
         if (!members.isActiveLeader(actor.memberId(), projectId)) {
             throw AccessErrors.forbidden("leader_changed project=" + projectId + " member=" + actor.memberId(),
                     "팀장만 할 수 있습니다");
@@ -205,16 +201,16 @@ public class ProjectMemberService {
     }
 
     /**
-     * 멤버십 행을 잠그고 refresh 로 지금 값을 읽는다. 이 프로젝트 소속이 아니면 null (잠그지 않는다).
+     * 멤버십 행을 잠그면서 지금 값으로 다시 읽는다(refresh + FOR UPDATE 한 번). 이 프로젝트 소속이 아니면 null (잠그지 않는다).
      * 활성 여부는 보지 않는다 — 부르는 쪽이 {@link ProjectMemberRepository#isActiveMember} 로 본다(계정 탈퇴까지 포함).
      */
     private ProjectMember lockMemberRow(long memberId, long projectId) {
-        ProjectMember m = members.findById(memberId).orElse(null);
+        // 권한 검사가 이미 읽은 행이면 쿼리 없이 돌아온다. project_id 는 바뀌지 않는 값이라 옛 상태로 봐도 된다
+        ProjectMember m = em.find(ProjectMember.class, memberId);
         if (m == null || m.getProjectId() != projectId) {
             return null;
         }
-        members.findForUpdate(memberId);
-        em.refresh(m);
+        em.refresh(m, LockModeType.PESSIMISTIC_WRITE);
         return m;
     }
 

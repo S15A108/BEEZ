@@ -11,6 +11,11 @@ import com.beez.backend.task.TaskApiSupport;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -167,20 +172,26 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
-     * 깨지면: 열린 작업을 담당자 없는 사람에게 남긴 채 빠지거나, 넘겨받은 사람이 떠난 사람의 검증으로 진행 중 작업을 이어 간다
-     * (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경, 2026-10-29 결정).
+     * 깨지면: 열린 작업을 담당자 없는 사람에게 남긴 채 빠지거나, 넘겨받은 사람이 떠난 사람의 검증(도는 중이던 것 포함)으로
+     * 진행 중 작업을 이어 가거나, 끝난 작업까지 담당자가 바뀐다 (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경, 2026-10-29 결정).
      */
     @Test
     void openTasks_blockUntilReassigned_inProgressGoesBackToRevalidation() {
         long ready = createTaskAsMember("준비된 작업");
         long running = createTaskAsMember("진행 중 작업");
-        long revision = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", running)
-                .query(Long.class).single();
         long pass = api.passValidation(running);
-        HttpResponse<String> started = api.post(tasksPath() + "/" + running + "/state-events",
-                "{\"event\":\"START\",\"plan_revision_id\":\"" + revision + "\",\"expected_lock_version\":"
-                        + lockVersion(running) + ",\"validation_id\":\"" + pass + "\"}", member);
-        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+        report(running, "START", "\"validation_id\":\"" + pass + "\"");
+        // 떠나는 사람의 에이전트가 요청해 두고 아직 도는 검증. 인계 뒤에 PASS 로 끝나도 쓸 수 없어야 한다
+        long runningValidation = api.jdbc.sql("""
+                        insert into validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash, rule_version)
+                        select t.id, t.current_plan_revision_id, p.current_baseline_id, 'RUNNING', 'AGENT', 'snap-run', 'r1'
+                          from task t join project p on p.id = t.project_id where t.id = :t
+                        returning id
+                        """).param("t", running).query(Long.class).single();
+        long done = createTaskAsMember("끝난 작업");
+        report(done, "START", "\"validation_id\":\"" + api.passValidation(done) + "\"");
+        report(done, "COMPLETED",
+                "\"summary\":\"끝\",\"delta\":[],\"completion_checks\":[{\"criterion\":\"테스트 통과\",\"met\":true}]");
 
         long memberMemberId = api.memberId("member@test");
         assertCode(api.post(removePath(memberMemberId), null, leader), 409, "active_tasks_exist");
@@ -198,8 +209,47 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
         assertThat(taskRow(ready)).isEqualTo("READY|null|" + carolMemberId);
         assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + carolMemberId);
-        assertThat(api.jdbc.sql("select status || '|' || stale_reason from validation where id = :v").param("v", pass)
-                .query(String.class).single()).isEqualTo("STALE|ASSIGNEE_CHANGED");
+        assertThat(validationRow(pass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+        assertThat(validationRow(runningValidation)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+        assertThat(taskRow(done)).isEqualTo("COMPLETED|null|" + memberMemberId);
+
+        // 나가기도 같은 규칙: 인계 대상을 주면 넘기고 빠진다
+        String leavePath = "/api/projects/" + projectId + "/leave";
+        assertCode(api.post(leavePath, null, carol), 409, "active_tasks_exist");
+        long leaderMemberId = api.memberId("leader@test");
+        assertThat(api.post(leavePath, body("reassign_to_member_id", leaderMemberId), carol).statusCode()).isEqualTo(204);
+        assertThat(taskRow(ready)).isEqualTo("READY|null|" + leaderMemberId);
+        assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + leaderMemberId);
+    }
+
+    /**
+     * 깨지면: 토큰 발급과 제외가 겹칠 때 제외 뒤에도 폐기 안 된 토큰이 남는다 — 두 쪽이 같은 멤버십 행을 잠그는 약속이 빠졌다
+     * (-172 합의 4). 겹치는 순간을 매번 만들 수는 없어서, 어느 순서로 끝나도 결과가 같은지를 본다.
+     */
+    @Test
+    void concurrentIssueAndRemove_leavesNoLiveToken() throws Exception {
+        String issuePath = "/api/projects/" + projectId + "/agent-tokens";
+        String removePath = removePath(api.memberId("member@test"));
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            CompletableFuture<Integer> issue = CompletableFuture.supplyAsync(() -> {
+                await(start);
+                return api.post(issuePath, "{}", member).statusCode();
+            }, pool);
+            CompletableFuture<Integer> remove = CompletableFuture.supplyAsync(() -> {
+                await(start);
+                return api.post(removePath, null, leader).statusCode();
+            }, pool);
+            start.countDown();
+            assertThat(remove.join()).isEqualTo(204);
+            // 발급이 먼저면 201 뒤 제외가 폐기하고, 제외가 먼저면 이미 멤버가 아니라 404
+            assertThat(issue.join()).isIn(201, 404);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(api.jdbc.sql("select count(*) from agent_token where project_id = :p and account_id = :a and revoked_at is null")
+                .param("p", projectId).param("a", member).query(Long.class).single()).isZero();
     }
 
     // ------------------------------------------------------------------
@@ -243,8 +293,29 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         return TaskApiSupport.longField(res.body(), "id");
     }
 
-    private long lockVersion(long taskId) {
-        return api.jdbc.sql("select lock_version from task where id = :t").param("t", taskId).query(Long.class).single();
+    /** member 가 작업 상태를 보고한다 (REST state-events, 사람 세션). extra 는 이벤트별 필드 */
+    private void report(long taskId, String event, String extra) {
+        Map<String, Object> row = api.jdbc.sql("select current_plan_revision_id, lock_version from task where id = :t")
+                .param("t", taskId).query().singleRow();
+        HttpResponse<String> res = api.post(tasksPath() + "/" + taskId + "/state-events",
+                "{\"event\":\"" + event + "\",\"plan_revision_id\":\"" + row.get("current_plan_revision_id")
+                        + "\",\"expected_lock_version\":" + row.get("lock_version") + "," + extra + "}", member);
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(200);
+    }
+
+    /** 상태|무효 사유 */
+    private String validationRow(long validationId) {
+        return api.jdbc.sql("select status || '|' || coalesce(stale_reason, 'null') from validation where id = :v")
+                .param("v", validationId).query(String.class).single();
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 
     /** 상태|대기 사유|담당 멤버 */

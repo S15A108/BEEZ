@@ -30,34 +30,32 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
                                                  @Param("accountId") long accountId);
 
     /** 멤버 번호가 이 프로젝트의 활성 멤버인지 (담당자 지정·변경). 조건은 {@link #findActiveMembership} 과 같다. */
-    @Query("""
-            select count(m) > 0 from ProjectMember m
-              join Project p on p.id = m.projectId
-              join Account a on a.id = m.accountId
-             where m.id = :memberId
-               and m.projectId = :projectId
-               and m.active = true
-               and p.archivedAt is null
-               and a.deletedAt is null
-            """)
-    boolean isActiveMember(@Param("memberId") long memberId, @Param("projectId") long projectId);
+    default boolean isActiveMember(long memberId, long projectId) {
+        return findActiveRole(memberId, projectId).isPresent();
+    }
 
     /**
-     * 멤버 번호가 이 프로젝트의 활성 팀장인지. 위임·제외가 프로젝트 행을 잠근 뒤 요청자의 팀장 권한을 다시 볼 때 쓴다 (MEM-A08 처리 규칙).
+     * 멤버 번호가 이 프로젝트의 활성 팀장인지. 팀원 관리가 프로젝트 행을 잠근 뒤 요청자의 팀장 권한을 다시 볼 때 쓴다 (MEM-A08 처리 규칙).
+     */
+    default boolean isActiveLeader(long memberId, long projectId) {
+        return findActiveRole(memberId, projectId).filter(r -> r == ProjectRole.LEADER).isPresent();
+    }
+
+    /**
+     * 활성 멤버의 역할 ({@link #isActiveMember}·{@link #isActiveLeader} 로만 부른다). 조건은 {@link #findActiveMembership} 과 같다.
      * 엔티티가 아니라 값을 읽으므로, 권한 검사가 먼저 읽어 둔 옛 상태가 아니라 DB 의 지금 값을 본다.
      */
     @Query("""
-            select count(m) > 0 from ProjectMember m
+            select m.role from ProjectMember m
               join Project p on p.id = m.projectId
               join Account a on a.id = m.accountId
              where m.id = :memberId
                and m.projectId = :projectId
                and m.active = true
-               and m.role = com.beez.backend.project.ProjectRole.LEADER
                and p.archivedAt is null
                and a.deletedAt is null
             """)
-    boolean isActiveLeader(@Param("memberId") long memberId, @Param("projectId") long projectId);
+    Optional<ProjectRole> findActiveRole(@Param("memberId") long memberId, @Param("projectId") long projectId);
 
     /**
      * 팀원 목록 (MEM-A06). 활성 조건은 {@link #findActiveMembership} 과 같다. id 내림차순 커서 — 프로젝트·초대 목록과 같은 방식.

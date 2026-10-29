@@ -108,4 +108,32 @@ public class ValidationStatusLookup {
                 .param("reason", reason)
                 .update();
     }
+
+    /**
+     * 이 작업의 검증을 끝난 것·도는 것 모두 쓸 수 없게 한다 — 작업 취소(TSK-A07)와 담당자 인계(MEM-A09·A10).
+     * {@link #markStaleForTask} 와 달리 계획 리비전이 그대로라, 지금 도는 검증이 나중에 PASS 로 끝나면 그대로 쓸 수 있게 된다. 그래서:
+     * - 진행 중인 검증 job 은 CANCELLED
+     * - NOT_RUN·RUNNING 도 STALE 로 바꾼다. 워커의 결과 반영(WHERE status='RUNNING')이 0 행이 되어 늦은 결과가 버려진다 (D6 fencing)
+     */
+    public void invalidateAllForTask(Long taskId, String reason) {
+        jdbc.sql("""
+                        update validation_job j
+                           set status = 'CANCELLED', lease_token = null, lease_until = null, updated_at = now()
+                          from validation v
+                         where j.validation_id = v.id
+                           and v.task_id = :taskId
+                           and j.status in ('QUEUED', 'LEASED')
+                        """)
+                .param("taskId", taskId)
+                .update();
+        jdbc.sql("""
+                        update validation
+                           set status = 'STALE', stale_reason = :reason, updated_at = now()
+                         where task_id = :taskId
+                           and status in ('NOT_RUN', 'RUNNING', 'PASS', 'NEEDS_INPUT', 'NEEDS_REVIEW')
+                        """)
+                .param("taskId", taskId)
+                .param("reason", reason)
+                .update();
+    }
 }

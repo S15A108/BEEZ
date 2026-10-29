@@ -15,10 +15,12 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 팀원 제외·나가기(MEM-A09·A10)의 열린 작업 인계 (S15P31A108-212). 권한·멤버십 확인은 부르는 쪽(ProjectMemberService)이 끝낸다.
  * <p>
- * 열린 작업 = DRAFT·READY·IN_PROGRESS·WAITING. 점유 중(IN_PROGRESS·WAITING)인 작업은 떠난 사람의 검증을 쓰지 못하게 STALE 로 만들고,
+ * 열린 작업 = DRAFT·READY·IN_PROGRESS·WAITING. 점유 중(IN_PROGRESS·WAITING)인 작업은 떠난 사람의 검증을 쓰지 못하게 하고,
  * IN_PROGRESS 는 WAITING(REVALIDATION) 으로 내린 뒤 넘긴다 — 새 담당자는 RESUME 때 G1 에서 새 검증을 받는다
- * (04-task-lifecycle.md §6 "진행 중 담당자 변경: WAITING 으로 내린 뒤", 2026-10-29 전진 결정). 처리는 진행 중 계획 변경(S2)과 같다:
- * WAITING 의 다른 사유는 덮어쓰지 않고, RUNNING 검증은 워커의 attempt 가 늦은 결과를 막으므로 건드리지 않는다.
+ * (04-task-lifecycle.md §6 "진행 중 담당자 변경: WAITING 으로 내린 뒤", 2026-10-29 전진 결정). WAITING 의 다른 사유는 덮어쓰지 않는다.
+ * <p>
+ * 검증 무효화는 진행 중 계획 변경(S2, {@code markStaleForTask})이 아니라 작업 취소와 같은 {@code invalidateAllForTask} 를 쓴다.
+ * S2 는 계획 리비전이 바뀌어 도는 검증이 늦게 PASS 가 돼도 G1 이 거르지만, 인계는 리비전이 그대로라 RUNNING 까지 막아야 한다.
  */
 @Service
 public class TaskHandoverService {
@@ -56,7 +58,7 @@ public class TaskHandoverService {
         }
         for (Task task : open) {
             if (task.getStatus().isOccupied()) {
-                validations.markStaleForTask(task.getId(), STALE_REASON);
+                validations.invalidateAllForTask(task.getId(), STALE_REASON);
             }
             if (task.getStatus() == TaskStatus.IN_PROGRESS) {
                 task.holdForRevalidation();
