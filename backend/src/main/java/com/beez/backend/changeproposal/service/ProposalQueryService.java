@@ -3,6 +3,7 @@ package com.beez.backend.changeproposal.service;
 import static com.beez.backend.designitem.support.DesignJson.*;
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
 import com.beez.backend.changeproposal.repository.ProposalRepository;
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -99,6 +100,13 @@ public class ProposalQueryService {
         boolean more = all.size() > limit;
         var selected = List.copyOf(all.subList(0, Math.min(limit, all.size())));
         return new RevisionPage(selected, more, more ? selected.getLast().revision() : null);
+    }
+
+    public ApprovalRecord approval(CallerContext caller, long project, long proposal) {
+        access.requireMember(caller, project);
+        repository.proposal(project, proposal);
+        return repository.publishedApproval(project, proposal)
+                .orElseThrow(() -> AccessErrors.notFound("proposal_approval_missing"));
     }
 
     private Proposal view(Map<String, Object> row, Map<String, Object> historical) {
