@@ -164,6 +164,22 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isZero();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {404, 503})
+    void unavailableAiDoesNotCreateReviewOrUsageAndNewKeyCanRetry(int status) {
+        doThrow(new org.springframework.web.client.RestClientResponseException(
+                "AI unavailable", status, "Unavailable", org.springframework.http.HttpHeaders.EMPTY,
+                new byte[0], StandardCharsets.UTF_8)).when(gateway).review(anyMap());
+        code(() -> reviews.review(author, project.projectId(), document, 1, "unavailable"), "review_unavailable");
+        code(() -> reviews.review(author, project.projectId(), document, 1, "unavailable"), "review_unavailable");
+        verify(gateway, times(1)).review(anyMap());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isZero();
+        doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
+        assertThat(reviews.review(author, project.projectId(), document, 1, "retry-new-key").id()).isNotBlank();
+        verify(gateway, times(2)).review(anyMap());
+    }
+
     @Test void submittedBytesAndHistoryAreProtectedInDatabaseAndReviewDecisionsCannotBeOverwritten() {
         var submission = submit(review());
         assertThatThrownBy(() -> jdbc.update("UPDATE document_version SET content_text='changed' WHERE id=?", Long.parseLong(submission.documentVersionId()))).isInstanceOf(RuntimeException.class);
