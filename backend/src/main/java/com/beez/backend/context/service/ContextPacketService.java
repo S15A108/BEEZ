@@ -170,10 +170,6 @@ public class ContextPacketService {
     }
 
     /**
-     * 패킷 해시: 요청·기준·내용을 정해진 순서로 이어 붙인 문자열의 SHA-256.
-     * content 는 넣은 순서가 고정된 LinkedHashMap 이고 목록 순서도 구성 모듈이 준 순서 그대로라, 같은 입력이면 같은 해시다.
-     */
-    /**
      * 패킷 해시 = {request, baseline_id, content} 의 정규 JSON SHA-256 ({@link CanonicalJson}).
      * Map.toString() 을 쓰면 constraints=["a, b"] 와 ["a", "b"] 가 같은 문자열이 되어 다른 패킷이 같은 해시를 갖는다 (리뷰 반영).
      */
@@ -183,6 +179,5 @@ public class ContextPacketService {
         input.put("baseline_id", baselineId);
         input.put("content", content);
         return CanonicalJson.sha256(json, input);
-    }
     }
 }
