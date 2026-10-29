@@ -13,14 +13,16 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 팀원 제외·나가기(MEM-A09·A10)의 열린 작업 인계 (S15P31A108-212). 권한·멤버십 확인은 부르는 쪽(ProjectMemberService)이 끝낸다.
+ * 작업 담당자 인계 (S15P31A108-212). 팀원 제외·나가기(MEM-A09·A10)의 열린 작업 일괄 인계와 팀장의 담당자 변경(TSK-A06)이
+ * 같은 규칙({@link #reassign})을 쓴다. 권한·멤버십 확인은 부르는 쪽이 끝낸다.
  * <p>
- * 열린 작업 = DRAFT·READY·IN_PROGRESS·WAITING. 점유 중(IN_PROGRESS·WAITING)인 작업은 떠난 사람의 검증을 쓰지 못하게 하고,
+ * 점유 중(IN_PROGRESS·WAITING)인 작업은 이전 담당자 쪽에서 요청한 검증을 쓰지 못하게 하고,
  * IN_PROGRESS 는 WAITING(REVALIDATION) 으로 내린 뒤 넘긴다 — 새 담당자는 RESUME 때 G1 에서 새 검증을 받는다
  * (04-task-lifecycle.md §6 "진행 중 담당자 변경: WAITING 으로 내린 뒤", 2026-10-29 전진 결정). WAITING 의 다른 사유는 덮어쓰지 않는다.
  * <p>
- * 검증 무효화는 진행 중 계획 변경(S2, {@code markStaleForTask})이 아니라 작업 취소와 같은 {@code invalidateAllForTask} 를 쓴다.
- * S2 는 계획 리비전이 바뀌어 도는 검증이 늦게 PASS 가 돼도 G1 이 거르지만, 인계는 리비전이 그대로라 RUNNING 까지 막아야 한다.
+ * 검증 무효화는 {@link ValidationStatusLookup#invalidateForReassign} 를 쓴다. 진행 중 계획 변경(S2, markStaleForTask)과 달리
+ * 계획 리비전이 그대로라 도는(RUNNING) 검증이 늦게 PASS 가 되면 쓸 수 있게 되므로 그것까지 막는다. 완료 보고에서 서버가 접수하는
+ * DELTA 검증만 담당자와 무관해 그대로 둔다.
  */
 @Service
 public class TaskHandoverService {
@@ -57,16 +59,28 @@ public class TaskHandoverService {
                     "정리되지 않은 열린 작업이 " + open.size() + "개 있습니다. 인계 대상을 지정하세요");
         }
         for (Task task : open) {
-            if (task.getStatus().isOccupied()) {
-                validations.invalidateAllForTask(task.getId(), STALE_REASON);
-            }
-            if (task.getStatus() == TaskStatus.IN_PROGRESS) {
-                task.holdForRevalidation();
-            }
-            task.changeAssignee(toMemberId);
+            reassign(task, toMemberId);
         }
         // 동시에 상태가 바뀐 작업이 있으면 lock_version 이 달라 409 revision_conflict 로 전체가 되돌아간다
         tasks.saveAllAndFlush(open);
         return open.size();
+    }
+
+    /**
+     * 열린 작업 하나의 담당자를 바꾼다. 저장(flush)은 부르는 쪽이 한다 — lock_version 비교가 그때 일어난다.
+     * 같은 담당자로 바꾸면 아무것도 하지 않는다(상태·검증을 건드릴 이유가 없다). 닫힌 작업은 부르는 쪽이 거른다.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void reassign(Task task, long toMemberId) {
+        if (task.getAssigneeMemberId() != null && task.getAssigneeMemberId() == toMemberId) {
+            return;
+        }
+        if (task.getStatus().isOccupied()) {
+            validations.invalidateForReassign(task.getId(), STALE_REASON);
+        }
+        if (task.getStatus() == TaskStatus.IN_PROGRESS) {
+            task.holdForRevalidation();
+        }
+        task.changeAssignee(toMemberId);
     }
 }

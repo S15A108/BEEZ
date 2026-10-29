@@ -278,8 +278,8 @@ public class TaskStateService {
 
     /**
      * CANCEL: 큐 취소·점유 해제·늦은 결과 차단 (명세 TSK-A07).
-     * 진행 중인 검증 job 은 CANCELLED, 끝나지 않았거나 쓸 수 있던 검증은 STALE(TASK_CANCELLED) —
-     * 담당자 인계(TaskHandoverService)와 같은 처리라 {@link ValidationStatusLookup#invalidateAllForTask} 에 모았다.
+     * 진행 중인 검증 job 은 CANCELLED, 끝나지 않았거나 쓸 수 있던 검증은 trigger 와 관계없이 STALE(TASK_CANCELLED)
+     * ({@link ValidationStatusLookup#invalidateAllForTask}). 담당자 인계는 DELTA 를 뺀 검증만 무효화한다 — 같은 SQL 을 거기서 함께 쓴다.
      */
     private void cancel(Task task, Instant now) {
         validations.invalidateAllForTask(task.getId(), "TASK_CANCELLED");

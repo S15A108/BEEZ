@@ -173,7 +173,8 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
     /**
      * 깨지면: 열린 작업을 담당자 없는 사람에게 남긴 채 빠지거나, 넘겨받은 사람이 떠난 사람의 검증(도는 중이던 것 포함)으로
-     * 진행 중 작업을 이어 가거나, 끝난 작업까지 담당자가 바뀐다 (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경, 2026-10-29 결정).
+     * 진행 중 작업을 이어 가거나, 끝난 작업까지 담당자가 바뀌거나, 담당자와 무관한 DELTA 검증까지 버려져 자동 완료(S4)가 막힌다
+     * (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경·§2.3, 2026-10-29 결정).
      */
     @Test
     void openTasks_blockUntilReassigned_inProgressGoesBackToRevalidation() {
@@ -182,12 +183,15 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         long pass = api.passValidation(running);
         report(running, "START", "\"validation_id\":\"" + pass + "\"");
         // 떠나는 사람의 에이전트가 요청해 두고 아직 도는 검증. 인계 뒤에 PASS 로 끝나도 쓸 수 없어야 한다
-        long runningValidation = api.jdbc.sql("""
-                        insert into validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash, rule_version)
-                        select t.id, t.current_plan_revision_id, p.current_baseline_id, 'RUNNING', 'AGENT', 'snap-run', 'r1'
-                          from task t join project p on p.id = t.project_id where t.id = :t
-                        returning id
-                        """).param("t", running).query(Long.class).single();
+        long runningValidation = insertValidation(running, "RUNNING", "AGENT");
+        // REVALIDATION 은 누가 접수하는지(-159) 정해지기 전이라 에이전트 요청일 수 있어 함께 막는다
+        long revalidation = insertValidation(running, "RUNNING", "REVALIDATION");
+        // delta 완료 보고 뒤 DELTA 검증을 기다리는 작업. DELTA 검증은 담당자와 무관해 인계 뒤에도 살아 있어야 한다
+        long awaitingDelta = createTaskAsMember("delta 기다리는 작업");
+        long deltaStartPass = api.passValidation(awaitingDelta);
+        report(awaitingDelta, "START", "\"validation_id\":\"" + deltaStartPass + "\"");
+        report(awaitingDelta, "COMPLETED", "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"응답에 nickname 추가\"}]");
+        long deltaValidation = insertValidation(awaitingDelta, "RUNNING", "DELTA");
         long done = createTaskAsMember("끝난 작업");
         report(done, "START", "\"validation_id\":\"" + api.passValidation(done) + "\"");
         report(done, "COMPLETED",
@@ -211,6 +215,10 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + carolMemberId);
         assertThat(validationRow(pass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
         assertThat(validationRow(runningValidation)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+        assertThat(validationRow(revalidation)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+        assertThat(taskRow(awaitingDelta)).isEqualTo("WAITING|REVALIDATION|" + carolMemberId);
+        assertThat(validationRow(deltaStartPass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+        assertThat(validationRow(deltaValidation)).isEqualTo("RUNNING|null");
         assertThat(taskRow(done)).isEqualTo("COMPLETED|null|" + memberMemberId);
 
         // 나가기도 같은 규칙: 인계 대상을 주면 넘기고 빠진다
@@ -220,6 +228,30 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         assertThat(api.post(leavePath, body("reassign_to_member_id", leaderMemberId), carol).statusCode()).isEqualTo(204);
         assertThat(taskRow(ready)).isEqualTo("READY|null|" + leaderMemberId);
         assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + leaderMemberId);
+    }
+
+    /**
+     * 깨지면: 팀장이 담당자 변경(TSK-A06)으로 진행 중 작업을 넘기면 제외·나가기와 달리 이전 담당자의 검증으로 계속 진행되거나,
+     * 같은 담당자로 다시 지정했을 뿐인데 진행 중 작업이 멈춘다 (§6 진행 중 담당자 변경, 두 경로 같은 규칙).
+     */
+    @Test
+    void assigneeChange_onInProgressTask_followsHandoverRule() {
+        long running = createTaskAsMember("진행 중 작업");
+        long pass = api.passValidation(running);
+        report(running, "START", "\"validation_id\":\"" + pass + "\"");
+        long memberMemberId = api.memberId("member@test");
+        long leaderMemberId = api.memberId("leader@test");
+
+        // 같은 담당자로 다시 지정 → 아무것도 바뀌지 않는다
+        assertThat(changeAssignee(running, memberMemberId).statusCode()).isEqualTo(200);
+        assertThat(taskRow(running)).isEqualTo("IN_PROGRESS|null|" + memberMemberId);
+        assertThat(validationRow(pass)).isEqualTo("PASS|null");
+
+        HttpResponse<String> res = changeAssignee(running, leaderMemberId);
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(200);
+        assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("WAITING");
+        assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + leaderMemberId);
+        assertThat(validationRow(pass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
     }
 
     /**
@@ -300,7 +332,25 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         HttpResponse<String> res = api.post(tasksPath() + "/" + taskId + "/state-events",
                 "{\"event\":\"" + event + "\",\"plan_revision_id\":\"" + row.get("current_plan_revision_id")
                         + "\",\"expected_lock_version\":" + row.get("lock_version") + "," + extra + "}", member);
-        assertThat(res.statusCode()).as(res.body()).isEqualTo(200);
+        // delta 있는 COMPLETED 는 검증을 접수해 202 (TSK-A07)
+        assertThat(res.statusCode()).as(res.body()).isIn(200, 202);
+    }
+
+    /** 팀장의 담당자 변경 (TSK-A06) */
+    private HttpResponse<String> changeAssignee(long taskId, long assigneeMemberId) {
+        long lock = api.jdbc.sql("select lock_version from task where id = :t").param("t", taskId).query(Long.class).single();
+        return api.patch(tasksPath() + "/" + taskId + "/assignee",
+                "{\"assignee_member_id\":\"" + assigneeMemberId + "\",\"expected_lock_version\":" + lock + "}", leader);
+    }
+
+    /** 검증 워커(-159) 전이라 SQL 로 현재 계획에 대한 검증 행을 만든다 */
+    private long insertValidation(long taskId, String status, String trigger) {
+        return api.jdbc.sql("""
+                        insert into validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash, rule_version)
+                        select t.id, t.current_plan_revision_id, p.current_baseline_id, :s, :tr, 'snap-' || :s || :tr, 'r1'
+                          from task t join project p on p.id = t.project_id where t.id = :t
+                        returning id
+                        """).param("t", taskId).param("s", status).param("tr", trigger).query(Long.class).single();
     }
 
     /** 상태|무효 사유 */

@@ -14,7 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * TSK-A06 담당자 변경. 사람 세션의 LEADER 만 (명세). 새 담당자는 같은 프로젝트의 활성 멤버.
- * 진행 중 작업의 인계·재검증 정책은 미결(04-task-lifecycle.md §6) — 지금은 막지 않고 바꾼다.
+ * 진행 중 작업은 팀원 제외·나가기의 인계와 같은 규칙으로 넘긴다 ({@link TaskHandoverService#reassign}) —
+ * IN_PROGRESS 는 WAITING(REVALIDATION) 으로 내리고 이전 담당자 쪽에서 요청한 검증은 쓸 수 없게 한다 (-212, Q02 확인 요청 중).
  */
 @Service
 public class TaskAssigneeService {
@@ -23,19 +24,26 @@ public class TaskAssigneeService {
     private final ProjectAccessChecker access;
     private final TaskQueryService query;
     private final ProjectDesignLookup designLookup;
+    private final TaskHandoverService handover;
 
     public TaskAssigneeService(TaskRepository tasks, ProjectAccessChecker access, TaskQueryService query,
-                               ProjectDesignLookup designLookup) {
+                               ProjectDesignLookup designLookup, TaskHandoverService handover) {
         this.tasks = tasks;
         this.access = access;
         this.query = query;
         this.designLookup = designLookup;
+        this.handover = handover;
     }
 
     @Transactional
     public TaskDetailResponse changeAssignee(CallerContext caller, Long projectId, Long taskId,
                                              Long newAssigneeMemberId, int expectedLockVersion) {
         access.requireHumanLeader(caller, projectId);
+        // 프로젝트 행을 먼저 잠그고 작업을 읽는다. 팀원 제외·나가기(MEM-A09·A10)와 상태 보고(START 등)가 같은 행을 잠그므로,
+        // 잠근 뒤 읽은 상태로 진행 중 여부를 판단하고, 새 담당자가 그 사이 나가지 않았는지도 본다
+        if (!designLookup.lockProject(projectId)) {
+            throw AccessErrors.notFound("project_missing project=" + projectId);
+        }
         Optional<Task> found = tasks.findByIdAndProjectId(taskId, projectId);
         if (found.isEmpty()) {
             throw AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId);
@@ -48,15 +56,10 @@ public class TaskAssigneeService {
         if (task.getStatus().isClosed()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition", "완료·취소된 작업의 담당자는 바꿀 수 없습니다");
         }
-        // 팀원 제외·나가기(MEM-A09·A10)와 같은 프로젝트 행을 잠근 뒤 본다. 안 잠그면 제외와 겹쳤을 때
-        // 확인은 통과하고 제외가 먼저 커밋돼, 나간 사람이 담당인 열린 작업이 남는다
-        if (!designLookup.lockProject(projectId)) {
-            throw AccessErrors.notFound("project_missing project=" + projectId);
-        }
         if (!access.isActiveMember(newAssigneeMemberId, projectId)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "같은 프로젝트의 활성 멤버가 아닙니다");
         }
-        task.changeAssignee(newAssigneeMemberId);
+        handover.reassign(task, newAssigneeMemberId);
         tasks.saveAndFlush(task);
         return query.toDetail(task);
     }
