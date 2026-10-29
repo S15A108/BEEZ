@@ -31,14 +31,16 @@ public class DocumentApplicationService {
     private final TransactionTemplate transaction;
     private final DocumentOriginalWriter originals;
     private final DocumentIndexWorker worker;
+    private final DocumentReviewRepository reviews;
 
     public DocumentApplicationService(JdbcClient jdbc, ProjectAccessChecker access, DocumentRepository documents,
             DocumentVersionRepository versions, DocumentStorage storage, DocumentInputValidator validator,
-            PlatformTransactionManager transactions, DocumentIndexWorker worker) {
+            PlatformTransactionManager transactions, DocumentIndexWorker worker, DocumentReviewRepository reviews) {
         this.jdbc = jdbc; this.access = access; this.documents = documents; this.versions = versions;
         this.storage = storage; this.validator = validator; this.transactions = transactions; this.worker = worker;
         this.transaction = new TransactionTemplate(transactions);
         this.originals = new DocumentOriginalWriter(storage, transactions);
+        this.reviews = reviews;
     }
 
     private List<Map<String, Object>> rows(String sql, Map<String, ?> parameters) {
@@ -48,6 +50,16 @@ public class DocumentApplicationService {
         return rows(sql, parameters).stream().findFirst().orElseThrow(DocumentValues::missing);
     }
     private void lock(long project) { if (documents.lockProject(project) == null) throw missing(); }
+    private void requireAuthor(CallerContext caller, long project, long id) {
+        access.requireMember(caller, project).requireHuman();
+        var doc = document(project, id);
+        if (number(doc, "created_by") != caller.accountId()) {
+            throw com.beez.backend.common.access.AccessErrors.forbidden("document_author_required", "등록한 담당자만 문서를 수정할 수 있습니다.");
+        }
+        reviews.workingCopy(project, id).ifPresent(copy -> {
+            if ("SUBMITTED".equals(copy.get("status"))) throw com.beez.backend.designitem.support.DesignJson.conflict("submission_locked");
+        });
+    }
     private String dbKind(DocumentKind kind) { return new DocumentKindMapper().convertToDatabaseColumn(kind); }
     private Map<String, Object> document(long project, long id) {
         return one("SELECT * FROM document WHERE id=:id AND project_id=:project", Map.of("id", id, "project", project));
@@ -57,10 +69,8 @@ public class DocumentApplicationService {
     }
     private Optional<Map<String, Object>> approved(long document) {
         return rows("""
-                SELECT v.* FROM document_version v JOIN document d ON d.id=v.document_id
-                JOIN project p ON p.id=d.project_id
-                JOIN baseline_document b ON b.baseline_id=p.current_baseline_id AND b.document_id=d.id
-                  AND b.document_version_id=v.id WHERE d.id=:document
+                SELECT v.* FROM document_version v WHERE v.document_id=:document AND v.status='APPROVED'
+                ORDER BY v.version_no DESC LIMIT 1
                 """, Map.of("document", document)).stream().findFirst();
     }
     private Map<String, Object> versionNumber(long document, int no) {
@@ -118,27 +128,29 @@ public class DocumentApplicationService {
     @Transactional(propagation = Propagation.NEVER)
     public Map<String, Object> upload(CallerContext caller, long project, DocumentKind kind, String title,
             String domain, String filename, byte[] bytes, String key) {
-        access.requireHumanLeader(caller, project);
+        access.requireMember(caller, project).requireHuman();
         var input = new DocumentRegistrationService.Input(project, kind, title, domain, filename, bytes);
         DocumentRegistrationService.validateInput(input);
         byte[] originalBytes = bytes.clone();
         var source = validator.validate(filename, originalBytes);
         String fp = fingerprint(Arrays.asList(kind, title, domain, source.extension(), source.contentHash()));
         var registration = new DocumentRegistrationService(validator, storage,
-                id -> { access.requireHumanLeader(caller, id); return caller.accountId(); }, documents, versions,
+                id -> { access.requireMember(caller, id).requireHuman(); return caller.accountId(); }, documents, versions,
                 transactions);
         var previous = transaction.execute(tx -> {
-            access.requireHumanLeader(caller, project);
+            access.requireMember(caller, project).requireHuman();
             var response = replay(caller, project, "upload", key, fp);
             if (response.isEmpty()) registration.checkRegistration(input);
             return response;
         });
         if (previous.isPresent()) return previous.get();
         return originals.write(originalBytes, source.extension(), original -> {
-            lock(project); access.requireHumanLeader(caller, project);
+            lock(project); access.requireMember(caller, project).requireHuman();
+            if (!reviews.lockMember(project, caller.accountId(), false)) throw missing();
             var concurrent = replay(caller, project, "upload", key, fp);
             if (concurrent.isPresent()) return concurrent.get();
             var saved = registration.persist(input, source, original);
+            reviews.initialize(saved.documentId(), saved.documentVersionId(), caller.accountId(), filename);
             enqueue(saved.documentVersionId(), saved.textHash());
             var response = Map.<String, Object>of("document", documentView(document(project, saved.documentId())), "analysis_status", "PENDING");
             return remember(caller, project, "upload", key, fp, response);
@@ -164,7 +176,7 @@ public class DocumentApplicationService {
     }
     public Map<String, Object> get(CallerContext caller, long project, long id, Integer no) {
         access.requireMember(caller, project); var doc = document(project, id);
-        var selected = no == null ? approved(id).orElseThrow(() -> conflict("baseline_not_published")) : versionNumber(id, no);
+        var selected = no == null ? approved(id).orElseThrow(() -> com.beez.backend.designitem.support.DesignJson.conflict("document_not_approved")) : versionNumber(id, no);
         return Map.of("document", documentView(doc), "version", versionView(selected, true));
     }
     public Map<String, Object> versions(CallerContext caller, long project, long id, String cursor, int limit) {
@@ -192,7 +204,8 @@ public class DocumentApplicationService {
 
     @Transactional
     public Map<String, Object> classify(CallerContext caller, long project, long id, Map<String, String> body, String key) {
-        access.requireHumanLeader(caller, project); lock(project); access.requireHumanLeader(caller, project); document(project, id);
+        requireAuthor(caller, project, id); lock(project); requireAuthor(caller, project, id);
+        if (!reviews.lockMember(project, caller.accountId(), false)) throw missing();
         if (body == null || body.size() != 1 || !body.containsKey("domain") || body.get("domain") == null) throw invalid("domain만 수정할 수 있습니다.");
         String operation = "classify:" + id, fp = fingerprint(body);
         var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
@@ -227,7 +240,13 @@ public class DocumentApplicationService {
     }
 
     private void requireCurrentBase(long document, long base) {
-        var current = approved(document).orElseThrow(() -> conflict("version_conflict"));
+        // DOC-A12 is based on the development baseline, not the document management screen's latest approval.
+        var current = rows("""
+                SELECT v.* FROM document_version v JOIN document d ON d.id=v.document_id
+                JOIN project p ON p.id=d.project_id
+                JOIN baseline_document b ON b.baseline_id=p.current_baseline_id AND b.document_id=d.id
+                  AND b.document_version_id=v.id WHERE d.id=:document
+                """, Map.of("document", document)).stream().findFirst().orElseThrow(() -> conflict("version_conflict"));
         if (number(current, "id") != base) throw conflict("version_conflict");
     }
 

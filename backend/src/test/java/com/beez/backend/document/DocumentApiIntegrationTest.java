@@ -175,7 +175,7 @@ class DocumentApiIntegrationTest {
         assertThat(send("GET", path + "/diff?from_version=1&to_version=1", null, false).body()).contains("\"diff\":\"\"");
     }
 
-    @Test void rejectsHeaderSpoofingMissingOriginNonLeaderAndRemovedMember() throws Exception {
+    @Test void rejectsHeaderSpoofingMissingOriginAndRemovedMemberButAllowsMemberUpload() throws Exception {
         var document = uploaded(); String path = "/api/projects/" + project + "/documents/" + document.get("id").asText();
         var anonymous = HttpClient.newHttpClient();
         var spoofed = anonymous.send(HttpRequest.newBuilder(URI.create(base + path + "?version_no=1")).header("X-Beez-Account-Id", Long.toString(leader)).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -183,7 +183,7 @@ class DocumentApiIntegrationTest {
         assertThat(send("PATCH", path, "{\"domain\":\"other\"}", false).statusCode()).isEqualTo(403);
         login(member);
         assertThat(send("GET", path + "?version_no=1", null, false).statusCode()).isEqualTo(200);
-        assertThat(upload(UUID.randomUUID().toString(), content, "PLAN").statusCode()).isEqualTo(403);
+        assertThat(upload(UUID.randomUUID().toString(), content, "PLAN").statusCode()).isEqualTo(201);
         jdbc.update("UPDATE project_member SET active=false WHERE project_id=? AND account_id=?", project, member);
         assertThat(send("GET", path + "?version_no=1", null, false).statusCode()).isEqualTo(404);
         login(leader);
