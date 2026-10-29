@@ -4,6 +4,7 @@ import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -40,6 +41,41 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
                and a.deletedAt is null
             """)
     boolean isActiveMember(@Param("memberId") long memberId, @Param("projectId") long projectId);
+
+    /**
+     * 멤버 번호가 이 프로젝트의 활성 팀장인지. 위임·제외가 프로젝트 행을 잠근 뒤 요청자의 팀장 권한을 다시 볼 때 쓴다 (MEM-A08 처리 규칙).
+     * 엔티티가 아니라 값을 읽으므로, 권한 검사가 먼저 읽어 둔 옛 상태가 아니라 DB 의 지금 값을 본다.
+     */
+    @Query("""
+            select count(m) > 0 from ProjectMember m
+              join Project p on p.id = m.projectId
+              join Account a on a.id = m.accountId
+             where m.id = :memberId
+               and m.projectId = :projectId
+               and m.active = true
+               and m.role = com.beez.backend.project.ProjectRole.LEADER
+               and p.archivedAt is null
+               and a.deletedAt is null
+            """)
+    boolean isActiveLeader(@Param("memberId") long memberId, @Param("projectId") long projectId);
+
+    /**
+     * 팀원 목록 (MEM-A06). 활성 조건은 {@link #findActiveMembership} 과 같다. id 내림차순 커서 — 프로젝트·초대 목록과 같은 방식.
+     */
+    @Query("""
+            select new com.beez.backend.project.MemberRow(m, a)
+              from ProjectMember m
+              join Project p on p.id = m.projectId
+              join Account a on a.id = m.accountId
+             where m.projectId = :projectId
+               and m.active = true
+               and p.archivedAt is null
+               and a.deletedAt is null
+               and m.id < :beforeId
+             order by m.id desc
+            """)
+    List<MemberRow> findActiveMembers(@Param("projectId") long projectId, @Param("beforeId") long beforeId,
+                                      Pageable pageable);
 
     /**
      * 멤버십 행을 잠그고 읽는다 (SELECT … FOR UPDATE). 토큰 발급(AGT-A01)이 이걸로 줄을 세워 동시 발급이 한도를 넘지 않게 한다.
