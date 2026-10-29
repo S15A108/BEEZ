@@ -178,8 +178,15 @@ sudo chgrp -R beez-deploy /var/www/beez
 sudo chmod 2775 /var/www/beez /var/www/beez/releases
 sudo find /var/www/beez/releases -mindepth 1 -type d -exec chmod 2775 {} +
 sudo find /var/www/beez/releases -type f -exec chmod 664 {} +
+sudo chmod 750 /var/lib/jenkins
 ```
 
+- **`/var/lib/jenkins`(JENKINS_HOME)는 `750`으로 닫습니다.** 패키지는 `755`로
+  두어서, Nginx 워커(`www-data`) 같은 다른 계정도 관리자 계정 파일의
+  비밀번호 해시와 `secret.key`를 읽을 수 있습니다(2026-10-29 확인). 그 계정이
+  뚫리면 해시를 가져가 비밀번호를 알아낼 수 있습니다. Nginx는 프록시만 해서
+  이 폴더를 읽을 일이 없습니다. 패키지 설치 스크립트는 그룹·기타 권한을
+  사용자에게 맡기므로(`jenkins.postinst` 주석) 패키지를 갱신해도 유지됩니다.
 - 배포 잡은 `releases/<sha>`에 파일을 풀고 `current` 심링크를 바꿉니다.
   심링크를 바꾸는 임시 링크·`mv -T`가 `/var/www/beez` 안에서 일어나므로 그
   폴더에도 쓰기 권한이 필요합니다.
@@ -243,6 +250,8 @@ sudo ss -ltnp | grep 8080                                       # 127.0.0.1:8080
 systemctl show jenkins -p UMask --value                         # 0002
 grep Groups /proc/$(systemctl show jenkins -p MainPID --value)/status   # jenkins·beez-deploy·docker
 sudo ls /var/lib/jenkins/users                                  # beezadmin_… 하나
+stat -c '%a %U:%G' /var/lib/jenkins                             # 750 jenkins:jenkins
+sudo -u www-data ls /var/lib/jenkins 2>&1 | head -1             # Permission denied
 sudo -u jenkins docker version --format '{{.Server.Version}}'   # sudo 없이 docker 사용
 sudo -u jenkins sudo -n true                                    # 거부되어야 함
 ```
@@ -254,7 +263,12 @@ curl -s -o /dev/null -w '%{http_code}\n' https://jenkins.beez.ai.kr/login    # 2
 curl -s -o /dev/null -w '%{http_code}\n' https://jenkins.beez.ai.kr/         # 403 (로그인 강제)
 curl -s -o /dev/null -w '%{http_code}\n' https://jenkins.beez.ai.kr/signup   # 404 (가입 금지)
 curl -s -m 8 -o /dev/null -w '%{http_code}\n' http://jenkins.beez.ai.kr:8080/  # 000 (닫힘)
+for i in $(seq 1 15); do curl -s -o /dev/null -w '%{http_code} ' -u nobody:wrong https://jenkins.beez.ai.kr/api/json; done; echo   # 401 … 뒤 429 (대입 제한)
 ```
+
+마지막 줄은 일부러 틀린 계정으로 연달아 요청해 대입 제한이 걸리는지 봅니다.
+**이 PC의 IP가 잠시(1분 안팎) 인증 요청에 429를 받습니다.** 로그인은 그 뒤에
+합니다.
 
 브라우저로 `https://jenkins.beez.ai.kr`에 `beez-admin`으로 로그인되는지 봅니다.
 
@@ -285,35 +299,49 @@ root가 `/tmp`에 파일을 만들면 기본 umask(022) 때문에 `644`로 생�
 로컬 PC(Git Bash):
 
 ```bash
-mkdir -p ~/beez-backup && chmod 700 ~/beez-backup
-ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=caches --exclude=.cache -czf - -C /var/lib jenkins; sudo systemctl start jenkins' \
-  > ~/beez-backup/jenkins-home-$(date +%Y%m%d).tgz
-tar -tzf ~/beez-backup/jenkins-home-$(date +%Y%m%d).tgz | head -3    # jenkins/ … 이 보이면 정상
+mkdir -p ~/beez-backup && F=~/beez-backup/jenkins-home-$(date +%Y%m%d-%H%M).tgz && \
+ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=caches --exclude=.cache -czf - -C /var/lib jenkins; rc=$?; sudo systemctl start jenkins; exit $rc' \
+  > "$F.part" && tar -tzf "$F.part" > /dev/null && mv "$F.part" "$F" && echo "saved $F" \
+  || { echo "backup FAILED"; rm -f "$F.part"; }
 ```
 
 - `tar -czf -`는 압축 결과를 파일 대신 표준 출력으로 내보내고, ssh가 그대로
   로컬 파일로 받습니다. 서버 디스크에는 아무것도 남지 않습니다.
-- `tar` 뒤를 `;`로 이어 백업이 실패해도 Jenkins는 다시 켭니다.
+- 받는 중에는 `.part` 이름으로 쓰고, 압축 파일이 온전한지(`tar -tzf`) 확인한
+  뒤에만 제 이름으로 바꿉니다. 실패하면 `.part`만 지우므로 **이전 백업을 빈
+  파일로 덮어쓰지 않습니다.** 파일 이름에 시각까지 넣어 같은 날 두 번 받아도
+  겹치지 않습니다.
+- 서버 쪽은 `tar`의 종료 코드를 `rc`에 담아 두고, Jenkins를 다시 켠 뒤 그
+  코드로 끝냅니다. 백업이 실패해도 Jenkins는 켜지고, 실패는 PC 쪽에
+  `backup FAILED`로 드러납니다.
 - 멈추고 백업해야 설정 파일이 쓰이는 도중에 잘리지 않습니다. 배포 잡이 돌고
   있지 않은 때에 합니다.
 - `workspace`·`caches`는 다시 만들 수 있어 뺍니다. 2026-10-29 기준 약
   17MB입니다.
-- 이 파일에는 `secrets/master.key`가 들어 있습니다. 저장소·메신저에 올리지
-  않고, 서버 밖 개인 보관 장소에만 둡니다.
+- 이 파일에는 `secrets/master.key`가 들어 있습니다. 저장소·메신저·공유
+  폴더에 올리지 않습니다. 로컬 PC가 Windows라면 Git Bash의 `chmod`는 NTFS 권한을
+  바꾸지 못하므로 폴더 권한으로 보호된다고 기대하지 않습니다. 사용자 프로필
+  폴더(`~`) 안에 두면 기본 ACL상 본인과 관리자만 읽을 수 있고, 다른 곳으로
+  옮길 때는 압축 파일 자체를 암호화합니다.
 
 ### 복원
 
-"새 서버에서 처음부터"의 1~5단계를 마친 뒤, 6단계(처음 켜기) 대신 로컬 PC에서
-백업을 ssh로 바로 풀어 넣습니다. 서버 `/tmp`에 올리지 않는 이유는 백업과
-같습니다.
+"새 서버에서 처음부터"의 **1~3단계와 5단계**를 마친 뒤 복원합니다.
+**4단계(플러그인 설치)는 건너뜁니다.** 백업에 그때의 플러그인이 들어 있어서,
+4단계에서 새로 받은 플러그인과 섞이면 버전이 어긋난 파일이 남습니다. 혹시 4단계를
+했더라도 아래 명령이 플러그인 폴더를 먼저 비우고 풉니다. 6단계(처음 켜기) 대신
+로컬 PC에서 백업을 ssh로 바로 풀어 넣습니다. 서버 `/tmp`에 올리지 않는 이유는
+백업과 같습니다.
 
 ```bash
-ssh beez 'sudo systemctl stop jenkins 2>/dev/null; sudo tar -xzf - -C /var/lib && sudo chown -R jenkins:jenkins /var/lib/jenkins' \
-  < ~/beez-backup/jenkins-home-YYYYMMDD.tgz
+ssh beez 'sudo systemctl stop jenkins 2>/dev/null; sudo rm -rf /var/lib/jenkins/plugins && sudo tar -xzf - -C /var/lib && sudo chown -R jenkins:jenkins /var/lib/jenkins && sudo chmod 750 /var/lib/jenkins' \
+  < ~/beez-backup/jenkins-home-YYYYMMDD-HHMM.tgz
 ssh beez 'sudo systemctl unmask jenkins && sudo systemctl daemon-reload && sudo systemctl enable jenkins && sudo systemctl restart jenkins'
 ```
 
-켠 뒤에는 6단계의 접근 제어 확인을 똑같이 합니다.
+켠 뒤에는 6단계의 접근 제어 확인을 똑같이 합니다. 새 서버의 Jenkins 본체가
+백업 때보다 새 버전이면 플러그인 호환 경고가 뜰 수 있습니다. 그때는 Jenkins를
+멈추고 4단계 명령으로 `plugins.txt`를 다시 설치해 맞춥니다.
 
 JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설정은 저장소 값으로
 맞춰집니다.
@@ -374,6 +402,9 @@ JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화�
 | 플러그인 | `configuration-as-code` 2140.v00e72b_047734 + 의존 17개 |
 | 인증서 | `jenkins.beez.ai.kr`, 발급자 Let's Encrypt `YE1`, 만료 2027-01-27, `renew_hook = systemctl reload nginx` |
 | 외부 확인 | `/login` 200, `/` 403, `/signup` 404, `http` → 301 `https`, 8080 닫힘 |
+| 대입 제한 | 틀린 Basic 인증 11회까지 401 뒤 429, 틀린 로그인 폼 6회까지 302 뒤 429. 비인증 화면은 영향 없음 |
+| 권한 | `/var/lib/jenkins` 750, `www-data`는 Permission denied |
+| keepalive | Nginx → 8080 연결이 요청 뒤에도 유지(재사용) |
 | JENKINS_HOME | 53MB, 백업 압축 약 17MB |
 | 메모리 | 기동 후 사용 1.2GiB / 15GiB |
 

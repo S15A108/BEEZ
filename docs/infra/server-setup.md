@@ -211,7 +211,7 @@ sudo install -d -o ubuntu -g ubuntu -m 750 /opt/beez
 
 | 경로 | 용도 | 권한 |
 |---|---|---|
-| `/var/www/beez` | 프론트 정적 파일(`dist`) | `755 ubuntu:ubuntu` — Nginx(`www-data`)가 읽음 |
+| `/var/www/beez` | 프론트 정적 파일(`dist`) | `2775 ubuntu:beez-deploy` — Nginx(`www-data`)가 읽고 jenkins가 씀 (처음 만들 때는 `755 ubuntu:ubuntu`, [Jenkins 런북](jenkins.md) 5단계에서 변경) |
 | `/var/www/beez/releases/<sha>/` | 배포 회차별 빌드 결과 | 상동 |
 | `/var/www/beez/current` | 서빙 중인 릴리스를 가리키는 심링크 | 첫 배포 때 생성 |
 | `/opt/beez` | backend·ai compose 파일, `.env` | `750 ubuntu:ubuntu` — 그 외 사용자 접근 불가 |
