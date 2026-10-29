@@ -2,7 +2,7 @@
 
 버전: 0.7 · 갱신일: 2026-10-29 · 개발 계약 초안
 
-2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, MEM-A11, DOC-A22~A24, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. 문서 검토·승인(DOC-A13~A21)과 최초 기준 생성(PLN-A10)은 PR #37 계약을 그대로 두고 화면에 더 필요한 것만 그 절에 붙였다. ACC-A08·A09와 MTG-A01·A05·A07·A08·A09는 폐지 예정이다. MTG-A04는 팀장과 회의 참여자가 관련자를 직접 추가하는 API로 남긴다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q23이다.
+2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, MEM-A11, DOC-A22~A24, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. 문서 검토·승인(DOC-A13~A21)과 최초 기준 생성(PLN-A10)은 PR #37 계약을 그대로 두고 화면에 더 필요한 것만 그 절에 붙였다. ACC-A08·A09와 MTG-A01·A05·A07·A08·A09는 폐지 예정이다. MTG-A04는 팀장과 회의 참여자가 관련자를 직접 추가하는 API로 남긴다. 기준 v1 뒤의 문서 변경은 회의 결과를 포함해 모두 변경 제안으로 간다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q24다.
 
 2026-10-29: 초대를 자동 참여 기본안으로 바꿨다(Q05). MEM-A01로 초대하면 수락 없이 팀원이 되고, MEM-A05는 폐지 예정이다.
 
@@ -5841,7 +5841,7 @@ HTTP `201`.
 
 - 새 파일을 DRAFT로 저장하고 변경 제안에 연결할 버전 ID를 반환한다.
 - 현재 승인본은 바뀌지 않는다. 사용되지 않은 업로드의 정리 기준은 Q07이다.
-- (수정안 요청) 새 버전도 DOC-A01처럼 등록 직후 DOC-A16 검토를 거쳐 DOC-A18 제출 → DOC-A21 승인으로 반영하는 것이 수정안이다. PR #37은 기준 이후 문서 변경을 변경 제안 경로(change_proposal_required)로 두므로 Q14에서 정한다.
+- (수정안 요청) 기준 v1 전에는 DOC-A01처럼 DOC-A16 검토 → DOC-A18 제출 → DOC-A21 승인으로 반영한다. 기준 v1 뒤에는 이 API로 올린 DRAFT를 변경 제안(CHG-A01 documents[].proposed_document_version_id)에 연결하고 CHG-A09 승인으로 반영한다(Q14).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7138,7 +7138,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
 | `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
-| `previous_proposal_id` | `ID` | N | 반려된 제안을 고쳐 새로 올릴 때 이전 제안. 수정안 요청 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
 
@@ -7263,7 +7263,7 @@ HTTP `201`.
 - items/documents 중 하나 이상 변경이 필요하다. UPDATE/RETIRE의 기준 버전 소속을 검사한다.
 - 문서 변경의 after_content와 proposed_document_version_id는 둘 중 하나다.
 - 명시 관계의 영향 대상·알림을 먼저 처리하고 AI 심층 영향 분석은 별도로 실행한다.
-- (수정안 요청) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 화면은 documents를 보내지 않는다. 문서 새 버전은 공용 문서함에서 올린다(DOC-A12).
+- (수정안 요청) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 기준 v1 뒤의 문서 변경도 이 API의 documents로 올린다(after_content 또는 DOC-A12로 올린 DRAFT의 proposed_document_version_id). 기준 뒤 공용 문서함의 DOC-A14~A18·A21은 409 change_proposal_required다.
 - (수정안 요청) 기준 v1 발행 전에는 409 baseline_required다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -12818,7 +12818,7 @@ HTTP `200`.
 
 - 양지훈의 회의 분석에서 박상은의 문서 수정 모듈을 재사용한다.
 - 결과는 미승인 초안이다. 변경 제안·사람 팀장 승인을 거쳐 발행한다.
-- (수정안 요청) 회의 결과는 변경 제안을 거치지 않고 회의 끝내기(MTG-A13)에서 문서 새 버전으로 바로 반영한다(2026-10-28 사용자 확정).
+- (수정안 요청) 이 API 대신 회의 끝내기(MTG-A13)가 회의 결과로 변경 제안을 만든다. 변경 제안과 사람 팀장 승인을 거친다는 위 규칙은 그대로다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13045,8 +13045,8 @@ HTTP `201`.
 
 - 팀장만 부른다. 팀원 화면은 버튼을 끄고 '팀장만 요청할 수 있어요'를 보이며, 서버도 403으로 거절한다.
 - 대화를 바탕으로 정리해 SUMMARY 기록으로 남기고 노란 말풍선으로 보인다(AI-A08 SUMMARY).
-- document_changes.after는 회의를 끝낼 때 그대로 들어갈 문장이고, 근거 발언은 이 회의의 실제 기록 ID만 쓴다.
-- 설계를 직접 바꾸지 않는다. 반영은 MTG-A13이다.
+- document_changes.after는 회의를 끝내면 만들어지는 변경 제안에 들어갈 문장이고, 근거 발언은 이 회의의 실제 기록 ID만 쓴다.
+- 문서와 설계를 직접 바꾸지 않는다. 회의를 끝내면(MTG-A13) 이 정리로 변경 제안을 만든다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13194,10 +13194,10 @@ HTTP `201`.
 
 ### POST `/api/projects/{id}/meetings/{meeting_id}/close`
 
-팀장이 비비 정리를 확인하고 회의를 끝낸다. 공용 문서가 새 버전으로 바로 바뀐다.
+팀장이 비비 정리를 확인하고 회의를 끝낸다. 비비가 회의 결과로 변경 제안을 만든다. 문서와 기준은 팀장이 그 제안을 승인(CHG-A09)할 때 바뀐다.
 
 관련 요구사항: MTG-09 (화면 PNL-06-v2-draft, PNL-06-v2-draft-result)  
-담당: BE: 오서현 / AI: 박상은(문서 반영) / FE: 오서현  
+담당: BE: 오서현 / AI: 박상은(제안 문안) / FE: 오서현  
 상태: 수정안 요청 (협의 필요)
 
 #### 인증
@@ -13229,14 +13229,10 @@ HTTP `201`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `summary_id` | `ID` | Y | 팀장이 확인한 최신 정리 |
-| `expected_base_version_ids` | `ID[]` | Y | 정리의 document_changes.base_version_id 목록 |
 
 ```json
 {
-  "summary_id": "951",
-  "expected_base_version_ids": [
-    "231"
-  ]
+  "summary_id": "951"
 }
 ```
 
@@ -13247,7 +13243,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `meeting` | [Meeting](00-common.md#schema-meeting) | Y | status=CLOSED인 회의 |
-| `document_versions` | [DocumentVersion[]](00-common.md#schema-documentversion) | Y | 새로 만든 승인본. source_meeting_id가 이 회의 |
+| `change_proposal_id` | `ID` | N | 비비가 회의 결과로 만든 변경 제안. 정리에 바꿀 문서·설계 항목이 없으면 생략 |
 | `notified_member_ids` | `ID[]` | Y | 알림을 받은 관련 작업 담당자 |
 
 ```json
@@ -13257,15 +13253,7 @@ HTTP `200`.
     "status": "CLOSED",
     "closed_at": "2026-10-28T04:00:00Z"
   },
-  "document_versions": [
-    {
-      "id": "232",
-      "document_id": "203",
-      "version_no": 2,
-      "status": "APPROVED",
-      "source_meeting_id": "901"
-    }
-  ],
+  "change_proposal_id": "71",
   "notified_member_ids": [
     "23"
   ]
@@ -13281,26 +13269,25 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `summary_outdated` | 정리 뒤 새 기록이 있거나 최신 정리가 아님 |
-| 409 | `version_conflict` | 문서 승인본이 바뀜 |
 | 409 | `meeting_closed` | 이미 끝난 회의 |
 
 ```json
 {
   "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
+    "code": "summary_outdated",
+    "message": "정리 뒤 새 기록이 있거나 최신 정리가 아님"
   }
 }
 ```
 
 #### 처리 규칙
 
-- 팀장이 끝내는 것이 승인이다. 변경 제안을 거치지 않는다(2026-10-28 사용자 확정).
-- 한 트랜잭션에서 document_changes를 적용한 새 문서 버전을 APPROVED로 만들고 회의를 CLOSED로 바꾼다. 같은 문서의 이전 승인본은 SUPERSEDED다.
-- task_ids의 담당자에게 바뀐 기준을 DOCUMENT_VERSION 알림으로 보내고 활동에 남긴다. 바뀐 문서는 MCP-03에도 보인다.
+- 한 트랜잭션에서 회의를 CLOSED로 바꾸고, 정리의 document_changes와 결정으로 변경 제안을 만든다. 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
+- 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
+- 제안을 누가 만든 것으로 둘지(actor_type은 HUMAN\|AGENT뿐)는 Q24다. 기본안은 회의를 끝낸 팀장(HUMAN)을 제안자로 두고 meeting_id로 회의 출처를 보인다.
+- task_ids의 담당자에게 회의 결과가 변경 제안으로 올라갔다고 알리고 활동에 남긴다.
 - 끝난 회의는 읽기만 한다(MTG-A06 409 meeting_closed).
-- 기준 버전을 올리는지, 관련 작업을 재검증으로 돌리는지, 잘못 반영됐을 때 되돌리는 방법은 Q16이다.
-- (수정안 요청) 회의 경로는 공용 문서함의 비비 검토·제출(DOC-A16·A18)을 거치지 않는 예외다. 비비 회의 정리(MTG-A11)와 팀장 확인 화면이 그 검토를 대신하고, 팀장이 끝내는 것이 승인이다.
+- 회의 결과는 공용 문서함의 비비 검토·제출(DOC-A16·A18)을 거치지 않는다. 비비 회의 정리(MTG-A11)와 변경 제안 검토(CHG-A08)가 검토를 맡는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

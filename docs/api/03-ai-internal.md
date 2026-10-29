@@ -1771,7 +1771,7 @@ HTTP `200`.
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
 - 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
-- (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝낼 때 그대로 문서에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
+- (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
 - (수정안 요청) QUESTIONS·MINUTES는 회의실 수정안에서 쓰지 않는다(MTG-A07·A08 폐지 예정).
 

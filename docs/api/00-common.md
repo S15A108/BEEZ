@@ -6,7 +6,7 @@
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
-2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q23에 올렸다.
+2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q24에 올렸다. 기준 v1 뒤의 문서 변경은 dev처럼 모두 변경 제안으로 간다.
 
 ## 1. 문서 안내
 
@@ -379,7 +379,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A10 회의 기록 목록](01-backend-rest.md#mtg-a10) | GET `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER | 오서현 | — | 오서현 |
 | [MTG-A11 비비 회의 정리](01-backend-rest.md#mtg-a11) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
-| [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | 박상은(문서 반영) | 오서현 |
+| [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | 박상은(제안 문안) | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
@@ -458,9 +458,9 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
 | Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10은 §5의 24시간·design_http_command 범위 한정 결정 적용 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부(수정안 기본안: 창을 연 동안만), '근거가 틀려요' 피드백 활용, 자주 묻는 질문 칩의 출처 |
-| Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 문서 검토·승인 API는 PR #37의 DOC-A13~A21을 따른다. PR #37은 기준 이후의 문서 변경을 변경 제안 경로로 받지만(change_proposal_required), 수정안은 기준 이후에도 공용 문서함 안에서 비비 검토 → 팀장 승인을 끝낸다. 또 변경 제안 보드끼리 어긋난다: 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'는 추천안 쪽이고, 새 변경 제안·반려 확인 화면은 '설계 항목만, 문서는 공용 문서함에서'다. 기본안은 문서 버전 하위 API(DOC-A13~A23)다. 변경 제안(DocumentChange)에 얹을지, 추천안(문서함은 승인본 읽기, 새 버전은 변경 제안)으로 갈지 정한다 |
+| Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
-| Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 기준 v1 뒤 문서 승인(DOC-A21)과 회의 끝내기(MTG-A13)가 기준 버전을 올리는지, 관련 검증을 STALE로·진행 중 작업을 WAITING(REVALIDATION)으로 바꾸는지, 영향 분석을 돌리는지. 기본안: 변경 제안 승인(CHG-A09)과 같은 규칙. 문서함 화면은 승인되면 '알림 API 명세서 v1이 팀의 기준 버전이 됐어요'라고 보여 기준이 바뀌는 쪽이다. 잘못 반영된 회의 결과는 새 문서 버전으로 되돌린다. 회의 끝내기는 문서함의 비비 검토·제출을 거치지 않는 예외다(MTG-A13) |
+| Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 정함(2026-10-29, dev 기준): 기준 v1 뒤 문서 변경은 변경 제안 승인(CHG-A09)으로만 반영되고 승인마다 기준 v2, v3이 생긴다. 재검증·영향 분석도 CHG-A09 규칙 그대로다. 회의 결과도 회의 끝내기(MTG-A13)가 변경 제안을 만들 뿐 문서를 바로 바꾸지 않는다. 잘못 반영된 결과는 새 변경 제안으로 되돌린다 |
 | Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지 |
 | Q18 | 접속·위치 공개 | 전진·박민용 | 사람의 위치를 '사무실 안 자리'까지만 보일지 열어 둔 메뉴까지 보일지, 보고 주기·TTL, 폴링·SSE·WebSocket 중 전송 수단(NTF-07 확장 후보와 함께) |
 | Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | PR #37 DOC-A16의 검토 정책(승인본만 참고, 참고 자료가 없어 비교하지 못한 단계는 사유를 보이고 제출 허용, 모델 실패는 새 요청 키로 재시도)을 따른다. 남은 것: 단계 이름과 목표 소요 시간, 단계 진행을 보이려면 검토를 동기 호출로 둘지 접수 후 조회로 바꿀지, 업로드마다 드는 AI 비용 상한 |
@@ -468,6 +468,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q21 | 대시보드 비용·집계 | 변준성·전진 | 비용을 팀장만 볼지(지금 MEMBER), 에이전트를 토큰별로 셀지 팀원별로 묶을지, 프로젝트 전체 관계 그래프가 필요한지 |
 | Q22 | 화면 상태 저장 | 전진·변준성·박민용 | 가이드 표시 상태는 브라우저 저장으로 정함(서버 저장은 8절 확장 후보). 시작 가이드 종료 조건(팀장 = 발행+초대, 팀원 = 에이전트 연결+첫 계획), 팀장을 넘겨받은 사람에게 가이드를 다시 띄울지, 기준 발행 전 팀원이 할 수 있는 일, 도시 부지 번호를 멤버십별로 서버에 둘지와 부지 상한 |
 | Q23 | 변경 제안 검토 시작 | 오서현 | 승인 전에 IN_REVIEW(CHG-A08)를 꼭 거칠지, 팀장이 제안을 열면 자동으로 할지(기본안: 자동) |
+| Q24 | 비비가 만든 변경 제안 | 오서현·박상은 | 회의 끝내기(MTG-A13)로 비비가 만든 제안을 ChangeProposal.actor_type(HUMAN\|AGENT)으로 어떻게 구분할지. 기본안: 제안자는 회의를 끝낸 팀장(HUMAN)으로 두고 meeting_id로 회의에서 나온 제안임을 보인다. actor_type에 BEE를 더할지 정해야 한다 |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
 
@@ -640,7 +641,6 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `content_hash` | `string` | Y | 원본 해시 |
 | `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
 | `created_by` | `ID` | Y | 올린 계정 |
-| `source_meeting_id` | `ID` | N | 회의 끝내기(MTG-A13)로 만든 버전이면 그 회의. 수정안 요청 |
 | `is_current_baseline` | `boolean` | Y | 현재 기준에 들어 있는 버전. 수정안 요청 |
 | `created_at` | `Time` | Y | 생성 시각 |
 
@@ -929,7 +929,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
 | `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
-| `previous_proposal_id` | `ID` | N | 반려된 제안을 고쳐 새로 올릴 때 이전 제안. 수정안 요청 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
 
@@ -1532,7 +1532,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `base_version_id` | `ID` | Y | 정리 시점의 현재 승인본 |
 | `locator` | [SourceLocator](#schema-sourcelocator) | Y | 바꿀 행 범위 |
 | `before` | `string` | Y | 지금 문장 |
-| `after` | `string` | Y | 회의를 끝내면 그대로 들어갈 문장 |
+| `after` | `string` | Y | 회의를 끝내면 비비가 만드는 변경 제안(MTG-A13)에 들어갈 문장 |
 | `evidence_entry_ids` | `ID[]` | Y | 근거 발언. 이 회의의 실제 기록 ID만 |
 
 <a id="schema-meetingsummary"></a>
@@ -1620,10 +1620,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 발행 기준 |
-| `proposal_id` | `ID` | N | 발행 제안. source=CHANGE_PROPOSAL이면 필수 |
-| `source` | `CHANGE_PROPOSAL\|DOCUMENT_APPROVAL\|MEETING` | Y | 변경 출처. 문서함 승인(DOC-A21)·회의 끝내기(MTG-A13)도 변경으로 알림. 수정안 요청 |
-| `document_version_ids` | `ID[]` | N | 바뀐 문서 버전. 수정안 요청 |
-| `meeting_id` | `ID` | N | source=MEETING이면 그 회의. 수정안 요청 |
+| `proposal_id` | `ID` | Y | 발행 제안 |
 | `changed_items` | [ChangedItem[]](00-common.md#schema-changeditem) | Y | 항목별 전후 버전 |
 | `affected_task_ids` | `ID[]` | Y | 영향 작업 |
 
