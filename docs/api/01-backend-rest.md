@@ -1826,7 +1826,7 @@ HTTP `200`.
 - 필수 kind 4종의 업로드·승인을 각각 표시한다.
 - 문서 등록·팀 구성·연결 안내에 사용하며 자동 승인하지 않는다.
 - (수정안 요청) required_documents[]에 document_id·latest_version_id·working_copy_status·index_ready를 넣어 팀장 시작 가이드가 문서별 검토·승인 단계와 '기준 만들기' 가능 여부를 그린다.
-- (수정안 요청) 4종이 모두 승인·색인되면 팀장이 PLN-A10으로 기준 v1을 만든다(Q15). 그 전에는 변경 제안·작업 계획을 받지 않는다(CHG-A01·TSK-A01 baseline_required).
+- (수정안 요청) 4종이 모두 승인·색인되면 팀장이 PLN-A10으로 기준 v1을 만든다(Q15). 그 전에는 변경 제안·작업 계획을 받지 않는다(CHG-A01·TSK-A01 baseline_missing).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7247,7 +7247,7 @@ HTTP `201`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 기준 baseline이 현재와 다름 |
-| 409 | `baseline_required` | 기준 v1 발행 전 |
+| 409 | `baseline_missing` | 기준 v1 발행 전 |
 
 ```json
 {
@@ -7264,7 +7264,7 @@ HTTP `201`.
 - 문서 변경의 after_content와 proposed_document_version_id는 둘 중 하나다.
 - 명시 관계의 영향 대상·알림을 먼저 처리하고 AI 심층 영향 분석은 별도로 실행한다.
 - (수정안 요청) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 기준 v1 뒤의 문서 변경도 이 API의 documents로 올린다(after_content 또는 DOC-A12로 올린 DRAFT의 proposed_document_version_id). 기준 뒤 공용 문서함의 DOC-A14~A18·A21은 409 change_proposal_required다.
-- (수정안 요청) 기준 v1 발행 전에는 409 baseline_required다.
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7668,7 +7668,7 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `baseline_conflict` | 갱신 기준이 현재가 아님 |
+| 409 | `baseline_conflict` | 재제출의 base_baseline_id가 현재 기준이 아님 |
 | 409 | `proposal_changed` | 동시 수정 |
 | 409 | `invalid_transition` | 승인·발행·반려 완료 제안 |
 
@@ -7686,6 +7686,7 @@ HTTP `200`.
 - 제출한 제안(PROPOSED·IN_REVIEW)은 편집을 잠근다. 반려된(REJECTED) 제안만 같은 제안 번호에서 고쳐 새 revision으로 재제출하며 결과 상태는 PROPOSED다(현재 구현 기준).
 - 현재 원문을 읽고 수정한 최종본을 제출한다. 영향·관련자 정보를 다시 확인한다.
 - 이전 제출 내용과 검토·반려·결정 이력은 보존한다. 제안 내용 변경을 승인 없이 발행하지 않는다.
+- (수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'(CHG-A10)한 뒤 최신 기준으로 재제출한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8376,6 +8377,7 @@ HTTP `200`.
 - 관련 검증 = 변경 항목의 이전 버전을 design_refs(READS·IMPLEMENTS·CHANGES)에 가진 PASS·RUNNING 검증이다. stale_reason을 남긴다. RUNNING 검증의 늦은 결과는 반영되지 않는다. 시작 전 작업은 상태를 유지하고 IN_PROGRESS 작업만 WAITING(REVALIDATION)으로 바꾼다.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
 - 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
+- (수정안 요청) requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8520,6 +8522,7 @@ HTTP `200`.
 
 - 반려 사유와 검토 이력을 보존한다.
 - 반려 후에는 같은 제안 번호에서 CHG-A04로 고쳐 새 revision으로 재제출한다. 이전 제출 내용과 반려 사유는 덮어쓰지 않는다.
+- (수정안 요청) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채운다. 제안자는 CHG-A04로 최신 기준에 맞춰 재제출하거나 CHG-A15로 거둔다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8980,7 +8983,7 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 409 | `invalid_transition` | 이미 승인·발행·반려·거둠 |
+| 409 | `invalid_transition` | 이미 승인·발행·거둠 |
 | 409 | `version_conflict` | expected_updated_at이 현재와 다름 |
 
 ```json
@@ -8994,7 +8997,7 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- PROPOSED·IN_REVIEW 제안만 거둔다. 거둔 제안은 고칠 수 없고 다시 올리면 새 제안이다(previous_proposal_id).
+- PROPOSED·IN_REVIEW·REJECTED 제안을 거둔다. 반려된 제안을 다시 내지 않기로 할 때도 거둔다. 거둔 제안은 고칠 수 없고 다시 올리면 새 제안이다(previous_proposal_id).
 - 검토 요청을 받은 팀원에게 알린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -9154,7 +9157,7 @@ HTTP `201`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `dependency_cycle` | 선행 순환 |
-| 409 | `baseline_required` | 기준 v1 발행 전 |
+| 409 | `baseline_missing` | 기준 v1 발행 전 |
 
 ```json
 {
@@ -9170,7 +9173,7 @@ HTTP `201`.
 - 호출자의 멤버 ID를 담당자로 초기화한다. ID·표시 키는 서버 발급이다.
 - 첫 불변 계획 리비전과 설계 참조를 저장하고 READY로 둔다. READY 자체는 시작 승인 상태가 아니다.
 - 의존 작업은 같은 프로젝트여야 하며 자기 자신·순환은 거부한다.
-- (수정안 요청) 기준 v1 발행 전에는 409 baseline_required다. 팀원 시작 가이드와 설계 관계 빈 화면이 이 규칙을 전제로 한다(Q22).
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다. 팀원 시작 가이드와 설계 관계 빈 화면이 이 규칙을 전제로 한다(Q22).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11949,7 +11952,7 @@ HTTP `201`.
 
 - 변경 제안 협의와 같은 참여자·기록·알림 구조를 사용한다.
 - 관련자 근거 없이 전체 팀원을 자동 호출하지 않는다.
-- (수정안 요청) 사람은 회의를 만들지 않는다. 서버가 작업 충돌을 감지하면 회의를 연다. 기본안: AI-A02 검증에서 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT가 나오면 origin=BEE_CONFLICT 회의를 만들고, 참여자는 팀장, 그 작업 담당자, 충돌한 설계 항목의 담당 영역 팀원(화면 예: '최팀원 · 화면 문구')이고, 첫 기록은 작업·문서 칩(refs)을 단 비비의 CONFLICT_BRIEF다(Q17).
+- (수정안 요청) 사람은 회의를 만들지 않는다. 서버가 작업 충돌을 감지하면 회의를 연다. 기준 v1 뒤에만 연다(작업은 기준 뒤에만 생긴다, TSK-A01 baseline_missing). 기본안: AI-A02 검증에서 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT가 나오면 origin=BEE_CONFLICT 회의를 만들고, 참여자는 팀장, 그 작업 담당자, 충돌한 설계 항목의 담당 영역 팀원(화면 예: '최팀원 · 화면 문구')이고, 첫 기록은 작업·문서 칩(refs)을 단 비비의 CONFLICT_BRIEF다(Q17).
 - (수정안 요청) 같은 작업 묶음에 OPEN 회의가 있으면 새로 만들지 않는다. 참여자에게 MEETING 알림을 보낸다. 이 API는 내부 생성 경로로 바꾸거나 없앤다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -12033,6 +12036,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -12047,6 +12051,7 @@ HTTP `200`.
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
 - (수정안 요청) 회의가 없으면 화면은 '회의가 없어요'와 비비가 회의를 연다는 안내만 보인다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12124,6 +12129,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -12137,6 +12143,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 기록은 MTG-A10으로 페이지 조회한다. 회의 상세에 무제한 전체 기록을 포함하지 않는다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12237,6 +12244,7 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `meeting_closed` | 끝난 회의 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -12255,6 +12263,7 @@ HTTP `200`.
 - (수정안 요청) 비비가 부른 사람 말고 더 부를 팀원은 팀장이나 이 회의 참여자가 이 API로 추가한다. 화면은 '관련자 추가' 창이다.
 - (수정안 요청) 추가한 사람은 수락 절차 없이 바로 `JOINED`로 참여하고 `target_type=MEETING` 알림을 받는다. `reason`이 있으면 알림에 함께 보낸다.
 - (수정안 요청) 참여자에 `added_by_member_id`를 남겨 화면이 '이팀장이 추가'처럼 누가 불렀는지 보여 준다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12445,6 +12454,7 @@ HTTP `201`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `meeting_closed` | 끝난 회의 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -12460,6 +12470,7 @@ HTTP `201`.
 - 회의 참여 상태를 검사하고 사람의 텍스트 기록을 저장한다.
 - TEXT 기록과 AI 분석·회의록을 entry kind로 구분한다.
 - (수정안 요청) 끝난 회의(status=CLOSED)에는 기록을 받지 않는다. 응답 기록에는 author_kind·author_member_id·author_name을 넣어 화면이 내 말은 오른쪽, 다른 사람은 이름과 함께 왼쪽, 비비는 노란 말풍선으로 그린다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -12897,6 +12908,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -12911,6 +12923,7 @@ HTTP `200`.
 
 - TEXT·BEE_ANALYSIS·MINUTES를 구분해 페이지로 반환한다.
 - (수정안 요청) CONFLICT_BRIEF·SUMMARY 기록도 함께 돌려준다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13031,6 +13044,7 @@ HTTP `201`.
 | 409 | `meeting_closed` | 끝난 회의 |
 | 502 | `ai_unavailable` | AI 응답 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -13047,6 +13061,7 @@ HTTP `201`.
 - 대화를 바탕으로 정리해 SUMMARY 기록으로 남기고 노란 말풍선으로 보인다(AI-A08 SUMMARY).
 - document_changes.after는 회의를 끝내면 만들어지는 변경 제안에 들어갈 문장이고, 근거 발언은 이 회의의 실제 기록 ID만 쓴다.
 - 문서와 설계를 직접 바꾸지 않는다. 회의를 끝내면(MTG-A13) 이 정리로 변경 제안을 만든다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13170,6 +13185,7 @@ HTTP `201`.
 | 409 | `summary_outdated` | 최신 정리가 아님 |
 | 502 | `ai_unavailable` | AI 응답 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -13183,6 +13199,7 @@ HTTP `201`.
 #### 처리 규칙
 
 - 이전 정리와 피드백을 입력으로 다시 정리한다. 새 정리가 최신이 되고 이전 정리는 기록에 남는다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13194,7 +13211,7 @@ HTTP `201`.
 
 ### POST `/api/projects/{id}/meetings/{meeting_id}/close`
 
-팀장이 비비 정리를 확인하고 회의를 끝낸다. 비비가 회의 결과로 변경 제안을 만든다. 문서와 기준은 팀장이 그 제안을 승인(CHG-A09)할 때 바뀐다.
+팀장이 비비 정리를 확인하고 회의를 끝낸다. 회의 결과로 변경 제안이 만들어진다. 제안자는 회의를 끝낸 팀장이고 문안은 비비 정리(MTG-A11)다. 문서와 기준은 팀장이 그 제안을 승인(CHG-A09)할 때 바뀐다.
 
 관련 요구사항: MTG-09 (화면 PNL-06-v2-draft, PNL-06-v2-draft-result)  
 담당: BE: 오서현 / AI: 박상은(제안 문안) / FE: 오서현  
@@ -13243,7 +13260,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `meeting` | [Meeting](00-common.md#schema-meeting) | Y | status=CLOSED인 회의 |
-| `change_proposal_id` | `ID` | N | 비비가 회의 결과로 만든 변경 제안. 정리에 바꿀 문서·설계 항목이 없으면 생략 |
+| `change_proposal_id` | `ID` | N | 회의 결과로 만든 변경 제안(제안자 = 회의를 끝낸 팀장). 정리에 바꿀 문서·설계 항목이 없으면 생략 |
 | `notified_member_ids` | `ID[]` | Y | 알림을 받은 관련 작업 담당자 |
 
 ```json
@@ -13270,6 +13287,7 @@ HTTP `200`.
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `summary_outdated` | 정리 뒤 새 기록이 있거나 최신 정리가 아님 |
 | 409 | `meeting_closed` | 이미 끝난 회의 |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
 ```json
 {
@@ -13284,10 +13302,11 @@ HTTP `200`.
 
 - 한 트랜잭션에서 회의를 CLOSED로 바꾸고, 정리의 document_changes와 결정으로 변경 제안을 만든다. 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
 - 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
-- 제안을 누가 만든 것으로 둘지(actor_type은 HUMAN\|AGENT뿐)는 Q24다. 기본안은 회의를 끝낸 팀장(HUMAN)을 제안자로 두고 meeting_id로 회의 출처를 보인다.
+- 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다(Q24 정함).
 - task_ids의 담당자에게 회의 결과가 변경 제안으로 올라갔다고 알리고 활동에 남긴다.
 - 끝난 회의는 읽기만 한다(MTG-A06 409 meeting_closed).
 - 회의 결과는 공용 문서함의 비비 검토·제출(DOC-A16·A18)을 거치지 않는다. 비비 회의 정리(MTG-A11)와 변경 제안 검토(CHG-A08)가 검토를 맡는다.
+- (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -1062,7 +1062,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `revision_conflict` | 리비전 경합 |
 | 409 | `dependency_cycle` | 선행 순환 |
-| 409 | `baseline_required` | 기준 v1 발행 전 |
+| 409 | `baseline_missing` | 기준 v1 발행 전 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1080,7 +1080,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 생성 시 본인 작업을 만들고 수정 시 본인 담당·현재 계획/상태를 검사한다.
 - 수정은 불변 새 리비전이다. 진행 중 수정은 STALE·WAITING(REVALIDATION)이며 점유 유지다.
 - design_refs는 항목당 가장 강한 관계 하나로 확정한다. 입력·정규화 세부 Q02.
-- (수정안 요청) 기준 v1 발행 전에는 409 baseline_required다(REST TSK-A01과 같음).
+- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing이다(REST TSK-A01·구현과 같음).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
