@@ -13,6 +13,8 @@
 | `http://dev.beez.ai.kr/.well-known/acme-challenge/*` | 인증서 발급용 토큰 파일 응답 |
 | `http://dev.beez.ai.kr/*` | `301` → `https://dev.beez.ai.kr/*` |
 | `https://dev.beez.ai.kr/*` | 프론트 `dist` 서빙(SPA fallback) |
+| `http://jenkins.beez.ai.kr/*` | 인증 경로 외에는 `301` → HTTPS |
+| `https://jenkins.beez.ai.kr/*` | Jenkins(`127.0.0.1:8080`) 리버스 프록시 ([Jenkins 런북](jenkins.md)) |
 | 그 외 호스트·IP 직접 접속(HTTP) | `444` — 응답 없이 연결 종료 |
 | 그 외 호스트·IP 직접 접속(HTTPS) | TLS 핸드셰이크 거절 |
 
@@ -36,6 +38,7 @@
 | `infra/nginx/snippets/ssl-params.conf` | `/etc/nginx/snippets/` | TLS 1.2·1.3 등 공통 설정. 443번 server 블록마다 include |
 | `infra/nginx/sites-available/00-default.conf` | `/etc/nginx/sites-available/` | 등록되지 않은 호스트 차단 |
 | `infra/nginx/sites-available/dev.beez.ai.kr.conf` | `/etc/nginx/sites-available/` | dev 프론트 |
+| `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` | `/etc/nginx/sites-available/` | Jenkins 리버스 프록시 (S15P31A108-126) |
 
 패키지가 소유한 `/etc/nginx/nginx.conf`는 고치지 않습니다. 고치면 nginx
 패키지를 갱신할 때 설정 충돌 질문이 생깁니다.
@@ -325,6 +328,12 @@ sudo tail /var/log/letsencrypt/letsencrypt.log
   `ssl-params.conf`로 덮어씁니다.
 - 80번을 연 직후부터 스캐너 접속이 들어옵니다(2026-10-23, 1시간 이내).
   `00-default.conf`가 없으면 IP로 들어온 요청에 첫 번째 사이트가 응답합니다.
+
+## 2026-10-29 추가
+
+`jenkins.beez.ai.kr`를 "호스트 추가" 절차로 열었습니다. certbot 계정이 이미 있어 `-m` 없이
+발급했습니다. 인증서 발급자 Let's Encrypt `YE1`, 만료 2027-01-27,
+`renew_hook = systemctl reload nginx`. 기존 dev 호스트는 그대로입니다.
 
 ## 2026-10-23 결과
 

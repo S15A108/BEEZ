@@ -1,0 +1,329 @@
+# Jenkins 런북
+
+CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez.ai.kr`로만
+접근하게 하는 절차입니다. 보안·계정 설정은 JCasC(Configuration as Code)로
+저장소에 둡니다. 배포 잡(Jenkinsfile)은 S15P31A108-123에서 작성합니다.
+(S15P31A108-126)
+
+[서버 세팅 런북](server-setup.md)과 [Nginx·HTTPS 런북](nginx-https.md)을
+먼저 마친 상태를 전제로 합니다.
+
+## 구성
+
+| 항목 | 값 |
+|---|---|
+| 설치 | Jenkins LTS apt 패키지(systemd 서비스), Java 21(OpenJDK, Ubuntu 기본 저장소) |
+| 받는 주소 | `127.0.0.1:8080`만. 외부 8080은 열지 않습니다 |
+| 외부 접근 | `https://jenkins.beez.ai.kr` → 호스트 Nginx → `127.0.0.1:8080` |
+| 계정 | Jenkins 자체 사용자 DB, 관리자 `beez-admin` 1명. 가입 금지 |
+| 권한 | 로그인한 사람만 모든 것을 할 수 있고, 비로그인은 아무것도 볼 수 없음 |
+| 실행 계정 | `jenkins`(sudo 없음). `beez-deploy`·`docker` 그룹 |
+| 설정 정본 | 저장소 `infra/jenkins/`, `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` |
+
+- 컨테이너가 아니라 apt로 설치합니다. 컨테이너로 돌리면 배포를 위해
+  `docker.sock`과 호스트 경로를 붙여야 해서 사실상 root가 되고, 설치·갱신
+  경로만 늘어납니다.
+- 관리 화면이 인터넷에 직접 열리지 않도록 8080은 서버 자신에서만 받습니다.
+  ufw도 8080을 막고 있지만 방화벽 하나에만 기대지 않습니다.
+- 보안·계정 설정을 화면에서 클릭으로 만들면 서버 안에만 남아 재현할 수
+  없습니다. JCasC 파일로 두면 복원이 "파일 복사 + 재시작"이 됩니다.
+
+### 저장소 파일과 서버 경로
+
+| 저장소 | 서버 | 내용 |
+|---|---|---|
+| `infra/jenkins/systemd/override.conf` | `/etc/systemd/system/jenkins.service.d/` | 127.0.0.1 바인딩, 설치 마법사 끄기, JCasC 경로, 비밀 파일 연결, `UMask=0002` |
+| `infra/jenkins/casc/jenkins.yaml` | `/etc/jenkins/casc/` | 보안·계정·공개 주소 |
+| `infra/jenkins/plugins.txt` | 설치할 때만 사용 | 플러그인 목록(버전 고정) |
+| `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` | `/etc/nginx/sites-available/` | 리버스 프록시 |
+| (저장소에 없음) | `/etc/jenkins/casc.env` | 관리자 ID·비밀번호. `600 root:root` |
+
+패키지가 설치한 `/usr/lib/systemd/system/jenkins.service`는 고치지 않습니다.
+바꿀 값만 `jenkins.service.d/override.conf`로 덮어써서 패키지를 갱신해도
+유지됩니다.
+
+## 새 서버에서 처음부터
+
+순서가 중요합니다. **apt 패키지는 설치하자마자 Jenkins를 켜고, 그때 설치
+마법사가 `admin` 계정을 만듭니다.** JCasC는 목록에 적은 계정만 만들거나
+고치고 목록에 없는 계정을 지우지 않으므로, 이 계정이 그대로 남습니다.
+그래서 서비스를 먼저 막고(`mask`), 플러그인과 JCasC를 둔 뒤 처음 켭니다.
+
+> **검증 상태:** 2026-10-29 서버는 설치 → 마법사 계정 삭제 순서로 세웠고,
+> 아래 `mask` 순서는 아직 실제로 돌려 보지 않았습니다. 설치 중 masked
+> 서비스 때문에 `apt-get install jenkins`가 오류로 끝나면
+> `sudo systemctl unmask jenkins` 뒤 `sudo dpkg --configure -a`로 마무리하고,
+> 6단계 전에 마법사 계정이 생겼는지(`sudo ls /var/lib/jenkins/users`) 확인합니다.
+> 생겼으면 "주의"의 계정 삭제 명령으로 지웁니다. 처음 따라 해 본 사람이 결과를
+> 이 문단에 고쳐 적습니다.
+
+로컬 PC(Git Bash):
+
+```bash
+cd /c/git/BEEZ && scp infra/jenkins/plugins.txt infra/jenkins/casc/jenkins.yaml infra/jenkins/systemd/override.conf beez:/tmp/
+```
+
+서버:
+
+### 1. 서비스 막기·systemd 설정
+
+```bash
+sudo systemctl mask jenkins
+sudo mkdir -p /etc/systemd/system/jenkins.service.d
+sudo install -m 644 /tmp/override.conf /etc/systemd/system/jenkins.service.d/override.conf
+```
+
+- `mask`는 서비스 파일을 `/dev/null`로 가려 어떤 방법으로도 켜지지 않게
+  합니다. 패키지 설치 스크립트의 자동 시작도 막힙니다.
+
+### 2. 관리자 비밀 파일
+
+비밀번호는 비밀번호 관리자에서 새로 만들어 붙여 넣습니다. 화면과 셸 기록에
+남지 않습니다.
+
+```bash
+sudo install -d -m 755 /etc/jenkins /etc/jenkins/casc
+read -rsp "Jenkins admin password: " P && echo && \
+  printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
+  sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && unset P
+sudo install -m 644 /tmp/jenkins.yaml /etc/jenkins/casc/jenkins.yaml
+```
+
+- `install … /dev/stdin`은 처음부터 `600 root:root`로 파일을 만듭니다. 만든
+  뒤에 권한을 좁히는 방식과 달리 열려 있는 순간이 없습니다.
+- systemd가 root로 이 파일을 읽어 Jenkins에 환경변수로 넘기므로 jenkins
+  사용자는 파일을 읽을 권한이 없어도 됩니다.
+
+### 3. Java·Jenkins 설치
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fontconfig openjdk-21-jre-headless
+sudo curl -fsSL -o /etc/apt/keyrings/jenkins-keyring.asc \
+  https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+gpg --show-keys /etc/apt/keyrings/jenkins-keyring.asc
+# 5E386EADB55F01504CAE8BCF7198F4B714ABFC68 이 아니면 멈춘다
+echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
+  | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y jenkins
+```
+
+- `debian-stable`은 LTS 판입니다. 매주 나오는 weekly(`debian`)보다 덜 자주
+  바뀝니다.
+- 서명 키는 해마다 바뀔 수 있습니다. 설치 전에
+  `https://pkg.jenkins.io/debian-stable/`에서 키 파일 이름과 지문을 다시
+  확인합니다. 2026-10 기준 키는 `jenkins.io-2026.key`(만료 2028-12-21)입니다.
+- `-headless`는 GUI 라이브러리를 뺀 Java입니다. Jenkins가 요구하는 Java
+  버전은 Jenkins의 Java 지원 정책을 따릅니다(2.580.x는 Java 21).
+
+### 4. 플러그인 설치
+
+```bash
+cd /tmp
+curl -fsSLO https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/2.15.0/jenkins-plugin-manager-2.15.0.jar
+curl -fsSL https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/2.15.0/jenkins-plugin-manager-2.15.0.jar.sha256 \
+  | awk '{print $1"  jenkins-plugin-manager-2.15.0.jar"}' | sha256sum -c -
+sudo -u jenkins java -jar /tmp/jenkins-plugin-manager-2.15.0.jar \
+  --war /usr/share/java/jenkins.war \
+  --plugin-download-directory /var/lib/jenkins/plugins \
+  --plugin-file /tmp/plugins.txt
+```
+
+- 화면의 "플러그인 설치" 대신 공식 도구와 목록 파일을 씁니다. 목록에 버전을
+  고정해 두면 다음에도 같은 판이 깔립니다. 의존 플러그인은 도구가
+  `--war`의 코어 버전에 맞춰 함께 받습니다.
+- `sudo -u jenkins`로 받아야 파일 소유자가 jenkins가 됩니다. root로 받으면
+  Jenkins가 나중에 플러그인을 갱신하지 못합니다.
+- 플러그인은 공식 업데이트 센터에서 바로 받습니다. 이 서버는 SSAFY 가이드의
+  미러 없이도 `updates.jenkins.io`에 닿습니다.
+
+### 5. 배포 권한
+
+```bash
+sudo groupadd --system beez-deploy
+sudo usermod -aG beez-deploy ubuntu
+sudo usermod -aG beez-deploy,docker jenkins
+sudo chgrp -R beez-deploy /var/www/beez
+sudo chmod 2775 /var/www/beez /var/www/beez/releases
+sudo find /var/www/beez/releases -mindepth 1 -type d -exec chmod 2775 {} +
+sudo find /var/www/beez/releases -type f -exec chmod 664 {} +
+```
+
+- 배포 잡은 `releases/<sha>`에 파일을 풀고 `current` 심링크를 바꿉니다.
+  심링크를 바꾸는 임시 링크·`mv -T`가 `/var/www/beez` 안에서 일어나므로 그
+  폴더에도 쓰기 권한이 필요합니다.
+- 소유자를 jenkins로 바꾸지 않고 `beez-deploy` 그룹을 공유합니다. Jenkins가
+  고장 나도 ubuntu로 수동 배포([Nginx·HTTPS 런북](nginx-https.md) 4단계)를
+  그대로 할 수 있습니다.
+- `2775`의 2는 setgid입니다. 안에 새로 만드는 파일이 `beez-deploy` 그룹을
+  물려받습니다. systemd 설정의 `UMask=0002`와 함께, jenkins가 만든 릴리스도
+  ubuntu가 지울 수 있습니다.
+- `usermod`는 반드시 `-aG`로 씁니다. `-a`가 빠지면 기존 보조 그룹(ubuntu의
+  sudo 등)이 지워집니다.
+- **docker 그룹은 사실상 root 권한입니다.** GHCR에서 이미지를 받는 데
+  필요해서 넣었습니다. 대신 Jenkins 화면은 관리자 1명·HTTPS 뒤에서만 열고,
+  팀원 계정을 늘릴 때는 권한 전략(전원 관리자)부터 다시 정합니다.
+- ubuntu의 새 그룹은 다시 접속해야 적용됩니다. jenkins는 다음 단계에서
+  서비스를 켤 때 적용됩니다.
+- `/opt/beez`(백엔드 compose·`.env`)는 백엔드 배포가 합류할 때 정합니다.
+
+### 6. 처음 켜기
+
+```bash
+sudo systemctl unmask jenkins
+sudo systemctl daemon-reload
+sudo systemctl enable --now jenkins
+sudo journalctl -u jenkins --since "-2min" --no-pager | grep -E "SEVERE|Jenkins is fully up"
+rm /tmp/plugins.txt /tmp/jenkins.yaml /tmp/override.conf /tmp/jenkins-plugin-manager-2.15.0.jar
+```
+
+`Jenkins is fully up and running`이 나오면 됩니다. `SEVERE`가 있으면 아래
+"주의"의 JCasC 항목을 봅니다.
+
+### 7. Nginx·HTTPS
+
+[Nginx·HTTPS 런북](nginx-https.md)의 "호스트 추가" 절차대로
+`jenkins.beez.ai.kr`를 엽니다. 임시 80 설정 → `certbot certonly --webroot
+-d jenkins.beez.ai.kr` → 저장소 설정 링크 순서입니다. 보안 설정(6단계)이
+끝난 뒤에 엽니다.
+
+## 확인
+
+서버:
+
+```bash
+systemctl is-active jenkins                                     # active
+sudo ss -ltnp | grep 8080                                       # 127.0.0.1:8080만
+systemctl show jenkins -p UMask --value                         # 0002
+grep Groups /proc/$(systemctl show jenkins -p MainPID --value)/status   # jenkins·beez-deploy·docker
+sudo ls /var/lib/jenkins/users                                  # beezadmin_… 하나
+sudo -u jenkins docker version --format '{{.Server.Version}}'   # sudo 없이 docker 사용
+sudo -u jenkins sudo -n true                                    # 거부되어야 함
+```
+
+로컬 PC:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://jenkins.beez.ai.kr/login    # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://jenkins.beez.ai.kr/         # 403 (로그인 강제)
+curl -s -o /dev/null -w '%{http_code}\n' https://jenkins.beez.ai.kr/signup   # 404 (가입 금지)
+curl -s -m 8 -o /dev/null -w '%{http_code}\n' http://jenkins.beez.ai.kr:8080/  # 000 (닫힘)
+```
+
+브라우저로 `https://jenkins.beez.ai.kr`에 `beez-admin`으로 로그인되는지 봅니다.
+
+## 백업·복원
+
+Jenkins를 다시 세우는 데 필요한 것은 대부분 저장소에 있습니다.
+
+| 무엇 | 어디에 | 복원 방법 |
+|---|---|---|
+| 서비스·보안·계정 설정 | 저장소 `infra/jenkins/` | "새 서버에서 처음부터" 그대로 |
+| 관리자 비밀번호 | 비밀번호 관리자 | 2단계에서 다시 입력 |
+| 플러그인 | 저장소 `plugins.txt` | 4단계 |
+| 배포 잡 정의 | 저장소 Jenkinsfile(-123) | 잡 생성 시 저장소에서 읽음 |
+| 빌드 기록·자격 증명·잡 설정 | `/var/lib/jenkins`(JENKINS_HOME) | 아래 백업 파일 |
+
+JENKINS_HOME은 빌드 기록과 화면에서 넣은 자격 증명(-123의 GHCR 토큰 등)을
+담습니다. 자격 증명은 `secrets/master.key`로 암호화되어 있어 **`secrets`
+폴더와 함께 옮겨야 풀립니다.** 이 폴더가 빠지면 자격 증명을 다시 넣어야
+합니다.
+
+### 백업
+
+서버:
+
+```bash
+sudo systemctl stop jenkins
+sudo tar --exclude=workspace --exclude=caches --exclude=.cache \
+  -czf /tmp/jenkins-home-$(date +%Y%m%d).tgz -C /var/lib jenkins
+sudo systemctl start jenkins
+sudo chown ubuntu:ubuntu /tmp/jenkins-home-*.tgz && chmod 600 /tmp/jenkins-home-*.tgz
+```
+
+로컬 PC로 가져온 뒤 서버의 파일은 지웁니다.
+
+```bash
+scp beez:/tmp/jenkins-home-*.tgz ~/beez-backup/ && ssh beez 'rm /tmp/jenkins-home-*.tgz'
+```
+
+- 멈추고 백업해야 설정 파일이 쓰이는 도중에 잘리지 않습니다. 배포 잡이 돌고
+  있지 않은 때에 합니다.
+- `workspace`·`caches`는 다시 만들 수 있어 뺍니다. 2026-10-29 기준 약
+  17MB입니다.
+- 이 파일에는 `secrets/master.key`가 들어 있습니다. 저장소·메신저에 올리지
+  않고, 서버 밖 개인 보관 장소에만 둡니다.
+
+### 복원
+
+"새 서버에서 처음부터"의 1~5단계를 마친 뒤, 6단계(처음 켜기) 대신:
+
+```bash
+sudo tar -xzf /tmp/jenkins-home-YYYYMMDD.tgz -C /var/lib
+sudo chown -R jenkins:jenkins /var/lib/jenkins
+sudo systemctl unmask jenkins && sudo systemctl daemon-reload && sudo systemctl enable --now jenkins
+```
+
+JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설정은 저장소 값으로
+맞춰집니다.
+
+## 비밀번호 바꾸기
+
+```bash
+read -rsp "new password: " P && echo && \
+  printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
+  sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && unset P
+sudo systemctl restart jenkins
+```
+
+JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화면에서 바꾼
+비밀번호는 재시작하면 이 파일 값으로 돌아갑니다.
+
+## 주의
+
+- **JCasC는 모르는 항목이 하나라도 있으면 Jenkins 기동 자체를 멈춥니다**
+  (`UnknownAttributesException`). 설정 반만 적용된 채 뜨는 것보다 안전한
+  동작입니다. 인터넷의 예전 예제를 옮길 때는 지금 버전에 있는 항목인지
+  확인합니다. 2026-10-29에 `crumbIssuer.standard.excludeClientIPFromCrumb`로
+  실제로 기동이 실패했습니다. CSRF 방어는 현재 코어에서 항상 켜져 있어 적지
+  않습니다.
+- 설치 마법사가 만든 계정이 남았으면 `beez-admin`으로 API를 불러 지웁니다.
+  POST 요청이라 CSRF 토큰(crumb)을 먼저 받아 같은 세션으로 보냅니다.
+
+  ```bash
+  read -rsp "beez-admin password: " P && echo && \
+    CRUMB=$(curl -s -c /tmp/jcj -u "beez-admin:$P" http://127.0.0.1:8080/crumbIssuer/api/json \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["crumbRequestField"]+":"+d["crumb"])') && \
+    curl -s -b /tmp/jcj -u "beez-admin:$P" -H "$CRUMB" -X POST -o /dev/null -w '%{http_code}\n' \
+      http://127.0.0.1:8080/user/admin/doDelete    # 302
+  unset P CRUMB; rm -f /tmp/jcj
+  sudo rm -f /var/lib/jenkins/secrets/initialAdminPassword
+  ```
+
+- 연속으로 기동에 실패하면 systemd가 더는 다시 켜지 않습니다. 설정을 고친
+  뒤 `sudo systemctl reset-failed jenkins`로 기록을 지우고 켭니다.
+- 화면에서 바꾼 보안 설정은 재시작하면 JCasC 값으로 돌아갑니다. 바꿀 때는
+  저장소 파일을 고쳐 반영합니다.
+- 응답 헤더 `X-Jenkins`에 버전이 보입니다. Jenkins CLI 등이 이 헤더로
+  서버를 알아보므로 숨기지 않았습니다. 버전 노출이 문제가 되면 Nginx에서
+  `proxy_hide_header`로 지웁니다.
+- SSAFY Jenkins 가이드는 8080을 Anywhere로 열지만 이 서버는 열지 않습니다.
+  `authorized_keys`는 `>>`로 추가만 하고 기존 pem 줄을 지우지 않는다는
+  가이드 주의는 그대로 지킵니다([서버 세팅 런북](server-setup.md) 6단계).
+
+## 2026-10-29 결과
+
+| 항목 | 값 |
+|---|---|
+| Jenkins | 2.580.2 (LTS, apt) |
+| Java | OpenJDK 21.0.12 (`openjdk-21-jre-headless`) |
+| 플러그인 | `configuration-as-code` 2140.v00e72b_047734 + 의존 17개 |
+| 인증서 | `jenkins.beez.ai.kr`, 발급자 Let's Encrypt `YE1`, 만료 2027-01-27, `renew_hook = systemctl reload nginx` |
+| 외부 확인 | `/login` 200, `/` 403, `/signup` 404, `http` → 301 `https`, 8080 닫힘 |
+| JENKINS_HOME | 53MB, 백업 압축 약 17MB |
+| 메모리 | 기동 후 사용 1.2GiB / 15GiB |
+
+설치 마법사가 처음 기동 때 만든 `admin` 계정은 JCasC 적용 뒤에도 남아 있어
+API로 지우고 `secrets/initialAdminPassword`도 지웠습니다. 위 "새 서버에서
+처음부터" 순서는 이 계정이 생기지 않도록 고친 순서입니다.
