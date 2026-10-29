@@ -48,7 +48,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-previous=$(docker inspect -f '{{.Config.Image}}' "$(compose ps -q backend 2> /dev/null)" 2> /dev/null || echo "없음")
+# 컨테이너가 없을 때 docker inspect 가 빈 줄을 찍고 실패하므로, id 가 있을 때만 묻는다
+previous=없음
+backend_cid=$(compose ps -q backend 2> /dev/null || true)
+[[ -n $backend_cid ]] && previous=$(docker inspect -f '{{.Config.Image}}' "$backend_cid")
 log "배포 SHA $SHA (환경 $ENV_NAME)"
 log "직전 backend 이미지: $previous"
 log "직전 프론트: $(readlink "$WEB_ROOT/current" 2> /dev/null || echo 없음)"
@@ -64,7 +67,11 @@ else
     cid=$(docker create "$FRONTEND_IMAGE" noop)
     tmp=$WEB_ROOT/releases/.tmp-$SHA
     rm -rf "$tmp"
-    docker cp "$cid:/dist" "$tmp"
+    docker cp -q "$cid:/dist" "$tmp"
+    # docker cp 는 파일 주인을 실행한 사용자(jenkins:jenkins)로, 권한은 이미지 안의 값(644/755)으로 만든다.
+    # 배포 폴더의 그룹(beez-deploy)·그룹 쓰기로 맞춰 ubuntu 도 손으로 지울 수 있게 한다
+    chgrp -R "$(stat -c %G "$WEB_ROOT/releases")" "$tmp"
+    chmod -R g+w "$tmp"
     # 다 꺼낸 뒤에 제 이름으로 바꾼다. 반쯤 꺼낸 폴더가 릴리스로 남지 않는다
     mv -T "$tmp" "$release"
     tmp=

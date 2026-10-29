@@ -203,7 +203,8 @@ sudo chmod 750 /var/lib/jenkins
   팀원 계정을 늘릴 때는 권한 전략(전원 관리자)부터 다시 정합니다.
 - ubuntu의 새 그룹은 다시 접속해야 적용됩니다. jenkins는 다음 단계에서
   서비스를 켤 때 적용됩니다.
-- `/opt/beez`(백엔드 compose·`.env`)는 백엔드 배포가 합류할 때 정합니다.
+- `/opt/beez`(서버 env 파일)는 [CD 런북](cd.md) "서버 준비"에서
+  `2750 ubuntu:beez-deploy`로 바꿉니다.
 
 ### 6. 처음 켜기
 

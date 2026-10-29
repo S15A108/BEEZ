@@ -214,7 +214,7 @@ sudo install -d -o ubuntu -g ubuntu -m 750 /opt/beez
 | `/var/www/beez` | 프론트 정적 파일(`dist`) | `2775 ubuntu:beez-deploy` — Nginx(`www-data`)가 읽고 jenkins가 씀 (처음 만들 때는 `755 ubuntu:ubuntu`, [Jenkins 런북](jenkins.md) 5단계에서 변경) |
 | `/var/www/beez/releases/<sha>/` | 배포 회차별 빌드 결과 | 상동 |
 | `/var/www/beez/current` | 서빙 중인 릴리스를 가리키는 심링크 | 첫 배포 때 생성 |
-| `/opt/beez` | backend·ai compose 파일, `.env` | `750 ubuntu:ubuntu` — 그 외 사용자 접근 불가 |
+| `/opt/beez` | 서버 env 파일(`.env.<환경>`, 비밀값) | `2750 ubuntu:beez-deploy` — jenkins는 읽기만, 그 외 접근 불가 (처음 만들 때는 `750 ubuntu:ubuntu`, [CD 런북](cd.md) "서버 준비"에서 변경) |
 
 - 배포는 `releases/<sha>`에 새 폴더를 만든 뒤 `current` 심링크를 바꾸는
   방식입니다. 파일을 덮어쓰는 도중의 화면이 노출되지 않고, 롤백은 심링크를
