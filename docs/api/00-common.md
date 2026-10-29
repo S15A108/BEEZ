@@ -363,7 +363,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A01 회의 생성 (폐지 예정)](01-backend-rest.md#mtg-a01) | POST `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
 | [MTG-A02 회의 목록](01-backend-rest.md#mtg-a02) | GET `/api/projects/{id}/meetings` | MEMBER | 오서현 | 양지훈 | 오서현 |
 | [MTG-A03 회의 상세](01-backend-rest.md#mtg-a03) | GET `/api/projects/{id}/meetings/{meeting_id}` | MEMBER | 오서현 | 양지훈 | 오서현 |
-| [MTG-A04 회의 참여 요청 (폐지 예정)](01-backend-rest.md#mtg-a04) | POST `/api/projects/{id}/meetings/{meeting_id}/participants` | MEMBER | 오서현 | 양지훈 | 오서현 |
+| [MTG-A04 회의 참여 요청](01-backend-rest.md#mtg-a04) | POST `/api/projects/{id}/meetings/{meeting_id}/participants` | MEMBER (팀장 또는 회의 참여자. 수정안 요청) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A05 회의 참여 응답 (폐지 예정)](01-backend-rest.md#mtg-a05) | PATCH `/api/projects/{id}/meetings/{meeting_id}/participation` | MEMBER (초대 대상 본인) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A06 회의 텍스트 기록](01-backend-rest.md#mtg-a06) | POST `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A07 비비의 회의 맥락 분석 (폐지 예정)](01-backend-rest.md#mtg-a07) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-analysis` | MEMBER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
@@ -1222,8 +1222,9 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 참여 멤버 |
-| `status` | `INVITED\|ACCEPTED\|DECLINED` | Y | 참여 상태. 비비가 연 회의의 참여자는 ACCEPTED로 만든다(수정안 요청). DB의 JOINED와 값 이름을 맞춘다 |
-| `role` | `LEADER\|TASK_OWNER\|DOMAIN_OWNER` | N | 비비가 부른 이유. 화면 예: '팀장 · TASK-001', 'TASK-002', '화면 문구'(담당 영역). 수정안 요청 |
+| `status` | `INVITED\|ACCEPTED\|DECLINED` | Y | 참여 상태. 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람은 ACCEPTED로 만든다(수정안 요청). DB의 JOINED와 값 이름을 맞춘다 |
+| `role` | `LEADER\|TASK_OWNER\|DOMAIN_OWNER` | N | 비비가 부른 이유. 화면 예: '팀장 · TASK-001', 'TASK-002', '화면 문구'(담당 영역). 관련자 추가로 들어온 사람은 생략. 수정안 요청 |
+| `added_by_member_id` | `ID` | N | 관련자 추가(MTG-A04)로 이 사람을 부른 멤버. 화면 예: '이팀장이 추가'. 비비가 부른 사람은 생략. 수정안 요청 |
 
 <a id="schema-meetingentry"></a>
 
