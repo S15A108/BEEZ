@@ -16,5 +16,9 @@ workflow-cps:4395.v738456a_5da_6b_
 workflow-durable-task-step:1479.v56e587f413a_7
 # timeout·error 단계
 workflow-basic-steps:1129.v60e3c7e6654d
+# stage 단계 (빌드 화면에서 단계별로 나뉘어 보인다)
+pipeline-stage-step:345.va_96187909426
+# Jenkinsfile 의 checkout scm. scm 변수는 이 플러그인이 준다 (의존은 대부분 job-dsl 과 겹친다)
+workflow-multibranch:842.v3a_b_59b_57b_e6e
 # 공개 저장소 체크아웃(자격 증명 없음)
 git:5.11.0
