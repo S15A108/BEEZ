@@ -1322,7 +1322,6 @@ HTTP `201`.
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
 | `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 수정안 요청 |
-| `phase` | `PREPARING\|STARTED\|BASELINED` | Y | 준비 중·시작됨·기준 있음. 수정안 요청 |
 | `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
@@ -1453,7 +1452,7 @@ HTTP `200`.
 
 - 현재 계정이 활성 멤버인 프로젝트만 페이지 처리 전에 필터링한다.
 - 삭제 프로젝트는 노출하지 않는다.
-- (수정안 요청) 각 항목에 design·phase·member_count를 넣어 도시 화면이 추가 호출 없이 건물과 '준비 중·시작됨'을 그린다. 검색·정렬은 화면에서 처리하고 `q`·`sort` 파라미터는 필요해지면 추가한다. 부지 번호 저장은 Q22다.
+- (수정안 요청) 각 항목에 design·member_count를 넣어 도시 화면이 추가 호출 없이 건물을 그린다. '준비 중'과 '기준 v1'은 기존 current_baseline 유무로 구분한다. 프로젝트 시작은 PLN-A10 최초 기준 생성이며 따로 시작 상태를 두지 않는다. 검색·정렬은 화면에서 처리하고 `q`·`sort` 파라미터는 필요해지면 추가한다. 부지 번호 저장은 Q22다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1506,7 +1505,6 @@ HTTP `200`.
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
 | `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 수정안 요청 |
-| `phase` | `PREPARING\|STARTED\|BASELINED` | Y | 준비 중·시작됨·기준 있음. 수정안 요청 |
 | `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
@@ -1547,7 +1545,6 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
-- (수정안 요청) phase는 필수 4종 등록 여부(STARTED)와 현재 기준 유무(BASELINED)로 계산한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1614,7 +1611,6 @@ HTTP `200`.
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
 | `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 수정안 요청 |
-| `phase` | `PREPARING\|STARTED\|BASELINED` | Y | 준비 중·시작됨·기준 있음. 수정안 요청 |
 | `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
@@ -1793,7 +1789,6 @@ HTTP `200`.
 | `baseline_published` | `boolean` | Y | 최초 기준 발행됨 |
 | `member_count` | `integer` | Y | 활성 멤버 수 |
 | `my_agent_connected` | `boolean` | Y | 본인 연결 관측 |
-| `documents_ready_at` | `Time` | N | 필수 4종이 처음 모두 올라간 시각. '프로젝트가 시작됐어요'를 한 번만 띄움. 수정안 요청 |
 
 ```json
 {

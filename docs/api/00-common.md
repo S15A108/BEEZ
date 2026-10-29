@@ -508,7 +508,6 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `description` | `string` | N | 프로젝트 설명 |
 | `my_role` | `LEADER\|MEMBER` | Y | 조회자의 프로젝트 역할 |
 | `design` | `glass\|brick\|modern\|tower\|wood` | Y | 건물 디자인. 팀원 모두의 도시·워크스페이스에 같이 보임. 수정안 요청 |
-| `phase` | `PREPARING\|STARTED\|BASELINED` | Y | 준비 중(필수 4종 미등록) · 시작됨(4종 등록, 기준 전) · 기준 있음. 수정안 요청 |
 | `member_count` | `integer` | Y | 활성 멤버 수. 수정안 요청 |
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
