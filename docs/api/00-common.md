@@ -133,7 +133,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
 | 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토 |
-| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW는 작성자가 WITHDRAWN으로 거둘 수 있음 |
+| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
 | 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함. REVALIDATION은 시스템만 설정(설계 발행·완료 delta) |

@@ -119,7 +119,7 @@ sequenceDiagram
 |---|---|
 | task | DRAFT → READY(계획 저장) → IN_PROGRESS(PASS 후 START) ↔ WAITING → COMPLETED / CANCELLED. `waiting_reason`: 보완 · 승인 대기 · 선행 작업 · 재검증 (제안, TSK-03) |
 | validation | NOT_RUN → RUNNING → PASS / NEEDS_INPUT / NEEDS_REVIEW / ERROR, 어느 상태에서든 → STALE |
-| change_proposal | PROPOSED → IN_REVIEW → APPROVED → PUBLISHED, 또는 REJECTED. PROPOSED/IN_REVIEW는 작성자가 WITHDRAWN으로 거둘 수 있음 |
+| change_proposal | PROPOSED → IN_REVIEW → APPROVED → PUBLISHED, 또는 REJECTED. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 
 PASS 판정표 (D2, 합의 필요)
 

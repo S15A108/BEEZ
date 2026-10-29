@@ -66,7 +66,7 @@ public class ProposalCommandService {
         if (replay.isPresent()) return replay.get();
         if (((Number) current.get("revision_no")).intValue() != input.expectedRevision()
                 || !current.get("snapshot_hash").equals(input.expectedSnapshotHash()))
-            throw error("proposal_changed", "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요.");
+            throw error("version_conflict", "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요.");
         if (!"REJECTED".equals(current.get("status")))
             throw error("proposal_locked", "제출한 제안은 잠겨 있습니다. 반려된 뒤에만 보완해 재제출할 수 있습니다.");
         if (current.get("rejection_reason") == null)
@@ -99,9 +99,9 @@ public class ProposalCommandService {
         if (replay.isPresent()) return replay.get();
         if (((Number) current.get("revision_no")).intValue() != input.expectedRevision()
                 || !current.get("snapshot_hash").equals(input.expectedSnapshotHash()))
-            throw error("proposal_changed", "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요.");
-        if (!Set.of("PROPOSED", "IN_REVIEW").contains(current.get("status")))
-            throw error("invalid_transition", "제출 또는 검토 중인 변경 제안만 거둘 수 있습니다.");
+            throw error("version_conflict", "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요.");
+        if (!Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status")))
+            throw error("invalid_transition", "제출, 검토 중 또는 반려된 변경 제안만 거둘 수 있습니다.");
         repository.withdraw(project, proposal, caller.accountId());
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
@@ -112,7 +112,7 @@ public class ProposalCommandService {
     private Snapshot resolve(CallerContext caller, long project, Long proposal, Input input) {
         long baseline = requiredId(input.baseBaselineId(), "base_baseline_id");
         if (projects.currentBaselineId(project) == null)
-            throw error("baseline_required", "최초 기준 설계를 생성한 뒤 변경 제안을 제출해 주세요.");
+            throw error("baseline_missing", "최초 기준 설계를 생성한 뒤 변경 제안을 제출해 주세요.");
         if (!projects.baselineBelongsToProject(project, baseline)) throw AccessErrors.notFound("proposal_baseline_missing");
         if (!Objects.equals(projects.currentBaselineId(project), baseline))
             throw error("baseline_conflict", "현재 기준 설계가 변경되었습니다. 최신 기준으로 제안을 다시 검토해 주세요.");

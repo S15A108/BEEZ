@@ -106,8 +106,8 @@ BEGIN
   IF OLD.status='WITHDRAWN' AND NEW IS DISTINCT FROM OLD THEN
     RAISE EXCEPTION '거둔 제안은 변경할 수 없습니다. 새 제안으로 제출해 주세요.' USING ERRCODE='check_violation';
   END IF;
-  IF NEW.status='WITHDRAWN' AND OLD.status NOT IN ('PROPOSED','IN_REVIEW','WITHDRAWN') THEN
-    RAISE EXCEPTION '제출 또는 검토 중인 제안만 거둘 수 있습니다.' USING ERRCODE='check_violation';
+  IF NEW.status='WITHDRAWN' AND OLD.status NOT IN ('PROPOSED','IN_REVIEW','REJECTED','WITHDRAWN') THEN
+    RAISE EXCEPTION '제출, 검토 중 또는 반려된 제안만 거둘 수 있습니다.' USING ERRCODE='check_violation';
   END IF;
   IF OLD.status='REJECTED' AND NEW.status='PROPOSED' AND NEW.revision_no<>OLD.revision_no+1 THEN
     RAISE EXCEPTION '재제출은 다음 리비전으로 저장해야 합니다.' USING ERRCODE='check_violation';

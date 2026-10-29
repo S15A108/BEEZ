@@ -99,7 +99,7 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         var history=queries.revisions(author,project.projectId(),id,null,20).items();
         assertThat(history).hasSize(2); assertThat(history.get(1).decisionReason()).isEqualTo("근거를 보완해 주세요.");
         reject(second);
-        error(() -> commands.resubmit(author,project.projectId(),id,next,"stale"),"proposal_changed");
+        error(() -> commands.resubmit(author,project.projectId(),id,next,"stale"),"version_conflict");
         assertThat(commands.resubmit(author,project.projectId(),id,resubmission(second,"세번째 보완"),"third").revision()).isEqualTo(3);
     }
 
@@ -321,11 +321,17 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         error(() -> commands.withdraw(CallerContext.human(member),project.projectId(),id,withdrawal(p),"other"),"forbidden");
         var foreign=fixtures().projectWithLeader();
         error(() -> commands.withdraw(CallerContext.human(foreign.leaderAccountId()),project.projectId(),id,withdrawal(p),"foreign"),"not_found");
-        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(2,p.snapshotHash()),"stale"),"proposal_changed");
-        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(1,"sha256:"+"0".repeat(64)),"hash"),"proposal_changed");
+        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(2,p.snapshotHash()),"stale"),"version_conflict");
+        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(1,"sha256:"+"0".repeat(64)),"hash"),"version_conflict");
         error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(0,p.snapshotHash()),"bad"),"validation_failed");
         reject(p);
-        error(() -> commands.withdraw(author,project.projectId(),id,withdrawal(p),"rejected"),"invalid_transition");
+        Proposal withdrawnAfterRejection=commands.withdraw(author,project.projectId(),id,withdrawal(p),"rejected");
+        assertThat(withdrawnAfterRejection.status()).isEqualTo("WITHDRAWN");
+        assertThat(withdrawnAfterRejection.revision()).isEqualTo(p.revision());
+        assertThat(withdrawnAfterRejection.snapshotHash()).isEqualTo(p.snapshotHash());
+        assertThat(queries.revisions(author,project.projectId(),id,null,20).items()).singleElement()
+                .satisfies(r -> assertThat(r.decision()).isEqualTo("REJECTED"));
+        error(() -> commands.resubmit(author,project.projectId(),id,resubmission(p,"거둔 뒤 보완"),"after-withdraw"),"proposal_locked");
         for(String status:List.of("APPROVED","PUBLISHED")) {
             Proposal decided=create(status);long decidedId=Long.parseLong(decided.id());
             jdbc.update("UPDATE change_proposal SET status=?,published_baseline_id=? WHERE id=?",
@@ -381,7 +387,7 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
 
     @Test void creationRequiresBaselineAndWithdrawalRestChecksOriginAndGroup() {
         var empty=fixtures().projectWithLeader();
-        error(() -> commands.create(CallerContext.human(empty.leaderAccountId()),empty.projectId(),input("변경"),"no-baseline"),"baseline_required");
+        error(() -> commands.create(CallerContext.human(empty.leaderAccountId()),empty.projectId(),input("변경"),"no-baseline"),"baseline_missing");
         Proposal p=create("http-withdraw");
         var client=client().login(project.leaderEmail(),AccessFixtures.PASSWORD);
         String path="/api/projects/"+project.projectId()+"/change-proposals";
@@ -434,7 +440,7 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
             assertThatThrownBy(() -> waiting.get().get(10,TimeUnit.SECONDS))
                     .isInstanceOfSatisfying(ExecutionException.class,e -> {
                         assertThat(e.getCause()).isInstanceOf(ApiException.class);
-                        assertThat(((ApiException)e.getCause()).getCode()).isEqualTo("proposal_changed");
+                        assertThat(((ApiException)e.getCause()).getCode()).isEqualTo("version_conflict");
                     });
         }
         Proposal current=queries.detail(author,project.projectId(),id,null).proposal();

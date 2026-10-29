@@ -7180,7 +7180,7 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 | 400 | `invalid_json` | JSON 역직렬화 오류 |
 | 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
 | 403 | `forbidden` | 다른 담당자가 올린 수정본 또는 제안의 변경 요청 |
-| 409 | `baseline_required` | 최초 baseline이 아직 없음 |
+| 409 | `baseline_missing` | 최초 baseline이 아직 없음 |
 | 409 | `baseline_conflict` | 현재 baseline 또는 기준 문서·항목 버전 불일치 |
 | 409 | `invalid_transition` | previous_proposal_id가 WITHDRAWN이 아님 |
 | 409 | `document_already_proposed` | 업로드 DRAFT가 다른 제안에 연결됨 |
@@ -7442,17 +7442,17 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 | 400 | `invalid_json` | JSON 역직렬화 오류 |
 | 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
 | 403 | `forbidden` | 다른 담당자가 올린 수정본 또는 제안의 변경 요청 |
-| 409 | `baseline_required` | 최초 baseline이 아직 없음 |
+| 409 | `baseline_missing` | 최초 baseline이 아직 없음 |
 | 409 | `baseline_conflict` | 현재 baseline 또는 기준 문서·항목 버전 불일치 |
 | 409 | `document_already_proposed` | 업로드 DRAFT가 다른 제안에 연결됨 |
 | 409 | `idempotency_conflict` | 같은 요청 키에 다른 입력 |
-| 409 | `proposal_changed` | 기대 리비전·해시 불일치 |
+| 409 | `version_conflict` | 기대 리비전·해시 불일치 |
 | 409 | `proposal_locked` | 반려 상태가 아니므로 변경 불가 |
 | 409 | `proposal_decision_missing` | 반려 결정 원본이 없음 |
 
 #### 처리 규칙
 
-- REJECTED만 재제출할 수 있다. PROPOSED·IN_REVIEW·APPROVED·PUBLISHED·WITHDRAWN은 편집 불가다. 같은 제안 계정의 활성 사람/에이전트 호출을 허용하며 실제 제출 토큰도 리비전에 보존한다.
+- REJECTED만 재제출할 수 있다. 재제출하지 않기로 하면 CHG-A15로 거둘 수 있다. PROPOSED·IN_REVIEW·APPROVED·PUBLISHED·WITHDRAWN은 편집 불가다. 같은 제안 계정의 활성 사람/에이전트 호출을 허용하며 실제 제출 토큰도 리비전에 보존한다.
 - 이전 제출·반려 결정은 변경하지 않는다. approval은 제안당 1건이 아니라 제출 리비전당 1건이다. 후속 승인 API는 검토한 revision/hash에 고정해야 한다.
 - 서버에 별도 편집 중 초안을 저장하지 않는다. 반려 후 보완한 최종 본문 또는 새 업로드 DRAFT를 PUT하면 새 불변 제출 리비전이 된다.
 - previous_proposal_id는 생성 때 정한 연결을 유지하며 PUT 입력에는 지정할 수 없다. 거둔 제안의 수정은 새 제안을 생성해야 한다.
@@ -7980,13 +7980,13 @@ HTTP `200`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `proposal_changed` | 제안 변경 |
+| 409 | `version_conflict` | 제안 변경 |
 | 409 | `invalid_transition` | 검토 시작 불가 상태 |
 
 ```json
 {
   "error": {
-    "code": "proposal_changed",
+    "code": "version_conflict",
     "message": "제안 변경"
   }
 }
@@ -8131,7 +8131,7 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 제안 기준과 현재 baseline 불일치 |
-| 409 | `proposal_changed` | 검토 뒤 제안 변경 |
+| 409 | `version_conflict` | 검토 뒤 제안 변경 |
 | 409 | `invalid_transition` | 반려 등 승인 불가 |
 | 500 | `internal` | 발행 트랜잭션 실패 |
 
@@ -8283,13 +8283,13 @@ HTTP `200`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `proposal_changed` | 경합 |
+| 409 | `version_conflict` | 경합 |
 | 409 | `invalid_transition` | 이미 처리 완료 |
 
 ```json
 {
   "error": {
-    "code": "proposal_changed",
+    "code": "version_conflict",
     "message": "경합"
   }
 }
@@ -8299,7 +8299,7 @@ HTTP `200`.
 
 - 반려 사유와 검토 이력을 보존한다.
 - 반려 후에는 같은 제안의 CHG-A04로 새 제출 리비전을 만든다. 이전 내용·반려 사유·결정은 리비전별로 보존하며 덮어쓰지 않는다.
-- (#218 수정안 요청 · 195 미구현) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채우고, 제안자는 CHG-A04로 최신 기준에 맞춰 재제출한다. 반려된 제안을 거두는 동작은 #218이 요청했으나 195의 CHG-A15는 PROPOSED/IN_REVIEW만 거둘 수 있다.
+- (#218 수정안 요청 · 195 미구현) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채우고, 제안자는 CHG-A04로 최신 기준에 맞춰 재제출한다. 재제출하지 않기로 하면 CHG-A15로 반려된 제안을 거둘 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8750,13 +8750,13 @@ HTTP `200`. `{ "proposal": ChangeProposal }` 래퍼로 반환한다(#218 계약)
 | 403 | `forbidden` | 제안 작성 계정이 아님 |
 | 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
 | 404 | `not_found` | 없는 제안·다른 프로젝트·현재 접근 불가 |
-| 409 | `proposal_changed` | 조회한 revision/hash가 현재와 다름 |
-| 409 | `invalid_transition` | 현재 상태가 PROPOSED/IN_REVIEW가 아님 |
+| 409 | `version_conflict` | 조회한 revision/hash가 현재와 다름 |
+| 409 | `invalid_transition` | 현재 상태가 PROPOSED·IN_REVIEW·REJECTED가 아님 |
 | 409 | `idempotency_conflict` | 동일 키에 다른 입력 |
 
 #### 처리 규칙
 
-- 프로젝트 잠금 후 작성자·현재 권한·기대 revision/hash·상태를 검사한다. 승인·반려·발행된 제안은 거둘 수 없다.
+- 프로젝트 잠금 후 작성자·현재 권한·기대 revision/hash·상태를 검사한다. 승인·발행된 제안은 거둘 수 없다. 반려(REJECTED)된 제안은 같은 번호로 재제출하지 않기로 할 때 거둘 수 있다.
 - 상태와 행위자/시각, 24시간 멱등 응답을 한 트랜잭션으로 저장한다. 동일 키·입력은 현재 권한을 확인한 뒤 최초 응답을 재사용한다. 다른 키로 이미 거둔 제안을 다시 거두면 invalid_transition이다.
 - 원문·리비전·문서 연결·기존 결정은 삭제하지 않고 baseline·작업 상태를 바꾸지 않는다. WITHDRAWN은 종결 상태이며 다시 작성하려면 새 CHG-A01 요청에 previous_proposal_id를 지정한다. 반려 후 같은 번호 재제출과 구분한다.
 - 이전 제안에 귀속된 업로드 DRAFT를 새 제안으로 이동하지 않는다. 새 수정본을 업로드하거나 본문을 명시적으로 입력한다.
