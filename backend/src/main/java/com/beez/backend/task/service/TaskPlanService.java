@@ -260,6 +260,12 @@ public class TaskPlanService {
     private TaskPlanRevision saveRevision(Task task, int revisionNo, PlanCommand plan, ResolvedRefs resolved,
                                           CallerContext caller) {
         String inputHash = hasher.hash(plan, resolved.versionByItem(), resolved.relationByItem());
+        // 저장 당시 기준 설계. 호출자가 프로젝트 행을 잠근 상태라 발행과 겹치지 않는다
+        Long baseBaselineId = null;
+        Optional<Long> currentBaseline = designLookup.currentBaselineId(task.getProjectId());
+        if (currentBaseline.isPresent()) {
+            baseBaselineId = currentBaseline.get();
+        }
         TaskPlanRevision revision = TaskPlanRevision.builder()
                 .taskId(task.getId())
                 .revisionNo(revisionNo)
@@ -276,6 +282,7 @@ public class TaskPlanService {
                 .createdByAccountId(caller.accountId())
                 .createdByTokenId(caller.agentTokenId())
                 .contextPacketId(plan.contextPacketId())
+                .baseBaselineId(baseBaselineId)
                 .build();
         revision = revisions.save(revision);
 
