@@ -50,12 +50,23 @@ CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez
 그래서 서비스를 먼저 막고(`mask`), 플러그인과 JCasC를 둔 뒤 처음 켭니다.
 
 > **검증 상태:** 2026-10-29 서버는 설치 → 마법사 계정 삭제 순서로 세웠고,
-> 아래 `mask` 순서는 아직 실제로 돌려 보지 않았습니다. 설치 중 masked
-> 서비스 때문에 `apt-get install jenkins`가 오류로 끝나면
-> `sudo systemctl unmask jenkins` 뒤 `sudo dpkg --configure -a`로 마무리하고,
-> 6단계 전에 마법사 계정이 생겼는지(`sudo ls /var/lib/jenkins/users`) 확인합니다.
-> 생겼으면 "주의"의 계정 삭제 명령으로 지웁니다. 처음 따라 해 본 사람이 결과를
-> 이 문단에 고쳐 적습니다.
+> 아래 `mask` 순서는 아직 실제로 돌려 보지 않았습니다. 패키지 설치
+> 스크립트(`jenkins.postinst`)는 서비스 시작 실패를 `|| true`로 무시하므로
+> masked 상태에서도 설치는 끝나야 합니다. 그래도 `apt-get install jenkins`가
+> 오류로 끝나면 아래처럼 마무리합니다.
+>
+> ```bash
+> sudo systemctl unmask jenkins
+> sudo dpkg --configure -a
+> sudo systemctl stop jenkins     # 바로 멈춘다
+> sudo ls /var/lib/jenkins/users  # 마법사 계정이 생겼는지 확인
+> ```
+>
+> **`dpkg --configure -a`가 Jenkins를 켤 수 있습니다.** 이때는 마법사가 꺼져
+> 있고 JCasC 플러그인은 아직 없어서 **보안이 전혀 없는 상태**로 뜹니다. 그래서
+> 바로 멈추고, 4단계(플러그인) 뒤 6단계에서 `restart`로 다시 켭니다. 마법사
+> 계정이 생겼으면 "주의"의 계정 삭제 명령으로 지웁니다. 처음 따라 해 본 사람이
+> 결과를 이 문단에 고쳐 적습니다.
 
 로컬 PC(Git Bash):
 
@@ -79,18 +90,37 @@ sudo install -m 644 /tmp/override.conf /etc/systemd/system/jenkins.service.d/ove
 ### 2. 관리자 비밀 파일
 
 비밀번호는 비밀번호 관리자에서 새로 만들어 붙여 넣습니다. 화면과 셸 기록에
-남지 않습니다.
+남지 않습니다. **영문·숫자와 `. _ ~ + = @ % -`만으로 20자 이상**으로
+만듭니다(아래 "비밀번호 문자 제한").
 
 ```bash
 sudo install -d -m 755 /etc/jenkins /etc/jenkins/casc
 read -rsp "Jenkins admin password: " P && echo && \
-  printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
-  sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && unset P
+  if [[ "$P" =~ ^[A-Za-z0-9._~+=@%-]{20,}$ ]]; then \
+    printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
+    sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && echo saved; \
+  else echo "허용 문자·길이가 아님. 저장하지 않음"; fi; unset P
 sudo install -m 644 /tmp/jenkins.yaml /etc/jenkins/casc/jenkins.yaml
 ```
 
 - `install … /dev/stdin`은 처음부터 `600 root:root`로 파일을 만듭니다. 만든
   뒤에 권한을 좁히는 방식과 달리 열려 있는 순간이 없습니다.
+- `[[ … =~ … ]]`는 허용 문자·길이가 아니면 파일을 쓰지 않습니다.
+
+### 비밀번호 문자 제한
+
+systemd는 `EnvironmentFile`을 읽을 때 값을 그대로 넘기지 않습니다.
+2026-10-29 이 서버에서 시험한 결과입니다.
+
+| 파일에 쓴 값 | Jenkins가 받는 값 |
+|---|---|
+| `ab\cd` | `abcd` (역슬래시가 사라짐) |
+| `  spaced  ` | `spaced` (앞뒤 공백이 잘림) |
+| `p$q`, `x"y`, `it's` | 그대로 |
+
+그래서 비밀번호에 역슬래시나 앞뒤 공백이 있으면 실제로 저장되는 비밀번호가
+입력과 달라집니다. 이스케이프 규칙을 맞추는 대신 문자를 제한합니다.
+영문·숫자만 써도 20자 이상이면 충분히 강합니다.
 - systemd가 root로 이 파일을 읽어 Jenkins에 환경변수로 넘기므로 jenkins
   사용자는 파일을 읽을 권한이 없어도 됩니다.
 
@@ -173,13 +203,28 @@ sudo find /var/www/beez/releases -type f -exec chmod 664 {} +
 ```bash
 sudo systemctl unmask jenkins
 sudo systemctl daemon-reload
-sudo systemctl enable --now jenkins
+sudo systemctl enable jenkins
+sudo systemctl restart jenkins
+sleep 30
 sudo journalctl -u jenkins --since "-2min" --no-pager | grep -E "SEVERE|Jenkins is fully up"
 rm /tmp/plugins.txt /tmp/jenkins.yaml /tmp/override.conf /tmp/jenkins-plugin-manager-2.15.0.jar
 ```
 
-`Jenkins is fully up and running`이 나오면 됩니다. `SEVERE`가 있으면 아래
-"주의"의 JCasC 항목을 봅니다.
+- `enable --now`가 아니라 `restart`로 켭니다. `enable --now`는 이미 돌고 있는
+  서비스를 다시 시작하지 않습니다. 설치 중 어떤 이유로 Jenkins가 먼저
+  켜졌다면 플러그인·JCasC 없이 뜬 프로세스가 그대로 남습니다. `restart`는
+  꺼져 있으면 켜고, 켜져 있으면 다시 시작해 새 설정을 반드시 읽게 합니다.
+- `Jenkins is fully up and running`이 나오면 됩니다. `SEVERE`가 있으면 아래
+  "주의"의 JCasC 항목을 봅니다.
+
+**7단계(외부 노출) 전에 접근 제어를 반드시 확인합니다.** 셋 중 하나라도
+다르면 HTTPS를 열지 않습니다.
+
+```bash
+curl -s -o /dev/null -w 'anon %{http_code}\n' http://127.0.0.1:8080/          # 403
+curl -s -o /dev/null -w 'signup %{http_code}\n' http://127.0.0.1:8080/signup   # 404
+sudo ls /var/lib/jenkins/users                                                # beezadmin_… 하나
+```
 
 ### 7. Nginx·HTTPS
 
@@ -232,22 +277,23 @@ JENKINS_HOME은 빌드 기록과 화면에서 넣은 자격 증명(-123의 GHCR 
 
 ### 백업
 
-서버:
+**서버에 백업 파일을 만들지 않고** 압축 결과를 ssh로 바로 로컬 PC에 받습니다.
+root가 `/tmp`에 파일을 만들면 기본 umask(022) 때문에 `644`로 생겨, 권한을
+좁히기 전까지 서버의 다른 사용자가 `master.key`가 든 파일을 읽을 수 있습니다
+(2026-10-29 확인).
+
+로컬 PC(Git Bash):
 
 ```bash
-sudo systemctl stop jenkins
-sudo tar --exclude=workspace --exclude=caches --exclude=.cache \
-  -czf /tmp/jenkins-home-$(date +%Y%m%d).tgz -C /var/lib jenkins
-sudo systemctl start jenkins
-sudo chown ubuntu:ubuntu /tmp/jenkins-home-*.tgz && chmod 600 /tmp/jenkins-home-*.tgz
+mkdir -p ~/beez-backup && chmod 700 ~/beez-backup
+ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=caches --exclude=.cache -czf - -C /var/lib jenkins; sudo systemctl start jenkins' \
+  > ~/beez-backup/jenkins-home-$(date +%Y%m%d).tgz
+tar -tzf ~/beez-backup/jenkins-home-$(date +%Y%m%d).tgz | head -3    # jenkins/ … 이 보이면 정상
 ```
 
-로컬 PC로 가져온 뒤 서버의 파일은 지웁니다.
-
-```bash
-scp beez:/tmp/jenkins-home-*.tgz ~/beez-backup/ && ssh beez 'rm /tmp/jenkins-home-*.tgz'
-```
-
+- `tar -czf -`는 압축 결과를 파일 대신 표준 출력으로 내보내고, ssh가 그대로
+  로컬 파일로 받습니다. 서버 디스크에는 아무것도 남지 않습니다.
+- `tar` 뒤를 `;`로 이어 백업이 실패해도 Jenkins는 다시 켭니다.
 - 멈추고 백업해야 설정 파일이 쓰이는 도중에 잘리지 않습니다. 배포 잡이 돌고
   있지 않은 때에 합니다.
 - `workspace`·`caches`는 다시 만들 수 있어 뺍니다. 2026-10-29 기준 약
@@ -257,13 +303,17 @@ scp beez:/tmp/jenkins-home-*.tgz ~/beez-backup/ && ssh beez 'rm /tmp/jenkins-hom
 
 ### 복원
 
-"새 서버에서 처음부터"의 1~5단계를 마친 뒤, 6단계(처음 켜기) 대신:
+"새 서버에서 처음부터"의 1~5단계를 마친 뒤, 6단계(처음 켜기) 대신 로컬 PC에서
+백업을 ssh로 바로 풀어 넣습니다. 서버 `/tmp`에 올리지 않는 이유는 백업과
+같습니다.
 
 ```bash
-sudo tar -xzf /tmp/jenkins-home-YYYYMMDD.tgz -C /var/lib
-sudo chown -R jenkins:jenkins /var/lib/jenkins
-sudo systemctl unmask jenkins && sudo systemctl daemon-reload && sudo systemctl enable --now jenkins
+ssh beez 'sudo systemctl stop jenkins 2>/dev/null; sudo tar -xzf - -C /var/lib && sudo chown -R jenkins:jenkins /var/lib/jenkins' \
+  < ~/beez-backup/jenkins-home-YYYYMMDD.tgz
+ssh beez 'sudo systemctl unmask jenkins && sudo systemctl daemon-reload && sudo systemctl enable jenkins && sudo systemctl restart jenkins'
 ```
+
+켠 뒤에는 6단계의 접근 제어 확인을 똑같이 합니다.
 
 JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설정은 저장소 값으로
 맞춰집니다.
@@ -272,10 +322,13 @@ JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설�
 
 ```bash
 read -rsp "new password: " P && echo && \
-  printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
-  sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && unset P
-sudo systemctl restart jenkins
+  if [[ "$P" =~ ^[A-Za-z0-9._~+=@%-]{20,}$ ]]; then \
+    printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
+    sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && sudo systemctl restart jenkins && echo changed; \
+  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P
 ```
+
+허용 문자는 2단계의 "비밀번호 문자 제한"과 같습니다.
 
 JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화면에서 바꾼
 비밀번호는 재시작하면 이 파일 값으로 돌아갑니다.
