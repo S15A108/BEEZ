@@ -217,7 +217,15 @@ public class RelationStorageService {
         if (request.commands().isEmpty() && request.recheckItemIds().isEmpty()) {
             throw invalid("바꿀 관계가 없습니다");
         }
-        if (!candidatesOnly && request.baselineId() == null) {
+        // 기준이 필요한 것은 확정·유지(양 끝 버전을 이력에 남김)와 재확인 표시뿐이다.
+        // 해제만 하는 호출은 기준 없이도 된다 — 관계는 있지만 기준이 없는 프로젝트에서도 해제할 수 있어야 한다
+        boolean needsBaseline = !request.recheckItemIds().isEmpty();
+        for (RelationCommand command : request.commands()) {
+            if (command != null && (command.action() == RelationAction.CONFIRM || command.action() == RelationAction.KEEP)) {
+                needsBaseline = true;
+            }
+        }
+        if (needsBaseline && request.baselineId() == null) {
             throw invalid("관계를 확정·유지하거나 재확인 표시하려면 유효 기준(baseline_id)이 필요합니다");
         }
         // 유효 기준은 이 프로젝트의 가장 최근 기준이어야 한다 = 지금 현재 기준이거나, 이번 발행에서 막 만든 기준.

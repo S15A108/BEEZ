@@ -341,6 +341,22 @@ class RelationIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void release_doesNotNeedBaseline() {
+        apply(leaderSession, commands(cmd(RelationAction.CONFIRM, api01, pol01)));
+        // 해제만 하는 호출은 기준 없이 된다 (기준이 없는 프로젝트에서도 해제할 수 있게). 이력에는 기준·버전이 비어 있다
+        apply(leaderSession, new RelationChangeRequest(null, null, List.of(), null,
+                List.of(cmd(RelationAction.RELEASE, api01, pol01))));
+        Map<String, Object> h = api.jdbc.sql("select * from design_item_dependency_history where action = 'RELEASE'")
+                .query().singleRow();
+        assertThat(h.get("baseline_id")).isNull();
+        assertThat(h.get("from_version_id")).isNull();
+        assertThat(revision()).isEqualTo(2);
+        // 확정은 여전히 기준이 필요하다
+        assertDenied(() -> apply(leaderSession, new RelationChangeRequest(null, null, List.of(), null,
+                List.of(cmd(RelationAction.CONFIRM, api01, pol01)))), HttpStatus.BAD_REQUEST, "validation_failed");
+    }
+
+    @Test
     void dependencyHistory_isImmutable() {
         apply(leaderSession, commands(cmd(RelationAction.CONFIRM, api01, pol01)));
         assertThatThrownBy(() -> api.jdbc.sql("update design_item_dependency_history set reason = 'x'").update())

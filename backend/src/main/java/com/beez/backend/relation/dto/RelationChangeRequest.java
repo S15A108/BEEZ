@@ -7,7 +7,7 @@ import java.util.List;
  * 처리 순서: ① recheckItemIds 에 걸린 확정 관계를 재확인 필요로 표시 → ② commands 를 순서대로 적용.
  * 그래서 같은 호출에서 재확인 필요로 바뀐 관계를 바로 KEEP·RELEASE 할 수 있다.
  *
- * @param baselineId       유효 기준. 확정·유지·재확인 표시가 있으면 필수. 그 기준의 항목 버전을 이력에 남긴다.
+ * @param baselineId       유효 기준. 확정·유지·재확인 표시가 있으면 필수, 해제·후보만이면 생략 가능. 그 기준의 항목 버전을 이력에 남긴다.
  *                         이 프로젝트의 가장 최근 기준이어야 한다 (현재 기준, 또는 발행 중이면 이번에 만든 기준)
  * @param changeProposalId 관련 변경 제안 (없으면 null, 최초 발행 등)
  * @param recheckItemIds   이번 변경으로 내용이 바뀌거나 빠진 항목. 이 항목이 끝에 걸린 확정 관계를 재확인 필요로 표시한다
