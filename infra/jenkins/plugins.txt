@@ -4,6 +4,8 @@
 
 # 보안·계정 설정을 casc/jenkins.yaml 로 관리
 configuration-as-code:2140.v00e72b_047734
+# 계정·잡별 권한 (S15P31A108-123). github-actions 계정에 배포 잡 실행만 준다
+matrix-auth:3.3
 
 # 배포 잡 (S15P31A108-123). 선언형 파이프라인(pipeline-model-definition)·묶음(workflow-aggregator)은 의존이 많아 쓰지 않는다
 # 잡 정의를 JCasC 의 jobs: 로 코드화

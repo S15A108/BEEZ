@@ -94,3 +94,38 @@ jobs:
 
       - name: Summary
         run: echo "pushed \`${{ steps.image.outputs.ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # 세 이미지가 다 올라간 뒤 Jenkins 배포 잡에 이 SHA 배포를 요청한다.
+  # 요청만 하고 배포 결과를 기다리지 않는다 — 결과는 Jenkins(beez-deploy)에서 본다.
+  # 기다리며 상태를 반복 조회하면 Jenkins 앞 Nginx 의 인증 요청 제한(분당 10회)에 걸린다. 요청은 배포 1회당 1번이다.
+  deploy:
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    # Environments 'dev' 의 시크릿을 쓴다. 이 환경은 dev 브랜치에서만 쓸 수 있게 묶어 둔다 (docs/infra/cd.md)
+    environment:
+      name: dev
+      url: https://dev.beez.ai.kr
+    steps:
+      - name: Request Jenkins deploy
+        env:
+          # github-actions 계정의 API 토큰. 이 계정은 beez-deploy 잡 실행 권한만 있다
+          JENKINS_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+        run: |
+          # API 토큰으로 부르면 CSRF 토큰(crumb)이 필요 없다. 접수되면 201 이 온다
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -u "github-actions:${JENKINS_TOKEN}" \
+            --data-urlencode "GIT_SHA=${GITHUB_SHA}" \
+            --data-urlencode "DEPLOY_ENV=dev" \
+            --data-urlencode "TARGET=local" \
+            https://jenkins.beez.ai.kr/job/beez-deploy/buildWithParameters)
+          echo "Jenkins 응답: ${code}"
+          if [ "${code}" != "201" ]; then
+            echo "::error::Jenkins 배포 요청 실패(HTTP ${code}). 401=토큰, 403/404=권한, 429=요청 제한"
+            exit 1
+          fi
+          {
+            echo "Jenkins 배포 요청 접수: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "결과: https://jenkins.beez.ai.kr/job/beez-deploy/"
+          } >> "$GITHUB_STEP_SUMMARY"
