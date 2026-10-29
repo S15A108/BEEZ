@@ -18,7 +18,7 @@ public final class SeaweedTestContainer extends GenericContainer<SeaweedTestCont
     public static final String SECRET_KEY = "fixture-secret";
 
     private static SeaweedTestContainer shared;
-    private static RuntimeException sharedStartFailure;
+    private static Throwable sharedStartFailure;
 
     public SeaweedTestContainer() {
         super(DockerImageName.parse("chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8"));
@@ -34,8 +34,10 @@ public final class SeaweedTestContainer extends GenericContainer<SeaweedTestCont
      * in IntegrationTestSupport. The bucket is shared, so tests compare stored-object counts against their own
      * starting count only.
      * <p>
-     * If the first start fails, the container is stopped and the same failure is rethrown to every later caller,
-     * so one broken start does not turn into a fresh container and another full wait per test class.
+     * If the first start fails (any Throwable, Errors included), the container is stopped and the same failure is
+     * rethrown to every later caller, so one broken start does not turn into a fresh container and another full wait
+     * per test class. A failure while stopping is attached as suppressed, so the original cause is never lost and
+     * the failure is still recorded.
      */
     public static synchronized SeaweedTestContainer shared() {
         if (sharedStartFailure != null) {
@@ -46,9 +48,14 @@ public final class SeaweedTestContainer extends GenericContainer<SeaweedTestCont
             try {
                 container.start();
                 container.awaitBucket();
-            } catch (RuntimeException e) {
-                container.stop();
+            } catch (Throwable e) {
+                try {
+                    container.stop();
+                } catch (Throwable stopFailure) {
+                    e.addSuppressed(stopFailure);
+                }
                 sharedStartFailure = e;
+                // Precise rethrow: the try block only throws unchecked types, so this needs no throws clause.
                 throw e;
             }
             shared = container;
