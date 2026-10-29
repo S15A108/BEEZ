@@ -46,20 +46,23 @@ public class DesignDependencyQueryService {
         requireItem(projectId, itemId);
         long revision = relations.currentRevision(projectId);
 
+        // 확정·재확인 필요·후보를 한 번의 조회(한 시점)로 읽어 나눈다. 두 번 읽으면 그 사이 후보가 확정될 때
+        // 첫 조회(확정 목록)에도, 두 번째 조회(후보 목록)에도 없는 관계가 생길 수 있다
         List<DesignDependencyResponse> items = new ArrayList<>();
-        for (DependencyRow row : relations.dependenciesOf(projectId, itemId,
-                List.of(RelationStorageService.CONFIRMED, RelationStorageService.NEEDS_RECHECK))) {
-            items.add(new DesignDependencyResponse(Ids.str(row.fromItemId()), Ids.str(row.toItemId()), DEPENDS_ON,
-                    row.origin(), row.status(), row.reason(), Ids.str(row.confirmedBy()), row.confirmedAt()));
-        }
         List<DependencyCandidateResponse> candidates = new ArrayList<>();
-        for (DependencyRow row : relations.dependenciesOf(projectId, itemId, List.of(RelationStorageService.CANDIDATE))) {
-            String reason = row.reason();
-            if (reason == null) {
-                reason = "";
+        for (DependencyRow row : relations.dependenciesOf(projectId, itemId, List.of(RelationStorageService.CONFIRMED,
+                RelationStorageService.NEEDS_RECHECK, RelationStorageService.CANDIDATE))) {
+            if (RelationStorageService.CANDIDATE.equals(row.status())) {
+                String reason = row.reason();
+                if (reason == null) {
+                    reason = "";
+                }
+                candidates.add(new DependencyCandidateResponse(Ids.str(row.fromItemId()), Ids.str(row.toItemId()),
+                        reason, false));
+            } else {
+                items.add(new DesignDependencyResponse(Ids.str(row.fromItemId()), Ids.str(row.toItemId()), DEPENDS_ON,
+                        row.origin(), row.status(), row.reason(), Ids.str(row.confirmedBy()), row.confirmedAt()));
             }
-            candidates.add(new DependencyCandidateResponse(Ids.str(row.fromItemId()), Ids.str(row.toItemId()), reason,
-                    false));
         }
         return new DesignDependenciesResponse(revision, items, candidates);
     }

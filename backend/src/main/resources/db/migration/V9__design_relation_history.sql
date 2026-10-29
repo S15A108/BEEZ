@@ -1,7 +1,8 @@
 -- S15P31A108-167 관계 조회 API: 설계 항목 의존관계(design_item_dependency)에 상태·근거를 두고,
 -- 바뀔 때마다 이력을 남기며, 확정 관계 집합이 바뀔 때마다 프로젝트별 번호(관계 집합 리비전)를 올린다.
 -- V2 의 표는 항목 쌍마다 현재 값 한 줄뿐이라 과거 근거·수정 이력과 "재확인 필요"를 남길 수 없다 (#40 3.5절 최소 항목).
--- 이 표를 쓰는 코드는 아직 없어 행이 없다. 혹시 있는 행은 확정 근거가 없으므로 재확인 필요(또는 후보)로 둔다.
+-- 이 표를 쓰는 코드는 아직 없어 행이 없다. 혹시 있는 행은 당시 기준·항목 버전·근거를 복원할 수 없으므로
+-- 확인자·시각이 있어도 확정으로 보지 않고 모두 재확인 필요(AI 후보는 후보)로 둔다. 팀장이 유지(KEEP)하면 그때 근거가 남는다.
 -- 번호(V9)는 머지 직전 dev 기준으로 다시 확인한다.
 
 ------------------------------------------------------------------------
@@ -15,9 +16,7 @@ ALTER TABLE design_item_dependency
   ADD COLUMN reason TEXT;
 
 UPDATE design_item_dependency SET status = 'CANDIDATE' WHERE origin = 'AI_CANDIDATE';
-UPDATE design_item_dependency SET status = 'CONFIRMED'
- WHERE origin = 'EXPLICIT' AND confirmed_by IS NOT NULL AND confirmed_at IS NOT NULL;
-UPDATE design_item_dependency SET status = 'NEEDS_RECHECK' WHERE status IS NULL;
+UPDATE design_item_dependency SET status = 'NEEDS_RECHECK' WHERE origin = 'EXPLICIT';
 
 ALTER TABLE design_item_dependency
   ALTER COLUMN status SET NOT NULL,
@@ -41,6 +40,9 @@ CREATE TABLE design_relation_set (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 위에서 재확인 필요가 된 관계가 있는 프로젝트는 집합이 이미 있으므로 1 에서 시작한다 (0 = 관계 변경이 없었음과 구분)
+INSERT INTO design_relation_set (project_id, revision)
+SELECT DISTINCT project_id, 1 FROM design_item_dependency WHERE origin = 'EXPLICIT';
 
 ------------------------------------------------------------------------
 -- 3) 관계 이력 (불변). 한 행 = 한 쌍의 한 번 변경.

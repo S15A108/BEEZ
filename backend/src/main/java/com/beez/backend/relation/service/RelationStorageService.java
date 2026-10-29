@@ -5,6 +5,7 @@ import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.relation.dto.RelationAction;
 import com.beez.backend.relation.dto.RelationChange;
 import com.beez.backend.relation.dto.RelationChangeRequest;
@@ -43,9 +44,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>오류 (호출한 API 의 응답이 된다)
  * <ul>
- *   <li>400 validation_failed — 기준·변경 제안·항목이 이 프로젝트 것이 아님, 같은 항목끼리, 같은 쌍 중복, 근거 없음·2,000자 초과,
+ *   <li>400 validation_failed — 기준이 이 프로젝트의 가장 최근 기준이 아님, 변경 제안·항목이 이 프로젝트 것이 아님, 같은 항목끼리, 같은 쌍 중복, 근거 없음·2,000자 초과,
  *       확정·유지하려는 항목이 유효 기준에 없음, 필요한 기준 없음</li>
- *   <li>400 invalid_transition — 지금 상태에서 할 수 없는 변경 (예: 이미 확정된 관계를 다시 확정, 재확인 필요가 아닌 관계를 유지)</li>
+ *   <li>400 invalid_transition — 지금 상태에서 할 수 없는 변경 (예: 이미 확정된 관계를 다시 확정, 재확인 필요가 아닌 관계를 유지,
+ *       팀장이 해제한 관계를 후보로 되돌림)</li>
  *   <li>401·403·404 — {@link ProjectAccessChecker} 규칙 그대로</li>
  * </ul>
  */
@@ -65,10 +67,13 @@ public class RelationStorageService {
 
     private final ProjectAccessChecker access;
     private final RelationRepository relations;
+    private final DesignProjectRepository projects;
 
-    public RelationStorageService(ProjectAccessChecker access, RelationRepository relations) {
+    public RelationStorageService(ProjectAccessChecker access, RelationRepository relations,
+                                  DesignProjectRepository projects) {
         this.access = access;
         this.relations = relations;
+        this.projects = projects;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -145,7 +150,8 @@ public class RelationStorageService {
                         command.reason(), actor));
                 setChanged = true;
             } else if (action == RelationAction.ADD_CANDIDATE) {
-                requireState(command, status, null, RELEASED, REJECTED);
+                // 사람이 해제한 관계(RELEASED)는 후보로 되돌리지 않는다. 다시 쓰려면 팀장이 CONFIRM 한다
+                requireState(command, status, null, REJECTED);
                 relations.upsert(projectId, from, to, AI_CANDIDATE, CANDIDATE, command.reason(), Confirmer.clear());
                 pending.add(history(projectId, from, to, "ADD_CANDIDATE", AI_CANDIDATE, CANDIDATE, request, versions,
                         command.reason(), actor));
@@ -191,10 +197,11 @@ public class RelationStorageService {
         } else {
             actor = access.requireHumanLeader(caller, projectId);
         }
-        if (!relations.lockActiveProject(projectId)) {
+        // 설계 항목 발행과 같은 잠금·역할 조회를 쓴다 (DesignProjectRepository) — 두 곳이 어긋나지 않게
+        if (!projects.lockActiveProject(projectId)) {
             throw AccessErrors.notFound("relation_project_missing project=" + projectId);
         }
-        Optional<String> role = relations.currentRole(projectId, actor.accountId());
+        Optional<String> role = projects.findCurrentRole(projectId, actor.accountId());
         if (role.isEmpty()) {
             throw AccessErrors.notFound("relation_membership_changed project=" + projectId);
         }
@@ -213,8 +220,14 @@ public class RelationStorageService {
         if (!candidatesOnly && request.baselineId() == null) {
             throw invalid("관계를 확정·유지하거나 재확인 표시하려면 유효 기준(baseline_id)이 필요합니다");
         }
-        if (request.baselineId() != null && !relations.baselineInProject(request.baselineId(), projectId)) {
-            throw invalid("baseline_id 가 이 프로젝트의 기준 설계가 아닙니다: " + request.baselineId());
+        // 유효 기준은 이 프로젝트의 가장 최근 기준이어야 한다 = 지금 현재 기준이거나, 이번 발행에서 막 만든 기준.
+        // 지난 기준을 넘기면 오래된 항목 버전을 근거로 관계를 다시 확정하게 되므로 받지 않는다 (프로젝트 잠금 안에서 읽는다)
+        if (request.baselineId() != null) {
+            Optional<Long> latest = relations.latestBaselineId(projectId);
+            if (latest.isEmpty() || !latest.get().equals(request.baselineId())) {
+                throw invalid("baseline_id 는 이 프로젝트의 현재 기준이거나 이번 발행에서 만든 기준이어야 합니다: "
+                        + request.baselineId());
+            }
         }
         if (request.changeProposalId() != null
                 && !relations.changeProposalInProject(request.changeProposalId(), projectId)) {

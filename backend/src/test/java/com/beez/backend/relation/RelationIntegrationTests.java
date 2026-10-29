@@ -204,11 +204,21 @@ class RelationIntegrationTests extends IntegrationTestSupport {
         assertDenied(() -> apply(leaderSession, commands(cmd(RelationAction.REJECT_CANDIDATE, api02, api01))),
                 HttpStatus.BAD_REQUEST, "invalid_transition");
 
-        // 해제한 관계를 다시 후보로 올리면 예전 확인자·시각은 지운다 (후보를 확정 근거로 오해하지 않게)
+        // 팀장이 해제한 관계는 후보로 되돌릴 수 없다 (AI 가 같은 관계를 계속 다시 올리지 않게). 해제 상태와 확인자는 그대로
         apply(leaderSession, commands(cmd(RelationAction.RELEASE, api02, api01)));
-        assertThat(count("select count(*) from design_item_dependency where status = 'RELEASED' and confirmed_by is not null"))
+        assertDenied(() -> apply(memberSession, commands(cmd(RelationAction.ADD_CANDIDATE, api02, api01))),
+                HttpStatus.BAD_REQUEST, "invalid_transition");
+        assertThat(count("select count(*) from design_item_dependency where status = 'RELEASED' and confirmed_by = " + leader))
                 .isEqualTo(1);
-        apply(memberSession, commands(cmd(RelationAction.ADD_CANDIDATE, api02, api01)));
+        // 다시 쓰려면 팀장이 직접 확정한다
+        apply(leaderSession, commands(cmd(RelationAction.CONFIRM, api02, api01)));
+
+        // 거절한 후보는 다시 후보가 될 수 있고, 후보에는 확인자·시각이 없다
+        Long pol02 = api.jdbc.sql("insert into design_item (project_id, key, kind) values (:p, 'POL-02', 'POLICY') returning id")
+                .param("p", projectId).query(Long.class).single();
+        apply(memberSession, commands(cmd(RelationAction.ADD_CANDIDATE, api01, pol02)));
+        apply(leaderSession, commands(cmd(RelationAction.REJECT_CANDIDATE, api01, pol02)));
+        apply(memberSession, commands(cmd(RelationAction.ADD_CANDIDATE, api01, pol02)));
         assertThat(count("select count(*) from design_item_dependency where status = 'CANDIDATE'"
                 + " and confirmed_by is null and confirmed_at is null")).isEqualTo(1);
     }
@@ -307,6 +317,27 @@ class RelationIntegrationTests extends IntegrationTestSupport {
         assertDenied(() -> apply(leaderSession, new RelationChangeRequest(999999L, null, List.of(), null,
                 List.of(cmd(RelationAction.CONFIRM, api02, pol01)))), HttpStatus.BAD_REQUEST, "validation_failed");
         assertThat(count("select count(*) from design_item_dependency")).isEqualTo(1);
+    }
+
+    @Test
+    void baseline_mustBeTheLatestOne_currentOrJustCreatedByThisPublish() {
+        Long api01v1 = api.currentVersionId("API-01");
+        Long pol01v1 = api.currentVersionId("POL-01");
+        // 발행 중: 새 기준 행은 만들었지만 아직 현재 기준으로 바꾸기 전 → 가장 최근 기준이므로 받는다
+        Long baseline2 = api.jdbc.sql("""
+                        insert into baseline (project_id, version_no, published_by) values (:p, 2, :a) returning id
+                        """).param("p", projectId).param("a", leader).query(Long.class).single();
+        for (Map.Entry<Long, Long> e : Map.of(api01, api01v1, pol01, pol01v1).entrySet()) {
+            api.jdbc.sql("insert into baseline_item (baseline_id, project_id, design_item_id, design_item_version_id) values (:b, :p, :i, :v)")
+                    .param("b", baseline2).param("p", projectId).param("i", e.getKey()).param("v", e.getValue()).update();
+        }
+        // 지난 기준(1)으로는 확정할 수 없다 — 오래된 항목 버전을 근거로 남기게 된다
+        assertDenied(() -> apply(leaderSession, commands(cmd(RelationAction.CONFIRM, api01, pol01))),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+        apply(leaderSession, new RelationChangeRequest(baseline2, null, List.of(), null,
+                List.of(cmd(RelationAction.CONFIRM, api01, pol01))));
+        Map<String, Object> h = api.jdbc.sql("select * from design_item_dependency_history").query().singleRow();
+        assertThat(((Number) h.get("baseline_id")).longValue()).isEqualTo(baseline2);
     }
 
     @Test

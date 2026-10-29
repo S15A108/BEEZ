@@ -28,24 +28,10 @@ public class RelationRepository {
 
     // ---- 확인용 조회 ----
 
-    /** 프로젝트 행 잠금 (SELECT … FOR UPDATE). 보관된 프로젝트·없는 프로젝트면 false */
-    public boolean lockActiveProject(long projectId) {
-        return jdbc.sql("select id from project where id = :p and archived_at is null for update")
-                .param("p", projectId).query(Long.class).optional().isPresent();
-    }
-
-    /** 잠금 뒤 다시 읽는 현재 역할. JPA 1차 캐시가 아니라 DB 에서 직접 읽는다 */
-    public Optional<String> currentRole(long projectId, long accountId) {
-        return jdbc.sql("""
-                        select m.role from project_member m join account a on a.id = m.account_id
-                         where m.project_id = :p and m.account_id = :a and m.active = true and a.deleted_at is null
-                        """)
-                .param("p", projectId).param("a", accountId).query(String.class).optional();
-    }
-
-    public boolean baselineInProject(long baselineId, long projectId) {
-        return jdbc.sql("select id from baseline where id = :b and project_id = :p")
-                .param("b", baselineId).param("p", projectId).query(Long.class).optional().isPresent();
+    /** 프로젝트의 가장 최근 기준 (버전 번호가 가장 큰 것). 발행 중이면 아직 현재 기준이 아닌 새 기준이다 */
+    public Optional<Long> latestBaselineId(long projectId) {
+        return jdbc.sql("select id from baseline where project_id = :p order by version_no desc limit 1")
+                .param("p", projectId).query(Long.class).optional();
     }
 
     public boolean changeProposalInProject(long changeProposalId, long projectId) {

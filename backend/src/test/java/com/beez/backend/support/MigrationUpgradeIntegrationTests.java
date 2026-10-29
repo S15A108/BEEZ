@@ -76,7 +76,10 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
         }
     }
 
-    /** V9: 기존 의존관계 행에 상태를 채운다. 확인자·시각이 있는 명시 관계만 확정, 없으면 재확인 필요, AI 후보는 후보 */
+    /**
+     * V9: 기존 의존관계 행에 상태를 채운다. 당시 기준·버전·근거를 복원할 수 없으므로 명시 관계는 확인자가 있어도 재확인 필요,
+     * AI 후보는 후보. 명시 관계가 있는 프로젝트의 관계 집합 리비전은 1 에서 시작한다
+     */
     @Test
     void v9_fillsDependencyStatus_fromExistingConfirmation() throws Exception {
         String db = "upgrade_v9_" + System.nanoTime();
@@ -116,11 +119,15 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
                          order by b.key
                         """);
                 assertThat(rs.next()).isTrue();
-                assertThat(rs.getString(2)).isEqualTo("CONFIRMED");      // A→B
+                assertThat(rs.getString(2)).isEqualTo("NEEDS_RECHECK");  // A→B 확인자는 있지만 근거 복원 불가
                 assertThat(rs.next()).isTrue();
                 assertThat(rs.getString(2)).isEqualTo("NEEDS_RECHECK");  // A→C 확정 근거 없음
                 assertThat(rs.next()).isTrue();
                 assertThat(rs.getString(2)).isEqualTo("CANDIDATE");      // A→D
+                ResultSet set = st.executeQuery("select revision from design_relation_set");
+                assertThat(set.next()).isTrue();
+                assertThat(set.getLong(1)).isEqualTo(1);
+                assertThat(set.next()).isFalse();
                 ResultSet trg = st.executeQuery("select tgenabled from pg_trigger where tgname = 'trg_dependency_history_immutable'");
                 assertThat(trg.next()).isTrue();
                 assertThat(trg.getString(1)).isEqualTo("O");
