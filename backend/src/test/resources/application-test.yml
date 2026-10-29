@@ -6,6 +6,8 @@ spring:
 
 # ai 서버는 닫힌 포트로 두어 ai_reachable=false 경로를 검증한다.
 beez:
+  validation:
+    worker-enabled: false
   document:
     worker-enabled: false
     object-storage:

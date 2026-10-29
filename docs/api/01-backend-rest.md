@@ -9204,6 +9204,8 @@ HTTP `200`.
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
+| `diagnostics` | `object` | N | **184번 제안(협의 필요)**: 현재 실패 attempt의 부분 분석 결과. `analysis`, `search_complete`, `retrieval_coverage` 포함. 진단용이며 `findings`나 최종 판정이 아님 |
+| `analysis_scope` | `object` | N | **184번 제안(협의 필요)**: PASS에서 검사한 키와 검색 범위(`UNKNOWN`)를 표시. 전체 프로젝트에 영향이 없다는 보장은 아님 |
 
 ```json
 {
