@@ -1,0 +1,32 @@
+// BEEZ 배포 잡 파이프라인 (S15P31A108-123).
+//
+// Jenkins 잡 beez-deploy 가 이 파일을 "배포할 SHA 그 커밋"에서 읽는다 (잡 정의: infra/jenkins/casc/jenkins.yaml).
+// 그래서 이 파일·배포 스크립트·compose 파일이 이미지와 같은 커밋에서 온다.
+// 배포 로직은 infra/deploy/deploy.sh 에 두고, 여기서는 확인과 호출만 한다 (Jenkins 를 바꿔도 스크립트는 그대로).
+//
+// 파라미터(잡 정의에 있음): GIT_SHA(40자) · DEPLOY_ENV(dev) · TARGET(local)
+// 플러그인을 적게 쓰려고 선언형(pipeline { }) 대신 스크립트형(node { })으로 쓴다.
+
+node {
+    stage('Checkout') {
+        // 잡이 Jenkinsfile 을 읽은 그 커밋을 작업 폴더에 받는다
+        checkout scm
+        def head = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+        if (head != params.GIT_SHA) {
+            error("체크아웃한 커밋(${head})이 GIT_SHA(${params.GIT_SHA})와 다르다. 40자 SHA 를 넣었는지 확인한다")
+        }
+        currentBuild.displayName = "#${env.BUILD_NUMBER} ${head.substring(0, 7)} ${params.DEPLOY_ENV}"
+    }
+
+    stage('Deploy') {
+        // 타깃: 지금은 이 서버(local)만. 다른 서버(ssh)는 운영 환경을 정할 때(S15P31A108-73) 추가한다
+        if (params.TARGET != 'local') {
+            error("아직 지원하지 않는 타깃: ${params.TARGET}")
+        }
+        // 첫 배포는 이미지 받기·DB 초기화로 수 분 걸린다. 멈춘 배포가 잡을 붙잡지 않게 상한을 둔다
+        timeout(time: 15, unit: 'MINUTES') {
+            // 작은따옴표: 값을 Groovy 가 아니라 셸 환경변수로 넘긴다 (파라미터가 명령으로 해석되지 않게)
+            sh 'bash infra/deploy/deploy.sh "$GIT_SHA" "$DEPLOY_ENV"'
+        }
+    }
+}

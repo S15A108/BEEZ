@@ -1,6 +1,20 @@
 # Jenkins 플러그인 목록 (S15P31A108-126). jenkins-plugin-manager 로 설치한다 — 설치 절차는 docs/infra/jenkins.md.
 # 직접 쓰는 것만 적고 버전을 고정한다. 의존 플러그인은 도구가 이 코어 버전에 맞는 것을 함께 받는다.
-# 배포 잡용 플러그인(파이프라인 등)은 S15P31A108-123 에서 추가한다.
+# 버전은 코어 2.580.2 업데이트 센터 기준, 활성 보안 경고 없음 (2026-10-29).
 
 # 보안·계정 설정을 casc/jenkins.yaml 로 관리
 configuration-as-code:2140.v00e72b_047734
+
+# 배포 잡 (S15P31A108-123). 선언형 파이프라인(pipeline-model-definition)·묶음(workflow-aggregator)은 의존이 많아 쓰지 않는다
+# 잡 정의를 JCasC 의 jobs: 로 코드화
+job-dsl:3732.v9a_c49a_61a_313
+# 파이프라인 잡 종류
+workflow-job:1622.vc41c189cb_e5f
+# Jenkinsfile 실행, 저장소에서 Jenkinsfile 읽기
+workflow-cps:4395.v738456a_5da_6b_
+# node·sh 단계
+workflow-durable-task-step:1479.v56e587f413a_7
+# timeout·error 단계
+workflow-basic-steps:1129.v60e3c7e6654d
+# 공개 저장소 체크아웃(자격 증명 없음)
+git:5.11.0
