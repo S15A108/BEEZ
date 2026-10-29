@@ -152,22 +152,31 @@ public class ContextLookup {
                 .list();
     }
 
-    /** 후속 판이 있는 기록 번호들 (= 최신이 아님) */
-    public Set<Long> superseded(List<Long> recordIds) {
+    /**
+     * 보는 사람에게 <b>보이는</b> 후속 판이 있는 기록 번호들 (= 최신이 아님).
+     * 남의 PRIVATE 후속 판은 세지 않는다 — 세면 "볼 수 없는 판이 있다"는 사실이 드러난다 (MCP-05 "타인의 PRIVATE 기록은
+     * 요약·건수에도 드러내지 않는다", 리뷰 반영).
+     */
+    public Set<Long> superseded(List<Long> recordIds, Long viewerAccountId) {
         Set<Long> out = new HashSet<>();
         if (recordIds.isEmpty()) {
             return out;
         }
-        out.addAll(jdbc.sql("select previous_id from context_record where previous_id in (:ids)")
-                .param("ids", recordIds).query(Long.class).list());
+        out.addAll(jdbc.sql("""
+                        select previous_id from context_record
+                         where previous_id in (:ids)
+                           and (visibility = 'SHARED' or author_account_id = :me)
+                        """)
+                .param("ids", recordIds).param("me", viewerAccountId).query(Long.class).list());
         return out;
     }
 
     /**
-     * 참조 설계가 지금도 현재인가: 기록이 참조한 모든 (항목, 버전)이 현재 기준 설계의 버전과 같으면 true.
-     * 참조가 없으면 true. 기준 설계가 없는데 참조가 있으면 false.
+     * 참조 설계가 그 기준 설계에서도 현재인가: 기록이 참조한 모든 (항목, 버전)이 baselineId 의 버전과 같으면 현재.
+     * 참조가 없으면 현재. 기준이 없는데(null) 참조가 있으면 현재가 아니다.
+     * 기준을 호출자가 한 번 읽어 넘긴다 — 같은 응답·조회 이력이 서로 다른 기준을 보지 않게 (리뷰 반영).
      */
-    public Set<Long> notCurrent(Long projectId, List<Long> recordIds) {
+    public Set<Long> notCurrent(Long baselineId, List<Long> recordIds) {
         Set<Long> out = new HashSet<>();
         if (recordIds.isEmpty()) {
             return out;
@@ -175,14 +184,30 @@ public class ContextLookup {
         out.addAll(jdbc.sql("""
                         select distinct r.record_id
                           from context_record_ref r
-                          left join project p on p.id = :p
-                          left join baseline_item bi on bi.baseline_id = p.current_baseline_id
+                          left join baseline_item bi on bi.baseline_id = cast(:b as bigint)
                                                     and bi.design_item_id = r.design_item_id
                          where r.record_id in (:ids)
                            and (bi.design_item_version_id is null or bi.design_item_version_id <> r.design_item_version_id)
                         """)
-                .param("p", projectId).param("ids", recordIds).query(Long.class).list());
+                .param("b", baselineId).param("ids", recordIds).query(Long.class).list());
         return out;
+    }
+
+    /**
+     * 패킷 근거(Source) 확인: 문서 버전이 그 문서의 것이고, 문서가 이 프로젝트 것이며, 버전 번호가 맞는지. 아니면 400.
+     * 불변 패킷에 다른 프로젝트 ID 가 영구히 남지 않게 한다 (리뷰 반영).
+     */
+    public void requireSourceInProject(Long projectId, Long documentId, Long documentVersionId, Integer versionNo) {
+        Integer found = jdbc.sql("""
+                        select count(*) from document_version v join document d on d.id = v.document_id
+                         where v.id = :v and d.id = :d and d.project_id = :p and v.version_no = :n
+                        """)
+                .param("v", documentVersionId).param("d", documentId).param("p", projectId).param("n", versionNo)
+                .query(Integer.class).single();
+        if (found == 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    "sources 에 이 프로젝트의 문서 버전이 아닌 것이 있습니다: " + documentId + "/" + documentVersionId);
+        }
     }
 
     /** 버전 번호 목록 → 명세 DesignItemVersion (입력 순서 유지) */

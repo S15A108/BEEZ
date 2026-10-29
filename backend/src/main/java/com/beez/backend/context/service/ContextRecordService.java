@@ -17,6 +17,7 @@ import com.beez.backend.context.entity.ContextRecordKind;
 import com.beez.backend.context.repository.ContextRecordRepository;
 import com.beez.backend.context.repository.DevContextPacketRepository;
 import com.beez.backend.contextaccess.service.ContextAccessRecorder;
+import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -51,10 +52,11 @@ public class ContextRecordService {
     private final ContextLookup lookup;
     private final ContextAccessRecorder accessLog;
     private final JdbcClient jdbc;
+    private final EntityManager entityManager;
 
     public ContextRecordService(ProjectAccessChecker access, InputValidator validator, ContextRecordRepository records,
                                 DevContextPacketRepository packets, ContextLookup lookup, ContextAccessRecorder accessLog,
-                                JdbcClient jdbc) {
+                                JdbcClient jdbc, EntityManager entityManager) {
         this.access = access;
         this.validator = validator;
         this.records = records;
@@ -62,6 +64,7 @@ public class ContextRecordService {
         this.lookup = lookup;
         this.accessLog = accessLog;
         this.jdbc = jdbc;
+        this.entityManager = entityManager;
     }
 
     // ---- MCP-07 write_context ----
@@ -114,10 +117,17 @@ public class ContextRecordService {
             // previous_id UNIQUE 가 잠금을 빠져나간 경합도 막는다 (마지막 방어)
             record = records.saveAndFlush(record);
         } catch (DataIntegrityViolationException e) {
+            if (previousId == null) {
+                // 첫 판의 제약 위반은 "후속 기록 존재"가 아니다 — 그대로 올려 원인을 숨기지 않는다
+                throw e;
+            }
             throw new ApiException(HttpStatus.CONFLICT, "revision_conflict", "같은 이전 리비전의 후속 기록 존재");
         }
+        // refresh: DB 에 실제 저장된 값(created_at 은 마이크로초)으로 다시 읽는다. 저장 응답과 나중 조회 응답이 같아야 한다
+        entityManager.refresh(record);
         lookup.insertRecordRefs(record.getId(), refs);
-        boolean current = !lookup.notCurrent(projectId, List.of(record.getId())).contains(record.getId());
+        Long baselineId = lookup.currentBaselineId(projectId).orElse(null);
+        boolean current = !lookup.notCurrent(baselineId, List.of(record.getId())).contains(record.getId());
         return ContextRecordResponse.of(record, true, current, lookup.recordRefs(record.getId()));
     }
 
@@ -131,10 +141,12 @@ public class ContextRecordService {
                 .orElseThrow(() -> AccessErrors.notFound("record_missing_or_private project=" + projectId
                         + " record=" + recordId));
         List<Long> one = List.of(record.getId());
-        boolean latest = !lookup.superseded(one).contains(record.getId());
-        boolean current = !lookup.notCurrent(projectId, one).contains(record.getId());
+        // 기준을 한 번만 읽어 응답의 현재성과 조회 이력에 같은 값을 쓴다
+        Long baselineId = lookup.currentBaselineId(projectId).orElse(null);
+        boolean latest = !lookup.superseded(one, actor.accountId()).contains(record.getId());
+        boolean current = !lookup.notCurrent(baselineId, one).contains(record.getId());
         accessLog.record(actor, record.getTaskId(), tool, ContextAccessRecorder.KIND_CONTEXT_RECORD, record.getId(),
-                lookup.currentBaselineId(projectId).orElse(null), record.getSourcePacketId());
+                baselineId, record.getSourcePacketId());
         return ContextRecordResponse.of(record, latest, current, lookup.recordRefs(record.getId()));
     }
 
@@ -193,8 +205,8 @@ public class ContextRecordService {
             for (ContextRecord r : page) {
                 pageIds.add(r.getId());
             }
-            Set<Long> superseded = lookup.superseded(pageIds);
-            Set<Long> notCurrent = lookup.notCurrent(projectId, pageIds);
+            Set<Long> superseded = lookup.superseded(pageIds, actor.accountId());
+            Set<Long> notCurrent = lookup.notCurrent(lookup.currentBaselineId(projectId).orElse(null), pageIds);
             List<ContextRecordSummaryResponse> items = new ArrayList<>();
             for (ContextRecord r : page) {
                 items.add(ContextRecordSummaryResponse.of(r, !superseded.contains(r.getId()), !notCurrent.contains(r.getId())));

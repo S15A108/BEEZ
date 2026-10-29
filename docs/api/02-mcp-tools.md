@@ -1468,7 +1468,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `task` | [TaskDetail](00-common.md#schema-taskdetail) | Y | 처리된 작업 |
-| `changes` | [DesignChanges](00-common.md#schema-designchanges) | Y | 관련 변경과 유효성 요약 |
+| `changes` | [DesignChanges](00-common.md#schema-designchanges) | N | 관련 변경과 유효성 요약. 기준 설계가 한 번도 없으면 생략 |
 | `changes_since_version` | `integer` | N | `changes`를 계산한 기준 번호. `changes`가 있으면 반환 |
 
 ```json

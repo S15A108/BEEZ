@@ -65,12 +65,13 @@ public class TaskMcpService {
      */
     @Transactional
     public TaskDetailResponse upsertTaskPlan(CallerContext caller, Long projectId, UpsertTaskPlanArgs args) {
+        // 권한이 첫 줄 (05 구현 메모): 폐기 토큰·비멤버는 인수가 틀려도 401·404 를 받는다
+        ProjectActor actor = access.requireMember(caller, projectId);
         validator.check(args, "arguments");
         validator.requireIdempotencyKey(args.idempotencyKey());
         validator.check(args.plan(), "plan");
 
-        // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 재요청도 현재 권한을 먼저 확인한다
-        ProjectActor actor = access.requireMember(caller, projectId);
+        // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 멤버 확인은 첫 줄에서 했다
         Optional<TaskDetailResponse> previous = commands.replay(projectId, actor.accountId(), OP_UPSERT,
                 args.idempotencyKey(), args, TaskDetailResponse.class);
         if (previous.isPresent()) {
@@ -103,6 +104,8 @@ public class TaskMcpService {
      */
     @Transactional
     public ReportTaskStateResult reportTaskState(CallerContext caller, Long projectId, ReportTaskStateArgs args) {
+        // 권한이 첫 줄 (05 구현 메모)
+        ProjectActor actor = access.requireMember(caller, projectId);
         validator.check(args, "arguments");
         validator.requireIdempotencyKey(args.idempotencyKey());
         if (args.taskId() == null) {
@@ -113,8 +116,7 @@ public class TaskMcpService {
                 args.validationId(), args.waitingReason(), args.summary(), args.delta(), args.completionChecks());
         validator.check(state, "arguments");
 
-        // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 재요청도 현재 권한을 먼저 확인한다
-        ProjectActor actor = access.requireMember(caller, projectId);
+        // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 멤버 확인은 첫 줄에서 했다
         Optional<ReportTaskStateResult> previous = commands.replay(projectId, actor.accountId(), OP_REPORT,
                 args.idempotencyKey(), args, ReportTaskStateResult.class);
         if (previous.isPresent()) {

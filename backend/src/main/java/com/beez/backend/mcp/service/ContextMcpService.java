@@ -14,6 +14,7 @@ import com.beez.backend.context.dto.FindContextArgs;
 import com.beez.backend.context.dto.ReadContextResult;
 import com.beez.backend.context.dto.SavePacketArgs;
 import com.beez.backend.context.dto.WriteContextArgs;
+import com.beez.backend.context.service.ContextLookup;
 import com.beez.backend.context.service.ContextPacketService;
 import com.beez.backend.context.service.ContextRecordService;
 import com.beez.backend.mcp.dto.GetDevelopmentContextArgs;
@@ -34,15 +35,17 @@ public class ContextMcpService {
     private final ContextRecordService records;
 
     private final McpCommandStore commands;
+    private final ContextLookup lookup;
 
     private static final String OP_WRITE = "write_context";
 
     public ContextMcpService(ProjectAccessChecker access, ContextPacketService packets, ContextRecordService records,
-                             McpCommandStore commands) {
+                             McpCommandStore commands, ContextLookup lookup) {
         this.access = access;
         this.packets = packets;
         this.records = records;
         this.commands = commands;
+        this.lookup = lookup;
     }
 
     /**
@@ -62,6 +65,15 @@ public class ContextMcpService {
         }
         if (args == null || args.request() == null || args.request().isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "request 는 필수입니다");
+        }
+        // 인수의 project_id 는 토큰 프로젝트와 같은지만 본다 (05 참고 2 "MCP 인자 project_id 가 토큰 프로젝트와 다름 → not_found")
+        if (args.projectId() != null && !Ids.parse(args.projectId(), "project_id").equals(projectId)) {
+            throw AccessErrors.notFound("packet_project_mismatch project=" + projectId + " arg=" + args.projectId());
+        }
+        // task_id 는 형식(400)과 이 프로젝트 소속(404)을 본다 (MCP-01 오류표)
+        Long taskId = Ids.parse(args.taskId(), "task_id");
+        if (taskId != null) {
+            lookup.requireTaskInProject(projectId, taskId);
         }
         // 구성: 박상은 모듈 연결 전. 연결되면 구성 결과로 packets.save(caller, projectId, composed) 를 부른다
         throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "context_not_ready",

@@ -16,6 +16,7 @@ import com.beez.backend.context.dto.SourceDto;
 import com.beez.backend.context.entity.DevContextPacket;
 import com.beez.backend.context.repository.DevContextPacketRepository;
 import com.beez.backend.contextaccess.service.ContextAccessRecorder;
+import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,15 +42,22 @@ public class ContextPacketService {
     private final ContextLookup lookup;
     private final ContextAccessRecorder accessLog;
     private final ObjectMapper json;
+    private final EntityManager entityManager;
+
+    /** 명세 00-common RelatedTask.status */
+    private static final java.util.Set<String> RELATED_TASK_STATUSES =
+            java.util.Set.of("READY", "IN_PROGRESS", "WAITING", "COMPLETED", "CANCELLED");
 
     public ContextPacketService(ProjectAccessChecker access, InputValidator validator, DevContextPacketRepository packets,
-                                ContextLookup lookup, ContextAccessRecorder accessLog, ObjectMapper json) {
+                                ContextLookup lookup, ContextAccessRecorder accessLog, ObjectMapper json,
+                                EntityManager entityManager) {
         this.access = access;
         this.validator = validator;
         this.packets = packets;
         this.lookup = lookup;
         this.accessLog = accessLog;
         this.json = json;
+        this.entityManager = entityManager;
     }
 
     @Transactional
@@ -73,6 +81,22 @@ public class ContextPacketService {
         List<Long> versionIds = Ids.parseAll(args.designItemVersionIds(), "design_item_version_ids");
         lookup.requireVersionsInBaseline(projectId, baselineId, versionIds);
 
+        // 구성 결과의 관련 작업·근거도 이 프로젝트 것인지 확인한다. 불변 패킷에 남의 ID 가 영구히 남지 않게 (리뷰 반영)
+        for (RelatedTaskDto t : args.relatedTasks()) {
+            Long relatedTaskId = Ids.parse(t.taskId(), "related_tasks.task_id");
+            Long relatedRevisionId = Ids.parse(t.planRevisionId(), "related_tasks.plan_revision_id");
+            lookup.requireTaskInProject(projectId, relatedTaskId);
+            lookup.requirePlanRevisionOfTask(relatedTaskId, relatedRevisionId);
+            if (!RELATED_TASK_STATUSES.contains(t.status())) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                        "related_tasks.status 는 READY·IN_PROGRESS·WAITING·COMPLETED·CANCELLED 중 하나입니다: " + t.status());
+            }
+        }
+        for (SourceDto src : args.sources()) {
+            lookup.requireSourceInProject(projectId, Ids.parse(src.documentId(), "sources.document_id"),
+                    Ids.parse(src.documentVersionId(), "sources.document_version_id"), src.versionNo());
+        }
+
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("design_item_version_ids", versionIds);
         // 반환할 승인 설계를 저장 시점 그대로 넣는다. 나중에 그 버전이 SUPERSEDED 가 되어도 같은 패킷은 같은 내용을 돌려준다 (리뷰 반영)
@@ -84,8 +108,10 @@ public class ContextPacketService {
         content.put("sources", sourcesToMaps(args.sources()));
 
         DevContextPacket packet = packets.saveAndFlush(DevContextPacket.create(projectId, taskId, actor.agentTokenId(),
-                args.request(), baselineId, content, hash(args.request(), baselineId, content)));
-        // ↑ 해시는 요청·기준·content(설계 스냅샷 포함)의 정규 JSON. 저장하는 값과 해시 입력이 같다
+                args.request(), baselineId, content, hash(projectId, taskId, args.request(), baselineId, content)));
+        // ↑ 해시는 프로젝트·작업·요청·기준·content(설계 스냅샷 포함)의 정규 JSON
+        // refresh: DB 에 실제 저장된 값(created_at 은 마이크로초)으로 다시 읽는다. 저장 응답과 나중 조회 응답이 같아야 한다
+        entityManager.refresh(packet);
         lookup.insertPacketRefs(packet.getId(), versionIds);
         accessLog.record(actor, taskId, "get_development_context", ContextAccessRecorder.KIND_PACKET,
                 packet.getId(), baselineId, packet.getId());
@@ -170,11 +196,13 @@ public class ContextPacketService {
     }
 
     /**
-     * 패킷 해시 = {request, baseline_id, content} 의 정규 JSON SHA-256 ({@link CanonicalJson}).
+     * 패킷 해시 = {project_id, task_id, request, baseline_id, content} 의 정규 JSON SHA-256 ({@link CanonicalJson}).
      * Map.toString() 을 쓰면 constraints=["a, b"] 와 ["a", "b"] 가 같은 문자열이 되어 다른 패킷이 같은 해시를 갖는다 (리뷰 반영).
      */
-    private String hash(String request, Long baselineId, Map<String, Object> content) {
+    private String hash(Long projectId, Long taskId, String request, Long baselineId, Map<String, Object> content) {
         Map<String, Object> input = new LinkedHashMap<>();
+        input.put("project_id", projectId);
+        input.put("task_id", taskId);
         input.put("request", request);
         input.put("baseline_id", baselineId);
         input.put("content", content);

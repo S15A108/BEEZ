@@ -12,6 +12,8 @@ import com.beez.backend.context.dto.ContextRecordSummaryResponse;
 import com.beez.backend.context.dto.FindContextArgs;
 import com.beez.backend.context.dto.ReadContextResult;
 import com.beez.backend.context.dto.SavePacketArgs;
+import com.beez.backend.context.dto.SourceDto;
+import com.beez.backend.context.dto.RelatedTaskDto;
 import com.beez.backend.context.dto.VersionRefDto;
 import com.beez.backend.context.dto.WriteContextArgs;
 import com.beez.backend.context.entity.ContextRecordKind;
@@ -98,6 +100,14 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         // 요청 문장 필수
         assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
                 new GetDevelopmentContextArgs(" ", null, null)), HttpStatus.BAD_REQUEST, "validation_failed");
+        // project_id 인수가 토큰 프로젝트와 다름 → 404 (503 보다 먼저)
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("x", String.valueOf(projectId + 99), null)), HttpStatus.NOT_FOUND, "not_found");
+        // task_id 형식 오류 400, 없는·다른 프로젝트 작업 404
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("x", null, "abc")), HttpStatus.BAD_REQUEST, "validation_failed");
+        assertDenied(() -> mcp.getDevelopmentContext(memberAgent, projectId,
+                new GetDevelopmentContextArgs("x", null, "999999")), HttpStatus.NOT_FOUND, "not_found");
         // 프로젝트 멤버가 아님
         Long outsider = api.accountId("outsider@test");
         assertDenied(() -> mcp.getDevelopmentContext(CallerContext.human(outsider), projectId,
@@ -145,6 +155,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         assertThat(read.packet().designItems().get(0).status()).isEqualTo("APPROVED");
         assertThat(read.packet().designItems()).isEqualTo(saved.designItems());
         assertThat(read.packet().contentHash()).isEqualTo(saved.contentHash());
+        assertThat(read.packet()).isEqualTo(saved);   // 저장 응답과 나중 조회 응답이 모든 값에서 같다 (시각 정밀도 포함)
     }
 
     @Test
@@ -206,6 +217,25 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void savePacket_relatedTasksAndSourcesMustBelongToProject() {
+        // 없는 작업 → 404
+        SavePacketArgs foreignTask = new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(),
+                List.of(new RelatedTaskDto("999999", "1", "READY")), List.of());
+        assertDenied(() -> packets.save(memberAgent, projectId, foreignTask), HttpStatus.NOT_FOUND, "not_found");
+        // 명세에 없는 상태 → 400
+        Long taskId = api.jdbc.sql("insert into task (project_id, key, title, status) values (:p, 'T-R', 'r', 'DRAFT') returning id")
+                .param("p", projectId).query(Long.class).single();
+        SavePacketArgs badStatus = new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(),
+                List.of(new RelatedTaskDto(String.valueOf(taskId), "1", "FOO")), List.of());
+        assertDenied(() -> packets.save(memberAgent, projectId, badStatus), HttpStatus.BAD_REQUEST, "validation_failed");
+        // 이 프로젝트에 없는 문서 버전 → 400
+        SavePacketArgs foreignSource = new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(), List.of(),
+                List.of(new SourceDto("999999", "999999", 1, "1장")));
+        assertDenied(() -> packets.save(memberAgent, projectId, foreignSource), HttpStatus.BAD_REQUEST, "validation_failed");
+        assertThat(count("select count(*) from dev_context_packet")).isZero();
+    }
+
+    @Test
     void savePacket_versionsMustBeInCurrentBaseline() {
         String unpublished = String.valueOf(api.newVersion("API-01", 2));
         assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(List.of(unpublished))),
@@ -240,6 +270,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
         ReadContextResult old = mcp.readContext(memberAgent, projectId, "RECORD", first.id());
         assertThat(old.record().isLatestRevision()).isFalse();
+        assertThat(old.record().createdAt()).isEqualTo(first.createdAt());   // 저장 응답과 조회의 시각이 같다
         assertThat(count("select count(*) from context_access_log where target_kind = 'CONTEXT_RECORD'")).isEqualTo(1);
     }
 
@@ -268,6 +299,19 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         WriteContextArgs args = new WriteContextArgs(null, null, null, null, ContextRecordKind.DECISION, Visibility.SHARED,
                 "널 참조", "상세", refs, "k-null");
         assertDenied(() -> mcp.writeContext(memberAgent, projectId, args), HttpStatus.BAD_REQUEST, "validation_failed");
+    }
+
+    @Test
+    void privateSuccessorOfSharedRecord_isNotRevealedToOthers() {
+        ContextRecordResponse shared = mcp.writeContext(leaderAgent, projectId, record(null, Visibility.SHARED, "공유 뒤 비공개"));
+        mcp.writeContext(leaderAgent, projectId, record(shared.id(), Visibility.PRIVATE, "비공개로 고침"));
+
+        // 다른 사람에게는 공유 판이 여전히 최신으로 보인다 (볼 수 없는 판이 있다는 사실을 드러내지 않음)
+        assertThat(mcp.readContext(memberAgent, projectId, "RECORD", shared.id()).record().isLatestRevision()).isTrue();
+        assertThat(mcp.findContext(memberAgent, projectId, new FindContextArgs("공유 뒤", null, null, null, null)).items())
+                .allMatch(ContextRecordSummaryResponse::isLatestRevision);
+        // 작성자 본인에게는 최신이 아니다
+        assertThat(mcp.readContext(leaderAgent, projectId, "RECORD", shared.id()).record().isLatestRevision()).isFalse();
     }
 
     @Test
@@ -312,8 +356,8 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
                 .items()).isEmpty();
 
         // API-01 이 바뀌면 그 버전을 참조한 기록은 현재가 아니다
+        assertThat(page2.items().get(0).referencesCurrent()).isTrue();   // 발행 전에는 현재
         api.publish(2, Map.of("API-01", api.newVersion("API-01", 2), "API-02", api.currentVersionId("API-02")));
-        assertThat(page2.items().get(0).referencesCurrent()).isTrue();
         assertThat(mcp.findContext(memberAgent, projectId, new FindContextArgs("로그인", null, null, null, null)).items())
                 .allMatch(s -> !s.referencesCurrent());
     }
