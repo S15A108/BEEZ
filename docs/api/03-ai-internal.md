@@ -1837,7 +1837,7 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 
 ### POST `/v1/bee/document-review`
 
-공용 문서함에 올린 문서를 승인 문서·함께 올린 초안과 비교해 문단별 수정 제안을 만든다. 등록마다 반드시 도는 비비 필수 검토다.
+공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토), DOC-A22(대화), DOC-A23(직접 요청)이 부른다. PR #37은 AI 내부 경로를 담당자 합의 대기로 두었으므로 이 절은 그 합의안 초안이다.
 
 관련 요구사항: DOC-01·08 (화면 PNL-02-m-review-*)  
 담당: BE: 오서현 / AI: 박상은 / FE: —  
@@ -1870,9 +1870,9 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 | `project_id` | `ID` | Y | 권한 검사를 완료한 프로젝트 |
 | `request_key` | `string` | Y | backend가 부여한 분석 요청 식별값. LLM별 실제 호출 key의 기준 |
 | `mode` | `REVIEW\|RERUN\|DISCUSS\|REQUEST` | Y | 등록 검토 / 반려 후 재검토 / 제안 대화 / 직접 요청 |
-| `document` | `object` | Y | 검토 대상 {document_id, document_version_id, kind, title, text, text_hash}. text는 utf8-lf-v1 정규화 원문(반영본) |
-| `comparisons` | `object[]` | Y | 비교 대상 [{document_id, document_version_id, kind, status: APPROVED\|DRAFT, text}]. 기준이 없으면 함께 올린 초안. 없으면 [] |
-| `suggestion` | [ReviewSuggestion](00-common.md#schema-reviewsuggestion) | N | DISCUSS 필수. 대화 대상 제안 |
+| `document` | `object` | Y | 검토 대상 {document_id, revision, kind, title, text, text_hash}. text는 utf8-lf-v1 정규화한 지금 작성 내용 |
+| `comparisons` | `object[]` | Y | 비교할 승인본 [{document_id, document_version_id, kind, version_no, text}]. 미승인 문서는 넣지 않는다(DOC-A16 검토 정책). 없으면 []이고 BE가 unavailable_references로 표시 |
+| `suggestion` | [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion) | N | DISCUSS 필수. 대화 대상 제안 |
 | `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | DISCUSS 필수. 지금까지의 대화와 새 메시지 |
 | `request_text` | `string` | N | REQUEST 필수. '비비에게 직접 요청하기' 내용 |
 | `rejection_reason` | `string` | N | RERUN 필수. 팀장 반려 사유 원문 |
@@ -1909,7 +1909,7 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `result` | `object` | Y | {steps: string[], suggestions: [{locator, category, severity, reason, original_text, proposed_text, evidence: [{document_version_id, locator}]}], reply?: {text, proposed_text?}} |
+| `result` | `object` | Y | {steps: string[], suggestions: [{original_text, replacement_text, explanation, category, severity, evidence: [{document_version_id, locator}]}], reply?: {text, proposed_text?}} |
 | `origin` | `MODEL\|TEMPLATE` | Y | 생성 출처 |
 | `model` | `string` | N | 실제 모델 호출 시 필수 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
@@ -1977,10 +1977,10 @@ HTTP `200`.
 #### 처리 규칙
 
 - REVIEW·RERUN은 문단별 제안 목록, DISCUSS는 답(reply), REQUEST는 제안 하나를 돌려준다.
-- steps는 BE가 DOC-A13의 단계 표시에 쓴다. REVIEW 기본: 문서 읽기 → 승인된 API 명세서와 비교 → ERD와 맞춰 보기 → 요구사항과 비교 → 수정 제안 정리. RERUN: 반려 사유 읽기 → 관련 문단 찾기 → ERD와 맞춰 보기 → 수정 제안 정리.
+- steps는 BE가 DOC-A16의 단계 표시(DocumentBeeReview.steps)에 쓴다. REVIEW 기본: 문서 읽기 → 승인된 API 명세서와 비교 → ERD와 맞춰 보기 → 요구사항과 비교 → 수정 제안 정리. RERUN: 반려 사유 읽기 → 관련 문단 찾기 → ERD와 맞춰 보기 → 수정 제안 정리.
 - 이 문서의 동기 응답 원칙을 따른다. 실제 단계별 진행률을 보이려면 BE가 단계마다 나눠 부르거나 스트리밍이 필요하며, 방식은 Q19다.
-- locator는 입력 document.text의 utf8-lf-v1 행 범위이고 original_text는 그 범위 원문과 정확히 같아야 한다. 다르면 BE가 잘못된 출력으로 버린다.
-- proposed_text는 그 범위를 그대로 바꿀 수 있는 문장이다. 반영·저장·승인은 BE와 사람이 한다.
+- original_text는 입력 document.text 안에서 한 곳과만 정확히 일치해야 한다(DOC-A17 APPLY 규칙). 행 번호를 쓰지 않으므로 앞 제안을 반영해도 뒤 제안이 어긋나지 않는다. 일치하지 않으면 BE가 잘못된 출력으로 버린다.
+- replacement_text는 그 원문을 그대로 바꿀 수 있는 문장이다. 반영·저장·승인은 BE와 사람이 한다.
 - 근거는 evidence의 document_version_id와 locator로 돌려준다. 입력 comparisons 밖의 버전은 쓰지 않는다.
 - RERUN은 반려 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만든다. 팀장은 문단을 고르지 않는다.
 - 입력 크기·비용 상한과 실패 때 재시도는 Q11·Q19다.
