@@ -213,7 +213,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
         TaskDetailResponse first = mcp.upsertTaskPlan(agent, projectId, args);
         // 응답을 잃고 같은 키·같은 입력으로 다시 보냄 → 같은 작업, 새 작업 없음
         TaskDetailResponse again = mcp.upsertTaskPlan(agent, projectId, args);
-        assertThat(again.id()).isEqualTo(first.id());
+        assertThat(again).isEqualTo(first);   // 저장했다 되읽은 결과가 모든 칸에서 처음과 같다
         Integer tasks = api.jdbc.sql("select count(*) from task where project_id = :p").param("p", projectId)
                 .query(Integer.class).single();
         assertThat(tasks).isEqualTo(1);
@@ -231,8 +231,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
         ReportTaskStateResult started = report(task, TaskEvent.START, pass, null, "s1");
         // 같은 키·같은 입력 재시도: 상태가 이미 바뀌었어도 처음 결과를 준다 (경합 409 가 아님)
         ReportTaskStateResult again = report(task, TaskEvent.START, pass, null, "s1");
-        assertThat(again.task().status()).isEqualTo(TaskStatus.IN_PROGRESS);
-        assertThat(again.task().lockVersion()).isEqualTo(started.task().lockVersion());
+        assertThat(again).isEqualTo(started);
     }
 
     @Test

@@ -200,8 +200,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         ContextRecordResponse first = mcp.writeContext(memberAgent, projectId, args);
         // 응답을 잃고 같은 키·같은 입력으로 다시 보냄 → 처음 결과, 기록은 하나
         ContextRecordResponse again = mcp.writeContext(memberAgent, projectId, args);
-        assertThat(again.id()).isEqualTo(first.id());
-        assertThat(again.revisionNo()).isEqualTo(first.revisionNo());
+        assertThat(again).isEqualTo(first);   // 저장했다 되읽은 결과가 모든 칸에서 처음과 같다
         assertThat(count("select count(*) from context_record")).isEqualTo(1);
 
         // 같은 키에 다른 입력 → 409
