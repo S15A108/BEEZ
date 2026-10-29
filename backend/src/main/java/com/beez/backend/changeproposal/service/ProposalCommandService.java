@@ -157,15 +157,21 @@ public class ProposalCommandService {
         for (int index = 0; index < input.documents().size(); index++) {
             DocumentChange doc = input.documents().get(index);
             if (doc.afterContent() == null) continue;
-            String extension = repository.versionExtension(project, requiredId(doc.documentId(), "document_id"),
+            var base = repository.versionText(project, requiredId(doc.documentId(), "document_id"),
                     requiredId(doc.baseDocumentVersionId(), "base_document_version_id"))
                     .orElseThrow(() -> AccessErrors.notFound("proposal_reference_missing"));
-            var text = documentInputs.validate("document." + extension, doc.afterContent().getBytes(StandardCharsets.UTF_8));
+            var text = documentInputs.validate("document." + base.extension(), doc.afterContent().getBytes(StandardCharsets.UTF_8));
+            // Reject before writing anything: a document identical to its base would only cost a version and an index run.
+            requireChanged(base.text(), text.text());
             byte[] bytes = text.text().getBytes(StandardCharsets.UTF_8);
             byDocument.put(index, files.size());
-            files.add(new Staged(text.text(), text.textHash(), bytes, extension));
+            files.add(new Staged(text.text(), text.textHash(), bytes, base.extension()));
         }
         return new Stage(files, byDocument);
+    }
+
+    private static void requireChanged(String base, String proposed) {
+        if (Objects.equals(base, proposed)) throw invalid("기준 본문과 같은 문서는 변경 목록에서 빼 주세요.");
     }
 
     /** Originals go to storage outside the DB transaction; the proposal rows and the versions commit together. */
@@ -269,7 +275,8 @@ public class ProposalCommandService {
             }
             ProposalValidator.documentText(after);
             // `after` is already normalized like a DOC-A12 upload, so equal text means no change.
-            if (!Objects.equals(base.get("content_text"), after)) changed = true;
+            requireChanged((String) base.get("content_text"), after);
+            changed = true;
             documents.add(new ResolvedDocument(doc.documentId(), doc.baseDocumentVersionId(), proposedVersion, after,
                     textHash(after)));
         }

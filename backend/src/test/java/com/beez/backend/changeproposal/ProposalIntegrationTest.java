@@ -252,6 +252,23 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isZero();
     }
 
+    @Test void unchangedDocumentAmongRealChangesIsRejectedBeforeAnyOriginalIsStored() {
+        long other=jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'API_SPEC','API 명세',?) RETURNING id",
+                Long.class,project.projectId(),author.accountId());
+        long otherVersion=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
+                VALUES(?,1,'APPROVED','api.md','api-hash','API\n그대로\n',?,?,now()) RETURNING id
+                """,Long.class,other,author.accountId(),author.accountId());
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)",baseline,project.projectId(),other,otherVersion);
+        Input mixed=new Input(""+baseline,"문서 둘","사유",null,null,List.of(),List.of(
+                new DocumentChange(""+document,""+version,"첫째\n수정\n끝\n",null),
+                new DocumentChange(""+other,""+otherVersion,"API\r\n그대로\r\n",null)),null,null,null);
+        error(() -> commands.create(author,project.projectId(),mixed,"mixed"),"validation_failed");
+        assertThat(storage.objects).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE document_id IN (?,?)",Integer.class,document,other)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isZero();
+    }
+
     @Test void documentOnlyChangeAndExplicitCandidatesHaveStableBaseDiffAfterBaselineMoves() {
         Proposal p=create("diff");
         var detail=queries.detail(author,project.projectId(),Long.parseLong(p.id()),null);

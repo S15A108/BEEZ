@@ -120,14 +120,16 @@ public class ProposalRepository {
                 WHERE d.project_id=:project AND d.id=:document AND v.id=:version FOR UPDATE OF v
                 """, Map.of("project", project, "document", document, "version", version));
     }
+    /** Extension (md/txt) and text of a document version in this project; names and compares a proposed text. */
+    public record VersionText(String extension, String text) { }
 
-    /** File extension (md/txt) of a document version in this project, used to name a stored proposal text. */
-    public Optional<String> versionExtension(long project, long document, long version) {
+    public Optional<VersionText> versionText(long project, long document, long version) {
         return jdbc.sql("""
-                SELECT v.storage_key FROM document_version v JOIN document d ON d.id=v.document_id
+                SELECT v.storage_key,v.content_text FROM document_version v JOIN document d ON d.id=v.document_id
                 WHERE d.project_id=:project AND d.id=:document AND v.id=:version
                 """).param("project", project).param("document", document).param("version", version)
-                .query(String.class).optional().map(key -> key.endsWith(".md") ? "md" : "txt");
+                .query((rs, row) -> new VersionText(rs.getString("storage_key").endsWith(".md") ? "md" : "txt",
+                        rs.getString("content_text"))).optional();
     }
 
     /**
