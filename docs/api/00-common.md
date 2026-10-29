@@ -1,6 +1,6 @@
 # BEEZ API Common
 
-버전: 0.8 · 갱신일: 2026-10-28 · 개발 계약 초안
+버전: 0.8 · 갱신일: 2026-10-29 · 개발 계약 초안
 
 2026-10-27: 원문 RAG의 SourceLocator·RetrievalScope·RetrievedEvidence를 추가했다. 관련 내부 호출은 AI-A09와 AI-A04/05 확장을 따른다. 기존 문서/승인 상태나 비RAG 계약을 일괄 변경하지 않는다.
 
@@ -277,7 +277,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MEM-A02 초대 목록](01-backend-rest.md#mem-a02) | GET `/api/projects/{id}/invitations` | LEADER | 전진 | — | 박민용 |
 | [MEM-A03 초대 폐기](01-backend-rest.md#mem-a03) | DELETE `/api/projects/{id}/invitations/{invitation_id}` | LEADER | 전진 | — | 박민용 |
 | [MEM-A04 초대 미리보기](01-backend-rest.md#mem-a04) | POST `/api/invitations/preview` | PUBLIC | 전진 | — | 박민용 |
-| [MEM-A05 초대 수락](01-backend-rest.md#mem-a05) | POST `/api/invitations/accept` | USER | 전진 | — | 박민용 |
+| [MEM-A05 초대 수락 (폐지 예정)](01-backend-rest.md#mem-a05) | POST `/api/invitations/accept` | USER | 전진 | — | 박민용 |
 | [MEM-A06 팀원 목록](01-backend-rest.md#mem-a06) | GET `/api/projects/{id}/members` | MEMBER | 전진 | — | 박민용 |
 | [MEM-A07 팀원 담당 영역·표시 수정](01-backend-rest.md#mem-a07) | PATCH `/api/projects/{id}/members/{member_id}` | LEADER | 전진 | — | 박민용 |
 | [MEM-A08 팀장 위임](01-backend-rest.md#mem-a08) | POST `/api/projects/{id}/leadership-transfer` | LEADER | 전진 | — | 박민용 |
@@ -432,7 +432,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | 확장 CTX | 고급 패킷·공유 기록 | 기본 MCP 계약 확장 | 미정 |
 | NTF-07·08 | 실시간 전파·로컬 제어 | 별도 전송·실행 제어 계약 | 미정 |
 | PRJ-04 시작 가이드 상태 | 가이드를 봤음·숨김·'기준 문서 읽었어요'를 기기 사이에 맞춤. 지금은 FE가 계정·프로젝트별로 브라우저에 저장 | GET·PATCH /api/projects/{id}/me/guide-state | 전진 |
-| MEM-02 내 대기 초대 목록 | 초대받고 나중에 가입한 사람에게 받은 초대를 모아 보여 줌(캔버스 메모의 대기열). 지금 화면은 초대 링크 토큰을 회원가입 뒤까지 들고 가 MEM-A05로 수락 | GET /api/me/invitations | 전진 |
+| MEM-02 내 대기 초대 목록 | 초대받고 나중에 가입한 사람에게 받은 초대를 모아 보여 줌(캔버스 메모의 대기열). 자동 참여 기본안(Q05)에서는 가입할 때 바로 팀원이 되므로 필요 없음. 자동 참여가 확정되면 지움 | GET /api/me/invitations | 전진 |
 
 ## 9. 검토 항목
 
@@ -442,7 +442,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
-| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도, 보내자마자 자동 참여시킬지(캔버스 메모 note-ax681p와 설정 › 팀원 초대 문구 '같은 이메일로 로그인하면 바로 이 프로젝트로 들어와요'는 자동 참여, 초대 수락 화면과 초대 보낸 뒤 문구는 수락 필요), 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
+| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 만료·1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도, 자동 참여(10-29 프론트 결정, 캔버스 메모 note-ax681p. 기본안으로 MEM-A01·A04·A05·A11·ACC-A01에 반영: 가입한 이메일은 초대하자마자 팀원, 가입 전 이메일은 가입할 때 팀원, 만료 없음, 원치 않으면 나가기. 확정되면 MEM-A05와 확장 후보 MEM-02를 지움), 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
 | Q08 | 초안·제안 충돌 | 오서현 | 초안 해시·조회 범위·해시 발급, 초안 편집·삭제, expected_updated_at 정밀도 |
@@ -532,8 +532,8 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `id` | `ID` | Y | 초대 ID |
 | `project_id` | `ID` | Y | 대상 프로젝트 |
 | `invited_email` | `string` | N | 주소를 지정한 초대의 대상 |
-| `expires_at` | `Time` | Y | 만료 시각 |
-| `accepted_at` | `Time` | N | 수락 시각 |
+| `expires_at` | `Time` | N | 만료 시각. 자동 참여 기본안은 만료 없음(Q05). 수정안 요청 |
+| `accepted_at` | `Time` | N | 팀원이 된 시각. 자동 참여면 가입한 계정은 초대할 때, 가입 전 이메일은 가입할 때 채움. 수정안 요청 |
 | `revoked_at` | `Time` | N | 폐기 시각 |
 
 <a id="schema-agenttoken"></a>
