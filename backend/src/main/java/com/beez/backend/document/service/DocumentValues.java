@@ -11,7 +11,19 @@ import tools.jackson.databind.json.JsonMapper;
 final class DocumentValues {
     static final JsonMapper JSON = JsonMapper.builder().build();
     static ApiException invalid(String message) { return new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", message); }
-    static ApiException conflict(String code) { return new ApiException(HttpStatus.CONFLICT, code, code); }
+    static ApiException conflict(String code) {
+        String message = switch (code) {
+            case "idempotency_conflict" -> "같은 요청 키로 다른 내용이 전송되었습니다. 새 요청 키로 다시 시도해 주세요.";
+            case "version_conflict" -> "기준 문서가 변경되었습니다. 현재 승인 기준을 확인한 뒤 다시 시도해 주세요.";
+            case "analysis_running" -> "문서를 분석 중입니다. 분석이 끝난 뒤 다시 확인해 주세요.";
+            case "analysis_not_failed" -> "실패한 분석만 재시도할 수 있습니다.";
+            case "baseline_not_published" -> "아직 기준 설계가 생성되지 않았습니다.";
+            case "index_not_ready" -> "문서 색인이 아직 준비되지 않았습니다. 분석 상태를 확인해 주세요.";
+            case "baseline_changed" -> "기준 설계가 변경되었습니다. 최신 기준으로 다시 조회해 주세요.";
+            default -> "현재 상태에서는 요청을 처리할 수 없습니다. 최신 상태를 확인해 주세요.";
+        };
+        return new ApiException(HttpStatus.CONFLICT, code, message);
+    }
     static ApiException missing() { return new ApiException(HttpStatus.NOT_FOUND, "not_found", "문서를 찾을 수 없습니다."); }
     static long number(Map<String, Object> row, String field) { return ((Number) row.get(field)).longValue(); }
     static String time(Object value) {

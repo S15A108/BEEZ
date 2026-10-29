@@ -33,7 +33,7 @@ class DocumentRegistrationServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         when(documents.lockProject(101)).thenReturn(101L);
-        when(access.requireCurrentLeader(101)).thenReturn(1L);
+        when(access.requireCurrentHumanMember(101)).thenReturn(1L);
         when(storage.store(any(), eq("md"))).thenReturn("opaque-key.md");
         service = new DocumentRegistrationService(new DocumentInputValidator(1024, 1024), storage,
                 access, documents, versions, transactions);
@@ -46,7 +46,7 @@ class DocumentRegistrationServiceTest {
 
     @Test
     void deniesUnauthorizedBeforeAnyFileOrDocumentWrite() {
-        when(access.requireCurrentLeader(101)).thenThrow(new ApiException(HttpStatus.FORBIDDEN, "forbidden", "팀장 권한이 필요합니다."));
+        when(access.requireCurrentHumanMember(101)).thenThrow(new ApiException(HttpStatus.FORBIDDEN, "forbidden", "팀장 권한이 필요합니다."));
         assertThatThrownBy(() -> service.register(input())).isInstanceOf(ApiException.class);
         verifyNoInteractions(storage, versions);
         verify(documents, never()).saveAndFlush(any());
