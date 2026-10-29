@@ -1,6 +1,7 @@
 package com.beez.backend.project;
 
 import com.beez.backend.account.Account;
+import com.beez.backend.agenttoken.AgentTokenRepository;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
@@ -34,14 +35,16 @@ public class ProjectService {
     private final ProjectAccessChecker access;
     private final ProjectRepository projects;
     private final ProjectMemberRepository members;
+    private final AgentTokenRepository tokens;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
 
     public ProjectService(ProjectAccessChecker access, ProjectRepository projects, ProjectMemberRepository members,
-                          ApplicationEventPublisher events, JdbcClient jdbc) {
+                          AgentTokenRepository tokens, ApplicationEventPublisher events, JdbcClient jdbc) {
         this.access = access;
         this.projects = projects;
         this.members = members;
+        this.tokens = tokens;
         this.events = events;
         this.jdbc = jdbc;
     }
@@ -130,7 +133,7 @@ public class ProjectService {
         }
         Instant now = Instant.now();
         project.archive(now);
-        projects.revokeAllTokens(projectId, now);
+        tokens.revokeAllInProject(projectId, now);
     }
 
     /**
