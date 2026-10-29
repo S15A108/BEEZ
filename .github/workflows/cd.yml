@@ -34,6 +34,8 @@ concurrency:
 
 jobs:
   images:
+    # 지정하지 않으면 matrix 값 전부가 잡 이름에 붙어 길어진다
+    name: image (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
