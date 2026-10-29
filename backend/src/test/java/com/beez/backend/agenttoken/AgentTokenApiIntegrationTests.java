@@ -116,7 +116,7 @@ class AgentTokenApiIntegrationTests extends IntegrationTestSupport {
         assertThat(unknown.body()).contains("\"code\":\"unauthenticated\"");
     }
 
-    /** 깨지면: 토큰이 한도 없이 쌓이거나, 폐기해도 다시 발급할 수 없다 (Q06 프로젝트당 5개). */
+    /** 깨지면: 토큰이 한도 없이 쌓이거나, 폐기해도 다시 발급할 수 없다 (Q06 프로젝트별 한 계정당 5개). */
     @Test
     void activeTokenLimit_countsOnlyUnrevokedTokens() {
         var p = fixtures().projectWithLeader();
