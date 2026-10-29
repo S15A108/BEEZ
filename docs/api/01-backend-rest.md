@@ -8402,7 +8402,7 @@ HTTP `200`.
 
 관련 요구사항: APR-02, MTG-04  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: BE 구현, 알림 전달은 공통 알림 서비스 연동 후
 
 #### 인증
 
@@ -8454,18 +8454,22 @@ HTTP `201`.
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 의견 ID |
 | `proposal_id` | `ID` | Y | 제안 |
+| `revision` | `integer` | Y | 의견을 쓸 때 제안의 제출 리비전 번호 |
 | `author_account_id` | `ID` | Y | 작성 계정 |
 | `kind` | `COMMENT\|REVIEW_REQUEST` | Y | 의견 종류 |
 | `body` | `string` | Y | 의견 본문 |
+| `mentioned_member_ids` | `ID[]` | Y | 지정한 멤버. 없으면 빈 배열 |
 | `created_at` | `Time` | Y | 작성 시각 |
 
 ```json
 {
   "id": "91",
   "proposal_id": "71",
+  "revision": 1,
   "author_account_id": "11",
   "kind": "COMMENT",
   "body": "프론트도 이 필드를 사용하겠습니다.",
+  "mentioned_member_ids": [],
   "created_at": "2026-10-23T03:00:00Z"
 }
 ```
@@ -8476,7 +8480,10 @@ HTTP `201`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류. 본문 공백·4000자 초과, DECISION 등 허용 외 kind, 대상 없는 검토 요청, 활성 멤버가 아닌 대상 |
+| 403 | `request_origin_rejected` | Origin/Referer가 누락되었거나 허용된 출처와 일치하지 않음 |
+| 409 | `invalid_transition` | 발행되었거나 거둔 제안 |
+| 409 | `idempotency_conflict` | 같은 Idempotency-Key 로 다른 내용 |
 
 ```json
 {
@@ -8489,7 +8496,11 @@ HTTP `201`.
 
 #### 처리 규칙
 
-- 현재 프로젝트 멤버만 의견을 남긴다. 의견 작성은 승인과 다르다.
+- 변경 요청이므로 변경 제안 쓰기와 같이 Origin을 먼저 검사한다(위 공통 출처 검사).
+- 현재 프로젝트 멤버만 의견을 남긴다. 의견 작성은 승인과 다르다. 제안 상태·기준·승인 이력은 바뀌지 않고 DECISION 은 받지 않는다.
+- 의견은 작성 시점의 현재 제출 리비전에 귀속된다. 반려 뒤 재제출해도 이전 리비전의 의견은 그대로 남는다. PROPOSED·IN_REVIEW·APPROVED·REJECTED 제안에 쓸 수 있고 PUBLISHED·WITHDRAWN 은 409 이다.
+- `mentioned_member_ids`(최대 20)는 이 프로젝트의 현재 활성 멤버여야 한다. 하나라도 아니면 전체를 거절한다. `REVIEW_REQUEST` 는 한 명 이상 필요하다.
+- `Idempotency-Key` 범위는 제안·작성 계정·키다. 같은 입력은 처음 저장한 의견을 그대로 돌려주고 새로 저장하지 않는다.
 - 관련자 알림의 대상·내용은 문서 도메인이 결정해 전진 서비스로 전달한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -8530,6 +8541,7 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
+| `revision` | `integer` | N | 해당 제출 리비전의 의견만. 생략하면 전체 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -8552,9 +8564,11 @@ HTTP `200`.
     {
       "id": "91",
       "proposal_id": "71",
+      "revision": 1,
       "author_account_id": "11",
       "kind": "COMMENT",
       "body": "프론트도 이 필드를 사용하겠습니다.",
+      "mentioned_member_ids": [],
       "created_at": "2026-10-23T03:00:00Z"
     }
   ],
@@ -8568,6 +8582,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | cursor·revision 형식 오류 |
 
 ```json
 {
@@ -8581,6 +8596,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- 작성 순서(오래된 순)로 반환하고 `cursor` 는 이전 페이지 마지막 의견 ID 다. 새 의견이 추가돼도 다음 페이지가 밀리지 않는다. 모든 제안 상태에서 조회할 수 있다.
+- 승인·반려 결정은 목록에 섞지 않는다. 결정 원본은 승인 이력(CHG-A11)이며 `approval` 의 리비전 번호로 의견의 `revision` 과 대응한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

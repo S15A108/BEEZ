@@ -1014,9 +1014,11 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 의견 ID |
 | `proposal_id` | `ID` | Y | 제안 |
+| `revision` | `integer` | Y | 의견을 쓸 때 제안의 제출 리비전 번호 |
 | `author_account_id` | `ID` | Y | 작성 계정 |
 | `kind` | `COMMENT\|REVIEW_REQUEST` | Y | 의견 종류 |
 | `body` | `string` | Y | 의견 본문 |
+| `mentioned_member_ids` | `ID[]` | Y | 지정한 멤버. 없으면 빈 배열 |
 | `created_at` | `Time` | Y | 작성 시각 |
 
 <a id="schema-explicitimpact"></a>
