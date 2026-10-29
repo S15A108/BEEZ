@@ -223,6 +223,157 @@ docker compose -p beez ps --format '{{.Service}}\t{{.Image}}\t{{.Status}}'
 readlink /var/www/beez/current
 ```
 
+## Jenkins 배포 잡 `beez-deploy`
+
+| 항목 | 값 |
+|---|---|
+| 정의 | `infra/jenkins/casc/jenkins.yaml`의 `jobs:`(Job DSL). Jenkins가 켜질 때마다 이 정의로 다시 만듭니다 |
+| 파라미터 | `GIT_SHA`(40자) · `DEPLOY_ENV`(`dev`) · `TARGET`(`local`) |
+| 파이프라인 | `infra/deploy/Jenkinsfile` — 체크아웃한 커밋이 `GIT_SHA`인지 확인 → `deploy.sh` 호출(15분 상한) |
+| 동작 | 동시 실행 안 함(뒤 요청은 줄을 섬), 기록 50회 보관 |
+| 실행 권한 | `beez-admin`, `github-actions`(이 잡만) |
+
+- **Jenkinsfile을 `GIT_SHA` 그 커밋에서 읽습니다.** 잡의 브랜치 지정이
+  `${GIT_SHA}`이고 가벼운 체크아웃(lightweight)을 꺼서 파라미터가 펼쳐집니다.
+  JCasC 파일에는 `^${GIT_SHA}`로 적습니다(`^`는 JCasC가 자기 변수로 바꾸지
+  않게 하는 표기). 그래서 Jenkinsfile·배포 스크립트·compose 파일이 이미지와
+  같은 커밋에서 오고, 예전 SHA로 롤백하면 절차도 그 시절 것으로 돌아갑니다.
+- 짧은 SHA나 브랜치 이름을 넣으면 체크아웃한 커밋과 달라 `Checkout`
+  단계에서 멈춥니다.
+- 화면에서 잡 설정을 고치면 다음 재시작 때 JCasC 정의로 돌아갑니다. 바꿀 때는
+  저장소 파일을 고칩니다.
+- 플러그인은 적게 씁니다. 선언형 파이프라인 대신 스크립트형(`node { }`)이라
+  `pipeline-model-definition` 묶음이 필요 없습니다. 대신 `stage`는
+  `pipeline-stage-step`, `checkout scm`의 `scm` 변수는 `workflow-multibranch`가
+  줍니다(빠지면 각각 `No such DSL method 'stage'`,
+  `No such property: scm`으로 실패, 2026-10-29 로컬 확인).
+
+### 화면에서 배포·롤백
+
+`https://jenkins.beez.ai.kr` → `beez-admin` 로그인 → `beez-deploy` → **Build
+with Parameters** → `GIT_SHA`에 40자 SHA → Build. 롤백은 예전 SHA를 넣습니다.
+빌드 이름이 `#번호 짧은SHA 환경`으로 바뀌고, Console Output 끝이
+`[deploy …] 완료: <SHA>`와 `Finished: SUCCESS`면 성공입니다.
+
+### 잡·플러그인·권한을 바꿀 때 (서버 반영)
+
+`casc/jenkins.yaml`이나 `plugins.txt`를 고쳤으면 아래 순서로 넣습니다. JCasC는
+모르는 항목이 있으면 Jenkins 기동 자체를 멈추므로, **바꾼 설정은 먼저 로컬
+컨테이너(`jenkins/jenkins:<같은 버전>-lts-jdk21` + `jenkins-plugin-cli`)에서
+띄워 봅니다.**
+
+```bash
+# 로컬 PC(Git Bash)
+scp /c/git/BEEZ/infra/jenkins/plugins.txt /c/git/BEEZ/infra/jenkins/casc/jenkins.yaml beez:/tmp/
+# 서버 — 플러그인 설치 도구는 Jenkins 런북 4단계와 같다(체크섬 확인)
+sudo install -D -m 600 /etc/jenkins/casc/jenkins.yaml /var/backups/jenkins/jenkins.yaml.before-$(date +%Y%m%d-%H%M) && \
+sudo systemctl stop jenkins && \
+sudo -u jenkins java -jar /tmp/jenkins-plugin-manager-2.15.0.jar --war /usr/share/java/jenkins.war \
+  --plugin-download-directory /var/lib/jenkins/plugins --plugin-file /tmp/plugins.txt && \
+sudo install -m 644 -o root -g root /tmp/jenkins.yaml /etc/jenkins/casc/jenkins.yaml && \
+sudo systemctl start jenkins && systemctl is-active jenkins && \
+sudo journalctl -u jenkins --since "-3 min" | grep -cE "SEVERE|ConfiguratorException|unresolved"   # active, 0
+rm -f /tmp/plugins.txt /tmp/jenkins.yaml
+```
+
+- 백업은 `/var/backups`에 둡니다. `/etc/jenkins/casc` 안에 두면 JCasC가 그
+  파일까지 읽습니다.
+- 켜지지 않으면 백업을 되돌려 놓고
+  `sudo systemctl reset-failed jenkins && sudo systemctl start jenkins`.
+  새로 깐 플러그인은 그대로 둬도 됩니다.
+- `unresolved`가 나오면 `casc.env`에 없는 변수를 쓴 것입니다. JCasC는 빈
+  문자열로 넣고 계속 뜹니다.
+
+## Actions → Jenkins 호출
+
+`cd.yml`의 `deploy` 잡이 이미지 3개를 다 올린 뒤 `beez-deploy`에
+`buildWithParameters`를 **한 번** 보냅니다. Jenkins가 접수하면 201이고, 그
+밖이면 잡이 실패합니다. **배포 결과는 기다리지 않습니다.** 기다리며 상태를
+반복해서 물으면 Jenkins 앞 Nginx의 인증 요청 제한(IP당 분당 10회, API
+토큰과 비밀번호를 구분할 수 없어 함께 셈)에 걸립니다. Actions의 초록불은
+"배포 요청 접수"까지이고, 배포 성공은 Jenkins에서 봅니다.
+
+| 응답 | 뜻 |
+|---|---|
+| 201 | 접수됨 |
+| 401 | 토큰이 틀렸거나 폐기됨 → 아래 "토큰 발급·교체" |
+| 403 / 404 | `github-actions`에 이 잡 권한이 없음 → JCasC의 `authorizationMatrix` |
+| 429 | Nginx 요청 제한. 1분 뒤 Actions에서 다시 실행 |
+
+### 계정과 권한
+
+GitHub에는 관리자 토큰을 두지 않습니다. 전용 계정 `github-actions`의 토큰만
+둡니다.
+
+| `github-actions` 토큰으로 | 결과 (2026-10-29 로컬 확인) |
+|---|---|
+| `beez-deploy` 실행 | 201 |
+| 잡 설정 보기·고치기, 관리 화면, 스크립트 콘솔 | 403 |
+| 잡 삭제, 새 잡 만들기 | 403 |
+
+토큰이 새도 할 수 있는 일은 "GHCR에 이미 있는 SHA로 배포"까지입니다.
+`github-actions`의 비밀번호는 `/etc/jenkins/casc.env`의
+`JENKINS_DEPLOY_PASSWORD`(무작위, 출력하지 않음)이고 토큰을 만들 때만
+씁니다([Jenkins 런북](jenkins.md) 2단계).
+
+### GitHub Environment `dev`
+
+토큰은 저장소 전체 시크릿이 아니라 Environment `dev`의 시크릿
+`JENKINS_API_TOKEN`입니다. 이 환경은 **`dev` 브랜치에서만** 쓸 수 있게
+묶었습니다. 다른 브랜치에서 워크플로를 고쳐 토큰을 꺼내려 해도 막힙니다.
+배포 기록은 저장소 화면의 Deployments에 남습니다.
+
+```bash
+# 처음 만들 때 (저장소 관리자, 로컬 PC)
+gh api -X PUT repos/S15A108/BEEZ/environments/dev \
+  -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/S15A108/BEEZ/environments/dev/deployment-branch-policies -f name=dev -f type=branch
+```
+
+### 토큰 발급·교체
+
+로컬 PC(Git Bash, 저장소 폴더)에서 실행합니다. 서버가 만든 토큰이 변수
+`T`를 거쳐 바로 GitHub 시크릿으로 들어가고, 화면·파일에 남지 않습니다.
+
+```bash
+T=$(ssh beez 'sudo bash -s' < /c/git/BEEZ/infra/jenkins/issue-deploy-token.sh) && [ ${#T} -ge 30 ] && \
+  printf %s "$T" | gh secret set JENKINS_API_TOKEN --env dev --repo S15A108/BEEZ && echo "secret set (${#T} chars)"; unset T
+```
+
+- `ssh beez 'sudo bash -s' < 파일`은 PC의 스크립트를 서버에서 root로
+  실행합니다. 스크립트는 `127.0.0.1:8080`에 직접 붙고, 비밀번호는 명령줄
+  인자 대신 `curl -K -`(표준 입력)로 넘겨 프로세스 목록에 보이지 않습니다.
+- `[ ${#T} -ge 30 ]`은 토큰이 비어 있을 때 시크릿을 빈 값으로 덮어쓰지 않게
+  합니다.
+- **새 토큰을 만들어도 옛 토큰은 살아 있습니다.** 교체한 뒤 `beez-admin`으로
+  로그인해 사람 목록 → `github-actions` → Security → API Token에서 옛 토큰을
+  폐기합니다. 토큰 이름에 발급 날짜(`github-actions-cd-YYYYMMDD`)가 붙습니다.
+
+## 운영 환경을 붙일 때 바뀌는 범위
+
+운영 환경 선택(A: t3a 서버 추가 / B: 이 서버를 main에 연결)은
+S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·compose
+파일·배포 스크립트의 흐름은 바꾸지 않습니다.** 같은 SHA의 이미지를 다른
+환경 값으로 띄울 뿐입니다.
+
+| 바뀌는 것 | A: t3a 추가 | B: 이 서버를 main으로 |
+|---|---|---|
+| env 파일 | 새 서버에 `/opt/beez/.env.prod`(서버 준비 1~3 다시) | 이 서버에 `/opt/beez/.env.prod` 추가, 또는 `.env.dev`를 운영 값으로 |
+| Jenkins 잡 파라미터 | `DEPLOY_ENV`에 `prod`, `TARGET`에 운영 서버(ssh) 선택지 추가 | `DEPLOY_ENV`에 `prod` 추가 |
+| 배포 대상 | ssh 타깃 구현(Jenkinsfile의 `TARGET` 분기, 운영 서버 deploy 사용자·키) — **유일한 코드 추가** | 없음 |
+| GitHub | Environment `prod`(main만, 시크릿 `JENKINS_API_TOKEN`), `cd.yml` 트리거에 `main` + 환경 이름을 브랜치로 고름 | 같음 |
+| DNS | `beez.ai.kr` A 레코드 → t3a | `beez.ai.kr` A 레코드 → 이 서버 |
+| 인증서·Nginx | t3a에 Nginx·certbot([Nginx·HTTPS 런북](nginx-https.md) "호스트 추가"), `beez.ai.kr` 설정 파일 | `beez.ai.kr` 설정 파일 추가·`certbot`으로 발급 |
+| 서버 준비 | t3a에 서버 세팅·Docker·`/var/www/beez`·`/opt/beez` 런북 다시 | 없음 |
+
+- 이렇게 범위가 좁은 이유는 처음부터 환경 이름을 경로·볼륨·서비스 이름에
+  넣지 않고(`/opt/beez`, `beez_pgdata`), 환경 차이를 env 파일과 잡
+  파라미터로만 주게 만들었기 때문입니다.
+- B에서 dev와 운영을 한 서버에 같이 두려면 compose 프로젝트 이름과 backend
+  호스트 포트를 환경별로 나눠야 합니다(`name: beez`가 고정이라 지금은 한
+  서버에 한 환경). 이 경우 compose의 `name`과 `BACKEND_HOST_PORT`를 env
+  파일로 빼는 변경이 추가됩니다.
+
 ## 확인
 
 로컬 PC:
@@ -261,3 +412,6 @@ curl -s http://127.0.0.1:8081/actuator/health            # {"groups":[...],"stat
 | 첫 수동 배포 | 57초(이미지 받기 22초, 컨테이너 생성·healthy 32초), Flyway V9까지 적용 |
 | 같은 SHA 재배포 | 3초, 컨테이너 재생성 없음 |
 | 외부 확인 | `/api/ping` JSON, `/actuator/health` 200, `/mcp` 401, 1.5MB 요청 통과·3MB 413 |
+| Jenkins 화면 배포(#1) | 26초, backend·ai만 재생성(postgres·seaweedfs 유지), 꺼낸 dist는 `jenkins:beez-deploy` 664/775 |
+| CD 재실행(캐시 적중) | 이미지 3개 각 19~25초 |
+| 자동 흐름(#2, 1531d05) | push → 이미지 → Jenkins 호출 201 → 배포 완료까지 약 1분 10초, Jenkins 빌드 시작 계정 `github-actions` |

@@ -15,8 +15,8 @@ CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez
 | 설치 | Jenkins LTS apt 패키지(systemd 서비스), Java 21(OpenJDK, Ubuntu 기본 저장소) |
 | 받는 주소 | `127.0.0.1:8080`만. 외부 8080은 열지 않습니다 |
 | 외부 접근 | `https://jenkins.beez.ai.kr` → 호스트 Nginx → `127.0.0.1:8080` |
-| 계정 | Jenkins 자체 사용자 DB, 관리자 `beez-admin` 1명. 가입 금지 |
-| 권한 | 로그인한 사람만 모든 것을 할 수 있고, 비로그인은 아무것도 볼 수 없음 |
+| 계정 | Jenkins 자체 사용자 DB. 관리자 `beez-admin`, 배포 호출용 `github-actions`(S15P31A108-123). 가입 금지 |
+| 권한 | matrix-auth. 관리자는 전부, `github-actions`는 전체 읽기 + `beez-deploy` 잡 보기·실행만. 비로그인은 아무것도 볼 수 없음 |
 | 실행 계정 | `jenkins`(sudo 없음). `beez-deploy`·`docker` 그룹 |
 | 설정 정본 | 저장소 `infra/jenkins/`, `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` |
 
@@ -33,10 +33,12 @@ CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez
 | 저장소 | 서버 | 내용 |
 |---|---|---|
 | `infra/jenkins/systemd/override.conf` | `/etc/systemd/system/jenkins.service.d/` | 127.0.0.1 바인딩, 설치 마법사 끄기, JCasC 경로, 비밀 파일 연결, `UMask=0002` |
-| `infra/jenkins/casc/jenkins.yaml` | `/etc/jenkins/casc/` | 보안·계정·공개 주소 |
+| `infra/jenkins/casc/jenkins.yaml` | `/etc/jenkins/casc/` | 보안·계정·권한·공개 주소, 배포 잡 정의(Job DSL) |
+| `infra/deploy/Jenkinsfile` | 서버에 두지 않음 | 배포 잡이 배포할 SHA 커밋에서 읽음([CD 런북](cd.md)) |
+| `infra/jenkins/issue-deploy-token.sh` | 서버에 두지 않음 | `github-actions` API 토큰 발급([CD 런북](cd.md)) |
 | `infra/jenkins/plugins.txt` | 설치할 때만 사용 | 플러그인 목록(버전 고정) |
 | `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` | `/etc/nginx/sites-available/` | 리버스 프록시 |
-| (저장소에 없음) | `/etc/jenkins/casc.env` | 관리자 ID·비밀번호. `600 root:root` |
+| (저장소에 없음) | `/etc/jenkins/casc.env` | 관리자 ID·비밀번호, `github-actions` 비밀번호. `600 root:root` |
 
 패키지가 설치한 `/usr/lib/systemd/system/jenkins.service`는 고치지 않습니다.
 바꿀 값만 `jenkins.service.d/override.conf`로 덮어써서 패키지를 갱신해도
@@ -103,8 +105,20 @@ read -rsp "Jenkins admin password: " P && echo && \
 sudo install -m 644 /tmp/jenkins.yaml /etc/jenkins/casc/jenkins.yaml
 ```
 
+이어서 배포 호출용 `github-actions` 계정의 비밀번호를 넣습니다. 사람이 쓰지
+않는 비밀번호라 무작위로 만들고 출력하지 않습니다. **이 줄이 없으면 JCasC가
+경고만 남기고 `github-actions`를 빈 비밀번호로 만듭니다**(S15P31A108-123).
+
+```bash
+sudo grep -q '^JENKINS_DEPLOY_PASSWORD=' /etc/jenkins/casc.env || \
+  printf 'JENKINS_DEPLOY_PASSWORD=%s\n' "$(openssl rand -hex 24)" | sudo tee -a /etc/jenkins/casc.env > /dev/null
+sudo cut -d= -f1 /etc/jenkins/casc.env    # JENKINS_ADMIN_ID, JENKINS_ADMIN_PASSWORD, JENKINS_DEPLOY_PASSWORD
+```
+
 - `install … /dev/stdin`은 처음부터 `600 root:root`로 파일을 만듭니다. 만든
   뒤에 권한을 좁히는 방식과 달리 열려 있는 순간이 없습니다.
+- `tee -a`는 파일 끝에 덧붙이기만 해서 권한(`600 root:root`)이 그대로입니다.
+  `grep -q … ||`로 이미 있으면 건너뛰어 두 번 실행해도 값이 바뀌지 않습니다.
 - `[[ … =~ … ]]`는 허용 문자·길이가 아니면 파일을 쓰지 않습니다.
 
 ### 비밀번호 문자 제한
@@ -231,7 +245,7 @@ rm /tmp/plugins.txt /tmp/jenkins.yaml /tmp/override.conf /tmp/jenkins-plugin-man
 ```bash
 curl -s -o /dev/null -w 'anon %{http_code}\n' http://127.0.0.1:8080/          # 403
 curl -s -o /dev/null -w 'signup %{http_code}\n' http://127.0.0.1:8080/signup   # 404
-sudo ls /var/lib/jenkins/users                                                # beezadmin_… 하나
+sudo ls /var/lib/jenkins/users                                                # beezadmin_…·githubactions_… 두 개
 ```
 
 ### 7. Nginx·HTTPS
@@ -250,7 +264,7 @@ systemctl is-active jenkins                                     # active
 sudo ss -ltnp | grep 8080                                       # 127.0.0.1:8080만
 systemctl show jenkins -p UMask --value                         # 0002
 grep Groups /proc/$(systemctl show jenkins -p MainPID --value)/status   # jenkins·beez-deploy·docker
-sudo ls /var/lib/jenkins/users                                  # beezadmin_… 하나
+sudo ls /var/lib/jenkins/users                                  # beezadmin_…·githubactions_… 두 개
 stat -c '%a %U:%G' /var/lib/jenkins                             # 750 jenkins:jenkins
 sudo -u www-data ls /var/lib/jenkins 2>&1 | head -1             # Permission denied
 sudo -u jenkins docker version --format '{{.Server.Version}}'   # sudo 없이 docker 사용
@@ -288,7 +302,8 @@ Jenkins를 다시 세우는 데 필요한 것은 대부분 저장소에 있습�
 | 서비스·보안·계정 설정 | 저장소 `infra/jenkins/` | "새 서버에서 처음부터" 그대로 |
 | 관리자 비밀번호 | 비밀번호 관리자 | 2단계에서 다시 입력 |
 | 플러그인 | 저장소 `plugins.txt` | 4단계 |
-| 배포 잡 정의 | 저장소 Jenkinsfile(-123) | 잡 생성 시 저장소에서 읽음 |
+| 배포 잡 정의 | 저장소 `casc/jenkins.yaml`(Job DSL)·`infra/deploy/Jenkinsfile` | 켤 때마다 JCasC가 잡을 다시 만듦 |
+| `github-actions` API 토큰 | JENKINS_HOME(해시만 저장) | 백업에 없으면 [CD 런북](cd.md) "토큰 발급·교체"로 새로 발급 |
 | 빌드 기록·자격 증명·잡 설정 | `/var/lib/jenkins`(JENKINS_HOME) | 아래 백업 파일 |
 
 JENKINS_HOME은 빌드 기록, 사용자별 API 토큰(-123의 배포 호출 계정 등), 화면에서
@@ -378,12 +393,19 @@ JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설�
 ```bash
 read -rsp "new password: " P && echo && \
   if [[ "$P" =~ ^[A-Za-z0-9._~+=@%-]{20,}$ ]]; then \
-    printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
-    sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && sudo systemctl restart jenkins && echo changed; \
-  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P
+    NEW=$(sudo grep -v '^JENKINS_ADMIN_PASSWORD=' /etc/jenkins/casc.env; printf 'JENKINS_ADMIN_PASSWORD=%s' "$P") && \
+    printf '%s\n' "$NEW" | sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && \
+    sudo systemctl restart jenkins && echo changed; \
+  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P NEW
 ```
 
 허용 문자는 2단계의 "비밀번호 문자 제한"과 같습니다.
+
+- **관리자 비밀번호 줄만 바꾸고 나머지 줄은 그대로 둡니다.** 파일을 통째로
+  새로 쓰면 `JENKINS_DEPLOY_PASSWORD`가 지워지고, JCasC가 `github-actions`를
+  빈 비밀번호로 다시 만듭니다(-123 이전 명령은 파일 전체를 다시 썼습니다).
+- 바꾼 내용을 먼저 변수에 담은 뒤 씁니다. 같은 파일을 읽으면서 바로 쓰면
+  다 읽기 전에 파일이 비워질 수 있습니다.
 
 JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화면에서 바꾼
 비밀번호는 재시작하면 이 파일 값으로 돌아갑니다.
@@ -426,7 +448,7 @@ JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화�
 |---|---|
 | Jenkins | 2.580.2 (LTS, apt) |
 | Java | OpenJDK 21.0.12 (`openjdk-21-jre-headless`) |
-| 플러그인 | `configuration-as-code` 2140.v00e72b_047734 + 의존 17개 |
+| 플러그인 | `configuration-as-code` 2140.v00e72b_047734 + 의존 17개. -123에서 `matrix-auth`·`job-dsl`·파이프라인 6개·`git` 추가 → 전체 45개 |
 | 인증서 | `jenkins.beez.ai.kr`, 발급자 Let's Encrypt `YE1`, 만료 2027-01-27, `renew_hook = systemctl reload nginx` |
 | 외부 확인 | `/login` 200, `/` 403, `/signup` 404, `http` → 301 `https`, 8080 닫힘 |
 | 대입 제한 | 틀린 Basic 인증 11회까지 401 뒤 429, 틀린 로그인 폼 6회까지 302 뒤 429. 비인증 화면은 영향 없음 |

@@ -13,8 +13,7 @@ name: CD
 
 on:
   push:
-    # TEMP(S15P31A108-123): 머지 전 실행 검증용 브랜치. PR 올리기 전에 지운다
-    branches: [dev, chore/infra-cd-S15P31A108-123]
+    branches: [dev]
     # 문서만 바뀐 커밋은 배포하지 않는다. 서버에는 직전 SHA 가 그대로 남는다
     paths-ignore:
       - 'docs/**'
