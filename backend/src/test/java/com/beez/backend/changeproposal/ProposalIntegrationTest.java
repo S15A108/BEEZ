@@ -1,0 +1,480 @@
+package com.beez.backend.changeproposal;
+
+import static org.assertj.core.api.Assertions.*;
+import static com.beez.backend.designitem.support.DesignJson.JSON;
+import com.beez.backend.changeproposal.dto.ProposalDtos.*;
+import com.beez.backend.changeproposal.service.ProposalCommandService;
+import com.beez.backend.changeproposal.service.ProposalQueryService;
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.project.ProjectRole;
+import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.IntegrationTestSupport;
+import java.net.http.HttpRequest;
+import java.util.*;
+import java.util.concurrent.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+class ProposalIntegrationTest extends IntegrationTestSupport {
+    @Autowired ProposalCommandService commands;
+    @Autowired ProposalQueryService queries;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired PlatformTransactionManager transactions;
+    AccessFixtures.ProjectWithLeader project;
+    CallerContext author;
+    long baseline, document, version, item, itemVersion;
+    static final String ORIGIN = "http://localhost:5173";
+
+    @BeforeEach void setup() {
+        project=fixtures().projectWithLeader(); author=CallerContext.human(project.leaderAccountId());
+        baseline=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,1,?) RETURNING id",
+                Long.class, project.projectId(), author.accountId());
+        jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?", baseline, project.projectId());
+        document=jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'REQ_SPEC','요구사항',?) RETURNING id",
+                Long.class, project.projectId(), author.accountId());
+        version=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
+                VALUES(?,1,'APPROVED','fixture.md','hash-before','첫째\n이전\n끝\n',?,?,now()) RETURNING id
+                """, Long.class, document, author.accountId(), author.accountId());
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)", baseline, project.projectId(), document, version);
+        item=jdbc.queryForObject("INSERT INTO design_item(project_id,key,kind) VALUES(?,'REQ-001','REQUIREMENT') RETURNING id", Long.class, project.projectId());
+        itemVersion=jdbc.queryForObject("""
+                INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,source_document_version_id,approved_at)
+                VALUES(?,1,'APPROVED','요구사항',1,'{"description":"기존"}','item-hash','HUMAN',?,now()) RETURNING id
+                """, Long.class, item, version);
+        jdbc.update("INSERT INTO baseline_item VALUES(?,?,?,?)", baseline, project.projectId(), item, itemVersion);
+    }
+
+    Input input(String after) {
+        return new Input(""+baseline,"문서 보완","반영 이유",null,null,List.of(),
+                List.of(new DocumentChange(""+document,""+version,after,null)),null,null,null);
+    }
+    Input resubmission(Proposal previous, String after) {
+        Input value=input(after);
+        return new Input(value.baseBaselineId(), value.title(), value.reason(), null,null,value.items(),value.documents(),previous.revision(),previous.snapshotHash(),null);
+    }
+    Proposal create(String key) { return commands.create(author,project.projectId(),input("첫째\n수정\n끝\n"),key); }
+    void reject(Proposal p) {
+        new TransactionTemplate(transactions).executeWithoutResult(tx -> {
+            jdbc.queryForObject("SELECT id FROM project WHERE id=? FOR UPDATE", Long.class,project.projectId());
+            jdbc.update("""
+                    INSERT INTO approval(change_proposal_id,proposal_revision_no,decided_by,decision,reason,base_baseline_id)
+                    VALUES(?, ?, ?, 'REJECTED','근거를 보완해 주세요.',?)
+                    """,Long.parseLong(p.id()),p.revision(),author.accountId(),baseline);
+            jdbc.update("UPDATE change_proposal SET status='REJECTED' WHERE id=?",Long.parseLong(p.id()));
+        });
+    }
+    void error(Runnable action,String code) {
+        assertThatThrownBy(action::run).isInstanceOfSatisfying(ApiException.class,e -> assertThat(e.getCode()).isEqualTo(code));
+    }
+
+    @Test void createReplaysAndDoesNotPublishOrMutateApprovedContent() {
+        Proposal p=create("same");
+        assertThat(create("same")).isEqualTo(p);
+        error(() -> commands.create(author,project.projectId(),input("다른 본문"),"same"),"idempotency_conflict");
+        assertThat(p.revision()).isEqualTo(1);
+        assertThat(p.status()).isEqualTo("PROPOSED");
+        assertThat(jdbc.queryForObject("SELECT current_baseline_id FROM project WHERE id=?",Long.class,project.projectId())).isEqualTo(baseline);
+        assertThat(jdbc.queryForObject("SELECT content_text FROM document_version WHERE id=?",String.class,version)).contains("이전");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal_revision WHERE change_proposal_id=?",Integer.class,Long.parseLong(p.id()))).isEqualTo(1);
+    }
+
+    @Test void submittedAndReviewingContentIsLockedAndRejectionResubmitsSameId() {
+        Proposal first=create("initial"); long id=Long.parseLong(first.id());
+        Input next=resubmission(first,"두번째 보완");
+        error(() -> commands.resubmit(author,project.projectId(),id,next,"retry"),"proposal_locked");
+        jdbc.update("UPDATE change_proposal SET status='IN_REVIEW' WHERE id=?",id);
+        error(() -> commands.resubmit(author,project.projectId(),id,next,"retry"),"proposal_locked");
+        reject(first);
+        Proposal second=commands.resubmit(author,project.projectId(),id,next,"retry");
+        assertThat(second.id()).isEqualTo(first.id()); assertThat(second.revision()).isEqualTo(2);
+        assertThat(commands.resubmit(author,project.projectId(),id,next,"retry")).isEqualTo(second);
+        assertThat(queries.detail(author,project.projectId(),id,1).proposal().documents().getFirst().afterContent()).contains("수정");
+        assertThat(queries.detail(author,project.projectId(),id,1).proposal().status()).isEqualTo("REJECTED");
+        var history=queries.revisions(author,project.projectId(),id,null,20).items();
+        assertThat(history).hasSize(2); assertThat(history.get(1).decisionReason()).isEqualTo("근거를 보완해 주세요.");
+        reject(second);
+        error(() -> commands.resubmit(author,project.projectId(),id,next,"stale"),"proposal_changed");
+        assertThat(commands.resubmit(author,project.projectId(),id,resubmission(second,"세번째 보완"),"third").revision()).isEqualTo(3);
+    }
+
+    @Test void documentOnlyChangeAndExplicitCandidatesHaveStableBaseDiffAfterBaselineMoves() {
+        Proposal p=create("diff");
+        var detail=queries.detail(author,project.projectId(),Long.parseLong(p.id()),null);
+        assertThat(detail.comparisons().getFirst().diff()).contains("-이전\n+수정\n");
+        assertThat(detail.explicitCandidates()).anyMatch(c -> c.targetType().equals("DESIGN_ITEM") && c.targetId().equals(""+item));
+        long newVersion=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,approved_at)
+                VALUES(?,2,'APPROVED','new.md','new-hash','별도 승인 내용',now()) RETURNING id
+                """,Long.class,document);
+        long next=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,2,?) RETURNING id",Long.class,project.projectId(),author.accountId());
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)",next,project.projectId(),document,newVersion);
+        jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?",next,project.projectId());
+        var moved=queries.detail(author,project.projectId(),Long.parseLong(p.id()),null);
+        assertThat(moved.proposal().requiresRefresh()).isTrue();
+        assertThat(moved.comparisons().getFirst().currentChanged()).isTrue();
+        assertThat(moved.comparisons().getFirst().diff()).isEqualTo(detail.comparisons().getFirst().diff());
+        error(() -> create("new-key"),"baseline_conflict");
+    }
+
+    @Test void historicalRejectionDoesNotInheritLaterPublicationOrAnotherSubmissionActor() {
+        Proposal first=create("human"); reject(first);
+        long token=fixtures().agentToken(project.projectId(),author.accountId());
+        Proposal second=commands.resubmit(CallerContext.agent(author.accountId(),token),project.projectId(),Long.parseLong(first.id()),
+                resubmission(first,"에이전트가 보완"),"agent-resubmit");
+        assertThat(second.actorType()).isEqualTo("AGENT");
+        long published=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,2,?) RETURNING id",
+                Long.class,project.projectId(),author.accountId());
+        jdbc.update("""
+                INSERT INTO approval(change_proposal_id,proposal_revision_no,decided_by,decision,base_baseline_id,result_baseline_id)
+                VALUES(?,2,?,'APPROVED',?,?)
+                """,Long.parseLong(first.id()),author.accountId(),baseline,published);
+        jdbc.update("UPDATE change_proposal SET status='PUBLISHED',published_baseline_id=? WHERE id=?",published,Long.parseLong(first.id()));
+        var old=queries.detail(author,project.projectId(),Long.parseLong(first.id()),1).proposal();
+        assertThat(old.status()).isEqualTo("REJECTED");
+        assertThat(old.publishedBaselineId()).isNull();
+        assertThat(old.actorType()).isEqualTo("HUMAN");
+        var latest=queries.detail(author,project.projectId(),Long.parseLong(first.id()),2).proposal();
+        assertThat(latest.status()).isEqualTo("PUBLISHED");
+        assertThat(latest.publishedBaselineId()).isEqualTo(""+published);
+        assertThat(latest.actorType()).isEqualTo("AGENT");
+    }
+
+    @Test void uploadedDraftIsClaimedOnceAndRemainsImmutable() {
+        long draft=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,parent_version_id)
+                VALUES(?,2,'DRAFT','draft.md','draft-hash','파일 수정본',?,?) RETURNING id
+                """,Long.class,document,author.accountId(),version);
+        Input value=new Input(""+baseline,"파일 변경","수정 사유",null,null,List.of(),
+                List.of(new DocumentChange(""+document,""+version,null,""+draft)),null,null,null);
+        Proposal p=commands.create(author,project.projectId(),value,"upload");
+        assertThat(p.documents().getFirst().afterContent()).isEqualTo("파일 수정본");
+        error(() -> commands.create(author,project.projectId(),value,"other"),"document_already_proposed");
+        assertThatThrownBy(() -> jdbc.update("UPDATE document_version SET content_text='변조' WHERE id=?",draft))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE change_proposal_revision SET snapshot='{}' WHERE change_proposal_id=?",Long.parseLong(p.id())))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        assertThatThrownBy(() -> jdbc.update("DELETE FROM change_proposal_revision WHERE change_proposal_id=?",Long.parseLong(p.id())))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE change_proposal SET reason='변조' WHERE id=?",Long.parseLong(p.id())))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test void foreignReferencesAndNonAuthorAreRejectedAndAgentUsesSameCommand() {
+        var foreign=fixtures().projectWithLeader();
+        error(() -> commands.create(CallerContext.human(foreign.leaderAccountId()),project.projectId(),input("변경"),"foreign"),"not_found");
+        Proposal p=create("author"); reject(p);
+        long member=fixtures().account(); fixtures().member(project.projectId(),member,ProjectRole.MEMBER);
+        error(() -> commands.resubmit(CallerContext.human(member),project.projectId(),Long.parseLong(p.id()),resubmission(p,"변경"),"other"),"forbidden");
+        long token=fixtures().agentToken(project.projectId(),member);
+        Proposal agent=commands.create(CallerContext.agent(member,token),project.projectId(),input("에이전트 수정안"),"agent");
+        assertThat(agent.actorType()).isEqualTo("AGENT");
+        fixtures().revokeToken(token);
+        error(() -> commands.create(CallerContext.agent(member,token),project.projectId(),input("에이전트 수정안"),"agent"),"token_revoked");
+        long outsiderDoc=jdbc.queryForObject("INSERT INTO document(project_id,type,title,created_by) VALUES(?,'PLAN','외부',?) RETURNING id",Long.class,foreign.projectId(),foreign.leaderAccountId());
+        Input bad=new Input(""+baseline,"외부 참조","사유",null,null,List.of(),List.of(new DocumentChange(""+outsiderDoc,""+version,"본문",null)),null,null,null);
+        error(() -> commands.create(author,project.projectId(),bad,"cross-doc"),"not_found");
+    }
+
+    @Test void itemSchemaIsStoredForImpactAnalysisAndRejectsNoChangeOrBadSchema() {
+        Item update=new Item("UPDATE",""+item,""+itemVersion,null,1,Map.of("description","변경"));
+        Input value=new Input(""+baseline,"항목 변경","사유",null,null,List.of(update),List.of(),null,null,null);
+        Proposal p=commands.create(author,project.projectId(),value,"item");
+        assertThat(p.items().getFirst().kind()).isEqualTo("REQUIREMENT");
+        assertThat(jdbc.queryForObject("SELECT schema_version FROM change_proposal_item WHERE change_proposal_id=?",Integer.class,Long.parseLong(p.id()))).isEqualTo(1);
+        error(() -> commands.create(author,project.projectId(),input("첫째\n이전\n끝\n"),"no-change"),"validation_failed");
+        Input invalid=new Input(""+baseline,"항목 변경","사유",null,null,
+                List.of(new Item("CREATE",null,null,"API_CONTRACT",1,Map.of("description","잘못된 계약"))),List.of(),null,null,null);
+        error(() -> commands.create(author,project.projectId(),invalid,"invalid"),"validation_failed");
+    }
+
+    @Test void listUsesScopedCursorAndRevisionHistoryIsPaged() {
+        create("one"); Proposal newest=create("two");
+        var first=queries.list(author,project.projectId(),"PROPOSED",null,null,1);
+        assertThat(first.items().getFirst().id()).isEqualTo(newest.id()); assertThat(first.hasMore()).isTrue();
+        assertThat(queries.list(author,project.projectId(),"PROPOSED",null,first.nextCursor(),1).items()).hasSize(1);
+        error(() -> queries.list(author,project.projectId(),"REJECTED",null,first.nextCursor(),1),"validation_failed");
+        error(() -> queries.list(author,project.projectId(),null,null,"broken",1),"validation_failed");
+        reject(newest); commands.resubmit(author,project.projectId(),Long.parseLong(newest.id()),resubmission(newest,"재제출"),"retry");
+        var history=queries.revisions(author,project.projectId(),Long.parseLong(newest.id()),null,1);
+        assertThat(history.hasMore()).isTrue();
+        assertThat(queries.revisions(author,project.projectId(),Long.parseLong(newest.id()),history.nextBeforeRevision(),1).items().getFirst().decision()).isEqualTo("REJECTED");
+    }
+
+    @Test void httpContractChecksOriginAndReturnsKoreanConflict() {
+        var client=client().login(project.leaderEmail(),AccessFixtures.PASSWORD);
+        String path="/api/projects/"+project.projectId()+"/change-proposals";
+        String body=JSON.writeValueAsString(input("HTTP 수정"));
+        assertThat(client.post(path,body,"Idempotency-Key","http").statusCode()).isEqualTo(403);
+        var response=client.post(path,body,"Origin",ORIGIN,"Idempotency-Key","http");
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        Proposal p=JSON.readValue(response.body(),Proposal.class);
+        assertThat(client.get(path+"/"+p.id()).statusCode()).isEqualTo(200);
+        var locked=client.send(client.request(path+"/"+p.id(),"Origin",ORIGIN,"Idempotency-Key","put","Content-Type","application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(resubmission(p,"다시 제출")))));
+        assertThat(locked.statusCode()).isEqualTo(409); assertThat(locked.body()).contains("proposal_locked","반려");
+        assertThat(client.get(path+"?limit=0").statusCode()).isEqualTo(400);
+    }
+
+    @Test void concurrentCreatesWithSameKeyReturnOneProposal() throws Exception {
+        try (var pool=Executors.newFixedThreadPool(2)) {
+            var start=new CountDownLatch(1);
+            Callable<Proposal> task=() -> {start.await(); return create("race");};
+            Future<Proposal> a=pool.submit(task), b=pool.submit(task); start.countDown();
+            assertThat(a.get(15,TimeUnit.SECONDS)).isEqualTo(b.get(15,TimeUnit.SECONDS));
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isEqualTo(1);
+        }
+    }
+
+    @Test void transactionFailureRollsBackProposalAndIdempotentResponse() {
+        var tx=new TransactionTemplate(transactions);
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> { create("rollback"); throw new IllegalStateException("failure injection"); }))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM design_http_command WHERE project_id=?",Integer.class,project.projectId())).isZero();
+        assertThat(create("rollback").status()).isEqualTo("PROPOSED");
+    }
+
+    @Test void membershipRemovedWhileWaitingForProjectLockCannotSubmit() throws Exception {
+        long account=fixtures().account(); long membership=fixtures().member(project.projectId(),account,ProjectRole.MEMBER);
+        var waiting=CallerContext.human(account);
+        try (var pool=Executors.newSingleThreadExecutor()) {
+            var submitted=new java.util.concurrent.atomic.AtomicReference<Future<Proposal>>();
+            new TransactionTemplate(transactions).executeWithoutResult(tx -> {
+                jdbc.queryForObject("SELECT id FROM project WHERE id=? FOR UPDATE",Long.class,project.projectId());
+                submitted.set(pool.submit(() -> commands.create(waiting,project.projectId(),input("대기 중 변경"),"removed")));
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+                boolean blocked=false;
+                while (System.nanoTime()<deadline) {
+                    jdbc.execute("SELECT pg_stat_clear_snapshot()");
+                    blocked=Boolean.TRUE.equals(jdbc.queryForObject("""
+                            SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+                             AND query ILIKE '%SELECT id FROM project%FOR UPDATE%')
+                            """,Boolean.class));
+                    if (blocked) break;
+                    try { Thread.sleep(20); } catch (InterruptedException e) {Thread.currentThread().interrupt(); throw new RuntimeException(e);}
+                }
+                assertThat(blocked).as("command waiting for project lock").isTrue();
+                fixtures().removeMember(membership);
+            });
+            assertThatThrownBy(() -> submitted.get().get(10,TimeUnit.SECONDS)).hasCauseInstanceOf(ApiException.class);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal WHERE project_id=?",Integer.class,project.projectId())).isZero();
+        }
+    }
+
+    @Test void foreignTaskAndValidationCannotBeAttachedEvenWithoutTaskId() {
+        var other=fixtures().projectWithLeader();
+        long task=jdbc.queryForObject("INSERT INTO task(project_id,key,title,status) VALUES(?,'T-1','외부','DRAFT') RETURNING id",Long.class,other.projectId());
+        long plan=jdbc.queryForObject("""
+                INSERT INTO task_plan_revision(task_id,revision_no,title,goal,input_hash,created_by_account_id)
+                VALUES(?,1,'외부','외부','h',?) RETURNING id
+                """,Long.class,task,other.leaderAccountId());
+        long otherBaseline=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,1,?) RETURNING id",Long.class,other.projectId(),other.leaderAccountId());
+        long validation=jdbc.queryForObject("""
+                INSERT INTO validation(task_id,plan_revision_id,baseline_id,status,trigger,input_snapshot_hash,rule_version)
+                VALUES(?,?,?,'NOT_RUN','AGENT','h','1') RETURNING id
+                """,Long.class,task,plan,otherBaseline);
+        Input base=input("변경");
+        error(() -> commands.create(author,project.projectId(),new Input(base.baseBaselineId(),base.title(),base.reason(),""+task,null,
+                base.items(),base.documents(),null,null,null),"foreign-task"),"not_found");
+        error(() -> commands.create(author,project.projectId(),new Input(base.baseBaselineId(),base.title(),base.reason(),null,""+validation,
+                base.items(),base.documents(),null,null,null),"foreign-validation"),"not_found");
+    }
+
+    WithdrawRequest withdrawal(Proposal proposal) {
+        return new WithdrawRequest(proposal.revision(), proposal.snapshotHash());
+    }
+    Input linkedInput(Proposal previous) {
+        Input value=input("거둔 제안에서 새로 작성한 본문");
+        return new Input(value.baseBaselineId(),value.title(),value.reason(),null,null,value.items(),value.documents(),
+                null,null,previous.id());
+    }
+
+    @Test void withdrawalPreservesContentAndAuditAndReplaysWithoutPublishing() {
+        Proposal original=create("withdraw-base"); long id=Long.parseLong(original.id());
+        Proposal withdrawn=commands.withdraw(author,project.projectId(),id,withdrawal(original),"withdraw");
+        assertThat(withdrawn.status()).isEqualTo("WITHDRAWN");
+        assertThat(withdrawn.snapshotHash()).isEqualTo(original.snapshotHash());
+        assertThat(withdrawn.revision()).isEqualTo(original.revision());
+        assertThat(withdrawn.documents()).isEqualTo(original.documents());
+        assertThat(withdrawn.withdrawnBy()).isEqualTo(author.accountId().toString());
+        assertThat(withdrawn.withdrawnAt()).isNotBlank();
+        assertThat(commands.withdraw(author,project.projectId(),id,withdrawal(original),"withdraw")).isEqualTo(withdrawn);
+        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(2,original.snapshotHash()),"withdraw"),"idempotency_conflict");
+        error(() -> commands.withdraw(author,project.projectId(),id,withdrawal(original),"again"),"invalid_transition");
+        error(() -> commands.resubmit(author,project.projectId(),id,resubmission(original,"수정"),"resubmit"),"proposal_locked");
+        assertThat(queries.detail(author,project.projectId(),id,1).proposal().withdrawnAt()).isEqualTo(withdrawn.withdrawnAt());
+        assertThat(queries.revisions(author,project.projectId(),id,null,20).items()).singleElement().satisfies(r -> assertThat(r.decision()).isNull());
+        assertThat(jdbc.queryForObject("SELECT current_baseline_id FROM project WHERE id=?",Long.class,project.projectId())).isEqualTo(baseline);
+        assertThatThrownBy(() -> jdbc.update("UPDATE change_proposal SET status='PROPOSED',withdrawn_by=NULL,withdrawn_at=NULL WHERE id=?",id))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test void withdrawalRejectsUnauthorizedStaleAndDecidedRequests() {
+        Proposal p=create("protected"); long id=Long.parseLong(p.id());
+        long member=fixtures().account(); fixtures().member(project.projectId(),member,ProjectRole.MEMBER);
+        error(() -> commands.withdraw(CallerContext.human(member),project.projectId(),id,withdrawal(p),"other"),"forbidden");
+        var foreign=fixtures().projectWithLeader();
+        error(() -> commands.withdraw(CallerContext.human(foreign.leaderAccountId()),project.projectId(),id,withdrawal(p),"foreign"),"not_found");
+        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(2,p.snapshotHash()),"stale"),"proposal_changed");
+        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(1,"sha256:"+"0".repeat(64)),"hash"),"proposal_changed");
+        error(() -> commands.withdraw(author,project.projectId(),id,new WithdrawRequest(0,p.snapshotHash()),"bad"),"validation_failed");
+        reject(p);
+        error(() -> commands.withdraw(author,project.projectId(),id,withdrawal(p),"rejected"),"invalid_transition");
+        for(String status:List.of("APPROVED","PUBLISHED")) {
+            Proposal decided=create(status);long decidedId=Long.parseLong(decided.id());
+            jdbc.update("UPDATE change_proposal SET status=?,published_baseline_id=? WHERE id=?",
+                    status,"PUBLISHED".equals(status) ? baseline : null,decidedId);
+            error(() -> commands.withdraw(author,project.projectId(),decidedId,withdrawal(decided),status),"invalid_transition");
+            assertThatThrownBy(() -> jdbc.update("UPDATE change_proposal SET status='WITHDRAWN',withdrawn_by=?,withdrawn_at=now() WHERE id=?",author.accountId(),decidedId))
+                    .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        }
+    }
+
+    @Test void withdrawnProposalCanBeLinkedOnlyByItsAuthorAndKeepsNewIdentity() {
+        Proposal previous=create("previous");
+        error(() -> commands.create(author,project.projectId(),linkedInput(previous),"premature"),"invalid_transition");
+        commands.withdraw(author,project.projectId(),Long.parseLong(previous.id()),withdrawal(previous),"withdraw-previous");
+        Proposal linked=commands.create(author,project.projectId(),linkedInput(previous),"linked");
+        assertThat(linked.id()).isNotEqualTo(previous.id()); assertThat(linked.key()).isNotEqualTo(previous.key());
+        assertThat(linked.previousProposalId()).isEqualTo(previous.id());
+        assertThat(linked.revision()).isEqualTo(1);
+        assertThat(commands.create(author,project.projectId(),linkedInput(previous),"linked")).isEqualTo(linked);
+        long other=fixtures().account();fixtures().member(project.projectId(),other,ProjectRole.MEMBER);
+        error(() -> commands.create(CallerContext.human(other),project.projectId(),linkedInput(previous),"other"),"forbidden");
+        var foreign=fixtures().projectWithLeader();
+        error(() -> commands.create(CallerContext.human(foreign.leaderAccountId()),foreign.projectId(),linkedInput(previous),"foreign"),"not_found");
+        reject(linked);
+        error(() -> commands.create(author,project.projectId(),linkedInput(linked),"rejected-link"),"invalid_transition");
+        Proposal resubmitted=commands.resubmit(author,project.projectId(),Long.parseLong(linked.id()),resubmission(linked,"새 리비전"),"linked-resubmit");
+        assertThat(resubmitted.previousProposalId()).isEqualTo(previous.id());
+        assertThat(resubmitted.revision()).isEqualTo(2);
+        commands.withdraw(author,project.projectId(),Long.parseLong(linked.id()),withdrawal(resubmitted),"withdraw-second");
+        var historical=queries.detail(author,project.projectId(),Long.parseLong(linked.id()),1).proposal();
+        assertThat(historical.status()).isEqualTo("REJECTED");assertThat(historical.withdrawnAt()).isNull();
+        assertThatThrownBy(() -> jdbc.update("UPDATE change_proposal SET previous_proposal_id=NULL WHERE id=?",Long.parseLong(linked.id())))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test void groupFiltersBeforePaginationAndBindsCursorToGroup() {
+        Proposal first=create("group-first"), second=create("group-second"), rejected=create("group-rejected"),withdrawn=create("group-withdrawn");
+        reject(rejected);
+        commands.withdraw(author,project.projectId(),Long.parseLong(withdrawn.id()),withdrawal(withdrawn),"group-withdraw");
+        var page=queries.list(author,project.projectId(),null,"IN_PROGRESS",null,1);
+        assertThat(page.items().getFirst().id()).isEqualTo(second.id());assertThat(page.hasMore()).isTrue();
+        assertThat(queries.list(author,project.projectId(),null,"IN_PROGRESS",page.nextCursor(),1).items().getFirst().id()).isEqualTo(first.id());
+        error(() -> queries.list(author,project.projectId(),null,"REJECTED",page.nextCursor(),1),"validation_failed");
+        assertThat(queries.list(author,project.projectId(),"REJECTED","IN_PROGRESS",null,20).items()).isEmpty();
+        assertThat(queries.list(author,project.projectId(),"WITHDRAWN",null,null,20).items()).singleElement().satisfies(p -> assertThat(p.id()).isEqualTo(withdrawn.id()));
+        assertThat(queries.list(author,project.projectId(),null,"REJECTED",null,20).items()).singleElement().satisfies(p -> assertThat(p.id()).isEqualTo(rejected.id()));
+        error(() -> queries.list(author,project.projectId(),null,"WITHDRAWN",null,20),"validation_failed");
+        jdbc.update("UPDATE change_proposal SET status='APPROVED' WHERE id=?",Long.parseLong(first.id()));
+        jdbc.update("UPDATE change_proposal SET status='PUBLISHED',published_baseline_id=? WHERE id=?",baseline,Long.parseLong(second.id()));
+        assertThat(queries.list(author,project.projectId(),null,"IN_PROGRESS",null,20).items()).singleElement().satisfies(p -> assertThat(p.status()).isEqualTo("APPROVED"));
+        assertThat(queries.list(author,project.projectId(),null,"PUBLISHED",null,20).items()).singleElement().satisfies(p -> assertThat(p.id()).isEqualTo(second.id()));
+    }
+
+    @Test void creationRequiresBaselineAndWithdrawalRestChecksOriginAndGroup() {
+        var empty=fixtures().projectWithLeader();
+        error(() -> commands.create(CallerContext.human(empty.leaderAccountId()),empty.projectId(),input("변경"),"no-baseline"),"baseline_required");
+        Proposal p=create("http-withdraw");
+        var client=client().login(project.leaderEmail(),AccessFixtures.PASSWORD);
+        String path="/api/projects/"+project.projectId()+"/change-proposals";
+        String body=JSON.writeValueAsString(withdrawal(p));
+        assertThat(client.post(path+"/"+p.id()+"/withdraw",body,"Idempotency-Key","rest-withdraw").statusCode()).isEqualTo(403);
+        var result=client.post(path+"/"+p.id()+"/withdraw",body,"Origin",ORIGIN,"Idempotency-Key","rest-withdraw");
+        assertThat(result.statusCode()).withFailMessage(result.body()).isEqualTo(200);
+        assertThat(result.body()).startsWith("{\"proposal\":{").contains("WITHDRAWN","withdrawn_at");
+        assertThat(client.get(path+"?group=IN_PROGRESS").body()).contains("\"items\":[]");
+        assertThat(client.get(path+"?group=UNKNOWN").statusCode()).isEqualTo(400);
+    }
+
+    @Test void concurrentWithdrawalReplaysOnceAndFailureRollsBack() throws Exception {
+        Proposal p=create("withdraw-race");long id=Long.parseLong(p.id());
+        var tx=new TransactionTemplate(transactions);
+        assertThatThrownBy(() -> tx.executeWithoutResult(s -> {
+            commands.withdraw(author,project.projectId(),id,withdrawal(p),"withdraw-rollback");throw new IllegalStateException("failure injection");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(queries.detail(author,project.projectId(),id,null).proposal().status()).isEqualTo("PROPOSED");
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var start=new CountDownLatch(1);
+            Callable<Proposal> action=() -> {start.await();return commands.withdraw(author,project.projectId(),id,withdrawal(p),"withdraw-race-key");};
+            var a=pool.submit(action);var b=pool.submit(action);start.countDown();
+            assertThat(a.get(15,TimeUnit.SECONDS)).isEqualTo(b.get(15,TimeUnit.SECONDS));
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM change_proposal_revision WHERE change_proposal_id=?",Integer.class,id)).isEqualTo(1);
+    }
+
+    @Test void withdrawalRechecksRevisionAfterConcurrentResubmission() throws Exception {
+        Proposal p=create("withdraw-stale-race");long id=Long.parseLong(p.id());reject(p);
+        try(var pool=Executors.newSingleThreadExecutor()) {
+            var waiting=new java.util.concurrent.atomic.AtomicReference<Future<Proposal>>();
+            new TransactionTemplate(transactions).executeWithoutResult(tx -> {
+                jdbc.queryForObject("SELECT id FROM project WHERE id=? FOR UPDATE",Long.class,project.projectId());
+                waiting.set(pool.submit(() -> commands.withdraw(author,project.projectId(),id,withdrawal(p),"old-withdraw")));
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+                boolean blocked=false;
+                while(System.nanoTime()<deadline) {
+                    jdbc.execute("SELECT pg_stat_clear_snapshot()");
+                    blocked=Boolean.TRUE.equals(jdbc.queryForObject("""
+                            SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+                            AND query ILIKE '%SELECT id FROM project%FOR UPDATE%')
+                            """,Boolean.class));
+                    if(blocked) break;
+                    try {Thread.sleep(20);} catch(InterruptedException e) {Thread.currentThread().interrupt();throw new RuntimeException(e);}
+                }
+                assertThat(blocked).isTrue();
+                commands.resubmit(author,project.projectId(),id,resubmission(p,"동시에 보완한 내용"),"new-revision");
+            });
+            assertThatThrownBy(() -> waiting.get().get(10,TimeUnit.SECONDS))
+                    .isInstanceOfSatisfying(ExecutionException.class,e -> {
+                        assertThat(e.getCause()).isInstanceOf(ApiException.class);
+                        assertThat(((ApiException)e.getCause()).getCode()).isEqualTo("proposal_changed");
+                    });
+        }
+        Proposal current=queries.detail(author,project.projectId(),id,null).proposal();
+        assertThat(current.revision()).isEqualTo(2);assertThat(current.status()).isEqualTo("PROPOSED");
+    }
+
+    @Test void migrationPreservesPreexistingProposalAndDecisionWithoutInventingSchema() throws Exception {
+        String schema="proposal_migration_"+UUID.randomUUID().toString().replace("-","");
+        try (var connection=Objects.requireNonNull(jdbc.getDataSource()).getConnection(); var sql=connection.createStatement()) {
+            sql.execute("CREATE SCHEMA "+schema);
+            try {
+                sql.execute("SET search_path TO "+schema+", public");
+                for (String file : List.of("V2__init_schema.sql","V3__document_processing.sql","V4__member_invitation.sql",
+                        "V5__context_access_log_account.sql","V6__design_command.sql")) {
+                    sql.execute(new org.springframework.core.io.ClassPathResource("db/migration/"+file).getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                sql.execute("""
+                        INSERT INTO account(email,display_name) VALUES('legacy@example.com','기존');
+                        INSERT INTO project(name,owner_account_id) VALUES('기존',1);
+                        INSERT INTO baseline(project_id,version_no,published_by) VALUES(1,1,1);
+                        INSERT INTO change_proposal(project_id,key,status,base_baseline_id,proposer_kind,proposer_account_id,reason)
+                        VALUES(1,'CP-OLD','REJECTED',1,'HUMAN',1,'기존 사유');
+                        INSERT INTO change_proposal_item(change_proposal_id,op,new_kind,proposed_content)
+                        VALUES(1,'CREATE','REQUIREMENT','{"description":"기존 제안"}');
+                        INSERT INTO approval(change_proposal_id,decided_by,decision,reason,base_baseline_id)
+                        VALUES(1,1,'REJECTED','기존 반려',1);
+                        """);
+                sql.execute(new org.springframework.core.io.ClassPathResource("db/migration/V10__change_proposal_revisions.sql")
+                        .getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+                try (var rows=sql.executeQuery("SELECT r.snapshot::text,a.reason FROM change_proposal_revision r JOIN approval a ON a.change_proposal_id=r.change_proposal_id AND a.proposal_revision_no=r.revision_no")) {
+                    assertThat(rows.next()).isTrue();
+                    Snapshot snapshot=JSON.readValue(rows.getString(1),Snapshot.class);
+                    assertThat(snapshot.legacy()).isTrue();
+                    assertThat(snapshot.input().items().getFirst().schemaVersion()).isNull();
+                    assertThat(rows.getString(2)).isEqualTo("기존 반려");
+                }
+            } finally {
+                sql.execute("SET search_path TO public");
+                sql.execute("DROP SCHEMA "+schema+" CASCADE");
+            }
+        }
+    }
+}
