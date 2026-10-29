@@ -100,4 +100,3 @@ Windows에서는 백엔드 검사에도 `gradlew.bat`을 사용합니다.
 ## 라이선스
 
 [LICENSE](LICENSE)를 참고하세요.
-
