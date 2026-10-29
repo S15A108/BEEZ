@@ -35,7 +35,9 @@ COMPOSE_FILE=$(cd "$(dirname "$0")/.." && pwd)/compose.yaml   # 같은 SHA 의 i
 # 잠금 파일은 jenkins·ubuntu 가 같이 쓰는 배포 폴더(beez-deploy 그룹 쓰기)에 둔다. Nginx 는 current/ 만 서빙해 보이지 않는다.
 # 대기는 5분까지. Jenkinsfile 의 15분 상한이 잠금 대기까지 세므로, 기다린 뒤에도 배포(이미지 받기 + 헬스 대기 최대 4분)에 10분이 남게 한다.
 # 다른 배포가 5분 넘게 걸리면 이 배포는 시작하지 않고 실패로 끝난다(컨테이너를 건드리기 전). 끝난 뒤 다시 실행한다
-exec 9> "$WEB_ROOT/.deploy.lock"
+LOCK=$WEB_ROOT/.deploy.lock
+[[ ! -e $LOCK || -w $LOCK ]] || { echo "잠금 파일에 쓸 수 없음($LOCK). jenkins 사용자로 실행한다: sudo -u jenkins -H bash $0 …" >&2; exit 2; }
+exec 9> "$LOCK"
 flock -w 300 9 || { echo "다른 배포가 5분 넘게 진행 중이라 시작하지 않음. 끝난 뒤 다시 실행한다" >&2; exit 3; }
 
 # compose.yaml 의 image: ${BACKEND_IMAGE}·${AI_IMAGE} 에 들어간다

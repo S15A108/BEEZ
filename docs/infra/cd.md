@@ -311,9 +311,11 @@ with Parameters** → `GIT_SHA`에 40자 SHA → Build. 롤백은 예전 SHA를 
 ```bash
 # 로컬 PC(Git Bash) — 반영할 커밋을 고정해 보낸다(작업 폴더가 다른 브랜치여도 같은 파일)
 C=<반영할 커밋>
+git -C /c/git/BEEZ fetch -q origin
 git -C /c/git/BEEZ show "$C:infra/jenkins/plugins.txt" | ssh beez 'cat > /tmp/plugins.txt'
 git -C /c/git/BEEZ show "$C:infra/jenkins/casc/jenkins.yaml" | ssh beez 'cat > /tmp/jenkins.yaml'
 # 서버 — 플러그인 설치 도구는 Jenkins 런북 4단계와 같다(체크섬 확인)
+test -s /tmp/plugins.txt && test -s /tmp/jenkins.yaml && \
 sudo install -D -m 600 /etc/jenkins/casc/jenkins.yaml /var/backups/jenkins/jenkins.yaml.before-$(date +%Y%m%d-%H%M) && \
 sudo systemctl stop jenkins && \
 sudo -u jenkins java -jar /tmp/jenkins-plugin-manager-2.15.0.jar --war /usr/share/java/jenkins.war \
@@ -324,6 +326,10 @@ sudo journalctl -u jenkins --since "-3 min" | grep -cE "SEVERE|ConfiguratorExcep
 rm -f /tmp/plugins.txt /tmp/jenkins.yaml
 ```
 
+- 서버 명령은 `test -s`(파일이 있고 비어 있지 않음)로 시작합니다. 로컬에
+  커밋이 없으면(`fetch` 전의 dev 머지 커밋, 오타) `git show`가 `fatal`을 내도
+  파이프 전체는 성공으로 끝나 서버에 **빈 파일**이 생깁니다(2026-10-29 실측).
+  이 검사가 없으면 빈 `jenkins.yaml`이 설치됩니다.
 - 백업은 `/var/backups`에 둡니다. `/etc/jenkins/casc` 안에 두면 JCasC가 그
   파일까지 읽습니다.
 - 켜지지 않으면 백업을 되돌려 놓고
