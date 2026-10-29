@@ -114,6 +114,28 @@ Docker Desktop의 `docker image ls`는 압축본과 해제본을 합쳐 보여 �
 - backend·ai 컨테이너 안 `id`가 `uid=10001(app)`
 - prod 프로필 기동: 필수값 누락 없음, 헬스 상세 숨김, nginx 경유 가입(201)·로그인(200, `Secure; HttpOnly; SameSite=Lax`)·`/api/me`(200)
 - dev `ea7867d`로 올린 뒤 재확인: 기존 볼륨에 V6·V7 마이그레이션 적용, 재빌드 포함 `up` 34초, local·prod 두 프로필 모두 위와 같은 응답
+- 임베딩 프로필: ai 컨테이너가 계산한 실제 값(`gms-small-1024-v1`·`text-embedding-3-small`·1024)과 backend 컨테이너의
+  `DOCUMENT_EMBEDDING_PROFILE`·`DOCUMENT_EMBEDDING_MODEL`이 같음. 실제 임베딩 호출은 `GMS_KEY`가 있어야 해서 확인하지 않았습니다
+
+## 문서 색인을 확인하려면
+
+문서 업로드 뒤 색인(임베딩)까지 보려면 `GMS_KEY`가 필요합니다. 키는 파일에 쓰지 말고 셸 환경변수로 넘깁니다.
+
+```bash
+read -rs GMS_KEY && export GMS_KEY && docker compose -f infra/compose.yaml -f infra/compose.local.yaml --env-file infra/local.env up -d
+```
+
+`read -rs`는 입력을 화면에 보이지 않게 받습니다. 셸 환경변수가 `--env-file`의 빈 값보다 우선합니다.
+
+backend의 `DOCUMENT_EMBEDDING_PROFILE`·`DOCUMENT_EMBEDDING_MODEL`은 ai가 실제로 쓰는 프로필과 같아야 합니다.
+ai는 프로필 이름을 `gms-small-{GMS_EMBEDDING_DIMENSION}-v1`로 만들고, backend 차원은 1024로 고정입니다.
+compose 기본값이 ai 기본값과 같으므로 ai 설정을 바꿀 때만 두 값을 같이 덮어씁니다.
+값을 확인하는 명령입니다.
+
+```bash
+docker compose -p beez exec ai python -c "from app.core.config import get_settings; from app.services.retrieval.tokenization import embedding_profile; p=embedding_profile(get_settings()); print(p.profile_id, p.model, p.dimension)"
+docker compose -p beez exec backend sh -c 'echo "$DOCUMENT_EMBEDDING_PROFILE $DOCUMENT_EMBEDDING_MODEL"'
+```
 
 ## ai 의존성 다시 고정하기
 
@@ -134,6 +156,9 @@ cd /c/git/BEEZ/ai && MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src:ro" python
 | `port is already allocated` | 8088·18080을 쓰는 프로세스를 끄거나 `infra/local.env`의 포트를 바꿉니다 |
 | backend가 healthy가 안 됨 | `docker compose -p beez logs backend --tail 40`. Flyway 오류면 이전 스택의 볼륨이 남은 것일 수 있습니다(`down -v`) |
 | 화면은 뜨는데 API가 안 불림 | 프론트를 `VITE_API_MODE=live`로 다시 빌드했는지 확인합니다 |
+| 색인이 `embedding_profile_not_configured` | backend에 `DOCUMENT_EMBEDDING_*`가 전달되지 않았습니다. `infra/compose.yaml`의 backend `environment`를 확인합니다 |
+| 색인이 `model_unavailable`(502) | ai에 `GMS_KEY`가 없습니다. 위 "문서 색인을 확인하려면"대로 넘깁니다 |
+| 색인이 `invalid_ai_input`(422) | backend 프로필·모델과 ai 실제 프로필이 다릅니다. 위 확인 명령으로 두 값을 비교합니다 |
 
 ## 이 문서 범위 밖
 

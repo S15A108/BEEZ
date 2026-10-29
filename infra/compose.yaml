@@ -75,6 +75,11 @@ services:
       DOCUMENT_S3_SECRET_KEY: ${DOCUMENT_S3_SECRET_KEY}
       AI_BASE_URL: http://ai:8000
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN}
+      # 문서 색인 임베딩 프로필. AI 가 실제로 쓰는 값(gms-small-{dimension}-v1, GMS_EMBEDDING_MODEL)과 같아야 한다.
+      # 다르면 AI 가 422 embedding_profile_mismatch, 비우면 백엔드가 embedding_profile_not_configured 로 색인을 멈춘다.
+      # 차원은 백엔드(1024)·AI 기본값이 같으므로 여기서 바꾸지 않는다.
+      DOCUMENT_EMBEDDING_PROFILE: ${DOCUMENT_EMBEDDING_PROFILE:-gms-small-1024-v1}
+      DOCUMENT_EMBEDDING_MODEL: ${DOCUMENT_EMBEDDING_MODEL:-text-embedding-3-small}
       # 공개 주소 셋. prod 프로필은 기본값이 없어 빠지면 기동이 실패한다
       CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
       INVITE_BASE_URL: ${PUBLIC_ORIGIN}
