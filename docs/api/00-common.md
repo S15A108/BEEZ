@@ -381,6 +381,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A11 비비 회의 정리](01-backend-rest.md#mtg-a11) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | 박상은(제안 문안) | 오서현 |
+| [MTG-A14 회의 참여자 제외](01-backend-rest.md#mtg-a14) | DELETE `/api/projects/{id}/meetings/{meeting_id}/participants/{member_id}` | LEADER (회의 참여자. 수정안 요청) | 오서현 | — | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
@@ -1365,7 +1366,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 참여 멤버 |
-| `status` | `INVITED\|JOINED\|DECLINED` | Y | 참여 상태. DB `meeting_participant.status`와 같은 값이다(예전 명세의 ACCEPTED를 JOINED로 바꿈). 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람은 JOINED로 만든다. 수정안 요청 |
+| `status` | `INVITED\|JOINED\|DECLINED` | Y | 참여 상태. DB `meeting_participant.status`와 같은 값이다(예전 명세의 ACCEPTED를 JOINED로 바꿈). 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람은 JOINED로 만든다. 팀장이 뺀(MTG-A14) 사람은 참여 행을 지워 목록에 나오지 않는다(새 상태 값 없음). 수정안 요청 |
 | `role` | `LEADER\|TASK_OWNER\|DOMAIN_OWNER` | N | 비비가 부른 이유. 화면 예: '팀장 · TASK-001', 'TASK-002', '화면 문구'(담당 영역). 관련자 추가로 들어온 사람은 생략. 수정안 요청 |
 | `added_by_member_id` | `ID` | N | 관련자 추가(MTG-A04)로 이 사람을 부른 멤버. 화면 예: '이팀장이 추가'. 비비가 부른 사람은 생략. 수정안 요청 |
 
