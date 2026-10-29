@@ -8,7 +8,9 @@ import org.springframework.stereotype.Component;
 
 /**
  * 검증 테이블을 읽고(현재 계획의 검증 상태) 무효화(STALE)하는 작은 도우미.
- * 검증 엔티티와 실행 로직은 S15P31A108-59 에서 만든다. 여기서는 TaskDetail.validation_status 계산과 계획 변경 시 STALE 처리만 한다.
+ * 검증 엔티티와 실행 로직은 S15P31A108-59 에서 만든다. 여기서는 TaskDetail.validation_status 계산과 무효화만 한다.
+ * 무효화는 세 갈래다 — 진행 중 계획 변경(S2, {@link #markStaleForTask}: 끝난 검증만), 작업 취소({@link #invalidateAllForTask}),
+ * 담당자 인계(S5, {@link #invalidateForReassign}: DELTA 제외). 뒤의 둘은 계획 리비전이 그대로라 도는 검증과 대기 job 까지 막는다.
  */
 @Component
 public class ValidationStatusLookup {

@@ -77,7 +77,10 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
 
     /**
      * 멤버십 행을 잠그고 읽는다 (SELECT … FOR UPDATE). 토큰 발급(AGT-A01)이 이걸로 줄을 세워 동시 발급이 한도를 넘지 않게 한다.
-     * 제외·나가기(-212)도 같은 행을 잠그면, 발급과 겹쳐도 제외 뒤에 폐기 안 된 토큰이 남지 않는다.
+     * 이미 영속성 컨텍스트에 있는 엔티티는 옛 값 그대로 돌아오므로, 잠근 뒤 상태는 값 조회({@link #isActiveMember})로 다시 본다.
+     * 팀원 관리(-212)는 이 메서드 대신 {@code ProjectMemberService.lockMemberRow} 의 {@code em.refresh(m, PESSIMISTIC_WRITE)} 로
+     * 같은 행을 잠근다 — 잠그면서 지금 값으로 다시 읽어야 해서다. 두 경로가 같은 행을 잠가, 발급과 제외·나가기가 겹쳐도
+     * 제외 뒤에 폐기 안 된 토큰이 남지 않는다. 한쪽 잠금을 바꾸면 다른 쪽도 함께 본다.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select m from ProjectMember m where m.id = :id")

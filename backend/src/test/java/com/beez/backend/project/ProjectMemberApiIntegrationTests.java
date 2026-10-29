@@ -13,11 +13,10 @@ import com.beez.backend.task.TaskApiSupport;
 import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -288,31 +287,26 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
-     * 깨지면: 토큰 발급과 제외가 겹칠 때 제외 뒤에도 폐기 안 된 토큰이 남는다 — 두 쪽이 같은 멤버십 행을 잠그는 약속이 빠졌다
-     * (-172 합의 4). 겹치는 순간을 매번 만들 수는 없어서, 어느 순서로 끝나도 결과가 같은지를 본다.
+     * 깨지면: 토큰 발급과 제외가 겹칠 때 제외 뒤에도 폐기 안 된 토큰이 남는다 — 제외가 토큰을 폐기하기 전에 발급(AGT-A01)과 같은
+     * 멤버십 행을 잠그는 약속이 빠졌다 (-172 합의 4). 발급이 그 행을 먼저 잠근 상황을 별도 트랜잭션으로 만든다: 행을 쥔 채 제외를 보내
+     * 제외가 그 잠금에서 기다리는지 보고, 같은 트랜잭션에서 토큰을 넣고 커밋한 뒤 제외가 그 토큰까지 폐기하는지 본다.
+     * 순서가 고정이라 결과가 매번 같다. (명시적 잠금을 빼도 멤버십 UPDATE 가 폐기보다 먼저면 그 UPDATE 가 같은 잠금을 기다려 통과한다 —
+     * 이 시험이 지키는 것은 "폐기는 그 행을 잠근 뒤"다.)
      */
     @Test
-    void concurrentIssueAndRemove_leavesNoLiveToken() throws Exception {
-        String issuePath = "/api/projects/" + projectId + "/agent-tokens";
-        String removePath = removePath(api.memberId("member@test"));
-        CountDownLatch start = new CountDownLatch(1);
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            CompletableFuture<Integer> issue = CompletableFuture.supplyAsync(() -> {
-                await(start);
-                return api.post(issuePath, "{}", member).statusCode();
-            }, pool);
-            CompletableFuture<Integer> remove = CompletableFuture.supplyAsync(() -> {
-                await(start);
-                return api.post(removePath, null, leader).statusCode();
-            }, pool);
-            start.countDown();
-            assertThat(remove.join()).isEqualTo(204);
-            // 발급이 먼저면 201 뒤 제외가 폐기하고, 제외가 먼저면 이미 멤버가 아니라 404
-            assertThat(issue.join()).isIn(201, 404);
-        } finally {
-            pool.shutdownNow();
-        }
+    void remove_waitsOnMembershipLock_andRevokesTokenIssuedMeanwhile() throws Exception {
+        long memberMemberId = api.memberId("member@test");
+        HttpResponse<String> removed = whileRowLocked("select id from project_member where id = ? for update", memberMemberId,
+                () -> api.post(removePath(memberMemberId), null, leader),
+                lock -> {
+                    try (PreparedStatement ps = lock.prepareStatement(
+                            "insert into agent_token (project_id, account_id, name, token_hash) values (?, ?, 'issued-meanwhile', 'hash-meanwhile')")) {
+                        ps.setLong(1, projectId);
+                        ps.setLong(2, member);
+                        ps.executeUpdate();
+                    }
+                });
+        assertThat(removed.statusCode()).as(removed.body()).isEqualTo(204);
         assertThat(api.jdbc.sql("select count(*) from agent_token where project_id = :p and account_id = :a and revoked_at is null")
                 .param("p", projectId).param("a", member).query(Long.class).single()).isZero();
     }
@@ -393,40 +387,58 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
-     * 프로젝트 행을 잠근 별도 트랜잭션을 열어 둔 채 request 를 보내고, request 가 그 잠금에서 기다리는 것을 확인한 뒤
-     * 같은 트랜잭션에서 팀장을 from → to 로 바꿔 커밋한다(위임 MEM-A08 흉내). request 의 응답을 돌려주고 역할은 원래대로 되돌린다.
+     * 프로젝트 행을 쥔 채 request 를 보내고, 그동안 팀장을 from → to 로 바꿔 커밋한다(위임 MEM-A08 흉내).
+     * request 의 응답을 돌려주고 역할은 원래대로 되돌린다.
      */
     private HttpResponse<String> whileLeadershipMoves(long from, long to, Supplier<HttpResponse<String>> request)
             throws Exception {
+        HttpResponse<String> res = whileRowLocked("select id from project where id = ? for update", projectId, request,
+                lock -> {
+                    // 활성 팀장은 하나(ux_member_one_leader)라 내리는 쪽이 먼저다
+                    try (PreparedStatement ps = lock.prepareStatement("update project_member set role = ? where id = ?")) {
+                        ps.setString(1, "MEMBER");
+                        ps.setLong(2, from);
+                        ps.executeUpdate();
+                        ps.setString(1, "LEADER");
+                        ps.setLong(2, to);
+                        ps.executeUpdate();
+                    }
+                });
+        api.jdbc.sql("update project_member set role = 'MEMBER' where id = :m").param("m", to).update();
+        api.jdbc.sql("update project_member set role = 'LEADER' where id = :m").param("m", from).update();
+        return res;
+    }
+
+    /** 행을 쥔 트랜잭션 안에서 할 일 */
+    @FunctionalInterface
+    private interface WhileLocked {
+        void run(Connection lock) throws SQLException;
+    }
+
+    /**
+     * 별도 트랜잭션에서 lockSql(… for update, 인자 하나)로 행을 쥔 채 request 를 보낸다. request 가 그 잠금에서 기다리는 것을 확인한 뒤
+     * 같은 트랜잭션에서 whileLocked 를 하고 커밋해, request 가 그 결과를 본 상태로 이어 가게 한다. 겹치는 순서를 매번 똑같이 만든다.
+     */
+    private HttpResponse<String> whileRowLocked(String lockSql, long id, Supplier<HttpResponse<String>> request,
+                                                WhileLocked whileLocked) throws Exception {
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try (Connection lock = dataSource.getConnection()) {
             lock.setAutoCommit(false);
-            try (PreparedStatement ps = lock.prepareStatement("select id from project where id = ? for update")) {
-                ps.setLong(1, projectId);
+            try (PreparedStatement ps = lock.prepareStatement(lockSql)) {
+                ps.setLong(1, id);
                 ps.executeQuery();
             }
             Future<HttpResponse<String>> pending = pool.submit(request::get);
             awaitBlockedOnLock();
-            // 활성 팀장은 하나(ux_member_one_leader)라 내리는 쪽이 먼저다
-            try (PreparedStatement ps = lock.prepareStatement("update project_member set role = ? where id = ?")) {
-                ps.setString(1, "MEMBER");
-                ps.setLong(2, from);
-                ps.executeUpdate();
-                ps.setString(1, "LEADER");
-                ps.setLong(2, to);
-                ps.executeUpdate();
-            }
+            whileLocked.run(lock);
             lock.commit();
-            HttpResponse<String> res = pending.get(10, TimeUnit.SECONDS);
-            api.jdbc.sql("update project_member set role = 'MEMBER' where id = :m").param("m", to).update();
-            api.jdbc.sql("update project_member set role = 'LEADER' where id = :m").param("m", from).update();
-            return res;
+            return pending.get(10, TimeUnit.SECONDS);
         } finally {
             pool.shutdownNow();
         }
     }
 
-    /** 다른 세션이 행 잠금을 기다릴 때까지 (최대 10초). 기다리지 않으면 그 요청이 프로젝트 행을 잠그지 않는다는 뜻이다 */
+    /** 다른 세션이 행 잠금을 기다릴 때까지 (최대 10초). 기다리지 않으면 그 요청이 그 행을 잠그지 않는다는 뜻이다 */
     private void awaitBlockedOnLock() throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (api.jdbc.sql("""
@@ -434,18 +446,9 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
                          where wait_event_type = 'Lock' and datname = current_database()
                         """).query(Long.class).single() == 0) {
             if (System.nanoTime() > deadline) {
-                throw new AssertionError("요청이 프로젝트 행 잠금에서 기다리지 않았다");
+                throw new AssertionError("요청이 행 잠금에서 기다리지 않았다");
             }
             Thread.sleep(20);
-        }
-    }
-
-    private static void await(CountDownLatch latch) {
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(e);
         }
     }
 
