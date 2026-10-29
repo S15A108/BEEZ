@@ -37,3 +37,18 @@ CREATE TABLE mcp_command (
 -- report_task_state 의 "계획 이후 변경" 기준점. 리비전 시각(앱)과 발행 시각(DB)을 비교해 추정하면 시계가 어긋날 때 변경이 빠진다.
 -- task_plan_revision 은 UPDATE 금지(불변) 표라 INSERT 때만 채운다.
 ALTER TABLE task_plan_revision ADD COLUMN base_baseline_id BIGINT REFERENCES baseline(id);
+
+-- 이미 있는 리비전 채우기 (리뷰 반영). 저장 당시 기준을 따로 남기지 않았으므로 아래 순서로 복원한다.
+--   1) 근거 패킷이 있으면 그 패킷의 기준 (패킷은 만들 때의 현재 기준을 저장한다)
+--   2) 없으면 리비전 created_at 이전에 발행된 마지막 기준. created_at·published_at 은 둘 다 DB now() 라 같은 시계다
+--   3) 그때 발행이 없었으면 NULL (= 기준 없음, 새 리비전과 같은 뜻)
+-- task_plan_revision 은 UPDATE 금지 트리거가 있어 이 한 번만 끄고 채운 뒤 다시 켠다 (같은 마이그레이션 트랜잭션 안).
+ALTER TABLE task_plan_revision DISABLE TRIGGER trg_plan_immutable;
+UPDATE task_plan_revision r
+   SET base_baseline_id = coalesce(
+         (SELECT k.baseline_id FROM dev_context_packet k WHERE k.id = r.context_packet_id),
+         (SELECT b.id FROM baseline b JOIN task t ON t.id = r.task_id
+           WHERE b.project_id = t.project_id AND b.published_at <= r.created_at
+           ORDER BY b.version_no DESC LIMIT 1))
+ WHERE r.base_baseline_id IS NULL;
+ALTER TABLE task_plan_revision ENABLE TRIGGER trg_plan_immutable;
