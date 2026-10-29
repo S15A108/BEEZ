@@ -3,14 +3,7 @@
 -- 기존 target_account_id 와 REVIEW_REQUEST 짝 검사는 단일 대상 전제라 걷어낸다. 컬럼 자체는 남겨 둔다(V2 데이터 호환).
 ALTER TABLE change_comment DROP CONSTRAINT IF EXISTS change_comment_check;
 
--- 재시도 식별. 같은 제안·같은 작성 계정·같은 키는 한 번만 저장한다 (공통 5절 Idempotency-Key)
-ALTER TABLE change_comment
-  ADD COLUMN idempotency_key TEXT,
-  ADD COLUMN request_hash    TEXT,
-  ADD CONSTRAINT ck_change_comment_idem CHECK ((idempotency_key IS NULL) = (request_hash IS NULL));
-CREATE UNIQUE INDEX ux_change_comment_idem
-  ON change_comment(change_proposal_id, author_account_id, idempotency_key)
-  WHERE idempotency_key IS NOT NULL;
+-- 재시도 식별(Idempotency-Key)은 195 와 같은 공용 design_http_command 에 저장하므로 이 표에는 칼럼을 두지 않는다.
 
 -- 의견이 어느 제출 리비전을 보고 쓴 것인지 (V10 change_proposal_revision). 재제출 뒤에도 이전 리비전의 의견이 구분되어 남는다.
 -- 기존 의견은 V10 이 기존 제안을 리비전 1 로 옮겼으므로 1 로 채운다.

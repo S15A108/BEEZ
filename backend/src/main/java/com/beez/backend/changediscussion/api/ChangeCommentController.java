@@ -9,7 +9,6 @@ import com.beez.backend.document.api.DocumentRequestOriginVerifier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -42,7 +41,8 @@ public class ChangeCommentController {
                                         @PathVariable("projectId") Long projectId,
                                         @PathVariable("proposalId") String proposalId,
                                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-                                        @Valid @RequestBody CreateChangeCommentRequest body) {
+                                        @RequestBody CreateChangeCommentRequest body) {
+        // @Valid 를 쓰면 본문 오류가 Origin 검사보다 먼저 400 이 되므로, Origin 을 먼저 보고 본문은 서비스에서 검증한다
         origins.requireTrustedOrigin(request);
         return discussion.create(caller, projectId, proposalId, body, idempotencyKey);
     }

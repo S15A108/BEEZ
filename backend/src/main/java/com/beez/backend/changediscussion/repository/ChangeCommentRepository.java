@@ -18,11 +18,11 @@ public class ChangeCommentRepository {
 
     /** 목록·응답용 한 줄. mentionedMemberIds 는 이 프로젝트의 멤버 번호 */
     public record CommentRow(Long id, Long proposalId, Long authorAccountId, String kind, String body,
-                             String requestHash, int revisionNo, List<Long> mentionedMemberIds, Instant createdAt) {
+                             int revisionNo, List<Long> mentionedMemberIds, Instant createdAt) {
     }
 
     private static final String COLUMNS =
-            "id, change_proposal_id, author_account_id, kind, body, request_hash, proposal_revision_no, created_at";
+            "id, change_proposal_id, author_account_id, kind, body, proposal_revision_no, created_at";
 
     private final JdbcClient jdbc;
 
@@ -56,13 +56,6 @@ public class ChangeCommentRepository {
                 .param("k", "change_comment:" + proposalId + ":" + accountId + ":" + key).query().singleRow();
     }
 
-    public Optional<CommentRow> findByKey(long proposalId, long accountId, String key) {
-        return withTargets(jdbc.sql("select " + COLUMNS + " from change_comment"
-                        + " where change_proposal_id = :p and author_account_id = :a and idempotency_key = :k")
-                .param("p", proposalId).param("a", accountId).param("k", key)
-                .query(ChangeCommentRepository::map).list()).stream().findFirst();
-    }
-
     /** 멤버 번호 → 계정. 이 프로젝트의 활성 멤버(탈퇴한 계정·삭제된 프로젝트 제외)만 담는다 */
     public Map<Long, Long> activeAccountsByMember(long projectId, Collection<Long> memberIds) {
         Map<Long, Long> out = new HashMap<>();
@@ -81,14 +74,13 @@ public class ChangeCommentRepository {
         return out;
     }
 
-    public long insert(long proposalId, int revisionNo, long authorAccountId, String kind, String body, String key,
-                       String requestHash, Collection<Long> targetAccountIds) {
+    public long insert(long proposalId, int revisionNo, long authorAccountId, String kind, String body,
+                       Collection<Long> targetAccountIds) {
         Long id = jdbc.sql("""
-                insert into change_comment (change_proposal_id, proposal_revision_no, author_account_id, kind, body,
-                                            idempotency_key, request_hash)
-                values (:p, :rev, :a, :kind, :body, :key, :hash) returning id
+                insert into change_comment (change_proposal_id, proposal_revision_no, author_account_id, kind, body)
+                values (:p, :rev, :a, :kind, :body) returning id
                 """).param("p", proposalId).param("rev", revisionNo).param("a", authorAccountId).param("kind", kind)
-                .param("body", body).param("key", key).param("hash", requestHash).query(Long.class).single();
+                .param("body", body).query(Long.class).single();
         for (Long target : targetAccountIds) {
             jdbc.sql("insert into change_comment_target (change_comment_id, account_id) values (:c, :a)")
                     .param("c", id).param("a", target).update();
@@ -116,7 +108,7 @@ public class ChangeCommentRepository {
 
     private static CommentRow map(ResultSet rs, int rowNum) throws SQLException {
         return new CommentRow(rs.getLong("id"), rs.getLong("change_proposal_id"), rs.getLong("author_account_id"),
-                rs.getString("kind"), rs.getString("body"), rs.getString("request_hash"),
+                rs.getString("kind"), rs.getString("body"),
                 rs.getInt("proposal_revision_no"), List.of(), rs.getTimestamp("created_at").toInstant());
     }
 
@@ -143,7 +135,7 @@ public class ChangeCommentRepository {
                         .add(rs.getLong("member_id"))).list();
         List<CommentRow> out = new ArrayList<>();
         for (CommentRow r : rows) {
-            out.add(new CommentRow(r.id(), r.proposalId(), r.authorAccountId(), r.kind(), r.body(), r.requestHash(), r.revisionNo(),
+            out.add(new CommentRow(r.id(), r.proposalId(), r.authorAccountId(), r.kind(), r.body(), r.revisionNo(),
                     byComment.getOrDefault(r.id(), List.of()), r.createdAt()));
         }
         return out;

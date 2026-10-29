@@ -325,6 +325,94 @@ class ChangeDiscussionIntegrationTests extends IntegrationTestSupport {
         assertThat(commentCount()).isEqualTo(1);
     }
 
+    @Test
+    void sameKeyRetryAfterPublished_returnsOriginalComment() throws Exception {
+        JsonNode first = body(post(member, path(), "{\"body\":\"발행 전\"}", "Idempotency-Key", "k-pub"));
+        long baseline = jdbc.queryForObject("SELECT base_baseline_id FROM change_proposal WHERE id = ?", Long.class, proposalId);
+        jdbc.update("UPDATE change_proposal SET status = 'PUBLISHED', published_baseline_id = ? WHERE id = ?", baseline, proposalId);
+
+        HttpResponse<String> again = post(member, path(), "{\"body\":\"발행 전\"}", "Idempotency-Key", "k-pub");
+
+        assertThat(again.statusCode()).isEqualTo(201);
+        assertThat(body(again).get("id").asString()).isEqualTo(first.get("id").asString());
+        assertThat(commentCount()).isEqualTo(1);
+        // 새 키는 종결 상태 검사를 받는다
+        assertThat(post(member, path(), "{\"body\":\"발행 전\"}", "Idempotency-Key", "k-pub-2").statusCode()).isEqualTo(409);
+    }
+
+    @Test
+    void sameKeyRetryAfterWithdrawn_returnsOriginalComment() throws Exception {
+        JsonNode first = body(post(member, path(), "{\"body\":\"거두기 전\"}", "Idempotency-Key", "k-wd"));
+        jdbc.update("UPDATE change_proposal SET status = 'WITHDRAWN', withdrawn_by = proposer_account_id, withdrawn_at = now() WHERE id = ?", proposalId);
+
+        HttpResponse<String> again = post(member, path(), "{\"body\":\"거두기 전\"}", "Idempotency-Key", "k-wd");
+
+        assertThat(again.statusCode()).isEqualTo(201);
+        assertThat(body(again).get("id").asString()).isEqualTo(first.get("id").asString());
+        assertThat(commentCount()).isEqualTo(1);
+    }
+
+    @Test
+    void sameKeyWithReorderedMentions_isSameInput() throws Exception {
+        long leaderMember = project.leaderMemberId();
+        JsonNode first = body(post(member, path(), comment("REVIEW_REQUEST", "순서", leaderMember, memberId), "Idempotency-Key", "k-ord"));
+
+        HttpResponse<String> again = post(member, path(), comment("REVIEW_REQUEST", "순서", memberId, leaderMember), "Idempotency-Key", "k-ord");
+
+        assertThat(again.statusCode()).isEqualTo(201);
+        assertThat(body(again).get("id").asString()).isEqualTo(first.get("id").asString());
+        assertThat(commentCount()).isEqualTo(1);
+    }
+
+    @Test
+    void sameKeyOnAnotherProposal_isSeparateRequest() throws Exception {
+        long baseline = jdbc.queryForObject("SELECT base_baseline_id FROM change_proposal WHERE id = ?", Long.class, proposalId);
+        long other = jdbc.queryForObject("""
+                INSERT INTO change_proposal (project_id, key, status, base_baseline_id, proposer_kind, proposer_account_id, reason)
+                VALUES (?, 'CP-2', 'IN_REVIEW', ?, 'HUMAN', ?, '사유') RETURNING id
+                """, Long.class, project.projectId(), baseline, project.leaderAccountId());
+        revision(other, project.projectId(), baseline, 1, project.leaderAccountId());
+
+        assertThat(post(member, path(), "{\"body\":\"같은 키\"}", "Idempotency-Key", "k-sep").statusCode()).isEqualTo(201);
+        assertThat(post(member, path(project.projectId(), other), "{\"body\":\"같은 키\"}", "Idempotency-Key", "k-sep").statusCode())
+                .isEqualTo(201);
+        assertThat(commentCount()).isEqualTo(1);
+    }
+
+    @Test
+    void keyIsStoredInSharedCommandStore_notInCommentTable() {
+        post(member, path(), "{\"body\":\"저장\"}", "Idempotency-Key", "k-store");
+
+        long stored = jdbc.queryForObject(
+                "SELECT count(*) FROM design_http_command WHERE request_key = 'k-store' AND operation LIKE ?", Long.class,
+                "proposal:comment:" + proposalId + ":%");
+        long columns = jdbc.queryForObject("""
+                SELECT count(*) FROM information_schema.columns
+                 WHERE table_name = 'change_comment' AND column_name IN ('idempotency_key', 'request_hash')
+                """, Long.class);
+        assertThat(stored).isEqualTo(1);
+        assertThat(columns).isZero();
+    }
+
+    @Test
+    void invalidIdempotencyKey_isRejectedWith400_notServerError() {
+        assertThat(post(member, path(), "{\"body\":\"x\"}", "Idempotency-Key", "k".repeat(129)).statusCode()).isEqualTo(400);
+        assertThat(post(member, path(), "{\"body\":\"x\"}", "Idempotency-Key", "k".repeat(3000)).statusCode()).isEqualTo(400);
+        assertThat(commentCount()).isZero();
+    }
+
+    @Test
+    void untrustedOrigin_winsOverInvalidBody() {
+        // 본문이 잘못되어도 Origin 검사가 먼저라 403 이다
+        assertThat(member.post(path(), "{\"body\":\"\"}", "Origin", "https://evil.example").statusCode()).isEqualTo(403);
+        assertThat(member.post(path(), "{}", "Origin", "https://evil.example").statusCode()).isEqualTo(403);
+        // 신뢰하는 Origin 이면 같은 본문은 400
+        assertThat(post(member, path(), "{\"body\":\"\"}").statusCode()).isEqualTo(400);
+        assertThat(post(member, path(), "{}").statusCode()).isEqualTo(400);
+        assertThat(post(member, path(), "{\"body\":\"" + "가".repeat(4001) + "\"}").statusCode()).isEqualTo(400);
+        assertThat(commentCount()).isZero();
+    }
+
     // ---- 목록 ----
 
     @Test
