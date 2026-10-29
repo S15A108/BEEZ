@@ -120,10 +120,10 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
-- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성은 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
-- 작업 변경은 expected_revision_no/expected_lock_version, 제안 변경은 expected_updated_at, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
+- 작업 변경은 expected_revision_no/expected_lock_version, 제안 재제출·후속 심사 계약은 expected_revision/expected_snapshot_hash, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
 - 시작·재개와 문서 발행은 프로젝트 잠금 아래 재검사한다. 모델 호출 중 DB 잠금을 잡고 기다리지 않는다.
 - 공유 기록은 previous_id를 잇는 새 불변 리비전이다. 같은 이전 리비전의 두 번째 수정은 충돌이다.
 
@@ -133,7 +133,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
 | 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토 |
-| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계 |
+| 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
 | 대기 이유 | INPUT, APPROVAL, DEPENDENCY, REVALIDATION. WAITING에서만 포함. REVALIDATION은 시스템만 설정(설계 발행·완료 delta) |
@@ -452,11 +452,11 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 남은 것: 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
-| Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 후속 제안 expected_updated_at 정밀도는 별도 검토 |
+| Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 변경 제안은 CHG-A04의 expected_revision/expected_snapshot_hash로 대조 |
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
-| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10은 §5의 24시간·design_http_command 범위 한정 결정 적용 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10·CHG-A01/04/15는 §5의 24시간·design_http_command 범위 한정 결정 적용 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부(수정안 기본안: 창을 연 동안만), '근거가 틀려요' 피드백 활용, 자주 묻는 질문 칩의 출처 |
 | Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
@@ -919,12 +919,14 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 문서 |
 | `base_document_version_id` | `ID` | Y | 기준 원문 버전 |
-| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나 |
+| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나. 서버가 DOC-A12와 같은 규칙으로 정규화해 새 DRAFT 문서 버전과 색인 작업을 만든다 |
 | `proposed_document_version_id` | `ID` | N | 업로드한 DRAFT 버전. after_content와 배타적 |
 
 <a id="schema-changeproposalinput"></a>
 
 ### ChangeProposalInput
+
+신규 생성에만 선택 previous_proposal_id(ID)를 받는다. 같은 프로젝트·작성 계정의 WITHDRAWN 제안만 연결한다. 반려된 제안은 새로 생성하지 않고 CHG-A04로 재제출한다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -945,6 +947,9 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 제안 ID |
+| `key` | `string` | Y | 프로젝트에 표시할 제안 키 |
+| `revision` | `integer` | Y | 제출 리비전 번호 |
+| `snapshot_hash` | `string` | Y | 불변 제출 스냅샷 SHA-256 |
 | `project_id` | `ID` | Y | 프로젝트 |
 | `base_baseline_id` | `ID` | Y | 제안 기준 |
 | `title` | `string` | Y | 제안 제목 |
@@ -952,10 +957,9 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
 | `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
-| `previous_proposal_id` | `ID` | N | 이 제안이 고쳐 올린 이전 제안. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태. WITHDRAWN은 수정안 요청(CHG-A15) |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경 |
+| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
 | `proposer_account_id` | `ID` | Y | 제안 계정 |
 | `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
 | `agent` | `object` | N | AGENT 제출이면 {agent_session_id, name(토큰 label), member_id}. 수정안 요청 |
@@ -965,6 +969,30 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 |
 | `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
+| `previous_proposal_id` | `ID` | N | 같은 작성자가 거둔 이전 제안. 반려 후 재제출과 구분 |
+| `withdrawn_by` | `ID` | N | WITHDRAWN일 때 거둔 계정 |
+| `withdrawn_at` | `Time` | N | WITHDRAWN일 때 거둔 시각 |
+
+<a id="schema-resolveddocumentchange"></a>
+
+### ResolvedDocumentChange
+
+DocumentChange 입력을 해석한 응답이다. document_id, base_document_version_id, proposed_document_version_id, after_content, content_hash가 모두 필수다. proposed_document_version_id는 항상 반환한다. 업로드를 선택했으면 그 DRAFT 버전이고, after_content로 제출했으면 서버가 만든 DRAFT 버전이다. after_content는 DOC-A12와 같은 정규화를 적용한 저장 본문이며 content_hash는 그 UTF-8 바이트의 SHA-256이다.
+
+<a id="schema-changeproposalsummary"></a>
+
+### ChangeProposalSummary
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 제안 ID |
+| `key` | `string` | Y | 제안 키 |
+| `title` | `string` | Y | 제목 |
+| `status` | `string` | Y | 제안 상태 |
+| `revision` | `integer` | Y | 최신 제출 번호 |
+| `base_baseline_id` | `ID` | Y | 기준 설계 |
+| `proposer_account_id` | `ID` | Y | 제안 계정 |
+| `updated_at` | `Time` | Y | 갱신 시각 |
 
 <a id="schema-approval"></a>
 
@@ -1788,11 +1816,12 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `target_type` | `DOCUMENT\|DESIGN_ITEM` | Y | 비교 대상 |
-| `target_id` | `ID` | Y | 대상 |
+| `target_id` | `ID` | N | 기존 대상. CREATE 항목은 발행 전 ID가 없어 null |
 | `format` | `TEXT\|FILE\|STRUCTURED` | Y | 비교 형식 |
 | `base_content` | `object\|string` | N | 기준 본문. FILE에서는 생략 |
 | `current_content` | `object\|string` | N | 현재 본문. FILE에서는 생략 |
 | `proposed_content` | `object\|string` | N | 수정안. FILE에서는 생략 |
+| `current_changed` | `boolean` | Y | 기준과 현재 내용이 다름. 기준→제안 diff와 별개 |
 | `diff` | `string` | N | 텍스트/구조 차이. FILE은 생략 |
 | `base_document_version_id` | `ID` | N | FILE 기준 버전 |
 | `proposed_document_version_id` | `ID` | N | FILE 수정안 버전 |

@@ -3,6 +3,8 @@ package com.beez.backend.document.service;
 import com.beez.backend.document.storage.DocumentStorage;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -31,30 +33,50 @@ public final class DocumentOriginalWriter {
         }
     }
 
+    public record Payload(byte[] bytes, String extension) { }
+
     public <T> T write(byte[] bytes, String extension, Function<Original, T> publish) {
+        return writeAll(List.of(new Payload(bytes, extension)), originals -> publish.apply(originals.getFirst()));
+    }
+
+    /**
+     * Stores every payload outside any DB transaction, then publishes them in one short transaction.
+     * An original that the transaction did not reference, or that was rolled back, is deleted afterwards.
+     */
+    public <T> T writeAll(List<Payload> payloads, Function<List<Original>, T> publish) {
         requireNoTransaction();
-        String key;
-        try { key = storage.store(bytes, extension); }
-        catch (IOException error) { throw new UncheckedIOException("문서 원본 저장에 실패했습니다.", error); }
-        Original original = new Original(key);
+        var originals = new ArrayList<Original>();
+        try {
+            for (Payload payload : payloads) originals.add(new Original(storage.store(payload.bytes(), payload.extension())));
+        } catch (IOException error) {
+            originals.forEach(original -> cleanup(original.key));
+            throw new UncheckedIOException("문서 원본 저장에 실패했습니다.", error);
+        } catch (RuntimeException error) {
+            originals.forEach(original -> cleanup(original.key));
+            throw error;
+        }
         try {
             return transaction.execute(status -> {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override public void afterCompletion(int outcome) {
-                        original.outcome = outcome;
+                        originals.forEach(original -> original.outcome = outcome);
                     }
                 });
-                original.observingOutcome = true;
-                return publish.apply(original);
+                originals.forEach(original -> original.observingOutcome = true);
+                return publish.apply(List.copyOf(originals));
             });
         } finally {
             // Release transaction resources before any compensating S3 call as well.
-            if (!original.observingOutcome || original.outcome == TransactionSynchronization.STATUS_ROLLED_BACK
-                    || (original.outcome == TransactionSynchronization.STATUS_COMMITTED && !original.referenced)) {
-                cleanup(key);
-            } else if (original.outcome == TransactionSynchronization.STATUS_UNKNOWN) {
-                log.error("문서 커밋 결과를 확인할 수 없습니다. 원본 참조를 대조해 주세요. original_key={}", key);
-            }
+            originals.forEach(this::finish);
+        }
+    }
+
+    private void finish(Original original) {
+        if (!original.observingOutcome || original.outcome == TransactionSynchronization.STATUS_ROLLED_BACK
+                || (original.outcome == TransactionSynchronization.STATUS_COMMITTED && !original.referenced)) {
+            cleanup(original.key);
+        } else if (original.outcome == TransactionSynchronization.STATUS_UNKNOWN) {
+            log.error("문서 커밋 결과를 확인할 수 없습니다. 원본 참조를 대조해 주세요. original_key={}", original.key);
         }
     }
 

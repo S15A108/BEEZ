@@ -417,6 +417,10 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 설계 변경 제안 기능을 제공한다.
 
+195의 공용 업무 진입점은 `ProposalCommandService.create(CallerContext, projectId, ProposalDtos.Input, idempotencyKey)`다. MCP 어댑터는 검증한 토큰으로 CallerContext.agent를 구성하며 인수에서 계정·actor_type·토큰 ID를 신뢰하지 않는다. 서비스도 멤버십·프로젝트·토큰 폐기를 다시 검사한다. 도구 등록·MCP 전송은 전진 담당이며 195는 서비스 직접 호출까지 검증한다.
+
+응답은 [ChangeProposal](00-common.md#schema-changeproposal)의 `key`, `revision`, `snapshot_hash` 및 해석된 원문을 포함한다. after_content 제출도 서버가 DRAFT 문서 버전과 색인 작업을 만들어 proposed_document_version_id를 반환한다(규칙은 CHG-A01과 같다). `items=[]`인 원문 단독 변경도 허용한다. Idempotency-Key는 프로젝트·계정·동작·토큰별 24시간 보존한다. 이미 제출된 내용은 잠기며 반려 후 같은 제안 계정만 `ProposalCommandService.resubmit`에 expected_revision/expected_snapshot_hash를 전달해 재제출할 수 있다. 거둔 제안에서 새로 생성할 때 선택 previous_proposal_id를 전달할 수 있으며 같은 프로젝트·작성 계정의 WITHDRAWN만 허용한다. 별도 재제출·거두기 MCP 도구는 이번 티켓에서 등록하지 않는다.
+
 관련 요구사항: MCP-04, CHG-01·02  
 담당: BE: 전진(도구) / 오서현(제안) / AI: 양지훈(영향 분석) / FE: —  
 상태: 설계 초안
@@ -478,6 +482,9 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 제안 ID |
+| `key` | `string` | Y | 제안 표시 키 |
+| `revision` | `integer` | Y | 제출 리비전 |
+| `snapshot_hash` | `string` | Y | 불변 제출 내용의 SHA-256 |
 | `project_id` | `ID` | Y | 프로젝트 |
 | `base_baseline_id` | `ID` | Y | 제안 기준 |
 | `title` | `string` | Y | 제안 제목 |
@@ -485,8 +492,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 해석된 원문·내용 해시·문서 버전(항상 반환) |
+| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
 | `proposer_account_id` | `ID` | Y | 제안 계정 |
 | `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
 | `current_baseline_id` | `ID` | Y | 현재 기준 |
@@ -499,6 +506,9 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 ```json
 {
   "id": "71",
+  "key": "CP-71",
+  "revision": 1,
+  "snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "project_id": "101",
   "base_baseline_id": "401",
   "title": "로그인 오류 응답 설명 보완",
@@ -522,7 +532,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
     {
       "document_id": "201",
       "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
+      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다.",
+      "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     }
   ],
   "status": "PROPOSED",
@@ -544,6 +555,9 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 기준 변경 |
+| 409 | `idempotency_conflict` | 같은 키에 다른 제안 입력 |
+| 409 | `document_already_proposed` | 수정본이 다른 변경 제안에 연결됨 |
+| 401 | `token_revoked` | 토큰 폐기·비활성 상태 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 

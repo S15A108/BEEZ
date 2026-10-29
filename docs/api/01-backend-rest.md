@@ -3996,6 +3996,8 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | 버전 번호가 양수가 아님 |
+| 413 | `diff_too_large` | 각 본문 1,048,576자·50,000줄 초과 |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -4011,7 +4013,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 서버가 두 원문을 읽어 비교한다. 클라이언트의 before 본문을 신뢰하지 않는다.
-- 바이너리는 버전·해시와 각 버전 다운로드로 비교한다.
+- 현재 md/txt 원문은 TEXT로 비교한다. CHG-A03과 같은 줄별 diff·동일 본문·마지막 개행·계산 한도 규약을 사용한다. 기존 원문·본문 해시는 변경하지 않는다.
 - (수정안 요청) 팀장 승인 화면의 '변경 내용'은 lines로 그린다. 추가는 초록, 삭제는 빨강이고 비비 제안으로 바뀐 줄에는 분류(예: 비비 제안 · 누락)를 붙인다. 문서 상세의 버전 비교는 이 화면으로 옮겼다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -7228,24 +7230,23 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 ### POST `/api/projects/{id}/change-proposals`
 
-설계 변경 제안 생성 기능을 제공한다.
-
 관련 요구사항: CHG-01·02  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안 · 수정안 요청 반영
+상태: BE 구현, 후속 승인·AI 분석 연동은 197·198
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER`. 현재 활성 멤버와 같은 프로젝트 소속을 검사한다. 에이전트는 REST 세션을 가장하지 않고 MCP 어댑터에서 같은 업무 서비스를 호출한다.
 
 #### Headers
 
 | 헤더 | 값·설명 |
 | --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Cookie | 로그인 세션 쿠키 |
+| X-Request-Id | 선택. 요청 추적 |
 | Content-Type | application/json |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Origin 또는 Referer | 허용된 화면의 출처 |
+| Idempotency-Key | 필수. 제어 문자 없는 1~128자 |
 
 #### Path Parameters
 
@@ -7261,41 +7262,27 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
-| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
+| `base_baseline_id` | `ID` | Y | 현재 기준 설계 |
+| `title` | `string` | Y | 1~200자 제목 |
+| `reason` | `string` | Y | 1~10,000자 변경 사유 |
+| `task_id` | `ID` | N | 같은 프로젝트의 관련 작업 |
+| `validation_id` | `ID` | N | 같은 프로젝트의 검증. task_id 지정 시 해당 작업 소속 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 최대 100개. 원문만 수정하면 빈 배열 |
+| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 최대 4개. 항목만 수정하면 빈 배열 |
+| `previous_proposal_id` | `ID` | N | 같은 프로젝트에서 본인이 거둔 WITHDRAWN 제안. 새 제안의 연결 정보 |
+| `meeting_id` | `ID` | N | 관련 회의. #218 수정안 요청 · 195 미구현 |
 
 ```json
 {
   "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
+  "title": "로그인 설명 보완",
+  "reason": "오류 표시를 명확히 한다.",
+  "items": [],
   "documents": [
     {
       "document_id": "201",
       "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
+      "after_content": "# 요구사항\n수정된 로그인 설명"
     }
   ]
 }
@@ -7303,97 +7290,37 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 #### Response
 
-HTTP `201`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 제안 ID |
-| `project_id` | `ID` | Y | 프로젝트 |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
-| `proposer_account_id` | `ID` | Y | 제안 계정 |
-| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
-| `current_baseline_id` | `ID` | Y | 현재 기준 |
-| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
-| `published_baseline_id` | `ID` | N | 발행된 기준 |
-| `created_at` | `Time` | Y | 생성 시각 |
-| `updated_at` | `Time` | Y | 최종 갱신 |
-| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
-| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
-| `previous_proposal_id` | `ID` | N | 이전 제안. 수정안 요청 |
-| `agent` | `object` | N | AGENT 제출이면 {agent_session_id, name, member_id}. 수정안 요청 |
-
-```json
-{
-  "id": "71",
-  "project_id": "101",
-  "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
-  "documents": [
-    {
-      "document_id": "201",
-      "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-    }
-  ],
-  "status": "PROPOSED",
-  "proposer_account_id": "11",
-  "actor_type": "HUMAN",
-  "current_baseline_id": "401",
-  "requires_refresh": false,
-  "created_at": "2026-10-23T03:00:00Z",
-  "updated_at": "2026-10-23T03:00:00Z"
-}
-```
+HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다. 최초 `revision=1`, `status=PROPOSED`이며 `snapshot_hash`는 정확한 제출 스냅샷을 식별한다.
 
 #### Error
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `baseline_conflict` | 기준 baseline이 현재와 다름 |
-| 409 | `baseline_missing` | 기준 v1 발행 전 |
-
-```json
-{
-  "error": {
-    "code": "baseline_conflict",
-    "message": "기준 baseline이 현재와 다름"
-  }
-}
-```
+| 401 | `unauthenticated` | 유효한 세션이 없음 |
+| 404 | `not_found` | 리소스가 없거나 같은 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 값·본문·버전·키·변경 내용 오류 |
+| 400 | `invalid_json` | JSON 역직렬화 오류 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 403 | `forbidden` | 다른 담당자가 올린 수정본 또는 제안의 변경 요청 |
+| 409 | `baseline_missing` | 최초 baseline이 아직 없음 |
+| 409 | `baseline_conflict` | 현재 baseline 또는 기준 문서·항목 버전 불일치 |
+| 409 | `invalid_transition` | previous_proposal_id가 WITHDRAWN이 아님 |
+| 409 | `document_already_proposed` | 업로드 DRAFT가 다른 제안에 연결됨 |
+| 409 | `idempotency_conflict` | 같은 요청 키에 다른 입력 |
 
 #### 처리 규칙
 
-- items/documents 중 하나 이상 변경이 필요하다. UPDATE/RETIRE의 기준 버전 소속을 검사한다.
-- 문서 변경의 after_content와 proposed_document_version_id는 둘 중 하나다.
-- 명시 관계의 영향 대상·알림을 먼저 처리하고 AI 심층 영향 분석은 별도로 실행한다.
-- (수정안 요청) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 기준 v1 뒤의 문서 변경도 이 API의 documents로 올린다(after_content 또는 DOC-A12로 올린 DRAFT의 proposed_document_version_id). 기준 뒤 공용 문서함의 DOC-A14~A18·A21은 409 change_proposal_required다.
-- (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다.
+- 최초 baseline이 있어야 생성할 수 있다. baseline 전에는 변경 제안이 아니라 초기 문서 보완·제출(문서별 승인 흐름)을 사용한다. 이전 제안 연결은 본인이 거둔 제안에만 허용하며 본문은 새 요청에서 명시한다. REJECTED는 같은 번호에서 재제출한다.
+- items/documents 중 기준과 실제로 다른 변경이 하나 이상 필요하다. 원문만 수정할 수 있으며 관련 항목 변경은 선택이다.
+- CREATE/UPDATE는 5종 content v1과 schema_version=1을 검증한다. UPDATE/RETIRE의 항목·기준 버전은 해당 baseline에 속해야 한다. 종류 변경과 중복 대상은 거절한다.
+- 문서 입력 after_content/proposed_document_version_id는 배타적이다. 업로드 경로는 본인이 올린 DRAFT·동일 문서·동일 parent 기준 버전을 검사한다. DOC-A12 업로드만으로 제출된 것은 아니다.
+- after_content로 제출하면(CHG-A01·A04, 같은 서비스를 호출하는 MTG-A13 포함) 서버가 본문을 DOC-A12와 같은 규칙으로 정규화해 원문 저장소에 저장하고, 같은 DB 트랜잭션에서 기준 문서 버전을 부모로 하는 DRAFT 문서 버전과 색인 작업(document_processing, PENDING)을 만들어 제안에 귀속시킨다. 응답과 모든 리비전 조회는 그 버전을 proposed_document_version_id로 항상 돌려준다. 저장소 쓰기는 DB 트랜잭션 밖에서 먼저 하며, 트랜잭션이 실패하거나 멱등 재요청이면 올린 원문을 삭제해 남기지 않는다. 색인 실패의 자동 복구(최대 2회)와 FAILED 재시도(PLN-A02)는 기존 문서와 같고, 색인 완료 확인은 CHG-A09가 한다.
+- 제출된 업로드 버전은 제안에 귀속되며 원문·해시·부모·등록자를 변경할 수 없다. 같은 제안의 후속 리비전에서 재사용할 수 있지만 다른 제안에 연결할 수 없다. 제외된 과거 수정본 연결도 이력으로 보존한다. 미연결 DRAFT는 자동 제출·삭제하지 않는다.
+- 직접 입력 본문은 비어 있지 않은 100,000자·1 MiB 이내 텍스트이며 저장 전에 BOM 제거와 CR/LF→LF 정규화를 적용한다(DOC-A12와 같다). 정규화한 결과가 기준 본문과 같으면 400 validation_failed다. 변경이 없는 문서는 documents에서 뺀다(불필요한 버전·색인 작업을 만들지 않는다). 원본 파일 업로드도 같은 규약이다. 요청 및 저장 스냅샷 전체의 canonical JSON은 각각 1 MiB 이내다.
+- project 행을 잠근 뒤 활성 멤버·계정·토큰을 다시 검사한다. 제안·현재 항목 투영·불변 리비전·문서 연결·멱등 응답을 한 트랜잭션에서 저장한다. 제출만으로 baseline·작업 상태를 바꾸지 않는다.
+- CHG-A01/A04/A15는 design_http_command의 24시간 응답 보존을 재사용한다. 프로젝트·계정·동작·사람/에이전트 토큰별 요청 키를 분리하고 재요청 시 현재 권한을 검사한다.
+- 제출 후 잠금이다. 승인·검토 시작·반려·발행 명령은 198, 의견·검토 요청은 196, 심층 영향 분석·저장은 188·197이 담당한다. 알림은 공통 서비스 연동 TODO이며 직접 INSERT하지 않는다.
+- (#218 수정안 요청 · 195 미구현) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 현재 195는 구조화된 content v1만 받는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7405,22 +7332,20 @@ HTTP `201`.
 
 ### GET `/api/projects/{id}/change-proposals`
 
-설계 변경 제안 목록 기능을 제공한다.
-
 관련 요구사항: CHG-07  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안 · 수정안 요청 반영
+상태: BE 구현, 후속 승인·AI 분석 연동은 197·198
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER`. 현재 활성 멤버와 같은 프로젝트 소속을 검사한다. 에이전트는 REST 세션을 가장하지 않고 MCP 어댑터에서 같은 업무 서비스를 호출한다.
 
 #### Headers
 
 | 헤더 | 값·설명 |
 | --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Cookie | 로그인 세션 쿠키 |
+| X-Request-Id | 선택. 요청 추적 |
 
 #### Path Parameters
 
@@ -7433,90 +7358,41 @@ HTTP `201`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | N | 상태 필터 |
-| `scope` | `DESIGN_ITEMS\|DOCUMENTS` | N | 설계 항목 제안만 / 문서 제안만. 변경 제안 창은 DESIGN_ITEMS. 수정안 요청 |
-| `group` | `IN_PROGRESS\|PUBLISHED\|REJECTED` | N | 목록 탭 '진행 중 · 발행됨 · 반려'. 진행 중은 PROPOSED·IN_REVIEW·APPROVED. 탭마다 개수가 필요하면 MON-C01을 씀. 수정안 요청 |
-| `q` | `string` | N | 제목·항목 번호 검색어. 수정안 요청 |
-| `sort` | `latest\|status` | N | 최신순(기본)·상태순. 수정안 요청 |
-| `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
-| `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
+| `group` | `IN_PROGRESS\|PUBLISHED\|REJECTED` | N | 목록 탭. IN_PROGRESS는 PROPOSED·IN_REVIEW·APPROVED |
+| `scope` | `DESIGN_ITEMS\|DOCUMENTS` | N | 설계 항목 제안만 / 문서 제안만. #218 수정안 요청 · 195 미구현 |
+| `q` | `string` | N | 제목·항목 번호 검색어. #218 수정안 요청 · 195 미구현 |
+| `sort` | `latest\|status` | N | 최신순(기본)·상태순. #218 수정안 요청 · 195 미구현 |
+| `cursor` | `string` | N | 같은 프로젝트·상태·탭의 next_cursor |
+| `limit` | `integer` | N | 기본 20, 1~100 |
 
 #### Request
 
 없음.
+
 #### Response
 
 HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `items` | [ChangeProposal[]](00-common.md#schema-changeproposal) | Y | 조회된 항목 |
-| `has_more` | `boolean` | Y | 다음 페이지 존재 |
-| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환 |
-
-```json
-{
-  "items": [
-    {
-      "id": "71",
-      "project_id": "101",
-      "base_baseline_id": "401",
-      "title": "로그인 오류 응답 설명 보완",
-      "reason": "오류 표시 기준을 명확하게 한다.",
-      "task_id": "501",
-      "validation_id": "601",
-      "items": [
-        {
-          "operation": "UPDATE",
-          "design_item_id": "301",
-          "base_design_item_version_id": "311",
-          "schema_version": 1,
-          "proposed_content": {
-            "method": "POST",
-            "path": "/api/auth/login",
-            "description": "수정된 로그인 계약"
-          }
-        }
-      ],
-      "documents": [
-        {
-          "document_id": "201",
-          "base_document_version_id": "211",
-          "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-        }
-      ],
-      "status": "PROPOSED",
-      "proposer_account_id": "11",
-      "actor_type": "HUMAN",
-      "current_baseline_id": "401",
-      "requires_refresh": false,
-      "created_at": "2026-10-23T03:00:00Z",
-      "updated_at": "2026-10-23T03:00:00Z"
-    }
-  ],
-  "has_more": false
-}
-```
+| `items` | [ChangeProposalSummary[]](00-common.md#schema-changeproposalsummary) | Y | 본문을 제외한 요약 |
+| `has_more` | `boolean` | Y | 다음 페이지 여부 |
+| `next_cursor` | `string` | N | 다음 페이지 커서 |
 
 #### Error
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-
-```json
-{
-  "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
-  }
-}
-```
+| 401 | `unauthenticated` | 유효한 세션이 없음 |
+| 404 | `not_found` | 리소스가 없거나 같은 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 상태·탭·커서·페이지 크기 오류 |
 
 #### 처리 규칙
 
-- 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
-- (수정안 요청) 목록은 한 줄 요약이고 상세는 개요·바뀌는 내용·영향·의견 탭에서 CHG-A03·A05·A13으로 읽는다.
+- ID 내림차순 keyset 조회다. 본문·diff·영향 후보를 목록마다 읽지 않는다.
+- (#218 수정안 요청) 목록은 한 줄 요약이고 상세는 개요·바뀌는 내용·영향·의견 탭에서 CHG-A03·A05·A13으로 읽는다.
+- status와 group은 교집합으로 필터하며 일치하지 않으면 0건이다. WITHDRAWN은 전체 또는 status 필터로 조회하고 REJECTED 탭에는 넣지 않는다. 필터는 LIMIT 전에 적용하며 탭 개수 집계는 이 API에서 제공하지 않는다.
+- 커서는 프로젝트와 상태·탭 필터에 묶인다. 현재 목록이므로 페이지 사이 상태가 바뀌면 항목 포함 여부가 달라질 수 있다. 승인 시에는 목록 상태가 아니라 검토한 revision/hash를 대조해야 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7528,22 +7404,20 @@ HTTP `200`.
 
 ### GET `/api/projects/{id}/change-proposals/{proposal_id}`
 
-설계 변경 제안 상세·비교 기능을 제공한다.
-
-관련 요구사항: CHG-04·07  
+관련 요구사항: CHG-04·05·07
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안 · 수정안 요청 반영
+상태: BE 구현, 후속 승인·AI 분석 연동은 197·198
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER`. 현재 활성 멤버와 같은 프로젝트 소속을 검사한다. 에이전트는 REST 세션을 가장하지 않고 MCP 어댑터에서 같은 업무 서비스를 호출한다.
 
 #### Headers
 
 | 헤더 | 값·설명 |
 | --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Cookie | 로그인 세션 쿠키 |
+| X-Request-Id | 선택. 요청 추적 |
 
 #### Path Parameters
 
@@ -7554,94 +7428,57 @@ HTTP `200`.
 
 #### Query Parameters
 
-없음.
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `revision` | `integer` | N | 조회할 제출 리비전. 생략 시 최신 |
 
 #### Request
 
 없음.
+
 #### Response
 
 HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | Y | 제안 |
-| `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 기준·현재·수정안 비교 |
-| `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. 수정안 요청 |
-
-```json
-{
-  "proposal": {
-    "id": "71",
-    "project_id": "101",
-    "base_baseline_id": "401",
-    "title": "로그인 오류 응답 설명 보완",
-    "reason": "오류 표시 기준을 명확하게 한다.",
-    "task_id": "501",
-    "validation_id": "601",
-    "items": [
-      {
-        "operation": "UPDATE",
-        "design_item_id": "301",
-        "base_design_item_version_id": "311",
-        "schema_version": 1,
-        "proposed_content": {
-          "method": "POST",
-          "path": "/api/auth/login",
-          "description": "수정된 로그인 계약"
-        }
-      }
-    ],
-    "documents": [
-      {
-        "document_id": "201",
-        "base_document_version_id": "211",
-        "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-      }
-    ],
-    "status": "PROPOSED",
-    "proposer_account_id": "11",
-    "actor_type": "HUMAN",
-    "current_baseline_id": "401",
-    "requires_refresh": false,
-    "created_at": "2026-10-23T03:00:00Z",
-    "updated_at": "2026-10-23T03:00:00Z"
-  },
-  "comparisons": [
-    {
-      "target_type": "DOCUMENT",
-      "target_id": "201",
-      "format": "TEXT",
-      "base_content": "이전 설명",
-      "current_content": "현재 설명",
-      "proposed_content": "수정 설명",
-      "diff": "- 이전 설명\n+ 수정 설명"
-    }
-  ]
-}
-```
+| `proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | Y | 선택한 제출 내용·해시와 결정 상태 |
+| `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 고정 기준→제안 diff와 현재 승인 내용 |
+| `explicit_candidates` | `object[]` | Y | 직접 참조 후보. target_type/target_id/via_design_item_id/assignee_member_id/origin |
+| `candidates_truncated` | `boolean` | Y | 후보 500개 초과 여부 |
+| `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. #218 수정안 요청 · 195 미구현 |
 
 #### Error
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-
-```json
-{
-  "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
-  }
-}
-```
+| 401 | `unauthenticated` | 유효한 세션이 없음 |
+| 404 | `not_found` | 리소스가 없거나 같은 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 리비전 입력 오류 |
+| 409 | `baseline_conflict` | 저장된 기준 항목을 확인할 수 없음 |
+| 413 | `diff_too_large` | 비교 본문 한도 초과 |
 
 #### 처리 규칙
 
-- 기준·현재·제안 내용을 각각 구분해 표시한다.
-- 바이너리는 텍스트 본문 대신 버전 ID·해시로 표시하며 실제 파일 다운로드로 확인한다.
-- (수정안 요청) 바뀌는 내용 탭은 항목마다 한 줄로 접고, 펼치면 기준 문장과 제안 문장을 −/+로 보인다. 문장은 item_texts에서 읽는다.
+- 선택 리비전의 base_baseline_id와 문서·항목 기준 버전을 고정해 비교한다. 현재 baseline 변경은 requires_refresh, 비교 대상의 현재 본문 변경은 current_changed로 따로 표시한다. diff의 기준을 현재 승인본으로 바꾸지 않는다.
+- READ ONLY REPEATABLE READ로 기준·현재·제안을 같은 DB 스냅샷에서 읽는다. 설계 항목 본문은 묶음 조회한다.
+- DOC-A06과 같은 줄별 계산기를 사용한다. 동일 본문은 빈 diff. 삭제 줄은 -, 추가 줄은 +, 유지 줄은 공백 접두어다. 마지막 개행 없음은 표준 \ No newline at end of file 표시로 구분하며 비교 중 CR/LF·공백을 정규화하지 않는다.
+- 각 본문은 1,048,576자·50,000줄 이내다. 공통 앞뒤 구간을 분리하고 중간 LCS 표가 1,000,000칸을 넘으면 해당 중간 구간을 전체 삭제/추가로 표시한다. 내용은 생략하지 않으며 최소 diff는 보장하지 않는다. JSON 항목은 키를 정렬한 canonical JSON으로 비교한다.
+- 후보는 기준 설계 항목의 원문 출처·현재 작업 계획의 직접 참조·검증 참조에 한정한다. 작업은 COMPLETED·CANCELLED를 제외하고(MCP-03 affected_task_ids와 같은 규칙), 검증은 열린 작업의 현재 계획 리비전 검증만 포함한다. API/DATA 계약도 설계 항목으로 표시한다. 확정 설계 관계 1단계+작업 계획 참조 규칙 계산은 관계 서비스 담당과 계약하고, 규칙/AI 후보 저장·조회는 197 후속이다. 후보를 확정 영향·알림·작업 변경으로 사용하지 않는다.
+- explicit_candidates는 현재 직접 참조 조회이며 분석 완료 결과가 아니다. MCP-03의 발행당 impact_candidates(최대 10개·잘린 개수)는 197 결과를 쓰는 별도 계약이다. 이 API의 500개/boolean 상한을 그 계약으로 대체하지 않는다. 후보만으로 D5 직접 참조 판정이나 작업 상태를 바꾸지 않는다.
+- 과거 리비전의 반려 사유는 그 리비전의 결정에서 조회한다. 현재 baseline과의 비교는 조회 시점 기준이다.
+- (#218 수정안 요청 · 195 미구현) 바뀌는 내용 탭은 항목마다 한 줄로 접고, 펼치면 기준 문장과 제안 문장을 −/+로 보인다. 문장은 item_texts에서 읽는다.
+
+### GET `/api/projects/{id}/change-proposals/{proposal_id}/revisions`
+
+동일 인증·경로 권한을 사용하는 CHG-A03의 이력 조회 경로다.
+
+| Query | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `before_revision` | `integer` | N | 이전 next_before_revision. 최초 생략 |
+| `limit` | `integer` | N | 기본 20, 1~100 |
+
+HTTP `200`: items 배열의 각 원소는 revision, snapshot_hash, submitted_by, submitted_at, decision, decision_reason, decided_by, decided_at이다. 미결정 필드는 null이다. has_more와 next_before_revision으로 이전 리비전을 조회한다. 오류는 400 validation_failed, 401 unauthenticated, 404 not_found다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7649,27 +7486,27 @@ HTTP `200`.
 
 <a id="chg-a04"></a>
 
-## CHG-A04. 설계 변경 제안 갱신·재제출
+## CHG-A04. 설계 변경 제안 보완·재제출
 
 ### PUT `/api/projects/{id}/change-proposals/{proposal_id}`
 
-설계 변경 제안 갱신·재제출 기능을 제공한다.
-
 관련 요구사항: APR-05  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: BE 구현, 후속 승인·AI 분석 연동은 197·198
 
 #### 인증
 
-`MEMBER (제안자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER (제안 계정)`. 현재 활성 멤버와 같은 프로젝트 소속을 검사한다. 에이전트는 REST 세션을 가장하지 않고 MCP 어댑터에서 같은 업무 서비스를 호출한다.
 
 #### Headers
 
 | 헤더 | 값·설명 |
 | --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Cookie | 로그인 세션 쿠키 |
+| X-Request-Id | 선택. 요청 추적 |
 | Content-Type | application/json |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Origin 또는 Referer | 허용된 화면의 출처 |
+| Idempotency-Key | 필수. 1~128자 |
 
 #### Path Parameters
 
@@ -7686,136 +7523,64 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `expected_updated_at` | `Time` | Y | 조회한 제안 updated_at. 낙관적 충돌 검사 |
+| `base_baseline_id` | `ID` | Y | 현재 기준 설계 |
+| `title` | `string` | Y | 1~200자 제목 |
+| `reason` | `string` | Y | 1~10,000자 변경 사유 |
+| `task_id` | `ID` | N | 같은 프로젝트의 관련 작업 |
+| `validation_id` | `ID` | N | 같은 프로젝트의 검증. task_id 지정 시 해당 작업 소속 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 최대 100개. 원문만 수정하면 빈 배열 |
+| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 최대 4개. 항목만 수정하면 빈 배열 |
+| `expected_revision` | `integer` | Y | 조회한 제출 리비전 번호 |
+| `expected_snapshot_hash` | `string` | Y | 조회한 sha256 해시 |
 
 ```json
 {
   "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
+  "title": "로그인 설명 보완",
+  "reason": "오류 표시를 명확히 한다.",
+  "items": [],
   "documents": [
     {
       "document_id": "201",
       "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
+      "after_content": "# 요구사항\n수정된 로그인 설명"
     }
   ],
-  "expected_updated_at": "2026-10-23T03:00:00Z"
+  "expected_revision": 1,
+  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
 
 #### Response
 
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 제안 ID |
-| `project_id` | `ID` | Y | 프로젝트 |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
-| `proposer_account_id` | `ID` | Y | 제안 계정 |
-| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
-| `current_baseline_id` | `ID` | Y | 현재 기준 |
-| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
-| `published_baseline_id` | `ID` | N | 발행된 기준 |
-| `created_at` | `Time` | Y | 생성 시각 |
-| `updated_at` | `Time` | Y | 최종 갱신 |
-| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
-
-```json
-{
-  "id": "71",
-  "project_id": "101",
-  "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
-  "documents": [
-    {
-      "document_id": "201",
-      "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-    }
-  ],
-  "status": "PROPOSED",
-  "proposer_account_id": "11",
-  "actor_type": "HUMAN",
-  "current_baseline_id": "401",
-  "requires_refresh": false,
-  "created_at": "2026-10-23T03:00:00Z",
-  "updated_at": "2026-10-23T03:00:00Z"
-}
-```
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key를 유지하고 revision을 1 증가시키며 status는 PROPOSED다.
 
 #### Error
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `baseline_conflict` | 재제출의 base_baseline_id가 현재 기준이 아님 |
-| 409 | `proposal_changed` | 동시 수정 |
-| 409 | `invalid_transition` | 승인·발행·반려 완료 제안 |
-
-```json
-{
-  "error": {
-    "code": "baseline_conflict",
-    "message": "갱신 기준이 현재가 아님"
-  }
-}
-```
+| 401 | `unauthenticated` | 유효한 세션이 없음 |
+| 404 | `not_found` | 리소스가 없거나 같은 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | 필수 값·본문·버전·키·변경 내용 오류 |
+| 400 | `invalid_json` | JSON 역직렬화 오류 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 403 | `forbidden` | 다른 담당자가 올린 수정본 또는 제안의 변경 요청 |
+| 409 | `baseline_missing` | 최초 baseline이 아직 없음 |
+| 409 | `baseline_conflict` | 현재 baseline 또는 기준 문서·항목 버전 불일치 |
+| 409 | `document_already_proposed` | 업로드 DRAFT가 다른 제안에 연결됨 |
+| 409 | `idempotency_conflict` | 같은 요청 키에 다른 입력 |
+| 409 | `version_conflict` | 기대 리비전·해시 불일치 |
+| 409 | `proposal_locked` | 반려 상태가 아니므로 변경 불가 |
+| 409 | `proposal_decision_missing` | 반려 결정 원본이 없음 |
 
 #### 처리 규칙
 
-- 제출한 제안(PROPOSED·IN_REVIEW)은 편집을 잠근다. 반려된(REJECTED) 제안만 같은 제안 번호에서 고쳐 새 revision으로 재제출하며 결과 상태는 PROPOSED다(현재 구현 기준).
-- 현재 원문을 읽고 수정한 최종본을 제출한다. 영향·관련자 정보를 다시 확인한다.
-- 이전 제출 내용과 검토·반려·결정 이력은 보존한다. 제안 내용 변경을 승인 없이 발행하지 않는다.
-- (수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'(CHG-A10)한 뒤 최신 기준으로 재제출한다.
+- REJECTED만 재제출할 수 있다. 재제출하지 않기로 하면 CHG-A15로 거둘 수 있다. PROPOSED·IN_REVIEW·APPROVED·PUBLISHED·WITHDRAWN은 편집 불가다. 같은 제안 계정의 활성 사람/에이전트 호출을 허용하며 실제 제출 토큰도 리비전에 보존한다.
+- 이전 제출·반려 결정은 변경하지 않는다. approval은 제안당 1건이 아니라 제출 리비전당 1건이다. 후속 승인 API는 검토한 revision/hash에 고정해야 한다.
+- 서버에 별도 편집 중 초안을 저장하지 않는다. 반려 후 보완한 최종 본문 또는 새 업로드 DRAFT를 PUT하면 새 불변 제출 리비전이 된다. after_content로 보완하면 매번 새 DRAFT 문서 버전이 만들어지고 이전 리비전의 버전은 그대로 보존한다.
+- previous_proposal_id는 생성 때 정한 연결을 유지하며 PUT 입력에는 지정할 수 없다. 거둔 제안의 수정은 새 제안을 생성해야 한다.
+- 그 외 입력·원문 연결·원자성·24시간 멱등성은 CHG-A01과 같다.
+- (#218 수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'하면 제안자가 CHG-A04로 최신 기준에 맞춰 재제출한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8256,77 +8021,19 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `expected_updated_at` | `Time` | Y | 조회한 제안 updated_at. 낙관적 충돌 검사 |
+| `expected_revision` | `integer` | Y | 검토한 제출 리비전 |
+| `expected_snapshot_hash` | `string` | Y | 검토한 제출 스냅샷 해시 |
 
 ```json
 {
-  "expected_updated_at": "2026-10-23T03:00:00Z"
+  "expected_revision": 1,
+  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
 
 #### Response
 
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 제안 ID |
-| `project_id` | `ID` | Y | 프로젝트 |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
-| `proposer_account_id` | `ID` | Y | 제안 계정 |
-| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
-| `current_baseline_id` | `ID` | Y | 현재 기준 |
-| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
-| `published_baseline_id` | `ID` | N | 발행된 기준 |
-| `created_at` | `Time` | Y | 생성 시각 |
-| `updated_at` | `Time` | Y | 최종 갱신 |
-| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
-
-```json
-{
-  "id": "71",
-  "project_id": "101",
-  "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
-  "documents": [
-    {
-      "document_id": "201",
-      "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-    }
-  ],
-  "status": "IN_REVIEW",
-  "proposer_account_id": "11",
-  "actor_type": "HUMAN",
-  "current_baseline_id": "401",
-  "requires_refresh": false,
-  "created_at": "2026-10-23T03:00:00Z",
-  "updated_at": "2026-10-23T03:00:00Z"
-}
-```
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없이 그대로 반환한다(A01·A04·A15와 같은 모양). `status=IN_REVIEW`인 제안이며, `revision`·`snapshot_hash`는 검토를 시작한 제출본을 가리킨다. 이어서 A09·A10의 `expected_revision`·`expected_snapshot_hash`로 그대로 쓸 수 있다.
 
 #### Error
 
@@ -8336,13 +8043,13 @@ HTTP `200`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `proposal_changed` | 제안 변경 |
+| 409 | `version_conflict` | 제안 변경 |
 | 409 | `invalid_transition` | 검토 시작 불가 상태 |
 
 ```json
 {
   "error": {
-    "code": "proposal_changed",
+    "code": "version_conflict",
     "message": "제안 변경"
   }
 }
@@ -8397,12 +8104,14 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `expected_base_baseline_id` | `ID` | Y | 검토한 제안 기준 |
-| `expected_updated_at` | `Time` | Y | 조회한 제안 updated_at. 낙관적 충돌 검사 |
+| `expected_revision` | `integer` | Y | 검토한 제출 리비전 |
+| `expected_snapshot_hash` | `string` | Y | 검토한 제출 스냅샷 해시 |
 
 ```json
 {
   "expected_base_baseline_id": "401",
-  "expected_updated_at": "2026-10-23T03:00:00Z"
+  "expected_revision": 1,
+  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
 
@@ -8485,7 +8194,7 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 제안 기준과 현재 baseline 불일치 |
-| 409 | `proposal_changed` | 검토 뒤 제안 변경 |
+| 409 | `version_conflict` | 검토 뒤 제안 변경 |
 | 409 | `invalid_transition` | 반려 등 승인 불가 |
 | 500 | `internal` | 발행 트랜잭션 실패 |
 | 409 | `analysis_not_completed` | 제안에 연결한 문서 버전의 색인 미준비·실패·불일치 |
@@ -8508,7 +8217,7 @@ HTTP `200`.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
 - 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
 - (수정안 요청) requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
-- (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때 원문 저장과 청킹·임베딩 작업(document_processing)이 함께 생긴다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
+- (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8555,79 +8264,20 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `reason` | `string` | Y | 반려·보완 사유 |
-| `expected_updated_at` | `Time` | Y | 조회한 제안 updated_at. 낙관적 충돌 검사 |
+| `expected_revision` | `integer` | Y | 검토한 제출 리비전 |
+| `expected_snapshot_hash` | `string` | Y | 검토한 제출 스냅샷 해시 |
 
 ```json
 {
   "reason": "현재 API 계약과의 차이를 명확하게 작성해 주세요.",
-  "expected_updated_at": "2026-10-23T03:00:00Z"
+  "expected_revision": 1,
+  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
 
 #### Response
 
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 제안 ID |
-| `project_id` | `ID` | Y | 프로젝트 |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED` | Y | 제안 상태 |
-| `proposer_account_id` | `ID` | Y | 제안 계정 |
-| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
-| `current_baseline_id` | `ID` | Y | 현재 기준 |
-| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
-| `published_baseline_id` | `ID` | N | 발행된 기준 |
-| `created_at` | `Time` | Y | 생성 시각 |
-| `updated_at` | `Time` | Y | 최종 갱신 |
-| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
-
-```json
-{
-  "id": "71",
-  "project_id": "101",
-  "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
-  "documents": [
-    {
-      "document_id": "201",
-      "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-    }
-  ],
-  "status": "REJECTED",
-  "proposer_account_id": "11",
-  "actor_type": "HUMAN",
-  "current_baseline_id": "401",
-  "requires_refresh": false,
-  "created_at": "2026-10-23T03:00:00Z",
-  "updated_at": "2026-10-23T03:00:00Z",
-  "rejection_reason": "현재 API 계약과의 차이를 명확하게 작성해 주세요."
-}
-```
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없이 그대로 반환한다(A01·A04·A15와 같은 모양). `status=REJECTED`이고 `rejection_reason`이 채워진 제안이다. `revision`·`snapshot_hash`는 반려된 제출본을 가리키며 CHG-A04 재제출의 `expected_revision`·`expected_snapshot_hash`로 쓴다.
 
 #### Error
 
@@ -8637,13 +8287,13 @@ HTTP `200`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `proposal_changed` | 경합 |
+| 409 | `version_conflict` | 경합 |
 | 409 | `invalid_transition` | 이미 처리 완료 |
 
 ```json
 {
   "error": {
-    "code": "proposal_changed",
+    "code": "version_conflict",
     "message": "경합"
   }
 }
@@ -8652,8 +8302,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 반려 사유와 검토 이력을 보존한다.
-- 반려 후에는 같은 제안 번호에서 CHG-A04로 고쳐 새 revision으로 재제출한다. 이전 제출 내용과 반려 사유는 덮어쓰지 않는다.
-- (수정안 요청) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채운다. 제안자는 CHG-A04로 최신 기준에 맞춰 재제출하거나 CHG-A15로 거둔다.
+- 반려 후에는 같은 제안의 CHG-A04로 새 제출 리비전을 만든다. 이전 내용·반려 사유·결정은 리비전별로 보존하며 덮어쓰지 않는다.
+- (#218 수정안 요청 · 195 미구현) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채우고, 제안자는 CHG-A04로 최신 기준에 맞춰 재제출한다. 재제출하지 않기로 하면 CHG-A15로 반려된 제안을 거둘 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9047,24 +8697,23 @@ HTTP `200`.
 
 ### POST `/api/projects/{id}/change-proposals/{proposal_id}/withdraw`
 
-제안자가 스스로 제안을 끝낸다.
-
-관련 요구사항: CHG-07 (화면 PNL-04-v2-changes)  
-담당: BE: 오서현 / AI: — / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+관련 요구사항: CHG-01·07 (화면 수정안 연계)
+담당: BE: 오서현 / AI: — / FE: 오서현
+상태: BE 구현. 공통 알림 연동 TODO
 
 #### 인증
 
-`MEMBER (제안자)`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER (제안 계정)`. 활성 멤버이며 제안을 작성한 계정만 가능하다. REST는 사람 세션, 에이전트는 별도 MCP 도구 구현 없이 같은 업무 서비스의 권한 검증을 사용한다.
 
 #### Headers
 
 | 헤더 | 값·설명 |
 | --- | --- |
-| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Cookie | 로그인 세션 쿠키 |
 | Content-Type | application/json |
-| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Origin 또는 Referer | 허용된 화면 출처 |
+| Idempotency-Key | 필수. 제어 문자 없는 1~128자 |
+| X-Request-Id | 선택. 요청 추적 |
 
 #### Path Parameters
 
@@ -9081,55 +8730,42 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `expected_updated_at` | `Time` | Y | 조회한 제안 updated_at |
+| `expected_revision` | `integer` | Y | 조회한 양수 제출 리비전 |
+| `expected_snapshot_hash` | `string` | Y | 조회한 sha256:소문자 64자리 해시 |
 
 ```json
 {
-  "expected_updated_at": "2026-10-28T03:00:00Z"
+  "expected_revision": 1,
+  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
 
 #### Response
 
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | Y | status=WITHDRAWN인 제안 |
-
-```json
-{
-  "proposal": {
-    "id": "71",
-    "status": "WITHDRAWN",
-    "updated_at": "2026-10-28T03:01:00Z"
-  }
-}
-```
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없이 그대로 반환한다(A01·A04·A08·A10과 같은 모양). status=WITHDRAWN, withdrawn_by/withdrawn_at을 포함하고 revision·snapshot_hash·제출 본문은 유지한다.
 
 #### Error
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 409 | `invalid_transition` | 이미 승인·발행·거둠 |
-| 409 | `version_conflict` | expected_updated_at이 현재와 다름 |
-
-```json
-{
-  "error": {
-    "code": "unauthenticated",
-    "message": "세션 인증이 유효하지 않음"
-  }
-}
-```
+| 400 | `validation_failed` | 필수 값·기대 revision/hash·키 오류 |
+| 400 | `invalid_json` | JSON 역직렬화 오류 |
+| 401 | `unauthenticated` | 로그인 무효 |
+| 403 | `forbidden` | 제안 작성 계정이 아님 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 404 | `not_found` | 없는 제안·다른 프로젝트·현재 접근 불가 |
+| 409 | `version_conflict` | 조회한 revision/hash가 현재와 다름 |
+| 409 | `invalid_transition` | 현재 상태가 PROPOSED·IN_REVIEW·REJECTED가 아님 |
+| 409 | `idempotency_conflict` | 동일 키에 다른 입력 |
 
 #### 처리 규칙
 
-- PROPOSED·IN_REVIEW·REJECTED 제안을 거둔다. 반려된 제안을 다시 내지 않기로 할 때도 거둔다. 거둔 제안은 고칠 수 없고 다시 올리면 새 제안이다(previous_proposal_id).
-- 검토 요청을 받은 팀원에게 알린다.
+- 프로젝트 잠금 후 작성자·현재 권한·기대 revision/hash·상태를 검사한다. 승인·발행된 제안은 거둘 수 없다. 반려(REJECTED)된 제안은 같은 번호로 재제출하지 않기로 할 때 거둘 수 있다.
+- 상태와 행위자/시각, 24시간 멱등 응답을 한 트랜잭션으로 저장한다. 동일 키·입력은 현재 권한을 확인한 뒤 최초 응답을 재사용한다. 다른 키로 이미 거둔 제안을 다시 거두면 invalid_transition이다.
+- 원문·리비전·문서 연결·기존 결정은 삭제하지 않고 baseline·작업 상태를 바꾸지 않는다. WITHDRAWN은 종결 상태이며 다시 작성하려면 새 CHG-A01 요청에 previous_proposal_id를 지정한다. 반려 후 같은 번호 재제출과 구분한다.
+- 이전 제안에 귀속된 업로드 DRAFT를 새 제안으로 이동하지 않는다. 새 수정본을 업로드하거나 본문을 명시적으로 입력한다.
+- 알림·활동은 공통 서비스 연계 TODO다. 직접 notification INSERT나 발송 성공 응답을 만들지 않는다.
+- 화면 수정안의 expected_updated_at 대신 기존 195 검토 식별인 expected_revision/expected_snapshot_hash를 사용한다. FE 연동 시 이 두 필드를 맞춰야 한다. 응답은 A01·A04·A08·A10과 같은 래퍼 없는 ChangeProposal이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13432,7 +13068,7 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 한 트랜잭션에서 회의를 CLOSED로 바꾸고, 정리의 document_changes와 결정으로 변경 제안을 만든다. 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
+- 정리의 document_changes와 결정으로 변경 제안을 먼저 만들고, 성공하면 회의를 CLOSED로 바꾼다. 문서 변경이 있는 제안은 원문을 저장소에 올리므로 회의 종료와 제안 생성을 한 DB 트랜잭션으로 묶지 않는다(제안 생성은 외부 트랜잭션 안에서 호출할 수 없다). 제안 생성이 성공한 뒤 회의 종료가 실패해 다시 시도하면 같은 Idempotency-Key로 같은 제안을 돌려받는다(보존 24시간). 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
 - (수정안 요청) 끝내기 전에 정리의 document_changes[].base_version_id가 지금 기준의 그 문서 승인본과 같은지 다시 확인한다. 정리 뒤 다른 변경 제안이 발행돼 기준이 바뀌었으면 409 summary_outdated로 회의를 끝내지 않는다. 화면은 '정리한 뒤 기준이 바뀌었어요'를 안내하고, 팀장이 비비에게 다시 정리(MTG-A11)를 요청한다. 아직 발행되지 않은 다른 제안은 기준이 아니므로 여기서 막지 않고, 승인할 때 CHG-A09의 requires_refresh 규칙을 따른다.
 - 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
 - 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다(Q24 정함).
