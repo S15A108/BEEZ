@@ -419,7 +419,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 195의 공용 업무 진입점은 `ProposalCommandService.create(CallerContext, projectId, ProposalDtos.Input, idempotencyKey)`다. MCP 어댑터는 검증한 토큰으로 CallerContext.agent를 구성하며 인수에서 계정·actor_type·토큰 ID를 신뢰하지 않는다. 서비스도 멤버십·프로젝트·토큰 폐기를 다시 검사한다. 도구 등록·MCP 전송은 전진 담당이며 195는 서비스 직접 호출까지 검증한다.
 
-응답은 [ChangeProposal](00-common.md#schema-changeproposal)의 `key`, `revision`, `snapshot_hash` 및 해석된 원문을 포함한다. `items=[]`인 원문 단독 변경도 허용한다. Idempotency-Key는 프로젝트·계정·동작·토큰별 24시간 보존한다. 이미 제출된 내용은 잠기며 반려 후 같은 제안 계정만 `ProposalCommandService.resubmit`에 expected_revision/expected_snapshot_hash를 전달해 재제출할 수 있다. 거둔 제안에서 새로 생성할 때 선택 previous_proposal_id를 전달할 수 있으며 같은 프로젝트·작성 계정의 WITHDRAWN만 허용한다. 별도 재제출·거두기 MCP 도구는 이번 티켓에서 등록하지 않는다.
+응답은 [ChangeProposal](00-common.md#schema-changeproposal)의 `key`, `revision`, `snapshot_hash` 및 해석된 원문을 포함한다. after_content 제출도 서버가 DRAFT 문서 버전과 색인 작업을 만들어 proposed_document_version_id를 반환한다(규칙은 CHG-A01과 같다). `items=[]`인 원문 단독 변경도 허용한다. Idempotency-Key는 프로젝트·계정·동작·토큰별 24시간 보존한다. 이미 제출된 내용은 잠기며 반려 후 같은 제안 계정만 `ProposalCommandService.resubmit`에 expected_revision/expected_snapshot_hash를 전달해 재제출할 수 있다. 거둔 제안에서 새로 생성할 때 선택 previous_proposal_id를 전달할 수 있으며 같은 프로젝트·작성 계정의 WITHDRAWN만 허용한다. 별도 재제출·거두기 MCP 도구는 이번 티켓에서 등록하지 않는다.
 
 관련 요구사항: MCP-04, CHG-01·02  
 담당: BE: 전진(도구) / 오서현(제안) / AI: 양지훈(영향 분석) / FE: —  
@@ -492,7 +492,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 해석된 원문·내용 해시·선택한 업로드 버전 |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 해석된 원문·내용 해시·문서 버전(항상 반환) |
 | `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
 | `proposer_account_id` | `ID` | Y | 제안 계정 |
 | `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |

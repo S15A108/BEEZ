@@ -7192,8 +7192,9 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 - items/documents 중 기준과 실제로 다른 변경이 하나 이상 필요하다. 원문만 수정할 수 있으며 관련 항목 변경은 선택이다.
 - CREATE/UPDATE는 5종 content v1과 schema_version=1을 검증한다. UPDATE/RETIRE의 항목·기준 버전은 해당 baseline에 속해야 한다. 종류 변경과 중복 대상은 거절한다.
 - 문서 입력 after_content/proposed_document_version_id는 배타적이다. 업로드 경로는 본인이 올린 DRAFT·동일 문서·동일 parent 기준 버전을 검사한다. DOC-A12 업로드만으로 제출된 것은 아니다.
+- after_content로 제출하면(CHG-A01·A04, 같은 서비스를 호출하는 MTG-A13 포함) 서버가 본문을 DOC-A12와 같은 규칙으로 정규화해 원문 저장소에 저장하고, 같은 DB 트랜잭션에서 기준 문서 버전을 부모로 하는 DRAFT 문서 버전과 색인 작업(document_processing, PENDING)을 만들어 제안에 귀속시킨다. 응답과 모든 리비전 조회는 그 버전을 proposed_document_version_id로 항상 돌려준다. 저장소 쓰기는 DB 트랜잭션 밖에서 먼저 하며, 트랜잭션이 실패하거나 멱등 재요청이면 올린 원문을 삭제해 남기지 않는다. 색인 실패의 자동 복구(최대 2회)와 FAILED 재시도(PLN-A02)는 기존 문서와 같고, 색인 완료 확인은 CHG-A09가 한다.
 - 제출된 업로드 버전은 제안에 귀속되며 원문·해시·부모·등록자를 변경할 수 없다. 같은 제안의 후속 리비전에서 재사용할 수 있지만 다른 제안에 연결할 수 없다. 제외된 과거 수정본 연결도 이력으로 보존한다. 미연결 DRAFT는 자동 제출·삭제하지 않는다.
-- 직접 입력 본문은 비어 있지 않은 100,000자·1 MiB 이내 텍스트이며 줄바꿈·마지막 개행을 그대로 보존한다. 원본 파일 업로드는 기존 업로드 정규화 규약을 따른다. 요청 및 저장 스냅샷 전체의 canonical JSON은 각각 1 MiB 이내다.
+- 직접 입력 본문은 비어 있지 않은 100,000자·1 MiB 이내 텍스트이며 저장 전에 BOM 제거와 CR/LF→LF 정규화를 적용한다(DOC-A12와 같다). 정규화한 결과가 기준 본문과 같으면 변경으로 보지 않는다. 원본 파일 업로드도 같은 규약이다. 요청 및 저장 스냅샷 전체의 canonical JSON은 각각 1 MiB 이내다.
 - project 행을 잠근 뒤 활성 멤버·계정·토큰을 다시 검사한다. 제안·현재 항목 투영·불변 리비전·문서 연결·멱등 응답을 한 트랜잭션에서 저장한다. 제출만으로 baseline·작업 상태를 바꾸지 않는다.
 - CHG-A01/A04/A15는 design_http_command의 24시간 응답 보존을 재사용한다. 프로젝트·계정·동작·사람/에이전트 토큰별 요청 키를 분리하고 재요청 시 현재 권한을 검사한다.
 - 제출 후 잠금이다. 승인·검토 시작·반려·발행 명령은 198, 의견·검토 요청은 196, 심층 영향 분석·저장은 188·197이 담당한다. 알림은 공통 서비스 연동 TODO이며 직접 INSERT하지 않는다.
@@ -7454,7 +7455,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 
 - REJECTED만 재제출할 수 있다. 재제출하지 않기로 하면 CHG-A15로 거둘 수 있다. PROPOSED·IN_REVIEW·APPROVED·PUBLISHED·WITHDRAWN은 편집 불가다. 같은 제안 계정의 활성 사람/에이전트 호출을 허용하며 실제 제출 토큰도 리비전에 보존한다.
 - 이전 제출·반려 결정은 변경하지 않는다. approval은 제안당 1건이 아니라 제출 리비전당 1건이다. 후속 승인 API는 검토한 revision/hash에 고정해야 한다.
-- 서버에 별도 편집 중 초안을 저장하지 않는다. 반려 후 보완한 최종 본문 또는 새 업로드 DRAFT를 PUT하면 새 불변 제출 리비전이 된다.
+- 서버에 별도 편집 중 초안을 저장하지 않는다. 반려 후 보완한 최종 본문 또는 새 업로드 DRAFT를 PUT하면 새 불변 제출 리비전이 된다. after_content로 보완하면 매번 새 DRAFT 문서 버전이 만들어지고 이전 리비전의 버전은 그대로 보존한다.
 - previous_proposal_id는 생성 때 정한 연결을 유지하며 PUT 입력에는 지정할 수 없다. 거둔 제안의 수정은 새 제안을 생성해야 한다.
 - 그 외 입력·원문 연결·원자성·24시간 멱등성은 CHG-A01과 같다.
 - (#218 수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'하면 제안자가 CHG-A04로 최신 기준에 맞춰 재제출한다.
@@ -7910,67 +7911,7 @@ HTTP `200`.
 
 #### Response
 
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 제안 ID |
-| `project_id` | `ID` | Y | 프로젝트 |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
-| `proposer_account_id` | `ID` | Y | 제안 계정 |
-| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
-| `current_baseline_id` | `ID` | Y | 현재 기준 |
-| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
-| `published_baseline_id` | `ID` | N | 발행된 기준 |
-| `created_at` | `Time` | Y | 생성 시각 |
-| `updated_at` | `Time` | Y | 최종 갱신 |
-| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
-
-```json
-{
-  "id": "71",
-  "project_id": "101",
-  "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
-  "documents": [
-    {
-      "document_id": "201",
-      "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-    }
-  ],
-  "status": "IN_REVIEW",
-  "proposer_account_id": "11",
-  "actor_type": "HUMAN",
-  "current_baseline_id": "401",
-  "requires_refresh": false,
-  "created_at": "2026-10-23T03:00:00Z",
-  "updated_at": "2026-10-23T03:00:00Z"
-}
-```
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없이 그대로 반환한다(A01·A04·A15와 같은 모양). `status=IN_REVIEW`인 제안이며, `revision`·`snapshot_hash`는 검토를 시작한 제출본을 가리킨다. 이어서 A09·A10의 `expected_revision`·`expected_snapshot_hash`로 그대로 쓸 수 있다.
 
 #### Error
 
@@ -8212,68 +8153,7 @@ HTTP `200`.
 
 #### Response
 
-HTTP `200`.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `id` | `ID` | Y | 제안 ID |
-| `project_id` | `ID` | Y | 프로젝트 |
-| `base_baseline_id` | `ID` | Y | 제안 기준 |
-| `title` | `string` | Y | 제안 제목 |
-| `reason` | `string` | Y | 변경 이유 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `validation_id` | `ID` | N | 관련 검증 |
-| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
-| `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
-| `proposer_account_id` | `ID` | Y | 제안 계정 |
-| `actor_type` | `HUMAN\|AGENT` | Y | 제출 주체 |
-| `current_baseline_id` | `ID` | Y | 현재 기준 |
-| `requires_refresh` | `boolean` | Y | 기준 갱신 필요 |
-| `published_baseline_id` | `ID` | N | 발행된 기준 |
-| `created_at` | `Time` | Y | 생성 시각 |
-| `updated_at` | `Time` | Y | 최종 갱신 |
-| `rejection_reason` | `string` | N | REJECTED인 경우의 사유 |
-
-```json
-{
-  "id": "71",
-  "project_id": "101",
-  "base_baseline_id": "401",
-  "title": "로그인 오류 응답 설명 보완",
-  "reason": "오류 표시 기준을 명확하게 한다.",
-  "task_id": "501",
-  "validation_id": "601",
-  "items": [
-    {
-      "operation": "UPDATE",
-      "design_item_id": "301",
-      "base_design_item_version_id": "311",
-      "schema_version": 1,
-      "proposed_content": {
-        "method": "POST",
-        "path": "/api/auth/login",
-        "description": "수정된 로그인 계약"
-      }
-    }
-  ],
-  "documents": [
-    {
-      "document_id": "201",
-      "base_document_version_id": "211",
-      "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
-    }
-  ],
-  "status": "REJECTED",
-  "proposer_account_id": "11",
-  "actor_type": "HUMAN",
-  "current_baseline_id": "401",
-  "requires_refresh": false,
-  "created_at": "2026-10-23T03:00:00Z",
-  "updated_at": "2026-10-23T03:00:00Z",
-  "rejection_reason": "현재 API 계약과의 차이를 명확하게 작성해 주세요."
-}
-```
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없이 그대로 반환한다(A01·A04·A15와 같은 모양). `status=REJECTED`이고 `rejection_reason`이 채워진 제안이다. `revision`·`snapshot_hash`는 반려된 제출본을 가리키며 CHG-A04 재제출의 `expected_revision`·`expected_snapshot_hash`로 쓴다.
 
 #### Error
 
@@ -8738,7 +8618,7 @@ HTTP `200`.
 
 #### Response
 
-HTTP `200`. `{ "proposal": ChangeProposal }` 래퍼로 반환한다(#218 계약). proposal은 [ChangeProposal](00-common.md#schema-changeproposal)이며 status=WITHDRAWN, withdrawn_by/withdrawn_at을 포함하고 revision·snapshot_hash·제출 본문은 유지한다.
+HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없이 그대로 반환한다(A01·A04·A08·A10과 같은 모양). status=WITHDRAWN, withdrawn_by/withdrawn_at을 포함하고 revision·snapshot_hash·제출 본문은 유지한다.
 
 #### Error
 
@@ -8761,7 +8641,7 @@ HTTP `200`. `{ "proposal": ChangeProposal }` 래퍼로 반환한다(#218 계약)
 - 원문·리비전·문서 연결·기존 결정은 삭제하지 않고 baseline·작업 상태를 바꾸지 않는다. WITHDRAWN은 종결 상태이며 다시 작성하려면 새 CHG-A01 요청에 previous_proposal_id를 지정한다. 반려 후 같은 번호 재제출과 구분한다.
 - 이전 제안에 귀속된 업로드 DRAFT를 새 제안으로 이동하지 않는다. 새 수정본을 업로드하거나 본문을 명시적으로 입력한다.
 - 알림·활동은 공통 서비스 연계 TODO다. 직접 notification INSERT나 발송 성공 응답을 만들지 않는다.
-- 화면 수정안의 expected_updated_at 대신 기존 195 검토 식별인 expected_revision/expected_snapshot_hash를 사용한다. FE 연동 시 이 두 필드를 맞춰야 한다. 응답의 proposal 래퍼는 #218과 같다.
+- 화면 수정안의 expected_updated_at 대신 기존 195 검토 식별인 expected_revision/expected_snapshot_hash를 사용한다. FE 연동 시 이 두 필드를 맞춰야 한다. 응답은 A01·A04·A08·A10과 같은 래퍼 없는 ChangeProposal이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -353,7 +353,7 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 | change_proposal | title·revision_no 추가. 최초 PROPOSED, 제출 후 잠금. REJECTED에서 같은 ID/key로 다음 리비전을 제출. WITHDRAWN·withdrawn_by/at·previous_proposal_id 추가, 거둔 제안은 변경 불가. 이전 제안은 같은 프로젝트·작성 계정의 WITHDRAWN만 연결 |
 | change_proposal_revision | PK(proposal, revision). 같은 프로젝트 제안·기준 baseline FK. 입력·해석된 원문·제출자/토큰·해시·시각 저장. UPDATE/DELETE 금지 |
 | change_proposal_item | 최신 제출의 항목 투영. schema_version 추가. 과거 항목은 불변 revision.snapshot으로 조회. 188은 이 명시적 스키마 버전을 읽어야 하며 현재 값 추측 금지 |
-| change_proposal_document | 리비전별 문서 기준/제안 version 연결. 프로젝트·문서 소속 복합 FK. after_content 입력은 snapshot에 보존하고 제안 version은 null |
+| change_proposal_document | 리비전별 문서 기준/제안 version 연결. 프로젝트·문서 소속 복합 FK. 모든 문서 변경은 proposed_document_version_id를 가진다(NOT NULL). after_content 입력은 서버가 정규화해 새 DRAFT 문서 버전과 색인 작업(document_processing)으로 만들고 snapshot에도 보존한다 |
 | document_version.change_proposal_id | 업로드 DRAFT의 제안 귀속. 연결 후 본문·해시·파일·부모·등록자·귀속 변경 금지. 과거 리비전에서 사용한 연결도 유지 |
 | approval | proposal_revision_no 추가, UNIQUE(proposal, revision), 제출 리비전 FK. 기존 제안당 UNIQUE 제거. 기존 행 이관용 DEFAULT 1은 채운 뒤 제거해 새 결정은 검토한 리비전을 반드시 지정한다. 기존 결정 UPDATE 금지는 유지 |
 | design_http_command | CHG-A01/A04/A15의 24시간 응답 보존 재사용. 프로젝트/계정/동작/사람 또는 토큰으로 범위 구분 |

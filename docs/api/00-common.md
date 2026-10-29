@@ -914,7 +914,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 문서 |
 | `base_document_version_id` | `ID` | Y | 기준 원문 버전 |
-| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나 |
+| `after_content` | `string` | N | 텍스트 수정안. proposed_document_version_id와 둘 중 하나. 서버가 DOC-A12와 같은 규칙으로 정규화해 새 DRAFT 문서 버전과 색인 작업을 만든다 |
 | `proposed_document_version_id` | `ID` | N | 업로드한 DRAFT 버전. after_content와 배타적 |
 
 <a id="schema-changeproposalinput"></a>
@@ -972,7 +972,7 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 
 ### ResolvedDocumentChange
 
-DocumentChange 입력을 해석한 응답이다. document_id, base_document_version_id, after_content, content_hash가 필수다. 업로드를 선택했으면 proposed_document_version_id도 반환한다. 응답에서는 after_content와 업로드 버전 ID가 함께 존재할 수 있다. content_hash는 원문 UTF-8 바이트의 SHA-256이다.
+DocumentChange 입력을 해석한 응답이다. document_id, base_document_version_id, proposed_document_version_id, after_content, content_hash가 모두 필수다. proposed_document_version_id는 항상 반환한다. 업로드를 선택했으면 그 DRAFT 버전이고, after_content로 제출했으면 서버가 만든 DRAFT 버전이다. after_content는 DOC-A12와 같은 정규화를 적용한 저장 본문이며 content_hash는 그 UTF-8 바이트의 SHA-256이다.
 
 <a id="schema-changeproposalsummary"></a>
 
