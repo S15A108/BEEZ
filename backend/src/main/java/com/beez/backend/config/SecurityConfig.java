@@ -3,7 +3,6 @@ package com.beez.backend.config;
 import com.beez.backend.auth.SecurityErrorWriter;
 import com.beez.backend.auth.agent.AgentTokenAuthenticationFilter;
 import com.beez.backend.auth.agent.AgentTokenVerifier;
-import com.beez.backend.auth.agent.RejectingAgentTokenVerifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -117,11 +116,5 @@ public class SecurityConfig {
     @Bean
     PasswordEncoder passwordEncoder() {
         return PasswordEncoderFactories.createDelegatingPasswordEncoder();
-    }
-
-    /** -175 에서 실제 구현 빈으로 교체한다. */
-    @Bean
-    AgentTokenVerifier agentTokenVerifier() {
-        return new RejectingAgentTokenVerifier();
     }
 }

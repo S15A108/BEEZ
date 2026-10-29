@@ -1,0 +1,19 @@
+# 빌드 컨텍스트에서 뺄 것. 여기 적힌 경로는 Dockerfile 의 COPY 가 볼 수 없다.
+# 호스트의 빌드 산출물·IDE 파일이 들어가면 캐시가 매번 깨지고 컨텍스트 전송만 느려진다.
+.gradle/
+build/
+out/
+bin/
+.idea/
+*.iml
+.vscode/
+
+# bootRun 전용 compose 와 Dockerfile 자신은 이미지에 필요 없다.
+compose.yaml
+Dockerfile
+.dockerignore
+
+# 비밀값·로그
+.env
+.env.*
+*.log
