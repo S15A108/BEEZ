@@ -10,7 +10,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 
 /**
- * 이미 데이터가 있는 DB 를 V7 → V8 로 올리는 업그레이드 시험 (S15P31A108-166 리뷰 반영).
+ * 이미 데이터가 있는 DB 를 올리는 업그레이드 시험. V7 → V8 (S15P31A108-166 리뷰 반영), V8 → V9 (S15P31A108-167).
  * 같은 컨테이너 안에 빈 데이터베이스를 따로 만들어 V7 까지 적용하고, 계획 리비전을 넣은 뒤 V8 을 적용한다.
  * Flyway 는 마이그레이션 파일을 번호 순서로 적용하는 도구이고, target("7") 은 "7번까지만" 적용하라는 뜻이다.
  */
@@ -67,6 +67,63 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
                 ResultSet trg = st.executeQuery("select tgenabled from pg_trigger where tgname = 'trg_plan_immutable'");
                 assertThat(trg.next()).isTrue();
                 assertThat(trg.getString(1)).isEqualTo("O");     // O = 켜짐
+            }
+        } finally {
+            try (Connection admin = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                 Statement st = admin.createStatement()) {
+                st.execute("drop database if exists " + db + " with (force)");
+            }
+        }
+    }
+
+    /** V9: 기존 의존관계 행에 상태를 채운다. 확인자·시각이 있는 명시 관계만 확정, 없으면 재확인 필요, AI 후보는 후보 */
+    @Test
+    void v9_fillsDependencyStatus_fromExistingConfirmation() throws Exception {
+        String db = "upgrade_v9_" + System.nanoTime();
+        try (Connection admin = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+             Statement st = admin.createStatement()) {
+            st.execute("create database " + db);
+        }
+        String url = postgres.getJdbcUrl().replace("/" + postgres.getDatabaseName(), "/" + db);
+        try {
+            Flyway.configure().dataSource(url, postgres.getUsername(), postgres.getPassword())
+                    .locations("classpath:db/migration").target("8").load().migrate();
+
+            try (Connection c = DriverManager.getConnection(url, postgres.getUsername(), postgres.getPassword());
+                 Statement st = c.createStatement()) {
+                st.execute("insert into account (email, password_hash, display_name) values ('l@test', 'x', 'L')");
+                st.execute("insert into project (name, owner_account_id) select 'U', id from account where email = 'l@test'");
+                for (String key : new String[] {"A", "B", "C", "D"}) {
+                    st.execute("insert into design_item (project_id, key, kind) select id, '" + key + "', 'API_CONTRACT' from project");
+                }
+                // A→B 확인자·시각 있음 / A→C 없음 / A→D AI 후보
+                st.execute("insert into design_item_dependency (project_id, from_item_id, to_item_id, origin, confirmed_by, confirmed_at) "
+                        + "select p.id, a.id, b.id, 'EXPLICIT', acc.id, now() from project p, account acc, design_item a, design_item b "
+                        + "where a.key = 'A' and b.key = 'B'");
+                st.execute("insert into design_item_dependency (project_id, from_item_id, to_item_id, origin) "
+                        + "select p.id, a.id, b.id, 'EXPLICIT' from project p, design_item a, design_item b where a.key = 'A' and b.key = 'C'");
+                st.execute("insert into design_item_dependency (project_id, from_item_id, to_item_id, origin) "
+                        + "select p.id, a.id, b.id, 'AI_CANDIDATE' from project p, design_item a, design_item b where a.key = 'A' and b.key = 'D'");
+            }
+
+            Flyway.configure().dataSource(url, postgres.getUsername(), postgres.getPassword())
+                    .locations("classpath:db/migration").load().migrate();
+
+            try (Connection c = DriverManager.getConnection(url, postgres.getUsername(), postgres.getPassword());
+                 Statement st = c.createStatement()) {
+                ResultSet rs = st.executeQuery("""
+                        select b.key, d.status from design_item_dependency d join design_item b on b.id = d.to_item_id
+                         order by b.key
+                        """);
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getString(2)).isEqualTo("CONFIRMED");      // A→B
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getString(2)).isEqualTo("NEEDS_RECHECK");  // A→C 확정 근거 없음
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getString(2)).isEqualTo("CANDIDATE");      // A→D
+                ResultSet trg = st.executeQuery("select tgenabled from pg_trigger where tgname = 'trg_dependency_history_immutable'");
+                assertThat(trg.next()).isTrue();
+                assertThat(trg.getString(1)).isEqualTo("O");
             }
         } finally {
             try (Connection admin = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());

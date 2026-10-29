@@ -312,6 +312,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A10 기준 설계 특정 버전 조회](01-backend-rest.md#doc-a10) | GET `/api/projects/{id}/baselines/{version_no}` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A11 문서·설계 검색](01-backend-rest.md#doc-a11) | GET `/api/projects/{id}/search` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [TRC-A01 설계 항목 의존관계 조회](01-backend-rest.md#trc-a01) | GET `/api/projects/{id}/design-items/{item_id}/dependencies` | MEMBER | 변준성 | — | 박민용 |
+| [TRC-A02 설계 항목 의존관계 이력 조회](01-backend-rest.md#trc-a02) | GET `/api/projects/{id}/design-items/{item_id}/dependencies/history` | MEMBER | 변준성 | — | 박민용 |
 | [DOC-A12 변경용 원문 파일 업로드](01-backend-rest.md#doc-a12) | POST `/api/projects/{id}/documents/{document_id}/draft-versions` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [DOC-A13 문서 작성 내용 조회](01-backend-rest.md#doc-a13) | GET `/api/projects/{id}/documents/{document_id}/working-copy` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A14 문서 작성 내용 수정](01-backend-rest.md#doc-a14) | PATCH `/api/projects/{id}/documents/{document_id}/working-copy` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
@@ -843,7 +844,12 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `from_design_item_id` | `ID` | Y | 의존하는 항목 |
 | `to_design_item_id` | `ID` | Y | 의존 대상 |
+| `relation` | `DEPENDS_ON` | Y | 관계 종류. MVP 는 하나 |
 | `origin` | `EXPLICIT\|AI_CANDIDATE` | Y | 명시 관계 또는 AI 후보. AI 후보는 무효화 근거가 아님 |
+| `status` | `CONFIRMED\|NEEDS_RECHECK` | Y | 확정 또는 재확인 필요(연결 항목이 바뀜). 재확인 필요는 규칙의 확정 근거가 아님 |
+| `reason` | `string` | N | 확정·유지 근거 |
+| `confirmed_by` | `ID` | N | 마지막으로 확정·유지한 계정 |
+| `confirmed_at` | `datetime` | N | 마지막 확정·유지 시각 |
 
 <a id="schema-changeitem"></a>
 
@@ -1351,8 +1357,10 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `from_type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 시작 종류 |
 | `to_id` | `ID` | Y | 도착 객체 |
 | `to_type` | `TASK\|DESIGN_ITEM\|VALIDATION\|CHANGE_PROPOSAL` | Y | 도착 종류 |
-| `relation` | `string` | Y | 관계 |
-| `confirmed` | `boolean` | Y | 명시적 확정 관계 |
+| `relation` | `string` | Y | 관계 ([MON-A03 처리 규칙](01-backend-rest.md#mon-a03)) |
+| `confirmed` | `boolean` | Y | 명시적 확정 관계. 설계 의존은 `CONFIRMED`일 때만 true |
+| `status` | `CONFIRMED\|NEEDS_RECHECK\|CANDIDATE` | N | 설계 의존(`DEPENDS_ON`) 간선의 상태 |
+| `design_item_version_id` | `ID` | N | 계획·검증이 그때 본 설계 항목 버전 |
 
 <a id="schema-activity"></a>
 
@@ -1563,6 +1571,27 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | `to_design_item_id` | `ID` | Y | 의존 후보 대상 |
 | `reason` | `string` | Y | 후보 근거 |
 | `confirmed` | `boolean` | Y | 확정 관계가 아님 |
+
+<a id="schema-dependencyhistory"></a>
+
+### DependencyHistory
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 이력 ID |
+| `from_design_item_id` | `ID` | Y | 의존하는 항목 |
+| `to_design_item_id` | `ID` | Y | 의존 대상 |
+| `action` | `CONFIRM\|MARK_RECHECK\|KEEP\|RELEASE\|ADD_CANDIDATE\|REJECT_CANDIDATE` | Y | 변경 종류 |
+| `origin` | `EXPLICIT\|AI_CANDIDATE` | Y | 변경 뒤 출처 |
+| `status` | `CONFIRMED\|NEEDS_RECHECK\|RELEASED\|CANDIDATE\|REJECTED` | Y | 변경 뒤 상태 |
+| `baseline_id` | `ID` | N | 유효 기준. 확정·유지는 필수 |
+| `from_design_item_version_id` | `ID` | N | 유효 기준의 from 항목 버전. 확정·유지는 필수 |
+| `to_design_item_version_id` | `ID` | N | 유효 기준의 to 항목 버전. 확정·유지는 필수 |
+| `change_proposal_id` | `ID` | N | 관련 변경 제안 |
+| `relation_set_revision` | `integer` | N | 이 변경이 만든 관계 집합 리비전. 후보 추가·거절은 없음 |
+| `reason` | `string` | N | 근거. 재확인 표시 외에는 필수 |
+| `actor_account_id` | `ID` | Y | 변경한 계정 |
+| `created_at` | `datetime` | Y | 변경 시각 |
 
 <a id="schema-comparison"></a>
 
