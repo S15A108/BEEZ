@@ -1528,7 +1528,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 바꿀 문서 |
-| `base_version_id` | `ID` | Y | 정리 시점의 현재 승인본 |
+| `base_version_id` | `ID` | Y | 정리할 때 현재 기준의 그 문서 승인본. 회의를 끝낼 때(MTG-A13) 지금 기준과 다시 맞춰 본다 |
 | `locator` | [SourceLocator](#schema-sourcelocator) | Y | 바꿀 행 범위 |
 | `before` | `string` | Y | 지금 문장 |
 | `after` | `string` | Y | 회의를 끝내면 만들어지는 변경 제안(MTG-A13)에 들어갈 문장 |
