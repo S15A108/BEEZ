@@ -58,6 +58,7 @@
 | S2 | 진행 중 계획 변경 (TSK-A04) | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 이전 검증 STALE | 유지 | REST TSK-A04 처리 규칙("진행 중 계획 변경") |
 | S3 | delta 있는 COMPLETED 보고 | IN_PROGRESS | **WAITING(REVALIDATION)**, `202`. 순서: DELTA 검증을 **먼저** 접수 → 그 ID 를 넣어 완료 보고 저장 (`task_completion_report` 는 UPDATE 금지라 나중에 채울 수 없음) | 유지 | REST TSK-A07, ERD task_completion_report |
 | S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 마지막 완료 보고의 `delta_validation_id` 가 이 검증일 때만 | **COMPLETED** | 해제 | REST TSK-A07 |
+| S5 | 담당자 인계 — 팀장의 담당자 변경(TSK-A06) · 팀원 제외(MEM-A09) · 나가기(MEM-A10)의 열린 작업 인계 (-212) | **IN_PROGRESS** 는 상태까지, **WAITING** 은 검증만 | IN_PROGRESS 는 **WAITING(REVALIDATION)**. 점유 중(IN_PROGRESS·WAITING) 작업의 DELTA 를 뺀 검증은 도는 것(NOT_RUN·RUNNING)까지 STALE(`ASSIGNEE_CHANGED`), 대기 job 취소. DELTA 검증은 담당자와 무관해 그대로(PASS 면 S4). 같은 담당자로 바꾸면 아무것도 하지 않는다 | 유지 | REST TSK-A06·MEM-A09·A10 처리 규칙, §6 |
 
 IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검증만 STALE** 로 둔다.
 - READY: START 때 G1·G2 가 걸러낸다.
@@ -75,10 +76,11 @@ IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검�
 | trigger = DELTA | ERROR | **WAITING(REVALIDATION) 유지** | 같은 검증 재시도(VAL-A03, 새 validation_run). 자동 PASS 하지 않는다 |
 | trigger = DELTA | RUNNING | 유지 | 결과를 기다린다 |
 | trigger = DELTA | STALE (DELTA 검증 중에 참조 설계가 발행됨) | 유지 | 새 기준으로 **새 DELTA 검증**을 접수한다(STALE 은 재시도가 아니라 새 검증, VAL-A03). 설계 발행 처리(S15P31A108-163)가 자동 접수한다. ②·③ 출구도 그대로 쓸 수 있고, ①은 G2 가 새 설계 기준으로 다시 판단한다 |
-| trigger = AGENT·REVALIDATION (S1·S2 로 들어온 경우) | 무엇이든 | 유지 | 현재 계획에 대한 새 PASS 를 받아 `RESUME` (게이트 G1·G2) |
+| trigger = AGENT·REVALIDATION (S1·S2·S5 로 들어온 경우) | 무엇이든 | 유지 | 현재 계획에 대한 새 PASS 를 받아 `RESUME` (게이트 G1·G2) |
 
 - 어느 경우든 사람·에이전트가 `COMPLETED` 를 다시 보내서 빠져나갈 수는 없다(WAITING + COMPLETED = ✗). 완료는 S4 또는 RESUME 뒤의 새 COMPLETED 로만.
 - ①이 가능한 이유: DELTA 검증은 별도 검증 행이라 시작 때 PASS 를 STALE 로 만들지 않는다. 그 사이 설계가 바뀌었으면 G2 가 막는다.
+- 담당자 인계(S5) 뒤에는 ①이 막힌다(의도). 시작 때 PASS 는 이전 담당자 쪽 검증이라 S5 가 STALE 로 만든다. DELTA 가 NEEDS_INPUT·NEEDS_REVIEW 로 끝난 작업을 넘겨받은 새 담당자는 ②·③으로 나간다. DELTA 가 아직 RUNNING 이면 그대로 결과를 기다리고, PASS 면 S4 로 완료된다.
 
 ### 2.4 WAIT 사유 (확정)
 
@@ -87,7 +89,7 @@ IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검�
 | INPUT | 작업자·에이전트 | 계획 보완 입력을 기다림 |
 | APPROVAL | 작업자·에이전트 | 설계 변경 승인을 기다림 |
 | DEPENDENCY | 작업자·에이전트 | 선행 작업 완료를 기다림 |
-| REVALIDATION | **시스템만** | 설계 발행(S1) · 진행 중 계획 변경(S2) · 완료 델타(S3) |
+| REVALIDATION | **시스템만** | 설계 발행(S1) · 진행 중 계획 변경(S2) · 완료 델타(S3) · 담당자 인계(S5, -212) |
 
 요청에 `REVALIDATION` 을 넣으면 `400 invalid_transition`. 이 사유로 대기 중인 작업은 새 PASS 없이 나갈 수 없으므로, 에이전트가 사유를 바꿔치기해 게이트를 우회하지 못하게 막는다.
 
@@ -166,9 +168,9 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 | 보고 끊김 임계값 (AC-14 "stalled", IN_PROGRESS 만) | 마지막 상태 보고(`agent_session.last_report_at`, 없으면 작업 마지막 변경 시각) 기준 **30분** | 설계 보고서 §5. 검증 lease 와 같은 자릿수 |
 | 팀장의 더 넓은 개입 (범위 축소로 필요 없어진 작업 정리, READY 작업 취소, 오래 멈춘 WAITING 작업 정리 등) | 지금은 불가. 담당자에게 요청. 필요하면 위 임계값과 함께 정한다 | CANCEL 은 재개가 안 되므로(아래) 좁게 시작. 00-common 2절 "개입 정책 Q02" |
 | 선행 작업 순환 탐지 깊이 | **1단계**(A↔B)만 서비스에서. 깊은 순환은 UI 경고 | 설계 보고서 §5 DEPENDS_ON 추적 깊이와 동일 |
-| 진행 중 담당자 변경 | 금지. WAITING 으로 내린 뒤 변경 | 에이전트 세션과 어긋남 방지. Q02 |
+| 진행 중 담당자 변경 | 금지. WAITING 으로 내린 뒤 변경. **-212 구현(2026-10-29 변준성 동의)**: §2.2 S5. 담당자 변경(TSK-A06)·제외·나가기가 같은 `TaskHandoverService.reassign` 으로 IN_PROGRESS 를 WAITING(REVALIDATION) 으로 내리고, 점유 중 작업의 검증(도는 것 포함)을 STALE(`ASSIGNEE_CHANGED`)로 바꾼 뒤 넘긴다. DELTA 검증만 그대로(담당자와 무관, PASS 면 S4). REVALIDATION 은 누가 접수하는지 -159 에서 정할 때까지 함께 무효화. READY 작업의 PASS 는 남긴다 — 시작 전이라 이전 담당자의 에이전트 세션이 없고 계획도 그대로라, 새 담당자가 같은 계획으로 START 해도 G1·G2 가 그대로 판단한다 | 에이전트 세션과 어긋남 방지. Q02 |
 | 담당자 본인이 담당자를 바꾸는 것 | 열지 않음 (명세대로 팀장만) | 열면 TSK-A06 명세도 바꿔야 함 |
-| 제외된 팀원의 진행 중 작업 | 점유를 계속 잡으므로 해제 필요. 팀장이 재배정·취소 | -172 4번과 함께 결정 |
+| 제외된 팀원의 진행 중 작업 | 점유를 계속 잡으므로 해제 필요. 팀장이 재배정·취소. **-212 구현(2026-10-29 변준성 동의)**: 열린 작업이 남으면 제외·나가기는 409 `active_tasks_exist`, `reassign_to_member_id` 를 주면 위 "진행 중 담당자 변경" 규칙으로 모두 넘긴 뒤 끝낸다 | -172 4번과 함께 결정 |
 | "센 관계 하나" 규칙 | 위 4.3 대로 | ERD §6 에서 팀 동의 대기 중 |
 | CANCEL 후 재개 | 불가. 새 작업으로 | 이력 단순화. 필요하면 "복제" 기능으로 |
 
@@ -178,13 +180,15 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 |---|---|---|
 | §1 상태·사유 | `task.entity.TaskStatus`, `WaitingReason` (enum, DB 는 STRING) | 엔티티-DDL 일치 (`ddl-auto=validate`) |
 | §2.1 요청 전이 표 | `task.service.TaskTransitionPolicy` — 허용/멱등/금지 결과 반환, 예외 안 던짐 | 6×5 전수 단위 테스트 + COMPLETED delta 있음/없음(202/200) 통합 |
-| §2.2 시스템 전이 | S2: `TaskPlanService`, S3: `TaskStateService`, S1: 설계 발행 수신(S15P31A108-163), S4: 검증 결과 반영(-159) | S2·S3 은 지금, S1·S4 는 해당 티켓에서 |
+| §2.2 시스템 전이 | S2: `TaskPlanService`, S3: `TaskStateService`, S1: 설계 발행 수신(S15P31A108-163), S4: 검증 결과 반영(-159), S5: `TaskHandoverService`(-212) | S2·S3·S5 는 지금, S1·S4 는 해당 티켓에서 |
 | §3 게이트 | `task.service.StartGate` — project 잠금 후 G1~G4 | Testcontainers: 동시 START 2 스레드, PASS 없음, 선행 미완료, 설계 변경 후 |
 | §4.3 참조 정규화 | `task.service.TaskPlanService` | 단위 |
 | §4.1·§5 권한 | 각 서비스 첫 줄에서 -170 공통 권한 검사 | 비멤버 **404**(존재 숨김, AC-10), 비담당자 403, 에이전트 CANCEL 403, 팀장 CANCEL 은 보고 끊긴 작업만 |
 
 ## 변경 이력
 
+- v1.7 (2026-10-29) 리뷰 반영(변준성). §2.2 에 S5 담당자 인계 추가, §2.4 REVALIDATION 계기에 S5, §2.3 에 인계 뒤 ① 출구가 막히는 것(의도), §6 에 READY 작업 PASS 를 남기는 이유, §7 에 S5 자리.
+- v1.6 (2026-10-29) §6 "진행 중 담당자 변경"·"제외된 팀원의 진행 중 작업"에 -212 구현 내용 기록(전진, 변준성 확인 요청).
 - v1.5 (2026-10-27) S1: 바뀐 항목·WAITING 대상은 -164 `DesignChangeQueries` 재사용, STALE 대상은 validation_design_ref 기준, 폐기는 스냅샷 제외로 명시(§2.2). 리뷰 반영(전진).
 - v1.4 (2026-10-26) 리뷰 반영(전진). S3 저장 순서(DELTA 검증 → 완료 보고)와 S4 적용 조건(아직 WAITING(REVALIDATION)·같은 delta 검증일 때만) 명시(§2.2).
 - v1.3 (2026-10-26) 선행 순환 응답을 명세대로 409 dependency_cycle 로 정정(§4.2).
