@@ -247,24 +247,8 @@ EOF
   서버에서 직접 compose 를 돌려 봅니다(채팅·PR 에 붙여 넣지 않습니다).
 - **2) 는 디스크의 Nginx 설정 파일을 읽습니다. 실행 중인 Nginx 가 아닙니다.** 파일을 고친 뒤 reload 하기 전에는
   `port ok` 가 나와도 Nginx 는 이전 포트로 보냅니다. 설정을 고쳤다면 `sudo nginx -t && sudo systemctl reload nginx` 까지
-  하고, 반영됐는지는 아래로 봅니다(로컬 PC, 위의 `HOST`·`SITE` 그대로).
-
-  ```bash
-  # reload 하면 worker 가 새로 뜬다. 파일 수정이 worker 시작보다 늦으면 아직 반영 전이다.
-  # sites-enabled 는 sites-available 을 가리키는 링크라, date -r 로 링크가 아닌 실제 파일 시각을 본다
-  ssh "$HOST" bash -s -- "$SITE" <<'EOF'
-  echo "설정 파일 수정: $(date -r "/etc/nginx/sites-enabled/$1.conf" '+%F %T')"
-  ps -o lstart=,cmd= -C nginx | awk '/worker process$/ {print $1,$2,$3,$4,$5}' | sort -u |
-    while read -r t; do echo "worker 시작(마지막 reload): $(date -d "$t" '+%F %T')"; done
-  EOF
-  # 배포한 뒤: 실제 Nginx 를 거쳐 backend health 를 부른다. 200 이면 지금 Nginx 가 backend 에 닿는다(502 면 다른 포트)
-  curl -sS -o /dev/null -w '%{http_code}\n' "https://$SITE/actuator/health"
-  ```
-
-  두 시각이 **같은 초**면 수정과 reload 중 어느 쪽이 먼저인지 알 수 없습니다(시각이 초 단위). 그때는 reload 를 한 번 더
-  하거나, 배포 뒤 health 로 확인합니다. health 주소는 `SITE` 가 도메인과 같다는 전제입니다(`dev.beez.ai.kr`).
-
-  배포 단계에서 자동으로 확인하는 것은 S15P31A108-245 에서 합니다.
+  하고, 반영됐는지는 아래 [Nginx 반영 확인](#nginx-반영-확인)으로 봅니다. 배포 단계에서 자동으로 확인하는 것은
+  S15P31A108-245 에서 합니다.
 - `upstream beez_backend` 에 `server` 가 둘 이상이면 멈춥니다. 하나만 맞아도 Nginx 는 나머지로도 요청을 보내므로,
   compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
 - **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
@@ -300,6 +284,27 @@ EOF
 ```bash
 docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet && echo "env ok"
 ```
+
+#### Nginx 반영 확인
+
+위 점검은 디스크의 설정 파일을 봅니다. Nginx 설정을 고쳤다면 reload 가 실제로 반영됐는지 따로 봅니다
+(로컬 PC, 위의 `HOST`·`SITE` 그대로).
+
+```bash
+# reload 하면 worker 가 새로 뜬다. 파일 수정이 worker 시작보다 늦으면 아직 반영 전이다.
+# sites-enabled 는 sites-available 을 가리키는 링크라, date -r 로 링크가 아닌 실제 파일 시각을 본다
+ssh "$HOST" bash -s -- "$SITE" <<'EOF'
+echo "설정 파일 수정: $(date -r "/etc/nginx/sites-enabled/$1.conf" '+%F %T')"
+ps -o lstart=,cmd= -C nginx | awk '/worker process$/ {print $1,$2,$3,$4,$5}' | sort -u |
+  while read -r t; do echo "worker 시작(마지막 reload): $(date -d "$t" '+%F %T')"; done
+EOF
+# 배포한 뒤: 실제 Nginx 를 거쳐 backend health 를 부른다. 200 이면 지금 Nginx 가 backend 에 닿는다(502 면 다른 포트)
+curl -sS -o /dev/null -w '%{http_code}\n' "https://$SITE/actuator/health"
+```
+
+- 두 시각이 **같은 초**면 수정과 reload 중 어느 쪽이 먼저인지 알 수 없습니다(시각이 초 단위). 그때는 reload 를 한 번
+  더 하거나, 배포 뒤 health 로 확인합니다.
+- health 주소는 `SITE` 가 도메인과 같다는 전제입니다(`dev.beez.ai.kr`).
 
 ## 4. 환경별 차이
 
