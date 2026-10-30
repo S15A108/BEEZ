@@ -51,6 +51,27 @@ public class ProposalController {
         origins.requireTrustedOrigin(request);
         return commands.withdraw(caller, projectId, proposalId, input, key);
     }
+    @PostMapping("/{proposalId}/review")
+    @Operation(summary = "CHG-A08 변경 제안 검토 시작")
+    public Proposal review(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+                           @PathVariable long proposalId, @RequestBody WithdrawRequest input,
+                           @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return commands.startReview(caller, projectId, proposalId, input, key);
+    }
+    @PostMapping("/{proposalId}/reject")
+    @Operation(summary = "CHG-A10 변경 제안 반려")
+    public Proposal reject(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+                           @PathVariable long proposalId, @RequestBody RejectRequest input,
+                           @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return commands.reject(caller, projectId, proposalId, input, key);
+    }
+    @GetMapping("/{proposalId}/approval")
+    @Operation(summary = "CHG-A11 승인 이력 조회")
+    public ApprovalRecord approval(CallerContext caller, @PathVariable long projectId, @PathVariable long proposalId) {
+        return queries.approval(caller, projectId, proposalId);
+    }
     @GetMapping("/{proposalId}")
     @Operation(summary = "CHG-A03 변경 제안 상세·비교")
     public Detail detail(CallerContext caller, @PathVariable long projectId, @PathVariable long proposalId,

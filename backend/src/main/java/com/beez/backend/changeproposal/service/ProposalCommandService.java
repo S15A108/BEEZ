@@ -217,6 +217,58 @@ public class ProposalCommandService {
         return response;
     }
 
+    /** CHG-A08. Re-requesting a review of the same revision is a no-op success. */
+    @Transactional
+    public Proposal startReview(CallerContext caller, long project, long proposal, WithdrawRequest input, String key) {
+        validator.validate(input);
+        return decide(caller, project, proposal, "review", input, key, input.expectedRevision(), input.expectedSnapshotHash(),
+                current -> {
+                    if ("IN_REVIEW".equals(current.get("status"))) return;
+                    requireDecidable(current, Set.of("PROPOSED"), "제출된 변경 제안만 검토를 시작할 수 있습니다.");
+                    repository.startReview(project, proposal);
+                });
+    }
+
+    /** CHG-A10. The decision row and the status change commit together; CHG-A04 needs the stored reason. */
+    @Transactional
+    public Proposal reject(CallerContext caller, long project, long proposal, RejectRequest input, String key) {
+        validator.validate(input);
+        return decide(caller, project, proposal, "reject", input, key, input.expectedRevision(), input.expectedSnapshotHash(),
+                current -> {
+                    requireDecidable(current, Set.of("PROPOSED", "IN_REVIEW"), "제출되었거나 검토 중인 변경 제안만 반려할 수 있습니다.");
+                    repository.reject(project, proposal, ((Number) current.get("revision_no")).intValue(),
+                            id(current, "base_baseline_id"), caller.accountId(), input.reason().strip());
+                });
+    }
+
+    /**
+     * Shared by the leader decisions (CHG-A08/A10, and A09 later): human leader -> project lock -> leader recheck ->
+     * proposal -> idempotent replay -> expected revision/hash -> {@code apply} (state check and write) -> response.
+     */
+    private Proposal decide(CallerContext caller, long project, long proposal, String command, Object input, String key,
+            int expectedRevision, String expectedHash, java.util.function.Consumer<Map<String, Object>> apply) {
+        if (project < 1) throw invalid("프로젝트 ID는 양수여야 합니다.");
+        var actor = access.requireHumanLeader(caller, project);
+        if (!projects.lockActiveProject(project)) throw AccessErrors.notFound("proposal_project_missing");
+        access.requireLeaderAfterLock(actor);
+        var current = repository.proposal(project, proposal);
+        String operation = operation(caller, command + ":" + proposal);
+        var replay = idempotency.replay(project, caller.accountId(), operation, key, input, Proposal.class);
+        if (replay.isPresent()) return replay.get();
+        if (((Number) current.get("revision_no")).intValue() != expectedRevision
+                || !current.get("snapshot_hash").equals(expectedHash))
+            throw error("version_conflict", "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요.");
+        apply.accept(current);
+        Proposal response = queries.current(project, proposal);
+        idempotency.save(project, caller.accountId(), operation, key, input, response);
+        // [TODO] 검토 시작·반려 알림과 타임라인은 전진 담당 공통 서비스 계약 확정 후 연결한다.
+        return response;
+    }
+
+    private static void requireDecidable(Map<String, Object> current, Set<String> allowed, String message) {
+        if (!allowed.contains(current.get("status"))) throw error("invalid_transition", message);
+    }
+
     private Snapshot resolve(CallerContext caller, long project, Long proposal, Input input, Stage stage, List<Original> stored) {
         long baseline = requiredId(input.baseBaselineId(), "base_baseline_id");
         requireCurrentBaseline(project, baseline);
