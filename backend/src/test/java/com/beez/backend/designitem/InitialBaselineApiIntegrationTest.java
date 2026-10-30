@@ -34,7 +34,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.JsonNode;
 
-@TestPropertySource(properties = {"beez.cors.allowed-origins=https://app.beez.test", "beez.document.embedding-profile=design-test"})
+@TestPropertySource(properties = {"beez.cors.allowed-origins=https://app.beez.test", "beez.document.embedding-profile=design-test", "beez.cdc.legacy-outbox-poc-enabled=true"})
 class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
     private static final JsonMapper JSON = JsonMapper.builder().propertyNamingStrategy(tools.jackson.databind.PropertyNamingStrategies.SNAKE_CASE).build();
     private static final String ORIGIN = "https://app.beez.test";
@@ -88,6 +88,59 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
                 new UpdateDesignItemRequest(Long.toString(p.projectId()), item.id(), Map.of("description", "변경"), item.contentHash())))
                 .isInstanceOf(ApiException.class);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_document WHERE baseline_id=?", Integer.class, result.path("id").asLong())).isEqualTo(4);
+    }
+
+    @Test void publicationOutboxIsAtomicAndReplayDoesNotCreateAnotherEvent() throws Exception {
+        var docs = documents(true);
+        var item = create("이벤트 항목");
+        var input = input(docs, List.of(Long.parseLong(item.id())));
+        var transaction = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        transaction.executeWithoutResult(status -> {
+            baselines.publish(actor, input, "outbox-rollback");
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM publication_outbox WHERE project_id=?", Integer.class, p.projectId())).isEqualTo(1);
+            status.setRollbackOnly();
+        });
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline WHERE project_id=?", Integer.class, p.projectId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM publication_outbox WHERE project_id=?", Integer.class, p.projectId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT status FROM design_item_version WHERE id=?", String.class, Long.parseLong(item.id()))).isEqualTo("DRAFT");
+
+        var response = baselines.publish(actor, input, "outbox-success");
+        String eventId = jdbc.queryForObject("SELECT event_id::text FROM publication_outbox WHERE project_id=?", String.class, p.projectId());
+        var event = JSON.readTree(jdbc.queryForObject("SELECT payload::text FROM publication_outbox WHERE project_id=?", String.class, p.projectId()));
+        assertThat(UUID.fromString(eventId)).isNotNull();
+        assertThat(event.path("event_id").asText()).isEqualTo(eventId);
+        assertThat(event.path("event_type").asText()).isEqualTo("DESIGN_PUBLISHED");
+        assertThat(event.path("event_version").asInt()).isEqualTo(1);
+        assertThat(event.path("publication_kind").asText()).isEqualTo("INITIAL");
+        assertThat(event.path("project_id").asText()).isEqualTo(Long.toString(p.projectId()));
+        assertThat(event.path("baseline_id").asText()).isEqualTo(response.id());
+        assertThat(event.path("previous_baseline_id").isNull()).isTrue();
+        assertThat(event.path("change_proposal_id").isNull()).isTrue();
+        assertThat(java.time.Instant.parse(event.path("occurred_at").asText())).isNotNull();
+        assertThat(event.path("changed_items").size()).isEqualTo(1);
+        var change = event.path("changed_items").get(0);
+        assertThat(change.path("design_item_id").asText()).isEqualTo(item.designItemId());
+        assertThat(change.path("previous_version_id").isNull()).isTrue();
+        assertThat(change.path("published_version_id").asText()).isEqualTo(item.id());
+        assertThat(change.path("change_type").asText()).isEqualTo("ADDED");
+
+        assertThat(baselines.publish(actor, input, "outbox-success")).isEqualTo(response);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM publication_outbox WHERE project_id=?", Integer.class, p.projectId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT event_id::text FROM publication_outbox WHERE project_id=?", String.class, p.projectId())).isEqualTo(eventId);
+    }
+
+    @Test void outboxWriteFailureRollsBackBaselinePublication() throws Exception {
+        var docs = documents(true);
+        var item = create("이벤트 실패");
+        var input = input(docs, List.of(Long.parseLong(item.id())));
+        String constraint = "test_fail_outbox_" + p.projectId();
+        jdbc.execute("ALTER TABLE publication_outbox ADD CONSTRAINT " + constraint + " CHECK (project_id<>" + p.projectId() + ")");
+        try {
+            assertThatThrownBy(() -> baselines.publish(actor, input, "outbox-failure")).isInstanceOf(RuntimeException.class);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline WHERE project_id=?", Integer.class, p.projectId())).isZero();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM publication_outbox WHERE project_id=?", Integer.class, p.projectId())).isZero();
+            assertThat(jdbc.queryForObject("SELECT status FROM design_item_version WHERE id=?", String.class, Long.parseLong(item.id()))).isEqualTo("DRAFT");
+        } finally { jdbc.execute("ALTER TABLE publication_outbox DROP CONSTRAINT " + constraint); }
     }
 
     @Test void baselineButtonCannotApproveUnapprovedDocumentsAndDoesNotChangeDocumentApprovalHistory() throws Exception {

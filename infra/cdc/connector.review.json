@@ -1,0 +1,29 @@
+{
+  "name": "beez-document-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "<DB_HOST>",
+    "database.port": "5432",
+    "database.user": "<CDC_DB_USER>",
+    "database.password": "<USE_CONFIG_PROVIDER>",
+    "database.dbname": "<DB_NAME>",
+    "database.sslmode": "verify-full",
+    "database.sslrootcert": "<DB_CA_CERT_PATH>",
+    "topic.prefix": "beez_document_cdc",
+    "plugin.name": "pgoutput",
+    "slot.name": "beez_document_cdc",
+    "publication.name": "beez_document_cdc",
+    "publication.autocreate.mode": "disabled",
+    "table.include.list": "public\\.document,public\\.document_version",
+    "column.include.list": "public\\.document\\.(id|project_id|type|created_at|updated_at),public\\.document_version\\.(id|document_id|version_no|status|parse_status|parent_version_id|change_proposal_id|lock_version|created_at|updated_at)",
+    "snapshot.mode": "initial",
+    "snapshot.select.statement.overrides": "public.document,public.document_version",
+    "snapshot.select.statement.overrides.public.document": "SELECT id,project_id,type,created_at,updated_at FROM public.document",
+    "snapshot.select.statement.overrides.public.document_version": "SELECT id,document_id,version_no,status,parse_status,parent_version_id,change_proposal_id,lock_version,created_at,updated_at FROM public.document_version",
+    "event.processing.failure.handling.mode": "fail",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }
+}

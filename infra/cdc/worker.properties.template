@@ -1,0 +1,32 @@
+# REVIEW TEMPLATE ONLY: do not start with placeholder values.
+# Store the completed file outside Git as connect-worker.properties in the
+# protected directory mounted at /run/cdc-secrets. Kafka ACLs and certificates
+# must be provisioned separately. Choose SASL_SSL or mutual TLS as approved.
+bootstrap.servers=<broker-dns:tls-port>
+group.id=<unique-connect-worker-group>
+config.storage.topic=<restricted-connect-config-topic>
+offset.storage.topic=<restricted-connect-offset-topic>
+status.storage.topic=<restricted-connect-status-topic>
+config.storage.replication.factor=<cluster-appropriate-replication-factor>
+offset.storage.replication.factor=<cluster-appropriate-replication-factor>
+status.storage.replication.factor=<cluster-appropriate-replication-factor>
+key.converter=org.apache.kafka.connect.json.JsonConverter
+key.converter.schemas.enable=false
+value.converter=org.apache.kafka.connect.json.JsonConverter
+value.converter.schemas.enable=false
+plugin.path=/kafka/connect
+config.providers=file
+config.providers.file.class=org.apache.kafka.common.config.provider.FileConfigProvider
+# Fill broker TLS/auth properties using approved broker credentials and mounted
+# trust material. The secure client settings must cover the Connect worker,
+# source producer and (where applicable) admin clients; validate with the
+# actual Kafka Connect version and broker ACLs before deployment.
+security.protocol=<approved-TLS-protocol>
+ssl.truststore.location=/run/cdc-secrets/<truststore>
+ssl.truststore.password=<secret-management-value>
+producer.security.protocol=<approved-TLS-protocol>
+producer.ssl.truststore.location=/run/cdc-secrets/<truststore>
+producer.ssl.truststore.password=<secret-management-value>
+admin.security.protocol=<approved-TLS-protocol>
+admin.ssl.truststore.location=/run/cdc-secrets/<truststore>
+admin.ssl.truststore.password=<secret-management-value>
