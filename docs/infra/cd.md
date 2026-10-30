@@ -122,7 +122,8 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
   없습니다.
 - `BACKEND_HOST_PORT`는 8080이 아닌 값이어야 합니다. 8080은 Jenkins가
   씁니다. Nginx `upstream beez_backend`의 포트와 같아야 합니다.
-- 변수 목록·`.env.example`·시크릿 관리 정리는 S15P31A108-27에서 합니다.
+- 변수마다의 의미·필수 여부, 빠졌을 때의 문구, 배포 전 점검 명령은
+  [환경변수와 비밀값](env.md)에 있습니다.
 
 ### 3. GMS 키 넣기·바꾸기
 

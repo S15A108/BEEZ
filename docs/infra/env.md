@@ -1,0 +1,230 @@
+# 환경변수와 비밀값
+
+BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 읽는 설정값을 한곳에 모은 문서입니다.
+값을 어디에 넣는지, 빠지면 무엇이 보이는지, 비밀값을 어떻게 다루는지를 적습니다. (S15P31A108-27)
+
+원칙은 셋입니다.
+
+1. **비밀값은 저장소에 없습니다.** 저장소에는 이름과 빈 칸(예시 파일)만 둡니다.
+2. **환경 차이는 env 파일로만 줍니다.** compose 파일·설정 파일은 환경과 상관없이 하나입니다.
+3. **필수값이 빠지면 기동 전에 멈춥니다.** compose 는 `${VAR:?}`, backend prod 는 설정 검증이 이름을 짚어 줍니다.
+
+## 1. 값을 넣는 곳
+
+| 실행 방식 | 값을 읽는 곳 | 비밀값 출처 |
+|---|---|---|
+| 로컬 backend `./gradlew bootRun` | `application.yml`·`application-local.yml` 기본값 | 없음. 아무것도 넣지 않아도 뜹니다 |
+| 로컬 ai `uvicorn` | `ai/.env` (`ai/.env.example` 복사) | 본인 GMS 키 |
+| 로컬 frontend `npm run dev` | `frontend/.env` (`frontend/.env.example` 복사, 선택) | 없음 (`VITE_` 값은 공개됩니다) |
+| 로컬 전체 스택 compose | `infra/local.env` (더미값, 커밋됨) | GMS 키가 필요하면 셸 환경변수로 |
+| CI (`ci.yml`) | `application-test.yml` + Testcontainers | 없음 |
+| CD 이미지 빌드 (`cd.yml`) | 저장소 변수 `VITE_API_MODE` (지금 없음 → `mock`) | `GITHUB_TOKEN` (자동 발급) |
+| CD 배포 호출 (`cd.yml` deploy 잡) | Environment `dev` 시크릿 | `JENKINS_API_TOKEN` |
+| 서버 컨테이너 | `/opt/beez/.env.<환경>` → `deploy.sh` 가 `--env-file` 로 넘김 | 그 파일 (`640 ubuntu:beez-deploy`) |
+| Jenkins | `/etc/jenkins/casc.env` | 그 파일 (`600 root:root`) |
+| 저장소 자동화 | 저장소 시크릿 | `PR_AUTOMERGE_TOKEN`, `GITLAB_SYNC_TOKEN` |
+
+서버 env 파일을 처음 만드는 명령과 GMS 키를 넣는 명령은 [cd.md 서버 준비](cd.md#2-env-파일)에 있습니다.
+Jenkins 비밀 파일은 [jenkins.md](jenkins.md)에 있습니다.
+
+## 2. 변수 목록
+
+### 서버 env 파일 (`/opt/beez/.env.<환경>`)
+
+compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사합니다. `infra/local.env` 가 같은 이름의 더미값을 가진
+로컬판입니다.
+
+| 이름 | 필수 | 비밀 | 의미 | 들어가는 곳 |
+|---|---|---|---|---|
+| `DB_USERNAME` | 필수 | | DB 계정 | postgres 초기화, backend |
+| `DB_PASSWORD` | 필수 | 비밀 | DB 비밀번호. **DB 를 처음 띄울 때 값으로 굳습니다** — 아래 [교체](#값이-샜을-때) 참고 | postgres 초기화, backend |
+| `DB_NAME` | | | 기본 `beez` | postgres, backend `DB_URL` |
+| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소 키 | seaweedfs, backend |
+| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs, backend |
+| `DOCUMENT_S3_BUCKET` | | | 기본 `beez-documents` | seaweedfs, backend |
+| `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
+| `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
+| `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
+| `BACKEND_HOST_PORT` | 서버 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
+| `SWAGGER_ENABLED` | | | 기본 `false` | backend |
+| `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
+| `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
+| `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |
+
+- `BACKEND_HOST_PORT` 는 compose 가 막지 못합니다(기본값 `8080` 이 있음). 서버에서 빠지면 Jenkins 의 8080 과 겹쳐
+  backend 가 뜨지 못합니다.
+- `BACKEND_IMAGE`·`AI_IMAGE` 는 `deploy.sh` 가 배포 SHA 로 채웁니다. env 파일에 쓰지 않습니다.
+- `LOCAL_HTTP_PORT` 는 로컬 nginx 전용입니다(`compose.local.yaml`).
+
+### backend (Spring)
+
+`application.yml` 이 기본값을 갖고, `application-prod.yml` 이 운영 필수값의 기본값을 지웁니다. 서버에서는 대부분
+compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
+
+| 이름 | prod 필수 | 로컬 기본값 | compose(서버) 값 |
+|---|---|---|---|
+| `DB_URL` | 필수 | `jdbc:postgresql://localhost:5432/beez` | `jdbc:postgresql://postgres:5432/${DB_NAME}` |
+| `DB_USERNAME`·`DB_PASSWORD` | 필수 | `beez`·`beez` | env 파일 |
+| `DB_POOL_SIZE` | | `10` | 기본값 |
+| `SERVER_PORT` | | `8080` (컨테이너 안) | 기본값 |
+| `DOCUMENT_S3_ENDPOINT` | 필수 | `http://127.0.0.1:8333` | `http://seaweedfs:8333` |
+| `DOCUMENT_S3_REGION` | | `us-east-1` | 기본값 |
+| `DOCUMENT_S3_BUCKET`·`ACCESS_KEY`·`SECRET_KEY` | 필수 | `beez-documents`·`beez-local-access`·`beez-local-secret` | env 파일 |
+| `DOCUMENT_WORKER_ENABLED` | | `true` | 기본값 |
+| `DOCUMENT_POLL_MILLIS` | | `2000` | 기본값 |
+| `DOCUMENT_EMBEDDING_PROFILE`·`MODEL` | | `unconfigured` (색인이 멈춤) | 위 표 기본값 |
+| `CORS_ALLOWED_ORIGINS` | 필수 | `http://localhost:5173,http://127.0.0.1:5173` | `PUBLIC_ORIGIN` |
+| `AI_BASE_URL` | 필수 | `http://localhost:8000` | `http://ai:8000` |
+| `AI_INTERNAL_TOKEN` | 필수 | `change-me` | env 파일 |
+| `AI_CONNECT_TIMEOUT`·`AI_READ_TIMEOUT` | | `3s`·`20s` | 기본값 |
+| `INVITE_BASE_URL` | 필수 | `http://localhost:5173` | `PUBLIC_ORIGIN` |
+| `INVITE_TTL` | | `7d` | 기본값 |
+| `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
+| `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |
+| `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
+
+prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
+오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30
+실측 — 초대 링크가 `${INVITE_BASE_URL}/invite?…` 가 됨). 빈 값이면 설정 검증이 이름을 짚어 멈춥니다.
+`DB_USERNAME`·`DB_PASSWORD` 는 예외로 `${X}` 그대로 둡니다. 빠지면 DB 접속 오류에 `${DB_USERNAME}` 이 찍혀 원인이
+바로 보입니다.
+
+### ai (FastAPI)
+
+`ai/app/core/config.py` 가 `ai/.env` 와 환경변수를 읽습니다. 서버 compose 는 앞의 둘만 넘깁니다.
+
+| 이름 | 비밀 | 의미 |
+|---|---|---|
+| `GMS_KEY` | 비밀 | 임베딩·생성 호출 키. 비면 호출이 502 `model_unavailable` |
+| `AI_INTERNAL_TOKEN` | 비밀 | backend 가 보내는 `Authorization: Bearer` 와 비교. 비거나 다르면 401 `invalid_internal_token` |
+| `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
+| `GMS_EMBEDDING_DIMENSION` | | 기본 `1024`. backend(1024)와 같아야 합니다 |
+| `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
+| `TIKTOKEN_CACHE_DIR` | | 어휘 파일 위치. 이미지에는 `/app/.tiktoken` 으로 고정 |
+
+**로컬 함정**: backend 를 `bootRun` 으로 띄우면 `AI_INTERNAL_TOKEN` 기본값이 `change-me` 입니다. `ai/.env.example` 을
+그대로 복사하면 빈 값이라 backend → ai 호출이 전부 401 입니다. 로컬에서는 `ai/.env` 에 `AI_INTERNAL_TOKEN=change-me`
+를 넣거나, 두 쪽에 같은 값을 환경변수로 줍니다. 로컬 compose 는 `infra/local.env` 하나에서 양쪽에 넣으므로 이 문제가
+없습니다.
+
+### frontend (Vite)
+
+| 이름 | 의미 |
+|---|---|
+| `VITE_API_MODE` | `live` 면 `/api` 를 호출, **그 밖의 값이나 빈 값은 모두 `mock`** |
+
+- `VITE_` 값은 빌드 결과(JS)에 글자로 들어가 누구나 볼 수 있습니다. **비밀값을 넣지 않습니다.**
+- 빌드할 때 굳습니다. 서버에서 바꾸려면 다시 빌드해야 합니다. CD 는 저장소 변수 `VITE_API_MODE` 를 빌드 인자로
+  넘기고, 변수가 없으면 `mock` 입니다(2026-10-30 기준 없음). `live` 전환은 프론트 연동 PR 때 합니다.
+
+### CI·CD·Jenkins
+
+| 이름 | 위치 | 쓰는 곳 | 교체 |
+|---|---|---|---|
+| `GITHUB_TOKEN` | Actions 자동 발급 | `cd.yml` GHCR push | 필요 없음 |
+| `JENKINS_API_TOKEN` | Environment `dev` 시크릿 | `cd.yml` → Jenkins 배포 잡 호출 | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
+| `PR_AUTOMERGE_TOKEN` | 저장소 시크릿 | `pr-auto-merge.yml` | 발급한 사람이 갱신 |
+| `GITLAB_SYNC_TOKEN` | 저장소 시크릿 | `sync-gitlab.yml` (SSAFY GitLab 미러) | 〃 |
+| `JENKINS_ADMIN_ID`·`JENKINS_ADMIN_PASSWORD` | 서버 `/etc/jenkins/casc.env` | Jenkins 관리자 (JCasC) | [jenkins.md](jenkins.md) |
+| `JENKINS_DEPLOY_PASSWORD` | 〃 | Jenkins `github-actions` 계정 | 〃 |
+
+CI(`ci.yml`)는 비밀값을 쓰지 않습니다. backend 테스트는 Testcontainers 가 DB 를 띄우고 나머지는
+`application-test.yml` 의 고정값을 씁니다.
+
+## 3. 빠졌을 때 보이는 것
+
+2026-10-30 실측입니다(이미지 `9f9af95` + 이 문서와 같은 PR 의 `application-prod.yml`).
+
+| 상황 | 결과 | 보이는 문구 |
+|---|---|---|
+| 서버 env 파일에 필수값 없음·빈 값 | **compose 가 시작 전에 멈춤**, 컨테이너는 그대로 | `required variable DB_PASSWORD is missing a value: DB_PASSWORD is required` |
+| 서버 env 파일을 읽을 수 없음 | `deploy.sh` 가 멈춤 | `env 파일을 읽을 수 없음: /opt/beez/.env.dev` |
+| backend prod, `DB_URL` 없음 | 기동 실패 | `Failed to configure a DataSource: 'url' attribute is not specified` |
+| backend prod, `DB_USERNAME` 없음 | 기동 실패 | `password authentication failed for user "${DB_USERNAME}"` |
+| backend prod, `CORS_ALLOWED_ORIGINS` 없음 | 기동 실패 | `Property: beez.cors.allowedOrigins … must not be empty` |
+| backend prod, `AI_*`·`INVITE_BASE_URL`·`MCP_URL` 없음 | 기동 실패 | `Property: beez.agent.mcpUrl … must not be blank` (먼저 걸린 것 하나만 나옴) |
+| backend prod, `DOCUMENT_S3_*` 없음 또는 버킷 이름 형식 틀림 | 기동 실패 | `SeaweedFS endpoint, region, bucket and credentials required` |
+| backend, 임베딩 프로필 비어 있음 | 기동은 됨, 색인이 멈춤 | `embedding_profile_not_configured` |
+| ai, `AI_INTERNAL_TOKEN` 비었거나 backend 와 다름 | 기동은 됨(`/health` 200), 호출이 401 | `invalid_internal_token` |
+| ai, `GMS_KEY` 비어 있음 | 기동은 됨, 호출이 502 | `model_unavailable` |
+| frontend, `VITE_API_MODE` 오타 | 조용히 `mock` | 없음 — 화면이 목데이터 |
+
+서버에서는 compose 가 먼저 걸러 주므로 backend 의 prod 검증까지 가는 일은 거의 없습니다. prod 검증은 compose 밖에서
+jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
+
+### 배포 전에 점검하기
+
+서버 env 파일에 필수값이 다 있는지를 **배포하지 않고** 확인합니다. 값은 화면에 나오지 않습니다.
+
+```bash
+# 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 흘려보내 그 자리에서 검사
+git fetch -q origin && git show origin/dev:infra/compose.yaml | \
+  ssh beez 'docker compose -f - --env-file /opt/beez/.env.dev config --quiet && echo "env ok"'
+```
+
+- `-f -` 는 compose 파일을 표준 입력으로 읽습니다. 서버에 파일을 남기지 않습니다.
+- `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 위 표의 첫 줄 문구가
+  나옵니다.
+- 값의 길이만 보려면 [cd.md](cd.md#2-env-파일)의 `awk` 명령을 씁니다.
+
+로컬 전체 스택도 같은 방식입니다.
+
+```bash
+docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet && echo "env ok"
+```
+
+## 4. 환경별 차이
+
+| 항목 | 로컬 `bootRun` | 로컬 compose | CI 테스트 | 서버 dev |
+|---|---|---|---|---|
+| Spring 프로필 | `local` | `local` | `test` | `prod` |
+| DB | `backend/compose.yaml` 자동 기동 | compose postgres | Testcontainers | compose postgres (볼륨 `beez_pgdata`) |
+| 문서 원본 | `127.0.0.1:8333` | `seaweedfs:8333` | 닫힌 주소(`127.0.0.1:1`) | `seaweedfs:8333` |
+| AI 주소 | `localhost:8000` | `ai:8000` | 닫힌 주소 | `ai:8000` |
+| `AI_INTERNAL_TOKEN` | `change-me` | `local.env` | 기본값 | env 파일 (난수) |
+| CORS·초대·MCP 주소 | `localhost:5173` 계열 | `http://localhost:8088` | 기본값 | `https://dev.beez.ai.kr` |
+| 세션 쿠키 `Secure` | 꺼짐 | 꺼짐 | 꺼짐 | 켜짐 (HTTPS 전용) |
+| Swagger | 켜짐 | 켜짐 | — | 꺼짐 |
+| 비밀값 | 없음 | 더미 | 없음 | env 파일 |
+
+## 5. 비밀값 규칙
+
+### 저장소에서 빼는 규칙
+
+`.gitignore` 가 이미 막고 있습니다.
+
+| 파일 | 규칙 | 결과 |
+|---|---|---|
+| 루트 `.gitignore` | `.env`, `.env.*`, `!.env.example` | 어느 폴더의 `.env`·`.env.dev` 사본도 무시, 예시 파일만 추적 |
+| `frontend/.gitignore` | 같음 | |
+| `ai/.gitignore` | `.env` | |
+
+- 예시 파일은 `ai/.env.example`, `frontend/.env.example`, `infra/local.env` 셋입니다. `local.env` 는 이름이 `.env.` 로
+  시작하지 않아 추적되는 **더미값 파일**입니다. 서버·운영 값을 여기에 쓰지 않습니다.
+- 서버용 예시 파일은 따로 두지 않습니다. 서버 파일은 [cd.md](cd.md#2-env-파일)의 명령이 난수와 함께 만들고, 이름 목록은
+  위 표가 정본입니다.
+- 비밀값을 채팅·메신저·PR 코멘트에 붙여 넣지 않습니다. 서버에 넣을 때는 `read -rs` 로 입력받습니다(cd.md GMS 키 절차).
+
+### 값이 샜을 때
+
+이력에서 지우는 것보다 **값을 바꾸는 것이 먼저**입니다. 공개 저장소라 푸시된 순간 복사됐다고 봅니다.
+
+| 값 | 바꾸는 방법 |
+|---|---|
+| `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용 |
+| `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
+| `DOCUMENT_S3_*` | 지금은 seaweedfs 관리 키와 backend 키가 같은 값입니다. 키를 나누고 교체 절차를 확인하는 일은 S15P31A108-211 에서 합니다 |
+| `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
+| `JENKINS_API_TOKEN` | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
+| Jenkins 비밀번호 | [jenkins.md 비밀번호 바꾸기](jenkins.md#비밀번호-바꾸기) |
+
+## 6. 변수를 추가할 때
+
+1. backend 는 `application.yml` 에 로컬 기본값과 함께 넣고, 운영에서 반드시 받아야 하면 `application-prod.yml` 에
+   `${X:}` 로 덮고 설정 클래스에 `@NotBlank` 등 검증을 답니다.
+2. 컨테이너에 넘겨야 하면 `infra/compose.yaml` 에 넣습니다. 필수면 `${X:?X is required}`.
+3. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example` 등)에 빈 칸을 넣습니다.
+4. 이 문서의 표를 고칩니다.
+5. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
+   compose 단계에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)로
+   확인합니다.
