@@ -60,7 +60,7 @@ Windows에서는 `./gradlew.bat bootRun`을 사용합니다. 기본 포트는 80
 
 ### AI 서비스
 
-Python 3.12를 준비하고 `ai/.env.example`을 `ai/.env`로 복사합니다. 임베딩 호출에는 `GMS_KEY`가 필요하며, 내부 API 호출에 사용하는 `AI_INTERNAL_TOKEN`은 백엔드와 같은 값으로 설정합니다. 실제 키는 저장소에 올리지 마세요.
+Python 3.12를 준비하고 `ai/.env.example`을 `ai/.env`로 복사합니다. 임베딩 호출에는 `GMS_KEY`가 필요하며, 내부 API 호출에 사용하는 `AI_INTERNAL_TOKEN`은 백엔드와 같은 값으로 설정합니다(`bootRun` 백엔드의 기본값은 `change-me`). 실제 키는 저장소에 올리지 마세요. 서비스별 환경변수 전체 목록은 [docs/infra/env.md](docs/infra/env.md)에 있습니다.
 
 ```bash
 cd ai
