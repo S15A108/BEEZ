@@ -160,6 +160,27 @@ class StatusIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    void documents_approvedBeforeFirstBaseline_countsApproved() {
+        // 시작 전: 팀장이 DOC-A21 로 문서를 승인해도 아직 기준(baseline)에는 들어가지 않는다
+        long projectId = project.projectId();
+        for (String type : new String[] {"PLAN", "REQ_SPEC", "API_SPEC"}) {
+            long doc = document(projectId, type);
+            version(doc, 1, "APPROVED");
+        }
+        long erd = document(projectId, "ERD");
+        version(erd, 1, "DRAFT");
+
+        JsonNode body = get(leader, documentsPath(projectId));
+
+        assertThat(body.has("baseline")).isFalse();
+        assertThat(kind(body, "PLAN").get("approved_count").asInt()).isEqualTo(1);
+        assertThat(kind(body, "REQUIREMENTS").get("approved_count").asInt()).isEqualTo(1);
+        assertThat(kind(body, "API_SPEC").get("approved_count").asInt()).isEqualTo(1);
+        assertThat(kind(body, "ERD").get("approved_count").asInt()).isZero();
+        assertThat(kind(body, "ERD").get("draft_count").asInt()).isEqualTo(1);
+    }
+
+    @Test
     void documents_approvedPlusNewDraft_countsBoth() {
         long projectId = project.projectId();
         long base = baseline(projectId, 1);

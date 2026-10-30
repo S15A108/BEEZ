@@ -13269,7 +13269,7 @@ HTTP `200`.
 
 - 필수 문서 상태와 현재 기준을 제공한다. 미승인 초안과 승인본을 구분한다.
 - (BE 구현, S15P31A108-104) `by_kind`는 PLAN·REQUIREMENTS·API_SPEC·ERD 네 종류를 이 순서로 문서가 없어도 0으로 모두 준다. 종류당 문서가 하나라 각 건수는 0 또는 1이다.
-- (BE 구현, S15P31A108-104) `approved_count`는 현재 기준에 들어 있는 문서다. `draft_count`는 미승인 작업이 있는 문서다. 새로 올린 DRAFT 버전이 있거나 작성 건(DOC-A13)이 EDITING·SUBMITTED·REJECTED인 경우이며, 둘이 겹쳐도 한 번만 센다. 제출되어 승인을 기다리는 건도 여기에 포함하고 별도 필드를 두지 않는다.
+- (BE 구현, S15P31A108-104) `approved_count`는 승인본(APPROVED 버전)이 있는 문서다. 최초 기준 발행 전에 DOC-A21로 승인한 문서도 센다. 기준 발행 뒤에는 승인본이 모두 기준에 들어가므로 기준에 든 문서 수와 같고, 기준 쪽 값은 `baseline`으로 본다. `approved_count`는 승인 여부이며 기준 반영 여부가 아니다. 기준 생성 가능 여부는 `GET /api/projects/{id}/onboarding`의 `required_documents[].index_ready`와 `baseline_published`로 본다. `draft_count`는 미승인 작업이 있는 문서다. 새로 올린 DRAFT 버전이 있거나 작성 건(DOC-A13)이 EDITING·SUBMITTED·REJECTED인 경우이며, 둘이 겹쳐도 한 번만 센다. 제출되어 승인을 기다리는 건도 여기에 포함하고 별도 필드를 두지 않는다.
 - (BE 구현, S15P31A108-104) 최초 기준 발행 전에는 `baseline`을 생략한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)

@@ -1750,7 +1750,7 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | --- | --- | --- | --- |
 | `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 문서 종류 |
 | `draft_count` | `integer` | Y | 미승인 초안 수. 새 DRAFT 버전이 있거나 작성 건이 EDITING·SUBMITTED·REJECTED인 문서 수 |
-| `approved_count` | `integer` | Y | 현재 승인 문서 수 |
+| `approved_count` | `integer` | Y | 승인본(APPROVED 버전)이 있는 문서 수. 기준 반영 여부와 무관하며, 기준 전 승인도 센다 |
 
 <a id="schema-statecount"></a>
 

@@ -29,7 +29,8 @@ public class StatusRepository {
     /**
      * 문서 종류(DB 값 REQ_SPEC 등)별 문서 수. 종류당 문서는 하나라 draft·approved 는 0 또는 1이다.
      * draft = 미승인 DRAFT 버전이 있거나 작성 건(DOC-A13)이 EDITING·SUBMITTED·REJECTED 인 문서,
-     * approved = 현재 기준에 들어 있는 문서.
+     * approved = 승인본(APPROVED 버전)이 있는 문서. 최초 기준 발행 전에도 DOC-A21 승인을 센다.
+     * 기준 발행 뒤에는 승인본이 모두 기준에 들어가므로 "기준에 든 문서"와 결과가 같다.
      */
     public List<Map<String, Object>> documentCounts(long projectId) {
         return jdbc.sql("""
@@ -39,10 +40,8 @@ public class StatusRepository {
                                                    or exists (select 1 from document_working_copy w
                                                                where w.document_id = d.id
                                                                  and w.status in ('EDITING', 'SUBMITTED', 'REJECTED'))) as draft_count,
-                               count(*) filter (where exists (select 1 from project p
-                                                                join baseline_document bd on bd.baseline_id = p.current_baseline_id
-                                                                                         and bd.project_id = p.id
-                                                               where p.id = d.project_id and bd.document_id = d.id)) as approved_count
+                               count(*) filter (where exists (select 1 from document_version v
+                                                               where v.document_id = d.id and v.status = 'APPROVED')) as approved_count
                           from document d
                          where d.project_id = :p
                          group by d.type
