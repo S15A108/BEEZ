@@ -151,7 +151,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 최초 발행 이후 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면(requires_refresh) 409 baseline_conflict다. 수정안 요청: 제출한 제안은 잠겨 있으므로 팀장은 승인하지 못하고 '기준이 바뀌어 반려'(CHG-A10)하며, 제안자는 반려 뒤 CHG-A04로 최신 기준에 맞춰 재제출하거나 CHG-A15로 거둔다.
 
-변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 성공 커밋 뒤 알림·활동은 중복 식별값으로 처리한다. 이벤트 전달 실패는 이미 완료한 발행을 다시 생성하는 이유가 아니다. D7·전달 유실 방지 세부는 Q03이다.
+변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 알림·활동도 같은 트랜잭션에서 저장하고, 같은 중복 식별값은 건너뛴다([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)). D7 세부는 Q03이다.
 
 ### 검증·시작
 
@@ -243,12 +243,12 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 ### 공통 서비스 데이터
 
-아래는 도메인 서비스 간 전달 계약이다. 별도 공개 REST endpoint나 메시지 브로커를 의미하지 않는다.
+아래는 도메인 서비스 간 전달 계약이다. 별도 공개 REST endpoint나 메시지 브로커를 의미하지 않는다. 활동 이벤트·알림 요청의 입구·키 규칙·유형은 [알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)을 따른다.
 
 | 전달 정보 | 필수 필드 | 선택·조건 |
 | --- | --- | --- |
-| 활동 이벤트 | event_key, project_id, actor_type, type, target_type, target_id, occurred_at | 사람·에이전트 행위에는 actor_account_id 필수. 시스템 행위자는 actor_type=BEE 등으로 식별하고 계정 ID 생략 |
-| 알림 요청 | notification_key, project_id, recipient_account_id, type, title, body, target_type, target_id | 개인별 읽음 시각은 알림 서비스에서 관리 |
+| 활동 이벤트 | event_key, project_id, type, target_type, target_id | 행위자(actor_type·actor_account_id·agent_session_id)와 발생 시각은 공통 모듈이 CallerContext·저장 시각으로 채운다. 비비·시스템 행위는 actor_type=BEE·SYSTEM, 계정 ID 없음 |
+| 알림 요청 | notification_key, project_id, recipient_account_id, type, title, body, target_type, target_id | target_type=DOCUMENT_VERSION이면 document_id 필수. 개인별 읽음 시각은 알림 서비스에서 관리 |
 | LLM 호출 사용량 | request_key, feature, project_id, model, failed, latency_ms, tokens_known, caller | task_id, validation_id, attempt, input_tokens, output_tokens, estimated_cost_amount, currency. caller는 AGENT·WEB이고 AGENT면 agent_session_id 필수 |
 | 검증 실행 기록 | validation_id, plan_revision_id, attempt, analyzer_version, latency_ms, cache_hit | usage_request_keys, error_code |
 
@@ -448,7 +448,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- | --- |
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
-| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
+| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 남은 것: 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
@@ -1481,6 +1481,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `task_id` | `ID` | N | 대상 작업 |
 | `change_proposal_id` | `ID` | N | 대상 제안 |
 | `baseline_id` | `ID` | N | 대상 기준 |
+| `target_type` | `string` | Y | 주 대상 종류([공통 계약](../design/10-notification-activity-contract.md) 4절). 수정안 요청 |
+| `target_id` | `ID` | Y | 주 대상. 수정안 요청 |
 | `result` | `string` | Y | 결과 |
 | `created_at` | `Time` | Y | 발생 시각 |
 
