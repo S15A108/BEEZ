@@ -20,7 +20,7 @@ public class CdcKafkaSecurityProperties {
         this.properties = properties == null ? new HashMap<>() : new HashMap<>(properties);
     }
 
-    Map<String, Object> validatedProperties() {
+    public Map<String, Object> validatedProperties() {
         Map<String, Object> result = new HashMap<>();
         for (var entry : properties.entrySet()) {
             String key = entry.getKey();
