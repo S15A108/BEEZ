@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClientResponseException;
 /**
  * AI 서버의 {@code /v1/validate} 를 부른다. 실패를 규약의 분류로 바꾼다:
  * 504·읽기 시간 초과 → ai_timeout, 502·연결 실패(연결 시간 초과 포함)·그 밖의 5xx → ai_unavailable,
+ * 404(AI 서버에 검증 경로가 아직 없음)도 호출 실패로 보아 ai_unavailable,
  * 200 인데 본문을 읽지 못함(JSON 객체가 아님 등) → ai_invalid_output, 4xx(422 등) → BE 가 만든 요청이 거부된 것이므로
  * validation_execution_failed.
  */
@@ -30,7 +31,7 @@ public class AiValidationAnalyzer implements ValidationAnalyzer {
         } catch (HttpServerErrorException.GatewayTimeout e) {
             throw new AnalyzerException("ai_timeout", "AI 분석이 시간 안에 끝나지 않았습니다 (504)", e);
         } catch (RestClientResponseException e) {
-            if (e.getStatusCode().is5xxServerError()) {
+            if (e.getStatusCode().is5xxServerError() || e.getStatusCode().value() == 404) {
                 throw new AnalyzerException("ai_unavailable", "AI 서버 오류 " + e.getStatusCode().value(), e);
             }
             throw new AnalyzerException("validation_execution_failed", "AI 가 요청을 거부했습니다 " + e.getStatusCode().value(), e);

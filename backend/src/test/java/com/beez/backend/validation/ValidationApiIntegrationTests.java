@@ -13,13 +13,18 @@ import com.beez.backend.mcp.service.ValidationMcpService;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import com.beez.backend.validation.dto.ValidationResponse;
+import com.beez.backend.validation.repository.JobLease;
+import com.beez.backend.validation.repository.ValidationRepository;
+import com.beez.backend.validation.service.AnalysisResultApplier;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.worker.ValidationWorker;
 import java.net.http.HttpResponse;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import javax.sql.DataSource;
@@ -48,6 +53,12 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ValidationMcpService mcp;
+
+    @Autowired
+    ValidationRepository repository;
+
+    @Autowired
+    AnalysisResultApplier applier;
 
     @MockitoBean
     ValidationAnalyzer analyzer;
@@ -592,6 +603,120 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         // 접수 때 만든 실행이 RUNNING 으로 남지 않는다
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("DISCARDED");
         assertThat(worker.runOnce()).isFalse();
+    }
+
+    @Test
+    void worker_expiredLease_isRecoveredAsErrorRetry_andLateResultIsIgnored() throws Exception {
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        // 워커가 큐에서 꺼낸 뒤 AI 를 기다리다 죽었다 (재배포 등)
+        JobLease lease = repository.lease(120).orElseThrow();
+        assertThat(worker.recoverExpired()).isFalse();             // 리스가 아직 살아 있으면 건드리지 않는다
+        api.jdbc.sql("update validation_job set lease_until = now() - interval '1 second' where id = :j")
+                .param("j", lease.jobId()).update();
+
+        assertThat(worker.recoverExpired()).isTrue();
+        JsonNode v = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
+        assertThat(v.get("status").asText()).isEqualTo("ERROR");
+        assertThat(v.get("error_code").asText()).isEqualTo("validation_lease_expired");
+        assertThat(v.get("findings")).hasSize(1);
+        assertThat(v.get("findings").get(0).get("kind").asText()).isEqualTo("ERROR");
+        assertThat(v.get("findings").get(0).get("resolution").asText()).isEqualTo("RETRY");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("ERROR");
+        assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("FAILED");
+        assertThat(worker.recoverExpired()).isFalse();
+        assertThat(worker.runOnce()).isFalse();
+
+        // 죽은 줄 알았던 워커의 결과가 늦게 와도 상태·발견 항목을 바꾸지 않는다
+        applier.applySuccess(lease, Map.of(), Map.of(), 0);
+        assertThat(column("validation", "status", id)).isEqualTo("ERROR");
+        assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isEqualTo(1);
+    }
+
+    @Test
+    void worker_sendsItemSourceOnlyWithLocation_andStoresRequestSource() throws Exception {
+        // 원문 문서 버전 하나에 항목 두 개를 잇는다: API-01 은 위치 없이(문서 버전만), API-02 는 위치까지
+        Long doc;
+        Optional<Long> existing = api.jdbc.sql("select id from document where project_id = :p order by id limit 1")
+                .param("p", projectId).query(Long.class).optional();
+        if (existing.isPresent()) {
+            doc = existing.get();
+        } else {
+            doc = api.jdbc.sql("insert into document (project_id, type, title, created_by) values (:p, 'API_SPEC', 'API 명세', :a) returning id")
+                    .param("p", projectId).param("a", leader).query(Long.class).single();
+        }
+        int docVersionNo = api.jdbc.sql("select coalesce(max(version_no), 0) + 1 from document_version where document_id = :d")
+                .param("d", doc).query(Integer.class).single();
+        Long docVersion = api.jdbc.sql("""
+                        insert into document_version (document_id, version_no, status, storage_key, content_hash, approved_at)
+                        values (:d, :n, 'APPROVED', :k, :h, now()) returning id
+                        """)
+                .param("d", doc).param("n", docVersionNo).param("k", "doc/" + doc + "/src-v" + docVersionNo)
+                .param("h", "h-src-" + doc + "-" + docVersionNo).query(Long.class).single();
+        Long v1 = versionWithSource("API-01", 2, docVersion, null);
+        Long v2 = versionWithSource("API-02", 2, docVersion, "{\"location\": \"인증 API / 로그인 응답\"}");
+        api.publish(2, Map.of("API-01", v1, "API-02", v2));
+        long item2 = api.designItemId("API-02");
+        String refs = "[{\"design_item_id\":\"" + api.designItemId("API-01") + "\",\"design_item_version_id\":\"" + v1
+                + "\",\"relation\":\"IMPLEMENTS\"},{\"design_item_id\":\"" + item2 + "\",\"design_item_version_id\":\"" + v2
+                + "\",\"relation\":\"IMPLEMENTS\"}]";
+        long[] t = createTask(planJson("A", refs, true, null), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
+        doAnswer(inv -> {
+            Map<String, Object> req = inv.getArgument(0);
+            sent.set(req);
+            // 요청에 온 출처를 인용하되 document_id 를 숫자로 바꿔 보낸다 — 저장은 요청의 출처 객체로 해야 한다
+            Map<String, Object> cited = null;
+            for (Object o : (List<?>) req.get("approved_items")) {
+                Map<?, ?> item = (Map<?, ?>) o;
+                if (String.valueOf(v2).equals(String.valueOf(item.get("id")))) {
+                    cited = new LinkedHashMap<>((Map<String, Object>) item.get("source"));
+                }
+            }
+            cited.put("document_id", Long.parseLong(String.valueOf(cited.get("document_id"))));
+            Map<String, Object> f = candidate("design-" + item2, "MISMATCH", "BLOCKING", String.valueOf(item2), String.valueOf(v2));
+            f.put("sources", List.of(cited));
+            return aiResponse(req, List.of(f), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+
+        // 위치 없는 출처는 넣지 않고, 위치 있는 출처만 넣는다
+        Map<String, Object> withoutLocation = null;
+        Map<String, Object> withLocation = null;
+        for (Object o : (List<?>) sent.get().get("approved_items")) {
+            Map<String, Object> item = (Map<String, Object>) o;
+            if (String.valueOf(v1).equals(String.valueOf(item.get("id")))) {
+                withoutLocation = item;
+            }
+            if (String.valueOf(v2).equals(String.valueOf(item.get("id")))) {
+                withLocation = item;
+            }
+        }
+        assertThat(withoutLocation).doesNotContainKey("source");
+        assertThat((Map<String, Object>) withLocation.get("source")).containsEntry("location", "인증 API / 로그인 응답")
+                .containsEntry("document_version_id", String.valueOf(docVersion));
+
+        JsonNode v = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
+        assertThat(v.get("status").asText()).isEqualTo("NEEDS_REVIEW");
+        JsonNode stored = v.get("findings").get(0).get("sources").get(0);
+        assertThat(stored.get("document_id").isNumber()).isFalse();        // 요청에 넣은 출처 그대로 (문자열 ID)
+        assertThat(stored.get("document_id").asText()).isEqualTo(String.valueOf(doc));
+    }
+
+    /** 원문 출처가 있는 새 승인 버전. locatorJson 이 null 이면 위치 없이 문서 버전만 */
+    private Long versionWithSource(String key, int versionNo, Long documentVersionId, String locatorJson) {
+        Long item = api.designItemId(key);
+        api.jdbc.sql("""
+                        insert into design_item_version (design_item_id, version_no, status, title, schema_version, content,
+                                                         content_hash, origin, approved_at, source_document_version_id, source_locator)
+                        values (:i, :n, 'APPROVED', :t, 1, '{}', :h, 'HUMAN', now(), :s, cast(:l as jsonb))
+                        """)
+                .param("i", item).param("n", versionNo).param("t", key + " v" + versionNo).param("h", "h-" + key + "-src-v" + versionNo)
+                .param("s", documentVersionId).param("l", locatorJson, Types.VARCHAR).update();
+        return api.jdbc.sql("select id from design_item_version where design_item_id = :i and version_no = :n")
+                .param("i", item).param("n", versionNo).query(Long.class).single();
     }
 
     // ---- 접수 오류 ----

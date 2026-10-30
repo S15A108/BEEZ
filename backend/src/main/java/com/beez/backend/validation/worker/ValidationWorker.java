@@ -32,7 +32,8 @@ import tools.jackson.databind.ObjectMapper;
  * → ③ AI 호출(트랜잭션 밖) → ④ 결과 반영(트랜잭션, {@link AnalysisResultApplier}).
  * AI 호출 중에는 DB 연결을 쥐지 않는다. 호출 뒤 반영 단계에서 아직 같은 시도·같은 리스인지 다시 확인하므로,
  * 그 사이 검증이 STALE 이 되거나 새 시도가 생겼으면 결과를 버린다.
- * 리스 만료 회수(워커 중단)는 검증 중복 실행·타임아웃·재시도 작업(-161)에서 붙인다.
+ * 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 주기마다 하나씩 회수해 ERROR(RETRY)로 닫는다.
+ * 같은 검증을 다시 돌리는 재시도(VAL-A04)는 -161 에서 붙인다 — 그 전에는 새 검증을 요청한다.
  */
 @Component
 public class ValidationWorker {
@@ -73,10 +74,26 @@ public class ValidationWorker {
         }
         // 한 번에 하나만 처리한다. 큐가 빌 때까지 돌면 AI 응답을 기다리는 동안 이 스레드를 오래 붙잡는다 (문서 워커와 같은 방식)
         try {
+            recoverExpired();
+        } catch (RuntimeException e) {
+            log.error("검증 리스 회수 중 오류: {}", e.toString());
+        }
+        try {
             runOnce();
         } catch (RuntimeException e) {
             log.error("검증 작업 처리 중 오류: {}", e.toString());
         }
+    }
+
+    /** 리스가 만료된 작업 하나를 회수한다. 회수할 것이 없으면 false */
+    public boolean recoverExpired() {
+        Optional<JobLease> expired = tx.execute(status -> validations.expiredLease());
+        if (expired == null || expired.isEmpty()) {
+            return false;
+        }
+        log.warn("validation {} attempt {} 리스 만료 — ERROR(RETRY) 로 회수", expired.get().validationId(), expired.get().attempt());
+        applier.applyLeaseExpired(expired.get());
+        return true;
     }
 
     /** 작업 하나를 처리한다. 처리할 것이 없으면 false */
@@ -199,11 +216,17 @@ public class ValidationWorker {
     private List<Map<String, Object>> withSources(List<Map<String, Object>> items, List<Long> versionIds) {
         Map<String, Map<String, Object>> sourceByVersion = new LinkedHashMap<>();
         for (Map<String, Object> row : validations.designSources(versionIds)) {
+            // 위치 없이 문서 버전만 지정한 출처(설계 항목 등록에서 허용)는 넣지 않는다. 명세 Source.location 은 필수이고
+            // AI 쪽 입력 검사도 빈 문자열을 거부해(422) 검증 전체가 ERROR 가 된다. 승인 항목의 source 는 선택이다
+            String location = String.valueOf(row.get("location"));
+            if (row.get("location") == null || location.isBlank()) {
+                continue;
+            }
             Map<String, Object> source = new LinkedHashMap<>();
             source.put("document_id", String.valueOf(row.get("document_id")));
             source.put("document_version_id", String.valueOf(row.get("document_version_id")));
             source.put("version_no", ((Number) row.get("version_no")).intValue());
-            source.put("location", String.valueOf(row.get("location")));
+            source.put("location", location);
             sourceByVersion.put(String.valueOf(row.get("id")), source);
         }
         for (Map<String, Object> item : items) {

@@ -295,6 +295,27 @@ public class ValidationRepository {
                 .param("id", jobId).param("tok", leaseToken, Types.OTHER).update();
     }
 
+    /**
+     * 리스가 만료된 작업 하나 (워커가 AI 호출 중 죽었거나 재배포로 내려간 경우). 그 리스로 표시한 실행의 시도 번호를 함께 돌려준다.
+     * 리스 시간(lease-seconds)은 AI 읽기 시간 초과보다 길어, 살아 있는 워커라면 그 전에 결과를 반영한다.
+     * FOR UPDATE SKIP LOCKED: 다른 워커가 같은 작업을 회수 중이면 건너뛴다. 회수 자체는 반영 단계({@code applyLeaseExpired})가
+     * 다시 잠그고 확인하므로, 두 워커가 같은 작업을 집어도 한 번만 종결된다.
+     */
+    public Optional<JobLease> expiredLease() {
+        return jdbc.sql("""
+                        select j.id as job_id, j.validation_id, r.attempt, j.lease_token
+                          from validation_job j
+                          join validation_run r on r.validation_id = j.validation_id and r.lease_token = j.lease_token
+                         where j.status = 'LEASED' and j.lease_until < now()
+                         order by j.lease_until
+                         limit 1
+                           for update of j skip locked
+                        """)
+                .query((rs, n) -> new JobLease(rs.getLong("job_id"), rs.getLong("validation_id"), rs.getInt("attempt"),
+                        rs.getObject("lease_token", UUID.class)))
+                .optional();
+    }
+
     /** 작업 종결. DONE·FAILED·CANCELLED 는 리스 정보를 비운다 (V2 CHECK: LEASED 일 때만 리스가 있다) */
     public void finishJob(long jobId, String status) {
         jdbc.sql("""

@@ -171,6 +171,22 @@ public class AnalysisResultApplier {
     }
 
     /**
+     * 리스 만료 회수 (공통 "검증 실행 오류 규약": 워커 중단·lease 만료 → 실행 ERROR, 검증 ERROR, RETRY).
+     * 일반 반영과 같은 확인(아직 RUNNING·같은 시도·같은 리스·같은 계획)을 거친다. 이미 다른 경로가 종결했으면 아무것도 바꾸지 않고,
+     * 이 리스의 작업이 남아 있으면 닫기만 한다. 회수 뒤에 예전 워커의 결과가 도착하면 검증이 ERROR 라 늦은 결과로 버려진다.
+     */
+    @Transactional
+    public void applyLeaseExpired(JobLease lease) {
+        Optional<Current> current = current(lease);
+        if (current.isEmpty()) {
+            return;
+        }
+        fail(lease, current.get().validation(), current.get().runId(), "validation_lease_expired", "ERROR",
+                "분석 실행이 시간 안에 결과를 반영하지 못했습니다 (워커 중단·재배포)", "RETRY",
+                "같은 계획으로 다시 검증을 요청하세요", null, 0, Map.of());
+    }
+
+    /**
      * @param diagnostics 모델을 부른 경우의 사용량·검사 키·부분 후보. summary 에 그대로 더한다 (빈 Map 이면 더할 것 없음)
      */
     private void fail(JobLease lease, ValidationRow v, long runId, String errorCode, String runStatus, String message,
