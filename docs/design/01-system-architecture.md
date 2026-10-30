@@ -77,7 +77,7 @@ flowchart LR
 | D4 참조 스냅샷 + 시작 게이트 | 검증마다 `validation_design_ref`(본 항목 버전·관련 계획 리비전). START = `project` 행 FOR UPDATE → 현재 리비전 PASS → 참조 버전 현재성 → 선행 완료 → 같은 항목 CHANGES 없음. 전역 baseline 번호는 비교하지 않음. READS끼리는 막지 않음 | 담당자 결정 · TRC-02, NTF-05, VAL-04, TSK-04, AC-05·06 |
 | D5 무효화 범위 | 변경 항목의 이전 버전을 `validation_design_ref`에 가진 검증(CHANGES·IMPLEMENTS·READS)만 STALE. AI 추론 관계 제외 | 담당자 결정 · VAL-03, AC-07 |
 | D6 멱등·재시도·늦은 결과 | 재사용은 설계 대조 결과만(입력 스냅샷 해시). 겹침은 매번 재확인. 재시도 = 새 `validation_run`. 큐는 LEASED 커밋 후 잠금 없이 AI 호출, lease 회수. 결과 반영은 `WHERE status='RUNNING' AND current_attempt=:attempt` | 담당자 결정 · AC-09·16, NFR-11 |
-| D7 발행·무효화 원자성 | 발행 서비스(오서현)가 같은 트랜잭션에서 검증 영향 서비스(변준성) 호출. 실패 시 전체 롤백. 알림·타임라인은 커밋 후 | 합의 필요 · APR-03, NFR-04 |
+| D7 발행·무효화 원자성 | 발행 서비스(오서현)가 같은 트랜잭션에서 검증 영향 서비스(변준성) 호출. 실패 시 전체 롤백. 알림·타임라인도 같은 트랜잭션에서 저장하고 중복 키는 건너뜀([10 문서](10-notification-activity-contract.md)) | 합의 필요 · APR-03, NFR-04 |
 | 완료 델타 | COMPLETED 요청에 계획 대비 변경 → 있으면 WAITING(REVALIDATION) 후 완료. `task_completion_report`(불변)로 저장. 자기 보고 기반 | 합의 필요 · AC-15 보완 |
 | AI 실패 폴백 | 대화·설명 = 템플릿 허용(origin 기록) · 검증 = ERROR(자동 PASS 금지) · 파싱 = 실패 상태(빈 결과 저장 금지) · 영향 분석 = 명시 관계 처리는 먼저 수행 | 담당자 결정 · NFR-06·12 |
 | 컨텍스트 | MVP `summary / detail`. `get_development_context` 결과는 불변 패킷으로 저장하고 계획 리비전이 참조. 개인 기록은 명시적 제출, 수정은 새 리비전(동시 수정 시 409). `kind=DECISION`은 승인 설계가 아님 | 합의 필요 (박상은 주관) · POL-02·03 |
