@@ -180,26 +180,35 @@ git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
 
 # 2) backend 포트를 다른 프로그램이 쓰지 않고, Nginx 가 보내는 포트와 같은가. 실패하면 모두 exit 1
 ssh "$HOST" bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
-p=$(sed -n 's/^BACKEND_HOST_PORT=//p' "/opt/beez/.env.$1" | tail -n1 | tr -d '\r')   # 키가 두 번이면 compose 처럼 마지막 값
+fail() { echo "$1"; exit 1; }
+blk='/upstream[[:space:]]+beez_backend[[:space:]]*[{]/'
+# 포트는 compose 가 해석한 값을 쓴다. 주석·따옴표·CRLF·중복 키(마지막 값)를 compose 와 똑같이 읽는다
+envs=$(printf 'services: {}\n' | docker compose -f - --env-file "/opt/beez/.env.$1" config --environment) ||
+  fail "env 읽기 실패: /opt/beez/.env.$1"
+p=$(printf '%s\n' "$envs" | sed -n 's/^BACKEND_HOST_PORT=//p'); unset envs   # 다른 값(비밀값)은 출력하지 않는다
+case $p in ''|*[^0-9]*) fail "port 값 없음·이상: '$p'" ;; esac
 conf=/etc/nginx/sites-enabled/$2.conf
-[ -r "$conf" ] || { echo "Nginx 설정 없음: $conf"; exit 1; }
-case $p in ''|*[!0-9]*) echo "port 값 없음·이상: '$p'"; exit 1 ;; esac
+[ -r "$conf" ] || fail "Nginx 설정 없음: $conf"
 hit="127\.0\.0\.1:$p([^0-9]|$)"
 # (a) Nginx 의 다른 곳이 같은 포트로 보내는가. 꺼져 있는 서비스(예: Jenkins 8080)도 설정으로 잡는다
 for f in /etc/nginx/sites-enabled/*; do
-  sed 's/#.*//' "$f" | awk '/upstream[[:space:]]+beez_backend[[:space:]]*[{]/{s=1} !s; s&&/[}]/{s=0}' |
-    grep -Eq "$hit" && { echo "port 충돌: Nginx 의 다른 설정이 포트 $p 사용 ($f)"; exit 1; }
+  body=$(sed 's/#.*//' "$f") || fail "Nginx 설정 읽기 실패: $f"
+  printf '%s\n' "$body" | awk "$blk{s=1} s==0; s&&/[}]/{s=0}" | grep -E "$hit" >/dev/null &&
+    fail "port 충돌: Nginx 의 다른 설정이 포트 $p 사용 ($f)"
 done
 # (b) 지금 그 포트를 연 프로그램이 있으면 떠 있는 backend 여야 한다
-if [ -n "$(ss -Hltn "sport = :$p")" ]; then
+listen=$(ss -Hltn "sport = :$p") || fail "ss 실행 실패: 포트 $p 사용 여부 확인 못 함"
+if [ -n "$listen" ]; then
   ports=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
-    --format '{{.Ports}}') || { echo "docker 조회 실패: 포트 $p 사용 주체 확인 못 함"; exit 1; }
-  case $ports in *"127.0.0.1:$p->"*) ;; *) echo "port 충돌: 다른 프로그램이 $p 사용 중"; exit 1 ;; esac
+    --format '{{.Ports}}') || fail "docker 조회 실패: 포트 $p 사용 주체 확인 못 함"
+  case $ports in *"127.0.0.1:$p->"*) ;; *) fail "port 충돌: 다른 프로그램이 $p 사용 중" ;; esac
 fi
-# (c) upstream beez_backend 블록 안의 포트와 비교한다
-up=$(sed 's/#.*//' "$conf" | awk '/upstream[[:space:]]+beez_backend[[:space:]]*[{]/{f=1} f; f&&/[}]/{exit}')
-[ -n "$up" ] || { echo "upstream beez_backend 없음: $conf"; exit 1; }
-printf '%s\n' "$up" | grep -Eq "server[[:space:]]+$hit" || { echo "port 다름: env=$p"; exit 1; }
+# (c) upstream beez_backend 의 server 는 하나여야 하고, 그 포트가 env 와 같아야 한다
+up=$(sed 's/#.*//' "$conf" | awk "$blk{f=1} f; f&&/[}]/{exit}")
+[ -n "$up" ] || fail "upstream beez_backend 없음: $conf"
+servers=$(printf '%s\n' "$up" | grep -oE '(^|[[:space:]{;])server[[:space:]]+[^;]+')
+[ "$(printf '%s\n' "$servers" | grep -c .)" -eq 1 ] || fail "upstream beez_backend 의 server 가 하나가 아님: $conf"
+printf '%s\n' "$servers" | grep -E "$hit" >/dev/null || fail "port 다름: env=$p"
 echo "port ok ($p)"
 EOF
 ```
@@ -215,11 +224,19 @@ EOF
   - `port 다름`: Nginx 의 `upstream beez_backend` 가 다른 포트로 보냅니다. backend 는 떠도 API 가 실패합니다.
 
   배포(`deploy.sh`)는 컨테이너 안 healthcheck 만 보므로 포트가 어긋나도 성공으로 끝납니다. 값을 바꿨다면 이 점검을 꼭 돌립니다.
-- 2) 는 `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해 실패는 모두 exit 1 입니다.
-  `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다.
+- 포트 값은 env 파일을 직접 읽지 않고 compose 가 해석한 값(`config --environment`)으로 봅니다. 그래서
+  `BACKEND_HOST_PORT=8081 # 주석`, 따옴표, CRLF, 같은 키 두 번(마지막 값)을 배포 때와 똑같이 읽습니다.
+  이 명령은 env 파일의 모든 값을 내보내므로 스크립트 안에서 포트만 꺼내고 화면에는 찍지 않습니다.
+- `upstream beez_backend` 에 `server` 가 둘 이상이면 멈춥니다. 하나만 맞아도 Nginx 는 나머지로도 요청을 보내므로,
+  compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
+- **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
+  실패는 모두 exit 1 입니다.
+  `env 읽기 실패` 는 `ENV_NAME` 이 틀렸거나(바로 아래에 `couldn't find env file` 이 같이 나옴) docker 를 쓸 수 없는 것입니다.
+  `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다.
+  `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다. `Nginx 설정 읽기 실패` 는 켜진 사이트 중 읽을 수 없는
+  파일(권한, 깨진 링크)이 있는 것입니다.
   `upstream beez_backend 없음` 은 그 설정 파일에 블록이 없는 것입니다(`SITE` 가 다른 사이트이거나 upstream 을 다른 파일로 옮김).
-  `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것인데, `ENV_NAME` 이 틀려도 이렇게 나옵니다
-  (그때는 바로 위에 `No such file` 이 같이 나옵니다).
+  `ss 실행 실패` 는 서버에 `ss`(iproute2)가 없거나 실행이 실패한 것입니다.
   `docker 조회 실패` 는 SSH 사용자에게 docker 권한이 없거나 데몬이 멈춘 것입니다.
 - 다른 환경(운영 등)은 위 네 변수를 바꿉니다. 운영 서버가 따로 있으면(S15P31A108-73) `HOST` 를 그 서버의 별칭으로 바꿉니다.
   `ENV_NAME`·`SITE` 만 바꾸면 여전히 dev 서버를 검사합니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
