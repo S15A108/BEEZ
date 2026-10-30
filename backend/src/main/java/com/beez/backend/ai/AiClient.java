@@ -23,7 +23,8 @@ public class AiClient {
 
     public AiClient(BeezProperties props) {
         BeezProperties.Ai ai = props.ai();
-        HttpClient http = HttpClient.newBuilder().connectTimeout(ai.connectTimeout()).build();
+        // Plain HTTP/1.1: the JDK client's default HTTP/2 h2c upgrade is rejected by uvicorn with 400.
+        HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(ai.connectTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(ai.readTimeout());
         this.rest = RestClient.builder()

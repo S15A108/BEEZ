@@ -683,6 +683,12 @@ export const documentAnalysisSchema = z.object({
 })
 export type DocumentAnalysis = z.infer<typeof documentAnalysisSchema>
 
+const retrievalLocatorSchema = z.object({
+  type: z.literal('text_lines'),
+  start_line: z.number().int().min(1),
+  end_line: z.number().int().min(1),
+})
+
 export const searchHitSchema = z.object({
   type: z.enum(['DOCUMENT', 'DOCUMENT_CHUNK', 'DESIGN_ITEM']),
   id: idSchema,
@@ -691,6 +697,29 @@ export const searchHitSchema = z.object({
   source: sourceSchema.optional(),
   design_item_id: idSchema.optional(),
   score: z.number().finite().optional(),
+  // Exact offsets are Unicode code points in utf8-lf-v1 text; end is exclusive.
+  chunk_key: z.string().optional(),
+  source_spans: z
+    .array(
+      z.object({
+        block_id: z.string(),
+        start_offset: z.number().int().nonnegative(),
+        end_offset: z.number().int().positive(),
+        locator: retrievalLocatorSchema,
+      }),
+    )
+    .optional(),
+  context_refs: z
+    .array(
+      z.object({
+        block_id: z.string(),
+        role: z.enum(['heading', 'table_header']),
+        locator: retrievalLocatorSchema,
+        text_hash: z.string(),
+        applied: z.boolean(),
+      }),
+    )
+    .optional(),
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
 

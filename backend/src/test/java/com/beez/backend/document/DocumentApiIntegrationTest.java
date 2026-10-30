@@ -14,6 +14,8 @@ import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -77,15 +79,43 @@ class DocumentApiIntegrationTest {
             Map<String, Object> input = invocation.getArgument(0);
             String text = input.get("content").toString();
             int lastLine = text.split("\n", -1).length - (text.endsWith("\n") ? 1 : 0);
-            var result = new HashMap<String, Object>();
-            for (String field : List.of("document_version_id", "request_key", "text_hash", "chunking_profile_id")) result.put(field, input.get(field));
-            result.put("parser_version", "fixture-v1"); result.put("diagnostics", List.of());
-            result.put("chunks", List.of(Map.of("chunk_key", "fixture-0", "chunk_no", 0, "text", text,
-                    "locator", Map.of("type", "text_lines", "start_line", 1, "end_line", lastLine))));
-            return Map.of("result", result, "origin", "PARSER", "usage", List.of());
+            var locator = locator(1, lastLine);
+            var span = Map.<String, Object>of("block_id", "fixture-block", "start_offset", 0,
+                    "end_offset", text.codePointCount(0, text.length()), "locator", locator);
+            return chunkResponse(input, List.of(chunk(input, "fixture-0", 0, text, text, List.of(span), locator)), List.of());
         });
         when(ai.documentEmbeddings(anyMap())).thenAnswer(invocation -> embedding(invocation.getArgument(0), 1024));
         login(leader);
+    }
+
+    static Map<String, Object> locator(int start, int end) {
+        return Map.of("type", "text_lines", "start_line", start, "end_line", end);
+    }
+
+    static Map<String, Object> chunk(Map<String, Object> input, String key, int number, String text,
+                                     String embeddingText, List<Map<String, Object>> spans, Map<String, Object> locator) {
+        return Map.of("chunk_key", key, "chunk_no", number, "document_version_id", input.get("document_version_id"),
+                "text", text, "embedding_text", embeddingText, "source_spans", spans, "context_refs", List.of(),
+                "token_count", text.codePointCount(0, text.length()), "locator", locator);
+    }
+
+    static Map<String, Object> chunkResponse(Map<String, Object> input, List<Map<String, Object>> chunks,
+                                             List<Map<String, Object>> excluded) {
+        var profile = Map.of("profile_id", input.get("chunking_profile_id"), "tokenizer_id", "fixture-v1",
+                "max_tokens", 600, "include_headings", false, "include_table_headers", false, "max_chunks", 1024);
+        var manifest = Map.of("project_id", input.get("project_id"), "document_version_id", input.get("document_version_id"),
+                "content_hash", input.get("content_hash").toString().replaceFirst("^sha256:", ""),
+                "text_hash", input.get("text_hash").toString().replaceFirst("^sha256:", ""),
+                "normalization_version", input.get("normalization_profile"),
+                "parser_profile", "text/plain".equals(input.get("media_type")) ? "plain-v1" : "markdown-v1",
+                "parser_version", "fixture-v1", "chunker_version", "fixture-v1", "chunking_profile", profile,
+                "expected_chunk_keys", chunks.stream().map(c -> c.get("chunk_key")).toList());
+        var result = new HashMap<String, Object>();
+        for (String field : List.of("project_id", "document_version_id", "request_key", "text_hash", "normalization_profile", "chunking_profile_id")) result.put(field, input.get(field));
+        result.put("contract_version", "document-chunks-v1"); result.put("parser_version", "fixture-v1");
+        result.put("manifest", manifest); result.put("diagnostics", List.of());
+        result.put("excluded_ranges", excluded); result.put("chunks", chunks);
+        return Map.of("result", result, "origin", "PARSER", "usage", List.of());
     }
     @SuppressWarnings("unchecked")
     Map<String, Object> embedding(Map<String, Object> input, int dimension) {
@@ -116,8 +146,11 @@ class DocumentApiIntegrationTest {
         return http.send(builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
     HttpResponse<String> upload(String key, byte[] bytes, String kind) throws Exception {
+        return upload(key, bytes, kind, "input.md");
+    }
+    HttpResponse<String> upload(String key, byte[] bytes, String kind, String filename) throws Exception {
         return multipart("/api/projects/" + project + "/documents", key, bytes,
-                Map.of("kind", kind, "title", "요구사항", "domain", "account"));
+                Map.of("kind", kind, "title", "요구사항", "domain", "account"), false, TRUSTED_ORIGIN, filename);
     }
     HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields) throws Exception {
         return multipart(path, key, bytes, fields, false);
@@ -126,10 +159,13 @@ class DocumentApiIntegrationTest {
         return multipart(path, key, bytes, fields, multiple, TRUSTED_ORIGIN);
     }
     HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields, boolean multiple, String origin) throws Exception {
+        return multipart(path, key, bytes, fields, multiple, origin, "input.md");
+    }
+    HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields, boolean multiple, String origin, String filename) throws Exception {
         String boundary = "beez-fixture-boundary";
         var out = new ByteArrayOutputStream();
         for (var field : fields.entrySet()) out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field.getKey() + "\"\r\n\r\n" + field.getValue() + "\r\n").getBytes(StandardCharsets.UTF_8));
-        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.md\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
         out.write(bytes);
         if (multiple) out.write(("\r\n--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"second.md\"\r\n\r\nsecond").getBytes(StandardCharsets.UTF_8));
         out.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
@@ -214,6 +250,186 @@ class DocumentApiIntegrationTest {
         assertThat(multipart(path + "/draft-versions", UUID.randomUUID().toString(), content, Map.of("base_document_version_id", "99999")).statusCode()).isEqualTo(409);
     }
 
+    @Test void indexesCodePointSpansAndExcludedLinesWithoutTreatingDisplayLinesAsOwnership() throws Exception {
+        String firstText = "😀" + "a".repeat(599);
+        String secondText = "a".repeat(401) + "\n끝\n";
+        String source = firstText + "a".repeat(401) + "\n---\n끝\n";
+        doAnswer(invocation -> {
+            Map<String, Object> input = invocation.getArgument(0);
+            var first = Map.<String, Object>of("block_id", "first", "start_offset", 0, "end_offset", 600, "locator", locator(1, 1));
+            var second = Map.<String, Object>of("block_id", "first", "start_offset", 600, "end_offset", 1002, "locator", locator(1, 1));
+            var third = Map.<String, Object>of("block_id", "last", "start_offset", 1006, "end_offset", 1008, "locator", locator(3, 3));
+            return chunkResponse(input, List.of(
+                    chunk(input, "first", 0, firstText, firstText, List.of(first), locator(1, 1)),
+                    chunk(input, "second", 1, secondText, secondText, List.of(second, third), locator(1, 3))),
+                    List.of(Map.of("locator", locator(2, 2), "reason", "thematic_break")));
+        }).when(ai).documentChunks(anyMap());
+        var response = upload(UUID.randomUUID().toString(), source.getBytes(StandardCharsets.UTF_8), "REQUIREMENTS");
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        var doc = JSON.readTree(response.body()).get("document");
+        long id = doc.get("id").asLong(), version = doc.get("latest_draft").get("id").asLong();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForList("SELECT text FROM document_chunk WHERE document_version_id=? ORDER BY chunk_no", String.class, version))
+                .containsExactly(firstText, secondText);
+        var saved = jdbc.queryForObject("SELECT source_spans::text FROM document_chunk WHERE document_version_id=? AND chunk_no=1", String.class, version);
+        assertThat(JSON.readTree(saved).size()).isEqualTo(2);
+        assertThat(JSON.readTree(saved).get(1).get("start_offset").asInt()).isEqualTo(1006);
+        verify(ai).documentEmbeddings(argThat(input -> "DOCUMENT".equals(input.get("purpose"))
+                && List.of(Map.of("key", "first", "text", firstText), Map.of("key", "second", "text", secondText))
+                .equals(input.get("texts"))));
+        publish(id, version);
+        var search = send("GET", "/api/projects/" + project + "/search?q=test&mode=SEMANTIC", null, false);
+        assertThat(search.statusCode()).withFailMessage(search.body()).isEqualTo(200);
+        var hits = JSON.readTree(search.body()).get("items");
+        assertThat(hits.size()).isEqualTo(2);
+        var precise = hits.get(1);
+        assertThat(precise.get("chunk_key").asText()).isEqualTo("second");
+        assertThat(precise.get("source_spans")).isEqualTo(JSON.readTree(saved));
+        assertThat(precise.get("context_refs").size()).isZero();
+    }
+
+    @Test @SuppressWarnings("unchecked")
+    void storesAndSearchesRecordedAiChunksWithExactUnicodeSourceRanges() throws Exception {
+        // Generated by the real AI chunker. Only request-scoped identity and hashes are rebound
+        // to this test's uploaded document; chunk text, ranges and metadata remain untouched.
+        var fixture = JSON.readValue(getClass().getResourceAsStream("/document-chunks-223.json"), Map.class);
+        var fixtureInput = (Map<String, Object>) fixture.get("input");
+        String source = (String) fixtureInput.get("content");
+        var response = (Map<String, Object>) fixture.get("response");
+        var result = (Map<String, Object>) response.get("result");
+        var manifest = (Map<String, Object>) result.get("manifest");
+        var chunks = (List<Map<String, Object>>) result.get("chunks");
+        doAnswer(invocation -> {
+            Map<String, Object> input = invocation.getArgument(0);
+            assertThat(input.get("content")).isEqualTo(source);
+            for (String field : List.of("project_id", "document_version_id", "request_key", "text_hash", "normalization_profile", "chunking_profile_id")) {
+                result.put(field, input.get(field));
+            }
+            manifest.put("project_id", input.get("project_id"));
+            manifest.put("document_version_id", input.get("document_version_id"));
+            manifest.put("content_hash", input.get("content_hash").toString().replaceFirst("^sha256:", ""));
+            manifest.put("text_hash", input.get("text_hash").toString().replaceFirst("^sha256:", ""));
+            chunks.forEach(chunk -> chunk.put("document_version_id", input.get("document_version_id")));
+            return response;
+        }).when(ai).documentChunks(anyMap());
+
+        var uploaded = upload(UUID.randomUUID().toString(), source.getBytes(StandardCharsets.UTF_8), "PLAN");
+        assertThat(uploaded.statusCode()).withFailMessage(uploaded.body()).isEqualTo(201);
+        var document = JSON.readTree(uploaded.body()).get("document");
+        long id = document.get("id").asLong(), version = document.get("latest_draft").get("id").asLong();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
+        var rows = jdbc.queryForList("SELECT chunk_key,text,source_spans::text AS spans,context_refs::text AS refs FROM document_chunk WHERE document_version_id=? ORDER BY chunk_no", version);
+        assertThat(rows).hasSize(chunks.size());
+        int[] codePoints = source.codePoints().toArray();
+        for (int i = 0; i < chunks.size(); i++) {
+            var expected = chunks.get(i);
+            var row = rows.get(i);
+            assertThat(row.get("chunk_key")).isEqualTo(expected.get("chunk_key"));
+            assertThat(row.get("text")).isEqualTo(expected.get("text"));
+            var spans = JSON.readTree(row.get("spans").toString());
+            assertThat(spans).isEqualTo(JSON.readTree(JSON.writeValueAsString(expected.get("source_spans"))));
+            assertThat(JSON.readTree(row.get("refs").toString())).isEqualTo(JSON.readTree(JSON.writeValueAsString(expected.get("context_refs"))));
+            var restored = new StringBuilder();
+            for (var span : spans) {
+                int start = span.get("start_offset").asInt(), end = span.get("end_offset").asInt();
+                restored.append(new String(codePoints, start, end - start));
+            }
+            assertThat(restored.toString()).isEqualTo(row.get("text"));
+        }
+        publish(id, version);
+        var search = send("GET", "/api/projects/" + project + "/search?q=fixture&mode=SEMANTIC&limit=10", null, false);
+        assertThat(search.statusCode()).withFailMessage(search.body()).isEqualTo(200);
+        var hits = JSON.readTree(search.body()).get("items");
+        assertThat(hits.size()).isEqualTo(chunks.size());
+        for (var hit : hits) {
+            var row = rows.stream().filter(r -> r.get("chunk_key").equals(hit.get("chunk_key").asText())).findFirst().orElseThrow();
+            assertThat(hit.get("source_spans")).isEqualTo(JSON.readTree(row.get("spans").toString()));
+            assertThat(hit.get("context_refs")).isEqualTo(JSON.readTree(row.get("refs").toString()));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"wrong_text", "gap", "overlap", "manifest"})
+    void malformedChunkResponseCannotReplacePreviouslyPublishedIndex(String defect) throws Exception {
+        var document = uploaded();
+        long version = document.get("latest_draft").get("id").asLong();
+        worker.runOnce();
+        var previousText = jdbc.queryForObject("SELECT text FROM document_chunk WHERE document_version_id=?", String.class, version);
+        var previousAttempt = jdbc.queryForObject("SELECT attempt FROM document_index_manifest WHERE document_version_id=?", Integer.class, version);
+        jdbc.update("UPDATE document_processing SET attempt=attempt+1,status='PENDING',source_status='PENDING',index_status='PENDING',lease_token=null,lease_until=null WHERE document_version_id=?", version);
+        doAnswer(invocation -> {
+            Map<String, Object> input = invocation.getArgument(0);
+            String text = input.get("content").toString();
+            int lastLine = text.split("\n", -1).length - (text.endsWith("\n") ? 1 : 0);
+            var locator = locator(1, lastLine);
+            int length = text.codePointCount(0, text.length());
+            int start = defect.equals("wrong_text") ? 1 : 0;
+            int end = defect.equals("gap") ? length - 1 : length;
+            var span = Map.<String, Object>of("block_id", "invalid", "start_offset", start, "end_offset", end, "locator", locator);
+            var spans = defect.equals("overlap") ? List.of(span, span) : List.of(span);
+            String chunkText = defect.equals("gap") ? text.substring(0, text.length() - 1)
+                    : defect.equals("overlap") ? text + text : text;
+            var output = chunkResponse(input, List.of(chunk(input, "bad", 0, chunkText, chunkText, spans, locator)), List.of());
+            if (defect.equals("manifest")) {
+                @SuppressWarnings("unchecked") var result = (Map<String, Object>) output.get("result");
+                @SuppressWarnings("unchecked") var original = (Map<String, Object>) result.get("manifest");
+                var badManifest = new HashMap<>(original); badManifest.put("expected_chunk_keys", List.of("other"));
+                result.put("manifest", badManifest);
+            }
+            return output;
+        }).when(ai).documentChunks(anyMap());
+        worker.runOnce();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT index_status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("SELECT text FROM document_chunk WHERE document_version_id=?", String.class, version)).isEqualTo(previousText);
+        assertThat(jdbc.queryForObject("SELECT attempt FROM document_index_manifest WHERE document_version_id=?", Integer.class, version)).isEqualTo(previousAttempt);
+    }
+
+    @Test void embeddingRequestUsesEmbeddingTextAndKeepsContextReferences() throws Exception {
+        String heading = "# 제목\n", body = "본문\n";
+        String headingHash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(heading.getBytes(StandardCharsets.UTF_8)));
+        doAnswer(invocation -> {
+            Map<String, Object> input = invocation.getArgument(0);
+            int boundary = heading.codePointCount(0, heading.length());
+            var firstSpan = Map.<String, Object>of("block_id", "heading", "start_offset", 0,
+                    "end_offset", boundary, "locator", locator(1, 1));
+            var bodySpan = Map.<String, Object>of("block_id", "body", "start_offset", boundary,
+                    "end_offset", boundary + body.codePointCount(0, body.length()), "locator", locator(2, 2));
+            var ref = Map.<String, Object>of("block_id", "heading", "role", "heading", "locator", locator(1, 1),
+                    "text_hash", headingHash, "applied", false);
+            var bodyChunk = new HashMap<>(chunk(input, "body", 1, body, body, List.of(bodySpan), locator(2, 2)));
+            bodyChunk.put("context_refs", List.of(ref));
+            return chunkResponse(input, List.of(chunk(input, "heading", 0, heading, heading, List.of(firstSpan), locator(1, 1)), bodyChunk), List.of());
+        }).when(ai).documentChunks(anyMap());
+        var response = upload(UUID.randomUUID().toString(), (heading + body).getBytes(StandardCharsets.UTF_8), "REQUIREMENTS");
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        long version = JSON.readTree(response.body()).get("document").get("latest_draft").get("id").asLong();
+        worker.runOnce();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
+        verify(ai).documentEmbeddings(argThat(input -> "DOCUMENT".equals(input.get("purpose"))
+                && List.of(Map.of("key", "heading", "text", heading), Map.of("key", "body", "text", body)).equals(input.get("texts"))));
+        var stored = jdbc.queryForObject("SELECT context_refs::text FROM document_chunk WHERE document_version_id=? AND chunk_no=1", String.class, version);
+        assertThat(JSON.readTree(stored).get(0).get("text_hash").asText()).isEqualTo(headingHash);
+        assertThat(JSON.readTree(stored).get(0).get("applied").asBoolean()).isFalse();
+    }
+
+    @Test void indexesPlainTextUploadThroughThePlainTextChunkingContract() throws Exception {
+        // The upload policy keeps .txt; the chunking API reads it as plain text (plain-v1), never as Markdown.
+        var response = upload(UUID.randomUUID().toString(), "계획 메모 <user> 태그\n두 번째 줄\n".getBytes(StandardCharsets.UTF_8), "PLAN", "notes.txt");
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        long version = JSON.readTree(response.body()).get("document").get("latest_draft").get("id").asLong();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
+        verify(ai).documentChunks(argThat(input -> "text/plain".equals(input.get("media_type")) && "PLAN".equals(input.get("kind"))));
+        var markdown = uploaded();
+        assertThat(worker.runOnce()).isTrue();
+        verify(ai).documentChunks(argThat(input -> "text/markdown".equals(input.get("media_type"))
+                && markdown.get("latest_draft").get("id").asText().equals(input.get("document_version_id"))));
+    }
+
     @Test void failedEmbeddingHasNoPartialIndexAndRetryPreservesInput() throws Exception {
         var document = uploaded(); long id = document.get("id").asLong(), version = document.get("latest_draft").get("id").asLong();
         String path = "/api/projects/" + project + "/documents/" + id;
@@ -285,6 +501,12 @@ class DocumentApiIntegrationTest {
         var mismatch = send("GET", path, null, false);
         assertThat(mismatch.statusCode()).isEqualTo(409);
         assertThat(mismatch.body()).contains("index_not_ready");
+        jdbc.update("UPDATE document_index_manifest SET embedding_profile_id='test-profile' WHERE document_version_id=?", current);
+        jdbc.update("UPDATE document_processing SET attempt=attempt+1,status='PENDING',index_status='PENDING' WHERE document_version_id=?", current);
+        assertThat(send("GET", path, null, false).statusCode()).isEqualTo(409);
+        // Even if status is accidentally restored, an older manifest must not be served.
+        jdbc.update("UPDATE document_processing SET status='COMPLETED',index_status='READY' WHERE document_version_id=?", current);
+        assertThat(send("GET", path, null, false).statusCode()).isEqualTo(409);
     }
 
     @Test void rejectsMalformedTextAndOversizedMultipartWithoutPersistingAnything() throws Exception {
