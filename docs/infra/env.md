@@ -163,32 +163,45 @@ jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
 
 ```bash
 # 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 흘려보내 그 자리에서 검사
+HOST=beez               # 그 환경의 서버. ~/.ssh/config 의 Host 별칭
 ENV_NAME=dev            # 검사할 환경. 서버 env 파일 /opt/beez/.env.<ENV_NAME>
 SITE=dev.beez.ai.kr     # 그 환경의 Nginx 설정 /etc/nginx/sites-enabled/<SITE>.conf
 REF=dev                 # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
 
 # 1) 필수값이 다 있는가
 git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
-  ssh beez "docker compose -f - --env-file /opt/beez/.env.$ENV_NAME config --quiet && echo 'env ok'"
+  ssh "$HOST" "docker compose -f - --env-file /opt/beez/.env.$ENV_NAME config --quiet && echo 'env ok'"
 
-# 2) backend 포트가 Nginx 가 보내는 포트와 같은가
-ssh beez bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
+# 2) backend 포트가 비어 있고, Nginx 가 보내는 포트와 같은가
+ssh "$HOST" bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
 p=$(sed -n 's/^BACKEND_HOST_PORT=//p' "/opt/beez/.env.$1" | tail -n1 | tr -d '\r')   # 키가 두 번이면 compose 처럼 마지막 값
 conf=/etc/nginx/sites-enabled/$2.conf
 [ -r "$conf" ] || { echo "Nginx 설정 없음: $conf"; exit 1; }
 case $p in ''|*[!0-9]*) echo "port 값 없음·이상: '$p'"; exit 1 ;; esac
-grep -Eq "^[[:space:]]*server 127\.0\.0\.1:$p([[:space:]]|;)" "$conf" && echo "port ok ($p)" || echo "port 다름: env=$p"
+# 그 포트를 이미 누가 쓰면 지금 떠 있는 backend 여야 한다 (8080 이면 Jenkins 가 쓰고 있어 여기서 걸린다)
+if [ -n "$(ss -Hltn "sport = :$p")" ]; then
+  docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
+    --format '{{.Ports}}' | grep -q "127\.0\.0\.1:$p->" || { echo "port 충돌: 다른 프로그램이 $p 사용 중"; exit 1; }
+fi
+# upstream beez_backend 블록 안에서만 찾는다. 주석은 지운다
+sed 's/#.*//' "$conf" | awk '/upstream[[:space:]]+beez_backend[[:space:]]*[{]/{f=1;next} f&&/[}]/{exit} f' |
+  grep -Eq "^[[:space:]]*server 127\.0\.0\.1:$p([[:space:]]|;)" && echo "port ok ($p)" || echo "port 다름: env=$p"
 EOF
 ```
 
 - **`env ok` 는 값이 있는지만 봅니다.** 값이 맞는지(포트, `PUBLIC_ORIGIN` 형식, 비밀값이 DB 와 같은지)는 보지 않습니다.
-  그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다. 포트가 `8080` 이면 Jenkins 와 겹쳐 backend 가 뜨지 못하고,
-  Nginx 와 다르면 backend 는 떠도 Nginx 가 다른 포트로 보내 API 가 실패합니다. 둘 다 `port 다름` 으로 나옵니다.
+  그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다.
+  - `port 충돌`: 그 포트를 backend 가 아닌 프로그램이 이미 씁니다. `8080` 이면 Jenkins 와 겹쳐 backend 가 뜨지 못합니다.
+    Nginx 설정까지 같은 포트로 바꿔 둬도 여기서 걸립니다.
+  - `port 다름`: Nginx 의 `upstream beez_backend` 가 다른 포트로 보냅니다. backend 는 떠도 API 가 실패합니다.
+    같은 파일의 다른 upstream 은 보지 않습니다.
+
   배포(`deploy.sh`)는 컨테이너 안 healthcheck 만 보므로 포트가 어긋나도 성공으로 끝납니다. 값을 바꿨다면 이 점검을 꼭 돌립니다.
 - 2) 가 비교 전에 멈추면 다른 문구가 나옵니다. `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다.
   `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것인데, `ENV_NAME` 이 틀려도 이렇게 나옵니다
   (그때는 바로 위에 `No such file` 이 같이 나옵니다).
-- 다른 환경(운영 등)은 위 세 변수만 바꿉니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
+- 다른 환경(운영 등)은 위 네 변수를 바꿉니다. 운영 서버가 따로 있으면(S15P31A108-73) `HOST` 를 그 서버의 별칭으로 바꿉니다.
+  `ENV_NAME`·`SITE` 만 바꾸면 여전히 dev 서버를 검사합니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
   검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
 - 브랜치 이름이 틀리면 `fatal: invalid object name` 과 compose 오류가 같이 나옵니다(`env ok` 는 나오지 않음).
