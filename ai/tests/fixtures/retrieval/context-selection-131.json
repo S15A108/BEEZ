@@ -1,0 +1,112 @@
+{
+  "fixture_version": "context-selection-131-v1",
+  "description": "#130 가상 나래 문서의 인공 설계 후보와 검색 결과. 원문과 무관 후보를 구별하는 개발용 시나리오이며 실제 검색·모델 평가가 아니다.",
+  "label_author": "agent-authored; human review pending",
+  "document_paths": {
+    "301": "ai/evaluations/data/plan.md",
+    "202": "ai/evaluations/data/requirements.md",
+    "302": "ai/evaluations/data/api-spec.md",
+    "303": "ai/evaluations/data/data-design.md"
+  },
+  "snapshot": {
+    "project_id": "101",
+    "baseline_id": "401",
+    "document_version_ids": ["301", "202", "302", "303"],
+    "items": [
+      {"design_item_id": "1000", "design_item_version_id": "1100", "project_id": "101", "baseline_id": "401", "status": "APPROVED", "text": "최종 발행은 활성 프로젝트 리더만 수행한다."},
+      {"design_item_id": "1001", "design_item_version_id": "1101", "project_id": "101", "baseline_id": "401", "status": "APPROVED", "text": "단일 파일 업로드는 30 MB까지 허용하며 초과 시 413을 반환한다."},
+      {"design_item_id": "1002", "design_item_version_id": "1102", "project_id": "101", "baseline_id": "401", "status": "APPROVED", "text": "POST /api/projects/{projectId}/documents는 Markdown 원문을 등록한다."},
+      {"design_item_id": "1003", "design_item_version_id": "1103", "project_id": "101", "baseline_id": "401", "status": "APPROVED", "text": "GET /api/projects/{projectId}/documents는 목록을 조회한다."},
+      {"design_item_id": "1004", "design_item_version_id": "1104", "project_id": "101", "baseline_id": "401", "status": "APPROVED", "text": "documents.owner_id는 accounts.id를 참조하며 삭제 정책은 RESTRICT다."}
+    ],
+    "evidence": [
+      {"evidence_id": "e-plan", "document_version_id": "301", "project_id": "101", "baseline_id": "401", "text": "문서의 최종 발행은 활성 프로젝트 리더만 수행한다."},
+      {"evidence_id": "e-limit", "document_version_id": "202", "project_id": "101", "baseline_id": "401", "text": "단일 파일 업로드 한도는 30 MB이며, 초과하면 HTTP 413을 반환한다."},
+      {"evidence_id": "e-post", "document_version_id": "302", "project_id": "101", "baseline_id": "401", "text": "POST /api/projects/{projectId}/documents"},
+      {"evidence_id": "e-get", "document_version_id": "302", "project_id": "101", "baseline_id": "401", "text": "GET은 문서 목록을 조회하며 새 문서를 생성하지 않는다."},
+      {"evidence_id": "e-owner", "document_version_id": "303", "project_id": "101", "baseline_id": "401", "text": "documents.owner_id는 accounts.id를 참조하며 삭제 정책은 RESTRICT다."}
+    ],
+    "relations": [
+      {"from_design_item_id": "1002", "from_design_item_version_id": "1102", "to_design_item_id": "1001", "to_design_item_version_id": "1101", "relation": "DEPENDS_ON", "origin": "EXPLICIT", "status": "CONFIRMED"},
+      {"from_design_item_id": "1001", "from_design_item_version_id": "1101", "to_design_item_id": "1000", "to_design_item_version_id": "1100", "relation": "DEPENDS_ON", "origin": "EXPLICIT", "status": "CONFIRMED"},
+      {"from_design_item_id": "1002", "from_design_item_version_id": "1102", "to_design_item_id": "1004", "to_design_item_version_id": "1104", "relation": "DEPENDS_ON", "origin": "EXPLICIT", "status": "NEEDS_RECHECK"},
+      {"from_design_item_id": "1002", "from_design_item_version_id": "1102", "to_design_item_id": "1003", "to_design_item_version_id": "1103", "relation": "DEPENDS_ON", "origin": "AI_CANDIDATE", "status": "CONFIRMED"}
+    ],
+    "task_id": null,
+    "task_design_refs": [],
+    "search_status": "COMPLETE"
+  },
+  "scenarios": [
+    {
+      "id": "upload-create-one-hop",
+      "request": "Markdown 문서 업로드 생성 API를 구현해 주세요.",
+      "fake_proposal": {"design_item_version_ids": ["1102"], "evidence_ids": ["e-post", "e-limit"]},
+      "expected_design_items": [{"design_item_version_id": "1101", "reasons": ["DEPENDENCY"]}, {"design_item_version_id": "1102", "reasons": ["MATCHED"]}],
+      "expected_evidence_ids": ["e-post", "e-limit"],
+      "excluded_ids": ["1100", "1103", "1104", "e-get"],
+      "explanation": "GET은 메서드가 다르고 후보 관계 또는 재확인 필요 관계는 확정 의존이 아니다. 발행 권한은 2단계여서 제외한다."
+    },
+    {
+      "id": "task-plan-adds-current-reference",
+      "request": "문서 생성 시 업로드 크기 제한을 확인해 주세요.",
+      "task_id": "501",
+      "task_design_refs": [{"design_item_id": "1004", "design_item_version_id": "1104"}],
+      "fake_proposal": {"design_item_version_ids": ["1102"], "evidence_ids": ["e-post", "e-limit"]},
+      "expected_design_items": [{"design_item_version_id": "1101", "reasons": ["DEPENDENCY"]}, {"design_item_version_id": "1102", "reasons": ["MATCHED"]}, {"design_item_version_id": "1104", "reasons": ["TASK_PLAN"]}],
+      "expected_evidence_ids": ["e-post", "e-limit"],
+      "excluded_ids": ["1100", "1103", "e-get"],
+      "explanation": "현재 작업 계획이 명시 참조한 데이터 설계는 TASK_PLAN으로 포함하되 선택기 추론이나 확정 관계로 둔갑하지 않는다."
+    },
+    {
+      "id": "owner-reference",
+      "request": "documents.owner_id 참조와 삭제 정책을 구현해 주세요.",
+      "fake_proposal": {"design_item_version_ids": ["1104"], "evidence_ids": ["e-owner"]},
+      "expected_design_items": [{"design_item_version_id": "1104", "reasons": ["MATCHED"]}],
+      "expected_evidence_ids": ["e-owner"],
+      "excluded_ids": ["1100", "1101", "1102", "1103"],
+      "explanation": "외부 식별자나 이름이 비슷하다는 이유로 FK 또는 역방향 의존을 추정하지 않는다."
+    },
+    {
+      "id": "source-only-index-retry",
+      "request": "색인 실패 후 원문 보존 및 재시도 정책을 확인해 주세요.",
+      "fake_proposal": {"design_item_version_ids": [], "evidence_ids": ["e-retry"]},
+      "evidence_override": [{"evidence_id": "e-retry", "document_version_id": "202", "project_id": "101", "baseline_id": "401", "text": "색인 실패 시 원문 버전은 보존하고, 활성 프로젝트 멤버가 재시도할 수 있다."}],
+      "expected_design_items": [],
+      "expected_evidence_ids": ["e-retry"],
+      "excluded_ids": ["1100", "1101", "1102", "1103", "1104"],
+      "explanation": "원문 근거만 있을 때 설계 항목을 만들어 내지 않는다."
+    },
+    {
+      "id": "unknown-retention",
+      "request": "감사 로그 보관 기간은 며칠인가요?",
+      "fake_proposal": {"design_item_version_ids": [], "evidence_ids": []},
+      "expected_design_items": [],
+      "expected_evidence_ids": [],
+      "expected_unresolved": ["NO_MATCH"],
+      "explanation": "정상 검색 후 근거가 없으면 미확정이며 보관 기간 숫자를 추측하지 않는다."
+    },
+    {
+      "id": "index-not-ready",
+      "request": "문서 업로드 제한을 확인해 주세요.",
+      "search_status": "NOT_READY",
+      "expected_error": "context_not_ready",
+      "expect_provider_calls": 0,
+      "explanation": "색인 미준비는 근거 없음이 아니므로 성공 결과를 만들지 않는다."
+    },
+    {
+      "id": "retrieval-failed",
+      "request": "문서 업로드 제한을 확인해 주세요.",
+      "search_status": "FAILED",
+      "expected_error": "search_failed",
+      "expect_provider_calls": 0,
+      "explanation": "검색 실패는 정상 0건과 별도로 처리한다."
+    },
+    {
+      "id": "irrelevant-allowed-id-negative-example",
+      "request": "문서 업로드 API를 구현해 주세요.",
+      "fake_proposal": {"design_item_version_ids": ["1102", "1103"], "evidence_ids": ["e-post", "e-get"]},
+      "expected_irrelevant_ids": ["1103", "e-get"],
+      "explanation": "GET 목록 후보는 허용 집합 내 ID이므로 부분집합 검증을 통과하지만 생성 요청에는 무관하다. 이는 의도적 혼입 예시이며 셀렉터가 거부했다고 주장하지 않는다."
+    }
+  ]
+}

@@ -377,8 +377,96 @@ async def test_cancelled_token_validation_never_dispatches_a_provider_call():
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
         task.cancel()
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError) as exc:
             await task
+        assert exc.value.embedding_usage == ()
         assert provider.calls == []
     finally:
         released.set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_provider_preserves_previous_and_unknown_inflight_usage():
+    entered = asyncio.Event()
+
+    async def block_second(provider, response):
+        if len(provider.calls) == 2:
+            entered.set()
+            await asyncio.Event().wait()
+        return response
+
+    provider = Provider(block_second)
+    task = asyncio.create_task(
+        embed_texts(
+            texts("first", "second"),
+            profile(),
+            "req",
+            provider,
+            Counter(),
+            policy=EmbeddingPolicy(batch_size=1),
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as exc:
+        await task
+    usage = exc.value.embedding_usage
+    assert len(usage) == 2
+    assert usage[0].tokens_known and not usage[0].failed
+    assert usage[1].request_key == provider.calls[1][3]
+    assert usage[1].failed and not usage[1].tokens_known
+    assert usage[1].input_tokens is None and usage[1].output_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_external_timeout_preserves_usage_on_cancellation_cause():
+    entered = asyncio.Event()
+
+    async def stall(provider, response):
+        entered.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(
+        embed_texts(texts("input"), profile(), "req", Provider(stall), Counter())
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    with pytest.raises(TimeoutError) as exc:
+        await asyncio.wait_for(task, timeout=0.01)
+    assert isinstance(exc.value.__cause__, asyncio.CancelledError)
+    usage = exc.value.__cause__.embedding_usage
+    assert len(usage) == 1 and usage[0].failed and not usage[0].tokens_known
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_retry_wait_does_not_invent_an_extra_call():
+    entered = asyncio.Event()
+
+    async def fail(provider, response):
+        entered.set()
+        raise EmbeddingProviderError(
+            "rate_limited",
+            "busy",
+            retryable=True,
+            usage=response.usage.model_copy(update={"failed": True}),
+        )
+
+    provider = Provider(fail)
+    task = asyncio.create_task(
+        embed_texts(
+            texts("input"),
+            profile(),
+            "req",
+            provider,
+            Counter(),
+            policy=EmbeddingPolicy(max_attempts=2, retry_delay_seconds=5),
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as exc:
+        await task
+    assert len(provider.calls) == 1
+    assert len(exc.value.embedding_usage) == 1
+    assert exc.value.embedding_usage[0].failed
+    assert exc.value.embedding_usage[0].tokens_known

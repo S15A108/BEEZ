@@ -184,6 +184,10 @@ async def embed_texts(
         raise EmbeddingError(
             "embedding_timeout", "Token validation exhausted the total budget."
         ) from exc
+    except asyncio.CancelledError as exc:
+        # Token validation completes before any external provider call.
+        exc.embedding_usage = ()
+        raise
     usage: list[EmbeddingUsage] = []
     vectors = {}
     invocation_id = uuid4().hex
@@ -209,6 +213,13 @@ async def embed_texts(
                     "Provider response timed out.",
                     retryable=policy.retry_timeouts,
                 )
+            except asyncio.CancelledError as exc:
+                # The provider was entered but its outcome/tokens are unknown.
+                # Preserve previous batches and the interrupted call without
+                # changing cancellation into a completed response or a retry.
+                usage.append(_unknown_usage(call_key, profile.model, started))
+                exc.embedding_usage = tuple(usage)
+                raise
             except EmbeddingProviderError as exc:
                 if exc.usage is not None and exc.usage.request_key != call_key:
                     usage.append(_unknown_usage(call_key, profile.model, started))
@@ -261,7 +272,12 @@ async def embed_texts(
                     "Retry would exceed the total budget.",
                     tuple(usage),
                 ) from failure
-            await asyncio.sleep(policy.retry_delay_seconds)
+            try:
+                await asyncio.sleep(policy.retry_delay_seconds)
+            except asyncio.CancelledError as exc:
+                # The failed attempt was already recorded; no new call began.
+                exc.embedding_usage = tuple(usage)
+                raise
     return EmbeddingResult(
         profile=profile,
         purpose=purpose,
