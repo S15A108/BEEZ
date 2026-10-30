@@ -231,7 +231,10 @@ EOF
   compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
 - **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
   실패는 모두 exit 1 입니다.
-  `env 읽기 실패` 는 `ENV_NAME` 이 틀렸거나(바로 아래에 `couldn't find env file` 이 같이 나옴) docker 를 쓸 수 없는 것입니다.
+  `env 읽기 실패` 는 같이 나오는 compose 문구로 원인을 구분합니다. `couldn't find env file` 은 `ENV_NAME` 이 틀린 것,
+  `failed to read … line N: …`(예: `unterminated quoted value`) 은 env 파일 N번째 줄의 형식 오류,
+  `unknown flag: --environment` 는 서버 compose 가 이 옵션보다 오래된 것입니다(서버 v5.6.1·로컬 v5.2.0 에는 있음, 2026-10-30).
+  `docker: command not found` 는 서버에 docker 가 없는 것입니다.
   `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다.
   `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다. `Nginx 설정 읽기 실패` 는 켜진 사이트 중 읽을 수 없는
   파일(권한, 깨진 링크)이 있는 것입니다.
