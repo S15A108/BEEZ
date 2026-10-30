@@ -7994,7 +7994,7 @@ HTTP `200`.
 
 관련 요구사항: CHG-03, APR-02  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-198)
 
 #### 인증
 
@@ -8043,7 +8043,8 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 403 | `forbidden` | 사람 세션의 현재 팀장이 아님(일반 팀원·에이전트, 요청 처리 중 팀장 위임 포함) |
+| 403 | `request_origin_rejected` | 허용되지 않은 Origin |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `version_conflict` | 제안 변경 |
@@ -8060,7 +8061,10 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 #### 처리 규칙
 
-- 현재 LEADER가 검토 상태만 변경한다. 승인·발행은 별도 동작이다.
+- 사람 세션의 현재 LEADER만 검토 상태를 바꾼다. 승인·발행은 별도 동작이다.
+- `PROPOSED → IN_REVIEW`만 허용한다. 같은 리비전이 이미 `IN_REVIEW`이면 상태를 바꾸지 않고 성공으로 응답한다. 반려·발행·거둔 제안은 409 `invalid_transition`이다.
+- 검토 시작은 선택이다. 승인(A09)·반려(A10)는 `PROPOSED`와 `IN_REVIEW` 모두에서 할 수 있다(00-common Q23).
+- `Idempotency-Key`가 필요하다. 같은 키·같은 입력은 24시간 동안 기존 응답을 반환하고 다른 입력은 409 `idempotency_conflict`다(00-common 5절·Q12). 재요청도 현재 팀장 권한을 확인한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8236,7 +8240,7 @@ HTTP `200`.
 
 관련 요구사항: APR-01·02  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-198)
 
 #### 인증
 
@@ -8287,26 +8291,29 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
+| 403 | `forbidden` | 사람 세션의 현재 팀장이 아님(일반 팀원·에이전트, 요청 처리 중 팀장 위임 포함) |
+| 403 | `request_origin_rejected` | 허용되지 않은 Origin |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `version_conflict` | 경합 |
-| 409 | `invalid_transition` | 이미 처리 완료 |
+| 400 | `validation_failed` | 사유 공백·길이(1~10000자) 초과 등 필수 필드·타입·허용 값 오류 |
+| 409 | `version_conflict` | `expected_revision`·`expected_snapshot_hash`가 현재 제출본과 다름 |
+| 409 | `invalid_transition` | 이미 반려·발행·거둔 제안 |
 
 ```json
 {
   "error": {
     "code": "version_conflict",
-    "message": "경합"
+    "message": "제안 리비전이 변경되었습니다. 최신 내용을 조회해 주세요."
   }
 }
 ```
 
 #### 처리 규칙
 
-- 반려 사유와 검토 이력을 보존한다.
+- 사람 세션의 현재 LEADER만 반려할 수 있다. `PROPOSED`·`IN_REVIEW` 제안만 반려하며 검토 시작(A08)을 거치지 않아도 된다.
+- 반려 사유와 검토 이력을 보존한다. 결정 기록(`approval`, 리비전별 1건)과 제안 상태 변경은 한 트랜잭션에서 저장하며, 이 사유가 `rejection_reason`으로 A03·A04에 노출된다. 사유 앞뒤 공백은 제거한다.
+- `Idempotency-Key`가 필요하다. 같은 키·같은 입력은 24시간 동안 기존 응답을 반환하고 다른 입력은 409 `idempotency_conflict`다.
 - 반려 후에는 같은 제안의 CHG-A04로 새 제출 리비전을 만든다. 이전 내용·반려 사유·결정은 리비전별로 보존하며 덮어쓰지 않는다.
-- (#218 수정안 요청 · 195 미구현) requires_refresh=true 제안은 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채우고, 제안자는 CHG-A04로 최신 기준에 맞춰 재제출한다. 재제출하지 않기로 하면 CHG-A15로 반려된 제안을 거둘 수 있다.
+- (#218 수정안 요청) requires_refresh=true 제안도 반려는 항상 가능하며, 승인 대신 반려한다. 화면은 사유에 '기준이 바뀌어 반려'를 미리 채우고, 제안자는 CHG-A04로 최신 기준에 맞춰 재제출한다. 재제출하지 않기로 하면 CHG-A15로 반려된 제안을 거둘 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8322,7 +8329,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 관련 요구사항: APR-04, DOC-09  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-198)
 
 #### 인증
 
@@ -8389,7 +8396,8 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 실제로 발행된 제안에 연결된 승인자·시각·baseline을 조회한다.
+- 실제로 발행(`PUBLISHED`)된 제안에 연결된 승인자·시각·baseline을 조회한다. 발행되지 않았거나 반려·거둔 제안은 승인 이력이 없으므로 404 `not_found`다.
+- 반려 이력은 이 API가 아니라 CHG-A03 `/revisions`가 리비전별 결정으로 제공한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13206,7 +13214,7 @@ HTTP `204`.
 
 관련 요구사항: MON-01  
 담당: BE: 오서현 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 (S15P31A108-104), 알림·타임라인 이벤트는 별도 PR
 
 #### 인증
 
@@ -13277,6 +13285,9 @@ HTTP `200`.
 #### 처리 규칙
 
 - 필수 문서 상태와 현재 기준을 제공한다. 미승인 초안과 승인본을 구분한다.
+- (BE 구현, S15P31A108-104) `by_kind`는 PLAN·REQUIREMENTS·API_SPEC·ERD 네 종류를 이 순서로 문서가 없어도 0으로 모두 준다. 종류당 문서가 하나라 각 건수는 0 또는 1이다.
+- (BE 구현, S15P31A108-104) `approved_count`는 승인본(APPROVED 버전)이 있는 문서다. 최초 기준 발행 전에 DOC-A21로 승인한 문서도 센다. 기준 발행 뒤에는 승인본이 모두 기준에 들어가므로 기준에 든 문서 수와 같고, 기준 쪽 값은 `baseline`으로 본다. `approved_count`는 승인 여부이며 기준 반영 여부가 아니다. 기준 생성 가능 여부는 `GET /api/projects/{id}/onboarding`의 `required_documents[].index_ready`와 `baseline_published`로 본다. `draft_count`는 미승인 작업이 있는 문서다. 새로 올린 DRAFT 버전이 있거나 작성 건(DOC-A13)이 EDITING·SUBMITTED·REJECTED인 경우이며, 둘이 겹쳐도 한 번만 센다. 제출되어 승인을 기다리는 건도 여기에 포함하고 별도 필드를 두지 않는다.
+- (BE 구현, S15P31A108-104) 최초 기준 발행 전에는 `baseline`을 생략한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13292,7 +13303,7 @@ HTTP `200`.
 
 관련 요구사항: MON-02  
 담당: BE: 오서현 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 (S15P31A108-104), 알림·타임라인 이벤트는 별도 PR
 
 #### 인증
 
@@ -13362,6 +13373,8 @@ HTTP `200`.
 #### 처리 규칙
 
 - 문서 도메인 소유의 현황 조회다. 작업 통계와 합치는 중간 API를 만들지 않는다.
+- (BE 구현, S15P31A108-104) `by_status`는 PROPOSED·IN_REVIEW·APPROVED·REJECTED·PUBLISHED·WITHDRAWN 여섯 상태를 이 순서로 건수가 0이어도 모두 준다. 거둔(WITHDRAWN) 제안은 REJECTED에 합치지 않고 따로 센다.
+- (BE 구현, S15P31A108-104) `review_required_count`는 팀장 결정을 기다리는 PROPOSED와 IN_REVIEW의 합이다. 승인되어 발행을 기다리는 APPROVED는 포함하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

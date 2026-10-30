@@ -14,6 +14,9 @@ public final class ProposalDtos {
                         List<Item> items, List<DocumentChange> documents,
                         Integer expectedRevision, String expectedSnapshotHash, String previousProposalId) { }
     public record WithdrawRequest(Integer expectedRevision, String expectedSnapshotHash) { }
+    public record RejectRequest(String reason, Integer expectedRevision, String expectedSnapshotHash) { }
+    /** CHG-A11: the approval that produced the published baseline. */
+    public record ApprovalRecord(String id, String proposalId, String approvedBy, String approvedAt, String baselineId) { }
     public record ResolvedDocument(String documentId, String baseDocumentVersionId,
                                    String proposedDocumentVersionId, String afterContent, String contentHash) { }
     public record Snapshot(Input input, List<ResolvedDocument> documents, boolean legacy) { }
