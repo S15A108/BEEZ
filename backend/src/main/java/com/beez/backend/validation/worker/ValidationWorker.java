@@ -71,10 +71,9 @@ public class ValidationWorker {
         if (!properties.workerEnabled()) {
             return;
         }
+        // 한 번에 하나만 처리한다. 큐가 빌 때까지 돌면 AI 응답을 기다리는 동안 이 스레드를 오래 붙잡는다 (문서 워커와 같은 방식)
         try {
-            while (runOnce()) {
-                // 큐가 빌 때까지
-            }
+            runOnce();
         } catch (RuntimeException e) {
             log.error("검증 작업 처리 중 오류: {}", e.toString());
         }
@@ -174,7 +173,7 @@ public class ValidationWorker {
         request.put("validation_id", String.valueOf(v.id()));
         request.put("attempt", lease.attempt());
         request.put("plan_revision", toMap(TaskPlanRevisionResponse.from(plan, refs)));
-        request.put("approved_items", toList(designLookup.designItemVersions(versionIds)));
+        request.put("approved_items", withSources(toList(designLookup.designItemVersions(versionIds)), versionIds));
         request.put("related_plans", relatedPlans);
         request.put("rule_findings", ruleFindings);
         request.put("unresolved", List.of());          // 미확정 정책 목록은 원문 검색 연결(후속) 전까지 비어 있다
@@ -183,6 +182,29 @@ public class ValidationWorker {
         request.put("evidence", List.of());            // 원문 근거 검색 연결(후속) 전까지 비어 있다 — 명세가 허용
         request.put("execution_budget_ms", properties.executionBudgetMs());
         return request;
+    }
+
+    /**
+     * 승인 항목마다 원문 출처(source)를 붙인다. AI 후보의 sources 는 요청에 넣은 출처 안에서만 고를 수 있어서,
+     * 출처를 넣어야 AI 가 근거 위치를 댈 수 있다. 출처가 없는 항목은 source 를 넣지 않는다(명세상 선택).
+     */
+    private List<Map<String, Object>> withSources(List<Map<String, Object>> items, List<Long> versionIds) {
+        Map<String, Map<String, Object>> sourceByVersion = new LinkedHashMap<>();
+        for (Map<String, Object> row : validations.designSources(versionIds)) {
+            Map<String, Object> source = new LinkedHashMap<>();
+            source.put("document_id", String.valueOf(row.get("document_id")));
+            source.put("document_version_id", String.valueOf(row.get("document_version_id")));
+            source.put("version_no", ((Number) row.get("version_no")).intValue());
+            source.put("location", String.valueOf(row.get("location")));
+            sourceByVersion.put(String.valueOf(row.get("id")), source);
+        }
+        for (Map<String, Object> item : items) {
+            String versionId = String.valueOf(item.get("id"));
+            if (sourceByVersion.containsKey(versionId)) {
+                item.put("source", sourceByVersion.get(versionId));
+            }
+        }
+        return items;
     }
 
     @SuppressWarnings("unchecked")

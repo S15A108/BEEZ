@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -164,7 +165,13 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         }
         f.put("sources", List.of());
         f.put("evidence_ids", List.of());
+        f.put("suggested_action", "계획을 보완하세요");
         return f;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> result(Map<String, Object> response) {
+        return (Map<String, Object>) response.get("result");
     }
 
     // ---- 규칙만으로 끝나는 경우 (200) ----
@@ -242,6 +249,17 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
     }
 
     // ---- 의미 분석이 필요한 경우 (202 → 워커) ----
+
+    @Test
+    void accept_implementsOnly_isQueuedForDesignAlignment() throws Exception {
+        // 미연결 내용·관련 작업이 없어도 CHANGES·IMPLEMENTS 는 승인 설계와 대조한다 (버전만 맞는다고 PASS 하지 않는다)
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        JsonNode v = body(accept(t, member), 202);
+        assertThat(v.get("status").asText()).isEqualTo("RUNNING");
+        assertThat(column("validation", "summary", v.get("id").asLong()))
+                .contains("\"design-" + api.designItemId("API-01") + "\"").contains("DESIGN_ALIGNMENT")
+                .doesNotContain("plan-completeness");
+    }
 
     @Test
     void accept_withUnlinked_queuesSemanticAnalysis() throws Exception {
@@ -366,6 +384,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(f.get("kind").asText()).isEqualTo("ERROR");
         assertThat(f.get("severity").asText()).isEqualTo("BLOCKING");
         assertThat(f.get("resolution").asText()).isEqualTo("HUMAN_REVIEW");
+        // 모델은 돌았으니 사용량·검사 키·미검사 사유를 진단용으로 남긴다 (비용 기록에서 빠지지 않게)
+        assertThat(column("validation", "summary", id)).contains("llm-validate-x-attempt-1-call-1")
+                .contains("\"analysis_status\": \"PARTIAL\"").contains("EVIDENCE_INSUFFICIENT").contains("partial_findings");
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("ERROR");
         assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("FAILED");
         assertThat(column("validation_job", "lease_token", id(id, "validation_job"))).isNull();
@@ -386,6 +407,102 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(v.get("status").asText()).isEqualTo("ERROR");
         assertThat(v.get("error_code").asText()).isEqualTo("ai_invalid_output");
         assertThat(v.get("findings").get(0).get("resolution").asText()).isEqualTo("RETRY");
+        assertThat(column("validation", "summary", id)).contains("llm-validate-x-attempt-1-call-1");
+    }
+
+    @Test
+    void worker_malformedResponses_areInvalidOutput_notPass() throws Exception {
+        long item = api.designItemId("API-01");
+        long version = api.currentVersionId("API-01");
+        String design = "design-" + item;
+        List<Function<Map<String, Object>, Map<String, Object>>> broken = new ArrayList<>();
+        // ① findings 칸이 없음 — 빈 목록으로 보면 PASS 가 된다
+        broken.add(req -> {
+            Map<String, Object> r = aiResponse(req, List.of(), List.of());
+            result(r).remove("findings");
+            return r;
+        });
+        // ② findings 원소가 객체가 아님
+        broken.add(req -> {
+            Map<String, Object> r = aiResponse(req, List.of(), List.of());
+            result(r).put("findings", List.of("invalid finding"));
+            return r;
+        });
+        // ③ 200 인데 본문이 비어 있음
+        broken.add(req -> null);
+        // ④ 필수 정보 누락인데 BLOCKING 이 아님
+        broken.add(req -> aiResponse(req, List.of(candidate(design, "MISSING_INPUT", "WARNING", null, null)), List.of()));
+        // ⑤ 필수 정책 누락인데 BLOCKING 이 아님
+        broken.add(req -> aiResponse(req, List.of(candidate(design, "MISSING_POLICY", "INFO", null, null)), List.of()));
+        // ⑥ 요청에 넣지 않은 출처
+        broken.add(req -> {
+            Map<String, Object> f = candidate(design, "MISMATCH", "BLOCKING", String.valueOf(item), String.valueOf(version));
+            f.put("sources", List.of(Map.of("document_id", "999", "document_version_id", "999", "version_no", 1, "location", "어딘가")));
+            return aiResponse(req, List.of(f), List.of());
+        });
+        // ⑦ 요청에 없는 근거 키
+        broken.add(req -> {
+            Map<String, Object> f = candidate(design, "MISMATCH", "BLOCKING", String.valueOf(item), String.valueOf(version));
+            f.put("evidence_ids", List.of("evidence-x"));
+            return aiResponse(req, List.of(f), List.of());
+        });
+        // ⑧ unassessed 가 배열이 아님
+        broken.add(req -> {
+            Map<String, Object> r = aiResponse(req, List.of(), List.of());
+            result(r).put("unassessed", "none");
+            return r;
+        });
+        // ⑨ 후속 행동 제안이 없음
+        broken.add(req -> {
+            Map<String, Object> f = candidate(design, "MISMATCH", "INFO", String.valueOf(item), String.valueOf(version));
+            f.remove("suggested_action");
+            return aiResponse(req, List.of(f), List.of());
+        });
+
+        for (int i = 0; i < broken.size(); i++) {
+            Function<Map<String, Object>, Map<String, Object>> make = broken.get(i);
+            long[] t = createTask(planJson("B" + i, api.implementsRef("API-01"), true, null), member);
+            long id = body(accept(t, member), 202).get("id").asLong();
+            doAnswer(inv -> make.apply(inv.getArgument(0))).when(analyzer).analyze(any());
+            worker.runOnce();
+            JsonNode v = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
+            assertThat(v.get("status").asText()).as("경우 " + (i + 1)).isEqualTo("ERROR");
+            assertThat(v.get("error_code").asText()).as("경우 " + (i + 1)).isEqualTo("ai_invalid_output");
+            assertThat(column("validation_run", "status", id(id, "validation_run"))).as("경우 " + (i + 1)).isEqualTo("ERROR");
+        }
+    }
+
+    @Test
+    void worker_aiStaleRef_isRecheckedAgainstCurrentBaseline() throws Exception {
+        long item = api.designItemId("API-01");
+        long version = api.currentVersionId("API-01");
+        Map<String, Object> stale = candidate("design-" + item, "STALE_REF", "BLOCKING", String.valueOf(item), String.valueOf(version));
+
+        // ① 다시 대조해 보니 아직 최신 → 추론만으로 낡았다고 확정하지 않고 사람 검토
+        long[] t1 = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long v1 = body(accept(t1, member), 202).get("id").asLong();
+        doAnswer(inv -> aiResponse(inv.getArgument(0), List.of(stale), List.of())).when(analyzer).analyze(any());
+        worker.runOnce();
+        JsonNode r1 = body(api.get("/api/projects/" + projectId + "/validations/" + v1, member), 200);
+        assertThat(r1.get("status").asText()).isEqualTo("NEEDS_REVIEW");
+        assertThat(r1.get("findings")).hasSize(1);
+        assertThat(r1.get("findings").get(0).get("resolution").asText()).isEqualTo("HUMAN_REVIEW");
+
+        // ② AI 가 도는 사이 기준이 바뀌어 정말 낡음 → 규칙 판정과 같이 보완 필요(NEEDS_INPUT)
+        long[] t2 = createTask(planJson("B", api.implementsRef("API-01"), true, null), member);
+        long v2 = body(accept(t2, member), 202).get("id").asLong();
+        doAnswer(inv -> {
+            api.publish(2, Map.of("API-01", api.newVersion("API-01", 2), "API-02", api.currentVersionId("API-02")));
+            return aiResponse(inv.getArgument(0), List.of(stale), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+        JsonNode r2 = body(api.get("/api/projects/" + projectId + "/validations/" + v2, member), 200);
+        assertThat(r2.get("status").asText()).isEqualTo("NEEDS_INPUT");
+        List<String> sources = new ArrayList<>();
+        for (JsonNode f : r2.get("findings")) {
+            sources.add(f.get("source").asText() + ":" + f.get("kind").asText() + ":" + f.get("resolution").asText());
+        }
+        assertThat(sources).containsExactlyInAnyOrder("RULE:STALE_REF:FIX_PLAN", "MODEL:STALE_REF:FIX_PLAN");
     }
 
     @Test

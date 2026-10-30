@@ -21,8 +21,9 @@ import org.springframework.stereotype.Component;
  *   <li>NEEDS_INPUT — 모르는 항목·버전(현재 기준에 없음), CHANGES 없음 + no_contract_change=false + unlinked 비어 있음,
  *       no_contract_change=true 인데 CHANGES 참조 있음. 계획 필수 칸은 등록 때 이미 검사한다</li>
  *   <li>NEEDS_REVIEW — 같은 항목을 CHANGES 하는 IN_PROGRESS·WAITING 작업이 있음 (CHANGES 점유 충돌)</li>
- *   <li>의미 분석 필요 — unlinked 가 있거나 관련 열린 작업이 있음 → 검사 목록(checks)을 만들어 RUNNING</li>
- *   <li>그 밖에는 PASS</li>
+ *   <li>의미 분석 필요 — unlinked 가 있거나, CHANGES·IMPLEMENTS 참조가 있거나(승인 설계와 대조), 관련 열린 작업이 있음
+ *       → 검사 목록(checks)을 만들어 RUNNING</li>
+ *   <li>그 밖에는(READS 만 참조하고 unlinked·관련 작업이 없음) PASS</li>
  * </ul>
  * "구조화된 계약의 명확한 불일치"(CHANGES 의 proposed_content 와 승인 내용 비교)는 kind 별 content 스키마가 Q01 에서 정해진
  * 뒤에 넣는다 — 지금은 의미 분석(DESIGN_ALIGNMENT)에 맡긴다.
@@ -110,7 +111,7 @@ public class ValidationRules {
             return new RuleOutcome("NEEDS_REVIEW", findings, List.of());
         }
 
-        // 4) 의미 분석이 필요한가: 미연결 내용이 있거나 같은 항목을 보는 열린 작업이 있을 때
+        // 4) 의미 분석이 필요한가: 미연결 내용·바꾸거나 구현하는 설계 항목·같은 항목을 보는 열린 작업 중 하나라도 있을 때
         List<Map<String, Object>> checks = checks(plan, refs, relatedOpen, unlinkedEmpty);
         if (checks.isEmpty()) {
             return new RuleOutcome("PASS", findings, List.of());
@@ -121,6 +122,8 @@ public class ValidationRules {
     /**
      * 검사 목록 (명세 ValidationCheck). 요청 안에서 키가 유일하다.
      * 계획 완결성 1개(unlinked 가 있을 때) + CHANGES·IMPLEMENTS 항목마다 설계 정합성 1개 + 관련 열린 작업마다 충돌 1개.
+     * 설계 정합성은 관련 작업 유무와 상관없이 넣는다 — 구조화 계약 비교(Q01)가 아직 없어, 빼면 내용이 승인 설계와 달라도
+     * 버전만 맞으면 PASS 가 된다. 목록이 비면(READS 만, unlinked·관련 작업 없음) 의미 분석 없이 PASS.
      */
     private List<Map<String, Object>> checks(TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
                                              List<Map<String, Object>> relatedOpen, boolean unlinkedEmpty) {
@@ -141,10 +144,6 @@ public class ValidationRules {
         for (Map.Entry<Long, Long> e : relatedPlans.entrySet()) {
             checks.add(check("related-task-" + e.getKey(), "RELATED_PLAN_CONFLICT", List.of(),
                     List.of(String.valueOf(e.getValue()))));
-        }
-        // 미연결 내용도 관련 작업도 없고 CHANGES·IMPLEMENTS 만 있으면 의미 분석 없이 PASS (판정표 "AI 분석이 불필요")
-        if (unlinkedEmpty && relatedPlans.isEmpty()) {
-            return List.of();
         }
         return checks;
     }

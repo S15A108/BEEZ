@@ -33,6 +33,13 @@ spring:
       max-file-size: 1MB
       max-request-size: 2MB
 
+  # @Scheduled 워커(문서 색인·원본 정리·검증)가 기본 스레드 1개를 같이 쓰면, 검증 워커가 AI 응답을 기다리는 동안
+  # 문서 색인이 멈춘다. 워커마다 스레드를 하나씩 쓰게 한다.
+  task:
+    scheduling:
+      pool:
+        size: ${SCHEDULING_POOL_SIZE:3}
+
   docker:
     compose:
       file: compose.yaml

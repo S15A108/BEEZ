@@ -119,6 +119,25 @@ public class ValidationRepository {
                 .param("v", validationId).query().listOfRows();
     }
 
+    /**
+     * 승인 항목 버전의 원문 출처 (명세 Source: document_id·document_version_id·version_no·location). 출처가 없는 버전은 행이 없다.
+     * 행: id(항목 버전), document_id, document_version_id, version_no, location
+     * location 은 원문 위치(source_locator)의 location 값, 없으면 위치 JSON 문자열 그대로 (설계 항목 조회와 같은 규칙)
+     */
+    public List<Map<String, Object>> designSources(List<Long> versionIds) {
+        if (versionIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                        select v.id, dv.document_id, v.source_document_version_id as document_version_id, dv.version_no,
+                               coalesce(v.source_locator ->> 'location', v.source_locator::text, '') as location
+                          from design_item_version v
+                          join document_version dv on dv.id = v.source_document_version_id
+                         where v.id in (:v)
+                        """)
+                .param("v", versionIds).query().listOfRows();
+    }
+
     public List<Map<String, Object>> taskRefs(long validationId) {
         return jdbc.sql("""
                         select related_task_id, related_plan_revision_id from validation_task_ref
