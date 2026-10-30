@@ -15,6 +15,7 @@ import com.beez.backend.designitem.dto.BaselineItemRefResponse;
 import com.beez.backend.designitem.dto.InitialBaselineResponse;
 import com.beez.backend.designitem.dto.PublishInitialBaselineRequest;
 import com.beez.backend.designitem.repository.BaselineRepository;
+import com.beez.backend.designitem.repository.PublicationOutboxRepository;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.validation.DesignContentValidator;
 import com.beez.backend.document.config.DocumentProperties;
@@ -22,6 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class BaselinePublishService {
     private final BaselineRepository baselines;
+    private final PublicationOutboxRepository outbox;
+    private final boolean legacyOutboxPocEnabled;
     private final DesignProjectRepository projects;
     private final DesignProjectLock locks;
     private final DesignCommandService commands;
@@ -37,10 +41,13 @@ public class BaselinePublishService {
     private final DesignContentValidator content;
     private final DocumentProperties properties;
 
-    public BaselinePublishService(BaselineRepository baselines, DesignProjectRepository projects, DesignProjectLock locks, DesignCommandService commands,
+    public BaselinePublishService(BaselineRepository baselines, PublicationOutboxRepository outbox, DesignProjectRepository projects, DesignProjectLock locks, DesignCommandService commands,
                                    DesignSnapshotService snapshots, DesignItemCommandService items,
-                                   DesignContentValidator content, DocumentProperties properties) {
+                                   DesignContentValidator content, DocumentProperties properties,
+                                   @Value("${beez.cdc.legacy-outbox-poc-enabled:false}") boolean legacyOutboxPocEnabled) {
         this.baselines = baselines;
+        this.outbox = outbox;
+        this.legacyOutboxPocEnabled = legacyOutboxPocEnabled;
         this.projects = projects;
         this.locks = locks;
         this.commands = commands;
@@ -118,6 +125,8 @@ public class BaselinePublishService {
                 documents.stream().map(r -> new BaselineDocumentRefResponse(r.get("document_id").toString(), r.get("id").toString())).toList(),
                 drafts.stream().map(r -> new BaselineItemRefResponse(r.get("design_item_id").toString(), r.get("id").toString())).toList(),
                 caller.accountId().toString(), time(baseline.get("published_at")));
+        // Legacy outbox is retained only for isolated PoC reproducibility; #197 owns the intake.
+        if (legacyOutboxPocEnabled) outbox.insertInitialPublication(project, baselineId);
         commands.save(project, caller.accountId(), "initial-baseline", key, command, result);
         return result;
     }

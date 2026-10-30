@@ -33,7 +33,7 @@ public class ProposalRepository {
 
     public Map<String, Object> proposal(long project, long proposal) {
         return one("""
-                SELECT c.*,p.current_baseline_id,r.snapshot_hash,r.snapshot::text AS snapshot,r.submitted_token_id,
+                SELECT c.*,p.current_baseline_id,r.snapshot_hash,r.snapshot::text AS snapshot,r.submitted_by,r.submitted_token_id,
                        a.reason AS rejection_reason
                 FROM change_proposal c JOIN project p ON p.id=c.project_id
                 JOIN change_proposal_revision r ON r.change_proposal_id=c.id AND r.revision_no=c.revision_no
@@ -170,6 +170,39 @@ public class ProposalRepository {
                 UPDATE change_proposal SET status='WITHDRAWN',withdrawn_by=:account,withdrawn_at=clock_timestamp(),
                   lock_version=lock_version+1,updated_at=clock_timestamp() WHERE id=:proposal AND project_id=:project
                 """).param("project", project).param("proposal", proposal).param("account", account).update();
+    }
+
+    public void startReview(long project, long proposal) {
+        jdbc.sql("""
+                UPDATE change_proposal SET status='IN_REVIEW',lock_version=lock_version+1,updated_at=clock_timestamp()
+                WHERE id=:proposal AND project_id=:project
+                """).param("project", project).param("proposal", proposal).update();
+    }
+
+    /** The REJECTED approval row is what CHG-A03/A04 read as the rejection reason, so it commits with the status. */
+    public void reject(long project, long proposal, int revision, long baseline, long account, String reason) {
+        jdbc.sql("""
+                INSERT INTO approval(change_proposal_id,proposal_revision_no,decided_by,decision,reason,base_baseline_id)
+                VALUES(:proposal,:revision,:account,'REJECTED',:reason,:baseline)
+                """).param("proposal", proposal).param("revision", revision).param("account", account)
+                .param("reason", reason).param("baseline", baseline).update();
+        jdbc.sql("""
+                UPDATE change_proposal SET status='REJECTED',lock_version=lock_version+1,updated_at=clock_timestamp()
+                WHERE id=:proposal AND project_id=:project
+                """).param("project", project).param("proposal", proposal).update();
+    }
+
+    /** The approval behind the published baseline of a PUBLISHED proposal; empty for anything else. */
+    public Optional<ApprovalRecord> publishedApproval(long project, long proposal) {
+        return jdbc.sql("""
+                SELECT a.id,a.change_proposal_id,a.decided_by,a.decided_at,a.result_baseline_id
+                FROM approval a JOIN change_proposal c ON c.id=a.change_proposal_id AND a.proposal_revision_no=c.revision_no
+                WHERE c.id=:proposal AND c.project_id=:project AND c.status='PUBLISHED' AND a.decision='APPROVED'
+                  AND a.result_baseline_id IS NOT NULL
+                """).param("project", project).param("proposal", proposal)
+                .query((rs, n) -> new ApprovalRecord(rs.getString("id"), rs.getString("change_proposal_id"),
+                        rs.getString("decided_by"), rs.getTimestamp("decided_at").toInstant().toString(),
+                        rs.getString("result_baseline_id"))).optional();
     }
 
     public void advance(long proposal, Input input) {

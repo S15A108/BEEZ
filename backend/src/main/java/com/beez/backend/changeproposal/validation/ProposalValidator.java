@@ -10,6 +10,11 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class ProposalValidator {
+    public void validate(com.beez.backend.changeproposal.dto.PublicationDtos.ApproveRequest input) {
+        if (input == null) throw invalid("승인 요청 본문이 필요합니다.");
+        requiredId(input.expectedBaseBaselineId(), "expected_base_baseline_id");
+        validate(new WithdrawRequest(input.expectedRevision(), input.expectedSnapshotHash()));
+    }
     public void validate(Input input, boolean update) {
         if (input == null) throw invalid("변경 제안 본문이 필요합니다.");
         requiredId(input.baseBaselineId(), "base_baseline_id");
@@ -68,6 +73,11 @@ public class ProposalValidator {
         if (input == null || input.expectedRevision() == null || input.expectedRevision() < 1
                 || input.expectedSnapshotHash() == null || !input.expectedSnapshotHash().matches("sha256:[0-9a-f]{64}"))
             throw invalid("조회한 expected_revision과 expected_snapshot_hash가 필요합니다.");
+    }
+    public void validate(RejectRequest input) {
+        if (input == null) throw invalid("반려 요청 본문이 필요합니다.");
+        text(input.reason(), "반려 사유", 10000);
+        validate(new WithdrawRequest(input.expectedRevision(), input.expectedSnapshotHash()));
     }
     public static void documentText(String text) {
         if (text == null || text.isBlank() || text.codePointCount(0, text.length()) > 100_000

@@ -59,6 +59,7 @@ public class TaskStateService {
     private final TaskQueryService query;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
+    private final ValidationStatusLookup validations;
     private final Clock clock;
 
     /** 보고가 끊겼다고 보는 시간. 값은 미결(04-task-lifecycle.md §6) — 기본 30분, 설정 beez.task.stalled-after 로 바꾼다 */
@@ -67,6 +68,7 @@ public class TaskStateService {
     public TaskStateService(TaskRepository tasks, TaskCompletionReportRepository reports, ProjectAccessChecker access,
                             ProjectDesignLookup designLookup, TaskTransitionPolicy policy, StartGate startGate,
                             TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc,
+                            ValidationStatusLookup validations,
                             @Value("${beez.task.stalled-after:PT30M}") Duration stalledAfter) {
         this.tasks = tasks;
         this.reports = reports;
@@ -77,6 +79,7 @@ public class TaskStateService {
         this.query = query;
         this.events = events;
         this.jdbc = jdbc;
+        this.validations = validations;
         this.clock = Clock.systemUTC();
         this.stalledAfter = stalledAfter;
     }
@@ -275,29 +278,11 @@ public class TaskStateService {
 
     /**
      * CANCEL: 큐 취소·점유 해제·늦은 결과 차단 (명세 TSK-A07).
-     * - 진행 중인 검증 job 은 CANCELLED
-     * - 끝나지 않았거나 쓸 수 있던 검증은 STALE(TASK_CANCELLED). RUNNING 도 STALE 로 바꾸면 워커의 결과 반영
-     *   (WHERE status='RUNNING') 이 0 행이 되어 늦은 결과가 자연히 버려진다 (D6 fencing)
+     * 진행 중인 검증 job 은 CANCELLED, 끝나지 않았거나 쓸 수 있던 검증은 trigger 와 관계없이 STALE(TASK_CANCELLED)
+     * ({@link ValidationStatusLookup#invalidateAllForTask}). 담당자 인계는 DELTA 를 뺀 검증만 무효화한다 — 같은 SQL 을 거기서 함께 쓴다.
      */
     private void cancel(Task task, Instant now) {
-        jdbc.sql("""
-                        update validation_job j
-                           set status = 'CANCELLED', lease_token = null, lease_until = null, updated_at = now()
-                          from validation v
-                         where j.validation_id = v.id
-                           and v.task_id = :taskId
-                           and j.status in ('QUEUED', 'LEASED')
-                        """)
-                .param("taskId", task.getId())
-                .update();
-        jdbc.sql("""
-                        update validation
-                           set status = 'STALE', stale_reason = 'TASK_CANCELLED', updated_at = now()
-                         where task_id = :taskId
-                           and status in ('NOT_RUN', 'RUNNING', 'PASS', 'NEEDS_INPUT', 'NEEDS_REVIEW')
-                        """)
-                .param("taskId", task.getId())
-                .update();
+        validations.invalidateAllForTask(task.getId(), "TASK_CANCELLED");
         task.cancel(now);
     }
 

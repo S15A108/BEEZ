@@ -120,7 +120,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
-- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A08 검토 시작·CHG-A09 승인·발행·CHG-A10 반려·CHG-A12 의견 등록(Idempotency-Key 선택, 있을 때만)·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다. CHG-A09는 다른 키·보존기간 경과 후에도 기준·리비전·해시가 같으면 기존 발행 baseline을 반환하며 새 발행을 만들지 않는다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
 - 작업 변경은 expected_revision_no/expected_lock_version, 제안 재제출·후속 심사 계약은 expected_revision/expected_snapshot_hash, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
@@ -151,7 +151,9 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 최초 발행 이후 변경 제안 승인 시 제안의 base_baseline_id와 현재 baseline 전체가 같아야 한다. 달라지면(requires_refresh) 409 baseline_conflict다. 수정안 요청: 제출한 제안은 잠겨 있으므로 팀장은 승인하지 못하고 '기준이 바뀌어 반려'(CHG-A10)하며, 제안자는 반려 뒤 CHG-A04로 최신 기준에 맞춰 재제출하거나 CHG-A15로 거둔다.
 
-변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 성공 커밋 뒤 알림·활동은 중복 식별값으로 처리한다. 이벤트 전달 실패는 이미 완료한 발행을 다시 생성하는 이유가 아니다. D7·전달 유실 방지 세부는 Q03이다.
+변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 알림·활동도 같은 트랜잭션에서 저장하고, 같은 중복 식별값은 건너뛴다([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)). D7 세부는 Q03이다.
+
+199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 현재 163 검증 영향과 197 분석 접수의 기본 구현은 no-op + WARN이며, 실제 STALE·WAITING 반영과 PENDING 접수행 저장은 아직 연결되지 않았다. 승인 게이트와 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
 
 ### 검증·시작
 
@@ -243,12 +245,12 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 
 ### 공통 서비스 데이터
 
-아래는 도메인 서비스 간 전달 계약이다. 별도 공개 REST endpoint나 메시지 브로커를 의미하지 않는다.
+아래는 도메인 서비스 간 전달 계약이다. 별도 공개 REST endpoint나 메시지 브로커를 의미하지 않는다. 활동 이벤트·알림 요청의 입구·키 규칙·유형은 [알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)을 따른다.
 
 | 전달 정보 | 필수 필드 | 선택·조건 |
 | --- | --- | --- |
-| 활동 이벤트 | event_key, project_id, actor_type, type, target_type, target_id, occurred_at | 사람·에이전트 행위에는 actor_account_id 필수. 시스템 행위자는 actor_type=BEE 등으로 식별하고 계정 ID 생략 |
-| 알림 요청 | notification_key, project_id, recipient_account_id, type, title, body, target_type, target_id | 개인별 읽음 시각은 알림 서비스에서 관리 |
+| 활동 이벤트 | event_key, project_id, type, target_type, target_id | 행위자(actor_type·actor_account_id·agent_session_id)와 발생 시각은 공통 모듈이 CallerContext·저장 시각으로 채운다. 비비·시스템 행위는 actor_type=BEE·SYSTEM, 계정 ID 없음 |
+| 알림 요청 | notification_key, project_id, recipient_account_id, type, title, body, target_type, target_id | target_type=DOCUMENT_VERSION이면 document_id 필수. 개인별 읽음 시각은 알림 서비스에서 관리 |
 | LLM 호출 사용량 | request_key, feature, project_id, model, failed, latency_ms, tokens_known, caller | task_id, validation_id, attempt, input_tokens, output_tokens, estimated_cost_amount, currency. caller는 AGENT·WEB이고 AGENT면 agent_session_id 필수 |
 | 검증 실행 기록 | validation_id, plan_revision_id, attempt, analyzer_version, latency_ms, cache_hit | usage_request_keys, error_code |
 
@@ -381,6 +383,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A11 비비 회의 정리](01-backend-rest.md#mtg-a11) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | 박상은(제안 문안) | 오서현 |
+| [MTG-A14 회의 참여자 제외](01-backend-rest.md#mtg-a14) | DELETE `/api/projects/{id}/meetings/{meeting_id}/participants/{member_id}` | LEADER (회의 참여자. 수정안 요청) | 오서현 | — | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
@@ -447,7 +450,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- | --- |
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
-| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 커밋 후 이벤트 유실 방지, 완료 delta(6절·TSK-A07에 반영, 팀 확인) |
+| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 실제 163/197·승인 게이트·알림 연결은 TODO. 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 남은 것: 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
@@ -456,7 +459,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
-| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10·CHG-A01/04/15는 §5의 24시간·design_http_command 범위 한정 결정 적용 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10·CHG-A01/04/08/09/10/12/15는 §5의 24시간·design_http_command 범위 한정 결정 적용. invalid_transition 의 HTTP 상태는 도메인별로 다르다(변경 제안은 현재 상태 때문에 막히면 409, 작업·관계는 400 을 쓰는 곳이 있다). 400/409 통일은 별도 이슈로 정한다 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부(수정안 기본안: 창을 연 동안만), '근거가 틀려요' 피드백 활용, 자주 묻는 질문 칩의 출처 |
 | Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
@@ -467,7 +470,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q20 | 같은 종류 문서 여러 개 | 오서현·박상은 | DOC-A01 확정 정책은 종류마다 문서 1개다. 수정안 예시('알림 API 명세서'를 두 번째 API 명세서로 등록)는 복수 등록이 필요하다. 허용하면 필수 4종 충족은 '그 종류에 승인 문서가 하나 이상'으로 판정한다 |
 | Q21 | 대시보드 비용·집계 | 변준성·전진 | 비용을 팀장만 볼지(지금 MEMBER), 에이전트를 토큰별로 셀지 팀원별로 묶을지, 프로젝트 전체 관계 그래프가 필요한지 |
 | Q22 | 화면 상태 저장 | 전진·변준성·박민용 | 가이드 표시 상태는 브라우저 저장으로 정함(서버 저장은 8절 확장 후보). 시작 가이드 종료 조건(팀장 = 발행+초대, 팀원 = 에이전트 연결+첫 계획), 팀장을 넘겨받은 사람에게 가이드를 다시 띄울지, 기준 발행 전 팀원이 할 수 있는 일, 도시 부지 번호를 멤버십별로 서버에 둘지와 부지 상한 |
-| Q23 | 변경 제안 검토 시작 | 오서현 | 승인 전에 IN_REVIEW(CHG-A08)를 꼭 거칠지, 팀장이 제안을 열면 자동으로 할지(기본안: 자동) |
+| Q23 | 변경 제안 검토 시작 | 오서현 | 정함(2026-10-29): CHG-A08은 선택이다. 승인·반려는 PROPOSED와 IN_REVIEW 모두에서 할 수 있고, A08은 팀장이 검토를 시작했음을 표시하는 용도다 |
 | Q24 | 회의에서 나온 변경 제안의 제안자 | 오서현·박상은 | 정함(2026-10-29): 회의 끝내기(MTG-A13)로 만든 제안의 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다. actor_type에 BEE를 더하지 않는다 |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
@@ -1014,9 +1017,11 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 의견 ID |
 | `proposal_id` | `ID` | Y | 제안 |
+| `revision` | `integer` | Y | 의견을 쓸 때 제안의 제출 리비전 번호 |
 | `author_account_id` | `ID` | Y | 작성 계정 |
 | `kind` | `COMMENT\|REVIEW_REQUEST` | Y | 의견 종류 |
 | `body` | `string` | Y | 의견 본문 |
+| `mentioned_member_ids` | `ID[]` | Y | 지정한 멤버. 없으면 빈 배열 |
 | `created_at` | `Time` | Y | 작성 시각 |
 
 <a id="schema-explicitimpact"></a>
@@ -1365,7 +1370,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 참여 멤버 |
-| `status` | `INVITED\|JOINED\|DECLINED` | Y | 참여 상태. DB `meeting_participant.status`와 같은 값이다(예전 명세의 ACCEPTED를 JOINED로 바꿈). 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람은 JOINED로 만든다. 수정안 요청 |
+| `status` | `INVITED\|JOINED\|DECLINED` | Y | 참여 상태. DB `meeting_participant.status`와 같은 값이다(예전 명세의 ACCEPTED를 JOINED로 바꿈). 비비가 부른 사람과 관련자 추가(MTG-A04)로 들어온 사람은 JOINED로 만든다. 팀장이 뺀(MTG-A14) 사람은 참여 행을 지워 목록에 나오지 않는다(새 상태 값 없음). 수정안 요청 |
 | `role` | `LEADER\|TASK_OWNER\|DOMAIN_OWNER` | N | 비비가 부른 이유. 화면 예: '팀장 · TASK-001', 'TASK-002', '화면 문구'(담당 영역). 관련자 추가로 들어온 사람은 생략. 수정안 요청 |
 | `added_by_member_id` | `ID` | N | 관련자 추가(MTG-A04)로 이 사람을 부른 멤버. 화면 예: '이팀장이 추가'. 비비가 부른 사람은 생략. 수정안 요청 |
 
@@ -1478,6 +1483,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `task_id` | `ID` | N | 대상 작업 |
 | `change_proposal_id` | `ID` | N | 대상 제안 |
 | `baseline_id` | `ID` | N | 대상 기준 |
+| `target_type` | `string` | Y | 주 대상 종류([공통 계약](../design/10-notification-activity-contract.md) 4절). 수정안 요청 |
+| `target_id` | `ID` | Y | 주 대상. 수정안 요청 |
 | `result` | `string` | Y | 결과 |
 | `created_at` | `Time` | Y | 발생 시각 |
 
@@ -1746,8 +1753,8 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `kind` | `PLAN\|ERD\|REQUIREMENTS\|API_SPEC` | Y | 문서 종류 |
-| `draft_count` | `integer` | Y | 미승인 초안 수 |
-| `approved_count` | `integer` | Y | 현재 승인 문서 수 |
+| `draft_count` | `integer` | Y | 미승인 초안 수. 새 DRAFT 버전이 있거나 작성 건이 EDITING·SUBMITTED·REJECTED인 문서 수 |
+| `approved_count` | `integer` | Y | 승인본(APPROVED 버전)이 있는 문서 수. 기준 반영 여부와 무관하며, 기준 전 승인도 센다 |
 
 <a id="schema-statecount"></a>
 

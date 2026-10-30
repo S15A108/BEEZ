@@ -65,6 +65,21 @@ public interface AgentTokenRepository extends JpaRepository<AgentToken, Long> {
     int revokeAllInProject(@Param("projectId") long projectId, @Param("now") Instant now);
 
     /**
+     * 팀원 제외·나가기와 같은 트랜잭션에서 그 사람이 이 프로젝트에 발급한 토큰을 모두 폐기한다 (-172 합의 4, MEM-A09·A10).
+     * 호출하는 쪽이 멤버십 행을 잠근 뒤 부른다 — 발급(AGT-A01)도 같은 행을 잠그므로 폐기 뒤에 새 토큰이 남지 않는다.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            update AgentToken t
+               set t.revokedAt = :now, t.updatedAt = :now
+             where t.projectId = :projectId
+               and t.accountId = :accountId
+               and t.revokedAt is null
+            """)
+    int revokeAllOfMember(@Param("projectId") long projectId, @Param("accountId") long accountId,
+                          @Param("now") Instant now);
+
+    /**
      * 마지막 사용 시각. 매 MCP 호출마다 쓰지 않도록 기록이 staleBefore 보다 오래됐을 때만 바꾼다.
      * 사용은 토큰 수정이 아니라 updated_at 은 두지 않는다.
      */
