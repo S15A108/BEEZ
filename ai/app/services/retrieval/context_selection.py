@@ -224,6 +224,8 @@ async def select_context(
     return SelectionResult(
         design_items=selected,
         evidence_ids=evidence_ids,
-        unresolved=("NO_MATCH",) if not selected and not evidence_ids else (),
+        # A task reference is useful context, but does not prove the search
+        # found a relevant item or source for this particular request.
+        unresolved=("NO_MATCH",) if not matched and not evidence_ids else (),
         usage=proposal.usage,
     )

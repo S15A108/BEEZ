@@ -160,6 +160,23 @@ async def test_evidence_only_and_successful_empty_are_distinct_from_failure():
 
 
 @pytest.mark.asyncio
+async def test_task_reference_does_not_hide_missing_search_matches():
+    result = await select_context(
+        snapshot(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            ),
+        ),
+        FakeSelector(),
+    )
+    assert [
+        (item.design_item_version_id, item.reasons) for item in result.design_items
+    ] == [("A-v1", ("TASK_PLAN",))]
+    assert result.unresolved == ("NO_MATCH",)
+
+
+@pytest.mark.asyncio
 async def test_rejects_unknown_or_duplicate_model_ids_and_provider_failure():
     for fake in (
         FakeSelector(("unknown",)),
