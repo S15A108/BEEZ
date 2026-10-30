@@ -13,12 +13,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.BindHandler;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.validation.BindValidationException;
 import org.springframework.boot.context.properties.bind.validation.ValidationBindHandler;
 import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.mock.env.MockEnvironment;
+import org.springframework.validation.FieldError;
 import org.springframework.validation.beanvalidation.SpringValidatorAdapter;
 
 /**
@@ -70,9 +73,13 @@ class ProdProfilePropertiesTest {
         BindHandler handler = new ValidationBindHandler(validator);
         Throwable failure = catchThrowable(() -> binder.bind(prefix, Bindable.of(type), handler));
         assertThat(failure).as(prefix + " 가 빈 값으로 통과했다").isNotNull();
-        for (String field : fields) {
-            assertThat(failure).rootCause().as(prefix).hasMessageContaining("field '" + field + "'");
-        }
+        // 문구 형식이 아니라 검증 오류의 필드 이름으로 본다 (Spring 버전이 바뀌어도 규칙만 검사)
+        assertThat(NestedExceptionUtils.getRootCause(failure)).isInstanceOf(BindValidationException.class);
+        List<String> rejected = ((BindValidationException) NestedExceptionUtils.getRootCause(failure))
+                .getValidationErrors().getAllErrors().stream()
+                .map(error -> error instanceof FieldError field ? field.getField() : error.getObjectName())
+                .toList();
+        assertThat(rejected).as(prefix).contains(fields);
     }
 
     /** 기동 때와 같은 우선순위: application-prod.yml 이 application.yml 을 덮는다. */
