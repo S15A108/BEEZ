@@ -7,7 +7,10 @@ from app.schemas.documents import SourceInput
 from app.schemas.retrieval import ChunkingProfile
 from app.services.document_parsing.errors import SourceParsingError
 from app.services.document_parsing.normalization import MAX_INPUT_BYTES
-from app.services.document_parsing.pipeline import parse_source
+from app.services.document_parsing.pipeline import (
+    default_parser_profile,
+    parse_source,
+)
 from app.services.retrieval.chunking import TokenCounter, build_chunks
 from app.services.retrieval.errors import RetrievalError
 
@@ -26,6 +29,11 @@ def render_document_chunks(body: DocumentChunksRequest, counter: TokenCounter) -
             "chunking_profile_mismatch", "Unsupported chunking profile."
         )
 
+    parser_profile = (
+        body.parser_profile
+        if body.parser_profile is not None
+        else default_parser_profile(body.media_type)
+    )
     source = parse_source(
         SourceInput(
             project_id=body.project_id,
@@ -36,7 +44,7 @@ def render_document_chunks(body: DocumentChunksRequest, counter: TokenCounter) -
             content_hash=body.content_hash.removeprefix("sha256:"),
             text_hash=body.text_hash.removeprefix("sha256:"),
             normalization_version=body.normalization_profile,
-            parser_profile=body.parser_profile,
+            parser_profile=parser_profile,
         )
     )
     profile = ChunkingProfile(

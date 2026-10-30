@@ -84,7 +84,7 @@ class SourceDocument(FrozenModel):
     project_id: Identifier
     document_version_id: Identifier
     kind: DocumentKind
-    media_type: Literal["text/markdown"]
+    media_type: Literal["text/markdown", "text/plain"]
     content_hash: Sha256
     text_hash: Sha256
     normalization_version: str

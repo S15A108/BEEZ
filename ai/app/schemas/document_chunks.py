@@ -17,5 +17,6 @@ class DocumentChunksRequest(BaseModel):
     content_hash: ExternalSha256
     text_hash: ExternalSha256
     normalization_profile: str
-    parser_profile: str = "markdown-v1"
+    # Omitted: the profile that belongs to media_type (markdown-v1 or plain-v1).
+    parser_profile: str | None = None
     chunking_profile_id: str

@@ -4,7 +4,6 @@ No HTML renderer, code execution, URL retrieval, or semantic fact extraction.
 """
 
 import re
-from dataclasses import dataclass
 from importlib.metadata import version
 
 from markdown_it import MarkdownIt
@@ -19,6 +18,7 @@ from app.schemas.documents import (
     SourceDiagnostic,
     SourceLocator,
 )
+from app.services.document_parsing.adapters.blocks import ParsedBlock
 from app.services.document_parsing.errors import SourceParsingError
 
 PARSER_PROFILE = "markdown-v1"
@@ -26,20 +26,6 @@ PARSER_VERSION = f"beez-markdown/1.1.0+markdown-it-py/{version('markdown-it-py')
 MAX_AST_NODES = 10_000
 MAX_AST_DEPTH = 32
 MAX_TABLE_COLUMNS = 128
-
-
-@dataclass(frozen=True)
-class ParsedBlock:
-    block_type: str
-    locator: SourceLocator
-    # Indices into preceding ParsedBlocks; a heading includes its own index.
-    heading_path: tuple[int, ...]
-    container_path: tuple[SourceContainer, ...]
-    heading_level: int | None = None
-    heading_text: str | None = None
-    cells: tuple[str, ...] = ()
-    table_header_index: int | None = None
-    info: str | None = None
 
 
 def _locator(token: Token) -> SourceLocator:
