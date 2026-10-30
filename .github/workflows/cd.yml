@@ -1,0 +1,137 @@
+# dev 배포(CD) — 이미지 빌드·GHCR 푸시 (S15P31A108-123).
+#
+# dev 에 푸시되면 backend·ai 이미지와 프론트 dist 포장 이미지를 한 번만 빌드해
+# GHCR 에 커밋 SHA(40자) 태그로 올린다. 세 이미지는 항상 같은 SHA 로 함께 올라가
+# "이 SHA 를 배포한다"가 한 단위가 된다. 바뀌지 않은 영역은 빌드 캐시로 금방 끝난다.
+#
+# 테스트는 다시 돌리지 않는다. PR CI(ci-gate)를 통과한 커밋만 dev 에 들어오고,
+# dev 푸시 때 ci.yml 도 따로 돈다. 서버 반영은 Jenkins 배포 잡이 한다.
+#
+# 이미지 이름: ghcr.io/s15a108/beez-{backend,ai,frontend-dist}:<sha>
+# 패키지는 공개다(저장소가 공개이고 이미지에 비밀값이 없음). 서버는 로그인 없이 pull 한다.
+name: CD
+
+on:
+  push:
+    branches: [dev]
+    # 문서만 바뀐 커밋은 배포하지 않는다. 서버에는 직전 SHA 가 그대로 남는다
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  # 같은 커밋을 다시 올리고 싶을 때 (Actions 화면 → Run workflow)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# dev 푸시가 연달아 오면 차례로 돌린다. 진행 중인 빌드는 끊지 않고,
+# 대기 중인 실행은 더 새 푸시가 오면 그것으로 바뀐다 → 마지막 커밋이 항상 배포된다.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    # 지정하지 않으면 matrix 값 전부가 잡 이름에 붙어 길어진다
+    name: image (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      # 하나라도 실패하면 나머지도 멈춘다. 세 이미지가 같은 SHA 로 다 있어야 배포할 수 있다
+      fail-fast: true
+      matrix:
+        include:
+          - name: backend
+            context: backend
+            file: backend/Dockerfile
+            build-args: ''
+          - name: ai
+            context: ai
+            file: ai/Dockerfile
+            build-args: ''
+          # D13: 프론트는 정적 배포. 이 이미지는 dist 를 나르는 포장일 뿐이다 (infra/frontend-dist/Dockerfile)
+          - name: frontend-dist
+            context: frontend
+            file: infra/frontend-dist/Dockerfile
+            # 저장소 변수(Settings → Secrets and variables → Actions → Variables)로 바꾼다. 없으면 mock
+            build-args: VITE_API_MODE=${{ vars.VITE_API_MODE || 'mock' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # GHCR 이름은 소문자만 받는다. 조직 이름 S15A108 → s15a108
+      - name: Image name
+        id: image
+        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/beez-${{ matrix.name }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      # GITHUB_TOKEN 으로 로그인한다. 별도 개인 토큰이 필요 없다 (permissions.packages: write)
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          build-args: ${{ matrix.build-args }}
+          platforms: linux/amd64        # 서버가 x86_64 다
+          push: true
+          tags: ${{ steps.image.outputs.ref }}
+          # source 라벨이 있어야 GHCR 패키지가 이 저장소에 연결된다 (저장소 화면의 Packages, 권한 상속)
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # 빌드 증명(provenance)을 붙이면 GHCR 에 플랫폼 unknown 항목이 같이 생겨 목록이 헷갈린다. 쓰지 않는다
+          provenance: false
+          # 층 캐시를 Actions 캐시에 영역별로 둔다. 의존성 층이 그대로면 그 단계를 건너뛴다
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Summary
+        run: echo "pushed \`${{ steps.image.outputs.ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # 세 이미지가 다 올라간 뒤 Jenkins 배포 잡에 이 SHA 배포를 요청한다.
+  # 요청만 하고 배포 결과를 기다리지 않는다 — 결과는 Jenkins(beez-deploy)에서 본다.
+  # 기다리며 상태를 반복 조회하면 Jenkins 앞 Nginx 의 인증 요청 제한(분당 10회)에 걸린다. 요청은 배포 1회당 1번이다.
+  deploy:
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    # Environments 'dev' 의 시크릿을 쓴다. 이 환경은 dev 브랜치에서만 쓸 수 있게 묶어 둔다 (docs/infra/cd.md)
+    environment:
+      name: dev
+      url: https://dev.beez.ai.kr
+    steps:
+      - name: Request Jenkins deploy
+        env:
+          # github-actions 계정의 API 토큰. 이 계정은 beez-deploy 잡 실행 권한만 있다
+          JENKINS_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+        run: |
+          # API 토큰으로 부르면 CSRF 토큰(crumb)이 필요 없다. 접수되면 201 이 온다
+          # --retry: 연결 실패와 일시 오류(429·502·503·504 등, Jenkins 재시작 중)면 10초 간격으로 3번 더 시도한다.
+          #   같은 요청이 두 번 들어가도 같은 SHA 를 다시 배포할 뿐이다(재배포는 바뀐 것이 없으면 컨테이너를 건드리지 않는다)
+          # --max-time: Jenkins 가 응답하지 않을 때 잡이 3분 내내 붙잡히지 않게 한 번에 30초까지만 기다린다
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            --max-time 30 --retry 3 --retry-delay 10 --retry-connrefused \
+            -u "github-actions:${JENKINS_TOKEN}" \
+            --data-urlencode "GIT_SHA=${GITHUB_SHA}" \
+            --data-urlencode "DEPLOY_ENV=dev" \
+            --data-urlencode "TARGET=local" \
+            https://jenkins.beez.ai.kr/job/beez-deploy/buildWithParameters) || true
+          # 연결 자체가 안 되면 curl 이 0 이 아닌 값으로 끝난다. run 은 bash -e 라 그대로 두면 아래 안내 없이 멈추므로
+          # || true 로 받고 응답 코드로 판단한다(연결 실패·시간 초과는 000)
+          code=${code:-000}
+          echo "Jenkins 응답: ${code}"
+          if [ "${code}" != "201" ]; then
+            echo "::error::Jenkins 배포 요청 실패(HTTP ${code}). 000=연결 실패·시간 초과, 401=토큰, 403/404=권한, 429=요청 제한"
+            exit 1
+          fi
+          {
+            echo "Jenkins 배포 요청 접수: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "결과: https://jenkins.beez.ai.kr/job/beez-deploy/"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -187,8 +187,11 @@ systemctl list-timers certbot.timer
 
 ## 4. 프론트 수동 배포·롤백
 
-CD(S15P31A108-123) 전까지, 또는 CD가 고장 났을 때 쓰는 절차입니다. 모두
-로컬 PC의 Git Bash 한 창에서 실행합니다(`SHA` 변수를 이어서 씁니다).
+CD(S15P31A108-123)가 생기기 전의 절차입니다. 이제 프론트는 backend·ai와
+함께 [CD 런북](cd.md)의 배포 스크립트로 올리고, 손으로 배포·롤백할 때도 그
+런북의 "손으로 배포·롤백"을 씁니다. 아래는 이미지 없이 로컬 빌드를 바로
+올려야 할 때만 씁니다. 모두 로컬 PC의 Git Bash 한 창에서 실행합니다(`SHA`
+변수를 이어서 씁니다).
 
 ```bash
 cd /c/git/BEEZ/frontend
@@ -222,7 +225,8 @@ PREV=<되돌릴 SHA>
 ssh beez "ln -s /var/www/beez/releases/$PREV /var/www/beez/current.tmp && mv -T /var/www/beez/current.tmp /var/www/beez/current"
 ```
 
-오래된 릴리스 정리는 CD에서 자동화합니다. 빌드 한 회차는 약 456KB입니다.
+오래된 릴리스는 CD 배포 스크립트가 최근 5개만 남기고 지웁니다. 빌드 한
+회차는 약 2MB입니다(2026-10-29, 처음 배포 때는 456KB).
 
 ## 5. 확인
 

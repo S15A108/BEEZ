@@ -2,7 +2,7 @@
 
 CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez.ai.kr`로만
 접근하게 하는 절차입니다. 보안·계정 설정은 JCasC(Configuration as Code)로
-저장소에 둡니다. 배포 잡(Jenkinsfile)은 S15P31A108-123에서 작성합니다.
+저장소에 둡니다. 배포 잡은 S15P31A108-123에서 같은 JCasC 파일에 정의했습니다([CD 런북](cd.md)).
 (S15P31A108-126)
 
 [서버 세팅 런북](server-setup.md)과 [Nginx·HTTPS 런북](nginx-https.md)을
@@ -15,8 +15,8 @@ CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez
 | 설치 | Jenkins LTS apt 패키지(systemd 서비스), Java 21(OpenJDK, Ubuntu 기본 저장소) |
 | 받는 주소 | `127.0.0.1:8080`만. 외부 8080은 열지 않습니다 |
 | 외부 접근 | `https://jenkins.beez.ai.kr` → 호스트 Nginx → `127.0.0.1:8080` |
-| 계정 | Jenkins 자체 사용자 DB, 관리자 `beez-admin` 1명. 가입 금지 |
-| 권한 | 로그인한 사람만 모든 것을 할 수 있고, 비로그인은 아무것도 볼 수 없음 |
+| 계정 | Jenkins 자체 사용자 DB. 관리자 `beez-admin`, 배포 호출용 `github-actions`(S15P31A108-123). 가입 금지 |
+| 권한 | matrix-auth. 관리자는 전부, `github-actions`는 전체 읽기 + `beez-deploy` 잡 보기·실행만. 비로그인은 아무것도 볼 수 없음 |
 | 실행 계정 | `jenkins`(sudo 없음). `beez-deploy`·`docker` 그룹 |
 | 설정 정본 | 저장소 `infra/jenkins/`, `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` |
 
@@ -33,10 +33,11 @@ CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez
 | 저장소 | 서버 | 내용 |
 |---|---|---|
 | `infra/jenkins/systemd/override.conf` | `/etc/systemd/system/jenkins.service.d/` | 127.0.0.1 바인딩, 설치 마법사 끄기, JCasC 경로, 비밀 파일 연결, `UMask=0002` |
-| `infra/jenkins/casc/jenkins.yaml` | `/etc/jenkins/casc/` | 보안·계정·공개 주소 |
+| `infra/jenkins/casc/jenkins.yaml` | `/etc/jenkins/casc/` | 보안·계정·권한·공개 주소, 배포 잡 정의와 고정 파이프라인(Job DSL) |
+| `infra/jenkins/issue-deploy-token.sh` | 서버에 두지 않음 | `github-actions` API 토큰 발급([CD 런북](cd.md)) |
 | `infra/jenkins/plugins.txt` | 설치할 때만 사용 | 플러그인 목록(버전 고정) |
 | `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` | `/etc/nginx/sites-available/` | 리버스 프록시 |
-| (저장소에 없음) | `/etc/jenkins/casc.env` | 관리자 ID·비밀번호. `600 root:root` |
+| (저장소에 없음) | `/etc/jenkins/casc.env` | 관리자 ID·비밀번호, `github-actions` 비밀번호. `600 root:root` |
 
 패키지가 설치한 `/usr/lib/systemd/system/jenkins.service`는 고치지 않습니다.
 바꿀 값만 `jenkins.service.d/override.conf`로 덮어써서 패키지를 갱신해도
@@ -103,8 +104,20 @@ read -rsp "Jenkins admin password: " P && echo && \
 sudo install -m 644 /tmp/jenkins.yaml /etc/jenkins/casc/jenkins.yaml
 ```
 
+이어서 배포 호출용 `github-actions` 계정의 비밀번호를 넣습니다. 사람이 쓰지
+않는 비밀번호라 무작위로 만들고 출력하지 않습니다. **이 줄이 없으면 JCasC가
+경고만 남기고 `github-actions`를 빈 비밀번호로 만듭니다**(S15P31A108-123).
+
+```bash
+sudo grep -q '^JENKINS_DEPLOY_PASSWORD=' /etc/jenkins/casc.env || \
+  printf 'JENKINS_DEPLOY_PASSWORD=%s\n' "$(openssl rand -hex 24)" | sudo tee -a /etc/jenkins/casc.env > /dev/null
+sudo cut -d= -f1 /etc/jenkins/casc.env    # JENKINS_ADMIN_ID, JENKINS_ADMIN_PASSWORD, JENKINS_DEPLOY_PASSWORD
+```
+
 - `install … /dev/stdin`은 처음부터 `600 root:root`로 파일을 만듭니다. 만든
   뒤에 권한을 좁히는 방식과 달리 열려 있는 순간이 없습니다.
+- `tee -a`는 파일 끝에 덧붙이기만 해서 권한(`600 root:root`)이 그대로입니다.
+  `grep -q … ||`로 이미 있으면 건너뛰어 두 번 실행해도 값이 바뀌지 않습니다.
 - `[[ … =~ … ]]`는 허용 문자·길이가 아니면 파일을 쓰지 않습니다.
 
 ### 비밀번호 문자 제한
@@ -203,7 +216,8 @@ sudo chmod 750 /var/lib/jenkins
   팀원 계정을 늘릴 때는 권한 전략(전원 관리자)부터 다시 정합니다.
 - ubuntu의 새 그룹은 다시 접속해야 적용됩니다. jenkins는 다음 단계에서
   서비스를 켤 때 적용됩니다.
-- `/opt/beez`(백엔드 compose·`.env`)는 백엔드 배포가 합류할 때 정합니다.
+- `/opt/beez`(서버 env 파일)는 [CD 런북](cd.md) "서버 준비"에서
+  `2750 ubuntu:beez-deploy`로 바꿉니다.
 
 ### 6. 처음 켜기
 
@@ -230,7 +244,7 @@ rm /tmp/plugins.txt /tmp/jenkins.yaml /tmp/override.conf /tmp/jenkins-plugin-man
 ```bash
 curl -s -o /dev/null -w 'anon %{http_code}\n' http://127.0.0.1:8080/          # 403
 curl -s -o /dev/null -w 'signup %{http_code}\n' http://127.0.0.1:8080/signup   # 404
-sudo ls /var/lib/jenkins/users                                                # beezadmin_… 하나
+sudo ls /var/lib/jenkins/users                                                # beezadmin_…·githubactions_… 두 개
 ```
 
 ### 7. Nginx·HTTPS
@@ -249,7 +263,7 @@ systemctl is-active jenkins                                     # active
 sudo ss -ltnp | grep 8080                                       # 127.0.0.1:8080만
 systemctl show jenkins -p UMask --value                         # 0002
 grep Groups /proc/$(systemctl show jenkins -p MainPID --value)/status   # jenkins·beez-deploy·docker
-sudo ls /var/lib/jenkins/users                                  # beezadmin_… 하나
+sudo ls /var/lib/jenkins/users                                  # beezadmin_…·githubactions_… 두 개
 stat -c '%a %U:%G' /var/lib/jenkins                             # 750 jenkins:jenkins
 sudo -u www-data ls /var/lib/jenkins 2>&1 | head -1             # Permission denied
 sudo -u jenkins docker version --format '{{.Server.Version}}'   # sudo 없이 docker 사용
@@ -270,6 +284,12 @@ for i in $(seq 1 15); do curl -s -o /dev/null -w '%{http_code} ' -u nobody:wrong
 **이 PC의 IP가 잠시(1분 안팎) 인증 요청에 429를 받습니다.** 로그인은 그 뒤에
 합니다.
 
+API 토큰 요청도 같은 한도(IP당 분당 10회, 순간 10회)를 받습니다. API 토큰과
+비밀번호가 둘 다 `Authorization: Basic`으로 와서 Nginx가 구분할 수 없기
+때문입니다. API 한도만 늘리면 비밀번호 대입 한도도 함께 늘어납니다. 지금 API를
+쓰는 곳은 Actions의 배포 잡 호출뿐이고, 배포 1회당 1요청이라 이 한도 안에
+듭니다(S15P31A108-123).
+
 브라우저로 `https://jenkins.beez.ai.kr`에 `beez-admin`으로 로그인되는지 봅니다.
 
 ## 백업·복원
@@ -281,11 +301,12 @@ Jenkins를 다시 세우는 데 필요한 것은 대부분 저장소에 있습�
 | 서비스·보안·계정 설정 | 저장소 `infra/jenkins/` | "새 서버에서 처음부터" 그대로 |
 | 관리자 비밀번호 | 비밀번호 관리자 | 2단계에서 다시 입력 |
 | 플러그인 | 저장소 `plugins.txt` | 4단계 |
-| 배포 잡 정의 | 저장소 Jenkinsfile(-123) | 잡 생성 시 저장소에서 읽음 |
+| 배포 잡 정의·파이프라인 | 저장소 `casc/jenkins.yaml`(Job DSL, 파이프라인 고정) | 켤 때마다 JCasC가 잡을 다시 만듦 |
+| `github-actions` API 토큰 | JENKINS_HOME(해시만 저장) | 백업에 없으면 [CD 런북](cd.md) "토큰 발급·교체"로 새로 발급 |
 | 빌드 기록·자격 증명·잡 설정 | `/var/lib/jenkins`(JENKINS_HOME) | 아래 백업 파일 |
 
-JENKINS_HOME은 빌드 기록과 화면에서 넣은 자격 증명(-123의 GHCR 토큰 등)을
-담습니다. 자격 증명은 `secrets/master.key`로 암호화되어 있어 **`secrets`
+JENKINS_HOME은 빌드 기록, 사용자별 API 토큰(-123의 배포 호출 계정 등), 화면에서
+넣은 자격 증명을 담습니다. 자격 증명은 `secrets/master.key`로 암호화되어 있어 **`secrets`
 폴더와 함께 옮겨야 풀립니다.** 이 폴더가 빠지면 자격 증명을 다시 넣어야
 합니다.
 
@@ -299,10 +320,15 @@ root가 `/tmp`에 파일을 만들면 기본 umask(022) 때문에 `644`로 생�
 로컬 PC(Git Bash):
 
 ```bash
-mkdir -p ~/beez-backup && F=~/beez-backup/jenkins-home-$(date +%Y%m%d-%H%M).tgz && \
-ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=caches --exclude=.cache -czf - -C /var/lib jenkins; rc=$?; sudo systemctl start jenkins; exit $rc' \
-  > "$F.part" && tar -tzf "$F.part" > /dev/null && mv "$F.part" "$F" && echo "saved $F" \
-  || { echo "backup FAILED"; rm -f "$F.part"; }
+mkdir -p ~/beez-backup && F=~/beez-backup/jenkins-home-$(date +%Y%m%d-%H%M).tgz
+ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=caches --exclude=.cache -czf - -C /var/lib jenkins; rc=$?; sudo systemctl start jenkins || { echo "jenkins restart FAILED" >&2; [ $rc -eq 0 ] && rc=90; }; exit $rc' \
+  > "$F.part"; rc=$?
+if { [ $rc -eq 0 ] || [ $rc -eq 90 ]; } && tar -tzf "$F.part" > /dev/null; then
+  mv "$F.part" "$F" && echo "saved $F"
+else
+  echo "backup FAILED"; rm -f "$F.part"
+fi
+[ $rc -eq 90 ] && echo "Jenkins가 다시 켜지지 않았습니다. 서버에서 journalctl -u jenkins -n 50 확인"
 ```
 
 - `tar -czf -`는 압축 결과를 파일 대신 표준 출력으로 내보내고, ssh가 그대로
@@ -314,6 +340,10 @@ ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=
 - 서버 쪽은 `tar`의 종료 코드를 `rc`에 담아 두고, Jenkins를 다시 켠 뒤 그
   코드로 끝냅니다. 백업이 실패해도 Jenkins는 켜지고, 실패는 PC 쪽에
   `backup FAILED`로 드러납니다.
+- Jenkins가 다시 켜지지 않으면 종료 코드 `90`으로 따로 알립니다. `tar`(0~2)나
+  ssh(255)와 겹치지 않는 값입니다. 압축이 온전하면 백업 파일은 그대로 남기고
+  마지막 줄에 재시작 실패를 출력합니다. 백업은 됐는데 Jenkins가 꺼진 채로
+  남는 경우를 `saved`만 보고 지나치지 않기 위해서입니다.
 - 멈추고 백업해야 설정 파일이 쓰이는 도중에 잘리지 않습니다. 배포 잡이 돌고
   있지 않은 때에 합니다.
 - `workspace`·`caches`는 다시 만들 수 있어 뺍니다. 2026-10-29 기준 약
@@ -334,10 +364,21 @@ ssh beez 'sudo systemctl stop jenkins && sudo tar --exclude=workspace --exclude=
 백업과 같습니다.
 
 ```bash
-ssh beez 'sudo systemctl stop jenkins 2>/dev/null; sudo rm -rf /var/lib/jenkins/plugins && sudo tar -xzf - -C /var/lib && sudo chown -R jenkins:jenkins /var/lib/jenkins && sudo chmod 750 /var/lib/jenkins' \
-  < ~/beez-backup/jenkins-home-YYYYMMDD-HHMM.tgz
-ssh beez 'sudo systemctl unmask jenkins && sudo systemctl daemon-reload && sudo systemctl enable jenkins && sudo systemctl restart jenkins'
+F=~/beez-backup/jenkins-home-YYYYMMDD-HHMM.tgz
+if tar -tzf "$F" > /dev/null && \
+   ssh beez 'sudo systemctl stop jenkins 2>/dev/null; sudo rm -rf /var/lib/jenkins/plugins && sudo tar -xzf - -C /var/lib && sudo chown -R jenkins:jenkins /var/lib/jenkins && sudo chmod 750 /var/lib/jenkins' < "$F"; then
+  ssh beez 'sudo systemctl unmask jenkins && sudo systemctl daemon-reload && sudo systemctl enable jenkins && sudo systemctl restart jenkins' \
+    && echo "restored" || echo "풀기는 됐지만 Jenkins 시작 실패. 서버에서 journalctl -u jenkins -n 50 확인"
+else
+  echo "복원 FAILED: Jenkins를 켜지 않았습니다"
+fi
 ```
+
+**풀기가 성공했을 때만 Jenkins를 켭니다.** 새 서버에서 풀기가 중간에 실패하면
+`config.xml`과 JCasC 플러그인이 없는 상태입니다. 1단계에서 설치 마법사도
+꺼 두었으므로, 이대로 켜면 로그인 없이 누구나 관리할 수 있는 Jenkins가
+뜹니다(127.0.0.1 한정이라도). 실패하면 서비스가 1단계의 `mask` 상태로 남아
+실수로 켜지지도 않습니다. 원인을 고친 뒤 같은 명령을 다시 실행합니다.
 
 켠 뒤에는 6단계의 접근 제어 확인을 똑같이 합니다. 새 서버의 Jenkins 본체가
 백업 때보다 새 버전이면 플러그인 호환 경고가 뜰 수 있습니다. 그때는 Jenkins를
@@ -351,12 +392,24 @@ JCasC는 켤 때마다 다시 적용되므로, 백업 이후 바뀐 보안 설�
 ```bash
 read -rsp "new password: " P && echo && \
   if [[ "$P" =~ ^[A-Za-z0-9._~+=@%-]{20,}$ ]]; then \
-    printf 'JENKINS_ADMIN_ID=beez-admin\nJENKINS_ADMIN_PASSWORD=%s\n' "$P" | \
-    sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && sudo systemctl restart jenkins && echo changed; \
-  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P
+    REST=$(sudo grep -v '^JENKINS_ADMIN_PASSWORD=' /etc/jenkins/casc.env) && \
+    grep -q '^JENKINS_ADMIN_ID=' <<< "$REST" && grep -q '^JENKINS_DEPLOY_PASSWORD=' <<< "$REST" && \
+    printf '%s\nJENKINS_ADMIN_PASSWORD=%s\n' "$REST" "$P" | sudo install -m 600 -o root -g root /dev/stdin /etc/jenkins/casc.env && \
+    sudo systemctl restart jenkins && echo changed || echo "실패: casc.env 읽기·항목(ID·DEPLOY) 또는 재시작을 확인"; \
+  else echo "허용 문자·길이가 아님. 바꾸지 않음"; fi; unset P REST
 ```
 
 허용 문자는 2단계의 "비밀번호 문자 제한"과 같습니다.
+
+- **관리자 비밀번호 줄만 바꾸고 나머지 줄은 그대로 둡니다.** 파일을 통째로
+  새로 쓰면 `JENKINS_DEPLOY_PASSWORD`가 지워지고, JCasC가 `github-actions`를
+  빈 비밀번호로 다시 만듭니다(-123 이전 명령은 파일 전체를 다시 썼습니다).
+- 나머지 줄을 먼저 변수에 담은 뒤 씁니다. 같은 파일을 읽으면서 바로 쓰면
+  다 읽기 전에 파일이 비워질 수 있습니다.
+- **읽기가 실패하면 쓰지 않습니다.** `sudo grep`이 실패하거나(인증 실패, 경로
+  오타) 읽은 내용에 `JENKINS_ADMIN_ID`·`JENKINS_DEPLOY_PASSWORD`가 없으면 거기서
+  멈춥니다. 그냥 이어 쓰면 비밀번호 한 줄만 남은 파일로 덮어써 관리자 ID까지
+  사라집니다.
 
 JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화면에서 바꾼
 비밀번호는 재시작하면 이 파일 값으로 돌아갑니다.
@@ -399,7 +452,7 @@ JCasC가 켤 때 `casc.env`의 값으로 비밀번호를 다시 씁니다. 화�
 |---|---|
 | Jenkins | 2.580.2 (LTS, apt) |
 | Java | OpenJDK 21.0.12 (`openjdk-21-jre-headless`) |
-| 플러그인 | `configuration-as-code` 2140.v00e72b_047734 + 의존 17개 |
+| 플러그인 | `configuration-as-code` 2140.v00e72b_047734 + 의존 17개. -123에서 `matrix-auth`·`job-dsl`·파이프라인 5개 추가(새로 깔면 의존 포함 37개). `git`·`workflow-multibranch`는 파이프라인을 고정하며 뺐고 서버에서도 지웠습니다 |
 | 인증서 | `jenkins.beez.ai.kr`, 발급자 Let's Encrypt `YE1`, 만료 2027-01-27, `renew_hook = systemctl reload nginx` |
 | 외부 확인 | `/login` 200, `/` 403, `/signup` 404, `http` → 301 `https`, 8080 닫힘 |
 | 대입 제한 | 틀린 Basic 인증 11회까지 401 뒤 429, 틀린 로그인 폼 6회까지 302 뒤 429. 비인증 화면은 영향 없음 |
