@@ -116,7 +116,9 @@
 
 | 예 | 뜻 |
 | --- | --- |
-| `task:501:lock:7:START` | 작업 501, 잠금 버전 7에서 시작(이미 쓰는 `TaskStateChangedEvent` 키) |
+| `task:501:lock:7:START` | 작업 501 시작, 시작을 저장한 뒤 올라간 잠금 버전 7(이미 쓰는 `TaskStateChangedEvent` 키 — `saveAndFlush` 뒤의 `lockVersion`) |
+| `task:501:lock:9:COMPLETED` | 작업 501이 delta 검증 통과(S4)로 COMPLETED가 됨, 그 저장 뒤 잠금 버전 9 |
+| `validation:88:finished:2` | 검증 88의 2번째 시도가 끝남 |
 | `change-proposal:71:published` | 제안 71 발행 |
 | `change-proposal:71:published:to:12` | 제안 71 발행 알림, 계정 12에게 |
 | `change-discussion:88:mentioned:to:12` | 의견 88에서 지정된 멤버 12에게 알림(`ChangeDiscussionService` TODO의 "의견 ID + 대상 계정"에 동작을 붙인 것) |
@@ -155,7 +157,7 @@
 | `TASK_CREATED`·`TASK_PLAN_REVISED` | 작업(변준성) | TASK |
 | `TASK_STARTED`·`TASK_RESUMED`·`TASK_WAITING`·`TASK_COMPLETION_REPORTED`·`TASK_COMPLETED`·`TASK_CANCELLED` | 작업(변준성) | TASK — 아래 "작업 유형 정하기"를 따른다 |
 | `TASK_ASSIGNEE_CHANGED` | 작업(변준성) — 인계 경로 호출은 `TaskHandoverService`(전진 -212 코드) | TASK |
-| `VALIDATION_FINISHED` | 작업(변준성) | VALIDATION (`result`로 통과·실패) |
+| `VALIDATION_FINISHED` | 작업(변준성) | VALIDATION — 아래 "검증 완료 정하기"를 따른다 |
 | `DOCUMENT_REGISTERED`·`DOCUMENT_APPROVED`·`DOCUMENT_REJECTED` | 문서(오서현) | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | BASELINE |
 | `CHANGE_PROPOSAL_SUBMITTED`·`_WITHDRAWN`·`_REVIEW_STARTED`·`_REVIEW_REQUESTED`·`_COMMENTED`·`_APPROVED`·`_REJECTED`·`_PUBLISHED` | 변경(오서현) | CHANGE_PROPOSAL |
@@ -180,7 +182,19 @@
   - S1 설계 발행 → `CHANGE_PROPOSAL_PUBLISHED` 활동 + 담당자에게 `REVALIDATION_REQUIRED` 알림
   - S2 진행 중 계획 변경(TSK-A04) → `TASK_PLAN_REVISED`
   - S5 담당자 인계(TSK-A06·MEM-A09·A10) → `TASK_ASSIGNEE_CHANGED`
-- `TASK_COMPLETED`는 작업이 실제로 COMPLETED가 된 순간에만 남긴다. 그래서 delta가 있는 작업에는 `TASK_COMPLETION_REPORTED`와 `TASK_COMPLETED` 두 건이 남는다(키는 잠금 버전이 달라 겹치지 않는다).
+- `TASK_COMPLETED`는 작업이 실제로 COMPLETED가 된 순간에만 남긴다. 그래서 delta가 있는 작업에는 `TASK_COMPLETION_REPORTED`와 `TASK_COMPLETED` 두 건이 남는다.
+- 작업 활동의 키는 모두 `task:{id}:lock:{저장·flush 뒤 잠금 버전}:{동작}`이다. 상태 보고는 `TaskEvent` 이름을, 그 밖은 `PLAN_REVISED`·`ASSIGNEE_CHANGED`처럼 동작 이름을 쓴다(`TASK_CREATED`는 `task:{id}:created`). S3 완료 보고는 `task:{id}:lock:{n}:COMPLETED`, S4는 작업을 COMPLETED로 저장한 뒤의 버전으로 `task:{id}:lock:{m}:COMPLETED`를 쓴다. 작업 행이 바뀔 때마다 `@Version`이 올라가므로 m > n이라 두 키는 겹치지 않는다.
+
+**검증 완료(`VALIDATION_FINISHED`) 정하기.**
+
+| 항목 | 규칙 |
+| --- | --- |
+| 언제 | 검증이 끝 상태(PASS·NEEDS_INPUT·NEEDS_REVIEW·ERROR)가 된 순간, 그 결과를 저장하는 같은 트랜잭션에서 |
+| 남기지 않는 것 | NOT_RUN·RUNNING(아직 안 끝남), STALE(무효화 — 원인이 된 행위의 활동이 대신함), 시도 번호가 `current_attempt`와 달라 버려진 늦은 결과 |
+| 행위자 | 요청 처리 안에서 규칙만으로 바로 끝나면 요청자의 `CallerContext`, 워커가 끝내면 `SystemActor.SYSTEM` |
+| `result` | PASS만 `SUCCESS`. NEEDS_INPUT·NEEDS_REVIEW·ERROR는 `FAILURE`(어떤 상태였는지는 검증 상세에서 본다) |
+| 키 | `validation:{id}:finished:{attempt}` — ERROR 뒤 재실행하면 같은 검증이 다시 끝나므로 시도 번호로 구분한다 |
+| 보조 참조 | `task_id`를 함께 넣는다(작업별 타임라인 필터) |
 
 ## 7. 구현에 따라오는 변경
 
@@ -191,7 +205,10 @@
 | MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id` | -183 |
 | `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
-| delta 검증 통과 처리(S4) | WAITING → COMPLETED로 바꾸는 같은 트랜잭션에서 `recordBy(SYSTEM, TASK_COMPLETED)` | -159 검증 결과 반영(변준성) |
+| 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |
+| 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서 WAITING(REVALIDATION)으로 바꾼 작업의 담당자에게 `REVALIDATION_REQUIRED` 알림(본인 포함) | -163(변준성) |
+| `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
+| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림(본인 포함). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
 | 코드 TODO 6곳 | 변경 제안 3(생성·거두기·검토 시작/반려 — `ProposalCommandService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
