@@ -173,11 +173,11 @@ git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
 
 # 2) backend 포트가 Nginx 가 보내는 포트와 같은가
 ssh beez bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
-p=$(sed -n 's/^BACKEND_HOST_PORT=//p' "/opt/beez/.env.$1" | tail -n1)   # 키가 두 번이면 compose 처럼 마지막 값
+p=$(sed -n 's/^BACKEND_HOST_PORT=//p' "/opt/beez/.env.$1" | tail -n1 | tr -d '\r')   # 키가 두 번이면 compose 처럼 마지막 값
 conf=/etc/nginx/sites-enabled/$2.conf
 [ -r "$conf" ] || { echo "Nginx 설정 없음: $conf"; exit 1; }
 case $p in ''|*[!0-9]*) echo "port 값 없음·이상: '$p'"; exit 1 ;; esac
-grep -Eq "^[[:space:]]*server 127\.0\.0\.1:$p;" "$conf" && echo "port ok ($p)" || echo "port 다름: env=$p"
+grep -Eq "^[[:space:]]*server 127\.0\.0\.1:$p([[:space:]]|;)" "$conf" && echo "port ok ($p)" || echo "port 다름: env=$p"
 EOF
 ```
 
@@ -185,6 +185,9 @@ EOF
   그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다. 포트가 `8080` 이면 Jenkins 와 겹쳐 backend 가 뜨지 못하고,
   Nginx 와 다르면 backend 는 떠도 Nginx 가 다른 포트로 보내 API 가 실패합니다. 둘 다 `port 다름` 으로 나옵니다.
   배포(`deploy.sh`)는 컨테이너 안 healthcheck 만 보므로 포트가 어긋나도 성공으로 끝납니다. 값을 바꿨다면 이 점검을 꼭 돌립니다.
+- 2) 가 비교 전에 멈추면 다른 문구가 나옵니다. `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다.
+  `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것인데, `ENV_NAME` 이 틀려도 이렇게 나옵니다
+  (그때는 바로 위에 `No such file` 이 같이 나옵니다).
 - 다른 환경(운영 등)은 위 세 변수만 바꿉니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
   검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
