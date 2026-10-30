@@ -1,6 +1,8 @@
 package com.beez.backend.changeproposal.api;
 
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
+import com.beez.backend.changeproposal.dto.PublicationDtos.*;
+import com.beez.backend.changeproposal.service.ProposalPublicationService;
 import com.beez.backend.changeproposal.service.ProposalCommandService;
 import com.beez.backend.changeproposal.service.ProposalQueryService;
 import com.beez.backend.common.auth.CallerContext;
@@ -18,8 +20,23 @@ public class ProposalController {
     private final ProposalCommandService commands;
     private final ProposalQueryService queries;
     private final DocumentRequestOriginVerifier origins;
-    public ProposalController(ProposalCommandService commands, ProposalQueryService queries, DocumentRequestOriginVerifier origins) {
-        this.commands=commands; this.queries=queries; this.origins=origins;
+    private final ProposalPublicationService publications;
+    public ProposalController(ProposalCommandService commands, ProposalQueryService queries, DocumentRequestOriginVerifier origins,
+                              ProposalPublicationService publications) {
+        this.commands=commands; this.queries=queries; this.origins=origins; this.publications=publications;
+    }
+    @PostMapping("/{proposalId}/approve")
+    @Operation(summary = "CHG-A09 변경 제안 승인·발행")
+    public Publication approve(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+                               @PathVariable long proposalId, @RequestBody ApproveRequest input,
+                               @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return publications.approve(caller, projectId, proposalId, input, key);
+    }
+    @GetMapping("/{proposalId}/approval-preview")
+    @Operation(summary = "CHG-A14 승인 미리 보기")
+    public Preview preview(CallerContext caller, @PathVariable long projectId, @PathVariable long proposalId) {
+        return publications.preview(caller, projectId, proposalId);
     }
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
