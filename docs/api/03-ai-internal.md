@@ -1796,21 +1796,23 @@ HTTP `200`.
 | `project_id`, `document_version_id` | 양의 십진 문자열, 최대 19자리 |
 | `request_key` | 1~128자 상관관계 키. 저장 또는 멱등성 보장은 BE 책임 |
 | `kind` | `PLAN`, `REQUIREMENTS`, `API_SPEC`, `ERD` |
-| `media_type` | `text/markdown`만 허용 |
+| `media_type` | `text/markdown` 또는 `text/plain`. 파서 프로필을 정한다 |
 | `content` | 엄격히 UTF-8 디코딩한 원문 문자열. BOM/CRLF 허용 |
 | `content_hash` | 원본 바이트 SHA-256 소문자 hex 64자리. `sha256:` 접두사 허용. BE가 원본과 대조 |
 | `text_hash` | 정규화 텍스트 UTF-8의 SHA-256 소문자 hex 64자리. `sha256:` 접두사 허용. AI가 대조 |
 | `normalization_profile` | `utf8-lf-v1`: 맨 앞 BOM 제거, CRLF/CR을 LF로 변환 |
-| `parser_profile` | 선택. 생략 시 `markdown-v1` |
+| `parser_profile` | 선택. 생략 시 media_type의 프로필(`text/markdown`은 `markdown-v1`, `text/plain`은 `plain-v1`). 명시하면 그 프로필과 같아야 한다 |
 | `chunking_profile_id` | `md-structure-v1` |
 
 추가 필드는 거부한다. 고정 청킹 프로필은 로컬 tiktoken, 청크당 600토큰, 최대 1,024청크이며 heading/table 문맥 보강은 꺼져 있다. 같은 입력·문서 버전·실제 프로필과 파서/청커 버전은 같은 chunk key를 만든다.
+
+파서 프로필은 media_type마다 하나다. `markdown-v1`은 CommonMark + pipe table 구조(제목·목록·표·코드·참조 정의)를 블록으로 나누며 HTML·이미지는 `unsupported_construct`로 전체 실패한다. `plain-v1`은 `.txt` 업로드용 일반 텍스트 프로필이다. 빈 줄로 구분한 문단만 `paragraph` 블록으로 삼고 HTML·이미지·Markdown 문법을 전혀 해석하지 않으므로 `<user>` 같은 태그 문자열도 원문 그대로 색인한다. `excluded_ranges`의 reason은 `blank`뿐이고 `heading_path`·`context_refs`·`diagnostics`는 비어 있으며 문단은 4,000개까지다. `source_spans`·`locator`·`text_hash`·manifest 구조와 청킹 프로필은 두 프로필이 같고 manifest의 `parser_profile`/`parser_version`(`beez-plain/1.0.0`)으로 구분한다. 같은 원문이라도 프로필이 다르면 block/chunk key가 다르다. BE는 `.md`를 `text/markdown`, `.txt`를 `text/plain`으로 보내고 manifest의 `parser_profile`이 보낸 media_type의 프로필과 같은지 검증한다.
 
 성공 응답은 `result`, `origin: "PARSER"`, `usage: []`다. result는 `contract_version: "document-chunks-v1"`, 요청 식별자·text_hash·프로필, `parser_version`, `manifest`, `excluded_ranges`, `diagnostics`, `chunks`를 포함한다. `result.text_hash`는 접두사를 포함해 요청값 그대로 반환하고, 내부 `manifest`의 해시는 접두사 없는 64자리다. manifest에는 실제 전체 청킹 프로필 및 예상 청크 key 목록이 있다. 각 청크에는 `chunk_key`, `chunk_no`, `document_version_id`, `text`, `embedding_text`, `token_count`, `source_spans`, `context_refs`, 표시용 `locator`가 있다.
 
 `source_spans`의 시작·끝은 정규화 문자열의 Unicode code point 0-based, 끝 제외다. span별 `locator`는 1-based 행 양끝 포함이다. Java에서는 UTF-16 인덱스로 변환한 뒤 원문을 자른다. `text`는 span별 원문 조각을 순서대로 결합한 값이다. 청크의 `locator`는 첫 span부터 마지막 span까지의 **표시 범위**이며 전체 행을 결합해 text를 복원하면 안 된다. 한 행 안에서 분할한 청크들은 이 표시 범위가 겹칠 수 있다. `excluded_ranges`는 빈 행, 구분선, 컨테이너 표시 등 청크에 속하지 않는 원문을 명시한다.
 
-`context_refs`는 heading/table header의 위치·해시와 문맥 적용 여부를 제공한다. 인용 근거는 원문 span이며 임베딩에는 `embedding_text`를 사용한다. 요청·응답의 실행 가능한 예시는 [청킹 계약 fixture](examples/document-chunks/)에 있다.
+`context_refs`는 heading/table header의 위치·해시와 문맥 적용 여부를 제공한다. 인용 근거는 원문 span이며 임베딩에는 `embedding_text`를 사용한다. 요청·응답의 실행 가능한 예시는 [청킹 계약 fixture](examples/document-chunks/)에 있다. Markdown은 `request.json`/`response.json`, `<user>` 태그가 든 일반 텍스트는 `plain-request.json`/`plain-response.json`이다.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
