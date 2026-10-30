@@ -44,7 +44,9 @@ class DocumentApiIntegrationTest {
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(DockerImageName.parse(
             "pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d").asCompatibleSubstituteFor("postgres"));
     static final JsonMapper JSON = JsonMapper.builder().build();
-    @Container static final SeaweedTestContainer seaweed = new SeaweedTestContainer();
+    // Shared across the test JVM and returned once the bucket is ready. The bucket is shared, so object counts
+    // are compared against this test's own starting count only.
+    static final SeaweedTestContainer seaweed = SeaweedTestContainer.shared();
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
         registry.add("beez.document.object-storage.endpoint", seaweed::endpoint);
     }
@@ -62,9 +64,6 @@ class DocumentApiIntegrationTest {
     final byte[] content = "\uFEFF# 요구사항\r\nREQ-01: 로그인한 멤버만 조회한다.\r\n".getBytes(StandardCharsets.UTF_8);
 
     @BeforeEach void setUp() throws Exception {
-        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(30)).ignoreExceptions().untilAsserted(() ->
-                assertThat(storageClient.headBucket(software.amazon.awssdk.services.s3.model.HeadBucketRequest.builder()
-                        .bucket(SeaweedTestContainer.BUCKET).build())).isNotNull());
         jdbc.update("UPDATE document_processing SET status='FAILED',source_status='FAILED',index_status='FAILED',error_code='test_reset',lease_token=null,lease_until=null WHERE status IN ('PENDING','RUNNING')");
         base = "http://localhost:" + env.getProperty("local.server.port");
         http = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
