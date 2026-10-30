@@ -12,10 +12,12 @@ import com.beez.backend.mcp.dto.ValidateTaskPlanArgs;
 import com.beez.backend.mcp.service.ValidationMcpService;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import com.beez.backend.task.service.StartGate;
 import com.beez.backend.validation.dto.ValidationResponse;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.service.AnalysisResultApplier;
+import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.worker.ValidationWorker;
 import java.net.http.HttpResponse;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -59,6 +62,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     AnalysisResultApplier applier;
+
+    @Autowired
+    StartGate startGate;
 
     @MockitoBean
     ValidationAnalyzer analyzer;
@@ -327,6 +333,41 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
         assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("DONE");
         assertThat(column("validation", "summary", id)).contains("\"analysis_status\": \"COMPLETE\"").contains("test-model");
+    }
+
+    /** START 요청 (검증 번호를 실어 보낸다) */
+    private HttpResponse<String> start(long[] t, long validationId, Long account) throws Exception {
+        return api.post(tasksPath() + "/" + t[0] + "/state-events",
+                "{\"event\":\"START\",\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2]
+                        + ",\"validation_id\":\"" + validationId + "\"}", account);
+    }
+
+    @Test
+    void fakeAnalyzerPass_isRejectedByStartGate_whenFakeAnalyzerIsOff() throws Exception {
+        // 가짜 분석기로 PASS 를 만든다 (실행 기록의 분석기 버전 = fake-analyzer)
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        when(analyzer.analyze(any())).thenAnswer(inv -> new FakeValidationAnalyzer().analyze(inv.getArgument(0)));
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", id)).isEqualTo("PASS");
+        assertThat(column("validation_run", "analyzer_version", id(id, "validation_run"))).isEqualTo(FakeValidationAnalyzer.MODEL);
+
+        // 가짜 분석기를 끈 서버(테스트 기본값): 그 PASS 로는 시작할 수 없다
+        HttpResponse<String> rejected = start(t, id, member);
+        assertThat(rejected.statusCode()).as(rejected.body()).isEqualTo(409);
+        assertThat(rejected.body()).contains("\"code\":\"validation_not_passed\"").contains("가짜 분석기");
+        assertThat(api.jdbc.sql("select status from task where id = :t").param("t", t[0]).query(String.class).single())
+                .isNotEqualTo("IN_PROGRESS");
+
+        // 가짜 분석기를 켠 서버(개발 서버): 같은 PASS 로 시작할 수 있다
+        ReflectionTestUtils.setField(startGate, "fakeAnalyzerEnabled", true);
+        try {
+            HttpResponse<String> started = start(t, id, member);
+            assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+            assertThat(TaskApiSupport.stringField(started.body(), "status")).isEqualTo("IN_PROGRESS");
+        } finally {
+            ReflectionTestUtils.setField(startGate, "fakeAnalyzerEnabled", false);
+        }
     }
 
     @Test

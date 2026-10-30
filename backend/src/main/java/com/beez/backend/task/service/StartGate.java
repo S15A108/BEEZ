@@ -1,9 +1,11 @@
 package com.beez.backend.task.service;
 
 import com.beez.backend.task.entity.Task;
+import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -46,8 +48,16 @@ public class StartGate {
 
     private final JdbcClient jdbc;
 
-    public StartGate(JdbcClient jdbc) {
+    /**
+     * 서버용 가짜 분석기가 켜져 있는가 (beez.validation.fake-analyzer).
+     * 꺼져 있으면 가짜 분석기가 낸 PASS 는 G1 에서 거절한다 — 실제 AI 로 바꾼 뒤 설계 대조 없는 PASS 로 시작·재개하지 못하게 (-159 리뷰).
+     * final 이 아닌 것은 통합 테스트가 같은 컨텍스트에서 켜고 끄기 위해서다.
+     */
+    private boolean fakeAnalyzerEnabled;
+
+    public StartGate(JdbcClient jdbc, @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled) {
         this.jdbc = jdbc;
+        this.fakeAnalyzerEnabled = fakeAnalyzerEnabled;
     }
 
     public Result evaluate(Task task, Long validationId) {
@@ -95,8 +105,30 @@ public class StartGate {
         }
         if (!"PASS".equals(status)) {
             failures.add(new Failure("validation_not_passed", "검증 상태가 PASS 가 아닙니다 (현재 " + status + ")"));
+            return true;
+        }
+        if (!fakeAnalyzerEnabled && passedByFakeAnalyzer(validationId)) {
+            failures.add(new Failure("validation_not_passed", "가짜 분석기로 낸 검증 결과라 쓸 수 없습니다. 검증을 다시 요청하세요"));
         }
         return true;
+    }
+
+    /**
+     * 이 검증의 실행 중 가짜 분석기가 끝낸 것이 있는가. 실행 기록의 분석기 버전에 응답의 model 이 남는다(AnalysisResultApplier).
+     * 규칙만으로 끝난 PASS 는 실행이 없어 여기에 걸리지 않는다.
+     */
+    private boolean passedByFakeAnalyzer(Long validationId) {
+        Integer found = jdbc.sql("""
+                        select count(*)
+                          from validation_run
+                         where validation_id = :id
+                           and analyzer_version = :fake
+                        """)
+                .param("id", validationId)
+                .param("fake", FakeValidationAnalyzer.MODEL)
+                .query(Integer.class)
+                .single();
+        return found > 0;
     }
 
     /**
