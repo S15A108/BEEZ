@@ -1,0 +1,23 @@
+{
+  "name": "<unique-connector-name>",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "<database-dns-name-matching-certificate>",
+    "database.port": "5432",
+    "database.user": "<dedicated-replication-user>",
+    "database.password": "${file:/run/cdc-secrets/database.properties:password}",
+    "database.dbname": "<database-name>",
+    "database.sslmode": "verify-full",
+    "database.sslrootcert": "/run/cdc-secrets/postgres-ca.pem",
+    "topic.prefix": "<unique-cdc-topic-prefix>",
+    "slot.name": "<unique-postgres-slot-name>",
+    "publication.name": "<precreated-197-intake-publication-name>",
+    "publication.autocreate.mode": "disabled",
+    "table.include.list": "<197-intake-schema>.<197-intake-table>",
+    "column.include.list": "<reviewed-qualified-intake-column-regex-list>",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "message.key.columns": "<197-intake-schema>.<197-intake-table>:project_id"
+  }
+}

@@ -1,5 +1,15 @@
 # 테스트 프로필: DB 는 Testcontainers 가 전담 (datasource 는 @ServiceConnection 으로 주입). compose 자동 기동은 명시적으로 끈다.
 spring:
+  # 여러 Spring 테스트 컨텍스트가 PostgreSQL 컨테이너 하나를 공유한다.
+  # 컨텍스트마다 기본 10개 연결을 유지하면 합계가 max_connections를 초과한다.
+  datasource:
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 0
+      idle-timeout: 10000
+  # 실험용 migration은 테스트 classpath에서만 추가한다. 운영 Flyway에는 노출하지 않는다.
+  flyway:
+    locations: classpath:db/migration,classpath:db/cdc-poc
   docker:
     compose:
       enabled: false

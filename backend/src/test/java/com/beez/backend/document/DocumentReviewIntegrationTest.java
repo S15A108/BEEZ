@@ -247,6 +247,19 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(reviews.submission(leader, project.projectId(), document, Long.parseLong(submission.id())).content()).isEqualTo(edited.content());
     }
 
+    @Test void pendingDocumentDecisionCannotBypassChangeProposalAfterBaselineExists() {
+        var submission=submit(review());
+        long baseline=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,1,?) RETURNING id",
+                Long.class,project.projectId(),leader.accountId());
+        jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?",baseline,project.projectId());
+        code(() -> reviews.decide(leader,project.projectId(),document,Long.parseLong(submission.id()),
+                new DocumentDecisionRequest("APPROVE",null)),"change_proposal_required");
+        assertThat(jdbc.queryForObject("SELECT status FROM document_review_submission WHERE id=?",String.class,Long.parseLong(submission.id())))
+                .isEqualTo("SUBMITTED");
+        assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE id=?",String.class,Long.parseLong(submission.documentVersionId())))
+                .isEqualTo("DRAFT");
+    }
+
     @Test void fourSeparateApprovalsStillNeedExplicitBaselineButtonAndReadyIndexes() throws Exception {
         var documentIds = List.of(document, upload("REQUIREMENTS"), upload("ERD"), upload("API_SPEC"));
         var submissions = new ArrayList<DocumentSubmissionResponse>();
