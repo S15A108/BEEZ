@@ -163,20 +163,29 @@ jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
 
 ```bash
 # 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 흘려보내 그 자리에서 검사
+ENV_NAME=dev            # 검사할 환경. 서버 env 파일 /opt/beez/.env.<ENV_NAME>
+SITE=dev.beez.ai.kr     # 그 환경의 Nginx 설정 /etc/nginx/sites-enabled/<SITE>.conf
+REF=dev                 # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
+
 # 1) 필수값이 다 있는가
-REF=dev    # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
 git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
-  ssh beez 'docker compose -f - --env-file /opt/beez/.env.dev config --quiet && echo "env ok"'
+  ssh beez "docker compose -f - --env-file /opt/beez/.env.$ENV_NAME config --quiet && echo 'env ok'"
 
 # 2) backend 포트가 Nginx 가 보내는 포트와 같은가
-ssh beez 'p=$(sed -n "s/^BACKEND_HOST_PORT=//p" /opt/beez/.env.dev)
-  grep -q "server 127.0.0.1:$p;" /etc/nginx/sites-enabled/dev.beez.ai.kr.conf && echo "port ok ($p)" || echo "port 다름: env=$p"'
+ssh beez bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
+p=$(sed -n 's/^BACKEND_HOST_PORT=//p' "/opt/beez/.env.$1" | tail -n1)   # 키가 두 번이면 compose 처럼 마지막 값
+conf=/etc/nginx/sites-enabled/$2.conf
+[ -r "$conf" ] || { echo "Nginx 설정 없음: $conf"; exit 1; }
+case $p in ''|*[!0-9]*) echo "port 값 없음·이상: '$p'"; exit 1 ;; esac
+grep -Eq "^[[:space:]]*server 127\.0\.0\.1:$p;" "$conf" && echo "port ok ($p)" || echo "port 다름: env=$p"
+EOF
 ```
 
 - **`env ok` 는 값이 있는지만 봅니다.** 값이 맞는지(포트, `PUBLIC_ORIGIN` 형식, 비밀값이 DB 와 같은지)는 보지 않습니다.
   그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다. 포트가 `8080` 이면 Jenkins 와 겹쳐 backend 가 뜨지 못하고,
   Nginx 와 다르면 backend 는 떠도 Nginx 가 다른 포트로 보내 API 가 실패합니다. 둘 다 `port 다름` 으로 나옵니다.
-
+  배포(`deploy.sh`)는 컨테이너 안 healthcheck 만 보므로 포트가 어긋나도 성공으로 끝납니다. 값을 바꿨다면 이 점검을 꼭 돌립니다.
+- 다른 환경(운영 등)은 위 세 변수만 바꿉니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
   검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
 - 브랜치 이름이 틀리면 `fatal: invalid object name` 과 compose 오류가 같이 나옵니다(`env ok` 는 나오지 않음).
@@ -248,11 +257,12 @@ docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet &
    `.github/workflows/cd.yml` 의 `build-args` 를 **둘 다** 고칩니다. 하나라도 빠지면 로컬에서는 되고 서버 화면만
    조용히 기본값으로 돕니다. 비밀값은 넣지 않습니다.
    지금 `cd.yml` 의 `frontend-dist` 항목은 `build-args` 가 값 하나짜리 한 줄입니다. 두 개 이상이면 여러 줄로 바꿉니다.
+   값마다 `|| '기본값'` 을 붙입니다. 저장소 변수가 없을 때 빈 값이 넘어가면 Dockerfile `ARG` 의 기본값을 덮습니다.
 
    ```yaml
    build-args: |
      VITE_API_MODE=${{ vars.VITE_API_MODE || 'mock' }}
-     VITE_NEW_VALUE=${{ vars.VITE_NEW_VALUE }}
+     VITE_NEW_VALUE=${{ vars.VITE_NEW_VALUE || '<ARG 와 같은 기본값>' }}
    ```
 5. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example`·`frontend/.env.example`)에 빈 칸을 넣습니다.
 6. 이 문서의 표를 고칩니다.
