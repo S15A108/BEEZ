@@ -4,6 +4,7 @@ import static com.beez.backend.document.service.DocumentValues.*;
 
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.designitem.repository.BaselineRepository;
 import com.beez.backend.document.DocumentKindMapper;
 import com.beez.backend.document.config.DocumentProperties;
 import java.nio.charset.StandardCharsets;
@@ -24,10 +25,11 @@ public class DocumentIndexWorker {
     private final JdbcClient jdbc;
     private final AiClient ai;
     private final DocumentProperties properties;
+    private final BaselineRepository baselines;
     private final TransactionTemplate tx;
 
-    public DocumentIndexWorker(JdbcClient jdbc, AiClient ai, DocumentProperties properties, PlatformTransactionManager manager) {
-        this.jdbc = jdbc; this.ai = ai; this.properties = properties; this.tx = new TransactionTemplate(manager);
+    public DocumentIndexWorker(JdbcClient jdbc, AiClient ai, DocumentProperties properties, BaselineRepository baselines, PlatformTransactionManager manager) {
+        this.jdbc = jdbc; this.ai = ai; this.properties = properties; this.baselines = baselines; this.tx = new TransactionTemplate(manager);
     }
     private List<Map<String, Object>> rows(String sql, Map<String, ?> params) { return jdbc.sql(sql).params(params).query().listOfRows(); }
     @SuppressWarnings("unchecked") private static Map<String, Object> object(Object value) {
@@ -109,7 +111,8 @@ public class DocumentIndexWorker {
         var input = new LinkedHashMap<String, Object>();
         input.put("project_id", job.get("project_id").toString()); input.put("document_version_id", job.get("document_version_id").toString());
         input.put("request_key", key(job, "chunks")); input.put("kind", new DocumentKindMapper().convertToEntityAttribute(job.get("type").toString()).name());
-        input.put("media_type", job.get("storage_key").toString().endsWith(".md") ? "text/markdown" : "text/plain");
+        // The chunking API accepts text/markdown only; an uploaded .txt is plain text, which Markdown contains.
+        input.put("media_type", "text/markdown");
         input.put("content", content); input.put("content_hash", job.get("content_hash")); input.put("text_hash", job.get("text_hash"));
         input.put("normalization_profile", "utf8-lf-v1"); input.put("chunking_profile_id", "md-structure-v1");
         var response = call(job, input, false);
@@ -248,7 +251,6 @@ public class DocumentIndexWorker {
                 "dimension", properties.embeddingDimension(), "texts", List.of(Map.of("key", "query", "text", query)));
         var embeddings = vectors(call(Map.of("project_id", project), queryInput, true), "QUERY");
         if (!embeddings.keySet().equals(Set.of("query"))) throw invalid("invalid_embedding_keys");
-        requireReadyIndex(baseline);
         // Materialize the allowed set before distance ordering: global HNSW post-filtering
         // can otherwise underfill results when most nearest chunks belong to another scope.
         String sql = """
@@ -270,7 +272,6 @@ public class DocumentIndexWorker {
                 + " ORDER BY a.embedding <=> cast(:vector AS vector),a.id LIMIT :limit OFFSET :offset", params);
         Long finalBaseline = jdbc.sql("SELECT current_baseline_id FROM project WHERE id=:project").param("project", project).query(Long.class).single();
         if (!baseline.equals(finalBaseline)) throw conflict("baseline_changed");
-        requireReadyIndex(baseline);
         boolean more = found.size() > limit; int nextOffset = offset + limit;
         var results = found.subList(0, Math.min(limit, found.size())).stream().<Map<String, Object>>map(row -> {
             var locator = object(JSON.readValue(row.get("locator").toString(), Map.class));
@@ -286,17 +287,6 @@ public class DocumentIndexWorker {
     }
 
     private void requireReadyIndex(long baseline) {
-        int missing = jdbc.sql("""
-                SELECT count(*) FROM baseline_document b
-                WHERE b.baseline_id=:baseline AND NOT EXISTS (
-                  SELECT 1 FROM document_processing p JOIN document_index_manifest m USING(document_version_id)
-                  WHERE p.document_version_id=b.document_version_id AND p.status='COMPLETED' AND p.source_status='READY'
-                    AND p.index_status='READY' AND m.attempt=p.attempt AND m.text_hash=p.text_hash
-                    AND m.embedding_profile_id=:profile AND m.chunk_count>0
-                    AND m.chunk_count=(SELECT count(*) FROM document_chunk c WHERE c.document_version_id=p.document_version_id AND c.embedding IS NOT NULL)
-                    AND NOT EXISTS (SELECT 1 FROM document_chunk c WHERE c.document_version_id=p.document_version_id AND c.embedding IS NULL)
-                )
-                """).param("baseline", baseline).param("profile", properties.embeddingProfile()).query(Integer.class).single();
-        if (missing > 0) throw conflict("index_not_ready");
+        if (baselines.countDocumentsWithoutReadyIndex(baseline, properties.embeddingProfile()) > 0) throw conflict("index_not_ready");
     }
 }

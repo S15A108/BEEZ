@@ -8,6 +8,9 @@ import java.util.*;
 
 /** Validates the AI response against the immutable normalized source before publication. */
 final class DocumentChunkValidator {
+    // The md-structure-v1 profile is fixed on both sides; the manifest must echo these limits.
+    private static final int MAX_TOKENS = 600, MAX_CHUNKS = 1024;
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> object(Object value) {
         if (!(value instanceof Map<?, ?> map)) throw invalid("invalid_ai_output");
@@ -46,13 +49,13 @@ final class DocumentChunkValidator {
         var profile = object(manifest.get("chunking_profile"));
         same(profile.get("profile_id"), input.get("chunking_profile_id"));
         text(profile.get("tokenizer_id"));
-        if (integer(profile.get("max_tokens")) != 600 || integer(profile.get("max_chunks")) != 1024
+        if (integer(profile.get("max_tokens")) != MAX_TOKENS || integer(profile.get("max_chunks")) != MAX_CHUNKS
                 || !Boolean.FALSE.equals(profile.get("include_headings")) || !Boolean.FALSE.equals(profile.get("include_table_headers"))) {
             throw invalid("invalid_chunk_manifest");
         }
 
         var raw = array(result.get("chunks"));
-        if (raw.isEmpty() || raw.size() > 1024 || raw.size() > integer(profile.get("max_chunks"))) throw invalid("invalid_chunk_count");
+        if (raw.isEmpty() || raw.size() > MAX_CHUNKS) throw invalid("invalid_chunk_count");
         var expected = array(manifest.get("expected_chunk_keys"));
         if (expected.size() != raw.size()) throw invalid("invalid_chunk_manifest");
         int[] points = source.codePoints().toArray();
@@ -70,7 +73,8 @@ final class DocumentChunkValidator {
             if (integer(chunk.get("chunk_no")) != no || !keys.add(key) || !Objects.equals(expected.get(no), key)) throw invalid("invalid_chunk_keys");
             same(chunk.get("document_version_id"), input.get("document_version_id"));
             String embeddingText = text(chunk.get("embedding_text"));
-            if (integer(chunk.get("token_count")) <= 0 || integer(chunk.get("token_count")) > integer(profile.get("max_tokens"))) throw invalid("invalid_chunk_tokens");
+            int tokens = integer(chunk.get("token_count"));
+            if (tokens <= 0 || tokens > MAX_TOKENS) throw invalid("invalid_chunk_tokens");
             var spans = array(chunk.get("source_spans"));
             if (spans.isEmpty()) throw invalid("invalid_source_span");
             var restored = new StringBuilder(); int firstLine = 0, lastLine = 0;
@@ -90,7 +94,8 @@ final class DocumentChunkValidator {
             if (!restored.toString().equals(chunk.get("text")) || !restored.toString().equals(embeddingText)) throw invalid("invalid_chunk_text");
             for (Object item : array(chunk.get("context_refs"))) {
                 var ref = object(item); text(ref.get("block_id"));
-                if (!Set.of("heading", "table_header").contains(ref.get("role")) || !Boolean.FALSE.equals(ref.get("applied"))) throw invalid("invalid_context_reference");
+                if (!(ref.get("role") instanceof String role) || !Set.of("heading", "table_header").contains(role)
+                        || !Boolean.FALSE.equals(ref.get("applied"))) throw invalid("invalid_context_reference");
                 var locator = object(ref.get("locator")); int start = integer(locator.get("start_line")), end = integer(locator.get("end_line"));
                 checkLocator(locator, start, end, lines);
                 String referenced = new String(points, starts.get(start - 1), starts.get(end) - starts.get(start - 1));

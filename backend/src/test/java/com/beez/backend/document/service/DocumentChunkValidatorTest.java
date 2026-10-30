@@ -85,6 +85,9 @@ class DocumentChunkValidatorTest {
         var firstChunk = map(list(result(applied).get("chunks")).getFirst());
         map(list(firstChunk.get("context_refs")).getFirst()).put("applied", true);
         assertThatThrownBy(() -> validate(applied)).isInstanceOf(ApiException.class);
+        var roleless = fixture();
+        map(list(map(list(result(roleless).get("chunks")).getFirst()).get("context_refs")).getFirst()).remove("role");
+        assertThatThrownBy(() -> validate(roleless)).isInstanceOf(ApiException.class);
     }
 
     @Test void embeddingRequestMapsEmbeddingTextField() {

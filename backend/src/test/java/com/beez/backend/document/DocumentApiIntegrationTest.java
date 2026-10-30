@@ -145,8 +145,11 @@ class DocumentApiIntegrationTest {
         return http.send(builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
     HttpResponse<String> upload(String key, byte[] bytes, String kind) throws Exception {
+        return upload(key, bytes, kind, "input.md");
+    }
+    HttpResponse<String> upload(String key, byte[] bytes, String kind, String filename) throws Exception {
         return multipart("/api/projects/" + project + "/documents", key, bytes,
-                Map.of("kind", kind, "title", "요구사항", "domain", "account"));
+                Map.of("kind", kind, "title", "요구사항", "domain", "account"), false, TRUSTED_ORIGIN, filename);
     }
     HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields) throws Exception {
         return multipart(path, key, bytes, fields, false);
@@ -155,10 +158,13 @@ class DocumentApiIntegrationTest {
         return multipart(path, key, bytes, fields, multiple, TRUSTED_ORIGIN);
     }
     HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields, boolean multiple, String origin) throws Exception {
+        return multipart(path, key, bytes, fields, multiple, origin, "input.md");
+    }
+    HttpResponse<String> multipart(String path, String key, byte[] bytes, Map<String, String> fields, boolean multiple, String origin, String filename) throws Exception {
         String boundary = "beez-fixture-boundary";
         var out = new ByteArrayOutputStream();
         for (var field : fields.entrySet()) out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field.getKey() + "\"\r\n\r\n" + field.getValue() + "\r\n").getBytes(StandardCharsets.UTF_8));
-        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.md\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));
         out.write(bytes);
         if (multiple) out.write(("\r\n--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"second.md\"\r\n\r\nsecond").getBytes(StandardCharsets.UTF_8));
         out.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
@@ -407,6 +413,16 @@ class DocumentApiIntegrationTest {
         var stored = jdbc.queryForObject("SELECT context_refs::text FROM document_chunk WHERE document_version_id=? AND chunk_no=1", String.class, version);
         assertThat(JSON.readTree(stored).get(0).get("text_hash").asText()).isEqualTo(headingHash);
         assertThat(JSON.readTree(stored).get(0).get("applied").asBoolean()).isFalse();
+    }
+
+    @Test void indexesPlainTextUploadThroughTheMarkdownChunkingContract() throws Exception {
+        // The upload policy keeps .txt while the chunking API accepts text/markdown only.
+        var response = upload(UUID.randomUUID().toString(), "계획 메모\n두 번째 줄\n".getBytes(StandardCharsets.UTF_8), "PLAN", "notes.txt");
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        long version = JSON.readTree(response.body()).get("document").get("latest_draft").get("id").asLong();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
+        verify(ai).documentChunks(argThat(input -> "text/markdown".equals(input.get("media_type")) && "PLAN".equals(input.get("kind"))));
     }
 
     @Test void failedEmbeddingHasNoPartialIndexAndRetryPreservesInput() throws Exception {
