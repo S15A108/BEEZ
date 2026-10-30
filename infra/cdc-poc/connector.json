@@ -1,0 +1,22 @@
+{
+  "name": "beez-cdc-poc-outbox",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "cdc_poc",
+    "database.password": "cdc_poc_local_only",
+    "database.dbname": "cdc_poc",
+    "topic.prefix": "beez_cdc",
+    "plugin.name": "pgoutput",
+    "slot.name": "beez_cdc_poc",
+    "publication.name": "beez_cdc_poc",
+    "publication.autocreate.mode": "filtered",
+    "table.include.list": "cdc_demo.publication_outbox",
+    "snapshot.mode": "no_data",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false"
+  }
+}
