@@ -212,6 +212,12 @@ public class TaskApiSupport {
                 """.formatted(designItemId(key), currentVersionId(key));
     }
 
+    public String implementsRef(String key) {
+        return """
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "IMPLEMENTS"}]
+                """.formatted(designItemId(key), currentVersionId(key));
+    }
+
     public String readsRef(String key) {
         return """
                 [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "READS"}]

@@ -1113,7 +1113,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: MCP-11, VAL-01·02  
 담당: BE: 전진(도구) / 변준성(실행·상태·저장) / AI: 양지훈(분석) / FE: —  
-상태: D2 판정표 합의 필요
+상태: BE 업무 서비스 구현 반영안 (S15P31A108-159, `ValidationMcpService.validateTaskPlan`). 도구 등록·어댑터 연결은 -179
 
 #### 인증
 
@@ -1194,6 +1194,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현, -159) |
 | 409 | `revision_conflict` | 현재 계획 아님 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
@@ -1212,6 +1213,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 검증을 관리하고 RUNNING이면 동일 validation_id를 get_validation으로 조회한다.
 - 규칙으로 즉시 완료할 수 있으며 판정은 [공통 6절 판정표](00-common.md#검증시작)를 따른다. 빈 입력은 NEEDS_INPUT, 명확한 계약 불일치·CHANGES 점유는 NEEDS_REVIEW다. AI가 finding을 내지 않은 것만으로는 PASS가 아니다.
 - AI 실패는 ERROR다. 규칙 finding을 AI가 해제하지 못한다.
+- (BE 구현, -159) 접수 규칙·판정·큐·워커는 REST [VAL-A01](01-backend-rest.md#val-a01) 처리 규칙과 같다. 도구 결과에는 200/202 구분이 없고 `status`(RUNNING 이면 큐에 들어감)로 본다. `idempotency_key`는 계정·프로젝트·동작 범위로 24시간 보존하고 같은 키·다른 입력은 409 `idempotency_conflict`, 재요청도 현재 담당자인지 확인한다(공통 5절).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
