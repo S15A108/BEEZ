@@ -168,25 +168,38 @@ jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
 서버 env 파일을 **배포하지 않고** 두 가지로 확인합니다. 비밀값은 화면에 나오지 않습니다.
 
 ```bash
-# 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 흘려보내 그 자리에서 검사
+# 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 넘겨 그 자리에서 검사
 HOST=beez               # 그 환경의 서버. ~/.ssh/config 의 Host 별칭
 ENV_NAME=dev            # 검사할 환경. 서버 env 파일 /opt/beez/.env.<ENV_NAME>
 SITE=dev.beez.ai.kr     # 그 환경의 Nginx 설정 /etc/nginx/sites-enabled/<SITE>.conf
 REF=dev                 # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
 
-# 1) 필수값이 다 있는가
-git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
-  ssh "$HOST" "docker compose -f - --env-file /opt/beez/.env.$ENV_NAME config --quiet && echo 'env ok'"
-
-# 2) backend 포트를 다른 프로그램이 쓰지 않고, Nginx 가 보내는 포트와 같은가. 실패하면 모두 exit 1
-ssh "$HOST" bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
+# 1) 필수값이 다 있는가  2) backend 포트를 다른 프로그램이 쓰지 않고, Nginx 가 보내는 포트와 같은가
+# 성공이면 env ok · port ok 두 줄, 실패하면 그 자리에서 멈추고 exit 1
+git fetch -q origin && cf=$(git show "origin/$REF:infra/compose.yaml" | base64 | tr -d '\n') && [ -n "$cf" ] &&
+ssh "$HOST" bash -s -- "$ENV_NAME" "$SITE" "$cf" <<'EOF'
 fail() { echo "$1"; exit 1; }
+# compose 오류 문구는 env 값을 그대로 담기도 한다(따옴표가 안 닫힌 값, 포트 형식 오류 등).
+# 값이 들어가지 않는 형식만 골라 보여 주고, 나머지는 숨긴다
+safe() { awk '
+  match($0, /required variable [A-Za-z0-9_]+ is missing a value/) { print substr($0, RSTART, RLENGTH); next }
+  /^failed to read / && match($0, /: line [0-9]+: /) { print "env 파일 " substr($0, RSTART + 7, RLENGTH - 9) "번째 줄 형식 오류 (값은 숨김)"; next }
+  /^failed to read / { print "env 파일 읽기 오류, 예: ${ 문법 (값은 숨김)"; next }
+  /^couldn.t find env file: |^unknown flag: |command not found/ { print; next }
+  NF { h = 1 }
+  END { if (h) print "compose 오류 (값이 섞일 수 있어 문구는 숨김)" }'; }
+envf=/opt/beez/.env.$1
+cf=$(printf '%s' "$3" | base64 -d) && [ -n "$cf" ] || fail "compose 파일을 받지 못함"
+err=$(printf '%s\n' "$cf" | docker compose -f - --env-file "$envf" config --quiet 2>&1 >/dev/null) ||
+  { printf '%s\n' "$err" | safe; fail "env 점검 실패"; }
+echo "env ok"
 blk='/upstream[[:space:]]+beez_backend[[:space:]]*[{]/'
-# 포트는 compose 가 해석한 값을 쓴다. 주석·따옴표·CRLF·중복 키(마지막 값)를 compose 와 똑같이 읽는다
-envs=$(printf 'services: {}\n' | docker compose -f - --env-file "/opt/beez/.env.$1" config --environment) ||
-  fail "env 읽기 실패: /opt/beez/.env.$1"
-p=$(printf '%s\n' "$envs" | sed -n 's/^BACKEND_HOST_PORT=//p'); unset envs   # 다른 값(비밀값)은 출력하지 않는다
-case $p in ''|*[^0-9]*) fail "port 값 없음·이상: '$p'" ;; esac
+# 포트는 compose 가 해석한 값을 쓴다. 주석·따옴표·CRLF·중복 키(마지막 값)를 compose 와 똑같이 읽는다.
+# 이 명령은 env 파일의 모든 값을 내보내므로 포트만 꺼낸다
+envs() { printf 'services: {}\n' | docker compose -f - --env-file "$envf" config --environment; }
+err=$(envs 2>&1 >/dev/null) || { printf '%s\n' "$err" | safe; fail "env 읽기 실패"; }
+p=$(envs 2>/dev/null | sed -n 's/^BACKEND_HOST_PORT=//p')
+case $p in ''|*[^0-9]*) fail "port 값 없음·이상 (숫자가 아님, 값은 숨김)" ;; esac
 conf=/etc/nginx/sites-enabled/$2.conf
 [ -r "$conf" ] || fail "Nginx 설정 없음: $conf"
 hit="127\.0\.0\.1:$p([^0-9]|$)"
@@ -227,15 +240,33 @@ EOF
 - 포트 값은 env 파일을 직접 읽지 않고 compose 가 해석한 값(`config --environment`)으로 봅니다. 그래서
   `BACKEND_HOST_PORT=8081 # 주석`, 따옴표, CRLF, 같은 키 두 번(마지막 값)을 배포 때와 똑같이 읽습니다.
   이 명령은 env 파일의 모든 값을 내보내므로 스크립트 안에서 포트만 꺼내고 화면에는 찍지 않습니다.
+- **compose 오류 문구도 그대로 보여 주지 않습니다.** compose 는 따옴표가 안 닫힌 값(`unterminated quoted value "<값>`),
+  포트 형식 오류(`invalid hostPort: <값>`), `${` 문법 오류(`Invalid template: "<값>"`)에서 값을 그대로 찍습니다
+  (2026-10-30 로컬 실측). 그래서 `safe` 가 값이 들어가지 않는 형식(빠진 변수 이름, 줄 번호, env 파일 경로, 모르는 옵션)만
+  골라 보여 주고, 나머지는 `compose 오류 (값이 섞일 수 있어 문구는 숨김)` 한 줄로 바꿉니다. 숨겨진 원인을 봐야 하면
+  서버에서 직접 compose 를 돌려 봅니다(채팅·PR 에 붙여 넣지 않습니다).
+- **2) 는 디스크의 Nginx 설정 파일을 읽습니다. 실행 중인 Nginx 가 아닙니다.** 파일을 고친 뒤 reload 하기 전에는
+  `port ok` 가 나와도 Nginx 는 이전 포트로 보냅니다. 설정을 고쳤다면 `sudo nginx -t && sudo systemctl reload nginx` 까지
+  하고, 반영됐는지는 둘 중 하나로 봅니다(서버에서).
+
+  ```bash
+  # reload 하면 worker 가 새로 뜬다. 파일 수정 시각이 worker 시작보다 늦으면 아직 반영 전이다
+  stat -c '%y %n' /etc/nginx/sites-enabled/dev.beez.ai.kr.conf; ps -o lstart=,cmd= -C nginx | grep 'worker process$'
+  # 배포한 뒤: 실제 Nginx 를 거쳐 backend health 를 부른다. 200 이면 지금 Nginx 가 backend 에 닿는다(502 면 다른 포트)
+  curl -sS -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/health
+  ```
+
+  배포 단계에서 자동으로 확인하는 것은 S15P31A108-245 에서 합니다.
 - `upstream beez_backend` 에 `server` 가 둘 이상이면 멈춥니다. 하나만 맞아도 Nginx 는 나머지로도 요청을 보내므로,
   compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
 - **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
   실패는 모두 exit 1 입니다.
-  `env 읽기 실패` 는 같이 나오는 compose 문구로 원인을 구분합니다. `couldn't find env file` 은 `ENV_NAME` 이 틀린 것,
-  `failed to read … line N: …`(예: `unterminated quoted value`) 은 env 파일 N번째 줄의 형식 오류,
+  `env 점검 실패`(1) 와 `env 읽기 실패`(2) 는 바로 위에 찍힌 줄로 원인을 구분합니다.
+  `required variable X is missing a value` 는 필수값 X 가 없거나 빈 것, `couldn't find env file` 은 `ENV_NAME` 이 틀린 것,
+  `env 파일 N번째 줄 형식 오류` 는 그 줄의 따옴표·키 형식이 틀린 것,
   `unknown flag: --environment` 는 서버 compose 가 이 옵션보다 오래된 것입니다(서버 v5.6.1·로컬 v5.2.0 에는 있음, 2026-10-30).
   `docker: command not found` 는 서버에 docker 가 없는 것입니다.
-  `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다.
+  `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다(값은 찍지 않습니다).
   `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다. `Nginx 설정 읽기 실패` 는 켜진 사이트 중 읽을 수 없는
   파일(권한, 깨진 링크)이 있는 것입니다.
   `upstream beez_backend 없음` 은 그 설정 파일에 블록이 없는 것입니다(`SITE` 가 다른 사이트이거나 upstream 을 다른 파일로 옮김).
@@ -249,10 +280,11 @@ EOF
   컨테이너부터 겹칩니다. 같은 서버에 두기로 하면 이 점검과 compose 이름을 함께 고칩니다.
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
   검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
-- 브랜치 이름이 틀리면 `fatal: invalid object name` 과 compose 오류가 같이 나옵니다(`env ok` 는 나오지 않음).
-- `-f -` 는 compose 파일을 표준 입력으로 읽습니다. 서버에 파일을 남기지 않습니다.
-- `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 위 표의 첫 줄 문구가
-  나옵니다.
+- 브랜치 이름이 틀리면 `fatal: invalid object name` 만 나오고 점검은 돌지 않습니다(`env ok` 는 나오지 않음).
+- compose 파일은 base64 로 바꿔 ssh 인자로 보냅니다(표준 입력은 점검 스크립트가 씁니다). 서버에서 `-f -` 로 읽으므로
+  서버에 파일을 남기지 않습니다.
+- `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 위 표 첫 줄 문구의 앞부분
+  (`required variable DB_PASSWORD is missing a value`)이 나옵니다.
 - 값의 길이만 보려면 [cd.md](cd.md#2-env-파일)의 `awk` 명령을 씁니다.
 
 로컬 전체 스택도 같은 방식입니다.
