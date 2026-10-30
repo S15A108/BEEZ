@@ -43,7 +43,7 @@ final class DocumentChunkValidator {
         same(manifest.get("content_hash"), digest(input.get("content_hash")));
         same(manifest.get("text_hash"), digest(input.get("text_hash")));
         same(manifest.get("normalization_version"), input.get("normalization_profile"));
-        same(manifest.get("parser_profile"), "markdown-v1");
+        same(manifest.get("parser_profile"), "text/plain".equals(input.get("media_type")) ? "plain-v1" : "markdown-v1");
         same(manifest.get("parser_version"), result.get("parser_version"));
         text(manifest.get("chunker_version"));
         var profile = object(manifest.get("chunking_profile"));

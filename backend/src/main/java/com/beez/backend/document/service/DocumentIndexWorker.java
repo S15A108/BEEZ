@@ -111,8 +111,8 @@ public class DocumentIndexWorker {
         var input = new LinkedHashMap<String, Object>();
         input.put("project_id", job.get("project_id").toString()); input.put("document_version_id", job.get("document_version_id").toString());
         input.put("request_key", key(job, "chunks")); input.put("kind", new DocumentKindMapper().convertToEntityAttribute(job.get("type").toString()).name());
-        // The chunking API accepts text/markdown only; an uploaded .txt is plain text, which Markdown contains.
-        input.put("media_type", "text/markdown");
+        // .md is parsed as Markdown (markdown-v1); .txt is sent as plain text (plain-v1) so tag-like text is never rejected.
+        input.put("media_type", job.get("storage_key").toString().endsWith(".md") ? "text/markdown" : "text/plain");
         input.put("content", content); input.put("content_hash", job.get("content_hash")); input.put("text_hash", job.get("text_hash"));
         input.put("normalization_profile", "utf8-lf-v1"); input.put("chunking_profile_id", "md-structure-v1");
         var response = call(job, input, false);

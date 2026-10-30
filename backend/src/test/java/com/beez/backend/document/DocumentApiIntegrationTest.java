@@ -106,7 +106,8 @@ class DocumentApiIntegrationTest {
         var manifest = Map.of("project_id", input.get("project_id"), "document_version_id", input.get("document_version_id"),
                 "content_hash", input.get("content_hash").toString().replaceFirst("^sha256:", ""),
                 "text_hash", input.get("text_hash").toString().replaceFirst("^sha256:", ""),
-                "normalization_version", input.get("normalization_profile"), "parser_profile", "markdown-v1",
+                "normalization_version", input.get("normalization_profile"),
+                "parser_profile", "text/plain".equals(input.get("media_type")) ? "plain-v1" : "markdown-v1",
                 "parser_version", "fixture-v1", "chunker_version", "fixture-v1", "chunking_profile", profile,
                 "expected_chunk_keys", chunks.stream().map(c -> c.get("chunk_key")).toList());
         var result = new HashMap<String, Object>();
@@ -415,14 +416,18 @@ class DocumentApiIntegrationTest {
         assertThat(JSON.readTree(stored).get(0).get("applied").asBoolean()).isFalse();
     }
 
-    @Test void indexesPlainTextUploadThroughTheMarkdownChunkingContract() throws Exception {
-        // The upload policy keeps .txt while the chunking API accepts text/markdown only.
-        var response = upload(UUID.randomUUID().toString(), "계획 메모\n두 번째 줄\n".getBytes(StandardCharsets.UTF_8), "PLAN", "notes.txt");
+    @Test void indexesPlainTextUploadThroughThePlainTextChunkingContract() throws Exception {
+        // The upload policy keeps .txt; the chunking API reads it as plain text (plain-v1), never as Markdown.
+        var response = upload(UUID.randomUUID().toString(), "계획 메모 <user> 태그\n두 번째 줄\n".getBytes(StandardCharsets.UTF_8), "PLAN", "notes.txt");
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
         long version = JSON.readTree(response.body()).get("document").get("latest_draft").get("id").asLong();
         assertThat(worker.runOnce()).isTrue();
         assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
-        verify(ai).documentChunks(argThat(input -> "text/markdown".equals(input.get("media_type")) && "PLAN".equals(input.get("kind"))));
+        verify(ai).documentChunks(argThat(input -> "text/plain".equals(input.get("media_type")) && "PLAN".equals(input.get("kind"))));
+        var markdown = uploaded();
+        assertThat(worker.runOnce()).isTrue();
+        verify(ai).documentChunks(argThat(input -> "text/markdown".equals(input.get("media_type"))
+                && markdown.get("latest_draft").get("id").asText().equals(input.get("document_version_id"))));
     }
 
     @Test void failedEmbeddingHasNoPartialIndexAndRetryPreservesInput() throws Exception {

@@ -90,6 +90,17 @@ class DocumentChunkValidatorTest {
         assertThatThrownBy(() -> validate(roleless)).isInstanceOf(ApiException.class);
     }
 
+    @Test void parserProfileMustMatchTheRequestedMediaType() {
+        var plain = fixture();
+        map(plain.get("input")).put("media_type", "text/plain");
+        assertThatThrownBy(() -> validate(plain)).isInstanceOf(ApiException.class);
+        map(result(plain).get("manifest")).put("parser_profile", "plain-v1");
+        assertThat(validate(plain)).hasSize(4);
+        var markdown = fixture();
+        map(result(markdown).get("manifest")).put("parser_profile", "plain-v1");
+        assertThatThrownBy(() -> validate(markdown)).isInstanceOf(ApiException.class);
+    }
+
     @Test void embeddingRequestMapsEmbeddingTextField() {
         // Mapping is tested independently with distinct values: valid v1 responses have identical fields.
         var chunks = List.of(Map.<String, Object>of("chunk_key", "key", "text", "source", "embedding_text", "embedding"));
