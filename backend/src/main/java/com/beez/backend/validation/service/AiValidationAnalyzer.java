@@ -2,6 +2,7 @@ package com.beez.backend.validation.service;
 
 import com.beez.backend.ai.AiClient;
 import java.util.Map;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -15,7 +16,9 @@ import org.springframework.web.client.RestClientResponseException;
  * 200 인데 본문을 읽지 못함(JSON 객체가 아님 등) → ai_invalid_output, 4xx(422 등) → BE 가 만든 요청이 거부된 것이므로
  * validation_execution_failed.
  */
+/* 서버용 가짜 분석기(beez.validation.fake-analyzer=true)를 켜면 이 클래스 대신 FakeValidationAnalyzer 가 쓰인다 */
 @Component
+@ConditionalOnProperty(name = "beez.validation.fake-analyzer", havingValue = "false", matchIfMissing = true)
 public class AiValidationAnalyzer implements ValidationAnalyzer {
 
     private final AiClient ai;

@@ -110,6 +110,9 @@ beez:
     poll-millis: ${VALIDATION_POLL_MILLIS:2000}
     lease-seconds: ${VALIDATION_LEASE_SECONDS:120}      # AI 읽기 시간 초과(ai.read-timeout)보다 길게
     execution-budget-ms: ${VALIDATION_BUDGET_MS:15000}  # AI 에게 주는 처리 예산. 읽기 시간 초과보다 짧게
+    # 서버용 가짜 분석기. AI 서버에 /v1/validate 가 붙기 전(-184)까지 개발 서버에서만 켠다.
+    # 켜면 AI 를 부르지 않고 의미 분석이 필요한 검증도 후보 없이 PASS 로 끝난다(실제 설계 대조 없음). 운영에서는 끈다
+    fake-analyzer: ${VALIDATION_FAKE_ANALYZER:false}
   ai:
     base-url: ${AI_BASE_URL:http://localhost:8000}
     internal-token: ${AI_INTERNAL_TOKEN:change-me}
