@@ -247,6 +247,13 @@ docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet &
 4. frontend `VITE_` 값은 빌드할 때 굳습니다. 서버 화면에도 쓰려면 `infra/frontend-dist/Dockerfile` 의 `ARG` 와
    `.github/workflows/cd.yml` 의 `build-args` 를 **둘 다** 고칩니다. 하나라도 빠지면 로컬에서는 되고 서버 화면만
    조용히 기본값으로 돕니다. 비밀값은 넣지 않습니다.
+   지금 `cd.yml` 의 `frontend-dist` 항목은 `build-args` 가 값 하나짜리 한 줄입니다. 두 개 이상이면 여러 줄로 바꿉니다.
+
+   ```yaml
+   build-args: |
+     VITE_API_MODE=${{ vars.VITE_API_MODE || 'mock' }}
+     VITE_NEW_VALUE=${{ vars.VITE_NEW_VALUE }}
+   ```
 5. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example`·`frontend/.env.example`)에 빈 칸을 넣습니다.
 6. 이 문서의 표를 고칩니다.
 7. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
