@@ -118,7 +118,7 @@
 | `task:501:lock:7:START` | 작업 501, 잠금 버전 7에서 시작(이미 쓰는 `TaskStateChangedEvent` 키) |
 | `change-proposal:71:published` | 제안 71 발행 |
 | `change-proposal:71:published:to:12` | 제안 71 발행 알림, 계정 12에게 |
-| `change-discussion:88:to:12` | 의견 88의 지정 멤버 12에게 알림(`ChangeDiscussionService` TODO 그대로) |
+| `change-discussion:88:mentioned:to:12` | 의견 88에서 지정된 멤버 12에게 알림(`ChangeDiscussionService` TODO의 "의견 ID + 대상 계정"에 동작을 붙인 것) |
 | `doc-submission:33:review-requested:to:11` | 문서 제출 33 검토 요청, 팀장 11에게 |
 | `project:101:created` | 프로젝트 101 생성 |
 
