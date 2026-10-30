@@ -233,8 +233,13 @@ docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet &
    `${X:}` 로 덮고 설정 클래스에 `@NotBlank` 등 검증을 답니다. 새 설정 클래스면 `ProdProfilePropertiesTest` 의
    바인딩 시험에 한 줄 추가합니다.
 2. 컨테이너에 넘겨야 하면 `infra/compose.yaml` 에 넣습니다. 필수면 `${X:?X is required}`.
-3. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example` 등)에 빈 칸을 넣습니다.
-4. 이 문서의 표를 고칩니다.
-5. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
+3. 서버 env 파일에 들어가는 값이면 [cd.md 서버 준비 2](cd.md#2-env-파일)의 **파일을 만드는 명령에도** 키를 더합니다.
+   그 명령이 키를 직접 나열하므로, 빠뜨리면 새 서버(-73 운영 등)에서 만든 파일에 그 키가 없어 첫 배포가 멈춥니다.
+4. frontend `VITE_` 값은 빌드할 때 굳습니다. 서버 화면에도 쓰려면 `infra/frontend-dist/Dockerfile` 의 `ARG` 와
+   `.github/workflows/cd.yml` 의 `build-args` 를 **둘 다** 고칩니다. 하나라도 빠지면 로컬에서는 되고 서버 화면만
+   조용히 기본값으로 돕니다. 비밀값은 넣지 않습니다.
+5. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example`·`frontend/.env.example`)에 빈 칸을 넣습니다.
+6. 이 문서의 표를 고칩니다.
+7. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
    compose 단계에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)를
    **`REF=<그 PR 브랜치>`** 로 돌려 확인합니다.
