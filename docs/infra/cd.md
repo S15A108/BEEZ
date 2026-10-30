@@ -74,6 +74,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
 Variables)로 정합니다. 없으면 `mock`입니다. `VITE_` 값은 빌드 결과에 그대로
 박히는 공개 값이라 토큰·키를 넣지 않습니다.
 
+**값을 바꾼 뒤에는 dev에 새 커밋이 들어가야 서버에 반영됩니다.** 같은 SHA로 CD를
+다시 돌리면 `beez-frontend-dist:<sha>` 이미지는 새 값으로 덮어써지지만, 배포
+스크립트가 `releases/<sha>`가 이미 있으면 꺼내기를 건너뛰어 서버에는 예전 dist가
+남습니다(Actions·Jenkins는 둘 다 성공으로 끝남). live 전환은 프론트 연동 PR
+머지와 함께 합니다(2026-10-29 프론트 합의).
+
 ## 서버 준비 (서버당 한 번)
 
 ### 1. `/opt/beez` 권한
