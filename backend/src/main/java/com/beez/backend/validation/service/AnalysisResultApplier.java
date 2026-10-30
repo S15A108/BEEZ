@@ -98,7 +98,9 @@ public class AnalysisResultApplier {
             return;
         }
 
-        // COMPLETE: 후보 저장 + 규칙 판정
+        // COMPLETE: 후보 저장 + 규칙 판정. 출처는 AI 가 보낸 값 대신 요청에 넣은 출처 객체로 바꿔 저장한다
+        // (계약 검사는 네 칸을 문자열로 비교하므로, 숫자 ID·명세에 없는 칸이 섞인 값을 그대로 내보내지 않게)
+        Map<String, Map<String, Object>> requestSources = requestSources(request);
         boolean needsInput = false;
         boolean needsReview = false;
         for (Map<String, Object> f : objects(result.get("findings"))) {
@@ -133,7 +135,7 @@ public class AnalysisResultApplier {
                 needsReview = true;              // MISMATCH·CONFLICT 는 BLOCKING 일 때만 막는다
             }
             validations.insertFinding(v.id(), new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
-                    id(f.get("related_task_id")), (String) f.get("message"), objects(f.get("sources")), resolution,
+                    id(f.get("related_task_id")), (String) f.get("message"), canonicalSources(f, requestSources), resolution,
                     nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids"))));
         }
         String status = "PASS";
@@ -217,11 +219,25 @@ public class AnalysisResultApplier {
             if (run.isPresent() && "RUNNING".equals(run.get().get("status"))) {
                 validations.finishRun(((Number) run.get().get("id")).longValue(), "DISCARDED", "늦은 결과", null, 0);
             }
+            validations.cancelJobIfStillLeased(lease.jobId(), lease.leaseToken());
             log.info("validation {} attempt {} result discarded (status={}, current_attempt={})", v.id(), lease.attempt(),
                     v.status(), v.currentAttempt());
             return Optional.empty();
         }
-        return Optional.of(new Current(v, ((Number) run.get().get("id")).longValue()));
+        long runId = ((Number) run.get().get("id")).longValue();
+        // 결과를 기다리는 사이 계획 리비전이 바뀌었으면 이 결과는 지난 계획의 것이다. 진행 중 계획 변경(S2)은 끝난 검증만
+        // STALE 로 바꾸고 도는 검증은 워커에 맡기므로, 여기서 버리고 STALE(PLAN_CHANGED) 로 닫는다.
+        // project 행은 잠그지 않는다 — 계획 변경이 project → validation 순서로 잠가, 여기서 잡으면 순서가 거꾸로 된다.
+        // 이 확인과 커밋 사이의 짧은 틈은 시작 관문(G1)이 계획 리비전으로 거른다
+        Optional<Long> currentPlan = validations.currentPlanRevision(v.taskId());
+        if (currentPlan.isEmpty() || !currentPlan.get().equals(v.planRevisionId())) {
+            validations.finishRun(runId, "DISCARDED", "계획이 바뀐 뒤 도착한 결과", null, 0);
+            validations.markStale(v.id(), "PLAN_CHANGED");
+            validations.finishJob(lease.jobId(), "CANCELLED");
+            log.info("validation {} attempt {} result discarded: plan changed", v.id(), lease.attempt());
+            return Optional.empty();
+        }
+        return Optional.of(new Current(v, runId));
     }
 
     private record Current(ValidationRow validation, long runId) {
@@ -313,23 +329,13 @@ public class AnalysisResultApplier {
 
         // 입력 집합: 항목 버전 → 항목, 관련 작업, 근거 키 → 근거 출처, 요청에 넣은 출처 전체
         Map<String, String> itemOfVersion = new LinkedHashMap<>();
-        Set<String> allowedSources = new HashSet<>();
         for (Map<String, Object> item : objects(request.get("approved_items"))) {
             itemOfVersion.put(String.valueOf(item.get("id")), String.valueOf(item.get("design_item_id")));
-            if (item.get("source") instanceof Map) {
-                allowedSources.add(sourceKey(map(item.get("source"))));
-            }
         }
-        for (Map<String, Object> ruleFinding : objects(request.get("rule_findings"))) {
-            for (Map<String, Object> s : objects(ruleFinding.get("sources"))) {
-                allowedSources.add(sourceKey(s));
-            }
-        }
+        Set<String> allowedSources = requestSources(request).keySet();
         Map<String, String> sourceOfEvidence = new LinkedHashMap<>();
         for (Map<String, Object> e : objects(request.get("evidence"))) {
-            String key = sourceKey(map(e.get("source")));
-            sourceOfEvidence.put(String.valueOf(e.get("evidence_id")), key);
-            allowedSources.add(key);
+            sourceOfEvidence.put(String.valueOf(e.get("evidence_id")), sourceKey(map(e.get("source"))));
         }
         Set<String> relatedTasks = new HashSet<>();
         for (Map<String, Object> plan : objects(request.get("related_plans"))) {
@@ -468,6 +474,37 @@ public class AnalysisResultApplier {
     private static boolean isSource(Map<String, Object> s) {
         return isNumber(s.get("document_id")) && isNumber(s.get("document_version_id")) && isNumber(s.get("version_no"))
                 && s.get("location") instanceof String;
+    }
+
+    /** 요청에 넣은 출처 전체 (승인 항목·규칙 finding·근거). 비교 키 → 요청에 넣은 출처 객체 */
+    private static Map<String, Map<String, Object>> requestSources(Map<String, Object> request) {
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+        for (Map<String, Object> item : objects(request.get("approved_items"))) {
+            if (item.get("source") instanceof Map) {
+                Map<String, Object> s = map(item.get("source"));
+                out.put(sourceKey(s), s);
+            }
+        }
+        for (Map<String, Object> ruleFinding : objects(request.get("rule_findings"))) {
+            for (Map<String, Object> s : objects(ruleFinding.get("sources"))) {
+                out.put(sourceKey(s), s);
+            }
+        }
+        for (Map<String, Object> e : objects(request.get("evidence"))) {
+            Map<String, Object> s = map(e.get("source"));
+            out.put(sourceKey(s), s);
+        }
+        return out;
+    }
+
+    /** 후보의 출처를 요청에 넣은 출처 객체로 바꾼다. 계약 검사를 통과했으므로 모두 찾을 수 있다 */
+    private static List<Map<String, Object>> canonicalSources(Map<String, Object> finding,
+                                                              Map<String, Map<String, Object>> requestSources) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> s : objects(finding.get("sources"))) {
+            out.add(requestSources.get(sourceKey(s)));
+        }
+        return out;
     }
 
     /** 출처 비교용 키. 네 칸을 문자열로 이어 붙인다 (ID 가 숫자로 와도 문자열로 와도 같게) */

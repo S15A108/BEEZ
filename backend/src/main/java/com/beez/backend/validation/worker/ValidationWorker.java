@@ -91,6 +91,8 @@ public class ValidationWorker {
         try {
             request = tx.execute(status -> buildRequest(lease));
         } catch (RuntimeException e) {
+            // 요청 조립은 DB 의 계획·승인 항목·출처만 읽는다. 원문 근거 검색(evidence)은 아직 붙지 않아(요청 evidence=[])
+            // evidence_fetch_failed 가 아니라 BE 실행 오류로 분류한다. 원문 검색을 붙일 때 그 단계만 따로 나눈다
             log.warn("validation {} 요청 조립 실패: {}", lease.validationId(), e.toString());
             applier.applyFailure(lease, "validation_execution_failed", "분석 요청을 만들지 못했습니다: " + e.getMessage(),
                     System.currentTimeMillis() - started);
@@ -131,6 +133,12 @@ public class ValidationWorker {
     Map<String, Object> buildRequest(JobLease lease) {
         ValidationRow v = validations.lock(lease.validationId()).orElse(null);
         if (v == null || !"RUNNING".equals(v.status()) || v.currentAttempt() != lease.attempt()) {
+            return null;
+        }
+        // 큐에서 기다리는 사이 계획이 바뀌었으면 AI 를 부르지 않는다 (지난 계획을 분석해 봐야 버릴 결과다).
+        // null 을 돌려주면 반영 단계가 STALE(PLAN_CHANGED) 로 닫는다
+        Optional<Long> currentPlan = validations.currentPlanRevision(v.taskId());
+        if (currentPlan.isEmpty() || !currentPlan.get().equals(v.planRevisionId())) {
             return null;
         }
         TaskPlanRevision plan = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId()).orElseThrow();

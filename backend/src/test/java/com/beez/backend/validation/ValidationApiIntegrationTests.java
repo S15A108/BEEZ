@@ -534,6 +534,66 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isZero();
     }
 
+    @Test
+    void worker_resultAfterPlanChanged_isDiscarded_andValidationStale() throws Exception {
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        doAnswer(inv -> {
+            // AI 가 도는 동안 담당자가 계획 리비전을 올린다 (TSK-A04)
+            String plan = api.planJson("A2", api.readsRef("API-01"), "[]").trim();
+            String revision = plan.substring(0, plan.lastIndexOf('}'))
+                    + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + t[2] + "\n}";
+            HttpResponse<String> res = api.post(tasksPath() + "/" + t[0] + "/plan-revisions", revision, member);
+            assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
+            return aiResponse(inv.getArgument(0), List.of(), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+        // 지난 계획의 결과는 PASS 로 남기지 않는다
+        assertThat(column("validation", "status", id)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", id)).isEqualTo("PLAN_CHANGED");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("DISCARDED");
+        assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("CANCELLED");
+        assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isZero();
+    }
+
+    @Test
+    void worker_planChangedWhileQueued_doesNotCallAi() throws Exception {
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        // 워커가 꺼내기 전에 계획 리비전이 바뀐다
+        String plan = api.planJson("A2", api.readsRef("API-01"), "[]").trim();
+        String revision = plan.substring(0, plan.lastIndexOf('}'))
+                + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + t[2] + "\n}";
+        HttpResponse<String> res = api.post(tasksPath() + "/" + t[0] + "/plan-revisions", revision, member);
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
+        AtomicReference<Boolean> called = new AtomicReference<>(false);
+        doAnswer(inv -> {
+            called.set(true);
+            return aiResponse(inv.getArgument(0), List.of(), List.of());
+        }).when(analyzer).analyze(any());
+
+        worker.runOnce();
+        assertThat(called.get()).isFalse();                 // 버릴 결과를 위해 모델을 부르지 않는다
+        assertThat(column("validation", "status", id)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", id)).isEqualTo("PLAN_CHANGED");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("DISCARDED");
+        assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void queuedValidation_taskCancelled_closesRunAsDiscarded() throws Exception {
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        HttpResponse<String> cancel = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                "{\"event\":\"CANCEL\",\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2] + "}", member);
+        assertThat(cancel.statusCode()).as(cancel.body()).isEqualTo(200);
+        assertThat(column("validation", "status", id)).isEqualTo("STALE");
+        assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("CANCELLED");
+        // 접수 때 만든 실행이 RUNNING 으로 남지 않는다
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("DISCARDED");
+        assertThat(worker.runOnce()).isFalse();
+    }
+
     // ---- 접수 오류 ----
 
     @Test

@@ -91,6 +91,24 @@ public class ValidationRepository {
                 .param("s", status).param("sum", toJson(summary)).param("v", validationId).update();
     }
 
+    /**
+     * 무효화 (결과를 받는 사이 계획이 바뀐 경우). 작업 쪽 무효화(ValidationStatusLookup)와 같이 상태·사유만 바꾼다.
+     * RUNNING 일 때만 바꾼다 — 이미 다른 경로가 STALE·ERROR 로 바꿨으면 덮어쓰지 않는다
+     */
+    public void markStale(long validationId, String reason) {
+        jdbc.sql("""
+                        update validation set status = 'STALE', stale_reason = :reason, updated_at = now()
+                         where id = :v and status = 'RUNNING'
+                        """)
+                .param("reason", reason).param("v", validationId).update();
+    }
+
+    /** 작업의 현재 계획 리비전 */
+    public Optional<Long> currentPlanRevision(long taskId) {
+        return jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", taskId)
+                .query(Long.class).optional();
+    }
+
     // ---- 참조 ----
 
     /** 계획 리비전의 설계 참조를 검증 참조로 복사한다 (당시 본 버전 고정). 복사한 줄 수 */
@@ -265,7 +283,19 @@ public class ValidationRepository {
                 .optional();
     }
 
-    /** 작업 종결. DONE·FAILED 는 리스 정보를 비운다 (V2 CHECK: LEASED 일 때만 리스가 있다) */
+    /**
+     * 늦은 결과를 버릴 때, 이 리스로 잡은 작업이 아직 LEASED 로 남아 있으면 CANCELLED 로 닫는다.
+     * 리스 토큰이 같을 때만 — 그 사이 다른 워커가 다시 잡았으면 건드리지 않는다
+     */
+    public void cancelJobIfStillLeased(long jobId, UUID leaseToken) {
+        jdbc.sql("""
+                        update validation_job set status = 'CANCELLED', lease_token = null, lease_until = null, updated_at = now()
+                         where id = :id and status = 'LEASED' and lease_token = :tok
+                        """)
+                .param("id", jobId).param("tok", leaseToken, Types.OTHER).update();
+    }
+
+    /** 작업 종결. DONE·FAILED·CANCELLED 는 리스 정보를 비운다 (V2 CHECK: LEASED 일 때만 리스가 있다) */
     public void finishJob(long jobId, String status) {
         jdbc.sql("""
                         update validation_job set status = :s, lease_token = null, lease_until = null, updated_at = now()

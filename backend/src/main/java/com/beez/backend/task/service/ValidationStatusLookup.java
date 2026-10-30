@@ -136,6 +136,8 @@ public class ValidationStatusLookup {
      * {@link #markStaleForTask} 와 달리 계획 리비전이 그대로인 경우에 쓴다. 지금 도는 검증이 나중에 PASS 로 끝나면 그대로 쓸 수 있게 되므로:
      * - 진행 중인 검증 job 은 CANCELLED
      * - NOT_RUN·RUNNING 도 STALE 로 바꾼다. 워커의 결과 반영(WHERE status='RUNNING')이 0 행이 되어 늦은 결과가 버려진다 (D6 fencing)
+     * - 그 검증의 아직 열린 실행(run)은 DISCARDED 로 닫는다. 접수 때 실행을 미리 만들어 두므로(-159), 큐에서 꺼내기 전에
+     *   무효화되면 워커가 다시 볼 일이 없어 RUNNING 으로 남는다 (공통 "검증 실행 오류 규약" 마지막 행)
      */
     private void invalidate(Long taskId, String reason, List<String> triggers) {
         jdbc.sql("""
@@ -159,6 +161,19 @@ public class ValidationStatusLookup {
                         """)
                 .param("taskId", taskId)
                 .param("reason", reason)
+                .param("triggers", triggers)
+                .update();
+        jdbc.sql("""
+                        update validation_run r
+                           set status = 'DISCARDED', error = '검증 무효화', finished_at = now(), updated_at = now()
+                          from validation v
+                         where r.validation_id = v.id
+                           and v.task_id = :taskId
+                           and v.trigger in (:triggers)
+                           and v.status = 'STALE'
+                           and r.status = 'RUNNING'
+                        """)
+                .param("taskId", taskId)
                 .param("triggers", triggers)
                 .update();
     }
