@@ -1,5 +1,32 @@
+-- Test-only CDC PoC fixture. Existing tables are not upgraded by IF NOT EXISTS.
+-- Publication and event insert are atomic; delivery state belongs to the consumer.
+CREATE TABLE IF NOT EXISTS publication_outbox (
+  event_id UUID PRIMARY KEY,
+  event_type TEXT NOT NULL CHECK (event_type = 'DESIGN_PUBLISHED'),
+  event_version INT NOT NULL CHECK (event_version > 0),
+  project_id BIGINT NOT NULL,
+  baseline_id BIGINT NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  payload JSONB NOT NULL,
+  FOREIGN KEY (baseline_id, project_id) REFERENCES baseline(id, project_id),
+  UNIQUE (baseline_id, event_type),
+  CHECK (jsonb_typeof(payload) = 'object')
+);
+
+-- Consumer inbox: same event can be delivered repeatedly, but is accepted once.
+CREATE TABLE IF NOT EXISTS cdc_publication_inbox (
+  event_id UUID PRIMARY KEY,
+  project_id BIGINT NOT NULL,
+  baseline_id BIGINT NOT NULL,
+  publication_kind TEXT NOT NULL CHECK (publication_kind IN ('INITIAL','CHANGE')),
+  status TEXT NOT NULL CHECK (status = 'PENDING'),
+  payload JSONB NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (baseline_id, project_id) REFERENCES baseline(id, project_id)
+);
+
 -- The inbox is a receipt; this separate queue is never started automatically.
-CREATE TABLE cdc_processing_cursor (
+CREATE TABLE IF NOT EXISTS cdc_processing_cursor (
   project_id BIGINT PRIMARY KEY REFERENCES project(id),
   initial_baseline_id BIGINT NOT NULL,
   next_version BIGINT NOT NULL CHECK (next_version > 0),
@@ -7,7 +34,7 @@ CREATE TABLE cdc_processing_cursor (
   FOREIGN KEY (initial_baseline_id, project_id) REFERENCES baseline(id, project_id)
 );
 
-CREATE TABLE cdc_processing_job (
+CREATE TABLE IF NOT EXISTS cdc_processing_job (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   project_id BIGINT NOT NULL,
   baseline_id BIGINT NOT NULL,
@@ -28,4 +55,4 @@ CREATE TABLE cdc_processing_job (
   CHECK ((state = 'RUNNING') = (lease_token IS NOT NULL AND lease_until IS NOT NULL)),
   CHECK ((lease_token IS NULL) = (lease_until IS NULL))
 );
-CREATE INDEX ix_cdc_processing_job_order ON cdc_processing_job(project_id, baseline_version, state);
+CREATE INDEX IF NOT EXISTS ix_cdc_processing_job_order ON cdc_processing_job(project_id, baseline_version, state);

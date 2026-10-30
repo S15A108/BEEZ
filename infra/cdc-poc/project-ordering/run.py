@@ -51,6 +51,68 @@ def wait_for(label, function, timeout=120):
     raise RuntimeError(f"{label} timed out; last={last}")
 
 
+
+def cleanup_connector_and_slot(name, slot, registration_confirmed):
+    """Delete only this run's verified connector and its now-inactive test slot.
+
+    Never infer ownership of a connector with different configuration. Connect
+    may have persisted a registration even when the PUT response timed out.
+    """
+    if not re.fullmatch(r"order_[0-9a-f]{12}", slot) or name != "ordering-" + slot.removeprefix("order_"):
+        raise ValueError("Invalid generated test connector or slot name")
+    endpoint = "/connectors/" + name
+    try:
+        config = request(endpoint + "/config")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        config = None
+    else:
+        if not isinstance(config, dict):
+            raise RuntimeError("Connector configuration response is invalid; refusing cleanup")
+    if config is None and not registration_confirmed:
+        # A timed-out PUT may still complete later. A 404 alone cannot prove
+        # the unknown registration did not create a connector or slot.
+        raise RuntimeError("Connector registration outcome is unknown; inspect this run's identifiers")
+    if config is not None:
+        if config.get("slot.name") != slot or config.get("database.dbname") != "ordering_test":
+            raise RuntimeError("Connector does not match this run's test slot and database; refusing cleanup")
+        try:
+            request(endpoint, "DELETE")
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+
+        def connector_deleted():
+            try:
+                request(endpoint + "/config")
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return True
+                raise
+            return False
+
+        wait_for("connector deletion", connector_deleted, timeout=30)
+
+    # The generated name is restricted before embedding it in SQL; do not drop
+    # active slots or a same-named slot from a different database/plugin.
+    def slot_inactive():
+        state = psql("SELECT active FROM pg_replication_slots "
+                     f"WHERE slot_name='{slot}' AND slot_type='logical' "
+                     "AND database=current_database() AND plugin='pgoutput'")
+        return state != "t"
+
+    wait_for("replication slot to become inactive", slot_inactive, timeout=30)
+    psql("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots "
+         f"WHERE slot_name='{slot}' AND slot_type='logical' "
+         "AND database=current_database() AND plugin='pgoutput' AND NOT active")
+    remaining = psql("SELECT count(*) FROM pg_replication_slots "
+                     f"WHERE slot_name='{slot}'")
+    if remaining != "0":
+        raise RuntimeError("The test slot still exists or does not belong to the test database")
+    print(f"PASS: removed connector {name} and inactive slot {slot}")
+
+
 def records(topic, partition):
     result = subprocess.run(COMPOSE + [
         "exec", "-T", "kafka", "/opt/kafka/bin/kafka-console-consumer.sh",
@@ -83,7 +145,10 @@ def main():
     prefix = "order_" + suffix
     topic = prefix + ".public.ordering_fixture"
     run_id = "run_" + suffix
+    print(f"Test resources: connector={name}, slot={slot}", flush=True)
     started = False
+    registration_attempted = False
+    registration_confirmed = False
     try:
         started = True
         compose("up", "-d", timeout=180)
@@ -119,7 +184,20 @@ def main():
             "key.converter": "org.apache.kafka.connect.json.JsonConverter", "key.converter.schemas.enable": "false",
             "value.converter": "org.apache.kafka.connect.json.JsonConverter", "value.converter.schemas.enable": "false",
         }
+        # Do not adopt an existing connector or slot, even on the unlikely
+        # chance a generated identifier collides with a retained run.
+        if psql(f"SELECT count(*) FROM pg_replication_slots WHERE slot_name='{slot}'") != "0":
+            raise RuntimeError("Generated test slot already exists; refusing to reuse it")
+        try:
+            request("/connectors/" + name + "/config")
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+        else:
+            raise RuntimeError("Generated test connector already exists; refusing to reuse it")
+        registration_attempted = True
         request("/connectors/" + name + "/config", "PUT", config)
+        registration_confirmed = True
 
         def running():
             status = request("/connectors/" + name + "/status")
@@ -169,8 +247,22 @@ def main():
         print("LIMIT: isolated insert fixture; not #197 schema, replay, production config or asynchronous completion ordering")
     finally:
         if started:
-            # Only the exclusively owned project; never remove volumes.
-            subprocess.run(COMPOSE + ["down"], timeout=90, check=False)
+            cleanup_error = None
+            try:
+                if registration_attempted:
+                    cleanup_connector_and_slot(name, slot, registration_confirmed)
+            except Exception as exc:
+                cleanup_error = exc
+            try:
+                # Only the exclusively owned project; never remove volumes.
+                subprocess.run(COMPOSE + ["down"], timeout=90, check=True)
+            except (OSError, subprocess.SubprocessError) as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+                else:
+                    print("Compose cleanup also failed:", exc, file=sys.stderr)
+            if cleanup_error is not None:
+                raise RuntimeError(f"Test cleanup failed; inspect {name}/{slot} before retrying: {cleanup_error}") from cleanup_error
 
 
 if __name__ == "__main__":
