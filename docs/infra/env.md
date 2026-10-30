@@ -69,7 +69,7 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `SERVER_PORT` | | `8080` (컨테이너 안) | 기본값 |
 | `DOCUMENT_S3_ENDPOINT` | 필수 | `http://127.0.0.1:8333` | `http://seaweedfs:8333` |
 | `DOCUMENT_S3_REGION` | | `us-east-1` | 기본값 |
-| `DOCUMENT_S3_BUCKET`·`ACCESS_KEY`·`SECRET_KEY` | 필수 | `beez-documents`·`beez-local-access`·`beez-local-secret` | env 파일 |
+| `DOCUMENT_S3_BUCKET`·`ACCESS_KEY`·`SECRET_KEY` | 필수 | `beez-documents`·`beez-local-access`·`beez-local-secret` | env 파일 (뜻은 [seaweedfs.md](seaweedfs.md)) |
 | `DOCUMENT_WORKER_ENABLED` | | `true` | 기본값 |
 | `DOCUMENT_POLL_MILLIS` | | `2000` | 기본값 |
 | `DOCUMENT_EMBEDDING_PROFILE`·`MODEL` | | `unconfigured` (색인이 멈춤) | 위 표 기본값 |
@@ -85,9 +85,12 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 
 prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
 오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30
-실측 — 초대 링크가 `${INVITE_BASE_URL}/invite?…` 가 됨). 빈 값이면 설정 검증이 이름을 짚어 멈춥니다.
-`DB_USERNAME`·`DB_PASSWORD` 는 예외로 `${X}` 그대로 둡니다. 빠지면 DB 접속 오류에 `${DB_USERNAME}` 이 찍혀 원인이
-바로 보입니다.
+실측: `AI_*`·`INVITE_BASE_URL`·`MCP_URL` 없이 기동됨. 그대로 두면 초대 링크가 `${INVITE_BASE_URL}/invite?…` 로
+만들어질 수 있음). 빈 값이면 설정 검증이 이름을 짚어 멈춥니다.
+`DB_USERNAME` 만 예외로 `${X}` 그대로 둡니다. 빠지면 DB 접속 오류에 user `"${DB_USERNAME}"` 이 찍혀 원인이 바로
+보입니다. `DB_PASSWORD` 는 `${X}` 로 두면 글자가 비밀번호로 전송돼 "비밀번호 틀림"처럼 보이므로 `${X:}` 입니다.
+이 규칙은 `ProdProfilePropertiesTest`(빠른 층 `./gradlew test`)가 검사합니다 — prod 파일에 기본값 없는 `${X}` 가
+생기거나 필수값에 기본값이 다시 들어가면 실패합니다.
 
 ### ai (FastAPI)
 
@@ -141,6 +144,7 @@ CI(`ci.yml`)는 비밀값을 쓰지 않습니다. backend 테스트는 Testconta
 | 서버 env 파일을 읽을 수 없음 | `deploy.sh` 가 멈춤 | `env 파일을 읽을 수 없음: /opt/beez/.env.dev` |
 | backend prod, `DB_URL` 없음 | 기동 실패 | `Failed to configure a DataSource: 'url' attribute is not specified` |
 | backend prod, `DB_USERNAME` 없음 | 기동 실패 | `password authentication failed for user "${DB_USERNAME}"` |
+| backend prod, `DB_PASSWORD` 없음 | 기동 실패 | `The server requested SCRAM-based authentication, but no password was provided.` |
 | backend prod, `CORS_ALLOWED_ORIGINS` 없음 | 기동 실패 | `Property: beez.cors.allowedOrigins … must not be empty` |
 | backend prod, `AI_*`·`INVITE_BASE_URL`·`MCP_URL` 없음 | 기동 실패 | `Property: beez.agent.mcpUrl … must not be blank` (먼저 걸린 것 하나만 나옴) |
 | backend prod, `DOCUMENT_S3_*` 없음 또는 버킷 이름 형식 틀림 | 기동 실패 | `SeaweedFS endpoint, region, bucket and credentials required` |
@@ -158,10 +162,14 @@ jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
 
 ```bash
 # 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 흘려보내 그 자리에서 검사
-git fetch -q origin && git show origin/dev:infra/compose.yaml | \
+REF=dev    # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
+git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
   ssh beez 'docker compose -f - --env-file /opt/beez/.env.dev config --quiet && echo "env ok"'
 ```
 
+- **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
+  검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
+- 브랜치 이름이 틀리면 `fatal: invalid object name` 과 compose 오류가 같이 나옵니다(`env ok` 는 나오지 않음).
 - `-f -` 는 compose 파일을 표준 입력으로 읽습니다. 서버에 파일을 남기지 않습니다.
 - `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 위 표의 첫 줄 문구가
   나옵니다.
@@ -221,10 +229,11 @@ docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet &
 ## 6. 변수를 추가할 때
 
 1. backend 는 `application.yml` 에 로컬 기본값과 함께 넣고, 운영에서 반드시 받아야 하면 `application-prod.yml` 에
-   `${X:}` 로 덮고 설정 클래스에 `@NotBlank` 등 검증을 답니다.
+   `${X:}` 로 덮고 설정 클래스에 `@NotBlank` 등 검증을 답니다. 새 설정 클래스면 `ProdProfilePropertiesTest` 의
+   바인딩 시험에 한 줄 추가합니다.
 2. 컨테이너에 넘겨야 하면 `infra/compose.yaml` 에 넣습니다. 필수면 `${X:?X is required}`.
 3. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example` 등)에 빈 칸을 넣습니다.
 4. 이 문서의 표를 고칩니다.
 5. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
-   compose 단계에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)로
-   확인합니다.
+   compose 단계에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)를
+   **`REF=<그 PR 브랜치>`** 로 돌려 확인합니다.
