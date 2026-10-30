@@ -354,7 +354,21 @@ rm -f /tmp/plugins.txt /tmp/jenkins.yaml
   파일까지 읽습니다.
 - 켜지지 않으면 백업을 되돌려 놓고
   `sudo systemctl reset-failed jenkins && sudo systemctl start jenkins`.
-  새로 깐 플러그인은 그대로 둬도 됩니다.
+  새로 깐 플러그인은 그대로 둬도 됩니다. 아래처럼 플러그인을 **지웠다면**, 예전
+  설정이 그 플러그인을 쓸 수 있으니 예전 커밋의 `plugins.txt`로 다시 설치한 뒤
+  켭니다.
+- **목록에서 플러그인을 뺐으면 서버에서 직접 지웁니다.** 설치 도구는 목록에 있는
+  것을 깔기만 하고, 빠진 것은 지우지 않습니다. 위 명령의 `systemctl stop` 다음,
+  `systemctl start` 전에 지웁니다.
+
+  ```bash
+  sudo sh -c 'cd /var/lib/jenkins/plugins && rm -rf <이름> <이름>.jpi'
+  ```
+
+  지우기 전에 그 플러그인에 기대는 다른 플러그인이 없는지 봅니다(각 플러그인
+  `META-INF/MANIFEST.MF`의 `Plugin-Dependencies`). 기대는 플러그인이 남아 있으면
+  기동 때 SEVERE가 나서 위 검사에 잡힙니다. 2026-10-30 `git`·`workflow-multibranch`를
+  이렇게 지웠습니다(기대는 플러그인 없음, 46개 검사).
 - `unresolved`가 나오면 `casc.env`에 없는 변수를 쓴 것입니다. JCasC는 빈
   문자열로 넣고 계속 뜹니다.
 - 파이프라인을 바꿨으면 켠 뒤 위 "검사를 고정 파이프라인에 두는 이유"의 표대로
