@@ -12,7 +12,7 @@ matrix-auth:3.3
 job-dsl:3732.v9a_c49a_61a_313
 # 파이프라인 잡 종류
 workflow-job:1622.vc41c189cb_e5f
-# Jenkinsfile 실행, 저장소에서 Jenkinsfile 읽기
+# 파이프라인 스크립트 실행(배포 잡의 파이프라인은 casc/jenkins.yaml 안에 고정)
 workflow-cps:4395.v738456a_5da_6b_
 # node·sh 단계
 workflow-durable-task-step:1479.v56e587f413a_7
@@ -20,7 +20,4 @@ workflow-durable-task-step:1479.v56e587f413a_7
 workflow-basic-steps:1129.v60e3c7e6654d
 # stage 단계 (빌드 화면에서 단계별로 나뉘어 보인다)
 pipeline-stage-step:345.va_96187909426
-# Jenkinsfile 의 checkout scm. scm 변수는 이 플러그인이 준다 (의존은 대부분 job-dsl 과 겹친다)
-workflow-multibranch:842.v3a_b_59b_57b_e6e
-# 공개 저장소 체크아웃(자격 증명 없음)
-git:5.11.0
+# 저장소 받기·검사는 서버의 git 명령으로 한다(sh). git 플러그인·workflow-multibranch 는 쓰지 않는다

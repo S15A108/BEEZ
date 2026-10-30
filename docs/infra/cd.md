@@ -237,7 +237,7 @@ rm -rf /tmp/beez-infra
 
 ### 롤백의 한계
 
-- **Jenkins로는 dev에 있는 SHA만 됩니다**(받는 범위 제한). 2026-10-29 현재 서버에
+- **Jenkins로는 지금 dev 이력에 있는 SHA만 됩니다**(고정 파이프라인의 검사). 2026-10-29 현재 서버에
   떠 있는 `1531d05…`는 작업 브랜치 커밋이라, PR 머지 후 첫 자동 배포의 "직전
   backend 이미지"로 찍혀도 Jenkins로는 돌아갈 수 없습니다. 그때는 위 "손으로
   배포·롤백"으로 되돌립니다(이미지는 GHCR에 있음).
@@ -249,7 +249,7 @@ rm -rf /tmp/beez-infra
 
 ### 브랜치를 서버에서 시험할 때
 
-받는 범위를 dev로 묶었고 CD는 dev에서만 자동으로 돌므로, 작업 브랜치는
+Jenkins는 지금 dev 이력에 있는 커밋만 배포하고 CD는 dev에서만 자동으로 돌므로, 작업 브랜치는
 이미지도 Jenkins 배포도 생기지 않습니다. 서버에서 꼭 시험해야 하면:
 
 1. GitHub → Actions → CD → **Run workflow**에서 그 브랜치를 골라 실행합니다.
@@ -273,61 +273,46 @@ readlink /var/www/beez/current
 |---|---|
 | 정의 | `infra/jenkins/casc/jenkins.yaml`의 `jobs:`(Job DSL). Jenkins가 켜질 때마다 이 정의로 다시 만듭니다 |
 | 파라미터 | `GIT_SHA`(40자) · `DEPLOY_ENV`(`dev`) · `TARGET`(`local`) |
-| 파이프라인 | `infra/deploy/Jenkinsfile` — 체크아웃한 커밋이 `GIT_SHA`인지 확인 → `deploy.sh` 호출(15분 상한) |
+| 파이프라인 | **같은 파일 안에 고정**. 검사(SHA 형식 → dev 받기 → 지금 dev 이력에 있는지) → 그 커밋으로 전환 → `deploy.sh` 호출(15분 상한) |
 | 동작 | 동시 실행 안 함(뒤 요청은 줄을 섬), 기록 50회 보관 |
 | 실행 권한 | `beez-admin`, `github-actions`(이 잡만) |
 
-- **Jenkinsfile을 `GIT_SHA` 그 커밋에서 읽습니다.** 잡의 브랜치 지정이
-  `${GIT_SHA}`이고 가벼운 체크아웃(lightweight)을 꺼서 파라미터가 펼쳐집니다.
-  JCasC 파일에는 `^${GIT_SHA}`로 적습니다(`^`는 JCasC가 자기 변수로 바꾸지
-  않게 하는 표기). 그래서 Jenkinsfile·배포 스크립트·compose 파일이 이미지와
-  같은 커밋에서 오고, 예전 SHA로 롤백하면 절차도 그 시절 것으로 돌아갑니다.
-- 짧은 SHA나 브랜치 이름을 넣으면 체크아웃한 커밋과 달라 `Checkout`
-  단계에서 멈춥니다.
+### 검사를 고정 파이프라인에 두는 이유
 
-### 받는 범위를 dev로 묶는 이유
+배포할 커밋의 코드는 jenkins 계정(docker 그룹 = 사실상 root)으로 실행됩니다.
+그래서 **"이 커밋을 실행해도 되는가"는 그 커밋 밖에서 판단해야 합니다.**
+파이프라인을 저장소(Jenkinsfile)에서 읽으면 검사 코드가 검사받을 커밋 안에
+있게 되어 믿을 수 없습니다. 파이프라인은 서버의 JCasC에 고정하고, 실행 순서를
+이렇게 둡니다.
 
-잡의 git 설정은 `refs/heads/dev`만 받고(refspec + `honorRefspec`), 태그는 받지
-않습니다(`noTags`). 그래서 **`GIT_SHA`는 dev에 들어온 커밋만** 됩니다. dev에
-없는 커밋을 넣으면 `Couldn't find any revision to build`로 멈춥니다(2026-10-29
-로컬 확인).
+1. `GIT_SHA`가 40자 소문자 16진수인지 본다(브랜치 이름·짧은 SHA·옵션처럼 생긴 값 차단)
+2. dev만, 태그 없이 받는다
+3. `git merge-base --is-ancestor $GIT_SHA origin/dev`로 **지금 dev 이력에 있는지** 본다
+4. 통과한 커밋으로 바꾼 뒤 그 커밋의 `infra/deploy/deploy.sh`를 실행한다
 
-묶지 않으면 저장소 아무 브랜치·태그의 커밋을 넣을 수 있고, **그 커밋의
-Jenkinsfile이 jenkins 계정(docker 그룹 = 사실상 root)으로 실행됩니다.** 이미지가
-없어도 Jenkinsfile은 먼저 돕니다. 토큰이 새고 그 사람이 브랜치 하나를 push할
-수 있으면 서버를 장악할 수 있다는 뜻입니다. dev는 PR 리뷰를 거쳐야 들어가므로
-이 경로가 막힙니다.
+dev는 PR 리뷰를 거쳐야 들어가므로, 토큰이 새도 리뷰를 거친 커밋으로 다시
+배포하는 것까지만 됩니다. 3번은 "지금 이력"을 기준으로 하므로, 작업 폴더에
+예전에 받은 커밋(다른 브랜치, 강제 푸시로 dev에서 빠진 커밋)이 남아 있어도
+거부합니다. 그래서 작업 폴더를 지우는 절차가 필요 없습니다.
 
-- 이 설정을 바꾼 뒤에는 서버의 잡 작업 폴더를 한 번 지웁니다. 예전에 받아 둔
-  다른 브랜치의 커밋이 남아 있으면 그 SHA를 찾을 수 있습니다.
+| `GIT_SHA` (2026-10-30 로컬 Jenkins) | 결과 |
+|---|---|
+| dev 최신 커밋 | 검사 통과 → 그 커밋으로 전환 → `deploy.sh` 실행 |
+| 작업 브랜치에만 있는 커밋 | `지금 dev 이력에 없는 커밋이라 배포하지 않는다` |
+| 작업 폴더에 객체가 남아 있지만 dev 이력에 없는 커밋 | 같은 메시지로 거부 |
+| 짧은 SHA, 빈 값 | `GIT_SHA 는 40자 소문자 16진수여야 한다` |
 
-  ```bash
-  sudo sh -c 'rm -rf /var/lib/jenkins/workspace/beez-deploy /var/lib/jenkins/workspace/beez-deploy@*'
-  ```
-
-  `sudo sh -c '…'`로 감싸야 `@*`가 root 권한으로 펼쳐집니다. 그냥
-  `sudo rm -rf …@*`라고 쓰면 ubuntu 셸이 먼저 펼치려다 `/var/lib/jenkins`(750)를
-  읽지 못해 글자 그대로 넘기고, 아무것도 지우지 않습니다.
-
-- **지운 뒤에는 막혔는지 확인합니다.** 지우기가 조용히 실패하면 받는 범위를
-  묶어도 예전 커밋으로 배포할 수 있기 때문입니다.
-  1. 서버: `sudo sh -c 'ls -d /var/lib/jenkins/workspace/beez-deploy*'`가
-     `No such file or directory`면 지워진 것입니다(다음 빌드 전까지).
-  2. Jenkins 화면: `beez-admin`으로 Build with Parameters에 **dev에 없는
-     커밋**을 넣습니다(예: 작업 브랜치에만 있던
-     `1531d05fe926f94270db1cac84bb922902a74f62`). `Couldn't find any revision
-     to build`로 실패해야 정상입니다. 서버는 바뀌지 않습니다. 배포 단계까지
-     가면 작업 폴더가 남아 있는 것이니 다시 지웁니다.
-
-- 그래서 **작업 브랜치는 Jenkins로 배포할 수 없습니다.** 서버에서 시험하는
-  방법은 위 "브랜치를 서버에서 시험할 때".
+- 파이프라인을 바꾸면 JCasC를 서버에 다시 반영해야 합니다(아래 "잡·플러그인·권한을
+  바꿀 때"). 실제 배포 절차는 커밋의 `deploy.sh`에 있으므로 자주 바뀌지 않습니다.
+- JCasC는 파일 안의 `${...}`를 자기 변수로 바꿉니다. 파이프라인에서는 `$VAR` 형태만 씁니다.
+- **작업 브랜치는 Jenkins로 배포할 수 없습니다.** 서버에서 시험하는 방법은 위
+  "브랜치를 서버에서 시험할 때".
 - 화면에서 잡 설정을 고치면 다음 재시작 때 JCasC 정의로 돌아갑니다. 바꿀 때는
   저장소 파일을 고칩니다.
-- 플러그인은 적게 씁니다. 선언형 파이프라인 대신 스크립트형(`node { }`)이라
-  `pipeline-model-definition` 묶음이 필요 없습니다. 대신 `stage`는
-  `pipeline-stage-step`, `checkout scm`의 `scm` 변수는 `workflow-multibranch`가
-  줍니다(빠지면 각각 `No such DSL method 'stage'`,
-  `No such property: scm`으로 실패, 2026-10-29 로컬 확인).
+- 플러그인은 적게 씁니다. 스크립트형 파이프라인(`node { }`)이라 선언형 묶음
+  (`pipeline-model-definition`)이 필요 없고, 저장소 받기·검사는 서버의 `git`
+  명령으로 해서 git 플러그인도 쓰지 않습니다. `stage` 단계는
+  `pipeline-stage-step`이 줍니다(빠지면 `No such DSL method 'stage'`).
 
 ### 화면에서 배포·롤백
 
@@ -372,8 +357,9 @@ rm -f /tmp/plugins.txt /tmp/jenkins.yaml
   새로 깐 플러그인은 그대로 둬도 됩니다.
 - `unresolved`가 나오면 `casc.env`에 없는 변수를 쓴 것입니다. JCasC는 빈
   문자열로 넣고 계속 뜹니다.
-- **받는 범위(refspec)를 바꿨으면** `systemctl start` 전에 잡 작업 폴더도
-  지우고, 켠 뒤 위 "받는 범위를 dev로 묶는 이유"의 확인 두 가지를 합니다.
+- 파이프라인을 바꿨으면 켠 뒤 위 "검사를 고정 파이프라인에 두는 이유"의 표대로
+  dev에 없는 커밋(예: `1531d05fe926f94270db1cac84bb922902a74f62`)을 넣어
+  거부되는지 봅니다. 서버는 바뀌지 않습니다.
 
 ## Actions → Jenkins 호출
 
@@ -403,9 +389,9 @@ GitHub에는 관리자 토큰을 두지 않습니다. 전용 계정 `github-acti
 | 잡 설정 보기·고치기, 관리 화면, 스크립트 콘솔 | 403 |
 | 잡 삭제, 새 잡 만들기 | 403 |
 
-토큰이 새도 할 수 있는 일은 "dev에 들어온 커밋 중 하나로 다시 배포"까지입니다.
-배포 잡이 받는 범위를 dev 브랜치로 묶었기 때문입니다(아래 "받는 범위를 dev로
-묶는 이유").
+토큰이 새도 할 수 있는 일은 "dev에 들어온 커밋 중 하나로 다시 배포"와 이 잡의
+빌드 기록(실패 시 backend·ai 로그 포함) 읽기까지입니다. 배포 잡이 지금 dev 이력에
+없는 커밋을 거부하기 때문입니다(위 "검사를 고정 파이프라인에 두는 이유").
 `github-actions`의 비밀번호는 `/etc/jenkins/casc.env`의
 `JENKINS_DEPLOY_PASSWORD`(무작위, 출력하지 않음)이고 토큰을 만들 때만
 씁니다([Jenkins 런북](jenkins.md) 2단계).
@@ -453,8 +439,8 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
 | 바뀌는 것 | A: t3a 추가 | B: 이 서버를 main으로 |
 |---|---|---|
 | env 파일 | 새 서버에 `/opt/beez/.env.prod`(서버 준비 1~3 다시) | 이 서버에 `/opt/beez/.env.prod` 추가, 또는 `.env.dev`를 운영 값으로 |
-| Jenkins 잡 | `DEPLOY_ENV`에 `prod`, `TARGET`에 운영 서버(ssh) 선택지 추가, 운영 잡은 받는 범위를 `main`으로 | `DEPLOY_ENV`에 `prod` 추가, 운영 잡은 받는 범위를 `main`으로 |
-| 배포 대상 | ssh 타깃 구현(Jenkinsfile의 `TARGET` 분기, 운영 서버 deploy 사용자·키) — **유일한 코드 추가** | 없음 |
+| Jenkins 잡 | `DEPLOY_ENV`에 `prod`, `TARGET`에 운영 서버(ssh) 선택지 추가, 운영 잡은 조상 검사 기준을 `main`으로 | `DEPLOY_ENV`에 `prod` 추가, 운영 잡은 조상 검사 기준을 `main`으로 |
+| 배포 대상 | ssh 타깃 구현(고정 파이프라인의 `TARGET` 분기, 운영 서버 deploy 사용자·키) — **유일한 코드 추가** | 없음 |
 | GitHub | Environment `prod`(main만, 시크릿 `JENKINS_API_TOKEN`), `cd.yml` 트리거에 `main` + 환경 이름을 브랜치로 고름 | 같음 |
 | DNS | `beez.ai.kr` A 레코드 → t3a | `beez.ai.kr` A 레코드 → 이 서버 |
 | 인증서·Nginx | t3a에 Nginx·certbot([Nginx·HTTPS 런북](nginx-https.md) "호스트 추가"), `beez.ai.kr` 설정 파일 | `beez.ai.kr` 설정 파일 추가·`certbot`으로 발급 |
