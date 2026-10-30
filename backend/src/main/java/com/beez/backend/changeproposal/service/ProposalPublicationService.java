@@ -71,6 +71,8 @@ public class ProposalPublicationService {
             return result;
         }
         var plan=planner.plan(project,proposal,current);
+        long author=id(current,"submitted_by");
+        String origin=current.get("submitted_token_id")==null ? "HUMAN" : "AI_PROPOSED";
         long baseline=repository.insertBaseline(project,plan.nextVersion(),proposal,caller.accountId());
         var changedDocuments=new HashMap<Long,Long>();
         for (var doc : plan.proposedDocuments()) {
@@ -101,10 +103,11 @@ public class ProposalPublicationService {
                 itemId=id(before,"design_item_id"); changedItems.add(itemId);
                 repository.supersedeItem(id(before,"id"));
             }
-            // A human edit preserves its explicit provenance; unchanged items keep their original versions.
+            // Preserve the cited immutable source and locator. A changed document does not prove the old locator
+            // identifies the same passage in its new version; source replacement requires an explicit contract.
             Long source=before==null || before.get("source_document_version_id")==null ? null : id(before,"source_document_version_id");
             long version=repository.insertVersion(itemId,change.versionNo(),change.title(),item.schemaVersion(),item.proposedContent(),
-                    source,before==null ? null : before.get("source_locator"),caller.accountId());
+                    source,before==null ? null : before.get("source_locator"),origin,author);
             baselines.insertItemRef(baseline,project,itemId,version);
             if (before!=null) impactItems.add(new ChangedItem(itemId,id(before,"id"),version,"UPDATE"));
         }
@@ -119,7 +122,9 @@ public class ProposalPublicationService {
         intake.accept(project,baseline,proposal);
         var result=new Publication(queries.current(project,proposal),repository.response(project,baseline));
         commands.save(project,caller.accountId(),operation,key,input,result);
-        // TODO(180~182 알림·활동): dispatch after commit; delivery failure must never trigger a new publication.
+        // TODO(180~182 알림·활동): request storage inside this publication transaction (contract 10).
+        // Activity: CHANGE_PROPOSAL_PUBLISHED, key change-proposal:{id}:published; duplicate keys are skipped.
+        // Non-duplicate storage failures must roll back publication; neither replay branch requests storage again.
         return result;
     }
 

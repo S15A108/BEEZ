@@ -59,15 +59,16 @@ public class PublicationRepository {
                 """).param("actor", actor).param("id", after).update());
     }
     public long insertVersion(long item, int version, String title, int schema, Map<String, Object> content,
-                              Long source, Object locator, long actor) {
+                              Long source, Object locator, String origin, long author) {
         return jdbc.sql("""
                 INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,
                   source_document_version_id,source_locator,origin,created_by,approved_at)
                 VALUES(:item,:version,'APPROVED',:title,:schema,cast(:content AS jsonb),:hash,:source,
-                  cast(:locator AS jsonb),'HUMAN',:actor,now()) RETURNING id
+                  cast(:locator AS jsonb),:origin,:author,now()) RETURNING id
                 """).param("item", item).param("version", version).param("title", title).param("schema", schema)
                 .param("content", canonical(content)).param("hash", hash(content)).param("source", source)
-                .param("locator", locator == null ? null : locator.toString()).param("actor", actor).query(Long.class).single();
+                .param("locator", locator == null ? null : locator.toString()).param("origin", origin)
+                .param("author", author).query(Long.class).single();
     }
     public void supersedeItem(long version) {
         requireOne(jdbc.sql("UPDATE design_item_version SET status='SUPERSEDED',updated_at=now() WHERE id=:id AND status='APPROVED'")

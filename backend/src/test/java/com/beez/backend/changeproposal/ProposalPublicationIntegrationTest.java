@@ -19,6 +19,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
@@ -35,14 +37,20 @@ import org.springframework.test.util.AopTestUtils;
 @TestPropertySource(properties = "beez.document.embedding-profile=publication-test")
 class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @TestConfiguration static class Ports {
-        @Bean RecordingImpact recordingImpact() { return new RecordingImpact(); }
+        @Bean RecordingImpact recordingImpact(JdbcTemplate jdbc) { return new RecordingImpact(jdbc); }
         @Bean RecordingIntake recordingIntake() { return new RecordingIntake(); }
     }
     static class RecordingImpact implements ValidationImpactPort {
+        final JdbcTemplate jdbc;
+        RecordingImpact(JdbcTemplate jdbc) { this.jdbc=jdbc; }
         final List<ImpactRequest> applied=new CopyOnWriteArrayList<>();
         volatile boolean fail;
         volatile Runnable onPreview=() -> {};
         @Override public ImpactResult applyPublication(CallerContext caller,long project,ImpactRequest request) {
+            assertThat(jdbc.queryForObject("SELECT current_baseline_id FROM project WHERE id=?",Long.class,project))
+                    .isEqualTo(request.previousBaselineId());
+            assertThat(request.baselineId()).isNotNull().isNotEqualTo(request.previousBaselineId());
+            assertThat(request.changedItems()).allMatch(i -> Set.of("UPDATE","RETIRE").contains(i.operation()));
             applied.add(request); if(fail) throw new IllegalStateException("impact failure"); return ImpactResult.empty();
         }
         @Override public ImpactResult previewPublication(long project,ImpactRequest request) {
@@ -94,18 +102,22 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     long baseItem(String key) {
         long id=jdbc.queryForObject("INSERT INTO design_item(project_id,key,kind) VALUES(?,?,'REQUIREMENT') RETURNING id",Long.class,project.projectId(),key);
         long v=jdbc.queryForObject("""
-                INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,approved_at)
-                VALUES(?,1,'APPROVED','기존',1,'{"description":"기존"}','before','HUMAN',now()) RETURNING id
-                """,Long.class,id);
+                INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,
+                  source_document_version_id,source_locator,approved_at)
+                VALUES(?,1,'APPROVED','기존',1,'{"description":"기존"}','before','HUMAN',?,'{"location":"첫 문단"}',now()) RETURNING id
+                """,Long.class,id,version);
         jdbc.update("INSERT INTO baseline_item VALUES(?,?,?,?)",baseline,project.projectId(),id,v); return id;
     }
     long currentVersion(long id) { return jdbc.queryForObject("SELECT id FROM design_item_version WHERE design_item_id=? ORDER BY version_no DESC LIMIT 1",Long.class,id); }
     Proposal create(boolean docs,boolean mixed,String key) {
+        return create(leader,docs,mixed,key);
+    }
+    Proposal create(CallerContext author,boolean docs,boolean mixed,String key) {
         var changes=mixed ? List.of(new Item("UPDATE",""+item,""+itemVersion,"REQUIREMENT",1,Map.of("description","보완")),
                 new Item("RETIRE",""+retired,""+retiredVersion,null,null,null),
                 new Item("CREATE",null,null,"POLICY",1,Map.of("description","신규 정책"))) : List.<Item>of();
         var documents=docs ? List.of(new DocumentChange(""+document,""+version,"새 본문 "+key,null)) : List.<DocumentChange>of();
-        return commands.create(leader,project.projectId(),new Input(""+baseline,"변경","이유",null,null,changes,documents,null,null,null),key);
+        return commands.create(author,project.projectId(),new Input(""+baseline,"변경","이유",null,null,changes,documents,null,null,null),key);
     }
     ApproveRequest request(Proposal p) { return new ApproveRequest(p.baseBaselineId(),p.revision(),p.snapshotHash()); }
     Publication approve(Proposal p,String key) { return publications.approve(leader,project.projectId(),Long.parseLong(p.id()),request(p),key); }
@@ -158,6 +170,10 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(result.baseline().items()).noneMatch(i -> i.designItemId().equals(""+retired));
         assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE id=?",String.class,version)).isEqualTo("SUPERSEDED");
         assertThat(jdbc.queryForObject("SELECT content_text FROM document_version WHERE id=?",String.class,version)).isEqualTo("이전 본문");
+        assertThat(jdbc.queryForObject("SELECT source_document_version_id FROM design_item_version WHERE id=?",Long.class,currentVersion(item)))
+                .isEqualTo(version);
+        assertThat(jdbc.queryForObject("SELECT source_locator->>'location' FROM design_item_version WHERE id=?",String.class,currentVersion(item)))
+                .isEqualTo("첫 문단");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline_item WHERE baseline_id=?",Integer.class,baseline)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT status FROM design_item_version WHERE id=?",String.class,retiredVersion)).isEqualTo("APPROVED");
         assertThat(jdbc.queryForObject("SELECT status FROM design_item_dependency WHERE from_item_id=? AND to_item_id=?",String.class,item,retired)).isEqualTo("NEEDS_RECHECK");
@@ -339,6 +355,39 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
                 project.projectId(),Long.parseLong(p.id()),leader.accountId()))
                 .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
         assertThat(count("baseline")).isEqualTo(2);
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void publishedVersionsKeepHumanOrAgentAuthorSeparateFromApprovingLeader(boolean agent) {
+        long author=fixtures().account(); fixtures().member(project.projectId(),author,ProjectRole.MEMBER);
+        CallerContext submitter=agent ? CallerContext.agent(author,fixtures().agentToken(project.projectId(),author)) : CallerContext.human(author);
+        Proposal p=create(submitter,false,true,"author");
+        var published=approve(p,"publish-author");
+        assertVersionAuthors(published,author,agent ? "AI_PROPOSED" : "HUMAN");
+        assertThat(published.baseline().approvedBy()).isEqualTo(leader.accountId().toString());
+        assertThat(queries.approval(leader,project.projectId(),Long.parseLong(p.id())).approvedBy()).isEqualTo(leader.accountId().toString());
+    }
+
+    @ParameterizedTest @ValueSource(booleans={false,true})
+    void publicationUsesCurrentRevisionOriginAfterSwitchingSubmissionChannel(boolean agentFirst) {
+        long author=fixtures().account(); fixtures().member(project.projectId(),author,ProjectRole.MEMBER);
+        long token=fixtures().agentToken(project.projectId(),author);
+        CallerContext human=CallerContext.human(author), agent=CallerContext.agent(author,token);
+        Proposal p=create(agentFirst ? agent : human,false,true,"channel-first");
+        commands.reject(leader,project.projectId(),Long.parseLong(p.id()),new RejectRequest("보완",p.revision(),p.snapshotHash()),"channel-reject");
+        var input=new Input(p.baseBaselineId(),"보완","보완 사유",null,null,p.items(),List.of(),p.revision(),p.snapshotHash(),null);
+        Proposal revised=commands.resubmit(agentFirst ? human : agent,project.projectId(),Long.parseLong(p.id()),input,"channel-resubmit");
+        assertVersionAuthors(approve(revised,"channel-publish"),author,agentFirst ? "HUMAN" : "AI_PROPOSED");
+    }
+
+    void assertVersionAuthors(Publication publication,long author,String origin) {
+        var changed=publication.baseline().items().stream().filter(i -> !i.designItemId().equals(""+unchanged)).toList();
+        assertThat(changed).hasSize(2); // UPDATE and CREATE, not the unchanged or retired version.
+        for(var ref : changed) {
+            var row=jdbc.queryForMap("SELECT created_by,origin FROM design_item_version WHERE id=?",Long.parseLong(ref.designItemVersionId()));
+            assertThat(((Number)row.get("created_by")).longValue()).isEqualTo(author);
+            assertThat(row.get("origin")).isEqualTo(origin);
+        }
     }
 
     void awaitLock(String queryPattern) {

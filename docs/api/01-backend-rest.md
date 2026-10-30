@@ -8226,13 +8226,16 @@ HTTP `200`.
 - 문서·항목 버전, baseline과 두 스냅샷, 승인 이력, PUBLISHED, 현재 포인터를 원자적으로 저장한다.
 - 같은 트랜잭션에서 변준성 서비스가 관련 검증 STALE·진행 작업 WAITING(REVALIDATION)을 반영한다. 하나라도 실패하면 전체 롤백한다.
 - 관련 검증 = 변경 항목의 이전 버전을 design_refs(READS·IMPLEMENTS·CHANGES)에 가진 PASS·RUNNING 검증이다. stale_reason을 남긴다. RUNNING 검증의 늦은 결과는 반영되지 않는다. 시작 전 작업은 상태를 유지하고 IN_PROGRESS 작업만 WAITING(REVALIDATION)으로 바꾼다.
-- 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
+- 알림·활동도 같은 발행 트랜잭션 안에서 저장하고 같은 중복 키는 건너뛴다([공통 계약](../design/10-notification-activity-contract.md)). 발행 활동은 CHANGE_PROPOSAL_PUBLISHED, 키는 change-proposal:{id}:published다. 키 충돌 외 저장 오류는 발행도 롤백한다. 재요청은 기존 결과를 반환하며 저장 요청을 반복하지 않는다.
 - 같은 사용자·operation·키·입력은 저장한 응답 전체를 24시간 재생한다. 같은 키의 다른 입력은 409 idempotency_conflict다. 재요청도 현재 사람 팀장 권한을 검사한다.
 - 다른 키·보존기간 경과 후에도 expected_base_baseline_id·expected_revision·expected_snapshot_hash가 모두 같고 이미 PUBLISHED면 기존 발행 baseline과 현재 제안 조회를 반환한다. 기대값 불일치는 409 version_conflict다. 후속 제안이 발행되어 현재 기준이 달라져도 기존 발행 결과를 반환하며 발행·관계·포트를 다시 실행하지 않는다. 이 분기는 현재 기준 충돌 검사보다 먼저 처리한다. D7 구현 경계는 Q03이다.
 - 현재 구현에서 requires_refresh는 제안의 base_baseline_id와 current_baseline_id의 비교값이다. 발행 직후에도 true일 수 있으며 PUBLISHED 재요청의 실패 조건으로 쓰지 않는다.
+- 새 항목 버전의 created_by는 현재 제출 리비전의 submitted_by다. submitted_token_id가 있으면 origin=AI_PROPOSED, 없으면 HUMAN이며 승인자는 approval.decided_by·baseline.published_by로 별도 기록한다. 최초 제출과 재제출의 채널이 달라도 현재 리비전 기준을 사용한다.
+- UPDATE의 source_document_version_id·source_locator는 기존 근거 원문을 보존한다. 같은 제안에서 문서가 바뀌어도 위치가 새 문서에 유효하다는 보장이 없어 자동 치환하지 않는다. 출처 교체는 명시적 입력·검증 계약을 추가해야 한다.
+- 문서별 승인 API는 기준 발행 이후 신규 결정을 change_proposal_required로 거부한다. 이미 완료한 결정의 같은 입력 재요청만 기존 결과를 반환하므로 변경 제안의 문서 승인을 우회하지 않는다.
 - 최종 문서·항목 참조를 계산한 뒤 새 기준에 한 번씩 INSERT한다. 이전 기준 참조는 변경하지 않는다. UPDATE 항목 번호는 전체 버전 max+1, CREATE는 1이며 RETIRE는 retired_at을 기록하고 새 기준에서 제외한다. 과거 기준의 참조와 본문은 보존한다.
 - 163 연결 전에는 ValidationImpactPort 기본 구현이 no-op + WARN이므로 승인해도 검증 STALE·작업 WAITING은 반영되지 않는다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
-- 영향 분석 결과에 따른 승인 게이트는 메서드 하나의 TODO로 현재 항상 통과한다. 커밋 후 알림·활동 전달도 TODO이며 이 PR의 저장 성공을 전달 완료로 보지 않는다.
+- 영향 분석 결과에 따른 승인 게이트는 메서드 하나의 TODO로 현재 항상 통과한다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO이며 이 PR의 저장 성공을 알림·활동 저장 완료로 보지 않는다.
 - (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 

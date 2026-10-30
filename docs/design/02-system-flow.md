@@ -176,7 +176,7 @@ sequenceDiagram
   Note over CB,B: 검토 중 수정 불가. 기준 갱신이 필요하면 사유를 포함해 반려한 뒤 새 리비전으로 재제출
   B-->>B: 같은 트랜잭션: 새 항목·문서 버전 · baseline v4 + baseline_item · baseline_document · proposal PUBLISHED · approval 이력 (APR-03·04, NFR-04·05)
   B-->>B: 같은 트랜잭션에서 검증 영향 서비스 호출: 변경 항목 이전 버전을 validation_design_ref에 가진 검증 STALE · 진행 중 task WAITING(재검증) (VAL-03, D7)
-  B-->>B: 공통 알림·활동 서비스 연계(발행·재검증 필요, BASELINE_PUBLISHED)
+  B-->>B: 같은 트랜잭션: 공통 알림·활동 저장(CHANGE_PROPOSAL_PUBLISHED·REVALIDATION_REQUIRED, 10 문서)
   Note over CA: 팀원 A의 에이전트, 다음 호출 시
   CA->>B: report_task_state(…) 또는 get_design_changes(sinceVersion=3) (MCP-03, NTF-04)
   B-->>CA: {변경 항목 API-07 v2, 영향: 내 검증 STALE, 조치: 계획 수정 후 재검증}

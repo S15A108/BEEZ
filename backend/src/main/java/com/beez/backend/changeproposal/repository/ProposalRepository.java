@@ -33,7 +33,7 @@ public class ProposalRepository {
 
     public Map<String, Object> proposal(long project, long proposal) {
         return one("""
-                SELECT c.*,p.current_baseline_id,r.snapshot_hash,r.snapshot::text AS snapshot,r.submitted_token_id,
+                SELECT c.*,p.current_baseline_id,r.snapshot_hash,r.snapshot::text AS snapshot,r.submitted_by,r.submitted_token_id,
                        a.reason AS rejection_reason
                 FROM change_proposal c JOIN project p ON p.id=c.project_id
                 JOIN change_proposal_revision r ON r.change_proposal_id=c.id AND r.revision_no=c.revision_no
