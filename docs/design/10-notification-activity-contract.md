@@ -207,7 +207,7 @@
 | `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
 | 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |
-| 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서 WAITING(REVALIDATION)으로 바꾼 작업의 담당자에게 `REVALIDATION_REQUIRED` 알림(본인 포함). 키는 발행에 묶어 `change-proposal:{제안 ID}:revalidation:task:{작업 ID}:to:{계정}` — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다 | -163(변준성) |
+| 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서 WAITING(REVALIDATION)으로 바꾼 작업의 담당자에게 `REVALIDATION_REQUIRED` 알림(본인 포함). 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다 | -163(변준성) |
 | `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
 | `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림(본인 포함). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
 | 코드 TODO 6곳 | 변경 제안 3(생성·거두기·검토 시작/반려 — `ProposalCommandService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
