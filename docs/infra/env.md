@@ -45,14 +45,14 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
 | `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
 | `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
-| `BACKEND_HOST_PORT` | 서버 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
+| `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
 | `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
 | `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |
 
-- `BACKEND_HOST_PORT` 는 compose 가 막지 못합니다(기본값 `8080` 이 있음). 서버에서 빠지면 Jenkins 의 8080 과 겹쳐
-  backend 가 뜨지 못합니다.
+- `BACKEND_HOST_PORT` 는 기본값이 없습니다. 예전 기본값 `8080` 은 서버의 Jenkins 와 겹치는데도 점검을 통과했습니다.
+  값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.
 - `BACKEND_IMAGE`·`AI_IMAGE` 는 `deploy.sh` 가 배포 SHA 로 채웁니다. env 파일에 쓰지 않습니다.
 - `LOCAL_HTTP_PORT` 는 로컬 nginx 전용입니다(`compose.local.yaml`).
 
@@ -159,14 +159,23 @@ jar 나 이미지를 prod 로 띄울 때의 안전장치입니다.
 
 ### 배포 전에 점검하기
 
-서버 env 파일에 필수값이 다 있는지를 **배포하지 않고** 확인합니다. 값은 화면에 나오지 않습니다.
+서버 env 파일을 **배포하지 않고** 두 가지로 확인합니다. 비밀값은 화면에 나오지 않습니다.
 
 ```bash
 # 로컬 PC (Git Bash, 저장소 루트). compose 파일을 서버로 흘려보내 그 자리에서 검사
+# 1) 필수값이 다 있는가
 REF=dev    # 필수값을 추가하는 PR 이면 그 PR 의 브랜치 이름
 git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
   ssh beez 'docker compose -f - --env-file /opt/beez/.env.dev config --quiet && echo "env ok"'
+
+# 2) backend 포트가 Nginx 가 보내는 포트와 같은가
+ssh beez 'p=$(sed -n "s/^BACKEND_HOST_PORT=//p" /opt/beez/.env.dev)
+  grep -q "server 127.0.0.1:$p;" /etc/nginx/sites-enabled/dev.beez.ai.kr.conf && echo "port ok ($p)" || echo "port 다름: env=$p"'
 ```
+
+- **`env ok` 는 값이 있는지만 봅니다.** 값이 맞는지(포트, `PUBLIC_ORIGIN` 형식, 비밀값이 DB 와 같은지)는 보지 않습니다.
+  그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다. 포트가 `8080` 이면 Jenkins 와 겹쳐 backend 가 뜨지 못하고,
+  Nginx 와 다르면 backend 는 떠도 Nginx 가 다른 포트로 보내 API 가 실패합니다. 둘 다 `port 다름` 으로 나옵니다.
 
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
   검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
