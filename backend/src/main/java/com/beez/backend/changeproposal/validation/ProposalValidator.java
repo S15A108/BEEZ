@@ -10,6 +10,11 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class ProposalValidator {
+    public void validate(com.beez.backend.changeproposal.dto.PublicationDtos.ApproveRequest input) {
+        if (input == null) throw invalid("승인 요청 본문이 필요합니다.");
+        requiredId(input.expectedBaseBaselineId(), "expected_base_baseline_id");
+        validate(new WithdrawRequest(input.expectedRevision(), input.expectedSnapshotHash()));
+    }
     public void validate(Input input, boolean update) {
         if (input == null) throw invalid("변경 제안 본문이 필요합니다.");
         requiredId(input.baseBaselineId(), "base_baseline_id");
