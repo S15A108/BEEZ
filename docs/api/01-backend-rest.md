@@ -8080,7 +8080,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 관련 요구사항: APR-01·03~05  
 담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-199·200, 실제 163/197 연결·승인 게이트·알림은 TODO)
 
 #### 인증
 
@@ -8093,7 +8093,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 필수. 제어 문자 없는 1~128자, 재시도 시 같은 키. 공통 5절 |
 
 #### Path Parameters
 
@@ -8158,14 +8158,17 @@ HTTP `200`.
       {
         "document_id": "201",
         "base_document_version_id": "211",
+        "proposed_document_version_id": "212",
         "after_content": "# 수정된 요구사항\n팀장이 프로젝트를 삭제한다."
       }
     ],
     "status": "PUBLISHED",
+    "revision": 1,
+    "snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "proposer_account_id": "11",
     "actor_type": "HUMAN",
     "current_baseline_id": "402",
-    "requires_refresh": false,
+    "requires_refresh": true,
     "created_at": "2026-10-23T03:00:00Z",
     "updated_at": "2026-10-23T03:00:00Z",
     "published_baseline_id": "402"
@@ -8202,7 +8205,9 @@ HTTP `200`.
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `baseline_conflict` | 제안 기준과 현재 baseline 불일치 |
 | 409 | `version_conflict` | 검토 뒤 제안 변경 |
-| 409 | `invalid_transition` | 반려 등 승인 불가 |
+| 409 | `invalid_transition` | 반려·거둠 등 승인 불가 |
+| 403 | `request_origin_rejected` | Origin/Referer가 허용 목록과 다르거나 없음 |
+| 409 | `idempotency_conflict` | 같은 키에 다른 입력 |
 | 500 | `internal` | 발행 트랜잭션 실패 |
 | 409 | `analysis_not_completed` | 제안에 연결한 문서 버전의 색인 미준비·실패·불일치 |
 
@@ -8222,8 +8227,13 @@ HTTP `200`.
 - 같은 트랜잭션에서 변준성 서비스가 관련 검증 STALE·진행 작업 WAITING(REVALIDATION)을 반영한다. 하나라도 실패하면 전체 롤백한다.
 - 관련 검증 = 변경 항목의 이전 버전을 design_refs(READS·IMPLEMENTS·CHANGES)에 가진 PASS·RUNNING 검증이다. stale_reason을 남긴다. RUNNING 검증의 늦은 결과는 반영되지 않는다. 시작 전 작업은 상태를 유지하고 IN_PROGRESS 작업만 WAITING(REVALIDATION)으로 바꾼다.
 - 커밋 뒤 알림·활동을 처리한다. 커밋 뒤 전달 실패로 새 기준을 중복 발행하지 않는다.
-- 이미 발행한 제안의 재요청은 기존 결과를 반환한다. D7 구현 경계는 Q03이다.
-- (수정안 요청) requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
+- 같은 사용자·operation·키·입력은 저장한 응답 전체를 24시간 재생한다. 같은 키의 다른 입력은 409 idempotency_conflict다. 재요청도 현재 사람 팀장 권한을 검사한다.
+- 다른 키·보존기간 경과 후에도 expected_base_baseline_id·expected_revision·expected_snapshot_hash가 모두 같고 이미 PUBLISHED면 기존 발행 baseline과 현재 제안 조회를 반환한다. 기대값 불일치는 409 version_conflict다. 후속 제안이 발행되어 현재 기준이 달라져도 기존 발행 결과를 반환하며 발행·관계·포트를 다시 실행하지 않는다. 이 분기는 현재 기준 충돌 검사보다 먼저 처리한다. D7 구현 경계는 Q03이다.
+- 현재 구현에서 requires_refresh는 제안의 base_baseline_id와 current_baseline_id의 비교값이다. 발행 직후에도 true일 수 있으며 PUBLISHED 재요청의 실패 조건으로 쓰지 않는다.
+- 최종 문서·항목 참조를 계산한 뒤 새 기준에 한 번씩 INSERT한다. 이전 기준 참조는 변경하지 않는다. UPDATE 항목 번호는 전체 버전 max+1, CREATE는 1이며 RETIRE는 retired_at을 기록하고 새 기준에서 제외한다. 과거 기준의 참조와 본문은 보존한다.
+- 163 연결 전에는 ValidationImpactPort 기본 구현이 no-op + WARN이므로 승인해도 검증 STALE·작업 WAITING은 반영되지 않는다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
+- 영향 분석 결과에 따른 승인 게이트는 메서드 하나의 TODO로 현재 항상 통과한다. 커밋 후 알림·활동 전달도 TODO이며 이 PR의 저장 성공을 전달 완료로 보지 않는다.
+- (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -8627,7 +8637,7 @@ HTTP `200`.
 
 관련 요구사항: CHG-05 (화면 PNL-04-v2-approve)  
 담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-199·200, 실제 검증 영향·AI 분석 연결은 TODO)
 
 #### 인증
 
@@ -8662,7 +8672,7 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `next_baseline_version_no` | `integer` | Y | 발행될 기준 번호 |
-| `baseline_items` | `object[]` | Y | 새 기준에 들어갈 항목 {design_item_id, title, version_no} |
+| `baseline_items` | `object[]` | Y | 새 기준에 들어갈 항목 {design_item_id, title, version_no, operation, proposal_item_index}. CREATE의 ID는 null이며 원본 items 배열의 0부터 시작하는 index로 식별 |
 | `validations_to_stale` | `object[]` | Y | '다시 검증 필요'가 될 검증 {validation_id, task_id, task_title} |
 | `tasks_to_wait` | `object[]` | Y | '대기 · 재검증'이 될 진행 중 작업 {task_id, title, assignee_member_id} |
 | `unchanged` | `object` | Y | 그대로인 것 {items, documents}. 화면 '나머지 항목 1개와 문서 4개는 v1 그대로' |
@@ -8675,7 +8685,9 @@ HTTP `200`.
     {
       "design_item_id": "701",
       "title": "REQ-001 프로젝트 목록 빈 화면 안내",
-      "version_no": 2
+      "version_no": 2,
+      "operation": "UPDATE",
+      "proposal_item_index": 0
     }
   ],
   "validations_to_stale": [
@@ -8691,7 +8703,9 @@ HTTP `200`.
       "title": "TASK-003",
       "assignee_member_id": "23"
     }
-  ]
+  ],
+  "unchanged": {"items": 1, "documents": 4},
+  "unreviewed": {"ai_candidates": 0, "open_review_requests": 1}
 }
 ```
 
@@ -8703,6 +8717,10 @@ HTTP `200`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 409 | `baseline_conflict` | 제안 기준이 현재와 다름(requires_refresh) |
+| 400 | `validation_failed` | 잘못된 ID·항목 내용·스키마 |
+| 409 | `invalid_transition` | PROPOSED·IN_REVIEW가 아닌 상태 |
+| 409 | `version_conflict` | 문서·항목 참조와 제출 리비전 불일치 |
+| 409 | `analysis_not_completed` | 제안 문서 버전의 색인 미준비·실패·불일치 |
 
 ```json
 {
@@ -8715,7 +8733,12 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- CHG-A09와 같은 규칙으로 계산하되 아무것도 저장하지 않는다.
+- 사람 팀장만 허용한다. Origin 검사와 Idempotency-Key는 필요하지 않다. REPEATABLE_READ 읽기 전용 트랜잭션에서 CHG-A09와 같은 PublishPlanner로 검증·최종 구성을 계산하며 아무것도 저장하지 않는다. 쓰기 잠금·sequence 발급·관계 apply·멱등 저장도 하지 않는다.
+- PROPOSED·IN_REVIEW만 미리 볼 수 있다. 제안 기준이 현재와 다르면 409 baseline_conflict이며 requires_refresh 응답 필드를 별도로 추가하지 않는다. 색인과 참조 검증도 A09와 공유한다.
+- baseline_items는 변경 후 최종 항목 목록이다. CREATE는 design_item_id:null, operation:CREATE, proposal_item_index:원본 items 배열의 index, version_no:1이다. UPDATE는 실제 항목 ID와 전체 max+1 번호, UNCHANGED는 기존 번호와 proposal_item_index:null을 반환한다. RETIRE는 제외한다. ID를 미리 발급하거나 예약하지 않는다.
+- unchanged는 새 기준에 그대로 참조하는 항목·문서 수다. open_review_requests는 현재 리비전 REVIEW_REQUEST 중 지정 대상 한 명이라도 요청 이후 같은 리비전에 의견을 남기지 않은 요청 건수다. change_comment_target 다중 대상을 사용하고 대상 수가 아닌 요청 수로 세며, 이후 순서는 의견 ID 기준이다.
+- 197 연결 전 ai_candidates=0은 호환용 임시값이며 미평가를 뜻한다. 163 연결 전 validations_to_stale·tasks_to_wait는 빈 배열인 기본 구현이며 실제 영향 0건을 확인한 결과가 아니다. PR에서 이 미연결 범위를 반드시 표시한다.
+- preview 포트에는 새 기준·버전 ID를 넘기지 않는다. 이전 baseline, 제안 ID·revision/hash, UPDATE·RETIRE의 이전 항목 버전으로 대상을 계산하고 apply 때만 실제 새 ID를 넘긴다.
 - 승인 확인 화면에서만 쓴다. 그사이 기준이나 제안이 바뀌면 CHG-A09가 기존 규칙대로 거절하고 화면은 다시 확인하라고 안내한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
