@@ -5651,6 +5651,7 @@ HTTP `200`.
 
 - 현재 승인본만 검색하고 권한·프로젝트 필터를 검색 전에 적용한다.
 - BE 키워드·벡터 저장/검색·실행/manifest는 오서현, 청킹·임베딩·검색 전략 AI는 박상은 담당이다. KEYWORD는 현재 baseline의 문서/항목을 검색해 DOCUMENT/DESIGN_ITEM을, SEMANTIC은 READY 청크의 DOCUMENT_CHUNK를 반환한다. 원문 키워드 검색은 색인과 독립적이다. 출처 없는 HUMAN 승인 항목은 source를 생략한다.
+- 새 의미 검색 색인의 `DOCUMENT_CHUNK`는 표시용 `source.location`과 함께 `chunk_key`, 정확한 `source_spans`, 보조 `context_refs`를 반환한다. 이전 색인에서 정확한 범위가 저장되지 않았다면 이 필드는 생략한다. offset은 정규화 원문의 Unicode 코드 포인트 기준이며 끝은 제외한다.
 - 검색 실패를 빈 결과로 표시하지 않는다. 유사도와 승인 근거를 구분한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)

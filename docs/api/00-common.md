@@ -1362,6 +1362,11 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `source` | [Source](00-common.md#schema-source) | N | 원문 근거. 출처 없는 HUMAN 승인 항목은 생략 |
 | `design_item_id` | `ID` | N | 관련 항목 |
 | `score` | `number` | N | 유사도. 확정 근거가 아님 |
+| `chunk_key` | `string` | N | 정확한 청킹 식별자. 새 `DOCUMENT_CHUNK` 색인에서 제공 |
+| `source_spans` | `object[]` | N | 정확한 원문 범위. 각 원소는 `block_id`, `start_offset`, `end_offset`, `locator`를 포함. offset은 `utf8-lf-v1` 정규화 텍스트의 Unicode 코드 포인트 기준 0부터 시작, 끝 제외 |
+| `context_refs` | `object[]` | N | 보조 제목·표 헤더 참조. 각 원소는 `block_id`, `role`, `locator`, `text_hash`, `applied`를 포함 |
+
+위 세 필드는 정확한 범위가 저장된 의미 검색 청크에서만 제공한다. 이전 색인에는 생략하며 표시용 `source.location`은 유지한다. 실제 근거는 `source_spans`이고 `context_refs`는 보조 문맥이다.
 
 <a id="schema-participant"></a>
 
@@ -1934,7 +1939,7 @@ HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. bac
 | `start_line` | `integer` | Y | utf8-lf-v1 정규화 텍스트의 1-based 시작 행 |
 | `end_line` | `integer` | Y | 끝 행 포함, start_line 이상 |
 
-기본 청크는 원문의 연속 행 범위다. 긴 한 행/분리 범위 등의 정확한 locator 확장이 필요하면 조용히 누락하거나 잘못된 정밀도를 표시하지 말고 invalid_ai_input 진단으로 실패시킨다. 행 개수·해시·청크 원문 일치 검증을 함께 수행한다. 파서 블록 구조는 내부 구현이고 BE 저장 청크의 최소 계약과 구분한다.
+청킹 API의 청크 locator는 첫 span부터 마지막 span까지의 표시용 행 범위다. 긴 한 행을 분할하면 여러 청크의 행 범위가 겹칠 수 있고, 여러 span 사이에 제외 범위가 있을 수 있다. 정확한 복원은 `source_spans`의 코드 포인트 범위를 사용한다. 파서 블록 구조는 내부 구현이고 BE 저장 청크의 계약과 구분한다.
 
 <a id="schema-retrievalscope"></a>
 

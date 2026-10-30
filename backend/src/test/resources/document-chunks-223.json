@@ -1,0 +1,251 @@
+{
+  "input": {
+    "project_id": "101",
+    "document_version_id": "202",
+    "request_key": "fixture-key",
+    "kind": "PLAN",
+    "media_type": "text/markdown",
+    "content": "# 제목 😀\n\n- 첫 번째 항목\n- 두 번째 항목\n\n---\n\n긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 \n",
+    "content_hash": "sha256:1f9518dab9f2c733454f8e21accab1c64a5b5924d6b694fccaa4760c79535072",
+    "text_hash": "sha256:1f9518dab9f2c733454f8e21accab1c64a5b5924d6b694fccaa4760c79535072",
+    "normalization_profile": "utf8-lf-v1",
+    "chunking_profile_id": "md-structure-v1"
+  },
+  "response": {
+    "result": {
+      "contract_version": "document-chunks-v1",
+      "project_id": "101",
+      "document_version_id": "202",
+      "request_key": "fixture-key",
+      "text_hash": "sha256:1f9518dab9f2c733454f8e21accab1c64a5b5924d6b694fccaa4760c79535072",
+      "normalization_profile": "utf8-lf-v1",
+      "chunking_profile_id": "md-structure-v1",
+      "parser_version": "beez-markdown/1.1.0+markdown-it-py/4.2.0",
+      "manifest": {
+        "project_id": "101",
+        "document_version_id": "202",
+        "content_hash": "1f9518dab9f2c733454f8e21accab1c64a5b5924d6b694fccaa4760c79535072",
+        "text_hash": "1f9518dab9f2c733454f8e21accab1c64a5b5924d6b694fccaa4760c79535072",
+        "normalization_version": "utf8-lf-v1",
+        "parser_profile": "markdown-v1",
+        "parser_version": "beez-markdown/1.1.0+markdown-it-py/4.2.0",
+        "chunker_version": "beez-structure/1.1.0",
+        "chunking_profile": {
+          "profile_id": "md-structure-v1",
+          "tokenizer_id": "fixture:character-v1",
+          "max_tokens": 600,
+          "include_headings": false,
+          "include_table_headers": false,
+          "max_chunks": 1024
+        },
+        "expected_chunk_keys": [
+          "chk_c7900e4c1d72ccdcca80efc44b5f891924935a6d2be711b69422fb1a3edbc5da",
+          "chk_bb6891ba0a9d2e62651b539cb6dc909a41a28c061ee4b4c86e5f5352cd136226",
+          "chk_7a04d2793241756a2f79f004147666b333cbdd1d93a9b3ef85da2a8693dd0977",
+          "chk_9c53cc34b37764f386a70ac654e612f3ad9ede9209d5f8d7dc7c71fa214bf01e"
+        ]
+      },
+      "excluded_ranges": [
+        {
+          "locator": {
+            "type": "text_lines",
+            "start_line": 2,
+            "end_line": 2
+          },
+          "reason": "blank"
+        },
+        {
+          "locator": {
+            "type": "text_lines",
+            "start_line": 5,
+            "end_line": 5
+          },
+          "reason": "blank"
+        },
+        {
+          "locator": {
+            "type": "text_lines",
+            "start_line": 6,
+            "end_line": 6
+          },
+          "reason": "thematic_break"
+        },
+        {
+          "locator": {
+            "type": "text_lines",
+            "start_line": 7,
+            "end_line": 7
+          },
+          "reason": "blank"
+        }
+      ],
+      "diagnostics": [],
+      "chunks": [
+        {
+          "chunk_key": "chk_c7900e4c1d72ccdcca80efc44b5f891924935a6d2be711b69422fb1a3edbc5da",
+          "chunk_no": 0,
+          "document_version_id": "202",
+          "text": "# 제목 😀\n",
+          "source_spans": [
+            {
+              "block_id": "blk_efaca7da4d8756e99ecf8e8679bb3725c180e245b2cc8761c950dba9b4afb453",
+              "start_offset": 0,
+              "end_offset": 7,
+              "locator": {
+                "type": "text_lines",
+                "start_line": 1,
+                "end_line": 1
+              }
+            }
+          ],
+          "context_refs": [
+            {
+              "block_id": "blk_efaca7da4d8756e99ecf8e8679bb3725c180e245b2cc8761c950dba9b4afb453",
+              "role": "heading",
+              "locator": {
+                "type": "text_lines",
+                "start_line": 1,
+                "end_line": 1
+              },
+              "text_hash": "7fd9e88339dd0c7dd909b83a54df070a4e5ac68bf2218bdcbac37d3a8521efad",
+              "applied": false
+            }
+          ],
+          "embedding_text": "# 제목 😀\n",
+          "token_count": 7,
+          "locator": {
+            "type": "text_lines",
+            "start_line": 1,
+            "end_line": 1
+          }
+        },
+        {
+          "chunk_key": "chk_bb6891ba0a9d2e62651b539cb6dc909a41a28c061ee4b4c86e5f5352cd136226",
+          "chunk_no": 1,
+          "document_version_id": "202",
+          "text": "- 첫 번째 항목\n- 두 번째 항목\n",
+          "source_spans": [
+            {
+              "block_id": "blk_73f7610301d47b8fbff12a98b52bb15332ba8548c0ab4683bc0f5746bc1b9dd8",
+              "start_offset": 8,
+              "end_offset": 18,
+              "locator": {
+                "type": "text_lines",
+                "start_line": 3,
+                "end_line": 3
+              }
+            },
+            {
+              "block_id": "blk_dd2a54259142410f7300cf0334dc06917364ff58894dfa2cc5c4d84605f6aee9",
+              "start_offset": 18,
+              "end_offset": 28,
+              "locator": {
+                "type": "text_lines",
+                "start_line": 4,
+                "end_line": 4
+              }
+            }
+          ],
+          "context_refs": [
+            {
+              "block_id": "blk_efaca7da4d8756e99ecf8e8679bb3725c180e245b2cc8761c950dba9b4afb453",
+              "role": "heading",
+              "locator": {
+                "type": "text_lines",
+                "start_line": 1,
+                "end_line": 1
+              },
+              "text_hash": "7fd9e88339dd0c7dd909b83a54df070a4e5ac68bf2218bdcbac37d3a8521efad",
+              "applied": false
+            }
+          ],
+          "embedding_text": "- 첫 번째 항목\n- 두 번째 항목\n",
+          "token_count": 20,
+          "locator": {
+            "type": "text_lines",
+            "start_line": 3,
+            "end_line": 4
+          }
+        },
+        {
+          "chunk_key": "chk_7a04d2793241756a2f79f004147666b333cbdd1d93a9b3ef85da2a8693dd0977",
+          "chunk_no": 2,
+          "document_version_id": "202",
+          "text": "긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 ",
+          "source_spans": [
+            {
+              "block_id": "blk_07c7b86134afde9123d5bf6f957b2b2ca044154283988dc274988c20d93be5f2",
+              "start_offset": 34,
+              "end_offset": 489,
+              "locator": {
+                "type": "text_lines",
+                "start_line": 8,
+                "end_line": 8
+              }
+            }
+          ],
+          "context_refs": [
+            {
+              "block_id": "blk_efaca7da4d8756e99ecf8e8679bb3725c180e245b2cc8761c950dba9b4afb453",
+              "role": "heading",
+              "locator": {
+                "type": "text_lines",
+                "start_line": 1,
+                "end_line": 1
+              },
+              "text_hash": "7fd9e88339dd0c7dd909b83a54df070a4e5ac68bf2218bdcbac37d3a8521efad",
+              "applied": false
+            }
+          ],
+          "embedding_text": "긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 ",
+          "token_count": 455,
+          "locator": {
+            "type": "text_lines",
+            "start_line": 8,
+            "end_line": 8
+          }
+        },
+        {
+          "chunk_key": "chk_9c53cc34b37764f386a70ac654e612f3ad9ede9209d5f8d7dc7c71fa214bf01e",
+          "chunk_no": 3,
+          "document_version_id": "202",
+          "text": "긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 \n",
+          "source_spans": [
+            {
+              "block_id": "blk_07c7b86134afde9123d5bf6f957b2b2ca044154283988dc274988c20d93be5f2",
+              "start_offset": 489,
+              "end_offset": 945,
+              "locator": {
+                "type": "text_lines",
+                "start_line": 8,
+                "end_line": 8
+              }
+            }
+          ],
+          "context_refs": [
+            {
+              "block_id": "blk_efaca7da4d8756e99ecf8e8679bb3725c180e245b2cc8761c950dba9b4afb453",
+              "role": "heading",
+              "locator": {
+                "type": "text_lines",
+                "start_line": 1,
+                "end_line": 1
+              },
+              "text_hash": "7fd9e88339dd0c7dd909b83a54df070a4e5ac68bf2218bdcbac37d3a8521efad",
+              "applied": false
+            }
+          ],
+          "embedding_text": "긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 긴 문장 😀 \n",
+          "token_count": 456,
+          "locator": {
+            "type": "text_lines",
+            "start_line": 8,
+            "end_line": 8
+          }
+        }
+      ]
+    },
+    "origin": "PARSER",
+    "usage": []
+  }
+}
