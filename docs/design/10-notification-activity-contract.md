@@ -34,6 +34,7 @@
 - 이 INSERT와 수신자 확인 조회는 **`EntityManager` 네이티브 쿼리**로 한다. `JdbcTemplate`은 Hibernate를 거치지 않아, 같은 트랜잭션에서 도메인이 JPA로 바꾸고 아직 flush하지 않은 변경(방금 제외·되살린 멤버십, 바뀐 담당자)을 보지 못한다. 네이티브 쿼리는 실행 전에 자동 flush된다.
 - `requestAll`은 수신자들이 활성 멤버인지 **조회 한 번**(`account_id IN (…)`)으로 거른다. 발행처럼 project 행 잠금을 쥔 트랜잭션에서 불리므로 수신자 수만큼 조회하지 않는다.
 - 도메인 이벤트(`ApplicationEvent`)로 넘기고 싶으면 듣는 쪽은 `@TransactionalEventListener(phase = BEFORE_COMMIT)` 또는 `@EventListener`(같은 트랜잭션)를 쓴다. **`AFTER_COMMIT`에서는 부르지 않는다** — 이미 커밋이 끝난 뒤라 저장이 반영되지 않을 수 있고(Spring `TransactionSynchronization.afterCommit` 주의 사항), 유실 틈도 그대로 남는다.
+- 도메인 이벤트에는 계정 ID가 아니라 **`CallerContext`를 담는다.** 계정 ID만 담으면 같은 계정의 사람 행위와 에이전트 행위를 구분할 수 없고, 에이전트 세션도 연결할 수 없다. 사람·에이전트가 아니라 시스템 판단으로 생긴 변화(검증 결과에 따른 전이 등)는 `CallerContext` 없이 `recordBy(SystemActor.SYSTEM, …)`로 남긴다.
 
 ### 2.2 실패를 어떻게 다루나
 
@@ -152,7 +153,7 @@
 | type | 소유 | target_type |
 | --- | --- | --- |
 | `TASK_CREATED`·`TASK_PLAN_REVISED` | 작업(변준성) | TASK |
-| `TASK_STARTED`·`TASK_RESUMED`·`TASK_WAITING`·`TASK_COMPLETED`·`TASK_CANCELED` | 작업(변준성) | TASK (`TaskEvent` 값과 1:1) |
+| `TASK_STARTED`·`TASK_RESUMED`·`TASK_WAITING`·`TASK_COMPLETION_REPORTED`·`TASK_COMPLETED`·`TASK_CANCELLED` | 작업(변준성) | TASK — 아래 "작업 유형 정하기"를 따른다 |
 | `TASK_ASSIGNEE_CHANGED` | 작업(변준성) — 인계 경로 호출은 `TaskHandoverService`(전진 -212 코드) | TASK |
 | `VALIDATION_FINISHED` | 작업(변준성) | VALIDATION (`result`로 통과·실패) |
 | `DOCUMENT_REGISTERED`·`DOCUMENT_APPROVED`·`DOCUMENT_REJECTED` | 문서(오서현) | DOCUMENT_VERSION |
@@ -162,6 +163,22 @@
 | `MEMBER_JOINED`·`MEMBER_LEFT`·`MEMBER_REMOVED`·`LEADER_TRANSFERRED` | 프로젝트(전진) | MEMBER |
 | `AGENT_CONNECTED`·`AGENT_DISCONNECTED` | 에이전트(전진 -178) | AGENT_SESSION |
 
+**작업 유형 정하기.** 활동 유형은 보고된 `TaskEvent` 이름이 아니라 **실제 전이 결과**(바뀐 뒤 상태·대기 사유)로 정한다. 변경분(delta)이 있는 `COMPLETED` 보고는 작업을 `WAITING(REVALIDATION)`으로 보내는데, 이벤트 이름만 따르면 재검증을 기다리는 작업이 타임라인에 완료로 보인다.
+
+| 보고·원인 | 실제 전이 | 활동 유형 | 행위자 |
+| --- | --- | --- | --- |
+| START | → IN_PROGRESS | `TASK_STARTED` | 보고자(`CallerContext`) |
+| RESUME | WAITING → IN_PROGRESS | `TASK_RESUMED` | 보고자 |
+| WAIT | → WAITING | `TASK_WAITING` | 보고자 |
+| COMPLETED, delta 없음 | → COMPLETED | `TASK_COMPLETED` | 보고자 |
+| COMPLETED, delta 있음 | → WAITING(REVALIDATION) | `TASK_COMPLETION_REPORTED`(완료 보고, 재검증 대기) | 보고자 |
+| delta 검증 통과 | WAITING → COMPLETED | `TASK_COMPLETED` | `SystemActor.SYSTEM` |
+| CANCEL | → CANCELLED | `TASK_CANCELLED` | 보고자 |
+| 같은 보고 재전송(이미 그 상태, 202) | 없음 | 남기지 않음 | — |
+
+- 발행으로 진행 중 작업이 `WAITING(REVALIDATION)`이 되는 것은 작업 활동을 따로 남기지 않는다. 그 사실은 `CHANGE_PROPOSAL_PUBLISHED` 활동과 담당자에게 가는 `REVALIDATION_REQUIRED` 알림이 남긴다.
+- `TASK_COMPLETED`는 작업이 실제로 COMPLETED가 된 순간에만 남긴다. 그래서 delta가 있는 작업에는 `TASK_COMPLETION_REPORTED`와 `TASK_COMPLETED` 두 건이 남는다(키는 잠금 버전이 달라 겹치지 않는다).
+
 ## 7. 구현에 따라오는 변경
 
 | 대상 | 변경 | 티켓 |
@@ -169,7 +186,9 @@
 | `notification` | `document_id` 컬럼 추가 | -181 |
 | `activity_event` | `actor_kind` CHECK에 `BEE` 추가, `agent_session_id`·`task_id`·`change_proposal_id`·`baseline_id`·`result` 저장(필터 대상은 인덱스 가능한 컬럼), `occurred_at` 기본값 `clock_timestamp()` | -182 |
 | MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id` | -183 |
+| `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
+| delta 검증 통과 처리 | WAITING → COMPLETED로 바꾸는 같은 트랜잭션에서 `recordBy(SYSTEM, TASK_COMPLETED)` | 검증 결과 반영(변준성) |
 | 코드 TODO 6곳 | 변경 제안 3(생성·거두기·검토 시작/반려 — `ProposalCommandService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
