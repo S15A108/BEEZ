@@ -9,6 +9,8 @@ import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.dto.TaskStateInput;
 import com.beez.backend.task.service.TaskStateService;
 import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -16,6 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -377,6 +380,69 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
         Integer reportCount = api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0])
                 .query(Integer.class).single();
         assertThat(reportCount).isEqualTo(1);
+    }
+
+    /**
+     * 깨지면: 팀장 위임(MEM-A08)이 커밋되는 동안 프로젝트 잠금을 기다린 팀장 CANCEL 이 이미 팀장이 아닌 사람으로 처리된다
+     * (-212 리뷰 "팀장 전용 요청은 잠금 뒤 팀장 권한 재확인"). 취소는 되돌릴 수 없어 더 중요하다.
+     * 프로젝트 행을 쥔 별도 트랜잭션에서 위임을 흉내 내 커밋해, 겹치는 순서를 매번 똑같이 만든다 (ProjectMemberApiIntegrationTests 와 같은 방식).
+     */
+    @Test
+    void cancel_byLeaderWaitingOnLock_isRejectedAfterTransfer() throws Exception {
+        long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", t[0]).update();
+        long lock = api.jdbc.sql("select lock_version from task where id = :t").param("t", t[0]).query(Long.class).single();
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        HttpResponse<String> res;
+        try (Connection held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (PreparedStatement ps = held.prepareStatement("select id from project where id = ? for update")) {
+                ps.setLong(1, projectId);
+                ps.executeQuery();
+            }
+            // 팀장이 보낸 CANCEL 은 프로젝트 잠금에서 기다린다
+            Future<HttpResponse<String>> pending = pool.submit(() -> report(t[0], stateJson("CANCEL", t[1], lock, null, null), leader));
+            awaitBlockedOnLock();
+            // 그 사이 위임: 활성 팀장은 하나(ux_member_one_leader)라 내리는 쪽이 먼저
+            try (PreparedStatement ps = held.prepareStatement("update project_member set role = ? where id = ?")) {
+                ps.setString(1, "MEMBER");
+                ps.setLong(2, leaderMemberId);
+                ps.executeUpdate();
+                ps.setString(1, "LEADER");
+                ps.setLong(2, memberMemberId);
+                ps.executeUpdate();
+            }
+            held.commit();
+            res = pending.get(10, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        // 역할 원복 (다른 시험에 영향 없게)
+        api.jdbc.sql("update project_member set role = 'MEMBER' where id = :m").param("m", memberMemberId).update();
+        api.jdbc.sql("update project_member set role = 'LEADER' where id = :m").param("m", leaderMemberId).update();
+
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(403);
+        assertThat(res.body()).contains("\"code\":\"forbidden\"");
+        assertThat(status(t[0])).isEqualTo("IN_PROGRESS");   // 취소되지 않았다
+    }
+
+    /** 다른 세션이 행 잠금을 기다릴 때까지 (최대 10초). 기다리지 않으면 그 요청이 그 행을 잠그지 않는다는 뜻이다 */
+    private void awaitBlockedOnLock() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (api.jdbc.sql("""
+                        select count(*) from pg_stat_activity
+                         where wait_event_type = 'Lock' and datname = current_database()
+                        """).query(Long.class).single() == 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("요청이 행 잠금에서 기다리지 않았다");
+            }
+            Thread.sleep(20);
+        }
     }
 
     @Test
