@@ -24,7 +24,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 | MCP-10 `upsert_task_plan` | `TaskMcpService.upsertTaskPlan(caller, projectId, args)` | `UpsertTaskPlanArgs(plan, taskId, expectedRevisionNo, expectedLockVersion, idempotencyKey)` | `TaskDetailResponse` |
 | MCP-12 `report_task_state` | `TaskMcpService.reportTaskState(caller, projectId, args)` | `ReportTaskStateArgs(taskId, event, planRevisionId, expectedLockVersion, validationId, waitingReason, summary, delta, completionChecks, idempotencyKey)` | `ReportTaskStateResult(task, changes, changesSinceVersion)` |
 | MCP-03 `get_design_changes` | `DesignChangesService.getChanges(caller, projectId, query)` | `DesignChangesQuery(sinceVersion, taskId, cursor, limit)` | `DesignChangesResponse` |
-| MCP-11 `validate_task_plan` | **-159에서 구현**(Sprint 4). 계약은 MCP-11 명세 그대로 | — | — |
+| MCP-11 `validate_task_plan` | `ValidationMcpService.validateTaskPlan(caller, projectId, args)` | `ValidateTaskPlanArgs(taskId, planRevisionId, expectedLockVersion, idempotencyKey)` | `ValidationResponse` (명세 Validation). 규칙으로 끝나면 PASS·NEEDS_*, 의미 분석이면 RUNNING — 조회는 MCP-13(-179 연결 때 `ValidationQueryService.get`) |
 
 - MCP-10: `task_id`가 없으면 새 작업(TSK-A01), 있으면 새 계획 리비전(TSK-A04). 수정이면 `expected_revision_no`·`expected_lock_version` 필수(없으면 400). 나머지 규칙·오류는 REST TSK-A01·A04와 같다.
 - MCP-12: 전이 규칙·오류는 REST TSK-A07과 같다. REST의 202(완료 델타 → 재검증 대기)는 도구 결과에서 구분하지 않는다 — `task.status`·`waiting_reason`으로 본다.
