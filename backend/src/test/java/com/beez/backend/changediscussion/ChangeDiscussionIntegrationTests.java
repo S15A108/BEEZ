@@ -149,7 +149,7 @@ class ChangeDiscussionIntegrationTests extends IntegrationTestSupport {
 
         assertThat(jdbc.queryForMap("SELECT status, lock_version FROM change_proposal WHERE id = ?", proposalId))
                 .containsEntry("status", "IN_REVIEW").containsEntry("lock_version", 0);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM approval", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM approval WHERE change_proposal_id = ?", Long.class, proposalId)).isZero();
     }
 
     @Test
