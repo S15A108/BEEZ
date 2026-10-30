@@ -30,9 +30,9 @@ class AnalysisIntakeEventPolicyTest {
         }
     }
 
-    @Test void deletesAreIgnoredWithoutAnAfterRow() {
-        assertThat(AnalysisIntakeEventPolicy.decide("d", null))
-                .isEqualTo(AnalysisIntakeEventPolicy.Decision.IGNORE);
+    @Test void deletesFailClosedUntilRetentionPolicyIsAgreed() {
+        assertThatThrownBy(() -> AnalysisIntakeEventPolicy.decide("d", null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test void missingAndUnknownOperationsFailClosed() {

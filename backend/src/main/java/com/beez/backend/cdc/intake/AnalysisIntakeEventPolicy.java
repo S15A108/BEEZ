@@ -20,13 +20,16 @@ public final class AnalysisIntakeEventPolicy {
 
     /**
      * Uses Debezium operation codes: c=insert, r=snapshot, u=update, d=delete.
+     * Delete events fail closed until the #197 row-retention policy is agreed.
      * A pending update is merely a wake-up hint, not authorization to analyze;
      * the contract for manual reanalysis and status transitions is not decided.
      * Transport tombstones are to be handled separately by the adapter.
      * Unknown operations/statuses fail closed so they cannot be silently lost.
      */
     public static Decision decide(String operation, String afterStatus) {
-        if ("d".equals(operation)) return Decision.IGNORE;
+        if ("d".equals(operation)) {
+            throw new IllegalArgumentException("Intake deletion policy is not defined");
+        }
         if (operation == null || !ROW_OPERATIONS.contains(operation)) {
             throw new IllegalArgumentException("Unsupported intake event operation");
         }
