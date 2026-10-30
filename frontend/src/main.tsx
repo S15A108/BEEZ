@@ -5,6 +5,9 @@ import { RouterProvider } from 'react-router/dom'
 import './index.css'
 import { router } from './router'
 import { apiMode } from '@/lib/apiMode'
+import { reloadOnStaleChunk } from '@/lib/reloadOnStaleChunk'
+
+reloadOnStaleChunk()
 
 const queryClient = new QueryClient()
 

@@ -69,6 +69,11 @@ public class ProposalValidator {
                 || input.expectedSnapshotHash() == null || !input.expectedSnapshotHash().matches("sha256:[0-9a-f]{64}"))
             throw invalid("조회한 expected_revision과 expected_snapshot_hash가 필요합니다.");
     }
+    public void validate(RejectRequest input) {
+        if (input == null) throw invalid("반려 요청 본문이 필요합니다.");
+        text(input.reason(), "반려 사유", 10000);
+        validate(new WithdrawRequest(input.expectedRevision(), input.expectedSnapshotHash()));
+    }
     public static void documentText(String text) {
         if (text == null || text.isBlank() || text.codePointCount(0, text.length()) > 100_000
                 || text.getBytes(StandardCharsets.UTF_8).length > 1_048_576
