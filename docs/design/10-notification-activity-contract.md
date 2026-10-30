@@ -172,11 +172,14 @@
 | WAIT | → WAITING | `TASK_WAITING` | 보고자 |
 | COMPLETED, delta 없음 | → COMPLETED | `TASK_COMPLETED` | 보고자 |
 | COMPLETED, delta 있음 | → WAITING(REVALIDATION) | `TASK_COMPLETION_REPORTED`(완료 보고, 재검증 대기) | 보고자 |
-| delta 검증 통과 | WAITING → COMPLETED | `TASK_COMPLETED` | `SystemActor.SYSTEM` |
+| delta 검증 통과(S4) | WAITING → COMPLETED | `TASK_COMPLETED` | `SystemActor.SYSTEM` |
 | CANCEL | → CANCELLED | `TASK_CANCELLED` | 보고자 |
-| 같은 보고 재전송(이미 그 상태, 202) | 없음 | 남기지 않음 | — |
+| 같은 보고 재전송(멱등 — 이벤트 발행 전에 반환) | 없음 | 남기지 않음 | — |
 
-- 발행으로 진행 중 작업이 `WAITING(REVALIDATION)`이 되는 것은 작업 활동을 따로 남기지 않는다. 그 사실은 `CHANGE_PROPOSAL_PUBLISHED` 활동과 담당자에게 가는 `REVALIDATION_REQUIRED` 알림이 남긴다.
+- 시스템이 진행 중 작업을 `WAITING(REVALIDATION)`으로 내리는 전이([04 문서](04-task-lifecycle.md) §2.2)는 작업 활동을 따로 남기지 않는다. 각각 그 원인이 된 행위의 활동이 대신한다.
+  - S1 설계 발행 → `CHANGE_PROPOSAL_PUBLISHED` 활동 + 담당자에게 `REVALIDATION_REQUIRED` 알림
+  - S2 진행 중 계획 변경(TSK-A04) → `TASK_PLAN_REVISED`
+  - S5 담당자 인계(TSK-A06·MEM-A09·A10) → `TASK_ASSIGNEE_CHANGED`
 - `TASK_COMPLETED`는 작업이 실제로 COMPLETED가 된 순간에만 남긴다. 그래서 delta가 있는 작업에는 `TASK_COMPLETION_REPORTED`와 `TASK_COMPLETED` 두 건이 남는다(키는 잠금 버전이 달라 겹치지 않는다).
 
 ## 7. 구현에 따라오는 변경
@@ -188,7 +191,7 @@
 | MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id` | -183 |
 | `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
-| delta 검증 통과 처리 | WAITING → COMPLETED로 바꾸는 같은 트랜잭션에서 `recordBy(SYSTEM, TASK_COMPLETED)` | 검증 결과 반영(변준성) |
+| delta 검증 통과 처리(S4) | WAITING → COMPLETED로 바꾸는 같은 트랜잭션에서 `recordBy(SYSTEM, TASK_COMPLETED)` | -159 검증 결과 반영(변준성) |
 | 코드 TODO 6곳 | 변경 제안 3(생성·거두기·검토 시작/반려 — `ProposalCommandService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
