@@ -93,6 +93,12 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 생기거나, `beez.cors`·`beez.ai`·`beez.invitation`·`beez.agent` 필수값에 기본값이 다시 들어가면 실패합니다.
 `DB_URL`·`DB_PASSWORD` 에 기본값을 넣는 것은 잡지 못하므로 리뷰에서 봅니다.
 
+**CDC(`beez.cdc.*`)는 위 표에 없습니다.** 기본으로 꺼진 실험 설정이라 `application.yml` 에도, 서버 compose 에도 없습니다.
+`enabled`·`bootstrap-servers`·`group-id`·`topic`·`kafka-security.properties` 의 뜻과 켜는 조건은
+[cdc README](../../backend/src/main/java/com/beez/backend/cdc/README.md)를 봅니다. 서버에서 켜려면 env 파일만으로는 안 되고
+`infra/compose.yaml` 의 backend `environment` 에도 넘겨야 합니다(compose 는 적힌 변수만 컨테이너에 넣습니다).
+그때 이 문서의 표에 옮겨 적습니다.
+
 ### ai (FastAPI)
 
 `ai/app/core/config.py` 가 `ai/.env` 와 환경변수를 읽습니다. 서버 compose 는 앞의 둘만 넘깁니다.
@@ -217,6 +223,10 @@ EOF
   `docker 조회 실패` 는 SSH 사용자에게 docker 권한이 없거나 데몬이 멈춘 것입니다.
 - 다른 환경(운영 등)은 위 네 변수를 바꿉니다. 운영 서버가 따로 있으면(S15P31A108-73) `HOST` 를 그 서버의 별칭으로 바꿉니다.
   `ENV_NAME`·`SITE` 만 바꾸면 여전히 dev 서버를 검사합니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
+- **서버 하나에 환경 하나**가 전제입니다. 2) 는 upstream 이름 `beez_backend` 와 compose 프로젝트 이름 `beez` 를
+  고정으로 봅니다. 한 서버에 dev 와 운영을 같이 두면 Nginx 가 upstream 이름 중복을 허용하지 않아 운영 쪽 이름이
+  달라지고, 2) 가 `port 충돌` 이나 `upstream beez_backend 없음` 으로 잘못 멈춥니다. compose 프로젝트 이름도 같아
+  컨테이너부터 겹칩니다. 같은 서버에 두기로 하면 이 점검과 compose 이름을 함께 고칩니다.
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
   검사하면 서버에 넣은 값에 오타가 있어도 `env ok` 가 나옵니다. 그 PR 의 브랜치로 검사합니다.
 - 브랜치 이름이 틀리면 `fatal: invalid object name` 과 compose 오류가 같이 나옵니다(`env ok` 는 나오지 않음).
