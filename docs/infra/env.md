@@ -172,34 +172,49 @@ REF=dev                 # 필수값을 추가하는 PR 이면 그 PR 의 브랜�
 git fetch -q origin && git show "origin/$REF:infra/compose.yaml" | \
   ssh "$HOST" "docker compose -f - --env-file /opt/beez/.env.$ENV_NAME config --quiet && echo 'env ok'"
 
-# 2) backend 포트가 비어 있고, Nginx 가 보내는 포트와 같은가
+# 2) backend 포트를 다른 프로그램이 쓰지 않고, Nginx 가 보내는 포트와 같은가. 실패하면 모두 exit 1
 ssh "$HOST" bash -s -- "$ENV_NAME" "$SITE" <<'EOF'
 p=$(sed -n 's/^BACKEND_HOST_PORT=//p' "/opt/beez/.env.$1" | tail -n1 | tr -d '\r')   # 키가 두 번이면 compose 처럼 마지막 값
 conf=/etc/nginx/sites-enabled/$2.conf
 [ -r "$conf" ] || { echo "Nginx 설정 없음: $conf"; exit 1; }
 case $p in ''|*[!0-9]*) echo "port 값 없음·이상: '$p'"; exit 1 ;; esac
-# 그 포트를 이미 누가 쓰면 지금 떠 있는 backend 여야 한다 (8080 이면 Jenkins 가 쓰고 있어 여기서 걸린다)
+hit="127\.0\.0\.1:$p([^0-9]|$)"
+# (a) Nginx 의 다른 곳이 같은 포트로 보내는가. 꺼져 있는 서비스(예: Jenkins 8080)도 설정으로 잡는다
+for f in /etc/nginx/sites-enabled/*; do
+  sed 's/#.*//' "$f" | awk '/upstream[[:space:]]+beez_backend[[:space:]]*[{]/{s=1} !s; s&&/[}]/{s=0}' |
+    grep -Eq "$hit" && { echo "port 충돌: Nginx 의 다른 설정이 포트 $p 사용 ($f)"; exit 1; }
+done
+# (b) 지금 그 포트를 연 프로그램이 있으면 떠 있는 backend 여야 한다
 if [ -n "$(ss -Hltn "sport = :$p")" ]; then
-  docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
-    --format '{{.Ports}}' | grep -q "127\.0\.0\.1:$p->" || { echo "port 충돌: 다른 프로그램이 $p 사용 중"; exit 1; }
+  ports=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
+    --format '{{.Ports}}') || { echo "docker 조회 실패: 포트 $p 사용 주체 확인 못 함"; exit 1; }
+  case $ports in *"127.0.0.1:$p->"*) ;; *) echo "port 충돌: 다른 프로그램이 $p 사용 중"; exit 1 ;; esac
 fi
-# upstream beez_backend 블록 안에서만 찾는다. 주석은 지운다
-sed 's/#.*//' "$conf" | awk '/upstream[[:space:]]+beez_backend[[:space:]]*[{]/{f=1;next} f&&/[}]/{exit} f' |
-  grep -Eq "^[[:space:]]*server 127\.0\.0\.1:$p([[:space:]]|;)" && echo "port ok ($p)" || echo "port 다름: env=$p"
+# (c) upstream beez_backend 블록 안의 포트와 비교한다
+up=$(sed 's/#.*//' "$conf" | awk '/upstream[[:space:]]+beez_backend[[:space:]]*[{]/{f=1} f; f&&/[}]/{exit}')
+[ -n "$up" ] || { echo "upstream beez_backend 없음: $conf"; exit 1; }
+printf '%s\n' "$up" | grep -Eq "server[[:space:]]+$hit" || { echo "port 다름: env=$p"; exit 1; }
+echo "port ok ($p)"
 EOF
 ```
 
 - **`env ok` 는 값이 있는지만 봅니다.** 값이 맞는지(포트, `PUBLIC_ORIGIN` 형식, 비밀값이 DB 와 같은지)는 보지 않습니다.
   그중 포트는 틀리면 배포가 바로 깨지므로 2) 로 따로 봅니다.
-  - `port 충돌`: 그 포트를 backend 가 아닌 프로그램이 이미 씁니다. `8080` 이면 Jenkins 와 겹쳐 backend 가 뜨지 못합니다.
-    Nginx 설정까지 같은 포트로 바꿔 둬도 여기서 걸립니다.
+  - `port 충돌`: 그 포트를 backend 가 아닌 곳이 씁니다. 두 가지로 봅니다.
+    (a) Nginx 의 켜진 사이트 설정 중 `upstream beez_backend` 밖에서 그 포트로 보내는 곳이 있으면 걸립니다.
+    `8080` 이면 Jenkins 설정에 걸리므로 Jenkins 가 잠깐 꺼져 있어도 잡힙니다.
+    (b) 지금 그 포트를 연 프로그램(`ss -Hltn` 은 LISTEN 중인 TCP 포트를 숫자로 보여 줌)이 떠 있는 backend 컨테이너가
+    아니면 걸립니다. backend 인지는 compose 라벨(`com.docker.compose.project=beez`, `service=backend`)로 찾습니다.
+    Nginx 에 없고 지금 꺼져 있는 프로그램의 포트는 잡지 못합니다.
   - `port 다름`: Nginx 의 `upstream beez_backend` 가 다른 포트로 보냅니다. backend 는 떠도 API 가 실패합니다.
-    같은 파일의 다른 upstream 은 보지 않습니다.
 
   배포(`deploy.sh`)는 컨테이너 안 healthcheck 만 보므로 포트가 어긋나도 성공으로 끝납니다. 값을 바꿨다면 이 점검을 꼭 돌립니다.
-- 2) 가 비교 전에 멈추면 다른 문구가 나옵니다. `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다.
+- 2) 는 `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해 실패는 모두 exit 1 입니다.
+  `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다.
+  `upstream beez_backend 없음` 은 그 설정 파일에 블록이 없는 것입니다(`SITE` 가 다른 사이트이거나 upstream 을 다른 파일로 옮김).
   `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것인데, `ENV_NAME` 이 틀려도 이렇게 나옵니다
   (그때는 바로 위에 `No such file` 이 같이 나옵니다).
+  `docker 조회 실패` 는 SSH 사용자에게 docker 권한이 없거나 데몬이 멈춘 것입니다.
 - 다른 환경(운영 등)은 위 네 변수를 바꿉니다. 운영 서버가 따로 있으면(S15P31A108-73) `HOST` 를 그 서버의 별칭으로 바꿉니다.
   `ENV_NAME`·`SITE` 만 바꾸면 여전히 dev 서버를 검사합니다. 그대로 복사하면 dev 를 검사하고 통과합니다.
 - **검사 기준은 `REF` 의 compose 파일입니다.** 머지 전 PR 이 추가한 변수는 dev 의 compose 에 없으므로, `REF=dev` 로
