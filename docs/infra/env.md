@@ -90,7 +90,8 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 `DB_USERNAME` 만 예외로 `${X}` 그대로 둡니다. 빠지면 DB 접속 오류에 user `"${DB_USERNAME}"` 이 찍혀 원인이 바로
 보입니다. `DB_PASSWORD` 는 `${X}` 로 두면 글자가 비밀번호로 전송돼 "비밀번호 틀림"처럼 보이므로 `${X:}` 입니다.
 이 규칙은 `ProdProfilePropertiesTest`(빠른 층 `./gradlew test`)가 검사합니다 — prod 파일에 기본값 없는 `${X}` 가
-생기거나 필수값에 기본값이 다시 들어가면 실패합니다.
+생기거나, `beez.cors`·`beez.ai`·`beez.invitation`·`beez.agent` 필수값에 기본값이 다시 들어가면 실패합니다.
+`DB_URL`·`DB_PASSWORD` 에 기본값을 넣는 것은 잡지 못하므로 리뷰에서 봅니다.
 
 ### ai (FastAPI)
 
