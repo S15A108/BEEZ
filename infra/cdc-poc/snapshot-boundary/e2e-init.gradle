@@ -1,0 +1,1 @@
+gradle.beforeProject { p -> p.plugins.withId('java') { p.sourceSets.test.java.srcDir(System.getenv('BOUNDARY_TEST_SOURCE')) } }
