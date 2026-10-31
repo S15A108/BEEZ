@@ -1,0 +1,106 @@
+# BEEZ 전체 스택 — 기본 파일 (S15P31A108-120).
+#
+# 서버와 로컬이 같이 쓰는 뼈대다. 서버는 호스트 Nginx 가 앞에 서므로 이 파일에는 nginx 가 없다.
+# 로컬 검증은 compose.local.yaml 을 겹쳐 nginx 를 더한다 (docs/infra/docker-images.md).
+#
+# 환경 중립 규칙: 서비스·볼륨 이름에 dev/prod 를 넣지 않는다. 환경 차이는 --env-file 로만 준다.
+# 필수 값은 ${VAR:?} 로 적어 빠지면 compose 가 바로 멈춘다 (빈 값으로 뜨는 사고 방지).
+# 비밀값을 이 파일에 쓰지 않는다.
+
+name: beez
+
+services:
+  postgres:
+    # backend/compose.yaml 과 같은 digest. 올릴 때 두 파일과 테스트의 DockerImageName 을 같이 바꾼다
+    image: pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    environment:
+      POSTGRES_DB: ${DB_NAME:-beez}
+      POSTGRES_USER: ${DB_USERNAME:?DB_USERNAME is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    environment:
+      # 지금은 backend 와 같은 키를 쓴다. 서버 배포 때 bootstrap 키와 backend 전용 bucket 키를 나눈다 (S15P31A108-211).
+      AWS_ACCESS_KEY_ID: ${DOCUMENT_S3_ACCESS_KEY:?DOCUMENT_S3_ACCESS_KEY is required}
+      AWS_SECRET_ACCESS_KEY: ${DOCUMENT_S3_SECRET_KEY:?DOCUMENT_S3_SECRET_KEY is required}
+      S3_BUCKET: ${DOCUMENT_S3_BUCKET:-beez-documents}
+    volumes:
+      - document-originals:/data
+    restart: unless-stopped
+    # 포트를 열지 않는다. backend 만 같은 네트워크에서 seaweedfs:8333 으로 닿는다.
+
+  ai:
+    image: ${AI_IMAGE:-beez-ai:local}
+    build: ../ai
+    environment:
+      GMS_KEY: ${GMS_KEY:-}
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
+    healthcheck:
+      # slim 이미지에는 curl 이 없어 파이썬 표준 라이브러리로 확인한다.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    # 포트를 열지 않는다. backend 가 ai:8000 으로 부른다.
+
+  backend:
+    image: ${BACKEND_IMAGE:-beez-backend:local}
+    build: ../backend
+    depends_on:
+      postgres:
+        condition: service_healthy   # Flyway 가 기동 중에 DB 에 붙으므로 DB 가 준비된 뒤에 띄운다
+      seaweedfs:
+        condition: service_started
+      ai:
+        condition: service_started   # 기동에는 ai 가 필요 없다. 순서만 맞춘다
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-beez}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DOCUMENT_S3_ENDPOINT: http://seaweedfs:8333
+      DOCUMENT_S3_BUCKET: ${DOCUMENT_S3_BUCKET:-beez-documents}
+      DOCUMENT_S3_ACCESS_KEY: ${DOCUMENT_S3_ACCESS_KEY}
+      DOCUMENT_S3_SECRET_KEY: ${DOCUMENT_S3_SECRET_KEY}
+      AI_BASE_URL: http://ai:8000
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN}
+      # 문서 색인 임베딩 프로필. AI 가 실제로 쓰는 값(gms-small-{dimension}-v1, GMS_EMBEDDING_MODEL)과 같아야 한다.
+      # 다르면 AI 가 422 embedding_profile_mismatch, 비우면 백엔드가 embedding_profile_not_configured 로 색인을 멈춘다.
+      # 차원은 백엔드(1024)·AI 기본값이 같으므로 여기서 바꾸지 않는다.
+      DOCUMENT_EMBEDDING_PROFILE: ${DOCUMENT_EMBEDDING_PROFILE:-gms-small-1024-v1}
+      DOCUMENT_EMBEDDING_MODEL: ${DOCUMENT_EMBEDDING_MODEL:-text-embedding-3-small}
+      # 공개 주소 셋. prod 프로필은 기본값이 없어 빠지면 기동이 실패한다
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+      INVITE_BASE_URL: ${PUBLIC_ORIGIN}
+      MCP_URL: ${PUBLIC_ORIGIN}/mcp
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+    ports:
+      # 127.0.0.1 에만 연다. 서버는 BACKEND_HOST_PORT=8081 이고 호스트 Nginx 가 그리로 프록시한다(S15P31A108-123).
+      # 서버에서 이 값이 빠지면 기본값 8080 이 Jenkins 와 겹쳐 기동이 실패한다 — 서버 env 파일에 반드시 둔다
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8080}:8080"
+    # Spring graceful shutdown(application.yml server.shutdown)은 진행 중 요청을 최대 30초 기다린다.
+    # docker stop 기본 대기는 10초라 그보다 길면 AI 호출 같은 긴 요청이 배포 중 잘리므로 맞춘다
+    stop_grace_period: 30s
+    healthcheck:
+      # temurin 이미지에는 curl 이 들어 있다. 상태 UP 이면 200, DB 가 끊기면 503
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  document-originals:

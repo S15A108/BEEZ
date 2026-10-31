@@ -1,0 +1,108 @@
+# Jenkins 설정 코드 (JCasC, S15P31A108-126).
+# 서버 위치: /etc/jenkins/casc/jenkins.yaml. Jenkins 가 켜질 때마다 이 파일대로 설정을 덮어쓴다.
+# 화면에서 바꾼 보안 설정은 재시작하면 이 파일 값으로 돌아간다 — 바꿀 때는 이 파일을 고친다.
+#
+# 비밀값은 여기에 쓰지 않는다. ${...} 는 서버의 /etc/jenkins/casc.env(root 전용)에서 systemd 가 넘겨준다.
+# 환경 중립: 서버 역할(dev/prod)을 적지 않는다. 주소는 jenkins.beez.ai.kr 하나뿐이다.
+
+jenkins:
+  systemMessage: "BEEZ Jenkins. 설정은 저장소 infra/jenkins/casc/jenkins.yaml 로 관리합니다."
+  # 배포 잡만 돌리므로 동시 실행은 2개면 충분하다
+  numExecutors: 2
+
+  # 로그인 계정: Jenkins 자체 사용자 DB. 가입 화면을 막는다. 관리자 + 배포 호출용 github-actions(S15P31A108-123, docs/infra/cd.md)
+  # casc.env 에 JENKINS_DEPLOY_PASSWORD 를 먼저 넣고 반영한다 — 없으면 github-actions 가 빈 비밀번호로 만들어진다
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+        - id: "github-actions"
+          password: "${JENKINS_DEPLOY_PASSWORD}"
+
+  # 권한 (matrix-auth). 적힌 것만 허용한다. 관리자는 전부, github-actions 는 전체 읽기 + beez-deploy 잡 실행(아래 jobs)만.
+  # 근거와 확인 결과는 docs/infra/cd.md "계정과 권한"
+  authorizationStrategy:
+    projectMatrix:
+      entries:
+        - user:
+            name: "${JENKINS_ADMIN_ID}"
+            permissions:
+              - "Overall/Administer"
+        - user:
+            name: "github-actions"
+            permissions:
+              - "Overall/Read"
+
+  # 외부 에이전트 접속 포트를 쓰지 않는다 (빌드는 이 서버의 내장 실행기만 쓴다)
+  slaveAgentPort: -1
+
+  # CSRF 방어(crumb)는 현재 Jenkins 코어에서 항상 켜져 있어 따로 적지 않는다.
+  # (예전 예제의 crumbIssuer.standard.excludeClientIPFromCrumb 는 지금 코어에 없는 항목이라 적으면 기동이 실패한다)
+
+unclassified:
+  # 알림·링크에 쓰이는 공개 주소. Nginx 뒤 HTTPS 주소를 적는다
+  location:
+    url: "https://jenkins.beez.ai.kr/"
+
+# 배포 잡 (S15P31A108-123). Jenkins 가 켜질 때마다 이 정의로 다시 만든다(화면에서 고친 잡 설정은 되돌아간다).
+#   파이프라인을 저장소가 아니라 여기에 고정한다. 배포할 커밋을 꺼내기 전에 SHA 형식과 "dev 본줄기(PR 머지 커밋)인지"를
+#   먼저 검사하고, 통과한 커밋의 deploy.sh 만 실행한다. 근거·절차는 docs/infra/cd.md "Jenkins 배포 잡 beez-deploy"
+#   주의: 이 파일은 JCasC 가 ${...} 를 치환하므로 파이프라인 안에서는 $VAR 형태만 쓴다
+jobs:
+  - script: |
+      pipelineJob('beez-deploy') {
+        description('커밋 SHA 하나의 이미지 셋(backend·ai·frontend-dist)을 배포한다. GitHub Actions(cd.yml)가 부른다. 런북: docs/infra/cd.md')
+        parameters {
+          stringParam('GIT_SHA', '', '배포할 커밋 SHA 40자. dev 에 있는 커밋이어야 하고, 그 커밋의 이미지가 GHCR 에 있어야 한다')
+          choiceParam('DEPLOY_ENV', ['dev'], '환경. 서버의 /opt/beez/.env.<환경> 을 쓴다')
+          choiceParam('TARGET', ['local'], '배포할 서버. local = 이 서버')
+        }
+        logRotator { numToKeep(50) }
+        properties {
+          disableConcurrentBuilds()
+          // github-actions 는 이 잡만 보고 실행할 수 있다 (전체 권한은 위 authorizationStrategy)
+          authorizationMatrix {
+            inheritanceStrategy { inheriting() }
+            entries {
+              user {
+                name('github-actions')
+                permissions(['Job/Read', 'Job/Build'])
+              }
+            }
+          }
+        }
+        definition {
+          cps {
+            sandbox(true)
+            script('''
+      node {
+        // 검사(받기 포함)와 배포 전체에 상한을 둔다. 받기가 멈춰도 잡이 끝나야 뒤 배포가 줄을 서서 기다리지 않는다
+        timeout(time: 15, unit: 'MINUTES') {
+          stage('Verify') {
+              // 타깃: 지금은 이 서버(local)만. 다른 서버(ssh)는 운영 환경을 정할 때(S15P31A108-73) 추가한다
+              if (params.TARGET != 'local') {
+                  error('아직 지원하지 않는 타깃: ' + params.TARGET)
+              }
+              // git 에 넘기기 전에 형식부터 본다. 브랜치 이름·짧은 SHA·옵션처럼 생긴 값을 막는다
+              sh 'printf %s "$GIT_SHA" | grep -Eqx "[0-9a-f]{40}" || { echo "GIT_SHA 는 40자 소문자 16진수여야 한다: $GIT_SHA" >&2; exit 1; }'
+              // dev 만, 태그 없이 받는다. 작업 폴더에 예전 객체가 남아 있어도 아래 검사는 지금 받은 dev 를 기준으로 한다
+              sh 'test -d .git || git init -q'
+              sh 'git fetch -q --no-tags --force https://github.com/S15A108/BEEZ.git +refs/heads/dev:refs/remotes/origin/dev'
+              // dev 본줄기(첫 번째 부모를 따라간 이력 = PR 머지 커밋)만 배포한다. 리뷰는 PR 의 최종 결과만 보므로,
+              // 머지된 PR 의 중간 커밋·다른 브랜치·이력에서 빠진 커밋은 여기서 멈춘다(리베이스 병합은 저장소 설정에서 끔)
+              sh 'git rev-list --first-parent refs/remotes/origin/dev | grep -qx "$GIT_SHA" || { echo "dev 본줄기(PR 머지 커밋)가 아니라 배포하지 않는다: $GIT_SHA" >&2; exit 1; }'
+              sh 'git checkout -q --force --detach "$GIT_SHA" && git clean -qfdx'
+              currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + params.GIT_SHA.substring(0, 7) + ' ' + params.DEPLOY_ENV
+          }
+          stage('Deploy') {
+              // 검사를 통과한 그 커밋의 배포 스크립트를 부른다. 작은따옴표: 값을 셸 환경변수로 넘긴다(명령으로 해석되지 않게)
+              sh 'bash infra/deploy/deploy.sh "$GIT_SHA" "$DEPLOY_ENV"'
+          }
+        }
+      }
+      ''')
+          }
+        }
+      }

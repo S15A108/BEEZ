@@ -44,7 +44,9 @@ class DocumentApiIntegrationTest {
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(DockerImageName.parse(
             "pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d").asCompatibleSubstituteFor("postgres"));
     static final JsonMapper JSON = JsonMapper.builder().build();
-    @Container static final SeaweedTestContainer seaweed = new SeaweedTestContainer();
+    // Shared across the test JVM and returned once the bucket is ready. The bucket is shared, so object counts
+    // are compared against this test's own starting count only.
+    static final SeaweedTestContainer seaweed = SeaweedTestContainer.shared();
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
         registry.add("beez.document.object-storage.endpoint", seaweed::endpoint);
     }
@@ -62,9 +64,6 @@ class DocumentApiIntegrationTest {
     final byte[] content = "\uFEFF# 요구사항\r\nREQ-01: 로그인한 멤버만 조회한다.\r\n".getBytes(StandardCharsets.UTF_8);
 
     @BeforeEach void setUp() throws Exception {
-        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(30)).ignoreExceptions().untilAsserted(() ->
-                assertThat(storageClient.headBucket(software.amazon.awssdk.services.s3.model.HeadBucketRequest.builder()
-                        .bucket(SeaweedTestContainer.BUCKET).build())).isNotNull());
         jdbc.update("UPDATE document_processing SET status='FAILED',source_status='FAILED',index_status='FAILED',error_code='test_reset',lease_token=null,lease_until=null WHERE status IN ('PENDING','RUNNING')");
         base = "http://localhost:" + env.getProperty("local.server.port");
         http = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
@@ -175,7 +174,7 @@ class DocumentApiIntegrationTest {
         assertThat(send("GET", path + "/diff?from_version=1&to_version=1", null, false).body()).contains("\"diff\":\"\"");
     }
 
-    @Test void rejectsHeaderSpoofingMissingOriginNonLeaderAndRemovedMember() throws Exception {
+    @Test void rejectsHeaderSpoofingMissingOriginAndRemovedMemberButAllowsMemberUpload() throws Exception {
         var document = uploaded(); String path = "/api/projects/" + project + "/documents/" + document.get("id").asText();
         var anonymous = HttpClient.newHttpClient();
         var spoofed = anonymous.send(HttpRequest.newBuilder(URI.create(base + path + "?version_no=1")).header("X-Beez-Account-Id", Long.toString(leader)).GET().build(), HttpResponse.BodyHandlers.ofString());
@@ -183,7 +182,7 @@ class DocumentApiIntegrationTest {
         assertThat(send("PATCH", path, "{\"domain\":\"other\"}", false).statusCode()).isEqualTo(403);
         login(member);
         assertThat(send("GET", path + "?version_no=1", null, false).statusCode()).isEqualTo(200);
-        assertThat(upload(UUID.randomUUID().toString(), content, "PLAN").statusCode()).isEqualTo(403);
+        assertThat(upload(UUID.randomUUID().toString(), content, "PLAN").statusCode()).isEqualTo(201);
         jdbc.update("UPDATE project_member SET active=false WHERE project_id=? AND account_id=?", project, member);
         assertThat(send("GET", path + "?version_no=1", null, false).statusCode()).isEqualTo(404);
         login(leader);

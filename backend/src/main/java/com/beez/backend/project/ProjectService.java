@@ -1,6 +1,7 @@
 package com.beez.backend.project;
 
 import com.beez.backend.account.Account;
+import com.beez.backend.agenttoken.AgentTokenRepository;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.access.ProjectActor;
@@ -34,14 +35,16 @@ public class ProjectService {
     private final ProjectAccessChecker access;
     private final ProjectRepository projects;
     private final ProjectMemberRepository members;
+    private final AgentTokenRepository tokens;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
 
     public ProjectService(ProjectAccessChecker access, ProjectRepository projects, ProjectMemberRepository members,
-                          ApplicationEventPublisher events, JdbcClient jdbc) {
+                          AgentTokenRepository tokens, ApplicationEventPublisher events, JdbcClient jdbc) {
         this.access = access;
         this.projects = projects;
         this.members = members;
+        this.tokens = tokens;
         this.events = events;
         this.jdbc = jdbc;
     }
@@ -105,6 +108,8 @@ public class ProjectService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "변경할 필드가 하나 이상 필요합니다");
         }
         Project project = lockActive(projectId);
+        // 잠금을 기다리는 동안 팀장 위임(MEM-A08)이 커밋됐으면 이전 팀장의 수정은 403
+        access.requireLeaderAfterLock(actor);
         if (req.name() != null) {
             project.rename(requireName(req.name()));
         }
@@ -122,21 +127,24 @@ public class ProjectService {
      */
     @Transactional
     public void delete(CallerContext caller, long projectId, DeleteProjectRequest req) {
-        access.requireHumanLeader(caller, projectId);
+        ProjectActor actor = access.requireHumanLeader(caller, projectId);
         Project project = lockActive(projectId);
+        // 잠금을 기다리는 동안 팀장 위임(MEM-A08)이 커밋됐으면 이전 팀장의 삭제는 403 — 삭제는 되돌릴 수 없다
+        access.requireLeaderAfterLock(actor);
         // 저장된 이름은 앞뒤 공백을 뺀 값이라 확인 입력도 같은 규칙으로 비교한다
         if (!project.getName().equals(req.confirmName().strip())) {
             throw new ApiException(HttpStatus.CONFLICT, "confirmation_mismatch", "프로젝트 이름이 일치하지 않습니다");
         }
         Instant now = Instant.now();
         project.archive(now);
-        projects.revokeAllTokens(projectId, now);
+        tokens.revokeAllInProject(projectId, now);
     }
 
     /**
      * 행을 잠그고 읽은 뒤 삭제 여부를 다시 본다. 권한 검사와 잠금 사이에 다른 요청이 삭제를 끝냈을 수 있다.
+     * 팀원 관리(ProjectMemberService)도 같은 행을 이걸로 잠가, 수정·삭제와 팀원 변경이 한 줄로 선다.
      */
-    private Project lockActive(long projectId) {
+    Project lockActive(long projectId) {
         Project project = projects.findForUpdate(projectId)
                 .orElseThrow(() -> AccessErrors.notFound("project_missing project=" + projectId));
         if (project.getArchivedAt() != null) {

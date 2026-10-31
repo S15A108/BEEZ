@@ -185,7 +185,7 @@ sudo usermod -aG docker ubuntu
 ```
 
 docker 그룹은 사실상 root 권한입니다(`docker run -v /:/host`로 호스트
-전체에 접근 가능). 그룹에는 ubuntu와, -122에서 추가할 jenkins만 둡니다.
+전체에 접근 가능). 그룹에는 ubuntu와 jenkins(S15P31A108-126에서 추가)만 둡니다.
 팀원 계정이나 다른 서비스 계정은 넣지 않습니다.
 
 확인(새로 접속해서):
@@ -211,10 +211,10 @@ sudo install -d -o ubuntu -g ubuntu -m 750 /opt/beez
 
 | 경로 | 용도 | 권한 |
 |---|---|---|
-| `/var/www/beez` | 프론트 정적 파일(`dist`) | `755 ubuntu:ubuntu` — Nginx(`www-data`)가 읽음 |
+| `/var/www/beez` | 프론트 정적 파일(`dist`) | `2775 ubuntu:beez-deploy` — Nginx(`www-data`)가 읽고 jenkins가 씀 (처음 만들 때는 `755 ubuntu:ubuntu`, [Jenkins 런북](jenkins.md) 5단계에서 변경) |
 | `/var/www/beez/releases/<sha>/` | 배포 회차별 빌드 결과 | 상동 |
 | `/var/www/beez/current` | 서빙 중인 릴리스를 가리키는 심링크 | 첫 배포 때 생성 |
-| `/opt/beez` | backend·ai compose 파일, `.env` | `750 ubuntu:ubuntu` — 그 외 사용자 접근 불가 |
+| `/opt/beez` | 서버 env 파일(`.env.<환경>`, 비밀값) | `2750 ubuntu:beez-deploy` — jenkins는 읽기만, 그 외 접근 불가 (처음 만들 때는 `750 ubuntu:ubuntu`, [CD 런북](cd.md) "서버 준비"에서 변경) |
 
 - 배포는 `releases/<sha>`에 새 폴더를 만든 뒤 `current` 심링크를 바꾸는
   방식입니다. 파일을 덮어쓰는 도중의 화면이 노출되지 않고, 롤백은 심링크를
@@ -222,7 +222,9 @@ sudo install -d -o ubuntu -g ubuntu -m 750 /opt/beez
 - `current`는 가리킬 릴리스가 생기는 첫 배포 때 만듭니다. 미리 만들면 깨진
   링크가 됩니다.
 - `install -d`는 디렉토리 생성·소유자·권한 지정을 한 번에 합니다.
-- jenkins 계정의 쓰기 권한은 Jenkins 설치 때(S15P31A108-122) 추가합니다.
+- jenkins 계정의 쓰기 권한은 S15P31A108-126에서 `beez-deploy` 그룹으로
+  열었습니다. 이후 `/var/www/beez`·`releases`는 `2775 ubuntu:beez-deploy`입니다
+  ([Jenkins 런북](jenkins.md) 5단계).
 
 확인:
 

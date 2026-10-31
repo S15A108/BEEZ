@@ -38,3 +38,5 @@ beez:
     internal-token: ${AI_INTERNAL_TOKEN}
   invitation:
     base-url: ${INVITE_BASE_URL}   # 프론트 오리진. 기본값(localhost)이 운영 초대 링크에 들어가지 않게 필수로 받는다
+  agent:
+    mcp-url: ${MCP_URL}            # 공개 /mcp 주소(Nginx 뒤). 같은 이유로 필수

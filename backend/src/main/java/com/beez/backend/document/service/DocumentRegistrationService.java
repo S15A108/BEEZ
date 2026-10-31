@@ -56,7 +56,7 @@ public final class DocumentRegistrationService {
     }
 
     long checkRegistration(Input input) {
-        long actor = access.requireCurrentLeader(input.projectId());
+        long actor = access.requireCurrentHumanMember(input.projectId());
         if (actor <= 0) throw new IllegalStateException("권한 검사 어댑터는 인증된 계정 ID를 반환해야 합니다.");
         if (documents.existsByProjectIdAndKind(input.projectId(), input.kind())) {
             throw new ApiException(HttpStatus.CONFLICT, "document_kind_exists", "이미 등록된 문서 종류입니다.");

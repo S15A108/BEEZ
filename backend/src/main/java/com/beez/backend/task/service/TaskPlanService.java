@@ -83,6 +83,11 @@ public class TaskPlanService {
         if (!exists) {
             throw AccessErrors.notFound("project_missing project=" + projectId);
         }
+        // 팀원 제외·나가기(MEM-A09·A10)도 이 행을 잠근다. 잠그기 전에 그쪽이 커밋됐으면 호출자는 이미 멤버가 아니다 —
+        // 그대로 만들면 나간 사람이 담당인 열린 작업이 남는다
+        if (!access.isActiveMember(actor.memberId(), projectId)) {
+            throw AccessErrors.notFound("member_left project=" + projectId + " member=" + actor.memberId());
+        }
         String key = nextTaskKey(projectId);
 
         // 2) 입력 검증 (DB 에 닿기 전에 400 으로 거른다)
@@ -260,6 +265,12 @@ public class TaskPlanService {
     private TaskPlanRevision saveRevision(Task task, int revisionNo, PlanCommand plan, ResolvedRefs resolved,
                                           CallerContext caller) {
         String inputHash = hasher.hash(plan, resolved.versionByItem(), resolved.relationByItem());
+        // 저장 당시 기준 설계. 호출자가 프로젝트 행을 잠근 상태라 발행과 겹치지 않는다
+        Long baseBaselineId = null;
+        Optional<Long> currentBaseline = designLookup.currentBaselineId(task.getProjectId());
+        if (currentBaseline.isPresent()) {
+            baseBaselineId = currentBaseline.get();
+        }
         TaskPlanRevision revision = TaskPlanRevision.builder()
                 .taskId(task.getId())
                 .revisionNo(revisionNo)
@@ -276,6 +287,7 @@ public class TaskPlanService {
                 .createdByAccountId(caller.accountId())
                 .createdByTokenId(caller.agentTokenId())
                 .contextPacketId(plan.contextPacketId())
+                .baseBaselineId(baseBaselineId)
                 .build();
         revision = revisions.save(revision);
 

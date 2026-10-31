@@ -1,0 +1,22 @@
+# Opt-in Connect worker only. The broker and its authenticated TLS listener are
+# provisioned separately. Never use the local CDC PoC broker in production.
+services:
+  cdc-connect:
+    profiles: [cdc]
+    image: ${CDC_CONNECT_IMAGE:?Set a reviewed Debezium Connect image pinned by digest}
+    entrypoint: ["/kafka/bin/connect-distributed.sh"]
+    command: ["/run/cdc-secrets/connect-worker.properties"]
+    init: true
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ${CDC_CONNECT_SECRETS_DIR:?Set the absolute path to the protected Connect configuration directory}
+        target: /run/cdc-secrets
+        read_only: true
+    networks: [cdc_private]
+    # Intentionally no published REST or Kafka ports.
+
+networks:
+  cdc_private:
+    external: true
+    name: ${CDC_PRIVATE_NETWORK:?Set the pre-provisioned restricted Docker network}

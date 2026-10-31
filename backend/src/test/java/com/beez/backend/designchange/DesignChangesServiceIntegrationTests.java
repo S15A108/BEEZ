@@ -303,6 +303,34 @@ class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
                 .doesNotContain(String.valueOf(completed));
     }
 
+    @Test
+    void sameItemChangedTwice_bothPublishesAffectTheTaskThatReadsTheOldestVersion() throws Exception {
+        long reads = createTask("API-01 v1 읽음", "API-01", member);
+        Long api02v1 = api.currentVersionId("API-02");
+        publish(2, Map.of("API-01", newVersion("API-01", 2), "API-02", api02v1));
+        publish(3, Map.of("API-01", newVersion("API-01", 3), "API-02", api02v1));
+
+        // 작업 지정: v1 을 읽는 계획에는 v1→v2, v2→v3 둘 다 영향
+        DesignChangesResponse scoped = call(asMember, 1, String.valueOf(reads), null, null);
+        assertThat(scoped.items()).extracting(c -> c.baseline().versionNo()).containsExactly(3, 2);
+        // 목록의 영향 작업 칸에도 둘 다 들어간다
+        DesignChangesResponse all = call(asMember, 1, null, null, null);
+        assertThat(all.items()).allMatch(c -> c.affectedTaskIds().contains(String.valueOf(reads)));
+    }
+
+    @Test
+    void completedTask_withTaskId_stillListsItsChanges_butNotInAffectedIds() throws Exception {
+        long completed = createTask("완료된 작업", "API-01", member);
+        long startedValidation = insertValidation(completed, "PASS", null);
+        api.jdbc.sql("update task set status = 'COMPLETED', started_validation_id = :v, completed_at = now() where id = :t")
+                .param("v", startedValidation).param("t", completed).update();
+        publish(2, Map.of("API-01", newVersion("API-01", 2), "API-02", api.currentVersionId("API-02")));
+
+        DesignChangesResponse scoped = call(asMember, 1, String.valueOf(completed), null, null);
+        assertThat(scoped.items()).hasSize(1);
+        assertThat(scoped.items().get(0).affectedTaskIds()).doesNotContain(String.valueOf(completed));
+    }
+
     private long createTaskWithRefs(String title, String refsJson, Long account) throws Exception {
         HttpResponse<String> created = api.post("/api/projects/" + projectId + "/tasks", api.planJson(title, refsJson, "[]"), account);
         assertThat(created.statusCode()).isEqualTo(201);
@@ -361,6 +389,22 @@ class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
         // 다음 호출(since=5)에서 v6 가 나온다
         DesignChangesResponse next = call(asMember, 5, null, null, null);
         assertThat(next.items()).extracting(c -> c.baseline().versionNo()).containsExactly(6);
+    }
+
+    @Test
+    void sinceZeroCursor_continuesWholeRange_notFirstConnectRule() {
+        // report_task_state 는 발행 전에 세운 계획이면 since=0 으로 cursor 를 만든다. 이어 볼 때 "처음 연결(최근 1건)"을 적용하면 안 된다
+        Long api02v1 = api.currentVersionId("API-02");
+        for (int v = 2; v <= 5; v++) {
+            publish(v, Map.of("API-01", newVersion("API-01", v), "API-02", api02v1));
+        }
+        // 첫 페이지가 v5·v4 였던 since=0 조회의 cursor (ChangesCursor 형식: 버전|ceiling|마지막 번호|since|작업)
+        String cursor = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("v1|5|4|0|".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        DesignChangesResponse second = call(asMember, 0, null, cursor, 2);
+        assertThat(second.items()).extracting(c -> c.baseline().versionNo()).containsExactly(3, 2);
+        assertThat(second.hasMore()).isFalse();
     }
 
     @Test
