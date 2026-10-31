@@ -71,11 +71,12 @@ public final class ImpactRequestAssembler {
             Map<String, Object> relation = new LinkedHashMap<>();
             relation.put("from_design_item_id", id(dependency.fromItemId()));
             relation.put("to_design_item_id", id(dependency.toItemId()));
-            relation.put("origin", "EXPLICIT");
-            relation.put("from_version_id", id(dependency.fromVersionId()));
-            relation.put("to_version_id", id(dependency.toVersionId()));
-            relation.put("confirmation_event_id", id(dependency.eventId()));
-            relation.put("reason", dependency.reason());
+            relation.put("relation", dependency.relation());
+            relation.put("origin", dependency.origin());
+            relation.put("status", "CONFIRMED");
+            if (dependency.reason() != null) relation.put("reason", dependency.reason());
+            if (dependency.confirmedBy() != null) relation.put("confirmed_by", dependency.confirmedBy());
+            if (dependency.confirmedAt() != null) relation.put("confirmed_at", dependency.confirmedAt().toString());
             explicit.add(relation);
         }
         body.put("explicit_dependencies", explicit);

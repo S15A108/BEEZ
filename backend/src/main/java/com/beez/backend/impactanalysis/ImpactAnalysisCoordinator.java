@@ -13,13 +13,19 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Internal, synchronous AI-A03 handoff. No public endpoint, durable result store, or approval is
- * implemented here. The rule paths are retained on AI failure; they never change task state.
+ * implemented here. Rule candidates are not connected; this never changes task state.
  */
 @Service
 public class ImpactAnalysisCoordinator {
     public enum Status { ANALYZED, INSUFFICIENT_EVIDENCE, AI_FAILED, STALE }
     public enum UsageStatus { REPORTED, UNKNOWN, NOT_STARTED }
 
+    /**
+     * aiEnvelope is retained for diagnostics and may report SUFFICIENT only within the supplied
+     * AI input. It is not the final evaluation status and an empty list is not zero impact.
+     * #197 must use the top-level status and atomically recheck freshness when persisting;
+     * that storage transaction and the shared rule candidate service are not connected here.
+     */
     public record Outcome(ImpactContextQuery.Snapshot input, Status status, Map<String, Object> aiEnvelope,
                           List<?> usage, UsageStatus usageStatus, String errorCode) {
         public Outcome {
@@ -68,7 +74,12 @@ public class ImpactAnalysisCoordinator {
                 errorCode = "invalid_output";
                 envelope = null;
             } else {
-                status = "SUFFICIENT".equals(evidence) ? Status.ANALYZED : Status.INSUFFICIENT_EVIDENCE;
+                // AI-only output can remain available for review, but cannot imply that
+                // the separately owned rule candidate phase completed.
+                status = Status.INSUFFICIENT_EVIDENCE;
+                if (snapshot.ruleCandidateStatus() == ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED) {
+                    errorCode = "rule_candidates_not_connected";
+                }
             }
         } catch (RestClientResponseException ex) {
             Map<String, Object> error = parseError(ex);

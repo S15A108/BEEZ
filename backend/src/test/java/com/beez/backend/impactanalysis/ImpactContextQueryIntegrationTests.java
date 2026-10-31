@@ -5,21 +5,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.ontology.DesignDependencyService;
+import com.beez.backend.relation.dto.RelationAction;
+import com.beez.backend.relation.dto.RelationChangeRequest;
+import com.beez.backend.relation.dto.RelationCommand;
+import com.beez.backend.relation.service.RelationStorageService;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
-/** Requires the real PostgreSQL integration profile; proposal setup uses SQL until #195 exists. */
-@TestPropertySource(properties = "spring.flyway.locations=classpath:db/migration,classpath:db/ontology-draft")
+/** Uses PostgreSQL and the real #167 relation service; proposal fixtures remain provisional. */
 class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
     @Autowired DataSource dataSource;
     @Autowired ImpactContextQuery query;
-    @Autowired DesignDependencyService dependencies;
+    @Autowired RelationStorageService dependencies;
+    @Autowired PlatformTransactionManager transactions;
     private TaskApiSupport api;
     private long projectId;
     private long leader;
@@ -65,21 +69,23 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
         long directTask = taskReferencing("API-01", "직접 참조");
         long indirectTask = taskReferencing("API-02", "간접 참조");
         long proposal = proposal("API-01");
-        long event = dependencies.confirm(CallerContext.human(leader), projectId, baseline,
-                api.designItemId("API-02"), api.designItemId("API-01"), "API-02 depends on API-01");
+        new TransactionTemplate(transactions).execute(tx -> dependencies.apply(CallerContext.human(leader), projectId,
+                new RelationChangeRequest(baseline, null, java.util.List.of(), null,
+                        java.util.List.of(new RelationCommand(RelationAction.CONFIRM,
+                                api.designItemId("API-02"), api.designItemId("API-01"), "API-02 depends on API-01")))));
 
         var snapshot = query.load(CallerContext.human(member), projectId, proposal);
 
         assertThat(snapshot.proposal().reason()).isEqualTo("field rename");
         assertThat(snapshot.changes()).hasSize(1);
         assertThat(snapshot.approvedItems()).hasSize(2);
-        assertThat(snapshot.candidates().paths()).hasSize(2);
-        assertThat(snapshot.candidates().paths()).anyMatch(path ->
-                path.taskId() == directTask && path.kind() == ImpactCandidateFinder.Kind.DIRECT_REFERENCE);
-        assertThat(snapshot.candidates().paths()).anyMatch(path ->
-                path.taskId() == indirectTask && path.kind() == ImpactCandidateFinder.Kind.INDIRECT_DEPENDENCY
-                        && path.confirmationEventId() == event);
-        assertThat(snapshot.candidates().indirectCoverage()).isEqualTo(ImpactCandidateFinder.Coverage.UNKNOWN);
+        assertThat(snapshot.taskReferences()).anyMatch(ref -> ref.taskId() == directTask);
+        assertThat(snapshot.taskReferences()).anyMatch(ref -> ref.taskId() == indirectTask);
+        assertThat(snapshot.dependencies()).hasSize(1);
+        assertThat(snapshot.dependencies().getFirst().fromItemId()).isEqualTo(api.designItemId("API-02"));
+        assertThat(snapshot.dependencies().getFirst().toItemId()).isEqualTo(api.designItemId("API-01"));
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.relationSetRevision()).isEqualTo(1);
         assertThat(snapshot.taskReferences()).allMatch(ref -> ref.validationId() == null);
         query.requireUnchanged(CallerContext.human(member), snapshot);
     }
@@ -101,16 +107,60 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
     void neverUsesLegacyExplicitRowsAsConfirmedOrTreatsMissingPathsAsNoImpact() {
         taskReferencing("API-02", "미확인 관계만 있음");
         long proposal = proposal("API-01");
-        api.jdbc.sql("""
-                insert into design_item_dependency (project_id, from_item_id, to_item_id, origin)
-                values (:p, :f, :t, 'EXPLICIT')
-                """).param("p", projectId).param("f", api.designItemId("API-02"))
-                .param("t", api.designItemId("API-01")).update();
+        new TransactionTemplate(transactions).execute(tx -> dependencies.apply(CallerContext.human(member), projectId,
+                new RelationChangeRequest(baseline, null, java.util.List.of(), null,
+                        java.util.List.of(new RelationCommand(RelationAction.ADD_CANDIDATE,
+                                api.designItemId("API-02"), api.designItemId("API-01"), "candidate only")))));
 
         var snapshot = query.load(CallerContext.human(member), projectId, proposal);
 
-        assertThat(snapshot.candidates().paths()).isEmpty();
-        assertThat(snapshot.candidates().indirectCoverage()).isEqualTo(ImpactCandidateFinder.Coverage.UNKNOWN);
+        assertThat(snapshot.dependencies()).isEmpty();
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+    }
+
+    @Test
+    void relationRecheckIsNotReadAsConfirmedAndInvalidatesPreviousSnapshot() {
+        long proposal = proposal("API-01");
+        long changed = api.designItemId("API-01");
+        long dependent = api.designItemId("API-02");
+        new TransactionTemplate(transactions).execute(tx -> dependencies.apply(CallerContext.human(leader), projectId,
+                new RelationChangeRequest(baseline, null, java.util.List.of(), null,
+                        java.util.List.of(new RelationCommand(RelationAction.CONFIRM, dependent, changed, "confirmed")))));
+        var before = query.load(CallerContext.human(member), projectId, proposal);
+        assertThat(before.dependencies()).hasSize(1);
+        new TransactionTemplate(transactions).execute(tx -> dependencies.apply(CallerContext.human(leader), projectId,
+                new RelationChangeRequest(baseline, null, java.util.List.of(changed), "source changed", java.util.List.of())));
+        var after = query.load(CallerContext.human(member), projectId, proposal);
+        assertThat(after.dependencies()).isEmpty();
+        assertThat(after.relationSetRevision()).isGreaterThan(before.relationSetRevision());
+        assertThatThrownBy(() -> query.requireUnchanged(CallerContext.human(member), before))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode()).isEqualTo("analysis_input_changed");
+    }
+
+    @Test
+    void oppositeDirectionIsNotUsedAsAnIncomingDependency() {
+        long proposal = proposal("API-01");
+        new TransactionTemplate(transactions).execute(tx -> dependencies.apply(CallerContext.human(leader), projectId,
+                new RelationChangeRequest(baseline, null, java.util.List.of(), null,
+                        java.util.List.of(new RelationCommand(RelationAction.CONFIRM,
+                                api.designItemId("API-01"), api.designItemId("API-02"), "reverse direction")))));
+        var snapshot = query.load(CallerContext.human(member), projectId, proposal);
+        assertThat(snapshot.dependencies()).isEmpty();
+        assertThat(snapshot.relationSetRevision()).isEqualTo(1);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+    }
+
+    @Test
+    void withdrawnProposalCannotBeAnalyzed() {
+        long proposal = proposal("API-01");
+        api.jdbc.sql("""
+                update change_proposal set status='WITHDRAWN', withdrawn_by=:actor, withdrawn_at=now()
+                 where id=:id
+                """).param("actor", leader).param("id", proposal).update();
+        assertThatThrownBy(() -> query.load(CallerContext.human(member), projectId, proposal))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode()).isEqualTo("proposal_not_analyzable");
     }
 
     @Test
@@ -141,8 +191,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
 
         assertThat(snapshot.searchCoverage().status()).isEqualTo(ImpactKeywordSearch.Status.SEARCHED);
         assertThat(snapshot.taskReferences()).anyMatch(ref -> ref.taskId() == taskId && ref.designItemId() == null);
-        assertThat(snapshot.candidates().paths()).isEmpty();
-        assertThat(snapshot.candidates().indirectCoverage()).isEqualTo(ImpactCandidateFinder.Coverage.UNKNOWN);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
         var request = ImpactRequestAssembler.assemble(snapshot, "request");
         assertThat(((java.util.List<?>) request.get("open_tasks"))).hasSize(1);
         query.requireUnchanged(CallerContext.human(member), snapshot);
@@ -212,8 +261,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
                 && ref.designItemId() == api.designItemId("API-02"));
         assertThat(snapshot.searchCoverage().candidateTaskIds()).contains(taskId);
         // Keyword relevance to API-02 is a candidate, not a confirmed dependency to API-01.
-        assertThat(snapshot.candidates().paths()).isEmpty();
-        assertThat(snapshot.candidates().indirectCoverage()).isEqualTo(ImpactCandidateFinder.Coverage.UNKNOWN);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
     }
 
     @Test
@@ -236,7 +284,6 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
         assertThat(snapshot.approvedItems()).anyMatch(item -> item.itemId() == api.designItemId("API-02"));
         assertThat(snapshot.taskReferences()).anyMatch(ref -> ref.taskId() == taskId);
         assertThat(snapshot.searchCoverage().candidateTaskIds()).contains(taskId);
-        assertThat(snapshot.candidates().paths()).isEmpty();
     }
 
     @Test
@@ -269,7 +316,6 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
 
         assertThat(snapshot.searchCoverage().tasksTruncated()).isTrue();
         assertThat(snapshot.searchCoverage().candidateTaskIds()).hasSize(ImpactKeywordSearch.MAX_RESULTS);
-        assertThat(snapshot.candidates().paths()).isEmpty();
     }
 
     @Test

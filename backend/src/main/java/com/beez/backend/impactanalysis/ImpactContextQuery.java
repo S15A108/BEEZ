@@ -3,8 +3,7 @@ package com.beez.backend.impactanalysis;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
-import com.beez.backend.ontology.ConfirmedDependency;
-import com.beez.backend.ontology.DesignDependencyService;
+import com.beez.backend.impactanalysis.ImpactRelationReader.ConfirmedRelation;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -27,10 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class ImpactContextQuery {
     private final JdbcClient jdbc;
     private final ProjectAccessChecker access;
-    private final DesignDependencyService dependencies;
+    private final ImpactRelationReader dependencies;
 
     public ImpactContextQuery(JdbcClient jdbc, ProjectAccessChecker access,
-                              DesignDependencyService dependencies) {
+                              ImpactRelationReader dependencies) {
         this.jdbc = jdbc;
         this.access = access;
         this.dependencies = dependencies;
@@ -52,9 +51,12 @@ public class ImpactContextQuery {
                                 boolean noContractChange, Long contextPacketId, long createdBy, Long agentTokenId, Instant createdAt,
                                 Long designItemId, Long designItemVersionId, String relation, String proposedContent,
                                 Long validationId, String validationStatus) {}
+    public enum RuleCandidateStatus { NOT_CONNECTED }
+
     public record Snapshot(Proposal proposal, List<Change> changes, List<ApprovedItem> approvedItems,
-                           List<ConfirmedDependency> dependencies, List<TaskReference> taskReferences,
-                           ImpactCandidateFinder.Result candidates, ImpactKeywordSearch.Coverage searchCoverage) {
+                           List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
+                           RuleCandidateStatus ruleCandidateStatus, ImpactKeywordSearch.Coverage searchCoverage,
+                           long relationSetRevision) {
         public Snapshot {
             changes = List.copyOf(changes);
             approvedItems = List.copyOf(approvedItems);
@@ -64,10 +66,16 @@ public class ImpactContextQuery {
 
         // Existing callers that do not perform keyword search must not imply complete coverage.
         public Snapshot(Proposal proposal, List<Change> changes, List<ApprovedItem> approvedItems,
-                        List<ConfirmedDependency> dependencies, List<TaskReference> taskReferences,
-                        ImpactCandidateFinder.Result candidates) {
-            this(proposal, changes, approvedItems, dependencies, taskReferences, candidates,
-                    new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false));
+                        List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
+                        RuleCandidateStatus ruleCandidateStatus) {
+            this(proposal, changes, approvedItems, dependencies, taskReferences, ruleCandidateStatus,
+                    new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false), 0);
+        }
+
+        public Snapshot(Proposal proposal, List<Change> changes, List<ApprovedItem> approvedItems,
+                        List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
+                        RuleCandidateStatus ruleCandidateStatus, ImpactKeywordSearch.Coverage searchCoverage) {
+            this(proposal, changes, approvedItems, dependencies, taskReferences, ruleCandidateStatus, searchCoverage, 0);
         }
     }
 
@@ -92,7 +100,7 @@ public class ImpactContextQuery {
                             rs.getInt("lock_version"), rs.getString("status"), rs.getString("reason"),
                             rs.getTimestamp("updated_at").toInstant());
                 }).optional().orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "변경 제안을 찾을 수 없습니다"));
-        if ("PUBLISHED".equals(proposal.status()) || "REJECTED".equals(proposal.status())) {
+        if (!Set.of("PROPOSED", "IN_REVIEW").contains(proposal.status())) {
             throw new ApiException(HttpStatus.CONFLICT, "proposal_not_analyzable", "검토 중인 변경 제안이 아닙니다");
         }
 
@@ -122,16 +130,16 @@ public class ImpactContextQuery {
             throw new ApiException(HttpStatus.CONFLICT, "analysis_input_missing", "분석할 변경 항목이 없습니다");
         }
 
-        List<ConfirmedDependency> confirmed = dependencies.listConfirmed(caller, projectId, proposal.baselineId());
-        // Compute only one edge from a changed item, regardless of event ordering.
         Set<Long> changedIds = new LinkedHashSet<>();
         changes.stream().map(Change::itemId).filter(id -> id != null).forEach(changedIds::add);
+        var relationSnapshot = dependencies.load(caller, projectId, proposal.baselineId(), changedIds);
+        List<ConfirmedRelation> confirmed = relationSnapshot.relations();
         Set<Long> relatedItemIds = new LinkedHashSet<>();
         relatedItemIds.addAll(changedIds);
-        List<ConfirmedDependency> relevantDependencies = confirmed.stream()
+        List<ConfirmedRelation> relevantDependencies = confirmed.stream()
                 .filter(d -> changedIds.contains(d.toItemId())).toList();
         relevantDependencies.stream()
-                .map(ConfirmedDependency::fromItemId).forEach(relatedItemIds::add);
+                .map(ConfirmedRelation::fromItemId).forEach(relatedItemIds::add);
 
         // Known graph relations are authoritative candidates. Keyword matches are separate,
         // bounded search inputs to the AI and must never create or confirm graph edges.
@@ -197,15 +205,10 @@ public class ImpactContextQuery {
                         nullableLong(rs, "design_item_version_id"), rs.getString("relation"), rs.getString("ref_proposed_content"),
                         nullableLong(rs, "validation_id"), rs.getString("validation_status"))).list();
 
-        var ruleChanges = changes.stream().map(c -> new ImpactCandidateFinder.Change(c.id(), c.itemId(),
-                c.beforeVersionId(), c.operation())).toList();
-        var ruleDependencies = relevantDependencies.stream().map(d -> new ImpactCandidateFinder.Dependency(d.fromItemId(),
-                d.fromVersionId(), d.toItemId(), d.toVersionId(), d.eventId())).toList();
-        var ruleReferences = taskReferences.stream().filter(r -> r.designItemId() != null && r.designItemVersionId() != null)
-                .map(r -> new ImpactCandidateFinder.PlanReference(r.taskId(),
-                r.assigneeMemberId(), r.planRevisionId(), r.designItemId(), r.designItemVersionId(), r.relation())).toList();
+        // Rule candidate calculation belongs to the shared BE integration. Do not treat
+        // its absence as an empty, completed evaluation or create duplicate rule results.
         return new Snapshot(proposal, changes, approved, relevantDependencies, taskReferences,
-                ImpactCandidateFinder.find(ruleChanges, ruleDependencies, ruleReferences), searchCoverage);
+                RuleCandidateStatus.NOT_CONNECTED, searchCoverage, relationSnapshot.relationSetRevision());
     }
 
     /**
