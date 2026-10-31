@@ -63,7 +63,7 @@ public class ValidationWorker {
                  UUID lease, long baselineId, long revisionId, CallerContext caller) {
         ValidationOutcomeWriter.Execution execution(Map<Long, Long> related, String provider) {
             return new ValidationOutcomeWriter.Execution(projectId, taskId, validationId, runId, attempt,
-                    lease, baselineId, revisionId, related, provider);
+                    lease, baselineId, revisionId, related, provider, caller);
         }
     }
 

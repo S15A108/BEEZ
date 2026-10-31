@@ -1,5 +1,7 @@
 package com.beez.backend.validation.service;
 
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -20,15 +22,18 @@ public class ValidationOutcomeWriter {
     private final JdbcClient jdbc;
     private final ObjectMapper json;
     private final ValidationRuleChecker rules;
+    private static final int MAX_RELATED_TASKS = 20;
     private final ValidationInputAssembler assembler;
+    private final RelatedTaskCandidateFinder relatedTasks;
     public ValidationOutcomeWriter(JdbcClient jdbc, ObjectMapper json, ValidationRuleChecker rules,
-                                   ValidationInputAssembler assembler) {
+                                   ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks) {
         this.jdbc = jdbc; this.json = json; this.rules = rules; this.assembler = assembler;
+        this.relatedTasks = relatedTasks;
     }
 
     public record Execution(long projectId, long taskId, long validationId, long runId, int attempt,
                             UUID leaseToken, long baselineId, long planRevisionId,
-                            Map<Long, Long> relatedPlanRevisions, String provider) {
+                            Map<Long, Long> relatedPlanRevisions, String provider, CallerContext caller) {
         public Execution { relatedPlanRevisions = Map.copyOf(relatedPlanRevisions); }
     }
 
@@ -53,7 +58,7 @@ public class ValidationOutcomeWriter {
         } catch (IllegalArgumentException invalid) {
             return failLocked(execution, "invalid_ai_output", false, List.of(), "RETRY", null);
         }
-        boolean fresh = fresh(execution, request);
+        boolean fresh = fresh(execution, request, searchComplete);
         if (!owned(execution)) return discardIfObsolete(execution);
         if (!fresh) return stale(execution);
         var inputPlan = map(map(request.get("plan_revision")).get("plan"));
@@ -201,7 +206,7 @@ public class ValidationOutcomeWriter {
         return Applied.DISCARDED;
     }
 
-    private boolean fresh(Execution e, Map<String, Object> request) {
+    private boolean fresh(Execution e, Map<String, Object> request, boolean initialSearchComplete) {
         Long count = jdbc.sql("""
                 select count(*) from project p join task t on t.project_id=p.id join validation v on v.task_id=t.id
                  where p.id=:project and t.id=:task and v.id=:validation
@@ -224,7 +229,18 @@ public class ValidationOutcomeWriter {
             if (jdbc.sql("select count(*) from baseline_item where baseline_id=:baseline and design_item_id=:item and design_item_version_id=:version")
                     .param("baseline", e.baselineId()).param("item", id).param("version", version).query(Long.class).single() != 1) return false;
         }
-        return true;
+        // Re-run the same candidate search used for the AI input while holding the
+        // project lock. Checking only old candidates misses a newly related task.
+        List<Long> designIds = maps(request.get("approved_items")).stream()
+                .map(item -> longId(item.get("design_item_id"))).toList();
+        var current = relatedTasks.find(e.caller(), e.projectId(), e.taskId(), e.planRevisionId(),
+                designIds, MAX_RELATED_TASKS);
+        if (current.baselineId() != e.baselineId() || (current.truncated() && initialSearchComplete)) return false;
+        Map<Long, Long> currentPlans = new HashMap<>();
+        for (var candidate : current.candidates()) {
+            if (currentPlans.put(candidate.taskId(), candidate.planRevisionId()) != null) return false;
+        }
+        return currentPlans.equals(e.relatedPlanRevisions());
     }
 
     /** Lock the source versions until commit so the verified excerpts cannot change after recheck. */

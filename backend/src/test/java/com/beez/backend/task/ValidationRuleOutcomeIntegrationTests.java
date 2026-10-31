@@ -51,7 +51,7 @@ class ValidationRuleOutcomeIntegrationTests extends IntegrationTestSupport {
                 .param("id", validation).param("token", lease).update();
         long run = api.jdbc.sql("insert into validation_run(validation_id,attempt,lease_token,kind,status) values(:id,1,:token,'MODEL','RUNNING') returning id")
                 .param("id", validation).param("token", lease).query(Long.class).single();
-        return new ValidationOutcomeWriter.Execution(project, task, validation, run, 1, lease, baseline, revision, Map.of(), "gms");
+        return new ValidationOutcomeWriter.Execution(project, task, validation, run, 1, lease, baseline, revision, Map.of(), "gms", CallerContext.human(owner));
     }
 
     @Test

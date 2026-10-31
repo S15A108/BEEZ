@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.beez.backend.common.auth.CallerContext;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -13,7 +14,7 @@ import org.junit.jupiter.api.Test;
 
 class ValidationOutcomeWriterTest {
     private final ValidationOutcomeWriter.Execution execution = new ValidationOutcomeWriter.Execution(
-            1, 2, 3, 4, 1, UUID.randomUUID(), 5, 6, Map.of(8L, 9L), "gms");
+            1, 2, 3, 4, 1, UUID.randomUUID(), 5, 6, Map.of(8L, 9L), "gms", CallerContext.human(1L));
 
     private Map<String, Object> source(String documentId) {
         return Map.of("document_id", documentId, "document_version_id", "20", "version_no", 1, "location", "API");

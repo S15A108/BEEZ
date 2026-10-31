@@ -45,7 +45,9 @@ class ValidationInputAssemblerTest {
         assembler = new ValidationInputAssembler(tasks, search, related, jdbc, json, evidenceBuilder);
         when(evidenceBuilder.build(anyLong(), anyLong(), anyList()))
                 .thenReturn(new ValidationEvidenceBuilder.Result(List.of(), List.of()));
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(20)))
+        when(jdbc.sql(contains("select distinct bd.document_version_id")).param(anyString(), any()).param(anyString(), any())
+                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(Map.of("document_version_id", 22L)));
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(), false, false));
         when(related.find(eq(caller), eq(1L), eq(3L), eq(4L), anyList(), eq(20)))
                 .thenReturn(new RelatedTaskCandidateFinder.Result(2, 4, List.of(), false,
@@ -65,7 +67,7 @@ class ValidationInputAssemblerTest {
                 "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC"));
         when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
                 .param(anyString(), any()).query().listOfRows()).thenReturn(List.of());
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(20)))
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk), false, false));
         var out = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
         assertEquals("UNKNOWN", out.coverage());
@@ -81,7 +83,7 @@ class ValidationInputAssemblerTest {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         var chunk = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK", "id", "11",
                 "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC"));
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(20)))
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk), false, false));
         when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
                 .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(Map.of("design_item_id", 10L)));
@@ -99,11 +101,69 @@ class ValidationInputAssemblerTest {
         assertEquals("candidate-design-101", ((Map<?, ?>) ((List<?>) out.request().get("checks")).get(1)).get("key"));
     }
 
+    private Map<String, Object> designRow(long id) {
+        var row = new LinkedHashMap<String, Object>();
+        row.put("item_id", id); row.put("key", "API-" + id); row.put("kind", "API_CONTRACT");
+        row.put("version_id", id + 100); row.put("version_no", 1); row.put("status", "APPROVED");
+        row.put("schema_version", 1); row.put("content", "{\"description\":\"회원 조회\"}");
+        row.put("content_hash", "hash");
+        return row;
+    }
+
+    @Test void keywordDocumentFindsItsBaselineDesignWithoutPromotingItToEvidence() {
+        when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
+        var document = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", "7",
+                "source", Map.of("document_version_id", "22")), Set.of("KEYWORD"));
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(document), false, false));
+        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
+                .param(eq("ids"), eq(Set.of(22L))).query().listOfRows())
+                .thenReturn(List.of(Map.of("design_item_id", 10L)));
+        when(jdbc.sql(contains("select i.id as item_id")).param(anyString(), any()).param(anyString(), any())
+                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(designRow(10L)));
+        var out = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
+        assertEquals(1, ((List<?>) out.request().get("approved_items")).size());
+        assertEquals(List.of(), out.request().get("evidence"));
+        assertTrue(out.searchComplete());
+    }
+
+    @Test void oneHundredChunksCompleteButMoreThanOneHundredRemainIncomplete() {
+        when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
+        List<HybridDocumentCandidateSearch.Candidate> chunks = new ArrayList<>();
+        for (long id = 1; id <= 100; id++) {
+            chunks.add(new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK",
+                    "id", Long.toString(id), "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC")));
+        }
+        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
+                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(Map.of("design_item_id", 10L)));
+        when(jdbc.sql(contains("select i.id as item_id")).param(anyString(), any()).param(anyString(), any())
+                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(designRow(10)));
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", chunks, false, false));
+        var complete = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
+        assertTrue(complete.searchComplete());
+        assertEquals("UNKNOWN", complete.coverage());
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", chunks, false, true));
+        assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
+    }
+
+    @Test void foundDocumentWithoutBaselineDesignMappingCannotBeComplete() {
+        when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
+        var document = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", "7",
+                "source", Map.of("document_version_id", "22")), Set.of("KEYWORD"));
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(document), false, false));
+        when(jdbc.sql(contains("select distinct bd.document_version_id")).param(anyString(), any()).param(anyString(), any())
+                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of());
+        assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
+    }
+
     @Test void moreThanFiftySourceDesignsMarksSearchIncomplete() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         var chunk = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK", "id", "11",
                 "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC"));
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(20)))
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk), false, false));
         List<Map<String, Object>> mappings = new ArrayList<>();
         List<Map<String, Object>> designs = new ArrayList<>();
@@ -129,7 +189,7 @@ class ValidationInputAssemblerTest {
 
     @Test void searchTruncationIsNotReportedComplete() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(20)))
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(), true, false));
         assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
     }

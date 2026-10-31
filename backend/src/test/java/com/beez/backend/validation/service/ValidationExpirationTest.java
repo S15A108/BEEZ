@@ -30,7 +30,7 @@ class ValidationExpirationTest {
     private final JdbcClient.ResultQuerySpec jobResult = mock(JdbcClient.ResultQuerySpec.class);
     @SuppressWarnings("unchecked")
     private final JdbcClient.MappedQuerySpec<Long> insertedRun = mock(JdbcClient.MappedQuerySpec.class);
-    private final ValidationOutcomeWriter writer = new ValidationOutcomeWriter(jdbc, json, new ValidationRuleChecker(jdbc, json), null);
+    private final ValidationOutcomeWriter writer = new ValidationOutcomeWriter(jdbc, json, new ValidationRuleChecker(jdbc, json), null, null);
     private final UUID lease = UUID.randomUUID();
 
     private JdbcClient.StatementSpec statement() {

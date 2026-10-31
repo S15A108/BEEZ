@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -21,13 +23,17 @@ class ValidationOutcomeWriterFlowTest {
     private final JdbcClient jdbc = mock(JdbcClient.class);
     private final ValidationRuleChecker rules = mock(ValidationRuleChecker.class);
     private final ValidationInputAssembler assembler = mock(ValidationInputAssembler.class);
+    private final RelatedTaskCandidateFinder related = mock(RelatedTaskCandidateFinder.class);
     private final List<Write> writes = new ArrayList<>();
     private final ValidationOutcomeWriter.Execution execution = new ValidationOutcomeWriter.Execution(
-            1, 2, 3, 4, 1, UUID.randomUUID(), 5, 6, Map.of(), "gms");
-    private final ValidationOutcomeWriter writer = new ValidationOutcomeWriter(jdbc, JsonMapper.builder().build(), rules, assembler);
+            1, 2, 3, 4, 1, UUID.randomUUID(), 5, 6, Map.of(), "gms", CallerContext.human(1L));
+    private final ValidationOutcomeWriter writer = new ValidationOutcomeWriter(jdbc, JsonMapper.builder().build(), rules, assembler, related);
 
     @BeforeEach
     void setup() {
+        when(related.find(any(), eq(1L), eq(2L), eq(6L), anyList(), eq(20)))
+                .thenReturn(new RelatedTaskCandidateFinder.Result(5, 6, List.of(), false,
+                        RelatedTaskCandidateFinder.Coverage.RECORDED_RELATIONSHIPS_ONLY));
         when(rules.check(1, 2, 6, 5)).thenReturn(ruleResult(List.of(), List.of()));
         when(assembler.loadUnresolved(eq(1L), eq(2L), eq(5L), anySet(), nullable(String.class))).thenReturn(List.of());
         when(assembler.loadEvidence(eq(1L), eq(5L), anyList()))
@@ -114,6 +120,26 @@ class ValidationOutcomeWriterFlowTest {
         assertThat(wrote("insert into llm_usage")).isTrue();
         assertThat(wrote("insert into validation_design_ref")).isTrue();
         assertThat(wrote("insert into validation_finding")).isFalse();
+    }
+
+    @Test void newlyRelatedTaskDiscardsPreviouslyAnalyzedResult() {
+        var newlyRelated = new RelatedTaskCandidateFinder.Candidate(99, 100, 1L, List.of());
+        when(related.find(any(), eq(1L), eq(2L), eq(6L), eq(List.of(10L)), eq(20)))
+                .thenReturn(new RelatedTaskCandidateFinder.Result(5, 6, List.of(newlyRelated), false,
+                        RelatedTaskCandidateFinder.Coverage.RECORDED_RELATIONSHIPS_ONLY));
+        assertThat(writer.complete(execution, request(), response(complete(List.of())), true))
+                .isEqualTo(ValidationOutcomeWriter.Applied.DISCARDED);
+        assertThat(validationWrite().sql()).contains("status='STALE'");
+        assertThat(wrote("insert into validation_finding")).isFalse();
+    }
+
+    @Test void truncatedRelatedTaskSearchCannotApplyOldResult() {
+        when(related.find(any(), eq(1L), eq(2L), eq(6L), anyList(), eq(20)))
+                .thenReturn(new RelatedTaskCandidateFinder.Result(5, 6, List.of(), true,
+                        RelatedTaskCandidateFinder.Coverage.RECORDED_RELATIONSHIPS_ONLY));
+        assertThat(writer.complete(execution, request(), response(complete(List.of())), true))
+                .isEqualTo(ValidationOutcomeWriter.Applied.DISCARDED);
+        assertThat(validationWrite().sql()).contains("status='STALE'");
     }
 
     @Test void extraSearchCandidatePreventsAutomaticPass() {

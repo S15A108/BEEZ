@@ -29,6 +29,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class ValidationInputAssembler {
     private static final int MAX_CANDIDATES = 20;
+    // A single snapshot avoids repeated embedding calls across pages. The API permits at
+    // most 100; more results still block completion until stable pagination is supported.
+    private static final int MAX_SEARCH_RESULTS = 100;
     private static final int MAX_QUERIES = 5;
     private static final int MAX_UNRESOLVED = 100;
     private static final int MAX_UNRESOLVED_TEXT = 2000;
@@ -73,11 +76,11 @@ public class ValidationInputAssembler {
         long baselineId = -1;
         boolean searchesComplete = selection.complete();
         Set<Long> itemIds = new LinkedHashSet<>();
-        Set<Long> semanticDocumentVersions = new LinkedHashSet<>();
+        Set<Long> documentVersions = new LinkedHashSet<>();
         target.plan().designRefs().forEach(ref -> itemIds.add(Long.parseLong(ref.designItemId())));
         if (itemIds.size() > 50) throw incomplete("design_reference_limit");
         for (String query : selection.queries()) {
-            var found = search.search(caller, projectId, query, null, null, MAX_CANDIDATES);
+            var found = search.search(caller, projectId, query, null, null, MAX_SEARCH_RESULTS);
             long foundBaseline = Long.parseLong(found.baselineId());
             if (baselineId != -1 && baselineId != foundBaseline) throw incomplete("baseline_changed");
             baselineId = foundBaseline;
@@ -88,16 +91,17 @@ public class ValidationInputAssembler {
                     if (itemIds.size() < 50 || itemIds.contains(itemId)) itemIds.add(itemId);
                     else searchesComplete = false;
                 }
-                if ("DOCUMENT_CHUNK".equals(candidate.hit().get("type"))) {
+                if (Set.of("DOCUMENT", "DOCUMENT_CHUNK").contains(candidate.hit().get("type"))) {
                     if (!(candidate.hit().get("source") instanceof Map<?, ?> source)
                             || source.get("document_version_id") == null) {
                         throw incomplete("invalid_search_source");
                     }
-                    semanticDocumentVersions.add(Long.parseLong(source.get("document_version_id").toString()));
+                    documentVersions.add(Long.parseLong(source.get("document_version_id").toString()));
                 }
             }
         }
-        var sourceItems = designsFromSourceDocuments(projectId, baselineId, semanticDocumentVersions);
+        var sourceItems = designsFromSourceDocuments(projectId, baselineId, documentVersions);
+        if (hasUnmappedDocuments(projectId, baselineId, documentVersions)) searchesComplete = false;
         if (sourceItems.size() > 50) searchesComplete = false;
         for (long itemId : sourceItems) {
             if (itemIds.size() < 50 || itemIds.contains(itemId)) itemIds.add(itemId);
@@ -251,6 +255,25 @@ public class ValidationInputAssembler {
                 """).param("project", projectId).param("baseline", baselineId).param("ids", versionIds)
                 .query().listOfRows();
         return rows.stream().map(row -> ((Number) row.get("design_item_id")).longValue()).toList();
+    }
+
+    /** Every found document must be current-baseline and mapped to a baseline design. */
+    private boolean hasUnmappedDocuments(long projectId, long baselineId, Set<Long> versionIds) {
+        if (versionIds.isEmpty()) return false;
+        var rows = jdbc.sql("""
+                select distinct bd.document_version_id
+                  from baseline_document bd
+                  join baseline_item bi on bi.project_id=bd.project_id and bi.baseline_id=bd.baseline_id
+                  join design_item_version v on v.id=bi.design_item_version_id
+                       and v.design_item_id=bi.design_item_id
+                       and v.source_document_version_id=bd.document_version_id
+                 where bd.project_id=:project and bd.baseline_id=:baseline
+                   and bd.document_version_id in (:ids) and v.status='APPROVED'
+                """).param("project", projectId).param("baseline", baselineId).param("ids", versionIds)
+                .query().listOfRows();
+        Set<Long> mapped = new LinkedHashSet<>();
+        for (var row : rows) mapped.add(((Number) row.get("document_version_id")).longValue());
+        return !mapped.containsAll(versionIds);
     }
 
     /**

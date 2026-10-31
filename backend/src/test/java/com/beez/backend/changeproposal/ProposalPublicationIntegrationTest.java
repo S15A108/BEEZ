@@ -12,6 +12,7 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.designitem.service.DesignCommandService;
 import com.beez.backend.project.ProjectRole;
+import com.beez.backend.validation.service.ValidationEvidenceBuilder;
 import com.beez.backend.relation.service.RelationStorageService;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.IntegrationTestSupport;
@@ -70,6 +71,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @Autowired ProposalPublicationService publications;
     @Autowired ProposalQueryService queries;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ValidationEvidenceBuilder evidenceBuilder;
     @Autowired RecordingImpact impact;
     @Autowired RecordingIntake intake;
     @Autowired PlatformTransactionManager transactions;
@@ -186,6 +188,28 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(intake.accepted).containsExactly(Long.parseLong(result.baseline().id()));
     }
 
+    @Test void changedDocumentMakesPreviouslyCitedSourceUnavailableRatherThanInventingNewSource() {
+        Proposal proposal=create(true,true,"source-after-publication");
+        ready(proposal);
+        Publication published=approve(proposal,"publish-source-check");
+        long newBaseline=Long.parseLong(published.baseline().id());
+        long newDocumentVersion=Long.parseLong(proposal.documents().getFirst().proposedDocumentVersionId());
+        long newItemVersion=currentVersion(item);
+
+        assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE id=?",String.class,version))
+                .isEqualTo("SUPERSEDED");
+        assertThat(jdbc.queryForObject("SELECT document_version_id FROM baseline_document WHERE baseline_id=? AND document_id=?",
+                Long.class,newBaseline,document)).isEqualTo(newDocumentVersion);
+        assertThat(jdbc.queryForObject("SELECT source_document_version_id FROM design_item_version WHERE id=?",
+                Long.class,newItemVersion)).isEqualTo(version);
+
+        var originalSource=Map.of("document_id",Long.toString(document),"document_version_id",Long.toString(version),
+                "version_no",1,"location","첫 문단");
+        var input=Map.<String,Object>of("id",Long.toString(newItemVersion),"design_item_id",Long.toString(item),"source",originalSource);
+        var result=evidenceBuilder.build(project.projectId(),newBaseline,List.of(input));
+        assertThat(result.evidence()).isEmpty();
+        assertThat(result.unavailableVersionIds()).containsExactly(Long.toString(newItemVersion));
+    }
     @Test void documentOnlyAndPublishedRetriesNeverRepublishEvenAfterAnotherBaseline() {
         Proposal p=create(true,false,"doc"); ready(p); clearInvocations(relations);
         var result=approve(p,"key"); assertThat(approve(p,"key")).isEqualTo(result);

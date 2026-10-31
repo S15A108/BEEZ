@@ -58,6 +58,14 @@ class ValidationEvidenceBuilderTest {
         assertEquals(List.of("101"), result.unavailableVersionIds());
     }
 
+    @Test void outOfBoundsLocatorIsUnavailableInsteadOfRetriedAsInfrastructureFailure() throws Exception {
+        String source = "api\n";
+        var locator = "{\"location\":\"API 명세\",\"start_line\":1,\"end_line\":5000}";
+        rows(List.of(row(source, locator, "sha256:" + digest(source))));
+        var result = builder.build(1, 2, List.of(item()));
+        assertTrue(result.evidence().isEmpty());
+        assertEquals(List.of("101"), result.unavailableVersionIds());
+    }
     @Test void omittedSourceDoesNotHideExistingSourceDocument() {
         var row = row("text\n", null, null);
         rows(List.of(row));
@@ -82,6 +90,14 @@ class ValidationEvidenceBuilderTest {
         assertThrows(IllegalStateException.class, () -> builder.build(1, 2, List.of(item())));
     }
 
+    @Test void acceptsOnlyUnambiguousExplicitDisplayLineRanges() {
+        assertArrayEquals(new int[] { 2, 3 }, ValidationEvidenceBuilder.displayLineRange("2~3행"));
+        assertArrayEquals(new int[] { 2, 2 }, ValidationEvidenceBuilder.displayLineRange("2행"));
+        assertArrayEquals(new int[] { 2, 3 }, ValidationEvidenceBuilder.displayLineRange(" 2 ~ 3행 "));
+        for (String ambiguous : List.of("1절", "서문 2~3행", "3~2행", "0행", "2-", "1~99999999999999999999행")) {
+            assertNull(ValidationEvidenceBuilder.displayLineRange(ambiguous));
+        }
+    }
     @Test void lineRangesRetainFinalNewlinesAndRejectOutOfBounds() {
         assertEquals("a\n\n", ValidationEvidenceBuilder.excerpt("a\n\nb", 1, 2));
         assertEquals("b", ValidationEvidenceBuilder.excerpt("a\n\nb", 3, 3));

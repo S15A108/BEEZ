@@ -75,6 +75,17 @@ class ValidationEvidenceBuilderIntegrationTests extends IntegrationTestSupport {
         assertThat(result.unavailableVersionIds()).containsExactly(item.get("id").toString());
     }
 
+    @Test void outOfBoundsDisplayLocationIsUnavailableWithoutDiscardingValidHash() throws Exception {
+        var item = seed("{\"location\":\"5000행\"}", true, true);
+        var source = (Map<String, Object>) item.get("source");
+        var request = Map.of("id", item.get("id"), "design_item_id", item.get("design_item_id"),
+                "source", Map.of("document_id", source.get("document_id"),
+                        "document_version_id", source.get("document_version_id"),
+                        "version_no", source.get("version_no"), "location", "5000행"));
+        var result = builder.build(project, baseline, List.of(request));
+        assertThat(result.evidence()).isEmpty();
+        assertThat(result.unavailableVersionIds()).containsExactly(item.get("id").toString());
+    }
     @Test void tamperedHashFailsInsteadOfSendingEvidence() throws Exception {
         var item = seed("{\"location\":\"회원 API\",\"start_line\":1,\"end_line\":2}", true, false);
         assertThatThrownBy(() -> builder.build(project, baseline, List.of(item))).isInstanceOf(IllegalStateException.class);

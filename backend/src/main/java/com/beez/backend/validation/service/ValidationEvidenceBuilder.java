@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
@@ -18,6 +19,9 @@ import tools.jackson.databind.ObjectMapper;
 /** Restores only explicit design-to-source line ranges; search hits do not prove relationships. */
 @Service
 public class ValidationEvidenceBuilder {
+    // The existing design-item API accepts a display location. Only this exact,
+    // explicit 1-based line notation can be restored without guessing.
+    private static final Pattern DISPLAY_LINES = Pattern.compile("^([1-9][0-9]*)\\s*(?:~\\s*([1-9][0-9]*))?\\s*행$");
     private static final int MAX_EXCERPT_BYTES = 16_000;
     private static final int MAX_TOTAL_BYTES = 100_000;
     private final JdbcClient jdbc;
@@ -81,20 +85,42 @@ public class ValidationEvidenceBuilder {
             if (row.get("locator") == null) { unavailable.add(Long.toString(versionId)); continue; }
             var locator = json.readValue(row.get("locator").toString(), new TypeReference<Map<String, Object>>() {});
             if (!location.equals(locator.get("location"))) throw new IllegalStateException("source display location changed");
-            if (!locator.containsKey("start_line") || !locator.containsKey("end_line")) {
-                unavailable.add(Long.toString(versionId)); continue;
+            int start;
+            int end;
+            if (locator.containsKey("start_line") && locator.containsKey("end_line")) {
+                if (locator.containsKey("type") && !"text_lines".equals(locator.get("type"))) {
+                    throw new IllegalStateException("unsupported source locator");
+                }
+                start = positiveInt(locator.get("start_line"));
+                end = positiveInt(locator.get("end_line"));
+            } else {
+                // Legacy free-form values such as headings or partial ranges do
+                // not establish a source range and must remain unavailable.
+                if (locator.containsKey("start_line") || locator.containsKey("end_line")
+                        || locator.containsKey("type")) {
+                    unavailable.add(Long.toString(versionId)); continue;
+                }
+                int[] lines = displayLineRange(location);
+                if (lines == null) { unavailable.add(Long.toString(versionId)); continue; }
+                start = lines[0];
+                end = lines[1];
             }
-            if (locator.containsKey("type") && !"text_lines".equals(locator.get("type"))) {
-                throw new IllegalStateException("unsupported source locator");
-            }
-            int start = positiveInt(locator.get("start_line")), end = positiveInt(locator.get("end_line"));
             String content = text(row.get("content_text"));
             if (content.startsWith("\uFEFF") || content.contains("\r")) throw new IllegalStateException("source text is not normalized");
             String digest = sha256(content);
             if (!(row.get("text_hash") instanceof String stored) || !stored.equals("sha256:" + digest)) {
                 throw new IllegalStateException("source text hash mismatch");
             }
-            String excerpt = excerpt(content, start, end);
+            final String excerpt;
+            try {
+                excerpt = excerpt(content, start, end);
+            } catch (IllegalArgumentException invalidRange) {
+                // A well-formed display locator may no longer fit this source.
+                // Preserve hash/identity failures above as errors, but don't retry
+                // an invalid source range as an infrastructure failure.
+                unavailable.add(Long.toString(versionId));
+                continue;
+            }
             int bytes = excerpt.getBytes(StandardCharsets.UTF_8).length;
             if (bytes > MAX_EXCERPT_BYTES || totalBytes + bytes > MAX_TOTAL_BYTES) {
                 unavailable.add(Long.toString(versionId)); continue;
@@ -113,6 +139,19 @@ public class ValidationEvidenceBuilder {
         return new Result(result, unavailable);
     }
 
+    /** Strict display-location subset; ambiguous or invalid ranges are unavailable. */
+    static int[] displayLineRange(String location) {
+        if (location == null) return null;
+        var matcher = DISPLAY_LINES.matcher(location.strip());
+        if (!matcher.matches()) return null;
+        try {
+            int first = Integer.parseInt(matcher.group(1));
+            int last = matcher.group(2) == null ? first : Integer.parseInt(matcher.group(2));
+            return last >= first ? new int[] { first, last } : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
     /** Return exact 1-based inclusive lines, retaining each source LF when present. */
     static String excerpt(String content, int first, int last) {
         if (first < 1 || last < first || content == null || content.isEmpty()) throw new IllegalArgumentException("invalid source range");
