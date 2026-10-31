@@ -4,7 +4,11 @@ import json
 
 from pydantic import ValidationError
 
-from app.schemas.design_recommendations import ModelOutput, RecommendationRequest
+from app.schemas.design_recommendations import (
+    DesignItemVersion,
+    ModelOutput,
+    RecommendationRequest,
+)
 from app.services.llm_client import LLMClient, LLMContext, LLMMessage, LLMRequest
 
 _SYSTEM = (
@@ -41,6 +45,11 @@ _SCHEMA = {
 }
 
 
+def has_usable_source(item: DesignItemVersion) -> bool:
+    """Require location metadata; source verification remains the BE responsibility."""
+    return item.source is not None and bool(item.source.location)
+
+
 def template_result(body: RecommendationRequest) -> dict | None:
     """Do not call the model when search produced nothing or has no usable source."""
     if not body.candidates:
@@ -55,7 +64,10 @@ def template_result(body: RecommendationRequest) -> dict | None:
             "model": None,
             "usage": [],
         }
-    if not any(candidate.design_item_version.source for candidate in body.candidates):
+    if not any(
+        has_usable_source(candidate.design_item_version)
+        for candidate in body.candidates
+    ):
         return {
             "result": {
                 "status": "INSUFFICIENT",
@@ -76,7 +88,7 @@ async def recommend(body: RecommendationRequest, client: LLMClient, model: str) 
     eligible = {
         candidate.design_item_version.id: candidate.design_item_version
         for candidate in body.candidates
-        if candidate.design_item_version.source is not None
+        if has_usable_source(candidate.design_item_version)
     }
     prompt = json.dumps(
         {

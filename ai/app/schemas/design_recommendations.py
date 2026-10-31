@@ -21,9 +21,11 @@ class Source(ContractModel):
     document_id: TextId
     document_version_id: TextId
     version_no: int = Field(ge=1)
-    location: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)
-    ]
+    # Existing BE responses may omit the location or serialize it as an empty
+    # string. Such sources remain incomplete and are never sent as evidence.
+    location: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] | None
+    ) = None
 
 
 class DesignItemVersion(ContractModel):
@@ -36,6 +38,7 @@ class DesignItemVersion(ContractModel):
     schema_version: int = Field(ge=1)
     content: dict[str, Any]
     source: Source | None = None
+    content_hash: str | None = None
 
     @model_validator(mode="after")
     def bounded_content(self) -> Self:

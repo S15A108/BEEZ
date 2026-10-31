@@ -212,3 +212,77 @@ def test_rollout_guard_blocks_model_until_explicitly_enabled(api, monkeypatch):
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "recommendation_not_enabled"
     assert not state["calls"]
+
+
+@pytest.mark.parametrize("location", ["", "   ", None, "__MISSING__"])
+def test_missing_source_location_is_insufficient_without_model(api, location):
+    client, state = api
+    item = candidate()
+    source = item["design_item_version"]["source"]
+    if location == "__MISSING__":
+        source.pop("location")
+    else:
+        source["location"] = location
+
+    response = post(client, request_body(candidates=[item]))
+
+    assert response.status_code == 200
+    assert response.json()["result"]["status"] == "INSUFFICIENT"
+    assert response.json()["result"]["follow_up"]
+    assert response.json()["result"]["candidates"] == []
+    assert not state["calls"]
+
+
+def test_be_design_hash_is_preserved_and_incomplete_source_is_not_recommended(api):
+    client, state = api
+    usable = candidate()
+    usable["design_item_version"]["content_hash"] = "sha256:" + "a" * 64
+    incomplete = candidate()
+    incomplete["design_item_version"]["id"] = "312"
+    incomplete["design_item_version"]["design_item_id"] = "302"
+    incomplete["design_item_version"]["source"]["location"] = ""
+    incomplete["design_item_version"]["content_hash"] = "sha256:" + "b" * 64
+
+    response = post(client, request_body(candidates=[usable, incomplete]))
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["status"] == "INSUFFICIENT"
+    assert result["follow_up"]
+    assert len(result["candidates"]) == 1
+    assert (
+        result["candidates"][0]["design_item_version"] == usable["design_item_version"]
+    )
+    assert result["candidates"][0]["sources"] == [
+        usable["design_item_version"]["source"]
+    ]
+    model_payload = json.loads(state["calls"][0].messages[1].content)
+    assert [item["id"] for item in model_payload["candidates"]] == ["311"]
+
+
+def test_model_cannot_select_a_candidate_without_a_usable_location(api):
+    client, state = api
+    incomplete = candidate()
+    incomplete["design_item_version"]["id"] = "312"
+    incomplete["design_item_version"]["design_item_id"] = "302"
+    incomplete["design_item_version"]["source"]["location"] = ""
+    state["response"] = {
+        "recommendations": [{"design_item_version_id": "312", "reason": "확인"}]
+    }
+
+    response = post(client, request_body(candidates=[candidate(), incomplete]))
+
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+    assert "result" not in response.json()
+
+
+def test_unsupported_candidate_fields_still_fail_before_model(api):
+    client, state = api
+    item = candidate()
+    item["design_item_version"]["unexpected"] = "not part of the contract"
+
+    response = post(client, request_body(candidates=[item]))
+
+    assert response.status_code == 400
+    assert not state["calls"]
