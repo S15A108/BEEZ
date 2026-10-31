@@ -37,7 +37,8 @@ public class ImpactAnalysisCoordinator {
     private static final Set<String> AI_CODES = Set.of("model_timeout", "model_unavailable",
             "invalid_ai_input", "invalid_output", "validation_failed", "invalid_internal_token");
     private static final Set<String> STALE_CODES = Set.of("baseline_changed", "baseline_inconsistent",
-            "baseline_missing", "proposal_not_analyzable", "analysis_input_missing", "analysis_input_changed");
+            "baseline_missing", "proposal_not_analyzable", "analysis_input_missing", "analysis_input_changed",
+            "analysis_snapshot_invalid");
     private static final int MAX_ERROR_BODY_BYTES = 65536;
     private final ImpactContextQuery query;
     private final AiClient ai;
@@ -50,12 +51,31 @@ public class ImpactAnalysisCoordinator {
     /** requestKey identifies this analysis; the AI server issues a unique key for every LLM call. */
     public Outcome analyze(CallerContext caller, long projectId, long proposalId, String requestKey) {
         ImpactContextQuery.Snapshot snapshot = query.load(caller, projectId, proposalId);
-        // V2 does not persist the proposed schema_version required by AI-A03.
-        // Do not guess it from the old item or invoke a paid model with an invalid request.
+        // Until document diffs have an agreed AI-A03 contract, mixed and document-only
+        // proposals must not produce an apparently complete partial analysis.
+        if (snapshot.documentChanges()) {
+            return new Outcome(snapshot, Status.INSUFFICIENT_EVIDENCE, null, List.of(),
+                    UsageStatus.NOT_STARTED, "document_change_unavailable");
+        }
+        // #195 stores schema_version in the immutable revision. Legacy submissions may not.
+        // Never infer a version or call the model with incomplete CREATE/UPDATE content.
         if (snapshot.changes().stream().anyMatch(change ->
-                "CREATE".equals(change.operation()) || "UPDATE".equals(change.operation()))) {
+                ("CREATE".equals(change.operation()) || "UPDATE".equals(change.operation()))
+                        && (change.schemaVersion() == null || change.schemaVersion() < 1))) {
             return new Outcome(snapshot, Status.INSUFFICIENT_EVIDENCE, null, List.of(),
                     UsageStatus.NOT_STARTED, "change_schema_version_unavailable");
+        }
+        if (snapshot.changes().stream().anyMatch(change ->
+                ("CREATE".equals(change.operation()) || "UPDATE".equals(change.operation()))
+                        && (change.proposedContent() == null || "{}".equals(change.proposedContent())))) {
+            return new Outcome(snapshot, Status.INSUFFICIENT_EVIDENCE, null, List.of(),
+                    UsageStatus.NOT_STARTED, "change_content_unavailable");
+        }
+        // With no approved designs and no related tasks there is no authorized target
+        // for the model to recommend. This is missing coverage, not zero impact.
+        if (snapshot.approvedItems().isEmpty() && snapshot.taskReferences().isEmpty()) {
+            return new Outcome(snapshot, Status.INSUFFICIENT_EVIDENCE, null, List.of(),
+                    UsageStatus.NOT_STARTED, "analysis_candidates_unavailable");
         }
         Map<String, Object> request = ImpactRequestAssembler.assemble(snapshot, requestKey);
         Map<String, Object> envelope = null;

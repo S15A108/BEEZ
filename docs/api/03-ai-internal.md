@@ -603,7 +603,7 @@ ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`�
 
 **#188 구현 제안 — BE 계약 협의 필요:** 기존 필드를 유지하면서 요청의 변경 사유 `reason`, 결과의 근거 상태 `result.evidence_status`, 후보의 `validation_id`를 추가한다. `validation_id`는 전달된 작업의 검증 ID만 사용할 수 있다. 근거 상태는 제공된 입력에 대한 평가이며 관련 작업이나 관계 전체가 검색됐다는 보장은 아니다. AI 결과와 BE의 규칙 후보·관계 경로는 별도로 보존한다. #197 저장 및 외부 API 형식은 이 제안만으로 확정하지 않는다.
 
-현재 V2의 `change_proposal_item`은 변경안의 `schema_version`을 보관하지 않는다. AI는 계약에 따라 CREATE·UPDATE의 `schema_version`을 필수로 검증하므로 BE는 값을 추측해 호출하지 않고 미평가로 처리한다. #195에서 정확한 버전의 저장·전달 방식을 합의해야 한다. 구조화 출력 `json_schema`는 공급자가 지원할 때 선택하며 기본값은 `json_object`다.
+#195는 변경 제안의 불변 리비전 스냅샷과 현재 항목 projection에 `schema_version`을 보존한다. #188 내부 구현 초안은 현재 제출 리비전의 스냅샷·리비전 번호·해시를 확인하고 실제 CREATE·UPDATE 입력에 그 값을 전달한다. 스키마 버전이나 변경 내용이 없는 제안은 값을 추측하지 않고 AI 호출 없이 미평가로 남긴다. 현재 AI-A03에는 문서 변경 본문을 전달하는 확정 계약이 없으므로 문서만 변경하거나 설계와 문서를 함께 변경한 제안도 미평가이며 영향 0건이 아니다. #188 초안의 AI 요청에 추가하는 `proposal_revision`·`proposal_snapshot_hash`는 내부 추적 정보로서 #197 저장·공개 계약의 확정을 뜻하지 않는다. 구조화 출력 `json_schema`는 공급자가 지원할 때 선택하며 기본값은 `json_object`다.
 
 #### 인증
 

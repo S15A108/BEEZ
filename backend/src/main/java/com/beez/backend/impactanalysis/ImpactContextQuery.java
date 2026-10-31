@@ -1,5 +1,7 @@
 package com.beez.backend.impactanalysis;
 
+import com.beez.backend.changeproposal.dto.ProposalDtos;
+import com.beez.backend.designitem.support.DesignJson;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -7,6 +9,9 @@ import com.beez.backend.impactanalysis.ImpactRelationReader.ConfirmedRelation;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -36,9 +41,12 @@ public class ImpactContextQuery {
     }
 
     public record Proposal(long id, long projectId, long baselineId, int lockVersion,
-                           String status, String reason, Instant updatedAt) {}
-    public record Change(long id, String operation, Long itemId, Long beforeVersionId,
-                         String newKind, String proposedContent, Instant updatedAt) {}
+                           String status, String reason, Instant updatedAt,
+                           int revisionNo, String snapshotHash) {}
+    /** Zero-based index is scoped to this proposal revision; it is not a persistent row ID. */
+    public record Change(int proposalItemIndex, String operation, Long itemId, Long beforeVersionId,
+                         String newKind, Integer schemaVersion, String proposedContent, Instant updatedAt) {}
+    private record StoredProposal(Proposal proposal, ProposalDtos.Snapshot revision) {}
     public record ApprovedItem(long itemId, long versionId, String key, String kind,
                                int versionNo, int schemaVersion, String title, String content,
                                Long sourceDocumentId, Long sourceDocumentVersionId,
@@ -56,7 +64,7 @@ public class ImpactContextQuery {
     public record Snapshot(Proposal proposal, List<Change> changes, List<ApprovedItem> approvedItems,
                            List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
                            RuleCandidateStatus ruleCandidateStatus, ImpactKeywordSearch.Coverage searchCoverage,
-                           long relationSetRevision) {
+                           long relationSetRevision, boolean documentChanges) {
         public Snapshot {
             changes = List.copyOf(changes);
             approvedItems = List.copyOf(approvedItems);
@@ -69,13 +77,13 @@ public class ImpactContextQuery {
                         List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
                         RuleCandidateStatus ruleCandidateStatus) {
             this(proposal, changes, approvedItems, dependencies, taskReferences, ruleCandidateStatus,
-                    new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false), 0);
+                    new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false), 0, false);
         }
 
         public Snapshot(Proposal proposal, List<Change> changes, List<ApprovedItem> approvedItems,
                         List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
                         RuleCandidateStatus ruleCandidateStatus, ImpactKeywordSearch.Coverage searchCoverage) {
-            this(proposal, changes, approvedItems, dependencies, taskReferences, ruleCandidateStatus, searchCoverage, 0);
+            this(proposal, changes, approvedItems, dependencies, taskReferences, ruleCandidateStatus, searchCoverage, 0, false);
         }
     }
 
@@ -83,56 +91,95 @@ public class ImpactContextQuery {
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Snapshot load(CallerContext caller, long projectId, long proposalId) {
         access.requireMember(caller, projectId);
-        Proposal proposal = jdbc.sql("""
-                select c.id, c.project_id, c.base_baseline_id, c.lock_version, c.status, c.reason, c.updated_at,
-                       p.current_baseline_id
+        // Analyze the immutable submitted revision, never the mutable item projection.
+        // Legacy V10 hashes use PostgreSQL jsonb::text; new #195 snapshots use DesignJson.
+        StoredProposal stored = jdbc.sql("""
+                select c.id, c.project_id, c.base_baseline_id, c.lock_version, c.status, c.updated_at,
+                       c.revision_no, p.current_baseline_id, r.base_baseline_id as revision_baseline_id,
+                       r.snapshot_hash, cast(r.snapshot as text) as snapshot,
+                       'sha256:' || encode(sha256(convert_to(r.snapshot::text,'UTF8')),'hex') as legacy_hash
                   from change_proposal c join project p on p.id = c.project_id
-                 where c.id = :proposal and c.project_id = :project and p.archived_at is null
-                """)
-                .param("project", projectId).param("proposal", proposalId)
+                  left join change_proposal_revision r on r.change_proposal_id=c.id
+                       and r.project_id=c.project_id and r.revision_no=c.revision_no
+                 where c.id=:proposal and c.project_id=:project and p.archived_at is null
+                """).param("project", projectId).param("proposal", proposalId)
                 .query((rs, row) -> {
                     Long currentBaseline = nullableLong(rs, "current_baseline_id");
                     long baseBaseline = rs.getLong("base_baseline_id");
                     if (currentBaseline == null || currentBaseline != baseBaseline) {
                         throw new ApiException(HttpStatus.CONFLICT, "baseline_changed", "변경 제안의 기준 설계를 다시 확인해야 합니다");
                     }
-                    return new Proposal(rs.getLong("id"), rs.getLong("project_id"), baseBaseline,
-                            rs.getInt("lock_version"), rs.getString("status"), rs.getString("reason"),
-                            rs.getTimestamp("updated_at").toInstant());
+                    String raw = rs.getString("snapshot"), storedHash = rs.getString("snapshot_hash");
+                    Long revisionBaseline = nullableLong(rs, "revision_baseline_id");
+                    if (raw == null || storedHash == null || revisionBaseline == null || revisionBaseline != baseBaseline) {
+                        throw invalidSnapshot();
+                    }
+                    final ProposalDtos.Snapshot revision;
+                    try {
+                        revision = DesignJson.JSON.readValue(raw, ProposalDtos.Snapshot.class);
+                    } catch (RuntimeException malformed) {
+                        throw invalidSnapshot();
+                    }
+                    if (revision.input() == null || revision.input().items() == null || revision.documents() == null
+                            || !Long.toString(baseBaseline).equals(revision.input().baseBaselineId())) throw invalidSnapshot();
+                    // New snapshots are hashed from the same canonical DTO used by #195. Legacy
+                    // migration hashes jsonb::text, which must be verified by its own algorithm.
+                    String calculated = revision.legacy() ? rs.getString("legacy_hash") : DesignJson.hash(revision);
+                    if (!storedHash.equals(calculated)) throw invalidSnapshot();
+                    var proposal = new Proposal(rs.getLong("id"), rs.getLong("project_id"), baseBaseline,
+                            rs.getInt("lock_version"), rs.getString("status"), revision.input().reason(),
+                            rs.getTimestamp("updated_at").toInstant(), rs.getInt("revision_no"), storedHash);
+                    return new StoredProposal(proposal, revision);
                 }).optional().orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "변경 제안을 찾을 수 없습니다"));
+        Proposal proposal = stored.proposal();
         if (!Set.of("PROPOSED", "IN_REVIEW").contains(proposal.status())) {
             throw new ApiException(HttpStatus.CONFLICT, "proposal_not_analyzable", "검토 중인 변경 제안이 아닙니다");
         }
-
-        List<Change> changes = jdbc.sql("""
-                select c.id, c.op, c.design_item_id, c.before_version_id, c.new_kind,
-                       cast(c.proposed_content as text) as proposed_content, c.updated_at,
-                       bi.design_item_version_id as baseline_version_id
-                  from change_proposal_item c
-                  left join baseline_item bi on bi.project_id = :project and bi.baseline_id = :baseline
-                                                and bi.design_item_id = c.design_item_id
-                 where c.change_proposal_id = :proposal
-                 order by c.id
-                """)
-                .param("project", projectId).param("baseline", proposal.baselineId()).param("proposal", proposalId)
-                .query((rs, row) -> {
-                    Long item = nullableLong(rs, "design_item_id");
-                    Long version = nullableLong(rs, "before_version_id");
-                    Long baselineVersion = nullableLong(rs, "baseline_version_id");
-                    if (item != null && (version == null || !version.equals(baselineVersion))) {
-                        throw new ApiException(HttpStatus.CONFLICT, "baseline_changed", "변경 항목의 기준 버전을 다시 확인해야 합니다");
-                    }
-                    return new Change(rs.getLong("id"), rs.getString("op"), item, version,
-                            rs.getString("new_kind"), rs.getString("proposed_content"),
-                            rs.getTimestamp("updated_at").toInstant());
-                }).list();
-        if (changes.isEmpty()) {
+        var submitted = stored.revision().input().items();
+        boolean documentChanges = !stored.revision().documents().isEmpty()
+                || (stored.revision().input().documents() != null && !stored.revision().input().documents().isEmpty());
+        if (submitted.isEmpty() && !documentChanges) {
             throw new ApiException(HttpStatus.CONFLICT, "analysis_input_missing", "분석할 변경 항목이 없습니다");
+        }
+        Set<Long> submittedIds = new LinkedHashSet<>();
+        for (var item : submitted) {
+            Long itemId = parseOptionalId(item.designItemId());
+            if (itemId != null) submittedIds.add(itemId);
+        }
+        Map<Long, Long> baselineVersions = new LinkedHashMap<>();
+        if (!submittedIds.isEmpty()) {
+            var rows = jdbc.sql("""
+                    select design_item_id, design_item_version_id from baseline_item
+                     where project_id=:project and baseline_id=:baseline and design_item_id in (:items)
+                    """).param("project", projectId).param("baseline", proposal.baselineId())
+                    .param("items", submittedIds).query().listOfRows();
+            for (var row : rows) baselineVersions.put(((Number) row.get("design_item_id")).longValue(),
+                    ((Number) row.get("design_item_version_id")).longValue());
+        }
+        List<Change> changes = new ArrayList<>();
+        for (int index = 0; index < submitted.size(); index++) {
+            var item = submitted.get(index);
+            Long itemId = parseOptionalId(item.designItemId()), version = parseOptionalId(item.baseDesignItemVersionId());
+            if ("CREATE".equals(item.operation())) {
+                if (itemId != null || version != null) throw invalidSnapshot();
+            } else if ("UPDATE".equals(item.operation()) || "RETIRE".equals(item.operation())) {
+                if (itemId == null || version == null || !version.equals(baselineVersions.get(itemId))) {
+                    throw new ApiException(HttpStatus.CONFLICT, "baseline_changed", "변경 항목의 기준 버전을 다시 확인해야 합니다");
+                }
+            } else throw invalidSnapshot();
+            changes.add(new Change(index, item.operation(), itemId, version, item.kind(), item.schemaVersion(),
+                    item.proposedContent() == null ? null : DesignJson.canonical(item.proposedContent()), proposal.updatedAt()));
         }
 
         Set<Long> changedIds = new LinkedHashSet<>();
         changes.stream().map(Change::itemId).filter(id -> id != null).forEach(changedIds::add);
         var relationSnapshot = dependencies.load(caller, projectId, proposal.baselineId(), changedIds);
+        if (documentChanges) {
+            // Document diffs are not yet in AI-A03; never infer no impact from a partial input.
+            return new Snapshot(proposal, changes, List.of(), List.of(), List.of(), RuleCandidateStatus.NOT_CONNECTED,
+                    new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false),
+                    relationSnapshot.relationSetRevision(), true);
+        }
         List<ConfirmedRelation> confirmed = relationSnapshot.relations();
         Set<Long> relatedItemIds = new LinkedHashSet<>();
         relatedItemIds.addAll(changedIds);
@@ -208,7 +255,7 @@ public class ImpactContextQuery {
         // Rule candidate calculation belongs to the shared BE integration. Do not treat
         // its absence as an empty, completed evaluation or create duplicate rule results.
         return new Snapshot(proposal, changes, approved, relevantDependencies, taskReferences,
-                RuleCandidateStatus.NOT_CONNECTED, searchCoverage, relationSnapshot.relationSetRevision());
+                RuleCandidateStatus.NOT_CONNECTED, searchCoverage, relationSnapshot.relationSetRevision(), false);
     }
 
     /**
@@ -291,6 +338,21 @@ public class ImpactContextQuery {
                 .param("limit", ImpactKeywordSearch.MAX_RESULTS + 1);
         for (int i = 0; i < terms.values().size(); i++) statement = statement.param("term" + i, terms.values().get(i));
         return statement.query(Long.class).list();
+    }
+
+    private static ApiException invalidSnapshot() {
+        return new ApiException(HttpStatus.CONFLICT, "analysis_snapshot_invalid", "변경 제안 리비전을 다시 확인해야 합니다");
+    }
+
+    private static Long parseOptionalId(String value) {
+        if (value == null) return null;
+        try {
+            long parsed = Long.parseLong(value);
+            if (parsed <= 0) throw new NumberFormatException();
+            return parsed;
+        } catch (NumberFormatException malformed) {
+            throw invalidSnapshot();
+        }
     }
 
     private static Long nullableLong(ResultSet rs, String name) throws SQLException {

@@ -21,6 +21,9 @@ public final class ImpactRequestAssembler {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("project_id", id(proposal.projectId()));
         body.put("proposal_id", id(proposal.id()));
+        // Internal trace metadata, not a claim of #197 persistence or an agreed public contract.
+        body.put("proposal_revision", proposal.revisionNo());
+        body.put("proposal_snapshot_hash", proposal.snapshotHash());
         body.put("request_key", requestKey);
         // Proposal reason is a provisional input extension; it is not approved design content.
         body.put("reason", proposal.reason());
@@ -44,7 +47,7 @@ public final class ImpactRequestAssembler {
             if (change.beforeVersionId() != null) item.put("base_design_item_version_id", id(change.beforeVersionId()));
             if (change.newKind() != null) item.put("kind", change.newKind());
             if (change.proposedContent() != null) item.put("proposed_content", object(change.proposedContent()));
-            // V2 does not persist a proposed schema version; do not invent one.
+            if (change.schemaVersion() != null) item.put("schema_version", change.schemaVersion());
             changes.add(item);
         }
         body.put("changes", changes);

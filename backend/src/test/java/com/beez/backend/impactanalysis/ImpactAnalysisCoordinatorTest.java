@@ -17,6 +17,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -24,8 +27,8 @@ class ImpactAnalysisCoordinatorTest {
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
     private ImpactContextQuery.Snapshot snapshot() {
-        var proposal = new ImpactContextQuery.Proposal(71, 1, 9, 1, "PROPOSED", "보안", NOW);
-        var change = new ImpactContextQuery.Change(11, "RETIRE", 10L, 100L, null, null, NOW);
+        var proposal = new ImpactContextQuery.Proposal(71, 1, 9, 1, "PROPOSED", "보안", NOW, 2, "sha256:abc");
+        var change = new ImpactContextQuery.Change(0, "RETIRE", 10L, 100L, null, null, null, NOW);
         var approved = new ImpactContextQuery.ApprovedItem(10, 100, "API-1", "API_CONTRACT", 1, 1,
                 "member", "{\"path\":\"/v1\"}", 7L, 8L, 1,
                 "{\"type\":\"text_lines\",\"start_line\":5,\"end_line\":7}");
@@ -183,7 +186,7 @@ class ImpactAnalysisCoordinatorTest {
     @Test
     void unavailableProposedSchemaVersionRemainsUnassessedAndDoesNotCallAi() {
         var original = snapshot();
-        var change = new ImpactContextQuery.Change(11, "UPDATE", 10L, 100L, null, "{\"path\":\"/v2\"}", NOW);
+        var change = new ImpactContextQuery.Change(0, "UPDATE", 10L, 100L, null, null, "{\"path\":\"/v2\"}", NOW);
         var input = new ImpactContextQuery.Snapshot(original.proposal(), List.of(change), original.approvedItems(),
                 original.dependencies(), original.taskReferences(), original.ruleCandidateStatus());
         var query = mock(ImpactContextQuery.class);
@@ -197,6 +200,73 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.errorCode()).isEqualTo("change_schema_version_unavailable");
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.NOT_STARTED);
         assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        verifyNoInteractions(ai);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CREATE", "UPDATE"})
+    void submittedSchemaVersionIsSentToAi(String operation) {
+        var original = snapshot();
+        boolean create = "CREATE".equals(operation);
+        var change = new ImpactContextQuery.Change(0, operation, create ? null : 10L, create ? null : 100L,
+                "API_CONTRACT", 1, "{\"method\":\"POST\",\"path\":\"/login\"}", NOW);
+        var input = new ImpactContextQuery.Snapshot(original.proposal(), List.of(change), original.approvedItems(),
+                original.dependencies(), original.taskReferences(), original.ruleCandidateStatus());
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(input);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "usage", List.of(Map.of("request_key", "call-1"))));
+
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Map<String, Object>> request = (ArgumentCaptor) ArgumentCaptor.forClass(Map.class);
+        verify(ai).changeImpact(request.capture());
+        var body = request.getValue();
+        var sent = (Map<?, ?>) ((List<?>) body.get("changes")).getFirst();
+        assertThat(sent.get("schema_version")).isEqualTo(1);
+        assertThat(sent.get("operation")).isEqualTo(operation);
+        assertThat(body.get("proposal_revision")).isEqualTo(2);
+        assertThat(body.get("proposal_snapshot_hash")).isEqualTo("sha256:abc");
+        assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
+        // The AI response cannot complete the overall analysis while rule candidates are unconnected.
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+    }
+
+    @Test
+    void createWithoutAnyApprovedOrTaskCandidatesNeverCallsAiOrClaimsNoImpact() {
+        var original = snapshot();
+        var change = new ImpactContextQuery.Change(0, "CREATE", null, null, "REQUIREMENT", 1,
+                "{\"description\":\"new requirement\"}", NOW);
+        var input = new ImpactContextQuery.Snapshot(original.proposal(), List.of(change), List.of(),
+                List.of(), List.of(), original.ruleCandidateStatus());
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(input);
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(outcome.errorCode()).isEqualTo("analysis_candidates_unavailable");
+        assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.NOT_STARTED);
+        verifyNoInteractions(ai);
+    }
+
+    @Test
+    void documentChangeNeverCallsAiWithOnlyPartialDesignChanges() {
+        var original = snapshot();
+        var input = new ImpactContextQuery.Snapshot(original.proposal(), original.changes(), original.approvedItems(),
+                original.dependencies(), original.taskReferences(), original.ruleCandidateStatus(),
+                original.searchCoverage(), original.relationSetRevision(), true);
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(input);
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(outcome.errorCode()).isEqualTo("document_change_unavailable");
+        assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.NOT_STARTED);
         verifyNoInteractions(ai);
     }
 

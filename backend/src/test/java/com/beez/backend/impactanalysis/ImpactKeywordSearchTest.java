@@ -11,7 +11,7 @@ class ImpactKeywordSearchTest {
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
     private ImpactContextQuery.Change change(String operation, String content) {
-        return new ImpactContextQuery.Change(1, operation, null, null, "API_CONTRACT", content, NOW);
+        return new ImpactContextQuery.Change(0, operation, null, null, "API_CONTRACT", null, content, NOW);
     }
 
     @Test
