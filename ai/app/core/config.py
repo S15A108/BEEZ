@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     gms_key: SecretStr | None = None
     ai_internal_token: SecretStr | None = None
+    validation_response_format: Literal["json_object", "json_schema"] = "json_object"
     gms_embedding_model: Literal["text-embedding-3-small"] = "text-embedding-3-small"
     gms_embedding_dimension: int = Field(default=1024, ge=1, le=1536)
     # Generation is implemented separately; no automatic fallback call in #129.

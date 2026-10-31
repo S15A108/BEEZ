@@ -84,6 +84,11 @@ logging:
     com.beez: INFO
 
 beez:
+  validation:
+    # Must match the LLM provider configured by the AI service; used for usage attribution.
+    provider: ${VALIDATION_PROVIDER:gms}
+    worker-enabled: ${VALIDATION_WORKER_ENABLED:true}
+    poll-millis: ${VALIDATION_POLL_MILLIS:2000}
   document:
     object-storage:
       endpoint: ${DOCUMENT_S3_ENDPOINT:}
