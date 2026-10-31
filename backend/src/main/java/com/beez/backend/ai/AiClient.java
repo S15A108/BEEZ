@@ -60,6 +60,12 @@ public class AiClient {
         return rest.post().uri("/v1/embeddings").body(input).retrieve().body(java.util.Map.class);
     }
 
+    /** Analyze a proposal; callers must retain the usage envelope and handle failures explicitly. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> changeImpact(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /** BE adapter contract; AI feature implementation belongs to the AI owner. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {

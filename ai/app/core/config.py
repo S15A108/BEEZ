@@ -21,6 +21,20 @@ class Settings(BaseSettings):
     bee_default_model: Literal["gpt-6-luna"] = "gpt-6-luna"
     bee_complex_model: Literal["gpt-6.1-sol"] = "gpt-6.1-sol"
 
+    # Impact analysis has its own opt-in provider configuration. No network
+    # call is made when any required value is absent.
+    impact_llm_endpoint: str | None = None
+    impact_llm_api_key: SecretStr | None = None
+    impact_llm_model: str | None = None
+    # Parse per feature so a bad impact-only setting cannot disable retrieval.
+    impact_llm_timeout_seconds: str = "15"
+    impact_llm_allowed_response_models: str = ""
+    impact_llm_output_token_limit: str = "1024"
+    impact_llm_output_token_parameter: str = "max_completion_tokens"
+    impact_llm_response_format: str = "json_object"
+    impact_max_body_bytes: str = "262144"
+    impact_max_items_per_list: str = "100"
+
 
 @lru_cache
 def get_settings() -> Settings:
