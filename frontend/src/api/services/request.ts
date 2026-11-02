@@ -113,11 +113,15 @@ export async function callEndpoint<S extends z.ZodType>(
     // 결과가 확정된 실패는 키를 버려 다음 시도가 새 키로 다시 실행되게 한다. 입력·권한 오류(4xx)와, 서버가 오류 코드로
     // 실패를 알려 준 5xx(ai_unavailable 등)가 그렇다. 서버는 실패한 키를 다시 실행하지 않는다(PR #72 리뷰).
     // 응답을 못 받았거나 본문 없는 5xx(게이트웨이 등)는 처리됐는지 알 수 없어 같은 키로 재확인한다.
+    // 다만 '아직 처리 중'(409 review_in_progress)은 실패가 아니라 키를 남겨 같은 키로 결과를 다시 확인한다. 새 키로 보내면
+    // 서버가 같은 리비전을 다시 검토해 AI 검토가 두 번 돈다(PR #72 5차 조사 FIFTH-DOC-01).
     const response = isAxiosError(error) ? error.response : undefined
+    const body = apiErrorSchema.safeParse(response?.data)
     const decided =
       !!response &&
       response.status >= 400 &&
-      (response.status < 500 || apiErrorSchema.safeParse(response.data).success)
+      (response.status < 500 || body.success) &&
+      body.data?.error.code !== 'review_in_progress'
     if (fingerprint && decided) unresolvedRequests.delete(fingerprint)
     throw error
   }

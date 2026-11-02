@@ -116,6 +116,41 @@ describe('명세 REST 교환', () => {
     expect(keys[2]).toBe(keys[1])
   })
 
+  // PR #72 5차 조사 FIFTH-DOC-01: 비비 검토가 아직 도는 중(409 review_in_progress)이면 키를 지우지 않고 같은 키로 다시 확인한다.
+  // 다른 409처럼 실패가 확정된 경우는 그대로 새 키를 쓴다.
+  it('검토가 진행 중이라는 409 뒤에는 같은 키로 다시 확인하고, 확정된 409 뒤에는 새 키를 쓴다', async () => {
+    const keys: string[] = []
+    const failures = [
+      { status: 409, code: 'review_in_progress' },
+      { status: 409, code: 'version_conflict' },
+    ]
+    api.defaults.adapter = async (config) => {
+      keys.push(String(config.headers.get('Idempotency-Key')))
+      const failure = failures.shift()
+      if (failure)
+        throw new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+          config,
+          data: { error: { code: failure.code, message: '' } },
+          status: failure.status,
+          statusText: 'Conflict',
+          headers: new AxiosHeaders(),
+        })
+      return {
+        config,
+        data: project,
+        status: 201,
+        statusText: 'Created',
+        headers: new AxiosHeaders(),
+      }
+    }
+    const create = () => projectsApi.create({ name: '검토 진행 중 재확인' })
+    await expect(create()).rejects.toBeInstanceOf(AxiosError)
+    await expect(create()).rejects.toBeInstanceOf(AxiosError)
+    await create()
+    expect(keys[1]).toBe(keys[0])
+    expect(keys[2]).not.toBe(keys[1])
+  })
+
   it('문자열 BIGINT와 선택 필드 생략을 유지하며 페이지의 중첩 DTO까지 검증한다', async () => {
     respond({ items: [project], has_more: false })
     const result = await projectsApi.list({ limit: 20 })
