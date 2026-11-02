@@ -340,72 +340,82 @@ public class ValidationRepository {
             return;
         }
         for (Object value : entries) {
-            if (!(value instanceof Map<?, ?> raw)) {
-                continue;
+            try {
+                recordUsageEntry(runId, value, fallbackLatencyMs);
+            } catch (RuntimeException e) {
+                // 값 거르기에서 미처 못 잡은 예외(수치 변환 등)도 실행 종결을 막지 않는다. DB 오류는 insertIsolated 가 따로 되돌린다
+                log.warn("validation run {} usage entry skipped (unexpected value): {} — {}", runId, value, e.toString());
             }
-            Map<String, Object> entry = new LinkedHashMap<>();
-            for (Map.Entry<?, ?> e : raw.entrySet()) {
-                entry.put(String.valueOf(e.getKey()), e.getValue());
-            }
-            Object key = entry.get("request_key");
-            if (!(key instanceof String k) || k.isBlank()) {
-                log.warn("validation run {} usage entry skipped (request_key missing): {}", runId, entry);
-                continue;
-            }
-            String model = null;
-            if (entry.get("model") instanceof String m && !m.isBlank()) {
-                model = m;
-            }
-            boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
-            Integer input = null;
-            Integer output = null;
-            if (known) {
-                input = nonNegativeInt(entry.get("input_tokens"));
-                output = nonNegativeInt(entry.get("output_tokens"));
-            }
-            Integer latency = nonNegativeInt(entry.get("latency_ms"));
-            if (latency == null) {
-                latency = (int) Math.min(Integer.MAX_VALUE, Math.max(0, fallbackLatencyMs));
-            }
-            String feature = "TASK_VALIDATION";
-            if (entry.get("feature") instanceof String f && USAGE_FEATURES.contains(f)) {
-                feature = f;
-            }
-            String provider = "unspecified";
-            if (entry.get("provider") instanceof String pv && !pv.isBlank()) {
-                provider = pv;
-            }
-            BigDecimal cost = null;
-            String currency = null;
-            if (entry.get("estimated_cost_amount") != null && entry.get("currency") instanceof String cur && !cur.isBlank()) {
-                cost = costAmount(entry.get("estimated_cost_amount"));
-                if (cost == null) {
-                    log.warn("validation run {} usage {}: estimated_cost_amount not a valid amount, stored without cost: {}", runId, k,
-                            entry.get("estimated_cost_amount"));
-                } else {
-                    currency = cur;
-                }
-            }
-            JdbcClient.StatementSpec insert = jdbc.sql("""
-                            insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
-                                                   tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
-                                                   estimated_cost_amount, currency, failed, origin)
-                            select t.project_id, :feature, :key, v.task_id, r.id, :provider, coalesce(:model, r.analyzer_version),
-                                   :known, :input, :output, :cache, :latency, :cost, :currency, :failed, 'model'
-                              from validation_run r
-                              join validation v on v.id = r.validation_id
-                              join task t on t.id = v.task_id
-                             where r.id = :run
-                               and coalesce(:model, r.analyzer_version) is not null
-                            on conflict (request_key) do nothing
-                            """)
-                    .param("feature", feature).param("key", k).param("provider", provider).param("model", model, Types.VARCHAR)
-                    .param("known", known).param("input", input, Types.INTEGER).param("output", output, Types.INTEGER)
-                    .param("cache", nonNegativeInt(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
-                    .param("cost", cost, Types.NUMERIC).param("currency", currency, Types.VARCHAR)
-                    .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("run", runId);
-            insertIsolated(runId, k, insert);
         }
+    }
+
+    /** 사용량 한 항목을 거르고 넣는다. 틀린 칸은 비우고, 항목 자체가 못 쓸 것이면 경고만 */
+    private void recordUsageEntry(long runId, Object value, long fallbackLatencyMs) {
+        if (!(value instanceof Map<?, ?> raw)) {
+            return;
+        }
+        Map<String, Object> entry = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            entry.put(String.valueOf(e.getKey()), e.getValue());
+        }
+        Object key = entry.get("request_key");
+        if (!(key instanceof String k) || k.isBlank()) {
+            log.warn("validation run {} usage entry skipped (request_key missing): {}", runId, entry);
+            return;
+        }
+        String model = null;
+        if (entry.get("model") instanceof String m && !m.isBlank()) {
+            model = m;
+        }
+        boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
+        Integer input = null;
+        Integer output = null;
+        if (known) {
+            input = nonNegativeInt(entry.get("input_tokens"));
+            output = nonNegativeInt(entry.get("output_tokens"));
+        }
+        Integer latency = nonNegativeInt(entry.get("latency_ms"));
+        if (latency == null) {
+            latency = (int) Math.min(Integer.MAX_VALUE, Math.max(0, fallbackLatencyMs));
+        }
+        String feature = "TASK_VALIDATION";
+        if (entry.get("feature") instanceof String f && USAGE_FEATURES.contains(f)) {
+            feature = f;
+        }
+        String provider = "unspecified";
+        if (entry.get("provider") instanceof String pv && !pv.isBlank()) {
+            provider = pv;
+        }
+        BigDecimal cost = null;
+        String currency = null;
+        if (entry.get("estimated_cost_amount") != null && entry.get("currency") instanceof String cur && !cur.isBlank()) {
+            cost = costAmount(entry.get("estimated_cost_amount"));
+            if (cost == null) {
+                log.warn("validation run {} usage {}: estimated_cost_amount not a valid amount, stored without cost: {}", runId, k,
+                        entry.get("estimated_cost_amount"));
+            } else {
+                currency = cur;
+            }
+        }
+        JdbcClient.StatementSpec insert = jdbc.sql("""
+                        insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
+                                               tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
+                                               estimated_cost_amount, currency, failed, origin)
+                        select t.project_id, :feature, :key, v.task_id, r.id, :provider, coalesce(:model, r.analyzer_version),
+                               :known, :input, :output, :cache, :latency, :cost, :currency, :failed, 'model'
+                          from validation_run r
+                          join validation v on v.id = r.validation_id
+                          join task t on t.id = v.task_id
+                         where r.id = :run
+                           and coalesce(:model, r.analyzer_version) is not null
+                        on conflict (request_key) do nothing
+                        """)
+                .param("feature", feature).param("key", k).param("provider", provider).param("model", model, Types.VARCHAR)
+                .param("known", known).param("input", input, Types.INTEGER).param("output", output, Types.INTEGER)
+                .param("cache", nonNegativeInt(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
+                .param("cost", cost, Types.NUMERIC).param("currency", currency, Types.VARCHAR)
+                .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("run", runId);
+        insertIsolated(runId, k, insert);
     }
 
     /**
@@ -430,36 +440,38 @@ public class ValidationRepository {
         }
     }
 
-    /** 0 이상의 int 로 읽을 수 있으면 그 값, 아니면 null (문자열 숫자도 받는다. 소수·음수·int 범위 밖·글자는 null) */
+    private static final BigDecimal INT_MAX = BigDecimal.valueOf(Integer.MAX_VALUE);
+    private static final BigDecimal COST_MAX = new BigDecimal("999999.999999");
+    private static final BigDecimal COST_HALF_UNIT = new BigDecimal("0.0000005");
+
+    /**
+     * 0 이상의 int 로 읽을 수 있으면 그 값, 아니면 null (문자열 숫자도 받는다. 소수·음수·int 범위 밖·글자는 null).
+     * 자르지 않고 비교한다 — 아주 큰 정수(JSON 에서 BigInteger 로 옴)를 long 으로 바꾸면 윗자리가 잘려 범위 검사를 통과할 수 있다
+     */
     static Integer nonNegativeInt(Object value) {
         if (value == null) {
             return null;
         }
-        long parsed;
-        if (value instanceof Number n) {
-            if (n instanceof Double || n instanceof Float || n instanceof BigDecimal) {
-                BigDecimal d = new BigDecimal(n.toString());
-                if (d.stripTrailingZeros().scale() > 0) {
-                    return null;
-                }
-                parsed = d.longValue();
-            } else {
-                parsed = n.longValue();
-            }
-        } else {
-            try {
-                parsed = Long.parseLong(String.valueOf(value).trim());
-            } catch (NumberFormatException e) {
-                return null;
-            }
-        }
-        if (parsed < 0 || parsed > Integer.MAX_VALUE) {
+        BigDecimal d;
+        try {
+            d = new BigDecimal(String.valueOf(value).trim());      // Number 든 문자열이든 10진 표기를 그대로 읽는다 (잘림 없음)
+        } catch (NumberFormatException e) {
             return null;
         }
-        return (int) parsed;
+        if (d.signum() < 0 || d.compareTo(INT_MAX) > 0) {
+            return null;
+        }
+        try {
+            return d.intValueExact();                                // 소수 부분이 있으면 ArithmeticException → null
+        } catch (ArithmeticException e) {
+            return null;
+        }
     }
 
-    /** 명세 Usage.estimated_cost_amount(문자열)를 llm_usage NUMERIC(12,6) 에 넣을 수 있는 값으로. 숫자가 아니거나 음수·범위 밖이면 null */
+    /**
+     * 명세 Usage.estimated_cost_amount(문자열)를 llm_usage NUMERIC(12,6) 에 넣을 수 있는 값으로. 숫자가 아니거나 음수·범위 밖이면 null.
+     * 자릿수 맞추기(setScale) 전에 범위를 본다 — 지수가 큰 값(1e2147483647)은 자릿수를 맞추려는 순간 예외가 난다
+     */
     static BigDecimal costAmount(Object value) {
         BigDecimal amount;
         try {
@@ -467,15 +479,21 @@ public class ValidationRepository {
         } catch (NumberFormatException e) {
             return null;
         }
-        if (amount.signum() < 0) {
+        if (amount.signum() < 0 || amount.compareTo(COST_MAX) > 0) {
             return null;
         }
-        // 소수 6자리로 맞추고(반올림), 정수부가 6자리를 넘으면 칸에 안 들어간다
-        BigDecimal scaled = amount.setScale(6, java.math.RoundingMode.HALF_UP);
-        if (scaled.compareTo(new BigDecimal("999999.999999")) > 0) {
-            return null;
+        if (amount.compareTo(COST_HALF_UNIT) < 0) {
+            return BigDecimal.ZERO.setScale(6);        // 반올림하면 0 인 값. 지수가 아주 작은 값(1e-2147483647)을 나누기 전에 거른다
         }
-        return scaled;
+        try {
+            BigDecimal scaled = amount.setScale(6, java.math.RoundingMode.HALF_UP);   // 소수 6자리로 (반올림)
+            if (scaled.compareTo(COST_MAX) > 0) {
+                return null;                                                           // 반올림으로 상한을 넘은 경우
+            }
+            return scaled;
+        } catch (ArithmeticException e) {
+            return null;                                                               // 매우 작은 지수(1e-2147483647) 등
+        }
     }
 
     // ---- 작업 큐(job) ----

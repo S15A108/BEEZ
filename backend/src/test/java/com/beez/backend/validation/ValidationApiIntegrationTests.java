@@ -397,12 +397,20 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
             Map<String, Object> goodCost = usageEntry("llm-validate-x-attempt-1-call-3", 1, 2);
             goodCost.put("estimated_cost_amount", "0.0123456789");
             goodCost.put("currency", "USD");
-            res.put("usage", List.of(badCost, hugeCost, goodCost));
+            Map<String, Object> extreme = usageEntry("llm-validate-x-attempt-1-call-4", 1, 2);
+            extreme.put("estimated_cost_amount", "1e2147483647");              // 자릿수를 맞추다 예외가 나는 값
+            extreme.put("currency", "USD");
+            extreme.put("input_tokens", new java.math.BigInteger("18446744073709551617"));   // long 으로 자르면 1 이 되는 값
+            res.put("usage", List.of(badCost, hugeCost, goodCost, extreme));
             return res;
         });
         worker.runOnce();
         assertThat(column("validation", "status", id)).isEqualTo("PASS");
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
+        Map<String, Object> extreme = usageRow("llm-validate-x-attempt-1-call-4");
+        assertThat(extreme).isNotNull();
+        assertThat(extreme.get("estimated_cost_amount")).isNull();
+        assertThat(extreme.get("input_tokens")).isNull();                    // 1 로 잘려 적히지 않는다
         assertThat(usageRow("llm-validate-x-attempt-1-call-1").get("estimated_cost_amount")).isNull();
         assertThat(usageRow("llm-validate-x-attempt-1-call-1").get("currency")).isNull();
         Map<String, Object> huge = usageRow("llm-validate-x-attempt-1-call-2");

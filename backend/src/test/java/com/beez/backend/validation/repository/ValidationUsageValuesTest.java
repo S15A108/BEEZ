@@ -20,6 +20,11 @@ class ValidationUsageValuesTest {
         assertThat(ValidationRepository.nonNegativeInt(2.5)).isNull();
         assertThat(ValidationRepository.nonNegativeInt("abc")).isNull();
         assertThat(ValidationRepository.nonNegativeInt(1L + Integer.MAX_VALUE)).isNull();   // int 칸 범위 밖
+        // 아주 큰 정수(JSON 의 BigInteger)는 long 으로 자르면 1 이 돼 범위 검사를 통과한다 — 잘리지 않고 걸러져야 한다
+        assertThat(ValidationRepository.nonNegativeInt(java.math.BigInteger.TWO.pow(64).add(java.math.BigInteger.ONE))).isNull();
+        assertThat(ValidationRepository.nonNegativeInt("18446744073709551617")).isNull();
+        assertThat(ValidationRepository.nonNegativeInt(1.0E10)).isNull();
+        assertThat(ValidationRepository.nonNegativeInt(Double.NaN)).isNull();
     }
 
     @Test
@@ -32,5 +37,10 @@ class ValidationUsageValuesTest {
         assertThat(ValidationRepository.costAmount("-0.1")).isNull();
         assertThat(ValidationRepository.costAmount("free")).isNull();
         assertThat(ValidationRepository.costAmount("1e3")).isEqualByComparingTo(new BigDecimal("1000"));
+        // 지수가 극단적인 값은 자릿수를 맞추다 예외가 나거나 메모리를 다 쓴다 — 그 전에 걸러야 한다
+        assertThat(ValidationRepository.costAmount("1e2147483647")).isNull();
+        assertThat(ValidationRepository.costAmount("1e-2147483647")).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(ValidationRepository.costAmount("999999.9999996")).isNull();   // 반올림하면 상한을 넘는다
+        assertThat(ValidationRepository.costAmount("0.0000004")).isEqualByComparingTo(BigDecimal.ZERO);
     }
 }
