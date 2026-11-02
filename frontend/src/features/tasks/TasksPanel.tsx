@@ -35,6 +35,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { PaneSheet, SheetSubmit } from '@/components/PaneSheet'
 import {
   DropdownMenu,
@@ -242,8 +243,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   return (
     <section className="space-y-6">
       {/* 창 머리에 이미 '작업 현황'이 있어 안쪽 제목을 두지 않고, 설명 문구도 캔버스 PNL-05-v2-tasks(v461 이후)처럼 뺀다.
-          머리 버튼은 모든 작업 현황 화면에서 노란 '+ 작업 계획' 하나(PNL-05 수정안 10-29). */}
-      <header className="flex justify-end">
+          노란 '+ 작업 계획' 하나는 캔버스처럼 창 머리 줄에 둔다(PNL-05 수정안 10-29). */}
+      <PaneHeaderAction>
         <Button
           onClick={() => {
             setFormTask(undefined)
@@ -253,7 +254,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           <Plus />
           작업 계획
         </Button>
-      </header>
+      </PaneHeaderAction>
       {action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
