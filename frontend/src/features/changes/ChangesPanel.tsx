@@ -1309,61 +1309,56 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         </div>
                       )}
                     </div>
-                    {mine &&
-                      (editable || current.status === 'REJECTED') &&
-                      !isLeader && (
-                        <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
-                          {withdrawing ? (
-                            <>
-                              <span className="mr-auto text-sm">
-                                제안을 거둘까요? 거둔 제안은 다시 고칠 수 없고,
-                                다시 올리면 새 제안이 돼요.
-                              </span>
-                              <Button
-                                variant="outline"
-                                onClick={() => setWithdrawing(false)}
-                              >
-                                취소
-                              </Button>
-                              {/* CHG-A15 거두기(PR #46): 올렸거나 반려된 내 제안만 */}
-                              <Button
-                                variant="destructive"
-                                disabled={action.busy}
-                                onClick={() =>
-                                  void perform(
-                                    () =>
-                                      changesApi.withdraw(
-                                        projectId,
-                                        current.id,
-                                        {
-                                          expected_revision: current.revision,
-                                          expected_snapshot_hash:
-                                            current.snapshot_hash,
-                                        },
-                                      ),
-                                    '제안을 거뒀어요.',
-                                  ).then(() => setWithdrawing(false))
-                                }
-                              >
-                                거두기
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="mr-auto text-xs text-muted-foreground">
-                                올린 제안은 잠겨 있어요. 거두면 이 제안은
-                                끝나고, 다시 올리면 새 제안이 돼요.
-                              </span>
-                              <Button
-                                variant="outline"
-                                onClick={() => setWithdrawing(true)}
-                              >
-                                제안 거두기
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      )}
+                    {/* 서버는 팀장이어도 작성자면 거두게 한다(PR #72 5차 조사 FIFTH-DOC-02). */}
+                    {mine && (editable || current.status === 'REJECTED') && (
+                      <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
+                        {withdrawing ? (
+                          <>
+                            <span className="mr-auto text-sm">
+                              제안을 거둘까요? 거둔 제안은 다시 고칠 수 없고,
+                              다시 올리면 새 제안이 돼요.
+                            </span>
+                            <Button
+                              variant="outline"
+                              onClick={() => setWithdrawing(false)}
+                            >
+                              취소
+                            </Button>
+                            {/* CHG-A15 거두기(PR #46): 올렸거나 반려된 내 제안만 */}
+                            <Button
+                              variant="destructive"
+                              disabled={action.busy}
+                              onClick={() =>
+                                void perform(
+                                  () =>
+                                    changesApi.withdraw(projectId, current.id, {
+                                      expected_revision: current.revision,
+                                      expected_snapshot_hash:
+                                        current.snapshot_hash,
+                                    }),
+                                  '제안을 거뒀어요.',
+                                ).then(() => setWithdrawing(false))
+                              }
+                            >
+                              거두기
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="mr-auto text-xs text-muted-foreground">
+                              올린 제안은 잠겨 있어요. 거두면 이 제안은 끝나고,
+                              다시 올리면 새 제안이 돼요.
+                            </span>
+                            <Button
+                              variant="outline"
+                              onClick={() => setWithdrawing(true)}
+                            >
+                              제안 거두기
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {isLeader && editable && (
                       <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
                         {current.requires_refresh && (

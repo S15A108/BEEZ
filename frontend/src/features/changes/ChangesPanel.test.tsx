@@ -438,3 +438,36 @@ it('제목만 고쳐 다시 올려도 관련 작업이 그대로면 검증 연�
     validation_id: '601',
   })
 })
+
+// PR #72 5차 조사 FIFTH-DOC-02: 서버는 작성자면 거두게 한다. 팀장도 본인 제안은 거둘 수 있다.
+it('팀장도 본인이 올린 제안을 거둔다', async () => {
+  const user = userEvent.setup()
+  const baselineId = (await documentsApi.baseline('101')).id
+  const document = (await documentsApi.list('101', { limit: 100 })).items.find(
+    (item) => item.approved_version,
+  )!
+  const created = await changesApi.create('101', {
+    base_baseline_id: baselineId,
+    title: '팀장이 올린 제안',
+    reason: '직접 고칠 곳이 있어요.',
+    items: [],
+    documents: [
+      {
+        document_id: document.id,
+        base_document_version_id: document.approved_version!.id,
+        after_content: `${document.approved_version!.content ?? ''}
+고친 줄`,
+      },
+    ],
+  })
+  renderPanel()
+  await user.click(await screen.findByText('팀장이 올린 제안'))
+  await user.click(await screen.findByRole('button', { name: '제안 거두기' }))
+  await user.click(screen.getByRole('button', { name: '거두기' }))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '제안을 거뒀어요.',
+  )
+  expect((await changesApi.get('101', created.id)).proposal.status).toBe(
+    'WITHDRAWN',
+  )
+})
