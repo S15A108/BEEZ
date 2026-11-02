@@ -11,6 +11,7 @@ import com.beez.backend.task.entity.Task;
 import com.beez.backend.task.entity.TaskPlanDesignRef;
 import com.beez.backend.task.entity.TaskPlanRevision;
 import com.beez.backend.task.entity.TaskStatus;
+import com.beez.backend.task.entity.WaitingReason;
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.task.repository.TaskRepository;
@@ -149,7 +150,15 @@ public class TaskQueryService {
             }
         }
         String validationStatus = validationLookup.latestStatus(task.getId(), task.getCurrentPlanRevisionId());
-        return TaskDetailResponse.of(task, current, validationStatus);
+        return TaskDetailResponse.of(task, current, validationStatus, deltaValidationIdOf(task));
+    }
+
+    /** delta 완료 보고로 재검증을 기다리는 동안만 DELTA 검증 번호를 넣는다 (명세 TaskDetail.delta_validation_id) */
+    private Long deltaValidationIdOf(Task task) {
+        if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
+            return null;
+        }
+        return validationLookup.latestDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId());
     }
 
     /** 목록용: 리비전·참조·검증 상태를 각각 한 번씩만 조회한다 (N+1 방지) */
@@ -182,7 +191,7 @@ public class TaskQueryService {
             if (vs == null) {
                 vs = ValidationStatusLookup.NOT_RUN;
             }
-            result.add(TaskDetailResponse.of(t, current, vs));
+            result.add(TaskDetailResponse.of(t, current, vs, deltaValidationIdOf(t)));
         }
         return result;
     }

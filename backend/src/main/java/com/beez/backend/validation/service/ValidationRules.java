@@ -41,9 +41,11 @@ public class ValidationRules {
     }
 
     /**
+     * @param baselineId  참조 버전을 대조할 기준 설계. 보통 현재 기준이지만, 설계 발행 트랜잭션 안에서는 아직 현재 포인터가 되기 전인
+     *                    새 기준을 받는다 (-163 재접수)
      * @param relatedOpen 같은 항목을 보는 열린 다른 작업 (행: task_id, plan_revision_id, status, design_item_id, relation)
      */
-    public RuleOutcome evaluate(Long projectId, TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
+    public RuleOutcome evaluate(Long projectId, Long baselineId, TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
                                 List<Map<String, Object>> relatedOpen) {
         List<FindingRow> findings = new ArrayList<>();
         boolean needsInput = false;
@@ -55,7 +57,7 @@ public class ValidationRules {
             if (ref.getRelation() == PlanRelation.CHANGES) {
                 hasChanges = true;
             }
-            Optional<Long> current = designLookup.currentVersionIdOf(projectId, ref.getDesignItemId());
+            Optional<Long> current = designLookup.versionIdIn(projectId, baselineId, ref.getDesignItemId());
             if (current.isEmpty()) {
                 findings.add(FindingRow.rule("STALE_REF", "BLOCKING", ref.getDesignItemId(), ref.getDesignItemVersionId(), null,
                         "참조한 설계 항목이 현재 기준 설계에 없습니다 (폐기되었거나 모르는 항목)", "FIX_PLAN",

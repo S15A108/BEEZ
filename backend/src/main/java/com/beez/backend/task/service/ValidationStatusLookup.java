@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component;
  * 검증 테이블을 읽고(현재 계획의 검증 상태) 무효화(STALE)하는 작은 도우미.
  * 검증 엔티티와 실행 로직은 S15P31A108-59 에서 만든다. 여기서는 TaskDetail.validation_status 계산과 무효화만 한다.
  * 무효화는 세 갈래다 — 진행 중 계획 변경(S2, {@link #markStaleForTask}: 끝난 검증만), 작업 취소({@link #invalidateAllForTask}),
- * 담당자 인계(S5, {@link #invalidateForReassign}: DELTA 제외). 뒤의 둘은 계획 리비전이 그대로라 도는 검증과 대기 job 까지 막는다.
+ * 담당자 인계(S5, {@link #invalidateForReassign}: DELTA 제외), 설계 발행(S1, {@link #invalidateByIds}: 지목한 검증).
+ * 뒤의 셋은 계획 리비전이 그대로라 도는 검증과 대기 job 까지 막는다.
  */
 @Component
 public class ValidationStatusLookup {
@@ -51,6 +52,20 @@ public class ValidationStatusLookup {
                 .query(String.class)
                 .optional()
                 .orElse(NOT_RUN);
+    }
+
+    /** (작업, 계획 리비전) 의 가장 최근 DELTA 검증 번호. 없으면 null */
+    public Long latestDeltaValidationId(Long taskId, Long planRevisionId) {
+        if (planRevisionId == null) {
+            return null;
+        }
+        return jdbc.sql("""
+                        select id from validation
+                         where task_id = :taskId and plan_revision_id = :revisionId and trigger = 'DELTA'
+                         order by id desc limit 1
+                        """)
+                .param("taskId", taskId).param("revisionId", planRevisionId)
+                .query(Long.class).optional().orElse(null);
     }
 
     /**
@@ -130,6 +145,47 @@ public class ValidationStatusLookup {
      */
     public void invalidateForReassign(Long taskId, String reason) {
         invalidate(taskId, reason, REASSIGN_TRIGGERS);
+    }
+
+    /**
+     * 설계 발행(S1, -163). 번호로 지목한 검증을 trigger 와 관계없이 쓸 수 없게 한다 — 끝난 것·도는 것·대기 중인 것 모두.
+     * 범위는 {@link #invalidate} 와 같다 (대기 job 취소, STALE, 열린 실행 DISCARDED). 이미 STALE·ERROR 인 것은 그대로.
+     *
+     * @return STALE 로 바뀐 행 수
+     */
+    public int invalidateByIds(List<Long> validationIds, String reason) {
+        if (validationIds.isEmpty()) {
+            return 0;
+        }
+        jdbc.sql("""
+                        update validation_job
+                           set status = 'CANCELLED', lease_token = null, lease_until = null, updated_at = now()
+                         where validation_id in (:ids)
+                           and status in ('QUEUED', 'LEASED')
+                        """)
+                .param("ids", validationIds)
+                .update();
+        int changed = jdbc.sql("""
+                        update validation
+                           set status = 'STALE', stale_reason = :reason, updated_at = now()
+                         where id in (:ids)
+                           and status in ('NOT_RUN', 'RUNNING', 'PASS', 'NEEDS_INPUT', 'NEEDS_REVIEW')
+                        """)
+                .param("ids", validationIds)
+                .param("reason", reason)
+                .update();
+        jdbc.sql("""
+                        update validation_run r
+                           set status = 'DISCARDED', error = '검증 무효화', finished_at = now(), updated_at = now()
+                          from validation v
+                         where r.validation_id = v.id
+                           and v.id in (:ids)
+                           and v.status = 'STALE'
+                           and r.status = 'RUNNING'
+                        """)
+                .param("ids", validationIds)
+                .update();
+        return changed;
     }
 
     /**

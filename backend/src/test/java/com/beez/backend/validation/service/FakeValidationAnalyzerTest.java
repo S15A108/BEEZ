@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
+import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.validation.repository.ValidationRepository;
 import java.util.LinkedHashMap;
@@ -45,7 +46,7 @@ class FakeValidationAnalyzerTest {
 
         AnalysisResultApplier applier = new AnalysisResultApplier(mock(ValidationRepository.class),
                 mock(ValidationResponses.class), mock(ProjectDesignLookup.class), mock(ValidationRules.class),
-                mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class));
+                mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class), mock(DeltaCompletion.class));
         assertThat(applier.contractViolation(request, response)).isNull();
     }
 }

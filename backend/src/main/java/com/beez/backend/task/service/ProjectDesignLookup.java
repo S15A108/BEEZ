@@ -65,6 +65,24 @@ public class ProjectDesignLookup {
                 .optional();
     }
 
+    /**
+     * 지정한 baseline 에서 설계 항목의 버전 id. 현재 포인터 대신 번호를 받는 이유: 설계 발행 트랜잭션 안(현재 포인터를 새 기준으로
+     * 바꾸기 전)에서 새 기준으로 규칙을 돌려야 하는 곳(-163 재접수)이 있다. 폐기된 항목은 없는 것으로 본다.
+     */
+    public Optional<Long> versionIdIn(Long projectId, Long baselineId, Long designItemId) {
+        return jdbc.sql("""
+                        select bi.design_item_version_id
+                          from baseline_item bi
+                          join design_item di on di.id = bi.design_item_id and di.project_id = :projectId
+                         where bi.baseline_id = :baselineId
+                           and bi.design_item_id = :itemId
+                           and di.retired_at is null
+                        """)
+                .param("projectId", projectId).param("baselineId", baselineId).param("itemId", designItemId)
+                .query(Long.class)
+                .optional();
+    }
+
     /** baseline 이 한 번도 발행되지 않은 프로젝트면 409 baseline_missing (명세 VAL-A01 와 같은 코드) */
     public Long requireCurrentBaseline(Long projectId) {
         Optional<Long> baseline = currentBaselineId(projectId);

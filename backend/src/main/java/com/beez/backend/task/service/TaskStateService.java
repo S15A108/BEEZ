@@ -17,6 +17,8 @@ import com.beez.backend.task.entity.WaitingReason;
 import com.beez.backend.task.event.TaskStateChangedEvent;
 import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.repository.TaskRepository;
+import com.beez.backend.validation.dto.AcceptResult;
+import com.beez.backend.validation.service.ValidationAcceptService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -60,6 +62,7 @@ public class TaskStateService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final ValidationStatusLookup validations;
+    private final ValidationAcceptService validationAccepts;
     private final Clock clock;
 
     /** 보고가 끊겼다고 보는 시간. 값은 미결(04-task-lifecycle.md §6) — 기본 30분, 설정 beez.task.stalled-after 로 바꾼다 */
@@ -68,7 +71,7 @@ public class TaskStateService {
     public TaskStateService(TaskRepository tasks, TaskCompletionReportRepository reports, ProjectAccessChecker access,
                             ProjectDesignLookup designLookup, TaskTransitionPolicy policy, StartGate startGate,
                             TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc,
-                            ValidationStatusLookup validations,
+                            ValidationStatusLookup validations, ValidationAcceptService validationAccepts,
                             @Value("${beez.task.stalled-after:PT30M}") Duration stalledAfter) {
         this.tasks = tasks;
         this.reports = reports;
@@ -80,6 +83,7 @@ public class TaskStateService {
         this.events = events;
         this.jdbc = jdbc;
         this.validations = validations;
+        this.validationAccepts = validationAccepts;
         this.clock = Clock.systemUTC();
         this.stalledAfter = stalledAfter;
     }
@@ -267,16 +271,24 @@ public class TaskStateService {
                 checks.add(row);
             }
         }
-        reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
-                checks, caller.agentTokenId()));
         if (delta.isEmpty()) {
+            reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
+                    checks, caller.agentTokenId()));
             task.complete(now);
-        } else {
-            // 계획과 다른 점이 있다 → 재검증 대기.
-            // -159 에서 바꿀 순서: DELTA 검증을 먼저 만들고 → 그 번호를 넣어 완료 보고를 저장한다.
-            // 완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다.
-            task.holdForRevalidation();
+            return;
         }
+        // 계획과 다른 점이 있다 → DELTA 검증을 먼저 접수하고(S3) 그 번호를 넣어 완료 보고를 저장한다
+        // (완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다). 같은 트랜잭션·같은 프로젝트 잠금 안이다
+        AcceptResult accepted = validationAccepts.acceptBySystem(task.getProjectId(), task, "DELTA");
+        long deltaValidationId = Long.parseLong(accepted.validation().id());
+        reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
+                checks, caller.agentTokenId(), deltaValidationId));
+        if (accepted.finished() && "PASS".equals(accepted.validation().status())) {
+            // 규칙만으로 바로 PASS (READS 만 참조하고 미연결 내용·관련 작업이 없음) → 기다릴 것이 없어 그 자리에서 완료 (S4)
+            task.complete(now);
+            return;
+        }
+        task.holdForRevalidation();
     }
 
     /**

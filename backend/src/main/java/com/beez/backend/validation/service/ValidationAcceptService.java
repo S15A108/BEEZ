@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
@@ -37,6 +38,10 @@ import tools.jackson.databind.ObjectMapper;
  *       만들어 202. 워커({@code ValidationWorker})가 큐에서 꺼내 AI 를 부른다</li>
  * </ol>
  * 조회(VAL-A02)는 새 실행을 만들지 않는다. 판정은 규칙이 내리고 AI 는 발견 후보만 더한다 (공통 6절).
+ *
+ * <p>서버가 스스로 접수하는 경우({@link #acceptBySystem}): delta 가 있는 완료 보고의 DELTA 검증(S3)과, 설계 발행으로 DELTA 검증이
+ * STALE 이 된 작업의 새 DELTA 검증(-163). 권한·잠금 번호 확인 없이, 호출자가 이미 프로젝트 행을 잠근 트랜잭션 안에서 같은 입력
+ * 고정·규칙 검사·큐 넣기를 한다.
  */
 @Service
 public class ValidationAcceptService {
@@ -90,12 +95,42 @@ public class ValidationAcceptService {
                             + ", lock_version=" + task.getLockVersion() + ")");
         }
 
+        return accept(projectId, task, planRevisionId, baselineId, "AGENT");
+    }
+
+    /**
+     * 서버가 접수하는 검증 (trigger=DELTA). 호출자가 프로젝트 행을 잠근 트랜잭션 안에서만 부른다 — 여기서 읽는 작업·기준이
+     * "지금" 값이어야 하고, 완료 보고 저장(S3)·설계 발행(S1)과 한 트랜잭션으로 묶여야 한다.
+     * 담당자·잠금 번호는 확인하지 않는다(사람 요청이 아니다). 현재 기준이 없으면 409 baseline_missing 그대로.
+     *
+     * @return 접수 결과. 규칙만으로 PASS 가 났으면 finished=true — 완료 보고(S3)는 이때 바로 COMPLETED(S4)로 간다
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public AcceptResult acceptBySystem(Long projectId, Task task, String trigger) {
+        return acceptBySystem(projectId, task, trigger, designLookup.requireCurrentBaseline(projectId));
+    }
+
+    /**
+     * @param baselineId 참조 버전을 대조하고 검증에 적을 기준. 설계 발행 트랜잭션 안에서는 현재 포인터가 아직 바뀌기 전이라
+     *                   발행 중인 새 기준 번호를 직접 받는다
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public AcceptResult acceptBySystem(Long projectId, Task task, String trigger, Long baselineId) {
+        if (!"DELTA".equals(trigger)) {
+            throw new IllegalArgumentException("서버 접수는 DELTA 만 지원합니다: " + trigger);
+        }
+        return accept(projectId, task, task.getCurrentPlanRevisionId(), baselineId, trigger);
+    }
+
+    /** 공통 접수: 입력 고정 → 규칙 검사 → 확정 또는 큐. 호출자가 권한·잠금·기준을 이미 확인했다 */
+    private AcceptResult accept(Long projectId, Task task, Long planRevisionId, Long baselineId, String trigger) {
+        Long taskId = task.getId();
         TaskPlanRevision plan = revisions.findByIdAndTaskId(planRevisionId, taskId)
                 .orElseThrow(() -> AccessErrors.notFound("plan_revision_missing revision=" + planRevisionId));
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(planRevisionId);
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(projectId, taskId, planRevisionId);
 
-        RuleOutcome outcome = rules.evaluate(projectId, plan, refs, relatedOpen);
+        RuleOutcome outcome = rules.evaluate(projectId, baselineId, plan, refs, relatedOpen);
         Map<Long, Long> relatedPlans = relatedPlans(relatedOpen);
         String inputHash = inputHash(planRevisionId, baselineId, refs, relatedPlans);
 
@@ -104,12 +139,12 @@ public class ValidationAcceptService {
         summary.put("rule_version", ValidationRules.RULE_VERSION);
         long validationId;
         if (finished) {
-            validationId = validations.insertValidation(taskId, planRevisionId, baselineId, outcome.decidedStatus(), "AGENT",
+            validationId = validations.insertValidation(taskId, planRevisionId, baselineId, outcome.decidedStatus(), trigger,
                     inputHash, ValidationRules.RULE_VERSION, 0, summary, true);
         } else {
             summary.put("checks", outcome.checks());
             summary.put("attempt", 1);
-            validationId = validations.insertValidation(taskId, planRevisionId, baselineId, "RUNNING", "AGENT",
+            validationId = validations.insertValidation(taskId, planRevisionId, baselineId, "RUNNING", trigger,
                     inputHash, ValidationRules.RULE_VERSION, 1, summary, false);
             // 시도 1 의 실행을 원문·검색 조회 전에 확보한다 (공통 "검증 실행 오류 규약"). 리스는 워커가 꺼낼 때 적는다
             validations.insertRun(validationId, 1, null, "RUNNING");

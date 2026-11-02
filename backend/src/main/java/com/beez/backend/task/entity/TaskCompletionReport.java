@@ -62,6 +62,14 @@ public class TaskCompletionReport extends BaseTimeEntity {
 
     public TaskCompletionReport(Long taskId, Long planRevisionId, List<Map<String, Object>> delta, String summary,
                                 List<Map<String, Object>> completionChecks, Long reportedByTokenId) {
+        this(taskId, planRevisionId, delta, summary, completionChecks, reportedByTokenId, null);
+    }
+
+    /**
+     * @param deltaValidationId delta 가 있을 때 먼저 접수한 DELTA 검증 번호 (S3). 이 표는 UPDATE 금지라 저장할 때 함께 넣어야 한다
+     */
+    public TaskCompletionReport(Long taskId, Long planRevisionId, List<Map<String, Object>> delta, String summary,
+                                List<Map<String, Object>> completionChecks, Long reportedByTokenId, Long deltaValidationId) {
         this.taskId = taskId;
         this.planRevisionId = planRevisionId;
         this.delta = delta;
@@ -69,5 +77,6 @@ public class TaskCompletionReport extends BaseTimeEntity {
         this.summary = summary;
         this.completionChecks = completionChecks;
         this.reportedByTokenId = reportedByTokenId;
+        this.deltaValidationId = deltaValidationId;
     }
 }
