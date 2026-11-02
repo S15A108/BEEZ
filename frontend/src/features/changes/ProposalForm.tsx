@@ -309,8 +309,15 @@ export function ProposalForm({
                 id="proposal-document"
                 aria-invalid={!!errors.document_id}
                 {...register('document_id', {
-                  onChange: () => {
-                    setValue('after_content', '')
+                  // 원래 제안에 있던 문서를 고르면 그 문서의 원래 수정안을, 아니면 빈칸에서 시작해 기준 원문을 받아
+                  // 채운다. 기준이 바뀐 문서는 새 기준 원문에서 다시 쓴다(PR #72 3차 조사 THIRD-DOC-01).
+                  onChange: (event: { target: { value: string } }) => {
+                    setValue(
+                      'after_content',
+                      sourceDocuments.find(
+                        (item) => item.id === event.target.value && !item.stale,
+                      )?.afterContent ?? '',
+                    )
                     setValue('base_content', undefined)
                     setValue('base_version_id', undefined)
                     setValue('latest_version_id', undefined)

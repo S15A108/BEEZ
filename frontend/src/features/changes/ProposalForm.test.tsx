@@ -227,3 +227,71 @@ it('고친 글을 기준 원문으로 되돌려 올리면 그 문서를 뺀 문�
     removed_document_id: '203',
   })
 })
+
+// PR #72 3차 조사 THIRD-DOC-01: 두 문서를 바꾼 제안을 다시 낼 때 고칠 문서를 두 번째로 바꾸면 그 문서의 원래 수정안을 채우고,
+// 원래 제안에 없던 문서를 고를 때만 기준 원문을 채운다.
+it('다시 내는 제안에서 고칠 문서를 바꾸면 원래 제안의 그 문서 수정안을 채운다', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const onSubmit = vi.fn().mockResolvedValue(undefined)
+  const originals: Record<string, Loaded> = {
+    '203': { content: '# 요구사항\n원문', versionId: '2031' },
+    '204': { content: '# API\n원문', versionId: '2041' },
+    '205': { content: '# ERD\n원문', versionId: '2051' },
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        heading="새 제안으로 다시 올리기"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[
+          { id: '203', label: '요구사항 명세서', versionId: '2031' },
+          { id: '204', label: 'API 명세서', versionId: '2041' },
+          { id: '205', label: 'ERD', versionId: '2051' },
+        ]}
+        sourceDocuments={[
+          {
+            id: '203',
+            title: '요구사항 명세서',
+            afterContent: '# 요구사항\n수정안',
+            stale: false,
+          },
+          {
+            id: '204',
+            title: 'API 명세서',
+            afterContent: '# API\n수정안',
+            stale: false,
+          },
+        ]}
+        fetchDocumentContent={(id) => Promise.resolve(originals[id])}
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '# 요구사항\n수정안',
+        }}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '204')
+  await waitFor(() => expect(text()).toHaveValue('# API\n수정안'))
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '205')
+  await waitFor(() => expect(text()).toHaveValue('# ERD\n원문'))
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '204')
+  await waitFor(() => expect(text()).toHaveValue('# API\n수정안'))
+  await user.type(text(), '\n보완한 줄')
+  await user.click(screen.getByRole('button', { name: '제안 올리기' }))
+  await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+  expect(onSubmit.mock.calls[0][0]).toMatchObject({
+    document_id: '204',
+    after_content: '# API\n수정안\n보완한 줄',
+    base_version_id: '2041',
+  })
+})
