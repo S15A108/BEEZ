@@ -54,7 +54,10 @@ public class ValidationStatusLookup {
                 .orElse(NOT_RUN);
     }
 
-    /** (작업, 계획 리비전) 의 가장 최근 DELTA 검증 번호. 없으면 null */
+    /**
+     * (작업, 계획 리비전) 의 가장 최근 DELTA 검증 번호(상태 무관). 없으면 null.
+     * "현재 계획의 가장 최근 DELTA" 는 S4 완료 조건·발행 뒤 재접수·TaskDetail.delta_validation_id 가 모두 같은 기준으로 봐야 해서 여기 한 곳에만 둔다
+     */
     public Long latestDeltaValidationId(Long taskId, Long planRevisionId) {
         if (planRevisionId == null) {
             return null;
@@ -66,6 +69,43 @@ public class ValidationStatusLookup {
                         """)
                 .param("taskId", taskId).param("revisionId", planRevisionId)
                 .query(Long.class).optional().orElse(null);
+    }
+
+    /** 여러 작업의 현재 계획 DELTA 검증 번호를 한 번에 (목록 조회, N+1 방지). key = task_id, 없는 작업은 빠진다 */
+    public Map<Long, Long> latestDeltaValidationIdByTask(List<Long> taskIds) {
+        Map<Long, Long> result = new HashMap<>();
+        if (taskIds.isEmpty()) {
+            return result;
+        }
+        List<Map<String, Object>> rows = jdbc.sql("""
+                        select distinct on (v.task_id) v.task_id, v.id
+                          from validation v
+                          join task t on t.id = v.task_id and t.current_plan_revision_id = v.plan_revision_id
+                         where v.task_id in (:ids) and v.trigger = 'DELTA'
+                         order by v.task_id, v.id desc
+                        """)
+                .param("ids", taskIds)
+                .query()
+                .listOfRows();
+        for (Map<String, Object> row : rows) {
+            result.put(((Number) row.get("task_id")).longValue(), ((Number) row.get("id")).longValue());
+        }
+        return result;
+    }
+
+    /** 검증 상태가 PASS 인가 (S4 완료 조건) */
+    public boolean isPass(Long validationId) {
+        return jdbc.sql("select count(*) from validation where id = :v and status = 'PASS'").param("v", validationId)
+                .query(Integer.class).single() > 0;
+    }
+
+    /**
+     * RESUME (04-task-lifecycle.md §2.3 출구 ①): delta 완료 보고를 거두고 다시 일하는 것이므로, 그 완료 보고를 기다리던 DELTA 검증은
+     * 끝났든 돌고 있든 쓸 수 없게 한다. 두지 않으면 다시 일하던 작업이 뒤늦게 도착한 옛 DELTA 의 PASS 로 완료될 수 있다
+     * (인계로 다시 WAITING(REVALIDATION) 이 된 뒤 등). 범위는 취소와 같이 대기 job 취소·열린 실행 DISCARDED 까지
+     */
+    public void invalidateDeltaOnResume(Long taskId) {
+        invalidate(taskId, "TASK_RESUMED", List.of("DELTA"));
     }
 
     /**

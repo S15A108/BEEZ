@@ -21,8 +21,8 @@ import org.springframework.stereotype.Component;
  *   <li>NEEDS_INPUT — 모르는 항목·버전(현재 기준에 없음), CHANGES 없음 + no_contract_change=false + unlinked 비어 있음,
  *       no_contract_change=true 인데 CHANGES 참조 있음. 계획 필수 칸은 등록 때 이미 검사한다</li>
  *   <li>NEEDS_REVIEW — 같은 항목을 CHANGES 하는 IN_PROGRESS·WAITING 작업이 있음 (CHANGES 점유 충돌)</li>
- *   <li>의미 분석 필요 — unlinked 가 있거나, CHANGES·IMPLEMENTS 참조가 있거나(승인 설계와 대조), 관련 열린 작업이 있음
- *       → 검사 목록(checks)을 만들어 RUNNING</li>
+ *   <li>의미 분석 필요 — unlinked 가 있거나, CHANGES·IMPLEMENTS 참조가 있거나(승인 설계와 대조), 관련 열린 작업이 있거나,
+ *       완료 delta 를 검사하는 DELTA 검증임 → 검사 목록(checks)을 만들어 RUNNING</li>
  *   <li>그 밖에는(READS 만 참조하고 unlinked·관련 작업이 없음) PASS</li>
  * </ul>
  * "구조화된 계약의 명확한 불일치"(CHANGES 의 proposed_content 와 승인 내용 비교)는 kind 별 content 스키마가 Q01 에서 정해진
@@ -32,7 +32,10 @@ import org.springframework.stereotype.Component;
 public class ValidationRules {
 
     /** 규칙 묶음 버전 (validation.rule_version). 규칙이 바뀌면 올린다 */
-    public static final String RULE_VERSION = "rules-v1";
+    public static final String RULE_VERSION = "rules-v2";
+
+    /** DELTA 검증의 완료 delta 검사 키. 워커가 같은 요청에 completion_delta 를 싣는다 */
+    public static final String COMPLETION_DELTA_CHECK = "completion-delta";
 
     private final ProjectDesignLookup designLookup;
 
@@ -44,9 +47,11 @@ public class ValidationRules {
      * @param baselineId  참조 버전을 대조할 기준 설계. 보통 현재 기준이지만, 설계 발행 트랜잭션 안에서는 아직 현재 포인터가 되기 전인
      *                    새 기준을 받는다 (-163 재접수)
      * @param relatedOpen 같은 항목을 보는 열린 다른 작업 (행: task_id, plan_revision_id, status, design_item_id, relation)
+     * @param completionDelta 완료 보고의 delta 를 검사하는 DELTA 검증인가. 그러면 규칙만으로 PASS 하지 않고 완료 delta 검사를 넣는다
+     *                        (delta 내용과 무관하게 완료되는 일이 없게)
      */
     public RuleOutcome evaluate(Long projectId, Long baselineId, TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
-                                List<Map<String, Object>> relatedOpen) {
+                                List<Map<String, Object>> relatedOpen, boolean completionDelta) {
         List<FindingRow> findings = new ArrayList<>();
         boolean needsInput = false;
         boolean needsReview = false;
@@ -114,7 +119,7 @@ public class ValidationRules {
         }
 
         // 4) 의미 분석이 필요한가: 미연결 내용·바꾸거나 구현하는 설계 항목·같은 항목을 보는 열린 작업 중 하나라도 있을 때
-        List<Map<String, Object>> checks = checks(plan, refs, relatedOpen, unlinkedEmpty);
+        List<Map<String, Object>> checks = checks(plan, refs, relatedOpen, unlinkedEmpty, completionDelta);
         if (checks.isEmpty()) {
             return new RuleOutcome("PASS", findings, List.of());
         }
@@ -123,15 +128,19 @@ public class ValidationRules {
 
     /**
      * 검사 목록 (명세 ValidationCheck). 요청 안에서 키가 유일하다.
-     * 계획 완결성 1개(unlinked 가 있을 때) + CHANGES·IMPLEMENTS 항목마다 설계 정합성 1개 + 관련 열린 작업마다 충돌 1개.
+     * 계획 완결성 1개(unlinked 가 있을 때) + CHANGES·IMPLEMENTS 항목마다 설계 정합성 1개 + 관련 열린 작업마다 충돌 1개
+     * + DELTA 검증이면 완료 delta 검사 1개({@value #COMPLETION_DELTA_CHECK}, 계획 완결성 종류 — 요청의 completion_delta 가 계획·설계와 맞는지).
      * 설계 정합성은 관련 작업 유무와 상관없이 넣는다 — 구조화 계약 비교(Q01)가 아직 없어, 빼면 내용이 승인 설계와 달라도
      * 버전만 맞으면 PASS 가 된다. 목록이 비면(READS 만, unlinked·관련 작업 없음) 의미 분석 없이 PASS.
      */
     private List<Map<String, Object>> checks(TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
-                                             List<Map<String, Object>> relatedOpen, boolean unlinkedEmpty) {
+                                             List<Map<String, Object>> relatedOpen, boolean unlinkedEmpty, boolean completionDelta) {
         List<Map<String, Object>> checks = new ArrayList<>();
         if (!unlinkedEmpty) {
             checks.add(check("plan-completeness", "PLAN_COMPLETENESS", List.of(), List.of()));
+        }
+        if (completionDelta) {
+            checks.add(check(COMPLETION_DELTA_CHECK, "PLAN_COMPLETENESS", List.of(), List.of()));
         }
         for (TaskPlanDesignRef ref : refs) {
             if (ref.getRelation() == PlanRelation.CHANGES || ref.getRelation() == PlanRelation.IMPLEMENTS) {

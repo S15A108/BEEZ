@@ -401,8 +401,9 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void completed_withDelta_whenRulesPassImmediately_isCompletedRightAway() throws Exception {
-        // READS 만 참조하고 미연결 내용·관련 작업이 없으면 DELTA 검증이 규칙만으로 PASS → 기다릴 것이 없어 바로 COMPLETED (S4)
+    void completed_withDelta_onReadsOnlyPlan_stillGoesToSemanticAnalysis() throws Exception {
+        // READS 만 참조해 보통 규칙만으로 PASS 가 나는 계획이라도, DELTA 검증은 완료 delta 검사가 붙어 의미 분석으로 간다 —
+        // delta 내용과 무관하게 작업이 완료되는 일이 없어야 한다 (-163 리뷰)
         long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
         long v = passValidation(t[0], t[1]);
         HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
@@ -410,16 +411,14 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
 
         String extra = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"응답에 nickname 추가\"}]";
         HttpResponse<String> res = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
-        assertThat(res.statusCode()).as(res.body()).isEqualTo(200);
-        assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("COMPLETED");
-        Map<String, Object> report = api.jdbc.sql("select has_delta, delta_validation_id from task_completion_report where task_id = :t")
-                .param("t", t[0]).query().singleRow();
-        assertThat(report.get("has_delta")).isEqualTo(true);
-        long deltaValidationId = ((Number) report.get("delta_validation_id")).longValue();
-        assertThat(api.jdbc.sql("select status from validation where id = :v").param("v", deltaValidationId).query(String.class).single())
-                .isEqualTo("PASS");
-        assertThat(api.jdbc.sql("select trigger from validation where id = :v").param("v", deltaValidationId).query(String.class).single())
-                .isEqualTo("DELTA");
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(202);
+        assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("WAITING");
+        long deltaValidationId = TaskApiSupport.longField(res.body(), "delta_validation_id");
+        Map<String, Object> validation = api.jdbc.sql("select trigger, status, summary::text as summary from validation where id = :v")
+                .param("v", deltaValidationId).query().singleRow();
+        assertThat(validation.get("trigger")).isEqualTo("DELTA");
+        assertThat(validation.get("status")).isEqualTo("RUNNING");
+        assertThat((String) validation.get("summary")).contains("completion-delta");
     }
 
     /**

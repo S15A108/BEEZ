@@ -184,7 +184,7 @@ public class AnalysisResultApplier {
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             // S4: delta 완료 보고의 DELTA 검증이 PASS → 서버가 작업을 COMPLETED 로 (같은 트랜잭션, 프로젝트 행을 쥔 채)
-            deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), Instant.now());
+            deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
         }
     }
 
@@ -429,7 +429,7 @@ public class AnalysisResultApplier {
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId());
         // 접수 때 기준이 아니라 "지금" 기준으로 대조한다 — 그 사이 설계가 발행됐으면 참조 버전이 낡은 것으로 잡힌다
         Long currentBaseline = designLookup.requireCurrentBaseline(v.projectId());
-        return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen);
+        return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen, "DELTA".equals(v.trigger()));
     }
 
     /**

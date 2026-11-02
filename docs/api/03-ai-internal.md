@@ -245,6 +245,7 @@ HTTP `200`.
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
 | `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
+| `completion_delta` | `object[]` | N | 수정안 요청(-163, 변준성 → 양지훈 확인). 완료 보고(TSK-A07 `delta`)를 검사하는 DELTA 검증일 때만, 그 `delta` 배열 그대로(구조 미확정, 임의 키). 이때 `checks`에 `key=completion-delta`, `kind=PLAN_COMPLETENESS`인 검사가 들어가며, 계획·승인 설계에 비추어 delta가 받아들일 수 있는 차이인지(계약 변경·완료 기준 위반이면 MISMATCH·MISSING_POLICY 후보)를 본다. 이 칸을 받기 전까지 AI는 모르는 칸으로 무시해도 된다 |
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
 

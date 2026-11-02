@@ -179,6 +179,13 @@ public class TaskQueryService {
         }
         Map<Long, List<TaskPlanDesignRef>> refsByRevision = loadRefs(new ArrayList<>(revisionById.values()));
         Map<Long, String> statusByTask = validationLookup.latestStatusByTask(taskIds);
+        List<Long> revalidating = new ArrayList<>();
+        for (Task t : page) {
+            if (t.getStatus() == TaskStatus.WAITING && t.getWaitingReason() == WaitingReason.REVALIDATION) {
+                revalidating.add(t.getId());
+            }
+        }
+        Map<Long, Long> deltaByTask = validationLookup.latestDeltaValidationIdByTask(revalidating);
 
         List<TaskDetailResponse> result = new ArrayList<>();
         for (Task t : page) {
@@ -191,7 +198,7 @@ public class TaskQueryService {
             if (vs == null) {
                 vs = ValidationStatusLookup.NOT_RUN;
             }
-            result.add(TaskDetailResponse.of(t, current, vs, deltaValidationIdOf(t)));
+            result.add(TaskDetailResponse.of(t, current, vs, deltaByTask.get(t.getId())));
         }
         return result;
     }

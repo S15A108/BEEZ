@@ -2,7 +2,11 @@ package com.beez.backend.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import com.beez.backend.changeproposal.dto.PublicationDtos.ChangedItem;
 import com.beez.backend.changeproposal.dto.PublicationDtos.ImpactRequest;
@@ -13,6 +17,10 @@ import com.beez.backend.changeproposal.port.ValidationImpactPort;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import com.beez.backend.validation.repository.JobLease;
+import com.beez.backend.validation.repository.ValidationRepository;
+import com.beez.backend.validation.service.AnalysisResultApplier;
+import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import com.beez.backend.validation.service.PublicationImpactAdapter;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.worker.ValidationWorker;
@@ -22,11 +30,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
@@ -52,6 +62,13 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ValidationWorker worker;
+
+    @Autowired
+    AnalysisResultApplier applier;
+
+    /** 실제 저장소 그대로. STALE 대상 계산이 한 번만 도는지 세는 데만 쓴다 */
+    @MockitoSpyBean
+    ValidationRepository repository;
 
     @MockitoBean
     ValidationAnalyzer analyzer;
@@ -164,6 +181,10 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
     }
 
     private static Map<String, Object> aiResponse(Map<String, Object> request, List<Map<String, Object>> findings) {
+        return aiResponse(request, findings, "test-model");
+    }
+
+    private static Map<String, Object> aiResponse(Map<String, Object> request, List<Map<String, Object>> findings, String model) {
         List<String> checked = new ArrayList<>();
         for (Object c : (List<?>) request.get("checks")) {
             checked.add(String.valueOf(((Map<?, ?>) c).get("key")));
@@ -176,9 +197,23 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("result", result);
         response.put("origin", "MODEL");
-        response.put("model", "test-model");
+        response.put("model", model);
         response.put("usage", List.of(Map.of("request_key", "llm-validate-x-attempt-1-call-1", "input_tokens", 10, "output_tokens", 5)));
         return response;
+    }
+
+    private static Map<String, Object> blockingMismatch(long item, long version) {
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("check_key", "design-" + item);
+        f.put("kind", "MISMATCH");
+        f.put("severity", "BLOCKING");
+        f.put("message", "응답 필드가 설계와 다릅니다");
+        f.put("design_item_id", String.valueOf(item));
+        f.put("design_item_version_id", String.valueOf(version));
+        f.put("sources", List.of());
+        f.put("evidence_ids", List.of());
+        f.put("suggested_action", "설계를 고치거나 되돌리세요");
+        return f;
     }
 
     // ---- S1: 발행 → 검증 STALE, IN_PROGRESS 만 WAITING ----
@@ -209,7 +244,10 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         assertThat(column("validation", "status", passA)).isEqualTo("PASS");
         assertThat(task(a[0]).get("status")).isEqualTo("IN_PROGRESS");
 
+        org.mockito.Mockito.clearInvocations(repository);
         ImpactResult applied = apply(request);
+        // STALE 대상은 한 번만 계산하고 무효화·응답이 그 결과를 같이 쓴다
+        verify(repository, times(1)).usableValidationsReferencingAtOrBelow(anyLong(), anyList(), anyList());
         assertThat(ids(applied.staleValidations())).containsExactly(String.valueOf(passA), String.valueOf(passB), String.valueOf(runningD));
         assertThat(applied.staleValidations().get(0).taskTitle()).isEqualTo("A");
         assertThat(taskIds(applied.waitingTasks())).containsExactly(String.valueOf(a[0]));
@@ -276,8 +314,19 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
                 "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"응답에 nickname 추가\"}]");
         assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
         long deltaF = TaskApiSupport.longField(done.body(), "delta_validation_id");
-        doAnswer(inv -> aiResponse(inv.getArgument(0), List.of())).when(analyzer).analyze(any());
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
+        doAnswer(inv -> {
+            sent.set(inv.getArgument(0));
+            return aiResponse(inv.getArgument(0), List.of());
+        }).when(analyzer).analyze(any());
         assertThat(worker.runOnce()).isTrue();
+        // 완료 보고의 delta 가 분석 입력에 들어가고, 그 검사(completion-delta)가 검사 목록에 있다
+        assertThat(sent.get().get("completion_delta")).isEqualTo(List.of(Map.of("kind", "ADDED_FIELD", "text", "응답에 nickname 추가")));
+        List<String> checkKeys = new ArrayList<>();
+        for (Object c : (List<?>) sent.get().get("checks")) {
+            checkKeys.add(String.valueOf(((Map<?, ?>) c).get("key")));
+        }
+        assertThat(checkKeys).contains("completion-delta");
         assertThat(column("validation", "status", deltaF)).isEqualTo("PASS");
         Map<String, Object> taskF = task(f[0]);
         assertThat(taskF.get("status")).isEqualTo("COMPLETED");
@@ -289,18 +338,7 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         HttpResponse<String> doneG = state(g[0], "COMPLETED", g[1], lockG, null, "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]");
         assertThat(doneG.statusCode()).as(doneG.body()).isEqualTo(202);
         long deltaG = TaskApiSupport.longField(doneG.body(), "delta_validation_id");
-        long item = api.designItemId("API-01");
-        long version = api.currentVersionId("API-01");
-        Map<String, Object> blocking = new LinkedHashMap<>();
-        blocking.put("check_key", "design-" + item);
-        blocking.put("kind", "MISMATCH");
-        blocking.put("severity", "BLOCKING");
-        blocking.put("message", "응답 필드가 설계와 다릅니다");
-        blocking.put("design_item_id", String.valueOf(item));
-        blocking.put("design_item_version_id", String.valueOf(version));
-        blocking.put("sources", List.of());
-        blocking.put("evidence_ids", List.of());
-        blocking.put("suggested_action", "설계를 고치거나 되돌리세요");
+        Map<String, Object> blocking = blockingMismatch(api.designItemId("API-01"), api.currentVersionId("API-01"));
         doAnswer(inv -> aiResponse(inv.getArgument(0), List.of(blocking))).when(analyzer).analyze(any());
         assertThat(worker.runOnce()).isTrue();
         assertThat(column("validation", "status", deltaG)).isEqualTo("NEEDS_REVIEW");
@@ -361,18 +399,7 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         long lockH = start(h);
         HttpResponse<String> done = state(h[0], "COMPLETED", h[1], lockH, null, "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]");
         assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
-        long item = api.designItemId("API-01");
-        long version = api.currentVersionId("API-01");
-        Map<String, Object> blocking = new LinkedHashMap<>();
-        blocking.put("check_key", "design-" + item);
-        blocking.put("kind", "MISMATCH");
-        blocking.put("severity", "BLOCKING");
-        blocking.put("message", "다릅니다");
-        blocking.put("design_item_id", String.valueOf(item));
-        blocking.put("design_item_version_id", String.valueOf(version));
-        blocking.put("sources", List.of());
-        blocking.put("evidence_ids", List.of());
-        blocking.put("suggested_action", "되돌리세요");
+        Map<String, Object> blocking = blockingMismatch(api.designItemId("API-01"), api.currentVersionId("API-01"));
         doAnswer(inv -> aiResponse(inv.getArgument(0), List.of(blocking))).when(analyzer).analyze(any());
         assertThat(worker.runOnce()).isTrue();
         long startPass = api.jdbc.sql("select started_validation_id from task where id = :t").param("t", h[0]).query(Long.class).single();
@@ -388,5 +415,95 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
                 .query(Integer.class).single()).isEqualTo(1);                               // 새 DELTA 없음
         JsonNode detail = JSON.readTree(api.get(tasksPath() + "/" + h[0], member).body());
         assertThat(detail.get("validation_status").asText()).isEqualTo("STALE");
+    }
+
+    @Test
+    void fakeAnalyzerDeltaPass_doesNotCompleteTask_whenFakeAnalyzerIsOff() throws Exception {
+        // 시작 관문 G1 과 같은 규칙: 가짜 분석기를 끈 서버에서 가짜 분석기가 낸 PASS 는 완료로 쓰지 않는다
+        long[] k = createTask("K", api.implementsRef("API-01"));
+        long lockK = start(k);
+        HttpResponse<String> done = state(k[0], "COMPLETED", k[1], lockK, null, "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]");
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        long deltaK = TaskApiSupport.longField(done.body(), "delta_validation_id");
+        doAnswer(inv -> aiResponse(inv.getArgument(0), List.of(), FakeValidationAnalyzer.MODEL)).when(analyzer).analyze(any());
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", deltaK)).isEqualTo("PASS");
+        assertThat(task(k[0]).get("status")).isEqualTo("WAITING");
+        assertThat(task(k[0]).get("waiting_reason")).isEqualTo("REVALIDATION");
+    }
+
+    @Test
+    void resume_invalidatesPendingDelta_soItsLatePassCannotCompleteTheTaskLater() throws Exception {
+        // 리뷰 순서: delta 완료 보고 → DELTA RUNNING 인 채 시작 PASS 로 RESUME → 담당자 인계로 다시 WAITING(REVALIDATION) → 옛 DELTA 가 뒤늦게 PASS
+        long[] r = createTask("R", api.implementsRef("API-01"));
+        long lockR = start(r);
+        long startPass = api.jdbc.sql("select started_validation_id from task where id = :t").param("t", r[0]).query(Long.class).single();
+        HttpResponse<String> done = state(r[0], "COMPLETED", r[1], lockR, null, "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]");
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        long delta = TaskApiSupport.longField(done.body(), "delta_validation_id");
+        JobLease lease = repository.lease(120).orElseThrow();                       // 워커가 DELTA 를 꺼내 AI 를 기다리는 중
+        assertThat(lease.validationId()).isEqualTo(delta);
+
+        // ① 코드를 되돌리기로 하고 RESUME → 기다리던 DELTA 는 STALE, 큐도 취소
+        long lockWaiting = TaskApiSupport.longField(done.body(), "lock_version");
+        HttpResponse<String> resumed = state(r[0], "RESUME", r[1], lockWaiting, startPass, null);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        assertThat(column("validation", "status", delta)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", delta)).isEqualTo("TASK_RESUMED");
+        assertThat(api.jdbc.sql("select status from validation_job where validation_id = :v").param("v", delta).query(String.class).single())
+                .isEqualTo("CANCELLED");
+
+        // 담당자 인계 → 다시 WAITING(REVALIDATION)
+        long lockResumed = TaskApiSupport.longField(resumed.body(), "lock_version");
+        HttpResponse<String> handover = api.patch(tasksPath() + "/" + r[0] + "/assignee",
+                "{\"assignee_member_id\": \"" + api.memberId("leader@test") + "\", \"expected_lock_version\": " + lockResumed + "}", leader);
+        assertThat(handover.statusCode()).as(handover.body()).isEqualTo(200);
+        assertThat(task(r[0]).get("status")).isEqualTo("WAITING");
+        assertThat(task(r[0]).get("waiting_reason")).isEqualTo("REVALIDATION");
+
+        // 옛 DELTA 의 늦은 PASS 가 도착해도 버려지고 작업은 완료되지 않는다
+        Map<String, Object> request = new LinkedHashMap<>();
+        Map<String, Object> check = new LinkedHashMap<>();
+        check.put("key", "completion-delta");
+        request.put("checks", List.of(check));
+        applier.applySuccess(lease, request, aiResponse(request, List.of()), 0);
+        assertThat(column("validation", "status", delta)).isEqualTo("STALE");
+        assertThat(task(r[0]).get("status")).isEqualTo("WAITING");
+        assertThat(task(r[0]).get("completed_at")).isNull();
+        // 조회에도 옛 DELTA 가 "기다리는 검증" 으로 나오지 않는다 (가장 최근 DELTA 는 STALE)
+        JsonNode detail = JSON.readTree(api.get(tasksPath() + "/" + r[0], leader).body());
+        assertThat(detail.get("delta_validation_id").asLong()).isEqualTo(delta);
+        assertThat(detail.get("validation_status").asText()).isEqualTo("STALE");
+    }
+
+    @Test
+    void publicationTouchingTwoItemsOfOneWaitingTask_reacceptsDeltaOnce() throws Exception {
+        String bothRefs = """
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "IMPLEMENTS"},
+                 {"design_item_id": "%d", "design_item_version_id": "%d", "relation": "IMPLEMENTS"}]
+                """.formatted(api.designItemId("API-01"), api.currentVersionId("API-01"), api.designItemId("API-02"), api.currentVersionId("API-02"));
+        long[] m = createTask("M", bothRefs);
+        long lockM = start(m);
+        HttpResponse<String> done = state(m[0], "COMPLETED", m[1], lockM, null, "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]");
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        long oldDelta = TaskApiSupport.longField(done.body(), "delta_validation_id");
+
+        // 두 항목이 한 발행에서 같이 바뀐다
+        long item1 = api.designItemId("API-01");
+        long item2 = api.designItemId("API-02");
+        long before1 = api.currentVersionId("API-01");
+        long before2 = api.currentVersionId("API-02");
+        long previousBaseline = api.jdbc.sql("select current_baseline_id from project where id = :p").param("p", projectId).query(Long.class).single();
+        long after1 = api.newVersion("API-01", 2);
+        long after2 = api.newVersion("API-02", 2);
+        long baseline = api.publish(2, Map.of("API-01", after1, "API-02", after2));
+        ImpactResult applied = apply(new ImpactRequest(baseline, previousBaseline, 1L, 1, "hash",
+                List.of(new ChangedItem(item1, before1, after1, "UPDATE"), new ChangedItem(item2, before2, after2, "UPDATE")), "발행"));
+
+        assertThat(ids(applied.staleValidations())).containsOnlyOnce(String.valueOf(oldDelta));   // 두 항목에 걸려도 한 번
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", m[0])
+                .query(Integer.class).single()).isEqualTo(2);                                      // 옛 것 + 새 것 하나
+        assertThat(api.jdbc.sql("select count(*) from validation_finding where validation_id = (select max(id) from validation where task_id = :t)")
+                .param("t", m[0]).query(Integer.class).single()).isEqualTo(2);                     // 항목마다 STALE_REF 하나씩
     }
 }

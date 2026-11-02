@@ -103,7 +103,7 @@ public class ValidationAcceptService {
      * "지금" 값이어야 하고, 완료 보고 저장(S3)·설계 발행(S1)과 한 트랜잭션으로 묶여야 한다.
      * 담당자·잠금 번호는 확인하지 않는다(사람 요청이 아니다). 현재 기준이 없으면 409 baseline_missing 그대로.
      *
-     * @return 접수 결과. 규칙만으로 PASS 가 났으면 finished=true — 완료 보고(S3)는 이때 바로 COMPLETED(S4)로 간다
+     * @return 접수 결과. DELTA 는 완료 delta 검사가 항상 들어가 규칙만으로는 PASS 가 나지 않는다 (NEEDS_INPUT·NEEDS_REVIEW 로는 끝날 수 있다)
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public AcceptResult acceptBySystem(Long projectId, Task task, String trigger) {
@@ -130,7 +130,7 @@ public class ValidationAcceptService {
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(planRevisionId);
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(projectId, taskId, planRevisionId);
 
-        RuleOutcome outcome = rules.evaluate(projectId, baselineId, plan, refs, relatedOpen);
+        RuleOutcome outcome = rules.evaluate(projectId, baselineId, plan, refs, relatedOpen, "DELTA".equals(trigger));
         Map<Long, Long> relatedPlans = relatedPlans(relatedOpen);
         String inputHash = inputHash(planRevisionId, baselineId, refs, relatedPlans);
 

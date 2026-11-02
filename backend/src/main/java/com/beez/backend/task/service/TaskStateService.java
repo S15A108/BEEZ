@@ -155,7 +155,12 @@ public class TaskStateService {
         Instant now = Instant.now(clock);
         switch (in.event()) {
             case START -> task.start(validationId, now);
-            case RESUME -> task.resume(validationId);
+            case RESUME -> {
+                // delta 완료 보고를 거두고 다시 일한다 (§2.3 출구 ①). 그 보고를 기다리던 DELTA 검증은 끝났든 돌고 있든 쓸 수 없게 한다 —
+                // 두면 뒤늦게 도착한 옛 DELTA 의 PASS 가 (인계 등으로 다시 WAITING(REVALIDATION) 이 된) 작업을 완료시킬 수 있다
+                validations.invalidateDeltaOnResume(taskId);
+                task.resume(validationId);
+            }
             case WAIT -> task.holdFor(in.waitingReason());
             case COMPLETED -> complete(task, in, caller, now);
             case CANCEL -> cancel(task, now);
@@ -242,18 +247,7 @@ public class TaskStateService {
         if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
             return false;
         }
-        Integer count = jdbc.sql("""
-                        select count(*)
-                          from task_completion_report
-                         where task_id = :taskId
-                           and plan_revision_id = :revisionId
-                           and has_delta = true
-                        """)
-                .param("taskId", task.getId())
-                .param("revisionId", task.getCurrentPlanRevisionId())
-                .query(Integer.class)
-                .single();
-        return count > 0;
+        return reports.existsByTaskIdAndPlanRevisionIdAndHasDeltaTrue(task.getId(), task.getCurrentPlanRevisionId());
     }
 
     private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
@@ -279,15 +273,12 @@ public class TaskStateService {
         }
         // 계획과 다른 점이 있다 → DELTA 검증을 먼저 접수하고(S3) 그 번호를 넣어 완료 보고를 저장한다
         // (완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다). 같은 트랜잭션·같은 프로젝트 잠금 안이다
+        // DELTA 검증은 delta 내용 자체를 의미 분석(완료 delta 검사)에 넣으므로 규칙만으로 PASS 가 나지 않는다 — 여기서 바로 완료되는 일은 없다.
+        // 규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 WAITING(REVALIDATION) 에서 §2.3 출구로 나간다
         AcceptResult accepted = validationAccepts.acceptBySystem(task.getProjectId(), task, "DELTA");
         long deltaValidationId = Long.parseLong(accepted.validation().id());
         reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
                 checks, caller.agentTokenId(), deltaValidationId));
-        if (accepted.finished() && "PASS".equals(accepted.validation().status())) {
-            // 규칙만으로 바로 PASS (READS 만 참조하고 미연결 내용·관련 작업이 없음) → 기다릴 것이 없어 그 자리에서 완료 (S4)
-            task.complete(now);
-            return;
-        }
         task.holdForRevalidation();
     }
 

@@ -4,6 +4,8 @@ import com.beez.backend.context.service.ContextLookup;
 import com.beez.backend.task.dto.TaskPlanRevisionResponse;
 import com.beez.backend.task.entity.TaskPlanDesignRef;
 import com.beez.backend.task.entity.TaskPlanRevision;
+import com.beez.backend.task.entity.TaskCompletionReport;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.validation.config.ValidationProperties;
@@ -44,6 +46,7 @@ public class ValidationWorker {
     private final ValidationRepository validations;
     private final TaskPlanRevisionRepository revisions;
     private final TaskPlanDesignRefRepository designRefs;
+    private final TaskCompletionReportRepository reports;
     private final ContextLookup designLookup;
     private final ValidationResponses responses;
     private final ValidationAnalyzer analyzer;
@@ -53,12 +56,14 @@ public class ValidationWorker {
 
     public ValidationWorker(ValidationProperties properties, ValidationRepository validations,
                             TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
-                            ContextLookup designLookup, ValidationResponses responses, ValidationAnalyzer analyzer,
-                            AnalysisResultApplier applier, PlatformTransactionManager transactions, ObjectMapper json) {
+                            TaskCompletionReportRepository reports, ContextLookup designLookup, ValidationResponses responses,
+                            ValidationAnalyzer analyzer, AnalysisResultApplier applier, PlatformTransactionManager transactions,
+                            ObjectMapper json) {
         this.properties = properties;
         this.validations = validations;
         this.revisions = revisions;
         this.designRefs = designRefs;
+        this.reports = reports;
         this.designLookup = designLookup;
         this.responses = responses;
         this.analyzer = analyzer;
@@ -211,6 +216,13 @@ public class ValidationWorker {
         request.put("checks", summary.get("checks"));
         request.put("evidence", List.of());            // 원문 근거 검색 연결(후속) 전까지 비어 있다 — 명세가 허용
         request.put("execution_budget_ms", properties.executionBudgetMs());
+        if ("DELTA".equals(v.trigger())) {
+            // 완료 보고의 delta 를 그대로 싣는다 (AI-A02 completion_delta, 검사 키 completion-delta). 보고는 접수와 같은 트랜잭션에서
+            // 저장되므로 큐에서 꺼낼 때는 항상 있다. 없으면(데이터 손상) 빈 배열이 아니라 요청 조립 실패로 ERROR 다
+            TaskCompletionReport report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(v.taskId(), v.planRevisionId())
+                    .orElseThrow(() -> new IllegalStateException("DELTA 검증 " + v.id() + " 의 delta 완료 보고가 없습니다"));
+            request.put("completion_delta", report.getDelta());
+        }
         return request;
     }
 
