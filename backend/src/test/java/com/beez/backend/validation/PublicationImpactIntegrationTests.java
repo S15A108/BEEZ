@@ -524,6 +524,41 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void handoverWhilePendingDelta_keepsTheWait_newAssigneeCanOnlyResendTheSameReport() throws Exception {
+        // 인계(S5)는 DELTA 를 그대로 둔다 — 새 담당자: 같은 보고 재전송은 202, 다른 내용은 409, 그 사이 DELTA PASS 면 완료(S4)
+        long[] p = createTask("P", api.implementsRef("API-01"));
+        long lockP = start(p);
+        String deltaJson = "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]";
+        HttpResponse<String> done = state(p[0], "COMPLETED", p[1], lockP, null, deltaJson);
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        long delta = TaskApiSupport.longField(done.body(), "delta_validation_id");
+        HttpResponse<String> handover = api.patch(tasksPath() + "/" + p[0] + "/assignee",
+                "{\"assignee_member_id\": \"" + api.memberId("leader@test") + "\", \"expected_lock_version\": "
+                        + TaskApiSupport.longField(done.body(), "lock_version") + "}", leader);
+        assertThat(handover.statusCode()).as(handover.body()).isEqualTo(200);
+        assertThat(column("validation", "status", delta)).isEqualTo("RUNNING");         // DELTA 는 담당자와 무관
+        long lock = TaskApiSupport.longField(handover.body(), "lock_version");
+
+        HttpResponse<String> other = api.post(tasksPath() + "/" + p[0] + "/state-events",
+                "{\"event\":\"COMPLETED\",\"plan_revision_id\":\"" + p[1] + "\",\"expected_lock_version\":" + lock
+                        + ",\"delta\":[{\"kind\":\"Z\",\"text\":\"다른 내용\"}]}", leader);
+        assertThat(other.statusCode()).as(other.body()).isEqualTo(409);
+        HttpResponse<String> same = api.post(tasksPath() + "/" + p[0] + "/state-events",
+                "{\"event\":\"COMPLETED\",\"plan_revision_id\":\"" + p[1] + "\",\"expected_lock_version\":" + lock + "," + deltaJson + "}", leader);
+        assertThat(same.statusCode()).as(same.body()).isEqualTo(202);
+        assertThat(TaskApiSupport.longField(same.body(), "delta_validation_id")).isEqualTo(delta);
+        // 옛 담당자는 이제 손댈 수 없다
+        HttpResponse<String> old = api.post(tasksPath() + "/" + p[0] + "/state-events",
+                "{\"event\":\"COMPLETED\",\"plan_revision_id\":\"" + p[1] + "\",\"expected_lock_version\":" + lock + "," + deltaJson + "}", member);
+        assertThat(old.statusCode()).as(old.body()).isEqualTo(403);
+
+        doAnswer(inv -> aiResponse(inv.getArgument(0), List.of())).when(analyzer).analyze(any());
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", delta)).isEqualTo("PASS");
+        assertThat(task(p[0]).get("status")).isEqualTo("COMPLETED");                     // S5 뒤에도 S4 는 그대로 (명세 §2.3)
+    }
+
+    @Test
     void publicationTouchingTwoItemsOfOneWaitingTask_reacceptsDeltaOnce() throws Exception {
         String bothRefs = """
                 [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "IMPLEMENTS"},
