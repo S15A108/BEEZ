@@ -435,6 +435,64 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
         assertThat(agentHash).isNotEqualTo(hashX1);      // 같은 계획이라도 AGENT 와 DELTA 는 검사 범위가 다르다
     }
 
+    @Test
+    void completedResend_isIdempotentOnlyForTheSamePendingReport() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        long lock = TaskApiSupport.longField(report(t[0], stateJson("START", t[1], t[2], v, null), member).body(), "lock_version");
+        String deltaX = "\"summary\":\"끝\",\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        HttpResponse<String> first = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(202);
+        long deltaId = TaskApiSupport.longField(first.body(), "delta_validation_id");
+
+        // 같은 보고 재전송 → 같은 결과(202), 새 보고·검증 없음
+        HttpResponse<String> same = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(same.statusCode()).as(same.body()).isEqualTo(202);
+        assertThat(TaskApiSupport.longField(same.body(), "delta_validation_id")).isEqualTo(deltaId);
+        // 다른 delta 를 보냄 → 재전송이 아니라 충돌(409). 기존 대기는 그대로
+        String deltaY = "\"summary\":\"끝\",\"delta\":[{\"kind\":\"REMOVED_FIELD\",\"text\":\"email 제거\"}]";
+        HttpResponse<String> other = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaY), member);
+        assertThat(other.statusCode()).as(other.body()).isEqualTo(409);
+        assertThat(other.body()).contains("\"code\":\"revision_conflict\"");
+        // 같은 delta 인데 요약만 다른 것도 다른 보고다
+        String otherSummary = "\"summary\":\"다른 요약\",\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        assertThat(report(t[0], stateJson("COMPLETED", t[1], lock, null, otherSummary), member).statusCode()).isEqualTo(409);
+        assertThat(api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0]).query(Integer.class).single())
+                .isEqualTo(1);
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void completedAfterResumeAndHandover_isNotTreatedAsResend() throws Exception {
+        // delta 완료 보고 → RESUME(옛 DELTA STALE) → 담당자 인계로 다시 WAITING(REVALIDATION) → 새 담당자의 COMPLETED
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        long lock = TaskApiSupport.longField(report(t[0], stateJson("START", t[1], t[2], v, null), member).body(), "lock_version");
+        String deltaX = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        HttpResponse<String> first = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(202);
+        HttpResponse<String> resumed = report(t[0], stateJson("RESUME", t[1], TaskApiSupport.longField(first.body(), "lock_version"), v, null), member);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        String handoverBody = """
+                {"assignee_member_id": "%d", "expected_lock_version": %d}
+                """.formatted(api.memberId("leader@test"), TaskApiSupport.longField(resumed.body(), "lock_version"));
+        HttpResponse<String> handover = api.patch(tasksPath() + "/" + t[0] + "/assignee", handoverBody, leader);
+        assertThat(handover.statusCode()).as(handover.body()).isEqualTo(200);
+        assertThat(status(t[0])).isEqualTo("WAITING");
+
+        // 새 담당자가 COMPLETED 를 보내도 옛 보고의 재전송이 아니다 — WAITING 에서는 COMPLETED 할 수 없다(400). 새 보고·검증도 안 만든다
+        long lockWaiting = TaskApiSupport.longField(handover.body(), "lock_version");
+        HttpResponse<String> again = report(t[0], stateJson("COMPLETED", t[1], lockWaiting, null, deltaX), leader);
+        assertThat(again.statusCode()).as(again.body()).isEqualTo(400);
+        assertThat(again.body()).contains("\"code\":\"invalid_transition\"");
+        assertThat(api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0]).query(Integer.class).single())
+                .isEqualTo(1);
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
+        assertThat(status(t[0])).isEqualTo("WAITING");
+    }
+
     private String hashOf(long validationId) {
         return api.jdbc.sql("select input_snapshot_hash from validation where id = :v").param("v", validationId).query(String.class).single();
     }

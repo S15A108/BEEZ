@@ -26,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -112,9 +113,18 @@ public class TaskStateService {
                 && validationId.equals(task.getStartedValidationId())) {
             return query.toDetail(task);
         }
-        //    delta 있는 COMPLETED 재전송: 이미 WAITING(REVALIDATION) 이고 현재 계획의 완료 보고가 있으면 같은 결과(202)를 돌려준다
-        if (in.event() == TaskEvent.COMPLETED && isAwaitingDeltaValidation(task)) {
-            return query.toDetail(task);
+        //    delta 있는 COMPLETED 재전송: 지금 기다리는 것이 "그 완료 보고" 이고 요청 내용이 같을 때만 같은 결과(202).
+        //    다른 내용이면 409, 기다리는 보고가 없으면(인계 등으로 WAITING 이 된 경우) 아래 전이 표에서 400 (WAITING + COMPLETED = ✗)
+        if (in.event() == TaskEvent.COMPLETED) {
+            Optional<TaskCompletionReport> pending = pendingDeltaReport(task);
+            if (pending.isPresent()) {
+                if (sameReport(pending.get(), in)) {
+                    return query.toDetail(task);
+                }
+                throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
+                        "이미 다른 내용의 완료 보고(delta 검증 " + pending.get().getDeltaValidationId() + ")를 기다리는 중입니다. "
+                                + "바꾸려면 RESUME 한 뒤 다시 보고하세요");
+            }
         }
         TaskTransitionPolicy.Verdict verdict = policy.check(task.getStatus(), in.event());
         if (verdict == TaskTransitionPolicy.Verdict.IDEMPOTENT) {
@@ -242,20 +252,37 @@ public class TaskStateService {
         return lastReport.toInstant().isBefore(threshold);
     }
 
-    /** delta 있는 완료 보고를 이미 받아 DELTA 검증을 기다리는 중인가 (S3 이후 상태) */
-    private boolean isAwaitingDeltaValidation(Task task) {
+    /**
+     * 지금의 WAITING(REVALIDATION) 이 기다리는 delta 완료 보고 (S3 이후 상태). 다음이 모두 맞을 때만:
+     * 작업이 WAITING(REVALIDATION) · 현재 계획에 delta 완료 보고가 있음 · 현재 계획의 가장 최근 DELTA 검증이 STALE 이 아님
+     * (RESUME 하면 DELTA 가 STALE(TASK_RESUMED) 이 되므로, 그 뒤 인계로 다시 WAITING(REVALIDATION) 이 된 작업은 옛 보고를 기다리는 것이 아니다).
+     * 발행으로 DELTA 가 바뀌어 재접수된 경우는 가장 최근 DELTA 가 살아 있어 같은 보고를 계속 기다리는 것으로 본다
+     */
+    private Optional<TaskCompletionReport> pendingDeltaReport(Task task) {
         if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
-            return false;
+            return Optional.empty();
         }
-        return reports.existsByTaskIdAndPlanRevisionIdAndHasDeltaTrue(task.getId(), task.getCurrentPlanRevisionId());
+        Long latestDelta = validations.latestDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId());
+        if (latestDelta == null || "STALE".equals(validations.statusOf(latestDelta))) {
+            return Optional.empty();
+        }
+        return reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(task.getId(), task.getCurrentPlanRevisionId());
     }
 
-    private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
+    /** 같은 완료 보고의 재전송인가 — delta·요약·완료 기준 확인이 모두 같아야 한다 */
+    private static boolean sameReport(TaskCompletionReport report, TaskStateInput in) {
         List<Map<String, Object>> delta = in.delta();
         if (delta == null) {
             delta = new ArrayList<>();
         }
-        // 완료 기준 확인은 형식 검사를 거친 CompletionCheck 로 받고, 저장(JSONB)은 {criterion, met} 로 한다
+        if (!Objects.equals(report.getDelta(), delta) || !Objects.equals(report.getSummary(), in.summary())) {
+            return false;
+        }
+        return Objects.equals(report.getCompletionChecks(), checksOf(in));
+    }
+
+    /** 완료 기준 확인을 저장 모양({criterion, met})으로 */
+    private static List<Map<String, Object>> checksOf(TaskStateInput in) {
         List<Map<String, Object>> checks = new ArrayList<>();
         if (in.completionChecks() != null) {
             for (CompletionCheck c : in.completionChecks()) {
@@ -265,6 +292,16 @@ public class TaskStateService {
                 checks.add(row);
             }
         }
+        return checks;
+    }
+
+    private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
+        List<Map<String, Object>> delta = in.delta();
+        if (delta == null) {
+            delta = new ArrayList<>();
+        }
+        // 완료 기준 확인은 형식 검사를 거친 CompletionCheck 로 받고, 저장(JSONB)은 {criterion, met} 로 한다
+        List<Map<String, Object>> checks = checksOf(in);
         if (delta.isEmpty()) {
             reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
                     checks, caller.agentTokenId()));

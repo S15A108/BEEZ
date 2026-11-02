@@ -95,8 +95,13 @@ public class ValidationStatusLookup {
 
     /** 검증 상태가 PASS 인가 (S4 완료 조건) */
     public boolean isPass(Long validationId) {
-        return jdbc.sql("select count(*) from validation where id = :v and status = 'PASS'").param("v", validationId)
-                .query(Integer.class).single() > 0;
+        return "PASS".equals(statusOf(validationId));
+    }
+
+    /** 검증 한 건의 상태. 없으면 null */
+    public String statusOf(Long validationId) {
+        return jdbc.sql("select status from validation where id = :v").param("v", validationId).query(String.class)
+                .optional().orElse(null);
     }
 
     /**
