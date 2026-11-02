@@ -390,8 +390,10 @@ export function changeRoutes(
                 : undefined
               return {
                 target_type: 'DESIGN_ITEM',
-                // 새 항목은 발행 전이라 ID가 없다.
-                target_id: change.design_item_id ?? null,
+                // 새 항목은 발행 전이라 ID가 없다. 실제 서버처럼 null 키는 빼고 보낸다(전역 non_null).
+                ...(change.design_item_id
+                  ? { target_id: change.design_item_id }
+                  : {}),
                 current_changed: !!base && !!current && base.id !== current.id,
                 format: 'STRUCTURED',
                 ...(base ? { base_content: base.content } : {}),

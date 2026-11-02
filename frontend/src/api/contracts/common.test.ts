@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest'
-import { documentBeeReviewSchema, usageSummarySchema } from './common'
+import {
+  comparisonSchema,
+  documentBeeReviewSchema,
+  usageSummarySchema,
+} from './common'
 
 const usage = {
   request_key: 'document-review-201-abc',
@@ -63,4 +67,16 @@ it('사용량 합계와 항목별 비용도 숫자로 와도 읽는다', () => {
   })
   expect(summary.estimated_cost_amount).toBe('1.25')
   expect(summary.by_feature[0].estimated_cost_amount).toBe('1.25')
+})
+
+// PR #72 mock/live 전수 대조 DOC-LIVE-2: CREATE 항목 비교는 target_id 키 없이 온다(서버 전역 non_null).
+it('비교 응답은 target_id 키가 없어도 읽는다', () => {
+  expect(
+    comparisonSchema.parse({
+      target_type: 'DESIGN_ITEM',
+      current_changed: false,
+      format: 'STRUCTURED',
+      proposed_content: { description: '새 API' },
+    }).target_id,
+  ).toBeUndefined()
 })

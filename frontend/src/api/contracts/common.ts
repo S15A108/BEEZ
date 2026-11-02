@@ -1094,8 +1094,9 @@ export type DependencyCandidate = z.infer<typeof dependencyCandidateSchema>
 
 export const comparisonSchema = z.object({
   target_type: z.enum(['DOCUMENT', 'DESIGN_ITEM']),
-  // CREATE 항목은 발행 전이라 ID가 없어 null
-  target_id: idSchema.nullable(),
+  // CREATE 항목은 발행 전이라 ID가 없다. 서버는 null 값을 응답에서 빼므로(전역 non_null) 키가 없어도 받는다
+  // (PR #72 mock/live 전수 대조 DOC-LIVE-2).
+  target_id: idSchema.nullish(),
   // 기준과 지금 내용이 다름. 기준→제안 diff와 별개
   current_changed: z.boolean(),
   format: z.enum(['TEXT', 'FILE', 'STRUCTURED']),
