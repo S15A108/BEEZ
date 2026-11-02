@@ -35,6 +35,15 @@ class Source(ContractModel):
         return self
 
 
+class DesignSource(ContractModel):
+    """An input design can identify a document without a known citation location."""
+
+    document_id: TextId
+    document_version_id: TextId
+    version_no: int = Field(ge=1)
+    location: Annotated[str, StringConstraints(max_length=10_000)] | None = None
+
+
 class DesignItemVersion(ContractModel):
     id: TextId
     design_item_id: TextId
@@ -46,7 +55,7 @@ class DesignItemVersion(ContractModel):
     status: Literal["APPROVED"]
     schema_version: int = Field(ge=1)
     content: dict[str, Any]
-    source: Source | None = None
+    source: DesignSource | None = None
     content_hash: Annotated[str, StringConstraints(max_length=256)] | None = None
 
 

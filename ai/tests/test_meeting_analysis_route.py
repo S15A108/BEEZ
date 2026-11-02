@@ -85,6 +85,60 @@ def test_meeting_route_calls_model_and_returns_feature_usage(api):
     assert state["calls"][0].context.request_key == "meeting-review-1"
 
 
+def design_source(location):
+    return {
+        "id": "311",
+        "design_item_id": "301",
+        "key": "API-001",
+        "kind": "API_CONTRACT",
+        "version_no": 1,
+        "status": "APPROVED",
+        "schema_version": 1,
+        "content": {"method": "POST", "path": "/login"},
+        "source": {
+            "document_id": "201",
+            "document_version_id": "211",
+            "version_no": 1,
+            "location": location,
+        },
+    }
+
+
+@pytest.mark.parametrize("location", ["", "  "])
+def test_be_source_without_location_does_not_block_model_call(api, location):
+    client, state = api
+    body = request_body()
+    body["approved_items"] = [design_source(location)]
+    response = client.post(
+        "/v1/bee/meeting-analysis",
+        json=body,
+        headers={"Authorization": "Bearer internal"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["sources"] == []
+    assert response.json()["usage"][0]["failed"] is False
+    assert len(state["calls"]) == 1
+    sent = json.loads(state["calls"][0].messages[1].content)
+    assert sent["approved_items"][0]["source"] == body["approved_items"][0]["source"]
+
+
+@pytest.mark.parametrize("location", ["", "  ", "lines 1-2"])
+def test_unlocated_source_cannot_be_returned_or_fabricated(api, location):
+    client, state = api
+    body = request_body()
+    body["approved_items"] = [design_source("")]
+    state["output"]["sources"] = [design_source(location)["source"]]
+    response = client.post(
+        "/v1/bee/meeting-analysis",
+        json=body,
+        headers={"Authorization": "Bearer internal"},
+    )
+    assert response.status_code == 502, response.text
+    assert response.json()["error"]["code"] == "model_unavailable"
+    assert response.json()["usage"][0]["failed"] is True
+    assert len(state["calls"]) == 1
+
+
 def test_invalid_token_and_unsupported_summary_do_not_call_provider(api):
     client, state = api
     assert (

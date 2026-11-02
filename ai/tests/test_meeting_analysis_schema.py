@@ -69,6 +69,17 @@ def test_accepts_be_entry_metadata_and_unlinked_source():
     )
 
 
+@pytest.mark.parametrize("location", ["", "  ", "\t"])
+def test_accepts_unspecified_input_location_and_preserves_document_identity(location):
+    body = request()
+    body["approved_items"][0]["source"]["location"] = location
+    source = MeetingAnalysisRequest.model_validate(body).approved_items[0].source
+    assert source.document_id == "201"
+    assert source.document_version_id == "211"
+    assert source.version_no == 1
+    assert source.location == location
+
+
 @pytest.mark.parametrize("change", ["duplicate", "other_meeting", "no_entries"])
 def test_ambiguous_or_empty_meeting_snapshots_are_rejected(change):
     body = request()
@@ -116,6 +127,21 @@ def test_output_is_structured_and_unknown_fields_are_rejected():
     body["approved"] = True
     with pytest.raises(ValidationError):
         MeetingAnalysisResult.model_validate(body)
+
+
+@pytest.mark.parametrize("location", ["", "  ", "\t"])
+def test_unspecified_location_cannot_be_returned_as_citation(location):
+    source = {**request()["approved_items"][0]["source"], "location": location}
+    with pytest.raises(ValidationError):
+        MeetingAnalysisResult.model_validate(
+            {
+                "text": "추가 협의 필요",
+                "decisions": [],
+                "unresolved": [],
+                "action_items": [],
+                "sources": [source],
+            }
+        )
 
 
 def test_action_item_does_not_guess_a_responsible_member():

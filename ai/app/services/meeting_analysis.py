@@ -20,6 +20,7 @@ MINUTES에서는 회의 요약, 실제로 확정된 결정, 미결 사항과 후
 결정의 근거가 된 회의 발언을 요약에 설명하세요. 근거가 불명확하면 결정으로 확정하지 마세요.
 발언의 제안이나 추측을 결정으로 만들지 말고 사실이 불명확하면 unresolved에 남기세요.
 제공된 출처 객체만 그대로 사용하고 출처나 위치를 만들지 마세요.
+문서 위치(location)가 없거나 빈 출처는 확인된 인용으로 반환하지 마세요.
 담당자는 회의 입력에 명시된 author_member_id만 사용하고 불명확하면 null로 두세요.
 원문에 없는 담당자, 결정, 정책, 날짜를 추측하지 마세요.
 이 응답은 제안일 뿐이며 문서 수정, 승인, 저장, 전송을 수행하지 않습니다.
@@ -110,7 +111,9 @@ async def analyze(body: MeetingAnalysisRequest, client: LLMClient, model: str) -
     try:
         parsed = MeetingAnalysisResult.model_validate(result.result)
         allowed_sources = {
-            _source_key(item.source) for item in body.approved_items if item.source
+            _source_key(item.source)
+            for item in body.approved_items
+            if item.source and item.source.location and item.source.location.strip()
         }
         if any(_source_key(source) not in allowed_sources for source in parsed.sources):
             raise ValueError("model returned a source not present in input")
