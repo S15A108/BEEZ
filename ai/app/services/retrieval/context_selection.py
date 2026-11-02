@@ -161,7 +161,7 @@ class SelectedItem(_Frozen):
 class SelectionResult(_Frozen):
     design_items: tuple[SelectedItem, ...]
     evidence_ids: tuple[Id, ...]
-    unresolved: tuple[Literal["NO_MATCH"], ...]
+    unresolved: tuple[Literal["NO_MATCH", "DEPENDENCY_UNVERIFIED"], ...]
     search_status: Literal["COMPLETE"] = "COMPLETE"
     usage: tuple[EmbeddingUsage, ...] = ()
     direct_match_truncation: DirectMatchTruncation | None = None
@@ -267,24 +267,27 @@ async def select_context(
         reasons.setdefault(ref.design_item_version_id, set()).add("TASK_PLAN")
 
     # One hop only from directly matched/plan items; never follow newly added nodes.
-    # Endpoints missing from the BE-supplied current snapshot are excluded, not
-    # surfaced to the selector or returned as current approved design items.
+    # Eligible edges with unavailable or mismatched endpoint versions cannot be
+    # expanded. Surface only the incomplete state, not any missing endpoint ID.
     seeds = {versions[version].design_item_id for version in reasons}
+    dependency_unverified = False
     for relation in request.relations:
         if (
             relation.relation == "DEPENDS_ON"
             and relation.origin == "EXPLICIT"
             and relation.status == "CONFIRMED"
             and relation.from_design_item_id in seeds
-            and relation.to_design_item_id in by_item
-            and by_item[relation.from_design_item_id].design_item_version_id
-            == relation.from_design_item_version_id
-            and by_item[relation.to_design_item_id].design_item_version_id
-            == relation.to_design_item_version_id
         ):
-            reasons.setdefault(
-                by_item[relation.to_design_item_id].design_item_version_id, set()
-            ).add("DEPENDENCY")
+            source = by_item[relation.from_design_item_id]
+            target = by_item.get(relation.to_design_item_id)
+            if (
+                source.design_item_version_id != relation.from_design_item_version_id
+                or target is None
+                or target.design_item_version_id != relation.to_design_item_version_id
+            ):
+                dependency_unverified = True
+                continue
+            reasons.setdefault(target.design_item_version_id, set()).add("DEPENDENCY")
 
     order = ("MATCHED", "TASK_PLAN", "DEPENDENCY")
     selected = tuple(
@@ -300,6 +303,8 @@ async def select_context(
         if item.design_item_version_id in reasons
     )
     unresolved = ("NO_MATCH",) if not matched and not evidence_ids else ()
+    if dependency_unverified:
+        unresolved += ("DEPENDENCY_UNVERIFIED",)
     return SelectionResult(
         design_items=selected,
         evidence_ids=evidence_ids,

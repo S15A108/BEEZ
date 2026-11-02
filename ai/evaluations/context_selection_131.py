@@ -243,7 +243,9 @@ async def run(args):
         ):
             raise ValueError("Fixture exceeds the one-document-batch call budget")
     output = {
-        "report_version": 3,
+        # v4 records DEPENDENCY_UNVERIFIED when supplied confirmed one-hop
+        # relations cannot be expanded against this snapshot.
+        "report_version": 4,
         "fixture_sha256": hashlib.sha256(raw).hexdigest(),
         "label_author": data["label_author"],
         "model": profile.model,

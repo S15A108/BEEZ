@@ -77,6 +77,7 @@ def test_real_saved_threshold_compares_final_ids_and_skips_uncertainty():
         "missing_evidence": ["e-post"],
         "extra_evidence": ["e-get"],
         "no_match_agrees": True,
+        "dependency_status": "not_recorded",
     }
     assert all(x["status"] == "uncertain_skipped" for x in result["cases"][1:])
     assert "MATCHED" not in json.dumps(result)
@@ -86,6 +87,56 @@ def test_primary_threshold_no_match_is_checked_separately():
     result = blind.compare(FIXTURE, ROOT, review(), measurement())
     assert result["threshold"] == 0.65
     assert result["cases"][0]["no_match_agrees"] is False
+
+
+@pytest.mark.parametrize(
+    ("version", "unresolved", "expected_dependency", "agrees"),
+    [
+        (None, [], "not_recorded", True),
+        (3, [], "not_recorded", True),
+        (4, [], "none_reported", True),
+        (5, [], "not_recorded", True),
+        (4, ["DEPENDENCY_UNVERIFIED"], "unverified", True),
+        (None, ["DEPENDENCY_UNVERIFIED"], "unverified", True),
+        (4, ["NO_MATCH", "DEPENDENCY_UNVERIFIED"], "unverified", False),
+        (4, ["DEPENDENCY_UNVERIFIED", "NO_MATCH"], "unverified", False),
+    ],
+)
+def test_no_match_and_dependency_states_are_compared_separately(
+    version, unresolved, expected_dependency, agrees
+):
+    data = copy.deepcopy(measurement())
+    if version is not None:
+        data["report_version"] = version
+    else:
+        data.pop("report_version", None)
+    data["cases"][0]["unresolved"] = unresolved
+    result = blind.compare(FIXTURE, ROOT, review(), data)
+    assert result["cases"][0]["no_match_agrees"] is agrees
+    assert result["cases"][0]["dependency_status"] == expected_dependency
+
+
+def test_task_only_no_match_can_agree_with_unverified_dependency():
+    form = review()
+    form["cases"][1].update(
+        uncertain=False, direct_item_ids=[], expected_evidence_ids=[], no_match=True
+    )
+    data = copy.deepcopy(measurement())
+    data["report_version"] = 4
+    data["cases"][1]["unresolved"] = ["NO_MATCH", "DEPENDENCY_UNVERIFIED"]
+    result = blind.compare(FIXTURE, ROOT, form, data)
+    assert result["cases"][1]["no_match_agrees"] is True
+    assert result["cases"][1]["dependency_status"] == "unverified"
+
+
+@pytest.mark.parametrize(
+    "unresolved", [["NO_MATCH", "NO_MATCH"], ["UNKNOWN"], [None], "NO_MATCH"]
+)
+def test_unknown_duplicate_or_non_list_unresolved_is_rejected(unresolved):
+    data = copy.deepcopy(measurement())
+    data["cases"][0]["unresolved"] = unresolved
+    with pytest.raises(ValueError, match="unresolved"):
+        blind.compare(FIXTURE, ROOT, review(), data)
 
 
 @pytest.mark.parametrize(

@@ -122,6 +122,33 @@ def test_real_json_arrays_are_converted_and_only_ids_and_usage_return(api):
     assert "비공개" not in response.text
 
 
+def test_unverified_dependency_is_exposed_without_missing_identifier(api):
+    client, selector = api
+    payload = request_body()
+    payload["relations"] = [
+        {
+            "from_design_item_id": "i1",
+            "from_design_item_version_id": "v1",
+            "to_design_item_id": "private-missing",
+            "to_design_item_version_id": "v2",
+            "relation": "DEPENDS_ON",
+            "origin": "EXPLICIT",
+            "status": "CONFIRMED",
+        }
+    ]
+    response = client.post(
+        "/v1/development-context-selections",
+        json=payload,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 200
+    assert len(selector.calls) == 1
+    assert response.json()["result"]["search_status"] == "COMPLETE"
+    assert response.json()["result"]["unresolved"] == ["DEPENDENCY_UNVERIFIED"]
+    assert response.json()["usage"][0]["input_tokens"] == 12
+    assert "private-missing" not in response.text
+
+
 @pytest.mark.parametrize("header", [None, "Bearer wrong", "Basic test-internal"])
 def test_unauthorized_never_calls_provider(api, header):
     client, selector = api

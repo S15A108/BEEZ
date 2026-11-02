@@ -171,7 +171,10 @@ async def test_matching_and_task_refs_expand_only_confirmed_forward_one_hop():
         ("C-v1", ("DEPENDENCY",)),
     ]
     assert result.evidence_ids == ("e1",)
-    assert not result.unresolved
+    # A confirmed one-hop edge from A has an unavailable target. Its ID is
+    # not returned, but omitting it cannot be presented as complete expansion.
+    assert result.unresolved == ("DEPENDENCY_UNVERIFIED",)
+    assert "outside" not in result.model_dump_json()
 
 
 @pytest.mark.asyncio
@@ -206,6 +209,78 @@ async def test_unconfirmed_or_stale_edges_cannot_expand():
         FakeSelector(("A-v1",)),
     )
     assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert result.unresolved == ("DEPENDENCY_UNVERIFIED",)
+
+
+@pytest.mark.parametrize(
+    "reason", ["missing_target", "source_version", "target_version"]
+)
+@pytest.mark.asyncio
+async def test_unverifiable_confirmed_one_hop_is_marked_without_exposing_id(reason):
+    usage = EmbeddingUsage(
+        request_key="call",
+        model="fake",
+        latency_ms=1,
+        failed=False,
+        tokens_known=True,
+        input_tokens=4,
+        output_tokens=0,
+    )
+    edge = (
+        relation("A", "private-missing")
+        if reason == "missing_target"
+        else relation("A", "B", from_design_item_version_id="A-old")
+        if reason == "source_version"
+        else relation("A", "B", to_design_item_version_id="B-old")
+    )
+
+    class UsedSelector:
+        async def select(self, request):
+            return SelectionProposal(
+                design_item_version_ids=("A-v1",), evidence_ids=(), usage=(usage,)
+            )
+
+    result = await select_context(snapshot(relations=(edge,)), UsedSelector())
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert result.search_status == "COMPLETE"
+    assert result.unresolved == ("DEPENDENCY_UNVERIFIED",)
+    assert result.usage == (usage,)
+    assert "private-missing" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_only_confirmed_explicit_forward_seed_edges_can_mark_unverified():
+    result = await select_context(
+        snapshot(
+            relations=(
+                relation("A", "missing-review", status="NEEDS_RECHECK"),
+                relation("A", "missing-ai", origin="AI_CANDIDATE"),
+                relation("A", "missing-other", relation="RELATES_TO"),
+                relation("B", "A", from_design_item_version_id="B-old"),
+                relation("B", "missing-two-hop"),
+            )
+        ),
+        FakeSelector(("A-v1",)),
+    )
+    assert not result.unresolved
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+
+
+@pytest.mark.asyncio
+async def test_task_only_no_match_and_unverified_dependency_are_both_visible():
+    result = await select_context(
+        snapshot(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            ),
+            relations=(relation("A", "private-missing"),),
+        ),
+        FakeSelector(),
+    )
+    assert result.unresolved == ("NO_MATCH", "DEPENDENCY_UNVERIFIED")
+    assert result.design_items[0].reasons == ("TASK_PLAN",)
+    assert "private-missing" not in result.model_dump_json()
 
 
 @pytest.mark.asyncio

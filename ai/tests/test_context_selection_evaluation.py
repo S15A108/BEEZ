@@ -249,7 +249,7 @@ async def test_comparison_run_reports_each_case_without_more_provider_calls(
     saved = evaluation.json.loads(output.read_text(encoding="utf-8"))
     assert provider.calls == ["query", "document"] * 5
     assert saved["compare_thresholds"] == [0.0, 0.5]
-    assert saved["report_version"] == 3
+    assert saved["report_version"] == 4
     assert len(saved["cases"]) == 5
     assert all(len(case["usage"]) == 2 for case in saved["cases"])
     assert all(len(case["threshold_comparisons"]) == 2 for case in saved["cases"])

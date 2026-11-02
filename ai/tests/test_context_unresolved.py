@@ -14,6 +14,7 @@ from app.services.llm_client import (
 from app.services.retrieval.context_selection import (
     ApprovedEvidence,
     ApprovedItem,
+    DesignRelation,
     DirectMatchTruncation,
     SelectedItem,
     SelectionInput,
@@ -455,6 +456,42 @@ async def test_changed_direct_truncation_cannot_reuse_old_binding():
     assessor = Assessor({"candidates": []})
     with pytest.raises(ValueError, match="selection snapshot"):
         await review_unresolved(original, changed, assessor)
+    assert assessor.input is None
+
+
+@pytest.mark.asyncio
+async def test_unverified_dependency_is_preserved_and_cannot_be_removed_before_review():
+    original = snapshot().model_copy(
+        update={
+            "relations": (
+                DesignRelation(
+                    from_design_item_id="i1",
+                    from_design_item_version_id="v1",
+                    to_design_item_id="private-missing",
+                    to_design_item_version_id="v2",
+                    relation="DEPENDS_ON",
+                    origin="EXPLICIT",
+                    status="CONFIRMED",
+                ),
+            )
+        }
+    )
+
+    class Selector:
+        async def select(self, request):
+            return SelectionProposal(
+                design_item_version_ids=("v1",), evidence_ids=("e1",)
+            )
+
+    selected = await select_context(original, Selector())
+    assert selected.unresolved == ("DEPENDENCY_UNVERIFIED",)
+    checked = await review_unresolved(original, selected, Assessor({"candidates": []}))
+    assert checked.result["selection_unresolved"] == ["DEPENDENCY_UNVERIFIED"]
+    assert "private-missing" not in json.dumps(checked.result)
+    tampered = selected.model_copy(update={"unresolved": ()})
+    assessor = Assessor({"candidates": []})
+    with pytest.raises(ValueError, match="selection snapshot"):
+        await review_unresolved(original, tampered, assessor)
     assert assessor.input is None
 
 

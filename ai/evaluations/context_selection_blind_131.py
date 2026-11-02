@@ -252,6 +252,11 @@ def compare(fixture, repository, review, measurement, threshold=None):
     ):
         raise ValueError("measurement does not match fixture or is incomplete")
     measured = measurement.get("cases")
+    report_version = measurement.get("report_version")
+    if report_version is not None and (
+        type(report_version) is not int or report_version < 1
+    ):
+        raise ValueError("invalid measurement report version")
     if not isinstance(measured, list) or any(
         not isinstance(row, dict) for row in measured
     ):
@@ -324,8 +329,20 @@ def compare(fixture, repository, review, measurement, threshold=None):
             measured_row.get("evidence"), {x.evidence_id for x in snapshot.evidence}
         )
         unresolved = measured_row.get("unresolved")
-        if unresolved not in ([], ["NO_MATCH"]):
+        if (
+            not isinstance(unresolved, list)
+            or any(not isinstance(value, str) for value in unresolved)
+            or len(unresolved) != len(set(unresolved))
+            or not set(unresolved).issubset({"NO_MATCH", "DEPENDENCY_UNVERIFIED"})
+        ):
             raise ValueError("invalid measurement unresolved state")
+        dependency_status = (
+            "unverified"
+            if "DEPENDENCY_UNVERIFIED" in unresolved
+            else "none_reported"
+            if report_version == 4
+            else "not_recorded"
+        )
         output["cases"].append(
             {
                 "case": _case_id(index),
@@ -334,7 +351,8 @@ def compare(fixture, repository, review, measurement, threshold=None):
                 "extra_items": sorted(items - expected_items),
                 "missing_evidence": sorted(expected_evidence - evidence),
                 "extra_evidence": sorted(evidence - expected_evidence),
-                "no_match_agrees": row["no_match"] == (unresolved == ["NO_MATCH"]),
+                "no_match_agrees": row["no_match"] == ("NO_MATCH" in unresolved),
+                "dependency_status": dependency_status,
             }
         )
     return output
