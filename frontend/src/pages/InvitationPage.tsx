@@ -37,12 +37,19 @@ export default function InvitationPage() {
   })
   const signedIn = Boolean(session.data)
   const ready = Boolean(invitation.data)
+  // 서버는 다른 이메일 계정의 수락을 무효 초대와 같은 404로 준다(MEM-A05, Q05 -174). 그래서 오류 코드에 기대지 않고,
+  // 로그인한 채 수락이 404거나 미리보기가 계정이 다르다고(account_matches=false) 하면 다른 계정일 수 있다고 알린다
+  // (PR #72 mock/live 전수 대조 LIVE-AMP-04).
+  const otherAccount =
+    invitation.data?.account_matches === false ||
+    getApiErrorStatus(accept.error) === 404 ||
+    getApiErrorCode(accept.error) === 'invitation_email_mismatch'
   const started = useRef(false)
   useEffect(() => {
-    if (!signedIn || !ready || started.current) return
+    if (!signedIn || !ready || otherAccount || started.current) return
     started.current = true
     accept.mutate()
-  }, [signedIn, ready, accept])
+  }, [signedIn, ready, otherAccount, accept])
   const status = getApiErrorStatus(invitation.error)
   // 통신 실패와 서버 오류만 다시 불러오기. 나머지는 원인을 알리지 않고 '찾을 수 없음'으로 통일한다.
   const networkFailure =
@@ -106,9 +113,8 @@ export default function InvitationPage() {
               )}
             </div>
             {signedIn ? (
-              accept.error ? (
-                getApiErrorCode(accept.error) ===
-                'invitation_email_mismatch' ? (
+              otherAccount || accept.error ? (
+                otherAccount ? (
                   <>
                     <div
                       role="alert"
@@ -116,13 +122,10 @@ export default function InvitationPage() {
                     >
                       <TriangleAlert className="mt-0.5 size-[18px] shrink-0 text-[#8a6a00]" />
                       <div>
-                        <p className="font-semibold">
-                          다른 계정으로 로그인되어 있어요
-                        </p>
+                        <p className="font-semibold">다른 계정일 수 있어요</p>
                         <p className="mt-1 text-[#57534e]">
-                          이 초대는 다른 이메일로 보냈어요. 지금은{' '}
-                          {session.data?.email}로 로그인되어 있어서 이
-                          프로젝트를 열 수 없어요.
+                          이 초대를 지금 계정({session.data?.email})으로는 열 수
+                          없어요. 초대받은 이메일 계정으로 다시 로그인해 주세요.
                         </p>
                       </div>
                     </div>

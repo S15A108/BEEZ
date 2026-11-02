@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router'
@@ -28,7 +28,10 @@ beforeEach(async () => {
   })
   token = new URL(result.invite_url).searchParams.get('token')!
 })
-afterEach(() => restore())
+afterEach(() => {
+  restore()
+  vi.restoreAllMocks()
+})
 
 function open() {
   render(
@@ -77,4 +80,26 @@ it('로그아웃 상태로 열면 로그인·가입하고 참여하는 길만 �
     screen.getByRole('link', { name: '이 이메일로 회원가입하기' }),
   ).toHaveAttribute('href', `/register?invite=${token}`)
   expect(screen.queryByRole('button', { name: /수락/ })).not.toBeInTheDocument()
+})
+
+// PR #72 mock/live 전수 대조 LIVE-AMP-04: 서버는 다른 계정의 수락을 404로 숨긴다.
+// 로그인한 채 다른 계정으로 열면 오류 코드 없이도 다시 로그인할 길을 보인다.
+it('다른 계정으로 초대 링크를 열면 초대받은 계정으로 다시 로그인하게 한다', async () => {
+  open()
+  expect(await screen.findByText('다른 계정일 수 있어요')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '초대받은 계정으로 다시 로그인' }),
+  ).toBeInTheDocument()
+})
+
+it('수락이 404면 미리보기에 계정 정보가 없어도 다시 로그인할 길을 보인다', async () => {
+  const preview = membersApi.previewInvitation
+  vi.spyOn(membersApi, 'previewInvitation').mockImplementation(
+    async (input, options) => ({
+      ...(await preview(input, options)),
+      account_matches: undefined,
+    }),
+  )
+  open()
+  expect(await screen.findByText('다른 계정일 수 있어요')).toBeInTheDocument()
 })

@@ -359,15 +359,12 @@ export async function accountRoutes(
         }
       }
       const account = requireAccount(context)
+      // 실제 서버처럼 다른 이메일 계정의 수락은 무효 초대와 같은 404로 준다(MEM-A05, Q05 -174).
       if (
         invitation.invited_email &&
-        invitation.invited_email !== account.email
+        invitation.invited_email.toLowerCase() !== account.email.toLowerCase()
       )
-        fail(
-          403,
-          'invitation_email_mismatch',
-          '초대받은 이메일로 로그인해 주세요.',
-        )
+        fail(404, 'not_found', '초대를 찾을 수 없어요.')
       let member = project.members.find(
         (item) => item.account_id === account.id,
       )
