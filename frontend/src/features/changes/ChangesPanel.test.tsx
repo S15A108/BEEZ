@@ -301,3 +301,56 @@ it('반려된 제안을 다시 내면 설계 항목 변경을 원래 그대로 �
   expect(update.mock.calls[0][2].items).toEqual(proposal.items)
   vi.restoreAllMocks()
 })
+
+// PR #72 mock/live 전수 대조 DOC-LIVE-5: 검토 요청은 대상 팀원이 있어야 한다(서버 400).
+it('검토 요청을 고르고 대상 팀원을 고르지 않으면 보내지 않고 알린다', async () => {
+  const user = userEvent.setup()
+  const comment = vi.spyOn(changesApi, 'comment')
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(screen.getByRole('tab', { name: /^의견/ }))
+  await user.selectOptions(
+    await screen.findByLabelText('남길 종류'),
+    'REVIEW_REQUEST',
+  )
+  await user.type(screen.getByLabelText(/^내용/), '이 문장도 봐 주세요.')
+  await user.click(screen.getByRole('button', { name: '남기기' }))
+  expect(
+    await screen.findByText('검토를 요청할 팀원을 골라 주세요.'),
+  ).toBeInTheDocument()
+  expect(comment).not.toHaveBeenCalled()
+  await expect(
+    changesApi.comment('101', '71', {
+      body: '봐 주세요',
+      kind: 'REVIEW_REQUEST',
+    }),
+  ).rejects.toMatchObject({ response: { status: 400 } })
+})
+
+// PR #72 mock/live 전수 대조 DOC-LIVE-6: 발행·철회한 제안에는 의견을 남길 수 없다(서버 409 invalid_transition).
+it('철회한 제안에는 의견 폼 대신 끝난 제안이라는 안내를 보인다', async () => {
+  const user = userEvent.setup()
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  const { proposal } = await changesApi.get('101', '71')
+  await changesApi.withdraw('101', '71', {
+    expected_revision: proposal.revision,
+    expected_snapshot_hash: proposal.snapshot_hash,
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ChangesPanel projectId="101" isLeader={false} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('tab', { name: /^의견/ }))
+  expect(
+    await screen.findByText('끝난 제안이라 댓글을 달 수 없어요.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '남기기' }),
+  ).not.toBeInTheDocument()
+  await expect(
+    changesApi.comment('101', '71', { body: '늦은 의견', kind: 'COMMENT' }),
+  ).rejects.toMatchObject({ response: { status: 409 } })
+})

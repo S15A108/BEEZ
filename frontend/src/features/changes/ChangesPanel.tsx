@@ -1177,64 +1177,78 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               의견 더 보기
                             </Button>
                           )}
-                          <ActionForm
-                            key={commentList.length}
-                            fields={[
-                              {
-                                name: 'kind',
-                                label: '남길 종류',
-                                type: 'select',
-                                value: 'COMMENT',
-                                options: [
-                                  { value: 'COMMENT', label: '의견' },
-                                  {
-                                    value: 'REVIEW_REQUEST',
-                                    label: '검토 요청',
-                                  },
-                                ],
-                              },
-                              {
-                                name: 'member_id',
-                                label: '검토를 요청할 팀원',
-                                type: 'select',
-                                options: [
-                                  { value: '', label: '고르지 않음' },
-                                  ...people.map((member) => ({
-                                    value: member.id,
-                                    label: member.name,
-                                  })),
-                                ],
-                              },
-                              {
-                                name: 'body',
-                                label: '내용',
-                                type: 'textarea',
-                                required: true,
-                                max: 2000,
-                              },
-                            ]}
-                            submitLabel="남기기"
-                            onSubmit={async (values) => {
-                              const review = values.kind === 'REVIEW_REQUEST'
-                              await action.run(
-                                () =>
-                                  changesApi.comment(projectId, current.id, {
-                                    body: values.body,
-                                    kind: review ? 'REVIEW_REQUEST' : 'COMMENT',
-                                    ...(review && values.member_id
-                                      ? {
-                                          mentioned_member_ids: [
-                                            values.member_id,
-                                          ],
-                                        }
-                                      : {}),
-                                  }),
-                                review
-                                  ? '검토를 요청했어요.'
-                                  : '의견을 남겼어요.',
-                              )
-                            }}
-                          />
+                          {/* 서버는 발행·철회된 제안의 의견을 409 invalid_transition으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-6). */}
+                          {['PUBLISHED', 'WITHDRAWN'].includes(
+                            current.status,
+                          ) ? (
+                            <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+                              끝난 제안이라 댓글을 달 수 없어요.
+                            </p>
+                          ) : (
+                            <ActionForm
+                              key={commentList.length}
+                              fields={[
+                                {
+                                  name: 'kind',
+                                  label: '남길 종류',
+                                  type: 'select',
+                                  value: 'COMMENT',
+                                  options: [
+                                    { value: 'COMMENT', label: '의견' },
+                                    {
+                                      value: 'REVIEW_REQUEST',
+                                      label: '검토 요청',
+                                    },
+                                  ],
+                                },
+                                {
+                                  name: 'member_id',
+                                  label: '검토를 요청할 팀원',
+                                  type: 'select',
+                                  // 서버는 대상이 없는 검토 요청을 400으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-5).
+                                  requiredWhen: (values) =>
+                                    values.kind === 'REVIEW_REQUEST',
+                                  options: [
+                                    { value: '', label: '고르지 않음' },
+                                    ...people.map((member) => ({
+                                      value: member.id,
+                                      label: member.name,
+                                    })),
+                                  ],
+                                },
+                                {
+                                  name: 'body',
+                                  label: '내용',
+                                  type: 'textarea',
+                                  required: true,
+                                  max: 2000,
+                                },
+                              ]}
+                              submitLabel="남기기"
+                              onSubmit={async (values) => {
+                                const review = values.kind === 'REVIEW_REQUEST'
+                                await action.run(
+                                  () =>
+                                    changesApi.comment(projectId, current.id, {
+                                      body: values.body,
+                                      kind: review
+                                        ? 'REVIEW_REQUEST'
+                                        : 'COMMENT',
+                                      ...(review && values.member_id
+                                        ? {
+                                            mentioned_member_ids: [
+                                              values.member_id,
+                                            ],
+                                          }
+                                        : {}),
+                                    }),
+                                  review
+                                    ? '검토를 요청했어요.'
+                                    : '의견을 남겼어요.',
+                                )
+                              }}
+                            />
+                          )}
                           <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             의견은 승인과 달라요. 승인은 팀장이 해요.
                             {/* 열린 질문 Q5: 사람이 회의를 만들지 않는 결정과 부딪혀 '회의로 논의'는 그대로 둔다. */}

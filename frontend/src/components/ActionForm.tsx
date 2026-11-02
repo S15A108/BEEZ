@@ -23,6 +23,8 @@ export interface FormField {
   /** columns 폼에서 오른쪽 칸에 둔다 */
   column?: 2
   required?: boolean
+  /** 다른 칸 값에 따라 필수일 때(예: 검토 요청이면 대상 팀원) */
+  requiredWhen?: (values: Record<string, string>) => boolean
   min?: number
   max?: number
   value?: string
@@ -81,11 +83,11 @@ export function ActionForm({
         for (const field of fields) {
           if (field.custom) continue
           const value = values[field.name] ?? ''
-          if (field.required && !value.trim())
+          if ((field.required || field.requiredWhen?.(values)) && !value.trim())
             context.addIssue({
               code: 'custom',
               path: [field.name],
-              message: `${field.label}${objectParticle(field.label)} ${field.type === 'chips' ? '골라' : '입력해'} 주세요.`,
+              message: `${field.label}${objectParticle(field.label)} ${field.type === 'chips' || field.type === 'select' ? '골라' : '입력해'} 주세요.`,
             })
           else if (field.min && value.length < field.min)
             context.addIssue({

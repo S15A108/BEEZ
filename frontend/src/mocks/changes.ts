@@ -559,6 +559,26 @@ export function changeRoutes(
           fail(404, 'not_found', '아직 승인 이력이 없어요.'),
       }
     case 'CHG-A12': {
+      // 실제 서버(ChangeDiscussionService)처럼 끝난 제안의 의견은 409, 대상 없는 검토 요청은 400
+      // (PR #72 mock/live 전수 대조 DOC-LIVE-5·6).
+      if (['PUBLISHED', 'WITHDRAWN'].includes(proposal!.status))
+        fail(
+          409,
+          'invalid_transition',
+          '발행되었거나 거둔 변경 제안에는 의견을 남길 수 없습니다',
+        )
+      if (
+        body.kind === 'REVIEW_REQUEST' &&
+        !(
+          Array.isArray(body.mentioned_member_ids) &&
+          body.mentioned_member_ids.length
+        )
+      )
+        fail(
+          400,
+          'validation_failed',
+          '검토 요청은 대상 멤버를 한 명 이상 지정해야 합니다',
+        )
       const comment = changeCommentSchema.parse({
         id: nextId(database),
         proposal_id: proposal!.id,
