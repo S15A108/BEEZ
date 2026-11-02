@@ -242,7 +242,8 @@ function Workspace({ projectId }: { projectId: string }) {
               >
                 <DialogHeader>
                   <div className="flex items-start justify-between gap-3 pr-8">
-                    <DialogTitle>
+                    {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
+                    <DialogTitle className="text-lg font-semibold">
                       {pane && pane !== 'settings' ? paneTitles[pane] : ''}
                     </DialogTitle>
                     {pane && paneKeys[pane] && (
