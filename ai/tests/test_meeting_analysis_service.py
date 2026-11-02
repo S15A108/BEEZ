@@ -50,7 +50,8 @@ def model_response():
         "decisions": ["오류 응답 구조 유지"],
         "unresolved": [],
         "action_items": [{"text": "오류 설명 보완", "member_id": "21"}],
-        "sources": [meeting_request()["approved_items"][0]["source"]],
+        # Stored design source metadata has not been verified against source text.
+        "sources": [],
     }
 
 
@@ -83,6 +84,11 @@ async def test_meeting_output_and_usage_are_scoped_to_input():
     assert provider.calls[0].context.project_id == "101"
     assert provider.calls[0].context.request_key == "meeting-request-1"
     assert provider.calls[0].response_format["type"] == "json_schema"
+    sent = json.loads(provider.calls[0].messages[1].content)
+    assert (
+        sent["approved_items"][0]["source"]
+        == meeting_request()["approved_items"][0]["source"]
+    )
 
 
 @pytest.mark.asyncio
@@ -112,7 +118,28 @@ async def test_unlocated_document_cannot_be_cited_with_blank_or_invented_locatio
     request = meeting_request()
     request["approved_items"][0]["source"]["location"] = ""
     response = model_response()
-    response["sources"][0]["location"] = output_location
+    source = copy.deepcopy(request["approved_items"][0]["source"])
+    source["location"] = output_location
+    response["sources"] = [source]
+    provider = Provider(response)
+    with pytest.raises(LLMError) as caught:
+        await analyze(
+            MeetingAnalysisRequest.model_validate(request),
+            LLMClient(provider),
+            "test-model",
+        )
+    assert caught.value.code == "invalid_output"
+    assert caught.value.usage[0].failed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["원문에 없는 위치", "지난 기준의 문서 5행"])
+async def test_stored_source_is_never_accepted_as_verified_evidence(location):
+    request = meeting_request()
+    request["approved_items"][0]["source"]["location"] = location
+    response = model_response()
+    # Exact input/output equality cannot verify a location or current baseline.
+    response["sources"] = [copy.deepcopy(request["approved_items"][0]["source"])]
     provider = Provider(response)
     with pytest.raises(LLMError) as caught:
         await analyze(
@@ -160,7 +187,9 @@ async def test_meeting_text_is_input_data_and_unknown_owner_is_not_guessed():
 async def test_invalid_output_preserves_failed_usage_without_leaking_content(bad_field):
     response = copy.deepcopy(model_response())
     if bad_field == "location":
-        response["sources"][0]["location"] = "없는 원문 위치"
+        source = copy.deepcopy(meeting_request()["approved_items"][0]["source"])
+        source["location"] = "없는 원문 위치"
+        response["sources"] = [source]
     elif bad_field == "member":
         response["action_items"][0]["member_id"] = "999"
     else:

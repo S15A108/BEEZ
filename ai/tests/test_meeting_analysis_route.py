@@ -32,8 +32,15 @@ def request_body():
     }
 
 
+@pytest.fixture(scope="module")
+def http_client():
+    # The meeting route does not depend on the embedding vocabulary.
+    with patch("app.main.EmbeddingTokenCounter"), TestClient(app) as test_client:
+        yield test_client
+
+
 @pytest.fixture
-def api(monkeypatch):
+def api(monkeypatch, http_client):
     state = {
         "calls": [],
         "error": None,
@@ -65,9 +72,7 @@ def api(monkeypatch):
         get_settings,
         lambda: Settings(_env_file=None, ai_internal_token="internal"),
     )
-    # The meeting route does not depend on the embedding vocabulary.
-    with patch("app.main.EmbeddingTokenCounter"), TestClient(app) as test_client:
-        yield test_client, state
+    yield http_client, state
 
 
 def test_meeting_route_calls_model_and_returns_feature_usage(api):
@@ -118,6 +123,39 @@ def test_be_source_without_location_does_not_block_model_call(api, location):
     assert response.json()["result"]["sources"] == []
     assert response.json()["usage"][0]["failed"] is False
     assert len(state["calls"]) == 1
+    sent = json.loads(state["calls"][0].messages[1].content)
+    assert sent["approved_items"][0]["source"] == body["approved_items"][0]["source"]
+
+
+@pytest.mark.parametrize("location", ["원문에 없는 위치", "지난 기준의 문서 5행"])
+def test_stored_source_with_location_is_not_a_verified_citation(api, location):
+    client, state = api
+    body = request_body()
+    body["approved_items"] = [design_source(location)]
+    # The model has used the exact supplied source; its position is still unverified.
+    state["output"]["sources"] = [design_source(location)["source"]]
+    response = client.post(
+        "/v1/bee/meeting-analysis",
+        json=body,
+        headers={"Authorization": "Bearer internal"},
+    )
+    assert response.status_code == 502, response.text
+    assert response.json()["error"]["code"] == "model_unavailable"
+    assert response.json()["usage"][0]["failed"] is True
+    assert len(state["calls"]) == 1
+
+
+def test_located_stored_source_is_kept_as_context_without_citation(api):
+    client, state = api
+    body = request_body()
+    body["approved_items"] = [design_source("3~5행")]
+    response = client.post(
+        "/v1/bee/meeting-analysis",
+        json=body,
+        headers={"Authorization": "Bearer internal"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["sources"] == []
     sent = json.loads(state["calls"][0].messages[1].content)
     assert sent["approved_items"][0]["source"] == body["approved_items"][0]["source"]
 
