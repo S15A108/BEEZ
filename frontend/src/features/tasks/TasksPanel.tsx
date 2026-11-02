@@ -50,7 +50,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { describeContent, lines } from '@/lib/display'
+import { describeContent, LIST_SELECTED, lines } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
@@ -302,7 +302,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                       <button
                         key={entry.id}
                         type="button"
-                        className={`w-full rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 ${entry.id === selectedId ? 'border-primary/30 bg-primary/5' : ''}`}
+                        aria-current={entry.id === selectedId}
+                        className={cn(
+                          'w-full rounded-xl border p-4 text-left transition-colors hover:bg-muted/50',
+                          entry.id === selectedId && LIST_SELECTED,
+                        )}
                         onClick={() =>
                           setSelected({ id: entry.id, focus: focusId })
                         }

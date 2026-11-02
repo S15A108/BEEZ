@@ -92,3 +92,7 @@ export const countText = (
   query: { isPending: boolean; isError: boolean },
   value: number | undefined,
 ) => (query.isError ? '—' : query.isPending ? '…' : String(value ?? 0))
+
+// 업무 창 목록에서 고른 항목 표시. 작업 목록의 노란 테두리·바탕을 기준으로 작업·변경 제안·회의·설계 관계 목록이 같이 쓴다
+// (사용자 요청 11-02). 탭 밑줄, 단축 바의 열린 칸, 비비 대화 테두리는 목록 선택이 아니라 따로 둔다.
+export const LIST_SELECTED = 'border-primary/30 bg-primary/5'

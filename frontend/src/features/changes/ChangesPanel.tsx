@@ -29,7 +29,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
-import { describeContent } from '@/lib/display'
+import { describeContent, LIST_SELECTED } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
@@ -416,8 +416,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         onClick={() => select(entry.id)}
                         className={cn(
                           'grid w-full gap-1 rounded-xl border px-3.5 py-3 text-left hover:bg-muted/40',
-                          selectedId === entry.id &&
-                            'border-2 border-foreground',
+                          selectedId === entry.id && LIST_SELECTED,
                         )}
                       >
                         <strong className="text-sm font-semibold">

@@ -19,6 +19,7 @@ import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
+import { LIST_SELECTED } from '@/lib/display'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useMeetingList } from './useMeetingList'
 
@@ -147,8 +148,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               aria-current={meeting.id === selectedId}
                               className={cn(
                                 'grid w-full gap-1 rounded-xl border px-3.5 py-3 text-left hover:bg-muted/40',
-                                meeting.id === selectedId &&
-                                  'border-2 border-foreground',
+                                meeting.id === selectedId && LIST_SELECTED,
                               )}
                               onClick={() => {
                                 setSelection({ id: meeting.id, focus })

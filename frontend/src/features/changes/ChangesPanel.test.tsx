@@ -471,3 +471,14 @@ it('팀장도 본인이 올린 제안을 거둔다', async () => {
     'WITHDRAWN',
   )
 })
+
+// 사용자 요청(11-02): 업무 창 목록의 선택 표시는 작업 목록과 같은 노란 테두리·바탕으로 통일한다.
+it('고른 제안은 작업 목록과 같은 노란 선택 표시로 보인다', async () => {
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  const selected = screen
+    .getAllByRole('button')
+    .find((button) => button.getAttribute('aria-current') === 'true')!
+  expect(selected).toHaveClass('border-primary/30', 'bg-primary/5')
+  expect(selected).not.toHaveClass('border-foreground')
+})
