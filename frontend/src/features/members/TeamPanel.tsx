@@ -75,7 +75,9 @@ export function TeamPanel({
     placements[placementKey(accountId, projectId)]?.design ?? 'modern',
   )
   const [dialog, setDialog] = useState<DialogAction | null>(null)
-  const [fresh, setFresh] = useState<{ id: string; url: string }[]>([])
+  const [fresh, setFresh] = useState<
+    { id: string; url: string; email: string }[]
+  >([])
   const [copyMessage, setCopyMessage] = useState('')
   const [inviteFailures, setInviteFailures] = useState<
     { email: string; message: string }[]
@@ -177,7 +179,7 @@ export function TeamPanel({
         created++
         setFresh((items) => [
           ...items,
-          { id: result.invitation.id, url: result.invite_url },
+          { id: result.invitation.id, url: result.invite_url, email },
         ])
       } catch (cause) {
         if (getApiErrorCode(cause) === 'already_member') skipped++
@@ -397,12 +399,29 @@ export function TeamPanel({
           )}
         </AsyncState>
       )}
-      {/* 초대가 하나도 없으면 '초대 중' 칸을 숨긴다(캔버스 SCR-06-v2-settings). */}
+      {/* 초대가 하나도 없다고 확인되면 '초대 중' 칸을 숨긴다(캔버스 SCR-06-v2-settings). 목록을 불러오는 중이거나
+          실패했으면 칸을 두고 AsyncState로 오류·다시 시도를 보인다. 방금 만든 초대 링크는 한 번만 받으므로 목록에 아직
+          없어도(목록 조회 실패 포함) 따로 보인다(PR #72 4차 조사 FOURTH-AMP-01). */}
       {view === 'team' &&
         isLeader &&
-        !!invitations.data?.pages.some((page) => page.items.length) && (
+        (!invitations.isSuccess ||
+          invitations.data.pages.some((page) => page.items.length) ||
+          fresh.length > 0) && (
           <div className="space-y-3">
             <h3 className="text-sm font-semibold">초대 중</h3>
+            {fresh
+              .filter(
+                (item) =>
+                  !invitations.data?.pages.some((page) =>
+                    page.items.some((invitation) => invitation.id === item.id),
+                  ),
+              )
+              .map((item) => (
+                <div key={item.id} className="grid gap-1 text-sm">
+                  <b className="font-medium">{item.email} · 방금 초대</b>
+                  <FreshLink url={item.url} onCopied={setCopyMessage} />
+                </div>
+              ))}
             <AsyncState query={invitations}>
               {(data) => (
                 <>
@@ -441,46 +460,14 @@ export function TeamPanel({
                             {fresh.some(
                               (item) => item.id === invitation.id,
                             ) && (
-                              <span className="flex w-full gap-2">
-                                <Input
-                                  aria-label="팀원 초대 링크"
-                                  readOnly
-                                  value={
-                                    fresh.find(
-                                      (item) => item.id === invitation.id,
-                                    )!.url
-                                  }
-                                  className="min-w-48 flex-1"
-                                  onFocus={(event) =>
-                                    event.currentTarget.select()
-                                  }
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    void navigator.clipboard
-                                      .writeText(
-                                        fresh.find(
-                                          (item) => item.id === invitation.id,
-                                        )!.url,
-                                      )
-                                      .then(() =>
-                                        setCopyMessage(
-                                          '초대 링크를 복사했어요.',
-                                        ),
-                                      )
-                                      .catch(() =>
-                                        setCopyMessage(
-                                          '링크를 선택해 직접 복사해 주세요.',
-                                        ),
-                                      )
-                                  }
-                                >
-                                  <Copy />
-                                  복사
-                                </Button>
-                              </span>
+                              <FreshLink
+                                url={
+                                  fresh.find(
+                                    (item) => item.id === invitation.id,
+                                  )!.url
+                                }
+                                onCopied={setCopyMessage}
+                              />
                             )}
                             {!invitation.revoked_at &&
                               !invitation.accepted_at && (
@@ -894,6 +881,40 @@ const inviteSchema = z.object({
 })
 
 // 팀 목록 위 초대 칸(노션처럼). 쉼표나 줄바꿈으로 여러 명을 넣고, 보내면 칸을 비운다.
+// 방금 만든 초대 링크. 응답에서 한 번만 받으므로 복사하게 둔다.
+function FreshLink({
+  url,
+  onCopied,
+}: {
+  url: string
+  onCopied: (message: string) => void
+}) {
+  return (
+    <span className="flex w-full gap-2">
+      <Input
+        aria-label="팀원 초대 링크"
+        readOnly
+        value={url}
+        className="min-w-48 flex-1"
+        onFocus={(event) => event.currentTarget.select()}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() =>
+          void navigator.clipboard
+            .writeText(url)
+            .then(() => onCopied('초대 링크를 복사했어요.'))
+            .catch(() => onCopied('링크를 선택해 직접 복사해 주세요.'))
+        }
+      >
+        <Copy />
+        복사
+      </Button>
+    </span>
+  )
+}
+
 function InviteForm({
   onInvite,
 }: {

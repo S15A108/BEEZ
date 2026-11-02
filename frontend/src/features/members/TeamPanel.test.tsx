@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router'
@@ -79,9 +79,12 @@ it('쉼표로 여러 이메일을 넣으면 사람마다 초대를 만들고 칸
     'one@beez.local, two@beez.local',
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
-  expect(await screen.findAllByLabelText('팀원 초대 링크')).toHaveLength(2)
-  expect(screen.getByText('one@beez.local')).toBeInTheDocument()
-  expect(screen.getByText('two@beez.local')).toBeInTheDocument()
+  // 링크는 만들어질 때마다 바로 보이므로 둘 다 보일 때까지 기다린다(PR #72 4차 조사 FOURTH-AMP-01).
+  await waitFor(() =>
+    expect(screen.getAllByLabelText('팀원 초대 링크')).toHaveLength(2),
+  )
+  expect(await screen.findByText('one@beez.local')).toBeInTheDocument()
+  expect(await screen.findByText('two@beez.local')).toBeInTheDocument()
   expect(within(form).getByLabelText('초대할 이메일')).toHaveValue('')
 })
 
@@ -300,4 +303,25 @@ it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 �
   await expect(
     membersApi.update('101', me.id, { domain: '프론트' }),
   ).rejects.toMatchObject({ response: { status: 403 } })
+})
+
+// PR #72 4차 조사 FOURTH-AMP-01: 초대 목록 조회가 실패해도 오류와 다시 불러오기를 보이고, 방금 만든 초대 링크는
+// 목록 응답과 상관없이 보인다(한 번만 받는 링크라 숨으면 잃는다).
+it('초대 목록 조회가 실패해도 오류와 방금 만든 초대 링크를 보인다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(membersApi, 'invitations').mockRejectedValue(new Error('503'))
+  renderTeam()
+  await screen.findByText('김동료')
+  expect(
+    await screen.findByRole('button', { name: /다시 불러오기/ }),
+  ).toBeInTheDocument()
+  const form = screen.getByRole('form', { name: '팀원 초대' })
+  await user.type(
+    within(form).getByLabelText('초대할 이메일'),
+    'later@beez.local',
+  )
+  await user.click(within(form).getByRole('button', { name: '초대' }))
+  const link = await screen.findByLabelText<HTMLInputElement>('팀원 초대 링크')
+  expect(link.value).toContain('mock-invite-')
+  expect(screen.getByText('later@beez.local · 방금 초대')).toBeInTheDocument()
 })
