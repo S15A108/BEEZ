@@ -795,128 +795,137 @@ function UploadDocument({
           </li>
         ))}
       </ol>
-      <div className="grid w-full max-w-180 gap-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-muted/50 px-4 py-3 text-sm">
-          <span className="text-muted-foreground">문서 유형</span>
-          <span className="flex items-center gap-2 font-semibold">
-            <KindTile kind={kind} />
-            {label}
-          </span>
-          <span className="basis-full text-xs text-muted-foreground">
-            공용 문서함에서 누른 칸의 종류라 바꿀 수 없어요
-          </span>
-        </div>
-        <Controller
-          name="file"
-          control={control}
-          render={({ field }) => {
-            const pick = (file?: File) => {
-              field.onChange(file)
-              void trigger('file')
-              setFailure(undefined)
-            }
-            return (
-              <div className="grid gap-2">
-                <Label htmlFor="document-file">원본 파일 *</Label>
-                <div
-                  className={cn(
-                    'grid justify-items-center gap-1 rounded-xl border-[1.5px] border-dashed px-4 py-6 text-center text-sm',
-                    errors.file && 'border-destructive',
-                  )}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault()
-                    if (!isSubmitting) pick(event.dataTransfer.files[0])
-                  }}
-                >
-                  <Upload className="size-5 text-muted-foreground" />
-                  <p>
-                    파일을 여기로 끌어 놓거나{' '}
-                    <label
-                      htmlFor="document-file"
-                      className="cursor-pointer font-semibold underline"
-                    >
-                      파일 선택
-                    </label>
-                  </p>
-                  <input
-                    id="document-file"
-                    type="file"
-                    accept=".md"
-                    className="sr-only"
-                    name={field.name}
-                    ref={field.ref}
-                    onBlur={field.onBlur}
-                    disabled={isSubmitting}
-                    aria-invalid={!!errors.file}
-                    onChange={(event) => {
-                      pick(event.target.files?.[0])
-                      event.target.value = ''
-                    }}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    지원 형식: Markdown (.md) · 1 MiB 이하
-                  </p>
-                </div>
-                {field.value && (
+      {/* 입력칸은 창 폭을 따라 늘어나고, 넓은 화면(lg 이상)에서는 두 칸으로 놓는다: 왼쪽 문서 유형·원본 파일,
+          오른쪽 제목·담당 영역·안내. 좁은 화면은 한 칸이다(사용자 요청 11-02, 등록 화면 보드는 없음). */}
+      <div className="grid w-full gap-4 lg:grid-cols-2 lg:items-start lg:gap-6">
+        <div className="grid gap-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-muted/50 px-4 py-3 text-sm">
+            <span className="text-muted-foreground">문서 유형</span>
+            <span className="flex items-center gap-2 font-semibold">
+              <KindTile kind={kind} />
+              {label}
+            </span>
+            <span className="basis-full text-xs text-muted-foreground">
+              공용 문서함에서 누른 칸의 종류라 바꿀 수 없어요
+            </span>
+          </div>
+          <Controller
+            name="file"
+            control={control}
+            render={({ field }) => {
+              const pick = (file?: File) => {
+                field.onChange(file)
+                void trigger('file')
+                setFailure(undefined)
+              }
+              return (
+                <div className="grid gap-2">
+                  <Label htmlFor="document-file">원본 파일 *</Label>
                   <div
                     className={cn(
-                      'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm',
+                      'grid justify-items-center gap-1 rounded-xl border-[1.5px] border-dashed px-4 py-6 text-center text-sm',
                       errors.file && 'border-destructive',
                     )}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      if (!isSubmitting) pick(event.dataTransfer.files[0])
+                    }}
                   >
-                    <FileText className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {field.value.name}
-                    </span>
-                    {!errors.file && (
-                      <span className="text-xs text-green-700">선택됨</span>
-                    )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="선택한 파일 빼기"
+                    <Upload className="size-5 text-muted-foreground" />
+                    <p>
+                      파일을 여기로 끌어 놓거나{' '}
+                      <label
+                        htmlFor="document-file"
+                        className="cursor-pointer font-semibold underline"
+                      >
+                        파일 선택
+                      </label>
+                    </p>
+                    <input
+                      id="document-file"
+                      type="file"
+                      accept=".md"
+                      className="sr-only"
+                      name={field.name}
+                      ref={field.ref}
+                      onBlur={field.onBlur}
                       disabled={isSubmitting}
-                      onClick={() => pick(undefined)}
-                    >
-                      <X />
-                    </Button>
+                      aria-invalid={!!errors.file}
+                      onChange={(event) => {
+                        pick(event.target.files?.[0])
+                        event.target.value = ''
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      지원 형식: Markdown (.md) · 1 MiB 이하
+                    </p>
                   </div>
-                )}
-                {errors.file && (
-                  <p className="text-sm text-destructive" role="alert">
-                    {errors.file.message}
-                  </p>
-                )}
-              </div>
-            )
-          }}
-        />
-        <div className="grid gap-2">
-          <Label htmlFor="document-title">문서 제목 *</Label>
-          <Input
-            id="document-title"
-            {...register('title')}
-            disabled={isSubmitting}
-            aria-invalid={!!errors.title}
+                  {field.value && (
+                    <div
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm',
+                        errors.file && 'border-destructive',
+                      )}
+                    >
+                      <FileText className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {field.value.name}
+                      </span>
+                      {!errors.file && (
+                        <span className="text-xs text-green-700">선택됨</span>
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="선택한 파일 빼기"
+                        disabled={isSubmitting}
+                        onClick={() => pick(undefined)}
+                      >
+                        <X />
+                      </Button>
+                    </div>
+                  )}
+                  {errors.file && (
+                    <p className="text-sm text-destructive" role="alert">
+                      {errors.file.message}
+                    </p>
+                  )}
+                </div>
+              )
+            }}
           />
-          {errors.title && (
-            <p className="text-sm text-destructive" role="alert">
-              {errors.title.message}
-            </p>
-          )}
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="document-domain">담당 영역 (선택)</Label>
-          <Input
-            id="document-domain"
-            placeholder="예: 인증"
-            {...register('domain')}
-            disabled={isSubmitting}
-          />
-          <p className="text-xs text-muted-foreground">
-            목록과 검색에서 담당 영역별로 모아 볼 수 있어요.
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="document-title">문서 제목 *</Label>
+            <Input
+              id="document-title"
+              {...register('title')}
+              disabled={isSubmitting}
+              aria-invalid={!!errors.title}
+            />
+            {errors.title && (
+              <p className="text-sm text-destructive" role="alert">
+                {errors.title.message}
+              </p>
+            )}
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="document-domain">담당 영역 (선택)</Label>
+            <Input
+              id="document-domain"
+              placeholder="예: 인증"
+              {...register('domain')}
+              disabled={isSubmitting}
+            />
+            <p className="text-xs text-muted-foreground">
+              목록과 검색에서 담당 영역별로 모아 볼 수 있어요.
+            </p>
+          </div>
+          <p className="rounded-xl bg-muted/50 px-4 py-3 text-xs text-muted-foreground">
+            등록하면 비비가 먼저 검토하고, 팀장이 승인해요.
           </p>
         </div>
       </div>
@@ -939,9 +948,6 @@ function UploadDocument({
         </div>
       )}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
-        <p className="mr-auto text-xs text-muted-foreground">
-          등록하면 비비가 먼저 검토하고, 팀장이 승인해요.
-        </p>
         <Button
           type="button"
           variant="outline"
