@@ -16,6 +16,8 @@ spring:
 
 # ai 서버는 닫힌 포트로 두어 ai_reachable=false 경로를 검증한다.
 beez:
+  validation:
+    worker-enabled: false   # 시험은 ValidationWorker.runOnce 를 직접 부른다
   document:
     worker-enabled: false
     object-storage:
