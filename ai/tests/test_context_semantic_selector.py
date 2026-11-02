@@ -145,6 +145,88 @@ async def test_real_selection_keeps_scope_and_separate_query_document_usage():
 
 
 @pytest.mark.asyncio
+async def test_candidate_preflight_reuses_batches_without_retokenizing():
+    class CountingCounter(Counter):
+        def __init__(self):
+            self.texts = []
+
+        def count(self, text):
+            self.texts.append(text)
+            return super().count(text)
+
+    request = inputs()
+    provider = Provider()
+    counter = CountingCounter()
+    configured = EmbeddingContextSelector(
+        provider,
+        PROFILE,
+        counter,
+        min_similarity=0.8,
+        max_items=2,
+        max_evidence=2,
+        policy=EmbeddingPolicy(max_attempts=1),
+    )
+    result = await select_context(request, configured)
+    expected = [item.text for item in request.items] + [
+        item.text for item in request.evidence
+    ]
+    assert counter.texts == expected + [request.request]
+    assert [call[2] for call in provider.calls] == ["query", "document"]
+    assert [text.text for text in provider.calls[1][0]] == expected
+    assert len(result.usage) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhausted", [False, True])
+async def test_document_preparation_budget_excludes_query_wait(monkeypatch, exhausted):
+    from app.services.retrieval import embeddings
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+    clock = Clock()
+
+    class TimedCounter(Counter):
+        def count(self, text):
+            if text != "login":
+                # Four candidate texts consume 0.75 or 1.0 seconds in total.
+                clock.now += 0.25 if exhausted else 0.1875
+            return super().count(text)
+
+    class TimedQueryProvider(Provider):
+        async def embed(self, texts, profile, purpose, request_key):
+            if purpose == "query":
+                clock.now += 0.5
+            return await super().embed(texts, profile, purpose, request_key)
+
+    # Replace only the embedding module's clock, not asyncio's event-loop clock.
+    monkeypatch.setattr(embeddings, "time", clock)
+    provider = TimedQueryProvider()
+    configured = EmbeddingContextSelector(
+        provider,
+        PROFILE,
+        TimedCounter(),
+        min_similarity=0.8,
+        max_items=2,
+        max_evidence=2,
+        policy=EmbeddingPolicy(max_attempts=1, total_timeout_seconds=1.0),
+    )
+    if exhausted:
+        with pytest.raises(ContextSelectionError) as exc:
+            await select_context(inputs(), configured)
+        assert exc.value.code == "embedding_timeout"
+        assert exc.value.usage == ()
+        assert provider.calls == []
+    else:
+        result = await select_context(inputs(), configured)
+        assert len(result.usage) == 2
+        assert [call[2] for call in provider.calls] == ["query", "document"]
+
+
+@pytest.mark.asyncio
 async def test_direct_limit_reports_threshold_passing_omissions_separately():
     provider = Provider()
     result = await select_context(

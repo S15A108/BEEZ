@@ -21,8 +21,9 @@ from app.services.retrieval.context_selection import (
 from app.services.retrieval.embeddings import (
     EmbeddingError,
     EmbeddingProvider,
+    _embed_prepared_texts,
+    _prepare_embedding_texts,
     embed_texts,
-    validate_embedding_texts,
 )
 
 _SAFE_ERROR_CODES = frozenset(
@@ -133,10 +134,9 @@ class EmbeddingContextSelector:
         document_key = key if self._request_key is not None else key + "-documents"
         query_usage = ()
         try:
-            # A candidate that cannot fit the configured document policy would
-            # otherwise fail after the query had already incurred a provider call.
-            # Actual embedding repeats validation to preserve its own safeguards.
-            await validate_embedding_texts(
+            # Validate before the query incurs a provider call and reuse exactly
+            # those immutable candidate batches for the document call.
+            prepared_docs = await _prepare_embedding_texts(
                 candidates, self._profile, self._policy, self._counter
             )
             query = await embed_texts(
@@ -149,14 +149,8 @@ class EmbeddingContextSelector:
                 policy=self._policy,
             )
             query_usage = query.usage
-            docs = await embed_texts(
-                candidates,
-                self._profile,
-                document_key,
-                self._provider,
-                self._counter,
-                purpose="document",
-                policy=self._policy,
+            docs = await _embed_prepared_texts(
+                prepared_docs, document_key, self._provider, purpose="document"
             )
         except EmbeddingError as exc:
             code = exc.code if exc.code in _SAFE_ERROR_CODES else "selection_failed"

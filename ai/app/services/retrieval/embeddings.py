@@ -4,6 +4,7 @@ import asyncio
 import math
 import struct
 import time
+from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import uuid4
 
@@ -111,18 +112,41 @@ def _batches(
     return batches
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedEmbeddingTexts:
+    """Validated immutable inputs and their exact batches for one invocation."""
+
+    texts: tuple[EmbeddingText, ...]
+    profile: EmbeddingProfile
+    policy: EmbeddingPolicy
+    batches: tuple[tuple[EmbeddingText, ...], ...]
+    preparation_seconds: float
+
+
+async def _prepare_embedding_texts(
+    texts: tuple[EmbeddingText, ...],
+    profile: EmbeddingProfile,
+    policy: EmbeddingPolicy,
+    token_counter: TokenCounter,
+) -> _PreparedEmbeddingTexts:
+    started = time.monotonic()
+    batches = await _prepare_batches(texts, profile, policy, token_counter)
+    elapsed = time.monotonic() - started
+    if elapsed >= policy.total_timeout_seconds:
+        raise EmbeddingError(
+            "embedding_timeout", "Token validation exhausted the total budget."
+        )
+    return _PreparedEmbeddingTexts(texts, profile, policy, tuple(batches), elapsed)
+
+
 async def validate_embedding_texts(
     texts: tuple[EmbeddingText, ...],
     profile: EmbeddingProfile,
     policy: EmbeddingPolicy,
     token_counter: TokenCounter,
 ) -> None:
-    """Validate a batch under the same policy without calling the provider.
-
-    The caller must still use embed_texts for the actual call; validation does
-    not reserve capacity or guarantee later provider success.
-    """
-    await _prepare_batches(texts, profile, policy, token_counter)
+    """Validate a batch without a provider call or reserving capacity."""
+    await _prepare_embedding_texts(texts, profile, policy, token_counter)
 
 
 async def _prepare_batches(
@@ -201,6 +225,12 @@ async def embed_texts(
     policy: EmbeddingPolicy | None = None,
 ) -> EmbeddingResult:
     policy = policy or EmbeddingPolicy()
+    _validate_call(request_key, purpose)
+    prepared = await _prepare_embedding_texts(texts, profile, policy, token_counter)
+    return await _embed_prepared_texts(prepared, request_key, provider, purpose=purpose)
+
+
+def _validate_call(request_key: str, purpose: str) -> None:
     if (
         not isinstance(request_key, str)
         or not 1 <= len(request_key) <= 128
@@ -209,8 +239,26 @@ async def embed_texts(
         raise EmbeddingError(
             "invalid_embedding_input", "Invalid request key or purpose."
         )
-    deadline = time.monotonic() + policy.total_timeout_seconds
-    batches = await _prepare_batches(texts, profile, policy, token_counter)
+
+
+async def _embed_prepared_texts(
+    prepared: _PreparedEmbeddingTexts,
+    request_key: str,
+    provider: EmbeddingProvider,
+    *,
+    purpose: Literal["document", "query"],
+) -> EmbeddingResult:
+    """Consume exactly the checked inputs; waiting between stages is not call time."""
+    _validate_call(request_key, purpose)
+    texts, profile, policy, batches = (
+        prepared.texts,
+        prepared.profile,
+        prepared.policy,
+        prepared.batches,
+    )
+    deadline = (
+        time.monotonic() + policy.total_timeout_seconds - prepared.preparation_seconds
+    )
     usage: list[EmbeddingUsage] = []
     vectors = {}
     invocation_id = uuid4().hex
