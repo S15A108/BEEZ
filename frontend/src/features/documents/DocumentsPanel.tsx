@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react'
 import { documentsApi } from '@/api/services/documents'
+import { readAllPages } from '@/api/readAllPages'
 import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
 import { MarkdownView } from '@/components/MarkdownView'
@@ -97,7 +98,9 @@ function Chip({ tone, children }: { tone: string; children: ReactNode }) {
 
 type View =
   | { name: 'list' }
-  | { name: 'detail'; id: string }
+  // versionId: 기준 vN 문서 보기에서 연 그 기준의 문서 버전
+  | { name: 'detail'; id: string; versionId?: string }
+  | { name: 'baseline'; versionNo: number }
   | { name: 'upload'; kind: Kind }
   | { name: 'review'; id: string }
 
@@ -115,6 +118,9 @@ export function DocumentsPanel({
     // 시작 가이드의 '올리기'는 'upload:종류'로 들어온다. 종류는 그 칸으로 고정한다.
     if (focus?.startsWith('upload:') && KINDS.includes(focus.slice(7) as Kind))
       return { name: 'upload', kind: focus.slice(7) as Kind }
+    // 발행한 변경 제안의 '기준 vN 보기'는 'baseline:N'으로 들어와 그 기준의 문서를 보인다(ROUND2-DOC-02).
+    if (focus?.startsWith('baseline:'))
+      return { name: 'baseline', versionNo: Number(focus.slice(9)) }
     return focus ? { name: 'detail', id: focus } : { name: 'list' }
   })
   const [query, setQuery] = useState('')
@@ -210,6 +216,18 @@ export function DocumentsPanel({
       </div>
     )
   }
+  if (view.name === 'baseline')
+    return (
+      <div className="grid gap-4">
+        {back}
+        <BaselineDocuments
+          projectId={projectId}
+          versionNo={view.versionNo}
+          titleOf={(id) => docs.find((item) => item.id === id)?.title ?? '문서'}
+          onOpen={(id, versionId) => setView({ name: 'detail', id, versionId })}
+        />
+      </div>
+    )
   if (view.name === 'detail')
     return (
       <div className="grid gap-4">
@@ -218,6 +236,7 @@ export function DocumentsPanel({
           key={view.id}
           projectId={projectId}
           documentId={view.id}
+          versionId={view.versionId}
           started={started}
           onEdit={() => openPane('changes', `doc:${view.id}`)}
         />
@@ -907,30 +926,95 @@ function UploadDocument({
   )
 }
 
+// 기준 vN 문서(DOC-A10): 그 기준에 든 문서와 버전. 누르면 그 버전으로 문서를 연다.
+function BaselineDocuments({
+  projectId,
+  versionNo,
+  titleOf,
+  onOpen,
+}: {
+  projectId: string
+  versionNo: number
+  titleOf: (documentId: string) => string
+  onOpen: (documentId: string, versionId: string) => void
+}) {
+  const baseline = useQuery({
+    queryKey: ['projects', projectId, 'baseline-version', versionNo],
+    queryFn: () => documentsApi.baselineVersion(projectId, versionNo),
+  })
+  return (
+    <section aria-labelledby="baseline-title" className="grid gap-3">
+      <h3 id="baseline-title" className="text-lg font-bold">
+        기준 v{versionNo} 문서
+      </h3>
+      <p className="text-sm text-muted-foreground">
+        이 기준을 발행할 때의 문서예요. 지금 승인본과 다를 수 있어요.
+      </p>
+      <AsyncState query={baseline}>
+        {(data) => (
+          <ul className="grid gap-2">
+            {data.documents.map((document) => (
+              <li key={document.document_id}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left text-sm hover:bg-muted/50"
+                  onClick={() =>
+                    onOpen(document.document_id, document.document_version_id)
+                  }
+                >
+                  <strong className="font-semibold">
+                    {titleOf(document.document_id)}
+                  </strong>
+                  <span className="text-xs text-muted-foreground">
+                    기준 v{versionNo}의 버전 보기 ›
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </AsyncState>
+    </section>
+  )
+}
+
 // 문서 상세 (F-20) · 보기 전용. 탭 두 개: 문서 내용 · 버전 이력. 버전 비교는 팀장 승인 화면의 '변경 내용'에서 본다.
+// versionId를 주면(기준 vN 문서에서 열면) 그 버전부터 보인다.
 function DocumentDetail({
   projectId,
   documentId,
+  versionId,
   started,
   onEdit,
 }: {
   projectId: string
   documentId: string
+  versionId?: string
   started: boolean
   onEdit: () => void
 }) {
   const action = useProjectAction(projectId)
-  const [versionNo, setVersionNo] = useState<number>()
+  const [picked, setVersionNo] = useState<number>()
   const [tab, setTab] = useState<'content' | 'history'>('content')
   const [classification, setClassification] = useState(false)
+  // 버전 이력은 마지막 페이지까지 읽어 v1까지 고르고 내려받게 한다(PR #72 재전수 ROUND2-DOC-03).
+  const versions = useQuery({
+    queryKey: ['projects', projectId, 'document-versions', documentId],
+    queryFn: () =>
+      readAllPages((cursor) =>
+        documentsApi.versions(projectId, documentId, { cursor, limit: 100 }),
+      ),
+  })
+  const pinned = versionId
+    ? versions.data?.items.find((item) => item.id === versionId)?.version_no
+    : undefined
+  const versionNo = picked ?? pinned
   const document = useQuery({
     queryKey: ['projects', projectId, 'document', documentId, versionNo],
     queryFn: () =>
       documentsApi.get(projectId, documentId, { version_no: versionNo }),
-  })
-  const versions = useQuery({
-    queryKey: ['projects', projectId, 'document-versions', documentId],
-    queryFn: () => documentsApi.versions(projectId, documentId),
+    // 기준 버전으로 열 때는 이력에서 그 버전 번호를 찾은 뒤에 부른다.
+    enabled: !versionId || picked !== undefined || versions.isFetched,
   })
   const download = async (version: DocumentVersion) => {
     await action.run(async () => {

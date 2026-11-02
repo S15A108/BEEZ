@@ -17,6 +17,7 @@ vi.mock('@/api/services/documents', () => ({
     upload: vi.fn(),
     uploadDraft: vi.fn(),
     baseline: vi.fn(),
+    baselineVersion: vi.fn(),
     workingCopy: vi.fn(),
   },
 }))
@@ -285,4 +286,61 @@ it('4종이 승인됐어도 설계 초안이 없으면 기획 분석으로 보�
   )
   expect(useWorkspaceStore.getState().pane).toBe('planning')
   expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeDisabled()
+})
+
+// PR #72 재전수 ROUND2-DOC-03: 버전 이력은 다음 페이지까지 읽어 가장 오래된 v1도 고를 수 있다.
+it('버전 이력은 다음 페이지까지 읽어 v1까지 보인다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  const newer = Array.from({ length: 20 }, (_, index) => ({
+    ...version,
+    id: String(100 + index),
+    version_no: 21 - index,
+  }))
+  vi.mocked(documentsApi.versions)
+    .mockResolvedValueOnce({ items: newer, has_more: true, next_cursor: 'c2' })
+    .mockResolvedValueOnce({ items: [version], has_more: false })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  expect(await screen.findByText('v1')).toBeInTheDocument()
+  expect(documentsApi.versions).toHaveBeenLastCalledWith('10', '2', {
+    cursor: 'c2',
+    limit: 100,
+  })
+})
+
+// PR #72 재전수 ROUND2-DOC-02: 발행한 제안의 '기준 vN 보기'는 그 기준의 문서 버전을 연다(지금 승인본이 아니라).
+it('기준 vN 문서에서 문서를 누르면 그 기준의 버전으로 연다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: 'baseline:2' })
+  vi.mocked(documentsApi.list).mockResolvedValue({
+    items: [focusedDocument],
+    has_more: false,
+  })
+  vi.mocked(documentsApi.baselineVersion).mockResolvedValue({
+    id: '402',
+    project_id: '10',
+    version_no: 2,
+    documents: [{ document_id: '2', document_version_id: '21' }],
+    items: [],
+    approved_by: '11',
+    created_at: '2026-10-23T00:00:00Z',
+  } as never)
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [{ ...version, version_no: 3, id: '23' }, version],
+    has_more: false,
+  })
+  mount()
+  expect(
+    await screen.findByRole('heading', { name: '기준 v2 문서' }),
+  ).toBeInTheDocument()
+  await user.click(await screen.findByRole('button', { name: /같은 제목/ }))
+  await waitFor(() =>
+    expect(documentsApi.get).toHaveBeenCalledWith('10', '2', {
+      version_no: 1,
+    }),
+  )
+  expect(documentsApi.get).not.toHaveBeenCalledWith('10', '2', {
+    version_no: undefined,
+  })
 })

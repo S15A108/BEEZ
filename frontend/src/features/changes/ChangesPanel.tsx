@@ -18,6 +18,7 @@ import {
   tasksApi,
 } from '@/api/services'
 import type { ChangeProposal, Comparison } from '@/api/contracts/common'
+import { readAllPages } from '@/api/readAllPages'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
@@ -158,7 +159,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   })
   const baselines = useQuery({
     queryKey: ['projects', projectId, 'baselines'],
-    queryFn: () => documentsApi.baselines(projectId, { limit: 20 }),
+    // 오래된 제안의 기준 번호도 찾게 마지막 페이지까지 읽는다(PR #72 재전수 ROUND2-DOC-03).
+    queryFn: () =>
+      readAllPages((cursor) =>
+        documentsApi.baselines(projectId, { cursor, limit: 100 }),
+      ),
     // 승인 이력 화면, 발행한 뒤 '기준 vN 보기' 버튼, 기준이 바뀐 제안의 만든 기준 번호가 쓴다.
     enabled:
       mode.kind === 'history' ||
@@ -854,10 +859,18 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               현황에서 확인하세요.
                             </p>
                             <div className="flex flex-wrap gap-2">
+                              {/* 이 제안이 발행한 기준 버전의 문서를 연다. 지금 승인본은 그 뒤 기준에서 바뀌었을 수 있다(ROUND2-DOC-02). */}
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => openPane('documents')}
+                                onClick={() =>
+                                  openPane(
+                                    'documents',
+                                    publishedVersion(result.baseline_id)
+                                      ? `baseline:${publishedVersion(result.baseline_id)}`
+                                      : null,
+                                  )
+                                }
                               >
                                 {publishedVersion(result.baseline_id)
                                   ? `기준 v${publishedVersion(result.baseline_id)} 보기`
