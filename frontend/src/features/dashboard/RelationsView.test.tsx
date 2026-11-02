@@ -84,3 +84,92 @@ it('관계 목록의 작업 보기는 누른 작업을 연다', async () => {
   })
   vi.restoreAllMocks()
 })
+
+// PR #72 mock/live 전수 대조 LA-TC-10: PROPOSED_FROM(이 작업에서 나온 제안)은 영향 경고가 아니다.
+// 경고는 진행 중 제안이 이 작업이 참조하는 설계 항목을 바꿀 때(항목 기준 관계의 제안 → 항목)만 띄운다.
+const taskGraph = {
+  nodes: [
+    { id: '501', type: 'TASK' as const, label: 'TASK-001 목록 화면' },
+    { id: '301', type: 'DESIGN_ITEM' as const, label: 'REQ-001' },
+    { id: '71', type: 'CHANGE_PROPOSAL' as const, label: '빈 화면 안내' },
+  ],
+  edges: [
+    {
+      from_id: '501',
+      from_type: 'TASK' as const,
+      to_id: '301',
+      to_type: 'DESIGN_ITEM' as const,
+      relation: 'IMPLEMENTS',
+      confirmed: true,
+    },
+    {
+      from_id: '71',
+      from_type: 'CHANGE_PROPOSAL' as const,
+      to_id: '501',
+      to_type: 'TASK' as const,
+      relation: 'PROPOSED_FROM',
+      confirmed: true,
+    },
+  ],
+}
+function renderView() {
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RelationsView projectId="101" />
+    </QueryClientProvider>,
+  )
+}
+
+it('이 작업에서 나온 제안(PROPOSED_FROM)만 있으면 영향 경고를 띄우지 않는다', async () => {
+  vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>
+    query?.design_item_id ? { nodes: [], edges: [] } : taskGraph,
+  )
+  const user = userEvent.setup()
+  renderView()
+  await user.click(await screen.findByRole('button', { name: /TASK-001/ }))
+  const list = await screen.findByRole('region', { name: '관계 목록' })
+  expect(
+    await within(list).findByText(/이 작업에서 나온 제안/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('검토 중인 변경 제안이 이 작업의 근거 설계를 고쳐요'),
+  ).not.toBeInTheDocument()
+})
+
+it('진행 중 제안이 참조 설계 항목을 바꾸면 항목 기준 관계로 영향 경고를 띄운다', async () => {
+  vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>
+    query?.design_item_id
+      ? {
+          nodes: [
+            { id: '301', type: 'DESIGN_ITEM', label: 'REQ-001' },
+            { id: '71', type: 'CHANGE_PROPOSAL', label: '빈 화면 안내' },
+          ],
+          edges: [
+            {
+              from_id: '71',
+              from_type: 'CHANGE_PROPOSAL',
+              to_id: '301',
+              to_type: 'DESIGN_ITEM',
+              relation: 'UPDATE',
+              confirmed: true,
+            },
+          ],
+        }
+      : taskGraph,
+  )
+  const user = userEvent.setup()
+  renderView()
+  await user.click(await screen.findByRole('button', { name: /TASK-001/ }))
+  expect(
+    await screen.findByText(
+      '검토 중인 변경 제안이 이 작업의 근거 설계를 고쳐요',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(/‘빈 화면 안내’ 제안이 승인되면 REQ-001의 새/),
+  ).toBeInTheDocument()
+})

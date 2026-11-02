@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { CircleAlert, Search } from 'lucide-react'
 import type { RelationNode } from '@/api/contracts/common'
 import { dashboardApi } from '@/api/services/dashboard'
@@ -18,6 +18,14 @@ const relationLabel: Record<string, string> = {
   CHANGES: '고침',
   DEPENDENCY: '의존',
   VALIDATED_BY: '검증',
+  // 서버(RelationGraphService) 관계 이름
+  PROPOSED_FROM: '이 작업에서 나온 제안',
+  UPDATE: '고침',
+  RETIRE: '없앰',
+  BLOCKS: '선행',
+  RELATES: '관련',
+  COMPARED_WITH: '대조',
+  DEPENDS_ON: '의존',
 }
 const NODE_LINKS: Record<RelationNode['type'], string> = {
   TASK: '작업 보기',
@@ -54,6 +62,42 @@ export function RelationsView({ projectId }: { projectId: string }) {
     queryFn: () =>
       changesApi.list(projectId, { group: 'IN_PROGRESS', limit: 50 }),
   })
+  // 영향 경고: 진행 중 제안이 이 작업이 참조하는 설계 항목을 바꿀 때만 띄운다. 작업 기준 응답의
+  // PROPOSED_FROM(제안 → 작업)은 '이 작업에서 나온 제안'이라 영향이 아니다. 서버는 제안 → 설계 항목(UPDATE·RETIRE)을
+  // 설계 항목 기준 조회에서만 주므로, 참조 항목마다 항목 기준 관계도 받는다(PR #72 mock/live 전수 대조 LA-TC-10).
+  const referenced = [
+    ...new Set(
+      relations.data?.edges
+        .filter(
+          (edge) =>
+            edge.from_type === 'TASK' &&
+            edge.from_id === selected &&
+            edge.to_type === 'DESIGN_ITEM',
+        )
+        .map((edge) => edge.to_id) ?? [],
+    ),
+  ]
+  const itemRelations = useQueries({
+    queries: referenced.map((id) => ({
+      queryKey: ['projects', projectId, 'relations', 'item', id],
+      queryFn: () => dashboardApi.relations(projectId, { design_item_id: id }),
+    })),
+  })
+  const warning = [relations.data, ...itemRelations.map((query) => query.data)]
+    .flatMap((data) =>
+      (data?.edges ?? [])
+        .filter(
+          (edge) =>
+            edge.from_type === 'CHANGE_PROPOSAL' &&
+            edge.to_type === 'DESIGN_ITEM' &&
+            referenced.includes(edge.to_id) &&
+            open.data?.items.some((entry) => entry.id === edge.from_id),
+        )
+        .map((edge) => ({ edge, nodes: data!.nodes })),
+    )
+    .at(0)
+  const nodeLabel = (nodes: RelationNode[], type: string, id: string) =>
+    nodes.find((node) => node.type === type && node.id === id)?.label ?? id
   const label = (type: string, id: string) =>
     relations.data?.nodes.find((node) => node.type === type && node.id === id)
       ?.label ?? id
@@ -129,16 +173,8 @@ export function RelationsView({ projectId }: { projectId: string }) {
             <AsyncState query={relations}>
               {(data) => (
                 <div className="grid gap-4">
-                  {data.edges
-                    .filter(
-                      (edge) =>
-                        edge.from_type === 'CHANGE_PROPOSAL' &&
-                        open.data?.items.some(
-                          (entry) => entry.id === edge.from_id,
-                        ),
-                    )
-                    .slice(0, 1)
-                    .map((edge) => (
+                  {warning &&
+                    [warning].map(({ edge, nodes }) => (
                       <div
                         key={edge.from_id}
                         className="flex items-center gap-3 rounded-[14px] bg-[#fdf8e6] px-3.5 py-3"
@@ -149,8 +185,9 @@ export function RelationsView({ projectId }: { projectId: string }) {
                             검토 중인 변경 제안이 이 작업의 근거 설계를 고쳐요
                           </strong>
                           <span className="text-[13px] leading-[19px] text-muted-foreground">
-                            ‘{label(edge.from_type, edge.from_id)}’ 제안이
-                            승인되면 {label(edge.to_type, edge.to_id)}의 새
+                            ‘{nodeLabel(nodes, edge.from_type, edge.from_id)}’
+                            제안이 승인되면{' '}
+                            {nodeLabel(nodes, edge.to_type, edge.to_id)}의 새
                             버전이 기준이 되고, 이 작업은 재검증 대기로
                             넘어가요.
                           </span>

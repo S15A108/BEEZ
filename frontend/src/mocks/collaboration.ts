@@ -336,6 +336,10 @@ export function collaborationRoutes(
           (item) => item.design_item_id && itemIds.has(item.design_item_id),
         ),
       )
+      // 실제 서버처럼 작업 기준이면 그 작업에서 나온 제안을 PROPOSED_FROM(제안 → 작업)으로 잇는다(RelationGraphService).
+      const fromTask = taskId
+        ? project.proposals.filter((proposal) => proposal.task_id === taskId)
+        : []
       return {
         data: {
           nodes: [
@@ -362,7 +366,10 @@ export function collaborationRoutes(
                 type: 'VALIDATION',
                 label: `계획 검증 ${task.validation!.status}`,
               })),
-            ...proposals.map((proposal) => ({
+            ...[
+              ...proposals,
+              ...fromTask.filter((proposal) => !proposals.includes(proposal)),
+            ].map((proposal) => ({
               id: proposal.id,
               type: 'CHANGE_PROPOSAL',
               label: proposal.title,
@@ -404,6 +411,14 @@ export function collaborationRoutes(
                   confirmed: false,
                 })),
             ),
+            ...fromTask.map((proposal) => ({
+              from_id: proposal.id,
+              from_type: 'CHANGE_PROPOSAL',
+              to_id: taskId!,
+              to_type: 'TASK',
+              relation: 'PROPOSED_FROM',
+              confirmed: true,
+            })),
           ],
         },
       }
