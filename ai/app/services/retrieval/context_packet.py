@@ -40,7 +40,7 @@ from app.services.retrieval.context_selection import (
 UNRESOLVED_TEXT = {
     "NO_MATCH": "검색을 마쳤지만 요청과 직접 일치하는 승인 설계·원문 근거가 없습니다.",
     "DEPENDENCY_UNVERIFIED": (
-        "확정 의존 관계 일부의 대상이나 버전을 현재 입력과 대조하지 못해 확장하지 않았습니다."
+        "의존 관계 일부가 재확인 필요하거나 대상·버전을 현재 입력과 대조하지 못해 확장하지 않았습니다."
     ),
 }
 
@@ -86,9 +86,10 @@ def check_packet_metadata(snapshot: SelectionInput, metadata: PacketMetadata) ->
         raise ContextPacketError(
             "validation_failed", "evidence metadata does not match the snapshot"
         )
-    if (snapshot.task_id is None) != (metadata.task is None) or (
-        metadata.task is not None and metadata.task.task_id != snapshot.task_id
-    ):
+    # The request may refer to an unplanned or DRAFT task. In that case the
+    # BE omits related-task metadata; retain the request task_id but do not
+    # fabricate a revision or status. Only the BE can verify this omission.
+    if metadata.task is not None and metadata.task.task_id != snapshot.task_id:
         raise ContextPacketError(
             "validation_failed", "task metadata does not match the snapshot"
         )

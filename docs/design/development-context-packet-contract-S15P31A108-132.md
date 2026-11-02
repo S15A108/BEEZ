@@ -22,11 +22,13 @@
 | `design_items[].key` | string | Y | 표시 키(예: `API-001`) |
 | `design_items[].kind` | `REQUIREMENT\|API_CONTRACT\|DATA_CONTRACT\|POLICY\|CONSTRAINT` | Y | 00-common DesignItemVersion.kind |
 | `design_items[].version_no` | integer ≥ 1 | Y | 항목 버전 번호 |
-| `design_items[].source` | Source | N | 항목의 원문 출처. 있으면 패킷 `sources`에 합쳐진다 |
+| `design_items[].source` | Source | N | 항목의 원문 출처. 현재 기준 소속이 확인되지 않은 참고 값이며 패킷 `sources`에는 합치지 않는다 |
 | `design_items[].description` | string ≤ 10,000 | N | 승인 본문의 `content.description`. `POLICY`·`CONSTRAINT`만 `constraints`로 쓴다 |
 | `evidence[]` | EvidenceMeta | Y | 스냅샷 `evidence`의 모든 후보. `evidence_id`와 `document_version_id`가 일치해야 한다 |
 | `evidence[].document_id`, `version_no`, `location` | — | Y | 해당 청크의 00-common Source 값 |
-| `task` | TaskMeta | 조건부 | 스냅샷 `task_id`가 있으면 필수, 없으면 금지. `task_id`·현재 `plan_revision_id`·`status` |
+| `task` | TaskMeta | 조건부 | `task_id`가 없으면 금지. 계획이 없거나 작업이 `DRAFT`이면 생략; 계획이 있고 `READY`·`IN_PROGRESS`·`WAITING`·`COMPLETED`·`CANCELLED` 중 하나이면 `task_id`·현재 `plan_revision_id`·`status`를 포함 |
+
+`task_id`는 계획이 없거나 `DRAFT`여도 요청의 작업 식별자로 유지한다. AI는 생략된 작업 메타데이터만으로 실제 상태·계획 유무를 독립적으로 확인할 수 없다. BE는 상태와 계획을 확인해 입력을 구성하고 사용·저장 전 재확인해야 한다. 현재 BE 저장 서비스가 빈 `related_tasks`에 대해 이를 재검사한다는 뜻은 아니며 실제 연동에서 계약·경합 처리가 필요하다.
 
 Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no`(≥1), `location`(1~1,000 코드 포인트). ID는 공백 없는 1~256자 문자열이다.
 
@@ -46,7 +48,7 @@ Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no
 | `constraints[]` | string ≤ 500 | 선택된 `POLICY`·`CONSTRAINT` 항목의 `description`을 순서대로. 500 코드 포인트 초과는 뒤를 잘라 `…`를 붙인다 |
 | `unresolved[]` | string ≤ 500 | BE 저장용 요약 문자열. 선택 상태는 코드 그대로(`NO_MATCH`, `DEPENDENCY_UNVERIFIED`), 검토 후보는 `"<KIND>: <description>"`을 500 코드 포인트로 자른다. 직접 선택 상한으로 제외된 후보가 있으면 `SELECTION_TRUNCATED: 직접 일치 후보 중 설계 N건, 원문 M건이 직접 선택 상한으로 제외됐습니다.`를 넣어 저장 패킷에도 잘림 사실이 남는다 |
 | `unresolved_details[]` | UnresolvedDetail | `unresolved`와 같은 순서의 구조형. `kind`(`NO_MATCH\|DEPENDENCY_UNVERIFIED\|POSSIBLE_CONFLICT\|INSUFFICIENT_EVIDENCE\|SELECTION_TRUNCATED`), 전체 `description`(≤ 2,000), `references[]`(`kind`=`design_item\|evidence`, `id`). 인용문은 넣지 않는다 |
-| `related_tasks[]` | RelatedTask | 요청의 작업 1건(`metadata.task` 값). 다른 작업 검색은 범위 밖 |
+| `related_tasks[]` | RelatedTask | `metadata.task`가 있으면 요청의 작업 1건, 없으면 빈 목록. 다른 작업 검색은 범위 밖 |
 | `sources[]` | Source | **선택된 원문 근거의 출처만**(선택 순서). 근거의 문서 버전은 스냅샷 `document_version_ids`(현재 기준 문서)에 속하므로 BE의 `requireSourceInBaseline` 검증을 통과한다. 설계에 저장된 출처는 현재 기준 밖 문서 버전이거나 위치가 미확인일 수 있어 넣지 않는다. 같은 (document_id, document_version_id, version_no, location)은 한 번만 |
 | `direct_match_truncation` | object \| null | #131과 같음. 직접 선택 상한으로 제외된 후보 수 |
 
@@ -71,6 +73,23 @@ Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no
 | `sources` | `sources` | 현재 기준 문서 버전·번호와 일치(400) |
 
 `content_hash`는 BE가 `{project_id, task_id, request, baseline_id, content}`의 정규 JSON(키 정렬·목록 순서 유지)으로 계산한다. AI는 해시를 만들지 않으며, 해시 일치만으로 실제 전송 사실을 증명하지 않는다. `design_items`·`unresolved_details`·`request_summary`는 저장 입력에 넣지 않는다. `direct_match_truncation`도 구조로는 넣지 않지만, 제외된 후보가 있으면 `unresolved`의 `SELECTION_TRUNCATED` 항목으로 보존해 저장 패킷을 나중에 읽는 쪽이 누락 사실을 알 수 있게 한다. 구조 필드 추가 여부는 9절.
+
+### 선택 이유 저장 제안 (리뷰 반영, BE 합의 전)
+
+선택 이유는 설계 버전의 고정 속성이 아니라 해당 요청에서의 선택 결과이므로 저장 패킷에 버전별로 보존하는 것이 필요하다. 현재 `packet.design_items[].reasons`에는 값이 있으나 기존 8개 필드의 `SavePacketArgs`와 저장 응답에는 없어 MCP-01·MCP-06 호출자는 볼 수 없다. **현재 변환 함수에 새 필드를 보내지는 않는다.** 다음은 BE 저장 담당자와 합의할 제안이며 아직 구현·연동 완료가 아니다.
+
+```json
+{
+  "selection_reasons": [
+    {"design_item_version_id": "1101", "reasons": ["MATCHED", "TASK_PLAN"]},
+    {"design_item_version_id": "1102", "reasons": ["DEPENDENCY"]}
+  ]
+}
+```
+
+- 새 필드는 패킷 수준에 두고, 저장 시 선택된 `design_item_version_ids`와 버전별 1:1인지, ID·이유 중복이 없는지, 이유가 `MATCHED`·`TASK_PLAN`·`DEPENDENCY` 중 하나 이상인지 검증한다. BE는 현재 기준의 설계 버전 검증도 계속 수행한다.
+- BE 저장 `content`와 `content_hash`에 포함하고, MCP-01 저장 응답과 MCP-06 패킷 재조회에서 동일한 값을 반환하도록 저장 입력·응답 계약을 함께 확장한다.
+- 과거 패킷의 미기록은 이유가 없는 것으로 단정하지 않는다. 기존 저장본을 보존하면서 미기록을 구분하는 호환 표현은 BE·MCP 담당자와 정한다. `unresolved_details`와 `request_summary` 저장 범위도 별도 합의한다.
 
 ## 5. 조회 수준과 원문 (POL-02, #95)
 

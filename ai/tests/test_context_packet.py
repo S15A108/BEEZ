@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from app.schemas.context_packet import (
     MAX_PACKET_BYTES,
@@ -234,6 +235,21 @@ async def test_no_match_and_unverified_dependency_become_fixed_entries():
 
 
 @pytest.mark.asyncio
+async def test_recheck_dependency_description_covers_both_unverified_reasons():
+    data = snapshot()
+    edge = data.relations[0].model_copy(update={"status": "NEEDS_RECHECK"})
+    data = data.model_copy(update={"relations": (edge,)})
+    selection = await select_context(data, Selector())
+    packet = compose_development_context(data, selection, metadata())
+    detail = next(
+        x for x in packet.unresolved_details if x.kind == "DEPENDENCY_UNVERIFIED"
+    )
+    assert "재확인 필요" in detail.description
+    assert "대상·버전" in detail.description
+    assert detail.references == ()
+
+
+@pytest.mark.asyncio
 async def test_review_candidates_keep_references_but_never_quotes():
     data = snapshot()
     selection = await select_context(data, Selector())
@@ -308,10 +324,53 @@ def test_metadata_mismatch_is_rejected_before_any_selection(defect):
         changed = meta.evidence[0].model_copy(update={"document_version_id": "d2"})
         meta = meta.model_copy(update={"evidence": (changed, meta.evidence[1])})
     else:
-        meta = meta.model_copy(update={"task": None})
+        meta = meta.model_copy(
+            update={
+                "task": TaskMeta(
+                    task_id="other", plan_revision_id="pr1", status="READY"
+                )
+            }
+        )
     with pytest.raises(ContextPacketError) as error:
         check_packet_metadata(data, meta)
     assert error.value.code == "validation_failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plan_refs", [False, True])
+async def test_task_without_related_task_metadata_keeps_task_id(plan_refs):
+    # A DRAFT can have plan references; neither status nor plan absence is
+    # inferred here. The BE remains responsible for assembling current metadata.
+    data = snapshot()
+    if not plan_refs:
+        data = data.model_copy(update={"task_design_refs": ()})
+    selection = await select_context(data, Selector())
+    packet = compose_development_context(data, selection, metadata(task=False))
+    assert packet.task_id == "t1"
+    assert packet.related_tasks == ()
+    args = packet.to_save_packet_args()
+    assert args["task_id"] == "t1"
+    assert args["related_tasks"] == []
+
+
+@pytest.mark.parametrize(
+    "status", ["READY", "IN_PROGRESS", "WAITING", "COMPLETED", "CANCELLED"]
+)
+def test_related_task_accepts_only_common_statuses(status):
+    task = TaskMeta(task_id="t1", plan_revision_id="pr1", status=status)
+    assert task.status == status
+
+
+@pytest.mark.parametrize("status", ["DRAFT", "UNKNOWN", "", "ready"])
+def test_related_task_rejects_other_statuses(status):
+    with pytest.raises(ValidationError):
+        TaskMeta(task_id="t1", plan_revision_id="pr1", status=status)
+
+
+def test_task_metadata_requires_matching_request_task():
+    data = snapshot(task=False)
+    with pytest.raises(ContextPacketError, match="task metadata does not match"):
+        check_packet_metadata(data, metadata())
 
 
 @pytest.mark.asyncio

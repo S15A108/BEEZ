@@ -182,13 +182,54 @@ def test_mismatched_metadata_is_rejected_before_selection(api, defect):
     elif defect == "evidence_version":
         body["metadata"]["evidence"][0]["document_version_id"] = "d9"
     else:
-        body["metadata"]["task"] = None
+        body["metadata"]["task"]["task_id"] = "other"
     response = client.post(
         "/v1/development-context-selections", json=body, headers=HEADERS
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation_failed"
     assert not selector.calls and "v9" not in response.text
+
+
+@pytest.mark.parametrize("has_plan_refs", [False, True])
+@pytest.mark.parametrize("task_field", ["omitted", "null"])
+def test_task_without_metadata_returns_no_related_tasks(api, has_plan_refs, task_field):
+    client, _ = api
+    body = request_body()
+    if task_field == "omitted":
+        del body["metadata"]["task"]
+    else:
+        body["metadata"]["task"] = None
+    if has_plan_refs:
+        body["task_design_refs"] = [
+            {"design_item_id": "i1", "design_item_version_id": "v1"}
+        ]
+    response = client.post(
+        "/v1/development-context-selections", json=body, headers=HEADERS
+    )
+    assert response.status_code == 200
+    packet = response.json()["packet"]
+    assert packet["task_id"] == "t1"
+    assert packet["related_tasks"] == []
+    assert (
+        DevelopmentContextPacket.model_validate_json(
+            json.dumps(packet, ensure_ascii=False)
+        ).to_save_packet_args()["related_tasks"]
+        == []
+    )
+
+
+@pytest.mark.parametrize("status", ["DRAFT", "UNKNOWN"])
+def test_unsupported_related_task_status_is_rejected_before_selection(api, status):
+    client, selector = api
+    body = request_body()
+    body["metadata"]["task"]["status"] = status
+    response = client.post(
+        "/v1/development-context-selections", json=body, headers=HEADERS
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert not selector.calls
 
 
 def test_examples_round_trip_through_the_route_and_be_arguments(api):

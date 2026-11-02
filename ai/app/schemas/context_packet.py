@@ -38,7 +38,7 @@ Location = Annotated[str, StringConstraints(min_length=1, max_length=1000)]
 Summary = Annotated[
     str, StringConstraints(min_length=1, max_length=SUMMARY_CODE_POINTS)
 ]
-Status = Annotated[str, StringConstraints(min_length=1, max_length=64)]
+RelatedTaskStatus = Literal["READY", "IN_PROGRESS", "WAITING", "COMPLETED", "CANCELLED"]
 
 
 class PacketModel(BaseModel):
@@ -78,11 +78,11 @@ class EvidenceMeta(PacketModel):
 
 
 class TaskMeta(PacketModel):
-    """Current plan revision and status of the request's task, read by the BE."""
+    """Current non-DRAFT task plan and status supplied by the BE."""
 
     task_id: Id
     plan_revision_id: Id
-    status: Status
+    status: RelatedTaskStatus
 
 
 class PacketMetadata(PacketModel):
@@ -128,7 +128,7 @@ class PacketRelatedTask(PacketModel):
 
     task_id: Id
     plan_revision_id: Id
-    status: Status
+    status: RelatedTaskStatus
 
 
 class UnresolvedReference(PacketModel):
