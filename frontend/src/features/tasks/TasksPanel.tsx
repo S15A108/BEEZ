@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { useForm, useWatch } from 'react-hook-form'
+import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ClipboardCheck, Ellipsis, Play, Plus, RefreshCw } from 'lucide-react'
@@ -1151,7 +1151,10 @@ const editorSchema = z.object({
   dependency_task_ids: idSchema.array(),
   context_packet_id: z.string(),
   no_contract_change: z.boolean(),
-  unlinked: z.string(),
+  // 연결하지 않은 내용은 객체 하나씩 고친다. source는 원래 계획의 unlinked 순번이라 지우거나 새로 더해도 짝이 맞는다.
+  unlinked: z.array(
+    z.object({ description: z.string(), source: z.number().optional() }),
+  ),
   refs: z.array(
     z.object({
       design_item_id: idSchema,
@@ -1249,7 +1252,11 @@ function PlanDialog({
       dependency_task_ids: plan?.dependency_task_ids ?? [],
       context_packet_id: plan?.context_packet_id ?? '',
       no_contract_change: plan?.no_contract_change ?? false,
-      unlinked: plan?.unlinked.map(describeContent).join('\n') ?? '',
+      unlinked:
+        plan?.unlinked.map((item, source) => ({
+          description: describeContent(item),
+          source,
+        })) ?? [],
       refs:
         plan?.design_refs.map((reference) => ({
           ...reference,
@@ -1258,6 +1265,7 @@ function PlanDialog({
     },
   })
   const refs = useWatch({ control, name: 'refs' })
+  const unlinkedRows = useFieldArray({ control, name: 'unlinked' })
   const dependencyIds = useWatch({ control, name: 'dependency_task_ids' })
   const selectedRefs = new Set(
     refs.map((reference) => reference.design_item_id),
@@ -1337,14 +1345,23 @@ function PlanDialog({
               excluded_scope: lines(values.excluded_scope),
               completion_criteria: lines(values.completion_criteria),
               context_packet_id: values.context_packet_id || undefined,
-              // 계획 수정은 기존 계획의 객체에서 시작해 고친 것만 바꾼다(PR #72 리뷰). 줄이 그대로면 원래 unlinked
-              // 객체를 두고, 새 줄만 description 하나짜리 구조로 보낸다(API 미정 H2).
-              unlinked: lines(values.unlinked).map(
-                (description) =>
-                  plan?.unlinked.find(
-                    (item) => describeContent(item) === description,
-                  ) ?? { description },
-              ),
+              // 계획 수정은 기존 계획의 객체에서 시작해 고친 것만 바꾼다(PR #72 리뷰). 객체마다 원래 순번(source)으로
+              // 짝을 맞춰, 설명이 그대로면 원래 객체를 두고 고쳤으면 다른 필드(method·path 등)는 두고 description만
+              // 바꾼다. 여러 줄 설명도 한 객체로 남고, 설명이 같은 두 객체도 따로 지킨다(PR #72 재전수 R2-TC-01).
+              // 새로 더한 것만 description 하나짜리 구조로 보낸다(API 미정 H2).
+              unlinked: values.unlinked
+                .filter((entry) => entry.description.trim())
+                .map((entry) => {
+                  const original =
+                    entry.source === undefined
+                      ? undefined
+                      : plan?.unlinked[entry.source]
+                  if (!original)
+                    return { description: entry.description.trim() }
+                  return describeContent(original) === entry.description
+                    ? original
+                    : { ...original, description: entry.description.trim() }
+                }),
               design_refs: values.refs.map((reference) => {
                 const before = plan?.design_refs.find(
                   (item) => item.design_item_id === reference.design_item_id,
@@ -1561,18 +1578,43 @@ function PlanDialog({
               </fieldset>
               {flagNote('dependency_task_ids')}
             </div>
-            <div className={cn('grid gap-2', flagged('unlinked'))}>
-              <Label htmlFor="plan-unlinked">
-                아직 연결하지 못한 내용 · 한 줄에 하나씩
-              </Label>
-              <Textarea
-                id="plan-unlinked"
-                {...register('unlinked')}
-                rows={4}
+            <fieldset className={cn('grid gap-2', flagged('unlinked'))}>
+              <legend className="mb-2 text-sm font-medium">
+                아직 연결하지 못한 내용 · 하나씩
+              </legend>
+              {unlinkedRows.fields.map((row, index) => (
+                <div key={row.id} className="flex items-start gap-2">
+                  <Textarea
+                    aria-label={`연결하지 못한 내용 ${index + 1}`}
+                    {...register(`unlinked.${index}.description`)}
+                    rows={2}
+                    disabled={isSubmitting}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`연결하지 못한 내용 ${index + 1} 지우기`}
+                    disabled={isSubmitting}
+                    onClick={() => unlinkedRows.remove(index)}
+                  >
+                    지우기
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="justify-self-start"
                 disabled={isSubmitting}
-              />
+                onClick={() => unlinkedRows.append({ description: '' })}
+              >
+                <Plus />
+                내용 더하기
+              </Button>
               {flagNote('unlinked')}
-            </div>
+            </fieldset>
             <div className="grid gap-2">
               <Label htmlFor="plan-packet">개발 컨텍스트 패킷 ID · 선택</Label>
               <Input

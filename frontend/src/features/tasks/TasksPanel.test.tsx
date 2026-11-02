@@ -413,3 +413,43 @@ it('완료 보고가 실패하면 폼 안에 실패 이유를 보인다', async 
     ),
   ).toHaveAttribute('role', 'alert')
 })
+
+// PR #72 재전수 R2-TC-01: 연결하지 않은 내용은 객체 하나씩 고친다. 여러 줄 설명도 한 객체로 남고,
+// 설명이 같은 두 객체도 따로 지키며, 고친 객체는 다른 필드를 두고 설명만 바뀐다.
+it('연결하지 않은 내용을 객체 하나씩 고치고 여러 줄·같은 설명의 다른 필드를 지킨다', async () => {
+  const multiline = {
+    description: '결제 연동\n환불 정책은 다음 단계',
+    method: 'POST',
+    path: '/payments',
+  }
+  const first = { description: '같은 설명', owner: 'A' }
+  const second = { description: '같은 설명', owner: 'B' }
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        unlinked: [multiline, first, second],
+      },
+    },
+  }
+  const save = vi
+    .spyOn(tasksApi, 'savePlan')
+    .mockImplementation(async () => task)
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '계획 수정' }),
+  )
+  const third = await screen.findByLabelText('연결하지 못한 내용 3')
+  await userEvent.clear(third)
+  await userEvent.type(third, '설명을 고침')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2].unlinked).toEqual([
+    multiline,
+    first,
+    { description: '설명을 고침', owner: 'B' },
+  ])
+})
