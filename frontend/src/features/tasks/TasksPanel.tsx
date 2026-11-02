@@ -241,15 +241,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
 
   return (
     <section className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold">작업 현황</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            계획과 승인 설계를 대조하고 필요한 합의를 마친 뒤 시작하세요. 계획
-            검증은 실제 코드 품질이나 테스트 통과를 뜻하지 않아요.
-          </p>
-        </div>
-        {/* 머리 버튼은 모든 작업 현황 화면에서 노란 '+ 작업 계획' 하나(PNL-05 수정안 10-29). */}
+      {/* 창 머리에 이미 '작업 현황'이 있어 안쪽 제목을 두지 않고, 설명 문구도 캔버스 PNL-05-v2-tasks(v461 이후)처럼 뺀다.
+          머리 버튼은 모든 작업 현황 화면에서 노란 '+ 작업 계획' 하나(PNL-05 수정안 10-29). */}
+      <header className="flex justify-end">
         <Button
           onClick={() => {
             setFormTask(undefined)
