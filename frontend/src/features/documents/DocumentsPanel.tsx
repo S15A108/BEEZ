@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -555,26 +555,34 @@ function SearchResults({
   onClear: () => void
   onOpen: (documentId: string) => void
 }) {
-  const [keyword, semantic] = useQueries({
-    queries: (['KEYWORD', 'SEMANTIC'] as const).map((mode) => ({
-      queryKey: ['projects', projectId, 'document-search', query, mode],
-      queryFn: () => documentsApi.search(projectId, { q: query, mode }),
-    })),
+  // 두 검색 모두 페이지로 온다. has_more면 그 묶음 아래 '더 보기'로 다음 페이지를 잇는다(PR #72 3차 조사 THIRD-DOC-02).
+  const search = (mode: 'KEYWORD' | 'SEMANTIC') => ({
+    queryKey: ['projects', projectId, 'document-search', query, mode],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      documentsApi.search(projectId, { q: query, mode, cursor: pageParam }),
+    getNextPageParam: (page: { has_more: boolean; next_cursor?: string }) =>
+      page.has_more ? page.next_cursor : undefined,
   })
-  const words = keyword.data?.items ?? []
-  const similar = (semantic.data?.items ?? []).filter(
+  const keyword = useInfiniteQuery(search('KEYWORD'))
+  const semantic = useInfiniteQuery(search('SEMANTIC'))
+  const words = keyword.data?.pages.flatMap((page) => page.items) ?? []
+  const similar = (
+    semantic.data?.pages.flatMap((page) => page.items) ?? []
+  ).filter(
     (hit) =>
       !words.some((word) => word.id === hit.id && word.type === hit.type),
   )
   const groups = [
-    ['단어가 들어간 문서', words],
-    ['뜻이 비슷한 문서', similar],
+    ['단어가 들어간 문서', words, keyword],
+    ['뜻이 비슷한 문서', similar, semantic],
   ] as const
   return (
     <section aria-labelledby="search-title" className="grid gap-3">
       <div className="flex items-center justify-between gap-2">
         <h3 id="search-title" className="font-semibold">
           ‘{query}’ 검색 결과 {words.length + similar.length}건
+          {keyword.hasNextPage || semantic.hasNextPage ? ' 이상' : ''}
         </h3>
         <Button variant="ghost" size="sm" onClick={onClear}>
           검색 지우기
@@ -582,11 +590,11 @@ function SearchResults({
       </div>
       <AsyncState query={keyword}>
         {() =>
-          words.length + similar.length ? (
+          words.length + similar.length || semantic.hasNextPage ? (
             <div className="grid gap-4">
               {groups.map(
-                ([title, hits]) =>
-                  hits.length > 0 && (
+                ([title, hits, pages]) =>
+                  (hits.length > 0 || pages.hasNextPage) && (
                     <div key={title} className="grid gap-2">
                       <h4 className="text-sm font-medium text-muted-foreground">
                         {title}
@@ -615,6 +623,18 @@ function SearchResults({
                           </li>
                         ))}
                       </ul>
+                      {pages.hasNextPage && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="justify-self-start"
+                          aria-label={`${title} 더 보기`}
+                          disabled={pages.isFetchingNextPage}
+                          onClick={() => void pages.fetchNextPage()}
+                        >
+                          더 보기
+                        </Button>
+                      )}
                     </div>
                   ),
               )}

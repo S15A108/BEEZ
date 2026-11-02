@@ -19,6 +19,7 @@ vi.mock('@/api/services/documents', () => ({
     baseline: vi.fn(),
     baselineVersion: vi.fn(),
     workingCopy: vi.fn(),
+    search: vi.fn(),
   },
 }))
 const version: DocumentVersion = {
@@ -342,5 +343,47 @@ it('기준 vN 문서에서 문서를 누르면 그 기준의 버전으로 연다
   )
   expect(documentsApi.get).not.toHaveBeenCalledWith('10', '2', {
     version_no: undefined,
+  })
+})
+
+// PR #72 3차 조사 THIRD-DOC-02: 검색은 첫 페이지만 쓰지 않고, has_more면 그 묶음 아래 '더 보기'로 다음 페이지를 잇는다.
+it('검색 결과가 더 있으면 더 보기로 다음 페이지를 불러온다', async () => {
+  const user = userEvent.setup()
+  const hit = (index: number) => ({
+    id: String(500 + index),
+    type: 'DESIGN_ITEM' as const,
+    title: `설계 항목 ${index}`,
+    snippet: '로그인',
+    score: 1,
+  })
+  vi.mocked(documentsApi.search).mockImplementation(async (_project, query) =>
+    query.mode === 'SEMANTIC'
+      ? { items: [], has_more: false, elapsed_ms: 0 }
+      : query.cursor
+        ? { items: [hit(21)], has_more: false, elapsed_ms: 0 }
+        : {
+            items: Array.from({ length: 20 }, (_, index) => hit(index + 1)),
+            has_more: true,
+            next_cursor: 'c2',
+            elapsed_ms: 0,
+          },
+  )
+  mount()
+  await user.type(await screen.findByLabelText('검색어'), '로그인')
+  await user.click(screen.getByRole('button', { name: '검색' }))
+  expect(await screen.findByText(/검색 결과 20건 이상/)).toBeInTheDocument()
+  expect(screen.queryByText('설계 항목 21')).not.toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: '단어가 들어간 문서 더 보기' }),
+  )
+  expect(await screen.findByText('설계 항목 21')).toBeInTheDocument()
+  expect(screen.getByText(/검색 결과 21건/)).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '단어가 들어간 문서 더 보기' }),
+  ).not.toBeInTheDocument()
+  expect(documentsApi.search).toHaveBeenCalledWith('10', {
+    q: '로그인',
+    mode: 'KEYWORD',
+    cursor: 'c2',
   })
 })
