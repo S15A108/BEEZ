@@ -138,3 +138,36 @@ it('문서 변경의 기준 버전이 지금 승인본과 다르면 기준이 �
     ),
   ).toBe(false)
 })
+
+// PR #72 재전수 ROUND2-DOC-01: A·B를 바꾼 제안에서 A를 기준 원문으로 되돌리면 A의 옛 수정안이 다시 들어가지 않는다.
+it('기준 원문으로 되돌린 문서는 원래 제안의 변경도 빼고 남은 문서만 보낸다', () => {
+  const source = [
+    {
+      document_id: '201',
+      base_document_version_id: '2011',
+      proposed_document_version_id: '2019',
+      after_content: '# 기획안\n고친 글',
+      content_hash: 'sha256:a',
+    },
+    {
+      document_id: '203',
+      base_document_version_id: '2031',
+      proposed_document_version_id: '2039',
+      after_content: '# 요구사항\n고친 글',
+      content_hash: 'sha256:b',
+    },
+  ]
+  expect(
+    toDocumentChanges(
+      { document_id: '', removed_document_id: '201' },
+      undefined,
+      source,
+    ),
+  ).toEqual([
+    {
+      document_id: '203',
+      base_document_version_id: '2031',
+      after_content: '# 요구사항\n고친 글',
+    },
+  ])
+})

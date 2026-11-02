@@ -175,8 +175,16 @@ export function ProposalForm({
           })
           return
         }
+        // 되돌린 문서는 원래 제안의 같은 문서 변경까지 빼도록 removed_document_id로 알린다.
         return onSubmit(
-          unchanged ? { ...form, document_id: '', after_content: '' } : form,
+          unchanged
+            ? {
+                ...form,
+                document_id: '',
+                after_content: '',
+                removed_document_id: form.document_id,
+              }
+            : form,
         ).catch(() => undefined)
       })}
       className="grid gap-4"

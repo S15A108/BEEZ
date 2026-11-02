@@ -169,3 +169,61 @@ it('기준이 바뀐 제안을 다시 낼 때 경고를 보이고 새 기준 원
   )
   expect(screen.getByText(/승인본이 바뀐 문서 1개/)).toHaveTextContent('ERD')
 })
+
+// PR #72 재전수 ROUND2-DOC-01: 두 문서를 바꾼 제안에서 고친 문서를 기준 원문으로 되돌리면 그 문서를 뺐다고 알린다.
+it('고친 글을 기준 원문으로 되돌려 올리면 그 문서를 뺀 문서로 알린다', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const onSubmit = vi.fn().mockResolvedValue(undefined)
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        heading="고쳐서 다시 올리기"
+        submitLabel="다시 올리기"
+        tasks={[]}
+        documents={[
+          { id: '203', label: '요구사항 명세서', versionId: '2031' },
+          { id: '204', label: 'API 명세서', versionId: '2041' },
+        ]}
+        sourceDocuments={[
+          {
+            id: '203',
+            title: '요구사항 명세서',
+            afterContent: '# 요구사항\n옛 수정안',
+            stale: false,
+          },
+          {
+            id: '204',
+            title: 'API 명세서',
+            afterContent: '# API\n수정안',
+            stale: false,
+          },
+        ]}
+        fetchDocumentContent={() =>
+          Promise.resolve({ content: '# 요구사항\n원문', versionId: '2031' })
+        }
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '# 요구사항\n원문',
+        }}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  await screen.findByText(/함께 올라가는 문서 변경 1개/)
+  await waitFor(() =>
+    expect(screen.getByLabelText('고친 글')).toHaveValue('# 요구사항\n원문'),
+  )
+  await user.click(screen.getByRole('button', { name: '다시 올리기' }))
+  await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+  expect(onSubmit.mock.calls[0][0]).toMatchObject({
+    document_id: '',
+    removed_document_id: '203',
+  })
+})

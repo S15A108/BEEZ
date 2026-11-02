@@ -35,6 +35,8 @@ export const proposalFormSchema = z
     // 고칠 문서: 고친 글을 after_content로 보낸다(CHG-A01 documents).
     document_id: z.string().optional(),
     after_content: z.string().optional(),
+    // 고친 글을 기준 원문으로 되돌려 이번 제안에서 뺀 문서. 원래 제안의 같은 문서 변경도 함께 뺀다(ProposalForm이 채운다).
+    removed_document_id: z.string().optional(),
     // 다시 내는 제안에서 폼 밖에 그대로 남는 문서 변경 수(toDocumentChanges의 kept)와 설계 항목 변경 수
     kept_documents: z.number().int().optional(),
     kept_items: z.number().int().optional(),
@@ -75,8 +77,12 @@ export function isStaleDocument(
 
 // 제안의 문서 변경. 폼은 문서 하나(document_id)를 고치고, 원래 제안의 나머지 문서 변경은 받은 값 그대로 함께 보낸다.
 // 폼에서 같은 문서를 고르면 폼의 글이 그 문서를 대신한다.
+// 기준 원문으로 되돌린 문서(removed_document_id)는 원래 제안에 있던 변경도 빼고 보내지 않는다(PR #72 재전수 ROUND2-DOC-01).
 export function toDocumentChanges(
-  form: Pick<ProposalFormValues, 'document_id' | 'after_content'>,
+  form: Pick<
+    ProposalFormValues,
+    'document_id' | 'after_content' | 'removed_document_id'
+  >,
   editedVersionId: string | undefined,
   kept: ResolvedDocumentChange[] = [],
 ): DocumentChange[] {
@@ -94,7 +100,11 @@ export function toDocumentChanges(
         ]
       : []),
     ...kept
-      .filter((change) => change.document_id !== form.document_id)
+      .filter(
+        (change) =>
+          change.document_id !== form.document_id &&
+          change.document_id !== form.removed_document_id,
+      )
       .map((change) => ({
         document_id: change.document_id,
         base_document_version_id: change.base_document_version_id,
