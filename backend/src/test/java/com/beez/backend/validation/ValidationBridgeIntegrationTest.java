@@ -131,19 +131,29 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
     }
 
-    @Test void completionDeltaMismatchWithoutDesignReferenceIsStoredAndBlocksPass() throws Exception {
+    /** Use #77's real completion report producer, rather than mutating the analyzer request. */
+    private long[] queuedDelta() {
         long[] task = queuedTask();
-        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
-        assertThat(accepted.finished()).isFalse();
-        long validation = Long.parseLong(accepted.validation().id());
+        long pass = api.passValidation(task[0]);
+        String path = "/api/projects/" + project + "/tasks/" + task[0] + "/state-events";
+        var started = api.post(path, "{\"event\":\"START\",\"plan_revision_id\":\"" + task[1]
+                + "\",\"expected_lock_version\":" + task[2] + ",\"validation_id\":\"" + pass + "\"}", owner);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+        var done = api.post(path, "{\"event\":\"COMPLETED\",\"plan_revision_id\":\"" + task[1]
+                + "\",\"expected_lock_version\":" + TaskApiSupport.longField(started.body(), "lock_version")
+                + ",\"delta\":[{\"kind\":\"CHANGE\",\"text\":\"완료 기준과 다르게 구현\"}]}", owner);
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        return new long[] {task[0], task[1], TaskApiSupport.longField(done.body(), "delta_validation_id")};
+    }
+
+    @Test void completionDeltaMismatchWithoutDesignReferenceIsStoredAndBlocksPass() throws Exception {
+        long[] task = queuedDelta();
+        long validation = task[2];
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
         when(analyzer.analyze(any())).thenAnswer(call -> {
             Map<String, Object> request = call.getArgument(0);
-            // Synthesize the future #77 handoff: that producer is not merged into this branch.
-            List<Map<String, Object>> checks = new ArrayList<>((List<Map<String, Object>>) request.get("checks"));
-            checks.add(Map.of("key", "completion-delta", "kind", "PLAN_COMPLETENESS",
-                    "design_item_version_ids", List.of(), "related_plan_revision_ids", List.of()));
-            request.put("checks", checks);
-            request.put("completion_delta", List.of(Map.of("kind", "CHANGE", "text", "완료 기준과 다르게 구현")));
+            sent.set(request);
+            List<Map<String, Object>> checks = (List<Map<String, Object>>) request.get("checks");
             return Map.of("origin", "MODEL", "model", "test-model", "usage", List.of(Map.of(
                     "request_key", "llm-validate-" + validation + "-attempt-1-call-1", "feature", "TASK_VALIDATION",
                     "model", "test-model", "failed", false, "tokens_known", false, "latency_ms", 10)),
@@ -155,6 +165,11 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         });
 
         assertThat(worker.runOnce()).isTrue();
+        assertThat(sent.get()).as("actual DELTA producer reached the analyzer").isNotNull();
+        assertThat(sent.get().get("completion_delta"))
+                .isEqualTo(List.of(Map.of("kind", "CHANGE", "text", "완료 기준과 다르게 구현")));
+        assertThat((List<Map<String, Object>>) sent.get().get("checks")).anySatisfy(check ->
+                assertThat(check).containsEntry("key", "completion-delta").containsEntry("kind", "PLAN_COMPLETENESS"));
         assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
                 .query(String.class).single()).isEqualTo("NEEDS_REVIEW");
         var finding = api.jdbc.sql("select kind,severity,design_item_id,design_item_version_id,related_task_id,check_key "
@@ -164,6 +179,15 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .containsEntry("check_key", "completion-delta")
                 .containsEntry("design_item_id", null).containsEntry("design_item_version_id", null)
                 .containsEntry("related_task_id", null);
+        assertThat(api.jdbc.sql("select status from task where id=:t").param("t", task[0])
+                .query(String.class).single()).isEqualTo("WAITING");
+    }
+
+    @Test void removedCompletionReporterCannotSearchOrCallAiFromDeltaQueue() {
+        long[] task = queuedDelta();
+        api.jdbc.sql("update project_member set active=false where project_id=:p and account_id=:a")
+                .param("p", project).param("a", owner).update();
+        assertClosedWithoutSearchOrAi(task[2]);
     }
 
     @Test void removedMemberCannotSearchOrCallAiFromQueuedWork() {
@@ -238,6 +262,38 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("STALE");
         assertThat(api.jdbc.sql("select status from validation_run where validation_id=:v")
                 .param("v", validation).query(String.class).single()).isEqualTo("DISCARDED");
+    }
+
+    @Test void unrelatedBaselinePublishedDuringAiCallDiscardsResultAndPreservesUsage() throws Exception {
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        when(analyzer.analyze(any())).thenAnswer(call -> {
+            Map<String, Object> request = call.getArgument(0);
+            // Publish a new baseline with the same approved versions while the provider is in flight.
+            // The already-assembled search result still belongs to the previous baseline.
+            api.publish(2, Map.of("API-01", api.currentVersionId("API-01"),
+                    "API-02", api.currentVersionId("API-02")));
+            List<String> checked = ((List<?>) request.get("checks")).stream()
+                    .map(check -> ((Map<?, ?>) check).get("key").toString()).toList();
+            return Map.of("origin", "MODEL", "model", "test-model", "usage", List.of(Map.of(
+                    "request_key", "llm-validate-" + validation + "-attempt-1-call-1", "feature", "TASK_VALIDATION",
+                    "model", "test-model", "failed", false, "tokens_known", true,
+                    "input_tokens", 10, "output_tokens", 5, "latency_ms", 10)),
+                    "result", Map.of("analysis_status", "COMPLETE", "checked_keys", checked,
+                            "unassessed", List.of(), "findings", List.of()));
+        });
+
+        assertThat(worker.runOnce()).isTrue();
+        verify(analyzer).analyze(any());
+        assertThat(api.jdbc.sql("select status from validation where id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("STALE");
+        assertThat(api.jdbc.sql("select status from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("DISCARDED");
+        assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).single())
+                .contains("llm-validate-" + validation + "-attempt-1-call-1");
     }
 
 }

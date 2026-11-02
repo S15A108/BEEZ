@@ -5,8 +5,10 @@ import static org.mockito.Mockito.mock;
 
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.task.service.RelatedTaskCandidateFinder;
+import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.validation.repository.ValidationRepository;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +21,8 @@ class AnalysisResultApplierUsageTest {
         return new AnalysisResultApplier(mock(ValidationRepository.class), mock(ValidationResponses.class),
                 mock(ProjectDesignLookup.class), mock(ValidationRules.class), mock(TaskPlanRevisionRepository.class),
                 mock(TaskPlanDesignRefRepository.class), mock(ValidationInputAssembler.class),
-                mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), fakeEnabled);
+                mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), fakeEnabled, mock(DeltaCompletion.class),
+                mock(TaskCompletionReportRepository.class));
     }
 
     private static boolean valid(AnalysisResultApplier applier, Map<String, Object> response) {

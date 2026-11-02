@@ -5,6 +5,8 @@ import com.beez.backend.task.entity.TaskPlanRevision;
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.task.service.ProjectDesignLookup;
+import com.beez.backend.task.service.DeltaCompletion;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import com.beez.backend.common.auth.CallerContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -14,6 +16,7 @@ import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.repository.ValidationRow;
 import java.util.ArrayList;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -63,12 +66,15 @@ public class AnalysisResultApplier {
     private final RelatedTaskCandidateFinder relatedTasks;
     private final JdbcClient jdbc;
     private final boolean fakeAnalyzerEnabled;
+    private final DeltaCompletion deltaCompletion;
+    private final TaskCompletionReportRepository reports;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
                                  TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                  ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks, JdbcClient jdbc,
-                                 @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled) {
+                                 @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
+                                 DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
@@ -79,6 +85,8 @@ public class AnalysisResultApplier {
         this.relatedTasks = relatedTasks;
         this.jdbc = jdbc;
         this.fakeAnalyzerEnabled = fakeAnalyzerEnabled;
+        this.deltaCompletion = deltaCompletion;
+        this.reports = reports;
     }
 
     /** An incomplete search cannot establish PASS, even when the model was never called. */
@@ -132,7 +140,7 @@ public class AnalysisResultApplier {
                     "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", model, durationMs, diag);
             return;
         }
-        applySuccess(lease, request, response, durationMs);
+        applySuccess(lease, request, response, durationMs, input.baselineId());
     }
 
     private boolean successfulModelUsage(Map<String, Object> request, Map<String, Object> response) {
@@ -233,9 +241,16 @@ public class AnalysisResultApplier {
 
     private boolean searchInputsCurrent(ValidationRow v, Map<String, Object> request, CallerContext caller,
                                         ValidationInputAssembler.Result input) {
-        if (!input.searchComplete() || input.baselineId() != v.baselineId()) return false;
+        if (!input.searchComplete()) return false;
+        long analyzedBaseline = input.baselineId();
+        if ("DELTA".equals(v.trigger())) {
+            Object accepted = responses.summary(v.summary()).get("completion_delta");
+            if (!(accepted instanceof List<?> delta) || delta.isEmpty() || !delta.equals(request.get("completion_delta"))) return false;
+            var report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(v.taskId(), v.planRevisionId());
+            if (report.isEmpty() || !delta.equals(report.get().getDelta())) return false;
+        }
         if (jdbc.sql("select count(*) from project p join task t on t.project_id=p.id where p.id=:project and t.id=:task and p.current_baseline_id=:baseline and t.current_plan_revision_id=:revision")
-                .param("project", v.projectId()).param("task", v.taskId()).param("baseline", v.baselineId())
+                .param("project", v.projectId()).param("task", v.taskId()).param("baseline", analyzedBaseline)
                 .param("revision", v.planRevisionId()).query(Long.class).single() != 1L) return false;
         List<Map<String, Object>> items = objects(request.get("approved_items"));
         List<Long> ids = new ArrayList<>(), versions = new ArrayList<>();
@@ -244,12 +259,12 @@ public class AnalysisResultApplier {
             if (id == null || version == null) return false;
             ids.add(id); versions.add(version);
             if (jdbc.sql("select count(*) from baseline_item where baseline_id=:baseline and design_item_id=:item and design_item_version_id=:version")
-                    .param("baseline", v.baselineId()).param("item", id).param("version", version).query(Long.class).single() != 1L) return false;
+                    .param("baseline", analyzedBaseline).param("item", id).param("version", version).query(Long.class).single() != 1L) return false;
         }
         var currentRelated = relatedTasks.find(caller, v.projectId(), v.taskId(), v.planRevisionId(), ids, 20);
         Map<Long, Long> related = new LinkedHashMap<>();
         for (var candidate : currentRelated.candidates()) related.put(candidate.taskId(), candidate.planRevisionId());
-        if (currentRelated.truncated() || currentRelated.baselineId() != v.baselineId()
+        if (currentRelated.truncated() || currentRelated.baselineId() != analyzedBaseline
                 || !related.equals(input.relatedPlanRevisions())) return false;
         if (!versions.isEmpty()) {
             var rows = jdbc.sql("select id,source_document_version_id from design_item_version where id in (:ids) order by id for share")
@@ -263,10 +278,10 @@ public class AnalysisResultApplier {
                         .param("ids", documents).query().listOfRows();
             }
         }
-        var evidence = assembler.loadEvidence(v.projectId(), v.baselineId(), items);
+        var evidence = assembler.loadEvidence(v.projectId(), analyzedBaseline, items);
         if (!evidence.unavailableVersionIds().isEmpty() || !evidence.evidence().equals(request.get("evidence"))) return false;
         Object packet = map(map(request.get("plan_revision")).get("plan")).get("context_packet_id");
-        List<String> unresolved = assembler.loadUnresolved(v.projectId(), v.taskId(), v.baselineId(),
+        List<String> unresolved = assembler.loadUnresolved(v.projectId(), v.taskId(), analyzedBaseline,
                 new HashSet<>(ids), packet == null ? null : packet.toString());
         return unresolved.equals(request.get("unresolved"));
     }
@@ -279,6 +294,11 @@ public class AnalysisResultApplier {
      */
     @Transactional
     public void applySuccess(JobLease lease, Map<String, Object> request, Map<String, Object> response, long durationMs) {
+        applySuccess(lease, request, response, durationMs, null);
+    }
+
+    private void applySuccess(JobLease lease, Map<String, Object> request, Map<String, Object> response,
+                              long durationMs, Long analyzedBaseline) {
         // 리스가 만료된 뒤 도착한 응답이면 반영하지 않고 만료로 닫는다. 그때도 모델을 부른 사용량은 진단 값으로 남긴다
         Map<String, Object> lateDiagnostics = Map.of();
         if (response != null) {
@@ -377,6 +397,12 @@ public class AnalysisResultApplier {
             status = "NEEDS_INPUT";
         }
         Map<String, Object> summary = responses.summary(v.summary());
+        // Keep the accepted baseline on the validation itself. The actual analyzed
+        // baseline may differ after an unrelated publication and remains auditable.
+        if (analyzedBaseline != null) {
+            summary.put("analysis_baseline_id", analyzedBaseline);
+            summary.put("analysis_input_snapshot_hash", request.get("input_snapshot_hash"));
+        }
         summary.put("analysis_status", "COMPLETE");
         summary.put("checked_keys", result.get("checked_keys"));
         summary.put("unassessed", List.of());
@@ -385,6 +411,9 @@ public class AnalysisResultApplier {
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
         validations.finishJob(lease.jobId(), "DONE");
+        if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
+            deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
+        }
     }
 
     /**
@@ -626,7 +655,8 @@ public class AnalysisResultApplier {
         TaskPlanRevision plan = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId()).orElseThrow();
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(v.planRevisionId());
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId());
-        return rules.evaluate(v.projectId(), plan, refs, relatedOpen);
+        Long currentBaseline = designLookup.requireCurrentBaseline(v.projectId());
+        return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen, "DELTA".equals(v.trigger()));
     }
 
     /**

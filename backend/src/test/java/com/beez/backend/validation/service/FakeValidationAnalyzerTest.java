@@ -5,6 +5,8 @@ import static org.mockito.Mockito.mock;
 
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
+import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -48,7 +50,8 @@ class FakeValidationAnalyzerTest {
         AnalysisResultApplier applier = new AnalysisResultApplier(mock(ValidationRepository.class),
                 mock(ValidationResponses.class), mock(ProjectDesignLookup.class), mock(ValidationRules.class),
                 mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class),
-                mock(ValidationInputAssembler.class), mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), true);
+                mock(ValidationInputAssembler.class), mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), true,
+                mock(DeltaCompletion.class), mock(TaskCompletionReportRepository.class));
         assertThat(applier.contractViolation(request, response)).isNull();
     }
 }

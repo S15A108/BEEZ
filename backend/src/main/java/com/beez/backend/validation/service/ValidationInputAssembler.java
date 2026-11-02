@@ -179,6 +179,18 @@ public class ValidationInputAssembler {
                 evidence.unavailableVersionIds(), List.copyOf(incompleteReasons));
     }
 
+    /** Bind the accepted immutable completion report and its required check into the AI snapshot. */
+    public void bindCompletionDelta(Result input, List<Map<String, Object>> delta) {
+        if (delta == null || delta.isEmpty()) throw new IllegalArgumentException("missing completion delta");
+        var request = input.request();
+        @SuppressWarnings("unchecked")
+        var checks = new ArrayList<>((List<Map<String, Object>>) request.get("checks"));
+        checks.add(check(ValidationRules.COMPLETION_DELTA_CHECK, "PLAN_COMPLETENESS", List.of(), List.of()));
+        request.put("checks", checks);
+        request.put("completion_delta", delta);
+        request.put("input_snapshot_hash", snapshotHash(request, input.baselineId()));
+    }
+
     /** Revalidate exact source evidence when the final transaction applies a result. */
     public ValidationEvidenceBuilder.Result loadEvidence(long projectId, long baselineId,
                                                          List<Map<String, Object>> approvedItems) {
@@ -405,6 +417,7 @@ public class ValidationInputAssembler {
             snapshot.put("baseline_id", Long.toString(baselineId));
             for (String key : List.of("project_id", "plan_revision", "approved_items", "related_plans",
                     "rule_findings", "unresolved", "checks", "evidence")) snapshot.put(key, value.get(key));
+            if (value.containsKey("completion_delta")) snapshot.put("completion_delta", value.get("completion_delta"));
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(json.writeValueAsString(stable(snapshot)).getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }

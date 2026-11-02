@@ -9,6 +9,8 @@ import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationResponses;
 import com.beez.backend.validation.service.ValidationInputAssembler;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -38,11 +40,12 @@ public class ValidationWorker {
     private final AnalysisResultApplier applier;
     private final TransactionTemplate tx;
     private final ValidationInputAssembler assembler;
+    private final TaskCompletionReportRepository reports;
 
     public ValidationWorker(ValidationProperties properties, ValidationRepository validations,
                             ValidationResponses responses, ValidationAnalyzer analyzer,
                             AnalysisResultApplier applier, PlatformTransactionManager transactions,
-                            ValidationInputAssembler assembler) {
+                            ValidationInputAssembler assembler, TaskCompletionReportRepository reports) {
         this.properties = properties;
         this.validations = validations;
         this.responses = responses;
@@ -50,6 +53,7 @@ public class ValidationWorker {
         this.applier = applier;
         this.tx = new TransactionTemplate(transactions);
         this.assembler = assembler;
+        this.reports = reports;
     }
 
     @Scheduled(fixedDelayString = "${beez.validation.poll-millis:2000}")
@@ -110,12 +114,26 @@ public class ValidationWorker {
             // Search may call the embedding service, so do not hold a DB transaction around it.
             searchInput = assembler.assemble(caller, row.projectId(), row.taskId(), row.planRevisionId(),
                     row.id(), lease.attempt(), properties.executionBudgetMs());
-            if (searchInput.baselineId() != row.baselineId()) throw new IllegalStateException("baseline changed");
+            // An unrelated publication need not invalidate the accepted plan. The assembler
+            // uses the current baseline; result application rechecks that exact search snapshot.
             if (!searchInput.searchComplete()) {
                 applier.applyInputIncomplete(lease, "검색 또는 원문 근거 범위가 불완전합니다", System.currentTimeMillis() - started);
                 return true;
             }
             request = searchInput.request();
+            if ("DELTA".equals(row.trigger())) {
+                Object saved = responses.summary(row.summary()).get("completion_delta");
+                if (!(saved instanceof List<?> delta) || delta.isEmpty()
+                        || delta.stream().anyMatch(value -> !(value instanceof Map<?, ?>))) {
+                    throw new IllegalStateException("검증의 완료 보고가 없습니다");
+                }
+                var report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(
+                        row.taskId(), row.planRevisionId()).orElseThrow();
+                if (!delta.equals(report.getDelta())) throw new IllegalStateException("완료 보고가 변경되었습니다");
+                @SuppressWarnings("unchecked")
+                var completionDelta = (List<Map<String, Object>>) saved;
+                assembler.bindCompletionDelta(searchInput, completionDelta);
+            }
         } catch (RuntimeException e) {
             log.warn("validation {} 요청 조립 실패: {}", lease.validationId(), e.toString());
             applier.applyFailure(lease, "evidence_fetch_failed", "분석 입력이나 검색 근거를 확인하지 못했습니다",
