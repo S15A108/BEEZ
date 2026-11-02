@@ -3,12 +3,16 @@ package com.beez.backend.validation.repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.math.BigDecimal;
 import java.sql.Types;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
@@ -19,6 +23,12 @@ import tools.jackson.databind.ObjectMapper;
  */
 @Repository
 public class ValidationRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(ValidationRepository.class);
+
+    /** llm_usage.feature CHECK 와 같은 값. 모르는 값이면 TASK_VALIDATION 으로 적는다 (제약 위반으로 반영 전체가 실패하지 않게) */
+    private static final java.util.Set<String> USAGE_FEATURES = java.util.Set.of("DOCUMENT_PARSE", "TASK_VALIDATION", "CHANGE_IMPACT",
+            "EMBEDDING", "BEE_CHAT", "BEE_DRAFT", "TASK_ASSIGNMENT", "MEETING_ANALYSIS");
 
     private final JdbcClient jdbc;
     private final ObjectMapper json;
@@ -261,7 +271,7 @@ public class ValidationRepository {
         if (usage != null) {
             usageJson = toJson(usage);
         }
-        return jdbc.sql("""
+        int changed = jdbc.sql("""
                         update validation_run
                            set status = :s, error = :e, analyzer_version = :m, finished_at = now(), duration_ms = :d,
                                usage = cast(:u as jsonb), updated_at = now()
@@ -269,6 +279,10 @@ public class ValidationRepository {
                         """)
                 .param("s", status).param("e", error, Types.VARCHAR).param("m", analyzerVersion, Types.VARCHAR)
                 .param("d", (int) durationMs).param("u", usageJson, Types.VARCHAR).param("id", runId).update();
+        if (changed == 1) {
+            recordUsage(runId, usage, durationMs);
+        }
+        return changed;
     }
 
     /**
@@ -276,11 +290,110 @@ public class ValidationRepository {
      * 판정은 버리지만 실제 호출 비용은 그 실행에 보존한다. 사용량이 이미 있으면 덮어쓰지 않는다
      */
     public int recordLateUsage(long runId, Object usage) {
-        return jdbc.sql("""
+        int changed = jdbc.sql("""
                         update validation_run set usage = cast(:u as jsonb), updated_at = now()
                          where id = :id and status <> 'RUNNING' and usage is null
                         """)
                 .param("u", toJson(usage), Types.VARCHAR).param("id", runId).update();
+        if (changed == 1) {
+            recordUsage(runId, usage, 0);
+        }
+        return changed;
+    }
+
+    /**
+     * 실행의 사용량 배열을 공통 사용량 표(llm_usage, -79)에 한 줄씩 넣는다 (S15P31A108-168). 비용 조회(-169)는 이 표를 읽는다.
+     * <ul>
+     *   <li>같은 호출은 한 번만: request_key 가 유일 제약이라 겹치면 건너뛴다 (늦은 응답·재전송이 같은 키로 와도 두 번 합산되지 않음)</li>
+     *   <li>실행(validation_run_id)·작업(task_id)·프로젝트를 함께 적어 검증별·작업별·프로젝트별로 집계할 수 있게 한다</li>
+     *   <li>tokens_known=false 면 토큰 칸을 비운다 (모르는 값을 0 으로 만들지 않음, 명세 Usage). 추정 비용은 통화와 함께 있을 때만</li>
+     *   <li>failed 는 그 모델 호출이 실패했는지(AI 가 적어 준 값)이고 실행 결과와는 별개다 — 판정을 버린 실행의 성공한 호출은 failed=false</li>
+     *   <li>request_key 가 없는 항목은 적지 않고 경고만 남긴다. model 이 없으면 실행의 분석기 버전(응답의 model)으로 채운다</li>
+     * </ul>
+     *
+     * @param fallbackLatencyMs 항목에 latency_ms 가 없을 때 쓸 값 (실행 전체 시간). 늦은 사용량은 0
+     */
+    private void recordUsage(long runId, Object usage, long fallbackLatencyMs) {
+        if (!(usage instanceof List<?> entries) || entries.isEmpty()) {
+            return;
+        }
+        for (Object value : entries) {
+            if (!(value instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, Object> entry = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : raw.entrySet()) {
+                entry.put(String.valueOf(e.getKey()), e.getValue());
+            }
+            Object key = entry.get("request_key");
+            if (!(key instanceof String k) || k.isBlank()) {
+                log.warn("validation run {} usage entry skipped (request_key missing): {}", runId, entry);
+                continue;
+            }
+            String model = null;
+            if (entry.get("model") instanceof String m && !m.isBlank()) {
+                model = m;
+            }
+            boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
+            Integer input = null;
+            Integer output = null;
+            if (known) {
+                input = integer(entry.get("input_tokens"));
+                output = integer(entry.get("output_tokens"));
+            }
+            Integer latency = integer(entry.get("latency_ms"));
+            if (latency == null) {
+                latency = (int) Math.min(Integer.MAX_VALUE, fallbackLatencyMs);
+            }
+            String feature = "TASK_VALIDATION";
+            if (entry.get("feature") instanceof String f && USAGE_FEATURES.contains(f)) {
+                feature = f;
+            }
+            String provider = "unspecified";
+            if (entry.get("provider") instanceof String pv && !pv.isBlank()) {
+                provider = pv;
+            }
+            BigDecimal cost = null;
+            String currency = null;
+            if (entry.get("estimated_cost_amount") != null && entry.get("currency") instanceof String cur && !cur.isBlank()) {
+                cost = new BigDecimal(String.valueOf(entry.get("estimated_cost_amount")));
+                currency = cur;
+            }
+            jdbc.sql("""
+                            insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
+                                                   tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
+                                                   estimated_cost_amount, currency, failed, origin)
+                            select t.project_id, :feature, :key, v.task_id, r.id, :provider, coalesce(:model, r.analyzer_version),
+                                   :known, :input, :output, :cache, :latency, :cost, :currency, :failed, 'model'
+                              from validation_run r
+                              join validation v on v.id = r.validation_id
+                              join task t on t.id = v.task_id
+                             where r.id = :run
+                               and coalesce(:model, r.analyzer_version) is not null
+                            on conflict (request_key) do nothing
+                            """)
+                    .param("feature", feature).param("key", k).param("provider", provider).param("model", model, Types.VARCHAR)
+                    .param("known", known).param("input", input, Types.INTEGER).param("output", output, Types.INTEGER)
+                    .param("cache", integer(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
+                    .param("cost", cost, Types.NUMERIC).param("currency", currency, Types.VARCHAR)
+                    .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("run", runId)
+                    .update();
+        }
+    }
+
+    /** 정수로 읽을 수 있으면 그 값, 아니면 null (문자열 숫자도 받는다) */
+    private static Integer integer(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // ---- 작업 큐(job) ----

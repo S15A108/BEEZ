@@ -77,7 +77,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | `validation_finding` | `source`(`RULE`·`MODEL`), `kind`(`MISMATCH`·`MISSING_INPUT`·`MISSING_POLICY`·`CONFLICT`·`STALE_REF`·`ERROR`), `severity`(`INFO`·`WARNING`·`BLOCKING`), `design_item_version_id`, `sources`, `resolution`(`FIX_PLAN`·`PROPOSE_CHANGE`·`HUMAN_REVIEW`·`RETRY`), `next_action` |
 | `validation_finding` (V16, -159) | `check_key`(의미 분석 후보가 속한 검사 키, 규칙 finding 은 NULL), `evidence_ids`(요청 evidence 참조 키 배열, 기본 `[]`). `validation_run.usage`(V16): 그 시도의 모델 호출 사용량 배열, 판정을 버린 실행도 모델을 불렀으면 남긴다(비용 집계 -168), 안 불렀으면 NULL. 큐 조회 인덱스 `ix_job_ready`(QUEUED 의 next_run_at)와 이력 인덱스 `ix_validation_task` 는 V2 에 있는 것을 쓴다 |
 | `task_completion_report` | `summary`, `completion_checks` 추가 |
-| `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS` |
+| `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, 검증 호출은 `validation_run_id`·`task_id` 를 채운다(-168, 실행을 닫을 때 `validation_run.usage` 에서 옮겨 적음), `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS` |
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 

@@ -173,8 +173,29 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         response.put("result", result);
         response.put("origin", "MODEL");
         response.put("model", "test-model");
-        response.put("usage", List.of(Map.of("request_key", "llm-validate-x-attempt-1-call-1", "input_tokens", 10, "output_tokens", 5)));
+        response.put("usage", List.of(usageEntry("llm-validate-x-attempt-1-call-1", 10, 5)));
         return response;
+    }
+
+    /** 명세 Usage 한 항목 (토큰 수를 아는 성공 호출) */
+    private static Map<String, Object> usageEntry(String requestKey, int inputTokens, int outputTokens) {
+        Map<String, Object> u = new LinkedHashMap<>();
+        u.put("request_key", requestKey);
+        u.put("feature", "TASK_VALIDATION");
+        u.put("model", "test-model");
+        u.put("provider", "test-provider");
+        u.put("tokens_known", true);
+        u.put("input_tokens", inputTokens);
+        u.put("output_tokens", outputTokens);
+        u.put("latency_ms", 321);
+        u.put("failed", false);
+        return u;
+    }
+
+    /** 공통 사용량 표(llm_usage)의 한 줄. 없으면 null */
+    private Map<String, Object> usageRow(String requestKey) {
+        return api.jdbc.sql("select * from llm_usage where request_key = :k").param("k", requestKey).query().listOfRows()
+                .stream().findFirst().orElse(null);
     }
 
     private static Map<String, Object> candidate(String checkKey, String kind, String severity, String itemId, String versionId) {
@@ -340,6 +361,53 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
         assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("DONE");
         assertThat(column("validation", "summary", id)).contains("\"analysis_status\": \"COMPLETE\"").contains("test-model");
+
+        // 공통 사용량 표에 실행·작업·프로젝트와 함께 한 줄 (비용 조회의 근거, -168)
+        Map<String, Object> usage = usageRow("llm-validate-x-attempt-1-call-1");
+        assertThat(usage).isNotNull();
+        assertThat(((Number) usage.get("validation_run_id")).longValue()).isEqualTo(id(id, "validation_run"));
+        assertThat(((Number) usage.get("task_id")).longValue()).isEqualTo(t[0]);
+        assertThat(((Number) usage.get("project_id")).longValue()).isEqualTo(projectId);
+        assertThat(usage.get("feature")).isEqualTo("TASK_VALIDATION");
+        assertThat(usage.get("model")).isEqualTo("test-model");
+        assertThat(usage.get("provider")).isEqualTo("test-provider");
+        assertThat(usage.get("tokens_known")).isEqualTo(true);
+        assertThat(usage.get("input_tokens")).isEqualTo(10);
+        assertThat(usage.get("output_tokens")).isEqualTo(5);
+        assertThat(usage.get("latency_ms")).isEqualTo(321);
+        assertThat(usage.get("failed")).isEqualTo(false);
+        assertThat(usage.get("estimated_cost_amount")).isNull();
+    }
+
+    @Test
+    void usageRecording_unknownTokensStayNull_andUnknownModelFallsBackToAnalyzer() throws Exception {
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        when(analyzer.analyze(any())).thenAnswer(inv -> {
+            Map<String, Object> res = aiResponse(inv.getArgument(0), List.of(), List.of());
+            // 토큰 수를 모르는 호출(tokens_known=false 인데 숫자가 같이 옴)과 모델·지연이 빠진 항목, 키 없는 항목
+            Map<String, Object> unknown = new LinkedHashMap<>();
+            unknown.put("request_key", "llm-validate-x-attempt-1-call-2");
+            unknown.put("tokens_known", false);
+            unknown.put("input_tokens", 99);
+            unknown.put("output_tokens", 99);
+            unknown.put("failed", true);
+            Map<String, Object> noKey = new LinkedHashMap<>();
+            noKey.put("model", "x");
+            res.put("usage", List.of(usageEntry("llm-validate-x-attempt-1-call-1", 1, 2), unknown, noKey));
+            return res;
+        });
+        worker.runOnce();
+        assertThat(column("validation", "status", id)).isEqualTo("PASS");
+        Map<String, Object> unknown = usageRow("llm-validate-x-attempt-1-call-2");
+        assertThat(unknown).isNotNull();
+        assertThat(unknown.get("tokens_known")).isEqualTo(false);
+        assertThat(unknown.get("input_tokens")).isNull();                 // 모르는 값을 0 으로 만들지 않는다
+        assertThat(unknown.get("output_tokens")).isNull();
+        assertThat(unknown.get("model")).isEqualTo("test-model");         // 항목에 model 이 없으면 실행의 분석기 버전
+        assertThat(unknown.get("failed")).isEqualTo(true);
+        assertThat(unknown.get("latency_ms")).isNotNull();                 // 없으면 실행 전체 시간
+        assertThat(count("select count(*) from llm_usage where validation_run_id = " + id(id, "validation_run"))).isEqualTo(2);   // 키 없는 항목은 안 적힘
     }
 
     /** START 요청 (검증 번호를 실어 보낸다) */
@@ -569,17 +637,22 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
         long id = body(accept(t, member), 202).get("id").asLong();
         // AI 가 모델을 부른 뒤 504 로 실패하면서 오류 본문에 사용량을 넣어 준 경우
-        List<Map<String, Object>> usage = List.of(Map.of("request_key", "llm-validate-x-attempt-1-call-1", "input_tokens", 7,
-                "output_tokens", 0, "tokens_known", true));
+        Map<String, Object> failedCall = usageEntry("llm-validate-x-attempt-1-call-1", 7, 0);
+        failedCall.put("failed", true);
+        List<Map<String, Object>> usage = List.of(failedCall);
         when(analyzer.analyze(any())).thenThrow(new ValidationAnalyzer.AnalyzerException("ai_timeout", "시간 초과", null, usage));
         worker.runOnce();
         JsonNode v = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
         assertThat(v.get("status").asText()).isEqualTo("ERROR");
         assertThat(v.get("error_code").asText()).isEqualTo("ai_timeout");
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("TIMEOUT");
-        // 실패한 호출의 사용량도 실행에 남는다
+        // 실패한 호출의 사용량도 실행과 공통 사용량 표에 남는다
         assertThat(column("validation_run", "usage", id(id, "validation_run"))).contains("llm-validate-x-attempt-1-call-1");
         assertThat(column("validation", "summary", id)).contains("llm-validate-x-attempt-1-call-1");
+        Map<String, Object> row = usageRow("llm-validate-x-attempt-1-call-1");
+        assertThat(row).isNotNull();
+        assertThat(row.get("failed")).isEqualTo(true);
+        assertThat(((Number) row.get("validation_run_id")).longValue()).isEqualTo(id(id, "validation_run"));
     }
 
     @Test
@@ -918,6 +991,10 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isEqualTo(1);
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("ERROR");
         assertThat(column("validation_run", "usage", id(id, "validation_run"))).contains("llm-validate-x-attempt-1-call-1");
+        assertThat(((Number) usageRow("llm-validate-x-attempt-1-call-1").get("validation_run_id")).longValue()).isEqualTo(id(id, "validation_run"));
+        // 같은 늦은 응답이 또 와도 같은 호출은 한 번만 집계된다
+        applier.applySuccess(lease, request, aiResponse(request, List.of(), List.of()), 0);
+        assertThat(count("select count(*) from llm_usage where request_key = 'llm-validate-x-attempt-1-call-1'")).isEqualTo(1);
     }
 
     @Test
