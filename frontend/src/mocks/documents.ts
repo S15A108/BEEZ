@@ -25,6 +25,7 @@ import {
 import type { MockContext, MockReply } from './helpers'
 import { copy, nextId, now } from './state'
 import type { MockProject } from './state'
+import { reviewRoutes } from './documentReviews'
 
 export function draftSnapshotHash(project: MockProject): string {
   return `sha256:mock-drafts-${project.project.id}-${project.items
@@ -34,7 +35,36 @@ export function draftSnapshotHash(project: MockProject): string {
     .join('-')}`
 }
 
-function analyzeDocument(context: MockContext, version: DocumentVersion): void {
+const sourceOf = (version: DocumentVersion) => ({
+  document_id: version.document_id,
+  document_version_id: version.id,
+  version_no: version.version_no,
+  location: '1. 예시 분석',
+})
+
+// 원문 분석(색인)은 보완 질문만 남긴다. 실제 서버처럼 문서 등록·승인·색인만으로는 설계 초안을 만들지 않는다
+// (PR #72 전수 리뷰 AMP-01). 초안은 기획 분석 창의 초안 만들기(PLN-A05)나 직접 추가(PLN-A07)로만 생긴다.
+export function analyzeDocument(
+  context: MockContext,
+  version: DocumentVersion,
+): void {
+  const project = requireProject(context)
+  if (
+    project.questions.some(
+      (question) => question.source?.document_version_id === version.id,
+    )
+  )
+    return
+  const document = findById(project.documents, version.document_id)
+  project.questions.push({
+    id: nextId(context.database),
+    question: `${document.title}의 완료 기준을 어떻게 확인하나요? (규칙 기반 예시)`,
+    source: sourceOf(version),
+  })
+}
+
+// 초안 만들기(PLN-A05): 원문 첫 줄로 요구사항 초안 하나를 만든다(규칙 기반 예시).
+function draftFromDocument(context: MockContext, version: DocumentVersion) {
   const project = requireProject(context)
   if (
     project.items.some(
@@ -42,12 +72,7 @@ function analyzeDocument(context: MockContext, version: DocumentVersion): void {
     )
   )
     return
-  const source = {
-    document_id: version.document_id,
-    document_version_id: version.id,
-    version_no: version.version_no,
-    location: '1. 예시 분석',
-  }
+  const source = sourceOf(version)
   const document = findById(project.documents, version.document_id)
   project.items.push({
     id: nextId(context.database),
@@ -67,14 +92,9 @@ function analyzeDocument(context: MockContext, version: DocumentVersion): void {
     source,
     content_hash: `sha256:mock-${version.id}`,
   })
-  project.questions.push({
-    id: nextId(context.database),
-    question: `${document.title}의 완료 기준을 어떻게 확인하나요? (규칙 기반 예시)`,
-    source,
-  })
 }
 
-async function textOf(file: Blob): Promise<string> {
+export async function textOf(file: Blob): Promise<string> {
   if (typeof file.text === 'function') return file.text()
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -147,6 +167,15 @@ async function upload(
   })
   project.versions.push(version)
   document.latest_draft = version
+  if (!existingId)
+    project.working_copies.push({
+      document_id: document.id,
+      owner_account_id: requireAccount(context).id,
+      revision: 1,
+      status: 'EDITING',
+      content,
+      file_name: fileName,
+    })
   analyzeDocument(context, version)
   activity(context, 'DOCUMENT_UPLOADED')
   return {
@@ -160,6 +189,7 @@ export async function documentRoutes(
   context: MockContext,
 ): Promise<MockReply | undefined> {
   if (!/^(DOC|PLN|TRC)-/.test(id)) return undefined
+  if (/^DOC-A(1[3-9]|2[01])$/.test(id)) return reviewRoutes(id, context)
   const project = requireProject(context)
   const { body, params, query, database } = context
   switch (id) {
@@ -167,17 +197,28 @@ export async function documentRoutes(
       return upload(context)
     case 'DOC-A12':
       return upload(context, params.document_id)
-    case 'DOC-A02':
+    case 'DOC-A02': {
+      // 백엔드 목록 API처럼 버전 본문(content)은 빼고 준다. 본문은 DOC-A03으로 따로 받는다.
+      const withoutContent = <T extends { content?: string }>(version?: T) =>
+        version && { ...version, content: undefined }
       return {
         data: page(
-          project.documents.filter(
-            (document) =>
-              (!query.get('kind') || document.kind === query.get('kind')) &&
-              (!query.get('domain') || document.domain === query.get('domain')),
-          ),
+          project.documents
+            .filter(
+              (document) =>
+                (!query.get('kind') || document.kind === query.get('kind')) &&
+                (!query.get('domain') ||
+                  document.domain === query.get('domain')),
+            )
+            .map((document) => ({
+              ...document,
+              approved_version: withoutContent(document.approved_version),
+              latest_draft: withoutContent(document.latest_draft),
+            })),
           query,
         ),
       }
+    }
     case 'DOC-A03': {
       const document = findById(project.documents, params.document_id)
       const version = query.has('version_no')
@@ -246,6 +287,22 @@ export async function documentRoutes(
     }
     case 'DOC-A07': {
       const document = findById(project.documents, params.document_id)
+      // 서버 requireAuthor: 문서를 등록한 사람만 고치고, 팀장 검토를 요청한 동안은 409(PR #72 4차 조사 FOURTH-DOC-01).
+      const copy = project.working_copies.find(
+        (item) => item.document_id === document.id,
+      )
+      if (copy?.owner_account_id !== requireAccount(context).id)
+        fail(
+          403,
+          'document_author_required',
+          '등록한 담당자만 문서를 수정할 수 있습니다.',
+        )
+      if (copy.status === 'SUBMITTED')
+        fail(
+          409,
+          'submission_locked',
+          '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
+        )
       document.domain = typeof body.domain === 'string' ? body.domain : ''
       return { data: document }
     }
@@ -299,9 +356,11 @@ export async function documentRoutes(
       const ids = strings(body.document_version_ids)
       if (!ids.length)
         fail(400, 'validation_failed', '초안의 원문 버전을 선택해 주세요.')
-      ids.forEach((versionId) =>
-        analyzeDocument(context, findById(project.versions, versionId)),
-      )
+      ids.forEach((versionId) => {
+        const version = findById(project.versions, versionId)
+        analyzeDocument(context, version)
+        draftFromDocument(context, version)
+      })
       const sourceIds = new Set(ids)
       const previousDrafts = project.items.filter(
         (item) =>
@@ -335,23 +394,40 @@ export async function documentRoutes(
         data: { status: 'PENDING', document_version_ids: ids },
       }
     }
-    case 'PLN-A06':
+    case 'PLN-A06': {
+      // 실제 서버처럼 초안 목록 cursor에 스냅숏 해시를 담고, 다음 페이지를 부를 때 초안이 바뀌었으면 409 draft_changed
+      // (DesignItemQueryService, PR #72 mock/live 전수 대조 DOC-LIVE-4).
+      const hash = draftSnapshotHash(project)
+      const [cursor, cursorHash] = (query.get('cursor') ?? '').split('~')
+      if (cursor && cursorHash !== hash)
+        fail(
+          409,
+          'draft_changed',
+          '설계 초안이 바뀌었어요. 처음부터 다시 불러와 주세요.',
+        )
+      const pageQuery = new URLSearchParams(query)
+      if (cursor) pageQuery.set('cursor', cursor)
+      const result = page(
+        project.items.filter(
+          (item) =>
+            (!query.get('status') || item.status === query.get('status')) &&
+            (!query.get('kind') || item.kind === query.get('kind')) &&
+            (!query.get('document_version_id') ||
+              item.source?.document_version_id ===
+                query.get('document_version_id')),
+        ),
+        pageQuery,
+      )
       return {
         data: {
-          ...page(
-            project.items.filter(
-              (item) =>
-                (!query.get('status') || item.status === query.get('status')) &&
-                (!query.get('kind') || item.kind === query.get('kind')) &&
-                (!query.get('document_version_id') ||
-                  item.source?.document_version_id ===
-                    query.get('document_version_id')),
-            ),
-            query,
-          ),
-          draft_snapshot_hash: draftSnapshotHash(project),
+          ...result,
+          ...(result.next_cursor
+            ? { next_cursor: `${result.next_cursor}~${hash}` }
+            : {}),
+          draft_snapshot_hash: hash,
         },
       }
+    }
     case 'PLN-A07': {
       const sourceVersion =
         typeof body.source_document_version_id === 'string'
@@ -416,7 +492,7 @@ export async function documentRoutes(
       if (project.baselines.length)
         fail(
           409,
-          'baseline_already_exists',
+          'baseline_exists',
           '기준 설계 변경은 변경 제안으로 진행해 주세요.',
         )
       expectValue(draftSnapshotHash(project), body.draft_snapshot_hash)
@@ -438,6 +514,17 @@ export async function documentRoutes(
           'required_documents_missing',
           '기획안·ERD·요구사항·API 명세서 네 종류가 모두 필요해요.',
         )
+      // 서버 BaselinePublishService처럼 문서 4종이 모두 팀장 승인을 받고 승인 전 작성 건이 없을 때만 만든다.
+      // 이 요청으로 문서를 승인하지 않는다(PR #72 6차 조사 SIXTH-DOC-02).
+      if (
+        versions.some((version) => version.status !== 'APPROVED') ||
+        project.working_copies.some((copy) => copy.status !== 'APPROVED')
+      )
+        fail(
+          409,
+          'document_not_approved',
+          '문서별 팀장 승인이 모두 완료된 후 기준 설계를 생성할 수 있습니다.',
+        )
       const items = strings(body.design_item_version_ids).map((itemId) =>
         findById(project.items, itemId),
       )
@@ -457,13 +544,6 @@ export async function documentRoutes(
         })),
         approved_by: requireAccount(context).id,
         created_at: now(),
-      })
-      versions.forEach((version) => {
-        version.status = 'APPROVED'
-        const document = findById(project.documents, version.document_id)
-        document.approved_version = version
-        if (document.latest_draft?.id === version.id)
-          delete document.latest_draft
       })
       items.forEach((item) => {
         item.status = 'APPROVED'

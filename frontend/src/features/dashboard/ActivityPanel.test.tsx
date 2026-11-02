@@ -18,7 +18,7 @@ vi.mock('@/api/services/dashboard', () => ({
 vi.mock('@/api/services/members', () => ({ membersApi: { list: vi.fn() } }))
 beforeEach(() => {
   vi.clearAllMocks()
-  useWorkspaceStore.setState({ pane: 'activity', focusId: null })
+  useWorkspaceStore.setState({ pane: 'dashboard', focusId: null })
   vi.mocked(dashboardApi.usage).mockResolvedValue({
     from: '2026-10-20T00:00:00Z',
     to: '2026-10-23T00:00:00Z',
@@ -72,18 +72,21 @@ function mount() {
 it('연결·대기 작업·통과한 계획을 분리하며 누락 비용을 0원으로 만들지 않는다', async () => {
   const user = userEvent.setup()
   mount()
+  // 수정안: 대시보드는 한눈에 보기 / 활동 타임라인 / 에이전트 현황 / 사용량·비용 탭으로 나눈다.
+  await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
   const name = await screen.findByText('민수')
   const row = name.closest('tr')!
   expect(within(row).getByText('연결됨')).toBeInTheDocument()
   expect(within(row).getByText('대기', { exact: true })).toBeInTheDocument()
   expect(within(row).getByText('계획 통과')).toBeInTheDocument()
   expect(within(row).getByText('선행 작업 대기')).toBeInTheDocument()
-  expect(
-    await screen.findByText('미보고', { selector: 'dd' }),
-  ).toBeInTheDocument()
   await user.click(within(row).getByRole('button', { name: '작업 #8' }))
   expect(useWorkspaceStore.getState().focusId).toBe('8')
   expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+  expect(
+    await screen.findByText('미보고', { selector: 'dd' }),
+  ).toBeInTheDocument()
 })
 it('한국시간 날짜 범위를 UTC로 전달하고 역전된 기간은 조회하지 않는다', async () => {
   const user = userEvent.setup()

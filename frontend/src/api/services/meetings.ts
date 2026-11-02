@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import * as schemas from '@/features/meetings/schemas'
 import { idSchema } from '@/api/contracts/common'
 import { callEndpoint, type RequestOptions } from './request'
@@ -53,6 +54,22 @@ export const meetingsApi = {
         method: 'POST',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/participants`,
         data: schemas.inviteInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  // MTG-A14(PR #54, 수정안 요청): 팀장만 뺀다. 팀장 자신은 409 leader_not_removable.
+  removeParticipant: (
+    projectId: string,
+    meetingId: string,
+    memberId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      z.void(),
+      {
+        method: 'DELETE',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/participants/${encodeURIComponent(String(idSchema.parse(memberId)))}`,
         idempotent: true,
       },
       options,
