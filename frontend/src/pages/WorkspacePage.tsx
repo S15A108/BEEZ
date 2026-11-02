@@ -97,6 +97,7 @@ function Workspace({ projectId }: { projectId: string }) {
             ? ('human' as const)
             : ('agent' as const),
         color: member.color ?? '#8ca9a0',
+        avatar: member.avatar,
         status: 'idle',
       })),
     ],
@@ -145,6 +146,7 @@ function Workspace({ projectId }: { projectId: string }) {
                 currentUserId={
                   currentUser ? `member:${currentUser.id}` : undefined
                 }
+                avatar={session.data?.avatar}
                 viewMode={viewMode}
                 outdoor={outdoor}
                 interactive={pane === null}

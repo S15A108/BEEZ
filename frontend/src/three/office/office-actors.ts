@@ -1,9 +1,17 @@
 import type { Agent } from '../types'
 import { agentDisplayName, bibiOf } from '../agentIdentity'
-import type { OfficeEntity3D } from './OfficeRenderer3D'
+import { characterOf } from '@/lib/characters'
+import type { OfficeAppearance, OfficeEntity3D } from './OfficeRenderer3D'
 import type { Floor } from './floors'
 import { officeWorkZone } from './office-layout'
 import { RECEPTIONIST } from './social'
+
+// 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D24).
+// 회원 캐릭터 로봇(member-robot)은 avatar를 모르는 팀원의 기본 로봇(robot)과 다른 모양이다.
+export function avatarAppearance(avatar?: string): OfficeAppearance {
+  const key = avatar ? characterOf(avatar).key : 'human'
+  return key === 'robot' ? 'member-robot' : key
+}
 
 export function officeActors(
   floor: Floor,
@@ -55,12 +63,15 @@ export function officeActors(
       floor: 1,
       color: agent.color,
       status: agent.status,
+      // 팀원 목록에 avatar가 오면 그 모양, 없으면 지금처럼 사람은 사람·에이전트는 로봇(명세 요청 MEM-A01 avatar).
       appearance:
-        agent.kind === 'human'
-          ? 'human'
-          : agent.kind === 'lead'
-            ? 'bibi'
-            : 'robot',
+        agent.kind === 'lead'
+          ? 'bibi'
+          : agent.avatar
+            ? avatarAppearance(agent.avatar)
+            : agent.kind === 'human'
+              ? 'human'
+              : 'robot',
       stationary: agent.kind === 'human',
     })
   }

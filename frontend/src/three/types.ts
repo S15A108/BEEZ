@@ -23,6 +23,8 @@ export interface SceneAgent {
   name: string
   kind: 'human' | 'lead' | 'agent'
   color?: string
+  /** 계정 avatar(human·robot·bee, 옛 bee-*). 있으면 사무실 모양을 이것으로 정한다(D24). */
+  avatar?: string
   status?: string
   home_zone?: Zone
   zone?: Zone
@@ -44,6 +46,7 @@ export interface Agent {
   name: string
   role: string
   kind: 'human' | 'lead' | 'agent'
+  avatar?: string
   builtin: boolean
   color: string
   home_zone: Zone

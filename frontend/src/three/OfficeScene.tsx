@@ -17,7 +17,7 @@ import {
   OutdoorStreetRenderer,
   streetSpawn,
 } from './office/OutdoorStreetRenderer'
-import { officeActors } from './office/office-actors'
+import { avatarAppearance, officeActors } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
 import { officePopulationOf } from './office/office-layout'
 import { officeLanding, officeWalkable } from './office/office-navigation'
@@ -41,6 +41,8 @@ export interface OfficeSceneProps {
   onHintChange?: (hint: string | null) => void
   phase?: 0 | 1 | 2 | 3 | 4
   currentUserId?: string
+  /** 내 계정 avatar. 사무실의 '나' 모양을 회원 설정 캐릭터로 그린다(D24). */
+  avatar?: string
   interactive?: boolean
   className?: string
 }
@@ -499,6 +501,7 @@ function OfficeRuntime(
     const ease = 1 - Math.exp(-dt * 2)
     focus.current.x += (target.x - focus.current.x) * ease
     focus.current.y += (target.y - focus.current.y) * ease
+    me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
       zoom: [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] * zoom.current,
       focus: focus.current,
