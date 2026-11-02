@@ -118,6 +118,21 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       .filter((document) => versionOf(document))
       .map((document) => document.kind),
   )
+  // 서버는 문서 4종이 모두 팀장 승인을 받고 승인 전 작성 건이 없어야 기준을 만든다(409 document_not_approved).
+  // 공용 문서함의 단계와 같은 기준(승인본이 있고 작성 건이 승인 상태)으로 보고, 아니면 발행을 끈다(PR #72 6차 조사 SIXTH-DOC-02).
+  const copies = useQueries({
+    queries: (documents.data?.items ?? []).map((document) => ({
+      queryKey: ['projects', projectId, 'working-copy', document.id],
+      queryFn: () => documentsApi.workingCopy(projectId, document.id),
+      retry: false,
+    })),
+  })
+  const checkingApproval = copies.some((query) => query.isPending)
+  const unapproved = (documents.data?.items ?? []).filter(
+    (document, index) =>
+      !document.approved_version ||
+      (!!copies[index]?.data && copies[index].data.status !== 'APPROVED'),
+  )
   const analysesReady =
     versions.length > 0 &&
     analyses.every((query) => query.data?.status === 'COMPLETED')
@@ -129,6 +144,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     !baseline.isPending &&
     !baseline.error &&
     allKinds.size === 4 &&
+    !checkingApproval &&
+    !unapproved.length &&
     analysesReady &&
     items.length > 0 &&
     !drafts.hasNextPage &&
@@ -466,7 +483,23 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               인간 팀장의 검토와 승인을 기다려 주세요.
             </p>
           )}
-          {!baseline.data && !canPublish && isLeader && (
+          {!baseline.data && isLeader && unapproved.length > 0 && (
+            <p
+              role="status"
+              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            >
+              문서 4종이 모두 팀장 승인을 받아야 발행할 수 있어요. 승인 전:{' '}
+              {unapproved.map((document) => document.title).join(', ')}
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => openPane('documents')}
+              >
+                공용 문서함에서 승인하기
+              </Button>
+            </p>
+          )}
+          {!baseline.data && !canPublish && isLeader && !unapproved.length && (
             <p className="text-xs text-muted-foreground">
               문서 4종·분석 완료·전체 항목 검토·최신 초안을 확인해 주세요.
             </p>

@@ -282,14 +282,54 @@ describe('documented REST mock adapter', () => {
         ),
       ),
     ).toBe(true)
-    const baseline = await planningApi.publishBaseline({
-      project_id: '102',
-      document_version_ids: documents.items.map(
-        (document) => document.latest_draft!.id,
+    // 서버처럼 문서 4종이 팀장 승인을 받기 전에는 발행하지 않고, 발행이 문서를 승인하지도 않는다
+    // (PR #72 6차 조사 SIXTH-DOC-02). 공용 문서함의 검토·승인 흐름으로 4종을 승인한 뒤 발행한다.
+    const publish = (versionIds: string[], hash: string) =>
+      planningApi.publishBaseline({
+        project_id: '102',
+        document_version_ids: versionIds,
+        design_item_version_ids: items.items.map((item) => item.id),
+        draft_snapshot_hash: hash,
+      })
+    await expect(
+      publish(
+        documents.items.map((document) => document.latest_draft!.id),
+        items.draft_snapshot_hash!,
       ),
-      design_item_version_ids: items.items.map((item) => item.id),
-      draft_snapshot_hash: items.draft_snapshot_hash!,
+    ).rejects.toMatchObject({
+      response: {
+        status: 409,
+        data: { error: { code: 'document_not_approved' } },
+      },
     })
+    for (const document of documents.items) {
+      const copy = await documentsApi.workingCopy('102', document.id)
+      const review = await documentsApi.requestBeeReview('102', document.id, {
+        expected_revision: copy.revision,
+      })
+      let current = copy
+      for (const suggestion of review.suggestions)
+        current = await documentsApi.decideSuggestion(
+          '102',
+          document.id,
+          review.id,
+          suggestion.id,
+          { expected_revision: current.revision, decision: 'SKIP' },
+        )
+      const submission = await documentsApi.submitReview('102', document.id, {
+        expected_revision: current.revision,
+        review_id: review.id,
+      })
+      await documentsApi.decideSubmission('102', document.id, submission.id, {
+        decision: 'APPROVE',
+      })
+    }
+    const approved = await documentsApi.list('102')
+    const latestItems = await planningApi.items('102', { status: 'DRAFT' })
+    const baseline = await publish(
+      approved.items.map((document) => document.approved_version!.id),
+      latestItems.draft_snapshot_hash!,
+    )
     expect(baseline.documents).toHaveLength(4)
     expect((await projectsApi.get('102')).current_baseline?.id).toBe(
       baseline.id,

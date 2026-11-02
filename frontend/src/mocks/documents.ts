@@ -514,6 +514,17 @@ export async function documentRoutes(
           'required_documents_missing',
           '기획안·ERD·요구사항·API 명세서 네 종류가 모두 필요해요.',
         )
+      // 서버 BaselinePublishService처럼 문서 4종이 모두 팀장 승인을 받고 승인 전 작성 건이 없을 때만 만든다.
+      // 이 요청으로 문서를 승인하지 않는다(PR #72 6차 조사 SIXTH-DOC-02).
+      if (
+        versions.some((version) => version.status !== 'APPROVED') ||
+        project.working_copies.some((copy) => copy.status !== 'APPROVED')
+      )
+        fail(
+          409,
+          'document_not_approved',
+          '문서별 팀장 승인이 모두 완료된 후 기준 설계를 생성할 수 있습니다.',
+        )
       const items = strings(body.design_item_version_ids).map((itemId) =>
         findById(project.items, itemId),
       )
@@ -533,13 +544,6 @@ export async function documentRoutes(
         })),
         approved_by: requireAccount(context).id,
         created_at: now(),
-      })
-      versions.forEach((version) => {
-        version.status = 'APPROVED'
-        const document = findById(project.documents, version.document_id)
-        document.approved_version = version
-        if (document.latest_draft?.id === version.id)
-          delete document.latest_draft
       })
       items.forEach((item) => {
         item.status = 'APPROVED'
