@@ -257,7 +257,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
         var snapshot = query.load(CallerContext.human(member), projectId, proposal);
         assertThat(snapshot.documentChanges()).isTrue();
         assertThat(snapshot.changes()).isEmpty();
-        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
     }
 
     @Test
@@ -280,7 +280,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
         assertThat(snapshot.dependencies()).hasSize(1);
         assertThat(snapshot.dependencies().getFirst().fromItemId()).isEqualTo(api.designItemId("API-02"));
         assertThat(snapshot.dependencies().getFirst().toItemId()).isEqualTo(api.designItemId("API-01"));
-        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
         assertThat(snapshot.relationSetRevision()).isEqualTo(1);
         assertThat(snapshot.taskReferences()).allMatch(ref -> ref.validationId() == null);
         query.requireUnchanged(CallerContext.human(member), snapshot);
@@ -311,7 +311,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
         var snapshot = load(proposal);
 
         assertThat(snapshot.dependencies()).isEmpty();
-        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
     }
 
     @Test
@@ -344,7 +344,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
         var snapshot = load(proposal);
         assertThat(snapshot.dependencies()).isEmpty();
         assertThat(snapshot.relationSetRevision()).isEqualTo(1);
-        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
     }
 
     @Test
@@ -388,7 +388,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
 
         assertThat(snapshot.searchCoverage().status()).isEqualTo(ImpactKeywordSearch.Status.SEARCHED);
         assertThat(snapshot.taskReferences()).anyMatch(ref -> ref.taskId() == taskId && ref.designItemId() == null);
-        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
         var request = ImpactRequestAssembler.assemble(snapshot, "request");
         assertThat(((java.util.List<?>) request.get("open_tasks"))).hasSize(1);
         query.requireUnchanged(CallerContext.human(member), snapshot);
@@ -458,7 +458,7 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
                 && ref.designItemId() == api.designItemId("API-02"));
         assertThat(snapshot.searchCoverage().candidateTaskIds()).contains(taskId);
         // Keyword relevance to API-02 is a candidate, not a confirmed dependency to API-01.
-        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(snapshot.ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
     }
 
     @Test

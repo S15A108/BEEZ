@@ -59,7 +59,7 @@ public class ImpactContextQuery {
                                 boolean noContractChange, Long contextPacketId, long createdBy, Long agentTokenId, Instant createdAt,
                                 Long designItemId, Long designItemVersionId, String relation, String proposedContent,
                                 Long validationId, String validationStatus) {}
-    public enum RuleCandidateStatus { NOT_CONNECTED }
+    public enum RuleCandidateStatus { NOT_CONNECTED, CONNECTED }
 
     public record Snapshot(Proposal proposal, List<Change> changes, List<ApprovedItem> approvedItems,
                            List<ConfirmedRelation> dependencies, List<TaskReference> taskReferences,
@@ -176,7 +176,7 @@ public class ImpactContextQuery {
         var relationSnapshot = dependencies.load(caller, projectId, proposal.baselineId(), changedIds);
         if (documentChanges) {
             // Document diffs are not yet in AI-A03; never infer no impact from a partial input.
-            return new Snapshot(proposal, changes, List.of(), List.of(), List.of(), RuleCandidateStatus.NOT_CONNECTED,
+            return new Snapshot(proposal, changes, List.of(), List.of(), List.of(), RuleCandidateStatus.CONNECTED,
                     new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false),
                     relationSnapshot.relationSetRevision(), true);
         }
@@ -252,10 +252,9 @@ public class ImpactContextQuery {
                         nullableLong(rs, "design_item_version_id"), rs.getString("relation"), rs.getString("ref_proposed_content"),
                         nullableLong(rs, "validation_id"), rs.getString("validation_status"))).list();
 
-        // Rule candidate calculation belongs to the shared BE integration. Do not treat
-        // its absence as an empty, completed evaluation or create duplicate rule results.
+        // #197 computes explicit impacts from the same immutable snapshot.
         return new Snapshot(proposal, changes, approved, relevantDependencies, taskReferences,
-                RuleCandidateStatus.NOT_CONNECTED, searchCoverage, relationSnapshot.relationSetRevision(), false);
+                RuleCandidateStatus.CONNECTED, searchCoverage, relationSnapshot.relationSetRevision(), false);
     }
 
     /**
