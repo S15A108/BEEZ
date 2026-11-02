@@ -29,6 +29,7 @@ beforeEach(async () => {
 afterEach(() => {
   client.clear()
   restore()
+  vi.restoreAllMocks()
 })
 
 it('validates an invitation form and displays the created invitation link', async () => {
@@ -239,4 +240,41 @@ it('프로젝트 정보를 저장해도 다른 프로젝트의 부지를 덮어�
   const placements = useWorkspaceStore.getState().placements
   expect(placements[`${account.id}:101`].lot).not.toBe(0)
   expect(placements[`${account.id}:102`]).toEqual({ lot: 0, design: 'wood' })
+})
+
+// PR #72 mock/live 전수 대조 LIVE-AMP-05: 백엔드는 초대를 7일 뒤 만료한다. 만료된 초대가 있어도 같은 이메일로 다시 초대한다.
+it('만료된 초대가 있는 이메일은 건너뛰지 않고 다시 초대한다', async () => {
+  const user = userEvent.setup()
+  const list = membersApi.invitations
+  vi.spyOn(membersApi, 'invitations').mockImplementation(
+    async (projectId, query, options) => {
+      const page = await list(projectId, query, options)
+      return {
+        ...page,
+        items: [
+          ...page.items,
+          {
+            ...page.items[0],
+            id: '990',
+            invited_email: 'late@beez.local',
+            accepted_at: undefined,
+            revoked_at: undefined,
+            expires_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+      }
+    },
+  )
+  const create = vi.spyOn(membersApi, 'createInvitation')
+  renderTeam()
+  await screen.findByText('김동료')
+  const form = screen.getByRole('form', { name: '팀원 초대' })
+  await user.type(
+    within(form).getByLabelText('초대할 이메일'),
+    'late@beez.local',
+  )
+  await user.click(within(form).getByRole('button', { name: '초대' }))
+  await vi.waitFor(() =>
+    expect(create).toHaveBeenCalledWith('101', { email: 'late@beez.local' }),
+  )
 })

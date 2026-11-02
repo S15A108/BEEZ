@@ -150,7 +150,14 @@ export function TeamPanel({
     const pending = new Set(
       invitations.data?.pages
         .flatMap((page) => page.items)
-        .filter((item) => !item.accepted_at && !item.revoked_at)
+        // 명세에는 만료가 없지만 백엔드는 7일 뒤 만료한다. 만료된 초대는 대기로 세지 않아 같은 이메일로 다시 초대한다
+        // (PR #72 mock/live 전수 대조 LIVE-AMP-05).
+        .filter(
+          (item) =>
+            !item.accepted_at &&
+            !item.revoked_at &&
+            !(item.expires_at && Date.parse(item.expires_at) <= Date.now()),
+        )
         .map((item) => item.invited_email?.toLowerCase()),
     )
     let created = 0
