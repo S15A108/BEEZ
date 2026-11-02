@@ -57,7 +57,7 @@
 | S1 | 설계 발행 — 작업이 참조한 항목의 이전 버전이 바뀜 | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 관련 검증 STALE. 바뀐 항목과 WAITING 으로 바꿀 작업은 get_design_changes(-164)의 `DesignChangeQueries` 와 **같은 쿼리**로 뽑는다. STALE 대상은 REST CHG 발행 규칙대로 `validation_design_ref` 에서 직접 찾는다(작업 상태·현재 계획으로 거르지 않음). 폐기 항목은 새 baseline_item 에서 **뺀다**(발행 -194 계약; G2 도 스냅샷 비교만 함) | 유지 | REST CHG 발행 처리 규칙("IN_PROGRESS 작업만"), 00-common 6절, D5 |
 | S2 | 진행 중 계획 변경 (TSK-A04) | **IN_PROGRESS 만** | **WAITING(REVALIDATION)**, 이전 검증 STALE | 유지 | REST TSK-A04 처리 규칙("진행 중 계획 변경") |
 | S3 | delta 있는 COMPLETED 보고 | IN_PROGRESS | **WAITING(REVALIDATION)**, `202`. 순서: DELTA 검증을 **먼저** 접수 → 그 ID 를 넣어 완료 보고 저장 (`task_completion_report` 는 UPDATE 금지라 나중에 채울 수 없음) | 유지 | REST TSK-A07, ERD task_completion_report |
-| S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 마지막 완료 보고의 `delta_validation_id` 가 이 검증일 때만 | **COMPLETED** | 해제 | REST TSK-A07 |
+| S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 현재 계획에 delta 완료 보고가 있고, 이 검증이 현재 계획의 **가장 최근 DELTA 검증**일 때만. (완료 보고의 `delta_validation_id` 와 같은지로 보지 않는 이유: 설계 발행으로 DELTA 가 STALE 이 되면 서버가 새 DELTA 를 접수하는데(S1·§2.3) 완료 보고는 UPDATE 금지라 그 번호를 새로 적을 수 없다. -163 구현) | **COMPLETED** | 해제 | REST TSK-A07 |
 | S5 | 담당자 인계 — 팀장의 담당자 변경(TSK-A06) · 팀원 제외(MEM-A09) · 나가기(MEM-A10)의 열린 작업 인계 (-212) | **IN_PROGRESS** 는 상태까지, **WAITING** 은 검증만 | IN_PROGRESS 는 **WAITING(REVALIDATION)**. 점유 중(IN_PROGRESS·WAITING) 작업의 DELTA 를 뺀 검증은 도는 것(NOT_RUN·RUNNING)까지 STALE(`ASSIGNEE_CHANGED`), 대기 job 취소. DELTA 검증은 담당자와 무관해 그대로(PASS 면 S4). 같은 담당자로 바꾸면 아무것도 하지 않는다 | 유지 | REST TSK-A06·MEM-A09·A10 처리 규칙, §6 |
 
 검증 쪽 사건(늦은 결과·입력 변경·리스 만료·실패·RESUME)까지 합친 무효화·롤백 전체 표와 기록 위치·수동 조치는 [11 검증 롤백](11-validation-rollback.md)에 있다.
@@ -66,6 +66,8 @@ IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검�
 - READY: START 때 G1·G2 가 걸러낸다.
 - WAITING(INPUT·APPROVAL·DEPENDENCY): 원래 사유를 덮어쓰지 않는다. RESUME 때 G1(새 리비전엔 PASS 없음)·G2(참조 버전 바뀜)가 걸러낸다.
 - WAITING(REVALIDATION): 이미 재검증 대기라 그대로.
+
+RESUME(§2.3 출구 ①)은 delta 완료 보고를 거두고 다시 일하는 것이므로, 그 보고를 기다리던 **DELTA 검증을 끝났든 돌고 있든 STALE(`TASK_RESUMED`)** 로 바꾸고 대기 job 을 취소한다(-163). 두지 않으면 다시 일하던 작업이 — 인계(S5)로 다시 WAITING(REVALIDATION) 이 된 뒤 등 — 뒤늦게 도착한 옛 DELTA 의 PASS 로 완료될 수 있다.
 
 ### 2.3 WAITING(REVALIDATION) 에서 나가는 길 (담당자 결정 — 명세 반영 필요)
 
@@ -182,14 +184,16 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 |---|---|---|
 | §1 상태·사유 | `task.entity.TaskStatus`, `WaitingReason` (enum, DB 는 STRING) | 엔티티-DDL 일치 (`ddl-auto=validate`) |
 | §2.1 요청 전이 표 | `task.service.TaskTransitionPolicy` — 허용/멱등/금지 결과 반환, 예외 안 던짐 | 6×5 전수 단위 테스트 + COMPLETED delta 있음/없음(202/200) 통합 |
-| §2.2 시스템 전이 | S2: `TaskPlanService`, S3: `TaskStateService`, S1: 설계 발행 수신(S15P31A108-163), S4: 검증 결과 반영(-159), S5: `TaskHandoverService`(-212) | S2·S3·S5 는 지금, S1·S4 는 해당 티켓에서 |
+| §2.2 시스템 전이 | S2: `TaskPlanService`, S3: `TaskStateService`(DELTA 접수는 `ValidationAcceptService.acceptBySystem`), S1: `PublicationImpactAdapter`(-163, 발행 포트 구현), S4: `DeltaCompletion`(검증 결과 반영·완료 보고·발행 뒤 재접수에서 부름), S5: `TaskHandoverService`(-212) | 모두 구현됨 (-163) |
 | §3 게이트 | `task.service.StartGate` — project 잠금 후 G1~G4 | Testcontainers: 동시 START 2 스레드, PASS 없음, 선행 미완료, 설계 변경 후 |
 | §4.3 참조 정규화 | `task.service.TaskPlanService` | 단위 |
 | §4.1·§5 권한 | 각 서비스 첫 줄에서 -170 공통 권한 검사 | 비멤버 **404**(존재 숨김, AC-10), 비담당자 403, 에이전트 CANCEL 403, 팀장 CANCEL 은 보고 끊긴 작업만 |
 
 ## 변경 이력
 
-- v1.8 (2026-11-02) §2.2 에 검증 롤백 문서(11) 링크 (변준성, -160).
+- v1.10 (2026-11-02) §2.2 에 검증 롤백 문서(11) 링크 (변준성, -160).
+- v1.9 (2026-11-02) -163 리뷰 반영(변준성). DELTA 검증은 완료 delta 를 분석 입력(AI-A02 `completion_delta`, 검사 `completion-delta`)에 넣고 규칙만으로는 PASS 하지 않는다 — READS 만 참조해도 의미 분석으로 간다(§2.2 S3, 완료 보고 자리에서 바로 COMPLETED 되는 경우 없음). RESUME 은 기다리던 DELTA 를 STALE(`TASK_RESUMED`)로(§2.2 아래). 가짜 분석기를 끈 서버에서는 가짜 분석기의 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙).
+- v1.8 (2026-11-02) -163 구현 반영(변준성). S1 `PublicationImpactAdapter` 와 S3 DELTA 접수·S4 완료 전이 구현, S4 조건을 "현재 계획의 가장 최근 DELTA" 로(§2.2). 발행 중 DELTA 가 STALE 이 되면 새 기준으로 새 DELTA 를 서버가 접수하고, 계획이 옛 버전을 참조하므로 보통 규칙(STALE_REF)으로 바로 NEEDS_INPUT 이 나 담당자가 ② 출구로 간다. 방금 IN_PROGRESS 에서 WAITING 으로 내린 작업은 재접수하지 않는다(다시 일하던 작업이라 서버가 완료를 판단할 대상이 아님). READS 만 참조해 DELTA 가 규칙만으로 PASS 면 완료 보고 자리에서 바로 COMPLETED(200)다 — delta 내용 자체는 AI 계약(AI-A02)에 아직 없어 현재 계획 검사와 같다.
 - v1.7 (2026-10-29) 리뷰 반영(변준성). §2.2 에 S5 담당자 인계 추가, §2.4 REVALIDATION 계기에 S5, §2.3 에 인계 뒤 ① 출구가 막히는 것(의도), §6 에 READY 작업 PASS 를 남기는 이유, §7 에 S5 자리.
 - v1.6 (2026-10-29) §6 "진행 중 담당자 변경"·"제외된 팀원의 진행 중 작업"에 -212 구현 내용 기록(전진, 변준성 확인 요청).
 - v1.5 (2026-10-27) S1: 바뀐 항목·WAITING 대상은 -164 `DesignChangeQueries` 재사용, STALE 대상은 validation_design_ref 기준, 폐기는 스냅샷 제외로 명시(§2.2). 리뷰 반영(전진).

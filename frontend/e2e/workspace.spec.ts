@@ -3,9 +3,14 @@ import type { Page } from '@playwright/test'
 
 test.setTimeout(90_000)
 
+// 처음 들어올 때 뜨는 환영 창은 tour.spec.ts에서 따로 확인한다.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('beez.tour.11', 'seen'))
+})
+
 async function login(page: Page) {
   await page.goto('/login')
-  await page.getByRole('button', { name: '로그인하기 →' }).click()
+  await page.getByRole('button', { name: '로그인', exact: true }).click()
   await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
 }
 
@@ -34,13 +39,18 @@ test('선택한 부지의 프로젝트와 외관이 새로고침 뒤에도 유�
   })
   await login(page)
   await expect(page.locator('canvas')).toBeVisible()
-  await page.getByRole('button', { name: '건물 짓기', exact: true }).click()
+  await page
+    .getByRole('button', { name: '프로젝트 만들기', exact: true })
+    .first()
+    .click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('부지 3')
   await dialog.getByLabel('프로젝트 이름').fill('부지 이식 확인')
   await dialog.getByLabel('프로젝트 소개').fill('도시에서 만든 목 프로젝트')
-  await dialog.getByLabel('건물 디자인').selectOption('wood')
-  await dialog.getByRole('button', { name: '건물 짓기', exact: true }).click()
+  await dialog.getByText('목조 스튜디오').click()
+  await dialog
+    .getByRole('button', { name: '프로젝트 만들기', exact: true })
+    .click()
   await expect(
     page.getByRole('heading', { name: '부지 이식 확인', exact: true }),
   ).toBeVisible()
@@ -81,18 +91,20 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await expect(
     dialog.getByRole('heading', { name: '공용 문서함', exact: true }).first(),
   ).toBeVisible()
-  await expect(dialog.getByText('버전 이력', { exact: true })).toBeVisible()
+  await expect(
+    dialog.getByRole('heading', { name: '현재 문서', exact: true }),
+  ).toBeVisible()
   await dialog.getByLabel('검색어').fill('로그인')
   await dialog.getByRole('button', { name: '검색', exact: true }).click()
   await expect(dialog.getByRole('heading', { name: '검색 결과' })).toBeVisible()
   await dialog.getByRole('button', { name: '닫기', exact: true }).click()
-  await page.getByRole('button', { name: '작업 검증', exact: true }).click()
+  await page.getByRole('button', { name: '작업 현황', exact: true }).click()
   dialog = page.getByRole('dialog')
   await expect(
     dialog.getByText('설계와 계획의 검증 결과', { exact: true }),
   ).toBeVisible()
   await expect(
-    dialog.getByRole('button', { name: '시작', exact: true }),
+    dialog.getByRole('button', { name: '작업 시작', exact: true }),
   ).toBeEnabled()
   await dialog.getByRole('button', { name: '닫기', exact: true }).click()
   await page.getByRole('button', { name: '비비와 대화', exact: true }).click()
@@ -111,36 +123,41 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   })
 })
 
-test('회의를 만들고 텍스트 기록과 회의록을 목 API로 저장한다', async ({
+test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장한다', async ({
   page,
 }) => {
   await openWorkspace(page)
   await page.getByRole('button', { name: '회의실', exact: true }).click()
-  await page.getByRole('button', { name: '회의 만들기', exact: true }).click()
-  const form = page.getByRole('dialog').last()
-  await form.getByLabel('회의 제목').fill('프론트 이식 회의')
-  await form.getByRole('button', { name: '회의 만들기', exact: true }).click()
   await expect(
-    page.getByRole('heading', { name: '프론트 이식 회의', exact: true }),
+    page.getByRole('heading', { name: '초대 안내 문구 검토', exact: true }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '회의 만들기', exact: true }),
+  ).toHaveCount(0)
+  const log = page.getByRole('log', { name: '회의 대화' })
+  await page
+    .getByRole('textbox', { name: /메시지/ })
+    .fill('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.')
+  await page.getByRole('button', { name: '보내기', exact: true }).click()
+  await expect(
+    log.getByText('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.', {
+      exact: true,
+    }),
   ).toBeVisible()
   await page
-    .getByLabel('회의에 남길 내용')
-    .fill('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.')
-  await page.getByRole('button', { name: '기록 남기기', exact: true }).click()
-  await expect(
-    page.getByText(
-      '3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.',
-      { exact: true },
-    ),
-  ).toBeVisible()
-  await page.getByRole('button', { name: '회의록 만들기', exact: true }).click()
-  await expect(page.getByRole('status')).toHaveText('회의록을 만들었어요.')
-  await expect(
-    page.getByText('예시 템플릿 · 실제 AI 호출 없음', { exact: true }),
-  ).toBeVisible()
+    .getByRole('button', { name: '비비에게 정리 요청', exact: true })
+    .click()
+  await expect(page.getByRole('status')).toHaveText(
+    '비비가 회의 내용을 정리했어요.',
+  )
+  await expect(log.getByText(/회의 내용을 정리했어요 · 메시지/)).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: '회의실', exact: true }).click()
   await expect(
-    page.getByRole('heading', { name: '프론트 이식 회의', exact: true }),
+    page
+      .getByRole('log', { name: '회의 대화' })
+      .getByText('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.', {
+        exact: true,
+      }),
   ).toBeVisible()
 })

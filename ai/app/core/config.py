@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     bee_complex_model: Literal["gpt-6.1-sol"] = "gpt-6.1-sol"
     # Disabled until the BE usage feature/DB contract for #185 is deployed.
     design_recommendation_enabled: bool = False
+    # Provisional #131 transport is disabled until explicitly configured.
+    context_selection_enabled: bool = False
+    # No quality threshold or candidate limit is adopted by default.
+    context_selection_min_similarity: str | None = None
+    context_selection_max_items: str | None = None
+    context_selection_max_evidence: str | None = None
+    context_selection_total_timeout_seconds: str | None = None
 
     # Impact analysis has its own opt-in provider configuration. No network
     # call is made when any required value is absent.

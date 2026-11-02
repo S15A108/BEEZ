@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
@@ -37,8 +38,11 @@ import org.springframework.test.util.AopTestUtils;
 @TestPropertySource(properties = "beez.document.embedding-profile=publication-test")
 class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @TestConfiguration static class Ports {
-        @Bean RecordingImpact recordingImpact(JdbcTemplate jdbc) { return new RecordingImpact(jdbc); }
-        @Bean RecordingIntake recordingIntake() { return new RecordingIntake(); }
+        // 실제 어댑터(PublicationImpactAdapter, -163)가 빈으로 있으므로 이 시험의 기록용 구현을 우선시킨다 — 여기서는 포트 호출 계약만 본다
+        @Bean @Primary RecordingImpact recordingImpact(JdbcTemplate jdbc) { return new RecordingImpact(jdbc); }
+        @Bean RecordingIntake recordingIntake(com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository repository) {
+            return new RecordingIntake(repository);
+        }
     }
     static class RecordingImpact implements ValidationImpactPort {
         final JdbcTemplate jdbc;
@@ -60,9 +64,12 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         }
     }
     static class RecordingIntake implements PostPublishAnalysisIntake {
+        final com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository repository;
+        RecordingIntake(com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository repository) { this.repository=repository; }
         final List<Long> accepted=new CopyOnWriteArrayList<>(); volatile boolean fail;
         @Override public void accept(long project,long baseline,Long proposal) {
             assertThat(proposal).isNotNull(); accepted.add(baseline);
+            repository.accept(project,baseline,proposal);
             if(fail) throw new IllegalStateException("intake failure");
         }
     }
@@ -135,6 +142,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     int count(String table) { return jdbc.queryForObject("SELECT count(*) FROM "+table+" WHERE project_id=?",Integer.class,project.projectId()); }
     String state(Proposal p) { return jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?",String.class,Long.parseLong(p.id())); }
     void rolledBack(Proposal p) {
+        assertThat(count("published_change_analysis")).isZero();
         assertThat(count("baseline")).isEqualTo(1); assertThat(state(p)).isEqualTo("PROPOSED");
         assertThat(jdbc.queryForObject("SELECT current_baseline_id FROM project WHERE id=?",Long.class,project.projectId())).isEqualTo(baseline);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM approval WHERE change_proposal_id=?",Integer.class,Long.parseLong(p.id()))).isZero();
@@ -184,6 +192,9 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
             assertThat(i.operation()).isEqualTo("RETIRE"); assertThat(i.newVersionId()).isNull();
         });
         assertThat(intake.accepted).containsExactly(Long.parseLong(result.baseline().id()));
+        assertThat(count("published_change_analysis")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM published_change_analysis WHERE published_baseline_id=?",String.class,
+                Long.parseLong(result.baseline().id()))).isEqualTo("PENDING");
     }
 
     @Test void documentOnlyAndPublishedRetriesNeverRepublishEvenAfterAnotherBaseline() {
@@ -195,6 +206,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?",third,project.projectId());
         assertThat(approve(p,"other").baseline()).isEqualTo(result.baseline());
         assertThat(count("baseline")).isEqualTo(3); assertThat(impact.applied).hasSize(1); assertThat(intake.accepted).hasSize(1);
+        assertThat(count("published_change_analysis")).isEqualTo(1);
         verify(relations,never()).apply(any(),anyLong(),any());
         error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash()),"other"),"idempotency_conflict");
         error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash()),"new"),"version_conflict");
@@ -290,7 +302,10 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
         assertThat(response.body()).contains("\"proposal\"","\"baseline\"","PUBLISHED");
         error(() -> preview(p),"invalid_transition");
-        assertThat(context.getBeansOfType(ValidationImpactPort.class)).hasSize(1);
+        // 기본 no-op 구현은 실제 어댑터(-163)에 밀려 빠지고, 이 시험에서는 기록용 구현이 우선한다
+        assertThat(context.getBeansOfType(ValidationImpactPort.class).values())
+                .noneMatch(port -> port instanceof PublicationPortConfiguration.UnconnectedValidationImpact);
+        assertThat(context.getBean(ValidationImpactPort.class)).isInstanceOf(RecordingImpact.class);
         assertThat(context.getBeansOfType(PostPublishAnalysisIntake.class)).hasSize(1);
     }
 

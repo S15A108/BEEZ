@@ -151,3 +151,65 @@ export const uploadDraftResponseSchema = z.object({
   created_at: common.timeSchema,
 })
 export type UploadDraftResponse = z.infer<typeof uploadDraftResponseSchema>
+
+// 문서별 검토·승인 (DOC-A13~A21, dev 89b2c60)
+export const workingCopyResponseSchema = common.documentWorkingCopySchema
+export type WorkingCopyResponse = z.infer<typeof workingCopyResponseSchema>
+
+export const updateWorkingCopyInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+  content: z.string().min(1),
+  file_name: z.string(),
+})
+export type UpdateWorkingCopyInput = z.infer<
+  typeof updateWorkingCopyInputSchema
+>
+
+export const reuploadWorkingCopyInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+  file: z.instanceof(Blob),
+})
+export type ReuploadWorkingCopyInput = z.infer<
+  typeof reuploadWorkingCopyInputSchema
+>
+
+export const requestBeeReviewInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+})
+export type RequestBeeReviewInput = z.infer<typeof requestBeeReviewInputSchema>
+
+export const decideSuggestionInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+  decision: z.enum(['APPLY', 'SKIP']),
+})
+export type DecideSuggestionInput = z.infer<typeof decideSuggestionInputSchema>
+
+export const submitReviewInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+  review_id: common.idSchema,
+})
+export type SubmitReviewInput = z.infer<typeof submitReviewInputSchema>
+
+export const reviewSubmissionsQuerySchema = z.object({
+  status: z.enum(['SUBMITTED', 'APPROVED', 'REJECTED']).optional(),
+})
+export type ReviewSubmissionsQuery = z.infer<
+  typeof reviewSubmissionsQuerySchema
+>
+
+export const reviewSubmissionsResponseSchema =
+  common.documentReviewSubmissionSchema.array()
+export type ReviewSubmissionsResponse = z.infer<
+  typeof reviewSubmissionsResponseSchema
+>
+
+export const decideSubmissionInputSchema = z
+  .object({
+    decision: z.enum(['APPROVE', 'REJECT']),
+    rejection_reason: z.string().max(10000).optional(),
+  })
+  .refine(
+    (input) => input.decision === 'APPROVE' || !!input.rejection_reason?.trim(),
+    { path: ['rejection_reason'], message: '반려 사유를 입력해 주세요.' },
+  )
+export type DecideSubmissionInput = z.infer<typeof decideSubmissionInputSchema>

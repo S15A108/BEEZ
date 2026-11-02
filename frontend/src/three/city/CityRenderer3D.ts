@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
+import { cloneKenney, loadKenney } from '../kenney'
+import { kenneyBuildingOf, kenneyBuildingUrl } from '../buildingModels'
 import type { WorldProject, WorldSummary } from '../types'
 
 type Point = { x: number; y: number }
@@ -14,6 +16,8 @@ type Actor = Point & {
   running?: boolean
 }
 type CityCar = Point & { id: string; color: string; facing?: string }
+
+// 프로젝트 건물 디자인 5종 → Kenney City Kit 모델(CC0, public/models/kenney/city). 색은 텍스처에 곱해 맞춘다.
 /** 건물 짓기 모드: 빈 부지 위에 단계별로 올라가는 공사 미리보기 (0 측량 · 1 기초 · 2 골조 · 3 외관 · 4 준공 준비 · 5 완공) */
 export interface BuildPreview {
   lot: number
@@ -74,6 +78,7 @@ export class CityRenderer3D {
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
   private readonly direction = new THREE.Vector3(0.64, 1.02, 1.08).normalize()
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>()
+  private readonly tinted = new Map<string, THREE.Material>()
   private readonly geometries = new Map<string, THREE.BufferGeometry>()
   private readonly actors = new Map<string, THREE.Group>()
   private readonly cars = new Map<string, THREE.Group>()
@@ -671,6 +676,8 @@ export class CityRenderer3D {
   }
 
   private buildBuilding(parent: THREE.Group, p: WorldProject, index: number) {
+    const shell = new THREE.Group()
+    parent.add(shell)
     const lot = lotAt(index)
     // Match buildingGeom in WorldView: front door = bx + 75, ground + 8.
     const bx = lot.x + 40 / UNIT
@@ -692,7 +699,7 @@ export class CityRenderer3D {
         } as Record<string, string>
       )[p.design] ?? colors.white
     this.box(
-      parent,
+      shell,
       width + 0.34,
       0.22,
       depth + 0.38,
@@ -703,7 +710,7 @@ export class CityRenderer3D {
       0.14,
     )
     this.box(
-      parent,
+      shell,
       width,
       height,
       depth,
@@ -714,7 +721,7 @@ export class CityRenderer3D {
       0.14,
     )
     this.box(
-      parent,
+      shell,
       width + 0.27,
       0.2,
       depth + 0.22,
@@ -727,7 +734,7 @@ export class CityRenderer3D {
     for (let floor = 0; floor < floors; floor++) {
       const level = 0.73 + floor * 0.84
       this.box(
-        parent,
+        shell,
         width + 0.08,
         0.075,
         depth + 0.08,
@@ -741,7 +748,7 @@ export class CityRenderer3D {
         if (floor === 0 && (col === 1 || col === 2)) continue
         const wx = bx + 0.65 + (col * (width - 1.3)) / 3
         this.box(
-          parent,
+          shell,
           0.67,
           0.48,
           0.065,
@@ -752,7 +759,7 @@ export class CityRenderer3D {
           0.035,
         )
         this.box(
-          parent,
+          shell,
           0.55,
           0.36,
           0.04,
@@ -763,7 +770,7 @@ export class CityRenderer3D {
           0.025,
         )
         this.box(
-          parent,
+          shell,
           0.57,
           0.035,
           0.055,
@@ -788,7 +795,7 @@ export class CityRenderer3D {
               (depth - 1.3) / Math.max(1, Math.min(3, Math.floor(depth) - 1)),
             )
         this.box(
-          parent,
+          shell,
           0.055,
           0.43,
           0.58,
@@ -800,10 +807,10 @@ export class CityRenderer3D {
         )
       }
     }
-    this.box(parent, 0.85, 0.97, 0.1, cx, 0.82, front + 0.08, colors.oak, 0.05)
-    this.box(parent, 0.65, 0.8, 0.06, cx, 0.82, front + 0.145, '#817b6e', 0.055)
+    this.box(shell, 0.85, 0.97, 0.1, cx, 0.82, front + 0.08, colors.oak, 0.05)
+    this.box(shell, 0.65, 0.8, 0.06, cx, 0.82, front + 0.145, '#817b6e', 0.055)
     this.box(
-      parent,
+      shell,
       0.035,
       0.76,
       0.035,
@@ -814,7 +821,7 @@ export class CityRenderer3D {
       0.008,
     )
     this.sphere(
-      parent,
+      shell,
       cx + 0.2,
       0.82,
       front + 0.2,
@@ -824,7 +831,7 @@ export class CityRenderer3D {
       '#e6ce8d',
     )
     this.box(
-      parent,
+      shell,
       1.35,
       0.12,
       0.7,
@@ -834,8 +841,8 @@ export class CityRenderer3D {
       colors.white,
       0.065,
     )
-    this.box(parent, 1.3, 0.05, 0.65, cx, 0.18, front + 0.31, '#d5c9a8', 0.025)
-    this.label(
+    this.box(shell, 1.3, 0.05, 0.65, cx, 0.18, front + 0.31, '#d5c9a8', 0.025)
+    const caption = this.label(
       parent,
       p.name,
       cx,
@@ -848,7 +855,7 @@ export class CityRenderer3D {
     this.plant(parent, bx + width - 0.46, front + 0.23, 0.47, false, 0.34)
     const roof = height + 0.55
     this.box(
-      parent,
+      shell,
       width - 0.45,
       0.05,
       depth - 0.5,
@@ -859,7 +866,7 @@ export class CityRenderer3D {
       0.03,
     )
     this.box(
-      parent,
+      shell,
       0.85,
       0.25,
       0.75,
@@ -871,7 +878,7 @@ export class CityRenderer3D {
     )
     for (let i = 0; i < 4; i++)
       this.box(
-        parent,
+        shell,
         0.6,
         0.025,
         0.035,
@@ -882,9 +889,70 @@ export class CityRenderer3D {
         0.008,
       )
     if (p.design === 'wood' || p.design === 'modern')
-      this.plant(parent, bx + 0.6, cz, 0.43, false, roof + 0.03)
+      this.plant(shell, bx + 0.6, cz, 0.43, false, roof + 0.03)
+    this.kenneyBuilding(parent, shell, caption, p, index, {
+      x: cx,
+      z: cz,
+      width,
+      depth,
+    })
     if (p.status === 'constructing')
       this.scaffold(parent, bx, front, width, depth, height)
+  }
+
+  // 직접 그린 건물(shell)을 먼저 보여 주고, Kenney 모델을 받으면 같은 자리에 바꿔 끼운다.
+  // 받지 못하면(테스트 환경, 네트워크 오류) 직접 그린 건물을 그대로 둔다.
+  private kenneyBuilding(
+    parent: THREE.Group,
+    shell: THREE.Group,
+    caption: THREE.Sprite,
+    p: WorldProject,
+    index: number,
+    spot: { x: number; z: number; width: number; depth: number },
+  ) {
+    const pick = kenneyBuildingOf(p.design)
+    loadKenney(kenneyBuildingUrl(pick.model))
+      .then((model) => {
+        if (this.disposed || !shell.parent) return
+        const figure = cloneKenney(model)
+        const scale =
+          Math.min(
+            (spot.width + 0.6) / model.size.x,
+            (spot.depth + 0.6) / model.size.z,
+          ) * 1.05
+        figure.scale.setScalar(scale)
+        const box = new THREE.Box3().setFromObject(figure)
+        const center = box.getCenter(new THREE.Vector3())
+        figure.position.set(
+          spot.x - center.x,
+          0.35 - box.min.y,
+          spot.z - center.z,
+        )
+        figure.traverse((object) => {
+          object.userData.lot = index
+          const mesh = object as THREE.Mesh
+          if (!mesh.isMesh) return
+          mesh.castShadow = true
+          mesh.receiveShadow = true
+          if (pick.tint) mesh.material = this.tint(mesh.material, pick.tint)
+        })
+        shell.visible = false
+        parent.add(figure)
+        caption.position.y = 0.35 + box.max.y - box.min.y + 0.65
+      })
+      .catch(() => {})
+  }
+
+  private tint(material: THREE.Material | THREE.Material[], color: string) {
+    const source = Array.isArray(material) ? material[0] : material
+    const key = `${source.uuid}/${color}`
+    let tinted = this.tinted.get(key)
+    if (!tinted) {
+      tinted = source.clone()
+      ;(tinted as THREE.MeshStandardMaterial).color?.set(color)
+      this.tinted.set(key, tinted)
+    }
+    return tinted
   }
 
   private scaffold(
@@ -1526,6 +1594,7 @@ export class CityRenderer3D {
       texture.dispose()
     for (const geometry of this.geometries.values()) geometry.dispose()
     for (const material of this.materials.values()) material.dispose()
+    for (const material of this.tinted.values()) material.dispose()
     if (this.ownsRenderer) {
       this.renderer.dispose()
       this.renderer.forceContextLoss()

@@ -19,6 +19,12 @@
 
 문서별 승인에서는 document_version과 submission의 결정을 한 트랜잭션으로 저장한다. 최초 baseline 생성에서는 이 승인 기록을 고치지 않고 baseline 참조·수동 항목 승인·현재 기준 포인터를 한 트랜잭션으로 저장한다. 미제출 working copy와 제출 본문은 별도이며, 제출 후 DB 트리거로 본문 변경을 막는다.
 
+### V17 문서 검토 계약 확장 (S15P31A108-216)
+
+`V17__document_review_contract.sql`은 기존 V6를 수정하지 않고 제안에 type(PATCH/COMMENT), step, sources JSONB를 추가한다. V16은 검증 finding CHECK 변경에서 사용하므로 문서 검토는 V17을 사용한다. 기존 제안은 PATCH/default PENDING, 단계는 미기록으로 유지한다. PATCH는 원문·대체문·선택이 필수이며 COMMENT는 이 필드와 decided_at이 모두 NULL이어야 한다.
+
+검토 input/result JSONB에 전송 본문·참고 해시와 contract_version=2, steps/review_status/references_used를 보존한다. 기존 검토 JSON을 COMPLETE로 보정하지 않으며 과거 조회만 유지하고 새 제출에는 재검토를 요구한다. document_review_submission에 참조된 review의 UPDATE 및 suggestion의 INSERT/UPDATE/DELETE를 트리거로 차단해 제출 당시 판단 자료를 보존한다. 대화·취소·새 usage feature/llm_usage CHECK 변경은 이 migration에 포함하지 않는다.
+
 <a id="design-relation-history"></a>
 
 ### V9 설계 의존관계 상태·이력 (S15P31A108-167)
@@ -77,7 +83,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | `validation_finding` | `source`(`RULE`·`MODEL`), `kind`(`MISMATCH`·`MISSING_INPUT`·`MISSING_POLICY`·`CONFLICT`·`STALE_REF`·`ERROR`), `severity`(`INFO`·`WARNING`·`BLOCKING`), `design_item_version_id`, `sources`, `resolution`(`FIX_PLAN`·`PROPOSE_CHANGE`·`HUMAN_REVIEW`·`RETRY`), `next_action` |
 | `validation_finding` (V16, -159) | `check_key`(의미 분석 후보가 속한 검사 키, 규칙 finding 은 NULL), `evidence_ids`(요청 evidence 참조 키 배열, 기본 `[]`). `validation_run.usage`(V16): 그 시도의 모델 호출 사용량 배열, 판정을 버린 실행도 모델을 불렀으면 남긴다(비용 집계 -168), 안 불렀으면 NULL. 큐 조회 인덱스 `ix_job_ready`(QUEUED 의 next_run_at)와 이력 인덱스 `ix_validation_task` 는 V2 에 있는 것을 쓴다 |
 | `task_completion_report` | `summary`, `completion_checks` 추가 |
-| `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS` |
+| `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, 검증 호출은 `validation_run_id`·`task_id` 를 채운다(-168, 실행을 닫을 때 `validation_run.usage` 에서 옮겨 적음), `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS` |
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 
@@ -361,6 +367,19 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 `try_start`, `publish_change` 테스트 함수는 서비스 로직을 SQL로 옮긴 **프로토타입**이다. 실제 구현은 Java 서비스에 두고, 이 시나리오를 Testcontainers 통합 테스트로 옮긴다.
 
 ## 6. 남은 결정
+
+### V18 변경 영향 결과·발행 후 분석 접수 (#197)
+
+원격 dev에 V17__document_review_contract.sql이 추가되어 번호 충돌을 피하기 위해 `V18__change_impact_results.sql`로 추가한다. 두 테이블은 서로 다른 분석 생명주기다.
+
+| 테이블 | 귀속·제약 | 저장·복구 |
+| --- | --- | --- |
+| `change_impact_run` | 제안/프로젝트·제출 리비전·기준 baseline FK. `(change_proposal_id,revision_no) WHERE status='RUNNING'` 부분 UNIQUE. 요청별 `impact-{id}` UNIQUE | 제출 해시·관계 revision·영향 입력 fingerprint(제안 리비전·기준·관계 revision·작업의 열림/닫힘·담당자·계획 리비전·설계 참조·검증 id. lock_version·갱신 시각·검증 상태는 제외), 규칙 후보와 AI 결과·generation·usage 별도 JSONB, 사용량 상태, 요청자·시각·lease. 상태 RUNNING/COMPLETED/INSUFFICIENT_EVIDENCE/NOT_EVALUATED/FAILED/STALE |
+| `published_change_analysis` | baseline/프로젝트 복합 FK, 제안 NULL 허용·프로젝트 복합 FK. UNIQUE(project_id,published_baseline_id). id가 CDC intakeReference | 변경 발행 PENDING, 최초 v1 NOT_EVALUATED, 기존 baseline 백필 NOT_EVALUATED(published_before_intake). attempt 0~4, lease·다음 재시도·제한된 error_code. 상태 PENDING/RUNNING/COMPLETED/FAILED/NOT_EVALUATED |
+
+승인 전 분석의 AI 호출은 트랜잭션 밖에서 실행한다. 프로젝트 행 잠금과 입력 지문 재검사 후 RUNNING·미만료 lease인 행만 완료할 수 있다. 접수 시 lease는 실행기 대기열 최대 대기(WAIT_ROUNDS×실행 lease)를 덮도록 길게 잡고, 작업자가 실제로 시작할 때 실행 lease로 줄인다(만료된 접수는 시작하지 못한다). 만료는 조회·재요청 시 FAILED(analysis_interrupted)로 닫는다. 규칙 후보는 AI 실패에도 보존하며 현재 입력과의 일치 여부를 조회 때 재검사한다. 관계·작업 변경은 프로젝트 잠금 밖에서 일어날 수 있어 조회 및 후속 승인 게이트에서 다시 확인해야 한다.
+
+발행 접수는 발행 트랜잭션에 포함되며 후보 0건도 생성한다. claim은 같은 프로젝트의 baseline 버전 순서를 검사한다. 이전 PENDING/RUNNING/FAILED가 남으면 다음 baseline을 가져갈 수 없다. attempt와 lease가 일치하는 미만료 소유자만 완료·실패 저장이 가능하고 재시도는 1·5·30초, 4회 실패 후 FAILED다. 만료된 4회차도 FAILED로 닫아 순서 차단을 유지한다. 복구 스캔은 30초 지난 PENDING(재시도 도래)과 만료 RUNNING을 id keyset으로 탐색한다. 반복 스캔과 발행 후 AI 실행은 #227에서 연결하며 이 변경에는 스케줄러가 없다. #227 병합 전 접수행은 PENDING으로 남는다.
 
 ### V10 변경 제안 제출·반려 후 재제출
 

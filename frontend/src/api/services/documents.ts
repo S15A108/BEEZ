@@ -1,6 +1,11 @@
 import { z } from 'zod'
 import * as schemas from '@/features/documents/schemas'
-import { idSchema } from '@/api/contracts/common'
+import {
+  documentBeeReviewSchema,
+  documentReviewSubmissionDetailSchema,
+  documentReviewSubmissionSchema,
+  idSchema,
+} from '@/api/contracts/common'
 import { callEndpoint, toFormData, type RequestOptions } from './request'
 
 const service = {
@@ -105,6 +110,7 @@ const service = {
         method: 'PATCH',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}`,
         data: schemas.updateInputSchema.parse(input),
+        idempotent: true,
       },
       options,
     ),
@@ -171,6 +177,142 @@ const service = {
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/draft-versions`,
         data: toFormData(schemas.uploadDraftInputSchema.parse(input)),
         idempotent: true,
+      },
+      options,
+    ),
+  workingCopy: (
+    projectId: string,
+    documentId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.workingCopyResponseSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/working-copy`,
+      },
+      options,
+    ),
+  updateWorkingCopy: (
+    projectId: string,
+    documentId: string,
+    input: schemas.UpdateWorkingCopyInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.workingCopyResponseSchema,
+      {
+        method: 'PATCH',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/working-copy`,
+        data: schemas.updateWorkingCopyInputSchema.parse(input),
+      },
+      options,
+    ),
+  reuploadWorkingCopy: (
+    projectId: string,
+    documentId: string,
+    input: schemas.ReuploadWorkingCopyInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.workingCopyResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/working-copy/file`,
+        data: toFormData(schemas.reuploadWorkingCopyInputSchema.parse(input)),
+      },
+      options,
+    ),
+  requestBeeReview: (
+    projectId: string,
+    documentId: string,
+    input: schemas.RequestBeeReviewInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      documentBeeReviewSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/bee-reviews`,
+        data: schemas.requestBeeReviewInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  decideSuggestion: (
+    projectId: string,
+    documentId: string,
+    reviewId: string,
+    suggestionId: string,
+    input: schemas.DecideSuggestionInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.workingCopyResponseSchema,
+      {
+        method: 'PATCH',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/bee-reviews/${encodeURIComponent(String(idSchema.parse(reviewId)))}/suggestions/${encodeURIComponent(String(idSchema.parse(suggestionId)))}`,
+        data: schemas.decideSuggestionInputSchema.parse(input),
+      },
+      options,
+    ),
+  submitReview: (
+    projectId: string,
+    documentId: string,
+    input: schemas.SubmitReviewInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      documentReviewSubmissionSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/review-submissions`,
+        data: schemas.submitReviewInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  reviewSubmissions: (
+    projectId: string,
+    query?: schemas.ReviewSubmissionsQuery,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.reviewSubmissionsResponseSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/document-review-submissions`,
+        params: schemas.reviewSubmissionsQuerySchema.parse(query ?? {}),
+      },
+      options,
+    ),
+  reviewSubmission: (
+    projectId: string,
+    documentId: string,
+    submissionId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      documentReviewSubmissionDetailSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/review-submissions/${encodeURIComponent(String(idSchema.parse(submissionId)))}`,
+      },
+      options,
+    ),
+  decideSubmission: (
+    projectId: string,
+    documentId: string,
+    submissionId: string,
+    input: schemas.DecideSubmissionInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      documentReviewSubmissionSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/review-submissions/${encodeURIComponent(String(idSchema.parse(submissionId)))}/decision`,
+        data: schemas.decideSubmissionInputSchema.parse(input),
       },
       options,
     ),

@@ -245,6 +245,7 @@ HTTP `200`.
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
 | `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
+| `completion_delta` | `object[]` | N | 수정안 요청(-163, 변준성 → 양지훈 확인). 완료 보고(TSK-A07 `delta`)를 검사하는 DELTA 검증일 때만, 그 `delta` 배열 그대로(구조 미확정, 임의 키). 이때 `checks`에 `key=completion-delta`, `kind=PLAN_COMPLETENESS`인 검사가 들어가며, 계획·승인 설계에 비추어 delta가 받아들일 수 있는 차이인지(계약 변경·완료 기준 위반이면 MISMATCH·MISSING_POLICY 후보)를 본다. AI 구현(-184)은 모르는 칸을 거부(422)하므로, AI가 이 칸과 `completion-delta` 검사를 받기 전에 둘을 연결하면 DELTA 검증 요청은 입력 오류 → BE 실행 오류(`validation_execution_failed`, ERROR)로 끝난다(조용히 통과하지 않음). 연결 순서: -184에 칸·검사 추가 → BE–AI 실제 HTTP 통합 확인(-65, 양지훈·박상은과) → 개발 서버 연결 |
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
 
@@ -1847,6 +1848,25 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 <a id="ai-a10"></a>
 
 ## AI-A10. 문서 검토·수정 제안
+
+### 216 BE 검토 계약 v2 — 실제 AI 구현은 222 TODO
+
+2026-11-02: 아래는 BE가 구현한 v2 대역 계약이며 양측 실연동 합의/완료 기록이 아니다. 222 담당은 사용자·최신 업무 기록 기준 양지훈이다. AI 공통 모듈/라우트 코드는 이번에 변경하지 않았다. 이하 기존 v1 기본 필드·화면 확장 예시만으로 호출하면 v2 필수 출력 누락으로 BE가 거절한다.
+
+| 구분 | v2 계약 |
+| --- | --- |
+| 요청 | 기존 project_id/document_id/revision/kind/content/request_key에 contract_version=2와 content_hash 추가. content_hash는 전송 문자열의 정규화 없는 UTF-8 SHA-256 |
+| 참고 | 승인본만 전달. references[]에 reference_id=`document-version-{version ID}`, status=APPROVED, 전송 content_hash 추가 |
+| 집합 해시 | reference_id ASCII 문자열 오름차순. 각 원소는 content를 제외한 content_hash/document_id/document_version_id/kind/reference_id/status/version_no를 모두 포함. 객체 키를 재귀적으로 사전순 정렬한 공백 없는 JSON의 UTF-8 SHA-256. null/키 생략 없음. 빈 집합은 [] |
+| 응답 식별 | document_id/revision/**content_hash**/reference_hash/request_key echo 필수. BE가 저장 결과에 contract_version=2 부여 |
+| 단계 | steps에 BODY/API_SPEC/ERD/REQ_SPEC 각각 1개. `{step,status,reason,reference_ids}`. BODY=COMPLETE/REVIEWED/[]; 동일 종류 비교=SKIPPED/SAME_KIND/[]; 승인본 없는 나머지 비교=PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE/[]; 승인본 있는 비교=COMPLETE/REVIEWED/해당 종류의 입력 ID 전체 |
+| 전체 | 같은 종류 제외 후 자료 부족 단계가 하나라도 있으면 review_status=PARTIAL, 아니면 COMPLETE. references_used는 실제 비교 reference_ids 합집합. BE가 재계산·대조 |
+| 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증 |
+| PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. PATCH 원문 구간 간 겹침은 전체 거절 |
+| COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
+| 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
+
+[정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN/DISCUSS/REQUEST 신규 기능은 후속 범위다.
 
 ### POST `/v1/document-reviews`
 

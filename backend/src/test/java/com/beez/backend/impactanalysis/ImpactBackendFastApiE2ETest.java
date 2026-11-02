@@ -170,12 +170,14 @@ class ImpactBackendFastApiE2ETest extends IntegrationTestSupport {
     }
 
     @Test
-    void submittedRevisionCrossesRealHttpBoundaryAndKeepsRulePhaseUnevaluated() {
+    void submittedRevisionCrossesRealHttpBoundaryWithConnectedRules() {
         long proposal = submittedProposal("fictional login change", "impact-http-success");
         var result = coordinator.analyze(CallerContext.human(member), projectId, proposal, "e2e-http-success");
 
-        assertThat(result.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
-        assertThat(result.errorCode()).isEqualTo("rule_candidates_not_connected");
+        var evidence = ((Map<?, ?>) result.aiEnvelope().get("result")).get("evidence_status");
+        assertThat(result.status()).isEqualTo("SUFFICIENT".equals(evidence)
+                ? ImpactAnalysisCoordinator.Status.ANALYZED : ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(result.errorCode()).isNull();
         assertThat(result.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
         assertThat(result.aiEnvelope()).containsEntry("origin", "MODEL");
         assertThat(result.input().proposal().revisionNo()).isEqualTo(1);

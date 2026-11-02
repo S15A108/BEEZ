@@ -66,6 +66,12 @@ const WALK_LABELS: Record<OfficeLifeDestination, string> = {
   following: '사용자를 따라가는 중',
   waiting: '멈출 자리로 이동하는 중',
 }
+// 사람끼리 지킬 거리(px, 1타일 = 32). 로봇 팀원 머리 지름(1.1타일, 약 35px)에 맞춘다.
+export const PERSONAL_SPACE = 34
+// 이 거리 안의 사람에게서 조금씩 비켜 걷는다.
+const AVOID_RADIUS = 50
+// 이만큼 못 나아가면 지금 자리에서 길을 다시 찾는다(초).
+const STUCK_SECONDS = 1.2
 const hash = (id: string) =>
   [...id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 7)
 const feet = (x: number, y: number): Point => ({ x: x * T + 16, y: y * T + 27 })
@@ -96,9 +102,25 @@ interface Resident {
   followTimer?: number
   blocked?: boolean
   transfer?: { from: Point; to: Point; progress: number; leaving: boolean }
+  stuck?: number
 }
 
 /** Stateful positions survive snapshots; routes and collisions use the same floor as the player. */
+/** 내딛은 자리가 누구에게도 개인 거리 안으로 더 다가가지 않으면 괜찮다. */
+export function keepsSpace(
+  from: Point,
+  to: Point,
+  others: readonly Point[],
+  space = PERSONAL_SPACE,
+) {
+  return others.every((other) => {
+    const after = Math.hypot(to.x - other.x, to.y - other.y)
+    return (
+      after >= space || after >= Math.hypot(from.x - other.x, from.y - other.y)
+    )
+  })
+}
+
 export class OfficeLifeSimulation {
   private residents = new Map<string, Resident>()
   private lastFloor?: Floor
@@ -224,19 +246,37 @@ export class OfficeLifeSimulation {
     return true
   }
 
-  private route(from: Point, to: Point): Point[] | undefined {
+  // avoid: 다른 사람이 서 있는 자리. 그 칸을 막힌 칸으로 보고 길을 찾는다(막혔을 때 돌아가는 길).
+  private route(
+    from: Point,
+    to: Point,
+    avoid: readonly Point[] = [],
+  ): Point[] | undefined {
     if (!this.free(to.x, to.y)) return undefined
-    const tiles = findPath(
-      this.blocked,
-      Math.floor(from.x / T),
-      Math.floor((from.y - 4) / T),
-      Math.floor(to.x / T),
-      Math.floor((to.y - 4) / T),
+    const tile = (point: Point) =>
+      [Math.floor(point.x / T), Math.floor((point.y - 4) / T)] as const
+    const [sx, sy] = tile(from),
+      [gx, gy] = tile(to)
+    const taken = new Set(
+      avoid
+        .map(tile)
+        .filter(([x, y]) => !(x === sx && y === sy) && !(x === gx && y === gy))
+        .map(([x, y]) => `${x}/${y}`),
     )
+    const blocked = taken.size
+      ? this.blocked.map((row, y) =>
+          row.map((cell, x) => cell || taken.has(`${x}/${y}`)),
+        )
+      : this.blocked
+    const free = taken.size
+      ? (x: number, y: number) =>
+          this.free(x, y) && !taken.has(tile({ x, y }).join('/'))
+      : this.free
+    const tiles = findPath(blocked, sx, sy, gx, gy)
     const route = smoothRoute(
       from,
       [...tiles.map(([x, y]) => feet(x, y)), to],
-      this.free,
+      free,
     )
     const end = route.at(-1)
     return end && Math.hypot(end.x - to.x, end.y - to.y) < 0.1
@@ -271,15 +311,26 @@ export class OfficeLifeSimulation {
         ? 0
         : (hash(actor.id) + resident.visits) % idle.length
       const preferred = idle.slice(first).concat(idle.slice(0, first))
-      const reserved = new Set(
-        [...this.residents.entries()]
-          .filter(([id]) => id !== actor.id)
-          .map(([, state]) => state.target?.id),
-      )
+      const others = [...this.residents.entries()]
+        .filter(([id]) => id !== actor.id)
+        .map(([, state]) => state.target)
+        .filter((target) => !!target)
+      const reserved = new Set(others.map((target) => target.id))
+      // 바로 옆 소파 자리처럼 다른 사람 자리와 너무 붙은 곳도 예약된 것으로 본다.
+      const crowded = (target: Destination) =>
+        others.some(
+          (other) =>
+            Math.hypot(
+              other.pose.x - target.pose.x,
+              other.pose.y - target.pose.y,
+            ) < PERSONAL_SPACE,
+        )
       choices = this.destinations
         .filter(
           (target) =>
-            !reserved.has(target.id) && target.id !== resident.target?.id,
+            !reserved.has(target.id) &&
+            !crowded(target) &&
+            target.id !== resident.target?.id,
         )
         .sort(
           (a, b) =>
@@ -539,6 +590,14 @@ export class OfficeLifeSimulation {
       dt = Math.min(0.1, Math.max(0, seconds))
     const live = new Set(actors.map((actor) => actor.id)),
       snapshots = lifeByProject.get(this.projectId)!
+    // 나를 뺀 사람들의 지금 자리: 걷는 사람, 앉거나 서 있는 사람, 제자리 배우(비비), 나(caller)
+    const neighbors = (selfId: string): Point[] => [
+      ...[...this.residents.entries()]
+        .filter(([id]) => id !== selfId)
+        .map(([, state]) => state),
+      ...actors.filter((other) => other.stationary && other.id !== selfId),
+      ...(options.caller ? [options.caller] : []),
+    ]
     for (const id of this.residents.keys())
       if (!live.has(id)) {
         this.residents.delete(id)
@@ -662,18 +721,93 @@ export class OfficeLifeSimulation {
               distance,
             )
           if (distance < 0.2) resident.route.shift()
-          else
-            Object.assign(
-              resident,
-              moveContinuous(
-                resident,
-                {
-                  x: ((next.x - resident.x) / distance) * step,
-                  y: ((next.y - resident.y) / distance) * step,
-                },
-                this.free,
-              ),
-            )
+          else {
+            // 곁의 사람에게서 밀려나는 힘을 더해 비켜 걷고, 다른 사람에게 너무 붙는 걸음은 내딛지 않는다.
+            const others = neighbors(actor.id)
+            let vx = ((next.x - resident.x) / distance) * step,
+              vy = ((next.y - resident.y) / distance) * step
+            for (const other of others) {
+              const ox = resident.x - other.x,
+                oy = resident.y - other.y,
+                gap = Math.hypot(ox, oy)
+              if (gap < 0.01 || gap >= AVOID_RADIUS) continue
+              const push = ((AVOID_RADIUS - gap) / AVOID_RADIUS) * step * 1.4
+              vx += (ox / gap) * push
+              vy += (oy / gap) * push
+            }
+            const length = Math.hypot(vx, vy)
+            if (length > step) {
+              vx = (vx / length) * step
+              vy = (vy / length) * step
+            }
+            const moved = moveContinuous(resident, { x: vx, y: vy }, this.free)
+            // 벽에 막혀 한 걸음도 못 나간 것도 막힌 것으로 센다(옆걸음 뒤 지름길이 벽을 지날 때).
+            if (
+              keepsSpace(resident, moved, others) &&
+              Math.hypot(moved.x - resident.x, moved.y - resident.y) > 0.001
+            ) {
+              Object.assign(resident, moved)
+              resident.stuck = 0
+            } else {
+              const stuckBefore = resident.stuck ?? 0
+              resident.stuck = stuckBefore + dt
+              // 막히면 오른쪽, 왼쪽 순서로 옆걸음을 해 본다. 마주 오는 두 사람이 서로 오른쪽으로 비켜 지나간다.
+              // 같은 정적 경로를 다시 찾기만 하면 서로 마주 선 채 멈췄다(PR #72 전수 리뷰 THREE-01).
+              const ux = (next.x - resident.x) / distance,
+                uy = (next.y - resident.y) / distance
+              const sidestep = [1, -1]
+                .map((side) =>
+                  moveContinuous(
+                    resident,
+                    { x: -uy * step * side, y: ux * step * side },
+                    this.free,
+                  ),
+                )
+                .find(
+                  (point) =>
+                    Math.hypot(point.x - resident.x, point.y - resident.y) >
+                      0.001 && keepsSpace(resident, point, others),
+                )
+              if (sidestep) Object.assign(resident, sidestep)
+              // 오래 막힐 때마다 막고 있는 사람의 칸을 피해 같은 목적지로 길을 다시 찾는다. 돌아갈 길이 없으면
+              // 쉬러 다니는 사람은 다른 곳으로 간다. 일하러 가는 사람은 비켜 줄 때까지 기다린다.
+              if (
+                Math.floor(stuckBefore / STUCK_SECONDS) <
+                  Math.floor(resident.stuck / STUCK_SECONDS) &&
+                resident.target
+              ) {
+                const blockers = others.filter(
+                  (other) =>
+                    Math.hypot(other.x - resident.x, other.y - resident.y) <
+                    AVOID_RADIUS,
+                )
+                // 길을 막고 서서 쉬는 사람은 쉬기를 끝내고 다른 곳으로 비켜 준다.
+                for (const [id, other] of this.residents)
+                  if (
+                    id !== actor.id &&
+                    !other.route.length &&
+                    !other.transfer &&
+                    !other.working &&
+                    !other.seated &&
+                    (!other.behavior || other.behavior === 'autonomous') &&
+                    Math.hypot(other.x - resident.x, other.y - resident.y) <
+                      AVOID_RADIUS
+                  )
+                    other.dwell = 0
+                const detour = this.route(
+                  resident,
+                  resident.target.landing,
+                  blockers,
+                )
+                if (detour) resident.route = detour
+                else if (
+                  !resident.working &&
+                  (!resident.behavior || resident.behavior === 'autonomous')
+                )
+                  this.choose(resident, actor, false)
+              }
+            }
+          }
           if (!resident.route.length && resident.target) {
             const target = resident.target
             resident.activity = target.activity

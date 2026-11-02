@@ -6385,12 +6385,16 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 - (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다. 지금처럼 동기 호출이면 화면은 진행률 없이 기다림만 보인다(Q19).
 - (수정안 요청) 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 rejection_submission_id로 고른다. 그 rejection_reason과 함께 AI-A10에 mode=RERUN으로 넣고, 아니면 REVIEW다. 화면은 제출을 고르지 않는다. 비비가 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만들고, 팀장은 문단을 고르지 않는다.
 
-#### 후속 PR에 적용할 검토 정책 — 정책 확정, 계약 확장 미구현
+#### 216 검토 계약 v2 — BE 구현, 실제 AI 222 연결은 TODO
 
 - 승인본만 참고하며 승인본이 없으면 해당 문서 자체 검토를 진행한다. 미승인 문서는 참고 자료로 사용하지 않는다.
 - 본문 검토를 완료하고 승인 참고 자료 부족으로 비교하지 못한 경우에는 팀장 검토 요청을 허용한다. 비교하지 못한 단계와 사유를 팀장에게 표시한다. 모델 실패·타임아웃은 제출 가능한 부분 검토 결과로 취급하지 않는다.
 - 자동 수정안 PATCH는 반영/넘기기 대상이고, 설명형 의견 COMMENT는 별도 확인 버튼 없이 표시한다. COMMENT 확인 여부로 제출을 차단하지 않는다. 직접 본문을 수정하면 재검토한다.
-- 단계별 상태·PATCH/COMMENT 구분·출처 검증·집합 해시의 정확한 요청/응답 및 저장 구조는 후속 PR에서 구현한다. 현재 응답 스키마와 예시는 이 확장을 아직 포함하지 않는다. AI 라우트·별도 usage feature·시간/크기 제한과 공용 AI 명세는 담당자 합의가 남아 있다.
+- 새 검토는 `contract_version=2`, `content_hash`, `review_status`, 4개 `steps`, `references_used`, 제안의 `type/step/sources`를 저장·반환한다. 상세 필드는 [공통 검토 스키마](00-common.md#schema-documentbeereview), 전체 실행 가능한 예시는 [부분 검토 fixture](../../backend/src/test/resources/document/review-contract-partial.json)와 [완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json)를 따른다. 앞의 JSON은 기본 필드 예시이며 v2 전체 필드를 생략했다.
+- BODY는 COMPLETE/REVIEWED여야 한다. 대상과 같은 종류의 비교만 SKIPPED/SAME_KIND로 제외한다. 나머지 종류의 승인본이 없을 때만 PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE를 허용하며 전체는 PARTIAL이다. 자료가 있는 비교는 COMPLETE/REVIEWED여야 한다. 단계 누락·중복·상태 모순·잘못된 출처는 502 invalid_ai_output이다.
+- PATCH의 원문은 입력에서 한 곳에만 존재하며 PATCH 간 원문 구간이 겹치면 결과 전체를 거절한다. COMMENT는 교체 필드와 decision이 null이며 선택이 필요 없다. 근거는 해당 비교 단계의 입력 승인본 ID에 한정하고 인용문은 승인본 본문과 대조한다.
+- 과거 검토·제출 조회는 유지하되 단계가 미기록인 검토로 제안 처리/새 제출하면 409 review_stale이며 재검토가 필요하다. 과거 완료 키는 당시 검토를 재조회하고 유료 호출을 재발행하지 않는다. 제출에 연결된 검토·의견은 DB에서 변경을 차단한다.
+- usage는 현재 BEE_DRAFT를 유지한다. `[TODO] 216-AI`: 양지훈 222 실제 라우트·모델 연결·한도/timeout 계약 확인. `[TODO] 216-USAGE`: 전용 feature는 DB·AI·집계·FE 준비 후 별도 전환한다. 신규 FE·대화·직접 요청·취소는 202/231 후속이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6517,7 +6521,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - 작성자만 제안을 선택한다. review와 suggestion은 해당 문서에 속해야 한다.
 - 현재 본문·참고 승인본과 검토가 일치해야 한다. 직접 편집/재업로드 또는 참고 승인본 변경 시 재검토한다.
 - APPLY는 현재 본문에서 original_text가 유일하게 일치할 때 replacement_text로 바꾸고 작성 revision과 검토 resolved_revision을 갱신한다. 겹친 제안이 일치하지 않으면 review_stale다.
-- SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 제안을 처리한 뒤 다시 고치거나 팀장에게 제출한다.
+- SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 PATCH를 처리한 뒤 다시 고치거나 팀장에게 제출한다. COMMENT에 APPLY/SKIP을 보내면 400 validation_failed다.
 - (수정안 요청) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고, 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 결정과 함께 남긴다. 지금 dev 구현은 저장된 replacement_text만 쓰므로 BE 변경이 필요하다.
 - (수정안 요청) 화면에는 반영한 문단의 '되돌리기'가 있다. 처리한 선택을 덮어쓰지 않는 지금 규칙과 맞지 않으므로, `decision=REVERT`로 받을지 화면에서 뺄지 정해야 한다.
 
@@ -6622,7 +6626,7 @@ HTTP `201`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 
 #### 처리 규칙
 
-- 작성자만 제출한다. 최신 내용에 대한 유효한 검토가 필요하며 모든 보완 제안을 반영 또는 넘긴 상태여야 한다. 제안이 없어도 실제 검토 완료 결과가 필요하다.
+- 작성자만 제출한다. 최신 내용에 대한 유효한 v2 검토가 필요하며 모든 PATCH를 반영 또는 넘긴 상태여야 한다. COMMENT는 선택 없이 제출할 수 있다. 제안이 없어도 BODY 검토 완료 결과가 필요하고, 승인 자료 부족에 한한 PARTIAL은 허용한다. 단계가 미기록인 과거 검토는 409 review_stale로 재검토를 요구한다.
 - 본문과 원본을 불변 제출로 저장하고 작성 건을 SUBMITTED로 잠근다. 첫 제출은 준비한 내부 DRAFT v1을 고정하고 이후 제출은 새 document_version/submission을 만든다.
 - 원본 PUT은 트랜잭션 밖에서, 문서 버전·분석 접수·제출·잠금·멱등 응답은 한 트랜잭션에서 저장한다. 원본 보존 규칙은 DOC-A01과 ERD를 따른다.
 - 같은 작성자/프로젝트/동작/키·입력은 document_http_command의 24시간 응답을 재사용한다. 제출 이력은 캐시 만료로 삭제하지 않는다.
@@ -7598,11 +7602,11 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 
 ### GET `/api/projects/{id}/change-proposals/{proposal_id}/impact`
 
-변경 영향 조회 기능을 제공한다.
+현재 제출 리비전에서 최근 완료된 결과를 반환한다. 완료 결과가 없으면 RUNNING, 현재 리비전 결과 없이 과거 결과만 있으면 과거 결과와 is_current=false를 반환한다. 이력이 없으면 NOT_EVALUATED(analysis_not_started)다. 실패·미평가·근거 부족은 영향 0건이 아니다. 재분석이 진행 중이면 이전 결과를 유지하면서 `reanalysis`로 새 실행을 알린다. 키워드 검색이 상한에 걸려 AI 입력에서 일부가 빠졌거나 검색어가 없어 검색을 하지 못했으면 AI가 SUFFICIENT여도 COMPLETED가 아니라 INSUFFICIENT_EVIDENCE(`error_code=search_coverage_incomplete`)다. 문서를 함께 바꾼 제안도 확인 가능한 설계 항목의 `explicit`은 계산해 보존하지만 문서 때문에 NOT_EVALUATED(`document_change_unavailable`)다. 읽기는 프로젝트 에이전트도 서비스 경로에서 허용한다. lease 만료 RUNNING은 FAILED(analysis_interrupted)로 정리한다.
 
 관련 요구사항: CHG-05·08, BEE-06·09  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현 (#197)
 
 #### 인증
 
@@ -7637,9 +7641,15 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `explicit` | [ExplicitImpact[]](00-common.md#schema-explicitimpact) | Y | 명시 관계 영향 |
 | `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | AI 영향 후보 |
-| `analysis_status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | AI 분석 상태 |
+| `analysis_status` | `RUNNING\|COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED\|FAILED\|STALE` | Y | AI 분석 상태 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | 분석 설명 |
-| `error_code` | `string` | N | 실패 원인 |
+| `error_code` | `string` | N | 실패·미평가 원인 |
+| `revision` | `integer` | Y | 분석한 제출 리비전 |
+| `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
+| `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
+| `stale_reason` | `string` | N | 이전 리비전·입력 변경 사유 |
+| `run_id` | `string` | Y | 이 응답이 보여 주는 실행 ID. 재분석 접수 응답의 `run_id`와 비교해 완료를 확인한다 |
+| `reanalysis` | `object` | N | 이전 결과가 보이는 동안 진행 중인 새 실행. `run_id`, `requested_at`. 끝나면 사라지고 `run_id`가 새 실행으로 바뀐다 |
 
 ```json
 {
@@ -7667,6 +7677,9 @@ HTTP `200`.
       ]
     }
   ],
+  "revision": 1,
+  "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "is_current": true,
   "analysis_status": "COMPLETED",
   "generation": {
     "origin": "MODEL",
@@ -7730,11 +7743,11 @@ HTTP `200`.
 
 ### POST `/api/projects/{id}/change-proposals/{proposal_id}/impact/retry`
 
-변경 영향 AI 재분석 기능을 제공한다.
+활성 사람 멤버가 수동으로 영향 분석을 접수한다. Origin(없으면 Referer)을 검사하며 에이전트는 403이다. 제안은 PROPOSED·IN_REVIEW 상태이고 현재 baseline과 일치해야 한다. 접수 트랜잭션 이후 유한 인메모리 실행기에서 기존 coordinator를 호출한다. 외부 AI 호출 동안 DB 잠금을 잡지 않는다. 제출 시 자동 실행하지 않는다.
 
 관련 요구사항: CHG-08  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현 (#197)
 
 #### 인증
 
@@ -7746,7 +7759,7 @@ HTTP `200`.
 | --- | --- |
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 선택. 같은 키·같은 제출 리비전은 24시간 기존 202 응답 재생. 리비전 변경 후 재사용은 409 idempotency_conflict |
 
 #### Path Parameters
 
@@ -7764,71 +7777,29 @@ HTTP `200`.
 없음.
 #### Response
 
-HTTP `202`.
+HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RUNNING이 있으면 409 analysis_running, 분석할 수 없는 상태는 409 proposal_not_analyzable, 기준 변경은 409 baseline_changed다. 만료 RUNNING을 FAILED(analysis_interrupted)로 닫고 새 run을 만든다. 포화는 접수 후 FAILED(analysis_capacity)로 기록한다. AI 실패에도 explicit은 보존하며, 저장 트랜잭션에서 프로젝트 잠금과 입력 지문을 재검사한다. 발행 후 분석 실행은 #227의 별도 계약이다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `explicit` | [ExplicitImpact[]](00-common.md#schema-explicitimpact) | Y | 명시 관계 영향 |
 | `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | AI 영향 후보 |
-| `analysis_status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | AI 분석 상태 |
+| `analysis_status` | `RUNNING\|COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED\|FAILED\|STALE` | Y | AI 분석 상태 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | 분석 설명 |
-| `error_code` | `string` | N | 실패 원인 |
+| `error_code` | `string` | N | 실패·미평가 원인 |
+| `revision` | `integer` | Y | 분석한 제출 리비전 |
+| `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
+| `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
+| `stale_reason` | `string` | N | 이전 리비전·입력 변경 사유 |
+| `run_id` | `string` | Y | 접수된 실행 ID. GET의 `run_id`가 이 값이 되거나 `reanalysis.run_id`가 이 값이면 이 실행이다 |
 
 ```json
 {
-  "explicit": [
-    {
-      "task_id": "501",
-      "member_id": "21",
-      "design_item_id": "301",
-      "validation_id": "601"
-    }
-  ],
-  "candidates": [
-    {
-      "task_id": "502",
-      "member_id": "22",
-      "design_item_id": "302",
-      "reason": "로그인 응답을 사용하는 화면입니다.",
-      "sources": [
-        {
-          "document_id": "201",
-          "document_version_id": "211",
-          "version_no": 1,
-          "location": "3. 계정 관리 / ACC-02"
-        }
-      ]
-    }
-  ],
+  "explicit": [],
+  "candidates": [],
   "analysis_status": "RUNNING",
-  "generation": {
-    "origin": "MODEL",
-    "model": "configured-model",
-    "text": "현재 승인 계약에 따라 이메일과 비밀번호를 입력합니다.",
-    "sources": [
-      {
-        "document_id": "201",
-        "document_version_id": "211",
-        "version_no": 1,
-        "location": "3. 계정 관리 / ACC-02"
-      }
-    ],
-    "unresolved": [],
-    "usage": [
-      {
-        "request_key": "llm-validate-601-attempt-1",
-        "feature": "TASK_VALIDATION",
-        "model": "configured-model",
-        "input_tokens": 1200,
-        "output_tokens": 300,
-        "latency_ms": 1800,
-        "failed": false,
-        "estimated_cost_amount": "0.0042",
-        "currency": "USD",
-        "tokens_known": true
-      }
-    ]
-  }
+  "revision": 1,
+  "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "is_current": true
 }
 ```
 
@@ -7839,12 +7810,17 @@ HTTP `202`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 409 | `analysis_running` | 이미 분석 중 |
+| 409 | `proposal_not_analyzable` | PROPOSED·IN_REVIEW 상태가 아님 |
+| 409 | `baseline_changed` | 제출 기준과 현재 baseline이 다름 |
+| 409 | `idempotency_conflict` | 같은 키로 다른 제출 리비전 요청 |
+| 403 | `forbidden` | 에이전트의 재분석 접수 |
+| 403 | `request_origin_rejected` | 신뢰 Origin·Referer 누락 또는 불일치 |
 
 ```json
 {
   "error": {
     "code": "analysis_running",
-    "message": "이미 분석 중"
+    "message": "현재 상태에서는 요청을 처리할 수 없습니다. 최신 정보를 확인해 주세요."
   }
 }
 ```
@@ -7852,7 +7828,7 @@ HTTP `202`.
 #### 처리 규칙
 
 - 현재 제안·관련 작업 스냅샷으로 재분석한다. 원본 제안을 수정하지 않는다.
-- 명시 관계 수신자 알림은 AI 실패와 관계없이 유지한다.
+- 규칙 후보는 AI 실패와 관계없이 보존한다. 알림 생성은 후속 #237 범위다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8083,7 +8059,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 관련 요구사항: APR-01·03~05  
 담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
-상태: 구현됨(S15P31A108-199·200, 실제 163/197 연결·승인 게이트·알림은 TODO)
+상태: 구현됨(S15P31A108-199·200, 검증 영향 163 연결됨, 197 연결·승인 게이트·알림은 TODO)
 
 #### 인증
 
@@ -8237,7 +8213,7 @@ HTTP `200`.
 - UPDATE의 source_document_version_id·source_locator는 기존 근거 원문을 보존한다. 같은 제안에서 문서가 바뀌어도 위치가 새 문서에 유효하다는 보장이 없어 자동 치환하지 않는다. 출처 교체는 명시적 입력·검증 계약을 추가해야 한다.
 - 문서별 승인 API는 기준 발행 이후 신규 결정을 change_proposal_required로 거부한다. 이미 완료한 결정의 같은 입력 재요청만 기존 결과를 반환하므로 변경 제안의 문서 승인을 우회하지 않는다.
 - 최종 문서·항목 참조를 계산한 뒤 새 기준에 한 번씩 INSERT한다. 이전 기준 참조는 변경하지 않는다. UPDATE 항목 번호는 전체 버전 max+1, CREATE는 1이며 RETIRE는 retired_at을 기록하고 새 기준에서 제외한다. 과거 기준의 참조와 본문은 보존한다.
-- 163 연결 전에는 ValidationImpactPort 기본 구현이 no-op + WARN이므로 승인해도 검증 STALE·작업 WAITING은 반영되지 않는다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
+- (BE 구현, -163) ValidationImpactPort 의 실제 구현은 `PublicationImpactAdapter` 다. 발행 트랜잭션 안에서 프로젝트 행을 먼저 잠그고(상태 보고·계획 변경·검증 반영과 같은 순서), 바뀐 항목(수정·폐기)의 변경 전 버전 **또는 그보다 옛 버전**을 validation_design_ref 에 가진 검증을 끝난 것(PASS·NEEDS_*)·도는 것(NOT_RUN·RUNNING) 모두 STALE(`DESIGN_PUBLISHED`)로 바꾸고 대기 job 은 취소한다(작업 상태·현재 계획으로 거르지 않음). 그 버전을 현재 계획이 참조하는 IN_PROGRESS 작업만 WAITING(REVALIDATION). 무효화된 검증이 delta 완료 보고의 DELTA 였고 작업이 이 발행 전부터 WAITING(REVALIDATION) 이었으면 새 기준으로 새 DELTA 검증을 서버가 접수한다(계획이 옛 버전을 참조하므로 보통 규칙으로 바로 NEEDS_INPUT). 문서만 바뀐 발행(바뀐 항목 없음)은 아무것도 하지 않는다. 미리보기는 같은 계산을 쓰기·잠금 없이 한다. 담당자 알림(REVALIDATION_REQUIRED)은 알림 모듈(-181) 연결 뒤 같은 트랜잭션에서 요청한다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
 - 영향 분석 결과에 따른 승인 게이트는 메서드 하나의 TODO로 현재 항상 통과한다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO이며 이 PR의 저장 성공을 알림·활동 저장 완료로 보지 않는다.
 - (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
@@ -8743,7 +8719,7 @@ HTTP `200`.
 - PROPOSED·IN_REVIEW만 미리 볼 수 있다. 제안 기준이 현재와 다르면 409 baseline_conflict이며 requires_refresh 응답 필드를 별도로 추가하지 않는다. 색인과 참조 검증도 A09와 공유한다.
 - baseline_items는 변경 후 최종 항목 목록이다. CREATE는 design_item_id:null, operation:CREATE, proposal_item_index:원본 items 배열의 index, version_no:1이다. UPDATE는 실제 항목 ID와 전체 max+1 번호, UNCHANGED는 기존 번호와 proposal_item_index:null을 반환한다. RETIRE는 제외한다. ID를 미리 발급하거나 예약하지 않는다.
 - unchanged는 새 기준에 그대로 참조하는 항목·문서 수다. open_review_requests는 현재 리비전 REVIEW_REQUEST 중 지정 대상 한 명이라도 요청 이후 같은 리비전에 의견을 남기지 않은 요청 건수다. change_comment_target 다중 대상을 사용하고 대상 수가 아닌 요청 수로 세며, 이후 순서는 의견 ID 기준이다.
-- 197 연결 전 ai_candidates=0은 호환용 임시값이며 미평가를 뜻한다. 163 연결 전 validations_to_stale·tasks_to_wait는 빈 배열인 기본 구현이며 실제 영향 0건을 확인한 결과가 아니다. PR에서 이 미연결 범위를 반드시 표시한다.
+- 197 연결 전 ai_candidates=0은 호환용 임시값이며 미평가를 뜻한다. validations_to_stale·tasks_to_wait 는 163 연결로 실제 계산값이다(위 발행 처리 규칙과 같은 기준). PR에서 이 미연결 범위를 반드시 표시한다.
 - preview 포트에는 새 기준·버전 ID를 넘기지 않는다. 이전 baseline, 제안 ID·revision/hash, UPDATE·RETIRE의 이전 항목 버전으로 대상을 계산하고 apply 때만 실제 새 ID를 넘긴다.
 - 승인 확인 화면에서만 쓴다. 그사이 기준이나 제안이 바뀌면 CHG-A09가 기존 규칙대로 거절하고 화면은 다시 확인하라고 안내한다.
 
@@ -10154,6 +10130,7 @@ HTTP `200`.
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
 - (BE 구현, -159) 최신순(id 내림차순), 커서는 마지막 검증 ID. 다른 프로젝트 작업은 404다.
+- (BE 구현, -168 검증 실행 이력·성능·사용량 기록, VAL-05 범위 결정) 실행(시도)마다 남기는 것은 `validation_run` 의 검증 ID·시도 번호·분석기 버전(응답 model)·처리 시간(duration_ms, AI 호출 왕복)·상태·오류·`usage` 배열·`cache_hit` 이고, 입력 버전은 검증 행의 `input_snapshot_hash`·design_ref·task_ref 로 고정돼 있어 실행에 다시 적지 않는다. 실행을 닫을 때(정상·실패·버림·늦은 응답 모두) `usage` 의 항목을 공통 사용량 표 `llm_usage`(-79)에 실행·작업·프로젝트와 함께 한 줄씩 넣는다 — 같은 `request_key` 는 한 번만(유일 제약, 늦은 응답·재전송이 같은 키로 와도 두 번 합산하지 않음), `tokens_known=false` 면 토큰 칸은 NULL(0 으로 만들지 않음), `estimated_cost_amount` 는 `currency` 와 함께 있을 때만, 항목에 `model` 이 없으면 실행의 분석기 버전(회수로 닫힌 실행에 늦은 응답이 오면 그 응답의 model 로 분석기 버전을 채운 뒤 같은 규칙), `latency_ms` 가 없으면 실행 처리 시간, `failed` 는 AI 가 적은 그 호출의 실패 여부(실행 결과와 별개). `request_key` 가 없는 항목은 적지 않는다. 값이 틀려도 실행 종결을 막지 않는다 — 비용이 숫자가 아니거나 NUMERIC(12,6) 범위 밖이면 비용 칸만 비우고, 토큰·지연이 음수·정수 범위 밖·글자면 그 칸만 비우며, 그래도 DB 오류가 나면 그 항목만 되돌리고 경고를 남긴다(틀린 사용량 때문에 검증이 RUNNING 으로 남아 리스 회수까지 가는 일이 없게). 비용 조회(-169)는 `validation.summary` 가 아니라 `llm_usage` 를 읽는다. 같은 계획·근거 재요청 때 결과 재사용(AC-16)은 "입력 해시가 같고 그 검증이 아직 PASS 로 살아 있으면 새 실행 없이 그 검증을 돌려준다" 로 두되, 지금은 재사용하지 않고 `cache_hit` 은 항상 false — 재시도(-161)와 함께 넣는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10540,6 +10517,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - WAIT는 IN_PROGRESS에서만 가능하며 사유 필수다. REVALIDATION은 시스템 전용이라 지정하면 400 `invalid_transition`이다.
 - 사람 세션의 LEADER는 보고가 끊긴 작업을 CANCEL할 수 있다(AC-14). 그 밖의 전이는 담당자만 한다. CANCEL은 큐 취소·점유 해제·늦은 결과 차단을 수행한다.
 - COMPLETED는 불변 완료 보고를 저장한다. delta가 있으면 WAITING(REVALIDATION)으로 두고 trigger=DELTA 검증을 접수하며 응답에 delta_validation_id를 포함한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (BE 구현, -163) delta 가 있으면 같은 트랜잭션에서 DELTA 검증을 **먼저** 접수하고(`ValidationAcceptService.acceptBySystem`, 담당자·잠금 번호 확인 없음) 그 번호를 완료 보고에 넣어 저장한 뒤 WAITING(REVALIDATION)·202. DELTA 검증은 완료 보고의 `delta` 를 분석 입력(AI-A02 `completion_delta`, 입력 스냅샷 해시에도 포함 — 검증 종류 `trigger` 와 함께)에 넣고 검사 목록에 완료 delta 검사(`completion-delta`, PLAN_COMPLETENESS)를 항상 넣으므로 규칙만으로 PASS 하지 않는다. AI(-184)가 이 칸을 받기 전에는 DELTA 요청이 AI 입력 오류로 ERROR 가 된다(조용히 통과하지 않음; 03-ai-internal AI-A02 Request 참조) — READS 만 참조하는 계획이라도 의미 분석으로 가고, 완료 보고 자리에서 바로 COMPLETED 되는 경우는 없다(규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 대기). 워커가 DELTA 를 PASS 로 끝내면 같은 트랜잭션에서 작업을 COMPLETED 로 바꾼다(`DeltaCompletion`, S4) — 조건은 작업이 아직 WAITING(REVALIDATION) 이고 그 검증이 현재 계획의 가장 최근 DELTA 일 때. 가짜 분석기를 끈 서버에서는 가짜 분석기가 낸 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙). NEEDS_INPUT·NEEDS_REVIEW·ERROR 면 작업은 그대로다(04-task-lifecycle.md §2.3 출구). RESUME 은 기다리던 DELTA 검증을 ERROR 로 끝난 것까지 STALE(`TASK_RESUMED`)로 바꾸고 대기 job 을 취소한다(그 완료 대기가 끝났다는 뜻. 옛 DELTA 의 늦은 PASS 가 나중에 작업을 완료시키지 못하게, 그리고 인계로 다시 WAITING 이 된 작업이 옛 DELTA 를 기다리는 것으로 보이지 않게. 오류 이력은 실행·발견 항목에 남는다). delta 있는 COMPLETED 의 재전송은 "지금 기다리는 것이 그 보고"(WAITING(REVALIDATION) + 현재 계획의 delta 완료 보고 + 가장 최근 DELTA 가 STALE 아님)이고 plan_revision_id·delta·summary·completion_checks 가 같을 때만 같은 결과(202)이고, 내용이 다르면 409 `revision_conflict`(바꾸려면 RESUME 뒤 다시 보고), 기다리는 보고가 없으면(RESUME 뒤 인계 등으로 WAITING 이 된 경우) WAITING + COMPLETED 전이 오류 400 이다. TaskDetail.delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호(현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때)이며, 재전송 판정과 같은 기준이다 — RESUME 뒤 인계로 WAITING 이 된 작업에는 없다.
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -13451,7 +13429,7 @@ HTTP `200`.
 
 관련 요구사항: MON-03  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 반영안 (S15P31A108-64)
 
 #### 인증
 
@@ -13522,6 +13500,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 작업 상태·대기 이유만 집계한다. 검증 상태와 혼용하지 않는다.
+- (BE 구현, -64) 상태는 DRAFT·READY·IN_PROGRESS·WAITING·COMPLETED·CANCELLED 순으로 건수가 0 이어도 한 줄씩, 대기 이유는 INPUT·APPROVAL·DEPENDENCY·REVALIDATION 순으로 같다(WAITING 작업만 센다). 프로젝트 밖 사람은 404.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13537,7 +13516,7 @@ HTTP `200`.
 
 관련 요구사항: MON-04  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 반영안 (S15P31A108-64)
 
 #### 인증
 
@@ -13605,6 +13584,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 현재 계획의 검증 상태를 기준으로 집계한다. 과거 실행 시도 수와 구분한다.
+- (BE 구현, -64) 작업마다 한 번씩 — 현재 계획 리비전의 가장 최근 검증 상태(TaskDetail.validation_status 와 같은 기준), 검증이 없으면 NOT_RUN. 계획이 아직 없는(DRAFT) 작업은 세지 않고, 완료·취소 작업은 포함한다(현재 계획 기준이므로). 상태는 NOT_RUN·RUNNING·PASS·NEEDS_INPUT·NEEDS_REVIEW·STALE·ERROR 순으로 0 이어도 한 줄씩.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13946,7 +13926,7 @@ HTTP `200`.
 
 관련 요구사항: MON-07, AGT-07  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 반영안 (S15P31A108-64)
 
 #### 인증
 
@@ -14021,6 +14001,7 @@ HTTP `200`.
 
 - 연결 정보는 AGT-A05, 명시 보고된 작업·검증·대기는 이 API로 나눠 제공한다.
 - 에이전트 보고가 없으면 실행 중·완료를 추정하지 않는다.
+- (BE 구현, -64) 폐기되지 않은 토큰·아직 활성인 멤버의 에이전트 세션(`agent_session`)마다 한 줄, 세션 번호 내림차순, 커서는 마지막 세션 번호. `member_id` 는 `project_member.id`(형식 오류 400). 세션이 보고한 현재 작업(`current_task_id`)이 있으면 작업 제목·상태·대기 사유·현재 계획의 가장 최근 검증 상태(없으면 NOT_RUN)를 함께 주고, 없으면 작업 칸은 모두 빠진다. `agent_name` 은 토큰 이름. `last_summary` 는 완료 보고 summary 가 세션에 남지 않아 아직 내려가지 않는다. 세션 행(현재 작업·마지막 보고 시각)은 에이전트 연결·보고 쪽(AGT-A05·MCP-12)이 적는다 — 이 API 는 읽기만 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

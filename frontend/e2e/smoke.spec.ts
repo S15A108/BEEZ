@@ -12,6 +12,8 @@ test('첫 화면이 콘솔 에러 없이 뜬다', async ({ page }) => {
   await expect(
     page.getByRole('heading', { name: 'BEEZ', exact: true }),
   ).toBeVisible()
-  await expect(page.getByRole('button', { name: '로그인하기 →' })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '로그인', exact: true }),
+  ).toBeVisible()
   expect(errors).toEqual([])
 })

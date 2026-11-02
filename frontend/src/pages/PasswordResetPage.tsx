@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { authApi } from '@/api/services'
 import { AsyncState } from '@/components/AsyncState'
 import { ActionForm } from '@/components/ActionForm'
+import { passwordRule } from '@/features/auth/passwordRule'
 
 export default function PasswordResetPage() {
   const [params] = useSearchParams()
@@ -41,8 +42,7 @@ export default function PasswordResetPage() {
                     label: '새 비밀번호',
                     type: 'password',
                     required: true,
-                    min: 8,
-                    max: 128,
+                    check: passwordRule,
                   },
                   {
                     name: 'confirm',

@@ -36,7 +36,7 @@ class ImpactSourceFastApiRoundTripTest {
         var approved = new ImpactContextQuery.ApprovedItem(10, 100, "API-1", "API_CONTRACT", 1, 1,
                 "fixture", "{\"path\":\"/v1\"}", 7L, 8L, 1, locator);
         var snapshot = new ImpactContextQuery.Snapshot(proposal, List.of(change), List.of(approved),
-                List.of(), List.of(), ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+                List.of(), List.of(), ImpactContextQuery.RuleCandidateStatus.CONNECTED);
         var query = mock(ImpactContextQuery.class);
         var caller = CallerContext.human(4L);
         when(query.load(caller, 1, 71)).thenReturn(snapshot);
@@ -44,7 +44,7 @@ class ImpactSourceFastApiRoundTripTest {
         var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "source-roundtrip");
 
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
-        assertThat(outcome.errorCode()).isEqualTo("rule_candidates_not_connected");
+        assertThat(outcome.errorCode()).isNull();
         var result = (Map<?, ?>) outcome.aiEnvelope().get("result");
         var candidate = (Map<?, ?>) ((List<?>) result.get("candidates")).getFirst();
         var source = (Map<?, ?>) ((List<?>) candidate.get("sources")).getFirst();

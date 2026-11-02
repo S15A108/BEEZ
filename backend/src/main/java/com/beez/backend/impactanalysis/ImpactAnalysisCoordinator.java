@@ -13,7 +13,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Internal, synchronous AI-A03 handoff. No public endpoint, durable result store, or approval is
- * implemented here. Rule candidates are not connected; this never changes task state.
+ * implemented here. #197 stores rule candidates separately; this never changes task state.
  */
 @Service
 public class ImpactAnalysisCoordinator {
@@ -24,7 +24,7 @@ public class ImpactAnalysisCoordinator {
      * aiEnvelope is retained for diagnostics and may report SUFFICIENT only within the supplied
      * AI input. It is not the final evaluation status and an empty list is not zero impact.
      * #197 must use the top-level status and atomically recheck freshness when persisting;
-     * that storage transaction and the shared rule candidate service are not connected here.
+     * #197 owns that storage transaction and rule candidate calculation.
      */
     public record Outcome(ImpactContextQuery.Snapshot input, Status status, Map<String, Object> aiEnvelope,
                           List<?> usage, UsageStatus usageStatus, String errorCode) {
@@ -94,12 +94,15 @@ public class ImpactAnalysisCoordinator {
                 errorCode = "invalid_output";
                 envelope = null;
             } else {
-                // AI-only output can remain available for review, but cannot imply that
-                // the separately owned rule candidate phase completed.
-                status = Status.INSUFFICIENT_EVIDENCE;
-                if (snapshot.ruleCandidateStatus() == ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED) {
-                    errorCode = "rule_candidates_not_connected";
-                }
+                // SUFFICIENT only describes the input the model received. If the bounded search dropped
+                // designs or tasks, or no search ran at all (no usable terms, input too large), the result cannot be
+                // presented as a complete evaluation.
+                var coverage = snapshot.searchCoverage();
+                boolean searchIncomplete = coverage.termsTruncated() || coverage.designsTruncated()
+                        || coverage.tasksTruncated() || coverage.status() != ImpactKeywordSearch.Status.SEARCHED;
+                status = snapshot.ruleCandidateStatus() == ImpactContextQuery.RuleCandidateStatus.CONNECTED
+                        && "SUFFICIENT".equals(evidence) && !searchIncomplete ? Status.ANALYZED : Status.INSUFFICIENT_EVIDENCE;
+                if (searchIncomplete) errorCode = "search_coverage_incomplete";
             }
         } catch (RestClientResponseException ex) {
             Map<String, Object> error = parseError(ex);

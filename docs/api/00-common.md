@@ -120,7 +120,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 - 변경 POST는 상세 Headers의 `Idempotency-Key`, MCP는 `idempotency_key`로 동일 동작을 식별한다. 키 범위는 인증 사용자·프로젝트·동작이다.
 - 같은 키·같은 입력은 기존 결과를 반환하고 다른 입력은 409 idempotency_conflict다. 보존기간·저장 방식은 Q12다. 재요청도 현재 권한을 확인한다.
-- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A08 검토 시작·CHG-A09 승인·발행·CHG-A10 반려·CHG-A12 의견 등록(Idempotency-Key 선택, 있을 때만)·MTG-A06 회의 텍스트 기록(Idempotency-Key 선택, 있을 때만)·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다. CHG-A09는 다른 키·보존기간 경과 후에도 기준·리비전·해시가 같으면 기존 발행 baseline을 반환하며 새 발행을 만들지 않는다.
+- Q12 범위 한정 결정: PLN-A07 수동 항목 등록·PLN-A10 최초 baseline 생성·CHG-A01 제안 생성·CHG-A04 재제출·CHG-A06 영향 재분석(Idempotency-Key 선택, 있을 때만)·CHG-A08 검토 시작·CHG-A09 승인·발행·CHG-A10 반려·CHG-A12 의견 등록(Idempotency-Key 선택, 있을 때만)·MTG-A06 회의 텍스트 기록(Idempotency-Key 선택, 있을 때만)·CHG-A15 거두기는 design_http_command에 응답을 저장하고 24시간 동안 재요청에 재사용한다. 기존 문서 업로드 규약과 같은 유효기간이며 전체 API의 보존기간을 확정하는 것은 아니다. 만료 행은 같은 키 재요청 시 정리하며 24시간 경과 즉시 삭제하는 스케줄러는 없다. CHG-A09는 다른 키·보존기간 경과 후에도 기준·리비전·해시가 같으면 기존 발행 baseline을 반환하며 새 발행을 만들지 않는다.
 - 토큰 발급은 평문 1회 표시다. 평문 복원용 응답 캐시를 만들지 않는다. 응답을 잃으면 목록에서 발급분을 폐기하고 새로 발급한다.
 - START는 같은 task_id·validation_id에 대해 중복 실행하지 않는다. 응답 유실을 새 작업 시작으로 처리하지 않는다.
 - 작업 변경은 expected_revision_no/expected_lock_version, 제안 재제출·후속 심사 계약은 expected_revision/expected_snapshot_hash, 초안 편집은 expected_version_id/expected_content_hash를 확인한다. Q08의 정밀도·해시 계약을 따른다.
@@ -153,7 +153,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 알림·활동도 같은 트랜잭션에서 저장하고, 같은 중복 식별값은 건너뛴다([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)). D7 세부는 Q03이다.
 
-199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 현재 163 검증 영향과 197 분석 접수의 기본 구현은 no-op + WARN이며, 실제 STALE·WAITING 반영과 PENDING 접수행 저장은 아직 연결되지 않았다. 승인 게이트와 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
+199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 163 검증 영향은 `PublicationImpactAdapter` 로 연결됐다(STALE·WAITING·DELTA 재접수, 발행 트랜잭션 참여). 197 분석 접수의 기본 구현은 아직 no-op + WARN 이며 PENDING 접수행 저장은 연결되지 않았다. 승인 게이트와 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
 
 ### 검증·시작
 
@@ -459,7 +459,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q09 | 회의 입력·기록 | 오서현·양지훈 | 참여자 분석 권한·entry kind, MTG-08 전사와 입력 경로, 회의록·초안 연결 |
 | Q10 | 컨텍스트·MCP | 전진·변준성·박상은 | MCP-05~07 최소 지원 범위, PRIVATE·리비전·패킷 검색, 개인 맥락 정책 |
 | Q11 | AI 실행·검색 | 양지훈·박상은 / 변준성 | 공통 오류·usage, 107의 execution_budget_ms·초기 명시적 재시도 정책·진단 보존 방식(합의 전), lease, 모델·임베딩 차원, 출력 검증·입력 크기. 검증 LLM과 임베딩의 운영값을 자동 공유하지 않음 |
-| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10·CHG-A01/04/08/09/10/12/15는 §5의 24시간·design_http_command 범위 한정 결정 적용. invalid_transition 의 HTTP 상태는 도메인별로 다르다(변경 제안은 현재 상태 때문에 막히면 409, 작업·관계는 400 을 쓰는 곳이 있다). 400/409 통일은 별도 이슈로 정한다 |
+| Q12 | 공통 FE·BE 계약 | 전진·변준성·오서현·박민용 | 문자열 ID·페이지·신규 code·멱등 보존, 정적 summary 경로, 조회/집계 구현. PLN-A07/10·CHG-A01/04/06/08/09/10/12/15는 §5의 24시간·design_http_command 범위 한정 결정 적용. invalid_transition 의 HTTP 상태는 도메인별로 다르다(변경 제안은 현재 상태 때문에 막히면 409, 작업·관계는 400 을 쓰는 곳이 있다). 400/409 통일은 별도 이슈로 정한다 |
 | Q13 | 비비 서버 연결 | 오서현·변준성·박상은 | 문서 기반 질문·수정 생성과 작업 배정 연결, 영구 대화 저장 여부(수정안 기본안: 창을 연 동안만), '근거가 틀려요' 피드백 활용, 자주 묻는 질문 칩의 출처 |
 | Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
@@ -681,6 +681,8 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 
 ### DocumentReviewReference
 
+216 계약 v2: 승인 스냅샷의 아래 추가 필드를 함께 반환한다. 216 이전 저장된 검토는 새 필드가 null/미기록이며, 과거 조회를 위해 유지한다.
+
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 참고 문서 ID |
@@ -688,6 +690,9 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `kind` | `string` | Y | 비교 문서 종류 |
 | `version_no` | `integer` | Y | 버전 번호 |
 | `content` | `string` | Y | 검토 당시 참고 본문 |
+| `reference_id` | `string` | v2 Y | `document-version-{document_version_id}` |
+| `status` | `APPROVED` | v2 Y | 검토 입력은 승인본만 사용 |
+| `content_hash` | `string` | v2 Y | 전송 content 문자열의 정규화 없는 UTF-8 SHA-256. 업로드 원본 bytes 해시와 구분 |
 
 <a id="schema-documentreviewsuggestion"></a>
 
@@ -697,14 +702,18 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 보완 제안 ID |
 | `explanation` | `string` | Y | 누락/보완 이유 |
-| `original_text` | `string` | Y | 변경할 원문 구간 |
-| `replacement_text` | `string` | Y | 제안 대체문. 빈 문자열 허용 |
-| `decision` | `PENDING\|APPLIED\|SKIPPED` | Y | 작성자 처리 상태 |
+| `type` | `PATCH\|COMMENT` | Y | 기존 저장 제안은 PATCH로 보존. COMMENT는 읽기 전용 설명 |
+| `step` | `BODY\|API_SPEC\|ERD\|REQ_SPEC` | v2 Y | 해당 제안을 생성한 검토 단계. 과거 제안은 미기록 |
+| `original_text` | `string` | PATCH Y | 변경할 유일한 원문 구간. COMMENT는 null |
+| `replacement_text` | `string` | PATCH Y | 빈 문자열은 삭제. COMMENT는 null |
+| `decision` | `PENDING\|APPLIED\|SKIPPED` | PATCH Y | PATCH만 작성자 선택 필요. COMMENT는 null이며 제출을 막지 않음 |
 | `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
 | `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
 | `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
-| `sources` | [Source[]](00-common.md#schema-source) | N | 근거가 된 참고 승인본 위치. 수정안 요청 |
+| `sources` | `DocumentReviewSource[]` | Y | 검증된 참고 승인본 근거. BODY 및 과거 제안은 []. 아래 검토 전용 구조 사용 |
 | `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | 이 제안에 대한 비비와의 대화(DOC-A22). 수정안 요청 |
+
+`DocumentReviewSource`는 `{reference_id, document_id, document_version_id, kind, version_no, quote?}`다. 식별 메타데이터는 BE가 검토 입력에서 붙이고 quote가 있으면 해당 승인본 본문에 존재하는지 검증한다. 일반 RAG `Source`와 별개다. A22/A23의 신규 대화·직접 요청 구현은 231 후속이며 216에 포함하지 않는다.
 
 <a id="schema-documentbeereview"></a>
 
@@ -721,7 +730,11 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `references` | [DocumentReviewReference[]](00-common.md#schema-documentreviewreference) | Y | 당시 참고 자료 |
 | `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 보완 제안과 선택 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | Y | 검증한 실제 모델 호출 사용량 |
-| `steps` | `object[]` | N | 단계별 {label, description, result}. 화면의 'n단계 / 5단계'와 '문단 4개' 같은 단계 결과. PR #37 후속의 단계별 상태와 같은 것. 수정안 요청 |
+| `contract_version` | `integer` | v2 Y | 새 검토는 2. 과거 검토는 null/미기록이며 새 제출 전 재검토 필요 |
+| `content_hash` | `string` | v2 Y | 검토 입력 본문 해시. 정상 PATCH 반영 후에도 당시 입력 해시를 보존 |
+| `review_status` | `COMPLETE\|PARTIAL` | v2 Y | 단계로부터 BE가 계산. request 실행 상태 COMPLETED와 별개 |
+| `steps` | `object[]` | Y | v2는 정확히 4개 `{step,status,reason,reference_ids}`. step=BODY/API_SPEC/ERD/REQ_SPEC, status=COMPLETE/PARTIAL/SKIPPED, reason=REVIEWED/REFERENCE_UNAVAILABLE/SAME_KIND. 과거 검토는 []. 동기 완료 결과이며 실시간 진행률이 아님 |
+| `references_used` | `string[]` | Y | 실제 비교 단계의 reference_ids 합집합. 중복 없이 정렬. 과거 검토는 [] |
 | `rejection_submission_id` | `ID` | N | 반려 뒤 검토면 서버가 고른 반려 제출(DOC-A16 선택 규칙). 비비가 그 rejection_reason을 입력으로 읽는다. 수정안 요청 |
 
 <a id="schema-documentreviewsubmission"></a>
@@ -1031,7 +1044,7 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `task_id` | `ID` | Y | 연결 작업 |
-| `member_id` | `ID` | Y | 담당 멤버 |
+| `member_id` | `ID` | N | 담당 멤버. 미배정 작업이면 생략 |
 | `design_item_id` | `ID` | Y | 변경 항목 |
 | `validation_id` | `ID` | N | 영향 검증 |
 
@@ -1055,9 +1068,15 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | --- | --- | --- | --- |
 | `explicit` | [ExplicitImpact[]](00-common.md#schema-explicitimpact) | Y | 명시 관계 영향 |
 | `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | AI 영향 후보 |
-| `analysis_status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | AI 분석 상태 |
+| `analysis_status` | `RUNNING\|COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED\|FAILED\|STALE` | Y | 승인 전 영향 분석 상태. PENDING은 발행 후 접수행 전용 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | 분석 설명 |
 | `error_code` | `string` | N | 실패 원인 |
+| `revision` | `integer` | Y | 분석한 제출 리비전 |
+| `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
+| `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
+| `stale_reason` | `string` | N | 과거 리비전·입력 변경 원인 |
+
+CHG-A05·A06의 ChangeImpact에는 `revision`(integer), `snapshot_hash`(string), `is_current`(boolean)이 필수이며 `stale_reason`(string)은 현재 입력과 다를 때 반환한다. `COMPLETED`인 빈 후보 배열만 평가 완료 후 0건이다. `NOT_EVALUATED`는 호출 전 미평가, `INSUFFICIENT_EVIDENCE`는 호출 후 근거 부족이다. `FAILED`여도 `explicit`은 보존한다. 현재 리비전의 최근 완료 결과를 우선 조회하고, 완료 결과가 없으면 RUNNING을 반환한다. 현재 리비전 결과가 없고 과거 결과만 있으면 그 결과에 `is_current=false`를 붙인다. 분석 이력이 전혀 없으면 `NOT_EVALUATED`, `error_code=analysis_not_started`다. `run_id`는 응답이 보여 주는 실행이고, 이전 완료 결과가 보이는 동안 새 실행이 진행 중이면 `reanalysis`(`run_id`, `requested_at`)가 함께 반환된다. 검색 범위가 잘렸거나 검색을 하지 못했으면 `INSUFFICIENT_EVIDENCE`와 `search_coverage_incomplete`다.
 
 <a id="schema-taskplaninput"></a>
 
