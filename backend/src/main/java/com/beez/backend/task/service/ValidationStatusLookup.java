@@ -21,6 +21,10 @@ public class ValidationStatusLookup {
     public static final java.util.Set<String> ALL = java.util.Set.of(
             "NOT_RUN", "RUNNING", "PASS", "NEEDS_INPUT", "NEEDS_REVIEW", "STALE", "ERROR");
 
+    /** 같은 값을 명세 순서대로 (현황 집계가 내려 주는 순서, MON-V01) */
+    public static final List<String> ORDERED = List.of(
+            "NOT_RUN", "RUNNING", "PASS", "NEEDS_INPUT", "NEEDS_REVIEW", "STALE", "ERROR");
+
     /** 검증 trigger 전부 (DDL validation.trigger CHECK 와 같음). 작업 취소가 무효화하는 범위 */
     private static final List<String> ALL_TRIGGERS = List.of("AGENT", "REVALIDATION", "DELTA");
 
