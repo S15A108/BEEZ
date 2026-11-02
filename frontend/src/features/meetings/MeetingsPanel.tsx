@@ -106,10 +106,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     meetingsApi.analyze(projectId, selectedId!, { through_entry_id: throughId })
   return (
     <section className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요. 기록은 원문
-        그대로 남아요.
-      </p>
       {action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
@@ -282,7 +278,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 : meeting.origin === 'BEE_CONFLICT'
                                   ? ' · 비비가 열었어요'
                                   : ''}
-                              {' · '}기록은 원문 그대로 남아요
                             </p>
                             <MeetingSteps
                               current={

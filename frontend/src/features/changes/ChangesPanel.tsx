@@ -323,12 +323,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-          팀원이 올린 문서 수정 제안을 모아 보고 검토해요. 팀장이 승인하면 새
-          기준을 발행해요. 제안은 공용 문서함에서 문서를 열고
-          &apos;고치기&apos;로 올려요.
-        </p>
+      {/* 설명 문구는 캔버스 PNL-04-v2-changes(v461 이후)처럼 두지 않는다. */}
+      <div className="flex justify-end">
         <Button variant="outline" onClick={() => openPane('documents')}>
           <FolderOpen />
           공용 문서함에서 제안하기

@@ -283,10 +283,6 @@ export function DocumentsPanel({
                     팀장 승인 {approvedCount} / 4
                   </span>
                 </div>
-                <span className="text-sm text-muted-foreground">
-                  문서마다 비비 검토와 팀장 승인을 거쳐요. 4종이 모두 승인돼야
-                  프로젝트를 시작할 수 있어요.
-                </span>
               </div>
               <ul className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                 {slots.map(({ kind, document, copy, approved }) => {
@@ -451,9 +447,6 @@ export function DocumentsPanel({
               </h3>
               <span className="text-sm text-muted-foreground">
                 {current.length}개
-              </span>
-              <span className="basis-full text-sm text-muted-foreground">
-                팀장이 승인해 지금 기준으로 쓰는 문서예요.
               </span>
             </div>
             <AsyncState query={documents}>
