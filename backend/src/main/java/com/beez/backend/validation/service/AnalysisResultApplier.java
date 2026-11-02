@@ -4,11 +4,13 @@ import com.beez.backend.task.entity.TaskPlanDesignRef;
 import com.beez.backend.task.entity.TaskPlanRevision;
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
+import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.repository.ValidationRow;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -51,16 +53,19 @@ public class AnalysisResultApplier {
     private final ValidationRules rules;
     private final TaskPlanRevisionRepository revisions;
     private final TaskPlanDesignRefRepository designRefs;
+    private final DeltaCompletion deltaCompletion;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
-                                 TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs) {
+                                 TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
+                                 DeltaCompletion deltaCompletion) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
         this.rules = rules;
         this.revisions = revisions;
         this.designRefs = designRefs;
+        this.deltaCompletion = deltaCompletion;
     }
 
     /**
@@ -177,6 +182,10 @@ public class AnalysisResultApplier {
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
         validations.finishJob(lease.jobId(), "DONE");
+        if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
+            // S4: delta 완료 보고의 DELTA 검증이 PASS → 서버가 작업을 COMPLETED 로 (같은 트랜잭션, 프로젝트 행을 쥔 채)
+            deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
+        }
     }
 
     /**
@@ -418,7 +427,9 @@ public class AnalysisResultApplier {
         TaskPlanRevision plan = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId()).orElseThrow();
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(v.planRevisionId());
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId());
-        return rules.evaluate(v.projectId(), plan, refs, relatedOpen);
+        // 접수 때 기준이 아니라 "지금" 기준으로 대조한다 — 그 사이 설계가 발행됐으면 참조 버전이 낡은 것으로 잡힌다
+        Long currentBaseline = designLookup.requireCurrentBaseline(v.projectId());
+        return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen, "DELTA".equals(v.trigger()));
     }
 
     /**

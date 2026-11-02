@@ -354,6 +354,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat((List<?>) req.get("approved_items")).hasSize(1);
         assertThat(((Map<?, ?>) ((Map<?, ?>) req.get("plan_revision")).get("plan")).get("unlinked")).isNotNull();
         assertThat(req.get("evidence")).isEqualTo(List.of());
+        assertThat(req.containsKey("completion_delta")).isFalse();     // 완료 delta 는 DELTA 검증 요청에만 싣는다 (AI 계약은 모르는 칸을 거부한다)
 
         JsonNode v = body(api.get("/api/projects/" + projectId + "/validations/" + id, member), 200);
         assertThat(v.get("status").asText()).isEqualTo("PASS");

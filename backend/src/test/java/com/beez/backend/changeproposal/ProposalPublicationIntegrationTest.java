@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
@@ -37,7 +38,8 @@ import org.springframework.test.util.AopTestUtils;
 @TestPropertySource(properties = "beez.document.embedding-profile=publication-test")
 class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @TestConfiguration static class Ports {
-        @Bean RecordingImpact recordingImpact(JdbcTemplate jdbc) { return new RecordingImpact(jdbc); }
+        // 실제 어댑터(PublicationImpactAdapter, -163)가 빈으로 있으므로 이 시험의 기록용 구현을 우선시킨다 — 여기서는 포트 호출 계약만 본다
+        @Bean @Primary RecordingImpact recordingImpact(JdbcTemplate jdbc) { return new RecordingImpact(jdbc); }
         @Bean RecordingIntake recordingIntake(com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository repository) {
             return new RecordingIntake(repository);
         }
@@ -300,7 +302,10 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
         assertThat(response.body()).contains("\"proposal\"","\"baseline\"","PUBLISHED");
         error(() -> preview(p),"invalid_transition");
-        assertThat(context.getBeansOfType(ValidationImpactPort.class)).hasSize(1);
+        // 기본 no-op 구현은 실제 어댑터(-163)에 밀려 빠지고, 이 시험에서는 기록용 구현이 우선한다
+        assertThat(context.getBeansOfType(ValidationImpactPort.class).values())
+                .noneMatch(port -> port instanceof PublicationPortConfiguration.UnconnectedValidationImpact);
+        assertThat(context.getBean(ValidationImpactPort.class)).isInstanceOf(RecordingImpact.class);
         assertThat(context.getBeansOfType(PostPublishAnalysisIntake.class)).hasSize(1);
     }
 

@@ -17,6 +17,8 @@ import com.beez.backend.task.entity.WaitingReason;
 import com.beez.backend.task.event.TaskStateChangedEvent;
 import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.repository.TaskRepository;
+import com.beez.backend.validation.dto.AcceptResult;
+import com.beez.backend.validation.service.ValidationAcceptService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -60,6 +63,7 @@ public class TaskStateService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final ValidationStatusLookup validations;
+    private final ValidationAcceptService validationAccepts;
     private final Clock clock;
 
     /** 보고가 끊겼다고 보는 시간. 값은 미결(04-task-lifecycle.md §6) — 기본 30분, 설정 beez.task.stalled-after 로 바꾼다 */
@@ -68,7 +72,7 @@ public class TaskStateService {
     public TaskStateService(TaskRepository tasks, TaskCompletionReportRepository reports, ProjectAccessChecker access,
                             ProjectDesignLookup designLookup, TaskTransitionPolicy policy, StartGate startGate,
                             TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc,
-                            ValidationStatusLookup validations,
+                            ValidationStatusLookup validations, ValidationAcceptService validationAccepts,
                             @Value("${beez.task.stalled-after:PT30M}") Duration stalledAfter) {
         this.tasks = tasks;
         this.reports = reports;
@@ -80,6 +84,7 @@ public class TaskStateService {
         this.events = events;
         this.jdbc = jdbc;
         this.validations = validations;
+        this.validationAccepts = validationAccepts;
         this.clock = Clock.systemUTC();
         this.stalledAfter = stalledAfter;
     }
@@ -108,9 +113,18 @@ public class TaskStateService {
                 && validationId.equals(task.getStartedValidationId())) {
             return query.toDetail(task);
         }
-        //    delta 있는 COMPLETED 재전송: 이미 WAITING(REVALIDATION) 이고 현재 계획의 완료 보고가 있으면 같은 결과(202)를 돌려준다
-        if (in.event() == TaskEvent.COMPLETED && isAwaitingDeltaValidation(task)) {
-            return query.toDetail(task);
+        //    delta 있는 COMPLETED 재전송: 지금 기다리는 것이 "그 완료 보고" 이고 요청 내용이 같을 때만 같은 결과(202).
+        //    다른 내용이면 409, 기다리는 보고가 없으면(인계 등으로 WAITING 이 된 경우) 아래 전이 표에서 400 (WAITING + COMPLETED = ✗)
+        if (in.event() == TaskEvent.COMPLETED) {
+            Optional<TaskCompletionReport> pending = pendingDeltaReport(task);
+            if (pending.isPresent()) {
+                if (sameReport(pending.get(), in, planRevisionId)) {
+                    return query.toDetail(task);
+                }
+                throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
+                        "이미 다른 내용의 완료 보고(delta 검증 " + pending.get().getDeltaValidationId() + ")를 기다리는 중입니다. "
+                                + "바꾸려면 RESUME 한 뒤 다시 보고하세요");
+            }
         }
         TaskTransitionPolicy.Verdict verdict = policy.check(task.getStatus(), in.event());
         if (verdict == TaskTransitionPolicy.Verdict.IDEMPOTENT) {
@@ -151,7 +165,12 @@ public class TaskStateService {
         Instant now = Instant.now(clock);
         switch (in.event()) {
             case START -> task.start(validationId, now);
-            case RESUME -> task.resume(validationId);
+            case RESUME -> {
+                // delta 완료 보고를 거두고 다시 일한다 (§2.3 출구 ①). 그 보고를 기다리던 DELTA 검증은 끝났든 돌고 있든 쓸 수 없게 한다 —
+                // 두면 뒤늦게 도착한 옛 DELTA 의 PASS 가 (인계 등으로 다시 WAITING(REVALIDATION) 이 된) 작업을 완료시킬 수 있다
+                validations.invalidateDeltaOnResume(taskId);
+                task.resume(validationId);
+            }
             case WAIT -> task.holdFor(in.waitingReason());
             case COMPLETED -> complete(task, in, caller, now);
             case CANCEL -> cancel(task, now);
@@ -233,31 +252,39 @@ public class TaskStateService {
         return lastReport.toInstant().isBefore(threshold);
     }
 
-    /** delta 있는 완료 보고를 이미 받아 DELTA 검증을 기다리는 중인가 (S3 이후 상태) */
-    private boolean isAwaitingDeltaValidation(Task task) {
+    /**
+     * 지금의 WAITING(REVALIDATION) 이 기다리는 delta 완료 보고 (S3 이후 상태). 다음이 모두 맞을 때만:
+     * 작업이 WAITING(REVALIDATION) · 현재 계획에 delta 완료 보고가 있음 · 현재 계획의 가장 최근 DELTA 검증이 STALE 이 아님
+     * (RESUME 하면 DELTA 가 STALE(TASK_RESUMED) 이 되므로, 그 뒤 인계로 다시 WAITING(REVALIDATION) 이 된 작업은 옛 보고를 기다리는 것이 아니다).
+     * 발행으로 DELTA 가 바뀌어 재접수된 경우는 가장 최근 DELTA 가 살아 있어 같은 보고를 계속 기다리는 것으로 본다
+     */
+    private Optional<TaskCompletionReport> pendingDeltaReport(Task task) {
         if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
-            return false;
+            return Optional.empty();
         }
-        Integer count = jdbc.sql("""
-                        select count(*)
-                          from task_completion_report
-                         where task_id = :taskId
-                           and plan_revision_id = :revisionId
-                           and has_delta = true
-                        """)
-                .param("taskId", task.getId())
-                .param("revisionId", task.getCurrentPlanRevisionId())
-                .query(Integer.class)
-                .single();
-        return count > 0;
+        if (validations.pendingDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId()) == null) {
+            return Optional.empty();
+        }
+        return reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(task.getId(), task.getCurrentPlanRevisionId());
     }
 
-    private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
+    /** 같은 완료 보고의 재전송인가 — 계획 리비전·delta·요약·완료 기준 확인이 모두 같아야 한다 */
+    private static boolean sameReport(TaskCompletionReport report, TaskStateInput in, Long planRevisionId) {
+        if (!Objects.equals(report.getPlanRevisionId(), planRevisionId)) {
+            return false;
+        }
         List<Map<String, Object>> delta = in.delta();
         if (delta == null) {
             delta = new ArrayList<>();
         }
-        // 완료 기준 확인은 형식 검사를 거친 CompletionCheck 로 받고, 저장(JSONB)은 {criterion, met} 로 한다
+        if (!Objects.equals(report.getDelta(), delta) || !Objects.equals(report.getSummary(), in.summary())) {
+            return false;
+        }
+        return Objects.equals(report.getCompletionChecks(), checksOf(in));
+    }
+
+    /** 완료 기준 확인을 저장 모양({criterion, met})으로 */
+    private static List<Map<String, Object>> checksOf(TaskStateInput in) {
         List<Map<String, Object>> checks = new ArrayList<>();
         if (in.completionChecks() != null) {
             for (CompletionCheck c : in.completionChecks()) {
@@ -267,16 +294,31 @@ public class TaskStateService {
                 checks.add(row);
             }
         }
-        reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
-                checks, caller.agentTokenId()));
-        if (delta.isEmpty()) {
-            task.complete(now);
-        } else {
-            // 계획과 다른 점이 있다 → 재검증 대기.
-            // -159 에서 바꿀 순서: DELTA 검증을 먼저 만들고 → 그 번호를 넣어 완료 보고를 저장한다.
-            // 완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다.
-            task.holdForRevalidation();
+        return checks;
+    }
+
+    private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
+        List<Map<String, Object>> delta = in.delta();
+        if (delta == null) {
+            delta = new ArrayList<>();
         }
+        // 완료 기준 확인은 형식 검사를 거친 CompletionCheck 로 받고, 저장(JSONB)은 {criterion, met} 로 한다
+        List<Map<String, Object>> checks = checksOf(in);
+        if (delta.isEmpty()) {
+            reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
+                    checks, caller.agentTokenId()));
+            task.complete(now);
+            return;
+        }
+        // 계획과 다른 점이 있다 → DELTA 검증을 먼저 접수하고(S3) 그 번호를 넣어 완료 보고를 저장한다
+        // (완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다). 같은 트랜잭션·같은 프로젝트 잠금 안이다
+        // DELTA 검증은 delta 내용 자체를 의미 분석(완료 delta 검사)에 넣으므로 규칙만으로 PASS 가 나지 않는다 — 여기서 바로 완료되는 일은 없다.
+        // 규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 WAITING(REVALIDATION) 에서 §2.3 출구로 나간다
+        AcceptResult accepted = validationAccepts.acceptBySystem(task.getProjectId(), task, "DELTA", delta);
+        long deltaValidationId = Long.parseLong(accepted.validation().id());
+        reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
+                checks, caller.agentTokenId(), deltaValidationId));
+        task.holdForRevalidation();
     }
 
     /**

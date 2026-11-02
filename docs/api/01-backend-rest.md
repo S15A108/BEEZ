@@ -8059,7 +8059,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 관련 요구사항: APR-01·03~05  
 담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
-상태: 구현됨(S15P31A108-199·200, 실제 163/197 연결·승인 게이트·알림은 TODO)
+상태: 구현됨(S15P31A108-199·200, 검증 영향 163 연결됨, 197 연결·승인 게이트·알림은 TODO)
 
 #### 인증
 
@@ -8213,7 +8213,7 @@ HTTP `200`.
 - UPDATE의 source_document_version_id·source_locator는 기존 근거 원문을 보존한다. 같은 제안에서 문서가 바뀌어도 위치가 새 문서에 유효하다는 보장이 없어 자동 치환하지 않는다. 출처 교체는 명시적 입력·검증 계약을 추가해야 한다.
 - 문서별 승인 API는 기준 발행 이후 신규 결정을 change_proposal_required로 거부한다. 이미 완료한 결정의 같은 입력 재요청만 기존 결과를 반환하므로 변경 제안의 문서 승인을 우회하지 않는다.
 - 최종 문서·항목 참조를 계산한 뒤 새 기준에 한 번씩 INSERT한다. 이전 기준 참조는 변경하지 않는다. UPDATE 항목 번호는 전체 버전 max+1, CREATE는 1이며 RETIRE는 retired_at을 기록하고 새 기준에서 제외한다. 과거 기준의 참조와 본문은 보존한다.
-- 163 연결 전에는 ValidationImpactPort 기본 구현이 no-op + WARN이므로 승인해도 검증 STALE·작업 WAITING은 반영되지 않는다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
+- (BE 구현, -163) ValidationImpactPort 의 실제 구현은 `PublicationImpactAdapter` 다. 발행 트랜잭션 안에서 프로젝트 행을 먼저 잠그고(상태 보고·계획 변경·검증 반영과 같은 순서), 바뀐 항목(수정·폐기)의 변경 전 버전 **또는 그보다 옛 버전**을 validation_design_ref 에 가진 검증을 끝난 것(PASS·NEEDS_*)·도는 것(NOT_RUN·RUNNING) 모두 STALE(`DESIGN_PUBLISHED`)로 바꾸고 대기 job 은 취소한다(작업 상태·현재 계획으로 거르지 않음). 그 버전을 현재 계획이 참조하는 IN_PROGRESS 작업만 WAITING(REVALIDATION). 무효화된 검증이 delta 완료 보고의 DELTA 였고 작업이 이 발행 전부터 WAITING(REVALIDATION) 이었으면 새 기준으로 새 DELTA 검증을 서버가 접수한다(계획이 옛 버전을 참조하므로 보통 규칙으로 바로 NEEDS_INPUT). 문서만 바뀐 발행(바뀐 항목 없음)은 아무것도 하지 않는다. 미리보기는 같은 계산을 쓰기·잠금 없이 한다. 담당자 알림(REVALIDATION_REQUIRED)은 알림 모듈(-181) 연결 뒤 같은 트랜잭션에서 요청한다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
 - 영향 분석 결과에 따른 승인 게이트는 메서드 하나의 TODO로 현재 항상 통과한다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO이며 이 PR의 저장 성공을 알림·활동 저장 완료로 보지 않는다.
 - (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
@@ -8719,7 +8719,7 @@ HTTP `200`.
 - PROPOSED·IN_REVIEW만 미리 볼 수 있다. 제안 기준이 현재와 다르면 409 baseline_conflict이며 requires_refresh 응답 필드를 별도로 추가하지 않는다. 색인과 참조 검증도 A09와 공유한다.
 - baseline_items는 변경 후 최종 항목 목록이다. CREATE는 design_item_id:null, operation:CREATE, proposal_item_index:원본 items 배열의 index, version_no:1이다. UPDATE는 실제 항목 ID와 전체 max+1 번호, UNCHANGED는 기존 번호와 proposal_item_index:null을 반환한다. RETIRE는 제외한다. ID를 미리 발급하거나 예약하지 않는다.
 - unchanged는 새 기준에 그대로 참조하는 항목·문서 수다. open_review_requests는 현재 리비전 REVIEW_REQUEST 중 지정 대상 한 명이라도 요청 이후 같은 리비전에 의견을 남기지 않은 요청 건수다. change_comment_target 다중 대상을 사용하고 대상 수가 아닌 요청 수로 세며, 이후 순서는 의견 ID 기준이다.
-- 197 연결 전 ai_candidates=0은 호환용 임시값이며 미평가를 뜻한다. 163 연결 전 validations_to_stale·tasks_to_wait는 빈 배열인 기본 구현이며 실제 영향 0건을 확인한 결과가 아니다. PR에서 이 미연결 범위를 반드시 표시한다.
+- 197 연결 전 ai_candidates=0은 호환용 임시값이며 미평가를 뜻한다. validations_to_stale·tasks_to_wait 는 163 연결로 실제 계산값이다(위 발행 처리 규칙과 같은 기준). PR에서 이 미연결 범위를 반드시 표시한다.
 - preview 포트에는 새 기준·버전 ID를 넘기지 않는다. 이전 baseline, 제안 ID·revision/hash, UPDATE·RETIRE의 이전 항목 버전으로 대상을 계산하고 apply 때만 실제 새 ID를 넘긴다.
 - 승인 확인 화면에서만 쓴다. 그사이 기준이나 제안이 바뀌면 CHG-A09가 기존 규칙대로 거절하고 화면은 다시 확인하라고 안내한다.
 
@@ -10517,6 +10517,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - WAIT는 IN_PROGRESS에서만 가능하며 사유 필수다. REVALIDATION은 시스템 전용이라 지정하면 400 `invalid_transition`이다.
 - 사람 세션의 LEADER는 보고가 끊긴 작업을 CANCEL할 수 있다(AC-14). 그 밖의 전이는 담당자만 한다. CANCEL은 큐 취소·점유 해제·늦은 결과 차단을 수행한다.
 - COMPLETED는 불변 완료 보고를 저장한다. delta가 있으면 WAITING(REVALIDATION)으로 두고 trigger=DELTA 검증을 접수하며 응답에 delta_validation_id를 포함한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (BE 구현, -163) delta 가 있으면 같은 트랜잭션에서 DELTA 검증을 **먼저** 접수하고(`ValidationAcceptService.acceptBySystem`, 담당자·잠금 번호 확인 없음) 그 번호를 완료 보고에 넣어 저장한 뒤 WAITING(REVALIDATION)·202. DELTA 검증은 완료 보고의 `delta` 를 분석 입력(AI-A02 `completion_delta`, 입력 스냅샷 해시에도 포함 — 검증 종류 `trigger` 와 함께)에 넣고 검사 목록에 완료 delta 검사(`completion-delta`, PLAN_COMPLETENESS)를 항상 넣으므로 규칙만으로 PASS 하지 않는다. AI(-184)가 이 칸을 받기 전에는 DELTA 요청이 AI 입력 오류로 ERROR 가 된다(조용히 통과하지 않음; 03-ai-internal AI-A02 Request 참조) — READS 만 참조하는 계획이라도 의미 분석으로 가고, 완료 보고 자리에서 바로 COMPLETED 되는 경우는 없다(규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 대기). 워커가 DELTA 를 PASS 로 끝내면 같은 트랜잭션에서 작업을 COMPLETED 로 바꾼다(`DeltaCompletion`, S4) — 조건은 작업이 아직 WAITING(REVALIDATION) 이고 그 검증이 현재 계획의 가장 최근 DELTA 일 때. 가짜 분석기를 끈 서버에서는 가짜 분석기가 낸 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙). NEEDS_INPUT·NEEDS_REVIEW·ERROR 면 작업은 그대로다(04-task-lifecycle.md §2.3 출구). RESUME 은 기다리던 DELTA 검증을 ERROR 로 끝난 것까지 STALE(`TASK_RESUMED`)로 바꾸고 대기 job 을 취소한다(그 완료 대기가 끝났다는 뜻. 옛 DELTA 의 늦은 PASS 가 나중에 작업을 완료시키지 못하게, 그리고 인계로 다시 WAITING 이 된 작업이 옛 DELTA 를 기다리는 것으로 보이지 않게. 오류 이력은 실행·발견 항목에 남는다). delta 있는 COMPLETED 의 재전송은 "지금 기다리는 것이 그 보고"(WAITING(REVALIDATION) + 현재 계획의 delta 완료 보고 + 가장 최근 DELTA 가 STALE 아님)이고 plan_revision_id·delta·summary·completion_checks 가 같을 때만 같은 결과(202)이고, 내용이 다르면 409 `revision_conflict`(바꾸려면 RESUME 뒤 다시 보고), 기다리는 보고가 없으면(RESUME 뒤 인계 등으로 WAITING 이 된 경우) WAITING + COMPLETED 전이 오류 400 이다. TaskDetail.delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호(현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때)이며, 재전송 판정과 같은 기준이다 — RESUME 뒤 인계로 WAITING 이 된 작업에는 없다.
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
