@@ -325,3 +325,41 @@ it('초대 목록 조회가 실패해도 오류와 방금 만든 초대 링크�
   expect(link.value).toContain('mock-invite-')
   expect(screen.getByText('later@beez.local · 방금 초대')).toBeInTheDocument()
 })
+
+// PR #72 5차 조사 FIFTH-AMP-01: 열린 작업이 있는 팀원은 넘겨받을 동료를 골라야 나갈 수 있다(서버 409 active_tasks_exist).
+it('열린 작업이 있는 팀원은 넘겨받을 동료를 골라 프로젝트를 나간다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  const leave = vi.spyOn(membersApi, 'leave')
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/projects/101']}>
+        <Routes>
+          <Route
+            path="/projects/:id"
+            element={
+              <TeamPanel projectId="101" isLeader={false} view="remove" />
+            }
+          />
+          <Route path="/" element={<p>나의 도시</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  const section = await screen.findByRole('region', { name: '넘길 작업' })
+  expect(within(section).getByText(/TASK-002/)).toBeInTheDocument()
+  await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(
+    await screen.findByText('작업을 넘겨받을 동료를 골라 주세요.'),
+  ).toBeInTheDocument()
+  expect(leave).not.toHaveBeenCalled()
+  await user.selectOptions(
+    screen.getByLabelText(/작업을 넘겨받을 동료/),
+    '이팀장',
+  )
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(await screen.findByText('나의 도시')).toBeInTheDocument()
+  expect(leave.mock.calls[0][1]?.reassign_to_member_id).toBeTruthy()
+})

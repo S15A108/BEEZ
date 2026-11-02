@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { Copy, Ellipsis, Pencil, TriangleAlert } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import type { Member } from '@/api/contracts/common'
+import type { Member, TaskDetail } from '@/api/contracts/common'
 import { membersApi, projectsApi, tasksApi } from '@/api/services'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
@@ -130,19 +130,26 @@ export function TeamPanel({
     typeof dialog === 'object' && dialog?.action === 'remove'
       ? dialog.member
       : undefined
+  // 팀원이 나갈 때도 맡은 열린 작업을 넘겨야 한다. 넘길 동료가 없으면 서버가 409 active_tasks_exist로 막는다
+  // (PR #72 5차 조사 FIFTH-AMP-01). 추방과 같은 작업 목록과 동료 선택을 쓴다.
+  const leaving = view === 'remove' && !isLeader
   const tasks = useQuery({
     queryKey: ['projects', projectId, 'team-tasks'],
     queryFn: () => tasksApi.list(projectId, { limit: 100 }),
-    enabled: !!removing,
+    enabled: !!removing || leaving,
   })
-  const handover =
+  const openTasksOf = (memberId?: string) =>
     tasks.data?.items.filter(
       (task) =>
-        task.assignee_member_id === removing?.id &&
+        task.assignee_member_id === memberId &&
         !['COMPLETED', 'CANCELLED'].includes(task.status),
     ) ?? []
+  const handover = openTasksOf(removing?.id)
   const otherMembers = people.filter(
     (member) => member.account_id !== session.data?.id,
+  )
+  const myHandover = openTasksOf(
+    people.find((member) => member.account_id === session.data?.id)?.id,
   )
   // 여러 명은 한 명씩 만든다. 이미 초대 중이거나 이미 팀원(409 already_member)이면 건너뛴다(Q05 3 ALREADY_INVITED).
   // API 없음: 초대 메일 발송·여러 명 한 번에(emails, PR #42). 지금은 만든 링크를 아래 '초대 중'에 보여 준다.
@@ -668,7 +675,33 @@ export function TeamPanel({
                         : '나가면 문서·작업을 볼 수 없고 이 프로젝트 토큰도 바로 막혀요. 다시 들어오려면 새 초대가 필요해요.'}
                     </p>
                     <ActionForm
+                      // 넘길 작업을 늦게 알게 되면 칸이 바뀌므로 폼을 새로 그린다.
+                      key={myHandover.length ? 'handover' : 'plain'}
+                      footer={
+                        !isLeader &&
+                        myHandover.length > 0 && (
+                          <HandoverTasks tasks={myHandover} />
+                        )
+                      }
                       fields={[
+                        ...(!isLeader && myHandover.length
+                          ? [
+                              {
+                                name: 'reassign_to_member_id',
+                                label: '작업을 넘겨받을 동료',
+                                type: 'select' as const,
+                                required: true,
+                                // 빈 칸을 먼저 두어 첫 동료에게 저절로 넘기지 않고 직접 고르게 한다.
+                                options: [
+                                  { value: '', label: '동료 고르기' },
+                                  ...otherMembers.map((member) => ({
+                                    value: member.id,
+                                    label: member.name,
+                                  })),
+                                ],
+                              },
+                            ]
+                          : []),
                         {
                           name: 'confirm_name',
                           label: '프로젝트 이름 입력',
@@ -690,7 +723,10 @@ export function TeamPanel({
                           ? projectsApi.remove(projectId, {
                               confirm_name: values.confirm_name,
                             })
-                          : membersApi.leave(projectId, {}))
+                          : membersApi.leave(projectId, {
+                              reassign_to_member_id:
+                                values.reassign_to_member_id || undefined,
+                            }))
                         leaveProject()
                       }}
                     />
@@ -834,29 +870,7 @@ export function TeamPanel({
           }}
         >
           {/* 넘길 작업을 목록으로 보여 주고 넘겨받을 동료를 고른다(L9). */}
-          <section aria-label="넘길 작업" className="grid gap-1.5 text-sm">
-            <p className="font-semibold">넘길 작업</p>
-            {handover.length ? (
-              <ul className="grid gap-1">
-                {handover.map((task) => (
-                  <li key={task.id} className="rounded-lg border px-3 py-2">
-                    {task.key} · {task.current_plan_revision.plan.title}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-muted-foreground">넘길 작업이 없어요.</p>
-            )}
-            {/* PR #50 d4db914: 진행 중·대기 작업은 넘기면 대기(재검증)가 된다. 보드에 없는 안내라 짧게 둔다. */}
-            {handover.some((task) =>
-              ['IN_PROGRESS', 'WAITING'].includes(task.status),
-            ) && (
-              <p className="text-xs text-muted-foreground">
-                진행 중인 작업은 넘기면 대기(재검증)로 바뀌고, 넘겨받은 동료가
-                다시 검증받아야 해요.
-              </p>
-            )}
-          </section>
+          <HandoverTasks tasks={handover} />
         </FormDialog>
       )}
     </section>
@@ -881,6 +895,35 @@ const inviteSchema = z.object({
 })
 
 // 팀 목록 위 초대 칸(노션처럼). 쉼표나 줄바꿈으로 여러 명을 넣고, 보내면 칸을 비운다.
+// 추방·나가기에서 넘길 열린 작업 목록
+function HandoverTasks({ tasks }: { tasks: TaskDetail[] }) {
+  return (
+    <section aria-label="넘길 작업" className="grid gap-1.5 text-sm">
+      <p className="font-semibold">넘길 작업</p>
+      {tasks.length ? (
+        <ul className="grid gap-1">
+          {tasks.map((task) => (
+            <li key={task.id} className="rounded-lg border px-3 py-2">
+              {task.key} · {task.current_plan_revision.plan.title}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-muted-foreground">넘길 작업이 없어요.</p>
+      )}
+      {/* PR #50 d4db914: 진행 중·대기 작업은 넘기면 대기(재검증)가 된다. 보드에 없는 안내라 짧게 둔다. */}
+      {tasks.some((task) =>
+        ['IN_PROGRESS', 'WAITING'].includes(task.status),
+      ) && (
+        <p className="text-xs text-muted-foreground">
+          진행 중인 작업은 넘기면 대기(재검증)로 바뀌고, 넘겨받은 동료가 다시
+          검증받아야 해요.
+        </p>
+      )}
+    </section>
+  )
+}
+
 // 방금 만든 초대 링크. 응답에서 한 번만 받으므로 복사하게 둔다.
 function FreshLink({
   url,
