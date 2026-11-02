@@ -1,0 +1,112 @@
+{
+  "project_id": "101",
+  "task_id": "501",
+  "baseline_id": "401",
+  "request": "로그인 화면을 구현해 주세요.",
+  "search_status": "COMPLETE",
+  "request_summary": null,
+  "design_items": [
+    {
+      "design_item_version_id": "311",
+      "design_item_id": "301",
+      "key": "API-001",
+      "kind": "API_CONTRACT",
+      "version_no": 1,
+      "reasons": [
+        "MATCHED"
+      ],
+      "source": {
+        "document_id": "201",
+        "document_version_id": "211",
+        "version_no": 1,
+        "location": "3. 계정 관리 / ACC-02"
+      }
+    },
+    {
+      "design_item_version_id": "312",
+      "design_item_id": "302",
+      "key": "POL-003",
+      "kind": "POLICY",
+      "version_no": 1,
+      "reasons": [
+        "DEPENDENCY"
+      ],
+      "source": {
+        "document_id": "202",
+        "document_version_id": "212",
+        "version_no": 1,
+        "location": "2. 보안 정책 / SEC-02"
+      }
+    },
+    {
+      "design_item_version_id": "313",
+      "design_item_id": "303",
+      "key": "REQ-010",
+      "kind": "REQUIREMENT",
+      "version_no": 1,
+      "reasons": [
+        "TASK_PLAN"
+      ],
+      "source": {
+        "document_id": "201",
+        "document_version_id": "211",
+        "version_no": 1,
+        "location": "3. 계정 관리 / ACC-01"
+      }
+    }
+  ],
+  "design_item_version_ids": [
+    "311",
+    "312",
+    "313"
+  ],
+  "constraints": [
+    "비밀번호를 5회 연속 틀리면 계정을 10분 동안 잠근다."
+  ],
+  "unresolved": [
+    "INSUFFICIENT_EVIDENCE: 비밀번호 재설정 흐름은 선택된 승인 설계·근거에 없어 확인이 필요합니다."
+  ],
+  "unresolved_details": [
+    {
+      "kind": "INSUFFICIENT_EVIDENCE",
+      "description": "비밀번호 재설정 흐름은 선택된 승인 설계·근거에 없어 확인이 필요합니다.",
+      "references": [
+        {
+          "kind": "design_item",
+          "id": "313"
+        }
+      ]
+    }
+  ],
+  "related_tasks": [
+    {
+      "task_id": "501",
+      "plan_revision_id": "512",
+      "status": "IN_PROGRESS"
+    }
+  ],
+  "sources": [
+    {
+      "document_id": "201",
+      "document_version_id": "211",
+      "version_no": 1,
+      "location": "3. 계정 관리 / ACC-02"
+    },
+    {
+      "document_id": "202",
+      "document_version_id": "212",
+      "version_no": 1,
+      "location": "2. 보안 정책 / SEC-02"
+    },
+    {
+      "document_id": "201",
+      "document_version_id": "211",
+      "version_no": 1,
+      "location": "3. 계정 관리 / ACC-01"
+    }
+  ],
+  "direct_match_truncation": {
+    "items": 0,
+    "evidence": 0
+  }
+}
