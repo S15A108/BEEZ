@@ -21,7 +21,13 @@ import {
   getApiErrorMessage,
   getApiErrorStatus,
 } from '@/api/error'
-import { authApi, documentsApi, projectsApi, validationsApi } from './index'
+import {
+  authApi,
+  changesApi,
+  documentsApi,
+  projectsApi,
+  validationsApi,
+} from './index'
 
 const initialAdapter = api.defaults.adapter
 const timestamp = '2026-10-23T03:00:00.123456Z'
@@ -317,6 +323,47 @@ describe('계약 경계', () => {
       unspecifiedCapabilities.every(
         (capability) => capability.availability === 'UNSPECIFIED',
       ),
+    ).toBe(true)
+  })
+})
+
+// PR #72 mock/live 전수 대조 DOC-LIVE-1: 백엔드가 Idempotency-Key를 필수로 받는 문서 분류(DOC-A07)와
+// 변경 제안 재제출(CHG-A04)도 키를 보낸다. 빠지면 서버가 400으로 거절한다.
+describe('멱등 키가 필수인 수정 요청', () => {
+  it('문서 분류와 변경 제안 재제출에 Idempotency-Key를 보낸다', async () => {
+    respond({})
+    await documentsApi
+      .update(
+        '101',
+        '201',
+        { domain: '공통' },
+        { idempotencyKey: 'classify-once' },
+      )
+      .catch(() => undefined)
+    expect(lastRequest?.method).toBe('patch')
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBe('classify-once')
+    await changesApi
+      .update(
+        '101',
+        '701',
+        {
+          base_baseline_id: '401',
+          title: '다시 제출',
+          reason: '반려 사유 반영',
+          items: [],
+          documents: [],
+          expected_revision: 2,
+          expected_snapshot_hash: `sha256:${'a'.repeat(64)}`,
+        },
+        { idempotencyKey: 'resubmit-once' },
+      )
+      .catch(() => undefined)
+    expect(lastRequest?.method).toBe('put')
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBe('resubmit-once')
+    expect(
+      endpointRegistry
+        .filter((endpoint) => ['DOC-A07', 'CHG-A04'].includes(endpoint.id))
+        .every((endpoint) => endpoint.idempotent),
     ).toBe(true)
   })
 })

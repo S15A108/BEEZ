@@ -53,6 +53,7 @@ export const changesApi = {
         method: 'PUT',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals/${encodeURIComponent(String(idSchema.parse(proposalId)))}`,
         data: schemas.updateInputSchema.parse(input),
+        idempotent: true,
       },
       options,
     ),

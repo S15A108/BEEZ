@@ -110,6 +110,7 @@ const service = {
         method: 'PATCH',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}`,
         data: schemas.updateInputSchema.parse(input),
+        idempotent: true,
       },
       options,
     ),

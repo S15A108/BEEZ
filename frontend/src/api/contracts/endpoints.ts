@@ -505,7 +505,7 @@ export const endpointRegistry = [
     multipart: false,
     binary: false,
     noContent: false,
-    idempotent: false,
+    idempotent: true,
   },
   {
     id: 'PLN-A01',
@@ -882,7 +882,7 @@ export const endpointRegistry = [
     multipart: false,
     binary: false,
     noContent: false,
-    idempotent: false,
+    idempotent: true,
   },
   {
     id: 'CHG-A05',
