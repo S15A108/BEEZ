@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
@@ -62,3 +63,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     },
   ),
 )
+
+// 워크스페이스를 떠나거나 다른 프로젝트로 바뀌면(Workspace는 프로젝트 id를 key로 다시 마운트된다) 열려 있던 창과 대상을
+// 비운다. 남아 있으면 다음 프로젝트에서 이전 프로젝트의 작업 id로 상세를 열어 404 창이 뜬다(PR #72 4차 조사 FOURTH-UI-01).
+export function useClearPaneOnLeave() {
+  const openPane = useWorkspaceStore((state) => state.openPane)
+  useEffect(() => () => openPane(null), [openPane])
+}

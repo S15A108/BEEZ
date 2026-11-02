@@ -27,7 +27,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { placementKey, useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  placementKey,
+  useClearPaneOnLeave,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
@@ -66,6 +70,7 @@ function Workspace({ projectId }: { projectId: string }) {
   const outdoor = useWorkspaceStore((state) => state.outdoor)
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const pendingMutations = useIsMutating()
+  useClearPaneOnLeave()
   // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
   const design = useWorkspaceStore(
     (state) =>
