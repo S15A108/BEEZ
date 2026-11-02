@@ -4,6 +4,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.Types;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -11,9 +14,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
 
@@ -32,10 +38,12 @@ public class ValidationRepository {
 
     private final JdbcClient jdbc;
     private final ObjectMapper json;
+    private final DataSource dataSource;
 
-    public ValidationRepository(JdbcClient jdbc, ObjectMapper json) {
+    public ValidationRepository(JdbcClient jdbc, ObjectMapper json, DataSource dataSource) {
         this.jdbc = jdbc;
         this.json = json;
+        this.dataSource = dataSource;
     }
 
     // ---- 검증 ----
@@ -290,11 +298,20 @@ public class ValidationRepository {
      * 판정은 버리지만 실제 호출 비용은 그 실행에 보존한다. 사용량이 이미 있으면 덮어쓰지 않는다
      */
     public int recordLateUsage(long runId, Object usage) {
+        return recordLateUsage(runId, usage, null);
+    }
+
+    /**
+     * @param model 늦은 응답 최상위의 model. 회수로 닫힌 실행은 분석기 버전이 비어 있으므로 여기서 채워야 항목에 model 이 없는 사용량도
+     *              공통 표에 들어간다 (리뷰 -168)
+     */
+    public int recordLateUsage(long runId, Object usage, String model) {
         int changed = jdbc.sql("""
-                        update validation_run set usage = cast(:u as jsonb), updated_at = now()
+                        update validation_run
+                           set usage = cast(:u as jsonb), analyzer_version = coalesce(analyzer_version, :m), updated_at = now()
                          where id = :id and status <> 'RUNNING' and usage is null
                         """)
-                .param("u", toJson(usage), Types.VARCHAR).param("id", runId).update();
+                .param("u", toJson(usage), Types.VARCHAR).param("m", model, Types.VARCHAR).param("id", runId).update();
         if (changed == 1) {
             recordUsage(runId, usage, 0);
         }
@@ -309,6 +326,11 @@ public class ValidationRepository {
      *   <li>tokens_known=false 면 토큰 칸을 비운다 (모르는 값을 0 으로 만들지 않음, 명세 Usage). 추정 비용은 통화와 함께 있을 때만</li>
      *   <li>failed 는 그 모델 호출이 실패했는지(AI 가 적어 준 값)이고 실행 결과와는 별개다 — 판정을 버린 실행의 성공한 호출은 failed=false</li>
      *   <li>request_key 가 없는 항목은 적지 않고 경고만 남긴다. model 이 없으면 실행의 분석기 버전(응답의 model)으로 채운다</li>
+     *   <li>값이 틀려도 실행 종결을 막지 않는다 — 여기서 예외가 나면 결과 반영 트랜잭션이 롤백되고 워커가 같은 사용량으로 실패 처리를
+     *       다시 시도해 같은 예외가 반복되므로, 검증이 리스 회수 전까지 RUNNING 으로 남는다. 그래서 DB 에 넣기 전에 모양·범위를 다 확인하고
+     *       틀린 칸은 비운다(추정 비용이 숫자가 아니거나 NUMERIC(12,6) 범위 밖, 토큰·지연이 정수 범위 밖, 음수 등). 그래도 넣다가 DB 오류가
+     *       나면(미처 못 거른 값) 그 항목만 되돌리고(세이브포인트) 경고를 남긴다 — Postgres 는 오류 난 트랜잭션을 그대로 못 쓰므로
+     *       잡기만 해서는 안 되고 되돌려야 한다</li>
      * </ul>
      *
      * @param fallbackLatencyMs 항목에 latency_ms 가 없을 때 쓸 값 (실행 전체 시간). 늦은 사용량은 0
@@ -338,12 +360,12 @@ public class ValidationRepository {
             Integer input = null;
             Integer output = null;
             if (known) {
-                input = integer(entry.get("input_tokens"));
-                output = integer(entry.get("output_tokens"));
+                input = nonNegativeInt(entry.get("input_tokens"));
+                output = nonNegativeInt(entry.get("output_tokens"));
             }
-            Integer latency = integer(entry.get("latency_ms"));
+            Integer latency = nonNegativeInt(entry.get("latency_ms"));
             if (latency == null) {
-                latency = (int) Math.min(Integer.MAX_VALUE, fallbackLatencyMs);
+                latency = (int) Math.min(Integer.MAX_VALUE, Math.max(0, fallbackLatencyMs));
             }
             String feature = "TASK_VALIDATION";
             if (entry.get("feature") instanceof String f && USAGE_FEATURES.contains(f)) {
@@ -356,10 +378,15 @@ public class ValidationRepository {
             BigDecimal cost = null;
             String currency = null;
             if (entry.get("estimated_cost_amount") != null && entry.get("currency") instanceof String cur && !cur.isBlank()) {
-                cost = new BigDecimal(String.valueOf(entry.get("estimated_cost_amount")));
-                currency = cur;
+                cost = costAmount(entry.get("estimated_cost_amount"));
+                if (cost == null) {
+                    log.warn("validation run {} usage {}: estimated_cost_amount not a valid amount, stored without cost: {}", runId, k,
+                            entry.get("estimated_cost_amount"));
+                } else {
+                    currency = cur;
+                }
             }
-            jdbc.sql("""
+            JdbcClient.StatementSpec insert = jdbc.sql("""
                             insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
                                                    tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
                                                    estimated_cost_amount, currency, failed, origin)
@@ -374,26 +401,81 @@ public class ValidationRepository {
                             """)
                     .param("feature", feature).param("key", k).param("provider", provider).param("model", model, Types.VARCHAR)
                     .param("known", known).param("input", input, Types.INTEGER).param("output", output, Types.INTEGER)
-                    .param("cache", integer(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
+                    .param("cache", nonNegativeInt(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
                     .param("cost", cost, Types.NUMERIC).param("currency", currency, Types.VARCHAR)
-                    .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("run", runId)
-                    .update();
+                    .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("run", runId);
+            insertIsolated(runId, k, insert);
         }
     }
 
-    /** 정수로 읽을 수 있으면 그 값, 아니면 null (문자열 숫자도 받는다) */
-    private static Integer integer(Object value) {
+    /**
+     * 사용량 한 줄을 세이브포인트 안에서 넣는다. 실패하면 그 줄만 되돌리고 경고 — 실행 종결·검증 상태 반영은 그대로 커밋된다.
+     * (DataSourceUtils.getConnection: 지금 트랜잭션이 쓰는 그 연결을 받는다. Savepoint: 트랜잭션 안의 되돌릴 지점)
+     */
+    private void insertIsolated(long runId, String requestKey, JdbcClient.StatementSpec insert) {
+        Connection connection = DataSourceUtils.getConnection(dataSource);
+        try {
+            Savepoint savepoint = connection.setSavepoint();
+            try {
+                insert.update();
+                connection.releaseSavepoint(savepoint);
+            } catch (DataAccessException e) {
+                connection.rollback(savepoint);
+                log.warn("validation run {} usage {} not recorded in llm_usage: {}", runId, requestKey, e.getMessage());
+            }
+        } catch (SQLException e) {
+            log.warn("validation run {} usage {} not recorded in llm_usage (savepoint failed): {}", runId, requestKey, e.getMessage());
+        } finally {
+            DataSourceUtils.releaseConnection(connection, dataSource);
+        }
+    }
+
+    /** 0 이상의 int 로 읽을 수 있으면 그 값, 아니면 null (문자열 숫자도 받는다. 소수·음수·int 범위 밖·글자는 null) */
+    static Integer nonNegativeInt(Object value) {
         if (value == null) {
             return null;
         }
+        long parsed;
         if (value instanceof Number n) {
-            return n.intValue();
+            if (n instanceof Double || n instanceof Float || n instanceof BigDecimal) {
+                BigDecimal d = new BigDecimal(n.toString());
+                if (d.stripTrailingZeros().scale() > 0) {
+                    return null;
+                }
+                parsed = d.longValue();
+            } else {
+                parsed = n.longValue();
+            }
+        } else {
+            try {
+                parsed = Long.parseLong(String.valueOf(value).trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
         }
+        if (parsed < 0 || parsed > Integer.MAX_VALUE) {
+            return null;
+        }
+        return (int) parsed;
+    }
+
+    /** 명세 Usage.estimated_cost_amount(문자열)를 llm_usage NUMERIC(12,6) 에 넣을 수 있는 값으로. 숫자가 아니거나 음수·범위 밖이면 null */
+    static BigDecimal costAmount(Object value) {
+        BigDecimal amount;
         try {
-            return Integer.parseInt(String.valueOf(value));
+            amount = new BigDecimal(String.valueOf(value).trim());
         } catch (NumberFormatException e) {
             return null;
         }
+        if (amount.signum() < 0) {
+            return null;
+        }
+        // 소수 6자리로 맞추고(반올림), 정수부가 6자리를 넘으면 칸에 안 들어간다
+        BigDecimal scaled = amount.setScale(6, java.math.RoundingMode.HALF_UP);
+        if (scaled.compareTo(new BigDecimal("999999.999999")) > 0) {
+            return null;
+        }
+        return scaled;
     }
 
     // ---- 작업 큐(job) ----

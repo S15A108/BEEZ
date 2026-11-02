@@ -380,6 +380,63 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void usageRecording_invalidCostOrNumbers_neverBlockFinishingTheRun() throws Exception {
+        // 성공 응답의 사용량에 틀린 비용(글자)·범위 밖 비용·음수 토큰이 섞여 와도 검증은 PASS 로 닫히고 사용량은 그 칸만 비운 채 남는다
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        when(analyzer.analyze(any())).thenAnswer(inv -> {
+            Map<String, Object> res = aiResponse(inv.getArgument(0), List.of(), List.of());
+            Map<String, Object> badCost = usageEntry("llm-validate-x-attempt-1-call-1", 1, 2);
+            badCost.put("estimated_cost_amount", "free");
+            badCost.put("currency", "USD");
+            Map<String, Object> hugeCost = usageEntry("llm-validate-x-attempt-1-call-2", 1, 2);
+            hugeCost.put("estimated_cost_amount", "12345678901234567890");
+            hugeCost.put("currency", "USD");
+            hugeCost.put("input_tokens", -5);
+            hugeCost.put("latency_ms", "fast");
+            Map<String, Object> goodCost = usageEntry("llm-validate-x-attempt-1-call-3", 1, 2);
+            goodCost.put("estimated_cost_amount", "0.0123456789");
+            goodCost.put("currency", "USD");
+            res.put("usage", List.of(badCost, hugeCost, goodCost));
+            return res;
+        });
+        worker.runOnce();
+        assertThat(column("validation", "status", id)).isEqualTo("PASS");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
+        assertThat(usageRow("llm-validate-x-attempt-1-call-1").get("estimated_cost_amount")).isNull();
+        assertThat(usageRow("llm-validate-x-attempt-1-call-1").get("currency")).isNull();
+        Map<String, Object> huge = usageRow("llm-validate-x-attempt-1-call-2");
+        assertThat(huge.get("estimated_cost_amount")).isNull();
+        assertThat(huge.get("input_tokens")).isNull();                       // 음수는 버린다 (tokens_known 은 true 그대로)
+        assertThat(huge.get("output_tokens")).isEqualTo(2);
+        assertThat(huge.get("latency_ms")).isNotNull();                      // 글자면 실행 처리 시간으로
+        assertThat(((java.math.BigDecimal) usageRow("llm-validate-x-attempt-1-call-3").get("estimated_cost_amount")))
+                .isEqualByComparingTo(new java.math.BigDecimal("0.012346"));
+        assertThat(worker.runOnce()).isFalse();
+    }
+
+    @Test
+    void usageRecording_invalidCostInErrorBody_stillClosesTheRunAsError() throws Exception {
+        // 504 오류 본문의 사용량에 틀린 비용이 와도 실패 처리가 반복되지 않고 ERROR 로 닫힌다
+        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        Map<String, Object> failedCall = usageEntry("llm-validate-x-attempt-1-call-1", 7, 0);
+        failedCall.put("failed", true);
+        failedCall.put("estimated_cost_amount", "n/a");
+        failedCall.put("currency", "USD");
+        when(analyzer.analyze(any())).thenThrow(new ValidationAnalyzer.AnalyzerException("ai_timeout", "시간 초과", null, List.of(failedCall)));
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", id)).isEqualTo("ERROR");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("TIMEOUT");
+        assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("FAILED");
+        Map<String, Object> row = usageRow("llm-validate-x-attempt-1-call-1");
+        assertThat(row).isNotNull();
+        assertThat(row.get("failed")).isEqualTo(true);
+        assertThat(row.get("estimated_cost_amount")).isNull();
+        assertThat(worker.runOnce()).isFalse();                              // 큐에 남지 않았다
+    }
+
+    @Test
     void usageRecording_unknownTokensStayNull_andUnknownModelFallsBackToAnalyzer() throws Exception {
         long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
         long id = body(accept(t, member), 202).get("id").asLong();
@@ -986,12 +1043,21 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         Map<String, Object> planCheck = new LinkedHashMap<>();
         planCheck.put("key", "plan-completeness");
         request.put("checks", List.of(planCheck));
-        applier.applySuccess(lease, request, aiResponse(request, List.of(), List.of()), 0);
+        // 회수된 실행은 분석기 버전이 비어 있다. 늦은 응답의 사용량 항목에 model 이 없어도 응답 최상위 model 로 채워 공통 표에 들어간다
+        Map<String, Object> late = aiResponse(request, List.of(), List.of());
+        Map<String, Object> noModel = new LinkedHashMap<>(usageEntry("llm-validate-x-attempt-1-call-1", 10, 5));
+        noModel.remove("model");
+        late.put("usage", List.of(noModel));
+        applier.applySuccess(lease, request, late, 0);
         assertThat(column("validation", "status", id)).isEqualTo("ERROR");
         assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isEqualTo(1);
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("ERROR");
         assertThat(column("validation_run", "usage", id(id, "validation_run"))).contains("llm-validate-x-attempt-1-call-1");
-        assertThat(((Number) usageRow("llm-validate-x-attempt-1-call-1").get("validation_run_id")).longValue()).isEqualTo(id(id, "validation_run"));
+        assertThat(column("validation_run", "analyzer_version", id(id, "validation_run"))).isEqualTo("test-model");
+        Map<String, Object> lateRow = usageRow("llm-validate-x-attempt-1-call-1");
+        assertThat(lateRow).isNotNull();
+        assertThat(lateRow.get("model")).isEqualTo("test-model");
+        assertThat(((Number) lateRow.get("validation_run_id")).longValue()).isEqualTo(id(id, "validation_run"));
         // 같은 늦은 응답이 또 와도 같은 호출은 한 번만 집계된다
         applier.applySuccess(lease, request, aiResponse(request, List.of(), List.of()), 0);
         assertThat(count("select count(*) from llm_usage where request_key = 'llm-validate-x-attempt-1-call-1'")).isEqualTo(1);

@@ -351,7 +351,7 @@ public class AnalysisResultApplier {
                 if ("RUNNING".equals(run.get().get("status"))) {
                     validations.finishRun(lateRunId, "DISCARDED", "늦은 결과", model, durationMs, usage);
                 } else if (usage != null) {
-                    validations.recordLateUsage(lateRunId, usage);
+                    validations.recordLateUsage(lateRunId, usage, model);
                 }
             }
             validations.cancelJobIfStillLeased(lease.jobId(), lease.leaseToken());
