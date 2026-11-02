@@ -39,7 +39,7 @@ public class ImpactRunRepository {
                   cast(:explicit AS jsonb),'NOT_STARTED',:key,:account,clock_timestamp()+:seconds*interval '1 second')
                 """).param("id", run).param("project", p.projectId()).param("proposal", p.id()).param("revision", p.revisionNo())
                 .param("hash", p.snapshotHash()).param("baseline", p.baselineId()).param("relations", input.relationSetRevision())
-                .param("fingerprint", hash(input)).param("explicit", canonical(explicit)).param("key", "impact-" + run)
+                .param("fingerprint", ImpactFingerprint.of(input)).param("explicit", canonical(explicit)).param("key", "impact-" + run)
                 .param("account", account).param("seconds", leaseSeconds).update();
         return run;
     }
@@ -62,9 +62,18 @@ public class ImpactRunRepository {
                 """).param("project", project).param("proposal", proposal).param("revision", revision).query().listOfRows().stream().findFirst();
     }
 
-    public void started(long id) {
-        jdbc.sql("UPDATE change_impact_run SET started_at=clock_timestamp(),usage_status='UNKNOWN' WHERE id=:id AND status='RUNNING' AND lease_until>clock_timestamp()")
-                .param("id", id).update();
+    /** Starts the execution lease only when the queued run is still live; false means it expired or was closed. */
+    public boolean started(long id, long leaseSeconds) {
+        return jdbc.sql("""
+                UPDATE change_impact_run SET started_at=clock_timestamp(),usage_status='UNKNOWN',
+                  lease_until=clock_timestamp()+:seconds*interval '1 second'
+                 WHERE id=:id AND status='RUNNING' AND lease_until>clock_timestamp()
+                """).param("id", id).param("seconds", leaseSeconds).update() == 1;
+    }
+
+    public Optional<Map<String, Object>> pending(long proposal, int revision) {
+        return jdbc.sql("SELECT id,requested_at FROM change_impact_run WHERE change_proposal_id=:proposal AND revision_no=:revision AND status='RUNNING'")
+                .param("proposal", proposal).param("revision", revision).query().listOfRows().stream().findFirst();
     }
 
     public boolean finish(long id, String status, String code, Object aiResult, Object generation, Object usage, String usageStatus) {

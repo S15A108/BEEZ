@@ -88,7 +88,7 @@ public class ImpactContextQuery {
     }
 
     /** A REPEATABLE READ snapshot prevents mixing data from multiple database revisions. */
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, noRollbackFor = ApiException.class)
     public Snapshot load(CallerContext caller, long projectId, long proposalId) {
         access.requireMember(caller, projectId);
         // Analyze the immutable submitted revision, never the mutable item projection.
@@ -174,8 +174,9 @@ public class ImpactContextQuery {
         Set<Long> changedIds = new LinkedHashSet<>();
         changes.stream().map(Change::itemId).filter(id -> id != null).forEach(changedIds::add);
         var relationSnapshot = dependencies.load(caller, projectId, proposal.baselineId(), changedIds);
-        if (documentChanges) {
-            // Document diffs are not yet in AI-A03; never infer no impact from a partial input.
+        if (documentChanges && changedIds.isEmpty()) {
+            // Document-only proposals have no design item to evaluate. Mixed proposals continue below so that
+            // rule impacts of the design items stay available; the AI call itself is skipped by the coordinator.
             return new Snapshot(proposal, changes, List.of(), List.of(), List.of(), RuleCandidateStatus.CONNECTED,
                     new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false),
                     relationSnapshot.relationSetRevision(), true);
@@ -254,7 +255,7 @@ public class ImpactContextQuery {
 
         // #197 computes explicit impacts from the same immutable snapshot.
         return new Snapshot(proposal, changes, approved, relevantDependencies, taskReferences,
-                RuleCandidateStatus.CONNECTED, searchCoverage, relationSnapshot.relationSetRevision(), false);
+                RuleCandidateStatus.CONNECTED, searchCoverage, relationSnapshot.relationSetRevision(), documentChanges);
     }
 
     /**
@@ -264,7 +265,8 @@ public class ImpactContextQuery {
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public void requireUnchanged(CallerContext caller, Snapshot previous) {
         Snapshot current = load(caller, previous.proposal().projectId(), previous.proposal().id());
-        if (!previous.equals(current)) {
+        // Compare only what decides impact; task churn must not discard a finished analysis.
+        if (!ImpactFingerprint.of(previous).equals(ImpactFingerprint.of(current))) {
             throw new ApiException(HttpStatus.CONFLICT, "analysis_input_changed", "분석 중 입력이 변경되어 재분석이 필요합니다");
         }
     }

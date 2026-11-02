@@ -44,7 +44,7 @@ public class ImpactRelationReader {
      * Read only reverse, one-edge CONFIRMED dependencies of changed items. A missing endpoint
      * on the current baseline is an inconsistent snapshot, never an empty/no-impact result.
      */
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, noRollbackFor = ApiException.class)
     public Result load(CallerContext caller, long projectId, long baselineId, Set<Long> changedItems) {
         access.requireMember(caller, projectId);
         long matching = jdbc.sql("""

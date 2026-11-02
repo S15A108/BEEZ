@@ -15,7 +15,10 @@ import org.springframework.transaction.support.*;
 @Service
 public class ImpactRunService {
     public record Result(List<?> explicit, List<?> candidates, String analysisStatus, Object generation,
-                         String errorCode, int revision, String snapshotHash, boolean isCurrent, String staleReason) {}
+                         String errorCode, int revision, String snapshotHash, boolean isCurrent, String staleReason,
+                         String runId, Reanalysis reanalysis) {}
+    /** A newer run in progress while the previous finished result stays visible. */
+    public record Reanalysis(String runId, String requestedAt) {}
     private final ProjectAccessChecker access;
     private final DesignProjectRepository projects;
     private final DesignCommandService commands;
@@ -52,8 +55,9 @@ public class ImpactRunService {
             var snapshot=contexts.load(caller,project,proposal);
             runs.expire(project,proposal);
             if (runs.running(proposal,snapshot.proposal().revisionNo())) throw conflict("analysis_running");
-            long id=runs.insert(snapshot,rules.calculate(snapshot),caller.accountId(),leaseSeconds);
-            Result result=result(runs.run(id),true,null);
+            // Until a worker starts it, the run may wait behind others; the lease is shortened to leaseSeconds at start.
+            long id=runs.insert(snapshot,rules.calculate(snapshot),caller.accountId(),leaseSeconds*ImpactRunExecutor.WAIT_ROUNDS);
+            Result result=result(runs.run(id),true,null,null);
             if (key!=null) commands.save(project,caller.accountId(),operation,key,input,result);
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override public void afterCommit() {
@@ -66,47 +70,58 @@ public class ImpactRunService {
     }
 
     public Result get(CallerContext caller, long project, long proposal) {
-        return tx.execute(ignored -> {
-            access.requireMember(caller,project);
-            lock(project);
+        // Reads and the conditional expire need no project lock. Holding that lock while a second
+        // connection is borrowed for the freshness read could exhaust the pool under polling.
+        var state=tx.execute(ignored -> {
             access.requireMember(caller,project);
             if (projects.findCurrentRole(project,caller.accountId()).isEmpty()) throw AccessErrors.notFound("impact_membership_changed");
             var current=runs.proposal(project,proposal);
             runs.expire(project,proposal);
             int revision=((Number)current.get("revision_no")).intValue();
             var latest=runs.latest(project,proposal,revision);
-            if (latest.isEmpty()) return new Result(List.of(),List.of(),"NOT_EVALUATED",null,"analysis_not_started",
-                    revision,current.get("snapshot_hash").toString(),true,null);
-            var run=latest.get();
-            String stale=null;
-            if (((Number)run.get("revision_no")).intValue()!=revision) stale="proposal_revision_changed";
-            else if ("STALE".equals(run.get("status"))) stale="analysis_input_changed";
-            else {
-                try {
-                    if (!run.get("input_fingerprint").equals(hash(loadCurrent(caller,project,proposal)))) stale="analysis_input_changed";
-                } catch (ApiException changed) {
-                    if (changed.getStatus().value()!=409) throw changed;
-                    stale=changed.getCode();
-                }
-            }
-            return result(run,stale==null,stale);
+            var pending=latest.isPresent() && "RUNNING".equals(latest.get().get("status")) ? Optional.<Map<String,Object>>empty() : runs.pending(proposal,revision);
+            return new Read(revision,current.get("snapshot_hash").toString(),latest,pending);
         });
+        if (state.latest().isEmpty()) return new Result(List.of(),List.of(),"NOT_EVALUATED",null,"analysis_not_started",
+                state.revision(),state.snapshotHash(),true,null,null,reanalysis(state));
+        var run=state.latest().get();
+        String stale=null;
+        if (((Number)run.get("revision_no")).intValue()!=state.revision()) stale="proposal_revision_changed";
+        else if ("STALE".equals(run.get("status"))) stale="analysis_input_changed";
+        else {
+            try {
+                // No transaction is held here; load opens its own single-connection snapshot.
+                if (!run.get("input_fingerprint").equals(ImpactFingerprint.of(contexts.load(caller,project,proposal)))) stale="analysis_input_changed";
+            } catch (ApiException changed) {
+                if (changed.getStatus().value()!=409) throw changed;
+                stale=changed.getCode();
+            }
+        }
+        return result(run,stale==null,stale,reanalysis(state));
+    }
+
+    private record Read(int revision,String snapshotHash,Optional<Map<String,Object>> latest,Optional<Map<String,Object>> pending) {}
+
+    private static Reanalysis reanalysis(Read state) {
+        return state.pending().map(row -> new Reanalysis(row.get("id").toString(),time(row.get("requested_at")))).orElse(null);
     }
 
     private void execute(CallerContext caller, long project, long proposal, long id) {
         try {
             boolean active=Boolean.TRUE.equals(tx.execute(ignored -> {
                 lock(project); runs.expire(project,proposal);
-                if (!"RUNNING".equals(runs.run(id).get("status"))) return false;
-                runs.started(id); return true;
+
+                return runs.started(id,leaseSeconds);
             }));
             if (!active) return;
             var outcome=coordinator.analyze(caller,project,proposal,"impact-"+id);
             tx.executeWithoutResult(ignored -> {
                 lock(project);
                 var run=runs.run(id);
-                boolean same=run.get("input_fingerprint").equals(hash(outcome.input()));
-                try { same &= run.get("input_fingerprint").equals(hash(loadCurrent(caller,project,proposal))); }
+                boolean same=run.get("input_fingerprint").equals(ImpactFingerprint.of(outcome.input()));
+                // Read on this connection while holding the lock: load does not mark the transaction rollback-only
+                // for stale-input errors, so no second connection is needed.
+                try { same &= run.get("input_fingerprint").equals(ImpactFingerprint.of(contexts.load(caller,project,proposal))); }
                 catch (ApiException changed) {
                     if (changed.getStatus().value()!=409 && changed.getStatus().value()!=404) throw changed;
                     same=false;
@@ -156,16 +171,6 @@ public class ImpactRunService {
                 "analysis_input_changed".equals(code) ? "STALE" : "FAILED",code,null,null,List.of(),usageStatus); });
     }
 
-    private ImpactContextQuery.Snapshot loadCurrent(CallerContext caller,long project,long proposal) {
-        // Isolate expected stale-input exceptions so they do not mark the result-write transaction rollback-only.
-        // The outer transaction retains the project lock while this consistent read runs.
-        var read=new TransactionTemplate(tx.getTransactionManager());
-        read.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        read.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
-        read.setReadOnly(true);
-        return read.execute(ignored -> contexts.load(caller,project,proposal));
-    }
-
     private void lock(long project) {
         if (!projects.lockActiveProject(project)) throw AccessErrors.notFound("impact_project_missing");
     }
@@ -191,13 +196,14 @@ public class ImpactRunService {
         return value;
     }
 
-    private static Result result(Map<String,Object> run,boolean current,String stale) {
+    private static Result result(Map<String,Object> run,boolean current,String stale,Reanalysis reanalysis) {
         Object raw=run.get("ai_result");
         Object ai=raw==null ? null : JSON.readValue(raw.toString(),Object.class);
         List<?> candidates=ai instanceof Map<?,?> map && map.get("candidates") instanceof List<?> list ? list : List.of();
         Object gen=run.get("generation");
         return new Result(JSON.readValue(run.get("explicit_result").toString(),List.class),candidates,run.get("status").toString(),
                 gen==null ? null : JSON.readValue(gen.toString(),Object.class),(String)run.get("error_code"),
-                ((Number)run.get("revision_no")).intValue(),run.get("snapshot_hash").toString(),current,stale);
+                ((Number)run.get("revision_no")).intValue(),run.get("snapshot_hash").toString(),current,stale,
+                run.get("id").toString(),reanalysis);
     }
 }

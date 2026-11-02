@@ -22,6 +22,9 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
     @Autowired DataSource dataSource;
     @Autowired ImpactRunService runs;
     @Autowired ProposalCommandService proposals;
+    @Autowired ImpactRunRepository runRepository;
+    @Autowired com.beez.backend.designitem.repository.DesignProjectRepository projects;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
     @MockitoBean AiClient ai;
     @MockitoBean ImpactRunExecutor executor;
     TaskApiSupport api;
@@ -80,7 +83,8 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
 
     @Test void changesDuringModelCallBecomeStaleAndExpiredWorkersCannotOverwrite() {
         when(ai.changeImpact(any())).thenAnswer(call -> {
-            api.jdbc.sql("UPDATE change_proposal SET lock_version=lock_version+1 WHERE id=:id").param("id",proposal).update();
+            // A new task referencing the changed item is a real impact input change.
+            assertThat(api.post("/api/projects/"+project+"/tasks",api.planJson("late",api.readsRef("API-01"),"[]"),member).statusCode()).isEqualTo(201);
             return envelope("SUFFICIENT");
         });
         runs.retry(caller,project,proposal,null); work();
@@ -93,6 +97,61 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
         work(); // old queued worker must not run or overwrite anything
         assertThat(runs.get(caller,project,proposal).errorCode()).isEqualTo("analysis_interrupted");
         work(); assertThat(runs.get(caller,project,proposal).analysisStatus()).isEqualTo("COMPLETED");
+    }
+
+    @Test void taskChurnKeepsResultCurrentButClosingTheTaskMakesItStale() {
+        assertThat(api.post("/api/projects/"+project+"/tasks",api.planJson("consumer",api.readsRef("API-01"),"[]"),member).statusCode()).isEqualTo(201);
+        runs.retry(caller,project,proposal,null); work();
+        assertThat(runs.get(caller,project,proposal).analysisStatus()).isEqualTo("COMPLETED");
+        // lock version, timestamps and proposal review progress are not impact inputs.
+        api.jdbc.sql("UPDATE task SET lock_version=lock_version+1,updated_at=clock_timestamp() WHERE project_id=:p").param("p",project).update();
+        api.jdbc.sql("UPDATE change_proposal SET lock_version=lock_version+1,updated_at=clock_timestamp() WHERE id=:id").param("id",proposal).update();
+        assertThat(runs.get(caller,project,proposal).isCurrent()).isTrue();
+        api.jdbc.sql("UPDATE task SET status='CANCELLED' WHERE project_id=:p").param("p",project).update();
+        var stale=runs.get(caller,project,proposal);
+        assertThat(stale.isCurrent()).isFalse(); assertThat(stale.staleReason()).isEqualTo("analysis_input_changed");
+    }
+
+    @Test void readingAndStoringResultsDoNotNeedASecondConnectionWhileTheProjectLockIsHeld() throws Exception {
+        runs.retry(caller,project,proposal,null);
+        var pool=Executors.newFixedThreadPool(6);
+        try {
+            // The test pool has 4 connections. Reads must not wait for, or take, the project lock.
+            new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(ignored -> {
+                assertThat(projects.lockActiveProject(project)).isTrue();
+                var reads=new ArrayList<Future<?>>();
+                for (int i=0;i<6;i++) reads.add(pool.submit(() -> runs.get(caller,project,proposal)));
+                for (var read:reads) {
+                    try { read.get(10,TimeUnit.SECONDS); }
+                    catch (Exception failed) { throw new AssertionError("read blocked behind the project lock",failed); }
+                }
+            });
+        } finally { pool.shutdownNow(); }
+        // The stored result path takes the lock and reads freshness on that same connection.
+        work();
+        assertThat(runs.get(caller,project,proposal).analysisStatus()).isEqualTo("COMPLETED");
+    }
+
+    @Test void aRetryIsVisibleWhileThePreviousResultStaysAndLeaseStartsWhenTheWorkerDoes() {
+        runs.retry(caller,project,proposal,null); work();
+        var first=runs.get(caller,project,proposal);
+        assertThat(first.analysisStatus()).isEqualTo("COMPLETED"); assertThat(first.reanalysis()).isNull();
+        var accepted=runs.retry(caller,project,proposal,null);
+        assertThat(accepted.runId()).isNotEqualTo(first.runId());
+        var during=runs.get(caller,project,proposal);
+        assertThat(during.analysisStatus()).isEqualTo("COMPLETED"); assertThat(during.runId()).isEqualTo(first.runId());
+        assertThat(during.reanalysis().runId()).isEqualTo(accepted.runId());
+        long id=Long.parseLong(accepted.runId());
+        // Queue wait is covered by a longer lease than the execution lease the worker sets when it starts.
+        var queued=api.jdbc.sql("SELECT lease_until FROM change_impact_run WHERE id=:id").param("id",id).query(java.sql.Timestamp.class).single();
+        assertThat(runRepository.started(id,60)).isTrue();
+        var started=api.jdbc.sql("SELECT lease_until FROM change_impact_run WHERE id=:id").param("id",id).query(java.sql.Timestamp.class).single();
+        assertThat(started).isBefore(queued);
+        api.jdbc.sql("UPDATE change_impact_run SET lease_until=clock_timestamp()-interval '1 second' WHERE id=:id").param("id",id).update();
+        assertThat(runRepository.started(id,60)).isFalse();
+        work();
+        var after=runs.get(caller,project,proposal);
+        assertThat(after.runId()).isEqualTo(accepted.runId()); assertThat(after.reanalysis()).isNull();
     }
 
     @Test void capacityFailureIsDurableAndMembershipOriginAndHumanChecksApply() {

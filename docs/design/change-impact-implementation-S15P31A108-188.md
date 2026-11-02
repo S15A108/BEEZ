@@ -10,7 +10,7 @@
 4. #197의 `ExplicitImpactCalculator`가 변경 항목 직접 참조와 변경 항목을 가리키는 확정 관계의 from 항목 참조 작업에서 규칙 후보를 계산한다. 키워드 전용 작업과 완료·취소 작업은 제외하고 미배정 담당자는 생략한다. `ImpactContextQuery`는 `CONNECTED`를 반환한다. 과거 #188의 별도 관계 저장 서비스와 전용 V8 초안은 복원하지 않는다.
 5. `ImpactAnalysisCoordinator`는 가능한 경우 AI-A03에 변경 정보·승인 설계·확정 관계·열린 작업을 전달하고 AI가 반환한 ID와 출처를 입력과 대조한다. `CONNECTED`이고 AI 근거 상태가 `SUFFICIENT`이면 `ANALYZED`, 그 외는 `INSUFFICIENT_EVIDENCE`다. #197은 이를 각각 `COMPLETED`·`INSUFFICIENT_EVIDENCE`로 저장하고 호출 전 미평가는 `NOT_EVALUATED`로 구분한다. `rule_candidates_not_connected` 오류는 더 이상 생성하지 않는다.
 6. #195의 불변 제출 리비전은 변경 항목의 `schema_version`과 변경 내용을 보존한다. #188은 실제 스냅샷의 값이 확인된 `CREATE`·`UPDATE`를 AI 요청에 전달한다. 과거 제안 등에서 버전이나 내용이 없으면 각각 `change_schema_version_unavailable` 또는 `change_content_unavailable`로 모델 호출 없이 미평가 처리한다. 문서 전용·혼합 변경은 `document_change_unavailable`로 미평가 처리한다. 승인 설계 후보와 관련 작업이 모두 없어 영향 대상을 특정할 수 없는 경우도 모델을 호출하지 않고 `analysis_candidates_unavailable`로 미평가 처리한다.
-7. AI 호출 후 `requireUnchanged`는 제안·기준 설계·작업·관계 스냅샷을 다시 읽어 변경을 확인한다. 이 검사는 결과 저장과 같은 트랜잭션이 아니며, #197의 원자적 저장·최신성 보장을 의미하지 않는다. 호출별 사용량은 수신된 범위에서만 반환하고 통신이 끊겨 수신하지 못하면 `UNKNOWN`이다.
+7. AI 호출 후 `requireUnchanged`는 제안·기준 설계·작업·관계 스냅샷을 다시 읽어 영향 입력의 변경(`ImpactFingerprint` 기준: lock_version·갱신 시각·검증 상태 같은 작업 변동은 제외)을 확인한다. 이 검사는 결과 저장과 같은 트랜잭션이 아니며, #197의 원자적 저장·최신성 보장을 의미하지 않는다. 호출별 사용량은 수신된 범위에서만 반환하고 통신이 끊겨 수신하지 못하면 `UNKNOWN`이다.
 8. AI의 `POST /v1/impact`는 공통 LLM 클라이언트를 사용한다. `evidence_status`, `validation_id` 등 AI-A03 확장 필드와 결과 저장 형식은 제안이며 #197 및 관련 담당자와 합의 전이다.
 
 ## 연결해야 할 작업

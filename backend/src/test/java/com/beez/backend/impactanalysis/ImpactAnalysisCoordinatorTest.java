@@ -121,6 +121,25 @@ class ImpactAnalysisCoordinatorTest {
     }
 
     @Test
+    void sufficientAiOverATruncatedSearchIsNotACompleteEvaluation() {
+        var base = snapshot();
+        var truncated = new ImpactContextQuery.Snapshot(base.proposal(), base.changes(), base.approvedItems(),
+                base.dependencies(), base.taskReferences(), base.ruleCandidateStatus(),
+                new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.SEARCHED, 3, false, false, true));
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(truncated);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "origin", "MODEL", "usage", List.of()));
+
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(outcome.errorCode()).isEqualTo("search_coverage_incomplete");
+    }
+
+    @Test
     void sufficientAiWithNoCandidatesCompletesWithConnectedRules() {
         var snapshot = snapshot();
         var query = mock(ImpactContextQuery.class);

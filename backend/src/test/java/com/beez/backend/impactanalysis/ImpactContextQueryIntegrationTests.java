@@ -261,6 +261,26 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void mixedProposalKeepsDesignRuleInputsEvenThoughDocumentsAreUnevaluated() {
+        long task = taskReferencing("API-01", "직접 참조");
+        long proposal = proposal("API-01");
+        var item = new ProposalDtos.Item("UPDATE", Long.toString(api.designItemId("API-01")),
+                Long.toString(api.currentVersionId("API-01")), null, null, java.util.Map.of("memberId", "long"));
+        var input = new ProposalDtos.Input(Long.toString(baseline), "mixed", "field rename", null, null,
+                List.of(item), List.of(new ProposalDtos.DocumentChange("10", "11", "after", null)), null, null, null);
+        var resolved = new ProposalDtos.ResolvedDocument("10", "11", "12", "after", "sha256:dummy");
+        insertRevision(proposal, new ProposalDtos.Snapshot(input, List.of(resolved), false), false);
+
+        var snapshot = query.load(CallerContext.human(member), projectId, proposal);
+
+        assertThat(snapshot.documentChanges()).isTrue();
+        assertThat(snapshot.changes()).hasSize(1);
+        assertThat(snapshot.taskReferences()).extracting(ImpactContextQuery.TaskReference::taskId).contains(task);
+        assertThat(new ExplicitImpactCalculator().calculate(snapshot))
+                .anyMatch(impact -> impact.get("task_id").equals(Long.toString(task)));
+    }
+
+    @Test
     void loadsProjectScopedDirectAndConfirmedIndirectEvidenceBeforeApproval() {
         long directTask = taskReferencing("API-01", "직접 참조");
         long indirectTask = taskReferencing("API-02", "간접 참조");
@@ -287,11 +307,22 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void changedTaskAfterAnalysisInvalidatesSnapshot() {
+    void taskChurnThatDoesNotChangeImpactKeepsSnapshotCurrent() {
         long task = taskReferencing("API-01", "직접 참조");
         long proposal = proposal("API-01");
         var snapshot = load(proposal);
-        api.jdbc.sql("update task set lock_version = lock_version + 1 where id = :id")
+        api.jdbc.sql("update task set lock_version = lock_version + 1, updated_at = clock_timestamp() where id = :id")
+                .param("id", task).update();
+
+        query.requireUnchanged(CallerContext.human(member), snapshot);
+    }
+
+    @Test
+    void closingATaskAfterAnalysisInvalidatesSnapshot() {
+        long task = taskReferencing("API-01", "직접 참조");
+        long proposal = proposal("API-01");
+        var snapshot = load(proposal);
+        api.jdbc.sql("update task set status = 'CANCELLED', lock_version = lock_version + 1 where id = :id")
                 .param("id", task).update();
 
         assertThatThrownBy(() -> query.requireUnchanged(CallerContext.human(member), snapshot))
