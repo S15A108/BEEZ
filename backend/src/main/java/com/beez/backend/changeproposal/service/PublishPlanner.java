@@ -35,7 +35,6 @@ public class PublishPlanner {
         int revision=((Number)current.get("revision_no")).intValue();
         Snapshot snapshot=JSON.readValue(current.get("snapshot").toString(),Snapshot.class);
         if (snapshot.legacy()) throw error("version_conflict", "리비전 원문을 확인할 수 없습니다. 제안을 다시 제출해 주세요.");
-        checkImpactGate(project, proposal, revision);
         var documents=repository.documents(project,previous);
         var proposed=repository.proposedDocuments(project,proposal,revision);
         if (proposed.size()!=snapshot.documents().size()) throw conflict("version_conflict");
@@ -85,8 +84,5 @@ public class PublishPlanner {
         return new Plan(previous,next,documents,proposed,existing,List.copyOf(changes),List.copyOf(preview),
                 new Counts(existing.size()-changed.size(),documents.size()-proposed.size()),
                 new ImpactRequest(null,previous,proposal,revision,current.get("snapshot_hash").toString(),List.copyOf(impacts),snapshot.input().reason()));
-    }
-    private void checkImpactGate(long project, long proposal, int revision) {
-        // TODO(승인 게이트): after #197, inspect the current revision's analysis result. Always passes in this PR.
     }
 }

@@ -37,13 +37,15 @@ public class ProposalPublicationService {
     private final ValidationImpactPort impacts;
     private final PostPublishAnalysisIntake intake;
     private final ProposalValidator validator;
+    private final ImpactApprovalGate gate;
     public ProposalPublicationService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository proposals,
             PublicationRepository repository, ProposalQueryService queries, PublishPlanner planner, BaselineRepository baselines,
             DesignItemRepository items, DesignCommandService commands, RelationStorageService relations,
-            ValidationImpactPort impacts, PostPublishAnalysisIntake intake, ProposalValidator validator) {
+            ValidationImpactPort impacts, PostPublishAnalysisIntake intake, ProposalValidator validator,
+            ImpactApprovalGate gate) {
         this.access=access; this.projects=projects; this.proposals=proposals; this.repository=repository; this.queries=queries;
         this.planner=planner; this.baselines=baselines; this.items=items; this.commands=commands; this.relations=relations;
-        this.impacts=impacts; this.intake=intake; this.validator=validator;
+        this.impacts=impacts; this.intake=intake; this.validator=validator; this.gate=gate;
     }
 
     @Transactional
@@ -71,6 +73,9 @@ public class ProposalPublicationService {
             return result;
         }
         var plan=planner.plan(project,proposal,current);
+        // Last gate before any write. Same project lock as the analysis save, so the verdict cannot change before publish.
+        String overrideReason=gate.enforce(gate.evaluate(caller,project,proposal),
+                input.impactOverrideReason()==null ? null : input.impactOverrideReason().strip());
         long author=id(current,"submitted_by");
         String origin=current.get("submitted_token_id")==null ? "HUMAN" : "AI_PROPOSED";
         long baseline=repository.insertBaseline(project,plan.nextVersion(),proposal,caller.accountId());
@@ -118,7 +123,7 @@ public class ProposalPublicationService {
         var impact=plan.impact();
         impacts.applyPublication(caller,project,new ImpactRequest(baseline,plan.previousBaselineId(),proposal,impact.revision(),
                 impact.snapshotHash(),List.copyOf(impactItems),impact.reason()));
-        repository.publish(project,proposal,impact.revision(),plan.previousBaselineId(),baseline,caller.accountId());
+        repository.publish(project,proposal,impact.revision(),plan.previousBaselineId(),baseline,caller.accountId(),overrideReason);
         intake.accept(project,baseline,proposal);
         var result=new Publication(queries.current(project,proposal),repository.response(project,baseline));
         commands.save(project,caller.accountId(),operation,key,input,result);
@@ -134,9 +139,13 @@ public class ProposalPublicationService {
         access.requireHumanLeader(caller,project);
         var plan=planner.plan(project,proposal,proposals.proposal(project,proposal));
         var result=impacts.previewPublication(project,plan.impact());
-        // TODO(197 연결): 0 is a compatibility placeholder, not a completed AI evaluation.
+        var gateDecision=gate.peek(caller,project,proposal);
+        // Candidates are counted only from a trusted analysis; otherwise null, never 0.
+        Integer aiCandidates=gateDecision.kind()==ImpactApprovalGate.Kind.TRUSTED ? gateDecision.candidateCount() : null;
         return new Preview(plan.nextVersion(),plan.previewItems(),result.staleValidations(),result.waitingTasks(),plan.unchanged(),
-                new Unreviewed(0,repository.openReviewRequests(proposal,plan.impact().revision())));
+                new Unreviewed(aiCandidates,repository.openReviewRequests(proposal,plan.impact().revision()),
+                        new AiAnalysis(gateDecision.status(),gateDecision.isCurrent(),gateDecision.errorCode()),
+                        gateDecision.needsReason()));
     }
     private static void positive(long project, long proposal) {
         if (project<1 || proposal<1) throw invalid("프로젝트·제안 ID는 양수여야 합니다.");

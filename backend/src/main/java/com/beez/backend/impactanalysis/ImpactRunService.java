@@ -70,14 +70,19 @@ public class ImpactRunService {
         return accepted.result();
     }
 
-    public Result get(CallerContext caller, long project, long proposal) {
+    public Result get(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,true); }
+
+    /** Same as get without the lease-expiry write, for read-only transactions such as the approval preview. */
+    public Result peek(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,false); }
+
+    private Result read(CallerContext caller, long project, long proposal, boolean expire) {
         // Reads and the conditional expire need no project lock. Holding that lock while a second
         // connection is borrowed for the freshness read could exhaust the pool under polling.
         var state=tx.execute(ignored -> {
             access.requireMember(caller,project);
             if (projects.findCurrentRole(project,caller.accountId()).isEmpty()) throw AccessErrors.notFound("impact_membership_changed");
             var current=runs.proposal(project,proposal);
-            runs.expire(project,proposal);
+            if (expire) runs.expire(project,proposal);
             int revision=((Number)current.get("revision_no")).intValue();
             var latest=runs.latest(project,proposal,revision);
             var pending=latest.isPresent() && "RUNNING".equals(latest.get().get("status")) ? Optional.<Map<String,Object>>empty() : runs.pending(proposal,revision);
