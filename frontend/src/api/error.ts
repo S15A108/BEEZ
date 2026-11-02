@@ -9,6 +9,11 @@ export function getApiErrorCode(error: unknown): string | undefined {
   const parsed = apiErrorSchema.safeParse(error.response?.data)
   return parsed.success ? parsed.data.error.code : undefined
 }
+// 서버가 보낸 오류 문구 원문. 'design_item_id=301'처럼 어느 항목 때문인지 찾을 때 쓰고, 화면 문구는 getApiErrorMessage로 보인다.
+export function getApiErrorDetail(error: unknown): string | undefined {
+  if (!isAxiosError(error)) return undefined
+  return apiErrorSchema.safeParse(error.response?.data).data?.error.message
+}
 export function getApiErrorStatus(error: unknown): number | undefined {
   return isAxiosError(error) ? error.response?.status : undefined
 }

@@ -18,7 +18,11 @@ import {
   type TaskPlanInput,
   type TaskStateInput,
 } from '@/api/contracts/common'
-import { getApiErrorMessage, isMissingApi } from '@/api/error'
+import {
+  getApiErrorDetail,
+  getApiErrorMessage,
+  isMissingApi,
+} from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
@@ -1212,6 +1216,13 @@ function PlanDialog({
 }) {
   const plan = task?.current_plan_revision.plan
   const [error, setError] = useState('')
+  // 저장이 서버에서 막히면 오류 문구의 design_item_id=·task_id=로 어느 항목 때문인지 그 줄에 표시한다(PR #72 3차 조사 THIRD-TC-01).
+  const [blame, setBlame] = useState<{ item?: string; task?: string }>({})
+  const blameNote = (text: string) => (
+    <span role="alert" className="block text-xs text-destructive">
+      {text}
+    </span>
+  )
   // 고치기에서 이미 값이 있거나 검증이 더 필요하다고 한 칸이 있으면 '더 자세히'를 펼친다.
   const [detailsOpen, setDetailsOpen] = useState(
     missing.length > 0 ||
@@ -1335,6 +1346,7 @@ function PlanDialog({
         noValidate
         onSubmit={handleSubmit(async (values) => {
           setError('')
+          setBlame({})
           try {
             const input = taskPlanInputSchema.parse({
               ...values,
@@ -1390,6 +1402,13 @@ function PlanDialog({
             await onSubmit(input)
           } catch (cause) {
             setError(getApiErrorMessage(cause))
+            const detail = getApiErrorDetail(cause) ?? ''
+            const culprit = {
+              item: /design_item_id=(\d+)/.exec(detail)?.[1],
+              task: /task_id=(\d+)/.exec(detail)?.[1],
+            }
+            setBlame(culprit)
+            if (culprit.task) setDetailsOpen(true)
           }
         })}
       >
@@ -1482,6 +1501,10 @@ function PlanDialog({
                         </Button>
                       </div>
                     )}
+                    {blame.item === item.design_item_id &&
+                      blameNote(
+                        '이 항목 때문에 저장하지 못했어요. 현재 승인본으로 갱신하거나 빼 주세요.',
+                      )}
                     {refs[index].relation === 'CHANGES' && (
                       <div className="grid gap-2">
                         <Label htmlFor={`change-${index}`}>
@@ -1507,13 +1530,38 @@ function PlanDialog({
                 ),
             )
             .map((reference) => (
-              <p
-                key={reference.design_item_id}
-                className="text-xs text-amber-800"
-              >
-                이전 참조 항목 {reference.design_item_id}의 현재 승인본을 확인해
-                주세요. 기존 버전은 보존해요.
-              </p>
+              // 승인 목록에 없는 참조는 고르는 칸이 없어 따로 보이고 뺄 수 있게 한다. 목록을 다 불러왔는데도 없으면
+              // 폐기된 설계다(PR #72 3차 조사 THIRD-TC-01). 서버는 폐기된 참조가 든 계획을 400으로 거절한다.
+              <div key={reference.design_item_id} className="grid gap-1">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-amber-800">
+                  <span>
+                    설계 항목 {reference.design_item_id} ·{' '}
+                    {moreItems
+                      ? '불러온 승인 목록에 없어요. 더 불러와 확인하거나 빼 주세요.'
+                      : '폐기된 설계예요. 빼고 저장해 주세요.'}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    aria-label={`설계 항목 ${reference.design_item_id} 빼기`}
+                    disabled={isSubmitting}
+                    onClick={() =>
+                      setValue(
+                        'refs',
+                        refs.filter(
+                          (other) =>
+                            other.design_item_id !== reference.design_item_id,
+                        ),
+                      )
+                    }
+                  >
+                    빼기
+                  </Button>
+                </div>
+                {blame.item === reference.design_item_id &&
+                  blameNote('이 항목 때문에 저장하지 못했어요.')}
+              </div>
             ))}
           {!items.length && (
             <p className="text-sm text-muted-foreground">
@@ -1570,8 +1618,59 @@ function PlanDialog({
                         }
                       />
                       {entry.key} · {entry.current_plan_revision.plan.title}
+                      {blame.task === entry.id &&
+                        blameNote(
+                          '이 작업 때문에 저장하지 못했어요(선행 관계가 순환해요).',
+                        )}
                     </label>
                   ))}
+                {/* 고른 선행 작업이 취소되면 고르는 칸에서 사라지므로 따로 보이고 뺄 수 있게 한다. 취소된 선행 작업이
+                    남아 있으면 작업을 시작할 수 없다(PR #72 3차 조사 THIRD-TC-01). */}
+                {dependencyIds
+                  .filter(
+                    (id) =>
+                      !dependencies.some(
+                        (entry) =>
+                          entry.id === id &&
+                          entry.id !== task?.id &&
+                          entry.status !== 'CANCELLED',
+                      ),
+                  )
+                  .map((id) => {
+                    const entry = dependencies.find((item) => item.id === id)
+                    const name = entry
+                      ? `${entry.key} · ${entry.current_plan_revision.plan.title}`
+                      : `작업 ${id}`
+                    return (
+                      <div key={id} className="grid gap-1">
+                        <div className="flex flex-wrap items-center gap-2 text-sm text-amber-800">
+                          <span>
+                            {name} ·{' '}
+                            {entry?.status === 'CANCELLED'
+                              ? '취소된 작업'
+                              : '불러온 목록에 없는 작업'}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            type="button"
+                            aria-label={`${entry?.key ?? `작업 ${id}`} 선행에서 빼기`}
+                            disabled={isSubmitting}
+                            onClick={() =>
+                              setValue(
+                                'dependency_task_ids',
+                                dependencyIds.filter((other) => other !== id),
+                              )
+                            }
+                          >
+                            빼기
+                          </Button>
+                        </div>
+                        {blame.task === id &&
+                          blameNote('이 작업 때문에 저장하지 못했어요.')}
+                      </div>
+                    )
+                  })}
               </fieldset>
               {flagNote('dependency_task_ids')}
             </div>

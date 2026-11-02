@@ -8,6 +8,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   authApi,
@@ -452,4 +453,107 @@ it('연결하지 않은 내용을 객체 하나씩 고치고 여러 줄·같은 
     first,
     { description: '설명을 고침', owner: 'B' },
   ])
+})
+
+// PR #72 3차 조사 THIRD-TC-01: 고른 선행 작업이 취소되거나 참조 설계가 폐기되면 고르는 칸에서 사라져도 따로 보이고 뺄 수 있다.
+it('취소된 선행 작업을 계획에서 빼고 저장한다', async () => {
+  const cancelled: TaskDetail = {
+    ...task,
+    id: '502',
+    key: 'TASK-002',
+    status: 'CANCELLED',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '512',
+      task_id: '502',
+      plan: { ...task.current_plan_revision.plan, title: '로그인 화면' },
+    },
+  }
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        dependency_task_ids: ['502'],
+      },
+    },
+  }
+  vi.spyOn(tasksApi, 'list').mockImplementation(async () => ({
+    items: [task, cancelled],
+    has_more: false,
+  }))
+  const save = vi
+    .spyOn(tasksApi, 'savePlan')
+    .mockImplementation(async () => task)
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '계획 수정' }),
+  )
+  expect(
+    await screen.findByText(/TASK-002 · 로그인 화면 · 취소된 작업/),
+  ).toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('button', { name: 'TASK-002 선행에서 빼기' }),
+  )
+  expect(screen.queryByText(/취소된 작업/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({ dependency_task_ids: [] })
+})
+
+it('폐기된 설계 참조 때문에 저장이 막히면 그 줄에 알리고, 빼면 저장한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        design_refs: [
+          {
+            design_item_id: '301',
+            design_item_version_id: '311',
+            relation: 'IMPLEMENTS',
+          },
+        ],
+      },
+    },
+  }
+  const save = vi
+    .spyOn(tasksApi, 'savePlan')
+    .mockRejectedValueOnce(
+      new AxiosError('bad request', '400', undefined, undefined, {
+        status: 400,
+        statusText: 'Bad Request',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: {
+          error: {
+            code: 'validation_failed',
+            message:
+              '현재 기준 설계에 없거나 폐기된 항목입니다 (design_item_id=301)',
+          },
+        },
+      }),
+    )
+    .mockImplementation(async () => task)
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '계획 수정' }),
+  )
+  expect(
+    await screen.findByText(/설계 항목 301 · 폐기된 설계예요/),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  expect(
+    await screen.findByText('이 항목 때문에 저장하지 못했어요.'),
+  ).toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('button', { name: '설계 항목 301 빼기' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+  expect(save.mock.calls[1][2]).toMatchObject({ design_refs: [] })
 })
