@@ -22,6 +22,7 @@ from app.services.retrieval.embeddings import (
     EmbeddingError,
     EmbeddingProvider,
     embed_texts,
+    validate_embedding_texts,
 )
 
 _SAFE_ERROR_CODES = frozenset(
@@ -132,6 +133,12 @@ class EmbeddingContextSelector:
         document_key = key if self._request_key is not None else key + "-documents"
         query_usage = ()
         try:
+            # A candidate that cannot fit the configured document policy would
+            # otherwise fail after the query had already incurred a provider call.
+            # Actual embedding repeats validation to preserve its own safeguards.
+            await validate_embedding_texts(
+                candidates, self._profile, self._policy, self._counter
+            )
             query = await embed_texts(
                 (EmbeddingText(key="query", text=request.request),),
                 self._profile,

@@ -111,6 +111,41 @@ def _batches(
     return batches
 
 
+async def validate_embedding_texts(
+    texts: tuple[EmbeddingText, ...],
+    profile: EmbeddingProfile,
+    policy: EmbeddingPolicy,
+    token_counter: TokenCounter,
+) -> None:
+    """Validate a batch under the same policy without calling the provider.
+
+    The caller must still use embed_texts for the actual call; validation does
+    not reserve capacity or guarantee later provider success.
+    """
+    await _prepare_batches(texts, profile, policy, token_counter)
+
+
+async def _prepare_batches(
+    texts: tuple[EmbeddingText, ...],
+    profile: EmbeddingProfile,
+    policy: EmbeddingPolicy,
+    token_counter: TokenCounter,
+) -> list[tuple[EmbeddingText, ...]]:
+    try:
+        async with asyncio.timeout(policy.total_timeout_seconds):
+            return await asyncio.to_thread(
+                _batches, texts, profile, policy, token_counter
+            )
+    except TimeoutError as exc:
+        raise EmbeddingError(
+            "embedding_timeout", "Token validation exhausted the total budget."
+        ) from exc
+    except asyncio.CancelledError as exc:
+        # Token validation completes before any external provider call.
+        exc.embedding_usage = ()
+        raise
+
+
 def _valid_vectors(
     response: ProviderEmbeddingBatch,
     texts: tuple[EmbeddingText, ...],
@@ -175,19 +210,7 @@ async def embed_texts(
             "invalid_embedding_input", "Invalid request key or purpose."
         )
     deadline = time.monotonic() + policy.total_timeout_seconds
-    try:
-        async with asyncio.timeout(policy.total_timeout_seconds):
-            batches = await asyncio.to_thread(
-                _batches, texts, profile, policy, token_counter
-            )
-    except TimeoutError as exc:
-        raise EmbeddingError(
-            "embedding_timeout", "Token validation exhausted the total budget."
-        ) from exc
-    except asyncio.CancelledError as exc:
-        # Token validation completes before any external provider call.
-        exc.embedding_usage = ()
-        raise
+    batches = await _prepare_batches(texts, profile, policy, token_counter)
     usage: list[EmbeddingUsage] = []
     vectors = {}
     invocation_id = uuid4().hex

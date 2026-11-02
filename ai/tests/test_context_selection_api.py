@@ -695,7 +695,7 @@ def test_total_timeout_retains_cancelled_selector_usage(api):
     assert response.json()["usage"][0]["input_tokens"] == 12
 
 
-def test_candidate_token_error_retains_query_usage(api, monkeypatch):
+def test_candidate_token_error_stops_before_query_call(api, monkeypatch):
     from app.schemas.retrieval import (
         EmbeddingProfile,
         EmbeddingVector,
@@ -755,14 +755,8 @@ def test_candidate_token_error_retains_query_usage(api, monkeypatch):
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "embedding_limit_exceeded"
-    assert calls == ["query"]
-    assert (
-        len(response.json()["usage"]) == 1
-        and response.json()["usage"][0]["input_tokens"] == 4
-    )
-    assert response.json()["usage"][0]["request_key"].startswith(
-        body["request_key"] + ":emb:"
-    )
+    assert calls == []
+    assert "usage" not in response.json()
 
 
 @pytest.mark.parametrize("blocked", ["query", "document"])

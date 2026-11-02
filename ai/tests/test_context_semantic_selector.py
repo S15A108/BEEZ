@@ -232,6 +232,35 @@ async def test_cannot_report_no_match_when_candidates_were_skipped(
     assert not provider.calls
 
 
+@pytest.mark.parametrize("failure", ["oversized_document", "too_many_candidates"])
+@pytest.mark.asyncio
+async def test_invalid_document_batch_never_calls_query_provider(failure):
+    request = inputs()
+    policy = EmbeddingPolicy(max_attempts=1)
+    if failure == "oversized_document":
+        item = request.items[0].model_copy(update={"text": "x" * 2049})
+        request = request.model_copy(update={"items": (item,)})
+        expected = "embedding_limit_exceeded"
+    else:
+        policy = EmbeddingPolicy(max_attempts=1, max_texts=1)
+        expected = "invalid_embedding_input"
+    provider = Provider()
+    configured = EmbeddingContextSelector(
+        provider,
+        PROFILE,
+        Counter(),
+        min_similarity=0.8,
+        max_items=2,
+        max_evidence=2,
+        policy=policy,
+    )
+    with pytest.raises(ContextSelectionError) as exc:
+        await select_context(request, configured)
+    assert exc.value.code == expected
+    assert exc.value.usage == ()
+    assert provider.calls == []
+
+
 @pytest.mark.asyncio
 async def test_failure_keeps_all_completed_usage_without_becoming_no_match():
     provider = Provider(fail_purpose="document")
