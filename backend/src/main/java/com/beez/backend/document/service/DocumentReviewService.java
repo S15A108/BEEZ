@@ -13,6 +13,8 @@ import com.beez.backend.document.repository.DocumentReviewRepository;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.document.validation.DocumentInputValidator;
 import com.beez.backend.document.validation.DocumentReviewUsageValidator;
+import com.beez.backend.document.validation.DocumentReviewReferenceHasher;
+import com.beez.backend.document.validation.DocumentReviewResultValidator;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.http.HttpStatus;
@@ -109,19 +111,21 @@ public class DocumentReviewService {
     private List<Map<String, Object>> references(long project, long document) { return repository.references(project, document); }
 
     private String referenceHash(List<Map<String, Object>> references) {
-        return hash(references.stream().map(r -> List.of(r.get("document_id"), r.get("document_version_id"), r.get("content_hash"))).toList());
+        return DocumentReviewReferenceHasher.referenceHash(DocumentReviewReferenceHasher.snapshots(references));
     }
 
     private Map<String, Object> reviewInput(Map<String, Object> copy, List<Map<String, Object>> refs, String key) {
         var available = refs.stream().map(r -> r.get("type").toString()).toList();
         var missing = List.of("API_SPEC", "ERD", "REQ_SPEC").stream()
-                .filter(type -> !available.contains(type)).toList();
-        return Map.of("project_id", copy.get("project_id").toString(), "document_id", copy.get("document_id").toString(),
-                "revision", copy.get("revision"), "content", copy.get("content_text"), "kind", copy.get("type"),
-                "request_key", key, "reference_hash", referenceHash(refs), "unavailable_references", missing,
-                "references", refs.stream().map(r -> Map.of("document_id", r.get("document_id").toString(),
-                        "document_version_id", r.get("document_version_id").toString(), "kind", r.get("type"),
-                        "version_no", r.get("version_no"), "content", r.get("content_text"))).toList());
+                .filter(type -> !type.equals(copy.get("type")) && !available.contains(type)).toList();
+        var input = new LinkedHashMap<String, Object>();
+        input.put("contract_version", 2); input.put("project_id", copy.get("project_id").toString());
+        input.put("document_id", copy.get("document_id").toString()); input.put("revision", copy.get("revision"));
+        input.put("content", copy.get("content_text")); input.put("kind", copy.get("type"));
+        input.put("content_hash", DocumentReviewReferenceHasher.textHash(copy.get("content_text").toString()));
+        input.put("request_key", key); input.put("reference_hash", referenceHash(refs));
+        input.put("unavailable_references", missing); input.put("references", DocumentReviewReferenceHasher.snapshots(refs));
+        return input;
     }
 
     private void key(String key) {
@@ -137,11 +141,24 @@ public class DocumentReviewService {
             lock(caller, project, false);
             var copy = owned(caller, project, document);
             var refs = references(project, document);
-            String fingerprint = hash(List.of(expected, referenceHash(refs)));
+            String fingerprint = hash(List.of("document-review-v2", expected, referenceHash(refs),
+                    DocumentReviewReferenceHasher.textHash(copy.get("content_text").toString())));
             var previous = repository.reviewRequest(document, caller.accountId(), key);
             if (previous.isPresent()) {
                 var old = previous.get();
-                if (!fingerprint.equals(old.get("fingerprint"))) throw conflict("idempotency_conflict");
+                // Completed pre-v2 keys still replay their original result without inventing v2 stages.
+                String legacyFingerprint = hash(List.of(expected, hash(refs.stream()
+                        .map(r -> List.of(r.get("document_id"), r.get("document_version_id"), r.get("content_hash"))).toList())));
+                boolean completedReplay = false;
+                if ("COMPLETED".equals(old.get("status"))) {
+                    var original = object(repository.review(document, id(old, "review_id")).orElseThrow().get("input"));
+                    // Applying a PATCH changes the working copy, not the input of a completed request.
+                    completedReplay = original.get("content_hash") == null
+                            ? legacyFingerprint.equals(old.get("fingerprint"))
+                            : hash(List.of("document-review-v2", expected, referenceHash(refs), original.get("content_hash")))
+                                    .equals(old.get("fingerprint"));
+                }
+                if (!fingerprint.equals(old.get("fingerprint")) && !completedReplay) throw conflict("idempotency_conflict");
                 if ("COMPLETED".equals(old.get("status"))) return Map.<String, Object>of("replay", old.get("review_id"));
                 if ("RUNNING".equals(old.get("status"))) throw conflict("review_in_progress");
                 throw unavailable("이 검토 요청은 실패했습니다. 새 요청 키로 다시 검토해 주세요.");
@@ -158,6 +175,7 @@ public class DocumentReviewService {
         List<Map<String, Object>> usage = List.of();
         try {
             // Network and model work never hold a project lock or DB transaction.
+            // [TODO] 216-AI: 양지훈 222의 v2 계약 실연동 확인. 현재 검증은 Gateway 대역이다.
             var envelope = ai.review(prepared);
             usage = DocumentReviewUsageValidator.extract(envelope == null ? null : envelope.get("usage"), prepared.get("request_key").toString());
             if (envelope != null) { envelope = new HashMap<>(envelope); envelope.put("usage", usage); }
@@ -172,7 +190,7 @@ public class DocumentReviewService {
                 long review = repository.saveReview(document, expected, prepared.get("reference_hash").toString(), prepared, result, actualUsage);
                 for (Object entry : (List<?>) result.get("suggestions")) {
                     var suggestion = (Map<?, ?>) entry;
-                    repository.saveSuggestion(review, suggestion.get("explanation").toString(), suggestion.get("original_text").toString(), suggestion.get("replacement_text").toString());
+                    repository.saveSuggestion(review, suggestion);
                 }
                 if (!repository.finishReview(document, caller.accountId(), key, review, null, actualUsage)) throw conflict("review_stale");
                 repository.recordUsage(project, actualUsage);
@@ -202,41 +220,14 @@ public class DocumentReviewService {
     }
 
     private Map<String, Object> validateResult(Map<String, Object> envelope, Map<String, Object> input) {
-        if (envelope == null || !"MODEL".equals(envelope.get("origin")) || !(envelope.get("result") instanceof Map<?, ?> raw)
-                || !(envelope.get("usage") instanceof List<?> usage) || usage.isEmpty()) throw invalidAi();
-        if (usage.stream().noneMatch(item -> item instanceof Map<?, ?> u && Boolean.FALSE.equals(u.get("failed"))
-                && u.get("model") instanceof String model && !model.isBlank())) throw invalidAi();
-        var result = new HashMap<String, Object>();
-        for (String field : List.of("document_id", "revision", "reference_hash", "request_key")) {
-            if ("revision".equals(field)) {
-                if (!(raw.get(field) instanceof Number n) || n.doubleValue() != n.longValue()
-                        || n.longValue() != ((Number) input.get(field)).longValue()) throw invalidAi();
-            } else if (!Objects.equals(input.get(field), raw.get(field))) throw invalidAi();
-            result.put(field, raw.get(field));
-        }
-        if (!(raw.get("summary") instanceof String summary) || summary.isBlank() || summary.length() > 10000
-                || !(raw.get("suggestions") instanceof List<?> suggestions) || suggestions.size() > 30) throw invalidAi();
-        String content = input.get("content").toString();
-        for (var entry : suggestions) {
-            if (!(entry instanceof Map<?, ?> suggestion) || !(suggestion.get("explanation") instanceof String explanation)
-                    || explanation.isBlank() || explanation.length() > 10000
-                    || !(suggestion.get("original_text") instanceof String original) || original.isEmpty()
-                    || !(suggestion.get("replacement_text") instanceof String replacement) || replacement.length() > 100000
-                    || content.indexOf(original) < 0 || content.indexOf(original) != content.lastIndexOf(original)) throw invalidAi();
-        }
-        result.put("summary", summary); result.put("suggestions", suggestions);
-        result.put("unavailable_references", input.get("unavailable_references"));
-        try { canonical(result); }
-        catch (ApiException malformed) { throw invalidAi(); }
-        return result;
+        return DocumentReviewResultValidator.validate(envelope, input);
     }
-
-    private ApiException invalidAi() { return new ApiException(HttpStatus.BAD_GATEWAY, "invalid_ai_output", "비비 검토 결과 형식이 올바르지 않습니다."); }
     private ApiException unavailable(String message) { return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "review_unavailable", message); }
 
     private Map<String, Object> currentReview(long project, long document, long review, long revision) {
         var row = repository.review(document, review).orElseThrow(() -> AccessErrors.notFound("document_review_missing"));
-        if (id(row, "resolved_revision") != revision
+        if (!Integer.valueOf(2).equals(object(row.get("result")).get("contract_version"))
+                || id(row, "resolved_revision") != revision
                 || !row.get("reference_hash").equals(referenceHash(references(project, document)))) throw conflict("review_stale");
         return row;
     }
@@ -251,6 +242,7 @@ public class DocumentReviewService {
         currentReview(project, document, review, input.expectedRevision());
         var row = repository.suggestions(review).stream().filter(r -> id(r, "id") == suggestion).findFirst()
                 .orElseThrow(() -> AccessErrors.notFound("document_suggestion_missing"));
+        if (!"PATCH".equals(row.get("type"))) throw invalid("설명형 의견은 반영하거나 넘기는 대상이 아닙니다.");
         String decision = "APPLY".equals(input.decision()) ? "APPLIED" : "SKIPPED";
         if (!Set.of("APPLY", "SKIP").contains(input.decision())) throw invalid("제안 처리 방식이 올바르지 않습니다.");
         if (!"PENDING".equals(row.get("decision"))) {
@@ -310,8 +302,11 @@ public class DocumentReviewService {
         initialWorkflow(project);
         editable(copy, revision);
         if ("APPROVED".equals(copy.get("status"))) throw conflict("version_conflict");
-        currentReview(project, document, review, revision);
-        if (repository.suggestions(review).stream().anyMatch(s -> "PENDING".equals(s.get("decision")))) throw conflict("review_decisions_pending");
+        var row = currentReview(project, document, review, revision);
+        var result = object(row.get("result"));
+        if (!Set.of("COMPLETE", "PARTIAL").contains(result.get("review_status"))) throw conflict("review_stale");
+        if (repository.suggestions(review).stream().anyMatch(s -> "PATCH".equals(s.get("type"))
+                && "PENDING".equals(s.get("decision")))) throw conflict("review_decisions_pending");
     }
 
     @Transactional
@@ -369,10 +364,16 @@ public class DocumentReviewService {
         return new DocumentBeeReviewResponse(Long.toString(review), id(row, "input_revision"), id(row, "resolved_revision"),
                 row.get("reference_hash").toString(), result.get("summary").toString(), (List<String>) result.get("unavailable_references"),
                 refs.stream().map(r -> new DocumentReviewReferenceResponse(r.get("document_id").toString(),
-                        r.get("document_version_id").toString(), r.get("kind").toString(), ((Number) r.get("version_no")).intValue(), r.get("content").toString())).toList(),
+                        r.get("document_version_id").toString(), r.get("kind").toString(), ((Number) r.get("version_no")).intValue(),
+                        r.get("content").toString(), (String) r.get("reference_id"), (String) r.get("status"), (String) r.get("content_hash"))).toList(),
                 repository.suggestions(review).stream().map(s -> new DocumentSuggestionResponse(s.get("id").toString(),
-                        s.get("explanation").toString(), s.get("original_text").toString(), s.get("replacement_text").toString(), s.get("decision").toString())).toList(),
-                JSON.readValue(row.get("usage").toString(), List.class));
+                        s.get("explanation").toString(), (String) s.get("original_text"), (String) s.get("replacement_text"),
+                        (String) s.get("decision"), s.get("type").toString(), (String) s.get("step"),
+                        Arrays.asList(JSON.readValue(s.get("sources").toString(), DocumentReviewSourceResponse[].class)))).toList(),
+                JSON.readValue(row.get("usage").toString(), List.class),
+                (Integer) result.get("contract_version"), (String) result.get("content_hash"), (String) result.get("review_status"),
+                result.get("steps") == null ? List.of() : Arrays.asList(JSON.convertValue(result.get("steps"), DocumentReviewStepResponse[].class)),
+                result.get("references_used") == null ? List.of() : (List<String>) result.get("references_used"));
     }
 
     private DocumentSubmissionResponse submissionView(Map<String, Object> row) {

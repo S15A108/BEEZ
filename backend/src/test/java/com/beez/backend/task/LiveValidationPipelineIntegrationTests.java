@@ -8,9 +8,8 @@ import static org.mockito.Mockito.doAnswer;
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.IntegrationTestSupport;
-import com.beez.backend.validation.service.ValidationWorker;
+import com.beez.backend.validation.worker.ValidationWorker;
 import com.beez.backend.validation.service.ValidationInputAssembler;
-import com.beez.backend.validation.service.ValidationRuleOutcomeWriter;
 import com.beez.backend.common.api.ApiException;
 import java.sql.SQLException;
 import java.nio.file.Files;
@@ -52,7 +51,6 @@ class LiveValidationPipelineIntegrationTests extends IntegrationTestSupport {
     @Autowired ValidationWorker worker;
     @MockitoSpyBean AiClient ai;
     @MockitoSpyBean ValidationInputAssembler assembler;
-    @MockitoSpyBean ValidationRuleOutcomeWriter ruleWriter;
     private TaskApiSupport api;
     private long project, owner, design, version, documentVersion;
     private Map<String, Object> sentRequest;
@@ -117,10 +115,6 @@ class LiveValidationPipelineIntegrationTests extends IntegrationTestSupport {
         }).when(assembler).assemble(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
-        doAnswer(inv -> {
-            try { return inv.callRealMethod(); }
-            catch (RuntimeException error) { diagnostic("rules", error); throw error; }
-        }).when(ruleWriter).apply(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     private static void diagnostic(String stage, Throwable error) {
@@ -199,27 +193,27 @@ class LiveValidationPipelineIntegrationTests extends IntegrationTestSupport {
         var observed = http.get("/api/projects/" + project + "/validations/" + validation);
         assertThat(observed.statusCode()).isEqualTo(200);
         Map<String, Object> result = JSON.readValue(observed.body(), new TypeReference<Map<String, Object>>() {});
-        long usage = api.jdbc.sql("select count(*) from llm_usage u join validation_run r on r.id=u.validation_run_id where r.validation_id=:validation and u.feature='TASK_VALIDATION'")
-                .param("validation", validation).query(Long.class).single();
         var runRows = api.jdbc.sql("select status,error from validation_run where validation_id=:validation order by attempt desc")
                 .param("validation", validation).query().listOfRows();
+        var usageRows = api.jdbc.sql("""
+                select entry->>'provider' as provider, entry->>'model' as model,
+                       entry->>'input_tokens' as input_tokens, entry->>'output_tokens' as output_tokens,
+                       entry->>'failed' as failed
+                  from validation_run r cross join lateral jsonb_array_elements(r.usage) entry
+                 where r.validation_id=:validation and entry->>'feature'='TASK_VALIDATION'
+                """).param("validation", validation).query().listOfRows();
         System.out.printf("synthetic validation: status=%s error_code=%s findings=%s run=%s ai_request_reached=%s task_validation_usage=%d%n",
-                result.get("status"), result.get("error_code"), result.get("findings"), runRows, sentRequest != null, usage);
-        assertThat(usage).as("real model usage must be persisted").isEqualTo(1);
+                result.get("status"), result.get("error_code"), result.get("findings"), runRows, sentRequest != null, usageRows.size());
+        assertThat(usageRows).as("real model usage must be persisted in validation_run").hasSize(1);
         String expectedProvider = System.getenv().getOrDefault("BEEZ_VALIDATION_EXPECTED_PROVIDER", "openai");
-        var usageRow = api.jdbc.sql("""
-                select u.provider,u.model,u.input_tokens,u.output_tokens,u.failed
-                from llm_usage u join validation_run r on r.id=u.validation_run_id
-                where r.validation_id=:validation and u.feature='TASK_VALIDATION'
-                """).param("validation", validation).query().singleRow();
+        var usageRow = usageRows.getFirst();
         String storedProvider = Objects.toString(usageRow.get("provider"), "");
         String model = Objects.toString(usageRow.get("model"), "");
-        // The report contains only provider/model and numeric usage for synthetic cases;
-        // redact an unexpected model or provider instead of printing arbitrary DB text.
+        // Only print recognized model/provider names and numeric token counts from synthetic cases.
         String safeProvider = List.of("gms", "openai").contains(storedProvider) ? storedProvider : "[unexpected]";
         String safeModel = model.matches("(?i)(gpt-[a-z0-9][a-z0-9._-]{0,80}|o[0-9][a-z0-9._-]{0,80})")
                 ? model : "[unexpected]";
-        System.out.printf("synthetic llm_usage: provider=%s model=%s input_tokens=%s output_tokens=%s failed=%s%n",
+        System.out.printf("synthetic validation_run usage: provider=%s model=%s input_tokens=%s output_tokens=%s failed=%s%n",
                 safeProvider, safeModel, usageRow.get("input_tokens"), usageRow.get("output_tokens"), usageRow.get("failed"));
         result.put("_test_provider", storedProvider);
         result.put("_test_expected_provider", expectedProvider);

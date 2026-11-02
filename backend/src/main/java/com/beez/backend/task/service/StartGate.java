@@ -114,7 +114,7 @@ public class StartGate {
     }
 
     /**
-     * 이 검증의 실행 중 가짜 분석기가 끝낸 것이 있는가. 실행 기록의 분석기 버전에 응답의 model 이 남는다.
+     * 이 검증의 실행 중 가짜 분석기가 끝낸 것이 있는가. 실행 기록의 분석기 버전에 응답의 model 이 남는다(AnalysisResultApplier).
      * 규칙만으로 끝난 PASS 는 실행이 없어 여기에 걸리지 않는다.
      */
     private boolean passedByFakeAnalyzer(Long validationId) {

@@ -35,10 +35,10 @@ usage를 오류 응답에 보존한다. 기본 형식은 `json_object`이며, �
   확정한다. 미확정 범위는 HUMAN_REVIEW로 보류한다. 상세는
   `docs/design/plan-validation-184-inventory.md` 참고.
 - 설계 content의 검사별 충분성, 검증 범위와 정책 부재 증명 형식은 Q01/Q02
-  확정이 필요하다. 증거 없는 정책 부재를 단정하지 않도록 모델에 PARTIAL을
-  요청하며, MISSING_POLICY 모델 출력은 현재 오류로 거부한다. unresolved
-  문자열이나 원문 속 미정 표현만으로 특정 정책의 미확정 상태를 기계적으로
-  검증할 수 없으므로 명시된 미정 사례도 아직 지원하지 않는다.
+  확정이 필요하다. 검색 결과의 부재만으로 정책 부재를 단정하지 않는다.
+  같은 설계 항목 버전의 원문에 정책 미정이 명시되어 있고 해당 evidence와
+  정확한 출처를 인용한 경우에만 BLOCKING MISSING_POLICY 후보를 허용한다.
+  그 외 근거가 부족한 경우는 PARTIAL의 미검사 항목으로 처리한다.
 - 현재 호출은 GMS Chat Completions URL과 `BEE_DEFAULT_MODEL`을 사용한다.
   공급자·모델의 해당 경로 호환성은 실호출로 검증되지 않았으며, 검증 전용
   모델 설정과 운영 시간 예산은 합의가 필요하다.

@@ -22,7 +22,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -49,15 +48,13 @@ public class ValidationAcceptService {
     private final TaskPlanDesignRefRepository designRefs;
     private final ValidationRepository validations;
     private final ValidationRules rules;
-    private final ValidationRuleChecker explicitRules;
     private final ValidationResponses responses;
     private final ObjectMapper json;
-    private final JdbcClient jdbc;
 
     public ValidationAcceptService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
                                    TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                    ValidationRepository validations, ValidationRules rules, ValidationResponses responses,
-                                   ObjectMapper json, JdbcClient jdbc, ValidationRuleChecker explicitRules) {
+                                   ObjectMapper json) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
@@ -65,20 +62,12 @@ public class ValidationAcceptService {
         this.designRefs = designRefs;
         this.validations = validations;
         this.rules = rules;
-        this.explicitRules = explicitRules;
         this.responses = responses;
         this.json = json;
-        this.jdbc = jdbc;
     }
 
     @Transactional
     public AcceptResult accept(CallerContext caller, Long projectId, Long taskId, Long planRevisionId, int expectedLockVersion) {
-        return accept(caller, projectId, taskId, planRevisionId, expectedLockVersion, null);
-    }
-
-    @Transactional
-    public AcceptResult accept(CallerContext caller, Long projectId, Long taskId, Long planRevisionId,
-                               int expectedLockVersion, String idempotencyKey) {
         ProjectActor actor = access.requireMember(caller, projectId);
         if (planRevisionId == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "plan_revision_id 는 필수입니다");
@@ -87,38 +76,9 @@ public class ValidationAcceptService {
         if (!designLookup.lockProject(projectId)) {
             throw AccessErrors.notFound("project_missing project=" + projectId);
         }
-        actor = access.requireMember(caller, projectId);
         Task task = tasks.findByIdAndProjectId(taskId, projectId)
                 .orElseThrow(() -> AccessErrors.notFound("task_not_in_project task=" + taskId + " project=" + projectId));
         actor.requireMemberId(task.getAssigneeMemberId(), "담당자만 검증을 요청할 수 있습니다");
-        String fingerprint = null;
-        String operation = "validation:start:" + taskId;
-        if (idempotencyKey != null) {
-            if (idempotencyKey.isBlank() || idempotencyKey.length() > 128
-                    || idempotencyKey.chars().anyMatch(Character::isISOControl)) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "유효한 Idempotency-Key가 필요합니다");
-            }
-            fingerprint = CanonicalJson.sha256(json, Map.of("plan_revision_id", planRevisionId.toString(),
-                    "expected_lock_version", expectedLockVersion));
-            var previous = jdbc.sql("""
-                    select v.summary->'idempotency' as saved from validation v
-                      join task t on t.id=v.task_id and t.project_id=:project
-                     where v.created_at > now() - interval '24 hours'
-                       and v.summary->'idempotency'->>'account_id'=:account
-                       and v.summary->'idempotency'->>'operation'=:operation
-                       and v.summary->'idempotency'->>'key'=:key
-                     order by v.id desc limit 1
-                    """).param("project", projectId).param("account", Long.toString(actor.accountId()))
-                    .param("operation", operation).param("key", idempotencyKey).query().listOfRows();
-            if (!previous.isEmpty()) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> saved = json.readValue(previous.getFirst().get("saved").toString(), Map.class);
-                if (!fingerprint.equals(saved.get("fingerprint"))) {
-                    throw new ApiException(HttpStatus.CONFLICT, "idempotency_conflict", "같은 요청 키에 다른 내용이 전달되었습니다.");
-                }
-                return json.convertValue(saved.get("response"), AcceptResult.class);
-            }
-        }
         if (task.getStatus().isClosed()) {
             // 완료·취소된 작업은 검증할 계획이 더 없다. 작업 취소는 모든 검증을 이미 무효화했다 (TSK-A07 오류표의 전이 오류 코드)
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition", "완료·취소된 작업은 검증을 요청할 수 없습니다");
@@ -136,29 +96,14 @@ public class ValidationAcceptService {
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(projectId, taskId, planRevisionId);
 
         RuleOutcome outcome = rules.evaluate(projectId, plan, refs, relatedOpen);
-        // #159 handles its own blocking outcomes synchronously. Before treating a
-        // request as PASS or queuing AI, also check explicit persisted dependencies.
-        // The project lock above keeps this decision tied to the accepted snapshot.
-        if (outcome.decidedStatus() == null || "PASS".equals(outcome.decidedStatus())) {
-            var extra = explicitRules.check(projectId, taskId, planRevisionId, baselineId);
-            if (!extra.findings().isEmpty()) {
-                List<FindingRow> allFindings = new ArrayList<>(outcome.findings());
-                boolean review = false;
-                for (var finding : extra.findings()) {
-                    allFindings.add(FindingRow.rule(finding.kind(), finding.severity(), finding.designItemId(),
-                            finding.designItemVersionId(), finding.relatedTaskId(), finding.message(),
-                            finding.resolution(), finding.nextAction()));
-                    if ("BLOCKING".equals(finding.severity()) && !"MISSING_INPUT".equals(finding.kind())) review = true;
-                }
-                outcome = new RuleOutcome(review ? "NEEDS_REVIEW" : "NEEDS_INPUT", allFindings, List.of());
-            }
-        }
         Map<Long, Long> relatedPlans = relatedPlans(relatedOpen);
         String inputHash = inputHash(planRevisionId, baselineId, refs, relatedPlans);
 
         boolean finished = outcome.decidedStatus() != null;
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("rule_version", ValidationRules.RULE_VERSION);
+        // Preserve the authenticated requester for later authorized background searches.
+        // The public validation DTO does not expose this internal summary field.
         Map<String, Object> requestActor = new LinkedHashMap<>();
         requestActor.put("account_id", caller.accountId());
         requestActor.put("agent_token_id", caller.agentTokenId());
@@ -185,15 +130,7 @@ public class ValidationAcceptService {
             validations.insertFinding(validationId, f);
         }
         ValidationRow row = validations.find(projectId, validationId).orElseThrow();
-        var result = new AcceptResult(responses.toResponse(row), finished);
-        if (idempotencyKey != null) {
-            var saved = Map.of("account_id", Long.toString(actor.accountId()), "operation", operation,
-                    "key", idempotencyKey, "fingerprint", fingerprint, "response", result);
-            jdbc.sql("update validation set summary=summary || cast(:addition as jsonb) where id=:id")
-                    .param("addition", json.writeValueAsString(Map.of("idempotency", saved)))
-                    .param("id", validationId).update();
-        }
-        return result;
+        return new AcceptResult(responses.toResponse(row), finished);
     }
 
     /** 관련 열린 작업 → 그 작업의 현재 계획 리비전 (작업·항목 쌍 행에서 작업마다 하나로) */

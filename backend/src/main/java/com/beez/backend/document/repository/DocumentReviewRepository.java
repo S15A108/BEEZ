@@ -83,11 +83,17 @@ public class DocumentReviewRepository {
                         "result", canonical(result), "usage", canonical(usage))).query(Long.class).single();
     }
 
-    public void saveSuggestion(long review, String explanation, String original, String replacement) {
+    public void saveSuggestion(long review, Map<?, ?> suggestion) {
+        var params = new java.util.HashMap<String, Object>();
+        params.put("review", review); params.put("type", suggestion.get("type"));
+        params.put("step", suggestion.get("step")); params.put("sources", canonical(suggestion.get("sources")));
+        params.put("explanation", suggestion.get("explanation"));
+        params.put("original", suggestion.get("original_text")); params.put("replacement", suggestion.get("replacement_text"));
+        params.put("decision", "PATCH".equals(suggestion.get("type")) ? "PENDING" : null);
         jdbc.sql("""
-                INSERT INTO document_bee_suggestion(review_id,explanation,original_text,replacement_text)
-                VALUES(:review,:explanation,:original,:replacement)
-                """).params(Map.of("review", review, "explanation", explanation, "original", original, "replacement", replacement)).update();
+                INSERT INTO document_bee_suggestion(review_id,type,step,sources,explanation,original_text,replacement_text,decision)
+                VALUES(:review,:type,:step,cast(:sources AS jsonb),:explanation,:original,:replacement,:decision)
+                """).params(params).update();
     }
 
     public Optional<Map<String, Object>> review(long document, Long review) {

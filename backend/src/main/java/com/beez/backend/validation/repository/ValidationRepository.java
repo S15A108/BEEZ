@@ -271,6 +271,18 @@ public class ValidationRepository {
                 .param("d", (int) durationMs).param("u", usageJson, Types.VARCHAR).param("id", runId).update();
     }
 
+    /**
+     * 이미 종결된 실행에 늦게 도착한 사용량을 남긴다 (리스 회수로 ERROR 가 된 뒤 예전 워커의 응답이 온 경우).
+     * 판정은 버리지만 실제 호출 비용은 그 실행에 보존한다. 사용량이 이미 있으면 덮어쓰지 않는다
+     */
+    public int recordLateUsage(long runId, Object usage) {
+        return jdbc.sql("""
+                        update validation_run set usage = cast(:u as jsonb), updated_at = now()
+                         where id = :id and status <> 'RUNNING' and usage is null
+                        """)
+                .param("u", toJson(usage), Types.VARCHAR).param("id", runId).update();
+    }
+
     // ---- 작업 큐(job) ----
 
     public void insertJob(long validationId) {

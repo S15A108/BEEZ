@@ -1,0 +1,34 @@
+{
+  "input": {
+    "contract_version": 2,
+    "project_id": "1", "document_id": "1", "revision": 1, "kind": "ERD",
+    "content": "# 계획\n로그인한다.\n",
+    "content_hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764",
+    "reference_hash": "sha256:bdb744093cc2c3af463ea24ec692cba5c4d3e3732efdd0e151754f1e787f8278",
+    "request_key": "document-review-complete", "unavailable_references": [],
+    "references": [
+      {"reference_id": "document-version-11", "document_id": "2", "document_version_id": "11", "kind": "API_SPEC", "version_no": 1, "status": "APPROVED", "content": "# 계획\n로그인한다.\n", "content_hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764"},
+      {"reference_id": "document-version-12", "document_id": "3", "document_version_id": "12", "kind": "REQ_SPEC", "version_no": 1, "status": "APPROVED", "content": "# 계획\n로그인한다.\n", "content_hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764"}
+    ]
+  },
+  "response": {
+    "origin": "MODEL",
+    "result": {
+      "document_id": "1", "revision": 1,
+      "content_hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764",
+      "reference_hash": "sha256:bdb744093cc2c3af463ea24ec692cba5c4d3e3732efdd0e151754f1e787f8278",
+      "request_key": "document-review-complete", "summary": "승인본 비교 완료", "review_status": "COMPLETE",
+      "steps": [
+        {"step": "BODY", "status": "COMPLETE", "reason": "REVIEWED", "reference_ids": []},
+        {"step": "API_SPEC", "status": "COMPLETE", "reason": "REVIEWED", "reference_ids": ["document-version-11"]},
+        {"step": "ERD", "status": "SKIPPED", "reason": "SAME_KIND", "reference_ids": []},
+        {"step": "REQ_SPEC", "status": "COMPLETE", "reason": "REVIEWED", "reference_ids": ["document-version-12"]}
+      ],
+      "references_used": ["document-version-11", "document-version-12"],
+      "suggestions": [
+        {"type": "PATCH", "step": "API_SPEC", "explanation": "승인본을 근거로 조건을 명시하세요.", "original_text": "로그인한다.", "replacement_text": "인증 후 로그인한다.", "sources": [{"reference_id": "document-version-11", "quote": "로그인한다."}]}
+      ]
+    },
+    "usage": [{"request_key": "document-review-complete", "feature": "BEE_DRAFT", "model": "fixture-model", "latency_ms": 1, "failed": false, "tokens_known": false}]
+  }
+}

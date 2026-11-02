@@ -73,11 +73,6 @@ public class AiClient {
         return rest.post().uri("/v1/embeddings").body(input).retrieve().body(java.util.Map.class);
     }
 
-    /** 작업계획 검증은 오류를 숨기거나 템플릿으로 대체하지 않는다. */
-    public java.util.Map<String, Object> validatePlan(java.util.Map<String, Object> input) {
-        return validate(input);
-    }
-
     /** Analyze a proposal; callers must retain the usage envelope and handle failures explicitly. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> changeImpact(java.util.Map<String, Object> input) {

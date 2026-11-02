@@ -47,22 +47,13 @@ public class ValidationResponses {
                     f.resolution(), f.nextAction()));
         }
         String errorCode = null;
-        Map<String, Object> diagnostics = null;
         if ("ERROR".equals(v.status())) {
             errorCode = errorCode(v.summary());
-            Map<String, Object> data = summary(v.summary());
-            Object attempt = data.get("attempt");
-            if (attempt instanceof Number n && n.intValue() == v.currentAttempt()
-                    && data.get("search_incomplete_reasons") instanceof List<?> reasons) {
-                diagnostics = Map.of("search_incomplete_reasons", reasons,
-                        "search_complete", Boolean.TRUE.equals(data.get("search_complete")),
-                        "retrieval_coverage", data.getOrDefault("retrieval_coverage", "UNKNOWN"));
-            }
         }
         return new ValidationResponse(Ids.str(v.id()), Ids.str(v.taskId()), Ids.str(v.planRevisionId()),
                 Ids.str(v.baselineId()), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,
                 findings, false,
-                v.requestedAt(), v.finishedAt(), errorCode, diagnostics);
+                v.requestedAt(), v.finishedAt(), errorCode);
     }
 
     /** 요약 JSON 을 Map 으로. 비어 있으면 빈 Map */
@@ -76,9 +67,6 @@ public class ValidationResponses {
 
     private String errorCode(String summaryJson) {
         Map<String, Object> summary = summary(summaryJson);
-        if (summary.get("execution_error_code") instanceof String code && !code.isBlank()) {
-            return code;
-        }
         if (summary.containsKey(SUMMARY_ERROR_CODE)) {
             return String.valueOf(summary.get(SUMMARY_ERROR_CODE));
         }

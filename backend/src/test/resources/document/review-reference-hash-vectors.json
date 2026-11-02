@@ -1,0 +1,9 @@
+{
+  "text_vectors": [
+    {"text": "", "hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    {"text": "한글\r\n", "hash": "sha256:2b014c0b5634a9e3da04ad895a7deebf4e18f924d5e52a3bb10aea4431bed5d8"},
+    {"text": "한글\n", "hash": "sha256:712f4b5a23ccde2c6cacfa46258849855f00be71873bb8e377132b8436030684"},
+    {"text": "# 계획\n로그인한다.\n", "hash": "sha256:396151c6ba58058cddb8c18f20798549bf3c6d115581e6e3470dfc0355301764"}
+  ],
+  "empty_reference_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+}

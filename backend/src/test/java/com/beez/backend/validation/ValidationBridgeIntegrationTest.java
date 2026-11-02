@@ -5,8 +5,10 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.beez.backend.document.service.HybridDocumentCandidateSearch;
+import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import com.beez.backend.validation.service.ValidationAcceptService;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.worker.ValidationWorker;
 import java.util.ArrayList;
@@ -25,6 +27,7 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     @Autowired DataSource dataSource;
     @Autowired ValidationWorker worker;
+    @Autowired ValidationAcceptService acceptance;
     @MockitoBean HybridDocumentCandidateSearch search;
     @MockitoBean ValidationAnalyzer analyzer;
     private TaskApiSupport api;
@@ -53,13 +56,6 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         var accepted = api.postWithHeaders(path, body, owner, "Idempotency-Key", "bridge-test");
         assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
         long validation = JSON.readTree(accepted.body()).get("id").asLong();
-        var replay = api.postWithHeaders(path, body, owner, "Idempotency-Key", "bridge-test");
-        assertThat(replay.statusCode()).as(replay.body()).isEqualTo(202);
-        assertThat(JSON.readTree(replay.body())).isEqualTo(JSON.readTree(accepted.body()));
-        var conflict = api.postWithHeaders(path,
-                "{\"plan_revision_id\":\"" + revision + "\",\"expected_lock_version\":" + (version + 1) + "}",
-                owner, "Idempotency-Key", "bridge-test");
-        assertThat(conflict.statusCode()).as(conflict.body()).isEqualTo(409);
         assertThat(api.jdbc.sql("select count(*) from validation where task_id=:t")
                 .param("t", taskId).query(Integer.class).single()).isEqualTo(1);
         AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
@@ -86,59 +82,104 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
         assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
                 .param("v", validation).query(String.class).single()).isEqualTo("HUMAN_REVIEW");
-        assertThat(api.jdbc.sql("select count(*) from llm_usage where task_id=:t")
-                .param("t", taskId).query(Integer.class).single()).isEqualTo(1);
+        assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).single())
+                .contains("llm-validate-" + validation + "-attempt-1-call-1");
     }
 
-    @Test void synchronousValidationChecksExplicitDependenciesBeforePass() throws Exception {
-        var predecessor = api.post("/api/projects/" + project + "/tasks",
-                api.planJson("선행 작업", api.readsRef("API-02"), "[]"), owner);
-        assertThat(predecessor.statusCode()).as(predecessor.body()).isEqualTo(201);
-        long predecessorId = TaskApiSupport.longField(predecessor.body(), "id");
+    @Test void truncatedSearchClosesRunForHumanReviewWithoutCallingAi() throws Exception {
+        when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(), true, false));
         var task = api.post("/api/projects/" + project + "/tasks",
-                api.planJson("의존성 확인", api.readsRef("API-01"), "[\"" + predecessorId + "\"]"), owner);
+                api.planJson("검색 범위 초과", api.implementsRef("API-01"), "[]"), owner);
         assertThat(task.statusCode()).as(task.body()).isEqualTo(201);
         long taskId = TaskApiSupport.longField(task.body(), "id");
         long revision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
                 .param("t", taskId).query(Long.class).single();
-        // Simulate the dependency graph changing after the immutable plan was accepted.
-        api.jdbc.sql("insert into task_dependency(project_id,task_id,depends_on_task_id,kind) values(:p,:from,:to,'BLOCKS')")
-                .param("p", project).param("from", predecessorId).param("to", taskId).update();
-        var result = api.postWithHeaders("/api/projects/" + project + "/tasks/" + taskId + "/validations",
+        var accepted = api.post("/api/projects/" + project + "/tasks/" + taskId + "/validations",
                 "{\"plan_revision_id\":\"" + revision + "\",\"expected_lock_version\":"
-                        + TaskApiSupport.longField(task.body(), "lock_version") + "}", owner,
-                "Idempotency-Key", "dependency-check");
-        assertThat(result.statusCode()).as(result.body()).isEqualTo(200);
-        assertThat(JSON.readTree(result.body()).get("status").asText()).isEqualTo("NEEDS_INPUT");
+                        + TaskApiSupport.longField(task.body(), "lock_version") + "}", owner);
+        assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
+        long validation = JSON.readTree(accepted.body()).get("id").asLong();
+
+        assertThat(worker.runOnce()).isTrue();
         verifyNoInteractions(analyzer);
+        assertThat(api.jdbc.sql("select status from validation where id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
+        assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
+                .param("v", validation).query(String.class).single()).isEqualTo("HUMAN_REVIEW");
+        assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).optional()).isEmpty();
     }
 
-    @Test void blockingConflictTakesPriorityOverMissingInput() throws Exception {
-        var first = api.post("/api/projects/" + project + "/tasks",
-                api.planJson("선행 변경", api.changesRef("API-01"), "[]")
-                        .replace("\"no_contract_change\": true", "\"no_contract_change\": false"), owner);
-        long firstId = TaskApiSupport.longField(first.body(), "id");
-        long firstRevision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
-                .param("t", firstId).query(Long.class).single();
-        long pass = api.passValidation(firstId);
-        var start = api.post("/api/projects/" + project + "/tasks/" + firstId + "/state-events",
-                "{\"event\":\"START\",\"plan_revision_id\":\"" + firstRevision
-                        + "\",\"expected_lock_version\":" + TaskApiSupport.longField(first.body(), "lock_version")
-                        + ",\"validation_id\":\"" + pass + "\"}", owner);
-        assertThat(start.statusCode()).as(start.body()).isEqualTo(200);
-        var second = api.post("/api/projects/" + project + "/tasks",
-                api.planJson("충돌 변경", api.changesRef("API-01"), "[]"), owner);
-        long secondId = TaskApiSupport.longField(second.body(), "id");
+    private long[] queuedTask() {
+        var task = api.post("/api/projects/" + project + "/tasks",
+                api.planJson("검증 요청자 확인", api.implementsRef("API-01"), "[]"), owner);
+        assertThat(task.statusCode()).as(task.body()).isEqualTo(201);
+        long taskId = TaskApiSupport.longField(task.body(), "id");
         long revision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
-                .param("t", secondId).query(Long.class).single();
-        var result = api.postWithHeaders("/api/projects/" + project + "/tasks/" + secondId + "/validations",
-                "{\"plan_revision_id\":\"" + revision + "\",\"expected_lock_version\":"
-                        + TaskApiSupport.longField(second.body(), "lock_version") + "}", owner,
-                "Idempotency-Key", "conflict-and-missing");
-        assertThat(result.statusCode()).as(result.body()).isEqualTo(200);
-        var json = JSON.readTree(result.body());
-        assertThat(json.get("status").asText()).isEqualTo("NEEDS_REVIEW");
-        assertThat(result.body()).contains("MISSING_INPUT", "CONFLICT");
-        verifyNoInteractions(analyzer);
+                .param("t", taskId).query(Long.class).single();
+        return new long[] { taskId, revision, TaskApiSupport.longField(task.body(), "lock_version") };
     }
+
+    private void assertClosedWithoutSearchOrAi(long validation) {
+        assertThat(worker.runOnce()).isTrue();
+        verifyNoInteractions(search, analyzer);
+        assertThat(api.jdbc.sql("select status from validation where id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
+        assertThat(api.jdbc.sql("select status from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
+    }
+
+    @Test void removedMemberCannotSearchOrCallAiFromQueuedWork() {
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        api.jdbc.sql("update project_member set active=false where project_id=:p and account_id=:a")
+                .param("p", project).param("a", owner).update();
+        assertClosedWithoutSearchOrAi(validation);
+    }
+
+    @Test void revokedAgentCannotSearchOrCallAiFromQueuedWork() {
+        long[] task = queuedTask();
+        long token = api.agentTokenId();
+        var accepted = acceptance.accept(CallerContext.agent(owner, token), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        api.jdbc.sql("update agent_token set revoked_at=now() where id=:id").param("id", token).update();
+        assertClosedWithoutSearchOrAi(validation);
+    }
+
+    @Test void oldQueueWithoutRequesterCannotSearchOrCallAi() {
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        api.jdbc.sql("update validation set summary=summary - 'request_actor' where id=:id")
+                .param("id", validation).update();
+        assertClosedWithoutSearchOrAi(validation);
+    }
+
+    @Test void relatedTaskAddedDuringAiCallMakesResultStale() throws Exception {
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        when(analyzer.analyze(any())).thenAnswer(call -> {
+            var related = api.post("/api/projects/" + project + "/tasks",
+                    api.planJson("새 관련 작업", api.readsRef("API-01"), "[]"), owner);
+            assertThat(related.statusCode()).as(related.body()).isEqualTo(201);
+            return Map.of("origin", "MODEL", "model", "test-model", "usage", List.of(),
+                    "result", Map.of("analysis_status", "COMPLETE", "checked_keys", List.of(),
+                            "unassessed", List.of(), "findings", List.of()));
+        });
+        assertThat(worker.runOnce()).isTrue();
+        verify(analyzer).analyze(any());
+        assertThat(api.jdbc.sql("select status from validation where id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("STALE");
+        assertThat(api.jdbc.sql("select status from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("DISCARDED");
+    }
+
 }

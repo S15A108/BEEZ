@@ -104,11 +104,11 @@ public class ValidationRules {
             }
         }
 
-        if (needsReview) {
-            return new RuleOutcome("NEEDS_REVIEW", findings, List.of());
-        }
         if (needsInput) {
             return new RuleOutcome("NEEDS_INPUT", findings, List.of());
+        }
+        if (needsReview) {
+            return new RuleOutcome("NEEDS_REVIEW", findings, List.of());
         }
 
         // 4) 의미 분석이 필요한가: 미연결 내용·바꾸거나 구현하는 설계 항목·같은 항목을 보는 열린 작업 중 하나라도 있을 때

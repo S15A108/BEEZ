@@ -34,7 +34,7 @@ class AiClientHttpVersionTest {
             var ai = new BeezProperties.Ai("http://127.0.0.1:" + server.getAddress().getPort(),
                     "synthetic-token", Duration.ofSeconds(2), Duration.ofSeconds(2));
             var client = new AiClient(new BeezProperties(null, ai, null));
-            assertThat(client.validatePlan(Map.of("project_id", "synthetic"))).containsEntry("origin", "TEST");
+            assertThat(client.validate(Map.of("project_id", "synthetic"))).containsEntry("origin", "TEST");
             assertThat(observedVersion.get()).isEqualTo("HTTP/1.1");
             assertThat(observedUpgrade.get()).isNull();
             assertThat(observedBody.get()).contains("synthetic");

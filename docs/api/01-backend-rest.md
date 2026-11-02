@@ -6385,12 +6385,16 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 - (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다. 지금처럼 동기 호출이면 화면은 진행률 없이 기다림만 보인다(Q19).
 - (수정안 요청) 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 rejection_submission_id로 고른다. 그 rejection_reason과 함께 AI-A10에 mode=RERUN으로 넣고, 아니면 REVIEW다. 화면은 제출을 고르지 않는다. 비비가 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만들고, 팀장은 문단을 고르지 않는다.
 
-#### 후속 PR에 적용할 검토 정책 — 정책 확정, 계약 확장 미구현
+#### 216 검토 계약 v2 — BE 구현, 실제 AI 222 연결은 TODO
 
 - 승인본만 참고하며 승인본이 없으면 해당 문서 자체 검토를 진행한다. 미승인 문서는 참고 자료로 사용하지 않는다.
 - 본문 검토를 완료하고 승인 참고 자료 부족으로 비교하지 못한 경우에는 팀장 검토 요청을 허용한다. 비교하지 못한 단계와 사유를 팀장에게 표시한다. 모델 실패·타임아웃은 제출 가능한 부분 검토 결과로 취급하지 않는다.
 - 자동 수정안 PATCH는 반영/넘기기 대상이고, 설명형 의견 COMMENT는 별도 확인 버튼 없이 표시한다. COMMENT 확인 여부로 제출을 차단하지 않는다. 직접 본문을 수정하면 재검토한다.
-- 단계별 상태·PATCH/COMMENT 구분·출처 검증·집합 해시의 정확한 요청/응답 및 저장 구조는 후속 PR에서 구현한다. 현재 응답 스키마와 예시는 이 확장을 아직 포함하지 않는다. AI 라우트·별도 usage feature·시간/크기 제한과 공용 AI 명세는 담당자 합의가 남아 있다.
+- 새 검토는 `contract_version=2`, `content_hash`, `review_status`, 4개 `steps`, `references_used`, 제안의 `type/step/sources`를 저장·반환한다. 상세 필드는 [공통 검토 스키마](00-common.md#schema-documentbeereview), 전체 실행 가능한 예시는 [부분 검토 fixture](../../backend/src/test/resources/document/review-contract-partial.json)와 [완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json)를 따른다. 앞의 JSON은 기본 필드 예시이며 v2 전체 필드를 생략했다.
+- BODY는 COMPLETE/REVIEWED여야 한다. 대상과 같은 종류의 비교만 SKIPPED/SAME_KIND로 제외한다. 나머지 종류의 승인본이 없을 때만 PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE를 허용하며 전체는 PARTIAL이다. 자료가 있는 비교는 COMPLETE/REVIEWED여야 한다. 단계 누락·중복·상태 모순·잘못된 출처는 502 invalid_ai_output이다.
+- PATCH의 원문은 입력에서 한 곳에만 존재하며 PATCH 간 원문 구간이 겹치면 결과 전체를 거절한다. COMMENT는 교체 필드와 decision이 null이며 선택이 필요 없다. 근거는 해당 비교 단계의 입력 승인본 ID에 한정하고 인용문은 승인본 본문과 대조한다.
+- 과거 검토·제출 조회는 유지하되 단계가 미기록인 검토로 제안 처리/새 제출하면 409 review_stale이며 재검토가 필요하다. 과거 완료 키는 당시 검토를 재조회하고 유료 호출을 재발행하지 않는다. 제출에 연결된 검토·의견은 DB에서 변경을 차단한다.
+- usage는 현재 BEE_DRAFT를 유지한다. `[TODO] 216-AI`: 양지훈 222 실제 라우트·모델 연결·한도/timeout 계약 확인. `[TODO] 216-USAGE`: 전용 feature는 DB·AI·집계·FE 준비 후 별도 전환한다. 신규 FE·대화·직접 요청·취소는 202/231 후속이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6517,7 +6521,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - 작성자만 제안을 선택한다. review와 suggestion은 해당 문서에 속해야 한다.
 - 현재 본문·참고 승인본과 검토가 일치해야 한다. 직접 편집/재업로드 또는 참고 승인본 변경 시 재검토한다.
 - APPLY는 현재 본문에서 original_text가 유일하게 일치할 때 replacement_text로 바꾸고 작성 revision과 검토 resolved_revision을 갱신한다. 겹친 제안이 일치하지 않으면 review_stale다.
-- SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 제안을 처리한 뒤 다시 고치거나 팀장에게 제출한다.
+- SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 PATCH를 처리한 뒤 다시 고치거나 팀장에게 제출한다. COMMENT에 APPLY/SKIP을 보내면 400 validation_failed다.
 - (수정안 요청) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고, 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 결정과 함께 남긴다. 지금 dev 구현은 저장된 replacement_text만 쓰므로 BE 변경이 필요하다.
 - (수정안 요청) 화면에는 반영한 문단의 '되돌리기'가 있다. 처리한 선택을 덮어쓰지 않는 지금 규칙과 맞지 않으므로, `decision=REVERT`로 받을지 화면에서 뺄지 정해야 한다.
 
@@ -6622,7 +6626,7 @@ HTTP `201`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 
 #### 처리 규칙
 
-- 작성자만 제출한다. 최신 내용에 대한 유효한 검토가 필요하며 모든 보완 제안을 반영 또는 넘긴 상태여야 한다. 제안이 없어도 실제 검토 완료 결과가 필요하다.
+- 작성자만 제출한다. 최신 내용에 대한 유효한 v2 검토가 필요하며 모든 PATCH를 반영 또는 넘긴 상태여야 한다. COMMENT는 선택 없이 제출할 수 있다. 제안이 없어도 BODY 검토 완료 결과가 필요하고, 승인 자료 부족에 한한 PARTIAL은 허용한다. 단계가 미기록인 과거 검토는 409 review_stale로 재검토를 요구한다.
 - 본문과 원본을 불변 제출로 저장하고 작성 건을 SUBMITTED로 잠근다. 첫 제출은 준비한 내부 DRAFT v1을 고정하고 이후 제출은 새 document_version/submission을 만든다.
 - 원본 PUT은 트랜잭션 밖에서, 문서 버전·분석 접수·제출·잠금·멱등 응답은 한 트랜잭션에서 저장한다. 원본 보존 규칙은 DOC-A01과 ERD를 따른다.
 - 같은 작성자/프로젝트/동작/키·입력은 document_http_command의 24시간 응답을 재사용한다. 제출 이력은 캐시 만료로 삭제하지 않는다.
@@ -9933,8 +9937,9 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -159) 입력 고정: 계획의 설계 참조를 `validation_design_ref`로, 같은 항목을 현재 계획에서 참조하는 READY·IN_PROGRESS·WAITING 작업의 현재 계획을 `validation_task_ref`로 복사한다. `input_snapshot_hash`는 계획 리비전·참조 버전·관련 계획·규칙 버전·기준의 정규 JSON SHA-256이다.
 - (BE 구현, -159) 규칙: 참조 항목이 현재 기준에 없거나 버전이 다르면 STALE_REF, `no_contract_change=true`인데 CHANGES가 있거나 false인데 CHANGES도 `unlinked`도 없으면 MISSING_INPUT → NEEDS_INPUT. 같은 항목을 CHANGES로 점유한 IN_PROGRESS·WAITING 작업이 있으면 CONFLICT → NEEDS_REVIEW. 구조화 계약 불일치 비교는 Q01 스키마 확정 뒤 규칙에 넣고 그때까지 의미 분석(DESIGN_ALIGNMENT)에 맡긴다.
 - (BE 구현, -159) 의미 분석은 `unlinked`가 있거나, CHANGES·IMPLEMENTS 참조가 있거나, 같은 항목을 보는 열린 다른 작업이 있으면 접수한다. 검사 목록은 계획 완결성(unlinked가 있을 때) + CHANGES·IMPLEMENTS 항목마다 설계 정합성 + 관련 작업마다 계획 충돌이다. 설계 정합성은 관련 작업 유무와 상관없이 넣는다(구조화 계약 비교 전까지 승인 설계와의 대조를 의미 분석이 맡는다). READS만 참조하고 unlinked·관련 작업이 없으면 규칙으로 PASS다.
-- (BE 구현, -159·-184) 접수 시 실행과 작업 큐를 생성한다. 워커는 AI를 트랜잭션 밖에서 호출하며, 프로젝트 잠금 안에서 입력·관련 작업·리스와 근거 최신성을 다시 확인한다. 입력이 바뀐 결과는 STALE로 폐기한다. 리스가 만료된 실행은 ERROR/RETRY로 닫는다. 사용량은 실행별 `validation_run.usage`와 `llm_usage`에 기록한다. AI 응답의 검사 키, 입력 ID, 원문 출처와 evidence ID를 대조하고, 검증 실패나 PARTIAL은 자동 PASS하지 않는다. 정책이 미정이라고 원문에 명시된 근거를 인용한 경우에만 MISSING_POLICY 후보를 허용한다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 저장한다. 가짜 분석기를 켠 경우에도 운영 설정에서 이를 끄면 가짜 PASS로 작업을 시작할 수 없다.
-- (BE 구현, -159·-184) REST 접수는 `Idempotency-Key`를 사용하며 동일 요청은 기존 접수 응답을 반환한다. MCP-11은 별도의 `idempotency_key`를 처리한다.
+- (BE 구현, -159) 접수 시 `current_attempt=1`의 실행(run)과 작업 큐(job)를 함께 만든다. 워커는 큐에서 꺼내 AI를 DB 트랜잭션 밖에서 부르고, 반영 직전 아직 RUNNING·같은 시도·같은 리스인지 확인해 아니면 결과를 버린다(실행 DISCARDED). 같은 리스라도 job의 리스 유효기간이 지났으면 결과를 받지 않고, 회수가 아직 안 됐어도 그 자리에서 만료(`validation_lease_expired`, RETRY)로 닫는다. 큐에서 기다리거나 AI가 도는 사이 분석 입력이 바뀌었으면 AI를 부르지 않거나 결과를 버리고 검증을 STALE로 닫는다 — 이 작업의 계획 리비전이 바뀌면 `PLAN_CHANGED`, 같은 항목을 보는 관련 작업이나 그 계획이 접수 때 고정한 것과 달라지면(계획 변경·새 관련 작업·관련 작업 종료) `RELATED_PLAN_CHANGED`. 반영은 프로젝트 행을 먼저 잠근 뒤(계획 변경·상태 보고와 같은 순서) 입력 확인부터 저장까지 한 트랜잭션으로 하므로, 그 사이 같은 프로젝트의 계획 변경·상태 전이·새 작업은 기다린다. 모델을 부른 실행은 결과를 버리든(DISCARDED) 만료·오류로 닫든 `validation_run.usage`(V16)에 그 호출의 사용량을 남기고, 회수로 이미 닫힌 실행에 늦게 온 응답의 사용량도 그 실행에 남기며(판정만 버린다), AI 의 HTTP 오류 본문(504 등)에 든 `usage`도 같이 남긴다. `usage` 가 객체 배열이 아니면 출력 계약 위반(`ai_invalid_output`)이고, 그 값은 저장하지 않는다(요약에 `usage_rejected` 원문만). 입력 변경으로 STALE 이 될 때는 요약에도 `model`·`usage`를 남긴다(비용 집계 -168 은 실행 기준, 후보는 남기지 않는다). 워커는 큐에서 꺼낸 직후에도 같은 규칙 재판정을 해, 기다리는 사이 규칙만으로 판정이 선 검증(관련 작업 시작으로 점유 충돌·참조 버전 낡음)은 모델을 부르지 않고 그 판정으로 닫는다(실행 DISCARDED, 작업 DONE). COMPLETE 결과를 저장하기 전에 접수 때와 같은 규칙을 지금의 관련 작업 상태·참조 버전으로 다시 판정해 규칙 발견 항목을 더한다 — 관련 작업의 계획은 그대로인데 상태만 바뀌어 같은 항목을 CHANGES 로 점유하게 된 경우는 NEEDS_REVIEW, 참조 버전이 그사이 낡은 경우는 NEEDS_INPUT 이다. 작업 취소·담당자 인계로 무효화되면 접수 때 만든 실행도 DISCARDED로 닫는다. AI 응답은 필수 배열·원소 타입, 검사 키 분할, 항목·버전·관련 작업 ID, 출처(요청의 승인 항목·규칙 finding·근거에 넣은 출처만), 근거 키(그 근거의 출처가 sources에 함께 있어야 함), MISSING_INPUT·MISSING_POLICY의 BLOCKING을 검사해 어긋나거나 본문이 비면 `ai_invalid_output`, PARTIAL은 미검사 사유별 코드로 ERROR다. AI의 STALE_REF는 현재 기준과 다시 대조해 정말 낡았으면 NEEDS_INPUT, 최신이면 사람 검토(BLOCKING이면 NEEDS_REVIEW)다. 승인 항목에는 원문 출처가 있으면 `source`를 넣어 보낸다. `checks`·`checked_keys`·`unassessed`·model·usage는 `validation.summary`에 남기고, PARTIAL·계약 위반처럼 모델을 부른 실패도 같은 값과 부분 후보(`partial_findings`)를 진단용으로 남긴다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 남긴다. 워커는 한 번에 한 건씩 처리하고, 스케줄 스레드는 워커마다 하나다(`spring.task.scheduling.pool.size`). 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 워커가 주기마다 회수해 실행 ERROR·검증 ERROR(`validation_lease_expired`, RETRY)로 닫는다. 같은 검증의 재시도(VAL-A04)는 -161이며, 그 전에는 새 검증을 요청한다. 승인 항목의 `source`는 위치를 만들 수 있는 출처만 넣는다 — 원문 위치의 `location`(앞뒤 공백 제거), 없으면 줄 범위(`text_lines`)로 `lines {시작}-{끝}`, 둘 다 없으면 source를 넣지 않는다(변경 영향 분석과 같은 규칙). AI가 404(검증 경로 없음)를 주면 `ai_unavailable`이다. AI 서버에 검증 경로가 붙기 전(-184)까지 개발 서버는 가짜 분석기(`beez.validation.fake-analyzer=true`, 환경변수 `VALIDATION_FAKE_ANALYZER`)를 켤 수 있다. 켜면 AI를 부르지 않고 요청한 검사를 모두 후보 없이 완료로 돌려줘, 의미 분석이 필요한 검증도 PASS가 된다(실제 설계 대조 없음, 운영에서는 끔). 이때 summary.model과 실행 기록의 분석기 버전은 `fake-analyzer`다. 가짜 분석기를 끈 서버에서는 실행 기록의 분석기 버전이 `fake-analyzer`인 PASS로 START·RESUME할 수 없다(시작 관문 G1, `validation_not_passed`). 실제 AI로 바꾼 뒤에는 검증을 다시 요청해야 한다.
+- (BE 구현, -159) `Idempotency-Key` 헤더는 다른 작업 변경 API(TSK-A04·A07)와 같이 Q12 확정 전이라 처리하지 않는다. MCP-11은 `idempotency_key`를 처리한다.
+- (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9996,8 +10001,6 @@ HTTP `200`.
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
-| `diagnostics` | `object` | N | **184번 제안(협의 필요)**: 현재 실패 attempt의 부분 분석 결과. `analysis`, `search_complete`, `retrieval_coverage` 포함. 진단용이며 `findings`나 최종 판정이 아님 |
-| `analysis_scope` | `object` | N | **184번 제안(협의 필요)**: PASS에서 검사한 키와 검색 범위(`UNKNOWN`)를 표시. 전체 프로젝트에 영향이 없다는 보장은 아님 |
 
 ```json
 {

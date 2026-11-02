@@ -158,7 +158,13 @@ public class ValidationInputAssembler {
         request.put("approved_items", designs);
         request.put("related_plans", relatedPlans);
         request.put("rule_findings", List.of());
-        request.put("unresolved", loadUnresolved(projectId, taskId, baselineId, itemIds, target.plan().contextPacketId()));
+        // Packet visibility and its validation contract are not established for this
+        // workflow. Do not read or send potentially private packet contents to the model.
+        if (target.plan().contextPacketId() != null) {
+            searchesComplete = false;
+            incompleteReasons.add("context_packet_unverified");
+        }
+        request.put("unresolved", loadUnresolved(projectId, taskId, baselineId, itemIds, null));
         request.put("checks", checks);
         // Only explicit source line locators can be restored as evidence. Search chunks
         // remain candidates and cannot establish a design-to-excerpt relationship.

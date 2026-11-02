@@ -681,6 +681,8 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 
 ### DocumentReviewReference
 
+216 계약 v2: 승인 스냅샷의 아래 추가 필드를 함께 반환한다. 216 이전 저장된 검토는 새 필드가 null/미기록이며, 과거 조회를 위해 유지한다.
+
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 참고 문서 ID |
@@ -688,6 +690,9 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `kind` | `string` | Y | 비교 문서 종류 |
 | `version_no` | `integer` | Y | 버전 번호 |
 | `content` | `string` | Y | 검토 당시 참고 본문 |
+| `reference_id` | `string` | v2 Y | `document-version-{document_version_id}` |
+| `status` | `APPROVED` | v2 Y | 검토 입력은 승인본만 사용 |
+| `content_hash` | `string` | v2 Y | 전송 content 문자열의 정규화 없는 UTF-8 SHA-256. 업로드 원본 bytes 해시와 구분 |
 
 <a id="schema-documentreviewsuggestion"></a>
 
@@ -697,14 +702,18 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 보완 제안 ID |
 | `explanation` | `string` | Y | 누락/보완 이유 |
-| `original_text` | `string` | Y | 변경할 원문 구간 |
-| `replacement_text` | `string` | Y | 제안 대체문. 빈 문자열 허용 |
-| `decision` | `PENDING\|APPLIED\|SKIPPED` | Y | 작성자 처리 상태 |
+| `type` | `PATCH\|COMMENT` | Y | 기존 저장 제안은 PATCH로 보존. COMMENT는 읽기 전용 설명 |
+| `step` | `BODY\|API_SPEC\|ERD\|REQ_SPEC` | v2 Y | 해당 제안을 생성한 검토 단계. 과거 제안은 미기록 |
+| `original_text` | `string` | PATCH Y | 변경할 유일한 원문 구간. COMMENT는 null |
+| `replacement_text` | `string` | PATCH Y | 빈 문자열은 삭제. COMMENT는 null |
+| `decision` | `PENDING\|APPLIED\|SKIPPED` | PATCH Y | PATCH만 작성자 선택 필요. COMMENT는 null이며 제출을 막지 않음 |
 | `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
 | `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
 | `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
-| `sources` | [Source[]](00-common.md#schema-source) | N | 근거가 된 참고 승인본 위치. 수정안 요청 |
+| `sources` | `DocumentReviewSource[]` | Y | 검증된 참고 승인본 근거. BODY 및 과거 제안은 []. 아래 검토 전용 구조 사용 |
 | `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | 이 제안에 대한 비비와의 대화(DOC-A22). 수정안 요청 |
+
+`DocumentReviewSource`는 `{reference_id, document_id, document_version_id, kind, version_no, quote?}`다. 식별 메타데이터는 BE가 검토 입력에서 붙이고 quote가 있으면 해당 승인본 본문에 존재하는지 검증한다. 일반 RAG `Source`와 별개다. A22/A23의 신규 대화·직접 요청 구현은 231 후속이며 216에 포함하지 않는다.
 
 <a id="schema-documentbeereview"></a>
 
@@ -721,7 +730,11 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | `references` | [DocumentReviewReference[]](00-common.md#schema-documentreviewreference) | Y | 당시 참고 자료 |
 | `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 보완 제안과 선택 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | Y | 검증한 실제 모델 호출 사용량 |
-| `steps` | `object[]` | N | 단계별 {label, description, result}. 화면의 'n단계 / 5단계'와 '문단 4개' 같은 단계 결과. PR #37 후속의 단계별 상태와 같은 것. 수정안 요청 |
+| `contract_version` | `integer` | v2 Y | 새 검토는 2. 과거 검토는 null/미기록이며 새 제출 전 재검토 필요 |
+| `content_hash` | `string` | v2 Y | 검토 입력 본문 해시. 정상 PATCH 반영 후에도 당시 입력 해시를 보존 |
+| `review_status` | `COMPLETE\|PARTIAL` | v2 Y | 단계로부터 BE가 계산. request 실행 상태 COMPLETED와 별개 |
+| `steps` | `object[]` | Y | v2는 정확히 4개 `{step,status,reason,reference_ids}`. step=BODY/API_SPEC/ERD/REQ_SPEC, status=COMPLETE/PARTIAL/SKIPPED, reason=REVIEWED/REFERENCE_UNAVAILABLE/SAME_KIND. 과거 검토는 []. 동기 완료 결과이며 실시간 진행률이 아님 |
+| `references_used` | `string[]` | Y | 실제 비교 단계의 reference_ids 합집합. 중복 없이 정렬. 과거 검토는 [] |
 | `rejection_submission_id` | `ID` | N | 반려 뒤 검토면 서버가 고른 반려 제출(DOC-A16 선택 규칙). 비비가 그 rejection_reason을 입력으로 읽는다. 수정안 요청 |
 
 <a id="schema-documentreviewsubmission"></a>
@@ -1142,9 +1155,6 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
-| `diagnostics` | `object` | N | 현재 실패 시도의 검색 진단. `search_complete`, `retrieval_coverage` 및 `search_incomplete_reasons`를 포함하며 알려진 누락이 없더라도 검색의 완전한 재현율을 보장하지 않는다. |
-
-`diagnostics.search_incomplete_reasons`의 값은 `search_query_too_long`, `search_query_limit`, `search_results_truncated`, `design_candidate_limit`, `unmapped_search_document`, `related_task_limit`, `source_evidence_unavailable`이다. 검색어 상한은 현재 10개이며 이를 초과하거나 다른 알려진 누락이 있으면 자동 PASS하지 않는다. `retrieval_coverage`의 현재 값 `UNKNOWN`은 검색이 전체 관련 문서를 찾았는지 확정할 수 없다는 뜻이다.
 
 <a id="schema-taskdetail"></a>
 
