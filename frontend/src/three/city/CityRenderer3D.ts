@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 import { cloneKenney, loadKenney } from '../kenney'
+import { kenneyBuildingOf, kenneyBuildingUrl } from '../buildingModels'
 import type { WorldProject, WorldSummary } from '../types'
 
 type Point = { x: number; y: number }
@@ -17,13 +18,6 @@ type Actor = Point & {
 type CityCar = Point & { id: string; color: string; facing?: string }
 
 // 프로젝트 건물 디자인 5종 → Kenney City Kit 모델(CC0, public/models/kenney/city). 색은 텍스처에 곱해 맞춘다.
-const KENNEY_BUILDINGS: Record<string, { model: string; tint?: string }> = {
-  glass: { model: 'building-skyscraper-a' },
-  brick: { model: 'building-j', tint: '#f0b49a' },
-  modern: { model: 'building-i' },
-  tower: { model: 'building-skyscraper-c', tint: '#8f8f99' },
-  wood: { model: 'building-e', tint: '#ecc996' },
-}
 /** 건물 짓기 모드: 빈 부지 위에 단계별로 올라가는 공사 미리보기 (0 측량 · 1 기초 · 2 골조 · 3 외관 · 4 준공 준비 · 5 완공) */
 export interface BuildPreview {
   lot: number
@@ -916,8 +910,8 @@ export class CityRenderer3D {
     index: number,
     spot: { x: number; z: number; width: number; depth: number },
   ) {
-    const pick = KENNEY_BUILDINGS[p.design] ?? KENNEY_BUILDINGS.modern
-    loadKenney(`/models/kenney/city/${pick.model}.glb`)
+    const pick = kenneyBuildingOf(p.design)
+    loadKenney(kenneyBuildingUrl(pick.model))
       .then((model) => {
         if (this.disposed || !shell.parent) return
         const figure = cloneKenney(model)

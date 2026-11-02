@@ -27,7 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { placementKey, useWorkspaceStore } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
@@ -66,6 +66,11 @@ function Workspace({ projectId }: { projectId: string }) {
   const outdoor = useWorkspaceStore((state) => state.outdoor)
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const pendingMutations = useIsMutating()
+  // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
+  const design = useWorkspaceStore(
+    (state) =>
+      state.placements[placementKey(session.data?.id ?? '', projectId)]?.design,
+  )
   // 회원 탈퇴 화면의 '팀장 위임'처럼 ?settings=team으로 들어오면 설정 창을 연다.
   const settingsParam = params.get('settings')
   useEffect(() => {
@@ -127,6 +132,7 @@ function Workspace({ projectId }: { projectId: string }) {
               <OfficeScene
                 key={projectId}
                 project={data.project}
+                design={design}
                 agents={sceneAgents}
                 tasks={sceneTasks}
                 currentUserId={

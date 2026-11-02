@@ -29,6 +29,8 @@ import type { SceneAgent, SceneProject, SceneTask } from './types'
 
 export interface OfficeSceneProps {
   project: Pick<SceneProject, 'name' | 'id'>
+  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그린다. */
+  design?: string
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -384,6 +386,7 @@ function OfficeRuntime(
           bounds,
           state.props.project.name,
           gl,
+          state.props.design,
         )
         street.current.setSize(size.width, size.height)
         outdoorPlayer.current = streetSpawn(bounds)

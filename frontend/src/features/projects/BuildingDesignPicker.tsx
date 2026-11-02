@@ -1,14 +1,15 @@
 import type { ReactNode } from 'react'
 import { Check } from 'lucide-react'
-import brickArt from '@/assets/buildings/brick.svg'
-import glassArt from '@/assets/buildings/glass.svg'
-import modernArt from '@/assets/buildings/modern.svg'
-import towerArt from '@/assets/buildings/tower.svg'
-import woodArt from '@/assets/buildings/wood.svg'
+import brickArt from '@/assets/buildings/brick.png'
+import glassArt from '@/assets/buildings/glass.png'
+import modernArt from '@/assets/buildings/modern.png'
+import towerArt from '@/assets/buildings/tower.png'
+import woodArt from '@/assets/buildings/wood.png'
 import type { BuildingDesign } from '@/stores/workspaceStore'
 import { cn } from '@/lib/utils'
 
-// 이름·색·설명·그림은 캔버스 SCR-04-v2-create-project 보드 그대로다.
+// 이름·색·설명은 캔버스 SCR-04-v2-create-project 보드 그대로다. 그림은 도시와 같은 Kenney 건물(D22, src/three/buildingModels.ts)에
+// 같은 색을 곱해 렌더한 것이라, 고른 디자인이 도시·산책 화면에서 같은 모델로 보인다.
 const buildingDesigns: {
   value: BuildingDesign
   label: string
