@@ -10,6 +10,7 @@ from app.routers import (
     embeddings,
     health,
     impact,
+    meeting_analysis,
 )
 from app.services.retrieval.tokenization import EmbeddingTokenCounter
 
@@ -37,6 +38,7 @@ app.include_router(document_chunks.router)
 app.include_router(design_recommendations.router)
 app.include_router(context_selection.router)
 app.include_router(impact.router)
+app.include_router(meeting_analysis.router)
 
 
 @app.get("/")
