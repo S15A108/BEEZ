@@ -8,7 +8,7 @@ import java.time.Instant;
 
 /**
  * 명세 00-common TaskDetail. ID 는 십진 문자열, 값이 없는 선택 필드는 응답에서 빠진다(전역 non_null).
- * delta_validation_id 는 WAITING(REVALIDATION) 중 현재 계획의 가장 최근 DELTA 검증 번호 (명세 TaskDetail). validation(전체 객체)은 아직 없다.
+ * delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호 — 현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때 (명세 TaskDetail). validation(전체 객체)은 아직 없다.
  */
 public record TaskDetailResponse(
         String id,

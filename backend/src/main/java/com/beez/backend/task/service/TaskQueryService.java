@@ -153,12 +153,12 @@ public class TaskQueryService {
         return TaskDetailResponse.of(task, current, validationStatus, deltaValidationIdOf(task));
     }
 
-    /** delta 완료 보고로 재검증을 기다리는 동안만 DELTA 검증 번호를 넣는다 (명세 TaskDetail.delta_validation_id) */
+    /** delta 완료 보고로 재검증을 기다리는 동안만, 지금 기다리는 DELTA 검증 번호를 넣는다 (명세 TaskDetail.delta_validation_id) */
     private Long deltaValidationIdOf(Task task) {
         if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
             return null;
         }
-        return validationLookup.latestDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId());
+        return validationLookup.pendingDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId());
     }
 
     /** 목록용: 리비전·참조·검증 상태를 각각 한 번씩만 조회한다 (N+1 방지) */
@@ -185,7 +185,7 @@ public class TaskQueryService {
                 revalidating.add(t.getId());
             }
         }
-        Map<Long, Long> deltaByTask = validationLookup.latestDeltaValidationIdByTask(revalidating);
+        Map<Long, Long> deltaByTask = validationLookup.pendingDeltaValidationIdByTask(revalidating);
 
         List<TaskDetailResponse> result = new ArrayList<>();
         for (Task t : page) {

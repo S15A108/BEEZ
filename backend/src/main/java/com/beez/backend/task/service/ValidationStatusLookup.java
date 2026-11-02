@@ -71,18 +71,34 @@ public class ValidationStatusLookup {
                 .query(Long.class).optional().orElse(null);
     }
 
-    /** 여러 작업의 현재 계획 DELTA 검증 번호를 한 번에 (목록 조회, N+1 방지). key = task_id, 없는 작업은 빠진다 */
-    public Map<Long, Long> latestDeltaValidationIdByTask(List<Long> taskIds) {
+    /**
+     * 작업이 <b>지금 기다리는</b> DELTA 검증 번호: 현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때 그 번호, 아니면 null.
+     * RESUME 이 DELTA 를 STALE(TASK_RESUMED) 로 바꾸므로, 그 뒤 인계 등으로 다시 WAITING(REVALIDATION) 이 된 작업은 기다리는 DELTA 가 없다.
+     * 완료 보고 재전송 판정(TaskStateService)과 TaskDetail.delta_validation_id 가 같은 기준을 쓴다
+     */
+    public Long pendingDeltaValidationId(Long taskId, Long planRevisionId) {
+        Long latest = latestDeltaValidationId(taskId, planRevisionId);
+        if (latest == null || "STALE".equals(statusOf(latest))) {
+            return null;
+        }
+        return latest;
+    }
+
+    /** {@link #pendingDeltaValidationId} 를 여러 작업에 한 번에 (목록 조회, N+1 방지). key = task_id, 없는 작업은 빠진다 */
+    public Map<Long, Long> pendingDeltaValidationIdByTask(List<Long> taskIds) {
         Map<Long, Long> result = new HashMap<>();
         if (taskIds.isEmpty()) {
             return result;
         }
+        // 작업마다 가장 최근 DELTA 한 줄을 먼저 고르고(distinct on) 그것이 STALE 이 아닌 것만 남긴다 — "STALE 아닌 것 중 최근" 이 아니다
         List<Map<String, Object>> rows = jdbc.sql("""
-                        select distinct on (v.task_id) v.task_id, v.id
-                          from validation v
-                          join task t on t.id = v.task_id and t.current_plan_revision_id = v.plan_revision_id
-                         where v.task_id in (:ids) and v.trigger = 'DELTA'
-                         order by v.task_id, v.id desc
+                        select task_id, id
+                          from (select distinct on (v.task_id) v.task_id, v.id, v.status
+                                  from validation v
+                                  join task t on t.id = v.task_id and t.current_plan_revision_id = v.plan_revision_id
+                                 where v.task_id in (:ids) and v.trigger = 'DELTA'
+                                 order by v.task_id, v.id desc) latest
+                         where latest.status <> 'STALE'
                         """)
                 .param("ids", taskIds)
                 .query()

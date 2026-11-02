@@ -470,10 +470,17 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         assertThat(column("validation", "status", delta)).isEqualTo("STALE");
         assertThat(task(r[0]).get("status")).isEqualTo("WAITING");
         assertThat(task(r[0]).get("completed_at")).isNull();
-        // 조회에도 옛 DELTA 가 "기다리는 검증" 으로 나오지 않는다 (가장 최근 DELTA 는 STALE)
+        // 조회에도 옛 DELTA 가 "기다리는 검증" 으로 나오지 않는다 (가장 최근 DELTA 가 STALE 이면 비운다)
         JsonNode detail = JSON.readTree(api.get(tasksPath() + "/" + r[0], leader).body());
-        assertThat(detail.get("delta_validation_id").asLong()).isEqualTo(delta);
+        assertThat(detail.has("delta_validation_id")).isFalse();
         assertThat(detail.get("validation_status").asText()).isEqualTo("STALE");
+        // 목록에서도 같다 (묶음 조회가 같은 기준)
+        JsonNode list = JSON.readTree(api.get(tasksPath() + "?status=WAITING", leader).body());
+        for (JsonNode item : list.get("items")) {
+            if (item.get("id").asLong() == r[0]) {
+                assertThat(item.has("delta_validation_id")).isFalse();
+            }
+        }
     }
 
     @Test

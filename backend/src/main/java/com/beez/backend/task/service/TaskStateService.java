@@ -262,8 +262,7 @@ public class TaskStateService {
         if (task.getStatus() != TaskStatus.WAITING || task.getWaitingReason() != WaitingReason.REVALIDATION) {
             return Optional.empty();
         }
-        Long latestDelta = validations.latestDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId());
-        if (latestDelta == null || "STALE".equals(validations.statusOf(latestDelta))) {
+        if (validations.pendingDeltaValidationId(task.getId(), task.getCurrentPlanRevisionId()) == null) {
             return Optional.empty();
         }
         return reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(task.getId(), task.getCurrentPlanRevisionId());
