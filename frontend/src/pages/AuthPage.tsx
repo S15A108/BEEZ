@@ -9,6 +9,15 @@ import cityPreview from '@/assets/city-preview.png'
 import { getApiErrorCode } from '@/api/error'
 
 const savedEmailKey = 'beez.login.email'
+// 로그인 뒤 돌아갈 주소. RequireAccount가 보관한 앱 안 주소(/projects/…, /account/… 등)만 쓰고, 다른 사이트로 가는
+// 주소(//host, 역슬래시로 시작하는 주소)는 막는다(PR #72 3차 조사 THIRD-AMP-03).
+const returnPath = (from?: string) =>
+  from?.startsWith('/') &&
+  !from.startsWith('//') &&
+  !from.startsWith('/\\') &&
+  !from.startsWith('/login')
+    ? from
+    : '/'
 const readSavedEmail = () => {
   try {
     return localStorage.getItem(savedEmailKey) ?? ''
@@ -222,9 +231,7 @@ export default function AuthPage() {
                 navigate(
                   invite
                     ? `/invite?token=${encodeURIComponent(invite)}`
-                    : state?.from?.startsWith('/projects/')
-                      ? state.from
-                      : '/',
+                    : returnPath(state?.from),
                 )
               } catch (cause) {
                 setNotice('')
