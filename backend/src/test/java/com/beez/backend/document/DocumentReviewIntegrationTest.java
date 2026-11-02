@@ -70,12 +70,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
     }
 
     Map<String, Object> result(Map<String, Object> input, List<?> suggestions) {
-        var output = new HashMap<String, Object>();
-        for (String field : List.of("document_id", "revision", "reference_hash", "request_key")) output.put(field, input.get(field));
-        output.put("summary", "문서 검토 완료"); output.put("suggestions", suggestions);
-        return Map.of("origin", "MODEL", "result", output, "usage", List.of(Map.of(
-                "request_key", input.get("request_key"), "feature", "BEE_DRAFT", "model", "fixture-model",
-                "latency_ms", 1, "failed", false, "tokens_known", false)));
+        return com.beez.backend.document.support.DocumentReviewFixtures.result(input, suggestions);
     }
 
     DocumentWorkingCopyResponse copy() { return reviews.get(author, project.projectId(), document); }
@@ -141,8 +136,30 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         verify(gateway, times(1)).review(anyMap());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isEqualTo(1);
         reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "수정된 내용", "plan.md"));
+        assertThat(reviews.review(author, project.projectId(), document, 1, "same")).isEqualTo(first);
         code(() -> submit(first), "review_stale");
         code(() -> reviews.review(author, project.projectId(), document, 2, "same"), "idempotency_conflict");
+    }
+
+    @Test void suggestionConstraintsPreserveLegacyPatchAndRejectSelectableComments() {
+        var review = review();
+        long id = Long.parseLong(review.id());
+        jdbc.update("""
+                INSERT INTO document_bee_suggestion(review_id,explanation,original_text,replacement_text)
+                VALUES(?,'이전 PATCH','로그인한다.','')
+                """, id);
+        var legacy = copy().latestReview().suggestions().getFirst();
+        assertThat(legacy.type()).isEqualTo("PATCH");
+        assertThat(legacy.decision()).isEqualTo("PENDING");
+        assertThat(legacy.step()).isNull();
+        assertThatThrownBy(() -> jdbc.update("""
+                INSERT INTO document_bee_suggestion(review_id,type,explanation,decision)
+                VALUES(?,'COMMENT','선택할 수 없는 의견','PENDING')
+                """, id)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> jdbc.update("""
+                INSERT INTO document_bee_suggestion(review_id,type,explanation,decision)
+                VALUES(?,'PATCH','원문 없는 수정',null)
+                """, id)).isInstanceOf(RuntimeException.class);
     }
 
     @Test void approvedReferenceChangesRequireFreshReviewBeforeSubmission() {
@@ -162,6 +179,113 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         verify(gateway, times(1)).review(anyMap());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=?", Integer.class, project.projectId())).isZero();
+    }
+
+    @Test void commentNeedsNoDecisionAndPartialScopeSurvivesSubmissionAndReferenceChanges() {
+        doAnswer(call -> result(call.getArgument(0), List.of(Map.of(
+                "type", "COMMENT", "step", "BODY", "explanation", "승인된 비교 자료가 없어 본문만 확인했습니다."))))
+                .when(gateway).review(anyMap());
+        var review = review();
+        assertThat(review.contractVersion()).isEqualTo(2);
+        assertThat(review.reviewStatus()).isEqualTo("PARTIAL");
+        assertThat(review.steps()).hasSize(4);
+        var comment = review.suggestions().getFirst();
+        assertThat(comment.decision()).isNull();
+        assertThat(comment.originalText()).isNull();
+        for (String decision : List.of("APPLY", "SKIP")) code(() -> reviews.decideSuggestion(author,
+                project.projectId(), document, Long.parseLong(review.id()), Long.parseLong(comment.id()),
+                new SuggestionDecisionRequest(1, decision)), "validation_failed");
+        var submission = submit(review);
+        long reference = upload("ERD");
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), reference);
+        var detail = reviews.submission(leader, project.projectId(), document, Long.parseLong(submission.id()));
+        assertThat(detail.review()).isEqualTo(review);
+        assertThat(detail.review().unavailableReferences()).contains("ERD");
+        assertThatThrownBy(() -> jdbc.update("UPDATE document_bee_review SET result='{}' WHERE id=?", Long.parseLong(review.id())))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE document_bee_suggestion SET explanation='changed' WHERE id=?", Long.parseLong(comment.id())))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> jdbc.update("DELETE FROM document_bee_suggestion WHERE id=?", Long.parseLong(comment.id())))
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test void httpV2SerializesScopeAndRejectsCommentDecisionThenAcceptsPartialSubmission() {
+        doAnswer(call -> result(call.getArgument(0), List.of(Map.of("type", "COMMENT", "explanation", "설명형 의견"))))
+                .when(gateway).review(anyMap());
+        var http = client().login(fixtures().emailOf(author.accountId()), AccessFixtures.PASSWORD);
+        String path = "/api/projects/" + project.projectId() + "/documents/" + document;
+        var reviewed = http.post(path + "/bee-reviews", "{\"expected_revision\":1}",
+                "Origin", "https://app.beez.test", "Idempotency-Key", "http-review");
+        assertThat(reviewed.statusCode()).withFailMessage(reviewed.body()).isEqualTo(201);
+        var body = DesignJson.JSON.readTree(reviewed.body());
+        assertThat(body.path("contract_version").asInt()).isEqualTo(2);
+        assertThat(body.path("review_status").asText()).isEqualTo("PARTIAL");
+        assertThat(body.path("steps").size()).isEqualTo(4);
+        assertThat(body.path("steps").get(0).path("reference_ids").isArray()).isTrue();
+        var suggestion = body.path("suggestions").get(0);
+        assertThat(suggestion.path("type").asText()).isEqualTo("COMMENT");
+        assertThat(suggestion.path("decision").isNull() || suggestion.path("decision").isMissingNode()).isTrue();
+        var decision = http.patch(path + "/bee-reviews/" + body.path("id").asText() + "/suggestions/" + suggestion.path("id").asText(),
+                "{\"expected_revision\":1,\"decision\":\"APPLY\"}", "Origin", "https://app.beez.test");
+        assertThat(decision.statusCode()).isEqualTo(400);
+        assertThat(DesignJson.JSON.readTree(decision.body()).path("error").path("code").asText()).isEqualTo("validation_failed");
+        var submitted = http.post(path + "/review-submissions",
+                "{\"expected_revision\":1,\"review_id\":\"" + body.path("id").asText() + "\"}",
+                "Origin", "https://app.beez.test", "Idempotency-Key", "http-submit");
+        assertThat(submitted.statusCode()).withFailMessage(submitted.body()).isEqualTo(201);
+    }
+
+    @Test void legacyReviewIsReadableAndReplayableButCannotAuthorizeANewSubmission() {
+        var input = new HashMap<String, Object>();
+        input.put("references", List.of());
+        var legacy = Map.of("summary", "이전 검토", "suggestions", List.of(), "unavailable_references", List.of("ERD"));
+        String oldHash = DesignJson.hash(List.of());
+        long id = jdbc.queryForObject("""
+                INSERT INTO document_bee_review(document_id,input_revision,resolved_revision,reference_hash,input,result,usage)
+                VALUES(?,1,1,?,cast(? AS jsonb),cast(? AS jsonb),'[]') RETURNING id
+                """, Long.class, document, oldHash, DesignJson.canonical(input), DesignJson.canonical(legacy));
+        jdbc.update("""
+                INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status,review_id)
+                VALUES(?,?,'legacy',?,'COMPLETED',?)
+                """, document, author.accountId(), DesignJson.hash(List.of(1, oldHash)), id);
+        var old = copy().latestReview();
+        assertThat(old.contractVersion()).isNull();
+        assertThat(old.steps()).isEmpty();
+        assertThat(reviews.review(author, project.projectId(), document, 1, "legacy")).isEqualTo(old);
+        code(() -> submit(old), "review_stale");
+        verify(gateway, never()).review(anyMap());
+    }
+
+    @Test void missingBodyStageIsRejectedButActualModelUsageIsStillRecorded() {
+        doAnswer(call -> {
+            var envelope = result(call.getArgument(0), List.of());
+            var output = (Map<String, Object>) envelope.get("result");
+            ((List<?>) output.get("steps")).removeFirst();
+            return envelope;
+        }).when(gateway).review(anyMap());
+        code(() -> review(), "invalid_ai_output");
+        assertThat(copy().latestReview()).isNull();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND failed=true", Integer.class,
+                project.projectId())).isEqualTo(1);
+    }
+
+    @Test void sameKindIsExcludedAndApprovedReferencesHaveTransmittedTextHashes() {
+        long api = upload("API_SPEC");
+        long req = upload("REQUIREMENTS");
+        for (long id : List.of(api, req)) jdbc.update(
+                "UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), id);
+        long erd = upload("ERD");
+        var result = reviews.review(author, project.projectId(), erd, 1, "same-kind");
+        assertThat(result.reviewStatus()).isEqualTo("COMPLETE");
+        assertThat(result.steps()).anySatisfy(step -> {
+            assertThat(step.step()).isEqualTo("ERD"); assertThat(step.reason()).isEqualTo("SAME_KIND");
+        });
+        assertThat(result.references()).allSatisfy(ref -> {
+            assertThat(ref.status()).isEqualTo("APPROVED");
+            assertThat(ref.contentHash()).isEqualTo(com.beez.backend.document.validation.DocumentReviewReferenceHasher.textHash(ref.content()));
+        });
+        assertThat(reviews.submit(author, project.projectId(), erd,
+                new DocumentSubmissionRequest(1, result.id()), "same-kind-submit").status()).isEqualTo("SUBMITTED");
     }
 
     @org.junit.jupiter.params.ParameterizedTest
