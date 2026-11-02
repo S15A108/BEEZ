@@ -454,6 +454,10 @@ export function changeRoutes(
       if (proposal!.status !== 'REJECTED')
         fail(409, 'proposal_locked', '반려된 제안만 고쳐 다시 올릴 수 있어요.')
       const input = changeProposalInputSchema.parse(body)
+      // 서버 PUT처럼 요청에 없는 선택 필드는 비운다. 옛 task_id·validation_id를 남기면 화면이 빠뜨린 것을 가린다
+      // (PR #72 4차 조사 FOURTH-DOC-02).
+      delete proposal!.task_id
+      delete proposal!.validation_id
       Object.assign(
         proposal!,
         input,

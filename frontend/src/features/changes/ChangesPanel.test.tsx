@@ -32,6 +32,7 @@ beforeEach(async () => {
 afterEach(() => {
   client.clear()
   restore()
+  vi.restoreAllMocks()
 })
 
 function renderPanel() {
@@ -402,4 +403,38 @@ it('승인 확인창은 문서 새 버전 번호를 제안이 만든 버전에�
       `${second.title} v${second.approved_version!.version_no} → 새 버전`,
     ),
   ).toBeInTheDocument()
+})
+
+// PR #72 4차 조사 FOURTH-DOC-02: 제목만 고쳐 다시 올려도 관련 작업이 그대로면 원래 검증 연결(validation_id)을 보낸다.
+// mock도 서버 PUT처럼 빠진 필드를 비우므로, 빠뜨리면 연결이 끊긴다.
+it('제목만 고쳐 다시 올려도 관련 작업이 그대로면 검증 연결을 지킨다', async () => {
+  const { proposal } = await changesApi.get('101', '71')
+  expect(proposal).toMatchObject({ task_id: '501', validation_id: '601' })
+  await changesApi.reject('101', '71', {
+    reason: '다시 봐 주세요.',
+    expected_revision: proposal.revision,
+    expected_snapshot_hash: proposal.snapshot_hash,
+  })
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ChangesPanel projectId="101" isLeader={false} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await user.click(
+    await screen.findByRole('button', { name: '고쳐서 다시 올리기' }),
+  )
+  await user.type(screen.getByLabelText('제목 *'), ' (보완)')
+  await user.click(screen.getByRole('button', { name: '다시 올리기' }))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '고친 내용을 올렸어요.',
+  )
+  expect((await changesApi.get('101', '71')).proposal).toMatchObject({
+    title: `${proposal.title} (보완)`,
+    task_id: '501',
+    validation_id: '601',
+  })
 })

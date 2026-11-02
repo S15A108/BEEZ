@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   authApi,
+  changesApi,
   dashboardApi,
   documentsApi,
   inboxApi,
@@ -277,4 +278,28 @@ it('문서 분류는 등록한 사람만 고치고, 다른 팀원은 403 documen
     (await documentsApi.update('101', items[0].id, { domain: '프론트' }))
       .domain,
   ).toBe('프론트')
+})
+
+// PR #72 4차 조사 FOURTH-DOC-02: mock 재제출(CHG-A04)도 서버 PUT처럼 요청에 없는 task_id·validation_id를 비운다.
+it('반려된 제안을 다시 올릴 때 빠진 task_id·validation_id는 비운다', async () => {
+  await login()
+  const { proposal } = await changesApi.get('101', '71')
+  const rejected = await changesApi.reject('101', '71', {
+    reason: '다시 봐 주세요.',
+    expected_revision: proposal.revision,
+    expected_snapshot_hash: proposal.snapshot_hash,
+  })
+  await login('member@beez.local')
+  await changesApi.update('101', '71', {
+    base_baseline_id: proposal.base_baseline_id,
+    title: proposal.title,
+    reason: proposal.reason,
+    items: proposal.items,
+    documents: [],
+    expected_revision: rejected.revision,
+    expected_snapshot_hash: rejected.snapshot_hash,
+  })
+  const { proposal: after } = await changesApi.get('101', '71')
+  expect(after.task_id).toBeUndefined()
+  expect(after.validation_id).toBeUndefined()
 })

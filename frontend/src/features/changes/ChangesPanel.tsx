@@ -278,6 +278,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       title: values.title,
       reason: values.reason,
       ...(values.task_id ? { task_id: values.task_id } : {}),
+      // 관련 작업이 그대로면 원래 제안의 검증 연결도 그대로 보낸다. 서버 PUT은 빠진 필드를 비우므로 빠뜨리면 제목만
+      // 고쳐도 연결이 끊긴다(PR #72 4차 조사 FOURTH-DOC-02). 작업을 바꾸거나 뺐으면 보내지 않는다.
+      ...(source?.validation_id &&
+      values.task_id &&
+      values.task_id === source.task_id
+        ? { validation_id: source.validation_id }
+        : {}),
       // 거둔 제안을 다시 올리면 새 제안에 잇는다(PR #46 previous_proposal_id).
       ...(source?.status === 'WITHDRAWN' && !update
         ? { previous_proposal_id: source.id }
