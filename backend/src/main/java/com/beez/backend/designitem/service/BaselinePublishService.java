@@ -10,6 +10,7 @@ import static com.beez.backend.designitem.support.DesignJson.time;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.changeproposal.port.PostPublishAnalysisIntake;
 import com.beez.backend.designitem.dto.BaselineDocumentRefResponse;
 import com.beez.backend.designitem.dto.BaselineItemRefResponse;
 import com.beez.backend.designitem.dto.InitialBaselineResponse;
@@ -40,10 +41,12 @@ public class BaselinePublishService {
     private final DesignItemCommandService items;
     private final DesignContentValidator content;
     private final DocumentProperties properties;
+    private final PostPublishAnalysisIntake intake;
 
     public BaselinePublishService(BaselineRepository baselines, PublicationOutboxRepository outbox, DesignProjectRepository projects, DesignProjectLock locks, DesignCommandService commands,
                                    DesignSnapshotService snapshots, DesignItemCommandService items,
                                    DesignContentValidator content, DocumentProperties properties,
+                                   PostPublishAnalysisIntake intake,
                                    @Value("${beez.cdc.legacy-outbox-poc-enabled:false}") boolean legacyOutboxPocEnabled) {
         this.baselines = baselines;
         this.outbox = outbox;
@@ -55,6 +58,7 @@ public class BaselinePublishService {
         this.items = items;
         this.content = content;
         this.properties = properties;
+        this.intake = intake;
     }
 
     @Transactional
@@ -127,6 +131,7 @@ public class BaselinePublishService {
                 caller.accountId().toString(), time(baseline.get("published_at")));
         // Legacy outbox is retained only for isolated PoC reproducibility; #197 owns the intake.
         if (legacyOutboxPocEnabled) outbox.insertInitialPublication(project, baselineId);
+        intake.accept(project, baselineId, null);
         commands.save(project, caller.accountId(), "initial-baseline", key, command, result);
         return result;
     }

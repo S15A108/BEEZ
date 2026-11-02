@@ -2,6 +2,8 @@ package com.beez.backend.changeproposal.port;
 
 import com.beez.backend.changeproposal.dto.PublicationDtos.*;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
+import org.springframework.beans.factory.ObjectProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -19,7 +21,11 @@ public class PublicationPortConfiguration {
     ValidationImpactPort validationImpactPort() { return new UnconnectedValidationImpact(); }
 
     @Bean @ConditionalOnMissingBean(PostPublishAnalysisIntake.class)
-    PostPublishAnalysisIntake postPublishAnalysisIntake() { return new UnconnectedAnalysisIntake(); }
+    PostPublishAnalysisIntake postPublishAnalysisIntake(
+            ObjectProvider<PublishedAnalysisRepository> repositories) {
+        var repository = repositories.getIfAvailable();
+        return repository == null ? new UnconnectedAnalysisIntake() : repository::accept;
+    }
 
     public static class UnconnectedValidationImpact implements ValidationImpactPort {
         @Override @Transactional(propagation = Propagation.MANDATORY)

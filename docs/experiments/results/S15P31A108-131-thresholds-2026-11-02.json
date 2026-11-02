@@ -1,0 +1,632 @@
+{
+  "fixture_sha256": "144c16074b4a04f303db53c82e79765c733ca5db49659f7876d0f3df585b4cd6",
+  "label_author": "agent-authored; human review pending",
+  "model": "text-embedding-3-small",
+  "dimension": 1024,
+  "threshold": 0.65,
+  "compare_thresholds": [
+    0.45,
+    0.5,
+    0.55,
+    0.6,
+    0.7
+  ],
+  "max_items": 2,
+  "max_evidence": 2,
+  "max_provider_calls": 10,
+  "notes": "Synthetic development labels; BE, MCP and production data are not evaluated.",
+  "cases": [
+    {
+      "id": "upload-create-one-hop",
+      "items": [],
+      "evidence": [],
+      "missing_items": [
+        "1101",
+        "1102"
+      ],
+      "extra_items": [],
+      "missing_evidence": [
+        "e-limit",
+        "e-post"
+      ],
+      "extra_evidence": [],
+      "unresolved": [
+        "NO_MATCH"
+      ],
+      "usage": [
+        {
+          "request_key": "context-selection-952ddd95c701451c8ef88fbb0b7c33af-query:emb:ad416fd8601f442890174197463a9625:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 17,
+          "output_tokens": 0,
+          "latency_ms": 2203,
+          "failed": false,
+          "tokens_known": true
+        },
+        {
+          "request_key": "context-selection-952ddd95c701451c8ef88fbb0b7c33af-documents:emb:87b34a32c02242d1ae6c37abb9e26396:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 226,
+          "output_tokens": 0,
+          "latency_ms": 1483,
+          "failed": false,
+          "tokens_known": true
+        }
+      ],
+      "threshold_comparisons": [
+        {
+          "threshold": 0.45,
+          "id": "upload-create-one-hop",
+          "items": [
+            "1101",
+            "1102"
+          ],
+          "evidence": [
+            "e-get"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [
+            "e-get"
+          ],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.5,
+          "id": "upload-create-one-hop",
+          "items": [
+            "1101",
+            "1102"
+          ],
+          "evidence": [
+            "e-get"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [
+            "e-get"
+          ],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.55,
+          "id": "upload-create-one-hop",
+          "items": [
+            "1101",
+            "1102"
+          ],
+          "evidence": [
+            "e-get"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [
+            "e-get"
+          ],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.6,
+          "id": "upload-create-one-hop",
+          "items": [],
+          "evidence": [],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.7,
+          "id": "upload-create-one-hop",
+          "items": [],
+          "evidence": [],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "task-plan-adds-current-reference",
+      "items": [
+        "1104"
+      ],
+      "evidence": [],
+      "missing_items": [
+        "1101",
+        "1102"
+      ],
+      "extra_items": [],
+      "missing_evidence": [
+        "e-limit",
+        "e-post"
+      ],
+      "extra_evidence": [],
+      "unresolved": [
+        "NO_MATCH"
+      ],
+      "usage": [
+        {
+          "request_key": "context-selection-5b469663481a4dc793873e171c45cb52-query:emb:e91a1b33792b4ca6b6feaf70bf8773f2:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 19,
+          "output_tokens": 0,
+          "latency_ms": 1953,
+          "failed": false,
+          "tokens_known": true
+        },
+        {
+          "request_key": "context-selection-5b469663481a4dc793873e171c45cb52-documents:emb:72a768d0c0044fe8afd1767a2563f651:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 226,
+          "output_tokens": 0,
+          "latency_ms": 2139,
+          "failed": false,
+          "tokens_known": true
+        }
+      ],
+      "threshold_comparisons": [
+        {
+          "threshold": 0.45,
+          "id": "task-plan-adds-current-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [
+            "e-get"
+          ],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [
+            "e-get"
+          ],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.5,
+          "id": "task-plan-adds-current-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.55,
+          "id": "task-plan-adds-current-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.6,
+          "id": "task-plan-adds-current-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.7,
+          "id": "task-plan-adds-current-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [],
+          "missing_items": [
+            "1101",
+            "1102"
+          ],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-limit",
+            "e-post"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "owner-reference",
+      "items": [
+        "1104"
+      ],
+      "evidence": [
+        "e-owner"
+      ],
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [],
+      "extra_evidence": [],
+      "unresolved": [],
+      "usage": [
+        {
+          "request_key": "context-selection-65c4463797f748228f2a911d90d06ea7-query:emb:831e8d2c0d1f4e7f9c2e4b88f5d67946:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 20,
+          "output_tokens": 0,
+          "latency_ms": 2531,
+          "failed": false,
+          "tokens_known": true
+        },
+        {
+          "request_key": "context-selection-65c4463797f748228f2a911d90d06ea7-documents:emb:a0740b5f84204612adb1ee625104bb09:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 226,
+          "output_tokens": 0,
+          "latency_ms": 1859,
+          "failed": false,
+          "tokens_known": true
+        }
+      ],
+      "threshold_comparisons": [
+        {
+          "threshold": 0.45,
+          "id": "owner-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [
+            "e-owner"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.5,
+          "id": "owner-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [
+            "e-owner"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.55,
+          "id": "owner-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [
+            "e-owner"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.6,
+          "id": "owner-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [
+            "e-owner"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.7,
+          "id": "owner-reference",
+          "items": [
+            "1104"
+          ],
+          "evidence": [
+            "e-owner"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        }
+      ]
+    },
+    {
+      "id": "source-only-index-retry",
+      "items": [],
+      "evidence": [
+        "e-retry"
+      ],
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [],
+      "extra_evidence": [],
+      "unresolved": [],
+      "usage": [
+        {
+          "request_key": "context-selection-e797ac40e8594098a3f72a887361c60c-query:emb:ea7bae6eaf864589b841cb9fe30d5508:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 27,
+          "output_tokens": 0,
+          "latency_ms": 2328,
+          "failed": false,
+          "tokens_known": true
+        },
+        {
+          "request_key": "context-selection-e797ac40e8594098a3f72a887361c60c-documents:emb:f8f2aa0be6e4429bb9d2741218aeb6cd:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 151,
+          "output_tokens": 0,
+          "latency_ms": 2000,
+          "failed": false,
+          "tokens_known": true
+        }
+      ],
+      "threshold_comparisons": [
+        {
+          "threshold": 0.45,
+          "id": "source-only-index-retry",
+          "items": [],
+          "evidence": [
+            "e-retry"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.5,
+          "id": "source-only-index-retry",
+          "items": [],
+          "evidence": [
+            "e-retry"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.55,
+          "id": "source-only-index-retry",
+          "items": [],
+          "evidence": [
+            "e-retry"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.6,
+          "id": "source-only-index-retry",
+          "items": [],
+          "evidence": [
+            "e-retry"
+          ],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": []
+        },
+        {
+          "threshold": 0.7,
+          "id": "source-only-index-retry",
+          "items": [],
+          "evidence": [],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [
+            "e-retry"
+          ],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unknown-retention",
+      "items": [],
+      "evidence": [],
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [],
+      "extra_evidence": [],
+      "unresolved": [
+        "NO_MATCH"
+      ],
+      "usage": [
+        {
+          "request_key": "context-selection-9e7525bde0934e769e783a0a4b7587bc-query:emb:e074371a47a64e2e928f5b892b51f282:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 19,
+          "output_tokens": 0,
+          "latency_ms": 1905,
+          "failed": false,
+          "tokens_known": true
+        },
+        {
+          "request_key": "context-selection-9e7525bde0934e769e783a0a4b7587bc-documents:emb:4cec2d76983741708d6535dd6b300429:0:1",
+          "feature": "EMBEDDING",
+          "model": "text-embedding-3-small",
+          "input_tokens": 226,
+          "output_tokens": 0,
+          "latency_ms": 484,
+          "failed": false,
+          "tokens_known": true
+        }
+      ],
+      "threshold_comparisons": [
+        {
+          "threshold": 0.45,
+          "id": "unknown-retention",
+          "items": [],
+          "evidence": [],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.5,
+          "id": "unknown-retention",
+          "items": [],
+          "evidence": [],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.55,
+          "id": "unknown-retention",
+          "items": [],
+          "evidence": [],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.6,
+          "id": "unknown-retention",
+          "items": [],
+          "evidence": [],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        },
+        {
+          "threshold": 0.7,
+          "id": "unknown-retention",
+          "items": [],
+          "evidence": [],
+          "missing_items": [],
+          "extra_items": [],
+          "missing_evidence": [],
+          "extra_evidence": [],
+          "unresolved": [
+            "NO_MATCH"
+          ]
+        }
+      ]
+    }
+  ],
+  "in_flight": null
+}

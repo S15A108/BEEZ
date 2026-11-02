@@ -28,14 +28,7 @@ export type ListQuery = z.infer<typeof listQuerySchema>
 export const listResponseSchema = common.pageSchema(common.meetingSchema)
 export type ListResponse = z.infer<typeof listResponseSchema>
 
-export const getResponseSchema = z.object({
-  id: common.idSchema,
-  project_id: common.idSchema,
-  title: z.string(),
-  change_proposal_id: common.idSchema.optional(),
-  participants: common.participantSchema.array(),
-  created_at: common.timeSchema,
-})
+export const getResponseSchema = common.meetingSchema
 export type GetResponse = z.infer<typeof getResponseSchema>
 
 export const inviteInputSchema = z.object({
@@ -54,7 +47,7 @@ export const inviteResponseSchema = z.object({
 export type InviteResponse = z.infer<typeof inviteResponseSchema>
 
 export const respondInputSchema = z.object({
-  status: z.enum(['ACCEPTED', 'DECLINED']),
+  status: z.enum(['JOINED', 'DECLINED']),
 })
 export type RespondInput = z.infer<typeof respondInputSchema>
 

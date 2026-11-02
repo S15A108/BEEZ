@@ -1,0 +1,71 @@
+{
+  "fixture_sha256": "144c16074b4a04f303db53c82e79765c733ca5db49659f7876d0f3df585b4cd6",
+  "reviewer": "independent-automated-review",
+  "reviewer_identity_verified": false,
+  "threshold": 0.45,
+  "scope": "final selected IDs only; synthetic labels; no direct-match inference",
+  "measurement_input_note": "Historical measurements do not contain per-case input hashes; verify their input-construction code and revision separately.",
+  "cases": [
+    {
+      "case": "CASE-01",
+      "status": "compared",
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [
+        "e-post"
+      ],
+      "extra_evidence": [
+        "e-get"
+      ],
+      "no_match_agrees": true,
+      "dependency_status": "not_recorded"
+    },
+    {
+      "case": "CASE-02",
+      "status": "compared",
+      "missing_items": [
+        "1100",
+        "1101"
+      ],
+      "extra_items": [],
+      "missing_evidence": [
+        "e-limit"
+      ],
+      "extra_evidence": [
+        "e-get"
+      ],
+      "no_match_agrees": true,
+      "dependency_status": "not_recorded"
+    },
+    {
+      "case": "CASE-03",
+      "status": "compared",
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [],
+      "extra_evidence": [],
+      "no_match_agrees": true,
+      "dependency_status": "not_recorded"
+    },
+    {
+      "case": "CASE-04",
+      "status": "compared",
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [],
+      "extra_evidence": [],
+      "no_match_agrees": true,
+      "dependency_status": "not_recorded"
+    },
+    {
+      "case": "CASE-05",
+      "status": "compared",
+      "missing_items": [],
+      "extra_items": [],
+      "missing_evidence": [],
+      "extra_evidence": [],
+      "no_match_agrees": true,
+      "dependency_status": "not_recorded"
+    }
+  ]
+}

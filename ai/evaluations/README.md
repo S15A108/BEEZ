@@ -1,5 +1,23 @@
 # #130 AI 평가 실행
 
+## #131 컨텍스트 선택 예비 평가
+
+가상 fixture에 실제 임베딩 선택기를 적용한다. `ai/`에서 새 출력 경로와 실험 임계값을 지정한다. 이 명령은 유료 GMS 호출을 수행한다.
+
+```text
+python -m evaluations.context_selection_131 --live --threshold 0.65 --env-file <기존 .env 경로> --output <새 결과 JSON 경로>
+```
+
+다섯 건에 대해 재시도 없이 최대 10회 호출하며 중간 결과를 기록한다. 기존 파일을 덮어쓰거나 중단된 실행을 자동 재개하지 않는다. 중단 시 `in_flight`가 남았다면 해당 호출의 사용량을 확인해야 한다. 0.65는 예비 실측값일 뿐 운영 임계값이 아니다. 초안 라벨과 실측 결과의 한계는 [#131 실험 기록](../../docs/experiments/development-context-selection-S15P31A108-131.md)을 따른다.
+
+같은 임베딩 결과로 임계값을 비교하려면 `--compare-threshold`를 반복 지정한다(최대 10개). 각 사례의 응답을 메모리에만 보관해 동일한 선택기와 의존 관계 확장을 다시 실행하므로 비교마다 추가 공급자 호출이나 usage를 만들지 않는다. 결과 JSON의 `threshold_comparisons`에서 누락·혼입 ID를 확인한다. 원본 벡터와 원문은 결과에 저장하지 않는다.
+
+```text
+python -m evaluations.context_selection_131 --live --threshold 0.65 --compare-threshold 0.5 --compare-threshold 0.6 --env-file <기존 .env 경로> --output <새 결과 JSON 경로>
+```
+
+임계값을 실측한 동일 fixture에 맞추면 과적합될 수 있다. 이 결과만으로 운영 임계값을 정하지 않고 독립 검토 라벨과 별도 데이터로 검증한다. 이 비교는 이 기능을 추가한 이후의 실행에만 적용하며, 이전 결과에는 벡터가 없으므로 소급 비교할 수 없다.
+
 운영 앱에서 import하지 않는 개발용 C/D 실험이다. 실제 파서·청커·GMS 임베딩을 재사용하며, BE/DB와 운영 비비 API는 연결하지 않는다. 현재 데이터는 agent가 작성한 가상 프로젝트의 Markdown 4종·질문 12개이며 독립 사람 검토와 운영 데이터 평가는 남아 있다.
 
 ## 실행

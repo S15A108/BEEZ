@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { loadKenney, type KenneyModel } from '../kenney'
 
 export interface OfficeCityBounds {
   left: number
@@ -22,6 +24,39 @@ interface Sector {
   outward: THREE.Vector2
   traffic: Traffic
 }
+/** Kenney 건물로 바꿔 끼울 자리. matrix는 그 root 기준 바닥 가운데이고 앞(+Z)이 길을 본다. */
+interface KenneySpot {
+  root: THREE.Group
+  matrix: THREE.Matrix4
+  w: number
+  h: number
+  d: number
+  lod: 'near' | 'mid' | 'far'
+  seed: number
+}
+// 가까운 건물은 비율이 맞는 모델을 고르고, 먼 건물은 저해상도 모델을 늘려 쓴다(Kenney City Kit, CC0).
+const KENNEY_NEAR = [
+  'building-a',
+  'building-b',
+  'building-d',
+  'building-f',
+  'building-g',
+  'building-h',
+  'building-l',
+  'building-m',
+  'building-skyscraper-b',
+  'building-skyscraper-d',
+]
+const KENNEY_FAR = [
+  'low-detail-building-a',
+  'low-detail-building-b',
+  'low-detail-building-c',
+  'low-detail-building-d',
+  'low-detail-building-g',
+  'low-detail-building-h',
+  'low-detail-building-j',
+  'low-detail-building-m',
+]
 interface Car {
   phase: number
   speed: number
@@ -93,6 +128,9 @@ export class OfficeCity {
   private readonly axis = new THREE.Vector3(0, 1, 0)
   private readonly walkObstacles: WalkObstacle[] = []
   private trafficObstacles: WalkObstacle[] = []
+  private readonly kenneySpots: KenneySpot[] = []
+  private readonly kenneyMaterials: THREE.Material[] = []
+  private disposed = false
 
   constructor(bounds: OfficeCityBounds) {
     this.root.name = 'office-city'
@@ -170,6 +208,9 @@ export class OfficeCity {
       3,
     )
     this.addDistrict(bounds)
+    void this.useKenney().catch(() => {
+      // 모델을 못 받으면(테스트 환경, 네트워크 오류) 직접 만든 건물을 그대로 둔다.
+    })
   }
 
   private geometry(kind: string) {
@@ -239,13 +280,15 @@ export class OfficeCity {
     root.rotation.y = yaw
     this.root.add(root)
     const batches = new Map<string, Batch>()
+    // 건물 몸체는 따로 묶어 Kenney 모델이 오면 숨긴다.
+    let buildingPart = false
     const stamp = (
       kind: string,
       finish: Finish,
       matrix: THREE.Matrix4,
       color: string,
     ) => {
-      const key = `${kind}/${finish}`
+      const key = `${buildingPart ? 'building:' : ''}${kind}/${finish}`
       if (!batches.has(key))
         batches.set(key, {
           geometry: this.geometry(kind),
@@ -436,7 +479,22 @@ export class OfficeCity {
       const levels = [8, 12, 9, 14, 10, 11, 8][variant]
       const h = 2.8 + levels * 1.48
       const v = 18.1 + [0, 3.4, 1.2, 5.2, 2.1, 4.1, 0.7][variant]
+      buildingPart = true
       this.building(box, u, v, w, d, h, levels, variant)
+      buildingPart = false
+      this.kenneySpots.push({
+        root,
+        matrix: new THREE.Matrix4().compose(
+          new THREE.Vector3(u, 0, v),
+          new THREE.Quaternion().setFromAxisAngle(this.axis, Math.PI),
+          new THREE.Vector3(1, 1, 1),
+        ),
+        w,
+        h,
+        d,
+        lod: 'near',
+        seed: variant + seed * 7,
+      })
       // Reserve the existing detailed neighbors when the surrounding grid is filled.
       const cosine = Math.cos(yaw),
         sine = Math.sin(yaw)
@@ -459,6 +517,7 @@ export class OfficeCity {
         batch.stamps.length,
       )
       mesh.name = `${root.name}-${key.replace('/', '-')}`
+      if (key.startsWith('building:')) mesh.userData.kenneyReplaceable = true
       batch.stamps.forEach((item, i) => {
         mesh.setMatrixAt(i, item.matrix)
         mesh.setColorAt(i, item.color)
@@ -730,6 +789,28 @@ export class OfficeCity {
                 lod,
               )
             buildingCounts[lod]++
+            // 앞(+Z)을 사무실 쪽 길로 돌린다.
+            const facing =
+              Math.round(
+                Math.atan2(this.center.x - x, this.center.y - z) /
+                  (Math.PI / 2),
+              ) *
+              (Math.PI / 2)
+            this.kenneySpots.push({
+              root: districtSectors[sector].root,
+              matrix: new THREE.Matrix4()
+                .compose(
+                  new THREE.Vector3(x, GROUND + 0.2, z),
+                  new THREE.Quaternion().setFromAxisAngle(this.axis, facing),
+                  new THREE.Vector3(1, 1, 1),
+                )
+                .premultiply(districtSectors[sector].inverse),
+              w,
+              h,
+              d,
+              lod,
+              seed,
+            })
             part('stone', x, h / 2 + 0.2, z, w, h, d, stone)
             // A varied roofline remains legible after distant window detail is removed.
             part(
@@ -828,6 +909,7 @@ export class OfficeCity {
         mesh.name = `${target.root.name}-${key.replaceAll('/', '-')}`
         if (batch.layer === 'road') mesh.userData.citySurface = 'road'
         if (batch.layer === 'buildings') {
+          mesh.userData.kenneyReplaceable = true
           mesh.userData.cityBuildings = true
           mesh.userData.cityLod = batch.lod
         }
@@ -1249,12 +1331,114 @@ export class OfficeCity {
     }
   }
 
+  // Kenney City Kit 건물을 받아 같은 자리에 인스턴스로 깔고, 직접 만든 건물 묶음을 숨긴다.
+  private async useKenney() {
+    const load = (names: string[]) =>
+      Promise.all(
+        names.map((name) => loadKenney(`/models/kenney/city/${name}.glb`)),
+      )
+    const [near, far] = await Promise.all([load(KENNEY_NEAR), load(KENNEY_FAR)])
+    if (this.disposed) return
+    const prepare = (model: KenneyModel, name: string) => {
+      model.scene.updateMatrixWorld(true)
+      const parts: THREE.BufferGeometry[] = []
+      const materials: THREE.Material[] = []
+      model.scene.traverse((object) => {
+        const mesh = object as THREE.Mesh
+        if (!mesh.isMesh) return
+        parts.push(mesh.geometry.clone().applyMatrix4(mesh.matrixWorld))
+        materials.push(
+          Array.isArray(mesh.material) ? mesh.material[0] : mesh.material,
+        )
+      })
+      const geometry = mergeGeometries(parts, true)
+      parts.forEach((part) => part.dispose())
+      if (!geometry) return undefined
+      // 재질은 복제해 쓴다. 스텐실 설정이 다른 화면과 나누는 원본 재질에 번지지 않게 한다.
+      const own = materials.map((material) => {
+        const copy = material.clone()
+        this.kenneyMaterials.push(copy)
+        return copy
+      })
+      // 바닥 가운데를 원점으로 옮긴다.
+      geometry.computeBoundingBox()
+      const box = geometry.boundingBox!
+      const center = box.getCenter(new THREE.Vector3())
+      geometry.translate(-center.x, -box.min.y, -center.z)
+      this.geometries.set(`kenney/${name}`, geometry)
+      return {
+        geometry,
+        material: own,
+        size: box.getSize(new THREE.Vector3()),
+      }
+    }
+    const nearSet = near
+      .map((model, i) => prepare(model, KENNEY_NEAR[i]))
+      .filter((item) => !!item)
+    const farSet = far
+      .map((model, i) => prepare(model, KENNEY_FAR[i]))
+      .filter((item) => !!item)
+    if (!nearSet.length || !farSet.length) return
+    type Prepared = (typeof nearSet)[number]
+    const groups = new Map<THREE.Group, Map<Prepared, THREE.Matrix4[]>>()
+    const scale = new THREE.Matrix4()
+    for (const spot of this.kenneySpots) {
+      let pick: Prepared
+      if (spot.lod === 'near') {
+        // 가까운 건물: 높이/너비 비율이 가장 비슷한 모델을 고르고 비율을 지킨 채 키운다.
+        const aspect = spot.h / Math.max(spot.w, spot.d)
+        const ranked = nearSet.toSorted(
+          (a, b) =>
+            Math.abs(a.size.y / a.size.x - aspect) -
+            Math.abs(b.size.y / b.size.x - aspect),
+        )
+        pick = ranked[spot.seed % Math.min(3, ranked.length)]
+        const s = Math.min(spot.w / pick.size.x, spot.d / pick.size.z)
+        scale.makeScale(s, s, s)
+      } else {
+        pick = farSet[spot.seed % farSet.length]
+        scale.makeScale(
+          spot.w / pick.size.x,
+          spot.h / pick.size.y,
+          spot.d / pick.size.z,
+        )
+      }
+      const byModel = groups.get(spot.root) ?? new Map()
+      groups.set(spot.root, byModel)
+      const list = byModel.get(pick) ?? []
+      byModel.set(pick, list)
+      list.push(spot.matrix.clone().multiply(scale))
+    }
+    for (const [root, byModel] of groups)
+      for (const [model, matrices] of byModel) {
+        const mesh = new THREE.InstancedMesh(
+          model.geometry,
+          model.material,
+          matrices.length,
+        )
+        mesh.name = `${root.name}-kenney`
+        matrices.forEach((matrix, i) => mesh.setMatrixAt(i, matrix))
+        mesh.instanceMatrix.needsUpdate = true
+        mesh.computeBoundingSphere()
+        root.add(mesh)
+      }
+    this.root.traverse((object) => {
+      if (object.userData.kenneyReplaceable) object.visible = false
+    })
+    // 창밖 스텐실이 새 재질을 다시 모으게 한다(3인칭에서는 유리창 안으로만 보여야 한다).
+    this.root.userData.cityVersion =
+      ((this.root.userData.cityVersion as number | undefined) ?? 0) + 1
+  }
+
   dispose() {
+    this.disposed = true
     this.root.traverse((object) => {
       if (object instanceof THREE.InstancedMesh) object.dispose()
     })
     this.geometries.forEach((geometry) => geometry.dispose())
     this.materials.forEach((material) => material.dispose())
+    this.kenneyMaterials.forEach((material) => material.dispose())
+    this.kenneyMaterials.length = 0
     this.geometries.clear()
     this.materials.clear()
     this.sectors.length = 0

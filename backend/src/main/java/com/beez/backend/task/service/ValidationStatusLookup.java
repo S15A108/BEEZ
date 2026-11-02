@@ -22,6 +22,10 @@ public class ValidationStatusLookup {
     public static final java.util.Set<String> ALL = java.util.Set.of(
             "NOT_RUN", "RUNNING", "PASS", "NEEDS_INPUT", "NEEDS_REVIEW", "STALE", "ERROR");
 
+    /** 같은 값을 명세 순서대로 (현황 집계가 내려 주는 순서, MON-V01) */
+    public static final List<String> ORDERED = List.of(
+            "NOT_RUN", "RUNNING", "PASS", "NEEDS_INPUT", "NEEDS_REVIEW", "STALE", "ERROR");
+
     /** 검증 trigger 전부 (DDL validation.trigger CHECK 와 같음). 작업 취소가 무효화하는 범위 */
     private static final List<String> ALL_TRIGGERS = List.of("AGENT", "REVALIDATION", "DELTA");
 
@@ -158,6 +162,33 @@ public class ValidationStatusLookup {
                 .param("status", status)
                 .query(Long.class)
                 .list();
+    }
+
+    /**
+     * 현재 계획의 최신 검증 상태별 작업 수 (MON-V01). 작업마다 한 번씩, 검증이 없으면 NOT_RUN. 계획이 없는(DRAFT) 작업은 세지 않는다.
+     * {@link #taskIdsWithStatus} 와 같은 기준. key = status
+     */
+    public Map<String, Integer> countTasksByLatestStatus(Long projectId) {
+        Map<String, Integer> result = new HashMap<>();
+        List<Map<String, Object>> rows = jdbc.sql("""
+                        select coalesce((select v.status
+                                           from validation v
+                                          where v.task_id = t.id
+                                            and v.plan_revision_id = t.current_plan_revision_id
+                                          order by v.id desc
+                                          limit 1), 'NOT_RUN') as status, count(*) as cnt
+                          from task t
+                         where t.project_id = :projectId
+                           and t.current_plan_revision_id is not null
+                         group by 1
+                        """)
+                .param("projectId", projectId)
+                .query()
+                .listOfRows();
+        for (Map<String, Object> row : rows) {
+            result.put((String) row.get("status"), ((Number) row.get("cnt")).intValue());
+        }
+        return result;
     }
 
     /** 여러 작업을 한 번에. 목록 조회에서 N+1 을 피한다. key = task_id */

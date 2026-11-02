@@ -2,6 +2,10 @@
 export const contractExamples = {
   'CHG-A01': {
     id: '71',
+    key: 'CP-71',
+    revision: 1,
+    snapshot_hash:
+      'sha256:3f6c2b9a1e7d4c5b8a0f9e2d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b',
     project_id: '101',
     base_baseline_id: '401',
     title: '로그인 오류 응답 설명 보완',
@@ -26,6 +30,8 @@ export const contractExamples = {
         document_id: '201',
         base_document_version_id: '211',
         after_content: '# 수정된 요구사항\n팀장이 프로젝트를 삭제한다.',
+        content_hash:
+          'sha256:7a1d9c3e5b2f4a6c8e0d1b3f5a7c9e2d4b6f8a0c1e3d5b7f9a2c4e6d8b0f1a3c',
       },
     ],
     status: 'PROPOSED',
@@ -176,7 +182,7 @@ export const contractExamples = {
     participants: [
       {
         member_id: '21',
-        status: 'ACCEPTED',
+        status: 'JOINED',
       },
     ],
     created_at: '2026-10-23T03:00:00Z',

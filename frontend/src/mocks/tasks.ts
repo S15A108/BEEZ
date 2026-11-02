@@ -28,12 +28,118 @@ function taskOwner(context: MockContext, task: TaskDetail): void {
     fail(403, 'forbidden', '현재 작업 담당자만 진행할 수 있어요.')
 }
 
+// 서버 TaskPlanService.resolveDesignRefs·validateDependencies와 같은 검사(PR #72 mock/live 전수 대조 LA-TC-04).
+// 기준에 없는 항목은 400, 보낸 버전이 지금 승인 버전과 다르면 409 version_conflict.
+// 자기 자신·없는 작업은 400 validation_failed, 선행 작업이 이미 나를 선행으로 두면(1단계 순환) 409 dependency_cycle.
+function checkPlanRefs(
+  context: MockContext,
+  plan: {
+    design_refs: { design_item_id: string; design_item_version_id: string }[]
+    dependency_task_ids: string[]
+  },
+  taskId?: string,
+): void {
+  const project = requireProject(context)
+  for (const reference of plan.design_refs) {
+    const current = project.items.find(
+      (item) =>
+        item.design_item_id === reference.design_item_id &&
+        item.status === 'APPROVED',
+    )
+    if (!current)
+      fail(
+        400,
+        'validation_failed',
+        `현재 기준 설계에 없거나 폐기된 항목입니다 (design_item_id=${reference.design_item_id})`,
+      )
+    if (current.id !== reference.design_item_version_id)
+      fail(
+        409,
+        'version_conflict',
+        `설계 참조가 오래됨 (design_item_id=${reference.design_item_id}, 현재 버전=${current.id})`,
+      )
+  }
+  for (const dependencyId of plan.dependency_task_ids) {
+    if (dependencyId === taskId)
+      fail(
+        400,
+        'validation_failed',
+        '작업이 자기 자신을 선행으로 가질 수 없습니다',
+      )
+    const dependency = project.tasks.find((item) => item.id === dependencyId)
+    if (!dependency)
+      fail(
+        400,
+        'validation_failed',
+        '선행 작업 중 같은 프로젝트에 없는 것이 있습니다',
+      )
+    if (
+      taskId &&
+      dependency.current_plan_revision.plan.dependency_task_ids.includes(taskId)
+    )
+      fail(
+        409,
+        'dependency_cycle',
+        `선행 관계가 순환합니다 (task_id=${dependencyId})`,
+      )
+  }
+}
+
+// 서버 TaskTransitionPolicy의 요청 전이 표. 멱등은 바꾸지 않고 지금 상태를 200으로 돌려준다.
+const ALLOWED: Record<string, string[]> = {
+  DRAFT: ['CANCEL'],
+  READY: ['START', 'CANCEL'],
+  IN_PROGRESS: ['WAIT', 'COMPLETED', 'CANCEL'],
+  WAITING: ['RESUME', 'CANCEL'],
+  COMPLETED: [],
+  CANCELLED: [],
+}
+const IDEMPOTENT: Record<string, string[]> = {
+  IN_PROGRESS: ['START'],
+  COMPLETED: ['COMPLETED'],
+  CANCELLED: ['CANCEL'],
+}
+// 서버 beez.task.stalled-after 기본값. 마지막 보고(여기서는 작업의 마지막 변경 시각) 뒤 이만큼 지나면 보고가 끊긴 작업이다.
+const STALLED_AFTER_MS = 30 * 60 * 1000
+
 function syncValidation(context: MockContext, validation: Validation): void {
   const task = findById(requireProject(context).tasks, validation.task_id)
   if (task.current_plan_revision.id === validation.plan_revision_id) {
     task.validation_status = validation.status
     task.validation = copy(validation)
   }
+}
+
+// 담당자 인계(PR #50 d4db914, 서버 TaskHandoverService.reassign). TSK-A06과 제외·나가기가 같이 쓴다.
+// 같은 담당자면 그대로. 점유 중(IN_PROGRESS·WAITING)이면 DELTA를 뺀 이 작업의 검증(진행 중 포함)을
+// STALE(ASSIGNEE_CHANGED)로 바꾸고, IN_PROGRESS는 WAITING(REVALIDATION)으로 내린 뒤 넘긴다.
+export function reassignTask(
+  context: MockContext,
+  task: TaskDetail,
+  memberId: string,
+): void {
+  if (task.assignee_member_id === memberId) return
+  if (['IN_PROGRESS', 'WAITING'].includes(task.status))
+    for (const validation of requireProject(context).validations) {
+      if (
+        validation.task_id !== task.id ||
+        validation.trigger === 'DELTA' ||
+        validation.status === 'STALE'
+      )
+        continue
+      validation.status = 'STALE'
+      validation.stale_reason = 'ASSIGNEE_CHANGED'
+      validation.finished_at ??= now()
+      delete context.database.pending_validations[validation.id]
+      syncValidation(context, validation)
+    }
+  if (task.status === 'IN_PROGRESS') {
+    task.status = 'WAITING'
+    task.waiting_reason = 'REVALIDATION'
+  }
+  task.assignee_member_id = memberId
+  task.lock_version++
+  task.updated_at = now()
 }
 
 function evaluate(context: MockContext, validation: Validation): void {
@@ -220,9 +326,7 @@ export function taskRoutes(
       }
       if (plan.context_packet_id)
         findById(project.packets, plan.context_packet_id)
-      plan.dependency_task_ids.forEach((dependencyId) =>
-        findById(project.tasks, dependencyId),
-      )
+      checkPlanRefs(context, plan)
       project.tasks.push(next)
       project.revisions.push(copy(revision))
       activity(context, 'TASK_CREATED', { task_id: taskId })
@@ -235,7 +339,10 @@ export function taskRoutes(
             (item) =>
               (!query.get('status') || item.status === query.get('status')) &&
               (!query.get('assignee_member_id') ||
-                item.assignee_member_id === query.get('assignee_member_id')),
+                item.assignee_member_id === query.get('assignee_member_id')) &&
+              // 서버처럼 validation_status도 페이지를 자르기 전에 건다(LA-TC-05).
+              (!query.get('validation_status') ||
+                item.validation_status === query.get('validation_status')),
           ),
           query,
         ),
@@ -257,15 +364,7 @@ export function taskRoutes(
         'revision_conflict',
       )
       const plan = taskPlanInputSchema.parse(body)
-      plan.dependency_task_ids.forEach((dependencyId) => {
-        if (dependencyId === task!.id)
-          fail(
-            400,
-            'dependency_cycle',
-            '자기 자신을 선행 작업으로 지정할 수 없어요.',
-          )
-        findById(project.tasks, dependencyId)
-      })
+      checkPlanRefs(context, plan, task!.id)
       const revision = {
         id: nextId(database),
         task_id: task!.id,
@@ -276,6 +375,20 @@ export function taskRoutes(
       }
       project.revisions.push(revision)
       task!.current_plan_revision = copy(revision)
+      // 서버 TaskPlanService: 점유 중(IN_PROGRESS·WAITING)이던 작업의 이전 검증은 PLAN_CHANGED로 무효,
+      // IN_PROGRESS만 WAITING(REVALIDATION)으로 내린다. 다른 대기 사유는 덮어쓰지 않는다(LA-TC-02).
+      if (['IN_PROGRESS', 'WAITING'].includes(task!.status))
+        for (const item of project.validations)
+          if (item.task_id === task!.id && item.status !== 'STALE') {
+            item.status = 'STALE'
+            item.stale_reason = 'PLAN_CHANGED'
+            item.finished_at ??= now()
+            delete database.pending_validations[item.id]
+          }
+      if (task!.status === 'IN_PROGRESS') {
+        task!.status = 'WAITING'
+        task!.waiting_reason = 'REVALIDATION'
+      }
       task!.lock_version++
       task!.validation_status = 'NOT_RUN'
       delete task!.validation
@@ -297,13 +410,17 @@ export function taskRoutes(
         body.expected_lock_version,
         'revision_conflict',
       )
+      if (['COMPLETED', 'CANCELLED'].includes(task!.status))
+        fail(
+          400,
+          'invalid_transition',
+          '완료·취소된 작업의 담당자는 바꿀 수 없습니다',
+        )
       const member = findById(
         project.members,
         requiredString(body, 'assignee_member_id'),
       )
-      task!.assignee_member_id = member.id
-      task!.lock_version++
-      task!.updated_at = now()
+      reassignTask(context, task!, member.id)
       return { data: task! }
     }
     case 'VAL-A01':
@@ -346,8 +463,23 @@ export function taskRoutes(
       return { status: 202, data: validation! }
     }
     case 'TSK-A07': {
-      taskOwner(context, task!)
       const input = taskStateInputSchema.parse(body)
+      // 서버 TaskStateService: 담당자만 보고한다. 예외로 사람 팀장은 보고가 끊긴(IN_PROGRESS이고 30분 넘게 보고 없음)
+      // 남의 작업을 취소할 수 있다. 이미 취소된 작업은 그대로 돌려준다(LA-TC-08).
+      if (task!.assignee_member_id !== context.member?.id) {
+        if (input.event !== 'CANCEL' || context.member?.role !== 'LEADER')
+          taskOwner(context, task!)
+        else if (task!.status === 'CANCELLED') return { data: task! }
+        else if (
+          task!.status !== 'IN_PROGRESS' ||
+          Date.now() - Date.parse(task!.updated_at) < STALLED_AFTER_MS
+        )
+          fail(
+            403,
+            'forbidden',
+            '보고가 끊긴 진행 중 작업만 팀장이 취소할 수 있어요.',
+          )
+      }
       expectValue(
         task!.lock_version,
         input.expected_lock_version,
@@ -358,8 +490,16 @@ export function taskRoutes(
         input.plan_revision_id,
         'revision_conflict',
       )
-      if (['COMPLETED', 'CANCELLED'].includes(task!.status))
-        fail(400, 'invalid_transition', '이미 종료한 작업이에요.')
+      // 서버 TaskTransitionPolicy 전이 표(LA-TC-07). 멱등이면 바꾸지 않고 지금 상태를 돌려준다.
+      if (IDEMPOTENT[task!.status]?.includes(input.event))
+        return { data: task! }
+      if (!ALLOWED[task!.status].includes(input.event))
+        fail(
+          400,
+          'invalid_transition',
+          `${task!.status} 상태에서는 ${input.event} 할 수 없습니다`,
+        )
+      let accepted = false
       if (['START', 'RESUME'].includes(input.event)) {
         if (
           task!.validation_status !== 'PASS' ||
@@ -395,10 +535,6 @@ export function taskRoutes(
           )
         )
           fail(409, 'stale_validation', '현재 승인 근거로 다시 검증해 주세요.')
-        if (input.event === 'RESUME' && task!.status !== 'WAITING')
-          fail(400, 'invalid_transition', '대기 중인 작업만 재개할 수 있어요.')
-        if (input.event === 'START' && task!.status !== 'READY')
-          fail(400, 'invalid_transition', '준비된 작업만 시작할 수 있어요.')
         task!.status = 'IN_PROGRESS'
         task!.started_validation_id = input.validation_id
         delete task!.waiting_reason
@@ -408,10 +544,15 @@ export function taskRoutes(
         task!.status = 'WAITING'
         task!.waiting_reason = input.waiting_reason
       } else if (input.event === 'COMPLETED') {
-        if (task!.status !== 'IN_PROGRESS')
-          fail(400, 'invalid_transition', '진행 중인 작업만 완료할 수 있어요.')
-        task!.status = 'COMPLETED'
-        delete task!.waiting_reason
+        // 계획과 다른 점(delta)이 있으면 완료가 아니라 재검증 대기로, 응답은 202(LA-TC-03)
+        if (input.delta?.length) {
+          task!.status = 'WAITING'
+          task!.waiting_reason = 'REVALIDATION'
+          accepted = true
+        } else {
+          task!.status = 'COMPLETED'
+          delete task!.waiting_reason
+        }
       } else {
         task!.status = 'CANCELLED'
         delete task!.waiting_reason
@@ -419,7 +560,7 @@ export function taskRoutes(
       task!.lock_version++
       task!.updated_at = now()
       activity(context, `TASK_${input.event}`, { task_id: task!.id })
-      return { data: task! }
+      return accepted ? { status: 202, data: task! } : { data: task! }
     }
     case 'CTX-A01':
       return { data: findById(project.packets, params.packet_id) }

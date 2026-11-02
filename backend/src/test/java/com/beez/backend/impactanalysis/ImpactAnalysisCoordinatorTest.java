@@ -37,7 +37,8 @@ class ImpactAnalysisCoordinatorTest {
         var direct = ref(10, 100);
         var second = ref(20, 200);
         return new ImpactContextQuery.Snapshot(proposal, List.of(change), List.of(approved), List.of(relation),
-                List.of(direct, second), ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+                List.of(direct, second), ImpactContextQuery.RuleCandidateStatus.CONNECTED,
+                new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.SEARCHED, 2, false, false, false));
     }
 
     private ImpactContextQuery.TaskReference ref(long itemId, long versionId) {
@@ -102,7 +103,7 @@ class ImpactAnalysisCoordinatorTest {
     }
 
     @Test
-    void insufficientAiResultRetainsUnconnectedRuleStateAndRechecksSnapshot() {
+    void insufficientAiResultRetainsConnectedRulesAndRechecksSnapshot() {
         var snapshot = snapshot();
         var query = mock(ImpactContextQuery.class);
         var ai = mock(AiClient.class);
@@ -115,13 +116,51 @@ class ImpactAnalysisCoordinatorTest {
         var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
 
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
-        assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
         verify(query).requireUnchanged(caller, snapshot);
     }
 
     @Test
-    void sufficientAiWithNoCandidatesDoesNotBecomeCompletedWhenRulesAreUnconnected() {
+    void sufficientAiOverATruncatedSearchIsNotACompleteEvaluation() {
+        var base = snapshot();
+        var truncated = new ImpactContextQuery.Snapshot(base.proposal(), base.changes(), base.approvedItems(),
+                base.dependencies(), base.taskReferences(), base.ruleCandidateStatus(),
+                new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.SEARCHED, 3, false, false, true));
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(truncated);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "origin", "MODEL", "usage", List.of()));
+
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(outcome.errorCode()).isEqualTo("search_coverage_incomplete");
+    }
+
+    @Test
+    void sufficientAiWithoutAnyKeywordSearchIsNotACompleteEvaluation() {
+        var base = snapshot();
+        var unsearched = new ImpactContextQuery.Snapshot(base.proposal(), base.changes(), base.approvedItems(),
+                base.dependencies(), base.taskReferences(), base.ruleCandidateStatus(),
+                new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false));
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(unsearched);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "origin", "MODEL", "usage", List.of()));
+
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(outcome.errorCode()).isEqualTo("search_coverage_incomplete");
+    }
+
+    @Test
+    void sufficientAiWithNoCandidatesCompletesWithConnectedRules() {
         var snapshot = snapshot();
         var query = mock(ImpactContextQuery.class);
         var ai = mock(AiClient.class);
@@ -133,13 +172,13 @@ class ImpactAnalysisCoordinatorTest {
 
         var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
 
-        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
-        assertThat(outcome.errorCode()).isEqualTo("rule_candidates_not_connected");
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.ANALYZED);
+        assertThat(outcome.errorCode()).isNull();
         assertThat(outcome.aiEnvelope().get("result")).isEqualTo(aiResult);
     }
 
     @Test
-    void modelFailurePreservesUnconnectedRuleStateAndReportedUsage() {
+    void modelFailurePreservesConnectedRuleStateAndReportedUsage() {
         var snapshot = snapshot();
         var query = mock(ImpactContextQuery.class);
         var ai = mock(AiClient.class);
@@ -154,7 +193,7 @@ class ImpactAnalysisCoordinatorTest {
 
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.AI_FAILED);
         assertThat(outcome.errorCode()).isEqualTo("model_timeout");
-        assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
     }
 
@@ -211,8 +250,8 @@ class ImpactAnalysisCoordinatorTest {
 
         var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
 
-        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
-        assertThat(outcome.errorCode()).isEqualTo("rule_candidates_not_connected");
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.ANALYZED);
+        assertThat(outcome.errorCode()).isNull();
         assertThat(outcome.aiEnvelope()).isNotNull();
     }
 
@@ -250,7 +289,7 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
         assertThat(outcome.errorCode()).isEqualTo("change_schema_version_unavailable");
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.NOT_STARTED);
-        assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED);
+        assertThat(outcome.input().ruleCandidateStatus()).isEqualTo(ImpactContextQuery.RuleCandidateStatus.CONNECTED);
         verifyNoInteractions(ai);
     }
 
@@ -262,7 +301,7 @@ class ImpactAnalysisCoordinatorTest {
         var change = new ImpactContextQuery.Change(0, operation, create ? null : 10L, create ? null : 100L,
                 "API_CONTRACT", 1, "{\"method\":\"POST\",\"path\":\"/login\"}", NOW);
         var input = new ImpactContextQuery.Snapshot(original.proposal(), List.of(change), original.approvedItems(),
-                original.dependencies(), original.taskReferences(), original.ruleCandidateStatus());
+                original.dependencies(), original.taskReferences(), original.ruleCandidateStatus(), original.searchCoverage());
         var query = mock(ImpactContextQuery.class);
         var ai = mock(AiClient.class);
         var caller = CallerContext.human(4L);
@@ -282,8 +321,8 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(body.get("proposal_revision")).isEqualTo(2);
         assertThat(body.get("proposal_snapshot_hash")).isEqualTo("sha256:abc");
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
-        // The AI response cannot complete the overall analysis while rule candidates are unconnected.
-        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        // Connected rules and sufficient AI evidence complete the evaluation.
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.ANALYZED);
     }
 
     @Test

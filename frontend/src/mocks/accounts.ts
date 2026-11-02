@@ -11,11 +11,51 @@ import {
 } from './helpers'
 import type { MockContext, MockReply } from './helpers'
 import { blankProject, nextId, now, passwordFingerprint } from './state'
+import { reassignTask } from './tasks'
 
+// 서버 PasswordPolicy와 같은 검사: 8자 이상, UTF-8 72바이트 이하, 영문과 숫자 포함(PR #72 mock/live 전수 대조 LIVE-AMP-02).
 async function password(value: unknown): Promise<string> {
   if (typeof value !== 'string' || value.length < 8)
-    fail(400, 'validation_failed', '비밀번호는 8자 이상 입력해 주세요.')
+    fail(400, 'validation_failed', 'password: 비밀번호는 8자 이상이어야 합니다')
+  if (new TextEncoder().encode(value).length > 72)
+    fail(
+      400,
+      'validation_failed',
+      'password: 비밀번호가 너무 깁니다 (UTF-8 72바이트 이하)',
+    )
+  if (!/[A-Za-z]/.test(value) || !/\d/.test(value))
+    fail(
+      400,
+      'validation_failed',
+      'password: 비밀번호는 영문과 숫자를 모두 포함해야 합니다',
+    )
   return passwordFingerprint(value)
+}
+
+// Q05 1·4: 멤버십은 초대할 때가 아니라 초대받은 이메일로 로그인·가입할 때 만든다.
+// 스스로 나간 프로젝트는 로그인만으로 되살리지 않는다(메일 링크를 열 때 MEM-A05로만).
+function joinPendingInvitations(context: MockContext, account: Account) {
+  for (const invitation of context.database.invitations) {
+    if (
+      invitation.invited_email !== account.email ||
+      invitation.accepted_at ||
+      invitation.revoked_at
+    )
+      continue
+    const project = context.database.projects.find(
+      (item) => item.project.id === invitation.project_id,
+    )
+    if (!project || project.left_account_ids?.includes(account.id)) continue
+    if (!project.members.some((item) => item.account_id === account.id))
+      project.members.push({
+        id: nextId(context.database),
+        account_id: account.id,
+        name: account.name,
+        role: 'MEMBER',
+        agent_connected: false,
+      })
+    invitation.accepted_at = now()
+  }
 }
 
 function projectView(context: MockContext, project: Project): Project {
@@ -49,6 +89,7 @@ export async function accountRoutes(
         password_fingerprint: await password(body.password),
       })
       database.session_account_id = profile.id
+      joinPendingInvitations(context, profile)
       return { status: 201, data: profile }
     }
     case 'ACC-A02': {
@@ -62,6 +103,7 @@ export async function accountRoutes(
       if (!account)
         fail(401, 'invalid_credentials', '이메일과 비밀번호를 확인해 주세요.')
       database.session_account_id = account.profile.id
+      joinPendingInvitations(context, account.profile)
       return { data: account.profile }
     }
     case 'ACC-A03':
@@ -238,11 +280,19 @@ export async function accountRoutes(
     case 'MEM-A01': {
       requireLeader(context)
       const project = requireProject(context)
+      const email = requiredString(body, 'email').trim().toLowerCase()
+      const invitee = database.accounts.find(
+        (item) => item.profile.email === email,
+      )
+      if (
+        invitee &&
+        project.members.some((item) => item.account_id === invitee.profile.id)
+      )
+        fail(409, 'already_member', '이미 팀원이에요.')
       const invitation = {
         id: nextId(database),
         project_id: project.project.id,
-        invited_email: requiredString(body, 'email').toLowerCase(),
-        expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+        invited_email: email,
         token: `mock-invite-${nextId(database)}`,
       }
       database.invitations.push(invitation)
@@ -285,33 +335,49 @@ export async function accountRoutes(
       const invitation =
         database.invitations.find((item) => item.token === body.token) ??
         fail(404, 'not_found', '초대를 찾을 수 없어요.')
-      if (
-        invitation.revoked_at ||
-        Date.parse(invitation.expires_at) < Date.now()
-      )
-        fail(410, 'invitation_expired', '초대가 만료됐어요.')
+      if (invitation.revoked_at)
+        fail(404, 'not_found', '초대를 찾을 수 없어요.')
       const project =
         database.projects.find(
           (item) => item.project.id === invitation.project_id,
         ) ?? fail(404, 'not_found', '프로젝트를 찾을 수 없어요.')
-      if (id === 'MEM-A04')
+      if (id === 'MEM-A04') {
+        // 수정안 요청 필드(inviter·project_description·invited_email·account_matches)도 명세대로 채운다.
+        const leader = database.accounts.find(
+          (item) =>
+            item.profile.id ===
+            project.members.find((member) => member.role === 'LEADER')
+              ?.account_id,
+        )?.profile
         return {
           data: {
             project_name: project.project.name,
-            expires_at: invitation.expires_at,
             login_required: !context.account,
+            ...(leader
+              ? { inviter: { name: leader.name, email: leader.email } }
+              : {}),
+            ...(project.project.description
+              ? { project_description: project.project.description }
+              : {}),
+            ...(invitation.invited_email
+              ? { invited_email: invitation.invited_email }
+              : {}),
+            ...(context.account && invitation.invited_email
+              ? {
+                  account_matches:
+                    context.account.email === invitation.invited_email,
+                }
+              : {}),
           },
         }
+      }
       const account = requireAccount(context)
+      // 실제 서버처럼 다른 이메일 계정의 수락은 무효 초대와 같은 404로 준다(MEM-A05, Q05 -174).
       if (
         invitation.invited_email &&
-        invitation.invited_email !== account.email
+        invitation.invited_email.toLowerCase() !== account.email.toLowerCase()
       )
-        fail(
-          403,
-          'invitation_email_mismatch',
-          '초대받은 이메일로 로그인해 주세요.',
-        )
+        fail(404, 'not_found', '초대를 찾을 수 없어요.')
       let member = project.members.find(
         (item) => item.account_id === account.id,
       )
@@ -325,6 +391,9 @@ export async function accountRoutes(
         }
         project.members.push(member)
       }
+      project.left_account_ids = project.left_account_ids?.filter(
+        (item) => item !== account.id,
+      )
       invitation.accepted_at = now()
       return {
         data: { project: projectView(context, project.project), member },
@@ -333,11 +402,24 @@ export async function accountRoutes(
     case 'MEM-A06':
       return { data: page(requireProject(context).members, query) }
     case 'MEM-A07': {
+      // 서버(ProjectMemberService.update)처럼 사람 팀장만 고친다. 본인 것도 팀원은 못 고친다(PR #72 재전수 SECOND-AMP-01).
+      requireLeader(context)
       const member = findById(requireProject(context).members, params.member_id)
-      if (member.account_id !== requireAccount(context).id)
-        requireLeader(context)
-      for (const field of ['domain', 'role_label', 'color'] as const)
-        if (typeof body[field] === 'string') member[field] = body[field]
+      // 서버(PR #50)처럼: 생략은 유지, ""는 지우기, 글은 앞뒤 공백을 빼고 50자, 색은 #RRGGBB를 대문자로.
+      for (const field of ['domain', 'role_label'] as const) {
+        if (typeof body[field] !== 'string') continue
+        const value = body[field].trim()
+        if (value.length > 50)
+          fail(400, 'validation_failed', '50자까지 쓸 수 있어요.')
+        if (value) member[field] = value
+        else delete member[field]
+      }
+      if (typeof body.color === 'string') {
+        if (body.color && !/^#[0-9a-fA-F]{6}$/.test(body.color))
+          fail(400, 'validation_failed', '색은 #RRGGBB 형식이에요.')
+        if (body.color) member.color = body.color.toUpperCase()
+        else delete member.color
+      }
       return { data: member }
     }
     case 'MEM-A08': {
@@ -347,9 +429,11 @@ export async function accountRoutes(
         project.members,
         requiredString(body, 'target_member_id'),
       )
+      if (target.id === context.member!.id)
+        fail(409, 'invalid_transfer_target', '나 자신에게는 위임할 수 없어요.')
       context.member!.role = 'MEMBER'
       target.role = 'LEADER'
-      return { data: { members: project.members } }
+      return { data: { members: [context.member!, target] } }
     }
     case 'MEM-A09':
     case 'MEM-A10': {
@@ -362,16 +446,23 @@ export async function accountRoutes(
       if (member.role === 'LEADER')
         fail(409, 'leader_transfer_required', '먼저 인간 팀장을 위임해 주세요.')
       const reassigned = body.reassign_to_member_id
-      if (typeof reassigned === 'string') findById(project.members, reassigned)
+      // 인계 대상이 떠나는 본인이거나 활성 멤버가 아니면 400(PR #50).
+      if (
+        typeof reassigned === 'string' &&
+        (reassigned === member.id ||
+          !project.members.some((item) => item.id === reassigned))
+      )
+        fail(
+          400,
+          'validation_failed',
+          '작업을 넘겨받을 팀원을 다시 골라 주세요.',
+        )
       const activeTasks = project.tasks.filter(
         (task) =>
           task.assignee_member_id === member.id &&
           !['COMPLETED', 'CANCELLED'].includes(task.status),
       )
-      if (
-        activeTasks.length &&
-        (typeof reassigned !== 'string' || reassigned === member.id)
-      )
+      if (activeTasks.length && typeof reassigned !== 'string')
         fail(
           409,
           'active_tasks_exist',
@@ -383,12 +474,19 @@ export async function accountRoutes(
             task.assignee_member_id === member.id &&
             !['COMPLETED', 'CANCELLED'].includes(task.status),
         )
-        .forEach((task) => {
-          task.assignee_member_id =
-            typeof reassigned === 'string' ? reassigned : context.member!.id
-          task.lock_version++
-        })
+        .forEach((task) =>
+          reassignTask(
+            context,
+            task,
+            typeof reassigned === 'string' ? reassigned : context.member!.id,
+          ),
+        )
       project.members = project.members.filter((item) => item !== member)
+      if (id === 'MEM-A10')
+        project.left_account_ids = [
+          ...(project.left_account_ids ?? []),
+          member.account_id,
+        ]
       database.tokens
         .filter(
           (token) =>
@@ -403,24 +501,28 @@ export async function accountRoutes(
     case 'AGT-A01': {
       const project = requireProject(context)
       const account = requireAccount(context)
+      // 서버(PR #38)와 같게: 계정·프로젝트마다 폐기 안 된 토큰은 5개까지, label은 앞뒤 공백을 빼고 비면 뺀다.
+      const label = typeof body.label === 'string' ? body.label.trim() : ''
+      if (label.length > 100)
+        fail(400, 'validation_failed', '토큰 이름은 100자까지예요.')
       if (
-        database.tokens.some(
+        database.tokens.filter(
           (token) =>
             token.account_id === account.id &&
             token.project_id === project.project.id &&
             !token.revoked_at,
-        )
+        ).length >= 5
       )
         fail(
           409,
-          'active_token_exists',
-          '기존 예시 토큰을 폐기한 뒤 발급해 주세요.',
+          'agent_limit_reached',
+          '활성 토큰은 프로젝트당 5개까지입니다. 쓰지 않는 토큰을 폐기한 뒤 다시 발급하세요',
         )
       const token = {
         id: nextId(database),
         project_id: project.project.id,
         account_id: account.id,
-        label: typeof body.label === 'string' ? body.label : '예시 토큰',
+        ...(label ? { label } : {}),
         created_at: now(),
       }
       database.tokens.push(token)
@@ -439,8 +541,14 @@ export async function accountRoutes(
     case 'AGT-A02':
       return {
         data: page(
+          // 폐기한 토큰도 revoked_at과 함께 준다. page()가 id 내림차순으로 자른다.
           database.tokens
-            .filter((token) => token.account_id === requireAccount(context).id)
+            .filter(
+              (token) =>
+                token.account_id === requireAccount(context).id &&
+                (!query.get('project_id') ||
+                  token.project_id === query.get('project_id')),
+            )
             .map((token) => omit(token, 'account_id')),
           query,
         ),
