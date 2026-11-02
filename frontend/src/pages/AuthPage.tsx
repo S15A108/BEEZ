@@ -224,6 +224,9 @@ export default function AuthPage() {
                 } catch {
                   // 저장소를 못 쓰는 브라우저에서는 아이디 저장만 건너뛴다.
                 }
+                // 로그인 전 세션의 /me가 늦게 와 새 계정을 덮지 않도록 진행 중인 계정 조회를 먼저 취소한다
+                // (PR #72 3차 조사 THIRD-AMP-01). 로그아웃은 queryClient.clear()가 같은 일을 한다.
+                await queryClient.cancelQueries({ queryKey: ['account'] })
                 queryClient.setQueryData(['account'], account)
                 await queryClient.invalidateQueries({
                   queryKey: ['projects'],

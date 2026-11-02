@@ -40,6 +40,27 @@ async function login(email: string) {
   await user.click(screen.getByRole('button', { name: '로그인' }))
 }
 
+// PR #72 3차 조사 THIRD-AMP-01: 로그인 전 세션(A)의 /me가 늦게 와도 새로 로그인한 계정(B)을 덮지 않는다.
+it('이전 세션의 늦은 /me 응답이 새로 로그인한 계정을 덮지 않는다', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  let answerA: (value: Account) => void = () => undefined
+  void client
+    .fetchQuery({
+      queryKey: ['account'],
+      queryFn: () => new Promise<Account>((done) => (answerA = done)),
+    })
+    .catch(() => undefined)
+  vi.spyOn(authApi, 'login').mockResolvedValue(account('12', 'b@beez.local'))
+  renderLogin(client)
+  await login('b@beez.local')
+  expect(await screen.findByText('도시 화면')).toBeInTheDocument()
+  answerA(account('11', 'a@beez.local'))
+  await new Promise((done) => setTimeout(done, 0))
+  expect(client.getQueryData<Account>(['account'])?.id).toBe('12')
+})
+
 // PR #72 3차 조사 THIRD-AMP-03: 회원 설정처럼 RequireAccount가 보관한 앱 안 주소로 돌아가고, 다른 사이트 주소는 막는다.
 it('로그인 뒤 보관한 회원 설정 주소로 돌아간다', async () => {
   vi.spyOn(authApi, 'login').mockResolvedValue(account('12', 'b@beez.local'))
