@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { getApiErrorCode } from '@/api/error'
 import { documentsApi, planningApi } from '@/api/services'
 import type { DesignItemVersion } from '@/api/contracts/common'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
@@ -6,7 +7,8 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 const REQUIRED = ['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC']
 
 // 시작(PLN-A10)은 초안 전체를 정확히 보내야 해서 모든 페이지를 같은 draft_snapshot_hash로 읽는다.
-// 읽는 사이 초안이 바뀌어 해시가 달라지면 처음부터 다시 읽는다.
+// 읽는 사이 초안이 바뀌어 해시가 달라지거나, 서버가 뒤 페이지를 409 draft_changed로 거절하면(cursor에 해시가 담김)
+// 처음부터 다시 읽는다. 모두 세 번까지 읽고 멈춘다(PR #72 mock/live 전수 대조 DOC-LIVE-4).
 export async function readAllDrafts(projectId: string) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const items: DesignItemVersion[] = []
@@ -14,11 +16,18 @@ export async function readAllDrafts(projectId: string) {
     let cursor: string | undefined
     let consistent = true
     do {
-      const page = await planningApi.items(projectId, {
-        status: 'DRAFT',
-        limit: 100,
-        cursor,
-      })
+      let page: Awaited<ReturnType<typeof planningApi.items>>
+      try {
+        page = await planningApi.items(projectId, {
+          status: 'DRAFT',
+          limit: 100,
+          cursor,
+        })
+      } catch (cause) {
+        if (!cursor || getApiErrorCode(cause) !== 'draft_changed') throw cause
+        consistent = false
+        break
+      }
       hash ??= page.draft_snapshot_hash
       if (page.draft_snapshot_hash !== hash) {
         consistent = false

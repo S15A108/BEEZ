@@ -378,23 +378,40 @@ export async function documentRoutes(
         data: { status: 'PENDING', document_version_ids: ids },
       }
     }
-    case 'PLN-A06':
+    case 'PLN-A06': {
+      // 실제 서버처럼 초안 목록 cursor에 스냅숏 해시를 담고, 다음 페이지를 부를 때 초안이 바뀌었으면 409 draft_changed
+      // (DesignItemQueryService, PR #72 mock/live 전수 대조 DOC-LIVE-4).
+      const hash = draftSnapshotHash(project)
+      const [cursor, cursorHash] = (query.get('cursor') ?? '').split('~')
+      if (cursor && cursorHash !== hash)
+        fail(
+          409,
+          'draft_changed',
+          '설계 초안이 바뀌었어요. 처음부터 다시 불러와 주세요.',
+        )
+      const pageQuery = new URLSearchParams(query)
+      if (cursor) pageQuery.set('cursor', cursor)
+      const result = page(
+        project.items.filter(
+          (item) =>
+            (!query.get('status') || item.status === query.get('status')) &&
+            (!query.get('kind') || item.kind === query.get('kind')) &&
+            (!query.get('document_version_id') ||
+              item.source?.document_version_id ===
+                query.get('document_version_id')),
+        ),
+        pageQuery,
+      )
       return {
         data: {
-          ...page(
-            project.items.filter(
-              (item) =>
-                (!query.get('status') || item.status === query.get('status')) &&
-                (!query.get('kind') || item.kind === query.get('kind')) &&
-                (!query.get('document_version_id') ||
-                  item.source?.document_version_id ===
-                    query.get('document_version_id')),
-            ),
-            query,
-          ),
-          draft_snapshot_hash: draftSnapshotHash(project),
+          ...result,
+          ...(result.next_cursor
+            ? { next_cursor: `${result.next_cursor}~${hash}` }
+            : {}),
+          draft_snapshot_hash: hash,
         },
       }
+    }
     case 'PLN-A07': {
       const sourceVersion =
         typeof body.source_document_version_id === 'string'
