@@ -2,6 +2,7 @@
 
 import re
 from typing import Annotated
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,7 +16,6 @@ from app.schemas.document_review import DocumentReviewRequest
 from app.services.document_review import analyze
 from app.services.llm_client import LLMClient, LLMError, OpenAICompatibleProvider
 
-_GMS_CHAT = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions"
 _MAX_BODY_BYTES = 8 * 1024 * 1024
 
 
@@ -70,15 +70,43 @@ class DocumentReviewRoute(APIRoute):
 router = APIRouter(route_class=DocumentReviewRoute)
 
 
+def _valid_gms_endpoint(endpoint: str) -> bool:
+    # The shared provider accepts arbitrary HTTPS endpoints. Document review
+    # sends the GMS credential, so restrict its destination independently.
+    if not isinstance(endpoint, str) or any(
+        ord(c) <= 32 or ord(c) == 127 for c in endpoint
+    ):
+        return False
+    try:
+        parsed = urlsplit(endpoint)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == "gms.ssafy.io"
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+            and "?" not in endpoint
+            and "#" not in endpoint
+            and parsed.path.endswith("/chat/completions")
+        )
+    except ValueError:
+        return False
+
+
 async def get_review_client(
     request: Request, settings: Annotated[Settings, Depends(get_settings)]
 ):
     """Keep one provider per request; the dependency always closes its transport."""
-    if settings.gms_key is None or not settings.gms_key.get_secret_value().strip():
+    if (
+        settings.gms_key is None
+        or not settings.gms_key.get_secret_value().strip()
+        or not _valid_gms_endpoint(settings.gms_chat_endpoint)
+    ):
         raise HTTPException(502, detail="model_unavailable")
     try:
         provider = OpenAICompatibleProvider(
-            endpoint=_GMS_CHAT, api_key=settings.gms_key.get_secret_value()
+            endpoint=settings.gms_chat_endpoint,
+            api_key=settings.gms_key.get_secret_value(),
         )
     except (TypeError, ValueError):
         raise HTTPException(502, detail="model_unavailable") from None
