@@ -192,6 +192,9 @@ public class TaskStateService {
             return;
         }
         if (event == TaskEvent.CANCEL && caller.isHuman() && actor.isLeader()) {
+            // 프로젝트 잠금 전에 읽은 역할이다. 팀장 위임(MEM-A08)이 잠금을 쥐고 커밋하는 사이 기다렸다면 이미 팀장이 아닐 수 있어,
+            // 잠금 뒤 DB 의 지금 역할로 다시 확인한다 (TSK-A06·MEM-A07 과 같은 규칙, -212 리뷰). 취소는 되돌릴 수 없다
+            access.requireLeaderAfterLock(actor);
             // 이미 취소된 작업에 대한 재전송은 멱등 처리로 넘긴다
             if (task.getStatus() == TaskStatus.CANCELLED) {
                 return;
