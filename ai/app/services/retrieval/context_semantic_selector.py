@@ -38,6 +38,22 @@ _SAFE_ERROR_CODES = frozenset(
 )
 
 
+def validate_correlation_key(value: str) -> str:
+    """Validate the BE-supplied opaque key without reflecting it in errors."""
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 128
+        or not value.strip()
+        or not value.isprintable()
+    ):
+        raise ValueError("Invalid request key")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("Invalid request key") from None
+    return value
+
+
 class EmbeddingContextSelector:
     """Rank supplied design items and evidence with one common embedding profile."""
 
@@ -51,6 +67,7 @@ class EmbeddingContextSelector:
         max_items: int,
         max_evidence: int,
         policy: EmbeddingPolicy,
+        request_key: str | None = None,
     ) -> None:
         if (
             isinstance(min_similarity, bool)
@@ -64,6 +81,8 @@ class EmbeddingContextSelector:
             or (max_items == 0 and max_evidence == 0)
         ):
             raise ValueError("Invalid explicit selection limits or threshold")
+        if request_key is not None:
+            validate_correlation_key(request_key)
         self._provider = provider
         self._profile = profile
         self._counter = counter
@@ -71,6 +90,7 @@ class EmbeddingContextSelector:
         self._max_items = max_items
         self._max_evidence = max_evidence
         self._policy = policy
+        self._request_key = request_key
 
     async def select(self, request: SelectionInput) -> SelectionProposal:
         if request.search_status != "COMPLETE":
@@ -105,14 +125,17 @@ class EmbeddingContextSelector:
                 direct_match_truncation=DirectMatchTruncation(items=0, evidence=0),
             )
 
-        # UUIDs avoid reuse across concurrent requests and retain no user text.
-        key = f"context-selection-{uuid4().hex}"
+        # embed_texts adds a fresh invocation UUID to each actual call.
+        # Keep the supplied correlation key intact, even at its 128-char limit.
+        key = self._request_key or f"context-selection-{uuid4().hex}"
+        query_key = key if self._request_key is not None else key + "-query"
+        document_key = key if self._request_key is not None else key + "-documents"
         query_usage = ()
         try:
             query = await embed_texts(
                 (EmbeddingText(key="query", text=request.request),),
                 self._profile,
-                key + "-query",
+                query_key,
                 self._provider,
                 self._counter,
                 purpose="query",
@@ -122,7 +145,7 @@ class EmbeddingContextSelector:
             docs = await embed_texts(
                 candidates,
                 self._profile,
-                key + "-documents",
+                document_key,
                 self._provider,
                 self._counter,
                 purpose="document",

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ from app.services.retrieval.context_selection import (
 
 def request_body():
     return {
+        "request_key": "development-context-test",
         "project_id": "p1",
         "baseline_id": "b1",
         "request": "비공개 요청 업로드",
@@ -94,7 +96,7 @@ def api():
     )
     selector = Selector()
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_context_selector] = lambda: selector
+    app.dependency_overrides[get_context_selector] = lambda: lambda _: selector
     with TestClient(app) as client:
         yield client, selector
     app.dependency_overrides.clear()
@@ -405,6 +407,152 @@ def test_configured_real_selector_uses_fake_provider_only(api, monkeypatch):
     assert len(response.json()["usage"]) == 2
 
 
+@pytest.mark.parametrize("key", ["x" * 128, "식별 :emb: 값"])
+def test_http_request_key_correlates_unique_actual_calls_and_repeated_requests(
+    api, monkeypatch, key
+):
+    from app.schemas.retrieval import (
+        EmbeddingProfile,
+        EmbeddingVector,
+        ProviderEmbeddingBatch,
+    )
+
+    client, _ = api
+    app.dependency_overrides.pop(get_context_selector)
+    calls = []
+
+    class Counter:
+        tokenizer_id = "fake"
+        max_input_tokens = 2048
+
+        def count(self, text):
+            return len(text)
+
+    class Provider:
+        async def embed(self, texts, profile, purpose, request_key):
+            calls.append((purpose, request_key))
+            return ProviderEmbeddingBatch(
+                profile=profile,
+                vectors=tuple(
+                    EmbeddingVector(key=x.key, embedding=(1.0, 0.0)) for x in texts
+                ),
+                usage=EmbeddingUsage(
+                    request_key=request_key,
+                    model=profile.model,
+                    latency_ms=1,
+                    failed=False,
+                    tokens_known=True,
+                    input_tokens=4,
+                    output_tokens=0,
+                ),
+            )
+
+    monkeypatch.setattr(selection_route, "get_counter", Counter)
+    monkeypatch.setattr(selection_route, "GmsEmbeddingProvider", lambda *_: Provider())
+    monkeypatch.setattr(
+        selection_route,
+        "embedding_profile",
+        lambda _: EmbeddingProfile(
+            profile_id="fixture",
+            provider="fake",
+            model="fake",
+            dimension=2,
+            tokenizer_id="fake",
+            max_input_tokens=2048,
+        ),
+    )
+    body = request_body()
+    body["request_key"] = key
+    headers = {"Authorization": "Bearer test-internal", "X-Request-Id": "trace-only"}
+    first = client.post(
+        "/v1/development-context-selections", json=body, headers=headers
+    )
+    second = client.post(
+        "/v1/development-context-selections", json=body, headers=headers
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.headers["x-request-id"] == "trace-only"
+    assert [purpose for purpose, _ in calls] == ["query", "document"] * 2
+    keys = [value for _, value in calls]
+    assert len(set(keys)) == 4
+    assert all(value.startswith(key + ":emb:") and len(value) <= 256 for value in keys)
+    assert [u["request_key"] for u in first.json()["usage"]] == keys[:2]
+    assert [u["request_key"] for u in second.json()["usage"]] == keys[2:]
+    # The selector factory must bind the key per request, even with overlap.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                client.post,
+                "/v1/development-context-selections",
+                json=body,
+                headers=headers,
+            )
+            for _ in range(2)
+        ]
+        responses = [future.result(timeout=10) for future in futures]
+    assert all(response.status_code == 200 for response in responses)
+    keys = [value for _, value in calls]
+    assert len(keys) == len(set(keys)) == 8
+    assert all(value.startswith(key + ":emb:") for value in keys)
+    assert {
+        entry["request_key"]
+        for response in responses
+        for entry in response.json()["usage"]
+    } == set(keys[4:])
+
+
+@pytest.mark.parametrize(
+    "value", [None, "", "   ", "x" * 129, 1, ["id"], "a\x00b", "a\rb", "a\nb", "a\tb"]
+)
+def test_missing_or_invalid_request_key_is_rejected_before_selection(api, value):
+    client, selector = api
+    body = request_body()
+    if value is None:
+        del body["request_key"]
+    else:
+        body["request_key"] = value
+    response = client.post(
+        "/v1/development-context-selections",
+        json=body,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 400 and not selector.calls
+    assert response.json()["error"]["code"] == "validation_failed"
+
+
+def test_unpaired_surrogate_in_request_key_is_rejected_before_selection(api):
+    client, selector = api
+    body = request_body()
+    body["request_key"] = "\ud800"
+    response = client.post(
+        "/v1/development-context-selections",
+        content=json.dumps(body).encode("ascii"),
+        headers={
+            "Authorization": "Bearer test-internal",
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 400 and not selector.calls
+
+
+@pytest.mark.parametrize("value", ["", "  ", "x" * 129, "x\ny", "x\x00y"])
+def test_invalid_key_never_constructs_configured_provider(api, monkeypatch, value):
+    client, _ = api
+    app.dependency_overrides.pop(get_context_selector)
+    constructed = []
+    monkeypatch.setattr(
+        selection_route, "GmsEmbeddingProvider", lambda *_: constructed.append(True)
+    )
+    body = request_body()
+    body["request_key"] = value
+    response = client.post(
+        "/v1/development-context-selections",
+        json=body,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 400 and not constructed
+
+
 def test_configured_zero_limit_fails_without_embed_call(api, monkeypatch):
     from app.schemas.retrieval import EmbeddingProfile
 
@@ -507,7 +655,9 @@ def test_total_timeout_retains_cancelled_selector_usage(api):
                 exc.embedding_usage = (usage(),)
                 raise
 
-    app.dependency_overrides[get_context_selector] = lambda: BlockingSelector()
+    app.dependency_overrides[get_context_selector] = lambda: (
+        lambda _: BlockingSelector()
+    )
     response = client.post(
         "/v1/development-context-selections",
         json=request_body(),
@@ -583,3 +733,93 @@ def test_candidate_token_error_retains_query_usage(api, monkeypatch):
         len(response.json()["usage"]) == 1
         and response.json()["usage"][0]["input_tokens"] == 4
     )
+    assert response.json()["usage"][0]["request_key"].startswith(
+        body["request_key"] + ":emb:"
+    )
+
+
+@pytest.mark.parametrize("blocked", ["query", "document"])
+def test_real_selector_timeout_keeps_correlated_started_call_usage(
+    api, monkeypatch, blocked
+):
+    from app.schemas.retrieval import (
+        EmbeddingProfile,
+        EmbeddingVector,
+        ProviderEmbeddingBatch,
+    )
+
+    client, _ = api
+    app.dependency_overrides.pop(get_context_selector)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None,
+        ai_internal_token="test-internal",
+        gms_key="fake",
+        context_selection_enabled=True,
+        context_selection_min_similarity="0.6",
+        context_selection_max_items="5",
+        context_selection_max_evidence="5",
+        context_selection_total_timeout_seconds="0.1",
+    )
+    calls = []
+
+    class Counter:
+        tokenizer_id = "fake"
+        max_input_tokens = 2048
+
+        def count(self, text):
+            return len(text)
+
+    class Provider:
+        async def embed(self, texts, profile, purpose, request_key):
+            calls.append((purpose, request_key))
+            if purpose == blocked:
+                await asyncio.Event().wait()
+            return ProviderEmbeddingBatch(
+                profile=profile,
+                vectors=tuple(
+                    EmbeddingVector(key=x.key, embedding=(1.0, 0.0)) for x in texts
+                ),
+                usage=EmbeddingUsage(
+                    request_key=request_key,
+                    model=profile.model,
+                    latency_ms=1,
+                    failed=False,
+                    tokens_known=True,
+                    input_tokens=4,
+                    output_tokens=0,
+                ),
+            )
+
+    monkeypatch.setattr(selection_route, "get_counter", Counter)
+    monkeypatch.setattr(selection_route, "GmsEmbeddingProvider", lambda *_: Provider())
+    monkeypatch.setattr(
+        selection_route,
+        "embedding_profile",
+        lambda _: EmbeddingProfile(
+            profile_id="fixture",
+            provider="fake",
+            model="fake",
+            dimension=2,
+            tokenizer_id="fake",
+            max_input_tokens=2048,
+        ),
+    )
+    body = request_body()
+    body["request_key"] = "x" * 128
+    response = client.post(
+        "/v1/development-context-selections",
+        json=body,
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 504
+    usage_rows = response.json()["usage"]
+    assert [entry["request_key"] for entry in usage_rows] == [key for _, key in calls]
+    assert all(
+        entry["request_key"].startswith(body["request_key"] + ":emb:")
+        for entry in usage_rows
+    )
+    assert usage_rows[-1]["failed"] and not usage_rows[-1]["tokens_known"]
+    if blocked == "document":
+        assert len(usage_rows) == 2 and not usage_rows[0]["failed"]
+    else:
+        assert len(usage_rows) == 1

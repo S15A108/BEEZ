@@ -285,3 +285,97 @@ async def test_empty_candidates_and_failed_search_never_call_provider():
 def test_threshold_must_be_explicit_finite_cosine(threshold):
     with pytest.raises(ValueError):
         selector(Provider(), min_similarity=threshold)
+
+
+@pytest.mark.parametrize("key", ["", "  ", "x" * 129, "x\ny", "x\x00y", "\ud800", 4])
+def test_invalid_in_process_correlation_key_is_rejected_without_provider_call(key):
+    provider = Provider()
+    with pytest.raises(ValueError, match="Invalid request key"):
+        EmbeddingContextSelector(
+            provider,
+            PROFILE,
+            Counter(),
+            min_similarity=0.8,
+            max_items=2,
+            max_evidence=2,
+            policy=EmbeddingPolicy(max_attempts=1),
+            request_key=key,
+        )
+    assert not provider.calls
+
+
+@pytest.mark.asyncio
+async def test_in_process_retry_has_distinct_usage_keys_with_same_correlation_key():
+    class RetryOnce(Provider):
+        def __init__(self):
+            super().__init__()
+            self.attempted = []
+
+        async def embed(self, texts, profile, purpose, request_key):
+            self.attempted.append(request_key)
+            if len(self.attempted) == 1:
+                raise EmbeddingProviderError(
+                    "provider_unavailable",
+                    "private",
+                    retryable=True,
+                    usage=EmbeddingUsage(
+                        request_key=request_key,
+                        model=profile.model,
+                        latency_ms=1,
+                        failed=True,
+                        tokens_known=False,
+                    ),
+                )
+            return await super().embed(texts, profile, purpose, request_key)
+
+    provider = RetryOnce()
+    key = "x" * 128
+    configured = EmbeddingContextSelector(
+        provider,
+        PROFILE,
+        Counter(),
+        min_similarity=0.8,
+        max_items=2,
+        max_evidence=2,
+        policy=EmbeddingPolicy(max_attempts=2, retry_delay_seconds=0),
+        request_key=key,
+    )
+    result = await select_context(inputs(), configured)
+    usage_keys = [entry.request_key for entry in result.usage]
+    assert usage_keys == provider.attempted
+    assert len(usage_keys) == len(set(usage_keys)) == 3
+    assert all(value.startswith(key + ":emb:") for value in usage_keys)
+    assert [entry.failed for entry in result.usage] == [True, False, False]
+
+
+@pytest.mark.asyncio
+async def test_in_process_cancellation_keeps_correlated_call_usage():
+    entered = asyncio.Event()
+
+    class BlockDocument(Provider):
+        async def embed(self, texts, profile, purpose, request_key):
+            if purpose == "document":
+                entered.set()
+                await asyncio.Event().wait()
+            return await super().embed(texts, profile, purpose, request_key)
+
+    key = "연관:emb:값"
+    configured = EmbeddingContextSelector(
+        BlockDocument(),
+        PROFILE,
+        Counter(),
+        min_similarity=0.8,
+        max_items=2,
+        max_evidence=2,
+        policy=EmbeddingPolicy(max_attempts=1),
+        request_key=key,
+    )
+    task = asyncio.create_task(select_context(inputs(), configured))
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as error:
+        await task
+    records = error.value.embedding_usage
+    assert len(records) == 2 and records[-1].failed and not records[-1].tokens_known
+    assert len({record.request_key for record in records}) == 2
+    assert all(record.request_key.startswith(key + ":emb:") for record in records)

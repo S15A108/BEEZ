@@ -3,6 +3,7 @@
 import asyncio
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import uuid4
@@ -141,9 +142,10 @@ def require_selection_config(
 
 
 class ConfiguredSelector:
-    def __init__(self, config: SelectionConfig, settings: Settings):
+    def __init__(self, config: SelectionConfig, settings: Settings, request_key: str):
         self._config = config
         self._settings = settings
+        self._request_key = request_key
 
     async def select(self, snapshot: SelectionInput):
         # Construct the provider only after validated input reaches selection.
@@ -160,6 +162,7 @@ class ConfiguredSelector:
                     max_attempts=1,
                     total_timeout_seconds=self._config.total_timeout_seconds,
                 ),
+                request_key=self._request_key,
             )
             return await selector.select(snapshot)
 
@@ -167,8 +170,8 @@ class ConfiguredSelector:
 def get_context_selector(
     config: Annotated[SelectionConfig, Depends(require_selection_config)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> SelectionProvider:
-    return ConfiguredSelector(config, settings)
+) -> Callable[[str], SelectionProvider]:
+    return lambda request_key: ConfiguredSelector(config, settings, request_key)
 
 
 def _request_openapi_schema():
@@ -199,7 +202,9 @@ def _request_openapi_schema():
 )
 async def select_development_context(
     request: Request,
-    selector: Annotated[SelectionProvider, Depends(get_context_selector)],
+    selector_factory: Annotated[
+        Callable[[str], SelectionProvider], Depends(get_context_selector)
+    ],
     config: Annotated[SelectionConfig, Depends(require_selection_config)],
 ):
     if (
@@ -215,12 +220,14 @@ async def select_development_context(
     try:
         body = ContextSelectionRequest.model_validate_json(bytes(data))
         # Pydantic's JSON mode validates arrays as tuples in the frozen model.
-        snapshot = SelectionInput.model_validate_json(body.model_dump_json())
+        snapshot = SelectionInput.model_validate_json(
+            body.model_dump_json(exclude={"request_key"})
+        )
     except (ValidationError, ValueError):
         raise HTTPException(400, detail="validation_failed") from None
     try:
         async with asyncio.timeout(config.total_timeout_seconds):
-            result = await select_context(snapshot, selector)
+            result = await select_context(snapshot, selector_factory(body.request_key))
     except TimeoutError as exc:
         cancelled = exc.__cause__
         usage = tuple(getattr(cancelled, "embedding_usage", ()))
