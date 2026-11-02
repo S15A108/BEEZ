@@ -292,7 +292,10 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
         assertThat(response.body()).contains("\"proposal\"","\"baseline\"","PUBLISHED");
         error(() -> preview(p),"invalid_transition");
-        assertThat(context.getBeansOfType(ValidationImpactPort.class)).hasSize(1);
+        // 기본 no-op 구현은 실제 어댑터(-163)에 밀려 빠지고, 이 시험에서는 기록용 구현이 우선한다
+        assertThat(context.getBeansOfType(ValidationImpactPort.class).values())
+                .noneMatch(port -> port instanceof PublicationPortConfiguration.UnconnectedValidationImpact);
+        assertThat(context.getBean(ValidationImpactPort.class)).isInstanceOf(RecordingImpact.class);
         assertThat(context.getBeansOfType(PostPublishAnalysisIntake.class)).hasSize(1);
     }
 

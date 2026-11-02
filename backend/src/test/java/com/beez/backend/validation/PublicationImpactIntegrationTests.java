@@ -189,9 +189,10 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         long[] a = createTask("A", api.implementsRef("API-01"));
         long lockA = start(a);
         long passA = api.jdbc.sql("select max(id) from validation where task_id = :t").param("t", a[0]).query(Long.class).single();
-        // B: API-01 을 READS, 접수해 PASS, 아직 READY — 검증만 STALE, 상태 그대로
+        // B: API-01 을 READS, PASS 가 있고 아직 READY — 검증만 STALE, 상태 그대로
+        // (A 가 같은 항목을 보는 열린 작업이라 접수하면 의미 분석으로 가므로, PASS 는 SQL 로 만든다)
         long[] b = createTask("B", api.readsRef("API-01"));
-        long passB = accept(b, 200);
+        long passB = api.passValidation(b[0]);
         // C: API-02 만 참조 — 무관
         long[] c = createTask("C", api.implementsRef("API-02"));
         long passC = accept(c, 202);
