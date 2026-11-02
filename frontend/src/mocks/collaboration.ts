@@ -259,8 +259,19 @@ export function collaborationRoutes(
           by_kind: (['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const).map(
             (kind) => ({
               kind,
+              // 서버 StatusRepository처럼 미승인 초안 버전이 있거나 작성 건이 EDITING·SUBMITTED·REJECTED인 문서를
+              // 한 번씩 센다. 승인 문서를 다시 고치기 시작하면 초안 버전 없이도 1이다(LA-TC-09).
               draft_count: project.documents.filter(
-                (document) => document.kind === kind && document.latest_draft,
+                (document) =>
+                  document.kind === kind &&
+                  (document.latest_draft ||
+                    project.working_copies.some(
+                      (copy) =>
+                        copy.document_id === document.id &&
+                        ['EDITING', 'SUBMITTED', 'REJECTED'].includes(
+                          copy.status,
+                        ),
+                    )),
               ).length,
               approved_count: project.documents.filter(
                 (document) =>
