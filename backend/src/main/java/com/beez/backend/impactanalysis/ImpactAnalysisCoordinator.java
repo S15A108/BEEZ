@@ -95,10 +95,11 @@ public class ImpactAnalysisCoordinator {
                 envelope = null;
             } else {
                 // SUFFICIENT only describes the input the model received. If the bounded search dropped
-                // designs or tasks, the result cannot be presented as a complete evaluation.
+                // designs or tasks, or no search ran at all (no usable terms, input too large), the result cannot be
+                // presented as a complete evaluation.
                 var coverage = snapshot.searchCoverage();
                 boolean searchIncomplete = coverage.termsTruncated() || coverage.designsTruncated()
-                        || coverage.tasksTruncated() || coverage.status() == ImpactKeywordSearch.Status.INPUT_TOO_LARGE;
+                        || coverage.tasksTruncated() || coverage.status() != ImpactKeywordSearch.Status.SEARCHED;
                 status = snapshot.ruleCandidateStatus() == ImpactContextQuery.RuleCandidateStatus.CONNECTED
                         && "SUFFICIENT".equals(evidence) && !searchIncomplete ? Status.ANALYZED : Status.INSUFFICIENT_EVIDENCE;
                 if (searchIncomplete) errorCode = "search_coverage_incomplete";

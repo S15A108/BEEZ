@@ -37,6 +37,11 @@ final class ImpactFingerprint {
         value.put("document_changes", snapshot.documentChanges());
         value.put("approved_items", approved);
         value.put("tasks", tasks);
+        // The search bound can change the verdict without changing the returned rows (20 -> 21 matches).
+        var search = snapshot.searchCoverage();
+        value.put("search", Map.of("status", search.status().name(), "terms_truncated", search.termsTruncated(),
+                "designs_truncated", search.designsTruncated(), "tasks_truncated", search.tasksTruncated(),
+                "candidate_tasks", search.candidateTaskIds().stream().sorted().toList()));
         return hash(value);
     }
 }

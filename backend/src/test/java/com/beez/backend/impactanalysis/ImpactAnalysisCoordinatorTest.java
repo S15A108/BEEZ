@@ -37,7 +37,8 @@ class ImpactAnalysisCoordinatorTest {
         var direct = ref(10, 100);
         var second = ref(20, 200);
         return new ImpactContextQuery.Snapshot(proposal, List.of(change), List.of(approved), List.of(relation),
-                List.of(direct, second), ImpactContextQuery.RuleCandidateStatus.CONNECTED);
+                List.of(direct, second), ImpactContextQuery.RuleCandidateStatus.CONNECTED,
+                new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.SEARCHED, 2, false, false, false));
     }
 
     private ImpactContextQuery.TaskReference ref(long itemId, long versionId) {
@@ -130,6 +131,25 @@ class ImpactAnalysisCoordinatorTest {
         var ai = mock(AiClient.class);
         var caller = CallerContext.human(4L);
         when(query.load(caller, 1, 71)).thenReturn(truncated);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "origin", "MODEL", "usage", List.of()));
+
+        var outcome = new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req");
+
+        assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.INSUFFICIENT_EVIDENCE);
+        assertThat(outcome.errorCode()).isEqualTo("search_coverage_incomplete");
+    }
+
+    @Test
+    void sufficientAiWithoutAnyKeywordSearchIsNotACompleteEvaluation() {
+        var base = snapshot();
+        var unsearched = new ImpactContextQuery.Snapshot(base.proposal(), base.changes(), base.approvedItems(),
+                base.dependencies(), base.taskReferences(), base.ruleCandidateStatus(),
+                new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false));
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(unsearched);
         when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
                 "evidence_status", "SUFFICIENT"), "origin", "MODEL", "usage", List.of()));
 
@@ -281,7 +301,7 @@ class ImpactAnalysisCoordinatorTest {
         var change = new ImpactContextQuery.Change(0, operation, create ? null : 10L, create ? null : 100L,
                 "API_CONTRACT", 1, "{\"method\":\"POST\",\"path\":\"/login\"}", NOW);
         var input = new ImpactContextQuery.Snapshot(original.proposal(), List.of(change), original.approvedItems(),
-                original.dependencies(), original.taskReferences(), original.ruleCandidateStatus());
+                original.dependencies(), original.taskReferences(), original.ruleCandidateStatus(), original.searchCoverage());
         var query = mock(ImpactContextQuery.class);
         var ai = mock(AiClient.class);
         var caller = CallerContext.human(4L);

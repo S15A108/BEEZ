@@ -7602,7 +7602,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 
 ### GET `/api/projects/{id}/change-proposals/{proposal_id}/impact`
 
-현재 제출 리비전에서 최근 완료된 결과를 반환한다. 완료 결과가 없으면 RUNNING, 현재 리비전 결과 없이 과거 결과만 있으면 과거 결과와 is_current=false를 반환한다. 이력이 없으면 NOT_EVALUATED(analysis_not_started)다. 실패·미평가·근거 부족은 영향 0건이 아니다. 재분석이 진행 중이면 이전 결과를 유지하면서 `reanalysis`로 새 실행을 알린다. 키워드 검색이 상한에 걸려 AI 입력에서 일부가 빠졌으면 AI가 SUFFICIENT여도 COMPLETED가 아니라 INSUFFICIENT_EVIDENCE(`error_code=search_coverage_incomplete`)다. 문서를 함께 바꾼 제안도 확인 가능한 설계 항목의 `explicit`은 계산해 보존하지만 문서 때문에 NOT_EVALUATED(`document_change_unavailable`)다. 읽기는 프로젝트 에이전트도 서비스 경로에서 허용한다. lease 만료 RUNNING은 FAILED(analysis_interrupted)로 정리한다.
+현재 제출 리비전에서 최근 완료된 결과를 반환한다. 완료 결과가 없으면 RUNNING, 현재 리비전 결과 없이 과거 결과만 있으면 과거 결과와 is_current=false를 반환한다. 이력이 없으면 NOT_EVALUATED(analysis_not_started)다. 실패·미평가·근거 부족은 영향 0건이 아니다. 재분석이 진행 중이면 이전 결과를 유지하면서 `reanalysis`로 새 실행을 알린다. 키워드 검색이 상한에 걸려 AI 입력에서 일부가 빠졌거나 검색어가 없어 검색을 하지 못했으면 AI가 SUFFICIENT여도 COMPLETED가 아니라 INSUFFICIENT_EVIDENCE(`error_code=search_coverage_incomplete`)다. 문서를 함께 바꾼 제안도 확인 가능한 설계 항목의 `explicit`은 계산해 보존하지만 문서 때문에 NOT_EVALUATED(`document_change_unavailable`)다. 읽기는 프로젝트 에이전트도 서비스 경로에서 허용한다. lease 만료 RUNNING은 FAILED(analysis_interrupted)로 정리한다.
 
 관련 요구사항: CHG-05·08, BEE-06·09  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  

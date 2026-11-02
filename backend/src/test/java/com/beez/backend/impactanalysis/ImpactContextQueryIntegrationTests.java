@@ -261,6 +261,29 @@ class ImpactContextQueryIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void aMatchBeyondTheSearchLimitInvalidatesTheSnapshotEvenWhenReturnedRowsAreUnchanged() {
+        long proposal = proposal("API-01");
+        for (int i = 0; i < ImpactKeywordSearch.MAX_RESULTS; i++) {
+            var response = api.post("/api/projects/" + projectId + "/tasks",
+                    api.planJson("rename task " + i, "[]", "[]"), member);
+            assertThat(response.statusCode()).isEqualTo(201);
+        }
+        var before = load(proposal);
+        assertThat(before.searchCoverage().tasksTruncated()).isFalse();
+        assertThat(before.searchCoverage().candidateTaskIds()).hasSize(ImpactKeywordSearch.MAX_RESULTS);
+
+        assertThat(api.post("/api/projects/" + projectId + "/tasks",
+                api.planJson("rename task extra", "[]", "[]"), member).statusCode()).isEqualTo(201);
+
+        var after = load(proposal);
+        assertThat(after.searchCoverage().tasksTruncated()).isTrue();
+        assertThat(after.searchCoverage().candidateTaskIds()).isEqualTo(before.searchCoverage().candidateTaskIds());
+        assertThatThrownBy(() -> query.requireUnchanged(CallerContext.human(member), before))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode()).isEqualTo("analysis_input_changed");
+    }
+
+    @Test
     void mixedProposalKeepsDesignRuleInputsEvenThoughDocumentsAreUnevaluated() {
         long task = taskReferencing("API-01", "직접 참조");
         long proposal = proposal("API-01");

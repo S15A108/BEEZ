@@ -38,8 +38,10 @@ public class ImpactRunService {
         this.leaseSeconds=Math.max(60, properties.ai().readTimeout().plus(properties.ai().connectTimeout()).toSeconds()+60);
     }
 
+    private record Accepted(Result result, Long newRun) {}
+
     public Result retry(CallerContext caller, long project, long proposal, String key) {
-        return tx.execute(ignored -> {
+        var accepted=tx.execute(ignored -> {
             access.requireMember(caller, project).requireHuman();
             lock(project);
             // Recheck membership after waiting for a concurrent project command.
@@ -50,7 +52,7 @@ public class ImpactRunService {
             var input=Map.of("proposal",proposal,"revision",revision.get("revision_no"),"snapshot_hash",revision.get("snapshot_hash"));
             if (key!=null) {
                 var replay=commands.replay(project,caller.accountId(),operation,key,input,Result.class);
-                if (replay.isPresent()) return replay.get();
+                if (replay.isPresent()) return new Accepted(replay.get(),null);
             }
             var snapshot=contexts.load(caller,project,proposal);
             runs.expire(project,proposal);
@@ -59,14 +61,13 @@ public class ImpactRunService {
             long id=runs.insert(snapshot,rules.calculate(snapshot),caller.accountId(),leaseSeconds*ImpactRunExecutor.WAIT_ROUNDS);
             Result result=result(runs.run(id),true,null,null);
             if (key!=null) commands.save(project,caller.accountId(),operation,key,input,result);
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() {
-                    if (!executor.submit(() -> execute(caller,project,proposal,id)))
-                        closeFailure(project,id,"analysis_capacity","NOT_STARTED");
-                }
-            });
-            return result;
+            return new Accepted(result,id);
         });
+        // Dispatch after the transaction ends: a rejected run is closed in a new transaction, which must not
+        // be requested while this request still holds its own connection.
+        if (accepted.newRun()!=null && !executor.submit(() -> execute(caller,project,proposal,accepted.newRun())))
+            closeFailure(project,accepted.newRun(),"analysis_capacity","NOT_STARTED");
+        return accepted.result();
     }
 
     public Result get(CallerContext caller, long project, long proposal) {
@@ -164,7 +165,7 @@ public class ImpactRunService {
     }
 
     private void closeFailure(long project,long id,String code,String usageStatus) {
-        // afterCommit runs while the original connection may still be bound: force a new transaction.
+        // Runs outside any request transaction, so a fresh transaction is started here.
         var fresh=new TransactionTemplate(tx.getTransactionManager());
         fresh.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         fresh.executeWithoutResult(ignored -> { lock(project); runs.finish(id,
