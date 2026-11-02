@@ -190,11 +190,10 @@ async def test_packet_joins_selection_with_metadata_in_snapshot_order():
     assert packet.design_items[0].key == "API-01"
     assert packet.constraints == ("업로드는 30 MB까지 허용한다.",)
     assert packet.unresolved == () and packet.unresolved_details == ()
-    # Evidence sources come first; the item source equal to e1 is not repeated.
-    assert [s.location for s in packet.sources] == [
-        SOURCE.location,
-        "5. 데이터 / DAT-01",
-    ]
+    # Only verified evidence sources become packet sources; the stored item
+    # sources stay on design_items[].source and are never merged.
+    assert [s.location for s in packet.sources] == [SOURCE.location]
+    assert packet.design_items[2].source.location == "5. 데이터 / DAT-01"
     assert [t.model_dump() for t in packet.related_tasks] == [
         {"task_id": "t1", "plan_revision_id": "pr1", "status": "IN_PROGRESS"}
     ]
@@ -404,3 +403,24 @@ def test_truncate_summary_keeps_short_text_and_marks_cuts():
     assert truncate_summary("  짧은 요약  ") == "짧은 요약"
     cut = truncate_summary("a" * 600)
     assert len(cut) == SUMMARY_CODE_POINTS and cut.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_direct_match_truncation_is_preserved_in_stored_unresolved():
+    class TruncatingSelector(Selector):
+        async def select(self, data):
+            return SelectionProposal(
+                design_item_version_ids=("v1",),
+                evidence_ids=("e1",),
+                direct_match_truncation=DirectMatchTruncation(items=1, evidence=1),
+            )
+
+    data = snapshot()
+    selection = await select_context(data, TruncatingSelector())
+    packet = compose_development_context(data, selection, metadata())
+    assert packet.direct_match_truncation == DirectMatchTruncation(items=1, evidence=1)
+    assert packet.unresolved == (
+        "SELECTION_TRUNCATED: 직접 일치 후보 중 설계 1건, 원문 1건이 직접 선택 상한으로 제외됐습니다.",
+    )
+    assert packet.unresolved_details[0].kind == "SELECTION_TRUNCATED"
+    assert packet.to_save_packet_args()["unresolved"] == list(packet.unresolved)

@@ -36,6 +36,7 @@ class Selector:
     def __init__(self, items=("v1",), evidence=("e1",)):
         self.calls = []
         self.items, self.evidence = items, evidence
+        self.truncation = DirectMatchTruncation(items=0, evidence=0)
 
     async def select(self, data):
         self.calls.append(data)
@@ -43,7 +44,7 @@ class Selector:
             design_item_version_ids=self.items,
             evidence_ids=self.evidence,
             usage=(usage(),),
-            direct_match_truncation=DirectMatchTruncation(items=0, evidence=0),
+            direct_match_truncation=self.truncation,
         )
 
 
@@ -193,6 +194,8 @@ def test_mismatched_metadata_is_rejected_before_selection(api, defect):
 def test_examples_round_trip_through_the_route_and_be_arguments(api):
     client, selector = api
     selector.items, selector.evidence = ("311",), ("chunk-211-7",)
+    # The example selector reported one evidence candidate cut by the limit.
+    selector.truncation = DirectMatchTruncation(items=0, evidence=1)
     request = json.loads((EXAMPLES / "request.json").read_text(encoding="utf-8"))
     expected = json.loads((EXAMPLES / "packet.json").read_text(encoding="utf-8"))
     arguments = json.loads(

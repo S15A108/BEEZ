@@ -25,7 +25,11 @@ DesignKind = Literal[
 ]
 SelectionReason = Literal["MATCHED", "TASK_PLAN", "DEPENDENCY"]
 UnresolvedKind = Literal[
-    "NO_MATCH", "DEPENDENCY_UNVERIFIED", "POSSIBLE_CONFLICT", "INSUFFICIENT_EVIDENCE"
+    "NO_MATCH",
+    "DEPENDENCY_UNVERIFIED",
+    "POSSIBLE_CONFLICT",
+    "INSUFFICIENT_EVIDENCE",
+    "SELECTION_TRUNCATED",
 ]
 # Kinds whose approved description is surfaced verbatim as a packet constraint.
 CONSTRAINT_KINDS = frozenset({"POLICY", "CONSTRAINT"})
@@ -113,6 +117,9 @@ class PacketDesignItem(PacketModel):
     kind: DesignKind
     version_no: int = Field(ge=1)
     reasons: tuple[SelectionReason, ...] = Field(min_length=1)
+    # The source stored on the design item, as supplied. Its location and
+    # document version are not verified against the current baseline, so it
+    # is informational only and never copied into `sources`.
     source: PacketSource | None = None
 
 
@@ -179,7 +186,12 @@ class DevelopmentContextPacket(PacketModel):
         return self
 
     def to_save_packet_args(self) -> dict:
-        """Exactly the BE `SavePacketArgs` fields, snake_case and JSON-ready."""
+        """Exactly the BE `SavePacketArgs` fields, snake_case and JSON-ready.
+
+        Direct-match truncation has no structured field in the BE contract yet;
+        when candidates were cut it is preserved as a SELECTION_TRUNCATED entry
+        of `unresolved` so the stored packet still records the incompleteness.
+        """
         return {
             "request": self.request,
             "project_id": self.project_id,

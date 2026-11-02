@@ -216,6 +216,20 @@ def compose_development_context(
             {item.design_item_version_id for item in selection.design_items},
             set(selection.evidence_ids),
         )
+    truncation = selection.direct_match_truncation
+    if truncation is not None and (truncation.items or truncation.evidence):
+        # Keep the cut visible in the stored packet until the BE contract
+        # gains a structured field for it.
+        details.append(
+            UnresolvedDetail(
+                kind="SELECTION_TRUNCATED",
+                description=(
+                    f"직접 일치 후보 중 설계 {truncation.items}건, 원문 "
+                    f"{truncation.evidence}건이 직접 선택 상한으로 제외됐습니다."
+                ),
+            )
+        )
+
     unresolved = tuple(
         detail.kind
         if detail.kind in UNRESOLVED_TEXT
@@ -234,9 +248,9 @@ def compose_development_context(
             location=meta.location,
         )
         _add_source(sources, seen, source)
-    for item in design_items:
-        if item.source is not None:
-            _add_source(sources, seen, item.source)
+    # Stored design-item sources may point outside the current baseline or
+    # to an unverified location; the BE rejects such packets, so only the
+    # evidence sources (baseline document versions) become packet sources.
 
     related_tasks = (
         (

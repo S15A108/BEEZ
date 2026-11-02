@@ -11,7 +11,8 @@
     "비밀번호를 5회 연속 틀리면 계정을 10분 동안 잠근다."
   ],
   "unresolved": [
-    "INSUFFICIENT_EVIDENCE: 비밀번호 재설정 흐름은 선택된 승인 설계·근거에 없어 확인이 필요합니다."
+    "INSUFFICIENT_EVIDENCE: 비밀번호 재설정 흐름은 선택된 승인 설계·근거에 없어 확인이 필요합니다.",
+    "SELECTION_TRUNCATED: 직접 일치 후보 중 설계 0건, 원문 1건이 직접 선택 상한으로 제외됐습니다."
   ],
   "related_tasks": [
     {
@@ -26,18 +27,6 @@
       "document_version_id": "211",
       "version_no": 1,
       "location": "3. 계정 관리 / ACC-02"
-    },
-    {
-      "document_id": "202",
-      "document_version_id": "212",
-      "version_no": 1,
-      "location": "2. 보안 정책 / SEC-02"
-    },
-    {
-      "document_id": "201",
-      "document_version_id": "211",
-      "version_no": 1,
-      "location": "3. 계정 관리 / ACC-01"
     }
   ]
 }

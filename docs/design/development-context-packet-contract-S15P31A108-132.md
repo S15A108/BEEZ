@@ -41,13 +41,13 @@ Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no
 | `search_status` | `COMPLETE` | 미준비·실패는 오류로 끝나므로 항상 COMPLETE |
 | `request_summary` | object \| null | 요청 분석 힌트(`functions`·`domains`·`keywords`). HTTP 경로는 분석기를 연결하지 않아 null이다. 필터나 권한이 아니다 |
 | `design_items[]` | PacketDesignItem | 선택된 승인 설계. 스냅샷 `items` 순서. `reasons`는 `MATCHED`(직접 일치), `TASK_PLAN`(현재 계획 참조), `DEPENDENCY`(확정 명시 의존 1단계) 중 1개 이상 |
-| `design_items[].source` | Source \| null | `metadata`의 항목 출처 |
+| `design_items[].source` | Source \| null | `metadata`의 항목 **저장 출처** 그대로. 위치와 현재 기준 소속이 확인되지 않은 참고 값이며 `sources`에는 합치지 않는다 |
 | `design_item_version_ids[]` | ID | `design_items`와 같은 순서의 버전 ID. BE `SavePacketArgs.designItemVersionIds` |
 | `constraints[]` | string ≤ 500 | 선택된 `POLICY`·`CONSTRAINT` 항목의 `description`을 순서대로. 500 코드 포인트 초과는 뒤를 잘라 `…`를 붙인다 |
-| `unresolved[]` | string ≤ 500 | BE 저장용 요약 문자열. 선택 상태는 코드 그대로(`NO_MATCH`, `DEPENDENCY_UNVERIFIED`), 검토 후보는 `"<KIND>: <description>"`을 500 코드 포인트로 자른다 |
-| `unresolved_details[]` | UnresolvedDetail | `unresolved`와 같은 순서의 구조형. `kind`(`NO_MATCH\|DEPENDENCY_UNVERIFIED\|POSSIBLE_CONFLICT\|INSUFFICIENT_EVIDENCE`), 전체 `description`(≤ 2,000), `references[]`(`kind`=`design_item\|evidence`, `id`). 인용문은 넣지 않는다 |
+| `unresolved[]` | string ≤ 500 | BE 저장용 요약 문자열. 선택 상태는 코드 그대로(`NO_MATCH`, `DEPENDENCY_UNVERIFIED`), 검토 후보는 `"<KIND>: <description>"`을 500 코드 포인트로 자른다. 직접 선택 상한으로 제외된 후보가 있으면 `SELECTION_TRUNCATED: 직접 일치 후보 중 설계 N건, 원문 M건이 직접 선택 상한으로 제외됐습니다.`를 넣어 저장 패킷에도 잘림 사실이 남는다 |
+| `unresolved_details[]` | UnresolvedDetail | `unresolved`와 같은 순서의 구조형. `kind`(`NO_MATCH\|DEPENDENCY_UNVERIFIED\|POSSIBLE_CONFLICT\|INSUFFICIENT_EVIDENCE\|SELECTION_TRUNCATED`), 전체 `description`(≤ 2,000), `references[]`(`kind`=`design_item\|evidence`, `id`). 인용문은 넣지 않는다 |
 | `related_tasks[]` | RelatedTask | 요청의 작업 1건(`metadata.task` 값). 다른 작업 검색은 범위 밖 |
-| `sources[]` | Source | 선택된 원문 근거의 출처(선택 순서) 다음에 선택된 설계의 출처(설계 순서). 같은 (document_id, document_version_id, version_no, location)은 한 번만 |
+| `sources[]` | Source | **선택된 원문 근거의 출처만**(선택 순서). 근거의 문서 버전은 스냅샷 `document_version_ids`(현재 기준 문서)에 속하므로 BE의 `requireSourceInBaseline` 검증을 통과한다. 설계에 저장된 출처는 현재 기준 밖 문서 버전이거나 위치가 미확인일 수 있어 넣지 않는다. 같은 (document_id, document_version_id, version_no, location)은 한 번만 |
 | `direct_match_truncation` | object \| null | #131과 같음. 직접 선택 상한으로 제외된 후보 수 |
 
 규칙:
@@ -70,7 +70,7 @@ Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no
 | `related_tasks` | `relatedTasks` | 현재 계획 리비전·상태와 일치(400) |
 | `sources` | `sources` | 현재 기준 문서 버전·번호와 일치(400) |
 
-`content_hash`는 BE가 `{project_id, task_id, request, baseline_id, content}`의 정규 JSON(키 정렬·목록 순서 유지)으로 계산한다. AI는 해시를 만들지 않으며, 해시 일치만으로 실제 전송 사실을 증명하지 않는다. `design_items`·`unresolved_details`·`request_summary`·`direct_match_truncation`은 저장 입력에 넣지 않는다.
+`content_hash`는 BE가 `{project_id, task_id, request, baseline_id, content}`의 정규 JSON(키 정렬·목록 순서 유지)으로 계산한다. AI는 해시를 만들지 않으며, 해시 일치만으로 실제 전송 사실을 증명하지 않는다. `design_items`·`unresolved_details`·`request_summary`는 저장 입력에 넣지 않는다. `direct_match_truncation`도 구조로는 넣지 않지만, 제외된 후보가 있으면 `unresolved`의 `SELECTION_TRUNCATED` 항목으로 보존해 저장 패킷을 나중에 읽는 쪽이 누락 사실을 알 수 있게 한다. 구조 필드 추가 여부는 9절.
 
 ## 5. 조회 수준과 원문 (POL-02, #95)
 
@@ -120,6 +120,8 @@ BE 쪽 403 `forbidden`·404 `not_found`·404 `baseline_not_published`는 AI 호�
 - `request` 2,000 코드 포인트 제한과 비밀값 입력 금지 안내의 공용 명세 반영.
 - `constraints`를 `POLICY`·`CONSTRAINT` description에서만 만드는 규칙과 `unresolved` 문자열 형식(`KIND: 설명`)의 수용 여부.
 - 요청 분석 힌트(`request_summary`)를 BE 검색에 쓸지 여부. 현재는 어떤 검색에도 연결하지 않는다.
+- `direct_match_truncation`을 BE `SavePacketArgs`에 구조 필드로 추가할지. 추가 전까지는 `unresolved`의 `SELECTION_TRUNCATED` 문자열로 보존한다.
+- 설계 저장 출처 가운데 현재 기준 문서 버전에 속하고 위치가 확인된 것을 `sources`에 포함할지. 현재는 모두 제외하고 `design_items[].source`에만 둔다.
 - MCP-01 실제 호출로 응답 확인(-179 연결 후), 응답 잘림·전체 조회 경로(#95).
 
 ## 10. 검증
