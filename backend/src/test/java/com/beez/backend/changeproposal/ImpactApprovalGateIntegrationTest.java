@@ -109,14 +109,69 @@ class ImpactApprovalGateIntegrationTest extends IntegrationTestSupport {
         assertThat(pre.aiAnalysis().status()).isEqualTo("RUNNING"); assertThat(pre.requiresOverrideReason()).isFalse();
     }
 
-    @Test void expiredRunningLeaseIsClosedAsFailedSoAReasonCanOverrideAndPreviewStaysReadOnly() {
+    @Test void reanalysisInProgressBlocksEvenWhenThePreviousResultIsCompletedAndCurrent() {
+        analyze();
+        runs.retry(member,project,proposalId,null); // 재분석 접수: 이전 완료 결과가 그대로 보이고 새 실행은 reanalysis 로만 나온다
+        assertThat(runs.get(member,project,proposalId).analysisStatus()).isEqualTo("COMPLETED");
+        blocked("analysis_running",null);
+        blocked("analysis_running","그래도 승인");
+        var pre=publications.preview(leader,project,proposalId).unreviewed();
+        assertThat(pre.aiAnalysis().status()).isEqualTo("COMPLETED"); assertThat(pre.aiAnalysis().reanalysisInProgress()).isTrue();
+        assertThat(pre.requiresOverrideReason()).isFalse(); assertThat(pre.aiCandidates()).isNull();
+        queued.removeFirst().run(); // 재분석이 끝나면 다시 승인할 수 있다
+        assertThat(approve("after-reanalysis",null).proposal().status()).isEqualTo("PUBLISHED");
+    }
+
+    @Test void reanalysisInProgressCannotBeOverriddenWithAReasonAfterAFailedRun() {
+        when(ai.changeImpact(any())).thenThrow(new ResourceAccessException("timeout"));
+        analyze();
+        assertThat(publications.preview(leader,project,proposalId).unreviewed().requiresOverrideReason()).isTrue();
+        runs.retry(member,project,proposalId,null);
+        blocked("analysis_running","실패했으니 사유로 승인");
+        var pre=publications.preview(leader,project,proposalId).unreviewed();
+        assertThat(pre.aiAnalysis().status()).isEqualTo("FAILED"); assertThat(pre.aiAnalysis().reanalysisInProgress()).isTrue();
+        assertThat(pre.requiresOverrideReason()).isFalse();
+    }
+
+    @Test void expiredRunningReadsAsFailedEverywhereSoRolledBackApprovalsStayConsistent() {
         runs.retry(member,project,proposalId,null);
         api.jdbc.sql("UPDATE change_impact_run SET lease_until=clock_timestamp()-interval '1 second' WHERE change_proposal_id=:p").param("p",proposalId).update();
-        // 읽기 전용 미리 보기는 만료 정리를 쓰지 않으므로 예외 없이 RUNNING 으로 보인다
-        assertThat(publications.preview(leader,project,proposalId).unreviewed().aiAnalysis().status()).isEqualTo("RUNNING");
-        blocked("impact_not_confirmed",null); // 승인은 쓰기 트랜잭션이라 만료 RUNNING 을 FAILED 로 닫는다
+        // 읽기 전용 미리 보기도 쓰기 없이 만료를 FAILED 로 판정한다 — 승인 판정과 같다
+        var pre=publications.preview(leader,project,proposalId).unreviewed();
+        assertThat(pre.aiAnalysis().status()).isEqualTo("FAILED"); assertThat(pre.aiAnalysis().errorCode()).isEqualTo("analysis_interrupted");
+        assertThat(pre.aiAnalysis().reanalysisInProgress()).isFalse(); assertThat(pre.requiresOverrideReason()).isTrue();
+        blocked("impact_not_confirmed",null); // 승인 트랜잭션이 롤백돼 만료 정리도 되돌아간다
+        assertThat(api.jdbc.sql("SELECT status FROM change_impact_run WHERE change_proposal_id=:p").param("p",proposalId).query(String.class).single()).isEqualTo("RUNNING");
+        var again=publications.preview(leader,project,proposalId).unreviewed(); // 롤백 뒤에도 미리 보기가 같다
+        assertThat(again.aiAnalysis().status()).isEqualTo("FAILED"); assertThat(again.requiresOverrideReason()).isTrue();
         assertThat(approve("expired","분석이 멈춰서 직접 확인").proposal().status()).isEqualTo("PUBLISHED");
         assertThat(api.jdbc.sql("SELECT error_code FROM change_impact_run WHERE change_proposal_id=:p").param("p",proposalId).query(String.class).single())
                 .isEqualTo("analysis_interrupted");
+    }
+
+    @Test void expiredReanalysisFallsBackToTheFailureNotTheOlderCompletedResult() {
+        analyze();
+        runs.retry(member,project,proposalId,null);
+        // 현실에서는 재분석의 lease 가 이전 완료 시각보다 늦다 — 시험에서 인위로 당긴 lease 와 순서가 뒤집히지 않게 완료 시각을 과거로 둔다
+        api.jdbc.sql("UPDATE change_impact_run SET requested_at=requested_at-interval '2 hours',finished_at=finished_at-interval '2 hours',started_at=started_at-interval '2 hours' WHERE status='COMPLETED' AND change_proposal_id=:p").param("p",proposalId).update();
+        api.jdbc.sql("UPDATE change_impact_run SET lease_until=clock_timestamp()-interval '1 second' WHERE status='RUNNING' AND change_proposal_id=:p").param("p",proposalId).update();
+        var before=publications.preview(leader,project,proposalId).unreviewed();
+        runs.get(member,project,proposalId); // 만료 정리를 실제로 저장한 뒤에도 판정이 같아야 한다
+        var after=publications.preview(leader,project,proposalId).unreviewed();
+        assertThat(before.aiAnalysis()).isEqualTo(after.aiAnalysis());
+        assertThat(after.aiAnalysis().status()).isEqualTo("FAILED"); assertThat(after.requiresOverrideReason()).isTrue();
+    }
+
+    @Test void approvalRequestsStoredBeforeTheReasonFieldStillReplayWithTheSameKeyAndBody() {
+        analyze();
+        var first=approve("old-key",null);
+        var old=Map.of("expected_base_baseline_id",proposal.baseBaselineId(),"expected_revision",proposal.revision(),
+                "expected_snapshot_hash",proposal.snapshotHash());
+        assertThat(com.beez.backend.designitem.support.DesignJson.hash(new ApproveRequest(proposal.baseBaselineId(),proposal.revision(),
+                proposal.snapshotHash(),null))).isEqualTo(com.beez.backend.designitem.support.DesignJson.hash(old));
+        // 사유 필드가 없던 시절 저장된 지문으로 되돌린 뒤 같은 키·본문으로 재시도한다
+        assertThat(api.jdbc.sql("UPDATE design_http_command SET fingerprint=:f WHERE request_key='old-key'")
+                .param("f",com.beez.backend.designitem.support.DesignJson.hash(old)).update()).isEqualTo(1);
+        assertThat(approve("old-key",null)).isEqualTo(first);
     }
 }

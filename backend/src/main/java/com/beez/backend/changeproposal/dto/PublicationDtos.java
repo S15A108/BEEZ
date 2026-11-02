@@ -6,7 +6,9 @@ import com.beez.backend.designitem.dto.BaselineItemRefResponse;
 import java.util.List;
 
 public final class PublicationDtos {
-    /** impactOverrideReason: why the leader approves without a completed, current impact analysis (S15P31A108-241). */
+    /** impactOverrideReason: why the leader approves without a completed, current impact analysis (S15P31A108-241).
+     *  A null reason is omitted from the canonical form so idempotency fingerprints of pre-241 requests stay valid. */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     public record ApproveRequest(String expectedBaseBaselineId, Integer expectedRevision, String expectedSnapshotHash,
                                  String impactOverrideReason) { }
     public record Baseline(String id, String projectId, int versionNo, List<BaselineDocumentRefResponse> documents,
@@ -15,10 +17,12 @@ public final class PublicationDtos {
     /** CREATE has no persisted ID until approval; proposalItemIndex identifies its submitted item. */
     public record PreviewItem(String designItemId, String title, int versionNo, String operation, Integer proposalItemIndex) { }
     public record Counts(int items, int documents) { }
-    /** aiCandidates is null unless the current analysis is trusted: "not evaluated" must not read as "0 candidates". */
+    /** aiCandidates is null unless the current analysis is trusted ("not evaluated" must not read as 0 candidates).
+     *  ALWAYS keeps that null in the response despite the global non_null setting. */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
     public record Unreviewed(Integer aiCandidates, int openReviewRequests, AiAnalysis aiAnalysis, boolean requiresOverrideReason) { }
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-    public record AiAnalysis(String status, boolean isCurrent, String errorCode) { }
+    public record AiAnalysis(String status, boolean isCurrent, String errorCode, boolean reanalysisInProgress) { }
     public record Preview(int nextBaselineVersionNo, List<PreviewItem> baselineItems,
                           List<StaleValidation> validationsToStale, List<WaitingTask> tasksToWait,
                           Counts unchanged, Unreviewed unreviewed) { }

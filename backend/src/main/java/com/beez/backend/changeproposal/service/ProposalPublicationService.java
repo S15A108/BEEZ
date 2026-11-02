@@ -144,7 +144,7 @@ public class ProposalPublicationService {
         Integer aiCandidates=gateDecision.kind()==ImpactApprovalGate.Kind.TRUSTED ? gateDecision.candidateCount() : null;
         return new Preview(plan.nextVersion(),plan.previewItems(),result.staleValidations(),result.waitingTasks(),plan.unchanged(),
                 new Unreviewed(aiCandidates,repository.openReviewRequests(proposal,plan.impact().revision()),
-                        new AiAnalysis(gateDecision.status(),gateDecision.isCurrent(),gateDecision.errorCode()),
+                        new AiAnalysis(gateDecision.status(),gateDecision.isCurrent(),gateDecision.errorCode(),gateDecision.reanalysis()),
                         gateDecision.needsReason()));
     }
     private static void positive(long project, long proposal) {

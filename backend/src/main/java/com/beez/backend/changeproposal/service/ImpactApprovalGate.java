@@ -13,7 +13,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class ImpactApprovalGate {
     public enum Kind { TRUSTED, RUNNING, UNTRUSTED }
-    public record Decision(Kind kind, String status, boolean isCurrent, String errorCode, int candidateCount) {
+    public record Decision(Kind kind, String status, boolean isCurrent, String errorCode, int candidateCount,
+                          boolean reanalysis) {
         public boolean needsReason() { return kind==Kind.UNTRUSTED; }
     }
     private final ImpactStatusQuery statuses;
@@ -29,10 +30,11 @@ public class ImpactApprovalGate {
     }
     static Decision decide(ImpactStatusQuery.Status status) {
         Kind kind;
-        if ("RUNNING".equals(status.status())) kind=Kind.RUNNING;
+        // A newer run in progress hides behind the previous finished result (reanalysis): it blocks like RUNNING.
+        if ("RUNNING".equals(status.status()) || status.reanalysisRunning()) kind=Kind.RUNNING;
         else if ("COMPLETED".equals(status.status()) && status.isCurrent()) kind=Kind.TRUSTED;
         else kind=Kind.UNTRUSTED;
-        return new Decision(kind,status.status(),status.isCurrent(),status.errorCode(),status.candidateCount());
+        return new Decision(kind,status.status(),status.isCurrent(),status.errorCode(),status.candidateCount(),status.reanalysisRunning());
     }
 
     /** Throws 409 unless approval may proceed; returns the reason to store with the approval, or null. */

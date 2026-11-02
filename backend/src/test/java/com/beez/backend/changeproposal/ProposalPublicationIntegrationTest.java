@@ -289,7 +289,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
 
     // 게이트 판정 자체(상태별)는 ImpactApprovalGateIntegrationTest 가 실제 분석 실행으로 본다. 여기서는 승인·미리 보기 배선만 본다.
     void decide(ImpactApprovalGate.Kind kind,String status,boolean current) {
-        var decision=new ImpactApprovalGate.Decision(kind,status,current,"COMPLETED".equals(status) ? null : "analysis_not_started",2);
+        var decision=new ImpactApprovalGate.Decision(kind,status,current,"COMPLETED".equals(status) ? null : "analysis_not_started",2,false);
         doReturn(decision).when(gate).evaluate(any(),anyLong(),anyLong()); doReturn(decision).when(gate).peek(any(),anyLong(),anyLong());
     }
     void trusted() { decide(ImpactApprovalGate.Kind.TRUSTED,"COMPLETED",true); }
@@ -340,6 +340,20 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
                     e -> assertThat(e.getCode()).isEqualTo("validation_failed"));
         rolledBack(p);
         assertThat(approve(p,"max","x".repeat(1000)).proposal().status()).isEqualTo("PUBLISHED");
+    }
+
+    @Test void previewHttpResponseKeepsNullAiCandidatesAndTheNewFields() {
+        Proposal p=create(false,true,"http-null");
+        var client=client().login(project.leaderEmail(),AccessFixtures.PASSWORD);
+        String path="/api/projects/"+project.projectId()+"/change-proposals/"+p.id()+"/approval-preview";
+        decide(ImpactApprovalGate.Kind.UNTRUSTED,"NOT_EVALUATED",false);
+        var untrusted=client.get(path);
+        assertThat(untrusted.statusCode()).isEqualTo(200);
+        assertThat(untrusted.body()).contains("\"ai_candidates\":null","\"requires_override_reason\":true",
+                "\"ai_analysis\":{\"status\":\"NOT_EVALUATED\"","\"is_current\":false","\"reanalysis_in_progress\":false","\"error_code\":\"analysis_not_started\"");
+        trusted();
+        var ok=client.get(path);
+        assertThat(ok.body()).contains("\"ai_candidates\":2","\"requires_override_reason\":false").doesNotContain("\"error_code\"");
     }
 
     @Test void gateDoesNotRunForAnAlreadyPublishedProposalReplay() {
