@@ -1592,7 +1592,8 @@ HTTP `200`.
 회의 질문·요약·결정 추출 기능을 제공한다.
 
 관련 요구사항: MTG-06·08  
-담당: BE: 오서현 / AI: 양지훈 / FE: —  
+담당: BE: 오서현 / AI: 양지훈 / FE: —
+
 상태: 내부 계약 초안
 
 #### 인증
@@ -1849,9 +1850,9 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 
 ## AI-A10. 문서 검토·수정 제안
 
-### 216 BE 검토 계약 v2 — 실제 AI 구현은 222 TODO
+### 216 BE 검토 계약 v2 — 222 AI 구현
 
-2026-11-02: 아래는 BE가 구현한 v2 대역 계약이며 양측 실연동 합의/완료 기록이 아니다. 222 담당은 사용자·최신 업무 기록 기준 양지훈이다. AI 공통 모듈/라우트 코드는 이번에 변경하지 않았다. 이하 기존 v1 기본 필드·화면 확장 예시만으로 호출하면 v2 필수 출력 누락으로 BE가 거절한다.
+222에서 아래 BE v2 계약을 따르는 AI 라우트와 모델 호출을 구현했다. 실제 배포 환경 연동 및 제품 정책 합의의 완료를 뜻하지 않는다. 이하 기존 v1 기본 필드·화면 확장 예시만으로 호출하면 v2 필수 출력 누락으로 BE가 거절한다.
 
 | 구분 | v2 계약 |
 | --- | --- |
@@ -1868,13 +1869,20 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 
 [정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN/DISCUSS/REQUEST 신규 기능은 후속 범위다.
 
+222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
+
+연동 회귀 테스트: `backend`에서 `BEEZ_RUN_AI_E2E=true`를 설정하고 `./gradlew integrationTest --tests '*DocumentReviewFastApiE2ETest'`를 실행한다. Docker와 AI 의존성이 설치된 `ai/.venv`가 필요하며, 다른 Python 실행 파일은 `BEEZ_E2E_PYTHON`으로 지정한다. 테스트는 로컬 FastAPI, 가짜 모델 및 임시 DB를 사용한다.
+
+실제 GMS 검증은 `ai/.env`에 `GMS_KEY`를 설정한 후 `ai`에서 `python -m scripts.document_review_live_smoke --execute`를 실행한다. 실제 호출은 비용이 발생할 수 있으며 합성 fixture만 전송한다. 전체 BE·AI·GMS 경계는 `backend`에서 `BEEZ_RUN_REAL_GMS_E2E=true`와 `./gradlew integrationTest --tests '*DocumentReviewRealGmsE2ETest'`로 검증하며, 실제 모델 1회와 임시 DB를 사용한다. 키는 로그나 저장소에 포함하지 않는다.
+
 ### POST `/v1/document-reviews`
 
-공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. PR #37은 AI 내부 연동을 담당자 합의 대기로 두었으므로 AI 구현 전에 이 절로 합의한다.
+공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. 아래 기존 v1 예시와 화면 확장 필드는 v2 전체 계약이 아니며, 확장 기능은 별도 합의가 필요하다.
 
 관련 요구사항: DOC-01·08 (화면 PNL-02-m-review-*)  
-담당: BE: 오서현 / AI: 박상은 / FE: —  
-상태: BE 호출·검증 구현 · AI 구현 전 · 확장 필드는 수정안 요청 (협의 필요)
+담당: BE: 오서현 / AI: 양지훈 / FE: —
+
+상태: BE 호출·검증 및 AI 라우트 구현 · 합성 문서로 실제 GMS 연동 확인 · 배포 환경 연동 전 · 확장 필드는 수정안 요청 (협의 필요)
 
 #### 인증
 
