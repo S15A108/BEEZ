@@ -368,6 +368,19 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 
 ## 6. 남은 결정
 
+### V18 변경 영향 결과·발행 후 분석 접수 (#197)
+
+원격 dev에 V17__document_review_contract.sql이 추가되어 번호 충돌을 피하기 위해 `V18__change_impact_results.sql`로 추가한다. 두 테이블은 서로 다른 분석 생명주기다.
+
+| 테이블 | 귀속·제약 | 저장·복구 |
+| --- | --- | --- |
+| `change_impact_run` | 제안/프로젝트·제출 리비전·기준 baseline FK. `(change_proposal_id,revision_no) WHERE status='RUNNING'` 부분 UNIQUE. 요청별 `impact-{id}` UNIQUE | 제출 해시·관계 revision·영향 입력 fingerprint(제안 리비전·기준·관계 revision·작업의 열림/닫힘·담당자·계획 리비전·설계 참조·검증 id. lock_version·갱신 시각·검증 상태는 제외), 규칙 후보와 AI 결과·generation·usage 별도 JSONB, 사용량 상태, 요청자·시각·lease. 상태 RUNNING/COMPLETED/INSUFFICIENT_EVIDENCE/NOT_EVALUATED/FAILED/STALE |
+| `published_change_analysis` | baseline/프로젝트 복합 FK, 제안 NULL 허용·프로젝트 복합 FK. UNIQUE(project_id,published_baseline_id). id가 CDC intakeReference | 변경 발행 PENDING, 최초 v1 NOT_EVALUATED, 기존 baseline 백필 NOT_EVALUATED(published_before_intake). attempt 0~4, lease·다음 재시도·제한된 error_code. 상태 PENDING/RUNNING/COMPLETED/FAILED/NOT_EVALUATED |
+
+승인 전 분석의 AI 호출은 트랜잭션 밖에서 실행한다. 프로젝트 행 잠금과 입력 지문 재검사 후 RUNNING·미만료 lease인 행만 완료할 수 있다. 접수 시 lease는 실행기 대기열 최대 대기(WAIT_ROUNDS×실행 lease)를 덮도록 길게 잡고, 작업자가 실제로 시작할 때 실행 lease로 줄인다(만료된 접수는 시작하지 못한다). 만료는 조회·재요청 시 FAILED(analysis_interrupted)로 닫는다. 규칙 후보는 AI 실패에도 보존하며 현재 입력과의 일치 여부를 조회 때 재검사한다. 관계·작업 변경은 프로젝트 잠금 밖에서 일어날 수 있어 조회 및 후속 승인 게이트에서 다시 확인해야 한다.
+
+발행 접수는 발행 트랜잭션에 포함되며 후보 0건도 생성한다. claim은 같은 프로젝트의 baseline 버전 순서를 검사한다. 이전 PENDING/RUNNING/FAILED가 남으면 다음 baseline을 가져갈 수 없다. attempt와 lease가 일치하는 미만료 소유자만 완료·실패 저장이 가능하고 재시도는 1·5·30초, 4회 실패 후 FAILED다. 만료된 4회차도 FAILED로 닫아 순서 차단을 유지한다. 복구 스캔은 30초 지난 PENDING(재시도 도래)과 만료 RUNNING을 id keyset으로 탐색한다. 반복 스캔과 발행 후 AI 실행은 #227에서 연결하며 이 변경에는 스케줄러가 없다. #227 병합 전 접수행은 PENDING으로 남는다.
+
 ### V10 변경 제안 제출·반려 후 재제출
 
 195는 기존 V2~V6을 수정하지 않고 `V10__change_proposal_revisions.sql`로 추가한다. V7~V9는 선행 PR을 위한 번호이며 병합·운영 적용 순서를 확인해야 한다. 이 번호 선택은 다른 PR의 최종 번호를 변경하거나 운영 적용을 허가하는 의미가 아니다.

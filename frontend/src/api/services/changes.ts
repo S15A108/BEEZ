@@ -53,6 +53,7 @@ export const changesApi = {
         method: 'PUT',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals/${encodeURIComponent(String(idSchema.parse(proposalId)))}`,
         data: schemas.updateInputSchema.parse(input),
+        idempotent: true,
       },
       options,
     ),
@@ -138,6 +139,22 @@ export const changesApi = {
         method: 'POST',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals/${encodeURIComponent(String(idSchema.parse(proposalId)))}/reject`,
         data: schemas.rejectInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  withdraw: (
+    projectId: string,
+    proposalId: string,
+    input: schemas.WithdrawInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.withdrawResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals/${encodeURIComponent(String(idSchema.parse(proposalId)))}/withdraw`,
+        data: schemas.withdrawInputSchema.parse(input),
         idempotent: true,
       },
       options,

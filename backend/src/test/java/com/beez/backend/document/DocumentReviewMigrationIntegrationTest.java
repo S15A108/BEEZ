@@ -50,7 +50,8 @@ class DocumentReviewMigrationIntegrationTest {
                 """, Long.class, document, version, account, review);
         String oldResult = jdbc.queryForObject("SELECT result::text FROM document_bee_review WHERE id=?", String.class, review);
 
-        var upgraded = Flyway.configure().dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword()).load();
+        var upgraded = Flyway.configure().dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
+                .target("17").load();
         upgraded.migrate();
         assertThat(upgraded.info().current().getVersion().toString()).isEqualTo("17");
 

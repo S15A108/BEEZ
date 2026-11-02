@@ -52,7 +52,7 @@ test('human owners and invited members get desks even when the server places the
 
 test('a small team has only occupied desks, one shared meeting table and a projector', () => {
   const floor = office(populations[0])
-  assert.strictEqual(floor.W, 24)
+  assert.strictEqual(floor.W, 30)
   assert.strictEqual(
     floor.furniture.filter(
       (item) => item.kind === 'desk' || item.kind === 'execdesk',

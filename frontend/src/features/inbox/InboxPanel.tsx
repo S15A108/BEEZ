@@ -40,7 +40,7 @@ export function InboxPanel({ projectId }: { projectId: string }) {
         : item.target_type === 'MEETING'
           ? 'meetings'
           : item.target_type === 'BASELINE'
-            ? 'planning'
+            ? 'documents'
             : 'tasks',
       item.target_id,
     )

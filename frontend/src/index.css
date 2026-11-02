@@ -121,8 +121,13 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* 글자 드래그 선택을 막는다. 입력칸은 브라우저가 따로 선택을 허용하고, 문서 본문·복사해서 쓰는 값은 select-text로 연다. */
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground select-none;
+  }
+  img,
+  a {
+    -webkit-user-drag: none;
   }
   html {
     @apply font-sans;

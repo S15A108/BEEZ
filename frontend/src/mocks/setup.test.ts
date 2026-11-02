@@ -137,7 +137,7 @@ describe('documented REST mock adapter', () => {
       email: user.email,
       password: 'changed-password-8832',
     })
-    await authApi.forgotPassword({ email: user.email })
+    await authApi.forgotPassword({ email: user.email, name: user.name })
     expect(
       (await authApi.verifyResetToken({ token: `mock-reset-${user.id}` }))
         .valid,
@@ -168,9 +168,8 @@ describe('documented REST mock adapter', () => {
     const token = new URL(invitation.invite_url).searchParams.get('token')!
     await authApi.logout()
     await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-    await expect(projectsApi.get(created.id)).rejects.toMatchObject({
-      response: { status: 404 },
-    })
+    // Q05(2026-10-29 확정): 초대받은 이메일로 로그인하면 그때 팀원이 된다. 링크 참여(MEM-A05)도 그대로 된다.
+    expect((await projectsApi.get(created.id)).my_role).toBe('MEMBER')
     const accepted = await membersApi.acceptInvitation({ token })
     expect(accepted.member.role).toBe('MEMBER')
     expect((await projectsApi.get(created.id)).my_role).toBe('MEMBER')
@@ -236,6 +235,29 @@ describe('documented REST mock adapter', () => {
     expect(file).toBeInstanceOf(Blob)
   })
 
+  // PR #72 전수 리뷰 AMP-01: 실제 서버처럼 문서 등록·분석만으로는 설계 초안이 생기지 않고, 초안 만들기(PLN-A05)로 생긴다.
+  it('does not create design drafts on upload until drafts are generated', async () => {
+    await login()
+    const project = await projectsApi.create({ name: '초안 경로 검증' })
+    const result = await documentsApi.upload(project.id, {
+      file: new File(['# 기획\n사용자가 예약을 만든다.'], 'plan.md', {
+        type: 'text/markdown',
+      }),
+      title: '예약 기획',
+      kind: 'PLAN',
+    })
+    const version = result.document.latest_draft!
+    expect(
+      (await planningApi.items(project.id, { status: 'DRAFT' })).items,
+    ).toHaveLength(0)
+    await planningApi.generateDrafts(project.id, {
+      document_version_ids: [version.id],
+    })
+    expect(
+      (await planningApi.items(project.id, { status: 'DRAFT' })).items,
+    ).toHaveLength(1)
+  })
+
   it('publishes the exact reviewed four-document baseline and answers planning questions', async () => {
     await login()
     const question = (await planningApi.questions('102')).items[0]
@@ -260,14 +282,54 @@ describe('documented REST mock adapter', () => {
         ),
       ),
     ).toBe(true)
-    const baseline = await planningApi.publishBaseline({
-      project_id: '102',
-      document_version_ids: documents.items.map(
-        (document) => document.latest_draft!.id,
+    // 서버처럼 문서 4종이 팀장 승인을 받기 전에는 발행하지 않고, 발행이 문서를 승인하지도 않는다
+    // (PR #72 6차 조사 SIXTH-DOC-02). 공용 문서함의 검토·승인 흐름으로 4종을 승인한 뒤 발행한다.
+    const publish = (versionIds: string[], hash: string) =>
+      planningApi.publishBaseline({
+        project_id: '102',
+        document_version_ids: versionIds,
+        design_item_version_ids: items.items.map((item) => item.id),
+        draft_snapshot_hash: hash,
+      })
+    await expect(
+      publish(
+        documents.items.map((document) => document.latest_draft!.id),
+        items.draft_snapshot_hash!,
       ),
-      design_item_version_ids: items.items.map((item) => item.id),
-      draft_snapshot_hash: items.draft_snapshot_hash!,
+    ).rejects.toMatchObject({
+      response: {
+        status: 409,
+        data: { error: { code: 'document_not_approved' } },
+      },
     })
+    for (const document of documents.items) {
+      const copy = await documentsApi.workingCopy('102', document.id)
+      const review = await documentsApi.requestBeeReview('102', document.id, {
+        expected_revision: copy.revision,
+      })
+      let current = copy
+      for (const suggestion of review.suggestions)
+        current = await documentsApi.decideSuggestion(
+          '102',
+          document.id,
+          review.id,
+          suggestion.id,
+          { expected_revision: current.revision, decision: 'SKIP' },
+        )
+      const submission = await documentsApi.submitReview('102', document.id, {
+        expected_revision: current.revision,
+        review_id: review.id,
+      })
+      await documentsApi.decideSubmission('102', document.id, submission.id, {
+        decision: 'APPROVE',
+      })
+    }
+    const approved = await documentsApi.list('102')
+    const latestItems = await planningApi.items('102', { status: 'DRAFT' })
+    const baseline = await publish(
+      approved.items.map((document) => document.approved_version!.id),
+      latestItems.draft_snapshot_hash!,
+    )
     expect(baseline.documents).toHaveLength(4)
     expect((await projectsApi.get('102')).current_baseline?.id).toBe(
       baseline.id,
@@ -341,7 +403,8 @@ describe('documented REST mock adapter', () => {
     await expect(
       changesApi.approve('101', '71', {
         expected_base_baseline_id: '999',
-        expected_updated_at: proposal.updated_at,
+        expected_revision: proposal.revision,
+        expected_snapshot_hash: proposal.snapshot_hash,
       }),
     ).rejects.toMatchObject({ response: { status: 409 } })
     expect((await documentsApi.baseline('101')).id).toBe('401')
@@ -350,7 +413,8 @@ describe('documented REST mock adapter', () => {
     )
     const published = await changesApi.approve('101', '71', {
       expected_base_baseline_id: '401',
-      expected_updated_at: proposal.updated_at,
+      expected_revision: proposal.revision,
+      expected_snapshot_hash: proposal.snapshot_hash,
     })
     expect(published.proposal.status).toBe('PUBLISHED')
     expect(published.baseline.version_no).toBe(2)

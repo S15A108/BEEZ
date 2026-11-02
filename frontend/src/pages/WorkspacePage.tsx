@@ -1,43 +1,25 @@
-import { lazy, Suspense, useMemo, useRef } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { lazy, Suspense, useEffect, useMemo, useRef } from 'react'
+import { useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
-import {
-  Bell,
-  BookOpen,
-  Bot,
-  ChartNoAxesCombined,
-  CheckCheck,
-  ChevronLeft,
-  FileText,
-  Footprints,
-  GitBranch,
-  LayoutDashboard,
-  Lightbulb,
-  MessageCircle,
-  Network,
-  NotebookPen,
-  Settings,
-  Users,
-} from 'lucide-react'
-import { agentsApi, membersApi, projectsApi, tasksApi } from '@/api/services'
+import { Footprints } from 'lucide-react'
 import type { SceneAgent, SceneTask } from '@/three/types'
 import { RequireAccount } from '@/features/auth/RequireAccount'
 import { useSession } from '@/features/auth/useSession'
-import { OverviewPanel } from '@/features/workspace/OverviewPanel'
 import { DocumentsPanel } from '@/features/documents/DocumentsPanel'
 import { PlanningPanel } from '@/features/planning/PlanningPanel'
 import { ChangesPanel } from '@/features/changes/ChangesPanel'
 import { TasksPanel } from '@/features/tasks/TasksPanel'
 import { MeetingsPanel } from '@/features/meetings/MeetingsPanel'
-import { TeamPanel } from '@/features/members/TeamPanel'
-import { AgentsPanel } from '@/features/agents/AgentsPanel'
 import { ActivityPanel } from '@/features/dashboard/ActivityPanel'
 import { InboxPanel } from '@/features/inbox/InboxPanel'
 import { BibiPanel } from '@/features/bee/BibiPanel'
 import { ContextPanel } from '@/features/contexts/ContextPanel'
+import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
+import { SettingsDialog } from '@/features/workspace/SettingsDialog'
+import { sceneQuery } from '@/features/workspace/sceneQuery'
 import { AsyncState } from '@/components/AsyncState'
+import { PaneSheetHost } from '@/components/PaneSheet'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
@@ -45,31 +27,42 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  placementKey,
+  useClearPaneOnLeave,
+  useWorkspaceStore,
+} from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
 
 const OfficeScene = lazy(() => import('@/three/OfficeScene'))
-const menu = [
-  { id: 'overview', label: '설계 현황', icon: LayoutDashboard },
-  { id: 'documents', label: '공용 문서함', icon: FileText },
-  { id: 'planning', label: '기획 분석', icon: Lightbulb },
-  { id: 'changes', label: '변경 제안', icon: GitBranch },
-  { id: 'tasks', label: '작업 검증', icon: CheckCheck },
-  { id: 'meetings', label: '회의실', icon: Users },
-  { id: 'team', label: '팀 관리', icon: Network },
-  { id: 'agents', label: '에이전트 연결', icon: Bot },
-  { id: 'activity', label: '활동 · 비용', icon: ChartNoAxesCombined },
-  { id: 'context', label: '작업 맥락', icon: NotebookPen },
-  { id: 'inbox', label: '알림함', icon: Bell },
-  { id: 'git', label: 'Git · PR (확장)', icon: GitBranch },
-] satisfies { id: WorkspacePane; label: string; icon: typeof FileText }[]
+// 단축 바 번호(창 머리 'N 또는 Esc로 닫기')
+const paneKeys: Partial<Record<WorkspacePane, number>> = {
+  documents: 1,
+  changes: 2,
+  meetings: 3,
+  tasks: 4,
+  relations: 5,
+  dashboard: 6,
+}
+const paneTitles: Record<Exclude<WorkspacePane, 'settings'>, string> = {
+  documents: '공용 문서함',
+  planning: '기획 분석',
+  changes: '변경 제안',
+  meetings: '회의실',
+  tasks: '작업 현황',
+  relations: '작업·설계 관계',
+  dashboard: '대시보드',
+  inbox: '알림함',
+  chat: '비비',
+  context: '작업 맥락',
+}
 
 function Workspace({ projectId }: { projectId: string }) {
   const sceneHost = useRef<HTMLElement>(null)
   const focusScene = () =>
     sceneHost.current?.querySelector('canvas')?.focus({ preventScroll: true })
   const session = useSession()
-  const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
   const pane = useWorkspaceStore((state) => state.pane)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const viewMode = useWorkspaceStore((state) => state.viewMode)
@@ -77,18 +70,20 @@ function Workspace({ projectId }: { projectId: string }) {
   const outdoor = useWorkspaceStore((state) => state.outdoor)
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const pendingMutations = useIsMutating()
-  const query = useQuery({
-    queryKey: ['projects', projectId, 'scene'],
-    queryFn: async () => {
-      const [project, members, agents, tasks] = await Promise.all([
-        projectsApi.get(projectId),
-        membersApi.list(projectId),
-        agentsApi.list(projectId),
-        tasksApi.list(projectId, { limit: 100 }),
-      ])
-      return { project, members, agents, tasks }
-    },
-  })
+  useClearPaneOnLeave()
+  // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
+  const design = useWorkspaceStore(
+    (state) =>
+      state.placements[placementKey(session.data?.id ?? '', projectId)]?.design,
+  )
+  // 회원 탈퇴 화면의 '팀장 위임'처럼 ?settings=team으로 들어오면 설정 창을 연다.
+  const settingsParam = params.get('settings')
+  useEffect(() => {
+    if (!settingsParam) return
+    openPane('settings', settingsParam)
+    setParams({}, { replace: true })
+  }, [settingsParam, openPane, setParams])
+  const query = useQuery(sceneQuery(projectId, session.data?.id))
   const sceneAgents = useMemo<SceneAgent[]>(
     () => [
       { id: 'bibi', name: '비비', kind: 'lead', color: '#f5b800' },
@@ -128,7 +123,8 @@ function Workspace({ projectId }: { projectId: string }) {
         return (
           <main
             ref={sceneHost}
-            className="relative h-[calc(100dvh-4rem)] min-h-[620px] overflow-hidden bg-muted/30"
+            data-tour="office"
+            className="relative h-dvh min-h-[620px] overflow-hidden bg-muted/30"
             aria-label="프로젝트 워크스페이스"
           >
             <Suspense
@@ -141,6 +137,7 @@ function Workspace({ projectId }: { projectId: string }) {
               <OfficeScene
                 key={projectId}
                 project={data.project}
+                design={design}
                 agents={sceneAgents}
                 tasks={sceneTasks}
                 currentUserId={
@@ -152,91 +149,29 @@ function Workspace({ projectId }: { projectId: string }) {
                 phase={data.project.current_baseline ? 4 : 3}
                 onOutdoorChange={setOutdoor}
                 onAgentSelect={(id) =>
-                  openPane(
-                    id === 'bibi' || id.includes('reception')
-                      ? 'chat'
-                      : 'agents',
-                    id,
-                  )
+                  id === 'bibi' || id.includes('reception')
+                    ? openPane('chat', id)
+                    : openPane('settings', 'team')
                 }
                 onTaskSelect={(id) => openPane('tasks', id)}
                 className="absolute inset-0 h-full w-full"
               />
             </Suspense>
-            <aside className="pointer-events-none absolute top-4 bottom-4 left-4 z-10 flex max-w-[calc(100%-2rem)] gap-4">
-              <nav
-                className="pointer-events-auto flex w-14 flex-col items-center gap-1 overflow-y-auto rounded-2xl border bg-card/95 p-2 shadow-lg backdrop-blur sm:w-20"
-                aria-label="프로젝트 메뉴"
-              >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="mb-2 shrink-0"
-                  aria-label="나의 도시로"
-                  onClick={() => {
-                    openPane(null)
-                    setOutdoor(false)
-                    navigate('/')
-                  }}
-                >
-                  <ChevronLeft />
-                </Button>
-                {menu.map((item) => (
-                  <Button
-                    key={item.id}
-                    variant={pane === item.id ? 'secondary' : 'ghost'}
-                    className="h-auto w-full shrink-0 flex-col gap-1.5 px-1 py-3"
-                    aria-label={item.label}
-                    onClick={() => openPane(item.id)}
-                  >
-                    <item.icon className="size-4" />
-                    <span className="hidden text-[10px] sm:inline">
-                      {item.label}
-                    </span>
-                  </Button>
-                ))}
-              </nav>
-              <div className="pointer-events-auto flex h-fit max-w-[calc(100vw-7rem)] items-center gap-4 rounded-2xl border bg-card/95 p-4 shadow-sm backdrop-blur">
-                <div>
-                  <p className="text-[9px] tracking-widest text-muted-foreground">
-                    WORKSPACE / 나의 사무실
-                  </p>
-                  <h2 className="mt-1 max-w-60 truncate text-base font-bold">
-                    {data.project.name}
-                  </h2>
-                </div>
-                <Badge variant="outline">
-                  {isLeader ? '인간 팀장' : '팀원'}
-                </Badge>
-              </div>
-            </aside>
-            <div className="absolute top-4 right-4 z-10 flex gap-2">
-              <Button
-                size="icon"
-                variant="secondary"
-                aria-label="알림 열기"
-                onClick={() => openPane('inbox')}
-              >
-                <Bell />
-              </Button>
-              <Button
-                size="icon"
-                variant="secondary"
-                aria-label="회원 설정"
-                asChild
-              >
-                <Link to="/account">
-                  <Settings />
-                </Link>
-              </Button>
-            </div>
-            {!pane && (
-              <p className="pointer-events-none absolute bottom-6 left-28 z-10 hidden rounded-lg bg-card/90 px-3 py-2 text-[11px] text-muted-foreground lg:block">
-                바닥 클릭 · WASD/방향키 이동 · Shift 달리기 · 드래그로 둘러보기
-              </p>
-            )}
-            <div className="absolute right-5 bottom-5 z-10 flex flex-wrap items-center justify-end gap-2">
-              <div className="mr-2 rounded-xl border bg-card/95 p-1 shadow-sm">
+            <WorkspaceHud
+              project={data.project}
+              members={data.members.items}
+              me={currentUser}
+              onboarding={data.onboarding}
+              tasks={data.tasks.items}
+              myTasks={data.tasks.items.filter(
+                (task) => task.assignee_member_id === currentUser?.id,
+              )}
+            />
+            <div
+              data-tour="view"
+              className="absolute bottom-4 left-4 z-10 flex items-center gap-2"
+            >
+              <div className="rounded-xl border bg-card/95 p-1 shadow-sm">
                 <Button
                   size="sm"
                   variant={viewMode === 'first' ? 'secondary' : 'ghost'}
@@ -268,86 +203,90 @@ function Workspace({ projectId }: { projectId: string }) {
                 <Footprints />
                 {outdoor ? '사무실로' : '산책'}
               </Button>
-              <Button
-                onClick={() => openPane('chat')}
-                className="rounded-full px-5 shadow-md"
-              >
-                <MessageCircle />
-                비비와 대화
-              </Button>
             </div>
-            {!data.project.current_baseline && !pane && (
-              <div className="absolute right-5 bottom-24 z-10 max-w-80 rounded-2xl border bg-card/95 p-5 shadow-sm">
-                <BookOpen className="mb-3 size-5 text-primary" />
-                <h3 className="font-semibold">문서로 시작을 준비해요</h3>
-                <p className="mt-2 text-xs leading-6 text-muted-foreground">
-                  기획안·ERD·요구사항 명세서·API 명세서를 등록하고 인간 팀장이
-                  기준을 발행해요.
-                </p>
-                <Button
-                  className="mt-4"
-                  size="sm"
-                  onClick={() => openPane('documents')}
-                >
-                  공용 문서함 열기
-                </Button>
-              </div>
+            {/* 조작 안내는 처음(기준 v1 전)에만, 단축 바 위 가운데에 보여 준다(SCR-06-v2-workspace-preparing). */}
+            {!pane && !data.project.current_baseline && (
+              <p className="pointer-events-none absolute bottom-[82px] left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/85 px-3 py-1 text-[11px] leading-4 whitespace-nowrap text-[#737373]">
+                WASD 이동 · Shift 달리기 · 드래그로 둘러보기 · 숫자 키로 메뉴
+                열기
+              </p>
             )}
+            <SettingsDialog
+              projectId={projectId}
+              isLeader={isLeader}
+              agentConnected={data.onboarding.my_agent_connected}
+            />
             <Dialog
-              open={pane !== null}
+              open={pane !== null && pane !== 'settings'}
               onOpenChange={(open) => {
                 if (!open && !pendingMutations) openPane(null)
               }}
             >
+              {/* 보드처럼 위에서 40px에 두고, 아래 단축 바 자리(120px)를 비운다.
+                  비비 대화를 포함한 모든 업무 창은 내용이 적거나 비어 있어도 같은 폭·높이·바탕색으로 열고,
+                  넘치는 내용만 안에서 스크롤한다. */}
               <DialogContent
-                className="max-h-[87dvh] overflow-y-auto bg-background p-5 sm:max-w-[min(1180px,94vw)] sm:p-8"
+                className="top-10 h-[calc(100dvh-160px)] translate-y-0 grid-rows-[auto_1fr] overflow-y-auto bg-background p-5 sm:max-w-[min(1180px,94vw)] sm:p-8"
                 onEscapeKeyDown={(event) => {
                   if (pendingMutations) event.preventDefault()
                 }}
                 onInteractOutside={(event) => {
-                  if (pendingMutations) event.preventDefault()
+                  // 창이 열려도 단축 바는 밝게 남아 다른 메뉴로 바로 옮겨 간다.
+                  const target = event.target as HTMLElement | null
+                  if (
+                    pendingMutations ||
+                    target?.closest('nav[aria-label="프로젝트 메뉴 단축 바"]')
+                  )
+                    event.preventDefault()
                 }}
               >
                 <DialogHeader>
-                  <DialogTitle>
-                    {pane === 'chat'
-                      ? 'AI 팀장 비비'
-                      : (menu.find((item) => item.id === pane)?.label ??
-                        '프로젝트 업무')}
-                  </DialogTitle>
-                  <DialogDescription>
-                    {data.project.name} · 팀의 설계와 작업 맥락
+                  <div className="flex items-start justify-between gap-3 pr-8">
+                    <DialogTitle>
+                      {pane && pane !== 'settings' ? paneTitles[pane] : ''}
+                    </DialogTitle>
+                    {pane && paneKeys[pane] && (
+                      <span className="mt-0.5 shrink-0 text-xs whitespace-nowrap text-muted-foreground">
+                        <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
+                          {paneKeys[pane]}
+                        </kbd>{' '}
+                        또는{' '}
+                        <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
+                          Esc
+                        </kbd>
+                        로 닫기
+                      </span>
+                    )}
+                  </div>
+                  {/* 공용 문서함은 머리 부제목 없이 제목만(PNL-02-v2 10-29 부제목 제거). */}
+                  <DialogDescription
+                    className={pane === 'documents' ? 'sr-only' : undefined}
+                  >
+                    {data.project.name}
+                    {data.project.current_baseline &&
+                      ` · 기준 v${data.project.current_baseline.version_no}`}
                   </DialogDescription>
                 </DialogHeader>
-                <div key={`${projectId}:${pane}`} className="mt-4 min-w-0">
-                  {pane === 'overview' && (
-                    <OverviewPanel projectId={projectId} />
-                  )}
+                <PaneSheetHost
+                  key={`${projectId}:${pane}`}
+                  // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
+                  className="mt-4 flex min-w-0 flex-col"
+                >
                   {pane === 'documents' && <DocumentsPanel {...panelProps} />}
                   {pane === 'planning' && <PlanningPanel {...panelProps} />}
                   {pane === 'changes' && <ChangesPanel {...panelProps} />}
                   {pane === 'tasks' && <TasksPanel {...panelProps} />}
                   {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
-                  {pane === 'team' && <TeamPanel {...panelProps} />}
-                  {pane === 'agents' && <AgentsPanel projectId={projectId} />}
-                  {pane === 'activity' && <ActivityPanel {...panelProps} />}
+                  {pane === 'relations' && (
+                    <ActivityPanel projectId={projectId} view="relations" />
+                  )}
+                  {pane === 'dashboard' && (
+                    <ActivityPanel projectId={projectId} view="dashboard" />
+                  )}
                   {pane === 'inbox' && <InboxPanel projectId={projectId} />}
                   {pane === 'chat' && <BibiPanel projectId={projectId} />}
                   {pane === 'context' && <ContextPanel projectId={projectId} />}
-                  {pane === 'git' && (
-                    <div className="space-y-4 rounded-xl border border-dashed p-6">
-                      <GitBranch className="size-8 text-muted-foreground" />
-                      <h3 className="font-semibold">
-                        Git · PR 연동은 확장 기능이에요
-                      </h3>
-                      <p className="text-sm leading-7 text-muted-foreground">
-                        화면의 진입점은 유지했어요. 현재 BEEZ API 명세에는
-                        저장소·PR 조회와 게시의 상세 계약이 없어 실제 연결
-                        버튼은 제공하지 않아요.
-                      </p>
-                    </div>
-                  )}
-                </div>
+                </PaneSheetHost>
               </DialogContent>
             </Dialog>
           </main>
