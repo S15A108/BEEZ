@@ -128,6 +128,12 @@ public class ValidationWorker {
             return true;
         }
 
+        // Search can take longer than the lease, or inputs can change while it runs.
+        // Recheck ownership, expiry and the current rules before making a paid call.
+        if (applier.closeByRulesIfDecided(lease)) {
+            return true;
+        }
+
         Map<String, Object> response;
         try {
             response = analyzer.analyze(request);

@@ -161,6 +161,29 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         assertClosedWithoutSearchOrAi(validation);
     }
 
+    @Test void leaseExpiringDuringSearchDoesNotCallAiAndClosesForRetry() {
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100))).thenAnswer(call -> {
+            // The AI input search takes long enough for the worker's lease to expire;
+            // the separate recovery sweep has not yet run.
+            api.jdbc.sql("update validation_job set lease_until=now()-interval '1 second' where validation_id=:v")
+                    .param("v", validation).update();
+            return new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(), false, false);
+        });
+
+        assertThat(worker.runOnce()).isTrue();
+        verifyNoInteractions(analyzer);
+        assertThat(api.jdbc.sql("select status from validation where id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
+        assertThat(api.jdbc.sql("select status from validation_run where validation_id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
+        assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
+                .param("v", validation).query(String.class).single()).isEqualTo("RETRY");
+    }
+
     @Test void relatedTaskAddedDuringAiCallMakesResultStale() throws Exception {
         long[] task = queuedTask();
         var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
