@@ -60,6 +60,8 @@
 | S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 마지막 완료 보고의 `delta_validation_id` 가 이 검증일 때만 | **COMPLETED** | 해제 | REST TSK-A07 |
 | S5 | 담당자 인계 — 팀장의 담당자 변경(TSK-A06) · 팀원 제외(MEM-A09) · 나가기(MEM-A10)의 열린 작업 인계 (-212) | **IN_PROGRESS** 는 상태까지, **WAITING** 은 검증만 | IN_PROGRESS 는 **WAITING(REVALIDATION)**. 점유 중(IN_PROGRESS·WAITING) 작업의 DELTA 를 뺀 검증은 도는 것(NOT_RUN·RUNNING)까지 STALE(`ASSIGNEE_CHANGED`), 대기 job 취소. DELTA 검증은 담당자와 무관해 그대로(PASS 면 S4). 같은 담당자로 바꾸면 아무것도 하지 않는다 | 유지 | REST TSK-A06·MEM-A09·A10 처리 규칙, §6 |
 
+검증 쪽 사건(늦은 결과·입력 변경·리스 만료·실패·RESUME)까지 합친 무효화·롤백 전체 표와 기록 위치·수동 조치는 [11 검증 롤백](11-validation-rollback.md)에 있다.
+
 IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검증만 STALE** 로 둔다.
 - READY: START 때 G1·G2 가 걸러낸다.
 - WAITING(INPUT·APPROVAL·DEPENDENCY): 원래 사유를 덮어쓰지 않는다. RESUME 때 G1(새 리비전엔 PASS 없음)·G2(참조 버전 바뀜)가 걸러낸다.
@@ -187,6 +189,7 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 
 ## 변경 이력
 
+- v1.8 (2026-11-02) §2.2 에 검증 롤백 문서(11) 링크 (변준성, -160).
 - v1.7 (2026-10-29) 리뷰 반영(변준성). §2.2 에 S5 담당자 인계 추가, §2.4 REVALIDATION 계기에 S5, §2.3 에 인계 뒤 ① 출구가 막히는 것(의도), §6 에 READY 작업 PASS 를 남기는 이유, §7 에 S5 자리.
 - v1.6 (2026-10-29) §6 "진행 중 담당자 변경"·"제외된 팀원의 진행 중 작업"에 -212 구현 내용 기록(전진, 변준성 확인 요청).
 - v1.5 (2026-10-27) S1: 바뀐 항목·WAITING 대상은 -164 `DesignChangeQueries` 재사용, STALE 대상은 validation_design_ref 기준, 폐기는 스냅샷 제외로 명시(§2.2). 리뷰 반영(전진).
