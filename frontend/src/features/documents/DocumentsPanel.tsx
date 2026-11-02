@@ -125,7 +125,7 @@ export function DocumentsPanel({
     return focus ? { name: 'detail', id: focus } : { name: 'list' }
   })
   const [query, setQuery] = useState('')
-  const [notice, setNotice] = useState<{ title: string; text: string }>()
+  const [notice, setNotice] = useState<{ title?: string; text: string }>()
   const documents = useQuery({
     queryKey: ['projects', projectId, 'planning-documents'],
     queryFn: () => documentsApi.list(projectId, { limit: 100 }),
@@ -163,9 +163,15 @@ export function DocumentsPanel({
     .toSorted((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind))
 
   const toast = notice && (
-    <Toast key={notice.title + notice.text} tone="success">
-      <strong className="block">{notice.title}</strong>
-      <span className="text-muted-foreground">{notice.text}</span>
+    <Toast key={`${notice.title}${notice.text}`} tone="success">
+      {notice.title ? (
+        <>
+          <strong className="block">{notice.title}</strong>
+          <span className="text-muted-foreground">{notice.text}</span>
+        </>
+      ) : (
+        notice.text
+      )}
     </Toast>
   )
 
@@ -213,6 +219,11 @@ export function DocumentsPanel({
           isLeader={isLeader}
           locked={started}
           onClose={() => setView({ name: 'list' })}
+          // 승인하면 검토 화면에 머물지 않고 목록으로 돌아가 같은 알림을 띄운다(실패하면 검토 화면에 남는다).
+          onApproved={(message) => {
+            setView({ name: 'list' })
+            setNotice({ text: message })
+          }}
         />
       </div>
     )
