@@ -162,6 +162,17 @@ class TaskStatusApiIntegrationTests extends IntegrationTestSupport {
                         """).param("p", projectId).param("a", member).update();
         Long revoked = api.jdbc.sql("select id from agent_token where name = 'old-laptop'").query(Long.class).single();
         session(revoked, working[0]);
+        // 활성이 아닌 멤버(나간 사람)의 세션도 나오지 않는다 — 토큰이 남아 있어도
+        api.jdbc.sql("""
+                        insert into project_member (project_id, account_id, role, active, left_at)
+                        values (:p, (select id from account where email = 'outsider@test'), 'MEMBER', false, now())
+                        """).param("p", projectId).update();
+        api.jdbc.sql("""
+                        insert into agent_token (project_id, account_id, name, token_hash)
+                        values (:p, (select id from account where email = 'outsider@test'), 'gone-laptop', 'hash-gone')
+                        """).param("p", projectId).update();
+        Long gone = api.jdbc.sql("select id from agent_token where name = 'gone-laptop'").query(Long.class).single();
+        session(gone, null);
 
         JsonNode all = get(base() + "/agents/work-status", leader, 200);
         assertThat(all.get("has_more").asBoolean()).isFalse();

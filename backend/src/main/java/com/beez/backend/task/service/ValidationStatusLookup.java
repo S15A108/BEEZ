@@ -79,6 +79,33 @@ public class ValidationStatusLookup {
                 .list();
     }
 
+    /**
+     * 현재 계획의 최신 검증 상태별 작업 수 (MON-V01). 작업마다 한 번씩, 검증이 없으면 NOT_RUN. 계획이 없는(DRAFT) 작업은 세지 않는다.
+     * {@link #taskIdsWithStatus} 와 같은 기준. key = status
+     */
+    public Map<String, Integer> countTasksByLatestStatus(Long projectId) {
+        Map<String, Integer> result = new HashMap<>();
+        List<Map<String, Object>> rows = jdbc.sql("""
+                        select coalesce((select v.status
+                                           from validation v
+                                          where v.task_id = t.id
+                                            and v.plan_revision_id = t.current_plan_revision_id
+                                          order by v.id desc
+                                          limit 1), 'NOT_RUN') as status, count(*) as cnt
+                          from task t
+                         where t.project_id = :projectId
+                           and t.current_plan_revision_id is not null
+                         group by 1
+                        """)
+                .param("projectId", projectId)
+                .query()
+                .listOfRows();
+        for (Map<String, Object> row : rows) {
+            result.put((String) row.get("status"), ((Number) row.get("cnt")).intValue());
+        }
+        return result;
+    }
+
     /** 여러 작업을 한 번에. 목록 조회에서 N+1 을 피한다. key = task_id */
     public Map<Long, String> latestStatusByTask(List<Long> taskIds) {
         Map<Long, String> result = new HashMap<>();
