@@ -21,7 +21,7 @@ import { officeActors } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
 import { officePopulationOf } from './office/office-layout'
 import { officeLanding, officeWalkable } from './office/office-navigation'
-import { OfficeLifeSimulation } from './office/office-life'
+import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
 import { findPath } from './office/path'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
@@ -29,6 +29,8 @@ import type { SceneAgent, SceneProject, SceneTask } from './types'
 
 export interface OfficeSceneProps {
   project: Pick<SceneProject, 'name' | 'id'>
+  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그린다. */
+  design?: string
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -59,15 +61,21 @@ function OfficeRuntime(
   const { gl, size } = useThree()
   const phase = props.phase ?? 4
   const agents = useMemo(() => officeSceneAgents(props.agents), [props.agents])
-  const floor = useMemo(
-    () =>
-      makeDreamFloor(
-        makeBuilding(ALL_KEYS, 'glass', undefined, officePopulationOf(agents))
-          .floors[1],
-        phase,
-      ),
-    [agents, phase],
-  )
+  const floor = useMemo(() => {
+    const base = makeBuilding(
+      ALL_KEYS,
+      'glass',
+      undefined,
+      officePopulationOf(agents),
+    ).floors[1]
+    // 시작 전(3)에도 사무실 바닥 전체를 보여 준다. 바깥 산책 출입구만 시작 뒤(4)에 연다.
+    if (phase !== 3) return makeDreamFloor(base, phase)
+    return {
+      ...makeDreamFloor(base, 4),
+      staticKey: 'dream-3',
+      outdoorExit: undefined,
+    }
+  }, [agents, phase])
   const snapshot = useMemo(
     () => officeSceneSnapshot(props.project, agents, props.tasks),
     [props.project, agents, props.tasks],
@@ -290,6 +298,8 @@ function OfficeRuntime(
         exit()
       else if (latest.current.props.viewMode === 'first') {
         if (renderer.aimedTarget) activate(renderer.aimedTarget)
+        // 가리킨 대상이 없으면 단축 바의 '비비 Enter'대로 비비를 연다.
+        else latest.current.props.onAgentSelect('bibi')
       } else {
         const nearest = latest.current.actors
           .map((actor) => ({
@@ -300,8 +310,9 @@ function OfficeRuntime(
             ),
           }))
           .sort((a, b) => a.distance - b.distance)[0]
-        if (nearest && nearest.distance < 100)
-          latest.current.props.onAgentSelect(nearest.actor.id)
+        latest.current.props.onAgentSelect(
+          nearest && nearest.distance < 100 ? nearest.actor.id : 'bibi',
+        )
       }
     }
     const keyUp = (event: KeyboardEvent) =>
@@ -375,6 +386,7 @@ function OfficeRuntime(
           bounds,
           state.props.project.name,
           gl,
+          state.props.design,
         )
         street.current.setSize(size.width, size.height)
         outdoorPlayer.current = streetSpawn(bounds)
@@ -424,6 +436,11 @@ function OfficeRuntime(
     })
     const me = player.current,
       before = { x: me.x, y: me.y }
+    // 나도 다른 사람을 뚫고 지나가지 않는다(다가가는 걸음만 막고 비켜 가는 걸음은 둔다).
+    const step = (move: { x: number; y: number }) => {
+      const next = moveContinuous(me, move, free)
+      if (keepsSpace(me, next, residents)) Object.assign(me, next)
+    }
     if (state.phase >= 3 && state.props.interactive !== false) {
       const input = movementInput(keys.current),
         direction =
@@ -435,30 +452,16 @@ function OfficeRuntime(
             : input,
         speed = movementSpeed(105, keys.current) * dt
       if (direction.x || direction.y)
-        Object.assign(
-          me,
-          moveContinuous(
-            me,
-            { x: direction.x * speed, y: direction.y * speed },
-            free,
-          ),
-        )
+        step({ x: direction.x * speed, y: direction.y * speed })
       else if (route.current.length) {
         const next = route.current[0],
           distance = Math.hypot(next.x - me.x, next.y - me.y)
         if (distance < 3) route.current.shift()
         else
-          Object.assign(
-            me,
-            moveContinuous(
-              me,
-              {
-                x: ((next.x - me.x) / distance) * Math.min(speed, distance),
-                y: ((next.y - me.y) / distance) * Math.min(speed, distance),
-              },
-              free,
-            ),
-          )
+          step({
+            x: ((next.x - me.x) / distance) * Math.min(speed, distance),
+            y: ((next.y - me.y) / distance) * Math.min(speed, distance),
+          })
       }
     }
     const dx = me.x - before.x,
@@ -482,7 +485,7 @@ function OfficeRuntime(
       me.heading = renderer.viewHeading
     else if (me.moving) me.heading = Math.atan2(dx, dy)
     const target =
-      state.phase === 4
+      state.phase >= 3
         ? {
             x: (state.floor.W / 2) * 32,
             y: (bounds ? (bounds.back + bounds.front) / 2 : 9) * 32,
@@ -497,7 +500,7 @@ function OfficeRuntime(
     focus.current.x += (target.x - focus.current.x) * ease
     focus.current.y += (target.y - focus.current.y) * ease
     renderer.render(state.floor, [...residents, me], time, {
-      zoom: [2.6, 2.1, 1.6, 1.3, 1.16][state.phase] * zoom.current,
+      zoom: [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] * zoom.current,
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
       work: state.work,

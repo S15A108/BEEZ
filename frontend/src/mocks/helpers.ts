@@ -99,6 +99,21 @@ export function expectValue(
     fail(409, code, '조회한 기준이 변경됐어요. 최신 내용을 확인해 주세요.')
 }
 
+// 목에서 쓰는 sha256 모양 해시. 실제 SHA-256이 아니라 내용이 바뀌면 값이 바뀌는 것만 보장한다.
+export function mockHash(value: unknown): string {
+  const text = typeof value === 'string' ? value : JSON.stringify(value)
+  let out = ''
+  for (let seed = 0; seed < 8; seed++) {
+    let hash = 0x811c9dc5 ^ seed
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index)
+      hash = Math.imul(hash, 0x01000193)
+    }
+    out += (hash >>> 0).toString(16).padStart(8, '0')
+  }
+  return `sha256:${out}`
+}
+
 export function page<T extends { id: string }>(
   items: T[],
   query: URLSearchParams,

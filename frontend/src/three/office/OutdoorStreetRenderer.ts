@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { OfficeCity, CITY_GROUND_Y, type OfficeCityBounds } from './office-city'
+import { kenneyBuildingOf, kenneyBuildingUrl } from '../buildingModels'
+import { cloneKenney, loadKenney } from '../kenney'
 import { FirstPersonLook, firstPersonFrame } from './first-person'
 import type { Point } from './motion'
 
@@ -27,6 +29,11 @@ export class OutdoorStreetRenderer {
   private readonly door: THREE.Mesh
   private width = 1
   private height = 1
+  // 우리 건물: 직접 그린 상자(shell)를 먼저 보이고, 고른 디자인의 Kenney 모델을 받으면 바꿔 끼운다.
+  private readonly shell = new THREE.Group()
+  private kenney: THREE.Group | null = null
+  private readonly kenneyMaterials: THREE.Material[] = []
+  private disposed = false
 
   private readonly bounds: OfficeCityBounds
   constructor(
@@ -34,6 +41,7 @@ export class OutdoorStreetRenderer {
     bounds: OfficeCityBounds,
     name: string,
     externalRenderer?: THREE.WebGLRenderer,
+    design?: string,
   ) {
     this.bounds = bounds
     this.ownsRenderer = !externalRenderer
@@ -62,6 +70,7 @@ export class OutdoorStreetRenderer {
       cz = (bounds.back + bounds.front) / 2,
       w = bounds.right - bounds.left,
       d = bounds.front - bounds.back
+    const shellStart = this.scene.children.length
     this.box(cx, 9.3, cz, w, 18.6, d, '#c5c9c3')
     this.box(cx, 1.45, cz, w + 0.12, 2.9, d + 0.12, '#dad6c5')
     this.box(cx, 18.65, cz, w + 0.7, 0.3, d + 0.7, '#8b9997')
@@ -73,6 +82,9 @@ export class OutdoorStreetRenderer {
         for (const x of [bounds.left - 0.06, bounds.right + 0.06])
           this.box(x, y, z, 0.09, 1.5, 1.65, '#7999a2')
     }
+    this.shell.add(...this.scene.children.slice(shellStart))
+    this.scene.add(this.shell)
+    this.kenneyBuilding(bounds, design)
     this.box(cx, 1.65, bounds.front + 0.14, 2.6, 3.3, 0.14, '#40595b')
     this.door = this.box(
       cx,
@@ -128,6 +140,45 @@ export class OutdoorStreetRenderer {
     sign.position.set(cx, 4.6, bounds.front + 0.12)
     this.scene.add(sign)
     this.look.face(0)
+  }
+  // 도시 화면과 같은 Kenney 건물(D22)을 바닥 크기에 맞게 키워 세우고, 앞면을 출입문 쪽 벽에 맞춘다.
+  // 받지 못하면(테스트 환경, 네트워크 오류) 직접 그린 건물을 그대로 둔다.
+  private kenneyBuilding(bounds: OfficeCityBounds, design?: string) {
+    const pick = kenneyBuildingOf(design)
+    loadKenney(kenneyBuildingUrl(pick.model))
+      .then((model) => {
+        if (this.disposed) return
+        const figure = cloneKenney(model)
+        figure.scale.setScalar(
+          Math.min(
+            (bounds.right - bounds.left) / model.size.x,
+            (bounds.front - bounds.back) / model.size.z,
+          ),
+        )
+        figure.updateMatrixWorld(true)
+        const box = new THREE.Box3().setFromObject(figure)
+        figure.position.set(
+          (bounds.left + bounds.right) / 2 - (box.min.x + box.max.x) / 2,
+          -box.min.y,
+          bounds.front - box.max.z,
+        )
+        if (pick.tint)
+          figure.traverse((object) => {
+            const mesh = object as THREE.Mesh
+            if (!mesh.isMesh) return
+            const source = Array.isArray(mesh.material)
+              ? mesh.material[0]
+              : mesh.material
+            const tinted = source.clone() as THREE.MeshStandardMaterial
+            tinted.color.set(pick.tint!)
+            this.kenneyMaterials.push(tinted)
+            mesh.material = tinted
+          })
+        this.shell.visible = false
+        this.kenney = figure
+        this.scene.add(figure)
+      })
+      .catch(() => undefined)
   }
   private box(
     x: number,
@@ -195,6 +246,10 @@ export class OutdoorStreetRenderer {
     this.renderer.render(this.scene, this.camera)
   }
   dispose() {
+    this.disposed = true
+    // Kenney 모델의 geometry·material은 앱 전체가 나눠 쓰므로 지우지 않고 빼기만 한다. 색을 곱한 복제 재질만 지운다.
+    this.kenney?.removeFromParent()
+    this.kenneyMaterials.forEach((item) => item.dispose())
     this.city.root.removeFromParent()
     this.city.dispose()
     this.scene.traverse((object) => {

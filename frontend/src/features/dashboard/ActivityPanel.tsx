@@ -1,13 +1,16 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Activity, Network, Wallet } from 'lucide-react'
+import { Activity, Wallet } from 'lucide-react'
 import { dashboardApi } from '@/api/services/dashboard'
-import { membersApi } from '@/api/services/members'
-import type { RelationNode, UsageBucket } from '@/api/contracts/common'
-import type { RelationsResponse } from './schemas'
+import { unlessMissing } from '@/api/error'
+import type { UsageBucket } from '@/api/contracts/common'
+import { DashboardOverview } from './DashboardOverview'
+import { RelationsView } from './RelationsView'
+import { FEATURE_LABELS, dashboardTabs } from './labels'
+import type { DashboardTab } from './labels'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { StatusPill } from '@/components/StatusPill'
@@ -16,7 +19,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { statusLabel } from '@/lib/display'
+import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { membersQuery } from '@/features/members/membersQuery'
 
 const calendarDay = (date: Date) =>
   new Intl.DateTimeFormat('en-CA', {
@@ -29,12 +34,35 @@ const localDate = (day: string, end = false) =>
   new Date(
     `${day}T${end ? '23:59:59.999' : '00:00:00.000'}+09:00`,
   ).toISOString()
-const stamp = (value: string) =>
+const usageViews = [
+  ['by_feature', '기능별'],
+  ['by_task', '작업별'],
+  ['by_validation', '검증별'],
+] as const
+const clock = (value: string) =>
   new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
     timeZone: 'Asia/Seoul',
   }).format(new Date(value))
+const seoulDay = (value: string | number) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(
+    new Date(value),
+  )
+// 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일'
+function groupByDay<T extends { created_at: string }>(items: T[]) {
+  const today = seoulDay(Date.now())
+  const yesterday = seoulDay(Date.now() - 86_400_000)
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const day = seoulDay(item.created_at)
+    const [, month, date] = day.split('-').map(Number)
+    const name = `${day === today ? '오늘 · ' : day === yesterday ? '어제 · ' : ''}${month}월 ${date}일`
+    groups.set(name, [...(groups.get(name) ?? []), item])
+  }
+  return [...groups]
+}
 const dateRangeSchema = z
   .object({
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '시작일을 선택해 주세요.'),
@@ -45,36 +73,19 @@ const dateRangeSchema = z
     message: '종료일은 시작일 이후여야 해요.',
   })
 type DateRange = z.infer<typeof dateRangeSchema>
-const FEATURE_LABELS: Record<string, string> = {
-  DOCUMENT_PARSE: '문서 분석',
-  TASK_VALIDATION: '작업 검증',
-  CHANGE_IMPACT: '변경 영향 분석',
-  EMBEDDING: '검색 색인',
-  BEE_CHAT: '비비 대화',
-  BEE_DRAFT: '비비 초안',
-  TASK_ASSIGNMENT: '작업 배정 추천',
-  MEETING_ANALYSIS: '회의 분석',
-}
-const NODE_TYPES = [
-  'TASK',
-  'DESIGN_ITEM',
-  'VALIDATION',
-  'CHANGE_PROPOSAL',
-] as const
-const NODE_LABELS: Record<RelationNode['type'], string> = {
-  TASK: '작업',
-  DESIGN_ITEM: '설계 항목',
-  VALIDATION: '검증',
-  CHANGE_PROPOSAL: '변경 요청',
-}
 
+// 단축 바 5번(설계 관계)과 6번(대시보드)이 같이 쓴다.
 export function ActivityPanel({
   projectId,
+  view = 'dashboard',
 }: {
   projectId: string
   isLeader?: boolean
+  view?: 'dashboard' | 'relations'
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
+  const [usageView, setUsageView] = useState(0)
+  const [tab, setTab] = useState<DashboardTab>('overview')
   const [range, setRange] = useState<DateRange>(() => ({
     from: calendarDay(new Date(Date.now() - 6 * 86400000)),
     to: calendarDay(new Date()),
@@ -97,23 +108,19 @@ export function ActivityPanel({
         to: localDate(range.to, true),
       }),
   })
-  const relations = useQuery({
-    queryKey: ['projects', projectId, 'relations'],
-    queryFn: () => dashboardApi.relations(projectId),
-  })
   const activities = useQuery({
     queryKey: ['projects', projectId, 'activities', cursor],
     queryFn: () => dashboardApi.activities(projectId, { cursor, limit: 20 }),
   })
   const work = useQuery({
     queryKey: ['projects', projectId, 'agent-work', workCursor],
+    // API 없음: 서버에 아직 없으면(404) 에이전트 현황은 '준비 중'으로 둔다(AGT-A04·A05 -178 구현 전과 같은 규칙).
     queryFn: () =>
-      dashboardApi.agentWork(projectId, { cursor: workCursor, limit: 20 }),
+      unlessMissing(
+        dashboardApi.agentWork(projectId, { cursor: workCursor, limit: 20 }),
+      ),
   })
-  const members = useQuery({
-    queryKey: ['projects', projectId, 'members'],
-    queryFn: () => membersApi.list(projectId),
-  })
+  const members = useQuery(membersQuery(projectId))
   const memberName = (memberId: string) =>
     members.data?.items.find((member) => member.id === memberId)?.name ??
     `팀원 #${memberId}`
@@ -122,144 +129,227 @@ export function ActivityPanel({
       ? (members.data?.items.find((member) => member.account_id === accountId)
           ?.name ?? `회원 #${accountId}`)
       : '시스템'
+  if (view === 'relations') return <RelationsView projectId={projectId} />
   return (
     <div className="grid gap-6">
-      <header>
-        <p className="text-xs font-medium tracking-widest text-muted-foreground">
-          PROJECT PULSE
-        </p>
-        <h2 className="mt-2 text-2xl font-semibold">활동·비용</h2>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          팀의 작업 흐름과 설계 관계, 프로젝트에 기록된 사용량을 확인해요.
-        </p>
-      </header>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Wallet className="size-4" />
-            기간별 사용량
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-5">
-          <form
-            className="flex flex-wrap items-end gap-3"
-            noValidate
-            onSubmit={handleSubmit((values) => setRange(values))}
-          >
-            <div className="grid gap-2">
-              <Label htmlFor="usage-from">시작일 (한국시간)</Label>
-              <Input id="usage-from" type="date" {...register('from')} />
-              {errors.from && (
-                <p role="alert" className="text-xs text-destructive">
-                  {errors.from.message}
-                </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <h2 className="sr-only">대시보드</h2>
+        {/* 대시보드 탭: 한눈에 보기 / 활동 타임라인 / 에이전트 현황 / 사용량·비용. 기간 선택은 탭 줄 오른쪽 한 곳에서 모든 숫자에 쓴다. */}
+        <div
+          role="tablist"
+          aria-label="대시보드"
+          className="flex flex-wrap gap-1 text-sm"
+        >
+          {dashboardTabs.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              onClick={() => setTab(value)}
+              className={cn(
+                'rounded-full px-3 py-1',
+                tab === value ? 'bg-foreground text-background' : 'bg-muted',
               )}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="usage-to">종료일 (한국시간)</Label>
-              <Input id="usage-to" type="date" {...register('to')} />
-              {errors.to && (
-                <p role="alert" className="text-xs text-destructive">
-                  {errors.to.message}
-                </p>
-              )}
-            </div>
-            <Button type="submit" variant="outline">
-              기간 적용
-            </Button>
-          </form>
-          <AsyncState query={usage}>
-            {(data) => (
-              <>
-                <dl className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-                  {[
-                    {
-                      label: '입력 토큰',
-                      value: data.input_tokens.toLocaleString('ko-KR'),
-                    },
-                    {
-                      label: '출력 토큰',
-                      value: data.output_tokens.toLocaleString('ko-KR'),
-                    },
-                    {
-                      label: '호출 횟수',
-                      value: data.call_count.toLocaleString('ko-KR'),
-                    },
-                    {
-                      label: '예상 비용',
-                      value:
-                        data.estimated_cost_amount === undefined
-                          ? '미보고'
-                          : `${data.estimated_cost_amount} ${data.currency ?? ''}`.trim(),
-                    },
-                  ].map((metric) => (
-                    <div
-                      key={metric.label}
-                      className="rounded-xl border bg-muted/30 p-4"
-                    >
-                      <dt className="text-xs text-muted-foreground">
-                        {metric.label}
-                      </dt>
-                      <dd className="mt-2 font-mono text-xl font-semibold">
-                        {metric.value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="text-xs leading-5 text-muted-foreground">
-                  BEEZ에 기록된 호출을 집계한 값이에요. 외부 에이전트의 개인
-                  사용량과 실제 청구액은 포함하지 않아요.
-                </p>
-                <UsageTable
-                  title="기능별 사용량"
-                  rows={data.by_feature}
-                  currency={data.currency}
-                  label={(key) => FEATURE_LABELS[key] ?? key}
-                />
-                <div className="grid gap-5 xl:grid-cols-2">
-                  <UsageTable
-                    title="작업별 사용량"
-                    rows={data.by_task}
-                    currency={data.currency}
-                    label={(key) => `작업 #${key}`}
-                    onSelect={(id) => openPane('tasks', id)}
-                  />
-                  <UsageTable
-                    title="검증별 사용량"
-                    rows={data.by_validation}
-                    currency={data.currency}
-                    label={(key) => `검증 #${key}`}
-                  />
-                </div>
-              </>
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <form
+          aria-label="기간"
+          className="flex flex-wrap items-end gap-3"
+          noValidate
+          onSubmit={handleSubmit((values) => setRange(values))}
+        >
+          <div className="grid gap-2">
+            <Label htmlFor="usage-from">시작일 (한국시간)</Label>
+            <Input id="usage-from" type="date" {...register('from')} />
+            {errors.from && (
+              <p role="alert" className="text-xs text-destructive">
+                {errors.from.message}
+              </p>
             )}
-          </AsyncState>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">에이전트 작업 현황</CardTitle>
-          <p className="text-xs leading-5 text-muted-foreground">
-            연결 여부, 작업 상태, 계획 검증 결과를 각각 확인해요.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <AsyncState query={work}>
-            {(data) =>
-              data.items.length ? (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead className="border-b text-xs text-muted-foreground">
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="usage-to">종료일 (한국시간)</Label>
+            <Input id="usage-to" type="date" {...register('to')} />
+            {errors.to && (
+              <p role="alert" className="text-xs text-destructive">
+                {errors.to.message}
+              </p>
+            )}
+          </div>
+          <Button type="submit" variant="outline">
+            기간 적용
+          </Button>
+        </form>
+      </header>
+      {tab === 'overview' && (
+        <DashboardOverview
+          onTab={setTab}
+          projectId={projectId}
+          usage={usage}
+          activities={activities}
+          work={work}
+          members={members.data?.items ?? []}
+          actorName={actorName}
+        />
+      )}
+      {tab === 'timeline' && (
+        <Card id="dashboard-timeline">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Activity className="size-4" />
+              활동 타임라인
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AsyncState query={activities}>
+              {(data) =>
+                data.items.length ? (
+                  <>
+                    {/* API 없음: 활동에 사람·에이전트 구분이 없어 '보기 [전체][사람][에이전트]' 거르기는 아직 두지 않는다. */}
+                    <div className="grid gap-3">
+                      {groupByDay(data.items).map(([day, items]) => (
+                        <section
+                          key={day}
+                          aria-label={day}
+                          className="rounded-2xl border bg-card px-4 py-2"
+                        >
+                          <h4 className="py-1.5 text-[11.5px] text-muted-foreground">
+                            {day}
+                          </h4>
+                          <ol>
+                            {items.map((item) => (
+                              <li
+                                key={item.id}
+                                className="flex items-center gap-3 border-t py-2.5 text-[13px]"
+                              >
+                                <time
+                                  className="w-11 shrink-0 text-xs text-muted-foreground tabular-nums"
+                                  dateTime={item.created_at}
+                                >
+                                  {clock(item.created_at)}
+                                </time>
+                                <span className="min-w-0 flex-1">
+                                  <strong className="font-semibold">
+                                    {actorName(item.actor_account_id)}
+                                  </strong>{' '}
+                                  {statusLabel(item.type)}
+                                  {item.task_id && (
+                                    <Button
+                                      variant="link"
+                                      className="ml-2 h-auto p-0 text-xs"
+                                      onClick={() =>
+                                        openPane('tasks', item.task_id)
+                                      }
+                                    >
+                                      작업 #{item.task_id}
+                                    </Button>
+                                  )}
+                                  {item.change_proposal_id && (
+                                    <Button
+                                      variant="link"
+                                      className="ml-2 h-auto p-0 text-xs"
+                                      onClick={() =>
+                                        openPane(
+                                          'changes',
+                                          item.change_proposal_id,
+                                        )
+                                      }
+                                    >
+                                      변경 요청 #{item.change_proposal_id}
+                                    </Button>
+                                  )}
+                                  {item.baseline_id && (
+                                    <Button
+                                      variant="link"
+                                      className="ml-2 h-auto p-0 text-xs"
+                                      onClick={() => openPane('documents')}
+                                    >
+                                      기준 설계 #{item.baseline_id}
+                                    </Button>
+                                  )}
+                                </span>
+                                <span
+                                  className={cn(
+                                    'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                                    item.result === 'SUCCESS'
+                                      ? 'bg-emerald-50 text-[#00753a]'
+                                      : item.result === 'FAILED'
+                                        ? 'bg-[#fdecec] text-[#a3141b]'
+                                        : 'bg-muted text-muted-foreground',
+                                  )}
+                                >
+                                  {statusLabel(item.result) || item.result}
+                                </span>
+                              </li>
+                            ))}
+                          </ol>
+                        </section>
+                      ))}
+                    </div>
+                    {data.has_more && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-5"
+                        onClick={() => setCursor(data.next_cursor)}
+                      >
+                        다음 활동
+                      </Button>
+                    )}
+                    {cursor && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-5"
+                        onClick={() => setCursor(undefined)}
+                      >
+                        최신 활동
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <EmptyState>아직 기록된 프로젝트 활동이 없어요.</EmptyState>
+                )
+              }
+            </AsyncState>
+          </CardContent>
+        </Card>
+      )}
+      {tab === 'agents' && (
+        <Card id="dashboard-agents">
+          <CardHeader>
+            <CardTitle className="text-base">에이전트 현황</CardTitle>
+            <p className="text-xs leading-5 text-muted-foreground">
+              연결 여부, 작업 상태, 계획 검증 결과를 각각 확인해요.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <AsyncState query={work}>
+              {(data) =>
+                !data ? (
+                  <p className="text-sm text-muted-foreground">
+                    에이전트 현황은 준비 중이에요. 서버가 연결 보고를 받기
+                    시작하면 여기에 보여요.
+                  </p>
+                ) : data.items.length ? (
+                  <>
+                    {/* 캔버스 PNL-09-v2-agents: 에이전트마다 카드. API 없음: 에이전트별 사용량·최근 보고 줄과 '웹에서 직접 한 호출'은 응답에 없다. */}
+                    {/* 줄마다 카드 모양이지만 표 구조(열 머리는 화면 밖)를 지켜 읽기 도구가 칸을 알 수 있게 한다. */}
+                    <table className="block w-full text-left">
+                      <thead className="sr-only">
                         <tr>
-                          <th className="p-3 font-medium">팀원·연결</th>
-                          <th className="p-3 font-medium">현재 작업</th>
-                          <th className="p-3 font-medium">작업 상태</th>
-                          <th className="p-3 font-medium">계획 검증</th>
-                          <th className="p-3 font-medium">대기 이유</th>
+                          <th>에이전트·연결</th>
+                          <th>현재 작업</th>
+                          <th>작업 상태</th>
+                          <th>계획 검증</th>
+                          <th>대기 이유</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="grid gap-3.5 md:grid-cols-2">
                         {data.items.map((item) => {
                           const member = members.data?.items.find(
                             (entry) => entry.id === item.member_id,
@@ -267,450 +357,318 @@ export function ActivityPanel({
                           return (
                             <tr
                               key={`${item.member_id}:${item.agent_session_id ?? ''}`}
-                              className="border-b last:border-0"
+                              className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-2xl border bg-card px-4.5 py-4 shadow-xs"
                             >
-                              <td className="p-3">
-                                <strong className="block font-medium">
-                                  {memberName(item.member_id)}
+                              <td className="col-span-2 flex items-center gap-2.5 pb-0.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="grid size-6.5 shrink-0 place-items-center rounded-full bg-[#e9e4ff] text-[10px] font-bold text-[#4b3aa8]"
+                                >
+                                  AI
+                                </span>
+                                <strong className="text-sm font-bold">
+                                  <span>{memberName(item.member_id)}</span>의
+                                  에이전트
                                 </strong>
-                                <small className="mt-1 block text-muted-foreground">
+                                <span
+                                  className={cn(
+                                    'ml-auto inline-flex items-center gap-1.5 text-xs',
+                                    member?.agent_connected
+                                      ? 'text-[#00753a]'
+                                      : 'text-[#c99e1e]',
+                                  )}
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    className="size-1.75 rounded-full bg-current"
+                                  />
                                   {member
                                     ? member.agent_connected
                                       ? '연결됨'
                                       : '미연결'
                                     : '연결 상태 미확인'}
-                                </small>
+                                </span>
                               </td>
-                              <td className="p-3">
-                                {item.current_task_id ? (
-                                  <Button
-                                    variant="link"
-                                    className="h-auto p-0"
-                                    onClick={() =>
-                                      openPane('tasks', item.current_task_id)
-                                    }
+                              {(
+                                [
+                                  [
+                                    '현재 작업',
+                                    item.current_task_id ? (
+                                      <Button
+                                        variant="link"
+                                        className="h-auto justify-start p-0 text-[13px] font-semibold"
+                                        onClick={() =>
+                                          openPane(
+                                            'tasks',
+                                            item.current_task_id,
+                                          )
+                                        }
+                                      >
+                                        작업 #{item.current_task_id}
+                                      </Button>
+                                    ) : (
+                                      <span className="text-muted-foreground/70">
+                                        보고된 작업 없음
+                                      </span>
+                                    ),
+                                  ],
+                                  [
+                                    '작업 상태',
+                                    item.task_status ? (
+                                      <StatusPill value={item.task_status} />
+                                    ) : (
+                                      <span className="text-muted-foreground/70">
+                                        미보고
+                                      </span>
+                                    ),
+                                  ],
+                                  [
+                                    '계획 검증',
+                                    item.validation_status ? (
+                                      <StatusPill
+                                        value={item.validation_status}
+                                      />
+                                    ) : (
+                                      <span className="text-muted-foreground/70">
+                                        미보고
+                                      </span>
+                                    ),
+                                  ],
+                                  [
+                                    '대기 이유',
+                                    item.waiting_reason
+                                      ? statusLabel(item.waiting_reason)
+                                      : '—',
+                                  ],
+                                ] as const
+                              ).map(([label, value]) => (
+                                <td key={label} className="grid gap-0.5">
+                                  <span
+                                    aria-hidden="true"
+                                    className="text-[11.5px] text-muted-foreground/70"
                                   >
-                                    작업 #{item.current_task_id}
-                                  </Button>
-                                ) : (
-                                  '보고된 작업 없음'
-                                )}
-                              </td>
-                              <td className="p-3">
-                                {item.task_status ? (
-                                  <StatusPill value={item.task_status} />
-                                ) : (
-                                  '미보고'
-                                )}
-                              </td>
-                              <td className="p-3">
-                                {item.validation_status ? (
-                                  <StatusPill value={item.validation_status} />
-                                ) : (
-                                  '미보고'
-                                )}
-                              </td>
-                              <td className="p-3">
-                                {item.waiting_reason
-                                  ? statusLabel(item.waiting_reason)
-                                  : '—'}
-                              </td>
+                                    {label}
+                                  </span>
+                                  <span className="text-[13px] font-semibold">
+                                    {value}
+                                  </span>
+                                </td>
+                              ))}
                             </tr>
                           )
                         })}
                       </tbody>
                     </table>
-                  </div>
-                  {data.has_more && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-4"
-                      onClick={() => setWorkCursor(data.next_cursor)}
-                    >
-                      다음 작업 현황
-                    </Button>
-                  )}
-                  {workCursor && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="mt-4"
-                      onClick={() => setWorkCursor(undefined)}
-                    >
-                      처음 현황
-                    </Button>
-                  )}
-                </>
-              ) : (
-                <EmptyState>보고된 에이전트 작업이 없어요.</EmptyState>
-              )
-            }
-          </AsyncState>
-          {members.error && (
-            <p className="mt-3 text-xs text-destructive">
-              팀원 이름과 연결 상태를 불러오지 못했어요.{' '}
-              <button
-                type="button"
-                className="underline"
-                onClick={() => void members.refetch()}
-              >
-                다시 불러오기
-              </button>
-            </p>
-          )}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Network className="size-4" />
-            작업·설계 관계
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <AsyncState query={relations}>
-            {(data) =>
-              data.nodes.length ? (
-                <RelationGraph data={data} />
-              ) : (
-                <EmptyState>등록된 작업과 설계 관계가 없어요.</EmptyState>
-              )
-            }
-          </AsyncState>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Activity className="size-4" />
-            활동 타임라인
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <AsyncState query={activities}>
-            {(data) =>
-              data.items.length ? (
+                    <p className="mt-4 text-xs leading-[18px] text-muted-foreground/70">
+                      에이전트가 보고하지 않은 실행 중·완료 상태는 추정하지
+                      않아요. 연결 여부는 연결 보고, 작업 상태는 작업 보고를
+                      따로 봐요.
+                    </p>
+                    {data.has_more && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-4"
+                        onClick={() => setWorkCursor(data.next_cursor)}
+                      >
+                        다음 작업 현황
+                      </Button>
+                    )}
+                    {workCursor && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-4"
+                        onClick={() => setWorkCursor(undefined)}
+                      >
+                        처음 현황
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <EmptyState>보고된 에이전트 작업이 없어요.</EmptyState>
+                )
+              }
+            </AsyncState>
+            {members.error && (
+              <p className="mt-3 text-xs text-destructive">
+                팀원 이름과 연결 상태를 불러오지 못했어요.{' '}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => void members.refetch()}
+                >
+                  다시 불러오기
+                </button>
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {tab === 'usage' && (
+        <Card id="dashboard-usage">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Wallet className="size-4" />
+              기간별 사용량
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-5">
+            <AsyncState query={usage}>
+              {(data) => (
                 <>
-                  <ol className="grid gap-5 border-l pl-5">
-                    {data.items.map((item) => (
-                      <li key={item.id} className="relative">
-                        <span className="absolute top-1.5 -left-[1.53rem] size-2 rounded-full bg-primary" />
-                        <div className="flex flex-wrap justify-between gap-2">
-                          <strong className="text-sm font-medium">
-                            {actorName(item.actor_account_id)} ·{' '}
-                            {statusLabel(item.type)}
-                          </strong>
-                          <time
-                            className="text-xs text-muted-foreground"
-                            dateTime={item.created_at}
-                          >
-                            {stamp(item.created_at)}
-                          </time>
-                        </div>
-                        <p className="mt-2 text-sm leading-6 whitespace-pre-wrap">
-                          {item.result}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-3">
-                          {item.task_id && (
-                            <Button
-                              variant="link"
-                              className="h-auto p-0 text-xs"
-                              onClick={() => openPane('tasks', item.task_id)}
-                            >
-                              작업 #{item.task_id}
-                            </Button>
-                          )}
-                          {item.change_proposal_id && (
-                            <Button
-                              variant="link"
-                              className="h-auto p-0 text-xs"
-                              onClick={() =>
-                                openPane('changes', item.change_proposal_id)
-                              }
-                            >
-                              변경 요청 #{item.change_proposal_id}
-                            </Button>
-                          )}
-                          {item.baseline_id && (
-                            <Button
-                              variant="link"
-                              className="h-auto p-0 text-xs"
-                              onClick={() => openPane('planning')}
-                            >
-                              기준 설계 #{item.baseline_id}
-                            </Button>
-                          )}
-                        </div>
-                      </li>
+                  <dl className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                    {[
+                      {
+                        label: '입력 토큰',
+                        value: data.input_tokens.toLocaleString('ko-KR'),
+                      },
+                      {
+                        label: '출력 토큰',
+                        value: data.output_tokens.toLocaleString('ko-KR'),
+                      },
+                      {
+                        label: '호출',
+                        value: data.call_count.toLocaleString('ko-KR'),
+                      },
+                      {
+                        label: '추정 비용',
+                        value:
+                          data.estimated_cost_amount === undefined
+                            ? '미보고'
+                            : `${data.estimated_cost_amount} ${data.currency ?? ''}`.trim(),
+                      },
+                    ].map((metric) => (
+                      <div
+                        key={metric.label}
+                        className="rounded-xl border bg-card p-4 shadow-xs"
+                      >
+                        <dt className="text-xs text-muted-foreground">
+                          {metric.label}
+                        </dt>
+                        <dd className="mt-2 font-mono text-xl font-semibold">
+                          {metric.value}
+                        </dd>
+                      </div>
                     ))}
-                  </ol>
-                  {data.has_more && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-5"
-                      onClick={() => setCursor(data.next_cursor)}
-                    >
-                      다음 활동
-                    </Button>
-                  )}
-                  {cursor && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="mt-5"
-                      onClick={() => setCursor(undefined)}
-                    >
-                      최신 활동
-                    </Button>
-                  )}
+                  </dl>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    BEEZ에 기록된 호출을 집계한 값이에요. 외부 에이전트의 개인
+                    사용량과 실제 청구액은 포함하지 않아요.
+                  </p>
+                  {/* API 없음: 사용량 응답에 에이전트별 묶음이 없어 기능별·작업별·검증별만 전환한다. */}
+                  <section className="grid gap-1 rounded-[14px] border bg-card px-4 py-3.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">
+                        {usageViews[usageView][1]}
+                      </h3>
+                      <span role="tablist" className="flex gap-1 text-xs">
+                        {usageViews.map(([key, name], index) => (
+                          <button
+                            key={key}
+                            type="button"
+                            role="tab"
+                            aria-selected={usageView === index}
+                            onClick={() => setUsageView(index)}
+                            className={cn(
+                              'rounded-full px-2.5 py-0.5 font-semibold',
+                              usageView === index
+                                ? 'bg-foreground text-background'
+                                : 'bg-muted',
+                            )}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </span>
+                    </div>
+                    <UsageBars
+                      key={usageViews[usageView][0]}
+                      rows={data[usageViews[usageView][0]]}
+                      currency={data.currency}
+                      label={(key) =>
+                        usageView === 0
+                          ? (FEATURE_LABELS[key] ?? key)
+                          : usageView === 1
+                            ? `작업 #${key}`
+                            : `검증 #${key}`
+                      }
+                      onSelect={
+                        usageView === 1
+                          ? (id) => openPane('tasks', id)
+                          : undefined
+                      }
+                    />
+                  </section>
                 </>
-              ) : (
-                <EmptyState>아직 기록된 프로젝트 활동이 없어요.</EmptyState>
-              )
-            }
-          </AsyncState>
-        </CardContent>
-      </Card>
+              )}
+            </AsyncState>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
 
-function UsageTable({
-  title,
+// 묶음 하나를 막대 줄로 보여 준다. 막대 길이는 호출 수가 가장 많은 줄 기준이다.
+function UsageBars({
   rows,
   currency,
   label,
   onSelect,
 }: {
-  title: string
   rows: UsageBucket[]
   currency?: string
   label: (key: string) => string
   onSelect?: (id: string) => void
 }) {
-  return (
-    <section className="min-w-0">
-      <h3 className="mb-3 text-sm font-medium">{title}</h3>
-      {rows.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="border-b text-muted-foreground">
-              <tr>
-                <th className="p-2 font-medium">구분</th>
-                <th className="p-2 text-right font-medium">입력</th>
-                <th className="p-2 text-right font-medium">출력</th>
-                <th className="p-2 text-right font-medium">호출</th>
-                <th className="p-2 text-right font-medium">예상 비용</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.key} className="border-b last:border-0">
-                  <td className="p-2">
-                    {onSelect ? (
-                      <button
-                        type="button"
-                        className="text-primary underline-offset-4 hover:underline"
-                        onClick={() => onSelect(row.key)}
-                      >
-                        {label(row.key)}
-                      </button>
-                    ) : (
-                      label(row.key)
-                    )}
-                  </td>
-                  <td className="p-2 text-right font-mono">
-                    {row.input_tokens.toLocaleString('ko-KR')}
-                  </td>
-                  <td className="p-2 text-right font-mono">
-                    {row.output_tokens.toLocaleString('ko-KR')}
-                  </td>
-                  <td className="p-2 text-right font-mono">
-                    {row.call_count.toLocaleString('ko-KR')}
-                  </td>
-                  <td className="p-2 text-right font-mono">
-                    {row.estimated_cost_amount === undefined
-                      ? '미보고'
-                      : `${row.estimated_cost_amount} ${currency ?? ''}`.trim()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">기록된 사용량이 없어요.</p>
-      )}
-    </section>
-  )
-}
-
-function RelationGraph({ data }: { data: RelationsResponse }) {
-  const markerId = useId()
-  const openPane = useWorkspaceStore((state) => state.openPane)
-  const visible = NODE_TYPES.flatMap((type, column) =>
-    data.nodes
-      .filter((node) => node.type === type)
-      .slice(0, 8)
-      .map((node, row) => ({
-        ...node,
-        x: 10 + column * 220,
-        y: 45 + row * 82,
-      })),
-  )
-  const byKey = new Map(
-    visible.map((node) => [`${node.type}:${node.id}`, node]),
-  )
-  const edges = data.edges.flatMap((edge) => {
-    const from = byKey.get(`${edge.from_type}:${edge.from_id}`),
-      to = byKey.get(`${edge.to_type}:${edge.to_id}`)
-    return from && to ? [{ ...edge, from, to }] : []
-  })
-  const height =
-    60 +
-    Math.max(
-      1,
-      ...NODE_TYPES.map(
-        (type) => visible.filter((node) => node.type === type).length,
-      ),
-    ) *
-      82
-  const selectNode = (node: RelationNode) => {
-    if (node.type === 'TASK') openPane('tasks', node.id)
-    else if (node.type === 'CHANGE_PROPOSAL') openPane('changes', node.id)
-    else if (node.type === 'DESIGN_ITEM') openPane('planning')
-  }
-  return (
-    <div className="grid gap-4">
-      <p className="text-xs text-muted-foreground">
-        실선은 확인된 관계, 점선은 검토할 후보예요. 후보는 확정된 의존 관계로
-        보지 않아요.
+  const most = Math.max(1, ...rows.map((row) => row.call_count))
+  if (!rows.length)
+    return (
+      <p className="py-2 text-xs text-muted-foreground">
+        기록된 사용량이 없어요.
       </p>
-      <div className="overflow-x-auto rounded-xl border bg-muted/20 p-3">
-        <svg
-          role="img"
-          aria-label="작업·설계·검증·변경 요청 관계 그래프"
-          viewBox={`0 0 880 ${height}`}
-          className="w-full min-w-[740px]"
+    )
+  return (
+    <ul>
+      {rows.map((row) => (
+        <li
+          key={row.key}
+          className="grid grid-cols-[150px_minmax(0,1fr)_64px_110px_90px] items-center gap-3 border-b py-2.5 text-[13px] last:border-0"
         >
-          <defs>
-            <marker
-              id={markerId}
-              markerWidth="7"
-              markerHeight="7"
-              refX="6"
-              refY="3"
-              orient="auto"
-            >
-              <path d="M0,0 L0,6 L6,3 z" fill="currentColor" />
-            </marker>
-          </defs>
-          {NODE_TYPES.map((type, index) => (
-            <text
-              key={type}
-              x={100 + index * 220}
-              y="20"
-              textAnchor="middle"
-              className="fill-muted-foreground text-[12px]"
-            >
-              {NODE_LABELS[type]}
-            </text>
-          ))}
-          {edges.map((edge, index) => (
-            <path
-              key={`${edge.from.type}:${edge.from.id}:${edge.to.type}:${edge.to.id}:${index}`}
-              d={`M${edge.from.x + 90},${edge.from.y + 25} L${edge.to.x + 90},${edge.to.y + 25}`}
-              className="text-muted-foreground/60"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeDasharray={edge.confirmed ? undefined : '5 5'}
-              fill="none"
-              markerEnd={`url(#${markerId})`}
-            >
-              <title>
-                {edge.from.label} → {edge.to.label}: {edge.relation} (
-                {edge.confirmed ? '확인됨' : '후보'})
-              </title>
-            </path>
-          ))}
-          {visible.map((node) => (
-            <g key={`${node.type}:${node.id}`}>
-              <rect
-                x={node.x}
-                y={node.y}
-                width="180"
-                height="50"
-                rx="10"
-                className="fill-card stroke-border"
-              />
-              <text
-                x={node.x + 90}
-                y={node.y + 22}
-                textAnchor="middle"
-                className="fill-foreground text-[12px]"
+          <span className="truncate font-semibold">
+            {onSelect ? (
+              <button
+                type="button"
+                className="underline-offset-4 hover:underline"
+                onClick={() => onSelect(row.key)}
               >
-                {node.label.length > 17
-                  ? `${node.label.slice(0, 16)}…`
-                  : node.label}
-              </text>
-              <text
-                x={node.x + 90}
-                y={node.y + 38}
-                textAnchor="middle"
-                className="fill-muted-foreground text-[10px]"
-              >
-                #{node.id}
-              </text>
-              <title>{node.label}</title>
-            </g>
-          ))}
-        </svg>
-      </div>
-      {visible.length < data.nodes.length && (
-        <p className="text-xs text-muted-foreground">
-          그래프는 종류별 최대 8개 항목을 표시해요. 전체 {data.nodes.length}개
-          중 {visible.length}개와 그 사이의 관계 {edges.length}개를 보여요.
-        </p>
-      )}
-      <details className="rounded-xl border p-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          전체 항목과 관계 읽기
-        </summary>
-        <ul className="mt-4 grid gap-2 text-sm">
-          {data.nodes.map((node) => (
-            <li
-              key={`${node.type}:${node.id}`}
-              className="flex flex-wrap items-center gap-2"
-            >
-              <span className="text-xs text-muted-foreground">
-                {NODE_LABELS[node.type]} #{node.id}
-              </span>
-              {node.type === 'VALIDATION' ? (
-                <span>{node.label}</span>
-              ) : (
-                <button
-                  type="button"
-                  className="text-primary hover:underline"
-                  onClick={() => selectNode(node)}
-                >
-                  {node.label}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-        <ul className="mt-4 grid gap-2 border-t pt-4 text-xs text-muted-foreground">
-          {data.edges.map((edge, index) => (
-            <li key={index}>
-              {NODE_LABELS[edge.from_type]} #{edge.from_id} →{' '}
-              {NODE_LABELS[edge.to_type]} #{edge.to_id} · {edge.relation} ·{' '}
-              {edge.confirmed ? '확인됨' : '후보'}
-            </li>
-          ))}
-        </ul>
-      </details>
-    </div>
+                {label(row.key)}
+              </button>
+            ) : (
+              label(row.key)
+            )}
+          </span>
+          <span aria-hidden="true" className="h-2 rounded-full bg-muted">
+            <span
+              className="block h-2 rounded-full bg-[#e0b400]"
+              style={{ width: `${(row.call_count / most) * 100}%` }}
+            />
+          </span>
+          <span className="text-right text-[#57534e]">
+            {row.call_count.toLocaleString('ko-KR')}회
+          </span>
+          <span className="text-right text-muted-foreground">
+            {(row.input_tokens + row.output_tokens).toLocaleString('ko-KR')}{' '}
+            토큰
+          </span>
+          <strong className="text-right font-semibold">
+            {row.estimated_cost_amount === undefined
+              ? '미보고'
+              : `${row.estimated_cost_amount} ${currency ?? ''}`.trim()}
+          </strong>
+        </li>
+      ))}
+    </ul>
   )
 }

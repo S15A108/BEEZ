@@ -69,34 +69,34 @@ export function makeTeamOffice(
   for (let i = 0; i < developers; i++) {
     if (i < 6)
       stations.push({
-        x: 1 + (i % 2) * 5,
+        x: 1 + (i % 2) * 6,
         y: 8 + Math.floor(i / 2) * 3,
         zone: 'dev',
       })
     else overflow.push({ zone: 'dev' })
   }
   if (count('lead'))
-    stations.push({ x: 11, y: 1, zone: 'lead', executive: true })
+    stations.push({ x: 14, y: 1, zone: 'lead', executive: true })
   for (let i = 1; i < count('lead'); i++)
     overflow.push({ zone: 'lead', executive: true })
   const support = (
     ['humandesk', 'review', 'control', 'hr', 'board'] as Zone[]
   ).flatMap((zone) => Array.from({ length: count(zone) }, () => ({ zone })))
   support.forEach((item, index) => {
-    if (index === 0) stations.push({ x: 11, y: 12, ...item })
+    if (index === 0) stations.push({ x: 14, y: 12, ...item })
     else if (index < 3)
-      stations.push({ x: 17, y: index === 1 ? 8 : 12, ...item })
+      stations.push({ x: 21, y: index === 1 ? 8 : 12, ...item })
     else overflow.push(item)
   })
   overflow.forEach((item, index) =>
     stations.push({
-      x: 24 + Math.floor(index / 4) * 5,
+      x: 30 + Math.floor(index / 4) * 6,
       y: 3 + (index % 4) * 3,
       ...item,
     }),
   )
   const W = Math.max(
-      total > 5 ? 30 : 24,
+      total > 5 ? 36 : 30,
       ...stations.map((station) => station.x + 5),
     ),
     H = 20
@@ -108,7 +108,7 @@ export function makeTeamOffice(
       for (let col = x; col < Math.min(W, x + w); col++) grid[row][col] = tile
   }
   fill(1, 1, W - 2, 15, 'h')
-  fill(12, 16, 6, 1, 'l')
+  fill(15, 16, 6, 1, 'l')
   fill(0, 17, W, 2, 's')
   fill(0, 19, W, 1, 'o')
   fill(1, 1, 8, 6, 'l')
@@ -130,25 +130,25 @@ export function makeTeamOffice(
     label: '비비에게 말 걸기',
   })
   if (keys.includes('planning')) {
-    fill(10, 4, 6, 5, 'm')
-    fill(16, 1, 7, 5, 'b')
+    fill(13, 4, 6, 5, 'm')
+    fill(19, 1, 7, 5, 'b')
     furniture.push(
-      { kind: 'rug', x: 10, y: 4, w: 6, h: 5, solid: false },
-      { kind: 'table', x: 11, y: 5, w: 4, h: 2, solid: true, tag: 'meeting' },
-      { kind: 'projector', x: 16, y: 1, w: 6, h: 1, solid: true },
+      { kind: 'rug', x: 13, y: 4, w: 6, h: 5, solid: false },
+      { kind: 'table', x: 14, y: 5, w: 4, h: 2, solid: true, tag: 'meeting' },
+      { kind: 'projector', x: 19, y: 1, w: 6, h: 1, solid: true },
     )
     const meetingSeats = [
-      seat(11, 4, 'down'),
-      seat(13, 7),
-      seat(13, 4, 'down'),
-      seat(11, 7),
-      seat(10, 5, 'right'),
-      seat(15, 5, 'left'),
+      seat(14, 4, 'down'),
+      seat(16, 7),
+      seat(16, 4, 'down'),
+      seat(14, 7),
+      seat(13, 5, 'right'),
+      seat(18, 5, 'left'),
     ].slice(0, Math.max(2, Math.min(6, total)))
     meetingSeats.forEach((item) => chair(item.x, item.y, item.facing))
     seats.meeting = meetingSeats
     points.push({
-      x: 16,
+      x: 19,
       y: 1,
       w: 6,
       h: 1,
@@ -181,16 +181,16 @@ export function makeTeamOffice(
   if (keys.includes('planning'))
     furniture.push({
       kind: 'glass-partition',
-      x: 11,
+      x: 14,
       y: 10,
       w: 4,
       h: 1,
       solid: true,
     })
-  if (W >= 35)
+  if (W >= 41)
     furniture.push({
       kind: 'glass-partition',
-      x: 22,
+      x: 26,
       y: 9,
       w: 1,
       h: 3,
@@ -241,7 +241,7 @@ export function makeTeamOffice(
     signs: [],
     decor: [],
     elevator: [],
-    exit: { x: 14, y: 14 },
+    exit: { x: 17, y: 14 },
     outdoorExit,
     footprint: { left: 1, back: 1, right: W - 1, front: 16 },
   }
