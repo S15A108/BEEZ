@@ -5,11 +5,13 @@ import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.repository.ValidationRow;
 import com.beez.backend.validation.service.AnalysisResultApplier;
+import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationResponses;
 import com.beez.backend.validation.service.ValidationInputAssembler;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.repository.TaskCompletionReportRepository;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -98,8 +100,10 @@ public class ValidationWorker {
         }
         long started = System.currentTimeMillis();
         Map<String, Object> request;
-        ValidationInputAssembler.Result searchInput;
-        CallerContext caller;
+        ValidationInputAssembler.Result searchInput = null;
+        CallerContext caller = null;
+        // Only the server-selected fake bean can bypass real search. Never trust an AI response's model field for this.
+        boolean fake = analyzer instanceof FakeValidationAnalyzer;
         try {
             ValidationRow row = tx.execute(status -> {
                 ValidationRow v = validations.lock(lease.validationId()).orElse(null);
@@ -110,29 +114,26 @@ public class ValidationWorker {
                 applier.applyFailure(lease, "validation_execution_failed", "실행 전에 검증 상태가 바뀌었습니다", 0);
                 return true;
             }
-            caller = requestActor(row);
-            // Search may call the embedding service, so do not hold a DB transaction around it.
-            searchInput = assembler.assemble(caller, row.projectId(), row.taskId(), row.planRevisionId(),
-                    row.id(), lease.attempt(), properties.executionBudgetMs());
-            // An unrelated publication need not invalidate the accepted plan. The assembler
-            // uses the current baseline; result application rechecks that exact search snapshot.
-            if (!searchInput.searchComplete()) {
-                applier.applyInputIncomplete(lease, "검색 또는 원문 근거 범위가 불완전합니다", System.currentTimeMillis() - started);
-                return true;
-            }
-            request = searchInput.request();
-            if ("DELTA".equals(row.trigger())) {
-                Object saved = responses.summary(row.summary()).get("completion_delta");
-                if (!(saved instanceof List<?> delta) || delta.isEmpty()
-                        || delta.stream().anyMatch(value -> !(value instanceof Map<?, ?>))) {
-                    throw new IllegalStateException("검증의 완료 보고가 없습니다");
+            if (fake) {
+                // The fake analyzer needs only the already accepted check keys and never accesses source data.
+                // This also allows pre-184 queued jobs, whose summary has no request_actor, to complete as before.
+                request = fakeRequest(row, lease);
+            } else {
+                caller = requestActor(row);
+                // Search may call the embedding service, so do not hold a DB transaction around it.
+                searchInput = assembler.assemble(caller, row.projectId(), row.taskId(), row.planRevisionId(),
+                        row.id(), lease.attempt(), properties.executionBudgetMs());
+                // An unrelated publication need not invalidate the accepted plan. The assembler
+                // uses the current baseline; result application rechecks that exact search snapshot.
+                if (!searchInput.searchComplete()) {
+                    applier.applyInputIncomplete(lease, "검색 또는 원문 근거 범위가 불완전합니다", System.currentTimeMillis() - started);
+                    return true;
                 }
-                var report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(
-                        row.taskId(), row.planRevisionId()).orElseThrow();
-                if (!delta.equals(report.getDelta())) throw new IllegalStateException("완료 보고가 변경되었습니다");
-                @SuppressWarnings("unchecked")
-                var completionDelta = (List<Map<String, Object>>) saved;
-                assembler.bindCompletionDelta(searchInput, completionDelta);
+                request = searchInput.request();
+                if ("DELTA".equals(row.trigger())) {
+                    var completionDelta = completionDelta(row, false);
+                    assembler.bindCompletionDelta(searchInput, completionDelta);
+                }
             }
         } catch (RuntimeException e) {
             log.warn("validation {} 요청 조립 실패: {}", lease.validationId(), e.toString());
@@ -165,7 +166,12 @@ public class ValidationWorker {
             return true;
         }
         try {
-            applier.applySearchSuccess(lease, request, response, System.currentTimeMillis() - started, caller, searchInput);
+            if (fake) {
+                // Existing result application still fences the lease, rechecks inputs and rules, and records fake-analyzer.
+                applier.applySuccess(lease, request, response, System.currentTimeMillis() - started);
+            } else {
+                applier.applySearchSuccess(lease, request, response, System.currentTimeMillis() - started, caller, searchInput);
+            }
         } catch (RuntimeException e) {
             // 반영 자체가 실패하면(기록 실패) 상태 전이도 함께 롤백됐다. 실패로 종결해 사람이 재시도할 수 있게 한다.
             // 모델은 이미 불렀으므로 응답의 사용량은 실패 기록에 같이 남긴다
@@ -174,6 +180,36 @@ public class ValidationWorker {
                     System.currentTimeMillis() - started, AnalysisResultApplier.usageIn(response));
         }
         return true;
+    }
+
+    private Map<String, Object> fakeRequest(ValidationRow row, JobLease lease) {
+        Object checks = responses.summary(row.summary()).get("checks");
+        if (!(checks instanceof List<?> list) || list.isEmpty()
+                || list.stream().anyMatch(value -> !(value instanceof Map<?, ?> check)
+                        || !(check.get("key") instanceof String key) || key.isBlank())) {
+            throw new IllegalStateException("검증 검사 목록이 없습니다");
+        }
+        var request = new LinkedHashMap<String, Object>();
+        request.put("validation_id", String.valueOf(row.id()));
+        request.put("attempt", lease.attempt());
+        request.put("checks", checks);
+        if ("DELTA".equals(row.trigger())) request.put("completion_delta", completionDelta(row, true));
+        return request;
+    }
+
+    /** Current rows carry an immutable accepted delta; older queued rows use their immutable stored report. */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> completionDelta(ValidationRow row, boolean allowLegacy) {
+        Object saved = responses.summary(row.summary()).get("completion_delta");
+        var report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(
+                row.taskId(), row.planRevisionId()).orElseThrow();
+        if (saved == null && allowLegacy) saved = report.getDelta();
+        if (!(saved instanceof List<?> delta) || delta.isEmpty()
+                || delta.stream().anyMatch(value -> !(value instanceof Map<?, ?>))
+                || !delta.equals(report.getDelta())) {
+            throw new IllegalStateException("검증의 완료 보고가 없거나 변경되었습니다");
+        }
+        return (List<Map<String, Object>>) saved;
     }
 
     private CallerContext requestActor(ValidationRow row) {

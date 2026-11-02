@@ -112,6 +112,21 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).optional()).isEmpty();
     }
 
+    @Test void realModeStillRequiresSearchAndDoesNotPassWhenSearchFails() {
+        when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100)))
+                .thenThrow(new IllegalStateException("search unavailable"));
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+
+        assertThat(worker.runOnce()).isTrue();
+        verify(search, atLeastOnce()).search(any(), eq(project), anyString(), isNull(), isNull(), eq(100));
+        verifyNoInteractions(analyzer);
+        assertThat(api.jdbc.sql("select status from validation where id=:v")
+                .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
+    }
+
     private long[] queuedTask() {
         var task = api.post("/api/projects/" + project + "/tasks",
                 api.planJson("검증 요청자 확인", api.implementsRef("API-01"), "[]"), owner);
