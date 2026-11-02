@@ -117,6 +117,16 @@ class SelectionInput(_Frozen):
                 raise ValueError("evidence outside snapshot")
             if not item.text.strip():
                 raise ValueError("empty candidate")
+        # A BE current dependency set has one row per directed item pair.
+        # Reject mixed current/history rows instead of expanding an old
+        # CONFIRMED edge when the same pair is now released or rechecked.
+        dependency_pairs = [
+            (edge.from_design_item_id, edge.to_design_item_id)
+            for edge in self.relations
+            if edge.relation == "DEPENDS_ON"
+        ]
+        if len(dependency_pairs) != len(set(dependency_pairs)):
+            raise ValueError("duplicate dependency pair")
         if self.task_id is None and self.task_design_refs:
             raise ValueError("task references require a task")
         task_ids = [ref.design_item_id for ref in self.task_design_refs]

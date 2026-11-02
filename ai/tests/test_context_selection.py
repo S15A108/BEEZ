@@ -159,7 +159,7 @@ async def test_matching_and_task_refs_expand_only_confirmed_forward_one_hop():
             relation("B", "C"),
             relation("C", "A"),
             relation("A", "C", status="NEEDS_RECHECK"),
-            relation("A", "C", origin="AI_CANDIDATE"),
+            relation("A", "outside-ai", origin="AI_CANDIDATE"),
             relation("A", "outside"),
             relation("C", "outside"),
         ),
@@ -194,22 +194,61 @@ async def test_cycle_cannot_expand_past_one_hop_or_reverse():
     assert result.design_items[0].reasons == ("MATCHED",)
 
 
-@pytest.mark.asyncio
-async def test_unconfirmed_or_stale_edges_cannot_expand():
-    result = await select_context(
-        snapshot(
-            relations=(
-                relation("A", "B", from_design_item_version_id="A-old"),
-                relation("A", "B", to_design_item_version_id="B-old"),
-                relation("A", "B", status="NEEDS_RECHECK"),
-                relation("A", "B", origin="AI_CANDIDATE"),
-                relation("A", "B", relation="RELATES_TO"),
-            )
+@pytest.mark.parametrize(
+    ("edge", "expected_unresolved"),
+    [
+        (
+            relation("A", "B", from_design_item_version_id="A-old"),
+            ("DEPENDENCY_UNVERIFIED",),
         ),
-        FakeSelector(("A-v1",)),
-    )
+        (
+            relation("A", "B", to_design_item_version_id="B-old"),
+            ("DEPENDENCY_UNVERIFIED",),
+        ),
+        (relation("A", "B", status="NEEDS_RECHECK"), ()),
+        (relation("A", "B", status="RELEASED"), ()),
+        (relation("A", "B", origin="AI_CANDIDATE"), ()),
+        (relation("A", "B", relation="RELATES_TO"), ()),
+    ],
+)
+@pytest.mark.asyncio
+async def test_unconfirmed_or_stale_edges_cannot_expand(edge, expected_unresolved):
+    result = await select_context(snapshot(relations=(edge,)), FakeSelector(("A-v1",)))
     assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
-    assert result.unresolved == ("DEPENDENCY_UNVERIFIED",)
+    assert result.unresolved == expected_unresolved
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        relation("A", "B"),
+        relation("A", "B", status="NEEDS_RECHECK"),
+        relation("A", "B", status="RELEASED"),
+        relation("A", "B", origin="AI_CANDIDATE", status="CANDIDATE"),
+        relation("A", "B", from_design_item_version_id="A-old"),
+    ],
+)
+def test_duplicate_directed_dependency_rejected_before_selection(other):
+    # A current dependency snapshot cannot contain two rows for the same
+    # directed pair, even when one appears confirmed and the other does not.
+    with pytest.raises(ValidationError, match="duplicate dependency pair"):
+        snapshot(relations=(relation("A", "B"), other))
+
+
+@pytest.mark.asyncio
+async def test_other_relation_types_and_reverse_dependencies_remain_valid():
+    request = snapshot(
+        relations=(
+            relation("A", "B"),
+            relation("A", "B", relation="RELATES_TO"),
+            relation("B", "A"),
+        )
+    )
+    result = await select_context(request, FakeSelector(("A-v1",)))
+    assert [(x.design_item_version_id, x.reasons) for x in result.design_items] == [
+        ("A-v1", ("MATCHED",)),
+        ("B-v1", ("DEPENDENCY",)),
+    ]
 
 
 @pytest.mark.parametrize(
