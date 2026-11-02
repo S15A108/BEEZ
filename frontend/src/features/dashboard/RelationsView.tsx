@@ -3,6 +3,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { CircleAlert, Search } from 'lucide-react'
 import type { RelationNode } from '@/api/contracts/common'
 import { dashboardApi } from '@/api/services/dashboard'
+import { readAllPages } from '@/api/readAllPages'
 import { changesApi, tasksApi } from '@/api/services'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
@@ -42,7 +43,12 @@ export function RelationsView({ projectId }: { projectId: string }) {
   const [picked, setPicked] = useState<string | null>(null)
   const tasks = useQuery({
     queryKey: ['projects', projectId, 'relation-tasks'],
-    queryFn: () => tasksApi.list(projectId, { limit: 100 }),
+    // 작업 목록 API에는 검색 조건이 없어 마지막 페이지까지 읽고 화면에서 찾는다. 100개만 읽으면 101번째 이후 작업의
+    // 관계를 볼 수 없었다(PR #72 재전수 R2-TC-02).
+    queryFn: () =>
+      readAllPages((cursor) =>
+        tasksApi.list(projectId, { cursor, limit: 100 }),
+      ),
   })
   const all = tasks.data?.items ?? []
   const shown = all.filter((task) =>

@@ -1,10 +1,10 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { authApi } from '@/api/services'
+import { authApi, tasksApi } from '@/api/services'
 import { dashboardApi } from '@/api/services/dashboard'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import {
@@ -172,4 +172,43 @@ it('진행 중 제안이 참조 설계 항목을 바꾸면 항목 기준 관계�
   expect(
     screen.getByText(/‘빈 화면 안내’ 제안이 승인되면 REQ-001의 새/),
   ).toBeInTheDocument()
+})
+
+// PR #72 재전수 R2-TC-02: 작업을 마지막 페이지까지 읽어 101번째 이후 작업도 찾고 관계를 본다.
+it('작업 100개를 넘어도 다음 페이지 작업을 찾아 고를 수 있다', async () => {
+  const user = userEvent.setup()
+  const list = tasksApi.list
+  vi.spyOn(tasksApi, 'list').mockImplementation(async (projectId, query) => {
+    const page = await list(projectId, { limit: 100 })
+    if (!query?.cursor) return { ...page, has_more: true, next_cursor: 'c2' }
+    return {
+      items: [
+        {
+          ...page.items[0],
+          id: '999',
+          key: 'TASK-101',
+          current_plan_revision: {
+            ...page.items[0].current_plan_revision,
+            plan: {
+              ...page.items[0].current_plan_revision.plan,
+              title: '백한 번째 작업',
+            },
+          },
+        },
+      ],
+      has_more: false,
+    }
+  })
+  const relations = vi
+    .spyOn(dashboardApi, 'relations')
+    .mockResolvedValue({ nodes: [], edges: [] })
+  renderView()
+  await user.type(
+    await screen.findByPlaceholderText('작업 번호·제목'),
+    'TASK-101',
+  )
+  await user.click(await screen.findByRole('button', { name: /TASK-101/ }))
+  await waitFor(() =>
+    expect(relations).toHaveBeenCalledWith('101', { task_id: '999' }),
+  )
 })
