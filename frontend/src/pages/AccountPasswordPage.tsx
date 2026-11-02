@@ -1,28 +1,36 @@
 import { Link, useNavigate } from 'react-router'
 import { ArrowLeft } from 'lucide-react'
 import { authApi } from '@/api/services'
+import { AccountLayout } from '@/features/auth/AccountLayout'
 import { RequireAccount } from '@/features/auth/RequireAccount'
 import { passwordRule } from '@/features/auth/passwordRule'
 import { ActionForm } from '@/components/ActionForm'
-import { Button } from '@/components/ui/button'
 
+// 회원 설정 틀 안의 비밀번호 변경(캔버스 SCR-05-v2-password). 바꾸거나 취소하면 회원 설정으로 돌아간다.
 function AccountPassword() {
   const navigate = useNavigate()
   return (
-    <main className="mx-auto max-w-xl space-y-6 px-6 py-10">
-      <Button variant="ghost" asChild>
-        <Link to="/account">
-          <ArrowLeft />
+    <AccountLayout>
+      <section
+        aria-labelledby="password-title"
+        className="max-w-[560px] rounded-[14px] bg-card px-8 py-7 ring-1 ring-foreground/10"
+      >
+        <Link
+          to="/account"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" />
           회원 설정
         </Link>
-      </Button>
-      <section className="rounded-3xl border bg-card p-8">
-        <h2 className="text-2xl font-bold">비밀번호 변경</h2>
+        <h3 id="password-title" className="mt-4 text-2xl font-bold">
+          비밀번호 변경
+        </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          임시 비밀번호로 로그인했다면 여기서 새 비밀번호로 바꿔 주세요.
+          현재 비밀번호를 확인한 뒤 새 비밀번호로 바꿔요.
         </p>
-        <div className="mt-7">
+        <div className="mt-6">
           <ActionForm
+            auth
             block
             fields={[
               {
@@ -39,7 +47,6 @@ function AccountPassword() {
                 min: 8,
                 max: 128,
                 check: passwordRule,
-                placeholder: '영문·숫자·특수문자 포함 8자 이상',
               },
               {
                 name: 'confirm',
@@ -49,7 +56,8 @@ function AccountPassword() {
                 matches: 'new_password',
               },
             ]}
-            submitLabel="비밀번호 바꾸기"
+            submitLabel="비밀번호 변경"
+            onCancel={() => navigate('/account')}
             onSubmit={async (values) => {
               await authApi.changePassword({
                 current_password: values.current_password,
@@ -65,7 +73,7 @@ function AccountPassword() {
           />
         </div>
       </section>
-    </main>
+    </AccountLayout>
   )
 }
 

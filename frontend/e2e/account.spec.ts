@@ -40,7 +40,7 @@ test('회원 설정에서 비밀번호 변경과 회원 탈퇴를 별도 페이�
   await page
     .getByRole('textbox', { name: '새 비밀번호 확인', exact: true })
     .fill('beez-next-2026!')
-  await page.getByRole('button', { name: '비밀번호 바꾸기' }).click()
+  await page.getByRole('button', { name: '비밀번호 변경' }).click()
   await expect(page).toHaveURL(/\/account$/)
   await expect(page.getByText(/비밀번호를 바꿨어요/)).toBeVisible()
   await page.getByRole('link', { name: '회원 탈퇴' }).click()

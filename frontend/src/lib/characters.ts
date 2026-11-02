@@ -1,65 +1,55 @@
-import beeBlueHead from '@/assets/characters/bee-blue-head.svg'
-import beeBlue from '@/assets/characters/bee-blue.svg'
-import beeGreenHead from '@/assets/characters/bee-green-head.svg'
-import beeGreen from '@/assets/characters/bee-green.svg'
-import beeOrangeHead from '@/assets/characters/bee-orange-head.svg'
-import beeOrange from '@/assets/characters/bee-orange.svg'
-import beePurpleHead from '@/assets/characters/bee-purple-head.svg'
-import beePurple from '@/assets/characters/bee-purple.svg'
-import beeYellowHead from '@/assets/characters/bee-yellow-head.svg'
-import beeYellow from '@/assets/characters/bee-yellow.svg'
+import beeHead from '@/assets/characters/bee-head.png'
+import bee from '@/assets/characters/bee.png'
+import humanHead from '@/assets/characters/human-head.png'
+import human from '@/assets/characters/human.png'
+import robotHead from '@/assets/characters/robot-head.png'
+import robot from '@/assets/characters/robot.png'
 
-// 캐릭터 프리셋 5종. 이름과 그림은 캔버스 SCR-05-v2-account 보드 그대로이고, 키는 계정 avatar 저장값(bee-*)이다.
-// portrait는 몸 전체(캐릭터 고르기·프로필 카드), face는 머리줄 동그라미에 쓰는 얼굴이다.
+// 캐릭터 3종(캔버스 SCR-05-v2-account v440 이후). 키는 계정 avatar 저장값이고, 이름·표시 색은 보드 그대로다.
+// portrait는 몸 전체(캐릭터 고르기), face는 머리줄·프로필 동그라미에 쓰는 얼굴 컷이다. 그림은 보드가 쓰는 3D 렌더 그대로:
+// 사람은 Kenney Mini Characters(CC0) character-female-d, 로봇·벌은 같은 블록 비율로 새로 만든 모델.
 export const characters = [
   {
-    key: 'bee-yellow',
-    label: '꿀벌 후드',
-    colorName: '노랑',
-    color: '#f3c530',
-    portrait: beeYellow,
-    face: beeYellowHead,
-  },
-  {
-    key: 'bee-blue',
-    label: '안경 셔츠',
+    key: 'human',
+    label: '사람',
     colorName: '파랑',
     color: '#4f86c6',
-    portrait: beeBlue,
-    face: beeBlueHead,
+    portrait: human,
+    face: humanHead,
   },
   {
-    key: 'bee-green',
-    label: '초록 앞치마',
-    colorName: '초록',
-    color: '#3f9a5c',
-    portrait: beeGreen,
-    face: beeGreenHead,
+    key: 'robot',
+    label: '로봇',
+    colorName: '청록',
+    color: '#3aa6a0',
+    portrait: robot,
+    face: robotHead,
   },
   {
-    key: 'bee-purple',
-    label: '보라 헤드폰',
-    colorName: '보라',
-    color: '#7d64c8',
-    portrait: beePurple,
-    face: beePurpleHead,
-  },
-  {
-    key: 'bee-orange',
-    label: '주황 모자',
-    colorName: '주황',
-    color: '#e07b39',
-    portrait: beeOrange,
-    face: beeOrangeHead,
+    key: 'bee',
+    label: '벌',
+    colorName: '노랑',
+    color: '#f3c530',
+    portrait: bee,
+    face: beeHead,
   },
 ] as const
 
 export type Character = (typeof characters)[number]
 
+// 예전 프리셋 5종(bee-*)으로 저장된 계정은 그 표시 색으로 가장 가까운 새 캐릭터를 고른다.
+const legacyColors: Record<string, string> = {
+  'bee-yellow': '#f3c530',
+  'bee-blue': '#4f86c6',
+  'bee-green': '#3f9a5c',
+  'bee-purple': '#7d64c8',
+  'bee-orange': '#e07b39',
+}
+
 const hex = (value: string) =>
   [1, 3, 5].map((start) => parseInt(value.slice(start, start + 2), 16))
 
-// 계정의 avatar가 프리셋이면 그대로, 아니면(옛 값 human·robot·bee 등) 표시 색에 가장 가까운 프리셋.
+// 계정의 avatar가 지금 캐릭터면 그대로, 옛 값(bee-*)이면 그 색, 아니면 표시 색에 가장 가까운 캐릭터.
 // 색도 없으면 id로 고르게 나눈다.
 export function characterOf(
   avatar?: string,
@@ -68,11 +58,12 @@ export function characterOf(
 ): Character {
   const preset = characters.find((item) => item.key === avatar)
   if (preset) return preset
-  if (color && /^#[0-9a-f]{6}$/i.test(color)) {
-    const [r, g, b] = hex(color)
+  const target = (avatar && legacyColors[avatar]) || color
+  if (target && /^#[0-9a-f]{6}$/i.test(target)) {
+    const [r, g, b] = hex(target)
     return characters.reduce((best, item) => {
-      const distance = (target: Character) => {
-        const [tr, tg, tb] = hex(target.color)
+      const distance = (candidate: Character) => {
+        const [tr, tg, tb] = hex(candidate.color)
         return (r - tr) ** 2 + (g - tg) ** 2 + (b - tb) ** 2
       }
       return distance(item) < distance(best) ? item : best

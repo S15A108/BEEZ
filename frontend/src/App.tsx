@@ -52,7 +52,8 @@ export default function App() {
               />
               {session.data.name}
             </span>
-            {pathname !== '/account' && (
+            {/* 회원 설정 안(비밀번호 변경·탈퇴 포함)에서는 링크를 빼고 이름과 로그아웃만(캔버스 SCR-05-v2) */}
+            {!pathname.startsWith('/account') && (
               <Button variant="ghost" asChild>
                 <Link to="/account">
                   <Settings />

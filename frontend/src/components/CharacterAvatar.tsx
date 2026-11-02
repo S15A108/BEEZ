@@ -22,7 +22,7 @@ export function CharacterAvatar({
         src={character.face}
         alt=""
         draggable={false}
-        className="mt-0.5 block w-full"
+        className="block size-full object-cover"
       />
     </span>
   )

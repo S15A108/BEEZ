@@ -351,7 +351,13 @@ export function ActionForm({
         </p>
       )}
       {onCancel ? (
-        <div className="flex justify-end gap-2">
+        // block이면 폼 너비를 1:2로 나눈다(캔버스 SCR-05-v2-password·withdraw).
+        <div
+          className={cn(
+            'gap-2',
+            block ? 'grid grid-cols-[1fr_2fr]' : 'flex justify-end',
+          )}
+        >
           <Button
             type="button"
             variant="outline"
@@ -364,7 +370,10 @@ export function ActionForm({
           <SheetSubmit
             destructive={destructive}
             disabled={isSubmitting || disabled}
-            className="h-10 px-[18px] font-bold"
+            className={cn(
+              'h-10',
+              block ? 'font-semibold' : 'px-[18px] font-bold',
+            )}
           >
             {isSubmitting ? '처리 중…' : submitLabel}
           </SheetSubmit>

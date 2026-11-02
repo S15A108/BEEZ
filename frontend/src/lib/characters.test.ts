@@ -1,10 +1,10 @@
 import { expect, it } from 'vitest'
 import { characterOf, characters } from './characters'
 
-it('저장된 프리셋 키는 그대로 쓰고, 옛 값은 표시 색에 가장 가까운 프리셋으로 바꾼다', () => {
-  expect(characterOf('bee-purple').label).toBe('보라 헤드폰')
-  expect(characterOf('human', '#3f9a5c').key).toBe('bee-green')
-  expect(characterOf(undefined, '#e08040').key).toBe('bee-orange')
+it('저장된 캐릭터 키는 그대로 쓰고, 옛 bee-* 값과 표시 색은 가장 가까운 캐릭터로 바꾼다', () => {
+  expect(characterOf('bee-purple').label).toBe('사람')
+  expect(characterOf('human', '#3f9a5c').key).toBe('human')
+  expect(characterOf(undefined, '#e08040').key).toBe('bee')
 })
 
 it('색도 없으면 같은 id는 늘 같은 프리셋을 받는다', () => {
