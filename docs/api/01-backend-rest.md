@@ -7598,11 +7598,11 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 
 ### GET `/api/projects/{id}/change-proposals/{proposal_id}/impact`
 
-변경 영향 조회 기능을 제공한다.
+현재 제출 리비전에서 최근 완료된 결과를 반환한다. 완료 결과가 없으면 RUNNING, 현재 리비전 결과 없이 과거 결과만 있으면 과거 결과와 is_current=false를 반환한다. 이력이 없으면 NOT_EVALUATED(analysis_not_started)다. 실패·미평가·근거 부족은 영향 0건이 아니다. 읽기는 프로젝트 에이전트도 서비스 경로에서 허용한다. lease 만료 RUNNING은 FAILED(analysis_interrupted)로 정리한다.
 
 관련 요구사항: CHG-05·08, BEE-06·09  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현 (#197)
 
 #### 인증
 
@@ -7637,9 +7637,13 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `explicit` | [ExplicitImpact[]](00-common.md#schema-explicitimpact) | Y | 명시 관계 영향 |
 | `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | AI 영향 후보 |
-| `analysis_status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | AI 분석 상태 |
+| `analysis_status` | `RUNNING\|COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED\|FAILED\|STALE` | Y | AI 분석 상태 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | 분석 설명 |
-| `error_code` | `string` | N | 실패 원인 |
+| `error_code` | `string` | N | 실패·미평가 원인 |
+| `revision` | `integer` | Y | 분석한 제출 리비전 |
+| `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
+| `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
+| `stale_reason` | `string` | N | 이전 리비전·입력 변경 사유 |
 
 ```json
 {
@@ -7667,6 +7671,9 @@ HTTP `200`.
       ]
     }
   ],
+  "revision": 1,
+  "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "is_current": true,
   "analysis_status": "COMPLETED",
   "generation": {
     "origin": "MODEL",
@@ -7730,11 +7737,11 @@ HTTP `200`.
 
 ### POST `/api/projects/{id}/change-proposals/{proposal_id}/impact/retry`
 
-변경 영향 AI 재분석 기능을 제공한다.
+활성 사람 멤버가 수동으로 영향 분석을 접수한다. Origin(없으면 Referer)을 검사하며 에이전트는 403이다. 제안은 PROPOSED·IN_REVIEW 상태이고 현재 baseline과 일치해야 한다. 접수 트랜잭션 이후 유한 인메모리 실행기에서 기존 coordinator를 호출한다. 외부 AI 호출 동안 DB 잠금을 잡지 않는다. 제출 시 자동 실행하지 않는다.
 
 관련 요구사항: CHG-08  
 담당: BE: 오서현 / AI: 양지훈·박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현 (#197)
 
 #### 인증
 
@@ -7746,7 +7753,7 @@ HTTP `200`.
 | --- | --- |
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 선택. 같은 키·같은 제출 리비전은 24시간 기존 202 응답 재생. 리비전 변경 후 재사용은 409 idempotency_conflict |
 
 #### Path Parameters
 
@@ -7764,71 +7771,28 @@ HTTP `200`.
 없음.
 #### Response
 
-HTTP `202`.
+HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RUNNING이 있으면 409 analysis_running, 분석할 수 없는 상태는 409 proposal_not_analyzable, 기준 변경은 409 baseline_changed다. 만료 RUNNING을 FAILED(analysis_interrupted)로 닫고 새 run을 만든다. 포화는 접수 후 FAILED(analysis_capacity)로 기록한다. AI 실패에도 explicit은 보존하며, 저장 트랜잭션에서 프로젝트 잠금과 입력 지문을 재검사한다. 발행 후 분석 실행은 #227의 별도 계약이다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `explicit` | [ExplicitImpact[]](00-common.md#schema-explicitimpact) | Y | 명시 관계 영향 |
 | `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | AI 영향 후보 |
-| `analysis_status` | `PENDING\|RUNNING\|COMPLETED\|FAILED` | Y | AI 분석 상태 |
+| `analysis_status` | `RUNNING\|COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED\|FAILED\|STALE` | Y | AI 분석 상태 |
 | `generation` | [Generation](00-common.md#schema-generation) | N | 분석 설명 |
-| `error_code` | `string` | N | 실패 원인 |
+| `error_code` | `string` | N | 실패·미평가 원인 |
+| `revision` | `integer` | Y | 분석한 제출 리비전 |
+| `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
+| `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
+| `stale_reason` | `string` | N | 이전 리비전·입력 변경 사유 |
 
 ```json
 {
-  "explicit": [
-    {
-      "task_id": "501",
-      "member_id": "21",
-      "design_item_id": "301",
-      "validation_id": "601"
-    }
-  ],
-  "candidates": [
-    {
-      "task_id": "502",
-      "member_id": "22",
-      "design_item_id": "302",
-      "reason": "로그인 응답을 사용하는 화면입니다.",
-      "sources": [
-        {
-          "document_id": "201",
-          "document_version_id": "211",
-          "version_no": 1,
-          "location": "3. 계정 관리 / ACC-02"
-        }
-      ]
-    }
-  ],
+  "explicit": [],
+  "candidates": [],
   "analysis_status": "RUNNING",
-  "generation": {
-    "origin": "MODEL",
-    "model": "configured-model",
-    "text": "현재 승인 계약에 따라 이메일과 비밀번호를 입력합니다.",
-    "sources": [
-      {
-        "document_id": "201",
-        "document_version_id": "211",
-        "version_no": 1,
-        "location": "3. 계정 관리 / ACC-02"
-      }
-    ],
-    "unresolved": [],
-    "usage": [
-      {
-        "request_key": "llm-validate-601-attempt-1",
-        "feature": "TASK_VALIDATION",
-        "model": "configured-model",
-        "input_tokens": 1200,
-        "output_tokens": 300,
-        "latency_ms": 1800,
-        "failed": false,
-        "estimated_cost_amount": "0.0042",
-        "currency": "USD",
-        "tokens_known": true
-      }
-    ]
-  }
+  "revision": 1,
+  "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "is_current": true
 }
 ```
 
@@ -7839,12 +7803,17 @@ HTTP `202`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 409 | `analysis_running` | 이미 분석 중 |
+| 409 | `proposal_not_analyzable` | PROPOSED·IN_REVIEW 상태가 아님 |
+| 409 | `baseline_changed` | 제출 기준과 현재 baseline이 다름 |
+| 409 | `idempotency_conflict` | 같은 키로 다른 제출 리비전 요청 |
+| 403 | `forbidden` | 에이전트의 재분석 접수 |
+| 403 | `request_origin_rejected` | 신뢰 Origin·Referer 누락 또는 불일치 |
 
 ```json
 {
   "error": {
     "code": "analysis_running",
-    "message": "이미 분석 중"
+    "message": "현재 상태에서는 요청을 처리할 수 없습니다. 최신 정보를 확인해 주세요."
   }
 }
 ```
@@ -7852,7 +7821,7 @@ HTTP `202`.
 #### 처리 규칙
 
 - 현재 제안·관련 작업 스냅샷으로 재분석한다. 원본 제안을 수정하지 않는다.
-- 명시 관계 수신자 알림은 AI 실패와 관계없이 유지한다.
+- 규칙 후보는 AI 실패와 관계없이 보존한다. 알림 생성은 후속 #237 범위다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
