@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
 import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { documentsApi } from '@/api/services/documents'
-import { membersApi } from '@/api/services/members'
 import type { DocumentBeeReview } from '@/api/contracts/common'
 import { ActionForm } from '@/components/ActionForm'
 import { MarkdownView } from '@/components/MarkdownView'
@@ -17,6 +16,7 @@ import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { reviewStage } from './reviewStage'
+import { membersQuery } from '@/features/members/membersQuery'
 
 const STEPS = ['파일 등록', '비비 검토', '수정 제안 반영', '팀장 승인'] as const
 const REVIEW_STEPS = [
@@ -92,10 +92,7 @@ export function DocumentReview({
     startReview(Number(reviewKey.split(':')[2]))
   }, [reviewKey, startReview])
   const failed = !!bee.error && !running
-  const members = useQuery({
-    queryKey: ['projects', projectId, 'members'],
-    queryFn: () => membersApi.list(projectId),
-  })
+  const members = useQuery(membersQuery(projectId))
   const pending = copy.data?.submissions.find(
     (item) => item.status === 'SUBMITTED',
   )

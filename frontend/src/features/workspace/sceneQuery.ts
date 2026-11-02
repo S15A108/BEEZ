@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 import { unlessMissing } from '@/api/error'
+import { readAllPages } from '@/api/readAllPages'
 import { documentsApi, membersApi, projectsApi, tasksApi } from '@/api/services'
 import { onboardingFrom } from '@/features/projects/onboardingFrom'
 
@@ -12,7 +13,11 @@ export function sceneQuery(projectId: string, accountId?: string) {
     queryFn: async () => {
       const [project, members, tasks, onboarding] = await Promise.all([
         projectsApi.get(projectId),
-        membersApi.list(projectId),
+        // 팀원은 마지막 페이지까지 읽는다. 첫 20명만 쓰면 21번째 이후 팀원(나일 수도 있다)이 사무실·HUD에서 빠진다
+        // (PR #72 재전수 SECOND-AMP-04).
+        readAllPages((cursor) =>
+          membersApi.list(projectId, { cursor, limit: 100 }),
+        ),
         tasksApi.list(projectId, { limit: 100 }),
         unlessMissing(projectsApi.onboarding(projectId)),
       ])

@@ -6,7 +6,6 @@ import { z } from 'zod'
 import { ClipboardCheck, Ellipsis, Play, Plus, RefreshCw } from 'lucide-react'
 import {
   contextsApi,
-  membersApi,
   planningApi,
   tasksApi,
   validationsApi,
@@ -50,6 +49,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { describeContent, lines } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
+import { membersQuery } from '@/features/members/membersQuery'
 
 interface Props {
   projectId: string
@@ -89,10 +89,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       tasksApi.list(projectId, { cursor: pageParam, limit: 50 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
   })
-  const members = useQuery({
-    queryKey: ['projects', projectId, 'members'],
-    queryFn: () => membersApi.list(projectId, { limit: 100 }),
-  })
+  const members = useQuery(membersQuery(projectId))
   const memberId = members.data?.items.find(
     (member) => member.account_id === session.data?.id,
   )?.id

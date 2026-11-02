@@ -5,7 +5,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Activity, Wallet } from 'lucide-react'
 import { dashboardApi } from '@/api/services/dashboard'
-import { membersApi } from '@/api/services/members'
 import { unlessMissing } from '@/api/error'
 import type { UsageBucket } from '@/api/contracts/common'
 import { DashboardOverview } from './DashboardOverview'
@@ -22,6 +21,7 @@ import { Label } from '@/components/ui/label'
 import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { membersQuery } from '@/features/members/membersQuery'
 
 const calendarDay = (date: Date) =>
   new Intl.DateTimeFormat('en-CA', {
@@ -120,10 +120,7 @@ export function ActivityPanel({
         dashboardApi.agentWork(projectId, { cursor: workCursor, limit: 20 }),
       ),
   })
-  const members = useQuery({
-    queryKey: ['projects', projectId, 'members'],
-    queryFn: () => membersApi.list(projectId),
-  })
+  const members = useQuery(membersQuery(projectId))
   const memberName = (memberId: string) =>
     members.data?.items.find((member) => member.id === memberId)?.name ??
     `팀원 #${memberId}`

@@ -13,7 +13,6 @@ import {
   changesApi,
   documentsApi,
   meetingsApi,
-  membersApi,
   planningApi,
   tasksApi,
 } from '@/api/services'
@@ -42,6 +41,7 @@ import {
   toDocumentChanges,
 } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
+import { membersQuery } from '@/features/members/membersQuery'
 
 interface Props {
   projectId: string
@@ -197,10 +197,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'change-tasks'],
     queryFn: () => tasksApi.list(projectId, { limit: 100 }),
   })
-  const members = useQuery({
-    queryKey: ['projects', projectId, 'members'],
-    queryFn: () => membersApi.list(projectId, { limit: 100 }),
-  })
+  const members = useQuery(membersQuery(projectId))
   const approved = items.data?.items ?? []
   const taskList = tasks.data?.items ?? []
   const people = members.data?.items ?? []
