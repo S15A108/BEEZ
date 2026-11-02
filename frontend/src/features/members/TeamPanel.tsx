@@ -364,7 +364,8 @@ export function TeamPanel({
                               </DropdownMenuContent>
                             </DropdownMenu>
                           ) : (
-                            (isLeader || mine) && (
+                            // 역할·담당 영역은 서버가 팀장만 고치게 한다(MEM-A07, PR #72 재전수 SECOND-AMP-01).
+                            isLeader && (
                               <Button
                                 variant="outline"
                                 size="sm"

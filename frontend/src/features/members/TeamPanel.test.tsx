@@ -278,3 +278,26 @@ it('만료된 초대가 있는 이메일은 건너뛰지 않고 다시 초대한
     expect(create).toHaveBeenCalledWith('101', { email: 'late@beez.local' }),
   )
 })
+
+// PR #72 재전수 SECOND-AMP-01: 역할·담당 영역은 서버가 팀장만 고치게 해서, 팀원에게는 본인 것도 고치기 버튼이 없다.
+it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 않고 mock도 403으로 거절한다', async () => {
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TeamPanel projectId="101" isLeader={false} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect((await screen.findAllByText(/김동료/)).length).toBeGreaterThan(0)
+  expect(
+    screen.queryByRole('button', { name: '역할·담당 영역' }),
+  ).not.toBeInTheDocument()
+  const account = await authApi.me()
+  const me = (await membersApi.list('101')).items.find(
+    (item) => item.account_id === account.id,
+  )!
+  await expect(
+    membersApi.update('101', me.id, { domain: '프론트' }),
+  ).rejects.toMatchObject({ response: { status: 403 } })
+})

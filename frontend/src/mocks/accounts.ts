@@ -402,9 +402,9 @@ export async function accountRoutes(
     case 'MEM-A06':
       return { data: page(requireProject(context).members, query) }
     case 'MEM-A07': {
+      // 서버(ProjectMemberService.update)처럼 사람 팀장만 고친다. 본인 것도 팀원은 못 고친다(PR #72 재전수 SECOND-AMP-01).
+      requireLeader(context)
       const member = findById(requireProject(context).members, params.member_id)
-      if (member.account_id !== requireAccount(context).id)
-        requireLeader(context)
       // 서버(PR #50)처럼: 생략은 유지, ""는 지우기, 글은 앞뒤 공백을 빼고 50자, 색은 #RRGGBB를 대문자로.
       for (const field of ['domain', 'role_label'] as const) {
         if (typeof body[field] !== 'string') continue
