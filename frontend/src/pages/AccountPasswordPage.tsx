@@ -44,8 +44,6 @@ function AccountPassword() {
                 label: '새 비밀번호',
                 type: 'password',
                 required: true,
-                min: 8,
-                max: 128,
                 check: passwordRule,
               },
               {

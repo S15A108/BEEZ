@@ -18,7 +18,7 @@ test('회원가입은 별도 페이지이고 비밀번호 규칙을 칸 아래�
     .fill('onlyletters')
   await page.getByRole('button', { name: '가입하기' }).click()
   await expect(page.getByRole('alert')).toHaveText(
-    '영문, 숫자, 특수문자를 모두 넣어 8자 이상(128자 이하)으로 입력하세요. 숫자, 특수문자가 없어요.',
+    '영문, 숫자, 특수문자를 모두 넣어 8자 이상으로 입력하세요. 숫자, 특수문자가 없어요.',
   )
 })
 

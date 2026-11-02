@@ -13,9 +13,22 @@ import type { MockContext, MockReply } from './helpers'
 import { blankProject, nextId, now, passwordFingerprint } from './state'
 import { reassignTask } from './tasks'
 
+// 서버 PasswordPolicy와 같은 검사: 8자 이상, UTF-8 72바이트 이하, 영문과 숫자 포함(PR #72 mock/live 전수 대조 LIVE-AMP-02).
 async function password(value: unknown): Promise<string> {
   if (typeof value !== 'string' || value.length < 8)
-    fail(400, 'validation_failed', '비밀번호는 8자 이상 입력해 주세요.')
+    fail(400, 'validation_failed', 'password: 비밀번호는 8자 이상이어야 합니다')
+  if (new TextEncoder().encode(value).length > 72)
+    fail(
+      400,
+      'validation_failed',
+      'password: 비밀번호가 너무 깁니다 (UTF-8 72바이트 이하)',
+    )
+  if (!/[A-Za-z]/.test(value) || !/\d/.test(value))
+    fail(
+      400,
+      'validation_failed',
+      'password: 비밀번호는 영문과 숫자를 모두 포함해야 합니다',
+    )
   return passwordFingerprint(value)
 }
 

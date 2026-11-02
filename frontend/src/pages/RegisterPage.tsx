@@ -14,8 +14,6 @@ const passwordFields: FormField[] = [
     label: '비밀번호',
     type: 'password',
     required: true,
-    min: 8,
-    max: 128,
     check: passwordRule,
     hint: PASSWORD_HINT,
   },
