@@ -5,6 +5,7 @@ import {
   authApi,
   dashboardApi,
   documentsApi,
+  inboxApi,
   tasksApi,
   validationsApi,
 } from '../api/services'
@@ -241,4 +242,19 @@ it('기준 전에 승인한 문서를 다시 고치기 시작하면 문서 집�
     file_name: approved.file_name,
   })
   expect(await count()).toBe(1)
+})
+
+// PR #72 3차 조사 THIRD-TC-02: mock 알림 '모두 읽음'(all=true)은 페이지와 상관없이 그 프로젝트의 안 읽은 알림을 모두 읽음 처리한다.
+it('알림 all=true 읽음은 그 프로젝트의 안 읽은 알림 전체를 읽음 처리한다', async () => {
+  await login()
+  const unread = (projectId: string) =>
+    inboxApi.list({ project_id: projectId, unread: true, limit: 100 })
+  const before = await unread('101')
+  expect(before.items.length).toBeGreaterThan(0)
+  const { updated_count } = await inboxApi.markRead({
+    all: true,
+    project_id: '101',
+  })
+  expect(updated_count).toBe(before.items.length)
+  expect((await unread('101')).items).toHaveLength(0)
 })

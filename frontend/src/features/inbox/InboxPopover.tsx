@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell } from 'lucide-react'
 import { isMissingApi } from '@/api/error'
 import { inboxApi } from '@/api/services'
+import type { MarkReadInput } from './schemas'
 import type { Notification } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,7 +34,7 @@ export function InboxPopover({ projectId }: { projectId: string }) {
       inboxApi.list({ project_id: projectId, unread: true, limit: 20 }),
   })
   const read = useMutation({
-    mutationFn: (ids: string[]) => inboxApi.markRead({ ids }),
+    mutationFn: (input: MarkReadInput) => inboxApi.markRead(input),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ['notifications'] }),
   })
@@ -46,7 +47,7 @@ export function InboxPopover({ projectId }: { projectId: string }) {
   const active = unreadOnly ? unreadQuery : query
   const shown = unreadOnly ? unread : items
   const go = (item: Notification) => {
-    if (!item.read_at) read.mutate([item.id])
+    if (!item.read_at) read.mutate({ ids: [item.id] })
     setOpen(false)
     // 정할 것: 대상이 지워졌거나 권한이 없을 때의 안내
     openPane(targetPane[item.target_type], item.target_id)
@@ -75,7 +76,8 @@ export function InboxPopover({ projectId }: { projectId: string }) {
             variant="ghost"
             size="sm"
             disabled={!unread.length || read.isPending}
-            onClick={() => read.mutate(unread.map((item) => item.id))}
+            // 불러온 첫 페이지 ID만 보내지 않고 이 프로젝트의 안 읽은 알림 전체를 읽음 처리한다(PR #72 3차 조사 THIRD-TC-02).
+            onClick={() => read.mutate({ all: true, project_id: projectId })}
           >
             모두 읽음
           </Button>

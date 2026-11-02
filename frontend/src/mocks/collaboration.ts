@@ -64,12 +64,16 @@ export function collaborationRoutes(
     }
   if (id === 'NTF-A02') {
     const ids = new Set(strings(body.ids))
+    // all=true면 본인 알림 전체(project_id가 있으면 그 프로젝트)를 읽음 처리한다(명세 NTF-A02 수정안).
+    const all = body.all === true
     let updated = 0
     database.notifications
       .filter(
         (item) =>
           item.account_id === requireAccount(context).id &&
-          ids.has(item.id) &&
+          (all
+            ? !body.project_id || item.project_id === body.project_id
+            : ids.has(item.id)) &&
           !item.read_at,
       )
       .forEach((item) => {

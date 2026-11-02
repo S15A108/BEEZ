@@ -47,3 +47,30 @@ it('최신 20건 밖의 안 읽은 알림도 배지와 읽지 않음 탭에 보�
   expect(screen.getByText('알림 99')).toBeInTheDocument()
   expect(screen.queryByText('알림 1')).not.toBeInTheDocument()
 })
+
+// PR #72 3차 조사 THIRD-TC-02: '모두 읽음'은 불러온 첫 20건 ID만 보내지 않고 이 프로젝트의 안 읽은 알림 전체를 읽음 처리한다.
+it('모두 읽음은 첫 페이지 ID 대신 이 프로젝트 알림 전체 읽음을 보낸다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(inboxApi, 'list').mockImplementation(async () => ({
+    items: Array.from({ length: 20 }, (_, index) =>
+      notification(String(index + 1), false),
+    ),
+    has_more: true,
+    next_cursor: 'next',
+  }))
+  const markRead = vi
+    .spyOn(inboxApi, 'markRead')
+    .mockResolvedValue({ updated_count: 21 })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <InboxPopover projectId="10" />
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('button', { name: '알림 20+건' }))
+  await user.click(screen.getByRole('button', { name: '모두 읽음' }))
+  expect(markRead).toHaveBeenCalledWith({ all: true, project_id: '10' })
+})
