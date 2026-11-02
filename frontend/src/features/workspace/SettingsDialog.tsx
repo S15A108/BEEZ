@@ -31,13 +31,17 @@ export function SettingsDialog({
         ? focusId
         : 'team'
   const go = (next: Section) => openPane('settings', next)
+  // 토큰 발급처럼 요청이 처리 중이면 다른 메뉴로 옮기지 않는다. 옮기면 발급이 끝나도 한 번만 보이는 평문 토큰을
+  // 받을 화면이 없어 토큰을 잃는다(PR #72 재전수 SECOND-AMP-02). 창 닫기도 처리 중에는 막는다.
+  const busy = pending > 0
   const item = (value: Section, label: string, extra?: string) => (
     <button
       type="button"
       aria-current={section === value ? 'page' : undefined}
+      disabled={busy && section !== value}
       onClick={() => go(value)}
       className={cn(
-        'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted',
+        'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
         section === value && 'bg-muted font-semibold',
         value === 'remove' && 'text-destructive',
       )}
@@ -63,6 +67,14 @@ export function SettingsDialog({
           className="flex flex-col gap-5 border-r bg-muted/30 px-3 py-6"
         >
           <DialogTitle className="px-3 text-xl font-bold">설정</DialogTitle>
+          {busy && (
+            <p
+              role="status"
+              className="mx-3 rounded-lg bg-primary/10 px-3 py-2 text-xs leading-5 text-[#6e5200]"
+            >
+              처리 중이에요. 끝나면 다른 메뉴로 옮길 수 있어요.
+            </p>
+          )}
           <div className="grid gap-0.5">
             <p className="mb-1 flex justify-between px-3 text-[11px] font-bold text-muted-foreground">
               프로젝트 설정
@@ -88,7 +100,9 @@ export function SettingsDialog({
             </p>
             <Link
               to="/account"
-              className="flex h-9 items-center justify-between rounded-lg px-3 text-sm font-medium hover:bg-muted"
+              aria-disabled={busy || undefined}
+              onClick={(event) => busy && event.preventDefault()}
+              className="flex h-9 items-center justify-between rounded-lg px-3 text-sm font-medium hover:bg-muted aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
               회원 설정
               <span className="text-[11px] text-muted-foreground">↗</span>
