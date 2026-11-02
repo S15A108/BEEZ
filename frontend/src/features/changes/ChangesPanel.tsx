@@ -17,6 +17,7 @@ import {
   tasksApi,
 } from '@/api/services'
 import type { ChangeProposal, Comparison } from '@/api/contracts/common'
+import { getApiErrorCode } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
@@ -25,6 +26,7 @@ import { FormDialog } from '@/components/FormDialog'
 import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
@@ -268,6 +270,43 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     documentOptions.find((item) => item.id === documentId)?.versionId
   const perform = (operation: () => Promise<unknown>, message: string) =>
     action.run(operation, message).catch(() => undefined)
+  // 영향 분석이 완료·최신이 아니면 서버가 409 impact_not_confirmed 로 막는다(S15P31A108-241). 그때 사유 입력을 열고,
+  // 사유를 넣어 다시 보낸다. 같은 키로 입력만 바꾸면 idempotency_conflict 라 매 호출이 새 Idempotency-Key 를 쓴다.
+  // 분석이 진행 중이면(analysis_running) 사유로도 우회할 수 없어 끝난 뒤 다시 승인하라고 알린다.
+  const [reasonRequired, setReasonRequired] = useState(false)
+  const [approveReason, setApproveReason] = useState('')
+  const [approveNotice, setApproveNotice] = useState('')
+  const openApprove = () => {
+    setReasonRequired(false)
+    setApproveReason('')
+    setApproveNotice('')
+    setMode({ kind: 'approve' })
+  }
+  const approveNow = async (proposal: ChangeProposal, nextVersion: number) => {
+    setApproveNotice('')
+    const reason = reasonRequired ? approveReason.trim() : ''
+    try {
+      await action.run(
+        () =>
+          changesApi.approve(projectId, proposal.id, {
+            expected_base_baseline_id: proposal.base_baseline_id,
+            expected_revision: proposal.revision,
+            expected_snapshot_hash: proposal.snapshot_hash,
+            ...(reason ? { impact_override_reason: reason } : {}),
+          }),
+        `기준 v${nextVersion} 발행을 마쳤어요.`,
+      )
+      setMode({ kind: 'detail' })
+    } catch (cause) {
+      const code = getApiErrorCode(cause)
+      if (code === 'impact_not_confirmed') setReasonRequired(true)
+      else if (code === 'analysis_running')
+        setApproveNotice(
+          '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
+        )
+      else setMode({ kind: 'detail' })
+    }
+  }
   const submitForm = async (
     values: ProposalFormValues,
     source?: ChangeProposal,
@@ -693,6 +732,38 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           ? ` 확인된 관련 작업: ${impact.data.explicit.map((entry) => taskKey(entry.task_id)).join(', ')}`
                           : ''}
                       </p>
+                      {approveNotice && (
+                        <p
+                          role="alert"
+                          className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                        >
+                          {approveNotice}
+                        </p>
+                      )}
+                      {reasonRequired && (
+                        <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                          <p className="text-sm leading-6">
+                            이 제안의 영향 분석이 끝나지 않았거나(실패·근거
+                            부족·아직 안 돌림·제안이 바뀜) 믿을 수 없는
+                            상태예요. 영향 범위를 직접 확인했다면 사유를 남기고
+                            승인할 수 있어요. 사유는 승인 이력에 남아요.
+                          </p>
+                          <label
+                            htmlFor="impact-override-reason"
+                            className="text-sm font-semibold"
+                          >
+                            영향 분석 없이 승인하는 사유
+                          </label>
+                          <Textarea
+                            id="impact-override-reason"
+                            maxLength={1000}
+                            value={approveReason}
+                            onChange={(event) =>
+                              setApproveReason(event.target.value)
+                            }
+                          />
+                        </div>
+                      )}
                       <div className="flex justify-end gap-2">
                         <Button
                           variant="outline"
@@ -701,21 +772,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           취소
                         </Button>
                         <Button
-                          disabled={action.busy}
-                          onClick={() =>
-                            void perform(
-                              () =>
-                                changesApi.approve(projectId, current.id, {
-                                  expected_base_baseline_id:
-                                    current.base_baseline_id,
-                                  expected_revision: current.revision,
-                                  expected_snapshot_hash: current.snapshot_hash,
-                                }),
-                              `기준 v${nextVersion} 발행을 마쳤어요.`,
-                            ).then(() => setMode({ kind: 'detail' }))
+                          disabled={
+                            action.busy ||
+                            (reasonRequired && !approveReason.trim())
                           }
+                          onClick={() => void approveNow(current, nextVersion)}
                         >
-                          승인하고 기준 v{nextVersion} 발행
+                          {reasonRequired
+                            ? `사유를 남기고 승인하고 기준 v${nextVersion} 발행`
+                            : `승인하고 기준 v${nextVersion} 발행`}
                         </Button>
                       </div>
                     </div>
@@ -1397,7 +1462,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         </Button>
                         <Button
                           disabled={action.busy || current.requires_refresh}
-                          onClick={() => setMode({ kind: 'approve' })}
+                          onClick={openApprove}
                         >
                           승인하고 기준 v{nextVersion} 발행
                         </Button>

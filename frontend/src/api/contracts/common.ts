@@ -499,6 +499,7 @@ export const approvalSchema = z.object({
   approved_by: idSchema,
   approved_at: timeSchema,
   baseline_id: idSchema,
+  impact_override_reason: z.string().optional(),
 })
 export type Approval = z.infer<typeof approvalSchema>
 

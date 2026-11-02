@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { authApi, changesApi, documentsApi } from '@/api/services'
@@ -469,5 +470,87 @@ it('팀장도 본인이 올린 제안을 거둔다', async () => {
   )
   expect((await changesApi.get('101', created.id)).proposal.status).toBe(
     'WITHDRAWN',
+  )
+})
+
+// S15P31A108-241: 영향 분석이 완료·최신이 아니면 서버가 409 impact_not_confirmed 로 승인을 막는다.
+// 팀장은 사유를 남겨 다시 승인하고, 사유는 impact_override_reason 으로 나간다.
+function conflict(code: string) {
+  return new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+    data: { error: { code, message: code } },
+  })
+}
+
+it('영향 분석이 확인되지 않아 막히면 사유 입력을 열고 사유를 담아 다시 승인한다', async () => {
+  const user = userEvent.setup()
+  const detail = await changesApi.get('101', '71')
+  const approve = vi
+    .spyOn(changesApi, 'approve')
+    .mockRejectedValueOnce(conflict('impact_not_confirmed'))
+    .mockResolvedValueOnce({
+      proposal: detail.proposal,
+      baseline: await documentsApi.baseline('101'),
+    })
+  renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(approve.mock.calls[0][2]).not.toHaveProperty('impact_override_reason')
+  const reason = await screen.findByLabelText('영향 분석 없이 승인하는 사유')
+  const retry = screen.getByRole('button', {
+    name: '사유를 남기고 승인하고 기준 v2 발행',
+  })
+  expect(retry).toBeDisabled()
+  await user.type(reason, '  분석 서버 장애로 직접 확인함  ')
+  await user.click(retry)
+  await waitFor(() => expect(approve).toHaveBeenCalledTimes(2))
+  expect(approve.mock.calls[1][2]).toMatchObject({
+    impact_override_reason: '분석 서버 장애로 직접 확인함',
+  })
+})
+
+it('영향 분석이 진행 중이면 사유 입력 없이 끝난 뒤 다시 승인하라고 안내한다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(changesApi, 'approve').mockRejectedValue(
+    conflict('analysis_running'),
+  )
+  renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(
+    await screen.findByText(/영향 분석이 진행 중이에요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByLabelText('영향 분석 없이 승인하는 사유'),
+  ).not.toBeInTheDocument()
+})
+
+it('승인 요청의 사유는 승인 이력에 남고 공백뿐인 사유는 요청 전에 거절한다', async () => {
+  const detail = (await changesApi.get('101', '71')).proposal
+  const base = {
+    expected_base_baseline_id: detail.base_baseline_id,
+    expected_revision: detail.revision,
+    expected_snapshot_hash: detail.snapshot_hash,
+  }
+  expect(() =>
+    changesApi.approve('101', '71', { ...base, impact_override_reason: ' ' }),
+  ).toThrow()
+  await changesApi.approve('101', '71', {
+    ...base,
+    impact_override_reason: '직접 확인함',
+  })
+  expect((await changesApi.approval('101', '71')).impact_override_reason).toBe(
+    '직접 확인함',
   )
 })

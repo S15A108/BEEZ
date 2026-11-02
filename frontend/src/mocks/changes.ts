@@ -121,6 +121,15 @@ function expectSubmission(context: MockContext, proposal: ChangeProposal) {
 
 function publish(context: MockContext, proposal: ChangeProposal): MockReply {
   requireLeader(context)
+  // 서버처럼 사유는 1~1000자(공백만 불가). 목 서버는 영향 분석을 늘 완료·최신으로 보므로 게이트로 막지 않고 보낸 사유만 이력에 남긴다.
+  const overrideReason = context.body.impact_override_reason
+  if (
+    overrideReason !== undefined &&
+    (typeof overrideReason !== 'string' ||
+      !overrideReason.trim() ||
+      overrideReason.length > 1000)
+  )
+    fail(400, 'validation_failed', '사유는 1~1000자여야 해요.')
   const project = requireProject(context)
   const current =
     project.baselines.at(-1) ??
@@ -241,6 +250,9 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
     approved_by: requireAccount(context).id,
     approved_at: now(),
     baseline_id: baseline.id,
+    ...(typeof overrideReason === 'string'
+      ? { impact_override_reason: overrideReason.trim() }
+      : {}),
   })
   for (const task of project.tasks) {
     if (['COMPLETED', 'CANCELLED'].includes(task.status)) continue

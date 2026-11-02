@@ -104,6 +104,8 @@ export type ReviewResponse = z.infer<typeof reviewResponseSchema>
 export const approveInputSchema = z.object({
   expected_base_baseline_id: common.idSchema,
   ...expectedSubmission,
+  // 영향 분석이 완료·최신이 아닐 때(CHG-A09 409 impact_not_confirmed) 팀장이 남기는 사유. 1~1000자.
+  impact_override_reason: z.string().trim().min(1).max(1000).optional(),
 })
 export type ApproveInput = z.infer<typeof approveInputSchema>
 
@@ -135,6 +137,7 @@ export const approvalResponseSchema = z.object({
   approved_by: common.idSchema,
   approved_at: common.timeSchema,
   baseline_id: common.idSchema,
+  impact_override_reason: z.string().optional(),
 })
 export type ApprovalResponse = z.infer<typeof approvalResponseSchema>
 
