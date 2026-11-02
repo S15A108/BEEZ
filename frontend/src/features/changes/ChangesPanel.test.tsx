@@ -354,3 +354,52 @@ it('철회한 제안에는 의견 폼 대신 끝난 제안이라는 안내를 �
     changesApi.comment('101', '71', { body: '늦은 의견', kind: 'COMMENT' }),
   ).rejects.toMatchObject({ response: { status: 409 } })
 })
+
+// PR #72 3차 조사 THIRD-DOC-03: 철회된 제안의 초안이 v2를 차지했으면 새 제안의 초안은 v3이다. 승인본+1로 짐작하지 않고
+// 제안이 만든 문서 버전의 번호를 보이며, 모르면 '새 버전'이라고만 한다.
+it('승인 확인창은 문서 새 버전 번호를 제안이 만든 버전에서 읽고, 모르면 새 버전이라고 한다', async () => {
+  const user = userEvent.setup()
+  const approved = (await documentsApi.list('101', { limit: 100 })).items
+    .filter((item) => item.approved_version)
+    .slice(0, 2)
+  expect(approved).toHaveLength(2)
+  const detail = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'get').mockResolvedValue({
+    ...detail,
+    proposal: {
+      ...detail.proposal,
+      documents: approved.map((item, index) => ({
+        document_id: item.id,
+        base_document_version_id: item.approved_version!.id,
+        proposed_document_version_id: `900${index}`,
+        after_content: '고친 글',
+        content_hash: `sha256:${'0'.repeat(64)}`,
+      })),
+    },
+  })
+  vi.spyOn(documentsApi, 'versions').mockImplementation(
+    async (_project, documentId) =>
+      ({
+        items:
+          documentId === approved[0].id
+            ? [{ id: '9000', version_no: 3 }]
+            : [{ id: '8999', version_no: 2 }],
+        has_more: false,
+      }) as never,
+  )
+  renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  const [first, second] = approved
+  expect(
+    await screen.findByText(
+      `${first.title} v${first.approved_version!.version_no} → v3`,
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(
+      `${second.title} v${second.approved_version!.version_no} → 새 버전`,
+    ),
+  ).toBeInTheDocument()
+})

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import {
   ArrowLeft,
   Check,
@@ -128,6 +128,31 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryFn: () => changesApi.get(projectId, selectedId!),
     enabled: !!selectedId,
   })
+  // 승인 확인창의 문서 새 버전 번호는 제안이 만든 문서 버전(proposed_document_version_id)을 버전 이력에서 찾는다.
+  // 철회된 제안의 초안도 번호를 차지하므로 승인본+1로 짐작하지 않는다(PR #72 3차 조사 THIRD-DOC-03).
+  const proposedDocuments =
+    mode.kind === 'approve' ? (detail.data?.proposal.documents ?? []) : []
+  const documentVersions = useQueries({
+    queries: proposedDocuments.map((change) => ({
+      queryKey: [
+        'projects',
+        projectId,
+        'document-versions',
+        change.document_id,
+      ],
+      queryFn: () =>
+        readAllPages((cursor) =>
+          documentsApi.versions(projectId, change.document_id, {
+            cursor,
+            limit: 100,
+          }),
+        ),
+    })),
+  })
+  const proposedVersionNo = (versionId: string) =>
+    documentVersions
+      .flatMap((query) => query.data?.items ?? [])
+      .find((version) => version.id === versionId)?.version_no
   const impact = useQuery({
     queryKey: ['projects', projectId, 'impact', selectedId],
     queryFn: () => changesApi.impact(projectId, selectedId!),
@@ -634,14 +659,18 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               const document = documentOptions.find(
                                 (item) => item.id === change.document_id,
                               )
+                              const next = proposedVersionNo(
+                                change.proposed_document_version_id,
+                              )
+                              const after = next ? `v${next}` : '새 버전'
                               return (
                                 <li
                                   key={change.document_id}
                                   className="rounded-lg border px-3 py-2"
                                 >
                                   {document
-                                    ? `${document.title} v${document.versionNo} → v${document.versionNo + 1}`
-                                    : '문서 → 새 버전'}
+                                    ? `${document.title} v${document.versionNo} → ${after}`
+                                    : `문서 → ${after}`}
                                 </li>
                               )
                             })}
