@@ -5,6 +5,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import { documentsApi } from '@/api/services/documents'
 import { planningApi } from '@/api/services/planning'
+import { authApi } from '@/api/services'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { DocumentVersion } from '@/api/contracts/common'
 import { DocumentsPanel } from './DocumentsPanel'
@@ -386,4 +387,42 @@ it('검색 결과가 더 있으면 더 보기로 다음 페이지를 불러온�
     mode: 'KEYWORD',
     cursor: 'c2',
   })
+})
+
+// PR #72 4차 조사 FOURTH-DOC-01: 서버는 문서를 등록한 사람만 분류를 고치게 한다. 등록한 사람에게만 버튼을 보이고,
+// 팀장 검토를 요청한 동안(SUBMITTED)은 끈다.
+it('분류 수정은 문서를 등록한 사람에게만 보이고 검토 요청 중에는 꺼진다', async () => {
+  useWorkspaceStore.setState({ focusId: '2' })
+  vi.spyOn(authApi, 'me').mockResolvedValue({
+    id: '11',
+    email: 'owner@beez.local',
+    name: '등록한 사람',
+    created_at: '2026-10-23T00:00:00Z',
+  })
+  const copy = (owner: string, status: 'EDITING' | 'SUBMITTED') => ({
+    document_id: '2',
+    owner_account_id: owner,
+    revision: 1,
+    status,
+    content: '',
+    file_name: 'requirements.md',
+    submissions: [],
+  })
+  vi.mocked(documentsApi.workingCopy).mockResolvedValue(copy('12', 'EDITING'))
+  const first = mount()
+  await screen.findByRole('button', { name: /원본 다운로드/ })
+  await waitFor(() => expect(documentsApi.workingCopy).toHaveBeenCalled())
+  expect(
+    screen.queryByRole('button', { name: '분류 수정' }),
+  ).not.toBeInTheDocument()
+  first.unmount()
+  vi.mocked(documentsApi.workingCopy).mockResolvedValue(copy('11', 'EDITING'))
+  const second = mount()
+  expect(await screen.findByRole('button', { name: '분류 수정' })).toBeEnabled()
+  second.unmount()
+  vi.mocked(documentsApi.workingCopy).mockResolvedValue(copy('11', 'SUBMITTED'))
+  mount()
+  expect(
+    await screen.findByRole('button', { name: '분류 수정' }),
+  ).toBeDisabled()
 })

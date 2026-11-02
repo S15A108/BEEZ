@@ -258,3 +258,23 @@ it('알림 all=true 읽음은 그 프로젝트의 안 읽은 알림 전체를 �
   expect(updated_count).toBe(before.items.length)
   expect((await unread('101')).items).toHaveLength(0)
 })
+
+// PR #72 4차 조사 FOURTH-DOC-01: mock 문서 분류(DOC-A07)도 서버처럼 문서를 등록한 사람만 고친다.
+it('문서 분류는 등록한 사람만 고치고, 다른 팀원은 403 document_author_required', async () => {
+  await login()
+  const { items } = await documentsApi.list('101', { limit: 100 })
+  await login('member@beez.local')
+  await expect(
+    documentsApi.update('101', items[0].id, { domain: '프론트' }),
+  ).rejects.toMatchObject({
+    response: {
+      status: 403,
+      data: { error: { code: 'document_author_required' } },
+    },
+  })
+  await login()
+  expect(
+    (await documentsApi.update('101', items[0].id, { domain: '프론트' }))
+      .domain,
+  ).toBe('프론트')
+})

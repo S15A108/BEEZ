@@ -499,7 +499,8 @@ export const endpointRegistry = [
     title: '문서 분류 수정',
     method: 'PATCH',
     path: '/projects/{id}/documents/{document_id}',
-    auth: 'LEADER',
+    // 명세는 LEADER지만 서버(requireAuthor)는 문서를 등록한 사람만 허용한다(PR #72 4차 조사 FOURTH-DOC-01, 실제 HTTP 확인).
+    auth: 'MEMBER (문서 등록자)',
     domain: 'documents',
     operation: 'update',
     multipart: false,

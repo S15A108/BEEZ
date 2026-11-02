@@ -287,6 +287,22 @@ export async function documentRoutes(
     }
     case 'DOC-A07': {
       const document = findById(project.documents, params.document_id)
+      // 서버 requireAuthor: 문서를 등록한 사람만 고치고, 팀장 검토를 요청한 동안은 409(PR #72 4차 조사 FOURTH-DOC-01).
+      const copy = project.working_copies.find(
+        (item) => item.document_id === document.id,
+      )
+      if (copy?.owner_account_id !== requireAccount(context).id)
+        fail(
+          403,
+          'document_author_required',
+          '등록한 담당자만 문서를 수정할 수 있습니다.',
+        )
+      if (copy.status === 'SUBMITTED')
+        fail(
+          409,
+          'submission_locked',
+          '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
+        )
       document.domain = typeof body.domain === 'string' ? body.domain : ''
       return { data: document }
     }

@@ -35,6 +35,7 @@ import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useProjectStart } from '@/features/projects/useProjectStart'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
+import { useSession } from '@/features/auth/useSession'
 import type { DocumentVersion } from '@/api/contracts/common'
 import { DocumentReview } from './DocumentReview'
 import { reviewStage } from './reviewStage'
@@ -1017,6 +1018,17 @@ function DocumentDetail({
   const [picked, setVersionNo] = useState<number>()
   const [tab, setTab] = useState<'content' | 'history'>('content')
   const [classification, setClassification] = useState(false)
+  // 분류 수정(DOC-A07)은 서버가 문서를 등록한 사람만 허용하고, 팀장 검토를 요청한 동안(SUBMITTED)은 409 submission_locked다.
+  // 작성 건의 owner_account_id로 등록한 사람에게만 버튼을 보인다(PR #72 4차 조사 FOURTH-DOC-01).
+  const session = useSession()
+  const copy = useQuery({
+    queryKey: ['projects', projectId, 'working-copy', documentId],
+    queryFn: () => documentsApi.workingCopy(projectId, documentId),
+    retry: false,
+  })
+  const author =
+    !!session.data && copy.data?.owner_account_id === session.data.id
+  const locked = copy.data?.status === 'SUBMITTED'
   // 버전 이력은 마지막 페이지까지 읽어 v1까지 고르고 내려받게 한다(PR #72 재전수 ROUND2-DOC-03).
   const versions = useQuery({
     queryKey: ['projects', projectId, 'document-versions', documentId],
@@ -1090,13 +1102,21 @@ function DocumentDetail({
                   <Download />
                   원본 다운로드
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setClassification(true)}
-                >
-                  분류 수정
-                </Button>
+                {author && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={locked}
+                    title={
+                      locked
+                        ? '팀장 검토를 요청한 뒤에는 고칠 수 없어요.'
+                        : undefined
+                    }
+                    onClick={() => setClassification(true)}
+                  >
+                    분류 수정
+                  </Button>
+                )}
                 {started && <Button onClick={onEdit}>수정 제안하기</Button>}
               </div>
             </div>
