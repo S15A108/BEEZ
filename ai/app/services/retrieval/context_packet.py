@@ -77,6 +77,16 @@ def check_packet_metadata(snapshot: SelectionInput, metadata: PacketMetadata) ->
         raise ContextPacketError(
             "validation_failed", "design item metadata does not match the snapshot"
         )
+    # All candidates of these kinds can later become constraints, so incomplete
+    # metadata must fail before the selector incurs any embedding/model calls.
+    if any(
+        item.kind in CONSTRAINT_KINDS
+        and (item.description is None or not item.description.strip())
+        for item in metadata.design_items
+    ):
+        raise ContextPacketError(
+            "validation_failed", "policy or constraint description is required"
+        )
     evidence = {item.evidence_id: item for item in metadata.evidence}
     candidates = {item.evidence_id: item for item in snapshot.evidence}
     if set(evidence) != set(candidates) or any(

@@ -2,6 +2,7 @@
   "request": "로그인 화면을 구현해 주세요.",
   "project_id": "101",
   "task_id": "501",
+  "expected_baseline_id": "401",
   "design_item_version_ids": [
     "311",
     "312",

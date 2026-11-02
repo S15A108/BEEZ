@@ -191,6 +191,65 @@ def test_mismatched_metadata_is_rejected_before_selection(api, defect):
     assert not selector.calls and "v9" not in response.text
 
 
+@pytest.mark.parametrize("kind", ["POLICY", "CONSTRAINT"])
+@pytest.mark.parametrize("description", [None, "", " \t\n", "omitted"])
+def test_policy_description_is_rejected_before_provider_call(api, kind, description):
+    client, selector = api
+    body = request_body()
+    body["metadata"]["design_items"][0]["kind"] = kind
+    if description == "omitted":
+        del body["metadata"]["design_items"][0]["description"]
+    else:
+        body["metadata"]["design_items"][0]["description"] = description
+    response = client.post(
+        "/v1/development-context-selections", json=body, headers=HEADERS
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert "usage" not in response.json()
+    assert selector.calls == []
+
+
+def test_unselected_policy_without_description_fails_before_selection(api):
+    client, selector = api
+    body = request_body()
+    other = dict(body["items"][0], design_item_id="i2", design_item_version_id="v2")
+    body["items"].append(other)
+    other_meta = dict(
+        body["metadata"]["design_items"][0],
+        design_item_id="i2",
+        design_item_version_id="v2",
+        kind="POLICY",
+        description=None,
+    )
+    body["metadata"]["design_items"].append(other_meta)
+    response = client.post(
+        "/v1/development-context-selections", json=body, headers=HEADERS
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert "usage" not in response.json()
+    assert selector.calls == []
+
+
+@pytest.mark.parametrize("kind", ["POLICY", "CONSTRAINT"])
+def test_policy_description_is_returned_as_a_constraint(api, kind):
+    client, selector = api
+    body = request_body()
+    body["metadata"]["design_items"][0]["kind"] = kind
+    body["metadata"]["design_items"][0]["description"] = "  등록 제한  "
+    response = client.post(
+        "/v1/development-context-selections", json=body, headers=HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["packet"]["constraints"] == ["등록 제한"]
+    packet = DevelopmentContextPacket.model_validate_json(
+        json.dumps(response.json()["packet"], ensure_ascii=False)
+    )
+    assert packet.to_save_packet_args()["expected_baseline_id"] == body["baseline_id"]
+    assert len(selector.calls) == 1
+
+
 @pytest.mark.parametrize("has_plan_refs", [False, True])
 @pytest.mark.parametrize("task_field", ["omitted", "null"])
 def test_task_without_metadata_returns_no_related_tasks(api, has_plan_refs, task_field):

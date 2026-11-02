@@ -47,6 +47,9 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     @Autowired
     ContextPacketService packets;
 
+    @Autowired
+    tools.jackson.databind.ObjectMapper json;
+
     TaskApiSupport api;
     Long projectId;
     Long member;
@@ -78,9 +81,18 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
     // ---- MCP-01 패킷 저장 ----
 
+    private String currentBaseline() {
+        return String.valueOf(api.jdbc.sql("select current_baseline_id from project where id = :p")
+                .param("p", projectId).query(Long.class).single());
+    }
+
     private SavePacketArgs packetArgs(List<String> versionIds) {
-        return new SavePacketArgs("로그인 화면 구현", null, null, versionIds, List.of("본문 토큰 유지"), List.of("만료 정책 미정"),
-                List.of(), List.of());
+        return packetArgs(currentBaseline(), versionIds);
+    }
+
+    private SavePacketArgs packetArgs(String expectedBaseline, List<String> versionIds) {
+        return new SavePacketArgs("로그인 화면 구현", null, null, expectedBaseline, versionIds,
+                List.of("본문 토큰 유지"), List.of("만료 정책 미정"), List.of(), List.of());
     }
 
     @Test
@@ -119,11 +131,63 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
         // 구성 결과가 생긴 뒤의 저장 규칙은 패킷 저장 서비스에서 확인한다
         // project_id 인수가 토큰 프로젝트와 다름
         assertDenied(() -> packets.save(memberAgent, projectId, new SavePacketArgs("x", String.valueOf(projectId + 99),
-                null, List.of(), List.of(), List.of(), List.of(), List.of())), HttpStatus.NOT_FOUND, "not_found");
-        // 기준 설계가 없는 프로젝트
+                null, currentBaseline(), List.of(), List.of(), List.of(), List.of(), List.of())), HttpStatus.NOT_FOUND, "not_found");
+        // 기준 설계가 없는 프로젝트. 요청에는 선택 당시의 기준 ID가 있다.
+        SavePacketArgs beforeBaselineRemoved = packetArgs(List.of());
         api.jdbc.sql("update project set current_baseline_id = null where id = :p").param("p", projectId).update();
-        assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(List.of())),
+        assertDenied(() -> packets.save(memberAgent, projectId, beforeBaselineRemoved),
                 HttpStatus.NOT_FOUND, "baseline_not_published");
+    }
+
+    @Test
+    void savePacket_acceptsSnakeCaseExpectedBaselineAndRejectsOmission() {
+        String body = """
+                {"request":"x","project_id":null,"task_id":null,"expected_baseline_id":"%s",
+                 "design_item_version_ids":[],"constraints":[],"unresolved":[],"related_tasks":[],"sources":[]}
+                """.formatted(currentBaseline());
+        SavePacketArgs decoded = json.readValue(body, SavePacketArgs.class);
+        assertThat(decoded.expectedBaselineId()).isEqualTo(currentBaseline());
+        assertThat(packets.save(memberAgent, projectId, decoded).baselineId()).isEqualTo(currentBaseline());
+        String withoutBaseline = """
+                {"request":"x","project_id":null,"task_id":null,"design_item_version_ids":[],
+                 "constraints":[],"unresolved":[],"related_tasks":[],"sources":[]}
+                """;
+        SavePacketArgs missing = json.readValue(withoutBaseline, SavePacketArgs.class);
+        assertDenied(() -> packets.save(memberAgent, projectId, missing),
+                HttpStatus.BAD_REQUEST, "validation_failed");
+        assertThat(count("select count(*) from dev_context_packet")).isEqualTo(1);
+    }
+
+    @Test
+    void savePacket_requiresAValidExpectedBaseline() {
+        for (String expected : new String[] {null, "", " ", "not-an-id", "0"}) {
+            assertDenied(() -> packets.save(memberAgent, projectId, packetArgs(expected, List.of())),
+                    HttpStatus.BAD_REQUEST, "validation_failed");
+        }
+        assertThat(count("select count(*) from dev_context_packet")).isZero();
+    }
+
+    @Test
+    void savePacket_rejectsOldSelectionEvenWhenAllSelectedVersionsRemainInNewBaseline() {
+        String expected = currentBaseline();
+        Long api01 = api.currentVersionId("API-01");
+        Long api02 = api.currentVersionId("API-02");
+        SavePacketArgs selected = packetArgs(expected, List.of(String.valueOf(api01)));
+        api.jdbc.sql("insert into design_item (project_id, key, kind) values (:p, 'POL-01', 'POLICY')")
+                .param("p", projectId).update();
+        Long newPolicy = api.newVersion("POL-01", 1);
+        Long nextBaseline = api.publish(2, Map.of("API-01", api01, "API-02", api02, "POL-01", newPolicy));
+
+        // 이전 선택은 새 기준에도 속하지만 추가된 정책을 반영하지 않았다.
+        assertDenied(() -> packets.save(memberAgent, projectId, selected),
+                HttpStatus.CONFLICT, "baseline_conflict");
+        assertThat(count("select count(*) from dev_context_packet")).isZero();
+        assertThat(count("select count(*) from dev_context_packet_ref")).isZero();
+        // 새 기준에서 다시 선택한 결과만 저장할 수 있다.
+        ContextPacketResponse saved = packets.save(memberAgent, projectId,
+                packetArgs(String.valueOf(nextBaseline), List.of(String.valueOf(api01), String.valueOf(newPolicy))));
+        assertThat(saved.baselineId()).isEqualTo(String.valueOf(nextBaseline));
+        assertThat(saved.designItems()).hasSize(2);
     }
 
     @Test
@@ -160,8 +224,8 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
 
     @Test
     void packetHash_keepsListAndStringBoundaries() {
-        SavePacketArgs joined = new SavePacketArgs("같은 요청", null, null, List.of(), List.of("a, b"), List.of(), List.of(), List.of());
-        SavePacketArgs split = new SavePacketArgs("같은 요청", null, null, List.of(), List.of("a", "b"), List.of(), List.of(), List.of());
+        SavePacketArgs joined = new SavePacketArgs("같은 요청", null, null, currentBaseline(), List.of(), List.of("a, b"), List.of(), List.of(), List.of());
+        SavePacketArgs split = new SavePacketArgs("같은 요청", null, null, currentBaseline(), List.of(), List.of("a", "b"), List.of(), List.of(), List.of());
         String h1 = packets.save(memberAgent, projectId, joined).contentHash();
         String h2 = packets.save(memberAgent, projectId, split).contentHash();
         assertThat(h1).hasSize(64).isNotEqualTo(h2);
@@ -183,6 +247,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
                     .param("b", v2).param("p", projectId).param("i", api.designItemId(e.getKey())).param("v", e.getValue()).update();
         }
 
+        SavePacketArgs selectedBeforePublish = packetArgs(List.of(String.valueOf(v1)));
         try (java.sql.Connection publish = dataSource.getConnection()) {
             publish.setAutoCommit(false);
             // 발행처럼 프로젝트 행을 FOR UPDATE 로 잡는다
@@ -192,7 +257,7 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
             }
             // 발행 도중에 v1 으로 패킷 저장을 시도
             java.util.concurrent.CompletableFuture<ContextPacketResponse> save = java.util.concurrent.CompletableFuture.supplyAsync(
-                    () -> packets.save(memberAgent, projectId, packetArgs(List.of(String.valueOf(v1)))));
+                    () -> packets.save(memberAgent, projectId, selectedBeforePublish));
             Thread.sleep(500);
             assertThat(save).isNotDone();   // 발행이 끝날 때까지 기다린다
 
@@ -208,10 +273,14 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
             }
             publish.commit();
 
-            // 발행 뒤의 기준(v2)으로 판단한다: v1 은 이제 현재 기준에 없으므로 400. 옛 기준 ID + SUPERSEDED 패킷이 생기지 않는다
+            // 현재 기준과 선택 당시 기준이 다르면 옛 선택을 저장하지 않는다.
             assertThatThrownBy(() -> save.get(10, java.util.concurrent.TimeUnit.SECONDS))
                     .hasCauseInstanceOf(ApiException.class)
-                    .satisfies(e -> assertThat(((ApiException) e.getCause()).getCode()).isEqualTo("validation_failed"));
+                    .satisfies(e -> {
+                        ApiException cause = (ApiException) e.getCause();
+                        assertThat(cause.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(cause.getCode()).isEqualTo("baseline_conflict");
+                    });
         }
         assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
@@ -219,29 +288,29 @@ class ContextMcpServiceIntegrationTests extends IntegrationTestSupport {
     @Test
     void savePacket_relatedTasksAndSourcesMustBelongToProject() {
         // 없는 작업 → 404
-        SavePacketArgs foreignTask = new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(),
+        SavePacketArgs foreignTask = new SavePacketArgs("x", null, null, currentBaseline(), List.of(), List.of(), List.of(),
                 List.of(new RelatedTaskDto("999999", "1", "READY")), List.of());
         assertDenied(() -> packets.save(memberAgent, projectId, foreignTask), HttpStatus.NOT_FOUND, "not_found");
         // 명세에 없는 상태 → 400
         Long taskId = api.jdbc.sql("insert into task (project_id, key, title, status) values (:p, 'T-R', 'r', 'DRAFT') returning id")
                 .param("p", projectId).query(Long.class).single();
-        SavePacketArgs badStatus = new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(),
+        SavePacketArgs badStatus = new SavePacketArgs("x", null, null, currentBaseline(), List.of(), List.of(), List.of(),
                 List.of(new RelatedTaskDto(String.valueOf(taskId), "1", "FOO")), List.of());
         assertDenied(() -> packets.save(memberAgent, projectId, badStatus), HttpStatus.BAD_REQUEST, "validation_failed");
         // 이 프로젝트에 없는 문서 버전 → 400
-        SavePacketArgs foreignSource = new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(), List.of(),
+        SavePacketArgs foreignSource = new SavePacketArgs("x", null, null, currentBaseline(), List.of(), List.of(), List.of(), List.of(),
                 List.of(new SourceDto("999999", "999999", 1, "1장")));
         assertDenied(() -> packets.save(memberAgent, projectId, foreignSource), HttpStatus.BAD_REQUEST, "validation_failed");
         assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
 
     private SavePacketArgs withRelated(Long taskId, Long planRevisionId, String status) {
-        return new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(),
+        return new SavePacketArgs("x", null, null, currentBaseline(), List.of(), List.of(), List.of(),
                 List.of(new RelatedTaskDto(String.valueOf(taskId), String.valueOf(planRevisionId), status)), List.of());
     }
 
     private SavePacketArgs withSource(Long documentId, Long documentVersionId, int versionNo) {
-        return new SavePacketArgs("x", null, null, List.of(), List.of(), List.of(), List.of(),
+        return new SavePacketArgs("x", null, null, currentBaseline(), List.of(), List.of(), List.of(), List.of(),
                 List.of(new SourceDto(String.valueOf(documentId), String.valueOf(documentVersionId), versionNo, "1장")));
     }
 

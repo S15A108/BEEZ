@@ -196,6 +196,7 @@ class DevelopmentContextPacket(PacketModel):
             "request": self.request,
             "project_id": self.project_id,
             "task_id": self.task_id,
+            "expected_baseline_id": self.baseline_id,
             "design_item_version_ids": list(self.design_item_version_ids),
             "constraints": list(self.constraints),
             "unresolved": list(self.unresolved),

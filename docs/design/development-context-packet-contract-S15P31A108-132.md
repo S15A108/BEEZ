@@ -8,13 +8,13 @@
 
 1. BE `ContextMcpService.getDevelopmentContext`가 권한·인수(400/403/404)를 확인하고 현재 기준의 승인 설계·원문 근거·확정 관계·작업 계획 참조를 모아 #131 스냅샷(`SelectionInput`)과 아래 `metadata`를 만든다.
 2. AI는 스냅샷으로 선택·의존 확장을 수행하고(#131), `metadata`와 합쳐 패킷 내용을 돌려준다. ID·출처·제약·승인은 만들지 않고 원문도 복사하지 않는다.
-3. BE는 돌려받은 `design_item_version_ids`·`sources`·`related_tasks`가 **현재** 기준·계획 리비전과 일치하는지 다시 확인한 뒤 `ContextPacketService.save`로 불변 패킷을 저장하고 `content_hash`를 계산한다. 색인·구성 모듈 미준비는 503 `context_not_ready`로 끝내고 패킷을 저장하지 않는다. 검색을 마친 0건은 정상 응답의 `unresolved`다.
+3. BE는 선택에 사용한 `baseline_id`를 저장 입력의 `expected_baseline_id`로 전달한다. `ContextPacketService.save`는 프로젝트 행 공유 잠금 아래 현재 기준과 비교해 다르면 409 `baseline_conflict`로 저장을 거부하고, 같으면 `design_item_version_ids`·`sources`·`related_tasks`도 검증한 뒤 불변 패킷을 저장하고 `content_hash`를 계산한다. 색인·구성 모듈 미준비는 503 `context_not_ready`로 끝내고 패킷을 저장하지 않는다. 검색을 마친 0건은 정상 응답의 `unresolved`다.
 
 구현: `ai/app/schemas/context_packet.py`(모델), `ai/app/services/retrieval/context_packet.py`(`compose_development_context`, `check_packet_metadata`), HTTP는 기존 `POST /v1/development-context-selections`([#131 초안](../experiments/context-selection-http-S15P31A108-131.md))에 선택적 `metadata`를 더한 형태다. 예시: `ai/examples/context-packet-132/`.
 
 ## 2. 입력: 스냅샷 + `metadata`
 
-요청 본문은 #131과 같고 `metadata`가 추가된다. `metadata`가 없으면 응답은 선택 결과만 담는다(기존 동작). `metadata`는 **스냅샷과 정확히 같은 집합**을 설명해야 하며, 불일치는 모델 호출 전에 400 `validation_failed`다.
+요청 본문은 #131과 같고 `metadata`가 추가된다. `metadata`가 없으면 응답은 선택 결과만 담는다(기존 동작). `metadata`의 설계·근거는 **스냅샷과 정확히 같은 집합**이어야 한다. HTTP 경로는 불일치와 필수 설명 누락을 모델 호출 전에 400 `validation_failed`로 거부한다. 프로세스 내부 호출자는 모델 호출 전에 `check_packet_metadata`를 직접 호출해야 한다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -23,7 +23,7 @@
 | `design_items[].kind` | `REQUIREMENT\|API_CONTRACT\|DATA_CONTRACT\|POLICY\|CONSTRAINT` | Y | 00-common DesignItemVersion.kind |
 | `design_items[].version_no` | integer ≥ 1 | Y | 항목 버전 번호 |
 | `design_items[].source` | Source | N | 항목의 원문 출처. 현재 기준 소속이 확인되지 않은 참고 값이며 패킷 `sources`에는 합치지 않는다 |
-| `design_items[].description` | string ≤ 10,000 | N | 승인 본문의 `content.description`. `POLICY`·`CONSTRAINT`만 `constraints`로 쓴다 |
+| `design_items[].description` | string ≤ 10,000 | 조건부 | 승인 본문의 `content.description`. `POLICY`·`CONSTRAINT`는 공백이 아닌 설명 필수이며 모델 호출 전에 검증한다. 그 외 종류는 생략할 수 있다 |
 | `evidence[]` | EvidenceMeta | Y | 스냅샷 `evidence`의 모든 후보. `evidence_id`와 `document_version_id`가 일치해야 한다 |
 | `evidence[].document_id`, `version_no`, `location` | — | Y | 해당 청크의 00-common Source 값 |
 | `task` | TaskMeta | 조건부 | `task_id`가 없으면 금지. 계획이 없거나 작업이 `DRAFT`이면 생략; 계획이 있고 `READY`·`IN_PROGRESS`·`WAITING`·`COMPLETED`·`CANCELLED` 중 하나이면 `task_id`·현재 `plan_revision_id`·`status`를 포함 |
@@ -66,6 +66,7 @@ Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no
 | --- | --- | --- |
 | `request` | `request` | 공백 금지(400) |
 | `project_id`, `task_id` | `projectId`, `taskId` | 토큰 프로젝트 일치(404), 작업 소속(404) |
+| `baseline_id` | `expectedBaselineId` | 프로젝트 공유 잠금 아래 현재 기준과 비교. 다르면 409 `baseline_conflict` |
 | `design_item_version_ids` | `designItemVersionIds` | 모두 현재 기준 설계(400), 기준 없음(404 `baseline_not_published`) |
 | `constraints` | `constraints` | — |
 | `unresolved` | `unresolved` | — |
@@ -76,7 +77,7 @@ Source는 00-common과 같다: `document_id`, `document_version_id`, `version_no
 
 ### 선택 이유 저장 제안 (리뷰 반영, BE 합의 전)
 
-선택 이유는 설계 버전의 고정 속성이 아니라 해당 요청에서의 선택 결과이므로 저장 패킷에 버전별로 보존하는 것이 필요하다. 현재 `packet.design_items[].reasons`에는 값이 있으나 기존 8개 필드의 `SavePacketArgs`와 저장 응답에는 없어 MCP-01·MCP-06 호출자는 볼 수 없다. **현재 변환 함수에 새 필드를 보내지는 않는다.** 다음은 BE 저장 담당자와 합의할 제안이며 아직 구현·연동 완료가 아니다.
+선택 이유는 설계 버전의 고정 속성이 아니라 해당 요청에서의 선택 결과이므로 저장 패킷에 버전별로 보존하는 것이 필요하다. 현재 `packet.design_items[].reasons`에는 값이 있으나 현재 9개 필드의 `SavePacketArgs`와 저장 응답에는 없어 MCP-01·MCP-06 호출자는 볼 수 없다. **현재 변환 함수에 새 필드를 보내지는 않는다.** 다음은 BE 저장 담당자와 합의할 제안이며 아직 구현·연동 완료가 아니다.
 
 ```json
 {
@@ -126,7 +127,7 @@ HTTP 경로에서는 본문 상한이 먼저 걸리므로 `packet_too_large`는 
 | 422 | `packet_too_large` | 6절 |
 | 502 | `selection_failed`, `invalid_selection` 등 | AI 쪽 실패. 입력 거부가 아니다 |
 
-BE 쪽 403 `forbidden`·404 `not_found`·404 `baseline_not_published`는 AI 호출 전후에 BE가 판정한다.
+BE 쪽 403 `forbidden`·404 `not_found`·404 `baseline_not_published`와 저장 시 409 `baseline_conflict`는 BE가 판정한다. 기준 충돌 시 결과를 저장하지 않고 최신 기준으로 다시 구성해야 한다.
 
 ## 8. 임시 응답(stub)과 병렬 개발
 

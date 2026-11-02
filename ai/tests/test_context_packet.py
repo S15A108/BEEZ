@@ -206,15 +206,58 @@ async def test_packet_joins_selection_with_metadata_in_snapshot_order():
         "request",
         "project_id",
         "task_id",
+        "expected_baseline_id",
         "design_item_version_ids",
         "constraints",
         "unresolved",
         "related_tasks",
         "sources",
     }
+    assert args["expected_baseline_id"] == data.baseline_id == "b"
     assert args["design_item_version_ids"] == ["v1", "v2", "v3"]
     assert args["sources"][0] == SOURCE.model_dump()
     json.dumps(args)
+
+
+@pytest.mark.parametrize("kind", ["POLICY", "CONSTRAINT"])
+@pytest.mark.parametrize("description", [None, "", " \t\n"])
+def test_policy_and_constraint_require_nonblank_description(kind, description):
+    original = metadata()
+    # model_copy permits invalid data, so the preflight must inspect even
+    # candidates constructed in process rather than relying on parsing alone.
+    changed = original.design_items[1].model_copy(
+        update={"kind": kind, "description": description}
+    )
+    changed_metadata = original.model_copy(
+        update={
+            "design_items": (
+                original.design_items[0],
+                changed,
+                original.design_items[2],
+            )
+        }
+    )
+    with pytest.raises(ContextPacketError) as error:
+        check_packet_metadata(snapshot(), changed_metadata)
+    assert error.value.code == "validation_failed"
+
+
+@pytest.mark.parametrize("kind", ["REQUIREMENT", "API_CONTRACT", "DATA_CONTRACT"])
+def test_other_design_kinds_can_omit_description(kind):
+    original = metadata()
+    changed = original.design_items[1].model_copy(
+        update={"kind": kind, "description": None}
+    )
+    changed_metadata = original.model_copy(
+        update={
+            "design_items": (
+                original.design_items[0],
+                changed,
+                original.design_items[2],
+            )
+        }
+    )
+    check_packet_metadata(snapshot(), changed_metadata)
 
 
 @pytest.mark.asyncio
