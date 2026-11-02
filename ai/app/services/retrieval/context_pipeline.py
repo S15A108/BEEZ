@@ -15,7 +15,7 @@ from app.services.retrieval.context_request_analysis import (
     SearchHints,
 )
 from app.services.retrieval.context_selection import (
-    _SAFE_SELECTION_ERROR_CODES,
+    SAFE_SELECTION_ERROR_CODES,
     ContextSelectionError,
     SelectionInput,
     SelectionProvider,
@@ -133,7 +133,7 @@ async def build_development_context(
             exc.code
             if phase == "selection"
             and isinstance(exc.code, str)
-            and exc.code in _SAFE_SELECTION_ERROR_CODES
+            and exc.code in SAFE_SELECTION_ERROR_CODES
             else f"{phase}_failed"
         )
         raise ContextPipelineError(

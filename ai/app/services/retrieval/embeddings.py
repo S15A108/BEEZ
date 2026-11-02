@@ -113,7 +113,7 @@ def _batches(
 
 
 @dataclass(frozen=True, slots=True)
-class _PreparedEmbeddingTexts:
+class PreparedEmbeddingTexts:
     """Validated immutable inputs and their exact batches for one invocation."""
 
     texts: tuple[EmbeddingText, ...]
@@ -123,12 +123,12 @@ class _PreparedEmbeddingTexts:
     preparation_seconds: float
 
 
-async def _prepare_embedding_texts(
+async def prepare_embedding_texts(
     texts: tuple[EmbeddingText, ...],
     profile: EmbeddingProfile,
     policy: EmbeddingPolicy,
     token_counter: TokenCounter,
-) -> _PreparedEmbeddingTexts:
+) -> PreparedEmbeddingTexts:
     started = time.monotonic()
     batches = await _prepare_batches(texts, profile, policy, token_counter)
     elapsed = time.monotonic() - started
@@ -136,17 +136,7 @@ async def _prepare_embedding_texts(
         raise EmbeddingError(
             "embedding_timeout", "Token validation exhausted the total budget."
         )
-    return _PreparedEmbeddingTexts(texts, profile, policy, tuple(batches), elapsed)
-
-
-async def validate_embedding_texts(
-    texts: tuple[EmbeddingText, ...],
-    profile: EmbeddingProfile,
-    policy: EmbeddingPolicy,
-    token_counter: TokenCounter,
-) -> None:
-    """Validate a batch without a provider call or reserving capacity."""
-    await _prepare_embedding_texts(texts, profile, policy, token_counter)
+    return PreparedEmbeddingTexts(texts, profile, policy, tuple(batches), elapsed)
 
 
 async def _prepare_batches(
@@ -226,8 +216,8 @@ async def embed_texts(
 ) -> EmbeddingResult:
     policy = policy or EmbeddingPolicy()
     _validate_call(request_key, purpose)
-    prepared = await _prepare_embedding_texts(texts, profile, policy, token_counter)
-    return await _embed_prepared_texts(prepared, request_key, provider, purpose=purpose)
+    prepared = await prepare_embedding_texts(texts, profile, policy, token_counter)
+    return await embed_prepared_texts(prepared, request_key, provider, purpose=purpose)
 
 
 def _validate_call(request_key: str, purpose: str) -> None:
@@ -241,8 +231,8 @@ def _validate_call(request_key: str, purpose: str) -> None:
         )
 
 
-async def _embed_prepared_texts(
-    prepared: _PreparedEmbeddingTexts,
+async def embed_prepared_texts(
+    prepared: PreparedEmbeddingTexts,
     request_key: str,
     provider: EmbeddingProvider,
     *,

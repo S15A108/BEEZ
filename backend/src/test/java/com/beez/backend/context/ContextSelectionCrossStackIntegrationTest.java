@@ -279,31 +279,35 @@ class ContextSelectionCrossStackIntegrationTest extends IntegrationTestSupport {
         builder.environment().put("PYTHONIOENCODING", "utf-8");
         builder.environment().remove("GMS_KEY");
         builder.environment().remove("AI_INTERNAL_TOKEN");
-        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        // Probe diagnostics stay visible in the test output instead of being discarded.
+        builder.redirectError(ProcessBuilder.Redirect.INHERIT);
         Process child = builder.start();
-        var writer = Executors.newSingleThreadExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "cross-stack-fixture-stdin");
+        var io = Executors.newFixedThreadPool(2, runnable -> {
+            Thread thread = new Thread(runnable, "cross-stack-fixture-io");
             thread.setDaemon(true);
             return thread;
         });
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         try {
             byte[] request = JSON.writeValueAsBytes(payload);
-            var write = writer.submit(() -> {
+            // Drain stdout while the child runs; a response above the pipe buffer must not block it.
+            var output = io.submit(() -> child.getInputStream().readAllBytes());
+            var write = io.submit(() -> {
                 try (var input = child.getOutputStream()) { input.write(request); }
                 return null;
             });
             write.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
             if (!child.waitFor(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS))
                 throw new IllegalStateException("AI fixture probe timed out");
+            byte[] response = output.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
             if (child.exitValue() != 0) throw new IllegalStateException("AI fixture probe failed");
-            return JSON.readTree(new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+            return JSON.readTree(new String(response, StandardCharsets.UTF_8));
         } finally {
             if (child.isAlive()) {
                 child.destroyForcibly();
                 child.waitFor(5, TimeUnit.SECONDS);
             }
-            writer.shutdownNow();
+            io.shutdownNow();
         }
     }
 }

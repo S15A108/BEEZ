@@ -18,8 +18,12 @@ Id = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^\S+$")]
 ShortText = Annotated[str, Field(min_length=1, max_length=2000)]
 CandidateText = Annotated[str, Field(min_length=1, max_length=100_000)]
 
+# One upper bound per candidate kind, shared by the HTTP schema, the server
+# limits and the unresolved review so no stage rejects what another allowed.
+MAX_CANDIDATES_PER_KIND = 200
+
 # Only stable, non-sensitive codes may cross the selector boundary.
-_SAFE_SELECTION_ERROR_CODES = frozenset(
+SAFE_SELECTION_ERROR_CODES = frozenset(
     {
         "invalid_embedding_input",
         "embedding_profile_mismatch",
@@ -179,7 +183,7 @@ class SelectionResult(_Frozen):
     snapshot_binding: str | None = Field(default=None, exclude=True, repr=False)
 
 
-def _selection_binding(
+def selection_binding(
     snapshot, items, evidence_ids, unresolved, truncation=None
 ) -> str:
     """Detect accidental mixing of inputs and selected output, not authorization."""
@@ -228,7 +232,7 @@ async def select_context(
         except ContextSelectionError as exc:
             code = (
                 exc.code
-                if isinstance(exc.code, str) and exc.code in _SAFE_SELECTION_ERROR_CODES
+                if isinstance(exc.code, str) and exc.code in SAFE_SELECTION_ERROR_CODES
                 else "selection_failed"
             )
             raise ContextSelectionError(code, exc.usage) from None
@@ -323,7 +327,7 @@ async def select_context(
         unresolved=unresolved,
         usage=proposal.usage,
         direct_match_truncation=proposal.direct_match_truncation,
-        snapshot_binding=_selection_binding(
+        snapshot_binding=selection_binding(
             request,
             selected,
             evidence_ids,

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.retrieval.context_selection import (
+    MAX_CANDIDATES_PER_KIND,
     ApprovedEvidence,
     ApprovedItem,
     DesignRelation,
@@ -25,10 +26,10 @@ class ContextSelectionRequest(BaseModel):
     request: ShortText
     task_id: Id | None = None
     document_version_ids: list[Id] = Field(max_length=1000)
-    items: list[ApprovedItem] = Field(max_length=200)
-    evidence: list[ApprovedEvidence] = Field(max_length=200)
+    items: list[ApprovedItem] = Field(max_length=MAX_CANDIDATES_PER_KIND)
+    evidence: list[ApprovedEvidence] = Field(max_length=MAX_CANDIDATES_PER_KIND)
     relations: list[DesignRelation] = Field(max_length=1000)
-    task_design_refs: list[TaskDesignRef] = Field(max_length=200)
+    task_design_refs: list[TaskDesignRef] = Field(max_length=MAX_CANDIDATES_PER_KIND)
     search_status: Literal["COMPLETE", "NOT_READY", "FAILED"]
 
     @field_validator("request_key")

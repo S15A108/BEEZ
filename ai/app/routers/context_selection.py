@@ -1,6 +1,7 @@
 """Opt-in provisional transport for selecting from a BE-authorized snapshot."""
 
 import asyncio
+import logging
 import math
 import re
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from app.routers.embeddings import get_counter
 from app.schemas.context_selection_api import ContextSelectionRequest
 from app.schemas.retrieval import EmbeddingPolicy
 from app.services.retrieval.context_selection import (
+    MAX_CANDIDATES_PER_KIND,
     ContextSelectionError,
     SelectionInput,
     SelectionProvider,
@@ -31,6 +33,8 @@ from app.services.retrieval.tokenization import embedding_profile
 
 # Hard transport bound, applied while receiving, before parsing or model calls.
 MAX_BODY_BYTES = 262_144
+
+logger = logging.getLogger(__name__)
 
 
 class SelectionRoute(APIRoute):
@@ -63,11 +67,12 @@ class SelectionRoute(APIRoute):
                     else 422
                     if exc.code
                     in {
-                        "invalid_selection",
                         "invalid_embedding_input",
                         "embedding_limit_exceeded",
                         "embedding_profile_mismatch",
                     }
+                    # invalid_selection is an inconsistent selector proposal,
+                    # a fault on this side rather than a rejected input.
                     else 502
                 )
                 body = {
@@ -81,8 +86,10 @@ class SelectionRoute(APIRoute):
                         u.model_dump(mode="json", exclude_none=True) for u in exc.usage
                     ]
                 response = JSONResponse(body, status_code=status)
-            except Exception:  # noqa: BLE001
-                # Never echo raw payload, provider details, or unexpected exceptions.
+            except Exception:
+                # Never echo raw payload, provider details, or unexpected exceptions,
+                # but keep the traceback on the server so faults are diagnosable.
+                logger.exception("Unexpected development context selection failure")
                 response = JSONResponse(
                     {
                         "error": {
@@ -129,8 +136,8 @@ def require_selection_config(
     if (
         not math.isfinite(min_similarity)
         or not -1 <= min_similarity <= 1
-        or not 0 <= max_items <= 200
-        or not 0 <= max_evidence <= 200
+        or not 0 <= max_items <= MAX_CANDIDATES_PER_KIND
+        or not 0 <= max_evidence <= MAX_CANDIDATES_PER_KIND
         or (max_items == 0 and max_evidence == 0)
         or not math.isfinite(total_timeout_seconds)
         or not 0 < total_timeout_seconds <= 120

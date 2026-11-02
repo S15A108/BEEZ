@@ -20,8 +20,8 @@ from app.services.retrieval.context_selection import (
     SelectionInput,
     SelectionProposal,
     SelectionResult,
-    _selection_binding,
     select_context,
+    selection_binding,
 )
 from app.services.retrieval.context_unresolved import (
     LLMUnresolvedAssessor,
@@ -80,7 +80,7 @@ def selection():
 def bind(data, selected):
     return selected.model_copy(
         update={
-            "snapshot_binding": _selection_binding(
+            "snapshot_binding": selection_binding(
                 data,
                 selected.design_items,
                 selected.evidence_ids,

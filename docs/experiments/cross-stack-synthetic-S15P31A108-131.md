@@ -14,4 +14,4 @@ $env:BEEZ_131_PROBE=(Resolve-Path '..\ai\tests\cross_stack_probe_131.py').Path
 .\gradlew.bat integrationTest --tests com.beez.backend.context.ContextSelectionCrossStackIntegrationTest
 ```
 
-Python 자식 프로세스는 작은 합성 JSON을 stdin으로 받고 결과를 stdout으로 반환하며 외부 서비스를 시작하지 않는다. 입력 전송과 프로세스 종료는 30초를 공유하고, 초과하면 자식 프로세스를 강제 종료한다. 실제 GMS·내부 토큰 환경변수는 제거하고 가짜 공급자를 사용한다.
+Python 자식 프로세스는 작은 합성 JSON을 stdin으로 받고 결과를 stdout으로 반환하며 외부 서비스를 시작하지 않는다. 테스트는 stdout을 실행 중에 병렬로 읽어 파이프 버퍼 크기와 무관하게 동작하고, stderr는 버리지 않고 테스트 출력에 그대로 표시한다. 입력 전송과 프로세스 종료는 30초를 공유하고, 초과하면 자식 프로세스를 강제 종료한다. 실제 GMS·내부 토큰 환경변수는 제거하고 가짜 공급자를 사용한다.

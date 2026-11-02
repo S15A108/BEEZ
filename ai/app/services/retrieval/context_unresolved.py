@@ -22,11 +22,12 @@ from app.services.llm_client import (
     LLMResult,
 )
 from app.services.retrieval.context_selection import (
+    MAX_CANDIDATES_PER_KIND,
     ApprovedEvidence,
     ApprovedItem,
     SelectionInput,
     SelectionResult,
-    _selection_binding,
+    selection_binding,
 )
 
 
@@ -167,7 +168,7 @@ async def review_unresolved(
     """Return only bounded, source-checked candidates; preserve model usage."""
     if snapshot.search_status != "COMPLETE" or selection.search_status != "COMPLETE":
         raise ValueError("incomplete search")
-    expected_binding = _selection_binding(
+    expected_binding = selection_binding(
         snapshot,
         selection.design_items,
         selection.evidence_ids,
@@ -191,7 +192,7 @@ async def review_unresolved(
         or len(set(evidence_ids)) != len(evidence_ids)
         or not set(selected_ids).issubset(items)
         or not set(evidence_ids).issubset(evidence)
-        or len(selected_ids) + len(evidence_ids) > 100
+        or len(selected_ids) + len(evidence_ids) > 2 * MAX_CANDIDATES_PER_KIND
     ):
         raise ValueError("invalid selected context")
     selected_items = tuple(items[item_id] for item_id in selected_ids)

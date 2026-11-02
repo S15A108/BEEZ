@@ -21,9 +21,9 @@ from app.services.retrieval.context_selection import (
 from app.services.retrieval.embeddings import (
     EmbeddingError,
     EmbeddingProvider,
-    _embed_prepared_texts,
-    _prepare_embedding_texts,
+    embed_prepared_texts,
     embed_texts,
+    prepare_embedding_texts,
 )
 
 _SAFE_ERROR_CODES = frozenset(
@@ -136,7 +136,7 @@ class EmbeddingContextSelector:
         try:
             # Validate before the query incurs a provider call and reuse exactly
             # those immutable candidate batches for the document call.
-            prepared_docs = await _prepare_embedding_texts(
+            prepared_docs = await prepare_embedding_texts(
                 candidates, self._profile, self._policy, self._counter
             )
             query = await embed_texts(
@@ -149,7 +149,7 @@ class EmbeddingContextSelector:
                 policy=self._policy,
             )
             query_usage = query.usage
-            docs = await _embed_prepared_texts(
+            docs = await embed_prepared_texts(
                 prepared_docs, document_key, self._provider, purpose="document"
             )
         except EmbeddingError as exc:

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -844,3 +845,53 @@ def test_real_selector_timeout_keeps_correlated_started_call_usage(
         assert len(usage_rows) == 2 and not usage_rows[0]["failed"]
     else:
         assert len(usage_rows) == 1
+
+
+def test_inconsistent_selector_proposal_is_a_server_fault_not_an_input_error(api):
+    client, selector = api
+
+    class InconsistentSelector:
+        async def select(self, data):
+            return SelectionProposal(
+                design_item_version_ids=("not-in-snapshot",),
+                evidence_ids=(),
+                usage=(usage(),),
+            )
+
+    app.dependency_overrides[get_context_selector] = lambda: (
+        lambda _: InconsistentSelector()
+    )
+    response = client.post(
+        "/v1/development-context-selections",
+        json=request_body(),
+        headers={"Authorization": "Bearer test-internal"},
+    )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_selection"
+    assert response.json()["usage"][0]["input_tokens"] == 12
+    assert "not-in-snapshot" not in response.text
+    assert not selector.calls
+
+
+def test_unexpected_failure_is_logged_but_never_echoed(api, caplog):
+    client, selector = api
+
+    def failing_factory(_request_key):
+        raise RuntimeError("비공개 내부 상태")
+
+    app.dependency_overrides[get_context_selector] = lambda: failing_factory
+    with caplog.at_level(logging.ERROR, logger="app.routers.context_selection"):
+        response = client.post(
+            "/v1/development-context-selections",
+            json=request_body(),
+            headers={"Authorization": "Bearer test-internal"},
+        )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "selection_failed"
+    assert "비공개" not in response.text
+    assert not selector.calls
+    assert any(
+        "Unexpected development context selection failure" in record.message
+        and record.exc_info is not None
+        for record in caplog.records
+    )
