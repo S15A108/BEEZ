@@ -59,5 +59,9 @@ class InitialBaselineNoLegacyIntegrationTest extends IntegrationTestSupport {
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline WHERE project_id=?", Integer.class, project.projectId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM publication_outbox WHERE project_id=?", Integer.class, project.projectId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT status FROM published_change_analysis WHERE project_id=?", String.class, project.projectId()))
+                .isEqualTo("NOT_EVALUATED");
+        baselines.publish(actor, request, "default-no-legacy");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM published_change_analysis WHERE project_id=?", Integer.class, project.projectId())).isEqualTo(1);
     }
 }
