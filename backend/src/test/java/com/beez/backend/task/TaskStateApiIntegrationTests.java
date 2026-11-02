@@ -401,6 +401,45 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void deltaValidation_inputHash_dependsOnDeltaAndTrigger() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        // 같은 계획의 사람 요청(AGENT) 검증 — 검증 종류가 달라 DELTA 와 해시가 다르다
+        HttpResponse<String> agentAccept = api.post(tasksPath() + "/" + t[0] + "/validations",
+                "{\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2] + "}", member);
+        assertThat(agentAccept.statusCode()).as(agentAccept.body()).isEqualTo(202);
+        String agentHash = hashOf(TaskApiSupport.longField(agentAccept.body(), "id"));
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        long lock = TaskApiSupport.longField(started.body(), "lock_version");
+
+        String deltaX = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        String deltaY = "\"delta\":[{\"kind\":\"REMOVED_FIELD\",\"text\":\"email 제거\"}]";
+        HttpResponse<String> first = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(202);
+        String hashX1 = hashOf(TaskApiSupport.longField(first.body(), "delta_validation_id"));
+        // 되돌리기로 하고 RESUME → 다른 delta 로 다시 완료 보고
+        HttpResponse<String> resumed = report(t[0], stateJson("RESUME", t[1], TaskApiSupport.longField(first.body(), "lock_version"), v, null), member);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        HttpResponse<String> second = report(t[0], stateJson("COMPLETED", t[1], TaskApiSupport.longField(resumed.body(), "lock_version"), null, deltaY), member);
+        assertThat(second.statusCode()).as(second.body()).isEqualTo(202);
+        String hashY = hashOf(TaskApiSupport.longField(second.body(), "delta_validation_id"));
+        // 다시 RESUME → 처음과 같은 delta 로 완료 보고
+        HttpResponse<String> resumed2 = report(t[0], stateJson("RESUME", t[1], TaskApiSupport.longField(second.body(), "lock_version"), v, null), member);
+        assertThat(resumed2.statusCode()).as(resumed2.body()).isEqualTo(200);
+        HttpResponse<String> third = report(t[0], stateJson("COMPLETED", t[1], TaskApiSupport.longField(resumed2.body(), "lock_version"), null, deltaX), member);
+        assertThat(third.statusCode()).as(third.body()).isEqualTo(202);
+        String hashX2 = hashOf(TaskApiSupport.longField(third.body(), "delta_validation_id"));
+
+        assertThat(hashX1).isNotEqualTo(hashY);          // 같은 계획, 다른 delta → 다른 입력
+        assertThat(hashX1).isEqualTo(hashX2);            // 같은 계획, 같은 delta → 같은 입력 (재사용 기준)
+        assertThat(agentHash).isNotEqualTo(hashX1);      // 같은 계획이라도 AGENT 와 DELTA 는 검사 범위가 다르다
+    }
+
+    private String hashOf(long validationId) {
+        return api.jdbc.sql("select input_snapshot_hash from validation where id = :v").param("v", validationId).query(String.class).single();
+    }
+
+    @Test
     void completed_withDelta_onReadsOnlyPlan_stillGoesToSemanticAnalysis() throws Exception {
         // READS 만 참조해 보통 규칙만으로 PASS 가 나는 계획이라도, DELTA 검증은 완료 delta 검사가 붙어 의미 분석으로 간다 —
         // delta 내용과 무관하게 작업이 완료되는 일이 없어야 한다 (-163 리뷰)

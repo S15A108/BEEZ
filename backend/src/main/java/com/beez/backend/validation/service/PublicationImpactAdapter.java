@@ -9,6 +9,7 @@ import com.beez.backend.changeproposal.port.ValidationImpactPort;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.entity.Task;
+import com.beez.backend.task.entity.TaskCompletionReport;
 import com.beez.backend.task.entity.TaskStatus;
 import com.beez.backend.task.entity.WaitingReason;
 import com.beez.backend.task.repository.TaskCompletionReportRepository;
@@ -122,7 +123,12 @@ public class PublicationImpactAdapter implements ValidationImpactPort {
                 continue;
             }
             reaccepted.add(taskId);
-            AcceptResult again = accepts.acceptBySystem(projectId, task.get(), "DELTA", request.baselineId());
+            Optional<TaskCompletionReport> report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(
+                    taskId, task.get().getCurrentPlanRevisionId());
+            if (report.isEmpty()) {
+                continue;                                  // awaitingDelta 가 확인했으므로 오지 않지만, 없으면 접수할 delta 가 없다
+            }
+            AcceptResult again = accepts.acceptBySystem(projectId, task.get(), "DELTA", request.baselineId(), report.get().getDelta());
             if (again.finished() && "PASS".equals(again.validation().status())) {
                 deltaCompletion.completeIfDeltaPassed(taskId, Long.parseLong(again.validation().id()), null, now);
             }

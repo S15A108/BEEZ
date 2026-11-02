@@ -275,7 +275,7 @@ public class TaskStateService {
         // (완료 보고는 UPDATE 금지라 저장 뒤에 delta_validation_id 를 채울 수 없다). 같은 트랜잭션·같은 프로젝트 잠금 안이다
         // DELTA 검증은 delta 내용 자체를 의미 분석(완료 delta 검사)에 넣으므로 규칙만으로 PASS 가 나지 않는다 — 여기서 바로 완료되는 일은 없다.
         // 규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 WAITING(REVALIDATION) 에서 §2.3 출구로 나간다
-        AcceptResult accepted = validationAccepts.acceptBySystem(task.getProjectId(), task, "DELTA");
+        AcceptResult accepted = validationAccepts.acceptBySystem(task.getProjectId(), task, "DELTA", delta);
         long deltaValidationId = Long.parseLong(accepted.validation().id());
         reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
                 checks, caller.agentTokenId(), deltaValidationId));
