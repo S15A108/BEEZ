@@ -340,7 +340,7 @@ def compare(fixture, repository, review, measurement, threshold=None):
             "unverified"
             if "DEPENDENCY_UNVERIFIED" in unresolved
             else "none_reported"
-            if report_version == 4
+            if report_version in {4, 5}
             else "not_recorded"
         )
         output["cases"].append(

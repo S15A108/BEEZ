@@ -205,7 +205,7 @@ async def test_cycle_cannot_expand_past_one_hop_or_reverse():
             relation("A", "B", to_design_item_version_id="B-old"),
             ("DEPENDENCY_UNVERIFIED",),
         ),
-        (relation("A", "B", status="NEEDS_RECHECK"), ()),
+        (relation("A", "B", status="NEEDS_RECHECK"), ("DEPENDENCY_UNVERIFIED",)),
         (relation("A", "B", status="RELEASED"), ()),
         (relation("A", "B", origin="AI_CANDIDATE"), ()),
         (relation("A", "B", relation="RELATES_TO"), ()),
@@ -287,22 +287,57 @@ async def test_unverifiable_confirmed_one_hop_is_marked_without_exposing_id(reas
     assert "private-missing" not in result.model_dump_json()
 
 
+@pytest.mark.parametrize("seed", ["matched", "task_plan"])
+@pytest.mark.parametrize("target_present", [False, True])
 @pytest.mark.asyncio
-async def test_only_confirmed_explicit_forward_seed_edges_can_mark_unverified():
+async def test_recheck_edge_marks_unverified_without_expansion_or_id_leak(
+    seed, target_present
+):
+    target = "B" if target_present else "private-missing"
+    edge = relation("A", target, status="NEEDS_RECHECK")
+    changes = {"relations": (edge,)}
+    if seed == "task_plan":
+        changes.update(
+            task_id="task",
+            task_design_refs=(
+                TaskDesignRef(design_item_id="A", design_item_version_id="A-v1"),
+            ),
+        )
+    selector = FakeSelector(("A-v1",) if seed == "matched" else ())
+    result = await select_context(snapshot(**changes), selector)
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert result.design_items[0].reasons == (
+        ("MATCHED",) if seed == "matched" else ("TASK_PLAN",)
+    )
+    assert result.unresolved == (
+        ("DEPENDENCY_UNVERIFIED",)
+        if seed == "matched"
+        else ("NO_MATCH", "DEPENDENCY_UNVERIFIED")
+    )
+    assert "private-missing" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_released_candidate_reverse_and_two_hop_edges_do_not_mark_unverified():
     result = await select_context(
         snapshot(
             relations=(
-                relation("A", "missing-review", status="NEEDS_RECHECK"),
-                relation("A", "missing-ai", origin="AI_CANDIDATE"),
-                relation("A", "missing-other", relation="RELATES_TO"),
-                relation("B", "A", from_design_item_version_id="B-old"),
-                relation("B", "missing-two-hop"),
+                relation("A", "B"),
+                relation("A", "missing-released", status="RELEASED"),
+                relation(
+                    "A", "missing-ai", origin="AI_CANDIDATE", status="NEEDS_RECHECK"
+                ),
+                relation(
+                    "A", "missing-other", relation="RELATES_TO", status="NEEDS_RECHECK"
+                ),
+                relation("C", "A", status="NEEDS_RECHECK"),
+                relation("B", "missing-two-hop", status="NEEDS_RECHECK"),
             )
         ),
         FakeSelector(("A-v1",)),
     )
     assert not result.unresolved
-    assert [x.design_item_version_id for x in result.design_items] == ["A-v1"]
+    assert [x.design_item_version_id for x in result.design_items] == ["A-v1", "B-v1"]
 
 
 @pytest.mark.asyncio
@@ -475,6 +510,12 @@ async def test_recorded_nara_fake_scenarios_are_contract_regressions():
     )
     data = json.loads(fixture_path.read_text(encoding="utf-8"))
     assert data["label_author"] == "agent-authored; human review pending"
+    # Keep the original fixture unchanged for the recorded model evaluations.
+    # These two historical scenarios now expose the recheck-pending edge.
+    current_expected_unresolved = {
+        "upload-create-one-hop": ["DEPENDENCY_UNVERIFIED"],
+        "task-plan-adds-current-reference": ["DEPENDENCY_UNVERIFIED"],
+    }
     for case in data["scenarios"]:
         values = dict(data["snapshot"])
         values["request"] = case["request"]
@@ -508,9 +549,9 @@ async def test_recorded_nara_fake_scenarios_are_contract_regressions():
             continue
         assert selected == case["expected_design_items"], case["id"]
         assert list(result.evidence_ids) == case["expected_evidence_ids"], case["id"]
-        assert list(result.unresolved) == case.get("expected_unresolved", []), case[
-            "id"
-        ]
+        assert list(result.unresolved) == current_expected_unresolved.get(
+            case["id"], case.get("expected_unresolved", [])
+        ), case["id"]
         ids = {x.design_item_version_id for x in result.design_items} | set(
             result.evidence_ids
         )

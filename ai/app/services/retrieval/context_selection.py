@@ -281,27 +281,32 @@ async def select_context(
         reasons.setdefault(ref.design_item_version_id, set()).add("TASK_PLAN")
 
     # One hop only from directly matched/plan items; never follow newly added nodes.
-    # Eligible edges with unavailable or mismatched endpoint versions cannot be
-    # expanded. Surface only the incomplete state, not any missing endpoint ID.
+    # Recheck-pending or unverifiable confirmed edges cannot be expanded. Surface
+    # only the incomplete state, never an endpoint ID or a reason for the state.
     seeds = {versions[version].design_item_id for version in reasons}
     dependency_unverified = False
     for relation in request.relations:
         if (
-            relation.relation == "DEPENDS_ON"
-            and relation.origin == "EXPLICIT"
-            and relation.status == "CONFIRMED"
-            and relation.from_design_item_id in seeds
+            relation.relation != "DEPENDS_ON"
+            or relation.origin != "EXPLICIT"
+            or relation.from_design_item_id not in seeds
         ):
-            source = by_item[relation.from_design_item_id]
-            target = by_item.get(relation.to_design_item_id)
-            if (
-                source.design_item_version_id != relation.from_design_item_version_id
-                or target is None
-                or target.design_item_version_id != relation.to_design_item_version_id
-            ):
-                dependency_unverified = True
-                continue
-            reasons.setdefault(target.design_item_version_id, set()).add("DEPENDENCY")
+            continue
+        if relation.status == "NEEDS_RECHECK":
+            dependency_unverified = True
+            continue
+        if relation.status != "CONFIRMED":
+            continue
+        source = by_item[relation.from_design_item_id]
+        target = by_item.get(relation.to_design_item_id)
+        if (
+            source.design_item_version_id != relation.from_design_item_version_id
+            or target is None
+            or target.design_item_version_id != relation.to_design_item_version_id
+        ):
+            dependency_unverified = True
+            continue
+        reasons.setdefault(target.design_item_version_id, set()).add("DEPENDENCY")
 
     order = ("MATCHED", "TASK_PLAN", "DEPENDENCY")
     selected = tuple(

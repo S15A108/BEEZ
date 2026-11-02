@@ -123,7 +123,8 @@ def test_real_json_arrays_are_converted_and_only_ids_and_usage_return(api):
     assert "비공개" not in response.text
 
 
-def test_unverified_dependency_is_exposed_without_missing_identifier(api):
+@pytest.mark.parametrize("status", ["CONFIRMED", "NEEDS_RECHECK"])
+def test_unverified_dependency_is_exposed_without_missing_identifier(api, status):
     client, selector = api
     payload = request_body()
     payload["relations"] = [
@@ -134,7 +135,7 @@ def test_unverified_dependency_is_exposed_without_missing_identifier(api):
             "to_design_item_version_id": "v2",
             "relation": "DEPENDS_ON",
             "origin": "EXPLICIT",
-            "status": "CONFIRMED",
+            "status": status,
         }
     ]
     response = client.post(
