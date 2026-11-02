@@ -118,7 +118,7 @@ public class TaskStateService {
         if (in.event() == TaskEvent.COMPLETED) {
             Optional<TaskCompletionReport> pending = pendingDeltaReport(task);
             if (pending.isPresent()) {
-                if (sameReport(pending.get(), in)) {
+                if (sameReport(pending.get(), in, planRevisionId)) {
                     return query.toDetail(task);
                 }
                 throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
@@ -268,8 +268,11 @@ public class TaskStateService {
         return reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(task.getId(), task.getCurrentPlanRevisionId());
     }
 
-    /** 같은 완료 보고의 재전송인가 — delta·요약·완료 기준 확인이 모두 같아야 한다 */
-    private static boolean sameReport(TaskCompletionReport report, TaskStateInput in) {
+    /** 같은 완료 보고의 재전송인가 — 계획 리비전·delta·요약·완료 기준 확인이 모두 같아야 한다 */
+    private static boolean sameReport(TaskCompletionReport report, TaskStateInput in, Long planRevisionId) {
+        if (!Objects.equals(report.getPlanRevisionId(), planRevisionId)) {
+            return false;
+        }
         List<Map<String, Object>> delta = in.delta();
         if (delta == null) {
             delta = new ArrayList<>();

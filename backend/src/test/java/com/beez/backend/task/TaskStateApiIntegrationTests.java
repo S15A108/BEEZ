@@ -457,6 +457,10 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
         // 같은 delta 인데 요약만 다른 것도 다른 보고다
         String otherSummary = "\"summary\":\"다른 요약\",\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
         assertThat(report(t[0], stateJson("COMPLETED", t[1], lock, null, otherSummary), member).statusCode()).isEqualTo(409);
+        // 내용은 같아도 다른 계획 리비전 번호를 보낸 요청은 재전송이 아니다 (409)
+        HttpResponse<String> otherPlan = report(t[0], stateJson("COMPLETED", t[1] + 1000, lock, null, deltaX), member);
+        assertThat(otherPlan.statusCode()).as(otherPlan.body()).isEqualTo(409);
+        assertThat(otherPlan.body()).contains("\"code\":\"revision_conflict\"");
         assertThat(api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0]).query(Integer.class).single())
                 .isEqualTo(1);
         assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", t[0])

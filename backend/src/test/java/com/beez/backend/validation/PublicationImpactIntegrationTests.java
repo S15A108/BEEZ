@@ -484,6 +484,46 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void resumeAfterErrorDelta_endsThatWait_soSameReportAfterHandoverIsNotAResend() throws Exception {
+        // DELTA 가 ERROR 로 끝남 → 시작 PASS 로 RESUME → 인계로 다시 WAITING(REVALIDATION) → 같은 COMPLETED 재전송
+        long[] e = createTask("E2", api.implementsRef("API-01"));
+        long lockE = start(e);
+        long startPass = api.jdbc.sql("select started_validation_id from task where id = :t").param("t", e[0]).query(Long.class).single();
+        String deltaJson = "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]";
+        HttpResponse<String> done = state(e[0], "COMPLETED", e[1], lockE, null, deltaJson);
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        long delta = TaskApiSupport.longField(done.body(), "delta_validation_id");
+        doAnswer(inv -> {
+            throw new ValidationAnalyzer.AnalyzerException("ai_unavailable", "AI 서버 오류 502", null);
+        }).when(analyzer).analyze(any());
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", delta)).isEqualTo("ERROR");
+
+        HttpResponse<String> resumed = state(e[0], "RESUME", e[1], TaskApiSupport.longField(done.body(), "lock_version"), startPass, null);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        // RESUME 으로 그 완료 대기는 끝났다 — ERROR 였던 DELTA 도 STALE(TASK_RESUMED). 오류 이력(실행·발견 항목)은 남는다
+        assertThat(column("validation", "status", delta)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", delta)).isEqualTo("TASK_RESUMED");
+        long errorRun = api.jdbc.sql("select id from validation_run where validation_id = :v").param("v", delta).query(Long.class).single();
+        assertThat(column("validation_run", "status", errorRun)).isEqualTo("ERROR");
+
+        HttpResponse<String> handover = api.patch(tasksPath() + "/" + e[0] + "/assignee",
+                "{\"assignee_member_id\": \"" + api.memberId("leader@test") + "\", \"expected_lock_version\": "
+                        + TaskApiSupport.longField(resumed.body(), "lock_version") + "}", leader);
+        assertThat(handover.statusCode()).as(handover.body()).isEqualTo(200);
+        assertThat(task(e[0]).get("status")).isEqualTo("WAITING");
+        // 조회에 옛 ERROR DELTA 가 기다리는 검증으로 나오지 않고, 같은 보고를 다시 보내도 재전송(202)이 아니라 전이 오류(400)
+        JsonNode detail = JSON.readTree(api.get(tasksPath() + "/" + e[0], leader).body());
+        assertThat(detail.has("delta_validation_id")).isFalse();
+        HttpResponse<String> again = api.post(tasksPath() + "/" + e[0] + "/state-events",
+                "{\"event\":\"COMPLETED\",\"plan_revision_id\":\"" + e[1] + "\",\"expected_lock_version\":"
+                        + TaskApiSupport.longField(handover.body(), "lock_version") + "," + deltaJson + "}", leader);
+        assertThat(again.statusCode()).as(again.body()).isEqualTo(400);
+        assertThat(api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", e[0]).query(Integer.class).single())
+                .isEqualTo(1);
+    }
+
+    @Test
     void publicationTouchingTwoItemsOfOneWaitingTask_reacceptsDeltaOnce() throws Exception {
         String bothRefs = """
                 [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "IMPLEMENTS"},

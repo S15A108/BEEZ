@@ -127,6 +127,15 @@ public class ValidationStatusLookup {
      */
     public void invalidateDeltaOnResume(Long taskId) {
         invalidate(taskId, "TASK_RESUMED", List.of("DELTA"));
+        // ERROR 로 끝난 DELTA 도 "그 완료 대기는 끝났다" 는 뜻으로 STALE 로 바꾼다 (일반 무효화는 ERROR 를 두지만, 여기서는 두면
+        // 그 뒤 인계로 다시 WAITING 이 된 작업이 옛 ERROR DELTA 를 기다리는 것으로 보인다). 오류 이력은 실행·발견 항목에 그대로 남는다
+        jdbc.sql("""
+                        update validation
+                           set status = 'STALE', stale_reason = 'TASK_RESUMED', updated_at = now()
+                         where task_id = :taskId and trigger = 'DELTA' and status = 'ERROR'
+                        """)
+                .param("taskId", taskId)
+                .update();
     }
 
     /**
