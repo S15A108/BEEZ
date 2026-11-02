@@ -131,6 +131,41 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
     }
 
+    @Test void completionDeltaMismatchWithoutDesignReferenceIsStoredAndBlocksPass() throws Exception {
+        long[] task = queuedTask();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        when(analyzer.analyze(any())).thenAnswer(call -> {
+            Map<String, Object> request = call.getArgument(0);
+            // Synthesize the future #77 handoff: that producer is not merged into this branch.
+            List<Map<String, Object>> checks = new ArrayList<>((List<Map<String, Object>>) request.get("checks"));
+            checks.add(Map.of("key", "completion-delta", "kind", "PLAN_COMPLETENESS",
+                    "design_item_version_ids", List.of(), "related_plan_revision_ids", List.of()));
+            request.put("checks", checks);
+            request.put("completion_delta", List.of(Map.of("kind", "CHANGE", "text", "완료 기준과 다르게 구현")));
+            return Map.of("origin", "MODEL", "model", "test-model", "usage", List.of(Map.of(
+                    "request_key", "llm-validate-" + validation + "-attempt-1-call-1", "feature", "TASK_VALIDATION",
+                    "model", "test-model", "failed", false, "tokens_known", false, "latency_ms", 10)),
+                    "result", Map.of("analysis_status", "COMPLETE", "checked_keys", checks.stream().map(c -> c.get("key")).toList(),
+                            "unassessed", List.of(), "findings", List.of(Map.of(
+                                    "check_key", "completion-delta", "kind", "MISMATCH", "severity", "BLOCKING",
+                                    "message", "완료 보고가 계획과 다릅니다", "suggested_action", "완료 내용을 검토하세요",
+                                    "sources", List.of(), "evidence_ids", List.of()))));
+        });
+
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
+                .query(String.class).single()).isEqualTo("NEEDS_REVIEW");
+        var finding = api.jdbc.sql("select kind,severity,design_item_id,design_item_version_id,related_task_id,check_key "
+                + "from validation_finding where validation_id=:v and source='MODEL'")
+                .param("v", validation).query().singleRow();
+        assertThat(finding).containsEntry("kind", "MISMATCH").containsEntry("severity", "BLOCKING")
+                .containsEntry("check_key", "completion-delta")
+                .containsEntry("design_item_id", null).containsEntry("design_item_version_id", null)
+                .containsEntry("related_task_id", null);
+    }
+
     @Test void removedMemberCannotSearchOrCallAiFromQueuedWork() {
         long[] task = queuedTask();
         var accepted = acceptance.accept(CallerContext.human(owner), project, task[0], task[1], (int) task[2]);

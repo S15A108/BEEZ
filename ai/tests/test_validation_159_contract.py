@@ -98,3 +98,56 @@ def test_159_request_accepts_partial_analysis_without_fabricated_evidence(
     assert payload["result"] == result
     assert payload["usage"][0]["request_key"] == "llm-validate-601-attempt-1-call-1"
     assert payload["usage"][0]["input_tokens"] == 11
+
+
+def test_delta_request_reaches_http_validation_and_model(monkeypatch):
+    monkeypatch.setattr("app.main.EmbeddingTokenCounter", lambda: None)
+    body = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "docs/api/examples/validation/request.json"
+        ).read_text(encoding="utf-8")
+    )
+    body["completion_delta"] = [{"description": "로그인 응답에서 토큰을 제외했습니다"}]
+    body["checks"].append(
+        {
+            "key": "completion-delta",
+            "kind": "PLAN_COMPLETENESS",
+            "design_item_version_ids": [],
+            "related_plan_revision_ids": [],
+        }
+    )
+    body["unresolved"] = []
+    received = []
+
+    class Provider:
+        async def complete(self, request, *, timeout_seconds):
+            received.append(json.loads(request.messages[1].content))
+            return ProviderResponse(
+                json.dumps(
+                    {
+                        "analysis_status": "COMPLETE",
+                        "checked_keys": [check["key"] for check in body["checks"]],
+                        "unassessed": [],
+                        "findings": [],
+                    }
+                ),
+                request.model,
+                11,
+                7,
+            )
+
+    @asynccontextmanager
+    async def fake_client(_settings):
+        yield LLMClient(Provider())
+
+    settings = Settings(_env_file=None, ai_internal_token="test-token")
+    monkeypatch.setattr(validation_router, "get_validation_client", fake_client)
+    monkeypatch.setitem(app.dependency_overrides, get_settings, lambda: settings)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/validate", json=body, headers={"Authorization": "Bearer test-token"}
+        )
+    assert response.status_code == 200, response.text
+    assert received[0]["completion_delta"] == body["completion_delta"]
+    assert "completion-delta" in response.json()["result"]["checked_keys"]

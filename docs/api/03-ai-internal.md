@@ -245,8 +245,11 @@ HTTP `200`.
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
 | `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
+| `completion_delta` | `object[]` | N | 완료 보고에서 전달한 변경 내용. DELTA 검사에서는 비어 있지 않은 배열을 보내고 `completion-delta` 검사를 함께 지정한다. 일반 계획 검증에는 생략한다. |
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
+
+`completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획과 완료 기준에 비추어 분석한다. 검사에 설계나 관련 계획 ID가 없을 때 보고와 현재 계획 사이의 불일치는 관련 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 연결되지 않은 승인 설계의 모순을 확인했다고 주장하지 않는다. BE의 시스템 DELTA 접수 및 검색 권한 연결은 별도 통합이 필요하다.
 
 `content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
 

@@ -151,6 +151,70 @@ async def test_one_call_has_check_coverage_and_attempt_usage_key():
     assert provider.calls[0].max_attempts == 1
 
 
+def delta_request():
+    body = fixture_request()
+    body["completion_delta"] = [
+        {
+            "description": "완료 결과에서 필수 토큰을 반환하지 않았습니다",
+            "files": ["auth.py"],
+        }
+    ]
+    body["checks"].append(
+        {
+            "key": "completion-delta",
+            "kind": "PLAN_COMPLETENESS",
+            "design_item_version_ids": [],
+            "related_plan_revision_ids": [],
+        }
+    )
+    return body
+
+
+@pytest.mark.asyncio
+async def test_completion_delta_is_sent_to_model_and_plan_mismatch_is_retained():
+    body = delta_request()
+    result = result_for(body)
+    result["findings"].append(
+        {
+            "check_key": "completion-delta",
+            "kind": "MISMATCH",
+            "severity": "BLOCKING",
+            "message": "완료 결과가 계획의 완료 기준과 다릅니다",
+            "sources": [],
+            "evidence_ids": [],
+            "suggested_action": "완료 결과를 확인하세요",
+        }
+    )
+    provider = Provider(result)
+    response = await analyze(
+        ValidateRequest.model_validate(body), LLMClient(provider), "test-model"
+    )
+    assert (
+        json.loads(provider.calls[0].messages[1].content)["completion_delta"]
+        == body["completion_delta"]
+    )
+    assert "For the completion-delta check" in provider.calls[0].messages[0].content
+    assert response["result"]["findings"][0]["check_key"] == "completion-delta"
+    assert response["result"]["findings"][0]["kind"] == "MISMATCH"
+
+
+@pytest.mark.parametrize(
+    "case", ["missing_delta", "empty_delta", "missing_check", "wrong_kind"]
+)
+def test_completion_delta_and_its_check_must_be_supplied_together(case):
+    body = delta_request()
+    if case == "missing_delta":
+        del body["completion_delta"]
+    elif case == "empty_delta":
+        body["completion_delta"] = []
+    elif case == "missing_check":
+        body["checks"].pop()
+    else:
+        body["checks"][-1]["kind"] = "DESIGN_ALIGNMENT"
+    with pytest.raises(InvalidInput):
+        validate_input(ValidateRequest.model_validate(body))
+
+
 @pytest.mark.asyncio
 async def test_known_mismatch_preserves_supplied_evidence():
     examples = json.loads(

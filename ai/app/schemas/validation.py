@@ -97,6 +97,8 @@ class ValidateRequest(ContractModel):
     checks: list[Check] = Field(min_length=1)
     evidence: list[Evidence]
     execution_budget_ms: StrictInt = Field(ge=1)
+    # Only DELTA validations supply this unstructured completion report.
+    completion_delta: list[dict[str, Any]] | None = None
 
 
 class Unassessed(ContractModel):
