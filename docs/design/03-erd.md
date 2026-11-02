@@ -19,9 +19,9 @@
 
 문서별 승인에서는 document_version과 submission의 결정을 한 트랜잭션으로 저장한다. 최초 baseline 생성에서는 이 승인 기록을 고치지 않고 baseline 참조·수동 항목 승인·현재 기준 포인터를 한 트랜잭션으로 저장한다. 미제출 working copy와 제출 본문은 별도이며, 제출 후 DB 트리거로 본문 변경을 막는다.
 
-### V16 문서 검토 계약 확장 (S15P31A108-216)
+### V17 문서 검토 계약 확장 (S15P31A108-216)
 
-`V16__document_review_contract.sql`은 기존 V6를 수정하지 않고 제안에 type(PATCH/COMMENT), step, sources JSONB를 추가한다. 기존 제안은 PATCH/default PENDING, 단계는 미기록으로 유지한다. PATCH는 원문·대체문·선택이 필수이며 COMMENT는 이 필드와 decided_at이 모두 NULL이어야 한다.
+`V17__document_review_contract.sql`은 기존 V6를 수정하지 않고 제안에 type(PATCH/COMMENT), step, sources JSONB를 추가한다. V16은 검증 finding CHECK 변경에서 사용하므로 문서 검토는 V17을 사용한다. 기존 제안은 PATCH/default PENDING, 단계는 미기록으로 유지한다. PATCH는 원문·대체문·선택이 필수이며 COMMENT는 이 필드와 decided_at이 모두 NULL이어야 한다.
 
 검토 input/result JSONB에 전송 본문·참고 해시와 contract_version=2, steps/review_status/references_used를 보존한다. 기존 검토 JSON을 COMPLETE로 보정하지 않으며 과거 조회만 유지하고 새 제출에는 재검토를 요구한다. document_review_submission에 참조된 review의 UPDATE 및 suggestion의 INSERT/UPDATE/DELETE를 트리거로 차단해 제출 당시 판단 자료를 보존한다. 대화·취소·새 usage feature/llm_usage CHECK 변경은 이 migration에 포함하지 않는다.
 

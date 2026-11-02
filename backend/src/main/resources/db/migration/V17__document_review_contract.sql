@@ -1,3 +1,4 @@
+-- V16 belongs to validation_finding_check. Document review changes start at V17.
 -- Existing reviews retain their original input/result/hash. Missing v2 stages require a new review, not a fabricated success.
 ALTER TABLE document_bee_suggestion
   ADD COLUMN type TEXT NOT NULL DEFAULT 'PATCH' CHECK (type IN ('PATCH','COMMENT')),

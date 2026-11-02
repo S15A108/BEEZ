@@ -21,7 +21,7 @@ class DocumentReviewMigrationIntegrationTest {
             "pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d")
             .asCompatibleSubstituteFor("postgres"));
 
-    @Test void upgradesPopulatedV15WithoutInventingStagesOrChangingSubmissionHistory() {
+    @Test void upgradesPopulatedV15ToV17WithoutInventingStagesOrChangingSubmissionHistory() {
         Flyway.configure().dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword())
                 .target("15").load().migrate();
         var jdbc = new JdbcTemplate(new DriverManagerDataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword()));
@@ -50,7 +50,9 @@ class DocumentReviewMigrationIntegrationTest {
                 """, Long.class, document, version, account, review);
         String oldResult = jdbc.queryForObject("SELECT result::text FROM document_bee_review WHERE id=?", String.class, review);
 
-        Flyway.configure().dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword()).load().migrate();
+        var upgraded = Flyway.configure().dataSource(database.getJdbcUrl(), database.getUsername(), database.getPassword()).load();
+        upgraded.migrate();
+        assertThat(upgraded.info().current().getVersion().toString()).isEqualTo("17");
 
         assertThat(jdbc.queryForObject("SELECT type FROM document_bee_suggestion WHERE id=?", String.class, suggestion)).isEqualTo("PATCH");
         assertThat(jdbc.queryForObject("SELECT step FROM document_bee_suggestion WHERE id=?", String.class, suggestion)).isNull();
