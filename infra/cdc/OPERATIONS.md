@@ -1,5 +1,7 @@
 # 발행 이벤트 CDC 배포 검토안 (#225)
 
+> #227에서 BE 접수행 디코더와 분석·복구 워커가 추가됐다. [연동 문서](../../docs/design/published-analysis-227.md)가 BE 코드의 현재 상태이며, 아래 운영 설정은 여전히 미배포 검토안이다.
+
 이 구성은 **운영 배포 완료 상태가 아니다.** 별도 승인된 Kafka 브로커와 보안 설정을 전제로 Connect worker만 선택적으로 띄우는 초안이다. 실제 운영 DB 변경, Kafka 구축, 자격 증명·네트워크 정책 설정과 배포는 하지 않았다. `compose.yaml`은 기존 `infra/compose.yaml`을 수정하거나 자동 실행하지 않는다.
 
 BE CDC consumer는 `beez.cdc.kafka-security.properties`를 통해 SSL 또는 SASL_SSL Kafka 속성을 받는다. 인증서·ACL·방화벽과 장애 복구 협의 및 실제 TLS 연결 검증을 완료한 뒤에만 배포를 판단한다. 보안 설정이 비어 있으면 로컬 PLAINTEXT로 동작하므로 운영에서 반드시 보안 속성을 주입한다. 이 Compose는 Kafka 자체를 설치하지 않는다. 팀이 Kafka를 직접 운영할지 별도 제공받을지와 브로커의 인증·암호화·영속 저장·운영 책임을 정해야 한다.

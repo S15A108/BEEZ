@@ -1,8 +1,8 @@
 package com.beez.backend.impactanalysis.intake;
 
-import com.beez.backend.cdc.intake.AnalysisIntakeCheckPort;
 import com.beez.backend.cdc.recovery.*;
 import com.beez.backend.cdc.retry.ProcessingRetryPolicy;
+import static com.beez.backend.designitem.support.DesignJson.canonical;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.*;
@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.*;
 
 /** Durable data operations only. #227 owns execution and recurring recovery sweeps. */
 @Repository
-public class PublishedAnalysisRepository implements AnalysisIntakeCheckPort, IntakeRecoveryScanPort {
+public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
     private final JdbcClient jdbc;
     public PublishedAnalysisRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
@@ -26,7 +26,7 @@ public class PublishedAnalysisRepository implements AnalysisIntakeCheckPort, Int
                 .param("status", proposal == null ? "NOT_EVALUATED" : "PENDING").update();
     }
 
-    @Override @Transactional(readOnly = true)
+    @Transactional(readOnly = true)
     public void ensureSafeToAcknowledge(String reference) {
         // Discovery is durable even when delivery is duplicated; no in-memory claim or execution here.
         if (jdbc.sql("SELECT id FROM published_change_analysis WHERE id=:id").param("id", parse(reference))
@@ -39,7 +39,8 @@ public class PublishedAnalysisRepository implements AnalysisIntakeCheckPort, Int
         if (limit < 1 || limit > IntakeRecoverySweep.MAX_PAGE_SIZE) throw new IllegalArgumentException("Invalid limit");
         var rows = jdbc.sql("""
                 SELECT id,status FROM published_change_analysis WHERE id>:cursor AND
-                ((status='PENDING' AND requested_at<=:threshold AND (next_attempt_at IS NULL OR next_attempt_at<=:now))
+                ((status='PENDING' AND ((next_attempt_at IS NULL AND requested_at<=:threshold)
+                   OR (next_attempt_at IS NOT NULL AND next_attempt_at<=:now)))
                   OR (status='RUNNING' AND lease_until<=:now)) ORDER BY id LIMIT :limit
                 """).param("cursor", cursor == null ? 0L : parse(cursor)).param("threshold", Timestamp.from(observedAt.minusSeconds(30)))
                 .param("now", Timestamp.from(observedAt)).param("limit", limit + 1).query().listOfRows();
@@ -50,6 +51,33 @@ public class PublishedAnalysisRepository implements AnalysisIntakeCheckPort, Int
     }
 
     public record Claim(long id, int attempt, Instant leaseUntil) {}
+    public record Publication(long projectId, long baselineId, long proposalId, long publishedBy) {}
+
+    @Transactional(readOnly = true)
+    public Publication publication(long id) {
+        return jdbc.sql("""
+                SELECT a.project_id,a.published_baseline_id,a.change_proposal_id,b.published_by
+                  FROM published_change_analysis a JOIN baseline b
+                    ON b.id=a.published_baseline_id AND b.project_id=a.project_id
+                 WHERE a.id=:id AND a.change_proposal_id IS NOT NULL
+                   AND b.change_proposal_id=a.change_proposal_id
+                """).param("id", id).query((rs, row) -> new Publication(rs.getLong(1),rs.getLong(2),
+                        rs.getLong(3),rs.getLong(4))).optional()
+                .orElseThrow(() -> new IllegalStateException("Invalid publication intake"));
+    }
+
+    @Transactional
+    public Optional<Claim> claimNow(long id, long leaseSeconds) {
+        var project = jdbc.sql("SELECT project_id FROM published_change_analysis WHERE id=:id")
+                .param("id", id).query(Long.class).optional();
+        if (project.isEmpty()) return Optional.empty();
+        jdbc.sql("SELECT id FROM project WHERE id=:project FOR UPDATE").param("project", project.get()).query(Long.class).single();
+        return claim(id, databaseTime(), leaseSeconds);
+    }
+
+    public Instant databaseTime() {
+        return jdbc.sql("SELECT clock_timestamp()").query((rs, row) -> rs.getTimestamp(1).toInstant()).single();
+    }
 
     @Transactional
     public Optional<Claim> claim(long id, Instant now, long leaseSeconds) {
@@ -70,11 +98,17 @@ public class PublishedAnalysisRepository implements AnalysisIntakeCheckPort, Int
                 WHERE a.id=:id AND a.attempt<4
                   AND ((a.status='PENDING' AND (a.next_attempt_at IS NULL OR a.next_attempt_at<=:now))
                     OR (a.status='RUNNING' AND a.lease_until<=:now))
-                  AND NOT EXISTS (SELECT 1 FROM published_change_analysis earlier
-                    JOIN baseline eb ON eb.id=earlier.published_baseline_id
-                    JOIN baseline current ON current.id=a.published_baseline_id
-                    WHERE earlier.project_id=a.project_id AND eb.version_no<current.version_no
-                      AND earlier.status IN ('PENDING','RUNNING','FAILED'))
+                  AND NOT EXISTS (SELECT 1 FROM baseline current
+                    CROSS JOIN LATERAL generate_series(1,current.version_no-1) required(version_no)
+                    WHERE current.id=a.published_baseline_id AND current.project_id=a.project_id
+                      AND NOT EXISTS (SELECT 1 FROM baseline b WHERE b.project_id=a.project_id AND b.version_no=required.version_no))
+                  AND NOT EXISTS (SELECT 1 FROM baseline eb
+                    JOIN baseline current ON current.id=a.published_baseline_id AND current.project_id=a.project_id
+                    LEFT JOIN published_change_analysis earlier ON earlier.published_baseline_id=eb.id AND earlier.project_id=eb.project_id
+                    WHERE eb.project_id=a.project_id AND eb.version_no<current.version_no
+                      AND (earlier.id IS NULL OR NOT COALESCE(earlier.status='COMPLETED' OR
+                        (earlier.status='NOT_EVALUATED' AND
+                          ((eb.version_no=1 AND earlier.change_proposal_id IS NULL) OR earlier.error_code='published_before_intake')), false)))
                 RETURNING id,attempt,lease_until
                 """).param("id", id).param("now", Timestamp.from(now)).param("lease", Timestamp.from(now.plusSeconds(leaseSeconds)))
                 .query((rs, n) -> new Claim(rs.getLong("id"), rs.getInt("attempt"), rs.getTimestamp("lease_until").toInstant())).optional();
@@ -96,9 +130,47 @@ public class PublishedAnalysisRepository implements AnalysisIntakeCheckPort, Int
                 UPDATE published_change_analysis SET status=:status,error_code=:code,next_attempt_at=:next,
                   finished_at=CASE WHEN :status='PENDING' THEN NULL ELSE cast(:now AS timestamptz) END,lease_until=NULL
                 WHERE id=:id AND status='RUNNING' AND attempt=:attempt AND lease_until=:lease AND lease_until>:now
+                  AND lease_until>clock_timestamp()
                 """).param("id", claim.id()).param("attempt", claim.attempt()).param("lease", Timestamp.from(claim.leaseUntil()))
                 .param("now", Timestamp.from(now)).param("status", status).param("code", code, java.sql.Types.VARCHAR)
                 .param("next", next == null ? null : next.atOffset(java.time.ZoneOffset.UTC), java.sql.Types.TIMESTAMP_WITH_TIMEZONE).update() == 1;
+    }
+
+    /** Must run in the same transaction as the project lock and final freshness check. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean recordResult(Claim claim, String evaluation, String code, String fingerprint,
+                                Object explicit, Object ai, Object generation, Object usage, String usageStatus) {
+        if (!Set.of("COMPLETED", "INSUFFICIENT_EVIDENCE", "NOT_EVALUATED").contains(evaluation))
+            throw new IllegalArgumentException("Invalid evaluation status");
+        String lifecycle = "NOT_EVALUATED".equals(evaluation) ? "NOT_EVALUATED" : "COMPLETED";
+        int updated = jdbc.sql("""
+                UPDATE published_change_analysis SET status=:lifecycle,evaluation_status=:evaluation,error_code=:code,
+                  input_fingerprint=:fingerprint,explicit_result=cast(:explicit AS jsonb),ai_result=cast(:ai AS jsonb),
+                  generation=cast(:generation AS jsonb),usage=cast(:usage AS jsonb),usage_status=:usageStatus,
+                  finished_at=clock_timestamp(),lease_until=NULL,next_attempt_at=NULL
+                 WHERE id=:id AND status='RUNNING' AND attempt=:attempt AND lease_until=:lease AND lease_until>clock_timestamp()
+                """).param("id", claim.id()).param("attempt", claim.attempt()).param("lease", Timestamp.from(claim.leaseUntil()))
+                .param("lifecycle", lifecycle).param("evaluation", evaluation).param("code", code, java.sql.Types.VARCHAR)
+                .param("fingerprint", fingerprint).param("explicit", canonical(explicit)).param("ai", canonical(ai))
+                .param("generation", canonical(generation)).param("usage", canonical(usage)).param("usageStatus", usageStatus).update();
+        if (updated == 1) insertAttempt(claim, evaluation, code, usage, usageStatus);
+        return updated == 1;
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean recordFailure(Claim claim, String code, boolean retryable, Object usage, String usageStatus) {
+        Instant now = databaseTime();
+        if (!fail(claim, now, code, retryable)) return false;
+        insertAttempt(claim, "FAILED", code, usage, usageStatus);
+        return true;
+    }
+
+    private void insertAttempt(Claim claim, String outcome, String code, Object usage, String usageStatus) {
+        jdbc.sql("""
+                INSERT INTO published_analysis_attempt(intake_id,attempt,outcome,error_code,usage,usage_status)
+                VALUES(:id,:attempt,:outcome,:code,cast(:usage AS jsonb),:usageStatus)
+                """).param("id", claim.id()).param("attempt", claim.attempt()).param("outcome", outcome)
+                .param("code", code, java.sql.Types.VARCHAR).param("usage", canonical(usage)).param("usageStatus", usageStatus).update();
     }
 
     private static long parse(String value) {
