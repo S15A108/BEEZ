@@ -153,7 +153,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 알림·활동도 같은 트랜잭션에서 저장하고, 같은 중복 식별값은 건너뛴다([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)). D7 세부는 Q03이다.
 
-199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 163 검증 영향은 `PublicationImpactAdapter` 로 연결됐다(STALE·WAITING·DELTA 재접수, 발행 트랜잭션 참여). 197 발행 후 분석 접수는 PENDING 접수행 저장으로 연결됐다. 영향 분석 승인 게이트는 S15P31A108-241에서 구현했다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결은 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
+199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 163 검증 영향은 `PublicationImpactAdapter`로 연결됐다(STALE·WAITING·DELTA 재접수, 발행 트랜잭션 참여). 197 분석 접수는 변경 발행 시 `PENDING`, 최초 기준은 `NOT_EVALUATED`로 저장하며, 발행 후 분석 실행은 후속 작업이다. 영향 분석 승인 게이트는 S15P31A108-241에서 구현했다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결은 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
 
 ### 검증·시작
 
@@ -593,7 +593,7 @@ backend가 권한·원문 버전·범위를 확인하고 복사한 불변 근거
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `evidence_id` | `string` | Y | 요청 안에서 유일한 근거 키 |
-| `design_item_version_id` | `ID` | Y | approved_items 안의 승인 항목 버전 |
+| `design_item_version_id` | `ID` | 조건부 | 설계 출처 근거라면 approved_items 안의 승인 항목 버전. 검색된 미연결 문서 근거는 생략 |
 | `source` | [Source](00-common.md#schema-source) | Y | 정확한 문서 버전과 표시 위치 |
 | `locator` | [ValidationTextLocator](00-common.md#schema-validationtextlocator) | Y | 원문을 복원할 범위 |
 | `text` | `string` | Y | locator의 원문 발췌. 각 행의 LF를 포함한 정확한 문자열 |
@@ -1149,7 +1149,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `id` | `ID` | Y | 검증 ID |
 | `task_id` | `ID` | Y | 작업 |
 | `plan_revision_id` | `ID` | Y | 입력 리비전 |
-| `baseline_id` | `ID` | Y | 검증 당시 기준. 이력용 |
+| `baseline_id` | `ID` | Y | 검증 기준. 의미 분석이 완료된 결과는 실제 분석에 사용한 기준이며 이후 STALE이 되어도 이력으로 유지한다. 접수·실행 중이거나 분석이 완료되지 않은 경우에는 접수 당시 기준이다. |
 | `status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 검증 상태 |
 | `trigger` | `AGENT\|REVALIDATION\|DELTA` | Y | 검증 계기 |
 | `stale_reason` | `string` | N | STALE일 때 필수. 무효화 원인 |
@@ -1161,6 +1161,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
+
+검증 대기 중 무관한 발행이 있으면 실행 시 현재 기준을 다시 검색하고 결과 반영 전에 기준·참조·근거를 재확인한다. 접수 시점의 기준과 접수 입력 해시는 내부 이력에 보존하며, 완료된 의미 분석의 실제 기준과 분석 입력 해시도 별도로 기록한다. 직접 참조가 바뀌거나 분석 중 기준이 다시 발행되면 기존 분석 결과를 유효한 결과로 반영하지 않는다.
 
 <a id="schema-taskdetail"></a>
 

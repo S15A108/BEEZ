@@ -1097,7 +1097,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 - 생성 시 본인 작업을 만들고 수정 시 본인 담당·현재 계획/상태를 검사한다.
 - 수정은 불변 새 리비전이다. 진행 중 수정은 STALE·WAITING(REVALIDATION)이며 점유 유지다.
-- (BE 구현, -162) 위 무효화는 검증 입력(제목·접근 방식을 뺀 계획 내용)이 바뀐 수정에만 적용한다. 제목만 바꾸는 수정은 검증을 유지하고 새 리비전으로 이어 받으므로, 쥐고 있던 `validation_id` 로 그대로 `report_task_state(START·RESUME)` 할 수 있다(응답 `task.validation_status` 로 확인). 완료 보고(delta)의 DELTA 검증이 아직 도는 동안은 수정이 `400 invalid_transition` 이다 — 결과를 기다리거나 RESUME. 결과가 보완 필요·검토 필요·오류로 끝났으면 수정할 수 있다. 규칙은 REST TSK-A04·[04 §2.5](../design/04-task-lifecycle.md)와 같다.
+- (BE 구현, -162) 위 무효화는 검증 입력(제목·접근 방식을 뺀 계획 내용)이 바뀐 수정에만 적용한다. 규칙·가짜 검증에서 제목만 바꾸는 수정은 검증을 유지하고 새 리비전으로 이어 받으므로, 쥐고 있던 `validation_id` 로 그대로 `report_task_state(START·RESUME)` 할 수 있다(응답 `task.validation_status` 로 확인). 실제 검색 검증은 제목·접근 방식·패킷이 바뀌면 재검증한다. 완료 보고(delta)의 DELTA 검증이 아직 도는 동안은 수정이 `400 invalid_transition` 이다 — 결과를 기다리거나 RESUME. 결과가 보완 필요·검토 필요·오류로 끝났으면 수정할 수 있다. 규칙은 REST TSK-A04·[04 §2.5](../design/04-task-lifecycle.md)와 같다.
 - design_refs는 항목당 가장 강한 관계 하나로 확정한다. 입력·정규화 세부 Q02.
 - (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing이다(REST TSK-A01·구현과 같음).
 

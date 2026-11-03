@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -168,13 +169,22 @@ public class TaskPlanService {
         TaskStatus before = task.getStatus();
         task.applyNewPlanRevision(revision.getId(), plan.title());
 
-        // 검증 입력이 바뀌었는가 (AC-13, 04-task-lifecycle.md §2.2 S2). 입력 해시가 같으면(제목·접근 방식만 바뀜) 이전 검증을 그대로 쓴다 —
-        // 무효화하지 않고 작업 상태도 두며, 이전 계획의 가장 최근 끝난 검증을 새 계획으로 이어 받는다(G1 은 리비전으로 찾으므로).
+        // 검증 입력이 바뀌었는가 (AC-13, 04-task-lifecycle.md §2.2 S2). 계획 해시 외에 AI 검색어와 패킷도 확인한다.
+        // 검색에 쓰인 입력까지 같으면 무효화하지 않고 가장 최근 끝난 검증을 새 계획으로 이어 받는다(G1 은 리비전으로 찾으므로).
         // 이전 계획을 못 읽으면 "바뀌지 않았다" 로 보지 않고 바뀐 것으로 다룬다 (조회 실패 ≠ 변경 없음)
         boolean sameInput = false;
         if (previousRevisionId != null) {
             Optional<TaskPlanRevision> previous = revisions.findByIdAndTaskId(previousRevisionId, taskId);
             sameInput = previous.isPresent() && revision.getInputHash().equals(previous.get().getInputHash());
+            if (sameInput) {
+                TaskPlanRevision old = previous.get();
+                // 패킷은 계획 해시에 없지만 AI 에 전달되는 근거다. 제목과 접근 방식도 실제 검색어에 사용된다.
+                boolean packetSame = Objects.equals(old.getContextPacketId(), revision.getContextPacketId());
+                boolean searchTextSame = Objects.equals(old.getTitle(), revision.getTitle())
+                        && Objects.equals(old.getApproach(), revision.getApproach());
+                sameInput = (packetSame && searchTextSame)
+                        || !validationLookup.hasSearchBackedValidation(taskId, previousRevisionId);
+            }
         }
         if (sameInput) {
             validationLookup.carryForwardLatest(taskId, previousRevisionId, revision.getId());
