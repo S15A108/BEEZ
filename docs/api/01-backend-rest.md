@@ -7844,7 +7844,7 @@ HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RU
 
 관련 요구사항: BEE-08  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-233). 실제 AI(AI-A06) 연동은 AI 모듈 병합 뒤 확인
 
 #### 인증
 
@@ -7857,7 +7857,7 @@ HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RU
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 필수. 같은 키·같은 본문으로 다시 보내면 저장된 초안을 그대로 돌려주고 AI를 다시 부르지 않는다(24시간). 같은 키에 다른 본문이면 409 idempotency_conflict. 실패한 요청은 저장하지 않으므로 같은 키로 다시 보내면 AI를 다시 부른다. 공통 5절 |
 
 #### Path Parameters
 
@@ -7874,9 +7874,9 @@ HTTP `202`. 반환은 새 RUNNING 접수행이다. 같은 리비전의 활성 RU
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `document_id` | `ID` | Y | 대상 문서 |
-| `base_document_version_id` | `ID` | Y | 기준 원문 |
-| `instruction` | `string` | Y | 수정 요청 |
-| `task_id` | `ID` | N | 관련 작업 |
+| `base_document_version_id` | `ID` | Y | 기준 원문. 지금 기준에 들어 있는 그 문서의 승인본이어야 한다 |
+| `instruction` | `string` | Y | 수정 요청. 공백뿐이면 안 되고 2,000자 이하 |
+| `task_id` | `ID` | N | 관련 작업. 이 프로젝트의 작업이어야 한다. AI에는 보내지 않고 사용량을 작업에 귀속하는 데만 쓴다 |
 
 ```json
 {
@@ -7941,8 +7941,11 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `version_conflict` | 기준 변경 |
-| 502 | `ai_unavailable` | 초안 생성 실패 |
+| 409 | `version_conflict` | 기준 변경. 요청한 버전이 지금 기준의 승인본이 아니거나, 초안을 만드는 동안 이 문서의 승인본이 바뀜 |
+| 409 | `baseline_missing` | 기준 v1이 만들어지기 전 |
+| 409 | `analysis_not_completed` | 기준의 승인본에 읽을 수 있는 원문이 아직 없음 |
+| 409 | `idempotency_conflict` | 같은 Idempotency-Key로 다른 본문을 보냄 |
+| 502 | `ai_unavailable` | 초안 생성 실패(AI 연결 실패·서버 오류·쓸 수 없는 출력) |
 | 504 | `ai_timeout` | 시간 초과 |
 
 ```json
@@ -7956,8 +7959,16 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 초안 생성으로 원문·승인본을 직접 바꾸지 않는다.
+- 초안 생성으로 원문·승인본을 직접 바꾸지 않는다. 문서 버전·기준·제안은 하나도 만들거나 바꾸지 않고, 쓰는 것은 사용량(`llm_usage`, feature `BEE_DRAFT`)과 멱등 기록뿐이다.
 - 생성된 내용을 사람이 확인하고 CHG-A01로 변경 제안을 제출한다.
+- AI에는 승인된 문서 본문(`document_version`)과 지금 기준에서 이 문서 버전을 출처로 하는 승인 항목(`approved_items`)만 보낸다. 항목은 퇴역하지 않은 것을 키 순서로 최대 50개 보내고, 더 있으면 `generation.unresolved`에 "관련 설계 항목 N개 중 50개만 전달했어요."를 남긴다.
+- AI를 부르는 동안에는 트랜잭션과 프로젝트 잠금을 잡지 않는다. 부른 뒤 프로젝트 잠금을 잡고 다시 확인해 그 사이 근거가 바뀌었으면 결과를 버리고 409 version_conflict로 응답한다. 확인하는 것은 ① 이 문서의 승인본이 같은가(새 기준에도 같은 승인본이 그대로 있으면 유효하다), ② AI에 보낸 관련 설계 항목의 목록과 버전이 지금 기준과 같은가(항목이 새 버전이 되거나 퇴역하거나 빠진 경우, 전체 개수가 달라진 경우 포함)이다. 문서는 그대로인데 항목만 바뀐 초안이 현재 기준의 결과처럼 나가지 않게 하려는 것이다. 이때도 AI 호출은 실제로 일어났으므로 사용량은 남긴다.
+- 같은 Idempotency-Key로 요청이 동시에 들어오면 먼저 온 요청 하나만 AI를 부르고, 나머지는 그 결과(성공이든 실패든)를 기다려 그대로 받는다. 본문이 다르면 기다리지 않고 409 idempotency_conflict이다. 이 공유는 서버 프로세스 안에서만 이루어진다. 인스턴스가 둘 이상으로 늘면 서로 보지 못하므로 DB 쪽 진행 중 표시가 필요하다.
+- AI 응답이 `after_content`가 비었거나 변경 제안으로 제출할 수 없는 본문(100,000자·1 MiB 초과, 제어 문자 포함), `reason` 없음, `origin`이 MODEL/TEMPLATE이 아님이면 쓸 수 없는 출력으로 보고 502 ai_unavailable로 응답한다. 모델 호출 실패를 템플릿으로 대신하지 않는다.
+- `generation.sources`는 네 필드(`document_id`, `document_version_id`, `version_no`, `location`)가 모두 있고 요청한 문서·버전과 일치하는 것만 남긴다. `document_id`·`document_version_id`는 요청한 값과, `version_no`는 그 버전의 번호와 같아야 하고 `location`은 비어 있지 않은 문자열이어야 한다. ID는 정수로 와도 같은 값이면 받아 문자열로 맞춘다. 제외한 것이 있으면 `unresolved`에 "근거 N건이 이 요청의 문서·버전과 맞지 않거나 필수 값이 없어 제외했어요."를 남기고, 전부 제외되면 502 ai_unavailable이다.
+- 다시 시도해도 되는 오류: 502 ai_unavailable, 504 ai_timeout(잠시 뒤 같은 요청). 기준을 새로 확인한 뒤 보내야 하는 오류: 409 version_conflict. 입력을 고쳐야 하는 오류: 400 validation_failed, 404 not_found. 409 baseline_missing·analysis_not_completed는 기준 v1 발행이나 문서 준비가 끝난 뒤에 다시 보낸다.
+- AI 호출 한 번마다 사용량 줄을 남긴다. 모델 호출 뒤에 실패한 경우 AI가 오류 본문에 실은 `usage[]`(알려진 토큰·비용, 여러 모델 호출 포함)를 그대로 남기고(03-ai-internal 공통 규칙), 응답 본문을 받지 못했거나 `usage`가 없을 때만 토큰 수를 모르는 실패 한 줄(`tokens_known=false`, `failed=true`)을 남긴다. 0토큰으로 단정하지 않는다. 사용량 기록이 실패해도 응답은 막지 않는다.
+- 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13071,7 +13082,7 @@ HTTP `201`.
 팀장이 비비 정리를 확인하고 회의를 끝낸다. 회의 결과로 변경 제안이 만들어진다. 제안자는 회의를 끝낸 팀장이고 문안은 비비 정리(MTG-A11)다. 문서와 기준은 팀장이 그 제안을 승인(CHG-A09)할 때 바뀐다.
 
 관련 요구사항: MTG-09 (화면 PNL-06-v2-draft, PNL-06-v2-draft-result)  
-담당: BE: 오서현 / AI: 박상은(제안 문안) / FE: 오서현  
+담당: BE: 오서현 / AI: — (문안은 MTG-A11 비비 정리에서 옴) / FE: 오서현  
 상태: 수정안 요청 (협의 필요)
 
 #### 인증
@@ -13157,6 +13168,7 @@ HTTP `200`.
 
 #### 처리 규칙
 
+- 이 API는 AI를 부르지 않는다. 문서 수정 초안 생성(CHG-A07, AI-A06)을 재사용하지 않고, 제안 문안은 정리(MTG-A11)가 이미 만든 document_changes.after를 쓴다.
 - 정리의 document_changes와 결정으로 변경 제안을 먼저 만들고, 성공하면 회의를 CLOSED로 바꾼다. 문서 변경이 있는 제안은 원문을 저장소에 올리므로 회의 종료와 제안 생성을 한 DB 트랜잭션으로 묶지 않는다(제안 생성은 외부 트랜잭션 안에서 호출할 수 없다). 제안 생성이 성공한 뒤 회의 종료가 실패해 다시 시도하면 같은 Idempotency-Key로 같은 제안을 돌려받는다(보존 24시간). 제안은 CHG-A01과 같은 계약이며 meeting_id는 이 회의, base_baseline_id는 현재 기준, documents[]는 base_document_version_id와 after_content(document_changes를 적용한 본문)다.
 - (수정안 요청) 끝내기 전에 정리의 document_changes[].base_version_id가 지금 기준의 그 문서 승인본과 같은지 다시 확인한다. 정리 뒤 다른 변경 제안이 발행돼 기준이 바뀌었으면 409 summary_outdated로 회의를 끝내지 않는다. 화면은 '정리한 뒤 기준이 바뀌었어요'를 안내하고, 팀장이 비비에게 다시 정리(MTG-A11)를 요청한다. 아직 발행되지 않은 다른 제안은 기준이 아니므로 여기서 막지 않고, 승인할 때 CHG-A09의 requires_refresh 규칙을 따른다.
 - 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
