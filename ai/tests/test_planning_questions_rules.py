@@ -139,3 +139,20 @@ def test_overlong_sentence_quote_is_capped_but_still_contains_the_signal():
     quote = hits[0][0].evidence[0].quote
     assert len(quote) <= 1000 and "미정" in quote
     assert_resolvable(document, hits)
+
+
+def test_long_table_cells_and_headings_keep_the_candidate_within_limits():
+    long_cell = "가" * 2100
+    long_heading = "나" * 1200
+    document = parse(
+        f"# {long_heading}\n\n| {long_cell} | 값 |\n| --- | --- |\n| {long_cell} | TBD |\n"
+    )
+    hits = detect_rule_candidates(document, REF)
+    assert len(hits) == 1
+    candidate, draft = hits[0]
+    assert len(candidate.summary) <= 2000 and len(draft.text) <= 2000
+    assert "가" * 80 + "…" in candidate.summary and "가" * 81 not in candidate.summary
+    assert "'값'" in candidate.summary
+    assert len(candidate.evidence[0].quote) <= 1000
+    assert len(candidate.evidence[0].location) <= 1000
+    assert_resolvable(document, hits)

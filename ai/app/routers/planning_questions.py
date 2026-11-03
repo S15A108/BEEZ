@@ -38,6 +38,14 @@ _MESSAGE = "Planning question request rejected."
 logger = logging.getLogger(__name__)
 
 
+class InvalidRequest(Exception):
+    """The request body failed schema validation; the input is never echoed."""
+
+    def __init__(self, semantic: bool) -> None:
+        super().__init__("Invalid planning question request.")
+        self.semantic = semantic
+
+
 def _error(status: int, code: str, reason: str | None = None, locator=None):
     error = {"code": code, "message": _MESSAGE}
     if reason:
@@ -60,13 +68,13 @@ class PlanningQuestionRoute(APIRoute):
                 response = await handler(request)
             except HTTPException as exc:
                 response = _error(exc.status_code, str(exc.detail))
-            except ValidationError as exc:
-                # Model validators denote structurally valid but semantically
-                # incompatible input; never echo the input itself.
-                semantic = any(error["type"] == "value_error" for error in exc.errors())
+            except InvalidRequest as exc:
+                # Only the request body maps to 400/422. A pydantic error raised
+                # while composing the result is this side's fault and falls
+                # through to the generic 502 below, never blamed on the caller.
                 response = (
                     _error(422, "invalid_ai_input")
-                    if semantic
+                    if exc.semantic
                     else _error(400, "validation_failed")
                 )
             except SourceParsingError as exc:
@@ -179,7 +187,13 @@ async def create_planning_questions(
         if len(data) + len(chunk) > config.max_body_bytes:
             raise HTTPException(413, detail="request_too_large")
         data.extend(chunk)
-    body = PlanningQuestionRequest.model_validate_json(bytes(data))
+    try:
+        body = PlanningQuestionRequest.model_validate_json(bytes(data))
+    except ValidationError as exc:
+        # Model validators denote structurally valid but semantically
+        # incompatible input.
+        semantic = any(error["type"] == "value_error" for error in exc.errors())
+        raise InvalidRequest(semantic) from None
     if body.mode == "RULES_ONLY":
         outcome = await generate_planning_questions(body, None)
         return outcome.to_api_dict()

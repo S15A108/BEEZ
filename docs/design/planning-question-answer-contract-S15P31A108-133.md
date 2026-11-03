@@ -78,7 +78,7 @@ ReviewCandidate:
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
-| `candidate_key` | string ≤ 64 | 결과 안의 임시 키(`rule-undecided-L29-1`, `model-02`). 최종 ID가 아니다 |
+| `candidate_key` | string ≤ 64 | 결과 안의 임시 키. 최종 ID가 아니다. 규칙 후보는 위치 기반(`rule-undecided-L29-1`, `rule-placeholder-L27-c2`, `rule-duplicate-REQ-003`), 모델 후보는 **종류 + 확인된 근거(블록 ID·인용)의 해시**(`model-3f9a1c…` 12자리)이고 근거가 없으면 종류 + 요약 문구의 해시다. 출력 순서와 무관해 같은 버전을 재분석해 같은 문장을 인용하면 같은 키가 나온다. 같은 종류·같은 인용의 제안이 둘이면 첫 번째만 남는다 |
 | `kind` | `MISSING_CANDIDATE\|CLARIFICATION\|CONFLICT` | 2절 |
 | `status` | `REVIEW_CANDIDATE\|UNVERIFIED` | 3절 |
 | `signal` | `UNDECIDED_STATEMENT\|PLACEHOLDER_CELL\|DUPLICATE_KEY\|MODEL_PROPOSAL` | 탐지 경로 |
@@ -132,7 +132,7 @@ SupplementQuestion:
 | `candidate.kind` | `kind` | 기존 CHECK 값과 동일 |
 | `question.text` | `question` | 기존 |
 | `question.origin` | `origin` (`model`/`template`) | 기존 CHECK에 소문자로 매핑 |
-| `candidate_key`, `question_key` | `candidate_key TEXT`, UNIQUE(`document_version_id`, `question_key`) | 같은 버전 재분석 시 중복 저장 방지 |
+| `candidate_key`, `question_key` | `analysis_request_key TEXT`(요청 `request_key` 또는 BE 분석 job ID), `question_key TEXT`, UNIQUE(`document_version_id`, `analysis_request_key`, `question_key`) | 키는 **한 분석 결과 안에서만** 유일성을 보장한다. 행마다 어느 분석 실행에서 나왔는지 남긴다 |
 | `question_type`, `answer_format` | `question_type TEXT`, `answer_format JSONB` | 화면 렌더링 |
 | `basis` | `evidence_status TEXT` (`REVIEW_CANDIDATE`/`UNVERIFIED`) | "근거 미확인" 표시 |
 | `candidate.summary`, `signal`, `unverified_reason` | `summary TEXT`, `signal TEXT`, `unverified_reason TEXT` | 검토 화면 설명 |
@@ -142,7 +142,9 @@ SupplementQuestion:
 
 처리 규칙 제안:
 
-- 새 버전 분석 결과는 이전 버전 질문을 덮어쓰지 않는다. 같은 버전 재분석은 `candidate_key`가 같은 행을 갱신하고 답변된 행은 보존한다.
+- 새 버전 분석 결과는 이전 버전 질문을 덮어쓰지 않는다.
+- 같은 버전 재분석(PLN-A02 재시도 등)에서는 키를 **같은 질문인지 판단하는 힌트**로만 쓴다. 규칙 후보 키와 같은 근거를 인용한 모델 후보 키는 재분석에서도 같지만, 모델이 다른 문장을 인용하거나 요약 문구만 바꿔도 키가 달라진다. 따라서 BE는 (1) 이전 실행의 답변된(`ANSWERED`)·닫힌(`DISMISSED`) 행은 키가 같아도 질문 문구·형식을 덮어쓰지 않고 보존하고, (2) 새 결과에만 있는 키는 새 행으로 넣고, (3) 새 결과에 없는 미답변(`OPEN`) 행은 숨기거나 `SUPERSEDED` 상태(추가 필요)로 표시한다. 키가 같다는 이유로 기존 행의 질문 내용을 바꾸지 않는다.
+- 같은 종류·같은 인용의 모델 제안이 한 결과 안에 둘 이상이면 AI가 첫 번째만 남기므로 한 결과 안에서 키는 중복되지 않는다.
 - 사용자가 후보를 닫으면 `status=DISMISSED`. `UNVERIFIED` 질문도 답변할 수 있지만 화면에 근거 미확인 표시를 유지한다.
 - PLN-A04 요청 `answer: string`을 6절 `answer` 객체로 바꾸거나, 호환을 위해 `answer`(표시 텍스트)와 `answer_payload`를 함께 받는다.
 - `origin=human`(사용자가 직접 추가한 질문)은 AI 결과에 없으며 BE 전용이다.

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings, get_settings
 from app.main import app
 from app.services.llm_client import ProviderError
-from evaluations.planning_questions.cases import request_body
+from evaluations.planning_questions.cases import PROPOSALS, request_body
 from evaluations.planning_questions.examples import (
     HEADERS,
     ExampleApp,
@@ -77,10 +77,13 @@ def test_model_mode_returns_source_checked_candidates_and_usage(api):
     assert call.context.project_id == "101"
     result = body["result"]
     assert result["document"] == request["document"]
-    statuses = {c["candidate_key"]: c["status"] for c in result["candidates"]}
-    assert statuses["model-01"] == "REVIEW_CANDIDATE"
-    assert statuses["model-03"] == "UNVERIFIED" and statuses["model-04"] == "UNVERIFIED"
+    statuses = {c["summary"]: c["status"] for c in result["candidates"]}
+    scripted = PROPOSALS["plan.md"]
+    assert statuses[scripted[0]["summary"]] == "REVIEW_CANDIDATE"
+    assert statuses[scripted[2]["summary"]] == "UNVERIFIED"
+    assert statuses[scripted[3]["summary"]] == "UNVERIFIED"
     for candidate in result["candidates"]:
+        assert candidate["candidate_key"].startswith(("rule-", "model-"))
         assert candidate["status"] in {"REVIEW_CANDIDATE", "UNVERIFIED"}
         assert candidate["evidence"] or candidate["status"] == "UNVERIFIED"
     # The fabricated quote from the scripted proposal is never echoed.

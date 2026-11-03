@@ -26,6 +26,7 @@ from app.services.planning_questions import (
     LLMCandidateProposer,
     ModelCandidate,
     generate_planning_questions,
+    model_candidate_key,
 )
 from app.services.planning_questions import proposer as proposer_module
 
@@ -112,8 +113,14 @@ class FakeProposer:
         return CandidateProposal(candidates, "fake", (usage(),))
 
 
-def by_key(result):
-    return {candidate.candidate_key: candidate for candidate in result.candidates}
+def by_summary(result):
+    return {candidate.summary: candidate for candidate in result.candidates}
+
+
+def question_for(result, candidate):
+    return next(
+        q for q in result.questions if q.candidate_key == candidate.candidate_key
+    )
 
 
 @pytest.mark.asyncio
@@ -145,15 +152,15 @@ async def test_verified_model_candidate_replaces_the_overlapping_rule_hit():
         )
     )
     outcome = await generate_planning_questions(request(), proposer)
-    candidates = by_key(outcome.result)
-    assert "rule-undecided-L3-1" not in candidates
-    model = candidates["model-01"]
+    keys = {candidate.candidate_key for candidate in outcome.result.candidates}
+    assert "rule-undecided-L3-1" not in keys
+    model = by_summary(outcome.result)["합계 한도가 없습니다."]
+    assert model.candidate_key.startswith("model-")
     assert model.status == "REVIEW_CANDIDATE" and model.signal == "MODEL_PROPOSAL"
     assert model.evidence[0].location == "업로드 / L3-L3"
     assert model.evidence[0].locator.start_line == 3
-    question = next(
-        q for q in outcome.result.questions if q.candidate_key == "model-01"
-    )
+    question = question_for(outcome.result, model)
+    assert question.question_key == f"q-{model.candidate_key}"
     assert question.origin == "MODEL" and question.question_type == "ESSAY"
     assert isinstance(question.answer_format, EssayAnswerFormat)
     assert outcome.origin == "MODEL" and outcome.model == "fake"
@@ -171,17 +178,14 @@ async def test_fabricated_quote_is_unverified_and_never_output():
         )
     )
     outcome = await generate_planning_questions(request(), proposer)
-    candidates = by_key(outcome.result)
-    model = candidates["model-01"]
+    model = by_summary(outcome.result)["합계 한도가 다릅니다."]
     assert model.status == "UNVERIFIED"
     assert model.unverified_reason == "QUOTE_NOT_IN_BLOCK" and model.evidence == ()
     assert "50 MB" not in json.dumps(outcome.to_api_dict(), ensure_ascii=False)
     # The rule hit on the same block stays because the model candidate is unverified.
-    assert "rule-undecided-L3-1" in candidates
-    question = next(
-        q for q in outcome.result.questions if q.candidate_key == "model-01"
-    )
-    assert question.basis == "UNVERIFIED"
+    keys = {candidate.candidate_key for candidate in outcome.result.candidates}
+    assert "rule-undecided-L3-1" in keys
+    assert question_for(outcome.result, model).basis == "UNVERIFIED"
 
 
 @pytest.mark.asyncio
@@ -201,10 +205,10 @@ async def test_unknown_block_empty_evidence_and_partial_evidence_reasons():
         ),
     )
     outcome = await generate_planning_questions(request(), proposer)
-    candidates = by_key(outcome.result)
-    assert candidates["model-01"].unverified_reason == "BLOCK_NOT_FOUND"
-    assert candidates["model-02"].unverified_reason == "NO_EVIDENCE"
-    partial = candidates["model-03"]
+    candidates = by_summary(outcome.result)
+    assert candidates["없는 블록"].unverified_reason == "BLOCK_NOT_FOUND"
+    assert candidates["주제 없음"].unverified_reason == "NO_EVIDENCE"
+    partial = candidates["일부만 맞음"]
     assert partial.status == "UNVERIFIED"
     assert partial.unverified_reason == "QUOTE_NOT_IN_BLOCK"
     assert [item.quote for item in partial.evidence] == ["재시도는 멤버가 수행한다."]
@@ -233,11 +237,13 @@ async def test_conflict_needs_two_distinct_verified_blocks_and_ranks_first():
     outcome = await generate_planning_questions(
         request(), FakeProposer(same_block, two_blocks)
     )
-    candidates = by_key(outcome.result)
-    assert candidates["model-01"].unverified_reason == "INSUFFICIENT_EVIDENCE"
-    assert candidates["model-02"].status == "REVIEW_CANDIDATE"
-    assert outcome.result.candidates[0].candidate_key == "model-02"
-    assert outcome.result.candidates[-1].candidate_key == "model-01"
+    candidates = by_summary(outcome.result)
+    assert (
+        candidates["한 블록 안의 두 문장"].unverified_reason == "INSUFFICIENT_EVIDENCE"
+    )
+    assert candidates["두 블록"].status == "REVIEW_CANDIDATE"
+    assert outcome.result.candidates[0].summary == "두 블록"
+    assert outcome.result.candidates[-1].summary == "한 블록 안의 두 문장"
 
 
 @pytest.mark.asyncio
@@ -252,21 +258,75 @@ async def test_priority_order_cap_and_truncation():
         proposal("MISSING_CANDIDATE", "근거 없음", []),
     )
     outcome = await generate_planning_questions(request(max_questions=2), proposer)
+    candidates = by_summary(outcome.result)
+    clarification = candidates["설명 필요"].candidate_key
+    unverified = candidates["근거 없음"].candidate_key
     keys = [candidate.candidate_key for candidate in outcome.result.candidates]
     # Verified MISSING hits by position, then verified CLARIFICATION, then unverified.
     assert keys == [
         "rule-undecided-L3-1",
         "rule-placeholder-L11-c2",
-        "model-01",
-        "model-02",
+        clarification,
+        unverified,
     ]
     assert [(q.rank, q.candidate_key) for q in outcome.result.questions] == [
         (1, "rule-undecided-L3-1"),
         (2, "rule-placeholder-L11-c2"),
     ]
-    assert outcome.result.truncated_candidate_keys == ("model-01", "model-02")
+    assert outcome.result.truncated_candidate_keys == (clarification, unverified)
     assert outcome.result.omitted_candidates == 0
     assert outcome.result.max_questions == 2
+
+
+@pytest.mark.asyncio
+async def test_model_keys_depend_on_content_not_on_output_order():
+    anchored = proposal(
+        "CLARIFICATION", "설명 A", [{"line": 7, "quote": "재시도는 멤버가 수행한다."}]
+    )
+    unanchored = proposal("MISSING_CANDIDATE", "근거 없음 B", [])
+    one = await generate_planning_questions(
+        request(), FakeProposer(anchored, unanchored)
+    )
+    two = await generate_planning_questions(
+        request(), FakeProposer(unanchored, anchored)
+    )
+    first, second = by_summary(one.result), by_summary(two.result)
+    assert first["설명 A"].candidate_key == second["설명 A"].candidate_key
+    assert first["근거 없음 B"].candidate_key == second["근거 없음 B"].candidate_key
+    assert first["설명 A"].candidate_key != first["근거 없음 B"].candidate_key
+    assert first["근거 없음 B"].candidate_key == model_candidate_key(
+        "MISSING_CANDIDATE", (), "  근거   없음 B "
+    )
+    # A different kind over the same quote is a different gap.
+    other_kind = proposal(
+        "MISSING_CANDIDATE",
+        "설명 A",
+        [{"line": 7, "quote": "재시도는 멤버가 수행한다."}],
+    )
+    three = await generate_planning_questions(request(), FakeProposer(other_kind))
+    assert (
+        by_summary(three.result)["설명 A"].candidate_key
+        != first["설명 A"].candidate_key
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_kind_and_quotes_collapse_to_the_first_proposal():
+    anchored = proposal(
+        "CLARIFICATION", "설명 A", [{"line": 7, "quote": "재시도는 멤버가 수행한다."}]
+    )
+    reworded = proposal(
+        "CLARIFICATION",
+        "설명 A의 다른 표현",
+        [{"line": 7, "quote": "재시도는 멤버가 수행한다."}],
+    )
+    outcome = await generate_planning_questions(
+        request(), FakeProposer(anchored, reworded)
+    )
+    model_summaries = [
+        c.summary for c in outcome.result.candidates if c.signal == "MODEL_PROPOSAL"
+    ]
+    assert model_summaries == ["설명 A"]
 
 
 @pytest.mark.asyncio
@@ -286,16 +346,17 @@ async def test_model_question_formats_are_typed():
         proposal(
             "CLARIFICATION",
             "단답",
-            [{"line": 7, "quote": "멤버"}],
+            [{"line": 7, "quote": "수행한다"}],
             {"type": "SHORT_ANSWER", "text": "몇 회?", "options": []},
         ),
     )
     outcome = await generate_planning_questions(request(), proposer)
-    formats = {q.candidate_key: q.answer_format for q in outcome.result.questions}
-    choice = formats["model-01"]
+    candidates = by_summary(outcome.result)
+    choice = question_for(outcome.result, candidates["선택"]).answer_format
     assert isinstance(choice, ChoiceAnswerFormat)
     assert choice.options == ("멤버", "리더") and choice.multiple and choice.allow_other
-    assert isinstance(formats["model-02"], ShortAnswerFormat)
+    short = question_for(outcome.result, candidates["단답"]).answer_format
+    assert isinstance(short, ShortAnswerFormat)
 
 
 class FakeProvider:

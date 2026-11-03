@@ -6,6 +6,7 @@ the referenced block, orders by priority and caps the questions. It never
 stores anything and never calls a model unless a proposer is supplied.
 """
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -106,8 +107,25 @@ def _answer_format(question: ModelQuestion) -> AnswerFormat:
     return EssayAnswerFormat()
 
 
+def model_candidate_key(
+    kind: str, evidence: tuple[EvidenceItem, ...], summary: str
+) -> str:
+    """Content-derived key: the same kind and verified quotes give the same key.
+
+    Output order never affects it, so re-analysing the same document version
+    yields the same key for the same anchored gap. Without evidence the
+    normalized summary is used, which is only as stable as the model's wording.
+    """
+    if evidence:
+        anchors = sorted((item.block_id, item.quote) for item in evidence)
+        material = "\n".join(f"{kind}\t{block}\t{quote}" for block, quote in anchors)
+    else:
+        material = f"{kind}\t{' '.join(summary.split())}"
+    return "model-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+
+
 def verify_model_candidate(
-    document: SourceDocument, ref: DocumentRef, index: int, proposed: ModelCandidate
+    document: SourceDocument, ref: DocumentRef, proposed: ModelCandidate
 ) -> Item:
     """Keep only quotes found in their block; anything less is UNVERIFIED."""
     blocks = {block.block_id: block for block in document.blocks}
@@ -147,7 +165,9 @@ def verify_model_candidate(
     ):
         reason = "INSUFFICIENT_EVIDENCE"
     candidate = ReviewCandidate(
-        candidate_key=f"model-{index:02d}",
+        candidate_key=model_candidate_key(
+            proposed.kind, tuple(verified), proposed.summary
+        ),
         kind=proposed.kind,
         status="REVIEW_CANDIDATE" if reason is None else "UNVERIFIED",
         signal="MODEL_PROPOSAL",
@@ -240,10 +260,15 @@ async def generate_planning_questions(
     usage: tuple[LLMUsage, ...] = ()
     if request.mode == "MODEL":
         proposal = await proposer.propose(document)
-        model_items = [
-            verify_model_candidate(document, ref, index, candidate)
-            for index, candidate in enumerate(proposal.candidates, start=1)
-        ]
+        model_items: list[Item] = []
+        seen_keys: set[str] = set()
+        for proposed in proposal.candidates:
+            item = verify_model_candidate(document, ref, proposed)
+            # The same kind and quotes describe the same gap; keep the first.
+            if item[0].candidate_key in seen_keys:
+                continue
+            seen_keys.add(item[0].candidate_key)
+            model_items.append(item)
         items = merge_items(items, model_items)
         origin, model, usage = "MODEL", proposal.model, proposal.usage
     result = compose_result(document, ref, items, max_questions=request.max_questions)

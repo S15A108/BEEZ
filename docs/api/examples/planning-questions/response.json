@@ -34,7 +34,7 @@
         "unverified_reason": null
       },
       {
-        "candidate_key": "model-02",
+        "candidate_key": "model-4370b83f96b4",
         "kind": "MISSING_CANDIDATE",
         "status": "REVIEW_CANDIDATE",
         "signal": "MODEL_PROPOSAL",
@@ -103,7 +103,7 @@
         "unverified_reason": null
       },
       {
-        "candidate_key": "model-01",
+        "candidate_key": "model-751273564e8f",
         "kind": "CLARIFICATION",
         "status": "REVIEW_CANDIDATE",
         "signal": "MODEL_PROPOSAL",
@@ -139,7 +139,7 @@
         "unverified_reason": null
       },
       {
-        "candidate_key": "model-03",
+        "candidate_key": "model-9be9a1d55dd4",
         "kind": "MISSING_CANDIDATE",
         "status": "UNVERIFIED",
         "signal": "MODEL_PROPOSAL",
@@ -148,7 +148,7 @@
         "unverified_reason": "QUOTE_NOT_IN_BLOCK"
       },
       {
-        "candidate_key": "model-04",
+        "candidate_key": "model-a7a3b0f54d8d",
         "kind": "MISSING_CANDIDATE",
         "status": "UNVERIFIED",
         "signal": "MODEL_PROPOSAL",
@@ -172,8 +172,8 @@
         "basis": "REVIEW_CANDIDATE"
       },
       {
-        "question_key": "q-model-02",
-        "candidate_key": "model-02",
+        "question_key": "q-model-4370b83f96b4",
+        "candidate_key": "model-4370b83f96b4",
         "rank": 2,
         "question_type": "SHORT_ANSWER",
         "text": "정식 운영 담당자는 누가, 언제 정하나요?",
@@ -211,8 +211,8 @@
         "basis": "REVIEW_CANDIDATE"
       },
       {
-        "question_key": "q-model-01",
-        "candidate_key": "model-01",
+        "question_key": "q-model-751273564e8f",
+        "candidate_key": "model-751273564e8f",
         "rank": 5,
         "question_type": "CHOICE",
         "text": "'활성 프로젝트 리더'는 어떤 기준으로 판단하나요?",
@@ -230,8 +230,8 @@
         "basis": "REVIEW_CANDIDATE"
       },
       {
-        "question_key": "q-model-03",
-        "candidate_key": "model-03",
+        "question_key": "q-model-9be9a1d55dd4",
+        "candidate_key": "model-9be9a1d55dd4",
         "rank": 6,
         "question_type": "ESSAY",
         "text": "미승인 초안을 조회할 수 있는 멤버 조건을 적어 주세요.",
@@ -243,8 +243,8 @@
         "basis": "UNVERIFIED"
       },
       {
-        "question_key": "q-model-04",
-        "candidate_key": "model-04",
+        "question_key": "q-model-a7a3b0f54d8d",
+        "candidate_key": "model-a7a3b0f54d8d",
         "rank": 7,
         "question_type": "ESSAY",
         "text": "개인정보 보관 기간과 삭제 절차를 어떻게 정할 계획인가요?",

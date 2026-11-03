@@ -26,7 +26,11 @@ from app.services.document_parsing.pipeline import resolve_source
 
 MAX_QUOTE_CHARS = 1000
 MAX_DUPLICATE_EVIDENCE = 5
+# Same bound as schemas.planning_questions.Text; composed text never exceeds it,
+# whatever the length of the source cells, headings or sentences.
+MAX_TEXT_CHARS = 2000
 _SHORT_QUOTE_CHARS = 120
+_NAME_CHARS = 80
 
 # Statements that say a decision, scope or value is not fixed in this document.
 # Past tense ("정하지 않았다") and explicit deferrals always count; present
@@ -105,6 +109,17 @@ def shorten(quote: str) -> str:
     )
 
 
+def _name(value: str) -> str:
+    """Display form of a row or column label; long cells are cut, not dropped."""
+    value = " ".join(value.split())
+    return value if len(value) <= _NAME_CHARS else value[:_NAME_CHARS] + "…"
+
+
+def clip(text: str) -> str:
+    """Last guard so a composed summary or question always fits the schema."""
+    return text if len(text) <= MAX_TEXT_CHARS else text[: MAX_TEXT_CHARS - 1] + "…"
+
+
 def _evidence(
     ref: DocumentRef, block: SourceBlock, location: str, quote: str
 ) -> EvidenceItem:
@@ -146,13 +161,17 @@ def _undecided(
             kind="MISSING_CANDIDATE",
             status="REVIEW_CANDIDATE",
             signal="UNDECIDED_STATEMENT",
-            summary=f"문서가 아직 정하지 않았거나 이 문서 범위 밖이라고 밝힌 내용입니다: 「{short}」",
+            summary=clip(
+                f"문서가 아직 정하지 않았거나 이 문서 범위 밖이라고 밝힌 내용입니다: 「{short}」"
+            ),
             evidence=(_evidence(ref, block, location, quote),),
         )
         draft = QuestionDraft(
             "ESSAY",
-            f"문서에 「{short}」라고 적혀 있습니다. 이 사항이 이후에 결정됐다면 결정 내용과 "
-            "근거를 적어 주세요. 아직 정해지지 않았다면 '미정'이라고 적어 주세요.",
+            clip(
+                f"문서에 「{short}」라고 적혀 있습니다. 이 사항이 이후에 결정됐다면 결정 "
+                "내용과 근거를 적어 주세요. 아직 정해지지 않았다면 '미정'이라고 적어 주세요."
+            ),
             EssayAnswerFormat(),
             "TEMPLATE",
         )
@@ -171,14 +190,15 @@ def _placeholder_cells(
     row_text = text.strip()[:MAX_QUOTE_CHARS].strip()
     if not row_text:
         return hits
-    row_label = (block.cells[0].strip() if block.cells else "") or (
+    row_label = (_name(block.cells[0]) if block.cells else "") or (
         f"L{block.locator.start_line}"
     )
+    where = shorten(location)
     for index, cell in enumerate(block.cells):
         if cell.strip().lower() not in _PLACEHOLDER_CELLS:
             continue
         column = (
-            header.cells[index].strip()
+            _name(header.cells[index])
             if header is not None and index < len(header.cells)
             else ""
         ) or f"{index + 1}번째 열"
@@ -187,13 +207,18 @@ def _placeholder_cells(
             kind="MISSING_CANDIDATE",
             status="REVIEW_CANDIDATE",
             signal="PLACEHOLDER_CELL",
-            summary=f"표의 '{row_label}' 행에서 '{column}' 값이 비어 있거나 미정입니다.",
+            summary=clip(
+                f"표의 '{row_label}' 행에서 '{column}' 값이 비어 있거나 미정입니다."
+            ),
             evidence=(_evidence(ref, block, location, row_text),),
         )
         draft = QuestionDraft(
             "SHORT_ANSWER",
-            f"표({location})의 '{row_label}' 행에서 '{column}' 값이 비어 있거나 미정입니다. "
-            "정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 적어 주세요.",
+            clip(
+                f"표({where})의 '{row_label}' 행에서 '{column}' 값이 비어 있거나 "
+                "미정입니다. 정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 "
+                "적어 주세요."
+            ),
             ShortAnswerFormat(),
             "TEMPLATE",
         )
