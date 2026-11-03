@@ -230,6 +230,8 @@ def test_result_grounding_invariants():
     with pytest.raises(ValidationError):
         result(text="한도는 30 MB입니다 [2].")
     with pytest.raises(ValidationError):
+        result(text="한도는 30 MB입니다 [0].")
+    with pytest.raises(ValidationError):
         result(citations=(citation(n=2),))
     with pytest.raises(ValidationError):
         result(citations=(citation(), citation(n=2)))

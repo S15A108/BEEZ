@@ -14,6 +14,7 @@ from app.services.bee_chat import (
     LLMAnswerProposer,
     ModelAnswer,
     build_instance,
+    claim_segments,
     clip_text,
     fact_tokens,
     generate_bee_chat,
@@ -193,6 +194,23 @@ def test_fact_tokens_are_ascii_numbers_keys_paths_and_identifiers():
     assert unsupported_facts("GET /api/users. [1]", "GET /api/users 목록") == []
     assert unsupported_facts("/api/users [1]", "/api/users/{id}") == ["/api/users"]
     assert unsupported_facts("TASK-001 [1]", "TASK-0011") == ["TASK-001"]
+    # PR #96 P2 (5th round): thousands separators do not make a new number.
+    assert unsupported_facts("한도는 1,000 MB [1]", "한도 1000 MB") == []
+    assert unsupported_facts("한도는 1000 MB [1]", "한도 1,000 MB") == []
+    assert unsupported_facts("한도는 1.5 GB [1]", "한도 15 GB") == ["1.5"]
+
+
+def test_claim_segments_attach_markers_to_the_sentence_they_follow():
+    text = "목록은 GET /api/users. [1] 생성은 POST /api/users 입니다 [2]. 끝."
+    assert claim_segments(text) == [
+        ("목록은 GET /api/users.", [1]),
+        ("생성은 POST /api/users 입니다 [2].", [2]),
+        ("끝.", []),
+    ]
+    assert claim_segments("[1] 앞 문장 [2]\n둘째 1.5초 [3]") == [
+        ("[1] 앞 문장 [2]", [1, 2]),
+        ("둘째 1.5초 [3]", [3]),
+    ]
 
 
 @pytest.mark.asyncio
@@ -243,8 +261,10 @@ async def test_a_quote_the_evidence_does_not_hold_rejects_the_whole_answer():
     error = await rejected(raw)
     assert "50 MB" not in json.dumps(error.to_api_dict(), ensure_ascii=False)
     await rejected(answer(citations=[{"evidence_id": "ev-1", "quote": "   "}]))
-    # A marker that names no citation is the same kind of claim without a source.
+    # A marker that names no citation is the same kind of claim without a
+    # source; PR #96 P1 (5th round): so is `[0]`.
     await rejected(answer(text="한도는 30 MB입니다 [1]. 삭제는 불가합니다 [2]."))
+    await rejected(answer(text="누구나 발행 가능 [0]. 한도는 30 MB [1]."))
 
 
 @pytest.mark.asyncio
@@ -269,7 +289,7 @@ async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
     # Codes and keys must come from the grounding too.
     await rejected(answer(text="한도는 30 MB이고 [1] 삭제 정책은 CASCADE입니다."))
     await rejected(answer(text="TASK-002가 이 한도를 구현합니다 [1]."))
-    # Facts drawn from the cited chunk, the referenced item and the task pass,
+    # Facts drawn from the cited quote, the referenced item and the task pass,
     # and a path followed by a full stop is still the cited path.
     fine = answer(
         text="한도는 30 MB이며 HTTP 413을 돌려줍니다 [1]. PLN-001에 따라 리더만 발행하고 TASK-001(READY, 멤버 21)이 구현합니다.",
@@ -285,6 +305,73 @@ async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
     )
     result = (
         await run(path_answer, retrieved_evidence=[evidence("ev-1", route)])
+    ).result
+    assert result.answer_status == "ANSWERED"
+
+
+@pytest.mark.asyncio
+async def test_each_sentence_is_checked_against_the_quotes_it_cites():
+    # PR #96 P1 (5th round): the rest of the chunk is no support. The chunk
+    # holds both limits; the sentence that cites the basic one may not state
+    # the premium number.
+    chunk = "기본 한도 30 MB. 프리미엄 한도 50 MB"
+    basic, premium = "기본 한도 30 MB", "프리미엄 한도 50 MB"
+    body = {"retrieved_evidence": [evidence("ev-1", chunk)]}
+    await rejected(
+        answer(
+            text="기본 한도는 50 MB입니다 [1].",
+            citations=[{"evidence_id": "ev-1", "quote": basic}],
+        ),
+        **body,
+    )
+    # Citing both quotes does not move a number across sentences either.
+    await rejected(
+        answer(
+            text="기본 한도는 50 MB입니다 [1]. 프리미엄 한도는 50 MB입니다 [2].",
+            citations=[
+                {"evidence_id": "ev-1", "quote": basic},
+                {"evidence_id": "ev-1", "quote": premium},
+            ],
+        ),
+        **body,
+    )
+    result = (
+        await run(
+            answer(
+                text="기본 한도는 30 MB입니다 [1]. 프리미엄 한도는 50 MB입니다 [2].",
+                citations=[
+                    {"evidence_id": "ev-1", "quote": basic},
+                    {"evidence_id": "ev-1", "quote": premium},
+                ],
+            ),
+            **body,
+        )
+    ).result
+    assert result.answer_status == "ANSWERED" and len(result.citations) == 2
+    # A marker after the full stop still binds that sentence to its quote.
+    result = (
+        await run(
+            answer(
+                text="기본 한도는 30 MB입니다. [1] 프리미엄 한도는 50 MB입니다. [2]",
+                citations=[
+                    {"evidence_id": "ev-1", "quote": basic},
+                    {"evidence_id": "ev-1", "quote": premium},
+                ],
+            ),
+            **body,
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    # Thousands separators are not a contradiction.
+    thousand = "최대 1000 MB까지 허용한다."
+    result = (
+        await run(
+            answer(
+                text="최대 1,000 MB입니다 [1].",
+                citations=[{"evidence_id": "ev-1", "quote": thousand}],
+            ),
+            retrieved_evidence=[evidence("ev-1", thousand)],
+        )
     ).result
     assert result.answer_status == "ANSWERED"
 

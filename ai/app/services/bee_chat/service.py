@@ -3,17 +3,18 @@
 Internal interface only. The caller passes one BE-authorized question with
 the search results, the approved items and the related tasks. Every citation
 is checked against its evidence text, every item and task reference against
-the input, and every checkable fact in the answer (numbers, keys, paths,
-identifiers, codes) against what the answer cites or references. A citation
-the evidence does not hold, or a fact nothing cited supports, rejects the
-whole output; an answer that names no grounding at all is replaced by the
-fixed "not found" text instead of being shown as a guess. Nothing is stored
-and nothing is decided here.
+the input, and every checkable fact in each sentence of the answer (numbers,
+keys, paths, identifiers, codes) against the quotes that sentence cites and
+the items and tasks the answer references. A citation the evidence does not
+hold, or a fact nothing cited supports, rejects the whole output; an answer
+that names no grounding at all is replaced by the fixed "not found" text
+instead of being shown as a guess. Nothing is stored and nothing is decided
+here.
 """
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -73,14 +74,19 @@ _FACT = re.compile(
     r"|[A-Z]{3,}"
     r"|\d+(?:[.,]\d+)*"
 )
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+# A sentence ends at a full stop, question or exclamation mark followed by
+# whitespace, or at a line break; "1.5초" and "e.g" do not break.
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?。])\s+|\n+")
+_LEADING_MARKERS = re.compile(r"^\s*((?:\[\d{1,2}\]\s*)+)")
 
 
 class AnswerRejected(ValueError):
     """The model output contradicts the supplied inputs.
 
-    Unknown ids, a quote the evidence does not hold, a `[n]` without a
-    citation, a fact nothing cited supports or a blank ANSWERED text: the
-    answer cannot be shown and the caller may retry with a fresh request key.
+    Unknown ids, a quote the evidence does not hold, a `[n]` outside 1..k,
+    a fact nothing cited supports or a blank ANSWERED text: the answer
+    cannot be shown and the caller may retry with a fresh request key.
     """
 
 
@@ -134,31 +140,63 @@ def evidence_location(item: RetrievedEvidence) -> str:
     return (f"{item.section_title} / {span}" if item.section_title else span)[:1000]
 
 
+def _canonical(token: str) -> str:
+    """Compare numbers without thousands separators and text case-blind."""
+    if _NUMBER.fullmatch(token):
+        return token.replace(",", "")
+    return token.casefold()
+
+
 def fact_tokens(text: str) -> list[str]:
     """Checkable facts in an answer, in order, without the `[n]` markers."""
     return list(dict.fromkeys(_FACT.findall(_MARKER.sub(" ", text))))
 
 
+def support_tokens(texts: Iterable[str]) -> set[str]:
+    """The canonical fact tokens a set of grounding texts states."""
+    return {_canonical(token) for text in texts for token in _FACT.findall(text)}
+
+
 def unsupported_facts(text: str, support: str) -> list[str]:
-    """Facts the answer states that the grounding text does not state.
+    """Facts the text states that the support text does not state.
 
     Both sides are tokenized the same way and compared token for token, so
-    `50` is not covered by `150` and `/api/users` is not covered by
-    `/api/users/{id}`.
+    `50` is not covered by `150`, `/api/users` is not covered by
+    `/api/users/{id}`, and `1,000` equals `1000`.
     """
-    known = {token.casefold() for token in _FACT.findall(support)}
-    return [token for token in fact_tokens(text) if token.casefold() not in known]
+    known = support_tokens([support])
+    return [token for token in fact_tokens(text) if _canonical(token) not in known]
 
 
-def support_text(
-    evidence: Sequence[RetrievedEvidence],
-    items: Sequence[ApprovedDesignItem],
-    tasks: Sequence[RelatedTask],
-) -> str:
-    """Everything an answer may state a fact from: what it cites or references."""
+def claim_segments(text: str) -> list[tuple[str, list[int]]]:
+    """Sentences of an answer with the citation numbers each one carries.
+
+    A marker that opens a sentence belongs to the sentence before it
+    ("… GET /api/users. [1]"), so a claim is checked against what it cites.
+    """
+    segments: list[tuple[str, list[int]]] = []
+    for raw in _SENTENCE_BREAK.split(text):
+        if not raw.strip():
+            continue
+        markers = citation_markers(raw)
+        leading = _LEADING_MARKERS.match(raw)
+        if leading and segments:
+            moved = citation_markers(leading.group(1))
+            previous_text, previous_markers = segments[-1]
+            segments[-1] = (previous_text, previous_markers + moved)
+            markers = markers[len(moved) :]
+            raw = raw[leading.end() :]
+            if not raw.strip():
+                continue
+        segments.append((raw, markers))
+    return segments
+
+
+def reference_support(
+    items: Sequence[ApprovedDesignItem], tasks: Sequence[RelatedTask]
+) -> list[str]:
+    """What the whole answer may state facts from: the items and tasks it names."""
     parts: list[str] = []
-    for chunk in evidence:
-        parts.extend([chunk.text, chunk.title or "", chunk.section_title or ""])
     for item in items:
         parts.extend(
             [
@@ -173,7 +211,7 @@ def support_text(
             plan = task.current_plan_revision.plan
             parts.extend([plan.title, plan.goal or ""])
             parts.extend(ref.design_item_version_id for ref in plan.design_refs)
-    return "\n".join(parts)
+    return parts
 
 
 def _texts(values: Sequence[str], limit: int) -> tuple[str, ...]:
@@ -191,16 +229,18 @@ def verify_answer(
     """Check the answer against the inputs and compose the result.
 
     Rejected as contradicting the input: unknown evidence, item or task ids;
-    a quote that is not an exact substring of its evidence; a `[n]` that
-    names no citation; a blank ANSWERED text; and a fact in the text
-    (number, key, path, identifier, code) that neither a cited chunk nor a
-    referenced item or task states as the same whole token, so "50 MB" over
-    a 30 MB (or 150 MB) quote never passes. A citation no `[n]` refers to
-    backs nothing and is dropped; repeated citations collapse to one number.
-    An ANSWERED answer that then keeps no citation, approved item or related
-    task is not shown: it becomes INSUFFICIENT_EVIDENCE with the fixed text.
-    For the two non-answer statuses the model's text, citations and
-    references are not used at all; only its unresolved and next_actions are.
+    a quote that is not an exact substring of its evidence; a `[n]` outside
+    1..k (so `[0]` too); a blank ANSWERED text; and, sentence by sentence, a
+    fact (number, key, path, identifier, code) that neither the quotes that
+    sentence cites nor a referenced item or task states as the same whole
+    token, so "50 MB" over a 30 MB (or 150 MB) quote never passes and a
+    number from another sentence of the same chunk is no support. A citation
+    no `[n]` refers to backs nothing and is dropped; repeated citations
+    collapse to one number. An ANSWERED answer that then keeps no citation,
+    approved item or related task is not shown: it becomes
+    INSUFFICIENT_EVIDENCE with the fixed text. For the two non-answer
+    statuses the model's text, citations and references are not used at
+    all; only its unresolved and next_actions are.
     """
     answer = proposal.answer
     by_evidence = {item.evidence_id: item for item in evidence}
@@ -223,10 +263,11 @@ def verify_answer(
         if not answer.text.strip():
             raise AnswerRejected("blank answer")
         referenced = set(citation_markers(answer.text))
-        if any(number > len(answer.citations) for number in referenced):
+        if any(not 1 <= number <= len(answer.citations) for number in referenced):
             raise AnswerRejected("marker without citation")
         mapping: dict[int, int] = {}
         numbers: dict[tuple[str, str], int] = {}
+        quotes: dict[int, str] = {}
         for index, cited in enumerate(answer.citations, start=1):
             item = by_evidence[cited.evidence_id]
             quote = cited.quote.strip()
@@ -234,6 +275,7 @@ def verify_answer(
                 # The evidence does not say this: the claim it backs would
                 # stay in the text, so the whole answer is unusable.
                 raise AnswerRejected("unverifiable citation")
+            quotes[index] = quote
             if index not in referenced:
                 # Listed but never used by the text: it backs no claim.
                 continue
@@ -274,15 +316,25 @@ def verify_answer(
             task = by_task[ref]
             task_refs.append(TaskRef(task_id=task.id, key=task.key, status=task.status))
         if citations or design_refs or task_refs:
-            text = renumber_markers(answer.text.strip(), mapping)
-            support = support_text(
-                [by_evidence[c.evidence_id] for c in citations],
-                [by_item[ref.design_item_version_id] for ref in design_refs],
-                [by_task[ref.task_id] for ref in task_refs],
+            shared = support_tokens(
+                reference_support(
+                    [by_item[ref.design_item_version_id] for ref in design_refs],
+                    [by_task[ref.task_id] for ref in task_refs],
+                )
             )
-            if unsupported_facts(text, support):
-                # The text states something its own grounding does not say.
-                raise AnswerRejected("unsupported fact")
+            for segment, markers in claim_segments(answer.text):
+                parts: list[str] = []
+                for index in dict.fromkeys(markers):
+                    chunk = by_evidence[answer.citations[index - 1].evidence_id]
+                    parts.extend(
+                        [quotes[index], chunk.title or "", chunk.section_title or ""]
+                    )
+                known = shared | support_tokens(parts)
+                if any(_canonical(t) not in known for t in fact_tokens(segment)):
+                    # The sentence states something its own citations and the
+                    # referenced items and tasks do not say.
+                    raise AnswerRejected("unsupported fact")
+            text = renumber_markers(answer.text.strip(), mapping)
         else:
             status = "INSUFFICIENT_EVIDENCE"
             extra_unresolved.append(UNGROUNDED_NOTE)

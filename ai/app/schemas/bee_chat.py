@@ -410,7 +410,7 @@ class BeeChatResult(_Strict):
             raise ValueError("grounded must reflect citations, design and task refs")
         if (self.answer_status == "ANSWERED") != self.grounded:
             raise ValueError("only an ANSWERED answer is grounded")
-        if any(n > len(self.citations) for n in citation_markers(self.text)):
+        if any(not 1 <= n <= len(self.citations) for n in citation_markers(self.text)):
             raise ValueError("answer text refers to a citation it does not have")
         for citation in self.citations:
             if citation.document_version_id not in self.scope.document_version_ids:
