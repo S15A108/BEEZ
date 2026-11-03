@@ -6,6 +6,7 @@ import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.task.service.ProjectDesignLookup;
+import com.beez.backend.task.service.ValidationStatusLookup;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -54,11 +55,12 @@ public class AnalysisResultApplier {
     private final TaskPlanRevisionRepository revisions;
     private final TaskPlanDesignRefRepository designRefs;
     private final DeltaCompletion deltaCompletion;
+    private final ValidationStatusLookup statusLookup;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
                                  TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
-                                 DeltaCompletion deltaCompletion) {
+                                 DeltaCompletion deltaCompletion, ValidationStatusLookup statusLookup) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
@@ -66,6 +68,7 @@ public class AnalysisResultApplier {
         this.revisions = revisions;
         this.designRefs = designRefs;
         this.deltaCompletion = deltaCompletion;
+        this.statusLookup = statusLookup;
     }
 
     /**
@@ -186,6 +189,23 @@ public class AnalysisResultApplier {
             // S4: delta 완료 보고의 DELTA 검증이 PASS → 서버가 작업을 COMPLETED 로 (같은 트랜잭션, 프로젝트 행을 쥔 채)
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
         }
+        carryIfPlanRenamed(v);
+    }
+
+    /**
+     * 도는 사이 계획이 입력은 같은 새 리비전(제목만 변경, AC-13)으로 바뀌어 있으면, 방금 끝난 결과를 현재 리비전으로 이어 받는다
+     * ({@link ValidationStatusLookup#carryForward}). {@link #inputChange} 가 내용으로 비교해 통과시킨 결과라 현재 계획에도 그대로 맞는다.
+     * 계획 변경 때는 이 검증이 아직 도는 중이라 이어 받지 못했다(TaskPlanService 는 끝난 것만). DELTA 는 기다리는 동안 계획 변경이
+     * 거부되므로 리비전이 같아 여기 오지 않는다. 끝낸 뒤(finish)에 불러야 복사본이 끝난 상태를 갖는다
+     */
+    private void carryIfPlanRenamed(ValidationRow v) {
+        Optional<Long> currentPlan = validations.currentPlanRevision(v.taskId());
+        if (currentPlan.isEmpty() || currentPlan.get().equals(v.planRevisionId()) || "DELTA".equals(v.trigger())) {
+            return;
+        }
+        Long copy = statusLookup.carryForward(v.id(), currentPlan.get());
+        log.info("validation {} finished after a same-input plan change → carried to plan revision {} as validation {}",
+                v.id(), currentPlan.get(), copy);
     }
 
     /**
@@ -214,6 +234,7 @@ public class AnalysisResultApplier {
         validations.finish(v.id(), rule.decidedStatus(), responses.summary(v.summary()));
         validations.finishJob(lease.jobId(), "DONE");
         log.info("validation {} attempt {} decided by rules before calling the model: {}", v.id(), lease.attempt(), rule.decidedStatus());
+        carryIfPlanRenamed(v);
         return true;
     }
 
@@ -433,11 +454,14 @@ public class AnalysisResultApplier {
     }
 
     /**
-     * 접수 때 고정한 분석 입력이 지금도 그대로인가. 바뀌었으면 무효화 사유:
+     * 접수 때 고정한 분석 입력이 지금도 그대로인가. 계획은 리비전 번호가 아니라 <b>계획 입력 해시</b>(task_plan_revision.input_hash:
+     * 제목·접근 방식을 뺀 내용, AC-13)로 비교한다 — 제목만 바뀐 새 리비전은 같은 입력이라 결과를 버리지 않는다 (-162).
+     * 바뀌었으면 무효화 사유:
      * <ul>
-     *   <li>PLAN_CHANGED — 이 작업의 현재 계획 리비전이 검증한 리비전과 다름</li>
-     *   <li>RELATED_PLAN_CHANGED — 같은 설계 항목을 보는 열린 다른 작업과 그 현재 계획(작업 → 계획 리비전)이 접수 때 고정한
-     *       관련 작업(validation_task_ref)과 다름. 관련 작업의 계획이 바뀐 경우, 새 관련 작업이 생긴 경우, 관련 작업이 닫힌 경우 모두</li>
+     *   <li>PLAN_CHANGED — 이 작업의 현재 계획의 입력이 검증한 계획과 다름. 현재 계획이나 검증한 계획을 못 읽어도 같은 사유다
+     *       (조회 실패를 "변경 없음" 으로 보지 않는다)</li>
+     *   <li>RELATED_PLAN_CHANGED — 같은 설계 항목을 보는 열린 다른 작업과 그 현재 계획의 입력(작업 → 계획 입력 해시)이 접수 때 고정한
+     *       관련 작업(validation_task_ref)과 다름. 관련 작업의 계획 내용이 바뀐 경우, 새 관련 작업이 생긴 경우, 관련 작업이 닫힌 경우 모두</li>
      * </ul>
      * 관련 작업의 상태만 바뀐 경우(점유 충돌)와 설계 발행으로 참조 버전이 낡은 경우는 여기가 아니라 결과 반영의 규칙 재판정
      * ({@link #reevaluateRules})이 잡는다. 설계 발행 수신(-163)은 끝난 검증을 STALE 로 바꾸고, 그 전까지는 시작 관문(G2)이 막는다.
@@ -445,16 +469,21 @@ public class AnalysisResultApplier {
      */
     public Optional<String> inputChange(ValidationRow v) {
         Optional<Long> currentPlan = validations.currentPlanRevision(v.taskId());
-        if (currentPlan.isEmpty() || !currentPlan.get().equals(v.planRevisionId())) {
+        if (currentPlan.isEmpty()) {
             return Optional.of("PLAN_CHANGED");
         }
-        Map<Long, Long> fixed = new LinkedHashMap<>();
-        for (Map<String, Object> row : validations.taskRefs(v.id())) {
-            fixed.put(((Number) row.get("related_task_id")).longValue(), ((Number) row.get("related_plan_revision_id")).longValue());
+        Optional<TaskPlanRevision> validated = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId());
+        Optional<TaskPlanRevision> current = revisions.findByIdAndTaskId(currentPlan.get(), v.taskId());
+        if (validated.isEmpty() || current.isEmpty() || !validated.get().getInputHash().equals(current.get().getInputHash())) {
+            return Optional.of("PLAN_CHANGED");
         }
-        Map<Long, Long> now = new LinkedHashMap<>();
+        Map<Long, String> fixed = new LinkedHashMap<>();
+        for (Map<String, Object> row : validations.taskRefs(v.id())) {
+            fixed.put(((Number) row.get("related_task_id")).longValue(), (String) row.get("plan_input_hash"));
+        }
+        Map<Long, String> now = new LinkedHashMap<>();
         for (Map<String, Object> row : validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId())) {
-            now.put(((Number) row.get("task_id")).longValue(), ((Number) row.get("plan_revision_id")).longValue());
+            now.put(((Number) row.get("task_id")).longValue(), (String) row.get("plan_input_hash"));
         }
         if (!now.equals(fixed)) {
             return Optional.of("RELATED_PLAN_CHANGED");
