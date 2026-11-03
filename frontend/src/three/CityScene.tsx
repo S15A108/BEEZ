@@ -17,7 +17,7 @@ export interface CitySceneProps {
   onLotSelect: (lot: number) => void
   className?: string
 }
-type View = { rot: number; target: number; zoom: number; hover: number | null }
+type View = { rot: number; target: number; hover: number | null }
 
 function CityRuntime({
   props,
@@ -32,7 +32,6 @@ function CityRuntime({
   const view = useRef<View>({
     rot: initialRotation(props.nextLot),
     target: initialRotation(props.nextLot),
-    zoom: 1,
     hover: null,
   })
   useEffect(() => {
@@ -95,12 +94,20 @@ function CityRuntime({
     const leave = () => {
       view.current.hover = null
     }
+    // 휠·트랙패드 스크롤도 원을 돌린다(아래로 굴리면 다음 칸이 가운데로). 멈추면 끌기처럼 가장 가까운 칸에 맞춘다.
+    // 도시 위에서만 페이지 스크롤을 막는다. 원은 끝이 없어 끝 칸에서 페이지로 넘어가지 않는다.
+    let settle = 0
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
-      view.current.zoom = Math.max(
-        0.8,
-        Math.min(1.8, view.current.zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1)),
-      )
+      const delta =
+        Math.abs(event.deltaX) > Math.abs(event.deltaY)
+          ? event.deltaX
+          : event.deltaY
+      view.current.target += (event.deltaMode === 1 ? delta * 40 : delta) / 250
+      window.clearTimeout(settle)
+      settle = window.setTimeout(() => {
+        view.current.target = Math.round(view.current.target)
+      }, 160)
     }
     canvas.addEventListener('pointerdown', down)
     canvas.addEventListener('pointermove', move)
@@ -113,6 +120,7 @@ function CityRuntime({
       canvas.removeEventListener('pointerup', up)
       canvas.removeEventListener('pointerleave', leave)
       canvas.removeEventListener('wheel', wheel)
+      window.clearTimeout(settle)
       renderer.dispose()
       engine.current = null
     }

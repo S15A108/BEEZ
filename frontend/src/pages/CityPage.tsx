@@ -155,7 +155,7 @@ function City() {
                 />
               </Suspense>
               <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                끌어서 원 돌리기 · 부지를 눌러 선택 · 휠로 확대/축소
+                끌거나 휠을 굴려 원 돌리기 · 부지를 눌러 선택
               </p>
             </section>
             <section className="mt-7">

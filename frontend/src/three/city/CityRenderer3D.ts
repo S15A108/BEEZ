@@ -13,7 +13,6 @@ export interface RingProject {
 export interface RingView {
   /** 몇 칸 돌렸는지(소수 가능) */
   rot: number
-  zoom: number
   hover: number | null
   /** 프로젝트 만들기 창 뒤에 깔 때: 더 가깝게 본다(보드 SCR-04-v2-create-project) */
   backdrop?: boolean
@@ -49,6 +48,8 @@ interface Slot {
   group: THREE.Group
   lawn: THREE.Group
   building: THREE.Group
+  /** 쓰지 않은 칸의 꾸밈(잔디·나무·벤치·꽃밭). 부지 모양은 프로젝트 칸과 빈 부지 하나에만 둔다. */
+  filler: THREE.Group
   number: THREE.Sprite
   key: string
   height: number
@@ -155,7 +156,7 @@ export class CityRenderer3D {
   /** 화면 1px이 몇 단위인지의 역수(단위당 px). 끌기 거리를 칸 수로 바꿀 때 쓴다. */
   pixelsPerUnit(view: RingView) {
     const frame = view.backdrop ? FRAME.backdrop : FRAME.city
-    return (this.width * view.zoom) / frame.view
+    return this.width / frame.view
   }
 
   /** 프로젝트 칸과 빈 부지 칸을 맞춘다. 같은 내용이면 아무것도 하지 않는다. */
@@ -191,9 +192,11 @@ export class CityRenderer3D {
     const ppu = this.pixelsPerUnit(view)
     for (const [s, slot] of this.slots.entries()) {
       const { size } = ringSlot(s, view.rot)
-      slot.group.visible = this.used.has(s) && size > 0.001
+      const used = this.used.has(s)
+      slot.group.visible = size > 0.001
       slot.group.scale.setScalar(Math.max(size, 0.001))
-      slot.number.visible = size > 0.85
+      slot.filler.visible = !used
+      slot.number.visible = used && size > 0.85
       // 보드 그림(2배 해상도)에서 64×48px 글자판을 0.42배로 찍은 크기: 화면에서 13×10px
       slot.number.scale.set((64 * 0.21) / ppu, (48 * 0.21) / ppu, 1)
     }
@@ -205,7 +208,7 @@ export class CityRenderer3D {
     else this.highlight.removeFromParent()
 
     const frame = view.backdrop ? FRAME.backdrop : FRAME.city
-    const w = frame.view / view.zoom
+    const w = frame.view
     const halfH = (w * this.height) / this.width / 2
     const d = (halfH - (frame.top * w) / frame.view) / Math.sin(EL)
     const target = d / Math.SQRT2
@@ -331,12 +334,70 @@ export class CityRenderer3D {
     this.at(group, R, s).rotation.y += Math.PI
     const lawn = new THREE.Group()
     const building = new THREE.Group()
+    const filler = this.filler(s)
     const number = this.numberSprite(s + 1)
     number.position.set(0, 6, -70)
-    group.add(lawn, building, number)
-    slot = { group, lawn, building, number, key: '', height: 0 }
+    group.add(lawn, building, filler, number)
+    slot = { group, lawn, building, filler, number, key: '', height: 0 }
     this.slots[s] = slot
     return slot
+  }
+
+  // 쓰지 않은 칸: 부지 모양 없이 둥근 잔디에 나무 셋, 벤치, 꽃밭(v469 꾸밈의 결). 칸마다 조금씩 다르게 놓는다.
+  private filler(s: number) {
+    const group = new THREE.Group()
+    const patch = this.flat(this.sharedGeometry('filler'), '#d5e1bd', 1.9)
+    group.add(patch)
+    const turn = s % 2 ? 1 : -1
+    const parts = this.decorParts()
+    for (const [x, z, size, color] of [
+      [-24 * turn, 12, 0.95, '#adc196'],
+      [20 * turn, -8, 0.8, '#9fb68b'],
+      [-4 * turn, -26, 0.7, '#adc196'],
+    ] as const) {
+      const tree = new THREE.Group()
+      const stem = new THREE.Mesh(parts.trunk, this.material('#a39078'))
+      stem.position.y = 4.5
+      const top = new THREE.Mesh(parts.crown, this.material(color))
+      top.position.y = 14
+      top.rotation.y = s + x
+      stem.castShadow = top.castShadow = true
+      tree.add(stem, top)
+      tree.position.set(x, 1.9, z)
+      tree.scale.setScalar(size)
+      group.add(tree)
+    }
+    const bench = new THREE.Mesh(parts.seat, this.material('#bca889'))
+    bench.position.set(16 * turn, 4.5, 20)
+    bench.rotation.y = 0.4 * turn
+    const bed = new THREE.Mesh(parts.bed, this.material('#c9b9a0'))
+    bed.position.set(-10 * turn, 3.5, 26)
+    for (const [dx, color] of [
+      [-6, '#e3b7b0'],
+      [0, '#e8d58f'],
+      [6, '#d9b8cf'],
+    ] as const) {
+      const flower = new THREE.Mesh(parts.flower, this.material(color))
+      flower.position.set(dx, 3, 0)
+      bed.add(flower)
+    }
+    group.add(bench, bed)
+    return group
+  }
+
+  private parts?: Record<
+    'trunk' | 'crown' | 'seat' | 'bed' | 'flower',
+    THREE.BufferGeometry
+  >
+  private decorParts() {
+    this.parts ??= {
+      trunk: this.own(new THREE.CylinderGeometry(1.5, 2, 9, 6)),
+      crown: this.own(new THREE.IcosahedronGeometry(8.5, 0)),
+      seat: this.own(new THREE.BoxGeometry(14, 3, 5)),
+      bed: this.own(new THREE.BoxGeometry(22, 4, 10)),
+      flower: this.own(new THREE.IcosahedronGeometry(3, 0)),
+    }
+    return this.parts
   }
 
   private lawn(kind: 'project' | 'next') {
@@ -353,20 +414,22 @@ export class CityRenderer3D {
   }
 
   private readonly shared = new Map<string, THREE.BufferGeometry>()
-  private sharedGeometry(key: 'lawn' | 'lawn-edge') {
+  private sharedGeometry(key: 'lawn' | 'lawn-edge' | 'filler') {
     let geometry = this.shared.get(key)
     if (!geometry) {
       geometry =
         key === 'lawn'
           ? new THREE.PlaneGeometry(110, 110)
-          : new THREE.BufferGeometry().setFromPoints(
-              [
-                [-56, -56],
-                [56, -56],
-                [56, 56],
-                [-56, 56],
-              ].map(([x, z]) => new THREE.Vector3(x, 3.4, z)),
-            )
+          : key === 'filler'
+            ? new THREE.CircleGeometry(50, 28)
+            : new THREE.BufferGeometry().setFromPoints(
+                [
+                  [-56, -56],
+                  [56, -56],
+                  [56, 56],
+                  [-56, 56],
+                ].map(([x, z]) => new THREE.Vector3(x, 3.4, z)),
+              )
       this.own(geometry)
       this.shared.set(key, geometry)
     }
@@ -434,8 +497,7 @@ export class CityRenderer3D {
   private buildDecor() {
     let seed = 7
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
-    const trunk = this.own(new THREE.CylinderGeometry(1.5, 2, 9, 6))
-    const crown = this.own(new THREE.IcosahedronGeometry(8.5, 0))
+    const { trunk, crown, seat, bed, flower } = this.decorParts()
     const tree = (r: number, th: number, s = 1) => {
       const group = new THREE.Group()
       const stem = new THREE.Mesh(trunk, this.material('#a39078'))
@@ -462,7 +524,6 @@ export class CityRenderer3D {
       group.add(stick, head)
       return this.at(group, r, th)
     }
-    const seat = this.own(new THREE.BoxGeometry(14, 3, 5))
     const bench = (r: number, th: number) => {
       const group = new THREE.Group()
       const board = new THREE.Mesh(seat, this.material('#bca889'))
@@ -561,8 +622,6 @@ export class CityRenderer3D {
 
     // 고리 위: 칸 사이 낮은 생울타리와 안쪽 화단(이웃 칸이 둘 다 쓰일 때만), 가로등과 칸 사이 나무
     const hedge = this.own(new THREE.BoxGeometry(9, 7, 92))
-    const bed = this.own(new THREE.BoxGeometry(22, 4, 10))
-    const flower = this.own(new THREE.IcosahedronGeometry(3, 0))
     for (let s = 0; s < N; s++) {
       const h = this.at(
         new THREE.Mesh(hedge, this.material('#a9bd92')),
