@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
 import { Footprints } from 'lucide-react'
@@ -19,6 +19,7 @@ import { SettingsDialog } from '@/features/workspace/SettingsDialog'
 import { sceneQuery } from '@/features/workspace/sceneQuery'
 import { AsyncState } from '@/components/AsyncState'
 import { PaneSheetHost } from '@/components/PaneSheet'
+import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -70,6 +71,7 @@ function Workspace({ projectId }: { projectId: string }) {
   const outdoor = useWorkspaceStore((state) => state.outdoor)
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const pendingMutations = useIsMutating()
+  const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
   useClearPaneOnLeave()
   // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
   const design = useWorkspaceStore(
@@ -242,9 +244,15 @@ function Workspace({ projectId }: { projectId: string }) {
               >
                 <DialogHeader>
                   <div className="flex items-start justify-between gap-3 pr-8">
-                    <DialogTitle>
+                    {/* 업무 창 머리 제목만 18px·600(사용자 요청 11-02). 공용 DialogTitle은 다른 확인 창도 쓰므로 그대로 둔다. */}
+                    <DialogTitle className="text-lg font-semibold">
                       {pane && pane !== 'settings' ? paneTitles[pane] : ''}
                     </DialogTitle>
+                    {/* 창별 머리 버튼 자리(작업 현황의 '+ 작업 계획', 캔버스 PNL-05-v2-tasks) */}
+                    <div
+                      ref={setHeaderSlot}
+                      className="-mt-1 ml-auto flex shrink-0 items-center gap-2 empty:hidden"
+                    />
                     {pane && paneKeys[pane] && (
                       <span className="mt-0.5 shrink-0 text-xs whitespace-nowrap text-muted-foreground">
                         <kbd className="rounded-md border px-1.5 py-px font-[inherit]">
@@ -267,26 +275,30 @@ function Workspace({ projectId }: { projectId: string }) {
                       ` · 기준 v${data.project.current_baseline.version_no}`}
                   </DialogDescription>
                 </DialogHeader>
-                <PaneSheetHost
-                  key={`${projectId}:${pane}`}
-                  // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
-                  className="mt-4 flex min-w-0 flex-col"
-                >
-                  {pane === 'documents' && <DocumentsPanel {...panelProps} />}
-                  {pane === 'planning' && <PlanningPanel {...panelProps} />}
-                  {pane === 'changes' && <ChangesPanel {...panelProps} />}
-                  {pane === 'tasks' && <TasksPanel {...panelProps} />}
-                  {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
-                  {pane === 'relations' && (
-                    <ActivityPanel projectId={projectId} view="relations" />
-                  )}
-                  {pane === 'dashboard' && (
-                    <ActivityPanel projectId={projectId} view="dashboard" />
-                  )}
-                  {pane === 'inbox' && <InboxPanel projectId={projectId} />}
-                  {pane === 'chat' && <BibiPanel projectId={projectId} />}
-                  {pane === 'context' && <ContextPanel projectId={projectId} />}
-                </PaneSheetHost>
+                <PaneHeaderSlot value={headerSlot}>
+                  <PaneSheetHost
+                    key={`${projectId}:${pane}`}
+                    // 본문 자리는 창 아래까지 채운다(비비 대화 입력줄, 하위 화면의 아래 버튼 줄).
+                    className="mt-4 flex min-w-0 flex-col"
+                  >
+                    {pane === 'documents' && <DocumentsPanel {...panelProps} />}
+                    {pane === 'planning' && <PlanningPanel {...panelProps} />}
+                    {pane === 'changes' && <ChangesPanel {...panelProps} />}
+                    {pane === 'tasks' && <TasksPanel {...panelProps} />}
+                    {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
+                    {pane === 'relations' && (
+                      <ActivityPanel projectId={projectId} view="relations" />
+                    )}
+                    {pane === 'dashboard' && (
+                      <ActivityPanel projectId={projectId} view="dashboard" />
+                    )}
+                    {pane === 'inbox' && <InboxPanel projectId={projectId} />}
+                    {pane === 'chat' && <BibiPanel projectId={projectId} />}
+                    {pane === 'context' && (
+                      <ContextPanel projectId={projectId} />
+                    )}
+                  </PaneSheetHost>
+                </PaneHeaderSlot>
               </DialogContent>
             </Dialog>
           </main>

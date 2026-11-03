@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { LIST_SELECTED } from '@/lib/display'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { RelationGraph } from './RelationGraph'
 
@@ -140,7 +141,7 @@ export function RelationsView({ projectId }: { projectId: string }) {
                       onClick={() => setPicked(task.id)}
                       className={cn(
                         'grid w-full gap-0.5 rounded-xl border bg-card px-3 py-2.5 text-left text-sm shadow-xs hover:bg-muted/40',
-                        task.id === selected && 'border-2 border-foreground',
+                        task.id === selected && LIST_SELECTED,
                       )}
                     >
                       <span className="text-xs text-muted-foreground">

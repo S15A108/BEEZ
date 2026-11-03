@@ -704,10 +704,11 @@ export function WorkspaceHud({
                     {row.initial}
                   </span>
                   <span className="min-w-0">
-                    <strong className="block truncate text-xs">
+                    {/* 이름 13px·줄높이 20px, 위치 등 12px·18px(사용자 요청 11-02) */}
+                    <strong className="block truncate text-[13px] leading-5">
                       {row.name}
                     </strong>
-                    <span className="block truncate text-[11px] text-muted-foreground">
+                    <span className="block truncate text-xs leading-[18px] text-muted-foreground">
                       {row.place && (
                         <span className="inline-flex items-center gap-0.5 text-[#57534e]">
                           <MapPin className="size-3" aria-hidden="true" />

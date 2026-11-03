@@ -41,7 +41,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @TestConfiguration static class Ports {
         // 실제 어댑터(PublicationImpactAdapter, -163)가 빈으로 있으므로 이 시험의 기록용 구현을 우선시킨다 — 여기서는 포트 호출 계약만 본다
         @Bean @Primary RecordingImpact recordingImpact(JdbcTemplate jdbc) { return new RecordingImpact(jdbc); }
-        @Bean RecordingIntake recordingIntake(com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository repository) {
+        @Bean @Primary RecordingIntake recordingIntake(com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository repository) {
             return new RecordingIntake(repository);
         }
     }
@@ -420,11 +420,11 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
         assertThat(response.body()).contains("\"proposal\"","\"baseline\"","PUBLISHED");
         error(() -> preview(p),"invalid_transition");
-        // 기본 no-op 구현은 실제 어댑터(-163)에 밀려 빠지고, 이 시험에서는 기록용 구현이 우선한다
+        // 실제 어댑터(-163)가 빈으로 있고, 이 시험에서는 기록용 구현이 우선한다 (승인 경로 전체는 ProposalPublicationImpactIntegrationTest)
         assertThat(context.getBeansOfType(ValidationImpactPort.class).values())
-                .noneMatch(port -> port instanceof PublicationPortConfiguration.UnconnectedValidationImpact);
+                .anyMatch(port -> port instanceof com.beez.backend.validation.service.PublicationImpactAdapter);
         assertThat(context.getBean(ValidationImpactPort.class)).isInstanceOf(RecordingImpact.class);
-        assertThat(context.getBeansOfType(PostPublishAnalysisIntake.class)).hasSize(1);
+        assertThat(context.getBean(PostPublishAnalysisIntake.class)).isInstanceOf(RecordingIntake.class);
     }
 
     @Test void staleBaselineAndRejectedOrWithdrawnProposalsAreRejected() {

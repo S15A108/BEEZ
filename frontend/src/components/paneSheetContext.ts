@@ -7,4 +7,6 @@ export const PaneSheetBody = createContext<{ onClose: () => void } | null>(null)
 export const PaneSheetContext = createContext<{
   host: HTMLElement | null
   track: (open: boolean) => void
+  /** 하위 화면이 하나라도 열려 있는지. 열려 있으면 창 머리 버튼을 숨긴다(PR #88 리뷰). */
+  open: boolean
 } | null>(null)
