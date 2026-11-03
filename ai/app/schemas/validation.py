@@ -93,6 +93,7 @@ class ValidateRequest(ContractModel):
     related_plans: list[PlanRevision]
     rule_findings: list[dict[str, Any]]
     unresolved: list[StrictStr]
+    context_packet_constraints: list[StrictStr] = Field(default_factory=list, max_length=100)
     input_snapshot_hash: StrictStr = Field(min_length=1)
     checks: list[Check] = Field(min_length=1)
     evidence: list[Evidence]

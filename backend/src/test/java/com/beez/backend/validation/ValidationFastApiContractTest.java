@@ -23,14 +23,14 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Java AiClient to the real FastAPI AI-A02 route over loopback HTTP, using a fake LLM.
- * #77 is not merged: the DELTA payload below is a producer-contract fixture, not the #77 worker.
+ * The DELTA payload below is a producer-contract fixture, not the #77 worker.
  * Enable with BEEZ_RUN_VALIDATION_HTTP_E2E=true and optionally BEEZ_E2E_PYTHON.
  */
 @EnabledIfEnvironmentVariable(named = "BEEZ_RUN_VALIDATION_HTTP_E2E", matches = "true")
 class ValidationFastApiContractTest {
     @Test
     @SuppressWarnings("unchecked")
-    void completionDeltaReachesTheModelAndItsFindingReturnsOverHttp() throws Exception {
+    void completionDeltaFindingWithDesignEvidenceReturnsOverHttp() throws Exception {
         Path backend = Path.of(System.getProperty("user.dir")).toAbsolutePath();
         Path ai = backend.resolve("../ai").normalize();
         Path fixture = backend.resolve("src/test/resources/validation_contract_fastapi.py");
@@ -80,8 +80,7 @@ class ValidationFastApiContractTest {
             input.put("request_key", "validate-601-attempt-1");
             input.put("completion_delta", List.of(Map.of("kind", "CHANGED", "text", "fixture completion differs from plan")));
             input.put("checks", List.of(Map.of("key", "completion-delta", "kind", "PLAN_COMPLETENESS",
-                    "design_item_version_ids", List.of(), "related_plan_revision_ids", List.of())));
-            input.put("evidence", List.of());
+                    "design_item_version_ids", List.of("311"), "related_plan_revision_ids", List.of())));
             input.put("unresolved", List.of());
 
             var aiConfig = new BeezProperties.Ai("http://127.0.0.1:" + port, token,
@@ -96,7 +95,11 @@ class ValidationFastApiContractTest {
             assertThat(findings).hasSize(1);
             assertThat(findings.getFirst()).containsEntry("check_key", "completion-delta")
                     .containsEntry("kind", "MISMATCH")
+                    .containsEntry("design_item_id", "301")
+                    .containsEntry("design_item_version_id", "311")
                     .containsEntry("message", "fixture completion differs from plan");
+            assertThat(findings.getFirst().get("evidence_ids")).isEqualTo(List.of("evidence-login-response"));
+            assertThat((List<?>) findings.getFirst().get("sources")).hasSize(1);
             assertThat((List<?>) response.get("usage")).hasSize(1);
         } finally {
             server.destroy();

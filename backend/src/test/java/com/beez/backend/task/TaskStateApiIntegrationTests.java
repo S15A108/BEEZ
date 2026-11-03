@@ -192,8 +192,15 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
     void start_afterDesignChanged_is409VersionConflict_butUnrelatedTaskStarts() throws Exception {
         long[] a = createTask("API-01 읽음", api.readsRef("API-01"), "[]", member);
         long[] b = createTask("API-02 읽음", api.readsRef("API-02"), "[]", member);
+        long[] c = createTask("API-02 읽음, API-01 검색 후보 비교", api.readsRef("API-02"), "[]", member);
         long va = passValidation(a[0], a[1]);
         long vb = passValidation(b[0], b[1]);
+        long vc = passValidation(c[0], c[1]);
+        api.jdbc.sql("""
+                        insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
+                        values (:v, :item, :version)
+                        """).param("v", vc).param("item", api.designItemId("API-01"))
+                .param("version", api.currentVersionId("API-01")).update();
 
         // API-01 v2 발행: 새 버전 + baseline v2 (API-01→v2, API-02→v1) + current 교체
         api.jdbc.sql("""
@@ -218,6 +225,11 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
         HttpResponse<String> resA = report(a[0], stateJson("START", a[1], a[2], va, null), member);
         assertThat(resA.statusCode()).isEqualTo(409);
         assertThat(resA.body()).contains("\"code\":\"version_conflict\"");
+
+        // 검색 후보도 모델이 대조한 입력이므로 변경 후에는 시작할 수 없다.
+        HttpResponse<String> resC = report(c[0], stateJson("START", c[1], c[2], vc, null), member);
+        assertThat(resC.statusCode()).isEqualTo(409);
+        assertThat(resC.body()).contains("\"code\":\"version_conflict\"");
 
         // 전역 baseline 번호가 바뀌었어도 내가 참조한 API-02 는 그대로 → 시작 가능 (D4)
         HttpResponse<String> resB = report(b[0], stateJson("START", b[1], b[2], vb, null), member);

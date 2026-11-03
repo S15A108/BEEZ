@@ -28,8 +28,10 @@ class FakeProvider:
             or not any(
                 check["key"] == "completion-delta"
                 and check["kind"] == "PLAN_COMPLETENESS"
+                and check["design_item_version_ids"] == ["311"]
                 for check in data.get("checks", [])
             )
+            or not data.get("evidence")
             or "completion-delta" not in request.messages[0].content
         ):
             raise ValueError("fixture delta did not reach the model")
@@ -41,10 +43,12 @@ class FakeProvider:
                 {
                     "check_key": "completion-delta",
                     "kind": "MISMATCH",
-                    "severity": "WARNING",
+                    "severity": "BLOCKING",
                     "message": "fixture completion differs from plan",
-                    "sources": [],
-                    "evidence_ids": [],
+                    "design_item_id": "301",
+                    "design_item_version_id": "311",
+                    "sources": [data["evidence"][0]["source"]],
+                    "evidence_ids": [data["evidence"][0]["evidence_id"]],
                     "suggested_action": "Review the completion report.",
                 }
             ],

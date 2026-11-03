@@ -179,18 +179,21 @@ public class AnalysisResultApplier {
             if (task != null && relatedPlans.stream().noneMatch(key -> plans.containsKey(key)
                     && String.valueOf(task).equals(String.valueOf(plans.get(key).get("task_id"))))) return false;
             Set<String> allowed = new HashSet<>();
-            for (String key : versions) {
+            // A check can cover multiple versions (e.g. completion-delta). Once a
+            // finding identifies one version, its citations must belong to that version.
+            List<String> citedVersions = version == null ? versions : List.of(String.valueOf(version));
+            for (String key : citedVersions) {
                 var item = items.get(key);
                 if (item != null && item.get("source") instanceof Map<?, ?>) allowed.add(sourceKey(map(item.get("source"))));
             }
             for (var entry : evidence.values()) {
-                if (versions.contains(String.valueOf(entry.get("design_item_version_id")))
+                if (citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))
                         && entry.get("source") instanceof Map<?, ?>) allowed.add(sourceKey(map(entry.get("source"))));
             }
             for (var source : objects(finding.get("sources"))) if (!allowed.contains(sourceKey(source))) return false;
             for (String evidenceId : strings(finding.get("evidence_ids"))) {
                 var entry = evidence.get(evidenceId);
-                if (entry == null || !versions.contains(String.valueOf(entry.get("design_item_version_id")))) return false;
+                if (entry == null || !citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))) return false;
             }
         }
         return true;
@@ -199,7 +202,10 @@ public class AnalysisResultApplier {
     private boolean needsHumanCoverageReview(ValidationRow v, Map<String, Object> request,
                                              ValidationInputAssembler.Result input) {
         Map<String, Object> plan = map(map(request.get("plan_revision")).get("plan"));
-        if (plan.get("context_packet_id") != null) return true;
+        // Proposed contract changes and unlinked scope cannot be proven safe by an
+        // empty model response until their coverage/approval policy is defined.
+        if (plan.get("unlinked") instanceof List<?> unlinked && !unlinked.isEmpty()) return true;
+        if (objects(plan.get("design_refs")).stream().anyMatch(ref -> "CHANGES".equals(ref.get("relation")))) return true;
         if (request.get("unresolved") instanceof List<?> unresolved && !unresolved.isEmpty()) return true;
         Map<Long, Long> acceptedRelated = new LinkedHashMap<>();
         for (var row : validations.taskRefs(v.id())) {
@@ -212,8 +218,7 @@ public class AnalysisResultApplier {
         Set<String> referenced = new HashSet<>();
         for (var ref : objects(plan.get("design_refs"))) referenced.add(String.valueOf(ref.get("design_item_id")));
         for (var item : objects(request.get("approved_items"))) {
-            if (!referenced.contains(String.valueOf(item.get("design_item_id")))) return true;
-            if ("API_CONTRACT".equals(item.get("kind"))) {
+            if (referenced.contains(String.valueOf(item.get("design_item_id"))) && "API_CONTRACT".equals(item.get("kind"))) {
                 Map<String, Object> content = map(item.get("content"));
                 if (!(content.get("request_fields") instanceof List<?>)
                         || !(content.get("responses") instanceof List<?> responses) || responses.isEmpty()) return true;
@@ -281,9 +286,10 @@ public class AnalysisResultApplier {
         var evidence = assembler.loadEvidence(v.projectId(), analyzedBaseline, items);
         if (!evidence.unavailableVersionIds().isEmpty() || !evidence.evidence().equals(request.get("evidence"))) return false;
         Object packet = map(map(request.get("plan_revision")).get("plan")).get("context_packet_id");
-        List<String> unresolved = assembler.loadUnresolved(v.projectId(), v.taskId(), analyzedBaseline,
+        var context = assembler.loadContext(v.projectId(), v.taskId(), analyzedBaseline,
                 new HashSet<>(ids), packet == null ? null : packet.toString());
-        return unresolved.equals(request.get("unresolved"));
+        return context.unresolved().equals(request.get("unresolved"))
+                && (packet == null || context.constraints().equals(request.get("context_packet_constraints")));
     }
 
     /**
@@ -408,6 +414,9 @@ public class AnalysisResultApplier {
         summary.put("unassessed", List.of());
         summary.put("model", model);
         summary.put("usage", response.get("usage"));   // 비용 기록(-168)까지 응답의 사용량을 버리지 않는다
+        if ("PASS".equals(status) && analyzedBaseline != null) {
+            validations.saveCandidateRefs(v.id(), objects(request.get("approved_items")));
+        }
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
         validations.finishJob(lease.jobId(), "DONE");

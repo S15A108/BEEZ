@@ -151,6 +151,17 @@ async def test_one_call_has_check_coverage_and_attempt_usage_key():
     assert provider.calls[0].max_attempts == 1
 
 
+
+@pytest.mark.asyncio
+async def test_context_packet_constraints_are_sent_as_untrusted_context():
+    body = fixture_request()
+    body["context_packet_constraints"] = ["접근 로그를 기록한다"]
+    provider = Provider(result_for(body))
+    await analyze(ValidateRequest.model_validate(body), LLMClient(provider), "test-model")
+    assert json.loads(provider.calls[0].messages[1].content)["context_packet_constraints"] == body["context_packet_constraints"]
+    assert "untrusted contextual data" in provider.calls[0].messages[0].content
+
+
 def delta_request():
     body = fixture_request()
     body["completion_delta"] = [
@@ -196,6 +207,72 @@ async def test_completion_delta_is_sent_to_model_and_plan_mismatch_is_retained()
     assert "For the completion-delta check" in provider.calls[0].messages[0].content
     assert response["result"]["findings"][0]["check_key"] == "completion-delta"
     assert response["result"]["findings"][0]["kind"] == "MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_completion_delta_can_cite_the_approved_design_and_its_evidence():
+    body = delta_request()
+    body["checks"][-1]["design_item_version_ids"] = ["311"]
+    result = result_for(body)
+    result["findings"].append(
+        {
+            "check_key": "completion-delta",
+            "kind": "MISMATCH",
+            "severity": "BLOCKING",
+            "message": "완료 보고가 승인된 응답과 다릅니다",
+            "design_item_id": "301",
+            "design_item_version_id": "311",
+            "sources": [body["evidence"][0]["source"]],
+            "evidence_ids": ["evidence-login-response"],
+            "suggested_action": "승인 설계에 맞춰 확인하세요",
+        }
+    )
+    provider = Provider(result)
+    response = await analyze(
+        ValidateRequest.model_validate(body), LLMClient(provider), "test-model"
+    )
+    sent = json.loads(provider.calls[0].messages[1].content)
+    assert sent["checks"][-1]["design_item_version_ids"] == ["311"]
+    finding = response["result"]["findings"][0]
+    assert finding["design_item_version_id"] == "311"
+    assert finding["evidence_ids"] == ["evidence-login-response"]
+
+
+@pytest.mark.parametrize("case", ["outside_check", "other_source", "other_evidence"])
+def test_completion_delta_rejects_unrelated_design_or_mismatched_evidence(case):
+    body = delta_request()
+    other = copy.deepcopy(body["approved_items"][0])
+    other.update(id="312", design_item_id="302", key="API-002")
+    other["source"].update(document_id="202", document_version_id="212")
+    body["approved_items"].append(other)
+    other_evidence = copy.deepcopy(body["evidence"][0])
+    other_evidence.update(
+        evidence_id="evidence-other", design_item_version_id="312", source=other["source"]
+    )
+    body["evidence"].append(other_evidence)
+    body["checks"][-1]["design_item_version_ids"] = ["311", "312"]
+    result = result_for(body)
+    finding = {
+        "check_key": "completion-delta",
+        "kind": "MISMATCH",
+        "severity": "BLOCKING",
+        "message": "설계와 다릅니다",
+        "design_item_id": "301",
+        "design_item_version_id": "311",
+        "sources": [body["evidence"][0]["source"]],
+        "evidence_ids": ["evidence-login-response"],
+        "suggested_action": "확인",
+    }
+    if case == "outside_check":
+        body["checks"][-1]["design_item_version_ids"] = ["312"]
+    elif case == "other_source":
+        finding["sources"] = [other["source"]]
+        finding["evidence_ids"] = []
+    else:
+        finding["evidence_ids"] = ["evidence-other"]
+    result["findings"] = [finding]
+    with pytest.raises(ValueError, match="unknown (design reference|source|evidence)"):
+        validate_output(result, ValidateRequest.model_validate(body))
 
 
 @pytest.mark.parametrize(

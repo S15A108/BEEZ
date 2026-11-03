@@ -158,13 +158,11 @@ public class ValidationInputAssembler {
         request.put("approved_items", designs);
         request.put("related_plans", relatedPlans);
         request.put("rule_findings", List.of());
-        // Packet visibility and its validation contract are not established for this
-        // workflow. Do not read or send potentially private packet contents to the model.
+        var context = loadContext(projectId, taskId, baselineId, itemIds, target.plan().contextPacketId());
+        request.put("unresolved", context.unresolved());
         if (target.plan().contextPacketId() != null) {
-            searchesComplete = false;
-            incompleteReasons.add("context_packet_unverified");
+            request.put("context_packet_constraints", context.constraints());
         }
-        request.put("unresolved", loadUnresolved(projectId, taskId, baselineId, itemIds, null));
         request.put("checks", checks);
         // Only explicit source line locators can be restored as evidence. Search chunks
         // remain candidates and cannot establish a design-to-excerpt relationship.
@@ -185,7 +183,10 @@ public class ValidationInputAssembler {
         var request = input.request();
         @SuppressWarnings("unchecked")
         var checks = new ArrayList<>((List<Map<String, Object>>) request.get("checks"));
-        checks.add(check(ValidationRules.COMPLETION_DELTA_CHECK, "PLAN_COMPLETENESS", List.of(), List.of()));
+        @SuppressWarnings("unchecked")
+        var items = (List<Map<String, Object>>) request.get("approved_items");
+        List<String> designVersions = items.stream().map(item -> (String) item.get("id")).toList();
+        checks.add(check(ValidationRules.COMPLETION_DELTA_CHECK, "PLAN_COMPLETENESS", designVersions, List.of()));
         request.put("checks", checks);
         request.put("completion_delta", delta);
         request.put("input_snapshot_hash", snapshotHash(request, input.baselineId()));
@@ -317,8 +318,15 @@ public class ValidationInputAssembler {
      * questions on current-baseline documents. These are open questions, not proof that a
      * policy is absent. Read again before applying a result because statuses may change.
      */
+    public record ContextInputs(List<String> unresolved, List<String> constraints) {}
+
     public List<String> loadUnresolved(long projectId, long taskId, long baselineId,
                                        Set<Long> itemIds, String contextPacketId) {
+        return loadContext(projectId, taskId, baselineId, itemIds, contextPacketId).unresolved();
+    }
+
+    public ContextInputs loadContext(long projectId, long taskId, long baselineId,
+                                     Set<Long> itemIds, String contextPacketId) {
         if (projectId <= 0 || taskId <= 0 || baselineId <= 0 || itemIds == null
                 || itemIds.stream().anyMatch(id -> id == null || id <= 0)) {
             throw new IllegalArgumentException("invalid unresolved scope");
@@ -350,6 +358,7 @@ public class ValidationInputAssembler {
             }
             unresolved.add("planning_question:" + id.longValue() + " " + question);
         }
+        List<String> constraints = new ArrayList<>();
         if (contextPacketId != null) {
             final long packetId;
             try { packetId = Long.parseLong(contextPacketId); }
@@ -363,12 +372,18 @@ public class ValidationInputAssembler {
             if (packets.size() != 1 || !(packets.getFirst().get("baseline_id") instanceof Number packetBaseline)
                     || packets.getFirst().get("content") == null) throw incomplete("invalid_context_packet");
             Map<String, Object> packet = parseObject(packets.getFirst().get("content").toString());
-            if (!(packet.get("unresolved") instanceof List<?> entries)) throw incomplete("invalid_context_packet");
-            if (entries.size() > MAX_UNRESOLVED || unresolved.size() + entries.size() > MAX_UNRESOLVED) {
+            if (packetBaseline.longValue() != baselineId) throw incomplete("stale_context_packet");
+            if (!(packet.get("unresolved") instanceof List<?> entries)
+                    || !(packet.get("constraints") instanceof List<?> packetConstraints)) throw incomplete("invalid_context_packet");
+            if (entries.size() > MAX_UNRESOLVED || unresolved.size() + entries.size() > MAX_UNRESOLVED
+                    || packetConstraints.size() > MAX_UNRESOLVED) {
                 throw incomplete("unresolved_limit");
             }
-            if (packetBaseline.longValue() != baselineId) {
-                unresolved.add("context_packet:" + packetId + "의 기준 설계가 현재 기준과 달라 재확인이 필요합니다.");
+            for (Object entry : packetConstraints) {
+                if (!(entry instanceof String constraint) || constraint.isBlank() || constraint.length() > MAX_UNRESOLVED_TEXT) {
+                    throw incomplete("invalid_context_packet");
+                }
+                constraints.add(constraint);
             }
             for (Object entry : entries) {
                 if (!(entry instanceof String question) || question.isBlank() || question.length() > MAX_UNRESOLVED_TEXT) {
@@ -378,7 +393,7 @@ public class ValidationInputAssembler {
             }
             if (unresolved.size() > MAX_UNRESOLVED) throw incomplete("unresolved_limit");
         }
-        return List.copyOf(unresolved);
+        return new ContextInputs(List.copyOf(unresolved), List.copyOf(constraints));
     }
 
     static List<Map<String, Object>> checks(List<Map<String, Object>> designs, List<Map<String, Object>> plans,
@@ -416,7 +431,7 @@ public class ValidationInputAssembler {
             Map<String, Object> snapshot = new LinkedHashMap<>();
             snapshot.put("baseline_id", Long.toString(baselineId));
             for (String key : List.of("project_id", "plan_revision", "approved_items", "related_plans",
-                    "rule_findings", "unresolved", "checks", "evidence")) snapshot.put(key, value.get(key));
+                    "rule_findings", "unresolved", "context_packet_constraints", "checks", "evidence")) snapshot.put(key, value.get(key));
             if (value.containsKey("completion_delta")) snapshot.put("completion_delta", value.get("completion_delta"));
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(json.writeValueAsString(stable(snapshot)).getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(digest);

@@ -237,10 +237,11 @@ HTTP `200`.
 | `validation_id` | `ID` | Y | 검증 실행 대상 |
 | `attempt` | `integer` | Y | backend 실행 시도 |
 | `plan_revision` | [TaskPlanRevision](00-common.md#schema-taskplanrevision) | Y | 불변 계획 |
-| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 참조한 승인 항목 |
+| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 명시 참조 또는 검색 후보로 선정한 현재 기준의 승인 항목 |
 | `related_plans` | [TaskPlanRevision[]](00-common.md#schema-taskplanrevision) | Y | 열린 관련 계획 |
 | `rule_findings` | [Finding[]](00-common.md#schema-finding) | Y | 규칙 검사 결과 |
 | `unresolved` | `string[]` | Y | 미확정 정책 |
+| `context_packet_constraints` | `string[]` | N | 범위·기준을 확인한 패킷의 제약. 지시가 아닌 참고 데이터이며 승인 설계 근거를 대체하지 않는다. |
 | `input_snapshot_hash` | `string` | Y | 전체 분석 입력 해시 |
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
@@ -249,7 +250,7 @@ HTTP `200`.
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
 
-`completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획과 완료 기준에 비추어 분석한다. 검사에 설계나 관련 계획 ID가 없을 때 보고와 현재 계획 사이의 불일치는 관련 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 연결되지 않은 승인 설계의 모순을 확인했다고 주장하지 않는다.
+`completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획·완료 기준 및 선정된 승인 설계에 비추어 분석한다. 검사의 설계 버전 목록은 해당 요청에서 조립한 승인 항목 버전이다. 완료 보고와 승인 설계의 불일치는 그 목록에 있는 설계 ID와 해당 설계의 출처·발췌를 인용할 수 있다. 보고와 현재 계획만의 불일치는 설계 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 검사 범위 밖의 설계나 다른 설계의 근거를 인용하지 않는다.
 
 `content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
 

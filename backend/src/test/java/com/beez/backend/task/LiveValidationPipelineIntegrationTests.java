@@ -232,6 +232,44 @@ class LiveValidationPipelineIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void normalPlanWithAdditionalSearchCandidatesShouldPass() {
+        seed(false);
+        long baseline = api.jdbc.sql("select current_baseline_id from project where id=:project")
+                .param("project", project).query(Long.class).single();
+        // All candidates share the retrieved source document but are not plan references.
+        // Duplicate compatible contracts keep this a test of coverage rather than conflict detection.
+        for (int i = 1; i <= 5; i++) {
+            long candidate = api.jdbc.sql("""
+                    insert into design_item(project_id,key,kind)
+                    values(:project,:key,'API_CONTRACT') returning id
+                    """).param("project", project).param("key", "API-CANDIDATE-184-" + i)
+                    .query(Long.class).single();
+            long candidateVersion = api.jdbc.sql("""
+                    insert into design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,
+                      origin,approved_at,source_document_version_id,source_locator)
+                    select :candidate,1,'APPROVED',title,schema_version,content,content_hash,
+                      'HUMAN',now(),source_document_version_id,source_locator
+                      from design_item_version where id=:version returning id
+                    """).param("candidate", candidate).param("version", version).query(Long.class).single();
+            api.jdbc.sql("""
+                    insert into baseline_item(baseline_id,project_id,design_item_id,design_item_version_id)
+                    values(:baseline,:project,:item,:version)
+                    """).param("baseline", baseline).param("project", project).param("item", candidate)
+                    .param("version", candidateVersion).update();
+        }
+
+        var result = execute("memberId");
+        assertSoftly(check -> {
+            check.assertThat((List<?>) sentRequest.get("approved_items")).hasSize(6);
+            check.assertThat(((List<?>) sentRequest.get("checks")).stream()
+                    .map(entry -> ((Map<?, ?>) entry).get("key").toString())
+                    .filter(key -> key.startsWith("candidate-design-")).count()).isEqualTo(5);
+            check.assertThat(result.get("status")).as("normal plan decision with search candidates").isEqualTo("PASS");
+            check.assertThat(result.get("_test_provider")).isEqualTo(result.get("_test_expected_provider"));
+        });
+    }
+
+    @Test
     void mismatchedIdentifierShouldNeedReview() {
         seed(false);
         var result = execute("userId");

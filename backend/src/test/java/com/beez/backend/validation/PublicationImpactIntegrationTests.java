@@ -263,6 +263,27 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
     // ---- S1: 발행 → 검증 STALE, IN_PROGRESS 만 WAITING ----
 
     @Test
+    void publication_stalesPassThatComparedChangedSearchCandidate() throws Exception {
+        long[] compared = createTask("후보 비교", api.readsRef("API-02"));
+        long comparedPass = api.passValidation(compared[0]);
+        long[] unrelated = createTask("후보 없음", api.readsRef("API-02"));
+        long unrelatedPass = api.passValidation(unrelated[0]);
+        repository.saveCandidateRefs(comparedPass, List.of(Map.of(
+                "design_item_id", String.valueOf(api.designItemId("API-01")),
+                "id", String.valueOf(api.currentVersionId("API-01")))));
+
+        ImpactRequest request = publishApi01();
+        assertThat(ids(preview(request).staleValidations())).containsExactly(String.valueOf(comparedPass));
+        assertThat(ids(apply(request).staleValidations())).containsExactly(String.valueOf(comparedPass));
+        assertThat(column("validation", "status", comparedPass)).isEqualTo("STALE");
+        assertThat(column("validation", "status", unrelatedPass)).isEqualTo("PASS");
+        // AI search candidates must not become declared design references.
+        assertThat(repository.designRefs(comparedPass)).hasSize(1);
+        assertThat(((Number) repository.designRefs(comparedPass).getFirst().get("design_item_id")).longValue())
+                .isEqualTo(api.designItemId("API-02"));
+    }
+
+    @Test
     void publication_stalesValidationsOnOldVersion_andHoldsOnlyInProgressTasks() throws Exception {
         provideCompleteApi02();
         // A: API-01 을 IMPLEMENTS, 시작함 (IN_PROGRESS) — 검증 STALE + 작업 WAITING(REVALIDATION)

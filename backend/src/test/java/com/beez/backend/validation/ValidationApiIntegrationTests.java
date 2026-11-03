@@ -424,7 +424,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         // #184의 근거 충분성 조건을 충족해 금액 오류가 실행 종결에 미치는 영향을 독립적으로 검증한다.
         provideCompleteApiContent("API-01");
         // 성공 응답의 사용량에 틀린 비용(글자)·범위 밖 비용·음수 토큰이 섞여 와도 검증은 PASS 로 닫히고 사용량은 그 칸만 비운 채 남는다
-        long[] t = createTask(planJson("A", api.readsRef("API-01"), true, "[{\"text\":\"x\"}]"), member);
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
         long id = body(accept(t, member), 202).get("id").asLong();
         when(analyzer.analyze(any())).thenAnswer(inv -> {
             Map<String, Object> res = aiResponse(inv.getArgument(0), List.of(), List.of());
@@ -589,8 +589,8 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(r2.get("status").asText()).isEqualTo("NEEDS_REVIEW");
         assertThat(kinds(r2.get("findings"))).containsExactlyInAnyOrder("MISSING_INPUT", "MISMATCH");
 
-        // ③ INFO 불일치만 → PASS (BLOCKING 이 아니면 막지 않는다)
-        long[] t3 = createTask(planJson("C", api.implementsRef("API-01"), true, "[{\"text\":\"z\"}]"), member);
+        // ③ INFO 불일치만 → PASS (별도 미연결 범위가 없고 BLOCKING 이 아니면 막지 않는다)
+        long[] t3 = createTask(planJson("C", api.implementsRef("API-01"), true, null), member);
         long v3 = body(accept(t3, member), 202).get("id").asLong();
         doAnswer(inv -> aiResponse(inv.getArgument(0),
                 List.of(candidate(designCheck(version), "MISMATCH", "INFO", String.valueOf(item), String.valueOf(version))), List.of())).when(analyzer).analyze(any());

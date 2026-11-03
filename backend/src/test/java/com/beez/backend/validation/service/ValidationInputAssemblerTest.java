@@ -304,7 +304,7 @@ class ValidationInputAssemblerTest {
                 Map.of("id", 11L, "question", "접근 권한이 미정입니다")));
         when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
                 .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of(
-                Map.of("baseline_id", 2L, "content", "{\"unresolved\":[\"권한 정책 확인\"]}")));
+                Map.of("baseline_id", 2L, "content", "{\"constraints\":[\"접근 로그 기록\"],\"unresolved\":[\"권한 정책 확인\"]}")));
         var unresolved = assembler.loadUnresolved(1, 3, 2, Set.of(10L), "22");
         assertEquals(List.of("planning_question:11 접근 권한이 미정입니다", "context_packet:22 권한 정책 확인"), unresolved);
         verify(jdbc).sql(argThat(sql -> sql.contains("q.project_id=:project") && sql.contains("q.status='OPEN'")
@@ -315,14 +315,42 @@ class ValidationInputAssemblerTest {
     @Test void staleOrMalformedContextPacketCannotBecomeEmptyEvidence() {
         when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
                 .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of(
-                Map.of("baseline_id", 1L, "content", "{\"unresolved\":[]}")));
-        assertEquals(List.of("context_packet:22의 기준 설계가 현재 기준과 달라 재확인이 필요합니다."),
-                assembler.loadUnresolved(1, 3, 2, Set.of(10L), "22"));
+                Map.of("baseline_id", 1L, "content", "{\"constraints\":[],\"unresolved\":[]}")));
+        assertEquals("stale_context_packet", assertThrows(ApiException.class,
+                () -> assembler.loadUnresolved(1, 3, 2, Set.of(10L), "22")).getCode());
         when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
                 .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of(
                 Map.of("baseline_id", 2L, "content", "{}")));
         assertEquals("invalid_context_packet", assertThrows(ApiException.class,
                 () -> assembler.loadUnresolved(1, 3, 2, Set.of(10L), "22")).getCode());
+    }
+
+    @Test void matchingContextPacketIsIncludedInTheSameSnapshotUsedForRevalidation() {
+        var plan = new TaskPlanInput("회원 조회", "조회", List.of("API"), List.of(), "GET 구현",
+                List.of("조회"), List.of(), List.of(), List.of(), true, "22");
+        var rev = new TaskPlanRevisionResponse("4", "3", 1, plan, Instant.parse("2026-01-01T00:00:00Z"), "1", null);
+        var target = new TaskDetailResponse("3", "T-1", "1", "1", TaskStatus.DRAFT, null, 0,
+                rev, "NOT_RUN", null, null, Instant.now(), Instant.now());
+        when(tasks.getTask(caller, 1L, 3L)).thenReturn(target);
+        when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
+                .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of(
+                Map.of("baseline_id", 2L, "content", "{\"constraints\":[\"접근 로그 기록\"],\"unresolved\":[]}")));
+        var result = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
+        assertTrue(result.searchComplete());
+        assertEquals(List.of("접근 로그 기록"), result.request().get("context_packet_constraints"));
+        assertEquals(List.of(), result.request().get("unresolved"));
+        var again = assembler.loadContext(1, 3, 2, Set.of(), "22");
+        assertEquals(result.request().get("unresolved"), again.unresolved());
+        assertEquals(result.request().get("context_packet_constraints"), again.constraints());
+        verify(jdbc, atLeastOnce()).sql(argThat(sql -> sql.contains("project_id=:project")
+                && sql.contains("task_id is null or task_id=:task")));
+    }
+
+    @Test void missingOrOutOfScopePacketCannotBeUsed() {
+        when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
+                .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of());
+        assertEquals("invalid_context_packet", assertThrows(ApiException.class,
+                () -> assembler.loadContext(1, 3, 2, Set.of(), "22")).getCode());
     }
 
     @Test void tooManyOpenQuestionsAreNotSilentlyTruncated() {
