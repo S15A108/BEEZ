@@ -76,8 +76,15 @@ public class ContextPacketService {
         if (taskId != null) {
             lookup.requireTaskInProject(projectId, taskId);
         }
+        Long expectedBaselineId = Ids.parse(args.expectedBaselineId(), "expected_baseline_id");
         Long baselineId = lookup.lockCurrentBaselineId(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음"));
+        // The AI selected against this exact baseline. Membership alone cannot
+        // detect a newly published policy when old versions remain unchanged.
+        // The project row stays locked until this transaction commits.
+        if (!baselineId.equals(expectedBaselineId)) {
+            throw new ApiException(HttpStatus.CONFLICT, "baseline_conflict", "기준 설계가 변경되었습니다. 최신 기준으로 다시 조회해 주세요.");
+        }
         List<Long> versionIds = Ids.parseAll(args.designItemVersionIds(), "design_item_version_ids");
         lookup.requireVersionsInBaseline(projectId, baselineId, versionIds);
 

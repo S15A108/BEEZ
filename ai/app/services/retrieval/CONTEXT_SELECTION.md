@@ -81,3 +81,4 @@ python -m ruff format --check .
 
 - 임베딩 선택기는 유료 질의 호출 전에 문서 후보 전체의 토큰·배치 제한을 검사한다. 검증한 불변 후보와 배치를 실제 문서 호출에 재사용하므로 후보별 토큰화는 한 번만 수행한다. 후보 검증 시간은 문서 임베딩 시간 예산에 포함하며 질의 호출 대기 시간은 포함하지 않는다. 사전 검증은 이후 모델 호출 성공을 보장하지 않는다. 후보 하나라도 `min(profile.max_input_tokens, policy.max_batch_tokens)` 토큰을 넘으면 그 후보를 자르거나 건너뛰지 않고 전체 선택이 `embedding_limit_exceeded`로 실패하므로, 후보 본문 길이는 호출자가 사전에 제한해야 한다.
 - 종류별 후보 상한 `MAX_CANDIDATES_PER_KIND`(200)는 HTTP 스키마, 서버 설정 검증과 `review_unresolved`가 공유한다. 검토 단계는 선택된 설계·근거 합계를 이 상한의 두 배까지 받으므로 상한 안의 선택 결과가 검토에서 거부되지 않는다.
+- `context_packet.compose_development_context`(#132)는 이 선택 결과와 BE 메타데이터로 MCP-01 패킷 내용을 만든다. 계약과 오류·크기 규칙은 `docs/design/development-context-packet-contract-S15P31A108-132.md`를 따른다.

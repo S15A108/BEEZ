@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.context_packet import PacketMetadata
 from app.services.retrieval.context_selection import (
     MAX_CANDIDATES_PER_KIND,
     ApprovedEvidence,
@@ -31,6 +32,9 @@ class ContextSelectionRequest(BaseModel):
     relations: list[DesignRelation] = Field(max_length=1000)
     task_design_refs: list[TaskDesignRef] = Field(max_length=MAX_CANDIDATES_PER_KIND)
     search_status: Literal["COMPLETE", "NOT_READY", "FAILED"]
+    # #132: when the BE supplies packet metadata, the response also carries the
+    # composed MCP-01 packet content; without it the route stays selection-only.
+    metadata: PacketMetadata | None = None
 
     @field_validator("request_key")
     @classmethod
