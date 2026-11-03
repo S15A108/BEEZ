@@ -106,6 +106,7 @@ public class ImpactRunRepository {
      * 실행 행을 닫는 것과 따로 부른다: 결과를 버리는 경우(늦은 결과·권한 재확인 실패·저장 실패)에도 실제 호출 비용이므로 남긴다.
      * 같은 호출은 request_key 로 한 번만. 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
      */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public void recordUsage(long id, Object entries, String model) {
         var project = jdbc.sql("SELECT project_id FROM change_impact_run WHERE id=:id").param("id", id).query(Long.class).optional();
         if (project.isEmpty()) return;

@@ -1542,7 +1542,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `input_tokens` | `integer` | Y | 입력 토큰 |
 | `output_tokens` | `integer` | Y | 출력 토큰 |
 | `call_count` | `integer` | Y | 모델 호출 수 |
-| `estimated_cost_amount` | `string` | N | 추정 비용. 비용 있는 호출이 기간 안에 하나도 없으면 생략 |
+| `estimated_cost_amount` | `string` | N | 추정 비용(응답 `currency` 기준). 조회 조건(기간·작업·검증·기능) 전체에 비용 있는 호출이 하나도 없을 때만 모든 묶음에서 생략하고, 그 외에는 이 묶음에 그 통화 비용이 없으면 `"0"` — 비용을 모르는 호출은 `cost_unknown_call_count`로 구분 |
 | `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수 (BE 구현, -169) |
 | `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 (BE 구현, -169) |
 

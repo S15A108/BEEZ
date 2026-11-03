@@ -66,7 +66,7 @@ public class ImpactRunService {
         // Dispatch after the transaction ends: a rejected run is closed in a new transaction, which must not
         // be requested while this request still holds its own connection.
         if (accepted.newRun()!=null && !executor.submit(() -> execute(caller,project,proposal,accepted.newRun())))
-            closeFailure(project,accepted.newRun(),"analysis_capacity","NOT_STARTED");
+            closeFailure(project,accepted.newRun(),"analysis_capacity","NOT_STARTED",List.of(),null);
         return accepted.result();
     }
 
@@ -125,7 +125,7 @@ public class ImpactRunService {
             if (!active) return;
             var outcome=coordinator.analyze(caller,project,proposal,"impact-"+id);
             received=outcome.usage();
-            model=modelOf(outcome.aiEnvelope());
+            model=outcome.model();
             final String responseModel=model;
             tx.executeWithoutResult(ignored -> {
                 lock(project);
@@ -168,14 +168,15 @@ public class ImpactRunService {
                 runs.finish(id,status,code,ai,generation,usage,usageStatus);
             });
         } catch (ApiException changed) {
-            // 모델 응답 뒤 권한 재확인이 거절한 경우(AccessRecheckException)에는 결과는 버리되 받은 사용량이 실려 온다
-            if (received.isEmpty()) received=ImpactAnalysisCoordinator.receivedUsage(changed);
+            // 모델 응답 뒤 권한 재확인이 거절한 경우(AccessRecheckException)에는 결과는 버리되 받은 사용량·model 이 실려 온다
+            if (received.isEmpty()) { received=ImpactAnalysisCoordinator.receivedUsage(changed); model=ImpactAnalysisCoordinator.receivedModel(changed); }
             if (changed.getStatus().value()==409 || changed.getStatus().value()==404)
                 closeFailure(project,id,"analysis_input_changed","NOT_STARTED",received,model);
             else closeFailure(project,id,"analysis_interrupted","UNKNOWN",received,model);
         } catch (RuntimeException failure) {
             // Store only a bounded code; never persist provider exceptions or document contents as errors.
-            if (received.isEmpty()) received=ImpactAnalysisCoordinator.receivedUsage(failure);
+            // 모델 응답 뒤 예상하지 못한 오류(ReceivedUsageException)에도 받은 사용량·model 이 실려 온다
+            if (received.isEmpty()) { received=ImpactAnalysisCoordinator.receivedUsage(failure); model=ImpactAnalysisCoordinator.receivedModel(failure); }
             closeFailure(project,id,"invalid_output","UNKNOWN",received,model);
         }
     }
@@ -203,11 +204,7 @@ public class ImpactRunService {
         if (!locked) throw AccessErrors.notFound("impact_project_missing");
     }
 
-    /** 응답 최상위 model. 사용량 항목에 model 이 없을 때 공통 사용량 표에 쓴다 */
-    private static String modelOf(Map<String,Object> envelope) {
-        if (envelope!=null && envelope.get("model") instanceof String value && !value.isBlank()) return value;
-        return null;
-    }
+
 
     private void lock(long project) {
         if (!projects.lockActiveProject(project)) throw AccessErrors.notFound("impact_project_missing");

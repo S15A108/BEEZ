@@ -141,8 +141,9 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
-     * V21 (S15P31A108-169): 공통 사용량 표에 적지 않고 각 실행 기록에만 남은 과거 사용량(검증 실행·승인 전 영향 분석·발행 뒤 영향 분석 시도)을
-     * 런타임 기록과 같은 규칙으로 옮긴다. 같은 호출 키는 한 번만, 틀린 값은 그 칸만 비우고, 시각은 그 실행이 끝난 시각
+     * V21 (S15P31A108-169, Java 마이그레이션): 공통 사용량 표에 적지 않고 각 실행 기록에만 남은 과거 사용량(검증 실행·승인 전 영향 분석·
+     * 발행 뒤 영향 분석 시도)을 실행 중 기록기와 같은 코드(LlmUsageRecorder.sanitize)로 옮긴다. 같은 호출 키는 한 번만, 틀린 값은 그 칸만 비우고,
+     * 넣다가 실패하는 항목은 그 항목만 건너뛰며, 시각은 그 실행이 끝난 시각
      */
     @Test
     void v21_backfillsUsageFromRunRecords_onceAndWithRuntimeRules() throws Exception {
@@ -184,8 +185,21 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
                         + "overriding system value values (8001, " + project + ", 1, 1, 's', 1, 1, 'f', 'COMPLETED', '{\"model\":\"impact-m\"}', "
                         + "'[{\"request_key\":\"i-1\",\"feature\":\"CHANGE_IMPACT\"},{\"request_key\":\"v-1\"}]', 'REPORTED', 'rk', 1, "
                         + "'2026-11-01T01:00:00Z', now())");
-                st.execute("insert into published_change_analysis (id, project_id, published_baseline_id, change_proposal_id, status) "
-                        + "overriding system value values (6001, " + project + ", 1, 1, 'COMPLETED')");
+                // 실행 중 기록기와 같은 거르기인지: 소수점 붙은 정수·지수 표기·앞뒤 공백은 받고, 빈 글자 키·통화·model, 글자 아닌 provider 는 버린다.
+                // latency_ms 가 없으면 실행 처리 시간. 압축되지 않는 아주 긴 키는 그 항목만 실패하고 이관은 계속된다
+                st.execute("""
+                        insert into validation_run (id, validation_id, attempt, kind, status, analyzer_version, duration_ms, usage, finished_at)
+                        overriding system value values
+                         (9003, 501, 2, 'MODEL', 'OK', 'gpt-y', 4321, '[
+                            {"request_key":"e-dec","tokens_known":true,"input_tokens":10.0,"output_tokens":"1e3","latency_ms":" 7 "},
+                            {"request_key":"   "},
+                            {"request_key":"e-ws","model":"  ","provider":5,"estimated_cost_amount":"0.5","currency":"  "},
+                            {"request_key":"e-nolat"}]', '2026-10-30T11:00:00Z')
+                        """);
+                st.execute("update validation_run set usage = usage || jsonb_build_array(jsonb_build_object('request_key', "
+                        + "(select string_agg(md5(i::text), '') from generate_series(1, 200) i))) where id = 9003");
+                st.execute("insert into published_change_analysis (id, project_id, published_baseline_id, change_proposal_id, status, attempt, generation) "
+                        + "overriding system value values (6001, " + project + ", 1, 1, 'COMPLETED', 2, '{\"model\":\"pub-m\"}')");
                 st.execute("insert into published_analysis_attempt (intake_id, attempt, outcome, usage, usage_status, finished_at) values "
                         + "(6001, 1, 'FAILED', '[{\"request_key\":\"p-1\",\"tokens_known\":true,\"input_tokens\":3,\"output_tokens\":4}]', 'REPORTED', '2026-11-02T01:00:00Z'), "
                         + "(6001, 2, 'COMPLETED', '[{\"request_key\":\"p-1\"},{\"request_key\":\"p-2\"}]', 'REPORTED', '2026-11-02T02:00:00Z')");
@@ -211,9 +225,12 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
                             + rs.getString("currency") + "|" + rs.getBoolean("failed"));
                 }
                 assertThat(rows).containsExactly(
+                        "e-dec|TASK_VALIDATION|701|9003|gpt-y|true|10|1000|null|null|false",             // 10.0·1e3 도 실행 중처럼 정수로
+                        "e-nolat|TASK_VALIDATION|701|9003|gpt-y|false|null|null|null|null|false",
+                        "e-ws|TASK_VALIDATION|701|9003|gpt-y|false|null|null|null|null|false",           // 빈 model·통화는 버림
                         "i-1|CHANGE_IMPACT|null|null|impact-m|false|null|null|null|null|false",          // 모델은 실행의 generation
                         "p-1|CHANGE_IMPACT|null|null|unknown|true|3|4|null|null|false",                   // 재시도가 같은 키를 보고해도 한 번
-                        "p-2|CHANGE_IMPACT|null|null|unknown|false|null|null|null|null|false",
+                        "p-2|CHANGE_IMPACT|null|null|pub-m|false|null|null|null|null|false",              // 결과를 저장한 시도는 generation 의 model
                         "v-1|TASK_VALIDATION|701|9001|gpt-x|true|10|5|0.001235|USD|false",                // 글자 숫자·소수 6자리 반올림
                         "v-2|TASK_VALIDATION|701|9001|gpt-x|true|null|null|null|null|false",              // 틀린 토큰·비용은 그 칸만 비움, 모르는 기능은 실행 기능
                         "v-3|TASK_VALIDATION|701|9001|gpt-x|false|null|null|null|null|true",              // 범위 밖 비용은 비움
@@ -221,6 +238,13 @@ class MigrationUpgradeIntegrationTests extends IntegrationTestSupport {
                 ResultSet at = st.executeQuery("select created_at = '2026-10-30T10:00:00Z'::timestamptz from llm_usage where request_key = 'v-1'");
                 assertThat(at.next()).isTrue();
                 assertThat(at.getBoolean(1)).isTrue();                                                // 그 실행이 끝난 시각
+                ResultSet detail = st.executeQuery("select request_key, latency_ms, provider from llm_usage where request_key in ('e-dec', 'e-nolat', 'e-ws') order by request_key");
+                assertThat(detail.next()).isTrue();
+                assertThat(detail.getInt("latency_ms")).isEqualTo(7);                                // " 7 " 은 앞뒤 공백을 지우고 읽는다
+                assertThat(detail.next()).isTrue();
+                assertThat(detail.getInt("latency_ms")).isEqualTo(4321);                             // 없으면 실행 처리 시간
+                assertThat(detail.next()).isTrue();
+                assertThat(detail.getString("provider")).isEqualTo("unspecified");                   // 글자가 아닌 provider
             }
         } finally {
             try (Connection admin = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());

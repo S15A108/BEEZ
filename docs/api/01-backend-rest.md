@@ -13668,25 +13668,95 @@ HTTP `200`.
   "to": "2026-10-24T03:00:00Z",
   "input_tokens": 1200,
   "output_tokens": 300,
-  "call_count": 1,
+  "call_count": 2,
   "estimated_cost_amount": "0.0042",
   "currency": "USD",
+  "tokens_unknown_call_count": 1,
+  "cost_unknown_call_count": 1,
   "by_feature": [
+    {
+      "key": "DOCUMENT_PARSE",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 1,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 1,
+      "cost_unknown_call_count": 1
+    },
     {
       "key": "TASK_VALIDATION",
       "input_tokens": 1200,
       "output_tokens": 300,
       "call_count": 1,
-      "estimated_cost_amount": "0.0042"
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "CHANGE_IMPACT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "EMBEDDING",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "BEE_CHAT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "BEE_DRAFT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "TASK_ASSIGNMENT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "MEETING_ANALYSIS",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
     }
   ],
   "by_task": [
     {
       "key": "501",
+      "label": "T-3",
       "input_tokens": 1200,
       "output_tokens": 300,
       "call_count": 1,
-      "estimated_cost_amount": "0.0042"
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
     }
   ],
   "by_validation": [
@@ -13695,7 +13765,30 @@ HTTP `200`.
       "input_tokens": 1200,
       "output_tokens": 300,
       "call_count": 1,
-      "estimated_cost_amount": "0.0042"
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    }
+  ],
+  "by_agent": [],
+  "by_day": [
+    {
+      "key": "2026-10-23",
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "call_count": 1,
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "2026-10-24",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 1,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 1,
+      "cost_unknown_call_count": 1
     }
   ]
 }
@@ -13727,10 +13820,11 @@ HTTP `200`.
 - (수정안 요청) by_agent는 caller=AGENT 호출을 agent_session_id별로, 웹에서 직접 한 호출(문서 분석·비비 질문·회의 분석)을 key WEB 한 줄로 묶는다. by_day는 한국 시간 날짜별이고 대시보드의 '날짜별 AI 호출' 막대가 쓴다. 비용을 팀장만 볼지는 Q21이다.
 - (BE 구현, -169) 공통 사용량 표 `llm_usage`를 읽는다. 시각은 행을 적은 시각, 기간은 [from, to). 검증별은 실행(`validation_run`)을 거쳐 검증 번호로 묶는다.
 - (BE 구현, -169) 토큰: `tokens_known`이고 입력·출력 토큰이 **둘 다** 있는 호출만 두 합계에 더한다. 하나라도 모르는 호출(`tokens_known=false`, 또는 기록 때 틀린 값이라 한쪽만 비어 있음)은 그 호출의 토큰을 어느 합계에도 넣지 않고 `tokens_unknown_call_count`로 센다.
-- (BE 구현, -169) 기록 범위: BE가 모델을 부르는 기능은 모두 `llm_usage`에 적는다 — 작업 검증, 문서 분석·검색 색인·문서 검토, 변경 영향 분석(승인 전 분석 CHG-A05·A06과 발행 뒤 분석 모두. 모델 응답을 받은 뒤 결과를 버리는 경우 — 실행 행을 닫지 못한 늦은 결과, 응답 뒤 권한 재확인 실패(분석 중 요청자가 프로젝트에서 빠짐 등), 재확인 조회 오류, 결과 저장 실패, 실행 기록에 넣기에 너무 큰 사용량 — 도 받은 사용량은 적는다). 같은 호출은 `request_key`로 한 번만. 외부 에이전트가 자기 모델을 쓴 사용량은 BE를 거치지 않아 들어가지 않는다. 이 연결 전에 실행 기록에만 남은 과거 사용량(검증 실행 `validation_run.usage`, 영향 분석 `change_impact_run.usage`·`published_analysis_attempt.usage`)은 마이그레이션 V21이 같은 규칙으로 옮겼으므로 과거 기간 조회에도 들어간다(시각은 그 실행이 끝난 시각). 앞으로 BE가 부르게 될 AI 기능(회의 분석·비비 등)도 공통 기록기(`LlmUsageRecorder`)로 적어야 이 조회에 나온다.
+- (BE 구현, -169) 기록 범위: BE가 모델을 부르는 기능은 모두 `llm_usage`에 적는다 — 작업 검증, 문서 분석·검색 색인·문서 검토, 변경 영향 분석(승인 전 분석 CHG-A05·A06과 발행 뒤 분석 모두. 모델 응답을 받은 뒤 결과를 버리는 경우 — 실행 행을 닫지 못한 늦은 결과, 응답 뒤 권한 재확인 실패(분석 중 요청자가 프로젝트에서 빠짐 등), 재확인 조회 오류, 결과 저장 실패, 실행 기록에 넣기에 너무 큰 사용량 — 도 받은 사용량은 적는다). 같은 호출은 `request_key`로 한 번만. 외부 에이전트가 자기 모델을 쓴 사용량은 BE를 거치지 않아 들어가지 않는다. 이 연결 전에 실행 기록에만 남은 과거 사용량(검증 실행 `validation_run.usage`, 영향 분석 `change_impact_run.usage`·`published_analysis_attempt.usage`)은 마이그레이션 V21(Java)이 실행 중 기록기와 **같은 거르기 코드**로 옮겼으므로 과거 기간 조회에도 들어간다. 시각은 그 실행이 끝난 시각, `latency_ms`가 없으면 검증은 실행 처리 시간·영향 분석은 0, model이 없으면 검증은 분석기 버전(없으면 옮기지 않음)·영향 분석은 저장된 generation의 model·그것도 없으면 `unknown`. 넣다가 실패하는 항목(아주 긴 키 등)은 그 항목만 건너뛰고 이관은 계속된다. 옛 버전과 새 버전이 함께 도는 배포(여러 대를 차례로 교체)라면, V21이 끝난 뒤 옛 버전이 마친 영향 분석은 이관에도 런타임 기록에도 없을 수 있다. 그런 배포라면 옛 버전이 모두 내려간 뒤 같은 이관을 한 번 더 돌린다(같은 키는 한 번만 들어가 다시 돌려도 안전). 앞으로 BE가 부르게 될 AI 기능(회의 분석·비비 등)도 공통 기록기(`LlmUsageRecorder`)로 적어야 이 조회에 나온다.
 - (BE 구현, -169) 비용: 기간·조건 안에서 추정 비용이 있는 호출이 가장 많은 통화를 `currency`로 정하고 그 통화의 추정 비용만 더한다(환산하지 않음). 단가 없는 호출과 다른 통화 호출은 `cost_unknown_call_count`로 센다. 비용 있는 호출이 하나도 없으면 전체·모든 묶음에서 `estimated_cost_amount`·`currency`를 생략하고, 있으면 그 통화 호출이 없는 묶음은 `"0"`이다(모르는 호출 수로 구분). 금액은 뒤의 0을 지운 소수 문자열이다.
 - (BE 구현, -169) 모든 묶음은 같은 조건·같은 통화로 한 스냅샷에서 계산하므로 `by_feature`·`by_day` 각각의 합이 전체 합(호출 수·토큰·모르는 호출 수·비용)과 같다. `by_task`·`by_validation`에는 작업·검증에 연결된 호출만 들어가 합이 전체보다 작을 수 있다.
 - (BE 구현, -169) `by_feature`는 8개 기능을 Usage.feature 순서로 호출이 없어도 한 줄씩, `by_day`는 기간이 걸치는 한국 날짜를 모두 0으로 채워 준다. `by_task`·`by_validation`은 번호 순이고 `by_task`의 `label`은 작업 키(T-3)다. `task_id`·`validation_id`·`feature`를 함께 주면 모두 맞는 호출만 센다.
+- (BE 구현, -169) 위 예시는 비용을 모르는 문서 분석 호출 1건(토큰도 모름)이 섞인 경우다 — 그 호출은 토큰·비용 합계에 없고 두 `*_unknown_call_count`로만 센다. 한국 날짜 기준이라 UTC 03:00~다음 날 03:00 기간은 두 날에 걸친다.
 - (BE 구현, -169) `by_agent`는 지금 빈 배열이다. `llm_usage`에 호출자(에이전트 세션·웹) 칸이 없어 나눌 수 없다. 칸 추가와 각 기능의 기록은 Q21과 함께 정한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)

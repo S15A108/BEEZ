@@ -78,9 +78,26 @@ public class LlmUsageRecorder {
         }
     }
 
-    private void recordEntry(Owner owner, Object value, long fallbackLatencyMs) {
+    /**
+     * 표에 넣을 한 줄. {@link #sanitize} 가 만든다 — 실행 중 기록과 과거 기록 이관(V21)이 같은 거르기 규칙을 쓰도록 한 곳에 둔다.
+     * input·output·cache·cost·currency 는 비어 있을 수 있다
+     */
+    public record Row(String requestKey, String feature, String provider, String model, boolean tokensKnown, Integer inputTokens,
+                      Integer outputTokens, Integer cacheTokens, int latencyMs, BigDecimal cost, String currency, boolean failed) {
+    }
+
+    /**
+     * 사용량 항목 하나를 표에 넣을 값으로 거른다. 못 쓰는 항목(객체가 아님, request_key 없음, model 을 알 수 없음)이면 null.
+     * 틀린 칸은 비운다: 토큰은 tokens_known=true 이고 0 이상 int 일 때만, 추정 비용은 통화와 함께 있고 NUMERIC(12,6) 에 들어갈 때만.
+     *
+     * @param defaultFeature    항목의 feature 가 없거나 모르는 값일 때
+     * @param fallbackModel     항목에 model 이 없을 때. null 이면 그런 항목은 버린다
+     * @param fallbackLatencyMs 항목에 latency_ms 가 없을 때
+     * @param label             경고 로그에 붙일 이름
+     */
+    public static Row sanitize(Object value, String defaultFeature, String fallbackModel, long fallbackLatencyMs, String label) {
         if (!(value instanceof Map<?, ?> raw)) {
-            return;
+            return null;
         }
         Map<String, Object> entry = new LinkedHashMap<>();
         for (Map.Entry<?, ?> e : raw.entrySet()) {
@@ -88,16 +105,16 @@ public class LlmUsageRecorder {
         }
         Object key = entry.get("request_key");
         if (!(key instanceof String k) || k.isBlank()) {
-            log.warn("{} usage entry skipped (request_key missing): {}", owner.label(), entry);
-            return;
+            log.warn("{} usage entry skipped (request_key missing): {}", label, entry.keySet());
+            return null;
         }
-        String model = owner.fallbackModel();
+        String model = fallbackModel;
         if (entry.get("model") instanceof String m && !m.isBlank()) {
             model = m;
         }
         if (model == null || model.isBlank()) {
-            log.warn("{} usage {} skipped (model missing)", owner.label(), k);
-            return;
+            log.warn("{} usage {} skipped (model missing)", label, k);
+            return null;
         }
         boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
         Integer input = null;
@@ -110,7 +127,7 @@ public class LlmUsageRecorder {
         if (latency == null) {
             latency = (int) Math.min(Integer.MAX_VALUE, Math.max(0, fallbackLatencyMs));
         }
-        String feature = owner.defaultFeature();
+        String feature = defaultFeature;
         if (entry.get("feature") instanceof String f && FEATURES.contains(f)) {
             feature = f;
         }
@@ -123,29 +140,39 @@ public class LlmUsageRecorder {
         if (entry.get("estimated_cost_amount") != null && entry.get("currency") instanceof String cur && !cur.isBlank()) {
             cost = costAmount(entry.get("estimated_cost_amount"));
             if (cost == null) {
-                log.warn("{} usage {}: estimated_cost_amount not a valid amount, stored without cost: {}", owner.label(), k,
-                        entry.get("estimated_cost_amount"));
+                log.warn("{} usage {}: estimated_cost_amount not a valid amount, stored without cost", label, k);
             } else {
                 currency = cur;
             }
         }
-        JdbcClient.StatementSpec insert = jdbc.sql("""
-                        insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
-                                               tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
-                                               estimated_cost_amount, currency, failed, origin)
-                        values (:project, :feature, :key, :task, :run, :provider, :model,
-                                :known, :input, :output, :cache, :latency, :cost, :currency, :failed, 'model')
-                        on conflict (request_key) do nothing
-                        """)
-                .param("project", owner.projectId()).param("feature", feature).param("key", k)
-                .param("task", owner.taskId(), Types.BIGINT).param("run", owner.validationRunId(), Types.BIGINT)
-                .param("provider", provider).param("model", model)
-                .param("known", known).param("input", input, Types.INTEGER).param("output", output, Types.INTEGER)
-                .param("cache", nonNegativeInt(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
-                .param("cost", cost, Types.NUMERIC).param("currency", currency, Types.VARCHAR)
-                .param("failed", Boolean.TRUE.equals(entry.get("failed")));
-        insertIsolated(owner.label(), k, insert);
+        return new Row(k, feature, provider, model, known, input, output, nonNegativeInt(entry.get("cache_tokens")), latency, cost,
+                currency, Boolean.TRUE.equals(entry.get("failed")));
     }
+
+    private void recordEntry(Owner owner, Object value, long fallbackLatencyMs) {
+        Row row = sanitize(value, owner.defaultFeature(), owner.fallbackModel(), fallbackLatencyMs, owner.label());
+        if (row == null) {
+            return;
+        }
+        JdbcClient.StatementSpec insert = jdbc.sql(INSERT_SQL)
+                .param("project", owner.projectId()).param("feature", row.feature()).param("key", row.requestKey())
+                .param("task", owner.taskId(), Types.BIGINT).param("run", owner.validationRunId(), Types.BIGINT)
+                .param("provider", row.provider()).param("model", row.model())
+                .param("known", row.tokensKnown()).param("input", row.inputTokens(), Types.INTEGER)
+                .param("output", row.outputTokens(), Types.INTEGER).param("cache", row.cacheTokens(), Types.INTEGER)
+                .param("latency", row.latencyMs()).param("cost", row.cost(), Types.NUMERIC)
+                .param("currency", row.currency(), Types.VARCHAR).param("failed", row.failed());
+        insertIsolated(owner.label(), row.requestKey(), insert);
+    }
+
+    private static final String INSERT_SQL = """
+            insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
+                                   tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
+                                   estimated_cost_amount, currency, failed, origin)
+            values (:project, :feature, :key, :task, :run, :provider, :model,
+                    :known, :input, :output, :cache, :latency, :cost, :currency, :failed, 'model')
+            on conflict (request_key) do nothing
+            """;
 
     /**
      * 사용량 한 줄을 세이브포인트 안에서 넣는다. 실패하면 그 줄만 되돌리고 경고 — 호출한 쪽의 저장은 그대로 커밋된다.
