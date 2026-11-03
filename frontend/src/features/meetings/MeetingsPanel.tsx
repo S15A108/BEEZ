@@ -54,6 +54,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   } | null>(null)
   const [ending, setEnding] = useState(false)
   const [agendaOpen, setAgendaOpen] = useState(false)
+  const [earlierOpen, setEarlierOpen] = useState(false)
   const list = useMeetingList(projectId)
   const meetings = list.data?.pages.flatMap((page) => page.items) ?? []
   const open = meetings.filter((meeting) => meeting.status !== 'CLOSED')
@@ -130,6 +131,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     setSelection({ id, focus })
     setEnding(false)
     setAgendaOpen(false)
+    setEarlierOpen(false)
   }
   return (
     // 창 본문을 베이지로 채운다(캔버스 PNL-06-v2: 머리 아래 #f3f1ea). 창의 안쪽 여백만큼 밖으로 넓힌다.
@@ -351,8 +353,12 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           </div>
                         </div>
                       )
-                    // 캔버스 PNL-06-v2-bibi-review는 정리 뒤 앞의 대화를 접는다. 기존 테스트가 정리 뒤에도 첫 비비 말을 보므로 접지 않는다(승인 대기).
                     const conversation = notes.toReversed()
+                    // 비비 정리가 나오면 앞의 대화는 접고 마지막 두 메시지와 정리만 보인다(캔버스 PNL-06-v2-bibi-review).
+                    const folded =
+                      review && !earlierOpen
+                        ? Math.max(0, conversation.length - 3)
+                        : 0
                     return (
                       <div className="flex min-h-0 min-w-0 flex-col gap-3">
                         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -590,18 +596,28 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 line,
                               )}
                             >
-                              {entries.hasNextPage && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="justify-self-center"
-                                  onClick={() => void entries.fetchNextPage()}
+                              {folded > 0 ? (
+                                <button
+                                  type="button"
+                                  className="justify-self-center text-xs text-muted-foreground hover:underline"
+                                  onClick={() => setEarlierOpen(true)}
                                 >
-                                  이전 기록 더 보기
-                                </Button>
+                                  앞의 대화 {folded}개
+                                </button>
+                              ) : (
+                                entries.hasNextPage && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="justify-self-center"
+                                    onClick={() => void entries.fetchNextPage()}
+                                  >
+                                    이전 기록 더 보기
+                                  </Button>
+                                )
                               )}
                               {conversation.length ? (
-                                conversation.map((entry) => {
+                                conversation.slice(folded).map((entry) => {
                                   const author = people.find(
                                     (member) =>
                                       member.account_id ===

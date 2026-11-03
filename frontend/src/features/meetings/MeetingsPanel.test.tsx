@@ -69,6 +69,13 @@ it('팀장은 메시지를 보내고 비비 정리를 받은 뒤 회의 끝내�
   expect(
     await within(log).findByText(/회의 내용을 정리했어요 · 메시지 4개 기준/),
   ).toBeInTheDocument()
+  // 정리 뒤에는 앞의 대화를 접고 마지막 두 메시지와 정리만 보인다(캔버스 PNL-06-v2-bibi-review, 기대값 변경 사용자 승인 11-04).
+  expect(
+    within(log).getAllByText('예시 템플릿 · 실제 AI 호출 없음'),
+  ).toHaveLength(1)
+  await user.click(
+    within(log).getByRole('button', { name: /^앞의 대화 \d+개$/ }),
+  )
   expect(
     within(log).getAllByText('예시 템플릿 · 실제 AI 호출 없음'),
   ).toHaveLength(2)
