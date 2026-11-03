@@ -1,0 +1,1264 @@
+{
+  "date": "2026-11-03",
+  "data": "synthetic",
+  "provider": "GMS",
+  "model": "gpt-6-luna",
+  "response_format": "json_schema",
+  "runs": [
+    {
+      "name": "exploratory",
+      "note": "synthetic exploratory run; task labels require human review",
+      "cases": [
+        {
+          "case": "FIELD_RENAME",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": [
+            "2"
+          ],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [
+            "1"
+          ],
+          "expected_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [
+            "1"
+          ],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [
+            {
+              "reason": "제안된 API 응답 식별자가 기존 `userId`에서 `memberId`로 바뀌었습니다. 이 작업은 설계 항목 1을 READS로 참조하고 화면 제목도 `userId` 조회로 되어 있으며, 계획에는 계약 변경이 없다고 명시되어 있어 응답 필드 변경이 화면의 조회·매핑과 계획에 미치는 영향을 검토할 필요가 있습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                },
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안된 API 응답 식별자가 기존 `userId`에서 `memberId`로 바뀌었습니다. 이 작업은 설계 항목 1을 READS로 참조하고 화면 제목도 `userId` 조회로 되어 있으며, 계획에는 계약 변경이 없다고 명시되어 있어 응답 필드 변경이 화면의 조회·매핑과 계획에 미치는 영향을 검토할 필요가 있습니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "제안된 API 응답 식별자가 기존 `userId`에서 `memberId`로 바뀌었습니다. 이 작업은 설계 항목 1을 READS로 참조하고 화면 제목도 `userId` 조회로 되어 있으며, 계획에는 계약 변경이 없다고 명시되어 있어 응답 필드 변경이 화면의 조회·매핑과 계획에 미치는 영향을 검토할 필요가 있습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 5031,
+                "input_tokens": 1755,
+                "tokens_known": true,
+                "output_tokens": 426
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "DESCRIPTION",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [],
+          "actual_model_task_ids": [],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [
+            "2"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 2421,
+                "input_tokens": 1240,
+                "tokens_known": true,
+                "output_tokens": 156
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "EMPTY",
+          "provider": "GMS_REAL",
+          "analysis_status": "INSUFFICIENT_EVIDENCE",
+          "error_code": null,
+          "expected_model_task_ids": [],
+          "actual_model_task_ids": [],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [],
+          "actual_final_member_ids": [],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 1,
+          "model_candidates": [
+            {
+              "reason": "제공된 API 설계에서는 응답 필드가 userId이고 제안 변경에서는 memberId로 바뀝니다. 따라서 기존 userId를 기대하는 API 소비자가 있다면 응답 파싱이나 연동에 영향이 있을 수 있습니다. 제공된 작업 목록에는 열린 작업이 없고 검색 범위도 UNKNOWN이므로 실제 영향받는 작업은 식별할 수 없습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [],
+          "generation": {
+            "text": "제공된 API 설계에서는 응답 필드가 userId이고 제안 변경에서는 memberId로 바뀝니다. 따라서 기존 userId를 기대하는 API 소비자가 있다면 응답 파싱이나 연동에 영향이 있을 수 있습니다. 제공된 작업 목록에는 열린 작업이 없고 검색 범위도 UNKNOWN이므로 실제 영향받는 작업은 식별할 수 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 7655,
+                "input_tokens": 993,
+                "tokens_known": true,
+                "output_tokens": 671
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": [
+              "insufficient_evidence"
+            ]
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "NO_SOURCE",
+          "provider": "GMS_REAL",
+          "analysis_status": "INSUFFICIENT_EVIDENCE",
+          "error_code": null,
+          "expected_model_task_ids": null,
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": null,
+          "unexpected_model_task_ids": null,
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [
+            "2"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 1,
+          "model_candidates": [
+            {
+              "reason": "기준 설계 버전(3)의 응답 필드는 `userId`였으나 제안 변경은 이를 `memberId`로 바꿉니다. 작업 계획은 `userId` 조회 화면을 목표로 하고 해당 설계를 `READS`로 참조하므로, 화면의 응답 필드 참조나 데이터 매핑이 변경 후 계약과 맞지 않을 가능성이 있어 검토가 필요합니다. 제공된 승인 항목에 문서 출처가 없어 문서 출처로는 뒷받침할 수 없습니다.",
+              "sources": [],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "sources": []
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "기준 설계 버전(3)의 응답 필드는 `userId`였으나 제안 변경은 이를 `memberId`로 바꿉니다. 작업 계획은 `userId` 조회 화면을 목표로 하고 해당 설계를 `READS`로 참조하므로, 화면의 응답 필드 참조나 데이터 매핑이 변경 후 계약과 맞지 않을 가능성이 있어 검토가 필요합니다. 제공된 승인 항목에 문서 출처가 없어 문서 출처로는 뒷받침할 수 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 4469,
+                "input_tokens": 1215,
+                "tokens_known": true,
+                "output_tokens": 339
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [],
+            "unresolved": [
+              "insufficient_evidence"
+            ]
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        }
+      ]
+    },
+    {
+      "name": "comparison",
+      "note": "synthetic comparison run; task labels require human review",
+      "cases": [
+        {
+          "case": "FIELD_RENAME",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": [
+            "2"
+          ],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [
+            "1"
+          ],
+          "expected_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [
+            "1"
+          ],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [
+            {
+              "reason": "제안된 API 응답 식별자가 기존 userId에서 memberId로 변경됩니다. T-1은 회원 userId 조회 화면을 구현하며 이 API 계약의 버전 3을 READS로 참조하고, 계약 변경 없음으로 계획되어 있으므로 응답 필드 참조나 화면의 데이터 연결이 맞지 않을 가능성이 있어 검토가 필요합니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                },
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안된 API 응답 식별자가 기존 userId에서 memberId로 변경됩니다. T-1은 회원 userId 조회 화면을 구현하며 이 API 계약의 버전 3을 READS로 참조하고, 계약 변경 없음으로 계획되어 있으므로 응답 필드 참조나 화면의 데이터 연결이 맞지 않을 가능성이 있어 검토가 필요합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "제안된 API 응답 식별자가 기존 userId에서 memberId로 변경됩니다. T-1은 회원 userId 조회 화면을 구현하며 이 API 계약의 버전 3을 READS로 참조하고, 계약 변경 없음으로 계획되어 있으므로 응답 필드 참조나 화면의 데이터 연결이 맞지 않을 가능성이 있어 검토가 필요합니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 4109,
+                "input_tokens": 1755,
+                "tokens_known": true,
+                "output_tokens": 332
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "FIELD_RENAME_CLEAR",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "actual_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [
+            "1",
+            "2"
+          ],
+          "expected_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "actual_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [
+            {
+              "reason": "제안된 API 응답 식별자는 기존 userId에서 memberId로 바뀝니다. 이 작업은 회원 조회 화면에서 userId를 조회하며 해당 설계 항목을 READS로 참조하므로, 구현 계획과 화면의 데이터 매핑이 새 응답 계약과 맞지 않을 가능성이 있어 검토가 필요합니다. 계획의 no_contract_change 표기도 이번 응답 필드 변경과 조정이 필요한지 확인할 사항입니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            },
+            {
+              "reason": "제안된 API 응답 필드가 userId에서 memberId로 변경되지만, 이 작업 제목은 회원 조회 API 응답의 userId를 주문 화면에 표시한다고 명시합니다. 따라서 표시 대상 필드나 매핑에 영향이 있을 수 있습니다. 다만 작업의 설계 참조는 설계 항목 2이므로 이 API 계약과의 연결은 제공된 정보만으로 확인할 수 없으며, 연결 여부를 검토할 필요가 있습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "2",
+              "member_id": "1",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                },
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안된 API 응답 식별자는 기존 userId에서 memberId로 바뀝니다. 이 작업은 회원 조회 화면에서 userId를 조회하며 해당 설계 항목을 READS로 참조하므로, 구현 계획과 화면의 데이터 매핑이 새 응답 계약과 맞지 않을 가능성이 있어 검토가 필요합니다. 계획의 no_contract_change 표기도 이번 응답 필드 변경과 조정이 필요한지 확인할 사항입니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "member_id": "1",
+              "evidence": [
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안된 API 응답 필드가 userId에서 memberId로 변경되지만, 이 작업 제목은 회원 조회 API 응답의 userId를 주문 화면에 표시한다고 명시합니다. 따라서 표시 대상 필드나 매핑에 영향이 있을 수 있습니다. 다만 작업의 설계 참조는 설계 항목 2이므로 이 API 계약과의 연결은 제공된 정보만으로 확인할 수 없으며, 연결 여부를 검토할 필요가 있습니다.",
+                  "task_id": "2",
+                  "task_key": "T-2",
+                  "plan_revision_id": "2",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "제안된 API 응답 식별자는 기존 userId에서 memberId로 바뀝니다. 이 작업은 회원 조회 화면에서 userId를 조회하며 해당 설계 항목을 READS로 참조하므로, 구현 계획과 화면의 데이터 매핑이 새 응답 계약과 맞지 않을 가능성이 있어 검토가 필요합니다. 계획의 no_contract_change 표기도 이번 응답 필드 변경과 조정이 필요한지 확인할 사항입니다.\n제안된 API 응답 필드가 userId에서 memberId로 변경되지만, 이 작업 제목은 회원 조회 API 응답의 userId를 주문 화면에 표시한다고 명시합니다. 따라서 표시 대상 필드나 매핑에 영향이 있을 수 있습니다. 다만 작업의 설계 참조는 설계 항목 2이므로 이 API 계약과의 연결은 제공된 정보만으로 확인할 수 없으며, 연결 여부를 검토할 필요가 있습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 8202,
+                "input_tokens": 1762,
+                "tokens_known": true,
+                "output_tokens": 734
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "DESCRIPTION",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [],
+          "actual_model_task_ids": [],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [
+            "2"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 2608,
+                "input_tokens": 1240,
+                "tokens_known": true,
+                "output_tokens": 158
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "EMPTY",
+          "provider": "GMS_REAL",
+          "analysis_status": "INSUFFICIENT_EVIDENCE",
+          "error_code": null,
+          "expected_model_task_ids": [],
+          "actual_model_task_ids": [],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [],
+          "actual_final_member_ids": [],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 1,
+          "model_candidates": [
+            {
+              "reason": "이전 설계의 응답 필드는 `userId`였으나 제안 변경에서는 `memberId`로 바뀝니다. 기존 응답 필드를 참조하는 API 소비자나 연동 코드에 영향이 있을 수 있습니다. 제공된 open_tasks가 비어 있어 영향을 받는 구체적인 작업은 식별할 수 없습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [],
+          "generation": {
+            "text": "이전 설계의 응답 필드는 `userId`였으나 제안 변경에서는 `memberId`로 바뀝니다. 기존 응답 필드를 참조하는 API 소비자나 연동 코드에 영향이 있을 수 있습니다. 제공된 open_tasks가 비어 있어 영향을 받는 구체적인 작업은 식별할 수 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 4593,
+                "input_tokens": 993,
+                "tokens_known": true,
+                "output_tokens": 423
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": [
+              "insufficient_evidence"
+            ]
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "NO_SOURCE",
+          "provider": "GMS_REAL",
+          "analysis_status": "INSUFFICIENT_EVIDENCE",
+          "error_code": null,
+          "expected_model_task_ids": null,
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": null,
+          "unexpected_model_task_ids": null,
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [
+            "2"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 1,
+          "model_candidates": [
+            {
+              "reason": "기준 설계 버전은 응답 필드가 `userId`였지만 제안된 변경은 이를 `memberId`로 바꿉니다. 이 작업은 해당 설계를 READS 관계로 참조하고 계획 제목도 `userId` 조회 화면이며 `no_contract_change`를 true로 표시하므로, 응답 필드 변경이 화면 구현과 계획의 계약 불변 가정에 영향을 주는지 검토가 필요합니다. 제공된 approved_items에는 인용할 문서 출처가 없어 sources는 비워 두었습니다.",
+              "sources": [],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "sources": []
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "기준 설계 버전은 응답 필드가 `userId`였지만 제안된 변경은 이를 `memberId`로 바꿉니다. 이 작업은 해당 설계를 READS 관계로 참조하고 계획 제목도 `userId` 조회 화면이며 `no_contract_change`를 true로 표시하므로, 응답 필드 변경이 화면 구현과 계획의 계약 불변 가정에 영향을 주는지 검토가 필요합니다. 제공된 approved_items에는 인용할 문서 출처가 없어 sources는 비워 두었습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 4343,
+                "input_tokens": 1215,
+                "tokens_known": true,
+                "output_tokens": 386
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [],
+            "unresolved": [
+              "insufficient_evidence"
+            ]
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        }
+      ]
+    },
+    {
+      "name": "final_source",
+      "note": "synthetic source document populated for human review",
+      "cases": [
+        {
+          "case": "FIELD_RENAME",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": [
+            "2"
+          ],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [
+            "1"
+          ],
+          "expected_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [
+            "1"
+          ],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [
+            {
+              "reason": "제안된 API 응답 필드가 기존 `userId`에서 `memberId`로 변경됩니다. 이 작업은 설계 항목 1을 읽고 계획 제목에서 `userId` 조회를 명시하므로, 화면의 응답 필드 참조가 새 계약과 맞지 않아 표시 또는 조회 기능에 영향이 있을 수 있습니다. 계획은 `no_contract_change`로 되어 있어 계약 변경을 반영했는지 검토가 필요합니다. 제공된 작업에는 검증 정보가 없습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                },
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안된 API 응답 필드가 기존 `userId`에서 `memberId`로 변경됩니다. 이 작업은 설계 항목 1을 읽고 계획 제목에서 `userId` 조회를 명시하므로, 화면의 응답 필드 참조가 새 계약과 맞지 않아 표시 또는 조회 기능에 영향이 있을 수 있습니다. 계획은 `no_contract_change`로 되어 있어 계약 변경을 반영했는지 검토가 필요합니다. 제공된 작업에는 검증 정보가 없습니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "제안된 API 응답 필드가 기존 `userId`에서 `memberId`로 변경됩니다. 이 작업은 설계 항목 1을 읽고 계획 제목에서 `userId` 조회를 명시하므로, 화면의 응답 필드 참조가 새 계약과 맞지 않아 표시 또는 조회 기능에 영향이 있을 수 있습니다. 계획은 `no_contract_change`로 되어 있어 계약 변경을 반영했는지 검토가 필요합니다. 제공된 작업에는 검증 정보가 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 5609,
+                "input_tokens": 1755,
+                "tokens_known": true,
+                "output_tokens": 384
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "FIELD_RENAME_CLEAR",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "actual_model_task_ids": [
+            "1",
+            "2"
+          ],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [
+            "1",
+            "2"
+          ],
+          "expected_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "actual_final_member_ids": [
+            "2",
+            "1"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [
+            {
+              "reason": "제안된 API 응답 식별자는 기존 `userId`에서 `memberId`로 바뀝니다. 이 작업은 설계 항목 1의 버전 3을 읽고 회원 조회 결과의 `userId`를 화면에 표시하도록 계획되어 있으므로, 응답 필드 변경으로 데이터 매핑이나 표시 기능을 수정해야 할 수 있습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            },
+            {
+              "reason": "제안 변경은 응답 필드 `userId`를 `memberId`로 바꾸지만, 이 작업의 제목은 회원 조회 API의 `userId`를 주문 화면에 표시한다고 명시합니다. 따라서 화면의 응답 필드 참조가 영향을 받을 가능성이 있어 검토가 필요합니다. 다만 작업의 설계 참조는 항목 2이므로, 변경 대상 항목 1과 실제로 연결되는지는 제공된 정보만으로 확인할 수 없습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "2",
+              "member_id": "1",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                },
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안된 API 응답 식별자는 기존 `userId`에서 `memberId`로 바뀝니다. 이 작업은 설계 항목 1의 버전 3을 읽고 회원 조회 결과의 `userId`를 화면에 표시하도록 계획되어 있으므로, 응답 필드 변경으로 데이터 매핑이나 표시 기능을 수정해야 할 수 있습니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "member_id": "1",
+              "evidence": [
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "제안 변경은 응답 필드 `userId`를 `memberId`로 바꾸지만, 이 작업의 제목은 회원 조회 API의 `userId`를 주문 화면에 표시한다고 명시합니다. 따라서 화면의 응답 필드 참조가 영향을 받을 가능성이 있어 검토가 필요합니다. 다만 작업의 설계 참조는 항목 2이므로, 변경 대상 항목 1과 실제로 연결되는지는 제공된 정보만으로 확인할 수 없습니다.",
+                  "task_id": "2",
+                  "task_key": "T-2",
+                  "plan_revision_id": "2",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "제안된 API 응답 식별자는 기존 `userId`에서 `memberId`로 바뀝니다. 이 작업은 설계 항목 1의 버전 3을 읽고 회원 조회 결과의 `userId`를 화면에 표시하도록 계획되어 있으므로, 응답 필드 변경으로 데이터 매핑이나 표시 기능을 수정해야 할 수 있습니다.\n제안 변경은 응답 필드 `userId`를 `memberId`로 바꾸지만, 이 작업의 제목은 회원 조회 API의 `userId`를 주문 화면에 표시한다고 명시합니다. 따라서 화면의 응답 필드 참조가 영향을 받을 가능성이 있어 검토가 필요합니다. 다만 작업의 설계 참조는 항목 2이므로, 변경 대상 항목 1과 실제로 연결되는지는 제공된 정보만으로 확인할 수 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 9047,
+                "input_tokens": 1762,
+                "tokens_known": true,
+                "output_tokens": 821
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "DESCRIPTION",
+          "provider": "GMS_REAL",
+          "analysis_status": "COMPLETED",
+          "error_code": null,
+          "expected_model_task_ids": [],
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [
+            "1"
+          ],
+          "visible_ai_task_ids": [
+            "1"
+          ],
+          "expected_final_member_ids": [
+            "2"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 0,
+          "model_candidates": [
+            {
+              "reason": "변경 설명은 ‘회원 조회’에서 ‘회원 정보 조회’로 바뀌지만 경로, 메서드, 응답 필드는 동일합니다. 다만 작업 계획은 userId 조회 화면으로 범위를 좁혀 두었으므로, 새 표현이 userId 이외의 회원 정보까지 포함하는 뜻으로 받아들여질지 검토가 필요합니다. 제공된 근거만으로는 표현 변경의 범위상 의미를 확정할 수 없습니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "document_id": "1",
+                  "document_version_id": "1",
+                  "sources": []
+                },
+                {
+                  "type": "AI_CANDIDATE",
+                  "reason": "변경 설명은 ‘회원 조회’에서 ‘회원 정보 조회’로 바뀌지만 경로, 메서드, 응답 필드는 동일합니다. 다만 작업 계획은 userId 조회 화면으로 범위를 좁혀 두었으므로, 새 표현이 userId 이외의 회원 정보까지 포함하는 뜻으로 받아들여질지 검토가 필요합니다. 제공된 근거만으로는 표현 변경의 범위상 의미를 확정할 수 없습니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "sources": [
+                    {
+                      "location": "API 계약",
+                      "version_no": 1,
+                      "document_id": "1",
+                      "document_version_id": "1"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "변경 설명은 ‘회원 조회’에서 ‘회원 정보 조회’로 바뀌지만 경로, 메서드, 응답 필드는 동일합니다. 다만 작업 계획은 userId 조회 화면으로 범위를 좁혀 두었으므로, 새 표현이 userId 이외의 회원 정보까지 포함하는 뜻으로 받아들여질지 검토가 필요합니다. 제공된 근거만으로는 표현 변경의 범위상 의미를 확정할 수 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 8140,
+                "input_tokens": 1240,
+                "tokens_known": true,
+                "output_tokens": 736
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": []
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "EMPTY",
+          "provider": "GMS_REAL",
+          "analysis_status": "INSUFFICIENT_EVIDENCE",
+          "error_code": null,
+          "expected_model_task_ids": [],
+          "actual_model_task_ids": [],
+          "missing_model_task_ids": [],
+          "unexpected_model_task_ids": [],
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [],
+          "actual_final_member_ids": [],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 1,
+          "model_candidates": [
+            {
+              "reason": "응답 필드가 기존 `userId`에서 제안된 `memberId`로 바뀌어, 기존 필드명을 기대하는 API 호출자가 있다면 응답 파싱이나 연동에 영향을 줄 수 있습니다. 제공된 입력에는 관련 작업 계획이나 호출자 정보가 없어 영향받는 작업은 특정할 수 없으며, 이 후보는 계약 변경에 따른 가능성 검토입니다.",
+              "sources": [
+                {
+                  "location": "API 계약",
+                  "version_no": 1,
+                  "document_id": "1",
+                  "document_version_id": "1"
+                }
+              ],
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [],
+          "generation": {
+            "text": "응답 필드가 기존 `userId`에서 제안된 `memberId`로 바뀌어, 기존 필드명을 기대하는 API 호출자가 있다면 응답 파싱이나 연동에 영향을 줄 수 있습니다. 제공된 입력에는 관련 작업 계획이나 호출자 정보가 없어 영향받는 작업은 특정할 수 없으며, 이 후보는 계약 변경에 따른 가능성 검토입니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 6875,
+                "input_tokens": 993,
+                "tokens_known": true,
+                "output_tokens": 554
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [
+              {
+                "location": "API 계약",
+                "version_no": 1,
+                "document_id": "1",
+                "document_version_id": "1"
+              }
+            ],
+            "unresolved": [
+              "insufficient_evidence"
+            ]
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        },
+        {
+          "case": "NO_SOURCE",
+          "provider": "GMS_REAL",
+          "analysis_status": "INSUFFICIENT_EVIDENCE",
+          "error_code": null,
+          "expected_model_task_ids": null,
+          "actual_model_task_ids": [
+            "1"
+          ],
+          "missing_model_task_ids": null,
+          "unexpected_model_task_ids": null,
+          "visible_ai_task_ids": [],
+          "expected_final_member_ids": [
+            "2"
+          ],
+          "actual_final_member_ids": [
+            "2"
+          ],
+          "missing_final_member_ids": [],
+          "unexpected_final_member_ids": [],
+          "withheld_ai_candidates": 1,
+          "model_candidates": [
+            {
+              "reason": "제안된 API 응답 필드는 기존 userId에서 memberId로 변경됩니다. 작업 T-1은 계획 제목에서 userId 조회 화면을 명시하고 설계 항목을 READS로 참조하므로, 응답 필드 변경으로 조회 구현이나 테스트 기준을 조정해야 할 가능성이 있습니다. 작업 계획의 no_contract_change와도 제안된 변경이 맞지 않을 수 있어 검토가 필요합니다. 제공된 승인 항목에는 문서 출처가 없습니다.",
+              "sources": [],
+              "task_id": "1",
+              "member_id": "2",
+              "design_item_id": "1"
+            }
+          ],
+          "final_recommendations": [
+            {
+              "member_id": "2",
+              "evidence": [
+                {
+                  "type": "DIRECT_TASK_REFERENCE",
+                  "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
+                  "task_id": "1",
+                  "task_key": "T-1",
+                  "plan_revision_id": "1",
+                  "design_item_id": "1",
+                  "design_item_version_id": "3",
+                  "referenced_design_item_version_id": "3",
+                  "sources": []
+                }
+              ]
+            }
+          ],
+          "generation": {
+            "text": "제안된 API 응답 필드는 기존 userId에서 memberId로 변경됩니다. 작업 T-1은 계획 제목에서 userId 조회 화면을 명시하고 설계 항목을 READS로 참조하므로, 응답 필드 변경으로 조회 구현이나 테스트 기준을 조정해야 할 가능성이 있습니다. 작업 계획의 no_contract_change와도 제안된 변경이 맞지 않을 수 있어 검토가 필요합니다. 제공된 승인 항목에는 문서 출처가 없습니다.",
+            "model": "gpt-6-luna",
+            "usage": [
+              {
+                "model": "gpt-6-luna",
+                "failed": false,
+                "feature": "CHANGE_IMPACT",
+                "latency_ms": 4813,
+                "input_tokens": 1215,
+                "tokens_known": true,
+                "output_tokens": 328
+              }
+            ],
+            "origin": "MODEL",
+            "sources": [],
+            "unresolved": [
+              "insufficient_evidence"
+            ]
+          },
+          "human_review_required": "Check each reason and source against the synthetic case."
+        }
+      ]
+    }
+  ]
+}

@@ -77,6 +77,37 @@ class FakeImpactProvider:
         if body.get("reason") == "E2E_TIMEOUT":
             raise ProviderError("model_timeout", input_tokens=3, output_tokens=1)
         first = body["approved_items"][0]
+        # Exercise the owner-evaluation transport without pretending to assess a model.
+        # The live GMS run does not use this provider.
+        reason = body.get("reason", "")
+        owner_eval_reasons = {
+            "회원 응답 식별자 변경",
+            "회원 조회 설명 문구 정리",
+            "회원 응답 필드 변경",
+            "회원 응답 ID 변경",
+        }
+        if reason in owner_eval_reasons:
+            candidates = []
+            if reason != "회원 조회 설명 문구 정리":
+                for task in body["open_tasks"]:
+                    plan = task.get("current_plan_revision", {}).get("plan", {})
+                    if "userId" not in plan.get("title", ""):
+                        continue
+                    candidates.append(
+                        {
+                            "task_id": task["id"],
+                            "member_id": task["assignee_member_id"],
+                            "design_item_id": first["design_item_id"],
+                            "reason": "가상 시험: userId 필드를 사용하는 작업입니다.",
+                            "sources": [first["source"]] if first.get("source") else [],
+                        }
+                    )
+            return ProviderResponse(
+                json.dumps({"candidates": candidates, "evidence_status": "SUFFICIENT"}),
+                request.model,
+                11,
+                7,
+            )
         result = {
             "candidates": [
                 {

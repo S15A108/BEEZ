@@ -21,9 +21,13 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -35,11 +39,12 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Opt-in integration: real PostgreSQL, Spring service and HTTP to a separate real FastAPI.
  * A deterministic fake model is the default. The GMS variant is explicit and separate.
- * There is no public BE endpoint for this workflow; the Spring service is invoked directly.
+ * Most tests call the Spring service directly; the owner evaluation uses the BE HTTP API.
  */
 @EnabledIfEnvironmentVariable(named = "BEEZ_RUN_AI_E2E", matches = "true")
 class ImpactBackendFastApiE2ETest extends IntegrationTestSupport {
@@ -142,6 +147,7 @@ class ImpactBackendFastApiE2ETest extends IntegrationTestSupport {
 
     @Autowired DataSource dataSource;
     @Autowired ImpactAnalysisCoordinator coordinator;
+    @Autowired ImpactContextQuery contexts;
     @Autowired AiClient aiClient;
     @Autowired ProposalCommandService proposals;
     private TaskApiSupport api;
@@ -202,6 +208,215 @@ class ImpactBackendFastApiE2ETest extends IntegrationTestSupport {
                     + " usage_reported=" + result.usageStatus() + " tokens_known=" + usage.get("tokens_known")
                     + " input_tokens=" + usage.get("input_tokens") + " output_tokens=" + usage.get("output_tokens"));
         }
+    }
+
+    /**
+     * Synthetic quality observations for #189 through the real retry and GET APIs, persistence,
+     * HTTP to FastAPI and (when explicitly enabled) GMS. ID comparisons are not a review of the
+     * explanations. All case outputs are printed so that a person can review reasons and sources.
+     * A fake-provider run checks the harness only and is not a model-quality result. A passing
+     * real-provider test means the calls and safety checks ran; quality is measured in the report.
+     */
+    @Test
+    void ownerRecommendationQualityAcrossSyntheticScenarios() throws Exception {
+        var cases = List.of("FIELD_RENAME", "FIELD_RENAME_CLEAR", "DESCRIPTION", "EMPTY", "NO_SOURCE");
+        var failures = new ArrayList<String>();
+        for (int index = 0; index < cases.size(); index++) {
+            if (index > 0) setup(); // independent synthetic database per case
+            String name = cases.get(index);
+            Map<String, Object> report = ownerEvaluation(name);
+            System.out.println("OWNER_EVAL_JSON " + JsonMapper.builder().build().writeValueAsString(report));
+            if ("FAILED".equals(report.get("analysis_status"))
+                    || "NOT_EVALUATED".equals(report.get("analysis_status"))
+                    || "STALE".equals(report.get("analysis_status"))) {
+                failures.add(name + ": " + report.get("analysis_status") + " / " + report.get("error_code"));
+            }
+        }
+        assertThat(failures).as("Cases with failed or unstarted analysis are not quality results").isEmpty();
+    }
+
+    private Map<String, Object> ownerEvaluation(String name) throws Exception {
+        String before = "{\"method\":\"GET\",\"path\":\"/members\",\"response\":{\"userId\":\"string\"},\"description\":\"회원 조회\"}";
+        long originalOtherVersion = api.currentVersionId("API-02");
+        long newVersion = api.jdbc.sql("""
+                INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,approved_at)
+                VALUES(:item,2,'APPROVED','회원 조회',1,cast(:content AS jsonb),'synthetic-before','HUMAN',now()) RETURNING id
+                """).param("item", api.designItemId("API-01")).param("content", before).query(Long.class).single();
+        baseline = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,2,:a) RETURNING id")
+                .param("p", projectId).param("a", api.accountId("leader@test")).query(Long.class).single();
+        for (var entry : Map.of("API-01", newVersion, "API-02", originalOtherVersion).entrySet()) {
+            api.jdbc.sql("INSERT INTO baseline_item(baseline_id,project_id,design_item_id,design_item_version_id) VALUES(:b,:p,:i,:v)")
+                    .param("b", baseline).param("p", projectId).param("i", api.designItemId(entry.getKey()))
+                    .param("v", entry.getValue()).update();
+        }
+        api.jdbc.sql("UPDATE project SET current_baseline_id=:b WHERE id=:p").param("b", baseline).param("p", projectId).update();
+        if (!"NO_SOURCE".equals(name)) ownerEvaluationSource("API-01");
+        ownerEvaluationSource("API-02");
+
+        var expectedModelTasks = new ArrayList<String>();
+        var expectedFinalMembers = new LinkedHashSet<String>();
+        String directMember = api.memberId("member@test").toString();
+        String indirectMember = api.memberId("leader@test").toString();
+        long directTask = 0;
+        if (!"EMPTY".equals(name)) {
+            directTask = ownerEvaluationTask("회원 userId 조회 화면", "API-01", member);
+            expectedFinalMembers.add(directMember);
+        }
+        if (name.startsWith("FIELD_RENAME")) {
+            String indirectTitle = "FIELD_RENAME_CLEAR".equals(name)
+                    ? "회원 조회 API 응답 userId를 주문 화면에 표시" : "회원 userId 주문 화면";
+            long indirectTask = ownerEvaluationTask(indirectTitle, "API-02", api.accountId("leader@test"));
+            // A third owner and task are in the search results but explicitly unrelated to the changed field.
+            api.jdbc.sql("INSERT INTO account(email,password_hash,display_name) SELECT 'other@test',password_hash,'다른 팀원' FROM account WHERE email='member@test'").update();
+            long other = api.accountId("other@test");
+            api.jdbc.sql("INSERT INTO project_member(project_id,account_id,role) VALUES(:project,:account,'MEMBER')")
+                    .param("project", projectId).param("account", other).update();
+            long unrelatedTask = ownerEvaluationTask("회원 화면 색상만 변경", "API-02", other);
+            expectedModelTasks.add(Long.toString(directTask));
+            expectedModelTasks.add(Long.toString(indirectTask));
+            expectedFinalMembers.add(indirectMember);
+            // The negative is only meaningful if it actually reaches the model input.
+            assertThat(unrelatedTask).isPositive();
+        }
+
+        var after = new LinkedHashMap<String, Object>();
+        after.put("method", "GET");
+        after.put("path", "/members");
+        after.put("response", Map.of("DESCRIPTION".equals(name) ? "userId" : "memberId", "string"));
+        after.put("description", "DESCRIPTION".equals(name) ? "회원 정보 조회" : "회원 조회");
+        var item = new ProposalDtos.Item("UPDATE", api.designItemId("API-01").toString(),
+                api.currentVersionId("API-01").toString(), null, 1, after);
+        String reason = switch (name) {
+            case "FIELD_RENAME", "FIELD_RENAME_CLEAR" -> "회원 응답 식별자 변경";
+            case "DESCRIPTION" -> "회원 조회 설명 문구 정리";
+            case "EMPTY" -> "회원 응답 필드 변경";
+            case "NO_SOURCE" -> "회원 응답 ID 변경";
+            default -> throw new IllegalArgumentException("Unknown evaluation case");
+        };
+        var input = new ProposalDtos.Input(Long.toString(baseline), "가상 회원 API 변경",
+                reason, null, null, List.of(item), List.of(), null, null, null);
+        var created = proposals.create(CallerContext.human(member), projectId, input, "owner-eval-" + name);
+        long proposalId = Long.parseLong(created.id());
+        var snapshot = contexts.load(CallerContext.human(member), projectId, proposalId);
+        assertThat(snapshot.searchCoverage().termsTruncated()).as(name + " search terms").isFalse();
+        assertThat(snapshot.searchCoverage().tasksTruncated()).as(name + " search tasks").isFalse();
+        if (name.startsWith("FIELD_RENAME")) {
+            assertThat(snapshot.taskReferences().stream().map(ImpactContextQuery.TaskReference::taskId).distinct())
+                    .as("positive and negative tasks passed to the AI").hasSize(3);
+        }
+
+        String path = "/api/projects/" + projectId + "/change-proposals/" + proposalId + "/impact";
+        var started = api.postWithHeaders(path + "/retry", null, member, "Origin", "http://localhost:5173");
+        assertThat(started.statusCode()).withFailMessage(started.body()).isEqualTo(202);
+        Map<?, ?> response = null;
+        long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
+        do {
+            var http = api.get(path, member);
+            assertThat(http.statusCode()).withFailMessage(http.body()).isEqualTo(200);
+            response = JsonMapper.builder().build().readValue(http.body(), Map.class);
+            if (!"RUNNING".equals(response.get("analysis_status"))) break;
+            Thread.sleep(200);
+        } while (System.nanoTime() < deadline);
+        assertThat(response.get("analysis_status")).as(name + " analysis deadline").isNotEqualTo("RUNNING");
+
+        var owners = (Map<?, ?>) response.get("owner_recommendations");
+        var recommendations = (List<?>) owners.get("recommendations");
+        var modelTasks = new LinkedHashSet<String>();
+        for (var raw : (List<?>) response.get("candidates")) {
+            Object task = ((Map<?, ?>) raw).get("task_id");
+            if (task instanceof String id) modelTasks.add(id);
+        }
+        var visibleAiTasks = new LinkedHashSet<String>();
+        var finalMembers = new LinkedHashSet<String>();
+        for (var raw : recommendations) {
+            var owner = (Map<?, ?>) raw;
+            finalMembers.add((String) owner.get("member_id"));
+            for (var itemEvidence : (List<?>) owner.get("evidence")) {
+                var evidence = (Map<?, ?>) itemEvidence;
+                if ("AI_CANDIDATE".equals(evidence.get("type"))) visibleAiTasks.add((String) evidence.get("task_id"));
+            }
+        }
+        Set<String> expectedNotification = "EMPTY".equals(name) ? Set.of() : Set.of(directMember);
+        assertThat(new LinkedHashSet<>((List<?>) owners.get("notification_candidate_member_ids")))
+                .as(name + " direct notification handoff").isEqualTo(expectedNotification);
+        if ("EMPTY".equals(name) || "NO_SOURCE".equals(name)) {
+            // Incomplete evidence must not turn AI candidates into owner recommendations.
+            assertThat(visibleAiTasks).isEmpty();
+            if (!Set.of("FAILED", "NOT_EVALUATED", "STALE").contains(response.get("analysis_status"))) {
+                assertThat(response.get("analysis_status")).as(name + " evidence status")
+                        .isEqualTo("INSUFFICIENT_EVIDENCE");
+            }
+        }
+
+        var missingModelTasks = new LinkedHashSet<>(expectedModelTasks);
+        missingModelTasks.removeAll(modelTasks);
+        var unexpectedModelTasks = new LinkedHashSet<>(modelTasks);
+        unexpectedModelTasks.removeAll(expectedModelTasks);
+        var missingFinalMembers = new LinkedHashSet<>(expectedFinalMembers);
+        missingFinalMembers.removeAll(finalMembers);
+        var unexpectedFinalMembers = new LinkedHashSet<>(finalMembers);
+        unexpectedFinalMembers.removeAll(expectedFinalMembers);
+        if (!REAL_GMS) {
+            assertThat(response.get("analysis_status")).as(name + " fake fixture evidence status")
+                    .isEqualTo("EMPTY".equals(name) || "NO_SOURCE".equals(name)
+                            ? "INSUFFICIENT_EVIDENCE" : "COMPLETED");
+            if (!"NO_SOURCE".equals(name)) {
+                assertThat(missingModelTasks).as(name + " fake fixture missing model tasks").isEmpty();
+                assertThat(unexpectedModelTasks).as(name + " fake fixture unexpected model tasks").isEmpty();
+            }
+            assertThat(missingFinalMembers).as(name + " fake fixture missing final members").isEmpty();
+            assertThat(unexpectedFinalMembers).as(name + " fake fixture unexpected final members").isEmpty();
+        }
+
+        var report = new LinkedHashMap<String, Object>();
+        report.put("case", name);
+        report.put("provider", REAL_GMS ? "GMS_REAL" : "FAKE_HARNESS_ONLY");
+        report.put("analysis_status", response.get("analysis_status"));
+        report.put("error_code", response.get("error_code"));
+        report.put("expected_model_task_ids", "NO_SOURCE".equals(name) ? null : expectedModelTasks);
+        report.put("actual_model_task_ids", modelTasks);
+        report.put("missing_model_task_ids", "NO_SOURCE".equals(name) ? null : missingModelTasks);
+        report.put("unexpected_model_task_ids", "NO_SOURCE".equals(name) ? null : unexpectedModelTasks);
+        report.put("visible_ai_task_ids", visibleAiTasks);
+        report.put("expected_final_member_ids", expectedFinalMembers);
+        report.put("actual_final_member_ids", finalMembers);
+        report.put("missing_final_member_ids", missingFinalMembers);
+        report.put("unexpected_final_member_ids", unexpectedFinalMembers);
+        report.put("withheld_ai_candidates", owners.get("withheld_ai_candidates"));
+        report.put("model_candidates", response.get("candidates"));
+        report.put("final_recommendations", recommendations);
+        report.put("generation", response.get("generation"));
+        report.put("human_review_required", "Check each reason and source against the synthetic case.");
+        return report;
+    }
+
+    private long ownerEvaluationTask(String title, String item, long account) {
+        var response = api.post("/api/projects/" + projectId + "/tasks", api.planJson(title, api.readsRef(item), "[]"), account);
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
+        return TaskApiSupport.longField(response.body(), "id");
+    }
+
+    private void ownerEvaluationSource(String item) {
+        var existing = api.jdbc.sql("SELECT dv.id FROM document d JOIN document_version dv ON dv.document_id=d.id WHERE d.project_id=:p AND d.type='API_SPEC'")
+                .param("p", projectId).query(Long.class).list();
+        long version;
+        if (existing.isEmpty()) {
+            long document = api.jdbc.sql("INSERT INTO document(project_id,type,title,created_by) VALUES(:p,'API_SPEC','가상 API',:a) RETURNING id")
+                    .param("p", projectId).param("a", member).query(Long.class).single();
+            version = api.jdbc.sql("""
+                    INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_at)
+                    VALUES(:d,1,'APPROVED','synthetic-eval.md','synthetic-hash',:text,:a,now()) RETURNING id
+                    """).param("d", document).param("a", member)
+                    .param("text", "# API 계약\nGET /members 응답: userId (string).\nGET /orders 주문 조회.\n")
+                    .query(Long.class).single();
+            api.jdbc.sql("INSERT INTO baseline_document(baseline_id,project_id,document_id,document_version_id) VALUES(:b,:p,:d,:v)")
+                    .param("b", baseline).param("p", projectId).param("d", document).param("v", version).update();
+        } else {
+            version = existing.getFirst();
+        }
+        api.jdbc.sql("UPDATE design_item_version SET source_document_version_id=:v,source_locator=cast(:locator AS jsonb) WHERE id=:id")
+                .param("v", version).param("locator", "{\"location\":\"API 계약\"}")
+                .param("id", api.currentVersionId(item)).update();
     }
 
     @Test
