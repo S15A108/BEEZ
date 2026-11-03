@@ -3,12 +3,15 @@
 Internal interface only. The caller passes one BE-authorized question with
 the search results, the approved items and the related tasks. Every citation
 is checked against its evidence text, every item and task reference against
-the input. A citation the evidence does not hold is a fabricated source and
-rejects the whole output; an answer that names no grounding at all is
-replaced by the fixed "not found" text instead of being shown as a guess.
-Nothing is stored and nothing is decided here.
+the input, and every checkable fact in the answer (numbers, keys, paths,
+identifiers, codes) against what the answer cites or references. A citation
+the evidence does not hold, or a fact nothing cited supports, rejects the
+whole output; an answer that names no grounding at all is replaced by the
+fixed "not found" text instead of being shown as a guess. Nothing is stored
+and nothing is decided here.
 """
 
+import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -19,11 +22,13 @@ from pydantic import ValidationError
 from app.schemas.bee_chat import (
     MAX_NEXT_ACTIONS,
     MAX_UNRESOLVED,
+    ApprovedDesignItem,
     BeeChatRequest,
     BeeChatResult,
     BeeCitation,
     DesignItemRef,
     InstanceEcho,
+    RelatedTask,
     RetrievedEvidence,
     TaskRef,
     citation_markers,
@@ -53,14 +58,27 @@ UNGROUNDED_NOTE = (
 # A marker with the space before and after it, so a removed marker leaves no
 # double space.
 _MARKER = re.compile(r"( ?)\[(\d{1,2})\]( ?)")
+# Tokens that state a checkable fact: a path, a dotted or snake_case or
+# camelCase identifier, a display key (TASK-001), an all-caps code (RESTRICT,
+# POST, HTTP) or a number. ASCII only, so a Korean particle glued to a token
+# is not part of it; two-letter units like MB are left to the quote itself.
+_FACT = re.compile(
+    r"/[A-Za-z0-9_{}./-]+"
+    r"|[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*"
+    r"|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+"
+    r"|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+"
+    r"|[A-Z][A-Z0-9]*-\d+"
+    r"|[A-Z]{3,}"
+    r"|\d+(?:[.,]\d+)*"
+)
 
 
 class AnswerRejected(ValueError):
     """The model output contradicts the supplied inputs.
 
     Unknown ids, a quote the evidence does not hold, a `[n]` without a
-    citation or a blank ANSWERED text: the answer cannot be shown and the
-    caller may retry with a fresh request key.
+    citation, a fact nothing cited supports or a blank ANSWERED text: the
+    answer cannot be shown and the caller may retry with a fresh request key.
     """
 
 
@@ -114,6 +132,43 @@ def evidence_location(item: RetrievedEvidence) -> str:
     return (f"{item.section_title} / {span}" if item.section_title else span)[:1000]
 
 
+def fact_tokens(text: str) -> list[str]:
+    """Checkable facts in an answer, in order, without the `[n]` markers."""
+    return list(dict.fromkeys(_FACT.findall(_MARKER.sub(" ", text))))
+
+
+def unsupported_facts(text: str, support: str) -> list[str]:
+    """Facts the answer states that appear nowhere in its grounding text."""
+    folded = support.casefold()
+    return [token for token in fact_tokens(text) if token.casefold() not in folded]
+
+
+def support_text(
+    evidence: Sequence[RetrievedEvidence],
+    items: Sequence[ApprovedDesignItem],
+    tasks: Sequence[RelatedTask],
+) -> str:
+    """Everything an answer may state a fact from: what it cites or references."""
+    parts: list[str] = []
+    for chunk in evidence:
+        parts.extend([chunk.text, chunk.title or "", chunk.section_title or ""])
+    for item in items:
+        parts.extend(
+            [
+                item.key,
+                item.kind,
+                json.dumps(item.content.model_dump(mode="json"), ensure_ascii=False),
+            ]
+        )
+    for task in tasks:
+        parts.extend([task.key, task.status, task.assignee_member_id or ""])
+        if task.current_plan_revision is not None:
+            plan = task.current_plan_revision.plan
+            parts.extend([plan.title, plan.goal or ""])
+            parts.extend(ref.design_item_version_id for ref in plan.design_refs)
+    return "\n".join(parts)
+
+
 def _texts(values: Sequence[str], limit: int) -> tuple[str, ...]:
     return tuple(dict.fromkeys(clip(text.strip()) for text in values if text.strip()))[
         :limit
@@ -128,15 +183,17 @@ def verify_answer(
 ) -> BeeChatResult:
     """Check the answer against the inputs and compose the result.
 
-    Unknown evidence, item or task ids, a quote that is not an exact
-    substring of its evidence, a `[n]` that names no citation and a blank
-    ANSWERED text all contradict the input and reject the whole output: a
-    claim whose source cannot be verified is never shown, with or without
-    other citations. Repeated citations collapse to one number. An ANSWERED
-    answer that names no citation, approved item or related task is not
-    shown either: it becomes INSUFFICIENT_EVIDENCE with the fixed text. For
-    the two non-answer statuses the model's text, citations and references
-    are not used at all; only its unresolved and next_actions are.
+    Rejected as contradicting the input: unknown evidence, item or task ids;
+    a quote that is not an exact substring of its evidence; a `[n]` that
+    names no citation; a blank ANSWERED text; and a fact in the text
+    (number, key, path, identifier, code) that neither a cited chunk nor a
+    referenced item or task contains, so "50 MB" over a 30 MB quote never
+    passes. A citation no `[n]` refers to backs nothing and is dropped;
+    repeated citations collapse to one number. An ANSWERED answer that then
+    keeps no citation, approved item or related task is not shown: it
+    becomes INSUFFICIENT_EVIDENCE with the fixed text. For the two
+    non-answer statuses the model's text, citations and references are not
+    used at all; only its unresolved and next_actions are.
     """
     answer = proposal.answer
     by_evidence = {item.evidence_id: item for item in evidence}
@@ -158,6 +215,9 @@ def verify_answer(
     if status == "ANSWERED":
         if not answer.text.strip():
             raise AnswerRejected("blank answer")
+        referenced = set(citation_markers(answer.text))
+        if any(number > len(answer.citations) for number in referenced):
+            raise AnswerRejected("marker without citation")
         mapping: dict[int, int] = {}
         numbers: dict[tuple[str, str], int] = {}
         for index, cited in enumerate(answer.citations, start=1):
@@ -167,6 +227,9 @@ def verify_answer(
                 # The evidence does not say this: the claim it backs would
                 # stay in the text, so the whole answer is unusable.
                 raise AnswerRejected("unverifiable citation")
+            if index not in referenced:
+                # Listed but never used by the text: it backs no claim.
+                continue
             key = (item.evidence_id, quote)
             if key in numbers:
                 mapping[index] = numbers[key]
@@ -188,8 +251,6 @@ def verify_answer(
                     claim=clip(claim) if claim else None,
                 )
             )
-        if any(number not in mapping for number in citation_markers(answer.text)):
-            raise AnswerRejected("marker without citation")
         for ref in dict.fromkeys(answer.design_refs):
             item = by_item[ref]
             design_refs.append(
@@ -207,6 +268,14 @@ def verify_answer(
             task_refs.append(TaskRef(task_id=task.id, key=task.key, status=task.status))
         if citations or design_refs or task_refs:
             text = renumber_markers(answer.text.strip(), mapping)
+            support = support_text(
+                [by_evidence[c.evidence_id] for c in citations],
+                [by_item[ref.design_item_version_id] for ref in design_refs],
+                [by_task[ref.task_id] for ref in task_refs],
+            )
+            if unsupported_facts(text, support):
+                # The text states something its own grounding does not say.
+                raise AnswerRejected("unsupported fact")
         else:
             status = "INSUFFICIENT_EVIDENCE"
             extra_unresolved.append(UNGROUNDED_NOTE)
@@ -215,6 +284,9 @@ def verify_answer(
     elif status == "OUT_OF_SCOPE":
         text = OUT_OF_SCOPE_TEXT
 
+    # 00-common Source rows come from citations only: a stored item source may
+    # point at an older document version outside this scope (#132 precedent),
+    # so it stays on design_refs[].source and is not presented as evidence.
     sources: list[ItemSource] = []
     for cited in citations:
         source = ItemSource(
@@ -225,9 +297,6 @@ def verify_answer(
         )
         if source not in sources:
             sources.append(source)
-    for ref in design_refs:
-        if ref.source is not None and ref.source not in sources:
-            sources.append(ref.source)
 
     notices: list[str] = []
     if request.scope.mode == "DOCUMENT_REVIEW":

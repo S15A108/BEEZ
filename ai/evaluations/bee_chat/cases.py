@@ -287,6 +287,29 @@ QUESTIONS = [
         },
     },
     {
+        # The quote is real (30 MB) but the text claims 50 MB: a fact the
+        # citation does not support rejects the output (PR #96 P1, 3rd round).
+        "id": "req-contradiction",
+        "document": "requirements.md",
+        "question": "파일 하나의 업로드 한도가 50 MB 맞나요?",
+        "quotes": ["단일 파일 업로드 한도는 30 MB이며, 초과하면 HTTP 413을 반환한다."],
+        "expected": "REJECTED",
+        "required": [],
+        "answer": {
+            "status": "ANSWERED",
+            "text": "네, 파일 하나의 업로드 한도는 50 MB입니다 [1].",
+            "citations": [
+                {
+                    "quote": "단일 파일 업로드 한도는 30 MB이며, 초과하면 HTTP 413을 반환한다."
+                }
+            ],
+            "design_refs": [],
+            "task_refs": [],
+            "unresolved": [],
+            "next_actions": [],
+        },
+    },
+    {
         "id": "api-create",
         "document": "api-spec.md",
         "question": "문서를 만드는 HTTP 메서드와 경로, 성공 코드 및 반환 식별자는 무엇인가요?",
@@ -377,7 +400,7 @@ QUESTIONS = [
             "status": "ANSWERED",
             "text": "TASK-001(문서 업로드 화면 구현)은 READY 상태이고 담당 멤버 ID는 21입니다. 승인 계약 API-001을 구현하는 작업입니다.",
             "citations": [],
-            "design_refs": [],
+            "design_refs": ["1104"],
             "task_refs": ["501"],
             "unresolved": [],
             "next_actions": ["담당자 이름은 멤버 목록에서 멤버 ID 21로 확인한다."],

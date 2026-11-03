@@ -178,25 +178,27 @@ def build_examples() -> dict[str, object]:
             ],
         }
         errors["422_invalid_ai_input_evidence_outside_scope"] = api.post(outside).json()
-        item_outside = {
+        # A review scope looks at the named document versions only; approved
+        # design is not mixed in, so the BE sends none.
+        review = {
             **request,
-            "approved_items": [
-                {
-                    **request["approved_items"][0],
-                    "source": {
-                        **request["approved_items"][0]["source"],
-                        "document_version_id": "999",
-                    },
-                }
-            ],
+            "scope": {
+                "mode": "DOCUMENT_REVIEW",
+                "document_version_ids": request["scope"]["document_version_ids"],
+            },
         }
-        errors["422_invalid_ai_input_item_source_outside_scope"] = api.post(
-            item_outside
+        errors["422_invalid_ai_input_review_scope_with_approved_items"] = api.post(
+            review
         ).json()
         # The scripted model answers this one with a quote the document does
         # not hold: the whole output is rejected instead of shown.
         errors["502_model_unavailable_unverifiable_quote"] = api.post(
             example_request("req-absent")
+        ).json()
+        # Here the quote is real (30 MB) but the text says 50 MB: a fact the
+        # citation does not support rejects the output too.
+        errors["502_model_unavailable_unsupported_fact"] = api.post(
+            example_request("req-contradiction")
         ).json()
         api.provider.output = {
             "status": "ANSWERED",

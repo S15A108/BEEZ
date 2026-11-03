@@ -31,6 +31,9 @@ MAX_EVIDENCE = 50
 DEFAULT_MAX_EVIDENCE = 12
 # A READY chunk is at most 600 tokens; this only bounds a hostile input.
 MAX_EVIDENCE_TEXT_CHARS = 20_000
+# The BE bounds a plan's title and goal only as non-blank; this guards a
+# hostile input and the payload clips what the model sees.
+MAX_TASK_TEXT_CHARS = 20_000
 MAX_APPROVED_ITEMS = 500
 MAX_RELATED_TASKS = 100
 MAX_HISTORY_TURNS = 10
@@ -74,6 +77,9 @@ ProjectDescription = Annotated[
     str, StringConstraints(max_length=MAX_PROJECT_DESCRIPTION_CHARS)
 ]
 Title = Annotated[str, StringConstraints(min_length=1, max_length=500)]
+TaskText = Annotated[
+    str, StringConstraints(min_length=1, max_length=MAX_TASK_TEXT_CHARS)
+]
 ContentHash = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 _MARKER = re.compile(r"\[(\d{1,2})\]")
@@ -224,8 +230,8 @@ class TaskDesignRef(_Lenient):
 class TaskPlanSummary(_Lenient):
     """The part of 00-common TaskPlan the model is shown."""
 
-    title: Text
-    goal: Text | None = None
+    title: TaskText
+    goal: TaskText | None = None
     design_refs: tuple[TaskDesignRef, ...] = Field(default=(), max_length=200)
 
 
@@ -304,16 +310,11 @@ class BeeChatRequest(_Strict):
                 raise ValueError("evidence outside the retrieval scope")
             if item.embedding_profile_id != self.embedding_profile_id:
                 raise ValueError("evidence from another embedding profile")
-        for item in self.approved_items:
-            # Approved design from outside the retrieval scope must not mix into
-            # the answer; a review scope only admits items sourced inside it.
-            if (
-                item.source is not None
-                and item.source.document_version_id not in allowed
-            ):
-                raise ValueError("approved item source outside the retrieval scope")
-            if item.source is None and self.scope.mode == "DOCUMENT_REVIEW":
-                raise ValueError("review scope admits only sourced approved items")
+        if self.scope.mode == "DOCUMENT_REVIEW" and self.approved_items:
+            # A review looks at the named document versions only; approved
+            # design (whose stored source may be any older version) is not
+            # mixed into it, so the BE sends none.
+            raise ValueError("review scope takes no approved items")
         _unique([item.id for item in self.approved_items], "approved item version")
         _unique([item.design_item_id for item in self.approved_items], "approved item")
         _unique([item.key for item in self.approved_items], "approved item key")
@@ -416,4 +417,9 @@ class BeeChatResult(_Strict):
         for citation in self.citations:
             if citation.document_version_id not in self.scope.document_version_ids:
                 raise ValueError("citation outside the retrieval scope")
+        for source in self.sources:
+            # Sources are evidence the screen may open; a stored item source
+            # outside the scope stays on design_refs instead.
+            if source.document_version_id not in self.scope.document_version_ids:
+                raise ValueError("source outside the retrieval scope")
         return self

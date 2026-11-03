@@ -8,15 +8,15 @@ from .instance import (
     render_system_prompt,
 )
 from .proposer import (
-    MAX_HISTORY_TURN_PAYLOAD_CHARS,
     MAX_PAYLOAD_BYTES,
+    MAX_PAYLOAD_TEXT_CHARS,
     AnswerProposal,
     AnswerProposer,
     LLMAnswerProposer,
     ModelAnswer,
     ModelCitation,
     chat_payload,
-    clip_turn,
+    clip_text,
 )
 from .service import (
     INSUFFICIENT_TEXT,
@@ -26,17 +26,20 @@ from .service import (
     AnswerRejected,
     BeeChatOutcome,
     evidence_location,
+    fact_tokens,
     generate_bee_chat,
     renumber_markers,
     select_evidence,
+    support_text,
+    unsupported_facts,
     verify_answer,
 )
 
 __all__ = [
     "GREETING",
     "INSUFFICIENT_TEXT",
-    "MAX_HISTORY_TURN_PAYLOAD_CHARS",
     "MAX_PAYLOAD_BYTES",
+    "MAX_PAYLOAD_TEXT_CHARS",
     "OUT_OF_SCOPE_TEXT",
     "PERSONA",
     "REVIEW_NOTICE",
@@ -51,11 +54,14 @@ __all__ = [
     "ModelCitation",
     "build_instance",
     "chat_payload",
-    "clip_turn",
+    "clip_text",
     "evidence_location",
+    "fact_tokens",
     "generate_bee_chat",
     "render_system_prompt",
     "renumber_markers",
     "select_evidence",
+    "support_text",
+    "unsupported_facts",
     "verify_answer",
 ]

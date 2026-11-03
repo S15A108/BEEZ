@@ -35,13 +35,31 @@
       "message": "Bee request rejected."
     }
   },
-  "422_invalid_ai_input_item_source_outside_scope": {
+  "422_invalid_ai_input_review_scope_with_approved_items": {
     "error": {
       "code": "invalid_ai_input",
       "message": "Bee request rejected."
     }
   },
   "502_model_unavailable_unverifiable_quote": {
+    "error": {
+      "code": "model_unavailable",
+      "message": "The LLM request could not be completed."
+    },
+    "usage": [
+      {
+        "request_key": "llm-bee-chat-00000000-0000-4000-8000-000000000135",
+        "feature": "BEE_CHAT",
+        "model": "gpt-6-luna",
+        "latency_ms": 0,
+        "failed": true,
+        "tokens_known": true,
+        "input_tokens": 1800,
+        "output_tokens": 320
+      }
+    ]
+  },
+  "502_model_unavailable_unsupported_fact": {
     "error": {
       "code": "model_unavailable",
       "message": "The LLM request could not be completed."

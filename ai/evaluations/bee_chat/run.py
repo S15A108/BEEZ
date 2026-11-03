@@ -178,8 +178,8 @@ def render_markdown(report: dict, *, title: str) -> str:
     summary = report["summary"]
     lines = [f"# {title}", ""]
     lines.append(
-        "대표 질문 세트(`evaluations/data/questions.json`의 12문항 + 후속 질문·작업 상태·"
-        "근거 없는 주제·범위 밖·주입 문장 5문항)를 대본 검색 결과와 대본 모델 출력으로 "
+        "대표 질문 세트(`evaluations/data/questions.json`의 12문항 + 후속 질문·작업 상태·모순 답변·"
+        "근거 없는 주제·범위 밖·주입 문장 6문항)를 대본 검색 결과와 대본 모델 출력으로 "
         "돌린 결과다. 모든 답변은 입력 근거와 대조한 뒤의 값이며, 원문에 없는 인용이 "
         "하나라도 있으면 답변 전체를 거부한다(`invalid_output`, HTTP 502). 승인·결정은 "
         "팀장의 몫이다."

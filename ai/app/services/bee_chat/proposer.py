@@ -36,16 +36,17 @@ from app.services.llm_client import (
 
 # Serialized payload bound, the same as the other internal AI routes.
 MAX_PAYLOAD_BYTES = 262_144
-# A history turn may be a whole answer (10,000 chars); the model needs its
-# gist for a follow-up, not all of it, so each turn is cut to this length.
-MAX_HISTORY_TURN_PAYLOAD_CHARS = 2000
+# A history turn may be a whole answer (10,000 chars) and a plan's title or
+# goal has no BE bound; the model needs the gist of each, so every such text
+# is cut to this length in the payload.
+MAX_PAYLOAD_TEXT_CHARS = 2000
 
 
-def clip_turn(text: str) -> str:
-    """The first `MAX_HISTORY_TURN_PAYLOAD_CHARS` of a turn, marked when cut."""
-    if len(text) <= MAX_HISTORY_TURN_PAYLOAD_CHARS:
+def clip_text(text: str) -> str:
+    """The first `MAX_PAYLOAD_TEXT_CHARS` of a text, marked when cut."""
+    if len(text) <= MAX_PAYLOAD_TEXT_CHARS:
         return text
-    return text[: MAX_HISTORY_TURN_PAYLOAD_CHARS - 1] + "…"
+    return text[: MAX_PAYLOAD_TEXT_CHARS - 1] + "…"
 
 
 class _Out(BaseModel):
@@ -110,7 +111,8 @@ def chat_payload(request: BeeChatRequest, evidence: Sequence[RetrievedEvidence])
     """Exactly what the model receives; only the selected evidence is shown.
 
     The project profile is user-written text and travels here, as data,
-    never in the system message.
+    never in the system message. Long plan texts and history turns are cut
+    to `MAX_PAYLOAD_TEXT_CHARS`.
     """
     project = request.instance.project if request.instance is not None else None
     return json.dumps(
@@ -155,8 +157,10 @@ def chat_payload(request: BeeChatRequest, evidence: Sequence[RetrievedEvidence])
                     "plan": None
                     if task.current_plan_revision is None
                     else {
-                        "title": task.current_plan_revision.plan.title,
-                        "goal": task.current_plan_revision.plan.goal,
+                        "title": clip_text(task.current_plan_revision.plan.title),
+                        "goal": None
+                        if task.current_plan_revision.plan.goal is None
+                        else clip_text(task.current_plan_revision.plan.goal),
                         "design_refs": [
                             {
                                 "design_item_version_id": ref.design_item_version_id,
@@ -170,7 +174,7 @@ def chat_payload(request: BeeChatRequest, evidence: Sequence[RetrievedEvidence])
             ],
             "known_unresolved": list(request.unresolved),
             "history": [
-                {"role": turn.role, "text": clip_turn(turn.text)}
+                {"role": turn.role, "text": clip_text(turn.text)}
                 for turn in request.history
             ],
         },

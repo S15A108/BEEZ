@@ -18,6 +18,7 @@ from app.schemas.bee_chat import (
     TaskRef,
     prompt_hash,
 )
+from app.schemas.design_drafts import ItemSource
 from app.schemas.documents import SourceLocator
 
 SCOPE = {
@@ -127,16 +128,7 @@ def test_request_reads_json_and_accepts_a_review_scope_without_a_baseline():
     assert body.max_evidence == 12 and body.history == ()
     review = request(
         scope={"mode": "DOCUMENT_REVIEW", "document_version_ids": ["311"]},
-        approved_items=[
-            item(
-                source={
-                    "document_id": "301",
-                    "document_version_id": "311",
-                    "version_no": 1,
-                    "location": "L1-L1",
-                }
-            )
-        ],
+        approved_items=[],
     )
     assert from_json(BeeChatRequest, review).scope.mode == "DOCUMENT_REVIEW"
 
@@ -156,20 +148,7 @@ def test_request_reads_json_and_accepts_a_review_scope_without_a_baseline():
         {"unresolved": ["같은 항목", "같은 항목"]},
         {"instance": {"profile_version": "bee-v2", "project": {"name": "x"}}},
         {"extra": 1},
-        # PR #96 P2: an approved item sourced outside the retrieval scope.
-        {
-            "approved_items": [
-                item(
-                    source={
-                        "document_id": "301",
-                        "document_version_id": "999",
-                        "version_no": 1,
-                        "location": "L1-L1",
-                    }
-                )
-            ]
-        },
-        # A review scope admits only items sourced inside it.
+        # A review scope looks at its document versions only: no approved items.
         {
             "scope": {"mode": "DOCUMENT_REVIEW", "document_version_ids": ["311"]},
             "approved_items": [item()],
@@ -319,6 +298,62 @@ def test_history_takes_a_full_answer_but_a_user_turn_only_a_question():
         )
     with pytest.raises(ValidationError):
         from_json(BeeChatRequest, request(history=[{"role": "BEE", "text": "  "}]))
+
+
+def test_approved_items_keep_sources_from_older_document_versions():
+    # PR #96 P2 (3rd round): the BE preserves an item's immutable source even
+    # when the baseline now holds a newer version of that document.
+    older = item(
+        source={
+            "document_id": "301",
+            "document_version_id": "310",
+            "version_no": 1,
+            "location": "L11-L11",
+        }
+    )
+    body = from_json(BeeChatRequest, request(approved_items=[older]))
+    assert body.approved_items[0].source.document_version_id == "310"
+
+
+def test_task_plan_texts_take_the_backend_length():
+    # PR #96 P2 (3rd round): the BE bounds a plan goal only as non-blank.
+    task = from_json(
+        RelatedTask,
+        {
+            "id": "501",
+            "key": "TASK-001",
+            "status": "READY",
+            "current_plan_revision": {
+                "id": "511",
+                "plan": {"title": "업로드 화면", "goal": "목표" * 2500},
+            },
+        },
+    )
+    assert len(task.current_plan_revision.plan.goal) == 5000
+    with pytest.raises(ValidationError):
+        from_json(
+            RelatedTask,
+            {
+                "id": "501",
+                "key": "TASK-001",
+                "status": "READY",
+                "current_plan_revision": {"id": "511", "plan": {"title": ""}},
+            },
+        )
+
+
+def test_result_sources_stay_inside_the_scope():
+    with pytest.raises(ValidationError):
+        result(
+            sources=(
+                ItemSource(
+                    document_id="301",
+                    document_version_id="999",
+                    version_no=1,
+                    location="L1-L1",
+                ),
+            )
+        )
 
 
 def test_instance_hash_must_match_the_prompt():

@@ -107,7 +107,9 @@ def test_grounded_answer_carries_citations_refs_and_usage(api, request_body):
     assert [ref["key"] for ref in result["task_refs"]] == ["TASK-001"]
     assert result["instance"]["system_prompt_hash"] == instance["system_prompt_hash"]
     assert result["scope"] == request_body["scope"]
-    assert len(result["sources"]) == 3
+    # Sources are the two citations; the item's stored source stays on design_refs.
+    assert len(result["sources"]) == 2
+    assert result["design_refs"][0]["source"]["document_version_id"] == "312"
 
 
 def test_insufficient_and_out_of_scope_are_200_with_fixed_text(api):

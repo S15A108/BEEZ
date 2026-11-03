@@ -37,7 +37,7 @@ def test_dry_run_grounds_answers_and_withholds_guesses():
         "answered": 12,
         "insufficient": 2,
         "out_of_scope": 1,
-        "rejected": 2,
+        "rejected": 3,
         "failed": 0,
         "all_checks_passed": True,
     }
@@ -46,12 +46,13 @@ def test_dry_run_grounds_answers_and_withholds_guesses():
     assert draft["status"] == "rejected" and draft["error_code"] == "invalid_output"
     assert draft["usage"][0]["failed"]
     assert row(result, "req-absent")["status"] == "rejected"
+    assert row(result, "req-contradiction")["status"] == "rejected"
     followup = row(result, "plan-publish-followup")
     assert len(followup["citations"]) == 2 and "[3]" not in followup["text"]
     assert followup["text"].count("[1]") == 2
     task = row(result, "task-status")
     assert task["grounded"] and task["task_refs"] == ["TASK-001"]
-    assert not task["citations"] and not task["design_refs"]
+    assert not task["citations"] and task["design_refs"] == ["API-001"]
     withheld = row(result, "password-absent")
     assert withheld["answer_status"] == "INSUFFICIENT_EVIDENCE"
     assert withheld["text"] == INSUFFICIENT_TEXT
