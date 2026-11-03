@@ -1,6 +1,7 @@
 package com.beez.backend.impactanalysis.intake;
 
 import com.beez.backend.cdc.recovery.*;
+import com.beez.backend.changeproposal.port.PostPublishAnalysisIntake;
 import com.beez.backend.cdc.retry.ProcessingRetryPolicy;
 import static com.beez.backend.designitem.support.DesignJson.canonical;
 import java.sql.Timestamp;
@@ -12,11 +13,11 @@ import org.springframework.transaction.annotation.*;
 
 /** Durable data operations only. #227 owns execution and recurring recovery sweeps. */
 @Repository
-public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
+public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, PostPublishAnalysisIntake {
     private final JdbcClient jdbc;
     public PublishedAnalysisRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
 
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Override @Transactional(propagation = Propagation.MANDATORY)
     public void accept(long project, long baseline, Long proposal) {
         jdbc.sql("""
                 INSERT INTO published_change_analysis(project_id,published_baseline_id,change_proposal_id,status,finished_at)
