@@ -286,6 +286,14 @@ public class DocumentApplicationService {
         response.put("source_status", run.get("source_status")); response.put("index_status", run.get("index_status"));
         response.put("attempt", run.get("attempt")); response.put("items", List.of()); response.put("questions", List.of());
         if (run.get("error_code") != null) response.put("error_code", run.get("error_code"));
+        // 질문 생성은 분석이 끝난 뒤의 별도 단계다. 실패해도 분석 상태(status)는 그대로이고 여기에만 드러난다(PLN-A02 가 다시 시도한다).
+        jdbc.sql("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=:id").param("id", version)
+                .query().listOfRows().stream().findFirst().ifPresent(q -> {
+                    var questionRun = new LinkedHashMap<String, Object>();
+                    questionRun.put("status", q.get("status"));
+                    if (q.get("error_code") != null) { questionRun.put("error_code", q.get("error_code")); questionRun.put("retryable", q.get("retryable")); }
+                    response.put("question_generation", questionRun);
+                });
         response.put("message", switch (run.get("status").toString()) {
             case "PENDING", "RUNNING" -> "분석 중입니다."; case "FAILED" -> "분석에 실패했습니다. 재시도할 수 있습니다.";
             default -> "검색 준비가 완료되었습니다.";
@@ -299,6 +307,11 @@ public class DocumentApplicationService {
         var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
         var run = one("SELECT * FROM document_processing WHERE document_version_id=:id FOR UPDATE", Map.of("id", version));
         if (List.of("PENDING", "RUNNING").contains(run.get("status"))) throw conflict("analysis_running");
+        // 분석은 끝났는데 질문 생성만 실패했다면 질문 생성만 다시 대기시킨다.
+        if ("COMPLETED".equals(run.get("status")) && jdbc.sql("UPDATE planning_question_run SET status='PENDING',error_code=null,retryable=false,lease_until=null,updated_at=now() WHERE document_version_id=:id AND status='FAILED'")
+                .param("id", version).update() == 1) {
+            return remember(caller, project, operation, key, fp, analysis(caller, project, id, version));
+        }
         if (!"FAILED".equals(run.get("status"))) throw conflict("analysis_not_failed");
         jdbc.sql("UPDATE document_processing SET attempt=attempt+1,automatic_recoveries=0,status='PENDING',source_status='PENDING',index_status='PENDING',error_code=null,lease_token=null,lease_until=null,updated_at=now() WHERE document_version_id=:id")
                 .param("id", version).update();

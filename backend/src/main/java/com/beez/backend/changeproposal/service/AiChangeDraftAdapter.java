@@ -69,7 +69,7 @@ public class AiChangeDraftAdapter implements ChangeDraftGateway {
      * 오류 본문의 usage 배열. 본문이 JSON 객체가 아니거나 usage 가 객체 배열이 아니면 null — 오류 분류는 그대로 두고
      * 사용량만 "미확인"으로 남기게 한다(알 수 없는 값을 0 으로 단정하지 않는다).
      */
-    static List<Map<String, Object>> usageIn(RestClientResponseException e) {
+    public static List<Map<String, Object>> usageIn(RestClientResponseException e) {
         String body = e.getResponseBodyAsString();
         if (body == null || body.isBlank()) return null;
         Object parsed;

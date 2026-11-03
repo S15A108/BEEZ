@@ -35,22 +35,32 @@ public class DraftUsageRecorder {
      */
     public int recordLines(long project, Long task, String requestKey, List<?> list, boolean template, Object responseModel,
                            long observedMillis) {
+        return recordLines(FEATURE, project, task, requestKey, list, template, responseModel, observedMillis);
+    }
+
+    /** 기능(feature)을 지정해 기록한다. 질문 생성(DOCUMENT_PARSE)처럼 BEE_DRAFT 가 아닌 호출이 같은 규칙을 쓴다. */
+    public int recordLines(String feature, long project, Long task, String requestKey, List<?> list, boolean template,
+                           Object responseModel, long observedMillis) {
         int tried = 0;
         for (int index = 0; index < list.size(); index++) {
             if (!(list.get(index) instanceof Map<?, ?> raw)) continue;
             tried++;
             @SuppressWarnings("unchecked") Map<String, Object> entry = (Map<String, Object>) raw;
-            insertQuietly(project, task, entry, requestKey + ":" + index, responseModel, template, observedMillis);
+            insertQuietly(feature, project, task, entry, requestKey + ":" + index, responseModel, template, observedMillis);
         }
         return tried;
     }
 
     /** 호출이 실패했거나 쓸 수 없는 응답이 왔을 때. 토큰 수를 모르므로 0 으로 채우지 않는다. */
     public void recordFailure(long project, Long task, String requestKey, long observedMillis) {
-        insertQuietly(project, task, Map.of("failed", true, "tokens_known", false), requestKey + ":failed", null, false, observedMillis);
+        recordFailure(FEATURE, project, task, requestKey, observedMillis);
     }
 
-    private void insertQuietly(long project, Long task, Map<String, Object> entry, String fallbackKey, Object responseModel,
+    public void recordFailure(String feature, long project, Long task, String requestKey, long observedMillis) {
+        insertQuietly(feature, project, task, Map.of("failed", true, "tokens_known", false), requestKey + ":failed", null, false, observedMillis);
+    }
+
+    private void insertQuietly(String feature, long project, Long task, Map<String, Object> entry, String fallbackKey, Object responseModel,
                                boolean template, long observedMillis) {
         try {
             boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
@@ -72,7 +82,7 @@ public class DraftUsageRecorder {
                     VALUES(:project,:feature,:key,:task,:provider,:model,:known,:input,:output,:cache,:latency,:cost,:currency,:failed,:origin)
                     ON CONFLICT(request_key) DO NOTHING
                     """)
-                    .param("project", project).param("feature", FEATURE).param("key", key).param("task", task, Types.BIGINT)
+                    .param("project", project).param("feature", feature).param("key", key).param("task", task, Types.BIGINT)
                     .param("provider", provider).param("model", model).param("known", known)
                     .param("input", known ? nonNegativeInt(entry.get("input_tokens")) : null, Types.INTEGER)
                     .param("output", known ? nonNegativeInt(entry.get("output_tokens")) : null, Types.INTEGER)
@@ -81,7 +91,7 @@ public class DraftUsageRecorder {
                     .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("origin", template ? "template" : "model")
                     .update();
         } catch (RuntimeException e) {
-            log.warn("BEE_DRAFT usage not recorded (project {}): {}", project, e.getMessage());
+            log.warn("{} usage not recorded (project {}): {}", feature, project, e.getMessage());
         }
     }
 

@@ -85,6 +85,17 @@ public class AiClient {
         return rest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
     }
 
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> planningQuestions(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/planning-questions").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /** 답변 반영 설계 초안 ({@code POST /v1/design-drafts}, S15P31A108-134 계약). 실패 분류는 부르는 쪽이 한다. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> designDrafts(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/design-drafts").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /**
      * AI-A06 기획·문서 수정 초안 생성 ({@code POST /v1/bee/draft}). 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다.
      * 읽기 시간 제한은 다른 호출과 같은 {@code ai.read-timeout} 이다. 문서 한 건을 다시 쓰는 호출은 더 걸릴 수 있어
