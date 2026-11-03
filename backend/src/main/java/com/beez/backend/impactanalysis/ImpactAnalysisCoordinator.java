@@ -27,23 +27,69 @@ public class ImpactAnalysisCoordinator {
      * #197 owns that storage transaction and rule candidate calculation.
      */
     public record Outcome(ImpactContextQuery.Snapshot input, Status status, Map<String, Object> aiEnvelope,
-                          List<?> usage, UsageStatus usageStatus, String errorCode) {
+                          List<?> usage, UsageStatus usageStatus, String errorCode, String model) {
         public Outcome {
             usage = List.copyOf(usage);
         }
+
+        /** 모델을 부르지 않은 결과 */
+        public Outcome(ImpactContextQuery.Snapshot input, Status status, Map<String, Object> aiEnvelope,
+                       List<?> usage, UsageStatus usageStatus, String errorCode) {
+            this(input, status, aiEnvelope, usage, usageStatus, errorCode, null);
+        }
     }
 
-    /** Carries only accounting data when a post-publication access recheck rejects the result. */
-    static final class PublishedRecheckException extends ApiException {
+    /**
+     * 모델 응답을 받은 뒤 권한 재확인이 결과를 거절했을 때 던진다. 결과·입력은 버리지만 이미 받은 사용량은 호출한 쪽이 기록해야 하므로
+     * (비용 집계 MON-A02, -169) 그것만 싣는다. 승인 전 분석·발행 뒤 분석 모두 쓴다. 상태·코드는 원래 오류 그대로.
+     */
+    static final class AccessRecheckException extends ApiException {
         private final List<?> usage;
+        private final String model;
 
-        PublishedRecheckException(ApiException cause, List<?> usage) {
+        AccessRecheckException(ApiException cause, List<?> usage, String model) {
             super(cause.getStatus(), cause.getCode(), cause.getMessage());
             this.usage = List.copyOf(usage);
+            this.model = model;
         }
 
         List<?> usage() { return usage; }
         UsageStatus usageStatus() { return usage.isEmpty() ? UsageStatus.UNKNOWN : UsageStatus.REPORTED; }
+    }
+
+    /**
+     * 모델 응답을 받은 뒤 예상하지 못한 오류(응답 검사 중 형 변환, 재확인 조회의 DB 오류 등)로 분석을 끝내지 못했을 때.
+     * 원래 오류를 감싸 그대로 올리고(호출한 쪽의 중단·재시도 처리는 예전과 같음) 받은 사용량만 싣는다 (-169)
+     */
+    static final class ReceivedUsageException extends RuntimeException {
+        private final List<?> usage;
+        private final String model;
+
+        ReceivedUsageException(RuntimeException cause, List<?> usage, String model) {
+            super(cause.getMessage(), cause);
+            this.usage = List.copyOf(usage);
+            this.model = model;
+        }
+    }
+
+    /** 실패에 실려 온, 이미 받은 모델 사용량. 실려 온 것이 없으면 빈 목록 (모델을 부르기 전 실패 등) */
+    static List<?> receivedUsage(Throwable failure) {
+        if (failure instanceof AccessRecheckException e) return e.usage;
+        if (failure instanceof ReceivedUsageException e) return e.usage;
+        return List.of();
+    }
+
+    /** 실패에 실려 온 응답 최상위 model. 사용량 항목에 model 이 없을 때 공통 사용량 표에 쓴다. 없으면 null */
+    static String receivedModel(Throwable failure) {
+        if (failure instanceof AccessRecheckException e) return e.model;
+        if (failure instanceof ReceivedUsageException e) return e.model;
+        return null;
+    }
+
+    /** 응답 최상위 model (글자이고 비어 있지 않을 때) */
+    private static String modelOf(Map<String, Object> envelope) {
+        if (envelope != null && envelope.get("model") instanceof String value && !value.isBlank()) return value;
+        return null;
     }
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -64,17 +110,16 @@ public class ImpactAnalysisCoordinator {
     /** requestKey identifies this analysis; the AI server issues a unique key for every LLM call. */
     public Outcome analyze(CallerContext caller, long projectId, long proposalId, String requestKey) {
         ImpactContextQuery.Snapshot snapshot = query.load(caller, projectId, proposalId);
-        return analyze(snapshot, requestKey, () -> query.requireUnchanged(caller, snapshot), false);
+        return analyze(snapshot, requestKey, () -> query.requireUnchanged(caller, snapshot));
     }
 
     public Outcome analyzePublished(CallerContext caller, long projectId, long proposalId,
                                     long publishedBaseline, String requestKey) {
         ImpactContextQuery.Snapshot snapshot = query.loadPublished(caller, projectId, proposalId, publishedBaseline);
-        return analyze(snapshot, requestKey, () -> query.requirePublishedUnchanged(caller, snapshot, publishedBaseline), true);
+        return analyze(snapshot, requestKey, () -> query.requirePublishedUnchanged(caller, snapshot, publishedBaseline));
     }
 
-    private Outcome analyze(ImpactContextQuery.Snapshot snapshot, String requestKey, Runnable recheck,
-                            boolean retainPublishedUsageOnRecheckFailure) {
+    private Outcome analyze(ImpactContextQuery.Snapshot snapshot, String requestKey, Runnable recheck) {
         // Until document diffs have an agreed AI-A03 contract, mixed and document-only
         // proposals must not produce an apparently complete partial analysis.
         if (snapshot.documentChanges()) {
@@ -106,8 +151,12 @@ public class ImpactAnalysisCoordinator {
         List<?> usage = List.of();
         Status status;
         String errorCode = null;
+        boolean responded = false;
+        String model = null;
         try {
             envelope = ai.changeImpact(request);
+            responded = true;
+            model = modelOf(envelope);
             usage = extractUsage(envelope);
             if (envelope == null || !(envelope.get("result") instanceof Map<?, ?> result)
                     || !(result.get("candidates") instanceof List<?>)
@@ -134,6 +183,7 @@ public class ImpactAnalysisCoordinator {
         } catch (RestClientResponseException ex) {
             Map<String, Object> error = parseError(ex);
             usage = extractUsage(error);
+            model = modelOf(error);
             Object detail = error.get("error");
             Object code = detail instanceof Map<?, ?> map ? map.get("code") : null;
             errorCode = code instanceof String text && AI_CODES.contains(text) ? text : "model_unavailable";
@@ -142,23 +192,30 @@ public class ImpactAnalysisCoordinator {
             // A broken connection does not prove whether a provider call started.
             errorCode = "model_unavailable";
             status = Status.AI_FAILED;
+        } catch (RuntimeException ex) {
+            // 응답을 받기 전의 오류는 원래대로 올린다. 받은 뒤 응답 검사 중 예상하지 못한 오류(형 변환 등)도 예전처럼 올리되
+            // (호출한 쪽의 오류 코드·재시도 여부가 바뀌지 않게) 받은 사용량을 함께 싣는다
+            if (!responded) throw ex;
+            throw new ReceivedUsageException(ex, usage, model);
         }
 
         try {
             recheck.run();
         } catch (ApiException e) {
             if (!STALE_CODES.contains(e.getCode())) {
-                // Never return the input or AI result after access loss. The publication worker
-                // still needs the already-received usage for its attempt history.
-                if (retainPublishedUsageOnRecheckFailure) throw new PublishedRecheckException(e, usage);
-                throw e;
+                // Never return the input or AI result after access loss. Both callers still need the
+                // already-received usage for cost accounting (llm_usage) and their attempt history.
+                throw new AccessRecheckException(e, usage, model);
             }
             status = Status.STALE;
             errorCode = "analysis_input_changed";
             envelope = null;
+        } catch (RuntimeException e) {
+            // 재확인 조회 자체가 실패(DB 등). 원래 오류는 그대로 올리되 받은 사용량을 함께 싣는다
+            throw new ReceivedUsageException(e, usage, model);
         }
         return new Outcome(snapshot, status, envelope, usage,
-                usage.isEmpty() ? UsageStatus.UNKNOWN : UsageStatus.REPORTED, errorCode);
+                usage.isEmpty() ? UsageStatus.UNKNOWN : UsageStatus.REPORTED, errorCode, model);
     }
 
     private static List<?> extractUsage(Map<String, Object> data) {
