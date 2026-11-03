@@ -13627,6 +13627,7 @@ HTTP `200`.
 | `to` | `Time` | Y | 집계 끝 미포함 |
 | `task_id` | `ID` | N | 작업 필터 |
 | `validation_id` | `ID` | N | 검증 필터 |
+| `feature` | `string` | N | 기능 필터. Usage.feature 값 중 하나 (BE 구현, -169) |
 
 #### Request
 
@@ -13644,6 +13645,8 @@ HTTP `200`.
 | `call_count` | `integer` | Y | 중복 제거한 호출 수 |
 | `estimated_cost_amount` | `string` | N | 추정 비용. 단가 없으면 생략 |
 | `currency` | `string` | N | 통화 |
+| `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수. 이 호출의 토큰은 합계에 없다 (BE 구현, -169) |
+| `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 — 단가 없음 또는 `currency`와 다른 통화 (BE 구현, -169) |
 | `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
 | `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
 | `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |
@@ -13694,7 +13697,8 @@ HTTP `200`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음. 다른 프로젝트·없는 `task_id`·`validation_id`도 (BE 구현, -169) |
+| 400 | `validation_failed` | `from`·`to` 누락·형식 오류(오프셋 있는 ISO-8601)·`from >= to`, 기간이 한국 날짜로 366일 초과, 모르는 `feature`, ID 형식 오류 (BE 구현, -169) |
 
 ```json
 {
@@ -13712,6 +13716,12 @@ HTTP `200`.
 - request_key로 같은 모델 호출을 한 번만 합산하고 실패·재시도도 실제 호출만큼 반영한다.
 - 추정 비용과 사용량을 구분한다. 단가가 없으면 비용을 생략하고 0원으로 표시하지 않는다.
 - (수정안 요청) by_agent는 caller=AGENT 호출을 agent_session_id별로, 웹에서 직접 한 호출(문서 분석·비비 질문·회의 분석)을 key WEB 한 줄로 묶는다. by_day는 한국 시간 날짜별이고 대시보드의 '날짜별 AI 호출' 막대가 쓴다. 비용을 팀장만 볼지는 Q21이다.
+- (BE 구현, -169) 공통 사용량 표 `llm_usage`를 읽는다. 시각은 행을 적은 시각, 기간은 [from, to). 검증별은 실행(`validation_run`)을 거쳐 검증 번호로 묶는다.
+- (BE 구현, -169) 토큰: 공급자 토큰 수를 모르는 호출(`tokens_known=false` 또는 값이 비어 있음)은 0으로 더하지 않고 `tokens_unknown_call_count`로 센다.
+- (BE 구현, -169) 비용: 기간·조건 안에서 추정 비용이 있는 호출이 가장 많은 통화를 `currency`로 정하고 그 통화의 추정 비용만 더한다(환산하지 않음). 단가 없는 호출과 다른 통화 호출은 `cost_unknown_call_count`로 센다. 비용 있는 호출이 하나도 없으면 전체·모든 묶음에서 `estimated_cost_amount`·`currency`를 생략하고, 있으면 그 통화 호출이 없는 묶음은 `"0"`이다(모르는 호출 수로 구분). 금액은 뒤의 0을 지운 소수 문자열이다.
+- (BE 구현, -169) 모든 묶음은 같은 조건·같은 통화로 한 스냅샷에서 계산하므로 `by_feature`·`by_day` 각각의 합이 전체 합(호출 수·토큰·모르는 호출 수·비용)과 같다. `by_task`·`by_validation`에는 작업·검증에 연결된 호출만 들어가 합이 전체보다 작을 수 있다.
+- (BE 구현, -169) `by_feature`는 8개 기능을 Usage.feature 순서로 호출이 없어도 한 줄씩, `by_day`는 기간이 걸치는 한국 날짜를 모두 0으로 채워 준다. `by_task`·`by_validation`은 번호 순이고 `by_task`의 `label`은 작업 키(T-3)다. `task_id`·`validation_id`·`feature`를 함께 주면 모두 맞는 호출만 센다.
+- (BE 구현, -169) `by_agent`는 지금 빈 배열이다. `llm_usage`에 호출자(에이전트 세션·웹) 칸이 없어 나눌 수 없다. 칸 추가와 각 기능의 기록은 Q21과 함께 정한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
