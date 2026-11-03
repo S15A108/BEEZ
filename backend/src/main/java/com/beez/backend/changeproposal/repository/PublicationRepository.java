@@ -78,11 +78,14 @@ public class PublicationRepository {
         requireOne(jdbc.sql("UPDATE design_item SET retired_at=now(),updated_at=now() WHERE id=:id AND project_id=:project AND retired_at IS NULL")
                 .param("id", item).param("project", project).update());
     }
-    public void publish(long project, long proposal, int revision, long previous, long baseline, long actor) {
+    /** impactOverrideReason is non-null only when approved without a completed, current impact analysis. */
+    public void publish(long project, long proposal, int revision, long previous, long baseline, long actor,
+                        String impactOverrideReason) {
         jdbc.sql("""
-                INSERT INTO approval(change_proposal_id,proposal_revision_no,decided_by,decision,base_baseline_id,result_baseline_id)
-                VALUES(:proposal,:revision,:actor,'APPROVED',:previous,:baseline)
+                INSERT INTO approval(change_proposal_id,proposal_revision_no,decided_by,decision,reason,base_baseline_id,result_baseline_id)
+                VALUES(:proposal,:revision,:actor,'APPROVED',:reason,:previous,:baseline)
                 """).param("proposal", proposal).param("revision", revision).param("actor", actor)
+                .param("reason", impactOverrideReason)
                 .param("previous", previous).param("baseline", baseline).update();
         requireOne(jdbc.sql("""
                 UPDATE change_proposal SET status='PUBLISHED',published_baseline_id=:baseline,

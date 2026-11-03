@@ -55,7 +55,8 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         var proposal = proposals.create(caller,project,new Input(""+initial,"사용자 API 변경","사용자 경로 변경",null,null,
                 List.of(new Item("UPDATE",""+api.designItemId("API-01"),""+oldVersion,"API_CONTRACT",1,
                         Map.of("method","GET","path","/users/v2","description","사용자 조회 변경"))),List.of(),null,null,null),"create");
-        var request = new ApproveRequest(proposal.baseBaselineId(),proposal.revision(),proposal.snapshotHash());
+        var request = new ApproveRequest(proposal.baseBaselineId(),proposal.revision(),proposal.snapshotHash(),
+                "발행 후 분석 테스트를 위해 승인 전 분석을 생략함");
         var published = publications.approve(caller,project,Long.parseLong(proposal.id()),request,"approve");
         intake = api.jdbc.sql("SELECT id FROM published_change_analysis WHERE published_baseline_id=:b")
                 .param("b",Long.parseLong(published.baseline().id())).query(Long.class).single();

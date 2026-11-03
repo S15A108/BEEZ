@@ -42,7 +42,8 @@ class PublishedAnalysisRecoveryIntegrationTest extends IntegrationTestSupport {
                 List.of(new Item("UPDATE",""+api.designItemId("API-01"),""+api.currentVersionId("API-01"),"API_CONTRACT",1,
                         Map.of("method","GET","path","/users/v2","description","사용자 조회 변경"))),List.of(),null,null,null),"recovery-create");
         var published=publications.approve(caller,project,Long.parseLong(proposal.id()),
-                new ApproveRequest(proposal.baseBaselineId(),proposal.revision(),proposal.snapshotHash()),"recovery-approve");
+                new ApproveRequest(proposal.baseBaselineId(),proposal.revision(),proposal.snapshotHash(),
+                        "발행 후 복구 테스트를 위해 승인 전 분석을 생략함"),"recovery-approve");
         long id=api.jdbc.sql("SELECT id FROM published_change_analysis WHERE published_baseline_id=:b")
                 .param("b",Long.parseLong(published.baseline().id())).query(Long.class).single();
         when(ai.changeImpact(any())).thenReturn(Map.of("result",Map.of("candidates",List.of(),"evidence_status","SUFFICIENT"),
