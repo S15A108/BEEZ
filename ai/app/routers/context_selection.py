@@ -20,6 +20,11 @@ from app.core.internal_auth import require_internal_token
 from app.routers.embeddings import get_counter
 from app.schemas.context_selection_api import ContextSelectionRequest
 from app.schemas.retrieval import EmbeddingPolicy
+from app.services.retrieval.context_packet import (
+    ContextPacketError,
+    check_packet_metadata,
+    compose_development_context,
+)
 from app.services.retrieval.context_selection import (
     MAX_CANDIDATES_PER_KIND,
     ContextSelectionError,
@@ -81,6 +86,20 @@ class SelectionRoute(APIRoute):
                         "message": "Selection processing failed.",
                     }
                 }
+                if exc.usage:
+                    body["usage"] = [
+                        u.model_dump(mode="json", exclude_none=True) for u in exc.usage
+                    ]
+                response = JSONResponse(body, status_code=status)
+            except ContextPacketError as exc:
+                # Packet composition (#132) uses the common MCP-01 error codes.
+                status = {
+                    "validation_failed": 400,
+                    "context_not_ready": 503,
+                    "search_failed": 502,
+                    "packet_too_large": 422,
+                }.get(exc.code, 502)
+                body = {"error": {"code": exc.code, "message": exc.message}}
                 if exc.usage:
                     body["usage"] = [
                         u.model_dump(mode="json", exclude_none=True) for u in exc.usage
@@ -228,10 +247,13 @@ async def select_development_context(
         body = ContextSelectionRequest.model_validate_json(bytes(data))
         # Pydantic's JSON mode validates arrays as tuples in the frozen model.
         snapshot = SelectionInput.model_validate_json(
-            body.model_dump_json(exclude={"request_key"})
+            body.model_dump_json(exclude={"request_key", "metadata"})
         )
     except (ValidationError, ValueError):
         raise HTTPException(400, detail="validation_failed") from None
+    if body.metadata is not None:
+        # Mismatched packet metadata is rejected before any paid provider call.
+        check_packet_metadata(snapshot, body.metadata)
     try:
         async with asyncio.timeout(config.total_timeout_seconds):
             result = await select_context(snapshot, selector_factory(body.request_key))
@@ -240,7 +262,11 @@ async def select_development_context(
         usage = tuple(getattr(cancelled, "embedding_usage", ()))
         raise ContextSelectionError("embedding_timeout", usage) from None
     # Snapshot binding is intentionally excluded; it cannot cross processes.
-    return {
+    response = {
         "result": result.model_dump(mode="json", exclude={"usage"}),
         "usage": [u.model_dump(mode="json", exclude_none=True) for u in result.usage],
     }
+    if body.metadata is not None:
+        packet = compose_development_context(snapshot, result, body.metadata)
+        response["packet"] = packet.model_dump(mode="json")
+    return response

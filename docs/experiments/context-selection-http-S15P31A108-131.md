@@ -32,3 +32,7 @@
 직접 `EmbeddingContextSelector`를 구성하는 내부 호출자는 선택적으로 `request_key`를 지정할 수 있다. 이 값은 인스턴스에 고정되므로 논리 요청마다 새 인스턴스를 만들어야 한다. 지정하지 않는 기존 호출은 내부에서 생성한 별도 키를 사용한다. HTTP 경로는 매 요청의 입력을 검증한 뒤 해당 요청 전용 선택기를 생성한다.
 
 이 endpoint는 내부 인증 외 프로젝트 권한이나 DB 최신성을 증명하지 않는다. BE·AI DTO, 부분 결과 허용 여부, usage 저장·중복·취소, 발췌 복원 및 모델/임계값은 담당자와 합의한 후 실제 데이터 통합과 독립 품질 평가를 해야 한다.
+
+## #132 패킷 구성 확장
+
+본문에 선택적 `metadata`(설계 키·종류·출처·설명, 근거 출처, 작업 계획 리비전)를 넣으면 응답에 MCP-01 패킷 내용 `packet`이 추가된다. `metadata`가 스냅샷과 일치하지 않으면 모델 호출 전에 400 `validation_failed`이고, 구성한 패킷이 262,144바이트를 넘으면 422 `packet_too_large`다. 필드·매핑·오류는 [패킷 구성 계약](../design/development-context-packet-contract-S15P31A108-132.md)을 따르며 예시는 `ai/examples/context-packet-132/`에 있다.
