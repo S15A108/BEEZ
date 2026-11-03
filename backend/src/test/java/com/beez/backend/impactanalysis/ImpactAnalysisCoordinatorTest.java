@@ -234,7 +234,7 @@ class ImpactAnalysisCoordinatorTest {
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
                     assertThat(e.getCode()).isEqualTo("forbidden");
-                    assertThat(ImpactAnalysisCoordinator.receivedUsage(e)).containsExactly(Map.of("request_key", "call-1"));
+                    assertThat(new java.util.ArrayList<Object>(ImpactAnalysisCoordinator.receivedUsage(e))).containsExactly(Map.of("request_key", "call-1"));
                     assertThat(ImpactAnalysisCoordinator.receivedModel(e)).isEqualTo("impact-m");
                 });
     }
@@ -254,7 +254,7 @@ class ImpactAnalysisCoordinatorTest {
         // 재확인 조회 자체가 실패해도 예전처럼 예외로 올라가고(호출한 쪽의 중단·재시도 처리 그대로), 받은 사용량은 실려 온다
         assertThatThrownBy(() -> new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req"))
                 .hasCause(broken)
-                .satisfies(e -> assertThat(ImpactAnalysisCoordinator.receivedUsage(e)).containsExactly(Map.of("request_key", "call-1")));
+                .satisfies(e -> assertThat(new java.util.ArrayList<Object>(ImpactAnalysisCoordinator.receivedUsage(e))).containsExactly(Map.of("request_key", "call-1")));
     }
 
     @Test
