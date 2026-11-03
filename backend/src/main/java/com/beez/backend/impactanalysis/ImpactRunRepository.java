@@ -55,11 +55,24 @@ public class ImpactRunRepository {
 
     public Optional<Map<String, Object>> latest(long project, long proposal, int revision) {
         // A finished result remains visible while a retry runs. Fall back to the latest historical revision.
+        // A RUNNING run past its lease is read as FAILED(analysis_interrupted) here, so the verdict never depends on
+        // the persisting expire() write (which a rolled-back approval would undo). It sorts as finished at lease_until.
         return jdbc.sql("""
-                SELECT * FROM change_impact_run WHERE project_id=:project AND change_proposal_id=:proposal
+                SELECT *,(status='RUNNING' AND lease_until<=clock_timestamp()) AS lease_expired
+                  FROM change_impact_run WHERE project_id=:project AND change_proposal_id=:proposal
                  ORDER BY (revision_no=:revision) DESC,revision_no DESC,
-                   (finished_at IS NOT NULL) DESC,finished_at DESC NULLS LAST,id DESC LIMIT 1
-                """).param("project", project).param("proposal", proposal).param("revision", revision).query().listOfRows().stream().findFirst();
+                   (finished_at IS NOT NULL OR (status='RUNNING' AND lease_until<=clock_timestamp())) DESC,
+                   COALESCE(finished_at,CASE WHEN status='RUNNING' AND lease_until<=clock_timestamp() THEN lease_until END) DESC NULLS LAST,
+                   id DESC LIMIT 1
+                """).param("project", project).param("proposal", proposal).param("revision", revision).query().listOfRows().stream()
+                .findFirst().map(ImpactRunRepository::effective);
+    }
+
+    private static Map<String, Object> effective(Map<String, Object> row) {
+        if (!Boolean.TRUE.equals(row.get("lease_expired"))) return row;
+        var view = new LinkedHashMap<>(row);
+        view.put("status", "FAILED"); view.put("error_code", "analysis_interrupted");
+        return view;
     }
 
     /** Starts the execution lease only when the queued run is still live; false means it expired or was closed. */
@@ -72,7 +85,7 @@ public class ImpactRunRepository {
     }
 
     public Optional<Map<String, Object>> pending(long proposal, int revision) {
-        return jdbc.sql("SELECT id,requested_at FROM change_impact_run WHERE change_proposal_id=:proposal AND revision_no=:revision AND status='RUNNING'")
+        return jdbc.sql("SELECT id,requested_at FROM change_impact_run WHERE change_proposal_id=:proposal AND revision_no=:revision AND status='RUNNING' AND lease_until>clock_timestamp()")
                 .param("proposal", proposal).param("revision", revision).query().listOfRows().stream().findFirst();
     }
 

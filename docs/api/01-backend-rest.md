@@ -8059,7 +8059,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 관련 요구사항: APR-01·03~05  
 담당: BE: 오서현 / 검증 영향: 변준성 / AI: — / FE: 오서현  
-상태: 구현됨(S15P31A108-199·200, 검증 영향 163 연결됨, 197 연결·승인 게이트·알림은 TODO)
+상태: 구현됨(S15P31A108-199·200·241, 검증 영향 163 연결됨, 알림은 TODO)
 
 #### 인증
 
@@ -8092,12 +8092,14 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 | `expected_base_baseline_id` | `ID` | Y | 검토한 제안 기준 |
 | `expected_revision` | `integer` | Y | 검토한 제출 리비전 |
 | `expected_snapshot_hash` | `string` | Y | 검토한 제출 스냅샷 해시 |
+| `impact_override_reason` | `string` | N | 현재 제출 리비전의 영향 분석이 완료·최신이 아닐 때 그래도 승인하는 사유. 공백만이거나 1000자를 넘으면 400 validation_failed. 분석이 완료·최신이면 보내도 무시하고 저장하지 않는다. 생략하면 이전 요청 본문과 같은 멱등 지문을 유지한다 |
 
 ```json
 {
   "expected_base_baseline_id": "401",
   "expected_revision": 1,
-  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  "expected_snapshot_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "impact_override_reason": "분석 서버 장애로 영향 범위를 직접 확인함"
 }
 ```
 
@@ -8188,6 +8190,8 @@ HTTP `200`.
 | 403 | `request_origin_rejected` | Origin/Referer가 허용 목록과 다르거나 없음 |
 | 409 | `idempotency_conflict` | 같은 키에 다른 입력 |
 | 500 | `internal` | 발행 트랜잭션 실패 |
+| 409 | `analysis_running` | 현재 리비전의 영향 분석이 진행 중. 사유가 있어도 승인하지 않음 |
+| 409 | `impact_not_confirmed` | 영향 분석이 완료·최신이 아니고(실패·근거 부족·미실행·오래됨) `impact_override_reason`이 없음 |
 | 409 | `analysis_not_completed` | 제안에 연결한 문서 버전의 색인 미준비·실패·불일치 |
 
 ```json
@@ -8214,7 +8218,8 @@ HTTP `200`.
 - 문서별 승인 API는 기준 발행 이후 신규 결정을 change_proposal_required로 거부한다. 이미 완료한 결정의 같은 입력 재요청만 기존 결과를 반환하므로 변경 제안의 문서 승인을 우회하지 않는다.
 - 최종 문서·항목 참조를 계산한 뒤 새 기준에 한 번씩 INSERT한다. 이전 기준 참조는 변경하지 않는다. UPDATE 항목 번호는 전체 버전 max+1, CREATE는 1이며 RETIRE는 retired_at을 기록하고 새 기준에서 제외한다. 과거 기준의 참조와 본문은 보존한다.
 - (BE 구현, -163) ValidationImpactPort 의 실제 구현은 `PublicationImpactAdapter` 다. 발행 트랜잭션 안에서 프로젝트 행을 먼저 잠그고(상태 보고·계획 변경·검증 반영과 같은 순서), 바뀐 항목(수정·폐기)의 변경 전 버전 **또는 그보다 옛 버전**을 validation_design_ref 에 가진 검증을 끝난 것(PASS·NEEDS_*)·도는 것(NOT_RUN·RUNNING) 모두 STALE(`DESIGN_PUBLISHED`)로 바꾸고 대기 job 은 취소한다(작업 상태·현재 계획으로 거르지 않음). 그 버전을 현재 계획이 참조하는 IN_PROGRESS 작업만 WAITING(REVALIDATION). 무효화된 검증이 delta 완료 보고의 DELTA 였고 작업이 이 발행 전부터 WAITING(REVALIDATION) 이었으면 새 기준으로 새 DELTA 검증을 서버가 접수한다(계획이 옛 버전을 참조하므로 보통 규칙으로 바로 NEEDS_INPUT). 문서만 바뀐 발행(바뀐 항목 없음)은 아무것도 하지 않는다. 미리보기는 같은 계산을 쓰기·잠금 없이 한다. 담당자 알림(REVALIDATION_REQUIRED)은 알림 모듈(-181) 연결 뒤 같은 트랜잭션에서 요청한다. 197 연결 전 PostPublishAnalysisIntake도 no-op + WARN으로 실제 PENDING 접수행을 만들지 않는다. 실제 어댑터는 발행 트랜잭션에 참여해야 하며 포트 예외·멱등 응답 저장 실패도 전체 롤백한다. 최초 발행(v1) 접수 호출은 이 구현에 포함하지 않고 197에서 추가한다.
-- 영향 분석 결과에 따른 승인 게이트는 메서드 하나의 TODO로 현재 항상 통과한다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO이며 이 PR의 저장 성공을 알림·활동 저장 완료로 보지 않는다.
+- 영향 분석 승인 게이트(S15P31A108-241): 프로젝트 잠금 안에서, 문서 색인 검증 뒤 쓰기 전에 현재 제출 리비전의 영향 분석(CHG-A05와 같은 판정)을 본다. `COMPLETED`이고 최신(`is_current=true`)이면 후보가 0건이어도 사유 없이 통과한다. `RUNNING`이거나 재분석이 진행 중(`reanalysis` 있음)이면 이전 결과가 완료·실패 무엇이든 409 `analysis_running`이다. 그 밖의 상태(`FAILED`·`INSUFFICIENT_EVIDENCE`·`NOT_EVALUATED`(한 번도 안 돌림 포함)·`STALE`·완료지만 입력이 바뀐 결과)는 영향 0건으로 보지 않으며, `impact_override_reason`이 없으면 409 `impact_not_confirmed`, 있으면 승인하고 사유를 승인 이력(approval.reason)에 남긴다. lease가 만료된 RUNNING은 정리 저장 여부와 무관하게 읽는 시점에 FAILED(`analysis_interrupted`)로 판정한다(승인이 409로 롤백돼도 판정이 바뀌지 않는다). 409 응답은 키를 저장하지 않으므로 사유를 넣어 다시 요청할 때는 새 Idempotency-Key를 쓴다. 이미 PUBLISHED인 제안의 재요청과 멱등 재생에는 게이트를 적용하지 않는다.
+- 같은 발행 트랜잭션 안의 알림·활동 저장 연결은 TODO이며 이 PR의 저장 성공을 알림·활동 저장 완료로 보지 않는다.
 - (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
 
@@ -8359,6 +8364,7 @@ HTTP `200`.
 | `approved_by` | `ID` | Y | 승인 계정 |
 | `approved_at` | `Time` | Y | 승인 시각 |
 | `baseline_id` | `ID` | Y | 발행 기준 |
+| `impact_override_reason` | `string` | N | 영향 분석이 완료·최신이 아닌 채 승인했을 때 팀장이 남긴 사유(CHG-A09 `impact_override_reason`). 분석을 확인하고 승인했으면 생략 |
 
 ```json
 {
@@ -8658,7 +8664,7 @@ HTTP `200`.
 | `validations_to_stale` | `object[]` | Y | '다시 검증 필요'가 될 검증 {validation_id, task_id, task_title} |
 | `tasks_to_wait` | `object[]` | Y | '대기 · 재검증'이 될 진행 중 작업 {task_id, title, assignee_member_id} |
 | `unchanged` | `object` | Y | 그대로인 것 {items, documents}. 화면 '나머지 항목 1개와 문서 4개는 v1 그대로' |
-| `unreviewed` | `object` | Y | 확인하지 않은 것 {ai_candidates, open_review_requests}. 화면 'AI 영향 후보 1개 · 답하지 않은 검토 요청 1개' |
+| `unreviewed` | `object` | Y | 확인하지 않은 것 {ai_candidates, open_review_requests, ai_analysis, requires_override_reason}. 화면 'AI 영향 후보 1개 · 답하지 않은 검토 요청 1개'. `ai_candidates`는 영향 분석이 완료·최신일 때만 정수이고 아니면 null(미평가를 0건으로 보이지 않기 위함). `ai_analysis`는 {status, is_current, error_code(있을 때만), reanalysis_in_progress}다. status·is_current·error_code는 CHG-A05와 같은 값이고, 새 재분석이 진행 중이면 이전 결과가 그대로 보이므로 `reanalysis_in_progress=true`로 알린다(이때 승인은 409 analysis_running). `ai_candidates`는 null이어도 응답에서 생략하지 않는다. `requires_override_reason`이 true면 승인 때 `impact_override_reason`이 필요하다(RUNNING은 false지만 승인은 409 analysis_running) |
 
 ```json
 {
@@ -8719,7 +8725,7 @@ HTTP `200`.
 - PROPOSED·IN_REVIEW만 미리 볼 수 있다. 제안 기준이 현재와 다르면 409 baseline_conflict이며 requires_refresh 응답 필드를 별도로 추가하지 않는다. 색인과 참조 검증도 A09와 공유한다.
 - baseline_items는 변경 후 최종 항목 목록이다. CREATE는 design_item_id:null, operation:CREATE, proposal_item_index:원본 items 배열의 index, version_no:1이다. UPDATE는 실제 항목 ID와 전체 max+1 번호, UNCHANGED는 기존 번호와 proposal_item_index:null을 반환한다. RETIRE는 제외한다. ID를 미리 발급하거나 예약하지 않는다.
 - unchanged는 새 기준에 그대로 참조하는 항목·문서 수다. open_review_requests는 현재 리비전 REVIEW_REQUEST 중 지정 대상 한 명이라도 요청 이후 같은 리비전에 의견을 남기지 않은 요청 건수다. change_comment_target 다중 대상을 사용하고 대상 수가 아닌 요청 수로 세며, 이후 순서는 의견 ID 기준이다.
-- 197 연결 전 ai_candidates=0은 호환용 임시값이며 미평가를 뜻한다. validations_to_stale·tasks_to_wait 는 163 연결로 실제 계산값이다(위 발행 처리 규칙과 같은 기준). PR에서 이 미연결 범위를 반드시 표시한다.
+- 미리 보기는 어떤 영향 분석 상태에서도 409로 막지 않는다. 읽기 전용이라 만료 정리를 저장하지 않지만, lease가 만료된 RUNNING은 읽는 시점에 FAILED(analysis_interrupted)로 판정하므로 미리 보기와 승인 판정이 같다. validations_to_stale·tasks_to_wait 는 163 연결로 실제 계산값이다(위 발행 처리 규칙과 같은 기준).
 - preview 포트에는 새 기준·버전 ID를 넘기지 않는다. 이전 baseline, 제안 ID·revision/hash, UPDATE·RETIRE의 이전 항목 버전으로 대상을 계산하고 apply 때만 실제 새 ID를 넘긴다.
 - 승인 확인 화면에서만 쓴다. 그사이 기준이나 제안이 바뀌면 CHG-A09가 기존 규칙대로 거절하고 화면은 다시 확인하라고 안내한다.
 
