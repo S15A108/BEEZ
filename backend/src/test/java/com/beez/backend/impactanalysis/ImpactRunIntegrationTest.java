@@ -95,10 +95,11 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
             return envelope("SUFFICIENT");
         });
         runs.retry(caller,project,proposal,null); work();
-        var run=api.jdbc.sql("SELECT status,usage_status,ai_result,generation,usage::text AS usage FROM change_impact_run "
+        var run=api.jdbc.sql("SELECT status,usage_status,(ai_result IS NULL OR ai_result='null'::jsonb) AS no_ai_result,"
+                + "(generation IS NULL OR generation='null'::jsonb) AS no_generation,usage::text AS usage FROM change_impact_run "
                 + "WHERE change_proposal_id=:p ORDER BY id DESC LIMIT 1").param("p",proposal).query().singleRow();
         assertThat(run).containsEntry("status","STALE").containsEntry("usage_status","REPORTED")
-                .containsEntry("ai_result",null).containsEntry("generation",null);
+                .containsEntry("no_ai_result",true).containsEntry("no_generation",true);
         assertThat(run.get("usage").toString()).contains("llm-call");
         assertThat(api.jdbc.sql("SELECT count(*) FROM llm_usage WHERE request_key='llm-call' AND feature='CHANGE_IMPACT' AND project_id=:p")
                 .param("p",project).query(Integer.class).single()).isEqualTo(1);
