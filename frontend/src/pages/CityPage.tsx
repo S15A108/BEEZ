@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
   useInfiniteQuery,
@@ -47,6 +47,7 @@ function City() {
   const [creatingAt, setCreatingAt] = useState<number | null>(null)
   const [design, setDesign] = useState<BuildingDesign>('modern')
   const [search, setSearch] = useState('')
+  const titleRef = useRef<HTMLDivElement>(null)
   const [sort, setSort] = useState<'recent' | 'name' | 'leader'>('recent')
   const projects = useInfiniteQuery({
     queryKey: ['projects'],
@@ -103,23 +104,25 @@ function City() {
       <AsyncState query={projects}>
         {() => (
           <>
-            <section
-              className="relative h-[54dvh] min-h-96 overflow-hidden rounded-3xl border bg-card shadow-sm"
-              aria-label="내 프로젝트 도시"
-            >
-              <div className="pointer-events-none absolute top-6 left-6 z-10">
-                <h2 className="text-[26px] leading-[34px] font-bold">
-                  {session.data?.name}님의 도시
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  프로젝트 {sceneProjects.length}개
-                  {nextLot !== undefined &&
-                    ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 만들면 원의 다음 칸에 새 빈 부지가 생겨요.'}
-                </p>
-              </div>
-              <div className="absolute top-6 right-6 z-10">
+            <div className="relative">
+              {/* 제목·설명·만들기 버튼: 넓은 화면(lg)에서는 캔버스처럼 도시 위에 겹치고, 좁은 화면에서는 줄이 늘어 건물과
+                겹치므로 도시 바깥 위에 둔다. */}
+              <div
+                ref={titleRef}
+                className="mb-4 flex flex-wrap items-start justify-between gap-3 lg:pointer-events-none lg:absolute lg:inset-x-6 lg:top-6 lg:z-10 lg:mb-0"
+              >
+                <div>
+                  <h2 className="text-[26px] leading-[34px] font-bold">
+                    {session.data?.name}님의 도시
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    프로젝트 {sceneProjects.length}개
+                    {nextLot !== undefined &&
+                      ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 만들면 원의 다음 칸에 새 빈 부지가 생겨요.'}
+                  </p>
+                </div>
                 <Button
-                  className="h-10 rounded-xl px-4 font-bold"
+                  className="h-10 rounded-xl px-4 font-bold lg:pointer-events-auto"
                   disabled={nextLot === undefined}
                   onClick={() => startCreate(nextLot ?? null)}
                 >
@@ -127,37 +130,45 @@ function City() {
                   프로젝트 만들기
                 </Button>
               </div>
-              {/* 원이 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city) */}
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[120px] bg-linear-to-b from-[rgba(253,252,248,0.88)] to-transparent"
-              />
-              <Suspense
-                fallback={
-                  <p
-                    role="status"
-                    className="grid h-full place-items-center text-sm text-muted-foreground"
-                  >
-                    도시를 준비하는 중…
-                  </p>
-                }
+              <section
+                className="relative h-[54dvh] min-h-96 overflow-hidden rounded-3xl border bg-card shadow-sm"
+                aria-label="내 프로젝트 도시"
               >
-                {/* 프로젝트 만들기 창이 열리면 도시가 화면 전체로 깔리고 창의 흐린 막 뒤에 보인다(SCR-04-v2-create-project). */}
-                <CityScene
-                  projects={sceneProjects}
-                  nextLot={nextLot ?? null}
-                  backdrop={creatingAt !== null}
-                  onProjectSelect={(id) => navigate(`/projects/${id}`)}
-                  onLotSelect={startCreate}
-                  className={
-                    creatingAt === null ? 'h-full w-full' : 'fixed inset-0 z-40'
-                  }
+                {/* 원이 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city). 제목이 겹치는 넓은 화면에서만 */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 top-0 z-[1] hidden h-[120px] bg-linear-to-b from-[rgba(253,252,248,0.88)] to-transparent lg:block"
                 />
-              </Suspense>
-              <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                끌거나 휠을 굴려 원 돌리기 · 부지를 눌러 선택
-              </p>
-            </section>
+                <Suspense
+                  fallback={
+                    <p
+                      role="status"
+                      className="grid h-full place-items-center text-sm text-muted-foreground"
+                    >
+                      도시를 준비하는 중…
+                    </p>
+                  }
+                >
+                  {/* 프로젝트 만들기 창이 열리면 도시가 화면 전체로 깔리고 창의 흐린 막 뒤에 보인다(SCR-04-v2-create-project). */}
+                  <CityScene
+                    projects={sceneProjects}
+                    nextLot={nextLot ?? null}
+                    backdrop={creatingAt !== null}
+                    titleRef={titleRef}
+                    onProjectSelect={(id) => navigate(`/projects/${id}`)}
+                    onLotSelect={startCreate}
+                    className={
+                      creatingAt === null
+                        ? 'h-full w-full'
+                        : 'fixed inset-0 z-40'
+                    }
+                  />
+                </Suspense>
+                <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
+                  끌거나 휠을 굴려 원 돌리기 · 부지를 눌러 선택
+                </p>
+              </section>
+            </div>
             <section className="mt-7">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="flex items-center gap-2 text-lg font-bold">

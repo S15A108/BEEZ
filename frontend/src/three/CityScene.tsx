@@ -13,6 +13,8 @@ export interface CitySceneProps {
   nextLot: number | null
   /** 프로젝트 만들기 창 뒤에 깔 때. 이름표를 숨기고 더 가깝게 본다. */
   backdrop?: boolean
+  /** 도시 위에 겹쳐 놓은 제목 영역. 이 아래로 올라온 칸의 이름표만 보인다. */
+  titleRef?: RefObject<HTMLElement | null>
   onProjectSelect: (id: string) => void
   onLotSelect: (lot: number) => void
   className?: string
@@ -136,8 +138,17 @@ function CityRuntime({
     const v = view.current
     v.rot += (v.target - v.rot) * Math.min(1, delta * 8)
     renderer.render({ ...v, backdrop: latest.current.backdrop })
-    // 고리를 돌려 위로 올라간 칸의 이름표가 화면 제목 글자와 겹치지 않게 위 120px 안에서는 숨긴다.
-    renderer.placeTags(overlay.current, 120)
+    // 고리를 돌려 위로 올라간 칸의 이름표가 제목 글자와 겹치지 않게, 제목 영역 아래 끝(넓은 화면에서 도시 위에 겹칠 때)보다
+    // 위로 올라간 이름표는 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면 위 끝 12px만 비운다.
+    const title = latest.current.titleRef?.current
+    const top = title
+      ? Math.max(
+          0,
+          title.getBoundingClientRect().bottom -
+            gl.domElement.getBoundingClientRect().top,
+        ) + 12
+      : 120
+    renderer.placeTags(overlay.current, top)
   }, 1)
   return null
 }

@@ -155,8 +155,15 @@ export class CityRenderer3D {
 
   /** 화면 1px이 몇 단위인지의 역수(단위당 px). 끌기 거리를 칸 수로 바꿀 때 쓴다. */
   pixelsPerUnit(view: RingView) {
-    const frame = view.backdrop ? FRAME.backdrop : FRAME.city
-    return this.width / frame.view
+    return this.width / this.viewUnits(view)
+  }
+
+  // 화면 폭에 담는 단위 수. 나의 도시는 폭 800~1300px에서 1440과 같은 크기(1단위 ≈ 1px)로 그리고 넘치는 양옆을 자른다.
+  // 그보다 좁으면 800단위를 담아 원이 작아지고, 넓으면 1300단위를 담는다. 만들기 창 배경은 늘 820단위다.
+  private viewUnits(view: RingView) {
+    return view.backdrop
+      ? FRAME.backdrop.view
+      : Math.min(FRAME.city.view, Math.max(800, this.width))
   }
 
   /** 프로젝트 칸과 빈 부지 칸을 맞춘다. 같은 내용이면 아무것도 하지 않는다. */
@@ -208,7 +215,7 @@ export class CityRenderer3D {
     else this.highlight.removeFromParent()
 
     const frame = view.backdrop ? FRAME.backdrop : FRAME.city
-    const w = frame.view
+    const w = this.viewUnits(view)
     const halfH = (w * this.height) / this.width / 2
     const d = (halfH - (frame.top * w) / frame.view) / Math.sin(EL)
     const target = d / Math.SQRT2
