@@ -75,7 +75,8 @@ class Locator(ContractModel):
 
 class Evidence(ContractModel):
     evidence_id: StrictStr = Field(min_length=1)
-    design_item_version_id: StrictStr = Field(min_length=1)
+    # Search document evidence need not have an approved design-item relationship.
+    design_item_version_id: StrictStr | None = Field(default=None, min_length=1)
     source: Source
     locator: Locator
     text: StrictStr = Field(min_length=1)

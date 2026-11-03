@@ -32,6 +32,12 @@ class FakeProvider:
                 for check in data.get("checks", [])
             )
             or not data.get("evidence")
+            or not any(
+                entry.get("evidence_id") == "document-222-2-2"
+                and "design_item_version_id" not in entry
+                and entry.get("text") == "기획 원문\n"
+                for entry in data.get("evidence", [])
+            )
             or "completion-delta" not in request.messages[0].content
         ):
             raise ValueError("fixture delta did not reach the model")

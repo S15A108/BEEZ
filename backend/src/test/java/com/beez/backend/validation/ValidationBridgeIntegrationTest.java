@@ -128,6 +128,59 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
     }
 
+    @Test void unmappedDocumentChunkReachesAiAsEvidenceAndDoesNotBlockPass() throws Exception {
+        prepareCompleteApiForCoverage();
+        String content = "기획 문서\n검증 요청자 확인은 관리자 범위입니다\n참고 사항\n";
+        String hash = "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        long document = api.jdbc.sql("insert into document(project_id,type,title,created_by) values (:p,'API_SPEC','기획 문서',:a) returning id")
+                .param("p", project).param("a", owner).query(Long.class).single();
+        long version = api.jdbc.sql("""
+                insert into document_version(document_id,version_no,status,storage_key,content_hash,content_text,approved_at)
+                values (:d,1,'APPROVED',:key,:hash,:text,now()) returning id
+                """).param("d", document).param("key", "unmapped-" + document).param("hash", hash).param("text", content)
+                .query(Long.class).single();
+        api.jdbc.sql("insert into document_processing(document_version_id,status,text_hash) values (:v,'COMPLETED',:h)")
+                .param("v", version).param("h", hash).update();
+        api.jdbc.sql("insert into baseline_document(baseline_id,project_id,document_id,document_version_id) values (:b,:p,:d,:v)")
+                .param("b", baseline).param("p", project).param("d", document).param("v", version).update();
+        long chunk = api.jdbc.sql("""
+                insert into document_chunk(document_version_id,chunk_no,text,locator)
+                values (:v,0,'검색 텍스트는 신뢰하지 않음',cast(:locator as jsonb)) returning id
+                """).param("v", version).param("locator", "{\"start_line\":2,\"end_line\":2}")
+                .query(Long.class).single();
+        var chunkHit = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK", "id", Long.toString(chunk),
+                "source", Map.of("document_version_id", Long.toString(version))), Set.of("SEMANTIC"));
+        var documentHit = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", Long.toString(document),
+                "source", Map.of("document_version_id", Long.toString(version))), Set.of("KEYWORD"));
+        when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(chunkHit, documentHit), false, false));
+        long[] task = queuedTask();
+        long validation = Long.parseLong(acceptance.accept(CallerContext.human(owner), project, task[0], task[1],
+                (int) task[2]).validation().id());
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
+        when(analyzer.analyze(any())).thenAnswer(call -> {
+            Map<String, Object> request = call.getArgument(0);
+            sent.set(request);
+            return completeResponse(validation, request, List.of());
+        });
+
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(sent.get()).isNotNull();
+        assertThat((List<Map<String, Object>>) sent.get().get("evidence")).singleElement().satisfies(evidence -> {
+            assertThat(evidence).doesNotContainKey("design_item_version_id");
+            assertThat(evidence).containsEntry("text", "검증 요청자 확인은 관리자 범위입니다\n");
+            assertThat((Map<String, Object>) evidence.get("source"))
+                    .containsEntry("document_id", Long.toString(document))
+                    .containsEntry("document_version_id", Long.toString(version));
+        });
+        assertThat((List<?>) sent.get().get("approved_items")).hasSize(1);
+        assertThat(api.jdbc.sql("select count(*) from validation_candidate_ref where validation_id=:v")
+                .param("v", validation).query(Integer.class).single()).isZero();
+        assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
+                .query(String.class).single()).isEqualTo("PASS");
+    }
+
     @Test void documentWithFiveDesignsOnlyIncludesDirectSearchHitAndCanPass() throws Exception {
         List<Long> versions = searchDocumentWithFiveDesigns();
         var related = api.post("/api/projects/" + project + "/tasks",

@@ -593,7 +593,7 @@ backend가 권한·원문 버전·범위를 확인하고 복사한 불변 근거
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `evidence_id` | `string` | Y | 요청 안에서 유일한 근거 키 |
-| `design_item_version_id` | `ID` | Y | approved_items 안의 승인 항목 버전 |
+| `design_item_version_id` | `ID` | 조건부 | 설계 출처 근거라면 approved_items 안의 승인 항목 버전. 검색된 미연결 문서 근거는 생략 |
 | `source` | [Source](00-common.md#schema-source) | Y | 정확한 문서 버전과 표시 위치 |
 | `locator` | [ValidationTextLocator](00-common.md#schema-validationtextlocator) | Y | 원문을 복원할 범위 |
 | `text` | `string` | Y | locator의 원문 발췌. 각 행의 LF를 포함한 정확한 문자열 |

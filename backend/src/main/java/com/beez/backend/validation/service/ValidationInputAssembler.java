@@ -36,6 +36,8 @@ public class ValidationInputAssembler {
     private static final int MAX_QUERIES = 10;
     private static final int MAX_UNRESOLVED = 100;
     private static final int MAX_UNRESOLVED_TEXT = 2000;
+    // AI-A02 allows 200 KB; reserve space for JSON formatting and the snapshot hash.
+    private static final int MAX_SEARCH_CONTEXT_REQUEST_BYTES = 180_000;
     private static final Pattern API_PATH = Pattern.compile("/(?=[\\p{L}\\p{N}_{])[\\p{L}\\p{N}_{}./-]+");
     private final TaskQueryService tasks;
     private final HybridDocumentCandidateSearch search;
@@ -87,6 +89,7 @@ public class ValidationInputAssembler {
         boolean searchesComplete = selection.complete();
         Set<Long> itemIds = new LinkedHashSet<>();
         Set<Long> documentVersions = new LinkedHashSet<>();
+        Map<String, ValidationEvidenceBuilder.SearchHit> documentHits = new LinkedHashMap<>();
         target.plan().designRefs().forEach(ref -> itemIds.add(Long.parseLong(ref.designItemId())));
         if (itemIds.size() > 50) throw incomplete("design_reference_limit");
         for (String query : selection.queries()) {
@@ -109,13 +112,16 @@ public class ValidationInputAssembler {
                             || source.get("document_version_id") == null) {
                         throw incomplete("invalid_search_source");
                     }
-                    documentVersions.add(Long.parseLong(source.get("document_version_id").toString()));
+                    long versionId = Long.parseLong(source.get("document_version_id").toString());
+                    long hitId = Long.parseLong(candidate.hit().get("id").toString());
+                    String type = candidate.hit().get("type").toString();
+                    documentVersions.add(versionId);
+                    documentHits.putIfAbsent(type + ":" + hitId,
+                            new ValidationEvidenceBuilder.SearchHit(type, hitId, versionId, query));
                 }
             }
         }
-        if (hasUnmappedDocuments(projectId, baselineId, documentVersions)) {
-            searchesComplete = false; incompleteReasons.add("unmapped_search_document");
-        }
+        Set<Long> mappedDocuments = mappedDocuments(projectId, baselineId, documentVersions);
         var designs = approvedItems(projectId, baselineId, itemIds);
         Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
         for (var design : designs) byId.put(design.get("design_item_id").toString(), design);
@@ -158,11 +164,15 @@ public class ValidationInputAssembler {
             request.put("context_packet_constraints", context.constraints());
         }
         request.put("checks", checks);
-        // Only explicit source line locators can be restored as evidence. Search chunks
-        // remain candidates and cannot establish a design-to-excerpt relationship.
+        // Search documents without a design mapping are context evidence, never design references.
         var evidence = loadEvidence(projectId, baselineId, designs);
-        request.put("evidence", evidence.evidence());
+        var allEvidence = new ArrayList<>(evidence.evidence());
+        var unmappedHits = documentHits.values().stream()
+                .filter(hit -> !mappedDocuments.contains(hit.documentVersionId())).toList();
+        allEvidence.addAll(evidenceBuilder.buildSearchEvidence(projectId, baselineId, unmappedHits));
+        request.put("evidence", List.copyOf(allEvidence));
         request.put("execution_budget_ms", executionBudgetMs);
+        limitSearchContext(request);
         request.put("input_snapshot_hash", snapshotHash(request, baselineId));
         boolean complete = searchesComplete && !relatives.truncated() && evidence.unavailableVersionIds().isEmpty();
         if (relatives.truncated()) incompleteReasons.add("related_task_limit");
@@ -183,6 +193,7 @@ public class ValidationInputAssembler {
         checks.add(check(ValidationRules.COMPLETION_DELTA_CHECK, "PLAN_COMPLETENESS", designVersions, List.of()));
         request.put("checks", checks);
         request.put("completion_delta", delta);
+        limitSearchContext(request);
         request.put("input_snapshot_hash", snapshotHash(request, input.baselineId()));
     }
 
@@ -190,6 +201,28 @@ public class ValidationInputAssembler {
     public ValidationEvidenceBuilder.Result loadEvidence(long projectId, long baselineId,
                                                          List<Map<String, Object>> approvedItems) {
         return evidenceBuilder.build(projectId, baselineId, approvedItems);
+    }
+
+    public boolean searchEvidenceCurrent(long projectId, long baselineId, List<Map<String, Object>> evidence) {
+        return evidenceBuilder.searchEvidenceCurrent(projectId, baselineId, evidence);
+    }
+
+    /** Optional search context must not crowd required inputs out of the AI request. */
+    private void limitSearchContext(Map<String, Object> request) {
+        @SuppressWarnings("unchecked")
+        var original = (List<Map<String, Object>>) request.get("evidence");
+        var retained = new ArrayList<>(original.stream().filter(e -> e.get("design_item_version_id") != null).toList());
+        request.put("evidence", retained);
+        int bytes = json.writeValueAsString(request).getBytes(StandardCharsets.UTF_8).length;
+        for (var entry : original) {
+            if (entry.get("design_item_version_id") != null) continue;
+            // Include allowance for separators added by downstream JSON encoders.
+            int extra = json.writeValueAsString(entry).getBytes(StandardCharsets.UTF_8).length + 64;
+            if (bytes + extra > MAX_SEARCH_CONTEXT_REQUEST_BYTES) continue;
+            retained.add(entry);
+            bytes += extra;
+        }
+        request.put("evidence", List.copyOf(retained));
     }
 
     record QuerySelection(List<String> queries, boolean complete, List<String> incompleteReasons) {}
@@ -271,9 +304,9 @@ public class ValidationInputAssembler {
         return items;
     }
 
-    /** Every found document must be current-baseline and mapped to a baseline design. */
-    private boolean hasUnmappedDocuments(long projectId, long baselineId, Set<Long> versionIds) {
-        if (versionIds.isEmpty()) return false;
+    /** A search hit can be used as document evidence without asserting a design relationship. */
+    private Set<Long> mappedDocuments(long projectId, long baselineId, Set<Long> versionIds) {
+        if (versionIds.isEmpty()) return Set.of();
         var rows = jdbc.sql("""
                 select distinct bd.document_version_id
                   from baseline_document bd
@@ -287,7 +320,7 @@ public class ValidationInputAssembler {
                 .query().listOfRows();
         Set<Long> mapped = new LinkedHashSet<>();
         for (var row : rows) mapped.add(((Number) row.get("document_version_id")).longValue());
-        return !mapped.containsAll(versionIds);
+        return mapped;
     }
 
     /**

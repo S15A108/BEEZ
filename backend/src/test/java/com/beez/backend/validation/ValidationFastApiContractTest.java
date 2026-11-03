@@ -82,6 +82,12 @@ class ValidationFastApiContractTest {
             input.put("checks", List.of(Map.of("key", "completion-delta", "kind", "PLAN_COMPLETENESS",
                     "design_item_version_ids", List.of("311"), "related_plan_revision_ids", List.of())));
             input.put("unresolved", List.of());
+            var existingEvidence = (List<Map<String, Object>>) input.get("evidence");
+            input.put("evidence", List.of(existingEvidence.getFirst(), Map.of(
+                    "evidence_id", "document-222-2-2", "source", Map.of("document_id", "202",
+                            "document_version_id", "222", "version_no", 1, "location", "2~2행"),
+                    "locator", Map.of("type", "text_lines", "start_line", 2, "end_line", 2),
+                    "text", "기획 원문\n", "text_hash", "a".repeat(64), "normalization_version", "utf8-lf-v1")));
 
             var aiConfig = new BeezProperties.Ai("http://127.0.0.1:" + port, token,
                     Duration.ofSeconds(3), Duration.ofSeconds(30));

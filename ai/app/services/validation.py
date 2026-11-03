@@ -79,8 +79,11 @@ For unknown optional IDs use null, never guess. related_task_id means only a
 DIFFERENT task identified by the check's related_plan_revision_ids. The current
 plan_revision.task_id is not a related task; when no related plan is supplied,
 related_task_id must be null. A finding's design_item_version_id, sources and
-evidence_ids must belong to that same check's design_item_version_ids; if the
-check has no design versions, all such references must be null or empty.
+evidence_ids must belong to that same check's design_item_version_ids. Evidence
+without a design_item_version_id is a searched document excerpt, not a design
+reference. It may be cited only on plan-completeness with null design IDs; use it
+as context and never assert it belongs to a design. Do not infer a missing policy
+or a mismatch merely because a document is unrelated or does not mention a fact.
 When a supplied source excerpt explicitly contradicts an approved item's content,
 report that concrete conflict on the checked DESIGN_ALIGNMENT key for that item,
 cite the exact evidence ID and source, and keep the approved content authoritative.
@@ -195,22 +198,23 @@ def validate_input(body: ValidateRequest) -> None:
         ):
             raise InvalidInput()
     for e in body.evidence:
-        if (
-            e.design_item_version_id not in items
-            or e.locator.end_line < e.locator.start_line
+        if e.locator.end_line < e.locator.start_line or (
+            e.design_item_version_id is not None
+            and e.design_item_version_id not in items
         ):
             raise InvalidInput()
-        item_source = items[e.design_item_version_id].source
-        if item_source is None or (
-            e.source.document_id,
-            e.source.document_version_id,
-            e.source.version_no,
-        ) != (
-            item_source.document_id,
-            item_source.document_version_id,
-            item_source.version_no,
-        ):
-            raise InvalidInput()
+        if e.design_item_version_id is not None:
+            item_source = items[e.design_item_version_id].source
+            if item_source is None or (
+                e.source.document_id,
+                e.source.document_version_id,
+                e.source.version_no,
+            ) != (
+                item_source.document_id,
+                item_source.document_version_id,
+                item_source.version_no,
+            ):
+                raise InvalidInput()
         # The caller validates the full-text hash; this checks the supplied range shape.
         line_count = e.text.count("\n") + (0 if e.text.endswith("\n") else 1)
         if (
@@ -280,6 +284,11 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
             if finding.design_item_version_id is not None
             else check.design_item_version_ids
         )
+        document_context_allowed = (
+            finding.design_item_version_id is None
+            and check.key == "plan-completeness"
+            and check.kind == "PLAN_COMPLETENESS"
+        )
         sources = {
             _source_key(items[item_id].source)
             for item_id in cited_versions
@@ -289,6 +298,7 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
             _source_key(entry.source)
             for entry in evidence.values()
             if entry.design_item_version_id in cited_versions
+            or (document_context_allowed and entry.design_item_version_id is None)
         )
         check_tasks = {plans[pid].task_id for pid in check.related_plan_revision_ids}
         for rule in body.rule_findings:
@@ -307,7 +317,13 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
             entry = evidence.get(evidence_id)
             if (
                 entry is None
-                or entry.design_item_version_id not in cited_versions
+                or not (
+                    entry.design_item_version_id in cited_versions
+                    or (
+                        document_context_allowed
+                        and entry.design_item_version_id is None
+                    )
+                )
                 or _source_key(entry.source) not in finding_sources
             ):
                 raise ValueError("unknown evidence")
@@ -321,6 +337,13 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
         if (
             finding.kind in {"MISMATCH", "CONFLICT"}
             and not (finding.design_item_version_id or finding.related_task_id)
+            and not (
+                document_context_allowed
+                and any(
+                    evidence[eid].design_item_version_id is None
+                    for eid in finding.evidence_ids
+                )
+            )
             and not (
                 finding.kind == "MISMATCH"
                 and check.key == "completion-delta"

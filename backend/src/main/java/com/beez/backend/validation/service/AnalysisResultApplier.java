@@ -186,18 +186,22 @@ public class AnalysisResultApplier {
             // A check can cover multiple versions (e.g. completion-delta). Once a
             // finding identifies one version, its citations must belong to that version.
             List<String> citedVersions = version == null ? versions : List.of(String.valueOf(version));
+            boolean documentContextAllowed = version == null && "plan-completeness".equals(check.get("key"))
+                    && "PLAN_COMPLETENESS".equals(check.get("kind"));
             for (String key : citedVersions) {
                 var item = items.get(key);
                 if (item != null && item.get("source") instanceof Map<?, ?>) allowed.add(sourceKey(map(item.get("source"))));
             }
             for (var entry : evidence.values()) {
-                if (citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))
+                if ((citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))
+                        || (documentContextAllowed && entry.get("design_item_version_id") == null))
                         && entry.get("source") instanceof Map<?, ?>) allowed.add(sourceKey(map(entry.get("source"))));
             }
             for (var source : objects(finding.get("sources"))) if (!allowed.contains(sourceKey(source))) return false;
             for (String evidenceId : strings(finding.get("evidence_ids"))) {
                 var entry = evidence.get(evidenceId);
-                if (entry == null || !citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))) return false;
+                if (entry == null || !(citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))
+                        || (documentContextAllowed && entry.get("design_item_version_id") == null))) return false;
             }
         }
         return true;
@@ -227,7 +231,8 @@ public class AnalysisResultApplier {
             boolean supported = false;
             for (String evidenceId : strings(finding.get("evidence_ids"))) {
                 var entry = evidence.get(evidenceId);
-                if (entry != null && java.util.Objects.equals(entry.get("design_item_version_id"), finding.get("design_item_version_id"))
+                if (entry != null && finding.get("design_item_version_id") != null
+                        && java.util.Objects.equals(entry.get("design_item_version_id"), finding.get("design_item_version_id"))
                         && entry.get("text") instanceof String text && EXPLICIT_UNDECIDED_POLICY.matcher(text).find()) supported = true;
             }
             if (!supported) return false;
@@ -264,20 +269,33 @@ public class AnalysisResultApplier {
         for (var candidate : currentRelated.candidates()) related.put(candidate.taskId(), candidate.planRevisionId());
         if (currentRelated.truncated() || currentRelated.baselineId() != analyzedBaseline
                 || !related.equals(input.relatedPlanRevisions())) return false;
+        Set<Long> documentIds = new HashSet<>();
+        var documentEvidence = objects(request.get("evidence")).stream()
+                .filter(entry -> entry.get("design_item_version_id") == null).toList();
+        for (var entry : documentEvidence) {
+            Long document = id(map(entry.get("source")).get("document_version_id"));
+            if (document == null) return false;
+            documentIds.add(document);
+        }
         if (!versions.isEmpty()) {
             var rows = jdbc.sql("select id,source_document_version_id from design_item_version where id in (:ids) order by id for share")
                     .param("ids", versions).query().listOfRows();
-            List<Long> documents = rows.stream().map(row -> id(row.get("source_document_version_id")))
-                    .filter(java.util.Objects::nonNull).distinct().sorted().toList();
-            if (!documents.isEmpty()) {
-                jdbc.sql("select document_version_id from document_processing where document_version_id in (:ids) order by document_version_id for share")
-                        .param("ids", documents).query().listOfRows();
-                jdbc.sql("select id from document_version where id in (:ids) order by id for share")
-                        .param("ids", documents).query().listOfRows();
-            }
+            rows.stream().map(row -> id(row.get("source_document_version_id")))
+                    .filter(java.util.Objects::nonNull).forEach(documentIds::add);
+        }
+        if (!documentIds.isEmpty()) {
+            List<Long> documents = documentIds.stream().sorted().toList();
+            jdbc.sql("select document_version_id from document_processing where document_version_id in (:ids) order by document_version_id for share")
+                    .param("ids", documents).query().listOfRows();
+            jdbc.sql("select id from document_version where id in (:ids) order by id for share")
+                    .param("ids", documents).query().listOfRows();
         }
         var evidence = assembler.loadEvidence(v.projectId(), analyzedBaseline, items);
-        if (!evidence.unavailableVersionIds().isEmpty() || !evidence.evidence().equals(request.get("evidence"))) return false;
+        var designEvidence = objects(request.get("evidence")).stream()
+                .filter(entry -> entry.get("design_item_version_id") != null).toList();
+        if (!evidence.unavailableVersionIds().isEmpty() || !evidence.evidence().equals(designEvidence)
+                || (!documentEvidence.isEmpty()
+                        && !assembler.searchEvidenceCurrent(v.projectId(), analyzedBaseline, documentEvidence))) return false;
         Object packet = map(map(request.get("plan_revision")).get("plan")).get("context_packet_id");
         var context = assembler.loadContext(v.projectId(), v.taskId(), analyzedBaseline,
                 new HashSet<>(ids), packet == null ? null : packet.toString());

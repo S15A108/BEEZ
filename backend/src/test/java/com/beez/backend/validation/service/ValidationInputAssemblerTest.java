@@ -127,7 +127,7 @@ class ValidationInputAssemblerTest {
         assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
     }
 
-    @Test void foundDocumentWithoutBaselineDesignMappingCannotBeComplete() {
+    @Test void foundDocumentWithoutBaselineDesignMappingIsEvidenceAndDoesNotBlockCompletion() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         var document = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", "7",
                 "source", Map.of("document_version_id", "22")), Set.of("KEYWORD"));
@@ -135,7 +135,33 @@ class ValidationInputAssemblerTest {
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(document), false, false));
         when(jdbc.sql(contains("select distinct bd.document_version_id")).param(anyString(), any()).param(anyString(), any())
                 .param(anyString(), any()).query().listOfRows()).thenReturn(List.of());
-        assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
+        var evidence = Map.<String, Object>of("evidence_id", "document-22-1-1", "text", "원문");
+        when(evidenceBuilder.buildSearchEvidence(eq(1L), eq(2L), anyList())).thenReturn(List.of(evidence));
+        var result = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
+        assertTrue(result.searchComplete());
+        assertEquals(List.of(evidence), result.request().get("evidence"));
+        assertEquals(List.of(), result.request().get("approved_items"));
+        verify(evidenceBuilder).buildSearchEvidence(eq(1L), eq(2L),
+                argThat(hits -> hits.size() == 1 && hits.getFirst().documentVersionId() == 22L));
+    }
+
+    @Test void completionReportKeepsRequiredInputsAndDropsSearchContextIfItWouldExceedBudget() {
+        when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
+        var document = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", "7",
+                "source", Map.of("document_version_id", "22")), Set.of("KEYWORD"));
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(document), false, false));
+        when(jdbc.sql(contains("select distinct bd.document_version_id")).param(anyString(), any()).param(anyString(), any())
+                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of());
+        var context = Map.<String, Object>of("evidence_id", "document-22-1-1", "text", "a".repeat(15000));
+        when(evidenceBuilder.buildSearchEvidence(eq(1L), eq(2L), anyList())).thenReturn(List.of(context));
+        var result = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
+        assertEquals(List.of(context), result.request().get("evidence"));
+        var delta = List.of(Map.<String, Object>of("description", "b".repeat(170000)));
+        assembler.bindCompletionDelta(result, delta);
+        assertEquals(List.of(), result.request().get("evidence"));
+        assertEquals(delta, result.request().get("completion_delta"));
+        assertTrue(result.searchComplete());
     }
 
     @Test void moreThanFiftyDirectDesignHitsMarksSearchIncomplete() {

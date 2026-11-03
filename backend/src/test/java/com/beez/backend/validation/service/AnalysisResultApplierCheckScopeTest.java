@@ -67,4 +67,21 @@ class AnalysisResultApplierCheckScopeTest {
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(applier, "findingsMatchChecks", request, wrongSource)).isFalse();
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(applier, "findingsMatchChecks", request, wrongEvidence)).isFalse();
     }
+
+    @Test void documentOnlyEvidenceIsScopedToPlanCompletenessAndCannotBeAttributedToADesign() {
+        var source = Map.of("document_id", "2", "document_version_id", "22", "version_no", 1, "location", "1~2행");
+        var request = Map.<String, Object>of(
+                "checks", List.of(
+                        Map.of("key", "plan-completeness", "kind", "PLAN_COMPLETENESS", "design_item_version_ids", List.of(), "related_plan_revision_ids", List.of()),
+                        Map.of("key", "design", "kind", "DESIGN_ALIGNMENT", "design_item_version_ids", List.of("101"), "related_plan_revision_ids", List.of())),
+                "approved_items", List.of(Map.of("id", "101")),
+                "evidence", List.of(Map.of("evidence_id", "doc", "source", source, "text", "정책: 미정")),
+                "related_plans", List.of());
+        var matching = Map.of("findings", List.of(Map.of("check_key", "plan-completeness", "sources", List.of(source), "evidence_ids", List.of("doc"))));
+        var wrongDesign = Map.of("findings", List.of(Map.of("check_key", "design", "design_item_version_id", "101", "sources", List.of(source), "evidence_ids", List.of("doc"))));
+        var missingPolicy = Map.of("findings", List.of(Map.of("kind", "MISSING_POLICY", "check_key", "plan-completeness", "sources", List.of(source), "evidence_ids", List.of("doc"))));
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(applier, "findingsMatchChecks", request, matching)).isTrue();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(applier, "findingsMatchChecks", request, wrongDesign)).isFalse();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(applier, "missingPoliciesSupported", request, missingPolicy)).isFalse();
+    }
 }

@@ -166,6 +166,81 @@ async def test_context_packet_constraints_are_sent_as_untrusted_context():
     assert "untrusted contextual data" in provider.calls[0].messages[0].content
 
 
+def unlinked_document_request():
+    body = fixture_request()
+    body["evidence"].append(
+        {
+            "evidence_id": "document-222-2-2",
+            "source": {
+                "document_id": "202",
+                "document_version_id": "222",
+                "version_no": 1,
+                "location": "2~2행",
+            },
+            "locator": {"type": "text_lines", "start_line": 2, "end_line": 2},
+            "text": "기획 원문\n",
+            "text_hash": "a" * 64,
+            "normalization_version": "utf8-lf-v1",
+        }
+    )
+    return body
+
+
+@pytest.mark.asyncio
+async def test_unlinked_document_is_sent_as_evidence_and_may_be_cited_for_plan():
+    body = unlinked_document_request()
+    result = result_for(body)
+    result["findings"] = [
+        {
+            "check_key": "plan-completeness",
+            "kind": "MISMATCH",
+            "severity": "WARNING",
+            "message": "기획 원문과 계획의 범위가 다릅니다",
+            "sources": [body["evidence"][-1]["source"]],
+            "evidence_ids": ["document-222-2-2"],
+            "suggested_action": "계획 범위를 확인하세요",
+        }
+    ]
+    provider = Provider(result)
+    response = await analyze(
+        ValidateRequest.model_validate(body), LLMClient(provider), "test-model"
+    )
+    sent = json.loads(provider.calls[0].messages[1].content)
+    assert sent["evidence"][-1] == body["evidence"][-1]
+    assert response["result"]["findings"][0]["evidence_ids"] == ["document-222-2-2"]
+
+
+def test_unlinked_document_cannot_be_attributed_to_design_or_prove_missing_policy():
+    body = unlinked_document_request()
+    body["evidence"][-1]["text"] = "정책: 미정\n"
+    parsed = ValidateRequest.model_validate(body)
+    validate_input(parsed)
+    result = result_for(body)
+    finding = {
+        "check_key": "design-api-login",
+        "kind": "MISMATCH",
+        "severity": "WARNING",
+        "message": "문서 확인",
+        "design_item_id": "301",
+        "design_item_version_id": "311",
+        "sources": [body["evidence"][-1]["source"]],
+        "evidence_ids": ["document-222-2-2"],
+        "suggested_action": "확인하세요",
+    }
+    result["findings"] = [finding]
+    with pytest.raises(ValueError, match="unknown source"):
+        validate_output(result, parsed)
+    finding.update(
+        check_key="plan-completeness",
+        kind="MISSING_POLICY",
+        severity="BLOCKING",
+        design_item_id=None,
+        design_item_version_id=None,
+    )
+    with pytest.raises(ValueError, match="policy absence is not established"):
+        validate_output(result, parsed)
+
+
 def delta_request():
     body = fixture_request()
     body["completion_delta"] = [
