@@ -36,6 +36,16 @@ from app.services.llm_client import (
 
 # Serialized payload bound, the same as the other internal AI routes.
 MAX_PAYLOAD_BYTES = 262_144
+# A history turn may be a whole answer (10,000 chars); the model needs its
+# gist for a follow-up, not all of it, so each turn is cut to this length.
+MAX_HISTORY_TURN_PAYLOAD_CHARS = 2000
+
+
+def clip_turn(text: str) -> str:
+    """The first `MAX_HISTORY_TURN_PAYLOAD_CHARS` of a turn, marked when cut."""
+    if len(text) <= MAX_HISTORY_TURN_PAYLOAD_CHARS:
+        return text
+    return text[: MAX_HISTORY_TURN_PAYLOAD_CHARS - 1] + "…"
 
 
 class _Out(BaseModel):
@@ -160,7 +170,8 @@ def chat_payload(request: BeeChatRequest, evidence: Sequence[RetrievedEvidence])
             ],
             "known_unresolved": list(request.unresolved),
             "history": [
-                {"role": turn.role, "text": turn.text} for turn in request.history
+                {"role": turn.role, "text": clip_turn(turn.text)}
+                for turn in request.history
             ],
         },
         ensure_ascii=False,

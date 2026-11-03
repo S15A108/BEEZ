@@ -8,6 +8,7 @@ from .instance import (
     render_system_prompt,
 )
 from .proposer import (
+    MAX_HISTORY_TURN_PAYLOAD_CHARS,
     MAX_PAYLOAD_BYTES,
     AnswerProposal,
     AnswerProposer,
@@ -15,6 +16,7 @@ from .proposer import (
     ModelAnswer,
     ModelCitation,
     chat_payload,
+    clip_turn,
 )
 from .service import (
     INSUFFICIENT_TEXT,
@@ -33,6 +35,7 @@ from .service import (
 __all__ = [
     "GREETING",
     "INSUFFICIENT_TEXT",
+    "MAX_HISTORY_TURN_PAYLOAD_CHARS",
     "MAX_PAYLOAD_BYTES",
     "OUT_OF_SCOPE_TEXT",
     "PERSONA",
@@ -48,6 +51,7 @@ __all__ = [
     "ModelCitation",
     "build_instance",
     "chat_payload",
+    "clip_turn",
     "evidence_location",
     "generate_bee_chat",
     "render_system_prompt",

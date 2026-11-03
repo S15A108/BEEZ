@@ -55,7 +55,7 @@ Jira 작업 내용 2 "질문 → 의미 검색 → 근거 선택 → 응답 생�
 | `approved_items[]` | ApprovedDesignItem | N | 00-common DesignItemVersion 중 `status=APPROVED`만. 최대 500. `id`·`design_item_id`·`key` 유일. 종류별 필수 필드는 #134와 같은 검사. **`source.document_version_id`는 `scope.document_version_ids` 안이어야 하고, `DOCUMENT_REVIEW`에서는 `source`가 있는 항목만 받는다**(어기면 422). 검토 범위 밖 문서의 설계가 답에 섞이지 않게 하기 위함이며, 검토 중인 문서에서 나온 승인 항목이 없으면 `[]`다 |
 | `related_tasks[]` | TaskDetail | N | 00-common TaskDetail **그대로** 보내도 된다. AI는 `id`·`key`·`status`·`assignee_member_id`·`current_plan_revision.plan`의 `title`·`goal`·`design_refs`를 읽어 모델에 보이고 나머지는 무시한다. 최대 100 |
 | `unresolved[]` | string ≤ 2,000 | N | BE가 이미 아는 미확정. 모델에 보이고 응답 앞머리에 그대로 돌아온다 |
-| `history[]` | `{role: USER\|BEE, text}` | N | 열린 창의 이전 문답. 최대 10턴. 데이터로만 취급(8절) |
+| `history[]` | `{role: USER\|BEE, text}` | N | 열린 창의 이전 문답. 최대 10턴. USER 턴은 질문 상한(2,000자), BEE 턴은 답변 상한(10,000자)까지 받으므로 이 경로가 돌려준 답변은 그대로 이력이 된다. 모델에는 턴당 앞 2,000자만 보이고 잘린 턴은 `…`로 표시한다(8절). 데이터로만 취급 |
 | `max_evidence` | integer 1~50 | N | 모델에 보일 근거 수. 기본 12 |
 
 RetrievedEvidence: 00-common과 같이 `evidence_id`, `document_id`, `document_version_id`, `version_no`, `chunk_key`, `text`(≤ 20,000자), `locator`(`text_lines` 행 범위), `embedding_profile_id`. 화면 표시용 `title`(문서 제목)·`section_title`(절 제목)은 선택이며 그대로 `citations`에 실린다.
@@ -101,7 +101,7 @@ RetrievedEvidence: 00-common과 같이 `evidence_id`, `document_id`, `document_v
 | --- | --- |
 | 질문 / 답변 본문 | 2,000자 / 10,000자 |
 | 검색 결과 | 요청 50건, 모델 전달 `max_evidence`(기본 12). 근거 `text` 20,000자 |
-| 승인 항목 / 관련 작업 / 이력 | 500 / 100 / 10턴 |
+| 승인 항목 / 관련 작업 / 이력 | 500 / 100 / 10턴(USER 2,000자·BEE 10,000자, 모델 전달은 턴당 2,000자) |
 | 인용 / 설계 항목 참조 / 작업 참조 | 20 / 20 / 20 |
 | `unresolved` / `next_actions` | 50 / 10, 각 2,000자 |
 | 모델 입력 | 프로젝트·근거·항목·작업·이력 JSON 256 KiB 초과 시 422 `invalid_ai_input` |
@@ -129,7 +129,7 @@ BE는 502·504에서 템플릿 폴백(`origin=TEMPLATE`)을 쓸 수 있고, 200�
 ## 8. 대화 이력 보관 범위 (Jira 작업 내용 5)
 
 - **AI는 대화를 저장하지 않는다.** 질문·답변·이력은 요청에 실린 범위만 보고 응답 뒤 남기지 않는다. 개인 원문(PRIVATE 기록)은 받지 않는다(#95 C12: 비비는 PRIVATE 제외).
-- 기본안(Q13·BEE-A01 수정안)은 "창을 연 동안만"이며 FE가 메모리에 둔다. 후속 질문은 FE가 보낸 이력을 BE가 `history`(최대 10턴)로 전달한다.
+- 기본안(Q13·BEE-A01 수정안)은 "창을 연 동안만"이며 FE가 메모리에 둔다. 후속 질문은 FE가 보낸 이력을 BE가 `history`(최대 10턴)로 전달한다. BEE 턴은 답변 상한(10,000자)까지 그대로 넣을 수 있고, AI가 모델에 보일 때 턴당 앞 2,000자로 자른다(절단 표시 `…`). 요약은 하지 않으며 더 긴 맥락이 필요하면 BE가 턴 수를 조절한다.
 - #95 C8의 **본인 이력 보존안**을 채택하면 BE가 질문·답변·근거 ID를 저장해 다음 요청의 `history`로 넘긴다. AI 계약은 바뀌지 않는다. 보존 기간·삭제·프로젝트 제외·탈퇴·프로젝트 삭제 후 처리는 BE·정책 결정이며 이 계약은 전제하지 않는다.
 - DOC-A22(보완 제안 대화)는 별도 경로이며 이 이력과 섞지 않는다.
 
@@ -148,6 +148,7 @@ BE는 502·504에서 템플릿 폴백(`origin=TEMPLATE`)을 쓸 수 있고, 200�
 ## 11. 담당자 확인 필요·미완료
 
 - 2026-11-03 PR #96 리뷰 반영: 원문에 없는 인용은 출력 전체 거부(P1), 승인 항목 출처의 검토 범위 검사(P2), 관련 작업만으로도 근거 인정(P2), `assignee_member_id` 모델 전달(P2), 프로젝트 이름·소개를 시스템 지시문에서 빼고 데이터로 전달(P2).
+- 2026-11-03 PR #96 2차 리뷰 반영: 이력 BEE 턴 길이를 답변 상한(10,000자)으로 올리고 모델 전달은 턴당 2,000자로 절단(P2). 인용 실패 주장 잔존(P2)은 1차 반영(원문에 없는 인용은 출력 전체 거부)으로 이미 해결됨.
 - 오서현: BEE-A01에서 `/v1/bee/chat` 호출 위치와 `retrieved_evidence` 구성(AI-A04 질의 임베딩 → 허용 집합 SQL top-k, 정상 0건은 `[]`), `approved_items` 범위(현재 baseline 전체인지 검색 결과와 관련된 항목만인지; `DOCUMENT_REVIEW`에서는 검토 문서에서 나온 항목만), `related_tasks` 선정 기준(`task_id`가 있을 때 그 작업만인지), `answer_id` 발급·BEE-A03 피드백 저장 항목(답변 ID·근거 문서 버전), `citations`→BeeCitation 변환과 `title` 채움, 409 `index_not_ready`·`baseline_changed` 처리, 502 거부 시 재시도 횟수, `instance` 저장 여부와 컬럼.
 - 전진: `ProjectCreatedListener`에서 `/v1/bee/instances` 호출과 실패 처리(2절 제안). 완료 조건 "리스너 연동 확인"은 BE 변경이 필요하며 이 PR에는 AI 쪽 경로·예시만 있다.
 - 화면 139(박상은): `citations`·`grounded`·`notices`·`design_refs`·`task_refs` 표시와 `[n]` 연결(9절). 현재 `BibiPanel`은 `sources`만 쓴다.

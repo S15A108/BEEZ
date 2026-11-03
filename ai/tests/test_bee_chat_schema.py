@@ -295,6 +295,32 @@ def test_result_grounding_invariants():
     assert by_item.grounded and not by_item.citations
 
 
+def test_history_takes_a_full_answer_but_a_user_turn_only_a_question():
+    # PR #96 P2: a 2,243-char answer this route returned must be accepted
+    # back as BEE history; a user turn stays within the question bound.
+    long_answer = "가" * 2243
+    body = from_json(
+        BeeChatRequest,
+        request(
+            history=[
+                {"role": "USER", "text": "이전 질문"},
+                {"role": "BEE", "text": long_answer},
+            ]
+        ),
+    )
+    assert body.history[1].text == long_answer
+    with pytest.raises(ValidationError):
+        from_json(
+            BeeChatRequest, request(history=[{"role": "USER", "text": long_answer}])
+        )
+    with pytest.raises(ValidationError):
+        from_json(
+            BeeChatRequest, request(history=[{"role": "BEE", "text": "가" * 10_001}])
+        )
+    with pytest.raises(ValidationError):
+        from_json(BeeChatRequest, request(history=[{"role": "BEE", "text": "  "}]))
+
+
 def test_instance_hash_must_match_the_prompt():
     fields = {
         "project_id": "101",

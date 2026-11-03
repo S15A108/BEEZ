@@ -18,7 +18,7 @@
 
 1. **의미 검색은 BE 몫이다.** BE가 AI-A04로 질문을 임베딩하고 허용 집합(현재 baseline 또는 명시 검토 버전)·READY·활성 프로필 안에서 top-k를 구해 `retrieved_evidence`로 보낸다. 이 모듈은 임베딩이나 DB를 호출하지 않는다. 요청 검증에서 근거와 승인 항목의 출처가 `scope` 안인지 확인한다(`DOCUMENT_REVIEW`는 출처 있는 승인 항목만).
 2. **근거 선택**: BE 순서(검색 순위)를 그대로 두고 `max_evidence`(기본 12)까지만 모델에 보인다. 넘친 수는 `evidence_omitted`와 `notices`에 남는다.
-3. **응답 생성**: 시스템 메시지는 프로젝트와 무관한 고정 규칙이다. 프로젝트 이름·소개(`instance.project`), 근거 원문, 승인 항목, 관련 작업(ID·키·상태·담당자·계획), 이력은 모두 사용자 메시지의 데이터로 간다. 모델은 `{status, text, citations[{evidence_id, quote, claim}], design_refs, task_refs, unresolved, next_actions}`를 돌려준다.
+3. **응답 생성**: 시스템 메시지는 프로젝트와 무관한 고정 규칙이다. 프로젝트 이름·소개(`instance.project`), 근거 원문, 승인 항목, 관련 작업(ID·키·상태·담당자·계획), 이력은 모두 사용자 메시지의 데이터로 간다. 이력 BEE 턴은 답변 상한(10,000자)까지 받되 모델에는 턴당 앞 2,000자만 보인다(`clip_turn`). 모델은 `{status, text, citations[{evidence_id, quote, claim}], design_refs, task_refs, unresolved, next_actions}`를 돌려준다.
 4. **검증**
    - 입력에 없는 `evidence_id`·설계 항목 버전 ID·작업 ID, **근거 원문에 없는 `quote`**, `citations`에 없는 본문 `[n]`, 빈 `ANSWERED` 본문은 모순이므로 **출력 전체를 거부**한다(`invalid_output`, usage는 실패로 기록, HTTP 502). 원문에 없는 인용을 그 인용만 지우면 그 주장이 본문에 남으므로 거부한다.
    - 같은 (근거, 인용)을 거듭 쓰면 한 번호로 합치고 본문 표식을 그 번호로 바꾼다.

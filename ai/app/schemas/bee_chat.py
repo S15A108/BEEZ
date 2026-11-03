@@ -77,6 +77,10 @@ Title = Annotated[str, StringConstraints(min_length=1, max_length=500)]
 ContentHash = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 _MARKER = re.compile(r"\[(\d{1,2})\]")
+# A history turn may be a whole answer, so it takes the answer bound.
+HistoryText = Annotated[
+    str, StringConstraints(min_length=1, max_length=MAX_ANSWER_CHARS)
+]
 
 
 class _Strict(BaseModel):
@@ -244,14 +248,22 @@ class RelatedTask(_Lenient):
 
 
 class ChatTurn(_Strict):
-    """A prior turn of the open conversation, supplied by the caller as data."""
+    """A prior turn of the open conversation, supplied by the caller as data.
+
+    A USER turn is a past question and is bounded like one; a BEE turn is a
+    past answer and may be as long as an answer, so anything this route
+    returned can come back as history. The model is shown at most
+    `MAX_HISTORY_TURN_PAYLOAD_CHARS` of each turn (see the proposer).
+    """
 
     role: HistoryRole
-    text: Text
+    text: HistoryText
 
     @model_validator(mode="after")
     def readable(self) -> Self:
         _nonblank(self.text, "turn text")
+        if self.role == "USER" and len(self.text) > MAX_QUESTION_CHARS:
+            raise ValueError("a user turn is bounded like a question")
         return self
 
 
