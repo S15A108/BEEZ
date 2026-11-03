@@ -169,7 +169,7 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void carriedValidationKeepsSearchCandidatesForStartGate() throws Exception {
+    void carriedSearchCandidatesRemainAuditOnlyAtStartGate() throws Exception {
         long[] t = createTask("A", api.implementsRef("API-01"));
         long v = passValidation(t[0], t[1]);
         api.jdbc.sql("update validation set summary=summary || '{\"analysis_baseline_id\":1}'::jsonb where id=:v")
@@ -186,14 +186,13 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
         long copy = latestOf(rev2);
         assertThat(count("select count(*) from validation_candidate_ref where validation_id = " + copy)).isEqualTo(1);
 
-        // 복사된 검증도 검색 후보의 버전을 검사한다. 원본 번호로 시작해도 우회할 수 없다.
+        // 명시 참조가 아닌 검색 후보는 시작 관문에서 무효화 근거로 쓰지 않는다.
         api.jdbc.sql("""
                         delete from baseline_item
                          where design_item_id = :item and baseline_id = (select current_baseline_id from project where id = :p)
                         """).param("item", candidate).param("p", projectId).update();
         HttpResponse<String> started = state(t[0], "START", rev2, TaskApiSupport.longField(renamed.body(), "lock_version"), v, null);
-        assertThat(started.statusCode()).as(started.body()).isEqualTo(409);
-        assertThat(started.body()).contains("\"code\":\"version_conflict\"");
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
     }
 
     @Test

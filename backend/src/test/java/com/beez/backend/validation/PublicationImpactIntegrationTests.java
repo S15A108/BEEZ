@@ -263,7 +263,7 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
     // ---- S1: 발행 → 검증 STALE, IN_PROGRESS 만 WAITING ----
 
     @Test
-    void publication_stalesPassThatComparedChangedSearchCandidate() throws Exception {
+    void publicationOfSearchCandidateDoesNotStaleOrHoldUnrelatedTask() throws Exception {
         long[] compared = createTask("후보 비교", api.readsRef("API-02"));
         long comparedPass = api.passValidation(compared[0]);
         long[] unrelated = createTask("후보 없음", api.readsRef("API-02"));
@@ -271,11 +271,16 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         repository.saveCandidateRefs(comparedPass, List.of(Map.of(
                 "design_item_id", String.valueOf(api.designItemId("API-01")),
                 "id", String.valueOf(api.currentVersionId("API-01")))));
+        HttpResponse<String> started = state(compared[0], "START", compared[1], compared[2], comparedPass, null);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
 
         ImpactRequest request = publishApi01();
-        assertThat(ids(preview(request).staleValidations())).containsExactly(String.valueOf(comparedPass));
-        assertThat(ids(apply(request).staleValidations())).containsExactly(String.valueOf(comparedPass));
-        assertThat(column("validation", "status", comparedPass)).isEqualTo("STALE");
+        assertThat(preview(request).staleValidations()).isEmpty();
+        ImpactResult result = apply(request);
+        assertThat(result.staleValidations()).isEmpty();
+        assertThat(result.waitingTasks()).isEmpty();
+        assertThat(column("validation", "status", comparedPass)).isEqualTo("PASS");
+        assertThat(task(compared[0]).get("status")).isEqualTo("IN_PROGRESS");
         assertThat(column("validation", "status", unrelatedPass)).isEqualTo("PASS");
         // AI search candidates must not become declared design references.
         assertThat(repository.designRefs(comparedPass)).hasSize(1);

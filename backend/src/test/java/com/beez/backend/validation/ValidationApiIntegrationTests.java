@@ -885,7 +885,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         long copy = api.jdbc.sql("select max(id) from validation where plan_revision_id=:r")
                 .param("r", currentRevision).query(Long.class).single();
         assertThat(column("validation", "status", copy)).isEqualTo("PASS");
-        assertThat(count("select count(*) from validation_candidate_ref where validation_id = " + copy)).isEqualTo(1);
+        assertThat(count("select count(*) from validation_candidate_ref where validation_id = " + copy)).isZero();
     }
 
     @Test

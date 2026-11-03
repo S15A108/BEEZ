@@ -65,8 +65,6 @@ class ValidationInputAssemblerTest {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         var chunk = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK", "id", "11",
                 "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC"));
-        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of());
         when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk), false, false));
         var out = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
@@ -79,14 +77,13 @@ class ValidationInputAssemblerTest {
         assertEquals("3", plan.get("task_id"));
     }
 
-    @Test void semanticChunkFindsDesignsFromSameApprovedSourceButNeverBecomesEvidence() {
+    @Test void directDesignHitIsIncludedButTheChunkDoesNotExpandItsSourceDocument() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         var chunk = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK", "id", "11",
                 "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC"));
+        var designHit = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DESIGN_ITEM", "id", "10"), Set.of("KEYWORD"));
         when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
-                .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk), false, false));
-        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(Map.of("design_item_id", 10L)));
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk, designHit), false, false));
         var row = new LinkedHashMap<String, Object>();
         row.put("item_id", 10L); row.put("key", "API-1"); row.put("kind", "API_CONTRACT");
         row.put("version_id", 101L); row.put("version_no", 1); row.put("status", "APPROVED");
@@ -101,28 +98,14 @@ class ValidationInputAssemblerTest {
         assertEquals("candidate-design-101", ((Map<?, ?>) ((List<?>) out.request().get("checks")).get(1)).get("key"));
     }
 
-    private Map<String, Object> designRow(long id) {
-        var row = new LinkedHashMap<String, Object>();
-        row.put("item_id", id); row.put("key", "API-" + id); row.put("kind", "API_CONTRACT");
-        row.put("version_id", id + 100); row.put("version_no", 1); row.put("status", "APPROVED");
-        row.put("schema_version", 1); row.put("content", "{\"description\":\"회원 조회\"}");
-        row.put("content_hash", "hash");
-        return row;
-    }
-
-    @Test void keywordDocumentFindsItsBaselineDesignWithoutPromotingItToEvidence() {
+    @Test void keywordDocumentDoesNotPromoteAllItsDesignsToCandidates() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
         var document = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", "7",
                 "source", Map.of("document_version_id", "22")), Set.of("KEYWORD"));
         when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(document), false, false));
-        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(eq("ids"), eq(Set.of(22L))).query().listOfRows())
-                .thenReturn(List.of(Map.of("design_item_id", 10L)));
-        when(jdbc.sql(contains("select i.id as item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(designRow(10L)));
         var out = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
-        assertEquals(1, ((List<?>) out.request().get("approved_items")).size());
+        assertEquals(List.of(), out.request().get("approved_items"));
         assertEquals(List.of(), out.request().get("evidence"));
         assertTrue(out.searchComplete());
     }
@@ -134,10 +117,6 @@ class ValidationInputAssemblerTest {
             chunks.add(new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK",
                     "id", Long.toString(id), "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC")));
         }
-        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(Map.of("design_item_id", 10L)));
-        when(jdbc.sql(contains("select i.id as item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(anyString(), any()).query().listOfRows()).thenReturn(List.of(designRow(10)));
         when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
                 .thenReturn(new HybridDocumentCandidateSearch.Result("2", chunks, false, false));
         var complete = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);
@@ -159,16 +138,12 @@ class ValidationInputAssemblerTest {
         assertFalse(assembler.assemble(caller, 1, 3, 4, 5, 1, 30000).searchComplete());
     }
 
-    @Test void moreThanFiftySourceDesignsMarksSearchIncomplete() {
+    @Test void moreThanFiftyDirectDesignHitsMarksSearchIncomplete() {
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(task(null));
-        var chunk = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT_CHUNK", "id", "11",
-                "source", Map.of("document_version_id", "22")), Set.of("SEMANTIC"));
-        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
-                .thenReturn(new HybridDocumentCandidateSearch.Result("2", List.of(chunk), false, false));
-        List<Map<String, Object>> mappings = new ArrayList<>();
+        List<HybridDocumentCandidateSearch.Candidate> hits = new ArrayList<>();
         List<Map<String, Object>> designs = new ArrayList<>();
         for (long id = 1; id <= 51; id++) {
-            mappings.add(Map.of("design_item_id", id));
+            hits.add(new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DESIGN_ITEM", "id", Long.toString(id)), Set.of("KEYWORD")));
             if (id <= 50) {
                 var row = new LinkedHashMap<String, Object>();
                 row.put("item_id", id); row.put("key", "API-" + id); row.put("kind", "API_CONTRACT");
@@ -178,8 +153,8 @@ class ValidationInputAssemblerTest {
                 designs.add(row);
             }
         }
-        when(jdbc.sql(contains("select distinct bi.design_item_id")).param(anyString(), any()).param(anyString(), any())
-                .param(anyString(), any()).query().listOfRows()).thenReturn(mappings);
+        when(search.search(eq(caller), eq(1L), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result("2", hits, false, false));
         when(jdbc.sql(contains("select i.id as item_id")).param(anyString(), any()).param(anyString(), any())
                 .param(anyString(), any()).query().listOfRows()).thenReturn(designs);
         var out = assembler.assemble(caller, 1, 3, 4, 5, 1, 30000);

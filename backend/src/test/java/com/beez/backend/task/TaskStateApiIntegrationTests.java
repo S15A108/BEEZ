@@ -226,10 +226,9 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
         assertThat(resA.statusCode()).isEqualTo(409);
         assertThat(resA.body()).contains("\"code\":\"version_conflict\"");
 
-        // 검색 후보도 모델이 대조한 입력이므로 변경 후에는 시작할 수 없다.
+        // 검색 후보만 바뀐 작업은 직접 참조가 그대로이므로 시작할 수 있다.
         HttpResponse<String> resC = report(c[0], stateJson("START", c[1], c[2], vc, null), member);
-        assertThat(resC.statusCode()).isEqualTo(409);
-        assertThat(resC.body()).contains("\"code\":\"version_conflict\"");
+        assertThat(resC.statusCode()).as(resC.body()).isEqualTo(200);
 
         // 전역 baseline 번호가 바뀌었어도 내가 참조한 API-02 는 그대로 → 시작 가능 (D4)
         HttpResponse<String> resB = report(b[0], stateJson("START", b[1], b[2], vb, null), member);

@@ -154,7 +154,7 @@ public class ValidationRepository {
                 .param("v", validationId).param("r", planRevisionId).update();
     }
 
-    /** Preserve the analyzed design versions without turning search hits into plan references. */
+    /** Preserve direct search hits for audit; they are not plan references or invalidation inputs. */
     public void saveCandidateRefs(long validationId, List<Map<String, Object>> approvedItems) {
         for (Map<String, Object> item : approvedItems) {
             long itemId = Long.parseLong(String.valueOf(item.get("design_item_id")));
@@ -251,9 +251,7 @@ public class ValidationRepository {
                         select distinct v.id as validation_id, v.task_id, t.title as task_title, v.trigger
                           from (values %s) as changed(item_id, before_version_id)
                           join design_item_version bv on bv.id = changed.before_version_id
-                          join (select validation_id, design_item_id, design_item_version_id from validation_design_ref
-                                union all
-                                select validation_id, design_item_id, design_item_version_id from validation_candidate_ref) r
+                          join validation_design_ref r
                             on r.design_item_id = changed.item_id
                           join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
                           join validation v on v.id = r.validation_id

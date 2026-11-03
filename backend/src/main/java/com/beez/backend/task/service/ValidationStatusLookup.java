@@ -309,7 +309,7 @@ public class ValidationStatusLookup {
                           from validation_design_ref where validation_id = :source
                         """)
                 .param("copy", copy).param("source", source).update();
-        // 검색에서 실제 비교한 후보도 복사해야 발행 시 무효화와 시작 전 버전 검사가 이어진다.
+        // 검색 후보는 이력용으로만 복사하며 발행 무효화와 시작 판정에는 쓰지 않는다.
         jdbc.sql("""
                         insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
                         select :copy, design_item_id, design_item_version_id

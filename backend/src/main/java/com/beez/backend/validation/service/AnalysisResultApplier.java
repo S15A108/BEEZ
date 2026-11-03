@@ -138,9 +138,9 @@ public class AnalysisResultApplier {
                 || "NEEDS_INPUT".equals(currentRules.decidedStatus());
         if (!ruleDecided && contractViolation(request, response) == null && "COMPLETE".equals(result.get("analysis_status"))
                 && objects(result.get("findings")).stream().noneMatch(f -> "BLOCKING".equals(f.get("severity")))
-                && needsHumanCoverageReview(v, request, input)) {
+                && needsHumanCoverageReview(request)) {
             String model = response.get("model") instanceof String m ? m : null;
-            fail(lease, v, active.get().runId(), "ai_evidence_insufficient", "ERROR", "검색 후보 또는 입력 범위에 추가 확인이 필요합니다",
+            fail(lease, v, active.get().runId(), "ai_evidence_insufficient", "ERROR", "미해결 질문 또는 설계 구조에 추가 확인이 필요합니다",
                     "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", model, durationMs, diag);
             return;
         }
@@ -203,22 +203,9 @@ public class AnalysisResultApplier {
         return true;
     }
 
-    private boolean needsHumanCoverageReview(ValidationRow v, Map<String, Object> request,
-                                             ValidationInputAssembler.Result input) {
+    private boolean needsHumanCoverageReview(Map<String, Object> request) {
         Map<String, Object> plan = map(map(request.get("plan_revision")).get("plan"));
-        // Proposed contract changes and unlinked scope cannot be proven safe by an
-        // empty model response until their coverage/approval policy is defined.
-        if (plan.get("unlinked") instanceof List<?> unlinked && !unlinked.isEmpty()) return true;
-        if (objects(plan.get("design_refs")).stream().anyMatch(ref -> "CHANGES".equals(ref.get("relation")))) return true;
         if (request.get("unresolved") instanceof List<?> unresolved && !unresolved.isEmpty()) return true;
-        Map<Long, Long> acceptedRelated = new LinkedHashMap<>();
-        for (var row : validations.taskRefs(v.id())) {
-            acceptedRelated.put(((Number) row.get("related_task_id")).longValue(),
-                    ((Number) row.get("related_plan_revision_id")).longValue());
-        }
-        // #159 tracks only accepted references for later invalidation. A newly discovered
-        // task cannot support PASS until its lifecycle is durably integrated.
-        if (!sameRelatedPlanInputs(acceptedRelated, input.relatedPlanRevisions())) return true;
         Set<String> referenced = new HashSet<>();
         for (var ref : objects(plan.get("design_refs"))) referenced.add(String.valueOf(ref.get("design_item_id")));
         for (var item : objects(request.get("approved_items"))) {
@@ -230,22 +217,6 @@ public class AnalysisResultApplier {
             }
         }
         return false;
-    }
-
-    /** 관련 작업은 동일한 작업 집합이어야 하며, 리비전만 달라진 경우 계획 입력과 패킷을 확인한다. */
-    private boolean sameRelatedPlanInputs(Map<Long, Long> accepted, Map<Long, Long> searched) {
-        if (!accepted.keySet().equals(searched.keySet())) return false;
-        for (var entry : accepted.entrySet()) {
-            long taskId = entry.getKey();
-            Long before = entry.getValue(), after = searched.get(taskId);
-            if (java.util.Objects.equals(before, after)) continue;
-            var oldPlan = revisions.findByIdAndTaskId(before, taskId);
-            var newPlan = revisions.findByIdAndTaskId(after, taskId);
-            if (oldPlan.isEmpty() || newPlan.isEmpty()
-                    || !java.util.Objects.equals(oldPlan.get().getInputHash(), newPlan.get().getInputHash())
-                    || !java.util.Objects.equals(oldPlan.get().getContextPacketId(), newPlan.get().getContextPacketId())) return false;
-        }
-        return true;
     }
 
     private boolean missingPoliciesSupported(Map<String, Object> request, Map<String, Object> result) {
@@ -437,7 +408,13 @@ public class AnalysisResultApplier {
         summary.put("model", model);
         summary.put("usage", response.get("usage"));   // 비용 기록(-168)까지 응답의 사용량을 버리지 않는다
         if ("PASS".equals(status) && analyzedBaseline != null) {
-            validations.saveCandidateRefs(v.id(), objects(request.get("approved_items")));
+            Set<String> declared = new HashSet<>();
+            for (var ref : objects(map(map(request.get("plan_revision")).get("plan")).get("design_refs"))) {
+                declared.add(String.valueOf(ref.get("design_item_id")));
+            }
+            // Direct search hits are retained only for audit; they are not plan references or invalidation inputs.
+            validations.saveCandidateRefs(v.id(), objects(request.get("approved_items")).stream()
+                    .filter(item -> !declared.contains(String.valueOf(item.get("design_item_id")))).toList());
         }
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);

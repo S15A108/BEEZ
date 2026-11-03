@@ -113,14 +113,8 @@ public class ValidationInputAssembler {
                 }
             }
         }
-        var sourceItems = designsFromSourceDocuments(projectId, baselineId, documentVersions);
         if (hasUnmappedDocuments(projectId, baselineId, documentVersions)) {
             searchesComplete = false; incompleteReasons.add("unmapped_search_document");
-        }
-        if (sourceItems.size() > 50) { searchesComplete = false; incompleteReasons.add("design_candidate_limit"); }
-        for (long itemId : sourceItems) {
-            if (itemIds.size() < 50 || itemIds.contains(itemId)) itemIds.add(itemId);
-            else { searchesComplete = false; incompleteReasons.add("design_candidate_limit"); }
         }
         var designs = approvedItems(projectId, baselineId, itemIds);
         Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
@@ -275,23 +269,6 @@ public class ValidationInputAssembler {
             items.add(item);
         }
         return items;
-    }
-
-    /** Same approved source document means a search candidate, not a confirmed semantic relation. */
-    private List<Long> designsFromSourceDocuments(long projectId, long baselineId, Set<Long> versionIds) {
-        if (versionIds.isEmpty()) return List.of();
-        var rows = jdbc.sql("""
-                select distinct bi.design_item_id
-                  from baseline_item bi
-                  join design_item_version v on v.id=bi.design_item_version_id and v.design_item_id=bi.design_item_id
-                  join baseline_document bd on bd.baseline_id=bi.baseline_id and bd.project_id=bi.project_id
-                       and bd.document_version_id=v.source_document_version_id
-                 where bi.project_id=:project and bi.baseline_id=:baseline and v.status='APPROVED'
-                   and bd.document_version_id in (:ids)
-                 order by bi.design_item_id limit 51
-                """).param("project", projectId).param("baseline", baselineId).param("ids", versionIds)
-                .query().listOfRows();
-        return rows.stream().map(row -> ((Number) row.get("design_item_id")).longValue()).toList();
     }
 
     /** Every found document must be current-baseline and mapped to a baseline design. */

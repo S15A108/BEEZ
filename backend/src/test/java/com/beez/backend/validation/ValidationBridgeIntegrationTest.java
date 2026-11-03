@@ -128,11 +128,19 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("ERROR");
     }
 
-    @Test void searchedDocumentWithFiveUnreferencedDesignsCanPass() throws Exception {
+    @Test void documentWithFiveDesignsOnlyIncludesDirectSearchHitAndCanPass() throws Exception {
         List<Long> versions = searchDocumentWithFiveDesigns();
+        var related = api.post("/api/projects/" + project + "/tasks",
+                api.planJson("검색 후보 관련 작업", api.readsRef("REQ-CANDIDATE-0"), "[]"), owner);
+        assertThat(related.statusCode()).as(related.body()).isEqualTo(201);
+        long relatedId = TaskApiSupport.longField(related.body(), "id");
+        long relatedRevision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
+                .param("t", relatedId).query(Long.class).single();
         long[] task = queuedTask();
         long validation = Long.parseLong(acceptance.accept(CallerContext.human(owner), project, task[0], task[1],
                 (int) task[2]).validation().id());
+        assertThat(api.jdbc.sql("select count(*) from validation_task_ref where validation_id=:v")
+                .param("v", validation).query(Integer.class).single()).isZero();
         AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
         when(analyzer.analyze(any())).thenAnswer(call -> {
             Map<String, Object> request = call.getArgument(0);
@@ -141,12 +149,16 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         });
 
         assertThat(worker.runOnce()).isTrue();
-        assertThat((List<?>) sent.get().get("approved_items")).hasSize(6);
-        assertThat((List<?>) sent.get().get("checks")).hasSize(7);
+        assertThat((List<?>) sent.get().get("approved_items")).hasSize(2);
+        assertThat((List<?>) sent.get().get("checks")).hasSize(4);
         assertThat(((List<Map<String, Object>>) sent.get().get("checks")))
                 .extracting(c -> c.get("key")).contains("candidate-design-" + versions.getFirst());
+        assertThat((List<Map<String, Object>>) sent.get().get("related_plans"))
+                .anySatisfy(plan -> assertThat(plan).containsEntry("id", Long.toString(relatedRevision)));
         assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
                 .query(String.class).single()).isEqualTo("PASS");
+        assertThat(api.jdbc.sql("select design_item_version_id from validation_candidate_ref where validation_id=:v")
+                .param("v", validation).query(Long.class).list()).containsExactly(versions.getFirst());
     }
 
     @Test void blockingFindingOnUnreferencedSearchCandidateStillRequiresReview() throws Exception {
@@ -172,19 +184,65 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("BLOCKING");
     }
 
-    @Test void changesWithEmptyCompleteResultRequiresHumanReview() throws Exception {
+    @Test void changesWithCompleteAnalysisAndNoBlockingFindingCanPass() throws Exception {
         prepareCompleteApiForCoverage();
         String plan = api.planJson("계약 변경", api.changesRef("API-01"), "[]")
                 .replace("\"no_contract_change\": true", "\"no_contract_change\": false");
-        assertEmptyResultRequiresHumanReview(plan);
+        assertEmptyCompleteResultPasses(plan);
     }
 
-    @Test void unlinkedWithEmptyCompleteResultRequiresHumanReview() throws Exception {
+    @Test void unlinkedWithCompleteAnalysisAndNoBlockingFindingCanPass() throws Exception {
         prepareCompleteApiForCoverage();
         String plan = api.planJson("미연결 범위", api.implementsRef("API-01"), "[]")
                 .replace("\"no_contract_change\": true", "\"no_contract_change\": false")
                 .replace("\"unlinked\": []", "\"unlinked\": [{\"text\":\"새 응답 필드\"}]");
-        assertEmptyResultRequiresHumanReview(plan);
+        assertEmptyCompleteResultPasses(plan);
+    }
+
+    @Test void dependencyOnlyRelatedCandidateDoesNotAutomaticallyBlockPass() throws Exception {
+        assertDependencyOnlyCandidate(false);
+    }
+
+    @Test void blockingFindingForDependencyOnlyCandidateRequiresReview() throws Exception {
+        assertDependencyOnlyCandidate(true);
+    }
+
+    private void assertDependencyOnlyCandidate(boolean blocking) throws Exception {
+        prepareCompleteApiForCoverage();
+        var related = api.post("/api/projects/" + project + "/tasks",
+                api.planJson("선행 작업", api.implementsRef("API-02"), "[]"), owner);
+        assertThat(related.statusCode()).as(related.body()).isEqualTo(201);
+        long relatedId = TaskApiSupport.longField(related.body(), "id");
+        long relatedRevision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
+                .param("t", relatedId).query(Long.class).single();
+        var created = api.post("/api/projects/" + project + "/tasks",
+                api.planJson("의존 작업", api.implementsRef("API-01"), "[\"" + relatedId + "\"]"), owner);
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        long taskId = TaskApiSupport.longField(created.body(), "id");
+        long revision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
+                .param("t", taskId).query(Long.class).single();
+        var accepted = acceptance.accept(CallerContext.human(owner), project, taskId, revision,
+                (int) TaskApiSupport.longField(created.body(), "lock_version"));
+        assertThat(accepted.finished()).isFalse();
+        long validation = Long.parseLong(accepted.validation().id());
+        assertThat(api.jdbc.sql("select count(*) from validation_task_ref where validation_id=:v")
+                .param("v", validation).query(Integer.class).single()).isZero();
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
+        when(analyzer.analyze(any())).thenAnswer(call -> {
+            Map<String, Object> request = call.getArgument(0);
+            sent.set(request);
+            List<Map<String, Object>> findings = blocking ? List.of(Map.of(
+                    "check_key", "related-" + relatedRevision, "kind", "CONFLICT", "severity", "BLOCKING",
+                    "related_task_id", Long.toString(relatedId), "message", "관련 작업과 충돌",
+                    "suggested_action", "작업 범위를 확인하세요", "sources", List.of(), "evidence_ids", List.of())) : List.of();
+            return completeResponse(validation, request, findings);
+        });
+
+        assertThat(worker.runOnce()).isTrue();
+        assertThat((List<Map<String, Object>>) sent.get().get("related_plans"))
+                .anySatisfy(plan -> assertThat(plan).containsEntry("id", Long.toString(relatedRevision)));
+        assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
+                .query(String.class).single()).isEqualTo(blocking ? "NEEDS_REVIEW" : "PASS");
     }
 
     private void prepareCompleteApiForCoverage() {
@@ -201,7 +259,7 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(), false, false));
     }
 
-    private void assertEmptyResultRequiresHumanReview(String plan) throws Exception {
+    private void assertEmptyCompleteResultPasses(String plan) throws Exception {
         var created = api.post("/api/projects/" + project + "/tasks", plan, owner);
         assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
         long taskId = TaskApiSupport.longField(created.body(), "id");
@@ -216,9 +274,9 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         assertThat(worker.runOnce()).isTrue();
         verify(analyzer).analyze(any());
         assertThat(api.jdbc.sql("select status from validation where id=:v").param("v", validation)
-                .query(String.class).single()).isEqualTo("ERROR");
-        assertThat(api.jdbc.sql("select resolution from validation_finding where validation_id=:v and kind='ERROR'")
-                .param("v", validation).query(String.class).single()).isEqualTo("HUMAN_REVIEW");
+                .query(String.class).single()).isEqualTo("PASS");
+        assertThat(api.jdbc.sql("select count(*) from validation_finding where validation_id=:v and kind='ERROR'")
+                .param("v", validation).query(Integer.class).single()).isZero();
     }
 
     @Test void currentContextPacketWithConstraintsCanPass() throws Exception {
@@ -289,7 +347,7 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         return new long[] {taskId, revision, TaskApiSupport.longField(response.body(), "lock_version")};
     }
 
-    /** Six approved items, five discovered from the same document and absent from the plan. */
+    /** Five unreferenced designs share one document; only the first is a direct design search hit. */
     private List<Long> searchDocumentWithFiveDesigns() {
         long apiVersion = api.jdbc.sql("""
                 insert into design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,approved_at)
@@ -335,8 +393,12 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
         }
         var hit = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DOCUMENT", "id", Long.toString(doc),
                 "source", Map.of("document_version_id", Long.toString(docVersion))), Set.of("KEYWORD"));
+        long directItem = api.jdbc.sql("select design_item_id from design_item_version where id=:v")
+                .param("v", versions.getFirst()).query(Long.class).single();
+        var directHit = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DESIGN_ITEM", "id", Long.toString(directItem)),
+                Set.of("KEYWORD"));
         when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100)))
-                .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(hit), false, false));
+                .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(hit, directHit), false, false));
         return versions;
     }
 

@@ -166,16 +166,14 @@ public class StartGate {
 
     /**
      * G2: 검증이 본 (항목, 버전) 이 지금 현재 baseline 의 버전과 모두 같은가.
-     * 전역 baseline 번호는 비교하지 않는다 — 계획 참조와 AI가 비교한 검색 후보의 항목만 본다.
+     * 전역 baseline 번호는 비교하지 않는다 — 계획에 명시한 참조만 본다.
      * evaluate 에서 G1 이 "이 작업의 검증" 을 찾았을 때만 부른다. 쿼리에도 task_id 조건을 걸어
      * 이 메서드만 따로 불려도 남의 검증이 본 설계 항목이 섞이지 않게 한다 (-172 합의 3·5번).
      */
     private void checkReferencesCurrent(Task task, Long validationId, List<Failure> failures) {
         List<Map<String, Object>> stale = jdbc.sql("""
                         select r.design_item_id, r.design_item_version_id as seen, bi.design_item_version_id as current
-                          from (select validation_id, design_item_id, design_item_version_id from validation_design_ref
-                                union
-                                select validation_id, design_item_id, design_item_version_id from validation_candidate_ref) r
+                          from validation_design_ref r
                           join validation v on v.id = r.validation_id and v.task_id = :taskId
                           left join project p on p.id = :projectId
                           left join baseline_item bi on bi.baseline_id = p.current_baseline_id
