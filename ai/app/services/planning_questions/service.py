@@ -7,6 +7,7 @@ stores anything and never calls a model unless a proposer is supplied.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -108,19 +109,31 @@ def _answer_format(question: ModelQuestion) -> AnswerFormat:
 
 
 def model_candidate_key(
-    kind: str, evidence: tuple[EvidenceItem, ...], summary: str
+    kind: str, evidence: tuple[EvidenceItem, ...], question: QuestionDraft
 ) -> str:
-    """Content-derived key: the same kind and verified quotes give the same key.
+    """Content-derived key for one model question.
 
-    Output order never affects it, so re-analysing the same document version
-    yields the same key for the same anchored gap. Without evidence the
-    normalized summary is used, which is only as stable as the model's wording.
+    The material is the kind, the verified quotes (sorted, so output order is
+    irrelevant), the question type with its options, and the whitespace-
+    normalized question text. Two questions that cite the same sentence but
+    ask different things therefore get different keys; only a repeat of the
+    same question collides. A re-analysis yields the same key only while the
+    model cites and asks the same thing, so the BE treats it as a hint.
     """
-    if evidence:
-        anchors = sorted((item.block_id, item.quote) for item in evidence)
-        material = "\n".join(f"{kind}\t{block}\t{quote}" for block, quote in anchors)
-    else:
-        material = f"{kind}\t{' '.join(summary.split())}"
+    options = getattr(question.answer_format, "options", ())
+    multiple = getattr(question.answer_format, "multiple", False)
+    material = json.dumps(
+        [
+            kind,
+            sorted((item.block_id, item.quote) for item in evidence),
+            question.question_type,
+            [" ".join(option.split()) for option in options],
+            multiple,
+            " ".join(question.text.split()),
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return "model-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
 
 
@@ -164,22 +177,20 @@ def verify_model_candidate(
         and len({item.block_id for item in verified}) < 2
     ):
         reason = "INSUFFICIENT_EVIDENCE"
+    draft = QuestionDraft(
+        proposed.question.type,
+        proposed.question.text.strip(),
+        _answer_format(proposed.question),
+        "MODEL",
+    )
     candidate = ReviewCandidate(
-        candidate_key=model_candidate_key(
-            proposed.kind, tuple(verified), proposed.summary
-        ),
+        candidate_key=model_candidate_key(proposed.kind, tuple(verified), draft),
         kind=proposed.kind,
         status="REVIEW_CANDIDATE" if reason is None else "UNVERIFIED",
         signal="MODEL_PROPOSAL",
         summary=proposed.summary.strip(),
         evidence=tuple(verified),
         unverified_reason=reason,
-    )
-    draft = QuestionDraft(
-        proposed.question.type,
-        proposed.question.text.strip(),
-        _answer_format(proposed.question),
-        "MODEL",
     )
     return candidate, draft
 
@@ -264,7 +275,8 @@ async def generate_planning_questions(
         seen_keys: set[str] = set()
         for proposed in proposal.candidates:
             item = verify_model_candidate(document, ref, proposed)
-            # The same kind and quotes describe the same gap; keep the first.
+            # Only a repeat of the same question (kind, quotes, type, options
+            # and text) collides; one sentence may back several questions.
             if item[0].candidate_key in seen_keys:
                 continue
             seen_keys.add(item[0].candidate_key)

@@ -25,6 +25,7 @@ from app.services.planning_questions import (
     CandidateProposal,
     LLMCandidateProposer,
     ModelCandidate,
+    QuestionDraft,
     generate_planning_questions,
     model_candidate_key,
 )
@@ -295,7 +296,11 @@ async def test_model_keys_depend_on_content_not_on_output_order():
     assert first["근거 없음 B"].candidate_key == second["근거 없음 B"].candidate_key
     assert first["설명 A"].candidate_key != first["근거 없음 B"].candidate_key
     assert first["근거 없음 B"].candidate_key == model_candidate_key(
-        "MISSING_CANDIDATE", (), "  근거   없음 B "
+        "MISSING_CANDIDATE",
+        (),
+        QuestionDraft(
+            "SHORT_ANSWER", "  값은   무엇인가요? ", ShortAnswerFormat(), "MODEL"
+        ),
     )
     # A different kind over the same quote is a different gap.
     other_kind = proposal(
@@ -311,17 +316,61 @@ async def test_model_keys_depend_on_content_not_on_output_order():
 
 
 @pytest.mark.asyncio
-async def test_same_kind_and_quotes_collapse_to_the_first_proposal():
+async def test_different_questions_on_the_same_sentence_are_both_kept():
+    quote = [{"line": 3, "quote": "단일 파일 한도는 30 MB이다."}]
+    size = proposal(
+        "CLARIFICATION",
+        "한도 단위",
+        quote,
+        {
+            "type": "SHORT_ANSWER",
+            "text": "최대 업로드 크기는 몇 MB인가요?",
+            "options": [],
+        },
+    )
+    retention = proposal(
+        "CLARIFICATION",
+        "보관 기간",
+        quote,
+        {"type": "SHORT_ANSWER", "text": "파일은 며칠 동안 보관하나요?", "options": []},
+    )
+    one = await generate_planning_questions(request(), FakeProposer(size, retention))
+    two = await generate_planning_questions(request(), FakeProposer(retention, size))
+    first, second = by_summary(one.result), by_summary(two.result)
+    assert {"한도 단위", "보관 기간"} <= set(first) and {
+        "한도 단위",
+        "보관 기간",
+    } <= set(second)
+    assert first["한도 단위"].candidate_key != first["보관 기간"].candidate_key
+    assert first["한도 단위"].candidate_key == second["한도 단위"].candidate_key
+    assert first["보관 기간"].candidate_key == second["보관 기간"].candidate_key
+    # A different answer format over the same question text is also distinct.
+    as_choice = proposal(
+        "CLARIFICATION",
+        "한도 단위(선택)",
+        quote,
+        {
+            "type": "CHOICE",
+            "text": "최대 업로드 크기는 몇 MB인가요?",
+            "options": ["30", "50"],
+        },
+    )
+    three = await generate_planning_questions(request(), FakeProposer(size, as_choice))
+    assert len(by_summary(three.result)) == len(one.result.candidates)
+
+
+@pytest.mark.asyncio
+async def test_only_a_repeated_identical_question_collapses_to_the_first():
     anchored = proposal(
         "CLARIFICATION", "설명 A", [{"line": 7, "quote": "재시도는 멤버가 수행한다."}]
     )
-    reworded = proposal(
+    repeated = proposal(
         "CLARIFICATION",
-        "설명 A의 다른 표현",
+        "설명 A의 다른 요약",
         [{"line": 7, "quote": "재시도는 멤버가 수행한다."}],
     )
     outcome = await generate_planning_questions(
-        request(), FakeProposer(anchored, reworded)
+        request(), FakeProposer(anchored, repeated)
     )
     model_summaries = [
         c.summary for c in outcome.result.candidates if c.signal == "MODEL_PROPOSAL"
