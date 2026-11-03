@@ -156,10 +156,12 @@ QUESTIONS = [
         "required": [["초안"], ["검토"]],
         "answer": {
             "status": "ANSWERED",
-            "text": "일반 멤버는 초안을 작성하고 검토 의견을 남길 수 있지만 [1], 초안을 작성했다는 사실만으로 발행 권한이 생기지는 않습니다 [2].",
+            "text": "일반 멤버는 초안을 작성하고 검토 의견을 남길 수 있습니다 [1]. 다만 초안을 작성했다는 사실만으로 발행 권한이 생기지는 않습니다 [2]. 검토 의견은 초안에 남깁니다 [3].",
             "citations": [
                 {"quote": "일반 멤버는 초안을 작성하고 검토 의견을 남길 수 있다."},
                 {"quote": "초안을 작성했다는 사실은 발행 권한을 주지 않는다."},
+                # The same quote again: it keeps the first number.
+                {"quote": "일반 멤버는 초안을 작성하고 검토 의견을 남길 수 있다."},
             ],
             "design_refs": [],
             "task_refs": [],
@@ -174,7 +176,9 @@ QUESTIONS = [
         "quotes": [
             "미승인 초안은 접근 권한이 있는 멤버의 문서 검토 모드에서만 조회한다."
         ],
-        "expected": "ANSWERED",
+        # One fabricated quote beside a real one: the claim it backs would
+        # stay in the text, so the whole output is rejected (PR #96 P1).
+        "expected": "REJECTED",
         "required": [["권한"], ["검토"]],
         "answer": {
             "status": "ANSWERED",
@@ -268,7 +272,7 @@ QUESTIONS = [
         "question": "감사 로그의 보관 기간은 며칠인가요?",
         "quotes": [],
         "extra_quotes": ["이 문서는 로그 보관 기간을 확정하지 않는다."],
-        "expected": "INSUFFICIENT_EVIDENCE",
+        "expected": "REJECTED",
         "required": [],
         "answer": {
             "status": "ANSWERED",
@@ -357,6 +361,26 @@ QUESTIONS = [
             "task_refs": [],
             "unresolved": ["문서 삭제 API의 경로와 응답"],
             "next_actions": ["삭제 API를 설계 질문으로 올려 합의한다."],
+        },
+    },
+    {
+        # Answerable from the related task alone (status, assignee); no
+        # document quote and no approved item is needed (PR #96 P2).
+        "id": "task-status",
+        "document": "api-spec.md",
+        "question": "TASK-001 작업은 지금 어떤 상태이고 담당자는 누구인가요?",
+        "quotes": [],
+        "top_k": 3,
+        "expected": "ANSWERED",
+        "required": [["READY"], ["21"]],
+        "answer": {
+            "status": "ANSWERED",
+            "text": "TASK-001(문서 업로드 화면 구현)은 READY 상태이고 담당 멤버 ID는 21입니다. 승인 계약 API-001을 구현하는 작업입니다.",
+            "citations": [],
+            "design_refs": [],
+            "task_refs": ["501"],
+            "unresolved": [],
+            "next_actions": ["담당자 이름은 멤버 목록에서 멤버 ID 21로 확인한다."],
         },
     },
     {

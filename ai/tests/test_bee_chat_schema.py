@@ -12,6 +12,7 @@ from app.schemas.bee_chat import (
     BeeCitation,
     BeeInstance,
     DesignItemRef,
+    ProjectProfile,
     RelatedTask,
     RetrievalScope,
     TaskRef,
@@ -124,7 +125,19 @@ def test_request_reads_json_and_accepts_a_review_scope_without_a_baseline():
     body = from_json(BeeChatRequest, request())
     assert body.retrieved_evidence[0].evidence_id == "ev-1"
     assert body.max_evidence == 12 and body.history == ()
-    review = request(scope={"mode": "DOCUMENT_REVIEW", "document_version_ids": ["311"]})
+    review = request(
+        scope={"mode": "DOCUMENT_REVIEW", "document_version_ids": ["311"]},
+        approved_items=[
+            item(
+                source={
+                    "document_id": "301",
+                    "document_version_id": "311",
+                    "version_no": 1,
+                    "location": "L1-L1",
+                }
+            )
+        ],
+    )
     assert from_json(BeeChatRequest, review).scope.mode == "DOCUMENT_REVIEW"
 
 
@@ -143,6 +156,24 @@ def test_request_reads_json_and_accepts_a_review_scope_without_a_baseline():
         {"unresolved": ["같은 항목", "같은 항목"]},
         {"instance": {"profile_version": "bee-v2", "project": {"name": "x"}}},
         {"extra": 1},
+        # PR #96 P2: an approved item sourced outside the retrieval scope.
+        {
+            "approved_items": [
+                item(
+                    source={
+                        "document_id": "301",
+                        "document_version_id": "999",
+                        "version_no": 1,
+                        "location": "L1-L1",
+                    }
+                )
+            ]
+        },
+        # A review scope admits only items sourced inside it.
+        {
+            "scope": {"mode": "DOCUMENT_REVIEW", "document_version_ids": ["311"]},
+            "approved_items": [item()],
+        },
     ],
 )
 def test_request_rejects_inconsistent_inputs(overrides):
@@ -242,6 +273,12 @@ def test_result_grounding_invariants():
             citations=(),
             task_refs=(TaskRef(task_id="501", key="TASK-001", status="READY"),),
         )
+    by_task = result(
+        citations=(),
+        task_refs=(TaskRef(task_id="501", key="TASK-001", status="READY"),),
+        text="TASK-001은 READY입니다.",
+    )
+    assert by_task.grounded and not by_task.citations
     by_item = result(
         citations=(),
         design_refs=(
@@ -261,6 +298,7 @@ def test_result_grounding_invariants():
 def test_instance_hash_must_match_the_prompt():
     fields = {
         "project_id": "101",
+        "project": ProjectProfile(name="나래"),
         "persona": "비비",
         "greeting": "안녕하세요.",
         "scope_statement": "문서에서 찾아 답해요.",

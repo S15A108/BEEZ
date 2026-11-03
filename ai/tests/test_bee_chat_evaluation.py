@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from app.services.bee_chat import INSUFFICIENT_TEXT, OUT_OF_SCOPE_TEXT, UNVERIFIED_NOTE
+from app.services.bee_chat import INSUFFICIENT_TEXT, OUT_OF_SCOPE_TEXT
 from app.services.llm_client import LLMError, LLMUsage
 from evaluations.bee_chat.cases import QUESTIONS
 from evaluations.bee_chat.run import (
@@ -34,22 +34,27 @@ def test_dry_run_grounds_answers_and_withholds_guesses():
     summary = result["summary"]
     assert summary == {
         "total": len(QUESTIONS),
-        "failed": 0,
         "answered": 12,
-        "insufficient": 3,
+        "insufficient": 2,
         "out_of_scope": 1,
+        "rejected": 2,
+        "failed": 0,
         "all_checks_passed": True,
     }
+    # A fabricated quote beside a real one rejects the output (PR #96 P1).
     draft = row(result, "plan-draft")
-    assert len(draft["citations"]) == 1 and "[2]" not in draft["text"]
-    assert "모든 멤버가 조회한다" not in str(draft["citations"])
-    withheld = row(result, "req-absent")
+    assert draft["status"] == "rejected" and draft["error_code"] == "invalid_output"
+    assert draft["usage"][0]["failed"]
+    assert row(result, "req-absent")["status"] == "rejected"
+    followup = row(result, "plan-publish-followup")
+    assert len(followup["citations"]) == 2 and "[3]" not in followup["text"]
+    assert followup["text"].count("[1]") == 2
+    task = row(result, "task-status")
+    assert task["grounded"] and task["task_refs"] == ["TASK-001"]
+    assert not task["citations"] and not task["design_refs"]
+    withheld = row(result, "password-absent")
     assert withheld["answer_status"] == "INSUFFICIENT_EVIDENCE"
-    assert (
-        withheld["text"] == INSUFFICIENT_TEXT
-        and UNVERIFIED_NOTE in withheld["unresolved"]
-    )
-    assert "90일" not in withheld["text"]
+    assert withheld["text"] == INSUFFICIENT_TEXT
     judged = row(result, "erd-absent")
     assert (
         judged["answer_status"] == "INSUFFICIENT_EVIDENCE" and not judged["citations"]
@@ -90,6 +95,7 @@ def test_failures_are_reported_separately():
 
     result = asyncio.run(evaluate(Failing))
     assert result["summary"]["failed"] == len(QUESTIONS)
+    assert result["summary"]["rejected"] == 0
     assert not result["summary"]["all_checks_passed"]
     assert result["questions"][0]["error_code"] == "model_unavailable"
     assert "실패: `model_unavailable`" in render_markdown(result, title="t")

@@ -1,9 +1,10 @@
 """Model answer proposal over the selected evidence, items and tasks (#135).
 
-The model sees the question, the evidence chunks with their exact text, the
-approved items, the related tasks and the open conversation. Everything it
-returns is checked by the service against those inputs; an answer is never a
-decision and never changes the approved design.
+The model sees the question, the project profile, the evidence chunks with
+their exact text, the approved items, the related tasks and the open
+conversation, all as data in the user message. Everything it returns is
+checked by the service against those inputs; an answer is never a decision
+and never changes the approved design.
 """
 
 import json
@@ -96,10 +97,18 @@ class AnswerProposer(Protocol):
 
 
 def chat_payload(request: BeeChatRequest, evidence: Sequence[RetrievedEvidence]) -> str:
-    """Exactly what the model receives: only the selected evidence is shown."""
+    """Exactly what the model receives; only the selected evidence is shown.
+
+    The project profile is user-written text and travels here, as data,
+    never in the system message.
+    """
+    project = request.instance.project if request.instance is not None else None
     return json.dumps(
         {
             "question": request.question,
+            "project": None
+            if project is None
+            else {"name": project.name, "description": project.description},
             "scope": {
                 "mode": request.scope.mode,
                 "baseline_id": request.scope.baseline_id,
@@ -132,13 +141,17 @@ def chat_payload(request: BeeChatRequest, evidence: Sequence[RetrievedEvidence])
                     "id": task.id,
                     "key": task.key,
                     "status": task.status,
+                    "assignee_member_id": task.assignee_member_id,
                     "plan": None
                     if task.current_plan_revision is None
                     else {
                         "title": task.current_plan_revision.plan.title,
                         "goal": task.current_plan_revision.plan.goal,
-                        "design_item_version_ids": [
-                            ref.design_item_version_id
+                        "design_refs": [
+                            {
+                                "design_item_version_id": ref.design_item_version_id,
+                                "relation": ref.relation,
+                            }
                             for ref in task.current_plan_revision.plan.design_refs
                         ],
                     },
@@ -200,12 +213,11 @@ class LLMAnswerProposer:
                 raise ValueError("input too large for one answer")
         except (TypeError, ValueError, UnicodeError, RecursionError):
             raise LLMError("invalid_input") from None
-        project = request.instance.project if request.instance is not None else None
         response = await self._client.generate(
             LLMRequest(
                 model=self._model,
                 messages=(
-                    LLMMessage(role="system", content=render_system_prompt(project)),
+                    LLMMessage(role="system", content=render_system_prompt()),
                     LLMMessage(role="user", content=payload),
                 ),
                 context=self._context,

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings, get_settings
 from app.main import app
-from app.services.bee_chat import INSUFFICIENT_TEXT, UNVERIFIED_NOTE
+from app.services.bee_chat import INSUFFICIENT_TEXT
 from app.services.llm_client import ProviderError
 from evaluations.bee_chat.examples import (
     CHAT_PATH,
@@ -74,7 +74,9 @@ def test_instance_initialization_is_deterministic_without_a_model(api):
     assert body["origin"] == "TEMPLATE" and body["usage"] == [] and "model" not in body
     instance = body["result"]["instance"]
     assert instance["project_id"] == "101" and instance["profile_version"] == "bee-v1"
-    assert instance["persona"] == "비비" and "나래" in instance["system_prompt"]
+    assert instance["persona"] == "비비" and instance["project"]["name"] == "나래"
+    # The project's own text is data for the model, never system instructions.
+    assert "나래" not in instance["system_prompt"]
     assert not api.provider.calls
     blank = api.post(
         {**instance_request(), "project": {"name": "  "}}, path=INSTANCE_PATH
@@ -109,13 +111,21 @@ def test_grounded_answer_carries_citations_refs_and_usage(api, request_body):
 
 
 def test_insufficient_and_out_of_scope_are_200_with_fixed_text(api):
-    withheld = api.post(example_request("req-absent")).json()["result"]
+    withheld = api.post(example_request("password-absent")).json()["result"]
     assert withheld["answer_status"] == "INSUFFICIENT_EVIDENCE"
     assert withheld["text"] == INSUFFICIENT_TEXT and not withheld["grounded"]
-    assert UNVERIFIED_NOTE in withheld["unresolved"]
-    assert "90일" not in json.dumps(withheld, ensure_ascii=False)
+    assert withheld["unresolved"] == ["비밀번호 정책은 공용 문서에 없다."]
     scope = api.post(example_request("out-of-scope")).json()["result"]
     assert scope["answer_status"] == "OUT_OF_SCOPE" and not scope["citations"]
+    # A fabricated quote is a model failure (502), never a shown or withheld guess.
+    fabricated = api.post(example_request("req-absent"))
+    assert fabricated.status_code == 502
+    assert fabricated.json()["error"]["code"] == "model_unavailable"
+    assert fabricated.json()["usage"][0]["failed"]
+    assert "90일" not in fabricated.text
+    task_only = api.post(example_request("task-status")).json()["result"]
+    assert task_only["answer_status"] == "ANSWERED" and task_only["grounded"]
+    assert [ref["key"] for ref in task_only["task_refs"]] == ["TASK-001"]
 
 
 def test_body_limit_media_type_and_json_errors(api, request_body):

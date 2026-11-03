@@ -3,9 +3,10 @@
 Internal interface only. The caller passes one BE-authorized question with
 the search results, the approved items and the related tasks. Every citation
 is checked against its evidence text, every item and task reference against
-the input, and an answer that keeps no verifiable grounding is replaced by
-the fixed "not found" text instead of being shown as a guess. Nothing is
-stored and nothing is decided here.
+the input. A citation the evidence does not hold is a fabricated source and
+rejects the whole output; an answer that names no grounding at all is
+replaced by the fixed "not found" text instead of being shown as a guess.
+Nothing is stored and nothing is decided here.
 """
 
 import re
@@ -25,6 +26,7 @@ from app.schemas.bee_chat import (
     InstanceEcho,
     RetrievedEvidence,
     TaskRef,
+    citation_markers,
     prompt_hash,
 )
 from app.schemas.design_drafts import ItemSource
@@ -43,14 +45,23 @@ OUT_OF_SCOPE_TEXT = (
     "승인 설계에 대해 물어봐 주세요."
 )
 REVIEW_NOTICE = "미승인 문서 검토 범위의 답변입니다. 현재 승인 설계와 다를 수 있습니다."
-UNVERIFIED_NOTE = "모델 답변의 인용을 원문에서 확인하지 못해 답변을 보류했습니다."
+UNGROUNDED_NOTE = (
+    "모델 답변이 근거(원문 인용·승인 설계 항목·관련 작업)를 하나도 대지 않아 답변을 "
+    "보류했습니다."
+)
 
-# A marker with the space before it, so a removed marker leaves no double space.
+# A marker with the space before and after it, so a removed marker leaves no
+# double space.
 _MARKER = re.compile(r"( ?)\[(\d{1,2})\]( ?)")
 
 
 class AnswerRejected(ValueError):
-    """The model output contradicts the supplied inputs (ids, blank answer)."""
+    """The model output contradicts the supplied inputs.
+
+    Unknown ids, a quote the evidence does not hold, a `[n]` without a
+    citation or a blank ANSWERED text: the answer cannot be shown and the
+    caller may retry with a fresh request key.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,13 +128,15 @@ def verify_answer(
 ) -> BeeChatResult:
     """Check the answer against the inputs and compose the result.
 
-    Unknown evidence, item or task ids contradict the input and reject the
-    whole output. A quote that is not an exact substring of its evidence is
-    dropped and the `[n]` markers are renumbered. An ANSWERED answer that
-    keeps neither a citation nor an approved item is not shown: it becomes
-    INSUFFICIENT_EVIDENCE with the fixed text, so the screen never shows a
-    guess. For the two non-answer statuses the model's text, citations and
-    references are not used at all; only its unresolved and next_actions are.
+    Unknown evidence, item or task ids, a quote that is not an exact
+    substring of its evidence, a `[n]` that names no citation and a blank
+    ANSWERED text all contradict the input and reject the whole output: a
+    claim whose source cannot be verified is never shown, with or without
+    other citations. Repeated citations collapse to one number. An ANSWERED
+    answer that names no citation, approved item or related task is not
+    shown either: it becomes INSUFFICIENT_EVIDENCE with the fixed text. For
+    the two non-answer statuses the model's text, citations and references
+    are not used at all; only its unresolved and next_actions are.
     """
     answer = proposal.answer
     by_evidence = {item.evidence_id: item for item in evidence}
@@ -146,14 +159,19 @@ def verify_answer(
         if not answer.text.strip():
             raise AnswerRejected("blank answer")
         mapping: dict[int, int] = {}
-        seen: set[tuple[str, str]] = set()
+        numbers: dict[tuple[str, str], int] = {}
         for index, cited in enumerate(answer.citations, start=1):
             item = by_evidence[cited.evidence_id]
             quote = cited.quote.strip()
-            if not quote or quote not in item.text or (item.evidence_id, quote) in seen:
+            if not quote or quote not in item.text:
+                # The evidence does not say this: the claim it backs would
+                # stay in the text, so the whole answer is unusable.
+                raise AnswerRejected("unverifiable citation")
+            key = (item.evidence_id, quote)
+            if key in numbers:
+                mapping[index] = numbers[key]
                 continue
-            seen.add((item.evidence_id, quote))
-            mapping[index] = len(citations) + 1
+            numbers[key] = mapping[index] = len(citations) + 1
             claim = (cited.claim or "").strip()
             citations.append(
                 BeeCitation(
@@ -170,6 +188,8 @@ def verify_answer(
                     claim=clip(claim) if claim else None,
                 )
             )
+        if any(number not in mapping for number in citation_markers(answer.text)):
+            raise AnswerRejected("marker without citation")
         for ref in dict.fromkeys(answer.design_refs):
             item = by_item[ref]
             design_refs.append(
@@ -185,12 +205,11 @@ def verify_answer(
         for ref in dict.fromkeys(answer.task_refs):
             task = by_task[ref]
             task_refs.append(TaskRef(task_id=task.id, key=task.key, status=task.status))
-        if citations or design_refs:
+        if citations or design_refs or task_refs:
             text = renumber_markers(answer.text.strip(), mapping)
         else:
             status = "INSUFFICIENT_EVIDENCE"
-            design_refs, task_refs = [], []
-            extra_unresolved.append(UNVERIFIED_NOTE)
+            extra_unresolved.append(UNGROUNDED_NOTE)
     if status == "INSUFFICIENT_EVIDENCE":
         text = INSUFFICIENT_TEXT
     elif status == "OUT_OF_SCOPE":
@@ -218,10 +237,9 @@ def verify_answer(
             f"검색 결과 {omitted}건은 상한({request.max_evidence}건)으로 모델에 "
             "전달하지 않았습니다."
         )
-    project = request.instance.project if request.instance is not None else None
     return BeeChatResult(
         answer_status=status,
-        grounded=bool(citations or design_refs),
+        grounded=bool(citations or design_refs or task_refs),
         text=text,
         citations=tuple(citations),
         sources=tuple(sources),
@@ -241,7 +259,7 @@ def verify_answer(
         if request.instance is None
         else InstanceEcho(
             profile_version=request.instance.profile_version,
-            system_prompt_hash=prompt_hash(render_system_prompt(project)),
+            system_prompt_hash=prompt_hash(render_system_prompt()),
         ),
     )
 

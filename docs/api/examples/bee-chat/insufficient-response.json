@@ -8,9 +8,11 @@
     "design_refs": [],
     "task_refs": [],
     "unresolved": [
-      "모델 답변의 인용을 원문에서 확인하지 못해 답변을 보류했습니다."
+      "비밀번호 정책은 공용 문서에 없다."
     ],
-    "next_actions": [],
+    "next_actions": [
+      "요구사항 문서에 비밀번호 정책을 추가한다."
+    ],
     "notices": [],
     "scope": {
       "mode": "APPROVED",
@@ -23,11 +25,11 @@
       "baseline_id": "401"
     },
     "embedding_profile_id": "gms-small-1024-v1",
-    "evidence_considered": 6,
+    "evidence_considered": 4,
     "evidence_omitted": 0,
     "instance": {
       "profile_version": "bee-v1",
-      "system_prompt_hash": "1a6a5f3dfc7c227784d1d4e2e3e6b4e49e7420a7cd100be06b98e1e5e464aa73"
+      "system_prompt_hash": "a629f4e7b66c8a8a4e88952db002f219c24850f47ae278bd144105a0017209bd"
     }
   },
   "origin": "MODEL",

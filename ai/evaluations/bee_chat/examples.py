@@ -151,7 +151,7 @@ def build_examples() -> dict[str, object]:
         assert instance.status_code == 200, instance.text
         response = api.post(request)
         assert response.status_code == 200, response.text
-        insufficient = api.post(example_request("req-absent"))
+        insufficient = api.post(example_request("password-absent"))
         assert insufficient.status_code == 200, insufficient.text
         out_of_scope = api.post(example_request("out-of-scope"))
         assert out_of_scope.status_code == 200, out_of_scope.text
@@ -178,6 +178,26 @@ def build_examples() -> dict[str, object]:
             ],
         }
         errors["422_invalid_ai_input_evidence_outside_scope"] = api.post(outside).json()
+        item_outside = {
+            **request,
+            "approved_items": [
+                {
+                    **request["approved_items"][0],
+                    "source": {
+                        **request["approved_items"][0]["source"],
+                        "document_version_id": "999",
+                    },
+                }
+            ],
+        }
+        errors["422_invalid_ai_input_item_source_outside_scope"] = api.post(
+            item_outside
+        ).json()
+        # The scripted model answers this one with a quote the document does
+        # not hold: the whole output is rejected instead of shown.
+        errors["502_model_unavailable_unverifiable_quote"] = api.post(
+            example_request("req-absent")
+        ).json()
         api.provider.output = {
             "status": "ANSWERED",
             "text": "삭제는 DELETE /api/documents/{id}로 합니다 [1].",

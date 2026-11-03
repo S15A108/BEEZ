@@ -3,7 +3,8 @@
 Without --live this uses the scripted retrieval and the scripted model in
 `cases.py` and makes no network call. The Markdown report is review material
 for a person: every row shows the status, what grounded the answer and which
-checks held.
+checks held. A question the scripted model answers with a fabricated quote is
+expected to be rejected (`invalid_output`), and that expectation is a check.
 """
 
 import argparse
@@ -97,13 +98,20 @@ async def evaluate(proposer_factory) -> dict:
         try:
             outcome = await generate_bee_chat(request, proposer_factory())
         except LLMError as error:
+            # A rejected output is the verifier doing its job; any other
+            # error is a failure of the run.
+            rejected = error.code == "invalid_output"
             rows.append(
                 {
                     "id": question["id"],
                     "question": question["question"],
                     "expected": question["expected"],
-                    "status": "failed",
+                    "status": "rejected" if rejected else "failed",
                     "error_code": error.code,
+                    "checks": {
+                        "status_expected": rejected
+                        and question["expected"] == "REJECTED"
+                    },
                     "usage": [usage.to_api_dict() for usage in error.usage],
                 }
             )
@@ -145,7 +153,6 @@ async def evaluate(proposer_factory) -> dict:
         "questions": rows,
         "summary": {
             "total": len(rows),
-            "failed": len(rows) - len(completed),
             "answered": sum(1 for r in completed if r["answer_status"] == "ANSWERED"),
             "insufficient": sum(
                 1 for r in completed if r["answer_status"] == "INSUFFICIENT_EVIDENCE"
@@ -153,8 +160,12 @@ async def evaluate(proposer_factory) -> dict:
             "out_of_scope": sum(
                 1 for r in completed if r["answer_status"] == "OUT_OF_SCOPE"
             ),
-            "all_checks_passed": all(all(row["checks"].values()) for row in completed)
-            and len(completed) == len(rows),
+            "rejected": sum(1 for r in rows if r["status"] == "rejected"),
+            "failed": sum(1 for r in rows if r["status"] == "failed"),
+            "all_checks_passed": all(
+                row["status"] != "failed" and all(row["checks"].values())
+                for row in rows
+            ),
         },
     }
 
@@ -167,15 +178,18 @@ def render_markdown(report: dict, *, title: str) -> str:
     summary = report["summary"]
     lines = [f"# {title}", ""]
     lines.append(
-        "대표 질문 세트(`evaluations/data/questions.json`의 12문항 + 후속 질문·근거 없는 "
-        "주제·범위 밖·주입 문장 4문항)를 대본 검색 결과와 대본 모델 출력으로 돌린 결과다. "
-        "모든 답변은 입력 근거와 대조한 뒤의 값이며, 승인·결정은 팀장의 몫이다."
+        "대표 질문 세트(`evaluations/data/questions.json`의 12문항 + 후속 질문·작업 상태·"
+        "근거 없는 주제·범위 밖·주입 문장 5문항)를 대본 검색 결과와 대본 모델 출력으로 "
+        "돌린 결과다. 모든 답변은 입력 근거와 대조한 뒤의 값이며, 원문에 없는 인용이 "
+        "하나라도 있으면 답변 전체를 거부한다(`invalid_output`, HTTP 502). 승인·결정은 "
+        "팀장의 몫이다."
     )
     lines.append("")
     lines.append(
         f"질문 {summary['total']}건 · 답변 {summary['answered']} · 정보 부족 "
-        f"{summary['insufficient']} · 범위 밖 {summary['out_of_scope']} · 실패 "
-        f"{summary['failed']} · 검사 {'모두 통과' if summary['all_checks_passed'] else '실패 있음'}"
+        f"{summary['insufficient']} · 범위 밖 {summary['out_of_scope']} · 거부 "
+        f"{summary['rejected']} · 실패 {summary['failed']} · 검사 "
+        f"{'모두 통과' if summary['all_checks_passed'] else '실패 있음'}"
     )
     lines.append("")
     lines.append("## 질문별 결과")
@@ -189,9 +203,11 @@ def render_markdown(report: dict, *, title: str) -> str:
     )
     for index, row in enumerate(report["questions"], start=1):
         if row["status"] != "completed":
+            label = "거부" if row["status"] == "rejected" else "실패"
+            verdict = "통과" if all(row["checks"].values()) else "실패: status_expected"
             lines.append(
                 f"| {index} | {row['id']} | {_cell(row['question'])} | {row['expected']} "
-                f"| 실패: `{row['error_code']}` | - | - | - | - | - | - | - |"
+                f"| {label}: `{row['error_code']}` | - | - | - | - | - | - | {verdict} |"
             )
             continue
         citations = "; ".join(
@@ -223,10 +239,11 @@ def render_markdown(report: dict, *, title: str) -> str:
         )
     lines.append("")
     lines.append(
-        "검사 항목: `status_expected`(기대 상태), `citations_resolvable`(모든 인용이 "
-        "근거 원문의 부분 문자열), `required_terms`(답변에 핵심 용어 포함), "
-        "`grounded_iff_answered`, `markers_valid`(본문 [n]이 인용 수 이내), "
-        "`injection_absent`(주입 문장의 표식이 답변에 없음)."
+        "검사 항목: `status_expected`(기대 상태; REJECTED는 `invalid_output` 거부), "
+        "`citations_resolvable`(모든 인용이 근거 원문의 부분 문자열), "
+        "`required_terms`(답변에 핵심 용어 포함), `grounded_iff_answered`, "
+        "`markers_valid`(본문 [n]이 인용 수 이내), `injection_absent`(주입 문장의 "
+        "표식이 답변에 없음)."
     )
     return "\n".join(lines) + "\n"
 

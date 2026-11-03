@@ -133,6 +133,8 @@ class BeeInstance(_Strict):
 
     project_id: Id
     profile_version: Literal["bee-v1"] = PROFILE_VERSION
+    # Echoed so the BE can store it and send it back as BeeInstanceRef.project.
+    project: ProjectProfile
     persona: Title
     greeting: Text
     scope_statement: Text
@@ -290,6 +292,16 @@ class BeeChatRequest(_Strict):
                 raise ValueError("evidence outside the retrieval scope")
             if item.embedding_profile_id != self.embedding_profile_id:
                 raise ValueError("evidence from another embedding profile")
+        for item in self.approved_items:
+            # Approved design from outside the retrieval scope must not mix into
+            # the answer; a review scope only admits items sourced inside it.
+            if (
+                item.source is not None
+                and item.source.document_version_id not in allowed
+            ):
+                raise ValueError("approved item source outside the retrieval scope")
+            if item.source is None and self.scope.mode == "DOCUMENT_REVIEW":
+                raise ValueError("review scope admits only sourced approved items")
         _unique([item.id for item in self.approved_items], "approved item version")
         _unique([item.design_item_id for item in self.approved_items], "approved item")
         _unique([item.key for item in self.approved_items], "approved item key")
@@ -352,7 +364,7 @@ class BeeChatResult(_Strict):
     """00-common ChatResult plus the grounding the screen and BE need."""
 
     answer_status: AnswerStatus
-    # True when at least one citation or approved item backs the answer.
+    # True when a citation, an approved item or a related task backs the answer.
     grounded: bool
     text: AnswerText
     citations: tuple[BeeCitation, ...] = Field(default=(), max_length=MAX_CITATIONS)
@@ -383,12 +395,10 @@ class BeeChatResult(_Strict):
         _unique([ref.task_id for ref in self.task_refs], "task ref")
         _unique(list(self.unresolved), "unresolved entry")
         _unique(list(self.next_actions), "next action")
-        if self.grounded != bool(self.citations or self.design_refs):
-            raise ValueError("grounded must reflect citations and design refs")
+        if self.grounded != bool(self.citations or self.design_refs or self.task_refs):
+            raise ValueError("grounded must reflect citations, design and task refs")
         if (self.answer_status == "ANSWERED") != self.grounded:
             raise ValueError("only an ANSWERED answer is grounded")
-        if not self.grounded and self.task_refs:
-            raise ValueError("task references belong to a grounded answer")
         if any(n > len(self.citations) for n in citation_markers(self.text)):
             raise ValueError("answer text refers to a citation it does not have")
         for citation in self.citations:
