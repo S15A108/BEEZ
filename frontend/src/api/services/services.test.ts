@@ -380,6 +380,62 @@ describe('계약 경계', () => {
     expect(read.analysis_status).toBe('COMPLETED')
     expect(read.explicit).toEqual([{ task_id: '501', design_item_id: '211' }])
   })
+
+  it('영향 조회에서 담당자 추천과 근거를 보존한다', async () => {
+    const ownerRecommendations = {
+      proposal_revision: 1,
+      snapshot_hash: 'sha256:0123',
+      direct_reference_status: 'COMPLETE',
+      direct_reference_reasons: [],
+      document_reference_status: 'INCOMPLETE',
+      document_reference_reasons: ['document_mapping_unavailable'],
+      ai_analysis_status: 'NOT_EVALUATED',
+      ai_current: true,
+      ai_reanalysis_in_progress: false,
+      withheld_ai_candidates: 0,
+      recommendations: [
+        {
+          member_id: '21',
+          area: '백엔드',
+          evidence: [
+            {
+              type: 'DIRECT_TASK_REFERENCE',
+              reason: '현재 작업 계획이 변경 항목을 직접 참조합니다.',
+              task_id: '501',
+              task_key: 'TASK-001',
+              plan_revision_id: '511',
+              design_item_id: '301',
+              design_item_version_id: '311',
+              referenced_design_item_version_id: '311',
+              sources: [],
+            },
+            {
+              type: 'DOCUMENT_SOURCE',
+              reason: '변경 문서의 출처 설계를 참조합니다.',
+              task_id: '502',
+              task_key: 'TASK-002',
+              plan_revision_id: '512',
+              design_item_id: '302',
+              design_item_version_id: '312',
+              referenced_design_item_version_id: '312',
+              document_id: '201',
+              document_version_id: '211',
+              sources: [],
+            },
+          ],
+        },
+      ],
+      notification_candidate_member_ids: ['21'],
+    }
+    respond({
+      explicit: [],
+      candidates: [],
+      analysis_status: 'NOT_EVALUATED',
+      owner_recommendations: ownerRecommendations,
+    })
+    const read = await changesApi.impact('101', '71')
+    expect(read.owner_recommendations).toEqual(ownerRecommendations)
+  })
 })
 
 // PR #72 mock/live 전수 대조 DOC-LIVE-1: 백엔드가 Idempotency-Key를 필수로 받는 문서 분류(DOC-A07)와

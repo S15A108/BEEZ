@@ -1077,6 +1077,7 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
 | `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
 | `stale_reason` | `string` | N | 과거 리비전·입력 변경 원인 |
+| `owner_recommendations` | `object` | N | #189 추천·근거. [CHG-A05 조회](01-backend-rest.md#chg-a05)에 포함하며 CHG-A06 재분석 접수 응답에는 없다 |
 
 CHG-A05·A06의 ChangeImpact에는 `revision`(integer), `snapshot_hash`(string), `is_current`(boolean)이 필수이며 `stale_reason`(string)은 현재 입력과 다를 때 반환한다. `COMPLETED`인 빈 후보 배열만 평가 완료 후 0건이다. `NOT_EVALUATED`는 호출 전 미평가, `INSUFFICIENT_EVIDENCE`는 호출 후 근거 부족이다. `FAILED`여도 `explicit`은 보존한다. 현재 리비전의 최근 완료 결과를 우선 조회하고, 완료 결과가 없으면 RUNNING을 반환한다. 현재 리비전 결과가 없고 과거 결과만 있으면 그 결과에 `is_current=false`를 붙인다. 분석 이력이 전혀 없으면 `NOT_EVALUATED`, `error_code=analysis_not_started`다. `run_id`는 응답이 보여 주는 실행이고, 이전 완료 결과가 보이는 동안 새 실행이 진행 중이면 `reanalysis`(`run_id`, `requested_at`)가 함께 반환된다. 검색 범위가 잘렸거나 검색을 하지 못했으면 `INSUFFICIENT_EVIDENCE`와 `search_coverage_incomplete`다.
 
