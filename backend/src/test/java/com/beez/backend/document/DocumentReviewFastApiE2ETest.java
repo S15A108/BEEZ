@@ -8,6 +8,7 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.document.service.DocumentApplicationService;
 import com.beez.backend.document.service.DocumentReviewService;
+import com.beez.backend.document.dto.SuggestionDecisionRequest;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.project.ProjectRole;
 import com.beez.backend.support.IntegrationTestSupport;
@@ -145,5 +146,29 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
                 .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=true", Integer.class, projectId)).isEqualTo(1);
+    }
+
+    @Test void invalidDeletionAndConflictingPatchesFailBeforeSavingReviewAndPreserveUsage() {
+        for (String content : List.of("# E2E_PATCH_DELETE\n", "# E2E_PATCH_CONFLICT\nfirst-token second-token\n")) {
+            long document = upload(content.contains("E2E_PATCH_DELETE") ? "PLAN" : "API_SPEC", content);
+            assertThatThrownBy(() -> reviews.review(author, projectId, document, 1, UUID.randomUUID().toString()))
+                    .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=true", Integer.class, projectId)).isEqualTo(2);
+    }
+
+    @Test void independentPatchesCanBeAppliedThroughBackendInReverseOrder() {
+        long document = upload("# E2E_PATCH_VALID\nred-item blue-item\n");
+        var review = reviews.review(author, projectId, document, 1, "patch-order-e2e");
+        assertThat(review.suggestions()).hasSize(2);
+        var second = review.suggestions().get(1);
+        var first = review.suggestions().getFirst();
+        var afterSecond = reviews.decideSuggestion(author, projectId, document, Long.parseLong(review.id()),
+                Long.parseLong(second.id()), new SuggestionDecisionRequest(1, "APPLY"));
+        var afterFirst = reviews.decideSuggestion(author, projectId, document, Long.parseLong(review.id()),
+                Long.parseLong(first.id()), new SuggestionDecisionRequest(afterSecond.revision(), "APPLY"));
+        assertThat(afterFirst.content()).contains("scarlet-item azure-item");
+        assertThat(afterFirst.revision()).isEqualTo(3);
     }
 }

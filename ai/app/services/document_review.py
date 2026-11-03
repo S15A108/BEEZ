@@ -7,6 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.schemas.document_review import KINDS, DocumentReviewRequest
+from app.services.document_review_patches import validate_patch_sequence
 from app.services.llm_client import LLMClient, LLMContext, LLMMessage, LLMRequest
 
 _SYSTEM = """당신은 문서 본문을 검토하고 승인된 참고 문서와 비교하는 비비입니다.
@@ -17,7 +18,8 @@ _SYSTEM = """당신은 문서 본문을 검토하고 승인된 참고 문서와 
 종류의 step을 지정하고 입력된 해당 종류 reference_id를 sources에 포함하세요. quote는
 해당 참고 본문의 실제 연속된 원문이어야 하며 필요한 경우에만 넣으세요.
 PATCH는 원문에 정확히 한 번만 나오는 비어 있지 않은 original_text와 replacement_text를
-포함합니다. 여러 PATCH의 원문은 서로 겹치면 안 됩니다. 삭제는 replacement_text를 빈
+포함합니다. 여러 PATCH는 원문이 서로 겹치지 않고 어떤 순서로 적용해도 다른 원문을 중복
+생성하거나 문서가 비거나 유효 크기를 넘지 않아야 합니다. 삭제는 replacement_text를 빈
 문자열로 표현합니다. 특정 원문을 안전하게 지정할 수 없으면 COMMENT를 사용하고 원문과
 대체문은 생략하세요. 제안이 없으면 빈 배열을 반환하세요. 실제로 검토하지 못했다면
 성공 결과를 만들지 마세요. 실제 본문 검토 완료 여부 body_reviewed와 검토한 모든 참고자료의
@@ -105,6 +107,7 @@ def _validate_result(
     ):
         raise ValueError("incomplete review")
     ranges: list[tuple[int, int]] = []
+    patches: list[tuple[int, int, str, str]] = []
     for suggestion in parsed.suggestions:
         step = step_by_name[suggestion.step]
         if step["status"] != "COMPLETE" or not _nonblank(suggestion.explanation, 10000):
@@ -144,11 +147,13 @@ def _validate_result(
             ):
                 raise ValueError("overlapping patches")
             ranges.append((start, end))
+            patches.append((start, end, original, replacement))
         elif (
             suggestion.original_text is not None
             or suggestion.replacement_text is not None
         ):
             raise ValueError("invalid comment")
+    validate_patch_sequence(body.content, patches)
 
 
 async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) -> dict:

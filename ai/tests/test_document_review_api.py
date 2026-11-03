@@ -250,6 +250,126 @@ def test_repeated_original_cannot_be_used_for_patch(api):
     assert response.json()["usage"][0]["failed"] is True
 
 
+def patch(original, replacement):
+    return {
+        "type": "PATCH",
+        "step": "BODY",
+        "explanation": "수정 제안",
+        "sources": [],
+        "original_text": original,
+        "replacement_text": replacement,
+    }
+
+
+def request_with_content(content):
+    import hashlib
+
+    payload = fixture("review-contract-partial.json")["input"]
+    payload["content"] = content
+    payload["content_hash"] = "sha256:" + hashlib.sha256(content.encode()).hexdigest()
+    return payload
+
+
+@pytest.mark.parametrize("replacement", ["", "  \n\t", "\x00", "\x85"])
+def test_patch_must_not_create_empty_blank_or_binary_document(api, replacement):
+    api[1].output["suggestions"] = [patch("원문", replacement)]
+    response = post(api, request_with_content("원문"))
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+    assert "result" not in response.json()
+
+
+def test_combined_valid_individual_patches_must_not_exceed_document_limit(api):
+    api[1].output["suggestions"] = [patch("A", "x" * 50_000), patch("B", "y" * 50_000)]
+    response = post(api, request_with_content("A B"))
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
+def test_combined_deletions_cannot_leave_a_blank_document(api):
+    api[1].output["suggestions"] = [patch("A", ""), patch("B", "")]
+    response = post(api, request_with_content("A B"))
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
+def test_nonbreaking_space_is_not_java_blank(api):
+    api[1].output["suggestions"] = [patch("원문", "\u00a0")]
+    assert post(api, request_with_content("원문")).status_code == 200
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_patch_must_not_duplicate_another_original_in_any_order(api, reverse):
+    patches = [patch("A", "B"), patch("B", "C")]
+    api[1].output["suggestions"] = patches[::-1] if reverse else patches
+    response = post(api, request_with_content("A B"))
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
+def test_three_patches_cannot_jointly_create_another_original(api):
+    # Each change and each pair is safe; all three create another "xyz".
+    api[1].output["suggestions"] = [
+        patch("A", "x"),
+        patch("B", "y"),
+        patch("C", "z"),
+        patch("xyz", "ok"),
+    ]
+    response = post(api, request_with_content("ABC xyz!"))
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
+def test_deletions_cannot_join_multiple_fragments_into_another_original(api):
+    api[1].output["suggestions"] = [
+        patch("A", ""),
+        patch("B", ""),
+        patch("C", ""),
+        patch("abc", "other"),
+    ]
+    response = post(api, request_with_content("aABCbc abc!"))
+    assert response.status_code == 502
+
+
+def test_patch_cannot_normalize_across_a_remaining_original_boundary(api):
+    api[1].output["suggestions"] = [patch("A", "\r"), patch("\nB", "C")]
+    response = post(api, request_with_content("A\nB tail"))
+    assert response.status_code == 502
+
+
+def test_disjoint_patches_remain_applicable_for_every_order_and_subset(api):
+    from itertools import permutations
+
+    content = "red green blue anchor"
+    api[1].output["suggestions"] = [
+        patch("red", "scarlet"),
+        patch("green", "emerald"),
+        patch("blue", "azure"),
+    ]
+    response = post(api, request_with_content(content))
+    assert response.status_code == 200, response.text
+    suggestions = response.json()["result"]["suggestions"]
+    for count in range(len(suggestions) + 1):
+        for selection in permutations(suggestions, count):
+            current = content
+            for suggestion in selection:
+                original = suggestion["original_text"]
+                assert current.find(original) == current.rfind(original) >= 0
+                current = current.replace(original, suggestion["replacement_text"], 1)
+                assert current.strip()
+
+
+def test_patch_validation_matches_be_normalization_and_character_limit(api):
+    # CRLF becomes LF in BE, and a supplementary character counts as one code point.
+    content = "A" + "x" * 50_000
+    api[1].output["suggestions"] = [patch("A", "😀" * 49_999 + "\r\n")]
+    response = post(api, request_with_content(content))
+    assert response.status_code == 200, response.text
+    api[1].output["suggestions"] = [patch("A", "😀" * 49_998 + "\r\nyy")]
+    response = post(api, request_with_content(content))
+    assert response.status_code == 502
+
+
 @pytest.mark.parametrize("raw", ['{"summary":', '{"summary":"ok"}', "not json"])
 def test_truncated_or_invalid_model_output_preserves_failed_usage(api, raw):
     api[1].raw = raw

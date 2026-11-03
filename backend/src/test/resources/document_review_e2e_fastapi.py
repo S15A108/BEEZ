@@ -19,9 +19,19 @@ class FakeProvider:
         if 'E2E_TIMEOUT' in payload['content']:
             raise ProviderError('model_timeout', input_tokens=3, output_tokens=1)
         refs = [item['reference_id'] for item in payload['references']]
+        def patch(original, replacement):
+            return {'type': 'PATCH', 'step': 'BODY', 'explanation': '수정', 'sources': [],
+                    'original_text': original, 'replacement_text': replacement}
+        if 'E2E_PATCH_DELETE' in payload['content']:
+            suggestions = [patch(payload['content'], '')]
+        elif 'E2E_PATCH_CONFLICT' in payload['content']:
+            suggestions = [patch('first-token', 'second-token'), patch('second-token', 'done-token')]
+        elif 'E2E_PATCH_VALID' in payload['content']:
+            suggestions = [patch('red-item', 'scarlet-item'), patch('blue-item', 'azure-item')]
+        else:
+            suggestions = [{'type': 'COMMENT', 'step': 'BODY', 'explanation': '본문 검토 의견', 'sources': []}]
         output = {'summary': '검토 완료', 'body_reviewed': True,
-                  'reviewed_reference_ids': refs, 'suggestions': [
-                      {'type': 'COMMENT', 'step': 'BODY', 'explanation': '본문 검토 의견', 'sources': []}]}
+                  'reviewed_reference_ids': refs, 'suggestions': suggestions}
         return ProviderResponse(json.dumps(output, ensure_ascii=False), request.model, 11, 7)
 
 settings = Settings(_env_file=None, ai_internal_token=SecretStr(os.environ['BEEZ_REVIEW_E2E_TOKEN']))

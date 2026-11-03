@@ -34,7 +34,8 @@ def make_case(count):
     request = fixture["input"]
     result = fixture["response"]["result"]
     markers = [f"[unique-{i:02d}]" for i in range(count)]
-    request["content"] = "\n".join(markers)
+    # A fixed nonblank section survives every possible subset of deletions.
+    request["content"] = "ANCHOR\n" + "\n".join(markers)
     request["content_hash"] = (
         "sha256:" + hashlib.sha256(request["content"].encode()).hexdigest()
     )
@@ -89,12 +90,19 @@ def review(request, output):
 
 @pytest.mark.parametrize(("size", "status"), [(LIMIT, 200), (LIMIT + 1, 502)])
 def test_canonical_utf8_size_limit_is_inclusive(size, status):
-    request, saved, output = make_case(12)
+    request, saved, output = make_case(30)
+    # Reach the result JSON limit without producing an oversized patched document.
+    # The explanations are Korean UTF-8; PATCH text stays within the BE limit.
+    for suggestion in output["suggestions"]:
+        suggestion["explanation"] = "가" * 9_500
     remaining = size - canonical_size(saved)
     for suggestion in output["suggestions"]:
-        length = min(100_000, remaining)
-        suggestion["replacement_text"] = "x" * length
-        remaining -= length
+        length = min(2_500, remaining // 3)
+        suggestion["replacement_text"] = "나" * length
+        remaining -= length * 3
+        if remaining < 3 and length < 2_500:
+            suggestion["replacement_text"] += "x" * remaining
+            remaining = 0
     assert remaining == 0
     assert canonical_size(saved) == size
     response = review(request, output)
@@ -106,7 +114,8 @@ def test_canonical_utf8_size_limit_is_inclusive(size, status):
 def test_korean_result_below_be_limit_is_not_counted_as_ascii_escapes():
     request, saved, output = make_case(20)
     for suggestion in output["suggestions"]:
-        suggestion["replacement_text"] = "가" * 9_000
+        suggestion["explanation"] = "가" * 9_500
+        suggestion["replacement_text"] = "나" * 2_000
     assert canonical_size(saved) < LIMIT
     assert (
         len(
