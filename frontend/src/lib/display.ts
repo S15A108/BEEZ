@@ -40,6 +40,9 @@ export const statusLabels: Record<string, string> = {
   PLAN: '기획안',
   ERD: 'ERD',
   REQUIREMENTS: '요구사항 명세서',
+  // 비비 검토 단계 코드(DocumentBeeReview.steps·unavailable_references)
+  REQ_SPEC: '요구사항 명세서',
+  BODY: '본문',
   API_SPEC: 'API 명세서',
   REQUIREMENT: '요구사항',
   API_CONTRACT: 'API 계약',

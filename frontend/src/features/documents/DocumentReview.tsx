@@ -511,11 +511,13 @@ function Suggestions({
   busy: boolean
   onDecide: (suggestionId: string, decision: 'APPLY' | 'SKIP') => void
 }) {
+  const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
   return (
     <div className="grid gap-3">
       <div className="rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
         <strong>
-          비비가 수정 제안 {review.suggestions.length}개를 남겼어요
+          비비가 수정 제안 {review.suggestions.length - comments.length}개
+          {comments.length > 0 && `와 의견 ${comments.length}개`}를 남겼어요
         </strong>
         <p className="mt-1 leading-6">{review.summary}</p>
         {review.unavailable_references.length > 0 && (
@@ -524,15 +526,20 @@ function Suggestions({
             {review.unavailable_references.map(statusLabel).join(', ')}
           </p>
         )}
-        {review.steps && review.steps.length > 0 && (
+        {review.steps.length > 0 && (
           <ol
             aria-label="비비 검토 단계"
             className="mt-2 grid gap-0.5 text-xs text-muted-foreground"
           >
             {review.steps.map((step, index) => (
-              <li key={step.label}>
-                {index + 1}단계 / {review.steps!.length}단계 · {step.label}
-                {step.result && ` · ${step.result}`}
+              <li key={step.step}>
+                {index + 1}단계 / {review.steps.length}단계 ·{' '}
+                {statusLabel(step.step)} ·{' '}
+                {step.status === 'COMPLETE'
+                  ? '검토함'
+                  : step.reason === 'SAME_KIND'
+                    ? '같은 문서라 건너뜀'
+                    : '승인본이 없어 건너뜀'}
               </li>
             ))}
           </ol>
@@ -546,22 +553,27 @@ function Suggestions({
           >
             <p className="flex flex-wrap items-center justify-between gap-2">
               <strong>
-                제안 {index + 1} · {suggestion.explanation}
+                {suggestion.type === 'COMMENT' ? '의견' : '제안'} {index + 1} ·{' '}
+                {suggestion.explanation}
               </strong>
-              {suggestion.decision !== 'PENDING' && (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                  {suggestion.decision === 'APPLIED' ? '반영함' : '넘김'}
-                </span>
-              )}
+              {suggestion.type === 'PATCH' &&
+                suggestion.decision !== 'PENDING' && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                    {suggestion.decision === 'APPLIED' ? '반영함' : '넘김'}
+                  </span>
+                )}
             </p>
-            <div className="grid gap-1 font-mono text-xs leading-6 whitespace-pre-wrap select-text">
-              <p className="rounded bg-destructive/5 px-2 text-destructive">
-                − {suggestion.original_text}
-              </p>
-              <p className="rounded bg-primary/10 px-2">
-                + {suggestion.replacement_text}
-              </p>
-            </div>
+            {/* 의견(COMMENT)은 읽기만 하고, 반영·넘기기 없이 제출을 막지 않는다. */}
+            {suggestion.type === 'PATCH' && (
+              <div className="grid gap-1 font-mono text-xs leading-6 whitespace-pre-wrap select-text">
+                <p className="rounded bg-destructive/5 px-2 text-destructive">
+                  − {suggestion.original_text}
+                </p>
+                <p className="rounded bg-primary/10 px-2">
+                  + {suggestion.replacement_text}
+                </p>
+              </div>
+            )}
             {owner && suggestion.decision === 'PENDING' && (
               <span className="flex gap-2">
                 <Button

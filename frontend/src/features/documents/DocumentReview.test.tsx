@@ -134,8 +134,52 @@ it('비비 검토는 같은 리비전으로 한 번만 자동으로 부르고, �
     await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
   ).toBeInTheDocument()
   expect(request).toHaveBeenCalledTimes(1)
-  expect(screen.getByText(/1단계 \/ 5단계 · 문서 읽기/)).toBeInTheDocument()
+  // 서버 v2 검토는 단계 4개이고 첫 단계는 본문이다(S15P31A108-252, 사용자 승인으로 기대값 변경).
+  expect(screen.getByText(/1단계 \/ 4단계 · 본문 · 검토함/)).toBeInTheDocument()
   request.mockRestore()
+})
+
+// S15P31A108-252: 의견(COMMENT)은 읽기만 하고 반영·넘기기 없이 최종본 확인을 막지 않는다.
+it('비비 의견은 반영 버튼 없이 보이고, 수정 제안만 처리하면 최종본으로 넘어간다', async () => {
+  const user = userEvent.setup()
+  const original = documentsApi.workingCopy.bind(documentsApi)
+  const read = vi
+    .spyOn(documentsApi, 'workingCopy')
+    .mockImplementation(async (...args) => {
+      const copy = await original(...args)
+      const latest = copy.latest_review
+      return latest
+        ? {
+            ...copy,
+            latest_review: {
+              ...latest,
+              suggestions: [
+                ...latest.suggestions,
+                {
+                  id: '9001',
+                  explanation: '참고 · 용어를 문서 전체에서 같게 써요.',
+                  type: 'COMMENT',
+                  step: 'BODY',
+                },
+              ],
+            },
+          }
+        : copy
+    })
+  mount(true)
+  expect(
+    await screen.findByText(/수정 제안 \d개와 의견 1개를 남겼어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(/의견 \d+ · 참고 · 용어를 문서 전체에서 같게 써요/),
+  ).toBeInTheDocument()
+  expect(screen.getByText(/· 본문 · 검토함/)).toBeInTheDocument()
+  while (screen.queryAllByRole('button', { name: '넘기기' }).length)
+    await user.click(screen.getAllByRole('button', { name: '넘기기' })[0])
+  expect(
+    await screen.findByRole('heading', { name: '최종본 확인' }),
+  ).toBeInTheDocument()
+  read.mockRestore()
 })
 
 it('검토가 실패하면 다시 검토하기로만 다시 부른다', async () => {
