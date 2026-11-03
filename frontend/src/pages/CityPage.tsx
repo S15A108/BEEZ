@@ -18,6 +18,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { BuildingDesign } from '@/stores/workspaceStore'
 import { formatAgo } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
+import { RING_SLOTS } from '@/three/city/ring'
 import { AsyncState } from '@/components/AsyncState'
 import { ActionForm } from '@/components/ActionForm'
 import { Button } from '@/components/ui/button'
@@ -75,7 +76,8 @@ function City() {
         ]
       : []
   })
-  const nextLot = Array.from({ length: 8 }, (_, index) => index).find(
+  // 원형 도시(캔버스 v474)의 빈 부지는 늘 하나다. 원을 따라 가장 앞의 빈 칸에 생긴다.
+  const nextLot = Array.from({ length: RING_SLOTS }, (_, index) => index).find(
     (lot) => !assigned.some((item) => item.lot === lot),
   )
   // ponytail: 불러온 페이지 안에서만 검색·정렬한다. 서버 검색·정렬 파라미터가 생기면 쿼리로 옮긴다.
@@ -110,9 +112,9 @@ function City() {
                   {session.data?.name}님의 도시
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  부지 8칸 중{' '}
-                  {assigned.filter((item) => item.lot !== null).length}칸 사용 ·
-                  빈 부지를 누르면 프로젝트를 만들 수 있어요.
+                  프로젝트 {sceneProjects.length}개
+                  {nextLot !== undefined &&
+                    ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 만들면 원의 다음 칸에 새 빈 부지가 생겨요.'}
                 </p>
               </div>
               <div className="absolute top-6 right-6 z-10">
@@ -125,6 +127,11 @@ function City() {
                   프로젝트 만들기
                 </Button>
               </div>
+              {/* 원이 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city) */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[120px] bg-linear-to-b from-[rgba(253,252,248,0.88)] to-transparent"
+              />
               <Suspense
                 fallback={
                   <p
@@ -135,15 +142,20 @@ function City() {
                   </p>
                 }
               >
+                {/* 프로젝트 만들기 창이 열리면 도시가 화면 전체로 깔리고 창의 흐린 막 뒤에 보인다(SCR-04-v2-create-project). */}
                 <CityScene
                   projects={sceneProjects}
+                  nextLot={nextLot ?? null}
+                  backdrop={creatingAt !== null}
                   onProjectSelect={(id) => navigate(`/projects/${id}`)}
                   onLotSelect={startCreate}
-                  className="h-full w-full"
+                  className={
+                    creatingAt === null ? 'h-full w-full' : 'fixed inset-0 z-40'
+                  }
                 />
               </Suspense>
               <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                부지를 눌러 선택 · 휠로 확대/축소
+                끌어서 원 돌리기 · 부지를 눌러 선택 · 휠로 확대/축소
               </p>
             </section>
             <section className="mt-7">
@@ -257,9 +269,7 @@ function City() {
                   </span>
                   {nextLot !== undefined && (
                     <span className="text-xs leading-4 text-muted-foreground">
-                      빈 부지{' '}
-                      {8 - assigned.filter((item) => item.lot !== null).length}
-                      칸 남음
+                      빈 부지 {nextLot + 1}번 · 만들면 다음 칸이 열려요
                     </span>
                   )}
                 </button>
