@@ -56,6 +56,7 @@ HttpMethod = Literal[
     "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"
 ]
 ChangeKind = Literal["CREATE", "UPDATE"]
+FieldChangeKind = Literal["ADDED", "CHANGED", "REMOVED"]
 # What backs a draft item: verified document quotes, stored answers, both, or
 # nothing the reviewer can check.
 Support = Literal["DOCUMENT", "ANSWER", "DOCUMENT_AND_ANSWER", "NONE"]
@@ -294,12 +295,16 @@ class DraftItem(_Strict):
 
 
 class FieldChange(_Strict):
-    """One top-level content field whose JSON value differs.
+    """One top-level content field that differs between before and after.
 
-    Null on either side means "no value" there: the field is absent or null.
+    `change` says how: ADDED (no such field before), REMOVED (none after) or
+    CHANGED (a different JSON value, null to a value included). A null in
+    `before` or `after` is therefore unambiguous: the field is absent there
+    for ADDED/REMOVED and null-valued for CHANGED.
     """
 
     field: FieldName
+    change: FieldChangeKind
     before: Any = None
     after: Any = None
 
@@ -315,7 +320,9 @@ class DraftChange(_Strict):
     changed_fields: tuple[FieldChange, ...] = ()
     # Top-level fields that the model's proposals for this item set to
     # different values; the last proposal's value is in `after`, so the
-    # reviewer must settle these before trusting the draft.
+    # reviewer must settle these before trusting the draft. An update may
+    # carry conflicts and no field change at all, when the proposals ended
+    # up back at the stored value: it is kept so the disagreement is seen.
     conflicting_fields: tuple[FieldName, ...] = ()
     answer_refs: tuple[Key, ...] = ()
 
@@ -329,8 +336,8 @@ class DraftChange(_Strict):
         else:
             if self.base_design_item_version_id is None or self.before is None:
                 raise ValueError("an update needs its base and before content")
-            if not self.changed_fields:
-                raise ValueError("an update must change at least one field")
+            if not self.changed_fields and not self.conflicting_fields:
+                raise ValueError("an update must change a field or flag a conflict")
         names = [item.field for item in self.changed_fields]
         if len(set(names)) != len(names) or len(set(self.conflicting_fields)) != len(
             self.conflicting_fields

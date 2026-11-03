@@ -116,27 +116,43 @@ def draft_key(kind: str, base_id: str | None, content: DesignItemContent) -> str
 def field_changes(
     before: DesignItemContent, after: DesignItemContent
 ) -> tuple[FieldChange, ...]:
-    """Top-level content fields whose JSON value differs, in name order.
+    """Top-level content fields that differ, in name order.
 
-    An absent field and a null-valued one both mean "no value", so removing
-    a field that was null is not a change.
+    Values are compared as JSON text, and presence counts: the BE keeps an
+    absent field and a null-valued one as different JSON, so removing a
+    field that was null is a REMOVED change the reviewer can see.
     """
     old, new = canonical(before), canonical(after)
-    return tuple(
-        FieldChange(field=name, before=old.get(name), after=new.get(name))
-        for name in sorted(set(old) | set(new))
-        if _json(old.get(name)) != _json(new.get(name))
-    )
+    changes: list[FieldChange] = []
+    for name in sorted(set(old) | set(new)):
+        if name not in new:
+            change = "REMOVED"
+        elif name not in old:
+            change = "ADDED"
+        elif _json(old[name]) != _json(new[name]):
+            change = "CHANGED"
+        else:
+            continue
+        changes.append(
+            FieldChange(
+                field=name, change=change, before=old.get(name), after=new.get(name)
+            )
+        )
+    return tuple(changes)
 
 
 def _leaves(
     patch: dict[str, Any], prefix: tuple[str, ...] = ()
 ) -> dict[tuple[str, ...], Any]:
-    """Every value a patch assigns, by path; an object only contributes its keys."""
+    """Every value a patch assigns, by path.
+
+    An object contributes its keys; an empty object is a value of its own,
+    since it replaces whatever scalar, array or null was there.
+    """
     leaves: dict[tuple[str, ...], Any] = {}
     for name, value in patch.items():
         path = (*prefix, name)
-        if isinstance(value, dict):
+        if isinstance(value, dict) and value:
             leaves.update(_leaves(value, path))
         else:
             leaves[path] = value
@@ -147,8 +163,10 @@ def conflicting_fields(patches: Sequence[dict[str, Any]]) -> tuple[str, ...]:
     """Top-level fields that two proposals for one item set differently.
 
     A conflict is the same path given two values, or one proposal replacing
-    a whole value that another sets a key inside. The later proposal wins in
-    the merge, so the reviewer is told which fields to settle.
+    a whole value that another sets a key inside; an empty object leaves
+    room for keys set inside it, so it clashes only with a value at its own
+    path. The later proposal wins in the merge, so the reviewer is told
+    which fields to settle.
     """
     assigned: dict[tuple[str, ...], str] = {}
     conflicts: set[str] = set()
@@ -159,7 +177,12 @@ def conflicting_fields(patches: Sequence[dict[str, Any]]) -> tuple[str, ...]:
                 shorter = min(len(path), len(earlier))
                 if path[:shorter] != earlier[:shorter]:
                     continue
-                if path != earlier or encoded != earlier_encoded:
+                if path == earlier:
+                    clash = encoded != earlier_encoded
+                else:
+                    whole = encoded if len(path) < len(earlier) else earlier_encoded
+                    clash = whole != "{}"
+                if clash:
                     conflicts.add(path[0])
         assigned.update(leaves)
     return tuple(sorted(conflicts))
@@ -291,8 +314,10 @@ def compose_result(
         base_id = item.base_design_item_version_id
         if base_id is not None:
             changed = field_changes(existing[base_id].content, item.content)
-            # An unchanged restatement is not a draft.
-            if not changed:
+            conflicts = conflicting_fields([proposed.content for proposed in group])
+            # An unchanged restatement is not a draft, unless the proposals
+            # disagreed on the way there: the reviewer must see that.
+            if not changed and not conflicts:
                 continue
             change = DraftChange(
                 candidate_key=item.candidate_key,
@@ -301,9 +326,7 @@ def compose_result(
                 before=existing[base_id].content,
                 after=item.content,
                 changed_fields=changed,
-                conflicting_fields=conflicting_fields(
-                    [proposed.content for proposed in group]
-                ),
+                conflicting_fields=conflicts,
                 answer_refs=item.answer_refs,
             )
         else:

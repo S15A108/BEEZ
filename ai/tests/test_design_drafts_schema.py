@@ -219,16 +219,33 @@ def test_merged_drafts_keep_every_reference_and_conflicts_only_on_updates():
         change="UPDATE",
         base_design_item_version_id="1101",
         before=DesignItemContent(description="한도는 30 MB이다."),
-        changed_fields=(FieldChange(field="description", before="a", after="b"),),
+        changed_fields=(
+            FieldChange(change="CHANGED", field="description", before="a", after="b"),
+        ),
         conflicting_fields=("description",),
     )
     assert update.conflicting_fields == ("description",)
+    # Conflicts that net out to the stored value: an update with no field
+    # change is allowed then, so the disagreement reaches the reviewer.
+    settle = change(
+        change="UPDATE",
+        base_design_item_version_id="1101",
+        before=DesignItemContent(description="한도는 30 MiB이다."),
+        conflicting_fields=("description",),
+    )
+    assert settle.changed_fields == () and settle.after == settle.before
+    with pytest.raises(ValidationError):
+        FieldChange(change="EDITED", field="description")
     with pytest.raises(ValidationError):
         change(
             change="UPDATE",
             base_design_item_version_id="1101",
             before=DesignItemContent(description="한도는 30 MB이다."),
-            changed_fields=(FieldChange(field="description", before="a", after="b"),),
+            changed_fields=(
+                FieldChange(
+                    change="CHANGED", field="description", before="a", after="b"
+                ),
+            ),
             conflicting_fields=("a", "a"),
         )
 
@@ -240,9 +257,9 @@ def test_limits_follow_the_backend_content_validator():
     check_content_for_kind("DATA_CONTRACT", long_entity)
     stored = existing(kind="DATA_CONTRACT", content=long_entity)
     assert stored.content.extra_fields()["entity"] == "e" * 300
-    assert FieldChange(field="f" * 200).field == "f" * 200
+    assert FieldChange(change="CHANGED", field="f" * 200).field == "f" * 200
     with pytest.raises(ValidationError):
-        FieldChange(field="")
+        FieldChange(change="CHANGED", field="")
 
 
 def test_answered_question_needs_a_fitting_answer():
@@ -337,7 +354,12 @@ def test_change_shape_follows_its_kind():
         base_design_item_version_id="1101",
         before=DesignItemContent(description="한도는 30 MB이다."),
         changed_fields=(
-            FieldChange(field="description", before="한도는 30 MB이다.", after="x"),
+            FieldChange(
+                change="CHANGED",
+                field="description",
+                before="한도는 30 MB이다.",
+                after="x",
+            ),
         ),
     )
     assert update.changed_fields[0].field == "description"
@@ -355,7 +377,9 @@ def test_result_changes_mirror_items_and_bases_are_unique():
         change="UPDATE",
         base_design_item_version_id="1101",
         before=DesignItemContent(description="한도는 30 MB이다."),
-        changed_fields=(FieldChange(field="description", before="a", after="b"),),
+        changed_fields=(
+            FieldChange(change="CHANGED", field="description", before="a", after="b"),
+        ),
     )
     ok = result(items=(update_item,), changes=(update_change,))
     assert ok.changes[0].change == "UPDATE"

@@ -592,13 +592,15 @@ async def test_nested_objects_merge_key_by_key_and_arrays_replace_whole():
 async def test_conflicting_proposals_are_flagged_and_agreeing_ones_are_not():
     body = request(existing_items=[APPROVED, DRAFT_ITEM, API_ITEM, MANUAL_POLICY])
 
-    async def conflicts(*patches):
+    async def result_of(*patches):
         proposals = [
             with_content(item("API_CONTRACT", "x", base="1103", refs=["q-1"]), p)
             for p in patches
         ]
-        outcome = await generate_design_drafts(body, FakeProposer(*proposals))
-        change = outcome.result.changes[0]
+        return (await generate_design_drafts(body, FakeProposer(*proposals))).result
+
+    async def conflicts(*patches):
+        change = (await result_of(*patches)).changes[0]
         return change.conflicting_fields, change.after.model_dump(mode="json")
 
     flagged, after = await conflicts({"path": "/a"}, {"path": "/b"})
@@ -618,6 +620,21 @@ async def test_conflicting_proposals_are_flagged_and_agreeing_ones_are_not():
     # A type change alone is a conflict too: JSON true is not 1.
     flagged, _ = await conflicts({"flag": True}, {"flag": 1})
     assert flagged == ("flag",)
+    # An empty object replaces a scalar (a conflict), but it neither
+    # overrides nor is overridden by keys set inside the object.
+    flagged, after = await conflicts({"meta": "text"}, {"meta": {}})
+    assert flagged == ("meta",) and after["meta"] == {}
+    flagged, _ = await conflicts({"responses": {"400": "a"}}, {"responses": {}})
+    assert flagged == ()
+    flagged, _ = await conflicts({"responses": {}}, {"responses": {"400": "a"}})
+    assert flagged == ()
+    # Proposals that end up back at the stored value still disagreed: the
+    # draft is kept, with no field change, so the reviewer sees it.
+    result = await result_of({"path": "/a"}, {"path": "/api/auth/login"})
+    change = result.changes[0]
+    assert change.conflicting_fields == ("path",) and change.changed_fields == ()
+    assert change.after == change.before
+    assert "1103" not in result.untouched_existing_ids
     # Every verified source and answer reference of the group is kept.
     body = request(
         existing_items=[APPROVED, DRAFT_ITEM, API_ITEM],
@@ -645,8 +662,12 @@ async def test_conflicting_proposals_are_flagged_and_agreeing_ones_are_not():
     assert outcome.result.changes[0].conflicting_fields == ()
 
 
+def field_tuples(change):
+    return [(f.field, f.change, f.before, f.after) for f in change.changed_fields]
+
+
 @pytest.mark.asyncio
-async def test_null_valued_base_fields_are_kept_and_count_as_no_value():
+async def test_null_valued_base_fields_are_kept_and_their_removal_is_a_change():
     nullable = with_content(
         DRAFT_ITEM, {"description": "발행은 리더만 수행한다.", "note": None}
     )
@@ -656,23 +677,34 @@ async def test_null_valued_base_fields_are_kept_and_count_as_no_value():
         "description": "발행은 리더만 수행한다.",
         "note": None,
     }
-    # Removing a field that was null is no change at all.
+    # The BE keeps an absent field and a null one as different JSON, so
+    # removing the null field is a change the reviewer sees as REMOVED.
     removal = with_content(item("POLICY", "x", base="1102"), {"note": None})
     outcome = await generate_design_drafts(body, FakeProposer(removal))
-    assert outcome.result.items == ()
-    assert outcome.result.untouched_existing_ids == ("1101", "1102")
+    change = outcome.result.changes[0]
+    assert "note" not in change.after.model_dump(mode="json")
+    assert field_tuples(change) == [("note", "REMOVED", None, None)]
+    assert outcome.result.untouched_existing_ids == ("1101",)
     # Changing another field keeps the null field in before and after alike.
     reworded = item("POLICY", "발행은 프로젝트 리더만 수행한다.", base="1102")
     outcome = await generate_design_drafts(body, FakeProposer(reworded))
     change = outcome.result.changes[0]
     assert change.before.model_dump(mode="json")["note"] is None
     assert change.after.model_dump(mode="json")["note"] is None
-    assert [f.field for f in change.changed_fields] == ["description"]
-    # Setting it shows up with before=null: no value there before.
+    assert [(f.field, f.change) for f in change.changed_fields] == [
+        ("description", "CHANGED")
+    ]
+    # Giving the null field a value is CHANGED; on an item that never had
+    # the field it is ADDED. Either way before is null, and `change` tells.
     added = with_content(item("POLICY", "x", base="1102"), {"note": "검토 필요"})
     outcome = await generate_design_drafts(body, FakeProposer(added))
-    change = outcome.result.changes[0].changed_fields[0]
-    assert (change.field, change.before, change.after) == ("note", None, "검토 필요")
+    assert field_tuples(outcome.result.changes[0]) == [
+        ("note", "CHANGED", None, "검토 필요")
+    ]
+    outcome = await generate_design_drafts(request(), FakeProposer(added))
+    assert field_tuples(outcome.result.changes[0]) == [
+        ("note", "ADDED", None, "검토 필요")
+    ]
 
 
 @pytest.mark.asyncio
