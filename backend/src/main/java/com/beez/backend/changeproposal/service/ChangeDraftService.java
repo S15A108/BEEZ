@@ -2,6 +2,8 @@ package com.beez.backend.changeproposal.service;
 
 import static com.beez.backend.changeproposal.validation.ProposalValidator.requiredId;
 import static com.beez.backend.designitem.support.DesignJson.JSON;
+import static com.beez.backend.designitem.support.DesignJson.conflict;
+import static com.beez.backend.designitem.support.DesignJson.hash;
 import static com.beez.backend.designitem.support.DesignJson.id;
 import static com.beez.backend.designitem.support.DesignJson.invalid;
 import static com.beez.backend.designitem.support.DesignJson.time;
@@ -9,6 +11,7 @@ import static com.beez.backend.designitem.support.DesignJson.time;
 import com.beez.backend.changeproposal.dto.DraftDtos.Draft;
 import com.beez.backend.changeproposal.dto.DraftDtos.Generation;
 import com.beez.backend.changeproposal.dto.DraftDtos.Request;
+import com.beez.backend.changeproposal.port.AiCallException;
 import com.beez.backend.changeproposal.port.ChangeDraftGateway;
 import com.beez.backend.changeproposal.repository.DraftContextRepository;
 import com.beez.backend.changeproposal.repository.ProposalRepository;
@@ -23,8 +26,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -40,13 +47,20 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>순서(AI 호출 동안에는 트랜잭션·잠금을 잡지 않는다): ① 짧은 읽기 트랜잭션에서 입력 형식·권한·기준 확인과 멱등 재생 확인
  * → ② AI 호출 → ③ 사용량 기록(트랜잭션 밖) → ④ 결과 검증 → ⑤ 짧은 트랜잭션에서 프로젝트 잠금 뒤 다시 멱등 재생과
- * 기준 확인(호출 동안 다른 제안이 발행됐을 수 있다)을 하고 응답을 저장한다.
+ * 기준 확인(호출 동안 다른 제안이 발행됐을 수 있다)을 하고 응답을 저장한다. ⑤ 의 확인은 문서 승인본뿐 아니라 AI 에 보낸
+ * 관련 설계 항목의 목록·버전도 지금 기준과 대조한다.
+ *
+ * <p><b>같은 키의 동시 요청</b>은 하나만 AI 를 부르고 나머지는 그 결과(성공이든 실패든)를 기다려 받는다({@link #flights}).
+ * 결과가 저장되기 전에는 DB 의 멱등 기록으로 구분할 수 없기 때문이다. 이 표는 <b>프로세스 안</b>에만 있어 백엔드 인스턴스가
+ * 둘 이상이면 서로 보지 못한다(지금은 단일 인스턴스). 늘리게 되면 DB 쪽 진행 중 표시가 필요하다.
  */
 @Service
 public class ChangeDraftService {
     private static final Logger log = LoggerFactory.getLogger(ChangeDraftService.class);
     static final int MAX_ITEMS = 50;
     static final int MAX_INSTRUCTION = 2000;
+    /** 먼저 온 요청을 기다리는 최대 시간. AI 읽기 시간 제한(기본 20초)과 저장 시간보다 충분히 길다. */
+    static final long FOLLOW_WAIT_SECONDS = 120;
 
     private final ProjectAccessChecker access;
     private final DesignProjectRepository projects;
@@ -56,6 +70,8 @@ public class ChangeDraftService {
     private final DraftUsageRecorder usage;
     private final DesignCommandService idempotency;
     private final TransactionTemplate transaction;
+    /** 진행 중인 요청. 키는 프로젝트·계정·작업 종류·Idempotency-Key. */
+    private final ConcurrentHashMap<String, Flight> flights = new ConcurrentHashMap<>();
 
     public ChangeDraftService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository proposals,
             DraftContextRepository context, ChangeDraftGateway gateway, DraftUsageRecorder usage, DesignCommandService idempotency,
@@ -65,15 +81,52 @@ public class ChangeDraftService {
         this.transaction = new TransactionTemplate(manager);
     }
 
-    /** AI 에 보내기 전에 확인한 입력과, 호출 뒤 결과를 검증할 때 쓰는 값. */
-    private record Prepared(long document, long version, Long task, Map<String, Object> documentVersion,
-                            List<Map<String, Object>> items, int totalItems) { }
+    /** AI 에 보내기 전에 확인한 입력과, 호출 뒤 결과를 검증·대조할 때 쓰는 값. */
+    private record Prepared(long document, long version, int versionNo, Long task, Map<String, Object> documentVersion,
+                            List<Map<String, Object>> items, List<String> itemKeys, int totalItems) { }
     private record Step(Draft replayed, Prepared prepared) { }
+    private record Flight(String fingerprint, CompletableFuture<Draft> result) { }
 
     public Draft generate(CallerContext caller, long project, Request input, String key) {
         validate(project, input);
         access.requireMember(caller, project);
         String operation = "change-draft:generate:" + (caller.isHuman() ? "human" : "agent:" + caller.agentTokenId());
+        // 키가 올바르지 않으면 공유 표에 올리지 않는다 — 곧 멱등 확인이 400 으로 거절한다.
+        if (key == null || key.isBlank() || key.length() > 128) return run(caller, project, input, key, operation);
+
+        String flightKey = project + "|" + caller.accountId() + "|" + operation + "|" + key;
+        Flight mine = new Flight(hash(input), new CompletableFuture<>());
+        Flight leader = flights.putIfAbsent(flightKey, mine);
+        if (leader != null) return follow(leader, mine.fingerprint());
+        try {
+            Draft draft = run(caller, project, input, key, operation);
+            mine.result().complete(draft);
+            return draft;
+        } catch (RuntimeException e) {
+            mine.result().completeExceptionally(e);
+            throw e;
+        } finally {
+            flights.remove(flightKey, mine);
+        }
+    }
+
+    /** 같은 키로 이미 진행 중인 요청의 결과를 기다려 그대로 받는다. 본문이 다르면 멱등 충돌이다. */
+    private Draft follow(Flight leader, String fingerprint) {
+        if (!leader.fingerprint().equals(fingerprint)) throw conflict("idempotency_conflict");
+        try {
+            return leader.result().get(FOLLOW_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException cause) throw cause;
+            throw unavailable();
+        } catch (TimeoutException e) {
+            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", AiChangeDraftAdapter.TIMEOUT);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw unavailable();
+        }
+    }
+
+    private Draft run(CallerContext caller, long project, Request input, String key, String operation) {
         Step step = transaction.execute(status -> {
             var replay = idempotency.replay(project, caller.accountId(), operation, key, input, Draft.class);
             return replay.isPresent() ? new Step(replay.get(), null) : new Step(null, prepare(project, input));
@@ -88,7 +141,7 @@ public class ChangeDraftService {
         try {
             response = gateway.draft(payload(project, requestKey, input.instruction().strip(), prepared));
         } catch (ApiException e) {
-            usage.recordFailure(project, prepared.task(), requestKey, elapsedMillis(started));
+            recordFailedCall(project, prepared, requestKey, e, elapsedMillis(started));
             throw e;
         } catch (RuntimeException e) {
             log.error("AI-A06 call failed unexpectedly: {}", e.toString(), e);
@@ -114,6 +167,18 @@ public class ChangeDraftService {
             idempotency.save(project, caller.accountId(), operation, key, input, draft);
             return draft;
         });
+    }
+
+    /**
+     * 실패한 호출의 사용량. 모델 호출이 일어난 뒤의 실패라 AI 가 오류 본문에 실제 usage 를 실었으면 그 줄들을 남기고,
+     * 본문을 받지 못했거나 usage 가 없을 때만 토큰 수를 모르는 실패 한 줄을 남긴다(0 으로 단정하지 않는다).
+     */
+    private void recordFailedCall(long project, Prepared prepared, String requestKey, ApiException error, long elapsed) {
+        int recorded = 0;
+        if (error instanceof AiCallException call && call.usage() != null) {
+            recorded = usage.recordLines(project, prepared.task(), requestKey, call.usage(), false, null, elapsed);
+        }
+        if (recorded == 0) usage.recordFailure(project, prepared.task(), requestKey, elapsed);
     }
 
     private static void validate(long project, Request input) {
@@ -142,17 +207,34 @@ public class ChangeDraftService {
         if (!(row.get("content_text") instanceof String text) || text.isBlank())
             throw new ApiException(HttpStatus.CONFLICT, "analysis_not_completed", "문서 원문이 아직 준비되지 않았어요. 잠시 뒤 다시 시도해 주세요.");
         int total = context.relatedItemCount(baseline, version);
+        var rows = context.relatedItems(baseline, version, MAX_ITEMS);
         List<Map<String, Object>> items = new ArrayList<>();
-        for (var item : context.relatedItems(baseline, version, MAX_ITEMS)) items.add(itemView(item, document, version, row));
-        return new Prepared(document, version, task, documentVersionView(row, text), items, total);
+        for (var item : rows) items.add(itemView(item, document, version, row));
+        return new Prepared(document, version, ((Number) row.get("version_no")).intValue(), task, documentVersionView(row, text),
+                items, itemKeys(rows), total);
     }
 
-    /** 호출 동안 다른 제안이 발행돼 이 문서의 승인본이 바뀌었으면 결과를 버린다. 같은 승인본이 새 기준에 그대로 있으면 유효하다. */
+    /** 항목마다 "항목ID:항목버전ID". 항목이 새 버전이 되거나 퇴역하거나 빠지면 달라진다. */
+    private static List<String> itemKeys(List<Map<String, Object>> rows) {
+        List<String> keys = new ArrayList<>();
+        for (var row : rows) keys.add(row.get("design_item_id") + ":" + row.get("id"));
+        return keys;
+    }
+
+    /**
+     * 호출 동안 다른 제안이 발행돼 초안의 근거가 바뀌었으면 결과를 버린다.
+     * ① 이 문서의 승인본이 같은가(새 기준에 같은 승인본이 그대로 있으면 유효) ② AI 에 보낸 관련 설계 항목의 목록·버전이
+     * 지금 기준과 같은가. 문서는 그대로인데 항목만 새 버전이 되거나 퇴역한 경우를 놓치면 옛 설계 항목을 근거로 만든 초안이
+     * 현재 기준의 결과처럼 나간다. 프로젝트 잠금을 잡은 뒤라 발행과 겹치지 않는다.
+     */
     private void requireStillCurrent(long project, Prepared prepared) {
         Long baseline = context.currentBaseline(project);
         if (baseline == null) throw versionConflict();
         var row = context.baselineVersion(baseline, prepared.document()).orElseThrow(ChangeDraftService::versionConflict);
         if (id(row, "id") != prepared.version()) throw versionConflict();
+        if (context.relatedItemCount(baseline, prepared.version()) != prepared.totalItems()
+                || !itemKeys(context.relatedItems(baseline, prepared.version(), MAX_ITEMS)).equals(prepared.itemKeys()))
+            throw versionConflict();
     }
 
     private static Map<String, Object> payload(long project, String requestKey, String instruction, Prepared prepared) {
@@ -178,24 +260,22 @@ public class ChangeDraftService {
         String origin = response.get("origin") instanceof String o ? o : null;
         if (!"MODEL".equals(origin) && !"TEMPLATE".equals(origin)) throw invalidOutput("origin 이 MODEL/TEMPLATE 이 아닙니다");
 
-        // 근거는 이 요청에 실제로 실은 문서 버전만 남긴다. 낯선 버전을 가리키는 근거를 그대로 보여 주면 사용자를 속인다.
-        Set<String> allowed = Set.of(Long.toString(prepared.version()));
+        // 근거는 이 요청에 실제로 실은 문서·버전을 가리키고 필수 값이 모두 있는 것만 남긴다.
+        // 다른 문서를 가리키거나 값이 빠진 근거를 그대로 보여 주면 사용자를 속이고, FE 의 sourceSchema 검증도 깨진다.
         List<Map<String, Object>> sources = new ArrayList<>();
         int rawSources = 0;
         if (result.get("sources") instanceof List<?> list) {
             for (Object value : list) {
                 rawSources++;
-                if (value instanceof Map<?, ?> m && m.get("document_version_id") != null
-                        && allowed.contains(String.valueOf(m.get("document_version_id")))) {
-                    @SuppressWarnings("unchecked") Map<String, Object> source = (Map<String, Object>) m;
-                    sources.add(source);
-                }
+                Map<String, Object> source = validSource(value, prepared);
+                if (source != null) sources.add(source);
             }
         }
-        if (rawSources > 0 && sources.isEmpty()) throw invalidOutput("근거가 모두 이 요청에 없는 문서 버전을 가리킵니다");
+        if (rawSources > 0 && sources.isEmpty()) throw invalidOutput("근거가 모두 요청한 문서·버전과 맞지 않거나 필수 값이 없습니다");
         List<String> unresolved = new ArrayList<>();
         if (result.get("unresolved") instanceof List<?> list) for (Object value : list) if (value instanceof String s) unresolved.add(s);
-        if (rawSources > sources.size()) unresolved.add("근거로 적힌 문서 버전 " + (rawSources - sources.size()) + "건이 이 요청에 없어 제외했어요.");
+        if (rawSources > sources.size())
+            unresolved.add("근거 " + (rawSources - sources.size()) + "건이 이 요청의 문서·버전과 맞지 않거나 필수 값이 없어 제외했어요.");
         if (prepared.totalItems() > prepared.items().size())
             unresolved.add("관련 설계 항목 " + prepared.totalItems() + "개 중 " + prepared.items().size() + "개만 전달했어요.");
         List<Map<String, Object>> usageLines = null;
@@ -211,6 +291,29 @@ public class ChangeDraftService {
         String model = response.get("model") instanceof String m && !m.isBlank() ? m : null;
         return new Draft(input.documentId(), input.baseDocumentVersionId(), after,
                 new Generation(origin, model, reason, sources, unresolved, usageLines));
+    }
+
+    /**
+     * 근거 한 건이 유효하면 정규화한 네 필드만 담아 돌려주고, 아니면 null. 유효하려면 document_id·document_version_id 가 요청한
+     * 문서·버전과 같고, version_no 가 그 버전의 번호와 같고, location 이 비어 있지 않은 문자열이어야 한다.
+     * ID 는 문자열이든 정수든 같은 값이면 받아들이고 문자열로 맞춰 내보낸다.
+     */
+    private static Map<String, Object> validSource(Object value, Prepared prepared) {
+        if (!(value instanceof Map<?, ?> m)) return null;
+        if (!sameId(m.get("document_id"), prepared.document()) || !sameId(m.get("document_version_id"), prepared.version())) return null;
+        if (!(m.get("version_no") instanceof Number number) || number.doubleValue() != prepared.versionNo()) return null;
+        if (!(m.get("location") instanceof String location) || location.isBlank()) return null;
+        var source = new LinkedHashMap<String, Object>();
+        source.put("document_id", Long.toString(prepared.document()));
+        source.put("document_version_id", Long.toString(prepared.version()));
+        source.put("version_no", prepared.versionNo());
+        source.put("location", location);
+        return source;
+    }
+
+    private static boolean sameId(Object value, long expected) {
+        if (value instanceof String s) return s.equals(Long.toString(expected));
+        return (value instanceof Integer || value instanceof Long) && ((Number) value).longValue() == expected;
     }
 
     private static Map<String, Object> documentVersionView(Map<String, Object> row, String text) {

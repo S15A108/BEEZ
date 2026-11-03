@@ -26,13 +26,21 @@ public class DraftUsageRecorder {
     /** AI 응답의 usage 배열을 한 줄씩 기록한다. 기록을 시도한 줄 수를 돌려준다. */
     public int record(long project, Long task, String requestKey, Map<String, Object> response, long observedMillis) {
         if (!(response.get("usage") instanceof List<?> list)) return 0;
-        boolean template = "TEMPLATE".equals(response.get("origin"));
+        return recordLines(project, task, requestKey, list, "TEMPLATE".equals(response.get("origin")), response.get("model"), observedMillis);
+    }
+
+    /**
+     * usage 줄 목록을 한 줄씩 기록한다. 성공 응답의 usage 와 오류 본문의 usage(모델 호출 뒤 실패, 실제 토큰·비용) 모두 이 경로다.
+     * 기록을 시도한 줄 수를 돌려준다 — 0 이면 호출한 쪽이 "미확인" 한 줄을 따로 남긴다.
+     */
+    public int recordLines(long project, Long task, String requestKey, List<?> list, boolean template, Object responseModel,
+                           long observedMillis) {
         int tried = 0;
         for (int index = 0; index < list.size(); index++) {
             if (!(list.get(index) instanceof Map<?, ?> raw)) continue;
             tried++;
             @SuppressWarnings("unchecked") Map<String, Object> entry = (Map<String, Object>) raw;
-            insertQuietly(project, task, entry, requestKey + ":" + index, response.get("model"), template, observedMillis);
+            insertQuietly(project, task, entry, requestKey + ":" + index, responseModel, template, observedMillis);
         }
         return tried;
     }
