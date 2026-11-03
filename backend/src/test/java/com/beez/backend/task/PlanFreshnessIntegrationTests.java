@@ -260,7 +260,8 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
         long v2 = TaskApiSupport.longField(second.body(), "id");
         assertThat(column("validation", "input_snapshot_hash", v2)).isEqualTo(column("validation", "input_snapshot_hash", v1));
 
-        HttpResponse<String> changed = revise(t[0], "A (이름만)", api.readsRef("API-01"), 2, TaskApiSupport.longField(second.body(), "lock_version"),
+        // 검증 접수는 작업의 lock_version 을 바꾸지 않는다 (검증 응답에는 lock_version 이 없다) → 계획 변경 응답의 값을 쓴다
+        HttpResponse<String> changed = revise(t[0], "A (이름만)", api.readsRef("API-01"), 2, TaskApiSupport.longField(renamed.body(), "lock_version"),
                 Map.of("\"goal\": \"목표\"", "\"goal\": \"다른 목표\""));
         assertThat(changed.statusCode()).as(changed.body()).isEqualTo(201);
         long rev3 = currentRevision(t[0]);
