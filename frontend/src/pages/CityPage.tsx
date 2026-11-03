@@ -167,9 +167,10 @@ function City() {
                     }
                   />
                 </Suspense>
-                <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                  끌거나 휠로 거리 넘기기 · 끝을 넘으면 처음으로 이어져요 ·
-                  부지를 눌러 선택
+                {/* 캔버스 SCR-04-v2-city(v495)처럼 바탕 없이 왼쪽 아래 24·16px에 둔다. */}
+                <p className="pointer-events-none absolute right-6 bottom-4 left-6 text-xs break-keep text-muted-foreground">
+                  끌거나 휠로 고리 돌리기 · 빈 부지 다음은 꾸밈 칸을 건너
+                  1번으로 · 부지를 눌러 선택
                 </p>
               </section>
             </div>
@@ -284,7 +285,8 @@ function City() {
                   </span>
                   {nextLot !== undefined && (
                     <span className="text-xs leading-4 text-muted-foreground">
-                      빈 부지 {nextLot + 1}번 · 만들면 다음 칸이 열려요
+                      빈 부지 {nextLot + 1}번 · 만들면 고리의 다음 칸이 빈
+                      부지가 돼요
                     </span>
                   )}
                 </button>
