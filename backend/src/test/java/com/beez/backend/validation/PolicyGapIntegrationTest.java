@@ -5,6 +5,10 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.beez.backend.document.service.HybridDocumentCandidateSearch;
+import com.beez.backend.changeproposal.dto.PublicationDtos.ChangedItem;
+import com.beez.backend.changeproposal.dto.PublicationDtos.ImpactRequest;
+import com.beez.backend.changeproposal.port.ValidationImpactPort;
+import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import com.beez.backend.validation.service.ValidationAnalyzer;
@@ -20,6 +24,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Real API, worker, persistence and PostgreSQL; synthetic search/model boundaries. */
@@ -28,6 +34,8 @@ class PolicyGapIntegrationTest extends IntegrationTestSupport {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     @Autowired DataSource dataSource;
     @Autowired ValidationWorker worker;
+    @Autowired ValidationImpactPort publications;
+    @Autowired PlatformTransactionManager transactions;
     @MockitoBean HybridDocumentCandidateSearch search;
     @MockitoBean ValidationAnalyzer analyzer;
     private TaskApiSupport api;
@@ -197,6 +205,115 @@ class PolicyGapIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(Long.toString(second));
         assertThat(api.jdbc.sql("select count(*) from validation_design_ref where validation_id=:v")
                 .param("v", validation).query(Integer.class).single()).isZero();
+        assertThat(api.jdbc.sql("select design_item_id from validation_policy_ref where validation_id=:v order by design_item_id")
+                .param("v", validation).query(Long.class).list()).containsExactly(first, second);
+    }
+
+    @Test
+    void onlyCitedPoliciesInvalidateValidationAndGateOrHoldTheTask() throws Exception {
+        long cited = policy("POL-CITED", "실패 5회면 잠금");
+        long merelySearched = policy("POL-UNUSED", "다른 알림 정책");
+        long citedVersion = api.currentVersionId("POL-CITED");
+        long unusedVersion = api.currentVersionId("POL-UNUSED");
+        var hit1 = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DESIGN_ITEM", "id", Long.toString(cited)), Set.of("KEYWORD"));
+        var hit2 = new HybridDocumentCandidateSearch.Candidate(Map.of("type", "DESIGN_ITEM", "id", Long.toString(merelySearched)), Set.of("KEYWORD"));
+        when(search.search(any(), eq(project), anyString(), isNull(), isNull(), eq(100)))
+                .thenReturn(new HybridDocumentCandidateSearch.Result(Long.toString(baseline), List.of(hit1, hit2), false, false));
+        when(analyzer.analyze(any())).thenAnswer(call -> {
+            Map<String, Object> request = call.getArgument(0);
+            var versions = maps(request.get("approved_items")).stream().map(i -> (String) i.get("id")).toList();
+            Map<String, Object> out = result(request, List.of(), List.of());
+            out.put("policy_assessments", List.of(Map.of("need_id", "lock", "topic", "잠금", "state", "SUPPORTED",
+                    "plan_evidence", Map.of("field", "goal", "quote", "목표"), "design_item_version_ids", versions,
+                    "approved_content_refs", List.of(Map.of("design_item_version_id", Long.toString(citedVersion),
+                            "path", List.of("description"), "quote", "5회")),
+                    "evidence_ids", List.of(), "explanation", "승인된 잠금 정책에 맞습니다")));
+            out.put("policy_assessments_truncated", false);
+            return response(Long.parseLong((String) request.get("validation_id")), out);
+        });
+        long runningValidation = accepted();
+        long waitingValidation = accepted();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(worker.runOnce()).isTrue();
+        for (long id : List.of(runningValidation, waitingValidation)) {
+            assertThat(validationStatus(id)).isEqualTo("PASS");
+            assertThat(api.jdbc.sql("select design_item_id from validation_policy_ref where validation_id=:v")
+                    .param("v", id).query(Long.class).list()).containsExactly(cited);
+            assertThat(api.jdbc.sql("select count(*) from validation_candidate_ref where validation_id=:v")
+                    .param("v", id).query(Integer.class).single()).isEqualTo(2);
+            assertThat(api.jdbc.sql("select count(*) from validation_design_ref where validation_id=:v")
+                    .param("v", id).query(Integer.class).single()).isZero();
+        }
+        long runningTask = taskOf(runningValidation), waitingTask = taskOf(waitingValidation);
+        var started = start(runningTask, runningValidation);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+
+        // Same policy input on a new plan revision must carry the policy dependencies as well.
+        int lock = api.jdbc.sql("select lock_version from task where id=:t").param("t", waitingTask).query(Integer.class).single();
+        String plan = api.planJson("정책 검사", "[]", "[]").trim();
+        String revision = plan.substring(0, plan.lastIndexOf('}'))
+                + ",\"expected_revision_no\":1,\"expected_lock_version\":" + lock + "}";
+        var revised = api.post("/api/projects/" + project + "/tasks/" + waitingTask + "/plan-revisions", revision, owner);
+        assertThat(revised.statusCode()).as(revised.body()).isEqualTo(201);
+        long carried = api.jdbc.sql("select max(id) from validation where task_id=:t").param("t", waitingTask).query(Long.class).single();
+        assertThat(carried).isNotEqualTo(waitingValidation);
+        assertThat(api.jdbc.sql("select design_item_id from validation_policy_ref where validation_id=:v")
+                .param("v", carried).query(Long.class).list()).containsExactly(cited);
+
+        long unusedNext = api.newVersion("POL-UNUSED", 2);
+        long secondBaseline = api.publish(2, Map.of("API-01", api.currentVersionId("API-01"), "API-02", api.currentVersionId("API-02"),
+                "POL-CITED", citedVersion, "POL-UNUSED", unusedNext));
+        var unrelated = publication(secondBaseline, baseline, merelySearched, unusedVersion, unusedNext);
+        assertThat(apply(unrelated).staleValidations()).isEmpty();
+        assertThat(validationStatus(runningValidation)).isEqualTo("PASS");
+        assertThat(taskStatus(runningTask)).isEqualTo("IN_PROGRESS");
+
+        long citedNext = api.newVersion("POL-CITED", 2);
+        long thirdBaseline = api.publish(3, Map.of("API-01", api.currentVersionId("API-01"), "API-02", api.currentVersionId("API-02"),
+                "POL-CITED", citedNext, "POL-UNUSED", unusedNext));
+        // Even before the publication adapter runs, G2 rejects the outdated carried PASS.
+        var blocked = start(waitingTask, waitingValidation);
+        assertThat(blocked.statusCode()).as(blocked.body()).isEqualTo(409);
+        assertThat(blocked.body()).contains("version_conflict");
+        var changed = publication(thirdBaseline, secondBaseline, cited, citedVersion, citedNext);
+        var preview = new TransactionTemplate(transactions).execute(status -> publications.previewPublication(project, changed));
+        assertThat(preview.staleValidations()).hasSize(3);
+        assertThat(preview.waitingTasks()).extracting("taskId").containsExactly(Long.toString(runningTask));
+        var applied = apply(changed);
+        assertThat(applied.staleValidations()).hasSize(3);
+        assertThat(applied.waitingTasks()).extracting("taskId").containsExactly(Long.toString(runningTask));
+        for (long id : List.of(runningValidation, waitingValidation, carried)) assertThat(validationStatus(id)).isEqualTo("STALE");
+        assertThat(taskStatus(runningTask)).isEqualTo("WAITING");
+        assertThat(api.jdbc.sql("select waiting_reason from task where id=:t").param("t", runningTask).query(String.class).single())
+                .isEqualTo("REVALIDATION");
+        assertThat(apply(changed).staleValidations()).isEmpty();
+    }
+
+    private long taskOf(long validation) {
+        return api.jdbc.sql("select task_id from validation where id=:v").param("v", validation).query(Long.class).single();
+    }
+
+    private String validationStatus(long validation) {
+        return api.jdbc.sql("select status from validation where id=:v").param("v", validation).query(String.class).single();
+    }
+
+    private String taskStatus(long task) {
+        return api.jdbc.sql("select status from task where id=:t").param("t", task).query(String.class).single();
+    }
+
+    private java.net.http.HttpResponse<String> start(long task, long validation) {
+        var row = api.jdbc.sql("select current_plan_revision_id,lock_version from task where id=:t").param("t", task).query().singleRow();
+        return api.post("/api/projects/" + project + "/tasks/" + task + "/state-events",
+                "{\"event\":\"START\",\"plan_revision_id\":\"" + row.get("current_plan_revision_id")
+                        + "\",\"expected_lock_version\":" + row.get("lock_version") + ",\"validation_id\":\"" + validation + "\"}", owner);
+    }
+
+    private ImpactRequest publication(long current, long previous, long item, long before, long after) {
+        return new ImpactRequest(current, previous, 1L, 1, "test", List.of(new ChangedItem(item, before, after, "UPDATE")), "정책 변경");
+    }
+
+    private com.beez.backend.changeproposal.dto.PublicationDtos.ImpactResult apply(ImpactRequest request) {
+        return new TransactionTemplate(transactions).execute(status -> publications.applyPublication(CallerContext.human(owner), project, request));
     }
 
     private long accepted() {

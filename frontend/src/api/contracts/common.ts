@@ -627,6 +627,12 @@ export const findingSchema = z.object({
 })
 export type Finding = z.infer<typeof findingSchema>
 
+const policyPlanEvidenceSchema = z.object({
+  field: z.string(),
+  index: z.number().int().optional(),
+  quote: z.string(),
+})
+
 export const validationSchema = z
   .object({
     id: idSchema,
@@ -658,11 +664,7 @@ export const validationSchema = z
           z.object({
             need_id: z.string(),
             topic: z.string(),
-            plan_evidence: z.object({
-              field: z.string(),
-              index: z.number().int().optional(),
-              quote: z.string(),
-            }),
+            plan_evidence: policyPlanEvidenceSchema,
             state: z.enum([
               'SUPPORTED',
               'EXPLICITLY_UNDECIDED',
@@ -683,13 +685,7 @@ export const validationSchema = z
         ),
         policy_assessments_truncated: z.boolean(),
         no_policy_requirements_reason: z.string().optional(),
-        no_policy_requirements_evidence: z
-          .object({
-            field: z.string(),
-            index: z.number().int().optional(),
-            quote: z.string(),
-          })
-          .optional(),
+        no_policy_requirements_evidence: policyPlanEvidenceSchema.optional(),
       })
       .optional(),
   })

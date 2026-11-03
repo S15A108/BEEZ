@@ -442,6 +442,13 @@ public class AnalysisResultApplier {
         copyPolicyAnalysis(result, summary);
         summary.put("model", model);
         summary.put("usage", response.get("usage"));   // 비용 기록(-168)까지 응답의 사용량을 버리지 않는다
+        if (policyPinned) {
+            // Contract validation above ties every quote and evidence id to approved input.
+            // An item merely present in the search scope is not an invalidation dependency.
+            Set<String> citedVersions = citedPolicyVersions(request, result);
+            validations.savePolicyRefs(v.id(), objects(request.get("approved_items")).stream()
+                    .filter(item -> citedVersions.contains(String.valueOf(item.get("id")))).toList());
+        }
         if ("PASS".equals(status) && analyzedBaseline != null) {
             Set<String> declared = new HashSet<>();
             for (var ref : objects(map(map(request.get("plan_revision")).get("plan")).get("design_refs"))) {
@@ -458,6 +465,23 @@ public class AnalysisResultApplier {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
         }
         carryIfPlanRenamed(v);
+    }
+
+    /** Call only after validating the result against this exact request. */
+    static Set<String> citedPolicyVersions(Map<String, Object> request, Map<String, Object> result) {
+        Set<String> versions = new HashSet<>(), evidenceIds = new HashSet<>();
+        for (var assessment : objects(result.get("policy_assessments"))) {
+            for (var ref : objects(assessment.get("approved_content_refs"))) {
+                versions.add(String.valueOf(ref.get("design_item_version_id")));
+            }
+            evidenceIds.addAll(strings(assessment.get("evidence_ids")));
+        }
+        for (var evidence : objects(request.get("evidence"))) {
+            if (evidenceIds.contains(String.valueOf(evidence.get("evidence_id")))) {
+                versions.add(String.valueOf(evidence.get("design_item_version_id")));
+            }
+        }
+        return versions;
     }
 
     /**

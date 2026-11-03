@@ -172,6 +172,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   const isOwner = !!task && memberId === task.assignee_member_id
   const active = !!task && !['COMPLETED', 'CANCELLED'].includes(task.status)
   const result = validation.data ?? task?.validation
+  const policyAnalysis = result?.policy_analysis
   const needsHumanReview = result?.findings.some(
     (finding) =>
       finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
@@ -209,25 +210,30 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           ? (staleReasonLabel[result.stale_reason ?? ''] ??
             '기준이 바뀌어 다시 검증해야 해요.')
           : result?.status === 'ERROR'
-            ? '검증을 마치지 못했어요. 다시 실행해 주세요.'
+            ? needsHumanReview
+              ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
+              : '검증을 마치지 못했어요. 다시 실행해 주세요.'
             : result?.status === 'PASS'
               ? '지금 계획으로 다시 검증해 주세요.'
               : '계획 검증을 통과해야 시작할 수 있어요.'
   const designItems = approved.data?.pages.flatMap((page) => page.items) ?? []
+  const approvedLabel = (versionId: string, itemId?: string) => {
+    const version = designItems.find(
+      (item) =>
+        item.id === versionId && (!itemId || item.design_item_id === itemId),
+    )
+    const item =
+      version ??
+      designItems.find((candidate) => candidate.design_item_id === itemId)
+    return `${item?.key ?? '설계 항목'} ${version ? `승인 v${version.version_no}` : '이전 승인본'}`
+  }
   // 근거는 '정확한 버전 311' 대신 'REQ-001 승인 v1 · 구현'처럼 사람 말로(M7).
   const refLabel = (reference: {
     design_item_id: string
     design_item_version_id: string
     relation: string
   }) => {
-    const key =
-      designItems.find(
-        (item) => item.design_item_id === reference.design_item_id,
-      )?.key ?? '설계 항목'
-    const version = designItems.find(
-      (item) => item.id === reference.design_item_version_id,
-    )?.version_no
-    return `${key} ${version ? `승인 v${version}` : '이전 승인본'} · ${relationLabel[reference.relation as keyof typeof relationLabel]}`
+    return `${approvedLabel(reference.design_item_version_id, reference.design_item_id)} · ${relationLabel[reference.relation as keyof typeof relationLabel]}`
   }
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
@@ -731,7 +737,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         )}
                       </div>
                     )}
-                    {result?.policy_analysis && (
+                    {policyAnalysis && (
                       <section
                         className="space-y-3 rounded-lg border p-4"
                         aria-label="정책 분석"
@@ -743,62 +749,62 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                             검토해 주세요.
                           </p>
                         </div>
-                        {result.policy_analysis
-                          .no_policy_requirements_reason && (
+                        {policyAnalysis.no_policy_requirements_reason && (
                           <p className="text-sm">
-                            {
-                              result.policy_analysis
-                                .no_policy_requirements_reason
-                            }
+                            {policyAnalysis.no_policy_requirements_reason}
                           </p>
                         )}
-                        {result.policy_analysis
-                          .no_policy_requirements_evidence && (
+                        {policyAnalysis.no_policy_requirements_evidence && (
                           <p className="text-xs text-muted-foreground">
                             계획 근거: “
                             {
-                              result.policy_analysis
-                                .no_policy_requirements_evidence.quote
+                              policyAnalysis.no_policy_requirements_evidence
+                                .quote
                             }
                             ”
                           </p>
                         )}
-                        {result.policy_analysis
-                          .policy_assessments_truncated && (
+                        {policyAnalysis.policy_assessments_truncated && (
                           <p className="text-sm text-destructive">
                             분석할 정책이 많아 일부만 확인했어요.
                           </p>
                         )}
-                        {result.policy_analysis.policy_assessments.map(
-                          (policy) => (
-                            <article
-                              key={policy.need_id}
-                              className="space-y-1 border-t pt-3 text-sm"
-                            >
-                              <div className="flex flex-wrap items-center gap-2">
-                                <strong>{policy.topic}</strong>
-                                <span className="text-xs text-muted-foreground">
-                                  {policyStateLabel[policy.state]}
-                                </span>
-                              </div>
-                              <p>{policy.explanation}</p>
-                              <p className="text-xs text-muted-foreground">
-                                계획 근거: “{policy.plan_evidence.quote}”
+                        {policyAnalysis.policy_assessments.map((policy) => (
+                          <article
+                            key={policy.need_id}
+                            className="space-y-1 border-t pt-3 text-sm"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong>{policy.topic}</strong>
+                              <span
+                                className={cn(
+                                  'text-xs',
+                                  [
+                                    'EXPLICITLY_UNDECIDED',
+                                    'CONTRADICTORY',
+                                  ].includes(policy.state)
+                                    ? 'font-medium text-destructive'
+                                    : 'text-muted-foreground',
+                                )}
+                              >
+                                {policyStateLabel[policy.state]}
+                              </span>
+                            </div>
+                            <p>{policy.explanation}</p>
+                            <p className="text-xs text-muted-foreground">
+                              계획 근거: “{policy.plan_evidence.quote}”
+                            </p>
+                            {policy.approved_content_refs.map((ref, index) => (
+                              <p
+                                key={index}
+                                className="text-xs text-muted-foreground"
+                              >
+                                {approvedLabel(ref.design_item_version_id)}: “
+                                {ref.quote}”
                               </p>
-                              {policy.approved_content_refs.map(
-                                (ref, index) => (
-                                  <p
-                                    key={index}
-                                    className="text-xs text-muted-foreground"
-                                  >
-                                    승인 설계 버전 {ref.design_item_version_id}:
-                                    “{ref.quote}”
-                                  </p>
-                                ),
-                              )}
-                            </article>
-                          ),
-                        )}
+                            ))}
+                          </article>
+                        ))}
                       </section>
                     )}
                     {result?.findings.map((finding) => (
@@ -827,6 +833,18 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           >
                             문서 {source.document_id} v{source.version_no} ·{' '}
                             {source.location}
+                          </p>
+                        ))}
+                        {finding.conflicting_design_refs?.map((ref) => (
+                          <p
+                            key={ref.design_item_version_id}
+                            className="mt-2 text-xs text-muted-foreground"
+                          >
+                            충돌하는 승인 항목:{' '}
+                            {approvedLabel(
+                              ref.design_item_version_id,
+                              ref.design_item_id,
+                            )}
                           </p>
                         ))}
                         <div className="mt-3">

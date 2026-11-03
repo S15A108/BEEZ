@@ -152,6 +152,18 @@ public class ValidationRepository {
         }
     }
 
+    /** Save only policy versions actually cited by a validated result, separately from plan refs. */
+    public void savePolicyRefs(long validationId, List<Map<String, Object>> citedItems) {
+        for (Map<String, Object> item : citedItems) {
+            jdbc.sql("""
+                    insert into validation_policy_ref (validation_id, design_item_id, design_item_version_id)
+                    values (:v, :item, :version)
+                    """).param("v", validationId)
+                    .param("item", Long.parseLong(String.valueOf(item.get("design_item_id"))))
+                    .param("version", Long.parseLong(String.valueOf(item.get("id")))).update();
+        }
+    }
+
     public void insertTaskRef(long validationId, long relatedTaskId, long relatedPlanRevisionId) {
         jdbc.sql("""
                         insert into validation_task_ref (validation_id, related_task_id, related_plan_revision_id)
@@ -218,7 +230,7 @@ public class ValidationRepository {
     }
 
     /**
-     * 설계 발행(-163) 의 STALE 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 계획에서 참조한, 아직 쓸 수 있는 검증.
+     * 설계 발행(-163) 의 STALE 대상: 계획에서 참조했거나 정책 판단에서 실제 인용한 버전이 바뀐 검증.
      * (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 상태·현재 계획으로 거르지 않는다 (REST CHG 발행 처리 규칙).
      * 행: validation_id, task_id, task_title, trigger. 검증 번호 오름차순, 여러 항목에 걸린 검증도 한 번만
      */
@@ -237,7 +249,9 @@ public class ValidationRepository {
                         select distinct v.id as validation_id, v.task_id, t.title as task_title, v.trigger
                           from (values %s) as changed(item_id, before_version_id)
                           join design_item_version bv on bv.id = changed.before_version_id
-                          join validation_design_ref r
+                          join (select validation_id, design_item_id, design_item_version_id from validation_design_ref
+                                union all
+                                select validation_id, design_item_id, design_item_version_id from validation_policy_ref) r
                             on r.design_item_id = changed.item_id
                           join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
                           join validation v on v.id = r.validation_id

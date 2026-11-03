@@ -12,10 +12,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties("beez.validation")
 public record ValidationProperties(boolean workerEnabled, long pollMillis, int leaseSeconds, int executionBudgetMs,
-                                   boolean policyAnalysisEnabled) {
+                                   boolean policyAnalysisEnabled, boolean fakeAnalyzer) {
     public ValidationProperties {
         if (pollMillis < 100 || leaseSeconds < 5 || executionBudgetMs < 1000) {
             throw new IllegalArgumentException("beez.validation: poll-millis ≥ 100, lease-seconds ≥ 5, execution-budget-ms ≥ 1000");
+        }
+        if (policyAnalysisEnabled && fakeAnalyzer) {
+            throw new IllegalArgumentException("beez.validation: policy-analysis-enabled requires fake-analyzer=false");
         }
     }
 }

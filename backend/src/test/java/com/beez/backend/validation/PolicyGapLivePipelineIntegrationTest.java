@@ -129,6 +129,8 @@ class PolicyGapLivePipelineIntegrationTest extends IntegrationTestSupport {
         assertThat(sent.get("evidence").toString()).contains(Long.toString(version));
         assertThat(api.jdbc.sql("select count(*) from validation_design_ref where validation_id=:v")
                 .param("v", validation).query(Integer.class).single()).isZero();
+        assertThat(api.jdbc.sql("select design_item_version_id from validation_policy_ref where validation_id=:v")
+                .param("v", validation).query(Long.class).list()).contains(version);
         assertThat(api.jdbc.sql("select count(*) from llm_usage where project_id=:p and feature='EMBEDDING' and failed=false")
                 .param("p", project).query(Integer.class).single()).isGreaterThanOrEqualTo(1);
         assertThat(api.jdbc.sql("select usage::text from validation_run where validation_id=:v")
