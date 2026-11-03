@@ -235,7 +235,8 @@ export function makeTeamOffice(): Floor {
   const outdoorExit = {
     x: tx(OFFICE_ENTRANCE.x),
     y: ty(doorZ) - 0.8,
-    w: 0.7,
+    // 벽에 붙은 문틀처럼 얇게(D30)
+    w: 0.35,
     h: 1.6,
     landing: {
       x: (tx(OFFICE_ENTRANCE.x) + 1.3) * 32,
@@ -255,6 +256,20 @@ export function makeTeamOffice(): Floor {
     )
       blocked[y][x] = true
   const bibi = seatAt(OFFICE_BIBI.x, OFFICE_BIBI.z, 'down')
+  // 두 아일랜드를 번갈아, 끝 자리(x 작은 쪽 → 큰 쪽) 다음 가운데 자리 순서
+  const spread = (a: Seat[], b: Seat[]) => {
+    const rank = (list: Seat[], seat: Seat) => {
+      const xs = [...new Set(list.map((item) => item.x))].sort((p, q) => p - q)
+      const i = xs.indexOf(seat.x)
+      return i === 0 ? 0 : i === xs.length - 1 ? 1 : 2
+    }
+    return [
+      ...a.map((seat) => ({ seat, rank: rank(a, seat), side: 0 })),
+      ...b.map((seat) => ({ seat, rank: rank(b, seat), side: 1 })),
+    ]
+      .sort((p, q) => p.rank - q.rank || p.side - q.side || p.seat.y - q.seat.y)
+      .map((item) => item.seat)
+  }
   return {
     id: 1,
     name: '우리 팀 사무실',
@@ -265,8 +280,8 @@ export function makeTeamOffice(): Floor {
     blocked,
     furniture,
     seats: {
-      // 작업 자리 12석(아일랜드 둘), 넘으면 허들·워룸
-      dev: [...work.island, ...work.center, ...work.huddle, ...work.war],
+      // 작업 자리 12석(아일랜드 둘), 넘으면 허들·워룸. 팀원은 바깥 자리부터 앉아 옆자리를 에이전트에게 남긴다(D29).
+      dev: [...spread(work.island, work.center), ...work.huddle, ...work.war],
       humandesk: [...work.library, ...work.change],
       meeting: work.huddle,
       lead: [bibi],

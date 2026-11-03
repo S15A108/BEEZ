@@ -1,6 +1,12 @@
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, expect, it, vi } from 'vitest'
-import { documentsApi, membersApi, projectsApi, tasksApi } from '@/api/services'
+import {
+  dashboardApi,
+  documentsApi,
+  membersApi,
+  projectsApi,
+  tasksApi,
+} from '@/api/services'
 import { sceneQuery } from '@/features/workspace/sceneQuery'
 import { membersQuery } from './membersQuery'
 
@@ -38,6 +44,11 @@ it('워크스페이스 첫 조회도 팀원을 마지막 페이지까지 읽는�
   twoPages()
   vi.spyOn(projectsApi, 'get').mockResolvedValue({ id: '10' } as never)
   vi.spyOn(projectsApi, 'onboarding').mockResolvedValue({} as never)
+  // 사무실 에이전트 자리(D29)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
+  vi.spyOn(dashboardApi, 'agentWork').mockResolvedValue({
+    items: [],
+    has_more: false,
+  })
   vi.spyOn(tasksApi, 'list').mockResolvedValue({
     items: [],
     has_more: false,

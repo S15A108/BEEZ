@@ -39,6 +39,11 @@ export interface OfficeAimTarget extends OfficeSceneHit {
 /** Positions keep the existing simulation's 32 px tile coordinate system. */
 export interface OfficeEntity3D {
   id: string
+  /** 에이전트 로봇의 모습 상태(online·working·idle·offline). 없으면 status로 정한다(D29). */
+  agentStatus?: string
+  /** 머리 위 이름표와 그 아래 말풍선(D29) */
+  tag?: string
+  note?: string
   x: number
   y: number
   dir: 'up' | 'down' | 'left' | 'right'
@@ -63,6 +68,8 @@ export interface OfficeEntity3D {
 
 interface Robot {
   appearance: OfficeAppearance
+  /** 머리 위 이름표(이름 · 상태, 말풍선). 같은 글이면 다시 그리지 않는다. */
+  tag?: { text: string; sprite: THREE.Sprite }
   /** 모양을 다시 만들어야 하는지 비교하는 값(에이전트는 주인 색·상태까지) */
   look: string
   root: THREE.Group
@@ -354,6 +361,10 @@ export class OfficeRenderer3D {
   private readonly firstPersonEnclosure = new THREE.Group()
   private readonly rearWindows = new THREE.Group()
   private readonly sideWindows = new THREE.Group()
+  /** 고정 사무실(D30)의 남·동쪽 벽. 3인칭에서도 보이고, 카메라 쪽이면 낮게 자른다. */
+  private frontWall: THREE.Group | null = null
+  private rightWall: THREE.Group | null = null
+  private wallBounds = { left: 0, back: 0, right: 0, front: 0 }
   private readonly windowMullions: THREE.Mesh[] = []
   private city: OfficeCity | null = null
   // Clear air across the surrounding districts; only the far horizon meets the sky.
@@ -2742,6 +2753,41 @@ export class OfficeRenderer3D {
       this.materials.set('office-curtain-glass', glass)
     }
 
+    // 막힌 벽(D30): 크림 벽에 걸레받이. inside는 벽 안쪽이 지역 z의 어느 쪽인지(+1·-1), slat은 나무 슬랫을 댈 구간(지역 x).
+    const solidWall = (
+      parent: THREE.Group,
+      length: number,
+      inside: number,
+      slat?: [number, number],
+    ) => {
+      this.box(
+        parent,
+        length / 2,
+        2.25,
+        0,
+        length + 0.24,
+        4.5,
+        0.2,
+        C.plaster,
+        0,
+      )
+      this.box(
+        parent,
+        length / 2,
+        0.06,
+        inside * 0.11,
+        length,
+        0.12,
+        0.025,
+        '#dedad2',
+        0,
+      )
+      if (slat)
+        for (let x = slat[0]; x < slat[1]; x += 0.12)
+          this.box(parent, x, 2.2, inside * 0.13, 0.05, 4.3, 0.05, '#b07a48', 0)
+    }
+    const fixed = !!floor.zoneSigns
+
     // Keep the original two-wall cutaway; the remaining shell is only visible at eye level.
     const windowWall = (parent: THREE.Group, length: number) => {
       this.box(parent, length / 2, 0.15, 0, length, 0.14, 0.16, '#dedbcb')
@@ -2783,7 +2829,10 @@ export class OfficeRenderer3D {
     }
     windowWall(this.rearWindows, width)
     this.rearWindows.position.set(left, 0, back - 0.12)
-    windowWall(this.sideWindows, depth)
+    // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(남쪽 끝 4.7 m)에 나무 슬랫을 댄다(캔버스 v488).
+    if (fixed)
+      solidWall(this.sideWindows, depth, -1, [depth - 4.8, depth - 0.1])
+    else windowWall(this.sideWindows, depth)
     this.sideWindows.rotation.y = -Math.PI / 2
     this.sideWindows.position.set(left - 0.12, 0, back)
 
@@ -2792,8 +2841,17 @@ export class OfficeRenderer3D {
     frontWindows.name = 'office-front-windows'
     rightWindows.name = 'office-right-windows'
     this.firstPersonEnclosure.name = 'office-first-person-enclosure'
-    this.firstPersonEnclosure.add(frontWindows, rightWindows)
-    windowWall(frontWindows, width)
+    // 고정 사무실은 남·동쪽 벽도 3인칭에 세우고(카메라 쪽이면 낮게), 남쪽은 크림 벽이다.
+    if (fixed) {
+      this.architecture.add(frontWindows, rightWindows)
+      solidWall(frontWindows, width, 1)
+    } else {
+      this.firstPersonEnclosure.add(frontWindows, rightWindows)
+      windowWall(frontWindows, width)
+    }
+    this.frontWall = fixed ? frontWindows : null
+    this.rightWall = fixed ? rightWindows : null
+    this.wallBounds = { left, back, right, front }
     frontWindows.rotation.y = Math.PI
     frontWindows.position.set(right, 0, front + 0.12)
     windowWall(rightWindows, depth)
@@ -3089,6 +3147,63 @@ export class OfficeRenderer3D {
       this.memberFigures.set(key, template)
     }
     return template
+  }
+
+  // 이름표(D29): 흰 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
+  private nameTag(robot: Robot, tag?: string, note?: string) {
+    const text = tag
+      ? `${tag}
+${note ?? ''}`
+      : ''
+    if (robot.tag?.text === text) return
+    this.dropTag(robot)
+    if (!tag) return
+    const canvas = document.createElement('canvas')
+    const g = canvas.getContext('2d')
+    const font = (size: number) =>
+      `700 ${size}px Geist, "Malgun Gothic", sans-serif`
+    canvas.width = 512
+    canvas.height = note ? 168 : 84
+    if (g) {
+      g.font = font(30)
+      const pill = (y: number, label: string, fill: string, ink: string) => {
+        const width = Math.min(500, g.measureText(label).width + 44)
+        g.fillStyle = fill
+        g.strokeStyle = 'rgba(44,41,31,0.16)'
+        g.lineWidth = 2
+        g.beginPath()
+        g.roundRect(256 - width / 2, y, width, 60, 30)
+        g.fill()
+        g.stroke()
+        g.fillStyle = ink
+        g.textAlign = 'center'
+        g.textBaseline = 'middle'
+        g.fillText(label, 256, y + 31, 470)
+      }
+      pill(12, tag, '#ffffff', '#2c291f')
+      if (note) pill(96, note, '#fff3c4', '#6e5200')
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: texture, transparent: true }),
+    )
+    const width = 2.1
+    sprite.scale.set(width, (width * canvas.height) / canvas.width, 1)
+    sprite.center.set(0.5, 0)
+    sprite.position.y = FIGURE_HEIGHT + 0.25
+    sprite.renderOrder = 5
+    sprite.userData.ignorePicking = true
+    robot.root.add(sprite)
+    robot.tag = { text, sprite }
+  }
+
+  private dropTag(robot: Robot) {
+    if (!robot.tag) return
+    robot.tag.sprite.removeFromParent()
+    robot.tag.sprite.material.map?.dispose()
+    robot.tag.sprite.material.dispose()
+    robot.tag = undefined
   }
 
   private animateFlips(time: number) {
@@ -3389,16 +3504,18 @@ export class OfficeRenderer3D {
       const look = entity.look as { top?: string } | undefined
       const color = entity.color || look?.top || '#a09b90'
       const appearance = entity.appearance ?? 'agent'
-      const status = agentStatusOf(entity.status)
+      const status = agentStatusOf(entity.agentStatus ?? entity.status)
       const shape =
         appearance === 'agent' ? `agent|${color}|${status}` : appearance
       let robot = this.robots.get(entity.id)
       if (robot && robot.look !== shape) {
         this.people.remove(robot.root)
+        this.dropTag(robot)
         this.robots.delete(entity.id)
         robot = undefined
       }
       robot ??= this.figure(entity.id, appearance, shape, color, status)
+      this.nameTag(robot, entity.tag, entity.note)
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&
@@ -3501,6 +3618,7 @@ export class OfficeRenderer3D {
     for (const [id, robot] of this.robots)
       if (!present.has(id)) {
         this.people.remove(robot.root)
+        this.dropTag(robot)
         this.robots.delete(id)
       }
     if (opts.car && floor.id === 1) {
@@ -3513,10 +3631,25 @@ export class OfficeRenderer3D {
       this.car.position.set(opts.car.x / TILE + 1.6, 0, 21.15)
     } else if (this.car) this.car.visible = false
     // Open the wall nearest an outside orbit camera, like an architectural cutaway.
-    this.rearWindows.visible =
-      this.firstPerson || this.camera.position.z >= this.environmentEdge.z
-    this.sideWindows.visible =
-      this.firstPerson || this.camera.position.x >= this.environmentEdge.x
+    if (this.frontWall && this.rightWall) {
+      // 고정 사무실(D30): 돌하우스 단면. 카메라 반대편 두 벽은 제 높이, 카메라 쪽 두 벽은 무릎 높이로 자른다.
+      // 카메라를 돌리면 자르는 벽도 바뀐다. 1인칭에서는 네 벽 모두 제 높이다.
+      const { left, back, right, front } = this.wallBounds,
+        at = this.camera.position
+      const cut = (wall: THREE.Group, near: boolean) => {
+        wall.visible = true
+        wall.scale.y = !this.firstPerson && near ? 0.14 : 1
+      }
+      cut(this.rearWindows, at.z < back)
+      cut(this.sideWindows, at.x < left)
+      cut(this.frontWall, at.z > front)
+      cut(this.rightWall, at.x > right)
+    } else {
+      this.rearWindows.visible =
+        this.firstPerson || this.camera.position.z >= this.environmentEdge.z
+      this.sideWindows.visible =
+        this.firstPerson || this.camera.position.x >= this.environmentEdge.x
+    }
     this.overhead.visible = this.firstPerson
     this.firstPersonEnclosure.visible = this.firstPerson
     // Aim after camera, NPC and furniture transforms settle for this frame.
@@ -3679,6 +3812,7 @@ export class OfficeRenderer3D {
       this.renderer.dispose()
       this.canvas.remove()
     }
+    this.robots.forEach((robot) => this.dropTag(robot))
     this.robots.clear()
     this.memberFigures.forEach(({ figure }) => disposeFigure(figure))
     this.memberFigures.clear()

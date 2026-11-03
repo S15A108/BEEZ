@@ -2,7 +2,13 @@ import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, expect, it, vi } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
 import { MISSING_API_MESSAGE } from '@/api/error'
-import { documentsApi, membersApi, projectsApi, tasksApi } from '@/api/services'
+import {
+  dashboardApi,
+  documentsApi,
+  membersApi,
+  projectsApi,
+  tasksApi,
+} from '@/api/services'
 import { sceneQuery } from './sceneQuery'
 
 afterEach(() => vi.restoreAllMocks())
@@ -34,6 +40,11 @@ it('초기 설정 현황 API가 없으면 그 계정의 에이전트 연결로 �
     ],
     has_more: false,
   } as never)
+  // 사무실 에이전트 자리(D29)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
+  vi.spyOn(dashboardApi, 'agentWork').mockResolvedValue({
+    items: [],
+    has_more: false,
+  })
   vi.spyOn(tasksApi, 'list').mockResolvedValue({
     items: [],
     has_more: false,

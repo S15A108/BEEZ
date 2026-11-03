@@ -17,6 +17,10 @@ import { ContextPanel } from '@/features/contexts/ContextPanel'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
 import { sceneQuery } from '@/features/workspace/sceneQuery'
+import {
+  officeAgentState,
+  showsOfficeAgent,
+} from '@/features/workspace/officeAgents'
 import { AsyncState } from '@/components/AsyncState'
 import { PaneSheetHost } from '@/components/PaneSheet'
 import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
@@ -100,31 +104,37 @@ function Workspace({ projectId }: { projectId: string }) {
         avatar: member.avatar,
         status: 'idle',
       })),
-      // 팀원의 AI 에이전트: HUD 팀 목록처럼 연결된 에이전트와 아직 연결하지 않은 내 에이전트(D27). 상태는 연결 여부와
-      // 주인의 진행 중 작업으로 정한다(에이전트 활동 API가 없어 '대기'는 쓰지 않는다).
+      // 팀원의 AI 에이전트(D27·D29): 연결된 에이전트, 작업 현황에 세션이 있는 에이전트, 아직 연결하지 않은 내 에이전트.
+      // 상태는 작업 현황(MON-A05)을 따르고, 그 API가 없으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
       ...(query.data?.members.items ?? [])
-        .filter(
-          (member) =>
-            member.agent_connected || member.account_id === session.data?.id,
+        .filter((member) =>
+          showsOfficeAgent(member, query.data?.agentWork, session.data?.id),
         )
-        .map((member) => ({
-          id: `agent:${member.id}`,
-          name: `${member.name}의 에이전트`,
-          kind: 'agent' as const,
-          owner: member.id,
-          color: member.color ?? '#8ca9a0',
-          status: !member.agent_connected
-            ? 'offline'
-            : query.data?.tasks.items.some(
-                  (task) =>
-                    task.assignee_member_id === member.id &&
-                    task.status === 'IN_PROGRESS',
-                )
-              ? 'working'
-              : 'online',
-        })),
+        .map((member) => {
+          const { state, note } = officeAgentState(
+            member,
+            query.data?.agentWork,
+            query.data?.tasks.items.filter(
+              (task) => task.assignee_member_id === member.id,
+            ) ?? [],
+          )
+          return {
+            id: `agent:${member.id}`,
+            name: `${member.name}의 에이전트`,
+            kind: 'agent' as const,
+            owner: member.id,
+            color: member.color ?? '#8ca9a0',
+            status: state,
+            note,
+          }
+        }),
     ],
-    [query.data?.members, query.data?.tasks, session.data?.id],
+    [
+      query.data?.members,
+      query.data?.tasks,
+      query.data?.agentWork,
+      session.data?.id,
+    ],
   )
   const sceneTasks = useMemo<SceneTask[]>(
     () =>

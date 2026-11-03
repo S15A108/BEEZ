@@ -478,11 +478,18 @@ export function collaborationRoutes(
         data: {
           ...members,
           items: members.items.map((member) => {
-            const task = project.tasks.find(
-              (item) =>
-                item.assignee_member_id === member.id &&
-                item.status === 'IN_PROGRESS',
+            // 지금 맡은 작업: 진행 중 → 대기 → 검증 중인 시작 전 작업 순(사무실 에이전트 자리, D29)
+            const mine = project.tasks.filter(
+              (item) => item.assignee_member_id === member.id,
             )
+            const task =
+              mine.find((item) => item.status === 'IN_PROGRESS') ??
+              mine.find((item) => item.status === 'WAITING') ??
+              mine.find(
+                (item) =>
+                  item.status === 'READY' &&
+                  item.validation_status === 'RUNNING',
+              )
             const agent = project.agents.find(
               (item) => item.member_id === member.id,
             )
@@ -494,6 +501,9 @@ export function collaborationRoutes(
                     current_task_id: task.id,
                     task_status: task.status,
                     validation_status: task.validation_status,
+                    ...(task.waiting_reason
+                      ? { waiting_reason: task.waiting_reason }
+                      : {}),
                   }
                 : {}),
             }

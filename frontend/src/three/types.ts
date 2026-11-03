@@ -27,6 +27,8 @@ export interface SceneAgent {
   avatar?: string
   /** AI 에이전트면 주인 팀원 id. 주인 색 띠를 두른 하늘색 로봇으로 그린다(D27). */
   owner?: string
+  /** 이름표 아래 말풍선(대기 이유 등, D29) */
+  note?: string
   status?: string
   home_zone?: Zone
   zone?: Zone

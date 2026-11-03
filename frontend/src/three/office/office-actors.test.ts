@@ -6,7 +6,7 @@ import { makeDreamFloor } from './dream-floor'
 import { buildBee, buildRobot } from './memberFigures'
 import { buildAgent } from './agentFigure'
 import { avatarAppearance, officeActors } from './office-actors'
-import { PERSONAL_SPACE } from './office-life'
+import { isOfficeWorkingStatus, PERSONAL_SPACE } from './office-life'
 import { officeHomeSeats } from './office-work'
 
 // D24: 계정 avatar(회원 설정 캐릭터)로 사무실 모양을 정한다. 옛 bee-*는 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람.
@@ -105,4 +105,99 @@ test('회원 캐릭터 로봇·벌은 보드 크기 그대로 팔·다리 축을
     // 사무실 키 1.5타일로 맞췄을 때의 폭(px)
     expect((width / height) * 1.5 * 32).toBeLessThan(PERSONAL_SPACE)
   }
+})
+
+// D29: 고정 사무실에서 팀원은 자기 자리에 앉아 있고(위치 API 없음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
+test('팀원은 자기 자리에 앉아 있고 에이전트는 상태별 자리로 간다', () => {
+  const floor = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
+      .floors[1],
+    4,
+  )
+  const agents = officeSceneAgents([
+    { id: 'bibi', name: '비비', kind: 'lead' },
+    { id: 'member:21', name: '나', kind: 'human' },
+    { id: 'member:22', name: '김동료', kind: 'agent' },
+    { id: 'member:26', name: '박팀원', kind: 'agent' },
+    {
+      id: 'agent:26',
+      name: '박팀원의 에이전트',
+      kind: 'agent',
+      owner: '26',
+      status: 'working',
+    },
+    {
+      id: 'agent:22',
+      name: '김동료의 에이전트',
+      kind: 'agent',
+      owner: '22',
+      status: 'waiting',
+      note: '승인 대기',
+    },
+    {
+      id: 'agent:25',
+      name: '최팀원의 에이전트',
+      kind: 'agent',
+      owner: '25',
+      status: 'offline',
+    },
+    {
+      id: 'agent:23',
+      name: '정팀원의 에이전트',
+      kind: 'agent',
+      owner: '23',
+      status: 'validating',
+    },
+    {
+      id: 'agent:21',
+      name: '나의 에이전트',
+      kind: 'agent',
+      owner: '21',
+      status: 'online',
+    },
+  ])
+  const homes = officeHomeSeats(floor, agents)
+  const actors = officeActors(floor, agents, 4, 'member:21', homes)
+  const at = (id: string) => actors.find((actor) => actor.id === id)!
+  const spots = (list: { x: number; y: number }[] | undefined) =>
+    (list ?? []).map((seat) => ({ x: seat.x * 32 + 16, y: seat.y * 32 + 27 }))
+  const place = (id: string) => ({ x: at(id).x, y: at(id).y })
+  expect(at('member:22')).toMatchObject({ stationary: true, seated: true })
+  expect(at('member:21')).toBeUndefined()
+  // 작업 중: 주인 옆 아일랜드 자리
+  const owner = spots([homes.get('member:26')!])[0]
+  expect(spots(floor.seats.dev!.slice(0, 12))).toContainEqual(place('agent:26'))
+  expect(
+    Math.hypot(owner.x - at('agent:26').x, owner.y - at('agent:26').y),
+  ).toBeLessThan(2.2 * 32)
+  expect(at('agent:26')).toMatchObject({
+    status: 'working',
+    agentStatus: 'working',
+  })
+  // 대기: 허들 스툴, 말풍선에 대기 이유
+  expect(spots(floor.seats.meeting)).toContainEqual(place('agent:22'))
+  expect(at('agent:22')).toMatchObject({
+    agentStatus: 'idle',
+    note: '승인 대기',
+  })
+  // 검증 중: 칸반 워룸 화면 앞
+  expect(spots(floor.seats.board)).toContainEqual(place('agent:23'))
+  // 연결 끊김: 라운지 충전 자리에서 움직이지 않는다
+  expect(spots(floor.seats.lobby)).toContainEqual(place('agent:25'))
+  expect(at('agent:25')).toMatchObject({
+    stationary: true,
+    agentStatus: 'offline',
+  })
+  // 연결됨(할 일 없음): 주인 자리 뒤에 서 있다
+  const mine = spots([homes.get('member:21')!])[0]
+  expect(at('agent:21')).toMatchObject({
+    standing: true,
+    agentStatus: 'online',
+  })
+  expect(
+    Math.hypot(mine.x - at('agent:21').x, mine.y - at('agent:21').y),
+  ).toBeLessThan(32)
+  // 에이전트는 산책하지 않는다: 연결 끊김 말고도 모두 자리에 묶인 상태로 걷는다
+  for (const id of ['agent:26', 'agent:22', 'agent:23', 'agent:21'])
+    expect(isOfficeWorkingStatus(at(id).status)).toBe(true)
 })
