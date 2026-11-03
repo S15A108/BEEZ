@@ -16,15 +16,19 @@ import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 
 class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
     @Autowired DataSource dataSource;
@@ -133,6 +137,36 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
                 .query().singleRow();
         assertThat(row).containsEntry("status","FAILED").containsEntry("error_code","analysis_access_unavailable");
         verify(ai,never()).changeImpact(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void accessRevokedDuringModelCallPreservesReceivedUsageOnly(boolean modelError) {
+        when(ai.changeImpact(any())).thenAnswer(call -> {
+            api.jdbc.sql("UPDATE project_member SET active=false,left_at=clock_timestamp() WHERE project_id=:p AND account_id=:a")
+                    .param("p",project).param("a",leader).update();
+            if (modelError) {
+                byte[] body = ("{\"error\":{\"code\":\"model_timeout\"},\"usage\":[{\"request_key\":\"published-llm-call\","
+                        + "\"feature\":\"CHANGE_IMPACT\",\"failed\":false}]}").getBytes(StandardCharsets.UTF_8);
+                throw new RestClientResponseException("model failure", 504, "Gateway Timeout", null, body, StandardCharsets.UTF_8);
+            }
+            return envelope();
+        });
+
+        processor.process(intake);
+
+        var row = api.jdbc.sql("SELECT status,error_code,evaluation_status,explicit_result,ai_result,generation "
+                + "FROM published_change_analysis WHERE id=:id").param("id",intake).query().singleRow();
+        assertThat(row).containsEntry("status","FAILED").containsEntry("error_code","analysis_access_unavailable")
+                .containsEntry("evaluation_status",null).containsEntry("explicit_result",null)
+                .containsEntry("ai_result",null).containsEntry("generation",null);
+        var attempt = api.jdbc.sql("SELECT attempt,outcome,error_code,usage_status, "
+                + "usage = '[{\"request_key\":\"published-llm-call\",\"feature\":\"CHANGE_IMPACT\",\"failed\":false}]'::jsonb AS usage_matches "
+                + "FROM published_analysis_attempt WHERE intake_id=:id").param("id",intake).query().singleRow();
+        assertThat(attempt).containsEntry("attempt",1).containsEntry("outcome","FAILED")
+                .containsEntry("error_code","analysis_access_unavailable").containsEntry("usage_status","REPORTED")
+                .containsEntry("usage_matches",true);
+        verify(ai,times(1)).changeImpact(any());
     }
 
     @Test void aNewBaselineDuringAnalysisNeverStoresTheOldCandidatesAsCurrent() {

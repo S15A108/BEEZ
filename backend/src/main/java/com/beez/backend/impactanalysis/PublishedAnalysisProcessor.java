@@ -74,6 +74,10 @@ public class PublishedAnalysisProcessor {
                         explicit, ai, generation, outcome.usage(), outcome.usageStatus().name());
             });
         } catch (ApiException e) {
+            if (e instanceof ImpactAnalysisCoordinator.PublishedRecheckException recheckFailure) {
+                receivedUsage = recheckFailure.usage();
+                receivedUsageStatus = recheckFailure.usageStatus().name();
+            }
             boolean changed = e.getStatus().value() == 409;
             String code = "baseline_changed".equals(e.getCode()) ? "baseline_changed"
                     : changed ? "analysis_input_changed" : "analysis_access_unavailable";
