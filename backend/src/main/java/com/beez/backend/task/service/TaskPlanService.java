@@ -135,13 +135,14 @@ public class TaskPlanService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition",
                     "완료·취소된 작업의 계획은 바꿀 수 없습니다 (현재 " + task.getStatus() + ")");
         }
-        // 완료 보고(delta)의 DELTA 검증을 기다리는 동안은 계획을 바꿀 수 없다 (04-task-lifecycle.md §2.2 S2).
-        // 완료 보고는 그 계획 리비전에 대한 것이라, 계획이 바뀌면 보고와 검증이 가리키는 계획이 더는 현재가 아니게 된다 —
-        // 입력이 같은 변경(제목만)이라도 S4 는 현재 계획의 DELTA 만 보므로 완료가 조용히 사라진다. 바꾸려면 RESUME 으로 보고를 거둔 뒤
-        Long pendingDelta = validationLookup.pendingDeltaValidationId(taskId, task.getCurrentPlanRevisionId());
-        if (pendingDelta != null) {
+        // 완료 보고(delta)의 DELTA 검증이 아직 도는 동안(NOT_RUN·RUNNING)만 계획을 바꿀 수 없다 (04-task-lifecycle.md §2.5).
+        // 결과가 PASS 로 나면 S4 가 현재 계획의 DELTA 로 완료시키는데, 그사이 계획이 바뀌면 완료가 조용히 사라진다.
+        // 결과가 난 뒤(NEEDS_INPUT·NEEDS_REVIEW·ERROR, 가짜 분석기라 완료되지 않은 PASS)는 막지 않는다 — 계획을 고쳐 새 PASS 로 RESUME 하는
+        // 출구 ②(§2.3)다. 설계 발행으로 시작 PASS 가 STALE 이 되면 RESUME 도 막히므로, 여기까지 막으면 작업이 갇힌다
+        Long undecidedDelta = validationLookup.undecidedDeltaValidationId(taskId, task.getCurrentPlanRevisionId());
+        if (undecidedDelta != null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition",
-                    "완료 보고의 delta 검증(" + pendingDelta + ")을 기다리는 중에는 계획을 바꿀 수 없습니다. RESUME 한 뒤 바꾸세요");
+                    "완료 보고의 delta 검증(" + undecidedDelta + ")이 아직 진행 중이라 계획을 바꿀 수 없습니다. 결과가 나온 뒤 바꾸거나 RESUME 하세요");
         }
 
         // 충돌 검사 두 가지 — 명세 00-common 5절. 둘 다 409 revision_conflict.

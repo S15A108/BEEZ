@@ -242,6 +242,33 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void planChange_afterDeltaEndedInError_isAllowed_andTitleOnlyChangeKeepsStartPass() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"));
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = state(t[0], "START", t[1], t[2], v, null);
+        HttpResponse<String> completed = state(t[0], "COMPLETED", t[1], TaskApiSupport.longField(started.body(), "lock_version"), null,
+                "\"summary\":\"끝\",\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]");
+        assertThat(completed.statusCode()).as(completed.body()).isEqualTo(202);
+        long delta = TaskApiSupport.longField(completed.body(), "delta_validation_id");
+        // DELTA 가 오류로 끝난다 (재시도 소진 등 — 워커가 하는 일을 SQL 로)
+        api.jdbc.sql("update validation set status = 'ERROR', finished_at = now() where id = :v").param("v", delta).update();
+        api.jdbc.sql("update validation_run set status = 'ERROR', finished_at = now() where validation_id = :v").param("v", delta).update();
+        api.jdbc.sql("update validation_job set status = 'FAILED', lease_token = null, lease_until = null where validation_id = :v")
+                .param("v", delta).update();
+
+        // 결과가 난 뒤라 계획을 바꿀 수 있다. 제목만 바꾸면 시작 PASS 를 이어 받아 그 번호로 RESUME 할 수 있다
+        HttpResponse<String> renamed = revise(t[0], "A (이름만)", api.implementsRef("API-01"), 1,
+                TaskApiSupport.longField(completed.body(), "lock_version"), Map.of());
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(201);
+        assertThat(TaskApiSupport.stringField(renamed.body(), "status")).isEqualTo("WAITING");
+        assertThat(TaskApiSupport.stringField(renamed.body(), "validation_status")).isEqualTo("PASS");
+        long rev2 = currentRevision(t[0]);
+        HttpResponse<String> resumed = state(t[0], "RESUME", rev2, TaskApiSupport.longField(renamed.body(), "lock_version"), v, null);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        assertThat(column("validation", "status", delta)).isEqualTo("STALE");             // RESUME 이 오류 DELTA 의 대기도 닫는다
+    }
+
+    @Test
     void sameContentRevisions_shareValidationInputHash_differentContentDoesNot() throws Exception {
         // READS 만 보는 계획은 규칙만으로 바로 PASS 가 난다 (200) → 해시를 비교할 수 있다
         long[] t = createTask("A", api.readsRef("API-01"));

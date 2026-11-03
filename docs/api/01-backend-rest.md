@@ -9444,7 +9444,7 @@ HTTP `201`.
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현) · 완료 보고의 delta 검증을 기다리는 중 (BE 구현, -162) |
+| 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현) · 완료 보고의 delta 검증이 아직 진행 중 (BE 구현, -162) |
 | 409 | `revision_conflict` | 계획 또는 작업 상태 변경 |
 | 409 | `dependency_cycle` | 의존 순환 |
 
@@ -9462,7 +9462,7 @@ HTTP `201`.
 - 기존 계획을 덮어쓰지 않고 새 불변 리비전을 생성한다.
 - 진행 중 계획 변경은 기존 검증을 STALE로 하고 WAITING(REVALIDATION)으로 전환하며 점유는 유지한다.
 - (BE 구현, -162 검증 최신성, AC-13) 위 규칙은 **검증 입력이 바뀐** 변경에만 적용한다. 검증 입력은 계획 입력 해시(`task_plan_revision.input_hash`)로 판정한다 — 목표·포함/제외 범위·완료 기준·선행 작업·`no_contract_change`·`unlinked`·설계 참조(항목·버전·관계·CHANGES 의 `proposed_content`)가 들어가고 **제목·접근 방식·컨텍스트 패킷은 들어가지 않는다**. 직전 리비전과 해시가 같으면(제목만 변경 등) 검증을 STALE 로 바꾸지 않고 작업 상태도 두며, 직전 리비전의 (DELTA 를 뺀) 가장 최근 검증이 끝난 것(PASS·NEEDS_INPUT·NEEDS_REVIEW)이면 새 리비전에 같은 내용의 검증을 한 줄 더 넣어 이어 받는다 — 응답 `validation_status` 가 그 상태이고, 그 검증 조회의 `summary.carried_from` 이 원본 검증 번호다(실행 기록은 원본에만). 에이전트가 쥔 옛 검증 번호로 START·RESUME 하면 시작 게이트가 현재 리비전의 그 복사본으로 판정한다. 직전 리비전을 못 읽으면 바뀐 것으로 다룬다. 세부는 [04-task-lifecycle.md §2.5](../design/04-task-lifecycle.md).
-- (BE 구현, -162) 완료 보고(delta)의 DELTA 검증을 기다리는 동안은 입력이 같아도 계획을 바꿀 수 없다 → `400 invalid_transition`(메시지에 기다리는 검증 번호). RESUME 으로 보고를 거둔 뒤 바꾼다. 완료·취소된 작업과 같은 코드다.
+- (BE 구현, -162) 완료 보고(delta)의 DELTA 검증이 아직 도는 동안(NOT_RUN·RUNNING)은 입력이 같아도 계획을 바꿀 수 없다 → `400 invalid_transition`(메시지에 그 검증 번호). 결과를 기다리거나 RESUME 으로 보고를 거둔다. 결과가 난 뒤(NEEDS_INPUT·NEEDS_REVIEW·ERROR)는 바꿀 수 있다 — 계획을 고쳐 새 PASS 로 RESUME 하는 출구다. 완료·취소된 작업과 같은 코드다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

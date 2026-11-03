@@ -88,6 +88,23 @@ public class ValidationStatusLookup {
         return latest;
     }
 
+    /**
+     * 현재 계획의 가장 최근 DELTA 가 <b>아직 결과가 안 난</b>(NOT_RUN·RUNNING) 것이면 그 번호, 아니면 null.
+     * 계획 변경을 막는 기준이다(TaskPlanService) — 결과가 나면 PASS 는 S4 로 완료되고, NEEDS_INPUT·NEEDS_REVIEW·ERROR 는 계획을 고쳐
+     * 나가는 길(§2.3 출구 ②)이 열려 있어야 한다. {@link #pendingDeltaValidationId} 는 끝난 DELTA 도 "기다리는 보고" 로 보므로 여기에 쓰지 않는다
+     */
+    public Long undecidedDeltaValidationId(Long taskId, Long planRevisionId) {
+        Long latest = latestDeltaValidationId(taskId, planRevisionId);
+        if (latest == null) {
+            return null;
+        }
+        String status = statusOf(latest);
+        if ("NOT_RUN".equals(status) || "RUNNING".equals(status)) {
+            return latest;
+        }
+        return null;
+    }
+
     /** {@link #pendingDeltaValidationId} 를 여러 작업에 한 번에 (목록 조회, N+1 방지). key = task_id, 없는 작업은 빠진다 */
     public Map<Long, Long> pendingDeltaValidationIdByTask(List<Long> taskIds) {
         Map<Long, Long> result = new HashMap<>();

@@ -30,12 +30,12 @@ BEEZ 에서 "검증 롤백" 은 **검증 결과·작업 상태를 지우고 과�
 | # | 계기 | 되돌리는 범위 | 남는 기록 | 사람이 다음에 할 일 |
 |---|---|---|---|---|
 | R1 | 늦은 결과 — 이미 STALE·취소·다른 시도·다른 리스인 검증에 워커 응답 도착 | 아무것도 반영 안 함 | 그 실행 `DISCARDED`("늦은 결과"), 사용량은 그 실행에 | 없음 |
-| R2 | 입력 변경 — 결과를 기다리는 사이 이 작업의 계획(`PLAN_CHANGED`)·같은 항목을 보는 관련 작업·그 계획(`RELATED_PLAN_CHANGED`)이 바뀜 | 결과 버림, 검증 `STALE` | 실행 `DISCARDED`(사유 포함), job `CANCELLED`, `stale_reason` | 새 검증 요청(VAL-A01) |
+| R2 | 입력 변경 — 결과를 기다리는 사이 이 작업의 계획(`PLAN_CHANGED`)·같은 항목을 보는 관련 작업·그 계획(`RELATED_PLAN_CHANGED`)의 **입력**이 바뀜. 제목·접근 방식만 바뀐 것은 입력 변경이 아니다(계획 입력 해시로 비교, 생명주기 §2.5) | 결과 버림, 검증 `STALE` | 실행 `DISCARDED`(사유 포함), job `CANCELLED`, `stale_reason` | 새 검증 요청(VAL-A01) |
 | R3 | 리스 만료 — 워커가 AI 호출 중 죽음·재배포 | 검증 `ERROR` | 실행 `ERROR`, ERROR 발견 항목 `validation_lease_expired`/RETRY, job `FAILED` | 재시도(VAL-A04, -161) 또는 새 검증 |
 | R4 | AI·BE 실행 실패 — 시간 초과·연결·계약 위반·PARTIAL·BE 오류 | 검증 `ERROR` | 실행 `TIMEOUT`/`ERROR`, ERROR 발견 항목(코드별 RETRY/HUMAN_REVIEW), 진단값(`summary.partial_findings` 등) | RETRY 면 재시도, HUMAN_REVIEW 면 근거 보완 후 새 검증 |
 | R5 | 결과 저장 중 DB 오류 | 결과 반영 트랜잭션 전체 롤백 → R4 로 실패 처리 | 실행 `ERROR` `validation_execution_failed`, 응답의 사용량은 남김 | 재시도 |
 | R6 | 작업 취소(TSK-A07 CANCEL) | 이 작업의 모든 검증(끝난 것·도는 것) `STALE`(`TASK_CANCELLED`), 큐 취소, 열린 실행 `DISCARDED` | 위 상태들 | 없음(작업 종료) |
-| R7 | 진행 중 계획 변경(S2) | 끝난 검증만 `STALE`(`PLAN_CHANGED`); 도는 검증은 R2 가 처리 | `stale_reason` | 새 계획으로 검증 요청 → RESUME |
+| R7 | 진행 중 계획 변경(S2) — 검증 입력이 바뀐 변경만. 입력이 같으면(제목만 등) 무효화하지 않고 끝난 검증을 새 리비전으로 이어 받는다(생명주기 §2.5) | 끝난 검증만 `STALE`(`PLAN_CHANGED`); 도는 검증은 R2 가 처리 | `stale_reason` | 새 계획으로 검증 요청 → RESUME |
 | R8 | 담당자 인계(S5) | DELTA 를 뺀 검증 `STALE`(`ASSIGNEE_CHANGED`), 큐 취소 | 위 상태들 | 새 담당자가 새 검증 요청 → RESUME |
 | R9 | 설계 발행(S1, -163) | 바뀐 항목의 옛 버전을 참조한 검증 `STALE`(`DESIGN_PUBLISHED`), 큐 취소, 열린 실행 `DISCARDED`; IN_PROGRESS 작업은 WAITING(REVALIDATION) | 위 상태들 + 기다리던 DELTA 는 새 기준으로 **자동 재접수** | 계획을 새 기준으로 올리고 검증 요청 |
 | R10 | RESUME(§2.3 출구 ①) | 기다리던 DELTA(ERROR 포함) `STALE`(`TASK_RESUMED`), 큐 취소 | `stale_reason` | 다시 완료 보고 |
