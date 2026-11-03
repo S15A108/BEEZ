@@ -208,9 +208,9 @@ function Workspace({ projectId }: { projectId: string }) {
                 {outdoor ? '사무실로' : '산책'}
               </Button>
             </div>
-            {/* 조작 안내는 처음(기준 v1 전)에만, 단축 바 위 가운데에 보여 준다(SCR-06-v2-workspace-preparing). */}
+            {/* 조작 안내는 처음(기준 v1 전)에만, 단축 바 위 가운데에 보여 준다(SCR-06-v2-workspace-preparing). 80px 비비 원(위 끝이 바닥에서 97px) 위로 띄운다. */}
             {!pane && !data.project.current_baseline && (
-              <p className="pointer-events-none absolute bottom-[82px] left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/85 px-3 py-1 text-[11px] leading-4 whitespace-nowrap text-[#737373]">
+              <p className="pointer-events-none absolute bottom-[106px] left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/85 px-3 py-1 text-[11px] leading-4 whitespace-nowrap text-[#737373]">
                 WASD 이동 · Shift 달리기 · 드래그로 둘러보기 · 숫자 키로 메뉴
                 열기
               </p>
