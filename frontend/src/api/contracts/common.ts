@@ -530,12 +530,33 @@ export const impactCandidateSchema = z.object({
 })
 export type ImpactCandidate = z.infer<typeof impactCandidateSchema>
 
+// 서버(A11·A12)는 6종 상태를 돌려준다. 분석 이력이 없는 제안은 200 NOT_EVALUATED(analysis_not_started)다.
+// PENDING 은 예시 서버 호환용으로 남긴다.
+export const impactStatusSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'INSUFFICIENT_EVIDENCE',
+  'NOT_EVALUATED',
+  'FAILED',
+  'STALE',
+])
+export type ImpactStatus = z.infer<typeof impactStatusSchema>
+
 export const changeImpactSchema = z.object({
   explicit: explicitImpactSchema.array(),
   candidates: impactCandidateSchema.array(),
-  analysis_status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
+  analysis_status: impactStatusSchema,
   generation: generationSchema.optional(),
   error_code: z.string().optional(),
+  revision: z.number().int().optional(),
+  snapshot_hash: z.string().optional(),
+  is_current: z.boolean().optional(),
+  stale_reason: z.string().optional(),
+  run_id: z.string().optional(),
+  reanalysis: z
+    .object({ run_id: z.string(), requested_at: timeSchema.optional() })
+    .optional(),
 })
 export type ChangeImpact = z.infer<typeof changeImpactSchema>
 

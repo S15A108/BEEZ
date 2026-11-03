@@ -504,8 +504,10 @@ it('영향 분석이 확인되지 않아 막히면 사유 입력을 열고 사�
   )
   expect(approve.mock.calls[0][2]).not.toHaveProperty('impact_override_reason')
   const reason = await screen.findByLabelText('영향 분석 없이 승인하는 사유')
+  // 사유가 필요한 것은 실패가 아니라 정상 단계라 일반 오류 띠가 같이 뜨면 안 된다.
+  expect(screen.queryByText(/요청을 처리하지 못했어요/)).not.toBeInTheDocument()
   const retry = screen.getByRole('button', {
-    name: '사유를 남기고 승인하고 기준 v2 발행',
+    name: '사유 남기고 기준 v2 발행',
   })
   expect(retry).toBeDisabled()
   await user.type(reason, '  분석 서버 장애로 직접 확인함  ')
@@ -533,6 +535,130 @@ it('영향 분석이 진행 중이면 사유 입력 없이 끝난 뒤 다시 승
   ).toBeInTheDocument()
   expect(
     screen.queryByLabelText('영향 분석 없이 승인하는 사유'),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText(/요청을 처리하지 못했어요/)).not.toBeInTheDocument()
+})
+
+// 분석 이력이 없는 제안은 서버가 오류 없이 NOT_EVALUATED(analysis_not_started)를 준다.
+// 팀장은 웹에서 분석을 시작하고, 완료된 뒤에는 사유 없이 승인한다(사유 우회에만 기대지 않는다).
+it('분석한 적 없는 제안은 영향 탭에서 분석을 시작하고 완료되면 사유 없이 승인한다', async () => {
+  const user = userEvent.setup()
+  const detail = await changesApi.get('101', '71')
+  const done = await changesApi.impact('101', '71')
+  let started = false
+  vi.spyOn(changesApi, 'impact').mockImplementation(async () =>
+    started
+      ? done
+      : {
+          explicit: [],
+          candidates: [],
+          analysis_status: 'NOT_EVALUATED',
+          error_code: 'analysis_not_started',
+          is_current: true,
+        },
+  )
+  const retryImpact = vi
+    .spyOn(changesApi, 'retryImpact')
+    .mockImplementation(async () => {
+      started = true
+      return { ...done, analysis_status: 'RUNNING' }
+    })
+  const approve = vi.spyOn(changesApi, 'approve').mockResolvedValue({
+    proposal: detail.proposal,
+    baseline: await documentsApi.baseline('101'),
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText(/아직 영향 분석을 하지 않았어요/),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '영향 분석 시작' }))
+  expect(retryImpact).toHaveBeenCalledTimes(1)
+  expect(
+    await screen.findByRole('button', { name: '다시 분석' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText(/아직 영향 분석을 하지 않았어요/),
+  ).not.toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await waitFor(() => expect(approve).toHaveBeenCalledTimes(1))
+  expect(approve.mock.calls[0][2]).not.toHaveProperty('impact_override_reason')
+})
+
+it('근거 부족·오래됨·재분석 중 상태도 오류 없이 상태별 안내와 버튼을 보인다', async () => {
+  const user = userEvent.setup()
+  const base = { explicit: [], candidates: [], is_current: true }
+  const impact = vi.spyOn(changesApi, 'impact')
+  impact.mockResolvedValue({
+    ...base,
+    analysis_status: 'INSUFFICIENT_EVIDENCE',
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(await screen.findByText(/근거가 부족해서/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeEnabled()
+  await client.invalidateQueries({ queryKey: ['projects', '101', 'impact'] })
+  impact.mockResolvedValue({
+    ...base,
+    analysis_status: 'COMPLETED',
+    reanalysis: { run_id: '9' },
+  })
+  await client.invalidateQueries({ queryKey: ['projects', '101', 'impact'] })
+  expect(await screen.findByText(/다시 분석하는 중이에요/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeDisabled()
+  impact.mockResolvedValue({
+    ...base,
+    analysis_status: 'STALE',
+    is_current: false,
+  })
+  await client.invalidateQueries({ queryKey: ['projects', '101', 'impact'] })
+  expect(await screen.findByText(/이전 분석이 오래됐어요/)).toBeInTheDocument()
+})
+
+it('사유를 남긴 예외 승인은 승인 이력과 발행 안내에 사유를 보여 준다', async () => {
+  const user = userEvent.setup()
+  const detail = (await changesApi.get('101', '71')).proposal
+  await changesApi.approve('101', '71', {
+    expected_base_baseline_id: detail.base_baseline_id,
+    expected_revision: detail.revision,
+    expected_snapshot_hash: detail.snapshot_hash,
+    impact_override_reason: '분석 서버 장애로 직접 확인함',
+  })
+  renderPanel()
+  expect(await screen.findByText(/새 기준을 발행했어요/)).toBeInTheDocument()
+  expect(
+    screen.getByText(/영향 분석 없이 승인한 사유/).parentElement,
+  ).toHaveTextContent('분석 서버 장애로 직접 확인함')
+  await user.click(screen.getByRole('button', { name: '승인 이력' }))
+  expect(
+    await screen.findByRole('heading', { name: '승인 이력' }),
+  ).toBeInTheDocument()
+  expect(
+    (await screen.findByText(/영향 분석 없이 승인한 사유/)).parentElement,
+  ).toHaveTextContent('분석 서버 장애로 직접 확인함')
+})
+
+it('사유 없이 승인한 이력에는 예외 사유 문구가 없다', async () => {
+  const user = userEvent.setup()
+  const detail = (await changesApi.get('101', '71')).proposal
+  await changesApi.approve('101', '71', {
+    expected_base_baseline_id: detail.base_baseline_id,
+    expected_revision: detail.revision,
+    expected_snapshot_hash: detail.snapshot_hash,
+  })
+  renderPanel()
+  expect(await screen.findByText(/새 기준을 발행했어요/)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '승인 이력' }))
+  expect(
+    await screen.findByRole('heading', { name: '승인 이력' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText(/영향 분석 없이 승인한 사유/),
   ).not.toBeInTheDocument()
 })
 

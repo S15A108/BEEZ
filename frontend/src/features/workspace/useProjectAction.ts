@@ -28,6 +28,8 @@ export function useProjectAction(projectId: string) {
   }
   return {
     run,
+    // 실패가 오류가 아니라 정상 단계일 때(예: 사유 입력 요구) 일반 오류 띠를 지운다.
+    reset: mutation.reset,
     busy: mutation.isPending,
     message,
     error: mutation.error

@@ -61,22 +61,11 @@ export type UpdateInput = z.infer<typeof updateInputSchema>
 export const updateResponseSchema = common.changeProposalSchema
 export type UpdateResponse = z.infer<typeof updateResponseSchema>
 
-export const impactResponseSchema = z.object({
-  explicit: common.explicitImpactSchema.array(),
-  candidates: common.impactCandidateSchema.array(),
-  analysis_status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
-  generation: common.generationSchema.optional(),
-  error_code: z.string().optional(),
-})
+export const impactResponseSchema = common.changeImpactSchema
 export type ImpactResponse = z.infer<typeof impactResponseSchema>
 
-export const retryImpactResponseSchema = z.object({
-  explicit: common.explicitImpactSchema.array(),
-  candidates: common.impactCandidateSchema.array(),
-  analysis_status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
-  generation: common.generationSchema.optional(),
-  error_code: z.string().optional(),
-})
+// 첫 분석도 이 요청(A12)으로 시작한다. 접수 응답은 새 RUNNING 실행이다.
+export const retryImpactResponseSchema = common.changeImpactSchema
 export type RetryImpactResponse = z.infer<typeof retryImpactResponseSchema>
 
 export const generateDraftInputSchema = z.object({

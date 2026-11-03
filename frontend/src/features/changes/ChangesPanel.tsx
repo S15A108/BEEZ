@@ -16,7 +16,11 @@ import {
   planningApi,
   tasksApi,
 } from '@/api/services'
-import type { ChangeProposal, Comparison } from '@/api/contracts/common'
+import type {
+  ChangeImpact,
+  ChangeProposal,
+  Comparison,
+} from '@/api/contracts/common'
 import { getApiErrorCode } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
 import { ActionForm } from '@/components/ActionForm'
@@ -84,6 +88,30 @@ const statusOrder: Record<ChangeStatus, number> = {
   PUBLISHED: 3,
   REJECTED: 4,
   WITHDRAWN: 5,
+}
+
+// 이전 결과가 보이는 동안 새 분석이 돌고 있으면(reanalysis) 이전 상태와 관계없이 분석 중이다(S15P31A108-241).
+const isImpactRunning = (impact: ChangeImpact) =>
+  ['PENDING', 'RUNNING'].includes(impact.analysis_status) || !!impact.reanalysis
+// 분석 이력이 없는 제안. 서버는 오류가 아니라 200 NOT_EVALUATED(analysis_not_started)로 알린다.
+const isImpactNotStarted = (impact: ChangeImpact) =>
+  impact.analysis_status === 'NOT_EVALUATED' &&
+  impact.error_code === 'analysis_not_started'
+function impactMessage(impact: ChangeImpact) {
+  if (isImpactRunning(impact))
+    return impact.reanalysis
+      ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
+      : '분석하는 중이에요.'
+  if (isImpactNotStarted(impact))
+    return '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
+  if (impact.analysis_status === 'FAILED') return '분석하지 못했어요.'
+  if (impact.analysis_status === 'INSUFFICIENT_EVIDENCE')
+    return '근거가 부족해서 영향을 확정하지 못했어요.'
+  if (impact.analysis_status === 'NOT_EVALUATED')
+    return '영향을 평가하지 못했어요.'
+  if (impact.analysis_status === 'STALE' || impact.is_current === false)
+    return '제안이 바뀌어 이전 분석이 오래됐어요. 다시 분석해 주세요.'
+  return '확인된 관계와 AI 후보를 나눠 보여요.'
 }
 
 // 변경 제안 창은 올라온 제안을 모아 보고 검토하는 곳이다(사용자 결정 11-02). 사람이 쓰는 제안은 공용 문서함의
@@ -160,9 +188,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryFn: () => changesApi.impact(projectId, selectedId!),
     enabled: !!selectedId,
     refetchInterval: (query) =>
-      ['PENDING', 'RUNNING'].includes(query.state.data?.analysis_status ?? '')
-        ? 1500
-        : false,
+      query.state.data && isImpactRunning(query.state.data) ? 1500 : false,
   })
   const comments = useInfiniteQuery({
     queryKey: ['projects', projectId, 'change-comments', selectedId],
@@ -299,12 +325,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       setMode({ kind: 'detail' })
     } catch (cause) {
       const code = getApiErrorCode(cause)
-      if (code === 'impact_not_confirmed') setReasonRequired(true)
-      else if (code === 'analysis_running')
+      // 두 코드는 실패가 아니라 승인 과정의 정상 단계라 일반 오류 띠를 함께 보이지 않는다.
+      if (code === 'impact_not_confirmed') {
+        action.reset()
+        setReasonRequired(true)
+      } else if (code === 'analysis_running') {
+        action.reset()
         setApproveNotice(
           '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
         )
-      else setMode({ kind: 'detail' })
+      } else setMode({ kind: 'detail' })
     }
   }
   const submitForm = async (
@@ -634,10 +664,21 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       <h3 className="text-lg font-bold">승인 이력</h3>
                       <AsyncState query={approval}>
                         {(result) => (
-                          <p className="text-sm">
-                            {nameOfAccount(result.approved_by)} 승인 ·{' '}
-                            {formatDate(result.approved_at)}
-                          </p>
+                          <div className="grid gap-1 text-sm">
+                            <p>
+                              {nameOfAccount(result.approved_by)} 승인 ·{' '}
+                              {formatDate(result.approved_at)}
+                            </p>
+                            {result.impact_override_reason && (
+                              <p className="rounded-lg border border-dashed px-3 py-2 whitespace-pre-wrap">
+                                <span className="font-semibold">
+                                  영향 분석 없이 승인한 사유
+                                </span>
+                                {'\n'}
+                                {result.impact_override_reason}
+                              </p>
+                            )}
+                          </div>
                         )}
                       </AsyncState>
                       {/* API 없음: 이 제안이 지나온 길(올림 → 검토 시작 → 검토 요청 → 의견 → 승인)은 활동을 제안 ID로 거르는 기능이 필요(백엔드 메모 10). */}
@@ -779,7 +820,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           onClick={() => void approveNow(current, nextVersion)}
                         >
                           {reasonRequired
-                            ? `사유를 남기고 승인하고 기준 v${nextVersion} 발행`
+                            ? `사유 남기고 기준 v${nextVersion} 발행`
                             : `승인하고 기준 v${nextVersion} 발행`}
                         </Button>
                       </div>
@@ -952,6 +993,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               {nameOfAccount(result.approved_by)} 승인 ·{' '}
                               {formatDate(result.approved_at)}
                             </p>
+                            {result.impact_override_reason && (
+                              <p className="whitespace-pre-wrap">
+                                <span className="font-semibold">
+                                  영향 분석 없이 승인한 사유
+                                </span>
+                                {'\n'}
+                                {result.impact_override_reason}
+                              </p>
+                            )}
                             <p className="text-muted-foreground">
                               이 승인으로 상태가 바뀐 검증과 작업은 작업
                               현황에서 확인하세요.
@@ -1181,18 +1231,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       {tab === 'impact' && (
                         <AsyncState query={impact}>
                           {(result) => {
-                            const running = ['PENDING', 'RUNNING'].includes(
-                              result.analysis_status,
-                            )
+                            const running = isImpactRunning(result)
+                            const notStarted = isImpactNotStarted(result)
                             return (
                               <div className="grid gap-3 text-sm">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <p className="text-muted-foreground">
-                                    {running
-                                      ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
-                                      : result.analysis_status === 'FAILED'
-                                        ? '분석하지 못했어요.'
-                                        : '확인된 관계와 AI 후보를 나눠 보여요.'}
+                                    {impactMessage(result)}
                                   </p>
                                   <Button
                                     size="sm"
@@ -1205,11 +1250,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                             projectId,
                                             current.id,
                                           ),
-                                        '다시 분석을 요청했어요.',
+                                        notStarted
+                                          ? '영향 분석을 시작했어요.'
+                                          : '다시 분석을 요청했어요.',
                                       )
                                     }
                                   >
-                                    다시 분석
+                                    {notStarted
+                                      ? '영향 분석 시작'
+                                      : '다시 분석'}
                                   </Button>
                                 </div>
                                 <div
