@@ -13,6 +13,11 @@ import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
@@ -111,7 +116,12 @@ class ChangeDraftIntegrationTest extends IntegrationTestSupport {
     }
     int savedCommands() { return jdbc.queryForObject("SELECT count(*) FROM design_http_command WHERE project_id=?", Integer.class, project); }
     /** 호출 중에 다른 제안이 발행된 것처럼 새 기준을 만든다. */
-    void publishNewBaseline(boolean keepVersion) {
+    void publishNewBaseline(boolean keepVersion) { newBaseline(keepVersion, "same"); }
+    /**
+     * 새 기준(v2)을 만든다. 다른 항목은 그대로 옮기고, 문서 승인본과 REQ-001 항목만 요청한 대로 둔다.
+     * @param itemMode same(항목 그대로) / newVersion(REQ-001 이 새 버전) / retired(REQ-001 퇴역, 기준에서 빠짐)
+     */
+    void newBaseline(boolean keepVersion, String itemMode) {
         long next = keepVersion ? version : 0;
         if (!keepVersion) {
             jdbc.update("UPDATE document_version SET status='SUPERSEDED' WHERE id=?", version);
@@ -119,6 +129,24 @@ class ChangeDraftIntegrationTest extends IntegrationTestSupport {
         }
         long b2 = jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,2,?) RETURNING id", Long.class, project, leaderId);
         jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)", b2, project, document, next);
+        long req = jdbc.queryForObject("SELECT id FROM design_item WHERE project_id=? AND key='REQ-001'", Long.class, project);
+        jdbc.update("INSERT INTO baseline_item(baseline_id,project_id,design_item_id,design_item_version_id) "
+                + "SELECT ?,project_id,design_item_id,design_item_version_id FROM baseline_item WHERE baseline_id=? AND design_item_id<>?", b2, baseline, req);
+        switch (itemMode) {
+            case "same" -> jdbc.update("INSERT INTO baseline_item(baseline_id,project_id,design_item_id,design_item_version_id) "
+                    + "SELECT ?,project_id,design_item_id,design_item_version_id FROM baseline_item WHERE baseline_id=? AND design_item_id=?", b2, baseline, req);
+            case "newVersion" -> {
+                long newer = jdbc.queryForObject("""
+                        INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,content_hash,origin,
+                                                        source_document_version_id,source_locator,approved_at)
+                        VALUES(?,2,'APPROVED','REQ-001 v2',1,'{"description":"바뀐 항목"}','hash-v2','HUMAN',?,'{"type":"text_lines","start_line":1,"end_line":2}',now())
+                        RETURNING id
+                        """, Long.class, req, version);
+                jdbc.update("INSERT INTO baseline_item VALUES(?,?,?,?)", b2, project, req, newer);
+            }
+            case "retired" -> jdbc.update("UPDATE design_item SET retired_at=now() WHERE id=?", req);
+            default -> throw new IllegalArgumentException(itemMode);
+        }
         jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?", b2, project);
     }
 
@@ -314,7 +342,177 @@ class ChangeDraftIntegrationTest extends IntegrationTestSupport {
         var generation = generate("k-src").generation();
         assertThat(generation.sources()).hasSize(1);
         assertThat(generation.sources().getFirst()).containsEntry("document_version_id", "" + version);
-        assertThat(generation.unresolved()).anyMatch(text -> text.contains("1건이 이 요청에 없어"));
+        assertThat(generation.unresolved()).anyMatch(text -> text.contains("근거 1건이 이 요청의 문서·버전과 맞지 않거나"));
+    }
+
+    Map<String, Object> src(Object documentId, Object versionId, Object versionNo, Object location) {
+        var source = new LinkedHashMap<String, Object>();
+        if (documentId != null) source.put("document_id", documentId);
+        if (versionId != null) source.put("document_version_id", versionId);
+        if (versionNo != null) source.put("version_no", versionNo);
+        if (location != null) source.put("location", location);
+        return source;
+    }
+
+    @Test void everySourceFieldIsCheckedAndKeptSourcesAreNormalized() {
+        String doc = "" + document, ver = "" + version;
+        doReturn(reply("# 로그인\n본문\n", List.of(
+                source(version),                                   // 유효
+                src("999999", ver, 1, "L1"),                       // 다른 문서를 가리킴
+                src(doc, ver, 2, "L1"),                            // 버전 번호가 다름
+                src(doc, ver, 1.5, "L1"),                          // 버전 번호가 정수가 아님
+                src(doc, ver, 1, null),                            // location 없음
+                src(doc, ver, 1, "  "),                            // location 비어 있음
+                src(doc, ver, 1, 7),                               // location 이 문자열이 아님
+                src(null, ver, 1, "L1"),                           // document_id 없음
+                src(document, version, 1, "L5")))                  // 정수 ID — 같은 값이면 받아 문자열로 맞춘다
+        ).when(ai).beeDraft(any());
+        var generation = generate("k-src-fields").generation();
+        assertThat(generation.sources()).hasSize(2);
+        assertThat(generation.sources().get(1)).containsOnlyKeys("document_id", "document_version_id", "version_no", "location")
+                .containsEntry("document_id", doc).containsEntry("document_version_id", ver).containsEntry("version_no", 1).containsEntry("location", "L5");
+        assertThat(generation.unresolved()).anyMatch(text -> text.contains("근거 7건이"));
+    }
+
+    @Test void aDraftWhoseSourcesAreAllMalformedIsRejected() {
+        doReturn(reply("# 로그인\n본문\n", List.of(src("" + document, "" + version, 1, null), src("999999", "" + version, 1, "L1"))))
+                .when(ai).beeDraft(any());
+        fails(HttpStatus.BAD_GATEWAY, "ai_unavailable", () -> generate("k-src-bad"));
+        assertThat(savedCommands()).isZero();
+    }
+
+    // ---- 호출 중 관련 설계 항목이 바뀐 경우 ----
+    @Test void relatedItemGettingANewVersionDuringTheCallDiscardsTheDraft() {
+        doAnswer(call -> { newBaseline(true, "newVersion"); return reply("# 로그인\n옛 항목 근거\n"); }).when(ai).beeDraft(any());
+        fails(HttpStatus.CONFLICT, "version_conflict", () -> generate("k-item-new"));
+        assertThat(savedCommands()).isZero();
+        assertThat(usageRows()).isEqualTo(1);
+    }
+
+    @Test void relatedItemRetiredDuringTheCallDiscardsTheDraft() {
+        doAnswer(call -> { newBaseline(true, "retired"); return reply("# 로그인\n퇴역한 항목 근거\n"); }).when(ai).beeDraft(any());
+        fails(HttpStatus.CONFLICT, "version_conflict", () -> generate("k-item-retired"));
+        assertThat(savedCommands()).isZero();
+    }
+
+    // ---- AI 오류 본문의 사용량 ----
+    HttpServerErrorException errorWith(HttpStatus status, String body) {
+        return HttpServerErrorException.create(status, "x", HttpHeaders.EMPTY, body.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+    }
+    String usageLine(String model, int input, int output) {
+        return "{\"request_key\":\"err-" + UUID.randomUUID() + "\",\"feature\":\"BEE_DRAFT\",\"model\":\"" + model + "\",\"input_tokens\":" + input
+                + ",\"output_tokens\":" + output + ",\"latency_ms\":900,\"failed\":true,\"tokens_known\":true,"
+                + "\"estimated_cost_amount\":\"0.0011\",\"currency\":\"USD\"}";
+    }
+
+    @Test void usageInTheAiErrorBodyIsRecordedInsteadOfAnUnknownLine() {
+        String body = "{\"error\":{\"code\":\"model_unavailable\",\"message\":\"x\"},\"usage\":[" + usageLine("m1", 120, 30) + "," + usageLine("m2", 80, 0) + "]}";
+        doThrow(errorWith(HttpStatus.BAD_GATEWAY, body)).when(ai).beeDraft(any());
+        fails(HttpStatus.BAD_GATEWAY, "ai_unavailable", () -> generate("k-err-usage"));
+        var rows = jdbc.queryForList("SELECT model,tokens_known,input_tokens,output_tokens,estimated_cost_amount,failed FROM llm_usage WHERE project_id=? ORDER BY model", project);
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0)).containsEntry("model", "m1").containsEntry("tokens_known", true).containsEntry("input_tokens", 120)
+                .containsEntry("output_tokens", 30).containsEntry("failed", true);
+        assertThat(rows.get(1)).containsEntry("model", "m2").containsEntry("input_tokens", 80);
+        assertThat(rows).noneMatch(row -> "unknown".equals(row.get("model")));
+    }
+
+    @Test void aTimeoutBodyWithUsageIsAlsoKept() {
+        doThrow(errorWith(HttpStatus.GATEWAY_TIMEOUT, "{\"usage\":[" + usageLine("m-timeout", 200, 0) + "]}")).when(ai).beeDraft(any());
+        fails(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", () -> generate("k-err-timeout"));
+        assertThat(jdbc.queryForList("SELECT model FROM llm_usage WHERE project_id=?", String.class, project)).containsExactly("m-timeout");
+    }
+
+    @Test void errorBodiesWithoutUsableUsageLeaveOneUnknownLine() {
+        int expected = 0;
+        for (String body : List.of("", "not json", "{\"error\":{\"code\":\"model_unavailable\"}}", "{\"usage\":\"none\"}", "{\"usage\":[1,2]}", "[]")) {
+            doThrow(errorWith(HttpStatus.BAD_GATEWAY, body)).when(ai).beeDraft(any());
+            fails(HttpStatus.BAD_GATEWAY, "ai_unavailable", () -> generate("k-err-" + UUID.randomUUID()));
+            assertThat(usageRows()).as("body [%s]", body).isEqualTo(++expected);
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND model='unknown' AND NOT tokens_known AND failed",
+                Integer.class, project)).isEqualTo(expected);
+    }
+
+    // ---- 같은 키의 동시 요청 ----
+    <T> Thread start(String name, Callable<T> call, AtomicReference<Object> out) {
+        Thread thread = new Thread(() -> {
+            try { out.set(call.call()); } catch (Throwable e) { out.set(e); }
+        }, name);
+        thread.start();
+        return thread;
+    }
+    void awaitWaiting(Thread thread) throws InterruptedException {
+        long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (thread.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < end) Thread.sleep(20);
+        assertThat(thread.getState()).as("%s 가 먼저 온 요청을 기다리는 중이어야 한다", thread.getName()).isEqualTo(Thread.State.TIMED_WAITING);
+    }
+
+    @Test void concurrentRequestsWithTheSameKeyShareOneAiCall() throws Exception {
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        doAnswer(call -> {
+            entered.countDown();
+            assertThat(release.await(15, TimeUnit.SECONDS)).isTrue();
+            return reply("# 로그인\n공유된 결과\n");
+        }).when(ai).beeDraft(any());
+        var firstOut = new AtomicReference<Object>(); var secondOut = new AtomicReference<Object>();
+        Thread first = start("leader", () -> generate("k-conc"), firstOut);
+        assertThat(entered.await(15, TimeUnit.SECONDS)).isTrue();
+        Thread second = start("follower", () -> generate("k-conc"), secondOut);
+        awaitWaiting(second);
+        release.countDown();
+        first.join(15_000); second.join(15_000);
+
+        assertThat(firstOut.get()).isInstanceOf(Draft.class);
+        assertThat(secondOut.get()).isEqualTo(firstOut.get());
+        verify(ai, times(1)).beeDraft(any());
+        assertThat(usageRows()).isEqualTo(1);
+        assertThat(savedCommands()).isEqualTo(1);
+    }
+
+    @Test void concurrentRequestsShareTheSameFailureAndTheNextAttemptCallsAgain() throws Exception {
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        doAnswer(call -> {
+            entered.countDown();
+            assertThat(release.await(15, TimeUnit.SECONDS)).isTrue();
+            throw errorWith(HttpStatus.BAD_GATEWAY, "");
+        }).when(ai).beeDraft(any());
+        var firstOut = new AtomicReference<Object>(); var secondOut = new AtomicReference<Object>();
+        Thread first = start("leader", () -> generate("k-conc-fail"), firstOut);
+        assertThat(entered.await(15, TimeUnit.SECONDS)).isTrue();
+        Thread second = start("follower", () -> generate("k-conc-fail"), secondOut);
+        awaitWaiting(second);
+        release.countDown();
+        first.join(15_000); second.join(15_000);
+
+        for (var out : List.of(firstOut, secondOut)) {
+            assertThat(out.get()).isInstanceOfSatisfying(ApiException.class, e -> {
+                assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_GATEWAY); assertThat(e.getCode()).isEqualTo("ai_unavailable");
+            });
+        }
+        verify(ai, times(1)).beeDraft(any());
+        assertThat(failedUsageRows()).isEqualTo(1);              // 같은 요청의 실패는 한 번만 센다
+        // 진행 중 표시가 남지 않아, 같은 키로 다시 보내면 새로 AI 를 부른다
+        doAnswer(call -> reply("# 로그인\n다시 시도\n")).when(ai).beeDraft(any());
+        assertThat(generate("k-conc-fail").afterContent()).contains("다시 시도");
+        verify(ai, times(2)).beeDraft(any());
+    }
+
+    @Test void aDifferentBodyWithTheSameKeyWhileTheFirstIsRunningIsAConflict() throws Exception {
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        doAnswer(call -> {
+            entered.countDown();
+            assertThat(release.await(15, TimeUnit.SECONDS)).isTrue();
+            return reply("# 로그인\n첫 요청\n");
+        }).when(ai).beeDraft(any());
+        var firstOut = new AtomicReference<Object>();
+        Thread first = start("leader", () -> generate("k-conc-body"), firstOut);
+        assertThat(entered.await(15, TimeUnit.SECONDS)).isTrue();
+        fails(HttpStatus.CONFLICT, "idempotency_conflict", () -> drafts.generate(member, project, request("다른 요청"), "k-conc-body"));
+        release.countDown();
+        first.join(15_000);
+        assertThat(firstOut.get()).isInstanceOf(Draft.class);
+        verify(ai, times(1)).beeDraft(any());
     }
 
     @Test void aDraftWhoseEverySourceIsForeignIsRejected() {
