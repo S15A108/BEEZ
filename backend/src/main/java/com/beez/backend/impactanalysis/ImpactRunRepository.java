@@ -92,30 +92,21 @@ public class ImpactRunRepository {
     }
 
     public boolean finish(long id, String status, String code, Object aiResult, Object generation, Object usage, String usageStatus) {
-        return finish(id, status, code, aiResult, generation, usage, usageStatus, null);
-    }
-
-    /**
-     * @param model 응답 최상위 model. 사용량 항목에 model 이 없을 때 공통 사용량 표에 쓴다 (없으면 "unknown")
-     */
-    public boolean finish(long id, String status, String code, Object aiResult, Object generation, Object usage, String usageStatus,
-                          String model) {
-        boolean finished = jdbc.sql("""
+        return jdbc.sql("""
                 UPDATE change_impact_run SET status=:status,error_code=:code,ai_result=cast(:ai AS jsonb),generation=cast(:generation AS jsonb),
                   usage=cast(:usage AS jsonb),usage_status=:usageStatus,finished_at=clock_timestamp()
                  WHERE id=:id AND status='RUNNING' AND lease_until>clock_timestamp()
                 """).param("id", id).param("status", status).param("code", code, java.sql.Types.VARCHAR)
                 .param("ai", canonical(aiResult)).param("generation", canonical(generation)).param("usage", canonical(usage))
                 .param("usageStatus", usageStatus).update() == 1;
-        recordUsage(id, usage, model);
-        return finished;
     }
 
     /**
-     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에도 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
-     * 실행 행을 닫지 못한 경우(리스 만료 뒤 늦은 결과)에도 실제 호출 비용이므로 남긴다. 같은 호출은 request_key 로 한 번만
+     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
+     * 실행 행을 닫는 것과 따로 부른다: 결과를 버리는 경우(늦은 결과·권한 재확인 실패·저장 실패)에도 실제 호출 비용이므로 남긴다.
+     * 같은 호출은 request_key 로 한 번만. 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
      */
-    private void recordUsage(long id, Object entries, String model) {
+    public void recordUsage(long id, Object entries, String model) {
         var project = jdbc.sql("SELECT project_id FROM change_impact_run WHERE id=:id").param("id", id).query(Long.class).optional();
         if (project.isEmpty()) return;
         String fallback = model == null || model.isBlank() ? "unknown" : model;

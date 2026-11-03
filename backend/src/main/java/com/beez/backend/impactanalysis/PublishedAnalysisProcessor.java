@@ -66,15 +66,18 @@ public class PublishedAnalysisProcessor {
             Object ai = envelope == null ? null : envelope.get("result");
             Object generation = envelope == null ? null : ImpactRunService.generation(envelope, outcome.usage());
             Object explicit = rules.calculate(outcome.input());
+            String model = envelope != null && envelope.get("model") instanceof String m && !m.isBlank() ? m : null;
             tx.executeWithoutResult(ignored -> {
                 lockProject(publication.projectId());
                 // Freshness and the fenced result write share the publication's project lock.
                 contexts.requirePublishedUnchanged(actor, outcome.input(), publication.baselineId());
+                // 비용 집계(llm_usage)는 결과 저장과 같은 트랜잭션. 되돌려지면 아래 실패 처리가 같은 사용량으로 다시 적는다 (-169)
+                repository.recordUsage(claim, outcome.usage(), model);
                 repository.recordResult(claim, evaluation, outcome.errorCode(), ImpactFingerprint.of(outcome.input()),
                         explicit, ai, generation, outcome.usage(), outcome.usageStatus().name());
             });
         } catch (ApiException e) {
-            if (e instanceof ImpactAnalysisCoordinator.PublishedRecheckException recheckFailure) {
+            if (e instanceof ImpactAnalysisCoordinator.AccessRecheckException recheckFailure) {
                 receivedUsage = recheckFailure.usage();
                 receivedUsageStatus = recheckFailure.usageStatus().name();
             }
@@ -84,6 +87,12 @@ public class PublishedAnalysisProcessor {
             fail(claim, code, changed && !"baseline_changed".equals(code), receivedUsage, receivedUsageStatus);
         } catch (RuntimeException e) {
             // Never log or store provider payloads, database errors, or document text.
+            // 모델 응답 뒤 재확인 조회가 실패한 경우(ReceivedUsageException)에는 받은 사용량이 실려 온다
+            List<?> carried = ImpactAnalysisCoordinator.receivedUsage(e);
+            if (receivedUsage.isEmpty() && !carried.isEmpty()) {
+                receivedUsage = carried;
+                receivedUsageStatus = "REPORTED";
+            }
             fail(claim, "analysis_interrupted", true, receivedUsage, receivedUsageStatus);
         }
     }
@@ -99,6 +108,10 @@ public class PublishedAnalysisProcessor {
         catch (RuntimeException invalid) { safeUsage = List.of(); safeStatus = "UNKNOWN"; }
         final Object recordedUsage = safeUsage;
         final String recordedStatus = safeStatus;
-        tx.executeWithoutResult(ignored -> repository.recordFailure(claim, code, retryable, recordedUsage, recordedStatus));
+        tx.executeWithoutResult(ignored -> {
+            // 비용 집계에는 시도 기록에 넣기에 너무 커서 비운 경우에도 받은 사용량 그대로 (같은 키는 한 번만)
+            repository.recordUsage(claim, usage, null);
+            repository.recordFailure(claim, code, retryable, recordedUsage, recordedStatus);
+        });
     }
 }

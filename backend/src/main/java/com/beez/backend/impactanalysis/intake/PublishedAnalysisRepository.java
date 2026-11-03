@@ -158,14 +158,12 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
                 .param("lifecycle", lifecycle).param("evaluation", evaluation).param("code", code, java.sql.Types.VARCHAR)
                 .param("fingerprint", fingerprint).param("explicit", canonical(explicit)).param("ai", canonical(ai))
                 .param("generation", canonical(generation)).param("usage", canonical(usage)).param("usageStatus", usageStatus).update();
-        recordUsage(claim, usage, generation instanceof Map<?, ?> g && g.get("model") instanceof String m ? m : null);
         if (updated == 1) insertAttempt(claim, evaluation, code, usage, usageStatus);
         return updated == 1;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public boolean recordFailure(Claim claim, String code, boolean retryable, Object usage, String usageStatus) {
-        recordUsage(claim, usage, null);
         Instant now = databaseTime();
         if (!fail(claim, now, code, retryable)) return false;
         insertAttempt(claim, "FAILED", code, usage, usageStatus);
@@ -173,11 +171,12 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
     }
 
     /**
-     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에도 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
-     * 이 시도가 결과를 쓰지 못한 경우(리스를 잃음)에도 실제 호출 비용이므로 남긴다. 같은 호출은 request_key 로 한 번만.
-     * 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
+     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
+     * 시도 기록과 따로 부른다: 결과를 쓰지 못한 경우(리스를 잃음·권한 재확인 실패·저장 실패)나 시도 기록에 넣기에 너무 큰 사용량도
+     * 실제 호출 비용이므로 남긴다. 같은 호출은 request_key 로 한 번만. 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
      */
-    private void recordUsage(Claim claim, Object usage, String model) {
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordUsage(Claim claim, Object usage, String model) {
         var project = jdbc.sql("SELECT project_id FROM published_change_analysis WHERE id=:id").param("id", claim.id())
                 .query(Long.class).optional();
         if (project.isEmpty()) return;
