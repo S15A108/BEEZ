@@ -157,7 +157,9 @@ public class ImpactRunService {
                     usage=List.of(); usageStatus="UNKNOWN";
                     if (!"STALE".equals(status)) { status="FAILED"; code="invalid_output"; }
                 }
-                runs.finish(id,status,code,ai,generation,usage,usageStatus);
+                // 응답 최상위 model 은 사용량 항목에 model 이 없을 때 공통 사용량 표에 쓴다 (-169)
+                String model=envelope!=null && envelope.get("model") instanceof String m ? m : null;
+                runs.finish(id,status,code,ai,generation,usage,usageStatus,model);
             });
         } catch (ApiException changed) {
             if (changed.getStatus().value()==409 || changed.getStatus().value()==404)

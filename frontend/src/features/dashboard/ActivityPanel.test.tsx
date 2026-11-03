@@ -113,3 +113,52 @@ it('한국시간 날짜 범위를 UTC로 전달하고 역전된 기간은 조회
   )
   expect(dashboardApi.usage).toHaveBeenCalledTimes(count)
 })
+it('비용·토큰을 모르는 호출이 섞이면 0원·전체 값처럼 보이지 않게 건수를 붙인다', async () => {
+  vi.mocked(dashboardApi.usage).mockResolvedValue({
+    from: '2026-10-20T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 120,
+    output_tokens: 30,
+    call_count: 3,
+    estimated_cost_amount: '0.01',
+    currency: 'USD',
+    tokens_unknown_call_count: 1,
+    cost_unknown_call_count: 1,
+    by_feature: [
+      {
+        key: 'DOCUMENT_PARSE',
+        input_tokens: 0,
+        output_tokens: 0,
+        call_count: 1,
+        estimated_cost_amount: '0',
+        tokens_unknown_call_count: 1,
+        cost_unknown_call_count: 1,
+      },
+      {
+        key: 'TASK_VALIDATION',
+        input_tokens: 120,
+        output_tokens: 30,
+        call_count: 2,
+        estimated_cost_amount: '0.01',
+        tokens_unknown_call_count: 0,
+        cost_unknown_call_count: 0,
+      },
+    ],
+    by_task: [],
+    by_validation: [],
+  })
+  const user = userEvent.setup()
+  mount()
+  await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+  expect(
+    await screen.findByText('0.01 USD + 미보고 1건', { selector: 'dd' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('120 + 미보고 1건', { selector: 'dd' }),
+  ).toBeInTheDocument()
+  // 비용을 모르는 문서 분석 줄이 '0 USD'만으로 보이지 않는다
+  const parse = screen.getByText('문서 분석').closest('li')!
+  expect(within(parse).getByText('0 USD + 미보고 1건')).toBeInTheDocument()
+  const validation = screen.getByText('작업 검증').closest('li')!
+  expect(within(validation).getByText('0.01 USD')).toBeInTheDocument()
+})

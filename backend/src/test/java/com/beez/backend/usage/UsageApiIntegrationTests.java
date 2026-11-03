@@ -239,6 +239,29 @@ class UsageApiIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void halfKnownTokens_areLeftOutOfBothSums_andCountedUnknownOnce() throws Exception {
+        usage("TASK_VALIDATION", null, null, 1000, 200, null, null, false, "2026-11-01T01:00:00+09:00");
+        // 검증 기록은 틀린 칸만 비우므로 tokens_known=true 인데 한쪽만 빌 수 있다 (DB 제약도 허용)
+        for (String[] half : new String[][] {{"100", null}, {null, "30"}}) {
+            api.jdbc.sql("""
+                            insert into llm_usage (project_id, feature, request_key, provider, model, tokens_known, input_tokens, output_tokens,
+                                                   latency_ms, failed, origin, created_at)
+                            values (:p, 'TASK_VALIDATION', :k, 'test', 'm', true, cast(:in as int), cast(:out as int), 10, false, 'model',
+                                    cast('2026-11-01T02:00:00+09:00' as timestamptz))
+                            """).param("p", projectId).param("k", "half-" + (++keySeq)).param("in", half[0], java.sql.Types.VARCHAR)
+                    .param("out", half[1], java.sql.Types.VARCHAR).update();
+        }
+
+        JsonNode body = get(q(FROM, TO), member, 200);
+        assertThat(body.get("call_count").asLong()).isEqualTo(3);
+        assertThat(body.get("input_tokens").asLong()).isEqualTo(1000);          // 한쪽만 있는 호출의 값은 어느 합계에도 없다
+        assertThat(body.get("output_tokens").asLong()).isEqualTo(200);
+        assertThat(body.get("tokens_unknown_call_count").asLong()).isEqualTo(2);
+        assertSumsMatch(body, body.get("by_feature"));
+        assertSumsMatch(body, body.get("by_day"));
+    }
+
+    @Test
     void emptyPeriod_givesZeros_andDayRowsInKoreanDates() throws Exception {
         JsonNode body = get(q("2026-11-01T00:00:00+09:00", "2026-11-01T00:00:01+09:00"), member, 200);
         assertThat(body.get("call_count").asLong()).isZero();

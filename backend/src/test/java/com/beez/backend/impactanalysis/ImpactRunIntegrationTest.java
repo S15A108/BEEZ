@@ -67,6 +67,10 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
                 .param("p",proposal).query(Integer.class).single()).isEqualTo(2);
         assertThat(api.jdbc.sql("SELECT usage_status FROM change_impact_run WHERE change_proposal_id=:p ORDER BY id DESC LIMIT 1")
                 .param("p",proposal).query(String.class).single()).isEqualTo("REPORTED");
+        // 비용 조회(MON-A02)가 읽는 공통 사용량 표에도 남는다. 두 실행이 같은 호출 키를 보고하면 한 번만 센다
+        assertThat(api.jdbc.sql("SELECT project_id,feature,model FROM llm_usage WHERE request_key='llm-call'").query().listOfRows())
+                .singleElement().satisfies(usage -> assertThat(usage).containsEntry("project_id",project)
+                        .containsEntry("feature","CHANGE_IMPACT").containsEntry("model","unknown"));
     }
 
     @Test void failedAiPreservesExplicitAndInsufficientEvidenceIsDistinct() {

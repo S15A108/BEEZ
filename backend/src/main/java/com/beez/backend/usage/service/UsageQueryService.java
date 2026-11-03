@@ -32,7 +32,10 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>같은 모델 호출은 request_key 로 이미 한 줄이다. 실패·재시도 호출도 실제 호출 수만큼 센다</li>
  *   <li>추정 비용은 단가가 있는 호출만 더한다. 비용을 모르는 호출을 0원으로 치지 않고, 합계에 못 들어간 호출 수를
  *       cost_unknown_call_count 로 따로 준다. 비용 있는 호출이 하나도 없으면 비용·통화를 생략한다. 통화가 여러 개면 가장 많은 통화로만
- *       더하고 나머지는 비용 모름으로 센다 (환산하지 않음). 토큰도 같은 방식(tokens_unknown_call_count)</li>
+ *       더하고 나머지는 비용 모름으로 센다 (환산하지 않음). 토큰도 같은 방식(tokens_unknown_call_count) — 입력·출력이 둘 다 있는 호출만 더하고,
+ *       하나라도 모르면 그 호출의 토큰은 합계에 넣지 않는다</li>
+ *   <li>모델을 부르는 기능은 모두 llm_usage 에 적는다: 검증(-168), 문서 분석·검토, 변경 영향 분석(승인 전·발행 뒤, LlmUsageRecorder). 외부 에이전트가
+ *       자기 모델을 쓴 사용량은 BE 를 거치지 않아 들어가지 않는다</li>
  *   <li>모든 축이 같은 조건·같은 기준 통화로 계산되므로 기능별 합 = 날짜별 합 = 전체 합이다. 같은 스냅샷으로 읽도록 REPEATABLE_READ</li>
  *   <li>by_agent 는 비어 있다 — llm_usage 에 호출자(에이전트 세션·웹) 칸이 아직 없어 나눌 수 없다. 칸을 추가하고 각 기능이 적는 것은 후속</li>
  * </ul>

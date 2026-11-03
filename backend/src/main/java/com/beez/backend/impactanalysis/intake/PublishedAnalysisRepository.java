@@ -6,6 +6,7 @@ import static com.beez.backend.designitem.support.DesignJson.canonical;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.*;
+import com.beez.backend.usage.repository.LlmUsageRecorder;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.*;
@@ -14,7 +15,11 @@ import org.springframework.transaction.annotation.*;
 @Repository
 public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
     private final JdbcClient jdbc;
-    public PublishedAnalysisRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
+    private final LlmUsageRecorder usageRecorder;
+    public PublishedAnalysisRepository(JdbcClient jdbc, LlmUsageRecorder usageRecorder) {
+        this.jdbc = jdbc;
+        this.usageRecorder = usageRecorder;
+    }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void accept(long project, long baseline, Long proposal) {
@@ -153,16 +158,32 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
                 .param("lifecycle", lifecycle).param("evaluation", evaluation).param("code", code, java.sql.Types.VARCHAR)
                 .param("fingerprint", fingerprint).param("explicit", canonical(explicit)).param("ai", canonical(ai))
                 .param("generation", canonical(generation)).param("usage", canonical(usage)).param("usageStatus", usageStatus).update();
+        recordUsage(claim, usage, generation instanceof Map<?, ?> g && g.get("model") instanceof String m ? m : null);
         if (updated == 1) insertAttempt(claim, evaluation, code, usage, usageStatus);
         return updated == 1;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public boolean recordFailure(Claim claim, String code, boolean retryable, Object usage, String usageStatus) {
+        recordUsage(claim, usage, null);
         Instant now = databaseTime();
         if (!fail(claim, now, code, retryable)) return false;
         insertAttempt(claim, "FAILED", code, usage, usageStatus);
         return true;
+    }
+
+    /**
+     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에도 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
+     * 이 시도가 결과를 쓰지 못한 경우(리스를 잃음)에도 실제 호출 비용이므로 남긴다. 같은 호출은 request_key 로 한 번만.
+     * 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
+     */
+    private void recordUsage(Claim claim, Object usage, String model) {
+        var project = jdbc.sql("SELECT project_id FROM published_change_analysis WHERE id=:id").param("id", claim.id())
+                .query(Long.class).optional();
+        if (project.isEmpty()) return;
+        String fallback = model == null || model.isBlank() ? "unknown" : model;
+        usageRecorder.record(new LlmUsageRecorder.Owner(project.get(), "CHANGE_IMPACT", null, null, fallback,
+                "published analysis " + claim.id() + " attempt " + claim.attempt()), usage, 0);
     }
 
     private void insertAttempt(Claim claim, String outcome, String code, Object usage, String usageStatus) {

@@ -41,6 +41,8 @@ export const usageResponseSchema = z.object({
   call_count: z.number().int(),
   estimated_cost_amount: common.costAmountSchema,
   currency: common.currencySchema,
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
   by_feature: common.usageBucketSchema.array(),
   by_task: common.usageBucketSchema.array(),
   by_validation: common.usageBucketSchema.array(),

@@ -91,7 +91,8 @@ public class UsageRepository {
 
     /**
      * axis 로 묶은 합계. TOTAL 은 언제나 한 줄. 묶음 값이 없는 행(작업·검증이 연결되지 않은 호출)은 작업·검증 축에서 빠진다 — 전체·기능·날짜 축에는 들어간다.
-     * 토큰: tokens_known 이고 값이 있는 칸만 더한다. 입력·출력 중 하나라도 모르면 그 호출을 tokens_unknown 으로 센다 (0 으로 만들지 않음)
+     * 토큰: tokens_known 이고 입력·출력이 <b>둘 다</b> 있는 호출만 두 합계에 더한다. 하나라도 모르면(검증 기록은 틀린 칸만 비우므로 한쪽만 빌 수 있다)
+     * 그 호출의 토큰은 어느 합계에도 넣지 않고 tokens_unknown 으로 센다 — 같은 호출이 "모름" 과 "합계" 양쪽에 걸치지 않게
      */
     public List<Aggregate> aggregate(Filter f, Axis axis, String currency) {
         String key = axis.expression;
@@ -103,11 +104,11 @@ public class UsageRepository {
         }
         String sql = "select " + key + " as k,"
                 + """
-                         coalesce(sum(u.input_tokens) filter (where u.tokens_known), 0) as input_tokens,
-                         coalesce(sum(u.output_tokens) filter (where u.tokens_known), 0) as output_tokens,
+                         coalesce(sum(u.input_tokens) filter (where u.tokens_known and u.input_tokens is not null and u.output_tokens is not null), 0) as input_tokens,
+                         coalesce(sum(u.output_tokens) filter (where u.tokens_known and u.input_tokens is not null and u.output_tokens is not null), 0) as output_tokens,
                          count(*) as call_count,
                          sum(u.estimated_cost_amount) filter (where u.currency = cast(:currency as text)) as cost,
-                         count(*) filter (where not u.tokens_known or u.input_tokens is null or u.output_tokens is null) as tokens_unknown,
+                         count(*) filter (where not (u.tokens_known and u.input_tokens is not null and u.output_tokens is not null)) as tokens_unknown,
                          count(*) filter (where u.estimated_cost_amount is null or u.currency is distinct from cast(:currency as text)) as cost_unknown
                   """
                 + FROM + keyFilter;
