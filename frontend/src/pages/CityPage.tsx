@@ -18,7 +18,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { BuildingDesign } from '@/stores/workspaceStore'
 import { formatAgo } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
-import { CITY_LOTS } from '@/three/city/queue'
+import { RING_SLOTS } from '@/three/city/ring'
 import { AsyncState } from '@/components/AsyncState'
 import { ActionForm } from '@/components/ActionForm'
 import { Button } from '@/components/ui/button'
@@ -77,8 +77,8 @@ function City() {
         ]
       : []
   })
-  // 도시 거리의 빈 부지는 늘 하나다. 부지 번호가 가장 앞인 빈 칸이고, 줄의 맨 끝(마지막 프로젝트 다음)에 선다.
-  const nextLot = Array.from({ length: CITY_LOTS }, (_, index) => index).find(
+  // 원형 도시의 빈 부지는 늘 하나다. 고리를 따라 가장 앞의 빈 칸에 생긴다.
+  const nextLot = Array.from({ length: RING_SLOTS }, (_, index) => index).find(
     (lot) => !assigned.some((item) => item.lot === lot),
   )
   // ponytail: 불러온 페이지 안에서만 검색·정렬한다. 서버 검색·정렬 파라미터가 생기면 쿼리로 옮긴다.
@@ -118,7 +118,7 @@ function City() {
                   <p className="mt-1 text-sm text-muted-foreground">
                     프로젝트 {sceneProjects.length}개
                     {nextLot !== undefined &&
-                      ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 만들면 줄 끝에 새 빈 부지가 생겨요.'}
+                      ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 빈 부지 다음은 다시 첫 프로젝트예요.'}
                   </p>
                 </div>
                 <Button
@@ -131,7 +131,9 @@ function City() {
                 </Button>
               </div>
               <section
-                className="relative h-[54dvh] min-h-96 overflow-hidden rounded-3xl border bg-card shadow-sm"
+                // 높이는 화면의 54%(최소 384px)지만 폭의 80%를 넘지 않는다. 좁은 세로 화면에서 키가 크면 고리 전체가 보여 원으로
+                // 읽히므로, 넓은 화면과 같은 가로세로 비율로 고리 앞쪽 호만 담는다(D26).
+                className="relative h-[min(max(54dvh,24rem),80vw)] overflow-hidden rounded-3xl border bg-card shadow-sm"
                 aria-label="내 프로젝트 도시"
               >
                 {/* 거리 뒤가 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city). 제목이 겹치는 넓은 화면에서만 두고,
@@ -166,7 +168,8 @@ function City() {
                   />
                 </Suspense>
                 <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                  끌거나 휠로 거리 넘기기 · 끝을 넘으면 처음으로 이어져요
+                  끌거나 휠로 거리 넘기기 · 끝을 넘으면 처음으로 이어져요 ·
+                  부지를 눌러 선택
                 </p>
               </section>
             </div>

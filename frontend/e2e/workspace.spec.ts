@@ -161,3 +161,37 @@ test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장
       }),
   ).toBeVisible()
 })
+
+// 이름표(HTML 버튼)는 캔버스 위에 겹쳐 있다. 이름표 위에서 굴린 휠과 이름표에서 시작한 끌기도 고리를 돌리고 페이지는
+// 스크롤하지 않는다. 끌지 않고 누르면 이름표가 그대로 연다(preview 확인에서 찾은 버그, 2026-11-03).
+test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르면 연다', async ({
+  page,
+}) => {
+  await login(page)
+  const tag = page
+    .getByRole('group', { name: /돌리는 원형 도시/ })
+    .getByRole('button', { name: /새 프로젝트/ })
+  await expect(tag).toBeVisible()
+  const x = async () => (await tag.boundingBox())!.x
+  const start = await tag.boundingBox()
+  await page.mouse.move(
+    start!.x + start!.width / 2,
+    start!.y + start!.height / 2,
+  )
+  await page.mouse.wheel(0, 250)
+  await expect.poll(x).toBeLessThan(start!.x - 100)
+  expect(await page.evaluate('window.scrollY')).toBe(0)
+  const centred = (await tag.boundingBox())!
+  const cx = centred.x + centred.width / 2
+  const cy = centred.y + centred.height / 2
+  await page.mouse.move(cx, cy)
+  await page.mouse.down()
+  // 빈 부지에서 프로젝트 쪽(오른쪽)으로 한 칸 끌면 고리가 돌아 빈 부지가 오른쪽으로 간다. 꾸밈 칸 쪽으로 끌면 가장
+  // 가까운 멈춤 자리인 빈 부지로 돌아온다(꾸밈 칸에는 멈추지 않는다).
+  await page.mouse.move(cx + 230, cy, { steps: 12 })
+  await page.mouse.up()
+  await expect.poll(x).toBeGreaterThan(centred.x + 100)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await tag.click()
+  await expect(page.getByRole('dialog')).toContainText('부지 3')
+})
