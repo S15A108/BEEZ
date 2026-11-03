@@ -24,6 +24,8 @@ interface WorkspaceState {
   viewMode: 'first' | 'third'
   outdoor: boolean
   placements: Record<string, Placement>
+  /** 계정 id → 마지막으로 연 프로젝트 id. 나의 도시가 그 건물을 가운데에 두고 시작한다(D26). */
+  lastVisited: Record<string, string>
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
   setViewMode: (viewMode: 'first' | 'third') => void
   setOutdoor: (outdoor: boolean) => void
@@ -32,6 +34,7 @@ interface WorkspaceState {
     projectId: string,
     placement: Placement,
   ) => void
+  visitProject: (accountId: string, projectId: string) => void
 }
 export const placementKey = (accountId: string, projectId: string) =>
   `${accountId}:${projectId}`
@@ -43,6 +46,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       viewMode: 'third',
       outdoor: false,
       placements: {},
+      lastVisited: {},
       openPane: (pane, focusId = null) => set({ pane, focusId }),
       setViewMode: (viewMode) => set({ viewMode }),
       setOutdoor: (outdoor) => set({ outdoor }),
@@ -53,11 +57,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             [placementKey(accountId, projectId)]: placement,
           },
         })),
+      visitProject: (accountId, projectId) =>
+        set((state) => ({
+          lastVisited: { ...state.lastVisited, [accountId]: projectId },
+        })),
     }),
     {
       name: 'beez.scene.preferences.v1',
       partialize: (state) => ({
         placements: state.placements,
+        lastVisited: state.lastVisited,
         viewMode: state.viewMode,
       }),
     },

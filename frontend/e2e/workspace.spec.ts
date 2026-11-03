@@ -195,3 +195,23 @@ test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르
   await tag.click()
   await expect(page.getByRole('dialog')).toContainText('부지 3')
 })
+
+// 사용자 요청 '가장 마지막에 방문한 프로젝트 건물이 가운데로'(D26): 1번 칸 프로젝트에 들어갔다 나오면 그 건물이 가운데에 온다.
+test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', async ({ page }) => {
+  await login(page)
+  const city = page.getByRole('group', { name: /돌리는 원형 도시/ })
+  const tag = city.getByRole('button', { name: /동네 책방 예약/ })
+  const centre = async () => {
+    const box = (await city.boundingBox())!
+    const at = (await tag.boundingBox())!
+    return Math.abs(at.x + at.width / 2 - (box.x + box.width / 2))
+  }
+  // 처음에는 가장 최근 칸(우리 팀 협업 서비스)이 가운데라 1번은 왼쪽에 있다
+  await expect(tag).toBeVisible()
+  expect(await centre()).toBeGreaterThan(100)
+  await page.goto('/projects/102')
+  await expect(page.locator('canvas')).toBeVisible()
+  await page.goto('/')
+  await expect(tag).toBeVisible()
+  await expect.poll(centre).toBeLessThan(30)
+})

@@ -43,6 +43,9 @@ function City() {
       projectsApi.create(input),
   })
   const placements = useWorkspaceStore((state) => state.placements)
+  const lastVisited = useWorkspaceStore(
+    (state) => state.lastVisited[session.data?.id ?? ''],
+  )
   const placeProject = useWorkspaceStore((state) => state.placeProject)
   const [creatingAt, setCreatingAt] = useState<number | null>(null)
   const [design, setDesign] = useState<BuildingDesign>('modern')
@@ -156,6 +159,13 @@ function City() {
                   <CityScene
                     projects={sceneProjects}
                     nextLot={nextLot ?? null}
+                    // 마지막으로 연 프로젝트(이 계정·이 브라우저)가 도시에 있으면 그 건물을 가운데에 둔다. 지웠거나 나간 프로젝트는
+                    // 목록에 없어 처음 화면 규칙을 쓴다(D26).
+                    visitedLot={
+                      sceneProjects.find(
+                        (project) => project.id === lastVisited,
+                      )?.lot
+                    }
                     backdrop={creatingAt !== null}
                     titleRef={titleRef}
                     onProjectSelect={(id) => navigate(`/projects/${id}`)}

@@ -18,6 +18,12 @@ export function ringSlot(slot: number, rot: number) {
 export const initialRotation = (nextSlot: number | null) =>
   nextSlot ? nextSlot - 1 : 0
 
+/** 도시에 들어올 때: 마지막으로 연 프로젝트의 칸을 가운데에 둔다. 그 칸을 모르면(기록 없음·지운 프로젝트) 처음 화면 규칙. */
+export const startRotation = (
+  visitedSlot: number | null | undefined,
+  nextSlot: number | null,
+) => visitedSlot ?? initialRotation(nextSlot)
+
 // 멈춤 자리는 프로젝트 칸과 빈 부지 칸(stops)이다. 꾸밈 칸에는 멈추지 않는다(사용자 결정 '꾸밈 구간 한 번에 넘기기').
 // 돌린 값(rot)은 고리를 감은 연속 값이라 같은 칸도 N 차이 나는 자리가 여럿이고, 가장 가까운 것을 고른다.
 

@@ -4,11 +4,13 @@ import type { RefObject } from 'react'
 import { Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CityRenderer3D } from './city/CityRenderer3D'
-import { initialRotation, nearestStop, RING_PITCH, stepStop } from './city/ring'
+import { nearestStop, RING_PITCH, startRotation, stepStop } from './city/ring'
 import type { SceneProject } from './types'
 
 export interface CitySceneProps {
   projects: readonly SceneProject[]
+  /** 마지막으로 연 프로젝트의 칸. 도시에 들어오면 이 칸을 가운데에 둔다(D26). */
+  visitedLot?: number | null
   /** 빈 부지(새 프로젝트 자리) 칸. 모두 쓰면 null */
   nextLot: number | null
   /** 프로젝트 만들기 창 뒤에 깔 때. 이름표를 숨기고 더 가깝게 본다. */
@@ -34,7 +36,7 @@ function CityRuntime({
   const { gl, size } = useThree()
   const engine = useRef<CityRenderer3D | null>(null)
   const latest = useRef(props)
-  const start = initialRotation(props.nextLot)
+  const start = startRotation(props.visitedLot, props.nextLot)
   const view = useRef<View>({ rot: start, target: start, hover: null })
   useEffect(() => {
     latest.current = props

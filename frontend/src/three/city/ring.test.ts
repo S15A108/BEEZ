@@ -6,6 +6,7 @@ import {
   RING_RADIUS,
   RING_SLOTS,
   ringSlot,
+  startRotation,
   stepStop,
 } from './ring'
 
@@ -49,4 +50,13 @@ it('휠 한 번은 꾸밈 칸을 건너 다음 멈춤 자리로, 끌고 놓으�
   expect(nearestStop(-0.3, stops)).toBe(0)
   // 칸이 비어 있는 자리(부지 번호에 틈)도 건너뛴다
   expect(stepStop(1, [1, 4, 5], 1)).toBe(4)
+})
+
+// 사용자 요청 '가장 마지막에 방문한 프로젝트 건물이 가운데로'(2026-11-03)
+it('도시에 들어오면 마지막으로 연 프로젝트 칸을 가운데에 두고, 모르면 처음 화면 규칙을 쓴다', () => {
+  expect(startRotation(0, 2)).toBe(0)
+  expect(startRotation(5, 2)).toBe(5)
+  // 기록이 없거나 그 프로젝트를 지웠거나 나가 도시에 없으면 가장 최근 칸
+  expect(startRotation(undefined, 2)).toBe(initialRotation(2))
+  expect(startRotation(null, null)).toBe(0)
 })
