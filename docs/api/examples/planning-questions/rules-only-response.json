@@ -1,0 +1,164 @@
+{
+  "result": {
+    "document": {
+      "document_id": "301",
+      "document_version_id": "311",
+      "version_no": 1
+    },
+    "kind": "PLAN",
+    "text_hash": "f8e265adf8d8be5ee57309613f5bbe84035e3aa6af5fd98c7dc4bc4bc1be1dd8",
+    "parser_profile": "markdown-v1",
+    "max_questions": 20,
+    "candidates": [
+      {
+        "candidate_key": "rule-undecided-L7-1",
+        "kind": "MISSING_CANDIDATE",
+        "status": "REVIEW_CANDIDATE",
+        "signal": "UNDECIDED_STATEMENT",
+        "summary": "문서가 아직 정하지 않았거나 이 문서 범위 밖이라고 밝힌 내용입니다: 「첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션 개발 일정은 정하지 않았다.」",
+        "evidence": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_fd54b4182fadf165fb3c879db027614352bbb04f9a7e6699680549353cb37500",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 7,
+              "end_line": 7
+            },
+            "location": "나래 협업 도구 기획서 / 서비스 목표 / L7-L7",
+            "quote": "첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션 개발 일정은 정하지 않았다."
+          }
+        ],
+        "unverified_reason": null
+      },
+      {
+        "candidate_key": "rule-placeholder-L27-c2",
+        "kind": "MISSING_CANDIDATE",
+        "status": "REVIEW_CANDIDATE",
+        "signal": "PLACEHOLDER_CELL",
+        "summary": "표의 '정식 운영' 행에서 '담당' 값이 비어 있거나 미정입니다.",
+        "evidence": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_c7fa632ae6da515e6d8c7b4876c0ad868079df552e7127d600c8efbf868885b1",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 27,
+              "end_line": 27
+            },
+            "location": "나래 협업 도구 기획서 / 운영 일정 / L27-L27",
+            "quote": "| 정식 운영 | 미정 | 시범 운영 평가 후 협의 |"
+          }
+        ],
+        "unverified_reason": null
+      },
+      {
+        "candidate_key": "rule-undecided-L29-1",
+        "kind": "MISSING_CANDIDATE",
+        "status": "REVIEW_CANDIDATE",
+        "signal": "UNDECIDED_STATEMENT",
+        "summary": "문서가 아직 정하지 않았거나 이 문서 범위 밖이라고 밝힌 내용입니다: 「정식 운영 날짜와 유료 요금제 가격은 아직 결정하지 않았다.」",
+        "evidence": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_b6fe018fce92ae7fe4fb1b4721d4bdd2c59affa457551215ac98124ce2645260",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 29,
+              "end_line": 29
+            },
+            "location": "나래 협업 도구 기획서 / 운영 일정 / L29-L29",
+            "quote": "정식 운영 날짜와 유료 요금제 가격은 아직 결정하지 않았다."
+          }
+        ],
+        "unverified_reason": null
+      },
+      {
+        "candidate_key": "rule-undecided-L29-2",
+        "kind": "MISSING_CANDIDATE",
+        "status": "REVIEW_CANDIDATE",
+        "signal": "UNDECIDED_STATEMENT",
+        "summary": "문서가 아직 정하지 않았거나 이 문서 범위 밖이라고 밝힌 내용입니다: 「이 문서는 가격표나 장애 보상 약관을 포함하지 않는다.」",
+        "evidence": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_b6fe018fce92ae7fe4fb1b4721d4bdd2c59affa457551215ac98124ce2645260",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 29,
+              "end_line": 29
+            },
+            "location": "나래 협업 도구 기획서 / 운영 일정 / L29-L29",
+            "quote": "이 문서는 가격표나 장애 보상 약관을 포함하지 않는다."
+          }
+        ],
+        "unverified_reason": null
+      }
+    ],
+    "questions": [
+      {
+        "question_key": "q-rule-undecided-L7-1",
+        "candidate_key": "rule-undecided-L7-1",
+        "rank": 1,
+        "question_type": "ESSAY",
+        "text": "문서에 「첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션 개발 일정은 정하지 않았다.」라고 적혀 있습니다. 이 사항이 이후에 결정됐다면 결정 내용과 근거를 적어 주세요. 아직 정해지지 않았다면 '미정'이라고 적어 주세요.",
+        "answer_format": {
+          "type": "ESSAY",
+          "max_length": 2000
+        },
+        "origin": "TEMPLATE",
+        "basis": "REVIEW_CANDIDATE"
+      },
+      {
+        "question_key": "q-rule-placeholder-L27-c2",
+        "candidate_key": "rule-placeholder-L27-c2",
+        "rank": 2,
+        "question_type": "SHORT_ANSWER",
+        "text": "표(나래 협업 도구 기획서 / 운영 일정 / L27-L27)의 '정식 운영' 행에서 '담당' 값이 비어 있거나 미정입니다. 정해진 값이 있다면 적어 주세요. 아직 없다면 '미정'이라고 적어 주세요.",
+        "answer_format": {
+          "type": "SHORT_ANSWER",
+          "max_length": 200
+        },
+        "origin": "TEMPLATE",
+        "basis": "REVIEW_CANDIDATE"
+      },
+      {
+        "question_key": "q-rule-undecided-L29-1",
+        "candidate_key": "rule-undecided-L29-1",
+        "rank": 3,
+        "question_type": "ESSAY",
+        "text": "문서에 「정식 운영 날짜와 유료 요금제 가격은 아직 결정하지 않았다.」라고 적혀 있습니다. 이 사항이 이후에 결정됐다면 결정 내용과 근거를 적어 주세요. 아직 정해지지 않았다면 '미정'이라고 적어 주세요.",
+        "answer_format": {
+          "type": "ESSAY",
+          "max_length": 2000
+        },
+        "origin": "TEMPLATE",
+        "basis": "REVIEW_CANDIDATE"
+      },
+      {
+        "question_key": "q-rule-undecided-L29-2",
+        "candidate_key": "rule-undecided-L29-2",
+        "rank": 4,
+        "question_type": "ESSAY",
+        "text": "문서에 「이 문서는 가격표나 장애 보상 약관을 포함하지 않는다.」라고 적혀 있습니다. 이 사항이 이후에 결정됐다면 결정 내용과 근거를 적어 주세요. 아직 정해지지 않았다면 '미정'이라고 적어 주세요.",
+        "answer_format": {
+          "type": "ESSAY",
+          "max_length": 2000
+        },
+        "origin": "TEMPLATE",
+        "basis": "REVIEW_CANDIDATE"
+      }
+    ],
+    "truncated_candidate_keys": [],
+    "omitted_candidates": 0
+  },
+  "origin": "TEMPLATE"
+}
