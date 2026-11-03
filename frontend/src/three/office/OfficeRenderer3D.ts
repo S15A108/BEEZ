@@ -90,10 +90,10 @@ const AGENT_STATUSES: readonly string[] = [
 ]
 const agentStatusOf = (status?: string) =>
   (AGENT_STATUSES.includes(status ?? '') ? status : 'online') as AgentStatus
-// 사무실 캐릭터 모양(D24, D27). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440), robot은 avatar를 모르는 팀원
-// (회원 로봇 모양으로 그린다), agent는 팀원의 AI 에이전트(하늘색 포인트 흰 로봇), bibi는 AI 팀장이다(캔버스 SCR-06-rec-office-chars).
+// 사무실 캐릭터 모양(D24, D27). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440), agent는 팀원의 AI 에이전트
+// (하늘색 포인트 흰 로봇), bibi는 AI 팀장이다(캔버스 SCR-06-rec-office-chars).
 export type OfficeAppearance =
-  'human' | 'member-robot' | 'bee' | 'robot' | 'agent' | 'bibi'
+  'human' | 'member-robot' | 'bee' | 'agent' | 'bibi'
 // 사람은 Kenney Mini Characters 모델(CC0), 로봇·벌은 보드 그림을 만든 캔버스 모델(memberFigures), 에이전트는 agentFigure,
 // 비비는 GLB 파일 하나다. 비비 GLB는 파일만 바꾸면 다른 모델로 바뀐다(앞 = +z, 발바닥 y = 0이면 된다).
 const PERSON_MODEL = '/models/kenney/characters/character-female-d.glb'
@@ -2496,14 +2496,9 @@ export class OfficeRenderer3D {
       })
       body.add(figure)
     }
-    if (
-      appearance === 'member-robot' ||
-      appearance === 'robot' ||
-      appearance === 'bee'
-    ) {
-      const template = this.memberFigure(
-        appearance === 'bee' ? 'bee' : 'member-robot',
-        () => (appearance === 'bee' ? buildBee() : buildRobot()),
+    if (appearance === 'member-robot' || appearance === 'bee') {
+      const template = this.memberFigure(appearance, () =>
+        appearance === 'bee' ? buildBee() : buildRobot(),
       )
       attach(template.figure.clone(), FIGURE_HEIGHT / template.height)
       return robot

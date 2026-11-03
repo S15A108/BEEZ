@@ -19,7 +19,8 @@ test('계정 avatar를 사무실 모양으로 바꾼다', () => {
   expect(avatarAppearance(undefined)).toBe('human')
 })
 
-test('팀원 목록에 avatar가 오면 그 모양, 없으면 기본 로봇으로, 팀원의 AI 에이전트는 에이전트 모양으로 그린다', () => {
+// avatar 없는 팀원의 기대값을 기본 로봇(검은 바이저)에서 사람으로 바꿨다(사용자 승인 2026-11-03, D27).
+test('팀원은 avatar 모양(없으면 사람)으로, 팀원의 AI 에이전트는 에이전트 모양으로 그린다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 2, lead: 1, humandesk: 1 })
       .floors[1],
@@ -49,7 +50,7 @@ test('팀원 목록에 avatar가 오면 그 모양, 없으면 기본 로봇으�
     actors.find((actor) => actor.id === id)?.appearance
   expect(appearance('member:21')).toBeUndefined()
   expect(appearance('member:22')).toBe('bee')
-  expect(appearance('member:23')).toBe('robot')
+  expect(appearance('member:23')).toBe('human')
   expect(appearance('agent:22')).toBe('agent')
   // 연결이 끊긴 에이전트는 돌아다니지 않는다.
   expect(actors.find((actor) => actor.id === 'agent:22')?.stationary).toBe(true)

@@ -63,18 +63,14 @@ export function officeActors(
       floor: 1,
       color: agent.color,
       status: agent.status,
-      // 팀원의 AI 에이전트(hired_by = 주인)는 하늘색 로봇이다(D27). 팀원은 avatar가 오면 그 모양, 없으면 기본 로봇
-      // (명세 요청 MEM-A01 avatar).
+      // 팀원의 AI 에이전트(hired_by = 주인)는 하늘색 로봇이다(D27). 팀원은 계정 avatar 모양, 모르면 사람이다(D24,
+      // 명세 요청 MEM-A01 avatar).
       appearance:
         agent.kind === 'lead'
           ? 'bibi'
           : agent.hired_by
             ? 'agent'
-            : agent.avatar
-              ? avatarAppearance(agent.avatar)
-              : agent.kind === 'human'
-                ? 'human'
-                : 'robot',
+            : avatarAppearance(agent.avatar),
       // 연결이 끊긴 에이전트는 자리에서 고개를 떨군 채 있는다.
       stationary: agent.kind === 'human' || agent.status === 'offline',
     })
