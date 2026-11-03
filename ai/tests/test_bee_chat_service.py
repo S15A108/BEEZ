@@ -200,6 +200,27 @@ def test_fact_tokens_are_ascii_numbers_keys_paths_and_identifiers():
     assert unsupported_facts("한도는 1.5 GB [1]", "한도 15 GB") == ["1.5"]
 
 
+def test_numbers_group_by_three_and_list_numbers_are_layout():
+    # PR #96 P1 (6th round): a comma is a thousands separator only between
+    # groups of three digits; `10,20` lists two values.
+    assert fact_tokens("허용 용량은 10,20 MB이고 1,000,000원, 1,000.5초") == [
+        "10",
+        "20",
+        "1,000,000",
+        "1,000.5",
+    ]
+    assert unsupported_facts("1020 MB [1]", "허용 용량은 10,20 MB") == ["1020"]
+    assert unsupported_facts("10 MB 또는 20 MB [1]", "허용 용량은 10,20 MB") == []
+    assert unsupported_facts("1,0000 MB [1]", "1000 MB") == ["0"]
+    # PR #96 P2 (6th round): list numbers and bullets at a line start are not
+    # facts.
+    assert fact_tokens("1. 한도는 30 MB\n2) 발행은 리더만\n- 셋째 413\n10. 넷째") == [
+        "30",
+        "413",
+    ]
+    assert fact_tokens("1.5초 안에\n30 MB") == ["1.5", "30"]
+
+
 def test_claim_segments_attach_markers_to_the_sentence_they_follow():
     text = "목록은 GET /api/users. [1] 생성은 POST /api/users 입니다 [2]. 끝."
     assert claim_segments(text) == [
@@ -210,6 +231,15 @@ def test_claim_segments_attach_markers_to_the_sentence_they_follow():
     assert claim_segments("[1] 앞 문장 [2]\n둘째 1.5초 [3]") == [
         ("[1] 앞 문장 [2]", [1, 2]),
         ("둘째 1.5초 [3]", [3]),
+    ]
+    # PR #96 P2 (6th round): a marker that opens a line stays on that line.
+    assert claim_segments("[1] POST /api/create\n[2] GET /api/list") == [
+        ("[1] POST /api/create", [1]),
+        ("[2] GET /api/list", [2]),
+    ]
+    assert claim_segments("1. 한도는 30 MB [1]\n2. 발행은 리더만 [2]") == [
+        ("한도는 30 MB [1]", [1]),
+        ("발행은 리더만 [2]", [2]),
     ]
 
 
@@ -262,9 +292,11 @@ async def test_a_quote_the_evidence_does_not_hold_rejects_the_whole_answer():
     assert "50 MB" not in json.dumps(error.to_api_dict(), ensure_ascii=False)
     await rejected(answer(citations=[{"evidence_id": "ev-1", "quote": "   "}]))
     # A marker that names no citation is the same kind of claim without a
-    # source; PR #96 P1 (5th round): so is `[0]`.
+    # source; PR #96 P1 (5th round): so is `[0]`; P2 (6th round): so is
+    # `[100]`, which must be seen, not left in the text.
     await rejected(answer(text="한도는 30 MB입니다 [1]. 삭제는 불가합니다 [2]."))
     await rejected(answer(text="누구나 발행 가능 [0]. 한도는 30 MB [1]."))
+    await rejected(answer(text="한도는 30 MB [1]. 발행은 리더만 [100]."))
 
 
 @pytest.mark.asyncio
@@ -280,6 +312,15 @@ async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
             citations=[{"evidence_id": "ev-1", "quote": bigger}],
         ),
         retrieved_evidence=[evidence("ev-1", bigger)],
+    )
+    # PR #96 P1 (6th round): `10,20 MB` lists two values, not 1020.
+    listed = "허용 용량은 10,20 MB다."
+    await rejected(
+        answer(
+            text="허용 용량은 1020 MB입니다 [1].",
+            citations=[{"evidence_id": "ev-1", "quote": listed}],
+        ),
+        retrieved_evidence=[evidence("ev-1", listed)],
     )
     # The same without any marker: the citation backs nothing and is dropped,
     # the unsupported number then has no grounding at all.
@@ -335,14 +376,15 @@ async def test_each_sentence_is_checked_against_the_quotes_it_cites():
         ),
         **body,
     )
+    both = [
+        {"evidence_id": "ev-1", "quote": basic},
+        {"evidence_id": "ev-1", "quote": premium},
+    ]
     result = (
         await run(
             answer(
                 text="기본 한도는 30 MB입니다 [1]. 프리미엄 한도는 50 MB입니다 [2].",
-                citations=[
-                    {"evidence_id": "ev-1", "quote": basic},
-                    {"evidence_id": "ev-1", "quote": premium},
-                ],
+                citations=both,
             ),
             **body,
         )
@@ -353,11 +395,27 @@ async def test_each_sentence_is_checked_against_the_quotes_it_cites():
         await run(
             answer(
                 text="기본 한도는 30 MB입니다. [1] 프리미엄 한도는 50 MB입니다. [2]",
-                citations=[
-                    {"evidence_id": "ev-1", "quote": basic},
-                    {"evidence_id": "ev-1", "quote": premium},
-                ],
+                citations=both,
             ),
+            **body,
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    # PR #96 P2 (6th round): a numbered list and line-leading markers keep
+    # each line's claim with its own citation.
+    result = (
+        await run(
+            answer(
+                text="1. 기본 한도는 30 MB입니다 [1]\n2. 프리미엄 한도는 50 MB입니다 [2]",
+                citations=both,
+            ),
+            **body,
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    result = (
+        await run(
+            answer(text="[1] 기본 한도 30 MB\n[2] 프리미엄 한도 50 MB", citations=both),
             **body,
         )
     ).result

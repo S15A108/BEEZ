@@ -56,15 +56,18 @@ UNGROUNDED_NOTE = (
     "보류했습니다."
 )
 
-# A marker with the space before and after it, so a removed marker leaves no
-# double space.
-_MARKER = re.compile(r"( ?)\[(\d{1,2})\]( ?)")
+# A marker is any bracketed integer (so `[100]` is seen and rejected, not left
+# in the text), with the space before and after it, so a removed marker
+# leaves no double space.
+_MARKER = re.compile(r"( ?)\[(\d+)\]( ?)")
 # Tokens that state a checkable fact: a path (never ending in a dot, so the
 # sentence's full stop stays out), a dotted or snake_case or camelCase
 # identifier, a display key (TASK-001), an all-caps code (RESTRICT, POST,
-# HTTP) or a number. ASCII only, so a Korean particle glued to a token is not
-# part of it; two-letter units like MB are left to the quote itself. The same
-# pattern tokenizes the grounding text, and tokens are compared whole.
+# HTTP) or a number. A comma inside a number is a thousands separator only
+# between groups of three digits (`1,000`); `10,20` is two numbers. ASCII
+# only, so a Korean particle glued to a token is not part of it; two-letter
+# units like MB are left to the quote itself. The same pattern tokenizes the
+# grounding text, and tokens are compared whole.
 _FACT = re.compile(
     r"/[A-Za-z0-9_{}./-]*[A-Za-z0-9_{}/-]"
     r"|[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*"
@@ -72,13 +75,16 @@ _FACT = re.compile(
     r"|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+"
     r"|[A-Z][A-Z0-9]*-\d+"
     r"|[A-Z]{3,}"
-    r"|\d+(?:[.,]\d+)*"
+    r"|\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    r"|\d+(?:\.\d+)?"
 )
-_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
-# A sentence ends at a full stop, question or exclamation mark followed by
-# whitespace, or at a line break; "1.5초" and "e.g" do not break.
-_SENTENCE_BREAK = re.compile(r"(?<=[.!?。])\s+|\n+")
-_LEADING_MARKERS = re.compile(r"^\s*((?:\[\d{1,2}\]\s*)+)")
+_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+# A list ordinal or bullet at the start of a line is layout, not a fact.
+_LIST_MARKER = re.compile(r"^[ \t]*(?:\d{1,3}[.)]|[-*•·])[ \t]+", re.MULTILINE)
+# Within a line a sentence ends at a full stop, question or exclamation mark
+# followed by spaces; "1.5초" and "e.g" do not break. Lines break on their own.
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?。])[ \t]+")
+_LEADING_MARKERS = re.compile(r"^[ \t]*((?:\[\d+\][ \t]*)+)")
 
 
 class AnswerRejected(ValueError):
@@ -148,8 +154,9 @@ def _canonical(token: str) -> str:
 
 
 def fact_tokens(text: str) -> list[str]:
-    """Checkable facts in an answer, in order, without the `[n]` markers."""
-    return list(dict.fromkeys(_FACT.findall(_MARKER.sub(" ", text))))
+    """Checkable facts in an answer, in order, without markers or list numbers."""
+    body = _MARKER.sub(" ", _LIST_MARKER.sub("", text))
+    return list(dict.fromkeys(_FACT.findall(body)))
 
 
 def support_tokens(texts: Iterable[str]) -> set[str]:
@@ -162,7 +169,7 @@ def unsupported_facts(text: str, support: str) -> list[str]:
 
     Both sides are tokenized the same way and compared token for token, so
     `50` is not covered by `150`, `/api/users` is not covered by
-    `/api/users/{id}`, and `1,000` equals `1000`.
+    `/api/users/{id}`, `1,000` equals `1000` and `10,20` is `10` and `20`.
     """
     known = support_tokens([support])
     return [token for token in fact_tokens(text) if _canonical(token) not in known]
@@ -171,24 +178,29 @@ def unsupported_facts(text: str, support: str) -> list[str]:
 def claim_segments(text: str) -> list[tuple[str, list[int]]]:
     """Sentences of an answer with the citation numbers each one carries.
 
-    A marker that opens a sentence belongs to the sentence before it
-    ("… GET /api/users. [1]"), so a claim is checked against what it cites.
+    Lines are segments of their own, then each line is split at sentence
+    ends. A marker that opens a later sentence of the same line belongs to
+    the sentence before it ("… GET /api/users. [1]"); a marker that opens a
+    line stays with that line ("[2] GET /api/list"). List numbers and
+    bullets at the start of a line are layout and are dropped.
     """
     segments: list[tuple[str, list[int]]] = []
-    for raw in _SENTENCE_BREAK.split(text):
-        if not raw.strip():
-            continue
-        markers = citation_markers(raw)
-        leading = _LEADING_MARKERS.match(raw)
-        if leading and segments:
-            moved = citation_markers(leading.group(1))
-            previous_text, previous_markers = segments[-1]
-            segments[-1] = (previous_text, previous_markers + moved)
-            markers = markers[len(moved) :]
-            raw = raw[leading.end() :]
+    for line in _LIST_MARKER.sub("", text).split("\n"):
+        line_start = len(segments)
+        for raw in _SENTENCE_BREAK.split(line):
             if not raw.strip():
                 continue
-        segments.append((raw, markers))
+            markers = citation_markers(raw)
+            leading = _LEADING_MARKERS.match(raw)
+            if leading and len(segments) > line_start:
+                moved = citation_markers(leading.group(1))
+                previous_text, previous_markers = segments[-1]
+                segments[-1] = (previous_text, previous_markers + moved)
+                markers = markers[len(moved) :]
+                raw = raw[leading.end() :]
+                if not raw.strip():
+                    continue
+            segments.append((raw, markers))
     return segments
 
 
@@ -230,17 +242,17 @@ def verify_answer(
 
     Rejected as contradicting the input: unknown evidence, item or task ids;
     a quote that is not an exact substring of its evidence; a `[n]` outside
-    1..k (so `[0]` too); a blank ANSWERED text; and, sentence by sentence, a
-    fact (number, key, path, identifier, code) that neither the quotes that
-    sentence cites nor a referenced item or task states as the same whole
-    token, so "50 MB" over a 30 MB (or 150 MB) quote never passes and a
-    number from another sentence of the same chunk is no support. A citation
-    no `[n]` refers to backs nothing and is dropped; repeated citations
-    collapse to one number. An ANSWERED answer that then keeps no citation,
-    approved item or related task is not shown: it becomes
-    INSUFFICIENT_EVIDENCE with the fixed text. For the two non-answer
-    statuses the model's text, citations and references are not used at
-    all; only its unresolved and next_actions are.
+    1..k (so `[0]` and `[100]` too); a blank ANSWERED text; and, sentence by
+    sentence, a fact (number, key, path, identifier, code) that neither the
+    quotes that sentence cites nor a referenced item or task states as the
+    same whole token, so "50 MB" over a 30 MB (or 150 MB) quote never
+    passes and a number from another sentence of the same chunk is no
+    support. A citation no `[n]` refers to backs nothing and is dropped;
+    repeated citations collapse to one number. An ANSWERED answer that then
+    keeps no citation, approved item or related task is not shown: it
+    becomes INSUFFICIENT_EVIDENCE with the fixed text. For the two
+    non-answer statuses the model's text, citations and references are not
+    used at all; only its unresolved and next_actions are.
     """
     answer = proposal.answer
     by_evidence = {item.evidence_id: item for item in evidence}

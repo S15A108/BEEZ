@@ -80,7 +80,8 @@ Title = Annotated[str, StringConstraints(min_length=1, max_length=500)]
 TaskText = Annotated[str, StringConstraints(min_length=1)]
 ContentHash = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
-_MARKER = re.compile(r"\[(\d{1,2})\]")
+# Any bracketed integer: a `[100]` the model writes must be seen and rejected.
+_MARKER = re.compile(r"\[(\d+)\]")
 # A history turn may be a whole answer, so it takes the answer bound.
 HistoryText = Annotated[
     str, StringConstraints(min_length=1, max_length=MAX_ANSWER_CHARS)
