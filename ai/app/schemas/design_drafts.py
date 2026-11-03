@@ -256,9 +256,16 @@ class DesignDraftRequest(_Strict):
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        # One version per design item: the BE sends the current DRAFT, or the
+        # APPROVED one, never both, so every base item is unambiguous.
         versions = [item.design_item_version_id for item in self.existing_items]
+        items = [item.design_item_id for item in self.existing_items]
         keys = [item.key for item in self.existing_items]
-        if len(set(versions)) != len(versions) or len(set(keys)) != len(keys):
+        if (
+            len(set(versions)) != len(versions)
+            or len(set(items)) != len(items)
+            or len(set(keys)) != len(keys)
+        ):
             raise ValueError("duplicate existing item")
         question_keys = [entry.question.question_key for entry in self.questions]
         if len(set(question_keys)) != len(question_keys):

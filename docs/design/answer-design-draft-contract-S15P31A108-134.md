@@ -2,13 +2,13 @@
 
 작성: 박상은 · Jira: S15P31A108-134 · 대상: 오서현(PLN-A05 답변 반영 설계 초안 생성, 저장·승인·발행), 화면 S15P31A108-202 · 선행: [#133 질문·답변 계약](planning-question-answer-contract-S15P31A108-133.md)
 
-**제안 상태다.** 권한을 확인한 문서 고정 버전과 #133 질문·답변, BE가 보유한 설계 항목 버전을 입력으로 받아 **미승인 설계 항목 초안(DRAFT)**, 항목별 출처(원문 인용·답변 참조), **답변 전후 차이를 보여 주는 변경 목록**을 돌려주는 AI 쪽 계약을 적는다. 저장·ID 발급·승인·발행은 BE가 맡고 AI는 입력을 바꾸지 않는다. 실제 BE→AI 호출 위치와 저장 방식은 담당자 합의가 남았다(9절).
+**제안 상태다.** 권한을 확인한 문서 고정 버전과 #133 질문·답변, BE가 보유한 설계 항목 버전을 입력으로 받아 **미승인 설계 항목 초안(DRAFT)**, 항목별 출처(원문 인용·답변 참조), **답변 전후 차이를 보여 주는 변경 목록**을 돌려주는 AI 쪽 계약을 적는다. 저장·ID 발급·승인·발행은 BE가 맡고 AI는 입력을 바꾸지 않는다. 호출 범위·입력 범위·후보 보관·채택 검증은 BE(오서현) 제안을 1절·6절에 반영했고, 화면 202와 후보 표 설계는 합의가 남았다(9절).
 
 ## 1. 흐름과 책임
 
-1. BE가 PLN-A05 요청을 접수하면 권한을 확인한 **문서 고정 버전·원문**, 그 버전의 `planning_question` 행(질문·근거·답변 상태·답변), 그리고 문서에서 나온 **기존 설계 항목 버전**(DRAFT 또는 현재 APPROVED)을 AI에 보낸다. #128 구조화 추출이 없으면 기존 항목은 빈 목록이어도 된다.
-2. AI는 원문을 #127 파서로 블록·행 범위로 만들고, 모델에 블록 원문·기존 항목·답변된 질문을 넘겨 초안 제안을 받은 뒤, 모든 인용을 블록 원문과 대조하고 기준 항목 ID·답변 키를 입력과 대조한다. 각 초안에 기준 항목의 **before**와 초안의 **after**, 바뀐 필드, 답변 참조를 붙인다.
-3. BE는 초안을 DRAFT 항목 버전으로 저장한다(`origin=AI_PROPOSED`). 기준 항목이 APPROVED이면 그 버전은 그대로 두고 새 DRAFT 버전을 만든다. 승인·발행은 PLN-A10 등 기존 경로다. 사용자는 화면 202에서 before/after를 보고 초안을 고치거나 버린다.
+1. BE가 PLN-A05 요청을 **비동기 작업**으로 접수하면 문서 버전마다 AI를 한 번씩 호출한다. 범위는 **최초 baseline 발행 전 초안 생성**이며, 발행 후 설계 변경은 기존 변경 제안·승인 경로로 간다. 요청에는 권한을 확인한 **문서 고정 버전·원문**, 그 버전의 `planning_question` 행(질문·근거·답변 상태·답변), 그리고 **그 문서에서 나온 현재 설계 항목**을 설계 항목당 **한 버전만**(사람이 고친 현재 DRAFT가 있으면 그 본문, 없으면 현재 APPROVED) 담는다. 출처 없는 수동 작성 항목은 넣지 않고, 이전 문서 버전에서 이어받는 항목은 BE가 명시적으로 고른다. BE는 접수 시 문서 버전·질문·답변·기존 항목 본문을 스냅샷으로 보존하고, 문서별 성공·실패를 기록해 실패한 문서만 재시도한다. #128 구조화 추출이 없으면 기존 항목은 빈 목록이어도 된다.
+2. AI는 원문을 #127 파서로 블록·행 범위로 만들고, 모델에 블록 원문·기존 항목·답변된 질문을 넘겨 초안 제안을 받은 뒤, 모든 인용을 블록 원문과 대조하고 기준 항목 ID·답변 키를 입력과 대조한다. 각 초안에 기준 항목의 **before**와 초안의 **after**, 바뀐 필드, 충돌 필드, 답변 참조를 붙인다.
+3. BE는 응답을 바로 DRAFT로 만들지 않고 **생성 후보**로 보관한다(항목별 before/after·근거·채택/폐기 상태, 결과 전체의 `unresolved`·사용량). 사용자가 화면 202에서 채택할 때만 실제 DRAFT에 반영한다(`origin=AI_PROPOSED`). CREATE는 새 항목과 v1 DRAFT를 만들고, 기존 DRAFT의 UPDATE는 그 DRAFT를 갱신하며, APPROVED 기준은 그대로 두고 새 DRAFT 버전을 만든다. 승인·발행은 PLN-A10 등 기존 경로다. 세부는 6절.
 
 구현: `ai/app/schemas/design_drafts.py`(모델), `ai/app/services/design_drafts/`(모델 제안·검증·변경 목록, [README](../../ai/app/services/design_drafts/README.md)), `ai/app/routers/design_drafts.py`(기본 비활성 경로). 예시: `docs/api/examples/design-drafts/`. 검토 자료: `ai/evaluations/design_drafts/`.
 
@@ -21,7 +21,7 @@
 | `project_id`, `request_key` | ID, string ≤ 256 | Y | #133과 같음. 실제 모델 호출 key는 `llm-design-drafts-<uuid>` |
 | `document` | `{document_id, document_version_id, version_no}` | Y | 분석할 고정 버전 |
 | `kind`, `media_type`, `content`, `content_hash`, `text_hash`, `normalization_version`, `parser_profile` | — | Y | #133 요청과 같음(#127 파서 계약) |
-| `existing_items[]` | ExistingDesignItem | N | 문서의 기존 설계 항목 버전. 최대 500. `design_item_version_id`·`key`는 서로 달라야 한다 |
+| `existing_items[]` | ExistingDesignItem | N | 문서에서 나온 현재 설계 항목. 최대 500. `design_item_version_id`·`design_item_id`·`key`는 서로 달라야 한다(**설계 항목당 한 버전**, 어기면 422) |
 | `questions[]` | AnsweredQuestion | N | 저장된 #133 질문. 최대 200, `question_key` 중복 금지 |
 | `max_items` | integer 1~100 | N | 초안 수 상한. 기본 50 |
 
@@ -94,16 +94,20 @@ DraftChange:
 | 모델 입력 | 블록·기존 항목·답변 JSON 256 KiB 초과 시 422 `invalid_ai_input` |
 | 본문 | `DESIGN_DRAFTS_MAX_BODY_BYTES` 기본 2 MiB |
 
-## 6. 저장 제안 (오서현 합의 대상)
+## 6. 저장과 채택 (오서현 제안 반영, 표 설계는 합의 중)
 
-| AI 필드 | 저장 제안 |
-| --- | --- |
-| `items[]` | `design_item_version` 새 행: `status=DRAFT`, `origin=AI_PROPOSED`, `schema_version=1`, `content`, `title=content.description`, `source_document_version_id`=요청 문서 버전, `source_locator`=`sources[0].locator`(있을 때) |
-| `base_design_item_version_id` | 같은 `design_item_id`의 다음 `version_no`로 저장. APPROVED 기준은 수정하지 않는다 |
-| CREATE | 새 `design_item`(키 발급)과 v1 DRAFT |
-| `sources[]`, `answer_refs[]`, `support`, `rationale`, `changes[].conflicting_fields` | 화면 202 검토용. 충돌 필드가 있으면 재검토 표시가 필요하다. 저장 위치(예: `design_item_version.content` 밖의 메타 JSONB 또는 별도 표)는 합의 필요 |
-| `changes[]` | 저장하지 않아도 `before`는 기존 버전에서 재구성할 수 있다. 화면에는 응답 그대로 쓴다 |
-| `candidate_key` | 한 분석 결과 안의 임시 키. 재분석 시 같은 종류·기준·본문이면 같은 키 |
+BE 제안대로 AI 응답은 바로 DRAFT가 되지 않고 **생성 작업 → 생성 후보 → 실제 DRAFT**로 나뉜다. 각 단계가 AI 응답에서 가져가는 것은 다음과 같다.
+
+| 단계 | 보존·사용할 AI 응답 | 비고 |
+| --- | --- | --- |
+| 생성 작업 | `document`·`text_hash`·`parser_profile`(대상 문서 확인), `usage[]`(실제 호출 사용량), 처리 상태 | 입력 스냅샷(문서 버전·질문·답변·기존 항목 본문)은 BE가 접수 시 보존한다 |
+| 생성 후보(항목별) | `items[]`와 `changes[]`: `candidate_key`, `kind`, `content`(= `after`, BE 용어로 `proposed_after`), `base_design_item_version_id`·`base_status`, **`before`(생성 당시 기준 본문 그대로)**, `changed_fields`, `conflicting_fields`, `sources[]`, `answer_refs[]`, `support`, `rationale` | 모두 **불변으로 보존**한다. 기존 DRAFT는 같은 행이 수정될 수 있어 `before`를 나중에 재구성할 수 없기 때문이다. 기준 본문 해시는 `before`에 BE `DesignJson.hash`를 적용해 얻는다(`before`는 입력 본문과 동일하며 `null` 필드도 보존된다). 생성에 쓴 답변은 BE 스냅샷에서 `answer_refs`의 질문 키로 찾는다 |
+| 생성 후보(결과 전체) | `unresolved[]`, `untouched_existing_ids[]`, `unanswered_question_keys[]`, `omitted_items` | `untouched_existing_ids`는 "이번 결과가 건드리지 않음"이지 삭제 지시가 아니다. 재생성 결과에 없는 기존 항목은 삭제하지 않는다 |
+| 실제 DRAFT(채택 시) | `content`를 `design_item_version`에 저장: `status=DRAFT`, `origin=AI_PROPOSED`, `schema_version=1`, `title=content.description`, `source_document_version_id`=요청 문서 버전, `source_locator`=`sources[0].locator`(대표 출처, 전체 근거를 대체하지 않음) | CREATE는 새 `design_item`(키 발급)과 v1 DRAFT, UPDATE는 기준 DRAFT 갱신 또는 APPROVED 기준의 새 DRAFT 버전. AI 제안과 사용자 편집 결과는 구분해 둔다 |
+
+채택 규칙(BE 제안): 모든 후보는 사용자 채택 후 반영하고, `support=NONE`은 "확인 가능한 근거 없음"을 확인한 뒤 명시적으로 채택한다. `conflicting_fields`가 있는 후보는 사용자가 그 필드를 확정하기 전에는 채택할 수 없게 하는 것을 제안한다. 반영 직전에 대상 문서·답변이 생성 당시와 같은지, UPDATE 대상 DRAFT의 버전·본문 해시가 같은지, baseline이 그사이 발행되지 않았는지 확인하고, 다르면 반영을 막고 재생성을 안내한다. 같은 후보의 채택 요청 재전송은 중복 반영하지 않는다. 후보를 폐기해도 실제 DRAFT에는 영향이 없다.
+
+`candidate_key`는 종류·기준 버전·본문의 해시라서 같은 입력을 재생성하면 같은 키가 나오고 본문이 달라지면 바뀐다. 생성 결과 사이의 후보 중복 제거와 채택 멱등 처리에 쓸 수 있지만 BE가 발급하는 후보 ID를 대신하지는 않는다. 한 결과 안에서 기준 항목당 후보는 하나이며, 여러 생성 결과에 같은 항목의 후보가 있으면 BE 제안대로 하나를 골라 반영하고 이후는 기존 편집 기능으로 고친다.
 
 ## 7. 오류
 
@@ -114,7 +118,7 @@ DraftChange:
 | 401 | `invalid_internal_token` | 내부 토큰 누락·불일치 |
 | 503 | `design_drafts_not_configured` | 기본 비활성 또는 한도 설정 오류 |
 | 400 | `validation_failed` | JSON·필드·허용 값 오류 |
-| 422 | `invalid_ai_input` | 중복 항목·질문, 답변 형식 불일치, 파서 거부(`details.reason`), 모델 입력 256 KiB 초과 |
+| 422 | `invalid_ai_input` | 중복 항목(버전·설계 항목·키)·질문, 답변 형식 불일치, 파서 거부(`details.reason`), 모델 입력 256 KiB 초과 |
 | 413 / 415 | `request_too_large` / `unsupported_media_type` | 본문 크기 / 미디어 타입 |
 | 502 | `model_unavailable` | 모델 호출 실패, 출력 구조 위반, 입력과 모순되는 ID·키, `GMS_KEY` 없음 |
 | 504 | `model_timeout` | `DESIGN_DRAFTS_LLM_TIMEOUT_SECONDS`(기본 45초) 초과 |
@@ -127,7 +131,8 @@ DraftChange:
 
 ## 9. 담당자 확인 필요·미완료
 
-- 오서현: BE→AI 호출 위치(PLN-A05 job), 기존 항목 목록 범위(해당 문서 출처 항목만인지 프로젝트 전체인지), 6절 저장 방식, 화면 202의 before/after·`support`·`unresolved` 표시, DRAFT 저장 후 PLN-A06 목록 노출.
+- 오서현 제안으로 정리된 것(2026-11-03): 호출 범위(baseline 발행 전, PLN-A05 비동기 작업, 문서별 호출·재시도), 입력 범위(문서 출처 현재 항목, 설계 항목당 한 버전), 생성 후보 보관 후 채택, 생성 당시 `before`·근거 불변 보존, 반영 직전 변경 확인. 1절·6절에 반영했고 요청 검증에 설계 항목당 한 버전(`design_item_id` 중복 422)을 더했다.
+- 합의 남음: 화면 202(후보 선택·비교, `conflicting_fields`·`support=NONE`·`unresolved` 표시), 생성 작업·후보 표 설계, 같은 항목의 후보가 여러 생성 결과에 있을 때의 선택 방식, DRAFT 채택 후 PLN-A06 목록 노출.
 - `docs/api/03-ai-internal.md`에 AI-A13으로 추가할지, AI-A06 `/v1/bee/draft`(문서 수정안 텍스트)와의 관계 정리.
 - `BEE_DRAFT` feature 사용 여부(기존 `llm_usage.feature` 값에 있음).
 - 실제 모델 평가는 하지 않았다(가짜 공급자만). 프롬프트와 `unresolved` 서술 품질은 실측 뒤 조정한다.

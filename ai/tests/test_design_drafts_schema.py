@@ -334,6 +334,19 @@ def test_request_rejects_duplicates_and_foreign_evidence():
         DesignDraftRequest(
             **base, existing_items=(existing("1101"), existing("1102", key="PLN-1101"))
         )
+    # Two versions of one design item: the BE sends only the current one.
+    with pytest.raises(ValidationError):
+        DesignDraftRequest(
+            **base, existing_items=(existing("1101"), existing("1102", key="PLN-1102"))
+        )
+    two = DesignDraftRequest(
+        **base,
+        existing_items=(
+            existing("1101"),
+            existing("1102", key="PLN-1102", design_item_id="1002"),
+        ),
+    )
+    assert len(two.existing_items) == 2
     with pytest.raises(ValidationError):
         DesignDraftRequest(**base, questions=(answered(), answered()))
     with pytest.raises(ValidationError):
