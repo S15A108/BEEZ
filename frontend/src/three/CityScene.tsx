@@ -4,7 +4,7 @@ import type { RefObject } from 'react'
 import { Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CityRenderer3D } from './city/CityRenderer3D'
-import { initialRotation, RING_PITCH } from './city/ring'
+import { initialOffset, QUEUE_PITCH, snapOffset } from './city/queue'
 import type { SceneProject } from './types'
 
 export interface CitySceneProps {
@@ -13,7 +13,7 @@ export interface CitySceneProps {
   nextLot: number | null
   /** 프로젝트 만들기 창 뒤에 깔 때. 이름표를 숨기고 더 가깝게 본다. */
   backdrop?: boolean
-  /** 도시 위에 겹쳐 놓은 제목 영역. 이 아래로 올라온 칸의 이름표만 보인다. */
+  /** 도시 위에 겹쳐 놓은 제목 영역. 제목 글자·버튼과 겹치는 이름표는 숨긴다. */
   titleRef?: RefObject<HTMLElement | null>
   onProjectSelect: (id: string) => void
   onLotSelect: (lot: number) => void
@@ -31,21 +31,18 @@ function CityRuntime({
   const { gl, size } = useThree()
   const engine = useRef<CityRenderer3D | null>(null)
   const latest = useRef(props)
-  const view = useRef<View>({
-    rot: initialRotation(props.nextLot),
-    target: initialRotation(props.nextLot),
-    hover: null,
-  })
+  const start = initialOffset(queueLength(props))
+  const view = useRef<View>({ rot: start, target: start, hover: null })
   useEffect(() => {
     latest.current = props
-    engine.current?.setProjects(ringProjects(props.projects), props.nextLot)
+    engine.current?.setProjects(cityLots(props.projects), props.nextLot)
   }, [props])
 
   useEffect(() => {
     const renderer = new CityRenderer3D(gl.domElement, true, gl)
     engine.current = renderer
     renderer.setProjects(
-      ringProjects(latest.current.projects),
+      cityLots(latest.current.projects),
       latest.current.nextLot,
     )
     const canvas = gl.domElement
@@ -61,14 +58,14 @@ function CityRuntime({
       press = { x: event.clientX, rot: view.current.rot, moved: false }
       canvas.setPointerCapture(event.pointerId)
     }
-    // 끌면 고리가 손을 따라 돈다. 앞 칸 근처에서 끈 거리 RING_PITCH만큼이 한 칸이다.
+    // 끌면 줄이 손을 따라 옆으로 흐른다. 끈 거리 QUEUE_PITCH만큼이 한 칸이다.
     const move = (event: PointerEvent) => {
       if (press) {
         const dx = event.clientX - press.x
         if (Math.abs(dx) > 4) press.moved = true
         if (!press.moved) return
         view.current.rot = view.current.target =
-          press.rot - dx / ppu() / RING_PITCH
+          press.rot - dx / ppu() / QUEUE_PITCH
         canvas.style.cursor = 'grabbing'
         return
       }
@@ -81,9 +78,12 @@ function CityRuntime({
       const moved = press.moved
       press = null
       canvas.style.cursor = 'grab'
-      // 놓으면 가장 가까운 칸이 가운데로 온다.
+      // 놓으면 가장 가까운 멈춤 자리로 간다.
       if (moved) {
-        view.current.target = Math.round(view.current.rot)
+        view.current.target = snapOffset(
+          view.current.rot,
+          queueLength(latest.current),
+        )
         return
       }
       const slot = renderer.pick(...local(event))
@@ -96,8 +96,8 @@ function CityRuntime({
     const leave = () => {
       view.current.hover = null
     }
-    // 휠·트랙패드 스크롤도 원을 돌린다(아래로 굴리면 다음 칸이 가운데로). 멈추면 끌기처럼 가장 가까운 칸에 맞춘다.
-    // 도시 위에서만 페이지 스크롤을 막는다. 원은 끝이 없어 끝 칸에서 페이지로 넘어가지 않는다.
+    // 휠·트랙패드 스크롤도 줄을 넘긴다(250px마다 한 칸, 아래·오른쪽으로 굴리면 다음 칸이 가운데로). 멈추면 끌기처럼
+    // 가장 가까운 칸에 맞춘다. 도시 위에서만 페이지 스크롤을 막는다. 순환 큐라 끝 칸에서 페이지로 넘어가지 않는다.
     let settle = 0
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
@@ -108,7 +108,10 @@ function CityRuntime({
       view.current.target += (event.deltaMode === 1 ? delta * 40 : delta) / 250
       window.clearTimeout(settle)
       settle = window.setTimeout(() => {
-        view.current.target = Math.round(view.current.target)
+        view.current.target = snapOffset(
+          view.current.target,
+          queueLength(latest.current),
+        )
       }, 160)
     }
     canvas.addEventListener('pointerdown', down)
@@ -131,29 +134,37 @@ function CityRuntime({
     engine.current?.setSize(size.width, size.height)
   }, [size.width, size.height])
 
-  // A positive priority owns rendering; the ring scene renders into R3F's canvas.
+  // A positive priority owns rendering; the city scene renders into R3F's canvas.
   useFrame((_, delta) => {
     const renderer = engine.current
     if (!renderer) return
     const v = view.current
     v.rot += (v.target - v.rot) * Math.min(1, delta * 8)
     renderer.render({ ...v, backdrop: latest.current.backdrop })
-    // 고리를 돌려 위로 올라간 칸의 이름표가 제목 글자와 겹치지 않게, 제목 영역 아래 끝(넓은 화면에서 도시 위에 겹칠 때)보다
-    // 위로 올라간 이름표는 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면 위 끝 12px만 비운다.
-    const title = latest.current.titleRef?.current
-    const top = title
-      ? Math.max(
-          0,
-          title.getBoundingClientRect().bottom -
-            gl.domElement.getBoundingClientRect().top,
-        ) + 12
-      : 120
-    renderer.placeTags(overlay.current, top)
+    // 이름표가 도시 위에 겹친 제목·설명·만들기 버튼(넓은 화면)과 겹치면 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면
+    // 겹칠 일이 없다.
+    const origin = gl.domElement.getBoundingClientRect()
+    const blocked = [...(latest.current.titleRef?.current?.children ?? [])].map(
+      (element) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          left: rect.left - origin.left - 8,
+          right: rect.right - origin.left + 8,
+          top: rect.top - origin.top - 8,
+          bottom: rect.bottom - origin.top + 8,
+        }
+      },
+    )
+    renderer.placeTags(overlay.current, blocked)
   }, 1)
   return null
 }
 
-const ringProjects = (projects: readonly SceneProject[]) =>
+/** 줄의 칸 수: 부지가 있는 프로젝트와 빈 부지 */
+const queueLength = ({ projects, nextLot }: CitySceneProps) =>
+  cityLots(projects).length + (nextLot === null ? 0 : 1)
+
+const cityLots = (projects: readonly SceneProject[]) =>
   projects.flatMap((project) =>
     project.lot == null
       ? []
@@ -170,7 +181,7 @@ export default function CityScene(props: CitySceneProps) {
     <div
       className={cn('relative cursor-grab', props.className ?? 'h-full w-full')}
       role="group"
-      aria-label={`돌리는 원형 도시. 앞 반원에 프로젝트 ${placed.length}개${props.nextLot === null ? '' : '와 빈 부지 하나'}`}
+      aria-label={`옆으로 넘기는 도시 거리. 프로젝트 ${placed.length}개${props.nextLot === null ? '' : '와 빈 부지 하나'}가 한 줄로 이어져요`}
     >
       <Canvas
         flat

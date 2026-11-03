@@ -18,7 +18,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { BuildingDesign } from '@/stores/workspaceStore'
 import { formatAgo } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
-import { RING_SLOTS } from '@/three/city/ring'
+import { CITY_LOTS } from '@/three/city/queue'
 import { AsyncState } from '@/components/AsyncState'
 import { ActionForm } from '@/components/ActionForm'
 import { Button } from '@/components/ui/button'
@@ -77,8 +77,8 @@ function City() {
         ]
       : []
   })
-  // 원형 도시(캔버스 v474)의 빈 부지는 늘 하나다. 원을 따라 가장 앞의 빈 칸에 생긴다.
-  const nextLot = Array.from({ length: RING_SLOTS }, (_, index) => index).find(
+  // 도시 거리의 빈 부지는 늘 하나다. 부지 번호가 가장 앞인 빈 칸이고, 줄의 맨 끝(마지막 프로젝트 다음)에 선다.
+  const nextLot = Array.from({ length: CITY_LOTS }, (_, index) => index).find(
     (lot) => !assigned.some((item) => item.lot === lot),
   )
   // ponytail: 불러온 페이지 안에서만 검색·정렬한다. 서버 검색·정렬 파라미터가 생기면 쿼리로 옮긴다.
@@ -118,7 +118,7 @@ function City() {
                   <p className="mt-1 text-sm text-muted-foreground">
                     프로젝트 {sceneProjects.length}개
                     {nextLot !== undefined &&
-                      ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 만들면 원의 다음 칸에 새 빈 부지가 생겨요.'}
+                      ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 만들면 줄 끝에 새 빈 부지가 생겨요.'}
                   </p>
                 </div>
                 <Button
@@ -134,10 +134,11 @@ function City() {
                 className="relative h-[54dvh] min-h-96 overflow-hidden rounded-3xl border bg-card shadow-sm"
                 aria-label="내 프로젝트 도시"
               >
-                {/* 원이 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city). 제목이 겹치는 넓은 화면에서만 */}
+                {/* 거리 뒤가 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city). 제목이 겹치는 넓은 화면에서만 두고,
+                    먼 건물이 부제목 뒤로 비치지 않게 진하게 칠한다(캔버스 v494). */}
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 top-0 z-[1] hidden h-[120px] bg-linear-to-b from-[rgba(253,252,248,0.88)] to-transparent lg:block"
+                  className="pointer-events-none absolute inset-x-0 top-0 z-[1] hidden h-[150px] bg-linear-to-b from-[rgba(253,252,248,0.96)] via-[rgba(253,252,248,0.82)] via-55% to-transparent lg:block"
                 />
                 <Suspense
                   fallback={
@@ -165,7 +166,7 @@ function City() {
                   />
                 </Suspense>
                 <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                  끌거나 휠을 굴려 원 돌리기 · 부지를 눌러 선택
+                  끌거나 휠로 거리 넘기기 · 끝을 넘으면 처음으로 이어져요
                 </p>
               </section>
             </div>
