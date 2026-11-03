@@ -5,13 +5,17 @@ import static org.mockito.Mockito.mock;
 
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.task.service.ProjectDesignLookup;
+import com.beez.backend.task.service.RelatedTaskCandidateFinder;
+import com.beez.backend.task.service.ValidationStatusLookup;
 import com.beez.backend.validation.repository.ValidationRepository;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.simple.JdbcClient;
 
 /** 서버용 가짜 분석기의 응답이 실제 응답과 같은 계약 검사를 통과하는지 (S15P31A108-159) */
 class FakeValidationAnalyzerTest {
@@ -46,7 +50,10 @@ class FakeValidationAnalyzerTest {
 
         AnalysisResultApplier applier = new AnalysisResultApplier(mock(ValidationRepository.class),
                 mock(ValidationResponses.class), mock(ProjectDesignLookup.class), mock(ValidationRules.class),
-                mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class), mock(DeltaCompletion.class));
+                mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class),
+                mock(ValidationInputAssembler.class), mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), true,
+                mock(DeltaCompletion.class), mock(TaskCompletionReportRepository.class),
+                mock(ValidationStatusLookup.class));
         assertThat(applier.contractViolation(request, response)).isNull();
     }
 }

@@ -16,20 +16,26 @@ import {
   planningApi,
   tasksApi,
 } from '@/api/services'
-import type { ChangeProposal, Comparison } from '@/api/contracts/common'
+import type {
+  ChangeImpact,
+  ChangeProposal,
+  Comparison,
+} from '@/api/contracts/common'
+import { getApiErrorCode } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
+import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
-import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
-import { describeContent } from '@/lib/display'
+import { describeContent, LIST_SELECTED, statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
@@ -82,6 +88,30 @@ const statusOrder: Record<ChangeStatus, number> = {
   PUBLISHED: 3,
   REJECTED: 4,
   WITHDRAWN: 5,
+}
+
+// 이전 결과가 보이는 동안 새 분석이 돌고 있으면(reanalysis) 이전 상태와 관계없이 분석 중이다(S15P31A108-241).
+const isImpactRunning = (impact: ChangeImpact) =>
+  ['PENDING', 'RUNNING'].includes(impact.analysis_status) || !!impact.reanalysis
+// 분석 이력이 없는 제안. 서버는 오류가 아니라 200 NOT_EVALUATED(analysis_not_started)로 알린다.
+const isImpactNotStarted = (impact: ChangeImpact) =>
+  impact.analysis_status === 'NOT_EVALUATED' &&
+  impact.error_code === 'analysis_not_started'
+function impactMessage(impact: ChangeImpact) {
+  if (isImpactRunning(impact))
+    return impact.reanalysis
+      ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
+      : '분석하는 중이에요.'
+  if (isImpactNotStarted(impact))
+    return '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
+  if (impact.analysis_status === 'FAILED') return '분석하지 못했어요.'
+  if (impact.analysis_status === 'INSUFFICIENT_EVIDENCE')
+    return '근거가 부족해서 영향을 확정하지 못했어요.'
+  if (impact.analysis_status === 'NOT_EVALUATED')
+    return '영향을 평가하지 못했어요.'
+  if (impact.analysis_status === 'STALE' || impact.is_current === false)
+    return '제안이 바뀌어 이전 분석이 오래됐어요. 다시 분석해 주세요.'
+  return '확인된 관계와 AI 후보를 나눠 보여요.'
 }
 
 // 변경 제안 창은 올라온 제안을 모아 보고 검토하는 곳이다(사용자 결정 11-02). 사람이 쓰는 제안은 공용 문서함의
@@ -158,9 +188,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryFn: () => changesApi.impact(projectId, selectedId!),
     enabled: !!selectedId,
     refetchInterval: (query) =>
-      ['PENDING', 'RUNNING'].includes(query.state.data?.analysis_status ?? '')
-        ? 1500
-        : false,
+      query.state.data && isImpactRunning(query.state.data) ? 1500 : false,
   })
   const comments = useInfiniteQuery({
     queryKey: ['projects', projectId, 'change-comments', selectedId],
@@ -268,6 +296,47 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     documentOptions.find((item) => item.id === documentId)?.versionId
   const perform = (operation: () => Promise<unknown>, message: string) =>
     action.run(operation, message).catch(() => undefined)
+  // 영향 분석이 완료·최신이 아니면 서버가 409 impact_not_confirmed 로 막는다(S15P31A108-241). 그때 사유 입력을 열고,
+  // 사유를 넣어 다시 보낸다. 같은 키로 입력만 바꾸면 idempotency_conflict 라 매 호출이 새 Idempotency-Key 를 쓴다.
+  // 분석이 진행 중이면(analysis_running) 사유로도 우회할 수 없어 끝난 뒤 다시 승인하라고 알린다.
+  const [reasonRequired, setReasonRequired] = useState(false)
+  const [approveReason, setApproveReason] = useState('')
+  const [approveNotice, setApproveNotice] = useState('')
+  const openApprove = () => {
+    setReasonRequired(false)
+    setApproveReason('')
+    setApproveNotice('')
+    setMode({ kind: 'approve' })
+  }
+  const approveNow = async (proposal: ChangeProposal, nextVersion: number) => {
+    setApproveNotice('')
+    const reason = reasonRequired ? approveReason.trim() : ''
+    try {
+      await action.run(
+        () =>
+          changesApi.approve(projectId, proposal.id, {
+            expected_base_baseline_id: proposal.base_baseline_id,
+            expected_revision: proposal.revision,
+            expected_snapshot_hash: proposal.snapshot_hash,
+            ...(reason ? { impact_override_reason: reason } : {}),
+          }),
+        `기준 v${nextVersion} 발행을 마쳤어요.`,
+      )
+      setMode({ kind: 'detail' })
+    } catch (cause) {
+      const code = getApiErrorCode(cause)
+      // 두 코드는 실패가 아니라 승인 과정의 정상 단계라 일반 오류 띠를 함께 보이지 않는다.
+      if (code === 'impact_not_confirmed') {
+        action.reset()
+        setReasonRequired(true)
+      } else if (code === 'analysis_running') {
+        action.reset()
+        setApproveNotice(
+          '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
+        )
+      } else setMode({ kind: 'detail' })
+    }
+  }
   const submitForm = async (
     values: ProposalFormValues,
     source?: ChangeProposal,
@@ -323,17 +392,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-          팀원이 올린 문서 수정 제안을 모아 보고 검토해요. 팀장이 승인하면 새
-          기준을 발행해요. 제안은 공용 문서함에서 문서를 열고
-          &apos;고치기&apos;로 올려요.
-        </p>
-        <Button variant="outline" onClick={() => openPane('documents')}>
-          <FolderOpen />
-          공용 문서함에서 제안하기
-        </Button>
-      </div>
+      {/* 설명 문구는 캔버스 PNL-04-v2-changes(v461 이후)처럼 두지 않고, 제안하러 가는 버튼만 업무 창 머리 줄에 둔다.
+          새 제안·승인·반려·이력 화면에서는 숨긴다. 누르면 창이 바뀌어 쓰던 내용을 잃는다(PR #88 리뷰). */}
+      {mode.kind === 'detail' && (
+        <PaneHeaderAction>
+          <Button variant="outline" onClick={() => openPane('documents')}>
+            <FolderOpen />
+            공용 문서함에서 제안하기
+          </Button>
+        </PaneHeaderAction>
+      )}
       {baseline.error && (
         <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           아직 기준 설계가 없어요. 첫 기준을 발행한 뒤 변경을 제안할 수 있어요.
@@ -356,7 +424,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       <div
         className={cn(
           'grid gap-5',
-          mode.kind === 'detail' && 'lg:grid-cols-[280px_minmax(0,1fr)]',
+          mode.kind === 'detail' && 'lg:grid-cols-[290px_minmax(0,1fr)]',
         )}
       >
         <div
@@ -385,7 +453,12 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
               <NativeSelectOption value="status">상태순</NativeSelectOption>
             </NativeSelect>
           </div>
-          <div role="tablist" aria-label="제안 상태" className="flex gap-1">
+          {/* 상태 필터는 캔버스 작업 현황·변경 제안처럼 회색 바탕의 칸 나눔 탭이다. */}
+          <div
+            role="tablist"
+            aria-label="제안 상태"
+            className="flex gap-0.5 rounded-[10px] bg-[#e6e9ee] p-[3px]"
+          >
             {statusTabs.map(([value, label]) => (
               <button
                 key={value}
@@ -394,10 +467,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                 aria-selected={filter === value}
                 onClick={() => setFilter(value)}
                 className={cn(
-                  'rounded-full px-2.5 py-1 text-xs',
+                  'h-[30px] flex-1 rounded-lg px-1 text-[13px] whitespace-nowrap',
                   filter === value
-                    ? 'bg-foreground text-background'
-                    : 'bg-muted',
+                    ? 'bg-white font-bold shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+                    : 'font-medium text-[#57534e]',
                 )}
               >
                 {label}
@@ -407,7 +480,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
           <AsyncState query={changes}>
             {() =>
               visible.length ? (
-                <ul className="grid gap-2">
+                <ul className="grid gap-1.5">
                   {visible.map((entry) => (
                     <li key={entry.id}>
                       <button
@@ -415,29 +488,28 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         aria-current={selectedId === entry.id}
                         onClick={() => select(entry.id)}
                         className={cn(
-                          'grid w-full gap-1 rounded-xl border px-3.5 py-3 text-left hover:bg-muted/40',
-                          selectedId === entry.id &&
-                            'border-2 border-foreground',
+                          'grid w-full gap-[3px] rounded-xl border px-3 py-2.5 text-left hover:bg-muted/40',
+                          selectedId === entry.id && LIST_SELECTED,
                         )}
                       >
-                        <strong className="text-sm font-semibold">
-                          {entry.title}
-                        </strong>
-                        <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                          <StatusPill value={entry.status} />
-                          {entry.key} ·{' '}
-                          {nameOfAccount(entry.proposer_account_id)}
-                          {entry.proposer_account_id === session.data?.id &&
-                            '(나)'}
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <StatusTag value={entry.status} />
                           {baseline.data &&
                             entry.base_baseline_id !== baseline.data.id &&
                             ['PROPOSED', 'IN_REVIEW', 'APPROVED'].includes(
                               entry.status,
                             ) && (
-                              <span className="rounded-full bg-[#fdecec] px-2 py-0.5 font-semibold text-[#b42318]">
-                                기준 바뀜
-                              </span>
+                              <Tag tone={operationTone.RETIRE}>기준 바뀜</Tag>
                             )}
+                        </span>
+                        <strong className="line-clamp-2 text-sm leading-5 font-semibold">
+                          {entry.title}
+                        </strong>
+                        <span className="text-xs leading-[17px] text-muted-foreground">
+                          {entry.key} ·{' '}
+                          {nameOfAccount(entry.proposer_account_id)}
+                          {entry.proposer_account_id === session.data?.id &&
+                            '(나)'}
                         </span>
                       </button>
                     </li>
@@ -510,7 +582,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                     ? '새 제안으로 다시 올리기'
                     : '문서 수정 제안'
               }
-              status={mode.source && <StatusPill value={mode.source.status} />}
+              status={mode.source && <StatusTag value={mode.source.status} />}
               description={
                 mode.update
                   ? `반려 사유: ${mode.source?.rejection_reason ?? ''} · 반려된 내용을 채웠어요. 같은 제안 번호로 다시 올리면 검토 대기가 되고, 이전 내용과 반려 사유는 이력에 남아요.`
@@ -595,10 +667,21 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       <h3 className="text-lg font-bold">승인 이력</h3>
                       <AsyncState query={approval}>
                         {(result) => (
-                          <p className="text-sm">
-                            {nameOfAccount(result.approved_by)} 승인 ·{' '}
-                            {formatDate(result.approved_at)}
-                          </p>
+                          <div className="grid gap-1 text-sm">
+                            <p>
+                              {nameOfAccount(result.approved_by)} 승인 ·{' '}
+                              {formatDate(result.approved_at)}
+                            </p>
+                            {result.impact_override_reason && (
+                              <p className="rounded-lg border border-dashed px-3 py-2 whitespace-pre-wrap">
+                                <span className="font-semibold">
+                                  영향 분석 없이 승인한 사유
+                                </span>
+                                {'\n'}
+                                {result.impact_override_reason}
+                              </p>
+                            )}
+                          </div>
                         )}
                       </AsyncState>
                       {/* API 없음: 이 제안이 지나온 길(올림 → 검토 시작 → 검토 요청 → 의견 → 승인)은 활동을 제안 ID로 거르는 기능이 필요(백엔드 메모 10). */}
@@ -693,6 +776,38 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           ? ` 확인된 관련 작업: ${impact.data.explicit.map((entry) => taskKey(entry.task_id)).join(', ')}`
                           : ''}
                       </p>
+                      {approveNotice && (
+                        <p
+                          role="alert"
+                          className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                        >
+                          {approveNotice}
+                        </p>
+                      )}
+                      {reasonRequired && (
+                        <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                          <p className="text-sm leading-6">
+                            이 제안의 영향 분석이 끝나지 않았거나(실패·근거
+                            부족·아직 안 돌림·제안이 바뀜) 믿을 수 없는
+                            상태예요. 영향 범위를 직접 확인했다면 사유를 남기고
+                            승인할 수 있어요. 사유는 승인 이력에 남아요.
+                          </p>
+                          <label
+                            htmlFor="impact-override-reason"
+                            className="text-sm font-semibold"
+                          >
+                            영향 분석 없이 승인하는 사유
+                          </label>
+                          <Textarea
+                            id="impact-override-reason"
+                            maxLength={1000}
+                            value={approveReason}
+                            onChange={(event) =>
+                              setApproveReason(event.target.value)
+                            }
+                          />
+                        </div>
+                      )}
                       <div className="flex justify-end gap-2">
                         <Button
                           variant="outline"
@@ -701,21 +816,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           취소
                         </Button>
                         <Button
-                          disabled={action.busy}
-                          onClick={() =>
-                            void perform(
-                              () =>
-                                changesApi.approve(projectId, current.id, {
-                                  expected_base_baseline_id:
-                                    current.base_baseline_id,
-                                  expected_revision: current.revision,
-                                  expected_snapshot_hash: current.snapshot_hash,
-                                }),
-                              `기준 v${nextVersion} 발행을 마쳤어요.`,
-                            ).then(() => setMode({ kind: 'detail' }))
+                          disabled={
+                            action.busy ||
+                            (reasonRequired && !approveReason.trim())
                           }
+                          onClick={() => void approveNow(current, nextVersion)}
                         >
-                          승인하고 기준 v{nextVersion} 발행
+                          {reasonRequired
+                            ? `사유 남기고 기준 v${nextVersion} 발행`
+                            : `승인하고 기준 v${nextVersion} 발행`}
                         </Button>
                       </div>
                     </div>
@@ -803,13 +912,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       </div>
                     )}
                     <div>
-                      <h3 className="flex flex-wrap items-center gap-2 text-lg font-bold">
+                      <h3 className="flex flex-wrap items-center gap-2 text-xl leading-7 font-bold">
                         {current.title}
-                        <StatusPill value={current.status} />
+                        <StatusTag value={current.status} />
                         {current.requires_refresh && editable && (
-                          <span className="rounded-full bg-[#fdecec] px-2 py-0.5 text-xs font-semibold text-[#b42318]">
-                            기준 바뀜
-                          </span>
+                          <Tag tone={operationTone.RETIRE}>기준 바뀜</Tag>
                         )}
                       </h3>
                       <p className="text-xs text-muted-foreground">
@@ -820,13 +927,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       </p>
                     </div>
                     {mine && editable && !isLeader && (
-                      <div className="grid gap-1 rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
-                        <strong>
+                      <div className="grid gap-1 rounded-[14px] bg-[#eef4fb] px-3.5 py-3 text-[13px] leading-5">
+                        <strong className="text-sm text-[#1d4f91]">
                           {current.status === 'IN_REVIEW'
                             ? `${leaderName}님이 검토하고 있어요`
                             : `${leaderName}님의 검토를 기다리고 있어요`}
                         </strong>
-                        <span className="text-muted-foreground">
+                        <span>
                           승인과 반려는 팀장이 해요. 결과가 나오면 알림으로 알려
                           드려요. 올린 제안은 고칠 수 없어요. 반려되면 같은
                           제안을 고쳐 다시 올려요.
@@ -887,6 +994,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               {nameOfAccount(result.approved_by)} 승인 ·{' '}
                               {formatDate(result.approved_at)}
                             </p>
+                            {result.impact_override_reason && (
+                              <p className="whitespace-pre-wrap">
+                                <span className="font-semibold">
+                                  영향 분석 없이 승인한 사유
+                                </span>
+                                {'\n'}
+                                {result.impact_override_reason}
+                              </p>
+                            )}
                             <p className="text-muted-foreground">
                               이 승인으로 상태가 바뀐 검증과 작업은 작업
                               현황에서 확인하세요.
@@ -943,8 +1059,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           className={cn(
                             '-mb-px border-b-2 px-3 py-2 text-sm',
                             tab === value
-                              ? 'border-foreground font-semibold'
-                              : 'border-transparent text-muted-foreground',
+                              ? 'border-foreground font-bold'
+                              : 'border-transparent font-medium text-muted-foreground',
                           )}
                         >
                           {label}
@@ -956,86 +1072,113 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                     <div role="tabpanel" className="min-h-40">
                       {tab === 'overview' && (
                         <div className="grid gap-3 text-sm">
-                          <p className="leading-6">{current.reason}</p>
-                          <h4 className="flex flex-wrap items-center gap-2 font-semibold">
-                            바뀌는 내용 {current.items.length}
-                            <span className="text-xs font-normal text-muted-foreground">
-                              {(['UPDATE', 'CREATE', 'RETIRE'] as const)
-                                .map(
-                                  (operation) =>
-                                    [
-                                      operation,
-                                      current.items.filter(
-                                        (item) => item.operation === operation,
-                                      ).length,
-                                    ] as const,
-                                )
-                                .filter(([, count]) => count)
-                                .map(
-                                  ([operation, count]) =>
-                                    `${operationLabel[operation]} ${count}`,
-                                )
-                                .join(' · ')}
-                            </span>
-                            <button
-                              type="button"
-                              className="ml-auto text-xs font-normal underline"
-                              onClick={() => setTab('diff')}
-                            >
-                              자세히
-                            </button>
-                          </h4>
-                          <ul className="grid gap-1.5">
-                            {current.items.map((item, index) => (
-                              <li
-                                key={index}
-                                className="rounded-lg border px-3 py-2"
-                              >
-                                <strong className="font-semibold">
-                                  {operationLabel[item.operation]}
-                                </strong>{' '}
-                                {item.operation === 'CREATE'
-                                  ? '새 항목'
-                                  : itemKey(item.design_item_id)}
-                                {item.proposed_content && (
-                                  <span className="text-muted-foreground">
-                                    {' · '}
-                                    {describeContent(item.proposed_content)}
+                          <p className="leading-[21px]">{current.reason}</p>
+                          {/* 캔버스 PNL-04-v2 개요: 모서리 14px·안쪽 16/18px 카드, 15px·700 머리와 노란 글자 이동 버튼 */}
+                          <section className={overviewCard}>
+                            <h4 className={overviewHead}>
+                              바뀌는 내용 {current.items.length}
+                              <span className="flex items-center gap-2 font-medium">
+                                <span className="text-xs text-muted-foreground">
+                                  {(['UPDATE', 'CREATE', 'RETIRE'] as const)
+                                    .map(
+                                      (operation) =>
+                                        [
+                                          operation,
+                                          current.items.filter(
+                                            (item) =>
+                                              item.operation === operation,
+                                          ).length,
+                                        ] as const,
+                                    )
+                                    .filter(([, count]) => count)
+                                    .map(
+                                      ([operation, count]) =>
+                                        `${operationLabel[operation]} ${count}`,
+                                    )
+                                    .join(' · ')}
+                                </span>
+                                <button
+                                  type="button"
+                                  className={overviewLink}
+                                  onClick={() => setTab('diff')}
+                                >
+                                  자세히
+                                </button>
+                              </span>
+                            </h4>
+                            <ul>
+                              {current.items.map((item, index) => (
+                                <li
+                                  key={index}
+                                  className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
+                                >
+                                  <Tag tone={operationTone[item.operation]}>
+                                    {operationLabel[item.operation]}
+                                  </Tag>
+                                  <strong className="truncate font-semibold">
+                                    {item.operation === 'CREATE'
+                                      ? item.kind
+                                        ? kindLabel[item.kind]
+                                        : '설계 항목'
+                                      : itemKey(item.design_item_id)}
+                                  </strong>
+                                  <span className="truncate">
+                                    {item.proposed_content
+                                      ? describeContent(item.proposed_content)
+                                      : ''}
                                   </span>
-                                )}
-                              </li>
-                            ))}
-                            {current.documents.length > 0 && (
-                              <li className="rounded-lg border border-dashed px-3 py-2 text-muted-foreground">
-                                문서 변경 {current.documents.length}건은 공용
-                                문서함 승인 흐름에서 다뤄요.
-                              </li>
-                            )}
-                          </ul>
+                                </li>
+                              ))}
+                              {current.documents.length > 0 && (
+                                <li className="py-[7px] text-[13px] text-muted-foreground">
+                                  문서 변경 {current.documents.length}건은 공용
+                                  문서함 승인 흐름에서 다뤄요.
+                                </li>
+                              )}
+                            </ul>
+                          </section>
                           <div className="grid gap-3 sm:grid-cols-2">
-                            <button
-                              type="button"
-                              className="grid gap-1 rounded-xl border p-3 text-left hover:bg-muted/40"
-                              onClick={() => setTab('impact')}
-                            >
-                              <strong>영향</strong>
-                              <span className="text-xs text-muted-foreground">
+                            <section className={overviewCard}>
+                              <h4 className={overviewHead}>
+                                영향
+                                <button
+                                  type="button"
+                                  aria-label="영향 보기"
+                                  className={overviewLink}
+                                  onClick={() => setTab('impact')}
+                                >
+                                  보기
+                                </button>
+                              </h4>
+                              <p className="text-[13px] leading-[19px]">
                                 확인된 관계 {impact.data?.explicit.length ?? 0}{' '}
                                 · AI 후보 {impact.data?.candidates.length ?? 0}
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              className="grid gap-1 rounded-xl border p-3 text-left hover:bg-muted/40"
-                              onClick={() => setTab('comments')}
-                            >
-                              <strong>의견</strong>
-                              <span className="text-xs text-muted-foreground">
-                                의견 {commentList.length}
-                                {commentList[0] &&
-                                  ` · ${nameOfAccount(commentList[0].author_account_id)}: ${commentList[0].body}`}
-                              </span>
-                            </button>
+                              </p>
+                            </section>
+                            <section className={overviewCard}>
+                              <h4 className={overviewHead}>
+                                의견
+                                <button
+                                  type="button"
+                                  aria-label="의견 보기"
+                                  className={overviewLink}
+                                  onClick={() => setTab('comments')}
+                                >
+                                  보기
+                                </button>
+                              </h4>
+                              <div className="grid gap-1 text-[13px] leading-[19px]">
+                                <span>의견 {commentList.length}</span>
+                                {commentList[0] && (
+                                  <span className="truncate text-xs leading-[18px] text-muted-foreground">
+                                    {nameOfAccount(
+                                      commentList[0].author_account_id,
+                                    )}
+                                    : {commentList[0].body}
+                                  </span>
+                                )}
+                              </div>
+                            </section>
                           </div>
                           {current.task_id && (
                             <p className="text-xs text-muted-foreground">
@@ -1116,18 +1259,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       {tab === 'impact' && (
                         <AsyncState query={impact}>
                           {(result) => {
-                            const running = ['PENDING', 'RUNNING'].includes(
-                              result.analysis_status,
-                            )
+                            const running = isImpactRunning(result)
+                            const notStarted = isImpactNotStarted(result)
                             return (
                               <div className="grid gap-3 text-sm">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <p className="text-muted-foreground">
-                                    {running
-                                      ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
-                                      : result.analysis_status === 'FAILED'
-                                        ? '분석하지 못했어요.'
-                                        : '확인된 관계와 AI 후보를 나눠 보여요.'}
+                                    {impactMessage(result)}
                                   </p>
                                   <Button
                                     size="sm"
@@ -1140,11 +1278,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                             projectId,
                                             current.id,
                                           ),
-                                        '다시 분석을 요청했어요.',
+                                        notStarted
+                                          ? '영향 분석을 시작했어요.'
+                                          : '다시 분석을 요청했어요.',
                                       )
                                     }
                                   >
-                                    다시 분석
+                                    {notStarted
+                                      ? '영향 분석 시작'
+                                      : '다시 분석'}
                                   </Button>
                                 </div>
                                 <div
@@ -1161,8 +1303,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                         className="rounded-lg border px-3 py-2"
                                       >
                                         {taskKey(entry.task_id)} ·{' '}
-                                        {nameOfMember(entry.member_id)} ·{' '}
-                                        {itemKey(entry.design_item_id)}
+                                        {entry.member_id
+                                          ? nameOfMember(entry.member_id)
+                                          : '미배정'}{' '}
+                                        · {itemKey(entry.design_item_id)}
                                         {entry.validation_id &&
                                           ' · 관련 검증 있음'}
                                       </p>
@@ -1345,7 +1489,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           </>
                         ) : (
                           <>
-                            <span className="mr-auto text-xs text-muted-foreground">
+                            <span className="mr-auto text-[13px] leading-[19px] text-muted-foreground">
                               올린 제안은 잠겨 있어요. 거두면 이 제안은 끝나고,
                               다시 올리면 새 제안이 돼요.
                             </span>
@@ -1387,7 +1531,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           </Button>
                         )}
                         <Button
-                          variant="outline"
+                          variant="destructive"
                           disabled={action.busy}
                           onClick={() => setMode({ kind: 'reject' })}
                         >
@@ -1397,7 +1541,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         </Button>
                         <Button
                           disabled={action.busy || current.requires_refresh}
-                          onClick={() => setMode({ kind: 'approve' })}
+                          onClick={openApprove}
                         >
                           승인하고 기준 v{nextVersion} 발행
                         </Button>
@@ -1474,12 +1618,42 @@ function Back({
   )
 }
 
-// 바뀌는 내용 · 항목마다 한 줄로 접어 두고, 펼치면 기준 문장과 제안 문장을 −/+로 보여 준다.
+// 개요 카드(캔버스 PNL-04-v2 통일감 개선: 모서리 14px, 안쪽 16/18px, 머리 15px·700, 이동 버튼 13px·600 노란 글자)
+const overviewCard = 'rounded-[14px] border px-[18px] py-4'
+const overviewHead =
+  'mb-2.5 flex items-center justify-between gap-2 text-[15px] leading-[22px] font-bold'
+const overviewLink =
+  'text-[13px] font-semibold whitespace-nowrap text-[#8a6a00] hover:underline'
+// 변경 제안 화면의 칩(캔버스 PNL-04-v2 통일감 개선: 높이 22px, 12px·600, 상태마다 색). 작업 칩과 상태 칩이 같은 모양을 쓴다.
 const operationTone = {
   UPDATE: 'bg-[#fdf0c8] text-[#6e5200]',
   CREATE: 'bg-[#e8f3ec] text-[#00753a]',
   RETIRE: 'bg-[#fdecec] text-[#b42318]',
 } as const
+const statusTone: Record<string, string> = {
+  PROPOSED: operationTone.UPDATE,
+  IN_REVIEW: 'bg-[#e6effa] text-[#1d4f91]',
+  APPROVED: operationTone.CREATE,
+  PUBLISHED: operationTone.CREATE,
+  REJECTED: operationTone.RETIRE,
+}
+function Tag({ tone, children }: { tone?: string; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-[22px] shrink-0 items-center rounded-full px-2 text-xs font-semibold whitespace-nowrap',
+        tone ?? 'bg-muted text-muted-foreground',
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+function StatusTag({ value }: { value: string }) {
+  return <Tag tone={statusTone[value]}>{statusLabel(value)}</Tag>
+}
+
+// 바뀌는 내용 · 항목마다 한 줄로 접어 두고, 펼치면 기준 문장과 제안 문장을 −/+로 보여 준다.
 
 function Diff({
   comparison,
@@ -1516,14 +1690,7 @@ function Diff({
         className="group overflow-hidden rounded-xl border text-[13px]"
       >
         <summary className="flex cursor-pointer items-center gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
-          <span
-            className={cn(
-              'rounded-full px-2 py-0.5 text-xs font-semibold',
-              operationTone[operation],
-            )}
-          >
-            {operationLabel[operation]}
-          </span>
+          <Tag tone={operationTone[operation]}>{operationLabel[operation]}</Tag>
           {label && <strong className="font-semibold">{label}</strong>}
           {kind && <span className="text-muted-foreground">{kind}</span>}
           <span className="ml-auto text-xs text-muted-foreground group-open:hidden">

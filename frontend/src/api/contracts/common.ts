@@ -525,6 +525,7 @@ export const approvalSchema = z.object({
   approved_by: idSchema,
   approved_at: timeSchema,
   baseline_id: idSchema,
+  impact_override_reason: z.string().optional(),
 })
 export type Approval = z.infer<typeof approvalSchema>
 
@@ -540,7 +541,8 @@ export type ChangeComment = z.infer<typeof changeCommentSchema>
 
 export const explicitImpactSchema = z.object({
   task_id: idSchema,
-  member_id: idSchema,
+  // 담당자가 없는 작업이면 서버가 생략한다(00-common ExplicitImpact).
+  member_id: idSchema.optional(),
   design_item_id: idSchema,
   validation_id: idSchema.optional(),
 })
@@ -555,12 +557,33 @@ export const impactCandidateSchema = z.object({
 })
 export type ImpactCandidate = z.infer<typeof impactCandidateSchema>
 
+// 서버(A11·A12)는 6종 상태를 돌려준다. 분석 이력이 없는 제안은 200 NOT_EVALUATED(analysis_not_started)다.
+// PENDING 은 예시 서버 호환용으로 남긴다.
+export const impactStatusSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'INSUFFICIENT_EVIDENCE',
+  'NOT_EVALUATED',
+  'FAILED',
+  'STALE',
+])
+export type ImpactStatus = z.infer<typeof impactStatusSchema>
+
 export const changeImpactSchema = z.object({
   explicit: explicitImpactSchema.array(),
   candidates: impactCandidateSchema.array(),
-  analysis_status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
+  analysis_status: impactStatusSchema,
   generation: generationSchema.optional(),
   error_code: z.string().optional(),
+  revision: z.number().int().optional(),
+  snapshot_hash: z.string().optional(),
+  is_current: z.boolean().optional(),
+  stale_reason: z.string().optional(),
+  run_id: z.string().optional(),
+  reanalysis: z
+    .object({ run_id: z.string(), requested_at: timeSchema.optional() })
+    .optional(),
 })
 export type ChangeImpact = z.infer<typeof changeImpactSchema>
 
@@ -1007,6 +1030,9 @@ export const usageBucketSchema = z.object({
   output_tokens: z.number().int(),
   call_count: z.number().int(),
   estimated_cost_amount: costAmountSchema,
+  // 토큰·비용이 합계에 들어가지 못한 호출 수(BE -169). 0보다 크면 합계는 일부만 센 값이다.
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
 })
 export type UsageBucket = z.infer<typeof usageBucketSchema>
 
@@ -1018,6 +1044,8 @@ export const usageSummarySchema = z.object({
   call_count: z.number().int(),
   estimated_cost_amount: costAmountSchema,
   currency: currencySchema,
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
   by_feature: usageBucketSchema.array(),
   by_task: usageBucketSchema.array(),
   by_validation: usageBucketSchema.array(),

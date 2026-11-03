@@ -128,7 +128,7 @@ public class PublicationImpactAdapter implements ValidationImpactPort {
             if (report.isEmpty()) {
                 continue;                                  // awaitingDelta 가 확인했으므로 오지 않지만, 없으면 접수할 delta 가 없다
             }
-            AcceptResult again = accepts.acceptBySystem(projectId, task.get(), "DELTA", request.baselineId(), report.get().getDelta());
+            AcceptResult again = accepts.acceptBySystem(caller, projectId, task.get(), "DELTA", request.baselineId(), report.get().getDelta());
             if (again.finished() && "PASS".equals(again.validation().status())) {
                 deltaCompletion.completeIfDeltaPassed(taskId, Long.parseLong(again.validation().id()), null, now);
             }

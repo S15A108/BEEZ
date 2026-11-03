@@ -323,14 +323,33 @@ export function collaborationRoutes(
             query.get('from') ??
             new Date(Date.now() - 7 * 86400000).toISOString(),
           to: query.get('to') ?? now(),
+          // 실제 서버처럼: 호출이 없으면 비용·통화를 생략하고(0원으로 보이지 않게) 기능별은 8줄을 0으로 채운다.
           input_tokens: 0,
           output_tokens: 0,
           call_count: 0,
-          estimated_cost_amount: '0',
-          currency: 'USD',
-          by_feature: [],
+          tokens_unknown_call_count: 0,
+          cost_unknown_call_count: 0,
+          by_feature: [
+            'DOCUMENT_PARSE',
+            'TASK_VALIDATION',
+            'CHANGE_IMPACT',
+            'EMBEDDING',
+            'BEE_CHAT',
+            'BEE_DRAFT',
+            'TASK_ASSIGNMENT',
+            'MEETING_ANALYSIS',
+          ].map((key) => ({
+            key,
+            input_tokens: 0,
+            output_tokens: 0,
+            call_count: 0,
+            tokens_unknown_call_count: 0,
+            cost_unknown_call_count: 0,
+          })),
           by_task: [],
           by_validation: [],
+          by_agent: [],
+          by_day: [],
         },
       }
     case 'MON-A03': {

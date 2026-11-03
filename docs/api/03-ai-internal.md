@@ -237,23 +237,26 @@ HTTP `200`.
 | `validation_id` | `ID` | Y | 검증 실행 대상 |
 | `attempt` | `integer` | Y | backend 실행 시도 |
 | `plan_revision` | [TaskPlanRevision](00-common.md#schema-taskplanrevision) | Y | 불변 계획 |
-| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 참조한 승인 항목 |
+| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 명시 참조 또는 검색 후보로 선정한 현재 기준의 승인 항목 |
 | `related_plans` | [TaskPlanRevision[]](00-common.md#schema-taskplanrevision) | Y | 열린 관련 계획 |
 | `rule_findings` | [Finding[]](00-common.md#schema-finding) | Y | 규칙 검사 결과 |
 | `unresolved` | `string[]` | Y | 미확정 정책 |
+| `context_packet_constraints` | `string[]` | N | 범위·기준을 확인한 패킷의 제약. 지시가 아닌 참고 데이터이며 승인 설계 근거를 대체하지 않는다. |
 | `input_snapshot_hash` | `string` | Y | 전체 분석 입력 해시 |
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
 | `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
-| `completion_delta` | `object[]` | N | 수정안 요청(-163, 변준성 → 양지훈 확인). 완료 보고(TSK-A07 `delta`)를 검사하는 DELTA 검증일 때만, 그 `delta` 배열 그대로(구조 미확정, 임의 키). 이때 `checks`에 `key=completion-delta`, `kind=PLAN_COMPLETENESS`인 검사가 들어가며, 계획·승인 설계에 비추어 delta가 받아들일 수 있는 차이인지(계약 변경·완료 기준 위반이면 MISMATCH·MISSING_POLICY 후보)를 본다. AI 구현(-184)은 모르는 칸을 거부(422)하므로, AI가 이 칸과 `completion-delta` 검사를 받기 전에 둘을 연결하면 DELTA 검증 요청은 입력 오류 → BE 실행 오류(`validation_execution_failed`, ERROR)로 끝난다(조용히 통과하지 않음). 연결 순서: -184에 칸·검사 추가 → BE–AI 실제 HTTP 통합 확인(-65, 양지훈·박상은과) → 개발 서버 연결 |
+| `completion_delta` | `object[]` | N | 완료 보고에서 전달한 변경 내용. DELTA 검사에서는 비어 있지 않은 배열을 보내고 `completion-delta` 검사를 함께 지정한다. 일반 계획 검증에는 생략한다. |
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
+
+`completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획·완료 기준 및 선정된 승인 설계에 비추어 분석한다. 검사의 설계 버전 목록은 해당 요청에서 조립한 승인 항목 버전이다. 완료 보고와 승인 설계의 불일치는 그 목록에 있는 설계 ID와 해당 설계의 출처·발췌를 인용할 수 있다. 보고와 현재 계획만의 불일치는 설계 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 검사 범위 밖의 설계나 다른 설계의 근거를 인용하지 않는다.
 
 `content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
 
 `approved_items[].content`는 해당 검사의 비교에 필요한 필드를 포함해야 한다. API 요청·응답 필드, 타입, 필수 여부 등 kind별 필수 키·지원 범위는 Q01에서 확정하며, 아래 content는 비교 흐름을 설명하는 예시이지 Q01의 최종 스키마가 아니다. 미지원 본문을 조용히 생략한 뒤 검사 완료로 처리하지 않는다. `unlinked`의 상세 형식은 Q02에서 함께 확정한다.
 
-`evidence`는 기존 RAG `RetrievedEvidence`를 BE가 승인 항목 버전·`Source`와 연결해 만든 요청 스냅샷이다. PR #18의 원문 파서·locator를 재사용하며 AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
+`evidence`는 BE가 원문과 `Source`를 확인해 만든 요청 스냅샷이다. 승인 항목에 명시적으로 연결된 근거에는 `design_item_version_id`가 있으며, 검색된 미연결 문서의 발췌에는 이 필드를 생략한다. 미연결 발췌는 설계 항목이나 직접 참조로 승격하지 않으며 `plan-completeness`에서 설계 ID 없이 원문 맥락으로만 인용할 수 있다. 검색 발췌는 최대 50개·발췌당 16,000바이트·합계 60,000바이트이며, 전체 입력 한도를 넘지 않도록 일부가 추가로 생략될 수 있다. 생략된 맥락은 검색 전체의 부재를 뜻하지 않는다. AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
 
 사람이 편집한 승인 `content`는 구조화 계약의 기준이다. 원문과 다르면 차이를 명시하며 원문으로 승인 내용을 덮어쓰지 않는다. 항목의 출처가 연결됐다는 사실만으로 원문 승인까지 추정하지 않는다. 수동 입력·기존 승인 항목을 사용할 수 있고, 자동 설계 항목 추출(-128/후속 E2)의 완료를 전제로 하지 않는다.
 
@@ -1216,8 +1219,8 @@ HTTP `200`.
 
 기획·문서 수정 초안 생성 기능을 제공한다.
 
-관련 요구사항: PLN-06, BEE-08, MTG-09  
-담당: BE: 오서현 / AI: 박상은 / 회의 연결: 양지훈 / FE: —  
+관련 요구사항: PLN-06, BEE-08  
+담당: BE: 오서현 / AI: 박상은 / FE: —  
 상태: 내부 계약 초안
 
 #### 인증
@@ -1379,6 +1382,9 @@ HTTP `200`.
 
 - 반환 원문은 미승인 수정안이다. 문서 버전·baseline을 직접 바꾸지 않는다.
 - 기획 초안의 항목 구조화는 필요 시 /v1/parse를 이어 호출한다.
+- 호출자는 변경 제안의 문서 수정 초안(CHG-A07)이다. 기획 설계 초안(PLN-A05)이 같은 모듈을 쓰는지는 S15P31A108-232에서 확정한다.
+- 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다. 변경 제안의 문안은 회의 정리(MTG-A11, AI-A08 SUMMARY)의 document_changes.after에서 온다. MTG-A09가 폐지 예정이라 회의 연결 호출자가 없으므로 `decisions`는 현재 쓰는 곳이 없다(필드는 유지).
+- 모델 출력이 최대 길이로 잘렸으면(`finish_reason=length` 등) 성공 응답으로 돌려주지 않고 502 `model_unavailable`로 응답한다. 응답 모양에는 종료 사유 필드가 없어 backend는 잘림 여부를 알 수 없으므로 이 오류가 유일한 신호다. 잘린 수정안을 성공으로 돌려주면 원문 대신 승인본이 될 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1592,7 +1598,8 @@ HTTP `200`.
 회의 질문·요약·결정 추출 기능을 제공한다.
 
 관련 요구사항: MTG-06·08  
-담당: BE: 오서현 / AI: 양지훈 / FE: —  
+담당: BE: 오서현 / AI: 양지훈 / FE: —
+
 상태: 내부 계약 초안
 
 #### 인증
@@ -1781,7 +1788,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
-- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다.
+- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다. 단 SUMMARY의 document_changes.after는 이 API가 직접 만들고 draft 모듈(AI-A06)을 부르지 않는다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
 - (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
@@ -1849,9 +1856,9 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 
 ## AI-A10. 문서 검토·수정 제안
 
-### 216 BE 검토 계약 v2 — 실제 AI 구현은 222 TODO
+### 216 BE 검토 계약 v2 — 222 AI 구현
 
-2026-11-02: 아래는 BE가 구현한 v2 대역 계약이며 양측 실연동 합의/완료 기록이 아니다. 222 담당은 사용자·최신 업무 기록 기준 양지훈이다. AI 공통 모듈/라우트 코드는 이번에 변경하지 않았다. 이하 기존 v1 기본 필드·화면 확장 예시만으로 호출하면 v2 필수 출력 누락으로 BE가 거절한다.
+222에서 아래 BE v2 계약을 따르는 AI 라우트와 모델 호출을 구현했다. 실제 배포 환경 연동 및 제품 정책 합의의 완료를 뜻하지 않는다. 이하 기존 v1 기본 필드·화면 확장 예시만으로 호출하면 v2 필수 출력 누락으로 BE가 거절한다.
 
 | 구분 | v2 계약 |
 | --- | --- |
@@ -1862,19 +1869,30 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 | 단계 | steps에 BODY/API_SPEC/ERD/REQ_SPEC 각각 1개. `{step,status,reason,reference_ids}`. BODY=COMPLETE/REVIEWED/[]; 동일 종류 비교=SKIPPED/SAME_KIND/[]; 승인본 없는 나머지 비교=PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE/[]; 승인본 있는 비교=COMPLETE/REVIEWED/해당 종류의 입력 ID 전체 |
 | 전체 | 같은 종류 제외 후 자료 부족 단계가 하나라도 있으면 review_status=PARTIAL, 아니면 COMPLETE. references_used는 실제 비교 reference_ids 합집합. BE가 재계산·대조 |
 | 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증 |
-| PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. PATCH 원문 구간 간 겹침은 전체 거절 |
+| PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. 원문 구간 간 겹침, 적용 후 빈 문서·제어 문자·크기 초과 또는 다른 제안의 원문이 중복되는 결과는 전체 거절 |
 | COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
 | 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
 
 [정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN/DISCUSS/REQUEST 신규 기능은 후속 범위다.
 
+222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
+
+각 PATCH의 적용·건너뛰기와 적용 순서에 따른 중간 문서는 BE와 같은 UTF-8 1 MiB, 정규화 후 100,000 코드포인트, 비어 있지 않은 텍스트 및 제어 문자 기준을 지켜야 한다. 업로드 후에도 선두 BOM이 남아 있을 수 있으며, 이 경우 BE와 같이 PATCH 적용마다 선두 BOM을 최대 하나 제거해 결과와 남은 원문의 유일성을 검증한다. 검증 작업량이 상한을 넘거나, 선두 BOM이 새로 노출되거나 PATCH 경계를 가로지르는 CRLF 정규화로 적용 결과가 달라질 수 있어 안전성을 확인할 수 없으면 전체 응답을 `invalid_output`으로 거절하고 사용량은 실패 기록에 남긴다.
+
+문서 검토 모델 호출 주소는 `GMS_CHAT_ENDPOINT`로 설정하며 생략하면 기존 GMS Chat Completions 주소를 사용한다. `infra/compose.yaml`은 배포 env 파일 또는 셸에서 이 값을 AI 컨테이너로 전달한다. GMS 키 전송을 보호하기 위해 HTTPS `gms.ssafy.io`의 기본 포트 또는 443만 허용하고 사용자 정보·쿼리·fragment는 거부한다. 경로는 `/chat/completions`로 끝나야 하며 잘못된 설정은 문서 검토에서 `model_unavailable`로 실패한다.
+
+연동 회귀 테스트: `backend`에서 `BEEZ_RUN_AI_E2E=true`를 설정하고 `./gradlew integrationTest --tests '*DocumentReviewFastApiE2ETest'`를 실행한다. Docker와 AI 의존성이 설치된 `ai/.venv`가 필요하며, 다른 Python 실행 파일은 `BEEZ_E2E_PYTHON`으로 지정한다. 테스트는 로컬 FastAPI, 가짜 모델 및 임시 DB를 사용한다.
+
+실제 GMS 검증은 `ai/.env`에 `GMS_KEY`를 설정한 후 `ai`에서 `python -m scripts.document_review_live_smoke --execute`를 실행한다. 실제 호출은 비용이 발생할 수 있으며 합성 fixture만 전송한다. 전체 BE·AI·GMS 경계는 `backend`에서 `BEEZ_RUN_REAL_GMS_E2E=true`와 `./gradlew integrationTest --tests '*DocumentReviewRealGmsE2ETest'`로 검증하며, 실제 모델 1회와 임시 DB를 사용한다. 키는 로그나 저장소에 포함하지 않는다.
+
 ### POST `/v1/document-reviews`
 
-공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. PR #37은 AI 내부 연동을 담당자 합의 대기로 두었으므로 AI 구현 전에 이 절로 합의한다.
+공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. 아래 기존 v1 예시와 화면 확장 필드는 v2 전체 계약이 아니며, 확장 기능은 별도 합의가 필요하다.
 
 관련 요구사항: DOC-01·08 (화면 PNL-02-m-review-*)  
-담당: BE: 오서현 / AI: 박상은 / FE: —  
-상태: BE 호출·검증 구현 · AI 구현 전 · 확장 필드는 수정안 요청 (협의 필요)
+담당: BE: 오서현 / AI: 양지훈 / FE: —
+
+상태: BE 호출·검증 및 AI 라우트 구현 · 합성 문서로 실제 GMS 연동 확인 · 배포 환경 연동 전 · 확장 필드는 수정안 요청 (협의 필요)
 
 #### 인증
 

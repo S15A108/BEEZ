@@ -1,6 +1,7 @@
 package com.beez.backend.impactanalysis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -214,6 +215,46 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.STALE);
         assertThat(outcome.aiEnvelope()).isNull();
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
+    }
+
+    @Test
+    void accessRevokedDuringApprovalAnalysisKeepsTheOriginalErrorAndCarriesReceivedUsage() {
+        var snapshot = snapshot();
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(snapshot);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "model", "impact-m", "usage", List.of(Map.of("request_key", "call-1"))));
+        var denied = new ApiException(HttpStatus.FORBIDDEN, "forbidden", "access revoked");
+        doThrow(denied).when(query).requireUnchanged(caller, snapshot);
+
+        // 결과·입력은 돌려주지 않고 상태·코드는 원래 오류 그대로, 받은 사용량과 model 만 싣는다 (비용 집계 -169)
+        assertThatThrownBy(() -> new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req"))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getCode()).isEqualTo("forbidden");
+                    assertThat(new java.util.ArrayList<Object>(ImpactAnalysisCoordinator.receivedUsage(e))).containsExactly(Map.of("request_key", "call-1"));
+                    assertThat(ImpactAnalysisCoordinator.receivedModel(e)).isEqualTo("impact-m");
+                });
+    }
+
+    @Test
+    void unexpectedErrorAfterTheModelResponseStillPropagatesButCarriesReceivedUsage() {
+        var snapshot = snapshot();
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(snapshot);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "usage", List.of(Map.of("request_key", "call-1"))));
+        var broken = new IllegalStateException("database unavailable");
+        doThrow(broken).when(query).requireUnchanged(caller, snapshot);
+
+        // 재확인 조회 자체가 실패해도 예전처럼 예외로 올라가고(호출한 쪽의 중단·재시도 처리 그대로), 받은 사용량은 실려 온다
+        assertThatThrownBy(() -> new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req"))
+                .hasCause(broken)
+                .satisfies(e -> assertThat(new java.util.ArrayList<Object>(ImpactAnalysisCoordinator.receivedUsage(e))).containsExactly(Map.of("request_key", "call-1")));
     }
 
     @Test

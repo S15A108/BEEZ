@@ -40,6 +40,7 @@ export function DocumentReview({
   isLeader,
   locked = false,
   onClose,
+  onApproved,
 }: {
   projectId: string
   documentId: string
@@ -49,6 +50,8 @@ export function DocumentReview({
   /** 기준 v1이 생겨 이 흐름으로는 고칠 수 없음(change_proposal_required) */
   locked?: boolean
   onClose: () => void
+  /** 팀장이 승인하면 부르는 쪽이 목록으로 돌아가고 이 알림을 띄운다(사용자 요청 11-02). */
+  onApproved?: (message: string) => void
 }) {
   const session = useSession()
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -106,14 +109,21 @@ export function DocumentReview({
     members.data?.items.find((member) => member.account_id === accountId)
       ?.name ?? '팀원'
   const [, rerender] = useReducer((count: number) => count + 1, 0)
-  const run = (operation: () => Promise<unknown>, message: string) =>
-    void action.run(operation, message).catch((cause: unknown) => {
-      const reviewId = currentStage?.review?.id
-      if (getApiErrorCode(cause) === 'review_stale' && reviewId) {
-        staleReviews.add(reviewId)
-        rerender()
-      }
-    })
+  const run = (
+    operation: () => Promise<unknown>,
+    message: string,
+    done?: () => void,
+  ) =>
+    void action
+      .run(operation, message)
+      .then(done)
+      .catch((cause: unknown) => {
+        const reviewId = currentStage?.review?.id
+        if (getApiErrorCode(cause) === 'review_stale' && reviewId) {
+          staleReviews.add(reviewId)
+          rerender()
+        }
+      })
   const reviewStale =
     !!currentStage?.review &&
     current?.status !== 'SUBMITTED' &&
@@ -471,6 +481,10 @@ export function DocumentReview({
                                       { decision: 'APPROVE' },
                                     ),
                                   '승인했어요. 현재 문서로 옮겼어요.',
+                                  () =>
+                                    onApproved?.(
+                                      '승인했어요. 현재 문서로 옮겼어요.',
+                                    ),
                                 )
                               }
                             >

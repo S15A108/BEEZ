@@ -14,7 +14,11 @@ class Settings(BaseSettings):
     )
 
     gms_key: SecretStr | None = None
+    gms_chat_endpoint: str = (
+        "https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions"
+    )
     ai_internal_token: SecretStr | None = None
+    validation_response_format: Literal["json_object", "json_schema"] = "json_object"
     gms_embedding_model: Literal["text-embedding-3-small"] = "text-embedding-3-small"
     gms_embedding_dimension: int = Field(default=1024, ge=1, le=1536)
     # Generation is implemented separately; no automatic fallback call in #129.
@@ -43,6 +47,23 @@ class Settings(BaseSettings):
     impact_llm_response_format: str = "json_object"
     impact_max_body_bytes: str = "262144"
     impact_max_items_per_list: str = "100"
+
+    # Provisional #133 transport is disabled until explicitly configured. The
+    # model call reuses gms_key and bee_default_model; limits are parsed per
+    # feature so a bad value here cannot disable other routes.
+    planning_questions_enabled: bool = False
+    planning_questions_max_body_bytes: str = "2097152"
+    planning_questions_llm_timeout_seconds: str = "30"
+    planning_questions_llm_output_token_limit: str = "2048"
+    planning_questions_llm_output_token_parameter: str = "max_completion_tokens"
+
+    # Provisional #134 transport is disabled until explicitly configured; the
+    # model call reuses gms_key and bee_default_model like #133.
+    design_drafts_enabled: bool = False
+    design_drafts_max_body_bytes: str = "2097152"
+    design_drafts_llm_timeout_seconds: str = "45"
+    design_drafts_llm_output_token_limit: str = "4096"
+    design_drafts_llm_output_token_parameter: str = "max_completion_tokens"
 
 
 @lru_cache

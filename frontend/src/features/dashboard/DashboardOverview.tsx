@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { countText, statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { FEATURE_LABELS } from './labels'
+import { FEATURE_LABELS, costText } from './labels'
 import type { DashboardTab } from './labels'
 import type {
   ActivitiesResponse,
@@ -65,10 +65,12 @@ export function DashboardOverview({
     !review &&
     !calls &&
     !recent.length
-  const cost =
-    usage.data?.estimated_cost_amount === undefined
-      ? '비용 미보고'
-      : `${usage.data.estimated_cost_amount} ${usage.data.currency ?? ''}`.trim()
+  const cost = costText(
+    usage.data?.estimated_cost_amount,
+    usage.data?.currency,
+    usage.data?.cost_unknown_call_count,
+    '비용 미보고',
+  )
   const metrics = [
     {
       label: '진행 중 작업',

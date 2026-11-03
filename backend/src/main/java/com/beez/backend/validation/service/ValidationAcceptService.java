@@ -95,7 +95,7 @@ public class ValidationAcceptService {
                             + ", lock_version=" + task.getLockVersion() + ")");
         }
 
-        return accept(projectId, task, planRevisionId, baselineId, "AGENT", null);
+        return accept(caller, projectId, task, planRevisionId, baselineId, "AGENT", null);
     }
 
     /**
@@ -106,8 +106,8 @@ public class ValidationAcceptService {
      * @return 접수 결과. DELTA 는 완료 delta 검사가 항상 들어가 규칙만으로는 PASS 가 나지 않는다 (NEEDS_INPUT·NEEDS_REVIEW 로는 끝날 수 있다)
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public AcceptResult acceptBySystem(Long projectId, Task task, String trigger, List<Map<String, Object>> completionDelta) {
-        return acceptBySystem(projectId, task, trigger, designLookup.requireCurrentBaseline(projectId), completionDelta);
+    public AcceptResult acceptBySystem(CallerContext caller, Long projectId, Task task, String trigger, List<Map<String, Object>> completionDelta) {
+        return acceptBySystem(caller, projectId, task, trigger, designLookup.requireCurrentBaseline(projectId), completionDelta);
     }
 
     /**
@@ -117,18 +117,21 @@ public class ValidationAcceptService {
      *                        (같은 계획에 다른 delta 를 보고하면 다른 입력이다)
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public AcceptResult acceptBySystem(Long projectId, Task task, String trigger, Long baselineId, List<Map<String, Object>> completionDelta) {
+    public AcceptResult acceptBySystem(CallerContext caller, Long projectId, Task task, String trigger, Long baselineId, List<Map<String, Object>> completionDelta) {
+        // The server-triggered work delegates the authenticated operation's project access;
+        // the worker rechecks it before searching. A missing or revoked actor fails closed.
+        access.requireMember(caller, projectId);
         if (!"DELTA".equals(trigger)) {
             throw new IllegalArgumentException("서버 접수는 DELTA 만 지원합니다: " + trigger);
         }
         if (completionDelta == null || completionDelta.isEmpty()) {
             throw new IllegalArgumentException("DELTA 검증에는 완료 보고의 delta 가 있어야 합니다");
         }
-        return accept(projectId, task, task.getCurrentPlanRevisionId(), baselineId, trigger, completionDelta);
+        return accept(caller, projectId, task, task.getCurrentPlanRevisionId(), baselineId, trigger, completionDelta);
     }
 
     /** 공통 접수: 입력 고정 → 규칙 검사 → 확정 또는 큐. 호출자가 권한·잠금·기준을 이미 확인했다. completionDelta 는 DELTA 에만 있다 */
-    private AcceptResult accept(Long projectId, Task task, Long planRevisionId, Long baselineId, String trigger,
+    private AcceptResult accept(CallerContext caller, Long projectId, Task task, Long planRevisionId, Long baselineId, String trigger,
                                 List<Map<String, Object>> completionDelta) {
         Long taskId = task.getId();
         TaskPlanRevision plan = revisions.findByIdAndTaskId(planRevisionId, taskId)
@@ -138,11 +141,19 @@ public class ValidationAcceptService {
 
         RuleOutcome outcome = rules.evaluate(projectId, baselineId, plan, refs, relatedOpen, "DELTA".equals(trigger));
         Map<Long, Long> relatedPlans = relatedPlans(relatedOpen);
-        String inputHash = inputHash(planRevisionId, baselineId, refs, relatedPlans, trigger, completionDelta);
+        String inputHash = inputHash(plan.getInputHash(), baselineId, refs, relatedPlanHashes(relatedOpen), trigger, completionDelta);
 
         boolean finished = outcome.decidedStatus() != null;
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("rule_version", ValidationRules.RULE_VERSION);
+        // Preserve the authenticated requester for later authorized background searches.
+        // The public validation DTO does not expose this internal summary field.
+        Map<String, Object> requestActor = new LinkedHashMap<>();
+        requestActor.put("account_id", caller.accountId());
+        requestActor.put("agent_token_id", caller.agentTokenId());
+        requestActor.put("kind", caller.kind().name());
+        summary.put("request_actor", requestActor);
+        if (completionDelta != null) summary.put("completion_delta", completionDelta);
         long validationId;
         if (finished) {
             validationId = validations.insertValidation(taskId, planRevisionId, baselineId, outcome.decidedStatus(), trigger,
@@ -176,16 +187,27 @@ public class ValidationAcceptService {
         return out;
     }
 
+    /** 관련 열린 작업 → 그 작업 현재 계획의 입력 해시 (해시 입력용. 리비전 번호가 아니라 내용으로 비교한다) */
+    private static Map<Long, String> relatedPlanHashes(List<Map<String, Object>> relatedOpen) {
+        Map<Long, String> out = new LinkedHashMap<>();
+        for (Map<String, Object> row : relatedOpen) {
+            out.put(((Number) row.get("task_id")).longValue(), (String) row.get("plan_input_hash"));
+        }
+        return out;
+    }
+
     /**
-     * 입력 스냅샷 해시: 같은 계획·참조·관련 계획·규칙·기준·검증 종류·완료 delta 면 같은 값 (키 정렬 정규 JSON, 목록 순서 유지).
+     * 입력 스냅샷 해시: 같은 계획 내용·참조·관련 계획 내용·규칙·기준·검증 종류·완료 delta 면 같은 값 (키 정렬 정규 JSON, 목록 순서 유지).
+     * 계획은 리비전 번호가 아니라 계획 입력 해시(task_plan_revision.input_hash — 제목·접근 방식을 뺀 내용, AC-13)로 넣는다 —
+     * 제목만 바꾼 새 리비전은 같은 입력이다 (-162). 관련 작업의 계획도 같은 이유로 그 계획의 입력 해시다.
      * 검증 종류(trigger)와 delta 가 들어가는 이유: 같은 계획이라도 AGENT 검증과 DELTA 검증은 검사 범위가 다르고, 같은 계획에 다른 delta 를
      * 보고하면 분석 입력이 다르다. 결과 재사용(AC-16, -161)은 이 해시가 같을 때만 한다
      */
-    private String inputHash(Long planRevisionId, Long baselineId, List<TaskPlanDesignRef> refs, Map<Long, Long> relatedPlans,
+    private String inputHash(String planInputHash, Long baselineId, List<TaskPlanDesignRef> refs, Map<Long, String> relatedPlans,
                              String trigger, List<Map<String, Object>> completionDelta) {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("trigger", trigger);
-        input.put("plan_revision_id", planRevisionId);
+        input.put("plan_input_hash", planInputHash);
         input.put("baseline_id", baselineId);
         if (completionDelta != null) {
             input.put("completion_delta", completionDelta);
@@ -200,10 +222,10 @@ public class ValidationAcceptService {
         }
         input.put("design_refs", refList);
         List<Map<String, Object>> related = new ArrayList<>();
-        for (Map.Entry<Long, Long> e : relatedPlans.entrySet()) {
+        for (Map.Entry<Long, String> e : relatedPlans.entrySet()) {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("task_id", e.getKey());
-            r.put("plan_revision_id", e.getValue());
+            r.put("plan_input_hash", e.getValue());
             related.add(r);
         }
         input.put("related_plans", related);

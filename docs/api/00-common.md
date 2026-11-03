@@ -153,7 +153,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 
 변경 승인 이력·새 버전·baseline·제안 발행·관련 검증 STALE/진행 작업 WAITING 반영은 같은 트랜잭션이다. 실패하면 전체 롤백한다. 알림·활동도 같은 트랜잭션에서 저장하고, 같은 중복 식별값은 건너뛴다([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md)). D7 세부는 Q03이다.
 
-199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 163 검증 영향은 `PublicationImpactAdapter` 로 연결됐다(STALE·WAITING·DELTA 재접수, 발행 트랜잭션 참여). 197 분석 접수의 기본 구현은 아직 no-op + WARN 이며 PENDING 접수행 저장은 연결되지 않았다. 승인 게이트와 같은 발행 트랜잭션 안의 알림·활동 저장 연결도 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
+199·200 구현 경계: 새 버전·기준 참조·승인 이력·PUBLISHED·현재 포인터·멱등 응답과 검증 영향/분석 접수 포트 호출은 한 트랜잭션이다. 포트 예외도 전체 롤백한다. 163 검증 영향은 `PublicationImpactAdapter`로 연결됐다(STALE·WAITING·DELTA 재접수, 발행 트랜잭션 참여). 197 분석 접수는 변경 발행 시 `PENDING`, 최초 기준은 `NOT_EVALUATED`로 저장하며, 발행 후 분석 실행은 후속 작업이다. 영향 분석 승인 게이트는 S15P31A108-241에서 구현했다. 같은 발행 트랜잭션 안의 알림·활동 저장 연결은 TODO다. 포트 대역 검증을 실제 연동 완료로 보지 않는다.
 
 ### 검증·시작
 
@@ -382,7 +382,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A10 회의 기록 목록](01-backend-rest.md#mtg-a10) | GET `/api/projects/{id}/meetings/{meeting_id}/entries` | MEMBER | 오서현 | — | 오서현 |
 | [MTG-A11 비비 회의 정리](01-backend-rest.md#mtg-a11) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
-| [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | 박상은(제안 문안) | 오서현 |
+| [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | — (문안은 MTG-A11 정리) | 오서현 |
 | [MTG-A14 회의 참여자 제외](01-backend-rest.md#mtg-a14) | DELETE `/api/projects/{id}/meetings/{meeting_id}/participants/{member_id}` | LEADER (회의 참여자. 수정안 요청) | 오서현 | — | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
@@ -426,7 +426,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AI-A04 텍스트 임베딩](03-ai-internal.md#ai-a04) | POST `/v1/embeddings` | 오서현(문서 접근) / 변준성(맥락 연계) | 박상은 |
 | [문서 청킹](03-ai-internal.md#document-chunks) | POST `/v1/document-chunks` | 오서현(문서 접근) | 박상은 |
 | [AI-A05 비비 설계 질의 응답](03-ai-internal.md#ai-a05) | POST `/v1/bee/chat` | 오서현(문서 연결) | 박상은 |
-| [AI-A06 기획·문서 수정 초안 생성](03-ai-internal.md#ai-a06) | POST `/v1/bee/draft` | 오서현 | 박상은 / 회의 연결: 양지훈 |
+| [AI-A06 기획·문서 수정 초안 생성](03-ai-internal.md#ai-a06) | POST `/v1/bee/draft` | 오서현 | 박상은 |
 | [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
 | [AI-A08 회의 질문·요약·결정 추출](03-ai-internal.md#ai-a08) | POST `/v1/bee/meeting-analysis` | 오서현 | 양지훈 |
 | [AI-A10 문서 검토·수정 제안](03-ai-internal.md#ai-a10) | POST `/v1/document-reviews` | 오서현 | 박상은 |
@@ -450,7 +450,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- | --- |
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위 |
-| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 실제 163/197·승인 게이트·알림 연결은 TODO. 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
+| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 알림 연결은 TODO(승인 게이트는 241에서 구현). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 남은 것: 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존) |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
@@ -593,7 +593,7 @@ backend가 권한·원문 버전·범위를 확인하고 복사한 불변 근거
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `evidence_id` | `string` | Y | 요청 안에서 유일한 근거 키 |
-| `design_item_version_id` | `ID` | Y | approved_items 안의 승인 항목 버전 |
+| `design_item_version_id` | `ID` | 조건부 | 설계 출처 근거라면 approved_items 안의 승인 항목 버전. 검색된 미연결 문서 근거는 생략 |
 | `source` | [Source](00-common.md#schema-source) | Y | 정확한 문서 버전과 표시 위치 |
 | `locator` | [ValidationTextLocator](00-common.md#schema-validationtextlocator) | Y | 원문을 복원할 범위 |
 | `text` | `string` | Y | locator의 원문 발췌. 각 행의 LF를 포함한 정확한 문자열 |
@@ -1149,7 +1149,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `id` | `ID` | Y | 검증 ID |
 | `task_id` | `ID` | Y | 작업 |
 | `plan_revision_id` | `ID` | Y | 입력 리비전 |
-| `baseline_id` | `ID` | Y | 검증 당시 기준. 이력용 |
+| `baseline_id` | `ID` | Y | 검증 기준. 의미 분석이 완료된 결과는 실제 분석에 사용한 기준이며 이후 STALE이 되어도 이력으로 유지한다. 접수·실행 중이거나 분석이 완료되지 않은 경우에는 접수 당시 기준이다. |
 | `status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 검증 상태 |
 | `trigger` | `AGENT\|REVALIDATION\|DELTA` | Y | 검증 계기 |
 | `stale_reason` | `string` | N | STALE일 때 필수. 무효화 원인 |
@@ -1161,6 +1161,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
+
+검증 대기 중 무관한 발행이 있으면 실행 시 현재 기준을 다시 검색하고 결과 반영 전에 기준·참조·근거를 재확인한다. 접수 시점의 기준과 접수 입력 해시는 내부 이력에 보존하며, 완료된 의미 분석의 실제 기준과 분석 입력 해시도 별도로 기록한다. 직접 참조가 바뀌거나 분석 중 기준이 다시 발행되면 기존 분석 결과를 유효한 결과로 반영하지 않는다.
 
 <a id="schema-taskdetail"></a>
 
@@ -1540,7 +1542,9 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `input_tokens` | `integer` | Y | 입력 토큰 |
 | `output_tokens` | `integer` | Y | 출력 토큰 |
 | `call_count` | `integer` | Y | 모델 호출 수 |
-| `estimated_cost_amount` | `string` | N | 추정 비용 |
+| `estimated_cost_amount` | `string` | N | 추정 비용(응답 `currency` 기준). 조회 조건(기간·작업·검증·기능) 전체에 비용 있는 호출이 하나도 없을 때만 모든 묶음에서 생략하고, 그 외에는 이 묶음에 그 통화 비용이 없으면 `"0"` — 비용을 모르는 호출은 `cost_unknown_call_count`로 구분 |
+| `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수 (BE 구현, -169) |
+| `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 (BE 구현, -169) |
 
 <a id="schema-usagesummary"></a>
 
@@ -1555,6 +1559,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `call_count` | `integer` | Y | 중복 제거한 호출 수 |
 | `estimated_cost_amount` | `string` | N | 추정 비용. 단가 없으면 생략 |
 | `currency` | `string` | N | 통화 |
+| `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수 (BE 구현, -169) |
+| `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 — 단가 없음·다른 통화 (BE 구현, -169) |
 | `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
 | `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
 | `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |

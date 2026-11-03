@@ -66,18 +66,23 @@ public class ImpactRunService {
         // Dispatch after the transaction ends: a rejected run is closed in a new transaction, which must not
         // be requested while this request still holds its own connection.
         if (accepted.newRun()!=null && !executor.submit(() -> execute(caller,project,proposal,accepted.newRun())))
-            closeFailure(project,accepted.newRun(),"analysis_capacity","NOT_STARTED");
+            closeFailure(project,accepted.newRun(),"analysis_capacity","NOT_STARTED",List.of(),null);
         return accepted.result();
     }
 
-    public Result get(CallerContext caller, long project, long proposal) {
+    public Result get(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,true); }
+
+    /** Same as get without the lease-expiry write, for read-only transactions such as the approval preview. */
+    public Result peek(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,false); }
+
+    private Result read(CallerContext caller, long project, long proposal, boolean expire) {
         // Reads and the conditional expire need no project lock. Holding that lock while a second
         // connection is borrowed for the freshness read could exhaust the pool under polling.
         var state=tx.execute(ignored -> {
             access.requireMember(caller,project);
             if (projects.findCurrentRole(project,caller.accountId()).isEmpty()) throw AccessErrors.notFound("impact_membership_changed");
             var current=runs.proposal(project,proposal);
-            runs.expire(project,proposal);
+            if (expire) runs.expire(project,proposal);
             int revision=((Number)current.get("revision_no")).intValue();
             var latest=runs.latest(project,proposal,revision);
             var pending=latest.isPresent() && "RUNNING".equals(latest.get().get("status")) ? Optional.<Map<String,Object>>empty() : runs.pending(proposal,revision);
@@ -108,6 +113,9 @@ public class ImpactRunService {
     }
 
     private void execute(CallerContext caller, long project, long proposal, long id) {
+        // 모델 응답에서 이미 받은 사용량과 model. 결과를 저장하지 못하고 실패로 닫는 경로에서도 비용 집계(llm_usage)에 남긴다 (-169)
+        List<?> received=List.of();
+        String model=null;
         try {
             boolean active=Boolean.TRUE.equals(tx.execute(ignored -> {
                 lock(project); runs.expire(project,proposal);
@@ -116,6 +124,9 @@ public class ImpactRunService {
             }));
             if (!active) return;
             var outcome=coordinator.analyze(caller,project,proposal,"impact-"+id);
+            received=outcome.usage();
+            model=outcome.model();
+            final String responseModel=model;
             tx.executeWithoutResult(ignored -> {
                 lock(project);
                 var run=runs.run(id);
@@ -152,31 +163,54 @@ public class ImpactRunService {
                     usage=List.of(); usageStatus="UNKNOWN";
                     if (!"STALE".equals(status)) { status="FAILED"; code="invalid_output"; }
                 }
+                // 비용 집계(llm_usage)는 실행 행에 넣을 수 있는지와 상관없이 받은 사용량 그대로 (-169). 이 트랜잭션이 되돌려지면 아래 실패 처리가 다시 적는다
+                runs.recordUsage(id,outcome.usage(),responseModel);
                 runs.finish(id,status,code,ai,generation,usage,usageStatus);
             });
         } catch (ApiException changed) {
+            // 모델 응답 뒤 권한 재확인이 거절한 경우(AccessRecheckException)에는 결과는 버리되 받은 사용량·model 이 실려 온다
+            if (received.isEmpty()) { received=ImpactAnalysisCoordinator.receivedUsage(changed); model=ImpactAnalysisCoordinator.receivedModel(changed); }
             if (changed.getStatus().value()==409 || changed.getStatus().value()==404)
-                closeFailure(project,id,"analysis_input_changed","NOT_STARTED");
-            else closeFailure(project,id,"analysis_interrupted","UNKNOWN");
+                closeFailure(project,id,"analysis_input_changed","NOT_STARTED",received,model);
+            else closeFailure(project,id,"analysis_interrupted","UNKNOWN",received,model);
         } catch (RuntimeException failure) {
             // Store only a bounded code; never persist provider exceptions or document contents as errors.
-            closeFailure(project,id,"invalid_output","UNKNOWN");
+            // 모델 응답 뒤 예상하지 못한 오류(ReceivedUsageException)에도 받은 사용량·model 이 실려 온다
+            if (received.isEmpty()) { received=ImpactAnalysisCoordinator.receivedUsage(failure); model=ImpactAnalysisCoordinator.receivedModel(failure); }
+            closeFailure(project,id,"invalid_output","UNKNOWN",received,model);
         }
     }
 
-    private void closeFailure(long project,long id,String code,String usageStatus) {
+    /**
+     * 결과 없이 실행을 닫는다. 모델 응답에서 이미 받은 사용량이 있으면 실행 기록과 공통 사용량 표(llm_usage)에 남긴다 (-169) —
+     * 권한 재확인 실패·결과 저장 실패처럼 결과를 버려도 실제 호출 비용이다. 프로젝트를 잠글 수 없으면(삭제 등) 실행은 그대로 두고
+     * 사용량만 남긴 뒤 원래처럼 not_found 로 끝낸다 (실행은 리스가 끝나면 expire 가 닫는다)
+     */
+    private void closeFailure(long project,long id,String code,String usageStatus,List<?> received,String model) {
         // Runs outside any request transaction, so a fresh transaction is started here.
         var fresh=new TransactionTemplate(tx.getTransactionManager());
         fresh.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        fresh.executeWithoutResult(ignored -> { lock(project); runs.finish(id,
-                "analysis_input_changed".equals(code) ? "STALE" : "FAILED",code,null,null,List.of(),usageStatus); });
+        boolean locked=Boolean.TRUE.equals(fresh.execute(ignored -> {
+            boolean active=projects.lockActiveProject(project);
+            runs.recordUsage(id,received,model);
+            if (!active) return false;
+            Object stored=received;
+            String storedStatus=received.isEmpty() ? usageStatus : "REPORTED";
+            try { canonical(stored); }
+            catch (ApiException oversized) { stored=List.of(); storedStatus="UNKNOWN"; }
+            runs.finish(id,"analysis_input_changed".equals(code) ? "STALE" : "FAILED",code,null,null,stored,storedStatus);
+            return true;
+        }));
+        if (!locked) throw AccessErrors.notFound("impact_project_missing");
     }
+
+
 
     private void lock(long project) {
         if (!projects.lockActiveProject(project)) throw AccessErrors.notFound("impact_project_missing");
     }
 
-    private static Map<String,Object> generation(Map<String,Object> envelope,List<?> usage) {
+    static Map<String,Object> generation(Map<String,Object> envelope,List<?> usage) {
         var value=new LinkedHashMap<String,Object>();
         value.put("origin",envelope.getOrDefault("origin","MODEL"));
         if (envelope.get("model")!=null) value.put("model",envelope.get("model"));

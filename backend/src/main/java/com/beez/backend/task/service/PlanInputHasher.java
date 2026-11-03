@@ -14,15 +14,23 @@ import org.springframework.stereotype.Component;
 
 /**
  * 계획 입력의 SHA-256. 같은 내용이면 순서가 달라도 같은 값이 나오도록 정렬한 뒤 문자열로 만들어 해시한다.
- * 검증 결과 재사용(D6, AC-16)의 키다. 선행 작업 id, 참조(항목·버전·관계) 가 포함되고 제목·접근 방식은 포함하지 않는다 —
- * 제목만 바꾼 계획은 같은 입력으로 본다 (AC-13).
+ * 검증 결과 재사용(D6, AC-16)과 계획 변경 때 "검증 입력이 바뀌었는가" 판정(AC-13, -162)의 키다.
+ * 들어가는 것: 목표, 포함·제외 범위, 완료 기준, 선행 작업 id, 계약 변경 없음·미연결 표시, 참조(항목·버전·관계·CHANGES 의 제안 내용).
+ * 들어가지 않는 것: 제목, 접근 방식, 컨텍스트 패킷. 실제 검색 검증은 이 해시 외에 검색어와 패킷도 따로 확인한다.
+ * 규칙·가짜 검증의 제목만 바꾼 계획은 같은 입력으로 보고 이전 검증을 이어 쓴다 (04-task-lifecycle.md §2.2 S2).
  *
  * <p>JSON 라이브러리 버전에 묶이지 않도록 아주 작은 직렬화 함수를 직접 둔다 (Map·List·문자열·숫자·불리언·null 만 다룬다).
  */
 @Component
 public class PlanInputHasher {
 
-    public String hash(PlanCommand plan, Map<Long, Long> resolvedVersionByItem, Map<Long, PlanRelation> relationByItem) {
+    /**
+     * @param resolvedVersionByItem 항목 → 확정 버전
+     * @param relationByItem        항목 → 관계 (같은 항목이 여러 번 왔으면 가장 센 것)
+     * @param proposedContentByItem 항목 → CHANGES 의 제안 내용. 계약을 어떻게 바꾸는지가 바뀌면 다른 입력이다. 없는 항목은 비워 둔다
+     */
+    public String hash(PlanCommand plan, Map<Long, Long> resolvedVersionByItem, Map<Long, PlanRelation> relationByItem,
+                       Map<Long, Map<String, Object>> proposedContentByItem) {
         // TreeMap: 키 순서가 항상 같다 → 같은 내용이면 같은 문자열
         Map<String, Object> canonical = new TreeMap<>();
         canonical.put("goal", plan.goal());
@@ -41,6 +49,9 @@ public class PlanInputHasher {
             ref.put("item", itemId);
             ref.put("version", resolvedVersionByItem.get(itemId));
             ref.put("relation", relationByItem.get(itemId).name());
+            if (proposedContentByItem.containsKey(itemId) && proposedContentByItem.get(itemId) != null) {
+                ref.put("proposed_content", proposedContentByItem.get(itemId));
+            }
             refs.add(ref);
         }
         canonical.put("design_refs", refs);

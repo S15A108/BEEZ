@@ -125,7 +125,9 @@ class TaskStatusApiIntegrationTests extends IntegrationTestSupport {
         assertThat(accepted.statusCode()).as(accepted.body()).isEqualTo(202);
         long[] stale = createTask("stale", api.readsRef("API-01"));
         long lock = state(stale[0], "START", stale[1], stale[2], api.passValidation(stale[0]), null);
-        String plan = api.planJson("stale2", api.readsRef("API-01"), "[]").trim();
+        // 완료 기준을 바꾸는 계획 변경 (검증 입력이 바뀜). 제목만 바꾸면 검증을 이어 받아 PASS 로 센다 (-162)
+        String plan = api.planJson("stale2", api.readsRef("API-01"), "[]").trim()
+                .replace("\"completion_criteria\": [\"테스트 통과\"]", "\"completion_criteria\": [\"테스트 통과\", \"문서 갱신\"]");
         String revision = plan.substring(0, plan.lastIndexOf('}')) + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + lock + "\n}";
         HttpResponse<String> revised = api.post(base() + "/tasks/" + stale[0] + "/plan-revisions", revision, member);
         assertThat(revised.statusCode()).as(revised.body()).isEqualTo(201);

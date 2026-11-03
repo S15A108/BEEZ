@@ -247,6 +247,57 @@ it('올린 사람이 아니면 검토를 부르지 않고 자동 검토 안내�
   request.mockRestore()
 })
 
+// review_stale 테스트가 모듈의 무효 검토 목록에 같은 검토 id를 남기므로 그보다 앞에 둔다.
+// 사용자 요청(11-02): 팀장이 승인하면 부르는 쪽(공용 문서함)이 목록으로 돌아가 같은 알림을 띄운다. 승인이 실패하면 검토 화면에 남는다.
+it('승인에 성공했을 때만 승인 알림 문구로 목록에 돌아가라고 알린다', async () => {
+  const user = userEvent.setup()
+  const onApproved = vi.fn()
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <DocumentReview
+        projectId="102"
+        documentId="221"
+        title="기획안"
+        kind="PLAN"
+        isLeader
+        onClose={vi.fn()}
+        onApproved={onApproved}
+      />
+    </QueryClientProvider>,
+  )
+  await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/)
+  while (screen.queryAllByRole('button', { name: '넘기기' }).length)
+    await user.click(screen.getAllByRole('button', { name: '넘기기' })[0])
+  await user.click(
+    await screen.findByRole('button', { name: '팀장에게 검토 요청' }),
+  )
+  await screen.findByText(/승인을 요청했어요/)
+  const decide = vi.spyOn(documentsApi, 'decideSubmission')
+  decide.mockRejectedValueOnce(
+    new AxiosError('conflict', '409', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'version_conflict', message: '바뀌었어요.' } },
+    }),
+  )
+  await user.click(screen.getByRole('button', { name: '승인' }))
+  await waitFor(() => expect(decide).toHaveBeenCalledTimes(1))
+  expect(onApproved).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: '승인' }))
+  await waitFor(() =>
+    expect(onApproved).toHaveBeenCalledWith(
+      '승인했어요. 현재 문서로 옮겼어요.',
+    ),
+  )
+  decide.mockRestore()
+})
+
 // PR #72 리뷰 2: 참고 승인본이 바뀌어 409 review_stale이면 검토를 무효로 보이고, 다시 열어도 '비비 검토 다시 받기'로 이어진다.
 it('반영이 review_stale로 막히면 검토 무효 안내와 다시 받기를 보이고, 다시 열어도 그대로다', async () => {
   const user = userEvent.setup()

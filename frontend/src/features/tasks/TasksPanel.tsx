@@ -35,6 +35,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { PaneSheet, SheetSubmit } from '@/components/PaneSheet'
 import {
   DropdownMenu,
@@ -50,7 +51,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { describeContent, lines } from '@/lib/display'
+import { describeContent, LIST_SELECTED, lines } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
@@ -241,15 +242,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
 
   return (
     <section className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold">작업 현황</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-            계획과 승인 설계를 대조하고 필요한 합의를 마친 뒤 시작하세요. 계획
-            검증은 실제 코드 품질이나 테스트 통과를 뜻하지 않아요.
-          </p>
-        </div>
-        {/* 머리 버튼은 모든 작업 현황 화면에서 노란 '+ 작업 계획' 하나(PNL-05 수정안 10-29). */}
+      {/* 창 머리에 이미 '작업 현황'이 있어 안쪽 제목을 두지 않고, 설명 문구도 캔버스 PNL-05-v2-tasks(v461 이후)처럼 뺀다.
+          노란 '+ 작업 계획' 하나는 캔버스처럼 창 머리 줄에 둔다(PNL-05 수정안 10-29). */}
+      <PaneHeaderAction>
         <Button
           onClick={() => {
             setFormTask(undefined)
@@ -259,7 +254,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           <Plus />
           작업 계획
         </Button>
-      </header>
+      </PaneHeaderAction>
       {action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
@@ -308,7 +303,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                       <button
                         key={entry.id}
                         type="button"
-                        className={`w-full rounded-lg border p-4 text-left transition-colors hover:bg-muted/50 ${entry.id === selectedId ? 'border-primary/30 bg-primary/5' : ''}`}
+                        aria-current={entry.id === selectedId}
+                        className={cn(
+                          'w-full rounded-xl border p-4 text-left transition-colors hover:bg-muted/50',
+                          entry.id === selectedId && LIST_SELECTED,
+                        )}
                         onClick={() =>
                           setSelected({ id: entry.id, focus: focusId })
                         }
