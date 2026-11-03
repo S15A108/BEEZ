@@ -28,6 +28,8 @@ class FakeProvider:
             suggestions = [patch('first-token', 'second-token'), patch('second-token', 'done-token')]
         elif 'E2E_PATCH_VALID' in payload['content']:
             suggestions = [patch('red-item', 'scarlet-item'), patch('blue-item', 'azure-item')]
+        elif 'E2E_BOM_PREFIX' in payload['content']:
+            suggestions = [patch('\ufeff# E2E_BOM_PREFIX', '# updated'), patch('other-token', 'done-token')]
         else:
             suggestions = [{'type': 'COMMENT', 'step': 'BODY', 'explanation': '본문 검토 의견', 'sources': []}]
         output = {'summary': '검토 완료', 'body_reviewed': True,

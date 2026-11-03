@@ -298,6 +298,20 @@ def test_nonbreaking_space_is_not_java_blank(api):
     assert post(api, request_with_content("원문")).status_code == 200
 
 
+def test_patch_on_valid_leading_bom_snapshot_is_accepted(api):
+    api[1].output["suggestions"] = [patch("원문", "수정된 원문")]
+    response = post(api, request_with_content("\ufeff# 계획\n원문\n"))
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["suggestions"][0]["original_text"] == "원문"
+
+
+def test_leading_bom_does_not_hide_an_unsafe_patch_order(api):
+    api[1].output["suggestions"] = [patch("\ufeffA", "X"), patch("B", "Y")]
+    response = post(api, request_with_content("\ufeffA B"))
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_patch_must_not_duplicate_another_original_in_any_order(api, reverse):
     patches = [patch("A", "B"), patch("B", "C")]

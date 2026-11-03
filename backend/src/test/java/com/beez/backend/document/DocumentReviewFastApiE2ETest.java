@@ -171,4 +171,26 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
         assertThat(afterFirst.content()).contains("scarlet-item azure-item");
         assertThat(afterFirst.revision()).isEqualTo(3);
     }
+
+    @Test void uploadedDoubleBomCanBeReviewedAndPatched() {
+        long document = upload("\uFEFF\uFEFF# E2E_PATCH_VALID\nred-item blue-item\n");
+        assertThat(reviews.get(author, projectId, document).content()).startsWith("\uFEFF#");
+        var review = reviews.review(author, projectId, document, 1, "bom-patch-e2e");
+        assertThat(review.suggestions()).hasSize(2);
+        var first = reviews.decideSuggestion(author, projectId, document, Long.parseLong(review.id()),
+                Long.parseLong(review.suggestions().getFirst().id()), new SuggestionDecisionRequest(1, "APPLY"));
+        assertThat(first.content()).doesNotStartWith("\uFEFF").contains("scarlet-item blue-item");
+        var second = reviews.decideSuggestion(author, projectId, document, Long.parseLong(review.id()),
+                Long.parseLong(review.suggestions().get(1).id()), new SuggestionDecisionRequest(first.revision(), "APPLY"));
+        assertThat(second.content()).contains("scarlet-item azure-item");
+    }
+
+    @Test void bomRemovalCannotInvalidateAnotherPendingPatch() {
+        long document = upload("\uFEFF\uFEFF# E2E_BOM_PREFIX\nother-token\n");
+        assertThat(reviews.get(author, projectId, document).content()).startsWith("\uFEFF#");
+        assertThatThrownBy(() -> reviews.review(author, projectId, document, 1, "bom-conflict-e2e"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=true", Integer.class, projectId)).isEqualTo(1);
+    }
 }

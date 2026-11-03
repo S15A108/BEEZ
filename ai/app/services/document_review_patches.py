@@ -6,6 +6,9 @@ MAX_DOCUMENT_BYTES = 1_048_576
 MAX_DOCUMENT_CODEPOINTS = 100_000
 # Bound work even when model-generated alternatives create many match states.
 MAX_MATCH_WORK = 12_000_000
+# Preserve the same work bound when a leading BOM makes the intermediate
+# document depend on the order in which patches are applied.
+MAX_BOM_STATES = 4096
 
 
 def _normalized(text: str) -> str:
@@ -41,6 +44,89 @@ def _prefix_table(pattern: str) -> list[int]:
     return table
 
 
+def _validate_bom_sequence(
+    content: str, patches: list[tuple[int, int, str, str]]
+) -> None:
+    """Simulate the BE's one-leading-BOM removal after each selected patch."""
+    pending = [(0, content)]
+    seen = {(0, content)}
+    work = 0
+    while pending:
+        applied, current = pending.pop()
+        for index, (_, _, original, replacement) in enumerate(patches):
+            if applied & (1 << index):
+                continue
+            # Include search, reconstruction and normalization in the work budget.
+            work += 3 * len(current) + len(replacement)
+            if work > MAX_MATCH_WORK:
+                raise ValueError("patch sequence is too complex to verify")
+            start = current.find(original)
+            if start < 0 or start != current.rfind(original):
+                raise ValueError("patch original is no longer unique")
+            raw = current[:start] + replacement + current[start + len(original) :]
+            if not raw or len(raw.encode("utf-8")) > MAX_DOCUMENT_BYTES:
+                raise ValueError("patch produces an invalid document")
+            updated = _normalized(raw.removeprefix("\ufeff"))
+            if (
+                _blank(updated)
+                or _has_control(updated)
+                or len(updated) > MAX_DOCUMENT_CODEPOINTS
+            ):
+                raise ValueError("patch produces an invalid document")
+            state = (applied | (1 << index), updated)
+            if state not in seen:
+                if len(seen) >= MAX_BOM_STATES:
+                    raise ValueError("patch sequence is too complex to verify")
+                seen.add(state)
+                pending.append(state)
+
+
+def _can_check_without_bom(
+    content: str, patches: list[tuple[int, int, str, str]]
+) -> tuple[str, list[tuple[int, int, str, str]]] | None:
+    """Fast path when BOM removal cannot affect any patch's matching text."""
+    suffix = content.lstrip("\ufeff")
+    prefix_length = len(content) - len(suffix)
+    if (
+        not suffix
+        or _blank(suffix)
+        or "\ufeff" in suffix
+        or any(
+            "\ufeff" in original or "\ufeff" in replacement
+            for _, _, original, replacement in patches
+        )
+    ):
+        return None
+    # Keep an upper bound that includes even the BOM bytes/characters which BE
+    # will remove on application. Fall back to exact simulation if inconclusive.
+    normalized_deltas = [
+        len(_normalized(replacement).encode("utf-8")) - len(original.encode("utf-8"))
+        for _, _, original, replacement in patches
+    ]
+    raw_deltas = [
+        len(replacement.encode("utf-8")) - len(original.encode("utf-8"))
+        for _, _, original, replacement in patches
+    ]
+    maximum_bytes = (
+        len(content.encode("utf-8"))
+        + sum(max(0, delta) for delta in normalized_deltas)
+        + max(
+            raw - max(0, normalized)
+            for raw, normalized in zip(raw_deltas, normalized_deltas, strict=True)
+        )
+    )
+    maximum_chars = len(content) + sum(
+        max(0, len(_normalized(replacement)) - len(original))
+        for _, _, original, replacement in patches
+    )
+    if maximum_bytes > MAX_DOCUMENT_BYTES or maximum_chars > MAX_DOCUMENT_CODEPOINTS:
+        return None
+    return suffix, [
+        (start - prefix_length, end - prefix_length, original, replacement)
+        for start, end, original, replacement in patches
+    ]
+
+
 def validate_patch_sequence(
     content: str, patches: list[tuple[int, int, str, str]]
 ) -> None:
@@ -55,7 +141,6 @@ def validate_patch_sequence(
         return
     if (
         not content
-        or content.startswith("\ufeff")
         or _normalized(content) != content
         or _blank(content)
         or _has_control(content)
@@ -65,6 +150,22 @@ def validate_patch_sequence(
         raise ValueError("invalid patch input document")
 
     ordered = sorted(patches)
+    if content.startswith("\ufeff"):
+        # This is a valid BE snapshot: upload may have stripped one BOM while a
+        # second remained. Each subsequent apply strips at most one more BOM.
+        offset = 0
+        for start, end, original, _ in ordered:
+            if start < offset or not original or content[start:end] != original:
+                raise ValueError("invalid patch sequence")
+            if content.find(original) != start or content.rfind(original) != start:
+                raise ValueError("patch original is not unique")
+            offset = end
+        simple = _can_check_without_bom(content, ordered)
+        if simple is not None:
+            validate_patch_sequence(*simple)
+        else:
+            _validate_bom_sequence(content, ordered)
+        return
     pieces: list[tuple[str, ...]] = []
     raw_deltas = []
     normalized_deltas = []
