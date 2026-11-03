@@ -38,8 +38,12 @@ MAX_ITEMS = 100
 DEFAULT_MAX_ITEMS = 50
 MAX_EXISTING_ITEMS = 500
 MAX_QUESTIONS = 200
+# Per model proposal. A draft merges every proposal for one base item, so its
+# own bounds are the natural ones: nothing a proposal verified is dropped.
 MAX_SOURCES_PER_ITEM = 5
 MAX_ANSWER_REFS_PER_ITEM = 10
+MAX_SOURCES_PER_DRAFT = MAX_SOURCES_PER_ITEM * MAX_ITEMS
+MAX_ANSWER_REFS_PER_DRAFT = MAX_QUESTIONS
 MAX_UNRESOLVED = 50
 MAX_DESCRIPTION_CHARS = 10_000
 
@@ -82,12 +86,12 @@ class _Strict(BaseModel):
 class DesignItemContent(BaseModel):
     """DesignItemContent v1 (00-common): description is required for every kind.
 
-    Every other JSON field is kept as supplied, except that a top-level field
-    whose value is null counts as absent: the merge rule treats null as a
-    removal, so `after: null` in a field change always means the field is
-    gone. Only the fields a kind requires are type-checked, by
-    `check_content_for_kind`, so a POLICY may carry `method: "manual"` just as
-    the BE contract allows. Blank field names are rejected as the BE does.
+    Every other JSON field is kept exactly as supplied, a null-valued field
+    included: stored content is never rewritten here, so `before` is the
+    item as the BE holds it. Only the fields a kind requires are
+    type-checked, by `check_content_for_kind`, so a POLICY may carry
+    `method: "manual"` just as the BE contract allows. Blank field names are
+    rejected as the BE does.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True, strict=True)
@@ -96,11 +100,11 @@ class DesignItemContent(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def drop_null_fields(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            if any(not isinstance(name, str) or not name.strip() for name in data):
-                raise ValueError("blank content field name")
-            return {name: value for name, value in data.items() if value is not None}
+    def reject_blank_names(cls, data: Any) -> Any:
+        if isinstance(data, dict) and any(
+            not isinstance(name, str) or not name.strip() for name in data
+        ):
+            raise ValueError("blank content field name")
         return data
 
     @model_validator(mode="after")
@@ -258,10 +262,10 @@ class DraftItem(_Strict):
     base_design_item_version_id: Id | None = None
     base_status: ExistingStatus | None = None
     sources: tuple[EvidenceItem, ...] = Field(
-        default=(), max_length=MAX_SOURCES_PER_ITEM
+        default=(), max_length=MAX_SOURCES_PER_DRAFT
     )
     answer_refs: tuple[Key, ...] = Field(
-        default=(), max_length=MAX_ANSWER_REFS_PER_ITEM
+        default=(), max_length=MAX_ANSWER_REFS_PER_DRAFT
     )
     support: Support
     rationale: Text
@@ -290,7 +294,10 @@ class DraftItem(_Strict):
 
 
 class FieldChange(_Strict):
-    """One top-level content field; null on either side means absent there."""
+    """One top-level content field whose JSON value differs.
+
+    Null on either side means "no value" there: the field is absent or null.
+    """
 
     field: FieldName
     before: Any = None
@@ -306,6 +313,10 @@ class DraftChange(_Strict):
     before: DesignItemContent | None = None
     after: DesignItemContent
     changed_fields: tuple[FieldChange, ...] = ()
+    # Top-level fields that the model's proposals for this item set to
+    # different values; the last proposal's value is in `after`, so the
+    # reviewer must settle these before trusting the draft.
+    conflicting_fields: tuple[FieldName, ...] = ()
     answer_refs: tuple[Key, ...] = ()
 
     @model_validator(mode="after")
@@ -313,7 +324,7 @@ class DraftChange(_Strict):
         if self.change == "CREATE":
             if self.base_design_item_version_id is not None or self.before is not None:
                 raise ValueError("a created item has no base")
-            if self.changed_fields:
+            if self.changed_fields or self.conflicting_fields:
                 raise ValueError("a created item lists no field changes")
         else:
             if self.base_design_item_version_id is None or self.before is None:
@@ -321,7 +332,9 @@ class DraftChange(_Strict):
             if not self.changed_fields:
                 raise ValueError("an update must change at least one field")
         names = [item.field for item in self.changed_fields]
-        if len(set(names)) != len(names):
+        if len(set(names)) != len(names) or len(set(self.conflicting_fields)) != len(
+            self.conflicting_fields
+        ):
             raise ValueError("duplicate field change")
         return self
 

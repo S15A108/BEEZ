@@ -16,8 +16,6 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from app.schemas.design_drafts import (
-    MAX_ANSWER_REFS_PER_ITEM,
-    MAX_SOURCES_PER_ITEM,
     MAX_UNRESOLVED,
     DesignDraftRequest,
     DesignDraftResult,
@@ -66,12 +64,19 @@ def canonical(content: DesignItemContent) -> dict[str, Any]:
     return content.model_dump(mode="json")
 
 
+def _json(value: Any) -> str:
+    """Canonical JSON text, so `true` and `1` (equal in Python) stay distinct."""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def apply_patch(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     """Merge one JSON object into another, key by key at every depth.
 
     A key the patch omits keeps its value. An object value is merged into the
     existing object (so a response code the model does not mention stays);
     an array or scalar replaces the whole value; JSON null removes the key.
+    The base is never rewritten otherwise: a null-valued field it already
+    holds stays as it is.
     """
     merged = dict(base)
     for name, value in patch.items():
@@ -104,25 +109,60 @@ def merge_content(
 
 def draft_key(kind: str, base_id: str | None, content: DesignItemContent) -> str:
     """Content-derived key: same kind, base and content give the same key."""
-    material = json.dumps(
-        [kind, base_id, canonical(content)],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    material = _json([kind, base_id, canonical(content)])
     return "draft-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
 
 
 def field_changes(
     before: DesignItemContent, after: DesignItemContent
 ) -> tuple[FieldChange, ...]:
-    """Top-level content fields whose JSON value differs, in name order."""
+    """Top-level content fields whose JSON value differs, in name order.
+
+    An absent field and a null-valued one both mean "no value", so removing
+    a field that was null is not a change.
+    """
     old, new = canonical(before), canonical(after)
     return tuple(
         FieldChange(field=name, before=old.get(name), after=new.get(name))
         for name in sorted(set(old) | set(new))
-        if old.get(name) != new.get(name)
+        if _json(old.get(name)) != _json(new.get(name))
     )
+
+
+def _leaves(
+    patch: dict[str, Any], prefix: tuple[str, ...] = ()
+) -> dict[tuple[str, ...], Any]:
+    """Every value a patch assigns, by path; an object only contributes its keys."""
+    leaves: dict[tuple[str, ...], Any] = {}
+    for name, value in patch.items():
+        path = (*prefix, name)
+        if isinstance(value, dict):
+            leaves.update(_leaves(value, path))
+        else:
+            leaves[path] = value
+    return leaves
+
+
+def conflicting_fields(patches: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    """Top-level fields that two proposals for one item set differently.
+
+    A conflict is the same path given two values, or one proposal replacing
+    a whole value that another sets a key inside. The later proposal wins in
+    the merge, so the reviewer is told which fields to settle.
+    """
+    assigned: dict[tuple[str, ...], str] = {}
+    conflicts: set[str] = set()
+    for patch in patches:
+        leaves = {path: _json(value) for path, value in _leaves(patch).items()}
+        for path, encoded in leaves.items():
+            for earlier, earlier_encoded in assigned.items():
+                shorter = min(len(path), len(earlier))
+                if path[:shorter] != earlier[:shorter]:
+                    continue
+                if path != earlier or encoded != earlier_encoded:
+                    conflicts.add(path[0])
+        assigned.update(leaves)
+    return tuple(sorted(conflicts))
 
 
 def _support(sources: list[EvidenceItem], refs: list[str]) -> Support:
@@ -147,9 +187,9 @@ def verify_item(
 
     Several proposals share a base item when the model split its changes (a
     path change and a response change, say); they are applied in order and
-    their sources, answer references and rationale are combined, so no
-    answer's effect is silently lost. Contradictions of the inputs are
-    rejected; only unverifiable quotes are dropped.
+    every verified source, every answer reference and every rationale are
+    kept, so no answer's effect loses its trace. Contradictions of the inputs
+    are rejected; only unverifiable quotes are dropped.
     """
     first = proposals[0]
     base_id = first.base_design_item_version_id
@@ -174,7 +214,7 @@ def verify_item(
     for ref in (ref for item in proposals for ref in item.answer_refs):
         if ref not in answered:
             raise DraftRejected("unknown answer reference")
-        if ref not in refs and len(refs) < MAX_ANSWER_REFS_PER_ITEM:
+        if ref not in refs:
             refs.append(ref)
     blocks = {block.block_id: block for block in document.blocks}
     titles = heading_titles(document)
@@ -188,7 +228,6 @@ def verify_item(
             or not quote
             or quote not in resolve_source(document, block.locator)
             or (block.block_id, quote) in seen
-            or len(sources) >= MAX_SOURCES_PER_ITEM
         ):
             continue
         seen.add((block.block_id, quote))
@@ -262,6 +301,9 @@ def compose_result(
                 before=existing[base_id].content,
                 after=item.content,
                 changed_fields=changed,
+                conflicting_fields=conflicting_fields(
+                    [proposed.content for proposed in group]
+                ),
                 answer_refs=item.answer_refs,
             )
         else:

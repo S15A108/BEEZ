@@ -25,7 +25,7 @@
 | `questions[]` | AnsweredQuestion | N | 저장된 #133 질문. 최대 200, `question_key` 중복 금지 |
 | `max_items` | integer 1~100 | N | 초안 수 상한. 기본 50 |
 
-ExistingDesignItem: `design_item_version_id`, `design_item_id`, `key`(표시 키), `kind`(5종), `version_no`, `status`(`DRAFT|APPROVED`), `schema_version`(1), `content`(DesignItemContent v1), `source?`(00-common Source). 종류별 필수 필드(API `method`·`path`, DATA `entity`·`fields`)가 없으면 400이다. 검사 규칙은 BE `DesignContentValidator`와 같다(`description` ≤ 10,000자, API `method`는 대문자 HTTP 메서드, `path`는 `/`로 시작하고 공백·`?`·`#`·제어 문자 없이 2,000자 이하, DATA `entity`는 비어 있지 않은 문자열로 길이 제한 없음, `fields`는 배열). BE가 저장한 본문은 이 요청에서 거부되지 않아야 하므로 BE보다 좁은 제한은 두지 않는다. 값이 `null`인 최상위 필드는 없는 필드로 본다.
+ExistingDesignItem: `design_item_version_id`, `design_item_id`, `key`(표시 키), `kind`(5종), `version_no`, `status`(`DRAFT|APPROVED`), `schema_version`(1), `content`(DesignItemContent v1), `source?`(00-common Source). 종류별 필수 필드(API `method`·`path`, DATA `entity`·`fields`)가 없으면 400이다. 검사 규칙은 BE `DesignContentValidator`와 같다(`description` ≤ 10,000자, API `method`는 대문자 HTTP 메서드, `path`는 `/`로 시작하고 공백·`?`·`#`·제어 문자 없이 2,000자 이하, DATA `entity`는 비어 있지 않은 문자열로 길이 제한 없음, `fields`는 배열). BE가 저장한 본문은 이 요청에서 거부되지 않아야 하므로 BE보다 좁은 제한은 두지 않는다. 본문은 값이 `null`인 필드까지 입력 그대로 보존한다.
 
 AnsweredQuestion: `question`(#133 `SupplementQuestion` 그대로), `evidence[]`(#133 `EvidenceItem`, 이 문서 버전 소속), `status`(`OPEN|ANSWERED|DISMISSED`), `answer`(#133 `QuestionAnswer`, `ANSWERED`일 때만). 답변은 질문의 `answer_format`에 맞아야 하며(`validate_answer`) 어긋나면 422 `invalid_ai_input`이다. 모델에는 `ANSWERED` 질문만 본문이 전달되고 나머지는 개수만 전달된다.
 
@@ -53,10 +53,10 @@ DraftItem:
 | `kind` | 5종 | 기준 항목이 있으면 그 종류와 같다 |
 | `status` | `DRAFT` | 유일한 값. 스키마에 다른 상태가 없다 |
 | `schema_version` | 1 | DesignItemContent v1 |
-| `content` | DesignItemContent | `description` 필수. 종류가 요구하는 필드만 타입 검사(API `method`·`path`, DATA `entity`·`fields`)하고 그 밖의 JSON 필드는 그대로 보존한다(BE 계약과 동일; POLICY의 `method: "manual"` 같은 값도 허용). 값이 `null`인 최상위 필드는 없는 것으로 보고 생략한다. UPDATE면 기준 항목 본문에 모델이 돌려준 필드를 4절 규칙으로 합친 결과다 |
+| `content` | DesignItemContent | `description` 필수. 종류가 요구하는 필드만 타입 검사(API `method`·`path`, DATA `entity`·`fields`)하고 그 밖의 JSON 필드는 그대로 보존한다(BE 계약과 동일; POLICY의 `method: "manual"` 같은 값도 허용). UPDATE면 기준 항목 본문에 모델이 돌려준 필드를 4절 규칙으로 합친 결과이며, 기준 항목의 `null` 값 필드도 모델이 건드리지 않는 한 그대로 남는다 |
 | `base_design_item_version_id`, `base_status` | ID \| null, `DRAFT\|APPROVED` \| null | 갱신 대상 기존 버전과 그 상태. APPROVED 기준은 편집되지 않고 새 DRAFT 버전의 바탕일 뿐이다 |
-| `sources[]` | EvidenceItem | **확인된 원문 인용만**(블록 ID·행 범위·위치·인용, 최대 5). 블록에 없는 인용은 버린다 |
-| `answer_refs[]` | string | 이 초안이 기댄 답변의 `question_key`. 입력의 `ANSWERED` 질문만 허용 |
+| `sources[]` | EvidenceItem | **확인된 원문 인용만**(블록 ID·행 범위·위치·인용). 모델 제안당 최대 5이며 합친 초안은 그 합(최대 500)까지 모두 남긴다. 블록에 없는 인용은 버린다 |
+| `answer_refs[]` | string | 이 초안이 기댄 답변의 `question_key`. 입력의 `ANSWERED` 질문만 허용. 모델 제안당 최대 10이며 합친 초안은 답변된 질문 수(최대 200)까지 모두 남긴다 |
 | `support` | `DOCUMENT_AND_ANSWER\|ANSWER\|DOCUMENT\|NONE` | 출처 등급. `NONE`은 검토자가 대조할 근거가 없는 항목 |
 | `rationale` | string ≤ 2,000 | 문서·답변이 무엇을 확정했는지(한국어) |
 
@@ -67,17 +67,18 @@ DraftChange:
 | `candidate_key` | string | 초안 키 |
 | `change` | `CREATE\|UPDATE` | 기준 항목이 있으면 UPDATE |
 | `base_design_item_version_id` | ID \| null | UPDATE의 기준 버전 |
-| `before` | DesignItemContent \| null | 기준 항목의 **현재 본문 그대로**(답변 전). 값이 `null`이던 최상위 필드만 생략된다 |
+| `before` | DesignItemContent \| null | 기준 항목의 **현재 본문 그대로**(답변 전). 입력과 같다 |
 | `after` | DesignItemContent | 초안 본문(답변 후). `items[].content`와 같다 |
-| `changed_fields[]` | `{field, before, after}` | 최상위 본문 필드 중 JSON 값이 다른 것. UPDATE는 1개 이상. `before: null`은 추가, `after: null`은 삭제를 뜻한다(본문에 `null` 값 필드가 없으므로 모호하지 않다). 중첩 객체의 일부만 바뀌어도 그 최상위 필드 전체가 전후 값으로 실린다 |
+| `changed_fields[]` | `{field, before, after}` | 최상위 본문 필드 중 JSON 값이 다른 것. UPDATE는 1개 이상. 비교는 JSON 직렬화 기준이라 `true`와 `1`도 다른 값이다. `before`·`after`의 `null`은 그쪽에 값이 없음(필드 없음 또는 `null`)을 뜻하며, 둘은 비교에서 같다. 중첩 객체의 일부만 바뀌어도 그 최상위 필드 전체가 전후 값으로 실린다 |
+| `conflicting_fields[]` | string | 같은 기준 항목에 대한 모델 제안들이 **서로 다른 값**을 준 최상위 필드(이름순). `after`에는 마지막 제안의 값이 들어 있으므로 검토자가 이 필드를 확정해야 한다. CREATE는 항상 빈 배열 |
 | `answer_refs[]` | string | 초안과 같음. 어떤 답변이 변경을 이끌었는지 |
 
 ## 4. 검증 규칙
 
 - 인용(`sources`)은 `block_id`가 문서에 있고 `quote`가 그 블록 원문의 부분 문자열일 때만 남긴다. 아닌 인용은 조용히 버리고 `support`를 다시 계산한다(#133과 같은 기준).
 - 기준 항목 ID가 입력에 없거나 종류가 다르면, 답변 참조가 `ANSWERED` 질문 키가 아니면, 본문이 종류별 필수 필드를 어기면 **출력 전체를 거부**한다(502 `model_unavailable`, usage는 실패로 기록). 모델이 ID·키를 지어낸 경우다.
-- 갱신(UPDATE)의 `after`는 기준 항목 본문에 모델이 돌려준 내용을 **모든 깊이에서 키 단위로 합친** 결과다(`apply_patch`). 모델이 **생략한 키는 기존 값을 보존**하고(답변과 무관한 `parameters`·`responses` 등이 사라지지 않음), **객체 값은 그 안의 키 단위로 다시 합치며**(`responses`에 `400`만 돌려줘도 `200`은 남음), **배열·스칼라 값은 통째로 교체**하고, **JSON `null`은 그 키를 삭제**한다는 뜻이다(어느 깊이에서나). 배열 안의 `null`은 값이다. 생략과 삭제를 이렇게 구분하므로 `changed_fields`에는 실제로 바뀐 필드만 남는다. 신규(CREATE)의 `null` 키는 버린다.
-- 같은 기준 항목을 가리키는 제안이 여럿이면(예: 경로 변경과 응답 변경을 따로 돌려준 경우) **등장 순서대로 하나의 초안으로 합친다**. 본문은 위 규칙으로 차례로 적용하고, 인용·답변 참조는 중복 없이 모아 상한(5·10)까지 남기며, `rationale`은 이어 붙인다. 종류가 기준 항목과 다른 제안이 섞이면 출력 전체를 거부한다. 따라서 기준 항목당 초안은 하나이며 어떤 제안도 조용히 버려지지 않는다.
+- 갱신(UPDATE)의 `after`는 기준 항목 본문에 모델이 돌려준 내용을 **모든 깊이에서 키 단위로 합친** 결과다(`apply_patch`). 모델이 **생략한 키는 기존 값을 보존**하고(답변과 무관한 `parameters`·`responses` 등이 사라지지 않음), **객체 값은 그 안의 키 단위로 다시 합치며**(`responses`에 `400`만 돌려줘도 `200`은 남음), **배열·스칼라 값은 통째로 교체**하고, **JSON `null`은 그 키를 삭제**한다는 뜻이다(어느 깊이에서나). 배열 안의 `null`은 값이다. 이 삭제 규칙은 **모델 패치에만** 적용되며 기존 본문의 `null` 값 필드는 입력 그대로 둔다(변경 비교에서는 값 없음과 같으므로 그것만 삭제해도 변경이 아니다). 생략과 삭제를 이렇게 구분하므로 `changed_fields`에는 실제로 바뀐 필드만 남는다. 신규(CREATE)의 `null` 키는 버린다.
+- 같은 기준 항목을 가리키는 제안이 여럿이면(예: 경로 변경과 응답 변경을 따로 돌려준 경우) **등장 순서대로 하나의 초안으로 합친다**. 본문은 위 규칙으로 차례로 적용하고, 확인된 인용과 답변 참조는 중복 없이 **모두** 남기며(상한은 제안 수에 비례하는 자연 상한뿐), `rationale`은 이어 붙인다. 두 제안이 **같은 경로에 다른 값**을 주거나 한쪽이 통째로 바꾼 값 안의 키를 다른 쪽이 정하면 충돌이다. 뒤의 제안이 이기되 그 최상위 필드를 `conflicting_fields`에 적어 검토자가 확정하게 한다. 종류가 기준 항목과 다른 제안이 섞이면 출력 전체를 거부한다. 따라서 기준 항목당 초안은 하나이며 어떤 제안도 조용히 버려지지 않는다.
 - 기존 항목과 본문이 같은 "갱신"은 변경이 아니므로 버리고 그 항목을 `untouched_existing_ids`에 둔다.
 - 종류·기준·본문이 같은 신규 초안이 둘이면 첫 번째만 남긴다.
 - 승인본 불변: 입력의 APPROVED 항목 본문은 `before`에 그대로 나오고, 출력 어디에도 `APPROVED` 상태의 항목은 없다. 테스트 `test_update_of_an_approved_item_keeps_the_approved_content_as_before`와 평가 검사 `approved_bases_kept_as_before`가 이를 확인한다.
@@ -88,7 +89,7 @@ DraftChange:
 | --- | --- |
 | 초안 수 | `max_items`(기본 50, 1~100). 초과분은 근거 등급이 낮은 순으로 버리고 `omitted_items`에 수를 남긴다 |
 | 기존 항목 / 질문 | 500 / 200 |
-| 초안당 인용 / 답변 참조 | 5 / 10 |
+| 모델 제안당 인용 / 답변 참조 | 5 / 10. 합친 초안은 500 / 200까지(확인된 것은 버리지 않음) |
 | `unresolved` | 50건, 각 2,000자 |
 | 모델 입력 | 블록·기존 항목·답변 JSON 256 KiB 초과 시 422 `invalid_ai_input` |
 | 본문 | `DESIGN_DRAFTS_MAX_BODY_BYTES` 기본 2 MiB |
@@ -100,7 +101,7 @@ DraftChange:
 | `items[]` | `design_item_version` 새 행: `status=DRAFT`, `origin=AI_PROPOSED`, `schema_version=1`, `content`, `title=content.description`, `source_document_version_id`=요청 문서 버전, `source_locator`=`sources[0].locator`(있을 때) |
 | `base_design_item_version_id` | 같은 `design_item_id`의 다음 `version_no`로 저장. APPROVED 기준은 수정하지 않는다 |
 | CREATE | 새 `design_item`(키 발급)과 v1 DRAFT |
-| `sources[]`, `answer_refs[]`, `support`, `rationale` | 화면 202 검토용. 저장 위치(예: `design_item_version.content` 밖의 메타 JSONB 또는 별도 표)는 합의 필요 |
+| `sources[]`, `answer_refs[]`, `support`, `rationale`, `changes[].conflicting_fields` | 화면 202 검토용. 충돌 필드가 있으면 재검토 표시가 필요하다. 저장 위치(예: `design_item_version.content` 밖의 메타 JSONB 또는 별도 표)는 합의 필요 |
 | `changes[]` | 저장하지 않아도 `before`는 기존 버전에서 재구성할 수 있다. 화면에는 응답 그대로 쓴다 |
 | `candidate_key` | 한 분석 결과 안의 임시 키. 재분석 시 같은 종류·기준·본문이면 같은 키 |
 

@@ -194,14 +194,43 @@ def test_blank_description_is_rejected_for_every_kind():
         DesignItemContent.model_validate({"method": "GET", "path": "/a"})
 
 
-def test_extra_content_fields_are_preserved_and_null_fields_are_absent():
+def test_extra_content_fields_are_preserved_null_values_included():
+    # Stored content is never rewritten: a null-valued field the BE holds
+    # must come back exactly as supplied.
     content = DesignItemContent.model_validate(
-        {"description": "x", "note": "kept", "gone": None}
+        {"description": "x", "note": "kept", "empty": None}
     )
-    assert content.model_dump(mode="json") == {"description": "x", "note": "kept"}
-    assert content.extra_fields() == {"note": "kept"}
+    assert content.model_dump(mode="json") == {
+        "description": "x",
+        "note": "kept",
+        "empty": None,
+    }
+    assert content.extra_fields() == {"note": "kept", "empty": None}
     with pytest.raises(ValidationError):
         DesignItemContent.model_validate({"description": "x", " ": "blank name"})
+
+
+def test_merged_drafts_keep_every_reference_and_conflicts_only_on_updates():
+    many = tuple(f"q-{index}" for index in range(1, 12))
+    assert len(draft(sources=(), answer_refs=many, support="ANSWER").answer_refs) == 11
+    with pytest.raises(ValidationError):
+        change(conflicting_fields=("path",))
+    update = change(
+        change="UPDATE",
+        base_design_item_version_id="1101",
+        before=DesignItemContent(description="한도는 30 MB이다."),
+        changed_fields=(FieldChange(field="description", before="a", after="b"),),
+        conflicting_fields=("description",),
+    )
+    assert update.conflicting_fields == ("description",)
+    with pytest.raises(ValidationError):
+        change(
+            change="UPDATE",
+            base_design_item_version_id="1101",
+            before=DesignItemContent(description="한도는 30 MB이다."),
+            changed_fields=(FieldChange(field="description", before="a", after="b"),),
+            conflicting_fields=("a", "a"),
+        )
 
 
 def test_limits_follow_the_backend_content_validator():

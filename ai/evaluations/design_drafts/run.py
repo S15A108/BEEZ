@@ -192,9 +192,10 @@ def render_markdown(row: dict, *, title: str) -> str:
     lines.append("## 초안과 변경 목록")
     lines.append("")
     lines.append(
-        "| 순서 | 초안 | 종류 | 변경 | 기준 항목 | 근거 | before | after | 바뀐 필드 | 답변 참조 |"
+        "| 순서 | 초안 | 종류 | 변경 | 기준 항목 | 근거 | before | after | 바뀐 필드 "
+        "| 충돌 | 답변 참조 |"
     )
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for index, (item, change) in enumerate(
         zip(row["items"], row["changes"], strict=True), start=1
     ):
@@ -216,6 +217,7 @@ def render_markdown(row: dict, *, title: str) -> str:
                     _cell(before),
                     _cell(item["content"]["description"]),
                     fields,
+                    ", ".join(change["conflicting_fields"]) or "-",
                     ", ".join(item["answer_refs"]) or "-",
                 ]
             )

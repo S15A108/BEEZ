@@ -196,6 +196,7 @@
             "after": "문서의 최종 발행은 계정이 활성 상태이고 프로젝트 멤버십도 활성인 프로젝트 리더만 수행한다."
           }
         ],
+        "conflicting_fields": [],
         "answer_refs": [
           "q-model-231b13f37159"
         ]
@@ -217,6 +218,7 @@
             "after": "첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션은 첫 출시 범위에서 제외한다(2027년 상반기 이후 검토)."
           }
         ],
+        "conflicting_fields": [],
         "answer_refs": [
           "q-rule-undecided-L7-1"
         ]
@@ -230,6 +232,7 @@
           "description": "정식 운영 담당자는 시범 운영 평가 회의에서 프로젝트 리더가 정한다."
         },
         "changed_fields": [],
+        "conflicting_fields": [],
         "answer_refs": [
           "q-model-523f15ad3e6d"
         ]
@@ -243,6 +246,7 @@
           "description": "정식 운영 날짜는 아직 정하지 않았다."
         },
         "changed_fields": [],
+        "conflicting_fields": [],
         "answer_refs": [
           "q-rule-undecided-L29-1"
         ]
@@ -256,6 +260,7 @@
           "description": "검토 모드의 결과에는 대상 버전을 표시하며 이를 현재 정책으로 소개하지 않는다."
         },
         "changed_fields": [],
+        "conflicting_fields": [],
         "answer_refs": []
       },
       {
@@ -267,6 +272,7 @@
           "description": "서비스 응답 시간은 1초 이내여야 한다."
         },
         "changed_fields": [],
+        "conflicting_fields": [],
         "answer_refs": []
       }
     ],

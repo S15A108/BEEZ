@@ -15,13 +15,13 @@ origin `MODEL` · 모델 제안 7건 · 초안 6건(근거 없음 1) · 인용 �
 
 ## 초안과 변경 목록
 
-| 순서 | 초안 | 종류 | 변경 | 기준 항목 | 근거 | before | after | 바뀐 필드 | 답변 참조 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | draft-3499d2b40548 | POLICY | UPDATE | 1101 (APPROVED) | DOCUMENT_AND_ANSWER | 문서의 최종 발행은 프로젝트 리더만 수행한다. | 문서의 최종 발행은 계정이 활성 상태이고 프로젝트 멤버십도 활성인 프로젝트 리더만 수행한다. | description | q-model-231b13f37159 |
-| 2 | draft-78d0eae7050c | CONSTRAINT | UPDATE | 1103 (DRAFT) | DOCUMENT_AND_ANSWER | 첫 출시는 웹 브라우저를 대상으로 한다. | 첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션은 첫 출시 범위에서 제외한다(2027년 상반기 이후 검토). | description | q-rule-undecided-L7-1 |
-| 3 | draft-2c5f7d23000a | REQUIREMENT | CREATE | - | DOCUMENT_AND_ANSWER | - | 정식 운영 담당자는 시범 운영 평가 회의에서 프로젝트 리더가 정한다. | - | q-model-523f15ad3e6d |
-| 4 | draft-904ccaa9da10 | REQUIREMENT | CREATE | - | ANSWER | - | 정식 운영 날짜는 아직 정하지 않았다. | - | q-rule-undecided-L29-1 |
-| 5 | draft-d3f1d9970cac | POLICY | CREATE | - | DOCUMENT | - | 검토 모드의 결과에는 대상 버전을 표시하며 이를 현재 정책으로 소개하지 않는다. | - | - |
-| 6 | draft-580a8eabdf76 | CONSTRAINT | CREATE | - | NONE | - | 서비스 응답 시간은 1초 이내여야 한다. | - | - |
+| 순서 | 초안 | 종류 | 변경 | 기준 항목 | 근거 | before | after | 바뀐 필드 | 충돌 | 답변 참조 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | draft-3499d2b40548 | POLICY | UPDATE | 1101 (APPROVED) | DOCUMENT_AND_ANSWER | 문서의 최종 발행은 프로젝트 리더만 수행한다. | 문서의 최종 발행은 계정이 활성 상태이고 프로젝트 멤버십도 활성인 프로젝트 리더만 수행한다. | description | - | q-model-231b13f37159 |
+| 2 | draft-78d0eae7050c | CONSTRAINT | UPDATE | 1103 (DRAFT) | DOCUMENT_AND_ANSWER | 첫 출시는 웹 브라우저를 대상으로 한다. | 첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션은 첫 출시 범위에서 제외한다(2027년 상반기 이후 검토). | description | - | q-rule-undecided-L7-1 |
+| 3 | draft-2c5f7d23000a | REQUIREMENT | CREATE | - | DOCUMENT_AND_ANSWER | - | 정식 운영 담당자는 시범 운영 평가 회의에서 프로젝트 리더가 정한다. | - | - | q-model-523f15ad3e6d |
+| 4 | draft-904ccaa9da10 | REQUIREMENT | CREATE | - | ANSWER | - | 정식 운영 날짜는 아직 정하지 않았다. | - | - | q-rule-undecided-L29-1 |
+| 5 | draft-d3f1d9970cac | POLICY | CREATE | - | DOCUMENT | - | 검토 모드의 결과에는 대상 버전을 표시하며 이를 현재 정책으로 소개하지 않는다. | - | - | - |
+| 6 | draft-580a8eabdf76 | CONSTRAINT | CREATE | - | NONE | - | 서비스 응답 시간은 1초 이내여야 한다. | - | - | - |
 
 그대로 둔 기존 항목: 1102 · 미답변 질문: 3건 · 미확정: 유료 요금제 가격은 답변에서도 미정으로 남았다.

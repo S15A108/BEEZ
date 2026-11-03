@@ -572,7 +572,8 @@ async def test_nested_objects_merge_key_by_key_and_arrays_replace_whole():
     after = outcome.result.changes[0].after.model_dump(mode="json")
     assert after["responses"] == {"401": "인증 실패"}
 
-    # Proposals for one base apply in order, so the later value wins.
+    # Proposals for one base apply in order, so the later value wins, and
+    # the field they disagreed on is flagged for the reviewer.
     first = with_content(
         item("API_CONTRACT", "x", base="1103"), {"responses": {"400": "a"}}
     )
@@ -581,29 +582,115 @@ async def test_nested_objects_merge_key_by_key_and_arrays_replace_whole():
         {"responses": {"400": "b", "404": "없음"}},
     )
     outcome = await generate_design_drafts(body, FakeProposer(first, second))
-    after = outcome.result.changes[0].after.model_dump(mode="json")
+    change = outcome.result.changes[0]
+    after = change.after.model_dump(mode="json")
     assert after["responses"] == {"200": "세션 발급", "400": "b", "404": "없음"}
+    assert change.conflicting_fields == ("responses",)
 
 
 @pytest.mark.asyncio
-async def test_null_valued_base_fields_count_as_absent():
+async def test_conflicting_proposals_are_flagged_and_agreeing_ones_are_not():
+    body = request(existing_items=[APPROVED, DRAFT_ITEM, API_ITEM, MANUAL_POLICY])
+
+    async def conflicts(*patches):
+        proposals = [
+            with_content(item("API_CONTRACT", "x", base="1103", refs=["q-1"]), p)
+            for p in patches
+        ]
+        outcome = await generate_design_drafts(body, FakeProposer(*proposals))
+        change = outcome.result.changes[0]
+        return change.conflicting_fields, change.after.model_dump(mode="json")
+
+    flagged, after = await conflicts({"path": "/a"}, {"path": "/b"})
+    assert flagged == ("path",) and after["path"] == "/b"
+    # Different keys inside one object, or the same value twice: no conflict.
+    flagged, _ = await conflicts(
+        {"responses": {"400": "a"}}, {"responses": {"404": "b"}}
+    )
+    assert flagged == ()
+    flagged, _ = await conflicts({"path": "/a"}, {"path": "/a", "note": "n"})
+    assert flagged == ()
+    # One proposal replaces a whole value, another sets a key inside it.
+    flagged, _ = await conflicts({"responses": None}, {"responses": {"400": "a"}})
+    assert flagged == ("responses",)
+    flagged, _ = await conflicts({"responses": {"400": "a"}}, {"responses": "없음"})
+    assert flagged == ("responses",)
+    # A type change alone is a conflict too: JSON true is not 1.
+    flagged, _ = await conflicts({"flag": True}, {"flag": 1})
+    assert flagged == ("flag",)
+    # Every verified source and answer reference of the group is kept.
+    body = request(
+        existing_items=[APPROVED, DRAFT_ITEM, API_ITEM],
+        questions=[
+            stored_question(f"q-{index}", f"질문 {index}?") for index in range(1, 12)
+        ],
+    )
+    quotes = ["단일 파일", "한도는", "30 MB", "이다", "파일 한도", "단일"]
+    proposals = [
+        with_content(
+            item(
+                "API_CONTRACT",
+                "x",
+                base="1103",
+                sources=[{"line": 3, "quote": quotes[index % len(quotes)]}],
+                refs=[f"q-{index + 1}"],
+            ),
+            {"responses": {str(400 + index): "오류"}},
+        )
+        for index in range(11)
+    ]
+    outcome = await generate_design_drafts(body, FakeProposer(*proposals))
+    draft = outcome.result.items[0]
+    assert len(draft.answer_refs) == 11 and len(draft.sources) == 6
+    assert outcome.result.changes[0].conflicting_fields == ()
+
+
+@pytest.mark.asyncio
+async def test_null_valued_base_fields_are_kept_and_count_as_no_value():
     nullable = with_content(
         DRAFT_ITEM, {"description": "발행은 리더만 수행한다.", "note": None}
     )
     body = request(existing_items=[APPROVED, nullable])
+    # The stored content is passed through untouched, null included.
     assert body.existing_items[1].content.model_dump(mode="json") == {
-        "description": "발행은 리더만 수행한다."
+        "description": "발행은 리더만 수행한다.",
+        "note": None,
     }
     # Removing a field that was null is no change at all.
     removal = with_content(item("POLICY", "x", base="1102"), {"note": None})
     outcome = await generate_design_drafts(body, FakeProposer(removal))
     assert outcome.result.items == ()
     assert outcome.result.untouched_existing_ids == ("1101", "1102")
-    # Adding one shows up with before=null, which is unambiguous now.
+    # Changing another field keeps the null field in before and after alike.
+    reworded = item("POLICY", "발행은 프로젝트 리더만 수행한다.", base="1102")
+    outcome = await generate_design_drafts(body, FakeProposer(reworded))
+    change = outcome.result.changes[0]
+    assert change.before.model_dump(mode="json")["note"] is None
+    assert change.after.model_dump(mode="json")["note"] is None
+    assert [f.field for f in change.changed_fields] == ["description"]
+    # Setting it shows up with before=null: no value there before.
     added = with_content(item("POLICY", "x", base="1102"), {"note": "검토 필요"})
     outcome = await generate_design_drafts(body, FakeProposer(added))
     change = outcome.result.changes[0].changed_fields[0]
     assert (change.field, change.before, change.after) == ("note", None, "검토 필요")
+
+
+@pytest.mark.asyncio
+async def test_json_type_changes_are_changes():
+    flagged = with_content(
+        MANUAL_POLICY, {"description": "발행 전 검토를 거친다.", "strict": True}
+    )
+    body = request(existing_items=[APPROVED, DRAFT_ITEM, flagged])
+    update = with_content(
+        item("POLICY", "x", base="1104"),
+        {"description": "발행 전 두 명이 검토한다.", "strict": 1},
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(update))
+    changes = outcome.result.changes[0].changed_fields
+    assert [(f.field, f.before, f.after) for f in changes] == [
+        ("description", "발행 전 검토를 거친다.", "발행 전 두 명이 검토한다."),
+        ("strict", True, 1),
+    ]
 
 
 @pytest.mark.asyncio
