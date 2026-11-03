@@ -83,6 +83,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @Autowired RecordingIntake intake;
     @Autowired PlatformTransactionManager transactions;
     @Autowired ApplicationContext context;
+    @Autowired com.beez.backend.impactanalysis.PublishedAnalysisProcessor publishedAnalysisProcessor;
     @MockitoSpyBean PublicationRepository repository;
     @MockitoSpyBean RelationStorageService relations;
     @MockitoSpyBean DesignCommandService idempotency;
@@ -236,6 +237,19 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         verify(relations,never()).apply(any(),anyLong(),any());
         error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash(),null),"other"),"idempotency_conflict");
         error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash(),null),"new"),"version_conflict");
+    }
+
+    @Test void publishedDocumentOnlyChangeRemainsNotEvaluatedWithoutPretendingZeroImpact() {
+        new TransactionTemplate(transactions).executeWithoutResult(s -> intake.repository.accept(project.projectId(),baseline,null));
+        Proposal proposal=create(true,false,"document-analysis"); ready(proposal);
+        var result=approve(proposal,"document-analysis-approve");
+        long intakeId=jdbc.queryForObject("SELECT id FROM published_change_analysis WHERE published_baseline_id=?",
+                Long.class,Long.parseLong(result.baseline().id()));
+        publishedAnalysisProcessor.process(intakeId);
+        var status=jdbc.queryForMap("SELECT status,evaluation_status,error_code,ai_result FROM published_change_analysis WHERE id=?",intakeId);
+        assertThat(status).containsEntry("status","NOT_EVALUATED").containsEntry("evaluation_status","NOT_EVALUATED")
+                .containsEntry("error_code","document_change_unavailable");
+        assertThat(status.get("ai_result").toString()).isEqualTo("null");
     }
 
     @Test void indexFailuresAndStaleInputsLeaveNothingPublished() {

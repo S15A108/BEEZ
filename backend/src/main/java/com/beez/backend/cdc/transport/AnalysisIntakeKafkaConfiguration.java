@@ -17,14 +17,16 @@ import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.util.backoff.FixedBackOff;
 
 /**
- * Isolated opt-in transport. Startup requires the future schema decoder and a
- * durable intake-check adapter; no implementation is registered by this module.
+ * Isolated opt-in transport. Startup requires a schema decoder and a durable
+ * intake-check adapter with recurring recovery.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableKafka
+@EnableScheduling
 @EnableConfigurationProperties(CdcKafkaSecurityProperties.class)
 @ConditionalOnProperty(prefix = "beez.cdc.intake", name = "enabled", havingValue = "true")
 public class AnalysisIntakeKafkaConfiguration {

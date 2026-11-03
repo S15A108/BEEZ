@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     )
 
     gms_key: SecretStr | None = None
+    gms_chat_endpoint: str = (
+        "https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions"
+    )
     ai_internal_token: SecretStr | None = None
     validation_response_format: Literal["json_object", "json_schema"] = "json_object"
     gms_embedding_model: Literal["text-embedding-3-small"] = "text-embedding-3-small"

@@ -1,6 +1,7 @@
 package com.beez.backend.impactanalysis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -214,6 +215,22 @@ class ImpactAnalysisCoordinatorTest {
         assertThat(outcome.status()).isEqualTo(ImpactAnalysisCoordinator.Status.STALE);
         assertThat(outcome.aiEnvelope()).isNull();
         assertThat(outcome.usageStatus()).isEqualTo(ImpactAnalysisCoordinator.UsageStatus.REPORTED);
+    }
+
+    @Test
+    void accessRevokedDuringApprovalAnalysisStillThrowsTheOriginalException() {
+        var snapshot = snapshot();
+        var query = mock(ImpactContextQuery.class);
+        var ai = mock(AiClient.class);
+        var caller = CallerContext.human(4L);
+        when(query.load(caller, 1, 71)).thenReturn(snapshot);
+        when(ai.changeImpact(any())).thenReturn(Map.of("result", Map.of("candidates", List.of(),
+                "evidence_status", "SUFFICIENT"), "usage", List.of(Map.of("request_key", "call-1"))));
+        var denied = new ApiException(HttpStatus.FORBIDDEN, "forbidden", "access revoked");
+        doThrow(denied).when(query).requireUnchanged(caller, snapshot);
+
+        assertThatThrownBy(() -> new ImpactAnalysisCoordinator(query, ai).analyze(caller, 1, 71, "req"))
+                .isSameAs(denied);
     }
 
     @Test

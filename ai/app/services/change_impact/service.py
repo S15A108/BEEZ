@@ -33,6 +33,11 @@ the possible effect using the supplied evidence. Verification data and
 validation_id are optional: their absence alone is not insufficient evidence.
 Compare the approved design, proposed change, and supplied task plan when they
 provide enough detail; do not assume facts that are missing from the input.
+When analysis_timing is POST_PUBLICATION and approved_items_baseline is
+BEFORE_PUBLICATION, approved items are historical evidence approved at the
+previous baseline, not necessarily the current versions. Compare those prior
+versions with the supplied published changes. Never describe them as currently
+approved or treat candidates as instructions to change state.
 Candidates must identify a possible effect or a specific uncertainty that needs
 review. Do not return an item merely to say that it has no functional impact.
 When the supplied evidence is sufficient and shows no impact to any provided

@@ -181,7 +181,7 @@ public class ImpactRunService {
         if (!projects.lockActiveProject(project)) throw AccessErrors.notFound("impact_project_missing");
     }
 
-    private static Map<String,Object> generation(Map<String,Object> envelope,List<?> usage) {
+    static Map<String,Object> generation(Map<String,Object> envelope,List<?> usage) {
         var value=new LinkedHashMap<String,Object>();
         value.put("origin",envelope.getOrDefault("origin","MODEL"));
         if (envelope.get("model")!=null) value.put("model",envelope.get("model"));

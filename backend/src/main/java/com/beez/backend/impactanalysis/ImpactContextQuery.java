@@ -90,11 +90,21 @@ public class ImpactContextQuery {
     /** A REPEATABLE READ snapshot prevents mixing data from multiple database revisions. */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, noRollbackFor = ApiException.class)
     public Snapshot load(CallerContext caller, long projectId, long proposalId) {
+        return loadInternal(caller, projectId, proposalId, null);
+    }
+
+    /** A publication is evaluated against its own current baseline, never a later one. */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, noRollbackFor = ApiException.class)
+    public Snapshot loadPublished(CallerContext caller, long projectId, long proposalId, long publishedBaseline) {
+        return loadInternal(caller, projectId, proposalId, publishedBaseline);
+    }
+
+    private Snapshot loadInternal(CallerContext caller, long projectId, long proposalId, Long publishedBaseline) {
         access.requireMember(caller, projectId);
         // Analyze the immutable submitted revision, never the mutable item projection.
         // Legacy V10 hashes use PostgreSQL jsonb::text; new #195 snapshots use DesignJson.
         StoredProposal stored = jdbc.sql("""
-                select c.id, c.project_id, c.base_baseline_id, c.lock_version, c.status, c.updated_at,
+                select c.id, c.project_id, c.base_baseline_id, c.published_baseline_id, c.lock_version, c.status, c.updated_at,
                        c.revision_no, p.current_baseline_id, r.base_baseline_id as revision_baseline_id,
                        r.snapshot_hash, cast(r.snapshot as text) as snapshot,
                        'sha256:' || encode(sha256(convert_to(r.snapshot::text,'UTF8')),'hex') as legacy_hash
@@ -106,8 +116,13 @@ public class ImpactContextQuery {
                 .query((rs, row) -> {
                     Long currentBaseline = nullableLong(rs, "current_baseline_id");
                     long baseBaseline = rs.getLong("base_baseline_id");
-                    if (currentBaseline == null || currentBaseline != baseBaseline) {
+                    Long expected = publishedBaseline == null ? baseBaseline : publishedBaseline;
+                    if (currentBaseline == null || !currentBaseline.equals(expected)) {
                         throw new ApiException(HttpStatus.CONFLICT, "baseline_changed", "변경 제안의 기준 설계를 다시 확인해야 합니다");
+                    }
+                    if (publishedBaseline != null && (!"PUBLISHED".equals(rs.getString("status"))
+                            || !publishedBaseline.equals(nullableLong(rs, "published_baseline_id")))) {
+                        throw invalidSnapshot();
                     }
                     String raw = rs.getString("snapshot"), storedHash = rs.getString("snapshot_hash");
                     Long revisionBaseline = nullableLong(rs, "revision_baseline_id");
@@ -132,7 +147,7 @@ public class ImpactContextQuery {
                     return new StoredProposal(proposal, revision);
                 }).optional().orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "변경 제안을 찾을 수 없습니다"));
         Proposal proposal = stored.proposal();
-        if (!Set.of("PROPOSED", "IN_REVIEW").contains(proposal.status())) {
+        if (publishedBaseline == null && !Set.of("PROPOSED", "IN_REVIEW").contains(proposal.status())) {
             throw new ApiException(HttpStatus.CONFLICT, "proposal_not_analyzable", "검토 중인 변경 제안이 아닙니다");
         }
         var submitted = stored.revision().input().items();
@@ -173,11 +188,13 @@ public class ImpactContextQuery {
 
         Set<Long> changedIds = new LinkedHashSet<>();
         changes.stream().map(Change::itemId).filter(id -> id != null).forEach(changedIds::add);
-        var relationSnapshot = dependencies.load(caller, projectId, proposal.baselineId(), changedIds);
+        long analysisBaseline = publishedBaseline == null ? proposal.baselineId() : publishedBaseline;
+        var relationSnapshot = dependencies.load(caller, projectId, analysisBaseline, changedIds);
         if (documentChanges && changedIds.isEmpty()) {
             // Document-only proposals have no design item to evaluate. Mixed proposals continue below so that
             // rule impacts of the design items stay available; the AI call itself is skipped by the coordinator.
-            return new Snapshot(proposal, changes, List.of(), List.of(), List.of(), RuleCandidateStatus.CONNECTED,
+            return new Snapshot(proposal, changes, List.of(), List.of(), List.of(),
+                    publishedBaseline == null ? RuleCandidateStatus.CONNECTED : RuleCandidateStatus.NOT_CONNECTED,
                     new ImpactKeywordSearch.Coverage(ImpactKeywordSearch.Status.NO_USABLE_TERMS, 0, false, false, false),
                     relationSnapshot.relationSetRevision(), true);
         }
@@ -191,16 +208,19 @@ public class ImpactContextQuery {
 
         // Known graph relations are authoritative candidates. Keyword matches are separate,
         // bounded search inputs to the AI and must never create or confirm graph edges.
-        List<ApprovedItem> graphApproved = loadApproved(projectId, proposal.baselineId(), relatedItemIds);
+        // AI-A03 compares against the old, formerly approved baseline. Superseded versions
+        // remain historical evidence; never silently substitute the just-published version.
+        boolean historical = publishedBaseline != null;
+        List<ApprovedItem> graphApproved = loadApproved(projectId, proposal.baselineId(), relatedItemIds, historical);
         if (graphApproved.size() != relatedItemIds.size()) {
             throw new ApiException(HttpStatus.CONFLICT, "baseline_inconsistent", "승인 설계 항목을 확인할 수 없습니다");
         }
         ImpactKeywordSearch.Terms terms = ImpactKeywordSearch.terms(proposal.reason(), changes, graphApproved);
-        List<Long> designMatches = searchDesignIds(projectId, proposal.baselineId(), relatedItemIds, terms);
+        List<Long> designMatches = searchDesignIds(projectId, proposal.baselineId(), relatedItemIds, terms, historical);
         boolean designsTruncated = designMatches.size() > ImpactKeywordSearch.MAX_RESULTS;
         List<Long> selectedDesigns = designMatches.subList(0, Math.min(designMatches.size(), ImpactKeywordSearch.MAX_RESULTS));
         List<ApprovedItem> approved = new java.util.ArrayList<>(graphApproved);
-        approved.addAll(loadApproved(projectId, proposal.baselineId(), new LinkedHashSet<>(selectedDesigns)));
+        approved.addAll(loadApproved(projectId, proposal.baselineId(), new LinkedHashSet<>(selectedDesigns), historical));
 
         List<Long> taskMatches = searchTaskIds(projectId, relatedItemIds, selectedDesigns, terms);
         boolean tasksTruncated = taskMatches.size() > ImpactKeywordSearch.MAX_RESULTS;
@@ -255,7 +275,10 @@ public class ImpactContextQuery {
 
         // #197 computes explicit impacts from the same immutable snapshot.
         return new Snapshot(proposal, changes, approved, relevantDependencies, taskReferences,
-                RuleCandidateStatus.CONNECTED, searchCoverage, relationSnapshot.relationSetRevision(), documentChanges);
+                // Publication marks touched confirmed edges NEEDS_RECHECK. The current relation query
+                // alone cannot reconstruct the complete pre-publication graph; never claim full coverage.
+                publishedBaseline == null ? RuleCandidateStatus.CONNECTED : RuleCandidateStatus.NOT_CONNECTED,
+                searchCoverage, relationSnapshot.relationSetRevision(), documentChanges);
     }
 
     /**
@@ -271,7 +294,15 @@ public class ImpactContextQuery {
         }
     }
 
-    private List<ApprovedItem> loadApproved(long projectId, long baselineId, Set<Long> ids) {
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, noRollbackFor = ApiException.class)
+    public void requirePublishedUnchanged(CallerContext caller, Snapshot previous, long publishedBaseline) {
+        Snapshot current = loadInternal(caller, previous.proposal().projectId(), previous.proposal().id(), publishedBaseline);
+        if (!ImpactFingerprint.of(previous).equals(ImpactFingerprint.of(current))) {
+            throw new ApiException(HttpStatus.CONFLICT, "analysis_input_changed", "분석 중 입력이 변경되어 재분석이 필요합니다");
+        }
+    }
+
+    private List<ApprovedItem> loadApproved(long projectId, long baselineId, Set<Long> ids, boolean historical) {
         if (ids.isEmpty()) return List.of();
         return jdbc.sql("""
                 select di.id as item_id, di.key, di.kind, v.id as version_id, v.version_no, v.schema_version, v.title,
@@ -284,19 +315,20 @@ public class ImpactContextQuery {
                   left join baseline_document bd on bd.project_id = bi.project_id and bd.baseline_id = bi.baseline_id
                                                  and bd.document_version_id = v.source_document_version_id
                   left join document_version dv on dv.id = bd.document_version_id and dv.document_id = bd.document_id
-                                               and dv.status = 'APPROVED'
+                                               and (dv.status = 'APPROVED' or (:historical and dv.status = 'SUPERSEDED'))
                  where bi.project_id = :project and bi.baseline_id = :baseline and di.id in (:items)
-                   and v.status = 'APPROVED'
+                   and (v.status = 'APPROVED' or (:historical and v.status = 'SUPERSEDED'))
                  order by di.id
                 """)
-                .param("project", projectId).param("baseline", baselineId).param("items", ids)
+                .param("project", projectId).param("baseline", baselineId).param("items", ids).param("historical", historical)
                 .query((rs, row) -> new ApprovedItem(rs.getLong("item_id"), rs.getLong("version_id"),
                         rs.getString("key"), rs.getString("kind"), rs.getInt("version_no"), rs.getInt("schema_version"), rs.getString("title"),
                         rs.getString("content"), nullableLong(rs, "document_id"), nullableLong(rs, "document_version_id"),
                         nullableInt(rs, "document_version_no"), rs.getString("source_locator"))).list();
     }
 
-    private List<Long> searchDesignIds(long projectId, long baselineId, Set<Long> excluded, ImpactKeywordSearch.Terms terms) {
+    private List<Long> searchDesignIds(long projectId, long baselineId, Set<Long> excluded, ImpactKeywordSearch.Terms terms,
+                                       boolean historical) {
         if (terms.status() != ImpactKeywordSearch.Status.SEARCHED) return List.of();
         String predicate = ImpactKeywordSearch.predicate("concat_ws(' ', v.title, cast(v.content as text))", terms.values().size());
         String sql = """
@@ -304,11 +336,12 @@ public class ImpactContextQuery {
                   from baseline_item bi
                   join design_item di on di.id = bi.design_item_id and di.project_id = bi.project_id
                   join design_item_version v on v.id = bi.design_item_version_id and v.design_item_id = di.id
-                 where bi.project_id = :project and bi.baseline_id = :baseline and v.status = 'APPROVED'
+                 where bi.project_id = :project and bi.baseline_id = :baseline
+                   and (v.status = 'APPROVED' or (:historical and v.status = 'SUPERSEDED'))
                    and di.id not in (:excluded) and
                 """ + predicate + " order by di.id limit :limit";
         var statement = jdbc.sql(sql).param("project", projectId).param("baseline", baselineId)
-                .param("excluded", excluded.isEmpty() ? Set.of(-1L) : excluded)
+                .param("excluded", excluded.isEmpty() ? Set.of(-1L) : excluded).param("historical", historical)
                 .param("limit", ImpactKeywordSearch.MAX_RESULTS + 1);
         for (int i = 0; i < terms.values().size(); i++) statement = statement.param("term" + i, terms.values().get(i));
         return statement.query(Long.class).list();
