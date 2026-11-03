@@ -322,6 +322,7 @@ export function DocumentReview({
                       비비 제안을 반영한 최종본이에요. 팀장이 보게 될 화면과
                       같아요.
                     </p>
+                    <ReviewNotes review={stage.review} />
                     {editing ? (
                       <ActionForm
                         fields={[
@@ -500,6 +501,37 @@ export function DocumentReview({
   )
 }
 
+const unavailableText = (review: DocumentBeeReview) =>
+  `승인본이 없어 비교하지 못한 문서: ${review.unavailable_references.map(statusLabel).join(', ')}`
+
+// 처리할 수정 제안이 없으면 최종본 단계로 바로 넘어가므로, 그 단계에서도 비비 의견(COMMENT)과
+// 비교하지 못한 문서를 읽기 전용으로 보여 준다. 의견만 온 검토도 여기서 보인다(PR #89 리뷰).
+function ReviewNotes({ review }: { review: DocumentBeeReview }) {
+  const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
+  if (!comments.length && !review.unavailable_references.length) return null
+  return (
+    <div className="grid gap-1.5 rounded-xl border p-3 text-sm">
+      {comments.length > 0 && (
+        <>
+          <strong>비비 의견 {comments.length}개</strong>
+          <ol aria-label="비비 의견" className="grid gap-1">
+            {comments.map((comment, index) => (
+              <li key={comment.id}>
+                의견 {index + 1} · {comment.explanation}
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+      {review.unavailable_references.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {unavailableText(review)}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Suggestions({
   review,
   owner,
@@ -522,8 +554,7 @@ function Suggestions({
         <p className="mt-1 leading-6">{review.summary}</p>
         {review.unavailable_references.length > 0 && (
           <p className="mt-1 text-xs text-muted-foreground">
-            승인본이 없어 비교하지 못한 문서:{' '}
-            {review.unavailable_references.map(statusLabel).join(', ')}
+            {unavailableText(review)}
           </p>
         )}
         {review.steps.length > 0 && (
