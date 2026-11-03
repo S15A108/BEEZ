@@ -1275,8 +1275,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                         className="rounded-lg border px-3 py-2"
                                       >
                                         {taskKey(entry.task_id)} ·{' '}
-                                        {nameOfMember(entry.member_id)} ·{' '}
-                                        {itemKey(entry.design_item_id)}
+                                        {entry.member_id
+                                          ? nameOfMember(entry.member_id)
+                                          : '미배정'}{' '}
+                                        · {itemKey(entry.design_item_id)}
                                         {entry.validation_id &&
                                           ' · 관련 검증 있음'}
                                       </p>

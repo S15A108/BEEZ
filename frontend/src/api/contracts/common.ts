@@ -515,7 +515,8 @@ export type ChangeComment = z.infer<typeof changeCommentSchema>
 
 export const explicitImpactSchema = z.object({
   task_id: idSchema,
-  member_id: idSchema,
+  // 담당자가 없는 작업이면 서버가 생략한다(00-common ExplicitImpact).
+  member_id: idSchema.optional(),
   design_item_id: idSchema,
   validation_id: idSchema.optional(),
 })

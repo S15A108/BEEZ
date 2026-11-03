@@ -620,6 +620,19 @@ it('근거 부족·오래됨·재분석 중 상태도 오류 없이 상태별 �
   expect(await screen.findByText(/이전 분석이 오래됐어요/)).toBeInTheDocument()
 })
 
+it('영향받는 작업에 담당자가 없으면 미배정으로 보여 준다', async () => {
+  const user = userEvent.setup()
+  const done = await changesApi.impact('101', '71')
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...done,
+    explicit: [{ task_id: '501', design_item_id: '211' }],
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(await screen.findByText(/미배정/)).toBeInTheDocument()
+  expect(screen.queryByText(/담당자 확인 필요/)).not.toBeInTheDocument()
+})
+
 it('사유를 남긴 예외 승인은 승인 이력과 발행 안내에 사유를 보여 준다', async () => {
   const user = userEvent.setup()
   const detail = (await changesApi.get('101', '71')).proposal
