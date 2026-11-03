@@ -860,9 +860,17 @@ DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 질문 ID |
+| `number` | `integer` | N | 목록 안의 순번(1부터 이어짐). 조회 조건이 같으면 같은 순서이며 재분석으로 질문이 바뀌면 달라질 수 있다. 목록(PLN-A03) 응답에만 있다. S15P31A108-232 |
 | `question` | `string` | Y | 보완 질문 |
-| `source` | [Source](00-common.md#schema-source) | N | 출처 |
-| `answer` | `string` | N | 답변 |
+| `kind` | `MISSING_CANDIDATE\|CLARIFICATION\|CONFLICT` | N | 누락 후보 / 모호 / 충돌. 예전 질문은 있음. S15P31A108-232 |
+| `question_type` | `CHOICE\|SHORT_ANSWER\|ESSAY` | N | 선택·단답·서술. AI가 만든 질문에만 있다. S15P31A108-232 |
+| `answer_format` | `object` | N | 질문 유형별 답변 형식(선택지·`multiple`·`allow_other`·`max_length`). 133 계약 §6. S15P31A108-232 |
+| `status` | `OPEN\|ANSWERED\|DISMISSED` | N | 답변 상태. `SUPERSEDED`(재분석으로 대체됨)는 목록에 내지 않는다. S15P31A108-232 |
+| `evidence_status` | `REVIEW_CANDIDATE\|UNVERIFIED` | N | `UNVERIFIED`면 화면에 "근거 미확인"으로 구분한다. S15P31A108-232 |
+| `summary` | `string` | N | 무엇이 비었거나 모호한지. S15P31A108-232 |
+| `source` | [Source](00-common.md#schema-source) | N | 출처(첫 근거의 위치) |
+| `answer` | `string` | N | 답변. 선택형은 선택한 항목과 기타 입력을 `, `로 이은 표시 문장 |
+| `answer_payload` | `object` | N | 구조 답변 `{type, text}` 또는 `{type:"CHOICE", selected[], other_text?}`. 설계 초안 생성이 선택지를 복원하는 데 쓴다. S15P31A108-232 |
 | `answered_by` | `ID` | N | 답변 계정 |
 | `answered_at` | `Time` | N | 답변 시각 |
 

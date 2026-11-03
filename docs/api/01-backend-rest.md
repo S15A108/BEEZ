@@ -4139,6 +4139,8 @@ HTTP `200`.
 
 2026-10-27 원문 RAG 구현: status는 전체 실행 상태다. source_status/index_status(PENDING/RUNNING/READY/FAILED), attempt, message를 추가한다. COMPLETED는 청킹·임베딩·청크/manifest 원자적 게시 완료다. 자동 추출은 후속이므로 items/questions는 []이며 미도입 EXTRACTION을 대기/실패로 표시하지 않는다. SOURCE 성공 뒤 임베딩 실패는 READY/FAILED로 구분한다. 진행 문구는 ‘분석 중입니다.’다. 아래 자동 추출 예시는 후속 기능이며 현재 원문 RAG 완료 조건과 구분한다.
 
+2026-11-03 (S15P31A108-232): 응답에 `question_generation`(`status` PENDING/RUNNING/COMPLETED/FAILED, 실패 시 `error_code`·`retryable`)을 더한다. 보완 질문 생성은 분석이 COMPLETED가 된 뒤의 별도 단계라 이 값이 FAILED여도 위 `status`는 COMPLETED다. 질문 목록은 PLN-A03으로 조회하고 이 응답의 `questions`는 계속 []다. PLN-A02는 분석이 COMPLETED이고 질문 생성만 FAILED일 때 질문 생성만 다시 대기시킨다(202, 같은 응답 모양).
+
 ### GET `/api/projects/{id}/documents/{document_id}/analysis`
 
 문서 분석 상태·결과 조회 기능을 제공한다.
@@ -4365,7 +4367,7 @@ HTTP `202`.
 
 관련 요구사항: PLN-05  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-232). 질문은 문서 분석이 끝난 뒤 BE가 AI(133 `/v1/planning-questions`)를 자동으로 불러 만든다. 실제 모델 평가는 AI 쪽에서 가짜 공급자까지만 했다.
 
 #### 인증
 
@@ -4401,27 +4403,36 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `items` | [PlanningQuestion[]](00-common.md#schema-planningquestion) | Y | 조회된 항목 |
+| `items` | [PlanningQuestion[]](00-common.md#schema-planningquestion) | Y | 조회된 항목. 항목마다 `number`(1부터 이어지는 순번) |
+| `total_count` | `integer` | Y | 조회 조건(`document_version_id`)에 맞는 전체 질문 수. 화면이 질문 수로 페이지를 나눌 때 쓴다 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
-| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환 |
+| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환. 앞 페이지의 마지막 `number` |
 
 ```json
 {
   "items": [
     {
       "id": "61",
+      "number": 1,
       "question": "프로젝트 삭제 권한은 팀장만 가지나요?",
+      "kind": "MISSING_CANDIDATE",
+      "question_type": "CHOICE",
+      "answer_format": {"type": "CHOICE", "options": ["팀장만", "팀원도"], "multiple": false, "allow_other": true},
+      "status": "ANSWERED",
+      "evidence_status": "REVIEW_CANDIDATE",
       "source": {
         "document_id": "201",
         "document_version_id": "211",
         "version_no": 1,
         "location": "3. 계정 관리 / ACC-02"
       },
-      "answer": "팀장만 삭제할 수 있습니다.",
+      "answer": "팀장만",
+      "answer_payload": {"type": "CHOICE", "selected": ["팀장만"]},
       "answered_by": "11",
       "answered_at": "2026-10-23T03:00:00Z"
     }
   ],
+  "total_count": 1,
   "has_more": false
 }
 ```
@@ -4445,6 +4456,9 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- `number`는 필터가 적용된 목록 안의 순번(문서 버전, `rank`, `id` 순)이다. 같은 문서를 다시 분석하면 새 결과로 바뀌므로 질문 식별에는 `id`를 쓴다. `limit` 범위(1~100)와 `cursor` 형식이 틀리면 400 `validation_failed`다.
+- 목록에는 재분석으로 대체된 질문(`SUPERSEDED`)을 내지 않는다. 답변되거나 닫은 질문은 재분석해도 문구·답변이 바뀌지 않고 남는다. 새 결과에 없는 미답변 질문만 목록에서 사라진다.
+- 질문 생성은 문서 분석(PLN-A01)이 `COMPLETED`가 된 뒤 BE가 자동으로 한 번 실행한다(기준 설계 발행 전만). 생성이 실패해도 분석 `status`는 그대로이고, PLN-A01 응답의 `question_generation`(`status`·`error_code`·`retryable`)에만 드러난다. PLN-A02가 질문 생성만 다시 대기시킨다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -4460,7 +4474,7 @@ HTTP `200`.
 
 관련 요구사항: PLN-05  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-232)
 
 #### 인증
 
@@ -4489,7 +4503,11 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `answer` | `string` | Y | 답변 |
+| `answer` | `string` | 조건부 | 문장 답변. 선택형 질문은 선택지와 정확히 같은 문장이면 선택으로, 아니면 기타 입력으로 본다(기타를 받지 않는 질문은 400) |
+| `answer_payload` | `object` | 조건부 | 구조 답변 `{type, text}` 또는 `{type:"CHOICE", selected[], other_text?}`. 있으면 `answer`보다 우선하고 표시 문장은 서버가 만든다 |
+| `status` | `DISMISSED` | N | 질문을 답변 없이 닫는다. 이때 답변은 함께 보내지 않으며 이전 답변은 지워진다 |
+
+`answer`·`answer_payload` 중 하나, 또는 `status=DISMISSED`가 필요하다. 답은 질문의 `answer_format`을 따라야 한다(선택지 부분집합, `multiple`, `allow_other`, 길이 상한).
 
 ```json
 {
@@ -4535,6 +4553,7 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `design_already_published` | 이미 발행된 초안 |
+| 409 | `question_superseded` | 문서가 다시 분석되어 대체된 질문. 목록을 새로 불러온다 |
 
 ```json
 {
@@ -4548,6 +4567,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 팀장이 답변을 저장한다. 답변 자체가 승인 설계 변경은 아니다.
+- 화면은 질문 하나에 답하고 "다음"을 누를 때마다 이 API로 저장한다. 서버에 저장된 답이 곧 임시 저장이며, 같은 질문에 다시 보내면 덮어쓴다. 임시 저장 전용 상태나 일괄 제출 API는 없다. 마지막 질문을 저장한 뒤 PLN-A05를 호출한다.
 - 초안 재생성은 PLN-A05, 발행은 PLN-A10을 사용한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -4564,7 +4584,7 @@ HTTP `200`.
 
 관련 요구사항: PLN-06  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-232). AI(134 `/v1/design-drafts`)는 병합됐고 실제 모델 평가는 AI 쪽에서 가짜 공급자까지만 했다. 생성 결과는 **후보**로 보존하고 팀장이 채택할 때만 설계 항목 DRAFT가 된다(아래 PLN-A05 후보 API).
 
 #### 인증
 
@@ -4614,6 +4634,7 @@ HTTP `202`.
 | --- | --- | --- | --- |
 | `status` | `PENDING` | Y | 접수 상태 |
 | `document_version_ids` | `ID[]` | Y | 대상 원본 |
+| `jobs` | `{id, document_version_id}[]` | Y | 문서 버전마다 만들어진 생성 작업. 결과는 `GET /design-drafts`로 조회 |
 
 ```json
 {
@@ -4623,6 +4644,9 @@ HTTP `202`.
     "212",
     "213",
     "214"
+  ],
+  "jobs": [
+    {"id": "71", "document_version_id": "211"}
   ]
 }
 ```
@@ -4636,6 +4660,9 @@ HTTP `202`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `analysis_not_completed` | 선행 분석 미완료 |
+| 409 | `baseline_exists` | 이미 기준 설계가 발행됨. 이후 변경은 변경 제안 |
+| 409 | `draft_in_progress` | 같은 문서 버전의 생성 작업이 아직 진행 중 |
+| 409 | `idempotency_conflict` | 같은 `Idempotency-Key`로 다른 본문 |
 
 ```json
 {
@@ -4648,8 +4675,36 @@ HTTP `202`.
 
 #### 처리 규칙
 
-- 선택한 원문·보완 답변으로 DRAFT 항목을 생성한다.
-- 장시간 생성 결과는 PLN-A06으로 조회한다. 별도 job 상태 보관과 기존 초안 보존은 Q07이다.
+- 최초 기준 설계 발행 **전**에만 쓴다. 문서 버전마다 생성 작업(`design_draft_job`)을 만들고 AI를 버전마다 한 번씩 부른다. 접수 때 문서 원문·질문(답변 포함)·그 문서에서 나온 현재 설계 항목(항목당 한 버전: 사람이 고친 DRAFT가 있으면 그 본문)을 스냅샷으로 보존한다.
+- 순서는 권한 → 입력 스냅샷 저장 → 트랜잭션 밖 AI 호출 → 결과 검증·저장이다. 접수 응답은 AI 호출을 기다리지 않는다.
+- AI 결과는 설계 항목이 아니라 **생성 후보**로 저장한다. 후보를 만드는 것만으로는 `design_item`·`design_item_version`이 하나도 바뀌지 않아, PLN-A07~A09로 만든 수동 초안은 재생성으로 덮이지 않는다.
+- 응답이 요청한 문서 버전·텍스트 해시와 다르거나, 항목·변경 목록이 짝이 아니거나, 변경 전 본문이 보낸 본문과 다르거나, 답변 참조가 보낸 답변 질문이 아니거나, 설계 본문 규칙을 어기면 작업 전체를 실패(`invalid_ai_output`)로 둔다. 일부만 저장하지 않는다.
+- 실패 시 작업은 `FAILED`(`error_code`·`retryable`)로 남기고 기존 설계 항목·후보는 바꾸지 않는다. 모델 호출 뒤 실패면 실제 사용량(`BEE_DRAFT`)을, 응답을 못 받았으면 토큰 수 미확인 한 줄을 기록한다. 실패한 문서는 같은 본문을 새 `Idempotency-Key`로 다시 보내 만든다.
+- 생성 중 기준 설계가 발행되면 작업은 `baseline_exists`(재시도 불가)로 실패한다.
+
+#### 생성 작업·후보 조회
+
+`GET /api/projects/{id}/design-drafts?document_version_id=` — `MEMBER`. 최근 작업 20건과 완료된 작업의 후보를 돌려준다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `jobs[].id`, `document_version_id`, `status`(`PENDING\|RUNNING\|COMPLETED\|FAILED`), `error_code`·`retryable`(실패 시), `created_at`, `updated_at` | 작업 |
+| `jobs[].unresolved[]`, `unanswered_question_keys[]`, `untouched_existing_ids[]`, `omitted_items` | AI가 남긴 결과 전체 정보 |
+| `jobs[].candidates[]` | `id`, `candidate_key`, `change`(`CREATE\|UPDATE`), `kind`, `status`(`PENDING\|ADOPTED\|DISCARDED`), `base_design_item_version_id`·`base_status`·`before`(UPDATE), `after`, `changed_fields[]`, `conflicting_fields[]`, `sources[]`, `answer_refs[]`, `support`(`DOCUMENT\|ANSWER\|DOCUMENT_AND_ANSWER\|NONE`), `rationale`, `adopted_design_item_version_id` |
+
+`before`는 후보를 만든 당시의 기준 본문 그대로이며 이후 바뀌지 않는다(DB 트리거로 후보 본문·근거 변경을 막는다).
+
+#### 후보 채택
+
+`POST /api/projects/{id}/design-draft-candidates/{candidate_id}/adopt` — `LEADER`(사람). 본문(선택): `{"confirm_no_evidence": boolean, "resolved_fields": string[]}`.
+
+- CREATE는 새 설계 항목과 v1 DRAFT(`origin=AI_PROPOSED`, `source_document_version_id`=요청 문서 버전, `source_locator`=첫 근거 위치)를 만든다. UPDATE는 대상 DRAFT의 본문을 후보의 `after`로 바꾼다(출처·`origin`은 그대로).
+- `support=NONE`은 `confirm_no_evidence=true`로 근거 없음을 확인해야 채택한다. `conflicting_fields`가 있으면 모두 `resolved_fields`에 담아 사용자가 확정해야 한다. 아니면 400 `validation_failed`.
+- 반영 직전 프로젝트 잠금 뒤 후보를 만든 당시와 지금이 같은지 확인한다: 기준 설계 없음(아니면 409 `baseline_exists`), 원문 분석 텍스트 해시 동일, 쓰인 답변(`answer_refs`)의 구조 답변 동일, UPDATE는 대상 DRAFT가 그대로이고 본문 해시가 후보의 `before`와 같음. 하나라도 다르면 **그 후보만** 409 `candidate_stale`로 막고 초안을 다시 만들도록 안내한다. 사람이 고친 본문은 그대로 남는다.
+- 같은 후보를 다시 채택하면 처음 결과를 그대로 돌려준다(후보 ID 기준 멱등, 중복 반영 없음). 폐기한 후보는 409 `candidate_discarded`. 응답은 후보와 `design_item_version_id`.
+- 다른 프로젝트의 후보는 404 `not_found`, 팀장이 아니면 403.
+
+`POST /api/projects/{id}/design-draft-candidates/{candidate_id}/discard` — `LEADER`(사람). 후보를 폐기한다. 설계 항목에는 영향이 없다. 이미 폐기한 후보는 같은 결과, 채택한 후보는 409 `candidate_adopted`.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
