@@ -392,13 +392,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
 
   return (
     <section className="space-y-4">
-      {/* 설명 문구는 캔버스 PNL-04-v2-changes(v461 이후)처럼 두지 않고, 제안하러 가는 버튼만 업무 창 머리 줄에 둔다. */}
-      <PaneHeaderAction>
-        <Button variant="outline" onClick={() => openPane('documents')}>
-          <FolderOpen />
-          공용 문서함에서 제안하기
-        </Button>
-      </PaneHeaderAction>
+      {/* 설명 문구는 캔버스 PNL-04-v2-changes(v461 이후)처럼 두지 않고, 제안하러 가는 버튼만 업무 창 머리 줄에 둔다.
+          새 제안·승인·반려·이력 화면에서는 숨긴다. 누르면 창이 바뀌어 쓰던 내용을 잃는다(PR #88 리뷰). */}
+      {mode.kind === 'detail' && (
+        <PaneHeaderAction>
+          <Button variant="outline" onClick={() => openPane('documents')}>
+            <FolderOpen />
+            공용 문서함에서 제안하기
+          </Button>
+        </PaneHeaderAction>
+      )}
       {baseline.error && (
         <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           아직 기준 설계가 없어요. 첫 기준을 발행한 뒤 변경을 제안할 수 있어요.

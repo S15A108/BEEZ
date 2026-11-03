@@ -704,3 +704,26 @@ it('승인 요청의 사유는 승인 이력에 남고 공백뿐인 사유는 �
     '직접 확인함',
   )
 })
+
+// PR #88 리뷰: '공용 문서함에서 제안하기'는 창을 바꾸므로, 새 제안·승인·반려·이력 화면에서는 숨겨 쓰던 내용을 지킨다.
+it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 숨기고, 상세로 돌아오면 다시 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  expect(
+    screen.getByRole('button', { name: '공용 문서함에서 제안하기' }),
+  ).toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(
+    screen.getByRole('heading', { name: '기준 v2 발행을 승인할까요?' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '공용 문서함에서 제안하기' }),
+  ).toBeNull()
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  expect(
+    await screen.findByRole('button', { name: '공용 문서함에서 제안하기' }),
+  ).toBeInTheDocument()
+})
