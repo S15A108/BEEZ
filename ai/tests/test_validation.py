@@ -151,14 +151,18 @@ async def test_one_call_has_check_coverage_and_attempt_usage_key():
     assert provider.calls[0].max_attempts == 1
 
 
-
 @pytest.mark.asyncio
 async def test_context_packet_constraints_are_sent_as_untrusted_context():
     body = fixture_request()
     body["context_packet_constraints"] = ["접근 로그를 기록한다"]
     provider = Provider(result_for(body))
-    await analyze(ValidateRequest.model_validate(body), LLMClient(provider), "test-model")
-    assert json.loads(provider.calls[0].messages[1].content)["context_packet_constraints"] == body["context_packet_constraints"]
+    await analyze(
+        ValidateRequest.model_validate(body), LLMClient(provider), "test-model"
+    )
+    assert (
+        json.loads(provider.calls[0].messages[1].content)["context_packet_constraints"]
+        == body["context_packet_constraints"]
+    )
     assert "untrusted contextual data" in provider.calls[0].messages[0].content
 
 
@@ -247,7 +251,9 @@ def test_completion_delta_rejects_unrelated_design_or_mismatched_evidence(case):
     body["approved_items"].append(other)
     other_evidence = copy.deepcopy(body["evidence"][0])
     other_evidence.update(
-        evidence_id="evidence-other", design_item_version_id="312", source=other["source"]
+        evidence_id="evidence-other",
+        design_item_version_id="312",
+        source=other["source"],
     )
     body["evidence"].append(other_evidence)
     body["checks"][-1]["design_item_version_ids"] = ["311", "312"]
