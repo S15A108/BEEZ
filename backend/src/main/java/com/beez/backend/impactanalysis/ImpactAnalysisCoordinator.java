@@ -170,7 +170,7 @@ public class ImpactAnalysisCoordinator {
     }
 
     /** Treat the internal AI response as untrusted and enforce the same request-bound identifiers. */
-    private static boolean candidatesBelongToRequest(List<?> candidates, Map<String, Object> request) {
+    static boolean candidatesBelongToRequest(List<?> candidates, Map<String, Object> request) {
         if (!(request.get("approved_items") instanceof List<?> items)
                 || !(request.get("open_tasks") instanceof List<?> tasks)) return false;
         for (Object candidate : candidates) {
