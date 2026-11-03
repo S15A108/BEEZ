@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     impact_max_body_bytes: str = "262144"
     impact_max_items_per_list: str = "100"
 
+    # Provisional #133 transport is disabled until explicitly configured. The
+    # model call reuses gms_key and bee_default_model; limits are parsed per
+    # feature so a bad value here cannot disable other routes.
+    planning_questions_enabled: bool = False
+    planning_questions_max_body_bytes: str = "2097152"
+    planning_questions_llm_timeout_seconds: str = "30"
+    planning_questions_llm_output_token_limit: str = "2048"
+    planning_questions_llm_output_token_parameter: str = "max_completion_tokens"
+
 
 @lru_cache
 def get_settings() -> Settings:
