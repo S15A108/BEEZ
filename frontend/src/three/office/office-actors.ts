@@ -7,7 +7,7 @@ import { officeWorkZone } from './office-layout'
 import { RECEPTIONIST } from './social'
 
 // 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D24).
-// 회원 캐릭터 로봇(member-robot)은 avatar를 모르는 팀원의 기본 로봇(robot)과 다른 모양이다.
+// 회원 캐릭터 로봇(member-robot)은 팀원의 AI 에이전트(agent)와 다른 모양이다.
 export function avatarAppearance(avatar?: string): OfficeAppearance {
   const key = avatar ? characterOf(avatar).key : 'human'
   return key === 'robot' ? 'member-robot' : key
@@ -63,16 +63,20 @@ export function officeActors(
       floor: 1,
       color: agent.color,
       status: agent.status,
-      // 팀원 목록에 avatar가 오면 그 모양, 없으면 지금처럼 사람은 사람·에이전트는 로봇(명세 요청 MEM-A01 avatar).
+      // 팀원의 AI 에이전트(hired_by = 주인)는 하늘색 로봇이다(D27). 팀원은 avatar가 오면 그 모양, 없으면 기본 로봇
+      // (명세 요청 MEM-A01 avatar).
       appearance:
         agent.kind === 'lead'
           ? 'bibi'
-          : agent.avatar
-            ? avatarAppearance(agent.avatar)
-            : agent.kind === 'human'
-              ? 'human'
-              : 'robot',
-      stationary: agent.kind === 'human',
+          : agent.hired_by
+            ? 'agent'
+            : agent.avatar
+              ? avatarAppearance(agent.avatar)
+              : agent.kind === 'human'
+                ? 'human'
+                : 'robot',
+      // 연결이 끊긴 에이전트는 자리에서 고개를 떨군 채 있는다.
+      stationary: agent.kind === 'human' || agent.status === 'offline',
     })
   }
   return result

@@ -47,6 +47,7 @@ export function officeSceneAgents(agents: readonly SceneAgent[]): Agent[] {
       home_zone: home,
       zone: agent.zone ?? home,
       status: agent.status?.toLowerCase() ?? 'idle',
+      hired_by: agent.owner ?? null,
     }
   })
 }

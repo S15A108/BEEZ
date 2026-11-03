@@ -9,6 +9,7 @@ import { WindowCityView } from './window-city-view'
 import type { OfficeLifeActivity } from './office-life'
 import { cloneKenney, loadKenney } from '../kenney'
 import { buildBee, buildRobot, disposeFigure } from './memberFigures'
+import { buildAgent, type AgentStatus } from './agentFigure'
 import {
   officeFurnitureKey,
   type OfficeWorkHit,
@@ -62,6 +63,8 @@ export interface OfficeEntity3D {
 
 interface Robot {
   appearance: OfficeAppearance
+  /** 모양을 다시 만들어야 하는지 비교하는 값(에이전트는 주인 색·상태까지) */
+  look: string
   root: THREE.Group
   body: THREE.Group
   head: THREE.Object3D
@@ -79,15 +82,27 @@ interface Robot {
 }
 
 const TILE = 32
-// 사무실 캐릭터 모양(D24). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440)와 같은 블록 캐릭터이고,
-// robot은 avatar를 모르는 팀원·에이전트의 기본 모양, bibi는 AI 팀장이다(둘 다 직접 만든 모양).
+const AGENT_STATUSES: readonly string[] = [
+  'online',
+  'working',
+  'idle',
+  'offline',
+]
+const agentStatusOf = (status?: string) =>
+  (AGENT_STATUSES.includes(status ?? '') ? status : 'online') as AgentStatus
+// 사무실 캐릭터 모양(D24, D27). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440), robot은 avatar를 모르는 팀원
+// (회원 로봇 모양으로 그린다), agent는 팀원의 AI 에이전트(하늘색 포인트 흰 로봇), bibi는 AI 팀장이다(캔버스 SCR-06-rec-office-chars).
 export type OfficeAppearance =
-  'human' | 'member-robot' | 'bee' | 'robot' | 'bibi'
-type FigureAppearance = 'human' | 'member-robot' | 'bee'
-// 사람은 Kenney Mini Characters 모델(CC0), 로봇·벌은 보드 그림을 만든 캔버스 모델(memberFigures)이다.
+  'human' | 'member-robot' | 'bee' | 'robot' | 'agent' | 'bibi'
+// 사람은 Kenney Mini Characters 모델(CC0), 로봇·벌은 보드 그림을 만든 캔버스 모델(memberFigures), 에이전트는 agentFigure,
+// 비비는 GLB 파일 하나다. 비비 GLB는 파일만 바꾸면 다른 모델로 바뀐다(앞 = +z, 발바닥 y = 0이면 된다).
 const PERSON_MODEL = '/models/kenney/characters/character-female-d.glb'
-// 보드처럼 셋을 같은 키로 맞춘다. 1.5타일이면 가장 넓은 사람도 폭이 약 1타일이라 개인 거리 34px(약 1.06타일)에서 겹치지 않는다.
+const BIBI_MODEL = '/models/bibi.glb'
+// 보드처럼 팀원 셋을 같은 키로 맞춘다. 1.5타일이면 가장 넓은 사람도 폭이 약 1타일이라 개인 거리 34px(약 1.06타일)에서 겹치지 않는다.
 const FIGURE_HEIGHT = 1.5
+// 캔버스에서 팀원은 1.7 m, 에이전트는 안테나 끝까지 1.74 m(모델 단위 m), 비비는 1.35 m다(v478). 팀원 1.5타일을 1.7 m로 본다.
+const METER = FIGURE_HEIGHT / 1.7
+const BIBI_HEIGHT = 1.35 * METER
 // 보드 그림의 사람 팔 각도. 모델의 기본 자세는 팔을 옆으로 편 T자다.
 const PERSON_ARMS = 1.15
 // 직접 만든 로봇이 앉을 때의 엉덩이 높이. 블록 캐릭터는 다리가 짧아 같은 의자 높이까지 올려 앉힌다.
@@ -153,7 +168,7 @@ export class OfficeRenderer3D {
   private readonly people = new THREE.Group()
   private readonly robots = new Map<string, Robot>()
   private readonly memberFigures = new Map<
-    'member-robot' | 'bee',
+    string,
     { figure: THREE.Group; height: number }
   >()
   private readonly furnitureObjects: THREE.Group[] = []
@@ -2412,7 +2427,13 @@ export class OfficeRenderer3D {
 
   // 블록 캐릭터(회원 설정 캐릭터). 사람 모델은 받는 동안 바닥 그림자만 보이고, 받은 뒤 붙는다. 팔·다리·머리를 기존
   // 걸음·앉기 자세가 그대로 돌린다. 팔꿈치·무릎은 없어 그 자세는 빈 관절이 받는다.
-  private figure(id: string, appearance: FigureAppearance): Robot {
+  private figure(
+    id: string,
+    appearance: OfficeAppearance,
+    look: string,
+    color: string,
+    status: AgentStatus,
+  ): Robot {
     const root = new THREE.Group()
     const body = new THREE.Group()
     root.add(body)
@@ -2440,6 +2461,7 @@ export class OfficeRenderer3D {
     root.add(ring)
     const robot: Robot = {
       appearance,
+      look,
       root,
       body,
       head: new THREE.Object3D(),
@@ -2457,14 +2479,15 @@ export class OfficeRenderer3D {
       object.userData.entityId = id
     })
     this.robots.set(id, robot)
-    const attach = (figure: THREE.Object3D, height: number) => {
-      const scale = FIGURE_HEIGHT / height
+    const attach = (figure: THREE.Object3D, scale: number) => {
       figure.scale.setScalar(scale)
       const part = (name: string) =>
         figure.getObjectByName(name) ?? new THREE.Object3D()
       // 0번은 화면 기준 왼쪽(x 음수, 캐릭터의 오른쪽)이다. 직접 만든 몸과 같은 순서라 같은 자세 코드를 쓴다.
       robot.arms = [part('arm-right'), part('arm-left')]
+      robot.elbows = [part('elbow-right'), part('elbow-left')]
       robot.legs = [part('leg-right'), part('leg-left')]
+      robot.knees = [part('knee-right'), part('knee-left')]
       if (appearance === 'human') robot.head = part('head')
       robot.seatOffset = ROBOT_HIP - part('leg-left').position.y * scale
       figure.traverse((object) => {
@@ -2473,309 +2496,49 @@ export class OfficeRenderer3D {
       })
       body.add(figure)
     }
-    if (appearance !== 'human') {
-      const template = this.memberFigure(appearance)
-      attach(template.figure.clone(), template.height)
+    if (
+      appearance === 'member-robot' ||
+      appearance === 'robot' ||
+      appearance === 'bee'
+    ) {
+      const template = this.memberFigure(
+        appearance === 'bee' ? 'bee' : 'member-robot',
+        () => (appearance === 'bee' ? buildBee() : buildRobot()),
+      )
+      attach(template.figure.clone(), FIGURE_HEIGHT / template.height)
       return robot
     }
-    void loadKenney(PERSON_MODEL)
+    if (appearance === 'agent') {
+      const template = this.memberFigure(look, () => buildAgent(color, status))
+      attach(template.figure.clone(), METER)
+      return robot
+    }
+    // 사람(Kenney)과 비비(GLB)는 받는 동안 바닥 그림자만 보이고, 받은 뒤 붙는다.
+    const bibi = appearance === 'bibi'
+    void loadKenney(bibi ? BIBI_MODEL : PERSON_MODEL)
       .then((model) => {
         if (this.robots.get(id) !== robot) return
         const figure = cloneKenney(model)
         figure.getObjectByName('arm-right')?.rotation.set(0, 0, PERSON_ARMS)
         figure.getObjectByName('arm-left')?.rotation.set(0, 0, -PERSON_ARMS)
-        attach(figure, model.size.y)
+        attach(figure, (bibi ? BIBI_HEIGHT : FIGURE_HEIGHT) / model.size.y)
       })
       .catch(() => undefined)
     return robot
   }
 
-  // 로봇·벌 모델은 한 번 만들어 두고 캐릭터마다 복제한다(복제본은 geometry·material을 나눠 쓰고, dispose에서 한 번 정리한다).
-  private memberFigure(appearance: 'member-robot' | 'bee') {
-    let template = this.memberFigures.get(appearance)
+  // 로봇·벌·에이전트 모델은 한 번 만들어 두고 캐릭터마다 복제한다(복제본은 geometry·material을 나눠 쓰고, dispose에서 한 번 정리한다).
+  private memberFigure(key: string, build: () => THREE.Group) {
+    let template = this.memberFigures.get(key)
     if (!template) {
-      const figure = appearance === 'bee' ? buildBee() : buildRobot()
+      const figure = build()
       const size = new THREE.Box3()
         .setFromObject(figure)
         .getSize(new THREE.Vector3())
       template = { figure, height: size.y }
-      this.memberFigures.set(appearance, template)
+      this.memberFigures.set(key, template)
     }
     return template
-  }
-
-  private robot(
-    id: string,
-    color: string,
-    appearance: OfficeAppearance = 'robot',
-  ): Robot {
-    // 회원 설정 캐릭터는 보드와 같은 블록 캐릭터로 그린다(D24).
-    if (
-      appearance === 'human' ||
-      appearance === 'member-robot' ||
-      appearance === 'bee'
-    )
-      return this.figure(id, appearance)
-    const bibi = appearance === 'bibi'
-    const robotShell = bibi ? '#ffd24a' : C.shell
-    const root = new THREE.Group()
-    const body = new THREE.Group()
-    root.add(body)
-    this.people.add(root)
-    this.contact(root, 0, 0, 1.6, 1.25, 0.9)
-    const head = new THREE.Group()
-    head.position.set(0, 1.8, 0)
-    body.add(head)
-    const shell = this.sphere(body, 0, 0.95, 0, 0.36, 0.46, 0.3, robotShell)
-    shell.rotation.x = -0.05
-    this.sphere(
-      body,
-      0,
-      1.03,
-      0.265,
-      0.2,
-      0.21,
-      0.055,
-      bibi ? '#f2bd32' : '#e5e3e0',
-    )
-    const badge = this.sphere(body, 0, 1.05, 0.325, 0.06, 0.06, 0.018, color)
-    this.cylinder(
-      body,
-      0,
-      1.39,
-      0,
-      0.14,
-      0.14,
-      0.18,
-      bibi ? '#d5ad42' : '#908a7c',
-    )
-    this.sphere(head, 0, 0, 0, 0.55, 0.51, 0.49, robotShell)
-    this.sphere(head, 0, -0.035, 0.386, 0.435, 0.332, 0.172, '#2c2a24')
-    // The curved honey eyes and smile stay crisp at small orthographic sizes.
-    for (const side of [-1, 1]) {
-      this.sphere(
-        head,
-        side * 0.17,
-        0.005,
-        0.548,
-        0.055,
-        0.088,
-        0.018,
-        '#ffd24a',
-      )
-      this.sphere(
-        head,
-        side * 0.18,
-        0.035,
-        0.555,
-        0.025,
-        0.033,
-        0.008,
-        '#fff6d6',
-      )
-      this.sphere(
-        head,
-        side * 0.285,
-        -0.14,
-        0.52,
-        0.05,
-        0.022,
-        0.009,
-        '#6b5414',
-      )
-      const ear = this.cylinder(
-        head,
-        side * 0.535,
-        -0.02,
-        -0.015,
-        0.18,
-        0.18,
-        0.1,
-        bibi ? robotShell : '#ececda',
-      )
-      ear.rotation.z = Math.PI / 2
-      const inner = this.cylinder(
-        head,
-        side * 0.591,
-        -0.02,
-        -0.015,
-        0.107,
-        0.107,
-        0.012,
-        bibi ? '#d5ad42' : '#d0cec8',
-      )
-      inner.rotation.z = Math.PI / 2
-    }
-    const curve = new THREE.QuadraticBezierCurve3(
-      new THREE.Vector3(-0.12, -0.13, 0.552),
-      new THREE.Vector3(0, -0.235, 0.571),
-      new THREE.Vector3(0.12, -0.13, 0.552),
-    )
-    const smile = new THREE.Mesh(
-      this.geometry(
-        'smile',
-        () => new THREE.TubeGeometry(curve, 14, 0.017, 6, false),
-      ),
-      this.material('#f5b800', 0.3),
-    )
-    head.add(smile)
-    this.box(
-      head,
-      0,
-      0.16,
-      -0.469,
-      0.22,
-      0.035,
-      0.025,
-      bibi ? '#e4b632' : '#dad8d4',
-      0.01,
-    )
-    if (bibi) {
-      // Bibi's yellow exterior and team-lead badge distinguish the whole character.
-      this.cylinder(body, 0, 1.38, 0, 0.19, 0.19, 0.08, '#d5ad42')
-      for (const side of [-1, 1])
-        this.box(
-          body,
-          side * 0.35,
-          1.23,
-          0.05,
-          0.16,
-          0.085,
-          0.26,
-          '#d5ad42',
-          0.025,
-        )
-      this.box(body, 0, 1.08, 0.325, 0.18, 0.23, 0.035, '#344b58', 0.035)
-      this.box(
-        body,
-        0,
-        1.1,
-        0.35,
-        0.1,
-        0.1,
-        0.018,
-        '#e9c65e',
-        0.015,
-      ).rotation.z = Math.PI / 4
-    }
-    const arms: THREE.Group[] = [],
-      elbows: THREE.Group[] = [],
-      legs: THREE.Group[] = [],
-      knees: THREE.Group[] = []
-    for (const side of [-1, 1]) {
-      const arm = new THREE.Group()
-      arm.position.set(side * 0.365, 1.2, 0)
-      arm.rotation.z = side * 0.075
-      body.add(arm)
-      const upper = 0.27,
-        lower = 0.23
-      this.sphere(
-        arm,
-        0,
-        -0.015,
-        0,
-        0.095,
-        0.095,
-        0.09,
-        bibi ? '#e4b632' : '#bbb8b0',
-      )
-      this.box(arm, 0, -upper / 2, 0, 0.15, upper, 0.17, robotShell, 0.06)
-      const elbow = new THREE.Group()
-      elbow.position.y = -upper
-      arm.add(elbow)
-      this.sphere(
-        elbow,
-        0,
-        0,
-        0,
-        0.075,
-        0.075,
-        0.075,
-        bibi ? '#e4b632' : '#aba79d',
-      )
-      this.box(elbow, 0, -lower / 2, 0, 0.135, lower, 0.155, robotShell, 0.05)
-      this.sphere(
-        elbow,
-        0,
-        -lower - 0.055,
-        0.012,
-        0.078,
-        0.09,
-        0.075,
-        bibi ? robotShell : '#e6e5e2',
-      )
-      arms.push(arm)
-      elbows.push(elbow)
-      const leg = new THREE.Group()
-      leg.position.set(side * 0.17, 0.59, 0)
-      body.add(leg)
-      const thigh = 0.24,
-        shin = 0.19
-      this.box(leg, 0, -thigh / 2, 0, 0.195, thigh, 0.23, robotShell, 0.055)
-      const knee = new THREE.Group()
-      knee.position.y = -thigh
-      leg.add(knee)
-      this.sphere(
-        knee,
-        0,
-        0,
-        0,
-        0.08,
-        0.075,
-        0.085,
-        bibi ? '#e4b632' : '#b8b4ab',
-      )
-      this.box(knee, 0, -shin / 2, 0, 0.18, shin, 0.21, robotShell, 0.04)
-      this.box(
-        knee,
-        0,
-        -shin - 0.045,
-        0.055,
-        0.24,
-        0.14,
-        0.34,
-        bibi ? robotShell : '#e4e2df',
-        0.05,
-      )
-      legs.push(leg)
-      knees.push(knee)
-    }
-    const ringMaterial = this.material('selection-ring')
-    ringMaterial.color.set('#f5b800')
-    ringMaterial.emissive.set('#6b5414')
-    ringMaterial.emissiveIntensity = 0.24
-    ringMaterial.transparent = true
-    ringMaterial.opacity = 0.95
-    const ring = new THREE.Mesh(
-      this.geometry(
-        `selection-ring/${appearance}`,
-        () => new THREE.RingGeometry(0.67, 0.73, 56),
-      ),
-      ringMaterial,
-    )
-    ring.rotation.x = -Math.PI / 2
-    ring.position.y = 0.04
-    root.add(ring)
-    root.traverse((object) => {
-      object.userData.entityId = id
-    })
-    const robot = {
-      appearance,
-      root,
-      body,
-      head,
-      arms,
-      elbows,
-      legs,
-      knees,
-      ring,
-      badge,
-      phase: 0,
-      lastX: NaN,
-      lastY: NaN,
-    }
-    this.robots.set(id, robot)
-    return robot
   }
 
   private animateFlips(time: number) {
@@ -3075,14 +2838,17 @@ export class OfficeRenderer3D {
       present.add(entity.id)
       const look = entity.look as { top?: string } | undefined
       const color = entity.color || look?.top || '#a09b90'
-      const appearance = entity.appearance ?? 'robot'
+      const appearance = entity.appearance ?? 'agent'
+      const status = agentStatusOf(entity.status)
+      const shape =
+        appearance === 'agent' ? `agent|${color}|${status}` : appearance
       let robot = this.robots.get(entity.id)
-      if (robot && robot.appearance !== appearance) {
+      if (robot && robot.look !== shape) {
         this.people.remove(robot.root)
         this.robots.delete(entity.id)
         robot = undefined
       }
-      robot ??= this.robot(entity.id, color, appearance)
+      robot ??= this.figure(entity.id, appearance, shape, color, status)
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&

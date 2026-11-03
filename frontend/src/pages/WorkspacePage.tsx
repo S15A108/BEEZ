@@ -100,8 +100,31 @@ function Workspace({ projectId }: { projectId: string }) {
         avatar: member.avatar,
         status: 'idle',
       })),
+      // 팀원의 AI 에이전트: HUD 팀 목록처럼 연결된 에이전트와 아직 연결하지 않은 내 에이전트(D27). 상태는 연결 여부와
+      // 주인의 진행 중 작업으로 정한다(에이전트 활동 API가 없어 '대기'는 쓰지 않는다).
+      ...(query.data?.members.items ?? [])
+        .filter(
+          (member) =>
+            member.agent_connected || member.account_id === session.data?.id,
+        )
+        .map((member) => ({
+          id: `agent:${member.id}`,
+          name: `${member.name}의 에이전트`,
+          kind: 'agent' as const,
+          owner: member.id,
+          color: member.color ?? '#8ca9a0',
+          status: !member.agent_connected
+            ? 'offline'
+            : query.data?.tasks.items.some(
+                  (task) =>
+                    task.assignee_member_id === member.id &&
+                    task.status === 'IN_PROGRESS',
+                )
+              ? 'working'
+              : 'online',
+        })),
     ],
-    [query.data?.members, session.data?.id],
+    [query.data?.members, query.data?.tasks, session.data?.id],
   )
   const sceneTasks = useMemo<SceneTask[]>(
     () =>
