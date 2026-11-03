@@ -84,4 +84,14 @@ public class AiClient {
     public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {
         return rest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
     }
+
+    /**
+     * AI-A06 기획·문서 수정 초안 생성 ({@code POST /v1/bee/draft}). 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다.
+     * 읽기 시간 제한은 다른 호출과 같은 {@code ai.read-timeout} 이다. 문서 한 건을 다시 쓰는 호출은 더 걸릴 수 있어
+     * 기능별 시간 제한이 필요한지 137 실측 뒤에 정한다 (S15P31A108-233 계획 §0.5 A~C).
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> beeDraft(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/bee/draft").body(input).retrieve().body(java.util.Map.class);
+    }
 }

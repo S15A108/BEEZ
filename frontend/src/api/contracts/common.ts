@@ -1055,6 +1055,9 @@ export const usageBucketSchema = z.object({
   output_tokens: z.number().int(),
   call_count: z.number().int(),
   estimated_cost_amount: costAmountSchema,
+  // 토큰·비용이 합계에 들어가지 못한 호출 수(BE -169). 0보다 크면 합계는 일부만 센 값이다.
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
 })
 export type UsageBucket = z.infer<typeof usageBucketSchema>
 
@@ -1066,6 +1069,8 @@ export const usageSummarySchema = z.object({
   call_count: z.number().int(),
   estimated_cost_amount: costAmountSchema,
   currency: currencySchema,
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
   by_feature: usageBucketSchema.array(),
   by_task: usageBucketSchema.array(),
   by_validation: usageBucketSchema.array(),
