@@ -474,6 +474,40 @@ it('팀장도 본인이 올린 제안을 거둔다', async () => {
 })
 
 // 사용자 요청(11-02): 업무 창 목록의 선택 표시는 작업 목록과 같은 노란 테두리·바탕으로 통일한다.
+it('최신순은 처음 올린 순서를 지켜 발행된 제안이 맨 위로 올라오지 않는다', async () => {
+  const list = changesApi.list
+  // 서버는 제안 ID 내림차순으로 준다. 먼저 올린 71이 나중에 발행되어 updated_at이 더 늦다.
+  vi.spyOn(changesApi, 'list').mockImplementation(async (...args) => {
+    const page = await list(...args)
+    const first = page.items[0]
+    return {
+      ...page,
+      items: [
+        {
+          ...first,
+          id: '72',
+          key: 'CP-72',
+          title: '나중에 올린 제안',
+          status: 'PROPOSED',
+          updated_at: '2026-10-20T00:00:00Z',
+        },
+        {
+          ...first,
+          title: '먼저 올리고 방금 발행한 제안',
+          status: 'PUBLISHED',
+          updated_at: '2026-11-03T00:00:00Z',
+        },
+      ],
+    }
+  })
+  renderPanel()
+  const later = await screen.findByText('나중에 올린 제안')
+  const earlier = screen.getByText('먼저 올리고 방금 발행한 제안')
+  expect(
+    later.compareDocumentPosition(earlier) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+})
+
 it('고른 제안은 작업 목록과 같은 노란 선택 표시로 보인다', async () => {
   renderPanel()
   await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })

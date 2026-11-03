@@ -273,18 +273,19 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     ? impact.data.explicit.length + impact.data.candidates.length
     : 0
   const commentList = comments.data?.pages.flatMap((page) => page.items) ?? []
-  const visible = entries
-    .filter((entry) => {
-      const query = search.trim()
-      if (!query) return true
-      // 목록은 본문 없는 요약(PR #46)이라 제목과 제안 키로 거른다. 서버 검색(q)은 195 미구현.
-      return entry.title.includes(query) || entry.key.includes(query)
-    })
-    .toSorted((a, b) =>
-      sort === 'status'
-        ? statusOrder[a.status] - statusOrder[b.status]
-        : b.updated_at.localeCompare(a.updated_at),
-    )
+  const found = entries.filter((entry) => {
+    const query = search.trim()
+    if (!query) return true
+    // 목록은 본문 없는 요약(PR #46)이라 제목과 제안 키로 거른다. 서버 검색(q)은 195 미구현.
+    return entry.title.includes(query) || entry.key.includes(query)
+  })
+  // 최신순은 서버 순서(제안 ID 내림차순 = 처음 올린 순서)를 그대로 쓴다. updated_at으로 다시
+  // 정렬하면 승인·발행·반려 때마다 그 제안이 맨 위로 올라온다(사용자 요청 2026-11-03).
+  // 상태순도 같은 상태 안에서는 이 순서를 지킨다(안정 정렬).
+  const visible =
+    sort === 'status'
+      ? found.toSorted((a, b) => statusOrder[a.status] - statusOrder[b.status])
+      : found
   const select = (id: string) => {
     setSelected({ id, focus: focusId })
     setTab('overview')
