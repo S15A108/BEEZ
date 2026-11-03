@@ -13,13 +13,16 @@ describe('프로젝트 부지 배치', () => {
       { id: '103', lot: 0, design: 'wood' },
     ])
   })
-  it('다른 계정의 배치를 섞지 않고 아홉 번째 프로젝트도 목록에서 보존한다', () => {
+  // 원형 도시 12칸(D26)에 맞춰 부지 상한을 8에서 12로 바꾸며 기대값을 고쳤다(사용자 승인 2026-11-03).
+  it('다른 계정의 배치를 섞지 않고, 부지 12칸을 넘는 열세 번째 프로젝트도 부지 없이 목록에서 보존한다', () => {
     const result = projectPlacements(
-      Array.from({ length: 9 }, (_, index) => String(index + 1)),
+      Array.from({ length: 13 }, (_, index) => String(index + 1)),
       '22',
       { '11:1': { lot: 7, design: 'tower' } },
     )
     expect(result[0]).toEqual({ id: '1', lot: 0, design: 'modern' })
-    expect(result[8]).toEqual({ id: '9', lot: null, design: 'modern' })
+    expect(result[8]).toEqual({ id: '9', lot: 8, design: 'modern' })
+    expect(result[11]).toEqual({ id: '12', lot: 11, design: 'modern' })
+    expect(result[12]).toEqual({ id: '13', lot: null, design: 'modern' })
   })
 })

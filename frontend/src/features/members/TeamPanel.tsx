@@ -579,7 +579,7 @@ export function TeamPanel({
                       }),
                     '프로젝트 정보를 저장했어요.',
                   )
-                  // 도시 부지 8칸 밖(9번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                  // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
                   if (typeof lot === 'number')
                     placeProject(accountId, projectId, { lot, design })
                   await queryClient.invalidateQueries({
