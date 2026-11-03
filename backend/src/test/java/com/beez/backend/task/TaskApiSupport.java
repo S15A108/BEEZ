@@ -166,6 +166,10 @@ public class TaskApiSupport {
         return as(accountId).post(path, json);
     }
 
+    public HttpResponse<String> postWithHeaders(String path, String json, Long accountId, String... headers) {
+        return as(accountId).post(path, json, headers);
+    }
+
     public HttpResponse<String> patch(String path, String json, Long accountId) {
         return as(accountId).patch(path, json);
     }

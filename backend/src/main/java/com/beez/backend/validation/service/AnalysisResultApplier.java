@@ -4,15 +4,20 @@ import com.beez.backend.task.entity.TaskPlanDesignRef;
 import com.beez.backend.task.entity.TaskPlanRevision;
 import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
-import com.beez.backend.task.service.DeltaCompletion;
 import com.beez.backend.task.service.ProjectDesignLookup;
+import com.beez.backend.task.service.DeltaCompletion;
+import com.beez.backend.task.repository.TaskCompletionReportRepository;
+import com.beez.backend.task.service.RelatedTaskCandidateFinder;
+import com.beez.backend.common.auth.CallerContext;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.beans.factory.annotation.Value;
 import com.beez.backend.task.service.ValidationStatusLookup;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.repository.ValidationRow;
-import java.time.Instant;
 import java.util.ArrayList;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -47,6 +52,10 @@ public class AnalysisResultApplier {
     private static final Set<String> REASONS = Set.of("EVIDENCE_INSUFFICIENT", "UNSUPPORTED_CONTENT");
     /** 필수 누락 후보. 명세상 BLOCKING 으로만 온다 — 아니면 필수 누락이 있는 계획이 PASS 될 수 있어 계약 위반으로 본다 */
     private static final Set<String> BLOCKING_ONLY_KINDS = Set.of("MISSING_INPUT", "MISSING_POLICY");
+    private static final java.util.regex.Pattern EXPLICIT_UNDECIDED_POLICY = java.util.regex.Pattern.compile(
+            "^[ \\t]*(?:[-*][ \\t]*)?[^\\r\\n:：]{0,80}(?:정책|policy)[ \\t]*[:：][ \\t]*"
+            + "(?:미정|미결정|미확정|결정되지[ \\t]*않음|정해지지[ \\t]*않음|undecided|not[ \\t]+decided|to[ \\t]+be[ \\t]+determined|tbd)[ \\t]*[.!]?[ \\t]*$",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE | java.util.regex.Pattern.MULTILINE);
 
     private final ValidationRepository validations;
     private final ValidationResponses responses;
@@ -54,21 +63,244 @@ public class AnalysisResultApplier {
     private final ValidationRules rules;
     private final TaskPlanRevisionRepository revisions;
     private final TaskPlanDesignRefRepository designRefs;
+    private final ValidationInputAssembler assembler;
+    private final RelatedTaskCandidateFinder relatedTasks;
+    private final JdbcClient jdbc;
+    private final boolean fakeAnalyzerEnabled;
     private final DeltaCompletion deltaCompletion;
+    private final TaskCompletionReportRepository reports;
     private final ValidationStatusLookup statusLookup;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
                                  TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
-                                 DeltaCompletion deltaCompletion, ValidationStatusLookup statusLookup) {
+                                 ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks, JdbcClient jdbc,
+                                 @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
+                                 DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports,
+                                 ValidationStatusLookup statusLookup) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
         this.rules = rules;
         this.revisions = revisions;
         this.designRefs = designRefs;
+        this.assembler = assembler;
+        this.relatedTasks = relatedTasks;
+        this.jdbc = jdbc;
+        this.fakeAnalyzerEnabled = fakeAnalyzerEnabled;
         this.deltaCompletion = deltaCompletion;
+        this.reports = reports;
         this.statusLookup = statusLookup;
+    }
+
+    /** An incomplete search cannot establish PASS, even when the model was never called. */
+    @Transactional
+    public void applyInputIncomplete(JobLease lease, String message, long durationMs) {
+        Optional<Current> active = current(lease, Mode.RESULT, Map.of(), durationMs);
+        if (active.isEmpty()) return;
+        fail(lease, active.get().validation(), active.get().runId(), "ai_evidence_insufficient", "ERROR", message,
+                "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", null, durationMs, Map.of());
+    }
+
+    /** Recheck searched inputs under the project lock before applying model output. */
+    @Transactional
+    public void applySearchSuccess(JobLease lease, Map<String, Object> request, Map<String, Object> response,
+                                   long durationMs, CallerContext caller, ValidationInputAssembler.Result input) {
+        Map<String, Object> diag = response == null ? Map.of()
+                : diagnostics(response, String.valueOf(map(response.get("result")).get("analysis_status")));
+        Optional<Current> active = current(lease, Mode.RESULT, diag, durationMs);
+        if (active.isEmpty()) return;
+        ValidationRow v = active.get().validation();
+        if (!searchInputsCurrent(v, request, caller, input)) {
+            String model = response != null && response.get("model") instanceof String m ? m : null;
+            validations.finishRun(active.get().runId(), "DISCARDED", "검색 입력이 바뀐 뒤 도착한 결과", model,
+                    durationMs, diag.get("usage"));
+            validations.markStale(v.id(), "INPUT_CHANGED", usageOf(diag));
+            validations.finishJob(lease.jobId(), "CANCELLED");
+            return;
+        }
+        Map<String, Object> result = response == null ? Map.of() : map(response.get("result"));
+        if (contractViolation(request, response) == null && !successfulModelUsage(request, response)) {
+            String model = response.get("model") instanceof String m ? m : null;
+            fail(lease, v, active.get().runId(), "ai_invalid_output", "ERROR", "모델 호출 사용량이 올바르지 않습니다",
+                    "RETRY", "모델 호출 정보를 확인한 뒤 다시 검증해 주세요", model, durationMs, diag);
+            return;
+        }
+        if (contractViolation(request, response) == null
+                && (!findingsMatchChecks(request, result) || !missingPoliciesSupported(request, result))) {
+            String model = response.get("model") instanceof String m ? m : null;
+            fail(lease, v, active.get().runId(), "ai_invalid_output", "ERROR", "검사 범위와 결과 근거가 일치하지 않습니다",
+                    "RETRY", "근거를 확인한 뒤 다시 검증해 주세요", model, durationMs, diag);
+            return;
+        }
+        RuleOutcome currentRules = reevaluateRules(v);
+        boolean ruleDecided = "NEEDS_REVIEW".equals(currentRules.decidedStatus())
+                || "NEEDS_INPUT".equals(currentRules.decidedStatus());
+        if (!ruleDecided && contractViolation(request, response) == null && "COMPLETE".equals(result.get("analysis_status"))
+                && objects(result.get("findings")).stream().noneMatch(f -> "BLOCKING".equals(f.get("severity")))
+                && needsHumanCoverageReview(request)) {
+            String model = response.get("model") instanceof String m ? m : null;
+            fail(lease, v, active.get().runId(), "ai_evidence_insufficient", "ERROR", "미해결 질문 또는 설계 구조에 추가 확인이 필요합니다",
+                    "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", model, durationMs, diag);
+            return;
+        }
+        applySuccess(lease, request, response, durationMs, input.baselineId());
+    }
+
+    private boolean successfulModelUsage(Map<String, Object> request, Map<String, Object> response) {
+        List<Map<String, Object>> entries = objects(response.get("usage"));
+        String model = String.valueOf(response.get("model"));
+        if (fakeAnalyzerEnabled && FakeValidationAnalyzer.MODEL.equals(model) && entries.isEmpty()) return true;
+        if (entries.isEmpty()) return false;
+        String prefix = "llm-validate-" + request.get("validation_id") + "-attempt-" + request.get("attempt") + "-call-";
+        Set<String> keys = new HashSet<>();
+        boolean succeeded = false;
+        for (var entry : entries) {
+            if (!(entry.get("request_key") instanceof String key) || !key.startsWith(prefix)
+                    || !key.substring(prefix.length()).matches("[1-9][0-9]*") || !keys.add(key)
+                    || !"TASK_VALIDATION".equals(entry.get("feature"))
+                    || !(entry.get("model") instanceof String entryModel) || entryModel.isBlank()
+                    || !(entry.get("failed") instanceof Boolean failed)) return false;
+            if (!failed && model.equals(entryModel)) succeeded = true;
+        }
+        return succeeded;
+    }
+
+    private boolean findingsMatchChecks(Map<String, Object> request, Map<String, Object> result) {
+        Map<String, Map<String, Object>> checks = new LinkedHashMap<>(), evidence = new LinkedHashMap<>(), plans = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> items = new LinkedHashMap<>();
+        for (var check : objects(request.get("checks"))) checks.put(String.valueOf(check.get("key")), check);
+        for (var entry : objects(request.get("evidence"))) evidence.put(String.valueOf(entry.get("evidence_id")), entry);
+        for (var plan : objects(request.get("related_plans"))) plans.put(String.valueOf(plan.get("id")), plan);
+        for (var item : objects(request.get("approved_items"))) items.put(String.valueOf(item.get("id")), item);
+        for (var finding : objects(result.get("findings"))) {
+            var check = checks.get(String.valueOf(finding.get("check_key")));
+            if (check == null) return false;
+            List<String> versions = strings(check.get("design_item_version_ids"));
+            List<String> relatedPlans = strings(check.get("related_plan_revision_ids"));
+            Object version = finding.get("design_item_version_id"), task = finding.get("related_task_id");
+            if (version != null && !versions.contains(String.valueOf(version))) return false;
+            if (task != null && relatedPlans.stream().noneMatch(key -> plans.containsKey(key)
+                    && String.valueOf(task).equals(String.valueOf(plans.get(key).get("task_id"))))) return false;
+            Set<String> allowed = new HashSet<>();
+            // A check can cover multiple versions (e.g. completion-delta). Once a
+            // finding identifies one version, its citations must belong to that version.
+            List<String> citedVersions = version == null ? versions : List.of(String.valueOf(version));
+            boolean documentContextAllowed = version == null && "plan-completeness".equals(check.get("key"))
+                    && "PLAN_COMPLETENESS".equals(check.get("kind"));
+            for (String key : citedVersions) {
+                var item = items.get(key);
+                if (item != null && item.get("source") instanceof Map<?, ?>) allowed.add(sourceKey(map(item.get("source"))));
+            }
+            for (var entry : evidence.values()) {
+                if ((citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))
+                        || (documentContextAllowed && entry.get("design_item_version_id") == null))
+                        && entry.get("source") instanceof Map<?, ?>) allowed.add(sourceKey(map(entry.get("source"))));
+            }
+            for (var source : objects(finding.get("sources"))) if (!allowed.contains(sourceKey(source))) return false;
+            for (String evidenceId : strings(finding.get("evidence_ids"))) {
+                var entry = evidence.get(evidenceId);
+                if (entry == null || !(citedVersions.contains(String.valueOf(entry.get("design_item_version_id")))
+                        || (documentContextAllowed && entry.get("design_item_version_id") == null))) return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean needsHumanCoverageReview(Map<String, Object> request) {
+        Map<String, Object> plan = map(map(request.get("plan_revision")).get("plan"));
+        if (request.get("unresolved") instanceof List<?> unresolved && !unresolved.isEmpty()) return true;
+        Set<String> referenced = new HashSet<>();
+        for (var ref : objects(plan.get("design_refs"))) referenced.add(String.valueOf(ref.get("design_item_id")));
+        for (var item : objects(request.get("approved_items"))) {
+            if (referenced.contains(String.valueOf(item.get("design_item_id"))) && "API_CONTRACT".equals(item.get("kind"))) {
+                Map<String, Object> content = map(item.get("content"));
+                if (!(content.get("request_fields") instanceof List<?>)
+                        || !(content.get("responses") instanceof List<?> responses) || responses.isEmpty()) return true;
+                for (Object response : responses) if (!(response instanceof Map<?, ?> m) || !(m.get("fields") instanceof List<?>)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean missingPoliciesSupported(Map<String, Object> request, Map<String, Object> result) {
+        Map<String, Map<String, Object>> evidence = new LinkedHashMap<>();
+        for (var entry : objects(request.get("evidence"))) evidence.put(String.valueOf(entry.get("evidence_id")), entry);
+        for (var finding : objects(result.get("findings"))) {
+            if (!"MISSING_POLICY".equals(finding.get("kind"))) continue;
+            boolean supported = false;
+            for (String evidenceId : strings(finding.get("evidence_ids"))) {
+                var entry = evidence.get(evidenceId);
+                if (entry != null && finding.get("design_item_version_id") != null
+                        && java.util.Objects.equals(entry.get("design_item_version_id"), finding.get("design_item_version_id"))
+                        && entry.get("text") instanceof String text && EXPLICIT_UNDECIDED_POLICY.matcher(text).find()) supported = true;
+            }
+            if (!supported) return false;
+        }
+        return true;
+    }
+
+    private boolean searchInputsCurrent(ValidationRow v, Map<String, Object> request, CallerContext caller,
+                                        ValidationInputAssembler.Result input) {
+        if (!input.searchComplete()) return false;
+        long analyzedBaseline = input.baselineId();
+        Long analyzedRevision = id(map(request.get("plan_revision")).get("id"));
+        if (analyzedRevision == null) return false;
+        if ("DELTA".equals(v.trigger())) {
+            Object accepted = responses.summary(v.summary()).get("completion_delta");
+            if (!(accepted instanceof List<?> delta) || delta.isEmpty() || !delta.equals(request.get("completion_delta"))) return false;
+            var report = reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(v.taskId(), v.planRevisionId());
+            if (report.isEmpty() || !delta.equals(report.get().getDelta())) return false;
+        }
+        if (jdbc.sql("select count(*) from project p join task t on t.project_id=p.id where p.id=:project and t.id=:task and p.current_baseline_id=:baseline and t.current_plan_revision_id=:revision")
+                .param("project", v.projectId()).param("task", v.taskId()).param("baseline", analyzedBaseline)
+                .param("revision", analyzedRevision).query(Long.class).single() != 1L) return false;
+        List<Map<String, Object>> items = objects(request.get("approved_items"));
+        List<Long> ids = new ArrayList<>(), versions = new ArrayList<>();
+        for (var item : items) {
+            Long id = id(item.get("design_item_id")), version = id(item.get("id"));
+            if (id == null || version == null) return false;
+            ids.add(id); versions.add(version);
+            if (jdbc.sql("select count(*) from baseline_item where baseline_id=:baseline and design_item_id=:item and design_item_version_id=:version")
+                    .param("baseline", analyzedBaseline).param("item", id).param("version", version).query(Long.class).single() != 1L) return false;
+        }
+        var currentRelated = relatedTasks.find(caller, v.projectId(), v.taskId(), analyzedRevision, ids, 20);
+        Map<Long, Long> related = new LinkedHashMap<>();
+        for (var candidate : currentRelated.candidates()) related.put(candidate.taskId(), candidate.planRevisionId());
+        if (currentRelated.truncated() || currentRelated.baselineId() != analyzedBaseline
+                || !related.equals(input.relatedPlanRevisions())) return false;
+        Set<Long> documentIds = new HashSet<>();
+        var documentEvidence = objects(request.get("evidence")).stream()
+                .filter(entry -> entry.get("design_item_version_id") == null).toList();
+        for (var entry : documentEvidence) {
+            Long document = id(map(entry.get("source")).get("document_version_id"));
+            if (document == null) return false;
+            documentIds.add(document);
+        }
+        if (!versions.isEmpty()) {
+            var rows = jdbc.sql("select id,source_document_version_id from design_item_version where id in (:ids) order by id for share")
+                    .param("ids", versions).query().listOfRows();
+            rows.stream().map(row -> id(row.get("source_document_version_id")))
+                    .filter(java.util.Objects::nonNull).forEach(documentIds::add);
+        }
+        if (!documentIds.isEmpty()) {
+            List<Long> documents = documentIds.stream().sorted().toList();
+            jdbc.sql("select document_version_id from document_processing where document_version_id in (:ids) order by document_version_id for share")
+                    .param("ids", documents).query().listOfRows();
+            jdbc.sql("select id from document_version where id in (:ids) order by id for share")
+                    .param("ids", documents).query().listOfRows();
+        }
+        var evidence = assembler.loadEvidence(v.projectId(), analyzedBaseline, items);
+        var designEvidence = objects(request.get("evidence")).stream()
+                .filter(entry -> entry.get("design_item_version_id") != null).toList();
+        if (!evidence.unavailableVersionIds().isEmpty() || !evidence.evidence().equals(designEvidence)
+                || (!documentEvidence.isEmpty()
+                        && !assembler.searchEvidenceCurrent(v.projectId(), analyzedBaseline, documentEvidence))) return false;
+        Object packet = map(map(request.get("plan_revision")).get("plan")).get("context_packet_id");
+        var context = assembler.loadContext(v.projectId(), v.taskId(), analyzedBaseline,
+                new HashSet<>(ids), packet == null ? null : packet.toString());
+        return context.unresolved().equals(request.get("unresolved"))
+                && (packet == null || context.constraints().equals(request.get("context_packet_constraints")));
     }
 
     /**
@@ -79,6 +311,11 @@ public class AnalysisResultApplier {
      */
     @Transactional
     public void applySuccess(JobLease lease, Map<String, Object> request, Map<String, Object> response, long durationMs) {
+        applySuccess(lease, request, response, durationMs, null);
+    }
+
+    private void applySuccess(JobLease lease, Map<String, Object> request, Map<String, Object> response,
+                              long durationMs, Long analyzedBaseline) {
         // 리스가 만료된 뒤 도착한 응답이면 반영하지 않고 만료로 닫는다. 그때도 모델을 부른 사용량은 진단 값으로 남긴다
         Map<String, Object> lateDiagnostics = Map.of();
         if (response != null) {
@@ -177,16 +414,30 @@ public class AnalysisResultApplier {
             status = "NEEDS_INPUT";
         }
         Map<String, Object> summary = responses.summary(v.summary());
+        // Keep the accepted baseline on the validation itself. The actual analyzed
+        // baseline may differ after an unrelated publication and remains auditable.
+        if (analyzedBaseline != null) {
+            summary.put("analysis_baseline_id", analyzedBaseline);
+            summary.put("analysis_input_snapshot_hash", request.get("input_snapshot_hash"));
+        }
         summary.put("analysis_status", "COMPLETE");
         summary.put("checked_keys", result.get("checked_keys"));
         summary.put("unassessed", List.of());
         summary.put("model", model);
         summary.put("usage", response.get("usage"));   // 비용 기록(-168)까지 응답의 사용량을 버리지 않는다
+        if ("PASS".equals(status) && analyzedBaseline != null) {
+            Set<String> declared = new HashSet<>();
+            for (var ref : objects(map(map(request.get("plan_revision")).get("plan")).get("design_refs"))) {
+                declared.add(String.valueOf(ref.get("design_item_id")));
+            }
+            // Direct search hits are retained only for audit; they are not plan references or invalidation inputs.
+            validations.saveCandidateRefs(v.id(), objects(request.get("approved_items")).stream()
+                    .filter(item -> !declared.contains(String.valueOf(item.get("design_item_id")))).toList());
+        }
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
-            // S4: delta 완료 보고의 DELTA 검증이 PASS → 서버가 작업을 COMPLETED 로 (같은 트랜잭션, 프로젝트 행을 쥔 채)
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
         }
         carryIfPlanRenamed(v);
@@ -448,14 +699,13 @@ public class AnalysisResultApplier {
         TaskPlanRevision plan = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId()).orElseThrow();
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(v.planRevisionId());
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId());
-        // 접수 때 기준이 아니라 "지금" 기준으로 대조한다 — 그 사이 설계가 발행됐으면 참조 버전이 낡은 것으로 잡힌다
         Long currentBaseline = designLookup.requireCurrentBaseline(v.projectId());
         return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen, "DELTA".equals(v.trigger()));
     }
 
     /**
      * 접수 때 고정한 분석 입력이 지금도 그대로인가. 계획은 리비전 번호가 아니라 <b>계획 입력 해시</b>(task_plan_revision.input_hash:
-     * 제목·접근 방식을 뺀 내용, AC-13)로 비교한다 — 제목만 바뀐 새 리비전은 같은 입력이라 결과를 버리지 않는다 (-162).
+     * 제목·접근 방식을 뺀 내용, AC-13)와 컨텍스트 패킷으로 비교한다. 실제 검색 결과는 리비전도 별도로 확인한다.
      * 바뀌었으면 무효화 사유:
      * <ul>
      *   <li>PLAN_CHANGED — 이 작업의 현재 계획의 입력이 검증한 계획과 다름. 현재 계획이나 검증한 계획을 못 읽어도 같은 사유다
@@ -474,7 +724,8 @@ public class AnalysisResultApplier {
         }
         Optional<TaskPlanRevision> validated = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId());
         Optional<TaskPlanRevision> current = revisions.findByIdAndTaskId(currentPlan.get(), v.taskId());
-        if (validated.isEmpty() || current.isEmpty() || !validated.get().getInputHash().equals(current.get().getInputHash())) {
+        if (validated.isEmpty() || current.isEmpty() || !validated.get().getInputHash().equals(current.get().getInputHash())
+                || (!fakeAnalyzerEnabled && !java.util.Objects.equals(validated.get().getContextPacketId(), current.get().getContextPacketId()))) {
             return Optional.of("PLAN_CHANGED");
         }
         Map<Long, String> fixed = new LinkedHashMap<>();

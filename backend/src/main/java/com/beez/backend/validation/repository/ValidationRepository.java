@@ -140,6 +140,18 @@ public class ValidationRepository {
                 .param("v", validationId).param("r", planRevisionId).update();
     }
 
+    /** Preserve direct search hits for audit; they are not plan references or invalidation inputs. */
+    public void saveCandidateRefs(long validationId, List<Map<String, Object>> approvedItems) {
+        for (Map<String, Object> item : approvedItems) {
+            long itemId = Long.parseLong(String.valueOf(item.get("design_item_id")));
+            long versionId = Long.parseLong(String.valueOf(item.get("id")));
+            jdbc.sql("""
+                    insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
+                    values (:v, :item, :version)
+                    """).param("v", validationId).param("item", itemId).param("version", versionId).update();
+        }
+    }
+
     public void insertTaskRef(long validationId, long relatedTaskId, long relatedPlanRevisionId) {
         jdbc.sql("""
                         insert into validation_task_ref (validation_id, related_task_id, related_plan_revision_id)
@@ -206,7 +218,7 @@ public class ValidationRepository {
     }
 
     /**
-     * 설계 발행(-163) 의 STALE 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 참조(validation_design_ref)한, 아직 쓸 수 있는(끝났거나 도는) 검증.
+     * 설계 발행(-163) 의 STALE 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 계획에서 참조한, 아직 쓸 수 있는 검증.
      * (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 상태·현재 계획으로 거르지 않는다 (REST CHG 발행 처리 규칙).
      * 행: validation_id, task_id, task_title, trigger. 검증 번호 오름차순, 여러 항목에 걸린 검증도 한 번만
      */
@@ -225,7 +237,8 @@ public class ValidationRepository {
                         select distinct v.id as validation_id, v.task_id, t.title as task_title, v.trigger
                           from (values %s) as changed(item_id, before_version_id)
                           join design_item_version bv on bv.id = changed.before_version_id
-                          join validation_design_ref r on r.design_item_id = changed.item_id
+                          join validation_design_ref r
+                            on r.design_item_id = changed.item_id
                           join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
                           join validation v on v.id = r.validation_id
                           join task t on t.id = v.task_id

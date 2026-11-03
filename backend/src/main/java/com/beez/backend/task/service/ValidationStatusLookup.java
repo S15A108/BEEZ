@@ -141,6 +141,18 @@ public class ValidationStatusLookup {
                 .optional().orElse(null);
     }
 
+    /** 실제 검색·원문을 사용해 끝난 검증은 검색에 쓰인 제목·접근 방식·패킷이 바뀌면 이어 쓸 수 없다. */
+    public boolean hasSearchBackedValidation(Long taskId, Long revisionId) {
+        return jdbc.sql("""
+                        select exists (select 1 from validation
+                                        where task_id = :taskId and plan_revision_id = :revisionId
+                                          and trigger <> 'DELTA'
+                                          and status in ('PASS', 'NEEDS_INPUT', 'NEEDS_REVIEW')
+                                          and summary ->> 'analysis_baseline_id' is not null)
+                        """)
+                .param("taskId", taskId).param("revisionId", revisionId).query(Boolean.class).single();
+    }
+
     /**
      * RESUME (04-task-lifecycle.md §2.3 출구 ①): delta 완료 보고를 거두고 다시 일하는 것이므로, 그 완료 보고를 기다리던 DELTA 검증은
      * 끝났든 돌고 있든 쓸 수 없게 한다. 두지 않으면 다시 일하던 작업이 뒤늦게 도착한 옛 DELTA 의 PASS 로 완료될 수 있다
@@ -295,6 +307,13 @@ public class ValidationStatusLookup {
                         insert into validation_design_ref (validation_id, design_item_id, design_item_version_id, relation)
                         select :copy, design_item_id, design_item_version_id, relation
                           from validation_design_ref where validation_id = :source
+                        """)
+                .param("copy", copy).param("source", source).update();
+        // 검색 후보는 이력용으로만 복사하며 발행 무효화와 시작 판정에는 쓰지 않는다.
+        jdbc.sql("""
+                        insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
+                        select :copy, design_item_id, design_item_version_id
+                          from validation_candidate_ref where validation_id = :source
                         """)
                 .param("copy", copy).param("source", source).update();
         jdbc.sql("""

@@ -11,6 +11,7 @@ import com.beez.backend.validation.repository.ValidationRow;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
@@ -51,9 +52,33 @@ public class ValidationResponses {
             errorCode = errorCode(v.summary());
         }
         return new ValidationResponse(Ids.str(v.id()), Ids.str(v.taskId()), Ids.str(v.planRevisionId()),
-                Ids.str(v.baselineId()), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,
+                Ids.str(responseBaseline(v)), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,
                 findings, false,
                 v.requestedAt(), v.finishedAt(), errorCode);
+    }
+
+    /**
+     * The persisted baseline is the acceptance snapshot. A completed model analysis
+     * may use a newer, unrelated baseline; expose the server-recorded analyzed
+     * baseline for that result, including if it is later marked STALE. RUNNING and
+     * failed/incomplete executions still expose the acceptance baseline.
+     * This metadata is written internally only after same-project baseline and input
+     * checks, never copied from the model output or a client request.
+     */
+    private Long responseBaseline(ValidationRow v) {
+        if (v.finishedAt() == null || !Set.of("PASS", "NEEDS_INPUT", "NEEDS_REVIEW", "STALE").contains(v.status())) {
+            return v.baselineId();
+        }
+        Map<String, Object> metadata = summary(v.summary());
+        Object baseline = metadata.get("analysis_baseline_id");
+        Object hash = metadata.get("analysis_input_snapshot_hash");
+        if (!"COMPLETE".equals(metadata.get("analysis_status"))
+                || !(baseline instanceof Integer || baseline instanceof Long)
+                || ((Number) baseline).longValue() <= 0
+                || !(hash instanceof String s) || !s.matches("sha256:[0-9a-f]{64}")) {
+            return v.baselineId();
+        }
+        return ((Number) baseline).longValue();
     }
 
     /** 요약 JSON 을 Map 으로. 비어 있으면 빈 Map */

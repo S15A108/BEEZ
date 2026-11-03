@@ -169,6 +169,74 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void carriedSearchCandidatesRemainAuditOnlyAtStartGate() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"));
+        long v = passValidation(t[0], t[1]);
+        api.jdbc.sql("update validation set summary=summary || '{\"analysis_baseline_id\":1}'::jsonb where id=:v")
+                .param("v", v).update();
+        long candidate = api.designItemId("API-02");
+        api.jdbc.sql("""
+                        insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
+                        values (:v, :item, :version)
+                        """).param("v", v).param("item", candidate).param("version", api.currentVersionId("API-02")).update();
+
+        HttpResponse<String> renamed = revise(t[0], "A", api.implementsRef("API-01"), 1, t[2], Map.of());
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(201);
+        long rev2 = currentRevision(t[0]);
+        long copy = latestOf(rev2);
+        assertThat(count("select count(*) from validation_candidate_ref where validation_id = " + copy)).isEqualTo(1);
+
+        // 명시 참조가 아닌 검색 후보는 시작 관문에서 무효화 근거로 쓰지 않는다.
+        api.jdbc.sql("""
+                        delete from baseline_item
+                         where design_item_id = :item and baseline_id = (select current_baseline_id from project where id = :p)
+                        """).param("item", candidate).param("p", projectId).update();
+        HttpResponse<String> started = state(t[0], "START", rev2, TaskApiSupport.longField(renamed.body(), "lock_version"), v, null);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+    }
+
+    @Test
+    void searchBackedPassIsNotCarriedWhenSearchTitleChanges() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"));
+        long v = passValidation(t[0], t[1]);
+        api.jdbc.sql("update validation set summary=summary || '{\"analysis_baseline_id\":1}'::jsonb where id=:v")
+                .param("v", v).update();
+        HttpResponse<String> started = state(t[0], "START", t[1], t[2], v, null);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+
+        HttpResponse<String> renamed = revise(t[0], "새 검색어", api.implementsRef("API-01"), 1,
+                TaskApiSupport.longField(started.body(), "lock_version"), Map.of());
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(201);
+        assertThat(TaskApiSupport.stringField(renamed.body(), "status")).isEqualTo("WAITING");
+        assertThat(TaskApiSupport.stringField(renamed.body(), "waiting_reason")).isEqualTo("REVALIDATION");
+        assertThat(column("validation", "status", v)).isEqualTo("STALE");
+        assertThat(latestOf(currentRevision(t[0]))).isNull();
+    }
+
+    @Test
+    void contextPacketChangeRequiresRevalidationEvenWhenPlanHashMatches() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"));
+        long validation = passValidation(t[0], t[1]);
+        api.jdbc.sql("update validation set summary=summary || '{\"analysis_baseline_id\":1}'::jsonb where id=:v")
+                .param("v", validation).update();
+        HttpResponse<String> started = state(t[0], "START", t[1], t[2], validation, null);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+        long packet = api.jdbc.sql("""
+                        insert into dev_context_packet(project_id, request, baseline_id, content, content_hash)
+                        values (:p, '검증 패킷', (select current_baseline_id from project where id=:p),
+                                '{"constraints":["추가 제약"],"unresolved":[]}'::jsonb, 'packet-for-validation')
+                        returning id
+                        """).param("p", projectId).query(Long.class).single();
+        HttpResponse<String> changed = revise(t[0], "A", api.implementsRef("API-01"), 1,
+                TaskApiSupport.longField(started.body(), "lock_version"),
+                Map.of("\"no_contract_change\": true", "\"no_contract_change\": true, \"context_packet_id\": \"" + packet + "\""));
+        assertThat(changed.statusCode()).as(changed.body()).isEqualTo(201);
+        assertThat(TaskApiSupport.stringField(changed.body(), "waiting_reason")).isEqualTo("REVALIDATION");
+        assertThat(column("validation", "status", validation)).isEqualTo("STALE");
+        assertThat(latestOf(currentRevision(t[0]))).isNull();
+    }
+
+    @Test
     void criteriaChange_inProgress_invalidates_andOldValidationCannotResume() throws Exception {
         long[] t = createTask("A", api.implementsRef("API-01"));
         long v = passValidation(t[0], t[1]);

@@ -237,23 +237,26 @@ HTTP `200`.
 | `validation_id` | `ID` | Y | 검증 실행 대상 |
 | `attempt` | `integer` | Y | backend 실행 시도 |
 | `plan_revision` | [TaskPlanRevision](00-common.md#schema-taskplanrevision) | Y | 불변 계획 |
-| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 참조한 승인 항목 |
+| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 명시 참조 또는 검색 후보로 선정한 현재 기준의 승인 항목 |
 | `related_plans` | [TaskPlanRevision[]](00-common.md#schema-taskplanrevision) | Y | 열린 관련 계획 |
 | `rule_findings` | [Finding[]](00-common.md#schema-finding) | Y | 규칙 검사 결과 |
 | `unresolved` | `string[]` | Y | 미확정 정책 |
+| `context_packet_constraints` | `string[]` | N | 범위·기준을 확인한 패킷의 제약. 지시가 아닌 참고 데이터이며 승인 설계 근거를 대체하지 않는다. |
 | `input_snapshot_hash` | `string` | Y | 전체 분석 입력 해시 |
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
 | `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
-| `completion_delta` | `object[]` | N | 수정안 요청(-163, 변준성 → 양지훈 확인). 완료 보고(TSK-A07 `delta`)를 검사하는 DELTA 검증일 때만, 그 `delta` 배열 그대로(구조 미확정, 임의 키). 이때 `checks`에 `key=completion-delta`, `kind=PLAN_COMPLETENESS`인 검사가 들어가며, 계획·승인 설계에 비추어 delta가 받아들일 수 있는 차이인지(계약 변경·완료 기준 위반이면 MISMATCH·MISSING_POLICY 후보)를 본다. AI 구현(-184)은 모르는 칸을 거부(422)하므로, AI가 이 칸과 `completion-delta` 검사를 받기 전에 둘을 연결하면 DELTA 검증 요청은 입력 오류 → BE 실행 오류(`validation_execution_failed`, ERROR)로 끝난다(조용히 통과하지 않음). 연결 순서: -184에 칸·검사 추가 → BE–AI 실제 HTTP 통합 확인(-65, 양지훈·박상은과) → 개발 서버 연결 |
+| `completion_delta` | `object[]` | N | 완료 보고에서 전달한 변경 내용. DELTA 검사에서는 비어 있지 않은 배열을 보내고 `completion-delta` 검사를 함께 지정한다. 일반 계획 검증에는 생략한다. |
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
+
+`completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획·완료 기준 및 선정된 승인 설계에 비추어 분석한다. 검사의 설계 버전 목록은 해당 요청에서 조립한 승인 항목 버전이다. 완료 보고와 승인 설계의 불일치는 그 목록에 있는 설계 ID와 해당 설계의 출처·발췌를 인용할 수 있다. 보고와 현재 계획만의 불일치는 설계 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 검사 범위 밖의 설계나 다른 설계의 근거를 인용하지 않는다.
 
 `content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
 
 `approved_items[].content`는 해당 검사의 비교에 필요한 필드를 포함해야 한다. API 요청·응답 필드, 타입, 필수 여부 등 kind별 필수 키·지원 범위는 Q01에서 확정하며, 아래 content는 비교 흐름을 설명하는 예시이지 Q01의 최종 스키마가 아니다. 미지원 본문을 조용히 생략한 뒤 검사 완료로 처리하지 않는다. `unlinked`의 상세 형식은 Q02에서 함께 확정한다.
 
-`evidence`는 기존 RAG `RetrievedEvidence`를 BE가 승인 항목 버전·`Source`와 연결해 만든 요청 스냅샷이다. PR #18의 원문 파서·locator를 재사용하며 AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
+`evidence`는 BE가 원문과 `Source`를 확인해 만든 요청 스냅샷이다. 승인 항목에 명시적으로 연결된 근거에는 `design_item_version_id`가 있으며, 검색된 미연결 문서의 발췌에는 이 필드를 생략한다. 미연결 발췌는 설계 항목이나 직접 참조로 승격하지 않으며 `plan-completeness`에서 설계 ID 없이 원문 맥락으로만 인용할 수 있다. 검색 발췌는 최대 50개·발췌당 16,000바이트·합계 60,000바이트이며, 전체 입력 한도를 넘지 않도록 일부가 추가로 생략될 수 있다. 생략된 맥락은 검색 전체의 부재를 뜻하지 않는다. AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
 
 사람이 편집한 승인 `content`는 구조화 계약의 기준이다. 원문과 다르면 차이를 명시하며 원문으로 승인 내용을 덮어쓰지 않는다. 항목의 출처가 연결됐다는 사실만으로 원문 승인까지 추정하지 않는다. 수동 입력·기존 승인 항목을 사용할 수 있고, 자동 설계 항목 추출(-128/후속 E2)의 완료를 전제로 하지 않는다.
 

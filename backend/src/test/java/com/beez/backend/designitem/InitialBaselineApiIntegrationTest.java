@@ -10,6 +10,7 @@ import com.beez.backend.designitem.dto.UpdateDesignItemRequest;
 import com.beez.backend.designitem.service.BaselinePublishService;
 import com.beez.backend.designitem.service.DesignItemCommandService;
 import com.beez.backend.designitem.service.DesignItemQueryService;
+import com.beez.backend.validation.service.ValidationEvidenceBuilder;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
@@ -43,6 +44,7 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
     @Autowired DesignItemQueryService queries;
     @Autowired BaselinePublishService baselines;
     @Autowired PlatformTransactionManager transactions;
+    @Autowired ValidationEvidenceBuilder evidenceBuilder;
     AccessFixtures.ProjectWithLeader p;
     CallerContext actor;
     ApiClient leader;
@@ -247,6 +249,28 @@ class InitialBaselineApiIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM baseline WHERE project_id=?", Integer.class, p.projectId())).isZero();
     }
 
+    @Test void apiCreatedSourceLocationCanBeRestoredAfterBaselinePublication() throws Exception {
+        var docs = documents(true);
+        long sourceVersion = docs.getFirst();
+        var request = Map.of("kind", "POLICY", "schema_version", 1,
+                "content", Map.of("description", "출처 항목"),
+                "source_document_version_id", Long.toString(sourceVersion),
+                "source_location", "1~2행");
+        var item = json(leader.post(path(), JSON.writeValueAsString(request),
+                "Origin", ORIGIN, "Idempotency-Key", "line-range-source"), 201);
+        var published = json(publish(input(docs, List.of(item.path("id").asLong())), "line-range-baseline"), 201);
+        var source = item.path("source");
+        var approved = Map.<String, Object>of(
+                "id", item.path("id").asText(), "design_item_id", item.path("design_item_id").asText(),
+                "source", Map.of("document_id", source.path("document_id").asText(),
+                        "document_version_id", source.path("document_version_id").asText(),
+                        "version_no", source.path("version_no").asInt(), "location", source.path("location").asText()));
+        var result = evidenceBuilder.build(p.projectId(), published.path("id").asLong(), List.of(approved));
+        assertThat(result.unavailableVersionIds()).isEmpty();
+        assertThat(result.evidence()).singleElement().satisfies(evidence ->
+                assertThat(evidence).containsEntry("text", "# PLAN\n내용")
+                        .containsEntry("locator", Map.of("type", "text_lines", "start_line", 1, "end_line", 2)));
+    }
     @Test void sourceMapsToExactDocumentAndAnOldSourceCannotEnterNewDocumentSnapshot() throws Exception {
         var docs = documents(true);
         long source = docs.getFirst();
