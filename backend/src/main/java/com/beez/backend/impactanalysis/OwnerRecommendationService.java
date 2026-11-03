@@ -21,12 +21,10 @@ import static com.beez.backend.impactanalysis.OwnerRecommendationDtos.*;
 public class OwnerRecommendationService {
     private final DirectOwnerQuery direct;
     private final ImpactRunService runs;
-    private final ImpactContextQuery contexts;
 
-    OwnerRecommendationService(DirectOwnerQuery direct, ImpactRunService runs, ImpactContextQuery contexts) {
+    OwnerRecommendationService(DirectOwnerQuery direct, ImpactRunService runs) {
         this.direct = direct;
         this.runs = runs;
-        this.contexts = contexts;
     }
 
     public record Review(ImpactRunService.Result impact, Result owners) {}
@@ -36,7 +34,8 @@ public class OwnerRecommendationService {
     public Review forReview(CallerContext caller, long projectId, long proposalId) {
         DirectResult directResult = direct.load(caller, projectId, proposalId);
         // peek does not perform the lease-expiry write inside this read-only transaction.
-        ImpactRunService.Result impact = runs.peek(caller, projectId, proposalId);
+        var analysis = runs.peekWithSnapshot(caller, projectId, proposalId);
+        ImpactRunService.Result impact = analysis.result();
         Map<String, MutableOwner> owners = new LinkedHashMap<>();
         for (var recommendation : directResult.recommendations()) {
             owners.put(recommendation.memberId(), new MutableOwner(recommendation.area(), recommendation.evidence()));
@@ -45,10 +44,12 @@ public class OwnerRecommendationService {
         boolean eligible = "COMPLETED".equals(impact.analysisStatus()) && impact.isCurrent()
                 && impact.reanalysis() == null && impact.revision() == directResult.proposalRevision()
                 && directResult.snapshotHash().equals(impact.snapshotHash())
-                && "COMPLETE".equals(directResult.directReferenceStatus());
+                && "COMPLETE".equals(directResult.directReferenceStatus())
+                && !"INCOMPLETE".equals(directResult.documentReferenceStatus());
         int withheld = eligible ? 0 : impact.candidates().size();
         if (eligible && !impact.candidates().isEmpty()) {
-            var snapshot = contexts.load(caller, projectId, proposalId);
+            var snapshot = analysis.input();
+            if (snapshot == null) throw new IllegalStateException("current impact result has no input snapshot");
             var request = ImpactRequestAssembler.assemble(snapshot, "owner-recommendation-validation");
             Set<Long> taskIds = new LinkedHashSet<>();
             for (var raw : impact.candidates()) {
@@ -88,7 +89,8 @@ public class OwnerRecommendationService {
         var recommendations = new ArrayList<Recommendation>();
         owners.forEach((member, owner) -> recommendations.add(new Recommendation(member, owner.area, owner.evidence)));
         return new Review(impact, new Result(directResult.proposalRevision(), directResult.snapshotHash(),
-                directResult.directReferenceStatus(), directResult.directReferenceReasons(), impact.analysisStatus(),
+                directResult.directReferenceStatus(), directResult.directReferenceReasons(),
+                directResult.documentReferenceStatus(), directResult.documentReferenceReasons(), impact.analysisStatus(),
                 impact.isCurrent(), impact.reanalysis() != null, withheld, recommendations,
                 directResult.notificationCandidateMemberIds()));
     }

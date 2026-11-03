@@ -545,7 +545,7 @@ export const impactStatusSchema = z.enum([
 export type ImpactStatus = z.infer<typeof impactStatusSchema>
 
 export const ownerRecommendationEvidenceSchema = z.object({
-  type: z.enum(['DIRECT_TASK_REFERENCE', 'AI_CANDIDATE']),
+  type: z.enum(['DIRECT_TASK_REFERENCE', 'DOCUMENT_SOURCE', 'AI_CANDIDATE']),
   reason: z.string(),
   task_id: idSchema,
   task_key: z.string(),
@@ -568,6 +568,10 @@ export const ownerRecommendationsSchema = z.object({
     'NOT_APPLICABLE',
   ]),
   direct_reference_reasons: z.string().array(),
+  document_reference_status: z
+    .enum(['COMPLETE', 'INCOMPLETE', 'STALE', 'NOT_APPLICABLE'])
+    .optional(),
+  document_reference_reasons: z.string().array().optional(),
   ai_analysis_status: impactStatusSchema,
   ai_current: z.boolean(),
   ai_reanalysis_in_progress: z.boolean(),

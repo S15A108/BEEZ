@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.ResourceAccessException;
@@ -31,7 +32,7 @@ class OwnerRecommendationIntegrationTest extends IntegrationTestSupport {
     @Autowired DataSource dataSource;
     @Autowired OwnerRecommendationService owners;
     @Autowired ImpactRunService runs;
-    @Autowired ImpactContextQuery contexts;
+    @MockitoSpyBean ImpactContextQuery contexts;
     @Autowired ProposalCommandService proposals;
     @Autowired ProposalPublicationService publications;
     @Autowired PlatformTransactionManager transactions;
@@ -234,6 +235,13 @@ class OwnerRecommendationIntegrationTest extends IntegrationTestSupport {
                 }));
         assertThat(result.notificationCandidateMemberIds()).containsExactly(api.memberId("member@test").toString());
 
+        // GET preserves the freshness check and uses that same snapshot for candidate validation.
+        clearInvocations(contexts);
+        var response = api.get("/api/projects/" + project + "/change-proposals/" + proposal + "/impact", member);
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+        assertThat(response.body()).contains("\"AI_CANDIDATE\"");
+        verify(contexts, times(1)).load(any(), eq(project), eq(proposal));
+
         // Treat a stored candidate as untrusted too: a mismatched member cannot be promoted.
         var forged = Map.of("task_id", Long.toString(inferred), "member_id", api.memberId("member@test").toString(),
                 "design_item_id", api.designItemId("API-01").toString(), "reason", "잘못된 담당자", "sources", List.of(source));
@@ -244,6 +252,19 @@ class OwnerRecommendationIntegrationTest extends IntegrationTestSupport {
         var checked = owners.forReview(caller, project, proposal).owners();
         assertThat(checked.withheldAiCandidates()).isEqualTo(2);
         assertThat(checked.recommendations()).extracting("memberId").containsExactly(api.memberId("member@test").toString());
+    }
+
+    @Test void impactGetStillPersistsExpiredRunsWithoutLoadingTheSnapshotTwice() {
+        runs.retry(caller, project, proposal, null);
+        api.jdbc.sql("UPDATE change_impact_run SET lease_until=clock_timestamp()-interval '1 second' WHERE change_proposal_id=:p")
+                .param("p", proposal).update();
+        clearInvocations(contexts);
+        var response = api.get("/api/projects/" + project + "/change-proposals/" + proposal + "/impact", member);
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+        assertThat(response.body()).contains("\"analysis_status\":\"FAILED\"", "\"analysis_interrupted\"");
+        assertThat(api.jdbc.sql("SELECT status FROM change_impact_run WHERE change_proposal_id=:p")
+                .param("p", proposal).query(String.class).single()).isEqualTo("FAILED");
+        verify(contexts, times(1)).load(any(), eq(project), eq(proposal));
     }
 
     @Test void reanalysisAndChangedInputsNeverPresentAnOldAiCandidateAsCurrent() {
@@ -281,17 +302,118 @@ class OwnerRecommendationIntegrationTest extends IntegrationTestSupport {
         var result = owners.forReview(caller, project, Long.parseLong(mapped.id())).owners();
         assertThat(result.aiAnalysisStatus()).isEqualTo("NOT_EVALUATED");
         assertThat(result.directReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(result.documentReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(result.notificationCandidateMemberIds()).isEmpty();
         assertThat(result.recommendations()).singleElement().satisfies(r -> assertThat(r.evidence()).singleElement()
-                .satisfies(e -> assertThat(e.documentVersionId()).isEqualTo(Long.toString(mappedVersion))));
+                .satisfies(e -> {
+                    assertThat(e.type()).isEqualTo("DOCUMENT_SOURCE");
+                    assertThat(e.documentVersionId()).isEqualTo(Long.toString(mappedVersion));
+                }));
 
         long unmappedVersion = createDocument("REQ_SPEC");
         long unmappedDocument = api.jdbc.sql("SELECT document_id FROM document_version WHERE id=:v").param("v", unmappedVersion).query(Long.class).single();
         var unmapped = documentProposal(unmappedDocument, unmappedVersion, "unmapped");
         var incomplete = owners.forReview(caller, project, Long.parseLong(unmapped.id())).owners();
-        assertThat(incomplete.directReferenceStatus()).isEqualTo("INCOMPLETE");
-        assertThat(incomplete.directReferenceReasons()).contains("document_mapping_unavailable");
+        assertThat(incomplete.directReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(incomplete.documentReferenceStatus()).isEqualTo("INCOMPLETE");
+        assertThat(incomplete.documentReferenceReasons()).contains("document_mapping_unavailable");
         assertThat(incomplete.notificationCandidateMemberIds()).isEmpty();
         verifyNoInteractions(ai);
+    }
+
+    @Test void unmappedDocumentDoesNotEraseDirectUpdateRecipients() {
+        long directTask = task("direct update", "API-01", member);
+        task("unrelated", "API-02", leader);
+        long version = createDocument("REQ_SPEC");
+        long document = api.jdbc.sql("SELECT document_id FROM document_version WHERE id=:v").param("v", version).query(Long.class).single();
+        var mixed = mixedProposal(document, version, "mixed-unmapped");
+        long mixedId = Long.parseLong(mixed.id());
+
+        var result = notification(mixed);
+        assertThat(result.directReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(result.directReferenceReasons()).isEmpty();
+        assertThat(result.documentReferenceStatus()).isEqualTo("INCOMPLETE");
+        assertThat(result.documentReferenceReasons()).containsExactly("document_mapping_unavailable");
+        assertThat(result.notificationCandidateMemberIds()).containsExactly(api.memberId("member@test").toString());
+        assertThat(result.recommendations()).singleElement().satisfies(owner ->
+                assertThat(owner.evidence()).singleElement().satisfies(e -> {
+                    assertThat(e.type()).isEqualTo("DIRECT_TASK_REFERENCE");
+                    assertThat(e.taskId()).isEqualTo(Long.toString(directTask));
+                }));
+        var review = owners.forReview(caller, project, mixedId).owners();
+        assertThat(review.documentReferenceStatus()).isEqualTo("INCOMPLETE");
+        assertThat(review.notificationCandidateMemberIds()).isEqualTo(result.notificationCandidateMemberIds());
+        var response = api.get("/api/projects/" + project + "/change-proposals/" + mixedId + "/impact", member);
+        assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(200);
+        assertThat(response.body()).contains("\"direct_reference_status\":\"COMPLETE\"",
+                "\"document_reference_status\":\"INCOMPLETE\"", "\"document_mapping_unavailable\"",
+                "\"notification_candidate_member_ids\":[\"" + api.memberId("member@test") + "\"]");
+        runs.retry(caller, project, mixedId, null);
+        work();
+        var afterAnalysis = owners.forReview(caller, project, mixedId).owners();
+        assertThat(afterAnalysis.aiAnalysisStatus()).isEqualTo("NOT_EVALUATED");
+        assertThat(afterAnalysis.documentReferenceStatus()).isEqualTo("INCOMPLETE");
+        assertThat(afterAnalysis.notificationCandidateMemberIds()).containsExactly(api.memberId("member@test").toString());
+        verifyNoInteractions(ai);
+    }
+
+    @Test void sameTaskRetainsDirectAndDocumentEvidenceButOnlyDirectOwnersAreNotificationCandidates() {
+        long version = attachSourceDocument("API-01");
+        api.jdbc.sql("UPDATE design_item_version SET source_document_version_id=:version WHERE id=:id")
+                .param("version", version).param("id", api.currentVersionId("API-02")).update();
+        long document = api.jdbc.sql("SELECT document_id FROM document_version WHERE id=:v").param("v", version).query(Long.class).single();
+        long directTask = task("both paths", "API-01", member);
+        long documentTask = task("document only", "API-02", leader);
+        var mixed = mixedProposal(document, version, "mixed-mapped");
+
+        var result = notification(mixed);
+        assertThat(result.directReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(result.documentReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(result.notificationCandidateMemberIds()).containsExactly(api.memberId("member@test").toString());
+        assertThat(result.recommendations()).hasSize(2);
+        assertThat(result.recommendations()).filteredOn(r -> r.memberId().equals(api.memberId("member@test").toString()))
+                .singleElement().satisfies(owner -> {
+                    assertThat(owner.evidence()).extracting("type").containsExactly("DIRECT_TASK_REFERENCE", "DOCUMENT_SOURCE");
+                    assertThat(owner.evidence()).extracting("taskId").containsOnly(Long.toString(directTask));
+                });
+        assertThat(result.recommendations()).filteredOn(r -> r.memberId().equals(api.memberId("leader@test").toString()))
+                .singleElement().satisfies(owner -> assertThat(owner.evidence()).singleElement().satisfies(e -> {
+                    assertThat(e.type()).isEqualTo("DOCUMENT_SOURCE");
+                    assertThat(e.taskId()).isEqualTo(Long.toString(documentTask));
+                    assertThat(e.documentId()).isEqualTo(Long.toString(document));
+                }));
+    }
+
+    @Test void truncatedDocumentCandidatesDoNotConsumeTheDirectItemLimit() {
+        long version = attachSourceDocument("API-02");
+        long document = api.jdbc.sql("SELECT document_id FROM document_version WHERE id=:v").param("v", version).query(Long.class).single();
+        task("direct update", "API-01", member);
+        api.jdbc.sql("""
+                INSERT INTO task(project_id,key,title,status,assignee_member_id)
+                SELECT :project,'DOC-BULK-'||n,'bulk','DRAFT',:member FROM generate_series(1,1001) n
+                """).param("project", project).param("member", api.memberId("leader@test")).update();
+        api.jdbc.sql("""
+                INSERT INTO task_plan_revision(task_id,revision_no,title,goal,input_hash,created_by_account_id)
+                SELECT id,1,title,'bulk','doc-bulk-'||id,:account FROM task WHERE project_id=:project AND key LIKE 'DOC-BULK-%'
+                """).param("project", project).param("account", leader).update();
+        api.jdbc.sql("""
+                UPDATE task t SET current_plan_revision_id=r.id FROM task_plan_revision r
+                 WHERE r.task_id=t.id AND t.project_id=:project AND t.key LIKE 'DOC-BULK-%'
+                """).param("project", project).update();
+        api.jdbc.sql("""
+                INSERT INTO task_plan_design_ref(plan_revision_id,design_item_id,design_item_version_id,relation)
+                SELECT current_plan_revision_id,:item,:version,'READS' FROM task WHERE project_id=:project AND key LIKE 'DOC-BULK-%'
+                """).param("project", project).param("item", api.designItemId("API-02"))
+                .param("version", api.currentVersionId("API-02")).update();
+
+        var result = notification(mixedProposal(document, version, "document-truncated"));
+        assertThat(result.directReferenceStatus()).isEqualTo("COMPLETE");
+        assertThat(result.documentReferenceStatus()).isEqualTo("INCOMPLETE");
+        assertThat(result.documentReferenceReasons()).contains("document_results_truncated");
+        assertThat(result.notificationCandidateMemberIds()).containsExactly(api.memberId("member@test").toString());
+        assertThat(result.recommendations()).filteredOn(r -> r.memberId().equals(api.memberId("leader@test").toString()))
+                .singleElement().satisfies(r -> assertThat(r.evidence()).hasSize(1000)
+                        .allSatisfy(e -> assertThat(e.type()).isEqualTo("DOCUMENT_SOURCE")));
     }
 
     @Test void truncatedDirectSearchCannotBeUsedAsACompleteNotificationRecipientList() {
@@ -348,5 +470,18 @@ class OwnerRecommendationIntegrationTest extends IntegrationTestSupport {
         return proposals.create(caller, project, new Input(Long.toString(baseline), "document", "document change", null, null,
                 List.of(), List.of(new DocumentChange(Long.toString(document), Long.toString(version), "수정 내용", null)),
                 null, null, null), key);
+    }
+
+    private Proposal mixedProposal(long document, long version, String key) {
+        return proposals.create(caller, project, new Input(Long.toString(baseline), "mixed", "mixed change", null, null,
+                List.of(new Item("UPDATE", api.designItemId("API-01").toString(), api.currentVersionId("API-01").toString(),
+                        "API_CONTRACT", 1, Map.of("description", "변경된 API", "method", "GET", "path", "/users/v2"))),
+                List.of(new DocumentChange(Long.toString(document), Long.toString(version), "수정 내용", null)),
+                null, null, null), key);
+    }
+
+    private OwnerRecommendationDtos.DirectResult notification(Proposal target) {
+        return new TransactionTemplate(transactions).execute(ignored -> owners.forNotification(caller, project,
+                Long.parseLong(target.id()), target.revision(), target.snapshotHash()));
     }
 }

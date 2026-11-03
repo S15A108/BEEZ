@@ -29,7 +29,7 @@ public class ImpactController {
     public Response get(CallerContext caller,@PathVariable long projectId,@PathVariable long proposalId) {
         // Keep the existing lease-expiry cleanup, then assemble impact and recommendations from
         // one read-only snapshot so their revision and freshness cannot be mixed.
-        runs.get(caller,projectId,proposalId);
+        runs.expireForRead(caller,projectId,proposalId);
         var review=owners.forReview(caller,projectId,proposalId);
         var value=review.impact();
         return new Response(value.explicit(),value.candidates(),value.analysisStatus(),value.generation(),

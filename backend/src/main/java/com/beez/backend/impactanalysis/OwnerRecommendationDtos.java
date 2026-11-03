@@ -21,21 +21,25 @@ public final class OwnerRecommendationDtos {
      * incomplete or stale direct scan has an empty notificationCandidateMemberIds list.
      */
     public record DirectResult(int proposalRevision, String snapshotHash, String directReferenceStatus,
-                               List<String> directReferenceReasons, List<Recommendation> recommendations,
+                               List<String> directReferenceReasons, String documentReferenceStatus,
+                               List<String> documentReferenceReasons, List<Recommendation> recommendations,
                                List<String> notificationCandidateMemberIds) {
         public DirectResult {
             directReferenceReasons = List.copyOf(directReferenceReasons);
+            documentReferenceReasons = List.copyOf(documentReferenceReasons);
             recommendations = List.copyOf(recommendations);
             notificationCandidateMemberIds = List.copyOf(notificationCandidateMemberIds);
         }
     }
 
     public record Result(int proposalRevision, String snapshotHash, String directReferenceStatus,
-                         List<String> directReferenceReasons, String aiAnalysisStatus, boolean aiCurrent,
+                         List<String> directReferenceReasons, String documentReferenceStatus,
+                         List<String> documentReferenceReasons, String aiAnalysisStatus, boolean aiCurrent,
                          boolean aiReanalysisInProgress, int withheldAiCandidates,
                          List<Recommendation> recommendations, List<String> notificationCandidateMemberIds) {
         public Result {
             directReferenceReasons = List.copyOf(directReferenceReasons);
+            documentReferenceReasons = List.copyOf(documentReferenceReasons);
             recommendations = List.copyOf(recommendations);
             notificationCandidateMemberIds = List.copyOf(notificationCandidateMemberIds);
         }

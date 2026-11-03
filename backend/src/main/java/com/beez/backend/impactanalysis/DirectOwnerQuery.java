@@ -87,7 +87,7 @@ class DirectOwnerQuery {
         if (changedItems.isEmpty() && documents.isEmpty()
                 && proposal.snapshot().input().items().isEmpty()) throw invalidSnapshot();
 
-        var incomplete = new ArrayList<String>();
+        var documentIncomplete = new ArrayList<String>();
         if (!documents.isEmpty()) {
             var documentRows = jdbc.sql("""
                     SELECT bd.document_id, bd.document_version_id, EXISTS (
@@ -105,13 +105,41 @@ class DirectOwnerQuery {
                 long document = ((Number) row.get("document_id")).longValue();
                 long version = ((Number) row.get("document_version_id")).longValue();
                 if (!Long.valueOf(version).equals(documents.get(document))) throw invalidSnapshot();
-                if (!Boolean.TRUE.equals(row.get("mapped")) && !incomplete.contains("document_mapping_unavailable")) {
-                    incomplete.add("document_mapping_unavailable");
+                if (!Boolean.TRUE.equals(row.get("mapped")) && !documentIncomplete.contains("document_mapping_unavailable")) {
+                    documentIncomplete.add("document_mapping_unavailable");
                 }
             }
         }
 
-        var rows = jdbc.sql("""
+        // Each scope has its own limit. A large document must not consume the direct-item
+        // budget and hide otherwise complete notification candidates.
+        var directRows = findOwners(project, proposal.baseline(), changedItems, false);
+        var documentRows = findOwners(project, proposal.baseline(), documents.keySet(), true);
+        var directIncomplete = new ArrayList<String>();
+        if (directRows.size() > MAX_REFERENCES) directIncomplete.add("direct_results_truncated");
+        if (documentRows.size() > MAX_REFERENCES) documentIncomplete.add("document_results_truncated");
+
+        Map<Long, MutableOwner> owners = new LinkedHashMap<>();
+        Set<Long> directRecipients = new LinkedHashSet<>();
+        for (var row : directRows.subList(0, Math.min(directRows.size(), MAX_REFERENCES))) {
+            directRecipients.add(row.memberId());
+            addEvidence(owners, row, "DIRECT_TASK_REFERENCE", "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.");
+        }
+        for (var row : documentRows.subList(0, Math.min(documentRows.size(), MAX_REFERENCES))) {
+            addEvidence(owners, row, "DOCUMENT_SOURCE", "현재 작업 계획이 변경 문서에서 나온 설계 항목을 참조합니다.");
+        }
+        var recommendations = new ArrayList<Recommendation>();
+        owners.forEach((member, owner) -> recommendations.add(new Recommendation(text(member), owner.area, owner.evidence)));
+        var recipients = directIncomplete.isEmpty() ? directRecipients.stream().map(DirectOwnerQuery::text).toList() : List.<String>of();
+        String documentStatus = documents.isEmpty() ? "NOT_APPLICABLE" : documentIncomplete.isEmpty() ? "COMPLETE" : "INCOMPLETE";
+        return new DirectResult(proposal.revision(), proposal.hash(), directIncomplete.isEmpty() ? "COMPLETE" : "INCOMPLETE",
+                directIncomplete, documentStatus, documentIncomplete, recommendations, recipients);
+    }
+
+    private List<DirectRow> findOwners(long project, long baseline, Set<Long> scope, boolean documentSource) {
+        if (scope.isEmpty()) return List.of();
+        String filter = documentSource ? "bd.document_id IN (:scope)" : "bi.design_item_id IN (:scope)";
+        return jdbc.sql("""
                 SELECT DISTINCT m.id AS member_id, m.area, t.id AS task_id, t.key AS task_key,
                        t.current_plan_revision_id AS plan_revision_id, ref.design_item_id,
                        ref.design_item_version_id, bi.design_item_version_id AS baseline_item_version_id,
@@ -125,35 +153,26 @@ class DirectOwnerQuery {
                   JOIN project_member m ON m.id=t.assignee_member_id AND m.project_id=t.project_id AND m.active
                   JOIN account a ON a.id=m.account_id AND a.deleted_at IS NULL
                  WHERE bi.project_id=:project AND bi.baseline_id=:baseline
-                   AND (bi.design_item_id IN (:items) OR bd.document_id IN (:documents))
+                   AND %s
                    AND t.status NOT IN ('COMPLETED','CANCELLED')
                  ORDER BY m.id,t.id,ref.design_item_id,ref.design_item_version_id
                  LIMIT :limit
-                """).param("project", project).param("baseline", proposal.baseline())
-                .param("items", changedItems.isEmpty() ? Set.of(-1L) : changedItems)
-                .param("documents", documents.isEmpty() ? Set.of(-1L) : documents.keySet())
+                """.formatted(filter)).param("project", project).param("baseline", baseline)
+                .param("scope", scope)
                 .param("limit", MAX_REFERENCES + 1)
                 .query((rs, row) -> new DirectRow(rs.getLong("member_id"), rs.getString("area"),
                         rs.getLong("task_id"), rs.getString("task_key"), rs.getLong("plan_revision_id"),
                         rs.getLong("design_item_id"), rs.getLong("baseline_item_version_id"),
                         nullableLong(rs, "design_item_version_id"),
                         nullableLong(rs, "document_id"), nullableLong(rs, "document_version_id"))).list();
-        if (rows.size() > MAX_REFERENCES) incomplete.add("direct_results_truncated");
+    }
 
-        Map<Long, MutableOwner> owners = new LinkedHashMap<>();
-        for (var row : rows.subList(0, Math.min(rows.size(), MAX_REFERENCES))) {
-            var owner = owners.computeIfAbsent(row.memberId(), ignored -> new MutableOwner(row.area()));
-            var evidence = new Evidence("DIRECT_TASK_REFERENCE", "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.",
-                    text(row.taskId()), row.taskKey(), text(row.planRevisionId()), text(row.itemId()),
-                    text(row.baselineVersionId()), text(row.referencedVersionId()), text(row.documentId()),
-                    text(row.documentVersionId()), List.of());
-            if (!owner.evidence.contains(evidence)) owner.evidence.add(evidence);
-        }
-        var recommendations = new ArrayList<Recommendation>();
-        owners.forEach((member, owner) -> recommendations.add(new Recommendation(text(member), owner.area, owner.evidence)));
-        var recipients = incomplete.isEmpty() ? owners.keySet().stream().map(DirectOwnerQuery::text).toList() : List.<String>of();
-        return new DirectResult(proposal.revision(), proposal.hash(), incomplete.isEmpty() ? "COMPLETE" : "INCOMPLETE",
-                incomplete, recommendations, recipients);
+    private static void addEvidence(Map<Long, MutableOwner> owners, DirectRow row, String type, String reason) {
+        var owner = owners.computeIfAbsent(row.memberId(), ignored -> new MutableOwner(row.area()));
+        var evidence = new Evidence(type, reason, text(row.taskId()), row.taskKey(), text(row.planRevisionId()),
+                text(row.itemId()), text(row.baselineVersionId()), text(row.referencedVersionId()), text(row.documentId()),
+                text(row.documentVersionId()), List.of());
+        if (!owner.evidence.contains(evidence)) owner.evidence.add(evidence);
     }
 
     Map<Long, TaskOwner> activeTaskOwners(long project, Set<Long> taskIds) {
@@ -213,7 +232,8 @@ class DirectOwnerQuery {
     }
 
     private static DirectResult empty(Proposal proposal, String status, String reason) {
-        return new DirectResult(proposal.revision(), proposal.hash(), status, List.of(reason), List.of(), List.of());
+        return new DirectResult(proposal.revision(), proposal.hash(), status, List.of(reason), status, List.of(reason),
+                List.of(), List.of());
     }
 
     private record DirectRow(long memberId, String area, long taskId, String taskKey, long planRevisionId,

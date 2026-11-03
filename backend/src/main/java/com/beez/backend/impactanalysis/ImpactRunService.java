@@ -70,17 +70,36 @@ public class ImpactRunService {
         return accepted.result();
     }
 
-    public Result get(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,true); }
+    public Result get(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,true).result(); }
 
     /** Same as get without the lease-expiry write, for read-only transactions such as the approval preview. */
-    public Result peek(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,false); }
+    public Result peek(CallerContext caller, long project, long proposal) { return read(caller,project,proposal,false).result(); }
 
-    private Result read(CallerContext caller, long project, long proposal, boolean expire) {
+    /** Reuse the input used for freshness when a caller also needs to validate model candidates. */
+    record ReadSnapshot(Result result, ImpactContextQuery.Snapshot input) {}
+    ReadSnapshot peekWithSnapshot(CallerContext caller, long project, long proposal) {
+        return read(caller, project, proposal, false);
+    }
+
+    /** Preserve GET's expiry write without loading a result that the controller would discard. */
+    public void expireForRead(CallerContext caller, long project, long proposal) {
+        tx.executeWithoutResult(ignored -> {
+            requireReadable(caller, project);
+            runs.proposal(project, proposal);
+            runs.expire(project, proposal);
+        });
+    }
+
+    private void requireReadable(CallerContext caller, long project) {
+        access.requireMember(caller,project);
+        if (projects.findCurrentRole(project,caller.accountId()).isEmpty()) throw AccessErrors.notFound("impact_membership_changed");
+    }
+
+    private ReadSnapshot read(CallerContext caller, long project, long proposal, boolean expire) {
         // Reads and the conditional expire need no project lock. Holding that lock while a second
         // connection is borrowed for the freshness read could exhaust the pool under polling.
         var state=tx.execute(ignored -> {
-            access.requireMember(caller,project);
-            if (projects.findCurrentRole(project,caller.accountId()).isEmpty()) throw AccessErrors.notFound("impact_membership_changed");
+            requireReadable(caller,project);
             var current=runs.proposal(project,proposal);
             if (expire) runs.expire(project,proposal);
             int revision=((Number)current.get("revision_no")).intValue();
@@ -88,22 +107,24 @@ public class ImpactRunService {
             var pending=latest.isPresent() && "RUNNING".equals(latest.get().get("status")) ? Optional.<Map<String,Object>>empty() : runs.pending(proposal,revision);
             return new Read(revision,current.get("snapshot_hash").toString(),latest,pending);
         });
-        if (state.latest().isEmpty()) return new Result(List.of(),List.of(),"NOT_EVALUATED",null,"analysis_not_started",
-                state.revision(),state.snapshotHash(),true,null,null,reanalysis(state));
+        if (state.latest().isEmpty()) return new ReadSnapshot(new Result(List.of(),List.of(),"NOT_EVALUATED",null,"analysis_not_started",
+                state.revision(),state.snapshotHash(),true,null,null,reanalysis(state)), null);
         var run=state.latest().get();
         String stale=null;
+        ImpactContextQuery.Snapshot input=null;
         if (((Number)run.get("revision_no")).intValue()!=state.revision()) stale="proposal_revision_changed";
         else if ("STALE".equals(run.get("status"))) stale="analysis_input_changed";
         else {
             try {
-                // No transaction is held here; load opens its own single-connection snapshot.
-                if (!run.get("input_fingerprint").equals(ImpactFingerprint.of(contexts.load(caller,project,proposal)))) stale="analysis_input_changed";
+                // Standalone reads open a snapshot; callers with an existing transaction reuse it.
+                input=contexts.load(caller,project,proposal);
+                if (!run.get("input_fingerprint").equals(ImpactFingerprint.of(input))) stale="analysis_input_changed";
             } catch (ApiException changed) {
                 if (changed.getStatus().value()!=409) throw changed;
                 stale=changed.getCode();
             }
         }
-        return result(run,stale==null,stale,reanalysis(state));
+        return new ReadSnapshot(result(run,stale==null,stale,reanalysis(state)), input);
     }
 
     private record Read(int revision,String snapshotHash,Optional<Map<String,Object>> latest,Optional<Map<String,Object>> pending) {}

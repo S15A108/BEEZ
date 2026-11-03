@@ -7652,12 +7652,14 @@ HTTP `200`.
 | `reanalysis` | `object` | N | 이전 결과가 보이는 동안 진행 중인 새 실행. `run_id`, `requested_at`. 끝나면 사라지고 `run_id`가 새 실행으로 바뀐다 |
 | `owner_recommendations` | `object` | Y | #189 담당자 추천과 근거. 아래 계약은 #237 연동을 위한 구현 제안이며 알림 발송을 뜻하지 않는다 |
 
-`owner_recommendations`에는 현재 제출본의 `proposal_revision`, `snapshot_hash`, `direct_reference_status`, `direct_reference_reasons`, `ai_analysis_status`, `ai_current`, `ai_reanalysis_in_progress`, `withheld_ai_candidates`, `recommendations`, `notification_candidate_member_ids`가 들어간다. `ai_current`는 기존 영향 결과의 `is_current`와 같은 값이며 분석이 존재하거나 완료됐다는 뜻은 아니다.
+`owner_recommendations`에는 현재 제출본의 `proposal_revision`, `snapshot_hash`, `direct_reference_status`, `direct_reference_reasons`, `document_reference_status`, `document_reference_reasons`, `ai_analysis_status`, `ai_current`, `ai_reanalysis_in_progress`, `withheld_ai_candidates`, `recommendations`, `notification_candidate_member_ids`가 들어간다. `ai_current`는 기존 영향 결과의 `is_current`와 같은 값이며 분석이 존재하거나 완료됐다는 뜻은 아니다.
 
-- `direct_reference_status=COMPLETE`는 **등록된 직접 참조의 조회 범위**를 다 읽었다는 뜻이다. `INCOMPLETE`는 문서에 연결된 기준 설계 항목이 없거나 직접 참조가 1,000건을 넘어 잘린 경우다. `STALE`은 현재 기준이 제안의 기준(발행 후에는 발행 기준)과 다른 경우, `NOT_APPLICABLE`은 제출·검토·발행 상태가 아닌 경우다. 사유는 `direct_reference_reasons`에 담으며 `INCOMPLETE`·`STALE`·`NOT_APPLICABLE`은 영향이나 관련자가 0명이라는 뜻이 아니다.
-- `recommendations`는 `member_id`, 선택적 담당 `area`, `evidence[]`를 갖는다. `DIRECT_TASK_REFERENCE` 근거는 현재 열린 작업·현재 계획 리비전·설계 항목과, 확인 가능할 때 기준 문서/버전을 담는다. `design_item_version_id`는 제안의 기준 설계 버전으로 문서 출처에 대응하며, `referenced_design_item_version_id`는 작업 계획이 실제 참조한 버전이다. 두 버전이 달라도 합쳐 쓰지 않는다. 직접 참조만 알림 후보이며, 한 사람이 여러 작업을 맡으면 근거를 모두 보존한다. 완료·취소 작업, 비활성 멤버, 탈퇴 계정은 제외한다. 담당 영역은 표시 정보이며 그 자체로 추천 근거가 아니다.
-- `AI_CANDIDATE`는 기존 #188 결과가 `COMPLETED`·최신이고 재분석 중이 아닐 때, 모델이 반환한 작업·담당자·문서 출처가 분석 입력과 현재 작업에 맞는 경우에만 검토 후보로 넣는다. AI 후보는 자동 알림 후보에 합치지 않는다. 상태·최신성·재분석 또는 작업·출처 검증 때문에 제외한 후보는 `withheld_ai_candidates`에 건수를 기록한다. AI를 다시 호출하지 않는다.
-- `notification_candidate_member_ids`는 직접 참조 결과가 `COMPLETE`일 때의 멤버 ID 목록이며, 다른 상태에는 빈 배열이다. 관련 작업이 없으면 빈 배열이고 전체 팀으로 대체하지 않는다. 실제 발송 이벤트별 자기 자신 제외, 멤버 ID→계정 ID 변환과 활성 상태 재확인은 #237이 담당한다.
+- `direct_reference_status`는 **제안에서 직접 UPDATE·RETIRE하는 설계 항목**을 참조하는 작업의 조회 상태다. 조회를 마치면 `COMPLETE`, 이 범위가 1,000건을 넘어 잘리면 `INCOMPLETE` 및 `direct_results_truncated`다. 직접 변경 항목이 없으면 빈 조회의 `COMPLETE`다.
+- `document_reference_status`는 **변경 문서를 출처로 하는 설계 항목**을 참조하는 작업의 조회 상태다. 문서 변경이 없으면 `NOT_APPLICABLE`, 모두 조회하면 `COMPLETE`다. 기준 설계에 연결되지 않은 문서 또는 문서 경유 참조 1,000건 초과는 `INCOMPLETE`이며 `document_reference_reasons`에 각각 `document_mapping_unavailable`, `document_results_truncated`를 담는다. 직접 항목 조회와 문서 조회는 각각 1,000건의 독립적인 상한을 쓴다.
+- 두 상태의 `STALE`은 현재 기준이 제안의 기준(발행 후에는 발행 기준)과 다른 경우이고, 제안이 제출·검토·발행 상태가 아니면 `NOT_APPLICABLE`이다. `INCOMPLETE`·`STALE`·`NOT_APPLICABLE`은 관련자가 0명이라는 뜻이 아니다.
+- `recommendations`는 `member_id`, 선택적 담당 `area`, `evidence[]`를 갖는다. `DIRECT_TASK_REFERENCE`는 제안에서 직접 변경한 항목을 현재 작업 계획이 참조한 근거이고, `DOCUMENT_SOURCE`는 변경 문서에서 나온 설계 항목을 현재 계획이 참조한 검토 근거다. 같은 작업이 두 경로에 해당하면 두 근거를 보존한다. `design_item_version_id`는 제안의 기준 설계 버전이며, `referenced_design_item_version_id`는 작업 계획이 실제 참조한 버전이다. 두 버전이 달라도 합쳐 쓰지 않는다. 완료·취소 작업, 비활성 멤버, 탈퇴 계정은 제외한다. 담당 영역은 표시 정보이며 그 자체로 추천 근거가 아니다.
+- `AI_CANDIDATE`는 기존 #188 결과가 `COMPLETED`·최신이고 재분석 중이 아니며 직접·문서 조회에 알려진 누락이 없을 때, 모델이 반환한 작업·담당자·문서 출처가 분석 입력과 현재 작업에 맞는 경우에만 검토 후보로 넣는다. AI 후보는 자동 알림 후보에 합치지 않는다. 상태·최신성·재분석 또는 작업·출처 검증 때문에 제외한 후보는 `withheld_ai_candidates`에 건수를 기록한다. AI를 다시 호출하지 않는다.
+- `notification_candidate_member_ids`는 직접 항목 조회가 `COMPLETE`일 때 **직접 변경 항목을 참조한** 멤버 ID만 중복 없이 담는다. 직접 조회가 `INCOMPLETE`·`STALE`·`NOT_APPLICABLE`이면 빈 배열이다. 문서 경유 조회가 불완전해도 직접 조회가 완전하면 직접 후보는 유지한다. `DOCUMENT_SOURCE`와 `AI_CANDIDATE`는 자동 후보에 넣지 않으며 문서 경유 알림 포함 여부는 #237에서 결정한다. 관련 작업이 없으면 빈 배열이고 전체 팀으로 대체하지 않는다. 실제 발송 이벤트별 자기 자신 제외, 멤버 ID→계정 ID 변환과 활성 상태 재확인은 #237이 담당한다.
 
 ```json
 {
@@ -7694,6 +7696,8 @@ HTTP `200`.
     "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "direct_reference_status": "COMPLETE",
     "direct_reference_reasons": [],
+    "document_reference_status": "NOT_APPLICABLE",
+    "document_reference_reasons": [],
     "ai_analysis_status": "COMPLETED",
     "ai_current": true,
     "ai_reanalysis_in_progress": false,
