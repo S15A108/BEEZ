@@ -13,6 +13,7 @@ public class ProposalValidator {
     public void validate(com.beez.backend.changeproposal.dto.PublicationDtos.ApproveRequest input) {
         if (input == null) throw invalid("승인 요청 본문이 필요합니다.");
         requiredId(input.expectedBaseBaselineId(), "expected_base_baseline_id");
+        if (input.impactOverrideReason() != null) text(input.impactOverrideReason(), "영향 분석 없이 승인하는 사유", 1000);
         validate(new WithdrawRequest(input.expectedRevision(), input.expectedSnapshotHash()));
     }
     public void validate(Input input, boolean update) {
