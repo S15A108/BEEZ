@@ -89,4 +89,30 @@ class PublishedAnalysisIntegrationTest extends IntegrationTestSupport {
         assertThatThrownBy(() -> repository.ensureSafeToAcknowledge("9223372036854775807"))
                 .isInstanceOf(org.springframework.dao.InvalidDataAccessApiUsageException.class).hasMessageContaining("Analysis intake missing");
     }
+
+    @Test void missingBaselinesAndUnexplainedNotEvaluatedBlockLaterVersions() {
+        long firstBaseline=baseline(1), thirdBaseline=baseline(3);
+        tx.executeWithoutResult(s -> intake.accept(project,firstBaseline,null));
+        long third=pending(thirdBaseline);
+        Instant now=Instant.now();
+        assertThat(repository.claim(third,now,60)).isEmpty(); // version 2 is absent
+        long secondBaseline=baseline(2);
+        long second=jdbc.queryForObject("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) VALUES(?,?,'NOT_EVALUATED') RETURNING id",
+                Long.class,project,secondBaseline);
+        assertThat(repository.claim(third,now,60)).isEmpty(); // not a known initial/backfill skip
+        jdbc.update("UPDATE published_change_analysis SET error_code='published_before_intake' WHERE id=?",second);
+        assertThat(repository.claim(third,now,60)).isPresent();
+    }
+
+    @Test void dueRetryIsRecoverableWithoutWaitingThirtySecondsFromOriginalRequest() {
+        long id=pending(baseline(1));
+        Instant now=Instant.now();
+        jdbc.update("UPDATE published_change_analysis SET next_attempt_at=? WHERE id=?",Timestamp.from(now.minusSeconds(1)),id);
+        Set<String> found=new HashSet<>(); String cursor=null;
+        do {
+            var page=repository.findCandidates(now,10,cursor);
+            page.candidates().forEach(value -> found.add(value.intakeReference())); cursor=page.nextCursor();
+        } while(cursor!=null);
+        assertThat(found).contains(""+id);
+    }
 }

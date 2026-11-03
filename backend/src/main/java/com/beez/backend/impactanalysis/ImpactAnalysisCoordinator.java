@@ -51,6 +51,16 @@ public class ImpactAnalysisCoordinator {
     /** requestKey identifies this analysis; the AI server issues a unique key for every LLM call. */
     public Outcome analyze(CallerContext caller, long projectId, long proposalId, String requestKey) {
         ImpactContextQuery.Snapshot snapshot = query.load(caller, projectId, proposalId);
+        return analyze(snapshot, requestKey, () -> query.requireUnchanged(caller, snapshot));
+    }
+
+    public Outcome analyzePublished(CallerContext caller, long projectId, long proposalId,
+                                    long publishedBaseline, String requestKey) {
+        ImpactContextQuery.Snapshot snapshot = query.loadPublished(caller, projectId, proposalId, publishedBaseline);
+        return analyze(snapshot, requestKey, () -> query.requirePublishedUnchanged(caller, snapshot, publishedBaseline));
+    }
+
+    private Outcome analyze(ImpactContextQuery.Snapshot snapshot, String requestKey, Runnable recheck) {
         // Until document diffs have an agreed AI-A03 contract, mixed and document-only
         // proposals must not produce an apparently complete partial analysis.
         if (snapshot.documentChanges()) {
@@ -103,6 +113,9 @@ public class ImpactAnalysisCoordinator {
                 status = snapshot.ruleCandidateStatus() == ImpactContextQuery.RuleCandidateStatus.CONNECTED
                         && "SUFFICIENT".equals(evidence) && !searchIncomplete ? Status.ANALYZED : Status.INSUFFICIENT_EVIDENCE;
                 if (searchIncomplete) errorCode = "search_coverage_incomplete";
+                else if ("PUBLISHED".equals(snapshot.proposal().status())
+                        && snapshot.ruleCandidateStatus() == ImpactContextQuery.RuleCandidateStatus.NOT_CONNECTED)
+                    errorCode = "publication_relations_unavailable";
             }
         } catch (RestClientResponseException ex) {
             Map<String, Object> error = parseError(ex);
@@ -118,7 +131,7 @@ public class ImpactAnalysisCoordinator {
         }
 
         try {
-            query.requireUnchanged(caller, snapshot);
+            recheck.run();
         } catch (ApiException e) {
             if (!STALE_CODES.contains(e.getCode())) throw e; // do not disclose data after access loss
             status = Status.STALE;
