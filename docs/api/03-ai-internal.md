@@ -1219,8 +1219,8 @@ HTTP `200`.
 
 기획·문서 수정 초안 생성 기능을 제공한다.
 
-관련 요구사항: PLN-06, BEE-08, MTG-09  
-담당: BE: 오서현 / AI: 박상은 / 회의 연결: 양지훈 / FE: —  
+관련 요구사항: PLN-06, BEE-08  
+담당: BE: 오서현 / AI: 박상은 / FE: —  
 상태: 내부 계약 초안
 
 #### 인증
@@ -1382,6 +1382,9 @@ HTTP `200`.
 
 - 반환 원문은 미승인 수정안이다. 문서 버전·baseline을 직접 바꾸지 않는다.
 - 기획 초안의 항목 구조화는 필요 시 /v1/parse를 이어 호출한다.
+- 호출자는 변경 제안의 문서 수정 초안(CHG-A07)이다. 기획 설계 초안(PLN-A05)이 같은 모듈을 쓰는지는 S15P31A108-232에서 확정한다.
+- 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다. 변경 제안의 문안은 회의 정리(MTG-A11, AI-A08 SUMMARY)의 document_changes.after에서 온다. MTG-A09가 폐지 예정이라 회의 연결 호출자가 없으므로 `decisions`는 현재 쓰는 곳이 없다(필드는 유지).
+- 모델 출력이 최대 길이로 잘렸으면(`finish_reason=length` 등) 성공 응답으로 돌려주지 않고 502 `model_unavailable`로 응답한다. 응답 모양에는 종료 사유 필드가 없어 backend는 잘림 여부를 알 수 없으므로 이 오류가 유일한 신호다. 잘린 수정안을 성공으로 돌려주면 원문 대신 승인본이 될 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1785,7 +1788,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
-- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다.
+- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다. 단 SUMMARY의 document_changes.after는 이 API가 직접 만들고 draft 모듈(AI-A06)을 부르지 않는다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
 - (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
