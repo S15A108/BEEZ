@@ -201,3 +201,29 @@ test('팀원은 자기 자리에 앉아 있고 에이전트는 상태별 자리�
   for (const id of ['agent:26', 'agent:22', 'agent:23', 'agent:21'])
     expect(isOfficeWorkingStatus(at(id).status)).toBe(true)
 })
+
+// 사용자 결정 '라운지 가운데에 세움'(2026-11-03): 고정 사무실에서는 프로젝트를 시작한 뒤(lead 에이전트가 있어도) 비비가
+// lead 자리에 서 있다. 걷지 않으므로 평소에는 Idle만 돈다(D27).
+test('고정 사무실에서는 시작한 뒤에도 비비가 라운지 가운데 lead 자리에 서 있다', () => {
+  const floor = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
+      .floors[1],
+    4,
+  )
+  expect(floor.zoneSigns).toBeTruthy()
+  const agents = officeSceneAgents([
+    { id: 'bibi', name: '비비', kind: 'lead' },
+    { id: 'member:21', name: '나', kind: 'human' },
+  ])
+  const lead = floor.seats.lead![0]
+  const bibi = officeActors(floor, agents, 4, 'member:21', new Map()).find(
+    (actor) => actor.appearance === 'bibi',
+  )
+  expect(bibi).toMatchObject({
+    id: 'bibi',
+    x: lead.x * 32 + 16,
+    y: lead.y * 32 + 27,
+    moving: false,
+    stationary: true,
+  })
+})

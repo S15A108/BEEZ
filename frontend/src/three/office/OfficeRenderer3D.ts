@@ -86,6 +86,15 @@ interface Robot {
   phase: number
   lastX: number
   lastY: number
+  /** 뼈대 애니메이션이 든 GLB(비비): 서 있으면 Idle, 걸으면 Walk를 돌린다. 자세 코드 대신 쓴다. */
+  motion?: {
+    mixer: THREE.AnimationMixer
+    idle?: THREE.AnimationAction
+    walk?: THREE.AnimationAction
+    playing?: THREE.AnimationAction
+    /** 걸음이 끊겨도 이 시각(ms)까지는 Walk를 이어 프레임마다 바뀌지 않게 한다 */
+    walkUntil: number
+  }
 }
 
 const TILE = 32
@@ -3130,6 +3139,22 @@ export class OfficeRenderer3D {
         figure.getObjectByName('arm-right')?.rotation.set(0, 0, PERSON_ARMS)
         figure.getObjectByName('arm-left')?.rotation.set(0, 0, -PERSON_ARMS)
         attach(figure, (bibi ? BIBI_HEIGHT : FIGURE_HEIGHT) / model.size.y)
+        // 비비 GLB(D27)의 Idle·Walk 클립. Wave는 쓸 곳이 생길 때 붙인다.
+        const clip = (name: string) =>
+          model.animations.find((item) => item.name === name)
+        if (bibi && clip('Idle')) {
+          const mixer = new THREE.AnimationMixer(figure)
+          const action = (name: string) => {
+            const found = clip(name)
+            return found && mixer.clipAction(found)
+          }
+          robot.motion = {
+            mixer,
+            idle: action('Idle'),
+            walk: action('Walk'),
+            walkUntil: 0,
+          }
+        }
       })
       .catch(() => undefined)
     return robot
@@ -3560,9 +3585,22 @@ ${note ?? ''}`
       robot.body.position.y =
         (entity.seated
           ? (entity.seatLift ?? 0.08) + (robot.seatOffset ?? 0)
-          : walking
+          : walking && !robot.motion
             ? Math.abs(Math.sin(robot.phase)) * (entity.running ? 0.085 : 0.055)
             : 0) + breathing
+      const motion = robot.motion
+      if (motion) {
+        if (walking) motion.walkUntil = time + 250
+        const next =
+          time < motion.walkUntil ? (motion.walk ?? motion.idle) : motion.idle
+        if (next && next !== motion.playing) {
+          next.reset().fadeIn(0.25).play()
+          motion.playing?.fadeOut(0.25)
+          motion.playing = next
+        }
+        motion.walk?.setEffectiveTimeScale(entity.running ? 1.5 : 1)
+        motion.mixer.update(elapsed)
+      }
       robot.body.rotation.x =
         entity.running && walking ? 0.13 : resting ? -0.09 : typing ? 0.055 : 0
       robot.body.rotation.z = resting ? Math.sin(idleTime * 0.45) * 0.025 : 0
