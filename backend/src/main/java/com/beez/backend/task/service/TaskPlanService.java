@@ -135,6 +135,15 @@ public class TaskPlanService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition",
                     "완료·취소된 작업의 계획은 바꿀 수 없습니다 (현재 " + task.getStatus() + ")");
         }
+        // 완료 보고(delta)의 DELTA 검증이 아직 도는 동안(NOT_RUN·RUNNING)만 계획을 바꿀 수 없다 (04-task-lifecycle.md §2.5).
+        // 결과가 PASS 로 나면 S4 가 현재 계획의 DELTA 로 완료시키는데, 그사이 계획이 바뀌면 완료가 조용히 사라진다.
+        // 결과가 난 뒤(NEEDS_INPUT·NEEDS_REVIEW·ERROR, 가짜 분석기라 완료되지 않은 PASS)는 막지 않는다 — 계획을 고쳐 새 PASS 로 RESUME 하는
+        // 출구 ②(§2.3)다. 설계 발행으로 시작 PASS 가 STALE 이 되면 RESUME 도 막히므로, 여기까지 막으면 작업이 갇힌다
+        Long undecidedDelta = validationLookup.undecidedDeltaValidationId(taskId, task.getCurrentPlanRevisionId());
+        if (undecidedDelta != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "invalid_transition",
+                    "완료 보고의 delta 검증(" + undecidedDelta + ")이 아직 진행 중이라 계획을 바꿀 수 없습니다. 결과가 나온 뒤 바꾸거나 RESUME 하세요");
+        }
 
         // 충돌 검사 두 가지 — 명세 00-common 5절. 둘 다 409 revision_conflict.
         int currentRevisionNo = revisions.findMaxRevisionNo(taskId);
@@ -153,19 +162,32 @@ public class TaskPlanService {
         }
         validateDependencies(projectId, taskId, plan.dependencyTaskIds());
 
+        Long previousRevisionId = task.getCurrentPlanRevisionId();
         TaskPlanRevision revision = saveRevision(task, currentRevisionNo + 1, plan, resolved, caller);
         replaceDependencies(projectId, taskId, plan.dependencyTaskIds());
         TaskStatus before = task.getStatus();
         task.applyNewPlanRevision(revision.getId(), plan.title());
 
-        // 계획이 바뀌었으니 이전 검증은 쓸 수 없다 (점유 중인 작업만 의미 있음. READY 는 G1 이 리비전으로 거른다)
-        // 상태는 IN_PROGRESS 만 WAITING(REVALIDATION) 으로 (명세 TSK-A04 "진행 중 계획 변경", 04-task-lifecycle.md §2.2 S2).
-        // WAITING(INPUT·APPROVAL·DEPENDENCY) 은 원래 사유를 덮어쓰지 않는다 — RESUME 때 G1 이 새 PASS 를 요구한다.
-        if (before.isOccupied()) {
-            validationLookup.markStaleForTask(taskId, "PLAN_CHANGED");
+        // 검증 입력이 바뀌었는가 (AC-13, 04-task-lifecycle.md §2.2 S2). 입력 해시가 같으면(제목·접근 방식만 바뀜) 이전 검증을 그대로 쓴다 —
+        // 무효화하지 않고 작업 상태도 두며, 이전 계획의 가장 최근 끝난 검증을 새 계획으로 이어 받는다(G1 은 리비전으로 찾으므로).
+        // 이전 계획을 못 읽으면 "바뀌지 않았다" 로 보지 않고 바뀐 것으로 다룬다 (조회 실패 ≠ 변경 없음)
+        boolean sameInput = false;
+        if (previousRevisionId != null) {
+            Optional<TaskPlanRevision> previous = revisions.findByIdAndTaskId(previousRevisionId, taskId);
+            sameInput = previous.isPresent() && revision.getInputHash().equals(previous.get().getInputHash());
         }
-        if (before == TaskStatus.IN_PROGRESS) {
-            task.holdForRevalidation();
+        if (sameInput) {
+            validationLookup.carryForwardLatest(taskId, previousRevisionId, revision.getId());
+        } else {
+            // 계획이 바뀌었으니 이전 검증은 쓸 수 없다 (점유 중인 작업만 의미 있음. READY 는 G1 이 리비전으로 거른다)
+            // 상태는 IN_PROGRESS 만 WAITING(REVALIDATION) 으로 (명세 TSK-A04 "진행 중 계획 변경").
+            // WAITING(INPUT·APPROVAL·DEPENDENCY) 은 원래 사유를 덮어쓰지 않는다 — RESUME 때 G1 이 새 PASS 를 요구한다.
+            if (before.isOccupied()) {
+                validationLookup.markStaleForTask(taskId, "PLAN_CHANGED");
+            }
+            if (before == TaskStatus.IN_PROGRESS) {
+                task.holdForRevalidation();
+            }
         }
         tasks.saveAndFlush(task);
 
@@ -264,7 +286,11 @@ public class TaskPlanService {
 
     private TaskPlanRevision saveRevision(Task task, int revisionNo, PlanCommand plan, ResolvedRefs resolved,
                                           CallerContext caller) {
-        String inputHash = hasher.hash(plan, resolved.versionByItem(), resolved.relationByItem());
+        Map<Long, Map<String, Object>> proposedByItem = new HashMap<>();
+        for (PlanCommand.Ref in : resolved.refs()) {
+            proposedByItem.put(in.designItemId(), in.proposedContent());
+        }
+        String inputHash = hasher.hash(plan, resolved.versionByItem(), resolved.relationByItem(), proposedByItem);
         // 저장 당시 기준 설계. 호출자가 프로젝트 행을 잠근 상태라 발행과 겹치지 않는다
         Long baseBaselineId = null;
         Optional<Long> currentBaseline = designLookup.currentBaselineId(task.getProjectId());

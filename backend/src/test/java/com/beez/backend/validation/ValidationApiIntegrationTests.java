@@ -32,6 +32,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import javax.sql.DataSource;
@@ -803,6 +804,91 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isZero();
     }
 
+    /** 계획 리비전 추가 본문: 제목만 다르고 내용은 작업 생성 때(planJson(title, refs, true, null))와 같다 */
+    private String renameOnly(String title, String refsJson, long lock) {
+        String plan = api.planJson(title, refsJson, "[]").trim();
+        return plan.substring(0, plan.lastIndexOf('}')) + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + lock + "\n}";
+    }
+
+    @Test
+    void titleOnlyPlanChangeDuringAnalysis_keepsResult_andCarriesItToTheNewRevision() throws Exception {
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        AtomicLong lockAfterRename = new AtomicLong();
+        doAnswer(inv -> {
+            // AI 가 도는 동안 제목만 바뀐다 — 검증 입력(AC-13)은 그대로다
+            HttpResponse<String> res = api.post(tasksPath() + "/" + t[0] + "/plan-revisions", renameOnly("A (이름만)", api.implementsRef("API-01"), t[2]), member);
+            assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
+            lockAfterRename.set(TaskApiSupport.longField(res.body(), "lock_version"));
+            return aiResponse(inv.getArgument(0), List.of(), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+
+        // 결과는 버리지 않고 옛 리비전에 PASS 로 반영한 뒤, 현재 리비전으로 이어 받는다
+        assertThat(column("validation", "status", id)).isEqualTo("PASS");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
+        long rev2 = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t[0]).query(Long.class).single();
+        Long copy = api.jdbc.sql("select max(id) from validation where plan_revision_id = :r").param("r", rev2).query(Long.class).single();
+        assertThat(copy).isNotNull();
+        assertThat(column("validation", "status", copy)).isEqualTo("PASS");
+        assertThat(api.jdbc.sql("select summary->>'carried_from' from validation where id = :v").param("v", copy).query(String.class).single())
+                .isEqualTo(String.valueOf(id));
+        // 에이전트가 쥔 옛 번호로 새 리비전을 시작할 수 있다
+        HttpResponse<String> start = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                "{\"event\":\"START\",\"plan_revision_id\":\"" + rev2 + "\",\"expected_lock_version\":" + lockAfterRename.get()
+                        + ",\"validation_id\":\"" + id + "\"}", member);
+        assertThat(start.statusCode()).as(start.body()).isEqualTo(200);
+    }
+
+    @Test
+    void relatedTaskTitleOnlyChangeDuringAnalysis_keepsResult() throws Exception {
+        long[] b = createTask(planJson("B", api.implementsRef("API-01"), true, null), member);
+        long[] a = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(a, member), 202).get("id").asLong();
+        doAnswer(inv -> {
+            // AI 가 도는 동안 관련 작업 B 의 제목만 바뀐다 — B 의 계획 입력은 그대로라 A 의 분석 입력도 그대로다
+            HttpResponse<String> res = api.post(tasksPath() + "/" + b[0] + "/plan-revisions", renameOnly("B (이름만)", api.implementsRef("API-01"), b[2]), member);
+            assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
+            return aiResponse(inv.getArgument(0), List.of(), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+        assertThat(column("validation", "status", id)).isEqualTo("PASS");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
+        assertThat(count("select count(*) from validation where plan_revision_id = " + a[1])).isEqualTo(1);   // A 의 계획은 그대로니 복사본 없음
+    }
+
+    @Test
+    void carriedFakeAnalyzerPass_isStillRejectedByStartGate_whenFakeAnalyzerIsOff() throws Exception {
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        when(analyzer.analyze(any())).thenAnswer(inv -> new FakeValidationAnalyzer().analyze(inv.getArgument(0)));
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", id)).isEqualTo("PASS");
+        // 제목만 바꿔 이어 받은 복사본은 실행 기록이 없다 — 원본의 가짜 분석기 기록으로 판정해야 한다
+        HttpResponse<String> renamed = api.post(tasksPath() + "/" + t[0] + "/plan-revisions", renameOnly("A (이름만)", api.implementsRef("API-01"), t[2]), member);
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(201);
+        long rev2 = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t[0]).query(Long.class).single();
+        long copy = api.jdbc.sql("select max(id) from validation where plan_revision_id = :r").param("r", rev2).query(Long.class).single();
+        assertThat(count("select count(*) from validation_run where validation_id = " + copy)).isZero();
+        long lock = TaskApiSupport.longField(renamed.body(), "lock_version");
+        for (long given : new long[] {id, copy}) {                      // 옛 번호로도, 복사본 번호로도
+            HttpResponse<String> rejected = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                    "{\"event\":\"START\",\"plan_revision_id\":\"" + rev2 + "\",\"expected_lock_version\":" + lock
+                            + ",\"validation_id\":\"" + given + "\"}", member);
+            assertThat(rejected.statusCode()).as(rejected.body()).isEqualTo(409);
+            assertThat(rejected.body()).contains("가짜 분석기");
+        }
+        ReflectionTestUtils.setField(startGate, "fakeAnalyzerEnabled", true);
+        try {
+            HttpResponse<String> started = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                    "{\"event\":\"START\",\"plan_revision_id\":\"" + rev2 + "\",\"expected_lock_version\":" + lock
+                            + ",\"validation_id\":\"" + id + "\"}", member);
+            assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+        } finally {
+            ReflectionTestUtils.setField(startGate, "fakeAnalyzerEnabled", false);
+        }
+    }
+
     @Test
     void relatedTaskPlanChangedDuringAnalysis_discardsResult_andStartIsRefused() throws Exception {
         // A 와 B 가 같은 설계 항목을 본다. A 의 검증에는 B 의 지금 계획이 관련 계획으로 들어간다
@@ -812,8 +898,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(api.jdbc.sql("select related_plan_revision_id from validation_task_ref where validation_id = :v and related_task_id = :t")
                 .param("v", id).param("t", b[0]).query(Long.class).single()).isEqualTo(b[1]);
         doAnswer(inv -> {
-            // AI 가 도는 동안 B 의 계획이 바뀐다
-            String plan = api.planJson("B2", api.implementsRef("API-01"), "[]").trim();
+            // AI 가 도는 동안 B 의 계획 내용(미연결 항목)이 바뀐다. 제목만 바뀌면 입력이 같아 버리지 않는다 (relatedTaskTitleOnlyChange_*)
+            String plan = api.planJson("B2", api.implementsRef("API-01"), "[]").trim()
+                    .replace("\"unlinked\": []", "\"unlinked\": [{\"text\":\"y\"}]");
             String revision = plan.substring(0, plan.lastIndexOf('}'))
                     + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + b[2] + "\n}";
             HttpResponse<String> res = api.post(tasksPath() + "/" + b[0] + "/plan-revisions", revision, member);

@@ -43,6 +43,7 @@ services:
     build: ../ai
     environment:
       GMS_KEY: ${GMS_KEY:-}
+      GMS_CHAT_ENDPOINT: ${GMS_CHAT_ENDPOINT:-https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions}
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN is required}
     healthcheck:
       # slim 이미지에는 curl 이 없어 파이썬 표준 라이브러리로 확인한다.

@@ -25,6 +25,10 @@ public final class ImpactRequestAssembler {
         body.put("proposal_revision", proposal.revisionNo());
         body.put("proposal_snapshot_hash", proposal.snapshotHash());
         body.put("request_key", requestKey);
+        if ("PUBLISHED".equals(proposal.status())) {
+            body.put("analysis_timing", "POST_PUBLICATION");
+            body.put("approved_items_baseline", "BEFORE_PUBLICATION");
+        }
         // Proposal reason is a provisional input extension; it is not approved design content.
         body.put("reason", proposal.reason());
         // Lexical search is bounded and cannot prove project-wide completeness.
