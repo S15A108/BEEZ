@@ -161,6 +161,7 @@ def test_only_the_kind_that_requires_a_field_constrains_its_type():
         {"description": "x", "method": "GET", "path": "api"},
         {"description": "x", "method": "GET", "path": "/a b"},
         {"description": "x", "method": "GET", "path": "/a?x=1"},
+        {"description": "x", "method": "GET", "path": "/a\x85b"},
         {"description": "x", "method": "GET"},
     ],
 )
@@ -193,10 +194,26 @@ def test_blank_description_is_rejected_for_every_kind():
         DesignItemContent.model_validate({"method": "GET", "path": "/a"})
 
 
-def test_extra_content_fields_are_preserved():
-    content = DesignItemContent.model_validate({"description": "x", "note": "kept"})
+def test_extra_content_fields_are_preserved_and_null_fields_are_absent():
+    content = DesignItemContent.model_validate(
+        {"description": "x", "note": "kept", "gone": None}
+    )
     assert content.model_dump(mode="json") == {"description": "x", "note": "kept"}
     assert content.extra_fields() == {"note": "kept"}
+    with pytest.raises(ValidationError):
+        DesignItemContent.model_validate({"description": "x", " ": "blank name"})
+
+
+def test_limits_follow_the_backend_content_validator():
+    # The BE caps only description (10,000) and path (2,000); entity and
+    # field names are any non-blank text, so stored items are never rejected.
+    long_entity = DesignItemContent(description="x", entity="e" * 300, fields=[])
+    check_content_for_kind("DATA_CONTRACT", long_entity)
+    stored = existing(kind="DATA_CONTRACT", content=long_entity)
+    assert stored.content.extra_fields()["entity"] == "e" * 300
+    assert FieldChange(field="f" * 200).field == "f" * 200
+    with pytest.raises(ValidationError):
+        FieldChange(field="")
 
 
 def test_answered_question_needs_a_fitting_answer():

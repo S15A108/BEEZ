@@ -46,8 +46,11 @@ where quote is an exact substring of that block's text exactly as supplied); ans
 in Korean explaining what the document and the answers establish.
 Update an existing item only when an answer or the document changes its content, keep its
 kind, and do not repeat existing items unchanged. For an update, content may hold only the
-fields that change: omitted fields keep their existing values and a JSON null removes a
-field, so never drop contract details the answers do not touch. When an answer and the document disagree,
+fields that change: an omitted field keeps its existing value, an object field is merged key
+by key at every depth (a response code you do not mention stays), an array or scalar field
+replaces the whole value, and a JSON null removes a key. Never drop contract details the
+answers do not touch. Put every change to one existing item into a single item; items that
+share a base_design_item_version_id are merged in order. When an answer and the document disagree,
 follow the answer and record the disagreement in unresolved. Do not invent ids, quotes,
 question keys, facts or decisions. Every item is an unapproved draft for a human reviewer;
 approval and publishing are not yours. unresolved lists open points (Korean strings) that

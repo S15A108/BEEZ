@@ -10,6 +10,7 @@ from app.services.design_drafts import (
     DraftProposal,
     LLMDraftProposer,
     ModelItem,
+    apply_patch,
     draft_key,
     generate_design_drafts,
 )
@@ -234,17 +235,64 @@ async def test_fabricated_quote_is_dropped_and_unsupported_items_rank_last():
 
 
 @pytest.mark.asyncio
-async def test_unchanged_restatement_and_second_update_of_a_base_are_dropped():
+async def test_unchanged_restatement_is_dropped_and_split_updates_are_merged():
+    quote = "단일 파일 한도는 30 MB이다."
     proposer = FakeProposer(
         item("POLICY", "발행은 리더만 수행한다.", base="1102"),
-        item("CONSTRAINT", "단일 파일 한도는 30 MiB이다.", base="1101", refs=["q-1"]),
-        item("CONSTRAINT", "단일 파일 한도는 31 MiB이다.", base="1101", refs=["q-1"]),
+        item(
+            "CONSTRAINT",
+            "단일 파일 한도는 30 MiB이다.",
+            base="1101",
+            sources=[{"line": 3, "quote": quote}],
+            refs=["q-1"],
+            rationale="답변이 단위를 확정했습니다.",
+        ),
+        # The model split a second change to the same item into its own
+        # proposal: it is merged, not silently dropped.
+        with_content(
+            item(
+                "CONSTRAINT",
+                "x",
+                base="1101",
+                sources=[
+                    {"line": 3, "quote": quote},
+                    {"line": 7, "quote": "발행은 리더만 수행한다."},
+                ],
+                refs=["q-1"],
+                rationale="단위를 별도 필드로 둡니다.",
+            ),
+            {"unit": "MiB"},
+        ),
     )
     outcome = await generate_design_drafts(request(), proposer)
-    assert [entry.content.description for entry in outcome.result.items] == [
-        "단일 파일 한도는 30 MiB이다."
+    result = outcome.result
+    assert len(result.items) == 1 and result.omitted_items == 0
+    draft = result.items[0]
+    assert draft.content.model_dump(mode="json") == {
+        "description": "단일 파일 한도는 30 MiB이다.",
+        "unit": "MiB",
+    }
+    assert [source.quote for source in draft.sources] == [
+        quote,
+        "발행은 리더만 수행한다.",
     ]
-    assert outcome.result.untouched_existing_ids == ("1102",)
+    assert draft.answer_refs == ("q-1",)
+    assert draft.rationale == "답변이 단위를 확정했습니다. 단위를 별도 필드로 둡니다."
+    assert [f.field for f in result.changes[0].changed_fields] == [
+        "description",
+        "unit",
+    ]
+    assert result.untouched_existing_ids == ("1102",)
+
+
+@pytest.mark.asyncio
+async def test_split_proposals_with_different_kinds_are_invalid_output():
+    proposer = FakeProposer(
+        item("CONSTRAINT", "a", base="1101"), item("POLICY", "b", base="1101")
+    )
+    with pytest.raises(LLMError) as error:
+        await generate_design_drafts(request(), proposer)
+    assert error.value.code == "invalid_output"
 
 
 @pytest.mark.parametrize(
@@ -486,6 +534,76 @@ async def test_update_keeps_omitted_fields_and_a_null_removes_one():
     assert outcome.result.items[0].content.model_dump(mode="json") == {
         "description": "검토를 거친다."
     }
+
+
+def test_apply_patch_merges_objects_and_drops_nulls_at_any_depth():
+    assert apply_patch({}, {"a": {"b": None, "c": 1}, "d": [None]}) == {
+        "a": {"c": 1},
+        "d": [None],
+    }
+    assert apply_patch({"a": "x"}, {"a": {"b": 1}}) == {"a": {"b": 1}}
+    assert apply_patch({"a": {"b": 1}}, {"a": "x"}) == {"a": "x"}
+    assert apply_patch({"a": {"b": 1}}, {"a": None}) == {}
+
+
+@pytest.mark.asyncio
+async def test_nested_objects_merge_key_by_key_and_arrays_replace_whole():
+    body = request(existing_items=[APPROVED, DRAFT_ITEM, API_ITEM, MANUAL_POLICY])
+    partial = with_content(
+        item("API_CONTRACT", "x", base="1103"),
+        {"responses": {"400": "잘못된 요청"}, "parameters": [{"name": "email"}]},
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(partial))
+    change = outcome.result.changes[0]
+    after = change.after.model_dump(mode="json")
+    # The response code the model did not mention survives; the array is
+    # replaced as a whole; untouched fields stay.
+    assert after["responses"] == {"200": "세션 발급", "400": "잘못된 요청"}
+    assert after["parameters"] == [{"name": "email"}]
+    assert after["path"] == "/api/auth/login"
+    assert [f.field for f in change.changed_fields] == ["parameters", "responses"]
+    assert change.changed_fields[1].before == {"200": "세션 발급"}
+
+    nested_removal = with_content(
+        item("API_CONTRACT", "x", base="1103"),
+        {"responses": {"200": None, "401": "인증 실패"}},
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(nested_removal))
+    after = outcome.result.changes[0].after.model_dump(mode="json")
+    assert after["responses"] == {"401": "인증 실패"}
+
+    # Proposals for one base apply in order, so the later value wins.
+    first = with_content(
+        item("API_CONTRACT", "x", base="1103"), {"responses": {"400": "a"}}
+    )
+    second = with_content(
+        item("API_CONTRACT", "x", base="1103"),
+        {"responses": {"400": "b", "404": "없음"}},
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(first, second))
+    after = outcome.result.changes[0].after.model_dump(mode="json")
+    assert after["responses"] == {"200": "세션 발급", "400": "b", "404": "없음"}
+
+
+@pytest.mark.asyncio
+async def test_null_valued_base_fields_count_as_absent():
+    nullable = with_content(
+        DRAFT_ITEM, {"description": "발행은 리더만 수행한다.", "note": None}
+    )
+    body = request(existing_items=[APPROVED, nullable])
+    assert body.existing_items[1].content.model_dump(mode="json") == {
+        "description": "발행은 리더만 수행한다."
+    }
+    # Removing a field that was null is no change at all.
+    removal = with_content(item("POLICY", "x", base="1102"), {"note": None})
+    outcome = await generate_design_drafts(body, FakeProposer(removal))
+    assert outcome.result.items == ()
+    assert outcome.result.untouched_existing_ids == ("1101", "1102")
+    # Adding one shows up with before=null, which is unambiguous now.
+    added = with_content(item("POLICY", "x", base="1102"), {"note": "검토 필요"})
+    outcome = await generate_design_drafts(body, FakeProposer(added))
+    change = outcome.result.changes[0].changed_fields[0]
+    assert (change.field, change.before, change.after) == ("note", None, "검토 필요")
 
 
 @pytest.mark.asyncio

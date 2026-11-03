@@ -13,10 +13,12 @@ from .proposer import (
 from .service import (
     DesignDraftOutcome,
     DraftRejected,
+    apply_patch,
     compose_result,
     draft_key,
     field_changes,
     generate_design_drafts,
+    group_proposals,
     merge_content,
     verify_item,
 )
@@ -31,11 +33,13 @@ __all__ = [
     "ModelDraft",
     "ModelItem",
     "ModelSource",
+    "apply_patch",
     "compose_result",
     "draft_key",
     "draft_payload",
     "field_changes",
     "generate_design_drafts",
+    "group_proposals",
     "merge_content",
     "verify_item",
 ]

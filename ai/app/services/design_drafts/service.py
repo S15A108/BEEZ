@@ -9,12 +9,15 @@ answers can be reviewed. Nothing is stored and nothing is approved here.
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import ValidationError
 
 from app.schemas.design_drafts import (
+    MAX_ANSWER_REFS_PER_ITEM,
+    MAX_SOURCES_PER_ITEM,
     MAX_UNRESOLVED,
     DesignDraftRequest,
     DesignDraftResult,
@@ -63,21 +66,39 @@ def canonical(content: DesignItemContent) -> dict[str, Any]:
     return content.model_dump(mode="json")
 
 
-def merge_content(
-    base: DesignItemContent | None, patch: dict[str, Any]
-) -> DesignItemContent:
-    """Apply a model's content on top of the base item's content.
+def apply_patch(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge one JSON object into another, key by key at every depth.
 
-    A field the model omits keeps its existing value, so contract details the
-    answers never touched (parameters, responses, …) survive an update. An
-    explicit JSON null removes a field; a null is dropped on a new item.
+    A key the patch omits keeps its value. An object value is merged into the
+    existing object (so a response code the model does not mention stays);
+    an array or scalar replaces the whole value; JSON null removes the key.
     """
-    merged = canonical(base) if base is not None else {}
+    merged = dict(base)
     for name, value in patch.items():
         if value is None:
             merged.pop(name, None)
+        elif isinstance(value, dict):
+            current = merged.get(name)
+            merged[name] = apply_patch(
+                current if isinstance(current, dict) else {}, value
+            )
         else:
             merged[name] = value
+    return merged
+
+
+def merge_content(
+    base: DesignItemContent | None, *patches: dict[str, Any]
+) -> DesignItemContent:
+    """Apply the model's content, in order, on top of the base item's content.
+
+    A field the model omits keeps its existing value, so contract details the
+    answers never touched (parameters, responses, …) survive an update. A
+    null removes a field; on a new item it is simply dropped.
+    """
+    merged = canonical(base) if base is not None else {}
+    for patch in patches:
+        merged = apply_patch(merged, patch)
     return DesignItemContent.model_validate(merged)
 
 
@@ -117,35 +138,49 @@ def _support(sources: list[EvidenceItem], refs: list[str]) -> Support:
 def verify_item(
     document: SourceDocument,
     request: DesignDraftRequest,
-    proposed: ModelItem,
+    proposals: Sequence[ModelItem],
     *,
     existing: dict[str, ExistingDesignItem],
     answered: frozenset[str],
 ) -> DraftItem:
-    """Reject contradictions of the inputs; drop only unverifiable quotes."""
-    base = None
-    if proposed.base_design_item_version_id is not None:
-        base = existing.get(proposed.base_design_item_version_id)
-        if base is None or base.kind != proposed.kind:
-            raise DraftRejected("unknown or mismatched base item")
+    """Fold the proposals for one item into a draft.
+
+    Several proposals share a base item when the model split its changes (a
+    path change and a response change, say); they are applied in order and
+    their sources, answer references and rationale are combined, so no
+    answer's effect is silently lost. Contradictions of the inputs are
+    rejected; only unverifiable quotes are dropped.
+    """
+    first = proposals[0]
+    base_id = first.base_design_item_version_id
+    base = existing.get(base_id) if base_id is not None else None
+    if base_id is not None and base is None:
+        raise DraftRejected("unknown base item")
+    kind = base.kind if base is not None else first.kind
+    if any(
+        item.kind != kind or item.base_design_item_version_id != base_id
+        for item in proposals
+    ):
+        raise DraftRejected("mismatched base item or kind")
     try:
         content = merge_content(
-            base.content if base is not None else None, proposed.content
+            base.content if base is not None else None,
+            *(item.content for item in proposals),
         )
-        check_content_for_kind(proposed.kind, content)
+        check_content_for_kind(kind, content)
     except (ValidationError, ValueError, TypeError):
         raise DraftRejected("malformed item content") from None
     refs: list[str] = []
-    for ref in proposed.answer_refs:
+    for ref in (ref for item in proposals for ref in item.answer_refs):
         if ref not in answered:
             raise DraftRejected("unknown answer reference")
-        if ref not in refs:
+        if ref not in refs and len(refs) < MAX_ANSWER_REFS_PER_ITEM:
             refs.append(ref)
     blocks = {block.block_id: block for block in document.blocks}
     titles = heading_titles(document)
     sources: list[EvidenceItem] = []
     seen: set[tuple[str, str]] = set()
-    for source in proposed.sources:
+    for source in (source for item in proposals for source in item.sources):
         block = blocks.get(source.block_id)
         quote = source.quote.strip()
         if (
@@ -153,6 +188,7 @@ def verify_item(
             or not quote
             or quote not in resolve_source(document, block.locator)
             or (block.block_id, quote) in seen
+            or len(sources) >= MAX_SOURCES_PER_ITEM
         ):
             continue
         seen.add((block.block_id, quote))
@@ -167,19 +203,34 @@ def verify_item(
                 quote=quote,
             )
         )
+    rationale = " ".join(text for item in proposals if (text := item.rationale.strip()))
     return DraftItem(
-        candidate_key=draft_key(
-            proposed.kind, proposed.base_design_item_version_id, content
-        ),
-        kind=proposed.kind,
+        candidate_key=draft_key(kind, base_id, content),
+        kind=kind,
         content=content,
-        base_design_item_version_id=proposed.base_design_item_version_id,
+        base_design_item_version_id=base_id,
         base_status=base.status if base is not None else None,
         sources=tuple(sources),
         answer_refs=tuple(refs),
         support=_support(sources, refs),
-        rationale=clip(proposed.rationale.strip()),
+        rationale=clip(rationale),
     )
+
+
+def group_proposals(items: Sequence[ModelItem]) -> list[list[ModelItem]]:
+    """One group per new item, and one per base item in first-seen order."""
+    groups: list[list[ModelItem]] = []
+    by_base: dict[str, list[ModelItem]] = {}
+    for proposed in items:
+        base_id = proposed.base_design_item_version_id
+        if base_id is not None and base_id in by_base:
+            by_base[base_id].append(proposed)
+            continue
+        group = [proposed]
+        if base_id is not None:
+            by_base[base_id] = group
+        groups.append(group)
+    return groups
 
 
 def compose_result(
@@ -194,16 +245,15 @@ def compose_result(
     )
     pairs: list[tuple[DraftItem, DraftChange]] = []
     seen_keys: set[str] = set()
-    used_bases: set[str] = set()
-    for proposed in proposal.items:
+    for group in group_proposals(proposal.items):
         item = verify_item(
-            document, request, proposed, existing=existing, answered=answered
+            document, request, group, existing=existing, answered=answered
         )
         base_id = item.base_design_item_version_id
         if base_id is not None:
             changed = field_changes(existing[base_id].content, item.content)
-            # An unchanged restatement is not a draft, and one draft per base.
-            if not changed or base_id in used_bases:
+            # An unchanged restatement is not a draft.
+            if not changed:
                 continue
             change = DraftChange(
                 candidate_key=item.candidate_key,
@@ -224,8 +274,6 @@ def compose_result(
         if item.candidate_key in seen_keys:
             continue
         seen_keys.add(item.candidate_key)
-        if base_id is not None:
-            used_bases.add(base_id)
         pairs.append((item, change))
     # Stable: model order is kept inside each support level.
     pairs.sort(key=lambda pair: _SUPPORT_ORDER[pair[0].support])

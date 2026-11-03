@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import time
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 from uuid import UUID
@@ -13,6 +14,7 @@ from app.core.config import Settings, get_settings
 from app.main import app
 from app.routers import design_drafts as route
 from app.services.llm_client import LLMClient, ProviderError, ProviderResponse
+from app.services.llm_client import client as llm_client_module
 from evaluations.design_drafts.cases import build_request, scripted_draft
 
 TOKEN = "example-internal-token"
@@ -22,6 +24,22 @@ EXAMPLE_TOKENS = (2600, 900)
 # Fixed call key so the published examples are reproducible byte for byte.
 EXAMPLE_CALL_UUID = UUID("00000000-0000-4000-8000-000000000134")
 _SPAN = re.compile(r"L(\d+)-L(\d+)$")
+
+
+class _FrozenClock:
+    """`time` for the LLM client only, so `latency_ms` is 0 in every run.
+
+    The scripted provider answers instantly, but Windows' monotonic clock
+    ticks in ~16 ms steps and occasionally reports one, which would make the
+    published example differ from a fresh build.
+    """
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+    @staticmethod
+    def monotonic() -> float:
+        return 0.0
 
 
 class ScriptedDraftProvider:
@@ -91,6 +109,7 @@ class ExampleApp:
         self._patches = [
             patch("app.main.EmbeddingTokenCounter"),
             patch.object(route, "uuid4", return_value=EXAMPLE_CALL_UUID),
+            patch.object(llm_client_module, "time", _FrozenClock()),
         ]
         for item in self._patches:
             item.start()

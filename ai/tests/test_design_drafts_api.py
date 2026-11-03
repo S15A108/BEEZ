@@ -6,8 +6,10 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings
+from app.core.openapi import inline_request_schema
 from app.main import app
 from app.services.llm_client import ProviderError
 from evaluations.design_drafts.examples import (
@@ -142,6 +144,46 @@ def test_model_failures_and_contradictions_keep_usage(api, request_body):
     assert response.json()["error"]["code"] == "model_unavailable"
     assert response.json()["usage"][0]["failed"]
     assert "9999" not in response.text
+
+
+def test_openapi_request_schema_is_self_contained(api):
+    schema = api.client.get("/openapi.json").json()["paths"]["/v1/design-drafts"][
+        "post"
+    ]["requestBody"]["content"]["application/json"]["schema"]
+    # Nothing points at `#/$defs/…`, which the OpenAPI document never holds.
+    assert "$defs" not in schema and "#/$defs/" not in json.dumps(schema)
+    items = schema["properties"]["existing_items"]["items"]
+    assert "description" in items["properties"]["content"]["properties"]
+    question = schema["properties"]["questions"]["items"]["properties"]["question"]
+    assert "question_key" in question["properties"]
+    # The answer format union is inlined branch by branch, each with its tag.
+    formats = question["properties"]["answer_format"]["oneOf"]
+    assert {branch["properties"]["type"]["const"] for branch in formats} == {
+        "CHOICE",
+        "SHORT_ANSWER",
+        "ESSAY",
+    }
+
+
+def test_inline_request_schema_expands_references_and_keeps_siblings():
+    class Inner(BaseModel):
+        value: int
+
+    class Outer(BaseModel):
+        inner: Inner = Field(description="described reference")
+        many: list[Inner]
+
+    schema = inline_request_schema(Outer)
+    assert "$defs" not in schema and "#/$defs/" not in json.dumps(schema)
+    assert schema["properties"]["inner"]["description"] == "described reference"
+    assert schema["properties"]["inner"]["properties"]["value"]["type"] == "integer"
+    assert schema["properties"]["many"]["items"]["properties"]["value"]
+
+    class Node(BaseModel):
+        children: list["Node"] = []
+
+    with pytest.raises(ValueError):
+        inline_request_schema(Node)
 
 
 def test_published_examples_match_the_http_contract():

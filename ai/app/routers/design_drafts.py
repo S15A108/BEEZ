@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from app.core.config import Settings, get_settings
 from app.core.internal_auth import require_internal_token
+from app.core.openapi import inline_request_schema
 from app.schemas.design_drafts import DesignDraftRequest
 from app.services.design_drafts import LLMDraftProposer, generate_design_drafts
 from app.services.document_parsing.errors import SourceParsingError
@@ -160,7 +161,11 @@ async def get_design_draft_client(settings: Settings):
         "requestBody": {
             "required": True,
             "content": {
-                "application/json": {"schema": DesignDraftRequest.model_json_schema()}
+                # Self-contained: `$defs` references would dangle in the
+                # OpenAPI document and break generated clients.
+                "application/json": {
+                    "schema": inline_request_schema(DesignDraftRequest)
+                }
             },
         }
     },

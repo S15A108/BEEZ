@@ -60,15 +60,19 @@ QuestionStatus = Literal["OPEN", "ANSWERED", "DISMISSED"]
 Description = Annotated[
     str, StringConstraints(min_length=1, max_length=MAX_DESCRIPTION_CHARS)
 ]
+# The same rules as the BE DesignContentValidator: `/`-rooted, no query,
+# fragment, whitespace or control characters (C0, DEL and C1).
 ApiPath = Annotated[
     str,
     StringConstraints(
-        min_length=1, max_length=2000, pattern=r"^/[^\s?#\x00-\x1f\x7f]*$"
+        min_length=1, max_length=2000, pattern=r"^/[^\s?#\x00-\x1f\x7f-\x9f]*$"
     ),
 ]
-Entity = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+# The BE only requires non-blank text here; a stored value must never be
+# rejected on this side, so no length cap beyond the request body limit.
+Entity = Annotated[str, StringConstraints(min_length=1)]
 DisplayKey = Annotated[str, StringConstraints(min_length=1, max_length=64)]
-FieldName = Annotated[str, StringConstraints(min_length=1, max_length=128)]
+FieldName = Annotated[str, StringConstraints(min_length=1)]
 
 
 class _Strict(BaseModel):
@@ -78,14 +82,26 @@ class _Strict(BaseModel):
 class DesignItemContent(BaseModel):
     """DesignItemContent v1 (00-common): description is required for every kind.
 
-    Every other JSON field is kept exactly as supplied. Only the fields a kind
-    requires are type-checked, by `check_content_for_kind`, so a POLICY may
-    carry `method: "manual"` just as the BE contract allows.
+    Every other JSON field is kept as supplied, except that a top-level field
+    whose value is null counts as absent: the merge rule treats null as a
+    removal, so `after: null` in a field change always means the field is
+    gone. Only the fields a kind requires are type-checked, by
+    `check_content_for_kind`, so a POLICY may carry `method: "manual"` just as
+    the BE contract allows. Blank field names are rejected as the BE does.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True, strict=True)
 
     description: Description
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_null_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if any(not isinstance(name, str) or not name.strip() for name in data):
+                raise ValueError("blank content field name")
+            return {name: value for name, value in data.items() if value is not None}
+        return data
 
     @model_validator(mode="after")
     def nonblank(self) -> Self:
@@ -274,6 +290,8 @@ class DraftItem(_Strict):
 
 
 class FieldChange(_Strict):
+    """One top-level content field; null on either side means absent there."""
+
     field: FieldName
     before: Any = None
     after: Any = None
