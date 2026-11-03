@@ -35,7 +35,7 @@ export function PaneSheetHost({
   )
   useEffect(() => onOpenChange?.(open > 0), [open, onOpenChange])
   return (
-    <PaneSheetContext value={{ host, track }}>
+    <PaneSheetContext value={{ host, track, open: open > 0 }}>
       <div className={className}>
         {/* 부모가 세로 flex면 본문과 하위 화면이 남은 높이를 채운다. */}
         <div hidden={open > 0} className="flex-1">

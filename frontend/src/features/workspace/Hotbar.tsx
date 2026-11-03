@@ -69,6 +69,9 @@ export function Hotbar({
   const slot = (item: (typeof hotbarSlots)[number], index: number) => {
     const isLocked = locked.includes(item.pane)
     const isOpen = pane === item.pane
+    // '여기부터 시작' 강조 칸은 밝은 노란 바탕이라, 열린 칸이어도 열린 칸의 흰 글자·번호 대신 검정 글자를 쓴다(사용자 요청 11-02).
+    const highlighted = highlight === item.pane
+    const dark = isOpen && !highlighted
     const badge = badges[item.pane]
     return (
       <button
@@ -82,19 +85,19 @@ export function Hotbar({
         onClick={() => !isLocked && openPane(isOpen ? null : item.pane)}
         className={cn(
           'relative inline-flex h-[34px] items-center gap-1.5 rounded-[10px] bg-[#f5f2ea] pr-2.5 pl-1.5 text-[12.5px] font-semibold whitespace-nowrap text-[#3f3a2e] shadow-[inset_0_0_0_1px_rgba(44,41,31,0.07)] transition-colors hover:bg-[#ece7da]',
-          isOpen &&
+          dark &&
             'bg-foreground font-bold text-white shadow-[inset_0_0_0_1px_var(--foreground)] hover:bg-foreground',
           isLocked &&
             'cursor-not-allowed bg-[#f8f6f1] text-[#bdb8ac] shadow-[inset_0_0_0_1px_rgba(44,41,31,0.05)] hover:bg-[#f8f6f1]',
-          highlight === item.pane &&
-            'bg-[#fff3c4] shadow-[0_0_0_2px_var(--primary)] hover:bg-[#fff3c4]',
+          highlighted &&
+            'bg-[#fff3c4] text-foreground shadow-[0_0_0_2px_var(--primary)] hover:bg-[#fff3c4]',
         )}
       >
         <span
           aria-hidden="true"
           className={cn(
             'inline-grid h-4 min-w-4 place-items-center rounded-[5px] border border-[#e2ddcf] bg-white text-[9.5px] leading-none font-bold text-[#8a8478]',
-            isOpen && 'border-white/35 bg-transparent text-white/85',
+            dark && 'border-white/35 bg-transparent text-white/85',
             isLocked && 'border-[#e7e3d6] text-[#cfcabd]',
           )}
         >
@@ -110,7 +113,7 @@ export function Hotbar({
             strokeWidth={2.6}
           />
         )}
-        {highlight === item.pane && (
+        {highlighted && (
           <span className="absolute bottom-11 left-1/2 -translate-x-1/2 rounded-full bg-primary px-2.5 py-[5px] text-xs font-bold whitespace-nowrap text-primary-foreground shadow-md">
             여기부터 시작
             <span
