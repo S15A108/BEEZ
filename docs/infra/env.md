@@ -44,9 +44,11 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `DOCUMENT_S3_BUCKET` | | | 기본 `beez-documents` | seaweedfs, backend |
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
 | `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
+| `GMS_CHAT_ENDPOINT` | | | 문서 검토 모델 주소. 기본 GMS 주소(`https://gms.ssafy.io/gmsapi/…/chat/completions`) | ai |
 | `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
+| `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
 | `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
 | `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |
@@ -82,6 +84,12 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
 | `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |
 | `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
+| `SCHEDULING_POOL_SIZE` | | `3` (워커마다 스레드 하나: 문서 색인·원본 정리·검증) | 기본값 |
+| `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
+| `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
+| `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
+| `VALIDATION_BUDGET_MS` | | `15000`. `AI_READ_TIMEOUT` 보다 짧게 | 기본값 |
+| `VALIDATION_FAKE_ANALYZER` | | `false` | env 파일, 없으면 `false` |
 
 prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
 오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30
@@ -101,16 +109,30 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 
 ### ai (FastAPI)
 
-`ai/app/core/config.py` 가 `ai/.env` 와 환경변수를 읽습니다. 서버 compose 는 앞의 둘만 넘깁니다.
+`ai/app/core/config.py` 가 `ai/.env` 와 환경변수를 읽습니다(이름은 필드 이름의 대문자). 기본값과 허용 값의 정본은 이
+파일이고, 아래는 무엇이 있는지와 서버에서 어떻게 되는지만 적습니다. **서버 compose 는 앞의 셋만 넘깁니다.**
 
 | 이름 | 비밀 | 의미 |
 |---|---|---|
 | `GMS_KEY` | 비밀 | 임베딩·생성 호출 키. 비면 호출이 502 `model_unavailable` |
+| `GMS_CHAT_ENDPOINT` | | 문서 검토 모델 주소. `https://gms.ssafy.io` 의 `…/chat/completions` 만 허용 |
 | `AI_INTERNAL_TOKEN` | 비밀 | backend 가 보내는 `Authorization: Bearer` 와 비교. 비거나 다르면 401 `invalid_internal_token` |
+| `VALIDATION_RESPONSE_FORMAT` | | 기본 `json_object`. 모델이 strict 출력을 지원할 때만 `json_schema` |
+| `DESIGN_RECOMMENDATION_ENABLED` | | 설계 근거 추천(#185). 기본 `false` |
+| `CONTEXT_SELECTION_ENABLED`·`CONTEXT_SELECTION_*` | | 컨텍스트 선택(#131). 기본 `false`, 한도 값은 기본 없음 |
+| `PLANNING_QUESTIONS_ENABLED`·`PLANNING_QUESTIONS_*` | | 기획 보완 질문(#133). 기본 `false`. 켜면 `GMS_KEY`·`BEE_DEFAULT_MODEL` 로 호출 |
+| `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`. 〃 |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 `model_unavailable` |
+| `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
 | `GMS_EMBEDDING_DIMENSION` | | 기본 `1024`. backend(1024)와 같아야 합니다 |
 | `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
 | `TIKTOKEN_CACHE_DIR` | | 어휘 파일 위치. 이미지에는 `/app/.tiktoken` 으로 고정 |
+
+**서버에서는 위 기능 스위치가 모두 기본값(꺼짐)입니다**(2026-11-04, 이미지 `5f1a593`). compose 는 `environment` 에 적힌
+변수만 컨테이너에 넣으므로, 서버 env 파일에 `PLANNING_QUESTIONS_ENABLED=true` 를 써도 ai 에는 닿지 않습니다. 켜려면
+`infra/compose.yaml` 의 ai `environment` 에 그 변수를 추가하고(비밀값이면 이 문서 맨 위 표에도), 서버 env 파일에 값을 넣은
+뒤 배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은 [5절](#5-비밀값-규칙)을 따릅니다. 어느 기능을 dev 에서 켤지는 AI 담당과 정합니다.
 
 **로컬 함정**: backend 를 `bootRun` 으로 띄우면 `AI_INTERNAL_TOKEN` 기본값이 `change-me` 입니다. `ai/.env.example` 을
 그대로 복사하면 빈 값이라 backend → ai 호출이 전부 401 입니다. 로컬에서는 `ai/.env` 에 `AI_INTERNAL_TOKEN=change-me`
@@ -179,17 +201,27 @@ REF=dev                 # 필수값을 추가하는 PR 이면 그 PR 의 브랜�
 git fetch -q origin && cf=$(git show "origin/$REF:infra/compose.yaml" | base64 | tr -d '\n') && [ -n "$cf" ] &&
 ssh "$HOST" bash -s -- "$ENV_NAME" "$SITE" "$cf" <<'EOF'
 fail() { echo "$1"; exit 1; }
-# compose 오류 문구는 env 값을 그대로 담기도 한다(따옴표가 안 닫힌 값, 포트 형식 오류 등).
-# 값이 들어가지 않는 형식만 골라 보여 주고, 나머지는 숨긴다
-safe() { awk '
-  match($0, /required variable [A-Za-z0-9_]+ is missing a value/) { print substr($0, RSTART, RLENGTH); next }
-  /^failed to read / && match($0, /: line [0-9]+: /) { print "env 파일 " substr($0, RSTART + 7, RLENGTH - 9) "번째 줄 형식 오류 (값은 숨김)"; next }
-  /^failed to read / { print "env 파일 읽기 오류, 예: ${ 문법 (값은 숨김)"; next }
-  /^couldn.t find env file: |^unknown flag: |command not found/ { print; next }
-  NF { h = 1 }
-  END { if (h) print "compose 오류 (값이 섞일 수 있어 문구는 숨김)" }'; }
 envf=/opt/beez/.env.$1
 cf=$(printf '%s' "$3" | base64 -d) && [ -n "$cf" ] || fail "compose 파일을 받지 못함"
+# 오류 문구로 원인을 가리기 전에, 값과 무관한 원인은 먼저 직접 확인한다
+command -v docker >/dev/null || fail "서버에 docker 없음"
+[ -r "$envf" ] || fail "env 파일 없음·읽기 불가: $envf (ENV_NAME 확인)"
+docker compose config --help 2>/dev/null | grep -q -- '--environment' ||
+  fail "서버 docker compose 가 없거나 config --environment 를 모름 (버전 확인)"
+# compose 오류 문구는 env 값을 그대로 담기도 한다(따옴표가 안 닫힌 값, 포트 형식 오류 등).
+# 원문 줄은 한 줄도 내보내지 않는다. 확인된 변수 이름·줄 번호만 고정 문구에 넣고, 나머지는 숨긴다
+vars=" $(printf '%s\n' "$cf" | grep -oE '[$][{][A-Za-z_][A-Za-z0-9_]*' | cut -c3- | sort -u | tr '\n' ' ')"
+lines=$(awk 'END { print NR }' "$envf")
+safe() { awk -v vars="$vars" -v lines="$lines" '
+  match($0, /required variable [A-Za-z0-9_]+ is missing a value/) {
+    v = substr($0, RSTART + 18, RLENGTH - 37)   # compose 파일에 있는 변수 이름일 때만 보여 준다
+    if (index(vars, " " v " ")) { print "필수값 " v " 이 없거나 빈 값"; next } }
+  /^failed to read / && match($0, /: line [0-9]+: /) {
+    n = substr($0, RSTART + 7, RLENGTH - 9) + 0
+    if (n >= 1 && n <= lines) { print "env 파일 " n "번째 줄 형식 오류 (값은 숨김)"; next } }
+  /^failed to read / { print "env 파일 읽기 오류, 예: ${ 문법 (값은 숨김)"; next }
+  NF { h = 1 }
+  END { if (h) print "compose 오류 (값이 섞일 수 있어 문구는 숨김)" }'; }
 err=$(printf '%s\n' "$cf" | docker compose -f - --env-file "$envf" config --quiet 2>&1 >/dev/null) ||
   { printf '%s\n' "$err" | safe; fail "env 점검 실패"; }
 echo "env ok"
@@ -242,9 +274,14 @@ EOF
   이 명령은 env 파일의 모든 값을 내보내므로 스크립트 안에서 포트만 꺼내고 화면에는 찍지 않습니다.
 - **compose 오류 문구도 그대로 보여 주지 않습니다.** compose 는 따옴표가 안 닫힌 값(`unterminated quoted value "<값>`),
   포트 형식 오류(`invalid hostPort: <값>`), `${` 문법 오류(`Invalid template: "<값>"`)에서 값을 그대로 찍습니다
-  (2026-10-30 로컬 실측). 그래서 `safe` 가 값이 들어가지 않는 형식(빠진 변수 이름, 줄 번호, env 파일 경로, 모르는 옵션)만
-  골라 보여 주고, 나머지는 `compose 오류 (값이 섞일 수 있어 문구는 숨김)` 한 줄로 바꿉니다. 숨겨진 원인을 봐야 하면
-  서버에서 직접 compose 를 돌려 봅니다(채팅·PR 에 붙여 넣지 않습니다).
+  (2026-10-30 로컬 실측). 그래서 `safe` 는 **compose 의 원문 줄을 한 줄도 내보내지 않습니다.** 값이 여러 줄이면
+  오류 문구 중간의 아무 줄이든 값이 될 수 있어, 줄 모양으로 골라 내보내는 방식은 안전하지 않기 때문입니다.
+  고정 문구에 넣는 것은 두 가지뿐이고, 그것도 확인된 경우에만 넣습니다 — 빠진 변수 이름은 **compose 파일에 `${이름`
+  으로 있는 이름일 때만**, 형식 오류 줄 번호는 **env 파일 줄 수 안의 숫자일 때만**. 나머지는
+  `compose 오류 (값이 섞일 수 있어 문구는 숨김)` 한 줄입니다(2026-11-04 실측: 포트 값 `S3cretXYZ command not found`,
+  여러 줄 값 안의 `couldn't find env file: …`·`required variable <값> is missing a value` 가 모두 숨겨짐).
+  docker·env 파일·compose 버전처럼 값과 무관한 원인은 오류 문구를 읽지 않고 스크립트가 먼저 직접 확인합니다.
+  숨겨진 원인을 봐야 하면 서버에서 직접 compose 를 돌려 봅니다(채팅·PR 에 붙여 넣지 않습니다).
 - **2) 는 디스크의 Nginx 설정 파일을 읽습니다. 실행 중인 Nginx 가 아닙니다.** 파일을 고친 뒤 reload 하기 전에는
   `port ok` 가 나와도 Nginx 는 이전 포트로 보냅니다. 설정을 고쳤다면 `sudo nginx -t && sudo systemctl reload nginx` 까지
   하고, 반영됐는지는 아래 [Nginx 반영 확인](#nginx-반영-확인)으로 봅니다. 배포 단계에서 자동으로 확인하는 것은
@@ -253,11 +290,12 @@ EOF
   compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
 - **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
   실패는 모두 exit 1 입니다.
+  `서버에 docker 없음` 은 말 그대로이고, `env 파일 없음·읽기 불가` 는 `ENV_NAME` 이 틀렸거나 SSH 사용자가 읽을 수 없는 것,
+  `config --environment 를 모름` 은 서버에 compose 플러그인이 없거나 이 옵션보다 오래된 것입니다(서버 v5.6.1·로컬 v5.2.0
+  에는 있음, 2026-10-30).
   `env 점검 실패`(1) 와 `env 읽기 실패`(2) 는 바로 위에 찍힌 줄로 원인을 구분합니다.
-  `required variable X is missing a value` 는 필수값 X 가 없거나 빈 것, `couldn't find env file` 은 `ENV_NAME` 이 틀린 것,
-  `env 파일 N번째 줄 형식 오류` 는 그 줄의 따옴표·키 형식이 틀린 것,
-  `unknown flag: --environment` 는 서버 compose 가 이 옵션보다 오래된 것입니다(서버 v5.6.1·로컬 v5.2.0 에는 있음, 2026-10-30).
-  `docker: command not found` 는 서버에 docker 가 없는 것입니다.
+  `필수값 X 이 없거나 빈 값` 은 말 그대로이고, `env 파일 N번째 줄 형식 오류` 는 그 줄의 따옴표·키 형식이 틀린 것입니다
+  (따옴표가 안 닫힌 값이 여러 줄로 이어지면 compose 가 파일 끝 줄 번호를 대므로 `env 파일 읽기 오류` 로 나옵니다).
   `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다(값은 찍지 않습니다).
   `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다. `Nginx 설정 읽기 실패` 는 켜진 사이트 중 읽을 수 없는
   파일(권한, 깨진 링크)이 있는 것입니다.
@@ -275,8 +313,8 @@ EOF
 - 브랜치 이름이 틀리면 `fatal: invalid object name` 만 나오고 점검은 돌지 않습니다(`env ok` 는 나오지 않음).
 - compose 파일은 base64 로 바꿔 ssh 인자로 보냅니다(표준 입력은 점검 스크립트가 씁니다). 서버에서 `-f -` 로 읽으므로
   서버에 파일을 남기지 않습니다.
-- `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 위 표 첫 줄 문구의 앞부분
-  (`required variable DB_PASSWORD is missing a value`)이 나옵니다.
+- `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 compose 는 위 표 첫 줄 문구를
+  내고, 이 점검은 그것을 `필수값 DB_PASSWORD 이 없거나 빈 값` 으로 바꿔 보여 줍니다.
 - 값의 길이만 보려면 [cd.md](cd.md#2-env-파일)의 `awk` 명령을 씁니다.
 
 로컬 전체 스택도 같은 방식입니다.
@@ -287,24 +325,29 @@ docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet &
 
 #### Nginx 반영 확인
 
-위 점검은 디스크의 설정 파일을 봅니다. Nginx 설정을 고쳤다면 reload 가 실제로 반영됐는지 따로 봅니다
-(로컬 PC, 위의 `HOST`·`SITE` 그대로).
+위 점검은 디스크의 설정 파일을 봅니다. Nginx 설정을 고치고 reload 했다면, **실행 중인 Nginx 가 지금 떠 있는 backend 로
+보내는지**를 응답으로 확인합니다(로컬 PC, 위의 `HOST`·`SITE` 그대로, 배포가 끝나 backend 가 떠 있을 때).
 
 ```bash
-# reload 하면 worker 가 새로 뜬다. 파일 수정이 worker 시작보다 늦으면 아직 반영 전이다.
-# sites-enabled 는 sites-available 을 가리키는 링크라, date -r 로 링크가 아닌 실제 파일 시각을 본다
-ssh "$HOST" bash -s -- "$SITE" <<'EOF'
-echo "설정 파일 수정: $(date -r "/etc/nginx/sites-enabled/$1.conf" '+%F %T')"
-ps -o lstart=,cmd= -C nginx | awk '/worker process$/ {print $1,$2,$3,$4,$5}' | sort -u |
-  while read -r t; do echo "worker 시작(마지막 reload): $(date -d "$t" '+%F %T')"; done
-EOF
-# 배포한 뒤: 실제 Nginx 를 거쳐 backend health 를 부른다. 200 이면 지금 Nginx 가 backend 에 닿는다(502 면 다른 포트)
-curl -sS -o /dev/null -w '%{http_code}\n' "https://$SITE/actuator/health"
+# 같은 /api/ping 을 Nginx 를 거쳐 한 번, 서버 안에서 compose backend 컨테이너가 연 포트로 직접 한 번 부른다.
+# started_at(그 backend 프로세스의 기동 시각)이 같으면 Nginx 가 바로 그 backend 로 보내고 있다
+via=$(curl -sS --max-time 10 "https://$SITE/api/ping" | sed -n 's/.*"started_at":"\([^"]*\)".*/\1/p')
+direct=$(ssh "$HOST" 'p=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
+  --format "{{.Ports}}" | sed -n "s/.*127\.0\.0\.1:\([0-9]*\)->.*/\1/p") && [ -n "$p" ] &&
+  curl -sS --max-time 10 "http://127.0.0.1:$p/api/ping"' | sed -n 's/.*"started_at":"\([^"]*\)".*/\1/p')
+if [ -n "$via" ] && [ "$via" = "$direct" ]; then echo "nginx ok ($via)"
+else echo "nginx 다름: Nginx 경유=${via:-응답 없음·JSON 아님} / backend 직접=${direct:-backend 를 못 찾음}"; fi
 ```
 
-- 두 시각이 **같은 초**면 수정과 reload 중 어느 쪽이 먼저인지 알 수 없습니다(시각이 초 단위). 그때는 reload 를 한 번
-  더 하거나, 배포 뒤 health 로 확인합니다.
-- health 주소는 `SITE` 가 도메인과 같다는 전제입니다(`dev.beez.ai.kr`).
+- **HTTP 200 만으로는 판단하지 않습니다.** 실행 중인 설정에 `/api/` 프록시가 없으면 SPA fallback 이 `index.html` 을 200 으로
+  주고, 예전 포트의 backend 가 아직 살아 있어도 200 이 나옵니다. 그래서 응답 본문의 `started_at` 을 비교합니다.
+  HTML 이면 `started_at` 이 없어 `응답 없음·JSON 아님` 으로, 다른 backend 면 시각이 달라 `nginx 다름` 으로 걸립니다
+  (2026-11-04 서버 실측: `nginx ok`, `/api-nope` 같은 HTML 응답은 빈 값).
+- 이 확인이 보증하는 것은 `/api/` 경로가 지금 compose backend 로 간다는 것까지입니다. 같은 reload 로 바꾼 다른 설정
+  (요청 크기 한도, `/mcp` 시간 제한 등)은 각각 그 동작으로 따로 확인합니다.
+- Nginx worker 의 시작 시각은 reload 의 증거로 쓰지 않습니다. worker 는 비정상 종료 뒤 다시 뜨거나 재시작으로도 새로
+  떠서, 시각이 바뀌었다고 마지막 reload 가 이 설정을 읽었다고 단정할 수 없습니다.
+- `started_at` 은 비밀이 아니라 화면에 찍어도 됩니다. `SITE` 가 도메인과 같다는 전제입니다(`dev.beez.ai.kr`).
 
 ## 4. 환경별 차이
 
