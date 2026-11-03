@@ -360,6 +360,26 @@ describe('계약 경계', () => {
       ),
     ).toBe(true)
   })
+
+  // 서버(ExplicitImpactCalculator)는 담당자가 없는 작업이면 explicit 항목에서 member_id를 생략한다.
+  it('미배정 작업이 영향 대상이어도 분석 시작과 영향 조회 응답을 받는다', async () => {
+    const body = {
+      explicit: [{ task_id: '501', design_item_id: '211' }],
+      candidates: [],
+      analysis_status: 'RUNNING',
+      revision: 1,
+      snapshot_hash: 'sha256:0123',
+      is_current: true,
+      run_id: '9',
+    }
+    respond(body, 202)
+    const started = await changesApi.retryImpact('101', '71')
+    expect(started.explicit[0]).not.toHaveProperty('member_id')
+    respond({ ...body, analysis_status: 'COMPLETED' })
+    const read = await changesApi.impact('101', '71')
+    expect(read.analysis_status).toBe('COMPLETED')
+    expect(read.explicit).toEqual([{ task_id: '501', design_item_id: '211' }])
+  })
 })
 
 // PR #72 mock/live 전수 대조 DOC-LIVE-1: 백엔드가 Idempotency-Key를 필수로 받는 문서 분류(DOC-A07)와

@@ -86,11 +86,13 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
     @MockitoSpyBean PublicationRepository repository;
     @MockitoSpyBean RelationStorageService relations;
     @MockitoSpyBean DesignCommandService idempotency;
+    @MockitoSpyBean ImpactApprovalGate gate;
     AccessFixtures.ProjectWithLeader project;
     CallerContext leader;
     long baseline, document, version, item, itemVersion, retired, retiredVersion, unchanged;
 
     @BeforeEach void setup() {
+        reset(gate); trusted();
         impact.applied.clear(); impact.fail=false; impact.onPreview=() -> {}; intake.accepted.clear(); intake.fail=false;
         project=fixtures().projectWithLeader(); leader=CallerContext.human(project.leaderAccountId());
         baseline=jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,1,?) RETURNING id",Long.class,project.projectId(),leader.accountId());
@@ -128,7 +130,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         var documents=docs ? List.of(new DocumentChange(""+document,""+version,"새 본문 "+key,null)) : List.<DocumentChange>of();
         return commands.create(author,project.projectId(),new Input(""+baseline,"변경","이유",null,null,changes,documents,null,null,null),key);
     }
-    ApproveRequest request(Proposal p) { return new ApproveRequest(p.baseBaselineId(),p.revision(),p.snapshotHash()); }
+    ApproveRequest request(Proposal p) { return new ApproveRequest(p.baseBaselineId(),p.revision(),p.snapshotHash(),null); }
     Publication approve(Proposal p,String key) { return publications.approve(leader,project.projectId(),Long.parseLong(p.id()),request(p),key); }
     Preview preview(Proposal p) { return publications.preview(leader,project.projectId(),Long.parseLong(p.id())); }
     void ready(Proposal p) {
@@ -232,8 +234,8 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(count("baseline")).isEqualTo(3); assertThat(impact.applied).hasSize(1); assertThat(intake.accepted).hasSize(1);
         assertThat(count("published_change_analysis")).isEqualTo(1);
         verify(relations,never()).apply(any(),anyLong(),any());
-        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash()),"other"),"idempotency_conflict");
-        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash()),"new"),"version_conflict");
+        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash(),null),"other"),"idempotency_conflict");
+        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+third,p.revision(),p.snapshotHash(),null),"new"),"version_conflict");
     }
 
     @Test void indexFailuresAndStaleInputsLeaveNothingPublished() {
@@ -245,8 +247,8 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
             error(() -> approve(p,"p"),"analysis_not_completed");
             jdbc.update("UPDATE document_index_manifest SET embedding_profile_id='publication-test',attempt=1,chunk_count=1 WHERE document_version_id=?",proposed);
         }
-        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+baseline,2,p.snapshotHash()),"old"),"version_conflict");
-        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+baseline,1,"sha256:"+"0".repeat(64)),"hash"),"version_conflict");
+        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+baseline,2,p.snapshotHash(),null),"old"),"version_conflict");
+        error(() -> publications.approve(leader,project.projectId(),Long.parseLong(p.id()),new ApproveRequest(""+baseline,1,"sha256:"+"0".repeat(64),null),"hash"),"version_conflict");
         rolledBack(p);
     }
 
@@ -257,7 +259,7 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         RelationStorageService relationTarget=AopTestUtils.getUltimateTargetObject(relations);
         doThrow(new IllegalStateException("relation failure")).when(relationTarget).apply(any(),anyLong(),any());
         assertThatThrownBy(() -> approve(p,"fail-relation")).isInstanceOf(IllegalStateException.class); rolledBack(p); reset(relationTarget);
-        doThrow(new IllegalStateException("approval failure")).when(repository).publish(anyLong(),anyLong(),anyInt(),anyLong(),anyLong(),anyLong());
+        doThrow(new IllegalStateException("approval failure")).when(repository).publish(anyLong(),anyLong(),anyInt(),anyLong(),anyLong(),anyLong(),any());
         assertThatThrownBy(() -> approve(p,"fail-approval")).isInstanceOf(RuntimeException.class).hasMessageContaining("approval failure"); rolledBack(p); reset(repository);
         doThrow(new IllegalStateException("idempotency failure")).when(idempotency).save(anyLong(),anyLong(),contains("approve"),anyString(),any(),any());
         assertThatThrownBy(() -> approve(p,"fail-idempotency")).isInstanceOf(IllegalStateException.class); rolledBack(p);
@@ -307,6 +309,84 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(preview(p).unreviewed().openReviewRequests()).isZero();
         impact.onPreview=() -> {};
         assertThat(preview(p).unreviewed().openReviewRequests()).isEqualTo(1);
+    }
+
+    // 게이트 판정 자체(상태별)는 ImpactApprovalGateIntegrationTest 가 실제 분석 실행으로 본다. 여기서는 승인·미리 보기 배선만 본다.
+    void decide(ImpactApprovalGate.Kind kind,String status,boolean current) {
+        var decision=new ImpactApprovalGate.Decision(kind,status,current,"COMPLETED".equals(status) ? null : "analysis_not_started",2,false);
+        doReturn(decision).when(gate).evaluate(any(),anyLong(),anyLong()); doReturn(decision).when(gate).peek(any(),anyLong(),anyLong());
+    }
+    void trusted() { decide(ImpactApprovalGate.Kind.TRUSTED,"COMPLETED",true); }
+    Publication approve(Proposal p,String key,String reason) {
+        return publications.approve(leader,project.projectId(),Long.parseLong(p.id()),
+                new ApproveRequest(p.baseBaselineId(),p.revision(),p.snapshotHash(),reason),key);
+    }
+    String storedReason(Proposal p) {
+        return jdbc.queryForObject("SELECT reason FROM approval WHERE change_proposal_id=?",String.class,Long.parseLong(p.id()));
+    }
+
+    @Test void untrustedAnalysisBlocksApprovalUntilTheLeaderLeavesAReasonAndTheReasonIsKept() {
+        Proposal p=create(false,true,"gate");
+        for (String status : List.of("NOT_EVALUATED","FAILED","INSUFFICIENT_EVIDENCE","STALE")) {
+            decide(ImpactApprovalGate.Kind.UNTRUSTED,status,false);
+            error(() -> approve(p,"no-reason-"+status),"impact_not_confirmed"); rolledBack(p);
+        }
+        decide(ImpactApprovalGate.Kind.UNTRUSTED,"COMPLETED",false); // 완료여도 현재 제안과 다르면 신뢰하지 않는다
+        error(() -> approve(p,"old-result"),"impact_not_confirmed"); rolledBack(p);
+        var pre=preview(p).unreviewed();
+        assertThat(pre.requiresOverrideReason()).isTrue(); assertThat(pre.aiCandidates()).isNull();
+        assertThat(pre.aiAnalysis().status()).isEqualTo("COMPLETED"); assertThat(pre.aiAnalysis().isCurrent()).isFalse();
+        var result=approve(p,"with-reason","  분석 서버 장애로 직접 확인함  ");
+        assertThat(result.proposal().status()).isEqualTo("PUBLISHED");
+        assertThat(storedReason(p)).isEqualTo("분석 서버 장애로 직접 확인함");
+        assertThat(queries.approval(leader,project.projectId(),Long.parseLong(p.id())).impactOverrideReason()).isEqualTo("분석 서버 장애로 직접 확인함");
+    }
+
+    @Test void runningAnalysisCannotBeOverriddenAndTrustedAnalysisIgnoresAReason() {
+        Proposal running=create(false,true,"running");
+        decide(ImpactApprovalGate.Kind.RUNNING,"RUNNING",true);
+        error(() -> approve(running,"r","그래도 승인"),"analysis_running"); rolledBack(running);
+        var pre=preview(running).unreviewed(); assertThat(pre.requiresOverrideReason()).isFalse(); assertThat(pre.aiCandidates()).isNull();
+        assertThat(pre.aiAnalysis().status()).isEqualTo("RUNNING");
+        trusted();
+        var trustedPreview=preview(running).unreviewed();
+        assertThat(trustedPreview.requiresOverrideReason()).isFalse(); assertThat(trustedPreview.aiCandidates()).isEqualTo(2);
+        assertThat(approve(running,"t","필요 없는 사유").proposal().status()).isEqualTo("PUBLISHED");
+        assertThat(storedReason(running)).isNull();
+        assertThat(queries.approval(leader,project.projectId(),Long.parseLong(running.id())).impactOverrideReason()).isNull();
+    }
+
+    @Test void overrideReasonMustBeNonBlankAndAtMost1000Characters() {
+        Proposal p=create(false,true,"reason");
+        decide(ImpactApprovalGate.Kind.UNTRUSTED,"NOT_EVALUATED",false);
+        for (String bad : List.of(" ","\n","x".repeat(1001)))
+            assertThatThrownBy(() -> approve(p,"bad",bad)).isInstanceOfSatisfying(ApiException.class,
+                    e -> assertThat(e.getCode()).isEqualTo("validation_failed"));
+        rolledBack(p);
+        assertThat(approve(p,"max","x".repeat(1000)).proposal().status()).isEqualTo("PUBLISHED");
+    }
+
+    @Test void previewHttpResponseKeepsNullAiCandidatesAndTheNewFields() {
+        Proposal p=create(false,true,"http-null");
+        var client=client().login(project.leaderEmail(),AccessFixtures.PASSWORD);
+        String path="/api/projects/"+project.projectId()+"/change-proposals/"+p.id()+"/approval-preview";
+        decide(ImpactApprovalGate.Kind.UNTRUSTED,"NOT_EVALUATED",false);
+        var untrusted=client.get(path);
+        assertThat(untrusted.statusCode()).isEqualTo(200);
+        assertThat(untrusted.body()).contains("\"ai_candidates\":null","\"requires_override_reason\":true",
+                "\"ai_analysis\":{\"status\":\"NOT_EVALUATED\"","\"is_current\":false","\"reanalysis_in_progress\":false","\"error_code\":\"analysis_not_started\"");
+        trusted();
+        var ok=client.get(path);
+        assertThat(ok.body()).contains("\"ai_candidates\":2","\"requires_override_reason\":false").doesNotContain("\"error_code\"");
+    }
+
+    @Test void gateDoesNotRunForAnAlreadyPublishedProposalReplay() {
+        Proposal p=create(false,true,"replay"); approve(p,"first");
+        decide(ImpactApprovalGate.Kind.UNTRUSTED,"FAILED",false);
+        clearInvocations(gate);
+        assertThat(approve(p,"first").proposal().status()).isEqualTo("PUBLISHED");  // 멱등 재생
+        assertThat(approve(p,"second").proposal().status()).isEqualTo("PUBLISHED"); // 이미 발행된 제안의 재요청
+        verify(gate,never()).evaluate(any(),anyLong(),anyLong());
     }
 
     @Test void authorityStateAndHttpContractAreEnforced() {
