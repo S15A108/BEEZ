@@ -1,0 +1,209 @@
+{
+  "project_id": "101",
+  "request_key": "bee-chat-api-create",
+  "question": "문서를 만드는 HTTP 메서드와 경로, 성공 코드 및 반환 식별자는 무엇인가요?",
+  "instance": {
+    "profile_version": "bee-v1",
+    "project": {
+      "name": "나래",
+      "description": "팀이 함께 작성한 문서와 변경 이력을 한 화면에서 검토하는 협업 도구"
+    }
+  },
+  "scope": {
+    "mode": "APPROVED",
+    "document_version_ids": [
+      "311",
+      "212",
+      "312",
+      "313"
+    ],
+    "baseline_id": "401"
+  },
+  "embedding_profile_id": "gms-small-1024-v1",
+  "retrieved_evidence": [
+    {
+      "evidence_id": "ev-312-02",
+      "document_id": "302",
+      "document_version_id": "312",
+      "version_no": 1,
+      "chunk_key": "chk_62eb9dad818d4c08b1abe8b322a539c967a4720386bf5386c3f782f7f7cac563",
+      "text": "## POST /api/projects/{projectId}/documents",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 5,
+        "end_line": 5
+      },
+      "embedding_profile_id": "gms-small-1024-v1",
+      "title": "나래 문서 API 명세",
+      "section_title": "나래 문서 API 명세"
+    },
+    {
+      "evidence_id": "ev-312-10",
+      "document_id": "302",
+      "document_version_id": "312",
+      "version_no": 1,
+      "chunk_key": "chk_e1e733d94466a5a6b6ebbf202e8873b261d53ab95aed7c316f83a267e846747e",
+      "text": "문서 생성 성공은 HTTP 201이며 documentVersionId를 반환한다.",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 19,
+        "end_line": 19
+      },
+      "embedding_profile_id": "gms-small-1024-v1",
+      "title": "나래 문서 API 명세",
+      "section_title": "성공 응답"
+    },
+    {
+      "evidence_id": "ev-312-00",
+      "document_id": "302",
+      "document_version_id": "312",
+      "version_no": 1,
+      "chunk_key": "chk_dd221d92d2298455644ad263988f865617d517e424264700446d40047db8198a",
+      "text": "# 나래 문서 API 명세",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "embedding_profile_id": "gms-small-1024-v1",
+      "title": "나래 문서 API 명세",
+      "section_title": null
+    },
+    {
+      "evidence_id": "ev-312-01",
+      "document_id": "302",
+      "document_version_id": "312",
+      "version_no": 1,
+      "chunk_key": "chk_2325cb99d18ef864fe451b079ca36961fe5c1302f5026571fed2acde500ad075",
+      "text": "모든 경로는 실험용 API이며 실제 BEEZ 공통 API 계약을 변경하지 않는다. 같은 경로라도 HTTP 메서드가 다르면 서로 다른 기능이다.",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 3,
+        "end_line": 3
+      },
+      "embedding_profile_id": "gms-small-1024-v1",
+      "title": "나래 문서 API 명세",
+      "section_title": "나래 문서 API 명세"
+    },
+    {
+      "evidence_id": "ev-312-03",
+      "document_id": "302",
+      "document_version_id": "312",
+      "version_no": 1,
+      "chunk_key": "chk_356394b72bb6b63bd14d3dec093724fb24371fbea7563b5d1a64144ae4adba08",
+      "text": "프로젝트에 문서를 생성한다. 로그인 세션과 활성 프로젝트 멤버십이 필요하다. 요청에는 UTF-8 Markdown 파일을 넣는다. 클라이언트가 보낸 projectId만 믿지 않고 서버가 프로젝트 접근 권한을 확인한다.",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 7,
+        "end_line": 7
+      },
+      "embedding_profile_id": "gms-small-1024-v1",
+      "title": "나래 문서 API 명세",
+      "section_title": "POST /api/projects/{projectId}/documents"
+    },
+    {
+      "evidence_id": "ev-312-04",
+      "document_id": "302",
+      "document_version_id": "312",
+      "version_no": 1,
+      "chunk_key": "chk_6f453b8b69a649de464e39f259d71f964df86dc28395584ca880dcd2f6c85e5e",
+      "text": "### 요청",
+      "locator": {
+        "type": "text_lines",
+        "start_line": 9,
+        "end_line": 9
+      },
+      "embedding_profile_id": "gms-small-1024-v1",
+      "title": "나래 문서 API 명세",
+      "section_title": "POST /api/projects/{projectId}/documents"
+    }
+  ],
+  "approved_items": [
+    {
+      "id": "1101",
+      "design_item_id": "1001",
+      "key": "PLN-001",
+      "kind": "POLICY",
+      "version_no": 1,
+      "status": "APPROVED",
+      "schema_version": 1,
+      "content": {
+        "description": "문서의 최종 발행은 활성 프로젝트 리더만 수행한다."
+      },
+      "source": {
+        "document_id": "301",
+        "document_version_id": "311",
+        "version_no": 1,
+        "location": "나래 협업 도구 기획서 / 발행 권한 / L11-L11"
+      }
+    },
+    {
+      "id": "1104",
+      "design_item_id": "1004",
+      "key": "API-001",
+      "kind": "API_CONTRACT",
+      "version_no": 1,
+      "status": "APPROVED",
+      "schema_version": 1,
+      "content": {
+        "description": "프로젝트에 Markdown 문서를 생성한다.",
+        "method": "POST",
+        "path": "/api/projects/{projectId}/documents"
+      },
+      "source": {
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "location": "나래 문서 API 명세 / POST /api/projects/{projectId}/documents / L7-L7"
+      }
+    }
+  ],
+  "related_tasks": [
+    {
+      "id": "501",
+      "key": "TASK-001",
+      "project_id": "101",
+      "assignee_member_id": "21",
+      "status": "READY",
+      "lock_version": 1,
+      "current_plan_revision": {
+        "id": "511",
+        "task_id": "501",
+        "revision_no": 1,
+        "plan": {
+          "title": "문서 업로드 화면 구현",
+          "goal": "승인 계약대로 문서 업로드 화면을 연결한다.",
+          "included_scope": [
+            "업로드 폼과 413 오류 표시"
+          ],
+          "excluded_scope": [
+            "문서 삭제"
+          ],
+          "approach": "승인 API 계약을 사용한다.",
+          "completion_criteria": [
+            "업로드 성공 시 문서 목록으로 이동"
+          ],
+          "dependency_task_ids": [],
+          "design_refs": [
+            {
+              "design_item_id": "1004",
+              "design_item_version_id": "1104",
+              "relation": "IMPLEMENTS"
+            }
+          ],
+          "unlinked": [],
+          "no_contract_change": true,
+          "context_packet_id": "701"
+        },
+        "created_at": "2026-10-23T03:00:00Z",
+        "created_by": "11"
+      },
+      "validation_status": "PASS",
+      "created_at": "2026-10-23T03:00:00Z",
+      "updated_at": "2026-10-23T03:00:00Z"
+    }
+  ],
+  "unresolved": [],
+  "history": [],
+  "max_evidence": 12
+}

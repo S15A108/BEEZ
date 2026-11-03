@@ -1,0 +1,47 @@
+{
+  "result": {
+    "answer_status": "INSUFFICIENT_EVIDENCE",
+    "grounded": false,
+    "text": "찾지 못했어요. 지금 승인된 문서와 설계 항목에서는 이 질문에 답할 근거를 찾지 못했습니다. 짐작해서 답하지 않습니다.",
+    "citations": [],
+    "sources": [],
+    "design_refs": [],
+    "task_refs": [],
+    "unresolved": [
+      "모델 답변의 인용을 원문에서 확인하지 못해 답변을 보류했습니다."
+    ],
+    "next_actions": [],
+    "notices": [],
+    "scope": {
+      "mode": "APPROVED",
+      "document_version_ids": [
+        "311",
+        "212",
+        "312",
+        "313"
+      ],
+      "baseline_id": "401"
+    },
+    "embedding_profile_id": "gms-small-1024-v1",
+    "evidence_considered": 6,
+    "evidence_omitted": 0,
+    "instance": {
+      "profile_version": "bee-v1",
+      "system_prompt_hash": "1a6a5f3dfc7c227784d1d4e2e3e6b4e49e7420a7cd100be06b98e1e5e464aa73"
+    }
+  },
+  "origin": "MODEL",
+  "model": "gpt-6-luna",
+  "usage": [
+    {
+      "request_key": "llm-bee-chat-00000000-0000-4000-8000-000000000135",
+      "feature": "BEE_CHAT",
+      "model": "gpt-6-luna",
+      "latency_ms": 0,
+      "failed": false,
+      "tokens_known": true,
+      "input_tokens": 1800,
+      "output_tokens": 320
+    }
+  ]
+}

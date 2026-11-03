@@ -1,0 +1,121 @@
+{
+  "result": {
+    "answer_status": "ANSWERED",
+    "grounded": true,
+    "text": "문서 생성은 POST /api/projects/{projectId}/documents로 요청합니다 [1]. 성공하면 HTTP 201과 함께 documentVersionId를 반환합니다 [2]. 승인 설계 API-001이 같은 계약이고, 작업 TASK-001이 이 계약을 구현합니다.",
+    "citations": [
+      {
+        "n": 1,
+        "evidence_id": "ev-312-02",
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "chunk_key": "chk_62eb9dad818d4c08b1abe8b322a539c967a4720386bf5386c3f782f7f7cac563",
+        "locator": {
+          "type": "text_lines",
+          "start_line": 5,
+          "end_line": 5
+        },
+        "quote": "POST /api/projects/{projectId}/documents",
+        "title": "나래 문서 API 명세",
+        "section_title": "나래 문서 API 명세",
+        "claim": "문서 생성 메서드와 경로"
+      },
+      {
+        "n": 2,
+        "evidence_id": "ev-312-10",
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "chunk_key": "chk_e1e733d94466a5a6b6ebbf202e8873b261d53ab95aed7c316f83a267e846747e",
+        "locator": {
+          "type": "text_lines",
+          "start_line": 19,
+          "end_line": 19
+        },
+        "quote": "문서 생성 성공은 HTTP 201이며 documentVersionId를 반환한다.",
+        "title": "나래 문서 API 명세",
+        "section_title": "성공 응답",
+        "claim": "성공 코드와 반환 식별자"
+      }
+    ],
+    "sources": [
+      {
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "location": "나래 문서 API 명세 / L5-L5"
+      },
+      {
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "location": "성공 응답 / L19-L19"
+      },
+      {
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "location": "나래 문서 API 명세 / POST /api/projects/{projectId}/documents / L7-L7"
+      }
+    ],
+    "design_refs": [
+      {
+        "design_item_id": "1004",
+        "design_item_version_id": "1104",
+        "key": "API-001",
+        "kind": "API_CONTRACT",
+        "version_no": 1,
+        "source": {
+          "document_id": "302",
+          "document_version_id": "312",
+          "version_no": 1,
+          "location": "나래 문서 API 명세 / POST /api/projects/{projectId}/documents / L7-L7"
+        }
+      }
+    ],
+    "task_refs": [
+      {
+        "task_id": "501",
+        "key": "TASK-001",
+        "status": "READY"
+      }
+    ],
+    "unresolved": [],
+    "next_actions": [
+      "업로드 화면은 201 응답의 documentVersionId로 문서 상태를 조회한다."
+    ],
+    "notices": [],
+    "scope": {
+      "mode": "APPROVED",
+      "document_version_ids": [
+        "311",
+        "212",
+        "312",
+        "313"
+      ],
+      "baseline_id": "401"
+    },
+    "embedding_profile_id": "gms-small-1024-v1",
+    "evidence_considered": 6,
+    "evidence_omitted": 0,
+    "instance": {
+      "profile_version": "bee-v1",
+      "system_prompt_hash": "1a6a5f3dfc7c227784d1d4e2e3e6b4e49e7420a7cd100be06b98e1e5e464aa73"
+    }
+  },
+  "origin": "MODEL",
+  "model": "gpt-6-luna",
+  "usage": [
+    {
+      "request_key": "llm-bee-chat-00000000-0000-4000-8000-000000000135",
+      "feature": "BEE_CHAT",
+      "model": "gpt-6-luna",
+      "latency_ms": 0,
+      "failed": false,
+      "tokens_known": true,
+      "input_tokens": 1800,
+      "output_tokens": 320
+    }
+  ]
+}
