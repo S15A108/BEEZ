@@ -1,0 +1,356 @@
+{
+  "result": {
+    "document": {
+      "document_id": "301",
+      "document_version_id": "311",
+      "version_no": 1
+    },
+    "kind": "PLAN",
+    "text_hash": "f8e265adf8d8be5ee57309613f5bbe84035e3aa6af5fd98c7dc4bc4bc1be1dd8",
+    "parser_profile": "markdown-v1",
+    "max_items": 50,
+    "items": [
+      {
+        "candidate_key": "draft-09c48617c86a",
+        "kind": "POLICY",
+        "status": "DRAFT",
+        "schema_version": 1,
+        "content": {
+          "description": "문서의 최종 발행은 계정이 활성 상태이고 프로젝트 멤버십도 활성인 프로젝트 리더만 수행한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "base_design_item_version_id": "1101",
+        "base_status": "APPROVED",
+        "sources": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_7e7fc4b1febb4fdd6af6deb5b236bb6f5a7bde84e56b64bc91983ee3dc391fdd",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 11,
+              "end_line": 11
+            },
+            "location": "나래 협업 도구 기획서 / 발행 권한 / L11-L11",
+            "quote": "문서의 최종 발행은 활성 프로젝트 리더만 수행한다."
+          },
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_0a9f69f15480983fd4f0da09c25701d27c2d16cad94a89bf81f001ddfe7c9f3f",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 13,
+              "end_line": 13
+            },
+            "location": "나래 협업 도구 기획서 / 발행 권한 / L13-L13",
+            "quote": "리더도 비활성 계정이거나 프로젝트에서 탈퇴했다면 발행할 수 없다."
+          }
+        ],
+        "answer_refs": [
+          "q-model-231b13f37159"
+        ],
+        "support": "DOCUMENT_AND_ANSWER",
+        "rationale": "원문의 '활성' 기준이 모호했고 답변이 계정 활성과 멤버십 활성을 모두 요구한다고 확정했습니다."
+      },
+      {
+        "candidate_key": "draft-539b75daeddb",
+        "kind": "CONSTRAINT",
+        "status": "DRAFT",
+        "schema_version": 1,
+        "content": {
+          "description": "첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션은 첫 출시 범위에서 제외한다(2027년 상반기 이후 검토).",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "base_design_item_version_id": "1103",
+        "base_status": "DRAFT",
+        "sources": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_fd54b4182fadf165fb3c879db027614352bbb04f9a7e6699680549353cb37500",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 7,
+              "end_line": 7
+            },
+            "location": "나래 협업 도구 기획서 / 서비스 목표 / L7-L7",
+            "quote": "첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션 개발 일정은 정하지 않았다."
+          }
+        ],
+        "answer_refs": [
+          "q-rule-undecided-L7-1"
+        ],
+        "support": "DOCUMENT_AND_ANSWER",
+        "rationale": "답변이 모바일 앱을 첫 출시 범위에서 제외한다고 밝혀 기존 초안에 범위를 더했습니다."
+      },
+      {
+        "candidate_key": "draft-6b8e867f9ea6",
+        "kind": "REQUIREMENT",
+        "status": "DRAFT",
+        "schema_version": 1,
+        "content": {
+          "description": "정식 운영 담당자는 시범 운영 평가 회의에서 프로젝트 리더가 정한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "base_design_item_version_id": null,
+        "base_status": null,
+        "sources": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_c7fa632ae6da515e6d8c7b4876c0ad868079df552e7127d600c8efbf868885b1",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 27,
+              "end_line": 27
+            },
+            "location": "나래 협업 도구 기획서 / 운영 일정 / L27-L27",
+            "quote": "| 정식 운영 | 미정 | 시범 운영 평가 후 협의 |"
+          }
+        ],
+        "answer_refs": [
+          "q-model-523f15ad3e6d"
+        ],
+        "support": "DOCUMENT_AND_ANSWER",
+        "rationale": "표의 '미정' 담당을 답변이 채웠습니다."
+      },
+      {
+        "candidate_key": "draft-cde7fa408039",
+        "kind": "REQUIREMENT",
+        "status": "DRAFT",
+        "schema_version": 1,
+        "content": {
+          "description": "정식 운영 날짜는 아직 정하지 않았다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "base_design_item_version_id": null,
+        "base_status": null,
+        "sources": [],
+        "answer_refs": [
+          "q-rule-undecided-L29-1"
+        ],
+        "support": "ANSWER",
+        "rationale": "답변도 미정이라 날짜를 확정하지 않았습니다."
+      },
+      {
+        "candidate_key": "draft-183858e5e2a4",
+        "kind": "POLICY",
+        "status": "DRAFT",
+        "schema_version": 1,
+        "content": {
+          "description": "검토 모드의 결과에는 대상 버전을 표시하며 이를 현재 정책으로 소개하지 않는다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "base_design_item_version_id": null,
+        "base_status": null,
+        "sources": [
+          {
+            "document_id": "301",
+            "document_version_id": "311",
+            "version_no": 1,
+            "block_id": "blk_27f987dfe4ccae44d159c45fe8e9a26cb343c84b273b23df7b11068627523bf2",
+            "locator": {
+              "type": "text_lines",
+              "start_line": 19,
+              "end_line": 19
+            },
+            "location": "나래 협업 도구 기획서 / 승인되지 않은 자료 / L19-L19",
+            "quote": "검토 모드의 결과에는 대상 버전을 표시하며, 이를 현재 정책이라고 소개하지 않는다."
+          }
+        ],
+        "answer_refs": [],
+        "support": "DOCUMENT",
+        "rationale": "원문에 명시된 정책을 항목으로 옮겼습니다."
+      },
+      {
+        "candidate_key": "draft-e379c7ebd554",
+        "kind": "CONSTRAINT",
+        "status": "DRAFT",
+        "schema_version": 1,
+        "content": {
+          "description": "서비스 응답 시간은 1초 이내여야 한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "base_design_item_version_id": null,
+        "base_status": null,
+        "sources": [],
+        "answer_refs": [],
+        "support": "NONE",
+        "rationale": "일반적인 성능 기준을 제안합니다."
+      }
+    ],
+    "changes": [
+      {
+        "candidate_key": "draft-09c48617c86a",
+        "change": "UPDATE",
+        "base_design_item_version_id": "1101",
+        "before": {
+          "description": "문서의 최종 발행은 프로젝트 리더만 수행한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "after": {
+          "description": "문서의 최종 발행은 계정이 활성 상태이고 프로젝트 멤버십도 활성인 프로젝트 리더만 수행한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "changed_fields": [
+          {
+            "field": "description",
+            "before": "문서의 최종 발행은 프로젝트 리더만 수행한다.",
+            "after": "문서의 최종 발행은 계정이 활성 상태이고 프로젝트 멤버십도 활성인 프로젝트 리더만 수행한다."
+          }
+        ],
+        "answer_refs": [
+          "q-model-231b13f37159"
+        ]
+      },
+      {
+        "candidate_key": "draft-539b75daeddb",
+        "change": "UPDATE",
+        "base_design_item_version_id": "1103",
+        "before": {
+          "description": "첫 출시는 웹 브라우저를 대상으로 한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "after": {
+          "description": "첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션은 첫 출시 범위에서 제외한다(2027년 상반기 이후 검토).",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "changed_fields": [
+          {
+            "field": "description",
+            "before": "첫 출시는 웹 브라우저를 대상으로 한다.",
+            "after": "첫 출시는 웹 브라우저를 대상으로 하며 모바일 전용 애플리케이션은 첫 출시 범위에서 제외한다(2027년 상반기 이후 검토)."
+          }
+        ],
+        "answer_refs": [
+          "q-rule-undecided-L7-1"
+        ]
+      },
+      {
+        "candidate_key": "draft-6b8e867f9ea6",
+        "change": "CREATE",
+        "base_design_item_version_id": null,
+        "before": null,
+        "after": {
+          "description": "정식 운영 담당자는 시범 운영 평가 회의에서 프로젝트 리더가 정한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "changed_fields": [],
+        "answer_refs": [
+          "q-model-523f15ad3e6d"
+        ]
+      },
+      {
+        "candidate_key": "draft-cde7fa408039",
+        "change": "CREATE",
+        "base_design_item_version_id": null,
+        "before": null,
+        "after": {
+          "description": "정식 운영 날짜는 아직 정하지 않았다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "changed_fields": [],
+        "answer_refs": [
+          "q-rule-undecided-L29-1"
+        ]
+      },
+      {
+        "candidate_key": "draft-183858e5e2a4",
+        "change": "CREATE",
+        "base_design_item_version_id": null,
+        "before": null,
+        "after": {
+          "description": "검토 모드의 결과에는 대상 버전을 표시하며 이를 현재 정책으로 소개하지 않는다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "changed_fields": [],
+        "answer_refs": []
+      },
+      {
+        "candidate_key": "draft-e379c7ebd554",
+        "change": "CREATE",
+        "base_design_item_version_id": null,
+        "before": null,
+        "after": {
+          "description": "서비스 응답 시간은 1초 이내여야 한다.",
+          "method": null,
+          "path": null,
+          "entity": null,
+          "fields": null
+        },
+        "changed_fields": [],
+        "answer_refs": []
+      }
+    ],
+    "untouched_existing_ids": [
+      "1102"
+    ],
+    "unanswered_question_keys": [
+      "q-rule-undecided-L29-2",
+      "q-model-23c887c84e56",
+      "q-model-f5c7bf5dad68"
+    ],
+    "unresolved": [
+      "유료 요금제 가격은 답변에서도 미정으로 남았다."
+    ],
+    "omitted_items": 0
+  },
+  "origin": "MODEL",
+  "model": "gpt-6-luna",
+  "usage": [
+    {
+      "request_key": "llm-design-drafts-00000000-0000-4000-8000-000000000134",
+      "feature": "BEE_DRAFT",
+      "model": "gpt-6-luna",
+      "latency_ms": 0,
+      "failed": false,
+      "tokens_known": true,
+      "input_tokens": 2600,
+      "output_tokens": 900
+    }
+  ]
+}

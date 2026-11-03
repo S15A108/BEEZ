@@ -1,0 +1,419 @@
+"""Draft composition verifies model output against the inputs; fakes only."""
+
+import json
+from hashlib import sha256
+
+import pytest
+
+from app.schemas.design_drafts import DesignDraftRequest
+from app.services.design_drafts import (
+    DraftProposal,
+    LLMDraftProposer,
+    ModelItem,
+    draft_key,
+    generate_design_drafts,
+)
+from app.services.design_drafts import proposer as proposer_module
+from app.services.document_parsing.pipeline import parse_source
+from app.services.llm_client import (
+    LLMClient,
+    LLMContext,
+    LLMError,
+    LLMUsage,
+    ProviderError,
+    ProviderResponse,
+)
+
+DOC = "# 업로드\n\n단일 파일 한도는 30 MB이다.\n\n## 권한\n\n발행은 리더만 수행한다.\n"
+DOCUMENT = {"document_id": "301", "document_version_id": "311", "version_no": 1}
+APPROVED = {
+    "design_item_version_id": "1101",
+    "design_item_id": "1001",
+    "key": "PLN-001",
+    "kind": "CONSTRAINT",
+    "version_no": 1,
+    "status": "APPROVED",
+    "content": {"description": "단일 파일 한도는 30 MB이다."},
+}
+DRAFT_ITEM = {
+    "design_item_version_id": "1102",
+    "design_item_id": "1002",
+    "key": "PLN-002",
+    "kind": "POLICY",
+    "version_no": 1,
+    "status": "DRAFT",
+    "content": {"description": "발행은 리더만 수행한다."},
+}
+
+
+def evidence(line=3, quote="단일 파일 한도는 30 MB이다."):
+    return {
+        **DOCUMENT,
+        "block_id": "blk_unused",
+        "locator": {"type": "text_lines", "start_line": line, "end_line": line},
+        "location": f"L{line}-L{line}",
+        "quote": quote,
+    }
+
+
+def stored_question(key, text, status="ANSWERED", answer_text="MiB"):
+    entry = {
+        "question": {
+            "question_key": key,
+            "candidate_key": key.removeprefix("q-"),
+            "rank": 1,
+            "question_type": "SHORT_ANSWER",
+            "text": text,
+            "answer_format": {"type": "SHORT_ANSWER", "max_length": 200},
+            "origin": "MODEL",
+            "basis": "REVIEW_CANDIDATE",
+        },
+        "evidence": [evidence()],
+        "status": status,
+        "answer": None,
+    }
+    if status == "ANSWERED":
+        entry["answer"] = {
+            "question_key": key,
+            "answer": {"type": "SHORT_ANSWER", "text": answer_text},
+            "answered_by": "11",
+            "answered_at": "2026-11-03T03:00:00Z",
+        }
+    return entry
+
+
+def request(content=DOC, **overrides):
+    digest = sha256(content.encode("utf-8")).hexdigest()
+    body = {
+        "project_id": "101",
+        "request_key": "draft-1",
+        "document": DOCUMENT,
+        "kind": "PLAN",
+        "media_type": "text/markdown",
+        "content": content,
+        "content_hash": digest,
+        "text_hash": digest,
+        "normalization_version": "utf8-lf-v1",
+        "parser_profile": "markdown-v1",
+        "existing_items": [APPROVED, DRAFT_ITEM],
+        "questions": [
+            stored_question("q-1", "한도 단위는 무엇인가요?"),
+            stored_question("q-2", "보관 기간은?", status="OPEN"),
+        ],
+    }
+    body.update(overrides)
+    return DesignDraftRequest.model_validate_json(json.dumps(body, ensure_ascii=False))
+
+
+def usage():
+    return LLMUsage(
+        request_key="call-1",
+        feature="BEE_DRAFT",
+        project_id="101",
+        model="fake",
+        latency_ms=1,
+        failed=False,
+        tokens_known=True,
+        input_tokens=10,
+        output_tokens=5,
+    )
+
+
+def item(kind, description, *, base=None, sources=(), refs=(), rationale="근거"):
+    return {
+        "kind": kind,
+        "content": {"description": description},
+        "base_design_item_version_id": base,
+        "sources": list(sources),
+        "answer_refs": list(refs),
+        "rationale": rationale,
+    }
+
+
+class FakeProposer:
+    """Line anchors become real block ids; literal block ids are used as is."""
+
+    def __init__(self, *items, unresolved=()):
+        self.items = items
+        self.unresolved = unresolved
+        self.calls = []
+
+    async def propose(self, request, document):
+        self.calls.append((request, document))
+
+        def block_for(source):
+            if "block_id" in source:
+                return source["block_id"]
+            for block in document.blocks:
+                if block.locator.start_line <= source["line"] <= block.locator.end_line:
+                    return block.block_id
+            raise KeyError(source)
+
+        proposed = tuple(
+            ModelItem.model_validate(
+                {
+                    **entry,
+                    "sources": [
+                        {"block_id": block_for(s), "quote": s["quote"]}
+                        for s in entry["sources"]
+                    ],
+                }
+            )
+            for entry in self.items
+        )
+        return DraftProposal(proposed, tuple(self.unresolved), "fake", (usage(),))
+
+
+def by_description(result):
+    return {entry.content.description: entry for entry in result.items}
+
+
+@pytest.mark.asyncio
+async def test_update_of_an_approved_item_keeps_the_approved_content_as_before():
+    proposer = FakeProposer(
+        item(
+            "CONSTRAINT",
+            "단일 파일 한도는 30 MiB이다.",
+            base="1101",
+            sources=[{"line": 3, "quote": "단일 파일 한도는 30 MB이다."}],
+            refs=["q-1"],
+        )
+    )
+    body = request()
+    outcome = await generate_design_drafts(body, proposer)
+    result = outcome.result
+    assert len(result.items) == 1 and len(result.changes) == 1
+    draft = result.items[0]
+    assert draft.status == "DRAFT" and draft.base_status == "APPROVED"
+    assert draft.support == "DOCUMENT_AND_ANSWER"
+    assert draft.sources[0].location == "업로드 / L3-L3"
+    change = result.changes[0]
+    assert change.change == "UPDATE" and change.base_design_item_version_id == "1101"
+    assert change.before.description == "단일 파일 한도는 30 MB이다."
+    assert [f.field for f in change.changed_fields] == ["description"]
+    assert change.answer_refs == ("q-1",)
+    # The supplied approved item is untouched; only the draft differs from it.
+    assert body.existing_items[0].content.description == "단일 파일 한도는 30 MB이다."
+    assert result.untouched_existing_ids == ("1102",)
+    assert result.unanswered_question_keys == ("q-2",)
+    assert outcome.origin == "MODEL" and outcome.model == "fake"
+    assert outcome.usage[0].request_key == "call-1"
+    api = outcome.to_api_dict()
+    assert set(api) == {"result", "origin", "model", "usage"}
+    assert api["usage"][0]["feature"] == "BEE_DRAFT"
+
+
+@pytest.mark.asyncio
+async def test_fabricated_quote_is_dropped_and_unsupported_items_rank_last():
+    proposer = FakeProposer(
+        item("CONSTRAINT", "응답 시간은 1초 이내다."),
+        item(
+            "REQUIREMENT",
+            "한도 단위는 MiB다.",
+            sources=[{"line": 3, "quote": "한도는 50 MB이다."}],
+            refs=["q-1"],
+        ),
+        item(
+            "POLICY",
+            "발행 전 검토를 거친다.",
+            sources=[{"line": 7, "quote": "발행은 리더만 수행한다."}],
+        ),
+    )
+    outcome = await generate_design_drafts(request(), proposer)
+    drafts = by_description(outcome.result)
+    assert drafts["한도 단위는 MiB다."].support == "ANSWER"
+    assert drafts["한도 단위는 MiB다."].sources == ()
+    assert "50 MB" not in json.dumps(outcome.to_api_dict(), ensure_ascii=False)
+    assert drafts["발행 전 검토를 거친다."].support == "DOCUMENT"
+    assert [entry.support for entry in outcome.result.items] == [
+        "ANSWER",
+        "DOCUMENT",
+        "NONE",
+    ]
+    assert all(change.change == "CREATE" for change in outcome.result.changes)
+
+
+@pytest.mark.asyncio
+async def test_unchanged_restatement_and_second_update_of_a_base_are_dropped():
+    proposer = FakeProposer(
+        item("POLICY", "발행은 리더만 수행한다.", base="1102"),
+        item("CONSTRAINT", "단일 파일 한도는 30 MiB이다.", base="1101", refs=["q-1"]),
+        item("CONSTRAINT", "단일 파일 한도는 31 MiB이다.", base="1101", refs=["q-1"]),
+    )
+    outcome = await generate_design_drafts(request(), proposer)
+    assert [entry.content.description for entry in outcome.result.items] == [
+        "단일 파일 한도는 30 MiB이다."
+    ]
+    assert outcome.result.untouched_existing_ids == ("1102",)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        item("CONSTRAINT", "x", base="9999"),
+        item("POLICY", "x", base="1101"),
+        item("CONSTRAINT", "x", refs=["q-9"]),
+        item("CONSTRAINT", "x", refs=["q-2"]),
+        {**item("API_CONTRACT", "x"), "content": {"description": "x", "method": "GET"}},
+        {**item("REQUIREMENT", "x"), "content": {"description": "   "}},
+    ],
+)
+@pytest.mark.asyncio
+async def test_contradicting_the_inputs_is_invalid_output_with_failed_usage(bad):
+    with pytest.raises(LLMError) as error:
+        await generate_design_drafts(request(), FakeProposer(bad))
+    assert error.value.code == "invalid_output"
+    assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 10
+
+
+@pytest.mark.asyncio
+async def test_keys_are_content_derived_and_order_independent():
+    first = item("REQUIREMENT", "한도 단위는 MiB다.", refs=["q-1"])
+    second = item("POLICY", "발행 전 검토를 거친다.")
+    one = await generate_design_drafts(request(), FakeProposer(first, second))
+    two = await generate_design_drafts(request(), FakeProposer(second, first))
+    keys_one = {d.content.description: d.candidate_key for d in one.result.items}
+    keys_two = {d.content.description: d.candidate_key for d in two.result.items}
+    assert keys_one == keys_two
+    assert all(key.startswith("draft-") for key in keys_one.values())
+    duplicate = await generate_design_drafts(request(), FakeProposer(first, first))
+    assert len(duplicate.result.items) == 1
+    content = one.result.items[0].content
+    assert draft_key("REQUIREMENT", None, content) != draft_key("POLICY", None, content)
+
+
+@pytest.mark.asyncio
+async def test_cap_omits_lowest_ranked_drafts_and_restores_their_bases():
+    proposer = FakeProposer(
+        item("CONSTRAINT", "응답 시간은 1초 이내다."),
+        item("CONSTRAINT", "단일 파일 한도는 30 MiB이다.", base="1101", refs=["q-1"]),
+        unresolved=["  보관 기간은 답변이 없다.  ", "보관 기간은 답변이 없다.", "   "],
+    )
+    outcome = await generate_design_drafts(request(max_items=1), proposer)
+    result = outcome.result
+    assert [entry.support for entry in result.items] == ["ANSWER"]
+    assert result.omitted_items == 1 and result.max_items == 1
+    assert result.unresolved == ("보관 기간은 답변이 없다.",)
+    capped = await generate_design_drafts(
+        request(max_items=1),
+        FakeProposer(
+            item(
+                "CONSTRAINT", "단일 파일 한도는 30 MiB이다.", base="1101", refs=["q-1"]
+            ),
+            item("POLICY", "발행 전 검토를 거친다.", base="1102", refs=["q-1"]),
+        ),
+    )
+    assert capped.result.items[0].base_design_item_version_id == "1101"
+    assert capped.result.untouched_existing_ids == ("1102",)
+
+
+class FakeProvider:
+    def __init__(self, output):
+        self.output = output
+        self.calls = []
+
+    async def complete(self, request, *, timeout_seconds):
+        self.calls.append(request)
+        if isinstance(self.output, Exception):
+            raise self.output
+        return ProviderResponse(
+            json.dumps(self.output, ensure_ascii=False), request.model, 12, 7
+        )
+
+
+def llm_proposer(provider, *, project="101", **kwargs):
+    return LLMDraftProposer(
+        LLMClient(provider),
+        context=LLMContext(project_id=project, feature="BEE_DRAFT", request_key="d"),
+        model="fake",
+        call_key="call-1",
+        timeout_seconds=3,
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_llm_proposer_sends_blocks_items_and_answered_questions_only():
+    provider = FakeProvider({"items": [], "unresolved": []})
+    body = request()
+    document = parse_source(body.to_source_input())
+    result = await llm_proposer(provider).propose(body, document)
+    assert result.items == () and result.model == "fake"
+    assert result.usage[0].input_tokens == 12 and not result.usage[0].failed
+    llm_request = provider.calls[0]
+    assert "untrusted" in llm_request.messages[0].content
+    payload = json.loads(llm_request.messages[1].content)
+    assert payload["document"]["document_version_id"] == "311"
+    assert payload["blocks"][1]["text"].startswith("단일 파일 한도는")
+    assert [entry["key"] for entry in payload["existing_items"]] == [
+        "PLN-001",
+        "PLN-002",
+    ]
+    assert [q["question_key"] for q in payload["answered_questions"]] == ["q-1"]
+    assert payload["answered_questions"][0]["answer"] == {
+        "type": "SHORT_ANSWER",
+        "text": "MiB",
+    }
+    assert payload["unanswered_question_count"] == 1
+    assert payload["max_items"] == 50
+    assert llm_request.context.feature == "BEE_DRAFT"
+    assert llm_request.response_format == {"type": "json_object"}
+    assert llm_request.model_options == {"max_completion_tokens": 4096}
+
+
+@pytest.mark.parametrize(
+    "bad_output",
+    [
+        {"items": [{"kind": "POLICY", "content": {"description": "x"}}]},
+        {
+            "items": [
+                {
+                    "kind": "DEFECT",
+                    "content": {"description": "x"},
+                    "rationale": "r",
+                }
+            ],
+            "unresolved": [],
+        },
+        {"items": [], "unresolved": [], "approved": True},
+        {"items": [], "unresolved": ["x" * 2001]},
+    ],
+)
+@pytest.mark.asyncio
+async def test_structurally_invalid_model_output_keeps_failed_usage(bad_output):
+    provider = FakeProvider(bad_output)
+    body = request()
+    with pytest.raises(LLMError) as error:
+        await llm_proposer(provider).propose(body, parse_source(body.to_source_input()))
+    assert error.value.code == "invalid_output"
+    assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 12
+
+
+@pytest.mark.asyncio
+async def test_scope_mismatch_and_oversized_input_never_reach_the_provider(
+    monkeypatch,
+):
+    provider = FakeProvider({"items": [], "unresolved": []})
+    body = request()
+    document = parse_source(body.to_source_input())
+    with pytest.raises(LLMError) as error:
+        await llm_proposer(provider, project="other").propose(body, document)
+    assert error.value.code == "invalid_input" and not provider.calls
+    monkeypatch.setattr(proposer_module, "MAX_PAYLOAD_BYTES", 10)
+    with pytest.raises(LLMError) as error:
+        await llm_proposer(provider).propose(body, document)
+    assert error.value.code == "invalid_input" and not provider.calls
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_keeps_real_failed_usage():
+    provider = FakeProvider(
+        ProviderError(
+            "model_unavailable", model="fake", input_tokens=4, output_tokens=0
+        )
+    )
+    body = request()
+    with pytest.raises(LLMError) as error:
+        await llm_proposer(provider).propose(body, parse_source(body.to_source_input()))
+    assert error.value.code == "model_unavailable"
+    assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 4

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.routers import (
     context_selection,
+    design_drafts,
     design_recommendations,
     document_chunks,
     embeddings,
@@ -41,6 +42,7 @@ app.include_router(context_selection.router)
 app.include_router(impact.router)
 app.include_router(meeting_analysis.router)
 app.include_router(planning_questions.router)
+app.include_router(design_drafts.router)
 
 
 @app.get("/")
