@@ -23,7 +23,11 @@ public class AiClient {
 
     public AiClient(BeezProperties props) {
         BeezProperties.Ai ai = props.ai();
-        HttpClient http = HttpClient.newBuilder().connectTimeout(ai.connectTimeout()).build();
+        // Uvicorn uses HTTP/1.1; avoid h2c upgrades on streamed request bodies.
+        HttpClient http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(ai.connectTimeout())
+                .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(ai.readTimeout());
         this.rest = RestClient.builder()
@@ -45,6 +49,15 @@ public class AiClient {
         }
     }
 
+    /**
+     * AI-A02 작업 계획 의미 분석 ({@code POST /v1/validate}). 요청·응답 모양은 명세 그대로 Map 으로 주고받는다.
+     * 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽(validation 워커)이 한다.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> validate(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/validate").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /** 이후 lead/review/embeddings 호출이 공통으로 쓸 RestClient. */
     protected RestClient rest() {
         return rest;
@@ -60,9 +73,25 @@ public class AiClient {
         return rest.post().uri("/v1/embeddings").body(input).retrieve().body(java.util.Map.class);
     }
 
+    /** Analyze a proposal; callers must retain the usage envelope and handle failures explicitly. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> changeImpact(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/impact").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /** BE adapter contract; AI feature implementation belongs to the AI owner. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {
         return rest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /**
+     * AI-A06 기획·문서 수정 초안 생성 ({@code POST /v1/bee/draft}). 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다.
+     * 읽기 시간 제한은 다른 호출과 같은 {@code ai.read-timeout} 이다. 문서 한 건을 다시 쓰는 호출은 더 걸릴 수 있어
+     * 기능별 시간 제한이 필요한지 137 실측 뒤에 정한다 (S15P31A108-233 계획 §0.5 A~C).
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> beeDraft(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/bee/draft").body(input).retrieve().body(java.util.Map.class);
     }
 }

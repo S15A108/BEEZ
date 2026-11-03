@@ -49,6 +49,7 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/bee/meeting-analysis](#ai-a08)
 - [/v1/document-chunks](#ai-a09)
 - [/v1/document-reviews](#ai-a10)
+- [/v1/design-reference-recommendations](#ai-a11)
 
 ---
 
@@ -236,22 +237,26 @@ HTTP `200`.
 | `validation_id` | `ID` | Y | 검증 실행 대상 |
 | `attempt` | `integer` | Y | backend 실행 시도 |
 | `plan_revision` | [TaskPlanRevision](00-common.md#schema-taskplanrevision) | Y | 불변 계획 |
-| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 참조한 승인 항목 |
+| `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 명시 참조 또는 검색 후보로 선정한 현재 기준의 승인 항목 |
 | `related_plans` | [TaskPlanRevision[]](00-common.md#schema-taskplanrevision) | Y | 열린 관련 계획 |
 | `rule_findings` | [Finding[]](00-common.md#schema-finding) | Y | 규칙 검사 결과 |
 | `unresolved` | `string[]` | Y | 미확정 정책 |
+| `context_packet_constraints` | `string[]` | N | 범위·기준을 확인한 패킷의 제약. 지시가 아닌 참고 데이터이며 승인 설계 근거를 대체하지 않는다. |
 | `input_snapshot_hash` | `string` | Y | 전체 분석 입력 해시 |
 | `checks` | [ValidationCheck[]](00-common.md#schema-validationcheck) | Y | BE가 지정한 필수 검사 범위. 비어 있지 않고 key가 유일해야 함 |
 | `evidence` | [ValidationEvidence[]](00-common.md#schema-validationevidence) | Y | 권한·버전을 검증한 원문 발췌. 없으면 []이며 검색 미발견을 정책 부재로 간주하지 않음 |
 | `execution_budget_ms` | `integer` | Y | 모든 모델 호출·출력 검증을 포함한 AI 처리 예산. 양수이며 BE 배포 설정의 상한 이내 |
+| `completion_delta` | `object[]` | N | 완료 보고에서 전달한 변경 내용. DELTA 검사에서는 비어 있지 않은 배열을 보내고 `completion-delta` 검사를 함께 지정한다. 일반 계획 검증에는 생략한다. |
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
+
+`completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획·완료 기준 및 선정된 승인 설계에 비추어 분석한다. 검사의 설계 버전 목록은 해당 요청에서 조립한 승인 항목 버전이다. 완료 보고와 승인 설계의 불일치는 그 목록에 있는 설계 ID와 해당 설계의 출처·발췌를 인용할 수 있다. 보고와 현재 계획만의 불일치는 설계 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 검사 범위 밖의 설계나 다른 설계의 근거를 인용하지 않는다.
 
 `content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
 
 `approved_items[].content`는 해당 검사의 비교에 필요한 필드를 포함해야 한다. API 요청·응답 필드, 타입, 필수 여부 등 kind별 필수 키·지원 범위는 Q01에서 확정하며, 아래 content는 비교 흐름을 설명하는 예시이지 Q01의 최종 스키마가 아니다. 미지원 본문을 조용히 생략한 뒤 검사 완료로 처리하지 않는다. `unlinked`의 상세 형식은 Q02에서 함께 확정한다.
 
-`evidence`는 기존 RAG `RetrievedEvidence`를 BE가 승인 항목 버전·`Source`와 연결해 만든 요청 스냅샷이다. PR #18의 원문 파서·locator를 재사용하며 AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
+`evidence`는 BE가 원문과 `Source`를 확인해 만든 요청 스냅샷이다. 승인 항목에 명시적으로 연결된 근거에는 `design_item_version_id`가 있으며, 검색된 미연결 문서의 발췌에는 이 필드를 생략한다. 미연결 발췌는 설계 항목이나 직접 참조로 승격하지 않으며 `plan-completeness`에서 설계 ID 없이 원문 맥락으로만 인용할 수 있다. 검색 발췌는 최대 50개·발췌당 16,000바이트·합계 60,000바이트이며, 전체 입력 한도를 넘지 않도록 일부가 추가로 생략될 수 있다. 생략된 맥락은 검색 전체의 부재를 뜻하지 않는다. AI가 DB나 원본 저장소를 재조회하지 않는다. `text_hash`는 정규화 원문 전체의 SHA-256이고 원본 bytes의 `content_hash`와 별개다. `utf8-lf-v1`은 선두 BOM 제거와 CRLF/CR → LF만 수행하며 trim/NFKC를 하지 않는다. locator는 정규화 텍스트의 1-based, 끝 행 포함 범위이고 `text`는 해당 행의 LF까지 포함해 복원한 발췌다. BE가 원문·해시·범위를 검증한다.
 
 사람이 편집한 승인 `content`는 구조화 계약의 기준이다. 원문과 다르면 차이를 명시하며 원문으로 승인 내용을 덮어쓰지 않는다. 항목의 출처가 연결됐다는 사실만으로 원문 승인까지 추정하지 않는다. 수동 입력·기존 승인 항목을 사용할 수 있고, 자동 설계 항목 추출(-128/후속 E2)의 완료를 전제로 하지 않는다.
 
@@ -601,6 +606,10 @@ ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`�
 담당: BE: 오서현 / 작업 조회: 변준성 / AI: 양지훈 / FE: —  
 상태: 내부 계약 초안
 
+**#188 구현 제안 — BE 계약 협의 필요:** 기존 필드를 유지하면서 요청의 변경 사유 `reason`, 결과의 근거 상태 `result.evidence_status`, 후보의 `validation_id`를 추가한다. `validation_id`는 전달된 작업의 검증 ID만 사용할 수 있다. 근거 상태는 제공된 입력에 대한 평가이며 관련 작업이나 관계 전체가 검색됐다는 보장은 아니다. AI 결과와 BE의 규칙 후보·관계 경로는 별도로 보존한다. #197 저장 및 외부 API 형식은 이 제안만으로 확정하지 않는다.
+
+#195는 변경 제안의 불변 리비전 스냅샷과 현재 항목 projection에 `schema_version`을 보존한다. #188 내부 구현 초안은 현재 제출 리비전의 스냅샷·리비전 번호·해시를 확인하고 실제 CREATE·UPDATE 입력에 그 값을 전달한다. 스키마 버전이나 변경 내용이 없는 제안은 값을 추측하지 않고 AI 호출 없이 미평가로 남긴다. 현재 AI-A03에는 문서 변경 본문을 전달하는 확정 계약이 없으므로 문서만 변경하거나 설계와 문서를 함께 변경한 제안도 미평가이며 영향 0건이 아니다. #188 초안의 AI 요청에 추가하는 `proposal_revision`·`proposal_snapshot_hash`는 내부 추적 정보로서 #197 저장·공개 계약의 확정을 뜻하지 않는다. 구조화 출력 `json_schema`는 공급자가 지원할 때 선택하며 기본값은 `json_object`다.
+
 #### 인증
 
 `INTERNAL_SERVICE`. 내부 Bearer 토큰으로 인증한다. 외부 사용자 세션이나 에이전트 토큰은 허용하지 않는다.
@@ -628,6 +637,7 @@ ERROR를 만드는 모든 행의 finding은 `source=MODEL`, `severity=BLOCKING`�
 | `project_id` | `ID` | Y | 권한 검사를 완료한 프로젝트 |
 | `request_key` | `string` | Y | backend가 부여한 분석 요청 식별값. LLM별 실제 호출 key의 기준 |
 | `proposal_id` | `ID` | Y | 분석 제안 |
+| `reason` | `string` | N | 변경 제안 사유. #188 제안 필드 |
 | `changes` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 대상 항목 변경 |
 | `approved_items` | [DesignItemVersion[]](00-common.md#schema-designitemversion) | Y | 관련 승인 설계 |
 | `explicit_dependencies` | [DesignDependency[]](00-common.md#schema-designdependency) | Y | 확정 관계 |
@@ -764,6 +774,8 @@ HTTP `200`.
 | `model` | `string` | N | 실제 모델 호출 시 필수 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
 
+#188 제안 결과의 `result.evidence_status`는 `SUFFICIENT` 또는 `INSUFFICIENT`다. 승인된 기존 내용·변경안·작업 계획·문서 근거가 부족하면 `INSUFFICIENT`로 표현한다. `candidates`가 비어 있어도 프로젝트 전체에 영향이 없음을 의미하지 않는다. 후보에는 입력된 작업의 검증을 식별하기 위한 `validation_id`가 선택적으로 포함될 수 있다. 기존 `ImpactResult`·`ImpactCandidate` 공통 DTO 반영 및 #197 저장 방법은 담당자 합의가 필요하다.
+
 ```json
 {
   "result": {
@@ -809,6 +821,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 입력 타입·필수 값 오류 |
 | 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 413 | `invalid_ai_input` | #188 제안: 설정된 요청 본문 크기 초과 |
 | 422 | `invalid_ai_input` | 본문 업무 구조 부적합 |
 | 502 | `model_unavailable` | 외부 모델 호출 실패 또는 잘못된 출력 |
 | 504 | `model_timeout` | 모델 시간 초과 |
@@ -1206,8 +1219,8 @@ HTTP `200`.
 
 기획·문서 수정 초안 생성 기능을 제공한다.
 
-관련 요구사항: PLN-06, BEE-08, MTG-09  
-담당: BE: 오서현 / AI: 박상은 / 회의 연결: 양지훈 / FE: —  
+관련 요구사항: PLN-06, BEE-08  
+담당: BE: 오서현 / AI: 박상은 / FE: —  
 상태: 내부 계약 초안
 
 #### 인증
@@ -1369,6 +1382,9 @@ HTTP `200`.
 
 - 반환 원문은 미승인 수정안이다. 문서 버전·baseline을 직접 바꾸지 않는다.
 - 기획 초안의 항목 구조화는 필요 시 /v1/parse를 이어 호출한다.
+- 호출자는 변경 제안의 문서 수정 초안(CHG-A07)이다. 기획 설계 초안(PLN-A05)이 같은 모듈을 쓰는지는 S15P31A108-232에서 확정한다.
+- 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다. 변경 제안의 문안은 회의 정리(MTG-A11, AI-A08 SUMMARY)의 document_changes.after에서 온다. MTG-A09가 폐지 예정이라 회의 연결 호출자가 없으므로 `decisions`는 현재 쓰는 곳이 없다(필드는 유지).
+- 모델 출력이 최대 길이로 잘렸으면(`finish_reason=length` 등) 성공 응답으로 돌려주지 않고 502 `model_unavailable`로 응답한다. 응답 모양에는 종료 사유 필드가 없어 backend는 잘림 여부를 알 수 없으므로 이 오류가 유일한 신호다. 잘린 수정안을 성공으로 돌려주면 원문 대신 승인본이 될 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1582,7 +1598,8 @@ HTTP `200`.
 회의 질문·요약·결정 추출 기능을 제공한다.
 
 관련 요구사항: MTG-06·08  
-담당: BE: 오서현 / AI: 양지훈 / FE: —  
+담당: BE: 오서현 / AI: 양지훈 / FE: —
+
 상태: 내부 계약 초안
 
 #### 인증
@@ -1771,7 +1788,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
-- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다.
+- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다. 단 SUMMARY의 document_changes.after는 이 API가 직접 만들고 draft 모듈(AI-A06)을 부르지 않는다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
 - (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
@@ -1796,21 +1813,23 @@ HTTP `200`.
 | `project_id`, `document_version_id` | 양의 십진 문자열, 최대 19자리 |
 | `request_key` | 1~128자 상관관계 키. 저장 또는 멱등성 보장은 BE 책임 |
 | `kind` | `PLAN`, `REQUIREMENTS`, `API_SPEC`, `ERD` |
-| `media_type` | `text/markdown`만 허용 |
+| `media_type` | `text/markdown` 또는 `text/plain`. 파서 프로필을 정한다 |
 | `content` | 엄격히 UTF-8 디코딩한 원문 문자열. BOM/CRLF 허용 |
 | `content_hash` | 원본 바이트 SHA-256 소문자 hex 64자리. `sha256:` 접두사 허용. BE가 원본과 대조 |
 | `text_hash` | 정규화 텍스트 UTF-8의 SHA-256 소문자 hex 64자리. `sha256:` 접두사 허용. AI가 대조 |
 | `normalization_profile` | `utf8-lf-v1`: 맨 앞 BOM 제거, CRLF/CR을 LF로 변환 |
-| `parser_profile` | 선택. 생략 시 `markdown-v1` |
+| `parser_profile` | 선택. 생략 시 media_type의 프로필(`text/markdown`은 `markdown-v1`, `text/plain`은 `plain-v1`). 명시하면 그 프로필과 같아야 한다 |
 | `chunking_profile_id` | `md-structure-v1` |
 
 추가 필드는 거부한다. 고정 청킹 프로필은 로컬 tiktoken, 청크당 600토큰, 최대 1,024청크이며 heading/table 문맥 보강은 꺼져 있다. 같은 입력·문서 버전·실제 프로필과 파서/청커 버전은 같은 chunk key를 만든다.
+
+파서 프로필은 media_type마다 하나다. `markdown-v1`은 CommonMark + pipe table 구조(제목·목록·표·코드·참조 정의)를 블록으로 나누며 HTML·이미지는 `unsupported_construct`로 전체 실패한다. `plain-v1`은 `.txt` 업로드용 일반 텍스트 프로필이다. 빈 줄로 구분한 문단만 `paragraph` 블록으로 삼고 HTML·이미지·Markdown 문법을 전혀 해석하지 않으므로 `<user>` 같은 태그 문자열도 원문 그대로 색인한다. `excluded_ranges`의 reason은 `blank`뿐이고 `heading_path`·`context_refs`·`diagnostics`는 비어 있으며 문단은 4,000개까지다. `source_spans`·`locator`·`text_hash`·manifest 구조와 청킹 프로필은 두 프로필이 같고 manifest의 `parser_profile`/`parser_version`(`beez-plain/1.0.0`)으로 구분한다. 같은 원문이라도 프로필이 다르면 block/chunk key가 다르다. BE는 `.md`를 `text/markdown`, `.txt`를 `text/plain`으로 보내고 manifest의 `parser_profile`이 보낸 media_type의 프로필과 같은지 검증한다.
 
 성공 응답은 `result`, `origin: "PARSER"`, `usage: []`다. result는 `contract_version: "document-chunks-v1"`, 요청 식별자·text_hash·프로필, `parser_version`, `manifest`, `excluded_ranges`, `diagnostics`, `chunks`를 포함한다. `result.text_hash`는 접두사를 포함해 요청값 그대로 반환하고, 내부 `manifest`의 해시는 접두사 없는 64자리다. manifest에는 실제 전체 청킹 프로필 및 예상 청크 key 목록이 있다. 각 청크에는 `chunk_key`, `chunk_no`, `document_version_id`, `text`, `embedding_text`, `token_count`, `source_spans`, `context_refs`, 표시용 `locator`가 있다.
 
 `source_spans`의 시작·끝은 정규화 문자열의 Unicode code point 0-based, 끝 제외다. span별 `locator`는 1-based 행 양끝 포함이다. Java에서는 UTF-16 인덱스로 변환한 뒤 원문을 자른다. `text`는 span별 원문 조각을 순서대로 결합한 값이다. 청크의 `locator`는 첫 span부터 마지막 span까지의 **표시 범위**이며 전체 행을 결합해 text를 복원하면 안 된다. 한 행 안에서 분할한 청크들은 이 표시 범위가 겹칠 수 있다. `excluded_ranges`는 빈 행, 구분선, 컨테이너 표시 등 청크에 속하지 않는 원문을 명시한다.
 
-`context_refs`는 heading/table header의 위치·해시와 문맥 적용 여부를 제공한다. 인용 근거는 원문 span이며 임베딩에는 `embedding_text`를 사용한다. 요청·응답의 실행 가능한 예시는 [청킹 계약 fixture](examples/document-chunks/)에 있다.
+`context_refs`는 heading/table header의 위치·해시와 문맥 적용 여부를 제공한다. 인용 근거는 원문 span이며 임베딩에는 `embedding_text`를 사용한다. 요청·응답의 실행 가능한 예시는 [청킹 계약 fixture](examples/document-chunks/)에 있다. Markdown은 `request.json`/`response.json`, `<user>` 태그가 든 일반 텍스트는 `plain-request.json`/`plain-response.json`이다.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
@@ -1837,13 +1856,43 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 
 ## AI-A10. 문서 검토·수정 제안
 
+### 216 BE 검토 계약 v2 — 222 AI 구현
+
+222에서 아래 BE v2 계약을 따르는 AI 라우트와 모델 호출을 구현했다. 실제 배포 환경 연동 및 제품 정책 합의의 완료를 뜻하지 않는다. 이하 기존 v1 기본 필드·화면 확장 예시만으로 호출하면 v2 필수 출력 누락으로 BE가 거절한다.
+
+| 구분 | v2 계약 |
+| --- | --- |
+| 요청 | 기존 project_id/document_id/revision/kind/content/request_key에 contract_version=2와 content_hash 추가. content_hash는 전송 문자열의 정규화 없는 UTF-8 SHA-256 |
+| 참고 | 승인본만 전달. references[]에 reference_id=`document-version-{version ID}`, status=APPROVED, 전송 content_hash 추가 |
+| 집합 해시 | reference_id ASCII 문자열 오름차순. 각 원소는 content를 제외한 content_hash/document_id/document_version_id/kind/reference_id/status/version_no를 모두 포함. 객체 키를 재귀적으로 사전순 정렬한 공백 없는 JSON의 UTF-8 SHA-256. null/키 생략 없음. 빈 집합은 [] |
+| 응답 식별 | document_id/revision/**content_hash**/reference_hash/request_key echo 필수. BE가 저장 결과에 contract_version=2 부여 |
+| 단계 | steps에 BODY/API_SPEC/ERD/REQ_SPEC 각각 1개. `{step,status,reason,reference_ids}`. BODY=COMPLETE/REVIEWED/[]; 동일 종류 비교=SKIPPED/SAME_KIND/[]; 승인본 없는 나머지 비교=PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE/[]; 승인본 있는 비교=COMPLETE/REVIEWED/해당 종류의 입력 ID 전체 |
+| 전체 | 같은 종류 제외 후 자료 부족 단계가 하나라도 있으면 review_status=PARTIAL, 아니면 COMPLETE. references_used는 실제 비교 reference_ids 합집합. BE가 재계산·대조 |
+| 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증 |
+| PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. 원문 구간 간 겹침, 적용 후 빈 문서·제어 문자·크기 초과 또는 다른 제안의 원문이 중복되는 결과는 전체 거절 |
+| COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
+| 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
+
+[정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN/DISCUSS/REQUEST 신규 기능은 후속 범위다.
+
+222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
+
+각 PATCH의 적용·건너뛰기와 적용 순서에 따른 중간 문서는 BE와 같은 UTF-8 1 MiB, 정규화 후 100,000 코드포인트, 비어 있지 않은 텍스트 및 제어 문자 기준을 지켜야 한다. 업로드 후에도 선두 BOM이 남아 있을 수 있으며, 이 경우 BE와 같이 PATCH 적용마다 선두 BOM을 최대 하나 제거해 결과와 남은 원문의 유일성을 검증한다. 검증 작업량이 상한을 넘거나, 선두 BOM이 새로 노출되거나 PATCH 경계를 가로지르는 CRLF 정규화로 적용 결과가 달라질 수 있어 안전성을 확인할 수 없으면 전체 응답을 `invalid_output`으로 거절하고 사용량은 실패 기록에 남긴다.
+
+문서 검토 모델 호출 주소는 `GMS_CHAT_ENDPOINT`로 설정하며 생략하면 기존 GMS Chat Completions 주소를 사용한다. `infra/compose.yaml`은 배포 env 파일 또는 셸에서 이 값을 AI 컨테이너로 전달한다. GMS 키 전송을 보호하기 위해 HTTPS `gms.ssafy.io`의 기본 포트 또는 443만 허용하고 사용자 정보·쿼리·fragment는 거부한다. 경로는 `/chat/completions`로 끝나야 하며 잘못된 설정은 문서 검토에서 `model_unavailable`로 실패한다.
+
+연동 회귀 테스트: `backend`에서 `BEEZ_RUN_AI_E2E=true`를 설정하고 `./gradlew integrationTest --tests '*DocumentReviewFastApiE2ETest'`를 실행한다. Docker와 AI 의존성이 설치된 `ai/.venv`가 필요하며, 다른 Python 실행 파일은 `BEEZ_E2E_PYTHON`으로 지정한다. 테스트는 로컬 FastAPI, 가짜 모델 및 임시 DB를 사용한다.
+
+실제 GMS 검증은 `ai/.env`에 `GMS_KEY`를 설정한 후 `ai`에서 `python -m scripts.document_review_live_smoke --execute`를 실행한다. 실제 호출은 비용이 발생할 수 있으며 합성 fixture만 전송한다. 전체 BE·AI·GMS 경계는 `backend`에서 `BEEZ_RUN_REAL_GMS_E2E=true`와 `./gradlew integrationTest --tests '*DocumentReviewRealGmsE2ETest'`로 검증하며, 실제 모델 1회와 임시 DB를 사용한다. 키는 로그나 저장소에 포함하지 않는다.
+
 ### POST `/v1/document-reviews`
 
-공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. PR #37은 AI 내부 연동을 담당자 합의 대기로 두었으므로 AI 구현 전에 이 절로 합의한다.
+공용 문서함의 작성 내용을 승인 문서와 비교해 보완 제안을 만든다. DOC-A16(검토)이 부른다. 기본 필드와 검증은 dev BE 구현(`AiClient.documentReview`, `DocumentReviewService`의 reviewInput·validateResult)과 같다. 화면에 더 필요한 필드는 '수정안 요청' 확장으로 붙였고, DOC-A22(대화)·DOC-A23(직접 요청)도 같은 경로를 쓴다. 아래 기존 v1 예시와 화면 확장 필드는 v2 전체 계약이 아니며, 확장 기능은 별도 합의가 필요하다.
 
 관련 요구사항: DOC-01·08 (화면 PNL-02-m-review-*)  
-담당: BE: 오서현 / AI: 박상은 / FE: —  
-상태: BE 호출·검증 구현 · AI 구현 전 · 확장 필드는 수정안 요청 (협의 필요)
+담당: BE: 오서현 / AI: 양지훈 / FE: —
+
+상태: BE 호출·검증 및 AI 라우트 구현 · 합성 문서로 실제 GMS 연동 확인 · 배포 환경 연동 전 · 확장 필드는 수정안 요청 (협의 필요)
 
 #### 인증
 
@@ -2024,5 +2073,40 @@ result 필드:
 - (수정안 요청) RERUN은 BE가 DOC-A16 선택 규칙으로 고른 rejection_submission_id와 그 rejection_reason을 넣는다. 비비는 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만든다. 팀장은 문단을 고르지 않는다.
 - 이 문서의 동기 응답 원칙을 따른다. 실제 단계별 진행률을 보이려면 BE가 단계마다 나눠 부르거나 스트리밍이 필요하며, 방식은 Q19다.
 - 입력 크기·비용 상한과 실패 때 재시도는 Q11·Q19다.
+
+<a id="ai-a11"></a>
+
+## AI-A11. 작업 시작 설계 근거 추천 (#185 제안)
+
+### POST `/v1/design-reference-recommendations`
+
+**상태: AI 내부 계약 구현·BE 연동 전.** 승인된 설계 후보를 선택하고 추천 이유를 반환한다. 공개 CTX-A05의 변경이나 #131·#223·프론트 연동이 완료됐다는 뜻은 아니다. 상세 필드·요청/응답 예시는 [#185 내부 계약](../design/design-reference-recommendation-185.md)을 따른다.
+
+BE는 권한과 현재 baseline을 확인한 뒤 검색 결과와 명시적 관계를 기반으로 허용된 승인 설계 후보를 전달하고, 응답을 공개하기 전에 권한·기준 버전을 재확인한다. 검색 준비 중 또는 검색 실패를 BE가 알면 **AI를 호출하지 않는다.** 공개 `search_not_ready`·`search_failed`는 BE가 발생시키는 오류이며 공개 API의 상태 코드는 BE·FE와 협의한다.
+
+요청에는 프로젝트·요청·호출 ID, 자연어 요청, 검색 관찰·잘림·매핑 상태, 알려진 생략 후보와 미조회 범위, 승인 설계 후보를 포함한다. 항목의 저장 출처와 검색 원문은 별도로 전달한다. `VERIFIED`는 BE가 실제 위치를 검증했다는 표시이며 AI의 원문 확인을 뜻하지 않는다. 문서 출처 없는 승인 설계도 추천할 수 있고 위치를 추측하지 않는다.
+
+응답 `result.status`는 `RECOMMENDED`·`EMPTY`·`INSUFFICIENT`다. 부분 결과에는 이유와 확인된 생략 ID·선택적 설계 키를 보존한다. `unexamined_count`는 식별된 생략 후보와 별개의 **전체 미조회 설계 후보 총수**를 확실히 알 때만 기록하며, 검색이 잘린 현재 경로에서는 `null`이다. AI는 미조회 후보의 ID·키를 추측하지 않는다. 모델 호출이 없는 경우 `origin=TEMPLATE`, `usage=[]`다.
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 인증 실패 |
+| 422 | `invalid_ai_input` | 후보·출처·검색 상태의 업무 구조 모순 또는 호출 전 AI 입력 오류. `NOT_READY`·`FAILED`를 AI에 전달한 경우 포함 |
+| 502 | `model_unavailable` | 모델 호출 실패 또는 출력 계약 위반 |
+| 503 | `recommendation_not_enabled` | 모델 호출이 필요한데 추천 기능 비활성화 |
+| 503 | `recommendation_not_configured` | 모델 호출 설정·키 미구성 |
+| 504 | `model_timeout` | 모델 시간 초과 |
+
+`recommendation_not_enabled`·`recommendation_not_configured`는 모델 호출 전 오류다. 이미 호출한 모델의 실패는 확인 가능한 usage를 포함한다. 알려진 분석 대상은 본문을 조용히 잘라 원문으로 취급하지 않으며 16,000바이트·20개 분석 한도를 넘는 후보는 사유와 함께 생략한다. 입력 자체의 안전 한도와 최종 공개 오류 매핑은 BE·FE와 정한다.
+
+**BE 공개 오류 매핑 제안 — AI 응답 코드가 아님:**
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 503 | `search_not_ready` | BE가 검색 색인이 준비되지 않았다고 판단. AI 미호출 |
+| 502 | `search_failed` | BE 검색 호출 실패. AI 미호출 |
+
+공개 CTX-A05와 화면에서 위 코드·상태를 사용하는지는 BE·FE 확인이 필요하다.
 
 [공통 규약·권한·담당자 목록](00-common.md)

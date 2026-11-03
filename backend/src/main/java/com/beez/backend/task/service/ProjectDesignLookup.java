@@ -1,6 +1,7 @@
 package com.beez.backend.task.service;
 
 import com.beez.backend.common.api.ApiException;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -63,6 +64,57 @@ public class ProjectDesignLookup {
                 .param("itemId", designItemId)
                 .query(Long.class)
                 .optional();
+    }
+
+    /**
+     * 지정한 baseline 에서 설계 항목의 버전 id. 현재 포인터 대신 번호를 받는 이유: 설계 발행 트랜잭션 안(현재 포인터를 새 기준으로
+     * 바꾸기 전)에서 새 기준으로 규칙을 돌려야 하는 곳(-163 재접수)이 있다. 폐기된 항목은 없는 것으로 본다.
+     */
+    public Optional<Long> versionIdIn(Long projectId, Long baselineId, Long designItemId) {
+        return jdbc.sql("""
+                        select bi.design_item_version_id
+                          from baseline_item bi
+                          join design_item di on di.id = bi.design_item_id and di.project_id = :projectId
+                         where bi.baseline_id = :baselineId
+                           and bi.design_item_id = :itemId
+                           and di.retired_at is null
+                        """)
+                .param("projectId", projectId).param("baselineId", baselineId).param("itemId", designItemId)
+                .query(Long.class)
+                .optional();
+    }
+
+    /**
+     * 설계 발행(-163) 의 WAITING 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 <b>현재 계획</b>이 참조하는 IN_PROGRESS 작업
+     * (DesignChangeQueries.affected 와 같은 기준). (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 번호 오름차순, 중복 없음
+     */
+    public List<Long> inProgressTaskIdsReferencingAtOrBelow(Long projectId, List<Long> itemIds, List<Long> beforeVersionIds) {
+        if (itemIds.isEmpty()) {
+            return List.of();
+        }
+        StringBuilder values = new StringBuilder();
+        for (int i = 0; i < itemIds.size(); i++) {
+            if (i > 0) {
+                values.append(", ");
+            }
+            values.append("(:item").append(i).append(", :before").append(i).append(")");
+        }
+        JdbcClient.StatementSpec spec = jdbc.sql(("""
+                        select distinct t.id
+                          from (values %s) as changed(item_id, before_version_id)
+                          join design_item_version bv on bv.id = changed.before_version_id
+                          join task_plan_design_ref r on r.design_item_id = changed.item_id
+                          join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
+                          join task t on t.current_plan_revision_id = r.plan_revision_id
+                         where t.project_id = :projectId
+                           and t.status = 'IN_PROGRESS'
+                         order by t.id
+                        """).formatted(values))
+                .param("projectId", projectId);
+        for (int i = 0; i < itemIds.size(); i++) {
+            spec = spec.param("item" + i, itemIds.get(i)).param("before" + i, beforeVersionIds.get(i));
+        }
+        return spec.query(Long.class).list();
     }
 
     /** baseline 이 한 번도 발행되지 않은 프로젝트면 409 baseline_missing (명세 VAL-A01 와 같은 코드) */

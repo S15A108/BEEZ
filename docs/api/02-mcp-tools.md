@@ -164,6 +164,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 404 | `baseline_not_published` | 현재 승인 기준 없음 |
+| 409 | `baseline_conflict` | 선택에 사용한 기준이 저장 전 변경됨. 패킷을 저장하지 않고 최신 기준으로 다시 구성한다 |
 | 503 | `context_not_ready` | 컨텍스트 구성 모듈 미연결·색인 미준비. 패킷을 저장하지 않는다. 검색을 마쳤는데 근거가 0건이면 오류가 아니라 정상 응답의 `unresolved`로 표시한다 ([서비스 연결 계약](../design/08-mcp-service-contract.md)) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
@@ -1096,6 +1097,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 - 생성 시 본인 작업을 만들고 수정 시 본인 담당·현재 계획/상태를 검사한다.
 - 수정은 불변 새 리비전이다. 진행 중 수정은 STALE·WAITING(REVALIDATION)이며 점유 유지다.
+- (BE 구현, -162) 위 무효화는 검증 입력(제목·접근 방식을 뺀 계획 내용)이 바뀐 수정에만 적용한다. 규칙·가짜 검증에서 제목만 바꾸는 수정은 검증을 유지하고 새 리비전으로 이어 받으므로, 쥐고 있던 `validation_id` 로 그대로 `report_task_state(START·RESUME)` 할 수 있다(응답 `task.validation_status` 로 확인). 실제 검색 검증은 제목·접근 방식·패킷이 바뀌면 재검증한다. 완료 보고(delta)의 DELTA 검증이 아직 도는 동안은 수정이 `400 invalid_transition` 이다 — 결과를 기다리거나 RESUME. 결과가 보완 필요·검토 필요·오류로 끝났으면 수정할 수 있다. 규칙은 REST TSK-A04·[04 §2.5](../design/04-task-lifecycle.md)와 같다.
 - design_refs는 항목당 가장 강한 관계 하나로 확정한다. 입력·정규화 세부 Q02.
 - (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing이다(REST TSK-A01·구현과 같음).
 
@@ -1113,7 +1115,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: MCP-11, VAL-01·02  
 담당: BE: 전진(도구) / 변준성(실행·상태·저장) / AI: 양지훈(분석) / FE: —  
-상태: D2 판정표 합의 필요
+상태: BE 업무 서비스 구현 반영안 (S15P31A108-159, `ValidationMcpService.validateTaskPlan`). 도구 등록·어댑터 연결은 -179
 
 #### 인증
 
@@ -1194,6 +1196,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현, -159) |
 | 409 | `revision_conflict` | 현재 계획 아님 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
@@ -1212,6 +1215,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 검증을 관리하고 RUNNING이면 동일 validation_id를 get_validation으로 조회한다.
 - 규칙으로 즉시 완료할 수 있으며 판정은 [공통 6절 판정표](00-common.md#검증시작)를 따른다. 빈 입력은 NEEDS_INPUT, 명확한 계약 불일치·CHANGES 점유는 NEEDS_REVIEW다. AI가 finding을 내지 않은 것만으로는 PASS가 아니다.
 - AI 실패는 ERROR다. 규칙 finding을 AI가 해제하지 못한다.
+- (BE 구현, -159) 접수 규칙·판정·큐·워커는 REST [VAL-A01](01-backend-rest.md#val-a01) 처리 규칙과 같다. 도구 결과에는 200/202 구분이 없고 `status`(RUNNING 이면 큐에 들어감)로 본다. `idempotency_key`는 계정·프로젝트·동작 범위로 24시간 보존하고 같은 키·다른 입력은 409 `idempotency_conflict`, 재요청도 현재 담당자인지 확인한다(공통 5절).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -166,6 +166,10 @@ public class TaskApiSupport {
         return as(accountId).post(path, json);
     }
 
+    public HttpResponse<String> postWithHeaders(String path, String json, Long accountId, String... headers) {
+        return as(accountId).post(path, json, headers);
+    }
+
     public HttpResponse<String> patch(String path, String json, Long accountId) {
         return as(accountId).patch(path, json);
     }
@@ -209,6 +213,12 @@ public class TaskApiSupport {
         return """
                 [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "CHANGES",
                   "proposed_content": {"method":"GET","path":"/x","response":{"memberId":"long"}}}]
+                """.formatted(designItemId(key), currentVersionId(key));
+    }
+
+    public String implementsRef(String key) {
+        return """
+                [{"design_item_id": "%d", "design_item_version_id": "%d", "relation": "IMPLEMENTS"}]
                 """.formatted(designItemId(key), currentVersionId(key));
     }
 

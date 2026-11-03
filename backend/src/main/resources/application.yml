@@ -33,6 +33,13 @@ spring:
       max-file-size: 1MB
       max-request-size: 2MB
 
+  # @Scheduled 워커(문서 색인·원본 정리·검증)가 기본 스레드 1개를 같이 쓰면, 검증 워커가 AI 응답을 기다리는 동안
+  # 문서 색인이 멈춘다. 워커마다 스레드를 하나씩 쓰게 한다.
+  task:
+    scheduling:
+      pool:
+        size: ${SCHEDULING_POOL_SIZE:3}
+
   docker:
     compose:
       file: compose.yaml
@@ -98,6 +105,14 @@ beez:
     embedding-dimension: 1024
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  validation:
+    worker-enabled: ${VALIDATION_WORKER_ENABLED:true}
+    poll-millis: ${VALIDATION_POLL_MILLIS:2000}
+    lease-seconds: ${VALIDATION_LEASE_SECONDS:120}      # AI 읽기 시간 초과(ai.read-timeout)보다 길게
+    execution-budget-ms: ${VALIDATION_BUDGET_MS:15000}  # AI 에게 주는 처리 예산. 읽기 시간 초과보다 짧게
+    # 서버용 가짜 분석기. AI 서버에 /v1/validate 가 붙기 전(-184)까지 개발 서버에서만 켠다.
+    # 켜면 AI 를 부르지 않고 의미 분석이 필요한 검증도 후보 없이 PASS 로 끝난다(실제 설계 대조 없음). 운영에서는 끈다
+    fake-analyzer: ${VALIDATION_FAKE_ANALYZER:false}
   ai:
     base-url: ${AI_BASE_URL:http://localhost:8000}
     internal-token: ${AI_INTERNAL_TOKEN:change-me}

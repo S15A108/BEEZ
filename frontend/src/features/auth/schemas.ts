@@ -70,6 +70,8 @@ export type ChangePasswordInput = z.infer<typeof changePasswordInputSchema>
 
 export const forgotPasswordInputSchema = z.object({
   email: z.string(),
+  // ACC-A07 수정안 요청: 가입 때 쓴 표시 이름(앞뒤 공백 제외)
+  name: z.string(),
 })
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordInputSchema>
 

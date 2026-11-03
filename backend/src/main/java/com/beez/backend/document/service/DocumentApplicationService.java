@@ -78,7 +78,17 @@ public class DocumentApplicationService {
         return one("SELECT * FROM document_version WHERE document_id=:document AND version_no=:no", Map.of("document", document, "no", no));
     }
 
+    private Set<Long> currentBaselineVersionIds(long document) {
+        return new HashSet<>(jdbc.sql("""
+                SELECT bd.document_version_id FROM baseline_document bd
+                JOIN project p ON p.id=bd.project_id AND p.current_baseline_id=bd.baseline_id
+                WHERE bd.document_id=:document
+                """).param("document", document).query(Long.class).list());
+    }
     private Map<String, Object> versionView(Map<String, Object> row, boolean content) {
+        return versionView(row, content, currentBaselineVersionIds(number(row, "document_id")));
+    }
+    private Map<String, Object> versionView(Map<String, Object> row, boolean content, Set<Long> currentBaseline) {
         String extension = row.get("storage_key").toString().endsWith(".md") ? "md" : "txt";
         var result = new LinkedHashMap<String, Object>();
         result.put("id", row.get("id").toString()); result.put("document_id", row.get("document_id").toString());
@@ -86,6 +96,8 @@ public class DocumentApplicationService {
         result.put("file_name", "document-" + row.get("document_id") + "-v" + row.get("version_no") + "." + extension);
         result.put("media_type", extension.equals("md") ? "text/markdown" : "text/plain");
         result.put("content_hash", row.get("content_hash")); result.put("created_at", time(row.get("created_at")));
+        if (row.get("created_by") != null) result.put("created_by", row.get("created_by").toString());
+        result.put("is_current_baseline", currentBaseline.contains(number(row, "id")));
         if (content && row.get("content_text") != null) result.put("content", row.get("content_text"));
         return result;
     }
@@ -96,10 +108,24 @@ public class DocumentApplicationService {
         result.put("kind", new DocumentKindMapper().convertToEntityAttribute(row.get("type").toString()).name());
         result.put("title", row.get("title"));
         if (row.get("domain") != null) result.put("domain", row.get("domain"));
-        approved(id).ifPresent(v -> result.put("approved_version", versionView(v, false)));
-        rows("SELECT * FROM document_version WHERE document_id=:id AND status='DRAFT' ORDER BY version_no DESC LIMIT 1", Map.of("id", id))
-                .stream().findFirst().ifPresent(v -> result.put("latest_draft", versionView(v, false)));
+        var currentBaseline = currentBaselineVersionIds(id);
+        var approved = approved(id);
+        var draft = rows("SELECT * FROM document_version WHERE document_id=:id AND status='DRAFT' ORDER BY version_no DESC LIMIT 1", Map.of("id", id))
+                .stream().findFirst();
+        approved.ifPresent(v -> result.put("approved_version", versionView(v, false, currentBaseline)));
+        draft.ifPresent(v -> result.put("latest_draft", versionView(v, false, currentBaseline)));
+        // An in-progress working copy holds the latest edits; version bodies only change when it is submitted or approved.
+        var inProgress = rows("SELECT content_text FROM document_working_copy WHERE document_id=:id AND status IN ('EDITING','SUBMITTED','REJECTED')", Map.of("id", id))
+                .stream().findFirst();
+        (inProgress.isPresent() ? inProgress : approved.isPresent() ? approved : draft).map(v -> preview(v.get("content_text")))
+                .filter(text -> !text.isEmpty()).ifPresent(text -> result.put("preview_text", text));
         return result;
+    }
+    /** Collapses whitespace so a thumbnail card can show one paragraph, then keeps the first 300 code points. */
+    private static String preview(Object text) {
+        if (text == null) return "";
+        String collapsed = text.toString().replaceAll("\\s+", " ").trim();
+        return collapsed.substring(0, collapsed.offsetByCodePoints(0, Math.min(300, collapsed.codePointCount(0, collapsed.length()))));
     }
 
     private String fingerprint(Object value) { return hash(JSON.writeValueAsBytes(value)); }
@@ -157,12 +183,14 @@ public class DocumentApplicationService {
         });
     }
 
-    public Map<String, Object> list(CallerContext caller, long project, DocumentKind kind, String domain, String cursor, int limit) {
+    public Map<String, Object> list(CallerContext caller, long project, DocumentKind kind, String domain, DocumentStage stage, String cursor, int limit) {
         access.requireMember(caller, project); size(limit);
         String sql = "SELECT * FROM document WHERE project_id=:project";
         var params = new HashMap<String, Object>(Map.of("project", project, "limit", limit + 1));
         if (kind != null) { sql += " AND type=:kind"; params.put("kind", dbKind(kind)); }
         if (domain != null) { sql += " AND domain=:domain"; params.put("domain", domain); }
+        if (stage == DocumentStage.IN_PROGRESS) sql += " AND EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=document.id AND w.status IN ('EDITING','SUBMITTED','REJECTED'))";
+        if (stage == DocumentStage.CURRENT) sql += " AND EXISTS (SELECT 1 FROM baseline_document bd JOIN project p ON p.id=bd.project_id AND p.current_baseline_id=bd.baseline_id WHERE bd.document_id=document.id)";
         sql += cursorWhere(cursor, params, false);
         var all = rows(sql + " ORDER BY created_at DESC,id DESC LIMIT :limit", params);
         boolean more = all.size() > limit; var selected = all.subList(0, Math.min(limit, all.size()));
@@ -181,11 +209,12 @@ public class DocumentApplicationService {
     }
     public Map<String, Object> versions(CallerContext caller, long project, long id, String cursor, int limit) {
         access.requireMember(caller, project); document(project, id); size(limit);
+        var currentBaseline = currentBaselineVersionIds(id);
         var params = new HashMap<String, Object>(Map.of("document", id, "limit", limit + 1));
         var all = rows("SELECT * FROM document_version WHERE document_id=:document" + cursorWhere(cursor, params, false)
                 + " ORDER BY created_at DESC,id DESC LIMIT :limit", params);
         boolean more = all.size() > limit; var selected = all.subList(0, Math.min(limit, all.size()));
-        return page(selected.stream().map(v -> versionView(v, false)).toList(), more, more ? cursor(selected.getLast()) : null);
+        return page(selected.stream().map(v -> versionView(v, false, currentBaseline)).toList(), more, more ? cursor(selected.getLast()) : null);
     }
     public record Download(String filename, String mediaType, byte[] bytes) { }
     public Download download(CallerContext caller, long project, long id, int no) throws IOException {

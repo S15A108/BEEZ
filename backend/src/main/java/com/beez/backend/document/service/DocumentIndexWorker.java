@@ -4,6 +4,7 @@ import static com.beez.backend.document.service.DocumentValues.*;
 
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.designitem.repository.BaselineRepository;
 import com.beez.backend.document.DocumentKindMapper;
 import com.beez.backend.document.config.DocumentProperties;
 import java.nio.charset.StandardCharsets;
@@ -24,10 +25,11 @@ public class DocumentIndexWorker {
     private final JdbcClient jdbc;
     private final AiClient ai;
     private final DocumentProperties properties;
+    private final BaselineRepository baselines;
     private final TransactionTemplate tx;
 
-    public DocumentIndexWorker(JdbcClient jdbc, AiClient ai, DocumentProperties properties, PlatformTransactionManager manager) {
-        this.jdbc = jdbc; this.ai = ai; this.properties = properties; this.tx = new TransactionTemplate(manager);
+    public DocumentIndexWorker(JdbcClient jdbc, AiClient ai, DocumentProperties properties, BaselineRepository baselines, PlatformTransactionManager manager) {
+        this.jdbc = jdbc; this.ai = ai; this.properties = properties; this.baselines = baselines; this.tx = new TransactionTemplate(manager);
     }
     private List<Map<String, Object>> rows(String sql, Map<String, ?> params) { return jdbc.sql(sql).params(params).query().listOfRows(); }
     @SuppressWarnings("unchecked") private static Map<String, Object> object(Object value) {
@@ -109,23 +111,25 @@ public class DocumentIndexWorker {
         var input = new LinkedHashMap<String, Object>();
         input.put("project_id", job.get("project_id").toString()); input.put("document_version_id", job.get("document_version_id").toString());
         input.put("request_key", key(job, "chunks")); input.put("kind", new DocumentKindMapper().convertToEntityAttribute(job.get("type").toString()).name());
+        // .md is parsed as Markdown (markdown-v1); .txt is sent as plain text (plain-v1) so tag-like text is never rejected.
         input.put("media_type", job.get("storage_key").toString().endsWith(".md") ? "text/markdown" : "text/plain");
         input.put("content", content); input.put("content_hash", job.get("content_hash")); input.put("text_hash", job.get("text_hash"));
         input.put("normalization_profile", "utf8-lf-v1"); input.put("chunking_profile_id", "md-structure-v1");
         var response = call(job, input, false);
         if (!"PARSER".equals(response.get("origin")) || !array(response.get("usage")).isEmpty()) throw invalid("invalid_chunk_origin");
         var result = object(response.get("result"));
-        for (String field : List.of("document_version_id", "request_key", "text_hash", "chunking_profile_id")) {
+        if (!"document-chunks-v1".equals(result.get("contract_version"))) throw invalid("invalid_chunk_result");
+        for (String field : List.of("project_id", "document_version_id", "request_key", "text_hash", "normalization_profile", "chunking_profile_id")) {
             if (!Objects.equals(result.get(field), input.get(field))) throw invalid("invalid_chunk_result");
         }
         text(result.get("parser_version"));
-        var chunks = validateChunks(content, result.get("chunks"));
+        var chunks = DocumentChunkValidator.validate(content, input, result);
         if (!sourceReady(job)) return;
         configured();
         var embeddingInput = Map.<String, Object>of("project_id", job.get("project_id").toString(),
                 "request_key", key(job, "embeddings"), "embedding_profile_id", properties.embeddingProfile(),
                 "purpose", "DOCUMENT", "model", properties.embeddingModel(), "dimension", properties.embeddingDimension(),
-                "texts", chunks.stream().map(c -> Map.of("key", c.get("chunk_key"), "text", c.get("text"))).toList());
+                "texts", embeddingTexts(chunks));
         var embeddings = vectors(call(job, embeddingInput, true), "DOCUMENT");
         if (!embeddings.keySet().equals(chunks.stream().map(c -> text(c.get("chunk_key"))).collect(java.util.stream.Collectors.toSet()))) throw invalid("invalid_embedding_keys");
         tx.executeWithoutResult(status -> {
@@ -134,9 +138,11 @@ public class DocumentIndexWorker {
                     || !current.getFirst().get("text_hash").equals(job.get("text_hash"))) return;
             jdbc.sql("DELETE FROM document_chunk WHERE document_version_id=:id").param("id", job.get("document_version_id")).update();
             for (var chunk : chunks) {
-                jdbc.sql("INSERT INTO document_chunk(document_version_id,chunk_no,text,locator,embedding) VALUES(:id,:no,:text,cast(:locator AS jsonb),cast(:vector AS vector))")
+                jdbc.sql("INSERT INTO document_chunk(document_version_id,chunk_no,chunk_key,text,locator,source_spans,context_refs,embedding) VALUES(:id,:no,:key,:text,cast(:locator AS jsonb),cast(:spans AS jsonb),cast(:refs AS jsonb),cast(:vector AS vector))")
                         .params(Map.of("id", job.get("document_version_id"), "no", chunk.get("chunk_no"), "text", chunk.get("text"),
-                                "locator", JSON.writeValueAsString(chunk.get("locator")), "vector", embeddings.get(chunk.get("chunk_key")))).update();
+                                "key", chunk.get("chunk_key"), "locator", JSON.writeValueAsString(chunk.get("locator")),
+                                "spans", JSON.writeValueAsString(chunk.get("source_spans")), "refs", JSON.writeValueAsString(chunk.get("context_refs")),
+                                "vector", embeddings.get(chunk.get("chunk_key")))).update();
             }
             jdbc.sql("""
                     INSERT INTO document_index_manifest(document_version_id,attempt,text_hash,embedding_profile_id,chunking_profile_id,parser_version,chunk_count)
@@ -153,26 +159,10 @@ public class DocumentIndexWorker {
         });
     }
 
-    private List<Map<String, Object>> validateChunks(String source, Object value) {
-        var raw = array(value); if (raw.isEmpty() || raw.size() > 2000) throw invalid("invalid_chunk_count");
-        String[] lines = source.split("\n", -1); boolean[] covered = new boolean[lines.length];
-        var chunks = new ArrayList<Map<String, Object>>(); var keys = new HashSet<String>(); var numbers = new HashSet<Integer>();
-        for (Object item : raw) {
-            var chunk = object(item); int no = integer(chunk.get("chunk_no"));
-            if (no < 0 || no >= raw.size() || !numbers.add(no) || !keys.add(text(chunk.get("chunk_key")))) throw invalid("invalid_chunk_keys");
-            var locator = object(chunk.get("locator")); int start = integer(locator.get("start_line")), end = integer(locator.get("end_line"));
-            if (!"text_lines".equals(locator.get("type")) || start < 1 || end < start || end > lines.length) throw invalid("invalid_chunk_locator");
-            var restored = new StringBuilder();
-            for (int i = start - 1; i < end; i++) {
-                if (covered[i] && !lines[i].isBlank()) throw invalid("overlapping_source_ranges");
-                covered[i] = true; restored.append(lines[i]); if (i < lines.length - 1) restored.append('\n');
-            }
-            if (!restored.toString().equals(text(chunk.get("text")))) throw invalid("invalid_chunk_text");
-            chunks.add(chunk);
-        }
-        for (int i = 0; i < lines.length; i++) if (!covered[i] && !lines[i].isBlank()) throw invalid("missing_source_ranges");
-        chunks.sort(Comparator.comparingInt(c -> integer(c.get("chunk_no")))); return chunks;
+    static List<Map<String, Object>> embeddingTexts(List<Map<String, Object>> chunks) {
+        return chunks.stream().map(c -> Map.<String, Object>of("key", c.get("chunk_key"), "text", c.get("embedding_text"))).toList();
     }
+
     private void configured() {
         if (properties.embeddingProfile() == null || properties.embeddingModel() == null
                 || properties.embeddingProfile().equals("unconfigured") || properties.embeddingModel().equals("unconfigured")) {
@@ -246,12 +236,7 @@ public class DocumentIndexWorker {
         long start = System.nanoTime(); configured();
         Long baseline = jdbc.sql("SELECT current_baseline_id FROM project WHERE id=:project").param("project", project).query(Long.class).optional().orElse(null);
         if (baseline == null) throw conflict("index_not_ready");
-        int missing = jdbc.sql("""
-                SELECT count(*) FROM baseline_document b LEFT JOIN document_index_manifest m
-                  ON m.document_version_id=b.document_version_id AND m.embedding_profile_id=:profile
-                WHERE b.baseline_id=:baseline AND m.document_version_id IS NULL
-                """).param("baseline", baseline).param("profile", properties.embeddingProfile()).query(Integer.class).single();
-        if (missing > 0) throw conflict("index_not_ready");
+        requireReadyIndex(baseline);
         String signature = hash(JSON.writeValueAsBytes(Arrays.asList(project, baseline, query, domain, kind, properties.embeddingProfile())));
         int offset = 0;
         if (cursor != null) {
@@ -270,7 +255,7 @@ public class DocumentIndexWorker {
         // can otherwise underfill results when most nearest chunks belong to another scope.
         String sql = """
                 WITH allowed_chunks AS MATERIALIZED (
-                SELECT c.id,c.text,c.locator::text AS locator,c.embedding,d.title,d.id AS document_id,v.id AS document_version_id,v.version_no
+                SELECT c.id,c.text,c.locator::text AS locator,c.chunk_key,c.source_spans::text AS source_spans,c.context_refs::text AS context_refs,c.embedding,d.title,d.id AS document_id,v.id AS document_version_id,v.version_no
                 FROM baseline_document b
                 JOIN document d ON d.id=b.document_id AND d.project_id=:project
                 JOIN document_version v ON v.id=b.document_version_id AND v.document_id=d.id
@@ -282,20 +267,26 @@ public class DocumentIndexWorker {
                 "vector", embeddings.get("query"), "limit", limit + 1, "offset", offset));
         if (domain != null) { sql += " AND d.domain=:domain"; params.put("domain", domain); }
         if (kind != null) { sql += " AND d.type=:kind"; params.put("kind", kind.equals("REQUIREMENTS") ? "REQ_SPEC" : kind); }
-        var found = rows(sql + " ) SELECT a.id,a.text,a.locator,a.title,a.document_id,a.document_version_id,a.version_no,"
+        var found = rows(sql + " ) SELECT a.id,a.text,a.locator,a.chunk_key,a.source_spans,a.context_refs,a.title,a.document_id,a.document_version_id,a.version_no,"
                 + "1-(a.embedding <=> cast(:vector AS vector)) AS score FROM allowed_chunks a"
                 + " ORDER BY a.embedding <=> cast(:vector AS vector),a.id LIMIT :limit OFFSET :offset", params);
         Long finalBaseline = jdbc.sql("SELECT current_baseline_id FROM project WHERE id=:project").param("project", project).query(Long.class).single();
         if (!baseline.equals(finalBaseline)) throw conflict("baseline_changed");
         boolean more = found.size() > limit; int nextOffset = offset + limit;
-        var results = found.subList(0, Math.min(limit, found.size())).stream().map(row -> {
+        var results = found.subList(0, Math.min(limit, found.size())).stream().<Map<String, Object>>map(row -> {
             var locator = object(JSON.readValue(row.get("locator").toString(), Map.class));
-            return Map.<String, Object>of("type", "DOCUMENT_CHUNK", "id", row.get("id").toString(), "title", row.get("title"),
+            var hit = new LinkedHashMap<String, Object>(Map.<String, Object>of("type", "DOCUMENT_CHUNK", "id", row.get("id").toString(), "title", row.get("title"),
                     "snippet", row.get("text"), "score", row.get("score"), "source", Map.of("document_id", row.get("document_id").toString(),
                     "document_version_id", row.get("document_version_id").toString(), "version_no", row.get("version_no"),
-                    "location", locator.get("start_line") + "~" + locator.get("end_line") + "행"));
+                    "location", locator.get("start_line") + "~" + locator.get("end_line") + "행")));
+            ChunkRetrievalMetadata.addToHit(hit, row);
+            return hit;
         }).toList();
         var result = page(results, more, more ? Base64.getUrlEncoder().withoutPadding().encodeToString((signature + "|" + nextOffset).getBytes(StandardCharsets.UTF_8)) : null);
         result.put("elapsed_ms", (System.nanoTime() - start) / 1_000_000); return result;
+    }
+
+    private void requireReadyIndex(long baseline) {
+        if (baselines.countDocumentsWithoutReadyIndex(baseline, properties.embeddingProfile()) > 0) throw conflict("index_not_ready");
     }
 }

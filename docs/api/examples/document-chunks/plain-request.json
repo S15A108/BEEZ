@@ -1,0 +1,12 @@
+{
+  "project_id": "101",
+  "document_version_id": "202",
+  "request_key": "plain-chunk-fixture-1",
+  "kind": "PLAN",
+  "media_type": "text/plain",
+  "content": "결과에는 <user> 태그가 그대로 남는다.\n\n두 번째 문단은 빈 줄로 나뉜다. 😀\n",
+  "content_hash": "aa2893d0411cf8bd649ea7f5d52e4d4f3d220d49bc5f6233adda94d402939d43",
+  "text_hash": "aa2893d0411cf8bd649ea7f5d52e4d4f3d220d49bc5f6233adda94d402939d43",
+  "normalization_profile": "utf8-lf-v1",
+  "chunking_profile_id": "md-structure-v1"
+}

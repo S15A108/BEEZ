@@ -2,6 +2,7 @@ package com.beez.backend.document.api;
 
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.document.DocumentKind;
+import com.beez.backend.document.DocumentStage;
 import com.beez.backend.document.service.DocumentApplicationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -38,8 +39,9 @@ public class DocumentController {
     @Operation(summary = "DOC-A02 문서 목록")
     public Map<String, Object> list(CallerContext caller, @PathVariable long projectId,
             @RequestParam(required = false) DocumentKind kind, @RequestParam(required = false) String domain,
+            @RequestParam(required = false) DocumentStage stage,
             @RequestParam(required = false) String cursor, @RequestParam(defaultValue = "20") int limit) {
-        return documents.list(caller, projectId, kind, domain, cursor, limit);
+        return documents.list(caller, projectId, kind, domain, stage, cursor, limit);
     }
 
     @GetMapping("/api/projects/{projectId}/documents/{documentId}")

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import { FileCheck2, Lightbulb, RefreshCw, Sparkles } from 'lucide-react'
 import { documentsApi, planningApi } from '@/api/services'
-import type { DesignItemVersion } from '@/api/contracts/common'
+import type { DesignItemVersion, DocumentVersion } from '@/api/contracts/common'
 import { structuredContentSchema } from '@/api/contracts/common'
 import { getApiErrorStatus } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
@@ -46,10 +46,16 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'planning-documents'],
     queryFn: () => documentsApi.list(projectId, { limit: 100 }),
   })
+  // 문서별 승인(DOC-A21)을 마친 문서는 그 승인본을, 아직이면 최신 초안을 기준 후보로 본다(dev 89b2c60).
+  const versionOf = (document: {
+    approved_version?: DocumentVersion
+    latest_draft?: DocumentVersion
+  }) => document.approved_version ?? document.latest_draft
   const versions =
-    documents.data?.items.flatMap((document) =>
-      document.latest_draft ? [document.latest_draft] : [],
-    ) ?? []
+    documents.data?.items.flatMap((document) => {
+      const version = versionOf(document)
+      return version ? [version] : []
+    }) ?? []
   const analyses = useQueries({
     queries: versions.map((version) => ({
       queryKey: ['projects', projectId, 'analysis', version.id],
@@ -109,18 +115,37 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     )
   const allKinds = new Set(
     documents.data?.items
-      .filter((document) => document.latest_draft)
+      .filter((document) => versionOf(document))
       .map((document) => document.kind),
+  )
+  // 서버는 문서 4종이 모두 팀장 승인을 받고 승인 전 작성 건이 없어야 기준을 만든다(409 document_not_approved).
+  // 공용 문서함의 단계와 같은 기준(승인본이 있고 작성 건이 승인 상태)으로 보고, 아니면 발행을 끈다(PR #72 6차 조사 SIXTH-DOC-02).
+  const copies = useQueries({
+    queries: (documents.data?.items ?? []).map((document) => ({
+      queryKey: ['projects', projectId, 'working-copy', document.id],
+      queryFn: () => documentsApi.workingCopy(projectId, document.id),
+      retry: false,
+    })),
+  })
+  const checkingApproval = copies.some((query) => query.isPending)
+  const unapproved = (documents.data?.items ?? []).filter(
+    (document, index) =>
+      !document.approved_version ||
+      (!!copies[index]?.data && copies[index].data.status !== 'APPROVED'),
   )
   const analysesReady =
     versions.length > 0 &&
     analyses.every((query) => query.data?.status === 'COMPLETED')
+  // 최초 기준 설계 생성(PLN-A10)이 프로젝트 시작이다. 서버 거절 코드(analysis_not_completed·document_not_approved·baseline_exists)는 승인 창이 알려 준다.
+  // API 없음: 문서별 색인 완료(index_ready)가 dev 명세에 없어 분석 완료(analysesReady)로 대신 판단한다(PR #42 요청 중).
   const canPublish =
     isLeader &&
     !baseline.data &&
     !baseline.isPending &&
     !baseline.error &&
     allKinds.size === 4 &&
+    !checkingApproval &&
+    !unapproved.length &&
     analysesReady &&
     items.length > 0 &&
     !drafts.hasNextPage &&
@@ -169,7 +194,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
             {(['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const).map(
               (kind) => {
                 const document = data.items.find((item) => item.kind === kind)
-                const version = document?.latest_draft
+                const version = document ? versionOf(document) : undefined
                 const analysis = version
                   ? analyses[
                       versions.findIndex((item) => item.id === version.id)
@@ -458,7 +483,23 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               인간 팀장의 검토와 승인을 기다려 주세요.
             </p>
           )}
-          {!baseline.data && !canPublish && isLeader && (
+          {!baseline.data && isLeader && unapproved.length > 0 && (
+            <p
+              role="status"
+              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            >
+              문서 4종이 모두 팀장 승인을 받아야 발행할 수 있어요. 승인 전:{' '}
+              {unapproved.map((document) => document.title).join(', ')}
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => openPane('documents')}
+              >
+                공용 문서함에서 승인하기
+              </Button>
+            </p>
+          )}
+          {!baseline.data && !canPublish && isLeader && !unapproved.length && (
             <p className="text-xs text-muted-foreground">
               문서 4종·분석 완료·전체 항목 검토·최신 초안을 확인해 주세요.
             </p>

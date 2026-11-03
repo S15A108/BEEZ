@@ -25,6 +25,8 @@ class AiClientTest {
     private final AtomicReference<String> method = new AtomicReference<>();
     private final AtomicReference<String> authorization = new AtomicReference<>();
     private final AtomicReference<String> body = new AtomicReference<>();
+    private final AtomicReference<String> protocol = new AtomicReference<>();
+    private final AtomicReference<String> upgrade = new AtomicReference<>();
     private volatile int status = 200;
     private volatile String response = "{\"origin\":\"MODEL\",\"result\":{},\"usage\":[]}";
 
@@ -33,6 +35,8 @@ class AiClientTest {
         server.createContext("/", exchange -> {
             path.set(exchange.getRequestURI().getPath());
             method.set(exchange.getRequestMethod());
+            protocol.set(exchange.getProtocol());
+            upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
@@ -49,16 +53,19 @@ class AiClientTest {
     @AfterEach void stopStub() { if (server != null) server.stop(0); }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/v1/document-reviews", "/v1/document-chunks", "/v1/embeddings"})
+    @ValueSource(strings = {"/v1/document-reviews", "/v1/document-chunks", "/v1/embeddings", "/v1/impact"})
     void postsAuthenticatedJsonAndReadsEnvelope(String endpoint) {
         var input = Map.<String, Object>of("document_id", "194", "content", "검토할 문서");
         Map<String, Object> result = switch (endpoint) {
             case "/v1/document-reviews" -> client.documentReview(input);
             case "/v1/document-chunks" -> client.documentChunks(input);
+            case "/v1/impact" -> client.changeImpact(input);
             default -> client.documentEmbeddings(input);
         };
         assertThat(path.get()).isEqualTo(endpoint);
         assertThat(method.get()).isEqualTo("POST");
+        assertThat(protocol.get()).isEqualTo("HTTP/1.1");
+        assertThat(upgrade.get()).isNull();
         assertThat(authorization.get()).isEqualTo("Bearer fixture-token");
         assertThat(JsonMapper.builder().build().readValue(body.get(), Map.class)).isEqualTo(input);
         assertThat(result).containsEntry("origin", "MODEL").containsKeys("result", "usage");

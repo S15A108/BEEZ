@@ -279,6 +279,7 @@ it('올바르게 입력하면 값을 제출한다', async () => {
 
 - `e2e/*.spec.ts`에 둡니다. `npm run test:e2e`가 개발 서버를 띄우고 Chromium에서 실행합니다.
 - 핵심 사용자 흐름(페이지 이동, 폼 제출, 3D 화면 진입)이 생기면 E2E를 추가합니다. 첫 화면, 부지 선택·생성·보존, 문서·작업·비비, 회의 기록을 확인합니다.
+- E2E는 GPU를 쓰는 새 headless Chromium(`channel: 'chromium'`)으로 워커 1개에서 한 테스트씩 돕니다. 기본 headless shell은 3D를 CPU로 그려서 시간 제한을 넘습니다. 다른 worktree나 세션의 E2E와도 동시에 돌리지 않습니다([D25](docs/decisions.md)).
 - 기본 E2E는 브라우저 예시 어댑터로 백엔드 없이 실행합니다. live 모드 경계를 따로 검증할 때는 API 응답을 `page.route`로 대체할 수 있습니다.
 
 ```ts
@@ -303,6 +304,7 @@ React Three Fiber(R3F)로 three.js를 React 컴포넌트처럼 씁니다. 씬을
 - 3D 코드는 `src/three/`에 둡니다.
 - three.js는 번들이 큽니다. `<Canvas>`를 쓰는 컴포넌트는 `React.lazy`로 불러와 첫 화면 번들에서 분리합니다.
 - 모델 파일은 `public/models/`에 두고 `/models/xxx.glb` URL로 로드합니다. Vite는 `.glb`를 import 대상으로 인식하지 않습니다.
+- 도시 화면과 사무실 창밖 건물은 Kenney City Kit CC0 에셋(`public/models/kenney/city`)이고, `License.txt`를 같이 둡니다. 읽기와 복제는 `src/three/kenney.ts`가 맡습니다([D21](docs/decisions.md)).
 - 모델은 텍스처 해상도를 줄이고 압축한 뒤 커밋합니다. 10MB를 넘으면 팀과 상의해 Git LFS나 외부 스토리지를 씁니다.
 - 매 프레임 바뀌는 값은 `useFrame` 안에서 ref로 직접 바꿉니다. 프레임마다 `setState`를 호출하면 React가 매번 리렌더링합니다.
 - 움직임이 없는 씬은 `<Canvas frameloop="demand">`로 필요할 때만 렌더링합니다.
@@ -343,6 +345,7 @@ npm run check
 | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | `src/pages/CityPage.tsx`                     | 프로젝트 도시, 부지 선택과 프로젝트 생성                                     |
 | `src/pages/WorkspacePage.tsx`                | 사무실, 1·3인칭 전환, 산책과 업무 패널 진입                                  |
+| `src/features/workspace/`                    | 워크스페이스 게임 UI: 프로젝트 카드, 시작 가이드, 단축 바, 설정 창           |
 | `src/features/`                              | 문서, 기획 분석, 변경 제안, 작업 검증, 회의, 팀, 에이전트 연결, 활동·비용 등 |
 | `src/three/CityScene.tsx`, `OfficeScene.tsx` | lazy로 불러오는 R3F Canvas와 기존 엔진 연결                                  |
 | `src/three/city/`, `src/three/office/`       | 기존 도시·사무실 geometry, 레이아웃, 캐릭터·이동·카메라·충돌 처리            |
@@ -350,7 +353,7 @@ npm run check
 | `src/stores/workspaceStore.ts`               | 선택한 패널·시점과 브라우저별 부지·외관 설정                                 |
 | `src/api/`, `src/mocks/`                     | 실제 REST 서비스 경계와 브라우저 예시 어댑터                                 |
 
-도시의 건물이나 빈 부지를 누르면 프로젝트 또는 생성 창이 열립니다. 사무실에서는 드래그로 둘러보고 WASD·방향키로 이동하며, Shift로 달리고 Enter로 가까운 대상을 선택합니다. 휠로 확대·축소하고 1·3인칭을 전환할 수 있습니다. 출입구를 통해 실외 산책으로 이동합니다.
+도시의 건물이나 빈 부지를 누르면 프로젝트 또는 생성 창이 열립니다. 사무실에서는 드래그로 둘러보고 WASD·방향키로 이동하며, Shift로 달리고 Enter로 가까운 대상을 선택합니다. 아래 단축 바의 메뉴는 숫자 키 1~6으로 엽니다. ? 키나 오른쪽 위 도움말 버튼은 화면 안내와 1분 둘러보기를 엽니다. 휠로 확대·축소하고 1·3인칭을 전환할 수 있습니다. 출입구를 통해 실외 산책으로 이동합니다.
 
 문서 등록이나 기준 설계 승인 전에도 사무실에서 걸을 수 있습니다. 시점 버튼을 누르거나 업무 창을 닫으면 이동 입력이 사무실로 돌아옵니다. 업무 창을 연 동안에는 캐릭터 이동 입력을 멈추므로 문서와 검색어를 안전하게 입력할 수 있습니다.
 

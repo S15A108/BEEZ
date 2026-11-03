@@ -3,9 +3,14 @@ import type { Page } from '@playwright/test'
 
 test.setTimeout(90_000)
 
+// 처음 들어올 때 뜨는 환영 창은 tour.spec.ts에서 따로 확인한다.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('beez.tour.11', 'seen'))
+})
+
 async function office(page: Page, projectId: string) {
   await page.goto('/login')
-  await page.getByRole('button', { name: '로그인하기 →' }).click()
+  await page.getByRole('button', { name: '로그인', exact: true }).click()
   await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
   await page.goto(`/projects/${projectId}`)
   const canvas = page.locator('canvas')

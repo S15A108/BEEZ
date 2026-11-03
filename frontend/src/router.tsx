@@ -24,6 +24,12 @@ export const router = createBrowserRouter([
         }),
       },
       {
+        path: 'register',
+        lazy: async () => ({
+          Component: (await import('@/pages/RegisterPage')).default,
+        }),
+      },
+      {
         path: 'projects/:projectId',
         lazy: async () => ({
           Component: (await import('@/pages/WorkspacePage')).default,
@@ -33,6 +39,18 @@ export const router = createBrowserRouter([
         path: 'account',
         lazy: async () => ({
           Component: (await import('@/pages/AccountPage')).default,
+        }),
+      },
+      {
+        path: 'account/password',
+        lazy: async () => ({
+          Component: (await import('@/pages/AccountPasswordPage')).default,
+        }),
+      },
+      {
+        path: 'account/withdraw',
+        lazy: async () => ({
+          Component: (await import('@/pages/AccountWithdrawPage')).default,
         }),
       },
       {

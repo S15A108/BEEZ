@@ -21,7 +21,13 @@ import {
   getApiErrorMessage,
   getApiErrorStatus,
 } from '@/api/error'
-import { authApi, documentsApi, projectsApi, validationsApi } from './index'
+import {
+  authApi,
+  changesApi,
+  documentsApi,
+  projectsApi,
+  validationsApi,
+} from './index'
 
 const initialAdapter = api.defaults.adapter
 const timestamp = '2026-10-23T03:00:00.123456Z'
@@ -73,6 +79,75 @@ describe('명세 REST 교환', () => {
     await projectsApi.create({ name: '동일 요청 재확인' })
     expect(keys[1]).toBe(keys[0])
     await projectsApi.create({ name: '동일 요청 재확인' })
+    expect(keys[2]).not.toBe(keys[1])
+  })
+
+  // PR #72 리뷰 3: 서버가 오류 코드로 실패를 확정한 5xx 뒤에는 새 키로 다시 실행하고, 본문 없는 5xx는 같은 키로 재확인한다.
+  it('실패가 확정된 5xx 뒤에는 새 키를 쓰고, 결과를 모르는 5xx는 키를 유지한다', async () => {
+    const keys: string[] = []
+    const failures = [
+      { status: 503, data: { error: { code: 'ai_unavailable' } } },
+      { status: 502, data: '' },
+    ]
+    api.defaults.adapter = async (config) => {
+      keys.push(String(config.headers.get('Idempotency-Key')))
+      const failure = failures.shift()
+      if (failure)
+        throw new AxiosError('failed', 'ERR_BAD_RESPONSE', config, undefined, {
+          config,
+          data: failure.data,
+          status: failure.status,
+          statusText: '',
+          headers: new AxiosHeaders(),
+        })
+      return {
+        config,
+        data: project,
+        status: 201,
+        statusText: 'Created',
+        headers: new AxiosHeaders(),
+      }
+    }
+    const create = () => projectsApi.create({ name: '확정된 실패 뒤 재시도' })
+    await expect(create()).rejects.toBeInstanceOf(AxiosError)
+    await expect(create()).rejects.toBeInstanceOf(AxiosError)
+    await create()
+    expect(keys[1]).not.toBe(keys[0])
+    expect(keys[2]).toBe(keys[1])
+  })
+
+  // PR #72 5차 조사 FIFTH-DOC-01: 비비 검토가 아직 도는 중(409 review_in_progress)이면 키를 지우지 않고 같은 키로 다시 확인한다.
+  // 다른 409처럼 실패가 확정된 경우는 그대로 새 키를 쓴다.
+  it('검토가 진행 중이라는 409 뒤에는 같은 키로 다시 확인하고, 확정된 409 뒤에는 새 키를 쓴다', async () => {
+    const keys: string[] = []
+    const failures = [
+      { status: 409, code: 'review_in_progress' },
+      { status: 409, code: 'version_conflict' },
+    ]
+    api.defaults.adapter = async (config) => {
+      keys.push(String(config.headers.get('Idempotency-Key')))
+      const failure = failures.shift()
+      if (failure)
+        throw new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+          config,
+          data: { error: { code: failure.code, message: '' } },
+          status: failure.status,
+          statusText: 'Conflict',
+          headers: new AxiosHeaders(),
+        })
+      return {
+        config,
+        data: project,
+        status: 201,
+        statusText: 'Created',
+        headers: new AxiosHeaders(),
+      }
+    }
+    const create = () => projectsApi.create({ name: '검토 진행 중 재확인' })
+    await expect(create()).rejects.toBeInstanceOf(AxiosError)
+    await expect(create()).rejects.toBeInstanceOf(AxiosError)
+    await create()
+    expect(keys[1]).toBe(keys[0])
     expect(keys[2]).not.toBe(keys[1])
   })
 
@@ -256,10 +331,10 @@ describe('계약 경계', () => {
     ).toBe(false)
   })
 
-  it('108개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(108)
+  it('119개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(119)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      108,
+      119,
     )
     expect(
       new Set(
@@ -267,7 +342,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(108)
+    ).toBe(119)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
@@ -283,6 +358,123 @@ describe('계약 경계', () => {
       unspecifiedCapabilities.every(
         (capability) => capability.availability === 'UNSPECIFIED',
       ),
+    ).toBe(true)
+  })
+
+  // 서버(ExplicitImpactCalculator)는 담당자가 없는 작업이면 explicit 항목에서 member_id를 생략한다.
+  it('미배정 작업이 영향 대상이어도 분석 시작과 영향 조회 응답을 받는다', async () => {
+    const body = {
+      explicit: [{ task_id: '501', design_item_id: '211' }],
+      candidates: [],
+      analysis_status: 'RUNNING',
+      revision: 1,
+      snapshot_hash: 'sha256:0123',
+      is_current: true,
+      run_id: '9',
+    }
+    respond(body, 202)
+    const started = await changesApi.retryImpact('101', '71')
+    expect(started.explicit[0]).not.toHaveProperty('member_id')
+    respond({ ...body, analysis_status: 'COMPLETED' })
+    const read = await changesApi.impact('101', '71')
+    expect(read.analysis_status).toBe('COMPLETED')
+    expect(read.explicit).toEqual([{ task_id: '501', design_item_id: '211' }])
+  })
+
+  it('영향 조회에서 담당자 추천과 근거를 보존한다', async () => {
+    const ownerRecommendations = {
+      proposal_revision: 1,
+      snapshot_hash: 'sha256:0123',
+      direct_reference_status: 'COMPLETE',
+      direct_reference_reasons: [],
+      document_reference_status: 'INCOMPLETE',
+      document_reference_reasons: ['document_mapping_unavailable'],
+      ai_analysis_status: 'NOT_EVALUATED',
+      ai_current: true,
+      ai_reanalysis_in_progress: false,
+      withheld_ai_candidates: 0,
+      recommendations: [
+        {
+          member_id: '21',
+          area: '백엔드',
+          evidence: [
+            {
+              type: 'DIRECT_TASK_REFERENCE',
+              reason: '현재 작업 계획이 변경 항목을 직접 참조합니다.',
+              task_id: '501',
+              task_key: 'TASK-001',
+              plan_revision_id: '511',
+              design_item_id: '301',
+              design_item_version_id: '311',
+              referenced_design_item_version_id: '311',
+              sources: [],
+            },
+            {
+              type: 'DOCUMENT_SOURCE',
+              reason: '변경 문서의 출처 설계를 참조합니다.',
+              task_id: '502',
+              task_key: 'TASK-002',
+              plan_revision_id: '512',
+              design_item_id: '302',
+              design_item_version_id: '312',
+              referenced_design_item_version_id: '312',
+              document_id: '201',
+              document_version_id: '211',
+              sources: [],
+            },
+          ],
+        },
+      ],
+      notification_candidate_member_ids: ['21'],
+    }
+    respond({
+      explicit: [],
+      candidates: [],
+      analysis_status: 'NOT_EVALUATED',
+      owner_recommendations: ownerRecommendations,
+    })
+    const read = await changesApi.impact('101', '71')
+    expect(read.owner_recommendations).toEqual(ownerRecommendations)
+  })
+})
+
+// PR #72 mock/live 전수 대조 DOC-LIVE-1: 백엔드가 Idempotency-Key를 필수로 받는 문서 분류(DOC-A07)와
+// 변경 제안 재제출(CHG-A04)도 키를 보낸다. 빠지면 서버가 400으로 거절한다.
+describe('멱등 키가 필수인 수정 요청', () => {
+  it('문서 분류와 변경 제안 재제출에 Idempotency-Key를 보낸다', async () => {
+    respond({})
+    await documentsApi
+      .update(
+        '101',
+        '201',
+        { domain: '공통' },
+        { idempotencyKey: 'classify-once' },
+      )
+      .catch(() => undefined)
+    expect(lastRequest?.method).toBe('patch')
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBe('classify-once')
+    await changesApi
+      .update(
+        '101',
+        '701',
+        {
+          base_baseline_id: '401',
+          title: '다시 제출',
+          reason: '반려 사유 반영',
+          items: [],
+          documents: [],
+          expected_revision: 2,
+          expected_snapshot_hash: `sha256:${'a'.repeat(64)}`,
+        },
+        { idempotencyKey: 'resubmit-once' },
+      )
+      .catch(() => undefined)
+    expect(lastRequest?.method).toBe('put')
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBe('resubmit-once')
+    expect(
+      endpointRegistry
+        .filter((endpoint) => ['DOC-A07', 'CHG-A04'].includes(endpoint.id))
+        .every((endpoint) => endpoint.idempotent),
     ).toBe(true)
   })
 })

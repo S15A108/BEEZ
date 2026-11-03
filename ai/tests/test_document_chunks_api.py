@@ -189,7 +189,7 @@ def test_published_fixture_matches_http_contract(client):
     [
         ({"project_id": 101}, 400, "validation_failed"),
         ({"unexpected": "extra"}, 400, "validation_failed"),
-        ({"media_type": "text/plain"}, 415, "unsupported_media_type"),
+        ({"media_type": "text/html"}, 415, "unsupported_media_type"),
         ({"kind": "OTHER"}, 415, "unsupported_media_type"),
         ({"chunking_profile_id": "unknown"}, 422, "invalid_ai_input"),
         ({"normalization_profile": "unknown"}, 422, "invalid_ai_input"),

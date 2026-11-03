@@ -24,6 +24,7 @@ from .models import (
 FEATURES = frozenset(
     {
         "DOCUMENT_PARSE",
+        "DESIGN_RECOMMENDATION",
         "TASK_VALIDATION",
         "CHANGE_IMPACT",
         "EMBEDDING",

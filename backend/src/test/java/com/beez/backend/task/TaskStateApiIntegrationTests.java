@@ -9,13 +9,17 @@ import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.dto.TaskStateInput;
 import com.beez.backend.task.service.TaskStateService;
 import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -188,8 +192,15 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
     void start_afterDesignChanged_is409VersionConflict_butUnrelatedTaskStarts() throws Exception {
         long[] a = createTask("API-01 읽음", api.readsRef("API-01"), "[]", member);
         long[] b = createTask("API-02 읽음", api.readsRef("API-02"), "[]", member);
+        long[] c = createTask("API-02 읽음, API-01 검색 후보 비교", api.readsRef("API-02"), "[]", member);
         long va = passValidation(a[0], a[1]);
         long vb = passValidation(b[0], b[1]);
+        long vc = passValidation(c[0], c[1]);
+        api.jdbc.sql("""
+                        insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
+                        values (:v, :item, :version)
+                        """).param("v", vc).param("item", api.designItemId("API-01"))
+                .param("version", api.currentVersionId("API-01")).update();
 
         // API-01 v2 발행: 새 버전 + baseline v2 (API-01→v2, API-02→v1) + current 교체
         api.jdbc.sql("""
@@ -214,6 +225,10 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
         HttpResponse<String> resA = report(a[0], stateJson("START", a[1], a[2], va, null), member);
         assertThat(resA.statusCode()).isEqualTo(409);
         assertThat(resA.body()).contains("\"code\":\"version_conflict\"");
+
+        // 검색 후보만 바뀐 작업은 직접 참조가 그대로이므로 시작할 수 있다.
+        HttpResponse<String> resC = report(c[0], stateJson("START", c[1], c[2], vc, null), member);
+        assertThat(resC.statusCode()).as(resC.body()).isEqualTo(200);
 
         // 전역 baseline 번호가 바뀌었어도 내가 참조한 API-02 는 그대로 → 시작 가능 (D4)
         HttpResponse<String> resB = report(b[0], stateJson("START", b[1], b[2], vb, null), member);
@@ -355,7 +370,152 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void completed_withDelta_holdsForRevalidation() throws Exception {
+    void completed_withDelta_acceptsDeltaValidationFirst_andHoldsForRevalidation() throws Exception {
+        // IMPLEMENTS 참조 → DELTA 검증도 의미 분석이 필요해 RUNNING 으로 큐에 들어간다 (워커는 꺼져 있다)
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        long lock = TaskApiSupport.longField(started.body(), "lock_version");
+
+        String extra = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"응답에 nickname 추가\"}]";
+        HttpResponse<String> res = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
+        // 명세 TSK-A07: delta 가 있어 검증을 접수한 경우 202, 응답에 delta_validation_id
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(202);
+        assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("WAITING");
+        assertThat(TaskApiSupport.stringField(res.body(), "waiting_reason")).isEqualTo("REVALIDATION");
+        long deltaValidationId = TaskApiSupport.longField(res.body(), "delta_validation_id");
+        // S3 순서: DELTA 검증을 먼저 접수하고 그 번호를 완료 보고에 넣는다
+        Map<String, Object> report = api.jdbc.sql("select has_delta, delta_validation_id from task_completion_report where task_id = :t")
+                .param("t", t[0]).query().singleRow();
+        assertThat(report.get("has_delta")).isEqualTo(true);
+        assertThat(((Number) report.get("delta_validation_id")).longValue()).isEqualTo(deltaValidationId);
+        Map<String, Object> validation = api.jdbc.sql("select trigger, status, plan_revision_id from validation where id = :v")
+                .param("v", deltaValidationId).query().singleRow();
+        assertThat(validation.get("trigger")).isEqualTo("DELTA");
+        assertThat(validation.get("status")).isEqualTo("RUNNING");
+        assertThat(((Number) validation.get("plan_revision_id")).longValue()).isEqualTo(t[1]);
+        assertThat(api.jdbc.sql("select count(*) from validation_job where validation_id = :v and status = 'QUEUED'")
+                .param("v", deltaValidationId).query(Integer.class).single()).isEqualTo(1);
+
+        // 응답을 잃어버려 같은 완료 보고를 다시 보냄 → 같은 결과(202), 완료 보고·DELTA 검증은 1건 그대로
+        HttpResponse<String> again = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
+        assertThat(again.statusCode()).as(again.body()).isEqualTo(202);
+        assertThat(TaskApiSupport.longField(again.body(), "delta_validation_id")).isEqualTo(deltaValidationId);
+        Integer reportCount = api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0])
+                .query(Integer.class).single();
+        assertThat(reportCount).isEqualTo(1);
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
+        // 조회에도 delta_validation_id 가 나온다
+        HttpResponse<String> detail = api.get(tasksPath() + "/" + t[0], member);
+        assertThat(TaskApiSupport.longField(detail.body(), "delta_validation_id")).isEqualTo(deltaValidationId);
+    }
+
+    @Test
+    void deltaValidation_inputHash_dependsOnDeltaAndTrigger() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        // 같은 계획의 사람 요청(AGENT) 검증 — 검증 종류가 달라 DELTA 와 해시가 다르다
+        HttpResponse<String> agentAccept = api.post(tasksPath() + "/" + t[0] + "/validations",
+                "{\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2] + "}", member);
+        assertThat(agentAccept.statusCode()).as(agentAccept.body()).isEqualTo(202);
+        String agentHash = hashOf(TaskApiSupport.longField(agentAccept.body(), "id"));
+        long v = passValidation(t[0], t[1]);
+        HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        long lock = TaskApiSupport.longField(started.body(), "lock_version");
+
+        String deltaX = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        String deltaY = "\"delta\":[{\"kind\":\"REMOVED_FIELD\",\"text\":\"email 제거\"}]";
+        HttpResponse<String> first = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(202);
+        String hashX1 = hashOf(TaskApiSupport.longField(first.body(), "delta_validation_id"));
+        // 되돌리기로 하고 RESUME → 다른 delta 로 다시 완료 보고
+        HttpResponse<String> resumed = report(t[0], stateJson("RESUME", t[1], TaskApiSupport.longField(first.body(), "lock_version"), v, null), member);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        HttpResponse<String> second = report(t[0], stateJson("COMPLETED", t[1], TaskApiSupport.longField(resumed.body(), "lock_version"), null, deltaY), member);
+        assertThat(second.statusCode()).as(second.body()).isEqualTo(202);
+        String hashY = hashOf(TaskApiSupport.longField(second.body(), "delta_validation_id"));
+        // 다시 RESUME → 처음과 같은 delta 로 완료 보고
+        HttpResponse<String> resumed2 = report(t[0], stateJson("RESUME", t[1], TaskApiSupport.longField(second.body(), "lock_version"), v, null), member);
+        assertThat(resumed2.statusCode()).as(resumed2.body()).isEqualTo(200);
+        HttpResponse<String> third = report(t[0], stateJson("COMPLETED", t[1], TaskApiSupport.longField(resumed2.body(), "lock_version"), null, deltaX), member);
+        assertThat(third.statusCode()).as(third.body()).isEqualTo(202);
+        String hashX2 = hashOf(TaskApiSupport.longField(third.body(), "delta_validation_id"));
+
+        assertThat(hashX1).isNotEqualTo(hashY);          // 같은 계획, 다른 delta → 다른 입력
+        assertThat(hashX1).isEqualTo(hashX2);            // 같은 계획, 같은 delta → 같은 입력 (재사용 기준)
+        assertThat(agentHash).isNotEqualTo(hashX1);      // 같은 계획이라도 AGENT 와 DELTA 는 검사 범위가 다르다
+    }
+
+    @Test
+    void completedResend_isIdempotentOnlyForTheSamePendingReport() throws Exception {
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        long lock = TaskApiSupport.longField(report(t[0], stateJson("START", t[1], t[2], v, null), member).body(), "lock_version");
+        String deltaX = "\"summary\":\"끝\",\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        HttpResponse<String> first = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(202);
+        long deltaId = TaskApiSupport.longField(first.body(), "delta_validation_id");
+
+        // 같은 보고 재전송 → 같은 결과(202), 새 보고·검증 없음
+        HttpResponse<String> same = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(same.statusCode()).as(same.body()).isEqualTo(202);
+        assertThat(TaskApiSupport.longField(same.body(), "delta_validation_id")).isEqualTo(deltaId);
+        // 다른 delta 를 보냄 → 재전송이 아니라 충돌(409). 기존 대기는 그대로
+        String deltaY = "\"summary\":\"끝\",\"delta\":[{\"kind\":\"REMOVED_FIELD\",\"text\":\"email 제거\"}]";
+        HttpResponse<String> other = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaY), member);
+        assertThat(other.statusCode()).as(other.body()).isEqualTo(409);
+        assertThat(other.body()).contains("\"code\":\"revision_conflict\"");
+        // 같은 delta 인데 요약만 다른 것도 다른 보고다
+        String otherSummary = "\"summary\":\"다른 요약\",\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        assertThat(report(t[0], stateJson("COMPLETED", t[1], lock, null, otherSummary), member).statusCode()).isEqualTo(409);
+        // 내용은 같아도 다른 계획 리비전 번호를 보낸 요청은 재전송이 아니다 (409)
+        HttpResponse<String> otherPlan = report(t[0], stateJson("COMPLETED", t[1] + 1000, lock, null, deltaX), member);
+        assertThat(otherPlan.statusCode()).as(otherPlan.body()).isEqualTo(409);
+        assertThat(otherPlan.body()).contains("\"code\":\"revision_conflict\"");
+        assertThat(api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0]).query(Integer.class).single())
+                .isEqualTo(1);
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void completedAfterResumeAndHandover_isNotTreatedAsResend() throws Exception {
+        // delta 완료 보고 → RESUME(옛 DELTA STALE) → 담당자 인계로 다시 WAITING(REVALIDATION) → 새 담당자의 COMPLETED
+        long[] t = createTask("A", api.implementsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        long lock = TaskApiSupport.longField(report(t[0], stateJson("START", t[1], t[2], v, null), member).body(), "lock_version");
+        String deltaX = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"nickname 추가\"}]";
+        HttpResponse<String> first = report(t[0], stateJson("COMPLETED", t[1], lock, null, deltaX), member);
+        assertThat(first.statusCode()).as(first.body()).isEqualTo(202);
+        HttpResponse<String> resumed = report(t[0], stateJson("RESUME", t[1], TaskApiSupport.longField(first.body(), "lock_version"), v, null), member);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        String handoverBody = """
+                {"assignee_member_id": "%d", "expected_lock_version": %d}
+                """.formatted(api.memberId("leader@test"), TaskApiSupport.longField(resumed.body(), "lock_version"));
+        HttpResponse<String> handover = api.patch(tasksPath() + "/" + t[0] + "/assignee", handoverBody, leader);
+        assertThat(handover.statusCode()).as(handover.body()).isEqualTo(200);
+        assertThat(status(t[0])).isEqualTo("WAITING");
+
+        // 새 담당자가 COMPLETED 를 보내도 옛 보고의 재전송이 아니다 — WAITING 에서는 COMPLETED 할 수 없다(400). 새 보고·검증도 안 만든다
+        long lockWaiting = TaskApiSupport.longField(handover.body(), "lock_version");
+        HttpResponse<String> again = report(t[0], stateJson("COMPLETED", t[1], lockWaiting, null, deltaX), leader);
+        assertThat(again.statusCode()).as(again.body()).isEqualTo(400);
+        assertThat(again.body()).contains("\"code\":\"invalid_transition\"");
+        assertThat(api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0]).query(Integer.class).single())
+                .isEqualTo(1);
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id = :t and trigger = 'DELTA'").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
+        assertThat(status(t[0])).isEqualTo("WAITING");
+    }
+
+    private String hashOf(long validationId) {
+        return api.jdbc.sql("select input_snapshot_hash from validation where id = :v").param("v", validationId).query(String.class).single();
+    }
+
+    @Test
+    void completed_withDelta_onReadsOnlyPlan_stillGoesToSemanticAnalysis() throws Exception {
+        // READS 만 참조해 보통 규칙만으로 PASS 가 나는 계획이라도, DELTA 검증은 완료 delta 검사가 붙어 의미 분석으로 간다 —
+        // delta 내용과 무관하게 작업이 완료되는 일이 없어야 한다 (-163 리뷰)
         long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
         long v = passValidation(t[0], t[1]);
         HttpResponse<String> started = report(t[0], stateJson("START", t[1], t[2], v, null), member);
@@ -363,20 +523,77 @@ class TaskStateApiIntegrationTests extends IntegrationTestSupport {
 
         String extra = "\"delta\":[{\"kind\":\"ADDED_FIELD\",\"text\":\"응답에 nickname 추가\"}]";
         HttpResponse<String> res = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
-        // 명세 TSK-A07: delta 가 있어 검증을 접수한 경우 202
         assertThat(res.statusCode()).as(res.body()).isEqualTo(202);
         assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("WAITING");
-        assertThat(TaskApiSupport.stringField(res.body(), "waiting_reason")).isEqualTo("REVALIDATION");
-        Boolean hasDelta = api.jdbc.sql("select has_delta from task_completion_report where task_id = :t").param("t", t[0])
-                .query(Boolean.class).single();
-        assertThat(hasDelta).isTrue();
+        long deltaValidationId = TaskApiSupport.longField(res.body(), "delta_validation_id");
+        Map<String, Object> validation = api.jdbc.sql("select trigger, status, summary::text as summary from validation where id = :v")
+                .param("v", deltaValidationId).query().singleRow();
+        assertThat(validation.get("trigger")).isEqualTo("DELTA");
+        assertThat(validation.get("status")).isEqualTo("RUNNING");
+        assertThat((String) validation.get("summary")).contains("completion-delta");
+    }
 
-        // 응답을 잃어버려 같은 완료 보고를 다시 보냄 → 같은 결과(202), 완료 보고는 1건 그대로
-        HttpResponse<String> again = report(t[0], stateJson("COMPLETED", t[1], lock, null, extra), member);
-        assertThat(again.statusCode()).as(again.body()).isEqualTo(202);
-        Integer reportCount = api.jdbc.sql("select count(*) from task_completion_report where task_id = :t").param("t", t[0])
-                .query(Integer.class).single();
-        assertThat(reportCount).isEqualTo(1);
+    /**
+     * 깨지면: 팀장 위임(MEM-A08)이 커밋되는 동안 프로젝트 잠금을 기다린 팀장 CANCEL 이 이미 팀장이 아닌 사람으로 처리된다
+     * (-212 리뷰 "팀장 전용 요청은 잠금 뒤 팀장 권한 재확인"). 취소는 되돌릴 수 없어 더 중요하다.
+     * 프로젝트 행을 쥔 별도 트랜잭션에서 위임을 흉내 내 커밋해, 겹치는 순서를 매번 똑같이 만든다 (ProjectMemberApiIntegrationTests 와 같은 방식).
+     */
+    @Test
+    void cancel_byLeaderWaitingOnLock_isRejectedAfterTransfer() throws Exception {
+        long[] t = createTask("A", api.readsRef("API-01"), "[]", member);
+        long v = passValidation(t[0], t[1]);
+        report(t[0], stateJson("START", t[1], t[2], v, null), member);
+        api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", t[0]).update();
+        long lock = api.jdbc.sql("select lock_version from task where id = :t").param("t", t[0]).query(Long.class).single();
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        HttpResponse<String> res;
+        try (Connection held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (PreparedStatement ps = held.prepareStatement("select id from project where id = ? for update")) {
+                ps.setLong(1, projectId);
+                ps.executeQuery();
+            }
+            // 팀장이 보낸 CANCEL 은 프로젝트 잠금에서 기다린다
+            Future<HttpResponse<String>> pending = pool.submit(() -> report(t[0], stateJson("CANCEL", t[1], lock, null, null), leader));
+            awaitBlockedOnLock();
+            // 그 사이 위임: 활성 팀장은 하나(ux_member_one_leader)라 내리는 쪽이 먼저
+            try (PreparedStatement ps = held.prepareStatement("update project_member set role = ? where id = ?")) {
+                ps.setString(1, "MEMBER");
+                ps.setLong(2, leaderMemberId);
+                ps.executeUpdate();
+                ps.setString(1, "LEADER");
+                ps.setLong(2, memberMemberId);
+                ps.executeUpdate();
+            }
+            held.commit();
+            res = pending.get(10, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        // 역할 원복 (다른 시험에 영향 없게)
+        api.jdbc.sql("update project_member set role = 'MEMBER' where id = :m").param("m", memberMemberId).update();
+        api.jdbc.sql("update project_member set role = 'LEADER' where id = :m").param("m", leaderMemberId).update();
+
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(403);
+        assertThat(res.body()).contains("\"code\":\"forbidden\"");
+        assertThat(status(t[0])).isEqualTo("IN_PROGRESS");   // 취소되지 않았다
+    }
+
+    /** 다른 세션이 행 잠금을 기다릴 때까지 (최대 10초). 기다리지 않으면 그 요청이 그 행을 잠그지 않는다는 뜻이다 */
+    private void awaitBlockedOnLock() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (api.jdbc.sql("""
+                        select count(*) from pg_stat_activity
+                         where wait_event_type = 'Lock' and datname = current_database()
+                        """).query(Long.class).single() == 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("요청이 행 잠금에서 기다리지 않았다");
+            }
+            Thread.sleep(20);
+        }
     }
 
     @Test

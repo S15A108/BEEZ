@@ -61,16 +61,24 @@ public class BaselineRepository {
                 .params(Map.of("baseline", baseline, "project", project, "item", item, "version", version)).update();
     }
 
+    /** A version's index is ready when its current attempt published every chunk with an embedding for the profile. */
+    private static final String READY_INDEX = """
+            SELECT 1 FROM document_processing p JOIN document_index_manifest m USING(document_version_id)
+            WHERE p.document_version_id=%s AND p.status='COMPLETED' AND p.source_status='READY'
+              AND p.index_status='READY' AND m.attempt=p.attempt AND m.text_hash=p.text_hash
+              AND m.embedding_profile_id=:profile AND m.chunk_count>0
+              AND m.chunk_count=(SELECT count(*) FROM document_chunk c WHERE c.document_version_id=p.document_version_id AND c.embedding IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM document_chunk c WHERE c.document_version_id=p.document_version_id AND c.embedding IS NULL)
+            """;
+
     public boolean isIndexReady(long version, String profile) {
-        return jdbc.sql("""
-                SELECT EXISTS (
-                  SELECT 1 FROM document_processing p JOIN document_index_manifest m USING(document_version_id)
-                  WHERE p.document_version_id=:version AND p.status='COMPLETED' AND p.source_status='READY'
-                    AND p.index_status='READY' AND m.attempt=p.attempt AND m.text_hash=p.text_hash
-                    AND m.embedding_profile_id=:profile AND m.chunk_count>0
-                    AND m.chunk_count=(SELECT count(*) FROM document_chunk c WHERE c.document_version_id=p.document_version_id AND c.embedding IS NOT NULL)
-                    AND NOT EXISTS (SELECT 1 FROM document_chunk c WHERE c.document_version_id=p.document_version_id AND c.embedding IS NULL)
-                )
-                """).params(Map.of("version", version, "profile", profile)).query(Boolean.class).single();
+        return jdbc.sql("SELECT EXISTS (" + READY_INDEX.formatted(":version") + ")")
+                .params(Map.of("version", version, "profile", profile)).query(Boolean.class).single();
+    }
+
+    /** Baseline documents whose index is not ready; semantic search over the baseline requires zero. */
+    public int countDocumentsWithoutReadyIndex(long baseline, String profile) {
+        return jdbc.sql("SELECT count(*) FROM baseline_document b WHERE b.baseline_id=:baseline AND NOT EXISTS (" + READY_INDEX.formatted("b.document_version_id") + ")")
+                .params(Map.of("baseline", baseline, "profile", profile)).query(Integer.class).single();
     }
 }

@@ -47,7 +47,7 @@ export class WindowCityView {
   private readonly panes = new Map<THREE.Mesh, THREE.Mesh>()
   private readonly roots = new WeakMap<
     THREE.Object3D,
-    { materials: THREE.Material[]; enabled?: boolean }
+    { materials: THREE.Material[]; enabled?: boolean; version: number }
   >()
   private readonly originalStates = new Map<THREE.Material, StencilState>()
   private disposed = false
@@ -98,9 +98,17 @@ export class WindowCityView {
     this.panes.clear()
   }
 
-  /** A stable city root is indexed once; switching view modes only updates GL state. */
+  /**
+   * A city root is indexed once per content version; switching view modes only updates GL state.
+   * 건물을 나중에 끼우면(Kenney 모델) root.userData.cityVersion이 바뀌어 새 재질도 다시 모은다.
+   */
   setCityStencil(root: THREE.Object3D, enabled: boolean): void {
+    const version = (root.userData.cityVersion as number | undefined) ?? 0
     let entry = this.roots.get(root)
+    if (entry && entry.version !== version) {
+      // 새 재질에도 지금 상태를 다시 걸도록 다시 모은다.
+      entry = undefined
+    }
     if (!entry) {
       const materials = new Set<THREE.Material>()
       root.traverse((object) => {
@@ -112,7 +120,7 @@ export class WindowCityView {
           materials.add(material)
         }
       })
-      entry = { materials: [...materials] }
+      entry = { materials: [...materials], version }
       this.roots.set(root, entry)
     }
     if (entry.enabled === enabled) return

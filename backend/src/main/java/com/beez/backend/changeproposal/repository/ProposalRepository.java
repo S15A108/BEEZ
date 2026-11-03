@@ -195,14 +195,14 @@ public class ProposalRepository {
     /** The approval behind the published baseline of a PUBLISHED proposal; empty for anything else. */
     public Optional<ApprovalRecord> publishedApproval(long project, long proposal) {
         return jdbc.sql("""
-                SELECT a.id,a.change_proposal_id,a.decided_by,a.decided_at,a.result_baseline_id
+                SELECT a.id,a.change_proposal_id,a.decided_by,a.decided_at,a.result_baseline_id,a.reason
                 FROM approval a JOIN change_proposal c ON c.id=a.change_proposal_id AND a.proposal_revision_no=c.revision_no
                 WHERE c.id=:proposal AND c.project_id=:project AND c.status='PUBLISHED' AND a.decision='APPROVED'
                   AND a.result_baseline_id IS NOT NULL
                 """).param("project", project).param("proposal", proposal)
                 .query((rs, n) -> new ApprovalRecord(rs.getString("id"), rs.getString("change_proposal_id"),
                         rs.getString("decided_by"), rs.getTimestamp("decided_at").toInstant().toString(),
-                        rs.getString("result_baseline_id"))).optional();
+                        rs.getString("result_baseline_id"), rs.getString("reason"))).optional();
     }
 
     public void advance(long proposal, Input input) {

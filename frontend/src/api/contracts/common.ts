@@ -5,6 +5,18 @@ export const idSchema = z
   .string()
   .regex(/^(0|[1-9]\d*)$/, '십진 문자열 ID가 필요합니다.')
 export const timeSchema = z.iso.datetime()
+// 추정 비용: 명세는 십진 문자열이지만 서버(BigDecimal)는 JSON 숫자로 주고, 단가가 없으면 null을 준다.
+// 숫자·문자열 모두 받아 문자열로 맞추고 null은 없는 값으로 본다(PR #72 전수 리뷰 SC-1).
+export const costAmountSchema = z
+  .union([z.number(), z.string()])
+  .nullish()
+  .transform((value) => (value == null ? undefined : String(value)))
+  .optional()
+export const currencySchema = z
+  .string()
+  .nullish()
+  .transform((value) => value ?? undefined)
+  .optional()
 export const structuredContentSchema = z.record(z.string(), z.unknown())
 export const pageQuerySchema = z.object({
   cursor: z.string().optional(),
@@ -71,7 +83,8 @@ export const invitationSchema = z.object({
   id: idSchema,
   project_id: idSchema,
   invited_email: z.string().optional(),
-  expires_at: timeSchema,
+  // Q05 6(2026-10-29 확정): 초대 만료는 없다. dev 명세는 아직 필수라 둘 다 받는다.
+  expires_at: timeSchema.optional(),
   accepted_at: timeSchema.optional(),
   revoked_at: timeSchema.optional(),
 })
@@ -118,6 +131,45 @@ export const documentSchema = z.object({
   latest_draft: documentVersionSchema.optional(),
 })
 export type Document = z.infer<typeof documentSchema>
+
+export const documentReviewReferenceSchema = z.object({
+  document_id: idSchema,
+  document_version_id: idSchema,
+  kind: z.string(),
+  version_no: z.number().int(),
+  content: z.string(),
+})
+export type DocumentReviewReference = z.infer<
+  typeof documentReviewReferenceSchema
+>
+
+export const documentReviewSuggestionSchema = z.object({
+  id: idSchema,
+  explanation: z.string(),
+  original_text: z.string(),
+  replacement_text: z.string(),
+  decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']),
+})
+export type DocumentReviewSuggestion = z.infer<
+  typeof documentReviewSuggestionSchema
+>
+
+export const documentReviewSubmissionSchema = z.object({
+  id: idSchema,
+  document_id: idSchema,
+  document_version_id: idSchema,
+  submitted_by: idSchema,
+  revision: z.number().int(),
+  status: z.enum(['SUBMITTED', 'APPROVED', 'REJECTED']),
+  content_hash: z.string(),
+  submitted_at: timeSchema,
+  decided_by: idSchema.optional(),
+  decided_at: timeSchema.optional(),
+  rejection_reason: z.string().optional(),
+})
+export type DocumentReviewSubmission = z.infer<
+  typeof documentReviewSubmissionSchema
+>
 
 export const designItemVersionSchema = z.object({
   id: idSchema,
@@ -225,11 +277,56 @@ export const usageSchema = z.object({
   output_tokens: z.number().int().optional(),
   latency_ms: z.number().int(),
   failed: z.boolean(),
-  estimated_cost_amount: z.string().optional(),
-  currency: z.string().optional(),
+  estimated_cost_amount: costAmountSchema,
+  currency: currencySchema,
   tokens_known: z.boolean(),
 })
 export type Usage = z.infer<typeof usageSchema>
+
+export const documentBeeReviewSchema = z.object({
+  id: idSchema,
+  input_revision: z.number().int(),
+  resolved_revision: z.number().int(),
+  reference_hash: z.string(),
+  summary: z.string(),
+  unavailable_references: z.string().array(),
+  references: documentReviewReferenceSchema.array(),
+  suggestions: documentReviewSuggestionSchema.array(),
+  usage: usageSchema.array(),
+  // 단계별 결과('n단계 / 5단계', '문단 4개'). 서버가 아직 주지 않을 수 있다.
+  steps: z
+    .object({
+      label: z.string(),
+      description: z.string().optional(),
+      result: z.string().optional(),
+    })
+    .array()
+    .optional(),
+  // 반려 뒤 검토면 서버가 고른 반려 제출
+  rejection_submission_id: idSchema.optional(),
+})
+export type DocumentBeeReview = z.infer<typeof documentBeeReviewSchema>
+
+export const documentWorkingCopySchema = z.object({
+  document_id: idSchema,
+  owner_account_id: idSchema,
+  revision: z.number().int(),
+  status: z.enum(['EDITING', 'SUBMITTED', 'APPROVED', 'REJECTED']),
+  content: z.string(),
+  file_name: z.string(),
+  latest_review: documentBeeReviewSchema.optional(),
+  submissions: documentReviewSubmissionSchema.array(),
+})
+export type DocumentWorkingCopy = z.infer<typeof documentWorkingCopySchema>
+
+export const documentReviewSubmissionDetailSchema = z.object({
+  submission: documentReviewSubmissionSchema,
+  content: z.string(),
+  review: documentBeeReviewSchema,
+})
+export type DocumentReviewSubmissionDetail = z.infer<
+  typeof documentReviewSubmissionDetailSchema
+>
 
 export const generationSchema = z.object({
   origin: z.enum(['MODEL', 'TEMPLATE']),
@@ -313,38 +410,88 @@ export const changeProposalInputSchema = z.object({
   reason: z.string(),
   task_id: idSchema.optional(),
   validation_id: idSchema.optional(),
+  /** 거둔(WITHDRAWN) 제안을 새 제안으로 다시 올릴 때만. 반려된 제안은 CHG-A04로 같은 번호에서 다시 올린다. */
+  previous_proposal_id: idSchema.optional(),
   items: changeItemSchema.array(),
   documents: documentChangeSchema.array(),
 })
 export type ChangeProposalInput = z.infer<typeof changeProposalInputSchema>
 
+// PR #46(195): 충돌 검사는 updated_at이 아니라 제출 리비전과 스냅샷 해시로 한다.
+export const changeProposalStatusSchema = z.enum([
+  'PROPOSED',
+  'IN_REVIEW',
+  'APPROVED',
+  'PUBLISHED',
+  'REJECTED',
+  'WITHDRAWN',
+])
+export const snapshotHashSchema = z
+  .string()
+  .regex(/^sha256:[0-9a-f]{64}$/, 'sha256: 뒤에 소문자 64자리여야 합니다.')
+
+// DocumentChange 입력을 해석한 응답(PR #46 0df13f0). after_content로 내도 서버가 DRAFT 버전을 만들어
+// proposed_document_version_id를 항상 준다. after_content·content_hash는 정규화(BOM 제거, CRLF→LF)한 저장 본문이다.
+export const resolvedDocumentChangeSchema = z.object({
+  document_id: idSchema,
+  base_document_version_id: idSchema,
+  proposed_document_version_id: idSchema,
+  after_content: z.string(),
+  content_hash: z.string(),
+})
+export type ResolvedDocumentChange = z.infer<
+  typeof resolvedDocumentChangeSchema
+>
+
 export const changeProposalSchema = z.object({
   id: idSchema,
+  key: z.string(),
+  revision: z.number().int().positive(),
+  snapshot_hash: snapshotHashSchema,
   project_id: idSchema,
   base_baseline_id: idSchema,
   title: z.string(),
   reason: z.string(),
   task_id: idSchema.optional(),
   validation_id: idSchema.optional(),
+  // 195 미구현(#218 요청): 실제 서버에는 없을 수 있다.
+  meeting_id: idSchema.optional(),
   items: changeItemSchema.array(),
-  documents: documentChangeSchema.array(),
-  status: z.enum([
-    'PROPOSED',
-    'IN_REVIEW',
-    'APPROVED',
-    'PUBLISHED',
-    'REJECTED',
-  ]),
+  documents: resolvedDocumentChangeSchema.array(),
+  status: changeProposalStatusSchema,
   proposer_account_id: idSchema,
   actor_type: z.enum(['HUMAN', 'AGENT']),
+  // 195 미구현(#218 요청)
+  agent: z
+    .object({
+      agent_session_id: idSchema,
+      name: z.string(),
+      member_id: idSchema,
+    })
+    .optional(),
   current_baseline_id: idSchema,
   requires_refresh: z.boolean(),
   published_baseline_id: idSchema.optional(),
   created_at: timeSchema,
   updated_at: timeSchema,
   rejection_reason: z.string().optional(),
+  previous_proposal_id: idSchema.optional(),
+  withdrawn_by: idSchema.optional(),
+  withdrawn_at: timeSchema.optional(),
 })
 export type ChangeProposal = z.infer<typeof changeProposalSchema>
+
+export const changeProposalSummarySchema = z.object({
+  id: idSchema,
+  key: z.string(),
+  title: z.string(),
+  status: changeProposalStatusSchema,
+  revision: z.number().int().positive(),
+  base_baseline_id: idSchema,
+  proposer_account_id: idSchema,
+  updated_at: timeSchema,
+})
+export type ChangeProposalSummary = z.infer<typeof changeProposalSummarySchema>
 
 export const approvalSchema = z.object({
   id: idSchema,
@@ -352,6 +499,7 @@ export const approvalSchema = z.object({
   approved_by: idSchema,
   approved_at: timeSchema,
   baseline_id: idSchema,
+  impact_override_reason: z.string().optional(),
 })
 export type Approval = z.infer<typeof approvalSchema>
 
@@ -367,7 +515,8 @@ export type ChangeComment = z.infer<typeof changeCommentSchema>
 
 export const explicitImpactSchema = z.object({
   task_id: idSchema,
-  member_id: idSchema,
+  // 담당자가 없는 작업이면 서버가 생략한다(00-common ExplicitImpact).
+  member_id: idSchema.optional(),
   design_item_id: idSchema,
   validation_id: idSchema.optional(),
 })
@@ -382,12 +531,78 @@ export const impactCandidateSchema = z.object({
 })
 export type ImpactCandidate = z.infer<typeof impactCandidateSchema>
 
+// 서버(A11·A12)는 6종 상태를 돌려준다. 분석 이력이 없는 제안은 200 NOT_EVALUATED(analysis_not_started)다.
+// PENDING 은 예시 서버 호환용으로 남긴다.
+export const impactStatusSchema = z.enum([
+  'PENDING',
+  'RUNNING',
+  'COMPLETED',
+  'INSUFFICIENT_EVIDENCE',
+  'NOT_EVALUATED',
+  'FAILED',
+  'STALE',
+])
+export type ImpactStatus = z.infer<typeof impactStatusSchema>
+
+export const ownerRecommendationEvidenceSchema = z.object({
+  type: z.enum(['DIRECT_TASK_REFERENCE', 'DOCUMENT_SOURCE', 'AI_CANDIDATE']),
+  reason: z.string(),
+  task_id: idSchema,
+  task_key: z.string(),
+  plan_revision_id: idSchema,
+  design_item_id: idSchema.optional(),
+  design_item_version_id: idSchema.optional(),
+  referenced_design_item_version_id: idSchema.optional(),
+  document_id: idSchema.optional(),
+  document_version_id: idSchema.optional(),
+  sources: sourceSchema.array(),
+})
+
+export const ownerRecommendationsSchema = z.object({
+  proposal_revision: z.number().int(),
+  snapshot_hash: z.string(),
+  direct_reference_status: z.enum([
+    'COMPLETE',
+    'INCOMPLETE',
+    'STALE',
+    'NOT_APPLICABLE',
+  ]),
+  direct_reference_reasons: z.string().array(),
+  document_reference_status: z
+    .enum(['COMPLETE', 'INCOMPLETE', 'STALE', 'NOT_APPLICABLE'])
+    .optional(),
+  document_reference_reasons: z.string().array().optional(),
+  ai_analysis_status: impactStatusSchema,
+  ai_current: z.boolean(),
+  ai_reanalysis_in_progress: z.boolean(),
+  withheld_ai_candidates: z.number().int().nonnegative(),
+  recommendations: z
+    .object({
+      member_id: idSchema,
+      area: z.string().optional(),
+      evidence: ownerRecommendationEvidenceSchema.array(),
+    })
+    .array(),
+  notification_candidate_member_ids: idSchema.array(),
+})
+export type OwnerRecommendations = z.infer<typeof ownerRecommendationsSchema>
+
 export const changeImpactSchema = z.object({
   explicit: explicitImpactSchema.array(),
   candidates: impactCandidateSchema.array(),
-  analysis_status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
+  analysis_status: impactStatusSchema,
   generation: generationSchema.optional(),
   error_code: z.string().optional(),
+  revision: z.number().int().optional(),
+  snapshot_hash: z.string().optional(),
+  is_current: z.boolean().optional(),
+  stale_reason: z.string().optional(),
+  run_id: z.string().optional(),
+  reanalysis: z
+    .object({ run_id: z.string(), requested_at: timeSchema.optional() })
+    .optional(),
+  // CHG-A05 확장. 기존 서버와 CHG-A06 재분석 접수 응답에는 없을 수 있다.
+  owner_recommendations: ownerRecommendationsSchema.optional(),
 })
 export type ChangeImpact = z.infer<typeof changeImpactSchema>
 
@@ -683,6 +898,12 @@ export const documentAnalysisSchema = z.object({
 })
 export type DocumentAnalysis = z.infer<typeof documentAnalysisSchema>
 
+const retrievalLocatorSchema = z.object({
+  type: z.literal('text_lines'),
+  start_line: z.number().int().min(1),
+  end_line: z.number().int().min(1),
+})
+
 export const searchHitSchema = z.object({
   type: z.enum(['DOCUMENT', 'DOCUMENT_CHUNK', 'DESIGN_ITEM']),
   id: idSchema,
@@ -691,12 +912,35 @@ export const searchHitSchema = z.object({
   source: sourceSchema.optional(),
   design_item_id: idSchema.optional(),
   score: z.number().finite().optional(),
+  // Exact offsets are Unicode code points in utf8-lf-v1 text; end is exclusive.
+  chunk_key: z.string().optional(),
+  source_spans: z
+    .array(
+      z.object({
+        block_id: z.string(),
+        start_offset: z.number().int().nonnegative(),
+        end_offset: z.number().int().positive(),
+        locator: retrievalLocatorSchema,
+      }),
+    )
+    .optional(),
+  context_refs: z
+    .array(
+      z.object({
+        block_id: z.string(),
+        role: z.enum(['heading', 'table_header']),
+        locator: retrievalLocatorSchema,
+        text_hash: z.string(),
+        applied: z.boolean(),
+      }),
+    )
+    .optional(),
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
 
 export const participantSchema = z.object({
   member_id: idSchema,
-  status: z.enum(['INVITED', 'ACCEPTED', 'DECLINED']),
+  status: z.enum(['INVITED', 'JOINED', 'DECLINED']),
 })
 export type Participant = z.infer<typeof participantSchema>
 
@@ -717,6 +961,13 @@ export const meetingSchema = z.object({
   project_id: idSchema,
   title: z.string(),
   change_proposal_id: idSchema.optional(),
+  // dev 명세의 '수정안 요청' 필드(PR #42). 서버가 아직 주지 않을 수 있다.
+  origin: z.enum(['BEE_CONFLICT', 'HUMAN']).optional(),
+  task_ids: idSchema.array().optional(),
+  conflict_summary: z.string().optional(),
+  status: z.enum(['OPEN', 'CLOSED']).optional(),
+  closed_at: timeSchema.optional(),
+  closed_by: idSchema.optional(),
   participants: participantSchema.array(),
   created_at: timeSchema,
 })
@@ -797,7 +1048,10 @@ export const usageBucketSchema = z.object({
   input_tokens: z.number().int(),
   output_tokens: z.number().int(),
   call_count: z.number().int(),
-  estimated_cost_amount: z.string().optional(),
+  estimated_cost_amount: costAmountSchema,
+  // 토큰·비용이 합계에 들어가지 못한 호출 수(BE -169). 0보다 크면 합계는 일부만 센 값이다.
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
 })
 export type UsageBucket = z.infer<typeof usageBucketSchema>
 
@@ -807,8 +1061,10 @@ export const usageSummarySchema = z.object({
   input_tokens: z.number().int(),
   output_tokens: z.number().int(),
   call_count: z.number().int(),
-  estimated_cost_amount: z.string().optional(),
-  currency: z.string().optional(),
+  estimated_cost_amount: costAmountSchema,
+  currency: currencySchema,
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
   by_feature: usageBucketSchema.array(),
   by_task: usageBucketSchema.array(),
   by_validation: usageBucketSchema.array(),
@@ -940,7 +1196,11 @@ export type DependencyCandidate = z.infer<typeof dependencyCandidateSchema>
 
 export const comparisonSchema = z.object({
   target_type: z.enum(['DOCUMENT', 'DESIGN_ITEM']),
-  target_id: idSchema,
+  // CREATE 항목은 발행 전이라 ID가 없다. 서버는 null 값을 응답에서 빼므로(전역 non_null) 키가 없어도 받는다
+  // (PR #72 mock/live 전수 대조 DOC-LIVE-2).
+  target_id: idSchema.nullish(),
+  // 기준과 지금 내용이 다름. 기준→제안 diff와 별개
+  current_changed: z.boolean(),
   format: z.enum(['TEXT', 'FILE', 'STRUCTURED']),
   base_content: z.union([structuredContentSchema, z.string()]).optional(),
   current_content: z.union([structuredContentSchema, z.string()]).optional(),

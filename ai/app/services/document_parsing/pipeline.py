@@ -1,18 +1,18 @@
 import json
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from app.schemas.documents import (
     ExcludedRange,
     SourceBlock,
+    SourceDiagnostic,
     SourceDocument,
     SourceInput,
     SourceLocator,
 )
-from app.services.document_parsing.adapters.markdown import (
-    PARSER_PROFILE,
-    PARSER_VERSION,
-    parse_markdown,
-)
+from app.services.document_parsing.adapters import markdown, plain_text
+from app.services.document_parsing.adapters.blocks import ParsedBlock
 from app.services.document_parsing.errors import SourceParsingError
 from app.services.document_parsing.normalization import (
     NORMALIZATION_VERSION,
@@ -23,6 +23,46 @@ from app.services.document_parsing.normalization import (
 )
 
 MAX_RESULT_BYTES = 2_097_152
+SUPPORTED_KINDS = frozenset({"PLAN", "REQUIREMENTS", "API_SPEC", "ERD"})
+
+
+@dataclass(frozen=True)
+class ParserProfile:
+    media_type: str
+    parser_profile: str
+    parser_version: str
+    parse: Callable[
+        [str], tuple[list[ParsedBlock], list[ExcludedRange], list[SourceDiagnostic]]
+    ]
+
+
+# Exactly one parser profile per media type; the caller must echo its name.
+PARSER_PROFILES: dict[str, ParserProfile] = {
+    profile.media_type: profile
+    for profile in (
+        ParserProfile(
+            "text/markdown",
+            markdown.PARSER_PROFILE,
+            markdown.PARSER_VERSION,
+            markdown.parse_markdown,
+        ),
+        ParserProfile(
+            "text/plain",
+            plain_text.PARSER_PROFILE,
+            plain_text.PARSER_VERSION,
+            plain_text.parse_plain_text,
+        ),
+    )
+}
+
+
+def default_parser_profile(media_type: str) -> str:
+    profile = PARSER_PROFILES.get(media_type)
+    if profile is None:
+        raise SourceParsingError(
+            "unsupported_media_type", "Expected text/markdown or text/plain."
+        )
+    return profile.parser_profile
 
 
 def _coverage(
@@ -81,15 +121,14 @@ def _coverage(
 
 
 def parse_source(source: SourceInput) -> SourceDocument:
-    if (
-        source.kind not in {"PLAN", "REQUIREMENTS", "API_SPEC", "ERD"}
-        or source.media_type != "text/markdown"
-    ):
+    profile = PARSER_PROFILES.get(source.media_type)
+    if source.kind not in SUPPORTED_KINDS or profile is None:
         raise SourceParsingError(
-            "unsupported_media_type", "Expected supported kind + text/markdown."
+            "unsupported_media_type",
+            "Expected supported kind + text/markdown or text/plain.",
         )
     if (
-        source.parser_profile != PARSER_PROFILE
+        source.parser_profile != profile.parser_profile
         or source.normalization_version != NORMALIZATION_VERSION
     ):
         raise SourceParsingError(
@@ -100,7 +139,7 @@ def parse_source(source: SourceInput) -> SourceDocument:
         raise SourceParsingError(
             "source_hash_mismatch", "Normalized text does not match text_hash."
         )
-    parsed, excluded, diagnostics = parse_markdown(text)
+    parsed, excluded, diagnostics = profile.parse(text)
     if not parsed:
         raise SourceParsingError(
             "no_extractable_content", "No searchable source content."
@@ -113,7 +152,7 @@ def parse_source(source: SourceInput) -> SourceDocument:
         source.text_hash,
         source.normalization_version,
         source.parser_profile,
-        PARSER_VERSION,
+        profile.parser_version,
     ]
     block_ids = [
         "blk_"
@@ -150,12 +189,12 @@ def parse_source(source: SourceInput) -> SourceDocument:
         project_id=source.project_id,
         document_version_id=source.document_version_id,
         kind=source.kind,
-        media_type="text/markdown",
+        media_type=profile.media_type,
         content_hash=source.content_hash,
         text_hash=source.text_hash,
         normalization_version=NORMALIZATION_VERSION,
-        parser_profile=PARSER_PROFILE,
-        parser_version=PARSER_VERSION,
+        parser_profile=profile.parser_profile,
+        parser_version=profile.parser_version,
         normalized_text=text,
         blocks=tuple(blocks),
         excluded_ranges=_coverage(lines, blocks, excluded),

@@ -64,12 +64,16 @@ export function collaborationRoutes(
     }
   if (id === 'NTF-A02') {
     const ids = new Set(strings(body.ids))
+    // all=true면 본인 알림 전체(project_id가 있으면 그 프로젝트)를 읽음 처리한다(명세 NTF-A02 수정안).
+    const all = body.all === true
     let updated = 0
     database.notifications
       .filter(
         (item) =>
           item.account_id === requireAccount(context).id &&
-          ids.has(item.id) &&
+          (all
+            ? !body.project_id || item.project_id === body.project_id
+            : ids.has(item.id)) &&
           !item.read_at,
       )
       .forEach((item) => {
@@ -86,7 +90,7 @@ export function collaborationRoutes(
   switch (id) {
     case 'MTG-A01': {
       const participants: Participant[] = [
-        { member_id: context.member!.id, status: 'ACCEPTED' },
+        { member_id: context.member!.id, status: 'JOINED' },
       ]
       for (const memberId of strings(body.participant_member_ids)) {
         findById(project.members, memberId)
@@ -122,12 +126,26 @@ export function collaborationRoutes(
       }
       return { data: meeting! }
     }
+    case 'MTG-A14': {
+      // PR #54: 팀장만, 팀장 자신은 409, 끝난 회의 409, 참여자가 아니어도 204(멱등)
+      if (context.member?.role !== 'LEADER')
+        fail(403, 'forbidden', '팀장만 참여자를 뺄 수 있어요.')
+      if (meeting!.status === 'CLOSED')
+        fail(409, 'meeting_closed', '끝난 회의예요.')
+      const target = findById(project.members, params.member_id)
+      if (target.role === 'LEADER')
+        fail(409, 'leader_not_removable', '팀장은 회의에서 뺄 수 없어요.')
+      meeting!.participants = meeting!.participants.filter(
+        (item) => item.member_id !== target.id,
+      )
+      return { status: 204 }
+    }
     case 'MTG-A05': {
       const participant =
         meeting!.participants.find(
           (item) => item.member_id === context.member?.id,
         ) ?? fail(403, 'forbidden', '초대된 회의 참여자만 응답할 수 있어요.')
-      if (body.status !== 'ACCEPTED' && body.status !== 'DECLINED')
+      if (body.status !== 'JOINED' && body.status !== 'DECLINED')
         fail(400, 'validation_failed', '참여 상태를 확인해 주세요.')
       participant.status = body.status
       return { data: meeting! }
@@ -136,7 +154,7 @@ export function collaborationRoutes(
       if (
         !meeting!.participants.some(
           (item) =>
-            item.member_id === context.member?.id && item.status === 'ACCEPTED',
+            item.member_id === context.member?.id && item.status === 'JOINED',
         )
       )
         fail(403, 'forbidden', '회의 참여를 수락한 뒤 기록해 주세요.')
@@ -164,8 +182,21 @@ export function collaborationRoutes(
           item.kind === 'TEXT',
       )
       const summary = included.map((entry) => entry.text).join('\n')
+      const author = (accountId?: string) =>
+        project.members.find((member) => member.account_id === accountId)
+          ?.name ?? '팀원'
+      // 비비 정리 예시: 누가 무슨 말을 했는지만 모은다. 충돌·결정·할 일을 고르는 실제 AI 정리는 아니다.
       const generation = templateGeneration(
-        `회의 텍스트를 모았어요. 실제 AI 요약은 실행하지 않았어요.\n${summary}`,
+        id === 'MTG-A07'
+          ? [
+              `회의 내용을 정리했어요 · 메시지 ${included.length}개 기준`,
+              ...included.map(
+                (entry) =>
+                  `- ${author(entry.author_account_id)}: ${entry.text}`,
+              ),
+              '실제 AI 정리는 실행하지 않았어요.',
+            ].join('\n')
+          : `회의 텍스트를 모았어요. 실제 AI 요약은 실행하지 않았어요.\n${summary}`,
       )
       const entry: MeetingEntry = {
         id: nextId(database),
@@ -232,8 +263,19 @@ export function collaborationRoutes(
           by_kind: (['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const).map(
             (kind) => ({
               kind,
+              // 서버 StatusRepository처럼 미승인 초안 버전이 있거나 작성 건이 EDITING·SUBMITTED·REJECTED인 문서를
+              // 한 번씩 센다. 승인 문서를 다시 고치기 시작하면 초안 버전 없이도 1이다(LA-TC-09).
               draft_count: project.documents.filter(
-                (document) => document.kind === kind && document.latest_draft,
+                (document) =>
+                  document.kind === kind &&
+                  (document.latest_draft ||
+                    project.working_copies.some(
+                      (copy) =>
+                        copy.document_id === document.id &&
+                        ['EDITING', 'SUBMITTED', 'REJECTED'].includes(
+                          copy.status,
+                        ),
+                    )),
               ).length,
               approved_count: project.documents.filter(
                 (document) =>
@@ -281,45 +323,140 @@ export function collaborationRoutes(
             query.get('from') ??
             new Date(Date.now() - 7 * 86400000).toISOString(),
           to: query.get('to') ?? now(),
+          // 실제 서버처럼: 호출이 없으면 비용·통화를 생략하고(0원으로 보이지 않게) 기능별은 8줄을 0으로 채운다.
           input_tokens: 0,
           output_tokens: 0,
           call_count: 0,
-          estimated_cost_amount: '0',
-          currency: 'USD',
-          by_feature: [],
+          tokens_unknown_call_count: 0,
+          cost_unknown_call_count: 0,
+          by_feature: [
+            'DOCUMENT_PARSE',
+            'TASK_VALIDATION',
+            'CHANGE_IMPACT',
+            'EMBEDDING',
+            'BEE_CHAT',
+            'BEE_DRAFT',
+            'TASK_ASSIGNMENT',
+            'MEETING_ANALYSIS',
+          ].map((key) => ({
+            key,
+            input_tokens: 0,
+            output_tokens: 0,
+            call_count: 0,
+            tokens_unknown_call_count: 0,
+            cost_unknown_call_count: 0,
+          })),
           by_task: [],
           by_validation: [],
+          by_agent: [],
+          by_day: [],
         },
       }
-    case 'MON-A03':
+    case 'MON-A03': {
+      // task_id를 주면 그 작업 기준으로 설계 항목·검증·관련 변경 제안만 돌려준다. 변경 제안 연결은 예시로 후보(점선)로 둔다.
+      const taskId = query.get('task_id')
+      const tasks = project.tasks.filter(
+        (task) => !taskId || task.id === taskId,
+      )
+      const itemIds = new Set(
+        tasks.flatMap((task) =>
+          task.current_plan_revision.plan.design_refs.map(
+            (reference) => reference.design_item_id,
+          ),
+        ),
+      )
+      const proposals = project.proposals.filter((proposal) =>
+        proposal.items.some(
+          (item) => item.design_item_id && itemIds.has(item.design_item_id),
+        ),
+      )
+      // 실제 서버처럼 작업 기준이면 그 작업에서 나온 제안을 PROPOSED_FROM(제안 → 작업)으로 잇는다(RelationGraphService).
+      const fromTask = taskId
+        ? project.proposals.filter((proposal) => proposal.task_id === taskId)
+        : []
       return {
         data: {
           nodes: [
-            ...project.tasks.map((task) => ({
+            ...tasks.map((task) => ({
               id: task.id,
               type: 'TASK',
-              label: task.current_plan_revision.plan.title,
+              label: `${task.key} ${task.current_plan_revision.plan.title}`,
             })),
             ...project.items
-              .filter((item) => item.status === 'APPROVED')
+              .filter(
+                (item) =>
+                  item.status === 'APPROVED' &&
+                  (!taskId || itemIds.has(item.design_item_id)),
+              )
               .map((item) => ({
                 id: item.design_item_id,
                 type: 'DESIGN_ITEM',
                 label: item.key,
               })),
+            ...tasks
+              .filter((task) => task.validation)
+              .map((task) => ({
+                id: task.validation!.id,
+                type: 'VALIDATION',
+                label: `계획 검증 ${task.validation!.status}`,
+              })),
+            ...[
+              ...proposals,
+              ...fromTask.filter((proposal) => !proposals.includes(proposal)),
+            ].map((proposal) => ({
+              id: proposal.id,
+              type: 'CHANGE_PROPOSAL',
+              label: proposal.title,
+            })),
           ],
-          edges: project.tasks.flatMap((task) =>
-            task.current_plan_revision.plan.design_refs.map((reference) => ({
-              from_id: task.id,
-              from_type: 'TASK',
-              to_id: reference.design_item_id,
-              to_type: 'DESIGN_ITEM',
-              relation: reference.relation,
+          edges: [
+            ...tasks.flatMap((task) =>
+              task.current_plan_revision.plan.design_refs.map((reference) => ({
+                from_id: task.id,
+                from_type: 'TASK',
+                to_id: reference.design_item_id,
+                to_type: 'DESIGN_ITEM',
+                relation: reference.relation,
+                confirmed: true,
+              })),
+            ),
+            ...tasks
+              .filter((task) => task.validation)
+              .map((task) => ({
+                from_id: task.id,
+                from_type: 'TASK',
+                to_id: task.validation!.id,
+                to_type: 'VALIDATION',
+                relation: 'VALIDATED_BY',
+                confirmed: true,
+              })),
+            ...proposals.flatMap((proposal) =>
+              proposal.items
+                .filter(
+                  (item) =>
+                    item.design_item_id && itemIds.has(item.design_item_id),
+                )
+                .map((item) => ({
+                  from_id: proposal.id,
+                  from_type: 'CHANGE_PROPOSAL',
+                  to_id: item.design_item_id!,
+                  to_type: 'DESIGN_ITEM',
+                  relation: 'CHANGES',
+                  confirmed: false,
+                })),
+            ),
+            ...fromTask.map((proposal) => ({
+              from_id: proposal.id,
+              from_type: 'CHANGE_PROPOSAL',
+              to_id: taskId!,
+              to_type: 'TASK',
+              relation: 'PROPOSED_FROM',
               confirmed: true,
             })),
-          ),
+          ],
         },
       }
+    }
     case 'MON-A04':
       return {
         data: page(

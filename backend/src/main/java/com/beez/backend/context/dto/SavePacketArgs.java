@@ -14,6 +14,7 @@ public record SavePacketArgs(
         @NotBlank String request,
         String projectId,
         String taskId,
+        @NotBlank String expectedBaselineId,
         @NotNull List<@NotBlank String> designItemVersionIds,
         @NotNull List<@NotNull String> constraints,
         @NotNull List<@NotNull String> unresolved,

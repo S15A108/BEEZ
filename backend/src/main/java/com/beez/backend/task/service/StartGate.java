@@ -1,9 +1,11 @@
 package com.beez.backend.task.service;
 
 import com.beez.backend.task.entity.Task;
+import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -46,16 +48,25 @@ public class StartGate {
 
     private final JdbcClient jdbc;
 
-    public StartGate(JdbcClient jdbc) {
+    /**
+     * 서버용 가짜 분석기가 켜져 있는가 (beez.validation.fake-analyzer).
+     * 꺼져 있으면 가짜 분석기가 낸 PASS 는 G1 에서 거절한다 — 실제 AI 로 바꾼 뒤 설계 대조 없는 PASS 로 시작·재개하지 못하게 (-159 리뷰).
+     * final 이 아닌 것은 통합 테스트가 같은 컨텍스트에서 켜고 끄기 위해서다.
+     */
+    private boolean fakeAnalyzerEnabled;
+
+    public StartGate(JdbcClient jdbc, @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled) {
         this.jdbc = jdbc;
+        this.fakeAnalyzerEnabled = fakeAnalyzerEnabled;
     }
 
     public Result evaluate(Task task, Long validationId) {
         List<Failure> failures = new ArrayList<>();
-        boolean ownValidation = checkValidationPassed(task, validationId, failures);
-        // G2 는 그 검증이 이 작업 것일 때만 본다. 남의 검증이면 G1 이 이미 거절했고, 그 내용을 더 읽지 않는다
-        if (ownValidation) {
-            checkReferencesCurrent(task, validationId, failures);
+        Long effective = checkValidationPassed(task, validationId, failures);
+        // G2 는 그 검증이 이 작업 것일 때만 본다. 남의 검증이면 G1 이 이미 거절했고, 그 내용을 더 읽지 않는다.
+        // 제목만 바뀐 계획으로 이어 받은 복사본이 있으면 그 복사본(현재 리비전 것)을 본다 — 참조는 원본과 같다
+        if (effective != null) {
+            checkReferencesCurrent(task, effective, failures);
         }
         checkDependenciesCompleted(task, failures);
         checkNoChangesConflict(task, failures);
@@ -68,11 +79,15 @@ public class StartGate {
      * 작업은 이미 프로젝트 조건으로 찾은 것이라 프로젝트 소속도 함께 보장된다.
      * 다른 작업의 검증과 없는 검증은 같은 응답이다.
      *
-     * @return 이 작업의 검증이 있으면 true (PASS 여부와 상관없이). false 면 G2 를 건너뛴다
+     * <p>검증 입력이 같은 계획 변경(제목만 등, AC-13)으로 이어 받은 검증: 에이전트가 쥔 번호가 옛 리비전 것이어도, 현재 리비전에
+     * 그 검증을 원본으로 하는 복사본(summary.carried_from, {@link ValidationStatusLookup#carryForwardLatest})이 있으면 복사본으로 판정한다.
+     * 번호를 새로 알아내지 않아도 되게 하기 위해서다. 복사본이 없으면(입력이 바뀐 변경·RUNNING 중 변경) 전처럼 거절한다.
+     *
+     * @return 판정에 쓴 이 작업의 검증 번호 (PASS 여부와 상관없이). 이 작업의 검증이 아니면 null — G2 를 건너뛴다
      */
-    private boolean checkValidationPassed(Task task, Long validationId, List<Failure> failures) {
+    private Long checkValidationPassed(Task task, Long validationId, List<Failure> failures) {
         List<Map<String, Object>> rows = jdbc.sql("""
-                        select plan_revision_id, status
+                        select id, plan_revision_id, status, (summary ->> 'carried_from')::bigint as carried_from
                           from validation
                          where id = :id
                            and task_id = :taskId
@@ -84,24 +99,74 @@ public class StartGate {
         if (rows.isEmpty()) {
             // 요청한 번호를 메시지에 되풀이하지 않는다. 없는 번호와 남의 번호의 응답이 글자까지 같아야 한다
             failures.add(new Failure("validation_not_passed", "이 작업의 검증을 찾을 수 없습니다"));
-            return false;
+            return null;
         }
         Map<String, Object> v = rows.get(0);
+        long effectiveId = validationId;
         long vRevision = ((Number) v.get("plan_revision_id")).longValue();
-        String status = (String) v.get("status");
-        if (task.getCurrentPlanRevisionId() == null || vRevision != task.getCurrentPlanRevisionId()) {
-            failures.add(new Failure("validation_not_passed", "현재 계획(리비전)에 대한 검증이 아닙니다"));
-            return true;
+        // 원본 번호: 복사본이면 그 carried_from, 아니면 자기 자신. 실행 기록(가짜 분석기 여부)은 원본에만 있다
+        long origin = validationId;
+        if (v.get("carried_from") != null) {
+            origin = ((Number) v.get("carried_from")).longValue();
         }
+        if (task.getCurrentPlanRevisionId() == null) {
+            failures.add(new Failure("validation_not_passed", "현재 계획(리비전)에 대한 검증이 아닙니다"));
+            return effectiveId;
+        }
+        if (vRevision != task.getCurrentPlanRevisionId()) {
+            List<Map<String, Object>> carried = jdbc.sql("""
+                            select id, status
+                              from validation
+                             where task_id = :taskId
+                               and plan_revision_id = :revisionId
+                               and (summary ->> 'carried_from')::bigint = :origin
+                             order by id desc
+                             limit 1
+                            """)
+                    .param("taskId", task.getId())
+                    .param("revisionId", task.getCurrentPlanRevisionId())
+                    .param("origin", origin)
+                    .query()
+                    .listOfRows();
+            if (carried.isEmpty()) {
+                failures.add(new Failure("validation_not_passed", "현재 계획(리비전)에 대한 검증이 아닙니다"));
+                return effectiveId;
+            }
+            v = carried.get(0);
+            effectiveId = ((Number) v.get("id")).longValue();
+        }
+        String status = (String) v.get("status");
         if (!"PASS".equals(status)) {
             failures.add(new Failure("validation_not_passed", "검증 상태가 PASS 가 아닙니다 (현재 " + status + ")"));
+            return effectiveId;
         }
-        return true;
+        if (!fakeAnalyzerEnabled && passedByFakeAnalyzer(origin)) {
+            failures.add(new Failure("validation_not_passed", "가짜 분석기로 낸 검증 결과라 쓸 수 없습니다. 검증을 다시 요청하세요"));
+        }
+        return effectiveId;
+    }
+
+    /**
+     * 이 검증의 실행 중 가짜 분석기가 끝낸 것이 있는가. 실행 기록의 분석기 버전에 응답의 model 이 남는다(AnalysisResultApplier).
+     * 규칙만으로 끝난 PASS 는 실행이 없어 여기에 걸리지 않는다. 이어 받은 복사본은 실행이 없으므로 원본 번호로 묻는다.
+     */
+    private boolean passedByFakeAnalyzer(Long validationId) {
+        Integer found = jdbc.sql("""
+                        select count(*)
+                          from validation_run
+                         where validation_id = :id
+                           and analyzer_version = :fake
+                        """)
+                .param("id", validationId)
+                .param("fake", FakeValidationAnalyzer.MODEL)
+                .query(Integer.class)
+                .single();
+        return found > 0;
     }
 
     /**
      * G2: 검증이 본 (항목, 버전) 이 지금 현재 baseline 의 버전과 모두 같은가.
-     * 전역 baseline 번호는 비교하지 않는다 — 내가 참조한 항목만 본다.
+     * 전역 baseline 번호는 비교하지 않는다 — 계획에 명시한 참조만 본다.
      * evaluate 에서 G1 이 "이 작업의 검증" 을 찾았을 때만 부른다. 쿼리에도 task_id 조건을 걸어
      * 이 메서드만 따로 불려도 남의 검증이 본 설계 항목이 섞이지 않게 한다 (-172 합의 3·5번).
      */
