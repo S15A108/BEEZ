@@ -11,8 +11,8 @@ export function makePocketOffice(
   keys: readonly string[],
   developerCount?: number | OfficePopulation,
 ): Floor {
-  if (typeof developerCount === 'object')
-    return makeTeamOffice(keys, developerCount)
+  // 인원 객체를 넘기면(사무실 화면) 캔버스 고정 사무실이다(D28). 숫자는 옛 별관 배치다.
+  if (typeof developerCount === 'object') return makeTeamOffice()
   const count =
     developerCount === undefined
       ? 6

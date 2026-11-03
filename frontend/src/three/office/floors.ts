@@ -53,6 +53,8 @@ export type FurnitureKind =
   | 'trophy'
   | 'projector'
   | 'glass-partition'
+  /** 고정 사무실(D28)의 소품: 책·키보드·조명처럼 자리도 길도 막지 않는 Kenney 가구 */
+  | 'kit'
 
 export interface Furniture {
   kind: FurnitureKind
@@ -65,6 +67,20 @@ export interface Furniture {
   tag?: string
   /** 사람이 꾸미기로 놓은 장식 (치울 수 있음) */
   decorId?: string
+  /** 고정 사무실(D28)의 Kenney Furniture Kit 모델·보드 그림. 위치·크기는 타일 단위(1타일 = 1 m)다. */
+  kit?: {
+    model: string | null
+    ui: string | null
+    x: number
+    z: number
+    y: number
+    ry: number
+    s: [number, number, number] | null
+    w: number
+    d: number
+    h: number
+    tint: Record<string, string> | null
+  }
 }
 
 export interface Seat {
@@ -122,6 +138,8 @@ export interface Floor {
   /** Actual indoor footprint; streets and unopened expansion space stay outdoors. */
   footprint?: { left: number; back: number; right: number; front: number }
   outdoorExit?: OfficeOutdoorExit
+  /** 고정 사무실(D28)에 매다는 구역 표지(단축 바 1~6번 창 이름). 타일 단위 */
+  zoneSigns?: { n: number; name: string; x: number; z: number }[]
 }
 
 export type Act =

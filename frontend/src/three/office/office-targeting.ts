@@ -36,7 +36,13 @@ export function officeFurnitureLabel(furniture: Furniture): string {
     lamp: '조명',
     trophy: '트로피',
     'glass-partition': '유리 파티션',
+    kit: '소품',
   }
+  // 고정 사무실(D28): 모니터·노트북 자리, 칸반·메모 벽, 벽 화면
+  if (furniture.tag?.startsWith('workstation/')) return '작업 자리'
+  if (furniture.kit?.ui === 'kanban') return '칸반 보드'
+  if (furniture.kit?.ui === 'notes') return '메모 벽'
+  if (furniture.kind === 'projector' && furniture.kit) return '벽 화면'
   return labels[furniture.kind]
 }
 

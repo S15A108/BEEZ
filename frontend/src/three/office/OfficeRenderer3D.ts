@@ -117,7 +117,8 @@ const C = {
   wood: '#cfa05f',
   woodEdge: '#aa7d43',
   oakLight: '#e2b76e',
-  plaster: '#e9ddbd',
+  // 크림 벽(캔버스 v488 1번 색)
+  plaster: '#f4ece0',
   honey: '#ffd24a',
   dark: '#2c2a24',
   metal: '#a09b90',
@@ -125,6 +126,200 @@ const C = {
   leafLight: '#9eb64d',
   leafDark: '#426d35',
   navy: '#293840',
+}
+
+// ───── 고정 사무실(D28) 가구 재질·그림 ─────
+// Kit 재질 이름별 색(캔버스 PAL + 사용자가 고른 1번 색 테마: 따뜻한 나무, 초록 화분). 모델은 앱 전체가 나눠 써서 한 번만 칠한다.
+const KIT_PALETTE: Record<string, [string, number, number]> = {
+  wood: ['#c99a6b', 0.6, 0],
+  woodDark: ['#b08a60', 0.6, 0],
+  metal: ['#cdd1d5', 0.35, 0.5],
+  metalMedium: ['#8e949a', 0.4, 0.5],
+  metalDark: ['#2b2e34', 0.45, 0.3],
+  metalLight: ['#eef0f1', 0.35, 0.3],
+  carpet: ['#7a7d80', 0.95, 0],
+  carpetBlue: ['#6d7f95', 0.95, 0],
+  carpetDarker: ['#5a5d61', 0.95, 0],
+  carpetWhite: ['#f2f2f0', 0.9, 0],
+  plant: ['#4f8a3f', 0.8, 0],
+  _defaultMat: ['#f4f4f2', 0.6, 0],
+}
+function kitPalette(material: THREE.MeshStandardMaterial) {
+  if (material.userData.kitPalette) return
+  material.userData.kitPalette = true
+  const paint = KIT_PALETTE[material.name]
+  if (paint) {
+    material.color.set(paint[0])
+    material.roughness = paint[1]
+    material.metalness = paint[2]
+  }
+  if (material.name === 'lamp') {
+    material.color.set('#fff6e2')
+    material.emissive.set('#ffe7bd')
+    material.emissiveIntensity = 1.3
+  }
+  if (material.name === 'glass') {
+    material.color.set('#e4eef0')
+    material.transparent = true
+    material.opacity = 0.35
+    material.roughness = 0.05
+    material.depthWrite = false
+  }
+}
+// 화면 가운데 높이·폭·높이·기울기(m). 모니터·TV는 Kit 모델 단위에 배율을 곱하고(캔버스 SCREEN), 노트북은 크기로 어림한다.
+type KitSpec = NonNullable<Furniture['kit']>
+const KIT_SCREEN: Record<
+  string,
+  (kit: KitSpec) => [number, number, number, number]
+> = {
+  computerScreen: (kit) => {
+    const s = kit.s?.[0] ?? 1
+    return [kit.y + 0.177 * s, 0.36 * s, 0.2 * s, 0]
+  },
+  televisionModern: (kit) => {
+    const s = kit.s?.[0] ?? 1
+    return [kit.y + 0.265 * s, 0.635 * s, 0.355 * s, 0]
+  },
+  laptop: (kit) => [kit.y + kit.h * 0.62, kit.w * 0.72, kit.h * 0.6, -0.3],
+}
+// 캔버스 uiMake와 같은 그림: 칸반·메모 벽은 종이, 그래프·대시보드는 화면
+function drawKitUi(
+  g: CanvasRenderingContext2D,
+  kind: string,
+  w: number,
+  h: number,
+) {
+  const font = (size: number, weight = 700) =>
+    (g.font = `${weight} ${size}px Geist, "Malgun Gothic", sans-serif`)
+  const note = (
+    x: number,
+    y: number,
+    s: number,
+    color: string,
+    turn: number,
+  ) => {
+    g.save()
+    g.translate(x, y)
+    g.rotate(turn)
+    g.fillStyle = 'rgba(0,0,0,0.12)'
+    g.fillRect(4, 6, s, s)
+    g.fillStyle = color
+    g.fillRect(0, 0, s, s)
+    g.fillStyle = 'rgba(44,41,31,0.55)'
+    for (let k = 0; k < 3; k++)
+      g.fillRect(
+        s * 0.14,
+        s * (0.28 + k * 0.2),
+        s * (0.72 - k * 0.15),
+        s * 0.06,
+      )
+    g.restore()
+  }
+  const colors = ['#f3c530', '#fde68a', '#ffffff', '#cfe3f7', '#f9c6b8']
+  g.fillStyle = '#ffffff'
+  g.fillRect(0, 0, w, h)
+  if (kind === 'kanban' || kind === 'notes') {
+    const heads =
+      kind === 'kanban'
+        ? ['할 일', '진행 중', '검토', '완료']
+        : ['제안', '검토 중', '반영', '보류', '질문']
+    const cw = w / heads.length
+    heads.forEach((title, i) => {
+      if (i) {
+        g.fillStyle = '#d8d4cc'
+        g.fillRect(i * cw, 30, 4, h - 60)
+      }
+      font(kind === 'kanban' ? 64 : 58)
+      g.fillStyle = '#2c291f'
+      g.fillText(title, i * cw + 36, 92)
+      const n = 2 + ((i * 7 + 3) % 3)
+      for (let k = 0; k < n; k++)
+        note(
+          i * cw + 40 + (k % 2) * (cw * 0.44),
+          140 + Math.floor(k / 2) * (cw * 0.46),
+          cw * 0.38,
+          colors[(i + k) % colors.length],
+          (((i * 3 + k) % 5) - 2) * 0.03,
+        )
+    })
+    return
+  }
+  if (kind === 'graph') {
+    g.fillStyle = '#f7f8fa'
+    g.fillRect(0, 0, w, h)
+    const nodes: [number, number, string][] = [
+      [640, 360, '프로젝트'],
+      [300, 180, '화면'],
+      [980, 180, 'API'],
+      [280, 560, '데이터'],
+      [1000, 560, '정책'],
+      [640, 620, '변경'],
+    ]
+    g.strokeStyle = '#9aa3ad'
+    g.lineWidth = 6
+    for (const [x, y] of nodes.slice(1)) {
+      g.beginPath()
+      g.moveTo(640, 360)
+      g.lineTo(x, y)
+      g.stroke()
+    }
+    nodes.forEach(([x, y, label], i) => {
+      g.fillStyle = i ? '#ffffff' : '#f3c530'
+      g.strokeStyle = '#2c291f'
+      g.lineWidth = 4
+      g.beginPath()
+      g.roundRect(x - 120, y - 48, 240, 96, 22)
+      g.fill()
+      g.stroke()
+      font(40)
+      g.fillStyle = '#2c291f'
+      g.textAlign = 'center'
+      g.fillText(label, x, y + 14)
+      g.textAlign = 'left'
+    })
+    return
+  }
+  // 대시보드: 숫자 칸과 선 그래프, 또는 진행 막대
+  g.fillStyle = '#1f2329'
+  g.fillRect(0, 0, w, h)
+  font(44)
+  g.fillStyle = '#ffffff'
+  g.fillText(kind === 'dash1' ? '팀 대시보드' : '프로젝트 진행', 60, 90)
+  if (kind === 'dash1') {
+    ;[
+      ['작업 중', '6'],
+      ['검토', '3'],
+      ['완료', '27'],
+    ].forEach(([title, value], i) => {
+      g.fillStyle = '#2c3138'
+      g.fillRect(60 + i * 400, 130, 360, 180)
+      font(30, 500)
+      g.fillStyle = '#aab2bc'
+      g.fillText(title, 90 + i * 400, 185)
+      font(84)
+      g.fillStyle = i ? '#ffffff' : '#f3c530'
+      g.fillText(value, 90 + i * 400, 285)
+    })
+    g.strokeStyle = '#f3c530'
+    g.lineWidth = 8
+    g.beginPath()
+    ;[0.2, 0.35, 0.3, 0.5, 0.45, 0.7, 0.8].forEach((v, i) =>
+      g.lineTo(80 + i * 180, 660 - v * 300),
+    )
+    g.stroke()
+    return
+  }
+  ;['도시 화면', '작업 현황', '회의실', '변경 제안', '문서함'].forEach(
+    (title, i) => {
+      font(32, 500)
+      g.fillStyle = '#d5dae0'
+      g.fillText(title, 60, 190 + i * 110)
+      g.fillStyle = '#2c3138'
+      g.fillRect(330, 160 + i * 110, 860, 40)
+      g.fillStyle = i === 1 ? '#f3c530' : '#7fb08a'
+      g.fillRect(330, 160 + i * 110, 860 * [0.9, 0.6, 0.75, 0.4, 0.55][i], 40)
+    },
+  )
 }
 
 /** A real, interactive orthographic dollhouse; all assets are local procedural meshes. */
@@ -173,6 +368,8 @@ export class OfficeRenderer3D {
   >()
   private readonly furnitureObjects: THREE.Group[] = []
   private outdoorPortal: THREE.Group | null = null
+  private readonly zoneSigns = new THREE.Group()
+  private zoneSignKey = ''
   private outdoorPortalKey = ''
   private readonly geometries = new Map<string, THREE.BufferGeometry>()
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>()
@@ -291,12 +488,13 @@ export class OfficeRenderer3D {
       this.scene.add(ground)
       this.geometries.set('dreamGround', ground.geometry)
     }
-    const ambient = new THREE.HemisphereLight('#fffaf1', '#bebbb3', 1.5)
+    // 따뜻한 조명(캔버스 v488 1번 색: 조명 #ffe2bf, 햇빛 #ffe2bd)
+    const ambient = new THREE.HemisphereLight('#fff1dc', '#c9b89a', 1.5)
     this.scene.add(ambient)
     this.exteriorScene.add(
       new THREE.HemisphereLight('#e0f4ff', '#a09b90', 1.75),
     )
-    const light = new THREE.DirectionalLight('#fff1dc', 2.2)
+    const light = new THREE.DirectionalLight('#ffe2bd', 2.2)
     light.position.set(7, 26, 14)
     light.castShadow = true
     light.shadow.mapSize.set(2048, 2048)
@@ -887,7 +1085,224 @@ export class OfficeRenderer3D {
       this.chair(parent, x, f.y + f.h + 0.62, 'up')
   }
 
+  // ───── 고정 사무실(D28): Kenney Furniture Kit 모델과 직접 그리는 보드·화면 (캔버스 office2.html piece()·board()) ─────
+  private kitPiece(parent: THREE.Object3D, f: Furniture) {
+    const kit = f.kit!
+    const group = new THREE.Group()
+    group.position.set(kit.x, 0, kit.z)
+    group.rotation.y = kit.ry
+    parent.add(group)
+    // 떨어뜨리기 연출(dream)이 크기를 재고 바닥에 내려놓으므로, 모델을 받기 전에도 바닥부터 꼭대기까지의 자리를 둔다.
+    const proxy = new THREE.Mesh(
+      this.geometry(
+        `kit-proxy/${kit.w}/${kit.y + kit.h}/${kit.d}`,
+        () => new THREE.BoxGeometry(kit.w, kit.y + kit.h, kit.d),
+      ),
+      this.material('#ffffff'),
+    )
+    proxy.position.y = (kit.y + kit.h) / 2
+    proxy.visible = false
+    proxy.userData.ignorePicking = true
+    group.add(proxy)
+    if (!kit.model) {
+      this.kitBoard(group, kit)
+      return
+    }
+    const workstation = f.tag?.startsWith('workstation/')
+    void loadKenney(`/models/kenney/furniture/${kit.model}.glb`)
+      .then((model) => {
+        if (!group.parent) return
+        const inner = cloneKenney(model)
+        const box = new THREE.Box3().setFromObject(model.scene)
+        const center = box.getCenter(new THREE.Vector3())
+        inner.position.set(-center.x, -box.min.y, -center.z)
+        inner.traverse((object) => {
+          const mesh = object as THREE.Mesh
+          if (!mesh.isMesh) return
+          mesh.castShadow = kit.h > 0.12
+          mesh.receiveShadow = true
+          mesh.userData.floorX = (f.x + f.w / 2) * TILE
+          mesh.userData.floorY = (f.y + f.h / 2) * TILE
+          const materials = [
+            mesh.material,
+          ].flat() as THREE.MeshStandardMaterial[]
+          materials.forEach(kitPalette)
+          if (kit.tint) {
+            const tinted = materials.map((material) =>
+              this.kitTint(material, kit.tint!),
+            )
+            mesh.material = tinted.length === 1 ? tinted[0] : tinted
+          }
+        })
+        const scaled = new THREE.Group()
+        scaled.position.y = kit.y
+        scaled.scale.set(...(kit.s ?? [1, 1, 1]))
+        scaled.add(inner)
+        group.add(scaled)
+        const screen = KIT_SCREEN[kit.model!]?.(kit)
+        if (!screen || (!kit.ui && !workstation)) return
+        // 화면 면을 앞에서 쏜 광선으로 찾아 그림(또는 작업 화면)을 붙인다.
+        group.updateMatrixWorld(true)
+        const [y, width, height, tilt] = screen
+        const ray = new THREE.Raycaster(
+          group.localToWorld(new THREE.Vector3(0, y, 2)),
+          new THREE.Vector3(0, 0, -1).transformDirection(group.matrixWorld),
+        )
+        const hit = ray.intersectObject(scaled, true)[0]
+        const z = (hit ? group.worldToLocal(hit.point.clone()).z : 0) + 0.006
+        if (workstation) {
+          const surface = this.workSurface(
+            group,
+            'monitor',
+            0,
+            y,
+            z,
+            width,
+            height,
+            officeFurnitureKey(f),
+          )
+          surface.rotation.x = tilt
+          return
+        }
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(width, height),
+          this.kitUi(kit.ui!),
+        )
+        plane.position.set(0, y, z)
+        plane.rotation.x = tilt
+        group.add(plane)
+      })
+      .catch(() => undefined)
+  }
+
+  private kitTint(
+    material: THREE.MeshStandardMaterial,
+    tint: Record<string, string>,
+  ) {
+    const color = tint[material.name]
+    if (!color) return material
+    const key = `kit/${material.uuid}/${color}`
+    let tinted = this.materials.get(key)
+    if (!tinted) {
+      tinted =
+        color === 'screen'
+          ? new THREE.MeshStandardMaterial({
+              color: '#dfe8f2',
+              emissive: '#d5e3f4',
+              emissiveIntensity: 0.55,
+              roughness: 0.25,
+            })
+          : material.clone()
+      if (color !== 'screen') tinted.color.set(color)
+      this.materials.set(key, tinted)
+    }
+    return tinted
+  }
+
+  // 칸반(다리 달린 보드), 메모 벽, 벽 화면
+  private kitBoard(group: THREE.Group, kit: NonNullable<Furniture['kit']>) {
+    const length = Math.abs(Math.sin(kit.ry)) > 0.5 ? kit.d : kit.w
+    const ui = kit.ui ?? 'kanban'
+    if (ui.startsWith('dash')) {
+      this.box(
+        group,
+        0,
+        kit.y + kit.h / 2,
+        0,
+        length,
+        kit.h,
+        0.05,
+        '#1b1d21',
+        0.01,
+      )
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        this.kitUi(ui),
+      )
+      plane.position.set(0, kit.y + kit.h / 2, 0.026)
+      group.add(plane)
+      return
+    }
+    const kanban = ui === 'kanban'
+    const panel = kanban ? 1.2 : kit.h,
+      bottom = kanban ? 0.75 : 0.8
+    this.box(
+      group,
+      0,
+      bottom + panel / 2,
+      0,
+      length + 0.04,
+      panel + 0.04,
+      0.035,
+      '#d5d8db',
+      0.005,
+    )
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(length, panel),
+      this.kitUi(ui),
+    )
+    plane.position.set(0, bottom + panel / 2, 0.019)
+    group.add(plane)
+    if (kanban)
+      for (const side of [-1, 1]) {
+        this.box(
+          group,
+          side * (length / 2 + 0.02),
+          (bottom + panel) / 2,
+          0,
+          0.04,
+          bottom + panel,
+          0.04,
+          '#d5d8db',
+          0.005,
+        )
+        this.box(
+          group,
+          side * (length / 2 + 0.02),
+          0.015,
+          0,
+          0.06,
+          0.03,
+          0.55,
+          '#d5d8db',
+          0.005,
+        )
+      }
+  }
+
+  // 보드·화면 그림(캔버스 uiMake): 칸반, 메모 벽, 관계 그래프, 대시보드 둘
+  private kitUi(kind: string) {
+    const key = `kit-ui/${kind}`
+    let material = this.materials.get(key)
+    if (material) return material
+    const W = kind === 'notes' ? 2048 : 1280,
+      H = kind === 'notes' ? 910 : kind === 'kanban' ? 1100 : 720
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = H
+    const g = canvas.getContext('2d')
+    if (g) drawKitUi(g, kind, W, H)
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    this.textures.push(texture)
+    const paper = kind === 'kanban' || kind === 'notes'
+    material = new THREE.MeshStandardMaterial({
+      map: texture,
+      emissive: '#ffffff',
+      emissiveMap: texture,
+      emissiveIntensity: paper ? 0.08 : 0.85,
+      roughness: 0.5,
+    })
+    this.materials.set(key, material)
+    return material
+  }
+
   private furniture(parent: THREE.Object3D, f: Furniture, index: number) {
+    if (f.kit) {
+      this.kitPiece(parent, f)
+      return
+    }
     const x = f.x + f.w / 2,
       z = f.y + f.h / 2
     const w = Math.max(0.65, f.w - 0.14),
@@ -1885,6 +2300,7 @@ export class OfficeRenderer3D {
     this.floor = floor
     this.buildOfficeSurroundings(floor)
     this.buildOutdoorPortal(floor)
+    this.buildZoneSigns(floor)
     const furnitureKeys = new Set(floor.furniture.map(officeObjectKey))
     for (const [key, object] of this.dreamObjects)
       if (!furnitureKeys.has(key)) {
@@ -1950,6 +2366,9 @@ export class OfficeRenderer3D {
         palette[floor.grid[z][x]] ?? '#efeadb',
         0.025,
       )
+      // 고정 사무실(D28): 따뜻한 오크 바닥, 작업 현황·허들은 베이지 카펫 타일
+      if (floor.zoneSigns)
+        mesh.material = this.floorMaterial(floor.grid[z][x], x, z)
       mesh.visible = false
       this.dreamTiles.set(`${x},${z}`, {
         mesh,
@@ -2010,6 +2429,137 @@ export class OfficeRenderer3D {
     this.cameraKey = ''
   }
 
+  // 오크 판재(1 m 칸에 0.2 m 판 다섯 줄, 칸마다 무늬 넷 중 하나)와 0.5 m 카펫 타일(캔버스 1번 색: 베이지 두 톤)
+  private floorMaterial(tile: string, x: number, z: number) {
+    const carpet = tile === 'd' || tile === 'm'
+    const variant = carpet ? (x + z) % 2 : (x * 7 + z * 3) % 4
+    const key = `office-floor/${carpet ? 'carpet' : 'oak'}/${variant}`
+    let material = this.materials.get(key)
+    if (material) return material
+    let seed = 11 + variant * 97
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 256
+    const g = canvas.getContext('2d')
+    if (g && carpet)
+      for (let i = 0; i < 2; i++)
+        for (let j = 0; j < 2; j++) {
+          const [r, gg, b] =
+            (i + j + variant) % 2 ? [196, 174, 146] : [204, 183, 156]
+          g.fillStyle = `rgb(${r},${gg},${b})`
+          g.fillRect(i * 128, j * 128, 128, 128)
+          g.strokeStyle = 'rgba(255,255,255,0.06)'
+          g.lineWidth = 2
+          for (let k = 4; k < 128; k += 7) {
+            g.beginPath()
+            if ((i + j) % 2) {
+              g.moveTo(i * 128 + k, j * 128)
+              g.lineTo(i * 128 + k, j * 128 + 128)
+            } else {
+              g.moveTo(i * 128, j * 128 + k)
+              g.lineTo(i * 128 + 128, j * 128 + k)
+            }
+            g.stroke()
+          }
+          g.strokeStyle = 'rgba(0,0,0,0.12)'
+          g.lineWidth = 1
+          g.strokeRect(i * 128, j * 128, 128, 128)
+        }
+    else if (g)
+      for (let row = 0; row < 5; row++) {
+        let left = -rnd() * 120
+        while (left < 256) {
+          const length = 80 + rnd() * 120,
+            base = 186 + rnd() * 22
+          g.fillStyle = `rgb(${base + 12},${base - 18},${base - 62})`
+          g.fillRect(left, row * 51.2, length, 51.2)
+          g.fillStyle = 'rgba(90,60,30,0.35)'
+          g.fillRect(left, row * 51.2, 1.5, 51.2)
+          left += length
+        }
+        g.fillStyle = 'rgba(90,60,30,0.28)'
+        g.fillRect(0, row * 51.2, 256, 1.5)
+      }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    this.textures.push(texture)
+    material = new THREE.MeshStandardMaterial({
+      map: texture,
+      roughness: carpet ? 1 : 0.55,
+    })
+    this.materials.set(key, material)
+    return material
+  }
+
+  // 구역 표지: 단축 바 1~6번 창 이름을 매단 아크릴 판(캔버스 sign())
+  private buildZoneSigns(floor: Floor) {
+    const key = JSON.stringify(floor.zoneSigns ?? null)
+    if (key === this.zoneSignKey) return
+    this.zoneSignKey = key
+    this.zoneSigns.removeFromParent()
+    this.zoneSigns.clear()
+    for (const sign of floor.zoneSigns ?? []) {
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 140
+      const g = canvas.getContext('2d')
+      if (g) {
+        g.fillStyle = '#ffffff'
+        g.fillRect(0, 0, 640, 140)
+        g.fillStyle = '#2c291f'
+        g.beginPath()
+        g.roundRect(22, 22, 96, 96, 16)
+        g.fill()
+        g.fillStyle = '#ffffff'
+        g.font = 'bold 64px Geist, "Malgun Gothic", sans-serif'
+        g.textAlign = 'center'
+        g.textBaseline = 'middle'
+        g.fillText(String(sign.n), 70, 74)
+        g.fillStyle = '#2c291f'
+        g.textAlign = 'left'
+        g.font = 'bold 56px Geist, "Malgun Gothic", sans-serif'
+        g.fillText(sign.name, 146, 74)
+      }
+      const texture = new THREE.CanvasTexture(canvas)
+      texture.colorSpace = THREE.SRGBColorSpace
+      this.textures.push(texture)
+      const face = new THREE.MeshStandardMaterial({
+        map: texture,
+        roughness: 0.4,
+        emissive: '#ffffff',
+        emissiveMap: texture,
+        emissiveIntensity: 0.18,
+      })
+      this.materials.set(`zone-sign/${sign.n}`, face)
+      const edge = this.material('#f2f2f2', 0.85)
+      const panel = new THREE.Mesh(
+        this.geometry(
+          'zone-sign',
+          () => new THREE.BoxGeometry(1.6, 0.35, 0.03),
+        ),
+        [edge, edge, edge, edge, face, face],
+      )
+      panel.position.set(sign.x, 2.6, sign.z)
+      panel.castShadow = true
+      panel.userData.ignorePicking = true
+      this.zoneSigns.add(panel)
+      for (const side of [-0.6, 0.6])
+        this.box(
+          this.zoneSigns,
+          sign.x + side,
+          3.2,
+          sign.z,
+          0.008,
+          0.85,
+          0.008,
+          '#777777',
+          0,
+        )
+    }
+    this.room.add(this.zoneSigns)
+  }
+
   private buildOutdoorPortal(floor: Floor) {
     const exit = floor.outdoorExit,
       key = JSON.stringify(exit ?? null)
@@ -2029,6 +2579,11 @@ export class OfficeRenderer3D {
     group.userData.outdoorExit = true
     group.position.set(exit.x + exit.w / 2, 0, exit.y + exit.h / 2)
     group.scale.set(exit.w / 3, 0.82, exit.h / 1.1)
+    // 옆 벽에 붙은 엘리베이터(고정 사무실의 서쪽 벽)는 문이 방 안쪽(±x)을 본다.
+    if (exit.h > exit.w) {
+      group.rotation.y = Math.PI / 2
+      group.scale.set(exit.h / 3, 0.82, exit.w / 1.1)
+    }
     this.box(group, cx, 1.7, z, 3, 3.4, 0.82, '#b6bbb7', 0.06)
     for (const face of [-1, 1]) {
       this.box(
@@ -2360,8 +2915,8 @@ export class OfficeRenderer3D {
       0.06,
     )
     const lamp = this.material('office-linear-light')
-    lamp.color.set('#fff6dd')
-    lamp.emissive.set('#ffedc2')
+    lamp.color.set('#fff3e0')
+    lamp.emissive.set('#ffe2bf')
     lamp.emissiveIntensity = 0.65
     for (const fraction of [0.3, 0.72]) {
       const x = left + width * fraction

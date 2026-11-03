@@ -25,12 +25,14 @@ export function officeActors(
 ) {
   const result: (OfficeEntity3D & { name: string; stationary?: boolean })[] = []
   const lead = bibiOf(agents) ?? RECEPTIONIST
+  // 고정 사무실(D28)에서는 라운지 가운데(lead 자리)에서 손을 흔든다.
+  const bibiSpot = floor.seats.lead?.[0]
   if (phase < 3 || !bibiOf(agents))
     result.push({
       id: lead.id,
       name: '비비 · AI 팀장',
-      x: 4.5 * 32,
-      y: 3.5 * 32,
+      x: bibiSpot ? bibiSpot.x * 32 + 16 : 4.5 * 32,
+      y: bibiSpot ? bibiSpot.y * 32 + 27 : 3.5 * 32,
       dir: 'down',
       moving: false,
       floor: 1,
