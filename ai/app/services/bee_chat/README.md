@@ -33,7 +33,7 @@
 from app.schemas.bee_chat import BeeChatRequest, BeeInstanceRequest
 from app.services.bee_chat import LLMAnswerProposer, build_instance, generate_bee_chat
 
-instance = build_instance(BeeInstanceRequest.model_validate(body))   # 결정적, 모델 없음
+instance = build_instance(BeeInstanceRequest.model_validate(body))  # 결정적, 모델 없음
 outcome = await generate_bee_chat(request, proposer)
 outcome.to_api_dict()  # {"result", "origin": "MODEL", "model", "usage"}
 ```
