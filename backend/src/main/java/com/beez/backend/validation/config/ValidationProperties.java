@@ -11,7 +11,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param executionBudgetMs AI 에게 주는 처리 예산 (AI-A02 execution_budget_ms). 읽기 시간 초과보다 짧아야 한다
  */
 @ConfigurationProperties("beez.validation")
-public record ValidationProperties(boolean workerEnabled, long pollMillis, int leaseSeconds, int executionBudgetMs) {
+public record ValidationProperties(boolean workerEnabled, long pollMillis, int leaseSeconds, int executionBudgetMs,
+                                   boolean policyAnalysisEnabled) {
     public ValidationProperties {
         if (pollMillis < 100 || leaseSeconds < 5 || executionBudgetMs < 1000) {
             throw new IllegalArgumentException("beez.validation: poll-millis ≥ 100, lease-seconds ≥ 5, execution-budget-ms ≥ 1000");

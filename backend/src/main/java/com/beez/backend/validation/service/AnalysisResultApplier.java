@@ -185,7 +185,12 @@ public class AnalysisResultApplier {
             Set<String> allowed = new HashSet<>();
             // A check can cover multiple versions (e.g. completion-delta). Once a
             // finding identifies one version, its citations must belong to that version.
-            List<String> citedVersions = version == null ? versions : List.of(String.valueOf(version));
+            List<String> citedVersions = new ArrayList<>(version == null ? versions : List.of(String.valueOf(version)));
+            if ("POLICY_ALIGNMENT".equals(check.get("kind"))) {
+                for (var other : objects(finding.get("conflicting_design_refs"))) {
+                    citedVersions.add(String.valueOf(other.get("design_item_version_id")));
+                }
+            }
             boolean documentContextAllowed = version == null && "plan-completeness".equals(check.get("key"))
                     && "PLAN_COMPLETENESS".equals(check.get("kind"));
             for (String key : citedVersions) {
@@ -332,6 +337,14 @@ public class AnalysisResultApplier {
             model = m;
         }
 
+        boolean policyPinned = ValidationRules.POLICY_CHECK.equals(responses.summary(v.summary()).get("policy_analysis_version"));
+        boolean policyRequested = objects(request.get("checks")).stream().anyMatch(check ->
+                ValidationRules.POLICY_CHECK.equals(check.get("key")) || "POLICY_ALIGNMENT".equals(check.get("kind")));
+        if (policyPinned != policyRequested) {
+            fail(lease, v, runId, "ai_invalid_output", "ERROR", "접수한 정책 검사와 실행 입력이 일치하지 않습니다", "RETRY",
+                    "같은 입력으로 다시 실행합니다 (VAL-A04)", model, durationMs, diagnostics(response, "INVALID"));
+            return;
+        }
         String violation = contractViolation(request, response);
         if (violation != null) {
             fail(lease, v, runId, "ai_invalid_output", "ERROR", "출력 계약 위반: " + violation, "RETRY",
@@ -354,9 +367,11 @@ public class AnalysisResultApplier {
             } else if (reasons.equals(Set.of("UNSUPPORTED_CONTENT"))) {
                 code = "ai_unsupported_content";
             }
+            Map<String, Object> partialDiagnostics = diagnostics(response, "PARTIAL");
+            copyPolicyAnalysis(result, partialDiagnostics);
             fail(lease, v, runId, code, "ERROR", "의미 분석을 일부 수행하지 못했습니다", "HUMAN_REVIEW",
                     "근거·지원 범위를 보완한 뒤 새 검증을 요청하세요 — " + detail.toString().trim(), model, durationMs,
-                    diagnostics(response, "PARTIAL"));
+                    partialDiagnostics);
             return;
         }
 
@@ -405,7 +420,8 @@ public class AnalysisResultApplier {
             }
             validations.insertFinding(v.id(), new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
                     id(f.get("related_task_id")), (String) f.get("message"), canonicalSources(f, requestSources), resolution,
-                    nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids"))));
+                    nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids")),
+                    (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs"))));
         }
         String status = "PASS";
         if (needsReview) {
@@ -423,6 +439,7 @@ public class AnalysisResultApplier {
         summary.put("analysis_status", "COMPLETE");
         summary.put("checked_keys", result.get("checked_keys"));
         summary.put("unassessed", List.of());
+        copyPolicyAnalysis(result, summary);
         summary.put("model", model);
         summary.put("usage", response.get("usage"));   // 비용 기록(-168)까지 응답의 사용량을 버리지 않는다
         if ("PASS".equals(status) && analyzedBaseline != null) {
@@ -575,6 +592,16 @@ public class AnalysisResultApplier {
         return out;
     }
 
+    private static void copyPolicyAnalysis(Map<String, Object> result, Map<String, Object> destination) {
+        if (!(result.get("policy_assessments") instanceof List<?>)) return;
+        Map<String, Object> policy = new LinkedHashMap<>();
+        for (String key : List.of("policy_assessments", "policy_assessments_truncated",
+                "no_policy_requirements_reason", "no_policy_requirements_evidence")) {
+            if (result.get(key) != null) policy.put(key, result.get(key));
+        }
+        destination.put("policy_analysis", policy);
+    }
+
     /** 객체 배열(명세 Usage[])이면 그대로, 아니면 null. 빈 배열은 "호출 없음" 이므로 그대로 둔다 */
     private static Object validUsage(Object usage) {
         if (usage == null || !isObjectList(usage)) {
@@ -700,7 +727,8 @@ public class AnalysisResultApplier {
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(v.planRevisionId());
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId());
         Long currentBaseline = designLookup.requireCurrentBaseline(v.projectId());
-        return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen, "DELTA".equals(v.trigger()));
+        boolean policyEnabled = ValidationRules.POLICY_CHECK.equals(responses.summary(v.summary()).get("policy_analysis_version"));
+        return rules.evaluate(v.projectId(), currentBaseline, plan, refs, relatedOpen, "DELTA".equals(v.trigger()), policyEnabled);
     }
 
     /**
@@ -725,6 +753,9 @@ public class AnalysisResultApplier {
         Optional<TaskPlanRevision> validated = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId());
         Optional<TaskPlanRevision> current = revisions.findByIdAndTaskId(currentPlan.get(), v.taskId());
         if (validated.isEmpty() || current.isEmpty() || !validated.get().getInputHash().equals(current.get().getInputHash())
+                || (ValidationRules.POLICY_CHECK.equals(responses.summary(v.summary()).get("policy_analysis_version"))
+                    && (!java.util.Objects.equals(validated.get().getTitle(), current.get().getTitle())
+                        || !java.util.Objects.equals(validated.get().getApproach(), current.get().getApproach())))
                 || (!fakeAnalyzerEnabled && !java.util.Objects.equals(validated.get().getContextPacketId(), current.get().getContextPacketId()))) {
             return Optional.of("PLAN_CHANGED");
         }
@@ -909,7 +940,7 @@ public class AnalysisResultApplier {
                 }
             }
         }
-        return null;
+        return PolicyAnalysisContract.violation(request, result);
     }
 
     /** 후보 종류 → 후속 경로. 입력 보완은 FIX_PLAN, 정책 결정은 PROPOSE_CHANGE, 충돌·불일치는 사람 검토 */
@@ -932,7 +963,7 @@ public class AnalysisResultApplier {
             return "계획을 보완해 새 리비전으로 다시 올리고 검증을 요청하세요";
         }
         if ("MISSING_POLICY".equals(kind)) {
-            return "설계에 없는 정책입니다. 변경 제안으로 정책을 정한 뒤 다시 검증하세요";
+            return "승인 근거에 미정으로 표시된 정책을 검토하고 결정한 뒤 다시 검증하세요";
         }
         return "팀장·관련 담당자와 검토한 뒤 계획을 고치거나 변경 제안을 올리세요";
     }

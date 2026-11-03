@@ -17,6 +17,11 @@ from app.services.llm_client import (
     LLMMessage,
     LLMRequest,
 )
+from app.services.policy_validation import (
+    POLICY_CHECK_KEY,
+    POLICY_CHECK_KIND,
+    validate_policy_result,
+)
 
 MAX_INPUT_BYTES = 200_000
 MAX_BUDGET_MS = 60_000
@@ -102,6 +107,56 @@ EVIDENCE_INSUFFICIENT unassessed check instead. If citing an evidence_id include
 exact source. Never output a final decision or invent a responsible member.
 Write messages and actions in Korean."""
 
+POLICY_PROMPT = """
+Additionally perform the policy-gap-v1 POLICY_ALIGNMENT check. Extract concrete
+policy requirements implied by the plan, then compare each with the supplied
+approved items and excerpts. This is not proof that an unreturned policy is absent.
+Extract policies the task actually implements or depends on. A statement that
+an unrelated area is unchanged or out of scope does not by itself require its
+policies to be retrieved. For a task that only corrects documentation wording,
+do not invent runtime, permission or data policies solely from such exclusions.
+Return policy_assessments (at most 20) and policy_assessments_truncated (boolean).
+Set truncated true and make policy-gap-v1 unassessed with EVIDENCE_INSUFFICIENT
+when there are more than 20 needs. For each assessment provide a unique need_id,
+topic, plan_evidence {field,index,quote}, state, design_item_version_ids,
+approved_content_refs, evidence_ids and explanation. The quote must be a literal
+substring from the plan: field is title, goal, included_scope, approach or
+completion_criteria; index is zero-based for a list and null for a string.
+Content references have design_item_version_id, path (array of exact object keys
+or zero-based array indexes as strings) and quote, a literal substring of that
+approved content value. Evidence IDs must belong to the referenced versions.
+Use SUPPORTED for established agreement, EXPLICITLY_UNDECIDED only for an exact
+excerpt whose complete line explicitly says the policy is undecided,
+CONTRADICTORY for a concrete plan/design mismatch or conflict between approved
+designs, and INSUFFICIENT when the evidence cannot establish an answer. Any
+INSUFFICIENT result makes policy-gap-v1 unassessed with EVIDENCE_INSUFFICIENT;
+do not emit findings for an unassessed check. Never invent policy details.
+If no requirements can be extracted and the assessment is complete, return an
+empty list, no_policy_requirements_reason and no_policy_requirements_evidence
+with a literal plan quote supporting that conclusion. Otherwise set both to null.
+If the plan is too vague to decide whether it implies requirements, return an
+empty list, null explanation fields and an EVIDENCE_INSUFFICIENT unassessed check.
+For an assessed undecided policy return a BLOCKING MISSING_POLICY finding, citing
+the exact original evidence and source. For an assessed contradiction return a
+MISMATCH or CONFLICT finding. Each policy finding needs policy_need_id matching
+its assessment. A CONFLICT between distinct approved designs also needs
+conflicting_design_refs: each contains the other design_item_id,
+design_item_version_id, evidence_ids and content_paths (paths from that
+assessment's approved_content_refs). Cite evidence from both versions when
+available; every cited evidence requires its exact source. All evidence IDs in
+conflicting_design_refs MUST also occur in the finding's
+top-level evidence_ids, and the finding's sources MUST include the exact source
+object for every such ID, including evidence from the other design version.
+Non-conflict findings use an empty conflicting_design_refs list. For findings on other checks set
+policy_need_id and conflicting_design_refs to null. Do not assert a final decision.
+Avoid repeating the same policy issue under another check: include the finding
+on policy-gap-v1 and mark the other check assessed when appropriate. Keep
+explanations and suggested actions concise.
+Return the four ordinary result fields plus policy_assessments,
+policy_assessments_truncated, no_policy_requirements_reason and
+no_policy_requirements_evidence. Write explanations in Korean.
+"""
+
 
 class InvalidInput(Exception):
     """Structurally parseable input is outside the supported business contract."""
@@ -134,6 +189,19 @@ def validate_input(body: ValidateRequest) -> None:
     if bool(delta_checks) != (body.completion_delta is not None) or (
         delta_checks
         and (delta_checks[0].kind != "PLAN_COMPLETENESS" or not body.completion_delta)
+    ):
+        raise InvalidInput()
+    policy_checks = [
+        c
+        for c in body.checks
+        if c.kind == POLICY_CHECK_KIND or c.key == POLICY_CHECK_KEY
+    ]
+    if policy_checks and (
+        len(policy_checks) != 1
+        or policy_checks[0].key != POLICY_CHECK_KEY
+        or policy_checks[0].kind != POLICY_CHECK_KIND
+        or policy_checks[0].related_plan_revision_ids
+        or set(policy_checks[0].design_item_version_ids) != items.keys()
     ):
         raise InvalidInput()
     for item in items.values():
@@ -256,6 +324,7 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
         raise ValueError("invalid coverage status")
     if body.unresolved and not unassessed:
         raise ValueError("unresolved scope cannot be marked fully assessed")
+    validate_policy_result(body, result, UNDECIDED_POLICY_LINE)
     items = {item.id: item for item in body.approved_items}
     plans = {plan.id: plan for plan in body.related_plans}
     evidence = {entry.evidence_id: entry for entry in body.evidence}
@@ -284,6 +353,14 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
             if finding.design_item_version_id is not None
             else check.design_item_version_ids
         )
+        if check.kind == POLICY_CHECK_KIND and finding.conflicting_design_refs:
+            cited_versions = [
+                *cited_versions,
+                *(
+                    ref.design_item_version_id
+                    for ref in finding.conflicting_design_refs
+                ),
+            ]
         document_context_allowed = (
             finding.design_item_version_id is None
             and check.key == "plan-completeness"
@@ -365,7 +442,7 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
     return result
 
 
-def structured_response_format() -> dict[str, Any]:
+def structured_response_format(*, policy: bool = False) -> dict[str, Any]:
     """Build the provider schema from the DTO; application validation still applies.
 
     Strict structured output requires every object property to be listed as
@@ -378,6 +455,8 @@ def structured_response_format() -> dict[str, Any]:
         "default",
         "minLength",
         "maxLength",
+        "minItems",
+        "maxItems",
         "minimum",
         "maximum",
         "exclusiveMinimum",
@@ -399,12 +478,30 @@ def structured_response_format() -> dict[str, Any]:
             result["required"] = list(result["properties"])
         return result
 
+    schema = ValidateResult.model_json_schema()
+    if not policy:
+        for name in (
+            "policy_assessments",
+            "policy_assessments_truncated",
+            "no_policy_requirements_reason",
+            "no_policy_requirements_evidence",
+        ):
+            schema["properties"].pop(name, None)
+        for name in ("policy_need_id", "conflicting_design_refs"):
+            schema["$defs"]["Finding"]["properties"].pop(name, None)
+        for name in (
+            "PolicyAssessment",
+            "PolicyPlanEvidence",
+            "PolicyContentRef",
+            "ConflictingDesignRef",
+        ):
+            schema["$defs"].pop(name, None)
     return {
         "type": "json_schema",
         "json_schema": {
             "name": "task_plan_validation",
             "strict": True,
-            "schema": normalize(ValidateResult.model_json_schema()),
+            "schema": normalize(schema),
         },
     }
 
@@ -420,10 +517,20 @@ async def analyze(
     if response_format not in {"json_object", "json_schema"}:
         raise ValueError("unsupported validation response format")
     deadline = time.monotonic() + body.execution_budget_ms / 1000
+    policy = any(check.kind == POLICY_CHECK_KIND for check in body.checks)
+    prompt = PROMPT
+    if policy:
+        prompt = (
+            prompt.replace(
+                "Output JSON with exactly\nanalysis_status, checked_keys, unassessed, findings.",
+                "Return analysis_status, checked_keys, unassessed, findings and the policy fields described below.",
+            )
+            + POLICY_PROMPT
+        )
     request = LLMRequest(
         model=model,
         messages=(
-            LLMMessage(role="system", content=PROMPT),
+            LLMMessage(role="system", content=prompt),
             LLMMessage(role="user", content=body.model_dump_json(exclude_none=True)),
         ),
         context=LLMContext(
@@ -437,11 +544,12 @@ async def analyze(
         call_keys=(f"llm-validate-{body.validation_id}-attempt-{body.attempt}-call-1",),
         timeout_seconds=body.execution_budget_ms / 1000,
         response_format=(
-            structured_response_format()
+            structured_response_format(policy=policy)
             if response_format == "json_schema"
             else {"type": "json_object"}
         ),
         max_attempts=1,
+        model_options={"max_completion_tokens": 4096} if policy else None,
     )
     try:
         async with asyncio.timeout(body.execution_budget_ms / 1000):

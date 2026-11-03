@@ -150,6 +150,63 @@ it('현재 담당자는 PASS에 연결된 계획·검증·잠금 번호로 시�
   )
 })
 
+it('정책 분석의 근거 부족과 승인 설계 근거를 구분해 보여 준다', async () => {
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      error_code: 'ai_evidence_insufficient',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message: '의미 분석을 일부 수행하지 못했습니다',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+          next_action: '근거를 확인하세요',
+          validation_run_id: '801',
+        },
+      ],
+      policy_analysis: {
+        policy_assessments_truncated: false,
+        policy_assessments: [
+          {
+            need_id: 'retention',
+            topic: '보관 기간',
+            state: 'INSUFFICIENT',
+            plan_evidence: { field: 'goal', quote: '보관 기간을 적용한다' },
+            design_item_version_ids: ['311'],
+            approved_content_refs: [
+              {
+                design_item_version_id: '311',
+                path: ['description'],
+                quote: '보관 조건',
+              },
+            ],
+            evidence_ids: [],
+            explanation: '보관 기간을 확인할 근거가 부족해요.',
+          },
+        ],
+      },
+    },
+  }
+  show(false)
+  const analysis = await screen.findByRole('region', { name: '정책 분석' })
+  expect(within(analysis).getByText('근거 부족')).toBeInTheDocument()
+  expect(within(analysis).getByText(/보관 기간을 적용한다/)).toBeInTheDocument()
+  expect(within(analysis).getByText(/승인 설계 버전 311/)).toBeInTheDocument()
+  expect(
+    screen.getByText(/근거를 확인하고 보완한 뒤 새 검증/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '실행 재시도' }),
+  ).not.toBeInTheDocument()
+})
+
 it('팀장도 담당자가 아니면 시작·검증을 대신하지 않고 취소 개입만 제공한다', async () => {
   task = { ...task, assignee_member_id: '22' }
   show(true)

@@ -273,9 +273,9 @@ public class ValidationRepository {
         return jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
                         values (:v, :run, :src, :k, :sev, :item, :ver, :task, :msg, cast(:sources as jsonb), :res, :next,
-                                :ck, cast(:ev as jsonb))
+                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb))
                         returning id
                         """)
                 .param("v", validationId).param("run", f.validationRunId(), Types.BIGINT).param("src", f.source())
@@ -284,6 +284,7 @@ public class ValidationRepository {
                 .param("msg", f.message()).param("sources", toJson(f.sources())).param("res", f.resolution())
                 .param("next", f.nextAction(), Types.VARCHAR).param("ck", f.checkKey(), Types.VARCHAR)
                 .param("ev", toJson(f.evidenceIds()))
+                .param("need", f.policyNeedId(), Types.VARCHAR).param("conflicts", toJson(f.conflictingDesignRefs()))
                 .query(Long.class).single();
     }
 
@@ -291,7 +292,7 @@ public class ValidationRepository {
         return jdbc.sql("""
                         select id, validation_id, validation_run_id, source, kind, severity, design_item_id, design_item_version_id,
                                related_task_id, message, sources::text as sources, resolution, next_action, check_key,
-                               evidence_ids::text as evidence_ids
+                               evidence_ids::text as evidence_ids, policy_need_id, conflicting_design_refs::text as conflicting_design_refs
                           from validation_finding where validation_id = :v order by id
                         """)
                 .param("v", validationId).query(this::finding).list();
@@ -658,10 +659,12 @@ public class ValidationRepository {
         // readValue: JSON 문자열을 List 로 바꾼다
         List<Map<String, Object>> sources = json.readValue(rs.getString("sources"), List.class);
         List<String> evidence = json.readValue(rs.getString("evidence_ids"), List.class);
+        List<Map<String, Object>> conflicts = json.readValue(rs.getString("conflicting_design_refs"), List.class);
         return new FindingRow(rs.getLong("id"), rs.getLong("validation_id"), nullableLong(rs, "validation_run_id"),
                 rs.getString("source"), rs.getString("kind"), rs.getString("severity"), nullableLong(rs, "design_item_id"),
                 nullableLong(rs, "design_item_version_id"), nullableLong(rs, "related_task_id"), rs.getString("message"),
-                sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence);
+                sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence,
+                rs.getString("policy_need_id"), conflicts);
     }
 
     private String toJson(Object value) {

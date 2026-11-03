@@ -33,6 +33,8 @@ public class ValidationRules {
 
     /** 규칙 묶음 버전 (validation.rule_version). 규칙이 바뀌면 올린다 */
     public static final String RULE_VERSION = "rules-v2";
+    public static final String POLICY_RULE_VERSION = "rules-v3-policy-v1";
+    public static final String POLICY_CHECK = "policy-gap-v1";
 
     /** DELTA 검증의 완료 delta 검사 키. 워커가 같은 요청에 completion_delta 를 싣는다 */
     public static final String COMPLETION_DELTA_CHECK = "completion-delta";
@@ -52,6 +54,11 @@ public class ValidationRules {
      */
     public RuleOutcome evaluate(Long projectId, Long baselineId, TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
                                 List<Map<String, Object>> relatedOpen, boolean completionDelta) {
+        return evaluate(projectId, baselineId, plan, refs, relatedOpen, completionDelta, false);
+    }
+
+    public RuleOutcome evaluate(Long projectId, Long baselineId, TaskPlanRevision plan, List<TaskPlanDesignRef> refs,
+                                List<Map<String, Object>> relatedOpen, boolean completionDelta, boolean policyEnabled) {
         List<FindingRow> findings = new ArrayList<>();
         boolean needsInput = false;
         boolean needsReview = false;
@@ -120,6 +127,10 @@ public class ValidationRules {
 
         // 4) 의미 분석이 필요한가: 미연결 내용·바꾸거나 구현하는 설계 항목·같은 항목을 보는 열린 작업 중 하나라도 있을 때
         List<Map<String, Object>> checks = checks(plan, refs, relatedOpen, unlinkedEmpty, completionDelta);
+        if (policyEnabled) {
+            checks.add(check(POLICY_CHECK, "POLICY_ALIGNMENT", refs.stream()
+                    .map(ref -> String.valueOf(ref.getDesignItemVersionId())).distinct().toList(), List.of()));
+        }
         if (checks.isEmpty()) {
             return new RuleOutcome("PASS", findings, List.of());
         }
