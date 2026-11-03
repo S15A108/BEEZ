@@ -295,3 +295,32 @@ it('다시 내는 제안에서 고칠 문서를 바꾸면 원래 제안의 그 �
     base_version_id: '2041',
   })
 })
+
+// 캔버스 PNL-04-v2-propose-doc '파일 올리기': .md 파일 한 개를 브라우저에서 읽어 고친 글로 넣는다(BOM·CRLF는 정규화).
+it('파일 올리기로 .md 파일을 고르면 내용을 고친 글에 넣고, 다른 파일은 받지 않는다', async () => {
+  const user = userEvent.setup({ applyAccept: false })
+  const { text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(
+    screen.getByLabelText('고친 문서 파일'),
+    new File(['\uFEFF# 요구사항\r\n고친 원문'], 'spec.png'),
+  )
+  expect(
+    await screen.findByText(/\.md·\.markdown·\.txt 파일 한 개를 올려 주세요/),
+  ).toBeInTheDocument()
+  await user.upload(
+    screen.getByLabelText('고친 문서 파일'),
+    new File(['\uFEFF# 요구사항\r\n고친 원문'], 'spec.md'),
+  )
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'spec.md 내용을 고친 글에 넣었어요.',
+  )
+  expect(screen.getByRole('tab', { name: '고친 글 쓰기' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  expect(text()).toHaveValue('# 요구사항\n고친 원문')
+})

@@ -270,7 +270,11 @@ it('문서함에서 고치기로 들어오면 그 문서를 고른 새 제안으
     '참여한 프로젝트가 없으면 안내가 필요해요.',
   )
   await user.type(text, '\nREQ-006 참여한 프로젝트가 없으면 만들기를 안내한다.')
-  await user.click(screen.getByRole('button', { name: '제안 올리기' }))
+  // 새 제안은 네 단계(캔버스 v491)로 올린다. 누르는 버튼만 바꾸고 기대값은 그대로 둔다(사용자 승인 2026-11-03).
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  await user.click(screen.getByRole('button', { name: '비비 검토 받기' }))
+  await user.click(screen.getByRole('button', { name: '다음' }))
+  await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
   expect(await screen.findByRole('status')).toHaveTextContent(
     '변경 제안을 올렸어요.',
   )
@@ -291,7 +295,8 @@ it('고친 글이 기준 문서와 같으면 올리지 않고 칸 아래에 알�
   )
   await user.type(screen.getByLabelText('제목 *'), '그대로 둔 문서')
   await user.type(screen.getByLabelText('바꾸려는 이유 *'), '확인용')
-  await user.click(screen.getByRole('button', { name: '제안 올리기' }))
+  // 새 제안의 ① 등록 버튼(캔버스 v491). 버튼만 바꾸고 기대값은 그대로 둔다(사용자 승인 2026-11-03).
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
   expect(
     await screen.findByText('기준 문서와 달라진 내용이 없어요.'),
   ).toBeInTheDocument()
@@ -889,4 +894,102 @@ it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 
   expect(
     await screen.findByRole('button', { name: '공용 문서함에서 제안하기' }),
   ).toBeInTheDocument()
+})
+
+// 캔버스 v491 문서 수정 제안 흐름: ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 팀장 승인.
+// ④에서 '팀장에게 올리기'를 누르기 전에는 제안을 만들지 않는다(등록해도 팀장에게 가지 않는다).
+it('새 문서 수정 제안은 네 단계를 지나 마지막에만 팀장에게 올린다', async () => {
+  const user = userEvent.setup()
+  const create = vi.spyOn(changesApi, 'create')
+  useWorkspaceStore.getState().openPane('changes', 'doc:203')
+  renderPanel()
+  const steps = () => screen.getByRole('list', { name: '문서 수정 제안 단계' })
+  await waitFor(() =>
+    expect(
+      (screen.getByLabelText('고친 글') as HTMLTextAreaElement).value,
+    ).toContain('REQ-001'),
+  )
+  expect(steps()).toHaveTextContent('고친 문서 등록')
+  expect(screen.getByText('등록해도 아직 팀장에게 가지 않아요.')).toBeVisible()
+  await user.type(screen.getByLabelText('제목 *'), '빈 목록 안내 추가')
+  await user.type(screen.getByLabelText('바꾸려는 이유 *'), '안내가 필요해요.')
+  await user.type(
+    screen.getByLabelText('고친 글'),
+    '\nREQ-006 참여한 프로젝트가 없으면 만들기를 안내한다.',
+  )
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  expect(
+    screen.getByRole('heading', { name: '바뀐 곳 1개를 찾았어요' }),
+  ).toBeInTheDocument()
+  expect(screen.getByText('추가 1')).toBeInTheDocument()
+  expect(screen.getByText('수정 0')).toBeInTheDocument()
+  expect(
+    screen.getByText('REQ-006 참여한 프로젝트가 없으면 만들기를 안내한다.'),
+  ).toBeInTheDocument()
+  // 다시 고치기로 돌아가도 쓴 내용은 그대로다.
+  await user.click(screen.getByRole('button', { name: '다시 고치기' }))
+  expect(screen.getByLabelText('제목 *')).toHaveValue('빈 목록 안내 추가')
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  await user.click(screen.getByRole('button', { name: '비비 검토 받기' }))
+  expect(
+    screen.getByRole('heading', {
+      name: '올리기 전 비비 검토는 준비 중이에요',
+    }),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '다음' }))
+  expect(
+    screen.getByRole('heading', { name: '올리기 전에 확인해요' }),
+  ).toBeInTheDocument()
+  expect(create).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+  expect(create.mock.calls[0][1]).toMatchObject({
+    title: '빈 목록 안내 추가',
+    items: [],
+    documents: [
+      {
+        document_id: '203',
+        after_content: expect.stringContaining('REQ-006'),
+      },
+    ],
+  })
+  expect(
+    await screen.findByRole('heading', { name: /빈 목록 안내 추가/ }),
+  ).toBeInTheDocument()
+})
+
+// 캔버스 approve-gate(v491): 문서를 고친 제안은 영향 분석이 미평가(document_change_unavailable)라, 승인 확인을 열 때부터
+// 사유 칸을 보이고 사유를 담아 승인한다(409를 먼저 받지 않는다).
+it('영향 분석이 끝나지 않은 제안은 승인 확인을 열 때부터 사유를 받는다', async () => {
+  const user = userEvent.setup()
+  const detail = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'document_change_unavailable',
+    is_current: true,
+  })
+  const approve = vi.spyOn(changesApi, 'approve').mockResolvedValue({
+    proposal: detail.proposal,
+    baseline: await documentsApi.baseline('101'),
+  })
+  renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(
+    await screen.findByText('AI 영향 분석이 끝나지 않았어요'),
+  ).toBeVisible()
+  const send = screen.getByRole('button', { name: '사유 남기고 기준 v2 발행' })
+  expect(send).toBeDisabled()
+  await user.type(
+    screen.getByLabelText('영향 분석 없이 승인하는 사유'),
+    '담당자와 직접 확인했어요.',
+  )
+  await user.click(send)
+  await waitFor(() => expect(approve).toHaveBeenCalledTimes(1))
+  expect(approve.mock.calls[0][2]).toMatchObject({
+    impact_override_reason: '담당자와 직접 확인했어요.',
+  })
 })

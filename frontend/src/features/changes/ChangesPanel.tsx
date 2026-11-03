@@ -41,10 +41,13 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalForm } from './ProposalForm'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
+import { ProposeFlow } from './ProposeFlow'
+import { Tag } from './Tag'
 import {
   isStaleDocument,
   kindLabel,
   operationLabel,
+  operationTone,
   toDocumentChanges,
 } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
@@ -316,11 +319,21 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   // 영향 분석이 완료·최신이 아니면 서버가 409 impact_not_confirmed 로 막는다(S15P31A108-241). 그때 사유 입력을 열고,
   // 사유를 넣어 다시 보낸다. 같은 키로 입력만 바꾸면 idempotency_conflict 라 매 호출이 새 Idempotency-Key 를 쓴다.
   // 분석이 진행 중이면(analysis_running) 사유로도 우회할 수 없어 끝난 뒤 다시 승인하라고 알린다.
-  const [reasonRequired, setReasonRequired] = useState(false)
+  const [conflictReason, setConflictReason] = useState(false)
   const [approveReason, setApproveReason] = useState('')
   const [approveNotice, setApproveNotice] = useState('')
+  // 캔버스 approve-gate(v491): 영향 분석이 끝나지 않았으면(실패·근거 부족·안 돌림·오래됨, 문서 변경의 미평가 포함)
+  // 409를 받기 전에 승인 확인을 열 때부터 사유 칸과 '영향 다시 분석'을 보인다. 분석 중이면 사유로도 못 넘어가 열지 않는다.
+  const impactUnconfirmed =
+    !!impact.data &&
+    !isImpactRunning(impact.data) &&
+    !(
+      impact.data.analysis_status === 'COMPLETED' &&
+      impact.data.is_current !== false
+    )
+  const reasonRequired = conflictReason || impactUnconfirmed
   const openApprove = () => {
-    setReasonRequired(false)
+    setConflictReason(false)
     setApproveReason('')
     setApproveNotice('')
     setMode({ kind: 'approve' })
@@ -345,7 +358,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       // 두 코드는 실패가 아니라 승인 과정의 정상 단계라 일반 오류 띠를 함께 보이지 않는다.
       if (code === 'impact_not_confirmed') {
         action.reset()
-        setReasonRequired(true)
+        setConflictReason(true)
       } else if (code === 'analysis_running') {
         action.reset()
         setApproveNotice(
@@ -552,7 +565,38 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
           )}
         </div>
         <div className="min-w-0">
-          {mode.kind === 'form' ? (
+          {mode.kind === 'form' && !mode.source ? (
+            <ProposeFlow
+              key={documents.isSuccess ? 'documents' : 'loading'}
+              documents={documentOptions}
+              baselineVersion={baseline.data?.version_no}
+              itemKinds={Object.fromEntries(
+                approved.map((item) => [item.key, kindLabel[item.kind]]),
+              )}
+              tasks={taskList}
+              // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
+              fetchDocumentContent={(documentId) =>
+                documentsApi.get(projectId, documentId).then((result) => ({
+                  content: result.version.content ?? '',
+                  versionId: result.version.id,
+                }))
+              }
+              defaultValues={
+                mode.documentId
+                  ? {
+                      title: '',
+                      reason: '',
+                      task_id: '',
+                      document_id: mode.documentId,
+                      // 기준 원문은 폼이 받아서 채운다.
+                      after_content: '',
+                    }
+                  : undefined
+              }
+              onCancel={() => setMode({ kind: 'detail' })}
+              onSubmit={(values) => submitForm(values)}
+            />
+          ) : mode.kind === 'form' ? (
             <ProposalForm
               key={documents.isSuccess ? 'documents' : 'loading'}
               documents={documentOptions}
@@ -803,12 +847,32 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       )}
                       {reasonRequired && (
                         <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                          <strong className="text-sm">
+                            AI 영향 분석이 끝나지 않았어요
+                          </strong>
                           <p className="text-sm leading-6">
                             이 제안의 영향 분석이 끝나지 않았거나(실패·근거
-                            부족·아직 안 돌림·제안이 바뀜) 믿을 수 없는
-                            상태예요. 영향 범위를 직접 확인했다면 사유를 남기고
-                            승인할 수 있어요. 사유는 승인 이력에 남아요.
+                            부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못
+                            함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향
+                            0건으로 보지 않아요. 영향 범위를 직접 확인했다면
+                            사유를 남기고 승인할 수 있어요. 사유는 승인 이력에
+                            남아요.
                           </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="justify-self-start"
+                            disabled={action.busy}
+                            onClick={() =>
+                              void perform(
+                                () =>
+                                  changesApi.retryImpact(projectId, current.id),
+                                '다시 분석을 요청했어요.',
+                              )
+                            }
+                          >
+                            영향 다시 분석
+                          </Button>
                           <label
                             htmlFor="impact-override-reason"
                             className="text-sm font-semibold"
@@ -1666,30 +1730,12 @@ const overviewHead =
   'mb-2.5 flex items-center justify-between gap-2 text-[15px] leading-[22px] font-bold'
 const overviewLink =
   'text-[13px] font-semibold whitespace-nowrap text-[#8a6a00] hover:underline'
-// 변경 제안 화면의 칩(캔버스 PNL-04-v2 통일감 개선: 높이 22px, 12px·600, 상태마다 색). 작업 칩과 상태 칩이 같은 모양을 쓴다.
-const operationTone = {
-  UPDATE: 'bg-[#fdf0c8] text-[#6e5200]',
-  CREATE: 'bg-[#e8f3ec] text-[#00753a]',
-  RETIRE: 'bg-[#fdecec] text-[#b42318]',
-} as const
 const statusTone: Record<string, string> = {
   PROPOSED: operationTone.UPDATE,
   IN_REVIEW: 'bg-[#e6effa] text-[#1d4f91]',
   APPROVED: operationTone.CREATE,
   PUBLISHED: operationTone.CREATE,
   REJECTED: operationTone.RETIRE,
-}
-function Tag({ tone, children }: { tone?: string; children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-[22px] shrink-0 items-center rounded-full px-2 text-xs font-semibold whitespace-nowrap',
-        tone ?? 'bg-muted text-muted-foreground',
-      )}
-    >
-      {children}
-    </span>
-  )
 }
 function StatusTag({ value }: { value: string }) {
   return <Tag tone={statusTone[value]}>{statusLabel(value)}</Tag>

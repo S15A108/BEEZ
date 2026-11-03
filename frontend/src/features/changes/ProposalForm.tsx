@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
+import { cn } from '@/lib/utils'
 import { normalizeDocument } from './normalizeDocument'
 import { proposalFormSchema } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
@@ -41,6 +42,8 @@ interface Props {
   status?: ReactNode
   description?: string
   footnote?: string
+  /** 고친 글 칸 아래 안내 */
+  contentHint?: string
   comments?: { id: string; author: string; body: string }[]
   onShowComments?: () => void
   onSubmit: (values: ProposalFormValues) => Promise<unknown>
@@ -70,6 +73,7 @@ export function ProposalForm({
   status,
   description,
   footnote = '올리면 관련 팀원에게 알림이 가고 AI 영향 분석이 시작돼요. 제출만으로 기준이 바뀌지는 않아요.',
+  contentHint = '올리면 지금 기준 원문과 비교해 보여 줘요.',
   comments,
   onShowComments,
   onSubmit,
@@ -138,6 +142,26 @@ export function ProposalForm({
   const latestVersion = useWatch({ control, name: 'latest_version_id' })
   const outdated =
     !!shownVersion && !!latestVersion && shownVersion !== latestVersion
+  const [source, setSource] = useState<'write' | 'file'>('write')
+  const [fileNote, setFileNote] = useState('')
+  // 파일 한 개를 읽어 고친 글로 넣고 글 쓰기 탭으로 돌아가 내용을 보여 준다. 크기는 CHG-A01 본문 한도(1 MiB)를 따른다.
+  const readFile = async (input: HTMLInputElement) => {
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    if (!/\.(md|markdown|txt)$/i.test(file.name) || file.size > 1024 * 1024) {
+      setFileNote('')
+      setError('after_content', {
+        message: '1MB 이하의 .md·.markdown·.txt 파일 한 개를 올려 주세요.',
+      })
+      return
+    }
+    setValue('after_content', normalizeDocument(await file.text()), {
+      shouldValidate: true,
+    })
+    setFileNote(`${file.name} 내용을 고친 글에 넣었어요.`)
+    setSource('write')
+  }
   const rewriteFromLatest = () => {
     if (!content.data) return
     setValue('after_content', content.data.content)
@@ -377,17 +401,59 @@ export function ProposalForm({
                       </Button>
                     </div>
                   )}
-                  <Textarea
-                    aria-label="고친 글"
-                    rows={10}
-                    aria-invalid={!!errors.after_content}
-                    {...register('after_content')}
-                  />
+                  {/* 캔버스 PNL-04-v2-propose-doc '고친 글 쓰기 | 파일 올리기'. 파일은 브라우저에서 읽어 고친 글 칸에 넣고
+                      고친 글(after_content)로 보낸다. DOC-A12 업로드는 올리기 전 DRAFT 버전을 서버에 남겨 쓰지 않는다. */}
+                  <div
+                    role="tablist"
+                    aria-label="고치는 방법"
+                    className="flex gap-0.5 justify-self-end rounded-[10px] bg-[#e6e9ee] p-[3px]"
+                  >
+                    {(
+                      [
+                        ['write', '고친 글 쓰기'],
+                        ['file', '파일 올리기'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        role="tab"
+                        aria-selected={source === value}
+                        onClick={() => setSource(value)}
+                        className={cn(
+                          'h-7 rounded-lg px-2.5 text-[13px] whitespace-nowrap',
+                          source === value
+                            ? 'bg-white font-bold shadow-[0_1px_2px_rgba(0,0,0,0.08)]'
+                            : 'font-medium text-[#57534e]',
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {source === 'write' ? (
+                    <Textarea
+                      aria-label="고친 글"
+                      rows={10}
+                      aria-invalid={!!errors.after_content}
+                      className="font-mono text-[12.5px]"
+                      {...register('after_content')}
+                    />
+                  ) : (
+                    <Input
+                      type="file"
+                      aria-label="고친 문서 파일"
+                      accept=".md,.markdown,.txt,text/markdown,text/plain"
+                      onChange={(event) => void readFile(event.target)}
+                    />
+                  )}
+                  {fileNote && (
+                    <p role="status" className="text-xs text-muted-foreground">
+                      {fileNote}
+                    </p>
+                  )}
                   <FieldError message={errors.after_content?.message} />
-                  {/* API 없음: '파일 올리기'(DOC-A12 변경용 원문 → proposed_document_version_id)는 화면만 정해져 있어 고친 글 쓰기만 둔다. */}
-                  <p className="text-xs text-muted-foreground">
-                    올리면 지금 기준 원문과 비교해 보여 줘요.
-                  </p>
+                  <p className="text-xs text-muted-foreground">{contentHint}</p>
                 </>
               )}
             </div>
