@@ -25,7 +25,7 @@
 | `questions[]` | AnsweredQuestion | N | 저장된 #133 질문. 최대 200, `question_key` 중복 금지 |
 | `max_items` | integer 1~100 | N | 초안 수 상한. 기본 50 |
 
-ExistingDesignItem: `design_item_version_id`, `design_item_id`, `key`(표시 키), `kind`(5종), `version_no`, `status`(`DRAFT|APPROVED`), `schema_version`(1), `content`(DesignItemContent v1), `source?`(00-common Source). 종류별 필수 필드(API `method`·`path`, DATA `entity`·`fields`)가 없으면 400이다. 검사 규칙은 BE `DesignContentValidator`와 같다(`description` ≤ 10,000자, API `method`는 대문자 HTTP 메서드, `path`는 `/`로 시작하고 공백·`?`·`#`·제어 문자 없이 2,000자 이하, DATA `entity`는 비어 있지 않은 문자열로 길이 제한 없음, `fields`는 배열). BE가 저장한 본문은 이 요청에서 거부되지 않아야 하므로 BE보다 좁은 제한은 두지 않는다. 본문은 값이 `null`인 필드까지 입력 그대로 보존한다.
+ExistingDesignItem: `design_item_version_id`, `design_item_id`, `key`(표시 키), `kind`(5종), `version_no`, `status`(`DRAFT|APPROVED`), `schema_version`(1), `content`(DesignItemContent v1), `source?`(00-common Source). 종류별 필수 필드(API `method`·`path`, DATA `entity`·`fields`)가 없으면 400이다. 검사 규칙은 BE `DesignContentValidator`와 같다(`description` ≤ 10,000자, API `method`는 대문자 HTTP 메서드, `path`는 `/`로 시작하고 공백·`?`·`#`·제어 문자 없이 2,000자 이하, DATA `entity`는 비어 있지 않은 문자열로 길이 제한 없음, `fields`는 배열). BE가 저장한 본문은 이 요청에서 거부되지 않아야 하므로 BE보다 좁은 제한은 두지 않는다. 본문은 값이 `null`인 필드까지 입력 그대로 보존한다. BE `DesignJson`이 거부하는 것(모든 깊이의 빈 필드명, 32단계를 넘는 중첩, JSON이 아닌 값, 정렬·압축 JSON 1 MiB 초과)은 여기서도 거부한다(`check_json_content`).
 
 AnsweredQuestion: `question`(#133 `SupplementQuestion` 그대로), `evidence[]`(#133 `EvidenceItem`, 이 문서 버전 소속), `status`(`OPEN|ANSWERED|DISMISSED`), `answer`(#133 `QuestionAnswer`, `ANSWERED`일 때만). 답변은 질문의 `answer_format`에 맞아야 하며(`validate_answer`) 어긋나면 422 `invalid_ai_input`이다. 모델에는 `ANSWERED` 질문만 본문이 전달되고 나머지는 개수만 전달된다.
 
@@ -76,7 +76,7 @@ DraftChange:
 ## 4. 검증 규칙
 
 - 인용(`sources`)은 `block_id`가 문서에 있고 `quote`가 그 블록 원문의 부분 문자열일 때만 남긴다. 아닌 인용은 조용히 버리고 `support`를 다시 계산한다(#133과 같은 기준).
-- 기준 항목 ID가 입력에 없거나 종류가 다르면, 답변 참조가 `ANSWERED` 질문 키가 아니면, 본문이 종류별 필수 필드를 어기면 **출력 전체를 거부**한다(502 `model_unavailable`, usage는 실패로 기록). 모델이 ID·키를 지어낸 경우다.
+- 기준 항목 ID가 입력에 없거나 종류가 다르면, 답변 참조가 `ANSWERED` 질문 키가 아니면, 합친 본문이 종류별 필수 필드나 BE의 JSON 규칙(중첩 빈 필드명·깊이·크기·값 타입)을 어기면 **출력 전체를 거부**한다(502 `model_unavailable`, usage는 실패로 기록). 모델이 ID·키를 지어냈거나 BE가 저장할 수 없는 본문을 만든 경우다.
 - 갱신(UPDATE)의 `after`는 기준 항목 본문에 모델이 돌려준 내용을 **모든 깊이에서 키 단위로 합친** 결과다(`apply_patch`). 모델이 **생략한 키는 기존 값을 보존**하고(답변과 무관한 `parameters`·`responses` 등이 사라지지 않음), **객체 값은 그 안의 키 단위로 다시 합치며**(`responses`에 `400`만 돌려줘도 `200`은 남음), **배열·스칼라 값은 통째로 교체**하고, **JSON `null`은 그 키를 삭제**한다는 뜻이다(어느 깊이에서나). 배열 안의 `null`은 값이다. 이 삭제 규칙은 **모델 패치에만** 적용되며 기존 본문의 `null` 값 필드는 입력 그대로 둔다. 그 필드를 삭제하면 `REMOVED` 변경이다(BE는 필드 없음과 `null`을 다른 JSON으로 본다). 생략과 삭제를 이렇게 구분하므로 `changed_fields`에는 실제로 바뀐 필드만 남는다. 신규(CREATE)의 `null` 키는 버린다.
 - 같은 기준 항목을 가리키는 제안이 여럿이면(예: 경로 변경과 응답 변경을 따로 돌려준 경우) **등장 순서대로 하나의 초안으로 합친다**. 본문은 위 규칙으로 차례로 적용하고, 확인된 인용과 답변 참조는 중복 없이 **모두** 남기며(상한은 제안 수에 비례하는 자연 상한뿐), `rationale`은 이어 붙인다. 두 제안이 **같은 경로에 다른 값**을 주거나 한쪽이 통째로 바꾼 값(스칼라·배열·`null`·빈 객체 `{}`) 안의 키를 다른 쪽이 정하면 충돌이다. 빈 객체는 값이므로 스칼라를 `{}`로 바꾸는 것도 충돌이지만, 빈 객체와 그 안의 키 설정은 서로 충돌하지 않는다. 뒤의 제안이 이기되 그 최상위 필드를 `conflicting_fields`에 적어 검토자가 확정하게 한다. 종류가 기준 항목과 다른 제안이 섞이면 출력 전체를 거부한다. 따라서 기준 항목당 초안은 하나이며 어떤 제안도 조용히 버려지지 않는다.
 - 기존 항목과 본문이 같은 "갱신"은 변경이 아니므로 버리고 그 항목을 `untouched_existing_ids`에 둔다. 단, 제안들이 충돌한 끝에 기존 값으로 돌아온 경우는 `conflicting_fields`만 있는 초안으로 남긴다.

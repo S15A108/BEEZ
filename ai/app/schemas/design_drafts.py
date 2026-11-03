@@ -8,6 +8,7 @@ it would update. Nothing here is approved: the only status is DRAFT, no ID is
 issued, and the supplied existing items are never modified.
 """
 
+import json
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -46,6 +47,11 @@ MAX_SOURCES_PER_DRAFT = MAX_SOURCES_PER_ITEM * MAX_ITEMS
 MAX_ANSWER_REFS_PER_DRAFT = MAX_QUESTIONS
 MAX_UNRESOLVED = 50
 MAX_DESCRIPTION_CHARS = 10_000
+# The BE DesignJson.canonical rejects content nested deeper than this, any
+# blank field name at any depth, non-JSON values and a canonical form over
+# this many bytes; a draft that breaks one of them could never be saved.
+MAX_CONTENT_DEPTH = 32
+MAX_CONTENT_JSON_BYTES = 1_048_576
 
 # 00-common DesignItemVersion.kind / DesignItemContent v1.
 DesignKind = Literal[
@@ -84,6 +90,28 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
+def check_json_content(value: Any, depth: int = 0) -> None:
+    """Reject what the BE DesignJson.canonical rejects, at every depth.
+
+    Field names must be non-blank strings, nesting stops at
+    `MAX_CONTENT_DEPTH`, and values are JSON only (text, boolean, number,
+    null, array, object). The size bound is checked by the caller on the
+    canonical form.
+    """
+    if depth > MAX_CONTENT_DEPTH:
+        raise ValueError("content nested too deeply")
+    if isinstance(value, dict):
+        for name, item in value.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("blank content field name")
+            check_json_content(item, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            check_json_content(item, depth + 1)
+    elif value is not None and not isinstance(value, str | bool | int | float):
+        raise ValueError("content value is not JSON")
+
+
 class DesignItemContent(BaseModel):
     """DesignItemContent v1 (00-common): description is required for every kind.
 
@@ -91,8 +119,9 @@ class DesignItemContent(BaseModel):
     included: stored content is never rewritten here, so `before` is the
     item as the BE holds it. Only the fields a kind requires are
     type-checked, by `check_content_for_kind`, so a POLICY may carry
-    `method: "manual"` just as the BE contract allows. Blank field names are
-    rejected as the BE does.
+    `method: "manual"` just as the BE contract allows. What the BE's JSON
+    canonicalization rejects (blank names at any depth, nesting over 32
+    levels, non-JSON values, more than 1 MiB) is rejected here too.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True, strict=True)
@@ -101,11 +130,19 @@ class DesignItemContent(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def reject_blank_names(cls, data: Any) -> Any:
-        if isinstance(data, dict) and any(
-            not isinstance(name, str) or not name.strip() for name in data
-        ):
-            raise ValueError("blank content field name")
+    def fits_backend_json(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            check_json_content(data)
+            # Sorted compact UTF-8, the same shape as the BE canonical form.
+            encoded = json.dumps(
+                data,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            if len(encoded.encode("utf-8")) > MAX_CONTENT_JSON_BYTES:
+                raise ValueError("content too large")
         return data
 
     @model_validator(mode="after")

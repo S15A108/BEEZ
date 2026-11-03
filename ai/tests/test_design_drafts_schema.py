@@ -210,6 +210,31 @@ def test_extra_content_fields_are_preserved_null_values_included():
         DesignItemContent.model_validate({"description": "x", " ": "blank name"})
 
 
+def test_content_follows_the_backend_json_rules():
+    # DesignJson.canonical rejects blank names at any depth, nesting deeper
+    # than 32 levels, non-JSON values and more than 1 MiB; so does this side,
+    # or a draft could come back that the BE can never save.
+    with pytest.raises(ValidationError):
+        DesignItemContent.model_validate(
+            {"description": "x", "metadata": {"": "value"}}
+        )
+    with pytest.raises(ValidationError):
+        DesignItemContent.model_validate({"description": "x", "fields": [{" ": 1}]})
+    nested = "deep"
+    for _ in range(31):
+        nested = {"n": nested}
+    assert DesignItemContent.model_validate({"description": "x", "n": nested})
+    with pytest.raises(ValidationError):
+        DesignItemContent.model_validate({"description": "x", "n": {"n": nested}})
+    with pytest.raises(ValidationError):
+        DesignItemContent(description="x", when=(1, 2))
+    with pytest.raises(ValidationError):
+        DesignItemContent(description="x", ratio=float("nan"))
+    with pytest.raises(ValidationError):
+        DesignItemContent(description="x", blob="x" * 1_048_577)
+    assert DesignItemContent(description="x", blob="x" * 1_000_000).extra_fields()
+
+
 def test_merged_drafts_keep_every_reference_and_conflicts_only_on_updates():
     many = tuple(f"q-{index}" for index in range(1, 12))
     assert len(draft(sources=(), answer_refs=many, support="ANSWER").answer_refs) == 11

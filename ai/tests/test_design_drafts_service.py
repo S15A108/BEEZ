@@ -304,6 +304,11 @@ async def test_split_proposals_with_different_kinds_are_invalid_output():
         item("CONSTRAINT", "x", refs=["q-2"]),
         {**item("API_CONTRACT", "x"), "content": {"description": "x", "method": "GET"}},
         {**item("REQUIREMENT", "x"), "content": {"description": "   "}},
+        # The BE DesignJson rejects a blank field name at any depth.
+        {
+            **item("REQUIREMENT", "x"),
+            "content": {"description": "x", "metadata": {"": "value"}},
+        },
     ],
 )
 @pytest.mark.asyncio
@@ -723,6 +728,31 @@ async def test_json_type_changes_are_changes():
         ("description", "발행 전 검토를 거친다.", "발행 전 두 명이 검토한다."),
         ("strict", True, 1),
     ]
+    # The same inside an array of objects: a DATA field default going from
+    # 1 to true is a change, not an unchanged restatement.
+    data_item = {
+        "design_item_version_id": "1105",
+        "design_item_id": "1005",
+        "key": "DATA-001",
+        "kind": "DATA_CONTRACT",
+        "version_no": 1,
+        "status": "DRAFT",
+        "content": {
+            "description": "설정",
+            "entity": "setting",
+            "fields": [{"name": "enabled", "default": 1}],
+        },
+    }
+    body = request(existing_items=[APPROVED, DRAFT_ITEM, data_item])
+    toggled = with_content(
+        item("DATA_CONTRACT", "x", base="1105"),
+        {"fields": [{"name": "enabled", "default": True}]},
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(toggled))
+    changes = outcome.result.changes[0].changed_fields
+    assert [(f.field, f.change) for f in changes] == [("fields", "CHANGED")]
+    assert changes[0].after == [{"name": "enabled", "default": True}]
+    assert "1105" not in outcome.result.untouched_existing_ids
 
 
 @pytest.mark.asyncio
