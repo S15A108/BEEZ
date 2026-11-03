@@ -120,8 +120,10 @@ public class ValidationWorker {
                 request = fakeRequest(row, lease);
             } else {
                 caller = requestActor(row);
+                // 같은 검증 입력의 새 계획이 대기 중 생겼다면, 실제 검색은 현재 리비전을 대상으로 한다.
+                long searchRevision = validations.currentPlanRevision(row.taskId()).orElseThrow();
                 // Search may call the embedding service, so do not hold a DB transaction around it.
-                searchInput = assembler.assemble(caller, row.projectId(), row.taskId(), row.planRevisionId(),
+                searchInput = assembler.assemble(caller, row.projectId(), row.taskId(), searchRevision,
                         row.id(), lease.attempt(), properties.executionBudgetMs());
                 // An unrelated publication need not invalidate the accepted plan. The assembler
                 // uses the current baseline; result application rechecks that exact search snapshot.

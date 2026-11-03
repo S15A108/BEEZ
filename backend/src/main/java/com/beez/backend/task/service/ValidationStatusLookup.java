@@ -88,6 +88,23 @@ public class ValidationStatusLookup {
         return latest;
     }
 
+    /**
+     * 현재 계획의 가장 최근 DELTA 가 <b>아직 결과가 안 난</b>(NOT_RUN·RUNNING) 것이면 그 번호, 아니면 null.
+     * 계획 변경을 막는 기준이다(TaskPlanService) — 결과가 나면 PASS 는 S4 로 완료되고, NEEDS_INPUT·NEEDS_REVIEW·ERROR 는 계획을 고쳐
+     * 나가는 길(§2.3 출구 ②)이 열려 있어야 한다. {@link #pendingDeltaValidationId} 는 끝난 DELTA 도 "기다리는 보고" 로 보므로 여기에 쓰지 않는다
+     */
+    public Long undecidedDeltaValidationId(Long taskId, Long planRevisionId) {
+        Long latest = latestDeltaValidationId(taskId, planRevisionId);
+        if (latest == null) {
+            return null;
+        }
+        String status = statusOf(latest);
+        if ("NOT_RUN".equals(status) || "RUNNING".equals(status)) {
+            return latest;
+        }
+        return null;
+    }
+
     /** {@link #pendingDeltaValidationId} 를 여러 작업에 한 번에 (목록 조회, N+1 방지). key = task_id, 없는 작업은 빠진다 */
     public Map<Long, Long> pendingDeltaValidationIdByTask(List<Long> taskIds) {
         Map<Long, Long> result = new HashMap<>();
@@ -122,6 +139,18 @@ public class ValidationStatusLookup {
     public String statusOf(Long validationId) {
         return jdbc.sql("select status from validation where id = :v").param("v", validationId).query(String.class)
                 .optional().orElse(null);
+    }
+
+    /** 실제 검색·원문을 사용해 끝난 검증은 검색에 쓰인 제목·접근 방식·패킷이 바뀌면 이어 쓸 수 없다. */
+    public boolean hasSearchBackedValidation(Long taskId, Long revisionId) {
+        return jdbc.sql("""
+                        select exists (select 1 from validation
+                                        where task_id = :taskId and plan_revision_id = :revisionId
+                                          and trigger <> 'DELTA'
+                                          and status in ('PASS', 'NEEDS_INPUT', 'NEEDS_REVIEW')
+                                          and summary ->> 'analysis_baseline_id' is not null)
+                        """)
+                .param("taskId", taskId).param("revisionId", revisionId).query(Boolean.class).single();
     }
 
     /**
@@ -213,6 +242,98 @@ public class ValidationStatusLookup {
             result.put(taskId, (String) row.get("status"));
         }
         return result;
+    }
+
+    /**
+     * 검증 입력이 같은 새 계획 리비전으로 이전 계획의 검증을 이어 받는다 (AC-13, S15P31A108-162. 04-task-lifecycle.md §2.2 S2).
+     * 검증은 계획 리비전에 묶여 있어(G1·TaskDetail·현황 집계가 모두 "현재 리비전의 가장 최근 검증" 을 본다) 그냥 두면 제목만 바꿔도
+     * 검증이 없는 계획이 된다. 그래서 이전 리비전의 <b>DELTA 를 뺀 가장 최근 검증 한 건</b>이 끝난 것(PASS·NEEDS_INPUT·NEEDS_REVIEW)이면
+     * 같은 내용(상태·종류·입력 해시·규칙 버전·요약·참조·관련 계획·발견 항목)으로 새 리비전에 한 줄 더 넣는다.
+     * DELTA 를 빼는 이유: RESUME 으로 거둔 완료 보고의 DELTA(STALE) 가 가장 최근이어도 그 전의 PASS 로 일하던 작업이다.
+     * <ul>
+     *   <li>summary 에 {@code carried_from}(원본 = 처음 실제로 돌린 검증 번호. 복사본의 복사본도 같은 원본)과 {@code carried_from_revision}
+     *       을 남긴다. 실행(validation_run)은 복사하지 않는다 — 실제로 돈 것은 원본이고, 가짜 분석기 판정(G1)과 사용량 집계는 원본 번호로 본다</li>
+     *   <li>가장 최근 것이 RUNNING 이면 여기서는 이어 받지 않는다. 그 결과가 반영될 때 입력 비교(해시)를 통과하면 결과 반영
+     *       (AnalysisResultApplier)이 {@link #carryForward} 로 이어 받는다. STALE·ERROR 는 이어 받을 것이 없다</li>
+     *   <li>DELTA 는 이어 받지 않는다 — delta 를 기다리는 동안은 계획 변경이 거부되고(TaskPlanService), 거둔 DELTA 는 STALE 이다</li>
+     * </ul>
+     *
+     * @return 새로 넣은 검증 번호. 이어 받은 것이 없으면 null
+     */
+    public Long carryForwardLatest(Long taskId, Long fromRevisionId, Long toRevisionId) {
+        List<Map<String, Object>> latest = jdbc.sql("""
+                        select id, status
+                          from validation
+                         where task_id = :taskId and plan_revision_id = :from and trigger <> 'DELTA'
+                         order by id desc
+                         limit 1
+                        """)
+                .param("taskId", taskId).param("from", fromRevisionId)
+                .query().listOfRows();
+        if (latest.isEmpty()) {
+            return null;
+        }
+        String status = (String) latest.get(0).get("status");
+        boolean finished = "PASS".equals(status) || "NEEDS_INPUT".equals(status) || "NEEDS_REVIEW".equals(status);
+        if (!finished) {
+            return null;
+        }
+        return carryForward(((Number) latest.get(0).get("id")).longValue(), toRevisionId);
+    }
+
+    /**
+     * 검증 한 건을 다른 계획 리비전으로 이어 받는다 ({@link #carryForwardLatest} 의 복사 부분). 도는 사이 계획이 입력 같은 리비전으로
+     * 바뀐 검증이 끝났을 때 결과 반영(AnalysisResultApplier)이 끝난 그 검증으로 직접 부른다. 호출자가 끝난 검증(PASS·NEEDS_*)만 넘긴다.
+     *
+     * @return 새로 넣은 검증 번호
+     */
+    public Long carryForward(long source, Long toRevisionId) {
+        // 원본 번호는 원본의 carried_from 이 있으면 그것(복사본의 복사본), 없으면 원본 자신
+        Long copy = jdbc.sql("""
+                        insert into validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash,
+                                                rule_version, current_attempt, summary, finished_at)
+                        select task_id, :to, baseline_id, status, trigger, input_snapshot_hash, rule_version, current_attempt,
+                               coalesce(summary, '{}'::jsonb)
+                                   || jsonb_build_object('carried_from', coalesce((summary ->> 'carried_from')::bigint, id),
+                                                         'carried_from_revision', plan_revision_id),
+                               finished_at
+                          from validation
+                         where id = :source
+                        returning id
+                        """)
+                .param("to", toRevisionId).param("source", source)
+                .query(Long.class).single();
+        jdbc.sql("""
+                        insert into validation_design_ref (validation_id, design_item_id, design_item_version_id, relation)
+                        select :copy, design_item_id, design_item_version_id, relation
+                          from validation_design_ref where validation_id = :source
+                        """)
+                .param("copy", copy).param("source", source).update();
+        // 검색에서 실제 비교한 후보도 복사해야 발행 시 무효화와 시작 전 버전 검사가 이어진다.
+        jdbc.sql("""
+                        insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
+                        select :copy, design_item_id, design_item_version_id
+                          from validation_candidate_ref where validation_id = :source
+                        """)
+                .param("copy", copy).param("source", source).update();
+        jdbc.sql("""
+                        insert into validation_task_ref (validation_id, related_task_id, related_plan_revision_id)
+                        select :copy, related_task_id, related_plan_revision_id
+                          from validation_task_ref where validation_id = :source
+                        """)
+                .param("copy", copy).param("source", source).update();
+        // 발견 항목은 원본 실행(validation_run_id)을 그대로 가리킨다 — 근거가 된 실행은 원본 것이다
+        jdbc.sql("""
+                        insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
+                                                        design_item_version_id, related_task_id, message, sources, resolution,
+                                                        next_action, check_key, evidence_ids)
+                        select :copy, validation_run_id, source, kind, severity, design_item_id, design_item_version_id,
+                               related_task_id, message, sources, resolution, next_action, check_key, evidence_ids
+                          from validation_finding where validation_id = :source
+                         order by id
+                        """)
+                .param("copy", copy).param("source", source).update();
+        return copy;
     }
 
     /**

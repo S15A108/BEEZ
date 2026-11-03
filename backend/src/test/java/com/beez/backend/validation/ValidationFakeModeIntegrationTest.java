@@ -63,18 +63,38 @@ class ValidationFakeModeIntegrationTest extends IntegrationTestSupport {
                 + "(select id from validation_run where validation_id=:id)")
                 .param("id", validation).query(Integer.class).single()).isZero();
 
-        // Simulate the production server reading a PASS created earlier by a fake-enabled server.
+        String renamedPlan = api.planJson("가짜 분석 테스트 이름 변경", api.implementsRef("API-01"), "[]").trim();
+        String revisionBody = renamedPlan.substring(0, renamedPlan.lastIndexOf('}'))
+                + ",\"expected_revision_no\":1,\"expected_lock_version\":" + lockVersion + "}";
+        var renamed = api.post("/api/projects/" + project + "/tasks/" + taskId + "/plan-revisions", revisionBody, owner);
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(201);
+        long renamedRevision = api.jdbc.sql("select current_plan_revision_id from task where id=:id")
+                .param("id", taskId).query(Long.class).single();
+        long copy = api.jdbc.sql("select max(id) from validation where plan_revision_id=:revision")
+                .param("revision", renamedRevision).query(Long.class).single();
+        long newLockVersion = TaskApiSupport.longField(renamed.body(), "lock_version");
+        assertThat(api.jdbc.sql("select count(*) from validation_run where validation_id=:id")
+                .param("id", copy).query(Integer.class).single()).isZero();
+
+        // A carried copy has no run of its own; production must inspect the original fake run.
         ReflectionTestUtils.setField(startGate, "fakeAnalyzerEnabled", false);
         try {
-            var started = api.post("/api/projects/" + project + "/tasks/" + taskId + "/state-events",
-                    "{\"event\":\"START\",\"plan_revision_id\":\"" + revision
-                            + "\",\"expected_lock_version\":" + lockVersion
-                            + ",\"validation_id\":\"" + validation + "\"}", owner);
-            assertThat(started.statusCode()).as(started.body()).isEqualTo(409);
-            assertThat(started.body()).contains("validation_not_passed");
+            for (long given : new long[] {validation, copy}) {
+                var started = api.post("/api/projects/" + project + "/tasks/" + taskId + "/state-events",
+                        "{\"event\":\"START\",\"plan_revision_id\":\"" + renamedRevision
+                                + "\",\"expected_lock_version\":" + newLockVersion
+                                + ",\"validation_id\":\"" + given + "\"}", owner);
+                assertThat(started.statusCode()).as(started.body()).isEqualTo(409);
+                assertThat(started.body()).contains("가짜 분석기");
+            }
         } finally {
             ReflectionTestUtils.setField(startGate, "fakeAnalyzerEnabled", true);
         }
+        var started = api.post("/api/projects/" + project + "/tasks/" + taskId + "/state-events",
+                "{\"event\":\"START\",\"plan_revision_id\":\"" + renamedRevision
+                        + "\",\"expected_lock_version\":" + newLockVersion
+                        + ",\"validation_id\":\"" + validation + "\"}", owner);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
     }
 
     @Test void fakeModeCompletesDeltaWithoutSearchOrAi() {

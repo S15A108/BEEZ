@@ -201,23 +201,27 @@ public class ValidationRepository {
                 .param("v", versionIds).query().listOfRows();
     }
 
+    /** 검증이 대조한 관련 작업과 그 계획 리비전·계획 입력 해시. 행: related_task_id, related_plan_revision_id, plan_input_hash */
     public List<Map<String, Object>> taskRefs(long validationId) {
         return jdbc.sql("""
-                        select related_task_id, related_plan_revision_id from validation_task_ref
-                         where validation_id = :v order by related_task_id
+                        select r.related_task_id, r.related_plan_revision_id, pr.input_hash as plan_input_hash
+                          from validation_task_ref r
+                          join task_plan_revision pr on pr.id = r.related_plan_revision_id
+                         where r.validation_id = :v order by r.related_task_id
                         """)
                 .param("v", validationId).query().listOfRows();
     }
 
     /**
      * 같은 설계 항목을 현재 계획에서 참조하는 열린 다른 작업 (READY·IN_PROGRESS·WAITING). 관련 계획으로 대조한다.
-     * 행: task_id, plan_revision_id, status, design_item_id, relation — 작업·항목 쌍마다 한 줄
+     * 행: task_id, plan_revision_id, plan_input_hash(그 계획의 입력 해시), status, design_item_id, relation — 작업·항목 쌍마다 한 줄
      */
     public List<Map<String, Object>> openTasksSharingItems(long projectId, long taskId, long planRevisionId) {
         return jdbc.sql("""
-                        select t.id as task_id, t.current_plan_revision_id as plan_revision_id, t.status,
-                               r.design_item_id, r.relation
+                        select t.id as task_id, t.current_plan_revision_id as plan_revision_id, pr.input_hash as plan_input_hash,
+                               t.status, r.design_item_id, r.relation
                           from task t
+                          join task_plan_revision pr on pr.id = t.current_plan_revision_id
                           join task_plan_design_ref r on r.plan_revision_id = t.current_plan_revision_id
                          where t.project_id = :p and t.id <> :t
                            and t.status in ('READY', 'IN_PROGRESS', 'WAITING')

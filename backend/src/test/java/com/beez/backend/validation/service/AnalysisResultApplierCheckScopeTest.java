@@ -9,6 +9,7 @@ import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import com.beez.backend.task.service.DeltaCompletion;
+import com.beez.backend.task.service.ValidationStatusLookup;
 import com.beez.backend.validation.repository.ValidationRepository;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +23,7 @@ class AnalysisResultApplierCheckScopeTest {
             mock(ValidationResponses.class), mock(ProjectDesignLookup.class), mock(ValidationRules.class),
             mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class),
             mock(ValidationInputAssembler.class), mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), false,
-            mock(DeltaCompletion.class), mock(TaskCompletionReportRepository.class));
+            mock(DeltaCompletion.class), mock(TaskCompletionReportRepository.class), mock(ValidationStatusLookup.class));
 
     @Test void rejectsOtherChecksSourceEvenWhenEvidenceIdsAreEmpty() {
         var sourceA = Map.of("document_id", "1", "document_version_id", "11", "version_no", 1, "location", "A");

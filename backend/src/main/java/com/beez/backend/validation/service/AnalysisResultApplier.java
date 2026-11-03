@@ -11,6 +11,7 @@ import com.beez.backend.task.service.RelatedTaskCandidateFinder;
 import com.beez.backend.common.auth.CallerContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Value;
+import com.beez.backend.task.service.ValidationStatusLookup;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -68,13 +69,15 @@ public class AnalysisResultApplier {
     private final boolean fakeAnalyzerEnabled;
     private final DeltaCompletion deltaCompletion;
     private final TaskCompletionReportRepository reports;
+    private final ValidationStatusLookup statusLookup;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
                                  TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                  ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks, JdbcClient jdbc,
                                  @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
-                                 DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports) {
+                                 DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports,
+                                 ValidationStatusLookup statusLookup) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
@@ -87,6 +90,7 @@ public class AnalysisResultApplier {
         this.fakeAnalyzerEnabled = fakeAnalyzerEnabled;
         this.deltaCompletion = deltaCompletion;
         this.reports = reports;
+        this.statusLookup = statusLookup;
     }
 
     /** An incomplete search cannot establish PASS, even when the model was never called. */
@@ -214,7 +218,7 @@ public class AnalysisResultApplier {
         }
         // #159 tracks only accepted references for later invalidation. A newly discovered
         // task cannot support PASS until its lifecycle is durably integrated.
-        if (!acceptedRelated.equals(input.relatedPlanRevisions())) return true;
+        if (!sameRelatedPlanInputs(acceptedRelated, input.relatedPlanRevisions())) return true;
         Set<String> referenced = new HashSet<>();
         for (var ref : objects(plan.get("design_refs"))) referenced.add(String.valueOf(ref.get("design_item_id")));
         for (var item : objects(request.get("approved_items"))) {
@@ -226,6 +230,22 @@ public class AnalysisResultApplier {
             }
         }
         return false;
+    }
+
+    /** 관련 작업은 동일한 작업 집합이어야 하며, 리비전만 달라진 경우 계획 입력과 패킷을 확인한다. */
+    private boolean sameRelatedPlanInputs(Map<Long, Long> accepted, Map<Long, Long> searched) {
+        if (!accepted.keySet().equals(searched.keySet())) return false;
+        for (var entry : accepted.entrySet()) {
+            long taskId = entry.getKey();
+            Long before = entry.getValue(), after = searched.get(taskId);
+            if (java.util.Objects.equals(before, after)) continue;
+            var oldPlan = revisions.findByIdAndTaskId(before, taskId);
+            var newPlan = revisions.findByIdAndTaskId(after, taskId);
+            if (oldPlan.isEmpty() || newPlan.isEmpty()
+                    || !java.util.Objects.equals(oldPlan.get().getInputHash(), newPlan.get().getInputHash())
+                    || !java.util.Objects.equals(oldPlan.get().getContextPacketId(), newPlan.get().getContextPacketId())) return false;
+        }
+        return true;
     }
 
     private boolean missingPoliciesSupported(Map<String, Object> request, Map<String, Object> result) {
@@ -248,6 +268,8 @@ public class AnalysisResultApplier {
                                         ValidationInputAssembler.Result input) {
         if (!input.searchComplete()) return false;
         long analyzedBaseline = input.baselineId();
+        Long analyzedRevision = id(map(request.get("plan_revision")).get("id"));
+        if (analyzedRevision == null) return false;
         if ("DELTA".equals(v.trigger())) {
             Object accepted = responses.summary(v.summary()).get("completion_delta");
             if (!(accepted instanceof List<?> delta) || delta.isEmpty() || !delta.equals(request.get("completion_delta"))) return false;
@@ -256,7 +278,7 @@ public class AnalysisResultApplier {
         }
         if (jdbc.sql("select count(*) from project p join task t on t.project_id=p.id where p.id=:project and t.id=:task and p.current_baseline_id=:baseline and t.current_plan_revision_id=:revision")
                 .param("project", v.projectId()).param("task", v.taskId()).param("baseline", analyzedBaseline)
-                .param("revision", v.planRevisionId()).query(Long.class).single() != 1L) return false;
+                .param("revision", analyzedRevision).query(Long.class).single() != 1L) return false;
         List<Map<String, Object>> items = objects(request.get("approved_items"));
         List<Long> ids = new ArrayList<>(), versions = new ArrayList<>();
         for (var item : items) {
@@ -266,7 +288,7 @@ public class AnalysisResultApplier {
             if (jdbc.sql("select count(*) from baseline_item where baseline_id=:baseline and design_item_id=:item and design_item_version_id=:version")
                     .param("baseline", analyzedBaseline).param("item", id).param("version", version).query(Long.class).single() != 1L) return false;
         }
-        var currentRelated = relatedTasks.find(caller, v.projectId(), v.taskId(), v.planRevisionId(), ids, 20);
+        var currentRelated = relatedTasks.find(caller, v.projectId(), v.taskId(), analyzedRevision, ids, 20);
         Map<Long, Long> related = new LinkedHashMap<>();
         for (var candidate : currentRelated.candidates()) related.put(candidate.taskId(), candidate.planRevisionId());
         if (currentRelated.truncated() || currentRelated.baselineId() != analyzedBaseline
@@ -423,6 +445,23 @@ public class AnalysisResultApplier {
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
         }
+        carryIfPlanRenamed(v);
+    }
+
+    /**
+     * 도는 사이 계획이 입력은 같은 새 리비전(제목만 변경, AC-13)으로 바뀌어 있으면, 방금 끝난 결과를 현재 리비전으로 이어 받는다
+     * ({@link ValidationStatusLookup#carryForward}). {@link #inputChange} 가 내용으로 비교해 통과시킨 결과라 현재 계획에도 그대로 맞는다.
+     * 계획 변경 때는 이 검증이 아직 도는 중이라 이어 받지 못했다(TaskPlanService 는 끝난 것만). DELTA 는 기다리는 동안 계획 변경이
+     * 거부되므로 리비전이 같아 여기 오지 않는다. 끝낸 뒤(finish)에 불러야 복사본이 끝난 상태를 갖는다
+     */
+    private void carryIfPlanRenamed(ValidationRow v) {
+        Optional<Long> currentPlan = validations.currentPlanRevision(v.taskId());
+        if (currentPlan.isEmpty() || currentPlan.get().equals(v.planRevisionId()) || "DELTA".equals(v.trigger())) {
+            return;
+        }
+        Long copy = statusLookup.carryForward(v.id(), currentPlan.get());
+        log.info("validation {} finished after a same-input plan change → carried to plan revision {} as validation {}",
+                v.id(), currentPlan.get(), copy);
     }
 
     /**
@@ -451,6 +490,7 @@ public class AnalysisResultApplier {
         validations.finish(v.id(), rule.decidedStatus(), responses.summary(v.summary()));
         validations.finishJob(lease.jobId(), "DONE");
         log.info("validation {} attempt {} decided by rules before calling the model: {}", v.id(), lease.attempt(), rule.decidedStatus());
+        carryIfPlanRenamed(v);
         return true;
     }
 
@@ -669,11 +709,14 @@ public class AnalysisResultApplier {
     }
 
     /**
-     * 접수 때 고정한 분석 입력이 지금도 그대로인가. 바뀌었으면 무효화 사유:
+     * 접수 때 고정한 분석 입력이 지금도 그대로인가. 계획은 리비전 번호가 아니라 <b>계획 입력 해시</b>(task_plan_revision.input_hash:
+     * 제목·접근 방식을 뺀 내용, AC-13)와 컨텍스트 패킷으로 비교한다. 실제 검색 결과는 리비전도 별도로 확인한다.
+     * 바뀌었으면 무효화 사유:
      * <ul>
-     *   <li>PLAN_CHANGED — 이 작업의 현재 계획 리비전이 검증한 리비전과 다름</li>
-     *   <li>RELATED_PLAN_CHANGED — 같은 설계 항목을 보는 열린 다른 작업과 그 현재 계획(작업 → 계획 리비전)이 접수 때 고정한
-     *       관련 작업(validation_task_ref)과 다름. 관련 작업의 계획이 바뀐 경우, 새 관련 작업이 생긴 경우, 관련 작업이 닫힌 경우 모두</li>
+     *   <li>PLAN_CHANGED — 이 작업의 현재 계획의 입력이 검증한 계획과 다름. 현재 계획이나 검증한 계획을 못 읽어도 같은 사유다
+     *       (조회 실패를 "변경 없음" 으로 보지 않는다)</li>
+     *   <li>RELATED_PLAN_CHANGED — 같은 설계 항목을 보는 열린 다른 작업과 그 현재 계획의 입력(작업 → 계획 입력 해시)이 접수 때 고정한
+     *       관련 작업(validation_task_ref)과 다름. 관련 작업의 계획 내용이 바뀐 경우, 새 관련 작업이 생긴 경우, 관련 작업이 닫힌 경우 모두</li>
      * </ul>
      * 관련 작업의 상태만 바뀐 경우(점유 충돌)와 설계 발행으로 참조 버전이 낡은 경우는 여기가 아니라 결과 반영의 규칙 재판정
      * ({@link #reevaluateRules})이 잡는다. 설계 발행 수신(-163)은 끝난 검증을 STALE 로 바꾸고, 그 전까지는 시작 관문(G2)이 막는다.
@@ -681,16 +724,22 @@ public class AnalysisResultApplier {
      */
     public Optional<String> inputChange(ValidationRow v) {
         Optional<Long> currentPlan = validations.currentPlanRevision(v.taskId());
-        if (currentPlan.isEmpty() || !currentPlan.get().equals(v.planRevisionId())) {
+        if (currentPlan.isEmpty()) {
             return Optional.of("PLAN_CHANGED");
         }
-        Map<Long, Long> fixed = new LinkedHashMap<>();
-        for (Map<String, Object> row : validations.taskRefs(v.id())) {
-            fixed.put(((Number) row.get("related_task_id")).longValue(), ((Number) row.get("related_plan_revision_id")).longValue());
+        Optional<TaskPlanRevision> validated = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId());
+        Optional<TaskPlanRevision> current = revisions.findByIdAndTaskId(currentPlan.get(), v.taskId());
+        if (validated.isEmpty() || current.isEmpty() || !validated.get().getInputHash().equals(current.get().getInputHash())
+                || (!fakeAnalyzerEnabled && !java.util.Objects.equals(validated.get().getContextPacketId(), current.get().getContextPacketId()))) {
+            return Optional.of("PLAN_CHANGED");
         }
-        Map<Long, Long> now = new LinkedHashMap<>();
+        Map<Long, String> fixed = new LinkedHashMap<>();
+        for (Map<String, Object> row : validations.taskRefs(v.id())) {
+            fixed.put(((Number) row.get("related_task_id")).longValue(), (String) row.get("plan_input_hash"));
+        }
+        Map<Long, String> now = new LinkedHashMap<>();
         for (Map<String, Object> row : validations.openTasksSharingItems(v.projectId(), v.taskId(), v.planRevisionId())) {
-            now.put(((Number) row.get("task_id")).longValue(), ((Number) row.get("plan_revision_id")).longValue());
+            now.put(((Number) row.get("task_id")).longValue(), (String) row.get("plan_input_hash"));
         }
         if (!now.equals(fixed)) {
             return Optional.of("RELATED_PLAN_CHANGED");

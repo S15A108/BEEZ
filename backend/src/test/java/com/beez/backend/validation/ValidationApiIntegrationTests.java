@@ -33,6 +33,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import javax.sql.DataSource;
@@ -850,6 +851,95 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isZero();
     }
 
+    /** 계획 리비전 추가 본문: 제목만 다르고 내용은 작업 생성 때(planJson(title, refs, true, null))와 같다 */
+    private String renameOnly(String title, String refsJson, long lock) {
+        String plan = api.planJson(title, refsJson, "[]").trim();
+        return plan.substring(0, plan.lastIndexOf('}')) + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + lock + "\n}";
+    }
+
+    @Test
+    void sameInputRenamesWhileQueuedSearchTheCurrentRevisionsAndCarryResult() throws Exception {
+        provideCompleteApiContent("API-01");
+        long[] related = createTask(planJson("B", api.implementsRef("API-01"), true, null), member);
+        long[] task = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long validation = body(accept(task, member), 202).get("id").asLong();
+        HttpResponse<String> renamedRelated = api.post(tasksPath() + "/" + related[0] + "/plan-revisions",
+                renameOnly("B 이름 변경", api.implementsRef("API-01"), related[2]), member);
+        HttpResponse<String> renamed = api.post(tasksPath() + "/" + task[0] + "/plan-revisions",
+                renameOnly("A 이름 변경", api.implementsRef("API-01"), task[2]), member);
+        assertThat(renamedRelated.statusCode()).as(renamedRelated.body()).isEqualTo(201);
+        assertThat(renamed.statusCode()).as(renamed.body()).isEqualTo(201);
+        long currentRevision = api.jdbc.sql("select current_plan_revision_id from task where id=:t")
+                .param("t", task[0]).query(Long.class).single();
+        AtomicReference<Map<String, Object>> sent = new AtomicReference<>();
+        when(analyzer.analyze(any())).thenAnswer(inv -> {
+            Map<String, Object> request = inv.getArgument(0);
+            sent.set(request);
+            return aiResponse(request, List.of(), List.of());
+        });
+
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(sent.get()).isNotNull();
+        assertThat(((Map<?, ?>) sent.get().get("plan_revision")).get("id")).isEqualTo(String.valueOf(currentRevision));
+        assertThat(column("validation", "status", validation)).isEqualTo("PASS");
+        long copy = api.jdbc.sql("select max(id) from validation where plan_revision_id=:r")
+                .param("r", currentRevision).query(Long.class).single();
+        assertThat(column("validation", "status", copy)).isEqualTo("PASS");
+        assertThat(count("select count(*) from validation_candidate_ref where validation_id = " + copy)).isEqualTo(1);
+    }
+
+    @Test
+    void titleOnlyPlanChangeDuringSearchBackedAnalysis_discardsOldSearchResult() throws Exception {
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        AtomicLong lockAfterRename = new AtomicLong();
+        doAnswer(inv -> {
+            // 제목은 계획 해시에는 없지만 검색어에는 쓰이므로 기존 검색 결과를 재사용하지 않는다.
+            HttpResponse<String> res = api.post(tasksPath() + "/" + t[0] + "/plan-revisions", renameOnly("A (이름만)", api.implementsRef("API-01"), t[2]), member);
+            assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
+            lockAfterRename.set(TaskApiSupport.longField(res.body(), "lock_version"));
+            return aiResponse(inv.getArgument(0), List.of(), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+
+        assertThat(column("validation", "status", id)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", id)).isEqualTo("INPUT_CHANGED");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("DISCARDED");
+        long rev2 = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t[0]).query(Long.class).single();
+        assertThat(count("select count(*) from validation where plan_revision_id = " + rev2)).isZero();
+        HttpResponse<String> start = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                "{\"event\":\"START\",\"plan_revision_id\":\"" + rev2 + "\",\"expected_lock_version\":" + lockAfterRename.get()
+                        + ",\"validation_id\":\"" + id + "\"}", member);
+        assertThat(start.statusCode()).as(start.body()).isEqualTo(409);
+    }
+
+    @Test
+    void relatedTaskTitleOnlyChangeDuringSearchBackedAnalysis_discardsOldResult() throws Exception {
+        long[] b = createTask(planJson("B", api.implementsRef("API-01"), true, null), member);
+        long[] a = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(a, member), 202).get("id").asLong();
+        doAnswer(inv -> {
+            // 모델이 받은 관련 계획의 리비전이 바뀌면 검색 스냅샷을 다시 조립해야 한다.
+            HttpResponse<String> res = api.post(tasksPath() + "/" + b[0] + "/plan-revisions", renameOnly("B (이름만)", api.implementsRef("API-01"), b[2]), member);
+            assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
+            return aiResponse(inv.getArgument(0), List.of(), List.of());
+        }).when(analyzer).analyze(any());
+        worker.runOnce();
+        assertThat(column("validation", "status", id)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", id)).isEqualTo("INPUT_CHANGED");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("DISCARDED");
+    }
+
+    @Test
+    void realAnalyzerCannotBypassUsageChecksByClaimingToBeFake() throws Exception {
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        long id = body(accept(t, member), 202).get("id").asLong();
+        when(analyzer.analyze(any())).thenAnswer(inv -> new FakeValidationAnalyzer().analyze(inv.getArgument(0)));
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(column("validation", "status", id)).isEqualTo("ERROR");
+        assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("ERROR");
+    }
+
     @Test
     void relatedTaskPlanChangedDuringAnalysis_discardsResult_andStartIsRefused() throws Exception {
         // A 와 B 가 같은 설계 항목을 본다. A 의 검증에는 B 의 지금 계획이 관련 계획으로 들어간다
@@ -859,8 +949,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(api.jdbc.sql("select related_plan_revision_id from validation_task_ref where validation_id = :v and related_task_id = :t")
                 .param("v", id).param("t", b[0]).query(Long.class).single()).isEqualTo(b[1]);
         doAnswer(inv -> {
-            // AI 가 도는 동안 B 의 계획이 바뀐다
-            String plan = api.planJson("B2", api.implementsRef("API-01"), "[]").trim();
+            // AI 가 도는 동안 B 의 계획 내용(미연결 항목)이 바뀐다.
+            String plan = api.planJson("B2", api.implementsRef("API-01"), "[]").trim()
+                    .replace("\"unlinked\": []", "\"unlinked\": [{\"text\":\"y\"}]");
             String revision = plan.substring(0, plan.lastIndexOf('}'))
                     + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + b[2] + "\n}";
             HttpResponse<String> res = api.post(tasksPath() + "/" + b[0] + "/plan-revisions", revision, member);

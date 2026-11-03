@@ -470,6 +470,55 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         assertThat(worker.runOnce()).isFalse();
     }
 
+    /** 계획 리비전 추가 (TSK-A04). refs 만 바꾸고 나머지는 작업 생성 때와 같다 */
+    private HttpResponse<String> revise(long taskId, String title, String refsJson, int expectedRevisionNo, long lock) throws Exception {
+        String plan = api.planJson(title, refsJson, "[]").trim();
+        String body = plan.substring(0, plan.lastIndexOf('}'))
+                + ",\n  \"expected_revision_no\": " + expectedRevisionNo + ",\n  \"expected_lock_version\": " + lock + "\n}";
+        return api.post(tasksPath() + "/" + taskId + "/plan-revisions", body, member);
+    }
+
+    @Test
+    void deltaNeedsInputAfterPublication_planCanBeRevised_andNewPassResumes() throws Exception {
+        // 리뷰 재현: delta 완료 보고 → 발행으로 시작 PASS STALE → 재접수 DELTA 가 NEEDS_INPUT. 이때 RESUME 은 G1 에 막히므로
+        // 계획 변경(§2.3 출구 ②)까지 막히면 작업이 갇힌다. 계획을 새 버전으로 고치고 새 PASS 로 RESUME → 완료까지 갈 수 있어야 한다
+        long[] e = createTask("E", api.implementsRef("API-01"));
+        long lockE = start(e);
+        long startPass = api.jdbc.sql("select started_validation_id from task where id = :t").param("t", e[0]).query(Long.class).single();
+        HttpResponse<String> done = state(e[0], "COMPLETED", e[1], lockE, null, "\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]");
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        apply(publishApi01());
+        long newDelta = api.jdbc.sql("select max(id) from validation where task_id = :t and trigger = 'DELTA'").param("t", e[0])
+                .query(Long.class).single();
+        assertThat(column("validation", "status", newDelta)).isEqualTo("NEEDS_INPUT");
+        assertThat(column("validation", "status", startPass)).isEqualTo("STALE");
+        long lock = ((Number) task(e[0]).get("lock_version")).longValue();
+
+        // 옛 PASS 로는 RESUME 할 수 없다 (리뷰가 짚은 그대로)
+        HttpResponse<String> blockedResume = state(e[0], "RESUME", e[1], lock, startPass, null);
+        assertThat(blockedResume.statusCode()).as(blockedResume.body()).isEqualTo(409);
+
+        // 새 승인본(v2)으로 계획을 고칠 수 있다. 작업은 WAITING(REVALIDATION) 그대로, 끝난 DELTA 는 S2 로 STALE
+        HttpResponse<String> revised = revise(e[0], "E", api.implementsRef("API-01"), 1, lock);
+        assertThat(revised.statusCode()).as(revised.body()).isEqualTo(201);
+        assertThat(TaskApiSupport.stringField(revised.body(), "status")).isEqualTo("WAITING");
+        assertThat(TaskApiSupport.stringField(revised.body(), "waiting_reason")).isEqualTo("REVALIDATION");
+        assertThat(column("validation", "status", newDelta)).isEqualTo("STALE");
+        assertThat(column("validation", "stale_reason", newDelta)).isEqualTo("PLAN_CHANGED");
+        assertThat(revised.body()).doesNotContain("delta_validation_id");                  // 새 계획에는 기다리는 완료 보고가 없다
+        long rev2 = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", e[0]).query(Long.class).single();
+
+        // 새 계획의 PASS 로 RESUME → 다시 완료 보고
+        long pass2 = api.passValidation(e[0]);
+        HttpResponse<String> resumed = state(e[0], "RESUME", rev2, TaskApiSupport.longField(revised.body(), "lock_version"), pass2, null);
+        assertThat(resumed.statusCode()).as(resumed.body()).isEqualTo(200);
+        assertThat(task(e[0]).get("status")).isEqualTo("IN_PROGRESS");
+        HttpResponse<String> completed = state(e[0], "COMPLETED", rev2, TaskApiSupport.longField(resumed.body(), "lock_version"), null,
+                "\"summary\":\"끝\",\"delta\":[]");
+        assertThat(completed.statusCode()).as(completed.body()).isEqualTo(200);
+        assertThat(task(e[0]).get("status")).isEqualTo("COMPLETED");
+    }
+
     @Test
     void publicationWhileInProgress_doesNotReacceptAnOldDelta() throws Exception {
         // H: delta 완료 → DELTA NEEDS_REVIEW → RESUME 해서 다시 작업 중. 이때 발행되면 WAITING 으로 내리되, 옛 DELTA 를 다시 접수하지 않는다
@@ -509,6 +558,9 @@ class PublicationImpactIntegrationTests extends IntegrationTestSupport {
         assertThat(column("validation", "status", deltaK)).isEqualTo("PASS");
         assertThat(task(k[0]).get("status")).isEqualTo("WAITING");
         assertThat(task(k[0]).get("waiting_reason")).isEqualTo("REVALIDATION");
+        // 결과가 난 DELTA(완료로 쓰지 않은 PASS)는 계획 변경을 막지 않는다 (§2.5) — 막으면 RESUME 이 안 될 때 갇힌다
+        HttpResponse<String> revised = revise(k[0], "K2", api.implementsRef("API-01"), 1, ((Number) task(k[0]).get("lock_version")).longValue());
+        assertThat(revised.statusCode()).as(revised.body()).isEqualTo(201);
     }
 
     @Test
