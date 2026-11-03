@@ -49,7 +49,7 @@ DraftItem:
 
 | 필드 | 타입 | 설명 |
 | --- | --- | --- |
-| `candidate_key` | string | `draft-<해시 12자리>`: 종류·기준 항목·본문의 해시. 결과 안의 임시 키이며 최종 ID가 아니다 |
+| `candidate_key` | string | `draft-<해시 12자리>`: 종류·기준 버전 ID·본문의 해시. **한 결과 안에서** 항목과 변경을 짝짓는 임시 키이며 최종 ID가 아니다. `before`·답변·근거는 반영하지 않으므로 그것들이 달라도 같을 수 있다 |
 | `kind` | 5종 | 기준 항목이 있으면 그 종류와 같다 |
 | `status` | `DRAFT` | 유일한 값. 스키마에 다른 상태가 없다 |
 | `schema_version` | 1 | DesignItemContent v1 |
@@ -105,9 +105,9 @@ BE 제안대로 AI 응답은 바로 DRAFT가 되지 않고 **생성 작업 → �
 | 생성 후보(결과 전체) | `unresolved[]`, `untouched_existing_ids[]`, `unanswered_question_keys[]`, `omitted_items` | `untouched_existing_ids`는 "이번 결과가 건드리지 않음"이지 삭제 지시가 아니다. 재생성 결과에 없는 기존 항목은 삭제하지 않는다 |
 | 실제 DRAFT(채택 시) | `content`를 `design_item_version`에 저장: `status=DRAFT`, `origin=AI_PROPOSED`, `schema_version=1`, `title=content.description`, `source_document_version_id`=요청 문서 버전, `source_locator`=`sources[0].locator`(대표 출처, 전체 근거를 대체하지 않음) | CREATE는 새 `design_item`(키 발급)과 v1 DRAFT, UPDATE는 기준 DRAFT 갱신 또는 APPROVED 기준의 새 DRAFT 버전. AI 제안과 사용자 편집 결과는 구분해 둔다 |
 
-채택 규칙(BE 제안): 모든 후보는 사용자 채택 후 반영하고, `support=NONE`은 "확인 가능한 근거 없음"을 확인한 뒤 명시적으로 채택한다. `conflicting_fields`가 있는 후보는 사용자가 그 필드를 확정하기 전에는 채택할 수 없게 하는 것을 제안한다. 반영 직전에 대상 문서·답변이 생성 당시와 같은지, UPDATE 대상 DRAFT의 버전·본문 해시가 같은지, baseline이 그사이 발행되지 않았는지 확인하고, 다르면 반영을 막고 재생성을 안내한다. 같은 후보의 채택 요청 재전송은 중복 반영하지 않는다. 후보를 폐기해도 실제 DRAFT에는 영향이 없다.
+채택 규칙(BE 제안): 모든 후보는 사용자 채택 후 반영하고, `support=NONE`은 "확인 가능한 근거 없음"을 확인한 뒤 명시적으로 채택한다. `conflicting_fields`가 있는 후보는 사용자가 그 필드를 확정하기 전에는 채택할 수 없게 하는 것을 제안한다. 반영 직전에 대상 문서·답변이 생성 당시와 같은지, UPDATE 대상 DRAFT의 버전·본문 해시가 같은지, baseline이 그사이 발행되지 않았는지 확인하고, 다르면 반영을 막고 재생성을 안내한다. 같은 후보의 채택 요청 재전송은 **BE가 발급한 후보 ID**를 기준으로 중복 반영하지 않는다. 후보를 폐기해도 실제 DRAFT에는 영향이 없다.
 
-`candidate_key`는 종류·기준 버전·본문의 해시라서 같은 입력을 재생성하면 같은 키가 나오고 본문이 달라지면 바뀐다. 생성 결과 사이의 후보 중복 제거와 채택 멱등 처리에 쓸 수 있지만 BE가 발급하는 후보 ID를 대신하지는 않는다. 한 결과 안에서 기준 항목당 후보는 하나이며, 여러 생성 결과에 같은 항목의 후보가 있으면 BE 제안대로 하나를 골라 반영하고 이후는 기존 편집 기능으로 고친다.
+`candidate_key`는 한 생성 결과 안에서 `items[]`와 `changes[]`를 짝짓는 키일 뿐이다. 종류·기준 버전 ID·본문의 해시라서 `before`·답변·근거가 달라도 같을 수 있으므로, **생성 결과 간 중복 제거나 채택 멱등의 단독 기준으로 쓰지 않는다.** 후보는 생성 작업별로 보존하고 채택 멱등은 BE 후보 ID로 처리한다. 한 결과 안에서 기준 항목당 후보는 하나이며, 여러 생성 결과에 같은 항목의 후보가 있으면 BE 제안대로 하나를 골라 반영하고 이후는 기존 편집 기능으로 고친다.
 
 ## 7. 오류
 

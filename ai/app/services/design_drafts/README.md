@@ -23,7 +23,7 @@
 3. 기준 항목이 있으면 `before`(기존 본문)와 `after`(초안)의 최상위 필드 차이를 `changed_fields`로 만든다. 각 항목은 `ADDED`·`CHANGED`·`REMOVED`로 구분하며, 비교는 JSON 직렬화 기준이라 `true`와 `1`도 다르고 필드 없음과 `null`도 다르다(BE가 둘을 다른 JSON으로 보존). 차이도 충돌도 없으면 초안이 아니므로 버리고 기준 항목을 `untouched_existing_ids`에 둔다. 기준 항목당 초안은 하나다.
 4. 근거 등급(`DOCUMENT_AND_ANSWER` → `ANSWER` → `DOCUMENT` → `NONE`) 순으로 정렬하고 `max_items`로 자른다. 잘린 수는 `omitted_items`.
 
-승인본은 바뀌지 않는다. 입력의 `APPROVED` 항목은 `before`에 그대로 나오고 출력에는 `DRAFT` 상태만 있다. 초안 키 `draft-<해시>`는 종류·기준 항목·본문에서 만들어 출력 순서와 무관하다.
+승인본은 바뀌지 않는다. 입력의 `APPROVED` 항목은 `before`에 그대로 나오고 출력에는 `DRAFT` 상태만 있다. 초안 키 `draft-<해시>`는 종류·기준 버전 ID·본문에서 만들어 출력 순서와 무관하지만, 한 결과 안에서 항목과 변경을 짝짓는 키일 뿐이다. `before`·답변·근거가 달라도 같을 수 있으므로 생성 결과 간 식별이나 채택 멱등은 BE가 발급하는 후보 ID로 한다.
 
 ## 사용
 
