@@ -189,13 +189,17 @@ describe('documented REST mock adapter', () => {
 
   it('issues only mock tokens and keeps connection and provider status honest', async () => {
     await login()
+    // 팀원 예시 에이전트는 시드에서 연결됨이라, 새로 발급한 mock 토큰이 연결을 만들지 않는지(발급 전후 연결 수가 같은지)만
+    // 본다(사용자 승인 2026-11-03, D29).
+    const connected = async () =>
+      (await agentsApi.list('101')).items.filter((agent) => agent.connected)
+        .length
+    const before = await connected()
     const result = await agentsApi.issueToken('101', { label: '예시 PC' })
     expect(result.token).toMatch(/^mock-only-/)
     expect(result.mcp_url).toContain('mock.invalid')
     expect(localStorage.getItem(MOCK_STORAGE_KEY)).not.toContain(result.token)
-    expect(
-      (await agentsApi.list('101')).items.every((agent) => !agent.connected),
-    ).toBe(true)
+    expect(await connected()).toBe(before)
     await agentsApi.revokeToken(result.token_info.id)
     expect((await agentsApi.myTokens()).items[0].revoked_at).toBeTruthy()
     const usage = await dashboardApi.usage('101', {
