@@ -544,6 +544,49 @@ export const impactStatusSchema = z.enum([
 ])
 export type ImpactStatus = z.infer<typeof impactStatusSchema>
 
+export const ownerRecommendationEvidenceSchema = z.object({
+  type: z.enum(['DIRECT_TASK_REFERENCE', 'DOCUMENT_SOURCE', 'AI_CANDIDATE']),
+  reason: z.string(),
+  task_id: idSchema,
+  task_key: z.string(),
+  plan_revision_id: idSchema,
+  design_item_id: idSchema.optional(),
+  design_item_version_id: idSchema.optional(),
+  referenced_design_item_version_id: idSchema.optional(),
+  document_id: idSchema.optional(),
+  document_version_id: idSchema.optional(),
+  sources: sourceSchema.array(),
+})
+
+export const ownerRecommendationsSchema = z.object({
+  proposal_revision: z.number().int(),
+  snapshot_hash: z.string(),
+  direct_reference_status: z.enum([
+    'COMPLETE',
+    'INCOMPLETE',
+    'STALE',
+    'NOT_APPLICABLE',
+  ]),
+  direct_reference_reasons: z.string().array(),
+  document_reference_status: z
+    .enum(['COMPLETE', 'INCOMPLETE', 'STALE', 'NOT_APPLICABLE'])
+    .optional(),
+  document_reference_reasons: z.string().array().optional(),
+  ai_analysis_status: impactStatusSchema,
+  ai_current: z.boolean(),
+  ai_reanalysis_in_progress: z.boolean(),
+  withheld_ai_candidates: z.number().int().nonnegative(),
+  recommendations: z
+    .object({
+      member_id: idSchema,
+      area: z.string().optional(),
+      evidence: ownerRecommendationEvidenceSchema.array(),
+    })
+    .array(),
+  notification_candidate_member_ids: idSchema.array(),
+})
+export type OwnerRecommendations = z.infer<typeof ownerRecommendationsSchema>
+
 export const changeImpactSchema = z.object({
   explicit: explicitImpactSchema.array(),
   candidates: impactCandidateSchema.array(),
@@ -558,6 +601,8 @@ export const changeImpactSchema = z.object({
   reanalysis: z
     .object({ run_id: z.string(), requested_at: timeSchema.optional() })
     .optional(),
+  // CHG-A05 확장. 기존 서버와 CHG-A06 재분석 접수 응답에는 없을 수 있다.
+  owner_recommendations: ownerRecommendationsSchema.optional(),
 })
 export type ChangeImpact = z.infer<typeof changeImpactSchema>
 
