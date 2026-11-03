@@ -15,7 +15,7 @@ import { OfficeRenderer3D } from './office/OfficeRenderer3D'
 import type { OfficeEntity3D, OfficeSceneHit } from './office/OfficeRenderer3D'
 import {
   OutdoorStreetRenderer,
-  streetSpawn,
+  walkableStreetSpawn,
 } from './office/OutdoorStreetRenderer'
 import { avatarAppearance, officeActors } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
@@ -391,7 +391,10 @@ function OfficeRuntime(
           state.props.design,
         )
         street.current.setSize(size.width, size.height)
-        outdoorPlayer.current = streetSpawn(bounds)
+        outdoorPlayer.current = walkableStreetSpawn(
+          bounds,
+          street.current.canWalk,
+        )
         keys.current.clear()
       }
       const me = outdoorPlayer.current
@@ -410,6 +413,9 @@ function OfficeRuntime(
         ),
       )
       street.current.render(me, time, dt)
+      // 사무실의 data-player-x처럼 산책 위치를 남겨 E2E가 걸음을 확인한다.
+      gl.domElement.setAttribute('data-street-x', me.x.toFixed(2))
+      gl.domElement.setAttribute('data-street-y', me.y.toFixed(2))
       return
     }
     if (street.current) {

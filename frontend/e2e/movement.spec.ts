@@ -71,3 +71,33 @@ test('기준 설계가 없는 새 프로젝트에서도 걷고 문서 입력 중
   await expect(canvas).toBeFocused()
   await walkRight(page)
 })
+
+// 산책 버그(2026-11-03): 고정 사무실(D28) 폭에서는 산책 시작점이 가로수 기둥과 겹쳐 어느 쪽으로도 걷지 못했다.
+// 산책에서 W·D를 누르면 거리 위치가 바뀌어야 한다.
+test('산책에서 키를 누르면 거리에서 걷는다', async ({ page }) => {
+  const canvas = await office(page, '101')
+  await page.getByRole('button', { name: '산책', exact: true }).click()
+  // 거리 모델을 처음 만들 때는 몇 초 걸린다.
+  await expect(canvas).toHaveAttribute('data-street-x', /\d/, {
+    timeout: 30_000,
+  })
+  await canvas.focus()
+  const at = async () => [
+    Number(await canvas.getAttribute('data-street-x')),
+    Number(await canvas.getAttribute('data-street-y')),
+  ]
+  for (const key of ['w', 'd']) {
+    const [x, y] = await at()
+    await page.keyboard.down(key)
+    try {
+      await expect
+        .poll(async () => {
+          const [nx, ny] = await at()
+          return Math.hypot(nx - x, ny - y)
+        })
+        .toBeGreaterThan(8)
+    } finally {
+      await page.keyboard.up(key)
+    }
+  }
+})
