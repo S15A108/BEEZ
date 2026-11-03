@@ -107,8 +107,8 @@ test('회원 캐릭터 로봇·벌은 보드 크기 그대로 팔·다리 축을
   }
 })
 
-// D29: 고정 사무실에서 팀원은 자기 자리에 앉아 있고(위치 API 없음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
-test('팀원은 자기 자리에 앉아 있고 에이전트는 상태별 자리로 간다', () => {
+// D29: 고정 사무실에서 팀원은 자기 자리 옆에 서 있고(위치 API 없음, 가구는 쓰지 않음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
+test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리로 간다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
       .floors[1],
@@ -162,14 +162,26 @@ test('팀원은 자기 자리에 앉아 있고 에이전트는 상태별 자리�
   const spots = (list: { x: number; y: number }[] | undefined) =>
     (list ?? []).map((seat) => ({ x: seat.x * 32 + 16, y: seat.y * 32 + 27 }))
   const place = (id: string) => ({ x: at(id).x, y: at(id).y })
-  expect(at('member:22')).toMatchObject({ stationary: true, seated: true })
+  // 팀원은 가구를 쓰지 않는다: 의자에 앉지 않고 자기 의자 옆(2칸 안, 의자와 다른 곳)에 서 있다.
+  // 기대값을 seated에서 standing으로 바꿨다(사용자 승인 2026-11-03).
+  const chair22 = spots([homes.get('member:22')!])[0]
+  expect(at('member:22')).toMatchObject({ stationary: true, standing: true })
+  expect(at('member:22').seated).toBeFalsy()
+  expect(place('member:22')).not.toEqual(chair22)
+  expect(
+    Math.hypot(chair22.x - at('member:22').x, chair22.y - at('member:22').y),
+  ).toBeLessThan(2 * 32)
   expect(at('member:21')).toBeUndefined()
-  // 작업 중: 주인 옆 아일랜드 자리
+  // 작업 중: 주인의 빈 아일랜드 의자에 앉고(사용자 결정), 옆에 선 주인과는 사람 사이 거리보다 멀다
   const owner = spots([homes.get('member:26')!])[0]
   expect(spots(floor.seats.dev!.slice(0, 12))).toContainEqual(place('agent:26'))
+  expect(place('agent:26')).toEqual(owner)
   expect(
-    Math.hypot(owner.x - at('agent:26').x, owner.y - at('agent:26').y),
-  ).toBeLessThan(2.2 * 32)
+    Math.hypot(
+      at('member:26').x - at('agent:26').x,
+      at('member:26').y - at('agent:26').y,
+    ),
+  ).toBeGreaterThan(PERSONAL_SPACE)
   expect(at('agent:26')).toMatchObject({
     status: 'working',
     agentStatus: 'working',

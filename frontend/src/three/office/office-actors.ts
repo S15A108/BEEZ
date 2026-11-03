@@ -97,9 +97,10 @@ const STATE: Record<string, { label: string; look: string; life: string }> = {
 
 /**
  * 고정 사무실(D28·D29)의 사람과 에이전트.
- * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리에 앉아 있다.
+ * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리 옆에 서 있다.
+ *   팀원은 가구를 쓰지 않는다(사용자 결정 "가구랑 상호작용하는 건 에이전트만 가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
  * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 끊김은 라운지 충전 자리(리클라이너),
- *   작업 중은 주인 옆 아일랜드 자리, 검증 중은 칸반 워룸 화면 앞, 대기는 허들 스툴, 연결됨(할 일 없음)은 주인 자리 뒤에 선다.
+ *   작업 중은 주인의 빈 아일랜드 의자(주인은 옆에 서 있음), 검증 중은 칸반 워룸 화면 앞, 대기는 허들 스툴, 연결됨(할 일 없음)은 주인 자리 뒤에 선다.
  *   상태가 바뀔 때만 새 자리로 걷고, 산책은 하지 않는다.
  */
 function fixedOfficeActors(
@@ -132,28 +133,12 @@ function fixedOfficeActors(
     (agent) =>
       agent.kind !== 'lead' && !agent.hired_by && agent.duty_status !== 'off',
   )
-  for (const agent of people) {
-    const seat = homeSeats.get(agent.id)
-    if (seat) taken.add(key(seat))
-    if (!seat || agent.id === currentUserId) continue
-    result.push({
-      id: agent.id,
-      name: agent.name,
-      tag: agent.name,
-      x: seat.x * 32 + 16,
-      y: seat.y * 32 + 27,
-      dir: seat.facing,
-      moving: false,
-      floor: 1,
-      color: agent.color,
-      status: agent.status,
-      appearance: avatarAppearance(agent.avatar),
-      seated: true,
-      stationary: true,
-    })
-  }
-  // 주인 자리 뒤(앉는 방향 반대쪽) 0.9칸에 선다. 막혔으면 자리 옆에 앉는다.
-  const behind = (seat: Spot): Spot | undefined => {
+  // 자리(의자)에서 앉는 방향 반대쪽으로 back칸, 옆으로 side칸 떨어진 빈 곳. 막혔거나 이미 누가 선 곳이면 없다.
+  const standAt = (
+    seat: Spot,
+    back: number,
+    side: number,
+  ): Spot | undefined => {
     const [dx, dy] = {
       down: [0, -1],
       up: [0, 1],
@@ -161,8 +146,8 @@ function fixedOfficeActors(
       right: [-1, 0],
     }[seat.facing]
     const spot = {
-      x: seat.x + dx * 0.9,
-      y: seat.y + dy * 0.9,
+      x: seat.x + dx * back - dy * side,
+      y: seat.y + dy * back + dx * side,
       facing: seat.facing,
     }
     const free =
@@ -171,6 +156,39 @@ function fixedOfficeActors(
       ? (taken.add(key(spot)), spot)
       : undefined
   }
+  for (const agent of people) {
+    const seat = homeSeats.get(agent.id)
+    if (seat) taken.add(key(seat))
+  }
+  for (const agent of people) {
+    const seat = homeSeats.get(agent.id)
+    if (!seat || agent.id === currentUserId) continue
+    // 자기 의자 뒤 1.5칸, 이웃 의자 사이(옆 0.9칸)에 서서 책상을 본다. 의자 바로 뒤 0.9칸은 주인의 에이전트(연결됨)
+    // 자리라 비워 두고, 둘 사이는 사람 사이 거리(PERSONAL_SPACE)보다 멀다. 빈 의자에는 그 팀원의 작업 중 에이전트만 앉는다.
+    const spot =
+      standAt(seat, 1.5, 0.9) ??
+      standAt(seat, 1.5, -0.9) ??
+      standAt(seat, 1.5, 0)
+    if (!spot) continue
+    result.push({
+      id: agent.id,
+      name: agent.name,
+      tag: agent.name,
+      x: spot.x * 32 + 16,
+      y: spot.y * 32 + 27,
+      dir: spot.facing,
+      moving: false,
+      floor: 1,
+      color: agent.color,
+      status: agent.status,
+      appearance: avatarAppearance(agent.avatar),
+      standing: true,
+      stationary: true,
+    })
+  }
+  // 주인 자리 뒤(앉는 방향 반대쪽) 0.9칸에 선다. 막혔으면 자리 옆에 앉는다.
+  const behind = (seat: Spot) => standAt(seat, 0.9, 0)
+  const ownerChairs = new Set<string>()
   for (const agent of agents.filter(
     (item) => item.hired_by && item.duty_status !== 'off',
   )) {
@@ -178,7 +196,13 @@ function fixedOfficeActors(
     const owner = homeSeats.get(`member:${agent.hired_by}`)
     let standing = false
     let spot: Spot | undefined
-    if (state === 'working') spot = take(island, owner)
+    // 작업 중: 주인의 빈 아일랜드 의자에 앉는다(주인은 옆에 서 있다, 사용자 결정). 주인 의자를 모르거나 이미 다른
+    // 에이전트가 앉았으면 주인과 가까운 빈 아일랜드 의자.
+    if (state === 'working')
+      spot =
+        owner && !ownerChairs.has(key(owner))
+          ? (ownerChairs.add(key(owner)), owner)
+          : take(island, owner)
     else if (state === 'validating')
       spot = take(floor.seats.board) ?? take(floor.seats.meeting)
     else if (state === 'waiting') spot = take(floor.seats.meeting)
