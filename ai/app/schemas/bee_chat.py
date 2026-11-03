@@ -31,9 +31,6 @@ MAX_EVIDENCE = 50
 DEFAULT_MAX_EVIDENCE = 12
 # A READY chunk is at most 600 tokens; this only bounds a hostile input.
 MAX_EVIDENCE_TEXT_CHARS = 20_000
-# The BE bounds a plan's title and goal only as non-blank; this guards a
-# hostile input and the payload clips what the model sees.
-MAX_TASK_TEXT_CHARS = 20_000
 MAX_APPROVED_ITEMS = 500
 MAX_RELATED_TASKS = 100
 MAX_HISTORY_TURNS = 10
@@ -77,9 +74,10 @@ ProjectDescription = Annotated[
     str, StringConstraints(max_length=MAX_PROJECT_DESCRIPTION_CHARS)
 ]
 Title = Annotated[str, StringConstraints(min_length=1, max_length=500)]
-TaskText = Annotated[
-    str, StringConstraints(min_length=1, max_length=MAX_TASK_TEXT_CHARS)
-]
+# The BE bounds a plan's title and goal only as non-blank, so does this
+# side (the request body limit still applies); the payload clips the
+# model's view of them.
+TaskText = Annotated[str, StringConstraints(min_length=1)]
 ContentHash = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 _MARKER = re.compile(r"\[(\d{1,2})\]")

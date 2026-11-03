@@ -51,6 +51,12 @@
         "document_version_id": "312",
         "version_no": 1,
         "location": "성공 응답 / L19-L19"
+      },
+      {
+        "document_id": "302",
+        "document_version_id": "312",
+        "version_no": 1,
+        "location": "나래 문서 API 명세 / POST /api/projects/{projectId}/documents / L7-L7"
       }
     ],
     "design_refs": [

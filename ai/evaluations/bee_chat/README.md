@@ -24,7 +24,7 @@ python -m scripts.generate_bee_chat_examples              # 커밋된 보고서�
 | plan-absent·api-absent | 문서가 "아직 정하지 않았다"고 밝힌 문장을 인용 | `ANSWERED` + `unresolved`에 미정 사항 |
 | req-absent | 문서에 없는 "90일"을 조작 인용으로 답함 | **거부**(`invalid_output`). "90일"은 응답 어디에도 없음 |
 | req-contradiction | 실제 30 MB 문장을 인용하면서 본문은 "50 MB"라고 답함 | **거부**(`invalid_output`): 본문의 숫자 50이 인용·참조 어디에도 없음(사실 토큰 검사, PR #96 P1 3차) |
-| api-create | 인용 2건 + 승인 항목 API-001 + 작업 TASK-001 참조 | 문서 ID·승인 버전·항목 위치·관련 작업이 한 응답에 담김. `sources`는 인용 2건(항목 출처는 `design_refs`에만) |
+| api-create | 인용 2건 + 승인 항목 API-001 + 작업 TASK-001 참조 | 문서 ID·승인 버전·항목 위치·관련 작업이 한 응답에 담김. `sources`는 인용 2건 + 범위 안 항목 출처 1건 |
 | task-status | 인용 없이 작업 상태·담당자(`assignee_member_id`)와 승인 항목 API-001로 답함 | `ANSWERED`, `task_refs`·`design_refs`로 `grounded`; 숫자 21·READY·TASK-001·API-001이 참조 안에서 확인됨 |
 | erd-absent | 모델이 `INSUFFICIENT_EVIDENCE`로 판단하면서 인용을 첨부 | 상태가 우선: 고정 문구, 인용 비움 |
 | password-absent | 문서에 없는 주제 | `INSUFFICIENT_EVIDENCE` |
@@ -39,6 +39,6 @@ python -m scripts.generate_bee_chat_examples              # 커밋된 보고서�
 
 - 18문항 중 답변 12·정보 부족 2·범위 밖 1·거부 3, 검사 6종(기대 상태, 인용 복원, 핵심 용어, grounded 일치, 표식 범위, 주입 표식 부재) 모두 통과.
 - 조작 인용과 인용이 뒷받침하지 않는 사실은 답변 전체 거부(502)로, 근거를 대지 않은 답은 고정 문구 보류(200)로 처리된다. 정보 부족은 HTTP 200의 `answer_status`로, 모델 실패·거부는 HTTP 502/504 오류 봉투로 구분된다(완료 조건 "정보 부족·LLM 실패 응답이 구분됨").
-- 사실 토큰 검사는 숫자·키·경로·식별자·코드만 본다. 토큰이 같은 의미 모순(부정문 등)은 잡지 못하고, 정당한 답이 새 숫자("2가지")를 쓰면 거부될 수 있다. `--live`로 거부율을 재고 판정 모델 추가 여부를 정한다.
+- 사실 토큰 검사는 숫자·키·경로·식별자·코드를 독립 토큰으로 대조한다(150 안의 50은 통과하지 않음). 토큰이 같은 의미 모순(부정문 등)은 잡지 못하고, 정당한 답이 새 숫자("2가지")를 쓰면 거부될 수 있다. `--live`로 거부율을 재고 판정 모델 추가 여부를 정한다.
 - 문서가 스스로 미정이라고 밝힌 사항은 그 문장을 인용한 `ANSWERED`가 더 유용하다고 보고 대본을 그렇게 두었다. 실제 모델이 같은 판단을 하는지도 `--live`로 확인해야 한다.
 - 대본 검색은 기대 인용 블록을 앞세운 것이라 검색 품질을 말하지 않는다. 검색 재현율은 #130 기록(`docs/experiments/document-rag-evaluation-S15P31A108-130.md`)을 참조한다.

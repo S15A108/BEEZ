@@ -34,12 +34,13 @@ PROFILE = "gms-small-1024-v1"
 LIMIT = "단일 파일 업로드 한도는 30 MB이며, 초과하면 HTTP 413을 반환한다."
 PUBLISH = "발행은 리더만 수행한다."
 # A stored source may point at an older document version than the scope has.
-ITEM_SOURCE = {
+OLDER_SOURCE = {
     "document_id": "301",
     "document_version_id": "310",
     "version_no": 1,
     "location": "발행 권한 / L11-L11",
 }
+IN_SCOPE_SOURCE = {**OLDER_SOURCE, "document_version_id": "311", "version_no": 2}
 
 
 def evidence(evidence_id, text, section=None, line=3) -> dict:
@@ -54,6 +55,19 @@ def evidence(evidence_id, text, section=None, line=3) -> dict:
         "embedding_profile_id": PROFILE,
         "title": "업로드 요구사항",
         "section_title": section,
+    }
+
+
+def approved_item(source=None) -> dict:
+    return {
+        "id": "1101",
+        "design_item_id": "1001",
+        "key": "PLN-001",
+        "kind": "POLICY",
+        "version_no": 1,
+        "status": "APPROVED",
+        "content": {"description": PUBLISH},
+        "source": OLDER_SOURCE if source is None else source,
     }
 
 
@@ -73,18 +87,7 @@ def request_dict(**overrides) -> dict:
             evidence("ev-1", LIMIT, "파일 크기"),
             evidence("ev-2", PUBLISH, None, 11),
         ],
-        "approved_items": [
-            {
-                "id": "1101",
-                "design_item_id": "1001",
-                "key": "PLN-001",
-                "kind": "POLICY",
-                "version_no": 1,
-                "status": "APPROVED",
-                "content": {"description": PUBLISH},
-                "source": ITEM_SOURCE,
-            }
-        ],
+        "approved_items": [approved_item()],
         "related_tasks": [
             {
                 "id": "501",
@@ -176,8 +179,20 @@ def test_fact_tokens_are_ascii_numbers_keys_paths_and_identifiers():
         "30",
         "1.5",
     ]
+    # PR #96 P2 (4th round): the sentence's full stop is not part of a path.
+    assert fact_tokens("목록은 GET /api/users. 생성은 POST /api/users/. 끝.") == [
+        "GET",
+        "/api/users",
+        "POST",
+        "/api/users/",
+    ]
     assert unsupported_facts("한도는 50 MB [1]", LIMIT) == ["50"]
     assert unsupported_facts("한도는 30 MB [1]", LIMIT) == []
+    # PR #96 P1 (4th round): tokens are compared whole, never as substrings.
+    assert unsupported_facts("한도는 50 MB [1]", "한도는 150 MB이다.") == ["50"]
+    assert unsupported_facts("GET /api/users. [1]", "GET /api/users 목록") == []
+    assert unsupported_facts("/api/users [1]", "/api/users/{id}") == ["/api/users"]
+    assert unsupported_facts("TASK-001 [1]", "TASK-0011") == ["TASK-001"]
 
 
 @pytest.mark.asyncio
@@ -237,6 +252,15 @@ async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
     # PR #96 P1 (3rd round): a real 30 MB quote under a 50 MB claim.
     error = await rejected(answer(text="한도는 50 MB입니다 [1]."))
     assert "50" not in json.dumps(error.to_api_dict(), ensure_ascii=False)
+    # PR #96 P1 (4th round): 50 is not inside 150; whole tokens are compared.
+    bigger = "한도는 150 MB이다."
+    await rejected(
+        answer(
+            text="한도는 50 MB입니다 [1].",
+            citations=[{"evidence_id": "ev-1", "quote": bigger}],
+        ),
+        retrieved_evidence=[evidence("ev-1", bigger)],
+    )
     # The same without any marker: the citation backs nothing and is dropped,
     # the unsupported number then has no grounding at all.
     await rejected(answer(text="한도는 50 MB입니다.", design_refs=["1101"]))
@@ -245,7 +269,8 @@ async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
     # Codes and keys must come from the grounding too.
     await rejected(answer(text="한도는 30 MB이고 [1] 삭제 정책은 CASCADE입니다."))
     await rejected(answer(text="TASK-002가 이 한도를 구현합니다 [1]."))
-    # Facts drawn from the cited chunk, the referenced item and the task pass.
+    # Facts drawn from the cited chunk, the referenced item and the task pass,
+    # and a path followed by a full stop is still the cited path.
     fine = answer(
         text="한도는 30 MB이며 HTTP 413을 돌려줍니다 [1]. PLN-001에 따라 리더만 발행하고 TASK-001(READY, 멤버 21)이 구현합니다.",
         design_refs=["1101"],
@@ -253,6 +278,15 @@ async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
     )
     result = (await run(fine)).result
     assert result.answer_status == "ANSWERED" and result.grounded
+    route = "목록 조회는 GET /api/users 경로다."
+    path_answer = answer(
+        text="목록 조회 경로는 GET /api/users. [1]",
+        citations=[{"evidence_id": "ev-1", "quote": route}],
+    )
+    result = (
+        await run(path_answer, retrieved_evidence=[evidence("ev-1", route)])
+    ).result
+    assert result.answer_status == "ANSWERED"
 
 
 @pytest.mark.asyncio
@@ -323,22 +357,25 @@ async def test_non_answers_use_the_fixed_text_and_drop_citations():
 
 
 @pytest.mark.asyncio
-async def test_approved_items_ground_an_answer_but_their_source_is_not_evidence():
-    # PR #96 P2 (3rd round): an item sourced from an older document version is
-    # accepted; its stored source stays on design_refs, not in sources.
+async def test_item_sources_inside_the_scope_are_sources_and_older_ones_are_not():
+    # PR #96 P2 (3rd/4th round): an item sourced from an older document
+    # version is accepted and keeps its source on design_refs only; an item
+    # sourced inside the scope is a source the screen can open.
     raw = answer(
         text="발행은 리더만 합니다. TASK-001이 이를 구현합니다.",
         citations=[],
         design_refs=["1101", "1101"],
         task_refs=["501"],
     )
-    result = (await run(raw)).result
-    assert result.grounded and result.answer_status == "ANSWERED"
-    assert [ref.key for ref in result.design_refs] == ["PLN-001"]
-    assert result.design_refs[0].design_item_version_id == "1101"
-    assert result.design_refs[0].source.model_dump(mode="json") == ITEM_SOURCE
-    assert [ref.key for ref in result.task_refs] == ["TASK-001"]
-    assert result.sources == ()
+    older = (await run(raw)).result
+    assert older.grounded and older.answer_status == "ANSWERED"
+    assert [ref.key for ref in older.design_refs] == ["PLN-001"]
+    assert older.design_refs[0].design_item_version_id == "1101"
+    assert older.design_refs[0].source.model_dump(mode="json") == OLDER_SOURCE
+    assert [ref.key for ref in older.task_refs] == ["TASK-001"]
+    assert older.sources == ()
+    current = (await run(raw, approved_items=[approved_item(IN_SCOPE_SOURCE)])).result
+    assert [s.model_dump(mode="json") for s in current.sources] == [IN_SCOPE_SOURCE]
 
 
 @pytest.mark.asyncio
@@ -423,7 +460,8 @@ async def test_llm_proposer_sends_project_tasks_and_history_as_data():
                 "assignee_member_id": "21",
                 "current_plan_revision": {
                     "id": "511",
-                    "plan": {"title": "업로드 화면", "goal": "목" * 2243},
+                    # PR #96 P3 (4th round): no length bound, as in the BE.
+                    "plan": {"title": "업로드 화면", "goal": "목" * 20_001},
                 },
             }
         ],

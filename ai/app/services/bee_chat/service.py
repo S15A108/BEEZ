@@ -58,12 +58,14 @@ UNGROUNDED_NOTE = (
 # A marker with the space before and after it, so a removed marker leaves no
 # double space.
 _MARKER = re.compile(r"( ?)\[(\d{1,2})\]( ?)")
-# Tokens that state a checkable fact: a path, a dotted or snake_case or
-# camelCase identifier, a display key (TASK-001), an all-caps code (RESTRICT,
-# POST, HTTP) or a number. ASCII only, so a Korean particle glued to a token
-# is not part of it; two-letter units like MB are left to the quote itself.
+# Tokens that state a checkable fact: a path (never ending in a dot, so the
+# sentence's full stop stays out), a dotted or snake_case or camelCase
+# identifier, a display key (TASK-001), an all-caps code (RESTRICT, POST,
+# HTTP) or a number. ASCII only, so a Korean particle glued to a token is not
+# part of it; two-letter units like MB are left to the quote itself. The same
+# pattern tokenizes the grounding text, and tokens are compared whole.
 _FACT = re.compile(
-    r"/[A-Za-z0-9_{}./-]+"
+    r"/[A-Za-z0-9_{}./-]*[A-Za-z0-9_{}/-]"
     r"|[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*"
     r"|[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+"
     r"|[a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+"
@@ -138,9 +140,14 @@ def fact_tokens(text: str) -> list[str]:
 
 
 def unsupported_facts(text: str, support: str) -> list[str]:
-    """Facts the answer states that appear nowhere in its grounding text."""
-    folded = support.casefold()
-    return [token for token in fact_tokens(text) if token.casefold() not in folded]
+    """Facts the answer states that the grounding text does not state.
+
+    Both sides are tokenized the same way and compared token for token, so
+    `50` is not covered by `150` and `/api/users` is not covered by
+    `/api/users/{id}`.
+    """
+    known = {token.casefold() for token in _FACT.findall(support)}
+    return [token for token in fact_tokens(text) if token.casefold() not in known]
 
 
 def support_text(
@@ -187,13 +194,13 @@ def verify_answer(
     a quote that is not an exact substring of its evidence; a `[n]` that
     names no citation; a blank ANSWERED text; and a fact in the text
     (number, key, path, identifier, code) that neither a cited chunk nor a
-    referenced item or task contains, so "50 MB" over a 30 MB quote never
-    passes. A citation no `[n]` refers to backs nothing and is dropped;
-    repeated citations collapse to one number. An ANSWERED answer that then
-    keeps no citation, approved item or related task is not shown: it
-    becomes INSUFFICIENT_EVIDENCE with the fixed text. For the two
-    non-answer statuses the model's text, citations and references are not
-    used at all; only its unresolved and next_actions are.
+    referenced item or task states as the same whole token, so "50 MB" over
+    a 30 MB (or 150 MB) quote never passes. A citation no `[n]` refers to
+    backs nothing and is dropped; repeated citations collapse to one number.
+    An ANSWERED answer that then keeps no citation, approved item or related
+    task is not shown: it becomes INSUFFICIENT_EVIDENCE with the fixed text.
+    For the two non-answer statuses the model's text, citations and
+    references are not used at all; only its unresolved and next_actions are.
     """
     answer = proposal.answer
     by_evidence = {item.evidence_id: item for item in evidence}
@@ -284,9 +291,11 @@ def verify_answer(
     elif status == "OUT_OF_SCOPE":
         text = OUT_OF_SCOPE_TEXT
 
-    # 00-common Source rows come from citations only: a stored item source may
-    # point at an older document version outside this scope (#132 precedent),
-    # so it stays on design_refs[].source and is not presented as evidence.
+    # 00-common Source rows: the citations, then the stored source of each
+    # referenced item when it lies inside this scope. A source outside the
+    # scope (an older document version the BE preserved) stays on
+    # design_refs[].source only, as the #132 packet does.
+    allowed = set(request.scope.document_version_ids)
     sources: list[ItemSource] = []
     for cited in citations:
         source = ItemSource(
@@ -296,6 +305,14 @@ def verify_answer(
             location=evidence_location(by_evidence[cited.evidence_id]),
         )
         if source not in sources:
+            sources.append(source)
+    for ref in design_refs:
+        source = ref.source
+        if (
+            source is not None
+            and source.document_version_id in allowed
+            and source not in sources
+        ):
             sources.append(source)
 
     notices: list[str] = []

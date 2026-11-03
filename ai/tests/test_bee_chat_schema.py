@@ -316,7 +316,8 @@ def test_approved_items_keep_sources_from_older_document_versions():
 
 
 def test_task_plan_texts_take_the_backend_length():
-    # PR #96 P2 (3rd round): the BE bounds a plan goal only as non-blank.
+    # PR #96 P2/P3 (3rd, 4th round): the BE bounds a plan goal only as
+    # non-blank, so no length on this side either.
     task = from_json(
         RelatedTask,
         {
@@ -325,11 +326,11 @@ def test_task_plan_texts_take_the_backend_length():
             "status": "READY",
             "current_plan_revision": {
                 "id": "511",
-                "plan": {"title": "업로드 화면", "goal": "목표" * 2500},
+                "plan": {"title": "업로드 화면", "goal": "목" * 20_001},
             },
         },
     )
-    assert len(task.current_plan_revision.plan.goal) == 5000
+    assert len(task.current_plan_revision.plan.goal) == 20_001
     with pytest.raises(ValidationError):
         from_json(
             RelatedTask,
