@@ -2,6 +2,7 @@ package com.beez.backend.impactanalysis;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
@@ -22,7 +23,8 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
     @Autowired DataSource dataSource;
     @Autowired ImpactRunService runs;
     @Autowired ProposalCommandService proposals;
-    @Autowired ImpactRunRepository runRepository;
+    /** 실제 저장소 그대로. 결과 저장 실패를 한 번 흉내 내는 시험에서만 바꾼다 */
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean ImpactRunRepository runRepository;
     @Autowired com.beez.backend.designitem.repository.DesignProjectRepository projects;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
     @MockitoBean AiClient ai;
@@ -67,6 +69,10 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
                 .param("p",proposal).query(Integer.class).single()).isEqualTo(2);
         assertThat(api.jdbc.sql("SELECT usage_status FROM change_impact_run WHERE change_proposal_id=:p ORDER BY id DESC LIMIT 1")
                 .param("p",proposal).query(String.class).single()).isEqualTo("REPORTED");
+        // 비용 조회(MON-A02)가 읽는 공통 사용량 표에도 남는다. 두 실행이 같은 호출 키를 보고하면 한 번만 센다
+        assertThat(api.jdbc.sql("SELECT project_id,feature,model FROM llm_usage WHERE request_key='llm-call'").query().listOfRows())
+                .singleElement().satisfies(usage -> assertThat(usage).containsEntry("project_id",project)
+                        .containsEntry("feature","CHANGE_IMPACT").containsEntry("model","unknown"));
     }
 
     @Test void failedAiPreservesExplicitAndInsufficientEvidenceIsDistinct() {
@@ -79,6 +85,36 @@ class ImpactRunIntegrationTest extends IntegrationTestSupport {
         doReturn(envelope("INSUFFICIENT")).when(ai).changeImpact(any());
         runs.retry(caller,project,proposal,null); work();
         assertThat(runs.get(caller,project,proposal).analysisStatus()).isEqualTo("INSUFFICIENT_EVIDENCE");
+    }
+
+    /** 승인 전 분석에서 모델 호출 중 요청자가 프로젝트에서 빠지면 결과는 버리되, 받은 사용량은 실행 기록과 공통 사용량 표에 남는다 (-169) */
+    @Test void membershipRemovedDuringModelCallKeepsReceivedUsage() {
+        when(ai.changeImpact(any())).thenAnswer(call -> {
+            api.jdbc.sql("UPDATE project_member SET active=false,left_at=clock_timestamp() WHERE project_id=:p AND account_id=:a")
+                    .param("p",project).param("a",member).update();
+            return envelope("SUFFICIENT");
+        });
+        runs.retry(caller,project,proposal,null); work();
+        var run=api.jdbc.sql("SELECT status,usage_status,(ai_result IS NULL OR ai_result='null'::jsonb) AS no_ai_result,"
+                + "(generation IS NULL OR generation='null'::jsonb) AS no_generation,usage::text AS usage FROM change_impact_run "
+                + "WHERE change_proposal_id=:p ORDER BY id DESC LIMIT 1").param("p",proposal).query().singleRow();
+        assertThat(run).containsEntry("status","STALE").containsEntry("usage_status","REPORTED")
+                .containsEntry("no_ai_result",true).containsEntry("no_generation",true);
+        assertThat(run.get("usage").toString()).contains("llm-call");
+        assertThat(api.jdbc.sql("SELECT count(*) FROM llm_usage WHERE request_key='llm-call' AND feature='CHANGE_IMPACT' AND project_id=:p")
+                .param("p",project).query(Integer.class).single()).isEqualTo(1);
+    }
+
+    /** 결과 저장이 실패해 실패로 닫혀도 받은 사용량은 남는다 (저장 트랜잭션과 함께 되돌려진 기록을 실패 처리가 다시 적는다) */
+    @Test void resultStorageFailureStillRecordsReceivedUsage() {
+        doThrow(new IllegalStateException("storage failed")).doCallRealMethod().when(runRepository)
+                .finish(anyLong(),any(),any(),any(),any(),any(),any());
+        runs.retry(caller,project,proposal,null); work();
+        var run=api.jdbc.sql("SELECT status,error_code,usage_status,usage::text AS usage FROM change_impact_run "
+                + "WHERE change_proposal_id=:p ORDER BY id DESC LIMIT 1").param("p",proposal).query().singleRow();
+        assertThat(run).containsEntry("status","FAILED").containsEntry("error_code","invalid_output").containsEntry("usage_status","REPORTED");
+        assertThat(run.get("usage").toString()).contains("llm-call");
+        assertThat(api.jdbc.sql("SELECT count(*) FROM llm_usage WHERE request_key='llm-call'").query(Integer.class).single()).isEqualTo(1);
     }
 
     @Test void changesDuringModelCallBecomeStaleAndExpiredWorkersCannotOverwrite() {

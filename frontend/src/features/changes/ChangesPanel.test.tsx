@@ -473,6 +473,17 @@ it('팀장도 본인이 올린 제안을 거둔다', async () => {
   )
 })
 
+// 사용자 요청(11-02): 업무 창 목록의 선택 표시는 작업 목록과 같은 노란 테두리·바탕으로 통일한다.
+it('고른 제안은 작업 목록과 같은 노란 선택 표시로 보인다', async () => {
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  const selected = screen
+    .getAllByRole('button')
+    .find((button) => button.getAttribute('aria-current') === 'true')!
+  expect(selected).toHaveClass('border-primary/30', 'bg-primary/5')
+  expect(selected).not.toHaveClass('border-foreground')
+})
+
 // S15P31A108-241: 영향 분석이 완료·최신이 아니면 서버가 409 impact_not_confirmed 로 승인을 막는다.
 // 팀장은 사유를 남겨 다시 승인하고, 사유는 impact_override_reason 으로 나간다.
 function conflict(code: string) {
@@ -692,4 +703,27 @@ it('승인 요청의 사유는 승인 이력에 남고 공백뿐인 사유는 �
   expect((await changesApi.approval('101', '71')).impact_override_reason).toBe(
     '직접 확인함',
   )
+})
+
+// PR #88 리뷰: '공용 문서함에서 제안하기'는 창을 바꾸므로, 새 제안·승인·반려·이력 화면에서는 숨겨 쓰던 내용을 지킨다.
+it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 숨기고, 상세로 돌아오면 다시 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  expect(
+    screen.getByRole('button', { name: '공용 문서함에서 제안하기' }),
+  ).toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(
+    screen.getByRole('heading', { name: '기준 v2 발행을 승인할까요?' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '공용 문서함에서 제안하기' }),
+  ).toBeNull()
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  expect(
+    await screen.findByRole('button', { name: '공용 문서함에서 제안하기' }),
+  ).toBeInTheDocument()
 })

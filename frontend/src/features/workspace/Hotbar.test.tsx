@@ -87,3 +87,15 @@ it('가이드가 열린 동안에는 숫자 키로 창을 열지 않는다', asy
   await userEvent.keyboard('4')
   expect(useWorkspaceStore.getState().pane).toBeNull()
 })
+
+// 사용자 요청(11-02): '여기부터 시작'으로 강조한 칸이 열려 있어도 흰 글자가 아니라 검정 글자로 보인다.
+it('강조한 칸이 열려 있어도 글자와 번호를 검정으로 보인다', () => {
+  useWorkspaceStore.setState({ pane: 'documents' })
+  render(<Hotbar locked={[]} badges={{}} highlight="documents" />)
+  const button = screen.getByRole('button', { name: '공용 문서함' })
+  expect(button).toHaveAttribute('aria-current', 'page')
+  expect(button).toHaveClass('text-foreground')
+  expect(button).not.toHaveClass('text-white')
+  expect(screen.getByText('1')).not.toHaveClass('text-white/85')
+  expect(screen.getByText('여기부터 시작')).toBeInTheDocument()
+})

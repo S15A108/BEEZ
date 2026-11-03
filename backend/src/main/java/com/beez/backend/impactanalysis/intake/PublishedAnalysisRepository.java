@@ -1,22 +1,28 @@
 package com.beez.backend.impactanalysis.intake;
 
 import com.beez.backend.cdc.recovery.*;
+import com.beez.backend.changeproposal.port.PostPublishAnalysisIntake;
 import com.beez.backend.cdc.retry.ProcessingRetryPolicy;
 import static com.beez.backend.designitem.support.DesignJson.canonical;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.*;
+import com.beez.backend.usage.repository.LlmUsageRecorder;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.*;
 
 /** Durable data operations only. #227 owns execution and recurring recovery sweeps. */
 @Repository
-public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
+public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, PostPublishAnalysisIntake {
     private final JdbcClient jdbc;
-    public PublishedAnalysisRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
+    private final LlmUsageRecorder usageRecorder;
+    public PublishedAnalysisRepository(JdbcClient jdbc, LlmUsageRecorder usageRecorder) {
+        this.jdbc = jdbc;
+        this.usageRecorder = usageRecorder;
+    }
 
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Override @Transactional(propagation = Propagation.MANDATORY)
     public void accept(long project, long baseline, Long proposal) {
         jdbc.sql("""
                 INSERT INTO published_change_analysis(project_id,published_baseline_id,change_proposal_id,status,finished_at)
@@ -163,6 +169,21 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort {
         if (!fail(claim, now, code, retryable)) return false;
         insertAttempt(claim, "FAILED", code, usage, usageStatus);
         return true;
+    }
+
+    /**
+     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
+     * 시도 기록과 따로 부른다: 결과를 쓰지 못한 경우(리스를 잃음·권한 재확인 실패·저장 실패)나 시도 기록에 넣기에 너무 큰 사용량도
+     * 실제 호출 비용이므로 남긴다. 같은 호출은 request_key 로 한 번만. 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordUsage(Claim claim, Object usage, String model) {
+        var project = jdbc.sql("SELECT project_id FROM published_change_analysis WHERE id=:id").param("id", claim.id())
+                .query(Long.class).optional();
+        if (project.isEmpty()) return;
+        String fallback = model == null || model.isBlank() ? "unknown" : model;
+        usageRecorder.record(new LlmUsageRecorder.Owner(project.get(), "CHANGE_IMPACT", null, null, fallback,
+                "published analysis " + claim.id() + " attempt " + claim.attempt()), usage, 0);
     }
 
     private void insertAttempt(Claim claim, String outcome, String code, Object usage, String usageStatus) {

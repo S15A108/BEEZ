@@ -19,6 +19,8 @@ import {
   validationsApi,
 } from '@/api/services'
 import { taskDetailSchema, type TaskDetail } from '@/api/contracts/common'
+import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
+import { PaneSheetHost } from '@/components/PaneSheet'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { TasksPanel } from './TasksPanel'
 
@@ -556,4 +558,48 @@ it('폐기된 설계 참조 때문에 저장이 막히면 그 줄에 알리고, 
   fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
   expect(save.mock.calls[1][2]).toMatchObject({ design_refs: [] })
+})
+
+// PR #88 리뷰(재현 경로): 계획을 고쳐 저장하는 동안 머리의 '+ 작업 계획'으로 새 폼을 열면,
+// 앞의 저장이 끝나며 새 폼과 입력이 사라졌다. 계획 폼이 열려 있거나 저장 중이면 머리 버튼을 숨긴다.
+it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 버튼을 숨긴다', async () => {
+  let finish = () => {}
+  const save = vi.spyOn(tasksApi, 'savePlan').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({} as never)
+      }),
+  )
+  const slot = document.createElement('div')
+  document.body.append(slot)
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PaneHeaderSlot value={slot}>
+        <PaneSheetHost>
+          <TasksPanel projectId="101" isLeader={false} />
+        </PaneSheetHost>
+      </PaneHeaderSlot>
+    </QueryClientProvider>,
+  )
+  expect(
+    await within(slot).findByRole('button', { name: '작업 계획' }),
+  ).toBeInTheDocument()
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '계획 수정' }),
+  )
+  await screen.findByLabelText('어떻게 진행하나요?')
+  expect(within(slot).queryByRole('button', { name: '작업 계획' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(within(slot).queryByRole('button', { name: '작업 계획' })).toBeNull()
+  await act(async () => finish())
+  expect(
+    await within(slot).findByRole('button', { name: '작업 계획' }),
+  ).toBeInTheDocument()
+  slot.remove()
 })

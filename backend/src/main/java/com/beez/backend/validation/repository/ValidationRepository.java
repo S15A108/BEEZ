@@ -4,22 +4,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Savepoint;
 import java.sql.Types;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import javax.sql.DataSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataAccessException;
+import com.beez.backend.usage.repository.LlmUsageRecorder;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
 
@@ -30,20 +22,14 @@ import tools.jackson.databind.ObjectMapper;
 @Repository
 public class ValidationRepository {
 
-    private static final Logger log = LoggerFactory.getLogger(ValidationRepository.class);
-
-    /** llm_usage.feature CHECK 와 같은 값. 모르는 값이면 TASK_VALIDATION 으로 적는다 (제약 위반으로 반영 전체가 실패하지 않게) */
-    private static final java.util.Set<String> USAGE_FEATURES = java.util.Set.of("DOCUMENT_PARSE", "TASK_VALIDATION", "CHANGE_IMPACT",
-            "EMBEDDING", "BEE_CHAT", "BEE_DRAFT", "TASK_ASSIGNMENT", "MEETING_ANALYSIS");
-
     private final JdbcClient jdbc;
     private final ObjectMapper json;
-    private final DataSource dataSource;
+    private final LlmUsageRecorder usageRecorder;
 
-    public ValidationRepository(JdbcClient jdbc, ObjectMapper json, DataSource dataSource) {
+    public ValidationRepository(JdbcClient jdbc, ObjectMapper json, LlmUsageRecorder usageRecorder) {
         this.jdbc = jdbc;
         this.json = json;
-        this.dataSource = dataSource;
+        this.usageRecorder = usageRecorder;
     }
 
     // ---- 검증 ----
@@ -372,18 +358,10 @@ public class ValidationRepository {
 
     /**
      * 실행의 사용량 배열을 공통 사용량 표(llm_usage, -79)에 한 줄씩 넣는다 (S15P31A108-168). 비용 조회(-169)는 이 표를 읽는다.
-     * <ul>
-     *   <li>같은 호출은 한 번만: request_key 가 유일 제약이라 겹치면 건너뛴다 (늦은 응답·재전송이 같은 키로 와도 두 번 합산되지 않음)</li>
-     *   <li>실행(validation_run_id)·작업(task_id)·프로젝트를 함께 적어 검증별·작업별·프로젝트별로 집계할 수 있게 한다</li>
-     *   <li>tokens_known=false 면 토큰 칸을 비운다 (모르는 값을 0 으로 만들지 않음, 명세 Usage). 추정 비용은 통화와 함께 있을 때만</li>
-     *   <li>failed 는 그 모델 호출이 실패했는지(AI 가 적어 준 값)이고 실행 결과와는 별개다 — 판정을 버린 실행의 성공한 호출은 failed=false</li>
-     *   <li>request_key 가 없는 항목은 적지 않고 경고만 남긴다. model 이 없으면 실행의 분석기 버전(응답의 model)으로 채운다</li>
-     *   <li>값이 틀려도 실행 종결을 막지 않는다 — 여기서 예외가 나면 결과 반영 트랜잭션이 롤백되고 워커가 같은 사용량으로 실패 처리를
-     *       다시 시도해 같은 예외가 반복되므로, 검증이 리스 회수 전까지 RUNNING 으로 남는다. 그래서 DB 에 넣기 전에 모양·범위를 다 확인하고
-     *       틀린 칸은 비운다(추정 비용이 숫자가 아니거나 NUMERIC(12,6) 범위 밖, 토큰·지연이 정수 범위 밖, 음수 등). 그래도 넣다가 DB 오류가
-     *       나면(미처 못 거른 값) 그 항목만 되돌리고(세이브포인트) 경고를 남긴다 — Postgres 는 오류 난 트랜잭션을 그대로 못 쓰므로
-     *       잡기만 해서는 안 되고 되돌려야 한다</li>
-     * </ul>
+     * 거르기·중복 방지·항목별 되돌리기는 공통 기록기({@link LlmUsageRecorder})가 한다. 여기서는 실행(validation_run_id)·작업(task_id)·
+     * 프로젝트를 함께 적어 검증별·작업별로 집계할 수 있게 하고, 항목에 model 이 없으면 실행의 분석기 버전(응답의 model)으로 채운다
+     * (둘 다 없으면 적지 않는다). failed 는 그 모델 호출이 실패했는지(AI 가 적어 준 값)이고 실행 결과와는 별개다.
+     * 값이 틀려도 실행 종결을 막지 않는다 — 여기서 예외가 나면 결과 반영이 롤백되고 같은 실패가 반복돼 검증이 리스 회수 전까지 RUNNING 으로 남는다
      *
      * @param fallbackLatencyMs 항목에 latency_ms 가 없을 때 쓸 값 (실행 전체 시간). 늦은 사용량은 0
      */
@@ -391,161 +369,31 @@ public class ValidationRepository {
         if (!(usage instanceof List<?> entries) || entries.isEmpty()) {
             return;
         }
-        for (Object value : entries) {
-            try {
-                recordUsageEntry(runId, value, fallbackLatencyMs);
-            } catch (RuntimeException e) {
-                // 값 거르기에서 미처 못 잡은 예외(수치 변환 등)도 실행 종결을 막지 않는다. DB 오류는 insertIsolated 가 따로 되돌린다
-                log.warn("validation run {} usage entry skipped (unexpected value): {} — {}", runId, value, e.toString());
-            }
-        }
-    }
-
-    /** 사용량 한 항목을 거르고 넣는다. 틀린 칸은 비우고, 항목 자체가 못 쓸 것이면 경고만 */
-    private void recordUsageEntry(long runId, Object value, long fallbackLatencyMs) {
-        if (!(value instanceof Map<?, ?> raw)) {
-            return;
-        }
-        Map<String, Object> entry = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> e : raw.entrySet()) {
-            entry.put(String.valueOf(e.getKey()), e.getValue());
-        }
-        Object key = entry.get("request_key");
-        if (!(key instanceof String k) || k.isBlank()) {
-            log.warn("validation run {} usage entry skipped (request_key missing): {}", runId, entry);
-            return;
-        }
-        String model = null;
-        if (entry.get("model") instanceof String m && !m.isBlank()) {
-            model = m;
-        }
-        boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
-        Integer input = null;
-        Integer output = null;
-        if (known) {
-            input = nonNegativeInt(entry.get("input_tokens"));
-            output = nonNegativeInt(entry.get("output_tokens"));
-        }
-        Integer latency = nonNegativeInt(entry.get("latency_ms"));
-        if (latency == null) {
-            latency = (int) Math.min(Integer.MAX_VALUE, Math.max(0, fallbackLatencyMs));
-        }
-        String feature = "TASK_VALIDATION";
-        if (entry.get("feature") instanceof String f && USAGE_FEATURES.contains(f)) {
-            feature = f;
-        }
-        String provider = "unspecified";
-        if (entry.get("provider") instanceof String pv && !pv.isBlank()) {
-            provider = pv;
-        }
-        BigDecimal cost = null;
-        String currency = null;
-        if (entry.get("estimated_cost_amount") != null && entry.get("currency") instanceof String cur && !cur.isBlank()) {
-            cost = costAmount(entry.get("estimated_cost_amount"));
-            if (cost == null) {
-                log.warn("validation run {} usage {}: estimated_cost_amount not a valid amount, stored without cost: {}", runId, k,
-                        entry.get("estimated_cost_amount"));
-            } else {
-                currency = cur;
-            }
-        }
-        JdbcClient.StatementSpec insert = jdbc.sql("""
-                        insert into llm_usage (project_id, feature, request_key, task_id, validation_run_id, provider, model,
-                                               tokens_known, input_tokens, output_tokens, cache_tokens, latency_ms,
-                                               estimated_cost_amount, currency, failed, origin)
-                        select t.project_id, :feature, :key, v.task_id, r.id, :provider, coalesce(:model, r.analyzer_version),
-                               :known, :input, :output, :cache, :latency, :cost, :currency, :failed, 'model'
+        Optional<Map<String, Object>> owner = jdbc.sql("""
+                        select t.project_id, v.task_id, r.analyzer_version
                           from validation_run r
                           join validation v on v.id = r.validation_id
                           join task t on t.id = v.task_id
                          where r.id = :run
-                           and coalesce(:model, r.analyzer_version) is not null
-                        on conflict (request_key) do nothing
                         """)
-                .param("feature", feature).param("key", k).param("provider", provider).param("model", model, Types.VARCHAR)
-                .param("known", known).param("input", input, Types.INTEGER).param("output", output, Types.INTEGER)
-                .param("cache", nonNegativeInt(entry.get("cache_tokens")), Types.INTEGER).param("latency", latency)
-                .param("cost", cost, Types.NUMERIC).param("currency", currency, Types.VARCHAR)
-                .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("run", runId);
-        insertIsolated(runId, k, insert);
-    }
-
-    /**
-     * 사용량 한 줄을 세이브포인트 안에서 넣는다. 실패하면 그 줄만 되돌리고 경고 — 실행 종결·검증 상태 반영은 그대로 커밋된다.
-     * (DataSourceUtils.getConnection: 지금 트랜잭션이 쓰는 그 연결을 받는다. Savepoint: 트랜잭션 안의 되돌릴 지점)
-     */
-    private void insertIsolated(long runId, String requestKey, JdbcClient.StatementSpec insert) {
-        Connection connection = DataSourceUtils.getConnection(dataSource);
-        try {
-            Savepoint savepoint = connection.setSavepoint();
-            try {
-                insert.update();
-                connection.releaseSavepoint(savepoint);
-            } catch (DataAccessException e) {
-                connection.rollback(savepoint);
-                log.warn("validation run {} usage {} not recorded in llm_usage: {}", runId, requestKey, e.getMessage());
-            }
-        } catch (SQLException e) {
-            log.warn("validation run {} usage {} not recorded in llm_usage (savepoint failed): {}", runId, requestKey, e.getMessage());
-        } finally {
-            DataSourceUtils.releaseConnection(connection, dataSource);
+                .param("run", runId).query().listOfRows().stream().findFirst();
+        if (owner.isEmpty()) {
+            return;
         }
+        Map<String, Object> row = owner.get();
+        usageRecorder.record(new LlmUsageRecorder.Owner(((Number) row.get("project_id")).longValue(), "TASK_VALIDATION",
+                ((Number) row.get("task_id")).longValue(), runId, (String) row.get("analyzer_version"), "validation run " + runId),
+                entries, fallbackLatencyMs);
     }
 
-    private static final BigDecimal INT_MAX = BigDecimal.valueOf(Integer.MAX_VALUE);
-    private static final BigDecimal COST_MAX = new BigDecimal("999999.999999");
-    private static final BigDecimal COST_HALF_UNIT = new BigDecimal("0.0000005");
-
-    /**
-     * 0 이상의 int 로 읽을 수 있으면 그 값, 아니면 null (문자열 숫자도 받는다. 소수·음수·int 범위 밖·글자는 null).
-     * 자르지 않고 비교한다 — 아주 큰 정수(JSON 에서 BigInteger 로 옴)를 long 으로 바꾸면 윗자리가 잘려 범위 검사를 통과할 수 있다
-     */
+    /** {@link LlmUsageRecorder#nonNegativeInt} 그대로 (값 거르기 시험이 이 이름으로 부른다) */
     static Integer nonNegativeInt(Object value) {
-        if (value == null) {
-            return null;
-        }
-        BigDecimal d;
-        try {
-            d = new BigDecimal(String.valueOf(value).trim());      // Number 든 문자열이든 10진 표기를 그대로 읽는다 (잘림 없음)
-        } catch (NumberFormatException e) {
-            return null;
-        }
-        if (d.signum() < 0 || d.compareTo(INT_MAX) > 0) {
-            return null;
-        }
-        try {
-            return d.intValueExact();                                // 소수 부분이 있으면 ArithmeticException → null
-        } catch (ArithmeticException e) {
-            return null;
-        }
+        return LlmUsageRecorder.nonNegativeInt(value);
     }
 
-    /**
-     * 명세 Usage.estimated_cost_amount(문자열)를 llm_usage NUMERIC(12,6) 에 넣을 수 있는 값으로. 숫자가 아니거나 음수·범위 밖이면 null.
-     * 자릿수 맞추기(setScale) 전에 범위를 본다 — 지수가 큰 값(1e2147483647)은 자릿수를 맞추려는 순간 예외가 난다
-     */
+    /** {@link LlmUsageRecorder#costAmount} 그대로 */
     static BigDecimal costAmount(Object value) {
-        BigDecimal amount;
-        try {
-            amount = new BigDecimal(String.valueOf(value).trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-        if (amount.signum() < 0 || amount.compareTo(COST_MAX) > 0) {
-            return null;
-        }
-        if (amount.compareTo(COST_HALF_UNIT) < 0) {
-            return BigDecimal.ZERO.setScale(6);        // 반올림하면 0 인 값. 지수가 아주 작은 값(1e-2147483647)을 나누기 전에 거른다
-        }
-        try {
-            BigDecimal scaled = amount.setScale(6, java.math.RoundingMode.HALF_UP);   // 소수 6자리로 (반올림)
-            if (scaled.compareTo(COST_MAX) > 0) {
-                return null;                                                           // 반올림으로 상한을 넘은 경우
-            }
-            return scaled;
-        } catch (ArithmeticException e) {
-            return null;                                                               // 매우 작은 지수(1e-2147483647) 등
-        }
+        return LlmUsageRecorder.costAmount(value);
     }
 
     // ---- 작업 큐(job) ----

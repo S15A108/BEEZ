@@ -9,7 +9,7 @@ import { unlessMissing } from '@/api/error'
 import type { UsageBucket } from '@/api/contracts/common'
 import { DashboardOverview } from './DashboardOverview'
 import { RelationsView } from './RelationsView'
-import { FEATURE_LABELS, dashboardTabs } from './labels'
+import { FEATURE_LABELS, costText, dashboardTabs, tokenText } from './labels'
 import type { DashboardTab } from './labels'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
@@ -521,11 +521,17 @@ export function ActivityPanel({
                     {[
                       {
                         label: '입력 토큰',
-                        value: data.input_tokens.toLocaleString('ko-KR'),
+                        value: tokenText(
+                          data.input_tokens,
+                          data.tokens_unknown_call_count,
+                        ),
                       },
                       {
                         label: '출력 토큰',
-                        value: data.output_tokens.toLocaleString('ko-KR'),
+                        value: tokenText(
+                          data.output_tokens,
+                          data.tokens_unknown_call_count,
+                        ),
                       },
                       {
                         label: '호출',
@@ -533,10 +539,11 @@ export function ActivityPanel({
                       },
                       {
                         label: '추정 비용',
-                        value:
-                          data.estimated_cost_amount === undefined
-                            ? '미보고'
-                            : `${data.estimated_cost_amount} ${data.currency ?? ''}`.trim(),
+                        value: costText(
+                          data.estimated_cost_amount,
+                          data.currency,
+                          data.cost_unknown_call_count,
+                        ),
                       },
                     ].map((metric) => (
                       <div
@@ -659,13 +666,18 @@ function UsageBars({
             {row.call_count.toLocaleString('ko-KR')}회
           </span>
           <span className="text-right text-muted-foreground">
-            {(row.input_tokens + row.output_tokens).toLocaleString('ko-KR')}{' '}
+            {tokenText(
+              row.input_tokens + row.output_tokens,
+              row.tokens_unknown_call_count,
+            )}{' '}
             토큰
           </span>
           <strong className="text-right font-semibold">
-            {row.estimated_cost_amount === undefined
-              ? '미보고'
-              : `${row.estimated_cost_amount} ${currency ?? ''}`.trim()}
+            {costText(
+              row.estimated_cost_amount,
+              currency,
+              row.cost_unknown_call_count,
+            )}
           </strong>
         </li>
       ))}

@@ -1,0 +1,75 @@
+{
+  "401_invalid_internal_token": {
+    "error": {
+      "code": "invalid_internal_token",
+      "message": "Design draft request rejected."
+    }
+  },
+  "503_design_drafts_not_configured": {
+    "error": {
+      "code": "design_drafts_not_configured",
+      "message": "Design draft request rejected."
+    }
+  },
+  "413_request_too_large": {
+    "error": {
+      "code": "request_too_large",
+      "message": "Design draft request rejected."
+    }
+  },
+  "415_unsupported_media_type": {
+    "error": {
+      "code": "unsupported_media_type",
+      "message": "Design draft request rejected."
+    }
+  },
+  "400_validation_failed": {
+    "error": {
+      "code": "validation_failed",
+      "message": "Design draft request rejected."
+    }
+  },
+  "422_invalid_ai_input_source_hash_mismatch": {
+    "error": {
+      "code": "invalid_ai_input",
+      "message": "Design draft request rejected.",
+      "details": {
+        "reason": "source_hash_mismatch"
+      }
+    }
+  },
+  "502_model_unavailable_unknown_base_item": {
+    "error": {
+      "code": "model_unavailable",
+      "message": "The LLM request could not be completed."
+    },
+    "usage": [
+      {
+        "request_key": "llm-design-drafts-00000000-0000-4000-8000-000000000134",
+        "feature": "BEE_DRAFT",
+        "model": "gpt-6-luna",
+        "latency_ms": 0,
+        "failed": true,
+        "tokens_known": true,
+        "input_tokens": 2600,
+        "output_tokens": 900
+      }
+    ]
+  },
+  "504_model_timeout": {
+    "error": {
+      "code": "model_timeout",
+      "message": "The LLM request could not be completed."
+    },
+    "usage": [
+      {
+        "request_key": "llm-design-drafts-00000000-0000-4000-8000-000000000134",
+        "feature": "BEE_DRAFT",
+        "model": "gpt-6-luna",
+        "latency_ms": 0,
+        "failed": true,
+        "tokens_known": false
+      }
+    ]
+  }
+}

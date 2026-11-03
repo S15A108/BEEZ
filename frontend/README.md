@@ -279,6 +279,7 @@ it('올바르게 입력하면 값을 제출한다', async () => {
 
 - `e2e/*.spec.ts`에 둡니다. `npm run test:e2e`가 개발 서버를 띄우고 Chromium에서 실행합니다.
 - 핵심 사용자 흐름(페이지 이동, 폼 제출, 3D 화면 진입)이 생기면 E2E를 추가합니다. 첫 화면, 부지 선택·생성·보존, 문서·작업·비비, 회의 기록을 확인합니다.
+- E2E는 GPU를 쓰는 새 headless Chromium(`channel: 'chromium'`)으로 워커 1개에서 한 테스트씩 돕니다. 기본 headless shell은 3D를 CPU로 그려서 시간 제한을 넘습니다. 다른 worktree나 세션의 E2E와도 동시에 돌리지 않습니다([D25](docs/decisions.md)).
 - 기본 E2E는 브라우저 예시 어댑터로 백엔드 없이 실행합니다. live 모드 경계를 따로 검증할 때는 API 응답을 `page.route`로 대체할 수 있습니다.
 
 ```ts

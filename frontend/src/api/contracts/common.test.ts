@@ -69,6 +69,36 @@ it('사용량 합계와 항목별 비용도 숫자로 와도 읽는다', () => {
   expect(summary.by_feature[0].estimated_cost_amount).toBe('1.25')
 })
 
+it('사용량의 미보고 호출 수를 버리지 않는다', () => {
+  const summary = usageSummarySchema.parse({
+    from: '2026-10-22T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 1,
+    output_tokens: 1,
+    call_count: 2,
+    estimated_cost_amount: '0.5',
+    currency: 'USD',
+    tokens_unknown_call_count: 1,
+    cost_unknown_call_count: 1,
+    by_feature: [
+      {
+        key: 'DOCUMENT_PARSE',
+        input_tokens: 0,
+        output_tokens: 0,
+        call_count: 1,
+        estimated_cost_amount: '0',
+        tokens_unknown_call_count: 1,
+        cost_unknown_call_count: 1,
+      },
+    ],
+    by_task: [],
+    by_validation: [],
+  })
+  expect(summary.tokens_unknown_call_count).toBe(1)
+  expect(summary.cost_unknown_call_count).toBe(1)
+  expect(summary.by_feature[0].cost_unknown_call_count).toBe(1)
+})
+
 // PR #72 mock/live 전수 대조 DOC-LIVE-2: CREATE 항목 비교는 target_id 키 없이 온다(서버 전역 non_null).
 it('비교 응답은 target_id 키가 없어도 읽는다', () => {
   expect(

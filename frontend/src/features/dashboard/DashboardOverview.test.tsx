@@ -77,6 +77,30 @@ it('숫자 4개를 보여 주고 누르면 그 화면을 연다', async () => {
   expect(screen.getByText('비비 대화')).toBeInTheDocument()
 })
 
+it('비용을 모르는 호출이 있으면 요약 숫자에 그 건수를 붙인다', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query({
+          ...usage(5),
+          estimated_cost_amount: '0.2',
+          currency: 'USD',
+          cost_unknown_call_count: 2,
+        })}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByText('5회 · 0.2 USD + 미보고 2건'),
+  ).toBeInTheDocument()
+})
+
 it('아직 기록이 없으면 시작 순서 3개를 보여 준다', async () => {
   vi.mocked(dashboardApi.changes).mockResolvedValue({
     by_status: [],
