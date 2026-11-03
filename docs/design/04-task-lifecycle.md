@@ -60,6 +60,8 @@
 | S4 | DELTA 검증이 PASS | 작업이 **아직** WAITING(REVALIDATION) 이고, 현재 계획에 delta 완료 보고가 있고, 이 검증이 현재 계획의 **가장 최근 DELTA 검증**일 때만. (완료 보고의 `delta_validation_id` 와 같은지로 보지 않는 이유: 설계 발행으로 DELTA 가 STALE 이 되면 서버가 새 DELTA 를 접수하는데(S1·§2.3) 완료 보고는 UPDATE 금지라 그 번호를 새로 적을 수 없다. -163 구현) | **COMPLETED** | 해제 | REST TSK-A07 |
 | S5 | 담당자 인계 — 팀장의 담당자 변경(TSK-A06) · 팀원 제외(MEM-A09) · 나가기(MEM-A10)의 열린 작업 인계 (-212) | **IN_PROGRESS** 는 상태까지, **WAITING** 은 검증만 | IN_PROGRESS 는 **WAITING(REVALIDATION)**. 점유 중(IN_PROGRESS·WAITING) 작업의 DELTA 를 뺀 검증은 도는 것(NOT_RUN·RUNNING)까지 STALE(`ASSIGNEE_CHANGED`), 대기 job 취소. DELTA 검증은 담당자와 무관해 그대로(PASS 면 S4). 같은 담당자로 바꾸면 아무것도 하지 않는다 | 유지 | REST TSK-A06·MEM-A09·A10 처리 규칙, §6 |
 
+검증 쪽 사건(늦은 결과·입력 변경·리스 만료·실패·RESUME)까지 합친 무효화·롤백 전체 표와 기록 위치·수동 조치는 [11 검증 롤백](11-validation-rollback.md)에 있다.
+
 IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검증만 STALE** 로 둔다.
 - READY: START 때 G1·G2 가 걸러낸다.
 - WAITING(INPUT·APPROVAL·DEPENDENCY): 원래 사유를 덮어쓰지 않는다. RESUME 때 G1(새 리비전엔 PASS 없음)·G2(참조 버전 바뀜)가 걸러낸다.
@@ -73,7 +75,8 @@ IN_PROGRESS 가 아닌 작업은 S1·S2 에서 **상태를 바꾸지 않고 검�
 - 계획 변경 때 새 리비전의 입력 해시를 **직전 리비전**과 비교한다. 직전 리비전을 못 읽으면 "바뀌지 않았다" 로 보지 않고 바뀐 것으로 다룬다(조회 실패 ≠ 변경 없음).
   - **같다**: 아무것도 무효화하지 않고 상태도 두며, 직전 리비전의 (DELTA 를 뺀) 가장 최근 검증이 끝난 것(PASS·NEEDS_INPUT·NEEDS_REVIEW)이면 새 리비전에 **같은 내용으로 한 줄 더** 넣는다(참조·관련 계획·발견 항목까지, `summary.carried_from` = 원본 번호, 실행 기록은 복사하지 않음). 에이전트가 쥔 옛 번호로 START·RESUME 하면 G1 이 현재 리비전의 그 복사본으로 판정한다(§3). 가장 최근 것이 **RUNNING** 이면 두고, 그 결과가 반영될 때 같은 기준(입력 해시)으로 통과하면 그때 이어 받는다. STALE·ERROR 면 이어 받을 것이 없다.
   - **다르다**: 전처럼 S2(IN_PROGRESS → WAITING(REVALIDATION), 점유 중 작업의 끝난 검증 STALE `PLAN_CHANGED`). READY 의 옛 PASS 는 두고 G1 이 리비전으로 거른다.
-- delta 완료 보고의 DELTA 검증을 기다리는 동안(§2.3)은 입력이 같아도 계획을 바꿀 수 없다(`400 invalid_transition`). 완료 보고는 그 리비전에 대한 것이고 S4 는 현재 계획의 DELTA 만 보므로, 바꾸면 완료가 조용히 사라진다. 바꾸려면 RESUME(출구 ①)으로 보고를 거둔 뒤.
+- delta 완료 보고의 DELTA 검증이 **아직 도는 동안**(현재 계획의 가장 최근 DELTA 가 NOT_RUN·RUNNING)은 입력이 같아도 계획을 바꿀 수 없다(`400 invalid_transition`). 그 결과가 PASS 면 S4 가 현재 계획의 DELTA 로 완료시키는데, 그사이 계획이 바뀌면 완료가 조용히 사라진다. 결과를 기다리거나 RESUME(출구 ①)으로 보고를 거둔다.
+- 결과가 **난 뒤**(NEEDS_INPUT·NEEDS_REVIEW·ERROR, 또 가짜 분석기를 끈 서버라 완료되지 않은 PASS)는 계획을 바꿀 수 있다 — §2.3 출구 ② 다. 설계 발행(S1)으로 시작 때 PASS 가 STALE 이 되고 재접수된 DELTA 가 NEEDS_INPUT 으로 끝난 작업은 RESUME 도 G1 에 막히므로, 계획 변경까지 막으면 나갈 길이 없다. 입력이 바뀐 변경이면 그 DELTA 도 끝난 검증이라 S2 대로 STALE(`PLAN_CHANGED`)이 되고, 작업은 WAITING(REVALIDATION) 그대로 새 계획의 PASS 로 RESUME 한다. 옛 완료 보고는 옛 리비전에 이력으로 남고 새 계획에는 기다리는 보고가 없다(다시 COMPLETED 하려면 RESUME 뒤).
 - 결과 반영 때 입력 비교(`PLAN_CHANGED`·`RELATED_PLAN_CHANGED`)도 리비전 번호가 아니라 입력 해시로 한다 — 도는 사이 자기 계획이나 관련 작업의 제목만 바뀐 결과는 버리지 않는다.
 - 유지와 무효화의 경계는 위 "검증 입력" 목록이다. 접근 방식이 바뀌어도 유지하는 것은 담당자 결정(AI 분석이 approach 를 읽더라도 설계 대조의 대상은 목표·범위·기준·참조다). 바꾸려면 `PlanInputHasher` 와 이 절을 함께 고친다.
 
@@ -86,9 +89,9 @@ RESUME(§2.3 출구 ①)은 delta 완료 보고를 거두고 다시 일하는 �
 | 가장 최근 검증 | 그 검증 결과 | 작업 | 나가는 길 |
 |---|---|---|---|
 | trigger = DELTA | PASS | 서버가 **COMPLETED** (S4) | — |
-| trigger = DELTA | NEEDS_INPUT · NEEDS_REVIEW | **WAITING(REVALIDATION) 유지** | ① 코드를 계획대로 되돌릴 것이면 `RESUME`(시작 때 PASS 가 아직 유효하면 게이트 통과) 후 delta 없이 다시 COMPLETED ② 바뀐 내용이 맞으면 계획 리비전을 올려(S2) 새 검증 PASS → `RESUME` → COMPLETED ③ 설계 자체를 바꿔야 하면 변경 제안 → 승인 후 ② |
-| trigger = DELTA | ERROR | **WAITING(REVALIDATION) 유지** | 같은 검증 재시도(VAL-A03, 새 validation_run). 자동 PASS 하지 않는다 |
-| trigger = DELTA | RUNNING | 유지 | 결과를 기다린다 |
+| trigger = DELTA | NEEDS_INPUT · NEEDS_REVIEW | **WAITING(REVALIDATION) 유지** | ① 코드를 계획대로 되돌릴 것이면 `RESUME`(시작 때 PASS 가 아직 유효하면 게이트 통과) 후 delta 없이 다시 COMPLETED ② 바뀐 내용이 맞으면 계획 리비전을 올려(S2) 새 검증 PASS → `RESUME` → COMPLETED (DELTA 결과가 난 뒤라 계획 변경이 열려 있다, §2.5) ③ 설계 자체를 바꿔야 하면 변경 제안 → 승인 후 ②. 설계 발행으로 시작 때 PASS 가 STALE 이면 ①은 G1 에 막혀 ②·③ 만 남는다 |
+| trigger = DELTA | ERROR | **WAITING(REVALIDATION) 유지** | 같은 검증 재시도(VAL-A03, 새 validation_run). 자동 PASS 하지 않는다. ①·② 도 쓸 수 있다 |
+| trigger = DELTA | RUNNING | 유지 | 결과를 기다린다. 이 동안 계획 변경은 `400 invalid_transition`(§2.5). 거두려면 ① |
 | trigger = DELTA | STALE (DELTA 검증 중에 참조 설계가 발행됨) | 유지 | 새 기준으로 **새 DELTA 검증**을 접수한다(STALE 은 재시도가 아니라 새 검증, VAL-A03). 설계 발행 처리(S15P31A108-163)가 자동 접수한다. ②·③ 출구도 그대로 쓸 수 있고, ①은 G2 가 새 설계 기준으로 다시 판단한다 |
 | trigger = AGENT·REVALIDATION (S1·S2·S5 로 들어온 경우) | 무엇이든 | 유지 | 현재 계획에 대한 새 PASS 를 받아 `RESUME` (게이트 G1·G2) |
 
@@ -201,7 +204,8 @@ AI 는 어느 칸에서도 결정하지 않는다. finding 후보와 담당자 �
 
 ## 변경 이력
 
-- v1.10 (2026-11-03) -162 검증 최신성(변준성). §2.5 추가: 검증 입력(계획 입력 해시) 정의와 AC-13 결정 — 입력 같은 계획 변경은 검증 유지·이어 받기, 다른 변경은 S2, delta 대기 중 계획 변경 거부. S2 행·G1 행에 반영. 검증 `input_snapshot_hash` 와 결과 반영의 입력 비교를 리비전 번호 대신 계획 입력 해시로.
+- v1.11 (2026-11-03) -162 검증 최신성(변준성). §2.5 추가: 검증 입력(계획 입력 해시) 정의와 AC-13 결정 — 입력 같은 계획 변경은 검증 유지·이어 받기, 다른 변경은 S2, delta 검증이 아직 도는 동안만 계획 변경 거부(결과가 난 뒤는 §2.3 출구 ② 로 허용). S2 행·G1 행·§2.3 ② 에 반영. 검증 `input_snapshot_hash` 와 결과 반영의 입력 비교를 리비전 번호 대신 계획 입력 해시로.
+- v1.10 (2026-11-02) §2.2 에 검증 롤백 문서(11) 링크 (변준성, -160).
 - v1.9 (2026-11-02) -163 리뷰 반영(변준성). DELTA 검증은 완료 delta 를 분석 입력(AI-A02 `completion_delta`, 검사 `completion-delta`)에 넣고 규칙만으로는 PASS 하지 않는다 — READS 만 참조해도 의미 분석으로 간다(§2.2 S3, 완료 보고 자리에서 바로 COMPLETED 되는 경우 없음). RESUME 은 기다리던 DELTA 를 STALE(`TASK_RESUMED`)로(§2.2 아래). 가짜 분석기를 끈 서버에서는 가짜 분석기의 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙).
 - v1.8 (2026-11-02) -163 구현 반영(변준성). S1 `PublicationImpactAdapter` 와 S3 DELTA 접수·S4 완료 전이 구현, S4 조건을 "현재 계획의 가장 최근 DELTA" 로(§2.2). 발행 중 DELTA 가 STALE 이 되면 새 기준으로 새 DELTA 를 서버가 접수하고, 계획이 옛 버전을 참조하므로 보통 규칙(STALE_REF)으로 바로 NEEDS_INPUT 이 나 담당자가 ② 출구로 간다. 방금 IN_PROGRESS 에서 WAITING 으로 내린 작업은 재접수하지 않는다(다시 일하던 작업이라 서버가 완료를 판단할 대상이 아님). READS 만 참조해 DELTA 가 규칙만으로 PASS 면 완료 보고 자리에서 바로 COMPLETED(200)다 — delta 내용 자체는 AI 계약(AI-A02)에 아직 없어 현재 계획 검사와 같다.
 - v1.7 (2026-10-29) 리뷰 반영(변준성). §2.2 에 S5 담당자 인계 추가, §2.4 REVALIDATION 계기에 S5, §2.3 에 인계 뒤 ① 출구가 막히는 것(의도), §6 에 READY 작업 PASS 를 남기는 이유, §7 에 S5 자리.
