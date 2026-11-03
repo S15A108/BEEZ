@@ -417,3 +417,93 @@ async def test_provider_failure_keeps_real_failed_usage():
         await llm_proposer(provider).propose(body, parse_source(body.to_source_input()))
     assert error.value.code == "model_unavailable"
     assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 4
+
+
+API_ITEM = {
+    "design_item_version_id": "1103",
+    "design_item_id": "1003",
+    "key": "API-001",
+    "kind": "API_CONTRACT",
+    "version_no": 1,
+    "status": "DRAFT",
+    "content": {
+        "description": "로그인 API",
+        "method": "POST",
+        "path": "/api/auth/login",
+        "parameters": [{"name": "email"}, {"name": "password"}],
+        "responses": {"200": "세션 발급"},
+    },
+}
+MANUAL_POLICY = {
+    "design_item_version_id": "1104",
+    "design_item_id": "1004",
+    "key": "PLN-004",
+    "kind": "POLICY",
+    "version_no": 1,
+    "status": "APPROVED",
+    "content": {"description": "발행 전 검토를 거친다.", "method": "manual"},
+}
+
+
+def with_content(entry, content):
+    return {**entry, "content": content}
+
+
+@pytest.mark.asyncio
+async def test_update_keeps_omitted_fields_and_a_null_removes_one():
+    body = request(existing_items=[APPROVED, DRAFT_ITEM, API_ITEM, MANUAL_POLICY])
+    partial = with_content(
+        item("API_CONTRACT", "x", base="1103", refs=["q-1"]),
+        {
+            "description": "이메일·비밀번호 로그인 API",
+            "method": "POST",
+            "path": "/api/auth/login",
+        },
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(partial))
+    change = outcome.result.changes[0]
+    assert change.after.model_dump(mode="json") == {
+        **API_ITEM["content"],
+        "description": "이메일·비밀번호 로그인 API",
+    }
+    assert [field.field for field in change.changed_fields] == ["description"]
+    assert change.before.model_dump(mode="json") == API_ITEM["content"]
+
+    removal = with_content(item("API_CONTRACT", "x", base="1103"), {"responses": None})
+    outcome = await generate_design_drafts(body, FakeProposer(removal))
+    change = outcome.result.changes[0]
+    after = change.after.model_dump(mode="json")
+    assert "responses" not in after and after["description"] == "로그인 API"
+    assert after["parameters"] == API_ITEM["content"]["parameters"]
+    assert [field.field for field in change.changed_fields] == ["responses"]
+    assert change.changed_fields[0].before == {"200": "세션 발급"}
+    assert change.changed_fields[0].after is None
+
+    created = with_content(
+        item("POLICY", "x"), {"description": "검토를 거친다.", "note": None}
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(created))
+    assert outcome.result.items[0].content.model_dump(mode="json") == {
+        "description": "검토를 거친다."
+    }
+
+
+@pytest.mark.asyncio
+async def test_free_form_fields_on_other_kinds_are_accepted_and_preserved():
+    body = request(existing_items=[APPROVED, DRAFT_ITEM, API_ITEM, MANUAL_POLICY])
+    assert body.existing_items[3].content.extra_fields() == {"method": "manual"}
+    update = with_content(
+        item("POLICY", "x", base="1104"), {"description": "발행 전 두 명이 검토한다."}
+    )
+    outcome = await generate_design_drafts(body, FakeProposer(update))
+    change = outcome.result.changes[0]
+    assert change.after.model_dump(mode="json") == {
+        "description": "발행 전 두 명이 검토한다.",
+        "method": "manual",
+    }
+    assert outcome.result.items[0].base_status == "APPROVED"
+    # The merged API content still has to satisfy its kind.
+    broken = with_content(item("API_CONTRACT", "x", base="1103"), {"path": None})
+    with pytest.raises(LLMError) as error:
+        await generate_design_drafts(body, FakeProposer(broken))
+    assert error.value.code == "invalid_output"

@@ -10,7 +10,15 @@ issued, and the supplied existing items are never modified.
 
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from app.schemas.documents import DocumentKind, Sha256, SourceInput
 from app.schemas.planning_questions import (
@@ -68,31 +76,49 @@ class _Strict(BaseModel):
 
 
 class DesignItemContent(BaseModel):
-    """DesignItemContent v1 (00-common); extra JSON fields are preserved."""
+    """DesignItemContent v1 (00-common): description is required for every kind.
+
+    Every other JSON field is kept exactly as supplied. Only the fields a kind
+    requires are type-checked, by `check_content_for_kind`, so a POLICY may
+    carry `method: "manual"` just as the BE contract allows.
+    """
 
     model_config = ConfigDict(extra="allow", frozen=True, strict=True)
 
     description: Description
-    method: HttpMethod | None = None
-    path: ApiPath | None = None
-    entity: Entity | None = None
-    fields: list[Any] | None = None
 
     @model_validator(mode="after")
     def nonblank(self) -> Self:
         if not self.description.strip():
             raise ValueError("blank description")
-        if self.entity is not None and not self.entity.strip():
-            raise ValueError("blank entity")
         return self
+
+    def extra_fields(self) -> dict[str, Any]:
+        return dict(self.model_extra or {})
+
+
+_METHOD = TypeAdapter(HttpMethod)
+_PATH = TypeAdapter(ApiPath)
+_ENTITY = TypeAdapter(Entity)
+_FIELDS = TypeAdapter(list[Any])
 
 
 def check_content_for_kind(kind: DesignKind, content: DesignItemContent) -> None:
-    """Required fields per kind: API needs method+path, DATA needs entity+fields."""
-    if kind == "API_CONTRACT" and (content.method is None or content.path is None):
-        raise ValueError("API_CONTRACT content needs method and path")
-    if kind == "DATA_CONTRACT" and (content.entity is None or content.fields is None):
-        raise ValueError("DATA_CONTRACT content needs entity and fields")
+    """Kind-specific required fields: API method+path, DATA entity+fields.
+
+    Other kinds are not checked beyond description, matching the BE contract.
+    """
+    extra = content.extra_fields()
+    try:
+        if kind == "API_CONTRACT":
+            _METHOD.validate_python(extra.get("method"), strict=True)
+            _PATH.validate_python(extra.get("path"), strict=True)
+        elif kind == "DATA_CONTRACT":
+            if not _ENTITY.validate_python(extra.get("entity"), strict=True).strip():
+                raise ValueError("blank entity")
+            _FIELDS.validate_python(extra.get("fields"), strict=True)
+    except ValidationError as error:
+        raise ValueError(f"{kind} content lacks a valid required field") from error
 
 
 class ItemSource(_Strict):

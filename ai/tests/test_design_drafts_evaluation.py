@@ -38,12 +38,7 @@ def test_dry_run_keeps_approvals_and_shows_before_after():
         if change["base_design_item_version_id"] == "1101"
     )
     assert approved["change"] == "UPDATE"
-    assert approved["before"] == EXISTING_ITEMS[0]["content"] | {
-        "method": None,
-        "path": None,
-        "entity": None,
-        "fields": None,
-    }
+    assert approved["before"] == EXISTING_ITEMS[0]["content"]
     assert approved["changed_fields"][0]["field"] == "description"
     assert report["untouched_existing_ids"] == ["1102"]
     assert len(report["answered_questions"]) == 4

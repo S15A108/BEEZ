@@ -17,7 +17,7 @@
 
 1. `parse_source`로 블록·행 범위를 만들고 모델에 블록 원문, 기존 항목(ID·키·종류·상태·본문), `ANSWERED` 질문(키·문구·답변·근거 인용)을 넘긴다. 미답변·닫힌 질문은 개수만 전달한다.
 2. 모델 제안의 각 항목을 검증한다.
-   - 본문은 DesignItemContent v1(`description` 필수, API `method`·`path`, DATA `entity`·`fields`)이어야 하고, 기준 항목 ID는 입력에 있어야 하며 종류가 같아야 하고, 답변 참조는 `ANSWERED` 질문 키여야 한다. 어기면 `invalid_output`(usage는 실패로 기록).
+   - 기준 항목 ID는 입력에 있어야 하며 종류가 같아야 하고, 답변 참조는 `ANSWERED` 질문 키여야 한다. 갱신이면 기준 항목 본문 위에 모델이 돌려준 필드만 덮어쓴다(`merge_content`): 생략한 필드는 기존 값을 보존하고 JSON `null`은 삭제다. 합친 본문은 `description`이 있어야 하고 종류가 요구하는 필드(API `method`·`path`, DATA `entity`·`fields`)만 타입 검사하며 나머지 JSON 필드는 그대로 둔다. 어기면 `invalid_output`(usage는 실패로 기록).
    - 인용은 블록 원문의 부분 문자열일 때만 남기고 나머지는 버린다. 남은 인용·답변 참조로 `support`를 정한다.
 3. 기준 항목이 있으면 `before`(기존 본문)와 `after`(초안)의 최상위 필드 차이를 `changed_fields`로 만든다. 차이가 없으면 초안이 아니므로 버리고 기준 항목을 `untouched_existing_ids`에 둔다. 기준 항목당 초안은 하나다.
 4. 근거 등급(`DOCUMENT_AND_ANSWER` → `ANSWER` → `DOCUMENT` → `NONE`) 순으로 정렬하고 `max_items`로 자른다. 잘린 수는 `omitted_items`.

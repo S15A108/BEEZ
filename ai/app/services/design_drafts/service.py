@@ -63,6 +63,24 @@ def canonical(content: DesignItemContent) -> dict[str, Any]:
     return content.model_dump(mode="json")
 
 
+def merge_content(
+    base: DesignItemContent | None, patch: dict[str, Any]
+) -> DesignItemContent:
+    """Apply a model's content on top of the base item's content.
+
+    A field the model omits keeps its existing value, so contract details the
+    answers never touched (parameters, responses, …) survive an update. An
+    explicit JSON null removes a field; a null is dropped on a new item.
+    """
+    merged = canonical(base) if base is not None else {}
+    for name, value in patch.items():
+        if value is None:
+            merged.pop(name, None)
+        else:
+            merged[name] = value
+    return DesignItemContent.model_validate(merged)
+
+
 def draft_key(kind: str, base_id: str | None, content: DesignItemContent) -> str:
     """Content-derived key: same kind, base and content give the same key."""
     material = json.dumps(
@@ -105,16 +123,18 @@ def verify_item(
     answered: frozenset[str],
 ) -> DraftItem:
     """Reject contradictions of the inputs; drop only unverifiable quotes."""
-    try:
-        content = DesignItemContent.model_validate(proposed.content)
-        check_content_for_kind(proposed.kind, content)
-    except (ValidationError, ValueError, TypeError):
-        raise DraftRejected("malformed item content") from None
     base = None
     if proposed.base_design_item_version_id is not None:
         base = existing.get(proposed.base_design_item_version_id)
         if base is None or base.kind != proposed.kind:
             raise DraftRejected("unknown or mismatched base item")
+    try:
+        content = merge_content(
+            base.content if base is not None else None, proposed.content
+        )
+        check_content_for_kind(proposed.kind, content)
+    except (ValidationError, ValueError, TypeError):
+        raise DraftRejected("malformed item content") from None
     refs: list[str] = []
     for ref in proposed.answer_refs:
         if ref not in answered:

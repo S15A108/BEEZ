@@ -140,32 +140,63 @@ def test_content_required_fields_depend_on_kind():
         existing(kind="API_CONTRACT")
 
 
+def test_only_the_kind_that_requires_a_field_constrains_its_type():
+    # The BE contract validates kind-specific fields only; a POLICY may carry
+    # a free-form `method`, and an existing item like that must be accepted.
+    manual = DesignItemContent.model_validate({"description": "x", "method": "manual"})
+    check_content_for_kind("POLICY", manual)
+    assert existing(kind="POLICY", content=manual).content.extra_fields() == {
+        "method": "manual"
+    }
+    free_entity = DesignItemContent.model_validate({"description": "x", "entity": " "})
+    check_content_for_kind("REQUIREMENT", free_entity)
+    with pytest.raises(ValueError):
+        check_content_for_kind("DATA_CONTRACT", free_entity)
+
+
 @pytest.mark.parametrize(
     "content",
     [
-        {"description": " "},
         {"description": "x", "method": "get", "path": "/a"},
         {"description": "x", "method": "GET", "path": "api"},
         {"description": "x", "method": "GET", "path": "/a b"},
         {"description": "x", "method": "GET", "path": "/a?x=1"},
-        {"description": "x", "entity": " "},
+        {"description": "x", "method": "GET"},
     ],
 )
-def test_invalid_content_values_are_rejected(content):
+def test_invalid_api_fields_are_rejected_for_api_contracts(content):
+    with pytest.raises(ValueError):
+        check_content_for_kind(
+            "API_CONTRACT", DesignItemContent.model_validate(content)
+        )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"description": "x", "entity": " ", "fields": []},
+        {"description": "x", "entity": "account", "fields": "id"},
+        {"description": "x", "entity": "account"},
+    ],
+)
+def test_invalid_data_fields_are_rejected_for_data_contracts(content):
+    with pytest.raises(ValueError):
+        check_content_for_kind(
+            "DATA_CONTRACT", DesignItemContent.model_validate(content)
+        )
+
+
+def test_blank_description_is_rejected_for_every_kind():
     with pytest.raises(ValidationError):
-        DesignItemContent.model_validate(content)
+        DesignItemContent.model_validate({"description": " "})
+    with pytest.raises(ValidationError):
+        DesignItemContent.model_validate({"method": "GET", "path": "/a"})
 
 
 def test_extra_content_fields_are_preserved():
     content = DesignItemContent.model_validate({"description": "x", "note": "kept"})
-    assert content.model_dump(mode="json") == {
-        "description": "x",
-        "method": None,
-        "path": None,
-        "entity": None,
-        "fields": None,
-        "note": "kept",
-    }
+    assert content.model_dump(mode="json") == {"description": "x", "note": "kept"}
+    assert content.extra_fields() == {"note": "kept"}
 
 
 def test_answered_question_needs_a_fitting_answer():

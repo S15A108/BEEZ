@@ -53,7 +53,7 @@ DraftItem:
 | `kind` | 5종 | 기준 항목이 있으면 그 종류와 같다 |
 | `status` | `DRAFT` | 유일한 값. 스키마에 다른 상태가 없다 |
 | `schema_version` | 1 | DesignItemContent v1 |
-| `content` | DesignItemContent | `description` 필수, 종류별 필수 필드 검증, 추가 필드 보존 |
+| `content` | DesignItemContent | `description` 필수. 종류가 요구하는 필드만 타입 검사(API `method`·`path`, DATA `entity`·`fields`)하고 그 밖의 JSON 필드는 그대로 보존한다(BE 계약과 동일; POLICY의 `method: "manual"` 같은 값도 허용). UPDATE면 기준 항목 본문 위에 모델이 돌려준 필드만 덮어쓴 결과다 |
 | `base_design_item_version_id`, `base_status` | ID \| null, `DRAFT\|APPROVED` \| null | 갱신 대상 기존 버전과 그 상태. APPROVED 기준은 편집되지 않고 새 DRAFT 버전의 바탕일 뿐이다 |
 | `sources[]` | EvidenceItem | **확인된 원문 인용만**(블록 ID·행 범위·위치·인용, 최대 5). 블록에 없는 인용은 버린다 |
 | `answer_refs[]` | string | 이 초안이 기댄 답변의 `question_key`. 입력의 `ANSWERED` 질문만 허용 |
@@ -76,6 +76,7 @@ DraftChange:
 
 - 인용(`sources`)은 `block_id`가 문서에 있고 `quote`가 그 블록 원문의 부분 문자열일 때만 남긴다. 아닌 인용은 조용히 버리고 `support`를 다시 계산한다(#133과 같은 기준).
 - 기준 항목 ID가 입력에 없거나 종류가 다르면, 답변 참조가 `ANSWERED` 질문 키가 아니면, 본문이 종류별 필수 필드를 어기면 **출력 전체를 거부**한다(502 `model_unavailable`, usage는 실패로 기록). 모델이 ID·키를 지어낸 경우다.
+- 갱신(UPDATE)의 `after`는 기준 항목 본문에 모델이 돌려준 필드를 덮어쓴 결과다. 모델이 **생략한 필드는 기존 값을 보존**하고(답변과 무관한 `parameters`·`responses` 등이 사라지지 않음), **JSON `null`은 그 필드를 삭제**한다는 뜻이다. 생략과 삭제를 이렇게 구분하므로 `changed_fields`에는 실제로 바뀐 필드만 남는다. 신규(CREATE)의 `null` 필드는 버린다.
 - 기존 항목과 본문이 같은 "갱신"은 변경이 아니므로 버리고 그 항목을 `untouched_existing_ids`에 둔다. 같은 기준 항목에 대한 두 번째 초안도 버린다(기준 항목당 초안 1개).
 - 종류·기준·본문이 같은 초안이 둘이면 첫 번째만 남긴다.
 - 승인본 불변: 입력의 APPROVED 항목 본문은 `before`에 그대로 나오고, 출력 어디에도 `APPROVED` 상태의 항목은 없다. 테스트 `test_update_of_an_approved_item_keeps_the_approved_content_as_before`와 평가 검사 `approved_bases_kept_as_before`가 이를 확인한다.
