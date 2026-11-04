@@ -1,6 +1,7 @@
 package com.beez.backend.impactanalysis;
 
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.access.ProjectLogRedaction;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.config.BeezProperties;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
@@ -36,6 +37,12 @@ public class PublishedAnalysisProcessor {
     }
 
     public void process(long id) {
+        try (var ignored = ProjectLogRedaction.open()) {
+            processIntake(id);
+        }
+    }
+
+    private void processIntake(long id) {
         var claimed = repository.claimNow(id, leaseSeconds);
         if (claimed.isEmpty()) return;
         Claim claim = claimed.get();

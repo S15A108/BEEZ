@@ -70,7 +70,7 @@ public class ContextPacketService {
         validator.check(args, "arguments");
         // 프로젝트는 토큰에서 정한다. 인수의 project_id 는 같은지만 본다 (02-mcp-tools "연결과 인증")
         if (args.projectId() != null && !Ids.parse(args.projectId(), "project_id").equals(projectId)) {
-            throw AccessErrors.notFound("packet_project_mismatch project=" + projectId + " arg=" + args.projectId());
+            throw AccessErrors.notFound("packet_project_mismatch");
         }
         Long taskId = Ids.parse(args.taskId(), "task_id");
         if (taskId != null) {
