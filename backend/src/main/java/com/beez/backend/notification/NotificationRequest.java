@@ -10,7 +10,8 @@ import java.util.regex.Pattern;
  * <p>형식 검사는 여기서 한다. 어긋나면 {@link IllegalArgumentException} — 사용자 입력이 아니라 호출 코드 버그라
  * 도메인 처리도 함께 롤백된다(계약 2.2). 길이 초과는 오류가 아니다 — {@link NotificationRequester} 가 잘라 저장한다.
  *
- * @param notificationKey    {@code {대상}:{ID}:{동작}[:구분]:to:{계정 ID}}. 도메인 사실만으로 정해지게(난수·현재 시각 금지). DB dedupe_key
+ * @param notificationKey    {@code {대상}:{ID}:{동작}[:구분]:to:{계정 ID}}, 끝의 계정 ID 는 recipientAccountId 와 같아야 한다.
+ *                           도메인 사실만으로 정해지게(난수·현재 시각 금지). DB dedupe_key
  * @param recipientAccountId 받는 사람 계정. 활성 멤버가 아니면 저장 때 건너뛴다
  * @param type               {@code DOCUMENT_APPROVED} 같은 유형(계약 6.1). 상수는 소유 도메인 코드에 둔다
  * @param documentId         {@code targetType=DOCUMENT_VERSION} 이면 필수
@@ -36,6 +37,10 @@ public record NotificationRequest(String notificationKey, Long projectId, Long r
         Objects.requireNonNull(targetId, "targetId");
         if (notificationKey.length() > KEY_MAX_LENGTH || !KEY_FORMAT.matcher(notificationKey).matches()) {
             throw new IllegalArgumentException("notification key does not match the contract format: " + notificationKey);
+        }
+        if (!notificationKey.endsWith(":to:" + recipientAccountId)) {
+            // 수신자 조각이 없거나 다르면 같은 키가 여러 수신자에 쓰여, 첫 수신자 말고는 ON CONFLICT 로 조용히 사라진다
+            throw new IllegalArgumentException("notification key must end with :to:" + recipientAccountId + ": " + notificationKey);
         }
         if (!TYPE_FORMAT.matcher(type).matches()) {
             throw new IllegalArgumentException("notification type does not match the contract format: " + type);

@@ -36,10 +36,18 @@ class NotificationRequestTest {
 
     @Test
     void keyOver200Chars_isRejected() {
-        String max = "task:" + "1".repeat(195);   // 200자
+        String max = "task:" + "1".repeat(190) + ":to:2";   // 200자
         assertThat(request(max, "TASK_ASSIGNED", NotificationTargetType.TASK, null).notificationKey()).hasSize(200);
-        assertThatThrownBy(() -> request(max + "1", "TASK_ASSIGNED", NotificationTargetType.TASK, null))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> request("task:1" + max.substring(5), "TASK_ASSIGNED", NotificationTargetType.TASK, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("contract format");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"baseline:9:created", "task:1:assigned:to:3", "task:1:assigned:to:12"})
+    void keyWithoutMatchingRecipientSuffix_isRejected(String key) {
+        // 수신자 2에게 보내는 요청. 수신자 조각이 없거나 다르면 여러 수신자가 한 키를 나눠 써 첫 사람 말고는 사라진다
+        assertThatThrownBy(() -> request(key, "TASK_ASSIGNED", NotificationTargetType.TASK, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(":to:2");
     }
 
     @ParameterizedTest
@@ -51,9 +59,10 @@ class NotificationRequestTest {
 
     @Test
     void documentVersionTarget_requiresDocumentId() {
-        assertThatThrownBy(() -> request("doc-submission:33:approved:to:11", "DOCUMENT_APPROVED",
-                NotificationTargetType.DOCUMENT_VERSION, null)).isInstanceOf(IllegalArgumentException.class);
-        assertThat(request("doc-submission:33:approved:to:11", "DOCUMENT_APPROVED",
+        assertThatThrownBy(() -> request("doc-submission:33:approved:to:2", "DOCUMENT_APPROVED",
+                NotificationTargetType.DOCUMENT_VERSION, null)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("documentId");
+        assertThat(request("doc-submission:33:approved:to:2", "DOCUMENT_APPROVED",
                 NotificationTargetType.DOCUMENT_VERSION, 7L).documentId()).isEqualTo(7L);
     }
 }
