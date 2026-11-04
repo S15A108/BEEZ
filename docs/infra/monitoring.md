@@ -2,8 +2,9 @@
 
 dev 서버의 서버·PostgreSQL·백엔드 지표를 Prometheus로 모으고 Grafana로 보는
 스택입니다. 결정 근거는 S15P31A108-244 [결정 (11-04)]이고, 이 문서는 수집 스택
-(S15P31A108-263) 범위입니다. 대시보드·알림 규칙·Mattermost 연결은
-S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
+(S15P31A108-263) 범위입니다. 대시보드·알림 규칙·Mattermost 연결과 알림 대응은
+[모니터링 알림 런북](monitoring-alerts.md)(S15P31A108-264), Kafka·Connect·WAL 수집은
+S15P31A108-261에서 더합니다.
 
 [서버 세팅](server-setup.md) · [CD](cd.md) 런북을 마쳐 본 스택(compose 프로젝트
 `beez`)이 떠 있는 상태를 전제로 합니다.
@@ -25,7 +26,7 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
 |---|---|
 | compose 파일 | `infra/monitoring/compose.yaml` (프로젝트 이름 `beez-monitoring`) |
 | 서버 위치 | `/opt/beez/monitoring/` — 저장소의 `infra/monitoring/`을 그대로 푼 것 |
-| 서버 값 | `/opt/beez/.env.monitoring` — 비밀값 포함, 저장소에 없음 |
+| 서버 값 | `/opt/beez/.env.monitoring` — 비밀값 포함, 저장소에 없음. Mattermost 웹훅 주소는 `/opt/beez/.alertmanager-webhook-url`([알림 런북](monitoring-alerts.md#웹훅-넣기-서버당-한-번)) |
 | 수집 주기 | 15초 (`prometheus/prometheus.yml`) |
 | 보존 | 30일 또는 10GB 중 먼저 닿는 쪽 |
 | 호스트 포트 | Grafana `127.0.0.1:3000`, Prometheus `127.0.0.1:9090`. 나머지는 열지 않음 |
@@ -35,7 +36,7 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
 |---|---|---|---|
 | prometheus | `prom/prometheus:v3.15.1` | 수집·저장 | 1GiB |
 | grafana | `grafana/grafana:13.2.5` | 화면 | 1GiB |
-| alertmanager | `prom/alertmanager:v0.34.2` | 알림 전달. 지금은 수신처 없음 | 128MiB |
+| alertmanager | `prom/alertmanager:v0.34.2` | 알림 묶음·Mattermost 전달 | 128MiB |
 | node-exporter | `prom/node-exporter:v1.12.1` | 서버 CPU·메모리·디스크 | 128MiB |
 | postgres-exporter | `prometheuscommunity/postgres-exporter:v0.20.1` | PostgreSQL 통계 | 128MiB |
 
@@ -113,7 +114,8 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
   printf '%s\n' \
     '# BEEZ 모니터링 환경값 (S15P31A108-263). 비밀값 포함: 저장소·메신저에 올리지 않는다' \
     "GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 16)" \
-    "MONITOR_DB_PASSWORD=$(openssl rand -hex 24)" > /opt/beez/.env.monitoring ) && ls -l /opt/beez/.env.monitoring
+    "MONITOR_DB_PASSWORD=$(openssl rand -hex 24)" \
+    "ALERTMANAGER_WEBHOOK_URL_FILE=/opt/beez/.alertmanager-webhook-url" > /opt/beez/.env.monitoring ) && ls -l /opt/beez/.env.monitoring
 # -rw-r----- 1 ubuntu beez-deploy ... /opt/beez/.env.monitoring
 ```
 
@@ -123,7 +125,9 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
 - `set -C`로 덮어쓰기를 막습니다. 이미 있으면 "cannot overwrite existing file"로
   멈춥니다. `MONITOR_DB_PASSWORD`를 바꿀 때는 아래 "비밀번호 바꾸기"를 따릅니다.
 - `umask 027`로 `640`이 되고 그룹은 `/opt/beez`의 setgid로 `beez-deploy`입니다.
-- 키는 둘입니다. `GRAFANA_ADMIN_USER`(기본 `admin`)·`MONITOR_DB_USER`(기본
+- 키는 셋입니다. 마지막 줄은 웹훅 주소 파일의 경로이고 주소는 그 파일에만 둡니다. 파일은
+  [알림 런북 "웹훅 넣기"](monitoring-alerts.md#웹훅-넣기-서버당-한-번)로 만듭니다(없으면
+  alertmanager가 뜨지 않음). `GRAFANA_ADMIN_USER`(기본 `admin`)·`MONITOR_DB_USER`(기본
   `beez_monitor`)·`DB_NAME`(기본 `beez`)은 기본값을 쓸 때 적지 않습니다.
 
 ### 2. DB 수집 계정
@@ -248,7 +252,7 @@ git fetch -q origin && SHA=$(git rev-parse "$REV") && echo "$SHA" &&
 git archive "$SHA" infra/monitoring | ssh beez "set -e; cd /opt/beez
   rm -rf monitoring.new && mkdir monitoring.new
   tar -x -C monitoring.new --strip-components=2
-  rm -f monitoring.new/local.env monitoring.new/compose.local.yaml
+  rm -f monitoring.new/local.env monitoring.new/compose.local.yaml monitoring.new/alertmanager/local-webhook-url
   echo $SHA > monitoring.new/REVISION
   rm -rf monitoring.old; if [ -d monitoring ]; then mv monitoring monitoring.old; fi
   mv monitoring.new monitoring && ls monitoring && cat monitoring/REVISION"
@@ -258,7 +262,9 @@ git archive "$SHA" infra/monitoring | ssh beez "set -e; cd /opt/beez
   로컬 작업 트리의 고치다 만 파일이 섞이지 않습니다.
 - 새 폴더에 다 푼 뒤 이름을 바꿉니다. 직전 것은 `monitoring.old`로 하나 남겨
   되돌릴 때 씁니다(`REVISION`에 커밋이 적혀 있음).
-- 로컬 검증용 `local.env`·`compose.local.yaml`은 서버에 두지 않습니다.
+- 로컬 검증용 `local.env`·`compose.local.yaml`·`alertmanager/local-webhook-url`은 서버에 두지 않습니다.
+  규칙 시험(`prometheus/tests/`)은 올라가지만 컨테이너에 붙지 않습니다.
+- `infra/monitoring/`만 바뀐 dev 머지는 CD(`cd.yml`)가 돌지 않습니다(`paths-ignore`). 서버 반영은 이 절차뿐입니다.
 
 그다음 서버에서 다시 띄웁니다.
 
@@ -298,14 +304,15 @@ mon down                 # 컨테이너·monitoring 네트워크 삭제. 볼륨(
 | 대상 | 내용 | 백업 | 잃었을 때 |
 |---|---|---|---|
 | `infra/monitoring/` | 설정 전부 | 저장소가 정본 | 다시 올리기 |
-| `/opt/beez/.env.monitoring` | Grafana 관리자·DB 수집 계정 비밀번호 | 하지 않음 | 새로 만들고 2단계 SQL 다시 실행, Grafana 비밀번호 재설정 |
+| `/opt/beez/.env.monitoring` | Grafana 관리자·DB 수집 계정 비밀번호, 웹훅 파일 경로 | 하지 않음 | 새로 만들고 2단계 SQL 다시 실행, Grafana 비밀번호 재설정 |
+| `/opt/beez/.alertmanager-webhook-url` | Mattermost 웹훅 주소 | 하지 않음 | Mattermost에서 웹훅을 새로 만들어 다시 넣기 |
 | `beez-monitoring_prometheus-data` | 수집 이력(최대 30일) | 하지 않음 | 그 시점부터 다시 쌓임. 서비스 영향 없음 |
-| `beez-monitoring_grafana-data` | 로그인 정보·화면에서 만든 것 | 하지 않음 | 데이터 소스는 파일로 다시 생김. 대시보드는 264에서 파일로 저장소에 둘 예정 |
+| `beez-monitoring_grafana-data` | 로그인 정보·화면에서 만든 것 | 하지 않음 | 데이터 소스·대시보드는 파일(`grafana/`)로 다시 생김 |
 | `beez-monitoring_alertmanager-data` | 알림 일시 중지·통지 이력 | 하지 않음 | 일시 중지를 다시 건다 |
 
 - 정본은 저장소와 env 파일이고, 볼륨은 다시 쌓이는 값이라 따로 백업하지
-  않습니다. 대시보드를 화면에서만 만들고 저장소에 넣지 않으면 grafana-data와 함께
-  사라집니다(264에서 파일로 관리).
+  않습니다. 대시보드는 저장소 파일이 정본이고 화면에서 고친 것은 저장되지 않습니다
+  ([대시보드 바꾸기](monitoring-alerts.md#대시보드-바꾸기)).
 
 ## 비밀번호 바꾸기
 
@@ -385,7 +392,6 @@ docker compose -f infra/compose.yaml --env-file infra/local.env down
 
 | 할 일 | 어디서 |
 |---|---|
-| 대시보드·알림 규칙·Mattermost 수신처·운영 런북 | S15P31A108-264 |
 | Kafka lag·Connect 상태·replication slot WAL 수집 | S15P31A108-261 |
 | 배포 자동화(Jenkins 잡 연결) | 미정. 변경이 잦아지면 별도 티켓 |
 | 별도 모니터링 서버·서버 생존 외부 확인 | 244 작업 내용 4번, 2서버 구조 결정 때 |
