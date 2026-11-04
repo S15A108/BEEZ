@@ -38,6 +38,8 @@ public class SecurityConfig {
     static final String[] PUBLIC_API = {
             "/api/ping",
             "/api/auth/register",
+            "/api/auth/email-verifications",              // ACC-A11 (-219)
+            "/api/auth/email-verifications/*/confirm",    // ACC-A12
             "/api/auth/login",
             "/api/auth/logout",
             "/api/auth/password/**",

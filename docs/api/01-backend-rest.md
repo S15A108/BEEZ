@@ -198,7 +198,8 @@
 {
   "email": "member@example.com",
   "password": "example-password",
-  "name": "김개발"
+  "name": "김개발",
+  "verified_token": "evt_example"
 }
 ```
 
@@ -1056,13 +1057,13 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | 인증 요청 ID. 순번이 아닌 난수 문자열(-219: 남의 요청 ID 를 추측해 틀린 코드로 잠그지 못하게) |
 | `expires_at` | `Time` | Y | 코드 만료 시각. 화면은 이 값으로 남은 시간을 셈 |
 | `resend_available_at` | `Time` | Y | 다시 받기가 가능한 시각 |
 
 ```json
 {
-  "verification_id": "41",
+  "verification_id": "k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA",
   "expires_at": "2026-10-28T03:05:00Z",
   "resend_available_at": "2026-10-28T03:01:00Z"
 }
@@ -1074,7 +1075,8 @@ HTTP `201`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `email_already_exists` | 이미 등록된 이메일 |
-| 429 | `rate_limited` | 발송 횟수 초과 |
+| 429 | `rate_limited` | 다시 받기 간격 전이거나 발송 횟수 초과 |
+| 503 | `mail_send_failed` | 메일을 보내지 못함. 이 요청은 남지 않아 바로 다시 받을 수 있다 (-219) |
 
 ```json
 {
@@ -1088,7 +1090,7 @@ HTTP `201`.
 #### 처리 규칙
 
 - 코드 유효 시간은 5분이다(기본안). 다시 받으면 새 인증 요청을 만들고 이전 코드는 바로 무효다.
-- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다.
+- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다. 구현 기본안(-219, 설정값): 다시 받기 1분, 이메일당 1시간 5회, 서버 전체 1시간 100회(SMTP 계정 보호). IP별 한도는 아직 없다.
 - 코드는 해시로만 저장하고 응답·로그에 남기지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -1122,7 +1124,7 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | ACC-A11 응답의 인증 요청 ID (난수 문자열) |
 
 #### Query Parameters
 
@@ -1179,8 +1181,8 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 틀린 입력 횟수를 제한한다(값은 Q04). 넘으면 이 인증 요청은 끝나고 코드를 새로 받아야 한다.
-- 성공하면 코드를 소비한다. verified_token은 유효 기간이 짧고 가입 성공 때 소비된다.
+- 틀린 입력 횟수를 제한한다(값은 Q04, 구현 기본안 5회). 다섯 번째로 틀리면 429이고 그 뒤에는 맞는 코드도 429다. 코드를 새로 받아야 한다.
+- 성공하면 코드를 소비한다. 같은 코드를 다시 확인하면 410 verification_expired다. verified_token은 유효 기간이 짧고(구현 기본안 30분) 가입 성공 때 소비된다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
