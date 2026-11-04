@@ -57,7 +57,7 @@ public class MeController {
     @Operation(summary = "프로필 수정 (ACC-A05). name·avatar 중 하나 이상. avatar 빈 문자열은 지우기")
     @PatchMapping
     public AccountResponse updateProfile(CallerContext caller, @RequestBody(required = false) UpdateProfileRequest body) {
-        return AccountResponse.from(accounts.updateProfile(caller, body));
+        return AccountResponse.withPasswordState(accounts.updateProfile(caller, body));
     }
 
     @Operation(summary = "비밀번호 변경 (ACC-A06). 성공하면 이 세션만 남기고 같은 계정의 다른 세션을 끊는다")
