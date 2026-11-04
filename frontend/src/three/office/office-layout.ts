@@ -3,6 +3,7 @@ import type { Dir, Floor, Furniture, FurnitureKind, Seat, Tile } from './floors'
 import { V488_PLAN, type OfficePiece, type OfficePlan } from './officePlan'
 import { OFFICE_THEMES, officeDesignOf, type OfficeDesign } from './officeLook'
 import { BRICK_PLAN } from './plans/brick'
+import { GLASS_PLAN } from './plans/glass'
 import { MODERN_PLAN } from './plans/modern'
 import { TOWER_PLAN } from './plans/tower'
 import { WOOD_PLAN } from './plans/wood'
@@ -26,6 +27,7 @@ export function officePopulationOf(
 // 건물 외관별 배치(D31). 아직 옮기지 않은 외관은 v488 배치(D28)를 쓴다.
 const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
   brick: BRICK_PLAN,
+  glass: GLASS_PLAN,
   modern: MODERN_PLAN,
   tower: TOWER_PLAN,
   wood: WOOD_PLAN,

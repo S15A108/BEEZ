@@ -75,6 +75,7 @@ export const OFFICE_THEMES: Record<OfficeDesign, OfficeTheme> = {
     mullion: '#7d858c',
     light: '#f4f8ff',
     sun: '#ffffff',
+    glassRoom: true,
   },
   // 붉은 벽돌: 중간 오크, 흰 천장, 검은 창틀, 따뜻한 빛
   brick: {
