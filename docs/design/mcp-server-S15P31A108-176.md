@@ -1,0 +1,150 @@
+# MCP 서버 기반과 도구 추가 방법
+
+작성: 전진 · Jira: S15P31A108-176 · 대상: MCP 도구를 붙이는 사람(-179 어댑터, 각 서비스 담당자)
+
+Claude Code가 붙는 `/mcp` 서버의 구성, 모든 도구가 함께 쓰는 공통 처리(호출자·인수·오류·로그), 도구를 하나 추가하는 방법을 적는다. 도구 인수·응답 모양은 [MCP Tools](../api/02-mcp-tools.md), 어느 서비스 메서드를 부르는지는 [08 MCP ↔ 업무 서비스 계약](08-mcp-service-contract.md)이 기준이다.
+
+## 1. 구성
+
+| 항목 | 선택 | 이유 |
+| --- | --- | --- |
+| 라이브러리 | MCP Java SDK `io.modelcontextprotocol.sdk:mcp:2.1.0` (`mcp-core` + `mcp-json-jackson3`) | Spring Boot 4.1.1 BOM 아래에서 충돌 없이 해석된다(reactor 3.8.7, Jackson 3.1.5로 맞춰짐). 서블릿용 Streamable HTTP 전송과 시험용 클라이언트가 들어 있다. Spring AI MCP 스타터(2.0.2)는 같은 SDK를 감싸지만 `spring-ai-model`·WebFlux 전송·자동 설정을 함께 끌고 오고, 오류를 08 계약 형식으로 바꾸려면 결국 직접 감싸야 해서 쓰지 않았다 |
+| 전송 | Streamable HTTP, 경로 `/mcp`, 세션 있음(stateful) | 02-mcp-tools "연결과 인증". MCP 세션 ID는 계정·토큰과 다른 식별자로 남는다(-178에서 연결 상태에 쓴다) |
+| 인증 | 기존 `SecurityConfig.mcpChain` + `AgentTokenAuthenticationFilter`(-175) | 서블릿 앞에서 매 요청 토큰을 검증한다. 세션을 연 뒤에 토큰을 폐기해도 다음 요청이 401이다 |
+| 요청 상한 | 2 MiB (`McpServerConfig.REQUEST_MAX_BYTES`) | REST 요청 전체 상한·Nginx `/mcp`의 `client_max_body_size 2m`과 같다. SDK 기본은 16 MiB |
+
+요청이 지나가는 순서:
+
+```
+RequestIdFilter (X-Request-Id, MDC) → mcpChain (Bearer 토큰 → AgentPrincipal, 실패 401)
+  → MCP 서블릿 (SDK: initialize · tools/list · tools/call)
+    → McpToolHandler (공통 처리) → McpTool 구현 (인수 전달) → 담당 서비스
+```
+
+- MCP 서블릿은 DispatcherServlet과 따로 등록된다. `@RestControllerAdvice`를 타지 않으므로 도구 오류는 `McpToolHandler`가 결과로 바꾼다.
+- 세션은 서버 메모리에 있다. 서버를 재시작하면 기존 세션 ID는 404가 되고, 클라이언트는 다시 `initialize`한다(MCP 명세 동작). 서버를 여러 대로 늘리면 세션 고정이 필요하다.
+- **GET·HEAD `/mcp`(서버 → 클라이언트 대기 스트림)는 405로 닫는다**(서블릿의 HEAD는 GET 처리를 그대로 부른다). MCP 명세상 서버가 고를 수 있고 클라이언트는 POST만으로 동작한다. 열어 두면 끝나지 않는 비동기 요청이 되어, Spring Boot의 graceful shutdown이 진행 중인 async 요청을 기다리느라 에이전트가 붙어 있는 동안 배포마다 종료 대기 시간(30초)을 다 채운다. 서버가 먼저 보낼 기능(알림·elicitation)이 생기면 종료 처리와 함께 연다.
+- 그래서 연결 유지 ping도 끈다(보낼 통로가 없다). GET 스트림이 없으면 SDK 정리기가 두 정리 사이에 요청이 없던 세션을 닫으므로, 정리 주기를 1시간으로 늘려 마지막 요청 후 1~2시간 유지한다(웹 세션 2시간과 비슷하게). 닫힌 세션에 요청하면 404이고, 클라이언트는 MCP 명세대로 다시 `initialize`해야 한다 — 배포 재시작 때와 같은 동작이다. 대신 끊긴 POST 응답을 GET + `Last-Event-ID`로 이어받는 경로도 함께 닫힌다(도구 호출은 수십 ms라 드물고, 변경 도구는 `idempotency_key`로 다시 부르면 같은 결과를 받는다). POST 응답 스트림은 도구 결과를 보내면 끝나므로 Nginx `/mcp`의 `proxy_buffering off`·`proxy_read_timeout 1h`(-123)와 맞는다.
+
+## 2. 공통 처리 (`McpToolHandler`)
+
+모든 도구 호출에 똑같이 적용된다. 도구 구현은 이 부분을 다시 만들지 않는다.
+
+| 단계 | 하는 일 |
+| --- | --- |
+| 호출자 | 필터가 검증한 토큰 주체에서 `McpCall(caller = CallerContext.agent(계정, 토큰), projectId = 토큰 프로젝트, sessionId)`를 만든다. 도구 인수의 `project_id`로 프로젝트를 정하지 않는다 |
+| 인수 | 도구 인수(JSON 객체)를 Spring `ObjectMapper`(REST와 같은 snake_case)로 인수 레코드에 넣는다. 타입이 틀리거나 enum 이름이 없으면 `validation_failed` |
+| 결과 | 성공 payload를 snake_case JSON으로 `structuredContent`와 `content[0].text`에 같이 싣는다 |
+| 오류 | 아래 3절 형식의 도구 실패 결과(`isError: true`) |
+| 로그 | `com.beez.mcp` 한 줄: 도구·프로젝트·계정·토큰 ID·결과 코드·지연. 인수·결과 본문은 남기지 않는다(비밀값·개인 대화 원문, MCP-09). 요청 ID는 MDC로 붙고, `com.beez.access`의 `POST /mcp -> 상태` 줄과 같은 ID다 |
+
+SDK의 입력 스키마 검사는 끈다(`validateToolInputs(false)`). 켜면 실패가 SDK 문구 텍스트로 나가 공통 오류 형식과 어긋난다. 스키마는 에이전트에게 주는 안내이고, 검증은 인수 변환과 서비스의 검증 표시(`InputValidator`)가 한다(08 계약 1절).
+
+## 3. 오류 형식
+
+### 업무 오류 — 도구 실패 결과
+
+HTTP는 200이고 JSON-RPC 응답 안의 도구 결과가 실패다. 본문은 REST 오류 본문과 같다.
+
+```json
+{
+  "content": [{ "type": "text", "text": "{\"error\":{\"code\":\"not_found\",\"message\":\"리소스가 없거나 프로젝트 소속·접근 권한이 없음\"}}" }],
+  "structuredContent": { "error": { "code": "not_found", "message": "리소스가 없거나 프로젝트 소속·접근 권한이 없음" } },
+  "isError": true
+}
+```
+
+| 원인 | code | 비고 |
+| --- | --- | --- |
+| 서비스가 던진 `ApiException` | 그 `code`·`message` 그대로 | 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
+| 인수 타입·enum 변환 실패 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다` |
+| 인수 레코드를 만들 수 없음(레코드 정의 오류) | `internal` | 입력 탓이 아니라 서버 버그라 `validation_failed`로 숨기지 않고 스택을 남긴다 |
+| 그 밖의 예외 | REST `GlobalExceptionHandler`와 같은 code | 같은 대응표를 그대로 쓴다. 낙관적 잠금 충돌 → `revision_conflict`, DB 제약 → `validation_failed`, 나머지 → `internal`(서버 로그에 스택) |
+
+### 인증 실패 — HTTP 401
+
+전송 단계에서 거부한다. MCP 세션이 열리지 않고, 열린 세션도 그 요청은 처리되지 않는다.
+
+```json
+{ "error": { "code": "unauthenticated", "message": "에이전트 토큰이 유효하지 않음" } }
+```
+
+토큰 없음·모르는 토큰은 `unauthenticated`, 폐기·멤버십 종료·프로젝트 보관은 `token_revoked`(-175).
+
+### 프로토콜 오류
+
+없는 도구 이름, `Accept` 헤더 누락, 없는 세션 ID 같은 MCP 규약 위반은 SDK가 JSON-RPC 오류로 응답한다. 업무 오류 형식을 따르지 않는다.
+
+## 4. 도구 추가 방법
+
+도구 하나 = `McpTool<A>`를 구현한 `@Component` 하나. `McpServerConfig`가 빈을 모아 자동으로 등록한다. 도구 이름이 겹치면 서버가 기동하지 않는다.
+
+```java
+package com.beez.backend.mcp.tool;
+
+/** MCP-12 report_task_state (02-mcp-tools). 계약: 08 문서 2절 */
+@Component
+class ReportTaskStateTool implements McpTool<ReportTaskStateArgs> {
+
+    private final TaskMcpService tasks;
+
+    ReportTaskStateTool(TaskMcpService tasks) {
+        this.tasks = tasks;
+    }
+
+    @Override public String name() { return "report_task_state"; }
+
+    @Override public String description() {
+        return "작업 상태 전이(START·COMPLETED 등)를 보고한다. idempotency_key 는 필수다.";   // 예시 — 실제 스키마는 -179
+    }
+
+    @Override public String inputSchema() {
+        return """
+                {"type":"object","required":["task_id","event","idempotency_key"],
+                 "properties":{
+                   "task_id":{"type":"string"},
+                   "event":{"type":"string","enum":["START","RESUME","WAIT","COMPLETED","CANCEL"]},
+                   "idempotency_key":{"type":"string"}}}""";
+    }
+
+    @Override public Class<ReportTaskStateArgs> argsType() { return ReportTaskStateArgs.class; }
+
+    @Override public Object call(McpCall call, ReportTaskStateArgs args) {
+        return tasks.reportTaskState(call.caller(), call.projectId(), args);
+    }
+}
+```
+
+지킬 것 (08 계약 1절):
+
+1. **인수 → 서비스, 결과 → 반환만 한다.** 권한 확인·검증·멱등 처리는 서비스가 한다. 어댑터에 업무 규칙을 복제하지 않는다.
+2. **트랜잭션을 열지 않는다.** `@Transactional`을 붙이지 않는다. 서비스 메서드 하나가 트랜잭션 하나다.
+3. **오류는 `ApiException`으로 던진다.** 결과에 직접 `isError`를 만들지 않는다.
+4. **인수 레코드 칸은 camelCase, 스키마 키는 snake_case.** `task_id` ↔ `taskId`. 인수 레코드는 `mcp/dto`의 기존 것(`ReportTaskStateArgs` 등)을 쓴다.
+5. **반환값은 JSON 객체가 되는 값**(레코드·Map). 목록 하나만 돌려줘야 하면 `{"items": [...]}`처럼 감싼다 — `structuredContent`는 객체여야 한다.
+6. **감사 기록(mcp_audit_log)을 도구 안에서 남기지 않는다.** -177이 `McpToolHandler`에 공통으로 붙인다.
+
+시험: `McpServerIntegrationTests`처럼 SDK 클라이언트로 붙어 `tools/call`을 부른다. 서비스 규칙은 이미 서비스 시험에 있으니, 도구 시험은 "인수가 서비스까지 제대로 가는가"와 08 계약의 MCP 경유 시나리오만 본다.
+
+## 5. 로컬에서 연결해 보기
+
+1. backend를 띄운다(`./gradlew bootRun`, local 프로필이 compose의 Postgres를 띄운다).
+2. 웹 또는 REST로 로그인한 뒤 프로젝트 에이전트 토큰을 발급한다: `POST /api/projects/{projectId}/agent-tokens` → 응답의 `token`(한 번만 보인다).
+3. Claude Code에 서버를 등록한다.
+
+```bash
+claude mcp add --transport http beez http://localhost:8080/mcp --header "Authorization: Bearer <발급한 토큰>"
+```
+
+4. Claude Code에서 `/mcp`로 `beez`가 connected인지, 도구 목록이 보이는지 확인한다. 도메인 도구는 -179에서 붙으므로 그 전에는 목록이 비어 있다.
+
+SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect()`를 본다(`HttpClientStreamableHttpTransport` + `Authorization` 헤더).
+
+## 6. 다음 티켓으로 넘기는 것
+
+| 항목 | 티켓 |
+| --- | --- |
+| 도구 호출마다 감사 기록, 권한 실패 응답 형식 확인 | -177 (`McpToolHandler.handle`의 성공·실패 지점) |
+| 세션과 토큰을 묶기 — 지금은 다른 토큰이 남의 세션 ID로 POST하면 **보낸 토큰의 권한으로** 처리되지만, DELETE로 남의 세션을 끊을 수 있다 | -178 |
+| 토큰·계정당 세션 수 상한(지금은 initialize마다 세션이 생겨 마지막 요청 후 최대 2시간, 정리될 때까지 쌓인다), 1인 1에이전트, 연결 상태·해제, 작업 절차 안내(`instructions`) | -178 |
+| 도메인 도구 어댑터(MCP-01~07·10~12)와 입력 스키마, 출력 스키마 | -179 |

@@ -9,6 +9,7 @@ import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationResponses;
 import com.beez.backend.validation.service.ValidationInputAssembler;
+import com.beez.backend.validation.service.ValidationRules;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.repository.TaskCompletionReportRepository;
 import java.util.LinkedHashMap;
@@ -115,6 +116,9 @@ public class ValidationWorker {
                 return true;
             }
             if (fake) {
+                if (ValidationRules.POLICY_CHECK.equals(responses.summary(row.summary()).get("policy_analysis_version"))) {
+                    throw new IllegalStateException("정책 분석에는 실제 분석기가 필요합니다");
+                }
                 // The fake analyzer needs only the already accepted check keys and never accesses source data.
                 // This also allows pre-184 queued jobs, whose summary has no request_actor, to complete as before.
                 request = fakeRequest(row, lease);
@@ -132,6 +136,9 @@ public class ValidationWorker {
                     return true;
                 }
                 request = searchInput.request();
+                if (ValidationRules.POLICY_CHECK.equals(responses.summary(row.summary()).get("policy_analysis_version"))) {
+                    assembler.bindPolicyAnalysis(searchInput);
+                }
                 if ("DELTA".equals(row.trigger())) {
                     var completionDelta = completionDelta(row, false);
                     assembler.bindCompletionDelta(searchInput, completionDelta);

@@ -6,7 +6,8 @@ GitHub Actions가 한 번만 빌드해 GHCR에 올리고, 서버는 받아서 �
 
 [서버 세팅](server-setup.md) · [Nginx·HTTPS](nginx-https.md) ·
 [Jenkins](jenkins.md) · [Docker 이미지](docker-images.md) 런북을 먼저 마친
-상태를 전제로 합니다.
+상태를 전제로 합니다. 상태·로그 확인, 재시작, 되돌리기, 배포 실패 알림은
+[운영 안내](operations.md)에 모았습니다.
 
 ## 구성
 
@@ -122,7 +123,8 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
   없습니다.
 - `BACKEND_HOST_PORT`는 8080이 아닌 값이어야 합니다. 8080은 Jenkins가
   씁니다. Nginx `upstream beez_backend`의 포트와 같아야 합니다.
-- 변수 목록·`.env.example`·시크릿 관리 정리는 S15P31A108-27에서 합니다.
+- 변수마다의 의미·필수 여부, 빠졌을 때의 문구, 배포 전 점검 명령은
+  [환경변수와 비밀값](env.md)에 있습니다.
 
 ### 3. GMS 키 넣기·바꾸기
 
@@ -169,8 +171,23 @@ sudo nginx -t && sudo systemctl reload nginx && rm -r /tmp/nginx
 |---|---|
 | `/api/` | backend. 업로드 상한 `2m`(backend multipart `max-request-size`와 같음. Nginx 기본 1m이면 1~2MB 요청이 413) |
 | `/mcp` | backend. 스트리밍 연결이라 버퍼링 끔, 읽기 대기 1시간 |
-| `= /actuator/health` | backend. 상세는 prod 프로필에서 숨김. 다른 `/actuator` 경로는 열지 않음 |
+| `= /actuator/health` | backend. 상세는 prod 프로필에서 숨김 |
+| `^~ /actuator/` | 404. `/actuator/prometheus` 포함 나머지 actuator 경로를 외부에서 막음 |
 | 그 밖 | 정적 파일, 없으면 `index.html`(SPA) |
+
+**지표(`/actuator/prometheus`)는 backend 8080에서 인증 없이 열려 있고, 외부
+인터넷만 위 Nginx 규칙으로 막습니다**(S15P31A108-262, 결정은 S15P31A108-244).
+수집기는 compose 네트워크(`beez_default`) 안에서 `backend:8080`으로 읽습니다.
+같은 Docker 네트워크의 컨테이너와 서버 로컬(`127.0.0.1:8081`)에서는 누구나
+읽을 수 있는데, 지표 라벨에 프로젝트 ID·문서 원문이 없어 이를 수용합니다.
+수집기 전용으로 좁혀야 하면 네트워크·인증 정책을 따로 정합니다.
+backend로 넘기는 세 경로(`snippets/beez-backend-proxy.conf`)는 경로에 `;`·`\`
+(`%3B`·`%5C` 포함)가 있으면 400으로 돌려보냅니다. Nginx는 정규화한 경로로
+location을 고르지만 원래 경로를 넘기고, Tomcat은 `;` 뒤를 지우기 때문에
+`/api/;/../actuator/prometheus`가 backend에서 `/actuator/prometheus`가 되는
+틈을 막습니다(Spring 방화벽도 400으로 막지만 한 겹 더 둡니다).
+관리 포트를 따로 두지 않는 건 헬스체크·Nginx·`deploy.sh`가 모두
+8080의 `/actuator/health`를 보기 때문입니다.
 
 프록시가 없으면 `/api/...`도 SPA 규칙에 걸려 `index.html`이 200으로
 돌아옵니다. 상태 코드만 보고 "API가 된다"고 판단하지 않습니다.
@@ -181,6 +198,9 @@ sudo nginx -t && sudo systemctl reload nginx && rm -r /tmp/nginx
 infra/deploy/deploy.sh <git SHA 40자> <환경>
 ```
 
+0. [배포 전 점검](env.md#배포-전에-점검하기)(`infra/deploy/check-port.sh port`)으로
+   env 필수값과 backend 포트·Nginx upstream 일치를 봅니다. 실패하면 아무것도
+   받거나 바꾸지 않고 멈춥니다. compose 오류는 값 없는 고정 문구로만 냅니다.
 1. 프론트 포장 이미지에서 dist를 꺼내 `releases/<sha>`에 둡니다. 이미 있으면
    건너뜁니다. 아직 전환하지 않습니다.
 2. backend·ai 이미지를 받습니다. digest로 고정한 postgres·seaweedfs는 매번
@@ -189,6 +209,8 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
 3. `docker compose up -d --no-build --remove-orphans --wait`로 바뀐
    컨테이너만 교체하고, healthcheck가 있는 서비스가 healthy가 될 때까지 최대
    240초 기다립니다. backend의 healthcheck는 `/actuator/health`입니다.
+   이어서 [Nginx 반영 확인](env.md#nginx-반영-확인)(`check-port.sh nginx`)으로
+   실행 중인 Nginx가 새 backend로 보내는지 `/api/ping`의 `started_at`으로 봅니다.
 4. **3이 성공했을 때만** 프론트 `current`를 새 릴리스로 바꿉니다.
 5. 릴리스는 최근 5개만 남기고, 컨테이너가 쓰지 않는 이 저장소 이미지 중
    7일 넘은 것을 지웁니다. 필요하면 GHCR에서 다시 받습니다.
@@ -197,6 +219,13 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   끝납니다. 프론트는 바꾸지 않습니다. **backend·ai 컨테이너는 이미 새
   버전으로 바뀐 상태**이므로, 로그 맨 앞의 "직전 backend 이미지" SHA로 다시
   배포해 되돌립니다. 되돌리기의 한계는 아래 "롤백의 한계".
+- Nginx 반영 확인이 실패해도 프론트는 바꾸지 않고 실패로 끝납니다.
+  `nginx 다름`이면 대개 env의 포트를 바꾸고 Nginx를 reload하지 않은
+  것이라 직전 SHA로 되돌려도 고쳐지지 않습니다. `sudo nginx -t && sudo
+  systemctl reload nginx` 뒤 같은 SHA로 다시 배포합니다. `nginx 확인
+  실패`면 찍힌 원인(curl 종료 코드·HTTP 상태)을 보고 Nginx·인증서·backend
+  상태를 고친 뒤 같은 SHA로 다시 배포합니다. 문구 뜻은
+  [Nginx 반영 확인](env.md#nginx-반영-확인).
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
 - **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
   다른 배포가 돌고 있으면 최대 5분 기다리고, 그래도 안 끝나면 컨테이너를
@@ -275,6 +304,7 @@ readlink /var/www/beez/current
 | 파라미터 | `GIT_SHA`(40자) · `DEPLOY_ENV`(`dev`) · `TARGET`(`local`) |
 | 파이프라인 | **같은 파일 안에 고정**. 검사(SHA 형식 → dev 받기 → dev 본줄기 커밋인지) → 그 커밋으로 전환 → `deploy.sh` 호출. 검사·배포 전체 15분 상한 |
 | 동작 | 동시 실행 안 함(뒤 요청은 줄을 섬), 기록 50회 보관 |
+| 실패 알림 | 실패·중단·시간 초과면 팀 Mattermost 채널로 보냄([운영 안내](operations.md#6-배포-실패-알림)) |
 | 실행 권한 | `beez-admin`, `github-actions`(이 잡만) |
 
 ### 검사를 고정 파이프라인에 두는 이유
@@ -396,7 +426,8 @@ rm -f /tmp/plugins.txt /tmp/jenkins.yaml
 밖이면 잡이 실패합니다. **배포 결과는 기다리지 않습니다.** 기다리며 상태를
 반복해서 물으면 Jenkins 앞 Nginx의 인증 요청 제한(IP당 분당 10회, API
 토큰과 비밀번호를 구분할 수 없어 함께 셈)에 걸립니다. Actions의 초록불은
-"배포 요청 접수"까지이고, 배포 성공은 Jenkins에서 봅니다.
+"배포 요청 접수"까지이고, 배포 성공은 Jenkins에서 봅니다. 배포가 실패하면 Jenkins가
+팀 채널로 알립니다([운영 안내](operations.md#6-배포-실패-알림)).
 
 | 응답 | 뜻 |
 |---|---|
@@ -479,8 +510,10 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
   파라미터로만 주게 만들었기 때문입니다.
 - B에서 dev와 운영을 한 서버에 같이 두려면 compose 프로젝트 이름과 backend
   호스트 포트를 환경별로 나눠야 합니다(`name: beez`가 고정이라 지금은 한
-  서버에 한 환경). 이 경우 compose의 `name`과 `BACKEND_HOST_PORT`를 env
-  파일로 빼는 변경이 추가됩니다.
+  서버에 한 환경). 이 경우 compose의 `name`을 env 파일로 빼는 변경이
+  추가됩니다(`BACKEND_HOST_PORT`는 이미 env 파일의 필수값). Nginx upstream
+  이름도 환경별로 달라져야 하므로, `beez_backend`·`beez`를 고정으로 보는
+  [배포 전 점검](env.md#배포-전에-점검하기)도 함께 고칩니다.
 
 ## 확인
 
@@ -490,7 +523,9 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
 curl -s https://dev.beez.ai.kr/api/ping                                          # {"ok":true,"service":"beez-backend",...}
 curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/health  # 200
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://dev.beez.ai.kr/mcp       # 401 (토큰 없음)
-curl -s -o /dev/null -w '%{content_type}\n' https://dev.beez.ai.kr/actuator/env  # text/html (backend로 안 감)
+curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/prometheus  # 404 (Nginx가 막음)
+curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/env         # 404
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'https://dev.beez.ai.kr/api/;/../actuator/prometheus'  # 400 (Nginx가 막음)
 ```
 
 서버:
@@ -498,6 +533,7 @@ curl -s -o /dev/null -w '%{content_type}\n' https://dev.beez.ai.kr/actuator/env 
 ```bash
 sudo ss -ltnp | grep -E ':(8080|8081|5432|8000|8333) '   # 127.0.0.1:8080(Jenkins)·127.0.0.1:8081(backend)만
 curl -s http://127.0.0.1:8081/actuator/health            # {"groups":[...],"status":"UP"}
+curl -s http://127.0.0.1:8081/actuator/prometheus | grep -m1 '^jvm_memory_used_bytes'   # 지표 한 줄
 ```
 
 ## 주의

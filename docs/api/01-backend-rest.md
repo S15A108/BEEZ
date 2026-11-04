@@ -198,7 +198,8 @@
 {
   "email": "member@example.com",
   "password": "example-password",
-  "name": "김개발"
+  "name": "김개발",
+  "verified_token": "evt_example"
 }
 ```
 
@@ -1056,13 +1057,13 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | 인증 요청 ID. 순번이 아닌 난수 문자열(-219: 남의 요청 ID 를 추측해 틀린 코드로 잠그지 못하게) |
 | `expires_at` | `Time` | Y | 코드 만료 시각. 화면은 이 값으로 남은 시간을 셈 |
 | `resend_available_at` | `Time` | Y | 다시 받기가 가능한 시각 |
 
 ```json
 {
-  "verification_id": "41",
+  "verification_id": "k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA",
   "expires_at": "2026-10-28T03:05:00Z",
   "resend_available_at": "2026-10-28T03:01:00Z"
 }
@@ -1074,7 +1075,8 @@ HTTP `201`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `email_already_exists` | 이미 등록된 이메일 |
-| 429 | `rate_limited` | 발송 횟수 초과 |
+| 429 | `rate_limited` | 다시 받기 간격 전이거나 발송 횟수 초과 |
+| 503 | `mail_send_failed` | 메일을 보내지 못함. 이 요청은 남지 않아 바로 다시 받을 수 있다 (-219) |
 
 ```json
 {
@@ -1088,7 +1090,7 @@ HTTP `201`.
 #### 처리 규칙
 
 - 코드 유효 시간은 5분이다(기본안). 다시 받으면 새 인증 요청을 만들고 이전 코드는 바로 무효다.
-- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다.
+- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다. 구현 기본안(-219, 설정값): 다시 받기 1분, 이메일당 1시간 5회, 서버 전체 1시간 100회(SMTP 계정 보호). IP별 한도는 아직 없다.
 - 코드는 해시로만 저장하고 응답·로그에 남기지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -1122,7 +1124,7 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | ACC-A11 응답의 인증 요청 ID (난수 문자열) |
 
 #### Query Parameters
 
@@ -1179,8 +1181,8 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 틀린 입력 횟수를 제한한다(값은 Q04). 넘으면 이 인증 요청은 끝나고 코드를 새로 받아야 한다.
-- 성공하면 코드를 소비한다. verified_token은 유효 기간이 짧고 가입 성공 때 소비된다.
+- 틀린 입력 횟수를 제한한다(값은 Q04, 구현 기본안 5회). 다섯 번째로 틀리면 429이고 그 뒤에는 맞는 코드도 429다. 코드를 새로 받아야 한다.
+- 성공하면 코드를 소비한다. 같은 코드를 다시 확인하면 410 verification_expired다. verified_token은 유효 기간이 짧고(구현 기본안 30분) 가입 성공 때 소비된다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7456,6 +7458,7 @@ HTTP `200`.
 | `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 고정 기준→제안 diff와 현재 승인 내용 |
 | `explicit_candidates` | `object[]` | Y | 직접 참조 후보. target_type/target_id/via_design_item_id/assignee_member_id/origin |
 | `candidates_truncated` | `boolean` | Y | 후보 500개 초과 여부 |
+| `published_analysis` | `object` | N | 선택한 리비전의 발행 후 분석 접수 상태 (#243). 발행 전 리비전에서는 생략 |
 | `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. #218 수정안 요청 · 195 미구현 |
 
 #### Error
@@ -7467,11 +7470,15 @@ HTTP `200`.
 | 400 | `validation_failed` | 리비전 입력 오류 |
 | 409 | `baseline_conflict` | 저장된 기준 항목을 확인할 수 없음 |
 | 413 | `diff_too_large` | 비교 본문 한도 초과 |
+| 503 | `published_analysis_unavailable` | 발행 후 분석 접수 상태의 DB 조회 실패. 미평가나 0건으로 바꾸지 않음 |
 
 #### 처리 규칙
 
 - 선택 리비전의 base_baseline_id와 문서·항목 기준 버전을 고정해 비교한다. 현재 baseline 변경은 requires_refresh, 비교 대상의 현재 본문 변경은 current_changed로 따로 표시한다. diff의 기준을 현재 승인본으로 바꾸지 않는다.
 - READ ONLY REPEATABLE READ로 기준·현재·제안을 같은 DB 스냅샷에서 읽는다. 설계 항목 본문은 묶음 조회한다.
+- `published_analysis`는 발행 후 접수행 기준이며, 승인 전 분석을 반환하는 CHG-A05와 별개다. `status`는 `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `NOT_EVALUATED` 또는 발행되었으나 baseline이나 접수행을 확인할 수 없는 `UNKNOWN`이다. `evaluation_status`가 `INSUFFICIENT_EVIDENCE`인 완료는 영향 없음이 아니다. 평가 전이거나 결과가 없는 필드는 생략한다.
+- 접수행이 있으면 `attempt`, `requested_at`, `started_at`, `finished_at`, `next_attempt_at`, 제한된 `error_code`와 `guidance`를 제공한다. 실행 중에는 `lease_expired`를 제공한다. `current_baseline`은 발행 baseline ID가 현재 baseline과 같은지만 나타내며, 비교할 ID가 없으면 생략한다. 관계·작업 등 모든 분석 입력의 최신성을 보장하지 않는다.
+- `guidance`는 `WAIT`, `RETRY_SCHEDULED`, `RECOVERY_PENDING`, `CONTACT_OPERATOR`, `REVIEW_REASON`, `REVIEW_EVIDENCE`, `CHECK_RESULT`, `NONE` 중 하나다. `RETRY_SCHEDULED`는 예약/도래한 자동 재시도이고, 사용자 수동 재처리 API가 존재한다는 뜻이 아니다. 상태 의미와 지표는 [243번 문서](../design/cdc-observability-243.md)를 따른다.
 - DOC-A06과 같은 줄별 계산기를 사용한다. 동일 본문은 빈 diff. 삭제 줄은 -, 추가 줄은 +, 유지 줄은 공백 접두어다. 마지막 개행 없음은 표준 \ No newline at end of file 표시로 구분하며 비교 중 CR/LF·공백을 정규화하지 않는다.
 - 각 본문은 1,048,576자·50,000줄 이내다. 공통 앞뒤 구간을 분리하고 중간 LCS 표가 1,000,000칸을 넘으면 해당 중간 구간을 전체 삭제/추가로 표시한다. 내용은 생략하지 않으며 최소 diff는 보장하지 않는다. JSON 항목은 키를 정렬한 canonical JSON으로 비교한다.
 - 후보는 기준 설계 항목의 원문 출처·현재 작업 계획의 직접 참조·검증 참조에 한정한다. 작업은 COMPLETED·CANCELLED를 제외하고(MCP-03 affected_task_ids와 같은 규칙), 검증은 열린 작업의 현재 계획 리비전 검증만 포함한다. API/DATA 계약도 설계 항목으로 표시한다. 확정 설계 관계 1단계+작업 계획 참조 규칙 계산은 관계 서비스 담당과 계약하고, 규칙/AI 후보 저장·조회는 197 후속이다. 후보를 확정 영향·알림·작업 변경으로 사용하지 않는다.
@@ -9968,6 +9975,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -159) 접수 시 `current_attempt=1`의 실행(run)과 작업 큐(job)를 함께 만든다. 워커는 큐에서 꺼내 AI를 DB 트랜잭션 밖에서 부르고, 반영 직전 아직 RUNNING·같은 시도·같은 리스인지 확인해 아니면 결과를 버린다(실행 DISCARDED). 같은 리스라도 job의 리스 유효기간이 지났으면 결과를 받지 않고, 회수가 아직 안 됐어도 그 자리에서 만료(`validation_lease_expired`, RETRY)로 닫는다. 큐에서 기다리거나 AI가 도는 사이 분석 입력이 바뀌었으면 AI를 부르지 않거나 결과를 버리고 검증을 STALE로 닫는다 — 이 작업의 계획 리비전이 바뀌면 `PLAN_CHANGED`, 같은 항목을 보는 관련 작업이나 그 계획이 접수 때 고정한 것과 달라지면(계획 변경·새 관련 작업·관련 작업 종료) `RELATED_PLAN_CHANGED`. 반영은 프로젝트 행을 먼저 잠근 뒤(계획 변경·상태 보고와 같은 순서) 입력 확인부터 저장까지 한 트랜잭션으로 하므로, 그 사이 같은 프로젝트의 계획 변경·상태 전이·새 작업은 기다린다. 모델을 부른 실행은 결과를 버리든(DISCARDED) 만료·오류로 닫든 `validation_run.usage`(V16)에 그 호출의 사용량을 남기고, 회수로 이미 닫힌 실행에 늦게 온 응답의 사용량도 그 실행에 남기며(판정만 버린다), AI 의 HTTP 오류 본문(504 등)에 든 `usage`도 같이 남긴다. `usage` 가 객체 배열이 아니면 출력 계약 위반(`ai_invalid_output`)이고, 그 값은 저장하지 않는다(요약에 `usage_rejected` 원문만). 입력 변경으로 STALE 이 될 때는 요약에도 `model`·`usage`를 남긴다(비용 집계 -168 은 실행 기준, 후보는 남기지 않는다). 워커는 큐에서 꺼낸 직후에도 같은 규칙 재판정을 해, 기다리는 사이 규칙만으로 판정이 선 검증(관련 작업 시작으로 점유 충돌·참조 버전 낡음)은 모델을 부르지 않고 그 판정으로 닫는다(실행 DISCARDED, 작업 DONE). COMPLETE 결과를 저장하기 전에 접수 때와 같은 규칙을 지금의 관련 작업 상태·참조 버전으로 다시 판정해 규칙 발견 항목을 더한다 — 관련 작업의 계획은 그대로인데 상태만 바뀌어 같은 항목을 CHANGES 로 점유하게 된 경우는 NEEDS_REVIEW, 참조 버전이 그사이 낡은 경우는 NEEDS_INPUT 이다. 작업 취소·담당자 인계로 무효화되면 접수 때 만든 실행도 DISCARDED로 닫는다. AI 응답은 필수 배열·원소 타입, 검사 키 분할, 항목·버전·관련 작업 ID, 출처(요청의 승인 항목·규칙 finding·근거에 넣은 출처만), 근거 키(그 근거의 출처가 sources에 함께 있어야 함), MISSING_INPUT·MISSING_POLICY의 BLOCKING을 검사해 어긋나거나 본문이 비면 `ai_invalid_output`, PARTIAL은 미검사 사유별 코드로 ERROR다. AI의 STALE_REF는 현재 기준과 다시 대조해 정말 낡았으면 NEEDS_INPUT, 최신이면 사람 검토(BLOCKING이면 NEEDS_REVIEW)다. 승인 항목에는 원문 출처가 있으면 `source`를 넣어 보낸다. `checks`·`checked_keys`·`unassessed`·model·usage는 `validation.summary`에 남기고, PARTIAL·계약 위반처럼 모델을 부른 실패도 같은 값과 부분 후보(`partial_findings`)를 진단용으로 남긴다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 남긴다. 워커는 한 번에 한 건씩 처리하고, 스케줄 스레드는 워커마다 하나다(`spring.task.scheduling.pool.size`). 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 워커가 주기마다 회수해 실행 ERROR·검증 ERROR(`validation_lease_expired`, RETRY)로 닫는다. 같은 검증의 재시도(VAL-A04)는 -161이며, 그 전에는 새 검증을 요청한다. 승인 항목의 `source`는 위치를 만들 수 있는 출처만 넣는다 — 원문 위치의 `location`(앞뒤 공백 제거), 없으면 줄 범위(`text_lines`)로 `lines {시작}-{끝}`, 둘 다 없으면 source를 넣지 않는다(변경 영향 분석과 같은 규칙). AI가 404(검증 경로 없음)를 주면 `ai_unavailable`이다. AI 서버에 검증 경로가 붙기 전(-184)까지 개발 서버는 가짜 분석기(`beez.validation.fake-analyzer=true`, 환경변수 `VALIDATION_FAKE_ANALYZER`)를 켤 수 있다. 켜면 AI를 부르지 않고 요청한 검사를 모두 후보 없이 완료로 돌려줘, 의미 분석이 필요한 검증도 PASS가 된다(실제 설계 대조 없음, 운영에서는 끔). 이때 summary.model과 실행 기록의 분석기 버전은 `fake-analyzer`다. 가짜 분석기를 끈 서버에서는 실행 기록의 분석기 버전이 `fake-analyzer`인 PASS로 START·RESUME할 수 없다(시작 관문 G1, `validation_not_passed`). 실제 AI로 바꾼 뒤에는 검증을 다시 요청해야 한다.
 - (BE 구현, -159) `Idempotency-Key` 헤더는 다른 작업 변경 API(TSK-A04·A07)와 같이 Q12 확정 전이라 처리하지 않는다. MCP-11은 `idempotency_key`를 처리한다.
 - (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
+- (BE 구현, -186) 정책 분석이 완료되면 검증된 `policy_assessments`의 승인 내용 인용과 원문 근거가 가리키는 설계 버전만 `validation_policy_ref`에 저장한다. 계획 참조와는 별개이며 검색 범위에 있었지만 인용되지 않은 후보는 저장하지 않는다. 해당 항목이 수정·폐기되면 검증을 `STALE / DESIGN_PUBLISHED`로 만들고, 그 검증으로 시작한 진행 작업은 `WAITING / REVALIDATION`으로 전환한다. 작업 시작·재개 때도 인용 버전과 현재 기준을 비교하며, 같은 입력의 계획으로 검증을 이어 받을 때 이 참조도 복사한다. 새로운 정책 추가나 인용되지 않은 항목의 연관성까지 추적하는 것은 아니다. `VALIDATION_POLICY_ANALYSIS_ENABLED`와 `VALIDATION_FAKE_ANALYZER`를 동시에 켜면 설정 오류로 기동이 실패한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
