@@ -69,7 +69,9 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus 는 같은 8080 에서 연다(관리 포트 분리 안 함 — 헬스체크·Nginx·deploy.sh 가 8080 을 쓴다).
+        # 외부 인터넷은 Nginx 가 /actuator/ 를 막고, 수집은 compose 네트워크 안에서 한다 (S15P31A108-262, docs/infra/cd.md)
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: always
