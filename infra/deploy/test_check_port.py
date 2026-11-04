@@ -68,20 +68,22 @@ def run(mode="port", env_extra="", sites=None, **fake):
         env = os.environ.copy()
         env.pop("BACKEND_HOST_PORT", None)
         env.pop("PUBLIC_ORIGIN", None)
-        env.update({"NGINX_SITES_DIR": posix(site_dir), "REAL_DOCKER": posix(shutil.which("docker")),
-                    "FAKE_PS": BACKEND_PS, "FAKE_SS": "", "CURL_COUNT": posix(tmp / "curl-count"),
-                    "NGINX_RETRY_WAIT": "0"})
+        count = tmp / "curl-count"
+        env.update({"CHECK_PORT_TEST_SITES_DIR": posix(site_dir), "REAL_DOCKER": posix(shutil.which("docker")),
+                    "FAKE_PS": BACKEND_PS, "FAKE_SS": "", "CURL_COUNT": posix(count),
+                    "CHECK_PORT_TEST_RETRY_WAIT": "0"})
         env.update(fake)
         # 가짜 명령이 진짜보다 먼저 잡히도록 PATH 맨 앞에 둔다. Windows 경로(C:/…)는 PATH 의 ':' 와 겹쳐 /c/… 로 바꾼다
         cmd = (f'b=$(cygpath -u "{posix(bin_dir)}" 2>/dev/null || echo "{posix(bin_dir)}"); '
                'chmod +x "$b"/*; PATH="$b:$PATH" exec bash "$@"')
         r = subprocess.run([find_bash(), "-c", cmd, "check", posix(SCRIPT), mode, posix(envf), posix(COMPOSE)],
                            env=env, capture_output=True, text=True, encoding="utf-8")
-        return r.returncode, r.stdout + r.stderr
+        via_calls = int(count.read_text()) if count.exists() else 0   # Nginx 경유로 부른 횟수
+        return r.returncode, r.stdout + r.stderr, via_calls
 
 
 def expect(result, code, text):
-    rc, out = result
+    rc, out, _ = result
     assert rc == code and text in out, f"exit {rc} (기대 {code}), 출력에 '{text}' 없음:\n{out}"
     assert SECRET not in out, f"비밀값이 출력됨:\n{out}"
 
@@ -185,7 +187,10 @@ def test_nginx_same_backend():
 
 def test_nginx_other_backend_fails():
     # reload 전이면 Nginx 는 예전 포트의 backend 로 보내 started_at 이 다르다
-    expect(run("nginx", FAKE_VIA=PONG % "old", FAKE_DIRECT=PONG % "new"), 1, "nginx 다름: Nginx 경유=old / backend 직접=new")
+    # 다시 물어도 같으므로 기다리지 않고 한 번에 멈춘다
+    r = run("nginx", FAKE_VIA=PONG % "old", FAKE_DIRECT=PONG % "new")
+    expect(r, 1, "nginx 다름: Nginx 경유=old / backend 직접=new")
+    assert r[2] == 1, f"Nginx 경유 호출 {r[2]}회 (1회여야 함)"
 
 
 def test_nginx_spa_fallback_fails():

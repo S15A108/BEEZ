@@ -247,7 +247,8 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
   compose 가 여는 포트 하나와 같은 **server 하나짜리** 설정만 지원합니다.
 - **점검 명령 자체가 실패해도 `port ok` 가 나오지 않습니다.** `port ok` 일 때만 exit 0 이고, 아래 문구를 포함해
   실패는 모두 exit 1 입니다.
-  `서버에 docker 없음` 은 말 그대로이고, `env 파일 없음·읽기 불가` 는 `ENV_NAME` 이 틀렸거나 SSH 사용자가 읽을 수 없는 것,
+  `서버에 docker 없음`·`서버에 curl 없음` 은 말 그대로입니다(curl 은 교체 뒤 [Nginx 반영 확인](#nginx-반영-확인)에
+  쓰지만, 없으면 컨테이너를 바꾼 뒤에야 멈추므로 여기서 미리 봅니다). `env 파일 없음·읽기 불가` 는 `ENV_NAME` 이 틀렸거나 SSH 사용자가 읽을 수 없는 것,
   `config --environment 를 모름` 은 서버에 compose 플러그인이 없거나 이 옵션보다 오래된 것입니다(서버 v5.6.1·로컬 v5.2.0
   에는 있음, 2026-10-30).
   `env 점검 실패`(1) 와 `env 읽기 실패`(2) 는 바로 위에 찍힌 줄로 원인을 구분합니다.
@@ -276,6 +277,8 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 - 위 경계 처리는 [`infra/deploy/test_check_port.py`](../../infra/deploy/test_check_port.py) 가 고정합니다. 점검을 고치면
   `python infra/deploy/test_check_port.py` 를 돌립니다. 실제 docker compose 로 env 파일을 해석하고(데몬은 필요 없음),
   docker ps·`ss`·`curl`·Nginx 설정 폴더는 가짜로 둡니다. Windows 는 Git Bash 를 씁니다.
+  시험은 `CHECK_PORT_TEST_*` 환경변수로 Nginx 설정 폴더와 재시도 대기를 바꿉니다. 이 값이 설정돼 있으면 점검이 첫 줄에
+  `주의: 시험용 값 사용 중` 을 찍으므로, 배포 로그에 이 줄이 보이면 서버 환경에서 그 변수를 지웁니다.
 
 로컬 전체 스택도 같은 방식입니다.
 
@@ -302,8 +305,8 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
   주고, 예전 포트의 backend 가 아직 살아 있어도 200 이 나옵니다. 그래서 응답 본문의 `started_at` 을 비교합니다.
   다른 backend 면 시각이 달라 `nginx 다름` 으로, HTML 이면 `started_at` 이 없어 `nginx 확인 실패: … JSON 아님(HTTP 200, …)`
   으로 걸립니다(2026-11-04 서버 실측: `nginx ok`, `/api-nope` 같은 HTML 응답은 빈 값).
-- **실패 문구는 둘입니다.** `nginx 다름` 은 두 쪽이 다 응답했는데 시각이 다른 것으로, 대개 upstream 포트를 고치고 reload 하지
-  않은 것입니다. `nginx 확인 실패` 는 한쪽이 응답하지 않았거나 JSON 이 아닌 것으로, 원인을 `응답 없음(curl 종료 코드 N)`
+- **시각 비교의 실패 문구는 둘입니다.** 그 앞 단계의 실패는 아래 backend 포트·`docker 조회 실패` 와 위 점검의 env 문구입니다.
+  `nginx 다름` 은 두 쪽이 다 응답했는데 시각이 다른 것으로, 대개 upstream 포트를 고치고 reload 하지 않은 것입니다. `nginx 확인 실패` 는 한쪽이 응답하지 않았거나 JSON 이 아닌 것으로, 원인을 `응답 없음(curl 종료 코드 N)`
   또는 `JSON 아님(HTTP N, …)` 으로 보여 줍니다. curl 종료 코드는 7 연결 거부, 28 시간 초과, 35·60 TLS(인증서) 입니다.
   curl 의 오류 문구와 응답 본문은 내보내지 않습니다.
 - Nginx 경유 요청은 `PUBLIC_ORIGIN` 주소 그대로(호스트 이름·인증서 이름) 보내되, 연결만 이 서버의 Nginx(`127.0.0.1`)로
@@ -315,8 +318,9 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
   (요청 크기 한도, `/mcp` 시간 제한 등)만 바꿨다면 reload 를 안 해도 `nginx ok` 가 나오므로, 그 설정은 각각 그 동작으로
   확인합니다.
 - **판정은 응답 한 쌍으로 합니다.** upstream 의 server 가 하나라는 전제(위 점검 2)에서는 한 쌍으로 충분합니다.
-  한쪽이라도 응답을 못 받았을 때만 2초 간격으로 3번까지 다시 묻습니다(컨테이너 교체 직후의 일시 실패에 배포가 멈추지
-  않게). 둘 다 응답했는데 시각이 다르면 다시 물어도 같으므로 바로 멈춥니다.
+  처음을 포함해 3번까지 묻습니다. 한쪽이라도 응답을 못 받았을 때만 2초 뒤 다시 묻고(컨테이너 교체 직후의 일시 실패에
+  배포가 멈추지 않게), 3번 다 못 받으면 `(3회 시도)` 를 붙여 멈춥니다. 둘 다 응답했는데 시각이 다르면 다시 물어도
+  같으므로 바로 멈춥니다.
   실행 중인 설정에 server 가 둘 이상이면 요청마다 갈 곳이 달라 이 확인으로는 판단할 수 없습니다. 그런 설정 파일은
   위 점검이 먼저 멈추므로, 위 점검을 통과한 설정을 reload 한 뒤에 이 확인을 돌립니다.
 - Nginx worker 의 시작 시각은 reload 의 증거로 쓰지 않습니다. worker 는 비정상 종료 뒤 다시 뜨거나 재시작으로도 새로

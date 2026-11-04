@@ -13,11 +13,17 @@ envf=$2
 fail() { echo "$1"; exit 1; }
 case $mode in port | nginx) ;; *) fail "사용: check-port.sh port|nginx <env 파일> <compose 파일>" ;; esac
 [ $# -eq 3 ] || fail "사용: check-port.sh port|nginx <env 파일> <compose 파일>"
-sites=${NGINX_SITES_DIR:-/etc/nginx/sites-enabled}   # 시험에서만 바꾼다
+# 시험(test_check_port.py)만 쓰는 값. 운영에서 남아 있으면 엉뚱한 폴더를 읽으므로, 설정돼 있으면 로그에 드러낸다
+sites=${CHECK_PORT_TEST_SITES_DIR:-/etc/nginx/sites-enabled}
+retry_wait=${CHECK_PORT_TEST_RETRY_WAIT:-2}
+[ -n "$CHECK_PORT_TEST_SITES_DIR$CHECK_PORT_TEST_RETRY_WAIT" ] &&
+    echo "주의: 시험용 값 사용 중 (Nginx 설정 폴더 $sites, 재시도 대기 ${retry_wait}초)"
 
 cf=$(cat "$3" 2> /dev/null) && [ -n "$cf" ] || fail "compose 파일을 읽지 못함: $3"
-# 오류 문구로 원인을 가리기 전에, 값과 무관한 원인은 먼저 직접 확인한다
+# 오류 문구로 원인을 가리기 전에, 값과 무관한 원인은 먼저 직접 확인한다.
+# curl 은 교체 뒤(nginx) 에만 쓰지만, 없으면 컨테이너를 바꾼 뒤에야 멈추므로 교체 전(port) 에도 본다
 command -v docker > /dev/null || fail "서버에 docker 없음"
+command -v curl > /dev/null || fail "서버에 curl 없음"
 [ -r "$envf" ] || fail "env 파일 없음·읽기 불가: $envf"
 docker compose config --help 2> /dev/null | grep -q -- '--environment' ||
     fail "서버 docker compose 가 없거나 config --environment 를 모름 (버전 확인)"
@@ -58,7 +64,7 @@ if [ "$mode" = nginx ]; then
     # (curl 오류 문구·응답 본문은 내보내지 않는다). 종료 코드 뜻: 7 연결 거부, 28 시간 초과, 35·60 TLS
     ask() {
         local out rc code started
-        out=$(curl -sS --max-time 10 -w '\n%{http_code}' "$@" 2> /dev/null)
+        out=$(curl -s --max-time 10 -w '\n%{http_code}' "$@" 2> /dev/null)
         rc=$?
         code=${out##*$'\n'}
         started=$(printf '%s\n' "${out%$'\n'*}" | ts)
@@ -73,19 +79,19 @@ if [ "$mode" = nginx ]; then
     set -- $(printf '%s\n' "$out" | sed -n 's/.*127\.0\.0\.1:\([0-9]*\)->.*/\1/p')
     [ $# -eq 1 ] || fail "backend 컨테이너 포트가 $# 개 (1개여야 함)"
     bport=$1
-    # 둘 중 하나라도 응답을 못 받았을 때만 다시 묻는다(교체 직후 일시 실패). 둘 다 응답했으면 그 한 쌍으로 판정한다.
-    # 시각이 다르면(reload 전 등) 다시 물어도 같으므로 기다리지 않는다
+    # 처음 포함 3번까지 묻는다. 둘 중 하나라도 응답을 못 받았을 때만 다시 묻고(교체 직후 일시 실패),
+    # 둘 다 응답했으면 그 한 쌍으로 판정한다. 시각이 다르면(reload 전 등) 다시 물어도 같으므로 기다리지 않는다
     for try in 1 2 3; do
         via=$(ask --connect-to ::127.0.0.1: "$origin/api/ping")
         direct=$(ask "http://127.0.0.1:$bport/api/ping")
-        case "$via|$direct" in ok\ *\|ok\ *) break ;; esac
-        [ "$try" -lt 3 ] && sleep "${NGINX_RETRY_WAIT:-2}"   # 대기 시간은 시험에서만 바꾼다
+        both=
+        case "$via|$direct" in ok\ *\|ok\ *) both=1 ;; esac
+        [ -n "$both" ] && break
+        [ "$try" -lt 3 ] && sleep "$retry_wait"
     done
     detail="Nginx 경유=${via#* } / backend 직접=${direct#* }"
-    case "$via|$direct" in
-        ok\ *\|ok\ *) [ "$via" = "$direct" ] || fail "nginx 다름: $detail" ;;   # 다른 backend 로 보냄. reload 전이면 여기
-        *) fail "nginx 확인 실패: $detail (${try}회 시도)" ;;
-    esac
+    [ -n "$both" ] || fail "nginx 확인 실패: $detail (${try}회 시도)"
+    [ "$via" = "$direct" ] || fail "nginx 다름: $detail"   # 다른 backend 로 보냄. reload 전이면 여기
     echo "nginx ok (${via#ok })"
     exit 0
 fi
