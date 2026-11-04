@@ -23,11 +23,9 @@ public class PublishedAnalysisMetricsReader {
                        count(*) FILTER (WHERE a.status='FAILED') AS failed,
                        count(*) FILTER (WHERE a.status='NOT_EVALUATED') AS not_evaluated,
                        count(*) FILTER (WHERE a.status='NOT_EVALUATED' AND
-                         COALESCE((b.version_no=1 AND a.change_proposal_id IS NULL)
-                           OR a.error_code='published_before_intake', false)) AS not_evaluated_expected,
+                         COALESCE(%1$s, false)) AS not_evaluated_expected,
                        count(*) FILTER (WHERE a.status='NOT_EVALUATED' AND NOT
-                         COALESCE((b.version_no=1 AND a.change_proposal_id IS NULL)
-                           OR a.error_code='published_before_intake', false)) AS not_evaluated_review,
+                         COALESCE(%1$s, false)) AS not_evaluated_review,
                        count(*) FILTER (WHERE a.status='COMPLETED' AND a.evaluation_status='COMPLETED') AS evaluation_completed,
                        count(*) FILTER (WHERE a.status='COMPLETED' AND a.evaluation_status='INSUFFICIENT_EVIDENCE') AS insufficient_evidence,
                        count(*) FILTER (WHERE a.status='COMPLETED' AND (a.evaluation_status IS NULL
@@ -39,7 +37,7 @@ public class PublishedAnalysisMetricsReader {
                            - min(a.requested_at) FILTER (WHERE a.status='PENDING')))), 0) AS oldest_pending_seconds
                   FROM published_change_analysis a JOIN baseline b
                     ON b.id=a.published_baseline_id AND b.project_id=a.project_id
-                """).query().singleRow();
+                """.formatted(PublishedAnalysisOrderingSql.expectedNotEvaluated("b", "a"))).query().singleRow();
         var attempts = jdbc.sql("""
                 SELECT count(*) FILTER (WHERE outcome='COMPLETED') AS completed,
                        count(*) FILTER (WHERE outcome='INSUFFICIENT_EVIDENCE') AS insufficient_evidence,

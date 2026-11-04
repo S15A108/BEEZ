@@ -1,12 +1,17 @@
 package com.beez.backend.cdc.observability;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
+import com.beez.backend.cdc.intake.AnalysisIntakeSignalHandler;
+import com.beez.backend.cdc.transport.AnalysisIntakeDeliveryException;
+import com.beez.backend.cdc.transport.AnalysisIntakeKafkaListener;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Map;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assumptions;
 
@@ -82,10 +87,27 @@ class PublishedAnalysisMetricsTest {
         var reader = mock(PublishedAnalysisMetricsReader.class);
         when(reader.read()).thenReturn(snapshot(3, 1, 0)).thenThrow(new IllegalStateException("secret"));
         var metrics = new PublishedAnalysisMetrics(registry, reader, true, 15000);
+        var listener = new AnalysisIntakeKafkaListener((key, value) -> { throw new IllegalArgumentException("secret"); },
+                new AnalysisIntakeSignalHandler(ref -> { }), registry);
+        assertThatThrownBy(() -> listener.receive(new ConsumerRecord<>("intake", 0, 0, "key", "payload")))
+                .isInstanceOf(AnalysisIntakeDeliveryException.class);
         String scrape = (String) registryType.getMethod("scrape").invoke(registry);
         assertThat(scrape).contains("beez_cdc_analysis_intakes{status=\"PENDING\"} 3.0")
                 .contains("beez_cdc_analysis_evaluations{result=\"INSUFFICIENT_EVIDENCE\"} 2.0")
+                .contains("beez_cdc_kafka_receive_failures_total 1.0")
                 .doesNotContain("project_id", "baseline_id", "secret");
+        for (String name : new String[] {
+                "beez_cdc_analysis_intakes", "beez_cdc_analysis_evaluations",
+                "beez_cdc_analysis_attempt_records", "beez_cdc_analysis_not_evaluated_expected",
+                "beez_cdc_analysis_not_evaluated_requires_review", "beez_cdc_analysis_blocked_projects",
+                "beez_cdc_analysis_pending_retries", "beez_cdc_analysis_expired_leases",
+                "beez_cdc_analysis_started_retries", "beez_cdc_analysis_recorded_retry_attempts",
+                "beez_cdc_analysis_oldest_pending_seconds", "beez_cdc_analysis_snapshot_available",
+                "beez_cdc_analysis_snapshot_last_success_epoch_seconds", "beez_cdc_analysis_consumer_enabled"
+        }) {
+            assertThat(scrape).contains("# TYPE " + name + " gauge");
+        }
+        assertThat(scrape).contains("# TYPE beez_cdc_kafka_receive_failures_total counter");
         metrics.invalidate();
         String unavailable = (String) registryType.getMethod("scrape").invoke(registry);
         assertThat(unavailable).contains("beez_cdc_analysis_snapshot_available 0.0")

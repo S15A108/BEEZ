@@ -4,6 +4,12 @@ package com.beez.backend.impactanalysis.intake;
 public final class PublishedAnalysisOrderingSql {
     private PublishedAnalysisOrderingSql() { }
 
+    /** SQL aliases must be fixed identifiers from the calling query, never user input. */
+    public static String expectedNotEvaluated(String baselineAlias, String intakeAlias) {
+        return ("((%1$s.version_no=1 AND %2$s.change_proposal_id IS NULL) "
+                + "OR %2$s.error_code='published_before_intake')").formatted(baselineAlias, intakeAlias);
+    }
+
     /** Mirrors the publication worker's rule, including the v1 and historical backfill exceptions. */
     public static final String PREDECESSORS_READY = """
             NOT EXISTS (SELECT 1 FROM baseline current
@@ -15,7 +21,6 @@ public final class PublishedAnalysisOrderingSql {
               LEFT JOIN published_change_analysis earlier ON earlier.published_baseline_id=eb.id AND earlier.project_id=eb.project_id
               WHERE eb.project_id=a.project_id AND eb.version_no<current.version_no
                 AND (earlier.id IS NULL OR NOT COALESCE(earlier.status='COMPLETED' OR
-                  (earlier.status='NOT_EVALUATED' AND
-                    ((eb.version_no=1 AND earlier.change_proposal_id IS NULL) OR earlier.error_code='published_before_intake')), false)))
-            """;
+                  (earlier.status='NOT_EVALUATED' AND %s), false)))
+            """.formatted(expectedNotEvaluated("eb", "earlier"));
 }

@@ -64,6 +64,9 @@ public final class AccessErrors {
     }
 
     private static String logReason(String reason) {
-        return reason == null ? "unknown" : reason.replaceAll("(?i)\\b(project|token_project)=[^\\s,;]+", "$1=[redacted]");
+        if (reason == null) return "unknown";
+        return ProjectLogRedaction.isActive()
+                ? reason.replaceAll("(?i)\\b(project|token_project|arg)=[^\\s,;]+", "$1=[redacted]")
+                : reason;
     }
 }

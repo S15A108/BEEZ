@@ -1,11 +1,13 @@
 package com.beez.backend.common.web;
 
+import com.beez.backend.common.access.ProjectLogRedaction;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -27,6 +29,7 @@ public class RequestIdFilter extends OncePerRequestFilter {
     public static final String MDC_KEY = "requestId";
 
     private static final Logger access = LoggerFactory.getLogger("com.beez.access");
+    private static final Pattern ANALYSIS_DETAIL = Pattern.compile("^/api/projects/[^/]+/change-proposals/[^/]+/?$");
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
@@ -38,18 +41,23 @@ public class RequestIdFilter extends OncePerRequestFilter {
         MDC.put(MDC_KEY, id);
         res.setHeader(HEADER, id);
         long started = System.nanoTime();
-        try {
-            chain.doFilter(req, res);
-        } finally {
-            if (req.getRequestURI().startsWith("/api/")) {
-                long ms = (System.nanoTime() - started) / 1_000_000;
-                access.info("{} {} -> {} ({} ms)", req.getMethod(), accessLogPath(req.getRequestURI()), res.getStatus(), ms);
+        String path = req.getRequestURI();
+        boolean redact = "GET".equals(req.getMethod()) && ANALYSIS_DETAIL.matcher(path).matches();
+        try (var ignored = redact ? ProjectLogRedaction.open() : null) {
+            try {
+                chain.doFilter(req, res);
+            } finally {
+                if (path.startsWith("/api/")) {
+                    long ms = (System.nanoTime() - started) / 1_000_000;
+                    access.info("{} {} -> {} ({} ms)", req.getMethod(), redact ? accessLogPath(path) : path, res.getStatus(), ms);
+                }
             }
+        } finally {
             MDC.remove(MDC_KEY);
         }
     }
 
-    /** Do not put project identifiers into request logs, including analysis detail requests. */
+    /** Redact the project identifier from the analysis-detail access log. */
     static String accessLogPath(String path) {
         return path == null ? "" : path.replaceFirst("^(/api/projects/)[^/]+", "$1{projectId}");
     }
