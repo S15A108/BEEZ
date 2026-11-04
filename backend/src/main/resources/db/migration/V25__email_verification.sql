@@ -1,6 +1,6 @@
 -- 가입 이메일 인증 (S15P31A108-219, ACC-A11·A12, ACC-A01 verified_token).
 -- 인증 요청 한 번이 한 행이다. 코드 단계(code_*)와 확인 뒤 가입 토큰 단계(token_*)를 같은 행에 둔다.
--- V25 는 알림(-181, PR #99)이 쓴다. 이 파일은 그 뒤 번호다.
+-- V24(웹 세션) 뒤 번호다. 알림(-181, PR #99)은 V26 을 쓴다 — 이 PR 이 먼저 머지돼야 한다.
 CREATE TABLE email_verification (
     id                BIGSERIAL PRIMARY KEY,
     email             TEXT        NOT NULL,                -- Account.normalizeEmail 로 소문자·공백 제거

@@ -10,7 +10,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * 가입 이메일 인증 요청 한 번 (V26 email_verification, ACC-A11·A12).
+ * 가입 이메일 인증 요청 한 번 (V25 email_verification, ACC-A11·A12).
  * 코드 단계: 코드 해시·만료·틀린 횟수. 확인에 성공하면 같은 행에 가입 토큰(verified_token) 해시를 채운다.
  * 판정 규칙은 시각을 받는 메서드로 두어 DB 없이 시험한다 (EmailVerificationTest).
  */

@@ -42,7 +42,7 @@ public class EmailVerificationService {
     private static final SecureRandom RANDOM = new SecureRandom();
     /** 명세 ACC-A12 예시 "evt_example". 다른 토큰과 섞여 들어와도 눈으로 구분된다 */
     static final String TOKEN_PREFIX = "evt_";
-    /** V26 이메일당 열린 코드 하나 */
+    /** V25 이메일당 열린 코드 하나 */
     private static final String OPEN_UNIQUE = "ux_email_verification_open";
 
     private final EmailVerificationRepository verifications;
