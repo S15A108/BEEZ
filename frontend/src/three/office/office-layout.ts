@@ -9,6 +9,7 @@ import {
   OFFICE_ZONES,
   type OfficePiece,
 } from './officePlan'
+import { officeDesignOf } from './officeLook'
 
 export type OfficePopulation = Partial<Record<Zone, number>>
 export const officeObjectKey = (item: Furniture) =>
@@ -82,7 +83,7 @@ const onTop = (piece: OfficePiece) => piece.y > 0.2
  * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이다.
  * 작업 자리는 아일랜드 두 개의 12석이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
  */
-export function makeTeamOffice(): Floor {
+export function makeTeamOffice(design?: string): Floor {
   const grid: Tile[][] = Array.from({ length: H }, () =>
     Array<Tile>(W).fill('#'),
   )
@@ -273,6 +274,7 @@ export function makeTeamOffice(): Floor {
   return {
     id: 1,
     name: '우리 팀 사무실',
+    design: officeDesignOf(design),
     short: 'OFFICE',
     W,
     H,

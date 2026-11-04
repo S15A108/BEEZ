@@ -24,13 +24,16 @@ import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
 import { findPath } from './office/path'
+import { officeDesignOf, type OfficeTime } from './office/officeLook'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
 import type { SceneAgent, SceneProject, SceneTask } from './types'
 
 export interface OfficeSceneProps {
   project: Pick<SceneProject, 'name' | 'id'>
-  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그린다. */
+  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그리고, 사무실 재질·배치를 고른다(D31). */
   design?: string
+  /** 사무실 시간대(D31). 없으면 낮이다. */
+  time?: OfficeTime
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -66,7 +69,7 @@ function OfficeRuntime(
   const floor = useMemo(() => {
     const base = makeBuilding(
       ALL_KEYS,
-      'glass',
+      officeDesignOf(props.design),
       undefined,
       officePopulationOf(agents),
     ).floors[1]
@@ -77,7 +80,7 @@ function OfficeRuntime(
       staticKey: 'dream-3',
       outdoorExit: undefined,
     }
-  }, [agents, phase])
+  }, [agents, phase, props.design])
   const snapshot = useMemo(
     () => officeSceneSnapshot(props.project, agents, props.tasks),
     [props.project, agents, props.tasks],
@@ -513,6 +516,7 @@ function OfficeRuntime(
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
       work: state.work,
+      time: state.props.time,
     })
     const nextHint =
       state.props.viewMode === 'first'

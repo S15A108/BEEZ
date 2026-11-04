@@ -59,6 +59,11 @@ export class WindowCityView {
     }
   }
 
+  /** 창에 비치는 하늘 색(시간대, D31) */
+  setSky(skyColor: THREE.ColorRepresentation) {
+    this.maskMaterial.color.set(skyColor)
+  }
+
   /** Geometry stays owned by the office renderer; these are transform-only proxies. */
   addPane(source: THREE.Mesh): void {
     if (this.panes.has(source)) return

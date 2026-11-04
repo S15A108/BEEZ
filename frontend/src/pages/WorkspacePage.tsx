@@ -35,6 +35,7 @@ import {
 import {
   placementKey,
   useClearPaneOnLeave,
+  useOfficeTime,
   useWorkspaceStore,
 } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
@@ -77,6 +78,7 @@ function Workspace({ projectId }: { projectId: string }) {
   const pendingMutations = useIsMutating()
   const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
   useClearPaneOnLeave()
+  const officeTime = useOfficeTime()
   // 이 브라우저에 저장한 건물 디자인(D18). 산책 화면의 우리 건물을 도시와 같은 모델로 그린다(D22).
   const design = useWorkspaceStore(
     (state) =>
@@ -178,6 +180,7 @@ function Workspace({ projectId }: { projectId: string }) {
                 key={projectId}
                 project={data.project}
                 design={design}
+                time={officeTime}
                 agents={sceneAgents}
                 tasks={sceneTasks}
                 currentUserId={
