@@ -24,8 +24,9 @@ class GetDocumentTool implements McpTool<GetDocumentArgs> {
     @Override
     public String description() {
         return """
-                프로젝트 문서의 원문을 읽는다. version_no 를 생략하면 현재 승인본이다. \
-                승인본이 없는 문서는 document_not_approved 오류다.""";
+                프로젝트 문서의 원문을 읽는다. version_no 를 생략하면 가장 최근 승인본이다. \
+                승인본이 없는 문서는 document_not_approved 오류다. version_no 를 지정하면 승인 전 버전도 나오므로, \
+                근거로 쓰기 전에 version.status 가 APPROVED 이고 version.is_current_baseline 이 true 인지 확인한다.""";
     }
 
     @Override

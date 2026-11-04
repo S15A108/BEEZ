@@ -70,7 +70,10 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
 
     @AfterEach
     void tearDown() {
-        member.close();
+        // setUp 이 연결 전에 실패했으면 member 가 없다 — NPE 로 원래 실패를 가리지 않는다
+        if (member != null) {
+            member.close();
+        }
     }
 
     /** 깨지면: 에이전트가 명세의 도구 이름으로 도구를 찾지 못하거나, 스키마가 모르는 키를 허용한다고 안내한다 (02-mcp-tools 탐색 목록). */
@@ -143,12 +146,11 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         assertThat(started.get("changes")).isNotNull();
         assertThat(started.get("changes_since_version").asInt()).isEqualTo(1);
 
-        // 실패: 이미 시작한 작업을 옛 잠금 번호로 다시 보고 → 업무 오류가 도구 실패로
+        // 실패: 시작으로 잠금 번호가 바뀐 작업을 옛 번호로 보고 → 서비스의 409 code 가 그대로 도구 실패로 (TaskStateService 충돌 검사)
         CallToolResult stale = call(member, "report_task_state", Map.of("task_id", taskId, "event", "WAIT",
                 "plan_revision_id", revisionId, "expected_lock_version", lock, "waiting_reason", "INPUT",
                 "idempotency_key", "k-wait"));
-        assertThat(stale.isError()).isTrue();
-        assertThat(error(stale).get("code").toString()).isNotBlank();
+        assertThat(error(stale)).containsEntry("code", "revision_conflict");
     }
 
     /** 깨지면: 변경 없음(정상 0건)과 실패를 구분하지 못한다 (02-mcp-tools MCP-03 "실패를 변경 없음으로 처리하지 않는다"). */
