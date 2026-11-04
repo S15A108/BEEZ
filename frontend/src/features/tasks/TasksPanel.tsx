@@ -72,6 +72,12 @@ const taskSteps = ['계획 작성', '계획 검증', '작업 시작', '완료 �
 const staleReasonLabel: Record<string, string> = {
   ASSIGNEE_CHANGED: '담당자가 바뀌어 새 담당자가 다시 검증받아야 해요.',
 }
+const policyStateLabel = {
+  SUPPORTED: '승인 근거 확인',
+  EXPLICITLY_UNDECIDED: '정책 미확정',
+  CONTRADICTORY: '정책 불일치',
+  INSUFFICIENT: '근거 부족',
+} as const
 
 export function TasksPanel({ projectId, isLeader }: Props) {
   const session = useSession()
@@ -166,6 +172,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   const isOwner = !!task && memberId === task.assignee_member_id
   const active = !!task && !['COMPLETED', 'CANCELLED'].includes(task.status)
   const result = validation.data ?? task?.validation
+  const policyAnalysis = result?.policy_analysis
+  const needsHumanReview = result?.findings.some(
+    (finding) =>
+      finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
+  )
   const canStart =
     isOwner &&
     active &&
@@ -199,25 +210,30 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           ? (staleReasonLabel[result.stale_reason ?? ''] ??
             '기준이 바뀌어 다시 검증해야 해요.')
           : result?.status === 'ERROR'
-            ? '검증을 마치지 못했어요. 다시 실행해 주세요.'
+            ? needsHumanReview
+              ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
+              : '검증을 마치지 못했어요. 다시 실행해 주세요.'
             : result?.status === 'PASS'
               ? '지금 계획으로 다시 검증해 주세요.'
               : '계획 검증을 통과해야 시작할 수 있어요.'
   const designItems = approved.data?.pages.flatMap((page) => page.items) ?? []
+  const approvedLabel = (versionId: string, itemId?: string) => {
+    const version = designItems.find(
+      (item) =>
+        item.id === versionId && (!itemId || item.design_item_id === itemId),
+    )
+    const item =
+      version ??
+      designItems.find((candidate) => candidate.design_item_id === itemId)
+    return `${item?.key ?? '설계 항목'} ${version ? `승인 v${version.version_no}` : '이전 승인본'}`
+  }
   // 근거는 '정확한 버전 311' 대신 'REQ-001 승인 v1 · 구현'처럼 사람 말로(M7).
   const refLabel = (reference: {
     design_item_id: string
     design_item_version_id: string
     relation: string
   }) => {
-    const key =
-      designItems.find(
-        (item) => item.design_item_id === reference.design_item_id,
-      )?.key ?? '설계 항목'
-    const version = designItems.find(
-      (item) => item.id === reference.design_item_version_id,
-    )?.version_no
-    return `${key} ${version ? `승인 v${version}` : '이전 승인본'} · ${relationLabel[reference.relation as keyof typeof relationLabel]}`
+    return `${approvedLabel(reference.design_item_version_id, reference.design_item_id)} · ${relationLabel[reference.relation as keyof typeof relationLabel]}`
   }
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
@@ -696,10 +712,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                     {result?.status === 'ERROR' && (
                       <div className="flex flex-wrap items-center gap-3">
                         <p role="alert" className="text-sm text-destructive">
-                          분석을 완료하지 못했어요. 자동으로 통과 처리하지
-                          않아요.
+                          {needsHumanReview
+                            ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
+                            : '분석을 완료하지 못했어요. 자동으로 통과 처리하지 않아요.'}
                         </p>
-                        {isOwner && (
+                        {isOwner && !needsHumanReview && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -719,6 +736,76 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           </Button>
                         )}
                       </div>
+                    )}
+                    {policyAnalysis && (
+                      <section
+                        className="space-y-3 rounded-lg border p-4"
+                        aria-label="정책 분석"
+                      >
+                        <div>
+                          <h3 className="text-sm font-semibold">정책 분석</h3>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            계획과 승인 근거를 비교한 분석 후보예요. 내용을
+                            검토해 주세요.
+                          </p>
+                        </div>
+                        {policyAnalysis.no_policy_requirements_reason && (
+                          <p className="text-sm">
+                            {policyAnalysis.no_policy_requirements_reason}
+                          </p>
+                        )}
+                        {policyAnalysis.no_policy_requirements_evidence && (
+                          <p className="text-xs text-muted-foreground">
+                            계획 근거: “
+                            {
+                              policyAnalysis.no_policy_requirements_evidence
+                                .quote
+                            }
+                            ”
+                          </p>
+                        )}
+                        {policyAnalysis.policy_assessments_truncated && (
+                          <p className="text-sm text-destructive">
+                            분석할 정책이 많아 일부만 확인했어요.
+                          </p>
+                        )}
+                        {policyAnalysis.policy_assessments.map((policy) => (
+                          <article
+                            key={policy.need_id}
+                            className="space-y-1 border-t pt-3 text-sm"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong>{policy.topic}</strong>
+                              <span
+                                className={cn(
+                                  'text-xs',
+                                  [
+                                    'EXPLICITLY_UNDECIDED',
+                                    'CONTRADICTORY',
+                                  ].includes(policy.state)
+                                    ? 'font-medium text-destructive'
+                                    : 'text-muted-foreground',
+                                )}
+                              >
+                                {policyStateLabel[policy.state]}
+                              </span>
+                            </div>
+                            <p>{policy.explanation}</p>
+                            <p className="text-xs text-muted-foreground">
+                              계획 근거: “{policy.plan_evidence.quote}”
+                            </p>
+                            {policy.approved_content_refs.map((ref, index) => (
+                              <p
+                                key={index}
+                                className="text-xs text-muted-foreground"
+                              >
+                                {approvedLabel(ref.design_item_version_id)}: “
+                                {ref.quote}”
+                              </p>
+                            ))}
+                          </article>
+                        ))}
+                      </section>
                     )}
                     {result?.findings.map((finding) => (
                       <article
@@ -746,6 +833,18 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           >
                             문서 {source.document_id} v{source.version_no} ·{' '}
                             {source.location}
+                          </p>
+                        ))}
+                        {finding.conflicting_design_refs?.map((ref) => (
+                          <p
+                            key={ref.design_item_version_id}
+                            className="mt-2 text-xs text-muted-foreground"
+                          >
+                            충돌하는 승인 항목:{' '}
+                            {approvedLabel(
+                              ref.design_item_version_id,
+                              ref.design_item_id,
+                            )}
                           </p>
                         ))}
                         <div className="mt-3">

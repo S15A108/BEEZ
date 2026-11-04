@@ -288,6 +288,17 @@ public class ValidationStatusLookup {
      * @return 새로 넣은 검증 번호
      */
     public Long carryForward(long source, Long toRevisionId) {
+        boolean samePolicyInputs = jdbc.sql("""
+                select case when v.summary ->> 'policy_analysis_version' = 'policy-gap-v1'
+                            then old_plan.title is not distinct from new_plan.title
+                             and old_plan.approach is not distinct from new_plan.approach
+                            else true end
+                  from validation v
+                  join task_plan_revision old_plan on old_plan.id=v.plan_revision_id
+                  join task_plan_revision new_plan on new_plan.id=:to and new_plan.task_id=v.task_id
+                 where v.id=:source
+                """).param("to", toRevisionId).param("source", source).query(Boolean.class).optional().orElse(false);
+        if (!samePolicyInputs) return null;
         // 원본 번호는 원본의 carried_from 이 있으면 그것(복사본의 복사본), 없으면 원본 자신
         Long copy = jdbc.sql("""
                         insert into validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash,
@@ -309,6 +320,12 @@ public class ValidationStatusLookup {
                           from validation_design_ref where validation_id = :source
                         """)
                 .param("copy", copy).param("source", source).update();
+        jdbc.sql("""
+                        insert into validation_policy_ref (validation_id, design_item_id, design_item_version_id)
+                        select :copy, design_item_id, design_item_version_id
+                          from validation_policy_ref where validation_id = :source
+                        """)
+                .param("copy", copy).param("source", source).update();
         // 검색 후보는 이력용으로만 복사하며 발행 무효화와 시작 판정에는 쓰지 않는다.
         jdbc.sql("""
                         insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
@@ -326,9 +343,10 @@ public class ValidationStatusLookup {
         jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
                         select :copy, validation_run_id, source, kind, severity, design_item_id, design_item_version_id,
-                               related_task_id, message, sources, resolution, next_action, check_key, evidence_ids
+                               related_task_id, message, sources, resolution, next_action, check_key, evidence_ids,
+                               policy_need_id, conflicting_design_refs
                           from validation_finding where validation_id = :source
                          order by id
                         """)
