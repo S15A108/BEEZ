@@ -232,7 +232,7 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
     }
 
     /** 다음 runOnce 에서 AI 가 시간 초과로 실패한다 (그 시도의 실패 호출 사용량을 오류 본문에 넣어 준다) */
-    private void nextCallTimesOut() {
+    private void nextCallTimesOut() throws Exception {
         // doAnswer 꼴로 바꿔 끼운다 — when(...).thenAnswer 꼴은 바꿔 끼우는 순간 앞에 끼운 가짜 응답(예외)을 실제로 부른다
         doAnswer(inv -> {
             Map<String, Object> req = inv.getArgument(0);
