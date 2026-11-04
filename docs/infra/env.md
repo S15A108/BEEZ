@@ -278,8 +278,9 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 - `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 compose 는 위 표 첫 줄 문구를
   내고, 이 점검은 그것을 `필수값 DB_PASSWORD 이 없거나 빈 값` 으로 바꿔 보여 줍니다.
 - 값의 길이만 보려면 [cd.md](cd.md#2-env-파일)의 `awk` 명령을 씁니다.
-- 위 경계 처리는 [`infra/deploy/test_check_port.py`](../../infra/deploy/test_check_port.py) 가 고정합니다. 점검을 고치면
-  `python infra/deploy/test_check_port.py` 를 돌립니다. 실제 docker compose 로 env 파일을 해석하고(데몬은 필요 없음),
+- 위 경계 처리는 [`infra/deploy/test_check_port.py`](../../infra/deploy/test_check_port.py) 가 고정합니다.
+  `infra/deploy/`·`infra/compose.yaml`·`infra/local.env` 를 바꾼 PR 에서는 CI 의 `deploy-scripts` 잡이 이 시험을 돌리고,
+  로컬에서는 `python infra/deploy/test_check_port.py` 로 돌립니다. 실제 docker compose 로 env 파일을 해석하고(데몬은 필요 없음),
   docker ps·`ss`·`curl`·Nginx 설정 폴더는 가짜로 둡니다. Windows 는 Git Bash 를 씁니다.
   시험은 `CHECK_PORT_TEST_*` 환경변수로 Nginx 설정 폴더와 재시도 대기를 바꿉니다. 이 값이 설정돼 있으면 점검이 첫 줄에
   `주의: 시험용 값 사용 중` 을 찍으므로, 배포 로그에 이 줄이 보이면 서버 환경에서 그 변수를 지웁니다.
