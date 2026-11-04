@@ -2,6 +2,7 @@ package com.beez.backend.impactanalysis;
 
 import static com.beez.backend.designitem.support.DesignJson.*;
 import java.util.*;
+import com.beez.backend.usage.repository.LlmUsageRecorder;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -9,7 +10,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class ImpactRunRepository {
     private final JdbcClient jdbc;
-    public ImpactRunRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
+    private final LlmUsageRecorder usageRecorder;
+    public ImpactRunRepository(JdbcClient jdbc, LlmUsageRecorder usage) { this.jdbc = jdbc; this.usageRecorder = usage; }
 
     public Map<String, Object> proposal(long project, long proposal) {
         return jdbc.sql("""
@@ -97,5 +99,18 @@ public class ImpactRunRepository {
                 """).param("id", id).param("status", status).param("code", code, java.sql.Types.VARCHAR)
                 .param("ai", canonical(aiResult)).param("generation", canonical(generation)).param("usage", canonical(usage))
                 .param("usageStatus", usageStatus).update() == 1;
+    }
+
+    /**
+     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
+     * 실행 행을 닫는 것과 따로 부른다: 결과를 버리는 경우(늦은 결과·권한 재확인 실패·저장 실패)에도 실제 호출 비용이므로 남긴다.
+     * 같은 호출은 request_key 로 한 번만. 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
+     */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void recordUsage(long id, Object entries, String model) {
+        var project = jdbc.sql("SELECT project_id FROM change_impact_run WHERE id=:id").param("id", id).query(Long.class).optional();
+        if (project.isEmpty()) return;
+        String fallback = model == null || model.isBlank() ? "unknown" : model;
+        usageRecorder.record(new LlmUsageRecorder.Owner(project.get(), "CHANGE_IMPACT", null, null, fallback, "impact run " + id), entries, 0);
     }
 }

@@ -122,7 +122,8 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
   없습니다.
 - `BACKEND_HOST_PORT`는 8080이 아닌 값이어야 합니다. 8080은 Jenkins가
   씁니다. Nginx `upstream beez_backend`의 포트와 같아야 합니다.
-- 변수 목록·`.env.example`·시크릿 관리 정리는 S15P31A108-27에서 합니다.
+- 변수마다의 의미·필수 여부, 빠졌을 때의 문구, 배포 전 점검 명령은
+  [환경변수와 비밀값](env.md)에 있습니다.
 
 ### 3. GMS 키 넣기·바꾸기
 
@@ -181,6 +182,9 @@ sudo nginx -t && sudo systemctl reload nginx && rm -r /tmp/nginx
 infra/deploy/deploy.sh <git SHA 40자> <환경>
 ```
 
+0. [배포 전 점검](env.md#배포-전에-점검하기)(`infra/deploy/check-port.sh port`)으로
+   env 필수값과 backend 포트·Nginx upstream 일치를 봅니다. 실패하면 아무것도
+   받거나 바꾸지 않고 멈춥니다. compose 오류는 값 없는 고정 문구로만 냅니다.
 1. 프론트 포장 이미지에서 dist를 꺼내 `releases/<sha>`에 둡니다. 이미 있으면
    건너뜁니다. 아직 전환하지 않습니다.
 2. backend·ai 이미지를 받습니다. digest로 고정한 postgres·seaweedfs는 매번
@@ -189,6 +193,8 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
 3. `docker compose up -d --no-build --remove-orphans --wait`로 바뀐
    컨테이너만 교체하고, healthcheck가 있는 서비스가 healthy가 될 때까지 최대
    240초 기다립니다. backend의 healthcheck는 `/actuator/health`입니다.
+   이어서 [Nginx 반영 확인](env.md#nginx-반영-확인)(`check-port.sh nginx`)으로
+   실행 중인 Nginx가 새 backend로 보내는지 `/api/ping`의 `started_at`으로 봅니다.
 4. **3이 성공했을 때만** 프론트 `current`를 새 릴리스로 바꿉니다.
 5. 릴리스는 최근 5개만 남기고, 컨테이너가 쓰지 않는 이 저장소 이미지 중
    7일 넘은 것을 지웁니다. 필요하면 GHCR에서 다시 받습니다.
@@ -197,6 +203,13 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   끝납니다. 프론트는 바꾸지 않습니다. **backend·ai 컨테이너는 이미 새
   버전으로 바뀐 상태**이므로, 로그 맨 앞의 "직전 backend 이미지" SHA로 다시
   배포해 되돌립니다. 되돌리기의 한계는 아래 "롤백의 한계".
+- Nginx 반영 확인이 실패해도 프론트는 바꾸지 않고 실패로 끝납니다.
+  `nginx 다름`이면 대개 env의 포트를 바꾸고 Nginx를 reload하지 않은
+  것이라 직전 SHA로 되돌려도 고쳐지지 않습니다. `sudo nginx -t && sudo
+  systemctl reload nginx` 뒤 같은 SHA로 다시 배포합니다. `nginx 확인
+  실패`면 찍힌 원인(curl 종료 코드·HTTP 상태)을 보고 Nginx·인증서·backend
+  상태를 고친 뒤 같은 SHA로 다시 배포합니다. 문구 뜻은
+  [Nginx 반영 확인](env.md#nginx-반영-확인).
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
 - **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
   다른 배포가 돌고 있으면 최대 5분 기다리고, 그래도 안 끝나면 컨테이너를
@@ -479,8 +492,10 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
   파라미터로만 주게 만들었기 때문입니다.
 - B에서 dev와 운영을 한 서버에 같이 두려면 compose 프로젝트 이름과 backend
   호스트 포트를 환경별로 나눠야 합니다(`name: beez`가 고정이라 지금은 한
-  서버에 한 환경). 이 경우 compose의 `name`과 `BACKEND_HOST_PORT`를 env
-  파일로 빼는 변경이 추가됩니다.
+  서버에 한 환경). 이 경우 compose의 `name`을 env 파일로 빼는 변경이
+  추가됩니다(`BACKEND_HOST_PORT`는 이미 env 파일의 필수값). Nginx upstream
+  이름도 환경별로 달라져야 하므로, `beez_backend`·`beez`를 고정으로 보는
+  [배포 전 점검](env.md#배포-전에-점검하기)도 함께 고칩니다.
 
 ## 확인
 

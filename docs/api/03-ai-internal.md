@@ -250,6 +250,8 @@ HTTP `200`.
 
 `checks`의 항목·계획 버전 ID는 각각 `approved_items`, `related_plans`에 실제로 포함되어야 한다. `related_plans`에는 검증 대상 작업 자신을 제외하고 열린 다른 작업의 불변 계획을 전달한다. 전달한 모든 근거·검사 범위를 입력 스냅샷에 포함한다.
 
+S15P31A108-186의 선택적 `policy-gap-v1` / `POLICY_ALIGNMENT` 검사는 선정된 모든 승인 항목을 대상으로 계획에 필요한 정책을 추출·비교한다. AI는 `policy_assessments`, `policy_assessments_truncated`와 필요 시 `no_policy_requirements_reason`, `no_policy_requirements_evidence`를 반환한다. 계획·승인 내용의 인용은 요청에 실제 존재해야 한다. 근거 부족이나 결과 잘림은 정책 검사의 PARTIAL이며, 명시적 미정만 `MISSING_POLICY`로 반환한다. 정책 간 모순은 양쪽 항목과 각각의 인용을 확인한 `conflicting_design_refs`를 포함한다. 응답의 상세 형식은 [ValidateResult](00-common.md#schema-validateresult)와 [186 평가 기록](../../ai/evaluations/policy_gap/README.md)을 따른다. 기존 요청에는 정책 결과를 넣지 않는다.
+
 `completion-delta`는 `PLAN_COMPLETENESS` 검사다. 완료 보고는 지시나 완료의 증명이 아닌 데이터로 취급하고 현재 계획·완료 기준 및 선정된 승인 설계에 비추어 분석한다. 검사의 설계 버전 목록은 해당 요청에서 조립한 승인 항목 버전이다. 완료 보고와 승인 설계의 불일치는 그 목록에 있는 설계 ID와 해당 설계의 출처·발췌를 인용할 수 있다. 보고와 현재 계획만의 불일치는 설계 ID와 출처 없이 `MISMATCH`로 표시할 수 있다. 검사 범위 밖의 설계나 다른 설계의 근거를 인용하지 않는다.
 
 `content`만으로 검사가 충분하면 `evidence=[]`도 유효하다. BE의 원문 조회 장애는 AI의 정보 부족으로 바꾸지 않고 BE 실행 오류로 기록한다. 호출 전에 확인한 필수 참조·근거 구조 오류, 알려진 미지원 kind/schema, 입력 크기 초과는 422이며 모델을 호출하지 않는다.
@@ -1219,8 +1221,8 @@ HTTP `200`.
 
 기획·문서 수정 초안 생성 기능을 제공한다.
 
-관련 요구사항: PLN-06, BEE-08, MTG-09  
-담당: BE: 오서현 / AI: 박상은 / 회의 연결: 양지훈 / FE: —  
+관련 요구사항: PLN-06, BEE-08  
+담당: BE: 오서현 / AI: 박상은 / FE: —  
 상태: 내부 계약 초안
 
 #### 인증
@@ -1382,6 +1384,9 @@ HTTP `200`.
 
 - 반환 원문은 미승인 수정안이다. 문서 버전·baseline을 직접 바꾸지 않는다.
 - 기획 초안의 항목 구조화는 필요 시 /v1/parse를 이어 호출한다.
+- 호출자는 변경 제안의 문서 수정 초안(CHG-A07)이다. 기획 설계 초안(PLN-A05)이 같은 모듈을 쓰는지는 S15P31A108-232에서 확정한다.
+- 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다. 변경 제안의 문안은 회의 정리(MTG-A11, AI-A08 SUMMARY)의 document_changes.after에서 온다. MTG-A09가 폐지 예정이라 회의 연결 호출자가 없으므로 `decisions`는 현재 쓰는 곳이 없다(필드는 유지).
+- 모델 출력이 최대 길이로 잘렸으면(`finish_reason=length` 등) 성공 응답으로 돌려주지 않고 502 `model_unavailable`로 응답한다. 응답 모양에는 종료 사유 필드가 없어 backend는 잘림 여부를 알 수 없으므로 이 오류가 유일한 신호다. 잘린 수정안을 성공으로 돌려주면 원문 대신 승인본이 될 수 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1785,7 +1790,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
-- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다.
+- 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다. 단 SUMMARY의 document_changes.after는 이 API가 직접 만들고 draft 모듈(AI-A06)을 부르지 않는다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
 - (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.

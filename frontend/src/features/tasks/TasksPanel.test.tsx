@@ -150,6 +150,200 @@ it('현재 담당자는 PASS에 연결된 계획·검증·잠금 번호로 시�
   )
 })
 
+it('정책 분석과 모순 근거를 읽을 수 있는 설계 이름으로 보여 준다', async () => {
+  vi.mocked(planningApi.items).mockResolvedValue({
+    items: [
+      {
+        id: '311',
+        design_item_id: '301',
+        key: 'REQ-001',
+        kind: 'REQUIREMENT',
+        version_no: 1,
+        status: 'APPROVED',
+        schema_version: 1,
+        content: {},
+      },
+      {
+        id: '312',
+        design_item_id: '302',
+        key: 'REQ-003',
+        kind: 'REQUIREMENT',
+        version_no: 2,
+        status: 'APPROVED',
+        schema_version: 1,
+        content: {},
+      },
+    ],
+    has_more: false,
+  })
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      error_code: 'ai_evidence_insufficient',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message: '의미 분석을 일부 수행하지 못했습니다',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+          next_action: '근거를 확인하세요',
+          validation_run_id: '801',
+        },
+        {
+          id: '702',
+          source: 'MODEL',
+          kind: 'CONFLICT',
+          severity: 'BLOCKING',
+          message: '승인 정책이 충돌해요',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+          conflicting_design_refs: [
+            {
+              design_item_id: '302',
+              design_item_version_id: '312',
+              evidence_ids: [],
+              content_paths: [],
+            },
+            {
+              design_item_id: '399',
+              design_item_version_id: '3991',
+              evidence_ids: [],
+              content_paths: [],
+            },
+          ],
+        },
+      ],
+      policy_analysis: {
+        policy_assessments_truncated: false,
+        policy_assessments: [
+          {
+            need_id: 'retention',
+            topic: '보관 기간',
+            state: 'CONTRADICTORY',
+            plan_evidence: { field: 'goal', quote: '보관 기간을 적용한다' },
+            design_item_version_ids: ['311'],
+            approved_content_refs: [
+              {
+                design_item_version_id: '311',
+                path: ['description'],
+                quote: '보관 조건',
+              },
+            ],
+            evidence_ids: [],
+            explanation: '보관 기간을 확인할 근거가 부족해요.',
+          },
+          {
+            need_id: 'period',
+            topic: '보관 기간 확인',
+            state: 'INSUFFICIENT',
+            plan_evidence: { field: 'goal', quote: '보관 기간을 적용한다' },
+            design_item_version_ids: [],
+            approved_content_refs: [],
+            evidence_ids: [],
+            explanation: '추가 근거가 필요합니다.',
+          },
+        ],
+      },
+    },
+  }
+  show(false)
+  const analysis = await screen.findByRole('region', { name: '정책 분석' })
+  expect(within(analysis).getByText('정책 불일치')).toHaveClass(
+    'text-destructive',
+  )
+  expect(within(analysis).getByText('근거 부족')).toBeInTheDocument()
+  expect(within(analysis).getAllByText(/보관 기간을 적용한다/)).toHaveLength(2)
+  expect(
+    within(analysis).getByText(/REQ-001 승인 v1:.*보관 조건/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('충돌하는 승인 항목: REQ-003 승인 v2'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('충돌하는 승인 항목: 설계 항목 이전 승인본'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getAllByText('근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'),
+  ).toHaveLength(2)
+  expect(
+    screen.queryByRole('button', { name: '실행 재시도' }),
+  ).not.toBeInTheDocument()
+})
+
+it('정책 분석이 잘리면 안내한다', async () => {
+  task = {
+    ...task,
+    validation: {
+      ...task.validation!,
+      policy_analysis: {
+        policy_assessments: [],
+        policy_assessments_truncated: true,
+      },
+    },
+  }
+  show(false)
+  const analysis = await screen.findByRole('region', { name: '정책 분석' })
+  expect(
+    within(analysis).getByText('분석할 정책이 많아 일부만 확인했어요.'),
+  ).toBeInTheDocument()
+})
+
+it('정책이 필요 없다고 판단한 사유와 계획 근거를 보여 준다', async () => {
+  task = {
+    ...task,
+    validation: {
+      ...task.validation!,
+      policy_analysis: {
+        policy_assessments: [],
+        policy_assessments_truncated: false,
+        no_policy_requirements_reason: '맞춤법만 수정합니다.',
+        no_policy_requirements_evidence: { field: 'goal', quote: '문구 수정' },
+      },
+    },
+  }
+  show(false)
+  const analysis = await screen.findByRole('region', { name: '정책 분석' })
+  expect(within(analysis).getByText('맞춤법만 수정합니다.')).toBeInTheDocument()
+  expect(
+    within(analysis).getByText(/계획 근거:.*문구 수정/),
+  ).toBeInTheDocument()
+})
+
+it('사람 검토가 아닌 분석 오류는 실행 재시도를 제공한다', async () => {
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      findings: [
+        {
+          id: '703',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message: '분석 실패',
+          sources: [],
+          resolution: 'RETRY',
+        },
+      ],
+    },
+  }
+  show(false)
+  expect(
+    await screen.findByRole('button', { name: '실행 재시도' }),
+  ).toBeEnabled()
+  expect(
+    screen.getByText('검증을 마치지 못했어요. 다시 실행해 주세요.'),
+  ).toBeInTheDocument()
+})
+
 it('팀장도 담당자가 아니면 시작·검증을 대신하지 않고 취소 개입만 제공한다', async () => {
   task = { ...task, assignee_member_id: '22' }
   show(true)

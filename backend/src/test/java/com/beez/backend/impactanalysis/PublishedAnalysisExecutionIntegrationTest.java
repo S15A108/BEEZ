@@ -98,6 +98,11 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(api.jdbc.sql("SELECT count(*) FROM published_analysis_attempt WHERE intake_id=:id").param("id",intake)
                 .query(Integer.class).single()).isEqualTo(1);
         assertThat(api.jdbc.sql("SELECT count(*) FROM change_impact_run").query(Integer.class).single()).isZero();
+        // 비용 조회(MON-A02)가 읽는 공통 사용량 표에도 한 번만 남는다 (같은 이벤트를 두 번 받아도)
+        assertThat(api.jdbc.sql("SELECT project_id,feature,model,task_id FROM llm_usage WHERE request_key='published-llm-call'")
+                .query().listOfRows()).singleElement().satisfies(usage -> assertThat(usage)
+                        .containsEntry("project_id",project).containsEntry("feature","CHANGE_IMPACT")
+                        .containsEntry("model","unknown").containsEntry("task_id",null));
         verify(ai,times(1)).changeImpact(any());
     }
 
@@ -167,6 +172,9 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(attempt).containsEntry("attempt",1).containsEntry("outcome","FAILED")
                 .containsEntry("error_code","analysis_access_unavailable").containsEntry("usage_status","REPORTED")
                 .containsEntry("usage_matches",true);
+        // 결과를 버린 시도라도 실제 호출 비용은 공통 사용량 표에 남는다
+        assertThat(api.jdbc.sql("SELECT count(*) FROM llm_usage WHERE request_key='published-llm-call' AND feature='CHANGE_IMPACT'")
+                .query(Integer.class).single()).isEqualTo(1);
         verify(ai,times(1)).changeImpact(any());
     }
 
