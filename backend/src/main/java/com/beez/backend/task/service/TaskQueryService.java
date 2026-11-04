@@ -16,6 +16,8 @@ import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.task.repository.TaskRepository;
 import com.beez.backend.task.repository.TaskSpecifications;
+import com.beez.backend.validation.repository.ValidationRepository;
+import com.beez.backend.validation.service.ValidationResponses;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -44,21 +46,45 @@ public class TaskQueryService {
     private final TaskPlanDesignRefRepository designRefs;
     private final ProjectAccessChecker access;
     private final ValidationStatusLookup validationLookup;
+    private final ValidationRepository validations;
+    private final ValidationResponses validationResponses;
 
     public TaskQueryService(TaskRepository tasks, TaskPlanRevisionRepository revisions,
                             TaskPlanDesignRefRepository designRefs, ProjectAccessChecker access,
-                            ValidationStatusLookup validationLookup) {
+                            ValidationStatusLookup validationLookup, ValidationRepository validations,
+                            ValidationResponses validationResponses) {
         this.tasks = tasks;
         this.revisions = revisions;
         this.designRefs = designRefs;
         this.access = access;
         this.validationLookup = validationLookup;
+        this.validations = validations;
+        this.validationResponses = validationResponses;
     }
 
     public TaskDetailResponse getTask(CallerContext caller, Long projectId, Long taskId) {
         access.requireMember(caller, projectId);
         Task task = requireTask(projectId, taskId);
         return toDetail(task);
+    }
+
+    /**
+     * TSK-A03 상세 응답: {@link #getTask} 에 명세 TaskDetail.validation(현재 계획의 가장 최근 검증, validation_status 와 같은 기준)을 붙인다.
+     * 없으면 칸이 빠진다. 검증 입력 조립처럼 계획만 필요한 서버 안 호출은 {@link #getTask} 를 쓴다 (참조·발견 항목을 더 읽지 않게)
+     */
+    public TaskDetailResponse getTaskDetail(CallerContext caller, Long projectId, Long taskId) {
+        access.requireMember(caller, projectId);
+        Task task = requireTask(projectId, taskId);
+        // validation_status 와 validation 을 같은 줄(현재 계획의 가장 최근 검증)에서 한 번 읽어 채운다
+        Optional<Map<String, Object>> latest = validationLookup.latest(task.getId(), task.getCurrentPlanRevisionId());
+        if (latest.isEmpty()) {
+            return toDetail(task, ValidationStatusLookup.NOT_RUN);
+        }
+        TaskDetailResponse detail = toDetail(task, (String) latest.get().get("status"));
+        long latestId = ((Number) latest.get().get("id")).longValue();
+        return validations.find(projectId, latestId)
+                .map(row -> detail.withValidation(validationResponses.toResponse(row)))
+                .orElse(detail);
     }
 
     public PageResponse<TaskDetailResponse> listTasks(CallerContext caller, Long projectId, TaskStatus status,
@@ -141,6 +167,11 @@ public class TaskQueryService {
     // ------------------------------------------------------------------
 
     public TaskDetailResponse toDetail(Task task) {
+        return toDetail(task, validationLookup.latestStatus(task.getId(), task.getCurrentPlanRevisionId()));
+    }
+
+    /** validation_status 를 이미 읽은 경우 (상세 조회) */
+    private TaskDetailResponse toDetail(Task task, String validationStatus) {
         TaskPlanRevisionResponse current = null;
         if (task.getCurrentPlanRevisionId() != null) {
             Optional<TaskPlanRevision> rev = revisions.findById(task.getCurrentPlanRevisionId());
@@ -149,7 +180,6 @@ public class TaskQueryService {
                 current = TaskPlanRevisionResponse.from(rev.get(), refs);
             }
         }
-        String validationStatus = validationLookup.latestStatus(task.getId(), task.getCurrentPlanRevisionId());
         return TaskDetailResponse.of(task, current, validationStatus, deltaValidationIdOf(task));
     }
 
