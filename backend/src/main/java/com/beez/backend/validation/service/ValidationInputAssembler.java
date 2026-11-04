@@ -197,6 +197,20 @@ public class ValidationInputAssembler {
         request.put("input_snapshot_hash", snapshotHash(request, input.baselineId()));
     }
 
+    /** Bind the pinned policy contract after candidate search, without creating design links. */
+    public void bindPolicyAnalysis(Result input) {
+        var request = input.request();
+        @SuppressWarnings("unchecked")
+        var checks = new ArrayList<>((List<Map<String, Object>>) request.get("checks"));
+        @SuppressWarnings("unchecked")
+        var items = (List<Map<String, Object>>) request.get("approved_items");
+        checks.add(check(ValidationRules.POLICY_CHECK, "POLICY_ALIGNMENT",
+                items.stream().map(item -> (String) item.get("id")).toList(), List.of()));
+        request.put("checks", checks);
+        limitSearchContext(request);
+        request.put("input_snapshot_hash", snapshotHash(request, input.baselineId()));
+    }
+
     /** Revalidate exact source evidence when the final transaction applies a result. */
     public ValidationEvidenceBuilder.Result loadEvidence(long projectId, long baselineId,
                                                          List<Map<String, Object>> approvedItems) {

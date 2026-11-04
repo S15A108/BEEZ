@@ -684,8 +684,25 @@ export const findingSchema = z.object({
   resolution: z.enum(['FIX_PLAN', 'PROPOSE_CHANGE', 'HUMAN_REVIEW', 'RETRY']),
   next_action: z.string().optional(),
   validation_run_id: idSchema.optional(),
+  policy_need_id: z.string().optional(),
+  conflicting_design_refs: z
+    .array(
+      z.object({
+        design_item_id: idSchema,
+        design_item_version_id: idSchema,
+        evidence_ids: z.array(z.string()),
+        content_paths: z.array(z.array(z.string())),
+      }),
+    )
+    .optional(),
 })
 export type Finding = z.infer<typeof findingSchema>
+
+const policyPlanEvidenceSchema = z.object({
+  field: z.string(),
+  index: z.number().int().optional(),
+  quote: z.string(),
+})
 
 export const validationSchema = z
   .object({
@@ -712,6 +729,36 @@ export const validationSchema = z
     created_at: timeSchema,
     finished_at: timeSchema.optional(),
     error_code: z.string().optional(),
+    policy_analysis: z
+      .object({
+        policy_assessments: z.array(
+          z.object({
+            need_id: z.string(),
+            topic: z.string(),
+            plan_evidence: policyPlanEvidenceSchema,
+            state: z.enum([
+              'SUPPORTED',
+              'EXPLICITLY_UNDECIDED',
+              'CONTRADICTORY',
+              'INSUFFICIENT',
+            ]),
+            design_item_version_ids: z.array(idSchema),
+            approved_content_refs: z.array(
+              z.object({
+                design_item_version_id: idSchema,
+                path: z.array(z.string()),
+                quote: z.string(),
+              }),
+            ),
+            evidence_ids: z.array(z.string()),
+            explanation: z.string(),
+          }),
+        ),
+        policy_assessments_truncated: z.boolean(),
+        no_policy_requirements_reason: z.string().optional(),
+        no_policy_requirements_evidence: policyPlanEvidenceSchema.optional(),
+      })
+      .optional(),
   })
   .superRefine((validation, context) => {
     if (validation.status === 'STALE' && !validation.stale_reason)

@@ -152,6 +152,18 @@ public class ValidationRepository {
         }
     }
 
+    /** Save only policy versions actually cited by a validated result, separately from plan refs. */
+    public void savePolicyRefs(long validationId, List<Map<String, Object>> citedItems) {
+        for (Map<String, Object> item : citedItems) {
+            jdbc.sql("""
+                    insert into validation_policy_ref (validation_id, design_item_id, design_item_version_id)
+                    values (:v, :item, :version)
+                    """).param("v", validationId)
+                    .param("item", Long.parseLong(String.valueOf(item.get("design_item_id"))))
+                    .param("version", Long.parseLong(String.valueOf(item.get("id")))).update();
+        }
+    }
+
     public void insertTaskRef(long validationId, long relatedTaskId, long relatedPlanRevisionId) {
         jdbc.sql("""
                         insert into validation_task_ref (validation_id, related_task_id, related_plan_revision_id)
@@ -218,7 +230,7 @@ public class ValidationRepository {
     }
 
     /**
-     * 설계 발행(-163) 의 STALE 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 계획에서 참조한, 아직 쓸 수 있는 검증.
+     * 설계 발행(-163) 의 STALE 대상: 계획에서 참조했거나 정책 판단에서 실제 인용한 버전이 바뀐 검증.
      * (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 상태·현재 계획으로 거르지 않는다 (REST CHG 발행 처리 규칙).
      * 행: validation_id, task_id, task_title, trigger. 검증 번호 오름차순, 여러 항목에 걸린 검증도 한 번만
      */
@@ -237,7 +249,9 @@ public class ValidationRepository {
                         select distinct v.id as validation_id, v.task_id, t.title as task_title, v.trigger
                           from (values %s) as changed(item_id, before_version_id)
                           join design_item_version bv on bv.id = changed.before_version_id
-                          join validation_design_ref r
+                          join (select validation_id, design_item_id, design_item_version_id from validation_design_ref
+                                union all
+                                select validation_id, design_item_id, design_item_version_id from validation_policy_ref) r
                             on r.design_item_id = changed.item_id
                           join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
                           join validation v on v.id = r.validation_id
@@ -259,9 +273,9 @@ public class ValidationRepository {
         return jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
                         values (:v, :run, :src, :k, :sev, :item, :ver, :task, :msg, cast(:sources as jsonb), :res, :next,
-                                :ck, cast(:ev as jsonb))
+                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb))
                         returning id
                         """)
                 .param("v", validationId).param("run", f.validationRunId(), Types.BIGINT).param("src", f.source())
@@ -270,6 +284,7 @@ public class ValidationRepository {
                 .param("msg", f.message()).param("sources", toJson(f.sources())).param("res", f.resolution())
                 .param("next", f.nextAction(), Types.VARCHAR).param("ck", f.checkKey(), Types.VARCHAR)
                 .param("ev", toJson(f.evidenceIds()))
+                .param("need", f.policyNeedId(), Types.VARCHAR).param("conflicts", toJson(f.conflictingDesignRefs()))
                 .query(Long.class).single();
     }
 
@@ -277,7 +292,7 @@ public class ValidationRepository {
         return jdbc.sql("""
                         select id, validation_id, validation_run_id, source, kind, severity, design_item_id, design_item_version_id,
                                related_task_id, message, sources::text as sources, resolution, next_action, check_key,
-                               evidence_ids::text as evidence_ids
+                               evidence_ids::text as evidence_ids, policy_need_id, conflicting_design_refs::text as conflicting_design_refs
                           from validation_finding where validation_id = :v order by id
                         """)
                 .param("v", validationId).query(this::finding).list();
@@ -506,10 +521,12 @@ public class ValidationRepository {
         // readValue: JSON 문자열을 List 로 바꾼다
         List<Map<String, Object>> sources = json.readValue(rs.getString("sources"), List.class);
         List<String> evidence = json.readValue(rs.getString("evidence_ids"), List.class);
+        List<Map<String, Object>> conflicts = json.readValue(rs.getString("conflicting_design_refs"), List.class);
         return new FindingRow(rs.getLong("id"), rs.getLong("validation_id"), nullableLong(rs, "validation_run_id"),
                 rs.getString("source"), rs.getString("kind"), rs.getString("severity"), nullableLong(rs, "design_item_id"),
                 nullableLong(rs, "design_item_version_id"), nullableLong(rs, "related_task_id"), rs.getString("message"),
-                sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence);
+                sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence,
+                rs.getString("policy_need_id"), conflicts);
     }
 
     private String toJson(Object value) {
