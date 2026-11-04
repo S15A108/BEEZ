@@ -86,6 +86,8 @@ function suggestionsFor(
     result.push({
       id: nextId(context.database),
       explanation: '누락 · 이 문서가 무엇을 정하는지 목적이 없어요.',
+      type: 'PATCH',
+      step: 'BODY',
       original_text: heading,
       replacement_text: `${heading}\n\n목적: 이 문서가 정하는 범위를 한 줄로 적어요.`,
       decision: 'PENDING',
@@ -94,6 +96,8 @@ function suggestionsFor(
     result.push({
       id: nextId(context.database),
       explanation: '일관성 · 실패하거나 비어 있을 때의 동작이 없어요.',
+      type: 'PATCH',
+      step: 'BODY',
       original_text: last,
       replacement_text: `${last}\n- 실패하거나 비어 있을 때 어떻게 보이는지 적는다.`,
       decision: 'PENDING',
@@ -163,10 +167,47 @@ export async function reviewRoutes(
       const document = findById(project.documents, target.document_id)
       const others = project.documents.filter((item) => item.id !== document.id)
       const suggestions = suggestionsFor(context, target.content)
-      const approvedKind = (kind: string) =>
-        others.some((item) => item.kind === kind && item.approved_version)
-          ? '승인본과 비교함'
-          : '승인본이 없어 건너뜀'
+      // 서버 v2 단계 규칙(DocumentReviewResultValidator): 본문은 늘 검토하고, 같은 종류는 SAME_KIND로,
+      // 승인본이 없는 종류는 REFERENCE_UNAVAILABLE로 건너뛴다. 요구사항 명세서의 단계 코드는 REQ_SPEC이다.
+      const approved = others.filter((item) => item.approved_version)
+      const steps: DocumentBeeReview['steps'] = (
+        ['BODY', 'API_SPEC', 'ERD', 'REQ_SPEC'] as const
+      ).map((step) => {
+        const kind = step === 'REQ_SPEC' ? 'REQUIREMENTS' : step
+        const ids = approved
+          .filter((item) => item.kind === kind)
+          .map((item) => `ref-${item.id}`)
+        if (step === 'BODY')
+          return {
+            step,
+            status: 'COMPLETE',
+            reason: 'REVIEWED',
+            reference_ids: [],
+          }
+        if (kind === document.kind)
+          return {
+            step,
+            status: 'SKIPPED',
+            reason: 'SAME_KIND',
+            reference_ids: [],
+          }
+        if (!ids.length)
+          return {
+            step,
+            status: 'PARTIAL',
+            reason: 'REFERENCE_UNAVAILABLE',
+            reference_ids: [],
+          }
+        return {
+          step,
+          status: 'COMPLETE',
+          reason: 'REVIEWED',
+          reference_ids: ids,
+        }
+      })
+      const unavailable = steps
+        .filter((item) => item.reason === 'REFERENCE_UNAVAILABLE')
+        .map((item) => item.step)
       // 반려 뒤 검토면 가장 최근 반려 제출을 서버가 고른다(DOC-A16 선택 규칙).
       const rejected = project.submissions
         .filter(
@@ -182,37 +223,19 @@ export async function reviewRoutes(
         reference_hash: `sha256:mock-reference-${target.document_id}-${target.revision}`,
         summary:
           '예시 검토 · 실제 AI 호출 없음. 문서의 목적과 예외 상황을 보완하자고 제안했어요.',
-        unavailable_references: others
-          .filter((item) => !item.approved_version)
-          .map((item) => item.kind),
-        references: others.flatMap((item) =>
-          item.approved_version
-            ? [
-                {
-                  document_id: item.id,
-                  document_version_id: item.approved_version.id,
-                  kind: item.kind,
-                  version_no: item.approved_version.version_no,
-                  content: item.approved_version.content ?? '',
-                },
-              ]
-            : [],
-        ),
+        unavailable_references: unavailable,
+        references: approved.map((item) => ({
+          document_id: item.id,
+          document_version_id: item.approved_version!.id,
+          kind: item.kind,
+          version_no: item.approved_version!.version_no,
+          content: item.approved_version!.content ?? '',
+          reference_id: `ref-${item.id}`,
+        })),
         suggestions,
         usage: [],
-        steps: [
-          {
-            label: '문서 읽기',
-            result: `문단 ${target.content.split(/\n\s*\n/).filter((part) => part.trim()).length}개`,
-          },
-          {
-            label: '승인된 API 명세서와 비교',
-            result: approvedKind('API_SPEC'),
-          },
-          { label: 'ERD와 맞춰 보기', result: approvedKind('ERD') },
-          { label: '요구사항과 비교', result: approvedKind('REQUIREMENTS') },
-          { label: '수정 제안 정리', result: `제안 ${suggestions.length}개` },
-        ],
+        steps,
+        review_status: unavailable.length ? 'PARTIAL' : 'COMPLETE',
         ...(rejected && target.status === 'REJECTED'
           ? { rejection_submission_id: rejected.id }
           : {}),
@@ -229,15 +252,17 @@ export async function reviewRoutes(
       if (review.resolved_revision !== target.revision)
         fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
       const suggestion = findById(review.suggestions, params.suggestion_id)
+      const { original_text: original, replacement_text: replacement } =
+        suggestion
+      // 의견(COMMENT)은 반영·넘기기 대상이 아니다.
+      if (original === undefined || replacement === undefined)
+        fail(400, 'validation_failed', '의견은 반영하거나 넘길 수 없어요.')
       if (suggestion.decision !== 'PENDING')
         fail(409, 'version_conflict', '이미 처리한 제안이에요.')
       if (body.decision === 'APPLY') {
-        if (!occursOnce(target.content, suggestion.original_text))
+        if (!occursOnce(target.content, original))
           fail(409, 'review_stale', '제안한 원문을 본문에서 찾지 못했어요.')
-        target.content = target.content.replace(
-          suggestion.original_text,
-          suggestion.replacement_text,
-        )
+        target.content = target.content.replace(original, replacement)
         target.revision += 1
         review.resolved_revision = target.revision
         suggestion.decision = 'APPLIED'

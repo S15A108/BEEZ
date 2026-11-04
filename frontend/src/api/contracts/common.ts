@@ -138,18 +138,41 @@ export const documentReviewReferenceSchema = z.object({
   kind: z.string(),
   version_no: z.number().int(),
   content: z.string(),
+  // v2 검토가 단계별 reference_ids로 가리키는 값. 과거 검토는 없다.
+  reference_id: z.string().optional(),
 })
 export type DocumentReviewReference = z.infer<
   typeof documentReviewReferenceSchema
 >
 
-export const documentReviewSuggestionSchema = z.object({
-  id: idSchema,
-  explanation: z.string(),
-  original_text: z.string(),
-  replacement_text: z.string(),
-  decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']),
-})
+// 비비 검토 v2 단계(00-common DocumentBeeReview.steps). 요구사항 명세서는 단계 코드가 REQ_SPEC이다.
+export const documentReviewStepCodeSchema = z.enum([
+  'BODY',
+  'API_SPEC',
+  'ERD',
+  'REQ_SPEC',
+])
+
+// COMMENT는 읽기 전용 의견이라 원문·바꿀 글·선택이 없다(서버는 null을 빼고 보낸다).
+// type이 없는 과거 제안은 PATCH로 본다.
+export const documentReviewSuggestionSchema = z
+  .object({
+    id: idSchema,
+    explanation: z.string(),
+    type: z.enum(['PATCH', 'COMMENT']).default('PATCH'),
+    step: documentReviewStepCodeSchema.optional(),
+    original_text: z.string().optional(),
+    replacement_text: z.string().optional(),
+    decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']).optional(),
+  })
+  .refine(
+    (item) =>
+      item.type === 'COMMENT' ||
+      (item.original_text !== undefined &&
+        item.replacement_text !== undefined &&
+        item.decision !== undefined),
+    'PATCH 제안에는 원문·바꿀 글·선택이 있어야 해요.',
+  )
 export type DocumentReviewSuggestion = z.infer<
   typeof documentReviewSuggestionSchema
 >
@@ -293,15 +316,18 @@ export const documentBeeReviewSchema = z.object({
   references: documentReviewReferenceSchema.array(),
   suggestions: documentReviewSuggestionSchema.array(),
   usage: usageSchema.array(),
-  // 단계별 결과('n단계 / 5단계', '문단 4개'). 서버가 아직 주지 않을 수 있다.
+  // v2 검토는 단계 4개(본문·API 명세서·ERD·요구사항 명세서)를 주고, 과거 검토는 빈 배열이다.
   steps: z
     .object({
-      label: z.string(),
-      description: z.string().optional(),
-      result: z.string().optional(),
+      step: documentReviewStepCodeSchema,
+      status: z.enum(['COMPLETE', 'PARTIAL', 'SKIPPED']),
+      reason: z.string(),
+      reference_ids: z.string().array(),
     })
     .array()
-    .optional(),
+    .default([]),
+  // 승인본이 없어 건너뛴 단계가 있으면 PARTIAL. 과거 검토는 없다.
+  review_status: z.enum(['COMPLETE', 'PARTIAL']).optional(),
   // 반려 뒤 검토면 서버가 고른 반려 제출
   rejection_submission_id: idSchema.optional(),
 })
