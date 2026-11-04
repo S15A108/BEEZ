@@ -15,6 +15,8 @@ export interface OfficeTheme {
   brick?: string
   /** 회의실(3번 구역)을 유리 벽으로 두른다(통로 쪽 끝 1.4 m는 문). */
   glassRoom?: boolean
+  /** 높은 층(m): 창밖 거리와 다른 건물이 그만큼 아래에 있다. */
+  elev?: number
   slat: string
   glass: string
   glassOpacity: number
@@ -127,9 +129,11 @@ export const OFFICE_THEMES: Record<OfficeDesign, OfficeTheme> = {
     nightCeilingGlow: 0.45,
     light: '#ffe9c9',
     sun: '#f3e6d0',
+    glassRoom: true,
     wood: '#5a4232',
     nightLight: 12,
     nightExposure: 1.05,
+    elev: 60,
   },
   // 목조 스튜디오: 오크, 베이지 카펫, 나무 슬랫·창틀, 따뜻한 빛
   wood: {

@@ -2871,6 +2871,8 @@ export class OfficeRenderer3D {
       this.firstPersonEnclosure,
     )
     this.city = new OfficeCity({ left, back, right, front })
+    // 다크 타워는 높은 층이라 창밖 도시가 아래에 있다(캔버스 elev, 높이는 이 장면의 1.5배 높이 단위로).
+    this.city.root.position.y = -(this.theme.elev ?? 0) * 1.5
     this.exteriorScene.add(this.city.root)
     const width = right - left,
       depth = front - back

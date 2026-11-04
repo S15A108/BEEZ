@@ -4,6 +4,7 @@ import { V488_PLAN, type OfficePiece, type OfficePlan } from './officePlan'
 import { OFFICE_THEMES, officeDesignOf, type OfficeDesign } from './officeLook'
 import { BRICK_PLAN } from './plans/brick'
 import { MODERN_PLAN } from './plans/modern'
+import { TOWER_PLAN } from './plans/tower'
 
 export type OfficePopulation = Partial<Record<Zone, number>>
 export const officeObjectKey = (item: Furniture) =>
@@ -25,6 +26,7 @@ export function officePopulationOf(
 const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
   brick: BRICK_PLAN,
   modern: MODERN_PLAN,
+  tower: TOWER_PLAN,
 }
 // 충전 자리(D29 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
 const LOUNGE_SEATS = ['loungeChairRelax', 'loungeDesignChair']
@@ -51,6 +53,7 @@ const KIND: Record<string, FurnitureKind> = {
   cabinet: 'shelf',
   shelf: 'shelf',
   desk: 'table',
+  counter: 'table',
   plant: 'plant',
   lamp: 'lamp',
   rug: 'rug',
@@ -64,6 +67,8 @@ const SOLID = new Set([
   'bookcase',
   'cabinet',
   'shelf',
+  'sofa',
+  'counter',
   'bench',
   'plant',
   'lamp',
@@ -196,16 +201,16 @@ export function makeTeamOffice(design?: string): Floor {
     // 자리(의자)는 1칸, 작업 자리(모니터·노트북)는 그 자리 의자까지 덮는 칸으로 둔다(작업 화면이 주인을 찾는다).
     const workstation =
       piece.kind === 'monitor' || (piece.kind === 'laptop' && piece.zone === 0)
-    const chairZ = workstation
-      ? piece.z + (Math.cos(piece.ry) > 0 ? 0.9 : -0.9)
-      : piece.z
+    // 화면 앞 0.9 m가 의자다(화면 앞 = 모델 +z를 ry만큼 돌린 쪽). 다크 타워 창가석은 화면이 서쪽을 본다.
+    const chairX = piece.x + Math.round(Math.sin(piece.ry)) * 0.9,
+      chairZ = piece.z + Math.round(Math.cos(piece.ry)) * 0.9
     const footprint = seat
       ? { x: tx(piece.x) - 0.5, y: ty(piece.z) - 0.5, w: 1, h: 1 }
       : workstation
         ? {
-            x: tx(piece.x) - 0.5,
+            x: tx(Math.min(piece.x, chairX)) - 0.5,
             y: ty(Math.min(piece.z, chairZ)) - 0.5,
-            w: 1,
+            w: Math.abs(chairX - piece.x) + 1,
             h: Math.abs(chairZ - piece.z) + 1,
           }
         : { x: tx(piece.x) - w / 2, y: ty(piece.z) - d / 2, w, h: d }
