@@ -304,6 +304,7 @@ Jenkins를 다시 세우는 데 필요한 것은 대부분 저장소에 있습�
 | 관리자 비밀번호 | 비밀번호 관리자 | 2단계에서 다시 입력 |
 | 플러그인 | 저장소 `plugins.txt` | 4단계 |
 | 배포 잡 정의·파이프라인 | 저장소 `casc/jenkins.yaml`(Job DSL, 파이프라인 고정) | 켤 때마다 JCasC가 잡을 다시 만듦 |
+| 배포 실패 알림 | 스크립트는 저장소 `deploy-notify.sh`, 웹훅 주소는 Mattermost 통합 목록(백업에 없음) | [운영 안내](operations.md#설치웹훅-교체-서버당-한-번) 2·3번. 빠지면 배포는 되고 알림만 안 감 |
 | `github-actions` API 토큰 | JENKINS_HOME(해시만 저장) | 백업에 없으면 [CD 런북](cd.md) "토큰 발급·교체"로 새로 발급 |
 | 빌드 기록·자격 증명·잡 설정 | `/var/lib/jenkins`(JENKINS_HOME) | 아래 백업 파일 |
 
