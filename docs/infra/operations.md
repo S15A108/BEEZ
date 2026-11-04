@@ -261,17 +261,18 @@ beez-deploy 고정 파이프라인(JCasC) ── 실패·중단·시간 초과 �
 
 ### 2026-11-04 설치·확인
 
-채널은 `A108_github 알림`(비공개)입니다. 파이프라인은 이 문서와 같은 PR의 커밋 `833b0e1`로 반영했습니다
-(이전 설정은 `/var/backups/jenkins/jenkins.yaml.before-74-notify`).
+채널은 `A108_github 알림`(비공개)입니다. 파이프라인과 스크립트는 이 문서와 같은 PR의 커밋 `833b0e1`로 처음 반영하고, 리뷰 반영 뒤
+`f1823a5`로 다시 반영했습니다(알림 넣기 전 설정은 `/var/backups/jenkins/jenkins.yaml.before-74-notify`).
 
 | 확인 | 결과 |
 |---|---|
 | 서버 파일 | `deploy-notify.sh` 755 root(저장소와 sha256 같음), `deploy-notify.curl` 640 root:jenkins, `www-data`는 못 읽음 |
-| 4번 시험 메시지 | `배포 실패 알림 보냄`(Mattermost 200 응답) |
+| 4번 시험 메시지 | `배포 실패 알림 보냄`, 채널 수신 |
 | Jenkins 재시작 | `fully up`, SEVERE·ConfiguratorException·unresolved 0건 |
 | #45 `GIT_SHA=1531d05…`(본줄기 아님) | `dev 본줄기(PR 머지 커밋)가 아니라 배포하지 않는다` → `배포 실패 알림 보냄` → FAILURE, 컨테이너·프론트 그대로(`5bf2381`) |
 | 콘솔에 웹훅 주소 | 0회 |
 | #46 자동 배포 `8b6590d`(-243, `github-actions`) | 새 파이프라인으로 SUCCESS, 알림 없음(성공 경로 영향 없음) |
+| #47 재반영(`f1823a5`) 뒤 같은 시험 | 거부 → 알림에 콘솔·복구 안내 링크, 채널 수신 |
 
 배포 전 로컬 Jenkins(같은 버전·플러그인)에서는 SHA 형식 오류·본줄기 아님·Deploy 단계 실패·중단(ABORTED)
 네 경우 모두 알림이 가고 원래 결과가 유지되는 것을 확인했습니다.
