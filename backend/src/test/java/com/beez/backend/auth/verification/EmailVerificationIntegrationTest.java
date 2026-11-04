@@ -59,7 +59,8 @@ class EmailVerificationIntegrationTest extends IntegrationTestSupport {
         HttpResponse<String> sent = send(email);
         assertThat(sent.statusCode()).as(sent.body()).isEqualTo(201);
         String code = mail.lastCodeTo(email);
-        assertThat(sent.body()).contains("\"expires_at\"").contains("\"resend_available_at\"").doesNotContain(code);
+        assertThat(sent.body()).contains("\"expires_at\"").contains("\"resend_available_at\"")
+                .doesNotContain("\"" + code + "\"");   // 시각 문자열의 나노초 숫자와 우연히 겹치지 않게 따옴표째 본다
         String id = field(sent.body(), "verification_id");
         assertThat(db.queryForObject("SELECT code_hash FROM email_verification WHERE id = ?", String.class,
                 Long.parseLong(id))).as("코드는 해시로만 저장").doesNotContain(code);
@@ -162,6 +163,12 @@ class EmailVerificationIntegrationTest extends IntegrationTestSupport {
         HttpResponse<String> none = register(email, "evt_not-a-token");
         assertThat(none.statusCode()).isEqualTo(400);
         assertThat(none.body()).contains("\"code\":\"email_not_verified\"");
+
+        // 토큰을 아예 안 보내도 validation_failed 가 아니라 email_not_verified (ACC-A01 오류표)
+        HttpResponse<String> missing = client().post("/api/auth/register", "{\"email\":\"" + email
+                + "\",\"password\":\"" + PASSWORD + "\",\"name\":\"김개발\"}");
+        assertThat(missing.statusCode()).isEqualTo(400);
+        assertThat(missing.body()).contains("\"code\":\"email_not_verified\"");
 
         // 대소문자만 다른 같은 이메일은 같은 사람이다 (Account.normalizeEmail)
         assertThat(register(email.toUpperCase(), token).statusCode()).isEqualTo(201);

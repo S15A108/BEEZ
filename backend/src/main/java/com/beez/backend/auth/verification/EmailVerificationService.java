@@ -11,6 +11,7 @@ import com.beez.backend.common.mail.MailMessage;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Map;
+import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -41,6 +42,8 @@ public class EmailVerificationService {
     private static final SecureRandom RANDOM = new SecureRandom();
     /** 명세 ACC-A12 예시 "evt_example". 다른 토큰과 섞여 들어와도 눈으로 구분된다 */
     static final String TOKEN_PREFIX = "evt_";
+    /** V26 이메일당 열린 코드 하나 */
+    private static final String OPEN_UNIQUE = "ux_email_verification_open";
 
     private final EmailVerificationRepository verifications;
     private final AccountRepository accounts;
@@ -72,6 +75,8 @@ public class EmailVerificationService {
         if (accounts.findByEmailAndDeletedAtIsNull(email).isPresent()) {
             throw new ApiException(HttpStatus.CONFLICT, "email_already_exists", "이미 등록된 이메일");
         }
+        // 한도에 걸릴 요청이 bcrypt(약 0.1초 CPU)를 쓰지 않게 먼저 본다. 트랜잭션 안에서 같은 검사를 한 번 더 한다
+        checkSendAllowed(email, Instant.now());
         String code = "%06d".formatted(RANDOM.nextInt(1_000_000));
         String codeHash = encoder.encode(code);   // bcrypt 는 느리므로 트랜잭션 밖에서
         Instant now = Instant.now();
@@ -79,21 +84,16 @@ public class EmailVerificationService {
         EmailVerification saved;
         try {
             saved = tx.execute(status -> {
-                verifications.findFirstByEmailOrderByIdDesc(email).ifPresent(latest -> {
-                    if (now.isBefore(latest.getCreatedAt().plus(props.resendInterval()))) {
-                        throw rateLimited("다시 받기는 잠시 뒤에 할 수 있습니다");
-                    }
-                });
-                if (verifications.countByEmailAndCreatedAtAfter(email, now.minus(props.sendLimitWindow()))
-                        >= props.sendLimit()) {
-                    throw rateLimited("이 이메일로 보낼 수 있는 횟수를 넘었습니다. 잠시 뒤에 다시 시도하세요");
-                }
+                checkSendAllowed(email, now);
                 verifications.closeOpen(email, now);
                 return verifications.saveAndFlush(
                         EmailVerification.issue(email, codeHash, now.plus(props.codeTtl())));
             });
         } catch (DataIntegrityViolationException e) {
-            // 같은 이메일로 동시에 보냈다: 먼저 들어간 요청이 열린 코드를 차지했다 (ux_email_verification_open)
+            if (!violates(e, OPEN_UNIQUE)) {
+                throw e;   // 다른 제약 위반은 공통 처리(GlobalExceptionHandler)로 보낸다
+            }
+            // 같은 이메일로 동시에 보냈다: 먼저 들어간 요청이 열린 코드를 차지했다
             throw rateLimited("다시 받기는 잠시 뒤에 할 수 있습니다");
         }
 
@@ -148,11 +148,36 @@ public class EmailVerificationService {
     @Transactional(propagation = Propagation.MANDATORY)
     public void consumeForRegistration(String verifiedToken, String normalizedEmail) {
         Instant now = Instant.now();
-        EmailVerification v = verifications.findByTokenHashForUpdate(SecretTokens.hash(verifiedToken))
+        // 토큰이 없으면 명세대로 email_not_verified (validation_failed 가 아니라). 빈 값의 해시로 찾으면 없는 토큰과 같다
+        EmailVerification v = verifications.findByTokenHashForUpdate(
+                        SecretTokens.hash(verifiedToken == null ? "" : verifiedToken))
                 .filter(found -> found.tokenUsableFor(normalizedEmail, now))
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "email_not_verified",
                         "이메일 인증이 없거나 만료됐거나 다른 이메일의 인증입니다"));
         v.consumeToken(now);
+    }
+
+    /** 다시 받기 간격과 이메일당 발송 한도. 넘으면 429 rate_limited. */
+    private void checkSendAllowed(String email, Instant now) {
+        verifications.findFirstByEmailOrderByIdDesc(email).ifPresent(latest -> {
+            if (now.isBefore(latest.getCreatedAt().plus(props.resendInterval()))) {
+                throw rateLimited("다시 받기는 잠시 뒤에 할 수 있습니다");
+            }
+        });
+        if (verifications.countByEmailAndCreatedAtAfter(email, now.minus(props.sendLimitWindow()))
+                >= props.sendLimit()) {
+            throw rateLimited("이 이메일로 보낼 수 있는 횟수를 넘었습니다. 잠시 뒤에 다시 시도하세요");
+        }
+    }
+
+    /** AuthService.violates 와 같은 방식: 원인 사슬에서 Hibernate 제약 이름을 찾는다. */
+    private static boolean violates(DataIntegrityViolationException e, String constraint) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConstraintViolationException c) {
+                return constraint.equalsIgnoreCase(c.getConstraintName());
+            }
+        }
+        return false;
     }
 
     private void discard(Long id) {
