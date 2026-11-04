@@ -42,7 +42,8 @@ public class RequestIdFilter extends OncePerRequestFilter {
         res.setHeader(HEADER, id);
         long started = System.nanoTime();
         String path = req.getRequestURI();
-        boolean redact = "GET".equals(req.getMethod()) && ANALYSIS_DETAIL.matcher(path).matches();
+        boolean redact = ("GET".equals(req.getMethod()) || "HEAD".equals(req.getMethod()))
+                && ANALYSIS_DETAIL.matcher(path).matches();
         try (var ignored = redact ? ProjectLogRedaction.open() : null) {
             try {
                 chain.doFilter(req, res);
