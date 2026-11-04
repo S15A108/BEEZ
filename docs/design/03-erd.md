@@ -84,7 +84,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | `validation_finding` (V16, -159) | `check_key`(의미 분석 후보가 속한 검사 키, 규칙 finding 은 NULL), `evidence_ids`(요청 evidence 참조 키 배열, 기본 `[]`). `validation_run.usage`(V16): 그 시도의 모델 호출 사용량 배열, 판정을 버린 실행도 모델을 불렀으면 남긴다(비용 집계 -168), 안 불렀으면 NULL. 큐 조회 인덱스 `ix_job_ready`(QUEUED 의 next_run_at)와 이력 인덱스 `ix_validation_task` 는 V2 에 있는 것을 쓴다 |
 | `task_completion_report` | `summary`, `completion_checks` 추가 |
 | `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, 검증 호출은 `validation_run_id`·`task_id` 를 채운다(-168, 실행을 닫을 때 `validation_run.usage` 에서 옮겨 적음), `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS`. 비용 조회(MON-A02)는 이 표만 읽으므로 모델을 부르는 기능은 모두 여기 적는다 — 변경 영향 분석도 `change_impact_run.usage`·`published_analysis_attempt.usage` 와 함께 적는다(-169, `LlmUsageRecorder`). V21(Java 마이그레이션)이 그 전에 실행 기록에만 남은 사용량(검증 실행·승인 전·발행 뒤 영향 분석)을 실행 중 기록기와 같은 거르기 코드로 옮겼다(같은 `request_key` 는 한 번, `created_at` 은 실행이 끝난 시각, 넣다가 실패한 항목만 건너뜀) |
-| `notification` (V23, -181) | `document_id` 추가(`target_type=DOCUMENT_VERSION` 이면 입구가 필수로 검사). 저장은 `NotificationRequester` 입구로만 — `dedupe_key` 충돌은 건너뜀, `created_at` 은 `clock_timestamp()`([알림·활동 계약](10-notification-activity-contract.md)) |
+| `notification` (V25, -181) | `document_id` 추가(`target_type=DOCUMENT_VERSION` 이면 입구가 필수로 검사). 저장은 `NotificationRequester` 입구로만 — `dedupe_key` 충돌은 건너뜀, `created_at` 은 `clock_timestamp()`([알림·활동 계약](10-notification-activity-contract.md)) |
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 
