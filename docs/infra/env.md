@@ -169,7 +169,7 @@ CI(`ci.yml`)는 비밀값을 쓰지 않습니다. backend 테스트는 Testconta
 
 | 상황 | 결과 | 보이는 문구 |
 |---|---|---|
-| 서버 env 파일에 필수값 없음·빈 값 | **compose 가 시작 전에 멈춤**, 컨테이너는 그대로 | `required variable DB_PASSWORD is missing a value: DB_PASSWORD is required` |
+| 서버 env 파일에 필수값 없음·빈 값 | **배포 전 점검이 멈춤**, 컨테이너는 그대로 | `필수값 DB_PASSWORD 이 없거나 빈 값` (compose 원문 `required variable DB_PASSWORD is missing a value` 를 바꿔 보여 줌) |
 | 서버 env 파일을 읽을 수 없음 | `deploy.sh` 가 멈춤 | `env 파일을 읽을 수 없음: /opt/beez/.env.dev` |
 | backend prod, `DB_URL` 없음 | 기동 실패 | `Failed to configure a DataSource: 'url' attribute is not specified` |
 | backend prod, `DB_USERNAME` 없음 | 기동 실패 | `password authentication failed for user "${DB_USERNAME}"` |
@@ -384,5 +384,5 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 5. `infra/local.env` 에 더미값, 예시 파일(`ai/.env.example`·`frontend/.env.example`)에 빈 칸을 넣습니다.
 6. 이 문서의 표를 고칩니다.
 7. **compose 필수값을 추가한 PR 은 머지 전에 서버 env 파일에 값을 먼저 넣습니다.** 순서가 바뀌면 머지 직후 자동 배포가
-   compose 단계에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)를
+   배포 전 점검에서 멈춥니다(서비스는 이전 버전으로 계속 돕니다). 넣은 뒤 [배포 전에 점검하기](#배포-전에-점검하기)를
    **`REF=<그 PR 브랜치>`** 로 돌려 확인합니다.
