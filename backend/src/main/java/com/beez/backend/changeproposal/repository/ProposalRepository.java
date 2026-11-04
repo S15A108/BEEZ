@@ -4,7 +4,10 @@ import static com.beez.backend.designitem.support.DesignJson.*;
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.common.api.ApiException;
 import java.util.*;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -49,6 +52,24 @@ public class ProposalRepository {
                 WHERE r.project_id=:project AND r.change_proposal_id=:proposal AND r.revision_no=:revision
                 """,
                 Map.of("project", project, "proposal", proposal, "revision", revision));
+    }
+
+    /** Called only after the detail service checks project membership. */
+    public Optional<Map<String, Object>> publishedAnalysis(long project, long proposal, long baseline) {
+        try {
+            var rows = jdbc.sql("""
+                SELECT status,evaluation_status,error_code,attempt,requested_at,started_at,finished_at,next_attempt_at,
+                       (lease_until IS NOT NULL AND lease_until <= statement_timestamp()) AS lease_expired
+                FROM published_change_analysis
+                WHERE project_id=:project AND change_proposal_id=:proposal AND published_baseline_id=:baseline
+                """).param("project", project).param("proposal", proposal).param("baseline", baseline)
+                .query().listOfRows();
+            return rows.stream().findFirst();
+        } catch (DataAccessException failure) {
+            // Do not log database exception text or return UNKNOWN as if the query succeeded.
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "published_analysis_unavailable",
+                    "발행 후 분석 상태를 일시적으로 조회할 수 없습니다.");
+        }
     }
 
     public List<Revision> revisions(long project, long proposal, int before, int limit) {

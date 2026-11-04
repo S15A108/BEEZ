@@ -3,11 +3,13 @@ package com.beez.backend.impactanalysis;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static com.beez.backend.designitem.support.DesignJson.JSON;
 
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.cdc.intake.AnalysisIntakeSignalHandler;
 import com.beez.backend.cdc.transport.AnalysisIntakeKafkaListener;
 import com.beez.backend.cdc.transport.PublishedAnalysisRecordDecoder;
+import com.beez.backend.cdc.observability.PublishedAnalysisMetricsReader;
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
 import com.beez.backend.changeproposal.dto.PublicationDtos.ApproveRequest;
 import com.beez.backend.changeproposal.service.ProposalCommandService;
@@ -36,9 +38,10 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
     @Autowired ProposalPublicationService publications;
     @Autowired PublishedAnalysisRepository repository;
     @Autowired PublishedAnalysisProcessor processor;
+    @Autowired PublishedAnalysisMetricsReader metricsReader;
     @MockitoBean AiClient ai;
     TaskApiSupport api;
-    long project, leader, initial, oldVersion, intake;
+    long project, leader, initial, oldVersion, intake, proposalId;
 
     @BeforeEach void setup() {
         api = new TaskApiSupport(this::client, dataSource);
@@ -57,6 +60,7 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
                         Map.of("method","GET","path","/users/v2","description","사용자 조회 변경"))),List.of(),null,null,null),"create");
         var request = new ApproveRequest(proposal.baseBaselineId(),proposal.revision(),proposal.snapshotHash(),
                 "발행 후 분석 테스트를 위해 승인 전 분석을 생략함");
+        proposalId = Long.parseLong(proposal.id());
         var published = publications.approve(caller,project,Long.parseLong(proposal.id()),request,"approve");
         intake = api.jdbc.sql("SELECT id FROM published_change_analysis WHERE published_baseline_id=:b")
                 .param("b",Long.parseLong(published.baseline().id())).query(Long.class).single();
@@ -66,6 +70,95 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
     private Map<String,Object> envelope() {
         return Map.of("result",Map.of("candidates",List.of(),"evidence_status","SUFFICIENT"),"origin","MODEL",
                 "usage",List.of(Map.of("request_key","published-llm-call","feature","CHANGE_IMPACT","failed",false)));
+    }
+
+    @Test void proposalDetailShowsAuthorizedPublicationStateAndDoesNotCallInsufficientEvidenceAnEmptySuccess() {
+        String path = "/api/projects/" + project + "/change-proposals/" + proposalId;
+        var member = api.accountId("member@test");
+        var outsider = api.accountId("outsider@test");
+        var pending = api.get(path, member);
+        assertThat(pending.statusCode()).as(pending.body()).isEqualTo(200);
+        assertThat(JSON.readTree(pending.body()).get("published_analysis").get("status").asText()).isEqualTo("PENDING");
+        assertThat(api.get(path, outsider).statusCode()).isEqualTo(404);
+
+        when(ai.changeImpact(any())).thenThrow(new ResourceAccessException("secret failure")).thenReturn(envelope());
+        processor.process(intake);
+        var retry = JSON.readTree(api.get(path, member).body()).get("published_analysis");
+        assertThat(retry.get("status").asText()).isEqualTo("PENDING");
+        assertThat(retry.get("attempt").asInt()).isEqualTo(1);
+        assertThat(retry.get("guidance").asText()).isEqualTo("RETRY_SCHEDULED");
+        assertThat(retry.get("next_attempt_at").asText()).isNotBlank();
+
+        api.jdbc.sql("UPDATE published_change_analysis SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id")
+                .param("id", intake).update();
+        processor.process(intake);
+        var complete = JSON.readTree(api.get(path, member).body()).get("published_analysis");
+        assertThat(complete.get("status").asText()).isEqualTo("COMPLETED");
+        assertThat(complete.get("evaluation_status").asText()).isEqualTo("INSUFFICIENT_EVIDENCE");
+        assertThat(complete.get("guidance").asText()).isEqualTo("REVIEW_EVIDENCE");
+        assertThat(complete.get("current_baseline").asBoolean()).isTrue();
+        assertThat(complete.toString()).doesNotContain("secret failure");
+    }
+
+    @Test void missingPublishedIntakeIsUnknownRatherThanSuccessOrZeroImpact() {
+        api.jdbc.sql("DELETE FROM published_change_analysis WHERE id=:id").param("id", intake).update();
+        String path = "/api/projects/" + project + "/change-proposals/" + proposalId;
+        var response = api.get(path, leader);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        var status = JSON.readTree(response.body()).get("published_analysis");
+        assertThat(status.get("status").asText()).isEqualTo("UNKNOWN");
+        assertThat(status.get("guidance").asText()).isEqualTo("CHECK_RESULT");
+    }
+
+    @Test void metricsReflectRetryAndStoredEvaluationResults() {
+        var initialMetrics = metricsReader.read();
+        assertThat(initialMetrics.intakes().get("PENDING")).isEqualTo(1);
+        assertThat(initialMetrics.notEvaluatedExpected()).isEqualTo(1);
+        assertThat(initialMetrics.notEvaluatedRequiresReview()).isZero();
+
+        when(ai.changeImpact(any())).thenThrow(new ResourceAccessException("secret failure")).thenReturn(envelope());
+        processor.process(intake);
+        var failure = metricsReader.read();
+        assertThat(failure.pendingRetries()).isEqualTo(1);
+        assertThat(failure.attempts().get("FAILED")).isEqualTo(1);
+        assertThat(failure.startedRetries()).isZero();
+
+        api.jdbc.sql("UPDATE published_change_analysis SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id")
+                .param("id", intake).update();
+        processor.process(intake);
+        var success = metricsReader.read();
+        assertThat(success.intakes().get("PENDING")).isZero();
+        assertThat(success.intakes().get("COMPLETED")).isEqualTo(1);
+        assertThat(success.evaluations().get("INSUFFICIENT_EVIDENCE")).isEqualTo(1);
+        assertThat(success.attempts().get("FAILED")).isEqualTo(1);
+        assertThat(success.attempts().get("INSUFFICIENT_EVIDENCE")).isEqualTo(1);
+        assertThat(success.startedRetries()).isEqualTo(1);
+        assertThat(success.recordedRetryAttempts()).isEqualTo(1);
+    }
+
+    @Test void blockedProjectMetricFollowsTheWorkerPredecessorRule() {
+        long next = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
+                .param("p", project).param("a", leader).query(Long.class).single();
+        api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) VALUES(:p,:b,'PENDING')")
+                .param("p", project).param("b", next).update();
+        api.jdbc.sql("UPDATE published_change_analysis SET status='FAILED',error_code='analysis_interrupted' WHERE id=:id")
+                .param("id", intake).update();
+        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+
+        // COMPLETED with insufficient evidence still satisfies the existing ordering rule.
+        api.jdbc.sql("UPDATE published_change_analysis SET status='COMPLETED',evaluation_status='INSUFFICIENT_EVIDENCE',error_code=NULL WHERE id=:id")
+                .param("id", intake).update();
+        assertThat(metricsReader.read().blockedProjects()).isZero();
+
+        api.jdbc.sql("UPDATE published_change_analysis SET status='NOT_EVALUATED',evaluation_status='NOT_EVALUATED',error_code=NULL WHERE id=:id")
+                .param("id", intake).update();
+        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+        assertThat(metricsReader.read().notEvaluatedRequiresReview()).isEqualTo(1);
+
+        api.jdbc.sql("UPDATE published_change_analysis SET error_code='published_before_intake' WHERE id=:id")
+                .param("id", intake).update();
+        assertThat(metricsReader.read().blockedProjects()).isZero();
+        assertThat(metricsReader.read().notEvaluatedExpected()).isEqualTo(2);
     }
 
     @SuppressWarnings("unchecked")

@@ -43,9 +43,14 @@ public class RequestIdFilter extends OncePerRequestFilter {
         } finally {
             if (req.getRequestURI().startsWith("/api/")) {
                 long ms = (System.nanoTime() - started) / 1_000_000;
-                access.info("{} {} -> {} ({} ms)", req.getMethod(), req.getRequestURI(), res.getStatus(), ms);
+                access.info("{} {} -> {} ({} ms)", req.getMethod(), accessLogPath(req.getRequestURI()), res.getStatus(), ms);
             }
             MDC.remove(MDC_KEY);
         }
+    }
+
+    /** Do not put project identifiers into request logs, including analysis detail requests. */
+    static String accessLogPath(String path) {
+        return path == null ? "" : path.replaceFirst("^(/api/projects/)[^/]+", "$1{projectId}");
     }
 }

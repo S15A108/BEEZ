@@ -7456,6 +7456,7 @@ HTTP `200`.
 | `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 고정 기준→제안 diff와 현재 승인 내용 |
 | `explicit_candidates` | `object[]` | Y | 직접 참조 후보. target_type/target_id/via_design_item_id/assignee_member_id/origin |
 | `candidates_truncated` | `boolean` | Y | 후보 500개 초과 여부 |
+| `published_analysis` | `object` | N | 선택한 리비전의 발행 후 분석 접수 상태 (#243). 발행 전 리비전에서는 생략 |
 | `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. #218 수정안 요청 · 195 미구현 |
 
 #### Error
@@ -7467,11 +7468,15 @@ HTTP `200`.
 | 400 | `validation_failed` | 리비전 입력 오류 |
 | 409 | `baseline_conflict` | 저장된 기준 항목을 확인할 수 없음 |
 | 413 | `diff_too_large` | 비교 본문 한도 초과 |
+| 503 | `published_analysis_unavailable` | 발행 후 분석 접수 상태의 DB 조회 실패. 미평가나 0건으로 바꾸지 않음 |
 
 #### 처리 규칙
 
 - 선택 리비전의 base_baseline_id와 문서·항목 기준 버전을 고정해 비교한다. 현재 baseline 변경은 requires_refresh, 비교 대상의 현재 본문 변경은 current_changed로 따로 표시한다. diff의 기준을 현재 승인본으로 바꾸지 않는다.
 - READ ONLY REPEATABLE READ로 기준·현재·제안을 같은 DB 스냅샷에서 읽는다. 설계 항목 본문은 묶음 조회한다.
+- `published_analysis`는 발행 후 접수행 기준이며, 승인 전 분석을 반환하는 CHG-A05와 별개다. `status`는 `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `NOT_EVALUATED` 또는 발행되었으나 baseline이나 접수행을 확인할 수 없는 `UNKNOWN`이다. `evaluation_status`가 `INSUFFICIENT_EVIDENCE`인 완료는 영향 없음이 아니다. 평가 전이거나 결과가 없는 필드는 생략한다.
+- 접수행이 있으면 `attempt`, `requested_at`, `started_at`, `finished_at`, `next_attempt_at`, 제한된 `error_code`와 `guidance`를 제공한다. 실행 중에는 `lease_expired`를 제공한다. `current_baseline`은 발행 baseline ID가 현재 baseline과 같은지만 나타내며, 비교할 ID가 없으면 생략한다. 관계·작업 등 모든 분석 입력의 최신성을 보장하지 않는다.
+- `guidance`는 `WAIT`, `RETRY_SCHEDULED`, `RECOVERY_PENDING`, `CONTACT_OPERATOR`, `REVIEW_REASON`, `REVIEW_EVIDENCE`, `CHECK_RESULT`, `NONE` 중 하나다. `RETRY_SCHEDULED`는 예약/도래한 자동 재시도이고, 사용자 수동 재처리 API가 존재한다는 뜻이 아니다. 상태 의미와 지표는 [243번 문서](../design/cdc-observability-243.md)를 따른다.
 - DOC-A06과 같은 줄별 계산기를 사용한다. 동일 본문은 빈 diff. 삭제 줄은 -, 추가 줄은 +, 유지 줄은 공백 접두어다. 마지막 개행 없음은 표준 \ No newline at end of file 표시로 구분하며 비교 중 CR/LF·공백을 정규화하지 않는다.
 - 각 본문은 1,048,576자·50,000줄 이내다. 공통 앞뒤 구간을 분리하고 중간 LCS 표가 1,000,000칸을 넘으면 해당 중간 구간을 전체 삭제/추가로 표시한다. 내용은 생략하지 않으며 최소 diff는 보장하지 않는다. JSON 항목은 키를 정렬한 canonical JSON으로 비교한다.
 - 후보는 기준 설계 항목의 원문 출처·현재 작업 계획의 직접 참조·검증 참조에 한정한다. 작업은 COMPLETED·CANCELLED를 제외하고(MCP-03 affected_task_ids와 같은 규칙), 검증은 열린 작업의 현재 계획 리비전 검증만 포함한다. API/DATA 계약도 설계 항목으로 표시한다. 확정 설계 관계 1단계+작업 계획 참조 규칙 계산은 관계 서비스 담당과 계약하고, 규칙/AI 후보 저장·조회는 197 후속이다. 후보를 확정 영향·알림·작업 변경으로 사용하지 않는다.
