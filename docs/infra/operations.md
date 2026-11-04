@@ -17,7 +17,7 @@ dev 서버(`dev.beez.ai.kr`)에 문제가 생겼을 때 팀원 누구나 상태�
 | 팀 채널에 배포 실패 알림이 옴 | 알림의 콘솔 출력 링크를 열어 끝부분 확인 | [6. 배포 실패 알림](#6-배포-실패-알림) |
 | 알림을 받았는데 Jenkins 계정이 없음 | 서버에서 빌드 로그 파일을 봄 | [Jenkins 계정이 없을 때](#jenkins-계정이-없을-때) |
 | 화면·API가 안 됨 | 상태부터 확인 | [1. 상태 보기](#1-상태-보기) |
-| 방금 배포된 버전에서 기능이 망가짐 | 직전 PR 머지 커밋으로 되돌림 | [4. 이전 버전으로 되돌리기](#4-이전-버전으로-되돌리기-배포-복구) |
+| 방금 배포된 버전에서 기능이 망가짐 | 사이에 파괴적 DB 마이그레이션이 없는지 보고, 팀에 알린 뒤 직전 배포 SHA로 되돌림 | [4. 이전 버전으로 되돌리기](#4-이전-버전으로-되돌리기-배포-복구) |
 | 컨테이너 하나가 응답이 없음 | 그 컨테이너만 재시작 | [3. 재시작](#3-재시작) |
 | 서버 env 값을 바꿈 | 같은 SHA로 다시 배포 | [3. 재시작](#env-값을-바꿨을-때) |
 | 검증 결과가 `STALE`·`ERROR`가 됨 | 배포 문제가 아닙니다 | [5. 배포 복구와 검증 롤백](#5-배포-복구와-검증업무-롤백) |
@@ -98,8 +98,8 @@ sudo sed 's/\x1b\[8m[^\x1b]*\x1b\[0m//g' $B/<번호>/log | tail -n 80   # 콘솔
 서버:
 
 ```bash
-flock -E 75 -w 300 /var/www/beez/.deploy.lock docker compose -p beez restart backend; \
-  [ $? -eq 75 ] && echo "배포가 5분 넘게 진행 중이라 재시작하지 않음. 배포가 끝난 뒤 다시 실행"
+flock -E 75 -w 300 /var/www/beez/.deploy.lock docker compose -p beez restart backend \
+  || { [ $? -eq 75 ] && echo "배포가 5분 넘게 진행 중이라 재시작하지 않음. 배포가 끝난 뒤 다시 실행"; }
 docker compose -p beez ps backend          # (healthy)가 될 때까지 다시 실행. 첫 healthy까지 1분 안팎
 ```
 
@@ -164,7 +164,7 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    git -C /c/git/BEEZ fetch -q origin
    git -C /c/git/BEEZ diff --name-status "$OLD" "$NOW" -- backend/src/main/resources/db/migration
    git -C /c/git/BEEZ diff "$OLD" "$NOW" -- backend/src/main/resources/db/migration \
-     | grep -inE '^\+.*(drop |rename |alter column .* type |not null)'
+     | grep -inE '^\+.*(drop |rename |alter column .* type |set not null|add column .* not null)'
    ```
 
    - 첫 명령이 아무것도 찍지 않으면 사이에 마이그레이션이 없어 스키마 걱정 없이 되돌릴 수 있습니다.
@@ -250,7 +250,7 @@ Actions의 초록불은 "Jenkins가 배포 요청을 접수했다"까지입니�
 | Deploy · 마지막 줄이 `프론트 dist 꺼내기`·`이미지 받기`이고 그 뒤 docker 오류(`manifest unknown`·`denied`·연결 오류 등) | 컨테이너·프론트 `current`는 그대로. 꺼낸 릴리스 폴더·받은 이미지만 남을 수 있음(다음 배포가 다시 쓰거나 정리) | GHCR에 그 SHA 이미지가 있는지 봅니다. 그 커밋의 Actions CD `image` 잡이 성공했는지, 문서만 바뀐 커밋(`paths-ignore`)이 아닌지, 패키지가 공개인지([새 패키지를 공개로 만들 때](cd.md#새-패키지를-공개로-만들-때)). GHCR 일시 장애면 같은 SHA로 다시 배포 |
 | Deploy · `헬스체크 실패` | **backend·ai는 새 버전**(DB 마이그레이션이 이미 돌았을 수 있음), 프론트는 예전 | 콘솔의 backend·ai 로그로 원인 확인 → [4. 되돌리기](#4-이전-버전으로-되돌리기-배포-복구) 또는 고친 커밋 배포 |
 | Deploy · `Nginx 경유 확인 실패` | **backend·ai는 새 버전**, 프론트는 예전 | 되돌려도 안 고쳐짐. [cd.md 배포 스크립트](cd.md#배포-스크립트)의 `nginx 다름`·`nginx 확인 실패` 설명대로 |
-| 중단(`Aborted by …`)·시간 초과(15분, `Timeout has been exceeded`) | 끊긴 단계에 따라 다름 → 아래 표 | 콘솔의 마지막 `[deploy …]` 줄로 단계를 찾고 `docker compose -p beez ps`로 이미지 태그 확인 |
+| 중단(`Aborted by …`)·시간 초과(잡 전체 15분) | 끊긴 단계에 따라 다름 → 아래 표 | 콘솔의 마지막 `[deploy …]` 줄로 단계를 찾고 `docker compose -p beez ps`로 이미지 태그 확인 |
 
 중단·시간 초과는 어느 단계에서든 일어나므로 콘솔의 마지막 `[deploy …]` 줄과 `compose ps`로 판단합니다.
 배포 스크립트는 중단 신호를 받으면 꺼내기용 컨테이너·임시 폴더를 지우고 끝나지만, 이미 시작한 컨테이너 교체를
@@ -258,9 +258,9 @@ Actions의 초록불은 "Jenkins가 배포 요청을 접수했다"까지입니�
 
 | 마지막 `[deploy …]` 줄 | 서버 상태 | 할 일 |
 |---|---|---|
-| 없음(Verify에서 끊김), `배포 전 점검`, `배포 SHA`·`직전 …`, `프론트 …`, `이미지 받기` | 그대로 | 같은 SHA로 다시 배포 |
+| 없음(Verify에서 끊겼거나, 앞 배포의 잠금을 기다리던 중), `배포 전 점검`, `배포 SHA`·`직전 …`, `프론트 dist 꺼내기`·`프론트 릴리스가 이미 있어…`, `이미지 받기` | 그대로 | 같은 SHA로 다시 배포 |
 | `컨테이너 교체 + 헬스체크 대기` | 서비스마다 다름. `compose ps`의 이미지 태그가 새 SHA인 서비스만 바뀜 | 다시 배포해 끝내거나 [4. 되돌리기](#4-이전-버전으로-되돌리기-배포-복구) |
-| `Nginx 경유 확인` | backend·ai는 새 버전, 프론트는 예전 | 위 `Nginx 경유 확인 실패`와 같음 |
+| `Nginx 경유 확인` | backend·ai는 새 버전, 프론트는 대개 예전 | `readlink /var/www/beez/current`로 프론트도 확인(전환 직후·기록 전에 끊겼으면 새 버전). 그 뒤 위 `Nginx 경유 확인 실패`와 같음 |
 | `프론트 전환: …` 이후(`오래된 릴리스 삭제` 등) | 모두 새 버전. 정리 중에 끊김 | 할 일 없음. 다음 배포가 정리 |
 
 ### 구조
