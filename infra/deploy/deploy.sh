@@ -11,8 +11,9 @@
 # 환경 값(비밀 포함)은 서버의 /opt/beez/.env.<환경> 에서 읽는다. 저장소에는 없다.
 # 환경 중립: 환경 차이는 env 파일로만 준다. 이 파일에 dev/prod 분기를 넣지 않는다.
 #
-# 순서: 프론트 dist 꺼내기 → backend·ai 이미지 받기 → 컨테이너 교체 + 헬스체크 대기 → 프론트 전환.
-# 헬스체크가 실패하면 프론트를 바꾸지 않고 실패로 끝낸다. 되돌리기는 직전 SHA 로 이 스크립트를 다시 돌린다
+# 순서: 배포 전 점검(check-port.sh) → 프론트 dist 꺼내기 → backend·ai 이미지 받기 → 컨테이너 교체 + 헬스체크 대기
+#       → Nginx 경유 확인 → 프론트 전환.
+# 배포 전 점검이 실패하면 아무것도 바꾸지 않는다. 헬스체크·Nginx 경유 확인이 실패하면 프론트를 바꾸지 않고 실패로 끝낸다. 되돌리기는 직전 SHA 로 이 스크립트를 다시 돌린다
 # (직전 SHA 는 시작할 때 로그에 찍는다).
 set -euo pipefail
 
@@ -46,6 +47,7 @@ FRONTEND_IMAGE=$REGISTRY/beez-frontend-dist:$SHA
 
 compose() { docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"; }
 log() { echo "[deploy $(date +%H:%M:%S)] $*"; }
+check() { bash "$(dirname "$0")/check-port.sh" "$1" "$ENV_FILE" "$COMPOSE_FILE"; }
 
 # 중간에 실패해도 꺼내기용 컨테이너와 임시 폴더가 남지 않게 한다
 cid=
@@ -58,6 +60,12 @@ trap cleanup EXIT
 # Jenkins 의 중단·시간 초과는 SIGTERM 으로 끝낸다. 신호로 끝나면 EXIT 처리가 돌지 않으므로 exit 로 바꿔 EXIT 처리를 태운다
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# 0) 배포 전 점검. 아무것도 받거나 바꾸기 전에 env 필수값과 backend 포트·Nginx upstream 일치를 본다.
+#    compose 오류 문구는 env 값을 담을 수 있어(따옴표가 안 닫힌 값 등) 점검이 고정 문구로만 내보낸다.
+#    통과한 env 파일만 아래 compose 명령에 넘기므로 형식 오류의 원문이 배포 로그에 남지 않는다
+log "배포 전 점검 (env·포트·Nginx upstream)"
+check port || { log "배포 전 점검 실패. 컨테이너·프론트는 그대로다. 문구 뜻은 docs/infra/env.md \"배포 전에 점검하기\""; exit 1; }
 
 # 컨테이너가 없을 때 docker inspect 가 빈 줄을 찍고 실패하므로, id 가 있을 때만 묻는다
 previous=없음
@@ -105,6 +113,14 @@ if ! compose up -d --no-build --remove-orphans --wait --wait-timeout 240; then
     exit 1
 fi
 compose ps --format '{{.Service}}\t{{.Image}}\t{{.Status}}'
+
+# 3-1) 실행 중인 Nginx 가 새 backend 로 보내는지 본다. 0) 은 디스크의 설정 파일을 읽으므로, upstream 포트를 고치고
+#      reload 하지 않았으면 여기서 드러난다. 실패하면 프론트를 바꾸지 않는다(backend·ai 는 이미 새 버전이다)
+log "Nginx 경유 확인 (/api/ping started_at)"
+check nginx || {
+    log "Nginx 가 새 backend 로 보내지 않음. 프론트는 바꾸지 않았다. Nginx 설정 reload 여부를 확인한다"
+    exit 1
+}
 
 # 4) 프론트 전환. 새 링크를 만든 뒤 이름을 바꿔(mv -T) 한 번에 바꾼다. Nginx 는 reload 할 필요가 없다
 ln -sfn "$release" "$WEB_ROOT/current.tmp"
