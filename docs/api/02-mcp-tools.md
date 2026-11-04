@@ -1012,7 +1012,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `id` | `ID` | Y | 작업 ID |
 | `key` | `string` | Y | 표시 키 |
 | `project_id` | `ID` | Y | 프로젝트 |
-| `assignee_member_id` | `ID` | Y | 담당 멤버 |
+| `assignee_member_id` | `ID` | N | 담당 멤버. (수정안 요청 · 11-04 사용자 결정) 담당자가 나가거나 제외돼 미배정이면 생략(MEM-A09·A10) |
 | `status` | `DRAFT\|READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | Y | 작업 상태 |
 | `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAITING일 때만 포함 |
 | `lock_version` | `integer` | Y | 상태 충돌 검사 번호 |
