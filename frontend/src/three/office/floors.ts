@@ -135,6 +135,8 @@ export interface Floor {
   theme?: string
   /** 건물 외관(glass·brick·modern·tower·wood). 사무실 재질과 배치를 정한다(D31). */
   design?: string
+  /** 서쪽 막힌 벽의 나무 슬랫 구간(북쪽 벽에서 m, D30·D31) */
+  wallSlat?: [number, number]
   /** 정적 레이어(바닥·러그)를 다시 그려야 하는지 판단하는 키 */
   staticKey?: string
   /** Actual indoor footprint; streets and unopened expansion space stay outdoors. */

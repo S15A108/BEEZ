@@ -11,6 +11,8 @@ export interface OfficeTheme {
   /** 카펫 타일 두 톤. null이면 카펫 구역도 바닥과 같다. */
   carpet: [[number, number, number], [number, number, number]] | null
   wall: string
+  /** 남·서쪽 막힌 벽을 이 색 벽돌로 쌓는다(슬랫 없음). */
+  brick?: string
   slat: string
   glass: string
   glassOpacity: number
@@ -77,6 +79,7 @@ export const OFFICE_THEMES: Record<OfficeDesign, OfficeTheme> = {
       [160, 141, 126],
     ],
     wall: '#efe7dc',
+    brick: '#a8543a',
     mullion: '#2b2b2b',
     ceiling: '#ebe6df',
     ceilingGlow: 0.15,

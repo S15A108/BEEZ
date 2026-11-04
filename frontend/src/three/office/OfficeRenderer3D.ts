@@ -2541,6 +2541,40 @@ export class OfficeRenderer3D {
     this.cameraKey = ''
   }
 
+  // 벽돌 벽(캔버스 office3 brick): 0.26 m × 0.075 m 벽돌을 반씩 엇갈려 쌓는다. 그림 한 장이 0.52 m × 0.6 m(8단)다.
+  private brickMaterial(length: number) {
+    const key = `office-brick/${this.theme.brick}/${length.toFixed(2)}`
+    let material = this.materials.get(key)
+    if (material) return material
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 256
+    const g = canvas.getContext('2d')
+    if (g) {
+      g.fillStyle = '#d9cfc2'
+      g.fillRect(0, 0, 256, 256)
+      const base = new THREE.Color(this.theme.brick)
+      let seed = 7
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+      for (let row = 0; row < 8; row++)
+        for (let i = -1; i < 3; i++) {
+          g.fillStyle = `#${base
+            .clone()
+            .offsetHSL(0, 0, (rnd() - 0.5) * 0.08)
+            .getHexString()}`
+          g.fillRect(i * 128 + (row % 2 ? 64 : 0) + 3, row * 32 + 3, 122, 26)
+        }
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+    // 벽 높이 4.5(방 3 m)에 그림 다섯 장
+    texture.repeat.set(length / 0.52, 5)
+    this.textures.push(texture)
+    material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.95 })
+    this.materials.set(key, material)
+    return material
+  }
+
   // 오크 판재(1 m 칸에 0.2 m 판 다섯 줄, 칸마다 무늬 넷 중 하나)와 0.5 m 카펫 타일(캔버스 1번 색: 베이지 두 톤)
   private floorMaterial(tile: string, x: number, z: number) {
     const theme = this.theme
@@ -2589,7 +2623,7 @@ export class OfficeRenderer3D {
         let left = -rnd() * 120
         while (left < 256) {
           const length = 80 + rnd() * 120,
-            base = (theme.oakBase ?? 205) - 19 + rnd() * 22
+            base = (theme.oakBase ?? 205) + rnd() * 22
           g.fillStyle = `rgb(${base + 12},${base - 18},${base - 62})`
           g.fillRect(left, row * 51.2, length, 51.2)
           g.fillStyle = 'rgba(90,60,30,0.35)'
@@ -2870,7 +2904,7 @@ export class OfficeRenderer3D {
       inside: number,
       slat?: [number, number],
     ) => {
-      this.box(
+      const wall = this.box(
         parent,
         length / 2,
         2.25,
@@ -2881,6 +2915,7 @@ export class OfficeRenderer3D {
         theme.wall,
         0,
       )
+      if (theme.brick) wall.material = this.brickMaterial(length + 0.24)
       this.box(
         parent,
         length / 2,
@@ -2951,7 +2986,12 @@ export class OfficeRenderer3D {
     this.rearWindows.position.set(left, 0, back - 0.12)
     // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(남쪽 끝 4.7 m)에 나무 슬랫을 댄다(캔버스 v488).
     if (fixed)
-      solidWall(this.sideWindows, depth, -1, [depth - 4.8, depth - 0.1])
+      solidWall(
+        this.sideWindows,
+        depth,
+        -1,
+        theme.brick ? undefined : floor.wallSlat,
+      )
     else windowWall(this.sideWindows, depth)
     this.sideWindows.rotation.y = -Math.PI / 2
     this.sideWindows.position.set(left - 0.12, 0, back)

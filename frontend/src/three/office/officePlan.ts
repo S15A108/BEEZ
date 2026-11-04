@@ -101,7 +101,7 @@ export interface OfficePiece {
   h: number
   tint: Record<string, string> | null
 }
-type Row = [
+export type Row = [
   number,
   string,
   string | null,
@@ -241,8 +241,8 @@ const ROWS: Row[] = [
   [0,"plant","pottedPlant",null,-6,-1.3,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
   [0,"plant","pottedPlant",null,2,1.6,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
 ]
-export const OFFICE_PIECES: OfficePiece[] = ROWS.map(
-  ([zone, kind, model, ui, x, z, y, ry, s, w, d, h, tint]) => ({
+export const piecesOf = (rows: Row[]): OfficePiece[] =>
+  rows.map(([zone, kind, model, ui, x, z, y, ry, s, w, d, h, tint]) => ({
     zone,
     kind,
     model,
@@ -256,5 +256,23 @@ export const OFFICE_PIECES: OfficePiece[] = ROWS.map(
     d,
     h,
     tint,
-  }),
-)
+  }))
+export const OFFICE_PIECES = piecesOf(ROWS)
+
+/** 사무실 배치 한 벌. 건물 외관마다 하나씩 있고(D31), 없으면 v488 배치를 쓴다. */
+export interface OfficePlan {
+  room: { w: number; d: number; h: number }
+  zones: OfficeZone[]
+  lounge: { x0: number; z0: number; x1: number; z1: number }
+  entrance: { x: number; z: number }
+  bibi: { x: number; z: number; ry: number }
+  pieces: OfficePiece[]
+}
+export const V488_PLAN: OfficePlan = {
+  room: OFFICE_ROOM,
+  zones: OFFICE_ZONES,
+  lounge: OFFICE_LOUNGE,
+  entrance: OFFICE_ENTRANCE,
+  bibi: OFFICE_BIBI,
+  pieces: OFFICE_PIECES,
+}

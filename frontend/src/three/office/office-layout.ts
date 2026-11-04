@@ -1,15 +1,8 @@
 import type { Agent, Zone } from '../types'
 import type { Dir, Floor, Furniture, FurnitureKind, Seat, Tile } from './floors'
-import {
-  OFFICE_BIBI,
-  OFFICE_ENTRANCE,
-  OFFICE_LOUNGE,
-  OFFICE_PIECES,
-  OFFICE_ROOM,
-  OFFICE_ZONES,
-  type OfficePiece,
-} from './officePlan'
-import { officeDesignOf } from './officeLook'
+import { V488_PLAN, type OfficePiece, type OfficePlan } from './officePlan'
+import { officeDesignOf, type OfficeDesign } from './officeLook'
+import { BRICK_PLAN } from './plans/brick'
 
 export type OfficePopulation = Partial<Record<Zone, number>>
 export const officeObjectKey = (item: Furniture) =>
@@ -27,19 +20,12 @@ export function officePopulationOf(
   }, {})
 }
 
-// 캔버스 배치(m, 방 가운데 원점)를 타일로 옮긴다. 1 m = 1타일이고 서쪽·북쪽 벽이 0번 칸이다.
-const ROOM_W = OFFICE_ROOM.w
-const ROOM_D = OFFICE_ROOM.d
-const W = ROOM_W + 2
-const H = ROOM_D + 4
-const tx = (x: number) => x + ROOM_W / 2 + 1
-const ty = (z: number) => z + ROOM_D / 2 + 1
-// 앉은 사람 발끝 위치(px)는 seat.x * 32 + 16, seat.y * 32 + 27이다. 의자 가운데에 앉도록 자리를 그만큼 당긴다.
-const seatAt = (x: number, z: number, facing: Dir): Seat => ({
-  x: tx(x) - 0.5,
-  y: ty(z) - 27 / 32,
-  facing,
-})
+// 건물 외관별 배치(D31). 아직 옮기지 않은 외관은 v488 배치(D28)를 쓴다.
+const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
+  brick: BRICK_PLAN,
+}
+// 충전 자리(D29 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
+const LOUNGE_SEATS = ['loungeChairRelax', 'loungeDesignChair']
 // 의자 방향(ry, 모델 앞 = +z)을 앉은 사람이 보는 쪽으로
 const facingOf = (ry: number): Dir => {
   const turn = Math.round(ry / (Math.PI / 2))
@@ -61,6 +47,8 @@ const KIND: Record<string, FurnitureKind> = {
   laptop: 'console',
   bookcase: 'shelf',
   cabinet: 'shelf',
+  shelf: 'shelf',
+  desk: 'table',
   plant: 'plant',
   lamp: 'lamp',
   rug: 'rug',
@@ -70,8 +58,10 @@ const KIND: Record<string, FurnitureKind> = {
 // 길을 막는 가구. 책상 위 소품, 의자, 러그는 막지 않는다.
 const SOLID = new Set([
   'table',
+  'desk',
   'bookcase',
   'cabinet',
+  'shelf',
   'plant',
   'lamp',
   'board',
@@ -80,10 +70,27 @@ const SOLID = new Set([
 const onTop = (piece: OfficePiece) => piece.y > 0.2
 
 /**
- * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이다.
- * 작업 자리는 아일랜드 두 개의 12석이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
+ * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이고, 배치는 건물 외관을 따른다(D31).
+ * 작업 자리는 작업 현황 구역과 방 가운데 책상이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
  */
 export function makeTeamOffice(design?: string): Floor {
+  const plan = OFFICE_PLANS[officeDesignOf(design)] ?? V488_PLAN
+  // 캔버스 배치(m, 방 가운데 원점)를 타일로 옮긴다. 1 m = 1타일이고 서쪽·북쪽 벽이 0번 칸이다.
+  const ROOM_W = plan.room.w
+  const ROOM_D = plan.room.d
+  const W = ROOM_W + 2
+  const H = ROOM_D + 4
+  const tx = (x: number) => x + ROOM_W / 2 + 1
+  const ty = (z: number) => z + ROOM_D / 2 + 1
+  // 앉은 사람 발끝 위치(px)는 seat.x * 32 + 16, seat.y * 32 + 27이다. 의자 가운데에 앉도록 자리를 그만큼 당긴다.
+  const seatAt = (x: number, z: number, facing: Dir): Seat => ({
+    x: tx(x) - 0.5,
+    y: ty(z) - 27 / 32,
+    facing,
+  })
+  const loungeSeat = LOUNGE_SEATS.find((model) =>
+    plan.pieces.some((piece) => piece.model === model),
+  )
   const grid: Tile[][] = Array.from({ length: H }, () =>
     Array<Tile>(W).fill('#'),
   )
@@ -102,16 +109,10 @@ export function makeTeamOffice(design?: string): Floor {
     5: 'c',
     6: 'k',
   }
-  for (const zone of OFFICE_ZONES)
+  for (const zone of plan.zones)
     fill(zone.x0, zone.z0, zone.x1, zone.z1, ZONE_TILE[zone.n])
-  fill(
-    OFFICE_LOUNGE.x0,
-    OFFICE_LOUNGE.z0,
-    OFFICE_LOUNGE.x1,
-    OFFICE_LOUNGE.z1,
-    'l',
-  )
-  fill(3.2, 1, 8.8, 4.4, 'u')
+  fill(plan.lounge.x0, plan.lounge.z0, plan.lounge.x1, plan.lounge.z1, 'l')
+  if (plan === V488_PLAN) fill(3.2, 1, 8.8, 4.4, 'u')
   for (let x = 0; x < W; x++) {
     grid[H - 3][x] = 's'
     grid[H - 2][x] = 's'
@@ -140,13 +141,13 @@ export function makeTeamOffice(design?: string): Floor {
         if (blocked[y]?.[x] !== undefined) blocked[y][x] = true
   }
   const tableOf = (piece: OfficePiece) =>
-    OFFICE_PIECES.filter(
-      (item) => item.kind === 'table' && item.zone === piece.zone,
-    ).sort(
-      (a, b) =>
-        Math.hypot(a.x - piece.x, a.z - piece.z) -
-        Math.hypot(b.x - piece.x, b.z - piece.z),
-    )[0]
+    plan.pieces
+      .filter((item) => item.kind === 'table' && item.zone === piece.zone)
+      .sort(
+        (a, b) =>
+          Math.hypot(a.x - piece.x, a.z - piece.z) -
+          Math.hypot(b.x - piece.x, b.z - piece.z),
+      )[0]
   const work: Record<
     'island' | 'center' | 'huddle' | 'war' | 'library' | 'change' | 'lounge',
     Seat[]
@@ -159,12 +160,12 @@ export function makeTeamOffice(design?: string): Floor {
     change: [],
     lounge: [],
   }
-  OFFICE_PIECES.forEach((piece, index) => {
+  plan.pieces.forEach((piece, index) => {
     const turned = Math.abs(Math.sin(piece.ry)) > 0.5
     const w = turned ? piece.d : piece.w,
       d = turned ? piece.w : piece.d
     const seat = piece.kind === 'chair' || piece.kind === 'stool'
-    const lounge = piece.model === 'loungeChairRelax'
+    const lounge = piece.model === loungeSeat
     let facing = facingOf(piece.ry)
     if (piece.kind === 'stool') {
       const table = tableOf(piece)
@@ -232,15 +233,15 @@ export function makeTeamOffice(design?: string): Floor {
   for (const seat of Object.values(work).flat())
     blocked[Math.floor(seat.y + 23 / 32)][Math.floor(seat.x + 0.5)] = false
   // 엘리베이터(나의 도시로): 서쪽 벽, 통로 끝. 문은 캔버스처럼 입구 표시에서 1.2 m 북쪽에 있다.
-  const doorZ = OFFICE_ENTRANCE.z - 1.2
+  const doorZ = plan.entrance.z - 1.2
   const outdoorExit = {
-    x: tx(OFFICE_ENTRANCE.x),
+    x: tx(plan.entrance.x),
     y: ty(doorZ) - 0.8,
     // 벽에 붙은 문틀처럼 얇게(D38)
     w: 0.35,
     h: 1.6,
     landing: {
-      x: (tx(OFFICE_ENTRANCE.x) + 1.3) * 32,
+      x: (tx(plan.entrance.x) + 1.3) * 32,
       y: (ty(doorZ) - 0.6) * 32,
     },
     label: '엘리베이터 · 나의 도시로',
@@ -256,7 +257,11 @@ export function makeTeamOffice(design?: string): Floor {
       x++
     )
       blocked[y][x] = true
-  const bibi = seatAt(OFFICE_BIBI.x, OFFICE_BIBI.z, 'down')
+  const bibi = seatAt(plan.bibi.x, plan.bibi.z, 'down')
+  // 작업 현황 칸반(없으면 아무 칸반) 앞에서 작업 현황을 연다.
+  const kanban =
+    plan.pieces.find((piece) => piece.ui === 'kanban' && piece.zone === 4) ??
+    plan.pieces.find((piece) => piece.ui === 'kanban')
   // 두 아일랜드를 번갈아, 끝 자리(x 작은 쪽 → 큰 쪽) 다음 가운데 자리 순서
   const spread = (a: Seat[], b: Seat[]) => {
     const rank = (list: Seat[], seat: Seat) => {
@@ -303,8 +308,8 @@ export function makeTeamOffice(design?: string): Floor {
         label: '비비에게 말 걸기',
       },
       {
-        x: tx(1) - 0.5,
-        y: ty(-3.8) - 1.1,
+        x: tx(kanban?.x ?? 1) - 0.5,
+        y: ty(kanban?.z ?? -3.8) - 1.1,
         w: 1,
         h: 2.2,
         act: 'decisions',
@@ -320,7 +325,12 @@ export function makeTeamOffice(design?: string): Floor {
     },
     outdoorExit,
     footprint: { left: 1, back: 1, right: W - 1, front: H - 3 },
-    zoneSigns: OFFICE_ZONES.map((zone) => ({
+    // 서쪽 벽 나무 슬랫 구간(북쪽 벽에서 m). 캔버스 office3처럼 방 깊이의 0.9/14~6.9/14 남쪽, v488은 라운지 끝 4.7 m.
+    wallSlat:
+      plan === V488_PLAN
+        ? [ROOM_D - 4.8, ROOM_D - 0.1]
+        : [ROOM_D * (0.5 + 0.9 / 14), ROOM_D * (0.5 + 6.9 / 14)],
+    zoneSigns: plan.zones.map((zone) => ({
       n: zone.n,
       name: zone.name,
       x: tx(zone.sign[0]),
