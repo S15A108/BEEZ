@@ -1,6 +1,8 @@
 package com.beez.backend.cdc.transport;
 
 import com.beez.backend.cdc.intake.AnalysisIntakeSignalHandler;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Objects;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -9,10 +11,19 @@ import org.springframework.kafka.annotation.KafkaListener;
 public final class AnalysisIntakeKafkaListener {
     private final AnalysisIntakeRecordDecoder decoder;
     private final AnalysisIntakeSignalHandler handler;
+    private final Counter receiveFailures;
 
     public AnalysisIntakeKafkaListener(AnalysisIntakeRecordDecoder decoder, AnalysisIntakeSignalHandler handler) {
+        this(decoder, handler, null);
+    }
+
+    public AnalysisIntakeKafkaListener(AnalysisIntakeRecordDecoder decoder, AnalysisIntakeSignalHandler handler,
+                                       MeterRegistry registry) {
         this.decoder = Objects.requireNonNull(decoder, "decoder");
         this.handler = Objects.requireNonNull(handler, "handler");
+        this.receiveFailures = registry == null ? null : Counter.builder("beez.cdc.kafka.receive.failures")
+                .description("Failed Kafka record delivery attempts including repeated retries")
+                .register(registry);
     }
 
     @KafkaListener(topics = "${beez.cdc.intake.topic:}", groupId = "${beez.cdc.intake.group-id:}",
@@ -30,6 +41,10 @@ public final class AnalysisIntakeKafkaListener {
         } catch (RuntimeException failure) {
             // Provider and database exceptions can contain raw payloads or credentials.
             // Do not leak them into Kafka listener/error handler logs.
+            if (receiveFailures != null) {
+                try { receiveFailures.increment(); }
+                catch (RuntimeException ignored) { /* Metrics must not change delivery behavior. */ }
+            }
             throw new AnalysisIntakeDeliveryException();
         }
     }

@@ -141,4 +141,4 @@ class TaskIntegrationTest extends IntegrationTestSupport {
 
 에이전트 토큰으로 `/api/**`를 부르면 401이다(에이전트는 MCP 전용). 멤버십·역할은 캐시 없이 매 요청 조회하므로, 제외·위임 직후 다음 요청부터 막힌다. 에이전트 호출은 권한 검사가 토큰 행도 다시 읽어, 필터를 지난 뒤 폐기된 토큰도 막는다.
 
-세션(Q04 제안안): 마지막 요청 후 2시간 만료, `HttpOnly`, `SameSite=Lax`, 운영 `Secure`, CSRF 토큰 없음. 서버 메모리 세션이라 재시작하면 다시 로그인해야 한다.
+세션(Q04 제안안): 마지막 요청 후 2시간 만료, `HttpOnly`, `SameSite=Lax`, 운영 `Secure`, CSRF 토큰 없음. 세션은 PostgreSQL `spring_session`에 저장해(Spring Session JDBC, -242) backend를 재시작·재배포해도 로그인이 유지된다. 만료 세션 행은 1분마다 정리한다. 세션 행의 `principal_name`은 계정 ID라서, 그 계정의 세션을 모두 찾아 끊을 수 있다(-171 탈퇴·비밀번호 변경).
