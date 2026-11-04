@@ -62,7 +62,12 @@ class DesignVersion(ContractModel):
 
 class Check(ContractModel):
     key: StrictStr = Field(min_length=1)
-    kind: Literal["PLAN_COMPLETENESS", "DESIGN_ALIGNMENT", "RELATED_PLAN_CONFLICT"]
+    kind: Literal[
+        "PLAN_COMPLETENESS",
+        "DESIGN_ALIGNMENT",
+        "RELATED_PLAN_CONFLICT",
+        "POLICY_ALIGNMENT",
+    ]
     design_item_version_ids: list[StrictStr]
     related_plan_revision_ids: list[StrictStr]
 
@@ -111,6 +116,36 @@ class Unassessed(ContractModel):
     message: StrictStr = Field(min_length=1)
 
 
+class PolicyPlanEvidence(ContractModel):
+    field: Literal["title", "goal", "included_scope", "approach", "completion_criteria"]
+    index: StrictInt | None = None
+    quote: StrictStr = Field(min_length=1, max_length=1000)
+
+
+class PolicyContentRef(ContractModel):
+    design_item_version_id: StrictStr = Field(min_length=1)
+    path: list[StrictStr] = Field(min_length=1, max_length=12)
+    quote: StrictStr = Field(min_length=1, max_length=1000)
+
+
+class PolicyAssessment(ContractModel):
+    need_id: StrictStr = Field(min_length=1, max_length=80)
+    topic: StrictStr = Field(min_length=1, max_length=500)
+    plan_evidence: PolicyPlanEvidence
+    state: Literal["SUPPORTED", "EXPLICITLY_UNDECIDED", "CONTRADICTORY", "INSUFFICIENT"]
+    design_item_version_ids: list[StrictStr] = Field(max_length=50)
+    approved_content_refs: list[PolicyContentRef] = Field(max_length=50)
+    evidence_ids: list[StrictStr] = Field(max_length=50)
+    explanation: StrictStr = Field(min_length=1, max_length=2000)
+
+
+class ConflictingDesignRef(ContractModel):
+    design_item_id: StrictStr = Field(min_length=1)
+    design_item_version_id: StrictStr = Field(min_length=1)
+    evidence_ids: list[StrictStr] = Field(max_length=50)
+    content_paths: list[list[StrictStr]] = Field(max_length=50)
+
+
 class Finding(ContractModel):
     check_key: StrictStr = Field(min_length=1)
     kind: Literal[
@@ -124,6 +159,10 @@ class Finding(ContractModel):
     sources: list[Source]
     evidence_ids: list[StrictStr]
     suggested_action: StrictStr = Field(min_length=1)
+    policy_need_id: StrictStr | None = None
+    conflicting_design_refs: list[ConflictingDesignRef] | None = Field(
+        default=None, max_length=20
+    )
 
 
 class ValidateResult(ContractModel):
@@ -131,3 +170,11 @@ class ValidateResult(ContractModel):
     checked_keys: list[StrictStr]
     unassessed: list[Unassessed]
     findings: list[Finding]
+    policy_assessments: list[PolicyAssessment] | None = Field(
+        default=None, max_length=20
+    )
+    policy_assessments_truncated: StrictBool | None = None
+    no_policy_requirements_reason: StrictStr | None = Field(
+        default=None, max_length=2000
+    )
+    no_policy_requirements_evidence: PolicyPlanEvidence | None = None

@@ -36,10 +36,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 설계 발행 수신 (S15P31A108-163) — 변경 제안 승인·발행 트랜잭션이 부르는 {@link ValidationImpactPort} 의 실제 구현.
  * 생애주기 S1 (04-task-lifecycle.md §2.2), REST CHG 발행 처리 규칙:
  * <ul>
- *   <li><b>검증 STALE</b> — 바뀐 항목(수정·폐기)의 <b>변경 전 버전 또는 그보다 옛 버전</b>을 참조(validation_design_ref)한 검증.
+ *   <li><b>검증 STALE</b> — 바뀐 항목의 <b>변경 전 버전 또는 그보다 옛 버전</b>을 계획에서 참조하거나 정책 판단에 인용한 검증.
  *       끝난 것(PASS·NEEDS_*)과 도는 것(NOT_RUN·RUNNING)을 모두 {@code DESIGN_PUBLISHED} 로 무효화하고 대기 job 은 취소한다.
  *       작업 상태·현재 계획으로 거르지 않는다 (완료된 작업·옛 리비전의 검증도 STALE)</li>
- *   <li><b>작업 WAITING(REVALIDATION)</b> — 그 버전을 <b>현재 계획</b>이 참조하는 <b>IN_PROGRESS</b> 작업만. READY·WAITING 은 상태를
+ *   <li><b>작업 WAITING(REVALIDATION)</b> — 그 버전을 현재 계획이 참조하거나 시작 검증이 정책 근거로 인용한 IN_PROGRESS 작업.
+ *       READY·WAITING 은 상태를
  *       두고 검증만 STALE (START·RESUME 때 G1·G2 가 거른다). 점유는 유지</li>
  *   <li><b>DELTA 재접수</b> — 무효화된 검증이 delta 완료 보고의 DELTA 였고 작업이 이 발행 전부터 WAITING(REVALIDATION) 이었으면
  *       새 기준으로 새 DELTA 검증을 바로 접수한다(§2.3 "STALE 은 재시도가 아니라 새 검증"). 그 작업은 S4 로만 완료될 수 있어 서버가
