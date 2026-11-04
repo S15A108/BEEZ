@@ -122,7 +122,8 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
   없습니다.
 - `BACKEND_HOST_PORT`는 8080이 아닌 값이어야 합니다. 8080은 Jenkins가
   씁니다. Nginx `upstream beez_backend`의 포트와 같아야 합니다.
-- 변수 목록·`.env.example`·시크릿 관리 정리는 S15P31A108-27에서 합니다.
+- 변수마다의 의미·필수 여부, 빠졌을 때의 문구, 배포 전 점검 명령은
+  [환경변수와 비밀값](env.md)에 있습니다.
 
 ### 3. GMS 키 넣기·바꾸기
 
@@ -479,8 +480,10 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
   파라미터로만 주게 만들었기 때문입니다.
 - B에서 dev와 운영을 한 서버에 같이 두려면 compose 프로젝트 이름과 backend
   호스트 포트를 환경별로 나눠야 합니다(`name: beez`가 고정이라 지금은 한
-  서버에 한 환경). 이 경우 compose의 `name`과 `BACKEND_HOST_PORT`를 env
-  파일로 빼는 변경이 추가됩니다.
+  서버에 한 환경). 이 경우 compose의 `name`을 env 파일로 빼는 변경이
+  추가됩니다(`BACKEND_HOST_PORT`는 이미 env 파일의 필수값). Nginx upstream
+  이름도 환경별로 달라져야 하므로, `beez_backend`·`beez`를 고정으로 보는
+  [배포 전 점검](env.md#배포-전에-점검하기)도 함께 고칩니다.
 
 ## 확인
 
