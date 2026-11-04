@@ -467,6 +467,19 @@ def _judge_text(
                 piece = segment
             elif j == i - 1:
                 piece = "…" + segment[-(room - 1) :]
+            elif j == i:
+                # Keep the matching word itself when the segment is longer
+                # than the remaining budget, even if it appears near the end.
+                word = min(words_in[i], key=lambda value: (-len(value), value))
+                position = segment.lower().find(word)
+                width = room - 2
+                start = max(0, min(position - width // 3, len(segment) - width))
+                end = start + width
+                piece = (
+                    ("…" if start else "")
+                    + segment[start:end]
+                    + ("…" if end < len(segment) else "")
+                )
             else:
                 piece = segment[: room - 1] + "…"
             pieces[j] = piece
