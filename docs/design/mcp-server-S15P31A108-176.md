@@ -33,10 +33,12 @@ RequestIdFilter (X-Request-Id, MDC) → mcpChain (Bearer 토큰 → AgentPrincip
 | 단계 | 하는 일 |
 | --- | --- |
 | 호출자 | 필터가 검증한 토큰 주체에서 `McpCall(caller = CallerContext.agent(계정, 토큰), projectId = 토큰 프로젝트, sessionId)`를 만든다. 도구 인수의 `project_id`로 프로젝트를 정하지 않는다 |
-| 인수 | 도구 인수(JSON 객체)를 Spring `ObjectMapper`(REST와 같은 snake_case)로 인수 레코드에 넣는다. 타입이 틀리거나 enum 이름이 없으면 `validation_failed` |
+| 인수 | 도구 인수(JSON 객체)를 Spring `ObjectMapper`(REST와 같은 snake_case)로 인수 레코드에 넣는다. 타입이 틀리거나 enum 이름이 없거나 **모르는 키**가 있으면 `validation_failed` |
 | 결과 | 성공 payload를 snake_case JSON으로 `structuredContent`와 `content[0].text`에 같이 싣는다 |
 | 오류 | 아래 3절 형식의 도구 실패 결과(`isError: true`) |
 | 로그 | `com.beez.mcp` 한 줄: 도구·프로젝트·계정·토큰 ID·결과 코드·지연. 인수·결과 본문은 남기지 않는다(비밀값·개인 대화 원문, MCP-09). 요청 ID는 MDC로 붙고, `com.beez.access`의 `POST /mcp -> 상태` 줄과 같은 ID다 |
+
+**모르는 인수 키는 거부한다**(-179 결정). 인수 변환에만 `FAIL_ON_UNKNOWN_PROPERTIES`를 켜고 중첩 객체(`plan`·`items` 등)에도 적용된다. 메시지는 칸 경로로 낸다(예: `taskid 은(는) 이 도구에 없는 인수입니다`). REST는 Boot 기본대로 무시하지만, 도구에서 선택 인수 오타를 무시하면 뜻이 바뀐 채 성공한다 — `upsert_task_plan`의 `task_id` 오타는 계획 수정 대신 새 작업을 만든다. 그래서 인수 레코드는 스키마의 모든 키를 칸으로 가져야 하고, 스키마에는 `additionalProperties: false`를 적는다. 자유 객체 칸(`Map`, 예: `proposed_content`·`delta`)은 그대로 받는다.
 
 SDK의 입력 스키마 검사는 끈다(`validateToolInputs(false)`). 켜면 실패가 SDK 문구 텍스트로 나가 공통 오류 형식과 어긋난다. 스키마는 에이전트에게 주는 안내이고, 검증은 인수 변환과 서비스의 검증 표시(`InputValidator`)가 한다(08 계약 1절).
 
@@ -57,7 +59,7 @@ HTTP는 200이고 JSON-RPC 응답 안의 도구 결과가 실패다. 본문은 R
 | 원인 | code | 비고 |
 | --- | --- | --- |
 | 서비스가 던진 `ApiException` | 그 `code`·`message` 그대로 | 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
-| 인수 타입·enum 변환 실패 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다` |
+| 인수 타입·enum 변환 실패, 모르는 키 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다`, `plan.titel 은(는) 이 도구에 없는 인수입니다` |
 | 인수 레코드를 만들 수 없음(레코드 정의 오류) | `internal` | 입력 탓이 아니라 서버 버그라 `validation_failed`로 숨기지 않고 스택을 남긴다 |
 | 그 밖의 예외 | REST `GlobalExceptionHandler`와 같은 code | 같은 대응표를 그대로 쓴다. 낙관적 잠금 충돌 → `revision_conflict`, DB 제약 → `validation_failed`, 나머지 → `internal`(서버 로그에 스택) |
 
@@ -136,7 +138,7 @@ class ReportTaskStateTool implements McpTool<ReportTaskStateArgs> {
 claude mcp add --transport http beez http://localhost:8080/mcp --header "Authorization: Bearer <발급한 토큰>"
 ```
 
-4. Claude Code에서 `/mcp`로 `beez`가 connected인지, 도구 목록이 보이는지 확인한다. 도메인 도구는 -179에서 붙으므로 그 전에는 목록이 비어 있다.
+4. Claude Code에서 `/mcp`로 `beez`가 connected인지, 도구 목록이 보이는지 확인한다. 도구는 `mcp/tool` 패키지의 11개다(7절).
 
 SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect()`를 본다(`HttpClientStreamableHttpTransport` + `Authorization` 헤더).
 
@@ -147,4 +149,26 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | 도구 호출마다 감사 기록, 권한 실패 응답 형식 확인 | -177 (`McpToolHandler.handle`의 성공·실패 지점) |
 | 세션과 토큰을 묶기 — 지금은 다른 토큰이 남의 세션 ID로 POST하면 **보낸 토큰의 권한으로** 처리되지만, DELETE로 남의 세션을 끊을 수 있다 | -178 |
 | 토큰·계정당 세션 수 상한(지금은 initialize마다 세션이 생겨 마지막 요청 후 최대 2시간, 정리될 때까지 쌓인다), 1인 1에이전트, 연결 상태·해제, 작업 절차 안내(`instructions`) | -178 |
-| 도메인 도구 어댑터(MCP-01~07·10~12)와 입력 스키마, 출력 스키마 | -179 |
+| 도메인 도구 어댑터(MCP-01~07·10~12)와 입력 스키마 | -179 (7절) |
+
+## 7. 붙은 도구 (-179)
+
+| 도구 | 어댑터(`mcp/tool`) | 부르는 서비스 | 담당 |
+| --- | --- | --- | --- |
+| MCP-01 `get_development_context` | `GetDevelopmentContextTool` | `ContextMcpService.getDevelopmentContext` — 구성 모듈 연결 전에는 `context_not_ready` | 박상은(-131·-132) / 변준성 |
+| MCP-02 `get_document` | `GetDocumentTool` | `DocumentApplicationService.get` (REST DOC-A02와 같음) | 오서현(-192) |
+| MCP-03 `get_design_changes` | `GetDesignChangesTool` | `DesignChangesService.getChanges` | 변준성 |
+| MCP-04 `propose_design_change` | `ProposeDesignChangeTool` | `ProposalCommandService.create` (REST CHG-A01과 같음) | 오서현(-195) |
+| MCP-05 `find_context` | `FindContextTool` | `ContextMcpService.findContext` | 변준성 |
+| MCP-06 `read_context` | `ReadContextTool` | `ContextMcpService.readContext` — 패킷 조회도 이 도구(별도 패킷 도구 없음) | 변준성 |
+| MCP-07 `write_context` | `WriteContextTool` | `ContextMcpService.writeContext` | 변준성 |
+| MCP-10 `upsert_task_plan` | `UpsertTaskPlanTool` | `TaskMcpService.upsertTaskPlan` | 변준성 |
+| MCP-11 `validate_task_plan` | `ValidateTaskPlanTool` | `ValidationMcpService.validateTaskPlan` | 변준성 |
+| MCP-13 `get_validation` | `GetValidationTool` | `ValidationQueryService.get` (REST VAL-A02와 같음, 08 계약 2절) | 변준성 |
+| MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
+
+- MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).
+- 등록하지 않은 것: MCP-14 `retry_validation`(도구명·분리 담당자 검토 중), 제안 재제출·거두기 도구(02-mcp-tools MCP-04 "이번 티켓에서 등록하지 않는다").
+- `propose_design_change` 스키마에는 서비스가 지금 받는 칸만 싣는다. 명세의 수정안 요청 칸 `items[].proposed_text`·`meeting_id`는 서비스(`ProposalDtos`)에 아직 없어, 보내면 모르는 키로 거부된다.
+- 출력 스키마(`outputSchema`)는 싣지 않는다. 실패 결과도 `structuredContent`(`{"error":…}`)를 쓰므로 성공 모양의 출력 스키마를 걸면 스키마를 검사하는 클라이언트에서 실패 결과가 어긋난다. 응답 모양은 02-mcp-tools가 기준이다.
+- 시험: `McpToolsIntegrationTests`(실제 MCP 클라이언트 경유). 서비스 규칙은 각 서비스 시험에 있다.
