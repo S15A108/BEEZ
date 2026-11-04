@@ -70,7 +70,7 @@
 
 - **수신자는 호출 도메인이 고른다.** 관련자가 없으면 아무도 부르지 않는다 — 전체 팀으로 바꿔 보내지 않는다(NTF-02).
 - **행위 자체를 알리는 알림**(승인됨·반려됨·올림·검토 요청·의견 지정·기준 생김 등)은 행위자 본인을 빼고 넘긴다. 자기가 한 일을 자기에게 알리지 않는다.
-- **받는 사람이 후속 조치를 해야 하는 알림**(`REVALIDATION_REQUIRED`·`TASK_ASSIGNED`)은 행위자 본인이어도 보낸다. 팀장이 발행한 변경으로 팀장 자신의 작업이 재검증 대기가 되거나, 팀장이 자기에게 작업을 배정해도 알림함에 남아야 한다. (수정안 요청 · 11-04 사용자 결정) 다만 팀원이 미배정 작업을 스스로 맡을 때(TSK-A06)는 `TASK_ASSIGNED`를 보내지 않는다. 자기가 고른 일이라 알릴 후속 조치가 없다. 6.1 표의 "본인 포함" 열을 따른다.
+- **받는 사람이 후속 조치를 해야 하는 알림**(`REVALIDATION_REQUIRED`)은 행위자 본인이어도 보낸다. 팀장이 발행한 변경으로 팀장 자신의 작업이 재검증 대기가 되어도 알림함에 남아야 한다. (수정안 요청 · 11-04 사용자 결정) `TASK_ASSIGNED`는 자기에게 배정한 경우(팀장이 자기에게 배정, 팀원이 미배정 작업을 스스로 맡기) 보내지 않는다. 자기가 고른 일이라 알릴 후속 조치가 없고, 두 경우를 한 규칙으로 둔다(PR #113 리뷰). 6.1 표의 "본인 포함" 열을 따른다.
 - **문구에 원문을 넣지 않는다.** 제목·본문은 "어떤 일이 있었다"까지만 쓰고, 문서 내용·의견 원문·토큰 값은 넣지 않는다. 자세한 내용은 대상 화면에서 권한 검사를 거쳐 본다.
 - 읽음(`read_at`)은 공통 모듈이 관리한다(NTF-A02). 해결 상태(`resolved_at`)는 이번 계약에서 쓰지 않는다 — 응답 필드가 없다.
 - 보관 기한은 두지 않는다(MVP). 대상이 지워졌거나 권한이 없으면 화면이 404를 받고 읽음 처리한다(NTF-A01 처리 규칙).
@@ -147,7 +147,7 @@
 | `CHANGE_PROPOSAL_APPROVED` | 변경(오서현) | 승인 | 제안자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REJECTED` | 변경(오서현) | 반려 | 제안자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_PUBLISHED` | 변경(오서현) | 발행 | 관련 작업 담당자. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | 아니오 | CHANGE_PROPOSAL |
-| `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `reassign`을 거친다 | 새 담당자. (수정안 요청 · 11-04 사용자 결정) 팀원이 미배정 작업을 스스로 맡으면 보내지 않음 | **예** | TASK |
+| `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `reassign`을 거친다 | 새 담당자. (수정안 요청 · 11-04 사용자 결정) 자기에게 배정하면(팀장 자기 배정, 팀원 스스로 맡기) 보내지 않음 | 아니오 (수정안 요청 · 11-04 사용자 결정) | TASK |
 | `REVALIDATION_REQUIRED` | 작업(변준성) | 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 됨(완료·취소 작업 제외) | 작업 담당자, 작업마다 한 건. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | **예** | TASK |
 
 ### 6.2 활동 유형
@@ -209,7 +209,7 @@
 | 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |
 | 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서, 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 된 작업의 담당자에게 작업마다 한 건씩 `REVALIDATION_REQUIRED` 알림(본인 포함). S1은 IN_PROGRESS만 WAITING으로 바꾸고 READY 등은 검증만 STALE로 두는데, READY 작업도 새 PASS가 있어야 시작할 수 있으므로 함께 보낸다. STALE 대상은 작업 상태로 거르지 않으므로([04 문서](04-task-lifecycle.md) S1) 완료·취소 작업은 여기서 뺀다(이 제외 기준은 MCP-03 `affected_task_ids`와 같다 — 대상 선정 기준까지 같은 것은 아니다). 담당자가 없는 작업(`assignee_member_id` NULL)은 건너뛴다. 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다 | -163(변준성) |
 | `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
-| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림(본인 포함, (수정안 요청 · 11-04 사용자 결정) 팀원이 미배정 작업을 스스로 맡을 때는 뺀다). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
+| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
 | 코드 TODO 7곳 | 변경 제안 4(생성·거두기·검토 시작/반려 — `ProposalCommandService`, 승인·발행 — `ProposalPublicationService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
