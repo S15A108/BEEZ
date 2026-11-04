@@ -73,6 +73,25 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
         assertThat(me.body()).contains("\"email\":\"" + email + "\"");
     }
 
+    /**
+     * 깨지면: 세션이 있는 채로 다시 로그인할 때 세션 ID 가 바뀌지 않아(세션 고정 방지 실패) 로그인 전 ID 가 계속 통하거나,
+     * ID 교체가 새 행을 만들어 그 사용자의 세션이 쌓인다. AuthController.login 의 changeSessionId 가 DB 세션에서도 지켜지는지 본다.
+     */
+    @Test
+    void reLoginWithExistingSession_changesSessionId_andOldIdStopsWorking() {
+        var p = fixtures().projectWithLeader();
+        String body = "{\"email\":\"" + p.leaderEmail() + "\",\"password\":\"" + AccessFixtures.PASSWORD + "\"}";
+        ApiClient user = client();
+
+        String before = sessionCookie(user.post("/api/auth/login", body));
+        String after = sessionCookie(user.post("/api/auth/login", body));   // 쿠키 저장소가 before 를 싣고 간다
+
+        assertThat(after).isNotEqualTo(before);
+        assertThat(client().get("/api/me", "Cookie", before).statusCode()).as("로그인 전 세션 ID").isEqualTo(401);
+        assertThat(user.get("/api/me").statusCode()).isEqualTo(200);
+        assertThat(rowsOf(Long.toString(p.leaderAccountId()))).as("ID 만 바뀌고 행은 하나").isEqualTo(1);
+    }
+
     /** 깨지면: 만료된 세션 행이 DB 에 계속 쌓인다 (cleanup-cron 이 부르는 정리 작업). */
     @Test
     void expiredSession_isRemovedFromDb_byCleanup() {
@@ -123,6 +142,14 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
         // 이 요청 뒤에 생긴 행만 센다 (1분 정리 작업이 다른 행을 지워도 흔들리지 않게)
         assertThat(db.queryForObject("SELECT count(*) FROM spring_session WHERE creation_time >= ?",
                 Integer.class, requestedAt)).isZero();
+    }
+
+    /** 로그인 응답의 Set-Cookie 에서 "BEEZ_SESSION=값" 부분만 꺼낸다. */
+    private static String sessionCookie(HttpResponse<String> login) {
+        assertThat(login.statusCode()).as(login.body()).isEqualTo(200);
+        String setCookie = login.headers().allValues("Set-Cookie").stream()
+                .filter(c -> c.startsWith("BEEZ_SESSION=")).findFirst().orElseThrow();
+        return setCookie.substring(0, setCookie.indexOf(';'));
     }
 
     private int rowsOf(String principal) {
