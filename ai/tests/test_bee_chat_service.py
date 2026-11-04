@@ -18,6 +18,7 @@ from app.services.bee_chat import (
     ClaimVerdicts,
     LLMAnswerProposer,
     LLMClaimVerifier,
+    Mention,
     ModelAnswer,
     ModelVerdict,
     build_instance,
@@ -32,6 +33,7 @@ from app.services.bee_chat import (
     unsupported_facts,
 )
 from app.services.bee_chat import proposer as proposer_module
+from app.services.bee_chat.service import _judge_text
 from app.services.llm_client import (
     LLMClient,
     LLMContext,
@@ -243,12 +245,15 @@ def test_fact_tokens_are_ascii_numbers_keys_paths_and_identifiers():
     assert unsupported_facts("GET /api/users. [1]", "GET /api/users 목록") == []
     assert unsupported_facts("/api/users [1]", "/api/users/{id}") == ["/api/users"]
     assert unsupported_facts("TASK-001 [1]", "TASK-0011") == ["TASK-001"]
-    # PR #96 P2 (10th round): a path must match letter for letter, since a
-    # server may tell `/api/Users` from `/api/users`; identifiers and codes
-    # stay case-blind.
+    # PR #96 P2 (10th and 11th rounds): every token must match letter for
+    # letter, since a server may tell `/api/Users` from `/api/users` and JSON
+    # tells `user.userId` from `user.userid`.
     assert unsupported_facts("POST /api/users [1]", "POST /api/Users") == ["/api/users"]
     assert unsupported_facts("POST /api/Users [1]", "POST /api/Users") == []
-    assert unsupported_facts("Documents.Owner_id [1]", "documents.owner_id") == []
+    assert unsupported_facts("user.userid [1]", "user.userId") == ["user.userid"]
+    assert unsupported_facts("Documents.Owner_id [1]", "documents.owner_id") == [
+        "Documents.Owner_id"
+    ]
     assert unsupported_facts("post [1]", "POST") == []
     # PR #96 P2 (5th round): thousands separators do not make a new number.
     assert unsupported_facts("한도는 1,000 MB [1]", "한도 1000 MB") == []
@@ -292,9 +297,9 @@ def test_fact_tokens_stay_linear_and_keep_long_paths_whole():
         folded
     ]
     assert support_tokens([run_of_letters + " 30 TASK-001"]) == {
-        folded.casefold(),
+        folded,
         "30",
-        "task-001",
+        "TASK-001",
     }
     assert time.perf_counter() - started < 0.5
     # An atom at the cap is a token as it is; one over it is folded and the
@@ -653,6 +658,66 @@ async def test_the_judge_keeps_the_fields_and_text_the_answer_mentions():
     assert '"name": "field_21"' not in item_text
     assert '"description": "' + description[:299] + "…" in item_text
     assert item_text.index('"entity"') < item_text.index('"fields"')
+
+
+@pytest.mark.asyncio
+async def test_an_identifier_in_another_case_is_rejected_without_a_judge():
+    # PR #96 P2 (11th round): `user.userId` quoted, `user.userid` answered.
+    line = "응답 본문은 user.userId를 담는다."
+    body = {"retrieved_evidence": [evidence("ev-1", line)]}
+    cite = [{"evidence_id": "ev-1", "quote": line}]
+    await rejected(
+        answer(text="응답은 user.userid를 담습니다 [1].", citations=cite), **body
+    )
+    result = (
+        await run(
+            answer(text="응답은 user.userId를 담습니다 [1].", citations=cite), **body
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    assert result.verification.level == "TOKENS"
+
+
+@pytest.mark.asyncio
+async def test_the_judge_keeps_a_plain_field_name_the_answer_mentions():
+    # PR #96 P2 (11th round): `email` is no fact token, so the 21st field
+    # `email` was dropped from the judge's cut although the answer named it.
+    # What the answer mentions is now any string of the content found in
+    # the answer, not only a fact token.
+    fields = [{"name": f"field_{i:02d}", "type": "text"} for i in range(1, 21)]
+    fields.append({"name": "email", "type": "text"})
+    item = {
+        **approved_item(),
+        "id": "1105",
+        "key": "DAT-001",
+        "kind": "DATA_CONTRACT",
+        "content": {
+            "description": "사용자 테이블 계약.",
+            "entity": "users",
+            "fields": fields,
+        },
+    }
+    judge = Judge()
+    body = request(approved_items=[item])
+    named = answer(
+        text="DAT-001의 email 필드는 text 형식입니다.",
+        citations=[],
+        design_refs=["1105"],
+    )
+    result = (await generate_bee_chat(body, Scripted(named), judge)).result
+    assert result.answer_status == "ANSWERED"
+    (item_text,) = judge.seen[2]
+    assert '"name": "email"' in item_text
+    assert '"name": "field_20"' not in item_text and "… 외 1개" in item_text
+    assert item_text.index('"fields"') < item_text.index('"entity"')
+    # A word of the answer places the window of a long text, a specific
+    # word before a common one; without one the head is kept.
+    goal = "설명 " * 150 + "담당자가 email 주소를 검증한다. " + "설명 " * 150
+    mention = Mention.of("담당자는 email 주소를 검증합니다 [1].")
+    cut = _judge_text(goal, mention)
+    assert cut.startswith("…") and "담당자가 email 주소를 검증한다." in cut
+    assert len(cut) <= 300
+    assert _judge_text(goal) == goal[:299] + "…"
 
 
 @pytest.mark.asyncio
