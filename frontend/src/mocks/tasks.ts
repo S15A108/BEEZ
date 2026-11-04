@@ -443,6 +443,13 @@ export function taskRoutes(
     case 'VAL-A04': {
       const currentTask = findById(project.tasks, validation!.task_id)
       taskOwner(context, currentTask)
+      // 서버 ValidationRetryService: 보낸 시도 번호가 현재보다 작으면 그 요청이 이미 연 시도가 있는 것이다(응답을 잃고 다시 보냄).
+      // 새로 열지 않고 지금 검증을 그대로 돌려준다
+      if (
+        typeof body.expected_attempt === 'number' &&
+        body.expected_attempt < validation!.current_attempt
+      )
+        return { status: 202, data: validation! }
       expectValue(
         validation!.current_attempt,
         body.expected_attempt,

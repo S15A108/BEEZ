@@ -13,6 +13,7 @@ import com.beez.backend.task.repository.TaskPlanDesignRefRepository;
 import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.task.repository.TaskRepository;
 import com.beez.backend.task.service.ProjectDesignLookup;
+import com.beez.backend.validation.config.ValidationProperties;
 import com.beez.backend.validation.dto.AcceptResult;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -36,6 +37,8 @@ import tools.jackson.databind.ObjectMapper;
  *       입력 해시 = 계획 리비전 + 참조 버전 + 관련 계획 + 규칙 버전 + 기준의 정규 JSON SHA-256</li>
  *   <li>규칙 검사({@link ValidationRules}). 확정되면 그 상태로 끝(200). 의미 분석이 필요하면 RUNNING·시도 1·실행(run)·작업 큐(job)를
  *       만들어 202. 워커({@code ValidationWorker})가 큐에서 꺼내 AI 를 부른다</li>
+ *   <li>횟수 제한(-161): 의미 분석이 필요한데 같은 작업·같은 입력으로 이미 정한 횟수만큼 분석을 돌렸으면 409 validation_attempt_limit.
+ *       재시도({@link ValidationRetryService})와 같은 수를 센다. 서버가 접수하는 DELTA 검증에는 걸지 않는다</li>
  * </ol>
  * 조회(VAL-A02)는 새 실행을 만들지 않는다. 판정은 규칙이 내리고 AI 는 발견 후보만 더한다 (공통 6절).
  *
@@ -55,11 +58,12 @@ public class ValidationAcceptService {
     private final ValidationRules rules;
     private final ValidationResponses responses;
     private final ObjectMapper json;
+    private final ValidationProperties properties;
 
     public ValidationAcceptService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
                                    TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                    ValidationRepository validations, ValidationRules rules, ValidationResponses responses,
-                                   ObjectMapper json) {
+                                   ObjectMapper json, ValidationProperties properties) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
@@ -69,6 +73,7 @@ public class ValidationAcceptService {
         this.rules = rules;
         this.responses = responses;
         this.json = json;
+        this.properties = properties;
     }
 
     @Transactional
@@ -144,15 +149,14 @@ public class ValidationAcceptService {
         String inputHash = inputHash(plan.getInputHash(), baselineId, refs, relatedPlanHashes(relatedOpen), trigger, completionDelta);
 
         boolean finished = outcome.decidedStatus() != null;
+        if (!finished && "AGENT".equals(trigger)) {
+            requireAttemptsLeft(validations, properties, taskId, inputHash);
+        }
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("rule_version", ValidationRules.RULE_VERSION);
         // Preserve the authenticated requester for later authorized background searches.
         // The public validation DTO does not expose this internal summary field.
-        Map<String, Object> requestActor = new LinkedHashMap<>();
-        requestActor.put("account_id", caller.accountId());
-        requestActor.put("agent_token_id", caller.agentTokenId());
-        requestActor.put("kind", caller.kind().name());
-        summary.put("request_actor", requestActor);
+        summary.put("request_actor", requestActor(caller));
         if (completionDelta != null) summary.put("completion_delta", completionDelta);
         long validationId;
         if (finished) {
@@ -176,6 +180,30 @@ public class ValidationAcceptService {
         }
         ValidationRow row = validations.find(projectId, validationId).orElseThrow();
         return new AcceptResult(responses.toResponse(row), finished);
+    }
+
+    /**
+     * 검증 요약에 남기는 요청자 (워커가 이 사람의 권한으로 검색한다). 공개 응답에는 나가지 않는다.
+     * 재시도(VAL-A04)는 다시 돌리는 사람으로 바꿔 적는다
+     */
+    static Map<String, Object> requestActor(CallerContext caller) {
+        Map<String, Object> requestActor = new LinkedHashMap<>();
+        requestActor.put("account_id", caller.accountId());
+        requestActor.put("agent_token_id", caller.agentTokenId());
+        requestActor.put("kind", caller.kind().name());
+        return requestActor;
+    }
+
+    /**
+     * 횟수 제한 (-161). 같은 작업·같은 검증 입력으로 돌린 분석 실행이 이미 정한 횟수에 닿았으면 409 validation_attempt_limit.
+     * 새 검증 요청(VAL-A01·MCP-11)과 재시도(VAL-A04·MCP-14)가 같은 수를 본다 — 새 검증으로 재시도 제한을 돌아가지 못하게
+     */
+    static void requireAttemptsLeft(ValidationRepository validations, ValidationProperties properties, long taskId, String inputHash) {
+        int used = validations.countedModelAttempts(taskId, inputHash);
+        if (used >= properties.maxModelAttempts()) {
+            throw new ApiException(HttpStatus.CONFLICT, "validation_attempt_limit",
+                    "같은 계획으로 분석을 " + properties.maxModelAttempts() + "번 돌렸습니다. 계획을 고치거나 팀에 문의하세요");
+        }
     }
 
     /** 관련 열린 작업 → 그 작업의 현재 계획 리비전 (작업·항목 쌍 행에서 작업마다 하나로) */
