@@ -43,6 +43,7 @@ from app.schemas.bee_chat import (
 from app.schemas.design_drafts import ItemSource
 from app.services.bee_chat.instance import render_system_prompt
 from app.services.bee_chat.proposer import (
+    MAX_SHARED_SUPPORT_CHARS,
     AnswerProposal,
     AnswerProposer,
     Claim,
@@ -264,8 +265,13 @@ def claim_segments(text: str) -> list[tuple[str, list[int]]]:
 # first, so an API item's `method` and `path` survive a long `description`,
 # and a plan's title, references and goal are cut to this length each; the
 # whole text then fits `MAX_PAYLOAD_TEXT_CHARS` without losing a short field.
-MAX_JUDGE_FIELD_CHARS = 300
+MAX_JUDGE_FIELD_CHARS = 500
 MAX_JUDGE_LIST_ITEMS = 20
+# A sentence longer than this is cut into pieces of at most this many chars
+# at word boundaries, so a long clause is ranked piece by piece.
+JUDGE_PIECE_CHARS = 120
+# The least worth showing of a neighbouring sentence that does not fit whole.
+MIN_CONTEXT_CHARS = 40
 # A string of a content, or a word of the answer, this long or longer can
 # point the judge's cut at the field, list entry or passage the answer leans on.
 MIN_MENTION_CHARS = 2
@@ -325,10 +331,10 @@ class Mention:
     """What the answer says, for keeping the judge's cut of a content relevant.
 
     `text` is the answer lower-cased and `words` its words without edge
-    punctuation or a trailing particle. A content value is mentioned when one of its strings (a
-    field name, an entry's text, a key) occurs in the answer, whatever the
-    fact-token rules make of it, so a plain field name like `email` counts
-    as much as `field_21`.
+    punctuation or a trailing particle. A content value is mentioned when
+    one of its strings (a field name, an entry's text, a key) occurs in the
+    answer, whatever the fact-token rules make of it, so a plain field name
+    like `email` counts as much as `field_21`.
     """
 
     text: str
@@ -382,21 +388,47 @@ def _sentence_spans(text: str) -> list[tuple[int, int]]:
     return [(a, b) for a, b in spans if text[a:b].strip()]
 
 
-def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
-    """A text for the judge: its head, or the sentences the answer leans on.
+_WORD = re.compile(r"\S+")
 
-    A long description or goal is cut to `MAX_JUDGE_FIELD_CHARS`. The
-    sentences holding a word of the answer are kept, those sharing the most
-    (by the words' length) first, as many as fit, in their original order
-    with `…` where sentences were skipped, so an obligation stated after an
-    earlier mention of the same thing ("비밀번호를 입력받는다" … "비밀번호를
-    저장할 때 해시해야 한다") reaches the judge. A single sentence longer
-    than the cut is shown around its first such word. Without any such word
-    the head of the text is kept.
+
+def _segment_spans(text: str) -> list[tuple[int, int]]:
+    """Sentences, with any sentence over `JUDGE_PIECE_CHARS` cut into pieces.
+
+    A piece ends at a space, so a clause stays readable; a single word
+    longer than a piece is a piece of its own.
+    """
+    spans: list[tuple[int, int]] = []
+    for a, b in _sentence_spans(text):
+        if b - a <= JUDGE_PIECE_CHARS:
+            spans.append((a, b))
+            continue
+        start = a
+        for match in _WORD.finditer(text, a, b):
+            if match.end() - start > JUDGE_PIECE_CHARS and match.start() > start:
+                spans.append((start, match.start()))
+                start = match.start()
+        spans.append((start, b))
+    return [(a, b) for a, b in spans if text[a:b].strip()]
+
+
+def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
+    """A text for the judge: its head, or the passages the answer leans on.
+
+    A long description or goal is cut to `MAX_JUDGE_FIELD_CHARS`. The text
+    is read as segments (sentences; a long sentence in pieces of
+    `JUDGE_PIECE_CHARS` at word boundaries). Each segment holding a word of
+    the answer is kept together with the segment after it and the one
+    before it (a condition or an exception usually sits there: "사용자는
+    게시글을 즉시 삭제할 수 있다. 관리자 승인이 선행돼야 한다"), the segments
+    sharing the most with the answer first, as many as fit, in their
+    original order with `…` where segments were skipped. So an obligation
+    at the end of one long clause is kept beside the clause's start, and a
+    word repeated many times does not crowd the rare one out. Without any
+    such word the head of the text is kept.
     """
     if len(text) <= MAX_JUDGE_FIELD_CHARS:
         return text
-    spans = _sentence_spans(text)
+    spans = _segment_spans(text)
     hits = mention.occurrences(text) if mention.words else []
     starts = [a for a, _ in spans]
     words_in: list[set[str]] = [set() for _ in spans]
@@ -411,35 +443,56 @@ def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
     if not ranked:
         return text[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
     budget = MAX_JUDGE_FIELD_CHARS - 2
-    chosen: list[int] = []
+    pieces: dict[int, str] = {}
     used = 0
     for i in ranked:
-        a, b = spans[i]
-        length = len(text[a:b].strip()) + (3 if chosen else 0)
-        if used + length > budget:
-            if chosen:
+        # The match itself, then the segment after it, then the one before.
+        for j in (i, i + 1, i - 1):
+            if j < 0 or j >= len(spans) or j in pieces:
                 continue
-            # The best sentence alone is longer than the cut: show it around
-            # the first word of the answer it holds.
-            first = min(at for at, _ in hits if a <= at < b)
-            begin = max(a, first - MAX_JUDGE_FIELD_CHARS // 3)
-            window = text[begin : begin + budget]
-            head = "…" if begin > 0 else ""
-            tail = "…" if begin + len(window) < len(text) else ""
-            return head + window + tail
-        chosen.append(i)
-        used += length
-    chosen.sort()
-    parts: list[str] = []
-    previous = -1
-    for i in chosen:
-        if parts and i != previous + 1:
-            parts.append("…")
-        parts.append(text[spans[i][0] : spans[i][1]].strip())
-        previous = i
-    head = "…" if chosen[0] > 0 else ""
-    tail = "…" if chosen[-1] < len(spans) - 1 else ""
-    return head + " ".join(parts) + tail
+            segment = text[spans[j][0] : spans[j][1]].strip()
+            room = budget - used - (3 if pieces else 0)
+            if room < MIN_CONTEXT_CHARS:
+                break
+            if len(segment) <= room:
+                piece = segment
+            elif j == i - 1:
+                piece = "…" + segment[-(room - 1) :]
+            else:
+                piece = segment[: room - 1] + "…"
+            pieces[j] = piece
+            used += len(piece) + (3 if len(pieces) > 1 else 0)
+    order = sorted(pieces)
+    out: list[str] = []
+    previous = order[0]
+    for j in order:
+        if out:
+            out.append(" " if j == previous + 1 else " … ")
+        out.append(pieces[j])
+        previous = j
+    head = "…" if order[0] > 0 else ""
+    tail = "…" if order[-1] < len(spans) - 1 else ""
+    result = head + "".join(out) + tail
+    if len(result) > MAX_JUDGE_FIELD_CHARS:
+        result = result[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
+    return result
+
+
+def _fit_shared(texts: list[str], budget: int) -> list[str]:
+    """Cut the longest texts first so that together they fit the budget."""
+    if sum(len(text) for text in texts) <= budget:
+        return texts
+    lengths = sorted(len(text) for text in texts)
+    remaining = budget
+    cap = lengths[-1]
+    for index, length in enumerate(lengths):
+        share = remaining // (len(lengths) - index)
+        if length <= share:
+            remaining -= length
+        else:
+            cap = share
+            break
+    return [text if len(text) <= cap else text[: cap - 1] + "…" for text in texts]
 
 
 def _judge_value(value: Any, mention: Mention = NO_MENTION) -> Any:
@@ -742,6 +795,7 @@ def claims_from(
         )
         if text.strip()
     ]
+    shared = _fit_shared(shared, MAX_SHARED_SUPPORT_CHARS)
     every_quote = tuple(range(1, len(result.citations) + 1))
     claims: list[Claim] = []
     for segment, markers in claim_segments(result.text):

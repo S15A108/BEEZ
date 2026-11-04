@@ -8,7 +8,9 @@ import pytest
 from app.schemas.bee_chat import BeeChatRequest, BeeInstanceRequest, ProjectProfile
 from app.services.bee_chat import (
     INSUFFICIENT_TEXT,
+    MAX_JUDGE_FIELD_CHARS,
     MAX_PAYLOAD_BYTES,
+    MAX_SHARED_SUPPORT_CHARS,
     MAX_TOKEN_ATOM_CHARS,
     OUT_OF_SCOPE_TEXT,
     REVIEW_NOTICE,
@@ -31,9 +33,10 @@ from app.services.bee_chat import (
     renumber_markers,
     support_tokens,
     unsupported_facts,
+    verify_payload,
 )
 from app.services.bee_chat import proposer as proposer_module
-from app.services.bee_chat.service import _judge_text
+from app.services.bee_chat.service import _judge_text, _sentence_spans
 from app.services.llm_client import (
     LLMClient,
     LLMContext,
@@ -547,7 +550,7 @@ async def test_the_judge_gets_short_item_fields_and_plan_references_first():
         "current_plan_revision": {
             "id": "511",
             "plan": {
-                "title": "제" * 500,
+                "title": "제" * 600,
                 "goal": "목" * 5_000,
                 "design_refs": [
                     {
@@ -578,13 +581,13 @@ async def test_the_judge_gets_short_item_fields_and_plan_references_first():
         'API-001 (API_CONTRACT): {"method": "POST", '
         '"path": "/api/projects/{projectId}/documents", '
     )
-    assert '"description": "' + "문" * 299 + "…" in item_text
+    assert '"description": "' + "문" * (MAX_JUDGE_FIELD_CHARS - 1) + "…" in item_text
     assert "… 외 10개" in item_text
     assert task_text == (
         "TASK-001 READY / 담당 21 / 계획 "
-        + "제" * 299
+        + "제" * (MAX_JUDGE_FIELD_CHARS - 1)
         + "… / 참조 1104 / 목표 "
-        + "목" * 299
+        + "목" * (MAX_JUDGE_FIELD_CHARS - 1)
         + "…"
     )
     # The token check keeps the whole content and what the answer model saw.
@@ -617,7 +620,7 @@ async def test_the_judge_keeps_the_fields_and_text_the_answer_mentions():
     # data contract's `fields`, so a correct answer about `field_21` had no
     # grounding there. Entries, fields and text the answer mentions come
     # first; the rest is cut as before.
-    description = "설명 " * 150 + "field_21은 생성 시각이다. " + "설명 " * 150
+    description = "설명 " * 250 + "field_21은 생성 시각이다. " + "설명 " * 250
     item = {
         **approved_item(),
         "id": "1105",
@@ -656,7 +659,9 @@ async def test_the_judge_keeps_the_fields_and_text_the_answer_mentions():
     (item_text,) = judge.seen[2]
     assert '"name": "field_20"' in item_text
     assert '"name": "field_21"' not in item_text
-    assert '"description": "' + description[:299] + "…" in item_text
+    assert (
+        '"description": "' + description[: MAX_JUDGE_FIELD_CHARS - 1] + "…" in item_text
+    )
     assert item_text.index('"entity"') < item_text.index('"fields"')
 
 
@@ -712,19 +717,19 @@ async def test_the_judge_keeps_a_plain_field_name_the_answer_mentions():
     assert item_text.index('"fields"') < item_text.index('"entity"')
     # A word of the answer places the window of a long text, a specific
     # word before a common one; without one the head is kept.
-    goal = "설명 " * 150 + "담당자가 email 주소를 검증한다. " + "설명 " * 150
+    goal = "설명 " * 250 + "담당자가 email 주소를 검증한다. " + "설명 " * 250
     mention = Mention.of("담당자는 email 주소를 검증합니다 [1].")
     cut = _judge_text(goal, mention)
     assert cut.startswith("…") and "담당자가 email 주소를 검증한다." in cut
-    assert len(cut) <= 300
-    assert _judge_text(goal) == goal[:299] + "…"
+    assert len(cut) <= MAX_JUDGE_FIELD_CHARS
+    assert _judge_text(goal) == goal[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
 
 
 PASSWORD_RULES = (
     "비밀번호를 입력받는다. "
-    + "입력 칸은 두 개다. " * 12
+    + "입력 칸은 두 개다. " * 24
     + "비밀번호를 저장할 때 해시해야 한다. "
-    + "로그인 실패는 다섯 번까지 허용한다. " * 10
+    + "로그인 실패는 다섯 번까지 허용한다. " * 20
 )
 
 
@@ -740,15 +745,19 @@ def test_the_judge_cut_keeps_every_sentence_the_answer_leans_on():
     assert "비밀번호를 저장할 때 해시해야 한다." in cut
     assert "비밀번호를 입력받는다." in cut
     assert cut.index("입력받는다") < cut.index("해시해야")
-    assert "입력 칸은 두 개다." not in cut and "로그인 실패" not in cut
-    assert "…" in cut and len(cut) <= 300
+    # The sentences next to each match come along; the other fillers do not.
+    assert 1 <= cut.count("입력 칸은 두 개다.") <= 2
+    assert 1 <= cut.count("로그인 실패는 다섯 번까지 허용한다.") <= 2
+    assert "…" in cut and len(cut) <= MAX_JUDGE_FIELD_CHARS
     # Without any word of the answer the head is kept; a sentence longer
     # than the cut is shown around its first such word.
-    assert _judge_text(PASSWORD_RULES) == PASSWORD_RULES[:299] + "…"
-    long_sentence = "설명 " * 150 + "담당자가 email 주소를 검증한다 " + "설명 " * 150
+    assert (
+        _judge_text(PASSWORD_RULES) == PASSWORD_RULES[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
+    )
+    long_sentence = "설명 " * 250 + "담당자가 email 주소를 검증한다 " + "설명 " * 250
     cut = _judge_text(long_sentence, Mention.of("email 주소를 검증합니다"))
     assert cut.startswith("…") and "담당자가 email 주소를 검증한다" in cut
-    assert len(cut) <= 300
+    assert len(cut) <= MAX_JUDGE_FIELD_CHARS
 
 
 @pytest.mark.asyncio
@@ -771,6 +780,131 @@ async def test_the_judge_gets_both_password_passages_of_a_long_description():
     (shared,) = judge.seen[2]
     assert "비밀번호를 저장할 때 해시해야 한다." in shared
     assert "비밀번호를 입력받는다." in shared and len(shared) <= 2000
+
+
+def test_the_judge_cut_keeps_the_sentences_around_a_match():
+    # PR #96 P1 (13th round): the condition right after (or before) the
+    # matched sentence must reach the judge, or an answer that drops it
+    # would look supported.
+    answer_text = "사용자는 게시글을 즉시 삭제할 수 있습니다 [1]."
+    rules = (
+        "댓글은 작성자만 수정할 수 있다. " * 20
+        + "사용자는 게시글을 즉시 삭제할 수 있다. 관리자 승인이 선행돼야 한다. "
+        + "첨부 파일은 10 MB까지다. " * 20
+    )
+    assert len(rules) > MAX_JUDGE_FIELD_CHARS
+    cut = _judge_text(rules, Mention.of(answer_text))
+    assert "사용자는 게시글을 즉시 삭제할 수 있다. 관리자 승인이 선행돼야 한다." in cut
+    assert cut.count("댓글은 작성자만") == 1 and cut.count("첨부 파일은") <= 1
+    before = (
+        "댓글은 작성자만 수정할 수 있다. " * 20
+        + "관리자 승인이 선행돼야 한다. 사용자는 게시글을 즉시 삭제할 수 있다. "
+        + "첨부 파일은 10 MB까지다. " * 20
+    )
+    cut = _judge_text(before, Mention.of(answer_text))
+    assert "관리자 승인이 선행돼야 한다. 사용자는 게시글을 즉시 삭제할 수 있다." in cut
+    assert len(cut) <= MAX_JUDGE_FIELD_CHARS
+    # PR #96 P2 (13th round): one sentence longer than the cut keeps a window
+    # around every word of the answer in it, so the obligation stated at the
+    # end of a long clause is not lost behind the password mention at its start.
+    one = (
+        "로그인 화면은 비밀번호를 입력받고 "
+        + "아이디 칸과 암호 칸을 나란히 두며 " * 20
+        + "비밀번호를 저장할 때 해시해야 하고 "
+        + "실패 횟수를 세어 다섯 번째부터 잠근다 " * 20
+    )
+    assert len(one) > MAX_JUDGE_FIELD_CHARS and len(_sentence_spans(one)) == 1
+    cut = _judge_text(one, Mention.of("비밀번호를 저장할 때 해시해야 합니다 [1]."))
+    assert "비밀번호를 입력받고" in cut and "비밀번호를 저장할 때 해시해야 하고" in cut
+    assert cut.count(" … ") >= 1 and len(cut) <= MAX_JUDGE_FIELD_CHARS
+    # The richest window is kept first when not all fit.
+    crowded = (
+        "아이디 칸과 비밀번호 칸을 나란히 두며 " * 40
+        + "비밀번호를 저장할 때 해시해야 하고 "
+        + "실패 횟수를 센다 " * 40
+    )
+    cut = _judge_text(crowded, Mention.of("비밀번호를 저장할 때 해시해야 합니다 [1]."))
+    assert (
+        "비밀번호를 저장할 때 해시해야 하고" in cut
+        and len(cut) <= MAX_JUDGE_FIELD_CHARS
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_judge_gets_the_condition_after_the_matched_sentence():
+    # PR #96 P1 (13th round), through the service.
+    item = {
+        **approved_item(),
+        "id": "1102",
+        "key": "PLN-002",
+        "content": {
+            "description": "댓글은 작성자만 수정할 수 있다. " * 20
+            + "사용자는 게시글을 즉시 삭제할 수 있다. 관리자 승인이 선행돼야 한다. "
+            + "첨부 파일은 10 MB까지다. " * 20
+        },
+    }
+    judge = Judge()
+    body = request(approved_items=[item])
+    raw = answer(
+        text="사용자는 게시글을 즉시 삭제할 수 있습니다.",
+        citations=[],
+        design_refs=["1102"],
+    )
+    result = (await generate_bee_chat(body, Scripted(raw), judge)).result
+    assert result.answer_status == "ANSWERED"
+    (shared,) = judge.seen[2]
+    assert "관리자 승인이 선행돼야 한다." in shared and len(shared) <= 2000
+
+
+@pytest.mark.asyncio
+async def test_the_shared_support_of_one_judge_call_is_bounded_in_total():
+    # Forty references with 2,000-char texts would be 80,000 Korean chars,
+    # 240 KB, over the payload bound after the answer call; the longest
+    # texts are cut so the whole stays within MAX_SHARED_SUPPORT_CHARS.
+    items = [
+        {
+            **approved_item(),
+            "id": f"11{i:02d}",
+            "design_item_id": f"10{i:02d}",
+            "key": f"PLN-0{i:02d}",
+            "content": {
+                "description": "가" * 600,
+                "notes": ["나" * 600, "다" * 600, "라" * 600],
+            },
+        }
+        for i in range(1, 21)
+    ]
+    tasks = [
+        {
+            "id": f"5{i:02d}",
+            "key": f"TASK-0{i:02d}",
+            "status": "READY",
+            "current_plan_revision": {
+                "id": f"6{i:02d}",
+                "plan": {"title": "제" * 600, "goal": "목" * 3000},
+            },
+        }
+        for i in range(1, 21)
+    ]
+    body = request(approved_items=items, related_tasks=tasks)
+    raw = answer(
+        text="모든 항목과 작업을 참조합니다.",
+        citations=[],
+        design_refs=[item["id"] for item in items],
+        task_refs=[task["id"] for task in tasks],
+    )
+    judge = Judge()
+    outcome = await generate_bee_chat(body, Scripted(raw), judge)
+    assert outcome.result.answer_status == "ANSWERED"
+    question, quotes, shared, claims = judge.seen
+    assert len(shared) == 40 and all(len(text) <= 2000 for text in shared)
+    assert sum(len(text) for text in shared) <= MAX_SHARED_SUPPORT_CHARS
+    payload = verify_payload(question, quotes, shared, claims)
+    assert len(payload.encode("utf-8")) <= MAX_PAYLOAD_BYTES
+    # The verifier accepts exactly what the service built.
+    with pytest.raises(LLMError) as info:
+        await verifier(FakeProvider("{}")).verify(question, quotes, shared, claims)
+    assert info.value.code == "invalid_output"
 
 
 @pytest.mark.asyncio

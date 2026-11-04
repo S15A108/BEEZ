@@ -48,6 +48,10 @@ MAX_PAYLOAD_TEXT_CHARS = 2000
 MAX_CLAIMS = 200
 # One shared reference text per referenced item or task.
 MAX_SHARED_SUPPORT = 2 * MAX_REFS
+# All shared reference texts of one call together: 40,000 Korean characters
+# are 120 KB, which with the quotes (20 x 1,000) and the claims (10,000)
+# keeps every judge payload under `MAX_PAYLOAD_BYTES`.
+MAX_SHARED_SUPPORT_CHARS = 40_000
 # A quote is at most this long (schemas.planning_questions.Quote).
 MAX_QUOTE_CHARS = 1000
 # The judge's actual call key starts with this; callers tell the calls apart.
@@ -380,6 +384,7 @@ def _judge_input_fits(
         and all(
             isinstance(s, str) and 0 < len(s) <= MAX_PAYLOAD_TEXT_CHARS for s in shared
         )
+        and sum(len(s) for s in shared) <= MAX_SHARED_SUPPORT_CHARS
         and isinstance(claims, tuple | list)
         and 0 < len(claims) <= MAX_CLAIMS
         and all(isinstance(claim, Claim) for claim in claims)
