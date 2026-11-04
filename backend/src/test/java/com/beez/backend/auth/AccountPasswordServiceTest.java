@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
+import com.beez.backend.auth.recovery.PasswordRecoveryService;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
@@ -15,7 +16,7 @@ class AccountPasswordServiceTest {
 
     private final PasswordEncoder encoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
     private final AccountPasswordService passwords = new AccountPasswordService(mock(ProjectAccessChecker.class),
-            mock(AccountRepository.class), encoder);
+            mock(AccountRepository.class), encoder, mock(PasswordRecoveryService.class));
 
     /**
      * 깨지면: 72바이트를 넘는 입력이나 접두어 없는 해시({bcrypt} 없음·NULL — SQL 시드)에서 bcrypt 가 던지는 예외가 500 이 된다.

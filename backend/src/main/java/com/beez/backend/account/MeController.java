@@ -51,7 +51,7 @@ public class MeController {
     @Operation(summary = "내 계정 조회 (ACC-A04)")
     @GetMapping
     public AccountResponse me(CallerContext caller) {
-        return AccountResponse.from(accounts.getMe(caller));
+        return AccountResponse.withPasswordState(accounts.getMe(caller));
     }
 
     @Operation(summary = "프로필 수정 (ACC-A05). name·avatar 중 하나 이상. avatar 빈 문자열은 지우기")

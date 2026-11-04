@@ -33,6 +33,10 @@ public class Account extends BaseTimeEntity {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /** 임시 비밀번호(ACC-A07)로 로그인했으면 true. 비밀번호 변경(ACC-A06)으로 풀린다 (V27). */
+    @Column(name = "must_change_password")
+    private boolean mustChangePassword;
+
     protected Account() {
     }
 
@@ -53,9 +57,16 @@ public class Account extends BaseTimeEntity {
         this.avatarUrl = avatarUrl;
     }
 
-    /** ACC-A06. 인코딩한 해시를 받는다. */
+    /** ACC-A06. 인코딩한 해시를 받는다. 임시 비밀번호로 로그인한 뒤 바꾼 것이면 변경 요구도 풀린다. */
     public void changePasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+        this.mustChangePassword = false;
+    }
+
+    /** ACC-A07·A02. 임시 비밀번호로 로그인하면 그것이 비밀번호가 되고, 바꾸라는 표시가 붙는다. */
+    public void adoptTemporaryPassword(String temporaryPasswordHash) {
+        this.passwordHash = temporaryPasswordHash;
+        this.mustChangePassword = true;
     }
 
     /**
@@ -67,6 +78,7 @@ public class Account extends BaseTimeEntity {
         this.displayName = WITHDRAWN_NAME;
         this.avatarUrl = null;
         this.passwordHash = null;
+        this.mustChangePassword = false;
         this.deletedAt = now;
     }
 
@@ -95,6 +107,10 @@ public class Account extends BaseTimeEntity {
 
     public String getAvatarUrl() {
         return avatarUrl;
+    }
+
+    public boolean isMustChangePassword() {
+        return mustChangePassword;
     }
 
     public Instant getDeletedAt() {

@@ -2,6 +2,7 @@ package com.beez.backend.auth;
 
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
+import com.beez.backend.auth.recovery.PasswordRecoveryService;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -26,15 +27,18 @@ public class AccountPasswordService {
     private final ProjectAccessChecker access;
     private final AccountRepository accounts;
     private final PasswordEncoder encoder;
+    private final PasswordRecoveryService recovery;
 
-    public AccountPasswordService(ProjectAccessChecker access, AccountRepository accounts, PasswordEncoder encoder) {
+    public AccountPasswordService(ProjectAccessChecker access, AccountRepository accounts, PasswordEncoder encoder,
+                                  PasswordRecoveryService recovery) {
         this.access = access;
         this.accounts = accounts;
         this.encoder = encoder;
+        this.recovery = recovery;
     }
 
     /**
-     * ACC-A06. 현재 비밀번호가 맞아야 바꾼다. 틀리면 400 current_password_mismatch (401 이 아니다 — 세션은 유효하다).
+     * ACC-A06. 현재 비밀번호가 맞아야 바꾼다. 임시 비밀번호로 로그인한 사람은 그 임시 비밀번호가 현재 비밀번호다. 틀리면 400 current_password_mismatch (401 이 아니다 — 세션은 유효하다).
      * 다른 세션 정리는 커밋 뒤 웹 계층(MeController)이 한다.
      *
      * @return 바꾼 계정 (세션 정리에 계정 ID 를 쓴다)
@@ -48,6 +52,8 @@ public class AccountPasswordService {
         PasswordPolicy.check(newPassword);
         me.changePasswordHash(encoder.encode(newPassword));
         accounts.saveAndFlush(me);
+        // 받아 두고 쓰지 않은 임시 비밀번호가 바꾼 뒤에도 통하지 않게 닫는다 (must_change_password 는 changePasswordHash 가 푼다)
+        recovery.closeOpen(me.getId());
         log.info("비밀번호 변경: account_id={}", me.getId());
         return me;
     }
