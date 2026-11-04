@@ -83,7 +83,13 @@ class ScriptedAnswerProposer:
 class ScriptedClaimVerifier:
     """Judges every claim SUPPORTED unless the case script flags its text."""
 
-    async def verify(self, question: str, claims: Sequence[Claim]) -> ClaimVerdicts:
+    async def verify(
+        self,
+        question: str,
+        quotes: Sequence[str],
+        shared: Sequence[str],
+        claims: Sequence[Claim],
+    ) -> ClaimVerdicts:
         payload = {
             "question": question,
             "claims": [{"index": claim.index, "text": claim.text} for claim in claims],

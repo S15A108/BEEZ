@@ -1,12 +1,14 @@
 """Answer verification checks the model output against the inputs; fakes only."""
 
 import json
+import time
 
 import pytest
 
 from app.schemas.bee_chat import BeeChatRequest, BeeInstanceRequest, ProjectProfile
 from app.services.bee_chat import (
     INSUFFICIENT_TEXT,
+    MAX_PAYLOAD_BYTES,
     OUT_OF_SCOPE_TEXT,
     REVIEW_NOTICE,
     UNGROUNDED_NOTE,
@@ -24,6 +26,7 @@ from app.services.bee_chat import (
     fact_tokens,
     generate_bee_chat,
     renumber_markers,
+    support_tokens,
     unsupported_facts,
 )
 from app.services.bee_chat import proposer as proposer_module
@@ -160,8 +163,8 @@ class Judge:
         self.failure = failure
         self.seen = None
 
-    async def verify(self, question, claims):
-        self.seen = (question, claims)
+    async def verify(self, question, quotes, shared, claims):
+        self.seen = (question, quotes, shared, claims)
         if self.failure is not None:
             raise self.failure
         if self.raw is not None:
@@ -259,6 +262,21 @@ def test_numbers_group_by_three_and_list_numbers_are_layout():
     assert fact_tokens("1.5초 안에\n30 MB") == ["1.5", "30"]
 
 
+def test_fact_tokens_stay_linear_on_long_words():
+    # PR #96 P1 (8th round): a 10,000-letter run took 1.7 s with the pattern
+    # applied to the whole text; word by word with a length cap it is
+    # immediate, and such a run is no fact.
+    run_of_letters = "a" * 100_000
+    started = time.perf_counter()
+    assert fact_tokens(run_of_letters) == []
+    assert support_tokens([run_of_letters + " 30 TASK-001"]) == {"30", "task-001"}
+    assert unsupported_facts("한도 30 [1]", run_of_letters + " 30") == []
+    assert time.perf_counter() - started < 0.5
+    # A word at the cap is still tokenized; one over it is skipped.
+    assert fact_tokens("x" * 250 + "_id") == ["x" * 250 + "_id"]
+    assert fact_tokens("x" * 260 + "_id") == []
+
+
 def test_claim_segments_attach_markers_to_the_sentence_they_follow():
     text = "목록은 GET /api/users. [1] 생성은 POST /api/users 입니다 [2]. 끝."
     assert claim_segments(text) == [
@@ -351,15 +369,16 @@ async def test_the_judge_rejects_a_sentence_its_quotes_do_not_support():
         "model": "judge",
     }
     assert [u.request_key for u in outcome.usage] == ["answer", "verify"]
-    question, claims = judge.seen
+    question, quotes, shared, claims = judge.seen
     assert question == "파일 한도는 얼마인가요?"
-    assert [(c.index, c.text, c.support) for c in claims] == [
-        (1, "발행은 리더만 할 수 있습니다.", (PUBLISH,))
+    assert quotes == [PUBLISH] and shared == []
+    assert [(c.index, c.text, c.quotes) for c in claims] == [
+        (1, "발행은 리더만 할 수 있습니다.", (1,))
     ]
 
 
 @pytest.mark.asyncio
-async def test_claims_give_each_sentence_its_own_quotes_and_the_shared_references():
+async def test_claims_give_each_sentence_its_quote_numbers_and_the_shared_references():
     raw = answer(
         text=(
             "한도는 30 MB입니다 [1]. 발행은 리더만 합니다 [2]. "
@@ -375,25 +394,71 @@ async def test_claims_give_each_sentence_its_own_quotes_and_the_shared_reference
     judge = Judge()
     result = (await run(raw, judge)).result
     assert result.verification.claims == 3
-    claims = claims_from(result, request())
-    assert [c.text for c in claims] == [
-        "한도는 30 MB입니다.",
-        "발행은 리더만 합니다.",
-        "둘 다 승인 설계 PLN-001과 TASK-001에 걸려 있습니다.",
+    claims, shared = claims_from(result, request())
+    assert [(c.index, c.text, c.quotes) for c in claims] == [
+        (1, "한도는 30 MB입니다.", (1,)),
+        (2, "발행은 리더만 합니다.", (2,)),
+        # A sentence without markers may lean on any quote of the answer.
+        (3, "둘 다 승인 설계 PLN-001과 TASK-001에 걸려 있습니다.", (1, 2)),
     ]
-    shared = (
-        "PLN-001",
-        "POLICY",
-        '{"description": "발행은 리더만 수행한다."}',
-        "TASK-001",
-        "READY",
-        "21",
+    # PR #96 P2 (8th round): the references travel once, not once per claim.
+    assert shared == [
+        'PLN-001 (POLICY): {"description": "발행은 리더만 수행한다."}',
+        "TASK-001 READY / 담당 21",
+    ]
+    assert judge.seen[1] == [LIMIT, PUBLISH] and judge.seen[2] == shared
+    assert judge.seen[3] == claims
+
+
+@pytest.mark.asyncio
+async def test_a_huge_task_goal_keeps_the_judge_input_small():
+    # PR #96 P1/P2 (8th round): a 90,000-char goal is accepted (the BE has no
+    # bound), checked in linear time, and reaches the judge once and cut.
+    goal = "목표 " * 30_000
+    body = {
+        "related_tasks": [
+            {
+                "id": "501",
+                "key": "TASK-001",
+                "status": "READY",
+                "assignee_member_id": "21",
+                "current_plan_revision": {
+                    "id": "511",
+                    "plan": {"title": "업로드", "goal": goal},
+                },
+            }
+        ]
+    }
+    raw = answer(
+        text=(
+            "한도는 30 MB입니다 [1]. 초과하면 413입니다 [1]. "
+            "TASK-001이 이를 구현합니다. 담당은 멤버 21입니다."
+        ),
+        task_refs=["501"],
     )
-    assert claims[0].support == (LIMIT, *shared)
-    assert claims[1].support == (PUBLISH, *shared)
-    # A sentence without markers may lean on any quote of the answer.
-    assert claims[2].support == (LIMIT, PUBLISH, *shared)
-    assert judge.seen[1] == claims
+    judge = Judge()
+    started = time.perf_counter()
+    result = (await run(raw, judge, **body)).result
+    assert time.perf_counter() - started < 1.0
+    assert result.answer_status == "ANSWERED" and result.verification.claims == 4
+    _question, quotes, shared, claims = judge.seen
+    assert quotes == [LIMIT] and len(shared) == 1
+    assert len(shared[0]) <= 2000 and shared[0].startswith(
+        "TASK-001 READY / 담당 21 / 계획 업로드 / 목표"
+    )
+    assert (
+        len(
+            json.dumps(
+                {
+                    "quotes": quotes,
+                    "shared": shared,
+                    "claims": [c.text for c in claims],
+                },
+                ensure_ascii=False,
+            )
+        )
+        < 10_000
+    )
 
 
 @pytest.mark.asyncio
@@ -825,7 +890,7 @@ async def test_llm_proposer_sends_project_tasks_and_history_as_data():
 
 
 @pytest.mark.asyncio
-async def test_llm_verifier_sends_sentences_with_their_quotes_only():
+async def test_llm_verifier_sends_sentences_with_numbered_quotes_once():
     class TwoCalls:
         def __init__(self) -> None:
             self.requests = []
@@ -860,17 +925,57 @@ async def test_llm_verifier_sends_sentences_with_their_quotes_only():
     payload = json.loads(judge_call.messages[1].content)
     assert payload == {
         "question": "파일 한도는 얼마인가요?",
+        "quotes": [{"n": 1, "text": LIMIT}],
+        "shared_support": [],
         "claims": [
-            {
-                "index": 1,
-                "text": "한도는 30 MB이고 초과하면 413입니다.",
-                "support": [LIMIT],
-            }
+            {"index": 1, "text": "한도는 30 MB이고 초과하면 413입니다.", "quotes": [1]}
         ],
     }
     # The evidence chunks themselves are never sent to the judge.
     assert PUBLISH not in judge_call.messages[1].content
     assert judge_call.response_format == {"type": "json_object"}
+    # PR #96 P2 (8th round): with a 90,000-char goal the judge input stays
+    # far under the payload bound, since the goal is cut and sent once.
+    huge = request(
+        related_tasks=[
+            {
+                "id": "501",
+                "key": "TASK-001",
+                "status": "READY",
+                "current_plan_revision": {
+                    "id": "511",
+                    "plan": {"title": "업로드", "goal": "목표 " * 30_000},
+                },
+            }
+        ]
+    )
+
+    class FourSentences(TwoCalls):
+        async def complete(self, request, *, timeout_seconds):
+            if request.call_keys[0].startswith(VERIFY_CALL_KEY_PREFIX):
+                content = json.dumps(
+                    {
+                        "verdicts": [
+                            {"index": i, "verdict": "SUPPORTED"} for i in range(1, 5)
+                        ]
+                    }
+                )
+                self.requests.append(request)
+                return ProviderResponse(content, "gpt-6-luna", 10, 5)
+            self.requests.append(request)
+            raw = answer(
+                text="한도는 30 MB [1]. 초과하면 413 [1]. TASK-001이 구현합니다. 담당은 정해졌습니다.",
+                task_refs=["501"],
+            )
+            return ProviderResponse(
+                json.dumps(raw, ensure_ascii=False), "gpt-6-luna", 10, 5
+            )
+
+    four = FourSentences()
+    outcome = await generate_bee_chat(huge, proposer(four), verifier(four))
+    assert outcome.result.verification.claims == 4
+    judge_bytes = len(four.requests[1].messages[1].content.encode("utf-8"))
+    assert judge_bytes < 12_000 < MAX_PAYLOAD_BYTES
 
     # A judge output that is not the verdict shape marks the judge call failed.
     class BadJudge(TwoCalls):
@@ -887,9 +992,22 @@ async def test_llm_verifier_sends_sentences_with_their_quotes_only():
         ("llm-bee-chat-1", False),
         ("llm-bee-verify-1", True),
     ]
-    # The verifier insists on its call key prefix and on claims to judge.
+    # The verifier insists on its call key prefix, on claims to judge and on
+    # bounded inputs.
     with pytest.raises(LLMError) as info:
-        await verifier(provider, call_key="llm-bee-chat-9").verify("q", [])
+        await verifier(provider, call_key="llm-bee-chat-9").verify("q", [], [], [])
+    assert info.value.code == "invalid_input"
+    from app.services.bee_chat import Claim
+
+    with pytest.raises(LLMError) as info:
+        await verifier(provider).verify(
+            "q", [LIMIT], ["x" * 2001], [Claim(index=1, text="t", quotes=(1,))]
+        )
+    assert info.value.code == "invalid_input"
+    with pytest.raises(LLMError) as info:
+        await verifier(provider).verify(
+            "q", [LIMIT], [], [Claim(index=1, text="t", quotes=(2,))]
+        )
     assert info.value.code == "invalid_input"
 
 

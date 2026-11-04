@@ -46,6 +46,7 @@ from app.services.bee_chat.proposer import (
     Claim,
     ClaimVerdicts,
     ClaimVerifier,
+    clip_text,
     mark_last_failed,
 )
 from app.services.llm_client import LLMError, LLMUsage
@@ -88,6 +89,11 @@ _FACT = re.compile(
     r"|\d{1,3}(?:,\d{3})+(?:\.\d+)?"
     r"|\d+(?:\.\d+)?"
 )
+# The pattern backtracks across a long run of letters, so it is applied to
+# one whitespace-delimited word at a time and never to a word longer than
+# this: no key, path, identifier or number a document states is longer, and
+# a longer run is not a fact. This keeps the check linear in the input.
+MAX_TOKEN_WORD_CHARS = 256
 _NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
 # A list ordinal or bullet at the start of a line is layout, not a fact.
 _LIST_MARKER = re.compile(r"^[ \t]*(?:\d{1,3}[.)]|[-*•·])[ \t]+", re.MULTILINE)
@@ -172,15 +178,24 @@ def _canonical(token: str) -> str:
     return token.casefold()
 
 
+def _word_tokens(text: str) -> list[str]:
+    """Fact tokens found word by word; a word over the cap holds none."""
+    found: list[str] = []
+    for word in text.split():
+        if len(word) <= MAX_TOKEN_WORD_CHARS:
+            found.extend(_FACT.findall(word))
+    return found
+
+
 def fact_tokens(text: str) -> list[str]:
     """Checkable facts in an answer, in order, without markers or list numbers."""
     body = _MARKER.sub(" ", _LIST_MARKER.sub("", text))
-    return list(dict.fromkeys(_FACT.findall(body)))
+    return list(dict.fromkeys(_word_tokens(body)))
 
 
 def support_tokens(texts: Iterable[str]) -> set[str]:
     """The canonical fact tokens a set of grounding texts states."""
-    return {_canonical(token) for text in texts for token in _FACT.findall(text)}
+    return {_canonical(token) for text in texts for token in _word_tokens(text)}
 
 
 def unsupported_facts(text: str, support: str) -> list[str]:
@@ -224,25 +239,36 @@ def claim_segments(text: str) -> list[tuple[str, list[int]]]:
 
 
 def reference_support(
-    items: Sequence[ApprovedDesignItem], tasks: Sequence[RelatedTask]
+    items: Sequence[ApprovedDesignItem],
+    tasks: Sequence[RelatedTask],
+    *,
+    for_judge: bool = False,
 ) -> list[str]:
-    """What the whole answer may state facts from: the items and tasks it names."""
-    parts: list[str] = []
+    """One text per referenced item and task: what the whole answer may state.
+
+    A plan's title and goal are cut to what the answer model saw
+    (`MAX_PAYLOAD_TEXT_CHARS`). For the judge every text is cut to that length
+    as well, so the shared support of a call is bounded whatever the items
+    hold; the token check keeps an item's full content.
+    """
+    texts: list[str] = []
     for item in items:
-        parts.extend(
-            [
-                item.key,
-                item.kind,
-                json.dumps(item.content.model_dump(mode="json"), ensure_ascii=False),
-            ]
-        )
+        content = json.dumps(item.content.model_dump(mode="json"), ensure_ascii=False)
+        texts.append(f"{item.key} ({item.kind}): {content}")
     for task in tasks:
-        parts.extend([task.key, task.status, task.assignee_member_id or ""])
+        parts = [f"{task.key} {task.status}"]
+        if task.assignee_member_id:
+            parts.append(f"담당 {task.assignee_member_id}")
         if task.current_plan_revision is not None:
             plan = task.current_plan_revision.plan
-            parts.extend([plan.title, plan.goal or ""])
-            parts.extend(ref.design_item_version_id for ref in plan.design_refs)
-    return parts
+            parts.append(f"계획 {clip_text(plan.title)}")
+            if plan.goal:
+                parts.append(f"목표 {clip_text(plan.goal)}")
+            if plan.design_refs:
+                refs = " ".join(ref.design_item_version_id for ref in plan.design_refs)
+                parts.append(f"참조 {clip_text(refs)}")
+        texts.append(" / ".join(parts))
+    return [clip_text(text) if for_judge else text for text in texts]
 
 
 def _texts(values: Sequence[str], limit: int) -> tuple[str, ...]:
@@ -440,35 +466,39 @@ def verify_answer(
     )
 
 
-def claims_from(result: BeeChatResult, request: BeeChatRequest) -> list[Claim]:
-    """One claim per sentence of the verified answer, with what may support it.
+def claims_from(
+    result: BeeChatResult, request: BeeChatRequest
+) -> tuple[list[Claim], list[str]]:
+    """One claim per sentence of the verified answer, plus the shared references.
 
-    A sentence with `[n]` markers gets the quotes of those citations; a
-    sentence without markers gets every quote of the answer. Every sentence
-    also gets the referenced approved items and related tasks, since those
-    are referenced by the answer as a whole.
+    A sentence with `[n]` markers cites those quotes; a sentence without
+    markers may lean on every quote of the answer. The referenced approved
+    items and related tasks apply to every sentence and are returned once,
+    cut for the judge's payload.
     """
     by_item = {item.id: item for item in request.approved_items}
     by_task = {task.id: task for task in request.related_tasks}
     shared = [
-        part
-        for part in reference_support(
+        text
+        for text in reference_support(
             [by_item[ref.design_item_version_id] for ref in result.design_refs],
             [by_task[ref.task_id] for ref in result.task_refs],
+            for_judge=True,
         )
-        if part.strip()
+        if text.strip()
     ]
-    all_quotes = [cited.quote for cited in result.citations]
+    every_quote = tuple(range(1, len(result.citations) + 1))
     claims: list[Claim] = []
     for segment, markers in claim_segments(result.text):
         # Markers go with their leading space, so "413입니다 [1]." stays "…413입니다."
         text = " ".join(renumber_markers(segment, {}).split())
         if not text:
             continue
-        own = [result.citations[number - 1].quote for number in dict.fromkeys(markers)]
-        support = tuple(dict.fromkeys([*(own or all_quotes), *shared]))
-        claims.append(Claim(index=len(claims) + 1, text=text, support=support))
-    return claims
+        own = tuple(dict.fromkeys(markers))
+        claims.append(
+            Claim(index=len(claims) + 1, text=text, quotes=own or every_quote)
+        )
+    return claims, shared
 
 
 def check_verdicts(claims: Sequence[Claim], verdicts: ClaimVerdicts) -> None:
@@ -500,9 +530,10 @@ async def generate_bee_chat(
         raise proposal.invalid_output_error() from None
     usage = proposal.usage
     if verifier is not None and result.answer_status == "ANSWERED":
-        claims = claims_from(result, request)
+        claims, shared = claims_from(result, request)
+        quotes = [cited.quote for cited in result.citations]
         try:
-            verdicts = await verifier.verify(request.question, claims)
+            verdicts = await verifier.verify(request.question, quotes, shared, claims)
         except LLMError as error:
             # The answer call happened and must stay on record before the judge's.
             raise LLMError(error.code, (*proposal.usage, *error.usage)) from None
