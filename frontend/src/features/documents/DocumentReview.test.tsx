@@ -2,7 +2,13 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, AxiosHeaders } from 'axios'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authApi } from '@/api/services'
@@ -134,8 +140,86 @@ it('비비 검토는 같은 리비전으로 한 번만 자동으로 부르고, �
     await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
   ).toBeInTheDocument()
   expect(request).toHaveBeenCalledTimes(1)
-  expect(screen.getByText(/1단계 \/ 5단계 · 문서 읽기/)).toBeInTheDocument()
+  // 서버 v2 검토는 단계 4개이고 첫 단계는 본문이다(S15P31A108-252, 사용자 승인으로 기대값 변경).
+  expect(screen.getByText(/1단계 \/ 4단계 · 본문 · 검토함/)).toBeInTheDocument()
   request.mockRestore()
+})
+
+const comment = {
+  id: '9001',
+  explanation: '참고 · 용어를 문서 전체에서 같게 써요.',
+  type: 'COMMENT' as const,
+  step: 'BODY' as const,
+}
+
+// 서버가 준 검토에 의견(COMMENT)을 섞는다. onlyComments면 수정 제안 없이 의견만 남긴다.
+function withComment(onlyComments = false) {
+  const original = documentsApi.workingCopy.bind(documentsApi)
+  return vi
+    .spyOn(documentsApi, 'workingCopy')
+    .mockImplementation(async (...args) => {
+      const copy = await original(...args)
+      const latest = copy.latest_review
+      return latest
+        ? {
+            ...copy,
+            latest_review: {
+              ...latest,
+              unavailable_references: ['REQ_SPEC'],
+              suggestions: [
+                ...(onlyComments ? [] : latest.suggestions),
+                comment,
+              ],
+            },
+          }
+        : copy
+    })
+}
+
+// S15P31A108-252: 의견(COMMENT)은 읽기만 하고 반영·넘기기 없이 최종본 확인을 막지 않는다.
+// PR #89 리뷰: 마지막 수정 제안을 처리해 최종본으로 넘어가도 의견과 비교하지 못한 문서 안내가 남는다.
+it('비비 의견은 반영 버튼 없이 보이고, 수정 제안을 다 처리한 최종본에서도 의견이 남는다', async () => {
+  const user = userEvent.setup()
+  const read = withComment()
+  mount(true)
+  expect(
+    await screen.findByText(/수정 제안 \d개와 의견 1개를 남겼어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(/의견 \d+ · 참고 · 용어를 문서 전체에서 같게 써요/),
+  ).toBeInTheDocument()
+  expect(screen.getByText(/· 본문 · 검토함/)).toBeInTheDocument()
+  while (screen.queryAllByRole('button', { name: '넘기기' }).length)
+    await user.click(screen.getAllByRole('button', { name: '넘기기' })[0])
+  expect(
+    await screen.findByRole('heading', { name: '최종본 확인' }),
+  ).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('list', { name: '비비 의견' })).getByText(
+      /용어를 문서 전체에서 같게 써요/,
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('승인본이 없어 비교하지 못한 문서: 요구사항 명세서'),
+  ).toBeInTheDocument()
+  read.mockRestore()
+})
+
+// PR #89 리뷰: 처리할 수정 제안 없이 의견만 오면 바로 최종본 단계가 되므로, 거기서 의견을 보여 준다.
+it('의견만 있는 검토는 바로 최종본으로 가고 그 화면에서 의견을 보여 준다', async () => {
+  const read = withComment(true)
+  mount(true)
+  expect(
+    await screen.findByRole('heading', { name: '최종본 확인' }),
+  ).toBeInTheDocument()
+  expect(screen.getByText('비비 의견 1개')).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('list', { name: '비비 의견' })).getByText(
+      /용어를 문서 전체에서 같게 써요/,
+    ),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '반영하기' })).toBeNull()
+  read.mockRestore()
 })
 
 it('검토가 실패하면 다시 검토하기로만 다시 부른다', async () => {
