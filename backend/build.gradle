@@ -42,6 +42,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
     implementation 'org.springframework.boot:spring-boot-starter-security'
+    // 웹 세션을 PostgreSQL 에 저장 (S15P31A108-242). 배포로 backend 컨테이너가 바뀌어도 로그인이 유지된다
+    implementation 'org.springframework.boot:spring-boot-starter-session-jdbc'
     implementation 'org.springframework.kafka:spring-kafka'
 
     // OpenAPI 문서 (/swagger-ui.html, /v3/api-docs)
