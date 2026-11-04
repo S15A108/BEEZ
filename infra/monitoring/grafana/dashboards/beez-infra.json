@@ -33,7 +33,7 @@
     {
       "type": "stat",
       "title": "수집 대상 UP",
-      "description": "다섯 job(prometheus·alertmanager·node·postgres·backend) 중 UP 비율",
+      "description": "다섯 job(prometheus·alertmanager·node·postgres·backend) 중 UP 비율. 전부 내려가면 0%",
       "targets": [
         {
           "refId": "A",
@@ -41,7 +41,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(up == 1) / count(up)",
+          "expr": "avg(up)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true
@@ -683,7 +683,7 @@
     {
       "type": "timeseries",
       "title": "파일시스템 남은 비율",
-      "description": "점선 15%가 DiskSpaceLow 기준",
+      "description": "점선 15%가 DiskSpaceLow 기준(알림은 / 만, /boot 는 여기서만 본다)",
       "targets": [
         {
           "refId": "A",

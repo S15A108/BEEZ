@@ -125,10 +125,13 @@ S15P31A108-261에서 더합니다.
 - `set -C`로 덮어쓰기를 막습니다. 이미 있으면 "cannot overwrite existing file"로
   멈춥니다. `MONITOR_DB_PASSWORD`를 바꿀 때는 아래 "비밀번호 바꾸기"를 따릅니다.
 - `umask 027`로 `640`이 되고 그룹은 `/opt/beez`의 setgid로 `beez-deploy`입니다.
-- 키는 셋입니다. 마지막 줄은 웹훅 주소 파일의 경로이고 주소는 그 파일에만 둡니다. 파일은
-  [알림 런북 "웹훅 넣기"](monitoring-alerts.md#웹훅-넣기-서버당-한-번)로 만듭니다(없으면
-  alertmanager가 뜨지 않음). `GRAFANA_ADMIN_USER`(기본 `admin`)·`MONITOR_DB_USER`(기본
-  `beez_monitor`)·`DB_NAME`(기본 `beez`)은 기본값을 쓸 때 적지 않습니다.
+- 키는 셋입니다. 마지막 줄은 웹훅 주소 파일의 경로이고 주소는 그 파일에만 둡니다.
+  `GRAFANA_ADMIN_USER`(기본 `admin`)·`MONITOR_DB_USER`(기본 `beez_monitor`)·`DB_NAME`(기본
+  `beez`)은 기본값을 쓸 때 적지 않습니다.
+
+**이어서 웹훅 주소 파일을 만듭니다.** [알림 런북 "웹훅 넣기"](monitoring-alerts.md#웹훅-넣기-서버당-한-번)의
+1~2단계(웹훅 만들기·주소 파일)만 합니다. 3단계(env 경로)는 위 명령에 들어 있고, 4단계(반영)는 아래
+3·4단계가 대신합니다. 이 파일 없이 4단계로 가면 `moncheck`가 멈춥니다.
 
 ### 2. DB 수집 계정
 
@@ -168,12 +171,19 @@ MONITOR_DB_PASSWORD=$(sed -n 's/^MONITOR_DB_PASSWORD=//p' /opt/beez/.env.monitor
 ```bash
 # 서버 (ssh beez)
 mon() { docker compose -f /opt/beez/monitoring/compose.yaml --env-file /opt/beez/.env.monitoring "$@"; }
-mon config --quiet && mon up -d && mon ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
+moncheck() { local w; w=$(sed -n 's/^ALERTMANAGER_WEBHOOK_URL_FILE=//p' /opt/beez/.env.monitoring | tail -n 1)
+  if [ -f "$w" ] && [ -s "$w" ]; then mon config --quiet; else echo "웹훅 주소 파일 없음: ${w:-env 에 경로 없음} — monitoring-alerts.md \"웹훅 넣기\""; return 1; fi; }
+moncheck && mon up -d && mon ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 ```
 
-- `mon`은 이 셸에서만 쓰는 함수입니다. 아래 명령들도 이 함수를 씁니다.
-  새 셸에서는 이 줄을 다시 붙여 넣습니다.
-- `config --quiet`가 env 파일 필수값을 먼저 검사합니다. 빠지면
+- `mon`·`moncheck`는 이 셸에서만 쓰는 함수입니다. 아래 명령들도 이 함수를 씁니다.
+  새 셸에서는 앞의 세 줄을 다시 붙여 넣습니다.
+- `moncheck`는 띄우기 전 점검입니다. 먼저 웹훅 주소 파일이 비어 있지 않은 일반 파일인지
+  봅니다. **compose는 secret 파일이 없어도 경고만 내고 띄우며**, Docker가 그 경로에 빈
+  디렉터리를 만들어 붙입니다. 그러면 alertmanager는 떠 있는데 알림만 조용히 실패합니다
+  (2026-11-04 로컬 확인). 이미 디렉터리가 생겼으면 `sudo rmdir`로 지우고 "웹훅 넣기"를 합니다.
+  같은 키가 여러 줄이면 compose처럼 마지막 줄을 봅니다.
+- 이어서 `config --quiet`가 env 파일 필수값을 검사합니다. 빠지면
   `GRAFANA_ADMIN_PASSWORD is required`처럼 이름만 찍고 멈춥니다.
 - 이미지는 digest로 고정돼 있어 처음 한 번만 받습니다.
 
@@ -269,8 +279,8 @@ git archive "$SHA" infra/monitoring | ssh beez "set -e; cd /opt/beez
 그다음 서버에서 다시 띄웁니다.
 
 ```bash
-# 서버 (ssh beez). mon 함수는 "처음 올리기" 4단계
-mon config --quiet && mon up -d --force-recreate && mon ps --format '{{.Service}}\t{{.Status}}'
+# 서버 (ssh beez). mon·moncheck 함수는 "처음 올리기" 4단계
+moncheck && mon up -d --force-recreate && mon ps --format '{{.Service}}\t{{.Status}}'
 ```
 
 - `--force-recreate`를 붙입니다. 설정 파일은 바인드 마운트라 내용만 바뀌면

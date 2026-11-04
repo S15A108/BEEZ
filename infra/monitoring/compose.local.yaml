@@ -14,7 +14,8 @@ services:
   # 웹훅을 받아 본문을 로그로 찍는 가짜 Mattermost (S15P31A108-264). local.env 의 웹훅 주소가 여기를 가리킨다.
   #   docker compose ... logs webhook-catcher  → Alertmanager 가 보낸 JSON
   webhook-catcher:
-    image: python:3.13-alpine
+    # compose.yaml 과 같이 태그 + digest(멀티 아키텍처 인덱스)로 고정
+    image: python:3.13-alpine@sha256:7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8
     command:
       - python
       - -u

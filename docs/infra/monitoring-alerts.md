@@ -28,7 +28,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
-| [DiskSpaceLow](#diskspacelow) | 파일시스템 남은 공간 < 15% | 10분 | 4시간 | 인프라 · 전진 |
+| [DiskSpaceLow](#diskspacelow) | 루트(`/`) 남은 공간 < 15% | 10분 | 4시간 | 인프라 · 전진 |
 
 - **기준값은 초기값입니다.** 244 결정대로 실제 분석 소요 시간을 보고 조정합니다. 바꾸면
   규칙 파일과 이 표, 시험을 같이 고칩니다.
@@ -37,7 +37,9 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 - **대응 시간**: 평일 일과(09~18시) 중에 확인합니다. 1차 대응자가 알림 글 스레드에 "확인 중"을
   남깁니다. 야간·주말에 온 알림은 다음 일과에 봅니다. dev 서버 기준이며 운영 서비스를 열면 다시 정합니다.
 - 2분(`BackendScrapeDown` 등)은 배포 때 backend 재시작으로 잠깐 끊기는 것을 거르는 값입니다.
-  디스크 15%(약 46GB)는 244 결정에 값이 없어 정한 초기값입니다.
+  디스크 15%(약 46GB)는 244 결정에 값이 없어 정한 초기값입니다. 루트만 봅니다(아래 DiskSpaceLow).
+- 1차 대응자는 알림 글에 찍힙니다. 담당이 바뀌면 `alertmanager/templates/beez.tmpl`의
+  `beez.owner`, 이 표, 규칙 파일 머리말을 함께 고칩니다.
 - 묶음: 같은 알림 이름은 한 글로 옵니다. 처음 발생 뒤 30초 모아서 보내고, 묶음에 새
   대상이 붙으면 5분 간격으로 다시 보냅니다. 해소되면 `✅ … 해소` 글이 옵니다.
 
@@ -172,7 +174,9 @@ postgres-exporter가 2분 넘게 DB에 접속하지 못합니다.
 
 ### DiskSpaceLow
 
-파일시스템 남은 공간이 15% 아래로 10분 넘게 있습니다.
+루트(`/`) 남은 공간이 15% 아래로 10분 넘게 있습니다. DB·Docker 볼륨·Prometheus 데이터가 모두
+`/`에 있습니다. `/boot`(약 900MB)는 같은 비율이면 커널 업데이트만으로 울려 알림에서 뺐고,
+대시보드 "파일시스템 남은 비율"에서 봅니다.
 
 - 볼 곳: `BEEZ 서버·DB` "파일시스템 남은 비율"·"DB 크기", 서버에서 `docker system df`,
   `sudo du -sh /var/lib/docker/volumes/*`. Prometheus 자체는 10GB 상한이 있습니다.
@@ -266,11 +270,27 @@ Alertmanager는 웹훅 주소를 파일(`webhook_url_file`)로 읽습니다. 주
      printf 'ALERTMANAGER_WEBHOOK_URL_FILE=/opt/beez/.alertmanager-webhook-url\n' >> /opt/beez/.env.monitoring
    ```
 
-4. [올리기·업데이트](monitoring.md#올리기업데이트)로 반영합니다. 값이 빠지면
-   `mon config --quiet`가 `ALERTMANAGER_WEBHOOK_URL_FILE is required`로 멈춥니다.
+4. [올리기·업데이트](monitoring.md#올리기업데이트)로 반영합니다. 경로 값이 빠지면 compose가
+   `ALERTMANAGER_WEBHOOK_URL_FILE is required`로, 파일이 없으면 `moncheck`가 멈춥니다.
 
-주소가 샜으면 Mattermost에서 그 웹훅을 지우고 새로 만든 뒤 2단계를 다시 하고
-`mon restart alertmanager`를 합니다(파일은 기동 때 읽음).
+### 주소 바꾸기
+
+주소가 샜거나 웹훅을 바꿀 때는 Mattermost에서 옛 웹훅을 지우고 새로 만든 뒤, **있는 파일에
+덮어씁니다.**
+
+```bash
+# 서버 (ssh beez). 2단계와 달리 install 없이 tee 로 덮어쓴다
+read -rsp "webhook URL: " U && echo && \
+  if [[ "$U" =~ ^https://meeting\.ssafy\.com/hooks/[A-Za-z0-9]+$ ]]; then \
+    printf '%s\n' "$U" | sudo tee /opt/beez/.alertmanager-webhook-url > /dev/null && echo saved; \
+  else echo "형식이 다름 — 저장하지 않음"; fi; unset U
+```
+
+- Alertmanager는 이 파일을 **알림을 보낼 때마다** 읽습니다(v0.34.2 `notify/mattermost`의
+  `Notify`). 같은 파일에 덮어쓰면 재시작 없이 다음 알림부터 새 주소로 갑니다.
+- 2단계 명령(`install`)을 다시 돌리면 파일을 지우고 새로 만듭니다. 그러면 실행 중인
+  컨테이너의 바인드 마운트가 옛 파일(지워진 inode)을 계속 가리켜 옛 주소로 보냅니다. 그때는
+  `mon up -d --force-recreate alertmanager`로 컨테이너를 다시 만듭니다.
 
 ## 규칙 바꿀 때
 
@@ -289,7 +309,8 @@ cd ../..
 - `MSYS_NO_PATHCONV=1`: Git Bash가 `/p` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
 - 시험은 244 결정의 계약만 봅니다(consumer 꺼짐에서 안 울림, 600초 + 5분, 집계 실패·갱신
   멈춤, Kafka 실패·지표 누락, FAILED 중복 제거). 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
-- CI에서는 돌지 않습니다(S15P31A108-264 범위 밖).
+- CI에서는 돌지 않습니다(S15P31A108-264 범위 밖, 후속 과제). 규칙을 바꾼 PR은 위 세 명령의
+  결과를 PR 본문에 붙입니다.
 
 알림 문구까지 보려면 [로컬에서 검증하기](monitoring.md#로컬에서-검증하기)로 스택을 띄웁니다.
 `compose.local.yaml`의 `webhook-catcher`가 가짜 Mattermost로 받아 본문을 로그에 찍습니다.
@@ -305,6 +326,12 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 대시보드는 파일 프로비저닝이라 화면에서 고쳐도 저장되지 않습니다. 화면에서 고친 뒤
 대시보드 설정 → JSON Model(또는 Export → JSON)을 복사해 `grafana/dashboards/<uid>.json`을
 바꾸고 PR로 올립니다. 데이터 소스는 uid `prometheus`로 둡니다.
+
+- 파일이 정본입니다(`disableDeletion: false`). JSON을 지우거나 `uid`를 바꾸면 Grafana에서도
+  옛 대시보드가 지워집니다. 화면에서 준 별표·버전 기록은 그 대시보드와 함께 사라집니다.
+- 올리기를 두 번 연달아 하고 그 사이에 `--force-recreate`를 빼먹으면, 두 번째 올리기가 지우는
+  `monitoring.old`가 실행 중인 grafana가 붙인 폴더라 대시보드가 잠시 지워집니다. 다시 만들면
+  파일에서 돌아옵니다. 올리기 뒤에는 항상 다시 띄우기까지 합니다.
 
 - CDC 건수 패널은 기록 규칙(`beez_cdc:*`)을 씁니다. 기록 규칙이 없는 지표는 같은 중복 제거
   식(`max(지표 and on(instance) beez_cdc_analysis_snapshot_available == 1)`)을 씁니다.
@@ -324,6 +351,7 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 | 문구 | `amtool alert add`로 넣은 `CdcFailedIntakes`가 담당 "앱 · 양지훈", 한국 시각, 런북 링크 `#cdcfailedintakes`로 옴 |
 | 일시 중지 | "알림 일시 중지"의 `silence add`·`query`·`expire`가 그대로 동작. 걸린 동안 `alert query`에서 빠짐 |
 | 대시보드 | 두 대시보드가 `BEEZ` 폴더에 프로비저닝됨. 패널 식 57개를 서버 Prometheus에 조회만 해 오류 없음(기록 규칙 패널은 서버 반영 전이라 빈 값, 같은 식을 직접 조회해 값 확인) |
+| 리뷰 반영 | 기록 규칙을 알림과 한 그룹(`beez-cdc`)으로 합친 뒤, 같은 변형 시험에서 지연 알림 문구가 더는 갈리지 않음(그룹을 나눴을 때는 17m/16m으로 갈림). 웹훅 파일이 없으면 compose가 경고만 내고 띄우며 Docker가 빈 디렉터리를 만들어 붙이는 것 확인 → `moncheck` 추가, 정상·없음·디렉터리·빈 파일·키 없음·키 중복 6가지 시험 |
 
 ### 2026-11-04 서버
 

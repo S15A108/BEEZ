@@ -16,7 +16,9 @@
 # or vector(0) 은 여기서 쓰지 않는다. "시계열 없음"과 "0"을 섞으면 수집 장애가 정상으로 보인다. 대시보드 표시용으로만 쓴다.
 
 groups:
-  - name: beez-cdc-recording
+  # 기록 규칙과 그 값을 읽는 알림을 한 그룹에 둔다. 그룹 안의 규칙은 위에서부터 차례로 평가되므로 알림이 같은 주기의
+  # 기록 값을 읽는다. 그룹을 나누면 두 그룹이 따로 돌아 알림이 한 주기(15초) 전 값을 읽을 수도 있다.
+  - name: beez-cdc
     rules:
       - record: beez_cdc:oldest_pending_seconds:max
         expr: max(beez_cdc_analysis_oldest_pending_seconds and on(instance) beez_cdc_analysis_snapshot_available == 1)
@@ -34,8 +36,7 @@ groups:
       - record: beez_cdc:consumer_enabled:max
         expr: max(beez_cdc_analysis_consumer_enabled)
 
-  - name: beez-cdc-alerts
-    rules:
+      # ── 알림(위 기록 규칙 뒤에 둔다) ──
       # 244 결정 4: PENDING > 600초 그리고 consumer 켜짐, 5분 지속. 대기 시작부터 약 15분 뒤에 온다.
       # consumer 가 꺼진 dev(Kafka 없음)에서는 오래된 PENDING 을 장애로 보지 않는다.
       - alert: CdcPendingDelay
@@ -124,11 +125,13 @@ groups:
         annotations:
           summary: "postgres-exporter 가 DB 에 접속하지 못함"
 
-      # 초기값 15%: 309GB 디스크에서 약 46GB. 하루 증가량을 보고 조정한다
+      # 루트(/)만 본다. 데이터(DB·Docker 볼륨·Prometheus)가 모두 / 에 있다(2026-11-04 서버: /·/boot·/boot/efi 뿐).
+      # 초기값 15%: 309GB 에서 약 46GB. 같은 비율을 약 900MB 인 /boot 에 걸면 135MB 라 커널 업데이트만으로 울려 뺐다.
+      # 하루 증가량을 보고 조정한다
       - alert: DiskSpaceLow
         expr: |
-          node_filesystem_avail_bytes{fstype!~"tmpfs|vfat"} / node_filesystem_size_bytes < 0.15
-          and node_filesystem_readonly == 0
+          node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+          and node_filesystem_readonly{mountpoint="/"} == 0
         for: 10m
         labels: {team: infra}
         annotations:
