@@ -36,7 +36,13 @@ from app.services.bee_chat import (
     verify_payload,
 )
 from app.services.bee_chat import proposer as proposer_module
-from app.services.bee_chat.service import _fair_cap, _judge_text, _sentence_spans
+from app.services.bee_chat.service import (
+    MIN_CONTEXT_CHARS,
+    NO_MENTION,
+    _fair_cap,
+    _judge_text,
+    _sentence_spans,
+)
 from app.services.llm_client import (
     LLMClient,
     LLMContext,
@@ -927,6 +933,70 @@ async def test_the_shared_support_of_one_judge_call_is_bounded_in_total():
     with pytest.raises(LLMError) as info:
         await verifier(FakeProvider("{}")).verify(question, quotes, shared, claims)
     assert info.value.code == "invalid_output"
+
+
+def test_the_judge_cut_keeps_the_best_match_at_the_smallest_limit():
+    # PR #96 P2 (15th round): at the fit's smallest field limit (40) the
+    # inner budget was below the room a neighbour needs, no piece was taken
+    # and the empty piece list raised IndexError after the answer call.
+    rule = "결제 재시도 간격은 30초로 둔다."
+    text = "설명. " * 100 + rule
+    mention = Mention.of("결제 재시도 간격은 30초로 둡니다 [1].")
+    for limit in (MIN_CONTEXT_CHARS, MIN_CONTEXT_CHARS + 2, 62, 125):
+        cut = _judge_text(text, mention, limit)
+        assert rule in cut and len(cut) <= limit, limit
+    # A match longer than the limit is cut to it, never dropped.
+    cut = _judge_text(text, mention, 10)
+    assert cut.startswith("…결제") and len(cut) <= 10
+    assert _judge_text(text, NO_MENTION, 10) == text[:9] + "…"
+
+
+@pytest.mark.asyncio
+async def test_a_reference_with_many_long_fields_is_fitted_to_the_smallest_limit():
+    # PR #96 P2 (15th round), through the service: twenty items with thirty
+    # 600-char fields each drive the fit down to its smallest limit; the
+    # field the answer leans on comes first and the call still succeeds.
+    rule = "결제 재시도 간격은 30초로 둔다."
+    items = [
+        {
+            **approved_item(),
+            "id": f"11{i:02d}",
+            "design_item_id": f"10{i:02d}",
+            "key": f"PLN-0{i:02d}",
+            "content": {
+                "description": "가" * 600,
+                "rule": "설명. " * 100 + rule,
+                **{f"f{n:02d}": "나" * 600 for n in range(1, 31)},
+            },
+        }
+        for i in range(1, 21)
+    ]
+    tasks = [
+        {
+            "id": f"5{i:02d}",
+            "key": f"TASK-0{i:02d}",
+            "status": "READY",
+            "current_plan_revision": {
+                "id": f"6{i:02d}",
+                "plan": {"title": "제" * 600, "goal": "목" * 3000},
+            },
+        }
+        for i in range(1, 21)
+    ]
+    body = request(approved_items=items, related_tasks=tasks)
+    raw = answer(
+        text="모든 항목과 작업을 참조합니다. PLN-007의 결제 재시도 간격은 30초로 둡니다.",
+        citations=[],
+        design_refs=[item["id"] for item in items],
+        task_refs=[task["id"] for task in tasks],
+    )
+    judge = Judge()
+    outcome = await generate_bee_chat(body, Scripted(raw), judge)
+    assert outcome.result.answer_status == "ANSWERED"
+    shared = judge.seen[2]
+    assert len(shared) == 40 and sum(len(t) for t in shared) <= MAX_SHARED_SUPPORT_CHARS
+    (item_7,) = [t for t in shared if t.startswith("PLN-007 ")]
+    assert rule in item_7 and item_7.index('"rule"') < item_7.index('"description"')
 
 
 @pytest.mark.asyncio

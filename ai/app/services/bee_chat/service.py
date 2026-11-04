@@ -427,8 +427,10 @@ def _judge_text(
     the answer first, as many as fit, in their original order with `…`
     where segments were skipped. So an obligation at the end of one long
     clause is kept beside the clause's start, and a word repeated many
-    times does not crowd the rare one out. Without any such word the head
-    of the text is kept.
+    times does not crowd the rare one out. The best match is kept at any
+    limit, cut to it if need be, so a limit below `MIN_CONTEXT_CHARS` plus
+    two (the fit may go down to `MIN_CONTEXT_CHARS`) still yields a piece.
+    Without any such word the head of the text is kept.
     """
     if len(text) <= limit:
         return text
@@ -456,8 +458,11 @@ def _judge_text(
                 continue
             segment = text[spans[j][0] : spans[j][1]].strip()
             room = budget - used - (3 if pieces else 0)
-            if room < MIN_CONTEXT_CHARS:
+            # The first piece is the best match and is always kept, cut to
+            # whatever the limit allows; a neighbour needs real room.
+            if pieces and room < MIN_CONTEXT_CHARS:
                 break
+            room = max(room, 2)
             if len(segment) <= room:
                 piece = segment
             elif j == i - 1:
@@ -466,6 +471,8 @@ def _judge_text(
                 piece = segment[: room - 1] + "…"
             pieces[j] = piece
             used += len(piece) + (3 if len(pieces) > 1 else 0)
+    if not pieces:
+        return text[: limit - 1] + "…"
     order = sorted(pieces)
     out: list[str] = []
     previous = order[0]
