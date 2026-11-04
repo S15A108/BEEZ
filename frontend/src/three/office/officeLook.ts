@@ -13,6 +13,8 @@ export interface OfficeTheme {
   wall: string
   /** 남·서쪽 막힌 벽을 이 색 벽돌로 쌓는다(슬랫 없음). */
   brick?: string
+  /** 회의실(3번 구역)을 유리 벽으로 두른다(통로 쪽 끝 1.4 m는 문). */
+  glassRoom?: boolean
   slat: string
   glass: string
   glassOpacity: number
@@ -101,6 +103,7 @@ export const OFFICE_THEMES: Record<OfficeDesign, OfficeTheme> = {
     mullion: '#e2e2e2',
     light: '#ffffff',
     sun: '#fff8ef',
+    glassRoom: true,
     wood: '#f1efe9',
     plant: '#6f8f5c',
   },

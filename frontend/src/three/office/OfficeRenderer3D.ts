@@ -1193,7 +1193,9 @@ export class OfficeRenderer3D {
           mesh.material = tinted.length === 1 ? tinted[0] : tinted
         })
         const scaled = new THREE.Group()
-        scaled.position.y = kit.y
+        // 천장 펜던트는 이 장면의 천장(높이 4.58) 바로 아래에 매단다. 캔버스는 3 m 천장이라 2.45 m였다.
+        scaled.position.y =
+          kit.model === 'lampSquareCeiling' ? 4.58 - kit.h : kit.y
         scaled.scale.set(...(kit.s ?? [1, 1, 1]))
         scaled.add(inner)
         group.add(scaled)

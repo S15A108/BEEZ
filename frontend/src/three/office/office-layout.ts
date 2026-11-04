@@ -1,8 +1,9 @@
 import type { Agent, Zone } from '../types'
 import type { Dir, Floor, Furniture, FurnitureKind, Seat, Tile } from './floors'
 import { V488_PLAN, type OfficePiece, type OfficePlan } from './officePlan'
-import { officeDesignOf, type OfficeDesign } from './officeLook'
+import { OFFICE_THEMES, officeDesignOf, type OfficeDesign } from './officeLook'
 import { BRICK_PLAN } from './plans/brick'
+import { MODERN_PLAN } from './plans/modern'
 
 export type OfficePopulation = Partial<Record<Zone, number>>
 export const officeObjectKey = (item: Furniture) =>
@@ -23,6 +24,7 @@ export function officePopulationOf(
 // 건물 외관별 배치(D31). 아직 옮기지 않은 외관은 v488 배치(D28)를 쓴다.
 const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
   brick: BRICK_PLAN,
+  modern: MODERN_PLAN,
 }
 // 충전 자리(D29 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
 const LOUNGE_SEATS = ['loungeChairRelax', 'loungeDesignChair']
@@ -62,6 +64,7 @@ const SOLID = new Set([
   'bookcase',
   'cabinet',
   'shelf',
+  'bench',
   'plant',
   'lamp',
   'board',
@@ -74,7 +77,8 @@ const onTop = (piece: OfficePiece) => piece.y > 0.2
  * 작업 자리는 작업 현황 구역과 방 가운데 책상이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
  */
 export function makeTeamOffice(design?: string): Floor {
-  const plan = OFFICE_PLANS[officeDesignOf(design)] ?? V488_PLAN
+  const look = officeDesignOf(design)
+  const plan = OFFICE_PLANS[look] ?? V488_PLAN
   // 캔버스 배치(m, 방 가운데 원점)를 타일로 옮긴다. 1 m = 1타일이고 서쪽·북쪽 벽이 0번 칸이다.
   const ROOM_W = plan.room.w
   const ROOM_D = plan.room.d
@@ -219,6 +223,19 @@ export function makeTeamOffice(design?: string): Floor {
       kit,
     })
     if (solid) block(piece)
+    // 의자가 없는 회의실·워룸(모던 워룸 벤치)은 긴 의자 하나를 두 자리로 쓴다(D29 자리 대체, D31).
+    if (piece.kind === 'bench') {
+      for (const side of [-0.25, 0.25]) {
+        const spot = seatAt(
+          piece.x + (w >= d ? side * w : 0),
+          piece.z + (w >= d ? 0 : side * d),
+          facing,
+        )
+        if (piece.zone === 5) work.war.push(spot)
+        else work.huddle.push(spot)
+      }
+      return
+    }
     if (!seat) return
     const spot = seatAt(piece.x, piece.z, facing)
     if (lounge) work.lounge.push(spot)
@@ -229,6 +246,34 @@ export function makeTeamOffice(design?: string): Floor {
     else if (piece.zone === 1) work.library.push(spot)
     else if (piece.zone === 2) work.change.push(spot)
   })
+  // 유리 회의실(캔버스 office3 gwall): 통로 쪽 벽(동쪽 끝 1.4 m는 문)과 양 끝 벽. 벽이 지나는 칸을 막는다.
+  const room = plan.zones.find((zone) => zone.n === 3)
+  if (room && plan !== V488_PLAN && OFFICE_THEMES[look].glassRoom)
+    for (const [ax, az, bx, bz] of [
+      [room.x0, room.z1, room.x1 - 1.4, room.z1],
+      [room.x0, room.z0, room.x0, room.z1],
+      [room.x1, room.z0, room.x1, room.z1],
+    ]) {
+      const across = az === bz
+      furniture.push({
+        kind: 'glass-partition',
+        x: across ? tx(ax) : tx(ax) - 0.06,
+        y: across ? ty(az) - 0.06 : ty(az),
+        w: across ? bx - ax : 0.12,
+        h: across ? 0.12 : bz - az,
+        solid: true,
+      })
+      // 벽이 60% 넘게 지나는 칸을 막는다(가구와 같은 규칙). 벽 끝이 살짝 걸친 문 칸은 열어 둔다.
+      const along = span(
+        across ? tx((ax + bx) / 2) : ty((az + bz) / 2),
+        Math.max(bx - ax, bz - az),
+      )
+      for (const t of along) {
+        const x = across ? t : Math.floor(tx(ax)),
+          y = across ? Math.floor(ty(az)) : t
+        if (blocked[y]?.[x] !== undefined) blocked[y][x] = true
+      }
+    }
   // 의자·스툴이 놓인 칸은 열어 둔다(얇은 테이블이 의자와 같은 줄을 막지 않게).
   for (const seat of Object.values(work).flat())
     blocked[Math.floor(seat.y + 23 / 32)][Math.floor(seat.x + 0.5)] = false
