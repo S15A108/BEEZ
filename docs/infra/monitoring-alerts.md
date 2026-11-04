@@ -324,3 +324,14 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 | 문구 | `amtool alert add`로 넣은 `CdcFailedIntakes`가 담당 "앱 · 양지훈", 한국 시각, 런북 링크 `#cdcfailedintakes`로 옴 |
 | 일시 중지 | "알림 일시 중지"의 `silence add`·`query`·`expire`가 그대로 동작. 걸린 동안 `alert query`에서 빠짐 |
 | 대시보드 | 두 대시보드가 `BEEZ` 폴더에 프로비저닝됨. 패널 식 57개를 서버 Prometheus에 조회만 해 오류 없음(기록 규칙 패널은 서버 반영 전이라 빈 값, 같은 식을 직접 조회해 값 확인) |
+
+### 2026-11-04 서버
+
+커밋 `a666cb0`을 [올리기·업데이트](monitoring.md#올리기업데이트)로 올렸습니다(웹훅 파일·env 키를 먼저 만듦).
+
+| 항목 | 결과 |
+|---|---|
+| 적재 | 규칙 19개 health ok, 수집 대상 5개 UP, Prometheus가 alertmanager를 알림 전달 대상으로 잡음 |
+| 웹훅 파일 | `640 root:nogroup`, 컨테이너 안 `nobody`(65534)가 읽음 |
+| consumer 꺼짐 | `beez_cdc:consumer_enabled:max` 0, Kafka 실패 지표 없음(`absent` = 1)인데 `CdcKafkaFailureMetricMissing`·`CdcPendingDelay` 비활성 — consumer 조건이 막음 |
+| 실제 수신 | `mon stop node-exporter`(17:39) → `MonitoringTargetDown` pending 17:39:22, firing 17:41:22 → 팀 채널에 발생 글. `mon start`(17:42) → 해소 글. Mattermost 전송 2건, 실패 0 |
