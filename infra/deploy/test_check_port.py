@@ -121,7 +121,7 @@ def test_other_site_with_localhost_conflicts():
 
 
 def test_jenkins_port_conflicts():
-    expect(run(env_extra="BACKEND_HOST_PORT=8080\n"), 1, "port 충돌: Nginx 의 다른 설정이 포트 9999")
+    expect(run(env_extra="BACKEND_HOST_PORT=8080\n"), 1, "port 충돌: Nginx 의 다른 설정이 포트 8080")
 
 
 def test_unsupported_upstream_address():
