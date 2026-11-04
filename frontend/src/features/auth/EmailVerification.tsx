@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -57,47 +57,60 @@ export function EmailVerification({
   const expired = Boolean(sent) && !verified && left <= 0
   const resendIn = sent ? Date.parse(sent.resend_available_at) - now : 0
 
-  const send = async () => {
-    if (busy || !(await trigger('email'))) return
+  // 검증(trigger)을 기다리는 사이 들어온 두 번째 클릭도 막는다. state는 다음 렌더에야 보여 ref로 잠근다.
+  const lock = useRef(false)
+  const locked = async (run: () => Promise<void>) => {
+    if (lock.current) return
+    lock.current = true
     setBusy(true)
     try {
-      const result = await authApi.sendEmailVerification({
-        email: getValues('email').trim(),
-      })
-      setSent(result)
-      setMockCode(undefined)
-      // 목 모드는 메일을 보내지 않아 방금 보낸 코드를 예시로 보여 준다. env를 그 자리에서 비교해 live 빌드에는 목 청크가 없다.
-      if (import.meta.env.VITE_API_MODE !== 'live') {
-        const { sentCode } = await import('@/mocks/emailVerifications')
-        setMockCode(sentCode(result.verification_id))
+      await run()
+    } finally {
+      lock.current = false
+      setBusy(false)
+    }
+  }
+
+  const send = () =>
+    locked(async () => {
+      if (!(await trigger('email'))) return
+      try {
+        const result = await authApi.sendEmailVerification({
+          email: getValues('email').trim(),
+        })
+        setSent(result)
+        setMockCode(undefined)
+        // 목 모드는 메일을 보내지 않아 방금 보낸 코드를 예시로 보여 준다. env를 그 자리에서 비교해 live 빌드에는 목 청크가 없다.
+        if (import.meta.env.VITE_API_MODE !== 'live') {
+          const { sentCode } = await import('@/mocks/emailVerifications')
+          setMockCode(sentCode(result.verification_id))
+        }
+        setNow(Date.now())
+        setSendError('')
+        setMessage('')
+        resetField('code')
+      } catch (cause) {
+        setSendError(verificationMessage(cause))
       }
-      setNow(Date.now())
-      setSendError('')
-      setMessage('')
-      resetField('code')
-    } catch (cause) {
-      setSendError(verificationMessage(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const confirm = async () => {
-    if (!sent || busy || !(await trigger('code'))) return
-    setBusy(true)
-    try {
-      const result = await authApi.confirmEmailVerification(
-        sent.verification_id,
-        { code: getValues('code') },
-      )
-      setVerified(true)
-      setMessage('')
-      onVerified({ email: result.email, verified_token: result.verified_token })
-    } catch (cause) {
-      setMessage(verificationMessage(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
+  const confirm = () =>
+    locked(async () => {
+      if (!sent || !(await trigger('code'))) return
+      try {
+        const result = await authApi.confirmEmailVerification(
+          sent.verification_id,
+          { code: getValues('code') },
+        )
+        setVerified(true)
+        setMessage('')
+        onVerified({
+          email: result.email,
+          verified_token: result.verified_token,
+        })
+      } catch (cause) {
+        setMessage(verificationMessage(cause))
+      }
+    })
   const restart = () => {
     setSent(null)
     setMockCode(undefined)
@@ -133,7 +146,8 @@ export function EmailVerification({
             id="register-email"
             type="email"
             autoComplete="email"
-            readOnly={verified}
+            // 보내는 중에 고치면 응답이 이전 이메일로 남아 그 이메일로 가입된다(PR #117 리뷰).
+            readOnly={verified || busy}
             aria-invalid={Boolean(errors.email)}
             className="h-10"
             {...register('email', {
