@@ -118,7 +118,7 @@ compose ps --format '{{.Service}}\t{{.Image}}\t{{.Status}}'
 #      reload 하지 않았으면 여기서 드러난다. 실패하면 프론트를 바꾸지 않는다(backend·ai 는 이미 새 버전이다)
 log "Nginx 경유 확인 (/api/ping started_at)"
 check nginx || {
-    log "Nginx 가 새 backend 로 보내지 않음. 프론트는 바꾸지 않았다. Nginx 설정 reload 여부를 확인한다"
+    log "Nginx 경유 확인 실패. 프론트는 바꾸지 않았다. 'nginx 다름' 이면 Nginx reload, 그 밖은 위에 찍힌 원인을 본다"
     exit 1
 }
 

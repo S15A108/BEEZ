@@ -28,7 +28,14 @@ STUBS = {
     "docker": '[ "$1" = compose ] && exec "$REAL_DOCKER" "$@"\n'
               '[ -n "$FAIL_PS" ] && exit 1\nprintf "%s" "$FAKE_PS"\n',
     "ss": '[ -n "$FAIL_SS" ] && exit 1\nprintf "%s" "$FAKE_SS"\n',
-    "curl": 'case "$*" in *--connect-to*) printf "%s" "$FAKE_VIA" ;; *) printf "%s" "$FAKE_DIRECT" ;; esac\n',
+    # curl 은 본문 뒤에 -w 의 HTTP 상태를 붙인다. Nginx 경유는 처음 FAKE_VIA_FAILS 번을 종료 코드 FAKE_VIA_RC 로 실패한다
+    "curl": 'case "$*" in\n'
+            '  *--connect-to*)\n'
+            '    n=$(( $(cat "$CURL_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$CURL_COUNT"\n'
+            '    [ -n "$FAKE_VIA_RC" ] && [ "$n" -le "${FAKE_VIA_FAILS:-99}" ] && { printf "\\n000"; exit "$FAKE_VIA_RC"; }\n'
+            '    printf "%s\\n200" "$FAKE_VIA" ;;\n'
+            '  *) printf "%s\\n200" "$FAKE_DIRECT" ;;\n'
+            'esac\n',
 }
 BACKEND_PS = "127.0.0.1:8081->8080/tcp"
 
@@ -62,7 +69,8 @@ def run(mode="port", env_extra="", sites=None, **fake):
         env.pop("BACKEND_HOST_PORT", None)
         env.pop("PUBLIC_ORIGIN", None)
         env.update({"NGINX_SITES_DIR": posix(site_dir), "REAL_DOCKER": posix(shutil.which("docker")),
-                    "FAKE_PS": BACKEND_PS, "FAKE_SS": ""})
+                    "FAKE_PS": BACKEND_PS, "FAKE_SS": "", "CURL_COUNT": posix(tmp / "curl-count"),
+                    "NGINX_RETRY_WAIT": "0"})
         env.update(fake)
         # 가짜 명령이 진짜보다 먼저 잡히도록 PATH 맨 앞에 둔다. Windows 경로(C:/…)는 PATH 의 ':' 와 겹쳐 /c/… 로 바꾼다
         cmd = (f'b=$(cygpath -u "{posix(bin_dir)}" 2>/dev/null || echo "{posix(bin_dir)}"); '
@@ -177,11 +185,24 @@ def test_nginx_same_backend():
 
 def test_nginx_other_backend_fails():
     # reload 전이면 Nginx 는 예전 포트의 backend 로 보내 started_at 이 다르다
-    expect(run("nginx", FAKE_VIA=PONG % "old", FAKE_DIRECT=PONG % "new"), 1, "nginx 다름")
+    expect(run("nginx", FAKE_VIA=PONG % "old", FAKE_DIRECT=PONG % "new"), 1, "nginx 다름: Nginx 경유=old / backend 직접=new")
 
 
 def test_nginx_spa_fallback_fails():
-    expect(run("nginx", FAKE_VIA="<html></html>", FAKE_DIRECT=PONG % "t1"), 1, "Nginx 경유=응답 없음·JSON 아님")
+    expect(run("nginx", FAKE_VIA="<html></html>", FAKE_DIRECT=PONG % "t1"), 1,
+           "nginx 확인 실패: Nginx 경유=JSON 아님(HTTP 200, started_at 없음)")
+
+
+def test_nginx_transient_failure_is_retried():
+    # 교체 직후 한 번 연결이 실패해도 배포를 멈추지 않는다
+    expect(run("nginx", FAKE_VIA_RC="7", FAKE_VIA_FAILS="1", FAKE_VIA=PONG % "t1", FAKE_DIRECT=PONG % "t1"),
+           0, "nginx ok (t1)")
+
+
+def test_nginx_no_response_shows_cause():
+    # 계속 응답이 없으면 reload 안내가 아니라 curl 종료 코드로 원인을 보인다
+    expect(run("nginx", FAKE_VIA_RC="7", FAKE_DIRECT=PONG % "t1"), 1,
+           "nginx 확인 실패: Nginx 경유=응답 없음(curl 종료 코드 7) / backend 직접=t1 (3회 시도)")
 
 
 def test_nginx_backend_port_count():

@@ -54,17 +54,39 @@ if [ "$mode" = nginx ]; then
     # started_at(그 backend 프로세스의 기동 시각)이 같으면 Nginx 가 바로 그 backend 로 보내고 있다.
     # Nginx 경유는 이 서버의 Nginx 로 바로 붙는다(--connect-to). 주소·인증서 이름은 PUBLIC_ORIGIN 그대로다
     ts() { sed -n 's/.*"started_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; }
+    # 한 번 부르고 "ok <started_at>" 또는 "err <원인>" 을 찍는다. 원인은 curl 종료 코드나 HTTP 상태만 쓴다
+    # (curl 오류 문구·응답 본문은 내보내지 않는다). 종료 코드 뜻: 7 연결 거부, 28 시간 초과, 35·60 TLS
+    ask() {
+        local out rc code started
+        out=$(curl -sS --max-time 10 -w '\n%{http_code}' "$@" 2> /dev/null)
+        rc=$?
+        code=${out##*$'\n'}
+        started=$(printf '%s\n' "${out%$'\n'*}" | ts)
+        if [ -n "$started" ]; then echo "ok $started"
+        elif [ "$rc" -ne 0 ]; then echo "err 응답 없음(curl 종료 코드 $rc)"
+        else echo "err JSON 아님(HTTP $code, started_at 없음)"; fi
+    }
     out=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
         --format '{{.Ports}}') || fail "docker 조회 실패: backend 컨테이너 포트 확인 못 함"
     # backend 컨테이너가 연 127.0.0.1 포트는 정확히 하나여야 한다
     # shellcheck disable=SC2046
     set -- $(printf '%s\n' "$out" | sed -n 's/.*127\.0\.0\.1:\([0-9]*\)->.*/\1/p')
     [ $# -eq 1 ] || fail "backend 컨테이너 포트가 $# 개 (1개여야 함)"
-    via=$(curl -sS --max-time 10 --connect-to ::127.0.0.1: "$origin/api/ping" 2> /dev/null | ts)
-    direct=$(curl -sS --max-time 10 "http://127.0.0.1:$1/api/ping" 2> /dev/null | ts)
-    [ -n "$via" ] && [ "$via" = "$direct" ] ||
-        fail "nginx 다름: Nginx 경유=${via:-응답 없음·JSON 아님} / backend 직접=${direct:-응답 없음·JSON 아님}"
-    echo "nginx ok ($via)"
+    bport=$1
+    # 둘 중 하나라도 응답을 못 받았을 때만 다시 묻는다(교체 직후 일시 실패). 둘 다 응답했으면 그 한 쌍으로 판정한다.
+    # 시각이 다르면(reload 전 등) 다시 물어도 같으므로 기다리지 않는다
+    for try in 1 2 3; do
+        via=$(ask --connect-to ::127.0.0.1: "$origin/api/ping")
+        direct=$(ask "http://127.0.0.1:$bport/api/ping")
+        case "$via|$direct" in ok\ *\|ok\ *) break ;; esac
+        [ "$try" -lt 3 ] && sleep "${NGINX_RETRY_WAIT:-2}"   # 대기 시간은 시험에서만 바꾼다
+    done
+    detail="Nginx 경유=${via#* } / backend 직접=${direct#* }"
+    case "$via|$direct" in
+        ok\ *\|ok\ *) [ "$via" = "$direct" ] || fail "nginx 다름: $detail" ;;   # 다른 backend 로 보냄. reload 전이면 여기
+        *) fail "nginx 확인 실패: $detail (${try}회 시도)" ;;
+    esac
+    echo "nginx ok (${via#ok })"
     exit 0
 fi
 

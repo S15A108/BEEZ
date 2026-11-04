@@ -300,8 +300,12 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 
 - **HTTP 200 만으로는 판단하지 않습니다.** 실행 중인 설정에 `/api/` 프록시가 없으면 SPA fallback 이 `index.html` 을 200 으로
   주고, 예전 포트의 backend 가 아직 살아 있어도 200 이 나옵니다. 그래서 응답 본문의 `started_at` 을 비교합니다.
-  HTML 이면 `started_at` 이 없어 `응답 없음·JSON 아님` 으로, 다른 backend 면 시각이 달라 `nginx 다름` 으로 걸립니다
-  (2026-11-04 서버 실측: `nginx ok`, `/api-nope` 같은 HTML 응답은 빈 값).
+  다른 backend 면 시각이 달라 `nginx 다름` 으로, HTML 이면 `started_at` 이 없어 `nginx 확인 실패: … JSON 아님(HTTP 200, …)`
+  으로 걸립니다(2026-11-04 서버 실측: `nginx ok`, `/api-nope` 같은 HTML 응답은 빈 값).
+- **실패 문구는 둘입니다.** `nginx 다름` 은 두 쪽이 다 응답했는데 시각이 다른 것으로, 대개 upstream 포트를 고치고 reload 하지
+  않은 것입니다. `nginx 확인 실패` 는 한쪽이 응답하지 않았거나 JSON 이 아닌 것으로, 원인을 `응답 없음(curl 종료 코드 N)`
+  또는 `JSON 아님(HTTP N, …)` 으로 보여 줍니다. curl 종료 코드는 7 연결 거부, 28 시간 초과, 35·60 TLS(인증서) 입니다.
+  curl 의 오류 문구와 응답 본문은 내보내지 않습니다.
 - Nginx 경유 요청은 `PUBLIC_ORIGIN` 주소 그대로(호스트 이름·인증서 이름) 보내되, 연결만 이 서버의 Nginx(`127.0.0.1`)로
   붙습니다(`curl --connect-to`). DNS·외부 경로는 보지 않습니다.
 - backend 컨테이너가 연 `127.0.0.1` 포트가 하나가 아니면(컨테이너가 없거나 둘 이상) `backend 컨테이너 포트가 N 개` 로,
@@ -310,7 +314,9 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
   upstream 포트를 바꿨을 때뿐입니다(reload 를 안 했으면 예전 포트로 가서 시각이 다름). 포트는 그대로 두고 다른 설정
   (요청 크기 한도, `/mcp` 시간 제한 등)만 바꿨다면 reload 를 안 해도 `nginx ok` 가 나오므로, 그 설정은 각각 그 동작으로
   확인합니다.
-- **요청은 한 번만 보냅니다.** upstream 의 server 가 하나라는 전제(위 점검 2)에서는 한 번으로 충분합니다.
+- **판정은 응답 한 쌍으로 합니다.** upstream 의 server 가 하나라는 전제(위 점검 2)에서는 한 쌍으로 충분합니다.
+  한쪽이라도 응답을 못 받았을 때만 2초 간격으로 3번까지 다시 묻습니다(컨테이너 교체 직후의 일시 실패에 배포가 멈추지
+  않게). 둘 다 응답했는데 시각이 다르면 다시 물어도 같으므로 바로 멈춥니다.
   실행 중인 설정에 server 가 둘 이상이면 요청마다 갈 곳이 달라 이 확인으로는 판단할 수 없습니다. 그런 설정 파일은
   위 점검이 먼저 멈추므로, 위 점검을 통과한 설정을 reload 한 뒤에 이 확인을 돌립니다.
 - Nginx worker 의 시작 시각은 reload 의 증거로 쓰지 않습니다. worker 는 비정상 종료 뒤 다시 뜨거나 재시작으로도 새로

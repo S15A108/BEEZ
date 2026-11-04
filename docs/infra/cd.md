@@ -203,10 +203,13 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   끝납니다. 프론트는 바꾸지 않습니다. **backend·ai 컨테이너는 이미 새
   버전으로 바뀐 상태**이므로, 로그 맨 앞의 "직전 backend 이미지" SHA로 다시
   배포해 되돌립니다. 되돌리기의 한계는 아래 "롤백의 한계".
-- Nginx 반영 확인이 실패해도 프론트는 바꾸지 않고 실패로 끝납니다. 이때는
-  대개 env의 포트를 바꾸고 Nginx를 reload하지 않은 것이라 직전 SHA로
-  되돌려도 고쳐지지 않습니다. `sudo nginx -t && sudo systemctl reload nginx`
-  뒤 같은 SHA로 다시 배포합니다.
+- Nginx 반영 확인이 실패해도 프론트는 바꾸지 않고 실패로 끝납니다.
+  `nginx 다름`이면 대개 env의 포트를 바꾸고 Nginx를 reload하지 않은
+  것이라 직전 SHA로 되돌려도 고쳐지지 않습니다. `sudo nginx -t && sudo
+  systemctl reload nginx` 뒤 같은 SHA로 다시 배포합니다. `nginx 확인
+  실패`면 찍힌 원인(curl 종료 코드·HTTP 상태)을 보고 Nginx·인증서·backend
+  상태를 고친 뒤 같은 SHA로 다시 배포합니다. 문구 뜻은
+  [Nginx 반영 확인](env.md#nginx-반영-확인).
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
 - **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
   다른 배포가 돌고 있으면 최대 5분 기다리고, 그래도 안 끝나면 컨테이너를
