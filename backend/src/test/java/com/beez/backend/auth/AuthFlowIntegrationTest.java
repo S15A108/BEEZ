@@ -12,8 +12,10 @@ import org.junit.jupiter.api.Test;
 /** ACC-A01~A04 와 /api 세션 체인. Jira -170 완료 조건 "세션 만료·무권한 테스트"의 세션 쪽. */
 class AuthFlowIntegrationTest extends IntegrationTestSupport {
 
-    private static String registerJson(String email, String password) {
-        return "{\"email\":\"" + email + "\",\"password\":\"" + password + "\",\"name\":\"김개발\"}";
+    /** 가입에는 verified_token 이 필요하다(-219). 인증 흐름 자체는 EmailVerificationIntegrationTest 가 본다 */
+    private String registerJson(String email, String password) {
+        return "{\"email\":\"" + email + "\",\"password\":\"" + password + "\",\"name\":\"김개발\""
+                + ",\"verified_token\":\"" + fixtures().verifiedToken(email) + "\"}";
     }
 
     @Test
