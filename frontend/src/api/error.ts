@@ -63,7 +63,7 @@ const messages: Record<string, string> = {
   not_found: '이 항목을 찾을 수 없습니다.',
   email_already_exists: '이미 가입된 이메일입니다.',
   email_not_verified:
-    '이메일 인증이 끝났거나 만료됐어요. 이메일을 다시 인증해 주세요.',
+    '이메일 인증이 만료됐거나 이미 사용됐어요. 이메일을 다시 인증해 주세요.',
   validation_failed: '입력 내용을 확인해 주세요.',
   version_conflict: '설계가 변경되었습니다. 최신 내용을 확인해 주세요.',
   revision_conflict: '작업 계획이 변경되었습니다. 다시 확인해 주세요.',

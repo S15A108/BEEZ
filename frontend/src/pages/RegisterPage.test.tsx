@@ -119,7 +119,7 @@ it('가입한 이메일은 코드를 보내지 않고, 인증이 만료됐다는
   await user.click(screen.getByRole('button', { name: '가입하기' }))
   expect(
     await screen.findByText(
-      '이메일 인증이 끝났거나 만료됐어요. 이메일을 다시 인증해 주세요.',
+      '이메일 인증이 만료됐거나 이미 사용됐어요. 이메일을 다시 인증해 주세요.',
     ),
   ).toBeInTheDocument()
   expect(screen.queryByText('인증됨')).not.toBeInTheDocument()
