@@ -12,7 +12,6 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +23,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.exc.InvalidDefinitionException;
 
 /**
  * 모든 도구 호출의 공통 처리 (-176). {@link McpTool} 을 SDK 도구 등록 객체로 감싼다.
@@ -90,7 +89,8 @@ public class McpToolHandler {
         }
         long started = System.nanoTime();
         AgentPrincipal principal = context.get(PRINCIPAL_KEY) instanceof AgentPrincipal p ? p : null;
-        String outcome = "ok";
+        // 성공·오류 결과를 만든 뒤에만 바꾼다. 그 사이에 Error 등이 새면 로그가 ok 로 남지 않게 한다
+        String outcome = "internal";
         try {
             if (principal == null) {
                 // /mcp 필터 체인이 인증을 요구하므로 정상 경로에서는 오지 않는다
@@ -99,7 +99,9 @@ public class McpToolHandler {
             McpCall call = new McpCall(CallerContext.agent(principal.accountId(), principal.agentTokenId()),
                     principal.projectId(), exchange.sessionId());
             A args = convertArgs(tool, arguments);
-            return success(tool.call(call, args));
+            CallToolResult result = success(tool.call(call, args));
+            outcome = "ok";
+            return result;
         } catch (Exception e) {
             ApiErrorResponse body = toError(e);
             outcome = body.error().code();
@@ -119,14 +121,12 @@ public class McpToolHandler {
     private <A> A convertArgs(McpTool<A> tool, Map<String, Object> arguments) {
         try {
             return json.convertValue(arguments == null ? Map.of() : arguments, tool.argsType());
+        } catch (InvalidDefinitionException e) {
+            // 인수 레코드를 만들 수 없는 정의(서버 버그)다. 입력 탓으로 돌리지 않고 internal + 스택 로그로 보낸다
+            throw new IllegalStateException("MCP 도구 " + tool.name() + " 의 인수 타입을 만들 수 없습니다", e);
         } catch (JacksonException e) {
+            // Jackson 3 의 convertValue 는 변환 오류를 감싸지 않고 그대로 던진다
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", argumentMessage(e));
-        } catch (IllegalArgumentException e) {
-            // convertValue 가 변환 오류를 IllegalArgumentException 으로 감싸는 경우
-            if (e.getCause() instanceof JacksonException cause) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", argumentMessage(cause));
-            }
-            throw e;
         }
     }
 
@@ -145,12 +145,13 @@ public class McpToolHandler {
     }
 
     private CallToolResult success(Object payload) {
-        JsonNode tree = json.valueToTree(payload == null ? Map.of() : payload);
+        // 한 번만 snake_case 값(Map·List·스칼라)으로 바꾸고, 같은 값을 text 와 structuredContent 에 쓴다
+        Object value = json.convertValue(payload == null ? Map.of() : payload, Object.class);
         CallToolResult.Builder result = CallToolResult.builder()
-                .content(List.of(McpSchema.TextContent.builder(json.writeValueAsString(tree)).build()))
+                .content(List.of(McpSchema.TextContent.builder(json.writeValueAsString(value)).build()))
                 .isError(false);
-        if (tree.isObject()) {
-            result.structuredContent(json.convertValue(tree, Map.class));
+        if (value instanceof Map<?, ?>) {
+            result.structuredContent(value);
         }
         return result.build();
     }
@@ -175,8 +176,8 @@ public class McpToolHandler {
                 if (response instanceof ResponseEntity<?> entity && entity.getBody() instanceof ApiErrorResponse body) {
                     return body;
                 }
-            } catch (IllegalAccessException | InvocationTargetException ignored) {
-                // 아래 internal 로 떨어진다
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                // 핸들러 시그니처가 (예외 하나) 가 아니게 바뀌었거나 핸들러가 실패했다. 아래 internal 로 떨어진다
             }
         }
         log.error("MCP 도구 처리 중 처리되지 않은 예외", e);

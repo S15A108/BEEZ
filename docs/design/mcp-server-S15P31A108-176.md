@@ -23,7 +23,8 @@ RequestIdFilter (X-Request-Id, MDC) → mcpChain (Bearer 토큰 → AgentPrincip
 
 - MCP 서블릿은 DispatcherServlet과 따로 등록된다. `@RestControllerAdvice`를 타지 않으므로 도구 오류는 `McpToolHandler`가 결과로 바꾼다.
 - 세션은 서버 메모리에 있다. 서버를 재시작하면 기존 세션 ID는 404가 되고, 클라이언트는 다시 `initialize`한다(MCP 명세 동작). 서버를 여러 대로 늘리면 세션 고정이 필요하다.
-- 세션 정리·연결 유지 ping은 SDK 기본값(30분)이다. Nginx `/mcp`는 `proxy_buffering off`, `proxy_read_timeout 1h`라 응답 스트림과 맞는다(-123).
+- **GET `/mcp`(서버 → 클라이언트 대기 스트림)는 405로 닫는다.** MCP 명세상 서버가 고를 수 있고 클라이언트는 POST만으로 동작한다. 열어 두면 끝나지 않는 비동기 요청이 되어, Spring Boot의 graceful shutdown이 진행 중인 async 요청을 기다리느라 에이전트가 붙어 있는 동안 배포마다 종료 대기 시간(30초)을 다 채운다. 서버가 먼저 보낼 기능(알림·elicitation)이 생기면 종료 처리와 함께 연다.
+- 그래서 연결 유지 ping도 끈다(보낼 통로가 없다). GET 스트림이 없으면 SDK 정리기가 두 정리 사이에 요청이 없던 세션을 닫으므로, 정리 주기를 1시간으로 늘려 마지막 요청 후 1~2시간 유지한다(웹 세션 2시간과 비슷하게). 닫힌 세션에 요청하면 404이고, 클라이언트는 MCP 명세대로 다시 `initialize`해야 한다 — 배포 재시작 때와 같은 동작이다. POST 응답 스트림은 도구 결과를 보내면 끝나므로 Nginx `/mcp`의 `proxy_buffering off`·`proxy_read_timeout 1h`(-123)와 맞는다.
 
 ## 2. 공통 처리 (`McpToolHandler`)
 
@@ -57,6 +58,7 @@ HTTP는 200이고 JSON-RPC 응답 안의 도구 결과가 실패다. 본문은 R
 | --- | --- | --- |
 | 서비스가 던진 `ApiException` | 그 `code`·`message` 그대로 | 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
 | 인수 타입·enum 변환 실패 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다` |
+| 인수 레코드를 만들 수 없음(레코드 정의 오류) | `internal` | 입력 탓이 아니라 서버 버그라 `validation_failed`로 숨기지 않고 스택을 남긴다 |
 | 그 밖의 예외 | REST `GlobalExceptionHandler`와 같은 code | 같은 대응표를 그대로 쓴다. 낙관적 잠금 충돌 → `revision_conflict`, DB 제약 → `validation_failed`, 나머지 → `internal`(서버 로그에 스택) |
 
 ### 인증 실패 — HTTP 401
@@ -143,5 +145,6 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | 항목 | 티켓 |
 | --- | --- |
 | 도구 호출마다 감사 기록, 권한 실패 응답 형식 확인 | -177 (`McpToolHandler.handle`의 성공·실패 지점) |
-| 세션과 토큰을 묶기(다른 토큰이 남의 세션 ID를 쓰는 경우), 1인 1에이전트, 연결 상태·해제, 작업 절차 안내(`instructions`) | -178 |
+| 세션과 토큰을 묶기 — 지금은 다른 토큰이 남의 세션 ID로 POST하면 **보낸 토큰의 권한으로** 처리되지만, DELETE로 남의 세션을 끊을 수 있다 | -178 |
+| 토큰·계정당 세션 수 상한(지금은 initialize마다 세션이 생겨 30분 정리 전까지 쌓인다), 1인 1에이전트, 연결 상태·해제, 작업 절차 안내(`instructions`) | -178 |
 | 도메인 도구 어댑터(MCP-01~07·10~12)와 입력 스키마, 출력 스키마 | -179 |

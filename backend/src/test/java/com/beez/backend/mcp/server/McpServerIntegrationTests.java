@@ -73,6 +73,18 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
                 }
             };
         }
+
+        /** 인수 타입을 만들 수 없게 잘못 정의된 도구 (서버 버그 흉내) */
+        @Bean
+        McpTool<Runnable> brokenArgs() {
+            return new McpTool<>() {
+                public String name() { return "broken_args"; }
+                public String description() { return "인수 타입 정의 오류 시험용"; }
+                public String inputSchema() { return "{\"type\":\"object\"}"; }
+                public Class<Runnable> argsType() { return Runnable.class; }
+                public Object call(McpCall call, Runnable args) { return Map.of(); }
+            };
+        }
     }
 
     /** 깨지면: Claude Code 가 /mcp 에 붙어도 도구를 보거나 부를 수 없다 — 이 티켓 완료 조건 "도구 목록 조회·호출" (02-mcp-tools 연결과 인증). */
@@ -131,7 +143,30 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
             // ApiException 밖의 예외도 REST 대응표(GlobalExceptionHandler)와 같은 code 로 나간다
             CallToolResult lock = call(client, Map.of("mode", "LOCK_CONFLICT"));
             assertThat(error(lock)).containsEntry("code", "revision_conflict");
+
+            // 인수 타입을 만들 수 없는 것은 서버 버그다 — 입력 탓(validation_failed)으로 숨기지 않는다
+            CallToolResult broken = client.callTool(McpSchema.CallToolRequest.builder()
+                    .name("broken_args").arguments(Map.of()).build());
+            assertThat(error(broken)).containsEntry("code", "internal");
         }
+    }
+
+    /**
+     * 깨지면: GET /mcp 대기 스트림이 열려, 에이전트가 붙어 있는 동안 graceful shutdown 이 매 배포마다 30초를 다 기다린다
+     * (Spring Boot Tomcat GracefulShutdown 은 진행 중인 async 요청이 있으면 끝나지 않는다 — 실측 함정).
+     */
+    @Test
+    void listeningStreamGet_isClosedWith405_afterAuthentication() {
+        var p = fixtures().projectWithLeader();
+        String token = issueToken(p.leaderEmail(), p.projectId());
+        ApiClient raw = client();
+
+        HttpResponse<String> get = raw.get("/mcp", "Accept", "text/event-stream", "Authorization", "Bearer " + token);
+        assertThat(get.statusCode()).isEqualTo(405);
+        assertThat(get.headers().firstValue("Allow")).hasValue("POST, DELETE");
+        assertThat(json.readTree(get.body()).get("error").get("code").asString()).isEqualTo("method_not_allowed");
+        // 토큰 검사가 먼저다
+        assertThat(raw.get("/mcp", "Accept", "text/event-stream").statusCode()).isEqualTo(401);
     }
 
     /** 깨지면: 토큰 없이·틀린 토큰으로 MCP 세션을 열거나, 세션을 연 뒤 폐기한 토큰으로 계속 도구를 부른다 (MCP 연결과 인증 "매 요청 토큰 폐기 확인"). */
