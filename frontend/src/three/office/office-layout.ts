@@ -5,6 +5,7 @@ import { OFFICE_THEMES, officeDesignOf, type OfficeDesign } from './officeLook'
 import { BRICK_PLAN } from './plans/brick'
 import { MODERN_PLAN } from './plans/modern'
 import { TOWER_PLAN } from './plans/tower'
+import { WOOD_PLAN } from './plans/wood'
 
 export type OfficePopulation = Partial<Record<Zone, number>>
 export const officeObjectKey = (item: Furniture) =>
@@ -27,6 +28,7 @@ const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
   brick: BRICK_PLAN,
   modern: MODERN_PLAN,
   tower: TOWER_PLAN,
+  wood: WOOD_PLAN,
 }
 // 충전 자리(D29 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
 const LOUNGE_SEATS = ['loungeChairRelax', 'loungeDesignChair']
@@ -228,8 +230,8 @@ export function makeTeamOffice(design?: string): Floor {
       kit,
     })
     if (solid) block(piece)
-    // 의자가 없는 회의실·워룸(모던 워룸 벤치)은 긴 의자 하나를 두 자리로 쓴다(D29 자리 대체, D31).
-    if (piece.kind === 'bench') {
+    // 의자가 없는 회의실·워룸(모던 워룸 벤치, 목조 회의실 부스 소파)은 긴 의자 하나를 두 자리로 쓴다(D29 자리 대체, D31).
+    if (piece.kind === 'bench' || (piece.kind === 'sofa' && piece.zone === 3)) {
       for (const side of [-0.25, 0.25]) {
         const spot = seatAt(
           piece.x + (w >= d ? side * w : 0),

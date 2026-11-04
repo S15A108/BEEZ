@@ -3097,6 +3097,20 @@ export class OfficeRenderer3D {
       0,
     )
     ceiling.name = 'office-ceiling'
+    // 목조 스튜디오: 3 m마다 남북으로 지나는 나무 보(캔버스 beams, 1인칭에서만)
+    if (theme.beams)
+      for (let x = left + 1.5; x < right; x += 3)
+        this.box(
+          this.firstPersonEnclosure,
+          x,
+          4.355,
+          cz,
+          0.22,
+          0.45,
+          depth,
+          theme.beams,
+          0,
+        )
     // 천장은 등 빛을 받아 밝게 보인다(캔버스 ceilingGlow). 세기는 시간대마다 applyTime이 바꾼다.
     const ceilingKey = `office-ceiling/${this.design}`
     let ceilingMaterial = this.materials.get(ceilingKey)

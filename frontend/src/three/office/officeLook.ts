@@ -15,6 +15,8 @@ export interface OfficeTheme {
   brick?: string
   /** 회의실(3번 구역)을 유리 벽으로 두른다(통로 쪽 끝 1.4 m는 문). */
   glassRoom?: boolean
+  /** 1인칭 천장의 나무 보 색 */
+  beams?: string
   /** 높은 층(m): 창밖 거리와 다른 건물이 그만큼 아래에 있다. */
   elev?: number
   slat: string
@@ -141,6 +143,7 @@ export const OFFICE_THEMES: Record<OfficeDesign, OfficeTheme> = {
     oakBase: 172,
     wall: '#efe2cc',
     slat: '#9a6a3f',
+    beams: '#a8794e',
     mullion: '#8a6440',
     ceiling: '#efe2cc',
     ceilingGlow: 0.15,
