@@ -1198,7 +1198,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현, -159) |
 | 409 | `revision_conflict` | 현재 계획 아님 |
-| 409 | `validation_attempt_limit` | 의미 분석이 필요한데 같은 작업·같은 입력으로 정한 횟수(기본 3)만큼 분석을 돌림. 재시도(MCP-14)와 같은 수 (BE 구현, -161) |
+| 409 | `validation_attempt_limit` | 의미 분석이 필요한데 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름. 재시도(MCP-14)와 같은 수 (BE 구현, -161) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1419,7 +1419,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `invalid_transition` | ERROR가 아니거나(이미 재실행 중 포함) 현재 실패 실행의 오류가 RETRY 대상이 아님. 완료·취소된 작업, 더 최근 검증이 있음 |
 | 409 | `revision_conflict` | 입력·참조 변경. `expected_attempt`가 현재 시도보다 큼 |
-| 409 | `validation_attempt_limit` | 같은 작업·같은 입력으로 정한 횟수(기본 3)만큼 분석을 돌림 |
+| 409 | `validation_attempt_limit` | 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름 (REST VAL-A01 처리 규칙) |
 | 409 | `idempotency_conflict` | 같은 `idempotency_key`에 다른 인수 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.

@@ -2,6 +2,7 @@ package com.beez.backend.validation.dto;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 명세 00-common Validation (VAL-A01~A03, MCP-11 응답).
@@ -11,5 +12,6 @@ public record ValidationResponse(String id, String taskId, String planRevisionId
                                  String trigger, String staleReason, int currentAttempt,
                                  List<ValidationDesignRefResponse> designRefs,
                                  List<RelatedTaskRefResponse> relatedTaskRefs, List<FindingResponse> findings,
-                                 boolean cacheHit, Instant createdAt, Instant finishedAt, String errorCode) {
+                                 boolean cacheHit, Instant createdAt, Instant finishedAt, String errorCode,
+                                 Map<String, Object> policyAnalysis) {
 }

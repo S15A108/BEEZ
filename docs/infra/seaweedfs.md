@@ -16,6 +16,8 @@ Docker volume은 저장소 소스 파일이 아니므로 .document-data Git 무�
 
 DocumentStorage의 제품 구현은 S3DocumentStorage 하나다. AWS SDK는 S3 서명/HTTP 클라이언트이고 요청 대상은 명시한 SeaweedFS endpoint다. AWS 계정을 요구하지 않는다. bucket을 경로로 접근하는 path-style을 사용한다.
 
+서버에서 이 값이 어디서 들어오는지(compose·서버 env 파일)와 다른 서비스 변수는 [환경변수와 비밀값](env.md)에 모아 두었다. 아래 표의 의미가 바뀌면 그 문서의 표도 함께 고친다.
+
 | 변수 | 배포 시 설정 |
 | --- | --- |
 | DOCUMENT_S3_ENDPOINT | 같은 Docker network이면 http://seaweedfs:8333 등 내부 주소. 호스트 직접 실행이면 서버에서 접근 가능한 주소 |

@@ -69,7 +69,7 @@ public class TaskController {
     @GetMapping("/{task_id}")
     public TaskDetailResponse get(CallerContext caller, @PathVariable("id") Long projectId,
                                   @PathVariable("task_id") Long taskId) {
-        return queryService.getTask(caller, projectId, taskId);
+        return queryService.getTaskDetail(caller, projectId, taskId);
     }
 
     @Operation(summary = "TSK-A04 계획 리비전 추가 (덮어쓰지 않음)")

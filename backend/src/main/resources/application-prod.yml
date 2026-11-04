@@ -1,9 +1,14 @@
 # 운영: 환경변수 필수(기본값 없음), compose 자동 기동 끔, 헬스 상세 숨김
+#
+# 필수값은 ${X:} (빈 기본값)으로 적는다. ${X} 는 값이 없으면 오류 없이 "${X}" 글자를 그대로 넣어
+# @NotBlank 를 통과하고 그 글자로 기동한다. 빈 값이면 검증이 이름을 짚어 기동을 멈춘다 (S15P31A108-27, docs/infra/env.md)
+# DB_USERNAME 만 그대로 둔다 — 빠지면 DB 접속 오류에 user "${DB_USERNAME}" 이 찍혀 원인이 바로 보인다
+# (ProdProfilePropertiesTest 가 이 규칙을 검사한다)
 spring:
   datasource:
-    url: ${DB_URL}
+    url: ${DB_URL:}
     username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    password: ${DB_PASSWORD:}     # 비면 "no password was provided". ${X} 면 글자가 비밀번호로 가 "password authentication failed"
   docker:
     compose:
       enabled: false
@@ -32,11 +37,11 @@ logging:
 
 beez:
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   ai:
-    base-url: ${AI_BASE_URL}
-    internal-token: ${AI_INTERNAL_TOKEN}
+    base-url: ${AI_BASE_URL:}
+    internal-token: ${AI_INTERNAL_TOKEN:}
   invitation:
-    base-url: ${INVITE_BASE_URL}   # 프론트 오리진. 기본값(localhost)이 운영 초대 링크에 들어가지 않게 필수로 받는다
+    base-url: ${INVITE_BASE_URL:}   # 프론트 오리진. 기본값(localhost)이 운영 초대 링크에 들어가지 않게 필수로 받는다
   agent:
-    mcp-url: ${MCP_URL}            # 공개 /mcp 주소(Nginx 뒤). 같은 이유로 필수
+    mcp-url: ${MCP_URL:}            # 공개 /mcp 주소(Nginx 뒤). 같은 이유로 필수

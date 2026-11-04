@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import com.beez.backend.common.api.ApiException;
@@ -81,13 +82,31 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         leader = api.accountId("leader@test");
         member = api.accountId("member@test");
         outsider = api.accountId("outsider@test");
-        when(search.search(any(), org.mockito.ArgumentMatchers.eq(projectId), any(),
-                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(100)))
-                .thenAnswer(inv -> {
-                    Long baseline = api.jdbc.sql("select current_baseline_id from project where id=:id")
-                            .param("id", projectId).query(Long.class).single();
-                    return new HybridDocumentCandidateSearch.Result(baseline.toString(), List.of(), false, false);
-                });
+        searchWorks();
+    }
+
+    /** 근거 검색이 현재 기준으로 빈 결과를 돌려준다 */
+    private void searchWorks() {
+        doAnswer(inv -> {
+            Long baseline = api.jdbc.sql("select current_baseline_id from project where id=:id")
+                    .param("id", projectId).query(Long.class).single();
+            return new HybridDocumentCandidateSearch.Result(baseline.toString(), List.of(), false, false);
+        }).when(search).search(any(), org.mockito.ArgumentMatchers.eq(projectId), any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(100));
+    }
+
+    /** 근거 검색이 장애로 실패한다 — 워커는 AI 를 부르기 전에 evidence_fetch_failed 로 닫는다 */
+    private void searchFails() {
+        doThrow(new IllegalStateException("검색 장애 (시험용)")).when(search).search(any(), org.mockito.ArgumentMatchers.eq(projectId), any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(100));
+    }
+
+    /** 계획 본문 끝에 칸을 더하고 계획을 고친다 (TSK-A04) */
+    private HttpResponse<String> revise(long[] t, String extraFields) throws Exception {
+        String plan = api.planJson("A", api.implementsRef("API-01"), "[]").trim();
+        String body = plan.substring(0, plan.lastIndexOf('}')) + extraFields
+                + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + t[2] + "\n}";
+        return api.post(tasksPath() + "/" + t[0] + "/plan-revisions", body, member);
     }
 
     // ---- 도우미 ----
@@ -506,18 +525,99 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         assertThat(fresh.statusCode()).as(fresh.body()).isEqualTo(202);
     }
 
+    @Test
+    void fakeAnalyzerRunsDoNotCount_soAfterSwitchingToTheRealAiTheSamePlanCanBeValidatedAgain() throws Exception {
+        long[] t = passableTask("A");
+        doAnswer(inv -> aiResponse(inv.getArgument(0), List.of())).when(analyzer).analyze(any());
+        for (int i = 0; i < 3; i++) {
+            long id = body(accept(t, member), 202).get("id").asLong();
+            assertThat(worker.runOnce()).isTrue();
+            assertThat(validation(id).get("status").asText()).isEqualTo("PASS");
+        }
+        // 실제 분석기로 세 번 돌았으면 같은 입력으로는 더 돌리지 않는다
+        assertError(accept(t, member), 409, "validation_attempt_limit");
+
+        // 같은 세 번이 가짜 분석기(개발 서버)였다면 세지 않는다 — 실제 AI 로 바꾼 뒤 새 검증을 받는다
+        api.jdbc.sql("""
+                update validation_run set analyzer_version = 'fake-analyzer'
+                 where validation_id in (select id from validation where task_id = :t)
+                """).param("t", t[0]).update();
+        assertThat(accept(t, member).statusCode()).isEqualTo(202);
+    }
+
+    @Test
+    void failuresBeforeTheModelIsCalledDoNotCount() throws Exception {
+        long[] t = passableTask("A");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        // 시도 1: 근거 검색 장애 — AI 를 부르지 않았다
+        searchFails();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(validation(id).get("error_code").asText()).isEqualTo("evidence_fetch_failed");
+        searchWorks();
+        // 시도 2·3·4: AI 연결 실패, 모델 호출 사용량 없음 — 모델을 불렀다는 기록이 없다
+        doAnswer(inv -> {
+            throw new ValidationAnalyzer.AnalyzerException("ai_unavailable", "연결 실패", null, null);
+        }).when(analyzer).analyze(any());
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            body(retry(id, attempt, member), 202);
+            assertThat(worker.runOnce()).isTrue();
+            assertThat(validation(id).get("error_code").asText()).isEqualTo("ai_unavailable");
+        }
+        // 아직 한 번도 세지 않았으므로 다시 돌릴 수 있다
+        assertThat(body(retry(id, 4, member), 202).get("current_attempt").asInt()).isEqualTo(5);
+    }
+
+    @Test
+    void changingTheContextPacketMakesItANewInputForTheLimit() throws Exception {
+        long[] t = passableTask("A");
+        long id = timedOut(t);
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            body(retry(id, attempt, member), 202);
+            nextCallTimesOut();
+            assertThat(worker.runOnce()).isTrue();
+        }
+        assertError(retry(id, 3, member), 409, "validation_attempt_limit");
+        assertError(accept(t, member), 409, "validation_attempt_limit");
+
+        // 계획 내용은 그대로 두고 컨텍스트 패킷만 붙인다 → 실제 검증 근거가 바뀌었다
+        long packet = api.jdbc.sql("""
+                insert into dev_context_packet(project_id, request, baseline_id, content, content_hash)
+                values (:p, '검증 패킷', (select current_baseline_id from project where id = :p),
+                        '{"constraints":["추가 제약"],"unresolved":[]}'::jsonb, 'packet-for-retry-limit')
+                returning id
+                """).param("p", projectId).query(Long.class).single();
+        HttpResponse<String> changed = revise(t, ", \"context_packet_id\": \"" + packet + "\"");
+        assertThat(changed.statusCode()).as(changed.body()).isEqualTo(201);
+        long revision = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t[0])
+                .query(Long.class).single();
+        assertThat(revision).isNotEqualTo(t[1]);
+        // 옛 검증은 입력이 바뀌어 다시 돌릴 수 없고, 새 검증은 다른 입력이라 처음부터 센다
+        assertError(retry(id, 3, member), 409, "revision_conflict");
+        HttpResponse<String> fresh = accept(new long[] {t[0], revision, TaskApiSupport.longField(changed.body(), "lock_version")}, member);
+        assertThat(fresh.statusCode()).as(fresh.body()).isEqualTo(202);
+    }
+
     // ---- 실패 뒤 작업 상태 ----
 
     @Test
     void failedValidationCannotStartTheTask_andTheTaskStaysReady() throws Exception {
         long[] t = passableTask("A");
         long id = timedOut(t);
+        // 작업 상세(TSK-A03)가 현재 계획의 검증을 싣는다 — 화면은 이 값으로 오류 뒤 재시도 버튼을 그린다
+        JsonNode detail = body(api.get(tasksPath() + "/" + t[0], member), 200);
+        assertThat(detail.get("validation_status").asText()).isEqualTo("ERROR");
+        assertThat(detail.get("validation").get("id").asText()).isEqualTo(String.valueOf(id));
+        assertThat(detail.get("validation").get("current_attempt").asInt()).isEqualTo(1);
+        assertThat(detail.get("validation").get("findings").get(0).get("resolution").asText()).isEqualTo("RETRY");
         HttpResponse<String> start = api.post(tasksPath() + "/" + t[0] + "/state-events",
                 "{\"event\":\"START\",\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2]
                         + ",\"validation_id\":\"" + id + "\"}", member);
         assertError(start, 409, "validation_not_passed");
         // 다시 돌리는 중(RUNNING)에도 시작할 수 없다
         body(retry(id, 1, member), 202);
+        JsonNode reopened = body(api.get(tasksPath() + "/" + t[0], member), 200);
+        assertThat(reopened.get("validation").get("status").asText()).isEqualTo("RUNNING");
+        assertThat(reopened.get("validation").get("current_attempt").asInt()).isEqualTo(2);
         HttpResponse<String> whileRunning = api.post(tasksPath() + "/" + t[0] + "/state-events",
                 "{\"event\":\"START\",\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2]
                         + ",\"validation_id\":\"" + id + "\"}", member);

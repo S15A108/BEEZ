@@ -144,27 +144,36 @@ public class ValidationRepository {
     }
 
     /**
-     * 같은 작업·같은 검증 입력(입력 스냅샷 해시)으로 지금까지 돌린 분석 실행 수 (횟수 제한, S15P31A108-161).
-     * 새 검증 요청과 재시도의 실행을 함께 센다. 세지 않는 것:
+     * 같은 작업·같은 검증 입력으로 지금까지 <b>실제 검증 AI(모델)를 부른</b> 실행 수 (횟수 제한, S15P31A108-161).
+     * 새 검증 요청과 재시도의 실행을 함께 센다. "같은 입력" 은 입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같은 것이다 —
+     * 해시에는 패킷이 없지만 결과 반영의 입력 비교({@code AnalysisResultApplier.inputChange})는 패킷이 바뀌면 다른 입력으로 보므로 맞춘다.
+     * 세는 실행:
      * <ul>
-     *   <li>DISCARDED — 입력 변경·늦은 결과·모델 전 규칙 판정으로 버린 실행</li>
-     *   <li>서버 쪽 중단으로 닫힌 실행 — 리스 만료(validation_lease_expired)·워커 중단(validation_worker_interrupted).
-     *       재배포·워커 중단은 사용자 책임이 아니다. 오류 칸은 "코드: 문장" 모양이다({@code AnalysisResultApplier.fail})</li>
+     *   <li>도는 중(RUNNING) — 같은 입력으로 동시에 여러 번 요청해 제한을 넘기지 못하게</li>
+     *   <li>실제 분석기로 끝까지 돈 실행(OK), 또는 모델 호출 사용량이 한 건 이상 남은 실행 (시간 초과·출력 계약 위반·부분 분석 등)</li>
      * </ul>
-     * 도는 중(RUNNING)인 실행은 센다 — 같은 입력으로 동시에 여러 번 요청해 제한을 넘기지 못하게
+     * 세지 않는 실행: 가짜 분석기(analyzer_version = fakeModel)로 끝난 실행, 사용량 없이 실패한 실행(근거 조회 실패·입력 불완전·
+     * 사용량을 알려 주지 않은 AI 연결 실패 등 모델을 불렀다는 기록이 없는 실패), 버린 실행(DISCARDED), 서버 쪽 중단(리스 만료·워커 중단 —
+     * 늦게 온 응답의 사용량이 그 실행에 남아도 세지 않는다). 오류 칸은 "코드: 문장" 모양이다({@code AnalysisResultApplier.fail})
      */
-    public int countedModelAttempts(long taskId, String inputSnapshotHash) {
+    public int countedModelAttempts(long taskId, String inputSnapshotHash, Long contextPacketId, String fakeModel) {
         return jdbc.sql("""
                         select count(*)
                           from validation_run r
                           join validation v on v.id = r.validation_id
+                          join task_plan_revision pr on pr.id = v.plan_revision_id
                          where v.task_id = :t and v.input_snapshot_hash = :h and r.kind = 'MODEL'
-                           and r.status in ('RUNNING', 'OK', 'TIMEOUT', 'ERROR')
-                           and (r.error is null
-                                or (r.error not like 'validation\\_lease\\_expired%'
-                                    and r.error not like 'validation\\_worker\\_interrupted%'))
+                           and pr.context_packet_id is not distinct from :pkt
+                           and (r.status = 'RUNNING'
+                                or (r.status in ('OK', 'TIMEOUT', 'ERROR')
+                                    and r.analyzer_version is distinct from :fake
+                                    and (r.error is null
+                                         or (r.error not like 'validation\\_lease\\_expired%'
+                                             and r.error not like 'validation\\_worker\\_interrupted%'))
+                                    and (r.status = 'OK' or (r.usage is not null and jsonb_array_length(r.usage) > 0))))
                         """)
-                .param("t", taskId).param("h", inputSnapshotHash).query(Integer.class).single();
+                .param("t", taskId).param("h", inputSnapshotHash).param("pkt", contextPacketId, Types.BIGINT)
+                .param("fake", fakeModel).query(Integer.class).single();
     }
 
     /** 작업의 현재 계획 리비전 */
@@ -194,6 +203,18 @@ public class ValidationRepository {
                     insert into validation_candidate_ref (validation_id, design_item_id, design_item_version_id)
                     values (:v, :item, :version)
                     """).param("v", validationId).param("item", itemId).param("version", versionId).update();
+        }
+    }
+
+    /** Save only policy versions actually cited by a validated result, separately from plan refs. */
+    public void savePolicyRefs(long validationId, List<Map<String, Object>> citedItems) {
+        for (Map<String, Object> item : citedItems) {
+            jdbc.sql("""
+                    insert into validation_policy_ref (validation_id, design_item_id, design_item_version_id)
+                    values (:v, :item, :version)
+                    """).param("v", validationId)
+                    .param("item", Long.parseLong(String.valueOf(item.get("design_item_id"))))
+                    .param("version", Long.parseLong(String.valueOf(item.get("id")))).update();
         }
     }
 
@@ -263,7 +284,7 @@ public class ValidationRepository {
     }
 
     /**
-     * 설계 발행(-163) 의 STALE 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 계획에서 참조한, 아직 쓸 수 있는 검증.
+     * 설계 발행(-163) 의 STALE 대상: 계획에서 참조했거나 정책 판단에서 실제 인용한 버전이 바뀐 검증.
      * (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 상태·현재 계획으로 거르지 않는다 (REST CHG 발행 처리 규칙).
      * 행: validation_id, task_id, task_title, trigger. 검증 번호 오름차순, 여러 항목에 걸린 검증도 한 번만
      */
@@ -282,7 +303,9 @@ public class ValidationRepository {
                         select distinct v.id as validation_id, v.task_id, t.title as task_title, v.trigger
                           from (values %s) as changed(item_id, before_version_id)
                           join design_item_version bv on bv.id = changed.before_version_id
-                          join validation_design_ref r
+                          join (select validation_id, design_item_id, design_item_version_id from validation_design_ref
+                                union all
+                                select validation_id, design_item_id, design_item_version_id from validation_policy_ref) r
                             on r.design_item_id = changed.item_id
                           join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
                           join validation v on v.id = r.validation_id
@@ -304,9 +327,9 @@ public class ValidationRepository {
         return jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
                         values (:v, :run, :src, :k, :sev, :item, :ver, :task, :msg, cast(:sources as jsonb), :res, :next,
-                                :ck, cast(:ev as jsonb))
+                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb))
                         returning id
                         """)
                 .param("v", validationId).param("run", f.validationRunId(), Types.BIGINT).param("src", f.source())
@@ -315,6 +338,7 @@ public class ValidationRepository {
                 .param("msg", f.message()).param("sources", toJson(f.sources())).param("res", f.resolution())
                 .param("next", f.nextAction(), Types.VARCHAR).param("ck", f.checkKey(), Types.VARCHAR)
                 .param("ev", toJson(f.evidenceIds()))
+                .param("need", f.policyNeedId(), Types.VARCHAR).param("conflicts", toJson(f.conflictingDesignRefs()))
                 .query(Long.class).single();
     }
 
@@ -327,7 +351,8 @@ public class ValidationRepository {
         return jdbc.sql("""
                         select f.id, f.validation_id, f.validation_run_id, f.source, f.kind, f.severity, f.design_item_id,
                                f.design_item_version_id, f.related_task_id, f.message, f.sources::text as sources, f.resolution,
-                               f.next_action, f.check_key, f.evidence_ids::text as evidence_ids
+                               f.next_action, f.check_key, f.evidence_ids::text as evidence_ids, f.policy_need_id,
+                               f.conflicting_design_refs::text as conflicting_design_refs
                           from validation_finding f
                           join validation v on v.id = f.validation_id
                           left join validation_run r on r.id = f.validation_run_id
@@ -590,10 +615,12 @@ public class ValidationRepository {
         // readValue: JSON 문자열을 List 로 바꾼다
         List<Map<String, Object>> sources = json.readValue(rs.getString("sources"), List.class);
         List<String> evidence = json.readValue(rs.getString("evidence_ids"), List.class);
+        List<Map<String, Object>> conflicts = json.readValue(rs.getString("conflicting_design_refs"), List.class);
         return new FindingRow(rs.getLong("id"), rs.getLong("validation_id"), nullableLong(rs, "validation_run_id"),
                 rs.getString("source"), rs.getString("kind"), rs.getString("severity"), nullableLong(rs, "design_item_id"),
                 nullableLong(rs, "design_item_version_id"), nullableLong(rs, "related_task_id"), rs.getString("message"),
-                sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence);
+                sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence,
+                rs.getString("policy_need_id"), conflicts);
     }
 
     private String toJson(Object value) {

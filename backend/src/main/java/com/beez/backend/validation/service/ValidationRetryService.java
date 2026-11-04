@@ -6,6 +6,8 @@ import com.beez.backend.common.access.ProjectActor;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.task.entity.Task;
+import com.beez.backend.task.entity.TaskPlanRevision;
+import com.beez.backend.task.repository.TaskPlanRevisionRepository;
 import com.beez.backend.task.repository.TaskRepository;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.validation.config.ValidationProperties;
@@ -35,7 +37,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       작업이 끝났거나(완료·취소) 그 작업에 더 최근 검증이 있어도 거부. 모두 409 invalid_transition</li>
  *   <li>입력이 그대로: 계획 내용·관련 작업의 계획({@link AnalysisResultApplier#inputChange}), 참조한 설계 항목 버전이 지금 기준과 같음.
  *       바뀌었으면 409 revision_conflict — 새 검증을 요청한다 (STALE 이 될 입력을 재시도로 되살리지 않는다)</li>
- *   <li>횟수 제한: 같은 작업·같은 입력으로 돌린 분석이 정한 횟수에 닿았으면 409 validation_attempt_limit (새 검증 요청과 같은 수)</li>
+ *   <li>횟수 제한: 같은 작업·같은 입력으로 실제 검증 AI 를 부른 실행이 정한 횟수에 닿았으면 409 validation_attempt_limit
+ *       (새 검증 요청과 같은 수. 가짜 분석기·모델 호출 전 실패는 세지 않는다)</li>
  * </ol>
  * 받으면 시도 번호를 올려 RUNNING 으로 다시 열고, 새 시도의 실행(run)을 만들고, 큐 작업을 다시 대기로 돌린다. 지난 시도의 실행·오류 항목은
  * 이력으로 남고 응답의 발견 항목에서는 빠진다. 요약의 지난 시도 진단 값(오류 코드·부분 후보·모델·사용량)은 걷어 낸다 — 비용은 실행별로 남아 있다.
@@ -44,25 +47,30 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ValidationRetryService {
 
-    /** 지난 시도의 결과·진단으로 요약에 남는 키. 새 시도를 열 때 걷어 낸다 (AnalysisResultApplier 의 성공·실패 반영이 쓰는 키) */
+    /**
+     * 지난 시도의 결과·진단으로 요약에 남는 키. 새 시도를 열 때 걷어 낸다 (AnalysisResultApplier 의 성공·실패 반영이 쓰는 키).
+     * 접수 때 고정한 값(rule_version·policy_analysis_version·checks·request_actor·completion_delta)은 남긴다
+     */
     private static final List<String> ATTEMPT_KEYS = List.of(
             ValidationResponses.SUMMARY_ERROR_CODE, "analysis_status", "checked_keys", "unassessed", "partial_findings",
-            "model", "usage", "usage_rejected", "analysis_baseline_id", "analysis_input_snapshot_hash");
+            "model", "usage", "usage_rejected", "analysis_baseline_id", "analysis_input_snapshot_hash", "policy_analysis");
 
     private final ProjectAccessChecker access;
     private final ProjectDesignLookup designLookup;
     private final TaskRepository tasks;
+    private final TaskPlanRevisionRepository revisions;
     private final ValidationRepository validations;
     private final ValidationResponses responses;
     private final AnalysisResultApplier applier;
     private final ValidationProperties properties;
 
     public ValidationRetryService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
-                                  ValidationRepository validations, ValidationResponses responses, AnalysisResultApplier applier,
-                                  ValidationProperties properties) {
+                                  TaskPlanRevisionRepository revisions, ValidationRepository validations,
+                                  ValidationResponses responses, AnalysisResultApplier applier, ValidationProperties properties) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
+        this.revisions = revisions;
         this.validations = validations;
         this.responses = responses;
         this.applier = applier;
@@ -130,7 +138,9 @@ public class ValidationRetryService {
                         "참조한 설계 항목이 바뀌었습니다 (design_item_id=" + item + "). 새 검증을 요청하세요");
             }
         }
-        ValidationAcceptService.requireAttemptsLeft(validations, properties, v.taskId(), v.inputSnapshotHash());
+        // 입력 확인을 지났으므로 검증한 계획의 컨텍스트 패킷이 곧 지금 계획의 패킷이다
+        TaskPlanRevision plan = revisions.findByIdAndTaskId(v.planRevisionId(), v.taskId()).orElseThrow();
+        ValidationAcceptService.requireAttemptsLeft(validations, properties, v.taskId(), v.inputSnapshotHash(), plan.getContextPacketId());
 
         int nextAttempt = v.currentAttempt() + 1;
         Map<String, Object> summary = responses.summary(v.summary());

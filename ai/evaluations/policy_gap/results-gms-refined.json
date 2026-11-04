@@ -1,0 +1,652 @@
+{
+  "created_at": "2026-11-03T05:32:00.918044+00:00",
+  "provider_host": "gms.ssafy.io",
+  "model": "gpt-6-luna",
+  "response_format": "json_object",
+  "scope": "synthetic FastAPI ASGI route and real GMS model; no BE, database or retrieval",
+  "cases": [
+    {
+      "name": "two_designs_conflict",
+      "split": "development",
+      "expectation": "CONFLICT",
+      "passed": true,
+      "detail": "expected=CONFLICT; states=['CONTRADICTORY']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "candidate-design-312",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "CONFLICT",
+              "severity": "BLOCKING",
+              "message": "로그인 실패 계정 잠금 정책에 대해 승인된 설계가 서로 다릅니다. 한 설계는 5회 실패 시 30분 잠금, 다른 설계는 3회 실패 시 10분 잠금을 명시합니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                },
+                {
+                  "document_id": "202",
+                  "document_version_id": "212",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1",
+                "policy-source-2"
+              ],
+              "suggested_action": "계정 잠금 기준과 시간을 확정하고 관련 설계를 일치시키세요.",
+              "policy_need_id": "login-account-lock-policy",
+              "conflicting_design_refs": [
+                {
+                  "design_item_id": "302",
+                  "design_item_version_id": "312",
+                  "evidence_ids": [
+                    "policy-source-2"
+                  ],
+                  "content_paths": [
+                    [
+                      "description"
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "login-account-lock-policy",
+              "topic": "로그인 실패 시 계정 잠금 기준과 시간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "로그인 실패 시 계정 잠금 정책을 적용한다."
+              },
+              "state": "CONTRADICTORY",
+              "design_item_version_ids": [
+                "311",
+                "312"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "로그인 5회 실패하면 계정을 30분 잠근다."
+                },
+                {
+                  "design_item_version_id": "312",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "로그인 3회 실패하면 계정을 10분 잠근다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1",
+                "policy-source-2"
+              ],
+              "explanation": "관련 승인 설계 두 건이 잠금 횟수와 시간에 대해 서로 다른 값을 명시합니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168200-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 14578,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2571,
+            "output_tokens": 1625
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"candidate-design-312\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"CONFLICT\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"로그인 실패 계정 잠금 정책에 대해 승인된 설계가 서로 다릅니다. 한 설계는 5회 실패 시 30분 잠금, 다른 설계는 3회 실패 시 10분 잠금을 명시합니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        },\n        {\n          \"document_id\": \"202\",\n          \"document_version_id\": \"212\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"suggested_action\": \"계정 잠금 기준과 시간을 확정하고 관련 설계를 일치시키세요.\",\n      \"policy_need_id\": \"login-account-lock-policy\",\n      \"conflicting_design_refs\": [\n        {\n          \"design_item_id\": \"302\",\n          \"design_item_version_id\": \"312\",\n          \"evidence_ids\": [\n            \"policy-source-2\"\n          ],\n          \"content_paths\": [\n            [\n              \"description\"\n            ]\n          ]\n        }\n      ]\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"login-account-lock-policy\",\n      \"topic\": \"로그인 실패 시 계정 잠금 기준과 시간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"로그인 실패 시 계정 잠금 정책을 적용한다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\",\n        \"312\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"로그인 5회 실패하면 계정을 30분 잠근다.\"\n        },\n        {\n          \"design_item_version_id\": \"312\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"로그인 3회 실패하면 계정을 10분 잠근다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"explanation\": \"관련 승인 설계 두 건이 잠금 횟수와 시간에 대해 서로 다른 값을 명시합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "documentation_only",
+      "split": "holdout",
+      "expectation": "NO_REQUIREMENTS",
+      "passed": true,
+      "detail": "expected=NO_REQUIREMENTS; states=[]; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [],
+          "policy_assessments": [],
+          "policy_assessments_truncated": false,
+          "no_policy_requirements_reason": "작업 범위가 README의 맞춤법과 띄어쓰기 수정으로 한정되어 있어 별도의 정책 요구사항을 추출할 수 없습니다.",
+          "no_policy_requirements_evidence": {
+            "field": "goal",
+            "quote": "README 맞춤법과 띄어쓰기만 수정한다. 기능, 권한, 데이터 처리는 변경하지 않는다."
+          }
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168201-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 4703,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2127,
+            "output_tokens": 402
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [],\n  \"policy_assessments\": [],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": \"작업 범위가 README의 맞춤법과 띄어쓰기 수정으로 한정되어 있어 별도의 정책 요구사항을 추출할 수 없습니다.\",\n  \"no_policy_requirements_evidence\": {\n    \"field\": \"goal\",\n    \"index\": null,\n    \"quote\": \"README 맞춤법과 띄어쓰기만 수정한다. 기능, 권한, 데이터 처리는 변경하지 않는다.\"\n  }\n}"
+      ]
+    },
+    {
+      "name": "fresh_password",
+      "split": "fresh_holdout",
+      "expectation": "SUPPORTED",
+      "passed": true,
+      "detail": "expected=SUPPORTED; states=['SUPPORTED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "password-minimum-length",
+              "topic": "비밀번호 최소 길이",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "비밀번호는 최소 12자로 설정한다."
+              },
+              "state": "SUPPORTED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "비밀번호는 최소 12자여야 한다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획의 최소 12자 요구사항은 승인된 정책과 일치합니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168202-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 5609,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2306,
+            "output_tokens": 519
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"password-minimum-length\",\n      \"topic\": \"비밀번호 최소 길이\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"비밀번호는 최소 12자로 설정한다.\"\n      },\n      \"state\": \"SUPPORTED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"비밀번호는 최소 12자여야 한다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획의 최소 12자 요구사항은 승인된 정책과 일치합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "fresh_expiry",
+      "split": "fresh_holdout",
+      "expectation": "CONTRADICTORY",
+      "passed": true,
+      "detail": "expected=CONTRADICTORY; states=['CONTRADICTORY']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "candidate-design-311",
+              "kind": "MISMATCH",
+              "severity": "BLOCKING",
+              "message": "계획은 임시 초대 링크를 3시간 뒤 만료시키도록 하지만, 승인된 정책은 발급 후 1시간 뒤 만료되도록 정하고 있어 서로 일치하지 않습니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "계획의 만료 시간을 승인된 1시간 정책에 맞추거나, 정책 변경 승인을 확인하세요."
+            },
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "MISMATCH",
+              "severity": "BLOCKING",
+              "message": "계획이 요구하는 3시간 만료 정책이 승인된 1시간 만료 정책과 모순됩니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "계획 또는 승인 정책을 정합성 있게 조정하세요.",
+              "policy_need_id": "need-invite-link-expiration",
+              "conflicting_design_refs": []
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "need-invite-link-expiration",
+              "topic": "임시 초대 링크 만료 시간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "임시 초대 링크를 3시간 뒤 만료시킨다."
+              },
+              "state": "CONTRADICTORY",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "임시 초대 링크는 발급 후 1시간 뒤 만료된다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "계획의 3시간 만료 요구와 승인 내용의 발급 후 1시간 만료 정책이 모순됩니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168203-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 11594,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2327,
+            "output_tokens": 1346
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"candidate-design-311\",\n      \"kind\": \"MISMATCH\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획은 임시 초대 링크를 3시간 뒤 만료시키도록 하지만, 승인된 정책은 발급 후 1시간 뒤 만료되도록 정하고 있어 서로 일치하지 않습니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"계획의 만료 시간을 승인된 1시간 정책에 맞추거나, 정책 변경 승인을 확인하세요.\",\n      \"policy_need_id\": null,\n      \"conflicting_design_refs\": null\n    },\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"MISMATCH\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획이 요구하는 3시간 만료 정책이 승인된 1시간 만료 정책과 모순됩니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"계획 또는 승인 정책을 정합성 있게 조정하세요.\",\n      \"policy_need_id\": \"need-invite-link-expiration\",\n      \"conflicting_design_refs\": []\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"need-invite-link-expiration\",\n      \"topic\": \"임시 초대 링크 만료 시간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"임시 초대 링크를 3시간 뒤 만료시킨다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"임시 초대 링크는 발급 후 1시간 뒤 만료된다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"계획의 3시간 만료 요구와 승인 내용의 발급 후 1시간 만료 정책이 모순됩니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "fresh_payment",
+      "split": "fresh_holdout",
+      "expectation": "EXPLICITLY_UNDECIDED",
+      "passed": true,
+      "detail": "expected=EXPLICITLY_UNDECIDED; states=['EXPLICITLY_UNDECIDED']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "MISSING_POLICY",
+              "severity": "BLOCKING",
+              "message": "결제 실패 시 적용할 재시도 정책이 미결정 상태입니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "suggested_action": "재시도 정책을 결정하고 승인된 내용에 반영하세요.",
+              "policy_need_id": "payment-retry-policy",
+              "conflicting_design_refs": []
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "payment-retry-policy",
+              "topic": "결제 실패 시 재시도 정책",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "결제 실패 시 재시도 정책을 적용한다."
+              },
+              "state": "EXPLICITLY_UNDECIDED",
+              "design_item_version_ids": [
+                "311"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "결제 실패 시 재시도 여부를 결정해야 한다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1"
+              ],
+              "explanation": "승인된 내용은 재시도 여부의 결정을 요구하지만, 원문 근거에는 결제 재시도 정책이 미결정이라고 명시되어 있습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168204-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 9515,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2307,
+            "output_tokens": 1087
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"MISSING_POLICY\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"결제 실패 시 적용할 재시도 정책이 미결정 상태입니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"suggested_action\": \"재시도 정책을 결정하고 승인된 내용에 반영하세요.\",\n      \"policy_need_id\": \"payment-retry-policy\",\n      \"conflicting_design_refs\": []\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"payment-retry-policy\",\n      \"topic\": \"결제 실패 시 재시도 정책\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"결제 실패 시 재시도 정책을 적용한다.\"\n      },\n      \"state\": \"EXPLICITLY_UNDECIDED\",\n      \"design_item_version_ids\": [\n        \"311\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"결제 실패 시 재시도 여부를 결정해야 한다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\"\n      ],\n      \"explanation\": \"승인된 내용은 재시도 여부의 결정을 요구하지만, 원문 근거에는 결제 재시도 정책이 미결정이라고 명시되어 있습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "fresh_returns_conflict",
+      "split": "fresh_holdout",
+      "expectation": "CONFLICT",
+      "passed": true,
+      "detail": "expected=CONFLICT; states=['CONTRADICTORY']; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "candidate-design-312",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "CONFLICT",
+              "severity": "BLOCKING",
+              "message": "반품 가능 기간 정책을 적용하는 계획과 관련된 승인 정책이 14일과 30일로 서로 다릅니다. 적용할 기간을 결정해야 합니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                },
+                {
+                  "document_id": "202",
+                  "document_version_id": "212",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1",
+                "policy-source-2"
+              ],
+              "suggested_action": "적용할 반품 가능 기간을 확정하고 승인 정책을 정합화하세요.",
+              "policy_need_id": "return-period-policy",
+              "conflicting_design_refs": [
+                {
+                  "design_item_id": "302",
+                  "design_item_version_id": "312",
+                  "evidence_ids": [
+                    "policy-source-2"
+                  ],
+                  "content_paths": [
+                    [
+                      "description"
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "return-period-policy",
+              "topic": "구매 상품의 반품 가능 기간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "구매 상품의 반품 가능 기간 정책을 적용한다."
+              },
+              "state": "CONTRADICTORY",
+              "design_item_version_ids": [
+                "311",
+                "312"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "상품 반품은 구매 후 14일 이내 가능하다."
+                },
+                {
+                  "design_item_version_id": "312",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "상품 반품은 구매 후 30일 이내 가능하다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1",
+                "policy-source-2"
+              ],
+              "explanation": "두 승인 정책이 동일한 반품 가능 기간에 대해 서로 다른 기간을 명시합니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168205-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 10827,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2553,
+            "output_tokens": 1180
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"candidate-design-312\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"CONFLICT\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"반품 가능 기간 정책을 적용하는 계획과 관련된 승인 정책이 14일과 30일로 서로 다릅니다. 적용할 기간을 결정해야 합니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        },\n        {\n          \"document_id\": \"202\",\n          \"document_version_id\": \"212\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"suggested_action\": \"적용할 반품 가능 기간을 확정하고 승인 정책을 정합화하세요.\",\n      \"policy_need_id\": \"return-period-policy\",\n      \"conflicting_design_refs\": [\n        {\n          \"design_item_id\": \"302\",\n          \"design_item_version_id\": \"312\",\n          \"evidence_ids\": [\n            \"policy-source-2\"\n          ],\n          \"content_paths\": [\n            [\n              \"description\"\n            ]\n          ]\n        }\n      ]\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"return-period-policy\",\n      \"topic\": \"구매 상품의 반품 가능 기간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"구매 상품의 반품 가능 기간 정책을 적용한다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\",\n        \"312\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"상품 반품은 구매 후 14일 이내 가능하다.\"\n        },\n        {\n          \"design_item_version_id\": \"312\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"상품 반품은 구매 후 30일 이내 가능하다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"explanation\": \"두 승인 정책이 동일한 반품 가능 기간에 대해 서로 다른 기간을 명시합니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "fresh_notification",
+      "split": "fresh_holdout",
+      "expectation": "INSUFFICIENT",
+      "passed": true,
+      "detail": "expected=INSUFFICIENT; states=['INSUFFICIENT']; policy_unassessed=True",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "PARTIAL",
+          "checked_keys": [],
+          "unassessed": [
+            {
+              "check_key": "plan-completeness",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획은 알림 수신 거부 기준 정책의 적용을 언급하지만, 제공된 승인 설계나 맥락 제약이 없어 완전성을 확인할 수 없습니다."
+            },
+            {
+              "check_key": "policy-gap-v1",
+              "reason": "EVIDENCE_INSUFFICIENT",
+              "message": "계획에서 정책 적용 필요성은 확인되지만, 구체적인 기준을 검증할 승인 설계나 증거가 제공되지 않았습니다."
+            }
+          ],
+          "findings": [],
+          "policy_assessments": [
+            {
+              "need_id": "notification-opt-out-criteria",
+              "topic": "알림 수신 거부 기준 정책 적용",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "알림 수신 거부 기준 정책을 적용한다."
+              },
+              "state": "INSUFFICIENT",
+              "design_item_version_ids": [],
+              "approved_content_refs": [],
+              "evidence_ids": [],
+              "explanation": "정책을 적용한다는 요구는 명시되어 있으나, 적용 기준을 확인할 승인 콘텐츠나 증거가 없습니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168206-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 9750,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2075,
+            "output_tokens": 1003
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"PARTIAL\",\n  \"checked_keys\": [],\n  \"unassessed\": [\n    {\n      \"check_key\": \"plan-completeness\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"계획은 알림 수신 거부 기준 정책의 적용을 언급하지만, 제공된 승인 설계나 맥락 제약이 없어 완전성을 확인할 수 없습니다.\"\n    },\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"reason\": \"EVIDENCE_INSUFFICIENT\",\n      \"message\": \"계획에서 정책 적용 필요성은 확인되지만, 구체적인 기준을 검증할 승인 설계나 증거가 제공되지 않았습니다.\"\n    }\n  ],\n  \"findings\": [],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"notification-opt-out-criteria\",\n      \"topic\": \"알림 수신 거부 기준 정책 적용\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"알림 수신 거부 기준 정책을 적용한다.\"\n      },\n      \"state\": \"INSUFFICIENT\",\n      \"design_item_version_ids\": [],\n      \"approved_content_refs\": [],\n      \"evidence_ids\": [],\n      \"explanation\": \"정책을 적용한다는 요구는 명시되어 있으나, 적용 기준을 확인할 승인 콘텐츠나 증거가 없습니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ]
+    },
+    {
+      "name": "fresh_comment_only",
+      "split": "fresh_holdout",
+      "expectation": "NO_REQUIREMENTS",
+      "passed": true,
+      "detail": "expected=NO_REQUIREMENTS; states=[]; policy_unassessed=False",
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [],
+          "policy_assessments": [],
+          "policy_assessments_truncated": false,
+          "no_policy_requirements_reason": "계획은 코드 주석의 맞춤법 수정만 다루며, 구현하거나 의존하는 정책 요구사항을 제시하지 않습니다.",
+          "no_policy_requirements_evidence": {
+            "field": "goal",
+            "quote": "코드 주석의 맞춤법만 고친다."
+          }
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793683895460168207-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 4827,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2131,
+            "output_tokens": 414
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [],\n  \"policy_assessments\": [],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": \"계획은 코드 주석의 맞춤법 수정만 다루며, 구현하거나 의존하는 정책 요구사항을 제시하지 않습니다.\",\n  \"no_policy_requirements_evidence\": {\n    \"field\": \"goal\",\n    \"index\": null,\n    \"quote\": \"코드 주석의 맞춤법만 고친다.\"\n  }\n}"
+      ]
+    }
+  ]
+}
