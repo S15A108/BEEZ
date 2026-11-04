@@ -165,7 +165,9 @@ class ProjectApiIntegrationTests extends IntegrationTestSupport {
         String path = "/api/projects/" + p.projectId() + "/onboarding";
 
         JsonNode empty = read(leader.get(path));
-        assertThat(empty.get("required_documents")).hasSize(4);
+        // 화면이 배열 순서대로 그린다 (명세 RequiredDocument.kind 순서)
+        assertThat(empty.get("required_documents").valueStream().map(n -> n.get("kind").asString()))
+                .containsExactly("PLAN", "ERD", "REQUIREMENTS", "API_SPEC");
         assertThat(requiredDocument(empty, "PLAN").get("uploaded").asBoolean()).isFalse();
         assertThat(empty.get("baseline_published").asBoolean()).isFalse();
         assertThat(empty.get("member_count").asInt()).isEqualTo(1);

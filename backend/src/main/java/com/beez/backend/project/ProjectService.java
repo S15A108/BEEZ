@@ -38,6 +38,10 @@ public class ProjectService {
 
     private static final DocumentKindMapper KINDS = new DocumentKindMapper();
 
+    /** PRJ-A06 required_documents 순서. 명세 RequiredDocument.kind 와 화면(WorkspaceHud)이 그리는 순서다 — enum 선언 순서와 다르다. */
+    static final List<DocumentKind> REQUIRED_KINDS =
+            List.of(DocumentKind.PLAN, DocumentKind.ERD, DocumentKind.REQUIREMENTS, DocumentKind.API_SPEC);
+
     private final ProjectAccessChecker access;
     private final ProjectRepository projects;
     private final ProjectMemberRepository members;
@@ -119,7 +123,7 @@ public class ProjectService {
                     ((Number) row.get("approved_count")).intValue() > 0);
         }
         List<OnboardingResponse.RequiredDocument> required = new ArrayList<>();
-        for (DocumentKind kind : DocumentKind.values()) {
+        for (DocumentKind kind : REQUIRED_KINDS) {
             required.add(new OnboardingResponse.RequiredDocument(kind, approvedByKind.containsKey(kind),
                     approvedByKind.getOrDefault(kind, false)));
         }
