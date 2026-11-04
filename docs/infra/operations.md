@@ -241,6 +241,22 @@ beez-deploy 고정 파이프라인(JCasC) ── 실패·중단·시간 초과 �
 
 주소가 샜으면 Mattermost에서 그 웹훅을 지우고 새로 만든 뒤 3번을 다시 합니다.
 
+### 2026-11-04 설치·확인
+
+채널은 `A108_github 알림`(비공개)입니다. 파이프라인은 이 문서와 같은 PR의 커밋 `833b0e1`로 반영했습니다
+(이전 설정은 `/var/backups/jenkins/jenkins.yaml.before-74-notify`).
+
+| 확인 | 결과 |
+|---|---|
+| 서버 파일 | `deploy-notify.sh` 755 root(저장소와 sha256 같음), `deploy-notify.curl` 640 root:jenkins, `www-data`는 못 읽음 |
+| 4번 시험 메시지 | `배포 실패 알림 보냄`, 채널 수신 |
+| Jenkins 재시작 | `fully up`, SEVERE·ConfiguratorException·unresolved 0건 |
+| #45 `GIT_SHA=1531d05…`(본줄기 아님) | `dev 본줄기(PR 머지 커밋)가 아니라 배포하지 않는다` → `배포 실패 알림 보냄` → FAILURE, 컨테이너·프론트 그대로(`5bf2381`) |
+| 콘솔에 웹훅 주소 | 0회 |
+
+배포 전 로컬 Jenkins(같은 버전·플러그인)에서는 SHA 형식 오류·본줄기 아님·Deploy 단계 실패·중단(ABORTED)
+네 경우 모두 알림이 가고 원래 결과가 유지되는 것을 확인했습니다.
+
 ## 7. 서비스별 실행 정보
 
 환경변수의 이름·필수 여부·빠졌을 때의 문구는 [환경변수와 비밀값](env.md#2-변수-목록)이 정본입니다.
