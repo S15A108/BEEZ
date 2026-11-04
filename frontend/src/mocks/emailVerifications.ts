@@ -3,13 +3,13 @@ import type { MockContext, MockReply } from './helpers'
 
 // 가입 이메일 인증(ACC-A11·A12)과 가입 때 토큰 소비(ACC-A01). 판정 순서와 오류 코드는 PR #114 EmailVerificationService와 같다.
 // 틀린 횟수는 오류 응답이어도 남아야 해서, 실패하면 되돌리는 예시 DB(state.ts) 대신 이 모듈에 둔다.
-// 명세가 정한 시간은 코드 5분뿐이다. 다시 받기 간격(Q04)과 토큰 유효 시간은 숫자가 없어 기존 목 값을 둔다(서버 기본값은 60초·30분).
+// 시간 값은 서버(PR #114 application.yml) 기본값과 같다. 다시 받기 60초는 명세 ACC-A11, 토큰 30분은 ACC-A12 응답 예시를 따른 값이다.
 export const CODE_TTL_MS = 5 * 60_000
-export const RESEND_INTERVAL_MS = 30_000
+export const RESEND_INTERVAL_MS = 60_000
 export const SEND_LIMIT = 5
 const SEND_LIMIT_WINDOW_MS = 60 * 60_000
 export const MAX_ATTEMPTS = 5
-export const TOKEN_TTL_MS = 10 * 60_000
+export const TOKEN_TTL_MS = 30 * 60_000
 
 interface Verification {
   id: string

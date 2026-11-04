@@ -13,7 +13,7 @@ import {
 } from './emailVerifications'
 import { DEMO_EMAIL, resetMockApi, setupMockApi } from './setup'
 
-// 목 규칙이 서버(PR #114 EmailVerificationService)와 같은지 본다. 다시 받기 30초·토큰 10분은 기존 목 값이다.
+// 목 규칙이 서버(PR #114 EmailVerificationService·application.yml)와 같은지 본다.
 let restore: () => void
 beforeEach(() => {
   Object.defineProperty(globalThis.crypto, 'subtle', {
@@ -52,7 +52,7 @@ const register = (email: string, verified_token: string) =>
   })
 
 describe('가입 인증 코드 보내기 (ACC-A11)', () => {
-  it('보내면 5분 뒤 만료와 30초 뒤 다시 받기 시각을 준다', async () => {
+  it('보내면 5분 뒤 만료와 60초 뒤 다시 받기 시각을 준다', async () => {
     const sent = await send('a@beez.local')
     // 서버처럼 순번이 아닌 32바이트 난수(base64url 43자)
     expect(sent.verification_id).toMatch(/^[\w-]{43}$/)
@@ -67,7 +67,7 @@ describe('가입 인증 코드 보내기 (ACC-A11)', () => {
     )
   })
 
-  it('30초 안에 다시 받으면 429 rate_limited이고 이전 코드는 그대로 쓸 수 있다', async () => {
+  it('60초 안에 다시 받으면 429 rate_limited이고 이전 코드는 그대로 쓸 수 있다', async () => {
     const first = await send('b@beez.local')
     later(RESEND_INTERVAL_MS - 1)
     expect(codeOf(await caught(send('b@beez.local')))).toBe('rate_limited')
@@ -137,7 +137,7 @@ describe('가입 인증 코드 확인 (ACC-A12)', () => {
     )
   })
 
-  it('토큰은 10분 동안 쓸 수 있다', async () => {
+  it('토큰은 30분 동안 쓸 수 있다', async () => {
     const { verification_id: id } = await send('f@beez.local')
     const result = await confirm(id, sentCode(id)!)
     expect(result.verified_token).toMatch(/^evt_/)
@@ -148,7 +148,7 @@ describe('가입 인증 코드 확인 (ACC-A12)', () => {
 })
 
 describe('회원가입 토큰 (ACC-A01)', () => {
-  it('토큰이 없거나 10분이 지났으면 400 email_not_verified', async () => {
+  it('토큰이 없거나 30분이 지났으면 400 email_not_verified', async () => {
     expect(codeOf(await caught(register('g@beez.local', '')))).toBe(
       'email_not_verified',
     )

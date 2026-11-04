@@ -65,7 +65,7 @@ describe('가입 이메일 인증 (목 모드)', () => {
       ),
     ).toBe('인증 시간이 지났어요. 코드를 다시 받아 주세요.')
     const second = await send('c@beez.local')
-    // 다시 받기는 30초 뒤부터 된다.
+    // 다시 받기는 60초 뒤부터 된다.
     vi.setSystemTime(CODE_TTL_MS + RESEND_INTERVAL_MS)
     await send('c@beez.local')
     await expect(
