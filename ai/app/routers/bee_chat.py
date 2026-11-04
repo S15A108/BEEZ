@@ -22,7 +22,13 @@ from app.core.config import Settings, get_settings
 from app.core.internal_auth import require_internal_token
 from app.core.openapi import inline_request_schema
 from app.schemas.bee_chat import BeeChatRequest, BeeInstanceRequest
-from app.services.bee_chat import LLMAnswerProposer, build_instance, generate_bee_chat
+from app.services.bee_chat import (
+    VERIFY_CALL_KEY_PREFIX,
+    LLMAnswerProposer,
+    LLMClaimVerifier,
+    build_instance,
+    generate_bee_chat,
+)
 from app.services.llm_client import (
     LLMClient,
     LLMContext,
@@ -32,6 +38,7 @@ from app.services.llm_client import (
 
 _GMS_CHAT = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions"
 _MESSAGE = "Bee request rejected."
+_VERIFICATION_MODES = frozenset({"entailment", "tokens"})
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +105,9 @@ class BeeChatConfig:
     timeout_seconds: float
     output_token_limit: int
     output_token_parameter: str
+    # "entailment": a second model call judges every sentence against its
+    # quotes; "tokens": the deterministic citation and fact checks only.
+    claim_verification: str
 
 
 def require_bee_chat_config(
@@ -111,7 +121,8 @@ def require_bee_chat_config(
         timeout_seconds = float(settings.bee_chat_llm_timeout_seconds)
         output_token_limit = int(settings.bee_chat_llm_output_token_limit)
         output_token_parameter = settings.bee_chat_llm_output_token_parameter
-    except (TypeError, ValueError, OverflowError):
+        claim_verification = settings.bee_chat_claim_verification.strip().lower()
+    except (TypeError, ValueError, OverflowError, AttributeError):
         raise HTTPException(503, detail="bee_chat_not_configured") from None
     if (
         not 1024 <= max_body_bytes <= 4_194_304
@@ -119,10 +130,15 @@ def require_bee_chat_config(
         or not 0 < timeout_seconds <= 120
         or not 1 <= output_token_limit <= 4096
         or output_token_parameter not in {"max_completion_tokens", "max_tokens"}
+        or claim_verification not in _VERIFICATION_MODES
     ):
         raise HTTPException(503, detail="bee_chat_not_configured")
     return BeeChatConfig(
-        max_body_bytes, timeout_seconds, output_token_limit, output_token_parameter
+        max_body_bytes,
+        timeout_seconds,
+        output_token_limit,
+        output_token_parameter,
+        claim_verification,
     )
 
 
@@ -199,14 +215,13 @@ async def answer_bee_question(
     config: Annotated[BeeChatConfig, Depends(require_bee_chat_config)],
 ):
     body = await _read_body(request, config.max_body_bytes, BeeChatRequest)
+    context = LLMContext(
+        project_id=body.project_id, feature="BEE_CHAT", request_key=body.request_key
+    )
     async with get_bee_chat_client(settings) as client:
         proposer = LLMAnswerProposer(
             client,
-            context=LLMContext(
-                project_id=body.project_id,
-                feature="BEE_CHAT",
-                request_key=body.request_key,
-            ),
+            context=context,
             model=settings.bee_default_model,
             # A fresh key per actual model call, even when the BE retries.
             call_key=f"llm-bee-chat-{uuid4()}",
@@ -214,5 +229,16 @@ async def answer_bee_question(
             output_token_limit=config.output_token_limit,
             output_token_parameter=config.output_token_parameter,
         )
-        outcome = await generate_bee_chat(body, proposer)
+        verifier = None
+        if config.claim_verification == "entailment":
+            verifier = LLMClaimVerifier(
+                client,
+                context=context,
+                model=settings.bee_default_model,
+                call_key=f"{VERIFY_CALL_KEY_PREFIX}{uuid4()}",
+                timeout_seconds=config.timeout_seconds,
+                output_token_limit=min(config.output_token_limit, 1024),
+                output_token_parameter=config.output_token_parameter,
+            )
+        outcome = await generate_bee_chat(body, proposer, verifier)
     return outcome.to_api_dict()

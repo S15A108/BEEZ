@@ -5,11 +5,13 @@ the search results, the approved items and the related tasks. Every citation
 is checked against its evidence text, every item and task reference against
 the input, and every checkable fact in each sentence of the answer (numbers,
 keys, paths, identifiers, codes) against the quotes that sentence cites and
-the items and tasks the answer references. A citation the evidence does not
-hold, or a fact nothing cited supports, rejects the whole output; an answer
-that names no grounding at all is replaced by the fixed "not found" text
-instead of being shown as a guess. Nothing is stored and nothing is decided
-here.
+the items and tasks the answer references. With a claim verifier, a second
+model call then judges each sentence against those quotes, which is what
+catches a flipped subject or negation that keeps every token. A citation the
+evidence does not hold, a fact nothing cited supports or a sentence the judge
+calls unsupported rejects the whole output; an answer that names no
+grounding at all is replaced by the fixed "not found" text instead of being
+shown as a guess. Nothing is stored and nothing is decided here.
 """
 
 import json
@@ -27,6 +29,7 @@ from app.schemas.bee_chat import (
     BeeChatRequest,
     BeeChatResult,
     BeeCitation,
+    ClaimVerification,
     DesignItemRef,
     InstanceEcho,
     RelatedTask,
@@ -37,8 +40,15 @@ from app.schemas.bee_chat import (
 )
 from app.schemas.design_drafts import ItemSource
 from app.services.bee_chat.instance import render_system_prompt
-from app.services.bee_chat.proposer import AnswerProposal, AnswerProposer
-from app.services.llm_client import LLMUsage
+from app.services.bee_chat.proposer import (
+    AnswerProposal,
+    AnswerProposer,
+    Claim,
+    ClaimVerdicts,
+    ClaimVerifier,
+    mark_last_failed,
+)
+from app.services.llm_client import LLMError, LLMUsage
 from app.services.planning_questions.rules import clip
 
 # Fixed texts: the screen shows these instead of a guess (BEE-A01 수정안).
@@ -91,14 +101,23 @@ class AnswerRejected(ValueError):
     """The model output contradicts the supplied inputs.
 
     Unknown ids, a quote the evidence does not hold, a `[n]` outside 1..k,
-    a fact nothing cited supports or a blank ANSWERED text: the answer
-    cannot be shown and the caller may retry with a fresh request key.
+    a fact nothing cited supports, a sentence the judge calls unsupported or
+    a blank ANSWERED text: the answer cannot be shown and the caller may
+    retry with a fresh request key.
     """
+
+
+class VerdictsRejected(ValueError):
+    """The judge did not return exactly one verdict per claim."""
 
 
 @dataclass(frozen=True, slots=True)
 class BeeChatOutcome:
-    """Result plus the common internal envelope fields (origin, model, usage)."""
+    """Result plus the common internal envelope fields (origin, model, usage).
+
+    `usage` holds the answer call first and, when a verifier ran, the judge
+    call after it.
+    """
 
     result: BeeChatResult
     origin: Literal["MODEL"]
@@ -252,7 +271,9 @@ def verify_answer(
     keeps no citation, approved item or related task is not shown: it
     becomes INSUFFICIENT_EVIDENCE with the fixed text. For the two
     non-answer statuses the model's text, citations and references are not
-    used at all; only its unresolved and next_actions are.
+    used at all; only its unresolved and next_actions are. The result's
+    verification level is TOKENS; `generate_bee_chat` raises it to
+    ENTAILMENT after the judge call.
     """
     answer = proposal.answer
     by_evidence = {item.evidence_id: item for item in evidence}
@@ -387,6 +408,7 @@ def verify_answer(
             f"검색 결과 {omitted}건은 상한({request.max_evidence}건)으로 모델에 "
             "전달하지 않았습니다."
         )
+    answered = status == "ANSWERED"
     return BeeChatResult(
         answer_status=status,
         grounded=bool(citations or design_refs or task_refs),
@@ -411,13 +433,64 @@ def verify_answer(
             profile_version=request.instance.profile_version,
             system_prompt_hash=prompt_hash(render_system_prompt()),
         ),
+        verification=ClaimVerification(
+            level="TOKENS" if answered else "NONE",
+            claims=len(claim_segments(text)) if answered else 0,
+        ),
     )
 
 
+def claims_from(result: BeeChatResult, request: BeeChatRequest) -> list[Claim]:
+    """One claim per sentence of the verified answer, with what may support it.
+
+    A sentence with `[n]` markers gets the quotes of those citations; a
+    sentence without markers gets every quote of the answer. Every sentence
+    also gets the referenced approved items and related tasks, since those
+    are referenced by the answer as a whole.
+    """
+    by_item = {item.id: item for item in request.approved_items}
+    by_task = {task.id: task for task in request.related_tasks}
+    shared = [
+        part
+        for part in reference_support(
+            [by_item[ref.design_item_version_id] for ref in result.design_refs],
+            [by_task[ref.task_id] for ref in result.task_refs],
+        )
+        if part.strip()
+    ]
+    all_quotes = [cited.quote for cited in result.citations]
+    claims: list[Claim] = []
+    for segment, markers in claim_segments(result.text):
+        # Markers go with their leading space, so "413입니다 [1]." stays "…413입니다."
+        text = " ".join(renumber_markers(segment, {}).split())
+        if not text:
+            continue
+        own = [result.citations[number - 1].quote for number in dict.fromkeys(markers)]
+        support = tuple(dict.fromkeys([*(own or all_quotes), *shared]))
+        claims.append(Claim(index=len(claims) + 1, text=text, support=support))
+    return claims
+
+
+def check_verdicts(claims: Sequence[Claim], verdicts: ClaimVerdicts) -> None:
+    """Exactly one verdict per claim, and none of them NOT_SUPPORTED."""
+    indexes = [verdict.index for verdict in verdicts.verdicts]
+    if sorted(indexes) != list(range(1, len(claims) + 1)):
+        raise VerdictsRejected("verdicts do not cover the claims once each")
+    if any(verdict.verdict == "NOT_SUPPORTED" for verdict in verdicts.verdicts):
+        raise AnswerRejected("claim not supported by its citations")
+
+
 async def generate_bee_chat(
-    request: BeeChatRequest, proposer: AnswerProposer
+    request: BeeChatRequest,
+    proposer: AnswerProposer,
+    verifier: ClaimVerifier | None = None,
 ) -> BeeChatOutcome:
-    """Select, propose, verify; raise LLM errors as is."""
+    """Select, propose, verify, and with a verifier judge; raise LLM errors as is.
+
+    The usage of both calls is kept in order. A judge verdict of
+    NOT_SUPPORTED rejects the answer and marks the answer call failed; a
+    judge output that does not cover the claims marks the judge call failed.
+    """
     evidence, omitted = select_evidence(request)
     proposal = await proposer.propose(request, evidence)
     try:
@@ -425,4 +498,28 @@ async def generate_bee_chat(
     except (AnswerRejected, ValidationError):
         # The model contradicted the inputs: keep the real usage, mark it failed.
         raise proposal.invalid_output_error() from None
-    return BeeChatOutcome(result, "MODEL", proposal.model, proposal.usage)
+    usage = proposal.usage
+    if verifier is not None and result.answer_status == "ANSWERED":
+        claims = claims_from(result, request)
+        try:
+            verdicts = await verifier.verify(request.question, claims)
+        except LLMError as error:
+            # The answer call happened and must stay on record before the judge's.
+            raise LLMError(error.code, (*proposal.usage, *error.usage)) from None
+        try:
+            check_verdicts(claims, verdicts)
+        except VerdictsRejected:
+            raise verdicts.invalid_output_error(proposal.usage) from None
+        except AnswerRejected:
+            raise LLMError(
+                "invalid_output", (*mark_last_failed(proposal.usage), *verdicts.usage)
+            ) from None
+        result = result.model_copy(
+            update={
+                "verification": ClaimVerification(
+                    level="ENTAILMENT", claims=len(claims), model=verdicts.model
+                )
+            }
+        )
+        usage = (*proposal.usage, *verdicts.usage)
+    return BeeChatOutcome(result, "MODEL", proposal.model, usage)

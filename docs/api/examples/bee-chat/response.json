@@ -102,6 +102,11 @@
     "instance": {
       "profile_version": "bee-v1",
       "system_prompt_hash": "a629f4e7b66c8a8a4e88952db002f219c24850f47ae278bd144105a0017209bd"
+    },
+    "verification": {
+      "level": "ENTAILMENT",
+      "claims": 3,
+      "model": "gpt-6-luna"
     }
   },
   "origin": "MODEL",
@@ -116,6 +121,16 @@
       "tokens_known": true,
       "input_tokens": 1800,
       "output_tokens": 320
+    },
+    {
+      "request_key": "llm-bee-verify-00000000-0000-4000-8000-000000000135",
+      "feature": "BEE_CHAT",
+      "model": "gpt-6-luna",
+      "latency_ms": 0,
+      "failed": false,
+      "tokens_known": true,
+      "input_tokens": 640,
+      "output_tokens": 90
     }
   ]
 }

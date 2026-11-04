@@ -11,6 +11,7 @@ from app.schemas.bee_chat import (
     BeeChatResult,
     BeeCitation,
     BeeInstance,
+    ClaimVerification,
     DesignItemRef,
     ProjectProfile,
     RelatedTask,
@@ -102,9 +103,13 @@ def result(**overrides) -> BeeChatResult:
         "embedding_profile_id": PROFILE,
         "evidence_considered": 1,
         "evidence_omitted": 0,
+        "verification": ClaimVerification(level="TOKENS", claims=1),
     }
     fields.update(overrides)
     return BeeChatResult(**fields)
+
+
+NONE = ClaimVerification(level="NONE", claims=0)
 
 
 def test_scope_requires_a_baseline_only_for_approved():
@@ -183,6 +188,21 @@ def test_approved_items_must_be_approved_and_well_formed():
     assert approved.content.extra_fields()["note"] is None
 
 
+def test_approved_items_keep_sources_from_older_document_versions():
+    # PR #96 P2 (3rd round): the BE preserves an item's immutable source even
+    # when the baseline now holds a newer version of that document.
+    older = item(
+        source={
+            "document_id": "301",
+            "document_version_id": "310",
+            "version_no": 1,
+            "location": "L11-L11",
+        }
+    )
+    body = from_json(BeeChatRequest, request(approved_items=[older]))
+    assert body.approved_items[0].source.document_version_id == "310"
+
+
 def test_related_task_reads_a_full_task_detail_and_ignores_extras():
     task = from_json(
         RelatedTask,
@@ -223,102 +243,6 @@ def test_related_task_reads_a_full_task_detail_and_ignores_extras():
         from_json(RelatedTask, {"id": "501", "key": "TASK-001", "status": "OPEN"})
 
 
-def test_result_grounding_invariants():
-    assert result().grounded
-    with pytest.raises(ValidationError):
-        result(grounded=False)
-    with pytest.raises(ValidationError):
-        result(text="한도는 30 MB입니다 [2].")
-    with pytest.raises(ValidationError):
-        result(text="한도는 30 MB입니다 [0].")
-    with pytest.raises(ValidationError):
-        result(text="한도는 30 MB입니다 [100].")
-    with pytest.raises(ValidationError):
-        result(citations=(citation(n=2),))
-    with pytest.raises(ValidationError):
-        result(citations=(citation(), citation(n=2)))
-    with pytest.raises(ValidationError):
-        result(answer_status="INSUFFICIENT_EVIDENCE")
-    with pytest.raises(ValidationError):
-        result(citations=(citation(document_version_id="999"),))
-    ungrounded = result(
-        answer_status="INSUFFICIENT_EVIDENCE",
-        grounded=False,
-        text="찾지 못했어요.",
-        citations=(),
-    )
-    assert not ungrounded.grounded
-    with pytest.raises(ValidationError):
-        result(
-            answer_status="INSUFFICIENT_EVIDENCE",
-            grounded=False,
-            text="찾지 못했어요.",
-            citations=(),
-            task_refs=(TaskRef(task_id="501", key="TASK-001", status="READY"),),
-        )
-    by_task = result(
-        citations=(),
-        task_refs=(TaskRef(task_id="501", key="TASK-001", status="READY"),),
-        text="TASK-001은 READY입니다.",
-    )
-    assert by_task.grounded and not by_task.citations
-    by_item = result(
-        citations=(),
-        design_refs=(
-            DesignItemRef(
-                design_item_id="1001",
-                design_item_version_id="1101",
-                key="PLN-001",
-                kind="POLICY",
-                version_no=1,
-            ),
-        ),
-        text="발행은 리더만 합니다.",
-    )
-    assert by_item.grounded and not by_item.citations
-
-
-def test_history_takes_a_full_answer_but_a_user_turn_only_a_question():
-    # PR #96 P2: a 2,243-char answer this route returned must be accepted
-    # back as BEE history; a user turn stays within the question bound.
-    long_answer = "가" * 2243
-    body = from_json(
-        BeeChatRequest,
-        request(
-            history=[
-                {"role": "USER", "text": "이전 질문"},
-                {"role": "BEE", "text": long_answer},
-            ]
-        ),
-    )
-    assert body.history[1].text == long_answer
-    with pytest.raises(ValidationError):
-        from_json(
-            BeeChatRequest, request(history=[{"role": "USER", "text": long_answer}])
-        )
-    with pytest.raises(ValidationError):
-        from_json(
-            BeeChatRequest, request(history=[{"role": "BEE", "text": "가" * 10_001}])
-        )
-    with pytest.raises(ValidationError):
-        from_json(BeeChatRequest, request(history=[{"role": "BEE", "text": "  "}]))
-
-
-def test_approved_items_keep_sources_from_older_document_versions():
-    # PR #96 P2 (3rd round): the BE preserves an item's immutable source even
-    # when the baseline now holds a newer version of that document.
-    older = item(
-        source={
-            "document_id": "301",
-            "document_version_id": "310",
-            "version_no": 1,
-            "location": "L11-L11",
-        }
-    )
-    body = from_json(BeeChatRequest, request(approved_items=[older]))
-    assert body.approved_items[0].source.document_version_id == "310"
-
-
 def test_task_plan_texts_take_the_backend_length():
     # PR #96 P2/P3 (3rd, 4th round): the BE bounds a plan goal only as
     # non-blank, so no length on this side either.
@@ -347,6 +271,89 @@ def test_task_plan_texts_take_the_backend_length():
         )
 
 
+def test_history_takes_a_full_answer_but_a_user_turn_only_a_question():
+    # PR #96 P2: a 2,243-char answer this route returned must be accepted
+    # back as BEE history; a user turn stays within the question bound.
+    long_answer = "가" * 2243
+    body = from_json(
+        BeeChatRequest,
+        request(
+            history=[
+                {"role": "USER", "text": "이전 질문"},
+                {"role": "BEE", "text": long_answer},
+            ]
+        ),
+    )
+    assert body.history[1].text == long_answer
+    with pytest.raises(ValidationError):
+        from_json(
+            BeeChatRequest, request(history=[{"role": "USER", "text": long_answer}])
+        )
+    with pytest.raises(ValidationError):
+        from_json(
+            BeeChatRequest, request(history=[{"role": "BEE", "text": "가" * 10_001}])
+        )
+    with pytest.raises(ValidationError):
+        from_json(BeeChatRequest, request(history=[{"role": "BEE", "text": "  "}]))
+
+
+def test_result_grounding_invariants():
+    assert result().grounded
+    with pytest.raises(ValidationError):
+        result(grounded=False)
+    with pytest.raises(ValidationError):
+        result(text="한도는 30 MB입니다 [2].")
+    with pytest.raises(ValidationError):
+        result(text="한도는 30 MB입니다 [0].")
+    with pytest.raises(ValidationError):
+        result(text="한도는 30 MB입니다 [100].")
+    with pytest.raises(ValidationError):
+        result(citations=(citation(n=2),))
+    with pytest.raises(ValidationError):
+        result(citations=(citation(), citation(n=2)))
+    with pytest.raises(ValidationError):
+        result(answer_status="INSUFFICIENT_EVIDENCE")
+    with pytest.raises(ValidationError):
+        result(citations=(citation(document_version_id="999"),))
+    ungrounded = result(
+        answer_status="INSUFFICIENT_EVIDENCE",
+        grounded=False,
+        text="찾지 못했어요.",
+        citations=(),
+        verification=NONE,
+    )
+    assert not ungrounded.grounded
+    with pytest.raises(ValidationError):
+        result(
+            answer_status="INSUFFICIENT_EVIDENCE",
+            grounded=False,
+            text="찾지 못했어요.",
+            citations=(),
+            verification=NONE,
+            task_refs=(TaskRef(task_id="501", key="TASK-001", status="READY"),),
+        )
+    by_task = result(
+        citations=(),
+        task_refs=(TaskRef(task_id="501", key="TASK-001", status="READY"),),
+        text="TASK-001은 READY입니다.",
+    )
+    assert by_task.grounded and not by_task.citations
+    by_item = result(
+        citations=(),
+        design_refs=(
+            DesignItemRef(
+                design_item_id="1001",
+                design_item_version_id="1101",
+                key="PLN-001",
+                kind="POLICY",
+                version_no=1,
+            ),
+        ),
+        text="발행은 리더만 합니다.",
+    )
+    assert by_item.grounded and not by_item.citations
+
+
 def test_result_sources_stay_inside_the_scope():
     with pytest.raises(ValidationError):
         result(
@@ -358,6 +365,31 @@ def test_result_sources_stay_inside_the_scope():
                     location="L1-L1",
                 ),
             )
+        )
+
+
+def test_verification_level_follows_the_answer_and_names_the_judge():
+    # PR #96 P1 (7th round): the level says how far the wording was checked.
+    assert (
+        ClaimVerification(level="ENTAILMENT", claims=2, model="gpt-6-luna").claims == 2
+    )
+    with pytest.raises(ValidationError):
+        ClaimVerification(level="ENTAILMENT", claims=2)
+    with pytest.raises(ValidationError):
+        ClaimVerification(level="TOKENS", claims=1, model="gpt-6-luna")
+    with pytest.raises(ValidationError):
+        ClaimVerification(level="NONE", claims=1)
+    with pytest.raises(ValidationError):
+        ClaimVerification(level="TOKENS", claims=0)
+    with pytest.raises(ValidationError):
+        result(verification=NONE)
+    with pytest.raises(ValidationError):
+        result(
+            answer_status="OUT_OF_SCOPE",
+            grounded=False,
+            text="범위 밖입니다.",
+            citations=(),
+            verification=ClaimVerification(level="TOKENS", claims=1),
         )
 
 

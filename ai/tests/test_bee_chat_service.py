@@ -10,11 +10,16 @@ from app.services.bee_chat import (
     OUT_OF_SCOPE_TEXT,
     REVIEW_NOTICE,
     UNGROUNDED_NOTE,
+    VERIFY_CALL_KEY_PREFIX,
     AnswerProposal,
+    ClaimVerdicts,
     LLMAnswerProposer,
+    LLMClaimVerifier,
     ModelAnswer,
+    ModelVerdict,
     build_instance,
     claim_segments,
+    claims_from,
     clip_text,
     fact_tokens,
     generate_bee_chat,
@@ -122,6 +127,18 @@ def answer(**overrides) -> dict:
     return fields
 
 
+def usage(key: str) -> LLMUsage:
+    return LLMUsage(
+        request_key=key,
+        feature="BEE_CHAT",
+        project_id="101",
+        model="fake",
+        latency_ms=1,
+        failed=False,
+        tokens_known=False,
+    )
+
+
 class Scripted:
     def __init__(self, raw: dict) -> None:
         self.raw = raw
@@ -129,27 +146,48 @@ class Scripted:
 
     async def propose(self, request, evidence):
         self.seen = (request, evidence)
-        usage = LLMUsage(
-            request_key="k",
-            feature="BEE_CHAT",
-            project_id="101",
-            model="fake",
-            latency_ms=1,
-            failed=False,
-            tokens_known=False,
+        return AnswerProposal(
+            ModelAnswer.model_validate(self.raw), "fake", (usage("answer"),)
         )
-        return AnswerProposal(ModelAnswer.model_validate(self.raw), "fake", (usage,))
 
 
-async def run(raw: dict, **overrides):
-    return await generate_bee_chat(request(**overrides), Scripted(raw))
+class Judge:
+    """A scripted judge: NOT_SUPPORTED for claims holding a flagged text."""
+
+    def __init__(self, flagged=(), *, raw=None, failure=None) -> None:
+        self.flagged = tuple(flagged)
+        self.raw = raw
+        self.failure = failure
+        self.seen = None
+
+    async def verify(self, question, claims):
+        self.seen = (question, claims)
+        if self.failure is not None:
+            raise self.failure
+        if self.raw is not None:
+            verdicts = [ModelVerdict.model_validate(item) for item in self.raw]
+        else:
+            verdicts = [
+                ModelVerdict(
+                    index=claim.index,
+                    verdict="NOT_SUPPORTED"
+                    if any(flag in claim.text for flag in self.flagged)
+                    else "SUPPORTED",
+                )
+                for claim in claims
+            ]
+        return ClaimVerdicts(tuple(verdicts), "judge", (usage("verify"),))
 
 
-async def rejected(raw: dict, **overrides) -> LLMError:
+async def run(raw: dict, verifier=None, **overrides):
+    return await generate_bee_chat(request(**overrides), Scripted(raw), verifier)
+
+
+async def rejected(raw: dict, verifier=None, **overrides) -> LLMError:
     with pytest.raises(LLMError) as info:
-        await run(raw, **overrides)
+        await run(raw, verifier, **overrides)
     error = info.value
-    assert error.code == "invalid_output" and error.usage[-1].failed
+    assert error.code == "invalid_output"
     assert error.to_api_dict()["error"]["code"] == "model_unavailable"
     return error
 
@@ -267,6 +305,13 @@ async def test_verified_citations_are_numbered_and_repeats_share_a_number():
     assert result.citations[0].claim is None
     assert [s.location for s in result.sources] == ["파일 크기 / L3-L3", "L11-L11"]
     assert result.evidence_considered == 2 and result.evidence_omitted == 0
+    # Without a verifier the wording was checked by the deterministic rules only.
+    assert result.verification.model_dump() == {
+        "level": "TOKENS",
+        "claims": 1,
+        "model": None,
+    }
+    assert [u.request_key for u in outcome.usage] == ["answer"]
     assert (
         result.instance.system_prompt_hash
         == build_instance(
@@ -275,6 +320,129 @@ async def test_verified_citations_are_numbered_and_repeats_share_a_number():
             )
         ).system_prompt_hash
     )
+
+
+@pytest.mark.asyncio
+async def test_the_judge_rejects_a_sentence_its_quotes_do_not_support():
+    # PR #96 P1 (7th round): every token matches, the subject is flipped.
+    flipped = answer(
+        text="누구나 발행할 수 있습니다 [1].",
+        citations=[{"evidence_id": "ev-2", "quote": PUBLISH}],
+    )
+    error = await rejected(flipped, Judge(flagged=["누구나"]))
+    # The answer call is the failed one; the judge's call is kept after it.
+    assert [(u.request_key, u.failed) for u in error.usage] == [
+        ("answer", True),
+        ("verify", False),
+    ]
+    assert "누구나" not in json.dumps(error.to_api_dict(), ensure_ascii=False)
+    # The same answer passes when the judge agrees, and the level says so.
+    judge = Judge()
+    outcome = await run(
+        answer(
+            text="발행은 리더만 할 수 있습니다 [1].",
+            citations=[{"evidence_id": "ev-2", "quote": PUBLISH}],
+        ),
+        judge,
+    )
+    assert outcome.result.verification.model_dump() == {
+        "level": "ENTAILMENT",
+        "claims": 1,
+        "model": "judge",
+    }
+    assert [u.request_key for u in outcome.usage] == ["answer", "verify"]
+    question, claims = judge.seen
+    assert question == "파일 한도는 얼마인가요?"
+    assert [(c.index, c.text, c.support) for c in claims] == [
+        (1, "발행은 리더만 할 수 있습니다.", (PUBLISH,))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_claims_give_each_sentence_its_own_quotes_and_the_shared_references():
+    raw = answer(
+        text=(
+            "한도는 30 MB입니다 [1]. 발행은 리더만 합니다 [2]. "
+            "둘 다 승인 설계 PLN-001과 TASK-001에 걸려 있습니다."
+        ),
+        citations=[
+            {"evidence_id": "ev-1", "quote": LIMIT},
+            {"evidence_id": "ev-2", "quote": PUBLISH},
+        ],
+        design_refs=["1101"],
+        task_refs=["501"],
+    )
+    judge = Judge()
+    result = (await run(raw, judge)).result
+    assert result.verification.claims == 3
+    claims = claims_from(result, request())
+    assert [c.text for c in claims] == [
+        "한도는 30 MB입니다.",
+        "발행은 리더만 합니다.",
+        "둘 다 승인 설계 PLN-001과 TASK-001에 걸려 있습니다.",
+    ]
+    shared = (
+        "PLN-001",
+        "POLICY",
+        '{"description": "발행은 리더만 수행한다."}',
+        "TASK-001",
+        "READY",
+        "21",
+    )
+    assert claims[0].support == (LIMIT, *shared)
+    assert claims[1].support == (PUBLISH, *shared)
+    # A sentence without markers may lean on any quote of the answer.
+    assert claims[2].support == (LIMIT, PUBLISH, *shared)
+    assert judge.seen[1] == claims
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_or_failing_judge_keeps_both_calls_on_record():
+    # Missing or duplicated verdicts are the judge's fault.
+    error = await rejected(answer(), Judge(raw=[]))
+    assert [(u.request_key, u.failed) for u in error.usage] == [
+        ("answer", False),
+        ("verify", True),
+    ]
+    error = await rejected(
+        answer(),
+        Judge(
+            raw=[
+                {"index": 1, "verdict": "SUPPORTED"},
+                {"index": 1, "verdict": "SUPPORTED"},
+            ]
+        ),
+    )
+    assert error.usage[-1].failed
+    # A judge call that fails outright reports its own error with both usages.
+    with pytest.raises(LLMError) as info:
+        await run(
+            answer(), Judge(failure=LLMError("model_timeout", (usage("verify"),)))
+        )
+    assert info.value.code == "model_timeout"
+    assert [u.request_key for u in info.value.usage] == ["answer", "verify"]
+    # NOT_A_CLAIM is fine: a guidance sentence is not a fact.
+    outcome = await run(
+        answer(text="한도는 30 MB입니다 [1]. 자세한 내용은 문서를 확인하세요."),
+        Judge(
+            raw=[
+                {"index": 1, "verdict": "SUPPORTED"},
+                {"index": 2, "verdict": "NOT_A_CLAIM"},
+            ]
+        ),
+    )
+    assert outcome.result.verification.level == "ENTAILMENT"
+    # Non-answers never reach the judge.
+    judge = Judge(flagged=["아무"])
+    withheld = (
+        await run(answer(text="한도는 30 MB입니다.", citations=[]), judge)
+    ).result
+    assert withheld.answer_status == "INSUFFICIENT_EVIDENCE" and judge.seen is None
+    assert withheld.verification.model_dump() == {
+        "level": "NONE",
+        "claims": 0,
+        "model": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -289,6 +457,7 @@ async def test_a_quote_the_evidence_does_not_hold_rejects_the_whole_answer():
         ],
     )
     error = await rejected(raw)
+    assert error.usage[-1].failed
     assert "50 MB" not in json.dumps(error.to_api_dict(), ensure_ascii=False)
     await rejected(answer(citations=[{"evidence_id": "ev-1", "quote": "   "}]))
     # A marker that names no citation is the same kind of claim without a
@@ -478,6 +647,7 @@ async def test_an_answer_that_names_no_grounding_is_withheld():
     assert result.citations == () and result.sources == ()
     assert result.unresolved == ("단위가 MiB인지 불명확", UNGROUNDED_NOTE)
     assert result.next_actions == ("요구사항 담당에게 확인",)
+    assert result.verification.level == "NONE"
     assert "30 MB" not in json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
 
@@ -589,6 +759,17 @@ def proposer(provider, **overrides) -> LLMAnswerProposer:
     return LLMAnswerProposer(LLMClient(provider), **fields)
 
 
+def verifier(provider, **overrides) -> LLMClaimVerifier:
+    fields = {
+        "context": LLMContext(project_id="101", feature="BEE_CHAT", request_key="r"),
+        "model": "gpt-6-luna",
+        "call_key": f"{VERIFY_CALL_KEY_PREFIX}1",
+        "timeout_seconds": 5,
+    }
+    fields.update(overrides)
+    return LLMClaimVerifier(LLMClient(provider), **fields)
+
+
 @pytest.mark.asyncio
 async def test_llm_proposer_sends_project_tasks_and_history_as_data():
     provider = FakeProvider(json.dumps(answer(), ensure_ascii=False))
@@ -641,6 +822,75 @@ async def test_llm_proposer_sends_project_tasks_and_history_as_data():
     assert task["plan"]["title"] == "업로드 화면"
     assert task["plan"]["goal"] == "목" * 1999 + "…"
     assert sent.response_format == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_llm_verifier_sends_sentences_with_their_quotes_only():
+    class TwoCalls:
+        def __init__(self) -> None:
+            self.requests = []
+
+        async def complete(self, request, *, timeout_seconds):
+            self.requests.append(request)
+            if request.call_keys[0].startswith(VERIFY_CALL_KEY_PREFIX):
+                content = json.dumps(
+                    {
+                        "verdicts": [
+                            {"index": 1, "verdict": "SUPPORTED", "reason": "일치"}
+                        ]
+                    }
+                )
+            else:
+                content = json.dumps(answer(), ensure_ascii=False)
+            return ProviderResponse(content, "gpt-6-luna", 10, 5)
+
+    provider = TwoCalls()
+    outcome = await generate_bee_chat(request(), proposer(provider), verifier(provider))
+    assert outcome.result.verification.model_dump() == {
+        "level": "ENTAILMENT",
+        "claims": 1,
+        "model": "gpt-6-luna",
+    }
+    assert [u.request_key for u in outcome.usage] == [
+        "llm-bee-chat-1",
+        "llm-bee-verify-1",
+    ]
+    judge_call = provider.requests[1]
+    assert "검증자" in judge_call.messages[0].content
+    payload = json.loads(judge_call.messages[1].content)
+    assert payload == {
+        "question": "파일 한도는 얼마인가요?",
+        "claims": [
+            {
+                "index": 1,
+                "text": "한도는 30 MB이고 초과하면 413입니다.",
+                "support": [LIMIT],
+            }
+        ],
+    }
+    # The evidence chunks themselves are never sent to the judge.
+    assert PUBLISH not in judge_call.messages[1].content
+    assert judge_call.response_format == {"type": "json_object"}
+
+    # A judge output that is not the verdict shape marks the judge call failed.
+    class BadJudge(TwoCalls):
+        async def complete(self, request, *, timeout_seconds):
+            if request.call_keys[0].startswith(VERIFY_CALL_KEY_PREFIX):
+                return ProviderResponse('{"verdicts": "yes"}', "gpt-6-luna", 10, 5)
+            return await super().complete(request, timeout_seconds=timeout_seconds)
+
+    bad = BadJudge()
+    with pytest.raises(LLMError) as info:
+        await generate_bee_chat(request(), proposer(bad), verifier(bad))
+    assert info.value.code == "invalid_output"
+    assert [(u.request_key, u.failed) for u in info.value.usage] == [
+        ("llm-bee-chat-1", False),
+        ("llm-bee-verify-1", True),
+    ]
+    # The verifier insists on its call key prefix and on claims to judge.
+    with pytest.raises(LLMError) as info:
+        await verifier(provider, call_key="llm-bee-chat-9").verify("q", [])
+    assert info.value.code == "invalid_input"
 
 
 @pytest.mark.asyncio

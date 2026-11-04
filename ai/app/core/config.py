@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     bee_chat_llm_timeout_seconds: str = "30"
     bee_chat_llm_output_token_limit: str = "2048"
     bee_chat_llm_output_token_parameter: str = "max_completion_tokens"
+    # "entailment": a second, smaller model call judges every answer
+    # sentence against the quotes it cites (catches a flipped subject or
+    # negation); "tokens": the deterministic checks only, one call.
+    bee_chat_claim_verification: str = "entailment"
 
 
 @lru_cache

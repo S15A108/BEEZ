@@ -77,6 +77,34 @@
       }
     ]
   },
+  "502_model_unavailable_contradicted_claim": {
+    "error": {
+      "code": "model_unavailable",
+      "message": "The LLM request could not be completed."
+    },
+    "usage": [
+      {
+        "request_key": "llm-bee-chat-00000000-0000-4000-8000-000000000135",
+        "feature": "BEE_CHAT",
+        "model": "gpt-6-luna",
+        "latency_ms": 0,
+        "failed": true,
+        "tokens_known": true,
+        "input_tokens": 1800,
+        "output_tokens": 320
+      },
+      {
+        "request_key": "llm-bee-verify-00000000-0000-4000-8000-000000000135",
+        "feature": "BEE_CHAT",
+        "model": "gpt-6-luna",
+        "latency_ms": 0,
+        "failed": false,
+        "tokens_known": true,
+        "input_tokens": 640,
+        "output_tokens": 90
+      }
+    ]
+  },
   "502_model_unavailable_unknown_evidence_id": {
     "error": {
       "code": "model_unavailable",

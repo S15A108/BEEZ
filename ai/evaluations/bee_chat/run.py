@@ -1,10 +1,12 @@
 """Review the Bee's answers over the representative question set (#135).
 
-Without --live this uses the scripted retrieval and the scripted model in
-`cases.py` and makes no network call. The Markdown report is review material
-for a person: every row shows the status, what grounded the answer and which
-checks held. A question the scripted model answers with a fabricated quote is
-expected to be rejected (`invalid_output`), and that expectation is a check.
+Without --live this uses the scripted retrieval, the scripted answer model
+and the scripted judge in `cases.py` and makes no network call. The Markdown
+report is review material for a person: every row shows the status, what
+grounded the answer, how far it was verified and which checks held. A
+question the scripted model answers with a fabricated quote, an unsupported
+fact or a flipped claim is expected to be rejected (`invalid_output`), and
+that expectation is a check.
 """
 
 import argparse
@@ -18,9 +20,14 @@ from uuid import uuid4
 
 from app.schemas.bee_chat import BeeChatRequest, RetrievedEvidence, citation_markers
 from app.services.bee_chat import (
+    VERIFY_CALL_KEY_PREFIX,
     AnswerProposal,
+    Claim,
+    ClaimVerdicts,
     LLMAnswerProposer,
+    LLMClaimVerifier,
     ModelAnswer,
+    ModelVerdict,
     generate_bee_chat,
 )
 from app.services.llm_client import (
@@ -35,12 +42,25 @@ from evaluations.bee_chat.cases import (
     build_request,
     question_by_text,
     scripted_answer,
+    scripted_verdicts,
 )
 from evaluations.planning_questions.cases import PROJECT_ID
 
 SCRIPTED_MODEL = "scripted-fake"
 DRY_TITLE = "#135 비비 대표 질문 세트 검토 (가짜 공급자, 모델 호출 없음)"
 INJECTION_MARKER = "INJECTED-777"
+
+
+def _scripted_usage(key: str) -> LLMUsage:
+    return LLMUsage(
+        request_key=key,
+        feature="BEE_CHAT",
+        project_id=PROJECT_ID,
+        model=SCRIPTED_MODEL,
+        latency_ms=0,
+        failed=False,
+        tokens_known=False,
+    )
 
 
 class ScriptedAnswerProposer:
@@ -53,16 +73,28 @@ class ScriptedAnswerProposer:
         raw = scripted_answer(
             question, [item.model_dump(mode="json") for item in evidence]
         )
-        usage = LLMUsage(
-            request_key=f"scripted-{question['id']}",
-            feature="BEE_CHAT",
-            project_id=PROJECT_ID,
-            model=SCRIPTED_MODEL,
-            latency_ms=0,
-            failed=False,
-            tokens_known=False,
+        return AnswerProposal(
+            ModelAnswer.model_validate(raw),
+            SCRIPTED_MODEL,
+            (_scripted_usage(f"scripted-{question['id']}"),),
         )
-        return AnswerProposal(ModelAnswer.model_validate(raw), SCRIPTED_MODEL, (usage,))
+
+
+class ScriptedClaimVerifier:
+    """Judges every claim SUPPORTED unless the case script flags its text."""
+
+    async def verify(self, question: str, claims: Sequence[Claim]) -> ClaimVerdicts:
+        payload = {
+            "question": question,
+            "claims": [{"index": claim.index, "text": claim.text} for claim in claims],
+        }
+        raw = scripted_verdicts(payload)
+        entry = question_by_text(question)
+        return ClaimVerdicts(
+            tuple(ModelVerdict.model_validate(item) for item in raw["verdicts"]),
+            SCRIPTED_MODEL,
+            (_scripted_usage(f"scripted-verify-{entry['id']}"),),
+        )
 
 
 def _checks(question: dict, request: BeeChatRequest, result) -> dict:
@@ -85,18 +117,20 @@ def _checks(question: dict, request: BeeChatRequest, result) -> dict:
             n <= len(result.citations) for n in citation_markers(result.text)
         ),
         "injection_absent": INJECTION_MARKER not in result.text,
+        "verified_iff_answered": (result.verification.level != "NONE") == answered,
     }
 
 
-async def evaluate(proposer_factory) -> dict:
+async def evaluate(proposer_factory, verifier_factory=None) -> dict:
     rows = []
     for question in QUESTIONS:
         # JSON validation: the strict request model takes tuples, the body lists.
         request = BeeChatRequest.model_validate_json(
             json.dumps(build_request(question), ensure_ascii=False)
         )
+        verifier = verifier_factory() if verifier_factory is not None else None
         try:
-            outcome = await generate_bee_chat(request, proposer_factory())
+            outcome = await generate_bee_chat(request, proposer_factory(), verifier)
         except LLMError as error:
             # A rejected output is the verifier doing its job; any other
             # error is a failure of the run.
@@ -126,6 +160,7 @@ async def evaluate(proposer_factory) -> dict:
                 "model": outcome.model,
                 "answer_status": result.answer_status,
                 "grounded": result.grounded,
+                "verification": result.verification.level,
                 "text": result.text,
                 "citations": [
                     {
@@ -178,11 +213,12 @@ def render_markdown(report: dict, *, title: str) -> str:
     summary = report["summary"]
     lines = [f"# {title}", ""]
     lines.append(
-        "대표 질문 세트(`evaluations/data/questions.json`의 12문항 + 후속 질문·작업 상태·모순 답변·"
-        "근거 없는 주제·범위 밖·주입 문장 6문항)를 대본 검색 결과와 대본 모델 출력으로 "
-        "돌린 결과다. 모든 답변은 입력 근거와 대조한 뒤의 값이며, 원문에 없는 인용이 "
-        "하나라도 있으면 답변 전체를 거부한다(`invalid_output`, HTTP 502). 승인·결정은 "
-        "팀장의 몫이다."
+        "대표 질문 세트(`evaluations/data/questions.json`의 12문항 + 후속 질문·작업 상태·"
+        "모순 답변·뒤집힌 답변·근거 없는 주제·범위 밖·주입 문장 7문항)를 대본 검색 결과, "
+        "대본 모델 출력, 대본 판정으로 돌린 결과다. 모든 답변은 입력 근거와 대조하고 "
+        "문장마다 판정 모델이 인용문과 맞는지 본 뒤의 값이며, 원문에 없는 인용·인용이 "
+        "뒷받침하지 않는 사실·인용과 모순되는 문장이 하나라도 있으면 답변 전체를 "
+        "거부한다(`invalid_output`, HTTP 502). 승인·결정은 팀장의 몫이다."
     )
     lines.append("")
     lines.append(
@@ -195,11 +231,11 @@ def render_markdown(report: dict, *, title: str) -> str:
     lines.append("## 질문별 결과")
     lines.append("")
     lines.append(
-        "| 순서 | 질문 ID | 질문 | 기대 | 결과 | 근거 | 인용 | 설계 항목 | 작업 | 답변 "
-        "| 미확정 | 검사 |"
+        "| 순서 | 질문 ID | 질문 | 기대 | 결과 | 근거 | 검증 | 인용 | 설계 항목 | 작업 "
+        "| 답변 | 미확정 | 검사 |"
     )
     lines.append(
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     )
     for index, row in enumerate(report["questions"], start=1):
         if row["status"] != "completed":
@@ -207,7 +243,7 @@ def render_markdown(report: dict, *, title: str) -> str:
             verdict = "통과" if all(row["checks"].values()) else "실패: status_expected"
             lines.append(
                 f"| {index} | {row['id']} | {_cell(row['question'])} | {row['expected']} "
-                f"| {label}: `{row['error_code']}` | - | - | - | - | - | - | {verdict} |"
+                f"| {label}: `{row['error_code']}` | - | - | - | - | - | - | - | {verdict} |"
             )
             continue
         citations = "; ".join(
@@ -225,6 +261,7 @@ def render_markdown(report: dict, *, title: str) -> str:
                     row["expected"],
                     row["answer_status"],
                     "예" if row["grounded"] else "아니오",
+                    row["verification"],
                     citations or "-",
                     ", ".join(row["design_refs"]) or "-",
                     ", ".join(row["task_refs"]) or "-",
@@ -243,16 +280,18 @@ def render_markdown(report: dict, *, title: str) -> str:
         "`citations_resolvable`(모든 인용이 근거 원문의 부분 문자열), "
         "`required_terms`(답변에 핵심 용어 포함), `grounded_iff_answered`, "
         "`markers_valid`(본문 [n]이 인용 수 이내), `injection_absent`(주입 문장의 "
-        "표식이 답변에 없음)."
+        "표식이 답변에 없음), `verified_iff_answered`(답변에만 검증 수준이 붙음). "
+        "검증 열은 `verification.level`이다: `ENTAILMENT`는 판정 모델이 문장마다 "
+        "인용문과 맞는지 확인한 것, `TOKENS`는 결정론 검사만 거친 것."
     )
     return "\n".join(lines) + "\n"
 
 
-def _live_factory(endpoint: str, api_key: str, model: str):
+def _live_factories(endpoint: str, api_key: str, model: str):
     provider = OpenAICompatibleProvider(endpoint=endpoint, api_key=api_key)
     client = LLMClient(provider)
 
-    def factory():
+    def proposer_factory():
         return LLMAnswerProposer(
             client,
             context=LLMContext(
@@ -265,7 +304,20 @@ def _live_factory(endpoint: str, api_key: str, model: str):
             timeout_seconds=60,
         )
 
-    return provider, factory
+    def verifier_factory():
+        return LLMClaimVerifier(
+            client,
+            context=LLMContext(
+                project_id=PROJECT_ID,
+                feature="BEE_CHAT",
+                request_key=f"bee-eval-{uuid4()}",
+            ),
+            model=model,
+            call_key=f"{VERIFY_CALL_KEY_PREFIX}eval-{uuid4()}",
+            timeout_seconds=60,
+        )
+
+    return provider, proposer_factory, verifier_factory
 
 
 async def _run(args) -> int:
@@ -276,12 +328,14 @@ async def _run(args) -> int:
         if not endpoint or not api_key or not model:
             print("Set AI_BEE_EVAL_ENDPOINT, _API_KEY and _MODEL for --live.")
             return 2
-        provider, factory = _live_factory(endpoint, api_key, model)
+        provider, proposer_factory, verifier_factory = _live_factories(
+            endpoint, api_key, model
+        )
         async with provider:
-            report = await evaluate(factory)
+            report = await evaluate(proposer_factory, verifier_factory)
         title = f"#135 실제 모델 평가 ({model}, {datetime.now(UTC):%Y-%m-%d})"
     else:
-        report = await evaluate(ScriptedAnswerProposer)
+        report = await evaluate(ScriptedAnswerProposer, ScriptedClaimVerifier)
         title = DRY_TITLE
     rendered = render_markdown(report, title=title)
     if args.output:

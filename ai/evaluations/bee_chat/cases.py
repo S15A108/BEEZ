@@ -170,6 +170,29 @@ QUESTIONS = [
         },
     },
     {
+        # The quote is real and no token differs, but the sentence flips the
+        # subject ("리더만" → "누구나"); only the judge call catches it (PR #96
+        # P1, 7th round). `unsupported_claims` scripts that verdict.
+        "id": "plan-negation",
+        "document": "plan.md",
+        "question": "문서 발행은 누구나 할 수 있나요?",
+        "quotes": ["문서의 최종 발행은 활성 프로젝트 리더만 수행한다."],
+        "expected": "REJECTED",
+        "required": [],
+        "unsupported_claims": ["누구나 할 수 있습니다"],
+        "answer": {
+            "status": "ANSWERED",
+            "text": "네, 문서의 최종 발행은 누구나 할 수 있습니다 [1].",
+            "citations": [
+                {"quote": "문서의 최종 발행은 활성 프로젝트 리더만 수행한다."}
+            ],
+            "design_refs": [],
+            "task_refs": [],
+            "unresolved": [],
+            "next_actions": [],
+        },
+    },
+    {
         "id": "plan-draft",
         "document": "plan.md",
         "question": "아직 승인되지 않은 초안은 누구에게 어떤 모드로 제공하나요?",
@@ -658,3 +681,28 @@ def scripted_answer(question: dict, evidence: list[dict]) -> dict:
             citation["claim"] = cited["claim"]
         citations.append(citation)
     return {**question["answer"], "citations": citations}
+
+
+def scripted_verdicts(payload: dict) -> dict:
+    """The raw JSON a judge would return: SUPPORTED unless the case flags it.
+
+    A claim whose text holds one of the case's `unsupported_claims` is judged
+    NOT_SUPPORTED; a question outside the set (an override in an example)
+    has nothing flagged.
+    """
+    try:
+        flagged = question_by_text(payload["question"]).get("unsupported_claims", [])
+    except KeyError:
+        flagged = []
+    return {
+        "verdicts": [
+            {
+                "index": claim["index"],
+                "verdict": "NOT_SUPPORTED"
+                if any(marker in claim["text"] for marker in flagged)
+                else "SUPPORTED",
+                "reason": "대본 판정",
+            }
+            for claim in payload["claims"]
+        ]
+    }

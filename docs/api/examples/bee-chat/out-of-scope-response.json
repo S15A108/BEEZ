@@ -26,6 +26,11 @@
     "instance": {
       "profile_version": "bee-v1",
       "system_prompt_hash": "a629f4e7b66c8a8a4e88952db002f219c24850f47ae278bd144105a0017209bd"
+    },
+    "verification": {
+      "level": "NONE",
+      "claims": 0,
+      "model": null
     }
   },
   "origin": "MODEL",

@@ -1,4 +1,4 @@
-"""The representative question set must separate grounded, withheld and off-topic."""
+"""The representative question set must separate grounded, withheld, off-topic and rejected."""
 
 import asyncio
 from pathlib import Path
@@ -9,6 +9,7 @@ from evaluations.bee_chat.cases import QUESTIONS
 from evaluations.bee_chat.run import (
     DRY_TITLE,
     ScriptedAnswerProposer,
+    ScriptedClaimVerifier,
     evaluate,
     render_markdown,
 )
@@ -22,7 +23,7 @@ REPORT = (
 
 
 def report():
-    return asyncio.run(evaluate(ScriptedAnswerProposer))
+    return asyncio.run(evaluate(ScriptedAnswerProposer, ScriptedClaimVerifier))
 
 
 def row(result, question_id):
@@ -37,7 +38,7 @@ def test_dry_run_grounds_answers_and_withholds_guesses():
         "answered": 12,
         "insufficient": 2,
         "out_of_scope": 1,
-        "rejected": 3,
+        "rejected": 4,
         "failed": 0,
         "all_checks_passed": True,
     }
@@ -47,6 +48,21 @@ def test_dry_run_grounds_answers_and_withholds_guesses():
     assert draft["usage"][0]["failed"]
     assert row(result, "req-absent")["status"] == "rejected"
     assert row(result, "req-contradiction")["status"] == "rejected"
+    # PR #96 P1 (7th round): the flipped subject is caught by the judge call,
+    # whose usage follows the failed answer call.
+    flipped = row(result, "plan-negation")
+    assert flipped["status"] == "rejected"
+    assert [(u["request_key"], u["failed"]) for u in flipped["usage"]] == [
+        ("scripted-plan-negation", True),
+        ("scripted-verify-plan-negation", False),
+    ]
+    completed = [r for r in result["questions"] if r["status"] == "completed"]
+    assert {
+        r["verification"] for r in completed if r["answer_status"] == "ANSWERED"
+    } == {"ENTAILMENT"}
+    assert {
+        r["verification"] for r in completed if r["answer_status"] != "ANSWERED"
+    } == {"NONE"}
     followup = row(result, "plan-publish-followup")
     assert len(followup["citations"]) == 2 and "[3]" not in followup["text"]
     assert followup["text"].count("[1]") == 2
@@ -68,6 +84,15 @@ def test_dry_run_grounds_answers_and_withholds_guesses():
     assert row(result, "out-of-scope")["text"] == OUT_OF_SCOPE_TEXT
     assert "INJECTED-777" not in row(result, "injection")["text"]
     assert row(result, "plan-publish-followup")["grounded"]
+
+
+def test_without_a_judge_the_flipped_answer_is_only_token_checked():
+    result = asyncio.run(evaluate(ScriptedAnswerProposer))
+    flipped = row(result, "plan-negation")
+    # The deterministic checks alone cannot see it, and the row says so.
+    assert flipped["status"] == "completed" and flipped["verification"] == "TOKENS"
+    assert not flipped["checks"]["status_expected"]
+    assert result["summary"]["rejected"] == 3
 
 
 def test_committed_report_matches_a_fresh_dry_run():

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings, get_settings
 from app.main import app
-from app.services.bee_chat import INSUFFICIENT_TEXT
+from app.services.bee_chat import INSUFFICIENT_TEXT, VERIFY_CALL_KEY_PREFIX
 from app.services.llm_client import ProviderError
 from evaluations.bee_chat.examples import (
     CHAT_PATH,
@@ -86,7 +86,9 @@ def test_instance_initialization_is_deterministic_without_a_model(api):
     assert missing.status_code == 400
 
 
-def test_grounded_answer_carries_citations_refs_and_usage(api, request_body):
+def test_grounded_answer_carries_citations_refs_verification_and_usage(
+    api, request_body
+):
     instance = api.post(instance_request(), path=INSTANCE_PATH).json()["result"][
         "instance"
     ]
@@ -95,12 +97,22 @@ def test_grounded_answer_carries_citations_refs_and_usage(api, request_body):
     assert response.headers["X-Request-Id"] == "bee-chat-example"
     body = response.json()
     assert body["origin"] == "MODEL" and body["model"] == "gpt-6-luna"
-    usage = body["usage"][0]
-    assert usage["feature"] == "BEE_CHAT" and not usage["failed"]
-    assert usage["request_key"].startswith("llm-bee-chat-")
+    # The answer call and the judge call, in order, both successful.
+    assert len(body["usage"]) == 2
+    assert body["usage"][0]["request_key"].startswith("llm-bee-chat-")
+    assert body["usage"][1]["request_key"].startswith(VERIFY_CALL_KEY_PREFIX)
+    assert all(not usage["failed"] for usage in body["usage"])
+    assert all(usage["feature"] == "BEE_CHAT" for usage in body["usage"])
+    assert len(api.provider.calls) == 2
     assert api.provider.calls[0].context.request_key == request_body["request_key"]
+    assert api.provider.calls[1].context.request_key == request_body["request_key"]
     result = body["result"]
     assert result["answer_status"] == "ANSWERED" and result["grounded"]
+    assert result["verification"] == {
+        "level": "ENTAILMENT",
+        "claims": 3,
+        "model": "gpt-6-luna",
+    }
     assert [c["n"] for c in result["citations"]] == [1, 2]
     assert result["citations"][1]["quote"].startswith("문서 생성 성공은 HTTP 201")
     assert [ref["key"] for ref in result["design_refs"]] == ["API-001"]
@@ -113,11 +125,29 @@ def test_grounded_answer_carries_citations_refs_and_usage(api, request_body):
     assert result["design_refs"][0]["source"]["document_version_id"] == "312"
 
 
-def test_insufficient_and_out_of_scope_are_200_with_fixed_text(api):
+def test_tokens_mode_skips_the_judge_and_the_response_says_so(api, request_body):
+    api.use(settings(bee_chat_claim_verification="tokens"))
+    response = api.post(request_body)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"]["verification"] == {
+        "level": "TOKENS",
+        "claims": 3,
+        "model": None,
+    }
+    assert len(body["usage"]) == 1 and len(api.provider.calls) == 1
+    api.use(settings(bee_chat_claim_verification="judge"))
+    refused = api.post(request_body)
+    assert refused.status_code == 503
+    assert refused.json()["error"]["code"] == "bee_chat_not_configured"
+
+
+def test_insufficient_out_of_scope_and_contradicted_answers(api):
     withheld = api.post(example_request("password-absent")).json()["result"]
     assert withheld["answer_status"] == "INSUFFICIENT_EVIDENCE"
     assert withheld["text"] == INSUFFICIENT_TEXT and not withheld["grounded"]
     assert withheld["unresolved"] == ["비밀번호 정책은 공용 문서에 없다."]
+    assert withheld["verification"] == {"level": "NONE", "claims": 0, "model": None}
     scope = api.post(example_request("out-of-scope")).json()["result"]
     assert scope["answer_status"] == "OUT_OF_SCOPE" and not scope["citations"]
     # A fabricated quote is a model failure (502), never a shown or withheld guess.
@@ -126,6 +156,16 @@ def test_insufficient_and_out_of_scope_are_200_with_fixed_text(api):
     assert fabricated.json()["error"]["code"] == "model_unavailable"
     assert fabricated.json()["usage"][0]["failed"]
     assert "90일" not in fabricated.text
+    # PR #96 P1 (7th round): "리더만" cited, "누구나" claimed; every token
+    # matches, so the judge call is what rejects it.
+    flipped = api.post(example_request("plan-negation"))
+    assert flipped.status_code == 502
+    assert flipped.json()["error"]["code"] == "model_unavailable"
+    assert [(u["request_key"][:12], u["failed"]) for u in flipped.json()["usage"]] == [
+        ("llm-bee-chat", True),
+        ("llm-bee-veri", False),
+    ]
+    assert "누구나" not in flipped.text
     task_only = api.post(example_request("task-status")).json()["result"]
     assert task_only["answer_status"] == "ANSWERED" and task_only["grounded"]
     assert [ref["key"] for ref in task_only["task_refs"]] == ["TASK-001"]
@@ -176,8 +216,15 @@ def test_model_failures_and_contradictions_keep_usage(api, request_body):
     response = api.post(request_body)
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "model_unavailable"
-    assert response.json()["usage"][0]["failed"]
+    assert response.json()["usage"][0]["failed"] and len(response.json()["usage"]) == 1
     assert "ev-none" not in response.text
+    api.provider.output = None
+    # A judge that does not cover the claims marks its own call failed.
+    api.provider.verdicts = {"verdicts": []}
+    response = api.post(request_body)
+    assert response.status_code == 502
+    assert [u["failed"] for u in response.json()["usage"]] == [False, True]
+    api.provider.verdicts = None
 
 
 def test_openapi_request_schemas_are_self_contained(api):

@@ -365,6 +365,36 @@ class TaskRef(_Strict):
     status: TaskStatus
 
 
+VerificationLevel = Literal["NONE", "TOKENS", "ENTAILMENT"]
+
+
+class ClaimVerification(_Strict):
+    """How far the answer text was checked against its grounding.
+
+    `TOKENS`: every citation is a verified quote and every fact token of each
+    sentence appears in what that sentence cites. `ENTAILMENT`: the same, and
+    a second model call judged every sentence as supported by its quotes
+    (subject, negation and conditions included). `NONE`: a non-answer whose
+    text is fixed. `grounded` says the answer has verified grounding; this
+    says how deeply the wording was checked against it, so the screen can
+    show what "확인됨" means.
+    """
+
+    level: VerificationLevel
+    # Sentences checked; one claim per sentence of the answer.
+    claims: int = Field(ge=0)
+    # The judge model; set exactly when the level is ENTAILMENT.
+    model: Annotated[str, StringConstraints(min_length=1, max_length=256)] | None = None
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        if (self.level == "ENTAILMENT") != (self.model is not None):
+            raise ValueError("ENTAILMENT names the judge model; other levels do not")
+        if (self.level == "NONE") != (self.claims == 0):
+            raise ValueError("NONE has no claims; other levels have at least one")
+        return self
+
+
 class InstanceEcho(_Strict):
     """Which stored instance produced this answer; the BE can compare hashes."""
 
@@ -394,6 +424,7 @@ class BeeChatResult(_Strict):
     evidence_considered: int = Field(ge=0, le=MAX_EVIDENCE)
     evidence_omitted: int = Field(ge=0)
     instance: InstanceEcho | None = None
+    verification: ClaimVerification
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -411,6 +442,8 @@ class BeeChatResult(_Strict):
             raise ValueError("grounded must reflect citations, design and task refs")
         if (self.answer_status == "ANSWERED") != self.grounded:
             raise ValueError("only an ANSWERED answer is grounded")
+        if (self.answer_status == "ANSWERED") != (self.verification.level != "NONE"):
+            raise ValueError("verification level follows the answer status")
         if any(not 1 <= n <= len(self.citations) for n in citation_markers(self.text)):
             raise ValueError("answer text refers to a citation it does not have")
         for citation in self.citations:

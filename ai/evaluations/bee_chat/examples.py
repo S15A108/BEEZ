@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings, get_settings
 from app.main import app
 from app.routers import bee_chat as route
+from app.services.bee_chat import VERIFY_CALL_KEY_PREFIX
 from app.services.llm_client import LLMClient, ProviderError, ProviderResponse
 from app.services.llm_client import client as llm_client_module
 from evaluations.bee_chat.cases import (
@@ -19,13 +20,16 @@ from evaluations.bee_chat.cases import (
     question_by_text,
     question_entry,
     scripted_answer,
+    scripted_verdicts,
 )
 from evaluations.planning_questions.cases import PROJECT_ID
 
 TOKEN = "example-internal-token"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "X-Request-Id": "bee-chat-example"}
-# Synthetic usage numbers; the real provider reports actual tokens.
+# Synthetic usage numbers; the real provider reports actual tokens. The judge
+# call reads only the sentences and their quotes, so it is the smaller one.
 EXAMPLE_TOKENS = (1800, 320)
+EXAMPLE_VERIFY_TOKENS = (640, 90)
 # Fixed call key so the published examples are reproducible byte for byte.
 EXAMPLE_CALL_UUID = UUID("00000000-0000-4000-8000-000000000135")
 CHAT_PATH = "/v1/bee/chat"
@@ -49,25 +53,42 @@ class _FrozenClock:
 
 
 class ScriptedChatProvider:
-    """Answers with the scripted answer, resolving evidence ids from the payload."""
+    """Answers with the scripted answer and judges with the scripted verdicts.
+
+    The two calls are told apart by their call key: the judge's starts with
+    `VERIFY_CALL_KEY_PREFIX`.
+    """
 
     def __init__(self, failure: Exception | None = None) -> None:
         self.failure = failure
         # When set, this JSON is returned instead of the scripted answer.
         self.output: dict | None = None
+        # When set, this JSON is returned instead of the scripted verdicts.
+        self.verdicts: dict | None = None
         self.calls = []
 
     async def complete(self, request, *, timeout_seconds):
         self.calls.append(request)
         if self.failure is not None:
             raise self.failure
+        payload = json.loads(request.messages[1].content)
+        if request.call_keys[0].startswith(VERIFY_CALL_KEY_PREFIX):
+            verdicts = (
+                self.verdicts
+                if self.verdicts is not None
+                else scripted_verdicts(payload)
+            )
+            return ProviderResponse(
+                json.dumps(verdicts, ensure_ascii=False),
+                request.model,
+                *EXAMPLE_VERIFY_TOKENS,
+            )
         if self.output is not None:
             return ProviderResponse(
                 json.dumps(self.output, ensure_ascii=False),
                 request.model,
                 *EXAMPLE_TOKENS,
             )
-        payload = json.loads(request.messages[1].content)
         question = question_by_text(payload["question"])
         answer = scripted_answer(question, payload["evidence"])
         return ProviderResponse(
@@ -199,6 +220,11 @@ def build_examples() -> dict[str, object]:
         # citation does not support rejects the output too.
         errors["502_model_unavailable_unsupported_fact"] = api.post(
             example_request("req-contradiction")
+        ).json()
+        # Every token matches ("리더만" → "누구나" changes none), so only the
+        # judge call catches it; both calls' usage is returned.
+        errors["502_model_unavailable_contradicted_claim"] = api.post(
+            example_request("plan-negation")
         ).json()
         api.provider.output = {
             "status": "ANSWERED",
