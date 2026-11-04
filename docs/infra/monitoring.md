@@ -47,10 +47,9 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
   `monitoring`에만 있습니다. backend·ai 컨테이너에서 Grafana에 닿지 않습니다.
   `beez_default`는 본 스택이 만드는 네트워크라 본 스택이 먼저 떠 있어야 합니다.
 - **backend는 컨테이너 이름으로 긁습니다.** 호스트 포트(8081)나 Nginx를 거치지
-  않습니다. 지표 경로는 S15P31A108-262가 8080에 엽니다. 그 PR이 배포되기 전에는
-  backend 대상이 DOWN(`401`, 열리지 않은 Actuator 경로를 보안 체인이 막음)인 것이
-  정상입니다. Prometheus는 인증 없이 긁으므로 262 배포 뒤에도 401이면 이 경로의
-  접근 허용을 262와 맞춥니다.
+  않습니다. 지표 경로는 S15P31A108-262(#109)가 8080에 인증 없이 열고, 외부는
+  Nginx가 `/actuator/`를 막습니다. backend가 `401`로 DOWN이면 보안 설정에서 이
+  경로가 닫힌 것입니다(262 배포 전 상태).
 - **메모리 한도를 둡니다.** 같은 서버의 DB·backend가 모니터링 때문에 OOM에 걸리지
   않게 합니다. 로컬 실측(빈 상태)은 grafana 약 250MiB, prometheus 약 45MiB,
   나머지 각 15MiB 이하였습니다. 한도에 닿으면 그 컨테이너만 재시작됩니다.
@@ -92,9 +91,9 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
 
 | 근거 | 값 |
 |---|---|
-| 시계열 수 | 실측 4,408(2026-11-04 서버, backend 제외: node·postgres·prometheus·alertmanager) + backend 예상 약 1,500 ≒ 6,000 |
+| 시계열 수 | 실측 4,816(2026-11-04 서버, 그중 backend 226). 요청 경로·테이블이 늘면 증가하므로 여유를 두어 약 6,000으로 계산 |
 | 하루 샘플 | 15초 주기 → 시계열당 5,760 |
-| 압축 뒤 크기 | 샘플당 약 1~2바이트 → 하루 약 35~70MB, 30일 약 1~2GB |
+| 압축 뒤 크기 | 샘플당 약 1~2바이트 → 6,000 기준 하루 약 35~70MB, 30일 약 1~2GB |
 | 디스크 | 309GB 중 10GB 사용(2026-11-04) → 상한 10GB는 디스크의 약 3% |
 
 - **30일**: 244 알림 기준은 "실제 분석 소요 시간을 보고 조정"하기로 한 초기값입니다.
@@ -180,7 +179,7 @@ mon config --quiet && mon up -d && mon ps --format '{{.Service}}\t{{.Status}}\t{
 
 ```bash
 # 서버 (ssh beez)
-# 1) 수집 대상. node·postgres·prometheus·alertmanager 는 up, backend 는 262 배포 전까지 down(401)
+# 1) 수집 대상. 다섯 job(alertmanager·backend·node·postgres·prometheus) 모두 up
 curl -s 127.0.0.1:9090/api/v1/targets | python3 -c '
 import sys, json
 for t in json.load(sys.stdin)["data"]["activeTargets"]:
@@ -206,9 +205,10 @@ done | cut -c1-160
 ```
 
 - 5)에서 볼 것: UUID·긴 숫자 ID가 값으로 깔린 라벨, 문장처럼 보이는 값, 값 개수가
-  계속 늘어나는 라벨. 2026-11-04 로컬 확인에서는 테이블·DB·롤 이름(`relname`·
-  `datname`·`rolname`)과 버전 정보뿐이었습니다. backend 지표가 붙은 뒤(262 배포 뒤)
-  한 번 더 돌립니다.
+  계속 늘어나는 라벨. 특히 backend의 `uri`는 템플릿 경로(`/api/projects/{projectId}`
+  꼴)여야 하고 실제 ID가 박힌 경로가 보이면 안 됩니다. backend만 보려면 `labels`·
+  `label/<이름>/values` 요청에 `-G --data-urlencode 'match[]={job="backend"}'`를 붙입니다.
+  backend에 지표나 API를 더한 PR이 배포되면 한 번 돌립니다.
 
 외부에서 닿지 않는지는 로컬 PC에서 봅니다.
 
@@ -359,17 +359,18 @@ docker compose -f infra/compose.yaml --env-file infra/local.env down
 
 ## 2026-11-04 서버 결과
 
-커밋 `6925db7`을 올려 처음 띄웠습니다.
+커밋 `6925db7`을 올려 처음 띄웠습니다. backend 줄은 #109 배포(`6be547d`) 뒤에 확인했습니다.
 
 | 항목 | 결과 |
 |---|---|
-| 수집 대상 | node·postgres·prometheus·alertmanager UP, `pg_up` 1. backend DOWN(401, 262 배포 전) |
+| 수집 대상 | 다섯 job 모두 UP, `pg_up` 1. backend는 #109 배포 전 401 → 배포 뒤 UP(수집 13ms) |
+| backend 지표 | 시계열 226. `beez_cdc_*` 23개 수집, `beez_cdc_analysis_snapshot_available` 1 |
 | 포트 | 서버에서 `127.0.0.1:3000`·`127.0.0.1:9090`만 열림. 로컬 PC에서 3000·9090·9093·9100·9187 모두 연결 실패 |
 | 보존 | `30d or 10GiB` |
 | 파일시스템 | `/`(ext4)·`/boot`·`/boot/efi`만 수집 |
-| 시계열 | 4,408 (backend 제외) |
+| 시계열 | 4,816 (backend 226 포함) |
 | 메모리 | grafana 263MiB, prometheus 42MiB, 나머지 각 15MiB 이하 |
-| 라벨 | UUID·프로젝트 ID·원문 없음. 테이블·DB·롤 이름, EC2 인스턴스 ID·EBS 볼륨 ID·OS 버전 같은 서버 정보만 있음(외부 비공개라 수용) |
+| 라벨 | UUID·긴 숫자 ID·원문 없음. node·postgres는 테이블·DB·롤 이름과 EC2 인스턴스 ID·EBS 볼륨 ID·OS 버전 같은 서버 정보(외부 비공개라 수용). backend는 `uri`가 템플릿 경로 4개, CDC는 고정 `status`·`result` 값, 그 밖에 클래스 이름·JVM·보안 필터 이름 |
 
 기동 로그에 남지만 무시해도 되는 줄:
 
@@ -385,7 +386,6 @@ docker compose -f infra/compose.yaml --env-file infra/local.env down
 | 할 일 | 어디서 |
 |---|---|
 | 대시보드·알림 규칙·Mattermost 수신처·운영 런북 | S15P31A108-264 |
-| backend 대상 UP 확인과 라벨 재점검 | S15P31A108-262 배포 뒤 |
 | Kafka lag·Connect 상태·replication slot WAL 수집 | S15P31A108-261 |
 | 배포 자동화(Jenkins 잡 연결) | 미정. 변경이 잦아지면 별도 티켓 |
 | 별도 모니터링 서버·서버 생존 외부 확인 | 244 작업 내용 4번, 2서버 구조 결정 때 |
