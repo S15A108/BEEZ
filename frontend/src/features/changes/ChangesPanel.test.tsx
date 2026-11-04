@@ -16,6 +16,7 @@ import {
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ChangesPanel } from './ChangesPanel'
+import { getResponseSchema } from './schemas'
 
 let restore: () => void
 let client: QueryClient
@@ -45,6 +46,113 @@ function renderPanel() {
     </QueryClientProvider>,
   )
 }
+
+it('발행된 제안은 상세 응답의 후속 분석 실패를 표시하고 발행 전 재분석 버튼을 숨긴다', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.get('101', '71')
+  const response = getResponseSchema.parse({
+    ...base,
+    proposal: { ...base.proposal, status: 'PUBLISHED' },
+    published_analysis: {
+      status: 'FAILED',
+      guidance: 'CONTACT_OPERATOR',
+      attempt: 4,
+      requested_at: '2026-11-04T00:00:00Z',
+    },
+  })
+  expect(response.published_analysis?.status).toBe('FAILED')
+  vi.spyOn(changesApi, 'get').mockResolvedValue(response)
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'analysis_not_started',
+    is_current: true,
+  })
+  const retry = vi.spyOn(changesApi, 'retryImpact')
+
+  renderPanel()
+  expect(await screen.findByText('처리 실패')).toBeInTheDocument()
+  expect(screen.getByText(/발행 후 분석을 마치지 못했어요/)).toBeInTheDocument()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(screen.getByText(/발행 전 영향 분석 결과예요/)).toBeInTheDocument()
+  expect(
+    screen.getByText('발행 전 영향 분석이 진행되지 않았어요.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '다시 분석' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '영향 분석 시작' }),
+  ).not.toBeInTheDocument()
+  expect(retry).not.toHaveBeenCalled()
+})
+
+it('영향 분석이 실패했으면 개요와 영향 탭에서 0건으로 대신 표시하지 않는다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    explicit: [],
+    candidates: [],
+    analysis_status: 'FAILED',
+    is_current: true,
+  })
+  renderPanel()
+  expect(await screen.findByText('분석하지 못했어요.')).toBeInTheDocument()
+  expect(screen.queryByText(/확인된 관계 0/)).not.toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: '영향' })).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: '영향' }))
+  expect(
+    screen.getByText('확인된 관계를 아직 판단할 수 없어요.'),
+  ).toBeInTheDocument()
+})
+
+it('상태를 새로고침하면 같은 제안의 변경된 발행 후 처리 결과를 보여 준다', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.get('101', '71')
+  const published = {
+    ...base,
+    proposal: { ...base.proposal, status: 'PUBLISHED' as const },
+  }
+  vi.spyOn(changesApi, 'get')
+    .mockResolvedValueOnce({
+      ...published,
+      published_analysis: { status: 'PENDING', guidance: 'WAIT' },
+    })
+    .mockResolvedValue({
+      ...published,
+      published_analysis: { status: 'FAILED', guidance: 'CONTACT_OPERATOR' },
+    })
+
+  renderPanel()
+  expect(await screen.findByText('처리 대기 중')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '상태 새로고침' }))
+  expect(await screen.findByText('처리 실패')).toBeInTheDocument()
+  expect(screen.queryByText('처리 대기 중')).not.toBeInTheDocument()
+})
+
+it('상태 재조회가 실패하면 이전 결과를 최신 상태로 계속 보여 주지 않는다', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'get')
+    .mockResolvedValueOnce({
+      ...base,
+      proposal: { ...base.proposal, status: 'PUBLISHED' },
+      published_analysis: {
+        status: 'COMPLETED',
+        evaluation_status: 'COMPLETED',
+        guidance: 'NONE',
+      },
+    })
+    .mockRejectedValue(new Error('unavailable'))
+
+  renderPanel()
+  expect(await screen.findByText('분석 완료')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '상태 새로고침' }))
+  expect(
+    await screen.findByText(/정보를 불러오지 못했어요/),
+  ).toBeInTheDocument()
+  expect(screen.queryByText('분석 완료')).not.toBeInTheDocument()
+})
 
 it('팀장은 탭으로 제안을 살펴보고 창 안에서 확인한 뒤 기준 v2를 발행한다', async () => {
   const user = userEvent.setup()
