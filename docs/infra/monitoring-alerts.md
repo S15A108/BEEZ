@@ -363,3 +363,4 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 | 웹훅 파일 | `640 root:nogroup`, 컨테이너 안 `nobody`(65534)가 읽음 |
 | consumer 꺼짐 | `beez_cdc:consumer_enabled:max` 0, Kafka 실패 지표 없음(`absent` = 1)인데 `CdcKafkaFailureMetricMissing`·`CdcPendingDelay` 비활성 — consumer 조건이 막음 |
 | 실제 수신 | `mon stop node-exporter`(17:39) → `MonitoringTargetDown` pending 17:39:22, firing 17:41:22 → 팀 채널에 발생 글. `mon start`(17:42) → 해소 글. Mattermost 전송 2건, 실패 0 |
+| 리뷰 반영 재배포 | 커밋 `f386d84`를 올려 `moncheck` 통과 뒤 다시 띄움. 규칙 그룹 `beez-cdc`(15개)·`beez-infra-alerts`(4개) 모두 health ok, 울리는 알림 없음, 수집 대상 5개 UP, DiskSpaceLow 식이 `/`만 봄, `beez_cdc:*` 기록 계속(consumer 0, 상태 5개), 대시보드 프로비저닝 오류 없음 |
