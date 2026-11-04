@@ -46,7 +46,7 @@ function City() {
   const lastVisited = useWorkspaceStore(
     (state) => state.lastVisited[session.data?.id ?? ''],
   )
-  const placeProject = useWorkspaceStore((state) => state.placeProject)
+  const placeProjects = useWorkspaceStore((state) => state.placeProjects)
   const [creatingAt, setCreatingAt] = useState<number | null>(null)
   const [design, setDesign] = useState<BuildingDesign>('modern')
   const [search, setSearch] = useState('')
@@ -369,10 +369,11 @@ function City() {
                   name: values.name.trim(),
                   description: values.description.trim(),
                 })
-                placeProject(session.data!.id, project.id, {
-                  lot: creatingAt,
-                  design,
-                })
+                // 지금 보이는 칸(빈 칸을 당긴 번호)을 같이 저장해, 새 칸 번호가 지운 칸 뒤에 남은 저장 번호와 겹치지 않는다.
+                placeProjects(session.data!.id, [
+                  ...assigned,
+                  { id: project.id, lot: creatingAt, design },
+                ])
                 await queryClient.invalidateQueries({ queryKey: ['projects'] })
                 setCreatingAt(null)
                 navigate(`/projects/${project.id}`)
