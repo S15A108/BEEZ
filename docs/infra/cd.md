@@ -170,8 +170,18 @@ sudo nginx -t && sudo systemctl reload nginx && rm -r /tmp/nginx
 |---|---|
 | `/api/` | backend. 업로드 상한 `2m`(backend multipart `max-request-size`와 같음. Nginx 기본 1m이면 1~2MB 요청이 413) |
 | `/mcp` | backend. 스트리밍 연결이라 버퍼링 끔, 읽기 대기 1시간 |
-| `= /actuator/health` | backend. 상세는 prod 프로필에서 숨김. 다른 `/actuator` 경로는 열지 않음 |
+| `= /actuator/health` | backend. 상세는 prod 프로필에서 숨김 |
+| `^~ /actuator/` | 404. `/actuator/prometheus` 포함 나머지 actuator 경로를 외부에서 막음 |
 | 그 밖 | 정적 파일, 없으면 `index.html`(SPA) |
+
+**지표(`/actuator/prometheus`)는 backend 8080에서 인증 없이 열려 있고, 외부
+인터넷만 위 Nginx 규칙으로 막습니다**(S15P31A108-262, 결정은 S15P31A108-244).
+수집기는 compose 네트워크(`beez_default`) 안에서 `backend:8080`으로 읽습니다.
+같은 Docker 네트워크의 컨테이너와 서버 로컬(`127.0.0.1:8081`)에서는 누구나
+읽을 수 있는데, 지표 라벨에 프로젝트 ID·문서 원문이 없어 이를 수용합니다.
+수집기 전용으로 좁혀야 하면 네트워크·인증 정책을 따로 정합니다.
+관리 포트를 따로 두지 않는 건 헬스체크·Nginx·`deploy.sh`가 모두
+8080의 `/actuator/health`를 보기 때문입니다.
 
 프록시가 없으면 `/api/...`도 SPA 규칙에 걸려 `index.html`이 200으로
 돌아옵니다. 상태 코드만 보고 "API가 된다"고 판단하지 않습니다.
@@ -505,7 +515,8 @@ S15P31A108-73에서 정합니다. 어느 쪽이든 **이미지·Dockerfile·comp
 curl -s https://dev.beez.ai.kr/api/ping                                          # {"ok":true,"service":"beez-backend",...}
 curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/health  # 200
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://dev.beez.ai.kr/mcp       # 401 (토큰 없음)
-curl -s -o /dev/null -w '%{content_type}\n' https://dev.beez.ai.kr/actuator/env  # text/html (backend로 안 감)
+curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/prometheus  # 404 (Nginx가 막음)
+curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/env         # 404
 ```
 
 서버:
@@ -513,6 +524,7 @@ curl -s -o /dev/null -w '%{content_type}\n' https://dev.beez.ai.kr/actuator/env 
 ```bash
 sudo ss -ltnp | grep -E ':(8080|8081|5432|8000|8333) '   # 127.0.0.1:8080(Jenkins)·127.0.0.1:8081(backend)만
 curl -s http://127.0.0.1:8081/actuator/health            # {"groups":[...],"status":"UP"}
+curl -s http://127.0.0.1:8081/actuator/prometheus | grep -m1 '^jvm_memory_used_bytes'   # 지표 한 줄
 ```
 
 ## 주의
