@@ -80,21 +80,20 @@ export async function accountRoutes(
       const email = requiredString(body, 'email').toLowerCase()
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         fail(400, 'validation_failed', '이메일 형식을 확인해 주세요.')
-      // 서버처럼 인증 토큰을 중복 검사보다 먼저 보고, 가입이 성공한 뒤에만 소비한다(PR #114).
+      const name = requiredString(body, 'name')
+      // 서버 순서대로 비밀번호 규칙 → 인증 토큰 → 중복을 보고, 토큰은 가입이 성공한 뒤에만 소비한다(PR #114·#119).
+      const password_fingerprint = await password(body.password)
       const consumeToken = verifiedTokenFor(body.verified_token, email)
       if (database.accounts.some((item) => item.profile.email === email))
         fail(409, 'email_already_exists', '이미 등록된 이메일이에요.')
       const profile: Account = {
         id: nextId(database),
         email,
-        name: requiredString(body, 'name'),
+        name,
         avatar: 'bee-yellow',
         created_at: now(),
       }
-      database.accounts.push({
-        profile,
-        password_fingerprint: await password(body.password),
-      })
+      database.accounts.push({ profile, password_fingerprint })
       consumeToken()
       database.session_account_id = profile.id
       joinPendingInvitations(context, profile)
