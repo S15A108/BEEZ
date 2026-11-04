@@ -209,19 +209,22 @@ command -v docker >/dev/null || fail "서버에 docker 없음"
 docker compose config --help 2>/dev/null | grep -q -- '--environment' ||
   fail "서버 docker compose 가 없거나 config --environment 를 모름 (버전 확인)"
 # compose 오류 문구는 env 값을 그대로 담기도 한다(따옴표가 안 닫힌 값, 포트 형식 오류 등).
-# 원문 줄은 한 줄도 내보내지 않는다. 확인된 변수 이름·줄 번호만 고정 문구에 넣고, 나머지는 숨긴다
+# 원문 줄은 한 줄도 내보내지 않는다. 오류의 첫 줄(compose 자신의 문구)만 해석하고, 그 뒤 줄은 여러 줄 값의
+# 나머지일 수 있어 읽지 않는다. 확인된 변수 이름·줄 번호만 고정 문구에 넣고, 나머지는 숨긴다
 vars=" $(printf '%s\n' "$cf" | grep -oE '[$][{][A-Za-z_][A-Za-z0-9_]*' | cut -c3- | sort -u | tr '\n' ' ')"
 lines=$(awk 'END { print NR }' "$envf")
 safe() { awk -v vars="$vars" -v lines="$lines" '
+  !NF || seen { next }
+  /^(WARN\[|time=.* level=warn)/ { next }   # 오류보다 먼저 나오는 compose 경고(변수 이름만 담음)
+  { seen = 1 }
   match($0, /required variable [A-Za-z0-9_]+ is missing a value/) {
     v = substr($0, RSTART + 18, RLENGTH - 37)   # compose 파일에 있는 변수 이름일 때만 보여 준다
     if (index(vars, " " v " ")) { print "필수값 " v " 이 없거나 빈 값"; next } }
   /^failed to read / && match($0, /: line [0-9]+: /) {
     n = substr($0, RSTART + 7, RLENGTH - 9) + 0
     if (n >= 1 && n <= lines) { print "env 파일 " n "번째 줄 형식 오류 (값은 숨김)"; next } }
-  /^failed to read / { print "env 파일 읽기 오류, 예: ${ 문법 (값은 숨김)"; next }
-  NF { h = 1 }
-  END { if (h) print "compose 오류 (값이 섞일 수 있어 문구는 숨김)" }'; }
+  /^failed to read / { print "env 파일 형식 오류 — 안 닫힌 따옴표·${ 문법 등 (값은 숨김)"; next }
+  { print "compose 오류 (값이 섞일 수 있어 문구는 숨김)" }'; }
 err=$(printf '%s\n' "$cf" | docker compose -f - --env-file "$envf" config --quiet 2>&1 >/dev/null) ||
   { printf '%s\n' "$err" | safe; fail "env 점검 실패"; }
 echo "env ok"
@@ -276,10 +279,13 @@ EOF
   포트 형식 오류(`invalid hostPort: <값>`), `${` 문법 오류(`Invalid template: "<값>"`)에서 값을 그대로 찍습니다
   (2026-10-30 로컬 실측). 그래서 `safe` 는 **compose 의 원문 줄을 한 줄도 내보내지 않습니다.** 값이 여러 줄이면
   오류 문구 중간의 아무 줄이든 값이 될 수 있어, 줄 모양으로 골라 내보내는 방식은 안전하지 않기 때문입니다.
+  해석하는 것도 **오류의 첫 줄**(compose 자신의 문구)뿐이고, 그 뒤 줄은 값의 나머지일 수 있어 읽지 않습니다
+  (첫 줄 앞의 compose 경고 `WARN[…]`·`level=warning` 은 변수 이름만 담으므로 건너뜁니다).
   고정 문구에 넣는 것은 두 가지뿐이고, 그것도 확인된 경우에만 넣습니다 — 빠진 변수 이름은 **compose 파일에 `${이름`
   으로 있는 이름일 때만**, 형식 오류 줄 번호는 **env 파일 줄 수 안의 숫자일 때만**. 나머지는
   `compose 오류 (값이 섞일 수 있어 문구는 숨김)` 한 줄입니다(2026-11-04 실측: 포트 값 `S3cretXYZ command not found`,
-  여러 줄 값 안의 `couldn't find env file: …`·`required variable <값> is missing a value` 가 모두 숨겨짐).
+  여러 줄 값 안의 `couldn't find env file: …`·`required variable <변수 이름> is missing a value`·`failed to read …: line 7:`
+  가 모두 숨겨지거나 원인과 다른 안내로 바뀌지 않음).
   docker·env 파일·compose 버전처럼 값과 무관한 원인은 오류 문구를 읽지 않고 스크립트가 먼저 직접 확인합니다.
   숨겨진 원인을 봐야 하면 서버에서 직접 compose 를 돌려 봅니다(채팅·PR 에 붙여 넣지 않습니다).
 - **2) 는 디스크의 Nginx 설정 파일을 읽습니다. 실행 중인 Nginx 가 아닙니다.** 파일을 고친 뒤 reload 하기 전에는
@@ -295,7 +301,8 @@ EOF
   에는 있음, 2026-10-30).
   `env 점검 실패`(1) 와 `env 읽기 실패`(2) 는 바로 위에 찍힌 줄로 원인을 구분합니다.
   `필수값 X 이 없거나 빈 값` 은 말 그대로이고, `env 파일 N번째 줄 형식 오류` 는 그 줄의 따옴표·키 형식이 틀린 것입니다
-  (따옴표가 안 닫힌 값이 여러 줄로 이어지면 compose 가 파일 끝 줄 번호를 대므로 `env 파일 읽기 오류` 로 나옵니다).
+  (따옴표가 안 닫힌 값이 여러 줄로 이어지면 compose 가 파일 끝 다음 줄 번호를 대므로 줄 번호 없이
+  `env 파일 형식 오류 — 안 닫힌 따옴표·${ 문법 등` 으로 나옵니다).
   `port 값 없음·이상` 은 env 파일에 포트가 없거나 숫자가 아닌 것입니다(값은 찍지 않습니다).
   `Nginx 설정 없음` 은 `SITE` 가 틀렸거나 사이트가 꺼진 것입니다. `Nginx 설정 읽기 실패` 는 켜진 사이트 중 읽을 수 없는
   파일(권한, 깨진 링크)이 있는 것입니다.
@@ -331,10 +338,13 @@ docker compose -f infra/compose.yaml --env-file infra/local.env config --quiet &
 ```bash
 # 같은 /api/ping 을 Nginx 를 거쳐 한 번, 서버 안에서 compose backend 컨테이너가 연 포트로 직접 한 번 부른다.
 # started_at(그 backend 프로세스의 기동 시각)이 같으면 Nginx 가 바로 그 backend 로 보내고 있다
-via=$(curl -sS --max-time 10 "https://$SITE/api/ping" | sed -n 's/.*"started_at":"\([^"]*\)".*/\1/p')
-direct=$(ssh "$HOST" 'p=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=backend \
-  --format "{{.Ports}}" | sed -n "s/.*127\.0\.0\.1:\([0-9]*\)->.*/\1/p") && [ -n "$p" ] &&
-  curl -sS --max-time 10 "http://127.0.0.1:$p/api/ping"' | sed -n 's/.*"started_at":"\([^"]*\)".*/\1/p')
+ts() { sed -n 's/.*"started_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; }
+via=$(curl -sS --max-time 10 "https://$SITE/api/ping" | ts)
+# backend 컨테이너가 연 127.0.0.1 포트는 정확히 하나여야 한다(둘 이상이면 그 사실을 알리고 멈춘다)
+direct=$(ssh "$HOST" 'set -- $(docker ps --filter label=com.docker.compose.project=beez \
+  --filter label=com.docker.compose.service=backend --format "{{.Ports}}" | sed -n "s/.*127\.0\.0\.1:\([0-9]*\)->.*/\1/p")
+  [ $# -eq 1 ] || { echo "backend 컨테이너 포트가 $# 개 (1개여야 함)" >&2; exit 1; }
+  curl -sS --max-time 10 "http://127.0.0.1:$1/api/ping"' | ts)
 if [ -n "$via" ] && [ "$via" = "$direct" ]; then echo "nginx ok ($via)"
 else echo "nginx 다름: Nginx 경유=${via:-응답 없음·JSON 아님} / backend 직접=${direct:-backend 를 못 찾음}"; fi
 ```
@@ -343,6 +353,8 @@ else echo "nginx 다름: Nginx 경유=${via:-응답 없음·JSON 아님} / backe
   주고, 예전 포트의 backend 가 아직 살아 있어도 200 이 나옵니다. 그래서 응답 본문의 `started_at` 을 비교합니다.
   HTML 이면 `started_at` 이 없어 `응답 없음·JSON 아님` 으로, 다른 backend 면 시각이 달라 `nginx 다름` 으로 걸립니다
   (2026-11-04 서버 실측: `nginx ok`, `/api-nope` 같은 HTML 응답은 빈 값).
+- backend 컨테이너가 연 `127.0.0.1` 포트가 하나가 아니면(컨테이너가 없거나 둘 이상) 그 개수를 찍고
+  `backend 를 못 찾음` 으로 끝납니다. 평소 compose 배포에서는 backend 가 하나입니다.
 - 이 확인이 보증하는 것은 `/api/` 경로가 지금 compose backend 로 간다는 것까지입니다. 같은 reload 로 바꾼 다른 설정
   (요청 크기 한도, `/mcp` 시간 제한 등)은 각각 그 동작으로 따로 확인합니다.
 - Nginx worker 의 시작 시각은 reload 의 증거로 쓰지 않습니다. worker 는 비정상 종료 뒤 다시 뜨거나 재시작으로도 새로
