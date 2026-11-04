@@ -947,8 +947,68 @@ def test_the_judge_cut_keeps_the_best_match_at_the_smallest_limit():
         assert rule in cut and len(cut) <= limit, limit
     # A match longer than the limit is cut to it, never dropped.
     cut = _judge_text(text, mention, 10)
-    assert cut.startswith("…결제") and len(cut) <= 10
+    assert cut.startswith("…") and len(cut) <= 10
+    assert any(word in cut for word in mention.words)
     assert _judge_text(text, NO_MENTION, 10) == text[:9] + "…"
+
+
+def test_the_judge_cut_keeps_a_match_near_the_end_of_a_segment():
+    text = (
+        "Interface description and layout details are displayed on the "
+        "administrative settings screen; passwords must be hashed."
+    )
+    cut = _judge_text(text, Mention.of("passwords must be hashed."), 40)
+    assert "passwords must be hashed" in cut
+    assert len(cut) <= 40
+
+
+@pytest.mark.asyncio
+async def test_fitting_many_references_keeps_a_match_within_a_long_segment():
+    rule = (
+        "Interface description and layout details are displayed on the "
+        "administrative settings screen; passwords must be hashed."
+    )
+    items = [
+        {
+            **approved_item(),
+            "id": str(1100 + i),
+            "design_item_id": str(1000 + i),
+            "key": f"PLN-{i:03}",
+            "content": {
+                "description": "Policy rules",
+                "rule": rule,
+                "notes": [f"Information {j} " + "x" * 220 for j in range(20)],
+            },
+        }
+        for i in range(1, 21)
+    ]
+    tasks = [
+        {
+            "id": str(500 + i),
+            "key": f"TASK-{i:03}",
+            "status": "READY",
+            "current_plan_revision": {
+                "id": str(600 + i),
+                "plan": {"title": "T" * 500, "goal": "G" * 1000},
+            },
+        }
+        for i in range(1, 21)
+    ]
+    body = request(retrieved_evidence=[], approved_items=items, related_tasks=tasks)
+    assert (
+        len(proposer_module.chat_payload(body, ()).encode("utf-8")) < MAX_PAYLOAD_BYTES
+    )
+    raw = answer(
+        text="passwords must be hashed.",
+        citations=[],
+        design_refs=[item["id"] for item in items],
+        task_refs=[task["id"] for task in tasks],
+    )
+    judge = Judge()
+    outcome = await generate_bee_chat(body, Scripted(raw), judge)
+    assert outcome.result.answer_status == "ANSWERED"
+    assert all("passwords must be hashed" in text for text in judge.seen[2][:20])
+    assert sum(map(len, judge.seen[2])) <= MAX_SHARED_SUPPORT_CHARS
 
 
 @pytest.mark.asyncio
