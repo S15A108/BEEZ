@@ -26,6 +26,7 @@ repositories {
 ext {
     springdocVersion = '3.1.1'   // Spring Boot 4 대응 라인
     awsSdkVersion = '2.57.3'
+    mcpSdkVersion = '2.1.0'     // MCP Java SDK. Jackson 3(tools.jackson) 바인딩을 함께 가져온다
 }
 
 dependencies {
@@ -53,6 +54,9 @@ dependencies {
         exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
     }
     implementation 'software.amazon.awssdk:url-connection-client'
+
+    // MCP 서버 (/mcp, Streamable HTTP). mcp = mcp-core(서블릿 전송 포함) + mcp-json-jackson3
+    implementation "io.modelcontextprotocol.sdk:mcp:${mcpSdkVersion}"
 
     runtimeOnly 'org.flywaydb:flyway-database-postgresql'
     implementation 'org.postgresql:postgresql' // Structured constraint diagnostics; never log server detail/message.
