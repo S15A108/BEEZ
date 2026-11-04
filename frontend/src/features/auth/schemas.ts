@@ -20,7 +20,8 @@ export type SendEmailVerificationInput = z.infer<
 >
 
 export const sendEmailVerificationResponseSchema = z.object({
-  verification_id: common.idSchema,
+  // 순번이 아닌 난수 문자열이라 십진 ID(idSchema)가 아니다(PR #114 2f3e1c9).
+  verification_id: z.string().min(1),
   expires_at: common.timeSchema,
   resend_available_at: common.timeSchema,
 })

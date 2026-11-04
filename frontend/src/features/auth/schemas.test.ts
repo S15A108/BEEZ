@@ -6,10 +6,10 @@ import {
   sendEmailVerificationResponseSchema,
 } from './schemas'
 
-// 응답 예시는 PR #114 docs/api/01-backend-rest.md ACC-A11·A12와 같다.
+// 응답 예시는 dev docs/api/01-backend-rest.md ACC-A11·A12와 같다. verification_id는 순번이 아닌 난수 문자열이다(PR #114 2f3e1c9).
 it('인증 코드 보내기 응답을 받고, 필드가 빠지면 거부한다', () => {
   const sent = {
-    verification_id: '41',
+    verification_id: 'k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA',
     expires_at: '2026-10-28T03:05:00Z',
     resend_available_at: '2026-10-28T03:01:00Z',
   }

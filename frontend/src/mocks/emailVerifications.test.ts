@@ -54,7 +54,11 @@ const register = (email: string, verified_token: string) =>
 describe('가입 인증 코드 보내기 (ACC-A11)', () => {
   it('보내면 5분 뒤 만료와 30초 뒤 다시 받기 시각을 준다', async () => {
     const sent = await send('a@beez.local')
-    expect(sent.verification_id).toMatch(/^\d+$/)
+    // 서버처럼 순번이 아닌 32바이트 난수(base64url 43자)
+    expect(sent.verification_id).toMatch(/^[\w-]{43}$/)
+    expect((await send('a2@beez.local')).verification_id).not.toBe(
+      sent.verification_id,
+    )
     expect(sent.expires_at).toBe(
       new Date(Date.now() + CODE_TTL_MS).toISOString(),
     )
@@ -128,6 +132,9 @@ describe('가입 인증 코드 확인 (ACC-A12)', () => {
       'verification_expired',
     )
     expect(codeOf(await caught(confirm('999', code)))).toBe('not_found')
+    expect(codeOf(await caught(confirm('not-issued_id', code)))).toBe(
+      'not_found',
+    )
   })
 
   it('토큰은 10분 동안 쓸 수 있다', async () => {

@@ -25,9 +25,14 @@ interface Verification {
 }
 
 const verifications: Verification[] = []
-let sequence = 0
 
 const iso = (ms: number) => new Date(ms).toISOString()
+// 서버 SecretTokens.generate와 같은 32바이트 난수 base64url(43자). verification_id와 토큰에 쓴다.
+const randomToken = () =>
+  btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
 
 export function resetEmailVerifications() {
   verifications.length = 0
@@ -56,7 +61,7 @@ export function sendVerification({ database, body }: MockContext): MockReply {
   // 다시 받으면 이전 코드는 바로 무효다.
   for (const item of sent) item.closed_at ??= now
   const verification: Verification = {
-    id: String(++sequence),
+    id: randomToken(),
     email,
     code: String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'),
     created_at: now,
@@ -78,11 +83,8 @@ export function confirmVerification({ body, params }: MockContext): MockReply {
   const code = body.code
   if (typeof code !== 'string' || !/^\d{6}$/.test(code))
     fail(400, 'validation_failed', 'code: 6자리 숫자여야 합니다')
-  const id = params.verification_id
-  if (!/^[1-9]\d*$/.test(id))
-    fail(400, 'validation_failed', 'verification_id 형식이 올바르지 않습니다')
   const verification =
-    verifications.find((item) => item.id === id) ??
+    verifications.find((item) => item.id === params.verification_id) ??
     fail(404, 'not_found', '없는 인증 요청이에요.')
   const now = Date.now()
   // 서버와 같은 순서: 이미 쓴 코드 → 틀린 횟수 초과 → 다시 받기로 닫힘·만료
@@ -100,7 +102,7 @@ export function confirmVerification({ body, params }: MockContext): MockReply {
     })
   }
   verification.closed_at = now
-  verification.token = `evt_mock_${id}_${crypto.randomUUID()}`
+  verification.token = `evt_${randomToken()}`
   verification.token_expires_at = now + TOKEN_TTL_MS
   return {
     data: {

@@ -478,3 +478,26 @@ describe('멱등 키가 필수인 수정 요청', () => {
     ).toBe(true)
   })
 })
+
+// PR #114 2f3e1c9: verification_id는 순번이 아닌 난수 문자열(base64url)이다.
+it('난수 문자열 verification_id로 코드 보내기 응답을 받고 그 ID로 코드를 확인한다', async () => {
+  const id = 'k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA'
+  respond(
+    {
+      verification_id: id,
+      expires_at: '2026-10-28T03:05:00Z',
+      resend_available_at: '2026-10-28T03:01:00Z',
+    },
+    201,
+  )
+  await expect(
+    authApi.sendEmailVerification({ email: 'member@example.com' }),
+  ).resolves.toMatchObject({ verification_id: id })
+  respond({
+    verified_token: 'evt_example',
+    email: 'member@example.com',
+    expires_at: '2026-10-28T03:35:00Z',
+  })
+  await authApi.confirmEmailVerification(id, { code: '483920' })
+  expect(lastRequest?.url).toBe(`/auth/email-verifications/${id}/confirm`)
+})

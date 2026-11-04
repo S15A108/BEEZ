@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { idSchema } from '@/api/contracts/common'
 import * as schemas from '@/features/auth/schemas'
 import { callEndpoint, type RequestOptions } from './request'
 
@@ -37,7 +36,7 @@ export const authApi = {
       schemas.confirmEmailVerificationResponseSchema,
       {
         method: 'POST',
-        url: `/auth/email-verifications/${encodeURIComponent(String(idSchema.parse(verificationId)))}/confirm`,
+        url: `/auth/email-verifications/${encodeURIComponent(verificationId)}/confirm`,
         data: schemas.confirmEmailVerificationInputSchema.parse(input),
       },
       options,
