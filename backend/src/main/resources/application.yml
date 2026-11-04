@@ -24,6 +24,11 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  session:
+    jdbc:
+      initialize-schema: never    # 세션 테이블은 Flyway(V24)가 만든다
+      cleanup-cron: "0 * * * * *" # 1분마다 만료 세션 행을 지운다 (expiry_time 인덱스)
+
   jackson:
     property-naming-strategy: SNAKE_CASE      # 프로토타입 API 와 동일 (decision_refs, task_id …)
     default-property-inclusion: non_null
@@ -55,7 +60,8 @@ server:
   error:
     include-message: never
     include-stacktrace: never
-  # 웹 세션 (Q04 제안안). 서버 메모리 세션이라 재시작하면 모두 로그아웃된다 — 세션 정리가 필요한 후속 PR 에서 JDBC 로 옮긴다.
+  # 웹 세션 (Q04 제안안). PostgreSQL 에 저장해(spring.session.jdbc) 배포로 backend 가 바뀌어도 로그인이 유지된다 (-242).
+  # 아래 만료·쿠키 값은 Spring Session 도 그대로 읽는다.
   servlet:
     session:
       timeout: 2h                 # 마지막 요청 후 2시간
