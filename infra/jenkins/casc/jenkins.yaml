@@ -108,8 +108,14 @@ jobs:
         } catch (err) {
           // 실패·중단·시간 초과 모두 여기로 온다. 팀 채널에 알린 뒤 원래 오류로 끝낸다.
           // 알림 스크립트는 배포할 커밋이 아니라 서버 파일이다(검사 단계 실패는 커밋을 꺼내기 전). 알림이 실패해도 결과는 그대로다
-          withEnv(['FAILED_STAGE=' + failedStage]) {
-            sh 'bash /etc/jenkins/deploy-notify.sh || true'
+          // 알림 단계 자체가 중단·실패해도(알림 중에 중단을 누름 등) 그 오류는 삼키고 원래 오류를 던진다.
+          // 그 빌드를 중단했으면 Jenkins 가 결과를 ABORTED 로 둔다
+          try {
+            withEnv(['FAILED_STAGE=' + failedStage]) {
+              sh 'bash /etc/jenkins/deploy-notify.sh || true'
+            }
+          } catch (notifyErr) {
+            echo '배포 실패 알림 단계가 끝나지 못했다. 원래 오류로 끝낸다'
           }
           throw err
         }
