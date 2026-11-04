@@ -48,7 +48,9 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
   `beez_default`는 본 스택이 만드는 네트워크라 본 스택이 먼저 떠 있어야 합니다.
 - **backend는 컨테이너 이름으로 긁습니다.** 호스트 포트(8081)나 Nginx를 거치지
   않습니다. 지표 경로는 S15P31A108-262가 8080에 엽니다. 그 PR이 배포되기 전에는
-  backend 대상이 DOWN(404)인 것이 정상입니다.
+  backend 대상이 DOWN(`401`, 열리지 않은 Actuator 경로를 보안 체인이 막음)인 것이
+  정상입니다. Prometheus는 인증 없이 긁으므로 262 배포 뒤에도 401이면 이 경로의
+  접근 허용을 262와 맞춥니다.
 - **메모리 한도를 둡니다.** 같은 서버의 DB·backend가 모니터링 때문에 OOM에 걸리지
   않게 합니다. 로컬 실측(빈 상태)은 grafana 약 250MiB, prometheus 약 45MiB,
   나머지 각 15MiB 이하였습니다. 한도에 닿으면 그 컨테이너만 재시작됩니다.
@@ -90,9 +92,9 @@ S15P31A108-264, Kafka·Connect·WAL 수집은 S15P31A108-261에서 더합니다.
 
 | 근거 | 값 |
 |---|---|
-| 시계열 수 예상 | node 약 1,000 + postgres 약 1,500(테이블 50여 개) + backend 약 1,500 ≒ 4,000~5,000 |
+| 시계열 수 | 실측 4,408(2026-11-04 서버, backend 제외: node·postgres·prometheus·alertmanager) + backend 예상 약 1,500 ≒ 6,000 |
 | 하루 샘플 | 15초 주기 → 시계열당 5,760 |
-| 압축 뒤 크기 | 샘플당 약 1~2바이트 → 하루 약 25~60MB, 30일 약 1~2GB |
+| 압축 뒤 크기 | 샘플당 약 1~2바이트 → 하루 약 35~70MB, 30일 약 1~2GB |
 | 디스크 | 309GB 중 10GB 사용(2026-11-04) → 상한 10GB는 디스크의 약 3% |
 
 - **30일**: 244 알림 기준은 "실제 분석 소요 시간을 보고 조정"하기로 한 초기값입니다.
@@ -178,7 +180,7 @@ mon config --quiet && mon up -d && mon ps --format '{{.Service}}\t{{.Status}}\t{
 
 ```bash
 # 서버 (ssh beez)
-# 1) 수집 대상. node·postgres·prometheus·alertmanager 는 up, backend 는 262 배포 전까지 down(404)
+# 1) 수집 대상. node·postgres·prometheus·alertmanager 는 up, backend 는 262 배포 전까지 down(401)
 curl -s 127.0.0.1:9090/api/v1/targets | python3 -c '
 import sys, json
 for t in json.load(sys.stdin)["data"]["activeTargets"]:
@@ -354,6 +356,29 @@ docker compose -f infra/compose.yaml --env-file infra/local.env down
 - 2026-11-04 로컬 결과: 대상 4개 UP(backend 제외), 재기동 뒤 이전 값 조회,
   Grafana 데이터 소스 정상, 계정 SQL 재실행·빈 값 거부, `beez_monitor`의 테이블
   조회 `permission denied` 확인.
+
+## 2026-11-04 서버 결과
+
+커밋 `6925db7`을 올려 처음 띄웠습니다.
+
+| 항목 | 결과 |
+|---|---|
+| 수집 대상 | node·postgres·prometheus·alertmanager UP, `pg_up` 1. backend DOWN(401, 262 배포 전) |
+| 포트 | 서버에서 `127.0.0.1:3000`·`127.0.0.1:9090`만 열림. 로컬 PC에서 3000·9090·9093·9100·9187 모두 연결 실패 |
+| 보존 | `30d or 10GiB` |
+| 파일시스템 | `/`(ext4)·`/boot`·`/boot/efi`만 수집 |
+| 시계열 | 4,408 (backend 제외) |
+| 메모리 | grafana 263MiB, prometheus 42MiB, 나머지 각 15MiB 이하 |
+| 라벨 | UUID·프로젝트 ID·원문 없음. 테이블·DB·롤 이름, EC2 인스턴스 ID·EBS 볼륨 ID·OS 버전 같은 서버 정보만 있음(외부 비공개라 수용) |
+
+기동 로그에 남지만 무시해도 되는 줄:
+
+- grafana `Skipping migration: Already executed, but not recorded` (warn): 새 DB를
+  만들 때 Grafana가 남기는 줄입니다.
+- node-exporter `Failed to open directory, disabling udev device properties`: 디스크
+  지표에 udev 부가 라벨(모델명 등)만 빠집니다. 디스크 I/O 값은 그대로 수집됩니다.
+- postgres-exporter `Error loading config ... postgres_exporter.yml`: 여러 DB를
+  인증별로 긁을 때 쓰는 선택 설정 파일입니다. 이 스택은 env로 접속해 필요 없습니다.
 
 ## 남은 일
 
