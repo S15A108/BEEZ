@@ -30,8 +30,8 @@ public interface EmailVerificationRepository extends JpaRepository<EmailVerifica
 
     /** 코드 확인: 같은 요청에 동시에 들어온 시도가 틀린 횟수를 함께 세도록 행을 잠그고 읽는다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select v from EmailVerification v where v.id = :id")
-    Optional<EmailVerification> findByIdForUpdate(@Param("id") long id);
+    @Query("select v from EmailVerification v where v.publicId = :publicId")
+    Optional<EmailVerification> findByPublicIdForUpdate(@Param("publicId") String publicId);
 
     /** 가입: 같은 토큰으로 동시에 가입해도 한 번만 쓰이도록 잠그고 읽는다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

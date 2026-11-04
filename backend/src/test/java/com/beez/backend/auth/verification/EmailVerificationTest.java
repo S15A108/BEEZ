@@ -14,7 +14,7 @@ class EmailVerificationTest {
     private static final Instant T0 = Instant.parse("2026-11-04T03:00:00Z");
 
     private static EmailVerification issued() {
-        return EmailVerification.issue("a@example.com", "hash", T0.plus(Duration.ofMinutes(5)));
+        return EmailVerification.issue("pub", "a@example.com", "hash", T0.plus(Duration.ofMinutes(5)));
     }
 
     // 깨지면: 유효 5분이 지난 코드로 인증이 통과한다 (완료 조건 "만료 코드 거부")

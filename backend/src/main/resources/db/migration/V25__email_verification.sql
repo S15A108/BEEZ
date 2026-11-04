@@ -3,6 +3,8 @@
 -- V24(웹 세션) 뒤 번호다. 알림(-181, PR #99)은 V26 을 쓴다 — 이 PR 이 먼저 머지돼야 한다.
 CREATE TABLE email_verification (
     id                BIGSERIAL PRIMARY KEY,
+    -- API 의 verification_id. 순번(id)을 내주면 남의 요청 ID 를 추측해 틀린 코드로 잠글 수 있어 난수로 따로 둔다
+    public_id         TEXT        NOT NULL UNIQUE,
     email             TEXT        NOT NULL,                -- Account.normalizeEmail 로 소문자·공백 제거
     code_hash         TEXT        NOT NULL,                -- 6자리 코드의 bcrypt 해시. 원문은 저장하지 않는다
     code_expires_at   TIMESTAMPTZ NOT NULL,

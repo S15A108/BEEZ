@@ -63,7 +63,7 @@ public class EmailVerificationService {
         this.props = props;
     }
 
-    public record Sent(Long verificationId, Instant expiresAt, Instant resendAvailableAt) {
+    public record Sent(String verificationId, Instant expiresAt, Instant resendAvailableAt) {
     }
 
     public record Confirmed(String verifiedToken, String email, Instant expiresAt) {
@@ -87,7 +87,7 @@ public class EmailVerificationService {
                 checkSendAllowed(email, now);
                 verifications.closeOpen(email, now);
                 return verifications.saveAndFlush(
-                        EmailVerification.issue(email, codeHash, now.plus(props.codeTtl())));
+                        EmailVerification.issue(SecretTokens.generate(), email, codeHash, now.plus(props.codeTtl())));
             });
         } catch (DataIntegrityViolationException e) {
             if (!violates(e, OPEN_UNIQUE)) {
@@ -105,16 +105,16 @@ public class EmailVerificationService {
                     "인증 메일을 보내지 못했습니다. 잠시 뒤에 다시 시도하세요");
         }
         log.info("가입 인증 코드 발송: verification_id={}", saved.getId());
-        return new Sent(saved.getId(), saved.getCodeExpiresAt(), saved.getCreatedAt().plus(props.resendInterval()));
+        return new Sent(saved.getPublicId(), saved.getCodeExpiresAt(), saved.getCreatedAt().plus(props.resendInterval()));
     }
 
     /** ACC-A12. 틀린 횟수는 오류 응답이어도 남아야 하므로 판정을 커밋한 뒤 오류로 바꾼다. */
-    public Confirmed confirm(long verificationId, String code) {
+    public Confirmed confirm(String verificationId, String code) {
         String token = TOKEN_PREFIX + SecretTokens.generate();
         record Result(Outcome outcome, int remaining, EmailVerification verification) {
         }
         Result result = tx.execute(status -> {
-            EmailVerification v = verifications.findByIdForUpdate(verificationId)
+            EmailVerification v = verifications.findByPublicIdForUpdate(verificationId)
                     .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "없는 인증 요청"));
             Instant now = Instant.now();
             Outcome rejected = v.rejectBeforeMatch(now, props.maxAttempts());

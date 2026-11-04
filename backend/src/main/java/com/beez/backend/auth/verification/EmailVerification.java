@@ -27,6 +27,10 @@ public class EmailVerification extends BaseTimeEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /** API 의 verification_id. 추측할 수 없는 난수 (SecretTokens.generate). */
+    @Column(name = "public_id")
+    private String publicId;
+
     private String email;
 
     @Column(name = "code_hash")
@@ -53,8 +57,10 @@ public class EmailVerification extends BaseTimeEntity {
     protected EmailVerification() {
     }
 
-    public static EmailVerification issue(String normalizedEmail, String codeHash, Instant codeExpiresAt) {
+    public static EmailVerification issue(String publicId, String normalizedEmail, String codeHash,
+                                          Instant codeExpiresAt) {
         EmailVerification v = new EmailVerification();
+        v.publicId = publicId;
         v.email = normalizedEmail;
         v.codeHash = codeHash;
         v.codeExpiresAt = codeExpiresAt;
@@ -113,6 +119,10 @@ public class EmailVerification extends BaseTimeEntity {
 
     public Long getId() {
         return id;
+    }
+
+    public String getPublicId() {
+        return publicId;
     }
 
     public String getEmail() {

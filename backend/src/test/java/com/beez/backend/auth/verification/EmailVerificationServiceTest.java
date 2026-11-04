@@ -43,7 +43,7 @@ class EmailVerificationServiceTest {
     }
 
     private static EmailVerification saved(long id) {
-        EmailVerification v = EmailVerification.issue("a@example.com", "hashed", Instant.now().plusSeconds(300));
+        EmailVerification v = EmailVerification.issue("pub-" + id, "a@example.com", "hashed", Instant.now().plusSeconds(300));
         ReflectionTestUtils.setField(v, "id", id);
         ReflectionTestUtils.setField(v, "createdAt", Instant.now());
         return v;
@@ -86,10 +86,10 @@ class EmailVerificationServiceTest {
     @Test
     void 틀린_코드는_400_과_남은_시도() {
         EmailVerification v = saved(41L);
-        when(verifications.findByIdForUpdate(41L)).thenReturn(Optional.of(v));
+        when(verifications.findByPublicIdForUpdate("pub-41")).thenReturn(Optional.of(v));
         when(encoder.matches("000000", "hashed")).thenReturn(false);
 
-        assertThatThrownBy(() -> service.confirm(41L, "000000"))
+        assertThatThrownBy(() -> service.confirm("pub-41", "000000"))
                 .isInstanceOfSatisfying(ApiException.class, e -> {
                     assertThat(e.getCode()).isEqualTo("verification_code_mismatch");
                     assertThat(e.getDetails()).containsEntry("remaining_attempts", 4);

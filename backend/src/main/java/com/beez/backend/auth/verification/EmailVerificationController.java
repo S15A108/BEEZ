@@ -1,6 +1,5 @@
 package com.beez.backend.auth.verification;
 
-import com.beez.backend.common.api.Ids;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -37,6 +36,7 @@ public class EmailVerificationController {
         }
     }
 
+    /** verification_id 는 순번이 아니라 난수 문자열이다 (남의 요청 ID 추측 방지). 없는 값이면 확인이 404 */
     public record SendResponse(String verificationId, Instant expiresAt, Instant resendAvailableAt) {
     }
 
@@ -51,14 +51,14 @@ public class EmailVerificationController {
     @ResponseStatus(HttpStatus.CREATED)
     public SendResponse send(@Valid @RequestBody SendRequest body) {
         EmailVerificationService.Sent sent = verifications.send(body.email());
-        return new SendResponse(Ids.str(sent.verificationId()), sent.expiresAt(), sent.resendAvailableAt());
+        return new SendResponse(sent.verificationId(), sent.expiresAt(), sent.resendAvailableAt());
     }
 
     @Operation(summary = "가입 인증 코드 확인 (ACC-A12). 성공하면 회원가입에 넣을 1회용 verified_token")
     @PostMapping("/{verificationId}/confirm")
     public ConfirmResponse confirm(@PathVariable String verificationId, @Valid @RequestBody ConfirmRequest body) {
         EmailVerificationService.Confirmed confirmed =
-                verifications.confirm(Ids.parse(verificationId, "verification_id"), body.code());
+                verifications.confirm(verificationId, body.code());
         return new ConfirmResponse(confirmed.verifiedToken(), confirmed.email(), confirmed.expiresAt());
     }
 }

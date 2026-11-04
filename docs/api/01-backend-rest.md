@@ -1057,13 +1057,13 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | 인증 요청 ID. 순번이 아닌 난수 문자열(-219: 남의 요청 ID 를 추측해 틀린 코드로 잠그지 못하게) |
 | `expires_at` | `Time` | Y | 코드 만료 시각. 화면은 이 값으로 남은 시간을 셈 |
 | `resend_available_at` | `Time` | Y | 다시 받기가 가능한 시각 |
 
 ```json
 {
-  "verification_id": "41",
+  "verification_id": "k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA",
   "expires_at": "2026-10-28T03:05:00Z",
   "resend_available_at": "2026-10-28T03:01:00Z"
 }
@@ -1124,7 +1124,7 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | ACC-A11 응답의 인증 요청 ID (난수 문자열) |
 
 #### Query Parameters
 

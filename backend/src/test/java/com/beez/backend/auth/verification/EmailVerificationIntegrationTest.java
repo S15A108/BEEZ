@@ -62,8 +62,8 @@ class EmailVerificationIntegrationTest extends IntegrationTestSupport {
         assertThat(sent.body()).contains("\"expires_at\"").contains("\"resend_available_at\"")
                 .doesNotContain("\"" + code + "\"");   // 시각 문자열의 나노초 숫자와 우연히 겹치지 않게 따옴표째 본다
         String id = field(sent.body(), "verification_id");
-        assertThat(db.queryForObject("SELECT code_hash FROM email_verification WHERE id = ?", String.class,
-                Long.parseLong(id))).as("코드는 해시로만 저장").doesNotContain(code);
+        assertThat(db.queryForObject("SELECT code_hash FROM email_verification WHERE public_id = ?", String.class,
+                id)).as("코드는 해시로만 저장").doesNotContain(code);
 
         HttpResponse<String> confirmed = confirm(id, code);
         assertThat(confirmed.statusCode()).as(confirmed.body()).isEqualTo(200);
@@ -105,8 +105,8 @@ class EmailVerificationIntegrationTest extends IntegrationTestSupport {
         assertThat(tooSoon.statusCode()).as("다시 받기 간격 전").isEqualTo(429);
         assertThat(tooSoon.body()).contains("\"code\":\"rate_limited\"");
 
-        db.update("UPDATE email_verification SET created_at = created_at - interval '2 minutes' WHERE id = ?",
-                Long.parseLong(firstId));
+        db.update("UPDATE email_verification SET created_at = created_at - interval '2 minutes' WHERE public_id = ?",
+                firstId);
         assertThat(send(email).statusCode()).isEqualTo(201);
 
         HttpResponse<String> old = confirm(firstId, firstCode);
@@ -119,8 +119,8 @@ class EmailVerificationIntegrationTest extends IntegrationTestSupport {
     void 만료된_코드는_410() {
         String email = AccessFixtures.uniqueEmail();
         String id = field(send(email).body(), "verification_id");
-        db.update("UPDATE email_verification SET code_expires_at = now() - interval '1 second' WHERE id = ?",
-                Long.parseLong(id));
+        db.update("UPDATE email_verification SET code_expires_at = now() - interval '1 second' WHERE public_id = ?",
+                id);
 
         HttpResponse<String> res = confirm(id, mail.lastCodeTo(email));
         assertThat(res.statusCode()).isEqualTo(410);
@@ -186,6 +186,20 @@ class EmailVerificationIntegrationTest extends IntegrationTestSupport {
 
         assertThat(send(email).statusCode()).isEqualTo(201);
         assertThat(mail.countTo(email)).isEqualTo(1);
+    }
+
+    // 깨지면: verification_id 가 순번이 되어, 남의 요청 ID 를 추측해 틀린 코드 5번으로 그 사람의 인증을 잠글 수 있다
+    @Test
+    void verification_id_는_추측할_수_없는_난수이고_없는_값은_404() {
+        String email = AccessFixtures.uniqueEmail();
+        String id = field(send(email).body(), "verification_id");
+        assertThat(id).doesNotMatch("\\d+").hasSizeGreaterThanOrEqualTo(32);
+
+        Long rowId = db.queryForObject("SELECT id FROM email_verification WHERE public_id = ?", Long.class, id);
+        HttpResponse<String> byRowId = confirm(String.valueOf(rowId), "000000");
+        assertThat(byRowId.statusCode()).as("내부 순번으로는 찾을 수 없다").isEqualTo(404);
+        assertThat(db.queryForObject("SELECT failed_attempts FROM email_verification WHERE public_id = ?",
+                Integer.class, id)).isZero();
     }
 
     // 깨지면: 이미 가입한 이메일로 코드를 보내 메일함을 괴롭힐 수 있다 (ACC-A11 오류표 409)
