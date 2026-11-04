@@ -15,6 +15,7 @@ import com.beez.backend.task.repository.TaskRepository;
 import com.beez.backend.task.service.ProjectDesignLookup;
 import com.beez.backend.validation.dto.AcceptResult;
 import com.beez.backend.validation.repository.FindingRow;
+import com.beez.backend.validation.config.ValidationProperties;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.repository.ValidationRow;
 import java.util.ArrayList;
@@ -55,11 +56,12 @@ public class ValidationAcceptService {
     private final ValidationRules rules;
     private final ValidationResponses responses;
     private final ObjectMapper json;
+    private final ValidationProperties properties;
 
     public ValidationAcceptService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
                                    TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                    ValidationRepository validations, ValidationRules rules, ValidationResponses responses,
-                                   ObjectMapper json) {
+                                   ObjectMapper json, ValidationProperties properties) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
@@ -69,6 +71,7 @@ public class ValidationAcceptService {
         this.rules = rules;
         this.responses = responses;
         this.json = json;
+        this.properties = properties;
     }
 
     @Transactional
@@ -139,13 +142,16 @@ public class ValidationAcceptService {
         List<TaskPlanDesignRef> refs = designRefs.findByPlanRevisionId(planRevisionId);
         List<Map<String, Object>> relatedOpen = validations.openTasksSharingItems(projectId, taskId, planRevisionId);
 
-        RuleOutcome outcome = rules.evaluate(projectId, baselineId, plan, refs, relatedOpen, "DELTA".equals(trigger));
+        boolean policyEnabled = properties.policyAnalysisEnabled();
+        String ruleVersion = policyEnabled ? ValidationRules.POLICY_RULE_VERSION : ValidationRules.RULE_VERSION;
+        RuleOutcome outcome = rules.evaluate(projectId, baselineId, plan, refs, relatedOpen, "DELTA".equals(trigger), policyEnabled);
         Map<Long, Long> relatedPlans = relatedPlans(relatedOpen);
-        String inputHash = inputHash(plan.getInputHash(), baselineId, refs, relatedPlanHashes(relatedOpen), trigger, completionDelta);
+        String inputHash = inputHash(plan, baselineId, refs, relatedPlanHashes(relatedOpen), trigger, completionDelta, ruleVersion);
 
         boolean finished = outcome.decidedStatus() != null;
         Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("rule_version", ValidationRules.RULE_VERSION);
+        summary.put("rule_version", ruleVersion);
+        if (policyEnabled) summary.put("policy_analysis_version", ValidationRules.POLICY_CHECK);
         // Preserve the authenticated requester for later authorized background searches.
         // The public validation DTO does not expose this internal summary field.
         Map<String, Object> requestActor = new LinkedHashMap<>();
@@ -157,12 +163,12 @@ public class ValidationAcceptService {
         long validationId;
         if (finished) {
             validationId = validations.insertValidation(taskId, planRevisionId, baselineId, outcome.decidedStatus(), trigger,
-                    inputHash, ValidationRules.RULE_VERSION, 0, summary, true);
+                    inputHash, ruleVersion, 0, summary, true);
         } else {
             summary.put("checks", outcome.checks());
             summary.put("attempt", 1);
             validationId = validations.insertValidation(taskId, planRevisionId, baselineId, "RUNNING", trigger,
-                    inputHash, ValidationRules.RULE_VERSION, 1, summary, false);
+                    inputHash, ruleVersion, 1, summary, false);
             // 시도 1 의 실행을 원문·검색 조회 전에 확보한다 (공통 "검증 실행 오류 규약"). 리스는 워커가 꺼낼 때 적는다
             validations.insertRun(validationId, 1, null, "RUNNING");
             validations.insertJob(validationId);
@@ -203,11 +209,15 @@ public class ValidationAcceptService {
      * 검증 종류(trigger)와 delta 가 들어가는 이유: 같은 계획이라도 AGENT 검증과 DELTA 검증은 검사 범위가 다르고, 같은 계획에 다른 delta 를
      * 보고하면 분석 입력이 다르다. 결과 재사용(AC-16, -161)은 이 해시가 같을 때만 한다
      */
-    private String inputHash(String planInputHash, Long baselineId, List<TaskPlanDesignRef> refs, Map<Long, String> relatedPlans,
-                             String trigger, List<Map<String, Object>> completionDelta) {
+    private String inputHash(TaskPlanRevision plan, Long baselineId, List<TaskPlanDesignRef> refs, Map<Long, String> relatedPlans,
+                             String trigger, List<Map<String, Object>> completionDelta, String ruleVersion) {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("trigger", trigger);
-        input.put("plan_input_hash", planInputHash);
+        input.put("plan_input_hash", plan.getInputHash());
+        if (ValidationRules.POLICY_RULE_VERSION.equals(ruleVersion)) {
+            input.put("policy_plan_title", plan.getTitle());
+            input.put("policy_plan_approach", plan.getApproach());
+        }
         input.put("baseline_id", baselineId);
         if (completionDelta != null) {
             input.put("completion_delta", completionDelta);
@@ -229,7 +239,7 @@ public class ValidationAcceptService {
             related.add(r);
         }
         input.put("related_plans", related);
-        input.put("rule_version", ValidationRules.RULE_VERSION);
+        input.put("rule_version", ruleVersion);
         return CanonicalJson.sha256(json, input);
     }
 }

@@ -45,16 +45,19 @@ public class ValidationResponses {
         for (FindingRow f : repository.findings(v.id())) {
             findings.add(new FindingResponse(Ids.str(f.id()), Ids.str(f.validationRunId()), f.source(), f.kind(), f.severity(), f.message(),
                     Ids.str(f.designItemId()), Ids.str(f.designItemVersionId()), Ids.str(f.relatedTaskId()), f.sources(),
-                    f.resolution(), f.nextAction()));
+                    f.resolution(), f.nextAction(), f.policyNeedId(), f.conflictingDesignRefs().isEmpty() ? null : f.conflictingDesignRefs()));
         }
         String errorCode = null;
         if ("ERROR".equals(v.status())) {
             errorCode = errorCode(v.summary());
         }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> policyAnalysis = summary(v.summary()).get("policy_analysis") instanceof Map<?, ?> value
+                ? (Map<String, Object>) value : null;
         return new ValidationResponse(Ids.str(v.id()), Ids.str(v.taskId()), Ids.str(v.planRevisionId()),
                 Ids.str(responseBaseline(v)), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,
                 findings, false,
-                v.requestedAt(), v.finishedAt(), errorCode);
+                v.requestedAt(), v.finishedAt(), errorCode, policyAnalysis);
     }
 
     /**

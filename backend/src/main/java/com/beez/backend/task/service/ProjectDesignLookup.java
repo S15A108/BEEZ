@@ -85,8 +85,8 @@ public class ProjectDesignLookup {
     }
 
     /**
-     * 설계 발행(-163) 의 WAITING 대상: 바뀐 항목의 변경 전 버전(번호) 이하를 <b>현재 계획</b>이 참조하는 IN_PROGRESS 작업
-     * (DesignChangeQueries.affected 와 같은 기준). (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 번호 오름차순, 중복 없음
+     * 설계 발행(-163) 의 WAITING 대상: 현재 계획이 참조하거나 시작 검증이 실제 인용한 정책 버전이 바뀐 IN_PROGRESS 작업.
+     * (항목, 변경 전 버전) 쌍을 한 번의 조회로 묶는다(VALUES). 작업 번호 오름차순, 중복 없음.
      */
     public List<Long> inProgressTaskIdsReferencingAtOrBelow(Long projectId, List<Long> itemIds, List<Long> beforeVersionIds) {
         if (itemIds.isEmpty()) {
@@ -100,15 +100,25 @@ public class ProjectDesignLookup {
             values.append("(:item").append(i).append(", :before").append(i).append(")");
         }
         JdbcClient.StatementSpec spec = jdbc.sql(("""
-                        select distinct t.id
-                          from (values %s) as changed(item_id, before_version_id)
+                        with changed(item_id, before_version_id) as (values %s), affected as (
+                        select t.id
+                          from changed
                           join design_item_version bv on bv.id = changed.before_version_id
                           join task_plan_design_ref r on r.design_item_id = changed.item_id
                           join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
                           join task t on t.current_plan_revision_id = r.plan_revision_id
                          where t.project_id = :projectId
                            and t.status = 'IN_PROGRESS'
-                         order by t.id
+                        union
+                        select t.id
+                          from changed
+                          join design_item_version bv on bv.id = changed.before_version_id
+                          join validation_policy_ref r on r.design_item_id = changed.item_id
+                          join design_item_version rv on rv.id = r.design_item_version_id and rv.version_no <= bv.version_no
+                          join task t on t.started_validation_id = r.validation_id
+                         where t.project_id = :projectId
+                           and t.status = 'IN_PROGRESS'
+                        ) select id from affected order by id
                         """).formatted(values))
                 .param("projectId", projectId);
         for (int i = 0; i < itemIds.size(); i++) {
