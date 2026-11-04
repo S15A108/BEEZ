@@ -180,6 +180,11 @@ sudo nginx -t && sudo systemctl reload nginx && rm -r /tmp/nginx
 같은 Docker 네트워크의 컨테이너와 서버 로컬(`127.0.0.1:8081`)에서는 누구나
 읽을 수 있는데, 지표 라벨에 프로젝트 ID·문서 원문이 없어 이를 수용합니다.
 수집기 전용으로 좁혀야 하면 네트워크·인증 정책을 따로 정합니다.
+backend로 넘기는 세 경로(`snippets/beez-backend-proxy.conf`)는 경로에 `;`·`\`
+(`%3B`·`%5C` 포함)가 있으면 400으로 돌려보냅니다. Nginx는 정규화한 경로로
+location을 고르지만 원래 경로를 넘기고, Tomcat은 `;` 뒤를 지우기 때문에
+`/api/;/../actuator/prometheus`가 backend에서 `/actuator/prometheus`가 되는
+틈을 막습니다(Spring 방화벽도 400으로 막지만 한 겹 더 둡니다).
 관리 포트를 따로 두지 않는 건 헬스체크·Nginx·`deploy.sh`가 모두
 8080의 `/actuator/health`를 보기 때문입니다.
 
@@ -517,6 +522,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/health 
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://dev.beez.ai.kr/mcp       # 401 (토큰 없음)
 curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/prometheus  # 404 (Nginx가 막음)
 curl -s -o /dev/null -w '%{http_code}\n' https://dev.beez.ai.kr/actuator/env         # 404
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' 'https://dev.beez.ai.kr/api/;/../actuator/prometheus'  # 400 (Nginx가 막음)
 ```
 
 서버:
