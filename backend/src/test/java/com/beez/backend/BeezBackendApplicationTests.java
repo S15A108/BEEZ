@@ -60,6 +60,17 @@ class BeezBackendApplicationTests extends IntegrationTestSupport {
         assertThat(res.body()).contains("\"status\":\"UP\"");
     }
 
+    /** S15P31A108-244 결정 2: 수집기는 인증 없이 /actuator/prometheus 를 읽고, 다른 actuator 경로는 닫혀 있다. */
+    @Test
+    void actuatorPrometheus_isPublic_otherActuatorStaysClosed() {
+        HttpResponse<String> res = get("/actuator/prometheus");
+        assertThat(res.statusCode()).isEqualTo(200);
+        assertThat(res.body()).contains("jvm_memory_used_bytes");
+
+        assertThat(get("/actuator/env").statusCode()).isEqualTo(401);
+        assertThat(get("/actuator/metrics").statusCode()).isEqualTo(401);
+    }
+
     @Test
     void openApiDocs_areServed() {
         HttpResponse<String> res = get("/v3/api-docs");

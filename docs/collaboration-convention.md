@@ -233,6 +233,7 @@ docs: Update installation guide
 - Merge 후 Jira 티켓 또는 GitHub Issue 상태를 확인한다.
 - 긴급 수정으로 `main`을 변경한 경우 `dev`에도 반영한다.
 - PR 템플릿 등 기본 브랜치 반영이 필요한 저장소 공통 설정은 목적을 PR에 명시하고 `main` 대상으로 생성할 수 있다.
+- Spring Boot·Spring Security 버전을 올리는 PR은 웹 세션을 비우는 Flyway 마이그레이션(`DELETE FROM spring_session;`)을 함께 넣고, PR 본문에 "배포 때 웹 사용자 1회 로그아웃"을 적는다. 웹 세션은 Java 직렬화로 DB에 저장되어(S15P31A108-242), 버전이 바뀌면 기존 세션을 읽지 못해 그 사용자의 요청이 로그아웃이 아니라 오류로 떨어질 수 있다.
 
 ### 승인 후 자동 병합
 

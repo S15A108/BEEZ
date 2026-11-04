@@ -90,6 +90,10 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
 | `VALIDATION_BUDGET_MS` | | `15000`. `AI_READ_TIMEOUT` 보다 짧게 | 기본값 |
 | `VALIDATION_FAKE_ANALYZER` | | `false` | env 파일, 없으면 `false` |
+| `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 아직 compose 가 넘기지 않음 (-219) |
+| `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | 〃. prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |
+| `MAIL_SMTP_AUTH`·`MAIL_SMTP_STARTTLS` | | `true`·`true` | 기본값 |
+| `EMAIL_VERIFY_RESEND_INTERVAL`·`SEND_LIMIT`·`GLOBAL_SEND_LIMIT`·`MAX_ATTEMPTS` | | `60s`·`5`(이메일당 시간당)·`100`(서버 전체 시간당, SMTP 계정 한도보다 낮게)·`5` (Q04 기본안) | 기본값 |
 
 prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
 오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30
@@ -274,8 +278,9 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 - `config --quiet` 는 변수를 채워 보기만 하고 아무것도 띄우지 않습니다. 빠진 값이 있으면 compose 는 위 표 첫 줄 문구를
   내고, 이 점검은 그것을 `필수값 DB_PASSWORD 이 없거나 빈 값` 으로 바꿔 보여 줍니다.
 - 값의 길이만 보려면 [cd.md](cd.md#2-env-파일)의 `awk` 명령을 씁니다.
-- 위 경계 처리는 [`infra/deploy/test_check_port.py`](../../infra/deploy/test_check_port.py) 가 고정합니다. 점검을 고치면
-  `python infra/deploy/test_check_port.py` 를 돌립니다. 실제 docker compose 로 env 파일을 해석하고(데몬은 필요 없음),
+- 위 경계 처리는 [`infra/deploy/test_check_port.py`](../../infra/deploy/test_check_port.py) 가 고정합니다.
+  `infra/deploy/`·`infra/compose.yaml`·`infra/local.env` 를 바꾼 PR 에서는 CI 의 `deploy-scripts` 잡이 이 시험을 돌리고,
+  로컬에서는 `python infra/deploy/test_check_port.py` 로 돌립니다. 실제 docker compose 로 env 파일을 해석하고(데몬은 필요 없음),
   docker ps·`ss`·`curl`·Nginx 설정 폴더는 가짜로 둡니다. Windows 는 Git Bash 를 씁니다.
   시험은 `CHECK_PORT_TEST_*` 환경변수로 Nginx 설정 폴더와 재시도 대기를 바꿉니다. 이 값이 설정돼 있으면 점검이 첫 줄에
   `주의: 시험용 값 사용 중` 을 찍으므로, 배포 로그에 이 줄이 보이면 서버 환경에서 그 변수를 지웁니다.

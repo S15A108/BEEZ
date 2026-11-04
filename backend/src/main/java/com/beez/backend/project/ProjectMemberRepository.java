@@ -75,6 +75,18 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     List<MemberRow> findActiveMembers(@Param("projectId") long projectId, @Param("beforeId") long beforeId,
                                       Pageable pageable);
 
+    /** 활성 멤버 수 (PRJ-A06 member_count). 조건은 {@link #findActiveMembers} 와 같아 팀원 목록 건수와 맞는다. */
+    @Query("""
+            select count(m) from ProjectMember m
+              join Project p on p.id = m.projectId
+              join Account a on a.id = m.accountId
+             where m.projectId = :projectId
+               and m.active = true
+               and p.archivedAt is null
+               and a.deletedAt is null
+            """)
+    long countActiveMembers(@Param("projectId") long projectId);
+
     /**
      * 멤버십 행을 잠그고 읽는다 (SELECT … FOR UPDATE). 토큰 발급(AGT-A01)이 이걸로 줄을 세워 동시 발급이 한도를 넘지 않게 한다.
      * 이미 영속성 컨텍스트에 있는 엔티티는 옛 값 그대로 돌아오므로, 잠근 뒤 상태는 값 조회({@link #isActiveMember})로 다시 본다.

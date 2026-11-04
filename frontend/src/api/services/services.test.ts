@@ -331,10 +331,10 @@ describe('계약 경계', () => {
     ).toBe(false)
   })
 
-  it('119개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(119)
+  it('121개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(121)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      119,
+      121,
     )
     expect(
       new Set(
@@ -342,7 +342,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(119)
+    ).toBe(121)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
@@ -477,4 +477,27 @@ describe('멱등 키가 필수인 수정 요청', () => {
         .every((endpoint) => endpoint.idempotent),
     ).toBe(true)
   })
+})
+
+// PR #114 2f3e1c9: verification_id는 순번이 아닌 난수 문자열(base64url)이다.
+it('난수 문자열 verification_id로 코드 보내기 응답을 받고 그 ID로 코드를 확인한다', async () => {
+  const id = 'k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA'
+  respond(
+    {
+      verification_id: id,
+      expires_at: '2026-10-28T03:05:00Z',
+      resend_available_at: '2026-10-28T03:01:00Z',
+    },
+    201,
+  )
+  await expect(
+    authApi.sendEmailVerification({ email: 'member@example.com' }),
+  ).resolves.toMatchObject({ verification_id: id })
+  respond({
+    verified_token: 'evt_example',
+    email: 'member@example.com',
+    expires_at: '2026-10-28T03:35:00Z',
+  })
+  await authApi.confirmEmailVerification(id, { code: '483920' })
+  expect(lastRequest?.url).toBe(`/auth/email-verifications/${id}/confirm`)
 })

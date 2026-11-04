@@ -2,12 +2,24 @@ import { isAxiosError } from 'axios'
 import { z } from 'zod'
 
 export const apiErrorSchema = z.object({
-  error: z.object({ code: z.string(), message: z.string().optional() }),
+  error: z.object({
+    code: z.string(),
+    message: z.string().optional(),
+    // 명세가 정한 오류만 채운다(예: ACC-A12 remaining_attempts). 없으면 빠진다.
+    details: z.record(z.string(), z.unknown()).optional(),
+  }),
 })
 export function getApiErrorCode(error: unknown): string | undefined {
   if (!isAxiosError(error)) return undefined
   const parsed = apiErrorSchema.safeParse(error.response?.data)
   return parsed.success ? parsed.data.error.code : undefined
+}
+// 오류 본문의 error.details 객체(예: ACC-A12 remaining_attempts). 서버 문구 원문은 아래 getApiErrorDetail이다.
+export function getApiErrorDetails(
+  error: unknown,
+): Record<string, unknown> | undefined {
+  if (!isAxiosError(error)) return undefined
+  return apiErrorSchema.safeParse(error.response?.data).data?.error.details
 }
 // 서버가 보낸 오류 문구 원문. 'design_item_id=301'처럼 어느 항목 때문인지 찾을 때 쓰고, 화면 문구는 getApiErrorMessage로 보인다.
 export function getApiErrorDetail(error: unknown): string | undefined {
@@ -50,6 +62,8 @@ const messages: Record<string, string> = {
   forbidden: '이 작업의 권한이 없습니다.',
   not_found: '이 항목을 찾을 수 없습니다.',
   email_already_exists: '이미 가입된 이메일입니다.',
+  email_not_verified:
+    '이메일 인증이 만료됐거나 이미 사용됐어요. 이메일을 다시 인증해 주세요.',
   validation_failed: '입력 내용을 확인해 주세요.',
   version_conflict: '설계가 변경되었습니다. 최신 내용을 확인해 주세요.',
   revision_conflict: '작업 계획이 변경되었습니다. 다시 확인해 주세요.',

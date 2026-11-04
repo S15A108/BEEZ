@@ -24,6 +24,11 @@ public final class ApiClient {
         this.baseUrl = "http://localhost:" + port;
     }
 
+    /** 테스트 컨텍스트 밖에서 띄운 다른 backend 를 부를 때 쓴다 (예: 재시작 시험의 두 번째 인스턴스). */
+    public static ApiClient forPort(int port) {
+        return new ApiClient(port);
+    }
+
     /** 로그인하고 자신을 돌려준다. 실패하면 예외. */
     public ApiClient login(String email, String password) {
         HttpResponse<String> res = post("/api/auth/login",

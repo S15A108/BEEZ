@@ -24,9 +24,29 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  session:
+    jdbc:
+      initialize-schema: never    # 세션 테이블은 Flyway(V24)가 만든다
+      cleanup-cron: "0 * * * * *" # 1분마다 만료 세션 행을 지운다 (expiry_time 인덱스)
+
   jackson:
     property-naming-strategy: SNAKE_CASE      # 프로토타입 API 와 동일 (decision_refs, task_id …)
     default-property-inclusion: non_null
+
+  # SMTP 접속 (S15P31A108-219). beez.mail.mode=smtp 일 때만 쓴다. host 가 비면 JavaMailSender 가 만들어지지 않고 발송이 503 이 된다
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_SMTP_STARTTLS:true}
+      mail.smtp.starttls.required: ${MAIL_SMTP_STARTTLS:true}
+      # 기본값은 무한 대기다. 요청 스레드가 SMTP 에 묶이지 않게 끊는다
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
 
   servlet:
     multipart:
@@ -55,7 +75,8 @@ server:
   error:
     include-message: never
     include-stacktrace: never
-  # 웹 세션 (Q04 제안안). 서버 메모리 세션이라 재시작하면 모두 로그아웃된다 — 세션 정리가 필요한 후속 PR 에서 JDBC 로 옮긴다.
+  # 웹 세션 (Q04 제안안). PostgreSQL 에 저장해(spring.session.jdbc) 배포로 backend 가 바뀌어도 로그인이 유지된다 (-242).
+  # 아래 만료·쿠키 값은 Spring Session 도 그대로 읽는다.
   servlet:
     session:
       timeout: 2h                 # 마지막 요청 후 2시간
@@ -69,10 +90,16 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus 는 같은 8080 에서 연다(관리 포트 분리 안 함 — 헬스체크·Nginx·deploy.sh 가 8080 을 쓴다).
+        # 외부 인터넷은 Nginx 가 /actuator/ 를 막고, 수집은 compose 네트워크 안에서 한다 (S15P31A108-262, docs/infra/cd.md)
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: always
+  health:
+    # SMTP 가 잠깐 안 닿는다고 backend 를 DOWN 으로 보지 않는다 — 헬스체크(compose·deploy.sh)가 배포를 되돌리게 된다
+    mail:
+      enabled: false
   info:
     build:
       enabled: true
@@ -122,6 +149,19 @@ beez:
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 초대 링크 = {base-url}/invite?token=…
     ttl: ${INVITE_TTL:7d}
+  mail:
+    mode: ${MAIL_MODE:log}                         # smtp 면 실제로 보낸다. 로컬·테스트는 log (보내지 않음)
+    from: ${MAIL_FROM:BEEZ <no-reply@beez.ai.kr>}
+    log-body: false                                # 로그 구현이 본문(인증 코드)을 찍을지. local 프로필만 true
+  # 가입 이메일 인증 (ACC-A11·A12). 코드 유효 5분만 명세 값이고 나머지는 Q04 가 정해지기 전 기본안이다
+  email-verification:
+    code-ttl: 5m
+    resend-interval: ${EMAIL_VERIFY_RESEND_INTERVAL:60s}   # 명세 ACC-A11 응답 예시
+    send-limit: ${EMAIL_VERIFY_SEND_LIMIT:5}               # 이메일당 send-limit-window 안 발송 수
+    send-limit-window: 1h
+    global-send-limit: ${EMAIL_VERIFY_GLOBAL_SEND_LIMIT:100}   # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
+    max-attempts: ${EMAIL_VERIFY_MAX_ATTEMPTS:5}           # 틀린 입력 한도. FE 목과 같은 값
+    token-ttl: 30m                                         # verified_token. 명세 ACC-A12 응답 예시
   agent:
     mcp-url: ${MCP_URL:http://localhost:8080/mcp}   # 토큰 발급 응답의 연결 URL (AGT-A01)
     max-active-tokens: ${AGENT_MAX_ACTIVE_TOKENS:5}  # 프로젝트당 한 계정의 폐기 안 된 토큰 수 (Q06)
