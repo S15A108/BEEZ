@@ -36,7 +36,7 @@ from app.services.bee_chat import (
     verify_payload,
 )
 from app.services.bee_chat import proposer as proposer_module
-from app.services.bee_chat.service import _judge_text, _sentence_spans
+from app.services.bee_chat.service import _fair_cap, _judge_text, _sentence_spans
 from app.services.llm_client import (
     LLMClient,
     LLMContext,
@@ -874,6 +874,9 @@ async def test_the_shared_support_of_one_judge_call_is_bounded_in_total():
         }
         for i in range(1, 21)
     ]
+    # PR #96 P2 (14th round): the answer leans on a sentence deep inside one
+    # task's goal; the fit must keep it, not cut the goal's tail.
+    goal_rule = "결제 재시도 간격은 30초로 둔다."
     tasks = [
         {
             "id": f"5{i:02d}",
@@ -881,14 +884,19 @@ async def test_the_shared_support_of_one_judge_call_is_bounded_in_total():
             "status": "READY",
             "current_plan_revision": {
                 "id": f"6{i:02d}",
-                "plan": {"title": "제" * 600, "goal": "목" * 3000},
+                "plan": {
+                    "title": "제" * 600,
+                    # The rule is the goal's last sentence: a tail cut of the
+                    # task text loses exactly it.
+                    "goal": "목" * 1900 + f" {goal_rule}" if i == 7 else "목" * 3000,
+                },
             },
         }
         for i in range(1, 21)
     ]
     body = request(approved_items=items, related_tasks=tasks)
     raw = answer(
-        text="모든 항목과 작업을 참조합니다.",
+        text="모든 항목과 작업을 참조합니다. TASK-007의 결제 재시도 간격은 30초로 둡니다.",
         citations=[],
         design_refs=[item["id"] for item in items],
         task_refs=[task["id"] for task in tasks],
@@ -899,6 +907,20 @@ async def test_the_shared_support_of_one_judge_call_is_bounded_in_total():
     question, quotes, shared, claims = judge.seen
     assert len(shared) == 40 and all(len(text) <= 2000 for text in shared)
     assert sum(len(text) for text in shared) <= MAX_SHARED_SUPPORT_CHARS
+    (task_7,) = [text for text in shared if text.startswith("TASK-007 ")]
+    assert goal_rule in task_7 and "목표 " in task_7
+    # Before the fit the same text was longer and held the rule at its end,
+    # which a tail cut to the fair share would have lost.
+    full = reference_support(
+        list(body.approved_items),
+        list(body.related_tasks),
+        for_judge=True,
+        mention=Mention.of(raw["text"]),
+    )
+    full_7 = full[26]
+    assert goal_rule in full_7 and len(full_7) > len(task_7)
+    share = _fair_cap([len(text) for text in full], MAX_SHARED_SUPPORT_CHARS)
+    assert len(full_7) > share and goal_rule not in full_7[: share - 1]
     payload = verify_payload(question, quotes, shared, claims)
     assert len(payload.encode("utf-8")) <= MAX_PAYLOAD_BYTES
     # The verifier accepts exactly what the service built.

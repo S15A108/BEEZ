@@ -18,8 +18,9 @@ import hashlib
 import json
 import re
 from bisect import bisect_right
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Literal, Self
 
 from pydantic import ValidationError
@@ -411,22 +412,25 @@ def _segment_spans(text: str) -> list[tuple[int, int]]:
     return [(a, b) for a, b in spans if text[a:b].strip()]
 
 
-def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
+def _judge_text(
+    text: str, mention: Mention = NO_MENTION, limit: int = MAX_JUDGE_FIELD_CHARS
+) -> str:
     """A text for the judge: its head, or the passages the answer leans on.
 
-    A long description or goal is cut to `MAX_JUDGE_FIELD_CHARS`. The text
-    is read as segments (sentences; a long sentence in pieces of
-    `JUDGE_PIECE_CHARS` at word boundaries). Each segment holding a word of
-    the answer is kept together with the segment after it and the one
-    before it (a condition or an exception usually sits there: "사용자는
-    게시글을 즉시 삭제할 수 있다. 관리자 승인이 선행돼야 한다"), the segments
-    sharing the most with the answer first, as many as fit, in their
-    original order with `…` where segments were skipped. So an obligation
-    at the end of one long clause is kept beside the clause's start, and a
-    word repeated many times does not crowd the rare one out. Without any
-    such word the head of the text is kept.
+    A long description or goal is cut to `limit` chars (`MAX_JUDGE_FIELD_CHARS`
+    unless the call's whole shared support must shrink). The text is read as
+    segments (sentences; a long sentence in pieces of `JUDGE_PIECE_CHARS` at
+    word boundaries). Each segment holding a word of the answer is kept
+    together with the segment after it and the one before it (a condition
+    or an exception usually sits there: "사용자는 게시글을 즉시 삭제할 수
+    있다. 관리자 승인이 선행돼야 한다"), the segments sharing the most with
+    the answer first, as many as fit, in their original order with `…`
+    where segments were skipped. So an obligation at the end of one long
+    clause is kept beside the clause's start, and a word repeated many
+    times does not crowd the rare one out. Without any such word the head
+    of the text is kept.
     """
-    if len(text) <= MAX_JUDGE_FIELD_CHARS:
+    if len(text) <= limit:
         return text
     spans = _segment_spans(text)
     hits = mention.occurrences(text) if mention.words else []
@@ -441,8 +445,8 @@ def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
         (i for i, s in enumerate(scores) if s), key=lambda i: (-scores[i], i)
     )
     if not ranked:
-        return text[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
-    budget = MAX_JUDGE_FIELD_CHARS - 2
+        return text[: limit - 1] + "…"
+    budget = limit - 2
     pieces: dict[int, str] = {}
     used = 0
     for i in ranked:
@@ -473,52 +477,37 @@ def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
     head = "…" if order[0] > 0 else ""
     tail = "…" if order[-1] < len(spans) - 1 else ""
     result = head + "".join(out) + tail
-    if len(result) > MAX_JUDGE_FIELD_CHARS:
-        result = result[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
+    if len(result) > limit:
+        result = result[: limit - 1] + "…"
     return result
 
 
-def _fit_shared(texts: list[str], budget: int) -> list[str]:
-    """Cut the longest texts first so that together they fit the budget."""
-    if sum(len(text) for text in texts) <= budget:
-        return texts
-    lengths = sorted(len(text) for text in texts)
-    remaining = budget
-    cap = lengths[-1]
-    for index, length in enumerate(lengths):
-        share = remaining // (len(lengths) - index)
-        if length <= share:
-            remaining -= length
-        else:
-            cap = share
-            break
-    return [text if len(text) <= cap else text[: cap - 1] + "…" for text in texts]
-
-
-def _judge_value(value: Any, mention: Mention = NO_MENTION) -> Any:
+def _judge_value(
+    value: Any, mention: Mention = NO_MENTION, limit: int = MAX_JUDGE_FIELD_CHARS
+) -> Any:
     """Item content for the judge: cut, with what the answer mentions kept.
 
-    Strings are cut to `MAX_JUDGE_FIELD_CHARS` (around a word of the answer
-    when it lies deeper). A list longer than `MAX_JUDGE_LIST_ITEMS` keeps
-    the entries the answer mentions most, then its leading entries, in
-    their order, so the 21st field of a data contract the answer names,
-    `field_21` or `email`, is not dropped. An object lists the fields the
-    answer mentions first and then its shortest values, so the final
-    length cut only ever trims a long text the answer does not lean on.
+    Strings are cut to `limit` (the passages the answer leans on first). A
+    list longer than `MAX_JUDGE_LIST_ITEMS` keeps the entries the answer
+    mentions most, then its leading entries, in their order, so the 21st
+    field of a data contract the answer names, `field_21` or `email`, is
+    not dropped. An object lists the fields the answer mentions first and
+    then its shortest values, so the final length cut only ever trims a
+    long text the answer does not lean on.
     """
     if isinstance(value, str):
-        return _judge_text(value, mention)
+        return _judge_text(value, mention, limit)
     if isinstance(value, list):
         kept = list(range(len(value)))
         if len(value) > MAX_JUDGE_LIST_ITEMS:
             ranked = sorted(kept, key=lambda i: (-mention.score(value[i]), i))
             kept = sorted(ranked[:MAX_JUDGE_LIST_ITEMS])
-        items = [_judge_value(value[i], mention) for i in kept]
+        items = [_judge_value(value[i], mention, limit) for i in kept]
         if len(kept) < len(value):
             items.append(f"… 외 {len(value) - len(kept)}개")
         return items
     if isinstance(value, dict):
-        cut = {name: _judge_value(item, mention) for name, item in value.items()}
+        cut = {name: _judge_value(item, mention, limit) for name, item in value.items()}
         return dict(
             sorted(
                 cut.items(),
@@ -529,6 +518,30 @@ def _judge_value(value: Any, mention: Mention = NO_MENTION) -> Any:
             )
         )
     return value
+
+
+def _judge_item_text(item: ApprovedDesignItem, mention: Mention, limit: int) -> str:
+    """One referenced item for the judge, its fields cut to `limit` each."""
+    content = _judge_value(item.content.model_dump(mode="json"), mention, limit)
+    return clip_text(
+        f"{item.key} ({item.kind}): {json.dumps(content, ensure_ascii=False)}"
+    )
+
+
+def _judge_task_text(task: RelatedTask, mention: Mention, limit: int) -> str:
+    """One referenced task for the judge: key, status, assignee, plan fields."""
+    parts = [f"{task.key} {task.status}"]
+    if task.assignee_member_id:
+        parts.append(f"담당 {task.assignee_member_id}")
+    if task.current_plan_revision is not None:
+        plan = task.current_plan_revision.plan
+        parts.append(f"계획 {_judge_text(plan.title, mention, limit)}")
+        if plan.design_refs:
+            refs = " ".join(ref.design_item_version_id for ref in plan.design_refs)
+            parts.append(f"참조 {_judge_text(refs, mention, limit)}")
+        if plan.goal:
+            parts.append(f"목표 {_judge_text(plan.goal, mention, limit)}")
+    return clip_text(" / ".join(parts))
 
 
 def reference_support(
@@ -543,38 +556,74 @@ def reference_support(
     For the token check an item keeps its full content and a plan's title
     and goal are cut to what the answer model saw (`MAX_PAYLOAD_TEXT_CHARS`).
     For the judge every text must fit `MAX_PAYLOAD_TEXT_CHARS`: an item's
-    content is cut field by field, keeping first what the answer
-    mentions (a string of it occurs in the answer) and then its short
-    fields (an API's `method` and
-    `path` come before a long `description`), and a plan's title,
-    references and goal are cut to `MAX_JUDGE_FIELD_CHARS` each, so the
-    final cut never removes a short field or one the answer mentions.
+    content is cut field by field, keeping first what the answer mentions
+    (a string of it occurs in the answer) and then its short fields (an
+    API's `method` and `path` come before a long `description`), and a
+    plan's title, references and goal are cut to `MAX_JUDGE_FIELD_CHARS`
+    each, so the final cut never removes a short field or one the answer
+    mentions. `claims_from` shrinks these further, field by field, when a
+    call's shared support exceeds `MAX_SHARED_SUPPORT_CHARS` in total.
     """
-
-    def cut(text: str) -> str:
-        return _judge_text(text, mention) if for_judge else clip_text(text)
-
+    if for_judge:
+        limit = MAX_JUDGE_FIELD_CHARS
+        return [_judge_item_text(item, mention, limit) for item in items] + [
+            _judge_task_text(task, mention, limit) for task in tasks
+        ]
     texts: list[str] = []
     for item in items:
-        content = item.content.model_dump(mode="json")
-        if for_judge:
-            content = _judge_value(content, mention)
-        encoded = json.dumps(content, ensure_ascii=False)
-        texts.append(f"{item.key} ({item.kind}): {encoded}")
+        content = json.dumps(item.content.model_dump(mode="json"), ensure_ascii=False)
+        texts.append(f"{item.key} ({item.kind}): {content}")
     for task in tasks:
         parts = [f"{task.key} {task.status}"]
         if task.assignee_member_id:
             parts.append(f"담당 {task.assignee_member_id}")
         if task.current_plan_revision is not None:
             plan = task.current_plan_revision.plan
-            parts.append(f"계획 {cut(plan.title)}")
+            parts.append(f"계획 {clip_text(plan.title)}")
             if plan.design_refs:
                 refs = " ".join(ref.design_item_version_id for ref in plan.design_refs)
-                parts.append(f"참조 {cut(refs) if for_judge else refs}")
+                parts.append(f"참조 {refs}")
             if plan.goal:
-                parts.append(f"목표 {cut(plan.goal)}")
+                parts.append(f"목표 {clip_text(plan.goal)}")
         texts.append(" / ".join(parts))
-    return [clip_text(text) if for_judge else text for text in texts]
+    return texts
+
+
+def _fair_cap(lengths: Sequence[int], budget: int) -> int:
+    """The largest per-text length such that the texts together fit the budget."""
+    ordered = sorted(lengths)
+    remaining = budget
+    for index, length in enumerate(ordered):
+        share = remaining // (len(ordered) - index)
+        if length > share:
+            return share
+        remaining -= length
+    return ordered[-1] if ordered else budget
+
+
+def _fit_shared(builders: Sequence[Callable[[int], str]], budget: int) -> list[str]:
+    """Shared support texts that together fit the budget.
+
+    Each builder makes one reference text for a field limit. When the texts
+    built with `MAX_JUDGE_FIELD_CHARS` exceed the budget together, the ones
+    over their fair share are rebuilt with the limit halved until they fit,
+    so a plan's goal keeps the passages the answer leans on instead of
+    losing its tail; a text is cut outright only when no limit fits.
+    """
+    texts = [build(MAX_JUDGE_FIELD_CHARS) for build in builders]
+    if sum(len(text) for text in texts) <= budget:
+        return texts
+    cap = _fair_cap([len(text) for text in texts], budget)
+    fitted: list[str] = []
+    for build, text in zip(builders, texts, strict=True):
+        limit = MAX_JUDGE_FIELD_CHARS
+        while len(text) > cap and limit > MIN_CONTEXT_CHARS:
+            limit = max(MIN_CONTEXT_CHARS, limit // 2)
+            text = build(limit)
+        if len(text) > cap:
+            text = text[: cap - 1] + "…"
+        fitted.append(text)
+    return fitted
 
 
 def _texts(values: Sequence[str], limit: int) -> tuple[str, ...]:
@@ -785,17 +834,16 @@ def claims_from(
     by_item = {item.id: item for item in request.approved_items}
     by_task = {task.id: task for task in request.related_tasks}
     mention = Mention.of(result.text)
-    shared = [
-        text
-        for text in reference_support(
-            [by_item[ref.design_item_version_id] for ref in result.design_refs],
-            [by_task[ref.task_id] for ref in result.task_refs],
-            for_judge=True,
-            mention=mention,
-        )
-        if text.strip()
+    builders: list[Callable[[int], str]] = [
+        partial(_judge_item_text, by_item[ref.design_item_version_id], mention)
+        for ref in result.design_refs
+    ] + [
+        partial(_judge_task_text, by_task[ref.task_id], mention)
+        for ref in result.task_refs
     ]
-    shared = _fit_shared(shared, MAX_SHARED_SUPPORT_CHARS)
+    shared = [
+        text for text in _fit_shared(builders, MAX_SHARED_SUPPORT_CHARS) if text.strip()
+    ]
     every_quote = tuple(range(1, len(result.citations) + 1))
     claims: list[Claim] = []
     for segment, markers in claim_segments(result.text):
