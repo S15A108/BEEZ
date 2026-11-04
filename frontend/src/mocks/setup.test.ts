@@ -17,6 +17,7 @@ import {
   tasksApi,
   validationsApi,
 } from '../api/services'
+import { verifyEmail } from '../test/verifyEmail'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -121,6 +122,7 @@ describe('documented REST mock adapter', () => {
       email: 'new@beez.local',
       name: '새 팀원',
       password,
+      verified_token: await verifyEmail('new@beez.local'),
     })
     expect(user.id).toMatch(/^\d+$/)
     expect(localStorage.getItem(MOCK_STORAGE_KEY)).not.toContain(password)

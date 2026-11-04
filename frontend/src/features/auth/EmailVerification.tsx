@@ -6,8 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { authApi } from '@/api/services'
 import { cn } from '@/lib/utils'
-import { clock, confirmCode, sendCode, verificationMessage } from './emailCode'
+import { clock, verificationMessage } from './emailCode'
+import type { SendEmailVerificationResponse } from './schemas'
 
 const schema = z.object({
   email: z
@@ -18,14 +20,16 @@ const schema = z.object({
   code: z.string().regex(/^\d{6}$/, '6자리 숫자를 입력해 주세요.'),
 })
 
-/** 회원가입 이메일 인증 (SCR-01 수정안). 인증한 이메일을 onVerified로 알린다. */
+/** 회원가입 이메일 인증 (SCR-01 수정안, ACC-A11·A12). 인증한 이메일과 가입 토큰을 onVerified로 알린다. */
 export function EmailVerification({
   needed,
   onVerified,
 }: {
   /** 인증 없이 가입하기를 눌렀을 때 */
   needed: boolean
-  onVerified: (email: string | null) => void
+  onVerified: (
+    verified: { email: string; verified_token: string } | null,
+  ) => void
 }) {
   const {
     register,
@@ -37,8 +41,11 @@ export function EmailVerification({
     resolver: zodResolver(schema),
     defaultValues: { email: '', code: '' },
   })
-  const [sent, setSent] = useState<ReturnType<typeof sendCode> | null>(null)
+  const [sent, setSent] = useState<SendEmailVerificationResponse | null>(null)
+  const [mockCode, setMockCode] = useState<string>()
   const [verified, setVerified] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [sendError, setSendError] = useState('')
   const [message, setMessage] = useState('')
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -51,25 +58,49 @@ export function EmailVerification({
   const resendIn = sent ? Date.parse(sent.resend_available_at) - now : 0
 
   const send = async () => {
-    if (!(await trigger('email'))) return
-    setSent(sendCode(getValues('email').trim()))
-    setNow(Date.now())
-    setMessage('')
-    resetField('code')
+    if (busy || !(await trigger('email'))) return
+    setBusy(true)
+    try {
+      const result = await authApi.sendEmailVerification({
+        email: getValues('email').trim(),
+      })
+      setSent(result)
+      setMockCode(undefined)
+      // 목 모드는 메일을 보내지 않아 방금 보낸 코드를 예시로 보여 준다. env를 그 자리에서 비교해 live 빌드에는 목 청크가 없다.
+      if (import.meta.env.VITE_API_MODE !== 'live') {
+        const { sentCode } = await import('@/mocks/emailVerifications')
+        setMockCode(sentCode(result.verification_id))
+      }
+      setNow(Date.now())
+      setSendError('')
+      setMessage('')
+      resetField('code')
+    } catch (cause) {
+      setSendError(verificationMessage(cause))
+    } finally {
+      setBusy(false)
+    }
   }
   const confirm = async () => {
-    if (!sent || !(await trigger('code'))) return
+    if (!sent || busy || !(await trigger('code'))) return
+    setBusy(true)
     try {
-      const result = confirmCode(sent.verification_id, getValues('code'))
+      const result = await authApi.confirmEmailVerification(
+        sent.verification_id,
+        { code: getValues('code') },
+      )
       setVerified(true)
       setMessage('')
-      onVerified(result.email)
+      onVerified({ email: result.email, verified_token: result.verified_token })
     } catch (cause) {
       setMessage(verificationMessage(cause))
+    } finally {
+      setBusy(false)
     }
   }
   const restart = () => {
     setSent(null)
+    setMockCode(undefined)
     setVerified(false)
     setMessage('')
     resetField('code')
@@ -82,7 +113,7 @@ export function EmailVerification({
     <button
       type="button"
       className="font-semibold text-foreground"
-      disabled={!expired && resendIn > 0}
+      disabled={busy || (!expired && resendIn > 0)}
       onClick={send}
     >
       다시 받기
@@ -105,7 +136,12 @@ export function EmailVerification({
             readOnly={verified}
             aria-invalid={Boolean(errors.email)}
             className="h-10"
-            {...register('email', { onChange: () => sent && restart() })}
+            {...register('email', {
+              onChange: () => {
+                setSendError('')
+                if (sent) restart()
+              },
+            })}
           />
           {verified ? (
             <Button
@@ -121,19 +157,19 @@ export function EmailVerification({
               type="button"
               variant="outline"
               className="h-10 bg-background"
-              disabled={Boolean(sent) && !expired && resendIn > 0}
+              disabled={busy || (Boolean(sent) && !expired && resendIn > 0)}
               onClick={send}
             >
               인증 코드 받기
             </Button>
           )}
         </div>
-        {errors.email && (
+        {(errors.email || sendError) && (
           <p role="alert" className="text-xs text-destructive">
-            {errors.email.message}
+            {errors.email?.message ?? sendError}
           </p>
         )}
-        {needed && !verified && !errors.email && (
+        {needed && !verified && !errors.email && !sendError && (
           <p role="alert" className="text-xs text-destructive">
             이메일 인증을 먼저 해 주세요.
           </p>
@@ -166,6 +202,7 @@ export function EmailVerification({
               type="button"
               variant="outline"
               className="h-10 bg-background"
+              disabled={busy}
               onClick={confirm}
             >
               확인
@@ -180,9 +217,9 @@ export function EmailVerification({
               메일로 받은 6자리 코드를 5분 안에 입력하세요. {resend}
             </p>
           )}
-          {sent.mock_code && (
+          {import.meta.env.VITE_API_MODE !== 'live' && mockCode && (
             <span className="text-xs text-muted-foreground">
-              예시 환경이라 메일을 보내지 않아요. 예시 코드: {sent.mock_code}
+              예시 환경이라 메일을 보내지 않아요. 예시 코드: {mockCode}
             </span>
           )}
         </div>

@@ -6,8 +6,49 @@ export const registerInputSchema = z.object({
   email: z.string(),
   password: z.string(),
   name: z.string(),
+  // ACC-A12에서 받은 1회용 토큰. 인증한 이메일과 email이 같아야 한다(PR #114).
+  verified_token: z.string(),
 })
 export type RegisterInput = z.infer<typeof registerInputSchema>
+
+// ACC-A11 가입 인증 코드 보내기 (PR #114). 응답은 201이다.
+export const sendEmailVerificationInputSchema = z.object({
+  email: z.string(),
+})
+export type SendEmailVerificationInput = z.infer<
+  typeof sendEmailVerificationInputSchema
+>
+
+export const sendEmailVerificationResponseSchema = z.object({
+  verification_id: common.idSchema,
+  expires_at: common.timeSchema,
+  resend_available_at: common.timeSchema,
+})
+export type SendEmailVerificationResponse = z.infer<
+  typeof sendEmailVerificationResponseSchema
+>
+
+// ACC-A12 가입 인증 코드 확인 (PR #114)
+export const confirmEmailVerificationInputSchema = z.object({
+  code: z.string(),
+})
+export type ConfirmEmailVerificationInput = z.infer<
+  typeof confirmEmailVerificationInputSchema
+>
+
+export const confirmEmailVerificationResponseSchema = z.object({
+  verified_token: z.string(),
+  email: z.string(),
+  expires_at: common.timeSchema,
+})
+export type ConfirmEmailVerificationResponse = z.infer<
+  typeof confirmEmailVerificationResponseSchema
+>
+
+// ACC-A12 400 verification_code_mismatch의 error.details
+export const codeMismatchDetailsSchema = z.object({
+  remaining_attempts: z.number().int(),
+})
 
 export const registerResponseSchema = z.object({
   id: common.idSchema,
