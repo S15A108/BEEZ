@@ -60,13 +60,16 @@ class ProjectLogPrivacyTest {
                     (req, res) -> AccessErrors.notFound("not_member project=987654"));
             var update = new MockHttpServletRequest("PUT", "/api/projects/987654/change-proposals/73");
             filter.doFilter(update, new MockHttpServletResponse(), (req, res) -> { });
+            var mcp = new MockHttpServletRequest("POST", "/mcp");
+            filter.doFilter(mcp, new MockHttpServletResponse(), (req, res) -> { });
 
             assertThat(captured.list).extracting(ILoggingEvent::getFormattedMessage)
                     .anySatisfy(message -> assertThat(message).contains("not_member project=[redacted]"))
                     .anySatisfy(message -> assertThat(message).contains("GET /api/projects/{projectId}/change-proposals/73"))
                     .anySatisfy(message -> assertThat(message).contains("not_member project=987654"))
                     .anySatisfy(message -> assertThat(message).contains("GET /api/projects/987654/tasks"))
-                    .anySatisfy(message -> assertThat(message).contains("PUT /api/projects/987654/change-proposals/73"));
+                    .anySatisfy(message -> assertThat(message).contains("PUT /api/projects/987654/change-proposals/73"))
+                    .anySatisfy(message -> assertThat(message).contains("POST /mcp -> 200"));
         } finally {
             logger.detachAppender(captured);
             captured.stop();

@@ -19,7 +19,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /**
  * 요청마다 X-Request-Id 를 붙이고(MDC → 로그 패턴의 [%X{requestId}]) 응답 헤더로 돌려준다.
  * 들어온 요청에 X-Request-Id 가 있으면 그대로 쓴다 (프론트·AI 서버와 추적 ID 를 이어 붙이기 위함).
- * /api/** 요청은 한 줄 접근 로그를 남긴다. actuator·swagger 는 제외.
+ * /api/** 와 /mcp 요청은 한 줄 접근 로그를 남긴다. actuator·swagger 는 제외.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -47,7 +47,7 @@ public class RequestIdFilter extends OncePerRequestFilter {
             try {
                 chain.doFilter(req, res);
             } finally {
-                if (path.startsWith("/api/")) {
+                if (path.startsWith("/api/") || path.equals("/mcp")) {
                     long ms = (System.nanoTime() - started) / 1_000_000;
                     access.info("{} {} -> {} ({} ms)", req.getMethod(), redact ? accessLogPath(path) : path, res.getStatus(), ms);
                 }
