@@ -33,7 +33,8 @@ function describe(analysis: PublishedAnalysis | undefined, observedAt: number) {
   if (!analysis || analysis.status === 'UNKNOWN')
     return {
       title: '상태 확인 필요',
-      message: '발행 후 분석 상태를 확인하지 못했어요. 팀에 문의해 주세요.',
+      message:
+        '발행 후 분석 상태를 확인하지 못했어요. 운영 담당자에게 문의해 주세요.',
     }
   if (analysis.status === 'PENDING') {
     const waitingLong =
@@ -42,7 +43,7 @@ function describe(analysis: PublishedAnalysis | undefined, observedAt: number) {
     return {
       title: waitingLong ? '오래 대기 중' : '처리 대기 중',
       message: waitingLong
-        ? '처리까지 시간이 걸리고 있어요. 환경 설정에 따라 대기할 수 있으며, 계속 지연되면 팀에 문의해 주세요.'
+        ? '처리가 평소보다 늦어지고 있어요. 계속 지연되면 운영 담당자에게 문의해 주세요.'
         : analysis.guidance === 'RETRY_SCHEDULED'
           ? '자동 재시도를 기다리고 있어요.'
           : '발행 후 분석이 시작되기를 기다리고 있어요.',
@@ -53,7 +54,7 @@ function describe(analysis: PublishedAnalysis | undefined, observedAt: number) {
       ? {
           title: '복구 확인 중',
           message:
-            '처리가 중단되었을 수 있어요. 복구를 기다리고 있으며 오래 걸리면 팀에 문의해 주세요.',
+            '처리가 중단되었을 수 있어요. 복구를 기다리고 있으며 오래 걸리면 운영 담당자에게 문의해 주세요.',
         }
       : { title: '분석 중', message: '발행 후 분석을 처리하고 있어요.' }
   if (analysis.status === 'FAILED')
@@ -61,16 +62,16 @@ function describe(analysis: PublishedAnalysis | undefined, observedAt: number) {
       title: '처리 실패',
       message:
         analysis.error_code === 'baseline_changed'
-          ? '발행 이후 기준이 바뀌어 분석을 마치지 못했어요. 팀에 문의해 주세요.'
-          : '발행 후 분석을 마치지 못했어요. 팀에 문의해 주세요.',
+          ? '발행 이후 기준이 바뀌어 분석을 마치지 못했어요. 운영 담당자에게 문의해 주세요.'
+          : '발행 후 분석을 마치지 못했어요. 운영 담당자에게 문의해 주세요.',
     }
   if (analysis.status === 'NOT_EVALUATED')
     return {
       title: '미평가',
       message: analysis.error_code
         ? (notEvaluatedReasons.get(analysis.error_code) ??
-          '발행 후 영향을 평가하지 못했어요. 팀에 문의해 주세요.')
-        : '발행 후 영향을 평가하지 못했어요. 팀에 문의해 주세요.',
+          '발행 후 영향을 평가하지 못했어요. 운영 담당자에게 문의해 주세요.')
+        : '발행 후 영향을 평가하지 못했어요. 운영 담당자에게 문의해 주세요.',
     }
   if (analysis.evaluation_status === 'COMPLETED')
     return {
@@ -85,7 +86,7 @@ function describe(analysis: PublishedAnalysis | undefined, observedAt: number) {
   return {
     title: '결과 확인 필요',
     message:
-      '처리는 끝났지만 분석 결과를 확인하지 못했어요. 팀에 문의해 주세요.',
+      '처리는 끝났지만 분석 결과를 확인하지 못했어요. 운영 담당자에게 문의해 주세요.',
   }
 }
 

@@ -573,7 +573,7 @@ public class AnalysisResultApplier {
         }
         fail(lease, current.get().validation(), current.get().runId(), "validation_lease_expired", "ERROR",
                 "분석 실행이 시간 안에 결과를 반영하지 못했습니다 (워커 중단·재배포)", "RETRY",
-                "같은 계획으로 다시 검증을 요청하세요", null, 0, Map.of());
+                "같은 입력으로 다시 실행합니다 (VAL-A04)", null, 0, Map.of());
     }
 
     /**
@@ -716,7 +716,7 @@ public class AnalysisResultApplier {
         if (mode == Mode.RESULT && expired) {
             fail(lease, v, runId, "validation_lease_expired", "ERROR",
                     "분석 결과가 리스 유효기간이 지난 뒤 도착해 반영하지 않았습니다", "RETRY",
-                    "같은 계획으로 다시 검증을 요청하세요", null, 0, lateDiagnostics);
+                    "같은 입력으로 다시 실행합니다 (VAL-A04)", null, 0, lateDiagnostics);
             log.info("validation {} attempt {} result arrived after lease expired — closed as lease expired", v.id(), lease.attempt());
             return Optional.empty();
         }

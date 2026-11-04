@@ -28,7 +28,7 @@ describe('발행 후 분석 상태', () => {
     })
     expect(screen.getByText('오래 대기 중')).toBeInTheDocument()
     expect(
-      screen.getByText(/환경 설정에 따라 대기할 수 있으며/),
+      screen.getByText(/계속 지연되면 운영 담당자에게 문의해 주세요/),
     ).toBeInTheDocument()
     expect(
       screen.getByText('자동 재시도를 기다리고 있어요.'),
@@ -46,6 +46,9 @@ describe('발행 후 분석 상태', () => {
     })
     expect(screen.getByText('복구 확인 중')).toBeInTheDocument()
     expect(screen.getByText(/처리가 중단되었을 수 있어요/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/운영 담당자에게 문의해 주세요/),
+    ).toBeInTheDocument()
     expect(screen.queryByText('분석 완료')).not.toBeInTheDocument()
   })
 
@@ -106,6 +109,9 @@ describe('발행 후 분석 상태', () => {
   it('상태가 없는 이전 서버 응답도 정상으로 추정하지 않는다', () => {
     renderStatus()
     expect(screen.getByText('상태 확인 필요')).toBeInTheDocument()
+    expect(
+      screen.getByText(/운영 담당자에게 문의해 주세요/),
+    ).toBeInTheDocument()
   })
 
   it('확인된 미평가 사유는 이해할 수 있는 안내로 표시한다', () => {
@@ -117,6 +123,7 @@ describe('발행 후 분석 상태', () => {
     expect(
       screen.getByText(/문서 변경은 아직 자동 분석을 지원하지 않아요/),
     ).toBeInTheDocument()
+    expect(screen.getByText(/팀에서 직접 확인해 주세요/)).toBeInTheDocument()
     expect(
       screen.queryByText('document_change_unavailable'),
     ).not.toBeInTheDocument()

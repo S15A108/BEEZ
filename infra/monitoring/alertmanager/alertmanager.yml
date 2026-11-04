@@ -1,0 +1,8 @@
+# Alertmanager 설정 (S15P31A108-263). 지금은 컨테이너만 띄운다.
+# 수신처가 없어 어떤 알림도 밖으로 나가지 않는다. 규칙·Mattermost 수신처·묶음 기준은 S15P31A108-264 에서 정한다.
+
+route:
+  receiver: "null"
+
+receivers:
+  - name: "null"

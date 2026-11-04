@@ -3,6 +3,7 @@ package com.beez.backend.task.service;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
@@ -56,6 +57,30 @@ public class ValidationStatusLookup {
                 .query(String.class)
                 .optional()
                 .orElse(NOT_RUN);
+    }
+
+    /**
+     * (작업, 계획 리비전) 의 가장 최근 검증 한 줄: id, status. {@link #latestStatus} 와 같은 기준을 한 번에 읽는다 (TaskDetail 의
+     * validation_status 와 validation 을 같은 줄에서 채우려고). 없으면 빈 값
+     */
+    public Optional<Map<String, Object>> latest(Long taskId, Long planRevisionId) {
+        if (planRevisionId == null) {
+            return Optional.empty();
+        }
+        return jdbc.sql("""
+                        select id, status
+                          from validation
+                         where task_id = :taskId
+                           and plan_revision_id = :revisionId
+                         order by id desc
+                         limit 1
+                        """)
+                .param("taskId", taskId)
+                .param("revisionId", planRevisionId)
+                .query()
+                .listOfRows()
+                .stream()
+                .findFirst();
     }
 
     /**

@@ -47,6 +47,27 @@ function renderPanel() {
   )
 }
 
+it('알 수 없는 발행 후 상태는 상세를 유지하고 확인 필요로 표시한다', async () => {
+  const base = await changesApi.get('101', '71')
+  const payload = {
+    ...base,
+    proposal: { ...base.proposal, status: 'PUBLISHED' },
+    published_analysis: { status: 'PENDING', guidance: 'FUTURE_GUIDANCE' },
+  }
+  const response = getResponseSchema.parse(payload)
+  expect(response.published_analysis).toEqual({
+    status: 'UNKNOWN',
+    guidance: 'CHECK_RESULT',
+  })
+  expect(
+    getResponseSchema.safeParse({ ...payload, proposal: null }).success,
+  ).toBe(false)
+  vi.spyOn(changesApi, 'get').mockResolvedValue(response)
+  renderPanel()
+  expect(await screen.findByText('상태 확인 필요')).toBeInTheDocument()
+  expect(screen.queryByText('처리 대기 중')).not.toBeInTheDocument()
+})
+
 it('발행된 제안은 상세 응답의 후속 분석 실패를 표시하고 발행 전 재분석 버튼을 숨긴다', async () => {
   const user = userEvent.setup()
   const base = await changesApi.get('101', '71')

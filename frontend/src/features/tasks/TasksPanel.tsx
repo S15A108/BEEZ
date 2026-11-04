@@ -141,11 +141,24 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       tasksApi.planRevisions(projectId, selectedId!, { limit: 100 }),
     enabled: !!selectedId,
   })
-  const validationId = task?.delta_validation_id ?? task?.validation?.id
+  // 서버 작업 상세의 validation 은 현재 계획의 가장 최근 검증이다(완료 보고 재검증 DELTA 가 가장 최근이면 그것).
+  // DELTA 가 오류로 끝난 뒤 계획 검증을 새로 받았으면 새 검증을 보여 주고(시작·재개에 쓴다), 기다리는 DELTA 는 따로 알린다.
+  const validationId = task?.validation?.id ?? task?.delta_validation_id
   const validation = useQuery({
     queryKey: ['projects', projectId, 'validation', validationId],
     queryFn: () => validationsApi.get(projectId, validationId!),
     enabled: !!validationId,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'RUNNING' ? 1500 : false,
+  })
+  const pendingDeltaId =
+    task?.delta_validation_id && task.delta_validation_id !== validationId
+      ? task.delta_validation_id
+      : undefined
+  const pendingDelta = useQuery({
+    queryKey: ['projects', projectId, 'validation', pendingDeltaId],
+    queryFn: () => validationsApi.get(projectId, pendingDeltaId!),
+    enabled: !!pendingDeltaId,
     refetchInterval: (query) =>
       query.state.data?.status === 'RUNNING' ? 1500 : false,
   })
@@ -177,6 +190,13 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     (finding) =>
       finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
   )
+  const delta = pendingDeltaId ? pendingDelta.data : undefined
+  const deltaRetryable =
+    delta?.status === 'ERROR' &&
+    !delta.findings.some(
+      (finding) =>
+        finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
+    )
   const canStart =
     isOwner &&
     active &&
@@ -733,6 +753,35 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           >
                             <RefreshCw />
                             실행 재시도
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {delta && (
+                      <div
+                        className="flex flex-wrap items-center gap-3 rounded-lg border p-3"
+                        aria-label="완료 보고 재검증"
+                      >
+                        <p className="text-sm">
+                          완료 보고 재검증: <StatusPill value={delta.status} />
+                        </p>
+                        {isOwner && deltaRetryable && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={action.busy}
+                            onClick={() =>
+                              perform(
+                                () =>
+                                  validationsApi.retry(projectId, delta.id, {
+                                    expected_attempt: delta.current_attempt,
+                                  }),
+                                '완료 보고 재검증 재시도를 접수했어요.',
+                              )
+                            }
+                          >
+                            <RefreshCw />
+                            완료 보고 재검증 재시도
                           </Button>
                         )}
                       </div>

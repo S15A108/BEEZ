@@ -65,7 +65,10 @@ export type PublishedAnalysis = z.infer<typeof publishedAnalysisSchema>
 export const getResponseSchema = z.object({
   proposal: common.changeProposalSchema,
   comparisons: common.comparisonSchema.array(),
-  published_analysis: publishedAnalysisSchema.optional(),
+  // 부가 상태의 새 enum이나 잘못된 값은 상세 전체 오류 대신 확인 필요로 표시한다.
+  published_analysis: publishedAnalysisSchema
+    .catch({ status: 'UNKNOWN', guidance: 'CHECK_RESULT' })
+    .optional(),
   // 직접 참조 후보는 화면에서 아직 쓰지 않아 모양만 받아 둔다(영향 탭은 CHG-A05).
   explicit_candidates: z.record(z.string(), z.unknown()).array().optional(),
   candidates_truncated: z.boolean().optional(),

@@ -34,10 +34,12 @@ CD 배포 잡을 돌릴 Jenkins를 서버에 설치하고, `https://jenkins.beez
 |---|---|---|
 | `infra/jenkins/systemd/override.conf` | `/etc/systemd/system/jenkins.service.d/` | 127.0.0.1 바인딩, 설치 마법사 끄기, JCasC 경로, 비밀 파일 연결, `UMask=0002` |
 | `infra/jenkins/casc/jenkins.yaml` | `/etc/jenkins/casc/` | 보안·계정·권한·공개 주소, 배포 잡 정의와 고정 파이프라인(Job DSL) |
+| `infra/jenkins/deploy-notify.sh` | `/etc/jenkins/` | 배포 실패 알림(S15P31A108-74, [운영 안내](operations.md#6-배포-실패-알림)) |
 | `infra/jenkins/issue-deploy-token.sh` | 서버에 두지 않음 | `github-actions` API 토큰 발급([CD 런북](cd.md)) |
 | `infra/jenkins/plugins.txt` | 설치할 때만 사용 | 플러그인 목록(버전 고정) |
 | `infra/nginx/sites-available/jenkins.beez.ai.kr.conf` | `/etc/nginx/sites-available/` | 리버스 프록시 |
 | (저장소에 없음) | `/etc/jenkins/casc.env` | 관리자 ID·비밀번호, `github-actions` 비밀번호. `600 root:root` |
+| (저장소에 없음) | `/etc/jenkins/deploy-notify.curl` | 배포 실패 알림 웹훅 주소. `640 root:jenkins` |
 
 패키지가 설치한 `/usr/lib/systemd/system/jenkins.service`는 고치지 않습니다.
 바꿀 값만 `jenkins.service.d/override.conf`로 덮어써서 패키지를 갱신해도
@@ -302,6 +304,7 @@ Jenkins를 다시 세우는 데 필요한 것은 대부분 저장소에 있습�
 | 관리자 비밀번호 | 비밀번호 관리자 | 2단계에서 다시 입력 |
 | 플러그인 | 저장소 `plugins.txt` | 4단계 |
 | 배포 잡 정의·파이프라인 | 저장소 `casc/jenkins.yaml`(Job DSL, 파이프라인 고정) | 켤 때마다 JCasC가 잡을 다시 만듦 |
+| 배포 실패 알림 | 스크립트는 저장소 `deploy-notify.sh`, 웹훅 주소는 Mattermost 통합 목록(백업에 없음) | [운영 안내](operations.md#설치웹훅-교체-서버당-한-번) 2·3번. 빠지면 배포는 되고 알림만 안 감 |
 | `github-actions` API 토큰 | JENKINS_HOME(해시만 저장) | 백업에 없으면 [CD 런북](cd.md) "토큰 발급·교체"로 새로 발급 |
 | 빌드 기록·자격 증명·잡 설정 | `/var/lib/jenkins`(JENKINS_HOME) | 아래 백업 파일 |
 

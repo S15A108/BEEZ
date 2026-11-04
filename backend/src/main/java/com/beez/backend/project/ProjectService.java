@@ -10,8 +10,12 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.designchange.dto.BaselineSummaryResponse;
+import com.beez.backend.document.DocumentKind;
+import com.beez.backend.document.DocumentKindMapper;
+import com.beez.backend.status.repository.StatusRepository;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,8 +27,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * PRJ-A01 ~ A05 (S15P31A108-173). 권한 검사는 각 메서드 첫 줄 (06-project-access.md).
- * 생성·목록은 프로젝트와 무관한 USER 권한, 상세는 MEMBER, 수정·삭제는 사람 세션의 팀장.
+ * PRJ-A01 ~ A05 (S15P31A108-173), A06 (S15P31A108-239). 권한 검사는 각 메서드 첫 줄 (06-project-access.md).
+ * 생성·목록은 프로젝트와 무관한 USER 권한, 상세·초기 설정 현황은 MEMBER, 수정·삭제는 사람 세션의 팀장.
  */
 @Service
 public class ProjectService {
@@ -32,19 +36,24 @@ public class ProjectService {
     static final int NAME_MAX = 100;
     static final int DESCRIPTION_MAX = 2000;
 
+    private static final DocumentKindMapper KINDS = new DocumentKindMapper();
+
     private final ProjectAccessChecker access;
     private final ProjectRepository projects;
     private final ProjectMemberRepository members;
     private final AgentTokenRepository tokens;
+    private final StatusRepository documentStatus;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
 
     public ProjectService(ProjectAccessChecker access, ProjectRepository projects, ProjectMemberRepository members,
-                          AgentTokenRepository tokens, ApplicationEventPublisher events, JdbcClient jdbc) {
+                          AgentTokenRepository tokens, StatusRepository documentStatus,
+                          ApplicationEventPublisher events, JdbcClient jdbc) {
         this.access = access;
         this.projects = projects;
         this.members = members;
         this.tokens = tokens;
+        this.documentStatus = documentStatus;
         this.events = events;
         this.jdbc = jdbc;
     }
@@ -93,11 +102,37 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public ProjectResponse get(CallerContext caller, long projectId) {
         ProjectActor actor = access.requireMember(caller, projectId);
-        // 권한 검사와 이 조회 사이에 삭제가 커밋됐을 수 있어 archived_at 을 다시 본다
-        Project project = projects.findById(projectId)
+        return toResponse(findActive(projectId), actor.role());
+    }
+
+    /**
+     * PRJ-A06 (S15P31A108-239). 화면 안내용 조회만 하고 아무것도 승인·생성하지 않는다.
+     * 문서 업로드·승인은 MON-D01 집계({@link StatusRepository#documentCounts})를 그대로 써서 두 화면의 판정이 갈리지 않게 한다.
+     */
+    @Transactional(readOnly = true)
+    public OnboardingResponse onboarding(CallerContext caller, long projectId) {
+        ProjectActor actor = access.requireMember(caller, projectId);
+        Project project = findActive(projectId);
+        Map<DocumentKind, Boolean> approvedByKind = new EnumMap<>(DocumentKind.class);
+        for (Map<String, Object> row : documentStatus.documentCounts(projectId)) {
+            approvedByKind.put(KINDS.convertToEntityAttribute((String) row.get("type")),
+                    ((Number) row.get("approved_count")).intValue() > 0);
+        }
+        List<OnboardingResponse.RequiredDocument> required = new ArrayList<>();
+        for (DocumentKind kind : DocumentKind.values()) {
+            required.add(new OnboardingResponse.RequiredDocument(kind, approvedByKind.containsKey(kind),
+                    approvedByKind.getOrDefault(kind, false)));
+        }
+        boolean agentConnected = !members.agentConnectedAccountIds(projectId, List.of(actor.accountId())).isEmpty();
+        return new OnboardingResponse(required, project.getCurrentBaselineId() != null,
+                Math.toIntExact(members.countActiveMembers(projectId)), agentConnected);
+    }
+
+    /** 권한 검사와 이 조회 사이에 삭제가 커밋됐을 수 있어 archived_at 을 다시 본다. */
+    private Project findActive(long projectId) {
+        return projects.findById(projectId)
                 .filter(p -> p.getArchivedAt() == null)
                 .orElseThrow(() -> AccessErrors.notFound("project_archived_or_missing project=" + projectId));
-        return toResponse(project, actor.role());
     }
 
     /** PRJ-A04. 이름·설명만 바꾼다. 멤버십·기준 설계는 이 요청으로 바꾸지 않는다. */

@@ -45,3 +45,5 @@ beez:
     base-url: ${INVITE_BASE_URL:}   # 프론트 오리진. 기본값(localhost)이 운영 초대 링크에 들어가지 않게 필수로 받는다
   agent:
     mcp-url: ${MCP_URL:}            # 공개 /mcp 주소(Nginx 뒤). 같은 이유로 필수
+  mail:
+    mode: ${MAIL_MODE:smtp}         # 운영은 실제로 보낸다. MAIL_HOST 가 비면 기동은 하되 발송이 503 mail_send_failed (SmtpMailGateway)
