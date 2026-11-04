@@ -6,7 +6,7 @@
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
-2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `leader_transfer_required`(나가기)·`active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트가 삭제되면 남은 팀원에게 `PROJECT_DELETED` 알림을 보낸다. 미배정 작업은 팀원이 스스로 맡을 수 있다(TSK-A06). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·NTF-A01·TSK-A06.
+2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `leader_transfer_required`(나가기)·`active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
 2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q24에 올렸다. 기준 v1 뒤의 문서 변경은 dev처럼 모두 변경 제안으로 간다.
 
@@ -1530,10 +1530,10 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 알림 ID |
 | `project_id` | `ID` | Y | 프로젝트 |
-| `type` | `string` | Y | 종류. 목록은 [알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md) 6.1. (수정안 요청 · 11-04 사용자 결정) 프로젝트 삭제 알림 `PROJECT_DELETED` 추가 |
+| `type` | `string` | Y | 종류 |
 | `title` | `string` | Y | 제목 |
 | `body` | `string` | Y | 알림 내용 |
-| `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING\|DOCUMENT_VERSION\|PROJECT` | Y | 이동 대상 종류. DOCUMENT_VERSION은 수정안 요청. PROJECT는 수정안 요청(11-04 사용자 결정): `PROJECT_DELETED`에서 쓰고, 누르면 내 프로젝트 목록으로 간다 |
+| `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING\|DOCUMENT_VERSION` | Y | 이동 대상 종류. DOCUMENT_VERSION은 수정안 요청 |
 | `target_id` | `ID` | Y | 이동 대상 |
 | `document_id` | `ID` | N | DOCUMENT_VERSION이면 소속 문서. 수정안 요청 |
 | `created_at` | `Time` | Y | 생성 시각 |

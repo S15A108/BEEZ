@@ -8,7 +8,7 @@
 
 2026-10-29: 회의 참여자 제외(MTG-A14)를 더했다. 참여자를 빼는 것은 팀장만 하고, 추가(MTG-A04)는 지금처럼 팀장과 회의 참여자가 한다.
 
-2026-11-04: 프로젝트 나가기·삭제 규칙을 바꾸는 수정안을 붙였다(S15P31A108-218, 사용자 결정). 팀원은 맡은 열린 작업이 있어도 경고만 보고 나가며, 넘겨받을 사람을 고르지 않으면 그 작업의 담당자가 비워진다. 팀장은 위임(MEM-A08)하면 팀원으로 나가고, 위임하지 않고 나가면 프로젝트가 삭제된다. 팀장은 다른 팀원이 있어도 프로젝트를 삭제할 수 있다. 바뀐 줄은 "(수정안 요청 · 11-04 사용자 결정)"으로 표시했다. 같은 날 남은 다섯 가지도 사용자가 정했다. 위임하지 않고 나가는 팀장은 프로젝트 이름을 확인하고, 미배정 작업은 상태·검증을 그대로 두며, 팀원 제외도 나가기와 같고, 탈퇴는 팀 프로젝트의 팀장을 계속 막으며, 프로젝트가 삭제되면 남은 팀원에게 알림을 보낸다(MEM-A08~A10, PRJ-A05, ACC-A10·A13, NTF-A01, 작업 응답의 `assignee_member_id`). 이어서 미배정 작업은 팀원이 스스로 맡을 수 있게 했다(TSK-A06).
+2026-11-04: 프로젝트 나가기·삭제 규칙을 바꾸는 수정안을 붙였다(S15P31A108-218, 사용자 결정). 팀원은 맡은 열린 작업이 있어도 경고만 보고 나가며, 넘겨받을 사람을 고르지 않으면 그 작업의 담당자가 비워진다. 팀장은 위임(MEM-A08)하면 팀원으로 나가고, 위임하지 않고 나가면 프로젝트가 삭제된다. 팀장은 다른 팀원이 있어도 프로젝트를 삭제할 수 있다. 바뀐 줄은 "(수정안 요청 · 11-04 사용자 결정)"으로 표시했다. 같은 날 남은 다섯 가지도 사용자가 정했다. 위임하지 않고 나가는 팀장은 프로젝트 이름을 확인하고, 미배정 작업은 상태·검증을 그대로 두며, 팀원 제외도 나가기와 같고, 탈퇴는 팀 프로젝트의 팀장을 계속 막는다(MEM-A08~A10, PRJ-A05, ACC-A10·A13, 작업 응답의 `assignee_member_id`). 이어서 미배정 작업은 팀원이 스스로 맡을 수 있게 했다(TSK-A06). PR #113 리뷰(11-04)에 따라 프로젝트 삭제 알림은 빼고, 미배정 작업을 거르는 작업 목록 필터를 더했다(TSK-A02).
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -1748,7 +1748,7 @@ HTTP `204`.
 - 원본·버전·감사 이력을 물리 삭제하지 않는다.
 - (수정안 요청 · 11-04 사용자 결정) 본인 말고 활성 팀원이 있어도 이름이 맞으면 삭제한다. 409 `members_exist`를 없앤다. 근거: 팀장이 위임하지 않고 나가면 프로젝트가 삭제된다는 결정("팀장은 팀장을 안넘기고 나가면 그냥 프로젝트가 삭제되어버리는거야")과 맞춰, 혼자 쓰는 프로젝트만 지울 수 있던 제한을 푼다.
 - (수정안 요청) 남은 팀원의 멤버십과 그 프로젝트의 에이전트 토큰은 삭제와 같은 트랜잭션에서 막힌다(위 첫 줄). 화면은 삭제 확인 창에 남은 팀원 수를 보이고, 그 팀원들도 이 프로젝트를 더 쓸 수 없다고 알린다.
-- (수정안 요청 · 11-04 사용자 결정) 삭제되면 남아 있던 활성 팀원(삭제한 팀장 제외)의 계정 알림함(NTF-A01)에 `PROJECT_DELETED` 알림을 한 건씩 보낸다. 대상은 `PROJECT`이고, 누르면 프로젝트가 아니라 내 프로젝트 목록으로 간다. 팀장이 위임하지 않고 나가 삭제될 때(MEM-A10)도 같다.
+- (수정안 요청 · 11-04 사용자 결정) 삭제 알림은 보내지 않는다. 남은 팀원은 프로젝트 목록·도시에서 프로젝트가 사라진 것으로 안다. 알림은 프로젝트 안에서만 보이므로(알림함은 워크스페이스에서 project_id로 걸러 보인다) 삭제된 프로젝트의 알림은 볼 곳이 없다. 팀장이 위임하지 않고 나가 삭제될 때(MEM-A10)도 같다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -2752,7 +2752,7 @@ HTTP `204`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `reassign_to_member_id` | `ID` | N | (수정안 요청 · 11-04 사용자 결정) 열린 작업을 넘겨받을 같은 프로젝트의 활성 멤버. 없으면 열린 작업의 담당자를 비운다(미배정). 팀장이 위임하지 않고 나가 프로젝트가 삭제될 때는 쓰지 않는다 |
-| `confirm_name` | `string` | N | (수정안 요청 · 11-04 사용자 결정) 팀장이 위임하지 않고 나갈 때 필수. 현재 프로젝트명을 PRJ-A05처럼 대조한다. 팀원과 위임을 마친 팀장은 보내지 않는다 |
+| `confirm_name` | `string` | N | (수정안 요청 · 11-04 사용자 결정) 팀장이 위임하지 않고 나갈 때 필수. 현재 프로젝트명을 PRJ-A05처럼 대조한다. 팀원과 위임을 마친 팀장은 보내지 않고, 보내도 서버가 무시한다 |
 
 ```json
 {
@@ -2789,13 +2789,13 @@ HTTP `204`.
 - 현재 호출자의 멤버십만 종료한다.
 - 종료한 멤버십으로 발급한 토큰은 즉시 사용할 수 없다.
 - (수정안 요청 · 자동 참여, Q05 정함) 스스로 나간 멤버십은 다시 초대받아도 로그인만으로 되살리지 않는다. 메일 링크를 직접 열어 MEM-A05로 참여할 때만 되살린다. 서버는 멤버십이 끝난 이유(제외·나가기)를 구분해 둔다.
-- (수정안 요청 · 11-04 사용자 결정) 팀원(MEMBER)은 맡은 열린 작업(DRAFT·READY·IN_PROGRESS·WAITING)이 있어도 나갈 수 있다. 409 `active_tasks_exist`를 없앤다. 화면은 나가기 확인 창에 열린 작업 수를 경고로만 보인다. 수는 작업 목록(TSK-A02)의 `assignee_member_id`·`status` 필터로 센다.
+- (수정안 요청 · 11-04 사용자 결정) 팀원(MEMBER)은 맡은 열린 작업(DRAFT·READY·IN_PROGRESS·WAITING)이 있어도 나갈 수 있다. 409 `active_tasks_exist`를 없앤다. 화면은 나가기 확인 창에 열린 작업 수를 경고로만 보인다. 수는 작업 목록(TSK-A02)을 `assignee_member_id`(나)와 `status=DRAFT&status=READY&status=IN_PROGRESS&status=WAITING`으로 한 번 불러 센다.
 - (수정안 요청 · 11-04 사용자 결정) `reassign_to_member_id`가 있으면 열린 작업을 모두 그 멤버에게 넘긴다. 담당자 변경(TSK-A06)과 같은 인계 규칙이다([작업 생명주기](../design/04-task-lifecycle.md) §2.2 S5). 없으면 담당자를 비운다(미배정). 미배정 작업은 팀장이 TSK-A06으로 새 담당자를 정하거나 팀원이 스스로 맡을 때까지 아무도 계획 수정·시작·재개하지 못한다.
 - (수정안 요청 · 11-04 사용자 결정) 담당자만 비우고 작업 상태·검증은 그대로 둔다. 새 담당자가 정해지면(TSK-A06) 지금의 담당자 변경 규칙(04 §2.2 S5)을 따른다. (수정안 요청 · 11-04 사용자 결정) 팀원은 TSK-A06으로 미배정 작업을 스스로 맡을 수 있다. 팀장이 미배정 작업을 취소하는 길은 따로 열지 않는다([작업 생명주기](../design/04-task-lifecycle.md) §6 "알려진 한계").
 - (수정안 요청 · 11-04 사용자 결정) 팀장(LEADER)은 위임(MEM-A08)을 먼저 하면 팀원이 되어 위 규칙으로 나간다. 위임하지 않고 이 API를 부르면 프로젝트를 삭제한다. 처리는 PRJ-A05와 같다(soft delete, 멤버·에이전트 접근 차단, 원본·이력 보존). 다른 활성 팀원이 있어도 삭제한다. 409 `leader_transfer_required`를 없앤다. 근거: 사용자 원문 "팀장은 팀장을 안넘기고 나가면 그냥 프로젝트가 삭제되어버리는거야"(11-04).
 - (수정안 요청 · 11-04 사용자 결정) 화면은 팀장의 나가기 확인 창에 팀장 위임과 작업 배정을 경고로만 보이고, 위임하지 않고 나가면 프로젝트가 삭제된다고 알린다. 역할은 프로젝트·멤버십 행을 잠근 뒤 요청 시점 값으로 다시 판정한다.
-- (수정안 요청 · 11-04 사용자 결정) 위임하지 않고 나가는 팀장은 `confirm_name`을 보내야 한다. PRJ-A05처럼 현재 프로젝트명과 대조하고, 없거나 다르면 409 `confirmation_mismatch`로 되묻는다. 팀원과 위임을 마친 팀장의 나가기에는 필요 없다.
-- (수정안 요청 · 11-04 사용자 결정) 프로젝트가 삭제되면 남아 있던 활성 팀원에게 `PROJECT_DELETED` 알림을 보낸다(PRJ-A05와 같음).
+- (수정안 요청 · 11-04 사용자 결정) 위임하지 않고 나가는 팀장은 `confirm_name`을 보내야 한다. PRJ-A05처럼 현재 프로젝트명과 대조하고, 없거나 다르면 409 `confirmation_mismatch`로 되묻는다. 팀원과 위임을 마친 팀장의 나가기에는 필요 없고, 보내도 서버가 무시한다.
+- (수정안 요청 · 11-04 사용자 결정) 프로젝트가 삭제돼도 알림은 보내지 않는다(PRJ-A05와 같음). 남은 팀원은 프로젝트 목록·도시에서 프로젝트가 사라진 것으로 안다. 알림은 프로젝트 안에서만 보이므로(알림함은 워크스페이스에서 project_id로 걸러 보인다) 삭제된 프로젝트의 알림은 볼 곳이 없다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7467,7 +7467,7 @@ HTTP `200`.
 | --- | --- | --- | --- |
 | `proposal` | [ChangeProposal](00-common.md#schema-changeproposal) | Y | 선택한 제출 내용·해시와 결정 상태 |
 | `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 고정 기준→제안 diff와 현재 승인 내용 |
-| `explicit_candidates` | `object[]` | Y | 직접 참조 후보. target_type/target_id/via_design_item_id/assignee_member_id/origin |
+| `explicit_candidates` | `object[]` | Y | 직접 참조 후보. target_type/target_id/via_design_item_id/assignee_member_id/origin. (수정안 요청 · 11-04 사용자 결정) assignee_member_id는 담당자 없는(미배정) 작업이면 생략 |
 | `candidates_truncated` | `boolean` | Y | 후보 500개 초과 여부 |
 | `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. #218 수정안 요청 · 195 미구현 |
 
@@ -8723,7 +8723,7 @@ HTTP `200`.
 | `next_baseline_version_no` | `integer` | Y | 발행될 기준 번호 |
 | `baseline_items` | `object[]` | Y | 새 기준에 들어갈 항목 {design_item_id, title, version_no, operation, proposal_item_index}. CREATE의 ID는 null이며 원본 items 배열의 0부터 시작하는 index로 식별 |
 | `validations_to_stale` | `object[]` | Y | '다시 검증 필요'가 될 검증 {validation_id, task_id, task_title} |
-| `tasks_to_wait` | `object[]` | Y | '대기 · 재검증'이 될 진행 중 작업 {task_id, title, assignee_member_id} |
+| `tasks_to_wait` | `object[]` | Y | '대기 · 재검증'이 될 진행 중 작업 {task_id, title, assignee_member_id}. (수정안 요청 · 11-04 사용자 결정) assignee_member_id는 담당자 없는(미배정) 작업이면 생략 |
 | `unchanged` | `object` | Y | 그대로인 것 {items, documents}. 화면 '나머지 항목 1개와 문서 4개는 v1 그대로' |
 | `unreviewed` | `object` | Y | 확인하지 않은 것 {ai_candidates, open_review_requests, ai_analysis, requires_override_reason}. 화면 'AI 영향 후보 1개 · 답하지 않은 검토 요청 1개'. `ai_candidates`는 영향 분석이 완료·최신일 때만 정수이고 아니면 null(미평가를 0건으로 보이지 않기 위함). `ai_analysis`는 {status, is_current, error_code(있을 때만), reanalysis_in_progress}다. status·is_current·error_code는 CHG-A05와 같은 값이고, 새 재분석이 진행 중이면 이전 결과가 그대로 보이므로 `reanalysis_in_progress=true`로 알린다(이때 승인은 409 analysis_running). `ai_candidates`는 null이어도 응답에서 생략하지 않는다. `requires_override_reason`이 true면 승인 때 `impact_override_reason`이 필요하다(RUNNING은 false지만 승인은 409 analysis_running) |
 
@@ -9059,7 +9059,7 @@ HTTP `201`.
 
 관련 요구사항: MON-03·04  
 담당: BE: 변준성 / AI: — / FE: 박민용  
-상태: 담당자 검토
+상태: 담당자 검토 · 수정안 요청 (협의 필요)
 
 #### 인증
 
@@ -9082,9 +9082,10 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `status` | `DRAFT\|READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 작업 상태 |
+| `status` | `(DRAFT\|READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED)[]` | N | 작업 상태. (수정안 요청 · 11-04 사용자 결정) 여러 값을 받는다. 같은 이름을 반복한다(`status=READY&status=IN_PROGRESS`) |
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 검증 상태 |
 | `assignee_member_id` | `ID` | N | 담당 멤버 |
+| `unassigned` | `boolean` | N | (수정안 요청 · 11-04 사용자 결정) true면 담당자 없는(미배정) 작업만. `assignee_member_id`와 함께 주면 400 `validation_failed` |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -9183,6 +9184,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 400 | `validation_failed` | (수정안 요청 · 11-04 사용자 결정) `unassigned`와 `assignee_member_id`를 함께 줌, 허용하지 않는 `status` 값 |
 
 ```json
 {
@@ -9196,6 +9198,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- (수정안 요청 · 11-04 사용자 결정) 필터는 모두 AND로 묶는다. `status`를 여러 번 주면 그중 하나에 맞는 작업이다. `unassigned=true`면 담당자가 없는 작업만 돌려준다. 화면의 '담당자 없는 작업'(작업 현황·HUD·대시보드)은 `unassigned=true&status=DRAFT&status=READY&status=IN_PROGRESS&status=WAITING`으로 부른다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -14446,7 +14449,6 @@ HTTP `200`.
 - 세션 계정 수신 알림만 반환한다. 읽음과 문제 해결 상태는 다르다.
 - (수정안 요청) 새 알림: 비비 문서 검토 끝남(등록자), 문서 승인 요청(팀장), 문서 승인·반려(등록자), 회의가 끝나 문서가 바뀜(관련 작업 담당자)은 DOCUMENT_VERSION. 기준 v1 생김(활성 팀원)은 BASELINE, 비비가 연 회의(참여자)는 MEETING, 작업 담당자 변경(새 담당자)은 TASK, 회의에 새 기록이 올라옴(다른 참여자)은 MEETING.
 - (수정안 요청) 대상이 지워졌거나 권한이 없으면 화면은 404를 받고 '찾을 수 없어요'를 보인 뒤 그 알림을 읽음 처리한다(기본안).
-- (수정안 요청 · 11-04 사용자 결정) 프로젝트 삭제 알림(`PROJECT_DELETED`, 대상 `PROJECT`)은 프로젝트가 삭제된 뒤에도 받은 사람의 알림함에 남는다. 누르면 404를 거치지 않고 내 프로젝트 목록으로 가며 읽음 처리한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -146,10 +146,9 @@
 | `CHANGE_PROPOSAL_COMMENTED` | 변경(오서현) | 의견에서 멤버 지정 | 지정 멤버 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_APPROVED` | 변경(오서현) | 승인 | 제안자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REJECTED` | 변경(오서현) | 반려 | 제안자 | 아니오 | CHANGE_PROPOSAL |
-| `CHANGE_PROPOSAL_PUBLISHED` | 변경(오서현) | 발행 | 관련 작업 담당자 | 아니오 | CHANGE_PROPOSAL |
+| `CHANGE_PROPOSAL_PUBLISHED` | 변경(오서현) | 발행 | 관련 작업 담당자. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | 아니오 | CHANGE_PROPOSAL |
 | `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `reassign`을 거친다 | 새 담당자 | **예** | TASK |
-| `REVALIDATION_REQUIRED` | 작업(변준성) | 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 됨(완료·취소 작업 제외) | 작업 담당자, 작업마다 한 건 | **예** | TASK |
-| `PROJECT_DELETED` | 프로젝트(전진) | 프로젝트 삭제(PRJ-A05) 또는 팀장이 위임하지 않고 나가 삭제됨(MEM-A10). 수정안 요청(11-04 사용자 결정, S15P31A108-218) | 남아 있던 활성 팀원 | 아니오 | PROJECT — 누르면 내 프로젝트 목록 |
+| `REVALIDATION_REQUIRED` | 작업(변준성) | 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 됨(완료·취소 작업 제외) | 작업 담당자, 작업마다 한 건. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | **예** | TASK |
 
 ### 6.2 활동 유형
 
