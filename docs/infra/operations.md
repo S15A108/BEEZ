@@ -17,7 +17,7 @@ dev 서버(`dev.beez.ai.kr`)에 문제가 생겼을 때 팀원 누구나 상태�
 | 팀 채널에 배포 실패 알림이 옴 | 알림의 콘솔 출력 링크를 열어 끝부분 확인 | [6. 배포 실패 알림](#6-배포-실패-알림) |
 | 알림을 받았는데 Jenkins 계정이 없음 | 서버에서 빌드 로그 파일을 봄 | [Jenkins 계정이 없을 때](#jenkins-계정이-없을-때) |
 | 화면·API가 안 됨 | 상태부터 확인 | [1. 상태 보기](#1-상태-보기) |
-| 방금 배포된 버전에서 기능이 망가짐 | 사이에 파괴적 DB 마이그레이션이 없는지 보고, 팀에 알린 뒤 직전 배포 SHA로 되돌림 | [4. 이전 버전으로 되돌리기](#4-이전-버전으로-되돌리기-배포-복구) |
+| 방금 배포된 버전에서 기능이 망가짐 | DB에 적용된 마이그레이션 중 되돌릴 버전보다 새 것에 파괴적 변경이 없는지 보고, 팀에 알린 뒤 직전 배포 SHA로 되돌림 | [4. 이전 버전으로 되돌리기](#4-이전-버전으로-되돌리기-배포-복구) |
 | 컨테이너 하나가 응답이 없음 | 그 컨테이너만 재시작 | [3. 재시작](#3-재시작) |
 | 서버 env 값을 바꿈 | 같은 SHA로 다시 배포 | [3. 재시작](#env-값을-바꿨을-때) |
 | 검증 결과가 `STALE`·`ERROR`가 됨 | 배포 문제가 아닙니다 | [5. 배포 복구와 검증 롤백](#5-배포-복구와-검증업무-롤백) |
@@ -156,20 +156,37 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
      `배포 SHA`)에서 40자를 복사합니다. Jenkins 계정이 없으면 [서버의 빌드 목록](#jenkins-계정이-없을-때)에서 봅니다.
    - `git log`의 dev 이력에서 고르지 않습니다. 문서만 바뀐 머지 커밋은 CD가 이미지를 만들지 않아(`cd.yml`
      `paths-ignore`) 그 SHA로는 배포가 실패합니다. Jenkins 빌드 목록의 SHA는 실제로 배포됐던 것이라 이미지가 있습니다.
-2. **파괴적 DB 마이그레이션이 사이에 있는지 봅니다.** 되돌려도 DB 스키마는 그대로라([롤백의 한계](cd.md#롤백의-한계)),
-   칼럼·테이블을 지우거나 이름·타입을 바꾼 마이그레이션 뒤에는 예전 backend가 동작하지 않습니다. 로컬 PC(Git Bash):
+2. **파괴적 DB 마이그레이션이 DB에 들어가 있는지 봅니다.** 되돌려도 DB 스키마는 그대로라([롤백의 한계](cd.md#롤백의-한계)),
+   칼럼·테이블을 지우거나 이름·타입을 바꾼 마이그레이션 뒤에는 예전 backend가 동작하지 않습니다.
+   **지금 떠 있는 SHA가 아니라 DB의 Flyway 적용 이력을 기준으로** 봅니다. 앞서 새 버전이 마이그레이션을 적용한 뒤
+   예전 이미지로 되돌린 적이 있으면, 지금 이미지보다 DB 스키마가 더 새것일 수 있기 때문입니다.
+
+   서버(`ssh beez`)에서 DB에 실제 적용된 최신 버전을 봅니다(조회만 함).
 
    ```bash
-   OLD=<되돌릴 SHA>; NOW=<지금 떠 있는 SHA>   # 헬스체크 실패면 NOW는 실패한 빌드의 SHA (마이그레이션이 이미 돌았을 수 있음)
+   docker compose -p beez exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
+     "select version, success, installed_on from flyway_schema_history order by installed_rank desc limit 5"'
+   ```
+
+   로컬 PC(Git Bash)에서 되돌릴 SHA가 아는 최신 버전과, 그보다 새 마이그레이션의 의심 줄을 봅니다.
+
+   ```bash
+   OLD=<되돌릴 SHA>; DIR=backend/src/main/resources/db/migration
    git -C /c/git/BEEZ fetch -q origin
-   git -C /c/git/BEEZ diff --name-status "$OLD" "$NOW" -- backend/src/main/resources/db/migration
-   git -C /c/git/BEEZ diff "$OLD" "$NOW" -- backend/src/main/resources/db/migration \
+   git -C /c/git/BEEZ ls-tree --name-only "$OLD" -- "$DIR/" | grep -oE 'V[0-9]+__' | tr -dc '0-9\n' | sort -n | tail -n 1
+   git -C /c/git/BEEZ diff --name-status "$OLD" origin/dev -- "$DIR"
+   git -C /c/git/BEEZ diff "$OLD" origin/dev -- "$DIR" \
      | grep -inE '^\+.*(drop |rename |alter column .* type |set not null|add column .* not null)'
    ```
 
-   - 첫 명령이 아무것도 찍지 않으면 사이에 마이그레이션이 없어 스키마 걱정 없이 되돌릴 수 있습니다.
-   - 파일이 찍히면 열어 봅니다. 둘째 명령은 의심 줄을 좁힐 뿐 판정이 아닙니다. 지우기·이름 바꾸기·타입 바꾸기,
-     기본값 없는 `NOT NULL` 추가가 있으면 되돌리지 않고 **고친 커밋을 배포**합니다. 테이블·칼럼 추가만이면 되돌려도 됩니다.
+   - DB의 최신 버전이 되돌릴 SHA가 아는 최신 버전 **이하**면 스키마 걱정 없이 되돌릴 수 있습니다.
+   - DB 쪽이 더 높으면, 되돌릴 SHA가 모르는 그 버전들(`V<OLD 최신+1>` ~ `V<DB 최신>`)이 판단 대상입니다. 셋째 명령에
+     찍힌 파일 중 그 버전들을 엽니다. 넷째 명령은 의심 줄을 좁힐 뿐 판정이 아닙니다. 지우기·이름 바꾸기·타입 바꾸기,
+     기본값 없는 `NOT NULL` 추가가 있으면 되돌리지 않고 **고친 커밋을 배포**합니다. 테이블·칼럼 추가만이면 되돌려도 됩니다
+     (예전 backend의 Flyway는 모르는 상위 버전을 경고만 하고, 엔티티 검증 `ddl-auto: validate`는 남는 칼럼을 문제 삼지 않습니다).
+   - DB 최신 버전의 파일이 `origin/dev`에 없으면(마이그레이션을 revert한 경우)
+     `git -C /c/git/BEEZ log --all --oneline -- "$DIR/V<번호>__*"`로 그 파일이 있던 커밋을 찾아 봅니다.
+   - `success`가 `f`인 행이 있으면 마이그레이션이 중간에 실패한 것입니다. 되돌리기 전에 그 버전의 스키마 상태부터 확인합니다.
 3. **팀 채널에 알립니다.** "dev 서버 되돌림: `<지금 SHA 7자>` → `<되돌릴 SHA 7자>`, 원인 PR #번호, 그동안 dev 머지 보류".
    되돌린 뒤 누가 dev에 머지하면 그 머지가 자동 배포되면서 문제 커밋까지 다시 올라갑니다.
 4. **Jenkins로 배포합니다.** [화면에서 배포·롤백](cd.md#화면에서-배포롤백) 그대로 예전 SHA를 넣습니다.
