@@ -178,7 +178,14 @@ def evidence_location(item: RetrievedEvidence) -> str:
 
 
 def _canonical(token: str) -> str:
-    """Compare numbers without thousands separators and text case-blind."""
+    """Numbers without thousands separators, paths as they are, the rest case-blind.
+
+    A server may tell `/api/Users` from `/api/users`, so a path must match
+    letter for letter; identifiers and codes are compared case-blind, as SQL
+    and most documents treat them.
+    """
+    if token.startswith("/"):
+        return token
     if _NUMBER.fullmatch(token):
         return token.replace(",", "")
     return token.casefold()
@@ -260,29 +267,79 @@ def claim_segments(text: str) -> list[tuple[str, list[int]]]:
 # whole text then fits `MAX_PAYLOAD_TEXT_CHARS` without losing a short field.
 MAX_JUDGE_FIELD_CHARS = 300
 MAX_JUDGE_LIST_ITEMS = 20
+_WORD = re.compile(r"\S+")
+
+# The canonical fact tokens an answer states; the judge's cut of a long
+# content keeps what holds one of them.
+Mentioned = frozenset[str]
 
 
-def _judge_text(text: str) -> str:
+def _mentions(value: Any, mentioned: Mentioned) -> bool:
+    """Whether a content value holds a token the answer mentions."""
+    if not mentioned:
+        return False
+    encoded = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return not support_tokens([encoded]).isdisjoint(mentioned)
+
+
+def _judge_text(text: str, mentioned: Mentioned = frozenset()) -> str:
+    """A text for the judge: its head, or the part around a mentioned token.
+
+    A long description or goal is cut to `MAX_JUDGE_FIELD_CHARS`. When the
+    first token the answer mentions lies beyond that, the window moves to
+    it, so the judge sees the sentence the answer leans on.
+    """
     if len(text) <= MAX_JUDGE_FIELD_CHARS:
         return text
-    return text[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
+    begin = 0
+    if mentioned:
+        for match in _WORD.finditer(text):
+            if any(_canonical(t) in mentioned for t in _word_tokens(match.group())):
+                begin = max(0, match.start() - MAX_JUDGE_FIELD_CHARS // 3)
+                break
+    if begin == 0:
+        return text[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
+    window = text[begin : begin + MAX_JUDGE_FIELD_CHARS - 2]
+    return "…" + window + ("…" if begin + len(window) < len(text) else "")
 
 
-def _judge_value(value: Any) -> Any:
-    """Item content for the judge: strings and lists cut, short fields first."""
+def _judge_value(value: Any, mentioned: Mentioned = frozenset()) -> Any:
+    """Item content for the judge: cut, with what the answer mentions kept.
+
+    Strings are cut to `MAX_JUDGE_FIELD_CHARS` (around a mentioned token
+    when one lies deeper). A list longer than `MAX_JUDGE_LIST_ITEMS` keeps
+    the entries that hold a mentioned token, then its leading entries, in
+    their order, so the 21st field of a data contract the answer names is
+    not dropped. An object lists the fields that hold a mentioned token
+    first and then its shortest values, so the final length cut only ever
+    trims a long text the answer does not lean on.
+    """
     if isinstance(value, str):
-        return _judge_text(value)
+        return _judge_text(value, mentioned)
     if isinstance(value, list):
-        items = [_judge_value(item) for item in value[:MAX_JUDGE_LIST_ITEMS]]
+        kept = list(range(len(value)))
         if len(value) > MAX_JUDGE_LIST_ITEMS:
-            items.append(f"… 외 {len(value) - MAX_JUDGE_LIST_ITEMS}개")
+            kept = [i for i, item in enumerate(value) if _mentions(item, mentioned)]
+            kept = kept[:MAX_JUDGE_LIST_ITEMS]
+            for index in range(len(value)):
+                if len(kept) >= MAX_JUDGE_LIST_ITEMS:
+                    break
+                if index not in kept:
+                    kept.append(index)
+            kept.sort()
+        items = [_judge_value(value[i], mentioned) for i in kept]
+        if len(kept) < len(value):
+            items.append(f"… 외 {len(value) - len(kept)}개")
         return items
     if isinstance(value, dict):
-        cut = {name: _judge_value(item) for name, item in value.items()}
+        cut = {name: _judge_value(item, mentioned) for name, item in value.items()}
         return dict(
             sorted(
                 cut.items(),
-                key=lambda pair: len(json.dumps(pair[1], ensure_ascii=False)),
+                key=lambda pair: (
+                    not _mentions({pair[0]: value[pair[0]]}, mentioned),
+                    len(json.dumps(pair[1], ensure_ascii=False)),
+                ),
             )
         )
     return value
@@ -293,23 +350,28 @@ def reference_support(
     tasks: Sequence[RelatedTask],
     *,
     for_judge: bool = False,
+    mentioned: Mentioned = frozenset(),
 ) -> list[str]:
     """One text per referenced item and task: what the whole answer may state.
 
     For the token check an item keeps its full content and a plan's title
     and goal are cut to what the answer model saw (`MAX_PAYLOAD_TEXT_CHARS`).
     For the judge every text must fit `MAX_PAYLOAD_TEXT_CHARS`: an item's
-    content is cut field by field with its short fields first (an API's
-    `method` and `path` come before a long `description`), and a plan's
-    title, references and goal are cut to `MAX_JUDGE_FIELD_CHARS` each, so
-    the final cut never removes a short field.
+    content is cut field by field, keeping first what holds a token the
+    answer `mentioned` and then its short fields (an API's `method` and
+    `path` come before a long `description`), and a plan's title,
+    references and goal are cut to `MAX_JUDGE_FIELD_CHARS` each, so the
+    final cut never removes a short field or a mentioned one.
     """
-    cut = _judge_text if for_judge else clip_text
+
+    def cut(text: str) -> str:
+        return _judge_text(text, mentioned) if for_judge else clip_text(text)
+
     texts: list[str] = []
     for item in items:
         content = item.content.model_dump(mode="json")
         if for_judge:
-            content = _judge_value(content)
+            content = _judge_value(content, mentioned)
         encoded = json.dumps(content, ensure_ascii=False)
         texts.append(f"{item.key} ({item.kind}): {encoded}")
     for task in tasks:
@@ -535,12 +597,14 @@ def claims_from(
     """
     by_item = {item.id: item for item in request.approved_items}
     by_task = {task.id: task for task in request.related_tasks}
+    mentioned = frozenset(_canonical(token) for token in fact_tokens(result.text))
     shared = [
         text
         for text in reference_support(
             [by_item[ref.design_item_version_id] for ref in result.design_refs],
             [by_task[ref.task_id] for ref in result.task_refs],
             for_judge=True,
+            mentioned=mentioned,
         )
         if text.strip()
     ]

@@ -243,6 +243,13 @@ def test_fact_tokens_are_ascii_numbers_keys_paths_and_identifiers():
     assert unsupported_facts("GET /api/users. [1]", "GET /api/users 목록") == []
     assert unsupported_facts("/api/users [1]", "/api/users/{id}") == ["/api/users"]
     assert unsupported_facts("TASK-001 [1]", "TASK-0011") == ["TASK-001"]
+    # PR #96 P2 (10th round): a path must match letter for letter, since a
+    # server may tell `/api/Users` from `/api/users`; identifiers and codes
+    # stay case-blind.
+    assert unsupported_facts("POST /api/users [1]", "POST /api/Users") == ["/api/users"]
+    assert unsupported_facts("POST /api/Users [1]", "POST /api/Users") == []
+    assert unsupported_facts("Documents.Owner_id [1]", "documents.owner_id") == []
+    assert unsupported_facts("post [1]", "POST") == []
     # PR #96 P2 (5th round): thousands separators do not make a new number.
     assert unsupported_facts("한도는 1,000 MB [1]", "한도 1000 MB") == []
     assert unsupported_facts("한도는 1000 MB [1]", "한도 1,000 MB") == []
@@ -579,6 +586,73 @@ async def test_the_judge_gets_short_item_fields_and_plan_references_first():
     full_item, full_task = reference_support(body.approved_items, body.related_tasks)
     assert "문" * 2_100 in full_item
     assert "참조 1104" in full_task and "목" * 1_999 + "…" in full_task
+
+
+@pytest.mark.asyncio
+async def test_a_path_in_another_case_is_rejected_without_a_judge():
+    # PR #96 P2 (10th round): `POST /api/Users` quoted, `/api/users` answered.
+    route = "사용자 생성은 POST /api/Users 로 요청한다."
+    body = {"retrieved_evidence": [evidence("ev-1", route)]}
+    cite = [{"evidence_id": "ev-1", "quote": route}]
+    await rejected(
+        answer(text="생성은 POST /api/users 입니다 [1].", citations=cite), **body
+    )
+    result = (
+        await run(
+            answer(text="생성은 POST /api/Users 입니다 [1].", citations=cite), **body
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    assert result.verification.level == "TOKENS"
+
+
+@pytest.mark.asyncio
+async def test_the_judge_keeps_the_fields_and_text_the_answer_mentions():
+    # PR #96 P2 (10th round): the judge got only the first 20 entries of a
+    # data contract's `fields`, so a correct answer about `field_21` had no
+    # grounding there. Entries, fields and text the answer mentions come
+    # first; the rest is cut as before.
+    description = "설명 " * 150 + "field_21은 생성 시각이다. " + "설명 " * 150
+    item = {
+        **approved_item(),
+        "id": "1105",
+        "key": "DAT-001",
+        "kind": "DATA_CONTRACT",
+        "content": {
+            "description": description,
+            "entity": "users",
+            "fields": [
+                {"name": f"field_{i:02d}", "type": "text"} for i in range(1, 31)
+            ],
+        },
+    }
+    judge = Judge()
+    body = request(approved_items=[item])
+    named = answer(
+        text="DAT-001의 field_21은 생성 시각입니다.", citations=[], design_refs=["1105"]
+    )
+    result = (await generate_bee_chat(body, Scripted(named), judge)).result
+    assert result.answer_status == "ANSWERED"
+    (item_text,) = judge.seen[2]
+    assert len(item_text) <= 2000
+    assert '"name": "field_21"' in item_text
+    assert '"name": "field_20"' not in item_text
+    assert "… 외 10개" in item_text
+    assert '"description": "…' in item_text and "field_21은 생성 시각이다." in item_text
+    # The mentioned field comes before the short `entity`; the rest keeps
+    # its order.
+    assert item_text.index('"fields"') < item_text.index('"entity"')
+    # Without a mention the leading entries and the head of the text are kept.
+    plain = answer(
+        text="DAT-001은 사용자 테이블 계약입니다.", citations=[], design_refs=["1105"]
+    )
+    judge = Judge()
+    await generate_bee_chat(body, Scripted(plain), judge)
+    (item_text,) = judge.seen[2]
+    assert '"name": "field_20"' in item_text
+    assert '"name": "field_21"' not in item_text
+    assert '"description": "' + description[:299] + "…" in item_text
+    assert item_text.index('"entity"') < item_text.index('"fields"')
 
 
 @pytest.mark.asyncio
