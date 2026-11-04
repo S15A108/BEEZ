@@ -9,6 +9,7 @@ from app.schemas.bee_chat import BeeChatRequest, BeeInstanceRequest, ProjectProf
 from app.services.bee_chat import (
     INSUFFICIENT_TEXT,
     MAX_PAYLOAD_BYTES,
+    MAX_TOKEN_ATOM_CHARS,
     OUT_OF_SCOPE_TEXT,
     REVIEW_NOTICE,
     UNGROUNDED_NOTE,
@@ -25,6 +26,7 @@ from app.services.bee_chat import (
     clip_text,
     fact_tokens,
     generate_bee_chat,
+    reference_support,
     renumber_markers,
     support_tokens,
     unsupported_facts,
@@ -40,6 +42,12 @@ from app.services.llm_client import (
 )
 
 PROFILE = "gms-small-1024-v1"
+# 261 chars of ordinary segments: longer than the old word cap (PR #96, 9th round).
+LONG_PATH = (
+    "/api/v1/projects/{projectId}/"
+    + "/".join(f"segment{i:02d}" for i in range(23))
+    + "/v1"
+)
 LIMIT = "단일 파일 업로드 한도는 30 MB이며, 초과하면 HTTP 413을 반환한다."
 PUBLISH = "발행은 리더만 수행한다."
 # A stored source may point at an older document version than the scope has.
@@ -262,19 +270,41 @@ def test_numbers_group_by_three_and_list_numbers_are_layout():
     assert fact_tokens("1.5초 안에\n30 MB") == ["1.5", "30"]
 
 
-def test_fact_tokens_stay_linear_on_long_words():
+def test_fact_tokens_stay_linear_and_keep_long_paths_whole():
     # PR #96 P1 (8th round): a 10,000-letter run took 1.7 s with the pattern
-    # applied to the whole text; word by word with a length cap it is
-    # immediate, and such a run is no fact.
+    # applied to the whole text. PR #96 P2 (9th round): skipping words over
+    # 256 chars also skipped a 268-char API path. A run of letters, digits
+    # and underscores over the cap is now folded to a digest of itself, so
+    # the check is linear and the run still counts, whole.
     run_of_letters = "a" * 100_000
     started = time.perf_counter()
-    assert fact_tokens(run_of_letters) == []
-    assert support_tokens([run_of_letters + " 30 TASK-001"]) == {"30", "task-001"}
-    assert unsupported_facts("한도 30 [1]", run_of_letters + " 30") == []
+    (folded,) = fact_tokens(run_of_letters)
+    assert len(folded) == 16 and folded.isupper()
+    assert unsupported_facts(run_of_letters + " [1]", run_of_letters) == []
+    assert unsupported_facts(run_of_letters + " [1]", "b" + run_of_letters[1:]) == [
+        folded
+    ]
+    assert support_tokens([run_of_letters + " 30 TASK-001"]) == {
+        folded.casefold(),
+        "30",
+        "task-001",
+    }
     assert time.perf_counter() - started < 0.5
-    # A word at the cap is still tokenized; one over it is skipped.
-    assert fact_tokens("x" * 250 + "_id") == ["x" * 250 + "_id"]
-    assert fact_tokens("x" * 260 + "_id") == []
+    # An atom at the cap is a token as it is; one over it is folded and the
+    # rest of its word is still checked exactly.
+    at_cap = "x" * (MAX_TOKEN_ATOM_CHARS - 3) + "_id"
+    assert fact_tokens(at_cap) == [at_cap]
+    (digest,) = fact_tokens("x" * 130)
+    assert fact_tokens("/api/" + "x" * 130 + "/v1") == [f"/api/{digest}/v1"]
+    assert unsupported_facts(
+        "/api/" + "x" * 130 + "/v2 [1]", "/api/" + "x" * 130 + "/v1"
+    ) == [f"/api/{digest}/v2"]
+    # A 261-char path of ordinary segments is one token, compared whole.
+    assert len(LONG_PATH) > 256 and fact_tokens(LONG_PATH) == [LONG_PATH]
+    assert unsupported_facts(LONG_PATH + " [1]", LONG_PATH) == []
+    assert unsupported_facts(LONG_PATH[:-1] + "2 [1]", LONG_PATH) == [
+        LONG_PATH[:-1] + "2"
+    ]
 
 
 def test_claim_segments_attach_markers_to_the_sentence_they_follow():
@@ -459,6 +489,96 @@ async def test_a_huge_task_goal_keeps_the_judge_input_small():
         )
         < 10_000
     )
+
+
+@pytest.mark.asyncio
+async def test_a_long_path_changed_at_its_end_is_rejected_without_a_judge():
+    # PR #96 P2 (9th round): a 261-char path whose `/v1` became `/v2` passed
+    # in tokens mode because words over 256 chars were skipped.
+    route = f"목록 조회는 GET {LONG_PATH} 경로다."
+    body = {"retrieved_evidence": [evidence("ev-1", route)]}
+    cite = [{"evidence_id": "ev-1", "quote": route}]
+    await rejected(
+        answer(text=f"경로는 GET {LONG_PATH[:-1]}2 입니다 [1].", citations=cite), **body
+    )
+    result = (
+        await run(
+            answer(text=f"경로는 GET {LONG_PATH} 입니다 [1].", citations=cite), **body
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    assert result.verification.level == "TOKENS"
+
+
+@pytest.mark.asyncio
+async def test_the_judge_gets_short_item_fields_and_plan_references_first():
+    # PR #96 P2 (9th round): cutting an item's JSON at 2,000 chars dropped an
+    # API item's `method` and `path` behind a long description, and a plan's
+    # references behind a long goal.
+    item = {
+        **approved_item(),
+        "id": "1104",
+        "key": "API-001",
+        "kind": "API_CONTRACT",
+        "content": {
+            "description": "문" * 2_100,
+            "method": "POST",
+            "path": "/api/projects/{projectId}/documents",
+            "responses": [f"응답 {i}" for i in range(30)],
+        },
+    }
+    task = {
+        "id": "501",
+        "key": "TASK-001",
+        "status": "READY",
+        "assignee_member_id": "21",
+        "current_plan_revision": {
+            "id": "511",
+            "plan": {
+                "title": "제" * 500,
+                "goal": "목" * 5_000,
+                "design_refs": [
+                    {
+                        "design_item_id": "1004",
+                        "design_item_version_id": "1104",
+                        "relation": "IMPLEMENTS",
+                    }
+                ],
+            },
+        },
+    }
+    raw = answer(
+        text=(
+            "문서 생성은 POST /api/projects/{projectId}/documents 입니다. "
+            "TASK-001이 설계 1104를 구현합니다."
+        ),
+        citations=[],
+        design_refs=["1104"],
+        task_refs=["501"],
+    )
+    judge = Judge()
+    body = request(approved_items=[item], related_tasks=[task])
+    result = (await generate_bee_chat(body, Scripted(raw), judge)).result
+    assert result.answer_status == "ANSWERED"
+    item_text, task_text = judge.seen[2]
+    assert len(item_text) <= 2000 and len(task_text) <= 2000
+    assert item_text.startswith(
+        'API-001 (API_CONTRACT): {"method": "POST", '
+        '"path": "/api/projects/{projectId}/documents", '
+    )
+    assert '"description": "' + "문" * 299 + "…" in item_text
+    assert "… 외 10개" in item_text
+    assert task_text == (
+        "TASK-001 READY / 담당 21 / 계획 "
+        + "제" * 299
+        + "… / 참조 1104 / 목표 "
+        + "목" * 299
+        + "…"
+    )
+    # The token check keeps the whole content and what the answer model saw.
+    full_item, full_task = reference_support(body.approved_items, body.related_tasks)
+    assert "문" * 2_100 in full_item
+    assert "참조 1104" in full_task and "목" * 1_999 + "…" in full_task
 
 
 @pytest.mark.asyncio

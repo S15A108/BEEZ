@@ -14,6 +14,7 @@ grounding at all is replaced by the fixed "not found" text instead of being
 shown as a guess. Nothing is stored and nothing is decided here.
 """
 
+import hashlib
 import json
 import re
 from collections.abc import Iterable, Sequence
@@ -89,11 +90,16 @@ _FACT = re.compile(
     r"|\d{1,3}(?:,\d{3})+(?:\.\d+)?"
     r"|\d+(?:\.\d+)?"
 )
-# The pattern backtracks across a long run of letters, so it is applied to
-# one whitespace-delimited word at a time and never to a word longer than
-# this: no key, path, identifier or number a document states is longer, and
-# a longer run is not a fact. This keeps the check linear in the input.
-MAX_TOKEN_WORD_CHARS = 256
+# The pattern backtracks across a run of letters, digits and underscores (an
+# atom), so a word costs the square of its longest atom. Words are tokenized
+# one at a time, and an atom longer than this is folded to a 16-letter digest
+# of itself before the pattern runs: the check stays linear, the rest of the
+# word (a path's other segments, a dotted identifier's other part) is still
+# checked exactly, and the folded atom still counts, whole, through its
+# digest. A path may be 2,000 chars (ApiPath) but its segments are short, so
+# a long path is one token compared whole.
+MAX_TOKEN_ATOM_CHARS = 128
+_ATOM = re.compile(r"[A-Za-z0-9_]+")
 _NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
 # A list ordinal or bullet at the start of a line is layout, not a fact.
 _LIST_MARKER = re.compile(r"^[ \t]*(?:\d{1,3}[.)]|[-*•·])[ \t]+", re.MULTILINE)
@@ -178,12 +184,22 @@ def _canonical(token: str) -> str:
     return token.casefold()
 
 
+def _fold_atom(match: re.Match[str]) -> str:
+    """An atom as it is, or a 16-letter digest of it when it is over the cap."""
+    atom = match.group()
+    if len(atom) <= MAX_TOKEN_ATOM_CHARS:
+        return atom
+    digest = hashlib.blake2b(atom.encode("ascii"), digest_size=8).hexdigest()
+    return "".join(chr(ord("A") + int(char, 16)) for char in digest)
+
+
 def _word_tokens(text: str) -> list[str]:
-    """Fact tokens found word by word; a word over the cap holds none."""
+    """Fact tokens found word by word, long atoms folded, in linear time."""
     found: list[str] = []
     for word in text.split():
-        if len(word) <= MAX_TOKEN_WORD_CHARS:
-            found.extend(_FACT.findall(word))
+        if len(word) > MAX_TOKEN_ATOM_CHARS:
+            word = _ATOM.sub(_fold_atom, word)
+        found.extend(_FACT.findall(word))
     return found
 
 
@@ -238,6 +254,40 @@ def claim_segments(text: str) -> list[tuple[str, list[int]]]:
     return segments
 
 
+# For the judge an item's content is cut field by field, shortest values
+# first, so an API item's `method` and `path` survive a long `description`,
+# and a plan's title, references and goal are cut to this length each; the
+# whole text then fits `MAX_PAYLOAD_TEXT_CHARS` without losing a short field.
+MAX_JUDGE_FIELD_CHARS = 300
+MAX_JUDGE_LIST_ITEMS = 20
+
+
+def _judge_text(text: str) -> str:
+    if len(text) <= MAX_JUDGE_FIELD_CHARS:
+        return text
+    return text[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
+
+
+def _judge_value(value: Any) -> Any:
+    """Item content for the judge: strings and lists cut, short fields first."""
+    if isinstance(value, str):
+        return _judge_text(value)
+    if isinstance(value, list):
+        items = [_judge_value(item) for item in value[:MAX_JUDGE_LIST_ITEMS]]
+        if len(value) > MAX_JUDGE_LIST_ITEMS:
+            items.append(f"… 외 {len(value) - MAX_JUDGE_LIST_ITEMS}개")
+        return items
+    if isinstance(value, dict):
+        cut = {name: _judge_value(item) for name, item in value.items()}
+        return dict(
+            sorted(
+                cut.items(),
+                key=lambda pair: len(json.dumps(pair[1], ensure_ascii=False)),
+            )
+        )
+    return value
+
+
 def reference_support(
     items: Sequence[ApprovedDesignItem],
     tasks: Sequence[RelatedTask],
@@ -246,27 +296,34 @@ def reference_support(
 ) -> list[str]:
     """One text per referenced item and task: what the whole answer may state.
 
-    A plan's title and goal are cut to what the answer model saw
-    (`MAX_PAYLOAD_TEXT_CHARS`). For the judge every text is cut to that length
-    as well, so the shared support of a call is bounded whatever the items
-    hold; the token check keeps an item's full content.
+    For the token check an item keeps its full content and a plan's title
+    and goal are cut to what the answer model saw (`MAX_PAYLOAD_TEXT_CHARS`).
+    For the judge every text must fit `MAX_PAYLOAD_TEXT_CHARS`: an item's
+    content is cut field by field with its short fields first (an API's
+    `method` and `path` come before a long `description`), and a plan's
+    title, references and goal are cut to `MAX_JUDGE_FIELD_CHARS` each, so
+    the final cut never removes a short field.
     """
+    cut = _judge_text if for_judge else clip_text
     texts: list[str] = []
     for item in items:
-        content = json.dumps(item.content.model_dump(mode="json"), ensure_ascii=False)
-        texts.append(f"{item.key} ({item.kind}): {content}")
+        content = item.content.model_dump(mode="json")
+        if for_judge:
+            content = _judge_value(content)
+        encoded = json.dumps(content, ensure_ascii=False)
+        texts.append(f"{item.key} ({item.kind}): {encoded}")
     for task in tasks:
         parts = [f"{task.key} {task.status}"]
         if task.assignee_member_id:
             parts.append(f"담당 {task.assignee_member_id}")
         if task.current_plan_revision is not None:
             plan = task.current_plan_revision.plan
-            parts.append(f"계획 {clip_text(plan.title)}")
-            if plan.goal:
-                parts.append(f"목표 {clip_text(plan.goal)}")
+            parts.append(f"계획 {cut(plan.title)}")
             if plan.design_refs:
                 refs = " ".join(ref.design_item_version_id for ref in plan.design_refs)
-                parts.append(f"참조 {clip_text(refs)}")
+                parts.append(f"참조 {cut(refs) if for_judge else refs}")
+            if plan.goal:
+                parts.append(f"목표 {cut(plan.goal)}")
         texts.append(" / ".join(parts))
     return [clip_text(text) if for_judge else text for text in texts]
 
