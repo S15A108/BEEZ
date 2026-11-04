@@ -3,6 +3,7 @@ package com.beez.backend.cdc.transport;
 import com.beez.backend.cdc.CdcKafkaSecurityProperties;
 import com.beez.backend.cdc.intake.AnalysisIntakeCheckPort;
 import com.beez.backend.cdc.intake.AnalysisIntakeSignalHandler;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -61,7 +62,7 @@ public class AnalysisIntakeKafkaConfiguration {
 
     @Bean
     public AnalysisIntakeKafkaListener intakeKafkaListener(
-            AnalysisIntakeRecordDecoder decoder, AnalysisIntakeCheckPort durableIntakeCheck) {
-        return new AnalysisIntakeKafkaListener(decoder, new AnalysisIntakeSignalHandler(durableIntakeCheck));
+            AnalysisIntakeRecordDecoder decoder, AnalysisIntakeCheckPort durableIntakeCheck, MeterRegistry registry) {
+        return new AnalysisIntakeKafkaListener(decoder, new AnalysisIntakeSignalHandler(durableIntakeCheck), registry);
     }
 }

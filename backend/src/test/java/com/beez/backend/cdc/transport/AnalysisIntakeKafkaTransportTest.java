@@ -11,6 +11,8 @@ import com.beez.backend.cdc.CdcKafkaSecurityProperties;
 import com.beez.backend.cdc.intake.AnalysisIntakeChange;
 import com.beez.backend.cdc.intake.AnalysisIntakeCheckPort;
 import com.beez.backend.cdc.intake.AnalysisIntakeSignalHandler;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Map;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -22,10 +24,12 @@ import org.springframework.kafka.listener.ContainerProperties;
 class AnalysisIntakeKafkaTransportTest {
     private final AnalysisIntakeCheckPort check = mock(AnalysisIntakeCheckPort.class);
     private final AnalysisIntakeRecordDecoder decoder = mock(AnalysisIntakeRecordDecoder.class);
+    private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
     private final AnalysisIntakeKafkaListener listener = new AnalysisIntakeKafkaListener(decoder,
-            new AnalysisIntakeSignalHandler(check));
+            new AnalysisIntakeSignalHandler(check), metrics);
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(AnalysisIntakeKafkaConfiguration.class);
+            .withUserConfiguration(AnalysisIntakeKafkaConfiguration.class)
+            .withBean(MeterRegistry.class, () -> metrics);
 
     private ConsumerRecord<String, String> record(String value) {
         return new ConsumerRecord<>("test-topic", 0, 0L, "project-key", value);
@@ -88,6 +92,20 @@ class AnalysisIntakeKafkaTransportTest {
                 .isInstanceOf(AnalysisIntakeDeliveryException.class).hasNoCause();
         assertThatThrownBy(() -> listener.receive(record("null-decoded")))
                 .isInstanceOf(AnalysisIntakeDeliveryException.class).hasNoCause();
+    }
+
+    @Test
+    void receiveFailureCountsEachDeliveryAttemptWithoutAddingPayloadOrIdentifiersAsTags() {
+        when(decoder.decode("project-key", "secret-payload"))
+                .thenThrow(new IllegalArgumentException("secret-payload"));
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> listener.receive(record("secret-payload")))
+                    .isInstanceOf(AnalysisIntakeDeliveryException.class).hasNoCause();
+        }
+        listener.receive(record(null));
+        var counter = metrics.get("beez.cdc.kafka.receive.failures").counter();
+        assertThat(counter.count()).isEqualTo(2);
+        assertThat(counter.getId().getTags()).isEmpty();
     }
 
     @Test
