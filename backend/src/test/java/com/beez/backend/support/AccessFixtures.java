@@ -1,5 +1,7 @@
 package com.beez.backend.support;
 
+import com.beez.backend.account.Account;
+import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.project.ProjectRole;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,6 +45,21 @@ public final class AccessFixtures {
         return jdbc.queryForObject(
                 "INSERT INTO account (email, password_hash, display_name) VALUES (?, ?, ?) RETURNING id",
                 Long.class, email, passwordHash, "tester");
+    }
+
+    /** 이 이메일로 가입(ACC-A01)할 수 있는 verified_token. 메일·코드 확인(ACC-A11·A12)을 건너뛰고 확인된 인증 행을 바로 넣는다. */
+    public String verifiedToken(String email) {
+        return verifiedToken(jdbc, email);
+    }
+
+    /** 이 클래스를 쓰지 않는 통합 시험(자체 컨테이너)용. */
+    public static String verifiedToken(JdbcTemplate jdbc, String email) {
+        String token = "evt_" + SecretTokens.generate();
+        jdbc.update("INSERT INTO email_verification (email, code_hash, code_expires_at, closed_at, token_hash,"
+                        + " token_expires_at, created_at, updated_at)"
+                        + " VALUES (?, 'fixture', now(), now(), ?, now() + interval '30 minutes', now(), now())",
+                Account.normalizeEmail(email), SecretTokens.hash(token));
+        return token;
     }
 
     public String emailOf(long accountId) {

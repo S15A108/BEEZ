@@ -128,7 +128,9 @@ class DocumentApiIntegrationTest {
                         "vectors", texts.stream().map(t -> Map.of("key", t.get("key"), "embedding", vector)).toList()));
     }
     long register(String name) throws Exception {
-        var body = JSON.writeValueAsString(Map.of("email", UUID.randomUUID() + "@documents.test", "password", PASSWORD, "name", name));
+        String email = UUID.randomUUID() + "@documents.test";
+        var body = JSON.writeValueAsString(Map.of("email", email, "password", PASSWORD, "name", name,
+                "verified_token", com.beez.backend.support.AccessFixtures.verifiedToken(jdbc, email)));
         var response = send("POST", "/api/auth/register", body, false);
         assertThat(response.statusCode()).withFailMessage(response.body()).isEqualTo(201);
         return JSON.readTree(response.body()).get("id").asLong();

@@ -41,7 +41,9 @@ public class AuthController {
     public record RegisterRequest(
             @NotBlank @Email @Size(max = 254) String email,
             @NotNull String password,
-            @NotBlank @Size(max = 50) String name) {
+            @NotBlank @Size(max = 50) String name,
+            // ACC-A12 에서 받은 1회용 토큰. 인증한 이메일과 email 이 같아야 한다 (S15P31A108-219)
+            @NotBlank @Size(max = 200) String verifiedToken) {
 
         /** @Email 검증 전에 앞뒤 공백을 지운다 — 붙여 넣은 " a@b.com " 이 가입만 400 이 되지 않게 (로그인은 서비스에서 정규화) */
         public RegisterRequest {
@@ -52,11 +54,11 @@ public class AuthController {
     public record LoginRequest(@NotBlank String email, @NotBlank String password) {
     }
 
-    @Operation(summary = "회원가입 (ACC-A01). 세션은 만들지 않는다 — 로그인을 따로 호출")
+    @Operation(summary = "회원가입 (ACC-A01). verified_token(ACC-A12) 필수. 세션은 만들지 않는다 — 로그인을 따로 호출")
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public AccountResponse register(@Valid @RequestBody RegisterRequest body) {
-        return AccountResponse.from(auth.register(body.email(), body.password(), body.name()));
+        return AccountResponse.from(auth.register(body.email(), body.password(), body.name(), body.verifiedToken()));
     }
 
     @Operation(summary = "로그인 (ACC-A02). 성공하면 세션 쿠키 발급")
