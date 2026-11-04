@@ -6,7 +6,8 @@ GitHub Actions가 한 번만 빌드해 GHCR에 올리고, 서버는 받아서 �
 
 [서버 세팅](server-setup.md) · [Nginx·HTTPS](nginx-https.md) ·
 [Jenkins](jenkins.md) · [Docker 이미지](docker-images.md) 런북을 먼저 마친
-상태를 전제로 합니다.
+상태를 전제로 합니다. 상태·로그 확인, 재시작, 되돌리기, 배포 실패 알림은
+[운영 안내](operations.md)에 모았습니다.
 
 ## 구성
 
@@ -303,6 +304,7 @@ readlink /var/www/beez/current
 | 파라미터 | `GIT_SHA`(40자) · `DEPLOY_ENV`(`dev`) · `TARGET`(`local`) |
 | 파이프라인 | **같은 파일 안에 고정**. 검사(SHA 형식 → dev 받기 → dev 본줄기 커밋인지) → 그 커밋으로 전환 → `deploy.sh` 호출. 검사·배포 전체 15분 상한 |
 | 동작 | 동시 실행 안 함(뒤 요청은 줄을 섬), 기록 50회 보관 |
+| 실패 알림 | 실패·중단·시간 초과면 팀 Mattermost 채널로 보냄([운영 안내](operations.md#6-배포-실패-알림)) |
 | 실행 권한 | `beez-admin`, `github-actions`(이 잡만) |
 
 ### 검사를 고정 파이프라인에 두는 이유
@@ -424,7 +426,8 @@ rm -f /tmp/plugins.txt /tmp/jenkins.yaml
 밖이면 잡이 실패합니다. **배포 결과는 기다리지 않습니다.** 기다리며 상태를
 반복해서 물으면 Jenkins 앞 Nginx의 인증 요청 제한(IP당 분당 10회, API
 토큰과 비밀번호를 구분할 수 없어 함께 셈)에 걸립니다. Actions의 초록불은
-"배포 요청 접수"까지이고, 배포 성공은 Jenkins에서 봅니다.
+"배포 요청 접수"까지이고, 배포 성공은 Jenkins에서 봅니다. 배포가 실패하면 Jenkins가
+팀 채널로 알립니다([운영 안내](operations.md#6-배포-실패-알림)).
 
 | 응답 | 뜻 |
 |---|---|
