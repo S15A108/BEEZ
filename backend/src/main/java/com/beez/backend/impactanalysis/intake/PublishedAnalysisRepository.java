@@ -104,19 +104,9 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, Post
                 WHERE a.id=:id AND a.attempt<4
                   AND ((a.status='PENDING' AND (a.next_attempt_at IS NULL OR a.next_attempt_at<=:now))
                     OR (a.status='RUNNING' AND a.lease_until<=:now))
-                  AND NOT EXISTS (SELECT 1 FROM baseline current
-                    CROSS JOIN LATERAL generate_series(1,current.version_no-1) required(version_no)
-                    WHERE current.id=a.published_baseline_id AND current.project_id=a.project_id
-                      AND NOT EXISTS (SELECT 1 FROM baseline b WHERE b.project_id=a.project_id AND b.version_no=required.version_no))
-                  AND NOT EXISTS (SELECT 1 FROM baseline eb
-                    JOIN baseline current ON current.id=a.published_baseline_id AND current.project_id=a.project_id
-                    LEFT JOIN published_change_analysis earlier ON earlier.published_baseline_id=eb.id AND earlier.project_id=eb.project_id
-                    WHERE eb.project_id=a.project_id AND eb.version_no<current.version_no
-                      AND (earlier.id IS NULL OR NOT COALESCE(earlier.status='COMPLETED' OR
-                        (earlier.status='NOT_EVALUATED' AND
-                          ((eb.version_no=1 AND earlier.change_proposal_id IS NULL) OR earlier.error_code='published_before_intake')), false)))
+                  AND (%s)
                 RETURNING id,attempt,lease_until
-                """).param("id", id).param("now", Timestamp.from(now)).param("lease", Timestamp.from(now.plusSeconds(leaseSeconds)))
+                """.formatted(PublishedAnalysisOrderingSql.PREDECESSORS_READY)).param("id", id).param("now", Timestamp.from(now)).param("lease", Timestamp.from(now.plusSeconds(leaseSeconds)))
                 .query((rs, n) -> new Claim(rs.getLong("id"), rs.getInt("attempt"), rs.getTimestamp("lease_until").toInstant())).optional();
     }
 
