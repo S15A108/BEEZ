@@ -1,6 +1,8 @@
 import { AxiosError, AxiosHeaders } from 'axios'
 import { expect, it } from 'vitest'
 import {
+  getApiErrorCode,
+  getApiErrorDetails,
   getApiErrorMessage,
   isMissingApi,
   MISSING_API_MESSAGE,
@@ -88,4 +90,20 @@ it('unlessMissing은 없는 API만 준비 중(undefined)으로 바꾼다', async
     error: { code: 'not_found', message: '없는 프로젝트' },
   })
   await expect(unlessMissing(Promise.reject(notFound))).rejects.toBe(notFound)
+})
+
+// PR #114: ACC-A12 400 verification_code_mismatch는 error.details.remaining_attempts를 준다.
+it('오류 본문의 details를 버리지 않고, 없으면 undefined다', () => {
+  const mismatch = response(400, {
+    error: {
+      code: 'verification_code_mismatch',
+      message: '인증 코드가 맞지 않습니다',
+      details: { remaining_attempts: 3 },
+    },
+  })
+  expect(getApiErrorCode(mismatch)).toBe('verification_code_mismatch')
+  expect(getApiErrorDetails(mismatch)).toEqual({ remaining_attempts: 3 })
+  expect(getApiErrorDetails(response(409, { error: { code: 'x' } }))).toBe(
+    undefined,
+  )
 })
