@@ -75,12 +75,14 @@ public class TaskQueryService {
     public TaskDetailResponse getTaskDetail(CallerContext caller, Long projectId, Long taskId) {
         access.requireMember(caller, projectId);
         Task task = requireTask(projectId, taskId);
-        TaskDetailResponse detail = toDetail(task);
-        Long latest = validationLookup.latestValidationId(task.getId(), task.getCurrentPlanRevisionId());
-        if (latest == null) {
-            return detail;
+        // validation_status 와 validation 을 같은 줄(현재 계획의 가장 최근 검증)에서 한 번 읽어 채운다
+        Optional<Map<String, Object>> latest = validationLookup.latest(task.getId(), task.getCurrentPlanRevisionId());
+        if (latest.isEmpty()) {
+            return toDetail(task, ValidationStatusLookup.NOT_RUN);
         }
-        return validations.find(projectId, latest)
+        TaskDetailResponse detail = toDetail(task, (String) latest.get().get("status"));
+        long latestId = ((Number) latest.get().get("id")).longValue();
+        return validations.find(projectId, latestId)
                 .map(row -> detail.withValidation(validationResponses.toResponse(row)))
                 .orElse(detail);
     }
@@ -165,6 +167,11 @@ public class TaskQueryService {
     // ------------------------------------------------------------------
 
     public TaskDetailResponse toDetail(Task task) {
+        return toDetail(task, validationLookup.latestStatus(task.getId(), task.getCurrentPlanRevisionId()));
+    }
+
+    /** validation_status 를 이미 읽은 경우 (상세 조회) */
+    private TaskDetailResponse toDetail(Task task, String validationStatus) {
         TaskPlanRevisionResponse current = null;
         if (task.getCurrentPlanRevisionId() != null) {
             Optional<TaskPlanRevision> rev = revisions.findById(task.getCurrentPlanRevisionId());
@@ -173,7 +180,6 @@ public class TaskQueryService {
                 current = TaskPlanRevisionResponse.from(rev.get(), refs);
             }
         }
-        String validationStatus = validationLookup.latestStatus(task.getId(), task.getCurrentPlanRevisionId());
         return TaskDetailResponse.of(task, current, validationStatus, deltaValidationIdOf(task));
     }
 

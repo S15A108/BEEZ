@@ -18,6 +18,7 @@ import com.beez.backend.validation.dto.ValidationResponse;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.service.AnalysisResultApplier;
+import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.worker.ValidationWorker;
 import java.net.http.HttpResponse;
@@ -99,6 +100,21 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
     private void searchFails() {
         doThrow(new IllegalStateException("검색 장애 (시험용)")).when(search).search(any(), org.mockito.ArgumentMatchers.eq(projectId), any(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(100));
+    }
+
+    /** 계획을 통째로 바꾼다 (TSK-A04). 첫 수정이라 expected_revision_no 는 1 */
+    private HttpResponse<String> revisePlan(long[] t, String planJson) throws Exception {
+        String plan = planJson.trim();
+        String body = plan.substring(0, plan.lastIndexOf('}'))
+                + ",\n  \"expected_revision_no\": 1,\n  \"expected_lock_version\": " + t[2] + "\n}";
+        return api.post(tasksPath() + "/" + t[0] + "/plan-revisions", body, member);
+    }
+
+    /** 두 참조를 이 순서대로 담은 설계 참조 목록 JSON */
+    private static String refs(String first, String second) {
+        String a = first.trim();
+        String b = second.trim();
+        return a.substring(0, a.lastIndexOf(']')) + ", " + b.substring(b.indexOf('[') + 1);
     }
 
     /** 계획 본문 끝에 칸을 더하고 계획을 고친다 (TSK-A04) */
@@ -344,6 +360,11 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
                 .isEqualTo(api.jdbc.sql("select id from validation_run where validation_id = :v and attempt = 2")
                         .param("v", id).query(Long.class).single());
         assertThat(count("select count(*) from validation_finding where validation_id = " + id)).isEqualTo(2);
+
+        // 시도 3 을 연 뒤에는 시도 1 의 요청이 "바로 앞 요청의 재전송" 이 아니다 — 그 사이 다른 재시도가 있었다
+        assertThat(body(retry(id, 2, member), 202).get("current_attempt").asInt()).isEqualTo(3);
+        assertError(retry(id, 1, member), 409, "revision_conflict");
+        assertThat(count("select count(*) from validation_run where validation_id = " + id)).isEqualTo(3);
     }
 
     @Test
@@ -539,9 +560,9 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
 
         // 같은 세 번이 가짜 분석기(개발 서버)였다면 세지 않는다 — 실제 AI 로 바꾼 뒤 새 검증을 받는다
         api.jdbc.sql("""
-                update validation_run set analyzer_version = 'fake-analyzer'
+                update validation_run set analyzer_version = :fake
                  where validation_id in (select id from validation where task_id = :t)
-                """).param("t", t[0]).update();
+                """).param("fake", FakeValidationAnalyzer.MODEL).param("t", t[0]).update();
         assertThat(accept(t, member).statusCode()).isEqualTo(202);
     }
 
@@ -554,7 +575,7 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         assertThat(worker.runOnce()).isTrue();
         assertThat(validation(id).get("error_code").asText()).isEqualTo("evidence_fetch_failed");
         searchWorks();
-        // 시도 2·3·4: AI 연결 실패, 모델 호출 사용량 없음 — 모델을 불렀다는 기록이 없다
+        // 시도 2·3·4: AI 서버에 연결하지 못함(요청이 닿지 않음), 사용량 없음
         doAnswer(inv -> {
             throw new ValidationAnalyzer.AnalyzerException("ai_unavailable", "연결 실패", null, null);
         }).when(analyzer).analyze(any());
@@ -565,6 +586,92 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         }
         // 아직 한 번도 세지 않았으므로 다시 돌릴 수 있다
         assertThat(body(retry(id, 4, member), 202).get("current_attempt").asInt()).isEqualTo(5);
+    }
+
+    @Test
+    void readTimeoutWithoutUsageStillCounts_becauseTheRequestReachedTheAi() throws Exception {
+        long[] t = passableTask("A");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        // 요청을 보낸 뒤 응답을 못 받음(읽기 시간 초과) — 모델이 돌았을 수 있어 사용량이 없어도 센다
+        doAnswer(inv -> {
+            throw new ValidationAnalyzer.AnalyzerException("ai_timeout", "AI 호출이 시간 안에 응답하지 않았습니다", null, null);
+        }).when(analyzer).analyze(any());
+        assertThat(worker.runOnce()).isTrue();
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            body(retry(id, attempt, member), 202);
+            assertThat(worker.runOnce()).isTrue();
+            assertThat(validation(id).get("error_code").asText()).isEqualTo("ai_timeout");
+        }
+        assertThat(api.jdbc.sql("select count(*) from validation_run where validation_id = :v and usage is null")
+                .param("v", id).query(Integer.class).single()).isEqualTo(3);
+        assertError(retry(id, 3, member), 409, "validation_attempt_limit");
+        assertError(accept(t, member), 409, "validation_attempt_limit");
+    }
+
+    @Test
+    void designReferenceOrderDoesNotChangeTheInputForTheLimit() throws Exception {
+        provideCompleteApiContent();
+        String forward = refs(api.implementsRef("API-01"), api.readsRef("API-02"));
+        long[] t = createTask(api.planJson("R", forward, "[]"), member);
+        long id = timedOut(t);
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            body(retry(id, attempt, member), 202);
+            nextCallTimesOut();
+            assertThat(worker.runOnce()).isTrue();
+        }
+        assertError(accept(t, member), 409, "validation_attempt_limit");
+
+        // 같은 참조를 반대 순서로 저장한 계획 — 내용이 같으니 같은 입력으로 센다
+        String backward = refs(api.readsRef("API-02"), api.implementsRef("API-01"));
+        HttpResponse<String> reordered = revisePlan(t, api.planJson("R", backward, "[]"));
+        assertThat(reordered.statusCode()).as(reordered.body()).isEqualTo(201);
+        long revision = api.jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", t[0])
+                .query(Long.class).single();
+        assertThat(revision).isNotEqualTo(t[1]);
+        HttpResponse<String> again = accept(new long[] {t[0], revision, TaskApiSupport.longField(reordered.body(), "lock_version")}, member);
+        assertError(again, 409, "validation_attempt_limit");
+    }
+
+    @Test
+    void deltaRetry_isNotBlockedByANewerPlanValidation_andCountsTowardTheLimit() throws Exception {
+        long[] t = passableTask("D");
+        long pass = api.passValidation(t[0]);
+        HttpResponse<String> started = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                "{\"event\":\"START\",\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":" + t[2]
+                        + ",\"validation_id\":\"" + pass + "\"}", member);
+        assertThat(started.statusCode()).as(started.body()).isEqualTo(200);
+        HttpResponse<String> done = api.post(tasksPath() + "/" + t[0] + "/state-events",
+                "{\"event\":\"COMPLETED\",\"plan_revision_id\":\"" + t[1] + "\",\"expected_lock_version\":"
+                        + TaskApiSupport.longField(started.body(), "lock_version")
+                        + ",\"delta\":[{\"kind\":\"X\",\"text\":\"y\"}]}", member);
+        assertThat(done.statusCode()).as(done.body()).isEqualTo(202);
+        long delta = TaskApiSupport.longField(done.body(), "delta_validation_id");
+        long lock = TaskApiSupport.longField(done.body(), "lock_version");
+        nextCallTimesOut();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(validation(delta).get("status").asText()).isEqualTo("ERROR");
+        assertThat(validation(delta).get("trigger").asText()).isEqualTo("DELTA");
+
+        // 완료 대기 중 새 계획 검증을 받는다 (RESUME 준비). 이것이 DELTA 재시도를 막지 않는다
+        long agent = body(accept(new long[] {t[0], t[1], lock}, member), 202).get("id").asLong();
+        assertThat(agent).isGreaterThan(delta);
+        assertThat(body(retry(delta, 1, member), 202).get("current_attempt").asInt()).isEqualTo(2);
+        // 작업 상세는 기다리는 DELTA 와 현재 계획의 가장 최근 검증(새 계획 검증)을 함께 싣는다
+        JsonNode detail = body(api.get(tasksPath() + "/" + t[0], member), 200);
+        assertThat(detail.get("delta_validation_id").asText()).isEqualTo(String.valueOf(delta));
+        assertThat(detail.get("validation").get("id").asText()).isEqualTo(String.valueOf(agent));
+
+        // 큐: 새 계획 검증이 먼저, 다시 연 DELTA 가 다음 — 둘 다 시간 초과
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(worker.runOnce()).isTrue();
+        assertThat(validation(agent).get("error_code").asText()).isEqualTo("ai_timeout");
+        assertThat(validation(delta).get("error_code").asText()).isEqualTo("ai_timeout");
+        // DELTA 재시도도 센다 (서버가 접수한 첫 실행 포함 3번)
+        body(retry(delta, 2, member), 202);
+        assertThat(worker.runOnce()).isTrue();
+        assertError(retry(delta, 3, member), 409, "validation_attempt_limit");
+        // 계획 검증은 다른 입력이라 따로 센다 (1번 썼다)
+        assertThat(body(retry(agent, 1, member), 202).get("current_attempt").asInt()).isEqualTo(2);
     }
 
     @Test

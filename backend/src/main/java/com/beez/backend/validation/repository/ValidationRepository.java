@@ -137,9 +137,18 @@ public class ValidationRepository {
                 .param("sum", toJson(summary)).param("v", validationId).param("a", expectedAttempt).update();
     }
 
-    /** 작업에 이 검증보다 나중에 만든 검증이 있는가 (재시도는 그 작업의 가장 최근 검증만 받는다) */
+    /**
+     * 작업에 이 검증보다 나중에 만든 <b>같은 갈래</b>의 검증이 있는가. 재시도는 갈래마다 가장 최근 검증만 받는다.
+     * 갈래는 완료 보고 재검증(DELTA)과 계획 검증(그 밖)이다 — DELTA 가 오류로 끝난 뒤 계획 검증을 새로 받아도(RESUME 준비) DELTA 재시도는
+     * 막지 않는다. 둘 중 어느 쪽으로 나가도 된다 (생애주기 §2.3: DELTA 재시도로 완료, 또는 새 검증 PASS 로 RESUME)
+     */
     public boolean hasNewerValidation(long taskId, long validationId) {
-        return jdbc.sql("select exists (select 1 from validation where task_id = :t and id > :v)")
+        return jdbc.sql("""
+                        select exists (
+                          select 1 from validation n, validation v
+                           where v.id = :v and n.task_id = :t and n.id > v.id
+                             and (n.trigger = 'DELTA') = (v.trigger = 'DELTA'))
+                        """)
                 .param("t", taskId).param("v", validationId).query(Boolean.class).single();
     }
 
@@ -147,14 +156,18 @@ public class ValidationRepository {
      * 같은 작업·같은 검증 입력으로 지금까지 <b>실제 검증 AI(모델)를 부른</b> 실행 수 (횟수 제한, S15P31A108-161).
      * 새 검증 요청과 재시도의 실행을 함께 센다. "같은 입력" 은 입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같은 것이다 —
      * 해시에는 패킷이 없지만 결과 반영의 입력 비교({@code AnalysisResultApplier.inputChange})는 패킷이 바뀌면 다른 입력으로 보므로 맞춘다.
-     * 세는 실행:
+     * 세는 실행 (모델이 돌았거나, 요청이 AI 에 닿았는데 결과를 확인하지 못한 실행):
      * <ul>
      *   <li>도는 중(RUNNING) — 같은 입력으로 동시에 여러 번 요청해 제한을 넘기지 못하게</li>
-     *   <li>실제 분석기로 끝까지 돈 실행(OK), 또는 모델 호출 사용량이 한 건 이상 남은 실행 (시간 초과·출력 계약 위반·부분 분석 등)</li>
+     *   <li>실제 분석기로 끝까지 돈 실행(OK)</li>
+     *   <li>시간 초과(TIMEOUT, ai_timeout) — 504 든 읽기 시간 초과든 요청은 AI 에 닿았고 모델이 돌았을 수 있다. 사용량을 못 받아도 센다</li>
+     *   <li>출력 계약 위반(ai_invalid_output) — AI 가 응답을 돌려줬다 (모델이 돌았다)</li>
+     *   <li>그 밖에 모델 호출 사용량이 한 건 이상 남은 실패 (부분 분석·오류 본문에 사용량을 실은 502 등)</li>
      * </ul>
-     * 세지 않는 실행: 가짜 분석기(analyzer_version = fakeModel)로 끝난 실행, 사용량 없이 실패한 실행(근거 조회 실패·입력 불완전·
-     * 사용량을 알려 주지 않은 AI 연결 실패 등 모델을 불렀다는 기록이 없는 실패), 버린 실행(DISCARDED), 서버 쪽 중단(리스 만료·워커 중단 —
-     * 늦게 온 응답의 사용량이 그 실행에 남아도 세지 않는다). 오류 칸은 "코드: 문장" 모양이다({@code AnalysisResultApplier.fail})
+     * 세지 않는 실행: 가짜 분석기(analyzer_version = fakeModel)로 끝난 실행, AI 에 요청이 닿지 않았거나 AI 가 모델을 부르지 않았다고
+     * 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502 — 분류는 {@code AiValidationAnalyzer}),
+     * 버린 실행(DISCARDED), 서버 쪽 중단(리스 만료·워커 중단 — 늦게 온 응답의 사용량이 남아도 세지 않는다).
+     * 오류 칸은 "코드: 문장" 모양이다({@code AnalysisResultApplier.fail})
      */
     public int countedModelAttempts(long taskId, String inputSnapshotHash, Long contextPacketId, String fakeModel) {
         return jdbc.sql("""
@@ -170,7 +183,9 @@ public class ValidationRepository {
                                     and (r.error is null
                                          or (r.error not like 'validation\\_lease\\_expired%'
                                              and r.error not like 'validation\\_worker\\_interrupted%'))
-                                    and (r.status = 'OK' or (r.usage is not null and jsonb_array_length(r.usage) > 0))))
+                                    and (r.status in ('OK', 'TIMEOUT')
+                                         or r.error like 'ai\\_invalid\\_output%'
+                                         or (r.usage is not null and jsonb_array_length(r.usage) > 0))))
                         """)
                 .param("t", taskId).param("h", inputSnapshotHash).param("pkt", contextPacketId, Types.BIGINT)
                 .param("fake", fakeModel).query(Integer.class).single();

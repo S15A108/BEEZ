@@ -38,7 +38,8 @@ import tools.jackson.databind.ObjectMapper;
  *   <li>규칙 검사({@link ValidationRules}). 확정되면 그 상태로 끝(200). 의미 분석이 필요하면 RUNNING·시도 1·실행(run)·작업 큐(job)를
  *       만들어 202. 워커({@code ValidationWorker})가 큐에서 꺼내 AI 를 부른다</li>
  *   <li>횟수 제한(-161): 의미 분석이 필요한데 같은 작업·같은 입력으로 이미 정한 횟수만큼 분석을 돌렸으면 409 validation_attempt_limit.
- *       재시도({@link ValidationRetryService})와 같은 수를 센다(실제 AI 를 부른 실행만). 서버가 접수하는 DELTA 검증에는 걸지 않는다</li>
+ *       재시도({@link ValidationRetryService})와 같은 수를 센다(실제 AI 를 부른 실행만). 서버가 접수하는 DELTA 검증의 첫 실행은 막지 않는다
+ *       (DELTA 를 사람이 다시 돌리는 재시도는 센다)</li>
  * </ol>
  * 조회(VAL-A02)는 새 실행을 만들지 않는다. 판정은 규칙이 내리고 AI 는 발견 후보만 더한다 (공통 6절).
  *
@@ -200,7 +201,7 @@ public class ValidationAcceptService {
     /**
      * 횟수 제한 (-161). 같은 작업·같은 검증 입력(입력 스냅샷 해시와 계획의 컨텍스트 패킷)으로 실제 검증 AI 를 부른 실행이 이미 정한 횟수에
      * 닿았으면 409 validation_attempt_limit. 새 검증 요청(VAL-A01·MCP-11)과 재시도(VAL-A04·MCP-14)가 같은 수를 본다 — 새 검증으로 재시도
-     * 제한을 돌아가지 못하게. 무엇을 세는지는 {@link ValidationRepository#countedModelAttempts} (가짜 분석기·모델 호출 전 실패는 세지 않는다)
+     * 제한을 돌아가지 못하게. 무엇을 세는지는 {@link ValidationRepository#countedModelAttempts} (가짜 분석기·AI 에 닿지 않은 실패는 세지 않는다)
      */
     static void requireAttemptsLeft(ValidationRepository validations, ValidationProperties properties, long taskId, String inputHash,
                                     Long contextPacketId) {
@@ -249,8 +250,13 @@ public class ValidationAcceptService {
         if (completionDelta != null) {
             input.put("completion_delta", completionDelta);
         }
+        // 설계 참조는 항목 번호 순으로 넣는다 — DB 가 돌려주는 순서는 정해져 있지 않아, 같은 참조라도 순서가 다르면 해시가 달라진다
+        // (계획 입력 해시 PlanInputHasher 도 같은 이유로 정렬한다). 계획 하나에 항목마다 참조는 하나다.
+        // Comparator.comparing: 각 참조의 항목 번호를 꺼내 그 값으로 비교하는 정렬 기준을 만든다
+        List<TaskPlanDesignRef> sortedRefs = new ArrayList<>(refs);
+        sortedRefs.sort(java.util.Comparator.comparing(TaskPlanDesignRef::getDesignItemId));
         List<Map<String, Object>> refList = new ArrayList<>();
-        for (TaskPlanDesignRef ref : refs) {
+        for (TaskPlanDesignRef ref : sortedRefs) {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("design_item_id", ref.getDesignItemId());
             r.put("design_item_version_id", ref.getDesignItemVersionId());
