@@ -93,7 +93,7 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 아직 compose 가 넘기지 않음 (-219) |
 | `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | 〃. prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |
 | `MAIL_SMTP_AUTH`·`MAIL_SMTP_STARTTLS` | | `true`·`true` | 기본값 |
-| `EMAIL_VERIFY_RESEND_INTERVAL`·`SEND_LIMIT`·`MAX_ATTEMPTS` | | `60s`·`5`(시간당)·`5` (Q04 기본안) | 기본값 |
+| `EMAIL_VERIFY_RESEND_INTERVAL`·`SEND_LIMIT`·`GLOBAL_SEND_LIMIT`·`MAX_ATTEMPTS` | | `60s`·`5`(이메일당 시간당)·`100`(서버 전체 시간당, SMTP 계정 한도보다 낮게)·`5` (Q04 기본안) | 기본값 |
 
 prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
 오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30

@@ -25,3 +25,5 @@ CREATE UNIQUE INDEX ux_email_verification_open ON email_verification(email) WHER
 CREATE UNIQUE INDEX ux_email_verification_token ON email_verification(token_hash) WHERE token_hash IS NOT NULL;
 -- 다시 받기 간격·시간당 발송 한도를 셀 때 이메일별 최근 행을 본다
 CREATE INDEX ix_email_verification_email_created ON email_verification(email, created_at);
+-- 서버 전체 시간당 발송 상한을 셀 때 최근 행만 본다
+CREATE INDEX ix_email_verification_created ON email_verification(created_at);

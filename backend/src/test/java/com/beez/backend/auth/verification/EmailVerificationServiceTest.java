@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,7 +32,7 @@ class EmailVerificationServiceTest {
     private final PasswordEncoder encoder = mock(PasswordEncoder.class);
     private final MailGateway mail = mock(MailGateway.class);
     private final EmailVerificationProperties props = new EmailVerificationProperties(Duration.ofMinutes(5),
-            Duration.ofSeconds(60), 5, Duration.ofHours(1), 5, Duration.ofMinutes(30));
+            Duration.ofSeconds(60), 5, Duration.ofHours(1), 100, 5, Duration.ofMinutes(30));
     private final EmailVerificationService service;
 
     EmailVerificationServiceTest() {
@@ -63,6 +64,22 @@ class EmailVerificationServiceTest {
                     assertThat(e.getCode()).isEqualTo("mail_send_failed");
                 });
         verify(verifications).deleteById(41L);
+    }
+
+    // 깨지면: 주소를 바꿔 가며 보내면 서버가 임의 주소로 메일을 무제한 보내 SMTP 계정이 막힌다 (리뷰 #114, 서버 전체 상한)
+    @Test
+    void 서버_전체_시간당_상한에_닿으면_보내지_않고_429() {
+        when(accounts.findByEmailAndDeletedAtIsNull("new@example.com")).thenReturn(Optional.empty());
+        when(verifications.findFirstByEmailOrderByIdDesc("new@example.com")).thenReturn(Optional.empty());
+        when(verifications.countByCreatedAtAfter(any())).thenReturn(100L);
+
+        assertThatThrownBy(() -> service.send("new@example.com"))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(e.getCode()).isEqualTo("rate_limited");
+                });
+        verify(mail, never()).send(any());
+        verify(encoder, never()).encode(anyString());
     }
 
     // 깨지면: 화면이 "남은 시도 N번"을 보여 줄 error.details.remaining_attempts 가 빠진다 (ACC-A12 오류표)

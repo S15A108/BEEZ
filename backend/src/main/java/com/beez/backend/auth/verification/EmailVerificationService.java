@@ -157,7 +157,7 @@ public class EmailVerificationService {
         v.consumeToken(now);
     }
 
-    /** 다시 받기 간격과 이메일당 발송 한도. 넘으면 429 rate_limited. */
+    /** 다시 받기 간격, 이메일당 발송 한도, 서버 전체 발송 상한. 넘으면 429 rate_limited. */
     private void checkSendAllowed(String email, Instant now) {
         verifications.findFirstByEmailOrderByIdDesc(email).ifPresent(latest -> {
             if (now.isBefore(latest.getCreatedAt().plus(props.resendInterval()))) {
@@ -167,6 +167,12 @@ public class EmailVerificationService {
         if (verifications.countByEmailAndCreatedAtAfter(email, now.minus(props.sendLimitWindow()))
                 >= props.sendLimit()) {
             throw rateLimited("이 이메일로 보낼 수 있는 횟수를 넘었습니다. 잠시 뒤에 다시 시도하세요");
+        }
+        // 이메일당 한도만으로는 주소를 바꿔 가며 무제한 보낼 수 있다. SMTP 계정 차단·일일 한도 소진을 막는 서버 전체 상한
+        if (verifications.countByCreatedAtAfter(now.minus(props.sendLimitWindow())) >= props.globalSendLimit()) {
+            log.warn("가입 인증 메일 서버 전체 상한 도달: limit={} window={}", props.globalSendLimit(),
+                    props.sendLimitWindow());
+            throw rateLimited("지금은 인증 메일 요청이 많습니다. 잠시 뒤에 다시 시도하세요");
         }
     }
 

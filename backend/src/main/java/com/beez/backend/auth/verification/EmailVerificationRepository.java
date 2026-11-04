@@ -17,6 +17,9 @@ public interface EmailVerificationRepository extends JpaRepository<EmailVerifica
     /** 한도 창 안의 발송 수 (시간당 발송 한도). 발송에 실패한 요청은 지우므로 세지 않는다. */
     long countByEmailAndCreatedAtAfter(String email, Instant since);
 
+    /** 한도 창 안의 서버 전체 발송 수 (주소를 바꿔 가며 보내는 남용 방지). */
+    long countByCreatedAtAfter(Instant since);
+
     /**
      * 다시 받기: 이 이메일의 열린 코드를 모두 닫는다. 새 행을 넣기 전에 바로 실행해야 한다 —
      * JPA 는 flush 때 INSERT 를 UPDATE 보다 먼저 보내므로 엔티티 변경으로 닫으면 ux_email_verification_open 에 걸린다.

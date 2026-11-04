@@ -8,7 +8,8 @@ import org.springframework.mail.javamail.JavaMailSender;
 
 /**
  * SMTP 로 보내는 구현 (beez.mail.mode=smtp). 접속 값은 spring.mail.* 이다.
- * spring.mail.host 가 비어 있으면 Spring Boot 가 JavaMailSender 를 만들지 않으므로 sender 가 null 로 온다.
+ * spring.mail.host 가 비어 있으면 MailConfig 가 sender 를 null 로 넘긴다 (빈 문자열이어도 Spring Boot 는 JavaMailSender 를 만들어
+ * localhost 로 붙으려 하므로, MailConfig 가 빈 host 를 설정 없음으로 본다).
  * 그때는 기동을 막지 않고 보낼 때마다 실패시킨다 — 서버 compose 가 MAIL_* 를 넘기기 전에 머지돼도 배포가 깨지지 않게 (-219 PR 노트).
  */
 public class SmtpMailGateway implements MailGateway {

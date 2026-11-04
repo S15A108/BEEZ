@@ -57,7 +57,9 @@ public final class AccessFixtures {
         String token = "evt_" + SecretTokens.generate();
         jdbc.update("INSERT INTO email_verification (email, code_hash, code_expires_at, closed_at, token_hash,"
                         + " token_expires_at, created_at, updated_at)"
-                        + " VALUES (?, 'fixture', now(), now(), ?, now() + interval '30 minutes', now(), now())",
+                        // 실제 발송이 아니므로 발송 한도 창(1시간) 밖 시각으로 넣어 서버 전체 상한에 세지 않는다
+                        + " VALUES (?, 'fixture', now(), now(), ?, now() + interval '30 minutes',"
+                        + " now() - interval '1 day', now())",
                 Account.normalizeEmail(email), SecretTokens.hash(token));
         return token;
     }

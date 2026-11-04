@@ -159,6 +159,7 @@ beez:
     resend-interval: ${EMAIL_VERIFY_RESEND_INTERVAL:60s}   # 명세 ACC-A11 응답 예시
     send-limit: ${EMAIL_VERIFY_SEND_LIMIT:5}               # 이메일당 send-limit-window 안 발송 수
     send-limit-window: 1h
+    global-send-limit: ${EMAIL_VERIFY_GLOBAL_SEND_LIMIT:100}   # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
     max-attempts: ${EMAIL_VERIFY_MAX_ATTEMPTS:5}           # 틀린 입력 한도. FE 목과 같은 값
     token-ttl: 30m                                         # verified_token. 명세 ACC-A12 응답 예시
   agent:
