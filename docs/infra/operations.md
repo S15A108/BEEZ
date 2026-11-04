@@ -271,6 +271,7 @@ beez-deploy 고정 파이프라인(JCasC) ── 실패·중단·시간 초과 �
 | Jenkins 재시작 | `fully up`, SEVERE·ConfiguratorException·unresolved 0건 |
 | #45 `GIT_SHA=1531d05…`(본줄기 아님) | `dev 본줄기(PR 머지 커밋)가 아니라 배포하지 않는다` → `배포 실패 알림 보냄` → FAILURE, 컨테이너·프론트 그대로(`5bf2381`) |
 | 콘솔에 웹훅 주소 | 0회 |
+| #46 자동 배포 `8b6590d`(-243, `github-actions`) | 새 파이프라인으로 SUCCESS, 알림 없음(성공 경로 영향 없음) |
 
 배포 전 로컬 Jenkins(같은 버전·플러그인)에서는 SHA 형식 오류·본줄기 아님·Deploy 단계 실패·중단(ABORTED)
 네 경우 모두 알림이 가고 원래 결과가 유지되는 것을 확인했습니다.
