@@ -1198,6 +1198,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현, -159) |
 | 409 | `revision_conflict` | 현재 계획 아님 |
+| 409 | `validation_attempt_limit` | 의미 분석이 필요한데 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름. 재시도(MCP-14)와 같은 수 (BE 구현, -161) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1337,7 +1338,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: VAL 재시도 계약  
 담당: BE: 전진(도구) / 변준성(재시도) / AI: 양지훈(실패 정보) / FE: —  
-상태: 도구명·분리 담당자 검토
+상태: 도구명·분리 담당자 검토. BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구 연결은 -179
 
 #### 인증
 
@@ -1348,7 +1349,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `validation_id` | `ID` | Y | 현재 실패 attempt의 ERROR finding이 RETRY인 ERROR 검증 |
-| `expected_attempt` | `integer` | Y | 현재 시도 |
+| `expected_attempt` | `integer` | Y | 현재 시도 (1 이상). 같은 값으로 다시 보내면 새 시도를 만들지 않는다 |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
 아래는 도구 인수 객체다.
@@ -1416,7 +1417,10 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `invalid_transition` | ERROR가 아니거나 현재 실패 실행의 오류가 RETRY 대상이 아님, 또는 이미 재실행 |
+| 409 | `invalid_transition` | ERROR가 아니거나(이미 재실행 중 포함) 현재 실패 실행의 오류가 RETRY 대상이 아님. 완료·취소된 작업, 같은 갈래(DELTA / 계획 검증)의 더 최근 검증이 있음 |
+| 409 | `revision_conflict` | 입력·참조 변경. `expected_attempt`가 현재 시도도, 현재 시도 - 1(재전송)도 아님 |
+| 409 | `validation_attempt_limit` | 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름 (REST VAL-A01 처리 규칙) |
+| 409 | `idempotency_conflict` | 같은 `idempotency_key`에 다른 인수 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1435,6 +1439,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 invalid_transition으로 거부한다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. REST와 같은 서비스 규칙을 적용한다.
 - STALE·입력 변경은 새 검증을 요청한다.
 - 기존 attempt·lease의 늦은 결과는 반영하지 않는다.
+- (BE 구현, -161) REST VAL-A04와 같은 서비스(`ValidationRetryService`)다 — 순서·입력 확인·횟수 제한·중복 요청 규칙은 VAL-A04 처리 규칙을 따른다. `idempotency_key`가 같고 인수가 같으면 처음 결과를 그대로 돌려주고(그 사이 담당자가 바뀌었으면 거부), 키가 달라도 `expected_attempt`가 현재 시도 - 1이면(바로 앞 요청의 재전송) 새 시도를 만들지 않고 지금 검증을 돌려준다. 워커가 검색할 때 쓰는 요청자는 다시 돌린 에이전트(토큰)로 바뀐다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -4,11 +4,14 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.task.entity.Task;
 import com.beez.backend.task.entity.TaskStatus;
 import com.beez.backend.task.entity.WaitingReason;
+import com.beez.backend.validation.dto.ValidationResponse;
 import java.time.Instant;
 
 /**
  * 명세 00-common TaskDetail. ID 는 십진 문자열, 값이 없는 선택 필드는 응답에서 빠진다(전역 non_null).
- * delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호 — 현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때 (명세 TaskDetail). validation(전체 객체)은 아직 없다.
+ * delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호 — 현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때 (명세 TaskDetail).
+ * validation(현재 계획의 가장 최근 검증 전체 객체)은 상세 조회(TSK-A03)에만 싣는다 — 화면이 오류 뒤 재시도 버튼을 이 값으로 그린다 (-161).
+ * 목록·상태 보고·계획 변경 응답에는 넣지 않는다 (검증마다 참조·발견 항목을 더 읽어야 해서).
  */
 public record TaskDetailResponse(
         String id,
@@ -20,6 +23,7 @@ public record TaskDetailResponse(
         Integer lockVersion,
         TaskPlanRevisionResponse currentPlanRevision,
         String validationStatus,
+        ValidationResponse validation,
         String startedValidationId,
         String deltaValidationId,
         Instant createdAt,
@@ -33,7 +37,13 @@ public record TaskDetailResponse(
                                         Long deltaValidationId) {
         return new TaskDetailResponse(Ids.str(t.getId()), t.getKey(), Ids.str(t.getProjectId()),
                 Ids.str(t.getAssigneeMemberId()), t.getStatus(), t.getWaitingReason(), t.getLockVersion(), current,
-                validationStatus, Ids.str(t.getStartedValidationId()), Ids.str(deltaValidationId), t.getCreatedAt(),
+                validationStatus, null, Ids.str(t.getStartedValidationId()), Ids.str(deltaValidationId), t.getCreatedAt(),
                 t.getUpdatedAt());
+    }
+
+    /** 같은 내용에 현재 계획의 검증 결과를 붙인 것 (상세 조회용) */
+    public TaskDetailResponse withValidation(ValidationResponse latest) {
+        return new TaskDetailResponse(id, key, projectId, assigneeMemberId, status, waitingReason, lockVersion,
+                currentPlanRevision, validationStatus, latest, startedValidationId, deltaValidationId, createdAt, updatedAt);
     }
 }

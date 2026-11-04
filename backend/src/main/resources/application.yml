@@ -138,6 +138,9 @@ beez:
     poll-millis: ${VALIDATION_POLL_MILLIS:2000}
     lease-seconds: ${VALIDATION_LEASE_SECONDS:120}      # AI 읽기 시간 초과(ai.read-timeout)보다 길게
     execution-budget-ms: ${VALIDATION_BUDGET_MS:15000}  # AI 에게 주는 처리 예산. 읽기 시간 초과보다 짧게
+    # 같은 작업·같은 검증 입력으로 실제 검증 AI 를 부를 수 있는 횟수 (새 검증 요청 + 재시도 합계).
+    # 가짜 분석기·AI 에 요청이 닿지 않은 실패·서버 중단으로 닫힌 실행은 세지 않는다 (읽기 시간 초과는 사용량이 없어도 센다)
+    max-model-attempts: ${VALIDATION_MAX_MODEL_ATTEMPTS:3}
     # 서버용 가짜 분석기. AI 서버에 /v1/validate 가 붙기 전(-184)까지 개발 서버에서만 켠다.
     # 켜면 AI 를 부르지 않고 의미 분석이 필요한 검증도 후보 없이 PASS 로 끝난다(실제 설계 대조 없음). 운영에서는 끈다
     fake-analyzer: ${VALIDATION_FAKE_ANALYZER:false}

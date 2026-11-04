@@ -9397,6 +9397,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 현재 계획에 해당하는 검증을 계산해 반환한다. 현재 포인터 중복 저장을 요구하지 않는다.
+- (BE 구현, -161) `validation`은 현재 계획의 가장 최근 검증(`validation_status`와 같은 기준) 전체 객체다(VAL-A02와 같은 모양, `findings`는 현재 시도만). 검증이 없으면 칸이 빠진다. 화면은 이 값으로 오류 뒤 재시도(VAL-A04) 버튼을 그린다. 목록(TSK-A02)·상태 보고·계획 변경 응답의 TaskDetail에는 넣지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9879,7 +9880,7 @@ HTTP `200`.
 
 관련 요구사항: VAL-01·02, MCP-11  
 담당: BE: 변준성 / AI: 양지훈 / FE: 박민용  
-상태: BE 구현 반영안 (S15P31A108-159). 재시도(VAL-A04)는 -161
+상태: BE 구현 반영안 (S15P31A108-159). 재시도는 VAL-A04 (S15P31A108-161)
 
 #### 인증
 
@@ -10007,6 +10008,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 | 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현, -159) |
 | 409 | `revision_conflict` | 현재 계획·상태 변경 |
 | 409 | `baseline_missing` | 발행된 기준 설계 없음 |
+| 409 | `validation_attempt_limit` | 의미 분석이 필요한데 같은 작업·같은 입력으로 실제 검증 AI를 이미 정한 횟수(기본 3)만큼 부름. 계획을 고치거나 팀에 문의 (BE 구현, -161) |
 
 ```json
 {
@@ -10027,8 +10029,9 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -159) 입력 고정: 계획의 설계 참조를 `validation_design_ref`로, 같은 항목을 현재 계획에서 참조하는 READY·IN_PROGRESS·WAITING 작업의 현재 계획을 `validation_task_ref`로 복사한다. `input_snapshot_hash`는 계획 리비전·참조 버전·관련 계획·규칙 버전·기준의 정규 JSON SHA-256이다. (-162) 계획과 관련 계획은 리비전 번호가 아니라 계획 입력 해시(`task_plan_revision.input_hash`, 제목·접근 방식 제외)로 넣는다 — 제목만 바꾼 리비전은 같은 입력이다(AC-13, [04 §2.5](../design/04-task-lifecycle.md)). 결과 반영 때의 계획 내용 비교(`PLAN_CHANGED`·`RELATED_PLAN_CHANGED`)도 이 해시를 사용한다. 실제 검색을 사용할 때는 패킷 변경도 별도로 감지하며, 분석 중에는 계획이나 검색된 관련 계획의 리비전이 바뀌면 검색 결과를 폐기한다.
 - (BE 구현, -159) 규칙: 참조 항목이 현재 기준에 없거나 버전이 다르면 STALE_REF, `no_contract_change=true`인데 CHANGES가 있거나 false인데 CHANGES도 `unlinked`도 없으면 MISSING_INPUT → NEEDS_INPUT. 같은 항목을 CHANGES로 점유한 IN_PROGRESS·WAITING 작업이 있으면 CONFLICT → NEEDS_REVIEW. 구조화 계약 불일치 비교는 Q01 스키마 확정 뒤 규칙에 넣고 그때까지 의미 분석(DESIGN_ALIGNMENT)에 맡긴다.
 - (BE 구현, -159) 의미 분석은 `unlinked`가 있거나, CHANGES·IMPLEMENTS 참조가 있거나, 같은 항목을 보는 열린 다른 작업이 있으면 접수한다. 검사 목록은 계획 완결성(unlinked가 있을 때) + CHANGES·IMPLEMENTS 항목마다 설계 정합성 + 관련 작업마다 계획 충돌이다. 설계 정합성은 관련 작업 유무와 상관없이 넣는다(구조화 계약 비교 전까지 승인 설계와의 대조를 의미 분석이 맡는다). READS만 참조하고 unlinked·관련 작업이 없으면 규칙으로 PASS다.
-- (BE 구현, -159) 접수 시 `current_attempt=1`의 실행(run)과 작업 큐(job)를 함께 만든다. 워커는 큐에서 꺼내 AI를 DB 트랜잭션 밖에서 부르고, 반영 직전 아직 RUNNING·같은 시도·같은 리스인지 확인해 아니면 결과를 버린다(실행 DISCARDED). 같은 리스라도 job의 리스 유효기간이 지났으면 결과를 받지 않고, 회수가 아직 안 됐어도 그 자리에서 만료(`validation_lease_expired`, RETRY)로 닫는다. 큐에서 기다리거나 AI가 도는 사이 분석 입력이 바뀌었으면 AI를 부르지 않거나 결과를 버리고 검증을 STALE로 닫는다 — 이 작업의 계획 리비전이 바뀌면 `PLAN_CHANGED`, 같은 항목을 보는 관련 작업이나 그 계획이 접수 때 고정한 것과 달라지면(계획 변경·새 관련 작업·관련 작업 종료) `RELATED_PLAN_CHANGED`. 반영은 프로젝트 행을 먼저 잠근 뒤(계획 변경·상태 보고와 같은 순서) 입력 확인부터 저장까지 한 트랜잭션으로 하므로, 그 사이 같은 프로젝트의 계획 변경·상태 전이·새 작업은 기다린다. 모델을 부른 실행은 결과를 버리든(DISCARDED) 만료·오류로 닫든 `validation_run.usage`(V16)에 그 호출의 사용량을 남기고, 회수로 이미 닫힌 실행에 늦게 온 응답의 사용량도 그 실행에 남기며(판정만 버린다), AI 의 HTTP 오류 본문(504 등)에 든 `usage`도 같이 남긴다. `usage` 가 객체 배열이 아니면 출력 계약 위반(`ai_invalid_output`)이고, 그 값은 저장하지 않는다(요약에 `usage_rejected` 원문만). 입력 변경으로 STALE 이 될 때는 요약에도 `model`·`usage`를 남긴다(비용 집계 -168 은 실행 기준, 후보는 남기지 않는다). 워커는 큐에서 꺼낸 직후에도 같은 규칙 재판정을 해, 기다리는 사이 규칙만으로 판정이 선 검증(관련 작업 시작으로 점유 충돌·참조 버전 낡음)은 모델을 부르지 않고 그 판정으로 닫는다(실행 DISCARDED, 작업 DONE). COMPLETE 결과를 저장하기 전에 접수 때와 같은 규칙을 지금의 관련 작업 상태·참조 버전으로 다시 판정해 규칙 발견 항목을 더한다 — 관련 작업의 계획은 그대로인데 상태만 바뀌어 같은 항목을 CHANGES 로 점유하게 된 경우는 NEEDS_REVIEW, 참조 버전이 그사이 낡은 경우는 NEEDS_INPUT 이다. 작업 취소·담당자 인계로 무효화되면 접수 때 만든 실행도 DISCARDED로 닫는다. AI 응답은 필수 배열·원소 타입, 검사 키 분할, 항목·버전·관련 작업 ID, 출처(요청의 승인 항목·규칙 finding·근거에 넣은 출처만), 근거 키(그 근거의 출처가 sources에 함께 있어야 함), MISSING_INPUT·MISSING_POLICY의 BLOCKING을 검사해 어긋나거나 본문이 비면 `ai_invalid_output`, PARTIAL은 미검사 사유별 코드로 ERROR다. AI의 STALE_REF는 현재 기준과 다시 대조해 정말 낡았으면 NEEDS_INPUT, 최신이면 사람 검토(BLOCKING이면 NEEDS_REVIEW)다. 승인 항목에는 원문 출처가 있으면 `source`를 넣어 보낸다. `checks`·`checked_keys`·`unassessed`·model·usage는 `validation.summary`에 남기고, PARTIAL·계약 위반처럼 모델을 부른 실패도 같은 값과 부분 후보(`partial_findings`)를 진단용으로 남긴다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 남긴다. 워커는 한 번에 한 건씩 처리하고, 스케줄 스레드는 워커마다 하나다(`spring.task.scheduling.pool.size`). 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 워커가 주기마다 회수해 실행 ERROR·검증 ERROR(`validation_lease_expired`, RETRY)로 닫는다. 같은 검증의 재시도(VAL-A04)는 -161이며, 그 전에는 새 검증을 요청한다. 승인 항목의 `source`는 위치를 만들 수 있는 출처만 넣는다 — 원문 위치의 `location`(앞뒤 공백 제거), 없으면 줄 범위(`text_lines`)로 `lines {시작}-{끝}`, 둘 다 없으면 source를 넣지 않는다(변경 영향 분석과 같은 규칙). AI가 404(검증 경로 없음)를 주면 `ai_unavailable`이다. AI 서버에 검증 경로가 붙기 전(-184)까지 개발 서버는 가짜 분석기(`beez.validation.fake-analyzer=true`, 환경변수 `VALIDATION_FAKE_ANALYZER`)를 켤 수 있다. 켜면 AI를 부르지 않고 요청한 검사를 모두 후보 없이 완료로 돌려줘, 의미 분석이 필요한 검증도 PASS가 된다(실제 설계 대조 없음, 운영에서는 끔). 이때 summary.model과 실행 기록의 분석기 버전은 `fake-analyzer`다. 가짜 분석기를 끈 서버에서는 실행 기록의 분석기 버전이 `fake-analyzer`인 PASS로 START·RESUME할 수 없다(시작 관문 G1, `validation_not_passed`). 실제 AI로 바꾼 뒤에는 검증을 다시 요청해야 한다.
+- (BE 구현, -159) 접수 시 `current_attempt=1`의 실행(run)과 작업 큐(job)를 함께 만든다. 워커는 큐에서 꺼내 AI를 DB 트랜잭션 밖에서 부르고, 반영 직전 아직 RUNNING·같은 시도·같은 리스인지 확인해 아니면 결과를 버린다(실행 DISCARDED). 같은 리스라도 job의 리스 유효기간이 지났으면 결과를 받지 않고, 회수가 아직 안 됐어도 그 자리에서 만료(`validation_lease_expired`, RETRY)로 닫는다. 큐에서 기다리거나 AI가 도는 사이 분석 입력이 바뀌었으면 AI를 부르지 않거나 결과를 버리고 검증을 STALE로 닫는다 — 이 작업의 계획 리비전이 바뀌면 `PLAN_CHANGED`, 같은 항목을 보는 관련 작업이나 그 계획이 접수 때 고정한 것과 달라지면(계획 변경·새 관련 작업·관련 작업 종료) `RELATED_PLAN_CHANGED`. 반영은 프로젝트 행을 먼저 잠근 뒤(계획 변경·상태 보고와 같은 순서) 입력 확인부터 저장까지 한 트랜잭션으로 하므로, 그 사이 같은 프로젝트의 계획 변경·상태 전이·새 작업은 기다린다. 모델을 부른 실행은 결과를 버리든(DISCARDED) 만료·오류로 닫든 `validation_run.usage`(V16)에 그 호출의 사용량을 남기고, 회수로 이미 닫힌 실행에 늦게 온 응답의 사용량도 그 실행에 남기며(판정만 버린다), AI 의 HTTP 오류 본문(504 등)에 든 `usage`도 같이 남긴다. `usage` 가 객체 배열이 아니면 출력 계약 위반(`ai_invalid_output`)이고, 그 값은 저장하지 않는다(요약에 `usage_rejected` 원문만). 입력 변경으로 STALE 이 될 때는 요약에도 `model`·`usage`를 남긴다(비용 집계 -168 은 실행 기준, 후보는 남기지 않는다). 워커는 큐에서 꺼낸 직후에도 같은 규칙 재판정을 해, 기다리는 사이 규칙만으로 판정이 선 검증(관련 작업 시작으로 점유 충돌·참조 버전 낡음)은 모델을 부르지 않고 그 판정으로 닫는다(실행 DISCARDED, 작업 DONE). COMPLETE 결과를 저장하기 전에 접수 때와 같은 규칙을 지금의 관련 작업 상태·참조 버전으로 다시 판정해 규칙 발견 항목을 더한다 — 관련 작업의 계획은 그대로인데 상태만 바뀌어 같은 항목을 CHANGES 로 점유하게 된 경우는 NEEDS_REVIEW, 참조 버전이 그사이 낡은 경우는 NEEDS_INPUT 이다. 작업 취소·담당자 인계로 무효화되면 접수 때 만든 실행도 DISCARDED로 닫는다. AI 응답은 필수 배열·원소 타입, 검사 키 분할, 항목·버전·관련 작업 ID, 출처(요청의 승인 항목·규칙 finding·근거에 넣은 출처만), 근거 키(그 근거의 출처가 sources에 함께 있어야 함), MISSING_INPUT·MISSING_POLICY의 BLOCKING을 검사해 어긋나거나 본문이 비면 `ai_invalid_output`, PARTIAL은 미검사 사유별 코드로 ERROR다. AI의 STALE_REF는 현재 기준과 다시 대조해 정말 낡았으면 NEEDS_INPUT, 최신이면 사람 검토(BLOCKING이면 NEEDS_REVIEW)다. 승인 항목에는 원문 출처가 있으면 `source`를 넣어 보낸다. `checks`·`checked_keys`·`unassessed`·model·usage는 `validation.summary`에 남기고, PARTIAL·계약 위반처럼 모델을 부른 실패도 같은 값과 부분 후보(`partial_findings`)를 진단용으로 남긴다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 남긴다. 워커는 한 번에 한 건씩 처리하고, 스케줄 스레드는 워커마다 하나다(`spring.task.scheduling.pool.size`). 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 워커가 주기마다 회수해 실행 ERROR·검증 ERROR(`validation_lease_expired`, RETRY)로 닫는다. 같은 검증의 재시도는 VAL-A04(-161)다. 승인 항목의 `source`는 위치를 만들 수 있는 출처만 넣는다 — 원문 위치의 `location`(앞뒤 공백 제거), 없으면 줄 범위(`text_lines`)로 `lines {시작}-{끝}`, 둘 다 없으면 source를 넣지 않는다(변경 영향 분석과 같은 규칙). AI가 404(검증 경로 없음)를 주면 `ai_unavailable`이다. AI 서버에 검증 경로가 붙기 전(-184)까지 개발 서버는 가짜 분석기(`beez.validation.fake-analyzer=true`, 환경변수 `VALIDATION_FAKE_ANALYZER`)를 켤 수 있다. 켜면 AI를 부르지 않고 요청한 검사를 모두 후보 없이 완료로 돌려줘, 의미 분석이 필요한 검증도 PASS가 된다(실제 설계 대조 없음, 운영에서는 끔). 이때 summary.model과 실행 기록의 분석기 버전은 `fake-analyzer`다. 가짜 분석기를 끈 서버에서는 실행 기록의 분석기 버전이 `fake-analyzer`인 PASS로 START·RESUME할 수 없다(시작 관문 G1, `validation_not_passed`). 실제 AI로 바꾼 뒤에는 검증을 다시 요청해야 한다.
 - (BE 구현, -159) `Idempotency-Key` 헤더는 다른 작업 변경 API(TSK-A04·A07)와 같이 Q12 확정 전이라 처리하지 않는다. MCP-11은 `idempotency_key`를 처리한다.
+- (BE 구현, -161) 횟수 제한: 의미 분석을 큐에 넣기 전에, 같은 작업·같은 입력(입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같음)으로 **실제 검증 AI를 부른** 실행 수를 센다. 새 검증 요청과 재시도(VAL-A04)를 합쳐 세며, 값이 `beez.validation.max-model-attempts`(기본 3, 환경변수 `VALIDATION_MAX_MODEL_ATTEMPTS`)에 닿았으면 409 `validation_attempt_limit`이다. 세는 실행(모델이 돌았거나, 요청이 AI에 닿았는데 결과를 확인하지 못한 실행): 도는 중(RUNNING), 실제 분석기로 끝까지 돈 실행(OK), 시간 초과(`ai_timeout` — 504든 읽기 시간 초과든 사용량이 없어도 센다), 출력 계약 위반(`ai_invalid_output` — AI가 응답을 돌려줬다), 그 밖에 모델 호출 사용량이 한 건 이상 남은 실패(부분 분석·오류 본문에 사용량을 실은 502 등). 세지 않는 실행: 가짜 분석기(`fake-analyzer`)로 끝난 실행 — 가짜 PASS는 시작에 쓸 수 없으니 실제 AI로 바꾼 뒤 같은 계획을 다시 검증할 수 있어야 한다, AI에 요청이 닿지 않았거나 AI가 모델을 부르지 않았다고 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502), 버린 실행(DISCARDED), 서버 쪽 중단(`validation_lease_expired`·`validation_worker_interrupted` — 늦게 온 응답의 사용량이 남아도 세지 않는다). 규칙만으로 끝나는 검증(200)과 서버가 접수하는 DELTA 검증의 첫 실행은 막지 않는다(DELTA를 사람이 다시 돌리는 재시도는 센다 — VAL-A04). 계획 내용·참조·관련 계획·컨텍스트 패킷이 바뀌면 다른 입력이라 처음부터 센다(제목만 바꾼 계획은 같은 입력이다). 같은 입력의 결과 재사용(AC-16)은 아직 없어 같은 입력의 새 요청도 매번 모델을 부르고 횟수에 들어간다.
 - (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
 - (BE 구현, -186) 정책 분석이 완료되면 검증된 `policy_assessments`의 승인 내용 인용과 원문 근거가 가리키는 설계 버전만 `validation_policy_ref`에 저장한다. 계획 참조와는 별개이며 검색 범위에 있었지만 인용되지 않은 후보는 저장하지 않는다. 해당 항목이 수정·폐기되면 검증을 `STALE / DESIGN_PUBLISHED`로 만들고, 그 검증으로 시작한 진행 작업은 `WAITING / REVALIDATION`으로 전환한다. 작업 시작·재개 때도 인용 버전과 현재 기준을 비교하며, 같은 입력의 계획으로 검증을 이어 받을 때 이 참조도 복사한다. 새로운 정책 추가나 인용되지 않은 항목의 연관성까지 추적하는 것은 아니다. `VALIDATION_POLICY_ANALYSIS_ENABLED`와 `VALIDATION_FAKE_ANALYZER`를 동시에 켜면 설정 오류로 기동이 실패한다.
 
@@ -10046,7 +10049,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 
 관련 요구사항: MON-04, VAL-05  
 담당: BE: 변준성 / AI: 양지훈 / FE: 박민용  
-상태: BE 구현 반영안 (S15P31A108-159). 재시도(VAL-A04)는 -161
+상태: BE 구현 반영안 (S15P31A108-159). 재시도는 VAL-A04 (S15P31A108-161)
 
 #### 인증
 
@@ -10142,6 +10145,7 @@ HTTP `200`.
 - 조회로 새 검증·모델 호출을 만들지 않는다.
 - RUNNING이면 같은 ID로 다시 조회한다. STALE·ERROR·보완 결과를 PASS로 간주하지 않는다.
 - (BE 구현, -159) `error_code`는 ERROR일 때만 있고 현재 실패 실행의 분류를 `validation.summary`에서 꺼낸다. 다른 프로젝트의 검증은 404다(task 조인으로 소속 확인).
+- (BE 구현, -161) `findings`는 규칙 항목과 `current_attempt` 시도의 실행이 낸 항목만 싣는다(공통 6절 "현재 판정용 DTO의 ERROR finding은 current_attempt에 해당하는 실행의 것으로 한정"). 재시도(VAL-A04) 전 시도의 오류 항목은 표에 이력으로 남고 응답에는 나오지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10157,7 +10161,7 @@ HTTP `200`.
 
 관련 요구사항: VAL-05, TRC-03  
 담당: BE: 변준성 / AI: 양지훈 / FE: 박민용  
-상태: BE 구현 반영안 (S15P31A108-159). 재시도(VAL-A04)는 -161
+상태: BE 구현 반영안 (S15P31A108-159). 재시도는 VAL-A04 (S15P31A108-161)
 
 #### 인증
 
@@ -10266,7 +10270,7 @@ HTTP `200`.
 
 관련 요구사항: VAL-01, NFR-06  
 담당: BE: 변준성 / AI: 양지훈 / FE: 박민용  
-상태: 담당자 검토
+상태: BE 구현 반영안 (S15P31A108-161)
 
 #### 인증
 
@@ -10279,7 +10283,7 @@ HTTP `200`.
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 쓰지 않는다 (BE 구현, -161). 요청의 `expected_attempt`가 이 재시도 요청의 식별값이다 — 아래 처리 규칙 |
 
 #### Path Parameters
 
@@ -10296,7 +10300,7 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `expected_attempt` | `integer` | Y | 조회한 현재 시도 번호 |
+| `expected_attempt` | `integer` | Y | 조회한 현재 시도 번호 (1 이상). 같은 값으로 다시 보내면 새 시도를 만들지 않는다 |
 
 ```json
 {
@@ -10358,9 +10362,10 @@ HTTP `202`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `invalid_transition` | ERROR가 아니거나 현재 실패 실행의 오류가 RETRY 대상이 아님, 또는 이미 재실행 중 |
-| 409 | `revision_conflict` | 입력·참조 변경 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 (`expected_attempt` 없음·1 미만) |
+| 409 | `invalid_transition` | ERROR가 아니거나(이미 재실행 중 포함) 현재 실패 실행의 오류가 RETRY 대상이 아님. 완료·취소된 작업, 그 작업에 같은 갈래(DELTA / 계획 검증)의 더 최근 검증이 있음 (BE 구현, -161) |
+| 409 | `revision_conflict` | 입력·참조 변경. `expected_attempt`가 현재 시도도, 현재 시도 - 1(재전송)도 아님 (BE 구현, -161) |
+| 409 | `validation_attempt_limit` | 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름. VAL-A01과 같은 수 (BE 구현, -161) |
 
 ```json
 {
@@ -10377,6 +10382,14 @@ HTTP `202`.
 - 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 409 invalid_transition이다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. FE 버튼 표시와 별개로 서버도 같은 제한을 검사한다.
 - STALE 또는 입력 변경은 새 검증을 생성해야 한다.
 - lease/attempt가 맞는 RUNNING 결과만 반영한다. 늦은 결과를 폐기하더라도 실제 비용은 기록한다.
+- 서버와 AI는 스스로 재시도하지 않는다. 이 API(와 MCP-14)를 부를 때만 새 시도를 연다 (03-ai-internal 재시도 규칙).
+- (BE 구현, -161) 순서: 멤버 확인 → 프로젝트 행 잠금 → 검증(같은 프로젝트, 아니면 404) 잠금 → 작업 담당자인지(아니면 403) → 시도 번호 → 상태·오류 항목 → 작업 상태·더 최근 검증 → 현재 기준(없으면 409 `baseline_missing`) → 입력 → 횟수 제한.
+- (BE 구현, -161) 중복 요청: 시도 N을 다시 돌리면 시도 N+1이 생기고, N 다음에 생길 수 있는 시도는 N+1 하나뿐이다. 그래서 `expected_attempt`가 현재 시도 - 1이면 응답을 잃고 다시 보낸 요청으로 보고, 새 시도를 만들지 않고 지금 검증을 202로 돌려준다(그 사이 상태가 바뀌었으면 바뀐 상태 그대로). 그보다 오래된 번호는 그 사이 다른 재시도가 있었던 것이라 409 `revision_conflict`다. 권한은 매번 다시 본다. 같은 요청이 동시에 와도 프로젝트 잠금으로 한 줄로 서므로 시도는 하나만 생긴다.
+- (BE 구현, -161) 입력 확인: 계획 내용·관련 작업의 계획이 검증할 때와 같고(결과 반영의 입력 비교와 같은 규칙. 제목만 바꾼 계획은 같은 입력), 참조한 설계 항목 버전이 지금 기준의 버전과 같아야 한다. 아니면 409 `revision_conflict` — 새 검증을 요청한다. 작업 쪽 무효화는 ERROR 검증을 STALE로 바꾸지 않으므로 여기서 다시 본다.
+- (BE 구현, -161) 횟수 제한: VAL-A01과 같은 수를 센다(같은 작업·같은 입력으로 실제 검증 AI를 부른 실행. 가짜 분석기·AI에 닿지 않은 실패·버린 실행·서버 쪽 중단은 빼고 — VAL-A01 처리 규칙). DELTA 검증의 재시도도 센다 — 서버가 접수하는 첫 실행은 막지 않지만 그 실행도 그 입력의 한 번으로 들어가, 첫 실행 포함 3번까지 돈다. 정한 횟수에 닿았으면 409 `validation_attempt_limit` — 새 검증 요청으로도 돌아갈 수 없다.
+- (BE 구현, -161) 갈래: 재시도는 갈래마다 가장 최근 검증만 받는다. 갈래는 완료 보고 재검증(DELTA)과 계획 검증(그 밖)이다. DELTA가 오류로 끝난 뒤 계획 검증을 새로 받아도(RESUME 준비) DELTA 재시도는 막지 않는다 — DELTA 재시도로 완료하든, 새 검증 PASS로 RESUME하든 어느 쪽으로 나가도 된다. 작업 상세(TSK-A03)는 `delta_validation_id`(기다리는 DELTA)와 `validation`(현재 계획의 가장 최근 검증)을 함께 싣는다.
+- (BE 구현, -161) 받으면 한 트랜잭션에서: 검증을 RUNNING·`current_attempt`+1·완료 시각 없음으로 다시 열고, 새 시도의 실행(run)을 만들고, 검증의 큐 작업(검증마다 하나)을 다시 QUEUED로 돌린다. 지난 시도의 실행·오류 항목은 이력으로 남는다. 요약(summary)의 지난 시도 진단 값(`error_code`·부분 후보·model·usage·`policy_analysis` 등)은 걷어 낸다 — 비용은 실행별(`validation_run.usage`, `llm_usage`)로 남아 있다. 워커가 검색할 때 쓰는 요청자는 다시 돌리는 사람으로 바꾼다. 새 시도의 모델 호출 키는 `llm-validate-{validation_id}-attempt-{n}-call-{k}`라 지난 시도와 겹치지 않는다.
+- (BE 구현, -161) 응답과 VAL-A02·A03의 `findings`는 규칙 항목과 현재 시도의 실행이 낸 항목만 싣는다(공통 6절). 그래서 다시 연 직후에는 비어 있고, 지난 시도의 오류 항목은 응답에 나오지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
