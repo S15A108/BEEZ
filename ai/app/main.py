@@ -9,6 +9,7 @@ from app.routers import (
     design_recommendations,
     document_chunks,
     document_review,
+    document_revision,
     embeddings,
     health,
     impact,
@@ -41,6 +42,7 @@ app.include_router(embeddings.router)
 app.include_router(document_chunks.router)
 app.include_router(validation.router)
 app.include_router(document_review.router)
+app.include_router(document_revision.router)
 app.include_router(design_recommendations.router)
 app.include_router(context_selection.router)
 app.include_router(impact.router)
