@@ -17,6 +17,7 @@ shown as a guess. Nothing is stored and nothing is decided here.
 import hashlib
 import json
 import re
+from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Self
@@ -269,6 +270,41 @@ MAX_JUDGE_LIST_ITEMS = 20
 # point the judge's cut at the field, list entry or passage the answer leans on.
 MIN_MENTION_CHARS = 2
 _EDGE_PUNCTUATION = ".,;:!?()[]{}<>\"'`«»「」『』（）、。·…"
+# Trailing Korean particles: "비밀번호는" in the answer must find "비밀번호를"
+# in a description, so a word is reduced to its stem before it is looked up.
+_PARTICLES = (
+    "으로서",
+    "에게서",
+    "으로",
+    "에서",
+    "까지",
+    "부터",
+    "에게",
+    "이나",
+    "이든",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "의",
+    "에",
+    "로",
+    "와",
+    "과",
+    "도",
+    "만",
+    "께",
+)
+
+
+def _stem(word: str) -> str:
+    """A word without one trailing particle, when a stem of two chars remains."""
+    for particle in _PARTICLES:
+        if word.endswith(particle) and len(word) - len(particle) >= MIN_MENTION_CHARS:
+            return word[: -len(particle)]
+    return word
 
 
 def _strings(value: Any) -> Iterator[str]:
@@ -288,8 +324,8 @@ def _strings(value: Any) -> Iterator[str]:
 class Mention:
     """What the answer says, for keeping the judge's cut of a content relevant.
 
-    `text` is the answer casefolded and `words` its words without edge
-    punctuation. A content value is mentioned when one of its strings (a
+    `text` is the answer lower-cased and `words` its words without edge
+    punctuation or a trailing particle. A content value is mentioned when one of its strings (a
     field name, an entry's text, a key) occurs in the answer, whatever the
     fact-token rules make of it, so a plain field name like `email` counts
     as much as `field_21`.
@@ -300,13 +336,12 @@ class Mention:
 
     @classmethod
     def of(cls, answer: str) -> Self:
-        body = _MARKER.sub(" ", answer).casefold()
+        body = _MARKER.sub(" ", answer).lower()
         words = {
-            word
+            _stem(word)
             for word in (raw.strip(_EDGE_PUNCTUATION) for raw in body.split())
             if len(word) >= MIN_MENTION_CHARS
         }
-        # Longest first, so a specific word places a window before a common one.
         return cls(body, tuple(sorted(words, key=lambda word: (-len(word), word))))
 
     def score(self, value: Any) -> int:
@@ -314,38 +349,97 @@ class Mention:
         return sum(
             1
             for leaf in set(_strings(value))
-            if len(leaf) >= MIN_MENTION_CHARS and leaf.casefold() in self.text
+            if len(leaf) >= MIN_MENTION_CHARS and leaf.lower() in self.text
         )
 
-    def position(self, text: str) -> int | None:
-        """Where the longest word of the answer found in a text first occurs."""
-        lowered = text.casefold()
+    def occurrences(self, text: str) -> list[tuple[int, str]]:
+        """Every place a word of the answer occurs in a text, as (position, word)."""
+        lowered = text.lower()
+        found: list[tuple[int, str]] = []
         for word in self.words:
-            found = lowered.find(word)
-            if found >= 0:
-                return found
-        return None
+            at = lowered.find(word)
+            while at >= 0:
+                found.append((at, word))
+                at = lowered.find(word, at + len(word))
+        return found
 
 
 NO_MENTION = Mention("", ())
 
+# A sentence ends at a full stop, question or exclamation mark followed by
+# spaces, or at a line break.
+_SENTENCE_END = re.compile(r"(?<=[.!?。])[ \t]+|\n+")
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """Start and end of each non-blank sentence of a text."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        spans.append((start, match.start()))
+        start = match.end()
+    spans.append((start, len(text)))
+    return [(a, b) for a, b in spans if text[a:b].strip()]
+
 
 def _judge_text(text: str, mention: Mention = NO_MENTION) -> str:
-    """A text for the judge: its head, or the part around what the answer says.
+    """A text for the judge: its head, or the sentences the answer leans on.
 
-    A long description or goal is cut to `MAX_JUDGE_FIELD_CHARS`. When a
-    word of the answer first occurs beyond that head, the window moves to
-    it, so the judge sees the passage the answer leans on.
+    A long description or goal is cut to `MAX_JUDGE_FIELD_CHARS`. The
+    sentences holding a word of the answer are kept, those sharing the most
+    (by the words' length) first, as many as fit, in their original order
+    with `…` where sentences were skipped, so an obligation stated after an
+    earlier mention of the same thing ("비밀번호를 입력받는다" … "비밀번호를
+    저장할 때 해시해야 한다") reaches the judge. A single sentence longer
+    than the cut is shown around its first such word. Without any such word
+    the head of the text is kept.
     """
     if len(text) <= MAX_JUDGE_FIELD_CHARS:
         return text
-    position = mention.position(text)
-    lead = MAX_JUDGE_FIELD_CHARS // 3
-    if position is None or position <= lead:
+    spans = _sentence_spans(text)
+    hits = mention.occurrences(text) if mention.words else []
+    starts = [a for a, _ in spans]
+    words_in: list[set[str]] = [set() for _ in spans]
+    for at, word in hits:
+        k = bisect_right(starts, at) - 1
+        if k >= 0 and at < spans[k][1]:
+            words_in[k].add(word)
+    scores = [sum(len(word) for word in words) for words in words_in]
+    ranked = sorted(
+        (i for i, s in enumerate(scores) if s), key=lambda i: (-scores[i], i)
+    )
+    if not ranked:
         return text[: MAX_JUDGE_FIELD_CHARS - 1] + "…"
-    begin = position - lead
-    window = text[begin : begin + MAX_JUDGE_FIELD_CHARS - 2]
-    return "…" + window + ("…" if begin + len(window) < len(text) else "")
+    budget = MAX_JUDGE_FIELD_CHARS - 2
+    chosen: list[int] = []
+    used = 0
+    for i in ranked:
+        a, b = spans[i]
+        length = len(text[a:b].strip()) + (3 if chosen else 0)
+        if used + length > budget:
+            if chosen:
+                continue
+            # The best sentence alone is longer than the cut: show it around
+            # the first word of the answer it holds.
+            first = min(at for at, _ in hits if a <= at < b)
+            begin = max(a, first - MAX_JUDGE_FIELD_CHARS // 3)
+            window = text[begin : begin + budget]
+            head = "…" if begin > 0 else ""
+            tail = "…" if begin + len(window) < len(text) else ""
+            return head + window + tail
+        chosen.append(i)
+        used += length
+    chosen.sort()
+    parts: list[str] = []
+    previous = -1
+    for i in chosen:
+        if parts and i != previous + 1:
+            parts.append("…")
+        parts.append(text[spans[i][0] : spans[i][1]].strip())
+        previous = i
+    head = "…" if chosen[0] > 0 else ""
+    tail = "…" if chosen[-1] < len(spans) - 1 else ""
+    return head + " ".join(parts) + tail
 
 
 def _judge_value(value: Any, mention: Mention = NO_MENTION) -> Any:

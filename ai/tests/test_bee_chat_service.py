@@ -720,6 +720,59 @@ async def test_the_judge_keeps_a_plain_field_name_the_answer_mentions():
     assert _judge_text(goal) == goal[:299] + "…"
 
 
+PASSWORD_RULES = (
+    "비밀번호를 입력받는다. "
+    + "입력 칸은 두 개다. " * 12
+    + "비밀번호를 저장할 때 해시해야 한다. "
+    + "로그인 실패는 다섯 번까지 허용한다. " * 10
+)
+
+
+def test_the_judge_cut_keeps_every_sentence_the_answer_leans_on():
+    # PR #96 P2 (12th round): one window around the first occurrence of the
+    # longest answer word kept "비밀번호를 입력받는다" at the head and lost the
+    # hashing obligation stated later. Now every sentence holding a word of
+    # the answer is kept, the most relevant first, in the original order.
+    assert len(PASSWORD_RULES) > 300
+    cut = _judge_text(
+        PASSWORD_RULES, Mention.of("비밀번호를 저장할 때 해시해야 합니다 [1].")
+    )
+    assert "비밀번호를 저장할 때 해시해야 한다." in cut
+    assert "비밀번호를 입력받는다." in cut
+    assert cut.index("입력받는다") < cut.index("해시해야")
+    assert "입력 칸은 두 개다." not in cut and "로그인 실패" not in cut
+    assert "…" in cut and len(cut) <= 300
+    # Without any word of the answer the head is kept; a sentence longer
+    # than the cut is shown around its first such word.
+    assert _judge_text(PASSWORD_RULES) == PASSWORD_RULES[:299] + "…"
+    long_sentence = "설명 " * 150 + "담당자가 email 주소를 검증한다 " + "설명 " * 150
+    cut = _judge_text(long_sentence, Mention.of("email 주소를 검증합니다"))
+    assert cut.startswith("…") and "담당자가 email 주소를 검증한다" in cut
+    assert len(cut) <= 300
+
+
+@pytest.mark.asyncio
+async def test_the_judge_gets_both_password_passages_of_a_long_description():
+    # PR #96 P2 (12th round), through the service: the shared support the
+    # judge receives carries the later hashing rule the answer leans on.
+    item = {
+        **approved_item(),
+        "id": "1102",
+        "key": "PLN-002",
+        "content": {"description": PASSWORD_RULES},
+    }
+    judge = Judge()
+    body = request(approved_items=[item])
+    raw = answer(
+        text="비밀번호는 저장할 때 해시해야 합니다.", citations=[], design_refs=["1102"]
+    )
+    result = (await generate_bee_chat(body, Scripted(raw), judge)).result
+    assert result.answer_status == "ANSWERED"
+    (shared,) = judge.seen[2]
+    assert "비밀번호를 저장할 때 해시해야 한다." in shared
+    assert "비밀번호를 입력받는다." in shared and len(shared) <= 2000
+
+
 @pytest.mark.asyncio
 async def test_a_malformed_or_failing_judge_keeps_both_calls_on_record():
     # Missing or duplicated verdicts are the judge's fault.
