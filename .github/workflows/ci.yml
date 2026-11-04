@@ -1,5 +1,5 @@
 # PR 검증 CI.
-# 바뀐 영역(backend / frontend / ai)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
+# 바뀐 영역(backend / frontend / ai / 배포 스크립트)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
 # 전체 결과를 대표한다. 룰셋의 "필수 상태 검사"에는 ci-gate 만 등록한다 —
 # 영역 잡은 건너뛸 수 있어서 직접 등록하면 문서만 바꾼 PR 이 영원히 대기한다.
 #
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   # 1) 무엇이 바뀌었는지 판정. 결과는 outputs 로 아래 잡들의 if 조건에 쓰인다.
-  #    워크플로 파일 자체가 바뀌면 세 영역 모두 다시 돈다.
+  #    워크플로 파일 자체가 바뀌면 모든 영역이 다시 돈다.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -32,6 +32,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       ai: ${{ steps.filter.outputs.ai }}
+      deploy_scripts: ${{ steps.filter.outputs.deploy_scripts }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
@@ -46,6 +47,13 @@ jobs:
               - '.github/workflows/ci.yml'
             ai:
               - 'ai/**'
+              - '.github/workflows/ci.yml'
+            # infra/** 전체가 아니다. infra/cdc-poc/ 시험은 Kafka·DB 를 띄워야 돌아 경량 잡에 맞지 않는다.
+            # local.env 는 시험이 compose 필수값의 더미로 읽는다.
+            deploy_scripts:
+              - 'infra/deploy/**'
+              - 'infra/compose.yaml'
+              - 'infra/local.env'
               - '.github/workflows/ci.yml'
 
   # 2) backend: 빠른 층(test) → 느린 층(integrationTest, Testcontainers).
@@ -143,9 +151,33 @@ jobs:
       - name: Pytest
         run: pytest -q
 
-  # 5) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
+  # 5) 배포 스크립트: infra/deploy/check-port.sh 의 경계 처리 시험(test_check_port.py).
+  #    실제 docker compose 로 env 파일을 해석만 하고(데몬 불필요) docker ps·ss·curl 은 가짜로 둔다.
+  #    표준 라이브러리만 써서 설치할 것이 없다. Python 은 ai 잡과 같은 3.12.
+  deploy-scripts:
+    needs: changes
+    if: needs.changes.outputs.deploy_scripts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # 시험은 compose v2 의 `config --environment` 를 쓴다. 러너 이미지가 바뀌면 여기서 먼저 보인다.
+      - name: Tool versions
+        run: |
+          bash --version | head -1
+          docker compose version
+
+      - name: check-port.sh tests
+        run: python infra/deploy/test_check_port.py
+
+  # 6) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
   ci-gate:
-    needs: [changes, backend, frontend, ai]
+    needs: [changes, backend, frontend, ai, deploy-scripts]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2

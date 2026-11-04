@@ -611,11 +611,13 @@ backend가 계획·승인 참조·관련 작업과 검증 규칙으로 정한 �
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `key` | `string` | Y | 요청 안에서 유일한 검사 키 |
-| `kind` | `PLAN_COMPLETENESS\|DESIGN_ALIGNMENT\|RELATED_PLAN_CONFLICT` | Y | 계획 정보·승인 설계 정합성·관련 계획 충돌 검사 |
+| `kind` | `PLAN_COMPLETENESS\|DESIGN_ALIGNMENT\|RELATED_PLAN_CONFLICT\|POLICY_ALIGNMENT` | Y | 계획 정보·승인 설계 정합성·관련 계획 충돌·정책 확인 검사 |
 | `design_item_version_ids` | `ID[]` | Y | 이 검사에서 읽을 approved_items의 버전 ID. 해당 없으면 [] |
 | `related_plan_revision_ids` | `ID[]` | Y | 이 검사에서 읽을 related_plans의 리비전 ID. 해당 없으면 [] |
 
 DESIGN_ALIGNMENT에는 하나 이상의 설계 버전, RELATED_PLAN_CONFLICT에는 하나 이상의 다른 작업 리비전이 필요하다. `checks=[]`인 요청은 보내지 않으며, 의미 분석이 불필요하면 backend가 규칙 판정으로 종료한다. 구체적인 필수 검사 선정은 Q02에서 합의하고 실행 스냅샷에 고정한다.
+
+S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-v1` 하나만 허용한다. 범위는 요청의 모든 `approved_items` 버전이며 관련 계획 ID는 비어 있다. 기본 기능 플래그는 꺼져 있다.
 
 <a id="schema-unassessedvalidationcheck"></a>
 
@@ -1083,6 +1085,7 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `snapshot_hash` | `string` | Y | 제출 스냅샷 해시 |
 | `is_current` | `boolean` | Y | 현재 입력과 일치하는지 |
 | `stale_reason` | `string` | N | 과거 리비전·입력 변경 원인 |
+| `owner_recommendations` | `object` | N | #189 추천·근거. [CHG-A05 조회](01-backend-rest.md#chg-a05)에 포함하며 CHG-A06 재분석 접수 응답에는 없다 |
 
 CHG-A05·A06의 ChangeImpact에는 `revision`(integer), `snapshot_hash`(string), `is_current`(boolean)이 필수이며 `stale_reason`(string)은 현재 입력과 다를 때 반환한다. `COMPLETED`인 빈 후보 배열만 평가 완료 후 0건이다. `NOT_EVALUATED`는 호출 전 미평가, `INSUFFICIENT_EVIDENCE`는 호출 후 근거 부족이다. `FAILED`여도 `explicit`은 보존한다. 현재 리비전의 최근 완료 결과를 우선 조회하고, 완료 결과가 없으면 RUNNING을 반환한다. 현재 리비전 결과가 없고 과거 결과만 있으면 그 결과에 `is_current=false`를 붙인다. 분석 이력이 전혀 없으면 `NOT_EVALUATED`, `error_code=analysis_not_started`다. `run_id`는 응답이 보여 주는 실행이고, 이전 완료 결과가 보이는 동안 새 실행이 진행 중이면 `reanalysis`(`run_id`, `requested_at`)가 함께 반환된다. 검색 범위가 잘렸거나 검색을 하지 못했으면 `INSUFFICIENT_EVIDENCE`와 `search_coverage_incomplete`다.
 
@@ -1145,6 +1148,8 @@ CHG-A05·A06의 ChangeImpact에는 `revision`(integer), `snapshot_hash`(string),
 | `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
 | `next_action` | `string` | N | 후속 경로 설명. severity=BLOCKING이면 필수: 작업 현황 화면이 막힌 항목마다 고칠 방법을 한 줄로 보여 줌(수정안 요청) |
 | `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding이면 필수이며, kind=ERROR는 현재 실패 attempt의 run을 참조 |
+| `policy_need_id` | `string` | N | 해당 분석 안의 정책 필요 항목 임시 ID |
+| `conflicting_design_refs` | `object[]` | N | 정책 간 모순 시 다른 승인 항목의 `design_item_id`, `design_item_version_id`, `evidence_ids`, `content_paths` |
 
 kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과 현재 실패 attempt에 속한 run을 반드시 참조한다. BE가 생성하는 실행 오류이며 실제 모델 호출 여부와 구분한다. 모든 ERROR 전이·복구·재시도 규칙은 [검증 실행 오류 규약](#validation-execution-errors)을 따른다.
 
@@ -1169,6 +1174,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
+| `policy_analysis` | `object` | N | 정책 검사의 검증된 `policy_assessments`, `policy_assessments_truncated`와 해당 시 `no_policy_requirements_reason`, `no_policy_requirements_evidence`. 부분 분석도 진단으로 노출한다. |
 
 검증 대기 중 무관한 발행이 있으면 실행 시 현재 기준을 다시 검색하고 결과 반영 전에 기준·참조·근거를 재확인한다. 접수 시점의 기준과 접수 입력 해시는 내부 이력에 보존하며, 완료된 의미 분석의 실제 기준과 분석 입력 해시도 별도로 기록한다. 직접 참조가 바뀌거나 분석 중 기준이 다시 발행되면 기존 분석 결과를 유효한 결과로 반영하지 않는다.
 
@@ -1550,7 +1556,9 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `input_tokens` | `integer` | Y | 입력 토큰 |
 | `output_tokens` | `integer` | Y | 출력 토큰 |
 | `call_count` | `integer` | Y | 모델 호출 수 |
-| `estimated_cost_amount` | `string` | N | 추정 비용 |
+| `estimated_cost_amount` | `string` | N | 추정 비용(응답 `currency` 기준). 조회 조건(기간·작업·검증·기능) 전체에 비용 있는 호출이 하나도 없을 때만 모든 묶음에서 생략하고, 그 외에는 이 묶음에 그 통화 비용이 없으면 `"0"` — 비용을 모르는 호출은 `cost_unknown_call_count`로 구분 |
+| `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수 (BE 구현, -169) |
+| `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 (BE 구현, -169) |
 
 <a id="schema-usagesummary"></a>
 
@@ -1565,6 +1573,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `call_count` | `integer` | Y | 중복 제거한 호출 수 |
 | `estimated_cost_amount` | `string` | N | 추정 비용. 단가 없으면 생략 |
 | `currency` | `string` | N | 통화 |
+| `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수 (BE 구현, -169) |
+| `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 — 단가 없음·다른 통화 (BE 구현, -169) |
 | `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
 | `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
 | `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |
@@ -1738,6 +1748,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `evidence_ids` | `string[]` | Y | 요청 evidence의 참조 키. content·계획만으로 확인한 경우 [] |
 | `suggested_action` | `string` | Y | 후속 행동 제안 |
+| `policy_need_id` | `string` | N | `policy-gap-v1`의 `policy_assessments.need_id` |
+| `conflicting_design_refs` | `object[]` | N | 정책 모순의 다른 승인 항목·버전과 `evidence_ids`, `content_paths` |
 
 sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처만 참조한다. evidence_ids가 있으면 그 근거의 source도 sources에 포함한다. 원문 근거가 없는 필수 계획 누락은 sources/evidence_ids=[]로 표현할 수 있고 누락된 계획 내용을 message에 명시한다. 후속 경로·현재 담당자·최종 판정·영구 ID는 backend가 연결한다.
 
@@ -1887,8 +1899,14 @@ sources는 요청의 승인 항목·규칙 finding·evidence에 전달된 출처
 | `checked_keys` | `string[]` | Y | 분류·근거 검사까지 수행한 요청 검사 키 |
 | `unassessed` | [UnassessedValidationCheck[]](00-common.md#schema-unassessedvalidationcheck) | Y | 수행하지 못한 요청 검사와 이유 |
 | `findings` | [FindingCandidate[]](00-common.md#schema-findingcandidate) | Y | 의미 분석 후보 |
+| `policy_assessments` | `object[]` | 정책 검사 시 Y | 최대 20개. `need_id`, `topic`, `plan_evidence`, `state`, `design_item_version_ids`, `approved_content_refs`, `evidence_ids`, `explanation` |
+| `policy_assessments_truncated` | `boolean` | 정책 검사 시 Y | 정책 필요 항목이 한도를 넘으면 true. 이때 정책 검사는 미검사 |
+| `no_policy_requirements_reason` | `string` | N | 정책 필요 항목이 없다고 판단한 근거 설명 |
+| `no_policy_requirements_evidence` | `object` | N | 위 판단을 뒷받침하는 계획의 `field`, 선택적 배열 `index`, 실제 `quote` |
 
 checked_keys와 unassessed의 키는 요청 checks를 정확히 분할하고, findings는 checked_keys에 속한 검사에서만 반환한다. unassessed가 비면 COMPLETE, 하나라도 있으면 PARTIAL이다. COMPLETE는 검사를 마쳤다는 뜻이므로 MISSING_INPUT·MISSING_POLICY나 불일치 후보가 있어도 가능하다. 빈 findings만으로 PASS를 판정하지 않는다.
+
+정책 분석의 `state`는 `SUPPORTED`, `EXPLICITLY_UNDECIDED`, `CONTRADICTORY`, `INSUFFICIENT` 중 하나다. `plan_evidence`는 계획 필드와 실제 인용이고, `approved_content_refs`는 승인 버전·JSON 경로·실제 인용이다. `INSUFFICIENT` 또는 항목 잘림이 있으면 정책 검사를 `EVIDENCE_INSUFFICIENT`로 남긴다. 검사 완료 시 미정·모순은 연결된 finding이 필요하며, 미정은 해당 승인 항목의 명시적 원문 인용이 있어야 한다. 검색 0건은 부재를 증명하지 않는다. 정책 분석을 요청하지 않은 기존 응답에는 네 정책 필드를 넣지 않는다.
 
 HTTP 200의 COMPLETE/PARTIAL은 실제 모델 호출 후에만 반환한다. backend는 구조·검사 키·ID·출처를 검증하고 6절 판정표를 적용한다. 이 검토안은 API DTO의 진단 필드이며 DDL의 finding 종류·실행 상태를 변경하지 않는다.
 

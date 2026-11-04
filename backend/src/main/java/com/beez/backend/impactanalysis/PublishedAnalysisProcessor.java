@@ -1,6 +1,7 @@
 package com.beez.backend.impactanalysis;
 
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.access.ProjectLogRedaction;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.config.BeezProperties;
 import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
@@ -36,11 +37,19 @@ public class PublishedAnalysisProcessor {
     }
 
     public void process(long id) {
+        try (var ignored = ProjectLogRedaction.open()) {
+            processIntake(id);
+        }
+    }
+
+    private void processIntake(long id) {
         var claimed = repository.claimNow(id, leaseSeconds);
         if (claimed.isEmpty()) return;
         Claim claim = claimed.get();
         List<?> receivedUsage = List.of();
         String receivedUsageStatus = "UNKNOWN";
+        // 응답 최상위 model. 사용량 항목에 model 이 없을 때 공통 사용량 표에 쓴다 (-169)
+        String receivedModel = null;
         try {
             var publication = repository.publication(id);
             // The publisher is revalidated as an active member on every input/freshness read;
@@ -50,13 +59,15 @@ public class PublishedAnalysisProcessor {
                     publication.baselineId(), "published-impact-" + id + "-" + claim.attempt());
             receivedUsage = outcome.usage();
             receivedUsageStatus = outcome.usageStatus().name();
+            receivedModel = outcome.model();
             if (outcome.status() == ImpactAnalysisCoordinator.Status.AI_FAILED) {
                 String code = outcome.errorCode() == null ? "model_unavailable" : outcome.errorCode();
-                fail(claim, code, Set.of("model_timeout", "model_unavailable").contains(code), outcome.usage(), outcome.usageStatus().name());
+                fail(claim, code, Set.of("model_timeout", "model_unavailable").contains(code), outcome.usage(), outcome.usageStatus().name(),
+                        outcome.model());
                 return;
             }
             if (outcome.status() == ImpactAnalysisCoordinator.Status.STALE) {
-                fail(claim, "analysis_input_changed", true, outcome.usage(), outcome.usageStatus().name());
+                fail(claim, "analysis_input_changed", true, outcome.usage(), outcome.usageStatus().name(), outcome.model());
                 return;
             }
             String evaluation = outcome.status() == ImpactAnalysisCoordinator.Status.ANALYZED ? "COMPLETED"
@@ -70,21 +81,31 @@ public class PublishedAnalysisProcessor {
                 lockProject(publication.projectId());
                 // Freshness and the fenced result write share the publication's project lock.
                 contexts.requirePublishedUnchanged(actor, outcome.input(), publication.baselineId());
+                // 비용 집계(llm_usage)는 결과 저장과 같은 트랜잭션. 되돌려지면 아래 실패 처리가 같은 사용량으로 다시 적는다 (-169)
+                repository.recordUsage(claim, outcome.usage(), outcome.model());
                 repository.recordResult(claim, evaluation, outcome.errorCode(), ImpactFingerprint.of(outcome.input()),
                         explicit, ai, generation, outcome.usage(), outcome.usageStatus().name());
             });
         } catch (ApiException e) {
-            if (e instanceof ImpactAnalysisCoordinator.PublishedRecheckException recheckFailure) {
+            if (e instanceof ImpactAnalysisCoordinator.AccessRecheckException recheckFailure) {
                 receivedUsage = recheckFailure.usage();
                 receivedUsageStatus = recheckFailure.usageStatus().name();
+                receivedModel = ImpactAnalysisCoordinator.receivedModel(e);
             }
             boolean changed = e.getStatus().value() == 409;
             String code = "baseline_changed".equals(e.getCode()) ? "baseline_changed"
                     : changed ? "analysis_input_changed" : "analysis_access_unavailable";
-            fail(claim, code, changed && !"baseline_changed".equals(code), receivedUsage, receivedUsageStatus);
+            fail(claim, code, changed && !"baseline_changed".equals(code), receivedUsage, receivedUsageStatus, receivedModel);
         } catch (RuntimeException e) {
             // Never log or store provider payloads, database errors, or document text.
-            fail(claim, "analysis_interrupted", true, receivedUsage, receivedUsageStatus);
+            // 모델 응답 뒤 재확인 조회가 실패한 경우(ReceivedUsageException)에는 받은 사용량이 실려 온다
+            List<?> carried = ImpactAnalysisCoordinator.receivedUsage(e);
+            if (receivedUsage.isEmpty() && !carried.isEmpty()) {
+                receivedUsage = carried;
+                receivedUsageStatus = "REPORTED";
+                receivedModel = ImpactAnalysisCoordinator.receivedModel(e);
+            }
+            fail(claim, "analysis_interrupted", true, receivedUsage, receivedUsageStatus, receivedModel);
         }
     }
 
@@ -92,13 +113,17 @@ public class PublishedAnalysisProcessor {
         jdbc.sql("SELECT id FROM project WHERE id=:id FOR UPDATE").param("id", project).query(Long.class).single();
     }
 
-    private void fail(Claim claim, String code, boolean retryable, Object usage, String usageStatus) {
+    private void fail(Claim claim, String code, boolean retryable, Object usage, String usageStatus, String model) {
         Object safeUsage = usage;
         String safeStatus = usageStatus;
         try { com.beez.backend.designitem.support.DesignJson.canonical(usage); }
         catch (RuntimeException invalid) { safeUsage = List.of(); safeStatus = "UNKNOWN"; }
         final Object recordedUsage = safeUsage;
         final String recordedStatus = safeStatus;
-        tx.executeWithoutResult(ignored -> repository.recordFailure(claim, code, retryable, recordedUsage, recordedStatus));
+        tx.executeWithoutResult(ignored -> {
+            // 비용 집계에는 시도 기록에 넣기에 너무 커서 비운 경우에도 받은 사용량 그대로 (같은 키는 한 번만)
+            repository.recordUsage(claim, usage, model);
+            repository.recordFailure(claim, code, retryable, recordedUsage, recordedStatus);
+        });
     }
 }

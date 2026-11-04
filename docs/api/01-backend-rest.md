@@ -198,7 +198,8 @@
 {
   "email": "member@example.com",
   "password": "example-password",
-  "name": "김개발"
+  "name": "김개발",
+  "verified_token": "evt_example"
 }
 ```
 
@@ -1056,13 +1057,13 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | 인증 요청 ID. 순번이 아닌 난수 문자열(-219: 남의 요청 ID 를 추측해 틀린 코드로 잠그지 못하게) |
 | `expires_at` | `Time` | Y | 코드 만료 시각. 화면은 이 값으로 남은 시간을 셈 |
 | `resend_available_at` | `Time` | Y | 다시 받기가 가능한 시각 |
 
 ```json
 {
-  "verification_id": "41",
+  "verification_id": "k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA",
   "expires_at": "2026-10-28T03:05:00Z",
   "resend_available_at": "2026-10-28T03:01:00Z"
 }
@@ -1074,7 +1075,8 @@ HTTP `201`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `email_already_exists` | 이미 등록된 이메일 |
-| 429 | `rate_limited` | 발송 횟수 초과 |
+| 429 | `rate_limited` | 다시 받기 간격 전이거나 발송 횟수 초과 |
+| 503 | `mail_send_failed` | 메일을 보내지 못함. 이 요청은 남지 않아 바로 다시 받을 수 있다 (-219) |
 
 ```json
 {
@@ -1088,7 +1090,7 @@ HTTP `201`.
 #### 처리 규칙
 
 - 코드 유효 시간은 5분이다(기본안). 다시 받으면 새 인증 요청을 만들고 이전 코드는 바로 무효다.
-- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다.
+- 다시 받기 간격과 이메일·IP별 발송 한도는 Q04다. 구현 기본안(-219, 설정값): 다시 받기 1분, 이메일당 1시간 5회, 서버 전체 1시간 100회(SMTP 계정 보호). IP별 한도는 아직 없다.
 - 코드는 해시로만 저장하고 응답·로그에 남기지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -1122,7 +1124,7 @@ HTTP `201`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `verification_id` | `ID` | Y | 인증 요청 ID |
+| `verification_id` | `string` | Y | ACC-A11 응답의 인증 요청 ID (난수 문자열) |
 
 #### Query Parameters
 
@@ -1179,8 +1181,8 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 틀린 입력 횟수를 제한한다(값은 Q04). 넘으면 이 인증 요청은 끝나고 코드를 새로 받아야 한다.
-- 성공하면 코드를 소비한다. verified_token은 유효 기간이 짧고 가입 성공 때 소비된다.
+- 틀린 입력 횟수를 제한한다(값은 Q04, 구현 기본안 5회). 다섯 번째로 틀리면 429이고 그 뒤에는 맞는 코드도 429다. 코드를 새로 받아야 한다.
+- 성공하면 코드를 소비한다. 같은 코드를 다시 확인하면 410 verification_expired다. verified_token은 유효 기간이 짧고(구현 기본안 30분) 가입 성공 때 소비된다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7511,6 +7513,7 @@ HTTP `200`.
 | `comparisons` | [Comparison[]](00-common.md#schema-comparison) | Y | 고정 기준→제안 diff와 현재 승인 내용 |
 | `explicit_candidates` | `object[]` | Y | 직접 참조 후보. target_type/target_id/via_design_item_id/assignee_member_id/origin |
 | `candidates_truncated` | `boolean` | Y | 후보 500개 초과 여부 |
+| `published_analysis` | `object` | N | 선택한 리비전의 발행 후 분석 접수 상태 (#243). 발행 전 리비전에서는 생략 |
 | `item_texts` | `object[]` | N | 항목별 {design_item_id, before_text, after_text}. 바뀌는 내용 탭의 −/+ 표시. #218 수정안 요청 · 195 미구현 |
 
 #### Error
@@ -7522,11 +7525,15 @@ HTTP `200`.
 | 400 | `validation_failed` | 리비전 입력 오류 |
 | 409 | `baseline_conflict` | 저장된 기준 항목을 확인할 수 없음 |
 | 413 | `diff_too_large` | 비교 본문 한도 초과 |
+| 503 | `published_analysis_unavailable` | 발행 후 분석 접수 상태의 DB 조회 실패. 미평가나 0건으로 바꾸지 않음 |
 
 #### 처리 규칙
 
 - 선택 리비전의 base_baseline_id와 문서·항목 기준 버전을 고정해 비교한다. 현재 baseline 변경은 requires_refresh, 비교 대상의 현재 본문 변경은 current_changed로 따로 표시한다. diff의 기준을 현재 승인본으로 바꾸지 않는다.
 - READ ONLY REPEATABLE READ로 기준·현재·제안을 같은 DB 스냅샷에서 읽는다. 설계 항목 본문은 묶음 조회한다.
+- `published_analysis`는 발행 후 접수행 기준이며, 승인 전 분석을 반환하는 CHG-A05와 별개다. `status`는 `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `NOT_EVALUATED` 또는 발행되었으나 baseline이나 접수행을 확인할 수 없는 `UNKNOWN`이다. `evaluation_status`가 `INSUFFICIENT_EVIDENCE`인 완료는 영향 없음이 아니다. 평가 전이거나 결과가 없는 필드는 생략한다.
+- 접수행이 있으면 `attempt`, `requested_at`, `started_at`, `finished_at`, `next_attempt_at`, 제한된 `error_code`와 `guidance`를 제공한다. 실행 중에는 `lease_expired`를 제공한다. `current_baseline`은 발행 baseline ID가 현재 baseline과 같은지만 나타내며, 비교할 ID가 없으면 생략한다. 관계·작업 등 모든 분석 입력의 최신성을 보장하지 않는다.
+- `guidance`는 `WAIT`, `RETRY_SCHEDULED`, `RECOVERY_PENDING`, `CONTACT_OPERATOR`, `REVIEW_REASON`, `REVIEW_EVIDENCE`, `CHECK_RESULT`, `NONE` 중 하나다. `RETRY_SCHEDULED`는 예약/도래한 자동 재시도이고, 사용자 수동 재처리 API가 존재한다는 뜻이 아니다. 상태 의미와 지표는 [243번 문서](../design/cdc-observability-243.md)를 따른다.
 - DOC-A06과 같은 줄별 계산기를 사용한다. 동일 본문은 빈 diff. 삭제 줄은 -, 추가 줄은 +, 유지 줄은 공백 접두어다. 마지막 개행 없음은 표준 \ No newline at end of file 표시로 구분하며 비교 중 CR/LF·공백을 정규화하지 않는다.
 - 각 본문은 1,048,576자·50,000줄 이내다. 공통 앞뒤 구간을 분리하고 중간 LCS 표가 1,000,000칸을 넘으면 해당 중간 구간을 전체 삭제/추가로 표시한다. 내용은 생략하지 않으며 최소 diff는 보장하지 않는다. JSON 항목은 키를 정렬한 canonical JSON으로 비교한다.
 - 후보는 기준 설계 항목의 원문 출처·현재 작업 계획의 직접 참조·검증 참조에 한정한다. 작업은 COMPLETED·CANCELLED를 제외하고(MCP-03 affected_task_ids와 같은 규칙), 검증은 열린 작업의 현재 계획 리비전 검증만 포함한다. API/DATA 계약도 설계 항목으로 표시한다. 확정 설계 관계 1단계+작업 계획 참조 규칙 계산은 관계 서비스 담당과 계약하고, 규칙/AI 후보 저장·조회는 197 후속이다. 후보를 확정 영향·알림·작업 변경으로 사용하지 않는다.
@@ -7705,6 +7712,16 @@ HTTP `200`.
 | `stale_reason` | `string` | N | 이전 리비전·입력 변경 사유 |
 | `run_id` | `string` | Y | 이 응답이 보여 주는 실행 ID. 재분석 접수 응답의 `run_id`와 비교해 완료를 확인한다 |
 | `reanalysis` | `object` | N | 이전 결과가 보이는 동안 진행 중인 새 실행. `run_id`, `requested_at`. 끝나면 사라지고 `run_id`가 새 실행으로 바뀐다 |
+| `owner_recommendations` | `object` | Y | #189 담당자 추천과 근거. 아래 계약은 #237 연동을 위한 구현 제안이며 알림 발송을 뜻하지 않는다 |
+
+`owner_recommendations`에는 현재 제출본의 `proposal_revision`, `snapshot_hash`, `direct_reference_status`, `direct_reference_reasons`, `document_reference_status`, `document_reference_reasons`, `ai_analysis_status`, `ai_current`, `ai_reanalysis_in_progress`, `withheld_ai_candidates`, `recommendations`, `notification_candidate_member_ids`가 들어간다. `ai_current`는 기존 영향 결과의 `is_current`와 같은 값이며 분석이 존재하거나 완료됐다는 뜻은 아니다.
+
+- `direct_reference_status`는 **제안에서 직접 UPDATE·RETIRE하는 설계 항목**을 참조하는 작업의 조회 상태다. 조회를 마치면 `COMPLETE`, 이 범위가 1,000건을 넘어 잘리면 `INCOMPLETE` 및 `direct_results_truncated`다. 직접 변경 항목이 없으면 빈 조회의 `COMPLETE`다.
+- `document_reference_status`는 **변경 문서를 출처로 하는 설계 항목**을 참조하는 작업의 조회 상태다. 문서 변경이 없으면 `NOT_APPLICABLE`, 모두 조회하면 `COMPLETE`다. 기준 설계에 연결되지 않은 문서 또는 문서 경유 참조 1,000건 초과는 `INCOMPLETE`이며 `document_reference_reasons`에 각각 `document_mapping_unavailable`, `document_results_truncated`를 담는다. 직접 항목 조회와 문서 조회는 각각 1,000건의 독립적인 상한을 쓴다.
+- 두 상태의 `STALE`은 현재 기준이 제안의 기준(발행 후에는 발행 기준)과 다른 경우이고, 제안이 제출·검토·발행 상태가 아니면 `NOT_APPLICABLE`이다. `INCOMPLETE`·`STALE`·`NOT_APPLICABLE`은 관련자가 0명이라는 뜻이 아니다.
+- `recommendations`는 `member_id`, 선택적 담당 `area`, `evidence[]`를 갖는다. `DIRECT_TASK_REFERENCE`는 제안에서 직접 변경한 항목을 현재 작업 계획이 참조한 근거이고, `DOCUMENT_SOURCE`는 변경 문서에서 나온 설계 항목을 현재 계획이 참조한 검토 근거다. 같은 작업이 두 경로에 해당하면 두 근거를 보존한다. `design_item_version_id`는 제안의 기준 설계 버전이며, `referenced_design_item_version_id`는 작업 계획이 실제 참조한 버전이다. 두 버전이 달라도 합쳐 쓰지 않는다. 완료·취소 작업, 비활성 멤버, 탈퇴 계정은 제외한다. 담당 영역은 표시 정보이며 그 자체로 추천 근거가 아니다.
+- `AI_CANDIDATE`는 기존 #188 결과가 `COMPLETED`·최신이고 재분석 중이 아니며 직접·문서 조회에 알려진 누락이 없을 때, 모델이 반환한 작업·담당자·문서 출처가 분석 입력과 현재 작업에 맞는 경우에만 검토 후보로 넣는다. AI 후보는 자동 알림 후보에 합치지 않는다. 상태·최신성·재분석 또는 작업·출처 검증 때문에 제외한 후보는 `withheld_ai_candidates`에 건수를 기록한다. AI를 다시 호출하지 않는다.
+- `notification_candidate_member_ids`는 직접 항목 조회가 `COMPLETE`일 때 **직접 변경 항목을 참조한** 멤버 ID만 중복 없이 담는다. 직접 조회가 `INCOMPLETE`·`STALE`·`NOT_APPLICABLE`이면 빈 배열이다. 문서 경유 조회가 불완전해도 직접 조회가 완전하면 직접 후보는 유지한다. `DOCUMENT_SOURCE`와 `AI_CANDIDATE`는 자동 후보에 넣지 않으며 문서 경유 알림 포함 여부는 #237에서 결정한다. 관련 작업이 없으면 빈 배열이고 전체 팀으로 대체하지 않는다. 실제 발송 이벤트별 자기 자신 제외, 멤버 ID→계정 ID 변환과 활성 상태 재확인은 #237이 담당한다.
 
 ```json
 {
@@ -7736,6 +7753,31 @@ HTTP `200`.
   "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "is_current": true,
   "analysis_status": "COMPLETED",
+  "owner_recommendations": {
+    "proposal_revision": 1,
+    "snapshot_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "direct_reference_status": "COMPLETE",
+    "direct_reference_reasons": [],
+    "document_reference_status": "NOT_APPLICABLE",
+    "document_reference_reasons": [],
+    "ai_analysis_status": "COMPLETED",
+    "ai_current": true,
+    "ai_reanalysis_in_progress": false,
+    "withheld_ai_candidates": 0,
+    "recommendations": [
+      {
+        "member_id": "21",
+        "area": "백엔드",
+        "evidence": [{"type": "DIRECT_TASK_REFERENCE", "reason": "현재 작업 계획이 변경 설계 항목을 직접 참조합니다.", "task_id": "501", "task_key": "TASK-001", "plan_revision_id": "511", "design_item_id": "301", "design_item_version_id": "311", "referenced_design_item_version_id": "311", "sources": []}]
+      },
+      {
+        "member_id": "22",
+        "area": "프론트엔드",
+        "evidence": [{"type": "AI_CANDIDATE", "reason": "로그인 응답을 사용하는 화면입니다.", "task_id": "502", "task_key": "TASK-002", "plan_revision_id": "512", "design_item_id": "302", "design_item_version_id": "312", "sources": [{"document_id": "201", "document_version_id": "211", "version_no": 1, "location": "3. 계정 관리 / ACC-02"}]}]
+      }
+    ],
+    "notification_candidate_member_ids": ["21"]
+  },
   "generation": {
     "origin": "MODEL",
     "model": "configured-model",
@@ -7773,6 +7815,7 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 409 | `analysis_snapshot_invalid` | 제출 리비전의 해시·기준 항목·문서 연결을 확인할 수 없음 |
 
 ```json
 {
@@ -7787,6 +7830,7 @@ HTTP `200`.
 
 - 명시 관계 영향과 AI 후보·분석 실패를 별도로 반환한다.
 - AI 결과를 영향 확정이나 승인으로 취급하지 않는다.
+- #189의 `OwnerRecommendationService.forNotification`은 프로젝트·제안·기대 리비전/해시를 받아 직접 후보를 반환하는 내부 연동 지점이다. #237은 같은 도메인 트랜잭션에서 프로젝트를 작업보다 먼저 잠그고 필요한 JPA 변경을 flush한 뒤 호출한다. 이 메서드는 기존 트랜잭션이 필수이며 프로젝트 잠금을 다시 확인하고 호출자의 멤버십을 재검사한다. 수신 요청 직전에 활성 멤버십을 재확인하고 멤버 ID를 계정 ID로 바꾼다. GET의 후보 목록을 그대로 발송에 재사용하지 않는다. 이 작업은 알림 저장·발송을 구현하지 않는다. #181 공통 서비스와의 호출 및 237 지라/공통 계약 문서의 트랜잭션 시점 차이는 후속 합의가 필요하다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9986,6 +10030,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -159) 접수 시 `current_attempt=1`의 실행(run)과 작업 큐(job)를 함께 만든다. 워커는 큐에서 꺼내 AI를 DB 트랜잭션 밖에서 부르고, 반영 직전 아직 RUNNING·같은 시도·같은 리스인지 확인해 아니면 결과를 버린다(실행 DISCARDED). 같은 리스라도 job의 리스 유효기간이 지났으면 결과를 받지 않고, 회수가 아직 안 됐어도 그 자리에서 만료(`validation_lease_expired`, RETRY)로 닫는다. 큐에서 기다리거나 AI가 도는 사이 분석 입력이 바뀌었으면 AI를 부르지 않거나 결과를 버리고 검증을 STALE로 닫는다 — 이 작업의 계획 리비전이 바뀌면 `PLAN_CHANGED`, 같은 항목을 보는 관련 작업이나 그 계획이 접수 때 고정한 것과 달라지면(계획 변경·새 관련 작업·관련 작업 종료) `RELATED_PLAN_CHANGED`. 반영은 프로젝트 행을 먼저 잠근 뒤(계획 변경·상태 보고와 같은 순서) 입력 확인부터 저장까지 한 트랜잭션으로 하므로, 그 사이 같은 프로젝트의 계획 변경·상태 전이·새 작업은 기다린다. 모델을 부른 실행은 결과를 버리든(DISCARDED) 만료·오류로 닫든 `validation_run.usage`(V16)에 그 호출의 사용량을 남기고, 회수로 이미 닫힌 실행에 늦게 온 응답의 사용량도 그 실행에 남기며(판정만 버린다), AI 의 HTTP 오류 본문(504 등)에 든 `usage`도 같이 남긴다. `usage` 가 객체 배열이 아니면 출력 계약 위반(`ai_invalid_output`)이고, 그 값은 저장하지 않는다(요약에 `usage_rejected` 원문만). 입력 변경으로 STALE 이 될 때는 요약에도 `model`·`usage`를 남긴다(비용 집계 -168 은 실행 기준, 후보는 남기지 않는다). 워커는 큐에서 꺼낸 직후에도 같은 규칙 재판정을 해, 기다리는 사이 규칙만으로 판정이 선 검증(관련 작업 시작으로 점유 충돌·참조 버전 낡음)은 모델을 부르지 않고 그 판정으로 닫는다(실행 DISCARDED, 작업 DONE). COMPLETE 결과를 저장하기 전에 접수 때와 같은 규칙을 지금의 관련 작업 상태·참조 버전으로 다시 판정해 규칙 발견 항목을 더한다 — 관련 작업의 계획은 그대로인데 상태만 바뀌어 같은 항목을 CHANGES 로 점유하게 된 경우는 NEEDS_REVIEW, 참조 버전이 그사이 낡은 경우는 NEEDS_INPUT 이다. 작업 취소·담당자 인계로 무효화되면 접수 때 만든 실행도 DISCARDED로 닫는다. AI 응답은 필수 배열·원소 타입, 검사 키 분할, 항목·버전·관련 작업 ID, 출처(요청의 승인 항목·규칙 finding·근거에 넣은 출처만), 근거 키(그 근거의 출처가 sources에 함께 있어야 함), MISSING_INPUT·MISSING_POLICY의 BLOCKING을 검사해 어긋나거나 본문이 비면 `ai_invalid_output`, PARTIAL은 미검사 사유별 코드로 ERROR다. AI의 STALE_REF는 현재 기준과 다시 대조해 정말 낡았으면 NEEDS_INPUT, 최신이면 사람 검토(BLOCKING이면 NEEDS_REVIEW)다. 승인 항목에는 원문 출처가 있으면 `source`를 넣어 보낸다. `checks`·`checked_keys`·`unassessed`·model·usage는 `validation.summary`에 남기고, PARTIAL·계약 위반처럼 모델을 부른 실패도 같은 값과 부분 후보(`partial_findings`)를 진단용으로 남긴다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 남긴다. 워커는 한 번에 한 건씩 처리하고, 스케줄 스레드는 워커마다 하나다(`spring.task.scheduling.pool.size`). 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 워커가 주기마다 회수해 실행 ERROR·검증 ERROR(`validation_lease_expired`, RETRY)로 닫는다. 같은 검증의 재시도(VAL-A04)는 -161이며, 그 전에는 새 검증을 요청한다. 승인 항목의 `source`는 위치를 만들 수 있는 출처만 넣는다 — 원문 위치의 `location`(앞뒤 공백 제거), 없으면 줄 범위(`text_lines`)로 `lines {시작}-{끝}`, 둘 다 없으면 source를 넣지 않는다(변경 영향 분석과 같은 규칙). AI가 404(검증 경로 없음)를 주면 `ai_unavailable`이다. AI 서버에 검증 경로가 붙기 전(-184)까지 개발 서버는 가짜 분석기(`beez.validation.fake-analyzer=true`, 환경변수 `VALIDATION_FAKE_ANALYZER`)를 켤 수 있다. 켜면 AI를 부르지 않고 요청한 검사를 모두 후보 없이 완료로 돌려줘, 의미 분석이 필요한 검증도 PASS가 된다(실제 설계 대조 없음, 운영에서는 끔). 이때 summary.model과 실행 기록의 분석기 버전은 `fake-analyzer`다. 가짜 분석기를 끈 서버에서는 실행 기록의 분석기 버전이 `fake-analyzer`인 PASS로 START·RESUME할 수 없다(시작 관문 G1, `validation_not_passed`). 실제 AI로 바꾼 뒤에는 검증을 다시 요청해야 한다.
 - (BE 구현, -159) `Idempotency-Key` 헤더는 다른 작업 변경 API(TSK-A04·A07)와 같이 Q12 확정 전이라 처리하지 않는다. MCP-11은 `idempotency_key`를 처리한다.
 - (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
+- (BE 구현, -186) 정책 분석이 완료되면 검증된 `policy_assessments`의 승인 내용 인용과 원문 근거가 가리키는 설계 버전만 `validation_policy_ref`에 저장한다. 계획 참조와는 별개이며 검색 범위에 있었지만 인용되지 않은 후보는 저장하지 않는다. 해당 항목이 수정·폐기되면 검증을 `STALE / DESIGN_PUBLISHED`로 만들고, 그 검증으로 시작한 진행 작업은 `WAITING / REVALIDATION`으로 전환한다. 작업 시작·재개 때도 인용 버전과 현재 기준을 비교하며, 같은 입력의 계획으로 검증을 이어 받을 때 이 참조도 복사한다. 새로운 정책 추가나 인용되지 않은 항목의 연관성까지 추적하는 것은 아니다. `VALIDATION_POLICY_ANALYSIS_ENABLED`와 `VALIDATION_FAKE_ANALYZER`를 동시에 켜면 설정 오류로 기동이 실패한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13703,6 +13748,7 @@ HTTP `200`.
 | `to` | `Time` | Y | 집계 끝 미포함 |
 | `task_id` | `ID` | N | 작업 필터 |
 | `validation_id` | `ID` | N | 검증 필터 |
+| `feature` | `string` | N | 기능 필터. Usage.feature 값 중 하나 (BE 구현, -169) |
 
 #### Request
 
@@ -13720,6 +13766,8 @@ HTTP `200`.
 | `call_count` | `integer` | Y | 중복 제거한 호출 수 |
 | `estimated_cost_amount` | `string` | N | 추정 비용. 단가 없으면 생략 |
 | `currency` | `string` | N | 통화 |
+| `tokens_unknown_call_count` | `integer` | Y | 토큰 수를 모르는 호출 수. 이 호출의 토큰은 합계에 없다 (BE 구현, -169) |
+| `cost_unknown_call_count` | `integer` | Y | 추정 비용이 합계에 없는 호출 수 — 단가 없음 또는 `currency`와 다른 통화 (BE 구현, -169) |
 | `by_feature` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 기능별 집계 |
 | `by_task` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 작업별. key는 task ID |
 | `by_validation` | [UsageBucket[]](00-common.md#schema-usagebucket) | Y | 검증별. key는 validation ID |
@@ -13732,25 +13780,95 @@ HTTP `200`.
   "to": "2026-10-24T03:00:00Z",
   "input_tokens": 1200,
   "output_tokens": 300,
-  "call_count": 1,
+  "call_count": 2,
   "estimated_cost_amount": "0.0042",
   "currency": "USD",
+  "tokens_unknown_call_count": 1,
+  "cost_unknown_call_count": 1,
   "by_feature": [
+    {
+      "key": "DOCUMENT_PARSE",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 1,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 1,
+      "cost_unknown_call_count": 1
+    },
     {
       "key": "TASK_VALIDATION",
       "input_tokens": 1200,
       "output_tokens": 300,
       "call_count": 1,
-      "estimated_cost_amount": "0.0042"
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "CHANGE_IMPACT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "EMBEDDING",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "BEE_CHAT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "BEE_DRAFT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "TASK_ASSIGNMENT",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "MEETING_ANALYSIS",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 0,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
     }
   ],
   "by_task": [
     {
       "key": "501",
+      "label": "T-3",
       "input_tokens": 1200,
       "output_tokens": 300,
       "call_count": 1,
-      "estimated_cost_amount": "0.0042"
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
     }
   ],
   "by_validation": [
@@ -13759,7 +13877,30 @@ HTTP `200`.
       "input_tokens": 1200,
       "output_tokens": 300,
       "call_count": 1,
-      "estimated_cost_amount": "0.0042"
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    }
+  ],
+  "by_agent": [],
+  "by_day": [
+    {
+      "key": "2026-10-23",
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "call_count": 1,
+      "estimated_cost_amount": "0.0042",
+      "tokens_unknown_call_count": 0,
+      "cost_unknown_call_count": 0
+    },
+    {
+      "key": "2026-10-24",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "call_count": 1,
+      "estimated_cost_amount": "0",
+      "tokens_unknown_call_count": 1,
+      "cost_unknown_call_count": 1
     }
   ]
 }
@@ -13770,7 +13911,8 @@ HTTP `200`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
-| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
+| 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음. 다른 프로젝트·없는 `task_id`·`validation_id`도 (BE 구현, -169) |
+| 400 | `validation_failed` | `from`·`to` 누락·형식 오류(오프셋 있는 ISO-8601)·`from >= to`, 기간이 한국 날짜로 366일 초과, 모르는 `feature`, ID 형식 오류 (BE 구현, -169) |
 
 ```json
 {
@@ -13788,6 +13930,14 @@ HTTP `200`.
 - request_key로 같은 모델 호출을 한 번만 합산하고 실패·재시도도 실제 호출만큼 반영한다.
 - 추정 비용과 사용량을 구분한다. 단가가 없으면 비용을 생략하고 0원으로 표시하지 않는다.
 - (수정안 요청) by_agent는 caller=AGENT 호출을 agent_session_id별로, 웹에서 직접 한 호출(문서 분석·비비 질문·회의 분석)을 key WEB 한 줄로 묶는다. by_day는 한국 시간 날짜별이고 대시보드의 '날짜별 AI 호출' 막대가 쓴다. 비용을 팀장만 볼지는 Q21이다.
+- (BE 구현, -169) 공통 사용량 표 `llm_usage`를 읽는다. 시각은 행을 적은 시각, 기간은 [from, to). 검증별은 실행(`validation_run`)을 거쳐 검증 번호로 묶는다.
+- (BE 구현, -169) 토큰: `tokens_known`이고 입력·출력 토큰이 **둘 다** 있는 호출만 두 합계에 더한다. 하나라도 모르는 호출(`tokens_known=false`, 또는 기록 때 틀린 값이라 한쪽만 비어 있음)은 그 호출의 토큰을 어느 합계에도 넣지 않고 `tokens_unknown_call_count`로 센다.
+- (BE 구현, -169) 기록 범위: BE가 모델을 부르는 기능은 모두 `llm_usage`에 적는다 — 작업 검증, 문서 분석·검색 색인·문서 검토, 변경 영향 분석(승인 전 분석 CHG-A05·A06과 발행 뒤 분석 모두. 모델 응답을 받은 뒤 결과를 버리는 경우 — 실행 행을 닫지 못한 늦은 결과, 응답 뒤 권한 재확인 실패(분석 중 요청자가 프로젝트에서 빠짐 등), 재확인 조회 오류, 결과 저장 실패, 실행 기록에 넣기에 너무 큰 사용량 — 도 받은 사용량은 적는다). 같은 호출은 `request_key`로 한 번만. 외부 에이전트가 자기 모델을 쓴 사용량은 BE를 거치지 않아 들어가지 않는다. 이 연결 전에 실행 기록에만 남은 과거 사용량(검증 실행 `validation_run.usage`, 영향 분석 `change_impact_run.usage`·`published_analysis_attempt.usage`)은 마이그레이션 V21(Java)이 실행 중 기록기와 **같은 거르기 코드**로 옮겼으므로 과거 기간 조회에도 들어간다. 시각은 그 실행이 끝난 시각, `latency_ms`가 없으면 검증은 실행 처리 시간·영향 분석은 0, model이 없으면 검증은 분석기 버전(없으면 옮기지 않음)·영향 분석은 저장된 generation의 model·그것도 없으면 `unknown`. 넣다가 실패하는 항목(아주 긴 키 등)은 그 항목만 건너뛰고 이관은 계속된다. 옛 버전과 새 버전이 함께 도는 배포(여러 대를 차례로 교체)라면, V21이 끝난 뒤 옛 버전이 마친 영향 분석은 이관에도 런타임 기록에도 없을 수 있다. 그런 배포라면 옛 버전이 모두 내려간 뒤 같은 이관을 한 번 더 돌린다(같은 키는 한 번만 들어가 다시 돌려도 안전). 앞으로 BE가 부르게 될 AI 기능(회의 분석·비비 등)도 공통 기록기(`LlmUsageRecorder`)로 적어야 이 조회에 나온다.
+- (BE 구현, -169) 비용: 기간·조건 안에서 추정 비용이 있는 호출이 가장 많은 통화를 `currency`로 정하고 그 통화의 추정 비용만 더한다(환산하지 않음). 단가 없는 호출과 다른 통화 호출은 `cost_unknown_call_count`로 센다. 비용 있는 호출이 하나도 없으면 전체·모든 묶음에서 `estimated_cost_amount`·`currency`를 생략하고, 있으면 그 통화 호출이 없는 묶음은 `"0"`이다(모르는 호출 수로 구분). 금액은 뒤의 0을 지운 소수 문자열이다.
+- (BE 구현, -169) 모든 묶음은 같은 조건·같은 통화로 한 스냅샷에서 계산하므로 `by_feature`·`by_day` 각각의 합이 전체 합(호출 수·토큰·모르는 호출 수·비용)과 같다. `by_task`·`by_validation`에는 작업·검증에 연결된 호출만 들어가 합이 전체보다 작을 수 있다.
+- (BE 구현, -169) `by_feature`는 8개 기능을 Usage.feature 순서로 호출이 없어도 한 줄씩, `by_day`는 기간이 걸치는 한국 날짜를 모두 0으로 채워 준다. `by_task`·`by_validation`은 번호 순이고 `by_task`의 `label`은 작업 키(T-3)다. `task_id`·`validation_id`·`feature`를 함께 주면 모두 맞는 호출만 센다.
+- (BE 구현, -169) 위 예시는 비용을 모르는 문서 분석 호출 1건(토큰도 모름)이 섞인 경우다 — 그 호출은 토큰·비용 합계에 없고 두 `*_unknown_call_count`로만 센다. 한국 날짜 기준이라 UTC 03:00~다음 날 03:00 기간은 두 날에 걸친다.
+- (BE 구현, -169) `by_agent`는 지금 빈 배열이다. `llm_usage`에 호출자(에이전트 세션·웹) 칸이 없어 나눌 수 없다. 칸 추가와 각 기능의 기록은 Q21과 함께 정한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

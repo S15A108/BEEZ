@@ -331,10 +331,10 @@ describe('계약 경계', () => {
     ).toBe(false)
   })
 
-  it('119개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(119)
+  it('121개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(121)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      119,
+      121,
     )
     expect(
       new Set(
@@ -342,7 +342,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(119)
+    ).toBe(121)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
@@ -379,6 +379,62 @@ describe('계약 경계', () => {
     const read = await changesApi.impact('101', '71')
     expect(read.analysis_status).toBe('COMPLETED')
     expect(read.explicit).toEqual([{ task_id: '501', design_item_id: '211' }])
+  })
+
+  it('영향 조회에서 담당자 추천과 근거를 보존한다', async () => {
+    const ownerRecommendations = {
+      proposal_revision: 1,
+      snapshot_hash: 'sha256:0123',
+      direct_reference_status: 'COMPLETE',
+      direct_reference_reasons: [],
+      document_reference_status: 'INCOMPLETE',
+      document_reference_reasons: ['document_mapping_unavailable'],
+      ai_analysis_status: 'NOT_EVALUATED',
+      ai_current: true,
+      ai_reanalysis_in_progress: false,
+      withheld_ai_candidates: 0,
+      recommendations: [
+        {
+          member_id: '21',
+          area: '백엔드',
+          evidence: [
+            {
+              type: 'DIRECT_TASK_REFERENCE',
+              reason: '현재 작업 계획이 변경 항목을 직접 참조합니다.',
+              task_id: '501',
+              task_key: 'TASK-001',
+              plan_revision_id: '511',
+              design_item_id: '301',
+              design_item_version_id: '311',
+              referenced_design_item_version_id: '311',
+              sources: [],
+            },
+            {
+              type: 'DOCUMENT_SOURCE',
+              reason: '변경 문서의 출처 설계를 참조합니다.',
+              task_id: '502',
+              task_key: 'TASK-002',
+              plan_revision_id: '512',
+              design_item_id: '302',
+              design_item_version_id: '312',
+              referenced_design_item_version_id: '312',
+              document_id: '201',
+              document_version_id: '211',
+              sources: [],
+            },
+          ],
+        },
+      ],
+      notification_candidate_member_ids: ['21'],
+    }
+    respond({
+      explicit: [],
+      candidates: [],
+      analysis_status: 'NOT_EVALUATED',
+      owner_recommendations: ownerRecommendations,
+    })
+    const read = await changesApi.impact('101', '71')
+    expect(read.owner_recommendations).toEqual(ownerRecommendations)
   })
 })
 
@@ -421,4 +477,27 @@ describe('멱등 키가 필수인 수정 요청', () => {
         .every((endpoint) => endpoint.idempotent),
     ).toBe(true)
   })
+})
+
+// PR #114 2f3e1c9: verification_id는 순번이 아닌 난수 문자열(base64url)이다.
+it('난수 문자열 verification_id로 코드 보내기 응답을 받고 그 ID로 코드를 확인한다', async () => {
+  const id = 'k3Jq9xV2mT7pLr0sYwE5bN8cHd1fGa4uZiQoXeRtMvA'
+  respond(
+    {
+      verification_id: id,
+      expires_at: '2026-10-28T03:05:00Z',
+      resend_available_at: '2026-10-28T03:01:00Z',
+    },
+    201,
+  )
+  await expect(
+    authApi.sendEmailVerification({ email: 'member@example.com' }),
+  ).resolves.toMatchObject({ verification_id: id })
+  respond({
+    verified_token: 'evt_example',
+    email: 'member@example.com',
+    expires_at: '2026-10-28T03:35:00Z',
+  })
+  await authApi.confirmEmailVerification(id, { code: '483920' })
+  expect(lastRequest?.url).toBe(`/auth/email-verifications/${id}/confirm`)
 })

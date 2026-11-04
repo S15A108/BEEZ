@@ -37,8 +37,14 @@ public final class ProposalDtos {
     public record Comparison(String targetType, String targetId, String format, Object baseContent,
                              Object currentContent, Object proposedContent, String diff,
                              boolean currentChanged) { }
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Detail(Proposal proposal, List<Comparison> comparisons, List<Candidate> explicitCandidates,
-                         boolean candidatesTruncated) { }
+                         boolean candidatesTruncated, PublishedAnalysisStatus publishedAnalysis) { }
+    /** Publication-time processing is separate from the approval-time impact analysis. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record PublishedAnalysisStatus(String status, String evaluationStatus, String errorCode, Integer attempt,
+                                          String requestedAt, String startedAt, String finishedAt, String nextAttemptAt,
+                                          Boolean leaseExpired, Boolean currentBaseline, String guidance) { }
     public record Candidate(String targetType, String targetId, String viaDesignItemId,
                             String assigneeMemberId, String origin) { }
     public record Revision(int revision, String snapshotHash, String submittedBy, String submittedAt,

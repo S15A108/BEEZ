@@ -138,18 +138,41 @@ export const documentReviewReferenceSchema = z.object({
   kind: z.string(),
   version_no: z.number().int(),
   content: z.string(),
+  // v2 검토가 단계별 reference_ids로 가리키는 값. 과거 검토는 없다.
+  reference_id: z.string().optional(),
 })
 export type DocumentReviewReference = z.infer<
   typeof documentReviewReferenceSchema
 >
 
-export const documentReviewSuggestionSchema = z.object({
-  id: idSchema,
-  explanation: z.string(),
-  original_text: z.string(),
-  replacement_text: z.string(),
-  decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']),
-})
+// 비비 검토 v2 단계(00-common DocumentBeeReview.steps). 요구사항 명세서는 단계 코드가 REQ_SPEC이다.
+export const documentReviewStepCodeSchema = z.enum([
+  'BODY',
+  'API_SPEC',
+  'ERD',
+  'REQ_SPEC',
+])
+
+// COMMENT는 읽기 전용 의견이라 원문·바꿀 글·선택이 없다(서버는 null을 빼고 보낸다).
+// type이 없는 과거 제안은 PATCH로 본다.
+export const documentReviewSuggestionSchema = z
+  .object({
+    id: idSchema,
+    explanation: z.string(),
+    type: z.enum(['PATCH', 'COMMENT']).default('PATCH'),
+    step: documentReviewStepCodeSchema.optional(),
+    original_text: z.string().optional(),
+    replacement_text: z.string().optional(),
+    decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']).optional(),
+  })
+  .refine(
+    (item) =>
+      item.type === 'COMMENT' ||
+      (item.original_text !== undefined &&
+        item.replacement_text !== undefined &&
+        item.decision !== undefined),
+    'PATCH 제안에는 원문·바꿀 글·선택이 있어야 해요.',
+  )
 export type DocumentReviewSuggestion = z.infer<
   typeof documentReviewSuggestionSchema
 >
@@ -293,15 +316,18 @@ export const documentBeeReviewSchema = z.object({
   references: documentReviewReferenceSchema.array(),
   suggestions: documentReviewSuggestionSchema.array(),
   usage: usageSchema.array(),
-  // 단계별 결과('n단계 / 5단계', '문단 4개'). 서버가 아직 주지 않을 수 있다.
+  // v2 검토는 단계 4개(본문·API 명세서·ERD·요구사항 명세서)를 주고, 과거 검토는 빈 배열이다.
   steps: z
     .object({
-      label: z.string(),
-      description: z.string().optional(),
-      result: z.string().optional(),
+      step: documentReviewStepCodeSchema,
+      status: z.enum(['COMPLETE', 'PARTIAL', 'SKIPPED']),
+      reason: z.string(),
+      reference_ids: z.string().array(),
     })
     .array()
-    .optional(),
+    .default([]),
+  // 승인본이 없어 건너뛴 단계가 있으면 PARTIAL. 과거 검토는 없다.
+  review_status: z.enum(['COMPLETE', 'PARTIAL']).optional(),
   // 반려 뒤 검토면 서버가 고른 반려 제출
   rejection_submission_id: idSchema.optional(),
 })
@@ -544,6 +570,49 @@ export const impactStatusSchema = z.enum([
 ])
 export type ImpactStatus = z.infer<typeof impactStatusSchema>
 
+export const ownerRecommendationEvidenceSchema = z.object({
+  type: z.enum(['DIRECT_TASK_REFERENCE', 'DOCUMENT_SOURCE', 'AI_CANDIDATE']),
+  reason: z.string(),
+  task_id: idSchema,
+  task_key: z.string(),
+  plan_revision_id: idSchema,
+  design_item_id: idSchema.optional(),
+  design_item_version_id: idSchema.optional(),
+  referenced_design_item_version_id: idSchema.optional(),
+  document_id: idSchema.optional(),
+  document_version_id: idSchema.optional(),
+  sources: sourceSchema.array(),
+})
+
+export const ownerRecommendationsSchema = z.object({
+  proposal_revision: z.number().int(),
+  snapshot_hash: z.string(),
+  direct_reference_status: z.enum([
+    'COMPLETE',
+    'INCOMPLETE',
+    'STALE',
+    'NOT_APPLICABLE',
+  ]),
+  direct_reference_reasons: z.string().array(),
+  document_reference_status: z
+    .enum(['COMPLETE', 'INCOMPLETE', 'STALE', 'NOT_APPLICABLE'])
+    .optional(),
+  document_reference_reasons: z.string().array().optional(),
+  ai_analysis_status: impactStatusSchema,
+  ai_current: z.boolean(),
+  ai_reanalysis_in_progress: z.boolean(),
+  withheld_ai_candidates: z.number().int().nonnegative(),
+  recommendations: z
+    .object({
+      member_id: idSchema,
+      area: z.string().optional(),
+      evidence: ownerRecommendationEvidenceSchema.array(),
+    })
+    .array(),
+  notification_candidate_member_ids: idSchema.array(),
+})
+export type OwnerRecommendations = z.infer<typeof ownerRecommendationsSchema>
+
 export const changeImpactSchema = z.object({
   explicit: explicitImpactSchema.array(),
   candidates: impactCandidateSchema.array(),
@@ -558,6 +627,8 @@ export const changeImpactSchema = z.object({
   reanalysis: z
     .object({ run_id: z.string(), requested_at: timeSchema.optional() })
     .optional(),
+  // CHG-A05 확장. 기존 서버와 CHG-A06 재분석 접수 응답에는 없을 수 있다.
+  owner_recommendations: ownerRecommendationsSchema.optional(),
 })
 export type ChangeImpact = z.infer<typeof changeImpactSchema>
 
@@ -613,8 +684,25 @@ export const findingSchema = z.object({
   resolution: z.enum(['FIX_PLAN', 'PROPOSE_CHANGE', 'HUMAN_REVIEW', 'RETRY']),
   next_action: z.string().optional(),
   validation_run_id: idSchema.optional(),
+  policy_need_id: z.string().optional(),
+  conflicting_design_refs: z
+    .array(
+      z.object({
+        design_item_id: idSchema,
+        design_item_version_id: idSchema,
+        evidence_ids: z.array(z.string()),
+        content_paths: z.array(z.array(z.string())),
+      }),
+    )
+    .optional(),
 })
 export type Finding = z.infer<typeof findingSchema>
+
+const policyPlanEvidenceSchema = z.object({
+  field: z.string(),
+  index: z.number().int().optional(),
+  quote: z.string(),
+})
 
 export const validationSchema = z
   .object({
@@ -641,6 +729,36 @@ export const validationSchema = z
     created_at: timeSchema,
     finished_at: timeSchema.optional(),
     error_code: z.string().optional(),
+    policy_analysis: z
+      .object({
+        policy_assessments: z.array(
+          z.object({
+            need_id: z.string(),
+            topic: z.string(),
+            plan_evidence: policyPlanEvidenceSchema,
+            state: z.enum([
+              'SUPPORTED',
+              'EXPLICITLY_UNDECIDED',
+              'CONTRADICTORY',
+              'INSUFFICIENT',
+            ]),
+            design_item_version_ids: z.array(idSchema),
+            approved_content_refs: z.array(
+              z.object({
+                design_item_version_id: idSchema,
+                path: z.array(z.string()),
+                quote: z.string(),
+              }),
+            ),
+            evidence_ids: z.array(z.string()),
+            explanation: z.string(),
+          }),
+        ),
+        policy_assessments_truncated: z.boolean(),
+        no_policy_requirements_reason: z.string().optional(),
+        no_policy_requirements_evidence: policyPlanEvidenceSchema.optional(),
+      })
+      .optional(),
   })
   .superRefine((validation, context) => {
     if (validation.status === 'STALE' && !validation.stale_reason)
@@ -1004,6 +1122,9 @@ export const usageBucketSchema = z.object({
   output_tokens: z.number().int(),
   call_count: z.number().int(),
   estimated_cost_amount: costAmountSchema,
+  // 토큰·비용이 합계에 들어가지 못한 호출 수(BE -169). 0보다 크면 합계는 일부만 센 값이다.
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
 })
 export type UsageBucket = z.infer<typeof usageBucketSchema>
 
@@ -1015,6 +1136,8 @@ export const usageSummarySchema = z.object({
   call_count: z.number().int(),
   estimated_cost_amount: costAmountSchema,
   currency: currencySchema,
+  tokens_unknown_call_count: z.number().int().optional(),
+  cost_unknown_call_count: z.number().int().optional(),
   by_feature: usageBucketSchema.array(),
   by_task: usageBucketSchema.array(),
   by_validation: usageBucketSchema.array(),

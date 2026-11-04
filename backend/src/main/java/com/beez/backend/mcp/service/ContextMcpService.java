@@ -68,7 +68,7 @@ public class ContextMcpService {
         }
         // 인수의 project_id 는 토큰 프로젝트와 같은지만 본다 (05 참고 2 "MCP 인자 project_id 가 토큰 프로젝트와 다름 → not_found")
         if (args.projectId() != null && !Ids.parse(args.projectId(), "project_id").equals(projectId)) {
-            throw AccessErrors.notFound("packet_project_mismatch project=" + projectId + " arg=" + args.projectId());
+            throw AccessErrors.notFound("packet_project_mismatch");
         }
         // task_id 는 형식(400)과 이 프로젝트 소속(404)을 본다 (MCP-01 오류표)
         Long taskId = Ids.parse(args.taskId(), "task_id");

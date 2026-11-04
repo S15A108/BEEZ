@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
+import { getApiErrorCode } from '@/api/error'
 import { authApi } from '@/api/services'
 import { ActionForm, type FormField } from '@/components/ActionForm'
 import { EmailVerification } from '@/features/auth/EmailVerification'
 import { PASSWORD_HINT, passwordRule } from '@/features/auth/passwordRule'
-
-// 가입 이메일 인증은 mock 전용이다(emailCode.ts). env를 그 자리에서 비교해 live 빌드에서는 인증 칸과 흉내 코드가 빠진다.
-const emailVerification = import.meta.env.VITE_API_MODE !== 'live'
 
 const passwordFields: FormField[] = [
   {
@@ -29,8 +27,13 @@ const passwordFields: FormField[] = [
 export default function RegisterPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null)
+  const [verified, setVerified] = useState<{
+    email: string
+    verified_token: string
+  } | null>(null)
   const [needVerify, setNeedVerify] = useState(false)
+  // 토큰이 만료·사용됐다는 가입 오류(email_not_verified) 뒤에 인증 칸을 처음 상태로 다시 그린다.
+  const [verifyKey, setVerifyKey] = useState(0)
   const invite = params.get('invite')
   const login = invite
     ? `/login?invite=${encodeURIComponent(invite)}`
@@ -51,43 +54,40 @@ export default function RegisterPage() {
             auth
             fields={[
               { name: 'name', label: '이름', required: true, max: 40 },
-              ...(emailVerification
-                ? [
-                    {
-                      name: 'verification',
-                      label: '이메일',
-                      // 인증 계약(ACC-A11·A12)이 없는 live 모드는 인증 없이 가입한다. emailCode.ts 참고
-                      custom: (
-                        <EmailVerification
-                          needed={needVerify}
-                          onVerified={setVerifiedEmail}
-                        />
-                      ),
-                    },
-                  ]
-                : [
-                    {
-                      name: 'email',
-                      label: '이메일',
-                      type: 'email',
-                      required: true,
-                    } as const,
-                  ]),
+              {
+                name: 'verification',
+                label: '이메일',
+                custom: (
+                  <EmailVerification
+                    key={verifyKey}
+                    needed={needVerify}
+                    onVerified={setVerified}
+                  />
+                ),
+              },
               ...passwordFields,
             ]}
             submitLabel="가입하기"
             onSubmit={async (values) => {
-              const email = emailVerification ? verifiedEmail : values.email
-              if (!email) {
+              if (!verified) {
                 setNeedVerify(true)
                 return
               }
-              await authApi.register({
-                name: values.name,
-                email,
-                password: values.password,
-              })
-              navigate(login, { state: { registered: email } })
+              try {
+                await authApi.register({
+                  name: values.name,
+                  email: verified.email,
+                  password: values.password,
+                  verified_token: verified.verified_token,
+                })
+              } catch (cause) {
+                if (getApiErrorCode(cause) === 'email_not_verified') {
+                  setVerified(null)
+                  setVerifyKey((key) => key + 1)
+                }
+                throw cause
+              }
+              navigate(login, { state: { registered: verified.email } })
             }}
           />
         </div>

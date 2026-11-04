@@ -39,7 +39,7 @@ public final class AccessErrors {
 
     /** 401. 폐기됐거나 호출 계정의 것이 아닌 에이전트 토큰. reason 은 로그에만. */
     public static ApiException tokenRevoked(String reason) {
-        log.info("access denied status=401 reason={}", reason);
+        log.info("access denied status=401 reason={}", logReason(reason));
         return new ApiException(HttpStatus.UNAUTHORIZED, "token_revoked", AGENT_UNAUTHENTICATED_MESSAGE);
     }
 
@@ -48,7 +48,7 @@ public final class AccessErrors {
      * 객체 소속 확인 예: {@code repo.findByIdAndProjectId(id, projectId).orElseThrow(() -> AccessErrors.notFound("cross_project"))}
      */
     public static ApiException notFound(String reason) {
-        log.info("access denied status=404 reason={}", reason);
+        log.info("access denied status=404 reason={}", logReason(reason));
         return new ApiException(HttpStatus.NOT_FOUND, "not_found", NOT_FOUND_MESSAGE);
     }
 
@@ -59,7 +59,14 @@ public final class AccessErrors {
      * @param message 응답 메시지 — 사용자가 알아야 할 사유 (예: "팀장만 할 수 있습니다")
      */
     public static ApiException forbidden(String reason, String message) {
-        log.info("access denied status=403 reason={}", reason);
+        log.info("access denied status=403 reason={}", logReason(reason));
         return new ApiException(HttpStatus.FORBIDDEN, "forbidden", message);
+    }
+
+    private static String logReason(String reason) {
+        if (reason == null) return "unknown";
+        return ProjectLogRedaction.isActive()
+                ? reason.replaceAll("(?i)\\b(project|token_project|arg)=[^\\s,;]+", "$1=[redacted]")
+                : reason;
     }
 }

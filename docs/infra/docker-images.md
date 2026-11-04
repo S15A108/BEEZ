@@ -164,4 +164,4 @@ cd /c/git/BEEZ/ai && MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src:ro" python
 
 - GHCR 푸시·SHA 태그·서버 배포, 서버 Nginx `/api` 프록시: [CD 런북](cd.md) (S15P31A108-123)
 - SeaweedFS bootstrap 키와 backend 전용 키 분리, 서버 볼륨·백업: S15P31A108-211
-- 서버용 환경변수 목록·`.env.example`·비밀값 주입: S15P31A108-27
+- 환경변수 목록·비밀값 주입: [환경변수와 비밀값](env.md) (S15P31A108-27)

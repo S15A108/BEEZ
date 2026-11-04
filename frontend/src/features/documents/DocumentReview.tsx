@@ -332,6 +332,7 @@ export function DocumentReview({
                       비비 제안을 반영한 최종본이에요. 팀장이 보게 될 화면과
                       같아요.
                     </p>
+                    <ReviewNotes review={stage.review} />
                     {editing ? (
                       <ActionForm
                         fields={[
@@ -514,6 +515,37 @@ export function DocumentReview({
   )
 }
 
+const unavailableText = (review: DocumentBeeReview) =>
+  `승인본이 없어 비교하지 못한 문서: ${review.unavailable_references.map(statusLabel).join(', ')}`
+
+// 처리할 수정 제안이 없으면 최종본 단계로 바로 넘어가므로, 그 단계에서도 비비 의견(COMMENT)과
+// 비교하지 못한 문서를 읽기 전용으로 보여 준다. 의견만 온 검토도 여기서 보인다(PR #89 리뷰).
+function ReviewNotes({ review }: { review: DocumentBeeReview }) {
+  const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
+  if (!comments.length && !review.unavailable_references.length) return null
+  return (
+    <div className="grid gap-1.5 rounded-xl border p-3 text-sm">
+      {comments.length > 0 && (
+        <>
+          <strong>비비 의견 {comments.length}개</strong>
+          <ol aria-label="비비 의견" className="grid gap-1">
+            {comments.map((comment, index) => (
+              <li key={comment.id}>
+                의견 {index + 1} · {comment.explanation}
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+      {review.unavailable_references.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {unavailableText(review)}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Suggestions({
   review,
   owner,
@@ -525,28 +557,34 @@ function Suggestions({
   busy: boolean
   onDecide: (suggestionId: string, decision: 'APPLY' | 'SKIP') => void
 }) {
+  const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
   return (
     <div className="grid gap-3">
       <div className="rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
         <strong>
-          비비가 수정 제안 {review.suggestions.length}개를 남겼어요
+          비비가 수정 제안 {review.suggestions.length - comments.length}개
+          {comments.length > 0 && `와 의견 ${comments.length}개`}를 남겼어요
         </strong>
         <p className="mt-1 leading-6">{review.summary}</p>
         {review.unavailable_references.length > 0 && (
           <p className="mt-1 text-xs text-muted-foreground">
-            승인본이 없어 비교하지 못한 문서:{' '}
-            {review.unavailable_references.map(statusLabel).join(', ')}
+            {unavailableText(review)}
           </p>
         )}
-        {review.steps && review.steps.length > 0 && (
+        {review.steps.length > 0 && (
           <ol
             aria-label="비비 검토 단계"
             className="mt-2 grid gap-0.5 text-xs text-muted-foreground"
           >
             {review.steps.map((step, index) => (
-              <li key={step.label}>
-                {index + 1}단계 / {review.steps!.length}단계 · {step.label}
-                {step.result && ` · ${step.result}`}
+              <li key={step.step}>
+                {index + 1}단계 / {review.steps.length}단계 ·{' '}
+                {statusLabel(step.step)} ·{' '}
+                {step.status === 'COMPLETE'
+                  ? '검토함'
+                  : step.reason === 'SAME_KIND'
+                    ? '같은 문서라 건너뜀'
+                    : '승인본이 없어 건너뜀'}
               </li>
             ))}
           </ol>
@@ -560,22 +598,27 @@ function Suggestions({
           >
             <p className="flex flex-wrap items-center justify-between gap-2">
               <strong>
-                제안 {index + 1} · {suggestion.explanation}
+                {suggestion.type === 'COMMENT' ? '의견' : '제안'} {index + 1} ·{' '}
+                {suggestion.explanation}
               </strong>
-              {suggestion.decision !== 'PENDING' && (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                  {suggestion.decision === 'APPLIED' ? '반영함' : '넘김'}
-                </span>
-              )}
+              {suggestion.type === 'PATCH' &&
+                suggestion.decision !== 'PENDING' && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                    {suggestion.decision === 'APPLIED' ? '반영함' : '넘김'}
+                  </span>
+                )}
             </p>
-            <div className="grid gap-1 font-mono text-xs leading-6 whitespace-pre-wrap select-text">
-              <p className="rounded bg-destructive/5 px-2 text-destructive">
-                − {suggestion.original_text}
-              </p>
-              <p className="rounded bg-primary/10 px-2">
-                + {suggestion.replacement_text}
-              </p>
-            </div>
+            {/* 의견(COMMENT)은 읽기만 하고, 반영·넘기기 없이 제출을 막지 않는다. */}
+            {suggestion.type === 'PATCH' && (
+              <div className="grid gap-1 font-mono text-xs leading-6 whitespace-pre-wrap select-text">
+                <p className="rounded bg-destructive/5 px-2 text-destructive">
+                  − {suggestion.original_text}
+                </p>
+                <p className="rounded bg-primary/10 px-2">
+                  + {suggestion.replacement_text}
+                </p>
+              </div>
+            )}
             {owner && suggestion.decision === 'PENDING' && (
               <span className="flex gap-2">
                 <Button

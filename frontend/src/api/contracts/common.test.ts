@@ -69,6 +69,102 @@ it('사용량 합계와 항목별 비용도 숫자로 와도 읽는다', () => {
   expect(summary.by_feature[0].estimated_cost_amount).toBe('1.25')
 })
 
+// S15P31A108-252: 서버 v2 검토는 단계 4개와 읽기 전용 의견(COMMENT)을 준다. 의견은 null 필드가 빠져서 온다.
+it('v2 검토의 단계와 의견을 읽고, 원문이 없는 수정 제안은 거절한다', () => {
+  const parsed = documentBeeReviewSchema.parse({
+    ...review,
+    usage: [],
+    unavailable_references: ['REQ_SPEC'],
+    review_status: 'PARTIAL',
+    steps: [
+      {
+        step: 'BODY',
+        status: 'COMPLETE',
+        reason: 'REVIEWED',
+        reference_ids: [],
+      },
+      {
+        step: 'API_SPEC',
+        status: 'COMPLETE',
+        reason: 'REVIEWED',
+        reference_ids: ['r1'],
+      },
+      {
+        step: 'ERD',
+        status: 'SKIPPED',
+        reason: 'SAME_KIND',
+        reference_ids: [],
+      },
+      {
+        step: 'REQ_SPEC',
+        status: 'PARTIAL',
+        reason: 'REFERENCE_UNAVAILABLE',
+        reference_ids: [],
+      },
+    ],
+    suggestions: [
+      { id: '1', explanation: '참고', type: 'COMMENT', step: 'BODY' },
+      {
+        id: '2',
+        explanation: '누락',
+        original_text: '가',
+        replacement_text: '나',
+        decision: 'PENDING',
+      },
+    ],
+  })
+  expect(parsed.steps.map((item) => item.step)).toEqual([
+    'BODY',
+    'API_SPEC',
+    'ERD',
+    'REQ_SPEC',
+  ])
+  expect(parsed.suggestions[0].decision).toBeUndefined()
+  // type이 없는 과거 제안은 수정 제안(PATCH)으로 본다.
+  expect(parsed.suggestions[1].type).toBe('PATCH')
+  expect(
+    documentBeeReviewSchema.safeParse({
+      ...review,
+      usage: [],
+      suggestions: [{ id: '3', explanation: '누락', type: 'PATCH' }],
+    }).success,
+  ).toBe(false)
+  // 단계를 주지 않는 과거 검토는 빈 배열로 읽는다.
+  expect(documentBeeReviewSchema.parse({ ...review, usage: [] }).steps).toEqual(
+    [],
+  )
+})
+
+it('사용량의 미보고 호출 수를 버리지 않는다', () => {
+  const summary = usageSummarySchema.parse({
+    from: '2026-10-22T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 1,
+    output_tokens: 1,
+    call_count: 2,
+    estimated_cost_amount: '0.5',
+    currency: 'USD',
+    tokens_unknown_call_count: 1,
+    cost_unknown_call_count: 1,
+    by_feature: [
+      {
+        key: 'DOCUMENT_PARSE',
+        input_tokens: 0,
+        output_tokens: 0,
+        call_count: 1,
+        estimated_cost_amount: '0',
+        tokens_unknown_call_count: 1,
+        cost_unknown_call_count: 1,
+      },
+    ],
+    by_task: [],
+    by_validation: [],
+  })
+  expect(summary.tokens_unknown_call_count).toBe(1)
+  expect(summary.cost_unknown_call_count).toBe(1)
+  expect(summary.by_feature[0].cost_unknown_call_count).toBe(1)
+})
+
 // PR #72 mock/live 전수 대조 DOC-LIVE-2: CREATE 항목 비교는 target_id 키 없이 온다(서버 전역 non_null).
 it('비교 응답은 target_id 키가 없어도 읽는다', () => {
   expect(

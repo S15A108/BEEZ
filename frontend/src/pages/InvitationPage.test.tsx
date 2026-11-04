@@ -11,6 +11,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { verifyEmail } from '@/test/verifyEmail'
 import InvitationPage from './InvitationPage'
 
 let restore: () => void
@@ -56,6 +57,7 @@ it('로그인한 채로 초대 링크를 열면 버튼 없이 참여하고 프�
     name: '새 팀원',
     email: 'new@beez.local',
     password: 'beez-2026!',
+    verified_token: await verifyEmail('new@beez.local'),
   })
   open()
   expect(await screen.findByText('프로젝트 화면')).toBeInTheDocument()

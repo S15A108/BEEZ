@@ -7,6 +7,7 @@ import static com.beez.backend.designitem.support.DesignJson.canonical;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.*;
+import com.beez.backend.usage.repository.LlmUsageRecorder;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.*;
@@ -15,7 +16,11 @@ import org.springframework.transaction.annotation.*;
 @Repository
 public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, PostPublishAnalysisIntake {
     private final JdbcClient jdbc;
-    public PublishedAnalysisRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
+    private final LlmUsageRecorder usageRecorder;
+    public PublishedAnalysisRepository(JdbcClient jdbc, LlmUsageRecorder usageRecorder) {
+        this.jdbc = jdbc;
+        this.usageRecorder = usageRecorder;
+    }
 
     @Override @Transactional(propagation = Propagation.MANDATORY)
     public void accept(long project, long baseline, Long proposal) {
@@ -99,19 +104,9 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, Post
                 WHERE a.id=:id AND a.attempt<4
                   AND ((a.status='PENDING' AND (a.next_attempt_at IS NULL OR a.next_attempt_at<=:now))
                     OR (a.status='RUNNING' AND a.lease_until<=:now))
-                  AND NOT EXISTS (SELECT 1 FROM baseline current
-                    CROSS JOIN LATERAL generate_series(1,current.version_no-1) required(version_no)
-                    WHERE current.id=a.published_baseline_id AND current.project_id=a.project_id
-                      AND NOT EXISTS (SELECT 1 FROM baseline b WHERE b.project_id=a.project_id AND b.version_no=required.version_no))
-                  AND NOT EXISTS (SELECT 1 FROM baseline eb
-                    JOIN baseline current ON current.id=a.published_baseline_id AND current.project_id=a.project_id
-                    LEFT JOIN published_change_analysis earlier ON earlier.published_baseline_id=eb.id AND earlier.project_id=eb.project_id
-                    WHERE eb.project_id=a.project_id AND eb.version_no<current.version_no
-                      AND (earlier.id IS NULL OR NOT COALESCE(earlier.status='COMPLETED' OR
-                        (earlier.status='NOT_EVALUATED' AND
-                          ((eb.version_no=1 AND earlier.change_proposal_id IS NULL) OR earlier.error_code='published_before_intake')), false)))
+                  AND (%s)
                 RETURNING id,attempt,lease_until
-                """).param("id", id).param("now", Timestamp.from(now)).param("lease", Timestamp.from(now.plusSeconds(leaseSeconds)))
+                """.formatted(PublishedAnalysisOrderingSql.PREDECESSORS_READY)).param("id", id).param("now", Timestamp.from(now)).param("lease", Timestamp.from(now.plusSeconds(leaseSeconds)))
                 .query((rs, n) -> new Claim(rs.getLong("id"), rs.getInt("attempt"), rs.getTimestamp("lease_until").toInstant())).optional();
     }
 
@@ -164,6 +159,21 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, Post
         if (!fail(claim, now, code, retryable)) return false;
         insertAttempt(claim, "FAILED", code, usage, usageStatus);
         return true;
+    }
+
+    /**
+     * 모델을 부른 사용량을 공통 사용량 표(llm_usage)에 남긴다 — 비용 조회(MON-A02)는 그 표만 읽는다 (-169).
+     * 시도 기록과 따로 부른다: 결과를 쓰지 못한 경우(리스를 잃음·권한 재확인 실패·저장 실패)나 시도 기록에 넣기에 너무 큰 사용량도
+     * 실제 호출 비용이므로 남긴다. 같은 호출은 request_key 로 한 번만. 항목에 model 이 없으면 응답의 model, 그것도 없으면 "unknown"
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordUsage(Claim claim, Object usage, String model) {
+        var project = jdbc.sql("SELECT project_id FROM published_change_analysis WHERE id=:id").param("id", claim.id())
+                .query(Long.class).optional();
+        if (project.isEmpty()) return;
+        String fallback = model == null || model.isBlank() ? "unknown" : model;
+        usageRecorder.record(new LlmUsageRecorder.Owner(project.get(), "CHANGE_IMPACT", null, null, fallback,
+                "published analysis " + claim.id() + " attempt " + claim.attempt()), usage, 0);
     }
 
     private void insertAttempt(Claim claim, String outcome, String code, Object usage, String usageStatus) {

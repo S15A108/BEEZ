@@ -10,6 +10,11 @@ import {
   requiredString,
 } from './helpers'
 import type { MockContext, MockReply } from './helpers'
+import {
+  confirmVerification,
+  sendVerification,
+  verifiedTokenFor,
+} from './emailVerifications'
 import { blankProject, nextId, now, passwordFingerprint } from './state'
 import { reassignTask } from './tasks'
 
@@ -75,6 +80,8 @@ export async function accountRoutes(
       const email = requiredString(body, 'email').toLowerCase()
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         fail(400, 'validation_failed', '이메일 형식을 확인해 주세요.')
+      // 서버처럼 인증 토큰을 중복 검사보다 먼저 보고, 가입이 성공한 뒤에만 소비한다(PR #114).
+      const consumeToken = verifiedTokenFor(body.verified_token, email)
       if (database.accounts.some((item) => item.profile.email === email))
         fail(409, 'email_already_exists', '이미 등록된 이메일이에요.')
       const profile: Account = {
@@ -88,10 +95,15 @@ export async function accountRoutes(
         profile,
         password_fingerprint: await password(body.password),
       })
+      consumeToken()
       database.session_account_id = profile.id
       joinPendingInvitations(context, profile)
       return { status: 201, data: profile }
     }
+    case 'ACC-A11':
+      return sendVerification(context)
+    case 'ACC-A12':
+      return confirmVerification(context)
     case 'ACC-A02': {
       const email = requiredString(body, 'email').toLowerCase()
       const fingerprint = await passwordFingerprint(String(body.password ?? ''))
