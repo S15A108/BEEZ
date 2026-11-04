@@ -165,6 +165,10 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
         assertThat(get.statusCode()).isEqualTo(405);
         assertThat(get.headers().firstValue("Allow")).hasValue("POST, DELETE");
         assertThat(json.readTree(get.body()).get("error").get("code").asString()).isEqualTo("method_not_allowed");
+        // 서블릿의 기본 doHead 는 doGet 을 부른다 — HEAD 로 돌아 들어가지 못해야 한다
+        HttpResponse<String> head = raw.send(raw.request("/mcp", "Accept", "text/event-stream",
+                "Authorization", "Bearer " + token).method("HEAD", java.net.http.HttpRequest.BodyPublishers.noBody()));
+        assertThat(head.statusCode()).isEqualTo(405);
         // 토큰 검사가 먼저다
         assertThat(raw.get("/mcp", "Accept", "text/event-stream").statusCode()).isEqualTo(401);
     }

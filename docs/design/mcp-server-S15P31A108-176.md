@@ -23,7 +23,7 @@ RequestIdFilter (X-Request-Id, MDC) → mcpChain (Bearer 토큰 → AgentPrincip
 
 - MCP 서블릿은 DispatcherServlet과 따로 등록된다. `@RestControllerAdvice`를 타지 않으므로 도구 오류는 `McpToolHandler`가 결과로 바꾼다.
 - 세션은 서버 메모리에 있다. 서버를 재시작하면 기존 세션 ID는 404가 되고, 클라이언트는 다시 `initialize`한다(MCP 명세 동작). 서버를 여러 대로 늘리면 세션 고정이 필요하다.
-- **GET `/mcp`(서버 → 클라이언트 대기 스트림)는 405로 닫는다.** MCP 명세상 서버가 고를 수 있고 클라이언트는 POST만으로 동작한다. 열어 두면 끝나지 않는 비동기 요청이 되어, Spring Boot의 graceful shutdown이 진행 중인 async 요청을 기다리느라 에이전트가 붙어 있는 동안 배포마다 종료 대기 시간(30초)을 다 채운다. 서버가 먼저 보낼 기능(알림·elicitation)이 생기면 종료 처리와 함께 연다.
+- **GET·HEAD `/mcp`(서버 → 클라이언트 대기 스트림)는 405로 닫는다**(서블릿의 HEAD는 GET 처리를 그대로 부른다). MCP 명세상 서버가 고를 수 있고 클라이언트는 POST만으로 동작한다. 열어 두면 끝나지 않는 비동기 요청이 되어, Spring Boot의 graceful shutdown이 진행 중인 async 요청을 기다리느라 에이전트가 붙어 있는 동안 배포마다 종료 대기 시간(30초)을 다 채운다. 서버가 먼저 보낼 기능(알림·elicitation)이 생기면 종료 처리와 함께 연다.
 - 그래서 연결 유지 ping도 끈다(보낼 통로가 없다). GET 스트림이 없으면 SDK 정리기가 두 정리 사이에 요청이 없던 세션을 닫으므로, 정리 주기를 1시간으로 늘려 마지막 요청 후 1~2시간 유지한다(웹 세션 2시간과 비슷하게). 닫힌 세션에 요청하면 404이고, 클라이언트는 MCP 명세대로 다시 `initialize`해야 한다 — 배포 재시작 때와 같은 동작이다. POST 응답 스트림은 도구 결과를 보내면 끝나므로 Nginx `/mcp`의 `proxy_buffering off`·`proxy_read_timeout 1h`(-123)와 맞는다.
 
 ## 2. 공통 처리 (`McpToolHandler`)

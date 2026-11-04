@@ -77,7 +77,7 @@ public class McpServerConfig {
     }
 
     /**
-     * GET /mcp(서버 → 클라이언트 대기 스트림)는 405 로 닫는다. MCP 명세상 서버가 고를 수 있고, 클라이언트는 POST 만으로 동작한다.
+     * GET·HEAD /mcp(서버 → 클라이언트 대기 스트림)는 405 로 닫는다. MCP 명세상 서버가 고를 수 있고, 클라이언트는 POST 만으로 동작한다.
      * 열어 두면 끝나지 않는 비동기 요청이 되어 graceful shutdown 이 매 배포마다 대기 시간(30초)을 다 채운다.
      * 서버가 먼저 보낼 기능(알림·elicitation)이 생기면 그때 종료 처리와 함께 연다.
      * 보안 필터 뒤에서 돌아 토큰 없는 GET 은 여전히 401 이다.
@@ -88,7 +88,8 @@ public class McpServerConfig {
             @Override
             protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
                     throws ServletException, IOException {
-                if (!HttpMethod.GET.matches(req.getMethod())) {
+                // HEAD 도 막는다 — HttpServlet.doHead 는 doGet 을 그대로 불러 같은 대기 스트림을 연다
+                if (!HttpMethod.GET.matches(req.getMethod()) && !HttpMethod.HEAD.matches(req.getMethod())) {
                     chain.doFilter(req, res);
                     return;
                 }
