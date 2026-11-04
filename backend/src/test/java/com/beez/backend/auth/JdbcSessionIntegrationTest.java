@@ -4,17 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.beez.backend.BeezBackendApplication;
 import com.beez.backend.support.AccessFixtures;
+import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -22,14 +18,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
 import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
+import tools.jackson.databind.ObjectMapper;
 
 /** 웹 세션 DB 저장 (S15P31A108-242 완료 조건). 세션이 backend 메모리가 아니라 spring_session 테이블에 있다. */
 class JdbcSessionIntegrationTest extends IntegrationTestSupport {
-
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
-
-    @Value("${local.server.port}")
-    int localPort;
 
     @Autowired
     JdbcConnectionDetails database;   // Testcontainers DB. 두 번째 backend 도 같은 DB 에 붙인다
@@ -42,6 +34,9 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     JdbcIndexedSessionRepository jdbcSessions;
+
+    @Autowired
+    ObjectMapper json;
 
     /**
      * 깨지면: 배포(backend 컨테이너 재생성) 때마다 웹 사용자가 다시 로그아웃되거나, 운영 쿠키 속성이 바뀐다.
@@ -56,8 +51,8 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
         // 운영처럼 Secure 를 켠 두 번째 backend. 같은 DB 를 쓴다.
         try (ConfigurableApplicationContext previous = startAnotherBackend(Map.of(
                 "server.servlet.session.cookie.secure", "true"))) {
-            HttpResponse<String> login = send(port(previous), "POST", "/api/auth/login",
-                    "{\"email\":\"" + email + "\",\"password\":\"" + AccessFixtures.PASSWORD + "\"}", null);
+            HttpResponse<String> login = ApiClient.forPort(port(previous)).post("/api/auth/login",
+                    "{\"email\":\"" + email + "\",\"password\":\"" + AccessFixtures.PASSWORD + "\"}");
             assertThat(login.statusCode()).as(login.body()).isEqualTo(200);
             setCookie = login.headers().allValues("Set-Cookie").stream()
                     .filter(c -> c.startsWith("BEEZ_SESSION=")).findFirst().orElseThrow();
@@ -71,9 +66,9 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
         assertThat(db.queryForObject("SELECT max_inactive_interval FROM spring_session WHERE principal_name = ?",
                 Integer.class, Long.toString(accountId))).isEqualTo(7200);
 
+        // Secure 쿠키라 http 시험 클라이언트의 쿠키 저장소는 보내지 않는다. 브라우저처럼 직접 싣는다
         String cookie = setCookie.substring(0, setCookie.indexOf(';'));
-        HttpResponse<String> me = send(localPort,
-                "GET", "/api/me", null, cookie);
+        HttpResponse<String> me = client().get("/api/me", "Cookie", cookie);
         assertThat(me.statusCode()).as(me.body()).isEqualTo(200);
         assertThat(me.body()).contains("\"email\":\"" + email + "\"");
     }
@@ -114,9 +109,9 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
     void mcp_withValidToken_createsNoSession() {
         var p = fixtures().projectWithLeader();
         var leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
-        String issued = leader.post("/api/projects/" + p.projectId() + "/agent-tokens", "{}").body();
-        String token = issued.replaceFirst("(?s).*\"token\":\"([^\"]+)\".*", "$1");
-        Integer before = db.queryForObject("SELECT count(*) FROM spring_session", Integer.class);
+        String token = json.readTree(leader.post("/api/projects/" + p.projectId() + "/agent-tokens", "{}").body())
+                .get("token").asString();
+        long requestedAt = System.currentTimeMillis();
 
         HttpResponse<String> init = client().post("/mcp", """
                 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",
@@ -125,7 +120,9 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
 
         assertThat(init.statusCode()).as(init.body()).isEqualTo(200);
         assertThat(init.headers().allValues("Set-Cookie")).isEmpty();
-        assertThat(db.queryForObject("SELECT count(*) FROM spring_session", Integer.class)).isEqualTo(before);
+        // 이 요청 뒤에 생긴 행만 센다 (1분 정리 작업이 다른 행을 지워도 흔들리지 않게)
+        assertThat(db.queryForObject("SELECT count(*) FROM spring_session WHERE creation_time >= ?",
+                Integer.class, requestedAt)).isZero();
     }
 
     private int rowsOf(String principal) {
@@ -150,25 +147,5 @@ class JdbcSessionIntegrationTest extends IntegrationTestSupport {
 
     private static int port(ConfigurableApplicationContext ctx) {
         return Integer.parseInt(ctx.getEnvironment().getRequiredProperty("local.server.port"));
-    }
-
-    private static HttpResponse<String> send(int port, String method, String path, String json, String cookie) {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-                .method(method, json == null ? HttpRequest.BodyPublishers.noBody()
-                        : HttpRequest.BodyPublishers.ofString(json));
-        if (json != null) {
-            b.header("Content-Type", "application/json");
-        }
-        if (cookie != null) {
-            b.header("Cookie", cookie);
-        }
-        try {
-            return HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(e);
-        }
     }
 }
