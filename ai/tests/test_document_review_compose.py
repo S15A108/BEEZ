@@ -34,6 +34,8 @@ def test_compose_passes_configured_endpoint_or_the_application_default(
         AI_INTERNAL_TOKEN="test",
         GMS_KEY="test",
         PUBLIC_ORIGIN="https://example.test",
+        # No default in compose.yaml since S15P31A108-27: config fails without it.
+        BACKEND_HOST_PORT="8081",
     )
     env.pop("GMS_CHAT_ENDPOINT", None)
     if configured is not None:
