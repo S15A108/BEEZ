@@ -7,14 +7,15 @@ import java.util.Map;
 public record FindingRow(Long id, Long validationId, Long validationRunId, String source, String kind, String severity,
                          Long designItemId, Long designItemVersionId, Long relatedTaskId, String message,
                          List<Map<String, Object>> sources, String resolution, String nextAction, String checkKey,
-                         List<String> evidenceIds, String policyNeedId, List<Map<String, Object>> conflictingDesignRefs) {
+                         List<String> evidenceIds, String policyNeedId, List<Map<String, Object>> conflictingDesignRefs,
+                         String aiSuggestedAction) {
 
     public FindingRow(Long id, Long validationId, Long validationRunId, String source, String kind, String severity,
                       Long designItemId, Long designItemVersionId, Long relatedTaskId, String message,
                       List<Map<String, Object>> sources, String resolution, String nextAction, String checkKey,
                       List<String> evidenceIds) {
         this(id, validationId, validationRunId, source, kind, severity, designItemId, designItemVersionId,
-                relatedTaskId, message, sources, resolution, nextAction, checkKey, evidenceIds, null, List.of());
+                relatedTaskId, message, sources, resolution, nextAction, checkKey, evidenceIds, null, List.of(), null);
     }
 
     /** 규칙 검사가 만드는 발견 항목 (실행·검사 키 없음) */

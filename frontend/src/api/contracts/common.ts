@@ -75,6 +75,8 @@ export const memberSchema = z.object({
   domain: z.string().optional(),
   role_label: z.string().optional(),
   color: z.string().optional(),
+  // 명세 요청 중(MEM-A06 팀원 목록에 avatar). 오면 사무실에서 그 팀원을 회원 설정 캐릭터로 그린다(D34).
+  avatar: z.string().optional(),
   agent_connected: z.boolean(),
 })
 export type Member = z.infer<typeof memberSchema>
@@ -683,6 +685,7 @@ export const findingSchema = z.object({
   sources: sourceSchema.array(),
   resolution: z.enum(['FIX_PLAN', 'PROPOSE_CHANGE', 'HUMAN_REVIEW', 'RETRY']),
   next_action: z.string().optional(),
+  ai_suggested_action: z.string().optional(),
   validation_run_id: idSchema.optional(),
   policy_need_id: z.string().optional(),
   conflicting_design_refs: z

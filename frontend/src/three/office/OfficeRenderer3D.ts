@@ -7,6 +7,9 @@ import { FirstPersonLook, firstPersonFrame } from './first-person'
 import { OfficeCity } from './office-city'
 import { WindowCityView } from './window-city-view'
 import type { OfficeLifeActivity } from './office-life'
+import { cloneKenney, loadKenney } from '../kenney'
+import { buildBee, buildRobot, disposeFigure } from './memberFigures'
+import { buildAgent, type AgentStatus } from './agentFigure'
 import {
   officeFurnitureKey,
   type OfficeWorkHit,
@@ -36,6 +39,11 @@ export interface OfficeAimTarget extends OfficeSceneHit {
 /** Positions keep the existing simulation's 32 px tile coordinate system. */
 export interface OfficeEntity3D {
   id: string
+  /** 에이전트 로봇의 모습 상태(online·working·idle·offline). 없으면 status로 정한다(D37). */
+  agentStatus?: string
+  /** 머리 위 이름표와 그 아래 말풍선(D37) */
+  tag?: string
+  note?: string
   x: number
   y: number
   dir: 'up' | 'down' | 'left' | 'right'
@@ -50,7 +58,7 @@ export interface OfficeEntity3D {
   selected?: boolean
   color?: string
   kind?: string
-  appearance?: 'human' | 'robot' | 'bibi'
+  appearance?: OfficeAppearance
   status?: string
   seated?: boolean
   seatLift?: number
@@ -59,22 +67,62 @@ export interface OfficeEntity3D {
 }
 
 interface Robot {
-  appearance: 'human' | 'robot' | 'bibi'
+  appearance: OfficeAppearance
+  /** 머리 위 이름표(이름 · 상태, 말풍선). 같은 글이면 다시 그리지 않는다. */
+  tag?: { text: string; sprite: THREE.Sprite }
+  /** 모양을 다시 만들어야 하는지 비교하는 값(에이전트는 주인 색·상태까지) */
+  look: string
   root: THREE.Group
   body: THREE.Group
-  head: THREE.Group
-  arms: THREE.Group[]
-  elbows: THREE.Group[]
-  legs: THREE.Group[]
-  knees: THREE.Group[]
+  head: THREE.Object3D
+  arms: THREE.Object3D[]
+  elbows: THREE.Object3D[]
+  legs: THREE.Object3D[]
+  knees: THREE.Object3D[]
+  /** 앉을 때 더 올리는 높이(블록 캐릭터) */
+  seatOffset?: number
   ring: THREE.Mesh
   badge: THREE.Mesh
   phase: number
   lastX: number
   lastY: number
+  /** 뼈대 애니메이션이 든 GLB(비비): 서 있으면 Idle, 걸으면 Walk를 돌린다. 자세 코드 대신 쓴다. */
+  motion?: {
+    mixer: THREE.AnimationMixer
+    idle?: THREE.AnimationAction
+    walk?: THREE.AnimationAction
+    playing?: THREE.AnimationAction
+    /** 걸음이 끊겨도 이 시각(ms)까지는 Walk를 이어 프레임마다 바뀌지 않게 한다 */
+    walkUntil: number
+  }
 }
 
 const TILE = 32
+const AGENT_STATUSES: readonly string[] = [
+  'online',
+  'working',
+  'idle',
+  'offline',
+]
+const agentStatusOf = (status?: string) =>
+  (AGENT_STATUSES.includes(status ?? '') ? status : 'online') as AgentStatus
+// 사무실 캐릭터 모양(D34, D35). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440), agent는 팀원의 AI 에이전트
+// (하늘색 포인트 흰 로봇), bibi는 AI 팀장이다(캔버스 SCR-06-rec-office-chars).
+export type OfficeAppearance =
+  'human' | 'member-robot' | 'bee' | 'agent' | 'bibi'
+// 사람은 Kenney Mini Characters 모델(CC0), 로봇·벌은 보드 그림을 만든 캔버스 모델(memberFigures), 에이전트는 agentFigure,
+// 비비는 GLB 파일 하나다. 비비 GLB는 파일만 바꾸면 다른 모델로 바뀐다(앞 = +z, 발바닥 y = 0이면 된다).
+const PERSON_MODEL = '/models/kenney/characters/character-female-d.glb'
+const BIBI_MODEL = '/models/bibi.glb'
+// 보드처럼 팀원 셋을 같은 키로 맞춘다. 1.5타일이면 가장 넓은 사람도 폭이 약 1타일이라 개인 거리 34px(약 1.06타일)에서 겹치지 않는다.
+const FIGURE_HEIGHT = 1.5
+// 캔버스에서 팀원은 1.7 m, 에이전트는 안테나 끝까지 1.74 m(모델 단위 m), 비비는 1.35 m다(v478). 팀원 1.5타일을 1.7 m로 본다.
+const METER = FIGURE_HEIGHT / 1.7
+const BIBI_HEIGHT = 1.35 * METER
+// 보드 그림의 사람 팔 각도. 모델의 기본 자세는 팔을 옆으로 편 T자다.
+const PERSON_ARMS = 1.15
+// 직접 만든 로봇이 앉을 때의 엉덩이 높이. 블록 캐릭터는 다리가 짧아 같은 의자 높이까지 올려 앉힌다.
+const ROBOT_HIP = 0.59
 const DREAM_BUILD_SPEED = 2
 const CITY_SKY = '#8fcff5'
 const CITY_VIEW_DISTANCE = 1200
@@ -85,7 +133,8 @@ const C = {
   wood: '#cfa05f',
   woodEdge: '#aa7d43',
   oakLight: '#e2b76e',
-  plaster: '#e9ddbd',
+  // 크림 벽(캔버스 v488 1번 색)
+  plaster: '#f4ece0',
   honey: '#ffd24a',
   dark: '#2c2a24',
   metal: '#a09b90',
@@ -93,6 +142,200 @@ const C = {
   leafLight: '#9eb64d',
   leafDark: '#426d35',
   navy: '#293840',
+}
+
+// ───── 고정 사무실(D36) 가구 재질·그림 ─────
+// Kit 재질 이름별 색(캔버스 PAL + 사용자가 고른 1번 색 테마: 따뜻한 나무, 초록 화분). 모델은 앱 전체가 나눠 써서 한 번만 칠한다.
+const KIT_PALETTE: Record<string, [string, number, number]> = {
+  wood: ['#c99a6b', 0.6, 0],
+  woodDark: ['#b08a60', 0.6, 0],
+  metal: ['#cdd1d5', 0.35, 0.5],
+  metalMedium: ['#8e949a', 0.4, 0.5],
+  metalDark: ['#2b2e34', 0.45, 0.3],
+  metalLight: ['#eef0f1', 0.35, 0.3],
+  carpet: ['#7a7d80', 0.95, 0],
+  carpetBlue: ['#6d7f95', 0.95, 0],
+  carpetDarker: ['#5a5d61', 0.95, 0],
+  carpetWhite: ['#f2f2f0', 0.9, 0],
+  plant: ['#4f8a3f', 0.8, 0],
+  _defaultMat: ['#f4f4f2', 0.6, 0],
+}
+function kitPalette(material: THREE.MeshStandardMaterial) {
+  if (material.userData.kitPalette) return
+  material.userData.kitPalette = true
+  const paint = KIT_PALETTE[material.name]
+  if (paint) {
+    material.color.set(paint[0])
+    material.roughness = paint[1]
+    material.metalness = paint[2]
+  }
+  if (material.name === 'lamp') {
+    material.color.set('#fff6e2')
+    material.emissive.set('#ffe7bd')
+    material.emissiveIntensity = 1.3
+  }
+  if (material.name === 'glass') {
+    material.color.set('#e4eef0')
+    material.transparent = true
+    material.opacity = 0.35
+    material.roughness = 0.05
+    material.depthWrite = false
+  }
+}
+// 화면 가운데 높이·폭·높이·기울기(m). 모니터·TV는 Kit 모델 단위에 배율을 곱하고(캔버스 SCREEN), 노트북은 크기로 어림한다.
+type KitSpec = NonNullable<Furniture['kit']>
+const KIT_SCREEN: Record<
+  string,
+  (kit: KitSpec) => [number, number, number, number]
+> = {
+  computerScreen: (kit) => {
+    const s = kit.s?.[0] ?? 1
+    return [kit.y + 0.177 * s, 0.36 * s, 0.2 * s, 0]
+  },
+  televisionModern: (kit) => {
+    const s = kit.s?.[0] ?? 1
+    return [kit.y + 0.265 * s, 0.635 * s, 0.355 * s, 0]
+  },
+  laptop: (kit) => [kit.y + kit.h * 0.62, kit.w * 0.72, kit.h * 0.6, -0.3],
+}
+// 캔버스 uiMake와 같은 그림: 칸반·메모 벽은 종이, 그래프·대시보드는 화면
+function drawKitUi(
+  g: CanvasRenderingContext2D,
+  kind: string,
+  w: number,
+  h: number,
+) {
+  const font = (size: number, weight = 700) =>
+    (g.font = `${weight} ${size}px Geist, "Malgun Gothic", sans-serif`)
+  const note = (
+    x: number,
+    y: number,
+    s: number,
+    color: string,
+    turn: number,
+  ) => {
+    g.save()
+    g.translate(x, y)
+    g.rotate(turn)
+    g.fillStyle = 'rgba(0,0,0,0.12)'
+    g.fillRect(4, 6, s, s)
+    g.fillStyle = color
+    g.fillRect(0, 0, s, s)
+    g.fillStyle = 'rgba(44,41,31,0.55)'
+    for (let k = 0; k < 3; k++)
+      g.fillRect(
+        s * 0.14,
+        s * (0.28 + k * 0.2),
+        s * (0.72 - k * 0.15),
+        s * 0.06,
+      )
+    g.restore()
+  }
+  const colors = ['#f3c530', '#fde68a', '#ffffff', '#cfe3f7', '#f9c6b8']
+  g.fillStyle = '#ffffff'
+  g.fillRect(0, 0, w, h)
+  if (kind === 'kanban' || kind === 'notes') {
+    const heads =
+      kind === 'kanban'
+        ? ['할 일', '진행 중', '검토', '완료']
+        : ['제안', '검토 중', '반영', '보류', '질문']
+    const cw = w / heads.length
+    heads.forEach((title, i) => {
+      if (i) {
+        g.fillStyle = '#d8d4cc'
+        g.fillRect(i * cw, 30, 4, h - 60)
+      }
+      font(kind === 'kanban' ? 64 : 58)
+      g.fillStyle = '#2c291f'
+      g.fillText(title, i * cw + 36, 92)
+      const n = 2 + ((i * 7 + 3) % 3)
+      for (let k = 0; k < n; k++)
+        note(
+          i * cw + 40 + (k % 2) * (cw * 0.44),
+          140 + Math.floor(k / 2) * (cw * 0.46),
+          cw * 0.38,
+          colors[(i + k) % colors.length],
+          (((i * 3 + k) % 5) - 2) * 0.03,
+        )
+    })
+    return
+  }
+  if (kind === 'graph') {
+    g.fillStyle = '#f7f8fa'
+    g.fillRect(0, 0, w, h)
+    const nodes: [number, number, string][] = [
+      [640, 360, '프로젝트'],
+      [300, 180, '화면'],
+      [980, 180, 'API'],
+      [280, 560, '데이터'],
+      [1000, 560, '정책'],
+      [640, 620, '변경'],
+    ]
+    g.strokeStyle = '#9aa3ad'
+    g.lineWidth = 6
+    for (const [x, y] of nodes.slice(1)) {
+      g.beginPath()
+      g.moveTo(640, 360)
+      g.lineTo(x, y)
+      g.stroke()
+    }
+    nodes.forEach(([x, y, label], i) => {
+      g.fillStyle = i ? '#ffffff' : '#f3c530'
+      g.strokeStyle = '#2c291f'
+      g.lineWidth = 4
+      g.beginPath()
+      g.roundRect(x - 120, y - 48, 240, 96, 22)
+      g.fill()
+      g.stroke()
+      font(40)
+      g.fillStyle = '#2c291f'
+      g.textAlign = 'center'
+      g.fillText(label, x, y + 14)
+      g.textAlign = 'left'
+    })
+    return
+  }
+  // 대시보드: 숫자 칸과 선 그래프, 또는 진행 막대
+  g.fillStyle = '#1f2329'
+  g.fillRect(0, 0, w, h)
+  font(44)
+  g.fillStyle = '#ffffff'
+  g.fillText(kind === 'dash1' ? '팀 대시보드' : '프로젝트 진행', 60, 90)
+  if (kind === 'dash1') {
+    ;[
+      ['작업 중', '6'],
+      ['검토', '3'],
+      ['완료', '27'],
+    ].forEach(([title, value], i) => {
+      g.fillStyle = '#2c3138'
+      g.fillRect(60 + i * 400, 130, 360, 180)
+      font(30, 500)
+      g.fillStyle = '#aab2bc'
+      g.fillText(title, 90 + i * 400, 185)
+      font(84)
+      g.fillStyle = i ? '#ffffff' : '#f3c530'
+      g.fillText(value, 90 + i * 400, 285)
+    })
+    g.strokeStyle = '#f3c530'
+    g.lineWidth = 8
+    g.beginPath()
+    ;[0.2, 0.35, 0.3, 0.5, 0.45, 0.7, 0.8].forEach((v, i) =>
+      g.lineTo(80 + i * 180, 660 - v * 300),
+    )
+    g.stroke()
+    return
+  }
+  ;['도시 화면', '작업 현황', '회의실', '변경 제안', '문서함'].forEach(
+    (title, i) => {
+      font(32, 500)
+      g.fillStyle = '#d5dae0'
+      g.fillText(title, 60, 190 + i * 110)
+      g.fillStyle = '#2c3138'
+      g.fillRect(330, 160 + i * 110, 860, 40)
+      g.fillStyle = i === 1 ? '#f3c530' : '#7fb08a'
+      g.fillRect(330, 160 + i * 110, 860 * [0.9, 0.6, 0.75, 0.4, 0.55][i], 40)
+    },
+  )
 }
 
 /** A real, interactive orthographic dollhouse; all assets are local procedural meshes. */
@@ -127,6 +370,10 @@ export class OfficeRenderer3D {
   private readonly firstPersonEnclosure = new THREE.Group()
   private readonly rearWindows = new THREE.Group()
   private readonly sideWindows = new THREE.Group()
+  /** 고정 사무실(D38)의 남·동쪽 벽. 3인칭에서도 보이고, 카메라 쪽이면 낮게 자른다. */
+  private frontWall: THREE.Group | null = null
+  private rightWall: THREE.Group | null = null
+  private wallBounds = { left: 0, back: 0, right: 0, front: 0 }
   private readonly windowMullions: THREE.Mesh[] = []
   private city: OfficeCity | null = null
   // Clear air across the surrounding districts; only the far horizon meets the sky.
@@ -135,8 +382,14 @@ export class OfficeRenderer3D {
   private environmentEdge = { x: 0, z: 0 }
   private readonly people = new THREE.Group()
   private readonly robots = new Map<string, Robot>()
+  private readonly memberFigures = new Map<
+    string,
+    { figure: THREE.Group; height: number }
+  >()
   private readonly furnitureObjects: THREE.Group[] = []
   private outdoorPortal: THREE.Group | null = null
+  private readonly zoneSigns = new THREE.Group()
+  private zoneSignKey = ''
   private outdoorPortalKey = ''
   private readonly geometries = new Map<string, THREE.BufferGeometry>()
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>()
@@ -255,12 +508,13 @@ export class OfficeRenderer3D {
       this.scene.add(ground)
       this.geometries.set('dreamGround', ground.geometry)
     }
-    const ambient = new THREE.HemisphereLight('#fffaf1', '#bebbb3', 1.5)
+    // 따뜻한 조명(캔버스 v488 1번 색: 조명 #ffe2bf, 햇빛 #ffe2bd)
+    const ambient = new THREE.HemisphereLight('#fff1dc', '#c9b89a', 1.5)
     this.scene.add(ambient)
     this.exteriorScene.add(
       new THREE.HemisphereLight('#e0f4ff', '#a09b90', 1.75),
     )
-    const light = new THREE.DirectionalLight('#fff1dc', 2.2)
+    const light = new THREE.DirectionalLight('#ffe2bd', 2.2)
     light.position.set(7, 26, 14)
     light.castShadow = true
     light.shadow.mapSize.set(2048, 2048)
@@ -400,32 +654,6 @@ export class OfficeRenderer3D {
     mesh.position.set(x, y, z)
     mesh.castShadow = true
     mesh.receiveShadow = true
-    parent.add(mesh)
-    return mesh
-  }
-
-  private rod(
-    parent: THREE.Object3D,
-    from: THREE.Vector3,
-    to: THREE.Vector3,
-    radius: number,
-    color: string,
-  ) {
-    const delta = to.clone().sub(from)
-    const mesh = new THREE.Mesh(
-      this.geometry(
-        `rod/${radius}`,
-        () => new THREE.CylinderGeometry(radius, radius, 1, 10),
-      ),
-      this.material(color),
-    )
-    mesh.position.copy(from).add(to).multiplyScalar(0.5)
-    mesh.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      delta.clone().normalize(),
-    )
-    mesh.scale.y = delta.length()
-    mesh.castShadow = true
     parent.add(mesh)
     return mesh
   }
@@ -877,7 +1105,224 @@ export class OfficeRenderer3D {
       this.chair(parent, x, f.y + f.h + 0.62, 'up')
   }
 
+  // ───── 고정 사무실(D36): Kenney Furniture Kit 모델과 직접 그리는 보드·화면 (캔버스 office2.html piece()·board()) ─────
+  private kitPiece(parent: THREE.Object3D, f: Furniture) {
+    const kit = f.kit!
+    const group = new THREE.Group()
+    group.position.set(kit.x, 0, kit.z)
+    group.rotation.y = kit.ry
+    parent.add(group)
+    // 떨어뜨리기 연출(dream)이 크기를 재고 바닥에 내려놓으므로, 모델을 받기 전에도 바닥부터 꼭대기까지의 자리를 둔다.
+    const proxy = new THREE.Mesh(
+      this.geometry(
+        `kit-proxy/${kit.w}/${kit.y + kit.h}/${kit.d}`,
+        () => new THREE.BoxGeometry(kit.w, kit.y + kit.h, kit.d),
+      ),
+      this.material('#ffffff'),
+    )
+    proxy.position.y = (kit.y + kit.h) / 2
+    proxy.visible = false
+    proxy.userData.ignorePicking = true
+    group.add(proxy)
+    if (!kit.model) {
+      this.kitBoard(group, kit)
+      return
+    }
+    const workstation = f.tag?.startsWith('workstation/')
+    void loadKenney(`/models/kenney/furniture/${kit.model}.glb`)
+      .then((model) => {
+        if (!group.parent) return
+        const inner = cloneKenney(model)
+        const box = new THREE.Box3().setFromObject(model.scene)
+        const center = box.getCenter(new THREE.Vector3())
+        inner.position.set(-center.x, -box.min.y, -center.z)
+        inner.traverse((object) => {
+          const mesh = object as THREE.Mesh
+          if (!mesh.isMesh) return
+          mesh.castShadow = kit.h > 0.12
+          mesh.receiveShadow = true
+          mesh.userData.floorX = (f.x + f.w / 2) * TILE
+          mesh.userData.floorY = (f.y + f.h / 2) * TILE
+          const materials = [
+            mesh.material,
+          ].flat() as THREE.MeshStandardMaterial[]
+          materials.forEach(kitPalette)
+          if (kit.tint) {
+            const tinted = materials.map((material) =>
+              this.kitTint(material, kit.tint!),
+            )
+            mesh.material = tinted.length === 1 ? tinted[0] : tinted
+          }
+        })
+        const scaled = new THREE.Group()
+        scaled.position.y = kit.y
+        scaled.scale.set(...(kit.s ?? [1, 1, 1]))
+        scaled.add(inner)
+        group.add(scaled)
+        const screen = KIT_SCREEN[kit.model!]?.(kit)
+        if (!screen || (!kit.ui && !workstation)) return
+        // 화면 면을 앞에서 쏜 광선으로 찾아 그림(또는 작업 화면)을 붙인다.
+        group.updateMatrixWorld(true)
+        const [y, width, height, tilt] = screen
+        const ray = new THREE.Raycaster(
+          group.localToWorld(new THREE.Vector3(0, y, 2)),
+          new THREE.Vector3(0, 0, -1).transformDirection(group.matrixWorld),
+        )
+        const hit = ray.intersectObject(scaled, true)[0]
+        const z = (hit ? group.worldToLocal(hit.point.clone()).z : 0) + 0.006
+        if (workstation) {
+          const surface = this.workSurface(
+            group,
+            'monitor',
+            0,
+            y,
+            z,
+            width,
+            height,
+            officeFurnitureKey(f),
+          )
+          surface.rotation.x = tilt
+          return
+        }
+        const plane = new THREE.Mesh(
+          new THREE.PlaneGeometry(width, height),
+          this.kitUi(kit.ui!),
+        )
+        plane.position.set(0, y, z)
+        plane.rotation.x = tilt
+        group.add(plane)
+      })
+      .catch(() => undefined)
+  }
+
+  private kitTint(
+    material: THREE.MeshStandardMaterial,
+    tint: Record<string, string>,
+  ) {
+    const color = tint[material.name]
+    if (!color) return material
+    const key = `kit/${material.uuid}/${color}`
+    let tinted = this.materials.get(key)
+    if (!tinted) {
+      tinted =
+        color === 'screen'
+          ? new THREE.MeshStandardMaterial({
+              color: '#dfe8f2',
+              emissive: '#d5e3f4',
+              emissiveIntensity: 0.55,
+              roughness: 0.25,
+            })
+          : material.clone()
+      if (color !== 'screen') tinted.color.set(color)
+      this.materials.set(key, tinted)
+    }
+    return tinted
+  }
+
+  // 칸반(다리 달린 보드), 메모 벽, 벽 화면
+  private kitBoard(group: THREE.Group, kit: NonNullable<Furniture['kit']>) {
+    const length = Math.abs(Math.sin(kit.ry)) > 0.5 ? kit.d : kit.w
+    const ui = kit.ui ?? 'kanban'
+    if (ui.startsWith('dash')) {
+      this.box(
+        group,
+        0,
+        kit.y + kit.h / 2,
+        0,
+        length,
+        kit.h,
+        0.05,
+        '#1b1d21',
+        0.01,
+      )
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        this.kitUi(ui),
+      )
+      plane.position.set(0, kit.y + kit.h / 2, 0.026)
+      group.add(plane)
+      return
+    }
+    const kanban = ui === 'kanban'
+    const panel = kanban ? 1.2 : kit.h,
+      bottom = kanban ? 0.75 : 0.8
+    this.box(
+      group,
+      0,
+      bottom + panel / 2,
+      0,
+      length + 0.04,
+      panel + 0.04,
+      0.035,
+      '#d5d8db',
+      0.005,
+    )
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(length, panel),
+      this.kitUi(ui),
+    )
+    plane.position.set(0, bottom + panel / 2, 0.019)
+    group.add(plane)
+    if (kanban)
+      for (const side of [-1, 1]) {
+        this.box(
+          group,
+          side * (length / 2 + 0.02),
+          (bottom + panel) / 2,
+          0,
+          0.04,
+          bottom + panel,
+          0.04,
+          '#d5d8db',
+          0.005,
+        )
+        this.box(
+          group,
+          side * (length / 2 + 0.02),
+          0.015,
+          0,
+          0.06,
+          0.03,
+          0.55,
+          '#d5d8db',
+          0.005,
+        )
+      }
+  }
+
+  // 보드·화면 그림(캔버스 uiMake): 칸반, 메모 벽, 관계 그래프, 대시보드 둘
+  private kitUi(kind: string) {
+    const key = `kit-ui/${kind}`
+    let material = this.materials.get(key)
+    if (material) return material
+    const W = kind === 'notes' ? 2048 : 1280,
+      H = kind === 'notes' ? 910 : kind === 'kanban' ? 1100 : 720
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = H
+    const g = canvas.getContext('2d')
+    if (g) drawKitUi(g, kind, W, H)
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    this.textures.push(texture)
+    const paper = kind === 'kanban' || kind === 'notes'
+    material = new THREE.MeshStandardMaterial({
+      map: texture,
+      emissive: '#ffffff',
+      emissiveMap: texture,
+      emissiveIntensity: paper ? 0.08 : 0.85,
+      roughness: 0.5,
+    })
+    this.materials.set(key, material)
+    return material
+  }
+
   private furniture(parent: THREE.Object3D, f: Furniture, index: number) {
+    if (f.kit) {
+      this.kitPiece(parent, f)
+      return
+    }
     const x = f.x + f.w / 2,
       z = f.y + f.h / 2
     const w = Math.max(0.65, f.w - 0.14),
@@ -1875,6 +2320,7 @@ export class OfficeRenderer3D {
     this.floor = floor
     this.buildOfficeSurroundings(floor)
     this.buildOutdoorPortal(floor)
+    this.buildZoneSigns(floor)
     const furnitureKeys = new Set(floor.furniture.map(officeObjectKey))
     for (const [key, object] of this.dreamObjects)
       if (!furnitureKeys.has(key)) {
@@ -1940,6 +2386,9 @@ export class OfficeRenderer3D {
         palette[floor.grid[z][x]] ?? '#efeadb',
         0.025,
       )
+      // 고정 사무실(D36): 따뜻한 오크 바닥, 작업 현황·허들은 베이지 카펫 타일
+      if (floor.zoneSigns)
+        mesh.material = this.floorMaterial(floor.grid[z][x], x, z)
       mesh.visible = false
       this.dreamTiles.set(`${x},${z}`, {
         mesh,
@@ -2000,6 +2449,137 @@ export class OfficeRenderer3D {
     this.cameraKey = ''
   }
 
+  // 오크 판재(1 m 칸에 0.2 m 판 다섯 줄, 칸마다 무늬 넷 중 하나)와 0.5 m 카펫 타일(캔버스 1번 색: 베이지 두 톤)
+  private floorMaterial(tile: string, x: number, z: number) {
+    const carpet = tile === 'd' || tile === 'm'
+    const variant = carpet ? (x + z) % 2 : (x * 7 + z * 3) % 4
+    const key = `office-floor/${carpet ? 'carpet' : 'oak'}/${variant}`
+    let material = this.materials.get(key)
+    if (material) return material
+    let seed = 11 + variant * 97
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 256
+    const g = canvas.getContext('2d')
+    if (g && carpet)
+      for (let i = 0; i < 2; i++)
+        for (let j = 0; j < 2; j++) {
+          const [r, gg, b] =
+            (i + j + variant) % 2 ? [196, 174, 146] : [204, 183, 156]
+          g.fillStyle = `rgb(${r},${gg},${b})`
+          g.fillRect(i * 128, j * 128, 128, 128)
+          g.strokeStyle = 'rgba(255,255,255,0.06)'
+          g.lineWidth = 2
+          for (let k = 4; k < 128; k += 7) {
+            g.beginPath()
+            if ((i + j) % 2) {
+              g.moveTo(i * 128 + k, j * 128)
+              g.lineTo(i * 128 + k, j * 128 + 128)
+            } else {
+              g.moveTo(i * 128, j * 128 + k)
+              g.lineTo(i * 128 + 128, j * 128 + k)
+            }
+            g.stroke()
+          }
+          g.strokeStyle = 'rgba(0,0,0,0.12)'
+          g.lineWidth = 1
+          g.strokeRect(i * 128, j * 128, 128, 128)
+        }
+    else if (g)
+      for (let row = 0; row < 5; row++) {
+        let left = -rnd() * 120
+        while (left < 256) {
+          const length = 80 + rnd() * 120,
+            base = 186 + rnd() * 22
+          g.fillStyle = `rgb(${base + 12},${base - 18},${base - 62})`
+          g.fillRect(left, row * 51.2, length, 51.2)
+          g.fillStyle = 'rgba(90,60,30,0.35)'
+          g.fillRect(left, row * 51.2, 1.5, 51.2)
+          left += length
+        }
+        g.fillStyle = 'rgba(90,60,30,0.28)'
+        g.fillRect(0, row * 51.2, 256, 1.5)
+      }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    this.textures.push(texture)
+    material = new THREE.MeshStandardMaterial({
+      map: texture,
+      roughness: carpet ? 1 : 0.55,
+    })
+    this.materials.set(key, material)
+    return material
+  }
+
+  // 구역 표지: 단축 바 1~6번 창 이름을 매단 아크릴 판(캔버스 sign())
+  private buildZoneSigns(floor: Floor) {
+    const key = JSON.stringify(floor.zoneSigns ?? null)
+    if (key === this.zoneSignKey) return
+    this.zoneSignKey = key
+    this.zoneSigns.removeFromParent()
+    this.zoneSigns.clear()
+    for (const sign of floor.zoneSigns ?? []) {
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 140
+      const g = canvas.getContext('2d')
+      if (g) {
+        g.fillStyle = '#ffffff'
+        g.fillRect(0, 0, 640, 140)
+        g.fillStyle = '#2c291f'
+        g.beginPath()
+        g.roundRect(22, 22, 96, 96, 16)
+        g.fill()
+        g.fillStyle = '#ffffff'
+        g.font = 'bold 64px Geist, "Malgun Gothic", sans-serif'
+        g.textAlign = 'center'
+        g.textBaseline = 'middle'
+        g.fillText(String(sign.n), 70, 74)
+        g.fillStyle = '#2c291f'
+        g.textAlign = 'left'
+        g.font = 'bold 56px Geist, "Malgun Gothic", sans-serif'
+        g.fillText(sign.name, 146, 74)
+      }
+      const texture = new THREE.CanvasTexture(canvas)
+      texture.colorSpace = THREE.SRGBColorSpace
+      this.textures.push(texture)
+      const face = new THREE.MeshStandardMaterial({
+        map: texture,
+        roughness: 0.4,
+        emissive: '#ffffff',
+        emissiveMap: texture,
+        emissiveIntensity: 0.18,
+      })
+      this.materials.set(`zone-sign/${sign.n}`, face)
+      const edge = this.material('#f2f2f2', 0.85)
+      const panel = new THREE.Mesh(
+        this.geometry(
+          'zone-sign',
+          () => new THREE.BoxGeometry(1.6, 0.35, 0.03),
+        ),
+        [edge, edge, edge, edge, face, face],
+      )
+      panel.position.set(sign.x, 2.6, sign.z)
+      panel.castShadow = true
+      panel.userData.ignorePicking = true
+      this.zoneSigns.add(panel)
+      for (const side of [-0.6, 0.6])
+        this.box(
+          this.zoneSigns,
+          sign.x + side,
+          3.2,
+          sign.z,
+          0.008,
+          0.85,
+          0.008,
+          '#777777',
+          0,
+        )
+    }
+    this.room.add(this.zoneSigns)
+  }
+
   private buildOutdoorPortal(floor: Floor) {
     const exit = floor.outdoorExit,
       key = JSON.stringify(exit ?? null)
@@ -2019,6 +2599,11 @@ export class OfficeRenderer3D {
     group.userData.outdoorExit = true
     group.position.set(exit.x + exit.w / 2, 0, exit.y + exit.h / 2)
     group.scale.set(exit.w / 3, 0.82, exit.h / 1.1)
+    // 옆 벽에 붙은 엘리베이터(고정 사무실의 서쪽 벽)는 문이 방 안쪽(±x)을 본다.
+    if (exit.h > exit.w) {
+      group.rotation.y = Math.PI / 2
+      group.scale.set(exit.h / 3, 0.82, exit.w / 1.1)
+    }
     this.box(group, cx, 1.7, z, 3, 3.4, 0.82, '#b6bbb7', 0.06)
     for (const face of [-1, 1]) {
       this.box(
@@ -2177,6 +2762,41 @@ export class OfficeRenderer3D {
       this.materials.set('office-curtain-glass', glass)
     }
 
+    // 막힌 벽(D38): 크림 벽에 걸레받이. inside는 벽 안쪽이 지역 z의 어느 쪽인지(+1·-1), slat은 나무 슬랫을 댈 구간(지역 x).
+    const solidWall = (
+      parent: THREE.Group,
+      length: number,
+      inside: number,
+      slat?: [number, number],
+    ) => {
+      this.box(
+        parent,
+        length / 2,
+        2.25,
+        0,
+        length + 0.24,
+        4.5,
+        0.2,
+        C.plaster,
+        0,
+      )
+      this.box(
+        parent,
+        length / 2,
+        0.06,
+        inside * 0.11,
+        length,
+        0.12,
+        0.025,
+        '#dedad2',
+        0,
+      )
+      if (slat)
+        for (let x = slat[0]; x < slat[1]; x += 0.12)
+          this.box(parent, x, 2.2, inside * 0.13, 0.05, 4.3, 0.05, '#b07a48', 0)
+    }
+    const fixed = !!floor.zoneSigns
+
     // Keep the original two-wall cutaway; the remaining shell is only visible at eye level.
     const windowWall = (parent: THREE.Group, length: number) => {
       this.box(parent, length / 2, 0.15, 0, length, 0.14, 0.16, '#dedbcb')
@@ -2218,7 +2838,10 @@ export class OfficeRenderer3D {
     }
     windowWall(this.rearWindows, width)
     this.rearWindows.position.set(left, 0, back - 0.12)
-    windowWall(this.sideWindows, depth)
+    // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(남쪽 끝 4.7 m)에 나무 슬랫을 댄다(캔버스 v488).
+    if (fixed)
+      solidWall(this.sideWindows, depth, -1, [depth - 4.8, depth - 0.1])
+    else windowWall(this.sideWindows, depth)
     this.sideWindows.rotation.y = -Math.PI / 2
     this.sideWindows.position.set(left - 0.12, 0, back)
 
@@ -2227,8 +2850,17 @@ export class OfficeRenderer3D {
     frontWindows.name = 'office-front-windows'
     rightWindows.name = 'office-right-windows'
     this.firstPersonEnclosure.name = 'office-first-person-enclosure'
-    this.firstPersonEnclosure.add(frontWindows, rightWindows)
-    windowWall(frontWindows, width)
+    // 고정 사무실은 남·동쪽 벽도 3인칭에 세우고(카메라 쪽이면 낮게), 남쪽은 크림 벽이다.
+    if (fixed) {
+      this.architecture.add(frontWindows, rightWindows)
+      solidWall(frontWindows, width, 1)
+    } else {
+      this.firstPersonEnclosure.add(frontWindows, rightWindows)
+      windowWall(frontWindows, width)
+    }
+    this.frontWall = fixed ? frontWindows : null
+    this.rightWall = fixed ? rightWindows : null
+    this.wallBounds = { left, back, right, front }
     frontWindows.rotation.y = Math.PI
     frontWindows.position.set(right, 0, front + 0.12)
     windowWall(rightWindows, depth)
@@ -2350,8 +2982,8 @@ export class OfficeRenderer3D {
       0.06,
     )
     const lamp = this.material('office-linear-light')
-    lamp.color.set('#fff6dd')
-    lamp.emissive.set('#ffedc2')
+    lamp.color.set('#fff3e0')
+    lamp.emissive.set('#ffe2bf')
     lamp.emissiveIntensity = 0.65
     for (const fraction of [0.3, 0.72]) {
       const x = left + width * fraction
@@ -2415,433 +3047,188 @@ export class OfficeRenderer3D {
     )
   }
 
-  private robot(
+  // 블록 캐릭터(회원 설정 캐릭터). 사람 모델은 받는 동안 바닥 그림자만 보이고, 받은 뒤 붙는다. 팔·다리·머리를 기존
+  // 걸음·앉기 자세가 그대로 돌린다. 팔꿈치·무릎은 없어 그 자세는 빈 관절이 받는다.
+  private figure(
     id: string,
+    appearance: OfficeAppearance,
+    look: string,
     color: string,
-    appearance: 'human' | 'robot' | 'bibi' = 'robot',
+    status: AgentStatus,
   ): Robot {
-    const human = appearance === 'human'
-    const bibi = appearance === 'bibi'
-    const robotShell = bibi ? '#ffd24a' : C.shell
-    const skin = '#dcb89e',
-      jacket = '#485c69',
-      trousers = '#56636c',
-      hair = '#393934'
     const root = new THREE.Group()
     const body = new THREE.Group()
     root.add(body)
     this.people.add(root)
-    this.contact(root, 0, 0, human ? 1.15 : 1.6, human ? 1 : 1.25, 0.9)
-    let badge: THREE.Mesh
-    const head = new THREE.Group()
-    head.position.set(0, human ? 2.01 : 1.8, 0)
-    body.add(head)
-    if (human) {
-      // A separate, adult-proportioned office worker: blazer, shirt, tie, ID and loafers.
-      this.box(body, 0, 1.31, 0, 0.62, 0.77, 0.36, jacket, 0.1)
-      this.box(body, 0, 0.87, -0.005, 0.46, 0.24, 0.31, trousers, 0.055)
-      this.box(body, 0, 1.46, 0.187, 0.24, 0.4, 0.028, '#efeee5', 0.015)
-      for (const side of [-1, 1]) {
-        const lapel = this.box(
-          body,
-          side * 0.14,
-          1.46,
-          0.205,
-          0.105,
-          0.37,
-          0.035,
-          '#5c6f7a',
-          0.02,
-        )
-        lapel.rotation.z = side * -0.26
-        const collar = this.box(
-          body,
-          side * 0.067,
-          1.65,
-          0.205,
-          0.1,
-          0.11,
-          0.035,
-          '#faf8ef',
-          0.015,
-        )
-        collar.rotation.z = side * 0.36
-      }
-      this.box(body, 0, 1.47, 0.221, 0.048, 0.28, 0.025, '#857f72', 0.012)
-      this.box(body, 0, 1.62, 0.227, 0.065, 0.06, 0.03, '#6d685c', 0.014)
-      this.cylinder(body, 0, 1.75, 0, 0.095, 0.095, 0.18, skin)
-      this.rod(
-        body,
-        new THREE.Vector3(-0.07, 1.69, 0.2),
-        new THREE.Vector3(0.14, 1.25, 0.225),
-        0.008,
-        '#b4b0a7',
-      )
-      this.rod(
-        body,
-        new THREE.Vector3(0.09, 1.69, 0.2),
-        new THREE.Vector3(0.19, 1.25, 0.225),
-        0.008,
-        '#b4b0a7',
-      )
-      badge = this.box(body, 0.165, 1.19, 0.23, 0.13, 0.17, 0.025, color, 0.014)
-      this.box(body, 0.165, 1.2, 0.247, 0.105, 0.112, 0.008, '#efeee5', 0.007)
-      this.box(body, 0.165, 1.15, 0.254, 0.055, 0.011, 0.004, '#999487', 0.002)
-      this.sphere(head, 0, 0, 0, 0.285, 0.32, 0.262, skin)
-      this.sphere(head, 0, 0.17, -0.055, 0.3, 0.19, 0.26, hair)
-      this.box(head, -0.246, 0.05, -0.042, 0.07, 0.24, 0.31, hair, 0.03)
-      this.box(head, 0.246, 0.07, -0.06, 0.065, 0.2, 0.28, hair, 0.03)
-      const fringe = this.sphere(
-        head,
-        -0.055,
-        0.195,
-        0.159,
-        0.217,
-        0.09,
-        0.077,
-        hair,
-      )
-      fringe.rotation.z = -0.18
-      for (const side of [-1, 1]) {
-        this.sphere(
-          head,
-          side * 0.105,
-          0.015,
-          0.249,
-          0.019,
-          0.026,
-          0.013,
-          '#3c3a34',
-        )
-        this.box(
-          head,
-          side * 0.106,
-          0.079,
-          0.244,
-          0.062,
-          0.013,
-          0.014,
-          hair,
-          0.005,
-        )
-        this.sphere(
-          head,
-          side * 0.282,
-          -0.018,
-          -0.008,
-          0.045,
-          0.068,
-          0.043,
-          skin,
-        )
-      }
-      this.sphere(head, 0, -0.055, 0.262, 0.033, 0.045, 0.03, '#d0a68b')
-      this.box(head, 0, -0.143, 0.235, 0.076, 0.014, 0.015, '#9d7867', 0.006)
-    } else {
-      const shell = this.sphere(body, 0, 0.95, 0, 0.36, 0.46, 0.3, robotShell)
-      shell.rotation.x = -0.05
-      this.sphere(
-        body,
-        0,
-        1.03,
-        0.265,
-        0.2,
-        0.21,
-        0.055,
-        bibi ? '#f2bd32' : '#e5e3e0',
-      )
-      badge = this.sphere(body, 0, 1.05, 0.325, 0.06, 0.06, 0.018, color)
-      this.cylinder(
-        body,
-        0,
-        1.39,
-        0,
-        0.14,
-        0.14,
-        0.18,
-        bibi ? '#d5ad42' : '#908a7c',
-      )
-      this.sphere(head, 0, 0, 0, 0.55, 0.51, 0.49, robotShell)
-      this.sphere(head, 0, -0.035, 0.386, 0.435, 0.332, 0.172, '#2c2a24')
-      // The curved honey eyes and smile stay crisp at small orthographic sizes.
-      for (const side of [-1, 1]) {
-        this.sphere(
-          head,
-          side * 0.17,
-          0.005,
-          0.548,
-          0.055,
-          0.088,
-          0.018,
-          '#ffd24a',
-        )
-        this.sphere(
-          head,
-          side * 0.18,
-          0.035,
-          0.555,
-          0.025,
-          0.033,
-          0.008,
-          '#fff6d6',
-        )
-        this.sphere(
-          head,
-          side * 0.285,
-          -0.14,
-          0.52,
-          0.05,
-          0.022,
-          0.009,
-          '#6b5414',
-        )
-        const ear = this.cylinder(
-          head,
-          side * 0.535,
-          -0.02,
-          -0.015,
-          0.18,
-          0.18,
-          0.1,
-          bibi ? robotShell : '#ececda',
-        )
-        ear.rotation.z = Math.PI / 2
-        const inner = this.cylinder(
-          head,
-          side * 0.591,
-          -0.02,
-          -0.015,
-          0.107,
-          0.107,
-          0.012,
-          bibi ? '#d5ad42' : '#d0cec8',
-        )
-        inner.rotation.z = Math.PI / 2
-      }
-      const curve = new THREE.QuadraticBezierCurve3(
-        new THREE.Vector3(-0.12, -0.13, 0.552),
-        new THREE.Vector3(0, -0.235, 0.571),
-        new THREE.Vector3(0.12, -0.13, 0.552),
-      )
-      const smile = new THREE.Mesh(
-        this.geometry(
-          'smile',
-          () => new THREE.TubeGeometry(curve, 14, 0.017, 6, false),
-        ),
-        this.material('#f5b800', 0.3),
-      )
-      head.add(smile)
-      this.box(
-        head,
-        0,
-        0.16,
-        -0.469,
-        0.22,
-        0.035,
-        0.025,
-        bibi ? '#e4b632' : '#dad8d4',
-        0.01,
-      )
-    }
-    if (bibi) {
-      // Bibi's yellow exterior and team-lead badge distinguish the whole character.
-      this.cylinder(body, 0, 1.38, 0, 0.19, 0.19, 0.08, '#d5ad42')
-      for (const side of [-1, 1])
-        this.box(
-          body,
-          side * 0.35,
-          1.23,
-          0.05,
-          0.16,
-          0.085,
-          0.26,
-          '#d5ad42',
-          0.025,
-        )
-      this.box(body, 0, 1.08, 0.325, 0.18, 0.23, 0.035, '#344b58', 0.035)
-      this.box(
-        body,
-        0,
-        1.1,
-        0.35,
-        0.1,
-        0.1,
-        0.018,
-        '#e9c65e',
-        0.015,
-      ).rotation.z = Math.PI / 4
-    }
-    const arms: THREE.Group[] = [],
-      elbows: THREE.Group[] = [],
-      legs: THREE.Group[] = [],
-      knees: THREE.Group[] = []
-    for (const side of [-1, 1]) {
-      const arm = new THREE.Group()
-      arm.position.set(side * (human ? 0.35 : 0.365), human ? 1.59 : 1.2, 0)
-      arm.rotation.z = side * 0.075
-      body.add(arm)
-      const upper = human ? 0.34 : 0.27,
-        lower = human ? 0.3 : 0.23
-      this.sphere(
-        arm,
-        0,
-        -0.015,
-        0,
-        human ? 0.09 : 0.095,
-        0.095,
-        0.09,
-        human ? jacket : bibi ? '#e4b632' : '#bbb8b0',
-      )
-      this.box(
-        arm,
-        0,
-        -upper / 2,
-        0,
-        human ? 0.17 : 0.15,
-        upper,
-        human ? 0.2 : 0.17,
-        human ? jacket : robotShell,
-        0.06,
-      )
-      const elbow = new THREE.Group()
-      elbow.position.y = -upper
-      arm.add(elbow)
-      this.sphere(
-        elbow,
-        0,
-        0,
-        0,
-        0.075,
-        0.075,
-        0.075,
-        human ? jacket : bibi ? '#e4b632' : '#aba79d',
-      )
-      this.box(
-        elbow,
-        0,
-        -lower / 2,
-        0,
-        human ? 0.15 : 0.135,
-        lower,
-        human ? 0.18 : 0.155,
-        human ? jacket : robotShell,
-        0.05,
-      )
-      if (human)
-        this.box(
-          elbow,
-          0,
-          -lower + 0.015,
-          0,
-          0.14,
-          0.045,
-          0.17,
-          '#efeee5',
-          0.014,
-        )
-      this.sphere(
-        elbow,
-        0,
-        -lower - 0.055,
-        0.012,
-        0.078,
-        0.09,
-        0.075,
-        human ? skin : bibi ? robotShell : '#e6e5e2',
-      )
-      arms.push(arm)
-      elbows.push(elbow)
-      const leg = new THREE.Group()
-      leg.position.set(side * (human ? 0.14 : 0.17), human ? 0.84 : 0.59, 0)
-      body.add(leg)
-      const thigh = human ? 0.37 : 0.24,
-        shin = human ? 0.34 : 0.19
-      this.box(
-        leg,
-        0,
-        -thigh / 2,
-        0,
-        human ? 0.19 : 0.195,
-        thigh,
-        0.23,
-        human ? trousers : robotShell,
-        0.055,
-      )
-      const knee = new THREE.Group()
-      knee.position.y = -thigh
-      leg.add(knee)
-      this.sphere(
-        knee,
-        0,
-        0,
-        0,
-        0.08,
-        0.075,
-        0.085,
-        human ? trousers : bibi ? '#e4b632' : '#b8b4ab',
-      )
-      this.box(
-        knee,
-        0,
-        -shin / 2,
-        0,
-        human ? 0.17 : 0.18,
-        shin,
-        0.21,
-        human ? trousers : robotShell,
-        0.04,
-      )
-      this.box(
-        knee,
-        0,
-        -shin - 0.045,
-        0.055,
-        human ? 0.205 : 0.24,
-        0.14,
-        human ? 0.32 : 0.34,
-        human ? '#3c4546' : bibi ? robotShell : '#e4e2df',
-        0.05,
-      )
-      legs.push(leg)
-      knees.push(knee)
-    }
-    const ringMaterial = this.material('selection-ring')
-    ringMaterial.color.set('#f5b800')
-    ringMaterial.emissive.set('#6b5414')
-    ringMaterial.emissiveIntensity = 0.24
-    ringMaterial.transparent = true
-    ringMaterial.opacity = 0.95
+    this.contact(root, 0, 0, 1, 0.9, 0.9)
+    const joints = () => [new THREE.Object3D(), new THREE.Object3D()]
+    const badge = new THREE.Mesh(
+      this.geometry(
+        'figure-badge',
+        () => new THREE.BoxGeometry(0.01, 0.01, 0.01),
+      ),
+      this.material('#ffffff'),
+    )
+    badge.visible = false
+    body.add(badge)
     const ring = new THREE.Mesh(
       this.geometry(
-        `selection-ring/${appearance}`,
-        () =>
-          new THREE.RingGeometry(human ? 0.47 : 0.67, human ? 0.53 : 0.73, 56),
+        'selection-ring/figure',
+        () => new THREE.RingGeometry(0.5, 0.56, 56),
       ),
-      ringMaterial,
+      this.material('selection-ring'),
     )
     ring.rotation.x = -Math.PI / 2
     ring.position.y = 0.04
     root.add(ring)
-    root.traverse((object) => {
-      object.userData.entityId = id
-    })
-    const robot = {
+    const robot: Robot = {
       appearance,
+      look,
       root,
       body,
-      head,
-      arms,
-      elbows,
-      legs,
-      knees,
+      head: new THREE.Object3D(),
+      arms: joints(),
+      elbows: joints(),
+      legs: joints(),
+      knees: joints(),
       ring,
       badge,
       phase: 0,
       lastX: NaN,
       lastY: NaN,
     }
+    root.traverse((object) => {
+      object.userData.entityId = id
+    })
     this.robots.set(id, robot)
+    const attach = (figure: THREE.Object3D, scale: number) => {
+      figure.scale.setScalar(scale)
+      const part = (name: string) =>
+        figure.getObjectByName(name) ?? new THREE.Object3D()
+      // 0번은 화면 기준 왼쪽(x 음수, 캐릭터의 오른쪽)이다. 직접 만든 몸과 같은 순서라 같은 자세 코드를 쓴다.
+      robot.arms = [part('arm-right'), part('arm-left')]
+      robot.elbows = [part('elbow-right'), part('elbow-left')]
+      robot.legs = [part('leg-right'), part('leg-left')]
+      robot.knees = [part('knee-right'), part('knee-left')]
+      if (appearance === 'human') robot.head = part('head')
+      robot.seatOffset = ROBOT_HIP - part('leg-left').position.y * scale
+      figure.traverse((object) => {
+        object.userData.entityId = id
+        if ((object as THREE.Mesh).isMesh) object.castShadow = true
+      })
+      body.add(figure)
+    }
+    if (appearance === 'member-robot' || appearance === 'bee') {
+      const template = this.memberFigure(appearance, () =>
+        appearance === 'bee' ? buildBee() : buildRobot(),
+      )
+      attach(template.figure.clone(), FIGURE_HEIGHT / template.height)
+      return robot
+    }
+    if (appearance === 'agent') {
+      const template = this.memberFigure(look, () => buildAgent(color, status))
+      attach(template.figure.clone(), METER)
+      return robot
+    }
+    // 사람(Kenney)과 비비(GLB)는 받는 동안 바닥 그림자만 보이고, 받은 뒤 붙는다.
+    const bibi = appearance === 'bibi'
+    void loadKenney(bibi ? BIBI_MODEL : PERSON_MODEL)
+      .then((model) => {
+        if (this.robots.get(id) !== robot) return
+        const figure = cloneKenney(model)
+        figure.getObjectByName('arm-right')?.rotation.set(0, 0, PERSON_ARMS)
+        figure.getObjectByName('arm-left')?.rotation.set(0, 0, -PERSON_ARMS)
+        attach(figure, (bibi ? BIBI_HEIGHT : FIGURE_HEIGHT) / model.size.y)
+        // 비비 GLB(D35)의 Idle·Walk 클립. Wave는 쓸 곳이 생길 때 붙인다.
+        const clip = (name: string) =>
+          model.animations.find((item) => item.name === name)
+        if (bibi && clip('Idle')) {
+          const mixer = new THREE.AnimationMixer(figure)
+          const action = (name: string) => {
+            const found = clip(name)
+            return found && mixer.clipAction(found)
+          }
+          robot.motion = {
+            mixer,
+            idle: action('Idle'),
+            walk: action('Walk'),
+            walkUntil: 0,
+          }
+        }
+      })
+      .catch(() => undefined)
     return robot
+  }
+
+  // 로봇·벌·에이전트 모델은 한 번 만들어 두고 캐릭터마다 복제한다(복제본은 geometry·material을 나눠 쓰고, dispose에서 한 번 정리한다).
+  private memberFigure(key: string, build: () => THREE.Group) {
+    let template = this.memberFigures.get(key)
+    if (!template) {
+      const figure = build()
+      const size = new THREE.Box3()
+        .setFromObject(figure)
+        .getSize(new THREE.Vector3())
+      template = { figure, height: size.y }
+      this.memberFigures.set(key, template)
+    }
+    return template
+  }
+
+  // 이름표(D37): 흰 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
+  private nameTag(robot: Robot, tag?: string, note?: string) {
+    const text = tag
+      ? `${tag}
+${note ?? ''}`
+      : ''
+    if (robot.tag?.text === text) return
+    this.dropTag(robot)
+    if (!tag) return
+    const canvas = document.createElement('canvas')
+    const g = canvas.getContext('2d')
+    const font = (size: number) =>
+      `700 ${size}px Geist, "Malgun Gothic", sans-serif`
+    canvas.width = 512
+    canvas.height = note ? 168 : 84
+    if (g) {
+      g.font = font(30)
+      const pill = (y: number, label: string, fill: string, ink: string) => {
+        const width = Math.min(500, g.measureText(label).width + 44)
+        g.fillStyle = fill
+        g.strokeStyle = 'rgba(44,41,31,0.16)'
+        g.lineWidth = 2
+        g.beginPath()
+        g.roundRect(256 - width / 2, y, width, 60, 30)
+        g.fill()
+        g.stroke()
+        g.fillStyle = ink
+        g.textAlign = 'center'
+        g.textBaseline = 'middle'
+        g.fillText(label, 256, y + 31, 470)
+      }
+      pill(12, tag, '#ffffff', '#2c291f')
+      if (note) pill(96, note, '#fff3c4', '#6e5200')
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: texture, transparent: true }),
+    )
+    const width = 2.1
+    sprite.scale.set(width, (width * canvas.height) / canvas.width, 1)
+    sprite.center.set(0.5, 0)
+    sprite.position.y = FIGURE_HEIGHT + 0.25
+    sprite.renderOrder = 5
+    sprite.userData.ignorePicking = true
+    robot.root.add(sprite)
+    robot.tag = { text, sprite }
+  }
+
+  private dropTag(robot: Robot) {
+    if (!robot.tag) return
+    robot.tag.sprite.removeFromParent()
+    robot.tag.sprite.material.map?.dispose()
+    robot.tag.sprite.material.dispose()
+    robot.tag = undefined
   }
 
   private animateFlips(time: number) {
@@ -3141,14 +3528,19 @@ export class OfficeRenderer3D {
       present.add(entity.id)
       const look = entity.look as { top?: string } | undefined
       const color = entity.color || look?.top || '#a09b90'
-      const appearance = entity.appearance ?? 'robot'
+      const appearance = entity.appearance ?? 'agent'
+      const status = agentStatusOf(entity.agentStatus ?? entity.status)
+      const shape =
+        appearance === 'agent' ? `agent|${color}|${status}` : appearance
       let robot = this.robots.get(entity.id)
-      if (robot && robot.appearance !== appearance) {
+      if (robot && robot.look !== shape) {
         this.people.remove(robot.root)
+        this.dropTag(robot)
         this.robots.delete(entity.id)
         robot = undefined
       }
-      robot ??= this.robot(entity.id, color, appearance)
+      robot ??= this.figure(entity.id, appearance, shape, color, status)
+      this.nameTag(robot, entity.tag, entity.note)
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&
@@ -3192,10 +3584,23 @@ export class OfficeRenderer3D {
       robot.body.rotation.y += delta * Math.min(1, elapsed * 14 || 1)
       robot.body.position.y =
         (entity.seated
-          ? (entity.seatLift ?? 0.08)
-          : walking
+          ? (entity.seatLift ?? 0.08) + (robot.seatOffset ?? 0)
+          : walking && !robot.motion
             ? Math.abs(Math.sin(robot.phase)) * (entity.running ? 0.085 : 0.055)
             : 0) + breathing
+      const motion = robot.motion
+      if (motion) {
+        if (walking) motion.walkUntil = time + 250
+        const next =
+          time < motion.walkUntil ? (motion.walk ?? motion.idle) : motion.idle
+        if (next && next !== motion.playing) {
+          next.reset().fadeIn(0.25).play()
+          motion.playing?.fadeOut(0.25)
+          motion.playing = next
+        }
+        motion.walk?.setEffectiveTimeScale(entity.running ? 1.5 : 1)
+        motion.mixer.update(elapsed)
+      }
       robot.body.rotation.x =
         entity.running && walking ? 0.13 : resting ? -0.09 : typing ? 0.055 : 0
       robot.body.rotation.z = resting ? Math.sin(idleTime * 0.45) * 0.025 : 0
@@ -3251,6 +3656,7 @@ export class OfficeRenderer3D {
     for (const [id, robot] of this.robots)
       if (!present.has(id)) {
         this.people.remove(robot.root)
+        this.dropTag(robot)
         this.robots.delete(id)
       }
     if (opts.car && floor.id === 1) {
@@ -3263,10 +3669,25 @@ export class OfficeRenderer3D {
       this.car.position.set(opts.car.x / TILE + 1.6, 0, 21.15)
     } else if (this.car) this.car.visible = false
     // Open the wall nearest an outside orbit camera, like an architectural cutaway.
-    this.rearWindows.visible =
-      this.firstPerson || this.camera.position.z >= this.environmentEdge.z
-    this.sideWindows.visible =
-      this.firstPerson || this.camera.position.x >= this.environmentEdge.x
+    if (this.frontWall && this.rightWall) {
+      // 고정 사무실(D38): 돌하우스 단면. 카메라 반대편 두 벽은 제 높이, 카메라 쪽 두 벽은 무릎 높이로 자른다.
+      // 카메라를 돌리면 자르는 벽도 바뀐다. 1인칭에서는 네 벽 모두 제 높이다.
+      const { left, back, right, front } = this.wallBounds,
+        at = this.camera.position
+      const cut = (wall: THREE.Group, near: boolean) => {
+        wall.visible = true
+        wall.scale.y = !this.firstPerson && near ? 0.14 : 1
+      }
+      cut(this.rearWindows, at.z < back)
+      cut(this.sideWindows, at.x < left)
+      cut(this.frontWall, at.z > front)
+      cut(this.rightWall, at.x > right)
+    } else {
+      this.rearWindows.visible =
+        this.firstPerson || this.camera.position.z >= this.environmentEdge.z
+      this.sideWindows.visible =
+        this.firstPerson || this.camera.position.x >= this.environmentEdge.x
+    }
     this.overhead.visible = this.firstPerson
     this.firstPersonEnclosure.visible = this.firstPerson
     // Aim after camera, NPC and furniture transforms settle for this frame.
@@ -3429,7 +3850,10 @@ export class OfficeRenderer3D {
       this.renderer.dispose()
       this.canvas.remove()
     }
+    this.robots.forEach((robot) => this.dropTag(robot))
     this.robots.clear()
+    this.memberFigures.forEach(({ figure }) => disposeFigure(figure))
+    this.memberFigures.clear()
     this.room.clear()
     this.architecture.clear()
     this.windowMullions.length = 0
