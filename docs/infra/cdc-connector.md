@@ -93,7 +93,8 @@ crest /connectors/beez-published-analysis-1/status
 # 2) 슬롯이 생기고 active = t, retained 는 수 MB 이하
 pgsql -c "SELECT slot_name, plugin, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained FROM pg_replication_slots" </dev/null
 # 3) 초기 스냅샷 끝남(기존 접수행이 있으면 그 수만큼 op=r 메시지가 토픽에 감)
-cdc logs connect --since 5m 2>&1 | grep -iE "snapshot (ended|completed)|ERROR" | tail -5
+# 대소문자를 가리고 ERROR 앞뒤에 공백을 둔다 — -i 면 설정 덤프의 errors.* 줄까지 잡힌다(11-05 서버)
+cdc logs connect --since 5m 2>&1 | grep -E "Snapshot (ended|completed)| ERROR " | tail -5
 ```
 
 - task가 `FAILED`면 `crest /connectors/beez-published-analysis-1/status`의 `trace` 첫 줄을 본다.
@@ -239,3 +240,6 @@ pgsql -c "SELECT count(*) FROM pg_replication_slots" </dev/null
 
 | 날짜 | 단계 | 결과 |
 |---|---|---|
+| 11-05 | 1 사전 점검 (전진, 머지 전) | 슬롯 0행, publication `{id,status}`, kafka·connect healthy, 커넥터 `{}`, 토픽 파티션 1·복제 1·`retention.ms=604800000`, 비밀 파일 `읽힘` |
+| 11-05 | 2 설정 올리기 (브랜치 커밋 `1bb781bd`) | `/opt/beez/cdc` = `REVISION`·`compose.yaml`·`intake-connector.json`, password 줄은 자리표시자. `cdc up -d --wait` 재생성 없음(Up 3 hours 유지) |
+| 11-05 17:41 KST | 3 등록 · 4 확인 | `PUT …/config` 응답의 password 자리표시자. connector·task `RUNNING`, 슬롯 `beez_published_analysis` `pgoutput` `active = t`, retained 152 bytes. `Snapshot ended … status=COMPLETED`, `totalEventCount=0`(접수행 0) |
