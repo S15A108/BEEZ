@@ -390,6 +390,23 @@ it('팀원이 넘겨받을 사람을 고르면 열린 작업을 그 사람에게
   expect(leave).toHaveBeenCalledWith('101', { reassign_to_member_id: '21' })
 })
 
+it('나가기가 409로 막히면 이유를 보이고 역할과 팀원 목록을 다시 불러온다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  const invalidate = vi.spyOn(client, 'invalidateQueries')
+  // 그사이 팀장이 되었는데 창은 아직 팀원 나가기 모양이다. 서버는 409 leader_transfer_required로 막는다.
+  renderRemoveView(false)
+  // 열린 작업을 알게 되면 폼을 새로 그리므로 경고가 보인 뒤에 입력한다.
+  await screen.findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(
+    await screen.findByText('인간 팀장을 먼저 위임해 주세요.'),
+  ).toBeInTheDocument()
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects', '101'] })
+  expect(screen.queryByText('나의 도시')).not.toBeInTheDocument()
+})
+
 // 11-04 사용자 결정: 팀장의 나가기 창은 '위임하고 나가기'와 '프로젝트 삭제' 두 길이다(MEM-A10·PRJ-A05).
 it('팀장은 넘길 팀원을 골라야 위임하고 나가고, 위임과 나가기를 한 번에 요청한다', async () => {
   const user = userEvent.setup()

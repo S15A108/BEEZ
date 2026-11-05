@@ -31,7 +31,11 @@ import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
 import { projectPlacements } from '@/features/projects/placements'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
-import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
+import {
+  getApiErrorCode,
+  getApiErrorMessage,
+  getApiErrorStatus,
+} from '@/api/error'
 import {
   Dialog,
   DialogContent,
@@ -220,6 +224,20 @@ export function TeamPanel({
     navigate('/')
     queryClient.removeQueries({ queryKey: ['projects', projectId] })
     void queryClient.invalidateQueries({ queryKey: ['projects'] })
+  }
+  // 성공하면 이 프로젝트를 다시 부르지 않도록 action.run 없이 부른다. 409(leader_transfer_required·invalid_transfer_target)는
+  // 그사이 역할이나 팀원이 바뀐 것이라 다시 불러오고, 이유는 폼이 보이도록 오류를 다시 던진다.
+  const leave = async (input: Parameters<typeof membersApi.leave>[1]) => {
+    try {
+      await membersApi.leave(projectId, input)
+    } catch (cause) {
+      if (getApiErrorStatus(cause) === 409)
+        await queryClient.invalidateQueries({
+          queryKey: ['projects', projectId],
+        })
+      throw cause
+    }
+    leaveProject()
   }
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
@@ -674,13 +692,12 @@ export function TeamPanel({
                         fields={[...reassign, confirmName]}
                         destructive
                         submitLabel="프로젝트 나가기"
-                        onSubmit={async (values) => {
-                          await membersApi.leave(projectId, {
+                        onSubmit={(values) =>
+                          leave({
                             reassign_to_member_id:
                               values.reassign_to_member_id || undefined,
                           })
-                          leaveProject()
-                        }}
+                        }
                       />
                     </div>
                   ) : otherMembers.length ? (
@@ -716,15 +733,14 @@ export function TeamPanel({
                           ]}
                           destructive
                           submitLabel="위임하고 나가기"
-                          onSubmit={async (values) => {
-                            await membersApi.leave(projectId, {
+                          onSubmit={(values) =>
+                            leave({
                               transfer_leader_to_member_id:
                                 values.transfer_leader_to_member_id,
                               reassign_to_member_id:
                                 values.reassign_to_member_id || undefined,
                             })
-                            leaveProject()
-                          }}
+                          }
                         />
                       </section>
                       <section
