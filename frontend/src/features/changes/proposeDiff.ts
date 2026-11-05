@@ -30,6 +30,9 @@ export function proposeChanges(base: string, edited: string) {
     for (let i = 0; i < Math.max(removed.length, added.length); i++) {
       const before = removed[i]
       const after = added[i]
+      // 긴 문서는 lineDiff가 가운데를 통째로 빠진 줄·더한 줄로 돌려줘서, 짝지은 두 줄이 똑같을 수 있다.
+      // 똑같은 짝은 바뀐 곳이 아니다(PR #135 리뷰).
+      if (before && after && before.text === after.text) continue
       const beforeKey = before?.text.match(KEY)?.[0]
       const afterKey = after?.text.match(KEY)?.[0]
       if (before && after && beforeKey === afterKey) {

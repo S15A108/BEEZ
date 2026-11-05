@@ -95,3 +95,20 @@ it('항목 키는 서버가 만드는 REQ·API·ENT·POL·CON-숫자 3자리 이
   expect(keyOf('UTF-8 응답은 API-012 규칙을 따른다.')).toBe('API-012')
   expect(keyOf('ENT-1000 프로젝트 테이블')).toBe('ENT-1000')
 })
+
+// PR #135 리뷰(전진): 긴 문서는 lineDiff가 가운데를 통째로 빠진 줄·더한 줄로 돌려주는데, 순서대로 짝지은 두 줄이
+// 똑같아도 '수정'으로 셌다. 2,000줄 문서에서 두 줄만 고쳐도 '바뀐 곳 1,491개'가 나왔다. 똑같은 짝은 바뀐 곳이 아니다.
+it('긴 문서에서 두 줄만 고치면 바뀐 곳도 두 곳이다', () => {
+  const base = Array.from({ length: 2000 }, (_, i) => `줄 ${i + 1}`)
+  const edited = [...base]
+  edited[9] = '줄 10 고침'
+  edited[1499] = '줄 1500 고침'
+  const result = proposeChanges(base.join('\n'), edited.join('\n'))
+  expect(
+    result.changes.map(({ kind, before, after }) => [kind, before, after]),
+  ).toEqual([
+    ['UPDATE', '줄 10', '줄 10 고침'],
+    ['UPDATE', '줄 1500', '줄 1500 고침'],
+  ])
+  expect([result.addedLines, result.removedLines]).toEqual([2, 2])
+})
