@@ -293,6 +293,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         assertThat(retried.get("id").asString()).isEqualTo(validationId);
         assertThat(retried.get("status").asString()).isEqualTo("RUNNING");
         assertThat(retried.get("current_attempt").asInt()).isEqualTo(2);
+        // ERROR 가 아니면 error_code 생략 — MCP 결과도 REST 와 같은 non_null 직렬화 (서비스 규칙은 ValidationRetryIntegrationTests)
+        assertThat(retried.has("error_code")).isFalse();
         // 같은 키 재전송은 처음 결과, 새 시도 없음 (공통 5절)
         assertThat(ok(call(member, "retry_validation", args)).get("current_attempt").asInt()).isEqualTo(2);
         assertThat(count("select count(*) from validation_run where validation_id = " + validationId)).isEqualTo(2);
