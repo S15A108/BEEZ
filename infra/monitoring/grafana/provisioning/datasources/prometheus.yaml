@@ -1,5 +1,5 @@
 # Grafana 데이터 소스 (S15P31A108-263). 화면에서 고치지 않고 이 파일로만 바꾼다(재기동 때 이 파일로 되돌아간다).
-# 대시보드는 S15P31A108-264.
+# 대시보드는 dashboards/beez.yaml (S15P31A108-264).
 apiVersion: 1
 
 datasources:

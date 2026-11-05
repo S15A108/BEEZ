@@ -22,6 +22,7 @@ BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 
 | CD 배포 호출 (`cd.yml` deploy 잡) | Environment `dev` 시크릿 | `JENKINS_API_TOKEN` |
 | 서버 컨테이너 | `/opt/beez/.env.<환경>` → `deploy.sh` 가 `--env-file` 로 넘김 | 그 파일 (`640 ubuntu:beez-deploy`) |
 | Jenkins | `/etc/jenkins/casc.env` | 그 파일 (`600 root:root`) |
+| 서버 모니터링 스택 | `/opt/beez/.env.monitoring` ([아래 표](#모니터링-env-파일-optbeezenvmonitoring)) | 그 파일 (`640 ubuntu:beez-deploy`), 웹훅 주소 파일 (`640 root:nogroup`) |
 | 저장소 자동화 | 저장소 시크릿 | `PR_AUTOMERGE_TOKEN`, `GITLAB_SYNC_TOKEN` |
 
 서버 env 파일을 처음 만드는 명령과 GMS 키를 넣는 명령은 [cd.md 서버 준비](cd.md#2-env-파일)에 있습니다.
@@ -57,6 +58,17 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
   값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.
 - `BACKEND_IMAGE`·`AI_IMAGE` 는 `deploy.sh` 가 배포 SHA 로 채웁니다. env 파일에 쓰지 않습니다.
 - `LOCAL_HTTP_PORT` 는 로컬 nginx 전용입니다(`compose.local.yaml`).
+
+### 모니터링 env 파일 (`/opt/beez/.env.monitoring`)
+
+모니터링 스택(compose 프로젝트 `beez-monitoring`)만 읽는 파일입니다. 본 스택 env 파일과 나눠 두며 배포 잡은 읽지 않습니다.
+만드는 법·키 설명은 [monitoring.md "env 파일"](monitoring.md#1-env-파일), 로컬판은 `infra/monitoring/local.env` 입니다.
+
+| 이름 | 필수 | 비밀 | 의미 |
+|---|---|---|---|
+| `GRAFANA_ADMIN_PASSWORD` | 필수 | 비밀 | Grafana 관리자. grafana 볼륨을 처음 만들 때만 쓰임 |
+| `MONITOR_DB_PASSWORD` | 필수 | 비밀 | postgres-exporter 전용 DB 계정 `beez_monitor` |
+| `ALERTMANAGER_WEBHOOK_URL_FILE` | 필수 | | Mattermost 웹훅 주소가 든 **파일 경로**(서버 `/opt/beez/.alertmanager-webhook-url`). 주소 자체는 그 파일에만 둡니다 — [monitoring-alerts.md "웹훅 넣기"](monitoring-alerts.md#웹훅-넣기-서버당-한-번) |
 
 ### backend (Spring)
 
