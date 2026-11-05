@@ -60,12 +60,6 @@ export const router = createBrowserRouter([
         }),
       },
       {
-        path: 'reset-password',
-        lazy: async () => ({
-          Component: (await import('@/pages/PasswordResetPage')).default,
-        }),
-      },
-      {
         path: '*',
         lazy: async () => ({
           Component: (await import('@/pages/NotFoundPage')).default,

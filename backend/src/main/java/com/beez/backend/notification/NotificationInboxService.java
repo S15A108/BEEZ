@@ -76,8 +76,9 @@ public class NotificationInboxService {
 
         String listSql = """
                 select n.id, n.project_id, n.type, n.title, n.body, n.ref_kind, n.ref_id, n.document_id,
-                       n.created_at, n.read_at
+                       b.version_no as baseline_version_no, n.created_at, n.read_at
                   from notification n
+                  left join baseline b on n.ref_kind = 'BASELINE' and b.id = n.ref_id and b.project_id = n.project_id
                  where %s %s and n.id < :beforeId
                  order by n.id desc
                  limit :limit
@@ -131,12 +132,18 @@ public class NotificationInboxService {
                 rs.getString("ref_kind"),
                 Ids.str(nullableLong(rs, "ref_id")),
                 Ids.str(nullableLong(rs, "document_id")),
+                nullableInt(rs, "baseline_version_no"),
                 instant(rs.getTimestamp("created_at")),
                 instant(rs.getTimestamp("read_at")));
     }
 
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
         long value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
+    }
+
+    private static Integer nullableInt(ResultSet rs, String column) throws SQLException {
+        int value = rs.getInt(column);
         return rs.wasNull() ? null : value;
     }
 

@@ -16,7 +16,57 @@ import {
   verifiedTokenFor,
 } from './emailVerifications'
 import { blankProject, nextId, now, passwordFingerprint } from './state'
+import type { MockDatabase, StoredAccount } from './state'
 import { reassignTask } from './tasks'
+
+// 비밀번호 찾기(ACC-A07)는 서버 기본값(application.yml beez.password-recovery)과 같다: 유효 30분, 같은 이메일 다시 요청 60초, 1시간 5번.
+const TEMPORARY_TTL_MS = 30 * 60_000
+const FORGOT_RESEND_MS = 60_000
+const FORGOT_LIMIT = 5
+const FORGOT_WINDOW_MS = 60 * 60_000
+const FORGOT_MESSAGE = '입력한 정보가 맞으면 임시 비밀번호를 메일로 보냅니다.'
+
+// 서버 PasswordRecoveryService.generate처럼 헷갈리는 글자(0·O·1·l·I)를 뺀 영문·숫자 12자. 영문과 숫자가 모두 들어가야 한다.
+function temporaryPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+  for (;;) {
+    const value = Array.from(
+      crypto.getRandomValues(new Uint8Array(12)),
+      (byte) => alphabet[byte % alphabet.length],
+    ).join('')
+    if (/[A-Za-z]/.test(value) && /\d/.test(value)) return value
+  }
+}
+
+function storedAccount(context: MockContext): StoredAccount {
+  const id = requireAccount(context).id
+  return context.database.accounts.find((item) => item.profile.id === id)!
+}
+
+// 로그인·내 계정 조회·프로필 수정(ACC-A02·A04·A05) 응답에는 must_change_password를 싣는다. 가입(ACC-A01) 응답에는 없다(PR #118).
+const withPasswordState = (stored: StoredAccount) => ({
+  ...stored.profile,
+  must_change_password: !!stored.must_change_password,
+})
+
+// 회원 탈퇴를 막는 프로젝트(ACC-A10·A13): 본인 말고 활성 팀원이 있는 프로젝트의 팀장. member_count는 본인을 뺀 수다.
+function blockedProjects(database: MockDatabase, accountId: string) {
+  return database.projects.flatMap(({ project, members }) => {
+    const others = members.filter((item) => item.account_id !== accountId)
+    return members.some(
+      (item) => item.account_id === accountId && item.role === 'LEADER',
+    ) && others.length
+      ? [
+          {
+            project_id: project.id,
+            name: project.name,
+            my_role: 'LEADER',
+            member_count: others.length,
+          },
+        ]
+      : []
+  })
+}
 
 // 서버 PasswordPolicy와 같은 검사: 8자 이상, UTF-8 72바이트 이하, 영문과 숫자 포함(PR #72 mock/live 전수 대조 LIVE-AMP-02).
 async function password(value: unknown): Promise<string> {
@@ -145,26 +195,48 @@ export async function accountRoutes(
     case 'ACC-A02': {
       const email = requiredString(body, 'email').toLowerCase()
       const fingerprint = await passwordFingerprint(String(body.password ?? ''))
-      const account = database.accounts.find(
-        (item) =>
-          item.profile.email === email &&
-          item.password_fingerprint === fingerprint,
+      const stored = database.accounts.find(
+        (item) => item.profile.email === email,
       )
-      if (!account)
+      const temporary = stored?.temporary_password
+      // 비밀번호가 틀려도 쓸 수 있는 임시 비밀번호와 맞으면 그것이 비밀번호가 되고 must_change_password가 붙는다
+      // (서버 PasswordRecoveryService.redeem). 한 번 쓰면 닫힌다.
+      if (
+        stored &&
+        stored.password_fingerprint !== fingerprint &&
+        temporary?.fingerprint === fingerprint &&
+        Date.parse(temporary.expires_at) > Date.now()
+      ) {
+        stored.password_fingerprint = fingerprint
+        stored.must_change_password = true
+        delete stored.temporary_password
+      }
+      if (!stored || stored.password_fingerprint !== fingerprint)
         fail(401, 'invalid_credentials', '이메일과 비밀번호를 확인해 주세요.')
-      database.session_account_id = account.profile.id
-      joinPendingInvitations(context, account.profile)
-      return { data: account.profile }
+      database.session_account_id = stored.profile.id
+      joinPendingInvitations(context, stored.profile)
+      return { data: withPasswordState(stored) }
     }
     case 'ACC-A03':
       database.session_account_id = null
       return { status: 204 }
     case 'ACC-A04':
-      return { data: requireAccount(context) }
+      return { data: withPasswordState(storedAccount(context)) }
     case 'ACC-A05': {
-      const account = requireAccount(context)
-      if (body.name !== undefined) account.name = requiredString(body, 'name')
-      if (typeof body.avatar === 'string') account.avatar = body.avatar
+      const stored = storedAccount(context)
+      const account = stored.profile
+      // 서버(AccountService.updateProfile)처럼 null·생략은 그대로 두고, 이름은 비울 수 없으며, 아바타 ""는 지운다.
+      if (body.name == null && body.avatar == null)
+        fail(
+          400,
+          'validation_failed',
+          '변경할 필드(name, avatar)가 하나 이상 필요합니다',
+        )
+      if (body.name != null) account.name = requiredString(body, 'name')
+      if (typeof body.avatar === 'string') {
+        if (body.avatar.trim()) account.avatar = body.avatar.trim()
+        else delete account.avatar
+      }
       database.projects.forEach((project) =>
         project.members
           .filter((member) => member.account_id === account.id)
@@ -172,74 +244,105 @@ export async function accountRoutes(
             member.name = account.name
           }),
       )
-      return { data: account }
+      return { data: withPasswordState(stored) }
     }
     case 'ACC-A06': {
-      const stored = database.accounts.find(
-        (item) => item.profile.id === requireAccount(context).id,
-      )!
+      const stored = storedAccount(context)
+      // 임시 비밀번호로 로그인했으면 그 임시 비밀번호가 현재 비밀번호다.
       if (
         stored.password_fingerprint !==
         (await passwordFingerprint(String(body.current_password ?? '')))
       )
-        fail(400, 'current_password_mismatch', '현재 비밀번호가 맞지 않아요.')
+        fail(400, 'current_password_mismatch', '현재 비밀번호가 맞지 않습니다')
       stored.password_fingerprint = await password(body.new_password)
+      // 바꾸면 must_change_password가 풀리고, 받아 두고 쓰지 않은 임시 비밀번호도 닫는다.
+      delete stored.must_change_password
+      delete stored.temporary_password
       return { status: 204 }
     }
     case 'ACC-A07': {
-      const account = database.accounts.find(
-        (item) => item.profile.email === body.email,
+      const email = requiredString(body, 'email').toLowerCase()
+      const name = requiredString(body, 'name')
+      const requests = (database.temporary_password_requests ??= [])
+      const sent = requests.filter((item) => item.email === email)
+      const at = Date.now()
+      if (
+        sent.length &&
+        at < Date.parse(sent.at(-1)!.created_at) + FORGOT_RESEND_MS
       )
-      if (account)
-        database.reset_tokens.push({
-          token: `mock-reset-${account.profile.id}`,
-          account_id: account.profile.id,
-          expires_at: new Date(Date.now() + 1800000).toISOString(),
-          used: false,
-        })
+        fail(429, 'rate_limited', '다시 요청은 잠시 뒤에 할 수 있습니다')
+      if (
+        sent.filter(
+          (item) => Date.parse(item.created_at) > at - FORGOT_WINDOW_MS,
+        ).length >= FORGOT_LIMIT
+      )
+        fail(
+          429,
+          'rate_limited',
+          '이 이메일로 요청할 수 있는 횟수를 넘었습니다. 잠시 뒤에 다시 시도하세요',
+        )
+      requests.push({ email, created_at: now() })
+      const stored = database.accounts.find(
+        (item) =>
+          item.profile.email === email && item.profile.name.trim() === name,
+      )
+      if (!stored) return { status: 202, data: { message: FORGOT_MESSAGE } }
+      // 발급해도 기존 비밀번호는 그대로이고, 다시 발급하면 이전 임시 비밀번호는 무효다.
+      // 예시 환경은 메일을 보내지 않아 안내 문구에 임시 비밀번호를 붙인다. 저장소에는 지문만 남긴다.
+      const temporary = temporaryPassword()
+      stored.temporary_password = {
+        fingerprint: await passwordFingerprint(temporary),
+        expires_at: new Date(at + TEMPORARY_TTL_MS).toISOString(),
+      }
       return {
-        data: {
-          message:
-            '예시 환경에서는 메일을 보내지 않아요. 재설정 예시 토큰은 mock-reset-계정ID입니다.',
-        },
         status: 202,
+        data: {
+          message: `${FORGOT_MESSAGE} 예시 환경이라 메일을 보내지 않아요. 임시 비밀번호: ${temporary}`,
+        },
       }
     }
-    case 'ACC-A08':
-    case 'ACC-A09': {
-      const token = database.reset_tokens.findLast(
-        (item) => item.token === body.token && !item.used,
-      )
-      if (!token || Date.parse(token.expires_at) <= Date.now())
-        fail(410, 'reset_token_expired', '재설정 예시 링크가 만료됐어요.')
-      if (id === 'ACC-A08')
-        return { data: { valid: true, expires_at: token.expires_at } }
-      database.accounts.find(
-        (item) => item.profile.id === token.account_id,
-      )!.password_fingerprint = await password(body.new_password)
-      token.used = true
-      database.session_account_id = null
-      return { status: 204 }
-    }
     case 'ACC-A10': {
-      const account = requireAccount(context)
-      const stored = database.accounts.find(
-        (item) => item.profile.id === account.id,
-      )!
+      const stored = storedAccount(context)
+      const accountId = stored.profile.id
+      // 세션은 유효하므로 401이 아니라 400이다(서버 AccountWithdrawalService).
       if (
         stored.password_fingerprint !==
         (await passwordFingerprint(String(body.password ?? '')))
       )
-        fail(400, 'password_mismatch', '비밀번호를 확인해 주세요.')
-      if (
-        database.projects.some((project) =>
-          project.members.some((member) => member.account_id === account.id),
+        fail(400, 'invalid_credentials', '비밀번호가 맞지 않습니다')
+      const blocked = blockedProjects(database, accountId)
+      if (blocked.length)
+        fail(
+          409,
+          'leader_of_team_projects',
+          '팀원이 있는 프로젝트의 팀장입니다. 팀장을 위임하거나 프로젝트를 삭제한 뒤에 탈퇴할 수 있습니다',
+          { blocked_projects: blocked },
         )
+      // 혼자 쓰는 프로젝트는 함께 지우고, 팀원으로 참여한 프로젝트에서는 빠진다. 맡은 작업의 담당자는 그대로 둔다
+      // (서버 ProjectWithdrawalService). 에이전트 토큰은 모두 폐기한다.
+      database.projects = database.projects.filter(
+        (project) =>
+          !project.members.every((member) => member.account_id === accountId),
       )
-        fail(409, 'active_membership', '참여 프로젝트를 먼저 나가 주세요.')
+      database.projects.forEach((project) => {
+        project.members = project.members.filter(
+          (member) => member.account_id !== accountId,
+        )
+      })
+      database.tokens
+        .filter((token) => token.account_id === accountId)
+        .forEach((token) => {
+          token.revoked_at ??= now()
+        })
       database.accounts = database.accounts.filter((item) => item !== stored)
       database.session_account_id = null
       return { status: 204 }
+    }
+    case 'ACC-A13': {
+      const blocked = blockedProjects(database, requireAccount(context).id)
+      return {
+        data: { can_withdraw: !blocked.length, blocked_projects: blocked },
+      }
     }
     case 'PRJ-A01': {
       const account = requireAccount(context)

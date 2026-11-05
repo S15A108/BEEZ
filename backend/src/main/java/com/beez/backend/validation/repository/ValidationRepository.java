@@ -342,9 +342,10 @@ public class ValidationRepository {
         return jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs,
+                                                        ai_suggested_action)
                         values (:v, :run, :src, :k, :sev, :item, :ver, :task, :msg, cast(:sources as jsonb), :res, :next,
-                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb))
+                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb), :suggestion)
                         returning id
                         """)
                 .param("v", validationId).param("run", f.validationRunId(), Types.BIGINT).param("src", f.source())
@@ -354,6 +355,7 @@ public class ValidationRepository {
                 .param("next", f.nextAction(), Types.VARCHAR).param("ck", f.checkKey(), Types.VARCHAR)
                 .param("ev", toJson(f.evidenceIds()))
                 .param("need", f.policyNeedId(), Types.VARCHAR).param("conflicts", toJson(f.conflictingDesignRefs()))
+                .param("suggestion", f.aiSuggestedAction(), Types.VARCHAR)
                 .query(Long.class).single();
     }
 
@@ -367,7 +369,7 @@ public class ValidationRepository {
                         select f.id, f.validation_id, f.validation_run_id, f.source, f.kind, f.severity, f.design_item_id,
                                f.design_item_version_id, f.related_task_id, f.message, f.sources::text as sources, f.resolution,
                                f.next_action, f.check_key, f.evidence_ids::text as evidence_ids, f.policy_need_id,
-                               f.conflicting_design_refs::text as conflicting_design_refs
+                               f.conflicting_design_refs::text as conflicting_design_refs, f.ai_suggested_action
                           from validation_finding f
                           join validation v on v.id = f.validation_id
                           left join validation_run r on r.id = f.validation_run_id
@@ -635,7 +637,7 @@ public class ValidationRepository {
                 rs.getString("source"), rs.getString("kind"), rs.getString("severity"), nullableLong(rs, "design_item_id"),
                 nullableLong(rs, "design_item_version_id"), nullableLong(rs, "related_task_id"), rs.getString("message"),
                 sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence,
-                rs.getString("policy_need_id"), conflicts);
+                rs.getString("policy_need_id"), conflicts, rs.getString("ai_suggested_action"));
     }
 
     private String toJson(Object value) {

@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft } from 'lucide-react'
 import { authApi } from '@/api/services'
 import { AccountLayout } from '@/features/auth/AccountLayout'
@@ -9,6 +10,7 @@ import { ActionForm } from '@/components/ActionForm'
 // 회원 설정 틀 안의 비밀번호 변경(캔버스 SCR-05-v2-password). 바꾸거나 취소하면 회원 설정으로 돌아간다.
 function AccountPassword() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   return (
     <AccountLayout>
       <section
@@ -61,6 +63,8 @@ function AccountPassword() {
                 current_password: values.current_password,
                 new_password: values.new_password,
               })
+              // 바꾸면 서버가 must_change_password를 푼다. 이 화면이 계정을 보고 있을 때 다시 불러 안내를 거둔다.
+              await queryClient.invalidateQueries({ queryKey: ['account'] })
               navigate('/account', {
                 state: {
                   toast:

@@ -25,6 +25,7 @@ services:
       # 보존 기간·디스크 상한은 prometheus.yml 의 storage.tsdb.retention 에 있다
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro   # 알림 규칙(S15P31A108-264). tests/ 는 붙이지 않는다
       - prometheus-data:/prometheus
     networks:
       - monitoring
@@ -44,10 +45,16 @@ services:
       - --cluster.listen-address=   # 한 대만 띄운다. 기본값이면 쓰지 않는 클러스터 포트(9094)를 연다
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/templates:/etc/alertmanager/templates:ro
       - alertmanager-data:/alertmanager   # 알림 일시 중지(silence)·통지 이력
+    # Mattermost 웹훅 주소(비밀값). 서버 파일을 /run/secrets/mattermost_webhook_url 로 붙인다.
+    # 파일 secret 은 바인드 마운트라 호스트 파일 권한이 그대로 간다. 컨테이너가 nobody(65534)로 돌므로
+    # 서버 파일은 그룹 65534 에 읽기 권한을 준다(docs/infra/monitoring-alerts.md "웹훅 넣기")
+    secrets:
+      - mattermost_webhook_url
     networks:
-      - monitoring
-    # 포트를 열지 않는다. 알림 규칙·Mattermost 연결은 S15P31A108-264
+      - monitoring   # 기본 브리지라 밖(Mattermost)으로 나갈 수 있다
+    # 포트를 열지 않는다. 일시 중지는 컨테이너 안의 amtool 로 건다
     mem_limit: 128m
     restart: unless-stopped
 
@@ -66,6 +73,7 @@ services:
       GF_NEWS_NEWS_FEED_ENABLED: "false"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro   # 대시보드 JSON(S15P31A108-264). 경로는 provisioning/dashboards/beez.yaml
       - grafana-data:/var/lib/grafana
     networks:
       - monitoring
@@ -105,6 +113,10 @@ services:
       - beez_default
     mem_limit: 128m
     restart: unless-stopped
+
+secrets:
+  mattermost_webhook_url:
+    file: ${ALERTMANAGER_WEBHOOK_URL_FILE:?ALERTMANAGER_WEBHOOK_URL_FILE is required}
 
 networks:
   monitoring:

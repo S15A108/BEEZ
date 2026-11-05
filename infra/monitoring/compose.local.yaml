@@ -1,4 +1,4 @@
-# 로컬 검증 전용 겹침 파일 (S15P31A108-263). 서버에서는 쓰지 않는다.
+# 로컬 검증 전용 겹침 파일 (S15P31A108-263·264). 서버에서는 쓰지 않는다.
 #
 #   docker compose -f compose.yaml -f compose.local.yaml --env-file local.env up -d
 #
@@ -10,3 +10,22 @@ services:
   node-exporter:
     volumes:
       - /:/host:ro
+
+  # 웹훅을 받아 본문을 로그로 찍는 가짜 Mattermost (S15P31A108-264). local.env 의 웹훅 주소가 여기를 가리킨다.
+  #   docker compose ... logs webhook-catcher  → Alertmanager 가 보낸 JSON
+  webhook-catcher:
+    # compose.yaml 과 같이 태그 + digest(멀티 아키텍처 인덱스)로 고정
+    image: python:3.13-alpine@sha256:7984cf56ceaddebe4fefeb75d64000b9f45d8b77b11a09b24524da6cdc3af0c8
+    command:
+      - python
+      - -u
+      - -c
+      - |
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                print(self.path, self.rfile.read(int(self.headers['Content-Length'])).decode(), flush=True)
+                self.send_response(200); self.end_headers(); self.wfile.write(b'ok')
+        HTTPServer(('', 8080), H).serve_forever()
+    networks:
+      - monitoring

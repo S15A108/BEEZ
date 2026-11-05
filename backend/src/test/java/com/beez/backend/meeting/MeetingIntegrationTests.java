@@ -466,4 +466,57 @@ class MeetingIntegrationTests extends IntegrationTestSupport {
         assertThat(seen).containsExactly("CONFLICT_BRIEF", "TEXT", "TEXT");
         assertThat(other.get(path + "?after_entry_id=abc").statusCode()).isEqualTo(400);
     }
+
+    private List<java.util.Map<String, Object>> notifications(String type) {
+        return jdbc.queryForList("SELECT * FROM notification WHERE project_id = ? AND type = ? ORDER BY id", project.projectId(), type);
+    }
+
+    @Test
+    void addParticipants_notifiesOnlyNewlyAddedPeopleOnce_withReason_andNeverTheAdder() {
+        long meeting = openMeeting();
+        String path = base() + "/" + meeting + "/participants";
+
+        // 참여자(작업 담당자)가 다른 팀원과 자기 자신을 함께 부른다. 자신은 이미 참여 중이라 새로 추가되지 않는다
+        assertThat(post(owner, path, add(otherMember, ownerMember)).statusCode()).isEqualTo(200);
+        assertThat(post(owner, path, add(otherMember)).statusCode()).isEqualTo(200);
+
+        assertThat(notifications("MEETING_PARTICIPANT_ADDED")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(otherAccount);
+            assertThat(row.get("ref_kind")).isEqualTo("MEETING");
+            assertThat(row.get("ref_id")).isEqualTo(meeting);
+            assertThat(row.get("dedupe_key")).isEqualTo("meeting:" + meeting + ":participant-added:" + otherAccount + ":to:" + otherAccount);
+            assertThat(row.get("body").toString()).contains("같이 봐 주세요");
+        });
+    }
+
+    @Test
+    void removeParticipant_notifiesTheRemovedPersonOnlyWhenARowWasActuallyDeleted() {
+        long meeting = openMeeting();
+        String path = base() + "/" + meeting + "/participants/" + ownerMember;
+
+        assertThat(remove(leader, path).statusCode()).isEqualTo(204);
+        // 이미 빠진 사람과 처음부터 참여자가 아닌 멤버는 멱등 204 — 알림을 만들지 않는다
+        assertThat(remove(leader, path).statusCode()).isEqualTo(204);
+        assertThat(remove(leader, base() + "/" + meeting + "/participants/" + otherMember).statusCode()).isEqualTo(204);
+
+        assertThat(notifications("MEETING_PARTICIPANT_REMOVED")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(ownerAccount);
+            assertThat(row.get("dedupe_key")).isEqualTo("meeting:" + meeting + ":participant-removed:" + ownerAccount + ":to:" + ownerAccount);
+        });
+    }
+
+    @Test
+    void createEntry_notifiesOtherParticipantsOnce_notTheAuthorAndNotOnReplay() {
+        long meeting = openMeeting();
+        String path = base() + "/" + meeting + "/entries";
+
+        assertThat(post(owner, path, "{\"text\":\"원문은 알림에 넣지 않습니다\"}", "Idempotency-Key", "k1").statusCode()).isEqualTo(201);
+        assertThat(post(owner, path, "{\"text\":\"원문은 알림에 넣지 않습니다\"}", "Idempotency-Key", "k1").statusCode()).isEqualTo(201);
+
+        // 팀장과 작업 담당자가 참여자다. 기록한 담당자를 뺀 팀장에게 한 건
+        assertThat(notifications("MEETING_RECORD_ADDED")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(project.leaderAccountId());
+            assertThat(row.get("title").toString() + row.get("body")).doesNotContain("원문은 알림에 넣지 않습니다");
+        });
+    }
 }

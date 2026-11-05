@@ -331,10 +331,12 @@ describe('계약 경계', () => {
     ).toBe(false)
   })
 
-  it('122개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(122)
+  // S15P31A108-283: 폐지 예정이고 서버(PR #118)가 만들지 않은 재설정 링크(ACC-A08·A09)를 빼고 탈퇴 가능 여부(ACC-A13)를 더해 120개다.
+  // S15P31A108-290: 초대 메일 다시 보내기(MEM-A11)를 더해 121개다.
+  it('121개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(121)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      122,
+      121,
     )
     expect(
       new Set(
@@ -342,7 +344,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(122)
+    ).toBe(121)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
