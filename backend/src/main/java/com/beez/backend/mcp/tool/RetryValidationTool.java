@@ -8,7 +8,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * MCP-14 retry_validation (02-mcp-tools). 계약: 08 문서 2절 — {@code ValidationMcpService.retryValidation}(-161),
- * REST VAL-A04 와 같은 {@code ValidationRetryService} 규칙이다. 도구명·분리는 02-mcp-tools 상태("담당자 검토")대로 두고 명세 이름을 쓴다.
+ * REST VAL-A04 와 같은 {@code ValidationRetryService} 규칙이다. validate_task_plan 과 나눈 별도 도구 (변준성 확정, -271 리뷰):
+ * 받는 조건(ERROR·전부 RETRY·입력 그대로)과 오류 코드 의미가 새 검증과 다르다.
  */
 @Component
 class RetryValidationTool implements McpTool<RetryValidationArgs> {
@@ -30,7 +31,10 @@ class RetryValidationTool implements McpTool<RetryValidationArgs> {
                 ERROR 로 끝난 검증을 같은 입력으로 다시 실행한다. 현재 시도의 실행 오류가 모두 RETRY 일 때만 받는다 — \
                 HUMAN_REVIEW 오류나 STALE·계획 변경이면 계획을 보완하고 validate_task_plan 으로 새 검증을 요청한다. \
                 expected_attempt 는 get_validation 의 current_attempt 다. 결과가 RUNNING 이면 get_validation 으로 본다. \
-                idempotency_key 는 필수다.""";
+                revision_conflict 면 get_validation 으로 current_attempt·상태를 다시 확인한다 — 시도 번호가 맞는데도 \
+                계획·설계 변경으로 거부되면 validate_task_plan 으로 새 검증을 요청한다. \
+                validation_attempt_limit 이면 같은 입력의 분석 횟수(새 검증과 함께 센다)를 다 쓴 것이라 같은 계획으로는 \
+                새 검증도 막힌다 — 계획을 바꾸거나 사람에게 알린다. idempotency_key 는 필수다.""";
     }
 
     @Override

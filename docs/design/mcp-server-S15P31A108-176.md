@@ -165,7 +165,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | MCP-10 `upsert_task_plan` | `UpsertTaskPlanTool` | `TaskMcpService.upsertTaskPlan` | 변준성 |
 | MCP-11 `validate_task_plan` | `ValidateTaskPlanTool` | `ValidationMcpService.validateTaskPlan` | 변준성 |
 | MCP-13 `get_validation` | `GetValidationTool` | `ValidationQueryService.get` (REST VAL-A02와 같음, 08 계약 2절) | 변준성 |
-| MCP-14 `retry_validation` | `RetryValidationTool` | `ValidationMcpService.retryValidation` (REST VAL-A04와 같은 `ValidationRetryService`, -161). 연결은 -271 — 도구명·분리는 담당자 검토 중이라 명세 이름 그대로 | 변준성 |
+| MCP-14 `retry_validation` | `RetryValidationTool` | `ValidationMcpService.retryValidation` (REST VAL-A04와 같은 `ValidationRetryService`, -161). 연결은 -271 — 별도 도구로 확정(변준성) | 변준성 |
 | MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
 
 - MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).

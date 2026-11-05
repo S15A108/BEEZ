@@ -30,7 +30,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 6. 변경이 발행되면 다음 호출에서 확인하고 계획 수정·재검증 후 RESUME한다.
 7. 완료 결과·계획 대비 변경을 `report_task_state(COMPLETED)`로 보고한다.
 
-`get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`의 분리·명칭은 담당자 검토 대상이다. 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
+`get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`은 `validate_task_plan`과 나눈 별도 도구다(변준성 확정, S15P31A108-271). 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
 
 ## 탐색
 
@@ -1340,7 +1340,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: VAL 재시도 계약  
 담당: BE: 전진(도구) / 변준성(재시도) / AI: 양지훈(실패 정보) / FE: —  
-상태: 도구명·분리 담당자 검토. BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구는 명세 이름 `retry_validation`으로 연결 (S15P31A108-271, `RetryValidationTool`)
+상태: 도구명·분리 확정 — 별도 도구 `retry_validation`(변준성, S15P31A108-271 리뷰: 받는 조건(ERROR·전부 RETRY·입력 그대로)과 오류 코드 의미가 새 검증과 달라 합치지 않는다). BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구 연결 S15P31A108-271 (`RetryValidationTool`)
 
 #### 인증
 
