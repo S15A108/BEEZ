@@ -27,6 +27,7 @@ import {
 } from '@/features/meetings/useMeetingList'
 import { targetLabel, targetPane } from '@/features/inbox/notificationTarget'
 import { Toast } from '@/components/Toast'
+import { BibiStatusRow } from './BibiStatusRow'
 import { Hotbar } from './Hotbar'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
@@ -398,7 +399,7 @@ export function WorkspaceHud({
   // 비비 대화 창이 열린 동안은 단축 바만 남기고 다른 위젯은 숨긴다(PNL-12 B안).
   const chatOpen = pane === 'chat'
   // 팀 목록(SCR-06 수정안 · 팀 현황): 사람마다 지금 하는 일과 연결된 에이전트를 한 줄씩.
-  // 비비는 목록에 넣지 않고 단축 바 가운데 버튼으로만 연다(사용자 요청 10-30).
+  // 비비는 목록에 넣지 않고 단축 바 가운데 버튼으로만 연다(사용자 요청 10-30). 검토·회의 중일 때만 BibiStatusRow가 한 줄 붙는다.
   // API 없음: 접속 점·위치·마지막 접속(MON-A07 presence, PR #42 요청)과 에이전트가 하는 일(MON-A05 보고)은 계약이 생기면 줄에 붙인다.
   const taskOrder = ['IN_PROGRESS', 'WAITING', 'DRAFT', 'READY']
   const taskOf = (memberId: string) =>
@@ -722,6 +723,7 @@ export function WorkspaceHud({
                 </button>
               </li>
             ))}
+            <BibiStatusRow projectId={project.id} />
           </ul>
         </div>
       </section>
