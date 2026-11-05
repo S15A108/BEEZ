@@ -46,12 +46,16 @@ export function officeAgentState(
   return { state: 'online' }
 }
 
-/** 사무실에 그릴 에이전트: 연결된 에이전트, 작업 현황에 세션이 있는 에이전트, 그리고 아직 연결하지 않은 내 에이전트 */
+/**
+ * 사무실에 그릴 에이전트: 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 작업 현황이 있으면 첫 조회의
+ * agent_connected 대신 그 세션으로 연결을 본다(officeAgentState와 같은 기준, PR #128 리뷰).
+ */
 export const showsOfficeAgent = (
   member: { id: string; account_id: string; agent_connected: boolean },
   work: readonly AgentWork[] | undefined,
   accountId: string | undefined,
 ) =>
-  member.agent_connected ||
   member.account_id === accountId ||
-  !!work?.find((item) => item.member_id === member.id)?.agent_session_id
+  (work
+    ? !!work.find((item) => item.member_id === member.id)?.agent_session_id
+    : member.agent_connected)

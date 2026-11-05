@@ -67,15 +67,29 @@ it('작업 현황 API가 없으면 연결 여부와 주인의 진행 중 작업�
   ).toBe('offline')
 })
 
-it('연결된 에이전트, 세션이 있는 에이전트, 아직 연결하지 않은 내 에이전트만 사무실에 그린다', () => {
+// PR #128 리뷰: 작업 현황이 있으면 첫 조회의 agent_connected 대신 새 작업 현황의 세션으로 그릴지 정한다. 열어 둔 동안
+// 토큰이 폐기된 에이전트는 사라지고, 연 뒤에 연결한 에이전트는 나타난다. 기대값 변경: 작업 현황이 있을 때
+// agent_connected만 참이고 세션이 없는 22번은 true → false.
+it('작업 현황에 세션이 있는 에이전트와 내 에이전트만 사무실에 그린다', () => {
   const member = (id: string, account_id: string, agent_connected = false) => ({
     id,
     account_id,
     agent_connected,
   })
   const work = [{ member_id: '25', agent_session_id: '903' }]
-  expect(showsOfficeAgent(member('22', '12', true), work, '11')).toBe(true)
+  expect(showsOfficeAgent(member('22', '12', true), work, '11')).toBe(false)
   expect(showsOfficeAgent(member('25', '13'), work, '11')).toBe(true)
   expect(showsOfficeAgent(member('21', '11'), work, '11')).toBe(true)
   expect(showsOfficeAgent(member('26', '14'), work, '11')).toBe(false)
+})
+
+it('작업 현황 API가 없으면 연결된 에이전트와 내 에이전트를 그린다', () => {
+  const member = (id: string, account_id: string, agent_connected = false) => ({
+    id,
+    account_id,
+    agent_connected,
+  })
+  expect(showsOfficeAgent(member('22', '12', true), undefined, '11')).toBe(true)
+  expect(showsOfficeAgent(member('21', '11'), undefined, '11')).toBe(true)
+  expect(showsOfficeAgent(member('26', '14'), undefined, '11')).toBe(false)
 })
