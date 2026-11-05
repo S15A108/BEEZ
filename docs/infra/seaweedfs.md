@@ -151,6 +151,7 @@ PostgreSQL과 SeaweedFS를 함께 커밋하는 분산 트랜잭션은 사용하�
 | `infra/backup/backup.sh <환경>` | 서버에서 매일 실행(crontab). `pg_dump -Fc` → 목차 검사 → 백업 키로 `rclone copy --immutable --checksum` → **덤프에서 꺼낸** 문서 버전 `storage_key`가 백업에 다 있는지 확인 → 성공하면 `LAST_OK`에 덤프 이름. 다른 백업·받기가 잠금을 쥐고 있으면 최대 30분 기다린다. 덤프는 최근 14개만, 원본은 지우지 않는다 |
 | `infra/backup/pull-backup.sh [폴더] [--check]` | PC Git Bash. 서버 백업에서 PC에 없는 파일만 받는다. 지우지도 덮어쓰지도 않는다. 임시 폴더(`.incoming`)에 받아 끝까지 성공했을 때만 옮긴다. 서버 백업이 도는 중이면 끝날 때까지 기다린다. `--check`면 받은 뒤 `LAST_OK`의 덤프로 `restore-check.sh`까지 돌린다 |
 | `infra/backup/restore-check.sh <백업 폴더>` | Docker만 있으면 어디서나(서버·PC Git Bash). 임시 postgres·SeaweedFS에 복원하고 `storage_key`로 내려받아 `content_hash`와 대조. 운영 컨테이너는 건드리지 않는다 |
+| `infra/backup/restore.sh <환경> objects·all --yes` | 서버. 운영 복원. `objects`는 백업 원본을 bucket에 올리고(지우지 않음), `all`은 배포 잠금을 쥔 채 backend를 멈추고 **DB를 빈 DB로 다시 만들어** 덤프를 복원한 뒤 원본을 올리고 backend를 켠다. `--yes` 없이는 할 일만 보여 준다 |
 
 서버의 백업 위치는 `/var/backups/beez`(`db/`, `objects/<bucket>/`)다. 백업 키는 읽기·목록만 되므로 백업 스크립트가 잘못 돌아도 원본을 지우거나 바꿀 수 없다.
 
@@ -173,8 +174,8 @@ PostgreSQL과 SeaweedFS를 함께 커밋하는 분산 트랜잭션은 사용하�
 
 절차는 [운영 안내 8. 백업·복원](operations.md#8-백업복원)에 있다.
 
-- **원본 몇 개만 없어졌을 때**: 백업 폴더에서 bucket으로 bootstrap 키로 `rclone copy --immutable`한다. 이미 있는 객체는 건너뛰고 빠진 것만 올라간다(로컬 실측: 지운 원본 1개만 올라가고 API 다운로드 해시 일치).
-- **전체 복원**(서버 재구축): 덤프를 `pg_restore`하고 원본 폴더 전체를 같은 방식으로 올린 뒤 `restore-check.sh`와 같은 대조를 한다.
+- **원본 몇 개만 없어졌을 때**: `restore.sh <환경> objects --yes`. 이미 있는 객체는 건너뛰고 빠진 것만 올라간다(로컬 실측: 지운 원본만 올라가고 다운로드 해시 일치).
+- **전체 복원**(서버 재구축 포함): `restore.sh <환경> all --yes` 뒤 `check-live.sh`. `pg_restore --clean`으로 덮어쓰지 않고 빈 DB에 복원한다 — 덤프 뒤 마이그레이션의 테이블이 남으면 Flyway가 기동 중에 멈춘다.
 
 ## 분석 작업의 만료 복구
 

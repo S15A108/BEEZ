@@ -303,17 +303,25 @@ DB(PostgreSQL)와 문서 원본(SeaweedFS)을 매일 새벽 서버에 백업하�
 | 서버 백업 | `/var/backups/beez` (`db/` 덤프 최근 14개, `objects/` 원본 전부, `LAST_OK` 마지막 성공 덤프 이름, `backup.log`) | |
 | 서버 밖 백업 | PC `~/beez-backup/dev` (`infra/backup/pull-backup.sh`) | 출근해서 한 번 |
 | 운영 원본 대조 `beez-check-live dev` (= `infra/backup/check-live.sh`) | 서버 | 배포·복원 뒤. 읽기만 함 |
+| 운영 복원 `beez-restore dev objects`·`beez-restore dev all` (= `infra/backup/restore.sh`) | 서버 | 원본이 없어졌거나 DB 를 되돌릴 때. `--yes` 없이는 할 일만 보여 줌 |
 
 ### 매일 확인 (PC Git Bash)
 
 ```bash
-cd /c/git/BEEZ && infra/backup/pull-backup.sh --check
-# [pull-backup ...] 새 파일 N개 ... / 마지막 성공 백업: beez-<UTC 시각>.dump (몇시간 전) / [restore-check ...] 통과
+# 로컬 PC(Git Bash). 스크립트는 지금 체크아웃한 브랜치가 아니라 origin/dev 것을 임시 폴더에 꺼내 쓴다
+d=$(mktemp -d) && git -C /c/git/BEEZ fetch -q origin && \
+  git -C /c/git/BEEZ archive origin/dev infra/backup infra/compose.yaml | tar -x -C "$d" && \
+  "$d/infra/backup/pull-backup.sh" --check; r=$?; rm -rf "$d"; echo "exit $r"
+# [pull-backup ...] 새 파일 N개 ... / 마지막 성공 백업: beez-<UTC 시각>.dump (몇시간 전) / [restore-check ...] 통과 / exit 0
 ```
+
+- origin/dev 것을 쓰는 이유: 체크아웃이 다른 브랜치면 스크립트가 없거나 옛것이고, 복원 시험이 쓰는 postgres·SeaweedFS
+  이미지 digest(`infra/compose.yaml`에서 읽음)가 서버에 배포된 것과 달라질 수 있습니다.
 
 - 새 덤프와 원본만 받습니다. PC의 파일은 지우지도 덮어쓰지도 않습니다.
 - 서버 백업이 끝까지 성공하면 `LAST_OK`에 그 덤프 이름을 적습니다. 원본 복사·확인이 실패한 날도 덤프 파일은 생기므로, 신선도와 복원 시험은 덤프가 아니라 `LAST_OK`를 기준으로 합니다.
 - 받다가 끊기면 받은 것을 버리고 PC 폴더는 그대로 둡니다. 다시 돌리면 처음부터 받습니다.
+- 서버 백업이 도는 중에 받아도 됩니다. 받은 `LAST_OK`가 가리키는 덤프와 원본은 이미 다 있고, 백업 중에 생긴 것은 다음에 받습니다. 받기는 서버 백업을 막지 않습니다.
 - `--check`는 `LAST_OK`의 덤프를 임시 컨테이너에 복원하고, 문서 버전 원본의 SHA-256을 `content_hash`와 대조합니다(Docker Desktop 필요, 1분 안팎).
 - **종료 코드 1, "마지막 성공 백업이 36시간보다 오래됨"·"끝까지 성공한 서버 백업이 없음"**: 서버 백업이 멈췄거나 매일 실패하는 것입니다. 서버에서 `tail -50 /var/backups/beez/backup.log`를 봅니다.
 - 백업하던 몇 초 사이에 첫 제출이 있으면 그날 서버 백업이 "덤프가 가리키는 문서 버전 원본 N개가 백업에 없다"로 실패하고 `LAST_OK`가 하루 전 그대로입니다([예외](seaweedfs.md#순서와-일관성)). 다음 날 백업이 성공하면 됩니다. 이틀 연속이면 원인을 찾습니다.
@@ -326,10 +334,10 @@ cd /c/git/BEEZ && infra/backup/pull-backup.sh --check
    # 로컬 PC(Git Bash) — 반영할 커밋을 고정해 보낸다
    C=<반영할 커밋>
    git -C /c/git/BEEZ fetch -q origin
-   for f in backup check-live; do git -C /c/git/BEEZ show "$C:infra/backup/$f.sh" | ssh beez "cat > /tmp/beez-$f"; done
+   for f in backup check-live restore; do git -C /c/git/BEEZ show "$C:infra/backup/$f.sh" | ssh beez "cat > /tmp/beez-$f"; done
    # 서버
    sudo install -d -m 700 -o ubuntu -g ubuntu /var/backups/beez && \
-   for f in backup check-live; do test -s /tmp/beez-$f && sudo install -m 755 -o root -g root /tmp/beez-$f /usr/local/sbin/ && rm /tmp/beez-$f; done; ls -l /usr/local/sbin/beez-*
+   for f in backup check-live restore; do test -s /tmp/beez-$f && sudo install -m 755 -o root -g root /tmp/beez-$f /usr/local/sbin/ && rm /tmp/beez-$f; done; ls -l /usr/local/sbin/beez-*
    ```
 
 2. 한 번 손으로 돌려 봅니다(서버). `완료: 덤프 …, 원본 N개`가 나오면 됩니다.
@@ -354,54 +362,41 @@ cd /c/git/BEEZ && infra/backup/pull-backup.sh --check
 ### 원본 몇 개가 없어졌을 때
 
 `beez-check-live dev`가 `없음`을 찍으면, 서버 백업에서 bucket으로 되살립니다. 이미 있는 원본은 건너뛰고 없는 것만 올라갑니다.
-bucket에 쓰기 때문에 관리(bootstrap) 키를 씁니다.
 
 ```bash
 # 서버
-E=/opt/beez/.env.dev; B=/var/backups/beez; BUCKET=beez-documents
-s3admin() {
-  RCLONE_CONFIG_DST_ACCESS_KEY_ID=$(sed -n 's/^SEAWEEDFS_BOOTSTRAP_ACCESS_KEY=//p' "$E") \
-  RCLONE_CONFIG_DST_SECRET_ACCESS_KEY=$(sed -n 's/^SEAWEEDFS_BOOTSTRAP_SECRET_KEY=//p' "$E") \
-  docker run --rm --network beez_storage -v "$B/objects:/backup:ro" \
-    -e RCLONE_CONFIG_DST_TYPE=s3 -e RCLONE_CONFIG_DST_PROVIDER=SeaweedFS \
-    -e RCLONE_CONFIG_DST_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_DST_REGION=us-east-1 \
-    -e RCLONE_CONFIG_DST_ACCESS_KEY_ID -e RCLONE_CONFIG_DST_SECRET_ACCESS_KEY \
-    -e RCLONE_CONFIG=/dev/null -e XDG_CACHE_HOME=/tmp \
-    rclone/rclone:1.71.2@sha256:3103526c506266a9ecdf064efe99bf3677d92ef6407af124d8c56b4f49cbaa51 "$@"; }
-s3admin copy "/backup/$BUCKET" "dst:$BUCKET" --immutable --checksum --stats-one-line --stats-log-level NOTICE
-beez-check-live dev    # 일치 N개, 문제 0개
+beez-restore dev objects          # 할 일만 보여 준다(원본 백업 폴더·개수)
+beez-restore dev objects --yes    # 올린다
+beez-check-live dev               # 일치 N개, 문제 0개
 ```
 
-- 키 값은 `-e 이름`으로만 넘겨 명령줄·`docker inspect`에 나오지 않습니다.
-- 백업에는 정리 워커가 지운 옛 작업본 원본도 남아 있어서 함께 올라갑니다. DB가 참조하지 않는 파일이라 동작에는 영향이 없습니다.
+- bucket에 써야 해서 관리(bootstrap) 키를 씁니다. 키 값은 `-e 이름`으로만 넘겨 명령줄·`docker inspect`에 나오지 않습니다.
+- `--immutable --checksum`: bucket의 객체를 지우지 않고, 같은 key인데 내용이 다르면 덮어쓰지 않고 실패합니다.
+- 백업에는 정리 워커가 지운 옛 작업본 원본도 남아 있어 함께 올라갑니다. DB가 참조하지 않는 파일이라 동작에는 영향이 없습니다.
 - 서버 백업에도 없으면 PC 백업을 서버로 보낸 뒤 같은 명령을 씁니다. PC Git Bash에서
   `tar -C ~/beez-backup/dev -cf - objects | ssh beez 'tar -C /var/backups/beez -xf - --skip-old-files'`를 칩니다.
 
 ### DB까지 되돌릴 때 (전체 복원)
 
-DB를 덤프 시점으로 되돌립니다. **덤프 뒤에 생긴 데이터는 모두 사라집니다.** 팀 채널에 알리고 진행합니다.
+DB를 덤프 시점으로 되돌립니다. **지금 DB는 지워지고, 덤프 뒤에 생긴 데이터는 모두 사라집니다.** 팀 채널에 알리고 진행합니다.
 
 ```bash
 # 서버. 서버가 새로 만들어졌으면 먼저 PC 백업을 보낸다(PC Git Bash):
-#   tar -C ~/beez-backup/dev -cf - db objects | ssh beez 'mkdir -p /var/backups/beez && tar -C /var/backups/beez -xf - --skip-old-files'
-dump=/var/backups/beez/db/$(sed -n 's/^dump=//p' /var/backups/beez/LAST_OK); ls -l "$dump"   # 끝까지 성공한 마지막 백업. 다른 시점이면 직접 고른다
-exec 8< /var/www/beez/.deploy.lock && flock -w 300 8 && echo "배포 잠금 잡음"   # 복원이 끝날 때까지 배포가 끼어들지 못하게 이 셸이 잠금을 쥔다
-docker compose -p beez stop backend                                                  # 쓰기를 멈춘다
-pg=$(docker compose -p beez ps -q postgres)
-docker exec -i "$pg" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --exit-on-error' < "$dump"
+#   tar -C ~/beez-backup/dev -cf - db objects LAST_OK | ssh beez 'mkdir -p /var/backups/beez && tar -C /var/backups/beez -xf - --skip-old-files'
+beez-restore dev all              # 할 일만 보여 준다. 덤프 기본값은 LAST_OK 의 것(끝까지 성공한 마지막 백업)
+beez-restore dev all --yes        # 다른 시점이면: beez-restore dev all /var/backups/beez/db/beez-<시각>.dump --yes
+beez-check-live dev               # 일치 N개, 문제 0개
 ```
 
-이어서 **같은 셸에서** 위 "원본 몇 개가 없어졌을 때"의 `s3admin copy`로 원본을 올린 뒤, backend를 켜고 잠금을 놓고 대조합니다.
+`all`이 하는 일(`infra/backup/restore.sh`):
 
-```bash
-docker compose -p beez start backend
-docker compose -p beez ps backend    # (healthy)까지
-exec 8<&-                            # 배포 잠금을 놓는다. 잊으면 그 셸을 닫을 때까지 배포가 5분 기다리다 실패한다
-beez-check-live dev                  # 일치 N개, 문제 0개
-```
+1. 배포 잠금(`deploy.sh`와 같은 파일)을 잡고 끝날 때까지 쥡니다. 다른 배포가 5분 넘게 돌면 아무것도 바꾸지 않고 멈춥니다.
+2. backend를 멈춥니다(웹 사용자는 로그아웃).
+3. **DB를 지우고 빈 DB로 다시 만든 뒤** 덤프를 복원합니다. `pg_restore --clean`으로 덮어쓰지 않는 이유가 있습니다. 그렇게 하면 덤프 뒤 마이그레이션이 만든 테이블이 남고 Flyway 이력만 덤프 시점으로 돌아가, backend를 켤 때 Flyway가 같은 마이그레이션을 다시 돌리다 `already exists`로 멈춥니다.
+4. 원본을 올리고(`objects`와 같음) backend를 켜서 `healthy`가 될 때까지 기다립니다. 켜지면 Flyway가 덤프 뒤의 마이그레이션을 적용합니다.
 
-- 잠금은 명령 하나가 아니라 셸이 쥡니다. `flock ... docker compose stop`처럼 명령마다 잡으면 그 사이(덤프 복원·원본 올리기)에 자동 배포가 backend를 다시 켤 수 있습니다. 배포 스크립트(`deploy.sh`)와 같은 잠금 파일입니다.
-- 도중에 실패해 그만둘 때도 `docker compose -p beez start backend`와 `exec 8<&-`를 합니다.
-- `--clean --if-exists`: 지금 DB의 테이블을 지우고 덤프 내용으로 다시 만듭니다. backend가 켜지면 Flyway가 덤프 뒤의 마이그레이션을 이어서 적용합니다.
-- backend를 끄면 웹 사용자가 모두 로그아웃됩니다(세션이 메모리에 있음).
-- 2026-11-05 로컬 확인: 원본 2개를 지운 bucket을 위 명령으로 되살렸고(일치 2 → 4), 테이블을 비운 DB에 덤프를 복원한 뒤 `check-live` 4개가 일치했습니다. 운영 서버에서의 복원 시험 기록은 아래에 남깁니다.
+- 붙여 넣는 명령 묶음이 아니라 스크립트입니다. 중간에 하나라도 실패하면 그 자리에서 멈춥니다.
+- **실패하면 backend를 켜지 않고 멈춥니다.** 비었거나 반쯤 복원된 DB로 켜면 Flyway가 빈 스키마를 새로 만들어, 데이터가 없는 정상 서비스처럼 보이기 때문입니다. 원인을 고쳐 같은 명령을 다시 돌립니다(DB를 다시 지우고 처음부터 합니다).
+  - 스크립트가 끝나면 배포 잠금도 풀립니다. 실패한 채 두는 동안 dev에 머지가 일어나면 자동 배포가 backend를 그 DB로 켭니다. 복원 전에 팀 채널에 "복원 끝날 때까지 dev 머지 멈춤"을 알리고, 실패하면 다시 돌릴 때까지 그 상태를 유지합니다.
+- 접속 중인 세션(모니터링 exporter 등)은 `DROP DATABASE … WITH (FORCE)`가 끊습니다.
+- 2026-11-05 로컬 확인: 실제 backend 이미지(Flyway)로 띄운 DB를 덤프한 뒤 "나중 마이그레이션"(테이블 + Flyway 이력 한 줄)을 더하고 `all --yes`로 되돌렸습니다. 나중 테이블과 이력이 사라지고 backend가 `healthy`로 켜졌고, `check-live`도 일치했습니다. 원본 2개를 지운 bucket은 `objects --yes`로 되살렸습니다. 운영 서버에서의 복원 시험 기록은 아래에 남깁니다.

@@ -38,10 +38,10 @@ log() { echo "[backup $(date +%H:%M:%S)] $*"; }
 # 덤프에는 계정·토큰 해시가 들어 있다. 만드는 파일을 주인만 읽게 한다
 umask 077
 mkdir -p "$BACKUP_ROOT/db" "$BACKUP_ROOT/objects"
-# 한 번에 하나만 돈다(손 실행과 예약 실행이 겹치지 않게). PC 의 pull-backup.sh 도 같은 파일에 공유 잠금을 잡고
-# 받는 동안 기다리게 한다 — 기다리지 않고 바로 끝내면 그 시각에 받고 있던 날은 백업이 통째로 빠진다
+# 한 번에 하나만 돈다(손 실행과 예약 실행이 겹치지 않게). 겹치면 앞 실행이 끝날 때까지 기다린다 — 바로 끝내면
+# 손 실행과 예약 시각이 겹친 날 예약 백업이 빠진다. PC 의 pull-backup.sh 는 이 잠금을 잡지 않는다(받기가 백업을 막지 않게)
 exec 9> "$BACKUP_ROOT/.backup.lock"
-flock -w "${LOCK_WAIT:-1800}" 9 || { echo "다른 백업·받기가 ${LOCK_WAIT:-1800}초 넘게 진행 중이라 시작하지 않음" >&2; exit 3; }
+flock -w "${LOCK_WAIT:-1800}" 9 || { echo "다른 백업이 ${LOCK_WAIT:-1800}초 넘게 진행 중이라 시작하지 않음" >&2; exit 3; }
 
 pg=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=postgres)
 [[ -n $pg ]] || { echo "postgres 컨테이너가 없음 (project=$PROJECT)" >&2; exit 2; }

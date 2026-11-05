@@ -17,7 +17,14 @@ export MSYS_NO_PATHCONV=1   # Git Bash 에서 /w 같은 컨테이너 경로가 �
 ROOT=${1:?"사용: restore-check.sh <백업 폴더> [덤프 파일]"}
 ok_dump=$(sed -n 's/^dump=//p' "$ROOT/LAST_OK" 2> /dev/null || true)
 # 덤프 이름은 backup.sh 가 만든 beez-<UTC 시각>.dump 뿐이라 이름 정렬이 곧 시각 순서다
-DUMP=${2:-${ok_dump:+$ROOT/db/$ok_dump}}
+DUMP=${2:-}
+if [[ -z $DUMP && -n $ok_dump ]]; then
+    if [[ -f $ROOT/db/$ok_dump ]]; then
+        DUMP=$ROOT/db/$ok_dump
+    else
+        echo "경고: LAST_OK 의 덤프($ok_dump)가 없어 db 의 가장 최근 덤프를 쓴다(실패한 실행의 것일 수 있다)" >&2
+    fi
+fi
 # shellcheck disable=SC2012
 DUMP=${DUMP:-$(ls -1 "$ROOT"/db/beez-*.dump 2> /dev/null | sort | tail -n 1)}
 BUCKET=${DOCUMENT_S3_BUCKET:-beez-documents}

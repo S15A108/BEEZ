@@ -10,7 +10,9 @@
 #   - 덮어쓰지 않는다: 이미 받은 파일은 다시 받지 않는다. 원본 key 는 UUID 라 내용이 바뀌지 않는다
 #   - 받기가 끝까지 성공했을 때만 PC 폴더로 옮긴다: 임시 폴더(.incoming)에 풀고, 중간에 끊기면 버린다.
 #     바로 풀면 끊긴 자리의 잘린 파일이 남고, 이름이 이미 있으니 다음부터 다시 받지 않는다
-#   - 서버 백업이 도는 중이면 끝날 때까지 기다렸다 받는다(같은 잠금 파일). 덤프만 받고 그 원본을 못 받는 일이 없게
+#   - 서버 백업을 기다리지 않는다(잠금 없음). LAST_OK 를 목록보다 먼저 떠 두므로, 받은 LAST_OK 가 가리키는 덤프와 그
+#     원본은 백업 중이어도 이미 다 있다(LAST_OK 는 복사·확인이 끝난 뒤에 쓰이고 원본은 지우지 않는다). 백업 중에 생긴
+#     덤프·원본은 다음 받기 때 온다. 잠금을 쥐고 받으면 느린 받기가 그날 백업을 막는다
 #   - LAST_OK(끝까지 성공한 마지막 서버 백업의 덤프 이름)는 매번 새로 받는다. 신선도·복원 시험은 이것을 기준으로 한다 —
 #     복사가 실패한 날도 덤프 파일은 생기므로 덤프 시각만 보면 실패를 놓친다
 #
@@ -35,22 +37,24 @@ STAGE=$DEST/.incoming
 log() { echo "[pull-backup $(date +%H:%M:%S)] $*"; }
 mkdir -p "$DEST/db" "$DEST/objects"
 
-# 서버에서 도는 부분. PC 가 가진 파일 목록을 표준입력으로 받아, 없는 것과 LAST_OK 를 tar 로 내보낸다.
+# 서버에서 도는 부분. PC 가 가진 파일 목록을 표준입력으로 받아, 없는 것과 먼저 떠 둔 LAST_OK 를 tar 로 내보낸다.
 # rclone 이 쓰는 중인 *.partial 과 덤프 임시 파일(*.dump.tmp)은 보내지 않는다
 # shellcheck disable=SC2016  # 서버에서 펼칠 변수다
 remote_script='
 set -euo pipefail
 cd "$1"
-exec 9< .backup.lock || { echo "백업 잠금 파일이 없음: $1/.backup.lock (서버에서 backup.sh 를 한 번도 안 돌렸나?)" >&2; exit 4; }
-flock -s -w 600 9 || { echo "10분 기다려도 서버 백업이 끝나지 않음" >&2; exit 5; }
-list=$(LC_ALL=C comm -23 \
+snap=$(mktemp -d)
+trap "rm -rf \"$snap\"" EXIT
+# LAST_OK 를 파일 목록보다 먼저 떠 둔다. 목록을 만든 뒤에 읽으면 그사이 끝난 백업의 LAST_OK 가 목록에 없는 덤프를 가리킬 수 있다
+if [ -f LAST_OK ]; then cp LAST_OK "$snap/LAST_OK"; fi
+LC_ALL=C comm -23 \
     <({ find db -type f -name "beez-*.dump"; find objects -type f ! -name "*.partial"; } | LC_ALL=C sort) \
-    <(LC_ALL=C sort))
-if [ -f LAST_OK ]; then list=$(printf "%s\nLAST_OK" "$list"); fi
-list=$(printf "%s\n" "$list" | sed "/^$/d")
+    <(LC_ALL=C sort) > "$snap/list"
+extra=()
+if [ -f "$snap/LAST_OK" ]; then extra=(-C "$snap" LAST_OK); fi
+# --ignore-failed-read: 목록을 만든 뒤 백업이 오래된 덤프를 정리했으면 그 파일만 건너뛴다(PC 에는 보통 이미 있다).
 # 보낼 것이 없어도 빈 tar 를 보낸다(PC 의 tar 가 빈 입력을 오류로 본다)
-if [ -z "$list" ]; then tar -cf - -T /dev/null; exit 0; fi
-printf "%s\n" "$list" | tar -cf - --verbatim-files-from -T -
+tar -cf - --ignore-failed-read --verbatim-files-from -T "$snap/list" "${extra[@]}"
 '
 
 # 지난번에 끊긴 받기가 남긴 것은 버린다
