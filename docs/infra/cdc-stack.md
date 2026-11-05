@@ -1,0 +1,255 @@
+# dev CDC 스택(Kafka·Debezium Connect) 런북 (S15P31A108-294)
+
+dev 서버에 Kafka 단일 broker와 Debezium Connect를 compose 프로젝트 `beez-cdc`로 띄우는 절차다.
+결정과 이유는 [CDC 배포 계획](cdc-deploy-plan-279.md) D1~D3이 정본이고, 이 문서는 그 실행 방법만 적는다.
+
+- PostgreSQL 쪽 준비(`wal_level`·복제 계정·publication·비밀 파일)는 S15P31A108-293 런북 `cdc-postgres.md`.
+- 커넥터 등록과 backend consumer 켜기는 S15P31A108-295. **이 스택만 올린 상태에서는 아무것도 흐르지 않는다.**
+
+## 구성
+
+| 항목 | 값 |
+|---|---|
+| compose 파일 | `infra/cdc/dev/compose.yaml` (서버 `/opt/beez/cdc/compose.yaml`). 옆의 `infra/cdc/compose.yaml`은 운영 검토안이라 관계없다 |
+| 프로젝트 이름 | `beez-cdc`. 본 스택 `beez`와 달라 CD의 `--remove-orphans`가 지우지 않는다 |
+| 배포 | 손으로(아래 "올리기·업데이트"). `infra/cdc/**`만 바뀐 dev 머지는 CD가 돌지 않는다(`cd.yml` `paths-ignore`) |
+| kafka | `apache/kafka:3.9.1`(digest 고정), KRaft 단일 노드(broker+controller), 힙 512MB·상한 1GB, 데이터 볼륨 `beez-cdc_kafka-data` |
+| connect | `debezium/connect:2.7.3.Final`(digest 고정, 안의 Kafka Connect 3.7.0, `uid=1001`), distributed 모드 worker 1개, 힙 512MB·상한 1GB |
+| 네트워크 | 본 스택의 `beez_default`(외부)만. 서비스 이름 `kafka`·`connect` |
+| 호스트 포트 | **없음** |
+| 컨테이너 안에서만 여는 포트 | Connect REST `127.0.0.1:8083`, Kafka controller `127.0.0.1:9093` |
+| 같은 망에 여는 포트 | Kafka broker `9092`(PLAINTEXT). `beez_default`의 모든 컨테이너가 읽고 쓸 수 있다(계획 D3 "남는 위험"으로 수용) |
+| 비밀 디렉터리 | 서버 `/opt/beez/.cdc-secrets/`(스택 폴더 밖) → 컨테이너 `/run/cdc-secrets` 읽기 전용. `root:1001` `750` |
+| Connect 내부 토픽 | `beez-cdc-connect-configs`(1)·`-offsets`(25)·`-status`(5) 파티션, 모두 compact·복제 1. Connect가 기동할 때 만든다 |
+| 접수 토픽 | `beez.public.published_change_analysis`, 파티션 1, 복제 1, `retention.ms` 7일. **손으로 만든다** |
+
+설정에서 눈여겨볼 것(이유는 compose 파일 주석):
+
+- broker 내부 토픽 복제 수 1(`KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR` 등). 기본값 3이면 consumer group이 붙지 못한다.
+- 토픽 자동 생성 끔(`KAFKA_AUTO_CREATE_TOPICS_ENABLE=false`). Connect 내부 토픽은 Connect가 관리 API로 따로 만든다.
+- Kafka 데이터 경로를 볼륨(`/var/lib/kafka/data`)으로 옮겼다. 이미지 기본값은 `/tmp` 아래라 다시 만들면 사라진다.
+- `KAFKA_JMX_OPTS`를 채워 JVM이 JMX(RMI) 커넥터를 임의 포트에 열지 않게 했다.
+- Connect의 `/kafka/config`는 tmpfs다. 진입 스크립트가 env로 설정 파일을 덧쓰는데, 익명 볼륨이면 env에서 지운 값이
+  옛 파일에 남는다.
+- 비밀 디렉터리는 `create_host_path: false`로 붙인다. 없으면 Docker가 root 소유 빈 디렉터리를 만드는 대신
+  `bind source path does not exist`로 멈춘다.
+- file config provider(`config.providers=file`)가 켜져 있다. 커넥터 설정의
+  `${file:/run/cdc-secrets/database.properties:password}`를 등록할 때(295) 읽는다.
+
+## 처음 올리기 (서버당 한 번)
+
+본 스택이 떠 있어 `beez_default` 네트워크가 있어야 한다. 순서대로 한다.
+
+### 1. 비밀 디렉터리
+
+```bash
+# 서버 (ssh beez)
+sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /opt/beez/.cdc-secrets
+# drwxr-x--- 2 root 1001 ... /opt/beez/.cdc-secrets
+```
+
+- 293 런북과 같은 명령이다. 이미 있으면 소유자·권한만 같은 값으로 맞추고 안의 파일은 건드리지 않는다.
+- 그룹 1001은 Connect 컨테이너 사용자(`kafka`)다. 서버에 같은 번호의 그룹 이름이 없어도 된다.
+- 비밀번호 파일(`database.properties`)은 293이 쓴다. 이 스택은 파일이 없어도 뜬다(등록 때만 읽음).
+
+### 2. 파일 올리기
+
+아래 "올리기·업데이트"의 명령을 그대로 쓴다. 처음에는 기존 폴더가 없어 옮기는 단계를 건너뛴다.
+
+### 3. 띄우기
+
+```bash
+# 서버 (ssh beez)
+cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
+sudo ss -Htlnp | awk '{print $4, $6}' | sort > /tmp/ss-before-cdc.txt
+cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
+# kafka    Up ... (healthy)   9092/tcp
+# connect  Up ... (healthy)   8083/tcp, 8778/tcp, 9092/tcp
+```
+
+- `cdc`는 이 셸에서만 쓰는 함수다. 새 셸에서는 첫 줄을 다시 붙여 넣는다. env 파일은 없다(비밀값은 디렉터리 파일뿐).
+- `ss` 결과(주소·프로세스만, 정렬)는 아래 "확인" 2번에서 띄운 뒤와 비교한다. 큐 길이·출력 순서는 바뀔 수 있어 뺐다.
+- `Ports` 칸의 `8083/tcp` 등은 이미지가 선언만 한 포트다. `0.0.0.0:`이 붙지 않았으면 호스트에 열린 것이 아니다.
+- `--wait`는 둘 다 healthy가 될 때까지 기다린다. 처음에는 이미지(약 2.5GB)를 받느라 몇 분 걸린다.
+
+### 4. 접수 토픽 만들기
+
+```bash
+# 서버 (ssh beez)
+docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create \
+  --topic beez.public.published_change_analysis --partitions 1 --replication-factor 1 --config retention.ms=604800000
+docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe \
+  --topic beez.public.published_change_analysis
+# Topic: beez.public.published_change_analysis ... PartitionCount: 1  ReplicationFactor: 1  Configs: retention.ms=604800000
+```
+
+- 이름에 `.`과 `_`가 섞였다는 경고(metric 이름 충돌)는 무시한다. 토픽 이름은 Debezium이 `<prefix>.<schema>.<table>`로 정한다.
+- 토픽은 볼륨에 남으므로 한 번만 만든다. 이미 있으면 `already exists`로 끝난다.
+- heartbeat를 쓰지 않으므로(계획 D6) heartbeat 토픽은 만들지 않는다.
+- **이 토픽에 시험 메시지를 쓰지 않는다.** consumer를 켜면 없는 id를 끝없이 재시도해 파티션이 막힌다(계획 D3).
+
+## 확인
+
+`ssh beez`로 들어가 위 `cdc` 함수를 정의한 셸에서 친다.
+
+```bash
+# 서버 (ssh beez)
+# 1) 둘 다 healthy
+cdc ps --format '{{.Service}}\t{{.Status}}'
+
+# 2) 호스트에 새 포트가 없다. 출력이 비어 있어야 한다(docker-proxy·java 가 새로 보이면 노출)
+sudo ss -Htlnp | awk '{print $4, $6}' | sort | diff /tmp/ss-before-cdc.txt - | grep '^>'
+
+# 3) 같은 망의 backend·ai 에서 Connect REST·controller 가 닿지 않는다. 000 / False 면 통과
+docker exec beez-backend-1 sh -c 'for u in connect:8083 kafka:9093; do printf "%s " $u; curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://$u/; done'
+docker exec beez-ai-1 python -c "
+import socket
+for h, p in (('connect', 8083), ('kafka', 9093)):
+    s = socket.socket(); s.settimeout(5)
+    print(h, p, s.connect_ex((h, p)) == 0); s.close()"
+
+# 4) Connect 는 컨테이너 안에서만 응답한다
+docker exec beez-cdc-connect-1 curl -s http://127.0.0.1:8083/ ; echo
+
+# 5) worker 설정: REST 주소·file provider
+docker exec beez-cdc-connect-1 grep -E '^(listeners|config\.providers)' /kafka/config/connect-distributed.properties
+# listeners=http://127.0.0.1:8083
+# config.providers.file.class=org.apache.kafka.common.config.provider.FileConfigProvider
+# config.providers=file
+
+# 6) 293 이 비밀번호 파일을 쓴 뒤: Connect 사용자로 읽힌다(내용은 출력하지 않는다)
+docker exec beez-cdc-connect-1 test -r /run/cdc-secrets/database.properties && echo '읽기 OK'
+
+# 7) 토픽 목록: 접수 토픽 + Connect 내부 토픽 셋 + __consumer_offsets(처음 consumer 가 붙을 때 생김)
+docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+```
+
+- 3)에서 `000`은 연결 거부다. 두 포트는 컨테이너 안 127.0.0.1에만 열려 있다. broker `kafka:9092`는 같은 망에서
+  닿는 것이 정상이다(backend consumer가 쓴다).
+- 6)이 실패하면 파일·디렉터리 소유자와 권한(`root:1001`, 750·640)을 본다. 600이면 Connect가 읽지 못해 295의 커넥터
+  등록이 실패한다.
+
+## 올리기·업데이트
+
+설정이나 이미지 버전을 바꿀 때는 PR로 `infra/cdc/dev/`를 고쳐 dev에 넣은 뒤 아래를 돌린다. 서버에서 파일을 직접
+고치지 않는다(다음 올리기에 덮인다).
+
+```bash
+# 로컬 PC (Git Bash, 저장소 루트). REV 는 올릴 커밋. PR 검증 중이면 그 브랜치의 커밋(HEAD 등)
+REV=origin/dev
+git fetch -q origin && SHA=$(git rev-parse "$REV") && echo "$SHA" &&
+git archive "$SHA" infra/cdc/dev | ssh beez "set -e; cd /opt/beez
+  rm -rf cdc.new && mkdir cdc.new
+  tar -x -C cdc.new --strip-components=3
+  echo $SHA > cdc.new/REVISION
+  rm -rf cdc.old; if [ -d cdc ]; then mv cdc cdc.old; fi
+  mv cdc.new cdc && ls cdc && cat cdc/REVISION"
+```
+
+- `git archive <SHA> infra/cdc/dev`는 그 커밋의 dev용 파일만 묶는다. 운영 검토안·PoC는 서버에 올리지 않는다.
+- 비밀 디렉터리는 스택 폴더 밖(`/opt/beez/.cdc-secrets/`)이라 폴더를 바꿔도 남는다.
+- 직전 것은 `cdc.old`로 하나 남겨 되돌릴 때 쓴다(`REVISION`에 커밋이 적혀 있음).
+
+그다음 서버에서 다시 띄운다.
+
+```bash
+# 서버 (ssh beez). cdc 함수는 "처음 올리기" 3단계
+cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
+```
+
+- 설정 파일을 바인드 마운트하지 않으므로 compose 파일이 바뀌면 compose가 알아채 바뀐 컨테이너만 다시 만든다.
+- **consumer를 켠 뒤(295 이후)에 kafka 컨테이너가 다시 만들어지면** 그동안 broker가 응답하지 않는다. 이미 떠 있는
+  backend는 계속 healthy이고 처리는 복구 스캔이 30초 지연으로 이어 간다(계획 D7). 다만 그 사이 dev 머지 배포가
+  겹치면 backend가 뜨지 못할 수 있으므로, Kafka를 바꾸는 올리기는 머지가 없는 시간에 한다(298 전까지).
+- 이미지 버전을 올릴 때는 태그와 digest를 함께 바꾼다. digest는
+  `docker buildx imagetools inspect <이미지>:<태그>`의 `Digest:`(멀티 아키텍처 인덱스)를 쓴다.
+- 되돌리기: 서버에서 `cd /opt/beez && mv cdc cdc.bad && mv cdc.old cdc` 뒤 위 명령으로 다시 띄운다.
+
+## 중지·내리기
+
+**consumer를 켠 뒤(295 이후)에는 반드시 consumer부터 끈다**(계획 D1·§4 되돌리기 1번). consumer가 켜진 채 Kafka
+컨테이너가 없으면 새로 뜨는 backend가 기동하지 못하고, 그 사이 dev 머지가 들어오면 dev가 멈춘다.
+
+| 순서 | 할 일 | 비고 |
+|---|---|---|
+| 1 | backend consumer 끄기: 서버 env `BEEZ_CDC_INTAKE_ENABLED=false` → backend 재배포 | 295 전이면 건너뛴다. 이때부터 분석이 멈춘다(계획 §1) |
+| 2 | `cdc stop` 또는 `cdc down` | 아래 명령 |
+| 3 | 본 스택을 내려야 할 때만 본 스택 `down` | `beez-cdc`가 `beez_default`에 붙어 있으면 본 스택 `down`이 "has active endpoints"로 실패한다 |
+
+```bash
+# 서버 (ssh beez)
+cdc stop        # 멈추기만. 컨테이너·데이터 그대로, cdc start 로 다시
+cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은 남음
+# cdc down -v   # 볼륨까지 삭제 — 아래 "볼륨을 지우면" 을 먼저 읽는다
+```
+
+- 커넥터가 등록된 뒤(295 이후)에 Connect를 오래 멈추면 PostgreSQL 슬롯이 WAL을 붙잡아 쌓인다. 오래 내릴 거면
+  계획 §4 되돌리기 표대로 커넥터·슬롯까지 정리한다.
+- 서버 재부팅 뒤에는 `restart: unless-stopped`로 Docker가 다시 띄운다. `cdc stop`으로 멈춘 것은 다시 띄우지 않는다.
+  재부팅 때 backend가 Kafka보다 먼저 뜨면 기동에 실패했다가 다시 시도해 정상이 된다(계획 D1). backend가
+  healthy인지 본다.
+
+### 볼륨을 지우면
+
+`beez-cdc_kafka-data`에는 접수 토픽, Connect 설정·offset·status 토픽이 함께 있다. 커넥터가 등록된 뒤(295 이후)에
+이 볼륨만 지우면 Connect는 offset을 잃고, PostgreSQL 슬롯은 남은 채 커넥터가 사라진다. `infra/cdc/OPERATIONS.md`의
+"slot, Connect offset, 내부 토픽을 독립적으로 삭제·초기화하지 않는다"에 걸린다. 그래서 **볼륨 삭제는 계획 §4
+되돌리기 표 1~3번(consumer → 커넥터 → 슬롯)을 끝낸 뒤에만** 하고, 다시 올릴 때는 "처음 올리기" 4단계(접수 토픽)부터
+다시 한다.
+
+## 되돌리기
+
+294만 되돌릴 때(295 전):
+
+```bash
+# 서버 (ssh beez)
+cdc down -v && docker volume ls | grep beez-cdc    # 출력이 없으면 정리 끝
+```
+
+- 비밀 디렉터리 `/opt/beez/.cdc-secrets/`는 293 소관이라 여기서 지우지 않는다(293 되돌리기 순서를 따른다).
+- 295 이후라면 계획 §4 되돌리기 표를 1번부터 순서대로 한다. 이 스택은 그 표의 4번이다.
+
+## 백업 대상
+
+| 대상 | 내용 | 백업 | 잃었을 때 |
+|---|---|---|---|
+| `infra/cdc/dev/` | 설정 전부 | 저장소가 정본 | 다시 올리기 |
+| `/opt/beez/.cdc-secrets/database.properties` | 복제 계정 비밀번호 | 하지 않음 | 293 런북대로 비밀번호를 새로 만들어 계정과 파일을 맞춤 |
+| `beez-cdc_kafka-data` | 토픽 데이터, Connect 설정·offset | 하지 않음 | 메시지는 힌트일 뿐이라 복구 스캔이 처리를 이어 간다. 커넥터는 새 이름으로 다시 등록(계획 D6) |
+
+## 한계
+
+- **Connect 2.7.3은 Debezium 공식 지원표에 PG17이 없다.** 서버와 같은 pgvector PG17 이미지로 PoC 여러 개가 이
+  버전으로 돈 것이 근거다(계획 D2, 11-05 전진 확인). 실제 커넥터 조합은 295 로컬 리허설이 처음이다.
+- 단일 서버·단일 broker. broker가 죽으면 전달이 멈추고 복구 스캔이 받친다.
+- 같은 망 컨테이너가 broker를 읽고 쓸 수 있다(계획 D3 "남는 위험").
+- Connect·task 상태 수집은 S15P31A108-261. 그 전까지는 계획 D6의 수동 확인으로 본다.
+- 비밀 파일 권한 함정(uid 1001)은 Windows 바인드 마운트에서 재현되지 않아 로컬에서 확인하지 못했다. 서버 "확인" 6)으로 본다.
+
+## 로컬 확인 기록 (11-05, Docker Desktop 29.6.1)
+
+`beez_default` 네트워크를 만들고 비밀 디렉터리에 더미 `database.properties`를 둔 뒤 서버와 같은 compose로 띄웠다.
+
+```bash
+# 로컬 PC (Git Bash, 저장소 루트). 끝나면 down -v 와 네트워크·더미 디렉터리 정리
+docker network inspect beez_default >/dev/null 2>&1 || docker network create beez_default
+CDC_SECRETS_DIR=<더미 디렉터리> docker compose -f infra/cdc/dev/compose.yaml up -d --wait
+```
+
+| 확인 | 결과 |
+|---|---|
+| 기동 | kafka 약 15초, connect 약 10초 뒤 healthy |
+| 리슨 주소 | connect: `127.0.0.1:8083`만. kafka: `*:9092`, `127.0.0.1:9093`. `KAFKA_JMX_OPTS`를 채우기 전에는 두 JVM 모두 `*:<임의 포트>`(JMX RMI)가 열려 있었다. `-Dcom.sun.management.jmxremote=false`로는 닫히지 않았다(속성이 있기만 해도 커넥터를 연다) |
+| 같은 망 probe 컨테이너 | `connect:8083`·`kafka:9093` 연결 거부, `kafka:9092` 연결됨 |
+| 접수 토픽 | 손으로 생성, `--describe`가 파티션 1·복제 1·`retention.ms=604800000` |
+| 자동 생성 차단 | 없는 토픽에 쓰면 `UNKNOWN_TOPIC_OR_PARTITION` 뒤 시간 초과, 토픽이 생기지 않음 |
+| consumer group | 같은 망에서 `kafka:9092`로 group consume 성공, `__consumer_offsets` 50파티션·복제 1로 생성 |
+| Connect 내부 토픽 | 셋 다 `cleanup.policy=compact`, 복제 1 |
+| file config provider | 임시 PostgreSQL로 커넥터 설정 검증(`PUT …/config/validate`)에 `${file:…:password}`를 넣어 오류 0. 대조로 DB 비밀번호를 바꾸면 `password authentication failed`. 컨테이너 로그에 비밀번호 없음 |
+| 비밀 디렉터리 없음 | 서버와 같은 리눅스 경로로 주면 `bind source path does not exist`로 기동 거부. (Docker Desktop의 Windows 경로는 빈 폴더를 만들어 버려 재현이 안 된다) |
+| 재기동 | `down` → `up` 뒤 접수 토픽이 같은 TopicId로 남음 |
+| 메모리 | 띄운 직후 kafka 약 400MiB, connect 약 610MiB (상한 각 1GiB) |
+
+## 서버 실행 기록
+
+(서버에 올린 뒤 채운다)
