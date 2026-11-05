@@ -918,18 +918,42 @@ it('팀원이 담당자 없는 작업에서 내가 맡기를 누르면 확인 �
   ).toBeInTheDocument()
 })
 
+const revisionConflict = () => {
+  const config = { headers: new AxiosHeaders() }
+  return new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config,
+    data: { error: { code: 'revision_conflict' } },
+  })
+}
+
 it('다른 팀원이 먼저 맡아 409 revision_conflict가 오면 먼저 맡은 사람을 알린다', async () => {
   task = withoutAssignee()
+  // 기본 픽스처 이름 '다른 팀원'은 이름을 못 찾을 때 쓰는 문구와 같아, 이 테스트에서는 다른 이름을 쓴다.
+  vi.spyOn(membersApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '21',
+        account_id: '11',
+        name: '담당자',
+        role: 'MEMBER',
+        agent_connected: false,
+      },
+      {
+        id: '22',
+        account_id: '12',
+        name: '김동료',
+        role: 'LEADER',
+        agent_connected: false,
+      },
+    ],
+    has_more: false,
+  })
   vi.spyOn(tasksApi, 'assign').mockImplementation(async () => {
     task = { ...task, assignee_member_id: '22', lock_version: 8 }
-    const config = { headers: new AxiosHeaders() }
-    throw new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
-      status: 409,
-      statusText: 'Conflict',
-      headers: {},
-      config,
-      data: { error: { code: 'revision_conflict' } },
-    })
+    throw revisionConflict()
   })
   show(false)
   await userEvent.click(
@@ -944,8 +968,42 @@ it('다른 팀원이 먼저 맡아 409 revision_conflict가 오면 먼저 맡은
     name: '다른 팀원이 먼저 맡았어요',
   })
   expect(
-    within(taken).getByText(/다른 팀원님이 조금 전에 TASK-001 작업을 맡았어요/),
+    within(taken).getByText(/김동료님이 조금 전에 TASK-001 작업을 맡았어요/),
   ).toBeInTheDocument()
+})
+
+it('409 뒤에도 담당자가 비어 있으면 다시 누를 때 새로 받은 잠금 번호로 맡는다', async () => {
+  task = withoutAssignee()
+  const assign = vi
+    .spyOn(tasksApi, 'assign')
+    .mockImplementationOnce(async () => {
+      // 다른 변경으로 잠금 번호만 올랐고 담당자는 여전히 비어 있다.
+      task = { ...task, lock_version: 8 }
+      throw revisionConflict()
+    })
+    .mockImplementationOnce(async () => {
+      task = { ...task, assignee_member_id: '21', lock_version: 9 }
+      return task
+    })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '내가 맡기' }),
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: '이 작업을 내가 맡을까요?',
+  })
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '내가 맡기' }),
+  )
+  expect(await within(dialog).findByRole('alert')).toBeInTheDocument()
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '내가 맡기' }),
+  )
+  await waitFor(() => expect(assign).toHaveBeenCalledTimes(2))
+  expect(assign).toHaveBeenLastCalledWith('101', '501', {
+    assignee_member_id: '21',
+    expected_lock_version: 8,
+  })
 })
 
 it('팀장이 담당자 없는 작업의 담당자를 정할 때는 첫 팀원을 미리 고르지 않는다', async () => {

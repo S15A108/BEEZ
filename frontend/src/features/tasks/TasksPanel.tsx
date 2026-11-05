@@ -1322,6 +1322,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                       .get(projectId, formTask.id)
                       .catch(() => undefined)
                   : undefined
+              // 아직 비어 있으면 다시 누를 수 있으니 새 잠금 번호를 들고 있어야 같은 409가 되풀이되지 않는다.
+              if (latest) setFormTask(latest)
               setClaim(
                 latest?.assignee_member_id
                   ? {
