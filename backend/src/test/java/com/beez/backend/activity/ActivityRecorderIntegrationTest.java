@@ -63,6 +63,20 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    void domainTransactionRolledBack_leavesNoActivity() {
+        // 계약 1절: 같은 트랜잭션이라 롤백된 처리의 활동은 남지 않는다. 입구가 자기 트랜잭션(REQUIRES_NEW 등)을 열면 여기서 깨진다
+        ProjectWithLeader p = fixtures().projectWithLeader();
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            recorder.record(CallerContext.human(p.leaderAccountId()), ActivityEvent.of("project:" + p.projectId() + ":created",
+                    p.projectId(), "PROJECT_CREATED", ActivityTargetType.PROJECT, p.projectId()));
+            status.setRollbackOnly();
+        });
+
+        assertThat(rowsOf(p.projectId())).isEmpty();
+    }
+
+    @Test
     void eachActorKind_isStoredWithItsAccountAndSecondaryRefs() {
         ProjectWithLeader p = fixtures().projectWithLeader();
         long task = draftTask(p.projectId());

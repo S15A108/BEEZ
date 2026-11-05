@@ -1,6 +1,7 @@
 package com.beez.backend.activity;
 
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.common.auth.CallerKind;
 import jakarta.persistence.EntityManager;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
@@ -37,8 +38,13 @@ public class ActivityRecorder {
     @Transactional(propagation = Propagation.MANDATORY)
     public void record(CallerContext caller, ActivityEvent event) {
         Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(event, "event");
         Objects.requireNonNull(caller.kind(), "caller.kind");
         Objects.requireNonNull(caller.accountId(), "caller.accountId");
+        if (caller.kind() == CallerKind.AGENT && caller.agentTokenId() == null) {
+            // 토큰이 없으면 세션(-178)을 이을 근거가 없어 에이전트 필터에서 영구히 빠진다
+            throw new IllegalArgumentException("agent caller must carry agentTokenId: " + event.eventKey());
+        }
         // TODO(-178): 에이전트면 caller.agentTokenId() 의 현재 연결 세션을 agent_session_id 로. 세션 기록이 생기기 전에는 비운다(계약 4절)
         insert(caller.kind().name(), caller.accountId(), null, event);
     }
