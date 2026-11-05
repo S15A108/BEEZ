@@ -14,6 +14,9 @@ CDC(`published_change_analysis` → Debezium → Kafka → backend)를 위해 de
 | publication `beez_published_analysis_cdc` | DB (Flyway 아님) | 손으로 (아래 3) |
 | 비밀번호 파일 | 서버 `/opt/beez/.cdc-secrets/database.properties` | 손으로 (아래 2) |
 
+2·3은 1(머지)과 순서가 상관없다. `wal_level=replica`에서도 계정과 publication은 만들어진다
+(`"wal_level" is insufficient to publish logical changes` 경고만 나온다, 로컬에서 확인).
+
 ## 꼭 지킬 것
 
 - **접수행(`published_change_analysis`)을 손으로 지우지 않는다.** consumer는 DELETE 이벤트를 건너뛰지 않고 재시도하므로
@@ -23,8 +26,22 @@ CDC(`published_change_analysis` → Debezium → Kafka → backend)를 위해 de
   `logical replication slot "…" exists, but wal_level < logical`로 기동을 거부한다.
 - **계정은 `REVOKE` 뒤에만 `DROP ROLE` 한다.** 컬럼 권한이 남아 있으면
   `role "beez_cdc" cannot be dropped because some objects depend on it`으로 거부된다(로컬에서 확인).
-- **비밀번호는 화면·명령 이력·로그에 내지 않는다.** 서버에서 바로 만들어 파일에 쓰고, 파일에서 읽어 DB에 넘긴다(아래 2·3).
+- **비밀번호는 화면·명령 이력·로그에 내지 않는다.** 서버에서 바로 만들어 파일에 쓰고, 파일에서 읽어 DB에 넘긴다(아래 2·3-3).
 - **계약 확인은 DB를 직접 조회한다.** `infra/cdc/check_contract.py`는 문서 캡처용 검토안만 보고 접수 테이블은 보지 않는다.
+
+## 0. 준비 (서버 bash, 셸을 새로 열 때마다)
+
+아래 절의 명령은 이 두 가지를 쓴다. **셸을 새로 열면 다시 친다.** postgres가 CD로 다시 만들어져도 컨테이너 이름은 같다.
+
+```bash
+# 본 compose 프로젝트(beez)의 postgres 컨테이너
+PG=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=postgres --format '{{.Names}}')
+[ -n "$PG" ] && echo "postgres 컨테이너: $PG" || echo "postgres 컨테이너를 찾지 못함 — 아래 명령을 치지 않는다"
+
+# 컨테이너 안에서 테이블 소유자(슈퍼유저, POSTGRES_USER)로 접속한다. 계정 이름·비밀번호를 명령에 적지 않는다.
+# 컨테이너 안 소켓 접속은 pg_hba 의 trust 라 비밀번호가 필요 없다. 실패하면 다음 문장으로 넘어가지 않는다(ON_ERROR_STOP)
+pgsql() { docker exec -i "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 "$@"' _ "$@"; }
+```
 
 ## 1. `wal_level` 바꾸기 (PR 머지)
 
@@ -36,6 +53,7 @@ command: ["postgres", "-c", "wal_level=logical", "-c", "max_slot_wal_keep_size=1
 ```
 
 - `max_replication_slots`·`max_wal_senders`는 기본 10으로 충분해 바꾸지 않는다.
+- 서버(`infra/compose.yaml`) 전용이다. 로컬 개발용 `backend/compose.yaml`은 `replica` 그대로라 거기서는 슬롯을 만들 수 없다.
 - **머지하면 약 3분 뒤 CD가 postgres를 다시 만든다**(`deploy.sh`의 `up -d`). 새 SHA 이미지라 backend·ai도 함께 다시 뜨고,
   backend는 healthy까지 최대 60초가 걸린다. 그래서 팀에 **"머지 시각부터 10분"**을 공지하고 그 시각에 머지한 뒤
   Jenkins 배포가 끝날 때까지 지켜본다. 볼륨(`pgdata`)은 그대로다.
@@ -47,15 +65,10 @@ command: ["postgres", "-c", "wal_level=logical", "-c", "max_slot_wal_keep_size=1
 | `command` 없이 만든 볼륨(`replica`)에 표를 넣고, 새 정의로 같은 볼륨을 다시 띄움 | healthy, `wal_level`=`logical`, `max_slot_wal_keep_size`=`10GB`, 넣은 행 유지 |
 | 빈 볼륨에서 새 정의로 처음 띄움 | 초기화 완료 후 healthy, 같은 두 값 |
 
-배포 뒤 확인 (**서버 bash**):
+배포 뒤 확인 (**서버 bash**, 0 준비 뒤):
 
 ```bash
-# 본 compose 프로젝트(beez)의 postgres 컨테이너 이름을 찾는다
-PG=$(docker ps --filter label=com.docker.compose.project=beez --filter label=com.docker.compose.service=postgres --format '{{.Names}}')
-echo "$PG"
-
-# 설정 두 개와 backend 상태
-docker exec "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc "SHOW wal_level" -c "SHOW max_slot_wal_keep_size"'
+pgsql -Atc "SHOW wal_level" -c "SHOW max_slot_wal_keep_size"
 docker ps --filter label=com.docker.compose.project=beez --format '{{.Names}}\t{{.Status}}'
 ```
 
@@ -73,28 +86,30 @@ Connect 컨테이너가 `uid=1001`로 돌며 이 파일을 읽는다(294가 디�
 # 디렉터리: 없으면 만들고, 있으면 주인·권한만 맞춘다 (294가 먼저 만들었어도 같은 값)
 sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets
 
-# 비밀번호를 서버에서 만들어 바로 파일에 쓴다. 화면에 찍지 않는다. 파일이 이미 있으면 덮어쓰지 않는다
-sudo sh -c 'umask 027; f=/opt/beez/.cdc-secrets/database.properties; test -e "$f" || printf "password=%s\n" "$(openssl rand -hex 24)" > "$f"'
+# 비밀번호를 서버에서 만들어 바로 파일에 쓴다. 화면에 찍지 않는다.
+# 파일이 이미 있으면 덮어쓰지 않는다. openssl 이 실패하거나 길이가 48자가 아니면 파일을 만들지 않고 실패로 끝난다
+sudo sh -c 'set -e; umask 027; f=/opt/beez/.cdc-secrets/database.properties
+test -e "$f" && { echo "이미 있음: 그대로 둔다"; exit 0; }
+pw=$(openssl rand -hex 24); [ "${#pw}" -eq 48 ]
+printf "password=%s\n" "$pw" > "$f"; echo "만듦"'
 sudo chown root:1001 /opt/beez/.cdc-secrets/database.properties
 sudo chmod 640 /opt/beez/.cdc-secrets/database.properties
 
-# 내용 말고 주인·권한·줄 수만 본다
+# 내용 말고 주인·권한과 비밀번호 길이만 본다
 sudo stat -c '%U:%G %a %n' /opt/beez/.cdc-secrets /opt/beez/.cdc-secrets/database.properties
-sudo grep -c '^password=' /opt/beez/.cdc-secrets/database.properties
+sudo awk -F= '/^password=/{print length($2)}' /opt/beez/.cdc-secrets/database.properties
 ```
 
-기대값: 디렉터리 `root:1001 750`, 파일 `root:1001 640`, `password=` 줄 1개.
+기대값: 디렉터리 `root:1001 750`, 파일 `root:1001 640`, 마지막 줄 `48` 하나.
+빈 값이거나 다른 숫자면 파일을 지우고(`sudo rm …/database.properties`) 이 절을 다시 한다.
 비밀번호는 16진수 48자라 따옴표·역슬래시 문제가 없다.
 
 ## 3. 복제 계정·publication 만들기 (서버, 손으로)
 
-테이블 소유자이자 슈퍼유저인 `POSTGRES_USER`로 컨테이너 안 소켓에서 접속한다. 컨테이너 안 환경 변수를 쓰므로
-계정 이름·비밀번호를 명령에 적지 않는다.
-
-### 3-1. 착수 전 확인 (**서버 bash**)
+### 3-1. 착수 전 확인 (**서버 bash**, 0 준비 뒤)
 
 ```bash
-docker exec -i "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X' <<'SQL'
+pgsql <<'SQL'
 \d published_change_analysis
 SELECT relreplident FROM pg_class WHERE oid = 'public.published_change_analysis'::regclass;
 SELECT rolname FROM pg_roles WHERE rolname = 'beez_cdc';
@@ -111,7 +126,7 @@ SQL
 publication 문장은 검토안 [`intake.publication.review.sql`](../../infra/cdc/intake.publication.review.sql) 그대로다.
 
 ```bash
-docker exec -i "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1' <<'SQL'
+pgsql <<'SQL'
 CREATE ROLE beez_cdc WITH LOGIN REPLICATION;
 GRANT SELECT (id, status) ON public.published_change_analysis TO beez_cdc;
 CREATE PUBLICATION beez_published_analysis_cdc
@@ -123,49 +138,62 @@ SQL
 - `REPLICATION`은 WAL을 읽는 권한이고, `SELECT (id, status)`는 Debezium 초기 스냅샷용이다. 다른 컬럼과 다른 표는 주지 않는다.
 - 이 조합으로 초기 스냅샷이 도는 것은 `infra/cdc-poc/document-capture`에서 확인했다.
 
-### 3-3. 비밀번호를 파일에서 역할로 넘기기 (**서버 bash**)
+### 3-3. 비밀번호를 파일에서 역할로 넘기기 (**서버 bash**, 0 준비 뒤)
 
-비밀번호를 psql 표준 입력으로만 넘긴다. 명령줄(`ps`)·셸 이력·psql 이력(`-X`, 비대화형)에 남지 않는다.
-`log_min_error_statement = panic`은 이 세션에서 문장이 실패해도 서버 로그에 문장(비밀번호 포함)을 남기지 않게 한다.
+비밀번호는 셸 변수와 psql 표준 입력으로만 지나간다.
+
+- 명령줄(`ps`)과 셸 이력에는 변수 이름만 남는다.
+- psql 이력(`~/.psql_history`)에는 남지 않는다. 표준 입력이 파이프라 psql이 대화형으로 돌지 않기 때문이다.
+  대화형 psql에서 같은 문장을 치면 이력에 남으므로 그렇게 하지 않는다.
+- 같은 세션에서 `log_statement = 'none'`(성공한 문장)과 `log_min_error_statement = panic`(실패한 문장)을 걸어
+  서버 로그에 문장(비밀번호 포함)이 남지 않게 한다. 슈퍼유저 세션이라 걸 수 있다.
+- 비밀번호가 48자가 아니면 보내지 않는다. 빈 값을 보내면 PostgreSQL은 NOTICE만 내고 비밀번호를 지운 채 성공으로 끝나기 때문이다.
 
 ```bash
-{ echo 'SET log_min_error_statement = panic;'
-  printf '\\set pw %s\n' "$(sudo sed -n 's/^password=//p' /opt/beez/.cdc-secrets/database.properties)"
-  echo "ALTER ROLE beez_cdc PASSWORD :'pw';"
-} | docker exec -i "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -q -v ON_ERROR_STOP=1'
-echo "exit=$?"
+pw=$(sudo sed -n 's/^password=//p' /opt/beez/.cdc-secrets/database.properties)
+if [ "${#pw}" -ne 48 ]; then
+  echo "비밀번호 파일 이상(길이 ${#pw}) — 2를 다시 본다"
+else
+  { echo "SET log_statement = 'none';"
+    echo 'SET log_min_error_statement = panic;'
+    printf '\\set pw %s\n' "$pw"
+    echo "ALTER ROLE beez_cdc PASSWORD :'pw';"
+  } | pgsql -q
+  echo "exit=$?"
+fi
+unset pw
 ```
 
-기대값: 출력 없이 `exit=0`. 비밀번호를 바꿀 때는 파일을 지우고 2·3-3을 다시 하고, 커넥터가 있으면 재시작한다.
+기대값: `exit=0` 한 줄. 비밀번호를 바꿀 때는 파일을 지우고 2·3-3을 다시 하고, 커넥터가 있으면 재시작한다.
 
 ## 4. 검증 (서버, 읽기 전용)
 
-### 4-1. publication 컬럼 (**서버 bash**)
+### 4-1. publication 컬럼 (**서버 bash**, 0 준비 뒤)
 
 ```bash
-docker exec "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc "SELECT attnames FROM pg_publication_tables WHERE pubname = '\''beez_published_analysis_cdc'\''"'
+pgsql -Atc "SELECT attnames FROM pg_publication_tables WHERE pubname = 'beez_published_analysis_cdc'"
 ```
 
 기대값: `{id,status}`.
 
-### 4-2. `beez_cdc`로 망을 거쳐 접속 (**서버 bash**)
+### 4-2. `beez_cdc`로 망을 거쳐 접속 (**서버 bash**, 0 준비 뒤)
 
 Connect와 같은 조건(uid 1001, 비밀 파일 디렉터리를 읽기 전용으로 붙임, `beez_default` 망으로 `postgres:5432`)으로 접속한다.
 컨테이너 안 `127.0.0.1` 접속은 `pg_hba.conf`에서 trust라 비밀번호를 검사하지 않으므로 검증이 되지 않는다.
-이미 서버에 있는 postgres 이미지를 클라이언트로 쓴다.
+클라이언트는 서버에 이미 있는 postgres 이미지를 쓰고, DB 이름은 postgres 컨테이너의 `POSTGRES_DB`에서 받는다.
 
 ```bash
 docker run --rm --network beez_default --user 1001 -v /opt/beez/.cdc-secrets:/run/cdc-secrets:ro \
+  -e PGHOST=postgres -e PGUSER=beez_cdc -e PGDATABASE="$(docker exec "$PG" printenv POSTGRES_DB)" \
   "$(docker inspect -f '{{.Config.Image}}' "$PG")" sh -c '
 PGPASSWORD=$(sed -n "s/^password=//p" /run/cdc-secrets/database.properties); export PGPASSWORD
-echo "[1] id,status";  psql -h postgres -U beez_cdc -d beez -X -Atc "SELECT count(*) FROM (SELECT id, status FROM published_change_analysis) t"
-echo "[2] 다른 컬럼";  psql -h postgres -U beez_cdc -d beez -X -Atc "SELECT project_id FROM published_change_analysis LIMIT 1" 2>&1
-echo "[3] 복제 접속";  psql "host=postgres user=beez_cdc dbname=beez replication=database" -X -Atc "IDENTIFY_SYSTEM" 2>&1'
+echo "[1] id,status";  psql -X -Atc "SELECT count(*) FROM (SELECT id, status FROM published_change_analysis) t"
+echo "[2] 다른 컬럼";  psql -X -Atc "SELECT project_id FROM published_change_analysis LIMIT 1" 2>&1
+echo "[3] 복제 접속";  psql "replication=database" -X -Atc "IDENTIFY_SYSTEM" 2>&1'
 ```
 
-기대값: [1] 숫자(행 수), [2] `permission denied for table published_change_analysis`, [3] `시스템ID|타임라인|LSN|beez`.
+기대값: [1] 숫자(행 수), [2] `permission denied for table published_change_analysis`, [3] `시스템ID|타임라인|LSN|DB이름`.
 [1]이 `password authentication failed`면 3-3이 안 된 것이고, `Permission denied`(파일)면 2의 주인·권한을 다시 본다.
-DB 이름이 `beez`가 아니면(`DB_NAME`) 명령의 `beez`를 바꾼다.
 
 ## 5. 되돌리기
 
@@ -174,16 +202,16 @@ CDC 전체를 내릴 때는 [계획 §4 되돌리기](cdc-deploy-plan-279.md#4-�
 
 ### 5-1. publication·계정·비밀 파일 (계획 5번)
 
-앞 단계(커넥터·슬롯)가 끝났는지 먼저 본다 (**서버 bash**):
+앞 단계(커넥터·슬롯)가 끝났는지 먼저 본다 (**서버 bash**, 0 준비 뒤):
 
 ```bash
-docker exec "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -Atc "SELECT count(*) FROM pg_replication_slots"'
+pgsql -Atc "SELECT count(*) FROM pg_replication_slots"
 ```
 
 `0`일 때만 진행한다 (**서버 bash**, 내용은 psql):
 
 ```bash
-docker exec -i "$PG" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X -v ON_ERROR_STOP=1' <<'SQL'
+pgsql <<'SQL'
 DROP PUBLICATION beez_published_analysis_cdc;
 REVOKE SELECT (id, status) ON public.published_change_analysis FROM beez_cdc;
 DROP ROLE beez_cdc;
@@ -202,4 +230,4 @@ sudo rm /opt/beez/.cdc-secrets/database.properties
 
 | 날짜 | 단계 | 결과 |
 |---|---|---|
-| 11-05 | 로컬 확인 (1 시나리오 2개, 3-2·3-3·4 리허설, 5-1 순서) | 위 기대값과 같음 |
+| 11-05 | 로컬 확인 (1 시나리오 2개, 0·2·3·4·5-1 블록을 문구 그대로 실행) | 위 기대값과 같음. 2는 `sudo` 대신 시험 폴더 경로로 실행 |

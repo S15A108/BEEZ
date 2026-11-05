@@ -18,6 +18,7 @@ services:
     # max_slot_wal_keep_size 는 슬롯이 멈춰도 WAL 이 디스크를 다 먹지 않게 두는 상한이다.
     # 되돌릴 때는 논리 복제 슬롯을 먼저 지운다. 슬롯이 남은 채 wal_level 을 내리면 PostgreSQL 이 기동을 거부한다
     # (순서는 docs/infra/cdc-postgres.md "되돌리기").
+    # 이 command 는 서버(이 파일) 전용이다. 로컬 개발용 backend/compose.yaml 은 replica 그대로라 거기서는 슬롯을 만들 수 없다.
     command: ["postgres", "-c", "wal_level=logical", "-c", "max_slot_wal_keep_size=10GB"]
     environment:
       POSTGRES_DB: ${DB_NAME:-beez}
