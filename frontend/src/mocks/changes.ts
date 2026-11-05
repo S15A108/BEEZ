@@ -388,6 +388,15 @@ export function changeRoutes(
       return {
         data: {
           proposal: proposalView(context, proposal!),
+          // 목은 발행 후 분석 워커를 실행하지 않으므로 완료나 대기 상태를 만들어 내지 않는다.
+          ...(proposal!.status === 'PUBLISHED'
+            ? {
+                published_analysis: {
+                  status: 'UNKNOWN',
+                  guidance: 'CHECK_RESULT',
+                },
+              }
+            : {}),
           comparisons: [
             ...proposal!.items.map((change) => {
               const base = change.base_design_item_version_id

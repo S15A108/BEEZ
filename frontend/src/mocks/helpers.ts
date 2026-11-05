@@ -5,11 +5,18 @@ import { nextId, now } from './state'
 export class MockApiError extends Error {
   status: number
   code: string
+  details?: Record<string, unknown>
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -30,8 +37,13 @@ export interface MockReply {
   headers?: Record<string, string>
 }
 
-export function fail(status: number, code: string, message: string): never {
-  throw new MockApiError(status, code, message)
+export function fail(
+  status: number,
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): never {
+  throw new MockApiError(status, code, message, details)
 }
 
 export function omit<T extends object, K extends keyof T>(

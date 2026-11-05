@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { authApi, membersApi } from '@/api/services'
 import { getApiErrorCode } from '@/api/error'
+import { verifyEmail } from '@/test/verifyEmail'
 import { DEMO_EMAIL, DEMO_PASSWORD, resetMockApi, setupMockApi } from './setup'
 
 // Q05 초대 규칙(PR #42, 2026-10-29 확정)을 목이 따르는지 본다.
@@ -42,6 +43,7 @@ it('초대할 때는 팀원이 아니고, 그 이메일로 가입하면 팀원�
     name: '새 팀원',
     email: 'new@beez.local',
     password: 'beez-2026!',
+    verified_token: await verifyEmail('new@beez.local'),
   })
   expect(
     (await membersApi.list('101', { limit: 100 })).items.map((m) => m.name),

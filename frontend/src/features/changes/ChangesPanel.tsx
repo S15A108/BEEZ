@@ -40,6 +40,7 @@ import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalForm } from './ProposalForm'
+import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
 import {
   isStaleDocument,
   kindLabel,
@@ -97,20 +98,28 @@ const isImpactRunning = (impact: ChangeImpact) =>
 const isImpactNotStarted = (impact: ChangeImpact) =>
   impact.analysis_status === 'NOT_EVALUATED' &&
   impact.error_code === 'analysis_not_started'
-function impactMessage(impact: ChangeImpact) {
+const hasCurrentImpact = (impact: ChangeImpact) =>
+  impact.analysis_status === 'COMPLETED' &&
+  impact.is_current !== false &&
+  !impact.reanalysis
+function impactMessage(impact: ChangeImpact, editable: boolean) {
   if (isImpactRunning(impact))
     return impact.reanalysis
       ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
       : '분석하는 중이에요.'
   if (isImpactNotStarted(impact))
-    return '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
+    return editable
+      ? '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
+      : '발행 전 영향 분석이 진행되지 않았어요.'
   if (impact.analysis_status === 'FAILED') return '분석하지 못했어요.'
   if (impact.analysis_status === 'INSUFFICIENT_EVIDENCE')
     return '근거가 부족해서 영향을 확정하지 못했어요.'
   if (impact.analysis_status === 'NOT_EVALUATED')
     return '영향을 평가하지 못했어요.'
   if (impact.analysis_status === 'STALE' || impact.is_current === false)
-    return '제안이 바뀌어 이전 분석이 오래됐어요. 다시 분석해 주세요.'
+    return editable
+      ? '제안이 바뀌어 이전 분석이 오래됐어요. 다시 분석해 주세요.'
+      : '이전 영향 분석은 현재 상태와 달라졌어요.'
   return '확인된 관계와 AI 후보를 나눠 보여요.'
 }
 
@@ -157,6 +166,12 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'change', selectedId],
     queryFn: () => changesApi.get(projectId, selectedId!),
     enabled: !!selectedId,
+    refetchInterval: (query) =>
+      ['PENDING', 'RUNNING'].includes(
+        query.state.data?.published_analysis?.status ?? '',
+      )
+        ? 15_000
+        : false,
   })
   // 승인 확인창의 문서 새 버전 번호는 제안이 만든 문서 버전(proposed_document_version_id)을 버전 이력에서 찾는다.
   // 철회된 제안의 초안도 번호를 차지하므로 승인본+1로 짐작하지 않는다(PR #72 3차 조사 THIRD-DOC-03).
@@ -269,9 +284,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     approved.find((item) => item.design_item_id === id)?.key ?? '설계 항목'
   const taskKey = (id?: string) =>
     taskList.find((task) => task.id === id)?.key ?? '작업'
-  const impactCount = impact.data
-    ? impact.data.explicit.length + impact.data.candidates.length
-    : 0
+  const impactCount =
+    !impact.error && impact.data && hasCurrentImpact(impact.data)
+      ? impact.data.explicit.length + impact.data.candidates.length
+      : undefined
   const commentList = comments.data?.pages.flatMap((page) => page.items) ?? []
   const visible = entries
     .filter((entry) => {
@@ -1044,6 +1060,14 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         )}
                       </AsyncState>
                     )}
+                    {current.status === 'PUBLISHED' && (
+                      <PublishedAnalysisStatus
+                        analysis={data.published_analysis}
+                        observedAt={detail.dataUpdatedAt}
+                        refreshing={detail.isFetching}
+                        onRefresh={() => void detail.refetch()}
+                      />
+                    )}
                     <div
                       role="tablist"
                       aria-label="제안 보기"
@@ -1064,7 +1088,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           )}
                         >
                           {label}
-                          {value === 'impact' && ` ${impactCount}`}
+                          {value === 'impact' &&
+                            impactCount !== undefined &&
+                            ` ${impactCount}`}
                           {value === 'comments' && ` ${commentList.length}`}
                         </button>
                       ))}
@@ -1151,8 +1177,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                 </button>
                               </h4>
                               <p className="text-[13px] leading-[19px]">
-                                확인된 관계 {impact.data?.explicit.length ?? 0}{' '}
-                                · AI 후보 {impact.data?.candidates.length ?? 0}
+                                {impact.error
+                                  ? '영향 분석 상태를 불러오지 못했어요.'
+                                  : impact.data && hasCurrentImpact(impact.data)
+                                    ? `확인된 관계 ${impact.data.explicit.length} · AI 후보 ${impact.data.candidates.length}`
+                                    : impact.data
+                                      ? impactMessage(impact.data, editable)
+                                      : '영향 분석 상태를 확인하는 중이에요.'}
                               </p>
                             </section>
                             <section className={overviewCard}>
@@ -1263,31 +1294,39 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             const notStarted = isImpactNotStarted(result)
                             return (
                               <div className="grid gap-3 text-sm">
+                                {current.status === 'PUBLISHED' && (
+                                  <p className="text-muted-foreground">
+                                    발행 전 영향 분석 결과예요. 발행 후 처리
+                                    상태는 위에서 확인해 주세요.
+                                  </p>
+                                )}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <p className="text-muted-foreground">
-                                    {impactMessage(result)}
+                                    {impactMessage(result, editable)}
                                   </p>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={action.busy || running}
-                                    onClick={() =>
-                                      void perform(
-                                        () =>
-                                          changesApi.retryImpact(
-                                            projectId,
-                                            current.id,
-                                          ),
-                                        notStarted
-                                          ? '영향 분석을 시작했어요.'
-                                          : '다시 분석을 요청했어요.',
-                                      )
-                                    }
-                                  >
-                                    {notStarted
-                                      ? '영향 분석 시작'
-                                      : '다시 분석'}
-                                  </Button>
+                                  {editable && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={action.busy || running}
+                                      onClick={() =>
+                                        void perform(
+                                          () =>
+                                            changesApi.retryImpact(
+                                              projectId,
+                                              current.id,
+                                            ),
+                                          notStarted
+                                            ? '영향 분석을 시작했어요.'
+                                            : '다시 분석을 요청했어요.',
+                                        )
+                                      }
+                                    >
+                                      {notStarted
+                                        ? '영향 분석 시작'
+                                        : '다시 분석'}
+                                    </Button>
+                                  )}
                                 </div>
                                 <div
                                   className={cn(
@@ -1313,7 +1352,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                     ))
                                   ) : (
                                     <p className="text-muted-foreground">
-                                      확인된 관계가 없어요.
+                                      {hasCurrentImpact(result)
+                                        ? '확인된 관계가 없어요.'
+                                        : '확인된 관계를 아직 판단할 수 없어요.'}
                                     </p>
                                   )}
                                   <h4 className="font-semibold">

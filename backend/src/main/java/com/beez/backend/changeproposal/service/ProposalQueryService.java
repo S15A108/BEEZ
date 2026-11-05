@@ -90,7 +90,18 @@ public class ProposalQueryService {
         }
         var candidates = repository.candidates(project, baseline, itemIds, documentIds, 501);
         return new Detail(value, List.copyOf(comparisons), List.copyOf(candidates.subList(0, Math.min(500, candidates.size()))),
-                candidates.size() > 500);
+                candidates.size() > 500, publishedAnalysis(project, proposal, value));
+    }
+
+    private PublishedAnalysisStatus publishedAnalysis(long project, long proposal, Proposal value) {
+        if (value.publishedBaselineId() == null) {
+            return "PUBLISHED".equals(value.status()) ? PublishedAnalysisStatusMapper.missing(null) : null;
+        }
+        Boolean current = value.currentBaselineId() == null ? null
+                : Objects.equals(value.publishedBaselineId(), value.currentBaselineId());
+        return repository.publishedAnalysis(project, proposal, Long.parseLong(value.publishedBaselineId()))
+                .map(row -> PublishedAnalysisStatusMapper.from(row, current))
+                .orElseGet(() -> PublishedAnalysisStatusMapper.missing(current));
     }
 
     public RevisionPage revisions(CallerContext caller, long project, long proposal, Integer before, int limit) {

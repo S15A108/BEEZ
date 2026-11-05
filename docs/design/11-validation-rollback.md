@@ -48,7 +48,7 @@ BEEZ 에서 "검증 롤백" 은 **검증 결과·작업 상태를 지우고 과�
 - **시점은 셋뿐이다.** ① 사건이 일어나는 요청의 트랜잭션 안(R6~R11), ② 워커가 결과를 반영하는 트랜잭션 안(R1·R2·R4·R5), ③ 워커의 주기 회수(R3). 별도의 "롤백 배치" 는 없다.
 - **잠금 순서는 한 가지** — 프로젝트 행 → 작업 → 검증(job → validation). 발행·상태 보고·계획 변경·검증 접수·결과 반영·회수가 모두 같다. 그래서 두 계기가 겹쳐도 한쪽이 끝난 뒤 다른 쪽이 "지금" 상태를 보고 판단한다.
 - **늦은 결과를 막는 울타리(fencing)** — 결과 반영은 `RUNNING`·같은 `current_attempt`·같은 리스 토큰·리스 유효기간 안·분석 입력 불변을 모두 확인한 뒤에만 쓴다. 하나라도 어긋나면 R1·R2. 상태 갱신 SQL 자체도 `where status = 'RUNNING'` 이라 조건이 어긋나면 0 행이다.
-- **복구는 "새 행" 으로만** — 재시도(VAL-A04, -161)는 같은 검증의 새 시도(`attempt+1`, 새 실행·새 job), 무효화 뒤는 새 검증 행, 계획 수정은 새 리비전. 옛 행을 고쳐 살리는 경로는 없다.
+- **복구는 "새 행" 으로만** — 재시도(VAL-A04, -161)는 같은 검증의 새 시도(`attempt+1`, 새 실행. 큐 작업은 검증마다 하나라 그 행을 다시 QUEUED 로 돌린다), 무효화 뒤는 새 검증 행, 계획 수정은 새 리비전. 옛 행을 고쳐 살리는 경로는 없다.
 - **같은 트랜잭션 원칙(D7)** — 작업 상태 전이와 그에 따른 검증 무효화는 반드시 한 트랜잭션이다. 알림·활동 기록도 붙으면(-181·-182) 같은 트랜잭션에 넣는다(계약 10).
 
 ## 4. 롤백 결과 기록 (확정 — 구현됨)
@@ -106,9 +106,11 @@ update validation_job set status = 'FAILED', lease_token = null, lease_until = n
 update validation_run set status = 'ERROR', error = 'validation_worker_interrupted: 운영자 수동 종결', finished_at = now(), updated_at = now()
  where validation_id = :v and status = 'RUNNING';
 insert into validation_finding (validation_id, validation_run_id, source, kind, severity, message, resolution, next_action)
-select :v, r.id, 'MODEL', 'ERROR', 'BLOCKING', '워커 중단으로 운영자가 종결했습니다', 'RETRY', '같은 계획으로 다시 검증을 요청하세요'
+select :v, r.id, 'MODEL', 'ERROR', 'BLOCKING', '워커 중단으로 운영자가 종결했습니다', 'RETRY', '같은 입력으로 다시 실행합니다 (VAL-A04)'
   from validation_run r where r.validation_id = :v order by r.attempt desc limit 1;
-update validation set status = 'ERROR', updated_at = now() where id = :v and status = 'RUNNING';
+update validation set status = 'ERROR', finished_at = now(), lock_version = lock_version + 1, updated_at = now(),
+       summary = coalesce(summary, '{}'::jsonb) || '{"error_code": "validation_worker_interrupted"}'::jsonb
+ where id = :v and status = 'RUNNING';
 ```
 
 작업 상태는 손으로 바꾸지 않는다 — 검증을 닫으면 담당자가 정해진 전이(새 검증·RESUME·CANCEL)로 나간다. 상태를 SQL 로 고치면 잠금 번호·활동 기록·알림과 어긋난다.
@@ -133,8 +135,9 @@ update validation set status = 'ERROR', updated_at = now() where id = :v and sta
 | R9·R11 | `PublicationImpactAdapter` (+ `ValidationStatusLookup.invalidateByIds`) |
 | R10 | `ValidationStatusLookup.invalidateDeltaOnResume` |
 | 사용량 보존 | `ValidationRepository.finishRun` / `recordLateUsage` (-168) |
-| 재시도(새 시도) | -161 에서 추가 |
+| 재시도(새 시도) | `ValidationRetryService.retry` (VAL-A04·MCP-14, -161) |
 
 ## 변경 이력
 
 - v1.0 (2026-11-02) 최초 작성 (변준성, -160). 구현된 R1~R11 과 기록 위치를 정리하고, 롤백 실패 시 수동 조치·배포 복구와의 구분을 담당자 결정으로 제안.
+- v1.1 (2026-11-04) 재시도(VAL-A04·MCP-14, -161) 반영 (변준성). 큐 작업은 검증마다 하나라 새 job 이 아니라 같은 행을 다시 QUEUED 로 돌린다. 수동 종결 SQL 이 오류 코드(`validation_worker_interrupted`)·완료 시각을 남기고, 다음 행동을 재시도로 안내한다. 수동 종결·리스 만료로 닫힌 실행은 재시도 횟수 제한에서 세지 않는다(횟수 제한은 실제 검증 AI를 부른 실행만 센다).

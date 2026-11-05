@@ -38,17 +38,24 @@ public class SecurityConfig {
     static final String[] PUBLIC_API = {
             "/api/ping",
             "/api/auth/register",
+            "/api/auth/email-verifications",              // ACC-A11 (-219)
+            "/api/auth/email-verifications/*/confirm",    // ACC-A12
             "/api/auth/login",
             "/api/auth/logout",
             "/api/auth/password/**",
             "/api/invitations/preview",
     };
 
-    /** 배포 확인(-126)·문서. 운영에서 OpenAPI 는 SWAGGER_ENABLED 로 따로 끈다. */
+    /**
+     * 배포 확인(-126)·지표 수집(-262)·문서. 운영에서 OpenAPI 는 SWAGGER_ENABLED 로 따로 끈다.
+     * /actuator/prometheus 는 인증 없이 열고 외부 인터넷은 Nginx 가 막는다. 같은 Docker 네트워크·서버 로컬 접근은
+     * 지표 라벨에 프로젝트 ID·원문이 없어 수용한다 (S15P31A108-244 결정 2). 다른 actuator 경로는 아래 denyAll 로 닫힌다.
+     */
     static final String[] PUBLIC_OPS = {
             "/actuator/health",
             "/actuator/health/**",
             "/actuator/info",
+            "/actuator/prometheus",
             "/swagger-ui.html",
             "/swagger-ui/**",
             "/v3/api-docs",

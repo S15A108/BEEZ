@@ -1,5 +1,7 @@
 # 로컬 개발: SQL 로그, 상세 헬스
 beez:
+  mail:
+    log-body: true   # 로컬은 메일을 보내지 않으므로 가입 인증 코드를 로그로 받는다. 다른 프로필에서는 켜지 않는다
   document:
     object-storage:
       endpoint: ${DOCUMENT_S3_ENDPOINT:http://127.0.0.1:8333}
