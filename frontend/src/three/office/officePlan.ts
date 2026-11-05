@@ -259,7 +259,7 @@ export const piecesOf = (rows: Row[]): OfficePiece[] =>
   }))
 export const OFFICE_PIECES = piecesOf(ROWS)
 
-/** 사무실 배치 한 벌. 건물 외관마다 하나씩 있고(D31), 없으면 v488 배치를 쓴다. */
+/** 사무실 배치 한 벌. 건물 외관마다 하나씩 있고(D39), 없으면 v488 배치를 쓴다. */
 export interface OfficePlan {
   room: { w: number; d: number; h: number }
   zones: OfficeZone[]

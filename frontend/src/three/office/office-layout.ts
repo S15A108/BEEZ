@@ -24,7 +24,7 @@ export function officePopulationOf(
   }, {})
 }
 
-// 건물 외관별 배치(D31). 아직 옮기지 않은 외관은 v488 배치(D28)를 쓴다.
+// 건물 외관별 배치(D39). 아직 옮기지 않은 외관은 v488 배치(D36)를 쓴다.
 const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
   brick: BRICK_PLAN,
   glass: GLASS_PLAN,
@@ -32,7 +32,7 @@ const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
   tower: TOWER_PLAN,
   wood: WOOD_PLAN,
 }
-// 충전 자리(D29 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
+// 충전 자리(D37 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
 const LOUNGE_SEATS = ['loungeChairRelax', 'loungeDesignChair']
 // 의자 방향(ry, 모델 앞 = +z)을 앉은 사람이 보는 쪽으로
 const facingOf = (ry: number): Dir => {
@@ -82,7 +82,7 @@ const SOLID = new Set([
 const onTop = (piece: OfficePiece) => piece.y > 0.2
 
 /**
- * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이고, 배치는 건물 외관을 따른다(D31).
+ * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이고, 배치는 건물 외관을 따른다(D39).
  * 작업 자리는 작업 현황 구역과 방 가운데 책상이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
  */
 export function makeTeamOffice(design?: string): Floor {
@@ -232,7 +232,7 @@ export function makeTeamOffice(design?: string): Floor {
       kit,
     })
     if (solid) block(piece)
-    // 의자가 없는 회의실·워룸(모던 워룸 벤치, 목조 회의실 부스 소파)은 긴 의자 하나를 두 자리로 쓴다(D29 자리 대체, D31).
+    // 의자가 없는 회의실·워룸(모던 워룸 벤치, 목조 회의실 부스 소파)은 긴 의자 하나를 두 자리로 쓴다(D37 자리 대체, D39).
     if (piece.kind === 'bench' || (piece.kind === 'sofa' && piece.zone === 3)) {
       for (const side of [-0.25, 0.25]) {
         const spot = seatAt(

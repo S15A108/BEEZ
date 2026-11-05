@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { makeBuilding, ALL_KEYS } from './building'
 import { OFFICE_THEMES, officeDesignOf, officeTimeAt } from './officeLook'
 
-// D31: 기본은 한국 시각에 따라 낮·노을·밤이 바뀐다(사용자 결정 '실제 시각 + 설정에서 고정').
+// D39: 기본은 한국 시각에 따라 낮·노을·밤이 바뀐다(사용자 결정 '실제 시각 + 설정에서 고정').
 it('한국 시각 7시부터 낮, 17시부터 노을, 19시부터 밤이다', () => {
   // UTC 시각이라 한국 시각은 9시간 뒤다
   expect(officeTimeAt(new Date('2026-11-04T21:59:00Z'))).toBe('night')

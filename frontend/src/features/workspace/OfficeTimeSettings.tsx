@@ -18,7 +18,7 @@ const options: { value: 'auto' | OfficeTime; label: string; hint: string }[] = [
   { value: 'night', label: '밤', hint: '창밖이 어둡고 천장 등만 밝아요' },
 ]
 
-// 설정 > 내 설정 > 사무실 화면(D31). 사무실은 프로젝트 건물 외관을 따르고, 시간대는 이 브라우저에만 저장한다.
+// 설정 > 내 설정 > 사무실 화면(D39). 사무실은 프로젝트 건물 외관을 따르고, 시간대는 이 브라우저에만 저장한다.
 export function OfficeTimeSettings() {
   const value = useWorkspaceStore((state) => state.officeTime)
   const setValue = useWorkspaceStore((state) => state.setOfficeTime)

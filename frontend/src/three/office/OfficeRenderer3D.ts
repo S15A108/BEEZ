@@ -384,7 +384,7 @@ export class OfficeRenderer3D {
   private city: OfficeCity | null = null
   // Clear air across the surrounding districts; only the far horizon meets the sky.
   private readonly cityFog = new THREE.Fog(CITY_SKY, 650, 850)
-  // 건물 외관별 재질(D31)과 시간대 빛. 외관은 바닥(floor.design)을 따르고, 시간대는 render의 opts.time이다.
+  // 건물 외관별 재질(D39)과 시간대 빛. 외관은 바닥(floor.design)을 따르고, 시간대는 render의 opts.time이다.
   private theme = OFFICE_THEMES.modern
   private design = ''
   private time: OfficeTime = 'day'
@@ -1179,7 +1179,7 @@ export class OfficeRenderer3D {
             mesh.material,
           ].flat() as THREE.MeshStandardMaterial[]
           materials.forEach(kitPalette)
-          // 건물 테마의 나무·화분 색(D31) 위에 가구마다 정한 색을 얹는다.
+          // 건물 테마의 나무·화분 색(D39) 위에 가구마다 정한 색을 얹는다.
           const tint: Record<string, string> = {
             wood: this.theme.wood,
             plant: this.theme.plant,
@@ -1949,7 +1949,7 @@ export class OfficeRenderer3D {
     }
   }
 
-  // 외관(D31)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다.
+  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다.
   private resetLook() {
     this.workSurfaces.forEach(({ surface }) => surface.dispose())
     this.workSurfaces.length = 0
@@ -1964,7 +1964,7 @@ export class OfficeRenderer3D {
     this.relook = !!this.floor
   }
 
-  // 시간대 빛(D31): 하늘·해·방 빛·천장 등. 건물 테마의 햇빛·방 빛 색과 어두운 방의 밤 보정을 함께 쓴다.
+  // 시간대 빛(D39): 하늘·해·방 빛·천장 등. 건물 테마의 햇빛·방 빛 색과 어두운 방의 밤 보정을 함께 쓴다.
   private applyTime() {
     const t = OFFICE_TIMES[this.time],
       theme = this.theme
@@ -2882,7 +2882,7 @@ export class OfficeRenderer3D {
       this.dreamGround.position.set(cx, -0.04, cz)
       this.dreamGround.scale.set(width, depth, 1)
     }
-    // 창틀·유리·벽·슬랫·천장은 건물 테마 색이다(D31). 유리는 창밖 도시가 보이게 캔버스 불투명도의 절반쯤만 쓴다.
+    // 창틀·유리·벽·슬랫·천장은 건물 테마 색이다(D39). 유리는 창밖 도시가 보이게 캔버스 불투명도의 절반쯤만 쓴다.
     const theme = this.theme
     const frame = theme.mullion,
       sill = '#d4d2bf'
@@ -3608,7 +3608,7 @@ ${note ?? ''}`
       decorMode?: boolean
       firstPersonId?: string
       work?: OfficeWorkState
-      /** 사무실 시간대(D31). 없으면 낮이다. */
+      /** 사무실 시간대(D39). 없으면 낮이다. */
       time?: OfficeTime
     },
   ) {

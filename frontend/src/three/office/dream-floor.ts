@@ -35,7 +35,7 @@ export function makeDreamFloor(base: Floor, phase: number): Floor {
     signs: [],
     outdoorExit: phase >= 4 ? base.outdoorExit : undefined,
     // 가구 가운데가 열린 칸에 있으면 둔다. 양 끝 칸으로 재면 1 m보다 작거나 벽에 붙은 가구(서가·화분·벽쪽 책상)가
-    // 빠졌다(D31).
+    // 빠졌다(D39).
     furniture: base.furniture.filter((f) =>
       visible(Math.floor(f.x + f.w / 2), Math.floor(f.y + f.h / 2)),
     ),

@@ -30,9 +30,9 @@ import type { SceneAgent, SceneProject, SceneTask } from './types'
 
 export interface OfficeSceneProps {
   project: Pick<SceneProject, 'name' | 'id'>
-  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그리고, 사무실 재질·배치를 고른다(D31). */
+  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그리고, 사무실 재질·배치를 고른다(D39). */
   design?: string
-  /** 사무실 시간대(D31). 없으면 낮이다. */
+  /** 사무실 시간대(D39). 없으면 낮이다. */
   time?: OfficeTime
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
@@ -433,7 +433,7 @@ function OfficeRuntime(
     }
     const free = (x: number, y: number) => officeWalkable(state.floor, x, y)
     if (lastFloor.current !== state.floor) {
-      // 처음에는 엘리베이터에서 내리는 칸에 선다. 건물마다 배치가 달라(D31) 고정 좌표는 벽이나 가구 옆일 수 있다.
+      // 처음에는 엘리베이터에서 내리는 칸에 선다. 건물마다 배치가 달라(D39) 고정 좌표는 벽이나 가구 옆일 수 있다.
       if (!lastFloor.current && state.phase >= 3)
         Object.assign(player.current, {
           x: state.floor.exit.x * 32 + 16,
@@ -518,7 +518,7 @@ function OfficeRuntime(
     focus.current.y += (target.y - focus.current.y) * ease
     me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
-      // 건물별 28 × 16 m 방(D31)도 v488 방(폭 26칸)과 같은 크기로 화면에 담는다.
+      // 건물별 28 × 16 m 방(D39)도 v488 방(폭 26칸)과 같은 크기로 화면에 담는다.
       zoom:
         [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] *
         zoom.current *

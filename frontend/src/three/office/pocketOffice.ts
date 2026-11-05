@@ -12,7 +12,7 @@ export function makePocketOffice(
   developerCount?: number | OfficePopulation,
   design?: string,
 ): Floor {
-  // 인원 객체를 넘기면(사무실 화면) 캔버스 고정 사무실이다(D36). 숫자는 옛 별관 배치다. 사무실은 건물 외관을 따른다(D31).
+  // 인원 객체를 넘기면(사무실 화면) 캔버스 고정 사무실이다(D36). 숫자는 옛 별관 배치다. 사무실은 건물 외관을 따른다(D39).
   if (typeof developerCount === 'object') return makeTeamOffice(design)
   const count =
     developerCount === undefined

@@ -1,4 +1,4 @@
-// 건물별 사무실의 재질·색(캔버스 SCR-06-rec-office-buildings v495~v504, 그림 코드 office3.html의 테마)과 시간대 빛(D31).
+// 건물별 사무실의 재질·색(캔버스 SCR-06-rec-office-buildings v495~v504, 그림 코드 office3.html의 테마)과 시간대 빛(D39).
 // 프로젝트의 건물 외관(부지 디자인 값) 다섯 개가 캔버스 다섯 안과 같은 이름이다. 값이 없으면 도시처럼 모던 화이트다.
 export type OfficeDesign = 'glass' | 'brick' | 'modern' | 'tower' | 'wood'
 export type OfficeTime = 'day' | 'sunset' | 'night'

@@ -1,4 +1,4 @@
-// 붉은 벽돌 사무실 배치(캔버스 SCR-06-rec-office-buildings, 그림 코드 office2_plan_b-brick.json, D31). 28 × 16 m 방에 기둥이 없다.
+// 붉은 벽돌 사무실 배치(캔버스 SCR-06-rec-office-buildings, 그림 코드 office2_plan_b-brick.json, D39). 28 × 16 m 방에 기둥이 없다.
 // 단위는 m, 방 가운데가 (0, 0)이고 북쪽(-z)·동쪽(+x)이 유리벽이다. 행 형식은 officePlan.ts의 Row다.
 import { piecesOf, type OfficePlan, type Row } from '../officePlan'
 

@@ -55,7 +55,7 @@ test('human owners and invited members get desks even when the server places the
   )
 })
 
-// D31: 'glass' 외관은 캔버스 유리 오피스 배치(28 × 16 m)다. 테스트 뜻(인원과 상관없이 같은 방)은 그대로 두고 숫자를
+// D39: 'glass' 외관은 캔버스 유리 오피스 배치(28 × 16 m)다. 테스트 뜻(인원과 상관없이 같은 방)은 그대로 두고 숫자를
 // 유리 안으로 바꿨다(기대값 변경 사용자 승인 2026-11-04).
 test('any team gets the same fixed room: team desks, a glass meeting room, a war room and the lounge', () => {
   const floors = populations.map(office)

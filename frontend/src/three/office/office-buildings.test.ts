@@ -5,7 +5,7 @@ import { gridWalkable, smoothRoute } from './motion'
 import { findPath } from './path'
 import { officeSeats, seatApproach } from './social'
 
-// D31: 건물 외관별 배치(캔버스 SCR-06-rec-office-buildings, 28 × 16 m, 기둥 없음). 안마다 D29 자리(충전·워룸·주인 의자·
+// D39: 건물 외관별 배치(캔버스 SCR-06-rec-office-buildings, 28 × 16 m, 기둥 없음). 안마다 D37 자리(충전·워룸·주인 의자·
 // 허들·비비)가 있고, 모든 자리는 엘리베이터에서 걸어갈 수 있다. 옮긴 외관을 하나씩 늘린다.
 const PORTED = ['brick', 'modern', 'tower', 'wood', 'glass'] as const
 // 작업 화면(모니터·방 가운데 노트북)이 있는 자리 수. 캔버스 안마다 다르다: 벽돌 긴 테이블 6+6, 모던 팀 책상 8 + 공용 테이블 노트북 2, 타워 창가 집중석 7 + 팀 테이블 노트북 2, 목조 나무 작업대 6, 유리 팀 책상 8.
@@ -24,7 +24,7 @@ const office = (design: string) =>
   )
 
 test.each(PORTED)(
-  '%s 사무실은 28 × 16 m 방에 D29 자리가 모두 있다',
+  '%s 사무실은 28 × 16 m 방에 D37 자리가 모두 있다',
   (design) => {
     const floor = office(design)
     assert.strictEqual(floor.design, design)

@@ -59,7 +59,7 @@ export class WindowCityView {
     }
   }
 
-  /** 창에 비치는 하늘 색(시간대, D31) */
+  /** 창에 비치는 하늘 색(시간대, D39) */
   setSky(skyColor: THREE.ColorRepresentation) {
     this.maskMaterial.color.set(skyColor)
   }

@@ -27,7 +27,7 @@ interface WorkspaceState {
   placements: Record<string, Placement>
   /** 계정 id → 마지막으로 연 프로젝트 id. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33). */
   lastVisited: Record<string, string>
-  /** 사무실 시간대. auto는 한국 시각을 따르고, 나머지는 그 시간대로 고정한다(D31). */
+  /** 사무실 시간대. auto는 한국 시각을 따르고, 나머지는 그 시간대로 고정한다(D39). */
   officeTime: 'auto' | OfficeTime
   setOfficeTime: (officeTime: 'auto' | OfficeTime) => void
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
@@ -93,7 +93,7 @@ export function useClearPaneOnLeave() {
   useEffect(() => () => openPane(null), [openPane])
 }
 
-/** 사무실에 쓸 시간대(D31). 자동이면 한국 시각을 1분마다 다시 본다. */
+/** 사무실에 쓸 시간대(D39). 자동이면 한국 시각을 1분마다 다시 본다. */
 export function useOfficeTime(): OfficeTime {
   const setting = useWorkspaceStore((state) => state.officeTime)
   const [now, setNow] = useState(() => new Date())
