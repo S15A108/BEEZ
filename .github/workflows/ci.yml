@@ -181,7 +181,6 @@ jobs:
 
   # 6) 모니터링: 알림 규칙 시험과 Prometheus·Alertmanager 설정 검사(S15P31A108-292).
   #    서버에는 수동 배포라(cd.yml paths-ignore) 머지본이 그대로 올라간다. 깨진 설정은 여기서 막는다.
-  #    이미지는 infra/monitoring/compose.yaml 과 같은 태그·digest. 올릴 때 두 곳을 같이 바꾼다.
   #    파일은 서버 컨테이너와 같은 경로(/etc/prometheus, /etc/alertmanager)에 붙인다 —
   #    prometheus.yml 의 rule_files 와 alertmanager.yml 의 templates 가 그 경로를 가리킨다.
   #    웹훅 주소 파일(webhook_url_file)은 check-config 가 읽지 않아 붙이지 않는다(알림 보낼 때만 읽음).
@@ -193,11 +192,35 @@ jobs:
     defaults:
       run:
         working-directory: infra/monitoring
-    env:
-      PROMETHEUS_IMAGE: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
-      ALERTMANAGER_IMAGE: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
     steps:
       - uses: actions/checkout@v5
+
+      # 이미지는 서버가 쓰는 compose.yaml 에서 읽는다. 여기 따로 적으면 compose 만 올렸을 때 옛 버전으로 검사한다.
+      # --no-interpolate: 비밀값 env(GRAFANA_ADMIN_PASSWORD 등) 없이 읽는다. image 에는 변수가 없다.
+      # jq -e 는 서비스·image 가 없으면(이름 변경 등) 실패한다.
+      - name: Resolve images from compose.yaml
+        run: |
+          cfg=$(docker compose -f compose.yaml config --no-interpolate --format json)
+          prometheus=$(jq -er '.services.prometheus.image' <<<"$cfg")
+          alertmanager=$(jq -er '.services.alertmanager.image' <<<"$cfg")
+          echo "PROMETHEUS_IMAGE=$prometheus" >> "$GITHUB_ENV"
+          echo "ALERTMANAGER_IMAGE=$alertmanager" >> "$GITHUB_ENV"
+          echo "prometheus: $prometheus"
+          echo "alertmanager: $alertmanager"
+
+      # 서버 Prometheus 는 rule_files 의 /etc/prometheus/rules/*.yml 만 읽는다. 다른 이름(.yaml 등)이나
+      # 하위 디렉터리는 서버에서도 아래 check config 에서도 조용히 빠지므로 막는다.
+      - name: Rule files match rule_files glob
+        run: |
+          stray=$(find prometheus/rules -mindepth 1 \( -type d -o ! -name '*.yml' \))
+          if [ -n "$stray" ]; then
+            echo "::error::prometheus.yml rule_files(rules/*.yml)에 안 잡히는 항목: $stray"
+            exit 1
+          fi
+          if ! compgen -G 'prometheus/rules/*.yml' > /dev/null; then
+            echo "::error::prometheus/rules/*.yml 이 없다"
+            exit 1
+          fi
 
       # rule_files 의 모든 규칙 파일까지 읽어 검사한다(check rules 를 따로 두지 않는 이유).
       - name: promtool check config

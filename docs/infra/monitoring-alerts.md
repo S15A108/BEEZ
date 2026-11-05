@@ -335,22 +335,25 @@ read -rsp "webhook URL: " U && echo && \
 # 로컬 PC (Git Bash, 저장소 루트)
 P=prom/prometheus:v3.15.1; A=prom/alertmanager:v0.34.2   # compose.yaml 과 같은 태그
 cd infra/monitoring
-MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool $P check rules ../rules/beez.yml
-MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool $P test rules beez_test.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" --entrypoint promtool $P check config /etc/prometheus/prometheus.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" -w /etc/prometheus/tests --entrypoint promtool $P test rules beez_test.yml
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A check-config /etc/alertmanager/alertmanager.yml
-MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A config routes test --config.file=/etc/alertmanager/alertmanager.yml alertname=CdcDataUnavailable   # null 이어야 한다
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A config routes test --config.file=/etc/alertmanager/alertmanager.yml --verify.receivers=null alertname=CdcDataUnavailable
 cd ../..
 ```
 
-- `MSYS_NO_PATHCONV=1`: Git Bash가 `/p` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
+- `MSYS_NO_PATHCONV=1`: Git Bash가 `/etc/...` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
+- `check config`는 prometheus.yml과 `rule_files`(`rules/*.yml`)가 가리키는 규칙 파일을 함께
+  검사합니다. 서버 컨테이너와 같은 경로에 붙여야 `rule_files` 경로가 맞습니다.
+- routes test는 `CdcDataUnavailable`이 `null`이 아닌 수신처로 가면 실패(종료 코드 1)합니다.
 - 시험은 244 결정과 PR #121 리뷰의 계약만 봅니다(consumer 꺼짐에서 안 울림, 600초 + 5분,
   집계 실패·갱신 멈춤, 오래된 스냅샷 제외·한 인스턴스만 멈추면 억제하지 않음, 집계가 멈추면
   억제 원인이 FAILED 해소보다 먼저 생김, CDC 지표 전부·일부 누락, Kafka 실패·인스턴스별 지표
   누락, FAILED 중복 제거). 억제 자체(Alertmanager)는 promtool이 보지 못해 아래 기록처럼 실측했습니다. 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
 - `infra/monitoring/**`를 바꾼 PR에서는 CI `monitoring` 잡이 같은 검사를 돌리고, 실패하면
-  `ci-gate`가 실패해 머지할 수 없습니다(S15P31A108-292). 잡은 위 명령에 더해
-  `promtool check config`(prometheus.yml과 `rule_files`가 가리키는 규칙)를 돌리고,
-  routes test는 `--verify.receivers=null`로 경로가 바뀌면 실패합니다. 로컬 실행은 PR 전에
+  `ci-gate`가 실패해 머지할 수 없습니다(S15P31A108-292). 잡은 위 네 명령에 더해, 이미지를
+  `compose.yaml`에서 읽고(위 `P`·`A`처럼 손으로 맞추지 않음) `rules/`에 `*.yml`이 아닌
+  파일·하위 디렉터리가 있으면 실패합니다(서버가 읽지 않는 규칙 파일). 로컬 실행은 PR 전에
   빨리 보려는 용도이고, 결과를 PR 본문에 붙이지 않아도 됩니다.
 - FAILED·확인 필요 미평가의 24시간 재통지는 routes test가 수신처만 보여 주어 CI에서 고정하지
   않습니다. 바꿀 때는 `config routes show`로 직접 확인합니다.
