@@ -1,6 +1,7 @@
 package com.beez.backend.notification;
 
 import com.beez.backend.common.access.AccessErrors;
+import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
@@ -22,8 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 내 알림함(NTF-A01)·읽음 처리(NTF-A02) (S15P31A108-276).
  *
  * <p><b>보이는 알림.</b> 세션 계정이 받은 알림 중, 그 프로젝트의 활성 멤버로 남아 있는 것만이다. 조건은
- * {@code ProjectMemberRepository.findActiveMembership} 에서 계정 탈퇴 조건만 뺀 것이다(멤버십 active, 프로젝트 보관 전 —
- * 탈퇴하면 세션이 끊겨 여기 올 수 없다). 나갔거나 제외됐거나
+ * {@code ProjectMemberRepository.findActiveMembership} 에서 계정 탈퇴 조건만 뺀 것이다(멤버십 active, 프로젝트 보관 전).
+ * 탈퇴 계정은 두 API 모두 맨 앞의 {@link ProjectAccessChecker#requireUser} 가 401 로 막는다 — 탈퇴 뒤 남은 세션도 마찬가지다.
+ * 나갔거나 제외됐거나
  * 보관된 프로젝트의 알림은 목록·배지·읽음 처리 어디서도 보이지 않는다 — 다시 들어오면 다시 보인다.
  * 남의 알림과 안 보이는 내 알림은 읽음 처리에서 똑같이 404 다.
  *
@@ -47,9 +49,11 @@ public class NotificationInboxService {
                            and p.archived_at is null)
             """;
 
+    private final ProjectAccessChecker access;
     private final NamedParameterJdbcTemplate sql;
 
-    public NotificationInboxService(NamedParameterJdbcTemplate sql) {
+    public NotificationInboxService(ProjectAccessChecker access, NamedParameterJdbcTemplate sql) {
+        this.access = access;
         this.sql = sql;
     }
 
@@ -59,6 +63,7 @@ public class NotificationInboxService {
                                            Integer limit) {
         // ?project_id= (빈 값)은 필터 없음 — '전체' 필터 화면이 빈 값을 그대로 붙여 보내도 열리게. 읽기라 범위가 넓어져도 해가 없다.
         // NTF-A02 의 project_id 는 읽음 범위라 빈 값을 '전체'로 넓히지 않는다(ReadTarget 은 그대로 400)
+        access.requireUser(caller);
         Long projectFilter = projectId == null || projectId.isBlank() ? null : Ids.parse(projectId, "project_id");
         long beforeId = PageResponse.beforeId(cursor);
         int size = PageResponse.normalizeLimit(limit);
@@ -92,6 +97,7 @@ public class NotificationInboxService {
      */
     @Transactional
     public NotificationReadResponse markRead(CallerContext caller, NotificationReadRequest request) {
+        access.requireUser(caller);
         ReadTarget target = ReadTarget.of(request);
         MapSqlParameterSource params = new MapSqlParameterSource("me", caller.accountId());
 

@@ -96,6 +96,20 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
                 .allSatisfy(row -> assertThat(row.get("read_at")).isNull());
     }
 
+    /** 깨지면 탈퇴 뒤 남은 세션으로 알림을 보고 읽음 처리까지 할 수 있다(PR #126 리뷰에서 재현된 회귀). */
+    @Test
+    void withdrawnAccount_leftoverSession_is401_andChangesNothing() {
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long n = notify(p.projectId(), p.leaderAccountId());
+        ApiClient me = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        fixtures().withdraw(p.leaderAccountId());   // 세션은 그대로 둔 채 계정만 탈퇴 상태로
+
+        assertThat(me.get("/api/me/notifications").statusCode()).isEqualTo(401);
+        assertThat(me.post("/api/me/notifications/read", "{\"all\":true}").statusCode()).isEqualTo(401);
+        assertThat(me.post("/api/me/notifications/read", "{\"ids\":[\"" + n + "\"]}").statusCode()).isEqualTo(401);
+        assertThat(sql.queryForObject("select read_at from notification where id = ?", Object.class, n)).isNull();
+    }
+
     /** 깨지면 재시도·더블클릭에서 updated_count 가 다시 세지거나 처음 읽은 시각이 덮인다(명세: 중복 갱신하지 않음). */
     @Test
     void readingTwice_countsOnce_andKeepsFirstReadAt() {
