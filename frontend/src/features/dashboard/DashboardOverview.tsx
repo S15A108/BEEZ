@@ -85,7 +85,8 @@ export function DashboardOverview({
     },
     {
       label: '선택 기간 AI 호출',
-      value: `${calls.toLocaleString('ko-KR')}회 · ${cost}`,
+      // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다.
+      value: calls ? `${calls.toLocaleString('ko-KR')}회 · ${cost}` : '0회',
       onClick: () => onTab('usage'),
     },
     {

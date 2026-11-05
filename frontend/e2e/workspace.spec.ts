@@ -61,7 +61,14 @@ test('선택한 부지의 프로젝트와 외관이 새로고침 뒤에도 유�
   await expect(
     page.getByRole('button', { name: '사무실로', exact: true }),
   ).toBeVisible()
+  // 거리는 늘 1인칭이라 산책 중에는 시점 버튼을 숨긴다.
+  await expect(
+    page.getByRole('button', { name: '3인칭', exact: true }),
+  ).toHaveCount(0)
   await page.getByRole('button', { name: '사무실로', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: '3인칭', exact: true }),
+  ).toBeVisible()
   await page.reload()
   await expect(
     page.getByRole('heading', { name: '부지 이식 확인', exact: true }),

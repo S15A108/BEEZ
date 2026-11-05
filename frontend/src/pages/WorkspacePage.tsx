@@ -173,28 +173,31 @@ function Workspace({ projectId }: { projectId: string }) {
               data-tour="view"
               className="absolute bottom-4 left-4 z-10 flex items-center gap-2"
             >
-              <div className="rounded-xl border bg-card/95 p-1 shadow-sm">
-                <Button
-                  size="sm"
-                  variant={viewMode === 'first' ? 'secondary' : 'ghost'}
-                  onClick={() => {
-                    setViewMode('first')
-                    focusScene()
-                  }}
-                >
-                  1인칭
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'third' ? 'secondary' : 'ghost'}
-                  onClick={() => {
-                    setViewMode('third')
-                    focusScene()
-                  }}
-                >
-                  3인칭
-                </Button>
-              </div>
+              {/* 거리(산책)는 늘 1인칭으로 그려서 시점 버튼이 듣지 않는다. 산책 중에는 숨긴다(사용자 결정 2026-11-03). */}
+              {!outdoor && (
+                <div className="rounded-xl border bg-card/95 p-1 shadow-sm">
+                  <Button
+                    size="sm"
+                    variant={viewMode === 'first' ? 'secondary' : 'ghost'}
+                    onClick={() => {
+                      setViewMode('first')
+                      focusScene()
+                    }}
+                  >
+                    1인칭
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={viewMode === 'third' ? 'secondary' : 'ghost'}
+                    onClick={() => {
+                      setViewMode('third')
+                      focusScene()
+                    }}
+                  >
+                    3인칭
+                  </Button>
+                </div>
+              )}
               <Button
                 variant="secondary"
                 onClick={() => {
