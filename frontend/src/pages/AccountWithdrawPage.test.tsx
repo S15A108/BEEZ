@@ -5,7 +5,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { authApi, membersApi } from '@/api/services'
+import { authApi, membersApi, projectsApi } from '@/api/services'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -58,7 +58,7 @@ async function withdraw(password: string) {
   await user.click(screen.getByRole('button', { name: '회원 탈퇴' }))
 }
 
-it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝트마다 팀장 위임과 프로젝트 삭제로 잇는다', async () => {
+it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝트마다 팀장 위임으로만 잇는다', async () => {
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
   const memberLists = vi.spyOn(membersApi, 'list')
   renderPage()
@@ -72,9 +72,11 @@ it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝
   expect(
     within(first).getByRole('link', { name: '팀장 위임' }),
   ).toHaveAttribute('href', '/projects/101?settings=team')
+  // 설정 창이 팀원이 있는 프로젝트의 삭제를 아직 막아서(S15P31A108-282) 삭제 링크는 두지 않는다.
   expect(
-    within(first).getByRole('link', { name: '프로젝트 삭제' }),
-  ).toHaveAttribute('href', '/projects/101?settings=project')
+    within(blocked).queryByRole('link', { name: '프로젝트 삭제' }),
+  ).not.toBeInTheDocument()
+  expect(blocked).not.toHaveTextContent('삭제')
   expect(screen.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
   // 팀원 목록으로 세지 않고 ACC-A13 결과를 쓴다.
   expect(memberLists).not.toHaveBeenCalled()
@@ -106,6 +108,28 @@ it('화면을 연 뒤 팀 프로젝트의 팀장이 되어 409로 막히면 서�
     '팀장이라 탈퇴할 수 없어요',
   )
   expect(screen.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
+})
+
+it('화면을 연 뒤 혼자 쓰는 프로젝트를 새로 만들고 409로 막히면 탈퇴 가능 여부를 다시 읽어 함께 삭제될 프로젝트에 넣는다', async () => {
+  await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+  vi.spyOn(authApi, 'withdrawalCheck').mockResolvedValueOnce({
+    can_withdraw: true,
+    blocked_projects: [],
+  })
+  renderPage()
+  await screen.findByLabelText('비밀번호 확인')
+  await projectsApi.create({ name: '혼자 만든 메모장' })
+  await withdraw(DEMO_PASSWORD)
+
+  await screen.findByRole('region', { name: BLOCKED_TITLE })
+  expect(
+    screen.getByRole('region', {
+      name: '탈퇴하면 기존 프로젝트는 이렇게 돼요',
+    }),
+  ).toHaveTextContent('혼자 쓰는 프로젝트(혼자 만든 메모장)는 함께 삭제돼요.')
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    '팀장이라 탈퇴할 수 없어요',
+  )
 })
 
 it('탈퇴하면 첫 화면인 로그인으로 간다', async () => {

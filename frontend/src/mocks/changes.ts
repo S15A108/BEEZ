@@ -297,6 +297,7 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
     '변경 제안이 새 기준 설계로 발행됐어요.',
     'BASELINE',
     baseline.id,
+    { baseline_version_no: baseline.version_no },
   )
   return { data: { proposal, baseline } }
 }

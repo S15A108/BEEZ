@@ -171,6 +171,7 @@ export function notification(
   targetType:
     'TASK' | 'VALIDATION' | 'CHANGE_PROPOSAL' | 'BASELINE' | 'MEETING',
   targetId: string,
+  extra: { baseline_version_no?: number } = {},
 ): void {
   const project = requireProject(context)
   context.database.notifications.push({
@@ -182,6 +183,7 @@ export function notification(
     body: '브라우저 예시 데이터가 변경됐어요.',
     target_type: targetType,
     target_id: targetId,
+    ...extra,
     created_at: now(),
   })
 }

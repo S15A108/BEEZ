@@ -1,8 +1,9 @@
 # dev 서버 CDC(Kafka·Debezium Connect) 배포 계획 — 제안 (S15P31A108-279)
 
-> **상태: 제안, 승인 대기.** 이 문서가 머지되기 전에는 서버·DB·compose를 바꾸지 않는다.
+> **상태: 승인됨(PR #147, 11-05 양지훈님 승인 뒤 머지). 팀 승인 몫(D1·D4·D8)의 기록은 §7을 따른다.** 실행 결과는 티켓별 런북(293 `cdc-postgres.md`, 294 `cdc-stack.md`)에 적는다.
 > 승인 범위는 아래 [결정 제안](#3-결정-제안) D1~D8이다. 계약·consumer 관련(D3·D5·D6·D7)은 양지훈님,
-> PostgreSQL 재시작 시각(D4)과 일정(D8)은 팀이 승인한다. 승인된 결정은 이 문서에서 "확정"으로 바꾼다.
+> PostgreSQL 재시작 시각(D4)과 일정(D8)은 팀이 승인한다. 승인 여부는 §7 체크리스트로 표시한다. 본문 §3의 "제안"
+> 표기는 승인받은 문안 그대로 두며, 체크된 항목은 그 내용대로 확정된 것으로 본다.
 >
 > **티켓 구성** — 279는 이 계획과 승인만 맡는다. 실행은 별도 작업 티켓 세 개로 나눴고, 티켓마다 PR 하나다.
 >
@@ -78,6 +79,8 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 - **주의 — 내리는 순서**: consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 기동하지 못한다(D7). 그래서
   **`beez-cdc`를 내리거나 Kafka를 멈추기 전에는 반드시 consumer부터 끈다**(§4 되돌리기 1번). consumer가 켜진 채
   Kafka가 내려가 있는 동안 dev 머지가 들어오면, CD가 새로 만든 backend가 뜨지 못해 dev가 멈춘다.
+  **S15P31A108-298 반영 뒤에는 이 결합이 풀려 consumer부터 끄는 것이 필수가 아니다**(D7 "298 반영 결과",
+  런북 `cdc-stack.md` "중지·내리기"). 끄는 것은 consumer(`BEEZ_CDC_INTAKE_CONSUMER_ENABLED`)뿐이고 스캔은 켜 둔다.
   - 본 스택을 `docker compose down`할 일이 있으면 consumer 끄기 → `beez-cdc` 내리기 → 본 스택 내리기 순서로 한다.
     `beez-cdc`가 `beez_default`에 붙어 있으면 본 스택을 내려도 네트워크가 지워지지 않는다.
   - 서버 재부팅 때는 두 스택이 동시에 뜬다. backend가 Kafka보다 먼저 뜨면 기동에 실패하지만
@@ -228,7 +231,8 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 
   | env | 서버 값 |
   |---|---|
-  | `BEEZ_CDC_INTAKE_ENABLED` | `true` (기본 `false`) |
+  | `BEEZ_CDC_INTAKE_ENABLED` | `true` (기본 `false`) — 복구 스캔 |
+  | `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | `true` (기본 `false`) — Kafka consumer. 298에서 스캔과 나뉨, 스캔 없이 켜면 기동 거부 |
   | `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS` | `kafka:9092` |
   | `BEEZ_CDC_INTAKE_GROUP_ID` | `beez-published-analysis` |
   | `BEEZ_CDC_INTAKE_TOPIC` | `beez.public.published_change_analysis` |
@@ -258,6 +262,11 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
     처리를 이어 가므로 기존 `CdcPendingDelay`로는 consumer 장애가 보이지 않기 때문이다.
   - 298이 끝나면 위 두 번째 경우도 "기동하고 복구 스캔으로 처리, Kafka가 돌아오면 자동 연결"로 바뀐다. 295 재시작
     시험(§4 9단계)은 이 기준으로 확인한다.
+  - **298 반영 결과**: 스캔은 `beez.cdc.intake.enabled`, consumer는 `beez.cdc.intake.consumer-enabled`(위 표 두 줄).
+    consumer 시작은 30초마다 다시 시도하고(`consumer-start-retry-millis`), 끊긴 동안 재연결 대기 상한은 10초다
+    (`reconnect.backoff.max.ms`, 경고 로그 줄이기). 지표 `beez_cdc_kafka_consumer_up`과 알림 `CdcConsumerDown`(5분),
+    `CdcPendingDelay`는 consumer가 아니라 스캔 설정(`beez_cdc_analysis_recovery_enabled`)을 본다.
+    기동이 실패하면 JVM이 exit 1로 끝나 재시작 정책이 돈다(전에는 MCP SDK 비데몬 스레드 때문에 `running`으로 남음).
 
 ### D8. 일정 (승인: 팀·양지훈)
 
@@ -337,13 +346,13 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 
 ## 7. 승인 체크리스트
 
-- [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀
-- [ ] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진
-- [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `/opt/beez/.cdc-secrets/` `root:1001 640`(293이 작성) — **양지훈**
-- [ ] D1·D7 CDC를 내릴 때 consumer부터 끄는 규칙, Kafka 없을 때 기동 실패가 재현되면 S15P31A108-298(스캔·consumer 분리·자동 재연결)을 consumer 켜기 전에 끝냄 — 전진·**양지훈**
-- [ ] D6 슬롯 알림 두 개(비활성 10분, WAL 1GB)는 295에서, Connect 상태 수집은 261에서, 그 전까지 수동 확인(평일 오전·배포 뒤) — 전진·**양지훈**
-- [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀**
-- [ ] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈**
-- [ ] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈**
-- [ ] D7 backend env 이름·기본 꺼짐·켜는 순서, 밀린 PENDING 처리 — **양지훈**
-- [ ] D8 실행을 229 통합 검증 첫 단계로, 295 전까지 분석이 돌지 않는 영향 확인(스캔만 켜는 우회는 쓰지 않음) — 팀·양지훈
+- [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀 (팀 승인 기록 없음)
+- [x] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진 (PR #147 승인, 11-05)
+- [x] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `/opt/beez/.cdc-secrets/` `root:1001 640`(293이 작성) — **양지훈** (PR #147 승인, 11-05)
+- [x] D1·D7 CDC를 내릴 때 consumer부터 끄는 규칙, Kafka 없을 때 기동 실패가 재현되면 S15P31A108-298(스캔·consumer 분리·자동 재연결)을 consumer 켜기 전에 끝냄 — 전진·**양지훈** (PR #147 승인, 11-05)
+- [x] D6 슬롯 알림 두 개(비활성 10분, WAL 1GB)는 295에서, Connect 상태 수집은 261에서, 그 전까지 수동 확인(평일 오전·배포 뒤) — 전진·**양지훈** (PR #147 승인, 11-05)
+- [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀** (팀 승인 기록 없음, 실행: 293 PR #155 11-05 14:47 KST 머지)
+- [x] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈** (PR #147 승인, 11-05)
+- [x] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈** (PR #147 승인, 11-05)
+- [x] D7 backend env 이름·기본 꺼짐·켜는 순서, 밀린 PENDING 처리 — **양지훈** (PR #147 승인, 11-05)
+- [ ] D8 실행을 229 통합 검증 첫 단계로, 295 전까지 분석이 돌지 않는 영향 확인(스캔만 켜는 우회는 쓰지 않음) — 팀·양지훈 (팀 승인 기록 없음)

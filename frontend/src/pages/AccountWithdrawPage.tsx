@@ -2,18 +2,11 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, TriangleAlert } from 'lucide-react'
-import {
-  getApiErrorCode,
-  getApiErrorDetails,
-  getApiErrorMessage,
-} from '@/api/error'
+import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import type { Project } from '@/api/contracts/common'
 import { authApi, projectsApi } from '@/api/services'
 import { RequireAccount } from '@/features/auth/RequireAccount'
-import {
-  leaderOfTeamProjectsDetailsSchema,
-  type BlockedProject,
-} from '@/features/auth/schemas'
+import type { BlockedProject } from '@/features/auth/schemas'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 
@@ -103,8 +96,8 @@ function AccountWithdraw() {
                     프로젝트 때문에 지금은 탈퇴할 수 없어요
                   </h3>
                   <p className="mt-1.5 text-[13px] leading-5 text-[#57534e]">
-                    팀원이 있는 프로젝트의 팀장이에요. 팀장을 위임하거나
-                    프로젝트를 삭제하면 탈퇴할 수 있어요.
+                    팀원이 있는 프로젝트의 팀장이에요. 팀장을 위임하면 탈퇴할 수
+                    있어요.
                   </p>
                   <ul className="mt-3 grid gap-2">
                     {blockers.map((project) => (
@@ -121,20 +114,13 @@ function AccountWithdraw() {
                             팀장 · 팀원 {project.member_count}명
                           </span>
                         </span>
-                        {/* 팀장 위임(MEM-A08) 또는 프로젝트 삭제(PRJ-A05, 팀원이 있어도 지울 수 있다) */}
-                        <span className="flex shrink-0 items-center gap-3 text-[13px] font-semibold [&>a]:underline [&>a]:underline-offset-3">
-                          <Link
-                            to={`/projects/${project.project_id}?settings=team`}
-                          >
-                            팀장 위임
-                          </Link>
-                          <Link
-                            to={`/projects/${project.project_id}?settings=project`}
-                            className="text-[#c10007]"
-                          >
-                            프로젝트 삭제
-                          </Link>
-                        </span>
+                        {/* 팀장 위임(MEM-A08). 프로젝트 삭제 링크는 설정 창이 팀원이 있어도 삭제를 허용하면(S15P31A108-282) 다시 넣는다. */}
+                        <Link
+                          to={`/projects/${project.project_id}?settings=team`}
+                          className="shrink-0 text-[13px] font-semibold underline underline-offset-3"
+                        >
+                          팀장 위임
+                        </Link>
                       </li>
                     ))}
                   </ul>
@@ -172,23 +158,11 @@ function AccountWithdraw() {
                     try {
                       await authApi.withdraw({ password: values.password })
                     } catch (cause) {
-                      // 화면을 연 뒤 팀 프로젝트의 팀장이 됐으면 서버가 막는 프로젝트를 다시 준다(409 leader_of_team_projects).
-                      const details =
-                        leaderOfTeamProjectsDetailsSchema.safeParse(
-                          getApiErrorDetails(cause),
-                        )
-                      if (
-                        getApiErrorCode(cause) === 'leader_of_team_projects' &&
-                        details.success
-                      )
-                        queryClient.setQueryData<Check>(checkKey, (old) => {
-                          const blocked = details.data.blocked_projects
-                          return (
-                            old && {
-                              blockers: blocked,
-                              solo: soloOf(old.solo, blocked),
-                            }
-                          )
+                      // 화면을 연 뒤 팀 프로젝트의 팀장이 됐으면 409 leader_of_team_projects다. 그사이 새로 혼자 쓰게 된
+                      // 프로젝트도 있을 수 있어 409 details로 손대지 않고 탈퇴 가능 여부(ACC-A13)와 프로젝트 목록을 다시 읽는다.
+                      if (getApiErrorCode(cause) === 'leader_of_team_projects')
+                        await queryClient.invalidateQueries({
+                          queryKey: checkKey,
                         })
                       throw cause
                     }
