@@ -10,6 +10,7 @@ import com.beez.backend.support.AccessFixtures.ProjectWithLeader;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.repository.TaskRepository;
 import jakarta.persistence.OptimisticLockException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 
 /**
  * 활동 입구 (S15P31A108-182, 계약 10-notification-activity-contract.md 2·4절).
@@ -164,6 +166,9 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
         }));
 
         assertThat(thrown).isInstanceOf(OptimisticLockException.class);
+        // 실제 요청처럼 @ExceptionHandler 목록으로 처리기를 고른다 — 목록에서 빠지면 handleUnexpected(500)로 간다
+        var handler = new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class).resolveMethod((Exception) thrown);
+        assertThat(handler).isNotNull().extracting(Method::getName).isEqualTo("handleOptimisticLock");
         var response = exceptionHandler.handleOptimisticLock((Exception) thrown);
         assertThat(response.getStatusCode().value()).isEqualTo(409);
         assertThat(response.getBody().error().code()).isEqualTo("revision_conflict");
