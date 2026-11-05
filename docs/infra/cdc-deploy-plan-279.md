@@ -10,9 +10,11 @@
 > |---|---|---|---|
 > | S15P31A108-293 | PostgreSQL 논리 복제 준비(`wal_level`·복제 계정·publication·비밀 파일) | D4·D5·D3 일부 | 279 |
 > | S15P31A108-294 | Kafka·Connect 스택 `beez-cdc` 배포(토픽 생성 포함) | D1·D2·D3 | 279 |
-> | S15P31A108-295 | 커넥터 등록과 backend consumer 켜기, 발행 1건·재시작 확인 | D6·D7 | 293·294 |
+> | S15P31A108-298 | backend: 복구 스캔과 Kafka consumer 기동 분리·자동 재연결(Kafka 없어도 기동) | D7 | 295 리허설에서 재현될 때 |
+> | S15P31A108-295 | 커넥터 등록과 backend consumer 켜기, 슬롯 알림, 발행 1건·재시작 확인 | D6·D7 | 293·294(·298) |
 >
-> 293과 294는 서로 기다리지 않는다. 295가 끝나야 S15P31A108-261(Kafka·Connect·WAL 수집·알림)과
+> 293과 294는 서로 기다리지 않는다. 298은 295의 로컬 리허설에서 "Kafka가 없으면 backend가 뜨지 않는다"가 재현될 때
+> 진행하고, 끝나야 295에서 consumer를 켠다(리뷰 반영, D7). 295가 끝나야 S15P31A108-261(Kafka·Connect·WAL 수집·알림)과
 > S15P31A108-229(CDC 통합·장애 복구 검증)를 시작할 수 있다.
 
 ## 1. 목적
@@ -199,7 +201,18 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
   19MB라 10GB 상한(D4)에 닿지 않는다. heartbeat를 켜면 heartbeat 토픽(`__debezium-heartbeat.beez`)을 손으로 더
   만들어야 하고(D2 자동 생성 끔), 슬롯을 확실히 앞당기려면 DB에 쓰는 `heartbeat.action.query`와 그 테이블을
   publication에 넣어야 한다. 복제 계정을 읽기 전용·컬럼 2개로 묶어 둔 D5와 부딪히므로 dev에서는 쓰지 않는다.
-  대신 261의 WAL 알림은 "증가 추세"가 아니라 **보유량 절댓값(예: 1GB 초과)과 슬롯 비활성 지속 시간**으로 건다.
+  대신 WAL 알림은 "증가 추세"가 아니라 **보유량 절댓값과 슬롯 비활성 지속 시간**으로 건다(아래).
+- **슬롯·Connect 감시 (리뷰 반영)**: 복구 스캔이 처리를 이어 가므로 Connect가 멈춰도 분석 지연 알림은 울리지 않는다.
+  그래서 Connect 장애와 WAL 누적은 따로 감시한다.
+  - **슬롯·WAL — 295에서 켠다**: 기존 postgres-exporter의 `replication_slots` 수집기가 서버에서 이미 돌고 있다
+    (`pg_scrape_collector_success{collector="replication_slots"}` = 1). 그래서 Connect REST 없이 수집된다. 295에서
+    모니터링 규칙에 알림 두 개를 더한다: 슬롯이 10분 넘게 비활성, 보유 WAL 1GB 초과.
+  - **Connect·task 상태 — 261에서 켠다**: Connect JMX 지표를 Prometheus 형식으로 내보내 connector·task 실패 수와
+    Debezium 연결 여부를 수집한다. debezium 이미지에서 되는지는 261에서 확인한다. 수집 자체가 실패하면 기존
+    `MonitoringTargetDown`처럼 `up == 0`이나 지표 누락으로 알린다.
+  - **261 전까지 수동 확인**: 전진이 평일 오전 1회와 배포·재시작 뒤에 커넥터 상태(`docker exec`로 REST 조회)와 슬롯
+    쿼리를 본다. task FAILED면 즉시 원인을 보고 재시작이나 재등록한다. WAL이 1GB를 넘으면 원인을 확인하고,
+    5GB를 넘으면 §4 되돌리기 1~3단계를 실행한다.
 - **커넥터를 다시 만들 때**: distributed 모드에서는 커넥터를 지워도 offset 토픽에 마지막 LSN이 남는다. 같은 이름으로
   다시 등록하면 새 슬롯에 옛 LSN으로 이어 붙으려 한다. 슬롯을 지웠거나 슬롯이 무효화된 뒤에는 둘 중 하나로 한다.
   - **새 커넥터 이름으로 등록한다**(기본). 옛 offset은 쓰이지 않고 남는다.
@@ -235,7 +248,16 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
     만들 때 bootstrap 주소 이름이 하나도 안 풀리면 `No resolvable bootstrap urls`로 실패한다(재점검에서
     kafka-clients로 실측). 그래서 이때 **새로 뜨는 backend는 기동에 실패한다**(Spring 기동까지 이어지는 것은 295에서
     확인). 이 때문에 D1 "내리는 순서"를 지킨다.
-  - 295 재시작 시험에서 두 경우를 나눠 확인한다(§4 9단계).
+- **선행 조건 — Kafka와 무관하게 기동 (S15P31A108-298)**: "consumer부터 끈다"는 계획된 중지만 막는다. Kafka가
+  예기치 않게 죽은 상태에서 backend 재시작이나 배포가 겹치면 backend 전체가 뜨지 못한다. 그래서 295 로컬 리허설에서
+  Spring 기동 실패가 재현되면, consumer를 켜기 전에 298을 끝낸다.
+  - 지금은 consumer와 복구 스캔이 같은 `beez.cdc.intake.enabled`에 묶여 있어 consumer만 끄면 스캔도 멈춘다.
+    298은 둘의 기동을 나눈다. 단 "consumer만 켜고 스캔은 끈 구성"은 #227 규칙대로 계속 막는다.
+  - 리스너는 `autoStartup=false`로 두고 주기적으로 시작을 다시 시도한다. 시작 실패는 앱 기동을 막지 않는다.
+  - consumer가 실제로 돌고 있는지 지표를 두고, 켜져 있는데 5분 넘게 멈춰 있으면 알린다. 복구 스캔이 30초 안에
+    처리를 이어 가므로 기존 `CdcPendingDelay`로는 consumer 장애가 보이지 않기 때문이다.
+  - 298이 끝나면 위 두 번째 경우도 "기동하고 복구 스캔으로 처리, Kafka가 돌아오면 자동 연결"로 바뀐다. 295 재시작
+    시험(§4 9단계)은 이 기준으로 확인한다.
 
 ### D8. 일정 (승인: 팀·양지훈)
 
@@ -257,11 +279,11 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 | 2 | 293 | 복제 계정·publication 생성, 비밀 파일 배치(D3·D5) | `pg_publication_tables.attnames` = `{id,status}`, `beez_cdc`로 다른 컬럼 SELECT 거부, `/opt/beez/.cdc-secrets/database.properties` `root:1001 640` |
 | 3 | 294 | PR: dev용 compose·Connect 설정 템플릿, `cd.yml` paths-ignore, 런북. `beez-cdc` 기동(D1~D3) | 컨테이너 healthy, `ss -tlnp`에 새 포트 없음, backend·ai에서 Connect REST 안 닿음, 293이 끝났으면 `docker exec <connect> test -r /run/cdc-secrets/database.properties`(내용은 출력하지 않음) |
 | 4 | 294 | 접수 토픽 생성(D2) | `kafka-topics --describe` |
-| 5 | 295 | **로컬 리허설**: 서버와 같은 pgvector digest + `debezium/connect:2.7.3.Final`로 이 계획의 publication·계정 권한·커넥터 설정(override 포함)·file config provider를 그대로 돌림. 파일 권한 함정은 Windows 바인드 마운트로 재현되지 않으므로 서버 3단계에서 따로 본다 | 초기 스냅샷 `r`과 이후 `c`/`u`가 id·status만 담아 도착, provider로 비밀번호를 읽어 접속 |
-| 6 | 295 | PR: backend env 기본 꺼짐(D7). 서버에 커넥터 등록(D6) | connector·task RUNNING, 슬롯 `active` |
-| 7 | 295 | PENDING 개수 확인 → 서버 env로 consumer 켜고 backend 재배포(D7) | `consumer_enabled`=1, Kafka 수신 실패 0 |
+| 5 | 295 | **로컬 리허설**: 서버와 같은 pgvector digest + `debezium/connect:2.7.3.Final`로 이 계획의 publication·계정 권한·커넥터 설정(override 포함)·file config provider를 그대로 돌림. 파일 권한 함정은 Windows 바인드 마운트로 재현되지 않으므로 서버 3단계에서 따로 본다. 이어서 이름이 안 풀리는 bootstrap 주소로 consumer를 켜고 backend를 띄워 Spring 기동 실패가 재현되는지 본다 | 초기 스냅샷 `r`과 이후 `c`/`u`가 id·status만 담아 도착, provider로 비밀번호를 읽어 접속. 기동 실패가 재현되면 298을 끝낸 뒤 7단계로 |
+| 6 | 295 | PR: backend env 기본 꺼짐(D7), 슬롯 알림 두 개(D6). 서버에 커넥터 등록(D6) | connector·task RUNNING, 슬롯 `active`, 슬롯 알림 규칙 시험 통과 |
+| 7 | 295 | (재현됐다면 298 완료 확인) PENDING 개수 확인 → 서버 env로 consumer 켜고 backend 재배포(D7) | `consumer_enabled`=1, Kafka 수신 실패 0 |
 | 8 | 295 | 변경 제안 1건 발행 | `started_at - requested_at` < 30초(Kafka 경로로 깨어남. COMPLETED까지는 AI 시간이 더해지므로 기준으로 쓰지 않음), 최종 COMPLETED, 대시보드 `beez_cdc_*` |
-| 9 | 295 | 재시작 시험: backend·Connect·Kafka 각각 재시작. 이어서 (가) Kafka 컨테이너는 둔 채 broker만 응답하지 않게 하고(`docker pause`, 이름은 계속 풀림) backend 재시작, (나) Kafka 컨테이너를 멈춘 채 backend 재시작 | 유실 없이 이어짐. (가) backend healthy, (나) backend 기동 실패를 확인한 뒤 Kafka를 다시 올려 backend가 스스로 healthy로 돌아옴 |
+| 9 | 295 | 재시작 시험: backend·Connect·Kafka 각각 재시작. 이어서 (가) Kafka 컨테이너는 둔 채 broker만 응답하지 않게 하고(`docker pause`, 이름은 계속 풀림) backend 재시작, (나) Kafka 컨테이너를 멈춘 채 backend 재시작 | 유실 없이 이어짐. (가)·(나) 모두 backend healthy, 그동안 PENDING은 복구 스캔으로 처리, Kafka를 다시 올리면 재시작 없이 consumer가 연결됨(298 반영 기준. 298 없이 진행한 경우 (나)는 기동 실패를 확인하고 Kafka를 올리면 스스로 healthy로 돌아오는지 본다) |
 
 1~2(293)와 3~4(294)는 순서가 없다. 5는 293·294와 상관없이 언제든 할 수 있지만, 실패하면 6 이후를 멈추고
 D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므로 229와 함께 설계한다.
@@ -290,20 +312,20 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 ## 5. 위험과 한계
 
 - **backend가 Kafka 컨테이너에 기동을 기댄다**: consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 새로 뜨지
-  못한다(D7). 그래서 CDC를 내릴 때는 consumer부터 끈다(D1 "내리는 순서"). 이 결합을 없애려면 backend 쪽 변경이 필요하고,
-  이 계획의 범위 밖이다.
+  못한다(D7). 계획된 중지는 consumer부터 끄는 순서(D1)로 막지만, 예기치 않은 Kafka 장애에 backend 재시작·배포가
+  겹치면 막지 못한다. 이 결합은 S15P31A108-298(backend)에서 푼다(D7 선행 조건). 295 리허설에서 기동 실패가 재현되면 298 전까지는
+  consumer를 켜지 않는다.
 - **단일 서버·단일 broker**: 서버나 broker가 죽으면 CDC가 멈춘다. 이때 복구 스캔이 처리를 이어 가지만, 모니터링도
   같은 서버라 알림이 가지 않는다(263 런북 한계와 같음).
 - **WAL 보유**: 슬롯이 멈추면 WAL이 쌓인다. 접수 테이블이 조용한 동안에도 다른 테이블 쓰기만큼 보유량이 늘어난다
   (D6 heartbeat). 10GB 상한(D4)으로 디스크는 지키지만, 넘으면 슬롯이 무효화돼 커넥터를 새 이름(또는 offset 삭제)으로
-  다시 만들어야 한다(D6). 슬롯·WAL 알림은 261에서 보유량 절댓값과 비활성 시간으로 붙인다. 그 전까지는 런북의 수동
-  확인 쿼리로 본다.
+  다시 만들어야 한다(D6). 슬롯·WAL 알림은 295에서 postgres-exporter 지표로 켠다(D6 "슬롯·Connect 감시").
 - **검증 공백**: 실제로 쓸 조합은 295의 로컬 리허설(§4 5단계)이 처음이다.
 - **D3 예외**: 같은 망의 컨테이너가 Kafka를 읽고 쓸 수 있다(D3 "남는 위험"). 토픽에는 접수행 id·status만 있지만,
   Connect 설정 토픽을 통해 복제 권한이 노출될 수 있다.
 - **Connect 버전**: 2.7.3은 PG17 공식 지원 범위 밖이다(D2). 서버와 같은 이미지에서 PoC로 확인한 것이 근거다.
-- **261 연결**: Connect REST를 컨테이너 안으로만 열면(D3) 261에서 Connect 상태를 수집할 방법(JMX exporter 등)을
-  따로 정해야 한다.
+- **261 연결**: Connect REST를 컨테이너 안으로만 열었으므로(D3) Connect·task 상태는 261에서 JMX 지표로 수집한다.
+  그 전까지는 D6의 수동 확인으로 본다.
 
 ## 6. 범위 밖
 
@@ -318,7 +340,8 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 - [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀
 - [ ] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진
 - [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `/opt/beez/.cdc-secrets/` `root:1001 640`(293이 작성) — **양지훈**
-- [ ] D1·D7 consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 기동하지 못하므로, CDC를 내릴 때 consumer부터 끄는 규칙 — 전진·**양지훈**
+- [ ] D1·D7 CDC를 내릴 때 consumer부터 끄는 규칙, Kafka 없을 때 기동 실패가 재현되면 S15P31A108-298(스캔·consumer 분리·자동 재연결)을 consumer 켜기 전에 끝냄 — 전진·**양지훈**
+- [ ] D6 슬롯 알림 두 개(비활성 10분, WAL 1GB)는 295에서, Connect 상태 수집은 261에서, 그 전까지 수동 확인(평일 오전·배포 뒤) — 전진·**양지훈**
 - [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀**
 - [ ] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈**
 - [ ] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈**
