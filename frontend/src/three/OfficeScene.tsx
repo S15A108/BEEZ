@@ -1,7 +1,7 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { makeBuilding, ALL_KEYS } from './office/building'
-import { makeDreamFloor } from './office/dream-floor'
+import { officeFloorAt } from './office/dream-floor'
 import { firstPersonMove } from './office/first-person'
 import {
   moveContinuous,
@@ -64,16 +64,14 @@ function OfficeRuntime(
   const agents = useMemo(() => officeSceneAgents(props.agents), [props.agents])
   // 인원 객체를 넘기면 팀원 수와 상관없는 고정 사무실(D36)이라 에이전트에 기대지 않는다. 30초마다 바뀌는 에이전트
   // 상태로 바닥을 새로 만들면 아래 lastFloor 분기가 내 클릭 걷기·엘리베이터 걷기를 멈춘다(PR #128 리뷰).
-  const floor = useMemo(() => {
-    const base = makeBuilding(ALL_KEYS, 'glass', undefined, {}).floors[1]
-    // 시작 전(3)에도 사무실 바닥 전체를 보여 준다. 바깥 산책 출입구만 시작 뒤(4)에 연다.
-    if (phase !== 3) return makeDreamFloor(base, phase)
-    return {
-      ...makeDreamFloor(base, 4),
-      staticKey: 'dream-3',
-      outdoorExit: undefined,
-    }
-  }, [phase])
+  const floor = useMemo(
+    () =>
+      officeFloorAt(
+        makeBuilding(ALL_KEYS, 'glass', undefined, {}).floors[1],
+        phase,
+      ),
+    [phase],
+  )
   const snapshot = useMemo(
     () => officeSceneSnapshot(props.project, agents, props.tasks),
     [props.project, agents, props.tasks],
@@ -291,6 +289,8 @@ function OfficeRuntime(
         )
           latest.current.props.onOutdoorChange(false)
       } else if (
+        // 시작 전에도 엘리베이터 앞에서 시작하므로, 산책 출구가 닫힌 동안에는 Enter를 비비·가리킨 대상에 넘긴다.
+        latest.current.phase >= 4 &&
         nearOfficeExit(player.current, latest.current.floor.outdoorExit)
       )
         exit()
