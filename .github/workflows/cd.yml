@@ -18,6 +18,8 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      # 모니터링 스택은 이미지에 들어가지 않고 따로 손으로 올린다(docs/infra/monitoring.md "올리기·업데이트")
+      - 'infra/monitoring/**'
   # 같은 커밋을 다시 올리고 싶을 때 (Actions 화면 → Run workflow)
   workflow_dispatch:
 

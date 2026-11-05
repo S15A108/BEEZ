@@ -45,7 +45,8 @@ public class ValidationResponses {
         for (FindingRow f : repository.findings(v.id())) {
             findings.add(new FindingResponse(Ids.str(f.id()), Ids.str(f.validationRunId()), f.source(), f.kind(), f.severity(), f.message(),
                     Ids.str(f.designItemId()), Ids.str(f.designItemVersionId()), Ids.str(f.relatedTaskId()), f.sources(),
-                    f.resolution(), f.nextAction(), f.policyNeedId(), f.conflictingDesignRefs().isEmpty() ? null : f.conflictingDesignRefs()));
+                    f.resolution(), f.nextAction(), f.policyNeedId(), f.conflictingDesignRefs().isEmpty() ? null : f.conflictingDesignRefs(),
+                    f.aiSuggestedAction()));
         }
         String errorCode = null;
         if ("ERROR".equals(v.status())) {

@@ -64,6 +64,7 @@ public class TaskStateService {
     private final JdbcClient jdbc;
     private final ValidationStatusLookup validations;
     private final ValidationAcceptService validationAccepts;
+    private final CompletionReviewer completionReviewer;
     private final Clock clock;
 
     /** 보고가 끊겼다고 보는 시간. 값은 미결(04-task-lifecycle.md §6) — 기본 30분, 설정 beez.task.stalled-after 로 바꾼다 */
@@ -73,6 +74,7 @@ public class TaskStateService {
                             ProjectDesignLookup designLookup, TaskTransitionPolicy policy, StartGate startGate,
                             TaskQueryService query, ApplicationEventPublisher events, JdbcClient jdbc,
                             ValidationStatusLookup validations, ValidationAcceptService validationAccepts,
+                            CompletionReviewer completionReviewer,
                             @Value("${beez.task.stalled-after:PT30M}") Duration stalledAfter) {
         this.tasks = tasks;
         this.reports = reports;
@@ -85,6 +87,7 @@ public class TaskStateService {
         this.jdbc = jdbc;
         this.validations = validations;
         this.validationAccepts = validationAccepts;
+        this.completionReviewer = completionReviewer;
         this.clock = Clock.systemUTC();
         this.stalledAfter = stalledAfter;
     }
@@ -95,6 +98,8 @@ public class TaskStateService {
         validateShape(in);
         Long validationId = Ids.parse(in.validationId(), "validation_id");
         Long planRevisionId = Ids.parse(in.planRevisionId(), "plan_revision_id");
+        // 완료 보고의 "실제로 바꾼 설계 항목" (-269). 이 프로젝트 항목인지 먼저 확인하고 정렬·중복 제거한 모양으로 쓴다
+        List<Long> changedItems = completionReviewer.normalizeChangedItems(projectId, in.changedDesignItemIds());
 
         // 2) 프로젝트 잠금. 이 뒤에 읽는 작업 상태가 "지금" 상태다.
         boolean exists = designLookup.lockProject(projectId);
@@ -118,8 +123,8 @@ public class TaskStateService {
         if (in.event() == TaskEvent.COMPLETED) {
             Optional<TaskCompletionReport> pending = pendingDeltaReport(task);
             if (pending.isPresent()) {
-                if (sameReport(pending.get(), in, planRevisionId)) {
-                    return query.toDetail(task);
+                if (sameReport(pending.get(), in, planRevisionId, changedItems)) {
+                    return detailOf(task, in.event());
                 }
                 throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
                         "이미 다른 내용의 완료 보고(delta 검증 " + pending.get().getDeltaValidationId() + ")를 기다리는 중입니다. "
@@ -133,7 +138,7 @@ public class TaskStateService {
                 throw new ApiException(HttpStatus.CONFLICT, "revision_conflict",
                         "이미 다른 검증(" + task.getStartedValidationId() + ")으로 시작된 작업입니다");
             }
-            return query.toDetail(task);
+            return detailOf(task, in.event());
         }
 
         // 5) 충돌 검사 (Integer 끼리는 == 로 비교하면 안 된다 → equals)
@@ -172,20 +177,35 @@ public class TaskStateService {
                 task.resume(validationId);
             }
             case WAIT -> task.holdFor(in.waitingReason());
-            case COMPLETED -> complete(task, in, caller, now);
+            case COMPLETED -> complete(task, in, changedItems, caller, now);
             case CANCEL -> cancel(task, now);
         }
         tasks.saveAndFlush(task);
 
         events.publishEvent(new TaskStateChangedEvent(projectId, taskId, from, task.getStatus(), in.event(),
                 caller.accountId(), "task:" + taskId + ":lock:" + task.getLockVersion() + ":" + in.event()));
-        return query.toDetail(task);
+        return detailOf(task, in.event());
+    }
+
+    /**
+     * 보고 응답. COMPLETED 보고에는 완료 검증 결과(completion_review, -269)를 붙인다 — 에이전트가 범위 이탈 후보를 바로 본다.
+     * 완료 검증은 결과를 보여 주기만 하고 전이를 바꾸지 않는다 (11/5 결정)
+     */
+    private TaskDetailResponse detailOf(Task task, TaskEvent event) {
+        TaskDetailResponse detail = query.toDetail(task);
+        if (event != TaskEvent.COMPLETED) {
+            return detail;
+        }
+        return completionReviewer.currentReview(task).map(detail::withCompletionReview).orElse(detail);
     }
 
     // ------------------------------------------------------------------
 
     /** 이벤트별 필수 값. 상태를 보기 전에 모양만으로 거를 수 있는 것 */
     private void validateShape(TaskStateInput in) {
+        if (in.event() != TaskEvent.COMPLETED && in.changedDesignItemIds() != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "changed_design_item_ids 는 COMPLETED 에만 보냅니다");
+        }
         if (in.event().needsStartGate() && in.validationId() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", in.event() + " 에는 validation_id 가 필요합니다");
         }
@@ -268,8 +288,9 @@ public class TaskStateService {
         return reports.findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(task.getId(), task.getCurrentPlanRevisionId());
     }
 
-    /** 같은 완료 보고의 재전송인가 — 계획 리비전·delta·요약·완료 기준 확인이 모두 같아야 한다 */
-    private static boolean sameReport(TaskCompletionReport report, TaskStateInput in, Long planRevisionId) {
+    /** 같은 완료 보고의 재전송인가 — 계획 리비전·delta·요약·완료 기준 확인·바꾼 설계 항목이 모두 같아야 한다 */
+    private static boolean sameReport(TaskCompletionReport report, TaskStateInput in, Long planRevisionId,
+                                      List<Long> changedItems) {
         if (!Objects.equals(report.getPlanRevisionId(), planRevisionId)) {
             return false;
         }
@@ -278,6 +299,10 @@ public class TaskStateService {
             delta = new ArrayList<>();
         }
         if (!Objects.equals(report.getDelta(), delta) || !Objects.equals(report.getSummary(), in.summary())) {
+            return false;
+        }
+        // 둘 다 정렬·중복 제거된 목록이다. null(보고 안 함)과 빈 목록(바꾼 것 없음)은 다른 보고로 본다
+        if (!Objects.equals(report.getChangedDesignItemIds(), changedItems)) {
             return false;
         }
         return Objects.equals(report.getCompletionChecks(), checksOf(in));
@@ -297,7 +322,7 @@ public class TaskStateService {
         return checks;
     }
 
-    private void complete(Task task, TaskStateInput in, CallerContext caller, Instant now) {
+    private void complete(Task task, TaskStateInput in, List<Long> changedItems, CallerContext caller, Instant now) {
         List<Map<String, Object>> delta = in.delta();
         if (delta == null) {
             delta = new ArrayList<>();
@@ -306,7 +331,7 @@ public class TaskStateService {
         List<Map<String, Object>> checks = checksOf(in);
         if (delta.isEmpty()) {
             reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
-                    checks, caller.agentTokenId()));
+                    checks, changedItems, caller.agentTokenId()));
             task.complete(now);
             return;
         }
@@ -317,7 +342,7 @@ public class TaskStateService {
         AcceptResult accepted = validationAccepts.acceptBySystem(caller, task.getProjectId(), task, "DELTA", delta);
         long deltaValidationId = Long.parseLong(accepted.validation().id());
         reports.save(new TaskCompletionReport(task.getId(), task.getCurrentPlanRevisionId(), delta, in.summary(),
-                checks, caller.agentTokenId(), deltaValidationId));
+                checks, changedItems, caller.agentTokenId(), deltaValidationId));
         task.holdForRevalidation();
     }
 
