@@ -154,4 +154,27 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
         assertThat(body(me.get("/api/me/notifications?project_id=" + p.projectId())).get("unread_count").asLong()).isZero();
         assertThat(ids(body(me.get("/api/me/notifications?unread=true")))).containsExactly(String.valueOf(elsewhere));
     }
+
+    /** 기준 화면·조회 API 는 버전 번호로 열린다. 알림 target_id 는 기준 ID 라서 버전 번호를 함께 내려야 한다. */
+    @Test
+    void baselineNotification_carriesTheBaselineVersionNo_otherTargetsDoNot() {
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long baseline = sql.queryForObject(
+                "insert into baseline (project_id, version_no, published_by) values (?, 3, ?) returning id",
+                Long.class, p.projectId(), p.leaderAccountId());
+        sql.update("""
+                insert into notification (project_id, recipient_account_id, type, title, body, ref_kind, ref_id, dedupe_key)
+                values (?, ?, 'BASELINE_CREATED', '기준', '기준이 생겼습니다', 'BASELINE', ?, ?)
+                """, p.projectId(), p.leaderAccountId(), baseline, "baseline:" + baseline + ":created:to:" + p.leaderAccountId());
+        notify(p.projectId(), p.leaderAccountId());
+        ApiClient me = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+
+        JsonNode items = body(me.get("/api/me/notifications?project_id=" + p.projectId())).get("items");
+
+        JsonNode baselineItem = items.get(1);   // 먼저 만든 쪽이 뒤에 온다(id 내림차순)
+        assertThat(baselineItem.get("target_type").asString()).isEqualTo("BASELINE");
+        assertThat(baselineItem.get("target_id").asString()).isEqualTo(String.valueOf(baseline));
+        assertThat(baselineItem.get("baseline_version_no").asInt()).isEqualTo(3);
+        assertThat(items.get(0).has("baseline_version_no")).isFalse();
+    }
 }

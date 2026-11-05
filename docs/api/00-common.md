@@ -1536,6 +1536,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING\|DOCUMENT_VERSION` | Y | 이동 대상 종류. DOCUMENT_VERSION은 수정안 요청 |
 | `target_id` | `ID` | Y | 이동 대상 |
 | `document_id` | `ID` | N | DOCUMENT_VERSION이면 소속 문서. 수정안 요청 |
+| `baseline_version_no` | `integer` | N | BASELINE이면 그 기준의 버전 번호(BASELINE 조회 API가 버전 번호로 열린다). `target_id`는 기준 ID. 저장하지 않고 조회 때 찾는다 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `read_at` | `Time` | N | 읽은 시각 |
 
