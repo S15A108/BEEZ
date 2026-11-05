@@ -92,6 +92,11 @@ export interface MockProject {
   activities: Activity[]
   /** 스스로 나간 계정. 로그인만으로는 되살리지 않고 메일 링크(MEM-A05)로만 다시 참여한다(Q05 4). */
   left_account_ids?: string[]
+  /**
+   * 실행 중인 비비 문서 검토(서버 document_bee_review_request RUNNING). BEE-A04가 읽는다.
+   * 예시 DOC-A16은 한 요청 안에서 바로 끝나서 평소에는 비어 있다. 검토 중 표시를 보려면 여기에 넣는다.
+   */
+  running_bee_reviews?: { document_id: string; started_at: string }[]
 }
 
 export interface MockDatabase {

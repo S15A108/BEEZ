@@ -331,10 +331,10 @@ describe('계약 경계', () => {
     ).toBe(false)
   })
 
-  it('121개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(121)
+  it('122개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(122)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      121,
+      122,
     )
     expect(
       new Set(
@@ -342,7 +342,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(121)
+    ).toBe(122)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
