@@ -5,6 +5,7 @@ import { ArrowLeft, FileCheck, MessageCircle, Network } from 'lucide-react'
 import { authApi } from '@/api/services'
 import { getApiErrorMessage } from '@/api/error'
 import { ActionForm } from '@/components/ActionForm'
+import { Button } from '@/components/ui/button'
 // 나의 도시와 같은 원형 도시 그림(D33). 3D를 띄우지 않고 나의 도시 화면을 찍은 정적 그림이라 첫 화면이 가볍다.
 import cityPreview from '@/assets/city-preview.webp'
 import { getApiErrorCode } from '@/api/error'
@@ -34,6 +35,8 @@ export default function AuthPage() {
   const navigate = useNavigate()
   const state = location.state as { from?: string; registered?: string } | null
   const [mode, setMode] = useState<'login' | 'forgot'>('login')
+  // 비밀번호 찾기를 보낸 이메일. 있으면 입력 화면 대신 완료 화면을 보인다(캔버스 SCR-01-v2-forgot-temp).
+  const [sentTo, setSentTo] = useState('')
   const [notice, setNotice] = useState(
     state?.registered ? '가입했어요. 등록한 계정으로 로그인해 주세요.' : '',
   )
@@ -46,6 +49,40 @@ export default function AuthPage() {
   // 예시 계정은 live 빌드에서 빠지도록 env를 그 자리에서 비교한다.
   const mockDemo =
     import.meta.env.VITE_API_MODE !== 'live' && !email && attempt === 0
+  if (mode === 'forgot' && sentTo)
+    return (
+      <main className="px-4 pt-24 pb-10">
+        <section
+          aria-labelledby="forgot-sent-title"
+          className="mx-auto max-w-[440px] rounded-[22px] border bg-card p-10 shadow-sm"
+        >
+          {/* 서버는 이름·이메일이 맞지 않아도 같은 202를 준다(가입 여부를 숨김). 그래서 캔버스의 '보냈어요'로 단정하지
+              않고 서버 문구('입력한 정보가 맞으면 …')를 그대로 보인다. */}
+          <h2 id="forgot-sent-title" className="text-2xl font-bold">
+            메일을 확인해 주세요
+          </h2>
+          <p className="mt-4 text-sm font-semibold break-all">{sentTo}</p>
+          <p role="status" className="mt-2 text-sm text-muted-foreground">
+            {notice}
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            임시 비밀번호로 로그인한 뒤 회원 설정에서 비밀번호를 바꿔 주세요.
+          </p>
+          <Button
+            type="button"
+            className="mt-6 h-11 w-full rounded-xl font-bold"
+            onClick={() => {
+              setEmail(sentTo)
+              setSentTo('')
+              setNotice('')
+              setMode('login')
+            }}
+          >
+            로그인하러 가기
+          </Button>
+        </section>
+      </main>
+    )
   if (mode === 'forgot')
     return (
       <main className="px-4 pt-24 pb-10">
@@ -97,14 +134,20 @@ export default function AuthPage() {
                   placeholder: 'name@example.com',
                 },
               ]}
-              // API 없음: 임시 비밀번호 발급 계약 전까지는 기존 재설정 메일 요청을 보낸다.
               submitLabel="임시 비밀번호 받기"
+              // 같은 이메일로 곧바로 다시 요청하거나 한도를 넘으면 429 rate_limited다(ACC-A07, PR #118).
+              errorMessage={(cause) =>
+                getApiErrorCode(cause) === 'rate_limited'
+                  ? '임시 비밀번호를 너무 자주 요청했어요. 잠시 뒤에 다시 시도해 주세요.'
+                  : getApiErrorMessage(cause)
+              }
               onSubmit={async (values) => {
                 const result = await authApi.forgotPassword({
                   email: values.email,
                   name: values.name.trim(),
                 })
                 setNotice(result.message)
+                setSentTo(values.email)
               }}
             />
           </div>
