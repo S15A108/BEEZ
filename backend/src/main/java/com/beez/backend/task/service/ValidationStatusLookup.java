@@ -368,10 +368,11 @@ public class ValidationStatusLookup {
         jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs,
+                                                        ai_suggested_action)
                         select :copy, validation_run_id, source, kind, severity, design_item_id, design_item_version_id,
                                related_task_id, message, sources, resolution, next_action, check_key, evidence_ids,
-                               policy_need_id, conflicting_design_refs
+                               policy_need_id, conflicting_design_refs, ai_suggested_action
                           from validation_finding where validation_id = :source
                          order by id
                         """)

@@ -1014,7 +1014,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `id` | `ID` | Y | 작업 ID |
 | `key` | `string` | Y | 표시 키 |
 | `project_id` | `ID` | Y | 프로젝트 |
-| `assignee_member_id` | `ID` | Y | 담당 멤버 |
+| `assignee_member_id` | `ID` | N | 담당 멤버. (수정안 요청 · 11-04 사용자 결정) 담당자가 나가거나 제외돼 미배정이면 생략(MEM-A09·A10) |
 | `status` | `DRAFT\|READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | Y | 작업 상태 |
 | `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAITING일 때만 포함 |
 | `lock_version` | `integer` | Y | 상태 충돌 검사 번호 |
@@ -1476,6 +1476,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
 아래는 도구 인수 객체다.
@@ -1642,6 +1643,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (BE 구현, -269) COMPLETED에 `changed_design_item_ids`를 실으면 결과 `task.completion_review`에 계획과 규칙으로 대조한 범위 이탈 후보가 나온다([CompletionReview](00-common.md#schema-completionreview)). 표시만 하고 완료를 막지 않는다. 코드 품질을 보증하지 않는다. 규칙은 REST TSK-A07과 같다.
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
 - `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
 - (수정안 요청) summary는 AgentWork.last_summary로 HUD·대시보드에 원문 그대로 보인다. AI로 다시 요약하지 않는다.

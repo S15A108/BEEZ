@@ -75,8 +75,10 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         // setUp 이 연결 전에 실패했으면 member 가 없다 — NPE 로 원래 실패를 가리지 않는다
+        // close() 는 세션 종료 DELETE 를 보내기만 하고 기다리지 않는다(SDK 2.1.0). 그 요청의 토큰 확인 트랜잭션이
+        // 다음 시험 setUp 의 truncate … cascade 와 교착하므로(CI 40P01) 응답까지 기다리는 closeGracefully 를 쓴다
         if (member != null) {
-            member.close();
+            member.closeGracefully();
         }
     }
 
@@ -155,6 +157,17 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 "plan_revision_id", revisionId, "expected_lock_version", lock, "waiting_reason", "INPUT",
                 "idempotency_key", "k-wait"));
         assertThat(error(stale)).containsEntry("code", "revision_conflict");
+
+        // 완료 보고에 실제로 바꾼 설계 항목을 실으면 결과에 계획과 대조한 범위 이탈 후보가 붙는다 (-269, 표시만).
+        // 이 계획은 API-01 을 읽기만 하고 "계약 변경 없음"을 선언했다
+        JsonNode completed = ok(call(member, "report_task_state", Map.of("task_id", taskId, "event", "COMPLETED",
+                "plan_revision_id", revisionId, "expected_lock_version", started.get("task").get("lock_version").asInt(),
+                "changed_design_item_ids", List.of(String.valueOf(api.designItemId("API-01"))),
+                "idempotency_key", "k-done")));
+        assertThat(completed.get("task").get("status").asString()).isEqualTo("COMPLETED");
+        JsonNode review = completed.get("task").get("completion_review");
+        assertThat(review.get("deviation_count").asInt()).isEqualTo(1);
+        assertThat(review.get("scope_deviations").get(0).get("reason").asString()).isEqualTo("NO_CONTRACT_CHANGE_DECLARED");
     }
 
     /** 깨지면: 변경 없음(정상 0건)과 실패를 구분하지 못한다 (02-mcp-tools MCP-03 "실패를 변경 없음으로 처리하지 않는다"). */
@@ -185,11 +198,14 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 .get("record").get("summary").asString()).isEqualTo("로그인 UI 연결 완료");
 
         String privateId;
-        try (McpSyncClient leader = connect(leaderToken)) {
+        McpSyncClient leader = connect(leaderToken);
+        try {
             leader.initialize();
             privateId = ok(call(leader, "write_context", Map.of("kind", "DECISION", "visibility", "PRIVATE",
                     "summary", "팀장 메모", "detail", "비공개", "design_refs", List.of(), "idempotency_key", "k-w2")))
                     .get("id").asString();
+        } finally {
+            leader.closeGracefully(); // tearDown 과 같은 이유 — 종료 DELETE 가 다음 시험의 truncate 와 겹치지 않게
         }
         assertThat(error(call(member, "read_context", Map.of("type", "RECORD", "id", privateId))))
                 .containsEntry("code", "not_found");
