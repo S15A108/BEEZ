@@ -1110,8 +1110,11 @@ export const notificationSchema = z.object({
     'CHANGE_PROPOSAL',
     'BASELINE',
     'MEETING',
+    'DOCUMENT_VERSION',
   ]),
+  // DOCUMENT_VERSION이면 target_id는 문서 버전 ID이고, 문서 상세를 열 문서 ID는 document_id로 온다(계약 10 3절).
   target_id: idSchema,
+  document_id: idSchema.optional(),
   created_at: timeSchema,
   read_at: timeSchema.optional(),
 })

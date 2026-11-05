@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { inboxApi } from '@/api/services'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { InboxPopover } from './InboxPopover'
 
 afterEach(() => vi.restoreAllMocks())
@@ -73,4 +74,39 @@ it('모두 읽음은 첫 페이지 ID 대신 이 프로젝트 알림 전체 읽�
   await user.click(await screen.findByRole('button', { name: '알림 20+건' }))
   await user.click(screen.getByRole('button', { name: '모두 읽음' }))
   expect(markRead).toHaveBeenCalledWith({ all: true, project_id: '10' })
+})
+
+// S15P31A108-296: 문서 알림의 target_id는 문서 버전 ID다. 문서함은 문서 ID로 상세를 열므로 document_id로 연다.
+it('문서 알림을 누르면 버전 ID가 아니라 그 문서의 상세를 연다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ pane: null, focusId: null })
+  const document = {
+    ...notification('30', false),
+    type: 'DOCUMENT_APPROVED',
+    title: '문서 승인',
+    target_type: 'DOCUMENT_VERSION' as const,
+    target_id: '42',
+    document_id: '7',
+  }
+  vi.spyOn(inboxApi, 'list').mockResolvedValue({
+    items: [document],
+    has_more: false,
+  })
+  vi.spyOn(inboxApi, 'markRead').mockResolvedValue({ updated_count: 1 })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <InboxPopover projectId="10" />
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('button', { name: '알림 1건' }))
+  expect(screen.getByText(/공용 문서함/)).toBeInTheDocument()
+  await user.click(screen.getByText('문서 승인'))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'documents',
+    focusId: '7',
+  })
 })
