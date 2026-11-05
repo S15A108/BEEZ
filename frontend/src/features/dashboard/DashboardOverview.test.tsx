@@ -115,6 +115,8 @@ it('아직 기록이 없으면 시작 순서 3개를 보여 준다', async () =>
   expect(
     await screen.findByText('아직 기록이 없어요. 이렇게 시작해 보세요.'),
   ).toBeInTheDocument()
+  // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다.
+  expect(screen.getByText('0회')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '내 에이전트 연결' }))
   expect(useWorkspaceStore.getState()).toMatchObject({
     pane: 'settings',

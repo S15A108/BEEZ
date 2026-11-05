@@ -150,4 +150,25 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
             """, nativeQuery = true)
     List<Long> findAgentConnectedAccountIds(@Param("projectId") long projectId,
                                             @Param("accountIds") Collection<Long> accountIds);
+
+    /**
+     * 회원 탈퇴 판정(ACC-A10·A13, -171): 이 계정의 활성 멤버십마다 프로젝트와 본인 말고 활성 팀원 수. 프로젝트 id 순서.
+     * 활성 조건은 {@link #findActiveMembership} 과 같다 — 탈퇴한 팀원은 세지 않는다.
+     */
+    @Query("""
+            select new com.beez.backend.project.WithdrawalMembershipRow(m.id, p.id, p.name, m.role,
+                   (select count(o) from ProjectMember o
+                      join Account oa on oa.id = o.accountId
+                     where o.projectId = m.projectId
+                       and o.active = true
+                       and oa.deletedAt is null
+                       and o.id <> m.id))
+              from ProjectMember m
+              join Project p on p.id = m.projectId
+             where m.accountId = :accountId
+               and m.active = true
+               and p.archivedAt is null
+             order by p.id
+            """)
+    List<WithdrawalMembershipRow> findMembershipsForWithdrawal(@Param("accountId") long accountId);
 }

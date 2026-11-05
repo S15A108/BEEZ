@@ -150,15 +150,81 @@ it('비용·토큰을 모르는 호출이 섞이면 0원·전체 값처럼 보�
   const user = userEvent.setup()
   mount()
   await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
-  expect(
-    await screen.findByText('0.01 USD + 미보고 1건', { selector: 'dd' }),
-  ).toBeInTheDocument()
-  expect(
-    screen.getByText('120 + 미보고 1건', { selector: 'dd' }),
-  ).toBeInTheDocument()
+  // 건수는 값 아래 줄에 붙는다(좁은 칸에서 꺾이지 않게). 기대값 변경은 사용자 승인 2026-11-03.
+  const cost = await screen.findByText('0.01 USD', { selector: 'dd' })
+  expect(within(cost).getByText('미보고 1건')).toBeInTheDocument()
+  const input = screen.getByText('120', { selector: 'dd' })
+  expect(within(input).getByText('미보고 1건')).toBeInTheDocument()
   // 비용을 모르는 문서 분석 줄이 '0 USD'만으로 보이지 않는다
   const parse = screen.getByText('문서 분석').closest('li')!
-  expect(within(parse).getByText('0 USD + 미보고 1건')).toBeInTheDocument()
+  expect(
+    within(within(parse).getByText('0 USD')).getByText('미보고 1건'),
+  ).toBeInTheDocument()
   const validation = screen.getByText('작업 검증').closest('li')!
   expect(within(validation).getByText('0.01 USD')).toBeInTheDocument()
+  expect(within(validation).queryByText(/미보고/)).not.toBeInTheDocument()
+})
+it('호출이 없으면 비용을 미보고로 보이지 않고, 모든 기능이 0회면 빈 안내를 보인다', async () => {
+  const empty = (key: string) => ({
+    key,
+    input_tokens: 0,
+    output_tokens: 0,
+    call_count: 0,
+    tokens_unknown_call_count: 0,
+    cost_unknown_call_count: 0,
+  })
+  // 서버처럼: 비용 있는 호출이 없으면 비용·통화를 생략하고 기능 8개를 0으로 채운다.
+  vi.mocked(dashboardApi.usage).mockResolvedValue({
+    from: '2026-10-20T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 0,
+    output_tokens: 0,
+    call_count: 0,
+    by_feature: [empty('DOCUMENT_PARSE'), empty('TASK_VALIDATION')],
+    by_task: [],
+    by_validation: [],
+  })
+  const user = userEvent.setup()
+  mount()
+  await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+  expect(await screen.findByText('—', { selector: 'dd' })).toBeInTheDocument()
+  expect(
+    screen.queryByText('미보고', { selector: 'dd' }),
+  ).not.toBeInTheDocument()
+  expect(screen.getByText('기록된 사용량이 없어요.')).toBeInTheDocument()
+})
+it('호출이 없는 기능 줄은 0 토큰·0원 대신 비어 있다고 보인다', async () => {
+  vi.mocked(dashboardApi.usage).mockResolvedValue({
+    from: '2026-10-20T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 10,
+    output_tokens: 0,
+    call_count: 1,
+    estimated_cost_amount: '0.01',
+    currency: 'USD',
+    by_feature: [
+      {
+        key: 'TASK_VALIDATION',
+        input_tokens: 10,
+        output_tokens: 0,
+        call_count: 1,
+        estimated_cost_amount: '0.01',
+      },
+      {
+        key: 'BEE_CHAT',
+        input_tokens: 0,
+        output_tokens: 0,
+        call_count: 0,
+        estimated_cost_amount: '0',
+      },
+    ],
+    by_task: [],
+    by_validation: [],
+  })
+  const user = userEvent.setup()
+  mount()
+  await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+  const chat = (await screen.findByText('비비 대화')).closest('li')!
+  expect(within(chat).getAllByText('—')).toHaveLength(2)
+  expect(within(chat).queryByText('0 USD')).not.toBeInTheDocument()
 })

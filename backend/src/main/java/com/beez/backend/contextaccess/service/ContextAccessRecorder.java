@@ -18,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 이력 저장이 실패하면 조회도 실패한다. 조회 서비스는 {@code @Transactional(readOnly = true)} 를 쓸 수 없다.
  *
  * <p><b>기록 지점.</b> get_design_changes(MCP-03, -164), get_development_context 패킷 저장(MCP-01), read_context(MCP-06),
- * REST CTX-A01 패킷 조회, CTX-A03 기록 상세. 검색 목록(MCP-05, CTX-A02)은 감사 기록(mcp_audit_log, -177)이 덮으므로 여기서는 남기지 않는다.
+ * get_document(MCP-02, -179 — REST DOC-A02 는 문서 검토용이라 남기지 않는다), REST CTX-A01 패킷 조회, CTX-A03 기록 상세. 검색 목록(MCP-05, CTX-A02)은 감사 기록(mcp_audit_log, -177)이 덮으므로 여기서는 남기지 않는다.
  *
  * <p><b>남기지 않는 것.</b> 요청 문장, 기록 원문, 토큰 값. 인자에 문자열 내용이 없고 번호만 받는다 (MCP 규약 "토큰·비밀번호·개인 대화 원문은 기록하지 않는다").
  *
@@ -31,6 +31,8 @@ public class ContextAccessRecorder {
     public static final String KIND_BASELINE = "BASELINE";
     public static final String KIND_PACKET = "PACKET";
     public static final String KIND_CONTEXT_RECORD = "CONTEXT_RECORD";
+    /** 문서 원문 버전 (MCP-02 get_document, S15P31A108-179). target_id 는 document_version 번호 */
+    public static final String KIND_DOCUMENT_VERSION = "DOCUMENT_VERSION";
 
     private static final Logger log = LoggerFactory.getLogger(ContextAccessRecorder.class);
 

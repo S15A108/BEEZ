@@ -5,7 +5,8 @@ import { ArrowLeft, FileCheck, MessageCircle, Network } from 'lucide-react'
 import { authApi } from '@/api/services'
 import { getApiErrorMessage } from '@/api/error'
 import { ActionForm } from '@/components/ActionForm'
-import cityPreview from '@/assets/city-preview.png'
+// 나의 도시와 같은 원형 도시 그림(D33). 3D를 띄우지 않고 나의 도시 화면을 찍은 정적 그림이라 첫 화면이 가볍다.
+import cityPreview from '@/assets/city-preview.webp'
 import { getApiErrorCode } from '@/api/error'
 
 const savedEmailKey = 'beez.login.email'

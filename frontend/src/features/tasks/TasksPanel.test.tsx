@@ -517,6 +517,26 @@ it('검증 중에는 시작을 끄고 옆에 이유를 적는다', async () => {
   ).toBeInTheDocument()
 })
 
+it('검증이 끝나면 목록의 상태 칩도 다시 불러와 바뀐다', async () => {
+  const passed = task
+  task = {
+    ...task,
+    validation_status: 'RUNNING',
+    validation: { ...task.validation!, status: 'RUNNING' },
+  }
+  show(false)
+  const entry = await screen.findByRole('button', {
+    name: /사용자 프로필 구현/,
+  })
+  expect(within(entry).getByText('검증 중')).toBeInTheDocument()
+
+  task = passed
+  await waitFor(
+    () => expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
+    { timeout: 4000 },
+  )
+}, 10000)
+
 it('완료 보고는 완료 기준을 모두 체크해야 보내고 달라진 점은 줄마다 보낸다', async () => {
   task = { ...task, status: 'IN_PROGRESS' }
   const state = vi.spyOn(tasksApi, 'state').mockImplementation(async () => task)
