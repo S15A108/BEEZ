@@ -150,8 +150,7 @@ beez:
     connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${AI_READ_TIMEOUT:20s}
   invitation:
-    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 초대 링크 = {base-url}/invite?token=…
-    ttl: ${INVITE_TTL:7d}
+    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
   mail:
     mode: ${MAIL_MODE:log}                         # smtp 면 실제로 보낸다. 로컬·테스트는 log (보내지 않음)
     from: ${MAIL_FROM:BEEZ <no-reply@beez.ai.kr>}

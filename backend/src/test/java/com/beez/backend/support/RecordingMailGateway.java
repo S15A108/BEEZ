@@ -36,6 +36,11 @@ public class RecordingMailGateway implements MailGateway {
         failNext.set(true);
     }
 
+    /** failNext 를 아직 아무 발송도 쓰지 않았는지 (비동기 발송이 실패를 가져갔는지 기다릴 때). */
+    public boolean failPending() {
+        return failNext.get();
+    }
+
     /** 이 주소로 마지막에 보낸 인증 코드. */
     public String lastCodeTo(String email) {
         for (var it = sent.descendingIterator(); it.hasNext(); ) {
@@ -55,6 +60,17 @@ public class RecordingMailGateway implements MailGateway {
         for (var it = sent.descendingIterator(); it.hasNext(); ) {
             MailMessage m = it.next();
             if (m.to().equals(email)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    /** 이 주소로 마지막에 보낸 메일 중 본문에 marker 가 든 것. 없으면 null (한 주소로 여러 종류가 갈 때). */
+    public MailMessage lastTo(String email, String marker) {
+        for (var it = sent.descendingIterator(); it.hasNext(); ) {
+            MailMessage m = it.next();
+            if (m.to().equals(email) && m.text().contains(marker)) {
                 return m;
             }
         }

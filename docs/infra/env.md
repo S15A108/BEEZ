@@ -80,7 +80,6 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `AI_INTERNAL_TOKEN` | 필수 | `change-me` | env 파일 |
 | `AI_CONNECT_TIMEOUT`·`AI_READ_TIMEOUT` | | `3s`·`20s` | 기본값 |
 | `INVITE_BASE_URL` | 필수 | `http://localhost:5173` | `PUBLIC_ORIGIN` |
-| `INVITE_TTL` | | `7d` | 기본값 |
 | `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
 | `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |
 | `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
