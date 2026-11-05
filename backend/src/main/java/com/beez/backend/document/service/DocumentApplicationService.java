@@ -4,6 +4,8 @@ import static com.beez.backend.document.service.DocumentValues.*;
 
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.common.api.ApiException;
+import com.beez.backend.contextaccess.service.ContextAccessRecorder;
 import com.beez.backend.document.*;
 import com.beez.backend.document.entity.DocumentVersion;
 import com.beez.backend.document.repository.*;
@@ -32,10 +34,13 @@ public class DocumentApplicationService {
     private final DocumentOriginalWriter originals;
     private final DocumentIndexWorker worker;
     private final DocumentReviewRepository reviews;
+    private final ContextAccessRecorder accessLog;
 
     public DocumentApplicationService(JdbcClient jdbc, ProjectAccessChecker access, DocumentRepository documents,
             DocumentVersionRepository versions, DocumentStorage storage, DocumentInputValidator validator,
-            PlatformTransactionManager transactions, DocumentIndexWorker worker, DocumentReviewRepository reviews) {
+            PlatformTransactionManager transactions, DocumentIndexWorker worker, DocumentReviewRepository reviews,
+            ContextAccessRecorder accessLog) {
+        this.accessLog = accessLog;
         this.jdbc = jdbc; this.access = access; this.documents = documents; this.versions = versions;
         this.storage = storage; this.validator = validator; this.transactions = transactions; this.worker = worker;
         this.transaction = new TransactionTemplate(transactions);
@@ -206,6 +211,40 @@ public class DocumentApplicationService {
         access.requireMember(caller, project); var doc = document(project, id);
         var selected = no == null ? approved(id).orElseThrow(() -> com.beez.backend.designitem.support.DesignJson.conflict("document_not_approved")) : versionNumber(id, no);
         return Map.of("document", documentView(doc), "version", versionView(selected, true));
+    }
+
+    /**
+     * MCP-02 get_document 전용 조회 (S15P31A108-179). REST DOC-A02({@link #get})는 문서 검토에도 쓰이므로 그대로 두고 여기서 나눈다.
+     * <ul>
+     *   <li>버전 생략: 현재 기준 설계(project.current_baseline_id)의 baseline_document 버전. 새 승인으로 SUPERSEDED 가 됐어도
+     *       기준이 다시 발행되기 전까지는 그 버전이 개발 기준이므로 상태로 거르지 않는다. 기준·기준 문서가 없으면 not_found.</li>
+     *   <li>버전 지정: 승인된 적 있는 버전(APPROVED·SUPERSEDED)만. DRAFT·REJECTED 는 없는 것과 같은 not_found.</li>
+     *   <li>document 의 preview_text 는 뺀다 — 작업 중 사본(승인 전 내용)에서 나올 수 있다.</li>
+     *   <li>조회 이력(context_access_log)을 결과를 돌려주기 전에 같은 트랜잭션으로 남긴다(08 계약 1절).</li>
+     * </ul>
+     */
+    @Transactional
+    public Map<String, Object> getForAgent(CallerContext caller, long project, long id, Integer no) {
+        var actor = access.requireMember(caller, project); var doc = document(project, id);
+        Object current = one("SELECT current_baseline_id FROM project WHERE id=:project", Map.of("project", project)).get("current_baseline_id");
+        Long baseline = current == null ? null : ((Number) current).longValue();
+        Map<String, Object> selected;
+        if (no == null) {
+            if (baseline == null) throw notInBaseline();
+            var row = rows("SELECT document_version_id FROM baseline_document WHERE baseline_id=:baseline AND document_id=:document",
+                    Map.of("baseline", baseline, "document", id)).stream().findFirst().orElseThrow(DocumentApplicationService::notInBaseline);
+            selected = version(id, number(row, "document_version_id"));
+        } else {
+            selected = versionNumber(id, no);
+            if (!Set.of("APPROVED", "SUPERSEDED").contains(selected.get("status"))) throw missing();
+        }
+        accessLog.record(actor, null, "get_document", ContextAccessRecorder.KIND_DOCUMENT_VERSION, number(selected, "id"), baseline, null);
+        var view = new LinkedHashMap<>(documentView(doc));
+        view.remove("preview_text");
+        return Map.of("document", view, "version", versionView(selected, true));
+    }
+    private static ApiException notInBaseline() {
+        return new ApiException(org.springframework.http.HttpStatus.NOT_FOUND, "not_found", "현재 기준 설계에 이 문서의 승인본이 없습니다.");
     }
     public Map<String, Object> versions(CallerContext caller, long project, long id, String cursor, int limit) {
         access.requireMember(caller, project); document(project, id); size(limit);

@@ -287,6 +287,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 #### 처리 규칙
 
 - 생략 시 현재 baseline_document의 승인본만 반환한다.
+- 지정 시 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 반환한다. DRAFT·REJECTED는 `not_found`다. REST DOC-A02는 문서 검토용이라 이 제한을 두지 않는다.
+- 조회 이력을 `context_access_log`에 남긴다(`target_kind=DOCUMENT_VERSION`).
 - 바이너리는 파일 정보와 읽을 수 있는 추출 내용만 제공한다. 원문 변환 범위 Q07.
 
 [공통 규약·권한·담당자 목록](00-common.md)

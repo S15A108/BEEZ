@@ -198,23 +198,61 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 .isInstanceOf(McpHttpClientTransportAuthorizationException.class);
     }
 
-    /** 깨지면: 문서 원문 조회가 승인본·버전 지정 규칙(REST DOC-A02 와 같은 서비스)으로 가지 않는다 (MCP-02). */
+    /**
+     * 깨지면: 에이전트가 현재 기준 밖의 승인본·승인 전 원문을 근거로 받거나, 문서 원문 조회가 조회 이력에 남지 않는다
+     * (MCP-02 처리 규칙 "생략 시 현재 baseline_document 의 승인본", 08 계약 1절 조회 이력). 기준 버전이 SUPERSEDED 가 된 경우가 함정이다.
+     */
     @Test
-    void getDocument_returnsApprovedVersion_andRequiresDocumentId() {
+    void getDocument_servesCurrentBaselineVersion_rejectsDrafts_andRecordsAccess() {
         long leaderAccount = api.accountId("leader@test");
-        Long document = api.jdbc.sql("insert into document(project_id,type,title,created_by) values(:p,'REQ_SPEC','요구사항',:a) returning id")
-                .param("p", projectId).param("a", leaderAccount).query(Long.class).single();
-        api.jdbc.sql("""
-                insert into document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
-                values(:d,1,'APPROVED','fixture.md','hash-v1','# 요구사항',:a,:a,now())
-                """).param("d", document).param("a", leaderAccount).update();
+        long baseline = api.jdbc.sql("select current_baseline_id from project where id = :p").param("p", projectId)
+                .query(Long.class).single();
+        long document = insertDocument("REQ_SPEC", leaderAccount);
+        long v1 = insertVersion(document, 1, "SUPERSEDED", "# v1 기준", leaderAccount);
+        insertVersion(document, 2, "APPROVED", "# v2 기준 밖 승인본", leaderAccount);
+        insertVersion(document, 3, "DRAFT", "# v3 초안", leaderAccount);
+        api.jdbc.sql("insert into baseline_document(baseline_id,project_id,document_id,document_version_id) values(:b,:p,:d,:v)")
+                .param("b", baseline).param("p", projectId).param("d", document).param("v", v1).update();
+        long outsideBaseline = insertDocument("API_SPEC", leaderAccount);
+        insertVersion(outsideBaseline, 1, "APPROVED", "# 기준에 없는 문서", leaderAccount);
 
-        JsonNode doc = ok(call(member, "get_document", Map.of("document_id", String.valueOf(document))));
-        assertThat(doc.get("version").get("version_no").asInt()).isEqualTo(1);
-        assertThat(doc.get("version").get("content").asString()).isEqualTo("# 요구사항");
+        JsonNode current = ok(call(member, "get_document", Map.of("document_id", String.valueOf(document))));
+        assertThat(current.get("version").get("version_no").asInt()).isEqualTo(1);
+        assertThat(current.get("version").get("content").asString()).isEqualTo("# v1 기준");
+        assertThat(current.get("version").get("is_current_baseline").asBoolean()).isTrue();
+        assertThat(current.get("document").has("preview_text")).isFalse();
 
+        JsonNode later = ok(call(member, "get_document", Map.of("document_id", String.valueOf(document), "version_no", 2)));
+        assertThat(later.get("version").get("is_current_baseline").asBoolean()).isFalse();
+
+        assertThat(error(call(member, "get_document", Map.of("document_id", String.valueOf(document), "version_no", 3))))
+                .containsEntry("code", "not_found");
+        assertThat(error(call(member, "get_document", Map.of("document_id", String.valueOf(outsideBaseline)))))
+                .containsEntry("code", "not_found");
         assertThat(error(call(member, "get_document", Map.of()))).containsEntry("code", "validation_failed");
         assertThat(error(call(member, "get_document", Map.of("document_id", "999999")))).containsEntry("code", "not_found");
+
+        // 성공 2건만 남는다. 실패 조회는 남기지 않는다(감사는 -177)
+        assertThat(count("select count(*) from context_access_log where tool = 'get_document'")).isEqualTo(2);
+        assertThat(count("select count(*) from context_access_log where tool = 'get_document' and target_kind = 'DOCUMENT_VERSION'"
+                + " and target_id = " + v1 + " and baseline_id = " + baseline + " and agent_token_id is not null")).isEqualTo(1);
+    }
+
+    /** 프로젝트당 종류별 문서 1개(ux_document_project_type)라 종류를 받는다 */
+    private long insertDocument(String type, long author) {
+        return api.jdbc.sql("insert into document(project_id,type,title,created_by) values(:p,:type,'요구사항',:a) returning id")
+                .param("p", projectId).param("type", type).param("a", author).query(Long.class).single();
+    }
+
+    private long insertVersion(long document, int no, String status, String content, long author) {
+        boolean approved = !"DRAFT".equals(status);
+        return api.jdbc.sql("""
+                insert into document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,approved_by,approved_at)
+                values(:d,:no,:status,'fixture.md',:hash,:content,:a,:approver,:approvedAt) returning id
+                """).param("d", document).param("no", no).param("status", status).param("hash", "hash-v" + no)
+                .param("content", content).param("a", author).param("approver", approved ? author : null)
+                .param("approvedAt", approved ? java.sql.Timestamp.from(java.time.Instant.now()) : null)
+                .query(Long.class).single();
     }
 
     /** 깨지면: 에이전트가 설계 변경을 제안할 수 없거나 같은 키 재시도가 제안을 두 번 만든다 (MCP-04, -195 서비스). */
