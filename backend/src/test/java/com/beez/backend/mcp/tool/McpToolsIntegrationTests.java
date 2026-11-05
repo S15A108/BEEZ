@@ -151,6 +151,17 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 "plan_revision_id", revisionId, "expected_lock_version", lock, "waiting_reason", "INPUT",
                 "idempotency_key", "k-wait"));
         assertThat(error(stale)).containsEntry("code", "revision_conflict");
+
+        // 완료 보고에 실제로 바꾼 설계 항목을 실으면 결과에 계획과 대조한 범위 이탈 후보가 붙는다 (-269, 표시만).
+        // 이 계획은 API-01 을 읽기만 하고 "계약 변경 없음"을 선언했다
+        JsonNode completed = ok(call(member, "report_task_state", Map.of("task_id", taskId, "event", "COMPLETED",
+                "plan_revision_id", revisionId, "expected_lock_version", started.get("task").get("lock_version").asInt(),
+                "changed_design_item_ids", List.of(String.valueOf(api.designItemId("API-01"))),
+                "idempotency_key", "k-done")));
+        assertThat(completed.get("task").get("status").asString()).isEqualTo("COMPLETED");
+        JsonNode review = completed.get("task").get("completion_review");
+        assertThat(review.get("deviation_count").asInt()).isEqualTo(1);
+        assertThat(review.get("scope_deviations").get(0).get("reason").asString()).isEqualTo("NO_CONTRACT_CHANGE_DECLARED");
     }
 
     /** 깨지면: 변경 없음(정상 0건)과 실패를 구분하지 못한다 (02-mcp-tools MCP-03 "실패를 변경 없음으로 처리하지 않는다"). */

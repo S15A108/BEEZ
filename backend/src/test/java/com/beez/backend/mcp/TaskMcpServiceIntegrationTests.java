@@ -126,7 +126,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
             vid = String.valueOf(validationId);
         }
         return mcp.reportTaskState(agent, projectId, new ReportTaskStateArgs(task.id(), event,
-                task.currentPlanRevision().id(), task.lockVersion(), vid, reason, null, null, null, key));
+                task.currentPlanRevision().id(), task.lockVersion(), vid, reason, null, null, null, null, key));
     }
 
     @Test
@@ -300,7 +300,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
     void report_requiresTaskIdAndIdempotencyKey_andKeepsStateRules() {
         TaskDetailResponse task = create("A");
         assertDenied(() -> mcp.reportTaskState(agent, projectId, new ReportTaskStateArgs(null, TaskEvent.START,
-                task.currentPlanRevision().id(), task.lockVersion(), null, null, null, null, null, "k")),
+                task.currentPlanRevision().id(), task.lockVersion(), null, null, null, null, null, null, "k")),
                 HttpStatus.BAD_REQUEST, "validation_failed");
         assertDenied(() -> report(task, TaskEvent.START, null, null, ""), HttpStatus.BAD_REQUEST, "validation_failed");
         // 규칙은 TSK-A07 그대로: PASS 없는 START 는 400(validation_id 누락)
