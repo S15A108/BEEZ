@@ -85,8 +85,7 @@ export const invitationSchema = z.object({
   id: idSchema,
   project_id: idSchema,
   invited_email: z.string().optional(),
-  // Q05 6(2026-10-29 확정): 초대 만료는 없다. dev 명세는 아직 필수라 둘 다 받는다.
-  expires_at: timeSchema.optional(),
+  // Q05 6: 초대 만료는 없다. 서버(PR #134)도 expires_at을 보내지 않는다.
   accepted_at: timeSchema.optional(),
   revoked_at: timeSchema.optional(),
 })
@@ -1112,8 +1111,13 @@ export const notificationSchema = z.object({
     'CHANGE_PROPOSAL',
     'BASELINE',
     'MEETING',
+    'DOCUMENT_VERSION',
   ]),
+  // DOCUMENT_VERSION이면 target_id는 문서 버전 ID이고, 문서 상세를 열 문서 ID는 document_id로 온다(계약 10 3절).
   target_id: idSchema,
+  document_id: idSchema.optional(),
+  // BASELINE이면 target_id는 기준 ID이고, 기준 화면을 열 기준 버전 번호는 baseline_version_no로 온다(PR #133).
+  baseline_version_no: z.number().int().optional(),
   created_at: timeSchema,
   read_at: timeSchema.optional(),
 })

@@ -34,6 +34,7 @@ jobs:
       ai: ${{ steps.filter.outputs.ai }}
       deploy_scripts: ${{ steps.filter.outputs.deploy_scripts }}
       monitoring: ${{ steps.filter.outputs.monitoring }}
+      cdc_stack: ${{ steps.filter.outputs.cdc_stack }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
@@ -53,11 +54,15 @@ jobs:
             # local.env 는 시험이 compose 필수값의 더미로 읽는다.
             deploy_scripts:
               - 'infra/deploy/**'
+              - 'infra/backup/**'
               - 'infra/compose.yaml'
               - 'infra/local.env'
               - '.github/workflows/ci.yml'
             monitoring:
               - 'infra/monitoring/**'
+              - '.github/workflows/ci.yml'
+            cdc_stack:
+              - 'infra/cdc/dev/**'
               - '.github/workflows/ci.yml'
 
   # 2) backend: 빠른 층(test) → 느린 층(integrationTest, Testcontainers).
@@ -155,7 +160,8 @@ jobs:
       - name: Pytest
         run: pytest -q
 
-  # 5) 배포 스크립트: infra/deploy/check-port.sh 의 경계 처리 시험(test_check_port.py).
+  # 5) 배포·백업 스크립트: infra/deploy/check-port.sh 의 경계 처리 시험(test_check_port.py)과
+  #    infra/backup/ 스크립트 시험(test_backup_scripts.py).
   #    실제 docker compose 로 env 파일을 해석만 하고(데몬 불필요) docker ps·ss·curl 은 가짜로 둔다.
   #    표준 라이브러리만 써서 설치할 것이 없다. Python 은 ai 잡과 같은 3.12.
   deploy-scripts:
@@ -178,6 +184,10 @@ jobs:
 
       - name: check-port.sh tests
         run: python infra/deploy/test_check_port.py
+
+      # 백업·복원 스크립트: env 를 compose 와 같게 읽는지, 문서 0건 백업도 복원 가능한지(S15P31A108-211). 같은 가짜 docker 방식
+      - name: backup scripts tests
+        run: python infra/backup/test_backup_scripts.py
 
   # 6) 모니터링: 알림 규칙 시험과 Prometheus·Alertmanager 설정 검사(S15P31A108-292).
   #    서버에는 수동 배포라(cd.yml paths-ignore) 머지본이 그대로 올라간다. 깨진 설정은 여기서 막는다.
@@ -272,9 +282,38 @@ jobs:
           config routes test --config.file=/etc/alertmanager/alertmanager.yml
           --verify.receivers=null alertname=CdcDataUnavailable
 
-  # 7) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
+  # 7) CDC 스택 compose(S15P31A108-294). 서버에 손으로 올려(cd.yml paths-ignore) 깨진 파일이 서버에서야 드러나므로
+  #    여기서 compose 해석과 이미지 digest 고정만 본다. 컨테이너는 띄우지 않는다(로컬 확인은 docs/infra/cdc-stack.md).
+  cdc-stack:
+    needs: changes
+    if: needs.changes.outputs.cdc_stack == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    defaults:
+      run:
+        working-directory: infra/cdc/dev
+    steps:
+      - uses: actions/checkout@v5
+
+      # config 는 비밀 디렉터리(bind source)가 있는지 보지 않는다. 그래서 러너에 없어도 된다
+      - name: compose config
+        run: docker compose -f compose.yaml config --quiet
+
+      # 태그만 있으면 같은 태그를 다시 올렸을 때 서버가 다른 이미지를 받는다. 서비스가 하나도 안 읽히면 실패로 본다
+      - name: Images pinned by digest
+        run: |
+          docker compose -f compose.yaml config --format json | python3 -c '
+          import json, re, sys
+          services = json.load(sys.stdin)["services"]
+          bad = [k + " " + str(v.get("image")) for k, v in services.items()
+                 if not re.search(r"@sha256:[0-9a-f]{64}$", v.get("image") or "")]
+          print(len(services), "services")
+          for b in bad: print("::error::digest 고정 안 됨:", b)
+          sys.exit(1 if bad or not services else 0)'
+
+  # 8) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
   ci-gate:
-    needs: [changes, backend, frontend, ai, deploy-scripts, monitoring]
+    needs: [changes, backend, frontend, ai, deploy-scripts, monitoring, cdc-stack]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2

@@ -81,7 +81,6 @@ const messages: Record<string, string> = {
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',
   unsupported_media_type: '지원하지 않는 파일 형식입니다.',
-  invitation_expired: '초대 링크가 만료되었습니다.',
   leader_transfer_required: '인간 팀장을 먼저 위임해 주세요.',
   leader_not_removable: '팀장은 회의에서 뺄 수 없어요.',
   meeting_closed: '끝난 회의라 바꿀 수 없어요.',
@@ -89,7 +88,7 @@ const messages: Record<string, string> = {
   active_tasks_exist: '진행 중인 작업의 담당자를 먼저 정리해 주세요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
   leader_of_team_projects:
-    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 위임하거나 프로젝트를 삭제해 주세요.',
+    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 먼저 위임해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
   document_not_approved:
@@ -106,6 +105,7 @@ const messages: Record<string, string> = {
   submission_decided: '이미 결정한 검토 요청이에요.',
   already_member: '이미 팀원이에요.',
   invitation_email_mismatch: '초대받은 이메일로 로그인해 주세요.',
+  invitation_not_pending: '이미 참여했거나 취소된 초대예요.',
   agent_limit_reached:
     '활성 토큰은 프로젝트마다 5개까지예요. 쓰지 않는 토큰을 폐기한 뒤 다시 발급해 주세요.',
 }
