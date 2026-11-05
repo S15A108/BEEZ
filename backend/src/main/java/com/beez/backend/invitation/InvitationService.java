@@ -379,6 +379,32 @@ public class InvitationService implements DisposableBean {
         }
     }
 
+    /**
+     * 회원 탈퇴(ACC-A10, -277)와 같은 트랜잭션에서, <b>프로젝트 행을 잠그기 전에</b> 부른다.
+     * 그 이메일로 온 대기 초대는 취소하고, 모든 초대 행에서 주소를 지운다.
+     * 취소하지 않고 주소만 지우면 대기 초대가 주소 없는 링크 초대가 되어 메일 링크를 가진 누구나 수락할 수 있다.
+     * 취소해 두므로 같은 이메일로 새로 가입한 계정이 예전 초대로 자동 참여하지 않는다 — 팀장이 새로 초대하면 그 초대로 들어온다.
+     *
+     * @return 주소를 지운 초대 수
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public int forgetOnAccountWithdrawal(String email) {
+        if (email == null) {
+            return 0;
+        }
+        Instant now = Instant.now();
+        List<Invitation> addressed = invitations.findAllByEmailForUpdate(email);
+        for (Invitation invitation : addressed) {
+            if (invitation.isPending()) {
+                invitation.revoke(now);
+                log.info("회원 탈퇴로 대기 초대 취소: invitation_id={} project_id={}", invitation.getId(),
+                        invitation.getProjectId());
+            }
+            invitation.forgetEmail();
+        }
+        return addressed.size();
+    }
+
     /** 자동 참여에서 멤버십 상태별로 할 일. */
     enum AutoJoin {
         /** 멤버십이 없다 → 새 MEMBER */
