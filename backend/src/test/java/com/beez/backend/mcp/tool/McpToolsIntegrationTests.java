@@ -71,8 +71,10 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         // setUp 이 연결 전에 실패했으면 member 가 없다 — NPE 로 원래 실패를 가리지 않는다
+        // close() 는 세션 종료 DELETE 를 보내기만 하고 기다리지 않는다(SDK 2.1.0). 그 요청의 토큰 확인 트랜잭션이
+        // 다음 시험 setUp 의 truncate … cascade 와 교착하므로(CI 40P01) 응답까지 기다리는 closeGracefully 를 쓴다
         if (member != null) {
-            member.close();
+            member.closeGracefully();
         }
     }
 
@@ -192,11 +194,14 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 .get("record").get("summary").asString()).isEqualTo("로그인 UI 연결 완료");
 
         String privateId;
-        try (McpSyncClient leader = connect(leaderToken)) {
+        McpSyncClient leader = connect(leaderToken);
+        try {
             leader.initialize();
             privateId = ok(call(leader, "write_context", Map.of("kind", "DECISION", "visibility", "PRIVATE",
                     "summary", "팀장 메모", "detail", "비공개", "design_refs", List.of(), "idempotency_key", "k-w2")))
                     .get("id").asString();
+        } finally {
+            leader.closeGracefully(); // tearDown 과 같은 이유 — 종료 DELETE 가 다음 시험의 truncate 와 겹치지 않게
         }
         assertThat(error(call(member, "read_context", Map.of("type", "RECORD", "id", privateId))))
                 .containsEntry("code", "not_found");
