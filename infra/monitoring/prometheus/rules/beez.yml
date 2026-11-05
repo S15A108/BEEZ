@@ -12,8 +12,12 @@
 #   마지막 성공이 120초 이내인 인스턴스(beez_cdc:snapshot_fresh)만 남겨 max 로 하나로 만든다.
 #   성공 1 인 채 갱신이 멈춘 인스턴스의 옛 값이 max 에 남아 이미 해소된 건을 알리지 않게 신선도까지 본다(PR #121 리뷰).
 #   → 집계가 실패하거나 멈추면 아래 beez_cdc:* 시계열이 사라진다. 그 동안은 CdcSnapshotFailing 이 운다.
-#     CDC 상태 알림에는 keep_firing_for: 10m 을 붙여, 값이 사라지자마자 "해소" 글이 먼저 가지 않게 한다
-#     (CdcSnapshotFailing 이 오기까지 갱신 멈춤 120초 + 지속 5분 + 묶음 대기 30초 ≈ 7.5분). 실제 해소 글도 최대 10분 늦다.
+#     값이 사라지면 CDC 상태 알림(지연·lease·막힘·FAILED·미평가)이 풀려 "해소" 글이 가는데, 실제로 풀린 것이 아니다.
+#     두 겹으로 막는다:
+#       ① CdcDataUnavailable(신선한 스냅샷이 어디에도 없음, 바로 발생)을 원인으로 Alertmanager 가 위 알림을 억제한다
+#          (alertmanager.yml inhibit_rules). 억제 중에 풀린 알림은 해소 글 없이 사라진다(2026-11-05 실측).
+#       ② CDC 상태 알림에 keep_firing_for: 10m — 값이 사라진 뒤에도 잠시 유지해, 억제 원인이 Alertmanager 에 먼저 닿게 한다.
+#     한계: 장애 중에 실제로 해소된 알림은 해소 글이 오지 않는다. 장애 해소 글을 받으면 대시보드로 다시 확인한다(런북).
 #   프로세스 counter(Kafka 수신 실패)는 인스턴스별 increase() 를 더한다. gauge 에는 increase() 를 쓰지 않는다.
 #
 # or vector(0) 은 여기서 쓰지 않는다. "시계열 없음"과 "0"을 섞으면 수집 장애가 정상으로 보인다. 대시보드 표시용으로만 쓴다.
@@ -24,7 +28,7 @@ groups:
   - name: beez-cdc
     rules:
       # 인스턴스별: 집계 성공 + 마지막 성공 120초 이내일 때만 시계열이 있다(값 1). 아래 기록 규칙과 대시보드가 이것으로 거른다.
-      # 120초는 CdcSnapshotFailing 의 갱신 멈춤 기준과 같다(평소 나이는 캐시 15초 + 수집 15초 안쪽)
+      # 120초: 평소 나이는 캐시 15초 + 수집 15초 안쪽이라 여러 번 놓친 것. CdcSnapshotFailing 도 이 규칙에서 유도한다
       - record: beez_cdc:snapshot_fresh
         expr: |
           beez_cdc_analysis_snapshot_available == 1
@@ -56,12 +60,19 @@ groups:
         annotations:
           summary: "분석 대기(PENDING)가 {{ $value | humanizeDuration }}째 처리되지 않음"
 
-      # 집계 실패: 마지막 집계 실패이거나, 성공 값이 120초 넘게 갱신되지 않음(캐시 15초 기준 여러 번 놓침).
-      # 인스턴스별로 본다. 성공한 적이 없으면 마지막 성공 시각이 NaN 이라 두 번째 식은 거짓이고 첫 번째 식이 잡는다.
+      # 억제 원인 전용(글을 보내지 않음, alertmanager.yml 의 "null" 경로). 신선한 스냅샷이 어떤 인스턴스에도 없으면
+      # CDC 건수 값이 없으므로 그 값으로 거는 알림의 "해소"를 믿을 수 없다. 인스턴스 하나만 고장 나고 다른 쪽이
+      # 신선하면 값이 있으므로 억제하지 않는다. 바로 발생시켜(for 없음) 아래 keep_firing_for 10분 안에 억제가 걸리게 한다
+      - alert: CdcDataUnavailable
+        expr: absent(beez_cdc:snapshot_fresh)
+        labels: {team: app}
+        annotations:
+          summary: "신선한 CDC 스냅샷 없음(억제 원인 전용, 알림 글 없음)"
+
+      # 집계 실패: 집계 실패이거나 성공 값이 120초 넘게 갱신되지 않음 = 인스턴스가 신선하지 않음.
+      # 기준(120초)은 위 beez_cdc:snapshot_fresh 한 곳에만 둔다. 성공한 적이 없으면(마지막 성공 NaN) 신선하지 않으므로 잡힌다
       - alert: CdcSnapshotFailing
-        expr: |
-          beez_cdc_analysis_snapshot_available == 0
-          or (time() - beez_cdc_analysis_snapshot_last_success_epoch_seconds) > 120
+        expr: beez_cdc_analysis_snapshot_available unless on(instance) beez_cdc:snapshot_fresh
         for: 5m
         labels: {team: app}
         annotations:

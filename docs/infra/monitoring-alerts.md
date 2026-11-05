@@ -44,10 +44,15 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 - **CDC 건수 값은 신선한 스냅샷만 씁니다.** 인스턴스별로 집계 성공이고 마지막 성공이 120초
   이내인 것(`beez_cdc:snapshot_fresh`)만 남겨 `max`로 합칩니다. 갱신이 멈춘 인스턴스의 옛 값이
   이미 해소된 건을 계속 알리지 않게 하려는 것입니다(PR #121 리뷰).
-- **CDC 상태 알림(지연·lease·막힘·FAILED·미평가)은 조건이 풀린 뒤 10분 더 유지합니다**
-  (`keep_firing_for`). 집계가 멈추면 건수 값이 사라지는데, 그때 바로 "해소" 글이 가면 실제로
-  풀린 것처럼 보입니다. 10분은 `CdcSnapshotFailing`이 먼저 오기에 충분한 시간입니다(약 7.5분).
-  그래서 **실제 해소 글도 최대 10분 늦게 옵니다.**
+- **CDC 값이 없을 때의 거짓 "해소"를 막습니다.** 집계 실패·지표 누락·backend 다운으로 신선한
+  스냅샷이 어디에도 없으면 CDC 건수 값이 사라지고, 그 값으로 거는 CDC 상태 알림(지연·lease·
+  막힘·FAILED·미평가)이 풀려 "해소" 글이 갈 수 있습니다. 실제로 풀린 것이 아닙니다. 두 겹으로 막습니다.
+  - 내부 알림 `CdcDataUnavailable`(신선한 스냅샷이 어디에도 없음)이 울리는 동안 Alertmanager가 위
+    알림들을 **억제**합니다(`inhibit_rules`). 이 알림은 글을 보내지 않습니다. 인스턴스 하나만
+    고장 나고 다른 쪽이 신선하면 값이 있으므로 억제하지 않습니다.
+  - CDC 상태 알림은 조건이 풀린 뒤 **10분 더 유지**합니다(`keep_firing_for`). 억제 원인이
+    Alertmanager에 먼저 닿게 하려는 것입니다. 그래서 **실제 해소 글도 최대 10분 늦게 옵니다.**
+  - Kafka·인프라 알림은 억제하지 않습니다.
 - 묶음: 같은 알림 이름은 한 글로 옵니다. 처음 발생 뒤 30초 모아서 보내고, 묶음에 새
   대상이 붙으면 5분 간격으로 다시 보냅니다. 해소되면 `✅ … 해소` 글이 옵니다.
 
@@ -78,6 +83,11 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
    쪽이 필요하면 그 스레드에서 부릅니다. 앱 처리 = 양지훈, 수집·서버·DB·Kafka 인프라 = 전진.
 4. **일시 중지(선택)** — 원인을 알고 고칠 때까지 같은 글이 반복되면 아래
    "알림 일시 중지"로 멈춥니다. 일시 중지는 해결이 아닙니다.
+5. **데이터 장애가 풀린 뒤 다시 확인** — `CdcSnapshotFailing`·`CdcMetricsMissing`·
+   `BackendScrapeDown`의 해소 글을 받으면 `BEEZ CDC 분석`에서 FAILED·미평가·막힘 등을 다시
+   봅니다. 장애 중에 실제로 풀린 CDC 상태 알림은 **해소 글이 오지 않습니다**(억제 중에 풀린
+   알림은 Alertmanager가 글 없이 버림, 2026-11-05 실측). 채널에 "발생"만 남아 있어도 이미
+   해소됐을 수 있습니다.
 
 **하지 않는 것**: `FAILED`를 `PENDING`으로 바꾸거나 `attempt`를 초기화하는 등 DB 상태를
 직접 바꾸지 않습니다. 워커는 attempt 4 이상을 선점하지 않고, 시도 이력이
@@ -100,7 +110,9 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 ### CdcSnapshotFailing
 
 backend가 지표용 DB 집계에 실패하거나, 집계 값이 120초 넘게 갱신되지 않은 상태가 5분
-이어졌습니다. 이 동안 CDC 건수 지표가 비어 다른 CDC 알림은 울리지 않습니다.
+이어졌습니다. 이 동안 CDC 건수 값이 비어 CDC 상태 알림은 새로 울리지 않고, 이미 울리던 것은
+억제된 채 최대 10분 유지되다 해소 글 없이 사라집니다(위 "거짓 해소를 막습니다"). 풀린 뒤
+대응 순서 5번대로 다시 확인합니다.
 
 - 볼 곳: `BEEZ CDC 분석`의 "DB 집계"·"마지막 집계 뒤", `BEEZ 서버·DB`의 PostgreSQL 연결·
   Hikari 대기. backend 로그(집계 실패는 예외 원문 없이 상태만 남깁니다).
@@ -234,7 +246,12 @@ am silence expire <ID>                           # 일찍 풀기
   보는 일은 별도 모니터링 서버 검토 때 정합니다([monitoring.md](monitoring.md#같은-서버에-두는-이유)).
 - **consumer가 꺼진 환경에서는 지연·Kafka 알림이 꺼집니다.** dev에는 Kafka가 없어
   consumer가 꺼져 있습니다. 켜는 배포(S15P31A108-261 이후)부터 이 두 알림이 의미를 가집니다.
-- **집계 실패 중에는 CDC 건수 알림이 풀립니다.** 대신 `CdcSnapshotFailing`이 웁니다.
+- **CDC 데이터 장애 중에 실제로 해소된 CDC 상태 알림은 해소 글이 오지 않습니다.** 거짓
+  "해소"(문제가 남았는데 해소로 보임)를 막는 대신 받아들인 쪽입니다. 틀려도 "이미 해소됐는데
+  발생으로 남음"이라 덜 위험합니다. 장애 해소 글을 받으면 대시보드로 다시 확인합니다.
+- **모니터링을 다시 띄우면(`--force-recreate`) 유지 중이던 알림 상태가 처음부터 다시 계산됩니다.**
+  CDC 데이터 장애 중이면 `CdcDataUnavailable`이 바로 다시 울려 억제가 이어지므로 거짓 해소는
+  가지 않지만, 장애 중에는 될 수 있으면 다시 띄우지 않습니다.
 - Kafka lag·Connect 상태·replication slot WAL 알림은 S15P31A108-261입니다.
 - 웹훅 주소가 틀리거나 Mattermost가 응답하지 않으면 Alertmanager 로그
   (`mon logs alertmanager`)에 `Notify for alerts failed`가 남고 재시도합니다. 이를 따로
@@ -321,13 +338,15 @@ cd infra/monitoring
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool $P check rules ../rules/beez.yml
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool $P test rules beez_test.yml
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A check-config /etc/alertmanager/alertmanager.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A config routes test --config.file=/etc/alertmanager/alertmanager.yml alertname=CdcDataUnavailable   # null 이어야 한다
 cd ../..
 ```
 
 - `MSYS_NO_PATHCONV=1`: Git Bash가 `/p` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
 - 시험은 244 결정과 PR #121 리뷰의 계약만 봅니다(consumer 꺼짐에서 안 울림, 600초 + 5분,
-  집계 실패·갱신 멈춤, 오래된 스냅샷 제외, 집계가 멈춰도 FAILED가 먼저 해소되지 않음, CDC 지표
-  누락, Kafka 실패·인스턴스별 지표 누락, FAILED 중복 제거). 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
+  집계 실패·갱신 멈춤, 오래된 스냅샷 제외·한 인스턴스만 멈추면 억제하지 않음, 집계가 멈추면
+  억제 원인이 FAILED 해소보다 먼저 생김, CDC 지표 전부·일부 누락, Kafka 실패·인스턴스별 지표
+  누락, FAILED 중복 제거). 억제 자체(Alertmanager)는 promtool이 보지 못해 아래 기록처럼 실측했습니다. 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
 - CI에서는 돌지 않습니다(S15P31A108-264 범위 밖, 후속 과제). 규칙을 바꾼 PR은 위 세 명령의
   결과를 PR 본문에 붙입니다.
 
@@ -385,3 +404,4 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 | 실제 수신 | `mon stop node-exporter`(17:39) → `MonitoringTargetDown` pending 17:39:22, firing 17:41:22 → 팀 채널에 발생 글. `mon start`(17:42) → 해소 글. Mattermost 전송 2건, 실패 0 |
 | 리뷰 반영 재배포 | 커밋 `f386d84`를 올려 `moncheck` 통과 뒤 다시 띄움. 규칙 그룹 `beez-cdc`(15개)·`beez-infra-alerts`(4개) 모두 health ok, 울리는 알림 없음, 수집 대상 5개 UP, DiskSpaceLow 식이 `/`만 봄, `beez_cdc:*` 기록 계속(consumer 0, 상태 5개), 대시보드 프로비저닝 오류 없음 |
 | PR #121 리뷰 반영 | 리뷰 지적 3건(갱신이 멈춘 인스턴스의 옛 값이 `max`에 남음, `up=1`인데 CDC 지표가 전부 빠지면 무알림, 인스턴스별 Kafka counter 누락)을 먼저 promtool로 재현 → 신선도 기록 규칙 `beez_cdc:snapshot_fresh`, `CdcMetricsMissing`, 인스턴스별 `unless`, CDC 상태 알림 `keep_firing_for: 10m`. 시험 10개 통과, 각 수정을 되돌린 사본에서 대응 시험이 실패하는 것 확인 |
+| 억제(inhibit) | 로컬 Alertmanager v0.34.2로 실측. ① FAILED 발생 → `CdcDataUnavailable` → (억제 중) FAILED 풀림 → 다시 발생: 처음 "발생" 한 번만 옴(거짓 해소·중복 발생 없음). ② (억제 중) 실제로 풀린 뒤 억제 원인 해소: 해소 글이 오지 않음(한계로 기록). 실제 설정에서 `CdcFailedIntakes`는 suppressed, `CdcKafkaReceiveFailures`는 그대로, `CdcDataUnavailable`은 `null` 경로. 시험 10개 통과, 수정 7가지를 하나씩 되돌린 사본에서 모두 대응 시험이 실패 |

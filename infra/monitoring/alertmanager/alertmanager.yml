@@ -16,11 +16,22 @@ route:
   group_interval: 5m
   repeat_interval: 4h
   routes:
+    # 억제 원인 전용 알림은 글을 보내지 않는다(아래 inhibit_rules, rules/beez.yml)
+    - matchers: ['alertname="CdcDataUnavailable"']
+      receiver: "null"
     - matchers: ['alertname=~"CdcFailedIntakes|CdcNotEvaluatedRequiresReview"']
       receiver: mattermost
       repeat_interval: 24h
 
+# 신선한 CDC 스냅샷이 어디에도 없는 동안(집계 실패·지표 누락·backend 다운) CDC 상태 알림을 억제한다.
+# 값이 사라져 풀린 알림의 거짓 "해소" 글을 막으려는 것. 억제 중에 풀린 알림은 해소 글 없이 사라진다(2026-11-05 실측,
+# docs/infra/monitoring-alerts.md "한계"). Kafka·인프라 알림은 억제하지 않는다
+inhibit_rules:
+  - source_matchers: ['alertname="CdcDataUnavailable"']
+    target_matchers: ['alertname=~"CdcPendingDelay|CdcExpiredLeases|CdcBlockedProjects|CdcFailedIntakes|CdcNotEvaluatedRequiresReview"']
+
 receivers:
+  - name: "null"
   - name: mattermost
     mattermost_configs:
       - webhook_url_file: /run/secrets/mattermost_webhook_url
