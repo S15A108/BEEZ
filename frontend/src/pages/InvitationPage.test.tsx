@@ -11,6 +11,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { loadMockDatabase } from '@/mocks/state'
 import { verifyEmail } from '@/test/verifyEmail'
 import InvitationPage from './InvitationPage'
 
@@ -34,14 +35,14 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function open() {
+function open(entry = `/invite?token=${token}`) {
   render(
     <QueryClientProvider
       client={
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <MemoryRouter initialEntries={[`/invite?token=${token}`]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/invite" element={<InvitationPage />} />
           <Route path="/projects/:id" element={<p>프로젝트 화면</p>} />
@@ -51,16 +52,49 @@ function open() {
   )
 }
 
-// Q05(2026-10-29 확정): 수락 버튼 없이 로그인 상태면 저절로 참여하고, 로그아웃이면 로그인·가입으로 잇는다.
-it('로그인한 채로 초대 링크를 열면 버튼 없이 참여하고 프로젝트로 간다', async () => {
-  await authApi.register({
+const register = async (email: string) =>
+  authApi.register({
     name: '새 팀원',
-    email: 'new@beez.local',
+    email,
     password: 'beez-2026!',
-    verified_token: await verifyEmail('new@beez.local'),
+    verified_token: await verifyEmail(email),
   })
+
+// Q05(2026-10-29 확정): 수락 버튼 없이 로그인 상태면 저절로 참여하고, 로그아웃이면 로그인·가입으로 잇는다.
+// PR #134부터 초대받은 이메일로 가입하면 그때 자동 참여해, 링크를 열어야 참여하는 이메일 없는 링크 초대로 본다.
+it('로그인한 채로 초대 링크를 열면 버튼 없이 참여하고 프로젝트로 간다', async () => {
+  const link = await membersApi.createInvitation('101')
+  token = new URL(link.invite_url).searchParams.get('token')!
+  await register('other@beez.local')
   open()
   expect(await screen.findByText('프로젝트 화면')).toBeInTheDocument()
+})
+
+// MEM-A05(PR #134): 로그인 자동 참여로 이미 들어온 사람이 메일 링크(/projects/{id}?invite=)로 돌아오면 409 already_member다.
+it('메일 링크로 돌아왔는데 이미 팀원이면 그 프로젝트로 간다', async () => {
+  await membersApi.createEmailInvitations('101', {
+    emails: ['mail@beez.local'],
+  })
+  token = loadMockDatabase().invitations.findLast(
+    (item) => item.invited_email === 'mail@beez.local',
+  )!.token
+  await register('mail@beez.local')
+  open(`/invite?invite=${token}&project=101`)
+  expect(await screen.findByText('프로젝트 화면')).toBeInTheDocument()
+})
+
+it('로그아웃 상태로 메일 링크를 열면 프로젝트 소개를 보이고 로그인·가입에 프로젝트도 넘긴다', async () => {
+  await authApi.logout()
+  open(`/invite?invite=${token}&project=101`)
+  expect(
+    await screen.findByText('승인 설계를 함께 관리하는 예시 프로젝트'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('link', { name: '로그인하고 프로젝트 열기' }),
+  ).toHaveAttribute('href', `/login?invite=${token}&project=101`)
+  expect(
+    screen.getByRole('link', { name: '이 이메일로 회원가입하기' }),
+  ).toHaveAttribute('href', `/register?invite=${token}&project=101`)
 })
 
 it('미리보기가 초대한 팀장과 초대받은 이메일을 주면 카드에 보여 준다', async () => {
