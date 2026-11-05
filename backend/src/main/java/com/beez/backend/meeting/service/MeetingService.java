@@ -174,7 +174,7 @@ public class MeetingService {
         requireOpen(meeting);
 
         long id = meetings.insertEntry(meetingId, "TEXT", "HUMAN", actor.accountId(), text, null);
-        MeetingEntryResponse response = MeetingAssembler.toResponse(meetings.findEntry(projectId, id).orElseThrow());
+        MeetingEntryResponse response = assembler.toEntryResponse(meetings.findEntry(projectId, id).orElseThrow());
         if (key != null) {
             idempotency.save(projectId, actor.accountId(), operation, key, input, response);
         }
@@ -196,13 +196,7 @@ public class MeetingService {
         long after = Math.max(cursor == null || cursor.isBlank() ? 0L : Ids.parse(cursor, "cursor"),
                 afterEntryId == null || afterEntryId.isBlank() ? 0L : Ids.parse(afterEntryId, "after_entry_id"));
         List<EntryRow> rows = meetings.listEntries(projectId, meetingId, after, size + 1);
-        return PageResponse.fromRows(rows, size, EntryRow::id, page -> {
-            List<MeetingEntryResponse> items = new ArrayList<>();
-            for (EntryRow row : page) {
-                items.add(MeetingAssembler.toResponse(row));
-            }
-            return items;
-        });
+        return PageResponse.fromRows(rows, size, EntryRow::id, assembler::toEntryResponses);
     }
 
     private void requireBaseline(long projectId) {
