@@ -32,6 +32,10 @@ public class MeetingRepository {
                            Instant createdAt) {
     }
 
+    /** 충돌 회의 개설 판정용 작업 한 줄. assigneeMemberId 는 담당자가 없으면 null */
+    public record TaskState(long id, String title, Long assigneeMemberId, String status) {
+    }
+
     private static final String MEETING_COLUMNS = "id, project_id, title, change_proposal_id, origin, conflict_summary,"
             + " status, closed_at, closed_by, created_at";
 
@@ -100,6 +104,32 @@ public class MeetingRepository {
                     return null;
                 }).list();
         return out;
+    }
+
+    /** 이 프로젝트 작업의 제목·담당 멤버·상태. 이 프로젝트의 작업이 아니면 나오지 않는다 */
+    public Map<Long, TaskState> taskStates(long projectId, Collection<Long> taskIds) {
+        Map<Long, TaskState> out = new LinkedHashMap<>();
+        if (taskIds.isEmpty()) {
+            return out;
+        }
+        jdbc.sql("select id, title, assignee_member_id, status from task where project_id = :p and id in (:ids) order by id")
+                .param("p", projectId).param("ids", taskIds)
+                .query((rs, n) -> {
+                    out.put(rs.getLong("id"), new TaskState(rs.getLong("id"), rs.getString("title"),
+                            nullableLong(rs, "assignee_member_id"), rs.getString("status")));
+                    return null;
+                }).list();
+        return out;
+    }
+
+    /** 한 검증에서 이 관련 작업을 가리키는 모델의 BLOCKING 충돌 발견 항목 메시지(없으면 비어 있음) */
+    public Optional<String> conflictFindingMessage(long validationId, long relatedTaskId) {
+        return jdbc.sql("""
+                select message from validation_finding
+                 where validation_id = :v and related_task_id = :t
+                   and source = 'MODEL' and kind = 'CONFLICT' and severity = 'BLOCKING'
+                 order by id limit 1
+                """).param("v", validationId).param("t", relatedTaskId).query(String.class).optional();
     }
 
     // ---- 회의 ----

@@ -19,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 작업 충돌 회의 내부 개설 (S15P31A108-205). HTTP 로 노출하지 않는다 — 사람이 회의를 만드는 API 는 없다.
- * 충돌 감지(변준성 검증)가 이 서비스를 호출하는 연결은 후속 티켓이고, 여기서는 개설 규칙만 맡는다.
+ * 충돌 감지 이벤트를 받는 ConflictMeetingListener 가 부른다(S15P31A108-248). 여기서는 개설 규칙만 맡는다.
  * 호출하는 쪽의 트랜잭션에 참여한다(단독 호출도 가능).
  */
 @Service

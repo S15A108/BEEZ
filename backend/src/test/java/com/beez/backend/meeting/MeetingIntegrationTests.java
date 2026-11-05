@@ -29,7 +29,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 회의 조회·참여자·기록과 충돌 회의 내부 개설 (MTG-A02·A03·A04·A06·A10·A14, S15P31A108-205).
- * 충돌 감지 연결과 알림 전달은 후속 티켓이라 여기서 검증하지 않는다.
+ * 충돌 감지 연결은 ConflictMeetingOpenIntegrationTests, 알림 전달은 후속(S15P31A108-237).
  */
 class MeetingIntegrationTests extends IntegrationTestSupport {
 
