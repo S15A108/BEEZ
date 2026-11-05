@@ -7,16 +7,19 @@
 #
 # 사용: infra/backup/restore-check.sh <백업 폴더> [덤프 파일]
 #   예) infra/backup/restore-check.sh ~/beez-backup
-#   덤프를 고르지 않으면 <백업 폴더>/db 의 가장 최근 덤프를 쓴다.
+#   덤프를 고르지 않으면 <백업 폴더>/LAST_OK 의 덤프(끝까지 성공한 마지막 백업)를 쓰고, LAST_OK 가 없으면
+#   db 의 가장 최근 덤프를 쓴다. 가장 최근 덤프는 원본 복사가 실패한 실행의 것일 수 있다.
 #
 # 종료 코드: 0 = 모든 문서 버전 원본 일치, 1 = 빠졌거나 다른 원본이 있음, 2 = 사용법·환경 오류
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # Git Bash 에서 /w 같은 컨테이너 경로가 바뀌지 않게. 리눅스에서는 영향 없음
 
 ROOT=${1:?"사용: restore-check.sh <백업 폴더> [덤프 파일]"}
-# 덤프 이름은 backup.sh 가 만든 beez-<UTC 시각>.dump 뿐이라 ls 정렬로 충분하다
+ok_dump=$(sed -n 's/^dump=//p' "$ROOT/LAST_OK" 2> /dev/null || true)
+# 덤프 이름은 backup.sh 가 만든 beez-<UTC 시각>.dump 뿐이라 이름 정렬이 곧 시각 순서다
+DUMP=${2:-${ok_dump:+$ROOT/db/$ok_dump}}
 # shellcheck disable=SC2012
-DUMP=${2:-$(ls -1t "$ROOT"/db/beez-*.dump 2> /dev/null | head -n 1)}
+DUMP=${DUMP:-$(ls -1 "$ROOT"/db/beez-*.dump 2> /dev/null | sort | tail -n 1)}
 BUCKET=${DOCUMENT_S3_BUCKET:-beez-documents}
 OBJECTS=$ROOT/objects/$BUCKET
 [[ -f $DUMP ]] || { echo "덤프가 없음: ${DUMP:-$ROOT/db/beez-*.dump}" >&2; exit 2; }

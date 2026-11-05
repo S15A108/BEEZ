@@ -140,7 +140,7 @@ PostgreSQL과 SeaweedFS를 함께 커밋하는 분산 트랜잭션은 사용하�
 **예외 — 덮어써지는 원본.** 아래 key는 새 key로 바뀌고, 옛 key는 정리 워커(-194)가 몇 초 안에 실제로 지운다. 덤프 뒤·복사 전 몇 초 사이에 이런 변경이 있으면 덤프가 가리키는 옛 원본이 백업에 없을 수 있다.
 
 - `document_working_copy.storage_key`: 편집·제출할 때. 작업본 본문은 DB(`content_text`)에 있으므로 복원 시험은 경고만 한다.
-- 처음 제출하는 문서의 초기 `document_version.storage_key`: 첫 제출 때 같은 행의 key를 바꾼다(`DocumentReviewRepository.submit`). 이 경우 복원 시험은 **실패**로 잡는다. 다음 날 백업에는 새 key가 들어가므로 그 덤프로 복원하면 된다.
+- 처음 제출하는 문서의 초기 `document_version.storage_key`: 첫 제출 때 같은 행의 key를 바꾼다(`DocumentReviewRepository.submit`). 이 경우 그날 `backup.sh`가 실패로 끝나고 `LAST_OK`를 바꾸지 않는다(덤프가 가리키는 key를 덤프에서 꺼내 대조한다). 다음 날 백업에는 새 key가 들어가므로 그 덤프로 복원하면 된다.
 
 새벽 4시 실행이고 틈이 몇 초라 드물다. 그래서 쓰기를 멈추는 대신 복원 시험으로 잡기로 했다.
 
@@ -148,8 +148,8 @@ PostgreSQL과 SeaweedFS를 함께 커밋하는 분산 트랜잭션은 사용하�
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `infra/backup/backup.sh <환경>` | 서버에서 매일 실행(crontab). `pg_dump -Fc` → 목차 검사 → 백업 키로 `rclone copy --immutable --checksum` → 덤프 시점까지의 문서 버전 원본이 백업에 다 있는지 확인. 덤프는 최근 14개만, 원본은 지우지 않는다 |
-| `infra/backup/pull-backup.sh [폴더] [--check]` | PC Git Bash. 서버 백업에서 PC에 없는 파일만 받는다. 지우지도 덮어쓰지도 않는다. 서버 백업이 도는 중이면 끝날 때까지 기다린다. `--check`면 받은 뒤 최근 덤프로 `restore-check.sh`까지 돌린다 |
+| `infra/backup/backup.sh <환경>` | 서버에서 매일 실행(crontab). `pg_dump -Fc` → 목차 검사 → 백업 키로 `rclone copy --immutable --checksum` → **덤프에서 꺼낸** 문서 버전 `storage_key`가 백업에 다 있는지 확인 → 성공하면 `LAST_OK`에 덤프 이름. 다른 백업·받기가 잠금을 쥐고 있으면 최대 30분 기다린다. 덤프는 최근 14개만, 원본은 지우지 않는다 |
+| `infra/backup/pull-backup.sh [폴더] [--check]` | PC Git Bash. 서버 백업에서 PC에 없는 파일만 받는다. 지우지도 덮어쓰지도 않는다. 임시 폴더(`.incoming`)에 받아 끝까지 성공했을 때만 옮긴다. 서버 백업이 도는 중이면 끝날 때까지 기다린다. `--check`면 받은 뒤 `LAST_OK`의 덤프로 `restore-check.sh`까지 돌린다 |
 | `infra/backup/restore-check.sh <백업 폴더>` | Docker만 있으면 어디서나(서버·PC Git Bash). 임시 postgres·SeaweedFS에 복원하고 `storage_key`로 내려받아 `content_hash`와 대조. 운영 컨테이너는 건드리지 않는다 |
 
 서버의 백업 위치는 `/var/backups/beez`(`db/`, `objects/<bucket>/`)다. 백업 키는 읽기·목록만 되므로 백업 스크립트가 잘못 돌아도 원본을 지우거나 바꿀 수 없다.
@@ -165,7 +165,7 @@ PostgreSQL과 SeaweedFS를 함께 커밋하는 분산 트랜잭션은 사용하�
 | --- | --- |
 | 비용 0. 서버에 바깥 저장소 쓰기 키를 두지 않아 서버가 뚫려도 PC의 백업은 지울 수 없다 | PC가 꺼져 있거나 사람이 잊으면 서버 밖 사본이 오래된다. SSAFY PC를 바꾸거나 초기화하면 PC 사본이 사라진다 |
 
-- 받는 쪽 기본 폴더는 `~/beez-backup/dev`다. 출근해서 한 번 돌린다. 최근 덤프가 36시간보다 오래되면 종료 코드 1과 경고를 내므로 서버 백업이 멈춘 것도 이때 안다.
+- 받는 쪽 기본 폴더는 `~/beez-backup/dev`다. 출근해서 한 번 돌린다. 마지막 **성공** 백업(`LAST_OK`)이 36시간보다 오래되면 종료 코드 1과 경고를 내므로 서버 백업이 멈추거나 매일 실패하는 것도 이때 안다.
 - PC를 바꿀 때는 이 폴더를 새 PC로 옮긴다. 옮기지 못하면 새 PC에서 처음부터 받는다. 서버에는 덤프 14개와 원본 전부가 있다.
 - 비교했던 다른 안: 개인 AWS S3(월 1센트 수준, 서버에 쓰기 키가 생김), 무료 R2·B2(새 계정, 팀 데이터가 제3자로 감).
 
@@ -205,6 +205,14 @@ RUNNING lease는 10분이며, 만료 시 새 attempt로 자동 복구한다. aut
 - 백업 흐름: `backup.sh` 두 번 연속 성공(`--checksum` 넣기 전에는 두 번째가 `immutable file modified`로 실패) → `pull-backup.sh` 증분·삭제 비전파·임시 파일 제외 → `--check`로 4건 일치. 백업 파일 내용을 같은 크기로 바꾸면 `backup.sh`가 실패로 잡는다.
 - 복원: 원본 2개를 지운 bucket을 운영 안내 8절 명령으로 되살렸고(`check-live` 일치 2 → 4), 비운 DB에 `pg_restore --clean`한 뒤 4건 일치했다.
 - dev 이미지(`e3f17c0`) backend·ai가 새 compose로 모두 `(healthy)`다.
+
+2026-11-05 리뷰 반영 검증(같은 환경):
+- 덤프에서 key 뽑기: storage_key가 셋째 열이고 다른 열에 탭이 든 행이 있어도 3건을 정확히 뽑는다.
+- `LAST_OK`: 덤프가 없는 원본을 가리키면 `backup.sh`가 실패하고 `LAST_OK`는 그대로다. `pull-backup.sh --check`와 `restore-check.sh` 기본값은 이름순 최신(실패본)이 아니라 `LAST_OK`의 덤프로 통과한다.
+- 받기: 3000바이트에서 끊긴 받기는 PC 폴더를 그대로 두고 임시 폴더를 버린다. 다시 받으면 정상이다. 오래된 `LAST_OK`·`LAST_OK` 없음은 종료 코드 1이다.
+- 잠금(리눅스 컨테이너의 flock): 받기 중 백업은 기다렸다 진행하고, 백업 중 받기도 기다린다. 런북처럼 셸이 쥔 복원 잠금은 `deploy.sh`와 같은 방식의 잠금을 놓을 때까지 막는다.
+- `check-live.sh`: DB 조회 실패는 종료 코드 2와 "DB 조회 실패", 0건은 통과다.
+- seaweedfs를 멈춘 채 backend를 다시 만들어도 backend는 `(healthy)`다(`depends_on: service_started`).
 
 문서 HTTP 통합 시험은 실제 PostgreSQL과 SeaweedFS를 함께 사용해 업로드/다운로드·DB rollback 시 객체 삭제·현재 승인 범위 검색을 검증한다. DB 등록 서비스만 독립 검증하는 일부 시험은 src/test 전용 메모리 대역을 사용하며 제품에 등록하지 않는다.
 

@@ -300,7 +300,7 @@ DB(PostgreSQL)와 문서 원본(SeaweedFS)을 매일 새벽 서버에 백업하�
 | 무엇 | 어디 | 언제 |
 |---|---|---|
 | `beez-backup dev` (= `infra/backup/backup.sh`) | 서버 `ubuntu` crontab | 매일 04:17 KST. pg_dump 먼저 → 원본 복사 |
-| 서버 백업 | `/var/backups/beez` (`db/` 덤프 최근 14개, `objects/` 원본 전부, `backup.log`) | |
+| 서버 백업 | `/var/backups/beez` (`db/` 덤프 최근 14개, `objects/` 원본 전부, `LAST_OK` 마지막 성공 덤프 이름, `backup.log`) | |
 | 서버 밖 백업 | PC `~/beez-backup/dev` (`infra/backup/pull-backup.sh`) | 출근해서 한 번 |
 | 운영 원본 대조 `beez-check-live dev` (= `infra/backup/check-live.sh`) | 서버 | 배포·복원 뒤. 읽기만 함 |
 
@@ -308,13 +308,15 @@ DB(PostgreSQL)와 문서 원본(SeaweedFS)을 매일 새벽 서버에 백업하�
 
 ```bash
 cd /c/git/BEEZ && infra/backup/pull-backup.sh --check
-# [pull-backup ...] 새 파일 N개 ... / 최근 덤프: beez-<UTC 시각>.dump (몇시간 전) / [restore-check ...] 통과
+# [pull-backup ...] 새 파일 N개 ... / 마지막 성공 백업: beez-<UTC 시각>.dump (몇시간 전) / [restore-check ...] 통과
 ```
 
 - 새 덤프와 원본만 받습니다. PC의 파일은 지우지도 덮어쓰지도 않습니다.
-- `--check`는 받은 최근 덤프를 임시 컨테이너에 복원하고, 문서 버전 원본의 SHA-256을 `content_hash`와 대조합니다(Docker Desktop 필요, 1분 안팎).
-- **종료 코드 1, "최근 덤프가 36시간보다 오래됨"**: 서버 백업이 멈춘 것입니다. 서버에서 `tail -50 /var/backups/beez/backup.log`를 봅니다.
-- `restore-check`가 문서 버전 원본 "없음"으로 실패하면, 백업하던 몇 초 사이에 첫 제출이 있었을 수 있습니다([예외](seaweedfs.md#순서와-일관성)). 다음 날 덤프로 다시 봅니다. 이틀 연속이면 원인을 찾습니다.
+- 서버 백업이 끝까지 성공하면 `LAST_OK`에 그 덤프 이름을 적습니다. 원본 복사·확인이 실패한 날도 덤프 파일은 생기므로, 신선도와 복원 시험은 덤프가 아니라 `LAST_OK`를 기준으로 합니다.
+- 받다가 끊기면 받은 것을 버리고 PC 폴더는 그대로 둡니다. 다시 돌리면 처음부터 받습니다.
+- `--check`는 `LAST_OK`의 덤프를 임시 컨테이너에 복원하고, 문서 버전 원본의 SHA-256을 `content_hash`와 대조합니다(Docker Desktop 필요, 1분 안팎).
+- **종료 코드 1, "마지막 성공 백업이 36시간보다 오래됨"·"끝까지 성공한 서버 백업이 없음"**: 서버 백업이 멈췄거나 매일 실패하는 것입니다. 서버에서 `tail -50 /var/backups/beez/backup.log`를 봅니다.
+- 백업하던 몇 초 사이에 첫 제출이 있으면 그날 서버 백업이 "덤프가 가리키는 문서 버전 원본 N개가 백업에 없다"로 실패하고 `LAST_OK`가 하루 전 그대로입니다([예외](seaweedfs.md#순서와-일관성)). 다음 날 백업이 성공하면 됩니다. 이틀 연속이면 원인을 찾습니다.
 
 ### 설치 (서버당 한 번)
 
@@ -382,20 +384,24 @@ DB를 덤프 시점으로 되돌립니다. **덤프 뒤에 생긴 데이터는 �
 ```bash
 # 서버. 서버가 새로 만들어졌으면 먼저 PC 백업을 보낸다(PC Git Bash):
 #   tar -C ~/beez-backup/dev -cf - db objects | ssh beez 'mkdir -p /var/backups/beez && tar -C /var/backups/beez -xf - --skip-old-files'
-dump=$(ls -1 /var/backups/beez/db/beez-*.dump | sort | tail -n 1); echo "$dump"   # 다른 시점이면 직접 고른다
-flock -w 300 /var/www/beez/.deploy.lock docker compose -p beez stop backend          # 쓰기를 멈춘다(배포와 겹치지 않게)
+dump=/var/backups/beez/db/$(sed -n 's/^dump=//p' /var/backups/beez/LAST_OK); ls -l "$dump"   # 끝까지 성공한 마지막 백업. 다른 시점이면 직접 고른다
+exec 8< /var/www/beez/.deploy.lock && flock -w 300 8 && echo "배포 잠금 잡음"   # 복원이 끝날 때까지 배포가 끼어들지 못하게 이 셸이 잠금을 쥔다
+docker compose -p beez stop backend                                                  # 쓰기를 멈춘다
 pg=$(docker compose -p beez ps -q postgres)
 docker exec -i "$pg" sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --exit-on-error' < "$dump"
 ```
 
-이어서 위 "원본 몇 개가 없어졌을 때"의 `s3admin copy`로 원본을 올린 뒤 backend를 켜고 대조합니다.
+이어서 **같은 셸에서** 위 "원본 몇 개가 없어졌을 때"의 `s3admin copy`로 원본을 올린 뒤, backend를 켜고 잠금을 놓고 대조합니다.
 
 ```bash
-flock -w 300 /var/www/beez/.deploy.lock docker compose -p beez start backend
+docker compose -p beez start backend
 docker compose -p beez ps backend    # (healthy)까지
+exec 8<&-                            # 배포 잠금을 놓는다. 잊으면 그 셸을 닫을 때까지 배포가 5분 기다리다 실패한다
 beez-check-live dev                  # 일치 N개, 문제 0개
 ```
 
+- 잠금은 명령 하나가 아니라 셸이 쥡니다. `flock ... docker compose stop`처럼 명령마다 잡으면 그 사이(덤프 복원·원본 올리기)에 자동 배포가 backend를 다시 켤 수 있습니다. 배포 스크립트(`deploy.sh`)와 같은 잠금 파일입니다.
+- 도중에 실패해 그만둘 때도 `docker compose -p beez start backend`와 `exec 8<&-`를 합니다.
 - `--clean --if-exists`: 지금 DB의 테이블을 지우고 덤프 내용으로 다시 만듭니다. backend가 켜지면 Flyway가 덤프 뒤의 마이그레이션을 이어서 적용합니다.
 - backend를 끄면 웹 사용자가 모두 로그아웃됩니다(세션이 메모리에 있음).
 - 2026-11-05 로컬 확인: 원본 2개를 지운 bucket을 위 명령으로 되살렸고(일치 2 → 4), 테이블을 비운 DB에 덤프를 복원한 뒤 `check-live` 4개가 일치했습니다. 운영 서버에서의 복원 시험 기록은 아래에 남깁니다.

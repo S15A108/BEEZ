@@ -9,7 +9,7 @@
 #   예) infra/backup/check-live.sh dev
 #
 # 키는 env 파일의 읽기 전용 백업 키(SEAWEEDFS_BACKUP_*)를 쓴다. 원본을 바꾸거나 지울 수 없다.
-# 종료 코드: 0 = 모두 일치(0건 포함), 1 = 없거나 다른 원본이 있음, 2 = 사용법·환경 오류
+# 종료 코드: 0 = 모두 일치(0건 포함), 1 = 없거나 다른 원본이 있음, 2 = 사용법·환경 오류·DB 조회 실패
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # Git Bash 에서 시험할 때 컨테이너 경로가 바뀌지 않게. 리눅스에서는 영향 없음
 
@@ -33,7 +33,11 @@ log() { echo "[check-live $(date +%H:%M:%S)] $*"; }
 log "문서 버전 원본 대조 ($PROJECT, bucket $BUCKET)"
 # 키는 -e 이름만 넘겨 명령줄(프로세스 목록)에 값이 보이지 않게 한다
 export AK SK
-docker exec "$pg" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -XAt -F " " -v ON_ERROR_STOP=1 -c "SELECT id, storage_key, content_hash FROM document_version ORDER BY id"' \
+# DB 조회를 먼저 끝내고 결과를 넘긴다. 파이프로 바로 이으면 조회 실패도 아래 "원본이 DB 와 맞지 않는다"로 보인다
+rows=$(docker exec "$pg" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -XAt -F " " -v ON_ERROR_STOP=1 -c "SELECT id, storage_key, content_hash FROM document_version ORDER BY id"') ||
+    { log "실패: 운영 DB 조회 실패 — 원본 대조를 하지 못함(postgres 상태부터 본다)"; exit 2; }
+# 0건이면 빈 줄 하나도 넘기지 않는다(빈 줄은 key 없는 "없음" 한 건으로 세어진다)
+{ [[ -n $rows ]] && printf '%s\n' "$rows"; true; } \
   | docker run -i --rm --network "${PROJECT}_storage" --entrypoint sh -e AK -e SK -e EP="http://seaweedfs:8333/$BUCKET" \
     "$CURL_IMAGE" -c '
       ok=0; bad=0

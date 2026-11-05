@@ -81,7 +81,9 @@ services:
       postgres:
         condition: service_healthy   # Flyway 가 기동 중에 DB 에 붙으므로 DB 가 준비된 뒤에 띄운다
       seaweedfs:
-        condition: service_healthy
+        # healthy 를 기다리지 않는다. seaweedfs 가 아파도 로그인·프로젝트 등 문서 밖 기능은 떠야 한다.
+        # seaweedfs 이상은 그 자신의 healthcheck 로 배포 --wait 가 실패해 알려 준다
+        condition: service_started
       ai:
         condition: service_started   # 기동에는 ai 가 필요 없다. 순서만 맞춘다
     environment:

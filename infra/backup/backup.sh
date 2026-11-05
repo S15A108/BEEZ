@@ -7,6 +7,9 @@
 # 결과(BACKUP_ROOT, 기본 /var/backups/beez):
 #   db/beez-<UTC 시각>.dump   pg_dump 커스텀 형식. 최근 KEEP_DUMPS 개만 남긴다
 #   objects/<bucket>/<key>    원본 객체. 실행마다 새 객체만 더한다(삭제를 옮기지 않는다)
+#   LAST_OK                   끝까지 성공한 마지막 실행의 덤프 이름(dump=<파일 이름>). 실패한 실행은 바꾸지 않는다.
+#                             덤프 파일만으로는 성공 여부를 알 수 없다 — 복사·확인이 실패해도 덤프는 남는다
+#                             (DB 백업으로는 쓸모가 있어 지우지 않는다). 서버 밖 보관·복원 시험은 이 파일을 기준으로 한다
 #
 # 순서가 이래야 하는 이유: 덤프가 가리키는 원본은 덤프 뒤에 복사해야 백업에 들어 있다. 승인·제출 원본은
 # 지우지 않고(DocumentOriginalCleanupWorker), 복사가 삭제를 옮기지 않으므로 쓰기를 멈추지 않아도 된다.
@@ -35,13 +38,13 @@ log() { echo "[backup $(date +%H:%M:%S)] $*"; }
 # 덤프에는 계정·토큰 해시가 들어 있다. 만드는 파일을 주인만 읽게 한다
 umask 077
 mkdir -p "$BACKUP_ROOT/db" "$BACKUP_ROOT/objects"
-# 한 번에 하나만 돈다(손 실행과 예약 실행이 겹치지 않게)
+# 한 번에 하나만 돈다(손 실행과 예약 실행이 겹치지 않게). PC 의 pull-backup.sh 도 같은 파일에 공유 잠금을 잡고
+# 받는 동안 기다리게 한다 — 기다리지 않고 바로 끝내면 그 시각에 받고 있던 날은 백업이 통째로 빠진다
 exec 9> "$BACKUP_ROOT/.backup.lock"
-flock -n 9 || { echo "다른 백업이 진행 중이라 시작하지 않음" >&2; exit 3; }
+flock -w "${LOCK_WAIT:-1800}" 9 || { echo "다른 백업·받기가 ${LOCK_WAIT:-1800}초 넘게 진행 중이라 시작하지 않음" >&2; exit 3; }
 
 pg=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=postgres)
 [[ -n $pg ]] || { echo "postgres 컨테이너가 없음 (project=$PROJECT)" >&2; exit 2; }
-psql_at() { docker exec "$pg" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -XAt -v ON_ERROR_STOP=1 -c "$1"' sh "$1"; }
 
 tmp=
 trap '[[ -n $tmp ]] && rm -f "$tmp" || true' EXIT
@@ -49,8 +52,7 @@ trap '[[ -n $tmp ]] && rm -f "$tmp" || true' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# 1) DB 덤프. 이 시각까지 있던 문서 버전이 덤프에 들어간다 — 3)에서 그 원본이 다 복사됐는지 본다
-last_version=$(psql_at 'SELECT coalesce(max(id), 0) FROM document_version')
+# 1) DB 덤프. 3)에서 이 덤프가 가리키는 문서 버전 원본이 다 복사됐는지 본다
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 dump=$BACKUP_ROOT/db/beez-$stamp.dump
 tmp=$dump.tmp
@@ -76,13 +78,27 @@ docker run --rm --network "${PROJECT}_storage" --user "$(id -u):$(id -g)" \
     -e RCLONE_CONFIG=/dev/null -e XDG_CACHE_HOME=/tmp \
     "$RCLONE_IMAGE" copy "src:$BUCKET" "/backup/$BUCKET" --immutable --checksum --stats-one-line --stats-log-level NOTICE
 
-# 3) 덤프 시점의 문서 버전 원본이 백업에 다 있는지 확인. 버전 원본은 지우지 않으므로 빠졌다면 백업이 불완전하다
+# 3) 이 덤프가 가리키는 문서 버전 원본이 백업에 다 있는지 확인. 운영 DB 를 다시 읽지 않고 덤프에서 key 를 꺼낸다 —
+#    덤프 뒤에 첫 제출로 key 가 바뀌면 운영 DB 는 새 key(아직 복사 전일 수 있음)를, 덤프는 옛 key 를 가리키기 때문이다.
+#    덤프의 COPY 머리줄에서 storage_key 가 몇째 열인지 찾아 그 열만 뽑는다(열 순서를 코드에 박지 않는다)
+keys=$(docker exec -i "$pg" pg_restore --data-only --table=document_version -f - < "$dump" | awk -F '\t' '
+    /^COPY [^ ]*document_version \(/ {
+        cols = $0; sub(/^[^(]*\(/, "", cols); sub(/\).*$/, "", cols)
+        n = split(cols, c, ", "); col = 0
+        for (i = 1; i <= n; i++) if (c[i] == "storage_key") col = i
+        if (col == 0) { print "storage_key 열을 찾지 못함" > "/dev/stderr"; exit 2 }
+        copying = 1; next
+    }
+    copying && /^\\\.$/ { copying = 0; next }   # COPY 데이터 끝 표시 줄 "\."
+    copying { print $col }')
+versions=$(printf '%s' "$keys" | grep -c . || true)
 missing=0
 while read -r key; do
+    [[ -z $key ]] && continue
     [[ -f $BACKUP_ROOT/objects/$BUCKET/$key ]] || { log "백업에 없는 원본: $key"; missing=$((missing + 1)); }
-done < <(psql_at "SELECT storage_key FROM document_version WHERE id <= $last_version")
+done <<< "$keys"
 if (( missing > 0 )); then
-    log "실패: 문서 버전 원본 ${missing}개가 백업에 없다"
+    log "실패: 덤프가 가리키는 문서 버전 원본 ${missing}개가 백업에 없다 (LAST_OK 는 그대로 둔다)"
     exit 1
 fi
 
@@ -92,4 +108,8 @@ ls -1t "$BACKUP_ROOT"/db/beez-*.dump | tail -n +$((KEEP_DUMPS + 1)) | while read
     rm -f "$old" && log "오래된 덤프 삭제: $old"
 done
 
-log "완료: 덤프 $(du -h "$dump" | cut -f1), 원본 $(find "$BACKUP_ROOT/objects/$BUCKET" -type f | wc -l)개 (문서 버전 $last_version 번까지 확인)"
+# 5) 성공 표시. 임시 파일에 쓰고 이름을 바꿔, 받는 쪽이 반쯤 쓴 파일을 읽지 않게 한다
+printf 'dump=%s\n' "$(basename "$dump")" > "$BACKUP_ROOT/LAST_OK.tmp"
+mv "$BACKUP_ROOT/LAST_OK.tmp" "$BACKUP_ROOT/LAST_OK"
+
+log "완료: 덤프 $(du -h "$dump" | cut -f1), 원본 $(find "$BACKUP_ROOT/objects/$BUCKET" -type f | wc -l)개 (덤프의 문서 버전 ${versions}개 확인)"
