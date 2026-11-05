@@ -77,7 +77,16 @@ while IFS= read -r -d '' f; do
     mkdir -p "$DEST/$(dirname "$rel")"
     mv -n "$f" "$DEST/$rel"
 done < <(find "$STAGE" -type f ! -name LAST_OK -print0)
-[[ -f $STAGE/LAST_OK ]] && mv -f "$STAGE/LAST_OK" "$DEST/LAST_OK"
+# LAST_OK 는 그것이 가리키는 덤프가 PC 에 있을 때만 바꾼다. 서버가 그 덤프를 정리해 이번에 못 받았으면 PC 의
+# 기존 기준(받아 둔 성공 덤프)을 지키고, 아래 신선도 검사가 오래됨으로 알린다
+if [[ -f $STAGE/LAST_OK ]]; then
+    new_ok=$(sed -n 's/^dump=//p' "$STAGE/LAST_OK")
+    if [[ $new_ok =~ ^beez-[0-9]{8}T[0-9]{6}Z\.dump$ && -f $DEST/db/$new_ok ]]; then
+        mv -f "$STAGE/LAST_OK" "$DEST/LAST_OK"
+    else
+        log "경고: 서버 LAST_OK($new_ok)의 덤프를 받지 못해 PC 의 LAST_OK 를 그대로 둔다"
+    fi
+fi
 rm -rf "${STAGE:?}"
 after=$(find "$DEST/db" "$DEST/objects" -type f | wc -l)
 log "새 파일 $((after - before))개, PC 보관 덤프 $(find "$DEST/db" -name 'beez-*.dump' | wc -l)개·원본 $(find "$DEST/objects" -type f | wc -l)개"

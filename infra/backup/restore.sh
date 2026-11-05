@@ -72,6 +72,13 @@ if (( ! YES )); then
     exit 0
 fi
 
+# 서버에서 백업 데이터를 쓰거나 읽어 판정하는 작업(backup.sh·이 스크립트)은 모두 이 잠금 하나를 잡는다.
+# 복원 중에 예약 백업이 돌면 비었거나 반쯤 복원된 DB 를 덤프해 LAST_OK 로 기록할 수 있다.
+# 잠금 순서는 늘 백업 잠금 → 배포 잠금이다(배포 잠금을 쥔 채 백업 잠금을 기다리는 곳이 없어 서로 막히지 않는다)
+exec 7> "$BACKUP_ROOT/.backup.lock"
+flock -w 1800 7 || fail "서버 백업이 30분 넘게 진행 중. 끝난 뒤 다시 실행한다"
+log "백업 잠금 잡음(이 스크립트가 끝나면 풀림)"
+
 put_objects() {
     log "원본 올리기"
     RCLONE_CONFIG_DST_ACCESS_KEY_ID=$(env_value SEAWEEDFS_BOOTSTRAP_ACCESS_KEY) \
