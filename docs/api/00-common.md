@@ -1273,7 +1273,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `agent_token_id` | `ID` | N | 에이전트 호출이면 토큰. 사람 세션은 생략 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `tool` | `string` | Y | 도구·API 이름. 예: get_design_changes, get_development_context, CTX-A01 |
-| `target_kind` | `BASELINE\|PACKET\|CONTEXT_RECORD` | Y | 본 대상의 종류 |
+| `target_kind` | `BASELINE\|PACKET\|CONTEXT_RECORD\|DOCUMENT_VERSION` | Y | 본 대상의 종류. `DOCUMENT_VERSION`은 MCP-02 문서 원문 조회이고 `target_id`가 문서 버전 |
 | `target_id` | `ID` | N | 본 대상 |
 | `baseline_id` | `ID` | N | 그때 참조한 기준 설계 |
 | `packet_id` | `ID` | N | 봤거나 만든 패킷 |

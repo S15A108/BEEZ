@@ -50,6 +50,17 @@ public class RecordingMailGateway implements MailGateway {
         throw new AssertionError("보낸 인증 메일이 없음: " + email);
     }
 
+    /** 이 주소로 마지막에 보낸 메일. 없으면 null (비동기 발송을 기다릴 때 쓴다). */
+    public MailMessage lastTo(String email) {
+        for (var it = sent.descendingIterator(); it.hasNext(); ) {
+            MailMessage m = it.next();
+            if (m.to().equals(email)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
     public long countTo(String email) {
         return sent.stream().filter(m -> m.to().equals(email)).count();
     }
