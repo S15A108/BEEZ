@@ -86,7 +86,6 @@ const messages: Record<string, string> = {
   leader_not_removable: '팀장은 회의에서 뺄 수 없어요.',
   meeting_closed: '끝난 회의라 바꿀 수 없어요.',
   invalid_transfer_target: '이 팀원에게는 넘길 수 없어요.',
-  active_tasks_exist: '진행 중인 작업의 담당자를 먼저 정리해 주세요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
