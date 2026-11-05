@@ -57,7 +57,7 @@ it('초대 칸 형식을 검사하고, 보내면 초대 메일을 보낸 결과�
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
   expect(
-    await screen.findByText('colleague@beez.local · 초대 메일을 보냈어요'),
+    await screen.findByText('colleague@beez.local · 초대했어요'),
   ).toBeInTheDocument()
   expect(await screen.findByText('colleague@beez.local')).toBeInTheDocument()
   expect(screen.queryByLabelText('팀원 초대 링크')).not.toBeInTheDocument()
@@ -86,11 +86,9 @@ it('쉼표로 여러 이메일과 함께 보낼 말을 넣으면 한 번에 초�
   await user.type(within(form).getByLabelText('함께 보낼 말'), '같이 해요')
   await user.click(within(form).getByRole('button', { name: '초대' }))
   expect(
-    await screen.findByText('one@beez.local · 초대 메일을 보냈어요'),
+    await screen.findByText('one@beez.local · 초대했어요'),
   ).toBeInTheDocument()
-  expect(
-    screen.getByText('two@beez.local · 초대 메일을 보냈어요'),
-  ).toBeInTheDocument()
+  expect(screen.getByText('two@beez.local · 초대했어요')).toBeInTheDocument()
   expect(create).toHaveBeenCalledTimes(1)
   expect(create).toHaveBeenCalledWith('101', {
     emails: ['one@beez.local', 'two@beez.local'],
@@ -293,7 +291,9 @@ it('이미 초대 중이거나 팀원인 이메일도 건너뛰지 않고 보내
     }),
   )
   expect(
-    await screen.findByText('late@beez.local · 이미 초대 중이에요'),
+    await screen.findByText(
+      'late@beez.local · 이미 초대 중이에요. 아래에서 메일을 다시 보낼 수 있어요',
+    ),
   ).toBeInTheDocument()
   expect(
     screen.getByText('member@beez.local · 이미 팀원이에요'),
@@ -312,7 +312,7 @@ it('초대 중인 줄의 메일 다시 보내기를 누르면 새 링크로 보�
   )
   expect(
     await screen.findByText(
-      '초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.',
+      'late@beez.local · 초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.',
     ),
   ).toBeInTheDocument()
   expect(resend).toHaveBeenCalledWith('101', results[0].invitation_id)
@@ -338,8 +338,40 @@ it('다시 보내기 메일이 실패하면 이전 링크는 그대로 쓸 수 �
     await screen.findByRole('button', { name: '메일 다시 보내기' }),
   )
   expect(await screen.findByRole('alert')).toHaveTextContent(
-    '초대 메일을 보내지 못했어요. 이전에 보낸 링크는 그대로 쓸 수 있어요.',
+    'late@beez.local · 초대 메일을 보내지 못했어요. 이전에 보낸 링크는 그대로 쓸 수 있어요.',
   )
+})
+
+// PR #146 리뷰: 한 줄을 보내는 동안 다른 줄의 다시 보내기 버튼은 그대로 눌린다.
+it('다시 보내는 중에는 그 줄의 버튼만 끈다', async () => {
+  const user = userEvent.setup()
+  await membersApi.createEmailInvitations('101', {
+    emails: ['one@beez.local', 'two@beez.local'],
+  })
+  vi.spyOn(membersApi, 'resendInvitation').mockReturnValue(
+    new Promise(() => {}),
+  )
+  renderTeam()
+  await screen.findByText('one@beez.local')
+  const row = (email: string) =>
+    screen
+      .getAllByRole('listitem')
+      .find((item) => within(item).queryByText(email))!
+  await user.click(
+    within(row('one@beez.local')).getByRole('button', {
+      name: '메일 다시 보내기',
+    }),
+  )
+  expect(
+    within(row('one@beez.local')).getByRole('button', {
+      name: '메일 다시 보내기',
+    }),
+  ).toBeDisabled()
+  expect(
+    within(row('two@beez.local')).getByRole('button', {
+      name: '메일 다시 보내기',
+    }),
+  ).toBeEnabled()
 })
 
 // PR #72 재전수 SECOND-AMP-01: 역할·담당 영역은 서버가 팀장만 고치게 해서, 팀원에게는 본인 것도 고치기 버튼이 없다.
@@ -382,7 +414,7 @@ it('초대 목록 조회가 실패해도 오류와 방금 보낸 초대 결과�
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
   expect(
-    await screen.findByText('later@beez.local · 초대 메일을 보냈어요'),
+    await screen.findByText('later@beez.local · 초대했어요'),
   ).toBeInTheDocument()
 })
 

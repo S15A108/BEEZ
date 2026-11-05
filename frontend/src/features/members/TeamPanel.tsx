@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { Ellipsis, Pencil, TriangleAlert } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import type { Member, TaskDetail } from '@/api/contracts/common'
+import type { Invitation, Member, TaskDetail } from '@/api/contracts/common'
 import { membersApi, projectsApi, tasksApi } from '@/api/services'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
@@ -116,9 +116,10 @@ export function TeamPanel({
     enabled: isLeader && view === 'team',
   })
   // 메일 다시 보내기(MEM-A11)는 새 링크로 보내 이전 링크를 막는다. 메일을 못 보내면(503) 토큰이 그대로라 이전 링크가 산다.
+  // PR #146 리뷰: 보내는 줄의 버튼만 끄고, 결과 문구에 어느 이메일 건인지 붙인다.
   const resend = useMutation({
-    mutationFn: (invitationId: string) =>
-      membersApi.resendInvitation(projectId, invitationId),
+    mutationFn: (invitation: Invitation) =>
+      membersApi.resendInvitation(projectId, invitation.id),
     onSettled: () =>
       queryClient.invalidateQueries({
         queryKey: ['projects', projectId, 'invitations'],
@@ -349,7 +350,7 @@ export function TeamPanel({
             <h3 className="text-sm font-semibold">초대 중</h3>
             {resend.isSuccess && (
               <Toast key={resend.submittedAt}>
-                초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.
+                {`${resend.variables.invited_email} · 초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.`}
               </Toast>
             )}
             {resend.isError && (
@@ -357,9 +358,11 @@ export function TeamPanel({
                 role="alert"
                 className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
               >
-                {getApiErrorCode(resend.error) === 'mail_send_failed'
-                  ? '초대 메일을 보내지 못했어요. 이전에 보낸 링크는 그대로 쓸 수 있어요.'
-                  : getApiErrorMessage(resend.error)}
+                {`${resend.variables.invited_email} · ${
+                  getApiErrorCode(resend.error) === 'mail_send_failed'
+                    ? '초대 메일을 보내지 못했어요. 이전에 보낸 링크는 그대로 쓸 수 있어요.'
+                    : getApiErrorMessage(resend.error)
+                }`}
               </p>
             )}
             <AsyncState query={invitations}>
@@ -400,8 +403,11 @@ export function TeamPanel({
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  disabled={resend.isPending}
-                                  onClick={() => resend.mutate(invitation.id)}
+                                  disabled={
+                                    resend.isPending &&
+                                    resend.variables.id === invitation.id
+                                  }
+                                  onClick={() => resend.mutate(invitation)}
                                 >
                                   메일 다시 보내기
                                 </Button>
@@ -851,9 +857,11 @@ function HandoverTasks({ tasks }: { tasks: TaskDetail[] }) {
   )
 }
 
+// PR #146 리뷰: 서버는 초대를 저장한 뒤 메일을 따로 보내서, 발송이 실패해도 INVITED로 답한다. 그래서 "보냈어요"라고 하지 않는다.
+// 첫 메일이 조용히 실패한 사람을 다시 초대하면 ALREADY_INVITED가 오므로, 다시 보낼 곳을 알려 준다.
 const inviteResultLabels: Record<EmailInvitationResult['status'], string> = {
-  INVITED: '초대 메일을 보냈어요',
-  ALREADY_INVITED: '이미 초대 중이에요',
+  INVITED: '초대했어요',
+  ALREADY_INVITED: '이미 초대 중이에요. 아래에서 메일을 다시 보낼 수 있어요',
   ALREADY_MEMBER: '이미 팀원이에요',
 }
 
