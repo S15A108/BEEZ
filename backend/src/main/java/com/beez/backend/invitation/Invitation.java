@@ -10,7 +10,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * 팀원 초대 (V2 invitation, V4 revoked_at, V32 만료 제거). 링크의 토큰은 해시만 저장한다.
+ * 팀원 초대 (V2 invitation, V4 revoked_at, V33 만료 제거). 링크의 토큰은 해시만 저장한다.
  * 상태는 컬럼으로 정해진다: 수락(accepted_at) · 폐기(revoked_at) · 그 밖은 대기(PENDING). 만료는 없다 (Q05 6).
  */
 @Entity

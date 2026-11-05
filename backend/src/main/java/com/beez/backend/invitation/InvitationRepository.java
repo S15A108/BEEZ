@@ -30,7 +30,7 @@ public interface InvitationRepository extends JpaRepository<Invitation, Long> {
     Optional<Invitation> findForUpdate(@Param("id") long id, @Param("projectId") long projectId);
 
     /**
-     * 자동 참여(ACC-A01·A02, -220): 이 이메일의 대기 초대를 id 순으로 잠그고 읽는다 (V32 ix_invitation_pending_email).
+     * 자동 참여(ACC-A01·A02, -220): 이 이메일의 대기 초대를 id 순으로 잠그고 읽는다 (V33 ix_invitation_pending_email).
      * 잠금 순서는 MEM-A05 수락과 같다 — 초대 행을 먼저, 프로젝트 행을 나중에. id 순이라 같은 계정의 동시 로그인끼리도 엇갈리지 않는다.
      * 다른 트랜잭션이 먼저 수락·폐기했으면 잠금을 기다린 뒤 조건을 다시 봐 빠진다 (Postgres FOR UPDATE 재평가).
      */
