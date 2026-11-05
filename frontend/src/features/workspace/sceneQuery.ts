@@ -27,12 +27,11 @@ export function sceneQuery(projectId: string, accountId?: string) {
           ),
           tasksApi.list(projectId, { limit: 100 }),
           unlessMissing(projectsApi.onboarding(projectId)),
-          // 사무실 에이전트의 자리(D37): 작업 현황(MON-A05). 없는 API면 undefined로 두고 연결 여부로 어림한다.
-          unlessMissing(
-            readAllPages((cursor) =>
-              dashboardApi.agentWork(projectId, { cursor, limit: 100 }),
-            ),
-          ),
+          // 사무실 에이전트의 자리(D37): 작업 현황(MON-A05). 자리를 꾸미는 데만 쓰므로 어떤 이유로든 실패하면
+          // undefined로 두고 연결 여부로 어림한다. 500·시간 초과로 첫 화면 전체가 실패하지 않게 한다(PR #128 리뷰).
+          readAllPages((cursor) =>
+            dashboardApi.agentWork(projectId, { cursor, limit: 100 }),
+          ).catch(() => undefined),
         ])
       return {
         project,

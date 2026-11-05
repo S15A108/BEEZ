@@ -69,3 +69,46 @@ it('초기 설정 현황 API가 없으면 그 계정의 에이전트 연결로 �
     baseline_published: false,
   })
 })
+
+// PR #128 리뷰: 작업 현황(MON-A05)은 에이전트 자리를 꾸미는 데만 쓴다. 500이나 시간 초과로 실패해도
+// 워크스페이스 첫 조회 전체가 실패하지 않고, 자리는 팀원 목록의 연결 여부로 어림한다.
+it('작업 현황 조회가 서버 오류로 실패해도 워크스페이스 첫 화면은 열린다', async () => {
+  vi.spyOn(projectsApi, 'get').mockResolvedValue({
+    id: '101',
+    name: '우리 팀 협업 서비스',
+    my_role: 'LEADER',
+    created_at: '2026-10-23T03:00:00Z',
+    updated_at: '2026-10-23T03:00:00Z',
+  })
+  vi.spyOn(membersApi, 'list').mockResolvedValue({
+    items: [{ account_id: '11', agent_connected: true }],
+    has_more: false,
+  } as never)
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [],
+    has_more: false,
+  } as never)
+  vi.spyOn(projectsApi, 'onboarding').mockResolvedValue({
+    member_count: 1,
+    my_agent_connected: true,
+    baseline_published: false,
+  } as never)
+  vi.spyOn(dashboardApi, 'agentWork').mockRejectedValue(
+    new AxiosError(
+      'Internal Server Error',
+      'ERR_BAD_RESPONSE',
+      undefined,
+      undefined,
+      {
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: { error: { code: 'internal_error', message: '서버 오류' } },
+      },
+    ),
+  )
+  const data = await new QueryClient().fetchQuery(sceneQuery('101', '11'))
+  expect(data.project.id).toBe('101')
+  expect(data.agentWork).toBeUndefined()
+})
