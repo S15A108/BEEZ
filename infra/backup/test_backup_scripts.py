@@ -48,6 +48,7 @@ case "$1" in
           for k in $FAKE_OBJECTS; do echo x > "$host/$BUCKET_NAME/$k"; done
         fi ;;
       *curlimages*) cat > /dev/null; echo "  일치 0개, 문제 0개" ;;
+      *" lsf "*) printf '%s' "$FAKE_BUCKET_LS" ;;   # restore.sh 사전 검증의 bucket 목록
     esac ;;
 esac
 '''
@@ -91,7 +92,7 @@ def run(script, *args, env_extra="", backup_root=None, **fake):
             env.pop(k)   # 셸 환경변수는 compose 에서 env 파일보다 앞선다
     env.update({"REAL_DOCKER": posix(shutil.which("docker")), "ENV_FILE": posix(envf), "BACKUP_ROOT": posix(root),
                 "DEPLOY_LOCK": posix(lock), "KEY_LOG": posix(key_log), "CALL_LOG": posix(call_log),
-                "BUCKET_NAME": BUCKET, "FAKE_COPY": copy_block(), "FAKE_OBJECTS": ""})
+                "BUCKET_NAME": BUCKET, "FAKE_COPY": copy_block(), "FAKE_OBJECTS": "", "FAKE_BUCKET_LS": ""})
     env.update(fake)
     cmd = (f'b=$(cygpath -u "{posix(bin_dir)}" 2>/dev/null || echo "{posix(bin_dir)}"); '
            'chmod +x "$b"/*; PATH="$b:$PATH" exec bash "$@"')
@@ -166,6 +167,52 @@ def test_restore_objects_without_bucket_folder_is_zero_objects():
 def test_restore_requires_backup_folder():
     with tempfile.TemporaryDirectory() as root:
         check(run("restore.sh", "dev", "objects", "--yes", backup_root=Path(root) / "nope"), 1, "백업 폴더가 아님")
+
+
+# --- restore.sh all 사전 검증: 원본 폴더가 없다는 것만으로 "문서 0건"이라 보지 않는다 ---------------------
+
+def restore_root(tmp, objects=()):
+    """LAST_OK 와 덤프가 있는 백업 폴더. objects 가 비면 objects/<bucket> 을 만들지 않는다(PC 사본·누락)."""
+    root = Path(tmp)
+    (root / "db").mkdir(parents=True)
+    (root / "db" / "beez-20261105T000000Z.dump").write_text("DUMP")
+    (root / "LAST_OK").write_text("dump=beez-20261105T000000Z.dump\n")
+    (root / "objects").mkdir()
+    if objects:
+        (root / "objects" / BUCKET).mkdir()
+        for k in objects:
+            (root / "objects" / BUCKET / k).write_text("x")
+    return root
+
+
+def test_restore_all_stops_before_changes_when_originals_missing():
+    # 문서 1건 덤프인데 원본 폴더가 없고 bucket 에도 없다 → backend 를 멈추기 전에 실패
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run("restore.sh", "dev", "all", "--yes", backup_root=restore_root(tmp), FAKE_COPY=copy_block("k1.txt"))
+        assert "stop" not in r[3] and "start" not in r[3], f"아무것도 바꾸지 않아야 한다: {r[3]}"
+        check(r, 1, "원본 1개가 백업 폴더와 bucket 어디에도 없음")
+
+
+def test_restore_all_zero_documents_without_folder_restores():
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run("restore.sh", "dev", "all", "--yes", backup_root=restore_root(tmp))
+        assert r[3][:1] == ["stop"] and "start" in r[3], r[3]
+        check(r, 0, "완료: backend healthy")
+
+
+def test_restore_all_originals_already_in_bucket_restores():
+    # DB 만 되돌리는 경우: 백업 폴더에 없어도 지금 bucket 에 있으면 된다
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run("restore.sh", "dev", "all", "--yes", backup_root=restore_root(tmp),
+                FAKE_COPY=copy_block("k1.txt", "k2.txt"), FAKE_BUCKET_LS="k1.txt\nk2.txt\nother.txt\n")
+        check(r, 0, "bucket 에만 있는 것 2개")
+
+
+def test_restore_all_originals_in_folder_restores():
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run("restore.sh", "dev", "all", "--yes", backup_root=restore_root(tmp, ["k1.txt"]),
+                FAKE_COPY=copy_block("k1.txt"))
+        check(r, 0, "완료: backend healthy")
 
 
 # --- 덤프 기준 대조 ------------------------------------------------------------

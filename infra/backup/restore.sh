@@ -6,7 +6,8 @@
 #   infra/backup/restore.sh <환경> all [덤프 파일] --yes    # DB 를 덤프 시점으로 + 원본. 덤프 기본값은 LAST_OK 의 것
 # --yes 가 없으면 할 일만 보여 주고 아무것도 바꾸지 않는다.
 #
-# all 의 순서: 배포 잠금 → backend 멈춤 → DB 를 지우고 빈 DB 로 다시 만듦 → pg_restore → 원본 올리기 → backend 켬
+# all 의 순서: 백업·배포 잠금 → 사전 검증(덤프가 가리키는 원본이 백업 폴더나 bucket 에 다 있는가. 없으면 아무것도
+#   바꾸지 않고 멈춤) → backend 멈춤 → DB 를 지우고 빈 DB 로 다시 만듦 → pg_restore → 원본 올리기 → backend 켬
 #   - 빈 DB 에 복원한다. --clean 으로 덮어쓰면 덤프 뒤 마이그레이션이 만든 테이블이 남고 Flyway 이력만 덤프 시점으로
 #     돌아가, backend 를 켤 때 Flyway 가 같은 마이그레이션을 다시 돌리다 "already exists" 로 멈춘다
 #   - 배포 잠금(deploy.sh 와 같은 파일)을 스크립트가 끝날 때까지 쥔다. 도중에 자동 배포가 backend 를 켜지 못하게
@@ -88,21 +89,29 @@ exec 7> "$BACKUP_ROOT/.backup.lock"
 flock -w 1800 7 || fail "서버 백업이 30분 넘게 진행 중. 끝난 뒤 다시 실행한다"
 log "백업 잠금 잡음(이 스크립트가 끝나면 풀림)"
 
-put_objects() {
-    if (( n_objects == 0 )); then
-        log "올릴 원본 0개(문서 0건 백업) — 건너뜀"
-        return 0
-    fi
-    log "원본 올리기"
+# 관리(bootstrap) 키로 rclone 을 storage 망에서 돌린다. 키 값은 -e 이름으로만 넘긴다. 앞에 -v <폴더:경로> 를 주면 붙인다
+rclone_admin() {
+    local mount=()
+    if [[ ${1:-} == -v ]]; then mount=(-v "$2"); shift 2; fi
     RCLONE_CONFIG_DST_ACCESS_KEY_ID=$(env_value SEAWEEDFS_BOOTSTRAP_ACCESS_KEY) \
     RCLONE_CONFIG_DST_SECRET_ACCESS_KEY=$(env_value SEAWEEDFS_BOOTSTRAP_SECRET_KEY) \
-    docker run --rm --network "${PROJECT}_storage" -v "$OBJECTS:/backup:ro" \
+    docker run --rm --network "${PROJECT}_storage" "${mount[@]}" \
         -e RCLONE_CONFIG_DST_TYPE=s3 -e RCLONE_CONFIG_DST_PROVIDER=SeaweedFS \
         -e RCLONE_CONFIG_DST_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_DST_REGION=us-east-1 \
         -e RCLONE_CONFIG_DST_ACCESS_KEY_ID -e RCLONE_CONFIG_DST_SECRET_ACCESS_KEY \
         -e RCLONE_CONFIG=/dev/null -e XDG_CACHE_HOME=/tmp \
-        "$RCLONE_IMAGE" copy /backup "dst:$BUCKET" --immutable --checksum --stats-one-line --stats-log-level NOTICE ||
-        fail "원본 올리기 실패(위 rclone 메시지)"
+        "$RCLONE_IMAGE" "$@"
+}
+
+put_objects() {
+    if (( n_objects == 0 )); then
+        # all 은 아래 사전 검증이 덤프가 가리키는 원본이 다 있는지 먼저 확인했다. 여기서 0개면 필요한 원본이 없는 것이다
+        log "올릴 원본 0개 — 건너뜀"
+        return 0
+    fi
+    log "원본 올리기"
+    rclone_admin -v "$OBJECTS:/backup:ro" copy /backup "dst:$BUCKET" --immutable --checksum \
+        --stats-one-line --stats-log-level NOTICE || fail "원본 올리기 실패(위 rclone 메시지)"
 }
 
 if [[ $MODE == objects ]]; then
@@ -119,6 +128,40 @@ log "배포 잠금 잡음(이 스크립트가 끝나면 풀림)"
 
 pg=$(cid postgres)
 backend=$(cid backend)
+
+# 사전 검증 — 아무것도 바꾸기 전에, 덤프가 가리키는 문서 버전 원본이 백업 폴더나 지금 bucket 에 다 있는지 본다.
+# 원본 폴더가 없거나 비어 있는 것만으로는 "문서 0건"인지 "원본이 빠진 백업"인지 알 수 없다(2026-11-05 hyunneee 리뷰).
+# 덤프의 COPY 머리줄에서 storage_key 열을 찾아 뽑는다(backup.sh 3) 과 같은 방법). bucket 에 이미 있는 원본은
+# 백업 폴더에 없어도 된다(DB 만 되돌리는 경우)
+log "사전 검증: 덤프가 가리키는 원본이 백업 폴더나 bucket 에 있는지"
+keys=$(docker exec -i "$pg" pg_restore --data-only --table=document_version -f - < "$DUMP" | awk -F '\t' '
+    /^COPY [^ ]*document_version \(/ {
+        cols = $0; sub(/^[^(]*\(/, "", cols); sub(/\).*$/, "", cols)
+        n = split(cols, c, ", "); col = 0
+        for (i = 1; i <= n; i++) if (c[i] == "storage_key") col = i
+        if (col == 0) { print "storage_key 열을 찾지 못함" > "/dev/stderr"; exit 2 }
+        copying = 1; next
+    }
+    copying && /^\\\.$/ { copying = 0; next }   # COPY 데이터 끝 표시 줄 "\."
+    copying { print $col }') || fail "덤프에서 storage_key 를 읽지 못함. 아무것도 바꾸지 않았다"
+not_in_folder=()
+while read -r key; do
+    [[ -z $key ]] && continue
+    [[ -f $OBJECTS/$key ]] || not_in_folder+=("$key")
+done <<< "$keys"
+missing=()
+if (( ${#not_in_folder[@]} > 0 )); then
+    in_bucket=$(rclone_admin lsf "dst:$BUCKET" --files-only) ||
+        fail "bucket 목록을 읽지 못함(위 rclone 메시지). 아무것도 바꾸지 않았다"
+    for key in "${not_in_folder[@]}"; do
+        grep -qxF -- "$key" <<< "$in_bucket" || missing+=("$key")
+    done
+fi
+if (( ${#missing[@]} > 0 )); then
+    fail "덤프가 가리키는 원본 ${#missing[@]}개가 백업 폴더와 bucket 어디에도 없음(예: ${missing[0]}). 아무것도 바꾸지 않았다. 원본이 있는 백업(PC 사본 등)을 서버로 보낸 뒤 다시 실행한다"
+fi
+log "사전 검증 통과: 덤프의 문서 버전 원본 $(printf '%s' "$keys" | grep -c . || true)개(백업 폴더에 없고 bucket 에만 있는 것 ${#not_in_folder[@]}개)"
+
 log "backend 멈춤(웹 사용자는 로그아웃된다)"
 docker stop "$backend" > /dev/null
 
