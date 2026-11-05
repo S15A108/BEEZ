@@ -123,6 +123,33 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   })
 })
 
+test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전 분석과 구분한다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '변경 제안', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(
+    dialog.getByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ }),
+  ).toBeVisible()
+  await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  const status = dialog.getByRole('region', { name: '발행 후 분석 상태' })
+  await expect(status).toContainText('상태 확인 필요')
+  await expect(status).toContainText('발행 전 영향 분석과는 별도의 처리 상태')
+  await dialog.getByRole('tab', { name: /^영향/ }).click()
+  await expect(dialog.getByText(/발행 전 영향 분석 결과예요/)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '다시 분석' })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click()
+  await page.getByRole('button', { name: '대시보드', exact: true }).click()
+  const dashboard = page.getByRole('dialog')
+  await dashboard.getByRole('tab', { name: '활동 타임라인' }).click()
+  await dashboard.getByRole('button', { name: '변경 요청 #71' }).click()
+  await expect(
+    page.getByRole('region', { name: '발행 후 분석 상태' }),
+  ).toContainText('상태 확인 필요')
+})
+
 test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장한다', async ({
   page,
 }) => {
