@@ -69,6 +69,13 @@ it('팀장은 메시지를 보내고 비비 정리를 받은 뒤 회의 끝내�
   expect(
     await within(log).findByText(/회의 내용을 정리했어요 · 메시지 4개 기준/),
   ).toBeInTheDocument()
+  // 정리 뒤에는 앞의 대화를 접고 마지막 두 메시지와 정리만 보인다(캔버스 PNL-06-v2-bibi-review, 기대값 변경 사용자 승인 11-04).
+  expect(
+    within(log).getAllByText('예시 템플릿 · 실제 AI 호출 없음'),
+  ).toHaveLength(1)
+  await user.click(
+    within(log).getByRole('button', { name: /^앞의 대화 \d+개$/ }),
+  )
   expect(
     within(log).getAllByText('예시 템플릿 · 실제 AI 호출 없음'),
   ).toHaveLength(2)
@@ -144,6 +151,17 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     screen.queryByRole('button', { name: '비비에게 정리 요청' }),
   ).not.toBeInTheDocument()
+})
+
+// 캔버스 PNL-06-v2: 참여자 수는 비비를 포함하고, 칩마다 이 회의에서 맡은 작업을 보인다.
+it('참여자 칩은 비비를 포함해 세고 사람마다 이 회의의 작업을 보인다', async () => {
+  renderPanel(true)
+  await screen.findByRole('heading', { name: '초대 안내 문구 검토' })
+  const people = screen.getByRole('group', { name: '참여자' })
+  expect(within(people).getByText('AI 팀장')).toBeInTheDocument()
+  expect(await within(people).findByText('팀장 · TASK-001')).toBeInTheDocument()
+  expect(within(people).getByText('TASK-002')).toBeInTheDocument()
+  expect(within(people).getByText(/^참여자 \d+$/)).toHaveTextContent('참여자 4')
 })
 
 // live 모드: dev 백엔드에 회의 API가 아직 없으면 회의 칸만 '준비 중'으로 두고 창은 그대로 연다.
