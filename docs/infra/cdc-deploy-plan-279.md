@@ -1,6 +1,6 @@
 # dev 서버 CDC(Kafka·Debezium Connect) 배포 계획 — 제안 (S15P31A108-279)
 
-> **상태: 제안, 승인 대기.** 이 문서가 머지되기 전에는 서버·DB·compose를 바꾸지 않는다.
+> **상태: 승인됨(PR #147, 11-05 양지훈님 승인 뒤 머지). 팀 승인 몫(D1·D4·D8)의 기록은 §7을 따른다.** 실행 결과는 티켓별 런북(293 `cdc-postgres.md`, 294 `cdc-stack.md`)에 적는다.
 > 승인 범위는 아래 [결정 제안](#3-결정-제안) D1~D8이다. 계약·consumer 관련(D3·D5·D6·D7)은 양지훈님,
 > PostgreSQL 재시작 시각(D4)과 일정(D8)은 팀이 승인한다. 승인된 결정은 이 문서에서 "확정"으로 바꾼다.
 >
@@ -337,13 +337,13 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 
 ## 7. 승인 체크리스트
 
-- [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀
-- [ ] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진
-- [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `/opt/beez/.cdc-secrets/` `root:1001 640`(293이 작성) — **양지훈**
-- [ ] D1·D7 CDC를 내릴 때 consumer부터 끄는 규칙, Kafka 없을 때 기동 실패가 재현되면 S15P31A108-298(스캔·consumer 분리·자동 재연결)을 consumer 켜기 전에 끝냄 — 전진·**양지훈**
-- [ ] D6 슬롯 알림 두 개(비활성 10분, WAL 1GB)는 295에서, Connect 상태 수집은 261에서, 그 전까지 수동 확인(평일 오전·배포 뒤) — 전진·**양지훈**
-- [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀**
-- [ ] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈**
-- [ ] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈**
-- [ ] D7 backend env 이름·기본 꺼짐·켜는 순서, 밀린 PENDING 처리 — **양지훈**
-- [ ] D8 실행을 229 통합 검증 첫 단계로, 295 전까지 분석이 돌지 않는 영향 확인(스캔만 켜는 우회는 쓰지 않음) — 팀·양지훈
+- [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀 (팀 승인 기록 없음)
+- [x] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진 (PR #147 승인, 11-05)
+- [x] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `/opt/beez/.cdc-secrets/` `root:1001 640`(293이 작성) — **양지훈** (PR #147 승인, 11-05)
+- [x] D1·D7 CDC를 내릴 때 consumer부터 끄는 규칙, Kafka 없을 때 기동 실패가 재현되면 S15P31A108-298(스캔·consumer 분리·자동 재연결)을 consumer 켜기 전에 끝냄 — 전진·**양지훈** (PR #147 승인, 11-05)
+- [x] D6 슬롯 알림 두 개(비활성 10분, WAL 1GB)는 295에서, Connect 상태 수집은 261에서, 그 전까지 수동 확인(평일 오전·배포 뒤) — 전진·**양지훈** (PR #147 승인, 11-05)
+- [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀** (팀 승인 기록 없음, 실행: 293 PR #155 11-05 14:47 KST 머지)
+- [x] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈** (PR #147 승인, 11-05)
+- [x] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈** (PR #147 승인, 11-05)
+- [x] D7 backend env 이름·기본 꺼짐·켜는 순서, 밀린 PENDING 처리 — **양지훈** (PR #147 승인, 11-05)
+- [ ] D8 실행을 229 통합 검증 첫 단계로, 295 전까지 분석이 돌지 않는 영향 확인(스캔만 켜는 우회는 쓰지 않음) — 팀·양지훈 (팀 승인 기록 없음)

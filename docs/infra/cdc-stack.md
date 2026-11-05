@@ -48,11 +48,13 @@ dev 서버에 Kafka 단일 broker와 Debezium Connect를 compose 프로젝트 `b
 ```bash
 # 서버 (ssh beez)
 sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /opt/beez/.cdc-secrets
-# drwxr-x--- 2 root 1001 ... /opt/beez/.cdc-secrets
+# drwxr-s--- 2 root 1001 ... /opt/beez/.cdc-secrets
 ```
 
 - 293 런북과 같은 명령이다. 이미 있으면 소유자·권한만 같은 값으로 맞추고 안의 파일은 건드리지 않는다.
-- 그룹 1001은 Connect 컨테이너 사용자(`kafka`)다. 서버에 같은 번호의 그룹 이름이 없어도 된다.
+- 권한의 `s`(2750)는 부모 `/opt/beez`의 setgid가 상속된 것이고 무해하다. 안에 만드는 파일의 그룹이 1001로 맞춰진다.
+- 그룹 1001은 Connect 컨테이너 사용자(`kafka`)다. 서버에는 gid 1001의 그룹 이름이 없어서 `ls`에는 `1001`로,
+  `stat -c %G`에는 `UNKNOWN`으로 나온다. 정상이다.
 - 비밀번호 파일(`database.properties`)은 293이 쓴다. 이 스택은 파일이 없어도 뜬다(등록 때만 읽음).
 
 ### 2. 파일 올리기
