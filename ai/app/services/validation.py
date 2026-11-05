@@ -459,7 +459,10 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
 # the BE remains the authority for routing, assignment, approval and status.
 _FOLLOWUP_PATHS = {
     "MISSING_INPUT": ("계획 보완 검토", "필요한 입력이 부족하다는 발견 때문입니다"),
-    "STALE_REF": ("계획의 참조 갱신 검토", "참조가 오래되었을 가능성이 보고되었기 때문입니다"),
+    "STALE_REF": (
+        "계획의 참조 갱신 검토",
+        "참조가 오래되었을 가능성이 보고되었기 때문입니다",
+    ),
     "MISSING_POLICY": (
         "정책 협의 및 설계 변경 제안 검토",
         "제공된 근거에 정책이 미정으로 명시되어 있기 때문입니다",
@@ -468,7 +471,10 @@ _FOLLOWUP_PATHS = {
         "관련 담당자 협의와 계획 또는 설계 변경 제안 검토",
         "확인된 내용 사이에 충돌이 보고되었기 때문입니다",
     ),
-    "MISMATCH": ("계획 보완 또는 설계 변경 제안 검토", "불일치 검토 결과가 보고되었기 때문입니다"),
+    "MISMATCH": (
+        "계획 보완 또는 설계 변경 제안 검토",
+        "불일치 검토 결과가 보고되었기 때문입니다",
+    ),
 }
 
 

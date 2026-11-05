@@ -707,6 +707,7 @@ def test_http_auth_input_and_output_error_mapping(monkeypatch):
     finally:
         app.dependency_overrides.clear()
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "check_key", "expected_path"),
@@ -790,11 +791,21 @@ async def test_unassessed_policy_does_not_generate_a_missing_policy_suggestion()
 async def test_followup_rejects_actions_that_cannot_be_stored(action):
     body = fixture_request()
     result = result_for(body)
-    result["findings"] = [{
-        "check_key": "plan-completeness", "kind": "MISSING_INPUT",
-        "severity": "BLOCKING", "message": "계획 입력 부족", "sources": [],
-        "evidence_ids": [], "suggested_action": action,
-    }]
+    result["findings"] = [
+        {
+            "check_key": "plan-completeness",
+            "kind": "MISSING_INPUT",
+            "severity": "BLOCKING",
+            "message": "계획 입력 부족",
+            "sources": [],
+            "evidence_ids": [],
+            "suggested_action": action,
+        }
+    ]
     with pytest.raises(LLMError) as caught:
-        await analyze(ValidateRequest.model_validate(body), LLMClient(Provider(result)), "test-model")
+        await analyze(
+            ValidateRequest.model_validate(body),
+            LLMClient(Provider(result)),
+            "test-model",
+        )
     assert caught.value.code == "invalid_output"
