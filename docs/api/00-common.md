@@ -1143,11 +1143,14 @@ CHG-A05·A06의 ChangeImpact에는 `revision`(integer), `snapshot_hash`(string),
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
 | `next_action` | `string` | N | 후속 경로 설명. severity=BLOCKING이면 필수: 작업 현황 화면이 막힌 항목마다 고칠 방법을 한 줄로 보여 줌(수정안 요청) |
+| `ai_suggested_action` | `string` | N | 검증된 AI finding의 후속 행동 제안. 서버의 `resolution`·`next_action`이나 승인된 정책과 별개이며 실제 담당자 배정·승인·상태 변경을 뜻하지 않음. 최대 4,000 UTF-16 코드 단위 |
 | `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding이면 필수이며, kind=ERROR는 현재 실패 attempt의 run을 참조 |
 | `policy_need_id` | `string` | N | 해당 분석 안의 정책 필요 항목 임시 ID |
 | `conflicting_design_refs` | `object[]` | N | 정책 간 모순 시 다른 승인 항목의 `design_item_id`, `design_item_version_id`, `evidence_ids`, `content_paths` |
 
 kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과 현재 실패 attempt에 속한 run을 반드시 참조한다. BE가 생성하는 실행 오류이며 실제 모델 호출 여부와 구분한다. 모든 ERROR 전이·복구·재시도 규칙은 [검증 실행 오류 규약](#validation-execution-errors)을 따른다.
+
+`ai_suggested_action`은 현재 완료된 분석의 AI 후보에만 보존한다. 기존 이력, 규칙 또는 오류 finding에는 없을 수 있다. AI 자유 문구는 사실이나 승인 여부를 보장하지 않으므로 사용자 화면에서도 AI 제안임을 표시한다. PARTIAL 후보는 기존과 같이 진단 이력에만 남는다.
 
 <a id="schema-validation"></a>
 
