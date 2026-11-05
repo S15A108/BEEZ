@@ -79,6 +79,8 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 - **주의 — 내리는 순서**: consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 기동하지 못한다(D7). 그래서
   **`beez-cdc`를 내리거나 Kafka를 멈추기 전에는 반드시 consumer부터 끈다**(§4 되돌리기 1번). consumer가 켜진 채
   Kafka가 내려가 있는 동안 dev 머지가 들어오면, CD가 새로 만든 backend가 뜨지 못해 dev가 멈춘다.
+  **S15P31A108-298 반영 뒤에는 이 결합이 풀려 consumer부터 끄는 것이 필수가 아니다**(D7 "298 반영 결과",
+  런북 `cdc-stack.md` "중지·내리기"). 끄는 것은 consumer(`BEEZ_CDC_INTAKE_CONSUMER_ENABLED`)뿐이고 스캔은 켜 둔다.
   - 본 스택을 `docker compose down`할 일이 있으면 consumer 끄기 → `beez-cdc` 내리기 → 본 스택 내리기 순서로 한다.
     `beez-cdc`가 `beez_default`에 붙어 있으면 본 스택을 내려도 네트워크가 지워지지 않는다.
   - 서버 재부팅 때는 두 스택이 동시에 뜬다. backend가 Kafka보다 먼저 뜨면 기동에 실패하지만
@@ -229,7 +231,8 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 
   | env | 서버 값 |
   |---|---|
-  | `BEEZ_CDC_INTAKE_ENABLED` | `true` (기본 `false`) |
+  | `BEEZ_CDC_INTAKE_ENABLED` | `true` (기본 `false`) — 복구 스캔 |
+  | `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | `true` (기본 `false`) — Kafka consumer. 298에서 스캔과 나뉨, 스캔 없이 켜면 기동 거부 |
   | `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS` | `kafka:9092` |
   | `BEEZ_CDC_INTAKE_GROUP_ID` | `beez-published-analysis` |
   | `BEEZ_CDC_INTAKE_TOPIC` | `beez.public.published_change_analysis` |
@@ -259,6 +262,11 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
     처리를 이어 가므로 기존 `CdcPendingDelay`로는 consumer 장애가 보이지 않기 때문이다.
   - 298이 끝나면 위 두 번째 경우도 "기동하고 복구 스캔으로 처리, Kafka가 돌아오면 자동 연결"로 바뀐다. 295 재시작
     시험(§4 9단계)은 이 기준으로 확인한다.
+  - **298 반영 결과**: 스캔은 `beez.cdc.intake.enabled`, consumer는 `beez.cdc.intake.consumer-enabled`(위 표 두 줄).
+    consumer 시작은 30초마다 다시 시도하고(`consumer-start-retry-millis`), 끊긴 동안 재연결 대기 상한은 10초다
+    (`reconnect.backoff.max.ms`, 경고 로그 줄이기). 지표 `beez_cdc_kafka_consumer_up`과 알림 `CdcConsumerDown`(5분),
+    `CdcPendingDelay`는 consumer가 아니라 스캔 설정(`beez_cdc_analysis_recovery_enabled`)을 본다.
+    기동이 실패하면 JVM이 exit 1로 끝나 재시작 정책이 돈다(전에는 MCP SDK 비데몬 스레드 때문에 `running`으로 남음).
 
 ### D8. 일정 (승인: 팀·양지훈)
 

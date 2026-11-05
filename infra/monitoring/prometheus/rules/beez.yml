@@ -48,12 +48,16 @@ groups:
       # 설정값이라 DB 집계와 무관하다. 인스턴스 중 하나라도 켜져 있으면 1
       - record: beez_cdc:consumer_enabled:max
         expr: max(beez_cdc_analysis_consumer_enabled)
+      # 복구 스캔(분석 접수 처리) 설정. consumer 와 따로 켠다(S15P31A108-298). consumer 만 켠 구성은 backend 가 기동을 거부한다
+      - record: beez_cdc:recovery_enabled:max
+        expr: max(beez_cdc_analysis_recovery_enabled)
 
       # ── 알림(위 기록 규칙 뒤에 둔다) ──
-      # 244 결정 4: PENDING > 600초 그리고 consumer 켜짐, 5분 지속. 대기 시작부터 약 15분 뒤에 온다.
-      # consumer 가 꺼진 dev(Kafka 없음)에서는 오래된 PENDING 을 장애로 보지 않는다.
+      # 244 결정 4: PENDING > 600초 그리고 처리가 켜짐, 5분 지속. 대기 시작부터 약 15분 뒤에 온다.
+      # 처리를 맡는 것은 복구 스캔이다(Kafka 는 30초를 줄이는 힌트). 그래서 298 부터 consumer 가 아니라 스캔 설정을 본다 —
+      # Kafka 가 죽어 스캔만 도는 동안에도 지연은 알려야 한다. 스캔이 꺼진 dev 에서는 오래된 PENDING 을 장애로 보지 않는다.
       - alert: CdcPendingDelay
-        expr: beez_cdc:oldest_pending_seconds:max > 600 and on() beez_cdc:consumer_enabled:max == 1
+        expr: beez_cdc:oldest_pending_seconds:max > 600 and on() beez_cdc:recovery_enabled:max == 1
         for: 5m
         keep_firing_for: 10m
         labels: {team: app}
@@ -85,6 +89,7 @@ groups:
           (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_snapshot_available)
           or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_snapshot_last_success_epoch_seconds)
           or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_consumer_enabled)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_recovery_enabled)
           or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_intakes)
         for: 5m
         labels: {team: app}
@@ -139,6 +144,17 @@ groups:
         labels: {team: infra}
         annotations:
           summary: "consumer 가 켜졌는데 Kafka 수신 실패 지표가 없음 ({{ $labels.instance }})"
+
+      # consumer 가 켜졌는데 Kafka 에 붙어 있지 않음(S15P31A108-298). up 은 자식 컨테이너 실행 + 파티션 할당 + 최근 30초 안의
+      # 그룹 heartbeat 일 때만 1 이다. Kafka 가 없어 시작을 재시도하는 중(0), 기동 뒤 broker 가 멈춤(heartbeat 끊김 → 0),
+      # up 지표 자체가 없음(리스너 설정 빠짐)을 모두 잡는다. 이 동안 분석은 복구 스캔이 처리하므로 CdcPendingDelay 는 울리지 않는다.
+      # 5분: broker 재기동·재할당(실측 약 10초~1분)은 거른다
+      - alert: CdcConsumerDown
+        expr: beez_cdc_analysis_consumer_enabled == 1 unless on(instance) beez_cdc_kafka_consumer_up == 1
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 ({{ $labels.instance }})"
 
   - name: beez-infra-alerts
     rules:
