@@ -271,3 +271,34 @@ tests:
             exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 (a:8080)"}
           - exp_labels: {team: infra, instance: "b:8080", job: backend}
             exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 (b:8080)"}
+
+  # 깨지면: 커넥터가 멈춰 슬롯이 WAL 을 쌓는데 조용하거나, Connect·Kafka 재시작 같은 잠깐의 끊김에도 운다(계획 D6 "비활성 10분",
+  # S15P31A108-295). 복구 스캔이 분석을 이어 가므로 다른 CDC 알림으로는 보이지 않는 장애다.
+  # a: 2분부터 비활성 → 10분 지나 알림. b: 3분 비활성 뒤 다시 붙음(재시작) → 없음
+  - name: 슬롯 10분 넘게 비활성이면 CdcSlotInactive
+    interval: 1m
+    input_series:
+      - {series: 'pg_replication_slots_slot_is_active{slot_name="a",slot_type="logical",job="postgres"}', values: '1 1 0x20'}
+      - {series: 'pg_replication_slots_slot_is_active{slot_name="b",slot_type="logical",job="postgres"}', values: '1 1 0 0 0 1x17'}
+    alert_rule_test:
+      - {eval_time: 11m, alertname: CdcSlotInactive, exp_alerts: []}
+      - eval_time: 13m
+        alertname: CdcSlotInactive
+        exp_alerts:
+          - exp_labels: {team: infra, slot_name: a, slot_type: logical, job: postgres}
+            exp_annotations: {summary: "논리 복제 슬롯 a 이 10분 넘게 비활성 — Connect 가 읽지 않아 WAL 이 쌓인다"}
+
+  # 깨지면: 슬롯이 붙잡은 WAL 이 무효화 상한(10GB)으로 가는 동안 조용하거나, 1GiB 아래에서 운다(계획 D6 "보유 WAL 1GB").
+  # c: 2GiB 가 계속 → 5분 지나 알림. d: 1GiB 바로 아래 → 없음
+  - name: 슬롯 보유 WAL 1GiB 초과 5분이면 CdcSlotWalRetained
+    interval: 1m
+    input_series:
+      - {series: 'pg_replication_slots_pg_wal_lsn_diff{slot_name="c",database="beez",job="postgres"}', values: '2147483648x10'}
+      - {series: 'pg_replication_slots_pg_wal_lsn_diff{slot_name="d",database="beez",job="postgres"}', values: '1073741823x10'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: CdcSlotWalRetained, exp_alerts: []}
+      - eval_time: 6m
+        alertname: CdcSlotWalRetained
+        exp_alerts:
+          - exp_labels: {team: infra, slot_name: c, database: beez, job: postgres}
+            exp_annotations: {summary: "슬롯 c 이 WAL 2GiB 를 붙잡고 있음(무효화 상한 10GB)"}

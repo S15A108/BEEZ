@@ -27,6 +27,8 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcKafkaReceiveFailures](#cdckafkareceivefailures) | 최근 5분 Kafka 수신 실패 증가 **그리고** consumer 켜짐 | 바로 | 4시간 | 인프라 · 전진 |
 | [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜진 인스턴스에 그 인스턴스의 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConsumerDown](#cdcconsumerdown) | consumer 켜진 인스턴스가 Kafka에 붙어 있지 않음(`consumer_up` ≠ 1 또는 없음) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotInactive](#cdcslotinactive) | 논리 복제 슬롯 `slot_is_active == 0`(커넥터 등록 뒤에만 시계열 있음) | 10분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotWalRetained](#cdcslotwalretained) | 슬롯이 붙잡은 WAL > 1GiB | 5분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -189,6 +191,24 @@ consumer 설정이 켜진 인스턴스가 5분 넘게 Kafka에 붙어 있지 않
   (Kafka 이름이 안 풀려 시작을 30초마다 재시도 중), Kafka 연결 경고. 지표가 아예 없으면 리스너 설정이 빠진 배포다.
 - Kafka가 돌아오면 backend 재시작 없이 다시 붙습니다(최대 30초 + 재연결 대기 10초). 붙으면 저절로 풀립니다.
 - 계획된 Kafka 점검이면 알림 일시 중지를 걸거나 consumer만 끕니다(`cdc-stack.md` "중지·내리기").
+
+### CdcSlotInactive
+
+PostgreSQL 논리 복제 슬롯을 10분 넘게 아무도 읽지 않습니다(S15P31A108-295, 계획 D6). 슬롯은 Debezium 커넥터가 쓰며,
+읽히지 않는 동안 WAL이 쌓입니다. 분석은 복구 스캔이 이어 가므로 다른 CDC 알림은 울리지 않습니다.
+
+- 볼 곳: [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)의 커넥터·task 상태와 슬롯 쿼리, `cdc ps`.
+  task가 `FAILED`면 그 절의 오류 문구를 보고 task를 재시작합니다. Connect·Kafka가 내려가 있으면 [cdc-stack.md](cdc-stack.md)대로 올립니다.
+- 커넥터를 일부러 지웠다면 슬롯도 정리합니다(계획 §4 되돌리기 2·3번). 남겨 두면 다음 알림 `CdcSlotWalRetained`로 이어집니다.
+
+### CdcSlotWalRetained
+
+슬롯이 붙잡은 WAL(현재 WAL 위치 − 슬롯이 확인한 위치)이 1GiB를 5분 넘게 넘었습니다. dev의 WAL 생성량(1주 약 19MB)으로는
+정상일 때 닿지 않으므로 슬롯이 오래 멈춘 것입니다. `max_slot_wal_keep_size`(10GB, 계획 D4)에 닿으면 슬롯이 무효화되고,
+커넥터를 새 이름으로 다시 만들어야 합니다([cdc-connector.md "다시 만들기"](cdc-connector.md#다시-만들기)).
+
+- 먼저 위 `CdcSlotInactive`와 같은 곳을 봅니다. 대개 함께 울립니다.
+- 5GB를 넘으면 원인을 찾기 전이라도 계획 §4 되돌리기 1~3번(커넥터·슬롯 정리)을 합니다(계획 D6).
 
 ### BackendScrapeDown
 

@@ -181,6 +181,26 @@ groups:
         annotations:
           summary: "postgres-exporter 가 DB 에 접속하지 못함"
 
+      # 논리 복제 슬롯(S15P31A108-295, 계획 D6). 슬롯은 커넥터를 등록할 때 생기므로 그 전에는 시계열이 없어 울지 않는다.
+      # 둘 다 postgres-exporter 기본 수집(replication_slots 수집기·기본 쿼리)이고 pg_monitor 계정으로 나온다(11-05 실측).
+      # 복구 스캔이 처리를 이어 가므로 Connect 가 멈춰도 분석 지연 알림은 울지 않는다. 그래서 슬롯을 따로 본다.
+      # 10분: Connect·Kafka 재시작(실측 약 10초~1분)은 거른다
+      - alert: CdcSlotInactive
+        expr: pg_replication_slots_slot_is_active{slot_type="logical"} == 0
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "논리 복제 슬롯 {{ $labels.slot_name }} 이 10분 넘게 비활성 — Connect 가 읽지 않아 WAL 이 쌓인다"
+
+      # 슬롯이 붙잡은 WAL(현재 위치 - 슬롯 확인 위치, 바이트). 1GiB: dev WAL 생성량(1주 약 19MB)으로는 정상일 때 닿지 않는다.
+      # 상한 max_slot_wal_keep_size=10GB(계획 D4)에 닿으면 슬롯이 무효화돼 커넥터를 새 이름으로 다시 만들어야 한다
+      - alert: CdcSlotWalRetained
+        expr: pg_replication_slots_pg_wal_lsn_diff > 1073741824
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "슬롯 {{ $labels.slot_name }} 이 WAL {{ $value | humanize1024 }}B 를 붙잡고 있음(무효화 상한 10GB)"
+
       # 루트(/)만 본다. 데이터(DB·Docker 볼륨·Prometheus)가 모두 / 에 있다(2026-11-04 서버: /·/boot·/boot/efi 뿐).
       # 초기값 15%: 309GB 에서 약 46GB. 같은 비율을 약 900MB 인 /boot 에 걸면 135MB 라 커널 업데이트만으로 울려 뺐다.
       # 하루 증가량을 보고 조정한다

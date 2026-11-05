@@ -4,7 +4,7 @@ dev 서버에 Kafka 단일 broker와 Debezium Connect를 compose 프로젝트 `b
 결정과 이유는 [CDC 배포 계획](cdc-deploy-plan-279.md) D1~D3이 정본이고, 이 문서는 그 실행 방법만 적는다.
 
 - PostgreSQL 쪽 준비(`wal_level`·복제 계정·publication·비밀 파일)는 S15P31A108-293 런북 [cdc-postgres.md](cdc-postgres.md).
-- 커넥터 등록과 backend consumer 켜기는 S15P31A108-295. **이 스택만 올린 상태에서는 아무것도 흐르지 않는다.**
+- 커넥터 등록과 backend consumer 켜기는 S15P31A108-295([cdc-connector.md](cdc-connector.md)). **이 스택만 올린 상태에서는 아무것도 흐르지 않는다.**
 
 ## 구성
 
@@ -222,7 +222,7 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 | 2 | 기준 파일을 새로 잡은 뒤 `cdc up -d --wait`(stop·down 어느 쪽이든 같음, 아래 명령) | "확인" 1) 둘 다 healthy. `network … not found`가 나면 아래 첫 번째 주의 |
 | 3 | 295 이후: 커넥터·task·슬롯 확인(아래 명령) | connector·task 모두 `RUNNING`, 슬롯 `active` = `t`. 아니면 여기서 멈추고 원인을 본다(계획 D6) |
 | 4 | 켜기 직전 접수 상태를 적는다(아래 명령) | 켜는 순간 그동안 쌓인 PENDING을 복구 스캔이 한꺼번에 집어 AI를 호출한다(계획 D7) |
-| 5 | 1번에서 껐다면 consumer 켜기: 서버 env `BEEZ_CDC_INTAKE_CONSUMER_ENABLED=true` → backend 재배포 | 명령은 295 런북의 consumer 켜기 절차를 따른다(295에서 이 칸을 그 절 링크로 바꾼다) |
+| 5 | 1번에서 껐다면 consumer 켜기: 서버 env `BEEZ_CDC_INTAKE_CONSUMER_ENABLED=true` → backend 재배포 | [cdc-connector.md "6. consumer 켜기"](cdc-connector.md#6-consumer-켜기)의 2)에서 `CONSUMER_ENABLED` 줄만 `true`로, 이어서 같은 SHA 재배포 |
 | 6 | 처리 재개 확인 | `beez_cdc_analysis_consumer_enabled` = 1, `beez_cdc_kafka_consumer_up` = 1, 4번에서 적은 PENDING이 줄어든다 |
 
 ```bash

@@ -54,7 +54,7 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
 | `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
-| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 S15P31A108-295 | backend |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 [cdc-connector.md](cdc-connector.md#6-consumer-켜기)(-295) | backend |
 | `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | | | 기본 `false`. Kafka 힌트 consumer. **위 스캔 없이 켜면 기동 거부**. Kafka 가 없어도 기동하고 30초마다 다시 붙습니다(-298) | backend |
 | `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS`·`_GROUP_ID`·`_TOPIC` | | | 기본 `kafka:9092`·`beez-published-analysis`·`beez.public.published_change_analysis`(계획 D7). 바꿀 일 없음 | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
@@ -123,11 +123,11 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 생기거나, `beez.cors`·`beez.ai`·`beez.invitation`·`beez.agent` 필수값에 기본값이 다시 들어가면 실패합니다.
 `DB_URL`·`DB_PASSWORD` 에 기본값을 넣는 것은 잡지 못하므로 리뷰에서 봅니다.
 
-**CDC(`beez.cdc.*`)는 위 표에 없습니다.** 기본으로 꺼진 실험 설정이라 `application.yml` 에도, 서버 compose 에도 없습니다.
-`enabled`·`bootstrap-servers`·`group-id`·`topic`·`kafka-security.properties` 의 뜻과 켜는 조건은
-[cdc README](../../backend/src/main/java/com/beez/backend/cdc/README.md)를 봅니다. 서버에서 켜려면 env 파일만으로는 안 되고
-`infra/compose.yaml` 의 backend `environment` 에도 넘겨야 합니다(compose 는 적힌 변수만 컨테이너에 넣습니다).
-그때 이 문서의 표에 옮겨 적습니다.
+**CDC 분석 접수(`beez.cdc.intake.*`)는 `application.yml` 에 없고 compose 가 넘깁니다.** compose 의 기본값은 꺼짐이고
+나머지 셋은 계획 D7 값이라, 서버에서는 위 "서버 env 파일" 표의 `BEEZ_CDC_INTAKE_*` 두 줄만 env 파일에 씁니다(-298).
+켜는 절차는 [cdc-connector.md](cdc-connector.md#6-consumer-켜기), 키의 뜻은
+[cdc README](../../backend/src/main/java/com/beez/backend/cdc/README.md)를 봅니다. `kafka-security.properties` 는 dev 에서
+비워 둡니다(PLAINTEXT, 계획 D3).
 
 ### ai (FastAPI)
 
