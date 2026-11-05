@@ -68,6 +68,11 @@ public class Invitation extends BaseTimeEntity {
         this.revokedAt = now;
     }
 
+    /** 초대받은 사람이 탈퇴했다 (ACC-A10, -277). 주소만 지우고 초대 기록(수락·폐기 시각)은 팀에 남긴다. */
+    public void forgetEmail() {
+        this.email = null;
+    }
+
     public boolean isAccepted() {
         return acceptedAt != null;
     }

@@ -89,7 +89,7 @@ const messages: Record<string, string> = {
   active_tasks_exist: '진행 중인 작업의 담당자를 먼저 정리해 주세요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
   leader_of_team_projects:
-    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 위임하거나 프로젝트를 삭제해 주세요.',
+    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 먼저 위임해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
   document_not_approved:
