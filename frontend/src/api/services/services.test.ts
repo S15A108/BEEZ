@@ -331,21 +331,13 @@ describe('계약 경계', () => {
     ).toBe(false)
   })
 
-<<<<<<< HEAD
-  // S15P31A108-283: 폐지 예정이고 서버(PR #118)가 만들지 않은 재설정 링크(ACC-A08·A09)를 빼고 탈퇴 가능 여부(ACC-A13)를 더해 120개다.
-  // S15P31A108-203: 서버에 있는데 등록이 빠져 있던 승인 미리 보기(CHG-A14)를 더해 121개다.
-  it('121개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(121)
-    expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      121,
-=======
   // S15P31A108-283: 폐지 예정이고 서버(PR #118)가 만들지 않은 재설정 링크(ACC-A08·A09)를 빼고 탈퇴 가능 여부(ACC-A13)를 더해 120개였고,
-  // S15P31A108-290이 초대 메일 다시 보내기(MEM-A11)를, S15P31A108-284가 비비 현재 상태(BEE-A04)를 더해 122개다.
-  it('122개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(122)
+  // S15P31A108-290이 초대 메일 다시 보내기(MEM-A11)를, S15P31A108-284가 비비 현재 상태(BEE-A04)를 더하고,
+  // S15P31A108-203이 서버에 있는데 등록이 빠져 있던 승인 미리 보기(CHG-A14)를 더해 123개다.
+  it('123개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(123)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      122,
->>>>>>> 9727f475de45dcfba0708c3cefddde648a7e1396
+      123,
     )
     expect(
       new Set(
@@ -353,11 +345,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-<<<<<<< HEAD
-    ).toBe(121)
-=======
-    ).toBe(122)
->>>>>>> 9727f475de45dcfba0708c3cefddde648a7e1396
+    ).toBe(123)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
