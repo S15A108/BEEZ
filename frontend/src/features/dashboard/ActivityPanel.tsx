@@ -9,7 +9,7 @@ import { unlessMissing } from '@/api/error'
 import type { UsageBucket } from '@/api/contracts/common'
 import { DashboardOverview } from './DashboardOverview'
 import { RelationsView } from './RelationsView'
-import { FEATURE_LABELS, costText, dashboardTabs, tokenText } from './labels'
+import { FEATURE_LABELS, costText, dashboardTabs, unknownText } from './labels'
 import type { DashboardTab } from './labels'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
@@ -521,17 +521,13 @@ export function ActivityPanel({
                     {[
                       {
                         label: '입력 토큰',
-                        value: tokenText(
-                          data.input_tokens,
-                          data.tokens_unknown_call_count,
-                        ),
+                        value: data.input_tokens.toLocaleString('ko-KR'),
+                        unknown: data.tokens_unknown_call_count,
                       },
                       {
                         label: '출력 토큰',
-                        value: tokenText(
-                          data.output_tokens,
-                          data.tokens_unknown_call_count,
-                        ),
+                        value: data.output_tokens.toLocaleString('ko-KR'),
+                        unknown: data.tokens_unknown_call_count,
                       },
                       {
                         label: '호출',
@@ -539,11 +535,11 @@ export function ActivityPanel({
                       },
                       {
                         label: '추정 비용',
-                        value: costText(
-                          data.estimated_cost_amount,
-                          data.currency,
-                          data.cost_unknown_call_count,
-                        ),
+                        // 호출이 없으면 서버가 비용을 생략한다. '미보고'가 아니라 비어 있음으로 본다.
+                        value: data.call_count
+                          ? costText(data.estimated_cost_amount, data.currency)
+                          : '—',
+                        unknown: data.cost_unknown_call_count,
                       },
                     ].map((metric) => (
                       <div
@@ -554,7 +550,10 @@ export function ActivityPanel({
                           {metric.label}
                         </dt>
                         <dd className="mt-2 font-mono text-xl font-semibold">
-                          {metric.value}
+                          <WithUnknown
+                            value={metric.value}
+                            unknown={metric.unknown}
+                          />
                         </dd>
                       </div>
                     ))}
@@ -630,7 +629,8 @@ function UsageBars({
   onSelect?: (id: string) => void
 }) {
   const most = Math.max(1, ...rows.map((row) => row.call_count))
-  if (!rows.length)
+  // 서버는 기능별을 호출이 없어도 0으로 채워 보낸다. 모두 0이면 빈 안내를 보인다.
+  if (!rows.some((row) => row.call_count > 0))
     return (
       <p className="py-2 text-xs text-muted-foreground">
         기록된 사용량이 없어요.
@@ -666,21 +666,42 @@ function UsageBars({
             {row.call_count.toLocaleString('ko-KR')}회
           </span>
           <span className="text-right text-muted-foreground">
-            {tokenText(
-              row.input_tokens + row.output_tokens,
-              row.tokens_unknown_call_count,
-            )}{' '}
-            토큰
+            {row.call_count ? (
+              <WithUnknown
+                value={`${(row.input_tokens + row.output_tokens).toLocaleString('ko-KR')} 토큰`}
+                unknown={row.tokens_unknown_call_count}
+              />
+            ) : (
+              '—'
+            )}
           </span>
           <strong className="text-right font-semibold">
-            {costText(
-              row.estimated_cost_amount,
-              currency,
-              row.cost_unknown_call_count,
+            {row.call_count ? (
+              <WithUnknown
+                value={costText(row.estimated_cost_amount, currency)}
+                unknown={row.cost_unknown_call_count}
+              />
+            ) : (
+              '—'
             )}
           </strong>
         </li>
       ))}
     </ul>
+  )
+}
+
+// 값 아래에 합계에 못 들어간 호출 수를 작게 붙인다. 한 줄에 이으면 좁은 칸에서 꺾인다.
+function WithUnknown({ value, unknown }: { value: string; unknown?: number }) {
+  const note = unknownText(unknown)
+  return (
+    <>
+      {value}
+      {note && (
+        <span className="block text-xs font-normal text-muted-foreground">
+          {note}
+        </span>
+      )}
+    </>
   )
 }

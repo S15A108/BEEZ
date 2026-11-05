@@ -69,7 +69,7 @@ export function TeamPanel({
     done?: string
   }>({})
   const placements = useWorkspaceStore((state) => state.placements)
-  const placeProject = useWorkspaceStore((state) => state.placeProject)
+  const placeProjects = useWorkspaceStore((state) => state.placeProjects)
   const accountId = session.data?.id ?? ''
   const [design, setDesign] = useState<BuildingDesign>(
     placements[placementKey(accountId, projectId)]?.design ?? 'modern',
@@ -93,12 +93,15 @@ export function TeamPanel({
     queryFn: () => projectsApi.list({ limit: 100 }),
     enabled: view === 'project',
   })
-  const lot = cityProjects.data
+  const assigned = cityProjects.data
     ? projectPlacements(
         cityProjects.data.items.map((item) => item.id),
         accountId,
         placements,
-      ).find((item) => item.id === projectId)?.lot
+      )
+    : []
+  const lot = cityProjects.data
+    ? assigned.find((item) => item.id === projectId)?.lot
     : placements[placementKey(accountId, projectId)]?.lot
   const members = useInfiniteQuery({
     // 다른 창은 같은 팀원 목록을 useQuery로 ['projects', id, 'members']에 담는다. 모양이 달라 키를 나눈다.
@@ -579,9 +582,13 @@ export function TeamPanel({
                       }),
                     '프로젝트 정보를 저장했어요.',
                   )
-                  // 도시 부지 8칸 밖(9번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                  // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                  // 도시와 같이 지금 보이는 칸을 함께 저장해, 당겨진 칸 번호로 다른 프로젝트와 순서가 뒤바뀌지 않는다(S15P31A108-256).
                   if (typeof lot === 'number')
-                    placeProject(accountId, projectId, { lot, design })
+                    placeProjects(accountId, [
+                      ...assigned,
+                      { id: projectId, lot, design },
+                    ])
                   await queryClient.invalidateQueries({
                     queryKey: ['projects'],
                   })

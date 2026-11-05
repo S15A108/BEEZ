@@ -77,6 +77,6 @@ public class AuthController {
         SecurityContextHolder.setContext(context);
         contextRepository.saveContext(context, req, res);
 
-        return AccountResponse.from(account);
+        return AccountResponse.withPasswordState(account);   // must_change_password (ACC-A07 임시 비밀번호, -171)
     }
 }

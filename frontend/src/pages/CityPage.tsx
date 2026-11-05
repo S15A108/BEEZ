@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
   useInfiniteQuery,
@@ -18,6 +18,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { BuildingDesign } from '@/stores/workspaceStore'
 import { formatAgo } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
+import { RING_SLOTS } from '@/three/city/ring'
 import { AsyncState } from '@/components/AsyncState'
 import { ActionForm } from '@/components/ActionForm'
 import { Button } from '@/components/ui/button'
@@ -42,10 +43,14 @@ function City() {
       projectsApi.create(input),
   })
   const placements = useWorkspaceStore((state) => state.placements)
-  const placeProject = useWorkspaceStore((state) => state.placeProject)
+  const lastVisited = useWorkspaceStore(
+    (state) => state.lastVisited[session.data?.id ?? ''],
+  )
+  const placeProjects = useWorkspaceStore((state) => state.placeProjects)
   const [creatingAt, setCreatingAt] = useState<number | null>(null)
   const [design, setDesign] = useState<BuildingDesign>('modern')
   const [search, setSearch] = useState('')
+  const titleRef = useRef<HTMLDivElement>(null)
   const [sort, setSort] = useState<'recent' | 'name' | 'leader'>('recent')
   const projects = useInfiniteQuery({
     queryKey: ['projects'],
@@ -75,7 +80,8 @@ function City() {
         ]
       : []
   })
-  const nextLot = Array.from({ length: 8 }, (_, index) => index).find(
+  // 원형 도시의 빈 부지는 늘 하나다. 고리를 따라 가장 앞의 빈 칸에 생긴다.
+  const nextLot = Array.from({ length: RING_SLOTS }, (_, index) => index).find(
     (lot) => !assigned.some((item) => item.lot === lot),
   )
   // ponytail: 불러온 페이지 안에서만 검색·정렬한다. 서버 검색·정렬 파라미터가 생기면 쿼리로 옮긴다.
@@ -101,23 +107,25 @@ function City() {
       <AsyncState query={projects}>
         {() => (
           <>
-            <section
-              className="relative h-[54dvh] min-h-96 overflow-hidden rounded-3xl border bg-card shadow-sm"
-              aria-label="내 프로젝트 도시"
-            >
-              <div className="pointer-events-none absolute top-6 left-6 z-10">
-                <h2 className="text-[26px] leading-[34px] font-bold">
-                  {session.data?.name}님의 도시
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  부지 8칸 중{' '}
-                  {assigned.filter((item) => item.lot !== null).length}칸 사용 ·
-                  빈 부지를 누르면 프로젝트를 만들 수 있어요.
-                </p>
-              </div>
-              <div className="absolute top-6 right-6 z-10">
+            <div className="relative">
+              {/* 제목·설명·만들기 버튼: 넓은 화면(lg)에서는 캔버스처럼 도시 위에 겹치고, 좁은 화면에서는 줄이 늘어 건물과
+                겹치므로 도시 바깥 위에 둔다. */}
+              <div
+                ref={titleRef}
+                className="mb-4 flex flex-wrap items-start justify-between gap-3 lg:pointer-events-none lg:absolute lg:inset-x-6 lg:top-6 lg:z-10 lg:mb-0"
+              >
+                <div>
+                  <h2 className="text-[26px] leading-[34px] font-bold">
+                    {session.data?.name}님의 도시
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    프로젝트 {sceneProjects.length}개
+                    {nextLot !== undefined &&
+                      ' · 빈 부지를 누르면 프로젝트를 만들 수 있어요. 빈 부지 다음은 다시 첫 프로젝트예요.'}
+                  </p>
+                </div>
                 <Button
-                  className="h-10 rounded-xl px-4 font-bold"
+                  className="h-10 rounded-xl px-4 font-bold lg:pointer-events-auto"
                   disabled={nextLot === undefined}
                   onClick={() => startCreate(nextLot ?? null)}
                 >
@@ -125,27 +133,57 @@ function City() {
                   프로젝트 만들기
                 </Button>
               </div>
-              <Suspense
-                fallback={
-                  <p
-                    role="status"
-                    className="grid h-full place-items-center text-sm text-muted-foreground"
-                  >
-                    도시를 준비하는 중…
-                  </p>
-                }
+              <section
+                // 높이는 화면의 54%(최소 384px)지만 폭의 80%를 넘지 않는다. 좁은 세로 화면에서 키가 크면 고리 전체가 보여 원으로
+                // 읽히므로, 넓은 화면과 같은 가로세로 비율로 고리 앞쪽 호만 담는다(D33).
+                className="relative h-[min(max(54dvh,24rem),80vw)] overflow-hidden rounded-3xl border bg-card shadow-sm"
+                aria-label="내 프로젝트 도시"
               >
-                <CityScene
-                  projects={sceneProjects}
-                  onProjectSelect={(id) => navigate(`/projects/${id}`)}
-                  onLotSelect={startCreate}
-                  className="h-full w-full"
+                {/* 거리 뒤가 위 끝 너머로 이어지는 느낌을 주는 흐린 띠(캔버스 SCR-04-v2-city). 제목이 겹치는 넓은 화면에서만 두고,
+                    먼 건물이 부제목 뒤로 비치지 않게 진하게 칠한다(캔버스 v494). */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 top-0 z-[1] hidden h-[150px] bg-linear-to-b from-[rgba(253,252,248,0.96)] via-[rgba(253,252,248,0.82)] via-55% to-transparent lg:block"
                 />
-              </Suspense>
-              <p className="pointer-events-none absolute bottom-5 left-6 text-xs text-muted-foreground">
-                부지를 눌러 선택 · 휠로 확대/축소
-              </p>
-            </section>
+                <Suspense
+                  fallback={
+                    <p
+                      role="status"
+                      className="grid h-full place-items-center text-sm text-muted-foreground"
+                    >
+                      도시를 준비하는 중…
+                    </p>
+                  }
+                >
+                  {/* 프로젝트 만들기 창이 열리면 도시가 화면 전체로 깔리고 창의 흐린 막 뒤에 보인다(SCR-04-v2-create-project). */}
+                  <CityScene
+                    projects={sceneProjects}
+                    nextLot={nextLot ?? null}
+                    // 마지막으로 연 프로젝트(이 계정·이 브라우저)가 도시에 있으면 그 건물을 가운데에 둔다. 지웠거나 나간 프로젝트는
+                    // 목록에 없어 처음 화면 규칙을 쓴다(D33).
+                    visitedLot={
+                      sceneProjects.find(
+                        (project) => project.id === lastVisited,
+                      )?.lot
+                    }
+                    backdrop={creatingAt !== null}
+                    titleRef={titleRef}
+                    onProjectSelect={(id) => navigate(`/projects/${id}`)}
+                    onLotSelect={startCreate}
+                    className={
+                      creatingAt === null
+                        ? 'h-full w-full'
+                        : 'fixed inset-0 z-40'
+                    }
+                  />
+                </Suspense>
+                {/* 캔버스 SCR-04-v2-city(v495)처럼 바탕 없이 왼쪽 아래 24·16px에 둔다. */}
+                <p className="pointer-events-none absolute right-6 bottom-4 left-6 text-xs break-keep text-muted-foreground">
+                  끌거나 휠로 고리 돌리기 · 빈 부지 다음은 꾸밈 칸을 건너
+                  1번으로 · 부지를 눌러 선택
+                </p>
+              </section>
+            </div>
             <section className="mt-7">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="flex items-center gap-2 text-lg font-bold">
@@ -257,9 +295,8 @@ function City() {
                   </span>
                   {nextLot !== undefined && (
                     <span className="text-xs leading-4 text-muted-foreground">
-                      빈 부지{' '}
-                      {8 - assigned.filter((item) => item.lot !== null).length}
-                      칸 남음
+                      빈 부지 {nextLot + 1}번 · 만들면 고리의 다음 칸이 빈
+                      부지가 돼요
                     </span>
                   )}
                 </button>
@@ -332,10 +369,11 @@ function City() {
                   name: values.name.trim(),
                   description: values.description.trim(),
                 })
-                placeProject(session.data!.id, project.id, {
-                  lot: creatingAt,
-                  design,
-                })
+                // 지금 보이는 칸(빈 칸을 당긴 번호)을 같이 저장해, 새 칸 번호가 지운 칸 뒤에 남은 저장 번호와 겹치지 않는다.
+                placeProjects(session.data!.id, [
+                  ...assigned,
+                  { id: project.id, lot: creatingAt, design },
+                ])
                 await queryClient.invalidateQueries({ queryKey: ['projects'] })
                 setCreatingAt(null)
                 navigate(`/projects/${project.id}`)
