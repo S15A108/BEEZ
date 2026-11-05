@@ -159,6 +159,20 @@ describe('회원가입 토큰 (ACC-A01)', () => {
     )
   })
 
+  it('서버처럼 비밀번호 규칙을 토큰·중복 검사보다 먼저 본다', async () => {
+    const weak = (email: string, verified_token: string) =>
+      caught(
+        authApi.register({
+          name: '새 팀원',
+          email,
+          password: 'short',
+          verified_token,
+        }),
+      )
+    expect(codeOf(await weak('i@beez.local', ''))).toBe('validation_failed')
+    expect(codeOf(await weak(DEMO_EMAIL, ''))).toBe('validation_failed')
+  })
+
   it('다른 이메일의 토큰은 거부하고 토큰은 남으며, 가입에 쓴 토큰은 다시 못 쓴다', async () => {
     const token = await verifyEmail('h@beez.local')
     expect(codeOf(await caught(register('other@beez.local', token)))).toBe(

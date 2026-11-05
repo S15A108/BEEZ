@@ -165,6 +165,13 @@ beez:
     global-send-limit: ${EMAIL_VERIFY_GLOBAL_SEND_LIMIT:100}   # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
     max-attempts: ${EMAIL_VERIFY_MAX_ATTEMPTS:5}           # 틀린 입력 한도. FE 목과 같은 값
     token-ttl: 30m                                         # verified_token. 명세 ACC-A12 응답 예시
+  # 비밀번호 찾기 — 임시 비밀번호 (ACC-A07, -171). Q04 가 정해지기 전 기본안. 한도는 가입 인증과 같은 값으로 시작한다
+  password-recovery:
+    ttl: 30m                    # 이 안에 임시 비밀번호로 로그인해야 한다
+    resend-interval: 60s        # 같은 이메일 다시 요청 간격
+    send-limit: 5               # 이메일당 send-limit-window 안 요청 수 (계정 유무와 관계없이 센다)
+    send-limit-window: 1h
+    global-send-limit: 100      # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
   agent:
     mcp-url: ${MCP_URL:http://localhost:8080/mcp}   # 토큰 발급 응답의 연결 URL (AGT-A01)
     max-active-tokens: ${AGENT_MAX_ACTIVE_TOKENS:5}  # 프로젝트당 한 계정의 폐기 안 된 토큰 수 (Q06)
