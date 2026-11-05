@@ -14084,11 +14084,11 @@ HTTP `200`.
 
 관련 요구사항: MON-08  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안 · 수정안 요청 반영
+상태: BE 구현 (S15P31A108-183)
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER`. 프로젝트 활성 멤버 전원이 본다(역할 무관). 나간·제외된 멤버와 비멤버는 404.
 
 #### Headers
 
@@ -14107,11 +14107,11 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `type` | `string` | N | 이벤트 유형 |
-| `actor_type` | `HUMAN\|AGENT\|BEE\|SYSTEM` | N | 행위자 종류 필터. 수정안 요청 |
-| `member_id` | `ID` | N | 사람 또는 그 멤버의 에이전트 필터. 수정안 요청 |
-| `agent_session_id` | `ID` | N | 에이전트 필터. 수정안 요청 |
-| `change_proposal_id` | `ID` | N | 한 변경 제안의 지나온 길(올림·검토 시작·검토 요청·의견·승인). 수정안 요청 |
+| `type` | `string` | N | 이벤트 유형(정확히 일치, 예: `TASK_STARTED`) |
+| `actor_type` | `HUMAN\|AGENT\|BEE\|SYSTEM` | N | 행위자 종류 필터. 대소문자 무관, 그 밖의 값은 400 |
+| `member_id` | `ID` | N | 프로젝트 멤버 ID. 그 멤버 본인의 행위와 그 멤버 토큰으로 한 에이전트 행위. 나간 멤버의 지난 활동도 걸린다 |
+| `agent_session_id` | `ID` | N | 에이전트 세션 필터 |
+| `change_proposal_id` | `ID` | N | 한 변경 제안의 지나온 길(올림·검토 시작·검토 요청·의견·승인) |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
 | `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
 
@@ -14134,15 +14134,18 @@ HTTP `200`.
     {
       "id": "1001",
       "type": "TASK_STARTED",
+      "actor_type": "HUMAN",
       "actor_account_id": "11",
+      "actor_name": "전진",
       "task_id": "501",
-      "change_proposal_id": "71",
-      "baseline_id": "401",
+      "target_type": "TASK",
+      "target_id": "501",
       "result": "SUCCESS",
       "created_at": "2026-10-23T03:00:00Z"
     }
   ],
-  "has_more": false
+  "has_more": true,
+  "next_cursor": "1001"
 }
 ```
 
@@ -14150,6 +14153,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | `actor_type`이 정해진 값이 아니거나, ID·`cursor` 형식이 올바르지 않음 |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -14164,9 +14168,13 @@ HTTP `200`.
 
 #### 처리 규칙
 
-- 각 도메인이 생성한 활동을 공통 중복 식별값으로 저장·조회한다.
-- 이벤트 종류와 처리 결과를 별도로 표시한다.
-- (수정안 요청) 활동 타임라인은 사람과 에이전트를 아바타로 나눠 전체 / 사람 / 에이전트별로 보인다. Activity의 actor_type·agent_session_id·actor_name으로 그린다.
+- 각 도메인이 생성한 활동을 공통 중복 식별값으로 저장·조회한다([공통 계약](../design/10-notification-activity-contract.md) 4절).
+- 정렬·cursor는 **id 내림차순**(최신 먼저)이다. `next_cursor`는 이 페이지 마지막 활동의 id다. 시각 정렬은 늦게 커밋된 활동이 이어 보기에서 빠질 수 있어 쓰지 않는다(공통 계약 4절). `created_at`은 실제 저장 시각이라 id 순서와 대부분 같지만, 동시에 저장된 활동끼리는 어긋날 수 있다.
+- 필터는 모두 AND로 묶고 페이지를 자르기 전에 건다. 빈 값(`?actor_type=`)은 필터 없음으로 본다.
+- 이벤트 종류(`type`)와 처리 결과(`result`: `SUCCESS|FAILURE`)를 별도로 표시한다. 응답에는 주 대상 `target_type`·`target_id`가 항상 있다.
+- `actor_name`: 사람은 계정 이름, 에이전트는 세션의 토큰 이름(이름 없는 토큰이거나 세션 기록 전이면 계정 이름). 비비·시스템은 내려가지 않는다 — `actor_type`으로 그린다. 값이 없는 필드는 응답에서 빠진다.
+- 기간 필터는 두지 않는다(Jira -183 작업 내용의 "기간"은 명세에 없어 cursor 이어 읽기로 대신한다).
+- 활동 타임라인은 사람과 에이전트를 아바타로 나눠 전체 / 사람 / 에이전트별로 보인다. Activity의 actor_type·agent_session_id·actor_name으로 그린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
