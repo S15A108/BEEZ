@@ -21,7 +21,9 @@ alerting:
     - static_configs:
         - targets: ["alertmanager:9093"]
 
-# 알림 규칙은 S15P31A108-264 에서 rule_files 로 더한다.
+# 기록·알림 규칙(S15P31A108-264). 기준과 대응은 docs/infra/monitoring-alerts.md
+rule_files:
+  - /etc/prometheus/rules/*.yml
 
 scrape_configs:
   - job_name: prometheus

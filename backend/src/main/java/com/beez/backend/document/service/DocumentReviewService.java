@@ -43,7 +43,7 @@ public class DocumentReviewService {
 
     private void member(CallerContext caller, long project) { access.requireMember(caller, project).requireHuman(); }
 
-    private void lock(CallerContext caller, long project, boolean leader) {
+    void lock(CallerContext caller, long project, boolean leader) {
         if (leader) access.requireHumanLeader(caller, project); else member(caller, project);
         if (!repository.lockMember(project, caller.accountId(), leader)) {
             if (leader && repository.currentRole(project, caller.accountId()).isPresent()) {
@@ -53,15 +53,15 @@ public class DocumentReviewService {
         }
     }
 
-    private void initialWorkflow(long project) {
+    void initialWorkflow(long project) {
         if (repository.hasBaseline(project)) throw conflict("change_proposal_required");
     }
 
-    private Map<String, Object> copy(long project, long document) {
+    Map<String, Object> copy(long project, long document) {
         return repository.workingCopy(project, document).orElseThrow(() -> AccessErrors.notFound("document_working_copy_missing"));
     }
 
-    private Map<String, Object> owned(CallerContext caller, long project, long document) {
+    Map<String, Object> owned(CallerContext caller, long project, long document) {
         var copy = copy(project, document);
         if (id(copy, "owner_account_id") != caller.accountId()) {
             throw AccessErrors.forbidden("document_author_required", "등록한 담당자만 작성 내용을 변경할 수 있습니다.");
@@ -69,7 +69,7 @@ public class DocumentReviewService {
         return copy;
     }
 
-    private void editable(Map<String, Object> copy, long expected) {
+    void editable(Map<String, Object> copy, long expected) {
         if (expected < 1) throw invalid("expected_revision은 양수여야 합니다.");
         if ("SUBMITTED".equals(copy.get("status"))) throw conflict("submission_locked");
         if (expected != id(copy, "revision")) throw conflict("version_conflict");
@@ -108,13 +108,13 @@ public class DocumentReviewService {
         });
     }
 
-    private List<Map<String, Object>> references(long project, long document) { return repository.references(project, document); }
+    List<Map<String, Object>> references(long project, long document) { return repository.references(project, document); }
 
-    private String referenceHash(List<Map<String, Object>> references) {
+    String referenceHash(List<Map<String, Object>> references) {
         return DocumentReviewReferenceHasher.referenceHash(DocumentReviewReferenceHasher.snapshots(references));
     }
 
-    private Map<String, Object> reviewInput(Map<String, Object> copy, List<Map<String, Object>> refs, String key) {
+    Map<String, Object> reviewInput(Map<String, Object> copy, List<Map<String, Object>> refs, String key) {
         var available = refs.stream().map(r -> r.get("type").toString()).toList();
         var missing = List.of("API_SPEC", "ERD", "REQ_SPEC").stream()
                 .filter(type -> !type.equals(copy.get("type")) && !available.contains(type)).toList();
@@ -128,7 +128,7 @@ public class DocumentReviewService {
         return input;
     }
 
-    private void key(String key) {
+    void key(String key) {
         if (key == null || key.isBlank() || key.length() > 128 || key.chars().anyMatch(Character::isISOControl)) {
             throw invalid("Idempotency-Key는 제어 문자가 없는 1~128자입니다.");
         }
@@ -222,14 +222,20 @@ public class DocumentReviewService {
     private Map<String, Object> validateResult(Map<String, Object> envelope, Map<String, Object> input) {
         return DocumentReviewResultValidator.validate(envelope, input);
     }
-    private ApiException unavailable(String message) { return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "review_unavailable", message); }
+    ApiException unavailable(String message) { return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "review_unavailable", message); }
 
-    private Map<String, Object> currentReview(long project, long document, long review, long revision) {
+    Map<String, Object> currentReview(long project, long document, long review, long revision) {
         var row = repository.review(document, review).orElseThrow(() -> AccessErrors.notFound("document_review_missing"));
         if (!Integer.valueOf(2).equals(object(row.get("result")).get("contract_version"))
                 || id(row, "resolved_revision") != revision
                 || !row.get("reference_hash").equals(referenceHash(references(project, document)))) throw conflict("review_stale");
         return row;
+    }
+
+    /** 화면에는 문서의 최신 검토만 보인다. 같은 본문으로 재검토가 끝났으면 이전 검토에 대화·요청을 남기지 않는다. */
+    void requireLatestReview(long document, long review) {
+        var latest = repository.review(document, null).orElseThrow(() -> AccessErrors.notFound("document_review_missing"));
+        if (id(latest, "id") != review) throw conflict("review_stale");
     }
 
     @Transactional
@@ -245,8 +251,19 @@ public class DocumentReviewService {
         if (!"PATCH".equals(row.get("type"))) throw invalid("설명형 의견은 반영하거나 넘기는 대상이 아닙니다.");
         String decision = "APPLY".equals(input.decision()) ? "APPLIED" : "SKIPPED";
         if (!Set.of("APPLY", "SKIP").contains(input.decision())) throw invalid("제안 처리 방식이 올바르지 않습니다.");
+        // DOC-A22: 대화에서 비비가 낸 다른 대체문으로 반영할 때만 replacement_text 를 받는다(SKIP 에는 보낼 수 없다).
+        String chosen = input.replacementText();
+        if (chosen != null) {
+            if (!"APPLY".equals(input.decision())) throw invalid("대체문은 반영할 때만 보낼 수 있습니다.");
+            if (repository.messagesOf(suggestion).stream().noneMatch(m -> "BEE".equals(m.get("author_kind")) && chosen.equals(m.get("proposed_text")))) {
+                throw invalid("대화에서 비비가 낸 대체문만 반영할 수 있습니다.");
+            }
+        }
         if (!"PENDING".equals(row.get("decision"))) {
             if (!decision.equals(row.get("decision"))) throw conflict("version_conflict");
+            if (chosen != null && !chosen.equals(row.get("applied_replacement_text") != null ? row.get("applied_replacement_text") : row.get("replacement_text"))) {
+                throw conflict("version_conflict");
+            }
             return view(copy);
         }
         long revision = input.expectedRevision();
@@ -254,12 +271,13 @@ public class DocumentReviewService {
             String content = copy.get("content_text").toString(), original = row.get("original_text").toString();
             int start = content.indexOf(original);
             if (start < 0 || start != content.lastIndexOf(original)) throw conflict("review_stale");
-            String updated = content.substring(0, start) + row.get("replacement_text") + content.substring(start + original.length());
+            String replacement = chosen != null ? chosen : row.get("replacement_text").toString();
+            String updated = content.substring(0, start) + replacement + content.substring(start + original.length());
             var source = validator.validate(copy.get("file_name").toString(), updated.getBytes(StandardCharsets.UTF_8));
             repository.edit(document, source.text(), copy.get("file_name").toString());
             revision++;
         }
-        repository.decideSuggestion(suggestion, decision, review, revision);
+        repository.decideSuggestion(suggestion, decision, review, revision, "APPLIED".equals(decision) ? chosen : null);
         return view(copy(project, document));
     }
 
@@ -309,6 +327,35 @@ public class DocumentReviewService {
                 && "PENDING".equals(s.get("decision")))) throw conflict("review_decisions_pending");
     }
 
+    /**
+     * DOC-A24 팀장이 결정하기 전에 제출을 거두고 작성 내용을 다시 고칠 수 있게 한다. 제출·검토·대화·결정 이력은 지우지 않고
+     * 제출은 WITHDRAWN 으로 종결한다. 작성 사본은 EDITING 으로 돌아가며 revision 이 올라 이전 검토는 오래된 것이 되어(반려 뒤 재작성과 같다)
+     * 고친 뒤 비비 검토를 다시 받아 재제출한다. 팀장 결정(decide)과 같은 프로젝트 잠금을 잡아 둘 중 하나만 성립한다.
+     */
+    @Transactional
+    public DocumentWorkingCopyResponse withdraw(CallerContext caller, long project, long document, long submission, String key) {
+        key(key);
+        lock(caller, project, false);
+        var copy = owned(caller, project, document);
+        String operation = "withdraw-document:" + submission, fingerprint = hash(Map.of("submission", submission));
+        var previous = repository.replay(project, caller.accountId(), operation, key, fingerprint);
+        if (previous.isPresent()) return JSON.readValue(previous.get(), DocumentWorkingCopyResponse.class);
+        var row = repository.submission(project, document, submission).orElseThrow(() -> AccessErrors.notFound("document_submission_missing"));
+        if (id(row, "submitted_by") != caller.accountId()) {
+            throw AccessErrors.forbidden("document_author_required", "제출한 담당자만 검토 요청을 취소할 수 있습니다.");
+        }
+        String status = row.get("status").toString();
+        if (!"SUBMITTED".equals(status) && !"WITHDRAWN".equals(status)) throw conflict("submission_decided");
+        if ("SUBMITTED".equals(status)) {
+            initialWorkflow(project);
+            if (!repository.withdraw(submission, caller.accountId())) throw conflict("submission_decided");
+            repository.reopenAfterWithdraw(document, id(row, "document_version_id"));
+        }
+        var response = view(copy(project, document));
+        repository.remember(project, caller.accountId(), operation, key, fingerprint, response);
+        return response;
+    }
+
     @Transactional
     public DocumentSubmissionResponse decide(CallerContext caller, long project, long document, long submission, DocumentDecisionRequest input) {
         lock(caller, project, true);
@@ -320,6 +367,7 @@ public class DocumentReviewService {
         };
         String reason = "REJECTED".equals(state) ? input.rejectionReason() : null;
         if ("REJECTED".equals(state) && (reason == null || reason.isBlank() || reason.length() > 10000)) throw invalid("반려 사유가 필요합니다.");
+        if ("WITHDRAWN".equals(row.get("status"))) throw conflict("submission_withdrawn");
         if (!"SUBMITTED".equals(row.get("status"))) {
             if (state.equals(row.get("status")) && Objects.equals(reason, row.get("rejection_reason"))) return submissionView(row);
             throw conflict("submission_decided");
@@ -335,7 +383,7 @@ public class DocumentReviewService {
     @Transactional(readOnly = true)
     public List<DocumentSubmissionResponse> submissions(CallerContext caller, long project, String status) {
         member(caller, project);
-        if (status != null && !Set.of("SUBMITTED", "APPROVED", "REJECTED").contains(status)) throw invalid("검토 상태가 올바르지 않습니다.");
+        if (status != null && !Set.of("SUBMITTED", "APPROVED", "REJECTED", "WITHDRAWN").contains(status)) throw invalid("검토 상태가 올바르지 않습니다.");
         return repository.submissions(project, null, status).stream().map(this::submissionView).toList();
     }
 
@@ -347,7 +395,7 @@ public class DocumentReviewService {
                 reviewView(repository.review(document, id(row, "bee_review_id")).orElseThrow()));
     }
 
-    private DocumentWorkingCopyResponse view(Map<String, Object> row) {
+    DocumentWorkingCopyResponse view(Map<String, Object> row) {
         long document = id(row, "document_id");
         return new DocumentWorkingCopyResponse(Long.toString(document), row.get("owner_account_id").toString(), id(row, "revision"),
                 row.get("status").toString(), row.get("content_text").toString(), row.get("file_name").toString(),
@@ -356,7 +404,7 @@ public class DocumentReviewService {
     }
 
     @SuppressWarnings("unchecked")
-    private DocumentBeeReviewResponse reviewView(Map<String, Object> row) {
+    DocumentBeeReviewResponse reviewView(Map<String, Object> row) {
         var result = object(row.get("result"));
         var input = object(row.get("input"));
         var refs = (List<Map<String, Object>>) input.get("references");
@@ -366,14 +414,31 @@ public class DocumentReviewService {
                 refs.stream().map(r -> new DocumentReviewReferenceResponse(r.get("document_id").toString(),
                         r.get("document_version_id").toString(), r.get("kind").toString(), ((Number) r.get("version_no")).intValue(),
                         r.get("content").toString(), (String) r.get("reference_id"), (String) r.get("status"), (String) r.get("content_hash"))).toList(),
-                repository.suggestions(review).stream().map(s -> new DocumentSuggestionResponse(s.get("id").toString(),
-                        s.get("explanation").toString(), (String) s.get("original_text"), (String) s.get("replacement_text"),
-                        (String) s.get("decision"), s.get("type").toString(), (String) s.get("step"),
-                        Arrays.asList(JSON.readValue(s.get("sources").toString(), DocumentReviewSourceResponse[].class)))).toList(),
+                suggestionViews(review),
                 JSON.readValue(row.get("usage").toString(), List.class),
                 (Integer) result.get("contract_version"), (String) result.get("content_hash"), (String) result.get("review_status"),
                 result.get("steps") == null ? List.of() : Arrays.asList(JSON.convertValue(result.get("steps"), DocumentReviewStepResponse[].class)),
                 result.get("references_used") == null ? List.of() : (List<String>) result.get("references_used"));
+    }
+
+    /** 검토의 모든 보완 제안. 출처(origin)와 제안별 대화(DOC-A22)를 함께 담는다. */
+    List<DocumentSuggestionResponse> suggestionViews(long review) {
+        var byId = new LinkedHashMap<Long, List<DocumentMessageResponse>>();
+        for (var m : repository.messages(review)) byId.computeIfAbsent(id(m, "suggestion_id"), k -> new ArrayList<>()).add(messageView(m));
+        return repository.suggestions(review).stream().map(s -> suggestionView(s, byId.getOrDefault(id(s, "id"), List.of()))).toList();
+    }
+
+    DocumentSuggestionResponse suggestionView(Map<String, Object> s, List<DocumentMessageResponse> messages) {
+        return new DocumentSuggestionResponse(s.get("id").toString(), s.get("explanation").toString(),
+                (String) s.get("original_text"), (String) s.get("replacement_text"), (String) s.get("decision"),
+                s.get("type").toString(), (String) s.get("step"),
+                Arrays.asList(JSON.readValue(s.get("sources").toString(), DocumentReviewSourceResponse[].class)),
+                (String) s.get("origin"), (String) s.get("applied_replacement_text"), messages);
+    }
+
+    static DocumentMessageResponse messageView(Map<String, Object> m) {
+        return new DocumentMessageResponse(m.get("id").toString(), m.get("author_kind").toString(), m.get("body").toString(),
+                (String) m.get("proposed_text"), time(m.get("created_at")));
     }
 
     private DocumentSubmissionResponse submissionView(Map<String, Object> row) {

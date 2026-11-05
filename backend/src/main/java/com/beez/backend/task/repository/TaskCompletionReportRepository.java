@@ -14,4 +14,7 @@ public interface TaskCompletionReportRepository extends JpaRepository<TaskComple
 
     /** (작업, 계획 리비전) 의 가장 최근 delta 완료 보고. DELTA 검증 요청에 delta 내용을 실을 때 */
     Optional<TaskCompletionReport> findFirstByTaskIdAndPlanRevisionIdAndHasDeltaTrueOrderByIdDesc(Long taskId, Long planRevisionId);
+
+    /** (작업, 계획 리비전) 의 가장 최근 완료 보고. 완료된 작업의 완료 검증 결과를 보여 줄 때 (S15P31A108-269) */
+    Optional<TaskCompletionReport> findFirstByTaskIdAndPlanRevisionIdOrderByIdDesc(Long taskId, Long planRevisionId);
 }

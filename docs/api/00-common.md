@@ -6,6 +6,8 @@
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
+2026-11-05: Q05의 남은 항목이던 탈퇴 처리(혼자 쓰는 프로젝트 삭제, 팀원 참여 프로젝트 자동 탈퇴)를 PR #118 구현대로 정함으로 고쳤다(S15P31A108-218).
+
 2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 팀장의 나가기는 넘길 팀원을 골라 위임과 한 번에 하고(넘길 사람이 없으면 `leader_transfer_required`), 삭제는 PRJ-A05로만 한다(PR #113 리뷰). 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
 2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q24에 올렸다. 기준 v1 뒤의 문서 변경은 dev처럼 모두 변경 제안으로 간다.
@@ -134,7 +136,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 대상 | 값·주요 조건 |
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
-| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토 |
+| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토. 팀장 결정 전에 등록자가 취소하면(DOC-A24) 제출은 WITHDRAWN으로 종결하고 작성 건은 EDITING으로 돌아간다 |
 | 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
@@ -333,8 +335,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A19 문서 검토 요청 목록](01-backend-rest.md#doc-a19) | GET `/api/projects/{id}/document-review-submissions` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A20 문서 검토 제출 상세](01-backend-rest.md#doc-a20) | GET `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A21 문서별 승인·반려](01-backend-rest.md#doc-a21) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/decision` | HUMAN LEADER | 오서현 | — | 오서현 |
-| [DOC-A22 보완 제안에 대해 비비와 대화](01-backend-rest.md#doc-a22) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
-| [DOC-A23 비비에게 직접 보완 요청](01-backend-rest.md#doc-a23) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
+| [DOC-A22 보완 제안에 대해 비비와 대화](01-backend-rest.md#doc-a22) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages` | HUMAN MEMBER (등록자) | 오서현 | 양지훈 | 오서현 |
+| [DOC-A23 비비에게 직접 보완 요청](01-backend-rest.md#doc-a23) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests` | HUMAN MEMBER (등록자) | 오서현 | 양지훈 | 오서현 |
 | [DOC-A24 팀장 검토 요청 취소](01-backend-rest.md#doc-a24) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/withdraw` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
 | [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -454,7 +456,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위. (수정안 요청 · 11-04 사용자 결정) 미배정 작업을 팀원이 스스로 맡기(TSK-A06)는 팀 합의 항목이다(TSK-A06 담당 변준성 동의 필요, PR #113 리뷰) |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 알림 연결은 TODO(승인 게이트는 241에서 구현). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
 | Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
-| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 남은 것: 탈퇴 때 혼자 쓰는 프로젝트를 지울지 남길지, 팀원으로만 참여한 프로젝트에서 자동으로 빠질지(회원 탈퇴 화면 기본안: 팀원 참여 프로젝트는 자동으로 빠지고 혼자 쓰는 프로젝트는 함께 삭제, 남긴 기록은 보존). (수정안 요청 · 11-04 사용자 결정) 나가기: 팀원은 열린 작업이 있어도 경고만 보고 나가며, 인계 대상을 고르지 않으면 담당자가 비워진다. 팀장은 나가기 창에서 넘길 팀원을 골라 위임과 나가기를 한 번에 하거나, 프로젝트를 삭제한다(팀원이 있어도 됨, 이름 확인). 나가기는 프로젝트를 삭제하지 않는다(MEM-A10·PRJ-A05, PR #113 리뷰). 팀장 나가기·삭제 규칙은 팀 합의 항목이다. 제외(MEM-A09)도 나가기와 같다. 탈퇴(ACC-A10)는 팀 프로젝트의 팀장을 지금처럼 막는다 |
+| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 탈퇴 처리는 PR #118(S15P31A108-171) 구현으로 정함(2026-11-05): 혼자 쓰는 프로젝트는 함께 삭제(PRJ-A05처럼 보관·토큰 전부 폐기), 팀원으로만 참여한 프로젝트는 자동으로 빠지고(LEFT), 남긴 기록은 보존. 팀원 참여 프로젝트의 열린 작업은 지금은 담당자를 그대로 두고, #113 구현 때 MEM-A10 팀원 규칙대로 비운다. (수정안 요청 · 11-04 사용자 결정) 나가기: 팀원은 열린 작업이 있어도 경고만 보고 나가며, 인계 대상을 고르지 않으면 담당자가 비워진다. 팀장은 나가기 창에서 넘길 팀원을 골라 위임과 나가기를 한 번에 하거나, 프로젝트를 삭제한다(팀원이 있어도 됨, 이름 확인). 나가기는 프로젝트를 삭제하지 않는다(MEM-A10·PRJ-A05, PR #113 리뷰). 팀장 나가기·삭제 규칙은 팀 합의 항목이다. 제외(MEM-A09)도 나가기와 같다. 탈퇴(ACC-A10)는 팀 프로젝트의 팀장을 지금처럼 막는다 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
 | Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 변경 제안은 CHG-A04의 expected_revision/expected_snapshot_hash로 대조 |
@@ -714,10 +716,11 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
 | `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
 | `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
+| `applied_replacement_text` | `string` | N | 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영했을 때 실제로 쓴 문장. S15P31A108-231 |
 | `sources` | `DocumentReviewSource[]` | Y | 검증된 참고 승인본 근거. BODY 및 과거 제안은 []. 아래 검토 전용 구조 사용 |
 | `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | 이 제안에 대한 비비와의 대화(DOC-A22). 수정안 요청 |
 
-`DocumentReviewSource`는 `{reference_id, document_id, document_version_id, kind, version_no, quote?}`다. 식별 메타데이터는 BE가 검토 입력에서 붙이고 quote가 있으면 해당 승인본 본문에 존재하는지 검증한다. 일반 RAG `Source`와 별개다. A22/A23의 신규 대화·직접 요청 구현은 231 후속이며 216에 포함하지 않는다.
+`DocumentReviewSource`는 `{reference_id, document_id, document_version_id, kind, version_no, quote?}`다. 식별 메타데이터는 BE가 검토 입력에서 붙이고 quote가 있으면 해당 승인본 본문에 존재하는지 검증한다. 일반 RAG `Source`와 별개다. A22/A23 대화·직접 요청은 S15P31A108-231에서 구현했다.
 
 <a id="schema-documentbeereview"></a>
 
@@ -752,7 +755,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `document_version_id` | `ID` | Y | 제출한 정확한 문서 버전 |
 | `submitted_by` | `ID` | Y | 제출한 작성자 계정 |
 | `revision` | `integer` | Y | 제출 당시 작성 리비전 |
-| `status` | `SUBMITTED\|APPROVED\|REJECTED` | Y | 심사 상태 |
+| `status` | `SUBMITTED\|APPROVED\|REJECTED\|WITHDRAWN` | Y | 심사 상태. WITHDRAWN은 등록자가 결정 전에 취소한 제출(S15P31A108-231) |
 | `content_hash` | `string` | Y | 제출 원본 bytes의 해시 |
 | `submitted_at` | `Time` | Y | 제출 시각 |
 | `decided_by` | `ID` | N | 심사한 팀장 계정 |
@@ -1141,11 +1144,14 @@ CHG-A05·A06의 ChangeImpact에는 `revision`(integer), `snapshot_hash`(string),
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `resolution` | `FIX_PLAN\|PROPOSE_CHANGE\|HUMAN_REVIEW\|RETRY` | Y | 후속 경로 |
 | `next_action` | `string` | N | 후속 경로 설명. severity=BLOCKING이면 필수: 작업 현황 화면이 막힌 항목마다 고칠 방법을 한 줄로 보여 줌(수정안 요청) |
+| `ai_suggested_action` | `string` | N | 검증된 AI finding의 후속 행동 제안. 서버의 `resolution`·`next_action`이나 승인된 정책과 별개이며 실제 담당자 배정·승인·상태 변경을 뜻하지 않음. 최대 4,000 UTF-16 코드 단위 |
 | `validation_run_id` | `ID` | N | 이 finding을 낸 실행. MODEL finding이면 필수이며, kind=ERROR는 현재 실패 attempt의 run을 참조 |
 | `policy_need_id` | `string` | N | 해당 분석 안의 정책 필요 항목 임시 ID |
 | `conflicting_design_refs` | `object[]` | N | 정책 간 모순 시 다른 승인 항목의 `design_item_id`, `design_item_version_id`, `evidence_ids`, `content_paths` |
 
 kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과 현재 실패 attempt에 속한 run을 반드시 참조한다. BE가 생성하는 실행 오류이며 실제 모델 호출 여부와 구분한다. 모든 ERROR 전이·복구·재시도 규칙은 [검증 실행 오류 규약](#validation-execution-errors)을 따른다.
+
+`ai_suggested_action`은 현재 완료된 분석의 AI 후보에만 보존한다. 기존 이력, 규칙 또는 오류 finding에는 없을 수 있다. AI 자유 문구는 사실이나 승인 여부를 보장하지 않으므로 사용자 화면에서도 AI 제안임을 표시한다. PARTIAL 후보는 기존과 같이 진단 이력에만 남는다.
 
 <a id="schema-validation"></a>
 
@@ -1190,8 +1196,28 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
 | `delta_validation_id` | `ID` | N | 완료 delta 재검증. WAITING(REVALIDATION) 중 포함 |
+| `completion_review` | [CompletionReview](00-common.md#schema-completionreview) | N | 완료 보고와 계획의 규칙 대조(-269). 완료됐거나 delta 재검증을 기다리는 작업의 상세 조회(TSK-A03)와 COMPLETED 보고 응답(TSK-A07·MCP-12)에만 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
+
+<a id="schema-completionreview"></a>
+
+### CompletionReview
+
+완료 보고를 계획과 **규칙으로** 대조한 결과(S15P31A108-269, VAL-07 작은 범위). AI를 쓰지 않고 완료를 막지 않는다. 사람이 볼 확인 거리이며 코드 품질·동작을 보증하지 않는다(AC-15와 같은 원칙). 저장하지 않고 조회할 때 계산한다 — 보고·계획 리비전·계획 참조가 모두 불변이라 같은 결과가 나오고, `handover_recorded`만 지금 상태를 본다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `review_version` | `string` | Y | 대조 규칙 판. 지금 `completion-review-v1` |
+| `report_id` | `ID` | Y | 대조한 완료 보고 |
+| `changes_reported` | `boolean` | Y | 보고에 `changed_design_item_ids`가 있었는가. false면 범위 이탈을 판단하지 않았다(0건이 "이탈 없음"이 아님) |
+| `scope_deviations` | `object[]` | Y | 범위 이탈 후보 `{design_item_id, reason}`. reason: `NO_CONTRACT_CHANGE_DECLARED`(계획이 계약 변경 없음을 선언) · `NOT_IN_PLAN`(계획에 없는 항목) · `NOT_PLANNED_TO_CHANGE`(계획은 READS·IMPLEMENTS로만 다룸). 설계와 다르게 바꿨다면 설계 변경 제안(CHG)이 필요하다는 신호 |
+| `unreported_planned_changes` | `ID[]` | Y | 계획이 CHANGES로 잡은 항목 중 변경 보고에 없는 것. `changes_reported`일 때만 채운다 |
+| `unmet_criteria` | `string[]` | Y | `met=false`로 보고된 완료 기준 |
+| `unchecked_criteria` | `string[]` | Y | 계획의 완료 기준 중 `completion_checks`에 없는 것(앞뒤 공백 무시, 글자 그대로 비교) |
+| `handover_recorded` | `boolean` | Y | 이 작업의 공유 인수인계 기록(write_context `kind=HANDOVER`, `visibility=SHARED`)이 있는가. 없으면 경고만 |
+| `deviation_count` | `integer` | Y | `scope_deviations` 개수 |
+| `notice` | `string` | Y | 화면에 함께 보일 안내("코드 품질이나 동작을 보증하지 않습니다") |
 
 <a id="schema-completioncheck"></a>
 
@@ -1216,6 +1242,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 
 <a id="schema-relatedtask"></a>
 

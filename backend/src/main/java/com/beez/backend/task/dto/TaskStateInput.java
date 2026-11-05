@@ -4,6 +4,7 @@ import com.beez.backend.task.entity.TaskEvent;
 import com.beez.backend.task.entity.WaitingReason;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 
@@ -18,6 +19,8 @@ import java.util.Map;
  * @param summary            진행/완료 요약
  * @param delta              완료 시 계획 대비 변경. 비어 있지 않으면 WAITING(REVALIDATION)
  * @param completionChecks   완료 기준 확인 [{criterion, met}]
+ * @param changedDesignItemIds COMPLETED 에서만. 실제로 바꾼 설계 항목. 계획과 대조해 범위 이탈 후보를 보여 준다 (완료는 막지 않음).
+ *                           보내지 않으면 대조하지 않는다. 다른 이벤트에 보내면 400
  */
 public record TaskStateInput(
         @NotNull TaskEvent event,
@@ -27,6 +30,7 @@ public record TaskStateInput(
         WaitingReason waitingReason,
         String summary,
         List<@NotNull Map<String, Object>> delta,
-        List<@NotNull @Valid CompletionCheck> completionChecks
+        List<@NotNull @Valid CompletionCheck> completionChecks,
+        @Size(max = 200) List<@NotNull String> changedDesignItemIds
 ) {
 }

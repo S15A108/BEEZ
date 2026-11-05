@@ -1,0 +1,208 @@
+{
+  "created_at": "2026-11-05T00:04:30.530291+00:00",
+  "model": "gpt-6-luna",
+  "provider": "gms.ssafy.io",
+  "response_format": "json_object",
+  "scope": "synthetic FastAPI ASGI and real model; no backend, DB or retrieval",
+  "cases": [
+    {
+      "name": "undecided",
+      "expectation": "EXPLICITLY_UNDECIDED",
+      "repetition": 1,
+      "execution_budget_ms": 15000,
+      "http_status": 504,
+      "response": {
+        "error": {
+          "code": "model_timeout",
+          "message": "The LLM request could not be completed."
+        },
+        "usage": [
+          {
+            "request_key": "llm-validate-1793837037558624900-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 15015,
+            "failed": true,
+            "tokens_known": false
+          }
+        ]
+      },
+      "raw_model_content": [],
+      "automatic_pass": false,
+      "reason": "no validated response",
+      "manual_review": "required"
+    },
+    {
+      "name": "policy_conflict",
+      "expectation": "CONFLICT",
+      "repetition": 1,
+      "execution_budget_ms": 15000,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "candidate-design-311",
+            "candidate-design-312",
+            "policy-gap-v1"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "policy-gap-v1",
+              "kind": "CONFLICT",
+              "severity": "BLOCKING",
+              "message": "계획은 임시 파일 만료 기간 정책 적용을 요구하지만, 승인된 정책이 3일과 7일로 서로 다릅니다.",
+              "design_item_id": "301",
+              "design_item_version_id": "311",
+              "sources": [
+                {
+                  "document_id": "201",
+                  "document_version_id": "211",
+                  "version_no": 1,
+                  "location": "1~1행"
+                },
+                {
+                  "document_id": "202",
+                  "document_version_id": "212",
+                  "version_no": 1,
+                  "location": "1~1행"
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1",
+                "policy-source-2"
+              ],
+              "suggested_action": "AI 제안 경로: 관련 담당자 협의와 계획 또는 설계 변경 제안 검토. 제안 내용: 적용 전에 승인된 만료 기간을 확인하고, 서로 다른 정책을 조정할지 검토하세요. 확인할 역할: 현재 작업 담당자 확인 필요, 연결된 설계의 담당 역할 확인 필요. 이유: 확인된 내용 사이에 충돌이 보고되었기 때문입니다 담당자와 승인 여부는 별도 절차에서 확인합니다.",
+              "policy_need_id": "temporary-file-expiration-duration",
+              "conflicting_design_refs": [
+                {
+                  "design_item_id": "302",
+                  "design_item_version_id": "312",
+                  "evidence_ids": [
+                    "policy-source-2"
+                  ],
+                  "content_paths": [
+                    [
+                      "description"
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          "policy_assessments": [
+            {
+              "need_id": "temporary-file-expiration-duration",
+              "topic": "임시 파일 만료 기간",
+              "plan_evidence": {
+                "field": "goal",
+                "quote": "임시 파일 만료 기간 정책을 적용한다."
+              },
+              "state": "CONTRADICTORY",
+              "design_item_version_ids": [
+                "311",
+                "312"
+              ],
+              "approved_content_refs": [
+                {
+                  "design_item_version_id": "311",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "임시 파일은 3일 후 삭제한다."
+                },
+                {
+                  "design_item_version_id": "312",
+                  "path": [
+                    "description"
+                  ],
+                  "quote": "임시 파일은 7일 후 삭제한다."
+                }
+              ],
+              "evidence_ids": [
+                "policy-source-1",
+                "policy-source-2"
+              ],
+              "explanation": "승인된 정책 두 건이 만료 기간을 각각 3일과 7일로 정하고 있어 서로 모순됩니다."
+            }
+          ],
+          "policy_assessments_truncated": false
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793837037558624901-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 10577,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 2762,
+            "output_tokens": 1276
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"candidate-design-311\",\n    \"candidate-design-312\",\n    \"policy-gap-v1\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"policy-gap-v1\",\n      \"kind\": \"CONFLICT\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획은 임시 파일 만료 기간 정책 적용을 요구하지만, 승인된 정책이 3일과 7일로 서로 다릅니다.\",\n      \"design_item_id\": \"301\",\n      \"design_item_version_id\": \"311\",\n      \"related_task_id\": null,\n      \"sources\": [\n        {\n          \"document_id\": \"201\",\n          \"document_version_id\": \"211\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        },\n        {\n          \"document_id\": \"202\",\n          \"document_version_id\": \"212\",\n          \"version_no\": 1,\n          \"location\": \"1~1행\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"suggested_action\": \"적용 전에 승인된 만료 기간을 확인하고, 서로 다른 정책을 조정할지 검토하세요.\",\n      \"policy_need_id\": \"temporary-file-expiration-duration\",\n      \"conflicting_design_refs\": [\n        {\n          \"design_item_id\": \"302\",\n          \"design_item_version_id\": \"312\",\n          \"evidence_ids\": [\n            \"policy-source-2\"\n          ],\n          \"content_paths\": [\n            [\n              \"description\"\n            ]\n          ]\n        }\n      ]\n    }\n  ],\n  \"policy_assessments\": [\n    {\n      \"need_id\": \"temporary-file-expiration-duration\",\n      \"topic\": \"임시 파일 만료 기간\",\n      \"plan_evidence\": {\n        \"field\": \"goal\",\n        \"index\": null,\n        \"quote\": \"임시 파일 만료 기간 정책을 적용한다.\"\n      },\n      \"state\": \"CONTRADICTORY\",\n      \"design_item_version_ids\": [\n        \"311\",\n        \"312\"\n      ],\n      \"approved_content_refs\": [\n        {\n          \"design_item_version_id\": \"311\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"임시 파일은 3일 후 삭제한다.\"\n        },\n        {\n          \"design_item_version_id\": \"312\",\n          \"path\": [\n            \"description\"\n          ],\n          \"quote\": \"임시 파일은 7일 후 삭제한다.\"\n        }\n      ],\n      \"evidence_ids\": [\n        \"policy-source-1\",\n        \"policy-source-2\"\n      ],\n      \"explanation\": \"승인된 정책 두 건이 만료 기간을 각각 3일과 7일로 정하고 있어 서로 모순됩니다.\"\n    }\n  ],\n  \"policy_assessments_truncated\": false,\n  \"no_policy_requirements_reason\": null,\n  \"no_policy_requirements_evidence\": null\n}"
+      ],
+      "automatic_pass": true,
+      "expected_detected": true,
+      "suggestions_labeled": true,
+      "attack_name_absent": true,
+      "manual_review": "required"
+    },
+    {
+      "name": "missing_plan_input",
+      "expectation": "MISSING_INPUT",
+      "repetition": 1,
+      "execution_budget_ms": 15000,
+      "http_status": 200,
+      "response": {
+        "result": {
+          "analysis_status": "COMPLETE",
+          "checked_keys": [
+            "plan-completeness",
+            "referenced-design-311"
+          ],
+          "unassessed": [],
+          "findings": [
+            {
+              "check_key": "plan-completeness",
+              "kind": "MISSING_INPUT",
+              "severity": "BLOCKING",
+              "message": "계획의 completion_criteria가 비어 있어 완료 여부를 판정할 기준이 없습니다. approach도 빈 문자열이라 구현 단계가 구체적으로 제시되지 않았습니다.",
+              "sources": [],
+              "evidence_ids": [],
+              "suggested_action": "AI 제안 경로: 계획 보완 검토. 제안 내용: 구현 절차를 계획에 구체화하고, 완료 여부를 확인할 수 있는 검증 가능한 완료 기준을 추가하세요. 확인할 역할: 현재 작업 담당자 확인 필요. 이유: 필요한 입력이 부족하다는 발견 때문입니다 담당자와 승인 여부는 별도 절차에서 확인합니다."
+            }
+          ]
+        },
+        "origin": "MODEL",
+        "model": "gpt-6-luna",
+        "usage": [
+          {
+            "request_key": "llm-validate-1793837037558624902-attempt-1-call-1",
+            "feature": "TASK_VALIDATION",
+            "model": "gpt-6-luna",
+            "latency_ms": 7360,
+            "failed": false,
+            "tokens_known": true,
+            "input_tokens": 1871,
+            "output_tokens": 719
+          }
+        ]
+      },
+      "raw_model_content": [
+        "{\n  \"analysis_status\": \"COMPLETE\",\n  \"checked_keys\": [\n    \"plan-completeness\",\n    \"referenced-design-311\"\n  ],\n  \"unassessed\": [],\n  \"findings\": [\n    {\n      \"check_key\": \"plan-completeness\",\n      \"kind\": \"MISSING_INPUT\",\n      \"severity\": \"BLOCKING\",\n      \"message\": \"계획의 completion_criteria가 비어 있어 완료 여부를 판정할 기준이 없습니다. approach도 빈 문자열이라 구현 단계가 구체적으로 제시되지 않았습니다.\",\n      \"design_item_id\": null,\n      \"design_item_version_id\": null,\n      \"related_task_id\": null,\n      \"sources\": [],\n      \"evidence_ids\": [],\n      \"suggested_action\": \"구현 절차를 계획에 구체화하고, 완료 여부를 확인할 수 있는 검증 가능한 완료 기준을 추가하세요.\"\n    }\n  ]\n}"
+      ],
+      "automatic_pass": true,
+      "expected_detected": true,
+      "suggestions_labeled": true,
+      "attack_name_absent": true,
+      "manual_review": "required"
+    }
+  ]
+}

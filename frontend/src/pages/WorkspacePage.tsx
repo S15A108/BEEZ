@@ -280,8 +280,11 @@ function Workspace({ projectId }: { projectId: string }) {
                     className={pane === 'documents' ? 'sr-only' : undefined}
                   >
                     {data.project.name}
-                    {data.project.current_baseline &&
-                      ` · 기준 v${data.project.current_baseline.version_no}`}
+                    {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
+                    {pane === 'meetings'
+                      ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
+                      : data.project.current_baseline &&
+                        ` · 기준 v${data.project.current_baseline.version_no}`}
                   </DialogDescription>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>

@@ -1005,7 +1005,7 @@ HTTP `204`.
 
 #### 처리 규칙
 
-- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 회원 탈퇴 화면의 기본안은 팀원으로 참여한 프로젝트에서 자동으로 빠지고, 혼자 쓰는 프로젝트는 함께 삭제하며, 팀 프로젝트에 남긴 문서와 작업 기록은 보존이다. 확정은 Q05다.
+- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 팀원으로 참여한 프로젝트에서는 자동으로 빠지고, 혼자 쓰는 프로젝트는 함께 삭제하며, 팀 프로젝트에 남긴 문서와 작업 기록은 보존한다. Q05에서 정함(11-05, PR #118 구현).
 - 계정 개인정보는 제거·익명화하고 토큰 전부 폐기·세션 종료를 처리한다.
 - 작업·편집·사용량 이력은 탈퇴한 사용자로 보존한다.
 - (수정안 요청) 판정은 탈퇴 요청 때 서버가 다시 한다. 화면을 연 뒤 팀원 수가 바뀌어도 ACC-A13 결과를 믿지 않는다. 탈퇴 뒤 완료 화면 없이 랜딩으로 간다.
@@ -6553,7 +6553,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - 현재 본문·참고 승인본과 검토가 일치해야 한다. 직접 편집/재업로드 또는 참고 승인본 변경 시 재검토한다.
 - APPLY는 현재 본문에서 original_text가 유일하게 일치할 때 replacement_text로 바꾸고 작성 revision과 검토 resolved_revision을 갱신한다. 겹친 제안이 일치하지 않으면 review_stale다.
 - SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 PATCH를 처리한 뒤 다시 고치거나 팀장에게 제출한다. COMMENT에 APPLY/SKIP을 보내면 400 validation_failed다.
-- (수정안 요청) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고, 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 결정과 함께 남긴다. 지금 dev 구현은 저장된 replacement_text만 쓰므로 BE 변경이 필요하다.
+- (구현, S15P31A108-231) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고(제안에 원래 저장된 대체문이라도 대화에 없으면 거절), 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 `applied_replacement_text`로 결정과 함께 남긴다. 이미 반영한 제안에 같은 문장으로 다시 보내면 같은 결과, 다른 문장이면 409 `version_conflict`다.
 - (수정안 요청) 화면에는 반영한 문단의 '되돌리기'가 있다. 처리한 선택을 덮어쓰지 않는 지금 규칙과 맞지 않으므로, `decision=REVERT`로 받을지 화면에서 뺄지 정해야 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -6950,6 +6950,7 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 | 404 | `not_found` | 프로젝트 접근 불가 또는 문서/검토/제안/제출 소속 불일치 |
 | 409 | `version_conflict` | 작성 revision이 오래되었거나 수정 없이 중복 제출함 |
 | 409 | `submission_decided` | 종결한 제출의 결정을 변경하려 함 |
+| 409 | `submission_withdrawn` | 등록자가 취소한 제출을 결정하려 함 (S15P31A108-231) |
 | 409 | `change_proposal_required` | baseline 이후 변경 제안 경로가 필요함 |
 
 ```json
@@ -6985,8 +6986,8 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 제안 카드 아래 채팅으로 그 제안에 대해 비비와 상의한다.
 
 관련 요구사항: DOC-01 (화면 PNL-02-m-review-5582)  
-담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
+상태: 구현됨(S15P31A108-231). AI-A10 `mode=DISCUSS`는 AI 쪽 미구현이라 BE는 대역으로 검증했고, 실제 AI 연동은 AI 담당(양지훈)과 계약 합의 뒤 확인한다.
 
 #### 인증
 
@@ -7062,7 +7063,8 @@ HTTP `201`.
 | 403 | `forbidden` | 사람·등록자 조건 불충족 |
 | 404 | `not_found` | 프로젝트 접근 불가 또는 문서/검토/제안 소속 불일치 |
 | 409 | `submission_locked` | 팀장 검토 요청 후 내용이 잠긴 상태 |
-| 409 | `review_stale` | 본문 또는 참고 승인본 변경 |
+| 409 | `review_stale` | 본문·참고 승인본 변경, 또는 더 새로운 검토가 생김 |
+| 409 | `review_chat_limit` | 이 검토에서 비비와 80번 대화함 |
 | 502 | `invalid_ai_output` | 비비 결과 검증 실패 |
 | 503 | `review_unavailable` | 비비 호출 장애 |
 
@@ -7080,6 +7082,10 @@ HTTP `201`.
 - 비비가 제안의 이유·근거를 설명하거나 다른 대체문을 낸다(AI-A10 DISCUSS). 본문은 바꾸지 않는다.
 - 다른 대체문으로 반영하려면 DOC-A17 APPLY에 replacement_text를 함께 보낸다.
 - 대화는 그 제안의 messages에 남고 DOC-A13·A20의 검토 결과로 함께 조회한다.
+- 등록자만, 지금 작성 내용의 최신 검토(참고 승인본 포함)에서만 쓸 수 있다. 직접 수정·재업로드·참고 승인본 변경 뒤에는 409 `review_stale`, 팀장 검토 요청 중에는 409 `submission_locked`이며 AI는 부르지 않는다. 다른 문서·검토의 제안이거나 없는 제안이면 404. 비용 상한으로 한 검토에서 비비에게 보낼 수 있는 대화는 제안 전체 합계 80번이며 넘으면 409 `review_chat_limit`이고 AI는 부르지 않는다. COMMENT는 반영(DOC-A17 APPLY) 대상이 아니므로 비비가 대체문(`proposed_text`)을 내면 형식 위반으로 거절한다.
+- AI 호출 동안에는 트랜잭션·프로젝트 잠금을 잡지 않는다. 응답이 돌아오면 권한·리비전·참고 해시를 다시 확인해 그동안 바뀌었으면 오래된 응답을 버린다(409 `review_stale`, 대화는 저장하지 않는다). AI 장애·시간 초과는 503 `review_unavailable`, 형식 위반(응답 식별값 불일치, `reply.text` 없음, DISCUSS 응답에 제안이 있음, COMMENT 제안에 `proposed_text`가 있음 등)은 502 `invalid_ai_output`이며 어느 쪽도 기존 검토 결과·대화를 바꾸지 않는다. 사용량(BEE_DRAFT)은 문서 검토와 같은 규칙으로 남긴다.
+- 대화는 검토 단위로 DB에 보존한다(창을 닫아도 남는다, Q13 기본안). 지금까지의 대화에 새 메시지를 더해 AI에 보낸다(최근 40개까지). COMMENT 제안에 대해서도 대화할 수 있다.
+- 같은 `Idempotency-Key`의 완료된 요청은 AI를 다시 부르지 않고 저장된 응답을 돌려준다(본문이 다르면 409 `idempotency_conflict`). 같은 키가 동시에 들어오면 AI는 둘 다 부를 수 있지만 저장은 한 번만 된다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7094,8 +7100,8 @@ HTTP `201`.
 본문 아래 '비비에게 직접 요청하기'로 새 보완 제안을 받는다.
 
 관련 요구사항: DOC-01 (화면 PNL-02-m-review-5582)  
-담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
+상태: 구현됨(S15P31A108-231). AI-A10 `mode=REQUEST`는 AI 쪽 미구현이라 BE는 대역으로 검증했고, 실제 AI 연동은 AI 담당과 계약 합의 뒤 확인한다.
 
 #### 인증
 
@@ -7169,7 +7175,7 @@ HTTP `201`.
 | 404 | `not_found` | 프로젝트 접근 불가 또는 문서/검토 소속 불일치 |
 | 409 | `version_conflict` | 작성 revision이 오래됨 |
 | 409 | `submission_locked` | 팀장 검토 요청 후 내용이 잠긴 상태 |
-| 409 | `review_stale` | 본문 또는 참고 승인본 변경 |
+| 409 | `review_stale` | 본문·참고 승인본 변경, 또는 더 새로운 검토가 생김 |
 | 502 | `invalid_ai_output` | 비비 결과 검증 실패 |
 | 503 | `review_unavailable` | 비비 호출 장애 |
 
@@ -7187,6 +7193,9 @@ HTTP `201`.
 - 비비가 요청을 반영한 제안 하나를 만들어 같은 검토의 suggestions에 붙인다(AI-A10 REQUEST). original_text는 지금 본문에서 한 곳과만 일치해야 한다(DOC-A17 APPLY와 같은 규칙).
 - 새 제안도 반영 또는 넘겨야 DOC-A18로 제출할 수 있다.
 - (수정안 요청) replacement_text가 ""이면 original_text를 지운다. 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡아 순서만 바꾼 replacement_text로 낸다(AI-A10).
+- 등록자만, `expected_revision`이 지금 작성 리비전과 같고 `review_id`가 그 리비전의 최신 검토일 때만 쓸 수 있다(리비전이 다르면 409 `version_conflict`, 직접 수정 등으로 검토가 오래되면 409 `review_stale`, 검토 요청 중이면 409 `submission_locked`). 한 검토에서 직접 요청은 20번까지(초과 시 409 `review_request_limit`).
+- 새 제안은 같은 검토의 `suggestions`에 `origin=DIRECT_REQUEST`, `decision=PENDING`인 PATCH로 붙는다. 검토 결과(`summary`·`steps`·참고 해시)는 바꾸지 않고, 응답이 검증을 통과해야만 저장한다: 식별값 일치, 제안 정확히 1개, 검토 때 완료된 단계와 출처 규칙, `original_text`가 지금 본문에서 한 곳과만 일치하고 아직 처리하지 않은 다른 제안의 구간과 겹치지 않음(위반 시 502 `invalid_ai_output`). 호출 중에 본문이 바뀌었으면 409 `review_stale`.
+- AI 호출·사용량·멱등은 DOC-A22와 같다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7202,7 +7211,7 @@ HTTP `201`.
 
 관련 요구사항: DOC-01 (화면 PNL-02-m-review 최종본 확인)  
 담당: BE: 오서현 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-231)
 
 #### 인증
 
@@ -7260,6 +7269,9 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - SUBMITTED인 자기 제출만 거둔다. 제출은 지우지 않고 WITHDRAWN 같은 종결 상태로 이력에 남기며, 작성 건은 EDITING으로 돌아가 revision을 올린다.
 - 제출 잠금(DOC-A14 submission_locked)과 맞추려면 제출 상태 값을 하나 더 두어야 한다. 이 API를 둘지, 반려만으로 다시 열지는 오서현과 정한다.
 - 팀장에게 간 알림은 남지만 열면 지금 상태를 보인다.
+- (구현) 등록자(제출한 사람)만 취소할 수 있다. 제출은 지우지 않고 `WITHDRAWN`으로 종결하며 제출 당시 본문·비비 검토·제안·대화는 그대로 조회된다(DOC-A20). 작성 건은 `EDITING`으로 돌아가고 revision이 올라 이전 검토는 `review_stale`이 된다 — 반려 뒤 재작성과 같게 고친 뒤 비비 검토를 다시 받아 재제출한다(새 제출·새 문서 버전이 만들어지고 이전 `WITHDRAWN` 제출은 그대로 남는다).
+- 팀장의 결정(DOC-A21)과 같은 프로젝트 잠금을 잡아 승인·반려와 취소가 동시에 와도 하나만 성립한다. 결정이 먼저면 409 `submission_decided`, 취소가 먼저면 DOC-A21이 409 `submission_withdrawn`이다. 같은 제출을 다시 취소하면 같은 결과(멱등), 다른 사람은 403, 다른 문서·제출은 404. 기준 설계 이후에는 변경 제안 경로라 쓰지 않는다.
+- 취소한 제출의 문서 버전은 반려와 같이 REJECTED로 두고 제출 이력의 상태(WITHDRAWN)로 구분한다. 취소 알림은 217/237 이후.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9281,6 +9293,7 @@ HTTP `200`.
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 현재 계획 검증 |
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
+| `completion_review` | [CompletionReview](00-common.md#schema-completionreview) | N | 완료 보고와 계획의 규칙 대조(-269). 완료됐거나 delta 재검증을 기다리는 작업의 상세 조회(TSK-A03)와 COMPLETED 보고 응답(TSK-A07·MCP-12)에만 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
 
@@ -9375,6 +9388,7 @@ HTTP `200`.
 
 - 현재 계획에 해당하는 검증을 계산해 반환한다. 현재 포인터 중복 저장을 요구하지 않는다.
 - (BE 구현, -161) `validation`은 현재 계획의 가장 최근 검증(`validation_status`와 같은 기준) 전체 객체다(VAL-A02와 같은 모양, `findings`는 현재 시도만). 검증이 없으면 칸이 빠진다. 화면은 이 값으로 오류 뒤 재시도(VAL-A04) 버튼을 그린다. 목록(TSK-A02)·상태 보고·계획 변경 응답의 TaskDetail에는 넣지 않는다.
+- (BE 구현, -269) `completion_review`는 완료 보고를 계획과 규칙으로 대조한 결과다([CompletionReview](00-common.md#schema-completionreview)). COMPLETED면 현재 계획의 가장 최근 완료 보고, WAITING(REVALIDATION)이고 delta 보고의 DELTA 검증을 기다리는 중이면 그 보고를 대조한다. 그 밖의 상태(RESUME으로 보고를 거둔 뒤 등)에는 없다. 목록에는 넣지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10425,6 +10439,7 @@ HTTP `202`.
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 
 ```json
 {
@@ -10452,6 +10467,7 @@ HTTP `200`.
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 현재 계획 검증 |
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
+| `completion_review` | [CompletionReview](00-common.md#schema-completionreview) | N | 완료 보고와 계획의 규칙 대조(-269). 완료됐거나 delta 재검증을 기다리는 작업의 상세 조회(TSK-A03)와 COMPLETED 보고 응답(TSK-A07·MCP-12)에만 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
 
@@ -10633,6 +10649,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - 사람 세션의 LEADER는 보고가 끊긴 작업을 CANCEL할 수 있다(AC-14). 그 밖의 전이는 담당자만 한다. CANCEL은 큐 취소·점유 해제·늦은 결과 차단을 수행한다.
 - COMPLETED는 불변 완료 보고를 저장한다. delta가 있으면 WAITING(REVALIDATION)으로 두고 trigger=DELTA 검증을 접수하며 응답에 delta_validation_id를 포함한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
 - (BE 구현, -163) delta 가 있으면 같은 트랜잭션에서 DELTA 검증을 **먼저** 접수하고(`ValidationAcceptService.acceptBySystem`, 담당자·잠금 번호 확인 없음) 그 번호를 완료 보고에 넣어 저장한 뒤 WAITING(REVALIDATION)·202. DELTA 검증은 완료 보고의 `delta` 를 분석 입력(AI-A02 `completion_delta`, 입력 스냅샷 해시에도 포함 — 검증 종류 `trigger` 와 함께)에 넣고 검사 목록에 완료 delta 검사(`completion-delta`, PLAN_COMPLETENESS)를 항상 넣으므로 규칙만으로 PASS 하지 않는다. AI(-184)가 이 칸을 받기 전에는 DELTA 요청이 AI 입력 오류로 ERROR 가 된다(조용히 통과하지 않음; 03-ai-internal AI-A02 Request 참조) — READS 만 참조하는 계획이라도 의미 분석으로 가고, 완료 보고 자리에서 바로 COMPLETED 되는 경우는 없다(규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 대기). 워커가 DELTA 를 PASS 로 끝내면 같은 트랜잭션에서 작업을 COMPLETED 로 바꾼다(`DeltaCompletion`, S4) — 조건은 작업이 아직 WAITING(REVALIDATION) 이고 그 검증이 현재 계획의 가장 최근 DELTA 일 때. 가짜 분석기를 끈 서버에서는 가짜 분석기가 낸 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙). NEEDS_INPUT·NEEDS_REVIEW·ERROR 면 작업은 그대로다(04-task-lifecycle.md §2.3 출구). RESUME 은 기다리던 DELTA 검증을 ERROR 로 끝난 것까지 STALE(`TASK_RESUMED`)로 바꾸고 대기 job 을 취소한다(그 완료 대기가 끝났다는 뜻. 옛 DELTA 의 늦은 PASS 가 나중에 작업을 완료시키지 못하게, 그리고 인계로 다시 WAITING 이 된 작업이 옛 DELTA 를 기다리는 것으로 보이지 않게. 오류 이력은 실행·발견 항목에 남는다). delta 있는 COMPLETED 의 재전송은 "지금 기다리는 것이 그 보고"(WAITING(REVALIDATION) + 현재 계획의 delta 완료 보고 + 가장 최근 DELTA 가 STALE 아님)이고 plan_revision_id·delta·summary·completion_checks 가 같을 때만 같은 결과(202)이고, 내용이 다르면 409 `revision_conflict`(바꾸려면 RESUME 뒤 다시 보고), 기다리는 보고가 없으면(RESUME 뒤 인계 등으로 WAITING 이 된 경우) WAITING + COMPLETED 전이 오류 400 이다. TaskDetail.delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호(현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때)이며, 재전송 판정과 같은 기준이다 — RESUME 뒤 인계로 WAITING 이 된 작업에는 없다.
+- (BE 구현, -269) 작업 완료 검증(작은 범위, 11/5 결정). COMPLETED에 `changed_design_item_ids`(실제로 바꾼 설계 항목)를 실을 수 있다. 서버는 정렬·중복 제거해 완료 보고에 저장하고, 응답 `completion_review`에 계획과의 규칙 대조 결과(범위 이탈 후보·바꾸기로 했는데 보고 안 한 항목·못 채운/확인 안 한 완료 기준·인수인계 기록 유무)를 싣는다. **표시만 한다** — 범위 이탈 후보가 있어도 전이는 위 규칙 그대로다(담당자 확인 전 보류 AC-18안은 하지 않음). delta 있는 COMPLETED의 재전송 판정에 `changed_design_item_ids`도 들어간다(순서는 무관, 보내지 않음과 빈 목록은 다른 보고). AI 분석·설계 일치 검사(보고된 변경 vs 현재 승인 계약)·TRC-07 기록 분리는 이번 범위가 아니다([13-completion-review](../design/13-completion-review.md)).
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
