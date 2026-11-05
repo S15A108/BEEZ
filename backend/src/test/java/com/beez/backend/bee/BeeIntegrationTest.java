@@ -88,7 +88,7 @@ class BeeIntegrationTest extends IntegrationTestSupport {
                 insert into document_bee_review_request(document_id, account_id, request_key, fingerprint, status, created_at)
                 values (?, ?, 'k', 'f', ?, now() - make_interval(mins => ?))
                 """, document, project.leaderAccountId(), status, minutesAgo);
-        return version;
+        return document;
     }
 
     private long meeting(long projectId, String title, String status, int minutesAgo) {
@@ -193,13 +193,13 @@ class BeeIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void status_runningReview_showsDocumentVersionAndLabel() {
-        long version = review(project.projectId(), "알림 API 명세서", "RUNNING", 1);
+        long document = review(project.projectId(), "알림 API 명세서", "RUNNING", 1);
 
         JsonNode body = status(member, project.projectId());
 
         assertThat(body.get("activity").asText()).isEqualTo("DOCUMENT_REVIEW");
-        assertThat(body.get("target_type").asText()).isEqualTo("DOCUMENT_VERSION");
-        assertThat(body.get("target_id").asText()).isEqualTo(Long.toString(version));
+        assertThat(body.get("target_type").asText()).isEqualTo("DOCUMENT");
+        assertThat(body.get("target_id").asText()).isEqualTo(Long.toString(document));
         assertThat(body.get("label").asText()).isEqualTo("알림 API 명세서 검토 중");
     }
 
@@ -219,7 +219,7 @@ class BeeIntegrationTest extends IntegrationTestSupport {
         assertThat(meetingOnly.get("activity").asText()).isEqualTo("MEETING");
         assertThat(meetingOnly.get("target_type").asText()).isEqualTo("MEETING");
         assertThat(meetingOnly.get("target_id").asText()).isEqualTo(Long.toString(meeting));
-        assertThat(meetingOnly.get("label").asText()).isEqualTo("로그인 충돌 회의 중");
+        assertThat(meetingOnly.get("label").asText()).isEqualTo("'로그인 충돌' 진행 중");
 
         review(project.projectId(), "최근 문서", "RUNNING", 1);
         assertThat(status(member, project.projectId()).get("activity").asText()).isEqualTo("DOCUMENT_REVIEW");

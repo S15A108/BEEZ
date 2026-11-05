@@ -11704,14 +11704,14 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `activity` | `DOCUMENT_REVIEW\|MEETING\|IDLE` | Y | 지금 하는 일 |
-| `target_type` | `DOCUMENT_VERSION\|MEETING` | N | 대상 종류 |
+| `target_type` | `DOCUMENT\|MEETING` | N | 대상 종류. 문서 검토는 작성 사본이라 버전이 아닌 DOCUMENT |
 | `target_id` | `ID` | N | 대상 |
 | `label` | `string` | N | 표시 문구. 예: '알림 API 명세서 검토 중' |
 
 ```json
 {
   "activity": "DOCUMENT_REVIEW",
-  "target_type": "DOCUMENT_VERSION",
+  "target_type": "DOCUMENT",
   "target_id": "212",
   "label": "알림 API 명세서 검토 중"
 }
@@ -11736,7 +11736,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 진행 중인 문서 검토(DOC-A16 실행 중)나 OPEN 회의에서 계산한다. 여러 개면 가장 최근 것 하나를 준다.
-- 검토는 시작한 지 10분이 지나도 끝나지 않으면 멈춘 것으로 보고 제외한다. `target_id`는 검토 중 문서의 기준 버전(없으면 최초 버전) ID, `label`은 서버가 "문서 이름 검토 중" / "회의 이름 회의 중"으로 만든다. 한가하면 `activity`만 `IDLE`로 내려간다. 문서·회의는 프로젝트 멤버 모두에게 보이므로 대상 정보를 멤버에게 그대로 준다.
+- 검토는 시작한 지 10분이 지나도 끝나지 않으면 멈춘 것으로 보고 제외한다. `target_id`는 검토 중인 문서 ID(프론트가 문서 ID로 문서를 연다), `label`은 서버가 문서는 "문서 이름 검토 중", 회의는 "'회의 제목' 진행 중"으로 만든다. 한가하면 `activity`만 `IDLE`로 내려간다. 문서·회의는 프로젝트 멤버 모두에게 보이므로 대상 정보를 멤버에게 그대로 준다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

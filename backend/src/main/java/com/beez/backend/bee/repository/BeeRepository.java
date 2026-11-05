@@ -38,12 +38,12 @@ public class BeeRepository {
 
     /**
      * 실행 중인 문서 검토(최근 staleMinutes 분 안)와 열린 회의 중 가장 최근 하나.
-     * 검토는 표시용 문서 버전으로 작성 사본의 기준 버전(없으면 최초 버전)을 쓴다.
+     * 검토 대상은 아직 버전이 아닌 작성 사본이라 문서 ID 를 쓴다.
      */
     public Optional<Activity> latestActivity(long projectId, int staleMinutes) {
         return jdbc.sql("""
                         select kind, target_id, title from (
-                          select 'DOCUMENT_REVIEW' as kind, coalesce(w.base_version_id, w.initial_version_id) as target_id,
+                          select 'DOCUMENT_REVIEW' as kind, d.id as target_id,
                                  d.title as title, r.created_at as at
                             from document_bee_review_request r
                             join document_working_copy w on w.document_id = r.document_id

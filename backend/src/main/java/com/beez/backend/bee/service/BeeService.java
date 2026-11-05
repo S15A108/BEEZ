@@ -54,8 +54,8 @@ public class BeeService {
     public BeeStatusResponse status(CallerContext caller, long projectId) {
         access.requireMember(caller, projectId);
         return repository.latestActivity(projectId, RUNNING_REVIEW_MINUTES).map(a -> a.kind().equals("MEETING")
-                        ? new BeeStatusResponse("MEETING", "MEETING", Ids.str(a.targetId()), a.title() + " 회의 중")
-                        : new BeeStatusResponse("DOCUMENT_REVIEW", "DOCUMENT_VERSION", Ids.str(a.targetId()),
+                        ? new BeeStatusResponse("MEETING", "MEETING", Ids.str(a.targetId()), "'" + a.title() + "' 진행 중")
+                        : new BeeStatusResponse("DOCUMENT_REVIEW", "DOCUMENT", Ids.str(a.targetId()),
                                 a.title() + " 검토 중"))
                 .orElseGet(BeeStatusResponse::idle);
     }
