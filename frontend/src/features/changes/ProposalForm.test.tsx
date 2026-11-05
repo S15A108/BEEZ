@@ -395,3 +395,58 @@ it('직접 쓴 고친 글에 제어 문자가 있으면 올리지 않는다', as
   ).toBeInTheDocument()
   expect(onSubmit).not.toHaveBeenCalled()
 })
+
+// PR #135 리뷰(오서현): A 문서에서 고른 파일을 읽는 동안 B 문서로 바꾸면, 늦게 끝난 A 파일 내용이 B의 고친 글에 들어가
+// B의 문서 ID·기준 버전에 A의 본문이 붙어 올라갔다. 읽기를 시작한 문서와 요청이 그대로일 때만 고친 글에 넣는다.
+it('파일을 읽는 동안 고칠 문서를 바꾸면 늦게 끝난 파일 내용을 바꾼 문서의 고친 글에 넣지 않는다', async () => {
+  const user = userEvent.setup()
+  const originals: Record<string, Loaded> = {
+    '203': { content: '# 요구사항\n원문', versionId: '2031' },
+    '204': { content: '# API\n원문', versionId: '2041' },
+  }
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[
+          { id: '203', label: '요구사항 명세서', versionId: '2031' },
+          { id: '204', label: 'API 명세서', versionId: '2041' },
+        ]}
+        fetchDocumentContent={(id) => Promise.resolve(originals[id])}
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n원문'))
+  let finish: (buffer: ArrayBuffer) => void = () => undefined
+  const slow = new File(['# 요구사항\nA 파일'], 'a.md')
+  Object.assign(slow, {
+    arrayBuffer: () => new Promise<ArrayBuffer>((done) => (finish = done)),
+  })
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '204')
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  await waitFor(() => expect(text()).toHaveValue('# API\n원문'))
+  finish(new TextEncoder().encode('# 요구사항\nA 파일').buffer as ArrayBuffer)
+  await new Promise((done) => setTimeout(done, 0))
+  expect(text()).toHaveValue('# API\n원문')
+  expect(
+    screen.queryByText('a.md 내용을 고친 글에 넣었어요.'),
+  ).not.toBeInTheDocument()
+})

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -144,6 +144,8 @@ export function ProposalForm({
     !!shownVersion && !!latestVersion && shownVersion !== latestVersion
   const [source, setSource] = useState<'write' | 'file'>('write')
   const [fileNote, setFileNote] = useState('')
+  // 파일 읽기 요청 번호. 새 파일을 고르면 올라가, 늦게 끝난 앞 요청의 결과를 버린다.
+  const fileRequest = useRef(0)
   // 파일 한 개를 읽어 고친 글로 넣고 글 쓰기 탭으로 돌아가 내용을 보여 준다. 크기는 CHG-A01 본문 한도(1 MiB)를 따른다.
   // 서버처럼 UTF-8로만 읽고(깨진 바이트를 U+FFFD로 바꾸지 않는다) 글자 수·제어 문자도 넣기 전에 본다. 맞지 않는 파일은
   // 고친 글을 바꾸지 않고 알리기만 한다. 읽기 실패도 여기서 받아 처리하지 않은 거절이 남지 않는다(PR #135 리뷰).
@@ -158,7 +160,9 @@ export function ProposalForm({
       })
       return
     }
-    let text: string
+    const request = ++fileRequest.current
+    const startedFor = getValues('document_id')
+    let text: string | undefined
     try {
       text = normalizeDocument(
         new TextDecoder('utf-8', { fatal: true }).decode(
@@ -166,6 +170,16 @@ export function ProposalForm({
         ),
       )
     } catch {
+      text = undefined
+    }
+    // 읽는 동안 고칠 문서를 바꾸거나 다른 파일을 고르면 이 결과는 버린다. A 문서에서 고른 파일이 B 문서의
+    // 고친 글에 들어가 B의 문서 ID·기준 버전으로 올라가던 것을 막는다(PR #135 리뷰).
+    if (
+      request !== fileRequest.current ||
+      getValues('document_id') !== startedFor
+    )
+      return
+    if (text === undefined) {
       setError('after_content', {
         message: '파일을 읽지 못했어요. UTF-8로 저장한 파일만 올릴 수 있어요.',
       })
