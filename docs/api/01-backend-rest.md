@@ -250,7 +250,7 @@ HTTP `201`.
 - 계정 생성과 이메일 유일성 검사를 원자적으로 처리한다.
 - 가입 응답으로 로그인 세션을 만들지 않는다. 로그인 API를 별도로 호출한다.
 - (수정안 요청) 가입 전에 ACC-A11·A12로 이메일을 인증한다. `verified_token`의 이메일과 요청 email이 같아야 하고, 토큰은 가입 성공 때 소비한다.
-- 검사 순서(-219 구현): 필드 검사(`validation_failed`) → 비밀번호 규칙(`password_policy_violation`) → `verified_token`(`email_not_verified`) → 이메일 중복(409 `email_already_exists`). 그래서 토큰 없이 보내면 이미 가입한 이메일이어도 400 `email_not_verified`가 먼저 나온다. 이미 가입한 이메일은 보통 ACC-A11에서 409로 걸러진다. 토큰 검사 뒤 409로 실패하면 가입이 되돌려져 토큰은 소비되지 않는다.
+- 검사 순서(-219 구현): 필드 검사(`validation_failed`) → 비밀번호 규칙(`validation_failed`, `message`가 `password:`로 시작) → `verified_token`(`email_not_verified`) → 이메일 중복(409 `email_already_exists`). 비밀번호 규칙 위반은 지금 구현에서 위 오류 표의 `password_policy_violation`이 아니라 `validation_failed`이고 `details.violations`도 없다. `password_policy_violation`으로 옮길지는 ACC-A06과 함께 따로 정한다(PR #118 알려진 한계 6). 그래서 토큰 없이 보내면 이미 가입한 이메일이어도 400 `email_not_verified`가 먼저 나온다. 이미 가입한 이메일은 보통 ACC-A11에서 409로 걸러진다. 토큰 검사 뒤 409로 실패하면 가입이 되돌려져 토큰은 소비되지 않는다.
 - (수정안 요청) 비밀번호 규칙은 ACC-A06·임시 비밀번호와 같다. 화면도 같은 규칙으로 미리 검사하지만 최종 판정은 서버다.
 - (수정안 요청 · 자동 참여, Q05 정함) 가입하면 그 이메일로 대기(PENDING) 중인 초대를 멤버십으로 바꾸고 초대의 `accepted_at`을 채운다. 규칙은 ACC-A02 로그인과 같다. 인증한 이메일(verified_token)로만 바꾸므로 ACC-A11·A12와 같이 또는 그 뒤에 배포한다.
 
