@@ -23,9 +23,17 @@
 
 **지금 dev에서는 발행 후 영향 분석이 아예 돌지 않는다.** 접수행 INSERT는 설정과 상관없이 들어가지만
 (`PublishedAnalysisRepository.accept`), 이를 처리하는 복구 스캔(`PublishedAnalysisDispatcher`)은
-`beez.cdc.intake.enabled=true`일 때만 생긴다. 켜는 설정은 Kafka 접속 정보를 함께 요구하므로
-(`AnalysisIntakeKafkaConfiguration`) Kafka 없이 스캔만 켤 수는 없다. 따라서 이 배포는 지연을 줄이는 일이
-아니라 **dev에서 분석 기능을 처음 켜는 일**이다. 켠 뒤 Kafka가 앞당기는 시간은 복구 스캔 주기(2초) 이내다.
+`beez.cdc.intake.enabled=true`일 때만 생긴다. 켜는 설정은 Kafka 접속 정보(bootstrap·group·topic)도 비어 있지
+않아야 한다(`AnalysisIntakeKafkaConfiguration`). 따라서 이 배포는 지연을 줄이는 일이 아니라 **dev에서 분석 기능을
+처음 켜는 일**이다.
+
+- **Kafka가 줄여 주는 시간은 약 30초다.** 복구 스캔은 2초마다 돌지만, 요청된 지 30초가 지난 PENDING만 집는다
+  (`PublishedAnalysisRepository.findCandidates`의 `requested_at <= now - 30초`). 그래서 Kafka가 없거나 멈추면
+  새 발행은 약 30~32초 뒤에 처리되고, Kafka가 있으면 바로 깨어난다.
+- **검토했지만 택하지 않은 우회**: 닿지 않는 bootstrap 주소를 넣고 `enabled=true`로 켜면, broker 없이도 기동하므로
+  복구 스캔만 돌릴 수 있다. 하지만 consumer가 연결 실패 경고를 계속 남기고, `beez_cdc_analysis_consumer_enabled`가
+  1이 돼 대시보드가 CDC가 켜진 것처럼 보인다. 코드가 의도한 구성이 아니므로(#227 문서 "소비자만 따로 켜는 구성은
+  지원하지 않는다"의 반대 경우) dev에서도 쓰지 않는다. 일정이 밀려 분석을 먼저 돌려야 하면 D8에서 다시 정한다.
 
 ## 2. 현재 상태 (11-05 확인)
 
@@ -43,12 +51,13 @@
 | backend CDC 설정 | `beez.cdc.intake.enabled`·`bootstrap-servers`·`group-id`·`topic` 모두 있어야 기동. 켜면 2초 주기 복구 스캔도 같이 켜짐 | `AnalysisIntakeKafkaConfiguration`, `PublishedAnalysisDispatcher` |
 | backend env 전달 | `infra/compose.yaml` backend `environment`에 **나열한 변수만** 들어감. CDC 변수는 아직 없음 | compose |
 | 저장소 CDC 자료 | `infra/cdc/compose.yaml`은 운영용 검토안(Connect만, TLS 전제, 전용 망)이고 broker는 없음. 커넥터·publication은 `intake.*.review.*` 검토안 | `infra/cdc/` |
-| 검증된 조합 | **서버와 같은 pgvector digest(PG17)** + `apache/kafka:3.9.1` + `debezium/connect:2.7.3.Final` (`cdc-poc/consumer-recovery`·`snapshot-boundary`). `postgres:17.6`에서도 같은 2.7.3으로 컬럼 단위 SELECT 권한만 준 초기 스냅샷까지 확인(`cdc-poc/document-capture`) | `infra/cdc-poc/*/compose.yaml` |
+| 검증된 조합 | **서버와 같은 pgvector digest(PG17)** + `apache/kafka:3.9.1` + `debezium/connect:2.7.3.Final` (`cdc-poc/consumer-recovery`·`snapshot-boundary`, 둘 다 `snapshot.mode=no_data`). `postgres:17.6`에서 같은 2.7.3으로 컬럼 단위 SELECT 권한만 준 초기 스냅샷까지 확인(`cdc-poc/document-capture`, snapshot override 없음). **실제로 쓸 조합(pgvector 이미지 + 접수 테이블 publication + snapshot override + `SELECT (id, status)`)은 함께 돌려 본 적이 없다** → 295에서 먼저 로컬 리허설 | `infra/cdc-poc/*/compose.yaml` |
+| Connect 이미지 | `debezium/connect:2.7.3.Final`은 `uid=1001(kafka)`로 돌고, 안에 든 Kafka Connect는 3.7.0 | 로컬 `docker run … id` |
 | 배포 스크립트 | `deploy.sh`가 본 compose를 `up -d --remove-orphans --wait`로 올림. 헬스 실패 시 로그를 남기고 멈출 뿐 자동 롤백은 없음 | `infra/deploy/deploy.sh` |
 
 **알아 둘 성질** — Kafka 메시지는 "DB를 다시 보라"는 힌트일 뿐이고, 처리 대상은 DB 상태로 정한다.
-consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이 오래된 PENDING을 찾는다. 그래서 **켠 뒤** CDC가
-멈추면 지연이 생기지 데이터가 사라지지는 않는다(#227 문서 6번). 아래 제안은 이 성질을 근거로 dev 구성을
+consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘은 PENDING을 찾는다. 그래서 **켠 뒤** CDC가
+멈추면 약 30초의 지연이 생기지 데이터가 사라지지는 않는다(#227 문서 6번). 아래 제안은 이 성질을 근거로 dev 구성을
 단순하게 가져간다.
 
 ## 3. 결정 제안
@@ -98,8 +107,16 @@ consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이
 - **줄이는 위험**
   - Connect REST(커넥터 설정 변경 가능)는 `listeners=http://127.0.0.1:8083`으로 **컨테이너 안에서만** 열고,
     관리는 `docker exec`로 한다.
-  - 복제 계정은 전용(`beez_cdc`)으로 만들고, 비밀번호는 서버 `/opt/beez/.env.cdc`(600)와 Connect file config
-    provider로만 넘긴다. 저장소·로그·명령 이력에 남기지 않는다.
+  - 복제 계정은 전용(`beez_cdc`)으로 만들고, 비밀번호는 서버 파일 하나와 Connect file config provider로만 넘긴다.
+    저장소·로그·명령 이력에 남기지 않는다. 파일 배치는 아래 "비밀 파일"을 따른다.
+- **비밀 파일**: 바인드 마운트는 호스트 파일 권한을 그대로 쓰는데, Connect 컨테이너는 `uid=1001(kafka)`로 돈다.
+  600으로 두면 Connect가 읽지 못해 커넥터 등록이 실패한다(모니터링의 Mattermost 웹훅 파일과 같은 함정,
+  `infra/monitoring/compose.yaml`의 secrets 주석).
+  - 디렉터리 `/opt/beez/cdc/secrets`는 `root:1001` `750`, 파일 `database.properties`(`password=…` 한 줄)는
+    `root:1001` `640`으로 둔다. 컨테이너에는 디렉터리를 읽기 전용으로 붙인다(`/run/cdc-secrets`).
+  - 파일은 **293**에서 복제 계정을 만들 때 비밀번호와 함께 쓴다(디렉터리가 없으면 293이 위 권한으로 만든다).
+    294는 디렉터리 마운트와 provider 설정(`CONNECT_CONFIG_PROVIDERS=file`)만 한다. provider는 커넥터를 등록할 때
+    (295) 파일을 읽으므로, 293과 294 중 어느 쪽이 먼저 끝나도 된다.
 - **남는 위험 (수용 여부를 함께 승인한다)**: Kafka는 `beez_default`에 붙은 모든 컨테이너(ai·backend·seaweedfs·postgres,
   모니터링의 prometheus·postgres-exporter)가 **읽고 쓸 수 있다.**
   - Connect 설정 토픽에 직접 쓰면 REST를 막은 효과를 우회해 커넥터를 바꿀 수 있다. 복제 권한은 publication과
@@ -125,8 +142,10 @@ consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이
     재스냅샷이 필요하지만, 복구 스캔 덕분에 분석 누락은 없다.
   - `max_replication_slots`·`max_wal_senders`는 지금 값(10)으로 충분해 바꾸지 않는다.
 - **주의**: compose의 postgres 정의가 바뀌면 그 PR이 dev에 머지될 때 **CD가 postgres를 다시 만든다**
-  (`deploy.sh`의 `up -d`). 그래서 293 PR의 **머지 시각 = 재시작 시각**이다. 머지 시각을 팀에 미리 공지하고 그때
-  머지한다. 재시작은 수 초~수십 초이고 볼륨은 유지된다.
+  (`deploy.sh`의 `up -d`). 재시작은 머지 때 바로가 아니라, CD가 이미지를 만들고 Jenkins가 배포하는 **머지 약
+  3분 뒤**에 일어난다. 새 SHA 이미지라 backend·ai도 함께 다시 뜨고, backend는 헬스가 healthy가 될 때까지 최대
+  60초(`start_period`)가 걸린다. 그래서 **공지 창은 "머지 시각부터 10분"**으로 잡고, 그 시각에 머지한 뒤 배포가 끝날
+  때까지 지켜본다. 볼륨은 유지된다.
 - **되돌리기 전제**: 논리 복제 슬롯이 남아 있는 채로 `wal_level`을 `replica`로 내리면 PostgreSQL이
   `logical replication slot "…" exists, but wal_level < logical`로 **기동을 거부한다.** `command`를 되돌리는 PR은
   슬롯을 지운 뒤에만 머지한다(§4 되돌리기 순서).
@@ -144,7 +163,10 @@ consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이
 - **DELETE 금지**: consumer는 DELETE 이벤트를 건너뛰지 않고 재시도하므로(`AnalysisIntakeEventPolicy`), 접수행을
   손으로 지우면 그 파티션이 영구히 막힌다. 앱에는 삭제 경로가 없다(FK에 cascade 없음). 런북에 "접수행 삭제 금지"를
   적는다.
-- 착수 전 `python infra/cdc/check_contract.py`로 컬럼 목록이 현재 스키마와 맞는지 확인한다.
+- **계약 확인은 DB를 직접 조회한다.** `infra/cdc/check_contract.py`는 문서 캡처용 검토안(`connector.review.json`·
+  `publication.review.sql`)만 검사하고 접수 테이블은 보지 않는다. 그래서 돌려도 이 계획을 확인한 것이 아니다.
+  - 착수 전: `\d published_change_analysis`에 `id`·`status`가 있고 replica identity가 default(PK `id`)인지 본다.
+  - 생성 후: `SELECT attnames FROM pg_publication_tables WHERE pubname = 'beez_published_analysis_cdc'`가 `{id,status}`인지 본다.
 
 ### D6. 커넥터 설정 (승인: **양지훈**) → 295
 
@@ -158,11 +180,21 @@ consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이
 | `slot.name` | `beez_published_analysis` |
 | `snapshot.mode` | `initial` 유지. 지금 접수 테이블은 0행이라 스냅샷 부담이 없다 |
 | `tombstones.on.delete` | `true` 유지(consumer가 tombstone을 처리함) |
-| 그 밖의 키 | 검토안 그대로 |
+| `heartbeat.interval.ms` | **넣지 않는다**(아래) |
+| 그 밖의 키 | 검토안 그대로(`snapshot.select.statement.overrides` 포함) |
 
+- **heartbeat를 쓰지 않는 이유**: 접수 테이블은 거의 바뀌지 않는다. PG15 이상 pgoutput은 빈 트랜잭션을 보내지
+  않으므로, 다른 테이블에 쓰기가 있는 동안 슬롯의 보유 WAL이 그만큼 늘어난다. 하지만 dev WAL 생성량은 1주에 약
+  19MB라 10GB 상한(D4)에 닿지 않는다. heartbeat를 켜면 heartbeat 토픽(`__debezium-heartbeat.beez`)을 손으로 더
+  만들어야 하고(D2 자동 생성 끔), 슬롯을 확실히 앞당기려면 DB에 쓰는 `heartbeat.action.query`와 그 테이블을
+  publication에 넣어야 한다. 복제 계정을 읽기 전용·컬럼 2개로 묶어 둔 D5와 부딪히므로 dev에서는 쓰지 않는다.
+  대신 261의 WAL 알림은 "증가 추세"가 아니라 **보유량 절댓값(예: 1GB 초과)과 슬롯 비활성 지속 시간**으로 건다.
 - **커넥터를 다시 만들 때**: distributed 모드에서는 커넥터를 지워도 offset 토픽에 마지막 LSN이 남는다. 같은 이름으로
-  다시 등록하면 새 슬롯에 옛 LSN으로 이어 붙으려 한다. 슬롯을 지웠거나 슬롯이 무효화된 뒤에는 **새 커넥터 이름으로
-  등록하거나**, 커넥터를 멈춘 뒤 `DELETE /connectors/{name}/offsets`(Kafka 3.6 이상)로 offset을 지우고 등록한다.
+  다시 등록하면 새 슬롯에 옛 LSN으로 이어 붙으려 한다. 슬롯을 지웠거나 슬롯이 무효화된 뒤에는 둘 중 하나로 한다.
+  - **새 커넥터 이름으로 등록한다**(기본). 옛 offset은 쓰이지 않고 남는다.
+  - 같은 이름을 써야 하면, 커넥터를 **지우기 전에** `PUT /connectors/{name}/stop`으로 STOPPED 상태로 만들고
+    `DELETE /connectors/{name}/offsets`로 offset을 지운 뒤 커넥터를 지운다. offset API는 커넥터가 STOPPED 상태로
+    남아 있어야 쓸 수 있다(pause로는 안 된다). 이미지에 든 Kafka Connect 3.7.0이 이 API(3.6 이상)를 지원한다.
 
 ### D7. backend 켜기 (승인: **양지훈**) → 295
 
@@ -203,38 +235,48 @@ consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이
 
 | # | 티켓 | 단계 | 확인 |
 |---|---|---|---|
-| 1 | 293 | PR: `infra/compose.yaml` postgres `command`(D4), 런북. 공지한 시각에 머지 → CD가 postgres 재생성 | `SHOW wal_level` = `logical`, backend healthy |
-| 2 | 293 | 복제 계정·publication 생성(D5) | `pg_publication_tables`, `beez_cdc`로 다른 컬럼 SELECT 거부 |
+| 1 | 293 | PR: `infra/compose.yaml` postgres `command`(D4), 런북. 공지한 시각에 머지 → 약 3분 뒤 CD가 postgres 재생성 | `SHOW wal_level` = `logical`, backend healthy |
+| 2 | 293 | 복제 계정·publication 생성, 비밀 파일 배치(D3·D5) | `pg_publication_tables.attnames` = `{id,status}`, `beez_cdc`로 다른 컬럼 SELECT 거부, 파일 `root:1001 640` |
 | 3 | 294 | PR: dev용 compose·Connect 설정 템플릿, `cd.yml` paths-ignore, 런북. `beez-cdc` 기동(D1~D3) | 컨테이너 healthy, `ss -tlnp`에 새 포트 없음, backend·ai에서 Connect REST 안 닿음 |
 | 4 | 294 | 접수 토픽 생성(D2) | `kafka-topics --describe` |
-| 5 | 295 | PR: backend env 기본 꺼짐(D7). 커넥터 등록(D6) | connector·task RUNNING, 슬롯 `active` |
-| 6 | 295 | PENDING 개수 확인 → 서버 env로 consumer 켜고 backend 재배포(D7) | `consumer_enabled`=1, Kafka 수신 실패 0 |
-| 7 | 295 | 변경 제안 1건 발행 | 접수행 PENDING → COMPLETED, 대시보드 `beez_cdc_*` |
-| 8 | 295 | 재시작 시험: backend·Connect·Kafka 각각, Kafka를 멈춘 채 backend 재시작 | 유실 없이 이어짐, backend healthy |
+| 5 | 295 | **로컬 리허설**: 서버와 같은 pgvector digest + `debezium/connect:2.7.3.Final`로 이 계획의 publication·계정 권한·커넥터 설정(override 포함)을 그대로 돌림 | 초기 스냅샷 `r`과 이후 `c`/`u`가 id·status만 담아 도착, Connect가 비밀 파일을 읽음 |
+| 6 | 295 | PR: backend env 기본 꺼짐(D7). 서버에 커넥터 등록(D6) | connector·task RUNNING, 슬롯 `active` |
+| 7 | 295 | PENDING 개수 확인 → 서버 env로 consumer 켜고 backend 재배포(D7) | `consumer_enabled`=1, Kafka 수신 실패 0 |
+| 8 | 295 | 변경 제안 1건 발행 | 접수행 PENDING → COMPLETED가 30초보다 빨리 끝남(Kafka 경로), 대시보드 `beez_cdc_*` |
+| 9 | 295 | 재시작 시험: backend·Connect·Kafka 각각, Kafka를 멈춘 채 backend 재시작 | 유실 없이 이어짐, backend healthy |
 
-1~2(293)와 3~4(294)는 순서가 없다. 7·8은 229 장애 시험과 범위가 겹치므로 229와 함께 설계한다.
+1~2(293)와 3~4(294)는 순서가 없다. 5는 293·294와 상관없이 언제든 할 수 있지만, 실패하면 6 이후를 멈추고
+D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므로 229와 함께 설계한다.
 
 **되돌리기는 반드시 역순으로 한다.** 앞 단계를 먼저 되돌리면 다음 문제가 생긴다.
 
 - 슬롯이 남은 채로 `wal_level`을 내리면 PostgreSQL이 기동하지 않는다.
 - 슬롯이 남은 채로 Connect만 멈추면 WAL이 쌓인다.
+- 커넥터를 지운 뒤에는 offset을 지울 수 없다(D6).
+- 권한이 남은 계정은 `DROP ROLE`이 거부된다.
 
 | 순서 | 되돌리는 것 | 방법 |
 |---|---|---|
-| 1 | consumer (6) | 서버 env를 `false`로 되돌리고 backend 재배포 |
-| 2 | 커넥터 (5) | 커넥터 삭제. 다시 만들 계획이면 offset도 지운다(D6) |
-| 3 | 슬롯 (5) | `SELECT pg_drop_replication_slot('beez_published_analysis')`, `pg_replication_slots`에서 사라졌는지 확인 |
+| 1 | consumer (7) | 서버 env를 `false`로 되돌리고 backend 재배포. 이때부터 분석이 다시 멈춘다(§1) |
+| 2 | 커넥터 (6) | 같은 이름을 다시 쓸 계획이면 `PUT …/stop` → `DELETE …/offsets` → `DELETE /connectors/{name}`. 아니면 바로 삭제(다음엔 새 이름으로 등록) |
+| 3 | 슬롯 (6) | 커넥터가 없어 슬롯이 `active = false`인 것을 본 뒤 `SELECT pg_drop_replication_slot('beez_published_analysis')`, `pg_replication_slots`에서 사라졌는지 확인 |
 | 4 | Kafka·Connect (3·4) | `docker compose -p beez-cdc down`(볼륨 유지) |
-| 5 | publication·계정 (2) | `DROP PUBLICATION beez_published_analysis_cdc`, `DROP ROLE beez_cdc` |
-| 6 | `wal_level` (1) | 슬롯이 0개인 것을 확인한 뒤 `command` 제거 PR을 공지한 시각에 머지 |
+| 5 | publication·계정·비밀 파일 (2) | `DROP PUBLICATION beez_published_analysis_cdc` → `REVOKE SELECT (id, status) ON published_change_analysis FROM beez_cdc` → `DROP ROLE beez_cdc` → 비밀 파일 삭제 |
+| 6 | `wal_level` (1) | `pg_replication_slots`가 0행인 것을 확인한 뒤 `command` 제거 PR을 공지한 시각에 머지 |
+
+`infra/cdc/OPERATIONS.md`는 "slot, Connect offset, 내부 토픽을 독립적으로 삭제·초기화하지 않는다"고 한다. 이 표는
+그 원칙을 따라 셋을 **정해진 순서로 함께** 정리하는 절차이고, dev 서버에서는 이 표가 검토안의 해당 문장을 대신한다.
+운영 서버에서는 검토안대로 담당자 합의와 격리 환경 시험을 먼저 한다.
 
 ## 5. 위험과 한계
 
 - **단일 서버·단일 broker**: 서버나 broker가 죽으면 CDC가 멈춘다. 이때 복구 스캔이 처리를 이어 가지만, 모니터링도
   같은 서버라 알림이 가지 않는다(263 런북 한계와 같음).
-- **WAL 보유**: 슬롯이 멈추면 WAL이 쌓인다. 10GB 상한(D4)으로 디스크는 지키지만, 넘으면 슬롯이 무효화돼 커넥터를
-  새 이름(또는 offset 삭제)으로 다시 만들어야 한다(D6). 슬롯·WAL 알림은 261에서 붙인다. 그 전까지는 런북의 수동
+- **WAL 보유**: 슬롯이 멈추면 WAL이 쌓인다. 접수 테이블이 조용한 동안에도 다른 테이블 쓰기만큼 보유량이 늘어난다
+  (D6 heartbeat). 10GB 상한(D4)으로 디스크는 지키지만, 넘으면 슬롯이 무효화돼 커넥터를 새 이름(또는 offset 삭제)으로
+  다시 만들어야 한다(D6). 슬롯·WAL 알림은 261에서 보유량 절댓값과 비활성 시간으로 붙인다. 그 전까지는 런북의 수동
   확인 쿼리로 본다.
+- **검증 공백**: 실제로 쓸 조합은 295의 로컬 리허설(§4 5단계)이 처음이다.
 - **D3 예외**: 같은 망의 컨테이너가 Kafka를 읽고 쓸 수 있다(D3 "남는 위험"). 토픽에는 접수행 id·status만 있지만,
   Connect 설정 토픽을 통해 복제 권한이 노출될 수 있다.
 - **Connect 버전**: 2.7.3은 PG17 공식 지원 범위 밖이다(D2). 서버와 같은 이미지에서 PoC로 확인한 것이 근거다.
@@ -253,9 +295,9 @@ consumer를 켠 뒤에는 메시지가 사라져도 2초 주기 복구 스캔이
 
 - [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀
 - [ ] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진
-- [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용** — **양지훈**
-- [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각 = 재시작 시각 — 전진·**팀**
-- [ ] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지 — **양지훈**
-- [ ] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), 재생성 때 offset 처리 — **양지훈**
+- [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `root:1001 640`(293이 작성) — **양지훈**
+- [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀**
+- [ ] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈**
+- [ ] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈**
 - [ ] D7 backend env 이름·기본 꺼짐·켜는 순서, 밀린 PENDING 처리 — **양지훈**
-- [ ] D8 실행을 229 통합 검증 첫 단계로, 295 전까지 분석이 돌지 않는 영향 확인 — 팀·양지훈
+- [ ] D8 실행을 229 통합 검증 첫 단계로, 295 전까지 분석이 돌지 않는 영향 확인(스캔만 켜는 우회는 쓰지 않음) — 팀·양지훈
