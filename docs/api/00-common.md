@@ -1190,8 +1190,28 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
 | `delta_validation_id` | `ID` | N | 완료 delta 재검증. WAITING(REVALIDATION) 중 포함 |
+| `completion_review` | [CompletionReview](00-common.md#schema-completionreview) | N | 완료 보고와 계획의 규칙 대조(-269). 완료됐거나 delta 재검증을 기다리는 작업의 상세 조회(TSK-A03)와 COMPLETED 보고 응답(TSK-A07·MCP-12)에만 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
+
+<a id="schema-completionreview"></a>
+
+### CompletionReview
+
+완료 보고를 계획과 **규칙으로** 대조한 결과(S15P31A108-269, VAL-07 작은 범위). AI를 쓰지 않고 완료를 막지 않는다. 사람이 볼 확인 거리이며 코드 품질·동작을 보증하지 않는다(AC-15와 같은 원칙). 저장하지 않고 조회할 때 계산한다 — 보고·계획 리비전·계획 참조가 모두 불변이라 같은 결과가 나오고, `handover_recorded`만 지금 상태를 본다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `review_version` | `string` | Y | 대조 규칙 판. 지금 `completion-review-v1` |
+| `report_id` | `ID` | Y | 대조한 완료 보고 |
+| `changes_reported` | `boolean` | Y | 보고에 `changed_design_item_ids`가 있었는가. false면 범위 이탈을 판단하지 않았다(0건이 "이탈 없음"이 아님) |
+| `scope_deviations` | `object[]` | Y | 범위 이탈 후보 `{design_item_id, reason}`. reason: `NO_CONTRACT_CHANGE_DECLARED`(계획이 계약 변경 없음을 선언) · `NOT_IN_PLAN`(계획에 없는 항목) · `NOT_PLANNED_TO_CHANGE`(계획은 READS·IMPLEMENTS로만 다룸). 설계와 다르게 바꿨다면 설계 변경 제안(CHG)이 필요하다는 신호 |
+| `unreported_planned_changes` | `ID[]` | Y | 계획이 CHANGES로 잡은 항목 중 변경 보고에 없는 것. `changes_reported`일 때만 채운다 |
+| `unmet_criteria` | `string[]` | Y | `met=false`로 보고된 완료 기준 |
+| `unchecked_criteria` | `string[]` | Y | 계획의 완료 기준 중 `completion_checks`에 없는 것(앞뒤 공백 무시, 글자 그대로 비교) |
+| `handover_recorded` | `boolean` | Y | 이 작업의 공유 인수인계 기록(write_context `kind=HANDOVER`, `visibility=SHARED`)이 있는가. 없으면 경고만 |
+| `deviation_count` | `integer` | Y | `scope_deviations` 개수 |
+| `notice` | `string` | Y | 화면에 함께 보일 안내("코드 품질이나 동작을 보증하지 않습니다") |
 
 <a id="schema-completioncheck"></a>
 
@@ -1216,6 +1236,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 
 <a id="schema-relatedtask"></a>
 

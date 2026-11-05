@@ -17,6 +17,7 @@ public record ReportTaskStateArgs(
         String summary,
         List<Map<String, Object>> delta,
         List<CompletionCheck> completionChecks,
+        List<String> changedDesignItemIds,
         String idempotencyKey
 ) {
 }
