@@ -217,6 +217,12 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
                 VALUES (?, now(), now(), now(), now())
                 """, email);
         fixtures().verifiedToken(email);   // 가입 인증 행
+        // 다른 사람의 행: 지워지면 안 된다
+        db.update("""
+                INSERT INTO temporary_password (email, expires_at, closed_at, created_at, updated_at)
+                VALUES (?, now(), now(), now(), now())
+                """, otherEmail);
+        fixtures().verifiedToken(otherEmail);
 
         assertThat(withdraw(user, AccessFixtures.PASSWORD).statusCode()).isEqualTo(204);
 
@@ -225,6 +231,10 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         assertThat(db.queryForObject("SELECT count(*) FROM email_verification WHERE email = ?", Integer.class, email))
                 .isZero();
         assertThat(db.queryForObject("SELECT count(*) FROM invitation WHERE email = ?", Integer.class, email)).isZero();
+        assertThat(db.queryForObject("SELECT count(*) FROM temporary_password WHERE email = ?", Integer.class,
+                otherEmail)).as("다른 사람의 임시 비밀번호 요청은 그대로").isEqualTo(1);
+        assertThat(db.queryForObject("SELECT count(*) FROM email_verification WHERE email = ?", Integer.class,
+                otherEmail)).as("다른 사람의 가입 인증은 그대로").isEqualTo(1);
         assertThat(db.queryForObject("SELECT revoked_at IS NOT NULL FROM invitation WHERE id = ?", Boolean.class,
                 pending)).as("대기 초대는 취소 — 주소 없는 링크 초대로 남지 않는다").isTrue();
         assertThat(db.queryForObject("SELECT accepted_account_id FROM invitation WHERE id = ?", Long.class, accepted))

@@ -2,8 +2,8 @@ package com.beez.backend.account;
 
 import com.beez.backend.agenttoken.AgentTokenRepository;
 import com.beez.backend.auth.AccountPasswordService;
-import com.beez.backend.auth.recovery.TemporaryPasswordRepository;
-import com.beez.backend.auth.verification.EmailVerificationRepository;
+import com.beez.backend.auth.recovery.PasswordRecoveryService;
+import com.beez.backend.auth.verification.EmailVerificationService;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
@@ -39,22 +39,22 @@ public class AccountWithdrawalService {
     private final ProjectWithdrawalService projects;
     private final AgentTokenRepository tokens;
     private final InvitationService invitations;
-    private final TemporaryPasswordRepository temporaryPasswords;
-    private final EmailVerificationRepository verifications;
+    private final PasswordRecoveryService recovery;
+    private final EmailVerificationService verifications;
     private final EntityManager em;
 
     public AccountWithdrawalService(ProjectAccessChecker access, AccountRepository accounts,
                                     AccountPasswordService passwords, ProjectWithdrawalService projects,
                                     AgentTokenRepository tokens, InvitationService invitations,
-                                    TemporaryPasswordRepository temporaryPasswords,
-                                    EmailVerificationRepository verifications, EntityManager em) {
+                                    PasswordRecoveryService recovery, EmailVerificationService verifications,
+                                    EntityManager em) {
         this.access = access;
         this.accounts = accounts;
         this.passwords = passwords;
         this.projects = projects;
         this.tokens = tokens;
         this.invitations = invitations;
-        this.temporaryPasswords = temporaryPasswords;
+        this.recovery = recovery;
         this.verifications = verifications;
         this.em = em;
     }
@@ -96,8 +96,8 @@ public class AccountWithdrawalService {
         projects.leaveAll(accountId, now);
         int revoked = tokens.revokeAllOfAccount(accountId, now);
         // 발송 한도를 세는 데만 쓰던 행이라 보존할 이유가 없다 (-277 결정: 탈퇴 때 바로 삭제)
-        int temporaryRows = temporaryPasswords.deleteByAccountOrEmail(accountId, email);
-        int verificationRows = verifications.deleteByEmail(email);
+        int temporaryRows = recovery.forgetOnAccountWithdrawal(email);
+        int verificationRows = verifications.forgetOnAccountWithdrawal(email);
         me.withdraw(now);
         accounts.saveAndFlush(me);
         log.info("회원 탈퇴: account_id={} revoked_tokens={} forgotten_invitations={} deleted_temporary_passwords={}"

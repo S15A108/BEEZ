@@ -145,6 +145,12 @@ public class EmailVerificationService {
      * ACC-A01 가입 트랜잭션 안에서 부른다. 토큰을 쓸 수 있으면 소비하고, 아니면 400 email_not_verified.
      * 가입이 뒤에서 실패하면(409 등) 같은 트랜잭션이 되돌려져 토큰도 다시 쓸 수 있다.
      */
+    /** 회원 탈퇴(ACC-A10, -277)와 같은 트랜잭션에서 부른다. 그 이메일의 인증 요청 행을 모두 지우고 지운 수를 돌려준다. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public int forgetOnAccountWithdrawal(String normalizedEmail) {
+        return verifications.deleteByEmail(normalizedEmail);
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void consumeForRegistration(String verifiedToken, String normalizedEmail) {
         Instant now = Instant.now();

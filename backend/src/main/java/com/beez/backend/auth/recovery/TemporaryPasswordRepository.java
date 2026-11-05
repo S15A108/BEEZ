@@ -29,12 +29,13 @@ public interface TemporaryPasswordRepository extends JpaRepository<TemporaryPass
     int closeOpen(@Param("accountId") long accountId, @Param("now") Instant now);
 
     /**
-     * 회원 탈퇴(ACC-A10, -277): 이 계정에 발급했거나 이 이메일로 들어온 요청 행을 지운다.
-     * 계정이 없던 시절의 요청(account_id NULL)도 이메일로 함께 지운다.
+     * 회원 탈퇴(ACC-A10, -277): 이 이메일의 요청 행을 모두 지운다. 계정에 발급한 행도 요청 이메일이 계정 이메일과 같고
+     * (계정 이메일은 가입 뒤 바뀌지 않는다) 계정이 없던 요청(account_id NULL)도 함께 지워져서, 이메일 하나로 충분하다.
+     * ix_temporary_password_email_created 를 탄다.
      */
     @Modifying(flushAutomatically = true)
-    @Query("delete from TemporaryPassword t where t.accountId = :accountId or t.email = :email")
-    int deleteByAccountOrEmail(@Param("accountId") long accountId, @Param("email") String email);
+    @Query("delete from TemporaryPassword t where t.email = :email")
+    int deleteByEmail(@Param("email") String email);
 
     /** 로그인: 같은 임시 비밀번호로 동시에 로그인해도 한 번만 쓰이도록 잠그고 읽는다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
