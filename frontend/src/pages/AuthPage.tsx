@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 // 나의 도시와 같은 원형 도시 그림(D33). 3D를 띄우지 않고 나의 도시 화면을 찍은 정적 그림이라 첫 화면이 가볍다.
 import cityPreview from '@/assets/city-preview.webp'
 import { getApiErrorCode } from '@/api/error'
+import { invitationQuery } from '@/features/members/invitationQuery'
 
 const savedEmailKey = 'beez.login.email'
 // 로그인 뒤 돌아갈 주소. RequireAccount가 보관한 앱 안 주소(/projects/…, /account/… 등)만 쓰고, 다른 사이트로 가는
@@ -45,7 +46,8 @@ export default function AuthPage() {
   const [attempt, setAttempt] = useState(0)
   const [email, setEmail] = useState(state?.registered ?? readSavedEmail())
   const [remember, setRemember] = useState(Boolean(readSavedEmail()))
-  const invite = params.get('invite')
+  // 초대 화면에서 왔으면 초대 토큰과 메일 링크의 프로젝트 ID를 가입·로그인 뒤까지 넘긴다.
+  const invite = invitationQuery(params)
   // 예시 계정은 live 빌드에서 빠지도록 env를 그 자리에서 비교한다.
   const mockDemo =
     import.meta.env.VITE_API_MODE !== 'live' && !email && attempt === 0
@@ -275,11 +277,7 @@ export default function AuthPage() {
                 await queryClient.invalidateQueries({
                   queryKey: ['projects'],
                 })
-                navigate(
-                  invite
-                    ? `/invite?token=${encodeURIComponent(invite)}`
-                    : returnPath(state?.from),
-                )
+                navigate(invite ? `/invite${invite}` : returnPath(state?.from))
               } catch (cause) {
                 setNotice('')
                 setFailure(
@@ -297,14 +295,7 @@ export default function AuthPage() {
           aria-label="계정 도움"
           className="mt-6 flex items-center justify-center gap-3 text-sm"
         >
-          <Link
-            to={
-              invite
-                ? `/register?invite=${encodeURIComponent(invite)}`
-                : '/register'
-            }
-            className="font-semibold"
-          >
+          <Link to={`/register${invite}`} className="font-semibold">
             회원가입
           </Link>
           <span aria-hidden="true" className="h-3 w-px bg-border" />

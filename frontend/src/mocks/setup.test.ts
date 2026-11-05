@@ -177,10 +177,12 @@ describe('documented REST mock adapter', () => {
     const token = new URL(invitation.invite_url).searchParams.get('token')!
     await authApi.logout()
     await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-    // Q05(2026-10-29 확정): 초대받은 이메일로 로그인하면 그때 팀원이 된다. 링크 참여(MEM-A05)도 그대로 된다.
+    // Q05(2026-10-29 확정): 초대받은 이메일로 로그인하면 그때 팀원이 된다. 이미 들어온 뒤 링크를 열면(MEM-A05)
+    // 409 already_member이고 화면은 그 프로젝트로 보낸다(PR #134).
     expect((await projectsApi.get(created.id)).my_role).toBe('MEMBER')
-    const accepted = await membersApi.acceptInvitation({ token })
-    expect(accepted.member.role).toBe('MEMBER')
+    await expect(membersApi.acceptInvitation({ token })).rejects.toMatchObject({
+      response: { status: 409 },
+    })
     expect((await projectsApi.get(created.id)).my_role).toBe('MEMBER')
     await membersApi.leave(created.id, {})
     await expect(projectsApi.get(created.id)).rejects.toMatchObject({
