@@ -26,7 +26,7 @@ S15P31A108-269 · VAL-07 · 담당 변준성 · 2026-11-05
 
 ## 3. 저장
 
-`task_completion_report.changed_design_item_ids JSONB` (V28). NULL = 보내지 않음, `[]` = 바꾼 항목 없음.
+`task_completion_report.changed_design_item_ids JSONB` (V30). NULL = 보내지 않음, `[]` = 바꾼 항목 없음.
 정렬·중복 제거해 저장한다. 같은 delta 완료 보고의 재전송 판정에 이 값도 들어간다(순서 무관).
 없는 항목·다른 프로젝트 항목은 400 `validation_failed` (둘을 구분하지 않는다).
 
