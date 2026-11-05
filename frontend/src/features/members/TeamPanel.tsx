@@ -869,7 +869,19 @@ const inviteResultLabels: Record<EmailInvitationResult['status'], string> = {
 // 이미 팀원인지·초대 중인지는 서버가 이메일마다 알려 준다. 보내면 칸을 비우고, 요청이 실패하면 칸을 그대로 둔다.
 function InviteForm({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient()
-  const [results, setResults] = useState<EmailInvitationResult[]>([])
+  // 결과는 mutation이 들고 있다. 다시 보내면 비워지고, 실패하면 남지 않는다.
+  const invite = useMutation({
+    mutationFn: (values: z.infer<typeof inviteSchema>) =>
+      membersApi.createEmailInvitations(projectId, {
+        emails: splitEmails(values.emails),
+        message: values.message || undefined,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ['projects', projectId, 'invitations'],
+      }),
+  })
+  const results = invite.data?.results ?? []
   const {
     register,
     handleSubmit,
@@ -887,21 +899,12 @@ function InviteForm({ projectId }: { projectId: string }) {
       aria-label="팀원 초대"
       className="grid gap-1.5"
       onSubmit={handleSubmit(async (values) => {
-        setResults([])
         try {
-          const created = await membersApi.createEmailInvitations(projectId, {
-            emails: splitEmails(values.emails),
-            message: values.message || undefined,
-          })
-          setResults(created.results)
+          await invite.mutateAsync(values)
           reset()
         } catch (cause) {
           setError('root', { message: getApiErrorMessage(cause) })
-          return
         }
-        await queryClient.invalidateQueries({
-          queryKey: ['projects', projectId, 'invitations'],
-        })
       })}
     >
       <span className="flex gap-2">
