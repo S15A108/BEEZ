@@ -39,7 +39,7 @@ final class SummaryResultValidator {
     private SummaryResultValidator() { }
 
     /** 입력으로 보낸 문서 한 건. 줄은 정규화한 원문의 줄 */
-    record DocInfo(long documentId, long versionId, int versionNo, List<String> lines) { }
+    record DocInfo(long documentId, long versionId, int versionNo, List<String> lines, boolean endsWithLf) { }
 
     /** 입력에 실제로 실은 기록·문서와 활성 멤버 판정 */
     record Context(Set<Long> entryIds, Map<Long, DocInfo> documents, LongPredicate activeMember) { }
@@ -161,7 +161,7 @@ final class SummaryResultValidator {
         Integer start = integer(locator.get("start_line"));
         Integer end = integer(locator.get("end_line"));
         if (start == null || end == null || start < 1 || end < start || end > document.lines().size()) return null;
-        if (!(m.get("before") instanceof String before) || !before.equals(NormalizedText.range(document.lines(), start, end))) return null;
+        if (!(m.get("before") instanceof String before) || !before.equals(NormalizedText.range(document.lines(), document.endsWithLf(), start, end))) return null;
         if (!(m.get("after") instanceof String after) || after.length() > MAX_AFTER) return null;
         Set<String> evidence = new LinkedHashSet<>();
         if (m.get("evidence_entry_ids") instanceof List<?> ids) {

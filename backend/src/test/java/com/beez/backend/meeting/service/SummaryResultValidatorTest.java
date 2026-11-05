@@ -22,7 +22,7 @@ class SummaryResultValidatorTest {
     static final String TEXT = "# 초대\r\n초대는 3일 뒤 만료된다.\r\n링크는 한 번만 쓸 수 있다.\r\n마지막 줄\r\n";
 
     LongPredicate active = member -> member == 21 || member == 23;
-    Context ctx = new Context(Set.of(915L, 917L), Map.of(DOC, new DocInfo(DOC, VERSION, 3, NormalizedText.lines(TEXT))), active);
+    Context ctx = new Context(Set.of(915L, 917L), Map.of(DOC, new DocInfo(DOC, VERSION, 3, NormalizedText.lines(TEXT), NormalizedText.endsWithLf(TEXT))), active);
 
     Map<String, Object> change(int start, int end, String before, String after) {
         var locator = new LinkedHashMap<String, Object>();
@@ -40,7 +40,7 @@ class SummaryResultValidatorTest {
     }
 
     Map<String, Object> goodChange() {
-        return change(2, 2, "초대는 3일 뒤 만료된다.", "초대는 7일 뒤 만료된다.");
+        return change(2, 2, "초대는 3일 뒤 만료된다.\n", "초대는 7일 뒤 만료된다.");
     }
 
     Map<String, Object> resultOf(List<Object> conflicts, List<Object> decisions, List<Object> changes, List<Object> actions) {
@@ -101,7 +101,7 @@ class SummaryResultValidatorTest {
     @Test
     void multiLineRangesJoinWithLfAndCrlfIsNormalized() {
         var v = SummaryResultValidator.validate(
-                withChanges(change(2, 3, "초대는 3일 뒤 만료된다.\n링크는 한 번만 쓸 수 있다.", "합친 문장")), ctx);
+                withChanges(change(2, 3, "초대는 3일 뒤 만료된다.\n링크는 한 번만 쓸 수 있다.\n", "합친 문장")), ctx);
         assertThat(v.result().documentChanges()).hasSize(1);
         // CRLF 로 이은 before 는 정규화 원문과 다르므로 버리고, 남은 게 없으니 쓸 수 없는 출력이다
         unusable(withChanges(change(2, 3, "초대는 3일 뒤 만료된다.\r\n링크는 한 번만 쓸 수 있다.", "x")));
@@ -114,13 +114,37 @@ class SummaryResultValidatorTest {
         var v = SummaryResultValidator.validate(withChanges(goodChange(), change(4, 5, "마지막 줄\n", "x"),
                 change(0, 1, "# 초대", "x"), change(3, 2, "x", "x")), ctx);
         assertThat(v.result().documentChanges()).hasSize(1);
-        assertThat(SummaryResultValidator.validate(withChanges(change(4, 4, "마지막 줄", "끝")), ctx).result().documentChanges()).hasSize(1);
+        assertThat(SummaryResultValidator.validate(withChanges(change(4, 4, "마지막 줄\n", "끝")), ctx).result().documentChanges()).hasSize(1);
+    }
+
+    @Test
+    void beforeIncludesTheLfOfEachLineInTheRange() {
+        // 줄 끝 LF 가 없는 before 는 AI SourceLocator 기준과 다르므로 버린다 — 전부 버려지면 쓸 수 없는 출력이다
+        unusable(withChanges(change(2, 2, "초대는 3일 뒤 만료된다.", "x")));
+        unusable(withChanges(change(2, 3, "초대는 3일 뒤 만료된다.\n링크는 한 번만 쓸 수 있다.", "x")));
+        assertThat(SummaryResultValidator.validate(
+                withChanges(change(1, 1, "# 초대\n", "x")), ctx).result().documentChanges()).hasSize(1);
+    }
+
+    @Test
+    void theLastLineOfADocumentWithoutTrailingLfHasNoLf() {
+        String text = "a\nb";
+        var noLfCtx = new Context(Set.of(915L, 917L),
+                Map.of(DOC, new DocInfo(DOC, VERSION, 3, NormalizedText.lines(text), NormalizedText.endsWithLf(text))), active);
+        assertThat(SummaryResultValidator.validate(withChanges(change(2, 2, "b", "x")), noLfCtx)
+                .result().documentChanges()).hasSize(1);
+        assertThat(SummaryResultValidator.validate(withChanges(change(1, 2, "a\nb", "x")), noLfCtx)
+                .result().documentChanges()).hasSize(1);
+        assertThat(SummaryResultValidator.validate(withChanges(change(1, 1, "a\n", "x")), noLfCtx)
+                .result().documentChanges()).hasSize(1);
+        assertThatThrownBy(() -> SummaryResultValidator.validate(withChanges(change(2, 2, "b\n", "x")), noLfCtx))
+                .isInstanceOf(ApiException.class);
     }
 
     @Test
     void overlappingChangesInTheSameDocumentKeepTheFirst() {
-        var v = SummaryResultValidator.validate(withChanges(change(2, 3, "초대는 3일 뒤 만료된다.\n링크는 한 번만 쓸 수 있다.", "a"),
-                change(3, 3, "링크는 한 번만 쓸 수 있다.", "b"), change(1, 1, "# 초대", "c")), ctx);
+        var v = SummaryResultValidator.validate(withChanges(change(2, 3, "초대는 3일 뒤 만료된다.\n링크는 한 번만 쓸 수 있다.\n", "a"),
+                change(3, 3, "링크는 한 번만 쓸 수 있다.\n", "b"), change(1, 1, "# 초대\n", "c")), ctx);
         assertThat(v.result().documentChanges()).extracting("after").containsExactly("a", "c");
         assertThat(v.unresolved()).anyMatch(s -> s.contains("문서 변경 1건"));
     }

@@ -43,7 +43,7 @@ import tools.jackson.core.type.TypeReference;
  * </ul>
  *
  * <p><b>요청 크기는 하나의 바이트 예산</b>({@link MeetingSummaryProperties#maxRequestBytes()})을 나눠 쓴다(한글은 글자당 3바이트).
- * 배분 우선순위: ① 고정부(작업·이전 정리·피드백) ② 설계 항목 ③ 최근 기록 예약분 ④ 문서(통째로만) ⑤ 남는 만큼 나머지 기록.
+ * 배분 우선순위: ① 고정부(작업·이전 정리·피드백) ② 최근 기록 예약분(최소 한 건, 못 담으면 AI 호출 전 400) ③ 설계 항목 ④ 문서(통째로만) ⑤ 남는 만큼 나머지 기록.
  * 건너뛴 것은 모두 {@code notes} 에 사람이 읽는 문장으로 남기고, 조립 뒤에 실제 직렬화 바이트를 한 번 더 확인한다.
  */
 @Component
@@ -108,7 +108,26 @@ class SummaryInputBuilder {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "정리에 보낼 작업·이전 정리가 너무 커서 요청할 수 없어요.");
         }
 
-        // ② 설계 항목 — 키 순서로 예산이 허용하는 만큼
+        // ② 최근 기록 예약분 — 설계 항목보다 먼저 잡는다. 최근 것부터 담되 가장 최근 한 건은 반드시 담는다
+        List<EntryRow> newest = meetings.summarizableNewestFirst(projectId, meetingId, throughEntryId, limits.maxEntries());
+        List<Map<String, Object>> reserved = new ArrayList<>();      // 최근 것부터
+        int next = 0;
+        long reservedBytes = 0;
+        long reserve = Math.min(limits.recentEntriesReserveBytes(), remaining);
+        for (; next < newest.size(); next++) {
+            Map<String, Object> view = entryView(newest.get(next));
+            long size = bytes(view) + 1;
+            if (!reserved.isEmpty() && reservedBytes + size > reserve) break;
+            if (reservedBytes + size > remaining) break;
+            reserved.add(view);
+            reservedBytes += size;
+        }
+        if (reserved.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    newest.isEmpty() ? "정리할 기록이 없어요." : "가장 최근 기록이 요청 크기 한도를 넘어 정리를 요청할 수 없어요.");
+        }
+        remaining -= reservedBytes;
+        // ③ 설계 항목 — 키 순서로 예산이 허용하는 만큼
         Long baseline = summaries.currentBaseline(projectId);
         List<Map<String, Object>> itemRows = baseline == null ? List.of() : summaries.baselineItems(baseline, designItemIds, limits.maxItems());
         List<Map<String, Object>> approvedItems = new ArrayList<>();
@@ -129,22 +148,6 @@ class SummaryInputBuilder {
         else if (designItemIds.size() > itemRows.size() && itemRows.size() >= limits.maxItems()) {
             notes.add("설계 항목 " + designItemIds.size() + "개 중 " + itemRows.size() + "개만 전달했어요.");
         }
-
-        // ③ 최근 기록 예약분 — 최근 것부터 담되 가장 최근 한 건은 항상 담는다
-        List<EntryRow> newest = meetings.summarizableNewestFirst(projectId, meetingId, throughEntryId, limits.maxEntries());
-        List<Map<String, Object>> reserved = new ArrayList<>();      // 최근 것부터
-        int next = 0;
-        long reservedBytes = 0;
-        long reserve = Math.min(limits.recentEntriesReserveBytes(), remaining);
-        for (; next < newest.size(); next++) {
-            Map<String, Object> view = entryView(newest.get(next));
-            long size = bytes(view) + 1;
-            if (!reserved.isEmpty() && reservedBytes + size > reserve) break;
-            if (reservedBytes + size > remaining) break;
-            reserved.add(view);
-            reservedBytes += size;
-        }
-        remaining -= reservedBytes;
 
         // ④ 문서 — 통째로만. 개수·문서당 바이트·남은 예산 안에서
         List<Map<String, Object>> documents = new ArrayList<>();
@@ -168,7 +171,7 @@ class SummaryInputBuilder {
                 remaining -= size;
                 documents.add(view);
                 docInfos.put(documentId, new DocInfo(documentId, versionId, ((Number) row.get("version_no")).intValue(),
-                        NormalizedText.lines(content)));
+                        NormalizedText.lines(content), NormalizedText.endsWithLf(content)));
             }
             if (skipped > 0) notes.add("관련 문서 " + skipped + "개는 원문이 없거나 크기 한도를 넘어 보내지 않았어요.");
         }

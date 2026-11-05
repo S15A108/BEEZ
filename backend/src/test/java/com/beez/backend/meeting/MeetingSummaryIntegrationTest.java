@@ -89,7 +89,7 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
         e1 = entry("만료는 7일이 좋겠어요.");
         e2 = entry("동의합니다. 7일로 통일해요.");
         jdbc.update("DELETE FROM llm_usage WHERE project_id=?", project);
-        doAnswer(call -> reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.", "초대는 7일 뒤 만료된다.")))).when(ai).meetingAnalysis(any());
+        doAnswer(call -> reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.\n", "초대는 7일 뒤 만료된다.")))).when(ai).meetingAnalysis(any());
     }
 
     // ---- 도우미 ----
@@ -213,7 +213,7 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
         assertThat(change.path("base_version_id").asString()).isEqualTo("" + version);
         assertThat(change.path("locator").path("type").asString()).isEqualTo("text_lines");
         assertThat(change.path("locator").path("start_line").asInt()).isEqualTo(2);
-        assertThat(change.path("before").asString()).isEqualTo("초대는 3일 뒤 만료된다.");
+        assertThat(change.path("before").asString()).isEqualTo("초대는 3일 뒤 만료된다.\n");
         assertThat(change.path("after").asString()).isEqualTo("초대는 7일 뒤 만료된다.");
         assertThat(change.path("evidence_entry_ids").size()).isEqualTo(2);
         assertThat(s.path("action_items").get(0).path("member_id").asString()).isEqualTo("" + api.memberId("member@test"));
@@ -436,8 +436,8 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
 
     // ---- S5 출력 검증 ----
     @Test void badItemsAreDroppedAndTheGenerationCountsThem() throws Exception {
-        doAnswer(call -> reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.", "초대는 7일 뒤 만료된다."),
-                goodChange(3, "원문과 다른 문장", "x"), goodChange(2, "초대는 3일 뒤 만료된다.", "겹치는 두 번째")))).when(ai).meetingAnalysis(any());
+        doAnswer(call -> reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.\n", "초대는 7일 뒤 만료된다."),
+                goodChange(3, "원문과 다른 문장", "x"), goodChange(2, "초대는 3일 뒤 만료된다.\n", "겹치는 두 번째")))).when(ai).meetingAnalysis(any());
         var res = summarize(leader, e2, "k-partial");
         expect(res, 201, null);
         assertThat(body(res).path("document_changes").size()).isEqualTo(1);
@@ -517,7 +517,7 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
     @Test void reviseMakesANewLatestSummaryAndKeepsThePreviousOne() throws Exception {
         long first = Long.parseLong(body(summarize(leader, e2, "k-a")).path("id").asString());
         long e3 = entry("아니요, 14일로 하기로 했어요.");
-        doAnswer(call -> reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.", "초대는 14일 뒤 만료된다.")))).when(ai).meetingAnalysis(any());
+        doAnswer(call -> reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.\n", "초대는 14일 뒤 만료된다.")))).when(ai).meetingAnalysis(any());
         var res = revise(leader, first, "만료 기간은 7일이 아니라 14일로 정했어.", "k-b");
         expect(res, 201, null);
         var second = body(res);
@@ -567,7 +567,7 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
         int before = entries();
         doAnswer(call -> {
             newBaselineWithNewDocumentVersion();
-            return reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.", "초대는 7일 뒤 만료된다.")));
+            return reply(List.of(goodChange(2, "초대는 3일 뒤 만료된다.\n", "초대는 7일 뒤 만료된다.")));
         }).when(ai).meetingAnalysis(any());
         expect(summarize(leader, e2, "k-stale"), 409, "summary_outdated");
         nothingSaved(before);

@@ -14,8 +14,13 @@ public final class NormalizedText {
     /** BOM 제거, CRLF/CR → LF. */
     public static String normalize(String text) {
         if (text == null) return "";
-        String s = !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
+        String s = !text.isEmpty() && text.charAt(0) == '﻿' ? text.substring(1) : text;
         return s.replace("\r\n", "\n").replace('\r', '\n');
+    }
+
+    /** 정규화한 원문이 LF 로 끝나는지. */
+    public static boolean endsWithLf(String text) {
+        return normalize(text).endsWith("\n");
     }
 
     /** 정규화한 뒤의 줄 목록(줄바꿈 문자 제외). 빈 문서는 빈 목록. */
@@ -27,9 +32,17 @@ public final class NormalizedText {
         return lines;
     }
 
-    /** 1-based 닫힌 줄 범위를 LF 로 이은 문자열. 범위가 줄 안에 있어야 한다. */
-    public static String range(List<String> lines, int start, int end) {
+    /**
+     * 1-based 닫힌 줄 범위의 원문. <b>각 줄의 LF 를 포함한다</b>(AI SourceLocator 와 같은 기준) —
+     * {@code "a\nb\n"} 의 1행은 {@code "a\n"}. 문서가 LF 로 끝나지 않으면 마지막 줄만 LF 가 없다.
+     */
+    public static String range(List<String> lines, boolean endsWithLf, int start, int end) {
         if (start < 1 || end < start || end > lines.size()) throw new IllegalArgumentException("invalid line range");
-        return String.join("\n", lines.subList(start - 1, end));
+        StringBuilder sb = new StringBuilder();
+        for (int i = start - 1; i < end; i++) {
+            sb.append(lines.get(i));
+            if (i < lines.size() - 1 || endsWithLf) sb.append('\n');
+        }
+        return sb.toString();
     }
 }
