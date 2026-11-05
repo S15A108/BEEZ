@@ -350,7 +350,8 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
         assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
             Task loaded = taskRepository.findById(task).orElseThrow();
-            // 읽은 뒤 다른 트랜잭션이 작업을 바꿔 커밋했다
+            // 읽은 뒤 DB 의 버전만 올린다. api.jdbc 는 이 트랜잭션에 참여하므로 커밋된 경합이 아니라 저장(UPDATE … where lock_version)이
+            // 0행이 되는 경로만 본다. 다른 커넥션의 실제 경합은 handover_conflictWithConcurrentTaskChange_is409_andLeavesNothing 이 본다
             api.jdbc.sql("update task set lock_version = lock_version + 1 where id = :t").param("t", task).update();
             handover.reassign(caller, loaded, carolMemberId);
         })).isInstanceOf(ObjectOptimisticLockingFailureException.class);
