@@ -17,6 +17,7 @@ import com.beez.backend.document.service.DocumentOriginalWriter;
 import com.beez.backend.document.service.DocumentOriginalWriter.Original;
 import com.beez.backend.document.storage.DocumentStorage;
 import com.beez.backend.document.validation.DocumentInputValidator;
+import com.beez.backend.notification.event.ChangeNotifications;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Function;
@@ -38,10 +39,13 @@ public class ProposalCommandService {
     private final DocumentInputValidator documentInputs;
     private final DocumentOriginalWriter originals;
     private final TransactionTemplate transaction;
+    private final ChangeNotifications notifications;
     public ProposalCommandService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository repository,
             ProposalValidator validator, DesignContentValidator contents, DesignCommandService idempotency, ProposalQueryService queries,
-            DocumentInputValidator documents, DocumentStorage storage, PlatformTransactionManager manager) {
+            DocumentInputValidator documents, DocumentStorage storage, PlatformTransactionManager manager,
+            ChangeNotifications notifications) {
         this.access=access; this.projects=projects; this.repository=repository; this.validator=validator;
+        this.notifications=notifications;
         this.contents=contents; this.idempotency=idempotency; this.queries=queries; this.documentInputs=documents;
         this.originals=new DocumentOriginalWriter(storage, manager); this.transaction=new TransactionTemplate(manager);
     }
@@ -75,7 +79,9 @@ public class ProposalCommandService {
         repository.saveRevision(project, proposal, 1, caller, snapshot, hash(snapshot));
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
-        // [TODO] 알림·타임라인은 전진 담당 공통 서비스 계약 확정 후 연결한다.
+        // 멱등 재생은 위에서 반환해 여기까지 오지 않는다. 알림은 이 트랜잭션에서 저장해 제안과 함께 커밋·롤백된다.
+        notifications.submitted(caller, project, proposal, 1, response.snapshotHash());
+        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_SUBMITTED, key change-proposal:{id}:submitted:1
         return response;
     }
 
@@ -106,6 +112,8 @@ public class ProposalCommandService {
         repository.saveRevision(project, proposal, revision, caller, snapshot, hash(snapshot));
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
+        notifications.submitted(caller, project, proposal, revision, response.snapshotHash());
+        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_SUBMITTED, key change-proposal:{id}:submitted:{revision}
         return response;
     }
 
@@ -213,7 +221,8 @@ public class ProposalCommandService {
         repository.withdraw(project, proposal, caller.accountId());
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
-        // [TODO] 거두기 알림·타임라인은 전진 담당 공통 서비스 계약 확정 후 연결한다.
+        // 거두기는 알림 유형이 없다(계약 6.1). 활동만 남는다.
+        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_WITHDRAWN, key change-proposal:{id}:withdrawn
         return response;
     }
 
@@ -261,7 +270,12 @@ public class ProposalCommandService {
         apply.accept(current);
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
-        // [TODO] 검토 시작·반려 알림과 타임라인은 전진 담당 공통 서비스 계약 확정 후 연결한다.
+        // 멱등 재생·리비전 충돌은 위에서 반환·예외로 끝난다. 반려만 제안자에게 알림이 가고 검토 시작은 알림이 없다.
+        if ("reject".equals(command)) {
+            notifications.rejected(caller, project, proposal, id(current, "proposer_account_id"), expectedRevision);
+        }
+        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_REVIEW_STARTED(key ...:review-started:{revision}),
+        //  CHANGE_PROPOSAL_REJECTED(key ...:rejected:{revision}). 이미 IN_REVIEW 인 검토 시작 재요청은 남기지 않는다.
         return response;
     }
 

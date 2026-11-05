@@ -15,11 +15,10 @@ import { OfficeRenderer3D } from './office/OfficeRenderer3D'
 import type { OfficeEntity3D, OfficeSceneHit } from './office/OfficeRenderer3D'
 import {
   OutdoorStreetRenderer,
-  streetSpawn,
+  walkableStreetSpawn,
 } from './office/OutdoorStreetRenderer'
-import { officeActors } from './office/office-actors'
+import { avatarAppearance, officeActors } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
-import { officePopulationOf } from './office/office-layout'
 import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
@@ -41,6 +40,8 @@ export interface OfficeSceneProps {
   onHintChange?: (hint: string | null) => void
   phase?: 0 | 1 | 2 | 3 | 4
   currentUserId?: string
+  /** 내 계정 avatar. 사무실의 '나' 모양을 회원 설정 캐릭터로 그린다(D34). */
+  avatar?: string
   interactive?: boolean
   className?: string
 }
@@ -61,13 +62,10 @@ function OfficeRuntime(
   const { gl, size } = useThree()
   const phase = props.phase ?? 4
   const agents = useMemo(() => officeSceneAgents(props.agents), [props.agents])
+  // 인원 객체를 넘기면 팀원 수와 상관없는 고정 사무실(D36)이라 에이전트에 기대지 않는다. 30초마다 바뀌는 에이전트
+  // 상태로 바닥을 새로 만들면 아래 lastFloor 분기가 내 클릭 걷기·엘리베이터 걷기를 멈춘다(PR #128 리뷰).
   const floor = useMemo(() => {
-    const base = makeBuilding(
-      ALL_KEYS,
-      'glass',
-      undefined,
-      officePopulationOf(agents),
-    ).floors[1]
+    const base = makeBuilding(ALL_KEYS, 'glass', undefined, {}).floors[1]
     // 시작 전(3)에도 사무실 바닥 전체를 보여 준다. 바깥 산책 출입구만 시작 뒤(4)에 연다.
     if (phase !== 3) return makeDreamFloor(base, phase)
     return {
@@ -75,7 +73,7 @@ function OfficeRuntime(
       staticKey: 'dream-3',
       outdoorExit: undefined,
     }
-  }, [agents, phase])
+  }, [phase])
   const snapshot = useMemo(
     () => officeSceneSnapshot(props.project, agents, props.tasks),
     [props.project, agents, props.tasks],
@@ -389,7 +387,10 @@ function OfficeRuntime(
           state.props.design,
         )
         street.current.setSize(size.width, size.height)
-        outdoorPlayer.current = streetSpawn(bounds)
+        outdoorPlayer.current = walkableStreetSpawn(
+          bounds,
+          street.current.canWalk,
+        )
         keys.current.clear()
       }
       const me = outdoorPlayer.current
@@ -408,6 +409,9 @@ function OfficeRuntime(
         ),
       )
       street.current.render(me, time, dt)
+      // 사무실의 data-player-x처럼 산책 위치를 남겨 E2E가 걸음을 확인한다.
+      gl.domElement.setAttribute('data-street-x', me.x.toFixed(2))
+      gl.domElement.setAttribute('data-street-y', me.y.toFixed(2))
       return
     }
     if (street.current) {
@@ -499,6 +503,7 @@ function OfficeRuntime(
     const ease = 1 - Math.exp(-dt * 2)
     focus.current.x += (target.x - focus.current.x) * ease
     focus.current.y += (target.y - focus.current.y) * ease
+    me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
       zoom: [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] * zoom.current,
       focus: focus.current,

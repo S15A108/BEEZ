@@ -41,7 +41,7 @@
 
 ### 문서 검토 저장·원본 보존
 
-V6은 working copy, 비비 실행/결과/제안, 제출, 작성 원본 정리 큐를 추가한다. 모델 사용량은 기존 llm_usage를 재사용한다. 문서 검토 알림은 전진 담당 공통 서비스 연동 TODO이며 문서 도메인은 notification에 직접 저장하지 않는다. 알림 대상 타입·중복 키·전달 보장은 담당자 계약 확정 후 반영한다. 195의 change_proposal 리비전 컬럼을 미리 넣지 않는다. 미병합 194의 V6에 통합하며 기존 V2~V5 migration은 변경하지 않는다.
+V6은 working copy, 비비 실행/결과/제안, 제출, 작성 원본 정리 큐를 추가한다. 모델 사용량은 기존 llm_usage를 재사용한다. 문서 검토 알림은 공통 알림 서비스(`NotificationRequester`)에 같은 트랜잭션으로 요청하며 문서 도메인은 notification에 직접 저장하지 않는다. 알림 대상 타입·중복 키는 [알림·활동 이벤트 공통 계약](10-notification-activity-contract.md)을 따른다. 195의 change_proposal 리비전 컬럼을 미리 넣지 않는다. 미병합 194의 V6에 통합하며 기존 V2~V5 migration은 변경하지 않는다.
 
 파일 원본은 private object storage에 보관한다. 직접 편집/제안 반영의 제출 파일은 정규화 UTF-8 본문으로 생성한다. 파일 재업로드 후 내용 편집이 없으면 재업로드한 원본 bytes를 보존한다. content_hash는 원본 bytes, text_hash는 정규화 본문을 나타낸다. 파일 PUT은 트랜잭션 밖, DB 참조·제출·멱등 응답은 한 트랜잭션이다. 실패 시 새 원본은 기존 보상 규칙으로 정리한다.
 
@@ -97,7 +97,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, planning_question | 오서현 |
 | B. 설계 의존관계·이력 | design_item_dependency, design_item_dependency_history (V9), design_relation_set (V9) | 변준성 (진입점은 오서현, #40 합의) |
 | B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
-| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target, approval, meeting, meeting_participant, meeting_entry | 오서현 |
+| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target, approval, meeting, meeting_participant, meeting_entry, meeting_summary | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
 | C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |
@@ -267,6 +267,8 @@ erDiagram
   change_proposal |o--o{ meeting : ""
   meeting ||--o{ meeting_participant : ""
   meeting ||--o{ meeting_entry : "분석 대상 텍스트"
+  meeting ||--o{ meeting_summary : "비비 회의 정리 (S15P31A108-235)"
+  meeting_entry ||--o| meeting_summary : "SUMMARY 기록·마지막 입력 기록"
 
   project ||--o{ dev_context_packet : ""
   dev_context_packet ||--o{ dev_context_packet_ref : "포함한 항목 버전"
@@ -369,6 +371,21 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 `try_start`, `publish_change` 테스트 함수는 서비스 로직을 SQL로 옮긴 **프로토타입**이다. 실제 구현은 Java 서비스에 두고, 이 시나리오를 Testcontainers 통합 테스트로 옮긴다.
 
 ## 6. 남은 결정
+
+### V30 비비 회의 정리 저장 (S15P31A108-235)
+
+`meeting_summary`는 팀장이 요청한 비비 회의 정리(MTG-A11)와 수정 요청(MTG-A12)을 저장한다. 정리는 고치거나 지우지 않고, 수정 요청은 새 행이며 이전 정리는 `previous_summary_id`로 이어진다. 회의별 최신 정리는 `max(id)`다.
+
+| 열·제약 | 설명 |
+| --- | --- |
+| `(meeting_id, project_id)` → `meeting` | 회의와 프로젝트 소속을 함께 묶는다 |
+| `entry_id` UNIQUE, `(entry_id, meeting_id)` → `meeting_entry` | 회의 기록에 남긴 SUMMARY 기록. 정리마다 기록 1건 |
+| `(through_entry_id, meeting_id)` → `meeting_entry` | 정리에 쓴 마지막 기록. 같은 회의의 기록만 가리킨다 |
+| `(previous_summary_id, meeting_id)` → `meeting_summary`, `previous_summary_id < id` | 수정 요청 전 정리. 같은 회의 안에서만 |
+| `result` JSONB | 검증·정규화한 `conflicts`, `decisions`, `document_changes`, `action_items` |
+| `generation` JSONB | `origin`, `model`, `text`, `sources`, `unresolved`, `usage` |
+
+`meeting_entry`에는 `UNIQUE (id, meeting_id)`를 추가해 복합 FK의 대상으로 쓴다.
 
 ### V18 변경 영향 결과·발행 후 분석 접수 (#197)
 

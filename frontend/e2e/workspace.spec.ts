@@ -31,6 +31,8 @@ test('선택한 부지의 프로젝트와 외관이 새로고침 뒤에도 유�
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (request) => {
     const url = new URL(request.url())
+    // GLB 안의 텍스처는 three가 메모리 주소(blob:)로 읽는다. 네트워크 요청만 센다(사용자 승인 2026-11-03).
+    if (url.protocol === 'blob:' || url.protocol === 'data:') return
     if (
       url.pathname.startsWith('/api/') ||
       !['localhost', '127.0.0.1'].includes(url.hostname)

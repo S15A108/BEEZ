@@ -121,6 +121,49 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(documents.get(author, project.projectId(), document, null).toString()).contains("보완");
     }
 
+    List<Map<String, Object>> notifications(String type) {
+        return jdbc.queryForList("SELECT * FROM notification WHERE project_id=? AND type=? ORDER BY id", project.projectId(), type);
+    }
+
+    @Test void beeReviewSubmissionAndDecisionNotifyTheRightPeopleOnceWithoutTheReason() {
+        var review = review();
+        assertThat(notifications("DOCUMENT_BEE_REVIEW_DONE")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(author.accountId());
+            assertThat(row.get("ref_kind")).isEqualTo("DOCUMENT_VERSION");
+            assertThat(row.get("document_id")).isEqualTo(document);
+            assertThat(row.get("dedupe_key")).isEqualTo("document-review:" + review.id() + ":bee-review-done:to:" + author.accountId());
+        });
+
+        var request = new DocumentSubmissionRequest(copy().revision(), review.id());
+        var submission = reviews.submit(author, project.projectId(), document, request, "notify-submit");
+        assertThat(reviews.submit(author, project.projectId(), document, request, "notify-submit")).isEqualTo(submission);
+        assertThat(notifications("DOCUMENT_REVIEW_REQUESTED")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(leader.accountId());
+            assertThat(row.get("ref_id")).isEqualTo(Long.parseLong(submission.documentVersionId()));
+            assertThat(row.get("document_id")).isEqualTo(document);
+            assertThat(row.get("dedupe_key")).isEqualTo("doc-submission:" + submission.id() + ":review-requested:to:" + leader.accountId());
+        });
+
+        var reject = new DocumentDecisionRequest("REJECT", "민감한 반려 사유 원문");
+        reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), reject);
+        reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), reject);
+        assertThat(notifications("DOCUMENT_REJECTED")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(author.accountId());
+            assertThat(row.get("title").toString() + row.get("body")).doesNotContain("민감한 반려 사유 원문");
+        });
+        assertThat(notifications("DOCUMENT_APPROVED")).isEmpty();
+        // 요청은 한 번, 결과는 한 번 — 재생·재요청이 알림을 늘리지 않았다
+        assertThat(notifications("DOCUMENT_REVIEW_REQUESTED")).hasSize(1);
+    }
+
+    @Test void approvalNotifiesTheRegistrant() {
+        var review = review();
+        var submission = submit(review);
+        reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), new DocumentDecisionRequest("APPROVE", null));
+        assertThat(notifications("DOCUMENT_APPROVED")).singleElement()
+                .satisfies(row -> assertThat(row.get("recipient_account_id")).isEqualTo(author.accountId()));
+    }
+
     @Test void evenLeaderCannotEditOtherAuthorsCopyAndAgentOrRemovedMemberCannotWrite() {
         code(() -> reviews.edit(leader, project.projectId(), document, new WorkingCopyUpdateRequest(1, "다른 내용", "plan.md")), "forbidden");
         long token = fixtures().agentToken(project.projectId(), author.accountId());
@@ -417,8 +460,11 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         }
         assertThat(baselines.publish(leader, request, "button").documents()).hasSize(4);
         assertThat(baselines.publish(leader, request, "button").versionNo()).isEqualTo(1);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM notification WHERE project_id=?", Integer.class,
-                project.projectId())).isZero();
+        // 같은 키 재요청(replay)은 알림을 늘리지 않는다. 최초 기준 알림은 팀장을 뺀 활성 팀원에게 한 번씩만 간다.
+        assertThat(notifications("BASELINE_CREATED")).singleElement().satisfies(row -> {
+            assertThat(row.get("recipient_account_id")).isEqualTo(author.accountId());
+            assertThat(row.get("ref_kind")).isEqualTo("BASELINE");
+        });
         code(() -> reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "우회 변경", "plan.md")), "change_proposal_required");
         assertThat(reviews.decide(leader, project.projectId(), Long.parseLong(last.documentId()), Long.parseLong(last.id()),
                 new DocumentDecisionRequest("APPROVE", null)).status()).isEqualTo("APPROVED");
