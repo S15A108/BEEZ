@@ -1423,8 +1423,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `author_member_id` | `ID` | N | HUMAN이면 작성 멤버. 수정안 요청 |
 | `author_name` | `string` | N | HUMAN이면 표시 이름. 수정안 요청 |
 | `refs` | `object[]` | N | 비비 기록이 가리키는 대상 [{type: TASK\|DESIGN_ITEM\|DOCUMENT_VERSION, id, label}]. 화면은 칩으로 보임. 수정안 요청 |
-| `through_entry_id` | `ID` | N | 분석 마지막 입력 기록 |
-| `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거 |
+| `through_entry_id` | `ID` | N | 분석 마지막 입력 기록. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
+| `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
 | `created_at` | `Time` | Y | 작성 시각 |
 
 <a id="schema-meeting"></a>

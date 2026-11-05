@@ -1602,7 +1602,7 @@ HTTP `200`.
 관련 요구사항: MTG-06·08  
 담당: BE: 오서현 / AI: 양지훈 / FE: —
 
-상태: 내부 계약 초안
+상태: 내부 계약 초안. SUMMARY 는 BE 가 호출하는 경계를 구현했다(S15P31A108-235). AI 서버는 2026-11-05 기준 SUMMARY 를 아직 받지 않아(`SUMMARY contract is not agreed`) 실제 연동은 AI 구현 뒤 확인한다
 
 #### 인증
 
@@ -1795,6 +1795,8 @@ HTTP `200`.
 - (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
 - (수정안 요청) QUESTIONS·MINUTES는 회의실 수정안에서 쓰지 않는다(MTG-A07·A08 폐지 예정).
+- (BE 구현, S15P31A108-235) BE가 SUMMARY로 보내는 입력: `entries`는 정리 범위의 TEXT·CONFLICT_BRIEF 기록(최근 것부터 최대 200건), `related_tasks`는 회의가 가리키는 작업, `approved_items`는 그 작업의 현재 계획이 참조하는 설계 항목의 지금 기준 승인 버전(최대 100개), `documents`는 그 항목의 출처 문서의 지금 기준 승인본 원문(utf8-lf-v1 정규화, 최대 10개·문서당 300,000바이트, 통째로만), 수정 요청이면 `previous_summary`·`feedback`(4,000자 이하). 요청 본문은 바이트 예산(기본 900,000바이트, 설정값)을 기록·문서·항목이 나눠 쓰며 AI 쪽 한도(1 MiB)보다 약 14% 낮다 — 실연동 때 조정한다. `change_proposal`은 보내지 않는다.
+- (BE 구현, S15P31A108-235) BE가 검증하는 출력: `result`는 객체, `origin`은 MODEL/TEMPLATE, `conflicts`·`decisions`·`document_changes`·`action_items`는 배열이어야 한다. `decisions`는 문자열 배열이면 BE가 `{text}`로 감싸고 `{text, decided_by_member_id}` 객체도 받는다. `document_changes[]`는 입력 `documents`의 문서·버전이고 `locator`가 `text_lines` 줄 범위 안이며 `before`가 그 범위와 정확히 같고 `evidence_entry_ids`가 입력 `entries`의 ID이며 같은 문서 안에서 줄 범위가 겹치지 않아야 한다. 틀린 항목은 버려 `unresolved`에 개수를 남기고, 한 목록이 통째로 쓸 수 없으면 502 `ai_unavailable`로 응답하며 아무것도 저장하지 않는다. `result.sources`는 입력 문서·버전과 같은 것만 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
