@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
 import { formatDate } from '@/lib/formatDate'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { targetFocus, targetPane } from './notificationTarget'
 
 export function InboxPanel({ projectId }: { projectId: string }) {
   const [unreadOnly, setUnreadOnly] = useState(false)
@@ -34,16 +35,7 @@ export function InboxPanel({ projectId }: { projectId: string }) {
   })
   const open = (item: Notification) => {
     if (!item.read_at) read.mutate([item.id])
-    openPane(
-      item.target_type === 'CHANGE_PROPOSAL'
-        ? 'changes'
-        : item.target_type === 'MEETING'
-          ? 'meetings'
-          : item.target_type === 'BASELINE'
-            ? 'documents'
-            : 'tasks',
-      item.target_id,
-    )
+    openPane(targetPane[item.target_type], targetFocus(item))
   }
   return (
     <div className="space-y-5">

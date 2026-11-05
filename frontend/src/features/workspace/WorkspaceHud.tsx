@@ -25,7 +25,11 @@ import {
   openMeetingCount,
   useMeetingList,
 } from '@/features/meetings/useMeetingList'
-import { targetLabel, targetPane } from '@/features/inbox/notificationTarget'
+import {
+  targetFocus,
+  targetLabel,
+  targetPane,
+} from '@/features/inbox/notificationTarget'
 import { Toast } from '@/components/Toast'
 import { BibiStatusRow } from './BibiStatusRow'
 import { Hotbar } from './Hotbar'
@@ -545,7 +549,10 @@ export function WorkspaceHud({
             .then(() =>
               queryClient.invalidateQueries({ queryKey: ['notifications'] }),
             )
-          openPane(targetPane[firstUnread.target_type], firstUnread.target_id)
+          openPane(
+            targetPane[firstUnread.target_type],
+            targetFocus(firstUnread),
+          )
         },
       },
       firstReady && {
