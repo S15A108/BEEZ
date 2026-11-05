@@ -1,12 +1,14 @@
 # BEEZ API Common
 
-버전: 0.8 · 갱신일: 2026-10-29 · 개발 계약 초안
+버전: 0.8 · 갱신일: 2026-11-05 · 개발 계약 초안
 
 2026-10-27: 원문 RAG의 SourceLocator·RetrievalScope·RetrievedEvidence를 추가했다. 관련 내부 호출은 AI-A09와 AI-A04/05 확장을 따른다. 기존 문서/승인 상태나 비RAG 계약을 일괄 변경하지 않는다.
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
 2026-11-05: Q05의 남은 항목이던 탈퇴 처리(혼자 쓰는 프로젝트 삭제, 팀원 참여 프로젝트 자동 탈퇴)를 PR #118 구현대로 정함으로 고쳤다(S15P31A108-218).
+
+2026-11-05: 계정 설정을 구현(PR #118)에 맞췄다(S15P31A108-278). 재설정 링크 API(ACC-A08·A09)와 `reset_token_expired`를 폐지로 확정해 목록에서 뺐다. Q04에 임시 비밀번호·세션 처리의 구현값을 적었다. Account에 `must_change_password`를 더했다.
 
 2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 팀장의 나가기는 넘길 팀원을 골라 위임과 한 번에 하고(넘길 사람이 없으면 `leader_transfer_required`), 삭제는 PRJ-A05로만 한다(PR #113 리뷰). 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
@@ -109,7 +111,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 404 | 리소스 없음 또는 소속 비노출 | not_found |
 | 405 | 지원하지 않는 메서드 | method_not_allowed |
 | 409 | 현재 상태·버전·중복·의존 충돌 | version_conflict, revision_conflict, baseline_conflict, baseline_missing(기준 v1 전) |
-| 410 | 링크 만료 | invitation_expired, reset_token_expired. 수정안 요청: 초대는 만료 없는 자동 참여(Q05)라 invitation_expired를 쓰지 않고 쓸 수 없는 초대는 404 not_found(MEM-A04)다. 재설정 링크(ACC-A09)는 폐지 예정이다 |
+| 410 | 링크 만료 | invitation_expired. 수정안 요청: 초대는 만료 없는 자동 참여(Q05)라 invitation_expired를 쓰지 않고 쓸 수 없는 초대는 404 not_found(MEM-A04)다. 재설정 링크(ACC-A08·A09)와 reset_token_expired는 폐지했다(11-05) |
 | 413 | 파일 용량 초과 | file_too_large |
 | 415 | 본문·파일 형식 불가 | unsupported_media_type |
 | 429 | 호출 제한 | rate_limited. 인증 코드를 여러 번 틀린 경우만 too_many_attempts(ACC-A12, 수정안 요청) |
@@ -273,8 +275,6 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [ACC-A05 프로필 수정](01-backend-rest.md#acc-a05) | PATCH `/api/me` | USER | 전진 | — | 박민용 |
 | [ACC-A06 비밀번호 변경](01-backend-rest.md#acc-a06) | PUT `/api/me/password` | USER | 전진 | — | 박민용 |
 | [ACC-A07 임시 비밀번호 발급](01-backend-rest.md#acc-a07) | POST `/api/auth/password/forgot` | PUBLIC | 전진 | — | 박민용 |
-| [ACC-A08 재설정 링크 확인 (폐지 예정)](01-backend-rest.md#acc-a08) | POST `/api/auth/password/reset/verify` | PUBLIC | 전진 | — | 박민용 |
-| [ACC-A09 비밀번호 재설정 (폐지 예정)](01-backend-rest.md#acc-a09) | POST `/api/auth/password/reset` | PUBLIC | 전진 | — | 박민용 |
 | [ACC-A10 회원 탈퇴](01-backend-rest.md#acc-a10) | POST `/api/me/withdraw` | USER | 전진 | — | 박민용 |
 | [ACC-A11 가입 인증 코드 보내기](01-backend-rest.md#acc-a11) | POST `/api/auth/email-verifications` | PUBLIC | 전진 | — | 박민용 |
 | [ACC-A12 가입 인증 코드 확인](01-backend-rest.md#acc-a12) | POST `/api/auth/email-verifications/{verification_id}/confirm` | PUBLIC | 전진 | — | 박민용 |
@@ -455,7 +455,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위. (수정안 요청 · 11-04 사용자 결정) 미배정 작업을 팀원이 스스로 맡기(TSK-A06)는 팀 합의 항목이다(TSK-A06 담당 변준성 동의 필요, PR #113 리뷰) |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 알림 요청은 S15P31A108-217에서 같은 트랜잭션으로 연결했고 활동 이벤트는 S15P31A108-237에서 연결한다(승인 게이트는 241에서 구현). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
-| Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
+| Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부. 임시 비밀번호는 기본안으로 구현됨(PR #118, S15P31A108-171): 12자·30분·다시 요청 60초·이메일당 1시간 5회·서버 전체 1시간 100통, 발급만으로는 기존 비밀번호·세션을 바꾸지 않고, 임시 비밀번호로 로그인하면 그것이 계정 비밀번호가 되며 다른 API는 막지 않는다(must_change_password로 알림). 비밀번호 변경(ACC-A06) 때 이 세션만 남기고 다른 세션을 끊는다. 남은 것: 비밀번호 정책(구현은 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상으로 기본안과 다르다)과 규칙 위반 코드(구현 `validation_failed`, 명세 `password_policy_violation`), IP별 한도(S15P31A108-273) |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 탈퇴 처리는 PR #118(S15P31A108-171) 구현으로 정함(2026-11-05): 혼자 쓰는 프로젝트는 함께 삭제(PRJ-A05처럼 보관·토큰 전부 폐기), 팀원으로만 참여한 프로젝트는 자동으로 빠지고(LEFT), 남긴 기록은 보존. 팀원 참여 프로젝트의 열린 작업은 지금은 담당자를 그대로 두고, #113 구현 때 MEM-A10 팀원 규칙대로 비운다. (수정안 요청 · 11-04 사용자 결정) 나가기: 팀원은 열린 작업이 있어도 경고만 보고 나가며, 인계 대상을 고르지 않으면 담당자가 비워진다. 팀장은 나가기 창에서 넘길 팀원을 골라 위임과 나가기를 한 번에 하거나, 프로젝트를 삭제한다(팀원이 있어도 됨, 이름 확인). 나가기는 프로젝트를 삭제하지 않는다(MEM-A10·PRJ-A05, PR #113 리뷰). 팀장 나가기·삭제 규칙은 팀 합의 항목이다. 제외(MEM-A09)도 나가기와 같다. 탈퇴(ACC-A10)는 팀 프로젝트의 팀장을 지금처럼 막는다 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
@@ -494,6 +494,7 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `name` | `string` | Y | 표시 이름 |
 | `avatar` | `string` | N | 아바타 식별값 또는 URL |
 | `created_at` | `Time` | Y | 가입 시각 |
+| `must_change_password` | `boolean` | N | 임시 비밀번호로 로그인한 뒤 아직 비밀번호를 바꾸지 않았으면 true. 로그인·내 계정 조회·프로필 수정(ACC-A02·A04·A05) 응답에만 있고 가입(ACC-A01) 응답에는 없다 |
 
 <a id="schema-baselinesummary"></a>
 
