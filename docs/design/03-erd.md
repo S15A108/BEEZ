@@ -95,7 +95,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 
 ## 1. 테이블과 소유자 (V2 기준 43개)
 
-이름 뒤의 (Vn)은 V2 뒤 마이그레이션으로 더한 테이블이다. 뒤에 더한 테이블을 모두 담지는 않았다 — 나머지는 위 V6·V17 절과 0-1절, 6절에 있다.
+이름 뒤의 (Vn)은 V2 뒤 마이그레이션으로 더한 테이블이다. 뒤에 더한 테이블을 이 표에 모두 담지는 않았다. 전체 목록은 `backend/src/main/resources/db/migration`이 기준이다.
 
 | 묶음 | 테이블 | 소유 |
 |---|---|---|
@@ -103,7 +103,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, planning_question | 오서현 |
 | B. 설계 의존관계·이력 | design_item_dependency, design_item_dependency_history (V9), design_relation_set (V9) | 변준성 (진입점은 오서현, #40 합의) |
 | B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
-| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target, approval, meeting, meeting_participant, meeting_entry, meeting_summary | 오서현 |
+| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target (V12), approval, meeting, meeting_participant, meeting_entry, meeting_summary (V34) | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
 | C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |

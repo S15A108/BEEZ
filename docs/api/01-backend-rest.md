@@ -12,7 +12,7 @@
 
 2026-11-04: 가입 이메일 인증 명세를 구현(PR #114)에 맞췄다(S15P31A108-274). ACC-A12 판정 순서와 이미 쓴 코드의 410, ACC-A11 `rate_limited`가 덮는 경우, ACC-A01 검사 순서를 적었다. 동작은 바뀌지 않는다.
 
-2026-11-05: 계정 설정 명세를 구현(PR #118)에 맞췄다(S15P31A108-278). 만료된 임시 비밀번호는 `temporary_password_expired`가 아니라 401 `invalid_credentials`다(ACC-A02). ACC-A04·A05 응답에 `must_change_password`가 있다. 임시 비밀번호의 세부값·발송 실패·기존 비밀번호 처리(ACC-A07)와 비밀번호 변경·탈퇴 때 세션·개인정보 처리(ACC-A06·A10)를 적었다. 재설정 링크 API(ACC-A08·A09)는 폐지로 확정했다. 비밀번호 규칙 위반 코드는 아직 정하지 않았다(ACC-A01·A06).
+2026-11-05: 계정 설정 명세를 구현(PR #118)에 맞췄다(S15P31A108-278). 만료된 임시 비밀번호는 `temporary_password_expired`가 아니라 401 `invalid_credentials`다(ACC-A02). ACC-A04·A05 응답에 `must_change_password`가 있다. 임시 비밀번호의 세부값·발송 실패·기존 비밀번호 처리(ACC-A07)와 비밀번호 변경·탈퇴 때 세션·개인정보 처리(ACC-A06·A10)를 적었다. 재설정 링크 API(ACC-A08·A09)는 폐지로 확정했다. 비밀번호 규칙 위반 코드는 아직 정하지 않았다(ACC-A01·A06). 초대 응답(MEM-A02·A04)의 `expires_at`은 V33에서 컬럼을 지워 응답에 없으므로 처리 규칙·필드 표·예시에서 뺐다(PR #134).
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -2048,7 +2048,6 @@ HTTP `200`.
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `project_name` | `string` | Y | 프로젝트명 |
-| `expires_at` | `Time` | N | 만료 시각. 초대는 만료가 없어 생략(Q05) |
 | `login_required` | `boolean` | Y | 프로젝트를 열려면 로그인 필요 |
 | `inviter` | `object` | Y | 초대한 팀장 {name, email}. 수정안 요청 |
 | `project_description` | `string` | N | 프로젝트 소개. 화면은 두 줄 넘으면 말줄임. 수정안 요청 |
