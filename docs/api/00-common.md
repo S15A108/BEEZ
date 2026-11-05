@@ -8,7 +8,7 @@
 
 2026-11-05: Q05의 남은 항목이던 탈퇴 처리(혼자 쓰는 프로젝트 삭제, 팀원 참여 프로젝트 자동 탈퇴)를 PR #118 구현대로 정함으로 고쳤다(S15P31A108-218).
 
-2026-11-05: 계정 설정을 구현(PR #118)에 맞췄다(S15P31A108-278). 재설정 링크 API(ACC-A08·A09)와 `reset_token_expired`를 폐지로 확정해 목록에서 뺐다. Q04에 임시 비밀번호·세션 처리의 구현값을 적었다. Account에 `must_change_password`를 더했다.
+2026-11-05: 계정 설정을 구현(PR #118)에 맞췄다(S15P31A108-278). 재설정 링크 API(ACC-A08·A09)와 `reset_token_expired`를 폐지로 확정해 목록에서 뺐다. Q04에 임시 비밀번호·세션 처리의 구현값을 적었다. Account에 `must_change_password`를 더했다. Invitation에서 `expires_at`을 뺐다(V33에서 컬럼 삭제, 응답에 없음, PR #134).
 
 2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 팀장의 나가기는 넘길 팀원을 골라 위임과 한 번에 하고(넘길 사람이 없으면 `leader_transfer_required`), 삭제는 PRJ-A05로만 한다(PR #113 리뷰). 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
@@ -547,7 +547,6 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `id` | `ID` | Y | 초대 ID |
 | `project_id` | `ID` | Y | 대상 프로젝트 |
 | `invited_email` | `string` | N | 주소를 지정한 초대의 대상 |
-| `expires_at` | `Time` | N | 만료 시각. 초대는 만료가 없다(Q05 정함). 수정안 요청 |
 | `accepted_at` | `Time` | N | 팀원이 된 시각. 초대받은 사람이 로그인·가입할 때나 메일 링크로 참여(MEM-A05)할 때 채움(Q05). 수정안 요청 |
 | `revoked_at` | `Time` | N | 폐기 시각 |
 

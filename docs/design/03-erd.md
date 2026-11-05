@@ -89,11 +89,13 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | `email_verification` (V25, -219) | 새 테이블. 가입 이메일 인증 요청 한 번이 한 행(ACC-A11·A12, ACC-A01 `verified_token`). API의 `verification_id`는 순번이 아닌 난수 `public_id`(UNIQUE). 코드·토큰은 해시만(`code_hash` bcrypt, `token_hash` SHA-256). `closed_at`(다시 받기·틀린 횟수 초과·확인 성공)과 `code_expires_at`을 따로 둔다. 이메일당 열린 코드 하나(`closed_at IS NULL` 부분 UNIQUE), 가입 때 `token_consumed_at`을 채운다 |
 | `account` (V27, -171) | `must_change_password BOOLEAN NOT NULL DEFAULT false` 추가. 임시 비밀번호로 로그인하면 true, 비밀번호 변경(ACC-A06)이 성공하면 false. 탈퇴(ACC-A10)는 행을 남기고 `email`·`avatar_url`·`password_hash`를 NULL로, `display_name`을 "탈퇴한 사용자"로 바꾸고 `deleted_at`을 찍는다(V2부터 이 컬럼들은 NULL 허용). `email` UNIQUE에 NULL은 걸리지 않으므로 같은 이메일로 다시 가입하면 새 계정 행이 생긴다 |
 | `temporary_password` (V27, -171) | 새 테이블. 임시 비밀번호 요청(ACC-A07) 한 번이 한 행. 계정이 없거나 이름이 틀린 요청도 `account_id`·`password_hash` NULL로 남기고 바로 닫는다(이메일당 한도를 똑같이 세려는 것, `(account_id IS NULL) = (password_hash IS NULL)` CHECK). `password_hash`는 bcrypt, 원문은 메일에만. `used_at`(로그인에 쓴 시각, 쓰면 `closed_at`도 필수)·`closed_at`(사용·새로 발급·비밀번호 변경·발송 실패)·`expires_at`. 계정당 열린 임시 비밀번호 하나(`ux_temporary_password_open`, `closed_at IS NULL` 부분 UNIQUE). 지난 행 정리 작업은 아직 없다(-273) |
-| `invitation` (V33, -220) | `expires_at` 삭제 — 초대는 만료가 없다(Q05). 로그인·가입 때 대기 초대를 찾는 `ix_invitation_pending_email`(`accepted_at`·`revoked_at`이 NULL인 행의 `email`) 추가 |
+| `invitation` (V33, -220) | `expires_at` 삭제 — 초대는 만료가 없다(Q05). 로그인·가입 때 대기 초대를 찾는 `ix_invitation_pending_email`(`email`이 있고 `accepted_at`·`revoked_at`이 NULL인 행의 `email`) 추가 |
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 
-## 1. 테이블과 소유자 (44개)
+## 1. 테이블과 소유자 (V2 기준 43개)
+
+이름 뒤의 (Vn)은 V2 뒤 마이그레이션으로 더한 테이블이다. 뒤에 더한 테이블을 모두 담지는 않았다 — 나머지는 위 V6·V17 절과 0-1절, 6절에 있다.
 
 | 묶음 | 테이블 | 소유 |
 |---|---|---|

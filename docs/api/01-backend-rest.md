@@ -327,7 +327,8 @@ HTTP `200`.
   "email": "member@example.com",
   "name": "김개발",
   "avatar": "bee-yellow",
-  "created_at": "2026-10-23T03:00:00Z"
+  "created_at": "2026-10-23T03:00:00Z",
+  "must_change_password": false
 }
 ```
 
@@ -486,7 +487,8 @@ HTTP `200`.
   "email": "member@example.com",
   "name": "김개발",
   "avatar": "bee-yellow",
-  "created_at": "2026-10-23T03:00:00Z"
+  "created_at": "2026-10-23T03:00:00Z",
+  "must_change_password": false
 }
 ```
 
@@ -578,7 +580,8 @@ HTTP `200`.
   "email": "member@example.com",
   "name": "김개발",
   "avatar": "bee-yellow",
-  "created_at": "2026-10-23T03:00:00Z"
+  "created_at": "2026-10-23T03:00:00Z",
+  "must_change_password": false
 }
 ```
 
@@ -681,7 +684,7 @@ HTTP `204`.
 
 - 비밀번호 해시를 갱신한다.
 - (-171 구현, Q04 기본안) 성공하면 이 요청의 세션만 남기고 같은 계정의 다른 세션을 모두 끊는다. 받아 두고 쓰지 않은 임시 비밀번호도 닫는다.
-- (-171 구현) 검사 순서: 현재 비밀번호(400 `current_password_mismatch`) → 새 비밀번호 규칙. 세션은 유효하므로 현재 비밀번호가 틀려도 401이 아니다.
+- (-171 구현) 검사 순서: 필드 검사(400 `validation_failed`) → 현재 비밀번호(400 `current_password_mismatch`) → 새 비밀번호 규칙. 세션은 유효하므로 현재 비밀번호가 틀려도 401이 아니다.
 - 비밀번호 규칙 위반은 지금 구현에서 위 오류 표의 `password_policy_violation`이 아니라 가입(ACC-A01)과 같은 400 `validation_failed`이고, `message`가 `password:`로 시작한다. 어느 코드로 맞출지는 ACC-A01과 함께 정한다(PR #118 알려진 한계 6).
 - 비밀번호·인증정보를 응답이나 로그에 남기지 않는다.
 - (수정안 요청) 임시 비밀번호로 로그인한 사람은 current_password에 임시 비밀번호를 보낸다. 성공하면 must_change_password가 풀린다. 변경 뒤 완료 화면 없이 회원 설정으로 돌아간다.
@@ -1890,8 +1893,7 @@ HTTP `200`.
     {
       "id": "31",
       "project_id": "101",
-      "invited_email": "member@example.com",
-      "expires_at": "2026-10-23T03:00:00Z"
+      "invited_email": "member@example.com"
     }
   ],
   "has_more": false
@@ -1918,7 +1920,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
-- 대기·수락·폐기·만료 초대를 모두 id 내림차순으로 돌려준다. 상태는 `accepted_at`·`revoked_at`·`expires_at`으로 구분한다.
+- 대기·수락·폐기 초대를 모두 id 내림차순으로 돌려준다. 상태는 `accepted_at`·`revoked_at`으로 구분한다. 초대는 만료가 없다(Q05, V33에서 `expires_at` 삭제).
 - (수정안 요청) '아직 로그인 전' 줄의 '메일 다시 보내기'는 MEM-A11, '초대 취소'는 MEM-A03이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -2056,7 +2058,6 @@ HTTP `200`.
 ```json
 {
   "project_name": "BEEZ",
-  "expires_at": "2026-10-23T03:00:00Z",
   "login_required": true
 }
 ```
