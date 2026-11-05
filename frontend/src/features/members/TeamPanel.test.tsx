@@ -4,6 +4,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { authApi, membersApi, projectsApi } from '@/api/services'
 import {
@@ -32,7 +33,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it('validates an invitation form and displays the created invitation link', async () => {
+// PR #134(S15P31A108-290): 화면은 링크 복사 대신 메일 보내기만 쓴다. 보낸 결과를 이메일별로 보인다.
+it('초대 칸 형식을 검사하고, 보내면 초대 메일을 보낸 결과를 이메일별로 보여 준다', async () => {
   const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
@@ -54,9 +56,11 @@ it('validates an invitation form and displays the created invitation link', asyn
     'colleague@beez.local',
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
-  const link = await screen.findByLabelText<HTMLInputElement>('팀원 초대 링크')
-  expect(link.value).toContain('mock-invite-')
+  expect(
+    await screen.findByText('colleague@beez.local · 초대 메일을 보냈어요'),
+  ).toBeInTheDocument()
   expect(await screen.findByText('colleague@beez.local')).toBeInTheDocument()
+  expect(screen.queryByLabelText('팀원 초대 링크')).not.toBeInTheDocument()
 })
 
 function renderTeam() {
@@ -69,8 +73,9 @@ function renderTeam() {
   )
 }
 
-it('쉼표로 여러 이메일을 넣으면 사람마다 초대를 만들고 칸을 비운다', async () => {
+it('쉼표로 여러 이메일과 함께 보낼 말을 넣으면 한 번에 초대하고 칸을 비운다', async () => {
   const user = userEvent.setup()
+  const create = vi.spyOn(membersApi, 'createEmailInvitations')
   renderTeam()
   await screen.findByText('김동료')
   const form = screen.getByRole('form', { name: '팀원 초대' })
@@ -78,14 +83,40 @@ it('쉼표로 여러 이메일을 넣으면 사람마다 초대를 만들고 칸
     within(form).getByLabelText('초대할 이메일'),
     'one@beez.local, two@beez.local',
   )
+  await user.type(within(form).getByLabelText('함께 보낼 말'), '같이 해요')
   await user.click(within(form).getByRole('button', { name: '초대' }))
-  // 링크는 만들어질 때마다 바로 보이므로 둘 다 보일 때까지 기다린다(PR #72 4차 조사 FOURTH-AMP-01).
+  expect(
+    await screen.findByText('one@beez.local · 초대 메일을 보냈어요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('two@beez.local · 초대 메일을 보냈어요'),
+  ).toBeInTheDocument()
+  expect(create).toHaveBeenCalledTimes(1)
+  expect(create).toHaveBeenCalledWith('101', {
+    emails: ['one@beez.local', 'two@beez.local'],
+    message: '같이 해요',
+  })
   await waitFor(() =>
-    expect(screen.getAllByLabelText('팀원 초대 링크')).toHaveLength(2),
+    expect(within(form).getByLabelText('초대할 이메일')).toHaveValue(''),
   )
-  expect(await screen.findByText('one@beez.local')).toBeInTheDocument()
-  expect(await screen.findByText('two@beez.local')).toBeInTheDocument()
-  expect(within(form).getByLabelText('초대할 이메일')).toHaveValue('')
+  expect(within(form).getByLabelText('함께 보낼 말')).toHaveValue('')
+})
+
+it('한 번에 20명을 넘게 넣으면 보내지 않고 알린다', async () => {
+  const user = userEvent.setup()
+  const create = vi.spyOn(membersApi, 'createEmailInvitations')
+  renderTeam()
+  await screen.findByText('김동료')
+  const form = screen.getByRole('form', { name: '팀원 초대' })
+  await user.click(within(form).getByLabelText('초대할 이메일'))
+  await user.paste(
+    Array.from({ length: 21 }, (_, i) => `u${i}@beez.local`).join(', '),
+  )
+  await user.click(within(form).getByRole('button', { name: '초대' }))
+  expect(
+    await within(form).findByText('한 번에 20명까지 초대할 수 있어요.'),
+  ).toBeInTheDocument()
+  expect(create).not.toHaveBeenCalled()
 })
 
 it('추방할 때 그 팀원이 맡은 작업을 넘길 작업으로 보여 준다', async () => {
@@ -189,15 +220,12 @@ it('팀원 목록을 못 불러오면 프로젝트 삭제 폼을 보이지 않�
   vi.restoreAllMocks()
 })
 
-// PR #72 전수 리뷰 AMP-03: 일괄 초대 중 하나가 실패해도 이미 만든 링크를 지키고, 실패한 이메일만 칸에 남겨 알린다.
-it('일괄 초대 중 하나가 실패해도 만든 링크를 보여 주고 실패한 이메일만 남긴다', async () => {
+// PR #72 전수 리뷰 AMP-03: 초대가 실패하면 입력한 이메일을 칸에 남겨 알린다. 이메일 초대(PR #134)는 요청 한 번이라
+// 일부만 실패하는 경우가 없고, 실패하면 이메일 전부를 남긴다.
+it('초대 요청이 실패하면 입력한 이메일을 칸에 남기고 이유를 보여 준다', async () => {
   const user = userEvent.setup()
-  const create = membersApi.createInvitation
-  vi.spyOn(membersApi, 'createInvitation').mockImplementation(
-    async (projectId, input, options) => {
-      if (input?.email === 'two@beez.local') throw new Error('서버 오류')
-      return create(projectId, input, options)
-    },
+  vi.spyOn(membersApi, 'createEmailInvitations').mockRejectedValue(
+    new Error('서버 오류'),
   )
   renderTeam()
   await screen.findByText('김동료')
@@ -207,13 +235,11 @@ it('일괄 초대 중 하나가 실패해도 만든 링크를 보여 주고 실�
     'one@beez.local, two@beez.local',
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
-  expect(await screen.findAllByLabelText('팀원 초대 링크')).toHaveLength(1)
-  expect(screen.getByText('one@beez.local')).toBeInTheDocument()
-  expect(
-    screen.getByText('1명은 초대하지 못했어요. 입력 칸에 남겨 뒀어요.'),
-  ).toBeInTheDocument()
+  expect(await within(form).findByRole('alert')).toHaveTextContent(
+    '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
+  )
   expect(within(form).getByLabelText('초대할 이메일')).toHaveValue(
-    'two@beez.local',
+    'one@beez.local, two@beez.local',
   )
 })
 
@@ -245,40 +271,74 @@ it('프로젝트 정보를 저장해도 다른 프로젝트의 부지를 덮어�
   expect(placements[`${account.id}:102`]).toEqual({ lot: 0, design: 'wood' })
 })
 
-// PR #72 mock/live 전수 대조 LIVE-AMP-05: 백엔드는 초대를 7일 뒤 만료한다. 만료된 초대가 있어도 같은 이메일로 다시 초대한다.
-it('만료된 초대가 있는 이메일은 건너뛰지 않고 다시 초대한다', async () => {
+// PR #72 mock/live 전수 대조 LIVE-AMP-05의 후속: 초대 만료는 없어졌고(PR #134) 이미 초대 중인지는 서버가 이메일마다 판정한다.
+// 화면은 대기 초대가 있는 이메일도 거르지 않고 보내 결과로 알린다.
+it('이미 초대 중이거나 팀원인 이메일도 건너뛰지 않고 보내 결과로 알린다', async () => {
   const user = userEvent.setup()
-  const list = membersApi.invitations
-  vi.spyOn(membersApi, 'invitations').mockImplementation(
-    async (projectId, query, options) => {
-      const page = await list(projectId, query, options)
-      return {
-        ...page,
-        items: [
-          ...page.items,
-          {
-            ...page.items[0],
-            id: '990',
-            invited_email: 'late@beez.local',
-            accepted_at: undefined,
-            revoked_at: undefined,
-            expires_at: '2026-01-01T00:00:00Z',
-          },
-        ],
-      }
-    },
-  )
-  const create = vi.spyOn(membersApi, 'createInvitation')
+  await membersApi.createEmailInvitations('101', {
+    emails: ['late@beez.local'],
+  })
+  const create = vi.spyOn(membersApi, 'createEmailInvitations')
   renderTeam()
-  await screen.findByText('김동료')
+  expect(await screen.findByText('late@beez.local')).toBeInTheDocument()
   const form = screen.getByRole('form', { name: '팀원 초대' })
   await user.type(
     within(form).getByLabelText('초대할 이메일'),
-    'late@beez.local',
+    'late@beez.local, member@beez.local',
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
   await vi.waitFor(() =>
-    expect(create).toHaveBeenCalledWith('101', { email: 'late@beez.local' }),
+    expect(create).toHaveBeenCalledWith('101', {
+      emails: ['late@beez.local', 'member@beez.local'],
+    }),
+  )
+  expect(
+    await screen.findByText('late@beez.local · 이미 초대 중이에요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('member@beez.local · 이미 팀원이에요'),
+  ).toBeInTheDocument()
+})
+
+it('초대 중인 줄의 메일 다시 보내기를 누르면 새 링크로 보냈다고 알린다', async () => {
+  const user = userEvent.setup()
+  const { results } = await membersApi.createEmailInvitations('101', {
+    emails: ['late@beez.local'],
+  })
+  const resend = vi.spyOn(membersApi, 'resendInvitation')
+  renderTeam()
+  await user.click(
+    await screen.findByRole('button', { name: '메일 다시 보내기' }),
+  )
+  expect(
+    await screen.findByText(
+      '초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.',
+    ),
+  ).toBeInTheDocument()
+  expect(resend).toHaveBeenCalledWith('101', results[0].invitation_id)
+})
+
+// MEM-A11: 메일을 못 보내면(503 mail_send_failed) 토큰이 바뀌지 않아 이전 링크가 그대로 쓰인다.
+it('다시 보내기 메일이 실패하면 이전 링크는 그대로 쓸 수 있다고 알린다', async () => {
+  const user = userEvent.setup()
+  await membersApi.createEmailInvitations('101', {
+    emails: ['late@beez.local'],
+  })
+  vi.spyOn(membersApi, 'resendInvitation').mockRejectedValue(
+    new AxiosError('mail', '503', undefined, undefined, {
+      status: 503,
+      statusText: 'Service Unavailable',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'mail_send_failed' } },
+    }),
+  )
+  renderTeam()
+  await user.click(
+    await screen.findByRole('button', { name: '메일 다시 보내기' }),
+  )
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '초대 메일을 보내지 못했어요. 이전에 보낸 링크는 그대로 쓸 수 있어요.',
   )
 })
 
@@ -305,9 +365,9 @@ it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 �
   ).rejects.toMatchObject({ response: { status: 403 } })
 })
 
-// PR #72 4차 조사 FOURTH-AMP-01: 초대 목록 조회가 실패해도 오류와 다시 불러오기를 보이고, 방금 만든 초대 링크는
-// 목록 응답과 상관없이 보인다(한 번만 받는 링크라 숨으면 잃는다).
-it('초대 목록 조회가 실패해도 오류와 방금 만든 초대 링크를 보인다', async () => {
+// PR #72 4차 조사 FOURTH-AMP-01: 초대 목록 조회가 실패해도 오류와 다시 불러오기를 보이고, 방금 보낸 초대 결과는
+// 목록 응답과 상관없이 보인다.
+it('초대 목록 조회가 실패해도 오류와 방금 보낸 초대 결과를 보인다', async () => {
   const user = userEvent.setup()
   vi.spyOn(membersApi, 'invitations').mockRejectedValue(new Error('503'))
   renderTeam()
@@ -321,9 +381,9 @@ it('초대 목록 조회가 실패해도 오류와 방금 만든 초대 링크�
     'later@beez.local',
   )
   await user.click(within(form).getByRole('button', { name: '초대' }))
-  const link = await screen.findByLabelText<HTMLInputElement>('팀원 초대 링크')
-  expect(link.value).toContain('mock-invite-')
-  expect(screen.getByText('later@beez.local · 방금 초대')).toBeInTheDocument()
+  expect(
+    await screen.findByText('later@beez.local · 초대 메일을 보냈어요'),
+  ).toBeInTheDocument()
 })
 
 // PR #72 5차 조사 FIFTH-AMP-01: 열린 작업이 있는 팀원은 넘겨받을 동료를 골라야 나갈 수 있다(서버 409 active_tasks_exist).
