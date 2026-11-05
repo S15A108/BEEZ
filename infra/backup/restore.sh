@@ -150,7 +150,10 @@ precheck() {
 log "환경 $ENV_NAME, 할 일: $([[ $MODE == all ]] && echo "DB 를 $(basename "$DUMP") 시점으로 되돌리고(지금 DB 는 지움) 원본 올리기" || echo "원본 올리기")"
 log "원본 백업: $OBJECTS (${n_objects}개) → bucket $BUCKET"
 if (( ! YES )); then
-    [[ $MODE == all ]] && precheck "$(cid postgres)"
+    if [[ $MODE == all ]]; then
+        pg=$(cid postgres)   # 인자 안에 $(cid …) 를 바로 쓰면 cid 의 종료 코드(2)가 사라진다. 대입으로 먼저 받는다
+        precheck "$pg"
+    fi
     log "바꾸지 않음. 진행하려면 끝에 --yes 를 붙인다"
     exit 0
 fi

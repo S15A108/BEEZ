@@ -28,7 +28,7 @@ BUCKET = "beez-documents"
 DOCKER = r'''
 case "$1" in
   compose) exec "$REAL_DOCKER" "$@" ;;
-  ps) echo fakecontainer ;;
+  ps) printf '%s' "${FAKE_PS-fakecontainer}" ;;   # FAKE_PS= 이면 컨테이너 없음
   stop|start) echo "$1" >> "$CALL_LOG" ;;
   inspect) echo healthy ;;
   exec)
@@ -228,6 +228,9 @@ def test_restore_all_preview_runs_precheck():
         check(r, 1, "원본 1개가 백업 폴더와 bucket 어디에도 없음")
     with tempfile.TemporaryDirectory() as tmp:
         check(run("restore.sh", "dev", "all", backup_root=restore_root(tmp)), 0, "바꾸지 않음")
+    # postgres 컨테이너가 없으면 미리보기도 환경 오류(2)로 끝난다(빈 ID 로 검증을 이어 1 로 끝나지 않게)
+    with tempfile.TemporaryDirectory() as tmp:
+        check(run("restore.sh", "dev", "all", backup_root=restore_root(tmp), FAKE_PS=""), 2, "컨테이너를 하나로 찾지 못함")
 
 
 def test_restore_all_originals_in_folder_restores():
