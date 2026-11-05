@@ -9,7 +9,7 @@ import {
   projectsApi,
   tasksApi,
 } from '@/api/services'
-import { sceneQuery } from './sceneQuery'
+import { agentWorkQuery, sceneQuery } from './sceneQuery'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -40,11 +40,6 @@ it('초기 설정 현황 API가 없으면 그 계정의 에이전트 연결로 �
     ],
     has_more: false,
   } as never)
-  // 사무실 에이전트 자리(D37)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
-  vi.spyOn(dashboardApi, 'agentWork').mockResolvedValue({
-    items: [],
-    has_more: false,
-  })
   vi.spyOn(tasksApi, 'list').mockResolvedValue({
     items: [],
     has_more: false,
@@ -70,9 +65,26 @@ it('초기 설정 현황 API가 없으면 그 계정의 에이전트 연결로 �
   })
 })
 
-// PR #128 리뷰: 작업 현황(MON-A05)은 에이전트 자리를 꾸미는 데만 쓴다. 500이나 시간 초과로 실패해도
-// 워크스페이스 첫 조회 전체가 실패하지 않고, 자리는 팀원 목록의 연결 여부로 어림한다.
-it('작업 현황 조회가 서버 오류로 실패해도 워크스페이스 첫 화면은 열린다', async () => {
+const axiosError = (status: number, message: string) =>
+  new AxiosError(message, 'ERR_BAD_RESPONSE', undefined, undefined, {
+    status,
+    statusText: message,
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+    data: { error: { code: 'error', message } },
+  })
+
+const work = {
+  member_id: '21',
+  agent_session_id: '91',
+  connection_status: 'ONLINE',
+  task_id: '3',
+  task_status: 'IN_PROGRESS',
+} as never
+
+// PR #128 리뷰(전진): 작업 현황(MON-A05)은 에이전트 자리를 꾸미는 데만 쓴다. 첫 화면 조회에 묶지 않아서
+// 500이나 시간 초과가 나도 워크스페이스 첫 화면은 열린다.
+it('워크스페이스 첫 화면 조회는 작업 현황을 부르지 않아 그 실패에 영향받지 않는다', async () => {
   vi.spyOn(projectsApi, 'get').mockResolvedValue({
     id: '101',
     name: '우리 팀 협업 서비스',
@@ -93,22 +105,45 @@ it('작업 현황 조회가 서버 오류로 실패해도 워크스페이스 첫
     my_agent_connected: true,
     baseline_published: false,
   } as never)
-  vi.spyOn(dashboardApi, 'agentWork').mockRejectedValue(
-    new AxiosError(
-      'Internal Server Error',
-      'ERR_BAD_RESPONSE',
-      undefined,
-      undefined,
-      {
-        status: 500,
-        statusText: 'Internal Server Error',
-        headers: {},
-        config: { headers: new AxiosHeaders() },
-        data: { error: { code: 'internal_error', message: '서버 오류' } },
-      },
-    ),
-  )
+  const agentWork = vi
+    .spyOn(dashboardApi, 'agentWork')
+    .mockRejectedValue(axiosError(500, 'Internal Server Error'))
   const data = await new QueryClient().fetchQuery(sceneQuery('101', '11'))
   expect(data.project.id).toBe('101')
-  expect(data.agentWork).toBeUndefined()
+  expect(agentWork).not.toHaveBeenCalled()
+})
+
+// PR #128 리뷰(양지훈): 사무실을 열어 둔 동안에도 다른 사람·에이전트의 상태 변화가 보이도록 작업 현황만 30초마다
+// 다시 부른다. 없는 API면 null로 두고 다시 부르지 않는다.
+it('작업 현황은 30초마다 다시 부르고, 없는 API면 null로 두고 멈춘다', async () => {
+  const query = agentWorkQuery('101', '11')
+  expect(query.queryKey).toEqual(['projects', '101', 'agent-work', '11'])
+  expect(agentWorkQuery('101').enabled).toBe(false)
+  const interval = query.refetchInterval as (q: {
+    state: { data: unknown }
+  }) => number | false
+  expect(interval({ state: { data: [work] } })).toBe(30_000)
+  expect(interval({ state: { data: undefined } })).toBe(30_000)
+  expect(interval({ state: { data: null } })).toBe(false)
+
+  vi.spyOn(dashboardApi, 'agentWork').mockRejectedValue(
+    axiosError(404, MISSING_API_MESSAGE),
+  )
+  expect(await new QueryClient().fetchQuery(query)).toBeNull()
+})
+
+it('작업 현황을 다시 부르다 실패하면 마지막으로 받은 상태를 그대로 쓴다', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const agentWork = vi
+    .spyOn(dashboardApi, 'agentWork')
+    .mockResolvedValue({ items: [work], has_more: false })
+  const query = agentWorkQuery('101', '11')
+  expect(await client.fetchQuery(query)).toEqual([work])
+
+  agentWork.mockRejectedValue(axiosError(500, 'Internal Server Error'))
+  await client.refetchQueries({ queryKey: query.queryKey })
+  expect(client.getQueryData(query.queryKey)).toEqual([work])
+  expect(client.getQueryState(query.queryKey)?.status).toBe('error')
 })

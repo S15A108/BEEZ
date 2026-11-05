@@ -16,7 +16,7 @@ import { BibiPanel } from '@/features/bee/BibiPanel'
 import { ContextPanel } from '@/features/contexts/ContextPanel'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
-import { sceneQuery } from '@/features/workspace/sceneQuery'
+import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
 import {
   officeAgentState,
   showsOfficeAgent,
@@ -90,6 +90,9 @@ function Workspace({ projectId }: { projectId: string }) {
     setParams({}, { replace: true })
   }, [settingsParam, openPane, setParams])
   const query = useQuery(sceneQuery(projectId, session.data?.id))
+  // 작업 현황(MON-A05)은 따로 30초마다 다시 부른다. 없거나 아직 못 받았으면 undefined라 연결 여부로 어림한다(D37).
+  const agentWork =
+    useQuery(agentWorkQuery(projectId, session.data?.id)).data ?? undefined
   // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
   const visitProject = useWorkspaceStore((state) => state.visitProject)
   const accountId = session.data?.id
@@ -114,12 +117,12 @@ function Workspace({ projectId }: { projectId: string }) {
       // 상태는 작업 현황(MON-A05)을 따르고, 그 API가 없으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
       ...(query.data?.members.items ?? [])
         .filter((member) =>
-          showsOfficeAgent(member, query.data?.agentWork, session.data?.id),
+          showsOfficeAgent(member, agentWork, session.data?.id),
         )
         .map((member) => {
           const { state, note } = officeAgentState(
             member,
-            query.data?.agentWork,
+            agentWork,
             query.data?.tasks.items.filter(
               (task) => task.assignee_member_id === member.id,
             ) ?? [],
@@ -135,12 +138,7 @@ function Workspace({ projectId }: { projectId: string }) {
           }
         }),
     ],
-    [
-      query.data?.members,
-      query.data?.tasks,
-      query.data?.agentWork,
-      session.data?.id,
-    ],
+    [query.data?.members, query.data?.tasks, agentWork, session.data?.id],
   )
   const sceneTasks = useMemo<SceneTask[]>(
     () =>
