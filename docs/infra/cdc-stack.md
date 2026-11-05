@@ -31,6 +31,9 @@ dev 서버에 Kafka 단일 broker와 Debezium Connect를 compose 프로젝트 `b
 - `KAFKA_JMX_OPTS`를 채워 JVM이 JMX(RMI) 커넥터를 임의 포트에 열지 않게 했다.
 - Connect의 `/kafka/config`는 tmpfs다. 진입 스크립트가 env로 설정 파일을 덧쓰는데, 익명 볼륨이면 env에서 지운 값이
   옛 파일에 남는다.
+- 두 이미지가 VOLUME으로 선언한 나머지 경로(connect의 `/kafka/data`·`/kafka/logs`, kafka의 `/etc/kafka/secrets`·
+  `/mnt/shared/config`)도 tmpfs로 덮었다. 그냥 두면 익명 볼륨이 생겨 `cdc down`을 할 때마다 이름 없는 볼륨이 남고,
+  `docker volume ls | grep beez-cdc`에도 잡히지 않는다. 그래서 이 스택의 볼륨은 `beez-cdc_kafka-data` 하나뿐이다.
 - 비밀 디렉터리는 `create_host_path: false`로 붙인다. 없으면 Docker가 root 소유 빈 디렉터리를 만드는 대신
   `bind source path does not exist`로 멈춘다.
 - file config provider(`config.providers=file`)가 켜져 있다. 커넥터 설정의
@@ -61,14 +64,19 @@ sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /op
 ```bash
 # 서버 (ssh beez)
 cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
-sudo ss -Htlnp | awk '{print $4, $6}' | sort > /tmp/ss-before-cdc.txt
+kt() { docker exec -e KAFKA_HEAP_OPTS=-Xmx128m beez-cdc-kafka-1 /opt/kafka/bin/"$@"; }
+sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
 cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 # kafka    Up ... (healthy)   9092/tcp
 # connect  Up ... (healthy)   8083/tcp, 8778/tcp, 9092/tcp
 ```
 
-- `cdc`는 이 셸에서만 쓰는 함수다. 새 셸에서는 첫 줄을 다시 붙여 넣는다. env 파일은 없다(비밀값은 디렉터리 파일뿐).
-- `ss` 결과(주소·프로세스만, 정렬)는 아래 "확인" 2번에서 띄운 뒤와 비교한다. 큐 길이·출력 순서는 바뀔 수 있어 뺐다.
+- `cdc`·`kt`는 이 셸에서만 쓰는 함수다. 새 셸에서는 앞의 두 줄을 다시 붙여 넣는다. env 파일은 없다(비밀값은 디렉터리 파일뿐).
+- `kt`는 kafka 컨테이너 안의 도구(`kafka-topics.sh` 등)를 힙 128MB로 돌린다. 그냥 `docker exec`로 돌리면 도구가
+  broker 힙 설정(512MB)을 물려받아 broker와 같은 1GB 상한을 나눠 쓰고, 상한에 닿으면 OOM이 broker를 죽인다.
+  **kafka 컨테이너 안 도구는 항상 `kt`로 돌린다.**
+- `ss` 결과(리슨 주소만, 정렬)는 아래 "확인" 2번에서 띄운 뒤와 비교한다. 큐 길이·출력 순서·pid는 다른 스택이
+  다시 만들어지기만 해도 바뀌어 거짓 경보가 나므로 뺐다.
 - `Ports` 칸의 `8083/tcp` 등은 이미지가 선언만 한 포트다. `0.0.0.0:`이 붙지 않았으면 호스트에 열린 것이 아니다.
 - `--wait`는 둘 다 healthy가 될 때까지 기다린다. 처음에는 이미지(약 2.5GB)를 받느라 몇 분 걸린다.
 
@@ -76,9 +84,9 @@ cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 
 ```bash
 # 서버 (ssh beez)
-docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create \
+kt kafka-topics.sh --bootstrap-server localhost:9092 --create \
   --topic beez.public.published_change_analysis --partitions 1 --replication-factor 1 --config retention.ms=604800000
-docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe \
+kt kafka-topics.sh --bootstrap-server localhost:9092 --describe \
   --topic beez.public.published_change_analysis
 # Topic: beez.public.published_change_analysis ... PartitionCount: 1  ReplicationFactor: 1  Configs: retention.ms=604800000
 ```
@@ -90,15 +98,15 @@ docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server l
 
 ## 확인
 
-`ssh beez`로 들어가 위 `cdc` 함수를 정의한 셸에서 친다.
+`ssh beez`로 들어가 위 `cdc`·`kt` 함수를 정의한 셸에서 친다.
 
 ```bash
 # 서버 (ssh beez)
 # 1) 둘 다 healthy
 cdc ps --format '{{.Service}}\t{{.Status}}'
 
-# 2) 호스트에 새 포트가 없다. 출력이 비어 있어야 한다(docker-proxy·java 가 새로 보이면 노출)
-sudo ss -Htlnp | awk '{print $4, $6}' | sort | diff /tmp/ss-before-cdc.txt - | grep '^>'
+# 2) 호스트에 새 리슨 주소가 없다. 출력이 비어 있어야 한다(줄이 보이면 sudo ss -tlnp 로 그 포트의 프로세스를 본다)
+sudo ss -Htln | awk '{print $4}' | sort | diff /tmp/ss-before-cdc.txt - | grep '^>'
 
 # 3) 같은 망의 backend·ai 에서 Connect REST·controller 가 닿지 않는다. 000 / False 면 통과
 docker exec beez-backend-1 sh -c 'for u in connect:8083 kafka:9093; do printf "%s " $u; curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://$u/; done'
@@ -120,10 +128,14 @@ docker exec beez-cdc-connect-1 grep -E '^(listeners|config\.providers)' /kafka/c
 # 6) 293 이 비밀번호 파일을 쓴 뒤: Connect 사용자로 읽힌다(내용은 출력하지 않는다)
 docker exec beez-cdc-connect-1 test -r /run/cdc-secrets/database.properties && echo '읽기 OK'
 
-# 7) 토픽 목록: 접수 토픽 + Connect 내부 토픽 셋 + __consumer_offsets(처음 consumer 가 붙을 때 생김)
-docker exec beez-cdc-kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+# 7) 토픽 목록: 접수 토픽 + Connect 내부 토픽 셋 + __consumer_offsets(Connect worker 그룹이 만든다)
+kt kafka-topics.sh --bootstrap-server localhost:9092 --list
 ```
 
+- 1)의 healthy는 **worker 상태**다. kafka는 broker 응답, connect는 worker가 그룹에 들어가 REST가 답하는지만 본다.
+  295에서 커넥터를 등록한 뒤에는 커넥터·task가 FAILED여도 healthy로 보인다. 그때부터는 커넥터 상태를 따로 본다:
+  `docker exec beez-cdc-connect-1 curl -s 'http://127.0.0.1:8083/connectors?expand=status'` (connector·task 모두 RUNNING).
+  자동 수집·알림은 S15P31A108-261, 그 전까지는 계획 D6의 수동 확인(평일 오전·배포 뒤)으로 본다.
 - 3)에서 `000`은 연결 거부다. 두 포트는 컨테이너 안 127.0.0.1에만 열려 있다. broker `kafka:9092`는 같은 망에서
   닿는 것이 정상이다(backend consumer가 쓴다).
 - 6)이 실패하면 파일·디렉터리 소유자와 권한(`root:1001`, 750·640)을 본다. 600이면 Connect가 읽지 못해 295의 커넥터
@@ -248,6 +260,8 @@ CDC_SECRETS_DIR=<더미 디렉터리> docker compose -f infra/cdc/dev/compose.ya
 | file config provider | 임시 PostgreSQL로 커넥터 설정 검증(`PUT …/config/validate`)에 `${file:…:password}`를 넣어 오류 0. 대조로 DB 비밀번호를 바꾸면 `password authentication failed`. 컨테이너 로그에 비밀번호 없음 |
 | 비밀 디렉터리 없음 | 서버와 같은 리눅스 경로로 주면 `bind source path does not exist`로 기동 거부. (Docker Desktop의 Windows 경로는 빈 폴더를 만들어 버려 재현이 안 된다) |
 | 재기동 | `down` → `up` 뒤 접수 토픽이 같은 TopicId로 남음 |
+| 볼륨 | 띄운 뒤 새 볼륨은 `beez-cdc_kafka-data` 하나, `down` 뒤 남는 익명 볼륨 없음(tmpfs로 덮은 뒤) |
+| 도구 힙 | `docker exec`로 돌린 `kafka-topics.sh`가 `-Xms512m -Xmx512m`을 물려받아 컨테이너 최대 사용량이 536→704MB로 오름. `kt`(`-Xmx128m`)로는 617→620MB |
 | 메모리 | 띄운 직후 kafka 약 400MiB, connect 약 610MiB (상한 각 1GiB) |
 
 ## 서버 실행 기록

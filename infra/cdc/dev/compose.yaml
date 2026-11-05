@@ -54,11 +54,19 @@ services:
       KAFKA_JMX_OPTS: -Djava.awt.headless=true
     volumes:
       - kafka-data:/var/lib/kafka/data
+    # 이미지가 VOLUME 으로 선언한 나머지 경로. 그냥 두면 익명 볼륨이 생겨 `down` 때마다 이름 없는 볼륨이 남는다.
+    # 둘 다 이 구성에서는 비어 있다(설정은 env, 비밀값 없음)
+    tmpfs:
+      - /etc/kafka/secrets:size=1m
+      - /mnt/shared/config:size=1m
     networks:
       - beez_default
     healthcheck:
-      # JVM 도구라 한 번에 1~2초 CPU 를 쓴다. 그래서 간격을 넓게 둔다
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      # JVM 도구라 한 번에 1~2초 CPU 를 쓴다. 그래서 간격을 넓게 둔다.
+      # 도구도 컨테이너 env 의 KAFKA_HEAP_OPTS(512m)를 물려받아 broker 와 같은 1g 상한을 나눠 쓴다(로컬 실측: 도구 한 번에
+      # 컨테이너 최대 사용량 536→704MB). 상한에 닿으면 OOM 이 가장 큰 프로세스인 broker 를 죽이므로 도구 힙을 작게 준다.
+      # 런북의 docker exec 도 같은 이유로 -e KAFKA_HEAP_OPTS 를 준다(docs/infra/cdc-stack.md 의 kt 함수)
+      test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -81,7 +89,8 @@ services:
       CONFIG_STORAGE_TOPIC: beez-cdc-connect-configs
       OFFSET_STORAGE_TOPIC: beez-cdc-connect-offsets
       STATUS_STORAGE_TOPIC: beez-cdc-connect-status
-      # 내부 토픽 셋은 Connect 가 compact 로 만든다. broker 가 하나라 복제 1
+      # 내부 토픽 셋은 Connect 가 compact 로 만든다. broker 가 하나라 복제 1. 이미지 기본 설정도 1 이지만
+      # 이미지 버전을 올려 기본값이 바뀌어도 의도가 남도록 적어 둔다
       CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
       CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
@@ -110,8 +119,12 @@ services:
           create_host_path: false
     # 진입 스크립트가 시작할 때마다 이 폴더의 worker 설정에 env 를 덧쓴다. 이미지가 익명 볼륨으로 잡아 두면
     # env 에서 지운 값이 옛 설정 파일에 남으므로, 매번 비어 있는 tmpfs 로 시작한다
+    # /kafka/data·/kafka/logs 도 이미지가 VOLUME 으로 선언한 경로라, 익명 볼륨이 남지 않게 tmpfs 로 덮는다.
+    # distributed 모드라 상태는 Kafka 토픽에 있고 여기엔 남길 것이 없다. 로그는 stdout 으로 나간다
     tmpfs:
-      - /kafka/config
+      - /kafka/config:size=16m
+      - /kafka/data:size=16m
+      - /kafka/logs:size=64m
     networks:
       - beez_default
     healthcheck:
