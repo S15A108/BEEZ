@@ -93,7 +93,8 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
         var p = fixtures().projectWithLeader();
         String token = issueToken(p.leaderEmail(), p.projectId());
 
-        try (McpSyncClient client = connect(token)) {
+        McpSyncClient client = connect(token);
+        try {
             client.initialize();
             assertThat(client.listTools().tools()).extracting(McpSchema.Tool::name).contains("probe");
             assertThat(client.listTools().tools().stream().filter(t -> t.name().equals("probe")).findFirst()
@@ -110,7 +111,8 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
                     .containsEntry("has_session", true)
                     .containsKey("agent_token_id");
             assertThat(text(result)).contains("\"task_id\":\"501\"");
-            closeAndWait(client);
+        } finally {
+            client.closeGracefully();
         }
     }
 
@@ -123,7 +125,8 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
         var p = fixtures().projectWithLeader();
         String token = issueToken(p.leaderEmail(), p.projectId());
 
-        try (McpSyncClient client = connect(token)) {
+        McpSyncClient client = connect(token);
+        try {
             client.initialize();
 
             CallToolResult business = call(client, Map.of("mode", "API_ERROR"));
@@ -149,7 +152,8 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
             CallToolResult broken = client.callTool(McpSchema.CallToolRequest.builder()
                     .name("broken_args").arguments(Map.of()).build());
             assertThat(error(broken)).containsEntry("code", "internal");
-            closeAndWait(client);
+        } finally {
+            client.closeGracefully();
         }
     }
 
@@ -196,25 +200,23 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
         ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
         JsonNode issued = json.readTree(leader.post("/api/projects/" + p.projectId() + "/agent-tokens", "{}").body());
         String token = issued.get("token").asString();
-        try (McpSyncClient client = connect(token)) {
+        McpSyncClient client = connect(token);
+        try {
             client.initialize();
             assertThat(call(client, Map.of()).isError()).isFalse();
 
             leader.send(leader.request("/api/agent-tokens/" + issued.get("token_info").get("id").asString()).DELETE());
 
             assertThatThrownBy(() -> call(client, Map.of())).isInstanceOf(McpHttpClientTransportAuthorizationException.class);
-            closeAndWait(client);
+        } finally {
+            client.closeGracefully();
         }
     }
 
     /**
-     * 세션 종료 요청(DELETE /mcp)이 끝날 때까지 기다리며 닫는다. {@code close()}(try 블록 끝)는 그 요청을 보내 놓고 기다리지 않아,
-     * 서버가 토큰을 확인하는 동안 다음 시험이 표를 비우면 DB 교착이 난다. 토큰을 폐기한 뒤라 401 이어도 예외 없이 false 다
+     * 닫을 때는 close()·try-with-resources 대신 closeGracefully() 를 쓴다 — close() 는 세션 종료 DELETE 를 기다리지 않아
+     * 그 요청의 토큰 확인 트랜잭션이 다음 시험(같은 컨텍스트의 다른 클래스 포함)의 truncate … cascade 와 교착한다(CI 40P01).
      */
-    private static void closeAndWait(McpSyncClient client) {
-        client.closeGracefully();
-    }
-
     private McpSyncClient connect(String token) {
         var transport = HttpClientStreamableHttpTransport
                 .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))

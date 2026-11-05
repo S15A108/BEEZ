@@ -71,8 +71,10 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         // setUp 이 연결 전에 실패했으면 member 가 없다 — NPE 로 원래 실패를 가리지 않는다
+        // close() 는 세션 종료 DELETE 를 보내기만 하고 기다리지 않는다(SDK 2.1.0). 그 요청의 토큰 확인 트랜잭션이
+        // 다음 시험 setUp 의 truncate … cascade 와 교착하므로(CI 40P01) 응답까지 기다리는 closeGracefully 를 쓴다
         if (member != null) {
-            closeAndWait(member);
+            member.closeGracefully();
         }
     }
 
@@ -192,12 +194,14 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 .get("record").get("summary").asString()).isEqualTo("로그인 UI 연결 완료");
 
         String privateId;
-        try (McpSyncClient leader = connect(leaderToken)) {
+        McpSyncClient leader = connect(leaderToken);
+        try {
             leader.initialize();
             privateId = ok(call(leader, "write_context", Map.of("kind", "DECISION", "visibility", "PRIVATE",
                     "summary", "팀장 메모", "detail", "비공개", "design_refs", List.of(), "idempotency_key", "k-w2")))
                     .get("id").asString();
-            closeAndWait(leader);
+        } finally {
+            leader.closeGracefully(); // tearDown 과 같은 이유 — 종료 DELETE 가 다음 시험의 truncate 와 겹치지 않게
         }
         assertThat(error(call(member, "read_context", Map.of("type", "RECORD", "id", privateId))))
                 .containsEntry("code", "not_found");
@@ -324,16 +328,6 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                         builder.header("Authorization", "Bearer " + token))
                 .build();
         return McpClient.sync(transport).requestTimeout(Duration.ofSeconds(10)).build();
-    }
-
-    /**
-     * 세션 종료 요청(DELETE /mcp)이 끝날 때까지 기다리며 닫는다.
-     * {@code close()} 는 그 요청을 보내 놓고 기다리지 않는다. 그러면 서버가 그 요청의 토큰 확인(agent_token·project_member 읽기)을
-     * 하는 동안 다음 시험의 setUp 이 표를 비우기 시작해 DB 교착(deadlock)이 난다 (CI·로컬에서 taskFlow 의 setUp 이 실패한 원인).
-     * 토큰을 폐기한 뒤라 종료 요청이 401 이어도 closeGracefully 가 예외를 삼키고 false 를 돌려준다.
-     */
-    private static void closeAndWait(McpSyncClient client) {
-        client.closeGracefully();
     }
 
     private static CallToolResult call(McpSyncClient client, String tool, Map<String, Object> args) {
