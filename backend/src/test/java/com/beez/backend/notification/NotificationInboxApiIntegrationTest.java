@@ -130,7 +130,8 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
         fixtures().removeMember(leftMembership);
         ApiClient me = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
 
-        assertThat(body(me.get("/api/me/notifications")).get("unread_count").asLong()).isEqualTo(3);
+        // 빈 project_id 는 필터 없음('전체' 필터 화면)
+        assertThat(body(me.get("/api/me/notifications?project_id=")).get("unread_count").asLong()).isEqualTo(3);
         assertThat(me.post("/api/me/notifications/read", "{\"ids\":[\"" + hidden + "\"]}").statusCode()).isEqualTo(404);
 
         JsonNode res = body(me.post("/api/me/notifications/read",

@@ -57,7 +57,9 @@ public class NotificationInboxService {
     @Transactional(readOnly = true)
     public NotificationInboxResponse inbox(CallerContext caller, String projectId, Boolean unreadOnly, String cursor,
                                            Integer limit) {
-        Long projectFilter = Ids.parse(projectId, "project_id");
+        // ?project_id= (빈 값)은 필터 없음 — '전체' 필터 화면이 빈 값을 그대로 붙여 보내도 열리게. 읽기라 범위가 넓어져도 해가 없다.
+        // NTF-A02 의 project_id 는 읽음 범위라 빈 값을 '전체'로 넓히지 않는다(ReadTarget 은 그대로 400)
+        Long projectFilter = projectId == null || projectId.isBlank() ? null : Ids.parse(projectId, "project_id");
         long beforeId = PageResponse.beforeId(cursor);
         int size = PageResponse.normalizeLimit(limit);
 
@@ -137,7 +139,7 @@ public class NotificationInboxService {
     }
 
     /**
-     * 요청 본문을 검사한 결과. ids 와 all=true 는 둘 중 하나만, project_id 는 all=true 일 때만 받는다.
+     * 요청 본문을 검사한 결과. ids 와 all=true 는 둘 중 하나만(빈 ids 는 없는 것), project_id 는 all=true 일 때만 받는다.
      * ids 는 중복을 없앤다 — 같은 ID 를 두 번 보내도 한 건이고, 소유 확인 건수와 맞게 센다.
      */
     record ReadTarget(boolean all, Long projectId, List<Long> ids) {
@@ -148,7 +150,8 @@ public class NotificationInboxService {
             }
             boolean all = Boolean.TRUE.equals(request.all());
             if (all) {
-                if (request.ids() != null) {
+                // 빈 ids 는 '없음'으로 본다 — 폼 상태를 그대로 직렬화한 {"ids":[],"all":true} 도 '모두 읽음'이 되게
+                if (request.ids() != null && !request.ids().isEmpty()) {
                     throw invalid("ids 와 all 은 함께 보낼 수 없습니다");
                 }
                 return new ReadTarget(true, Ids.parse(request.projectId(), "project_id"), List.of());

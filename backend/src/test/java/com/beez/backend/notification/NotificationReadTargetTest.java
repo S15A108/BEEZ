@@ -25,7 +25,15 @@ class NotificationReadTargetTest {
                 new NotificationReadRequest(null, false, null),
                 new NotificationReadRequest(List.of("1"), true, null),
                 new NotificationReadRequest(List.of("1"), null, "5"),
-                new NotificationReadRequest(List.of("abc"), null, null));
+                new NotificationReadRequest(List.of("abc"), null, null),
+                // 빈 project_id 를 '전체'로 넓히면 범위를 지정하려던 '모두 읽음'이 모든 프로젝트를 읽음 처리한다
+                new NotificationReadRequest(null, true, ""));
+    }
+
+    /** 깨지면 폼 상태를 그대로 보낸 '모두 읽음'({"ids":[],"all":true})이 400 으로 실패한다. */
+    @Test
+    void readAll_withEmptyIds_isAccepted() {
+        assertThat(ReadTarget.of(new NotificationReadRequest(List.of(), true, null)).all()).isTrue();
     }
 
     @ParameterizedTest
