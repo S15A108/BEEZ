@@ -110,6 +110,7 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
                     .containsEntry("has_session", true)
                     .containsKey("agent_token_id");
             assertThat(text(result)).contains("\"task_id\":\"501\"");
+            closeAndWait(client);
         }
     }
 
@@ -148,6 +149,7 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
             CallToolResult broken = client.callTool(McpSchema.CallToolRequest.builder()
                     .name("broken_args").arguments(Map.of()).build());
             assertThat(error(broken)).containsEntry("code", "internal");
+            closeAndWait(client);
         }
     }
 
@@ -201,7 +203,16 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
             leader.send(leader.request("/api/agent-tokens/" + issued.get("token_info").get("id").asString()).DELETE());
 
             assertThatThrownBy(() -> call(client, Map.of())).isInstanceOf(McpHttpClientTransportAuthorizationException.class);
+            closeAndWait(client);
         }
+    }
+
+    /**
+     * 세션 종료 요청(DELETE /mcp)이 끝날 때까지 기다리며 닫는다. {@code close()}(try 블록 끝)는 그 요청을 보내 놓고 기다리지 않아,
+     * 서버가 토큰을 확인하는 동안 다음 시험이 표를 비우면 DB 교착이 난다. 토큰을 폐기한 뒤라 401 이어도 예외 없이 false 다
+     */
+    private static void closeAndWait(McpSyncClient client) {
+        client.closeGracefully();
     }
 
     private McpSyncClient connect(String token) {
