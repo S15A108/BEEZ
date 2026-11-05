@@ -332,7 +332,7 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
      * 하는 동안 다음 시험의 setUp 이 표를 비우기 시작해 DB 교착(deadlock)이 난다 (CI·로컬에서 taskFlow 의 setUp 이 실패한 원인).
      * 토큰을 폐기한 뒤라 종료 요청이 401 이어도 closeGracefully 가 예외를 삼키고 false 를 돌려준다.
      */
-    static void closeAndWait(McpSyncClient client) {
+    private static void closeAndWait(McpSyncClient client) {
         client.closeGracefully();
     }
 
