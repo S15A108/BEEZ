@@ -1115,6 +1115,8 @@ export const notificationSchema = z.object({
   // DOCUMENT_VERSION이면 target_id는 문서 버전 ID이고, 문서 상세를 열 문서 ID는 document_id로 온다(계약 10 3절).
   target_id: idSchema,
   document_id: idSchema.optional(),
+  // BASELINE이면 target_id는 기준 ID이고, 기준 화면을 열 기준 버전 번호는 baseline_version_no로 온다(PR #133).
+  baseline_version_no: z.number().int().optional(),
   created_at: timeSchema,
   read_at: timeSchema.optional(),
 })

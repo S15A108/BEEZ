@@ -215,3 +215,20 @@ it('문서 알림이 섞인 알림 목록을 읽고 document_id를 남긴다', (
   })
   expect(page.items[0]).not.toHaveProperty('document_id')
 })
+
+// PR #133 답변: 기준 알림에만 baseline_version_no가 오고, target_id는 기준 ID 그대로다.
+it('기준 알림의 기준 버전 번호를 남긴다', () => {
+  expect(
+    notificationSchema.parse({
+      id: '12',
+      project_id: '1',
+      type: 'BASELINE_CREATED',
+      title: '새 기준',
+      body: '',
+      target_type: 'BASELINE',
+      target_id: '900',
+      baseline_version_no: 3,
+      created_at: '2026-11-05T01:00:00Z',
+    }),
+  ).toMatchObject({ target_id: '900', baseline_version_no: 3 })
+})
