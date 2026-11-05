@@ -94,6 +94,12 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         long mate = fixtures().account();
         long mateMemberId = fixtures().member(p.projectId(), mate, ProjectRole.MEMBER);
         ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        // 탈퇴는 초대 정리를 팀장 판정보다 먼저 한다(-277). 409 면 그 정리도 되돌려져야 한다. 로그인 뒤에 넣어 자동 참여되지 않게 한다
+        var inviting = fixtures().projectWithLeader();
+        long pendingInvite = db.queryForObject("""
+                INSERT INTO invitation (project_id, email, token_hash, invited_by) VALUES (?, ?, ?, ?) RETURNING id
+                """, Long.class, inviting.projectId(), p.leaderEmail(), "h-blocked-" + p.leaderAccountId(),
+                inviting.leaderAccountId());
 
         JsonNode check = json.readTree(leader.get("/api/me/withdrawal-check").body());
         assertThat(check.get("can_withdraw").asBoolean()).isFalse();
@@ -110,6 +116,10 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(String.valueOf(p.projectId()));
         assertThat(db.queryForObject("SELECT deleted_at IS NULL FROM account WHERE id = ?", Boolean.class,
                 p.leaderAccountId())).as("막히면 아무것도 바꾸지 않는다").isTrue();
+        assertThat(db.queryForMap("SELECT email, revoked_at FROM invitation WHERE id = ?", pendingInvite))
+                .as("막히면 대기 초대도 주소·대기 상태 그대로")
+                .containsEntry("email", p.leaderEmail())
+                .containsEntry("revoked_at", null);
 
         assertThat(leader.post("/api/projects/" + p.projectId() + "/leadership-transfer",
                 "{\"target_member_id\":\"" + mateMemberId + "\"}").statusCode()).isEqualTo(200);
