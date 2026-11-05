@@ -96,11 +96,15 @@ sudo chown root:1001 /opt/beez/.cdc-secrets/database.properties
 sudo chmod 640 /opt/beez/.cdc-secrets/database.properties
 
 # 내용 말고 주인·권한과 비밀번호 길이만 본다
-sudo stat -c '%U:%G %a %n' /opt/beez/.cdc-secrets /opt/beez/.cdc-secrets/database.properties
+sudo stat -c '%U:%g %a %n' /opt/beez/.cdc-secrets /opt/beez/.cdc-secrets/database.properties
 sudo awk -F= '/^password=/{print length($2)}' /opt/beez/.cdc-secrets/database.properties
 ```
 
-기대값: 디렉터리 `root:1001 750`, 파일 `root:1001 640`, 마지막 줄 `48` 하나.
+기대값: 디렉터리 `root:1001 2750`, 파일 `root:1001 640`, 마지막 줄 `48` 하나.
+
+- 서버에는 gid 1001의 그룹 이름이 없어 `%G`로 찍으면 `UNKNOWN`이 나온다. 그래서 숫자(`%g`)로 본다.
+- 디렉터리가 `750`이 아니라 `2750`(setgid)인 것은 부모 `/opt/beez`가 setgid(`drwxr-s---`)라 물려받은 것이다.
+  새로 생기는 파일이 그룹 1001을 물려받을 뿐이라 그대로 둔다(11-05 서버 확인).
 빈 값이거나 다른 숫자면 파일을 지우고(`sudo rm …/database.properties`) 이 절을 다시 한다.
 비밀번호는 16진수 48자라 따옴표·역슬래시 문제가 없다.
 
@@ -178,12 +182,15 @@ pgsql -Atc "SELECT attnames FROM pg_publication_tables WHERE pubname = 'beez_pub
 
 ### 4-2. `beez_cdc`로 망을 거쳐 접속 (**서버 bash**, 0 준비 뒤)
 
-Connect와 같은 조건(uid 1001, 비밀 파일 디렉터리를 읽기 전용으로 붙임, `beez_default` 망으로 `postgres:5432`)으로 접속한다.
+Connect와 같은 조건(uid·gid 1001, 비밀 파일 디렉터리를 읽기 전용으로 붙임, `beez_default` 망으로 `postgres:5432`)으로 접속한다.
+Connect 이미지의 `kafka` 사용자는 `uid=1001 gid=1001`이다. **`--user 1001`처럼 그룹을 빼면 안 된다.** postgres 이미지에는
+uid 1001 사용자가 없어 그룹이 0(root)이 되고, 그룹 1001에만 열린 파일(640)을 읽지 못해 검증이 거짓으로 실패한다
+(11-05 서버에서 겪음: `sed: can't read …: Permission denied`).
 컨테이너 안 `127.0.0.1` 접속은 `pg_hba.conf`에서 trust라 비밀번호를 검사하지 않으므로 검증이 되지 않는다.
 클라이언트는 서버에 이미 있는 postgres 이미지를 쓰고, DB 이름은 postgres 컨테이너의 `POSTGRES_DB`에서 받는다.
 
 ```bash
-docker run --rm --network beez_default --user 1001 -v /opt/beez/.cdc-secrets:/run/cdc-secrets:ro \
+docker run --rm --network beez_default --user 1001:1001 -v /opt/beez/.cdc-secrets:/run/cdc-secrets:ro \
   -e PGHOST=postgres -e PGUSER=beez_cdc -e PGDATABASE="$(docker exec "$PG" printenv POSTGRES_DB)" \
   "$(docker inspect -f '{{.Config.Image}}' "$PG")" sh -c '
 PGPASSWORD=$(sed -n "s/^password=//p" /run/cdc-secrets/database.properties); export PGPASSWORD
@@ -231,3 +238,8 @@ sudo rm /opt/beez/.cdc-secrets/database.properties
 | 날짜 | 단계 | 결과 |
 |---|---|---|
 | 11-05 | 로컬 확인 (1 시나리오 2개, 0·2·3·4·5-1 블록을 문구 그대로 실행) | 위 기대값과 같음. 2는 `sudo` 대신 시험 폴더 경로로 실행 |
+| 11-05 | 서버 사전 확인 (머지 전, 읽기 전용) | `wal_level`=`replica`, DB `beez`, 접수 테이블 `id`·`status`·PK `(id)`·replica identity `d`, 접수행 0, `beez_cdc`·publication·슬롯 0, `log_statement`=`none`, `/opt/beez/.cdc-secrets` 없음 |
+| 11-05 | 서버 2 비밀 파일 (전진) | `만듦`, 디렉터리 `0:1001 2750`(setgid는 `/opt/beez`에서 물려받음), 파일 `0:1001 640`, 길이 `48` |
+| 11-05 | 서버 3-2·3-3 계정·publication·비밀번호 (전진, 머지 전) | `CREATE ROLE`·`GRANT`·`CREATE PUBLICATION`(`wal_level` 경고는 머지 전이라 정상), 3-3 `exit=0` |
+| 11-05 | 서버 4 검증 (읽기 전용) | 4-1 `{id,status}`. `beez_cdc` = LOGIN·REPLICATION·슈퍼유저 아님·비밀번호 있음, 권한은 `id:SELECT,status:SELECT`뿐. 4-2(`1001:1001`) [1] `0`(접수행 0) [2] `permission denied` [3] `IDENTIFY_SYSTEM` 성공(`beez`). 다른 uid(1002)는 파일 읽기 거부. 서버 로그에 `ALTER ROLE` 문장 0건. 슬롯 0 |
+| — | 1 머지 뒤 확인 | 남음: `SHOW wal_level`=`logical`·`max_slot_wal_keep_size`=`10GB`, backend healthy |
