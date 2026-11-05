@@ -1752,6 +1752,42 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | N | 작업 관련 검증 유효성 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
 | `next_cursor` | `string` | N | 다음 조회 cursor |
+| `impact_updates` | [ImpactUpdate[]](00-common.md#schema-impactupdate) | N | MCP-03에만. `result_cursor` 이후 정해진 발행 후 영향 분석 결과(-221). MCP-12 `changes`에는 없음 |
+| `result_has_more` | `boolean` | N | MCP-03에만. 영향 결과가 더 있음. `has_more`(발행 변경)와 따로 본다 |
+| `next_result_cursor` | `string` | N | MCP-03에만. 다음에 보낼 `result_cursor`. 받은 결과를 처리한 뒤 저장한다 |
+
+<a id="schema-impactupdate"></a>
+
+### ImpactUpdate
+
+발행 한 건의 발행 후 영향 분석 결과가 정해졌다는 알림(S15P31A108-221). 결과가 정해질 때(완료·미평가·최종 실패) 프로젝트 안에서 1씩 오르는 결과 순번이 붙는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `result_seq` | `integer` | Y | 프로젝트 안 결과 순번. 같은 순번은 같은 결과(중복 판단용) |
+| `baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 분석한 발행 |
+| `proposal_id` | `ID` | N | 그 발행의 변경 제안. 제안 없이 발행됐으면 생략 |
+| `analysis_status` | `COMPLETED\|NOT_EVALUATED\|FAILED` | Y | 분석 실행 결과. 미평가·실패는 영향 0건이 아니다 |
+| `evaluation_status` | `COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED` | N | 분석이 끝났을 때 근거가 충분했는지 |
+| `error_code` | `string` | N | 실패·미평가 사유 |
+| `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | 영향 후보. 최대 10개, 규칙 후보 먼저·작업·항목 번호 순 |
+| `candidates_truncated` | `integer` | Y | 10개를 넘어 빠진 후보 수. 0보다 크면 전체를 본 것이 아니며 대시보드에서 확인한다 |
+| `analyzed_at` | `Time` | N | 결과가 정해진 시각 |
+
+<a id="schema-impactcandidate"></a>
+
+### ImpactCandidate
+
+영향받을 수 있는 대상 하나. **승인된 설계가 아니며 작업 상태·검증을 바꾸지 않는다** — 확인할 거리다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `origin` | `RULE\|AI` | Y | RULE: 확정 관계·계획 참조로 계산한 규칙 후보, AI: 모델이 근거와 함께 낸 후보 |
+| `task_id` | `ID` | N | 영향받을 수 있는 작업 |
+| `design_item_id` | `ID` | N | 그 작업이 닿는 바뀐 설계 항목 |
+| `member_id` | `ID` | N | 작업 담당 멤버 |
+| `validation_id` | `ID` | N | 영향받을 수 있는 검증 |
+| `reason` | `string` | N | AI 후보의 사유. 규칙 후보에는 없음 |
 
 <a id="schema-findingcandidate"></a>
 

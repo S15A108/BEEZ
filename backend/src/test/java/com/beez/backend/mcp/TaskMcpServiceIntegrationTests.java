@@ -202,7 +202,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
 
         // 에이전트: 돌려받은 기준 번호·같은 작업·next_cursor 로 이어 본다
         DesignChangesResponse rest = designChanges.getChanges(agent, projectId, new DesignChangesQuery(
-                waited.changesSinceVersion(), task.id(), waited.changes().nextCursor(), null));
+                waited.changesSinceVersion(), task.id(), waited.changes().nextCursor(), null, null));
         assertThat(rest.items()).extracting(c -> c.baseline().versionNo()).containsExactly(4, 3);
         assertThat(rest.hasMore()).isFalse();
     }
