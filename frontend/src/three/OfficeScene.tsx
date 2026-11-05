@@ -19,7 +19,6 @@ import {
 } from './office/OutdoorStreetRenderer'
 import { avatarAppearance, officeActors } from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
-import { officePopulationOf } from './office/office-layout'
 import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
@@ -63,13 +62,10 @@ function OfficeRuntime(
   const { gl, size } = useThree()
   const phase = props.phase ?? 4
   const agents = useMemo(() => officeSceneAgents(props.agents), [props.agents])
+  // 인원 객체를 넘기면 팀원 수와 상관없는 고정 사무실(D36)이라 에이전트에 기대지 않는다. 30초마다 바뀌는 에이전트
+  // 상태로 바닥을 새로 만들면 아래 lastFloor 분기가 내 클릭 걷기·엘리베이터 걷기를 멈춘다(PR #128 리뷰).
   const floor = useMemo(() => {
-    const base = makeBuilding(
-      ALL_KEYS,
-      'glass',
-      undefined,
-      officePopulationOf(agents),
-    ).floors[1]
+    const base = makeBuilding(ALL_KEYS, 'glass', undefined, {}).floors[1]
     // 시작 전(3)에도 사무실 바닥 전체를 보여 준다. 바깥 산책 출입구만 시작 뒤(4)에 연다.
     if (phase !== 3) return makeDreamFloor(base, phase)
     return {
@@ -77,7 +73,7 @@ function OfficeRuntime(
       staticKey: 'dream-3',
       outdoorExit: undefined,
     }
-  }, [agents, phase])
+  }, [phase])
   const snapshot = useMemo(
     () => officeSceneSnapshot(props.project, agents, props.tasks),
     [props.project, agents, props.tasks],
