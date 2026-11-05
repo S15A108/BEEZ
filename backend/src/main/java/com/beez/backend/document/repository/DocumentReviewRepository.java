@@ -39,6 +39,14 @@ public class DocumentReviewRepository {
                 """, Map.of("project", project, "account", account)).stream().findFirst().map(row -> row.get("role").toString());
     }
 
+    /** 검토 요청 알림을 받을 현재 활성 팀장 계정. 프로젝트당 활성 팀장은 한 명이다 */
+    public Optional<Long> leaderAccount(long project) {
+        return jdbc.sql("""
+                SELECT m.account_id FROM project_member m JOIN account a ON a.id=m.account_id
+                WHERE m.project_id=:project AND m.role='LEADER' AND m.active=true AND a.deleted_at IS NULL
+                """).param("project", project).query(Long.class).optional();
+    }
+
     public boolean hasBaseline(long project) {
         return !rows("SELECT id FROM baseline WHERE project_id=:project LIMIT 1", Map.of("project", project)).isEmpty();
     }

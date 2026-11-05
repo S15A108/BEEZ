@@ -20,6 +20,7 @@ import com.beez.backend.designitem.repository.PublicationOutboxRepository;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.validation.DesignContentValidator;
 import com.beez.backend.document.config.DocumentProperties;
+import com.beez.backend.notification.event.ChangeNotifications;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -42,12 +43,14 @@ public class BaselinePublishService {
     private final DesignContentValidator content;
     private final DocumentProperties properties;
     private final PostPublishAnalysisIntake intake;
+    private final ChangeNotifications notifications;
 
     public BaselinePublishService(BaselineRepository baselines, PublicationOutboxRepository outbox, DesignProjectRepository projects, DesignProjectLock locks, DesignCommandService commands,
                                    DesignSnapshotService snapshots, DesignItemCommandService items,
                                    DesignContentValidator content, DocumentProperties properties,
-                                   PostPublishAnalysisIntake intake,
+                                   PostPublishAnalysisIntake intake, ChangeNotifications notifications,
                                    @Value("${beez.cdc.legacy-outbox-poc-enabled:false}") boolean legacyOutboxPocEnabled) {
+        this.notifications = notifications;
         this.baselines = baselines;
         this.outbox = outbox;
         this.legacyOutboxPocEnabled = legacyOutboxPocEnabled;
@@ -133,6 +136,9 @@ public class BaselinePublishService {
         if (legacyOutboxPocEnabled) outbox.insertInitialPublication(project, baselineId);
         intake.accept(project, baselineId, null);
         commands.save(project, caller.accountId(), "initial-baseline", key, command, result);
+        // 멱등 재생은 위에서 반환해 여기까지 오지 않는다. 활성 팀원(팀장 본인 제외)에게 같은 트랜잭션으로 저장한다.
+        notifications.baselineCreated(caller, project, baselineId);
+        // TODO(S15P31A108-237): ActivityRecorder.record BASELINE_CREATED, key baseline:{id}:created
         return result;
     }
 

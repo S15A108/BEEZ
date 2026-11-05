@@ -15,6 +15,7 @@ import com.beez.backend.designitem.repository.BaselineRepository;
 import com.beez.backend.designitem.repository.DesignItemRepository;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.service.DesignCommandService;
+import com.beez.backend.notification.event.ChangeNotifications;
 import com.beez.backend.relation.dto.RelationChangeRequest;
 import com.beez.backend.relation.service.RelationStorageService;
 import java.util.*;
@@ -38,11 +39,13 @@ public class ProposalPublicationService {
     private final PostPublishAnalysisIntake intake;
     private final ProposalValidator validator;
     private final ImpactApprovalGate gate;
+    private final ChangeNotifications notifications;
     public ProposalPublicationService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository proposals,
             PublicationRepository repository, ProposalQueryService queries, PublishPlanner planner, BaselineRepository baselines,
             DesignItemRepository items, DesignCommandService commands, RelationStorageService relations,
             ValidationImpactPort impacts, PostPublishAnalysisIntake intake, ProposalValidator validator,
-            ImpactApprovalGate gate) {
+            ImpactApprovalGate gate, ChangeNotifications notifications) {
+        this.notifications=notifications;
         this.access=access; this.projects=projects; this.proposals=proposals; this.repository=repository; this.queries=queries;
         this.planner=planner; this.baselines=baselines; this.items=items; this.commands=commands; this.relations=relations;
         this.impacts=impacts; this.intake=intake; this.validator=validator; this.gate=gate;
@@ -121,15 +124,19 @@ public class ProposalPublicationService {
         if (!impactItems.isEmpty()) relations.apply(caller,project,new RelationChangeRequest(baseline,proposal,
                 impactItems.stream().map(ChangedItem::designItemId).toList(),"변경 제안 승인·발행",List.of()));
         var impact=plan.impact();
-        impacts.applyPublication(caller,project,new ImpactRequest(baseline,plan.previousBaselineId(),proposal,impact.revision(),
+        var impactResult=impacts.applyPublication(caller,project,new ImpactRequest(baseline,plan.previousBaselineId(),proposal,impact.revision(),
                 impact.snapshotHash(),List.copyOf(impactItems),impact.reason()));
         repository.publish(project,proposal,impact.revision(),plan.previousBaselineId(),baseline,caller.accountId(),overrideReason);
         intake.accept(project,baseline,proposal);
         var result=new Publication(queries.current(project,proposal),repository.response(project,baseline));
         commands.save(project,caller.accountId(),operation,key,input,result);
-        // TODO(180~182 알림·활동): request storage inside this publication transaction (contract 10).
-        // Activity: CHANGE_PROPOSAL_PUBLISHED, key change-proposal:{id}:published; duplicate keys are skipped.
-        // Non-duplicate storage failures must roll back publication; neither replay branch requests storage again.
+        // Notifications are stored in this publication transaction (contract 10); neither replay branch above reaches here.
+        // The proposal is PUBLISHED and the new baseline is visible now, which forNotification requires. A non-duplicate
+        // storage failure rolls back the whole publication.
+        notifications.published(caller,project,proposal,id(current,"proposer_account_id"),input.expectedRevision(),
+                input.expectedSnapshotHash(),impactResult);
+        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_APPROVED and CHANGE_PROPOSAL_PUBLISHED,
+        //  key change-proposal:{id}:published (duplicate keys are skipped).
         return result;
     }
 
