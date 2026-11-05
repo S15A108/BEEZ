@@ -236,7 +236,7 @@ public class InvitationService implements DisposableBean {
 
     /**
      * MEM-A04. 초대를 소비하지 않는다. callerAccountId 는 로그인 세션의 계정 — 없으면 로그인이 필요하다.
-     * 이메일 초대는 이미 수락됐어도 정상 응답이다: 로그아웃 상태로 링크를 연 사람이 로그인하는 순간 자동 참여로 수락되고,
+     * 이메일 초대는 이미 수락됐어도 그 사람이 지금 팀원이면 정상 응답이다: 로그아웃 상태로 링크를 연 사람이 로그인하는 순간 자동 참여로 수락되고,
      * 그 링크로 돌아왔을 때 404 가 아니라 "이미 팀원 → 프로젝트 열기"가 되어야 한다 (Q05). 링크 초대는 한 번 쓰면 무효다.
      */
     @Transactional(readOnly = true)
@@ -244,7 +244,10 @@ public class InvitationService implements DisposableBean {
         Invitation invitation = findByToken(token);
         Project project = activeProject(invitation);
         rejectRevoked(invitation);
-        if (invitation.isAccepted() && invitation.getEmail() == null) {
+        // 수락된 초대는 그 이메일 계정이 지금도 활성 멤버일 때만 정상 응답 — 수락(MEM-A05)이 409 already_member 를 줄 때와 같은 기준이다.
+        // 제외·나간 뒤 예전 링크를 열면 미리보기는 통과하는데 수락이 404 가 되는 어긋남을 막는다. 링크 초대는 한 번 쓰면 무효다
+        if (invitation.isAccepted()
+                && (invitation.getEmail() == null || !isActiveMemberByEmail(project.getId(), invitation.getEmail()))) {
             throw AccessErrors.notFound("invitation_used invitation=" + invitation.getId());
         }
         Boolean accountMatches = null;
@@ -358,20 +361,21 @@ public class InvitationService implements DisposableBean {
     }
 
     /**
-     * 팀원 제외(MEM-A09)와 같은 트랜잭션에서, <b>프로젝트 행을 잠그기 전에</b> 부른다. 그 사람 이메일로 이 프로젝트에 남은 대기 초대를 취소한다.
-     * 남겨 두면 제외 직후 그 사람이 로그인할 때 자동 참여가 REMOVED 를 되살리고(Q05 4 의 "다시 초대하면"이 아닌데도),
-     * 예전 메일 링크(MEM-A05)로도 다시 들어온다. 제외 뒤 팀장이 새로 초대하면 그 초대로는 되살아난다.
-     * 제외가 거절되면(403·409 등) 같은 트랜잭션이라 취소도 되돌려진다.
+     * 팀원 제외(MEM-A09)·나가기(MEM-A10)와 같은 트랜잭션에서, <b>프로젝트 행을 잠그기 전에</b> 부른다.
+     * 그 사람 이메일로 이 프로젝트에 남은 대기 초대를 취소한다. 남겨 두면 멤버십이 끝나기 전에 받은 초대로 돌아온다 —
+     * 제외된 사람은 다음 로그인(자동 참여 REVIVE)이나 예전 메일 링크로, 나간 사람은 예전 메일 링크(MEM-A05)로.
+     * Q05 4 는 "다시 초대받았을 때"만 돌아오게 한다. 끝난 뒤 팀장이 새로 초대하면 그 초대로는 돌아온다.
+     * 제외·나가기가 거절되면(403·409 등) 같은 트랜잭션이라 취소도 되돌려진다.
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void revokePendingOnRemoval(long projectId, String email) {
+    public void revokePendingOnMembershipEnd(long projectId, String email) {
         if (email == null) {
             return;
         }
         Instant now = Instant.now();
         for (Invitation invitation : invitations.findPendingByProjectAndEmailForUpdate(projectId, email)) {
             invitation.revoke(now);
-            log.info("제외로 대기 초대 취소: invitation_id={} project_id={}", invitation.getId(), projectId);
+            log.info("멤버십 종료로 대기 초대 취소: invitation_id={} project_id={}", invitation.getId(), projectId);
         }
     }
 

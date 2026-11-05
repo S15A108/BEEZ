@@ -229,6 +229,54 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
                 Integer.class, p.projectId(), me)).isEqualTo(1);   // 같은 멤버십 행을 되살림
     }
 
+    /** 깨지면: 스스로 나간 사람이 나가기 전에 받은 메일 링크로 다시 초대받지 않고 돌아온다 (Q05 4 — 다시 초대받은 링크로만). */
+    @Test
+    void leave_revokesStalePendingInvitation() {
+        var p = fixtures().projectWithLeader();
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        String email = AccessFixtures.uniqueEmail();
+        fixtures().account(email);
+        ApiClient session = client().login(email, AccessFixtures.PASSWORD);
+
+        inviteByEmail(p, email);
+        String staleToken = tokenIn(awaitMail(email, p.projectId()));
+        String linkToken = read(leader.post(invitations(p.projectId()), "{}")).get("invite_url").asString()
+                .replaceAll(".*token=", "");
+        assertThat(session.post("/api/invitations/accept", tokenBody(linkToken)).statusCode()).isEqualTo(200);
+        assertThat(session.post("/api/projects/" + p.projectId() + "/leave", "{}").statusCode()).isEqualTo(204);
+
+        assertThat(session.post("/api/invitations/accept", tokenBody(staleToken)).statusCode()).isEqualTo(404);
+
+        inviteByEmail(p, email);
+        await().atMost(Duration.ofSeconds(10)).until(() -> mail.countTo(email) == 2);
+        assertThat(session.post("/api/invitations/accept", tokenBody(tokenIn(mail.lastTo(email)))).statusCode())
+                .isEqualTo(200);
+    }
+
+    /**
+     * 깨지면: 자동 참여로 들어왔다가 제외된 사람이 예전 메일 링크를 열면 미리보기는 통과(account_matches=true)하는데 수락은 404 라,
+     * 화면이 '바로 참여'를 시도했다가 실패한다. 미리보기도 수락과 같은 기준으로 404 여야 한다.
+     */
+    @Test
+    void preview_ofAcceptedInvitation_isNotFoundAfterRemoval() {
+        var p = fixtures().projectWithLeader();
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        String email = AccessFixtures.uniqueEmail();
+        long me = fixtures().account(email);
+        inviteByEmail(p, email);
+        String token = tokenIn(awaitMail(email, p.projectId()));
+        ApiClient session = client().login(email, AccessFixtures.PASSWORD);   // 자동 참여
+        assertThat(session.post("/api/invitations/preview", tokenBody(token)).statusCode()).isEqualTo(200);
+
+        Long memberId = jdbc.queryForObject("SELECT id FROM project_member WHERE project_id = ? AND account_id = ?",
+                Long.class, p.projectId(), me);
+        assertThat(leader.post("/api/projects/" + p.projectId() + "/members/" + memberId + "/remove", "{}")
+                .statusCode()).isEqualTo(204);
+
+        assertThat(session.post("/api/invitations/preview", tokenBody(token)).statusCode()).isEqualTo(404);
+        assertThat(session.post("/api/invitations/accept", tokenBody(token)).statusCode()).isEqualTo(404);
+    }
+
     /**
      * 깨지면: 다시 보내기(MEM-A11) 뒤에도 이전 링크가 살아 있거나, 메일이 실패했는데 이전 링크까지 죽어 초대받은 사람이 쓸 링크가 없다.
      * 수락·폐기된 초대를 다시 보내 이미 끝난 초대에 새 링크가 생겨도 깨진다.
