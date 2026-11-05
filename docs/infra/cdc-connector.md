@@ -243,3 +243,4 @@ pgsql -c "SELECT count(*) FROM pg_replication_slots" </dev/null
 | 11-05 | 1 사전 점검 (전진, 머지 전) | 슬롯 0행, publication `{id,status}`, kafka·connect healthy, 커넥터 `{}`, 토픽 파티션 1·복제 1·`retention.ms=604800000`, 비밀 파일 `읽힘` |
 | 11-05 | 2 설정 올리기 (브랜치 커밋 `1bb781bd`) | `/opt/beez/cdc` = `REVISION`·`compose.yaml`·`intake-connector.json`, password 줄은 자리표시자. `cdc up -d --wait` 재생성 없음(Up 3 hours 유지) |
 | 11-05 17:41 KST | 3 등록 · 4 확인 | `PUT …/config` 응답의 password 자리표시자. connector·task `RUNNING`, 슬롯 `beez_published_analysis` `pgoutput` `active = t`, retained 152 bytes. `Snapshot ended … status=COMPLETED`, `totalEventCount=0`(접수행 0) |
+| 11-05 17:43~17:46 KST | 6 consumer 켜기 | 켜기 직전 접수행 0행. env 두 줄 `true`, `.env.dev` `-rw-r----- ubuntu beez-deploy`·jenkins 읽기 OK. 같은 SHA `9727f475` 손 배포 → backend만 재생성(healthy 22.6초, ai·postgres·seaweedfs 유지), Nginx 확인 OK. `recovery_enabled` 1·`consumer_enabled` 1·`kafka_consumer_up` 1·`kafka_receive_failures_total` 0 |
