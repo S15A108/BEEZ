@@ -331,8 +331,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A19 문서 검토 요청 목록](01-backend-rest.md#doc-a19) | GET `/api/projects/{id}/document-review-submissions` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A20 문서 검토 제출 상세](01-backend-rest.md#doc-a20) | GET `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}` | HUMAN MEMBER | 오서현 | — | 오서현 |
 | [DOC-A21 문서별 승인·반려](01-backend-rest.md#doc-a21) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/decision` | HUMAN LEADER | 오서현 | — | 오서현 |
-| [DOC-A22 보완 제안에 대해 비비와 대화](01-backend-rest.md#doc-a22) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
-| [DOC-A23 비비에게 직접 보완 요청](01-backend-rest.md#doc-a23) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests` | HUMAN MEMBER (등록자) | 오서현 | 박상은 | 오서현 |
+| [DOC-A22 보완 제안에 대해 비비와 대화](01-backend-rest.md#doc-a22) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages` | HUMAN MEMBER (등록자) | 오서현 | 양지훈 | 오서현 |
+| [DOC-A23 비비에게 직접 보완 요청](01-backend-rest.md#doc-a23) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests` | HUMAN MEMBER (등록자) | 오서현 | 양지훈 | 오서현 |
 | [DOC-A24 팀장 검토 요청 취소](01-backend-rest.md#doc-a24) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/withdraw` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
 | [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |

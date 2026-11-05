@@ -300,6 +300,11 @@ public class DocumentReviewRepository {
                 """).params(p).query().singleRow();
     }
 
+    public int humanMessageCount(long review) {
+        return jdbc.sql("SELECT count(*) FROM document_bee_message WHERE review_id=:review AND author_kind='HUMAN'")
+                .param("review", review).query(Integer.class).single();
+    }
+
     public int directRequestCount(long review) {
         return jdbc.sql("SELECT count(*) FROM document_bee_suggestion WHERE review_id=:review AND origin='DIRECT_REQUEST'")
                 .param("review", review).query(Integer.class).single();

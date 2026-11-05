@@ -178,6 +178,8 @@ public final class DocumentReviewResultValidator {
         saved.put("text", text(reply.get("text"), 10000));
         if (reply.get("proposed_text") != null) {
             // 빈 문자열은 "그 부분을 지운다"는 대체문이라 허용한다.
+            // COMMENT 는 반영(APPLY) 대상이 아니라 대체문을 쓸 곳이 없다.
+            if (input.get("suggestion") instanceof Map<?, ?> target && "COMMENT".equals(target.get("type"))) throw invalidAi();
             if (!(reply.get("proposed_text") instanceof String proposed) || proposed.length() > 100000) throw invalidAi();
             saved.put("proposed_text", proposed);
         }

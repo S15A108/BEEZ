@@ -203,7 +203,24 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
         }).when(gateway).review(anyMap());
         var review = review();
         assertThat(review.suggestions().getFirst().type()).isEqualTo("COMMENT");
+        chatAnswer = input -> chatReply(input, "표현만 다듬으면 돼요.", null);
         assertThat(chatOnce(review, "왜요?", key()).reply().text()).isNotBlank();
+        // COMMENT 는 반영 대상이 아니라 비비가 대체문을 내면 형식 위반이다
+        chatAnswer = input -> chatReply(input, "이렇게 바꿔요.", "다듬은 문장");
+        code(() -> chatOnce(review, "고쳐 줘", key()), "invalid_ai_output");
+        assertThat(messageCount()).isEqualTo(2);
+    }
+
+    @Test void discussionCountPerReviewIsCapped() {
+        var review = review();
+        long suggestion = id(review.suggestions().getFirst().id());
+        for (int i = 0; i < 80; i++) {
+            jdbc.update("INSERT INTO document_bee_message(review_id, suggestion_id, author_kind, author_account_id, body) VALUES (?,?,'HUMAN',?,'말')",
+                    id(review.id()), suggestion, author.accountId());
+        }
+        int calls = sent.size();
+        code(() -> chatOnce(review, "한 번 더", key()), "review_chat_limit");
+        assertThat(sent).hasSize(calls);
     }
 
     @Test void directEditAfterTheReviewMakesItStaleAndAiIsNotCalled() {
@@ -225,6 +242,28 @@ class DocumentReviewChatIntegrationTest extends IntegrationTestSupport {
         assertThat(messageCount()).isZero();
         assertThat(copy().content()).contains("그사이 수정");
         assertThat(count("SELECT count(*) FROM llm_usage WHERE project_id=?", pid())).as("호출은 일어났으므로 사용량은 남는다").isEqualTo(2);
+    }
+
+    @Test void oldReviewIsStaleOnceANewerReviewExistsEvenWithTheSameBody() {
+        var old = review();
+        var latest = review();   // 본문이 같아도 재검토는 새 검토다
+        assertThat(latest.id()).isNotEqualTo(old.id());
+        int calls = sent.size();
+        code(() -> chatOnce(old, "말", key()), "review_stale");
+        code(() -> chat.request(author, pid(), document, id(old.id()), new DirectRequest(1, "고쳐 줘"), key()), "review_stale");
+        assertThat(sent).hasSize(calls);
+        assertThat(messageCount()).isZero();
+        assertThat(chatOnce(latest, "말", key()).reply().text()).isNotBlank();
+    }
+
+    @Test void newerReviewFinishingWhileAiRunsRejectsTheAnswerForTheOldReview() {
+        var old = review();
+        chatAnswer = input -> {
+            review();   // AI 가 답하는 동안 같은 본문으로 재검토가 끝난다
+            return chatReply(input, "늦은 답", null);
+        };
+        code(() -> chatOnce(old, "말", key()), "review_stale");
+        assertThat(messageCount()).isZero();
     }
 
     @Test void conversationIsLockedWhileTheLeaderReviewsTheSubmission() {

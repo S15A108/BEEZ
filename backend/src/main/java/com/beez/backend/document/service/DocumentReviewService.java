@@ -232,6 +232,12 @@ public class DocumentReviewService {
         return row;
     }
 
+    /** 화면에는 문서의 최신 검토만 보인다. 같은 본문으로 재검토가 끝났으면 이전 검토에 대화·요청을 남기지 않는다. */
+    void requireLatestReview(long document, long review) {
+        var latest = repository.review(document, null).orElseThrow(() -> AccessErrors.notFound("document_review_missing"));
+        if (id(latest, "id") != review) throw conflict("review_stale");
+    }
+
     @Transactional
     public DocumentWorkingCopyResponse decideSuggestion(CallerContext caller, long project, long document,
             long review, long suggestion, SuggestionDecisionRequest input) {

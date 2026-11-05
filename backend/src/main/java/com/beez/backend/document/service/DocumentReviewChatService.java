@@ -49,6 +49,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class DocumentReviewChatService {
     static final int MAX_DIRECT_REQUESTS = 20;
     static final int MAX_MESSAGES_SENT = 40;
+    /** 한 검토에서 비비에게 보낼 수 있는 대화 횟수(제안 전체 합계). AI 비용 상한이다. */
+    static final int MAX_DISCUSSIONS = 80;
 
     private final DocumentReviewService reviews;
     private final DocumentReviewRepository repository;
@@ -79,7 +81,11 @@ public class DocumentReviewChatService {
             if (previous.isPresent()) return new Prepared(previous.get(), null, 0, null, null);
             requireOpen(project, copy);
             var reviewRow = reviews.currentReview(project, document, review, id(copy, "revision"));
+            reviews.requireLatestReview(document, review);
             var row = suggestionRow(review, suggestion);
+            if (repository.humanMessageCount(review) >= MAX_DISCUSSIONS) {
+                throw new ApiException(HttpStatus.CONFLICT, "review_chat_limit", "이 검토에서는 비비와 " + MAX_DISCUSSIONS + "번까지 대화할 수 있어요. 다시 검토를 받아 주세요.");
+            }
             var refs = reviews.references(project, document);
             var payload = reviews.reviewInput(copy, refs, "document-chat-" + document + "-" + UUID.randomUUID());
             payload.put("mode", "DISCUSS");
@@ -124,6 +130,7 @@ public class DocumentReviewChatService {
             reviews.initialWorkflow(project);
             reviews.editable(copy, input.expectedRevision());
             var reviewRow = reviews.currentReview(project, document, review, input.expectedRevision());
+            reviews.requireLatestReview(document, review);
             if (repository.directRequestCount(review) >= MAX_DIRECT_REQUESTS) {
                 throw new ApiException(HttpStatus.CONFLICT, "review_request_limit", "이 검토에서는 직접 요청을 " + MAX_DIRECT_REQUESTS + "번까지 할 수 있어요. 다시 검토를 받아 주세요.");
             }
@@ -203,6 +210,7 @@ public class DocumentReviewChatService {
     private void requireUnchanged(long project, long document, long review, Map<String, Object> copy, Prepared prepared) {
         if (id(copy, "revision") != prepared.revision()) throw conflict("review_stale");
         reviews.currentReview(project, document, review, prepared.revision());
+        reviews.requireLatestReview(document, review);
         if (!prepared.referenceHash().equals(reviews.referenceHash(reviews.references(project, document)))) throw conflict("review_stale");
     }
 
