@@ -186,7 +186,7 @@ cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 
 | 순서 | 할 일 | 비고 |
 |---|---|---|
-| 1 | backend consumer 끄기: 서버 env `BEEZ_CDC_INTAKE_ENABLED=false` → backend 재배포 | 295 전이면 건너뛴다. 이때부터 분석이 멈춘다(계획 §1) |
+| 1 | backend consumer 끄기: 서버 env `BEEZ_CDC_INTAKE_ENABLED=false` → backend 재배포 | 295 전이면 건너뛴다. 이때부터 분석이 멈춘다(계획 §1). 점검이 끝나면 아래 "다시 켜기"로 되살린다 |
 | 2 | `cdc stop` 또는 `cdc down` | 아래 명령 |
 | 3 | 본 스택을 내려야 할 때만 본 스택 `down` | `beez-cdc`가 `beez_default`에 붙어 있으면 본 스택 `down`이 "has active endpoints"로 실패한다 |
 
@@ -202,6 +202,35 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 - 서버 재부팅 뒤에는 `restart: unless-stopped`로 Docker가 다시 띄운다. `cdc stop`으로 멈춘 것은 다시 띄우지 않는다.
   재부팅 때 backend가 Kafka보다 먼저 뜨면 기동에 실패했다가 다시 시도해 정상이 된다(계획 D1). backend가
   healthy인지 본다.
+
+### 다시 켜기 (점검 뒤 복귀)
+
+위 순서로 멈췄다면 **역순으로 되살린다.** `cdc start`는 Kafka·Connect만 띄우고, backend consumer는 1번에서 끈 채로
+남는다. 지금 코드는 복구 스캔도 같은 설정(`beez.cdc.intake.enabled`)에 묶여 있어, consumer를 다시 켜지 않으면
+**점검이 끝나도 발행 분석이 계속 멈춰 있다**(계획 §1). 298로 스캔을 분리해도 consumer는 손으로 다시 켠다.
+
+| 순서 | 할 일 | 확인 |
+|---|---|---|
+| 1 | 본 스택을 내렸다면 먼저 올린다(`beez_default`가 있어야 이 스택이 붙는다) | backend·postgres healthy |
+| 2 | `cdc start`(stop 했을 때) 또는 `cdc up -d --wait`(down 했을 때) | "확인" 1) 둘 다 healthy |
+| 3 | 295 이후: 커넥터·task·슬롯 확인(아래 명령) | connector·task 모두 `RUNNING`, 슬롯 `active` = `t`. 아니면 여기서 멈추고 원인을 본다(계획 D6) |
+| 4 | 켜기 직전 접수 상태를 적는다(아래 명령) | 켜는 순간 그동안 쌓인 PENDING을 복구 스캔이 한꺼번에 집어 AI를 호출한다(계획 D7) |
+| 5 | consumer 켜기: 서버 env `BEEZ_CDC_INTAKE_ENABLED=true` → backend 재배포 | 명령은 295 런북의 consumer 켜기 절차를 따른다(295에서 이 칸을 그 절 링크로 바꾼다) |
+| 6 | 처리 재개 확인 | 대시보드 `beez_cdc_analysis_consumer_enabled` = 1, 4번에서 적은 PENDING이 줄어든다 |
+
+```bash
+# 서버 (ssh beez). cdc·kt 함수는 "처음 올리기" 3단계, PG·pgsql 은 cdc-postgres.md "0. 준비"
+# 3) 커넥터·task 상태. 커넥터가 없으면(295 전) {}
+docker exec beez-cdc-connect-1 curl -s 'http://127.0.0.1:8083/connectors?expand=status'; echo
+#    슬롯. Connect 가 다시 붙기까지 몇 초 걸릴 수 있다. retained 는 슬롯이 붙잡고 있는 WAL 양
+pgsql -c "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained FROM pg_replication_slots"
+# 4) 켜기 직전 접수 상태
+pgsql -c "SELECT status, count(*) FROM published_change_analysis GROUP BY status ORDER BY status"
+```
+
+- 295 전에는 멈출 때 1번(consumer)을 건너뛰었으므로 여기서도 1·2번까지만 한다.
+- 3번에서 슬롯이 `active` = `f`로 남거나 `retained`가 1GB를 넘으면 consumer를 켜지 말고 계획 D6 "슬롯·Connect 감시"를
+  따른다. 커넥터 없이 consumer만 켜면 토픽에 아무것도 오지 않아 연결 확인이 안 된다(계획 D7 "켜는 순서").
 
 ### 볼륨을 지우면
 
