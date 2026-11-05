@@ -1,4 +1,4 @@
-import type { Account, Project } from '../api/contracts/common'
+import type { Account, Member, Project } from '../api/contracts/common'
 import {
   fail,
   findById,
@@ -62,6 +62,45 @@ function joinPendingInvitations(context: MockContext, account: Account) {
     invitation.accepted_at = now()
   }
 }
+
+// 제외(MEM-A09)·나가기(MEM-A10)하면 그 사람 이메일로 이 프로젝트에 남은 대기 초대를 함께 취소한다(PR #134).
+// 남겨 두면 다음 로그인이나 예전 메일 링크로 바로 돌아온다. 끝난 뒤 새로 초대하면 그 초대로는 돌아온다.
+function revokePendingInvitations(
+  context: MockContext,
+  projectId: string,
+  accountId: string,
+) {
+  const email = context.database.accounts.find(
+    (item) => item.profile.id === accountId,
+  )?.profile.email
+  context.database.invitations
+    .filter(
+      (item) =>
+        item.project_id === projectId &&
+        item.invited_email === email &&
+        !item.accepted_at &&
+        !item.revoked_at,
+    )
+    .forEach((item) => {
+      item.revoked_at = now()
+    })
+}
+
+// MEM-A04·A05 공통: 없는 토큰·삭제된 프로젝트·취소한 초대는 원인을 나누지 않고 404다(PR #134).
+function findInvitation(context: MockContext) {
+  const invitation =
+    context.database.invitations.find(
+      (item) => item.token === context.body.token,
+    ) ?? fail(404, 'not_found', '초대를 찾을 수 없어요.')
+  const project = context.database.projects.find(
+    (item) => item.project.id === invitation.project_id,
+  )
+  if (!project || invitation.revoked_at)
+    fail(404, 'not_found', '초대를 찾을 수 없어요.')
+  return { invitation, project }
+}
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 function projectView(context: MockContext, project: Project): Project {
   const member = context.database.projects
@@ -291,19 +330,76 @@ export async function accountRoutes(
     case 'MEM-A01': {
       requireLeader(context)
       const project = requireProject(context)
-      const email = requiredString(body, 'email').trim().toLowerCase()
-      const invitee = database.accounts.find(
-        (item) => item.profile.email === email,
-      )
-      if (
-        invitee &&
-        project.members.some((item) => item.account_id === invitee.profile.id)
-      )
+      const isMember = (email: string) => {
+        const invitee = database.accounts.find(
+          (item) => item.profile.email === email,
+        )
+        return project.members.some(
+          (item) => item.account_id === invitee?.profile.id,
+        )
+      }
+      // 이메일 초대(PR #134): 이메일마다 대기 초대를 만들고 메일을 보낸다. 예시 환경은 메일을 보내지 않는다.
+      // 대소문자·앞뒤 공백만 다른 주소는 하나로 묶고, 같은 이메일의 대기 초대가 있으면 새로 만들지 않는다.
+      if (body.emails !== undefined) {
+        const raw = body.emails
+        if (
+          body.email !== undefined ||
+          !Array.isArray(raw) ||
+          raw.length < 1 ||
+          raw.length > 20 ||
+          raw.some(
+            (item) =>
+              typeof item !== 'string' || !emailPattern.test(item.trim()),
+          ) ||
+          (typeof body.message === 'string' && body.message.trim().length > 500)
+        )
+          fail(400, 'validation_failed', '초대할 이메일을 확인해 주세요.')
+        const emails = new Set(
+          (raw as string[]).map((item) => item.trim().toLowerCase()),
+        )
+        return {
+          status: 201,
+          data: {
+            results: [...emails].map((email) => {
+              if (isMember(email)) return { email, status: 'ALREADY_MEMBER' }
+              const pending = database.invitations.find(
+                (item) =>
+                  item.project_id === project.project.id &&
+                  item.invited_email === email &&
+                  !item.accepted_at &&
+                  !item.revoked_at,
+              )
+              if (pending)
+                return {
+                  email,
+                  status: 'ALREADY_INVITED',
+                  invitation_id: pending.id,
+                }
+              const id = nextId(database)
+              database.invitations.push({
+                id,
+                project_id: project.project.id,
+                invited_email: email,
+                token: `mock-invite-${nextId(database)}`,
+              })
+              return { email, status: 'INVITED', invitation_id: id }
+            }),
+          },
+        }
+      }
+      // 링크 초대(기존 호환). 메일을 보내지 않아 message를 넣을 곳이 없다.
+      if (body.message !== undefined)
+        fail(400, 'validation_failed', 'message는 emails와 함께만 보내요.')
+      const email =
+        typeof body.email === 'string' && body.email.trim()
+          ? body.email.trim().toLowerCase()
+          : undefined
+      if (email && isMember(email))
         fail(409, 'already_member', '이미 팀원이에요.')
       const invitation = {
         id: nextId(database),
         project_id: project.project.id,
-        invited_email: email,
+        ...(email ? { invited_email: email } : {}),
         token: `mock-invite-${nextId(database)}`,
       }
       database.invitations.push(invitation)
@@ -338,70 +434,95 @@ export async function accountRoutes(
             item.id === params.invitation_id &&
             item.project_id === requireProject(context).project.id,
         ) ?? fail(404, 'not_found', '초대를 찾을 수 없어요.')
-      invitation.revoked_at = now()
+      // 이미 수락한 초대는 바꾸지 않는다. 들어온 팀원을 내보내는 것은 MEM-A09다.
+      if (!invitation.accepted_at) invitation.revoked_at ??= now()
       return { status: 204 }
     }
-    case 'MEM-A04':
-    case 'MEM-A05': {
+    case 'MEM-A11': {
+      requireLeader(context)
       const invitation =
-        database.invitations.find((item) => item.token === body.token) ??
-        fail(404, 'not_found', '초대를 찾을 수 없어요.')
-      if (invitation.revoked_at)
-        fail(404, 'not_found', '초대를 찾을 수 없어요.')
-      const project =
-        database.projects.find(
-          (item) => item.project.id === invitation.project_id,
-        ) ?? fail(404, 'not_found', '프로젝트를 찾을 수 없어요.')
-      if (id === 'MEM-A04') {
-        // 수정안 요청 필드(inviter·project_description·invited_email·account_matches)도 명세대로 채운다.
-        const leader = database.accounts.find(
+        database.invitations.find(
           (item) =>
-            item.profile.id ===
-            project.members.find((member) => member.role === 'LEADER')
-              ?.account_id,
-        )?.profile
-        return {
-          data: {
-            project_name: project.project.name,
-            login_required: !context.account,
-            ...(leader
-              ? { inviter: { name: leader.name, email: leader.email } }
-              : {}),
-            ...(project.project.description
-              ? { project_description: project.project.description }
-              : {}),
-            ...(invitation.invited_email
-              ? { invited_email: invitation.invited_email }
-              : {}),
-            ...(context.account && invitation.invited_email
-              ? {
-                  account_matches:
-                    context.account.email === invitation.invited_email,
-                }
-              : {}),
-          },
-        }
+            item.id === params.invitation_id &&
+            item.project_id === requireProject(context).project.id &&
+            // 이메일 없는 링크 초대는 보낼 곳이 없어 없는 초대로 본다(PR #134).
+            item.invited_email,
+        ) ?? fail(404, 'not_found', '초대를 찾을 수 없어요.')
+      if (invitation.accepted_at || invitation.revoked_at)
+        fail(409, 'invitation_not_pending', '이미 수락·취소된 초대예요.')
+      // 새 토큰으로 바꿔 이전 링크를 막는다. 예시 환경은 메일을 보내지 않는다.
+      invitation.token = `mock-invite-${nextId(database)}`
+      return { data: { invitation: omit(invitation, 'token') } }
+    }
+    case 'MEM-A04': {
+      const { invitation, project } = findInvitation(context)
+      // 이메일 초대는 수락한 뒤에도 그 사람이 지금 팀원이면 정상 응답이다(로그인 자동 참여 뒤 메일 링크로 돌아온 경우).
+      // 링크 초대는 한 번 쓰면, 이메일 초대는 그 사람이 제외·나간 뒤면 404다.
+      const invitee = invitation.invited_email
+        ? database.accounts.find(
+            (item) => item.profile.email === invitation.invited_email,
+          )
+        : undefined
+      if (
+        invitation.accepted_at &&
+        !project.members.some(
+          (member) => member.account_id === invitee?.profile.id,
+        )
+      )
+        fail(404, 'not_found', '초대를 찾을 수 없어요.')
+      // 수정안 요청 필드(inviter·project_description·invited_email·account_matches)도 명세대로 채운다.
+      const leader = database.accounts.find(
+        (item) =>
+          item.profile.id ===
+          project.members.find((member) => member.role === 'LEADER')
+            ?.account_id,
+      )?.profile
+      return {
+        data: {
+          project_name: project.project.name,
+          login_required: !context.account,
+          ...(leader
+            ? { inviter: { name: leader.name, email: leader.email } }
+            : {}),
+          ...(project.project.description
+            ? { project_description: project.project.description }
+            : {}),
+          ...(invitation.invited_email
+            ? { invited_email: invitation.invited_email }
+            : {}),
+          // 로그인 상태에서만 준다. 링크 초대는 누구나, 이메일 초대는 그 이메일 계정만 맞다.
+          ...(context.account
+            ? {
+                account_matches:
+                  !invitation.invited_email ||
+                  context.account.email === invitation.invited_email,
+              }
+            : {}),
+        },
       }
+    }
+    case 'MEM-A05': {
+      const { invitation, project } = findInvitation(context)
       const account = requireAccount(context)
-      // 실제 서버처럼 다른 이메일 계정의 수락은 무효 초대와 같은 404로 준다(MEM-A05, Q05 -174).
+      // 서버 판정 순서(PR #134): 다른 이메일 → 404, 이미 팀원 → 409 already_member, 이미 쓴 초대 → 404.
+      // 그래서 로그인 자동 참여로 이미 들어온 사람이 메일 링크로 돌아오면 409다.
       if (
         invitation.invited_email &&
         invitation.invited_email.toLowerCase() !== account.email.toLowerCase()
       )
         fail(404, 'not_found', '초대를 찾을 수 없어요.')
-      let member = project.members.find(
-        (item) => item.account_id === account.id,
-      )
-      if (!member) {
-        member = {
-          id: nextId(database),
-          account_id: account.id,
-          name: account.name,
-          role: 'MEMBER',
-          agent_connected: false,
-        }
-        project.members.push(member)
+      if (project.members.some((item) => item.account_id === account.id))
+        fail(409, 'already_member', '이미 팀원이에요.')
+      if (invitation.accepted_at)
+        fail(404, 'not_found', '초대를 찾을 수 없어요.')
+      const member: Member = {
+        id: nextId(database),
+        account_id: account.id,
+        name: account.name,
+        role: 'MEMBER',
+        agent_connected: false,
       }
+      project.members.push(member)
       project.left_account_ids = project.left_account_ids?.filter(
         (item) => item !== account.id,
       )
@@ -498,6 +619,7 @@ export async function accountRoutes(
           ...(project.left_account_ids ?? []),
           member.account_id,
         ]
+      revokePendingInvitations(context, project.project.id, member.account_id)
       database.tokens
         .filter(
           (token) =>

@@ -83,8 +83,7 @@ export const invitationSchema = z.object({
   id: idSchema,
   project_id: idSchema,
   invited_email: z.string().optional(),
-  // Q05 6(2026-10-29 확정): 초대 만료는 없다. dev 명세는 아직 필수라 둘 다 받는다.
-  expires_at: timeSchema.optional(),
+  // Q05 6: 초대 만료는 없다. 서버(PR #134)도 expires_at을 보내지 않는다.
   accepted_at: timeSchema.optional(),
   revoked_at: timeSchema.optional(),
 })
