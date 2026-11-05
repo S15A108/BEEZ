@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -889,4 +889,169 @@ it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 
   expect(
     await screen.findByRole('button', { name: '공용 문서함에서 제안하기' }),
   ).toBeInTheDocument()
+})
+
+// S15P31A108-203·204: 승인 확인 화면은 CHG-A14 미리 보기로 승인하면 같이 바뀌는 것을 먼저 보여 준다.
+// 목 서버의 상태는 localStorage 'beez.mock.approvalPreview' 로 바꾼다(override·unevaluated·running·conflict).
+function useScenario(value: string) {
+  localStorage.setItem('beez.mock.approvalPreview', value)
+}
+afterEach(() => localStorage.removeItem('beez.mock.approvalPreview'))
+
+async function openApprove() {
+  const user = userEvent.setup()
+  renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await screen.findByRole('heading', { name: '기준 v2 발행을 승인할까요?' })
+  return user
+}
+
+it('승인 확인 화면은 승인하면 같이 바뀌는 것과 확인하지 못한 것을 먼저 보여 준다', async () => {
+  const preview = vi.spyOn(changesApi, 'approvalPreview')
+  await openApprove()
+  const group = await screen.findByRole('group', {
+    name: '승인하면 같이 바뀌는 것',
+  })
+  expect(group).toHaveTextContent('기준 v2에')
+  expect(
+    within(group).getByRole('region', { name: '확인하지 못한 것' }),
+  ).toBeInTheDocument()
+  expect(preview).toHaveBeenCalledWith('101', '71')
+  // 분석이 믿을 만하면 사유 칸을 미리 열지 않는다.
+  expect(
+    screen.queryByLabelText('영향 분석 없이 승인하는 사유'),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeEnabled()
+})
+
+it('미리 보기가 사유가 필요하다고 하면 409를 기다리지 않고 사유 칸을 열고, 사유를 담아 한 번에 승인한다', async () => {
+  useScenario('override')
+  const detail = await changesApi.get('101', '71')
+  const approve = vi.spyOn(changesApi, 'approve').mockResolvedValue({
+    proposal: detail.proposal,
+    baseline: await documentsApi.baseline('101'),
+  })
+  const user = await openApprove()
+  const reason = await screen.findByLabelText('영향 분석 없이 승인하는 사유')
+  const button = screen.getByRole('button', {
+    name: '사유 남기고 기준 v2 발행',
+  })
+  expect(button).toBeDisabled()
+  expect(
+    screen.getByRole('region', { name: '확인하지 못한 것' }),
+  ).toHaveTextContent('AI 영향 후보: 아직 평가하지 못했어요')
+  await user.type(reason, '분석 서버 장애로 직접 확인함')
+  await user.click(button)
+  await waitFor(() => expect(approve).toHaveBeenCalledTimes(1))
+  expect(approve.mock.calls[0][2]).toMatchObject({
+    impact_override_reason: '분석 서버 장애로 직접 확인함',
+  })
+})
+
+it('영향 분석을 안 돌린 제안도 같은 방식으로 사유를 받는다', async () => {
+  useScenario('unevaluated')
+  await openApprove()
+  expect(
+    await screen.findByLabelText('영향 분석 없이 승인하는 사유'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '확인하지 못한 것' }),
+  ).toHaveTextContent('아직 영향 분석을 하지 않았어요.')
+})
+
+it('재분석이 진행 중이면 사유 칸 없이 승인 버튼을 막고 끝난 뒤 승인하라고 알린다', async () => {
+  useScenario('running')
+  await openApprove()
+  expect(
+    await screen.findByRole('region', { name: '확인하지 못한 것' }),
+  ).toHaveTextContent('다시 분석하는 중이에요. 끝난 뒤에 승인할 수 있어요.')
+  expect(
+    screen.queryByLabelText('영향 분석 없이 승인하는 사유'),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeDisabled()
+})
+
+it('제안을 올린 뒤 기준이 바뀌어 미리 보기가 409면 승인 버튼을 막고 새로고침을 안내한다', async () => {
+  useScenario('conflict')
+  await openApprove()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '제안을 올린 뒤 기준이 바뀌었어요',
+  )
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeDisabled()
+})
+
+it('미리 보기를 불러오지 못해도 승인은 막지 않고 직접 확인하라고 알린다', async () => {
+  vi.spyOn(changesApi, 'approvalPreview').mockRejectedValue(
+    new Error('network'),
+  )
+  await openApprove()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '영향을 직접 확인한 뒤 승인해 주세요',
+  )
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeEnabled()
+})
+
+it('팀장이 아니면 승인 미리 보기를 요청하지 않는다', async () => {
+  const preview = vi.spyOn(changesApi, 'approvalPreview')
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ChangesPanel projectId="101" isLeader={false} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  expect(
+    screen.queryByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).not.toBeInTheDocument()
+  expect(preview).not.toHaveBeenCalled()
+})
+
+// 실제 BE(live) 점검에서 확인: 제안한 문서의 색인이 없으면 미리 보기와 승인 모두 409 analysis_not_completed 로 막힌다.
+it('제안 문서의 색인이 준비되지 않아 미리 보기가 409면 이유를 알리고 승인 버튼을 막는다', async () => {
+  useScenario('indexing')
+  await openApprove()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '제안한 문서의 색인이 아직 준비되지 않았어요',
+  )
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeDisabled()
+})
+
+it.each([
+  ['invalid_transition', '이미 처리했거나 지금은 승인할 수 없는 제안이에요'],
+  ['version_conflict', '제안이 그사이 바뀌었어요'],
+])(
+  '미리 보기가 %s 로 막히면 이유를 알리고 승인 버튼을 막는다',
+  async (code, text) => {
+    vi.spyOn(changesApi, 'approvalPreview').mockRejectedValue(conflict(code))
+    await openApprove()
+    expect(await screen.findByRole('alert')).toHaveTextContent(text)
+    expect(
+      screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+    ).toBeDisabled()
+  },
+)
+
+// 실제 BE 점검에서 확인: 승인에 성공해 프로젝트를 새로 고칠 때 이미 발행된 제안의 미리 보기를 다시 불러 409 가 났다.
+it('승인에 성공한 뒤에는 이미 발행된 제안의 미리 보기를 다시 요청하지 않는다', async () => {
+  const preview = vi.spyOn(changesApi, 'approvalPreview')
+  const user = await openApprove()
+  await screen.findByRole('group', { name: '승인하면 같이 바뀌는 것' })
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await screen.findByText(/새 기준을 발행했어요/)
+  expect(preview).toHaveBeenCalledTimes(1)
 })

@@ -295,3 +295,93 @@ it('다시 내는 제안에서 고칠 문서를 바꾸면 원래 제안의 그 �
     base_version_id: '2041',
   })
 })
+
+// S15P31A108-203: 비비에게 초안 받기(CHG-A07). 기준 원문의 버전과 고른 작업을 담아 요청하고, 손대지 않은 글만 초안으로 채운다.
+function renderDraftForm(requestDraft: () => Promise<unknown>) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['documents', '203', 'approved-content', '2031'], {
+    content: '# 요구사항\n기준 원문',
+    versionId: '2031',
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[
+          {
+            id: '203',
+            label: '요구사항 명세서 · 기준 v1',
+            title: '요구사항 명세서',
+            versionId: '2031',
+          },
+        ]}
+        fetchDocumentContent={() =>
+          Promise.resolve({
+            content: '# 요구사항\n기준 원문',
+            versionId: '2031',
+          })
+        }
+        requestDraft={requestDraft as never}
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  return { text: () => screen.getByLabelText('고친 글') }
+}
+
+const draftResponse = {
+  document_id: '203',
+  base_document_version_id: '2031',
+  after_content: '# 요구사항\n비비 초안',
+  generation: { origin: 'MODEL', text: '초안', sources: [], unresolved: [] },
+}
+
+it('초안 받기는 기준 원문 버전을 담아 요청하고 손대지 않은 글을 초안으로 채운다', async () => {
+  const user = userEvent.setup()
+  const requestDraft = vi.fn().mockResolvedValue(draftResponse)
+  const { text } = renderDraftForm(requestDraft)
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n기준 원문'))
+  await user.click(
+    await screen.findByRole('button', { name: '비비에게 초안 받기' }),
+  )
+  await user.type(
+    screen.getByLabelText('어떻게 고칠지 알려 주세요'),
+    '빈 화면 안내를 추가해 주세요.',
+  )
+  await user.click(screen.getByRole('button', { name: '초안 만들기' }))
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n비비 초안'))
+  expect(requestDraft).toHaveBeenCalledWith({
+    document_id: '203',
+    base_document_version_id: '2031',
+    instruction: '빈 화면 안내를 추가해 주세요.',
+  })
+})
+
+it('초안 요청 입력은 제안 폼을 제출하지 않는다', async () => {
+  const user = userEvent.setup()
+  const requestDraft = vi.fn().mockResolvedValue(draftResponse)
+  renderDraftForm(requestDraft)
+  await user.click(
+    await screen.findByRole('button', { name: '비비에게 초안 받기' }),
+  )
+  await user.type(
+    screen.getByLabelText('어떻게 고칠지 알려 주세요'),
+    '줄바꿈{enter}도 쓸 수 있어요',
+  )
+  expect(
+    screen.queryByText('기준 문서와 달라진 내용이 없어요.'),
+  ).not.toBeInTheDocument()
+  expect(requestDraft).not.toHaveBeenCalled()
+})
