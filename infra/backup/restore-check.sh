@@ -10,7 +10,7 @@
 #   덤프를 고르지 않으면 <백업 폴더>/LAST_OK 의 덤프(끝까지 성공한 마지막 백업)를 쓰고, LAST_OK 가 없으면
 #   db 의 가장 최근 덤프를 쓴다. 가장 최근 덤프는 원본 복사가 실패한 실행의 것일 수 있다.
 #
-# 종료 코드: 0 = 모든 문서 버전 원본 일치, 1 = 빠졌거나 다른 원본이 있음, 2 = 사용법·환경 오류
+# 종료 코드: 0 = 모든 문서 버전 원본 일치, 1 = 빠졌거나 다른 원본이 있음·복원한 DB 를 읽지 못함(복원 시험 실패), 2 = 사용법·환경 오류
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # Git Bash 에서 /w 같은 컨테이너 경로가 바뀌지 않게. 리눅스에서는 영향 없음
 
@@ -87,8 +87,12 @@ tar -C "$OBJECTS" -cf - . | docker run -i --rm --network "$N" --entrypoint sh \
 
 # 3) storage_key 로 내려받아 해시 대조. content_hash 형식은 "sha256:<16진수 64자>"(DocumentInputValidator)
 log "문서 버전 원본 대조"
-docker exec "$N-pg" psql -U beez -d beez -XAt -F ' ' -v ON_ERROR_STOP=1 \
-    -c 'SELECT id, storage_key, content_hash FROM document_version ORDER BY id' \
+# DB 조회를 먼저 끝내고 결과를 넘긴다. 파이프로 바로 이으면 조회 실패도 "원본이 DB 와 맞지 않는다"로 보인다(check-live.sh 와 같음)
+rows=$(docker exec "$N-pg" psql -U beez -d beez -XAt -F ' ' -v ON_ERROR_STOP=1 \
+    -c 'SELECT id, storage_key, content_hash FROM document_version ORDER BY id') ||
+    { log "실패: 복원한 DB 조회 실패 — 덤프 복원이 끝나지 않았거나 스키마가 다르다(복원 시험 실패)"; exit 1; }
+# 0건이면 빈 줄 하나도 넘기지 않는다(빈 줄은 key 없는 "없음" 한 건으로 세어진다)
+{ [[ -n $rows ]] && printf '%s\n' "$rows"; true; } \
   | docker run -i --rm --network "$N" --entrypoint sh -e AK="$AK" -e SK="$SK" -e EP="http://$N-sw:8333/$BUCKET" \
     "$CURL_IMAGE" -c '
       ok=0; bad=0
