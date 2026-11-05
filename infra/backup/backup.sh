@@ -63,6 +63,8 @@ tmp=
 
 # 2) 원본 복사. copy 는 대상에만 있는 파일을 지우지 않는다(sync 를 쓰지 않는다).
 #    --immutable: 같은 key 의 내용이 바뀌었으면 덮어쓰지 않고 실패한다. key 는 UUID 라 바뀔 일이 없다
+#    --checksum: 수정 시각이 아니라 내용(MD5, SeaweedFS ETag)으로 같은지 본다. 수정 시각으로 보면 1초 미만 차이를
+#      "바뀜"으로 보고 --immutable 이 매번 실패한다(2026-11-05 Docker Desktop 실측)
 log "원본 복사: $BUCKET → $BACKUP_ROOT/objects/$BUCKET"
 RCLONE_CONFIG_SRC_ACCESS_KEY_ID=$(env_value SEAWEEDFS_BACKUP_ACCESS_KEY) \
 RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY=$(env_value SEAWEEDFS_BACKUP_SECRET_KEY) \
@@ -72,7 +74,7 @@ docker run --rm --network "${PROJECT}_storage" --user "$(id -u):$(id -g)" \
     -e RCLONE_CONFIG_SRC_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SRC_REGION=us-east-1 \
     -e RCLONE_CONFIG_SRC_ACCESS_KEY_ID -e RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY \
     -e RCLONE_CONFIG=/dev/null -e XDG_CACHE_HOME=/tmp \
-    "$RCLONE_IMAGE" copy "src:$BUCKET" "/backup/$BUCKET" --immutable --stats-one-line --stats-log-level NOTICE
+    "$RCLONE_IMAGE" copy "src:$BUCKET" "/backup/$BUCKET" --immutable --checksum --stats-one-line --stats-log-level NOTICE
 
 # 3) 덤프 시점의 문서 버전 원본이 백업에 다 있는지 확인. 버전 원본은 지우지 않으므로 빠졌다면 백업이 불완전하다
 missing=0

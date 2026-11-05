@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# 운영 DB 와 운영 SeaweedFS 원본 대조 (S15P31A108-211). 읽기만 한다.
+#
+# document_version 마다 storage_key 로 원본을 내려받아 SHA-256 이 content_hash 와 같은지 본다.
+# 쓰는 때: 배포·재배포 뒤 원본 보존 확인, 복원 뒤 확인(docs/infra/operations.md 8. 백업·복원).
+# health 200 은 원본이 있는지 알려 주지 않는다 — SeaweedFS 가 비어 있어도 backend 는 뜬다.
+#
+# 사용(서버): infra/backup/check-live.sh <환경>
+#   예) infra/backup/check-live.sh dev
+#
+# 키는 env 파일의 읽기 전용 백업 키(SEAWEEDFS_BACKUP_*)를 쓴다. 원본을 바꾸거나 지울 수 없다.
+# 종료 코드: 0 = 모두 일치(0건 포함), 1 = 없거나 다른 원본이 있음, 2 = 사용법·환경 오류
+set -euo pipefail
+export MSYS_NO_PATHCONV=1   # Git Bash 에서 시험할 때 컨테이너 경로가 바뀌지 않게. 리눅스에서는 영향 없음
+
+ENV_NAME=${1:?"사용: check-live.sh <환경>"}
+[[ $ENV_NAME =~ ^[a-z]+$ ]] || { echo "환경 이름이 잘못됨: $ENV_NAME" >&2; exit 2; }
+ENV_FILE=${ENV_FILE:-/opt/beez/.env.$ENV_NAME}
+PROJECT=${COMPOSE_PROJECT:-beez}
+CURL_IMAGE=curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+
+[[ -r $ENV_FILE ]] || { echo "env 파일을 읽을 수 없음: $ENV_FILE" >&2; exit 2; }
+# env 파일을 source 하지 않는다(값이 셸 코드로 실행되지 않게). 필요한 줄만 꺼낸다
+env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
+BUCKET=$(env_value DOCUMENT_S3_BUCKET); BUCKET=${BUCKET:-beez-documents}
+AK=$(env_value SEAWEEDFS_BACKUP_ACCESS_KEY); SK=$(env_value SEAWEEDFS_BACKUP_SECRET_KEY)
+[[ -n $AK && -n $SK ]] || { echo "env 파일에 SEAWEEDFS_BACKUP_* 가 없음" >&2; exit 2; }
+
+pg=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" --filter label=com.docker.compose.service=postgres)
+[[ -n $pg ]] || { echo "postgres 컨테이너가 없음 (project=$PROJECT)" >&2; exit 2; }
+
+log() { echo "[check-live $(date +%H:%M:%S)] $*"; }
+log "문서 버전 원본 대조 ($PROJECT, bucket $BUCKET)"
+# 키는 -e 이름만 넘겨 명령줄(프로세스 목록)에 값이 보이지 않게 한다
+export AK SK
+docker exec "$pg" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -XAt -F " " -v ON_ERROR_STOP=1 -c "SELECT id, storage_key, content_hash FROM document_version ORDER BY id"' \
+  | docker run -i --rm --network "${PROJECT}_storage" --entrypoint sh -e AK -e SK -e EP="http://seaweedfs:8333/$BUCKET" \
+    "$CURL_IMAGE" -c '
+      ok=0; bad=0
+      while read -r id key hash; do
+        if ! curl -sf -o /tmp/o --aws-sigv4 aws:amz:us-east-1:s3 --user "$AK:$SK" "$EP/$key"; then
+          echo "  없음   version=$id key=$key"; bad=$((bad + 1)); continue
+        fi
+        got="sha256:$(sha256sum /tmp/o | cut -d " " -f1)"
+        if [ "$got" = "$hash" ]; then ok=$((ok + 1)); else echo "  불일치 version=$id key=$key"; bad=$((bad + 1)); fi
+      done
+      echo "  일치 $ok개, 문제 $bad개"
+      [ "$bad" -eq 0 ]' || { log "실패: 운영 원본이 DB 와 맞지 않는다"; exit 1; }
+log "통과"
