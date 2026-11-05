@@ -28,13 +28,33 @@ it('작업 현황(MON-A05)대로 에이전트 상태를 정하고, 세션이 없
   expect(officeAgentState(connected, [{ member_id: '22' }], []).state).toBe(
     'offline',
   )
+})
+
+// PR #128 리뷰(양지훈): 팀원 목록의 agent_connected는 사무실을 열 때 한 번 받은 값이다. 서버는 agent_connected와
+// 작업 현황의 행을 같은 조건(폐기되지 않은 토큰에 에이전트 세션이 있음)으로 만드므로, 30초마다 새로 받는 작업 현황의
+// 세션으로 연결 상태를 정한다. 화면을 연 뒤 연결한 에이전트도 연결 끊김으로 남지 않는다.
+it('화면을 연 뒤 연결된 에이전트는 새 작업 현황의 세션으로 연결 상태를 정한다', () => {
+  const openedBeforeConnect = { id: '22', agent_connected: false }
   expect(
     officeAgentState(
-      { id: '22', agent_connected: false },
-      work({ task_status: 'IN_PROGRESS' }),
+      openedBeforeConnect,
+      [
+        {
+          member_id: '22',
+          agent_session_id: '901',
+          task_status: 'IN_PROGRESS',
+        },
+      ],
       [],
     ).state,
-  ).toBe('offline')
+  ).toBe('working')
+  expect(
+    officeAgentState(
+      openedBeforeConnect,
+      [{ member_id: '22', agent_session_id: '901' }],
+      [],
+    ).state,
+  ).toBe('online')
 })
 
 it('작업 현황 API가 없으면 연결 여부와 주인의 진행 중 작업으로 어림한다', () => {
