@@ -39,8 +39,12 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `DB_USERNAME` | 필수 | | DB 계정 | postgres 초기화, backend |
 | `DB_PASSWORD` | 필수 | 비밀 | DB 비밀번호. **DB 를 처음 띄울 때 값으로 굳습니다** — 아래 [교체](#값이-샜을-때) 참고 | postgres 초기화, backend |
 | `DB_NAME` | | | 기본 `beez` | postgres, backend `DB_URL` |
-| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소 키 | seaweedfs, backend |
-| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs, backend |
+| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소의 **backend 전용** 키(`beez-documents` 읽기·쓰기·삭제·목록만) | seaweedfs 신원 파일, backend |
+| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, backend |
+| `SEAWEEDFS_BOOTSTRAP_ACCESS_KEY` | 필수 | 비밀 | SeaweedFS 관리 키(모든 bucket). 운영자의 관리·복원 작업에만 씁니다 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BOOTSTRAP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BACKUP_ACCESS_KEY` | 필수 | 비밀 | 백업 키(`beez-documents` 읽기·목록만) | seaweedfs 신원 파일, `backup.sh` |
+| `SEAWEEDFS_BACKUP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, `backup.sh` |
 | `DOCUMENT_S3_BUCKET` | | | 기본 `beez-documents` | seaweedfs, backend |
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
 | `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
@@ -372,7 +376,7 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 |---|---|
 | `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용 |
 | `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
-| `DOCUMENT_S3_*` | 지금은 seaweedfs 관리 키와 backend 키가 같은 값입니다. 키를 나누고 교체 절차를 확인하는 일은 S15P31A108-211 에서 합니다 |
+| `DOCUMENT_S3_*`·`SEAWEEDFS_*` | 새 키를 넣고 같은 SHA 로 다시 배포. **access key 와 secret key 를 함께** 바꿉니다 — [seaweedfs.md 키 교체](seaweedfs.md#키-교체) |
 | `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
 | `JENKINS_API_TOKEN` | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
 | Jenkins 비밀번호 | [jenkins.md 비밀번호 바꾸기](jenkins.md#비밀번호-바꾸기) |
