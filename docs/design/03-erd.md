@@ -85,6 +85,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | `task_completion_report` | `summary`, `completion_checks` 추가 |
 | `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, 검증 호출은 `validation_run_id`·`task_id` 를 채운다(-168, 실행을 닫을 때 `validation_run.usage` 에서 옮겨 적음), `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS`. 비용 조회(MON-A02)는 이 표만 읽으므로 모델을 부르는 기능은 모두 여기 적는다 — 변경 영향 분석도 `change_impact_run.usage`·`published_analysis_attempt.usage` 와 함께 적는다(-169, `LlmUsageRecorder`). V21(Java 마이그레이션)이 그 전에 실행 기록에만 남은 사용량(검증 실행·승인 전·발행 뒤 영향 분석)을 실행 중 기록기와 같은 거르기 코드로 옮겼다(같은 `request_key` 는 한 번, `created_at` 은 실행이 끝난 시각, 넣다가 실패한 항목만 건너뜀) |
 | `notification` (V26, -181) | `document_id` 추가(`target_type=DOCUMENT_VERSION` 이면 입구가 필수로 검사). 저장은 `NotificationRequester` 입구로만 — `dedupe_key` 충돌은 건너뜀, `created_at` 은 `clock_timestamp()`([알림·활동 계약](10-notification-activity-contract.md)) |
+| `activity_event` (V29, -182) | `actor_kind` 에 `BEE` 추가, `actor_id` 는 HUMAN·AGENT 만 채움(CHECK). `agent_session_id`(AGENT 만, -178 전에는 NULL)·`task_id`·`change_proposal_id`·`baseline_id`(보조 참조, `(id, project_id)` 복합 FK 로 같은 프로젝트만)·`result`(`SUCCESS`·`FAILURE`, 기본 `SUCCESS`) 추가, `occurred_at` 기본값 `clock_timestamp()`. 저장은 `ActivityRecorder` 입구로만 — `dedupe_key` 충돌은 건너뜀. 정렬·필터 인덱스는 -183 |
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 
