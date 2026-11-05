@@ -56,15 +56,29 @@ class ConflictMeetingListener {
         }
     }
 
+    /** 같은 쌍의 충돌 메시지를 모두 담는다(중복·빈 문구 제외). 하나도 없으면 템플릿 문구 */
+    static String brief(String summary, List<String> messages) {
+        List<String> distinct = messages.stream().filter(m -> m != null && !m.isBlank()).map(String::strip).distinct().toList();
+        if (distinct.isEmpty()) {
+            return summary + ". 어느 쪽을 따를지 정해 주세요.";
+        }
+        if (distinct.size() == 1) {
+            return distinct.get(0);
+        }
+        StringBuilder text = new StringBuilder(summary).append(" (").append(distinct.size()).append("가지)");
+        for (int i = 0; i < distinct.size(); i++) {
+            text.append('\n').append(i + 1).append(". ").append(distinct.get(i));
+        }
+        return text.toString();
+    }
+
     private void open(ConflictFindingsSaved event) {
         TreeSet<Long> ids = new TreeSet<>(event.relatedTaskIds());
         ids.add(event.taskId());
         Map<Long, TaskState> states = meetings.taskStates(event.projectId(), ids);
         for (ConflictPairs.Pair pair : ConflictPairs.select(event.taskId(), event.relatedTaskIds(), states)) {
             String summary = "'" + pair.task().title() + "' 와 '" + pair.related().title() + "' 가 서로 충돌해요";
-            String brief = meetings.conflictFindingMessage(event.validationId(), pair.related().id())
-                    .filter(m -> !m.isBlank())
-                    .orElse(summary + ". 어느 쪽을 따를지 정해 주세요.");
+            String brief = brief(summary, meetings.conflictFindingMessages(event.validationId(), pair.related().id()));
             List<MeetingRef> refs = new ArrayList<>();
             refs.add(new MeetingRef("TASK", String.valueOf(pair.task().id()), pair.task().title()));
             refs.add(new MeetingRef("TASK", String.valueOf(pair.related().id()), pair.related().title()));

@@ -35,11 +35,35 @@ class ConflictMeetingOpenIntegrationTests extends IntegrationTestSupport {
         memberB = fixtures().member(project.projectId(), fixtures().account(), ProjectRole.MEMBER);
     }
 
-    private void baseline() {
+    private long baseline() {
         long baseline = jdbc.queryForObject(
                 "INSERT INTO baseline (project_id, version_no, published_by) VALUES (?, 1, ?) RETURNING id",
                 Long.class, project.projectId(), project.leaderAccountId());
         jdbc.update("UPDATE project SET current_baseline_id = ? WHERE id = ?", baseline, project.projectId());
+        return baseline;
+    }
+
+    /** 작업 a 의 검증 하나와 모델 실행 하나를 만들고 (검증 ID, 실행 ID) 를 돌려준다 */
+    private long[] validationOf(long taskId, long baselineId) {
+        long revision = jdbc.queryForObject("""
+                INSERT INTO task_plan_revision (task_id, revision_no, title, goal, input_hash, created_by_account_id)
+                VALUES (?, 1, 't', 'g', 'h', ?) RETURNING id
+                """, Long.class, taskId, project.leaderAccountId());
+        long validation = jdbc.queryForObject("""
+                INSERT INTO validation (task_id, plan_revision_id, baseline_id, status, trigger, input_snapshot_hash, rule_version)
+                VALUES (?, ?, ?, 'NEEDS_REVIEW', 'AGENT', 'h', 'r') RETURNING id
+                """, Long.class, taskId, revision, baselineId);
+        long run = jdbc.queryForObject("""
+                INSERT INTO validation_run (validation_id, attempt, kind, status) VALUES (?, 1, 'MODEL', 'OK') RETURNING id
+                """, Long.class, validation);
+        return new long[] {validation, run};
+    }
+
+    private void conflictFinding(long[] validation, long relatedTaskId, String message) {
+        jdbc.update("""
+                INSERT INTO validation_finding (validation_id, validation_run_id, source, kind, severity, related_task_id, message, resolution)
+                VALUES (?, ?, 'MODEL', 'CONFLICT', 'BLOCKING', ?, ?, 'HUMAN_REVIEW')
+                """, validation[0], validation[1], relatedTaskId, message);
     }
 
     private long task(String key, Long assignee, String status) {
@@ -71,6 +95,23 @@ class ConflictMeetingOpenIntegrationTests extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM meeting_participant p JOIN meeting m ON m.id = p.meeting_id WHERE m.project_id = ?
                 """, Integer.class, project.projectId())).isEqualTo(3);   // 팀장 + 두 담당자
+    }
+
+    @Test void twoConflictsOnOnePairAreBothInTheBrief() {
+        long baseline = baseline();
+        long a = task("T-1", memberA, "DRAFT");
+        long b = task("T-2", memberB, "DRAFT");
+        long[] validation = validationOf(a, baseline);
+        conflictFinding(validation, b, "응답 형식이 달라요");
+        conflictFinding(validation, b, "만료 정책이 달라요");
+        tx.executeWithoutResult(s -> publisher.publishEvent(
+                new ConflictFindingsSaved(project.projectId(), validation[0], a, List.of(b))));
+        assertThat(meetings()).isEqualTo(1);
+        String brief = jdbc.queryForObject("""
+                SELECT e.body FROM meeting_entry e JOIN meeting m ON m.id = e.meeting_id
+                 WHERE m.project_id = ? AND e.kind = 'CONFLICT_BRIEF'
+                """, String.class, project.projectId());
+        assertThat(brief).contains("(2가지)", "1. 응답 형식이 달라요", "2. 만료 정책이 달라요");
     }
 
     @Test void sameConflictAgainDoesNotOpenAnotherMeeting() {
