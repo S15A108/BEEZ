@@ -169,7 +169,7 @@ def test_restore_objects_without_bucket_folder_is_zero_objects():
 
 def test_restore_requires_backup_folder():
     with tempfile.TemporaryDirectory() as root:
-        check(run("restore.sh", "dev", "objects", "--yes", backup_root=Path(root) / "nope"), 1, "백업 폴더가 아님")
+        check(run("restore.sh", "dev", "objects", "--yes", backup_root=Path(root) / "nope"), 2, "백업 폴더가 아님")   # 환경 오류(2)
 
 
 # --- restore.sh all 사전 검증: 원본 폴더가 없다는 것만으로 "문서 0건"이라 보지 않는다 ---------------------

@@ -5,7 +5,10 @@
 #   infra/backup/restore.sh <환경> objects --yes            # 원본만: 백업 폴더 → bucket. 이미 있는 원본은 건너뛴다
 #   infra/backup/restore.sh <환경> all [덤프 파일] --yes    # DB 를 덤프 시점으로 + 원본. 덤프 기본값은 LAST_OK 의 것
 # --yes 가 없으면 할 일만 보여 주고 아무것도 바꾸지 않는다.
-# 종료 코드: 0 = 완료(미리보기 포함), 1 = 실패(사전 검증·복원 단계), 2 = 사용법·환경 오류(env 파일 등) — 다른 백업 스크립트와 같다
+# 종료 코드(다른 백업 스크립트와 같은 구분):
+#   0 = 완료(미리보기 포함)
+#   1 = 실패 — 사전 검증·잠금 대기 시간 초과·DB 복원·원본 올리기·backend 기동
+#   2 = 사용법·환경 오류 — 인자, env 파일, 백업 폴더·LAST_OK·덤프 없음, 컨테이너·배포 잠금 파일 없음
 #
 # all 의 순서: 백업·배포 잠금 → 사전 검증(덤프가 가리키는 원본이 백업 폴더나 bucket 에 다 있는가. 없으면 아무것도
 #   바꾸지 않고 멈춤) → backend 멈춤 → DB 를 지우고 빈 DB 로 다시 만듦 → pg_restore → 원본 올리기 → backend 켬
@@ -57,7 +60,7 @@ ENV_ALL=$(printf 'services: {}\n' | docker compose -f - --env-file "$ENV_FILE" c
 env_value() { printf '%s\n' "$ENV_ALL" | sed -n "s/^$1=//p" | tail -n 1; }
 BUCKET=$(env_value DOCUMENT_S3_BUCKET); BUCKET=${BUCKET:-beez-documents}
 OBJECTS=$BACKUP_ROOT/objects/$BUCKET
-[[ -d $BACKUP_ROOT/objects ]] || fail "백업 폴더가 아님(objects 없음): $BACKUP_ROOT"
+[[ -d $BACKUP_ROOT/objects ]] || env_fail "백업 폴더가 아님(objects 없음): $BACKUP_ROOT"
 # objects/<bucket> 이 없으면 문서 0건일 때의 백업이다(빈 폴더는 PC 사본·옛 backup.sh 에서 빠질 수 있다). 원본 0개로 본다
 n_objects=0
 [[ -d $OBJECTS ]] && n_objects=$(find "$OBJECTS" -type f | wc -l)
@@ -65,17 +68,17 @@ n_objects=0
 cid() {
     local id
     id=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" --filter "label=com.docker.compose.service=$1")
-    [[ $(printf '%s\n' "$id" | grep -c .) == 1 ]] || fail "$1 컨테이너를 하나로 찾지 못함 (project=$PROJECT)"
+    [[ $(printf '%s\n' "$id" | grep -c .) == 1 ]] || env_fail "$1 컨테이너를 하나로 찾지 못함 (project=$PROJECT)"
     printf '%s' "$id"
 }
 
 if [[ $MODE == all ]]; then
     if [[ -z $DUMP ]]; then
         ok=$(sed -n 's/^dump=//p' "$BACKUP_ROOT/LAST_OK" 2> /dev/null || true)
-        [[ -n $ok ]] || fail "LAST_OK 가 없음. 덤프 파일을 직접 고른다"
+        [[ -n $ok ]] || env_fail "LAST_OK 가 없음. 덤프 파일을 직접 고른다"
         DUMP=$BACKUP_ROOT/db/$ok
     fi
-    [[ -f $DUMP ]] || fail "덤프가 없음: $DUMP"
+    [[ -f $DUMP ]] || env_fail "덤프가 없음: $DUMP"
 fi
 
 # 관리(bootstrap) 키로 rclone 을 storage 망에서 돌린다. 키 값은 -e 이름으로만 넘긴다. 앞에 -v <폴더:경로> 를 주면 붙인다
@@ -166,7 +169,7 @@ if [[ $MODE == objects ]]; then
 fi
 
 # ---- all ----
-[[ -e $DEPLOY_LOCK ]] || fail "배포 잠금 파일이 없음: $DEPLOY_LOCK"
+[[ -e $DEPLOY_LOCK ]] || env_fail "배포 잠금 파일이 없음: $DEPLOY_LOCK"
 exec 8< "$DEPLOY_LOCK"
 flock -w 300 8 || fail "다른 배포가 5분 넘게 진행 중. 끝난 뒤 다시 실행한다"
 log "배포 잠금 잡음(이 스크립트가 끝나면 풀림)"
