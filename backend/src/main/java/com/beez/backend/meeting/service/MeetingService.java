@@ -15,6 +15,10 @@ import com.beez.backend.meeting.dto.MeetingResponse;
 import com.beez.backend.meeting.repository.MeetingRepository;
 import com.beez.backend.meeting.repository.MeetingRepository.EntryRow;
 import com.beez.backend.meeting.repository.MeetingRepository.MeetingRow;
+import com.beez.backend.notification.NotificationRequest;
+import com.beez.backend.notification.NotificationRequester;
+import com.beez.backend.notification.NotificationTargetType;
+import com.beez.backend.notification.event.NotificationMessages;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -40,9 +44,11 @@ public class MeetingService {
     private final MeetingRepository meetings;
     private final MeetingAssembler assembler;
     private final DesignCommandService idempotency;
+    private final NotificationRequester notifier;
 
     public MeetingService(ProjectAccessChecker access, MeetingRepository meetings, MeetingAssembler assembler,
-                          DesignCommandService idempotency) {
+                          DesignCommandService idempotency, NotificationRequester notifier) {
+        this.notifier = notifier;
         this.access = access;
         this.meetings = meetings;
         this.assembler = assembler;
@@ -108,8 +114,12 @@ public class MeetingService {
                 added.add(memberId);
             }
         }
-        // TODO(알림 공통 서비스, S15P31A108-237): added 의 멤버에게 target_type=MEETING 알림(reason 포함)과 활동을 전달한다.
-        //  새로 추가된 사람이 없으면 보내지 않는다.
+        // 새로 추가된 사람에게만 보낸다(이미 참여 중이면 added 에 없다). 추가한 본인은 받지 않는다. reason 은 알림 문구에만 쓴다.
+        var message = NotificationMessages.meetingParticipantAdded(meeting.title(), body.reason());
+        notifier.requestAll(added.stream().map(accounts::get).filter(account -> account != actor.accountId())
+                .map(account -> meetingRequest(projectId, meetingId, "meeting:" + meetingId + ":participant-added:" + account,
+                        account, "MEETING_PARTICIPANT_ADDED", message)).toList());
+        // TODO(S15P31A108-237): ActivityRecorder.record MEETING_PARTICIPANT_ADDED, key meeting:{id}:participant-added:{account}
         return assembler.toResponse(projectId, meeting);
     }
 
@@ -133,8 +143,11 @@ public class MeetingService {
         if (meetings.removeParticipant(meetingId, account) == 0) {
             return;
         }
-        // TODO(알림 공통 서비스, S15P31A108-237): 빠진 사람에게 누가 뺐는지 담아 target_type=MEETING 알림과 활동을 전달한다.
-        //  위에서 지운 행이 없으면 보내지 않는다(멱등).
+        // 지운 행이 없으면 위에서 반환했으므로(멱등 204) 실제로 빠진 사람에게만 한 번 알린다.
+        var message = NotificationMessages.meetingParticipantRemoved(meeting.title());
+        notifier.request(meetingRequest(projectId, meetingId, "meeting:" + meetingId + ":participant-removed:" + account,
+                account, "MEETING_PARTICIPANT_REMOVED", message));
+        // TODO(S15P31A108-237): ActivityRecorder.record MEETING_PARTICIPANT_REMOVED, key meeting:{id}:participant-removed:{account}
     }
 
     /**
@@ -178,6 +191,13 @@ public class MeetingService {
         if (key != null) {
             idempotency.save(projectId, actor.accountId(), operation, key, input, response);
         }
+        // 기록한 사람을 뺀 현재 참여자에게. 멱등 재생은 위에서 반환해 새 알림이 생기지 않고, 기록 원문은 넣지 않는다.
+        var message = NotificationMessages.meetingRecordAdded(meeting.title());
+        notifier.requestAll(meetings.participants(projectId, List.of(meetingId)).getOrDefault(meetingId, List.of()).stream()
+                .filter(p -> "JOINED".equals(p.status()) && p.accountId() != actor.accountId())
+                .map(p -> meetingRequest(projectId, meetingId, "meeting:" + meetingId + ":entry:" + id, p.accountId(),
+                        "MEETING_RECORD_ADDED", message)).toList());
+        // 회의 기록은 활동이 과다해 남기지 않기로 했다(개발계획 §2.3 #16).
         return response;
     }
 
@@ -203,6 +223,12 @@ public class MeetingService {
             }
             return items;
         });
+    }
+
+    private static NotificationRequest meetingRequest(long projectId, long meetingId, String keyBase, long recipient,
+                                                      String type, NotificationMessages.Message message) {
+        return new NotificationRequest(keyBase + ":to:" + recipient, projectId, recipient, type, message.title(),
+                message.body(), NotificationTargetType.MEETING, meetingId, null);
     }
 
     private void requireBaseline(long projectId) {
