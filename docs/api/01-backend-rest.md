@@ -12919,7 +12919,7 @@ HTTP `200`.
 
 관련 요구사항: MTG-06·08 (화면 PNL-06-v2-bibi-review, PNL-06-v2-meetings-member)  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-235). 실제 AI(AI-A08 SUMMARY) 연동은 AI 서버가 SUMMARY 를 받는 뒤 확인(2026-11-05 기준 AI 서버는 `SUMMARY contract is not agreed` 로 거절해 dev 에서는 502 `ai_unavailable`)
 
 #### 인증
 
@@ -13025,6 +13025,8 @@ HTTP `201`.
 | 502 | `ai_unavailable` | AI 응답 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
 | 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+| 409 | `summary_outdated` | 정리하는 동안 정리가 인용한 문서의 승인본이 지금 기준과 달라짐 |
+| 409 | `idempotency_conflict` | 같은 Idempotency-Key로 다른 본문을 보냄 |
 
 ```json
 {
@@ -13043,6 +13045,16 @@ HTTP `201`.
 - 문서와 설계를 직접 바꾸지 않는다. 회의를 끝내면(MTG-A13) 이 정리로 변경 제안을 만든다.
 - (수정안 요청) document_changes[].base_version_id는 정리할 때 현재 기준의 그 문서 승인본이다. MTG-A13이 이 값으로 정리 뒤 기준 변경을 확인한다.
 - (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
+- 구현(S15P31A108-235): 팀장(사람)이면서 이 회의의 참여자만 부른다. 팀원은 403 "팀장만 요청할 수 있어요", 참여자가 아닌 팀장은 403이다. `Idempotency-Key`는 필수다.
+- `through_entry_id`는 이 회의의 TEXT 또는 CONFLICT_BRIEF 기록이어야 한다. 없거나 다른 회의의 기록이면 404, 비비의 분석·이전 정리(BEE_ANALYSIS·MINUTES·SUMMARY) 기록이면 400이다.
+- AI(AI-A08 `mode=SUMMARY`)에는 정리 범위(`through_entry_id`까지)의 TEXT·CONFLICT_BRIEF 기록(`entries`, 최근 것부터 최대 200건), 회의가 가리키는 작업(`related_tasks`), 그 작업들의 현재 계획이 참조하는 설계 항목의 지금 기준 승인 버전(`approved_items`, 최대 100개), 그 항목들의 출처 문서의 지금 기준 승인본 원문(`documents`, utf8-lf-v1 정규화, 최대 10개·문서당 300,000바이트)을 보낸다.
+- 요청 크기는 하나의 바이트 예산을 나눠 쓴다(설정 `beez.meeting.summary.max-request-bytes`, 기본 900,000바이트 — AI가 비어 있는 선택 필드까지 펼쳐 BE보다 커질 수 있어 AI 쪽 한도 1 MiB보다 낮게 잡음. 한글은 글자당 3바이트라 글자 수가 아니라 바이트로 잰다). 우선순위는 ① 작업·이전 정리·피드백 ② 최근 기록 예약분(기본 100,000바이트, 가장 최근 기록은 반드시 — 한 건도 담을 수 없으면 AI를 부르지 않고 400) ③ 설계 항목 ④ 문서(줄 번호가 원문과 맞아야 해서 통째로만, 일부를 자르지 않음) ⑤ 남는 만큼 나머지 기록(최근 것부터)이다. 건너뛴 기록·문서·항목은 `generation.unresolved`에 "앞쪽 기록 N건은 입력 한도를 넘어 제외했어요." 같은 문장으로 남기고, 조립 뒤 실제 직렬화 바이트를 한 번 더 확인해 넘으면 400으로 요청하지 않는다.
+- AI 출력은 믿지 않고 입력과 대조한다. `document_changes`는 ① `document_id`가 보낸 문서, ② `base_version_id`가 보낸 문서 버전, ③ `locator.type=text_lines`이고 `1 ≤ start_line ≤ end_line ≤` 원문 줄 수, ④ `before`가 그 줄 범위의 원문과 정확히 같음(범위 안 각 줄의 LF를 포함한다 — 원문이 `a\nb\n`이면 1행의 before는 `a\n`. 문서가 LF로 끝나지 않으면 마지막 줄만 LF가 없다), ⑤ `evidence_entry_ids` 중 보낸 기록의 ID만 남기고 하나도 없으면 그 변경을 버림, ⑥ 같은 문서 안에서 줄 범위가 겹치면 뒤의 것을 버림을 지켜야 한다. `action_items[].member_id`는 이 프로젝트의 활성 멤버일 때만 남긴다. 일부만 틀린 항목은 그 항목만 버리고 `generation.unresolved`에 개수를 남기며, 한 목록이 통째로 쓸 수 없거나 구조·`origin`이 틀리면 502 `ai_unavailable`이다. 줄은 BOM 제거·CRLF/CR→LF 정규화 뒤 `\n`으로 세며 마지막 줄바꿈 뒤의 빈 조각은 줄이 아니다.
+- AI 결과의 `decisions`는 문자열 배열이라 BE가 `{text}`로 감싼다. `decided_by_member_id`는 AI가 주고 이 프로젝트의 활성 멤버일 때만 싣는다.
+- AI를 부르는 동안에는 트랜잭션과 회의 행 잠금을 잡지 않는다. 부른 뒤 회의 행을 잠그고 팀장·참여자·열림과 정리가 인용한 문서의 승인본이 지금도 기준의 승인본인지 다시 확인해, 바뀌었으면 저장하지 않고 409 `summary_outdated`로 응답한다. 호출 동안 새 기록이 들어온 것은 막지 않는다 — 정리는 `through_entry_id`까지만 본 것이고 그 뒤 기록이 있으면 회의 끝내기(MTG-A13)가 막는다.
+- 실패하면(AI 오류·쓸 수 없는 출력·호출 중 승인본 변경) SUMMARY 기록도 정리도 저장하지 않는다. 회의 기록은 그대로이고 AI 호출 사용량(`llm_usage`, feature `MEETING_ANALYSIS`)만 남는다. 오류 응답 본문의 `usage[]`는 그대로 남기고 없을 때만 미확인 한 줄을 남긴다(03-ai-internal 공통 규칙).
+- 같은 Idempotency-Key로 요청이 동시에 들어오면 먼저 온 요청 하나만 AI를 부르고 나머지는 그 결과(성공이든 실패든)를 받는다. 본문이 다르면 409 `idempotency_conflict`이다. 이 공유는 서버 프로세스 안에서만 이루어진다. 같은 키를 다시 보내면 정리가 끝난 회의에서도 처음 응답을 돌려준다(24시간).
+- SUMMARY 기록의 `text`는 사람이 읽는 요약("회의 정리 / 충돌 / 결정 / 바뀔 문서 / 할 일", 4,000자 넘으면 "…")이고, 응답의 `entry`와 기록 목록(MTG-A10)의 SUMMARY 기록에 `through_entry_id`·`generation`이 실린다. 구조화된 값은 정리 응답에 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13058,7 +13070,7 @@ HTTP `201`.
 
 관련 요구사항: MTG-08 (화면 PNL-06-v2-bibi-review)  
 담당: BE: 오서현 / AI: 양지훈 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-235). 실제 AI(AI-A08 SUMMARY) 연동은 AI 서버가 SUMMARY 를 받는 뒤 확인
 
 #### 인증
 
@@ -13167,6 +13179,7 @@ HTTP `201`.
 | 502 | `ai_unavailable` | AI 응답 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
 | 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+| 409 | `idempotency_conflict` | 같은 Idempotency-Key로 다른 본문을 보냄 |
 
 ```json
 {
@@ -13181,6 +13194,9 @@ HTTP `201`.
 
 - 이전 정리와 피드백을 입력으로 다시 정리한다. 새 정리가 최신이 되고 이전 정리는 기록에 남는다.
 - (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
+- 구현(S15P31A108-235): 권한·입력 확인·AI 입력 조립·출력 검증·저장·실패 처리·사용량·동시 요청 규칙은 MTG-A11과 같다. `Idempotency-Key`는 필수다.
+- `summary_id`는 이 회의의 정리여야 하고(아니면 404) 최신 정리여야 한다. 최신이 아니면 AI를 부르기 전에 409 `summary_outdated`이고, 호출 동안 다른 정리가 생겼으면 저장 직전에 다시 확인해 같은 오류로 응답한다. `feedback`은 1~4,000자다.
+- AI에는 이전 정리 전체(`previous_summary`)와 `feedback`을 함께 보낸다. 새 정리의 `through_entry_id`는 요청 시점의 마지막 TEXT·CONFLICT_BRIEF 기록이다 — 이전 정리 뒤에 오간 말도 반영한다. 새 정리는 새 SUMMARY 기록과 새 정리 행으로 남고 이전 정리는 `previous_summary_id`로 이어진다. 정리는 고치거나 지우지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
