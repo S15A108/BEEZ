@@ -168,7 +168,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
 
 - MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).
-- `get_document`는 버전을 생략하면 현재 기준 설계의 `baseline_document` 버전을 준다(새 승인으로 SUPERSEDED가 됐어도 기준이 다시 발행되기 전까지는 그 버전). 버전을 지정하면 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 주고 DRAFT·REJECTED는 `not_found`다. 작업 중 사본에서 나올 수 있는 `document.preview_text`는 빼고, 조회 이력을 `target_kind=DOCUMENT_VERSION`으로 같은 트랜잭션에 남긴다.
+- `get_document`는 버전을 생략하면 현재 기준 설계의 `baseline_document` 버전을 준다(새 승인으로 SUPERSEDED가 됐어도 기준이 다시 발행되기 전까지는 그 버전). 버전을 지정하면 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 주고 DRAFT·REJECTED는 `not_found`다. 문서 화면용 칸 중 `document.preview_text`(작업 중 사본)·`latest_draft`는 빼고 `approved_version`은 현재 기준 버전으로 바꾸며, 조회 이력을 `target_kind=DOCUMENT_VERSION`으로 같은 트랜잭션에 남긴다.
 - 등록하지 않은 것: MCP-14 `retry_validation`(도구명·분리 담당자 검토 중), 제안 재제출·거두기 도구(02-mcp-tools MCP-04 "이번 티켓에서 등록하지 않는다").
 - `propose_design_change` 스키마에는 서비스가 지금 받는 칸만 싣는다. 명세의 수정안 요청 칸 `items[].proposed_text`·`meeting_id`는 서비스(`ProposalDtos`)에 아직 없어, 보내면 모르는 키로 거부된다.
 - 출력 스키마(`outputSchema`)는 싣지 않는다. 실패 결과도 `structuredContent`(`{"error":…}`)를 쓰므로 성공 모양의 출력 스키마를 걸면 스키마를 검사하는 클라이언트에서 실패 결과가 어긋난다. 응답 모양은 02-mcp-tools가 기준이다.

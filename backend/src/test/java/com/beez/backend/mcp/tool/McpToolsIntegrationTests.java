@@ -221,6 +221,13 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         assertThat(current.get("version").get("content").asString()).isEqualTo("# v1 기준");
         assertThat(current.get("version").get("is_current_baseline").asBoolean()).isTrue();
         assertThat(current.get("document").has("preview_text")).isFalse();
+        assertThat(current.get("document").has("latest_draft")).isFalse();
+        // 문서의 승인본 칸도 최신 APPROVED(v2)가 아니라 현재 기준 버전(v1)
+        assertThat(current.get("document").get("approved_version").get("version_no").asInt()).isEqualTo(1);
+
+        // 기준 버전은 SUPERSEDED 여도 번호로 지정해 읽을 수 있다
+        JsonNode pinned = ok(call(member, "get_document", Map.of("document_id", String.valueOf(document), "version_no", 1)));
+        assertThat(pinned.get("version").get("status").asString()).isEqualTo("SUPERSEDED");
 
         JsonNode later = ok(call(member, "get_document", Map.of("document_id", String.valueOf(document), "version_no", 2)));
         assertThat(later.get("version").get("is_current_baseline").asBoolean()).isFalse();
@@ -232,10 +239,10 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         assertThat(error(call(member, "get_document", Map.of()))).containsEntry("code", "validation_failed");
         assertThat(error(call(member, "get_document", Map.of("document_id", "999999")))).containsEntry("code", "not_found");
 
-        // 성공 2건만 남는다. 실패 조회는 남기지 않는다(감사는 -177)
-        assertThat(count("select count(*) from context_access_log where tool = 'get_document'")).isEqualTo(2);
+        // 성공 3건만 남는다. 실패 조회는 남기지 않는다(감사는 -177)
+        assertThat(count("select count(*) from context_access_log where tool = 'get_document'")).isEqualTo(3);
         assertThat(count("select count(*) from context_access_log where tool = 'get_document' and target_kind = 'DOCUMENT_VERSION'"
-                + " and target_id = " + v1 + " and baseline_id = " + baseline + " and agent_token_id is not null")).isEqualTo(1);
+                + " and target_id = " + v1 + " and baseline_id = " + baseline + " and agent_token_id is not null")).isEqualTo(2);
     }
 
     /** 프로젝트당 종류별 문서 1개(ux_document_project_type)라 종류를 받는다 */

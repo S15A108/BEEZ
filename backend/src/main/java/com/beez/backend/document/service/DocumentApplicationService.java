@@ -219,7 +219,8 @@ public class DocumentApplicationService {
      *   <li>버전 생략: 현재 기준 설계(project.current_baseline_id)의 baseline_document 버전. 새 승인으로 SUPERSEDED 가 됐어도
      *       기준이 다시 발행되기 전까지는 그 버전이 개발 기준이므로 상태로 거르지 않는다. 기준·기준 문서가 없으면 not_found.</li>
      *   <li>버전 지정: 승인된 적 있는 버전(APPROVED·SUPERSEDED)만. DRAFT·REJECTED 는 없는 것과 같은 not_found.</li>
-     *   <li>document 의 preview_text 는 뺀다 — 작업 중 사본(승인 전 내용)에서 나올 수 있다.</li>
+     *   <li>document 의 preview_text·latest_draft 는 빼고 approved_version 은 현재 기준 버전으로 둔다(기준에 없으면 뺀다) —
+     *       문서 화면용 칸이 작업 중 사본·기준 밖 승인본을 가리켜 에이전트가 기준으로 오해하지 않게.</li>
      *   <li>조회 이력(context_access_log)을 결과를 돌려주기 전에 같은 트랜잭션으로 남긴다(08 계약 1절).</li>
      * </ul>
      */
@@ -228,19 +229,22 @@ public class DocumentApplicationService {
         var actor = access.requireMember(caller, project); var doc = document(project, id);
         Object current = one("SELECT current_baseline_id FROM project WHERE id=:project", Map.of("project", project)).get("current_baseline_id");
         Long baseline = current == null ? null : ((Number) current).longValue();
+        Optional<Map<String, Object>> baselineVersion = baseline == null ? Optional.empty()
+                : rows("SELECT document_version_id FROM baseline_document WHERE baseline_id=:baseline AND document_id=:document",
+                        Map.of("baseline", baseline, "document", id)).stream().findFirst()
+                        .map(row -> version(id, number(row, "document_version_id")));
         Map<String, Object> selected;
         if (no == null) {
-            if (baseline == null) throw notInBaseline();
-            var row = rows("SELECT document_version_id FROM baseline_document WHERE baseline_id=:baseline AND document_id=:document",
-                    Map.of("baseline", baseline, "document", id)).stream().findFirst().orElseThrow(DocumentApplicationService::notInBaseline);
-            selected = version(id, number(row, "document_version_id"));
+            selected = baselineVersion.orElseThrow(DocumentApplicationService::notInBaseline);
         } else {
             selected = versionNumber(id, no);
             if (!Set.of("APPROVED", "SUPERSEDED").contains(selected.get("status"))) throw missing();
         }
         accessLog.record(actor, null, "get_document", ContextAccessRecorder.KIND_DOCUMENT_VERSION, number(selected, "id"), baseline, null);
+        // 문서 화면용 칸(최신 승인본·최신 초안·작업 중 미리보기)은 기준 밖 버전을 가리킬 수 있어 빼고, 승인본은 현재 기준 버전으로 바꾼다
         var view = new LinkedHashMap<>(documentView(doc));
-        view.remove("preview_text");
+        view.remove("preview_text"); view.remove("latest_draft"); view.remove("approved_version");
+        baselineVersion.ifPresent(v -> view.put("approved_version", versionView(v, false)));
         return Map.of("document", view, "version", versionView(selected, true));
     }
     private static ApiException notInBaseline() {
