@@ -336,10 +336,13 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 insert into agent_token (project_id, account_id, name, token_hash)
                 select p.id, a.id, 'outsider-laptop', :h from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""")
                 .param("h", SecretTokens.hash(otherToken)).update();
-        try (McpSyncClient other = connect(otherToken)) {
+        McpSyncClient other = connect(otherToken);
+        try {
             other.initialize();
             assertThat(error(call(other, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2,
                     "idempotency_key", "k-other")))).containsEntry("code", "not_found");
+        } finally {
+            other.closeGracefully(); // tearDown 과 같은 이유 — 종료 DELETE 가 다음 시험의 truncate 와 겹치지 않게
         }
         assertThat(count("select count(*) from validation_run where validation_id = " + validationId)).isEqualTo(2);
 
