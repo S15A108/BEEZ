@@ -50,9 +50,17 @@ export function ProposeFlow({
   const [step, setStep] = useState(0)
   const [values, setValues] = useState<ProposalFormValues>()
   const [sending, setSending] = useState(false)
+  // ①에서 등록할 때 비교한 기준 버전 번호. 그 뒤 승인본이 바뀌어도 비교·제출은 이 버전이므로 화면도 이 번호를 보인다.
+  const [comparedNo, setComparedNo] = useState<number>()
   const document = documents.find(
     (item) => item.id === (values ?? defaultValues)?.document_id,
   )
+  // 단계 중간에 승인본이 바뀌었는지. 그대로 올리면 서버가 baseline_conflict로 거절하므로 다시 비교하게 한다(PR #135 리뷰).
+  const outdated =
+    !!values?.base_version_id &&
+    !!document?.versionId &&
+    document.versionId !== values.base_version_id
+  const shownNo = comparedNo ?? document?.versionNo
   const found =
     values &&
     proposeChanges(values.base_content ?? '', values.after_content ?? '')
@@ -100,9 +108,46 @@ export function ProposeFlow({
           onCancel={onCancel}
           onSubmit={async (form) => {
             setValues(form)
+            setComparedNo(
+              documents.find(
+                (item) =>
+                  item.id === form.document_id &&
+                  item.versionId === form.base_version_id,
+              )?.versionNo,
+            )
             setStep(1)
           }}
         />
+      )}
+      {step > 0 && outdated && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
+        >
+          <p>
+            승인본이 v{document?.versionNo}로 바뀌었어요. 고친 글은 v{shownNo}과
+            비교한 것이라 그대로 올리면 거절돼요.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              // 고친 글은 두고 기준 원문만 비워, 폼이 새 승인본을 다시 받아 비교하게 한다.
+              setValues(
+                (current) =>
+                  current && {
+                    ...current,
+                    base_content: undefined,
+                    base_version_id: undefined,
+                  },
+              )
+              setComparedNo(undefined)
+              setStep(0)
+            }}
+          >
+            새 승인본과 다시 비교
+          </Button>
+        </div>
       )}
       {step === 1 && values && found && (
         <>
@@ -111,9 +156,8 @@ export function ProposeFlow({
               바뀐 곳 {found.changes.length}개를 찾았어요
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              {document?.title ?? '문서'} 기준 v{document?.versionNo}과 고친
-              문서를 줄마다 비교했어요. 고를 것은 없어요. 확인하고 비비 검토로
-              넘어가요.
+              {document?.title ?? '문서'} 기준 v{shownNo}과 고친 문서를 줄마다
+              비교했어요. 고를 것은 없어요. 확인하고 비비 검토로 넘어가요.
             </p>
           </div>
           <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -138,9 +182,7 @@ export function ProposeFlow({
               <Card title="비교한 문서">
                 <p className="flex items-center gap-3 text-[13px]">
                   <span>
-                    <strong className="block">
-                      기준 v{document?.versionNo}
-                    </strong>
+                    <strong className="block">기준 v{shownNo}</strong>
                     <span className="text-xs text-muted-foreground">
                       승인본
                     </span>
@@ -225,8 +267,7 @@ export function ProposeFlow({
               <Field label="제목">{values.title}</Field>
               <Field label="바꾸려는 이유">{values.reason}</Field>
               <Field label="고친 문서">
-                {document?.title ?? '문서'} · 기준 v{document?.versionNo}에서
-                고친 글
+                {document?.title ?? '문서'} · 기준 v{shownNo}에서 고친 글
                 <WholeText text={values.after_content ?? ''} />
               </Field>
               {taskLabel && <Field label="관련 작업">{taskLabel}</Field>}
@@ -260,7 +301,7 @@ export function ProposeFlow({
             back={['검토로 돌아가기', () => setStep(2)]}
           >
             <Button
-              disabled={sending}
+              disabled={sending || outdated}
               onClick={() => {
                 setSending(true)
                 void onSubmit(values)
