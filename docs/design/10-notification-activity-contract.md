@@ -99,7 +99,7 @@
 | `actor_name`(응답) | 계정 이름 또는 토큰 이름 |
 | `occurred_at` | `clock_timestamp()`(실제 저장 시각). `now()`는 트랜잭션 시작 시각이라 쓰지 않는다 |
 
-- 타임라인 정렬·cursor는 **id 내림차순**으로 한다(-183에서 MON-A04 처리 규칙에 반영). 시각 기준 정렬은 시각이 트랜잭션 시작 쪽으로 당겨질수록, 늦게 커밋된 활동이 cursor로 이미 지나간 위치에 끼어 이어 보기에서 빠질 수 있다. id는 저장하는 순간에 정해지므로 그 틈이 저장~커밋 사이로 줄어든다(완전히 없어지지는 않는다 — 처음부터 다시 읽으면 보인다).
+- 타임라인 정렬·cursor는 **id 내림차순**으로 한다(MON-A04 처리 규칙, -183). 시각 기준 정렬은 시각이 트랜잭션 시작 쪽으로 당겨질수록, 늦게 커밋된 활동이 cursor로 이미 지나간 위치에 끼어 이어 보기에서 빠질 수 있다. id는 저장하는 순간에 정해지므로 그 틈이 저장~커밋 사이로 줄어든다(완전히 없어지지는 않는다 — 처음부터 다시 읽으면 보인다).
 - 타임라인은 프로젝트 **멤버 전원**이 본다. 멤버에게 보여도 되는 사실만 남기고 원문·민감정보는 넣지 않는다.
 - 화면 응답(Activity)에는 주 대상 `target_type`·`target_id`도 내보낸다(공통 명세 Activity 스키마 수정안). 문서·멤버·세션처럼 보조 참조가 없는 활동도 무엇에 대한 일인지 보이게.
 
@@ -208,7 +208,7 @@
 | --- | --- | --- |
 | `notification` | `document_id` 컬럼 추가 | -181 |
 | `activity_event` | `actor_kind` CHECK에 `BEE` 추가, `agent_session_id`·`task_id`·`change_proposal_id`·`baseline_id`·`result` 저장(필터 대상은 인덱스 가능한 컬럼), `occurred_at` 기본값 `clock_timestamp()` | -182 |
-| MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id` | -183 |
+| MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id`·`actor_type`·`actor_name`. 인덱스 `(project_id, id DESC)`와 `change_proposal_id` 부분 인덱스(V35) | -183 |
 | `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
 | 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |

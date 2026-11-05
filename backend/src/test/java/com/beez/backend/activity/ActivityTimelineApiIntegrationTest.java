@@ -112,6 +112,7 @@ class ActivityTimelineApiIntegrationTest extends IntegrationTestSupport {
         // 권한 확인이 필터 해석보다 먼저다 — 잘못된 필터여도 비로그인 401·비멤버 404
         assertThat(client().get(path + "?actor_type=ROBOT").statusCode()).isEqualTo(401);
         assertThat(strangerClient.get(path + "?actor_type=ROBOT").statusCode()).isEqualTo(404);
+        assertThat(strangerClient.get(path + "?cursor=abc").statusCode()).isEqualTo(404);
     }
 
     /**

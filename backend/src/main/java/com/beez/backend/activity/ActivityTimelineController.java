@@ -34,7 +34,8 @@ public class ActivityTimelineController {
                                                      String changeProposalId,
                                                      @RequestParam(name = "cursor", required = false) String cursor,
                                                      @RequestParam(name = "limit", required = false) Integer limit) {
-        // 필터 해석(400)은 서비스가 권한 확인(401·404) 뒤에 한다
+        // 필터 해석(400)은 서비스가 권한 확인(401·404) 뒤에 한다. 경로 id·limit 형식 오류는 다른 목록 API 처럼
+        // 스프링 바인딩 단계의 400 이라 권한 확인보다 먼저다(프로젝트 존재 여부는 드러나지 않는다)
         return timeline.timeline(caller, projectId,
                 () -> TimelineFilter.of(type, actorType, memberId, agentSessionId, changeProposalId), cursor, limit);
     }

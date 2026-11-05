@@ -31,7 +31,10 @@ public class ActivityTimelineService {
         this.sql = sql;
     }
 
-    /** filter 는 권한 확인 뒤에 해석한다 — 비로그인·비멤버가 잘못된 필터를 보내도 400 이 아니라 401·404 가 먼저다. */
+    /**
+     * 필터·cursor 는 권한 확인 뒤에 해석한다 — 비로그인·비멤버가 잘못된 필터·cursor 를 보내도 400 이 아니라 401·404 가 먼저다.
+     * limit 은 컨트롤러가 Integer 로 받아(다른 목록 API 와 같다) 형식 오류는 그보다 앞서 400 이다.
+     */
     @Transactional(readOnly = true)
     public PageResponse<ActivityResponse> timeline(CallerContext caller, long projectId, Supplier<TimelineFilter> filterInput,
                                                    String cursor, Integer limit) {
