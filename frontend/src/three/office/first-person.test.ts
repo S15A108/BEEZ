@@ -1,10 +1,19 @@
 import { assert, test } from 'vitest'
 import {
+  FIGURE_HEIGHT,
   FirstPersonLook,
+  METER,
   firstPersonFrame,
   firstPersonMove,
 } from './first-person'
 import { moveContinuous } from './motion'
+
+test('1인칭 카메라는 키 1.7 m 팀원의 눈높이 1.6 m에 있어 머리 위로 올라가지 않는다', () => {
+  const { eye } = firstPersonFrame(320, 160, 1, 0)
+  assert.closeTo(FIGURE_HEIGHT / METER, 1.7, 1e-12)
+  assert.closeTo(eye.y / METER, 1.6, 1e-12)
+  assert.isBelow(eye.y, FIGURE_HEIGHT)
+})
 
 test('W follows the viewing direction and D strafes right at each cardinal heading', () => {
   for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
@@ -34,7 +43,7 @@ test('turning does not change movement speed or diagonal normalization, includin
 test('camera eye follows the player without changing height or flying when looking up or down', () => {
   for (const pitch of [-1.3, 0, 1.3]) {
     const frame = firstPersonFrame(320, 160, 1, pitch)
-    assert.deepStrictEqual(frame.eye, { x: 10, y: 2.02, z: 5 })
+    assert.deepStrictEqual(frame.eye, { x: 10, y: 1.6 * METER, z: 5 })
     assert.isOk(
       Math.abs(
         Math.hypot(frame.forward.x, frame.forward.y, frame.forward.z) - 1,

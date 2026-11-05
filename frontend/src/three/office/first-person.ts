@@ -1,5 +1,12 @@
 export type OfficeViewMode = 'first' | 'third'
 
+// 보드처럼 팀원 셋을 같은 키로 맞춘다. 1.5타일이면 가장 넓은 사람도 폭이 약 1타일이라 개인 거리 34px(약 1.06타일)에서 겹치지 않는다.
+export const FIGURE_HEIGHT = 1.5
+// 캔버스에서 팀원은 1.7 m, 에이전트는 안테나 끝까지 1.74 m(모델 단위 m), 비비는 1.35 m다(v478). 팀원 1.5타일을 1.7 m로 본다.
+export const METER = FIGURE_HEIGHT / 1.7
+// 1인칭 카메라는 키 1.7 m 팀원의 눈높이(1.6 m)에 둔다.
+const EYE_HEIGHT = 1.6 * METER
+
 /** Horizontal movement follows the camera's right/forward axes, without flying when looking up. */
 export function firstPersonMove(input: { x: number; y: number }, yaw: number) {
   return {
@@ -16,7 +23,7 @@ export function firstPersonFrame(
 ) {
   const horizontal = Math.cos(pitch)
   return {
-    eye: { x: x / 32, y: 2.02, z: y / 32 },
+    eye: { x: x / 32, y: EYE_HEIGHT, z: y / 32 },
     forward: {
       x: Math.sin(yaw) * horizontal,
       y: Math.sin(pitch),

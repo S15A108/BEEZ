@@ -5,6 +5,14 @@ export const OFFICE_ORBIT_HOME = {
 export const OFFICE_ORBIT_MIN_PITCH = Math.PI / 12
 export const OFFICE_ORBIT_MAX_PITCH = (Math.PI * 4) / 9
 
+/** 3인칭 WASD를 기본 시점에서 카메라가 돈 만큼 같이 돌린다. 화면 기준 방향은 그대로이고, 기본 시점에서는 입력이 바뀌지 않는다. */
+export function orbitMove(input: { x: number; y: number }, yaw: number) {
+  const turn = yaw - OFFICE_ORBIT_HOME.yaw
+  const cos = Math.cos(turn),
+    sin = Math.sin(turn)
+  return { x: input.x * cos + input.y * sin, y: input.y * cos - input.x * sin }
+}
+
 /** Damped spherical orbit; yaw remains continuous across 0/360 degrees. */
 export class OfficeOrbit {
   yaw = OFFICE_ORBIT_HOME.yaw

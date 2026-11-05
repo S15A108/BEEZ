@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { makeBuilding, ALL_KEYS } from './office/building'
 import { makeDreamFloor } from './office/dream-floor'
 import { firstPersonMove } from './office/first-person'
+import { orbitMove } from './office/office-orbit'
 import {
   moveContinuous,
   movementInput,
@@ -453,7 +454,7 @@ function OfficeRuntime(
                 input,
                 renderer.isFirstPerson ? renderer.viewHeading : me.heading,
               )
-            : input,
+            : orbitMove(input, renderer.orbitYaw),
         speed = movementSpeed(105, keys.current) * dt
       if (direction.x || direction.y)
         step({ x: direction.x * speed, y: direction.y * speed })
