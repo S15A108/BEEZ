@@ -75,20 +75,6 @@ if [[ $MODE == all ]]; then
     [[ -f $DUMP ]] || fail "덤프가 없음: $DUMP"
 fi
 
-log "환경 $ENV_NAME, 할 일: $([[ $MODE == all ]] && echo "DB 를 $(basename "$DUMP") 시점으로 되돌리고(지금 DB 는 지움) 원본 올리기" || echo "원본 올리기")"
-log "원본 백업: $OBJECTS (${n_objects}개) → bucket $BUCKET"
-if (( ! YES )); then
-    log "바꾸지 않음. 진행하려면 끝에 --yes 를 붙인다"
-    exit 0
-fi
-
-# 서버에서 백업 데이터를 쓰거나 읽어 판정하는 작업(backup.sh·이 스크립트)은 모두 이 잠금 하나를 잡는다.
-# 복원 중에 예약 백업이 돌면 비었거나 반쯤 복원된 DB 를 덤프해 LAST_OK 로 기록할 수 있다.
-# 잠금 순서는 늘 백업 잠금 → 배포 잠금이다(배포 잠금을 쥔 채 백업 잠금을 기다리는 곳이 없어 서로 막히지 않는다)
-exec 7> "$BACKUP_ROOT/.backup.lock"
-flock -w 1800 7 || fail "서버 백업이 30분 넘게 진행 중. 끝난 뒤 다시 실행한다"
-log "백업 잠금 잡음(이 스크립트가 끝나면 풀림)"
-
 # 관리(bootstrap) 키로 rclone 을 storage 망에서 돌린다. 키 값은 -e 이름으로만 넘긴다. 앞에 -v <폴더:경로> 를 주면 붙인다
 rclone_admin() {
     local mount=()
@@ -105,7 +91,7 @@ rclone_admin() {
 
 put_objects() {
     if (( n_objects == 0 )); then
-        # all 은 아래 사전 검증이 덤프가 가리키는 원본이 다 있는지 먼저 확인했다. 여기서 0개면 필요한 원본이 없는 것이다
+        # all 은 사전 검증이 덤프가 가리키는 원본이 다 있는지 먼저 확인했다. 여기서 0개면 올릴 것이 없는 것이다
         log "올릴 원본 0개 — 건너뜀"
         return 0
     fi
@@ -113,6 +99,62 @@ put_objects() {
     rclone_admin -v "$OBJECTS:/backup:ro" copy /backup "dst:$BUCKET" --immutable --checksum \
         --stats-one-line --stats-log-level NOTICE || fail "원본 올리기 실패(위 rclone 메시지)"
 }
+
+# 사전 검증(all) — 읽기만 한다. 미리보기(--yes 없음)에서도, 실제 복원에서는 backend 를 멈추기 전에 돈다.
+#   1) 덤프가 가리키는 문서 버전 원본이 백업 폴더나 지금 bucket 에 다 있는가. 원본 폴더가 없거나 비어 있는 것만으로는
+#      "문서 0건"인지 "원본이 빠진 백업"인지 알 수 없다(2026-11-05 hyunneee 리뷰). bucket 에만 있는 원본은 허용한다(DB 만 되돌리는 경우).
+#      덤프의 COPY 머리줄에서 storage_key 열을 찾아 뽑는다(backup.sh 3) 과 같은 방법)
+#   2) 백업 폴더의 원본을 올릴 때 bucket 의 같은 key 와 내용이 다르지 않은가(copy --dry-run --immutable).
+#      다르면 실제 올리기가 --immutable 로 실패하는데, 그때는 이미 DB 를 지운 뒤라 서비스가 멈춘 채로 남는다
+precheck() {
+    local pg=$1 keys key in_bucket not_in_folder=() missing=()
+    log "사전 검증: 덤프가 가리키는 원본이 백업 폴더나 bucket 에 있는지, 같은 key 의 내용이 다르지 않은지"
+    keys=$(docker exec -i "$pg" pg_restore --data-only --table=document_version -f - < "$DUMP" | awk -F '\t' '
+        /^COPY [^ ]*document_version \(/ {
+            cols = $0; sub(/^[^(]*\(/, "", cols); sub(/\).*$/, "", cols)
+            n = split(cols, c, ", "); col = 0
+            for (i = 1; i <= n; i++) if (c[i] == "storage_key") col = i
+            if (col == 0) { print "storage_key 열을 찾지 못함" > "/dev/stderr"; exit 2 }
+            copying = 1; next
+        }
+        copying && /^\\\.$/ { copying = 0; next }   # COPY 데이터 끝 표시 줄 "\."
+        copying { print $col }') || fail "덤프에서 storage_key 를 읽지 못함. 아무것도 바꾸지 않았다"
+    while read -r key; do
+        [[ -z $key ]] && continue
+        [[ -f $OBJECTS/$key ]] || not_in_folder+=("$key")
+    done <<< "$keys"
+    if (( ${#not_in_folder[@]} > 0 )); then
+        in_bucket=$(rclone_admin lsf "dst:$BUCKET" --files-only) ||
+            fail "bucket 목록을 읽지 못함(위 rclone 메시지). 아무것도 바꾸지 않았다"
+        for key in "${not_in_folder[@]}"; do
+            grep -qxF -- "$key" <<< "$in_bucket" || missing+=("$key")
+        done
+    fi
+    if (( ${#missing[@]} > 0 )); then
+        fail "덤프가 가리키는 원본 ${#missing[@]}개가 백업 폴더와 bucket 어디에도 없음(예: ${missing[0]}). 아무것도 바꾸지 않았다. 원본이 있는 백업(PC 사본 등)을 서버로 보낸 뒤 다시 실행한다"
+    fi
+    if (( n_objects > 0 )); then
+        rclone_admin -v "$OBJECTS:/backup:ro" copy /backup "dst:$BUCKET" --dry-run --immutable --checksum \
+            --stats-log-level NOTICE ||
+            fail "백업 원본과 bucket 의 같은 key 내용이 다름(위 rclone 메시지). 아무것도 바꾸지 않았다. 어느 쪽이 맞는지 확인한다"
+    fi
+    log "사전 검증 통과: 덤프의 문서 버전 원본 $(printf '%s' "$keys" | grep -c . || true)개(백업 폴더에 없고 bucket 에만 있는 것 ${#not_in_folder[@]}개)"
+}
+
+log "환경 $ENV_NAME, 할 일: $([[ $MODE == all ]] && echo "DB 를 $(basename "$DUMP") 시점으로 되돌리고(지금 DB 는 지움) 원본 올리기" || echo "원본 올리기")"
+log "원본 백업: $OBJECTS (${n_objects}개) → bucket $BUCKET"
+if (( ! YES )); then
+    [[ $MODE == all ]] && precheck "$(cid postgres)"
+    log "바꾸지 않음. 진행하려면 끝에 --yes 를 붙인다"
+    exit 0
+fi
+
+# 서버에서 백업 데이터를 쓰거나 읽어 판정하는 작업(backup.sh·이 스크립트)은 모두 이 잠금 하나를 잡는다.
+# 복원 중에 예약 백업이 돌면 비었거나 반쯤 복원된 DB 를 덤프해 LAST_OK 로 기록할 수 있다.
+# 잠금 순서는 늘 백업 잠금 → 배포 잠금이다(배포 잠금을 쥔 채 백업 잠금을 기다리는 곳이 없어 서로 막히지 않는다)
+exec 7> "$BACKUP_ROOT/.backup.lock"
+flock -w 1800 7 || fail "서버 백업이 30분 넘게 진행 중. 끝난 뒤 다시 실행한다"
+log "백업 잠금 잡음(이 스크립트가 끝나면 풀림)"
 
 if [[ $MODE == objects ]]; then
     put_objects
@@ -128,39 +170,10 @@ log "배포 잠금 잡음(이 스크립트가 끝나면 풀림)"
 
 pg=$(cid postgres)
 backend=$(cid backend)
-
-# 사전 검증 — 아무것도 바꾸기 전에, 덤프가 가리키는 문서 버전 원본이 백업 폴더나 지금 bucket 에 다 있는지 본다.
-# 원본 폴더가 없거나 비어 있는 것만으로는 "문서 0건"인지 "원본이 빠진 백업"인지 알 수 없다(2026-11-05 hyunneee 리뷰).
-# 덤프의 COPY 머리줄에서 storage_key 열을 찾아 뽑는다(backup.sh 3) 과 같은 방법). bucket 에 이미 있는 원본은
-# 백업 폴더에 없어도 된다(DB 만 되돌리는 경우)
-log "사전 검증: 덤프가 가리키는 원본이 백업 폴더나 bucket 에 있는지"
-keys=$(docker exec -i "$pg" pg_restore --data-only --table=document_version -f - < "$DUMP" | awk -F '\t' '
-    /^COPY [^ ]*document_version \(/ {
-        cols = $0; sub(/^[^(]*\(/, "", cols); sub(/\).*$/, "", cols)
-        n = split(cols, c, ", "); col = 0
-        for (i = 1; i <= n; i++) if (c[i] == "storage_key") col = i
-        if (col == 0) { print "storage_key 열을 찾지 못함" > "/dev/stderr"; exit 2 }
-        copying = 1; next
-    }
-    copying && /^\\\.$/ { copying = 0; next }   # COPY 데이터 끝 표시 줄 "\."
-    copying { print $col }') || fail "덤프에서 storage_key 를 읽지 못함. 아무것도 바꾸지 않았다"
-not_in_folder=()
-while read -r key; do
-    [[ -z $key ]] && continue
-    [[ -f $OBJECTS/$key ]] || not_in_folder+=("$key")
-done <<< "$keys"
-missing=()
-if (( ${#not_in_folder[@]} > 0 )); then
-    in_bucket=$(rclone_admin lsf "dst:$BUCKET" --files-only) ||
-        fail "bucket 목록을 읽지 못함(위 rclone 메시지). 아무것도 바꾸지 않았다"
-    for key in "${not_in_folder[@]}"; do
-        grep -qxF -- "$key" <<< "$in_bucket" || missing+=("$key")
-    done
-fi
-if (( ${#missing[@]} > 0 )); then
-    fail "덤프가 가리키는 원본 ${#missing[@]}개가 백업 폴더와 bucket 어디에도 없음(예: ${missing[0]}). 아무것도 바꾸지 않았다. 원본이 있는 백업(PC 사본 등)을 서버로 보낸 뒤 다시 실행한다"
-fi
-log "사전 검증 통과: 덤프의 문서 버전 원본 $(printf '%s' "$keys" | grep -c . || true)개(백업 폴더에 없고 bucket 에만 있는 것 ${#not_in_folder[@]}개)"
+# 받아들인 한계: 검증과 아래 backend 멈춤 사이 몇 초 동안 정리 워커가 "덤프는 가리키지만 지금 DB 는 참조하지 않는" 원본을
+# bucket 에서 지울 수 있다(bucket 에만 있는 옛 key 일 때). 막으려면 backend 를 먼저 멈춰야 해서 "실패하면 아무것도 바꾸지
+# 않음"을 잃는다. 드문 조건이라 받아들인다(docs/infra/operations.md 8. 전체 복원)
+precheck "$pg"
 
 log "backend 멈춤(웹 사용자는 로그아웃된다)"
 docker stop "$backend" > /dev/null

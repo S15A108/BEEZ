@@ -233,6 +233,7 @@ RUNNING lease는 10분이며, 만료 시 새 attempt로 자동 복구한다. aut
 - 문서 0건: 빈 bucket의 백업은 `objects/beez-documents`를 만들고 `LAST_OK`를 쓴다. PC 사본에는 빈 폴더가 없어도 `restore-check.sh`가 통과하고, `restore.sh all`은 "올릴 원본 0개"로 넘어가 backend가 healthy로 뜬다. 문서 1건을 넣은 뒤 백업·받기·복원 시험도 그대로 통과했다(실제 컨테이너).
 - 시험 `infra/backup/test_backup_scripts.py`(9개, 가짜 docker·진짜 compose): 고치기 전 스크립트에서는 env 4건·빈 bucket 3건이 실패한다. CI `deploy-scripts` 잡에서 돈다.
 - `restore.sh all` 사전 검증(hyunneee 리뷰 2차): 실제 Flyway DB에 문서 1건(`doc-1.txt`)을 넣고 확인했다. 원본이 백업 폴더와 bucket 모두에 없으면 아무것도 바꾸지 않고 실패한다(backend·데이터 그대로). bucket에만 있으면 DB만 되돌리고 통과, 백업 폴더에만 있으면 올리고 통과한다. 시험 4개를 더해 13개이고, 고치기 전 `restore.sh`에서는 "원본 누락인데 backend를 멈췄다 켬"이 실패로 잡힌다.
+- 같은 날 재리뷰 반영: 사전 검증이 백업 원본과 bucket의 같은 key 내용 충돌도 본다(`copy --dry-run --immutable`, 실제 SeaweedFS에서 충돌 rc=6·같으면 0, dry-run이라 아무것도 올라가지 않음). 미리보기에서도 사전 검증이 돈다. 시험 15개.
 
 문서 HTTP 통합 시험은 실제 PostgreSQL과 SeaweedFS를 함께 사용해 업로드/다운로드·DB rollback 시 객체 삭제·현재 승인 범위 검색을 검증한다. DB 등록 서비스만 독립 검증하는 일부 시험은 src/test 전용 메모리 대역을 사용하며 제품에 등록하지 않는다.
 

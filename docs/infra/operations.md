@@ -385,7 +385,7 @@ DB를 덤프 시점으로 되돌립니다. **지금 DB는 지워지고, 덤프 �
 ```bash
 # 서버. 서버가 새로 만들어졌으면 먼저 PC 백업을 보낸다(PC Git Bash):
 #   tar -C ~/beez-backup/dev -cf - db objects LAST_OK | ssh beez 'mkdir -p /var/backups/beez && tar -C /var/backups/beez -xf - --skip-old-files'
-beez-restore dev all              # 할 일만 보여 준다. 덤프 기본값은 LAST_OK 의 것(끝까지 성공한 마지막 백업)
+beez-restore dev all              # 할 일과 사전 검증 결과만 보여 준다(읽기만 함). 덤프 기본값은 LAST_OK 의 것(끝까지 성공한 마지막 백업)
 beez-restore dev all --yes        # 다른 시점이면: beez-restore dev all /var/backups/beez/db/beez-<시각>.dump --yes
 beez-check-live dev               # 일치 N개, 문제 0개
 ```
@@ -393,7 +393,8 @@ beez-check-live dev               # 일치 N개, 문제 0개
 `all`이 하는 일(`infra/backup/restore.sh`):
 
 1. 백업 잠금(`backup.sh`와 같은 파일), 이어서 배포 잠금(`deploy.sh`와 같은 파일)을 잡고 끝날 때까지 쥡니다. 백업이 30분, 배포가 5분 넘게 돌면 아무것도 바꾸지 않고 멈춥니다. 복원 중에는 예약 백업도 자동 배포도 기다립니다(`objects`는 백업 잠금만 잡습니다).
-2. **사전 검증**: 아무것도 바꾸기 전에 덤프가 가리키는 문서 버전 원본(`storage_key`)이 백업 폴더나 지금 bucket에 다 있는지 봅니다. 하나라도 없으면 backend·DB·bucket을 건드리지 않고 멈춥니다. 원본 폴더가 없다는 것만으로는 "문서 0건"인지 "원본이 빠진 백업"인지 알 수 없기 때문입니다. bucket에 이미 있는 원본은 백업 폴더에 없어도 됩니다(DB만 되돌리는 경우).
+2. **사전 검증**: 아무것도 바꾸기 전에 덤프가 가리키는 문서 버전 원본(`storage_key`)이 백업 폴더나 지금 bucket에 다 있는지 봅니다. 하나라도 없으면 backend·DB·bucket을 건드리지 않고 멈춥니다. 원본 폴더가 없다는 것만으로는 "문서 0건"인지 "원본이 빠진 백업"인지 알 수 없기 때문입니다. bucket에 이미 있는 원본은 백업 폴더에 없어도 됩니다(DB만 되돌리는 경우). 백업 폴더의 원본과 bucket의 같은 key가 내용이 다른지도 미리 봅니다(`rclone copy --dry-run --immutable`). 다르면 실제 올리기가 DB를 지운 뒤에 실패해 서비스가 멈춘 채 남기 때문입니다. 이 검증은 읽기만 하므로 `--yes` 없는 미리보기에서도 돕니다 — 팀에 머지 중단을 알리기 전에 미리보기로 복원 가능 여부부터 봅니다.
+   - 받아들인 한계: 검증과 backend 멈춤 사이 몇 초 동안, 정리 워커가 "덤프는 가리키지만 지금 DB는 참조하지 않는" 원본을 bucket에서 지울 수 있습니다(bucket에만 있는 옛 key일 때). 막으려면 backend를 먼저 멈춰야 해서 "실패하면 아무것도 바꾸지 않음"을 잃습니다. 드문 조건이라 받아들였습니다. 복원 뒤 `beez-check-live dev`가 이 경우를 `없음`으로 잡으면 PC 사본에서 그 원본을 찾아 `beez-restore dev objects --yes`로 올립니다.
 3. backend를 멈춥니다(웹 사용자는 로그아웃).
 4. **DB를 지우고 빈 DB로 다시 만든 뒤** 덤프를 복원합니다. `pg_restore --clean`으로 덮어쓰지 않는 이유가 있습니다. 그렇게 하면 덤프 뒤 마이그레이션이 만든 테이블이 남고 Flyway 이력만 덤프 시점으로 돌아가, backend를 켤 때 Flyway가 같은 마이그레이션을 다시 돌리다 `already exists`로 멈춥니다.
 5. 원본을 올리고(`objects`와 같음) backend를 켜서 `healthy`가 될 때까지 기다립니다. 켜지면 Flyway가 덤프 뒤의 마이그레이션을 적용합니다.

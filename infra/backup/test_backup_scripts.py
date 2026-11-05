@@ -49,6 +49,7 @@ case "$1" in
         fi ;;
       *curlimages*) cat > /dev/null; echo "  일치 0개, 문제 0개" ;;
       *" lsf "*) printf '%s' "$FAKE_BUCKET_LS" ;;   # restore.sh 사전 검증의 bucket 목록
+      *--dry-run*) exit "${FAKE_DRYRUN_RC:-0}" ;;   # restore.sh 사전 검증의 내용 충돌 검사(1 = 같은 key 다른 내용)
     esac ;;
 esac
 '''
@@ -206,6 +207,25 @@ def test_restore_all_originals_already_in_bucket_restores():
         r = run("restore.sh", "dev", "all", "--yes", backup_root=restore_root(tmp),
                 FAKE_COPY=copy_block("k1.txt", "k2.txt"), FAKE_BUCKET_LS="k1.txt\nk2.txt\nother.txt\n")
         check(r, 0, "bucket 에만 있는 것 2개")
+
+
+def test_restore_all_content_conflict_stops_before_changes():
+    # 백업 원본과 bucket 의 같은 key 내용이 다르면 실제 올리기가 DB 를 지운 뒤에 실패한다 → 그 전에 멈춘다
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run("restore.sh", "dev", "all", "--yes", backup_root=restore_root(tmp, ["k1.txt"]),
+                FAKE_COPY=copy_block("k1.txt"), FAKE_DRYRUN_RC="1")
+        assert "stop" not in r[3], r[3]
+        check(r, 1, "같은 key 내용이 다름")
+
+
+def test_restore_all_preview_runs_precheck():
+    # --yes 없는 미리보기에서도 읽기만 하는 사전 검증을 돌려, 복원할 수 없으면 미리 알린다
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run("restore.sh", "dev", "all", backup_root=restore_root(tmp), FAKE_COPY=copy_block("k1.txt"))
+        assert "stop" not in r[3] and "run" in r[3], r[3]   # bucket 목록은 읽었고 멈추지는 않았다
+        check(r, 1, "원본 1개가 백업 폴더와 bucket 어디에도 없음")
+    with tempfile.TemporaryDirectory() as tmp:
+        check(run("restore.sh", "dev", "all", backup_root=restore_root(tmp)), 0, "바꾸지 않음")
 
 
 def test_restore_all_originals_in_folder_restores():
