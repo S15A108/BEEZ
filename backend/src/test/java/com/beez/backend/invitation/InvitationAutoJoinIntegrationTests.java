@@ -72,6 +72,7 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
         assertThat(again.get("results").get(0).get("invitation_id").asString())
                 .isEqualTo(results.get(1).get("invitation_id").asString());
 
+        awaitMail(unregistered);   // 시험이 끝날 때 보내는 중인 메일을 남기지 않는다 (다른 시험의 실패 예약을 가져가지 않게)
         MailMessage m = awaitMail(registered);
         assertThat(m.text()).contains("/projects/" + p.projectId() + "?invite=").contains("같이 해요");
         assertThat(client().post("/api/invitations/preview", tokenBody(tokenIn(m))).statusCode()).isEqualTo(200);
@@ -123,6 +124,9 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
         assertThat(client().login(revoked.leaderEmail(), AccessFixtures.PASSWORD)
                 .delete(invitations(revoked.projectId()) + "/" + revokedId, "").statusCode()).isEqualTo(204);
         String leftToken = tokenIn(awaitMail(email, left.projectId()));
+        awaitMail(email, pending.projectId());
+        awaitMail(email, revoked.projectId());
+        awaitMail(email, removed.projectId());
 
         ApiClient session = client().login(email, AccessFixtures.PASSWORD);
 
@@ -180,6 +184,7 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
         var p = fixtures().projectWithLeader();
         String email = AccessFixtures.uniqueEmail();
         inviteByEmail(p, email);
+        awaitMail(email, p.projectId());
 
         HttpResponse<String> registered = client().post("/api/auth/register", "{\"email\":\"" + email
                 + "\",\"password\":\"" + AccessFixtures.PASSWORD + "\",\"name\":\"새팀원\",\"verified_token\":\""
@@ -189,6 +194,39 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
 
         assertThat(jdbc.queryForObject("SELECT count(*) FROM project_member WHERE project_id = ? AND account_id = ?"
                 + " AND active", Integer.class, p.projectId(), accountId)).isEqualTo(1);
+    }
+
+    /**
+     * 깨지면: 팀장이 제외한 사람이 제외 전에 남아 있던 대기 초대로 다음 로그인(자동 참여)이나 예전 메일 링크(MEM-A05)로 바로 돌아온다.
+     * (링크 초대로 먼저 들어와 이메일 초대가 대기로 남은 경우.) 제외 뒤 새로 초대하면 로그인으로 되살아나야 한다 (Q05 4).
+     */
+    @Test
+    void removal_revokesStalePendingInvitation_butReinviteRevives() {
+        var p = fixtures().projectWithLeader();
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        String email = AccessFixtures.uniqueEmail();
+        long me = fixtures().account(email);
+        ApiClient session = client().login(email, AccessFixtures.PASSWORD);   // 초대 전에 로그인해 둔 세션
+
+        inviteByEmail(p, email);
+        String staleToken = tokenIn(awaitMail(email, p.projectId()));
+        String linkToken = read(leader.post(invitations(p.projectId()), "{}")).get("invite_url").asString()
+                .replaceAll(".*token=", "");
+        String memberId = read(session.post("/api/invitations/accept", tokenBody(linkToken)))
+                .get("member").get("id").asString();
+        assertThat(leader.post("/api/projects/" + p.projectId() + "/members/" + memberId + "/remove", "{}")
+                .statusCode()).isEqualTo(204);
+
+        ApiClient again = client().login(email, AccessFixtures.PASSWORD);
+        assertThat(again.get("/api/projects/" + p.projectId()).statusCode()).isEqualTo(404);
+        assertThat(again.post("/api/invitations/accept", tokenBody(staleToken)).statusCode()).isEqualTo(404);
+
+        inviteByEmail(p, email);
+        await().atMost(Duration.ofSeconds(10)).until(() -> mail.countTo(email) == 2);   // 새 초대 메일까지 다 나간 뒤
+        assertThat(client().login(email, AccessFixtures.PASSWORD).get("/api/projects/" + p.projectId()).statusCode())
+                .isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM project_member WHERE project_id = ? AND account_id = ?",
+                Integer.class, p.projectId(), me)).isEqualTo(1);   // 같은 멤버십 행을 되살림
     }
 
     /**
@@ -204,7 +242,7 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
         String first = tokenIn(awaitMail(email, p.projectId()));
         String resend = invitations(p.projectId()) + "/" + id + "/resend";
 
-        mail.failNext();
+        mail.failNextTo(email);
         HttpResponse<String> failed = leader.post(resend, null);
         assertThat(failed.statusCode()).isEqualTo(503);
         assertThat(failed.body()).contains("mail_send_failed");
@@ -237,11 +275,11 @@ class InvitationAutoJoinIntegrationTests extends IntegrationTestSupport {
         String email = AccessFixtures.uniqueEmail();
         fixtures().account(email);
 
-        mail.failNext();
+        mail.failNextTo(email);
         JsonNode res = read(leader.post(invitations(p.projectId()), "{\"emails\":[\"" + email + "\"]}"));
         assertThat(res.get("results").get(0).get("status").asString()).isEqualTo("INVITED");
-        // 비동기 발송이 실패 플래그를 쓸 때까지 기다린다 (다음 시험의 메일이 대신 실패하지 않게)
-        await().atMost(Duration.ofSeconds(10)).until(() -> !mail.failPending());
+        // 비동기 발송이 실패 예약을 쓸 때까지 기다린다 (남은 예약이 뒤 시험에 새지 않게)
+        await().atMost(Duration.ofSeconds(10)).until(() -> !mail.failPendingTo(email));
         assertThat(mail.countTo(email)).isZero();
 
         assertThat(client().login(email, AccessFixtures.PASSWORD).get("/api/projects/" + p.projectId()).statusCode())

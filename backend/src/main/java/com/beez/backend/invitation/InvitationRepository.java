@@ -44,6 +44,22 @@ public interface InvitationRepository extends JpaRepository<Invitation, Long> {
             """)
     List<Invitation> findPendingByEmailForUpdate(@Param("email") String email);
 
+    /**
+     * 팀원 제외(MEM-A09) 때 그 사람 이메일의 이 프로젝트 대기 초대를 잠그고 읽는다. 자동 참여와 같이 id 순이라
+     * 두 쪽이 같은 초대들을 잠가도 순서가 엇갈리지 않는다. 제외는 이것을 프로젝트 행보다 먼저 잠근다 (초대 → 프로젝트).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select i from Invitation i
+             where i.projectId = :projectId
+               and i.email = :email
+               and i.acceptedAt is null
+               and i.revokedAt is null
+             order by i.id
+            """)
+    List<Invitation> findPendingByProjectAndEmailForUpdate(@Param("projectId") long projectId,
+                                                           @Param("email") String email);
+
     /** 이메일 초대(MEM-A01 emails)의 ALREADY_INVITED 판정: 이 프로젝트에서 이 이메일의 대기 초대 중 가장 오래된 것. */
     Optional<Invitation> findFirstByProjectIdAndEmailAndAcceptedAtIsNullAndRevokedAtIsNullOrderByIdAsc(
             long projectId, String email);

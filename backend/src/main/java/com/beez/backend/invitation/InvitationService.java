@@ -37,6 +37,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -354,6 +355,24 @@ public class InvitationService implements DisposableBean {
                     invitation.getProjectId(), accountId, action);
         }
         return converted;
+    }
+
+    /**
+     * 팀원 제외(MEM-A09)와 같은 트랜잭션에서, <b>프로젝트 행을 잠그기 전에</b> 부른다. 그 사람 이메일로 이 프로젝트에 남은 대기 초대를 취소한다.
+     * 남겨 두면 제외 직후 그 사람이 로그인할 때 자동 참여가 REMOVED 를 되살리고(Q05 4 의 "다시 초대하면"이 아닌데도),
+     * 예전 메일 링크(MEM-A05)로도 다시 들어온다. 제외 뒤 팀장이 새로 초대하면 그 초대로는 되살아난다.
+     * 제외가 거절되면(403·409 등) 같은 트랜잭션이라 취소도 되돌려진다.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void revokePendingOnRemoval(long projectId, String email) {
+        if (email == null) {
+            return;
+        }
+        Instant now = Instant.now();
+        for (Invitation invitation : invitations.findPendingByProjectAndEmailForUpdate(projectId, email)) {
+            invitation.revoke(now);
+            log.info("제외로 대기 초대 취소: invitation_id={} project_id={}", invitation.getId(), projectId);
+        }
     }
 
     /** 자동 참여에서 멤버십 상태별로 할 일. */
