@@ -23,6 +23,18 @@ export const openTasksQuery = (
         status: [...OPEN_TASK_STATUSES],
         limit: 100,
       }),
+    // 11-04 필터(unassigned·여러 status)는 수정안이라 서버가 아직 무시할 수 있다. 무시하면 모든 작업이 와서
+    // '담당자 없는 작업' 수가 틀리므로 받은 목록을 한 번 더 거른다.
+    select: (page) => ({
+      ...page,
+      items: page.items.filter(
+        (task) =>
+          OPEN_TASK_STATUSES.some((status) => status === task.status) &&
+          ('unassigned' in filter
+            ? !task.assignee_member_id
+            : task.assignee_member_id === filter.assignee_member_id),
+      ),
+    }),
   })
 
 export const openTaskCount = (page: { items: unknown[]; has_more: boolean }) =>
