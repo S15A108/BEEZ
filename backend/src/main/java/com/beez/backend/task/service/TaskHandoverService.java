@@ -10,15 +10,16 @@ import com.beez.backend.notification.NotificationRequester;
 import com.beez.backend.notification.NotificationTargetType;
 import com.beez.backend.notification.event.NotificationMessages;
 import com.beez.backend.notification.event.NotificationMessages.Message;
-import com.beez.backend.project.ProjectMember;
-import com.beez.backend.project.ProjectMemberRepository;
 import com.beez.backend.task.entity.Task;
 import com.beez.backend.task.entity.TaskStatus;
 import com.beez.backend.task.repository.TaskRepository;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,15 +56,15 @@ public class TaskHandoverService {
 
     private final TaskRepository tasks;
     private final ValidationStatusLookup validations;
-    private final ProjectMemberRepository members;
+    private final JdbcClient jdbc;
     private final ActivityRecorder activities;
     private final NotificationRequester notifications;
 
-    public TaskHandoverService(TaskRepository tasks, ValidationStatusLookup validations, ProjectMemberRepository members,
+    public TaskHandoverService(TaskRepository tasks, ValidationStatusLookup validations, JdbcClient jdbc,
                                ActivityRecorder activities, NotificationRequester notifications) {
         this.tasks = tasks;
         this.validations = validations;
-        this.members = members;
+        this.jdbc = jdbc;
         this.activities = activities;
         this.notifications = notifications;
     }
@@ -86,11 +87,13 @@ public class TaskHandoverService {
             throw new ApiException(HttpStatus.CONFLICT, "active_tasks_exist",
                     "정리되지 않은 열린 작업이 " + open.size() + "개 있습니다. 인계 대상을 지정하세요");
         }
-        long toAccountId = accountOf(toMemberId);
-        // 동시에 상태가 바뀐 작업이 있으면 lock_version 이 달라 409 revision_conflict 로 전체가 되돌아간다
+        List<Changed> changed = new ArrayList<>();
         for (Task task : open) {
-            reassign(caller, task, toMemberId, toAccountId);
+            apply(task, toMemberId, changed);
         }
+        // 동시에 상태가 바뀐 작업이 있으면 lock_version 이 달라 409 revision_conflict 로 전체가 되돌아간다
+        tasks.saveAllAndFlush(open);
+        recordChanged(caller, changed, toMemberId);
         return open.size();
     }
 
@@ -102,14 +105,22 @@ public class TaskHandoverService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void reassign(CallerContext caller, Task task, long toMemberId) {
-        if (isSameAssignee(task, toMemberId)) {
+        List<Changed> changed = new ArrayList<>(1);
+        apply(task, toMemberId, changed);
+        if (changed.isEmpty()) {
             return;
         }
-        reassign(caller, task, toMemberId, accountOf(toMemberId));
+        tasks.saveAndFlush(task);
+        recordChanged(caller, changed, toMemberId);
     }
 
-    private void reassign(CallerContext caller, Task task, long toMemberId, long toAccountId) {
-        if (isSameAssignee(task, toMemberId)) {
+    /** 담당자가 실제로 바뀐 작업 하나와 바꾸기 전 잠금 버전 */
+    private record Changed(Task task, int lockBefore) {
+    }
+
+    /** 담당자를 바꾼다(저장 전). 같은 담당자면 아무것도 하지 않고, 바꿨으면 changed 에 더한다 */
+    private void apply(Task task, long toMemberId, List<Changed> changed) {
+        if (task.getAssigneeMemberId() != null && task.getAssigneeMemberId() == toMemberId) {
             return;
         }
         // 키는 변경 전 잠금 버전(계약 6.2 예외) — 담당자 변경마다 버전이 오르므로 다음 변경과 겹치지 않는다
@@ -121,28 +132,44 @@ public class TaskHandoverService {
             task.holdForRevalidation();
         }
         task.changeAssignee(toMemberId);
-        // 활동·알림 입구는 네이티브 쿼리라 실행 전에 영속성 컨텍스트를 flush 한다. 거기서 잠금 충돌이 나면 저장소 예외 변환을 거치지 않아
-        // 409 가 아니라 500 이 되므로, 저장소로 먼저 flush 해 충돌을 ObjectOptimisticLockingFailureException(409)로 낸다
-        tasks.saveAndFlush(task);
+        changed.add(new Changed(task, lockBefore));
+    }
 
-        String key = "task:" + task.getId() + ":lock:" + lockBefore + ":ASSIGNEE_CHANGED";
-        activities.record(caller, ActivityEvent.of(key, task.getProjectId(), ACTIVITY_ASSIGNEE_CHANGED,
-                ActivityTargetType.TASK, task.getId()));
-        // 자기에게 배정한 경우(팀장 자기 배정 등)는 자기가 고른 일이라 알리지 않는다 (계약 6.1, 11-04 결정)
-        if (toAccountId != caller.accountId()) {
-            Message message = NotificationMessages.taskAssigned(task.getTitle());
-            notifications.request(new NotificationRequest(key + ":to:" + toAccountId, task.getProjectId(), toAccountId,
-                    NOTIFICATION_ASSIGNED, message.title(), message.body(), NotificationTargetType.TASK, task.getId(), null));
+    /**
+     * 바뀐 작업마다 활동 하나, 새 담당자에게 알림 하나(본인이면 생략). <b>작업을 저장소로 flush 한 뒤에</b> 부른다 — 활동·알림 입구는
+     * 네이티브 쿼리라 실행 전에 영속성 컨텍스트를 flush 하는데, 거기서 잠금 충돌이 나면 저장소 예외 변환을 거치지 않아
+     * 409(ObjectOptimisticLockingFailureException)가 아니라 500(jakarta OptimisticLockException)이 된다.
+     */
+    private void recordChanged(CallerContext caller, List<Changed> changed, long toMemberId) {
+        if (changed.isEmpty()) {
+            return;
         }
+        long toAccountId = accountOf(toMemberId);
+        // 자기에게 배정한 경우(팀장 자기 배정 등)는 자기가 고른 일이라 알리지 않는다 (계약 6.1, 11-04 결정)
+        boolean notify = !Objects.equals(toAccountId, caller.accountId());
+        List<NotificationRequest> requests = new ArrayList<>(changed.size());
+        for (Changed c : changed) {
+            Task task = c.task();
+            String key = "task:" + task.getId() + ":lock:" + c.lockBefore() + ":ASSIGNEE_CHANGED";
+            activities.record(caller, ActivityEvent.of(key, task.getProjectId(), ACTIVITY_ASSIGNEE_CHANGED,
+                    ActivityTargetType.TASK, task.getId()));
+            if (notify) {
+                Message message = NotificationMessages.taskAssigned(task.getTitle());
+                requests.add(new NotificationRequest(key + ":to:" + toAccountId, task.getProjectId(), toAccountId,
+                        NOTIFICATION_ASSIGNED, message.title(), message.body(), NotificationTargetType.TASK, task.getId(),
+                        null));
+            }
+        }
+        // 활성 멤버 확인을 한 번에 (requestAll 은 프로젝트마다 조회 한 번)
+        notifications.requestAll(requests);
     }
 
-    private static boolean isSameAssignee(Task task, long toMemberId) {
-        return task.getAssigneeMemberId() != null && task.getAssigneeMemberId() == toMemberId;
-    }
-
-    /** 새 담당자의 계정. 부르는 쪽이 활성 멤버임을 이미 확인했다 */
+    /**
+     * 새 담당자의 계정. 부르는 쪽이 활성 멤버임을 이미 확인했다. project 패키지가 이 서비스를 쓰므로 그쪽 저장소를 끌어오지 않고
+     * SQL 로 읽는다(패키지 순환 방지). 이 트랜잭션에서 그 멤버 행은 바뀌지 않아 flush 되지 않은 변경을 놓칠 일이 없다.
+     */
     private long accountOf(long memberId) {
-        return members.findById(memberId).map(ProjectMember::getAccountId)
-                .orElseThrow(() -> new IllegalStateException("assignee member missing: " + memberId));
+        return jdbc.sql("select account_id from project_member where id = :m").param("m", memberId)
+                .query(Long.class).single();
     }
 }

@@ -359,6 +359,36 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
+     * 깨지면: 팀원 제외 중 넘길 작업이 동시에 바뀌었을 때 409 revision_conflict 가 아니라 500 이 나거나, 실패했는데 활동·알림·멤버십 종료가 남는다.
+     * 작업 행을 쥔 별도 트랜잭션에서 잠금 버전을 올려 커밋해, 요청의 작업 저장(UPDATE … where lock_version)이 매번 충돌하게 만든다 (-288).
+     */
+    @Test
+    void handover_conflictWithConcurrentTaskChange_is409_andLeavesNothing() throws Exception {
+        long first = createTaskAsMember("인계 충돌 1");
+        long second = createTaskAsMember("인계 충돌 2");
+        long memberMemberId = api.memberId("member@test");
+        long carolMemberId = memberIdOf(joinAsMember());
+
+        HttpResponse<String> res = whileRowLocked("select id from task where id = ? for update", second,
+                () -> api.post(removePath(memberMemberId), body("reassign_to_member_id", carolMemberId), leader),
+                lock -> {
+                    try (PreparedStatement ps = lock.prepareStatement(
+                            "update task set lock_version = lock_version + 1 where id = ?")) {
+                        ps.setLong(1, second);
+                        ps.executeUpdate();
+                    }
+                });
+
+        assertCode(res, 409, "revision_conflict");
+        assertThat(leftReason(memberMemberId)).isNull();
+        for (long task : new long[] {first, second}) {
+            assertThat(taskRow(task)).endsWith("|" + memberMemberId);
+            assertThat(assigneeActivities(task)).isEmpty();
+            assertThat(assignedRecipients(task)).isEmpty();
+        }
+    }
+
+    /**
      * 깨지면: 팀장 위임이 커밋되는 동안 프로젝트 잠금을 기다린 팀장 전용 요청이 이미 팀장이 아닌 사람으로 처리된다
      * (MEM-A08 "요청 처리 시점의 팀장 권한 재확인"). 대상은 담당자 변경(TSK-A06)·표시 수정(MEM-A07)·프로젝트 수정·삭제(PRJ-A04·A05).
      * 잠금을 쥔 트랜잭션에서 위임을 흉내 내 커밋해, 겹치는 순서를 매번 똑같이 만든다.
