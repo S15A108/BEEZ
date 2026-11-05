@@ -29,7 +29,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * AI 호출 중에는 DB 연결을 쥐지 않는다. 호출 뒤 반영 단계에서 아직 같은 시도·같은 리스인지 다시 확인하므로,
  * 그 사이 검증이 STALE 이 되거나 새 시도가 생겼으면 결과를 버린다.
  * 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 주기마다 하나씩 회수해 ERROR(RETRY)로 닫는다.
- * 같은 검증을 다시 돌리는 재시도(VAL-A04)는 -161 에서 붙인다 — 그 전에는 새 검증을 요청한다.
+ * 같은 검증을 다시 돌리는 재시도(VAL-A04, {@code ValidationRetryService})는 시도 번호를 올리고 같은 큐 작업을 다시 대기로 돌린다 —
+ * 워커는 새 시도를 다른 작업과 똑같이 꺼낸다. 지난 시도의 늦은 결과는 시도 번호가 달라 반영 단계에서 버려진다.
  */
 @Component
 public class ValidationWorker {

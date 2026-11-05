@@ -344,6 +344,57 @@ it('사람 검토가 아닌 분석 오류는 실행 재시도를 제공한다', 
   ).toBeInTheDocument()
 })
 
+it('완료 보고 재검증이 오류인데 새 계획 검증이 있으면 새 검증으로 재개하고 재검증 재시도도 따로 제공한다', async () => {
+  const deltaError = {
+    ...task.validation!,
+    id: '602',
+    status: 'ERROR' as const,
+    trigger: 'DELTA' as const,
+    findings: [
+      {
+        id: '704',
+        source: 'MODEL' as const,
+        kind: 'ERROR' as const,
+        severity: 'BLOCKING' as const,
+        message: '분석 실패',
+        sources: [],
+        resolution: 'RETRY' as const,
+      },
+    ],
+  }
+  task = {
+    ...task,
+    status: 'WAITING',
+    waiting_reason: 'REVALIDATION',
+    delta_validation_id: '602',
+    validation: { ...task.validation!, id: '603', status: 'PASS' },
+  }
+  vi.spyOn(validationsApi, 'get').mockImplementation(async (_project, id) =>
+    id === '602' ? deltaError : task.validation!,
+  )
+  const retry = vi
+    .spyOn(validationsApi, 'retry')
+    .mockImplementation(async () => ({ ...deltaError, status: 'RUNNING' }))
+  const state = vi.spyOn(tasksApi, 'state').mockImplementation(async () => task)
+  show(false)
+  fireEvent.click(
+    await screen.findByRole('button', { name: '완료 보고 재검증 재시도' }),
+  )
+  await waitFor(() =>
+    expect(retry).toHaveBeenCalledWith('101', '602', { expected_attempt: 1 }),
+  )
+  const resume = await screen.findByRole('button', { name: '재개' })
+  await waitFor(() => expect(resume).toBeEnabled())
+  fireEvent.click(resume)
+  await waitFor(() =>
+    expect(state).toHaveBeenCalledWith(
+      '101',
+      '501',
+      expect.objectContaining({ event: 'RESUME', validation_id: '603' }),
+    ),
+  )
+})
+
 it('팀장도 담당자가 아니면 시작·검증을 대신하지 않고 취소 개입만 제공한다', async () => {
   task = { ...task, assignee_member_id: '22' }
   show(true)
