@@ -140,6 +140,8 @@
 | `DOCUMENT_CHANGED_BY_MEETING` | 회의(오서현) | 회의가 끝나 문서가 바뀜 | 관련 작업 담당자 | 아니오 | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | 기준 v1 생김 | 활성 팀원 | 아니오 | BASELINE |
 | `MEETING_OPENED` | 회의(오서현) | 비비가 회의를 엶 | 참여자 | — (행위자가 비비) | MEETING |
+| `MEETING_PARTICIPANT_ADDED` | 회의(오서현) | 참여자로 추가됨(MTG-A04, 이유를 문구에 포함) | 추가된 사람 | 아니오 | MEETING |
+| `MEETING_PARTICIPANT_REMOVED` | 회의(오서현) | 참여자에서 제외됨(MTG-A14, 이미 빠진 경우 멱등 204는 보내지 않음) | 빠진 사람 | — (팀장이 제외) | MEETING |
 | `MEETING_RECORD_ADDED` | 회의(오서현) | 회의에 새 기록 | 다른 참여자 | 아니오 | MEETING |
 | `CHANGE_PROPOSAL_SUBMITTED` | 변경(오서현) | 제안 올림 | 관련 작업 담당자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REVIEW_REQUESTED` | 변경(오서현) | 검토 요청 | 지정 검토자 | 아니오 | CHANGE_PROPOSAL |
