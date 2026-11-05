@@ -1,5 +1,5 @@
 -- 활동 이벤트 저장 (S15P31A108-182, 계약 10-notification-activity-contract.md 4·7절).
--- V29(#123)·V30(#127) 이 열린 PR 에 있어 V31 을 쓴다. outOfOrder 가 꺼져 있으므로 그 PR 들이 먼저 머지돼야 한다.
+-- dev 최신 V28(#127) 다음 번호. 열린 #123 도 V29 를 써서, 이 PR 이 먼저 머지되면 #123 이 V30 으로 올린다(outOfOrder 꺼짐).
 -- 아직 activity_event 에 쓰는 코드가 없어(빈 테이블) 아래 CHECK 를 바로 건다.
 
 -- 비비(BEE) 행위자 추가. V2 의 인라인 CHECK 는 PostgreSQL 기본 이름 activity_event_actor_kind_check 다.
