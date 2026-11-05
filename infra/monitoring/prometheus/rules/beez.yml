@@ -34,7 +34,7 @@ groups:
           beez_cdc_analysis_snapshot_available == 1
           and on(instance) (time() - beez_cdc_analysis_snapshot_last_success_epoch_seconds) <= 120
       - record: beez_cdc:oldest_pending_seconds:max
-        expr: max(beez_cdc_analysis_oldest_pending_seconds and on(instance) beez_cdc:snapshot_fresh)
+        expr: max(beez_cdc_analysis_oldest_pending_seconds and on(instance) beez_cdc:snapshot_fresh
       - record: beez_cdc:expired_leases:max
         expr: max(beez_cdc_analysis_expired_leases and on(instance) beez_cdc:snapshot_fresh)
       - record: beez_cdc:blocked_projects:max
