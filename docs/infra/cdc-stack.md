@@ -19,7 +19,7 @@ dev 서버에 Kafka 단일 broker와 Debezium Connect를 compose 프로젝트 `b
 | 호스트 포트 | **없음** |
 | 컨테이너 안에서만 여는 포트 | Connect REST `127.0.0.1:8083`, Kafka controller `127.0.0.1:9093` |
 | 같은 망에 여는 포트 | Kafka broker `9092`(PLAINTEXT). `beez_default`의 모든 컨테이너가 읽고 쓸 수 있다(계획 D3 "남는 위험"으로 수용) |
-| 비밀 디렉터리 | 서버 `/opt/beez/.cdc-secrets/`(스택 폴더 밖) → 컨테이너 `/run/cdc-secrets` 읽기 전용. `root:1001` `750` |
+| 비밀 디렉터리 | 서버 `/opt/beez/.cdc-secrets/`(스택 폴더 밖) → 컨테이너 `/run/cdc-secrets` 읽기 전용. `root:1001` `2750`(`drwxr-s---`, setgid는 `/opt/beez`에서 상속) |
 | Connect 내부 토픽 | `beez-cdc-connect-configs`(1)·`-offsets`(25)·`-status`(5) 파티션, 모두 compact·복제 1. Connect가 기동할 때 만든다 |
 | 접수 토픽 | `beez.public.published_change_analysis`, 파티션 1, 복제 1, `retention.ms` 7일. **손으로 만든다** |
 
@@ -107,8 +107,12 @@ kt kafka-topics.sh --bootstrap-server localhost:9092 --describe \
 # 1) 둘 다 healthy
 cdc ps --format '{{.Service}}\t{{.Status}}'
 
-# 2) 호스트에 새 리슨 주소가 없다. 출력이 비어 있어야 한다(줄이 보이면 sudo ss -tlnp 로 그 포트의 프로세스를 본다)
-sudo ss -Htln | awk '{print $4}' | sort | diff /tmp/ss-before-cdc.txt - | grep '^>'
+# 2) 호스트에 새 리슨 주소가 없다. 출력이 비어 있어야 한다(줄이 보이면 sudo ss -tlnp 로 그 포트의 프로세스를 본다).
+#    기준 파일은 띄우기 직전에 만든 것이다. 없으면(재부팅으로 /tmp 가 비는 등) 비교하지 않고 2b 로만 본다
+if [ -f /tmp/ss-before-cdc.txt ]; then sudo ss -Htln | awk '{print $4}' | sort | diff /tmp/ss-before-cdc.txt - | grep '^>'
+else echo '기준 파일 없음 — 2b 만 본다'; fi
+# 2b) 이 스택 컨테이너에 호스트 포트 연결이 없다. 출력이 비어 있어야 한다(->가 보이면 호스트에 publish 된 것)
+docker ps -a --filter label=com.docker.compose.project=beez-cdc --format '{{.Names}} {{.Ports}}' | grep -- '->'
 
 # 3) 같은 망의 backend·ai 에서 Connect REST·controller 가 닿지 않는다. 000 / False 면 통과
 docker exec beez-backend-1 sh -c 'for u in connect:8083 kafka:9093; do printf "%s " $u; curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://$u/; done'
@@ -140,7 +144,7 @@ kt kafka-topics.sh --bootstrap-server localhost:9092 --list
   자동 수집·알림은 S15P31A108-261, 그 전까지는 계획 D6의 수동 확인(평일 오전·배포 뒤)으로 본다.
 - 3)에서 `000`은 연결 거부다. 두 포트는 컨테이너 안 127.0.0.1에만 열려 있다. broker `kafka:9092`는 같은 망에서
   닿는 것이 정상이다(backend consumer가 쓴다).
-- 6)이 실패하면 파일·디렉터리 소유자와 권한(`root:1001`, 750·640)을 본다. 600이면 Connect가 읽지 못해 295의 커넥터
+- 6)이 실패하면 파일·디렉터리 소유자와 권한(`root:1001`, 디렉터리 2750·파일 640)을 본다. 600이면 Connect가 읽지 못해 295의 커넥터
   등록이 실패한다.
 
 ## 올리기·업데이트
@@ -167,7 +171,8 @@ git archive "$SHA" infra/cdc/dev | ssh beez "set -e; cd /opt/beez
 그다음 서버에서 다시 띄운다.
 
 ```bash
-# 서버 (ssh beez). cdc 함수는 "처음 올리기" 3단계
+# 서버 (ssh beez). cdc 함수는 "처음 올리기" 3단계. 첫 줄은 "확인" 2)의 기준을 이번 올리기 직전으로 새로 잡는다
+sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
 cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 ```
 
@@ -187,12 +192,12 @@ cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 | 순서 | 할 일 | 비고 |
 |---|---|---|
 | 1 | backend consumer 끄기: 서버 env `BEEZ_CDC_INTAKE_ENABLED=false` → backend 재배포 | 295 전이면 건너뛴다. 이때부터 분석이 멈춘다(계획 §1). 점검이 끝나면 아래 "다시 켜기"로 되살린다 |
-| 2 | `cdc stop` 또는 `cdc down` | 아래 명령 |
-| 3 | 본 스택을 내려야 할 때만 본 스택 `down` | `beez-cdc`가 `beez_default`에 붙어 있으면 본 스택 `down`이 "has active endpoints"로 실패한다 |
+| 2 | 본 스택을 그대로 두면 `cdc stop`, 본 스택도 내릴 거면 **`cdc down`** | 아래 명령. 이유는 3번 |
+| 3 | 본 스택을 내려야 할 때만 본 스택 `down` | `beez-cdc`가 떠 있으면 "has active endpoints"로 실패한다. `cdc stop`으로 멈추기만 했으면 `down`은 되지만 `beez_default`가 지워졌다가 새로 만들어져, 멈춘 컨테이너가 옛 네트워크를 가리킨 채 남는다. 그러면 `cdc start`·`cdc up` 모두 `network … not found`로 실패한다(로컬 실측). 그래서 2번에서 `cdc down`으로 컨테이너를 지운다 |
 
 ```bash
 # 서버 (ssh beez)
-cdc stop        # 멈추기만. 컨테이너·데이터 그대로, cdc start 로 다시
+cdc stop        # 멈추기만. 컨테이너·데이터 그대로. 본 스택을 내리지 않을 때만. 다시 띄울 때는 아래 "다시 켜기"
 cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은 남음
 # cdc down -v   # 볼륨까지 삭제 — 아래 "볼륨을 지우면" 을 먼저 읽는다
 ```
@@ -205,14 +210,14 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 
 ### 다시 켜기 (점검 뒤 복귀)
 
-위 순서로 멈췄다면 **역순으로 되살린다.** `cdc start`는 Kafka·Connect만 띄우고, backend consumer는 1번에서 끈 채로
+위 순서로 멈췄다면 **역순으로 되살린다.** `cdc up`은 Kafka·Connect만 띄우고, backend consumer는 1번에서 끈 채로
 남는다. 지금 코드는 복구 스캔도 같은 설정(`beez.cdc.intake.enabled`)에 묶여 있어, consumer를 다시 켜지 않으면
 **점검이 끝나도 발행 분석이 계속 멈춰 있다**(계획 §1). 298로 스캔을 분리해도 consumer는 손으로 다시 켠다.
 
 | 순서 | 할 일 | 확인 |
 |---|---|---|
 | 1 | 본 스택을 내렸다면 먼저 올린다(`beez_default`가 있어야 이 스택이 붙는다) | backend·postgres healthy |
-| 2 | `cdc start`(stop 했을 때) 또는 `cdc up -d --wait`(down 했을 때) | "확인" 1) 둘 다 healthy |
+| 2 | 기준 파일을 새로 잡은 뒤 `cdc up -d --wait`(stop·down 어느 쪽이든 같음, 아래 명령) | "확인" 1) 둘 다 healthy. `network … not found`가 나면 아래 첫 번째 주의 |
 | 3 | 295 이후: 커넥터·task·슬롯 확인(아래 명령) | connector·task 모두 `RUNNING`, 슬롯 `active` = `t`. 아니면 여기서 멈추고 원인을 본다(계획 D6) |
 | 4 | 켜기 직전 접수 상태를 적는다(아래 명령) | 켜는 순간 그동안 쌓인 PENDING을 복구 스캔이 한꺼번에 집어 AI를 호출한다(계획 D7) |
 | 5 | consumer 켜기: 서버 env `BEEZ_CDC_INTAKE_ENABLED=true` → backend 재배포 | 명령은 295 런북의 consumer 켜기 절차를 따른다(295에서 이 칸을 그 절 링크로 바꾼다) |
@@ -220,14 +225,20 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 
 ```bash
 # 서버 (ssh beez). cdc·kt 함수는 "처음 올리기" 3단계, PG·pgsql 은 cdc-postgres.md "0. 준비"
+# 2) "확인" 2)의 기준을 띄우기 직전으로 새로 잡고 띄운다. up 은 stop 으로 멈춘 것도 다시 띄우고 healthy 까지 기다린다
+sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
+cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 # 3) 커넥터·task 상태. 커넥터가 없으면(295 전) {}
 docker exec beez-cdc-connect-1 curl -s 'http://127.0.0.1:8083/connectors?expand=status'; echo
 #    슬롯. Connect 가 다시 붙기까지 몇 초 걸릴 수 있다. retained 는 슬롯이 붙잡고 있는 WAL 양
-pgsql -c "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained FROM pg_replication_slots"
+#    </dev/null: pgsql 은 docker exec -i 라서 그냥 두면 함께 붙여 넣은 다음 줄을 입력으로 삼켜 실행하지 않는다
+pgsql -c "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained FROM pg_replication_slots" </dev/null
 # 4) 켜기 직전 접수 상태
-pgsql -c "SELECT status, count(*) FROM published_change_analysis GROUP BY status ORDER BY status"
+pgsql -c "SELECT status, count(*) FROM published_change_analysis GROUP BY status ORDER BY status" </dev/null
 ```
 
+- 2번에서 `network … not found`가 나면 `cdc stop` 뒤 본 스택을 내렸다 올린 경우다. `cdc up -d --wait --force-recreate`로
+  컨테이너를 새 네트워크에 다시 만든다(로컬 실측으로 복구 확인). 데이터는 볼륨에 있어 그대로다.
 - 295 전에는 멈출 때 1번(consumer)을 건너뛰었으므로 여기서도 1·2번까지만 한다.
 - 3번에서 슬롯이 `active` = `f`로 남거나 `retained`가 1GB를 넘으면 consumer를 켜지 말고 계획 D6 "슬롯·Connect 감시"를
   따른다. 커넥터 없이 consumer만 켜면 토픽에 아무것도 오지 않아 연결 확인이 안 된다(계획 D7 "켜는 순서").
