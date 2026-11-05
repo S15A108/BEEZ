@@ -71,7 +71,7 @@ export function officeActors(
       color: agent.color,
       status: agent.status,
       // 팀원의 AI 에이전트(hired_by = 주인)는 하늘색 로봇이다(D35). 팀원은 계정 avatar 모양, 모르면 사람이다(D34,
-      // 명세 요청 MEM-A01 avatar).
+      // 명세 요청 MEM-A06 avatar).
       appearance:
         agent.kind === 'lead'
           ? 'bibi'
