@@ -6524,7 +6524,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - 현재 본문·참고 승인본과 검토가 일치해야 한다. 직접 편집/재업로드 또는 참고 승인본 변경 시 재검토한다.
 - APPLY는 현재 본문에서 original_text가 유일하게 일치할 때 replacement_text로 바꾸고 작성 revision과 검토 resolved_revision을 갱신한다. 겹친 제안이 일치하지 않으면 review_stale다.
 - SKIP은 본문을 바꾸지 않고 선택을 보관한다. 처리한 선택을 다른 결정으로 덮어쓸 수 없다. 모든 PATCH를 처리한 뒤 다시 고치거나 팀장에게 제출한다. COMMENT에 APPLY/SKIP을 보내면 400 validation_failed다.
-- (수정안 요청) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고, 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 결정과 함께 남긴다. 지금 dev 구현은 저장된 replacement_text만 쓰므로 BE 변경이 필요하다.
+- (구현, S15P31A108-231) 대화(DOC-A22)에서 비비가 다른 대체문(reply.proposed_text)을 내면 APPLY에 `replacement_text`로 그 문장을 보내 반영한다. 서버는 그 제안의 대화에 남은 비비 대체문 가운데 하나와 정확히 같을 때만 받고(제안에 원래 저장된 대체문이라도 대화에 없으면 거절), 다르면 400 validation_failed다. SKIP에 보내도 400이다. original_text 유일 일치와 review_stale 규칙은 같고, 반영에 쓴 문장은 제안의 `applied_replacement_text`로 결정과 함께 남긴다. 이미 반영한 제안에 같은 문장으로 다시 보내면 같은 결과, 다른 문장이면 409 `version_conflict`다.
 - (수정안 요청) 화면에는 반영한 문단의 '되돌리기'가 있다. 처리한 선택을 덮어쓰지 않는 지금 규칙과 맞지 않으므로, `decision=REVERT`로 받을지 화면에서 뺄지 정해야 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -6921,6 +6921,7 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 | 404 | `not_found` | 프로젝트 접근 불가 또는 문서/검토/제안/제출 소속 불일치 |
 | 409 | `version_conflict` | 작성 revision이 오래되었거나 수정 없이 중복 제출함 |
 | 409 | `submission_decided` | 종결한 제출의 결정을 변경하려 함 |
+| 409 | `submission_withdrawn` | 등록자가 취소한 제출을 결정하려 함 (S15P31A108-231) |
 | 409 | `change_proposal_required` | baseline 이후 변경 제안 경로가 필요함 |
 
 ```json
@@ -6957,7 +6958,7 @@ HTTP `200`. [DocumentReviewSubmission](00-common.md#schema-documentreviewsubmiss
 
 관련 요구사항: DOC-01 (화면 PNL-02-m-review-5582)  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-231). AI-A10 `mode=DISCUSS`는 AI 쪽 미구현이라 BE는 대역으로 검증했고, 실제 AI 연동은 AI 담당(양지훈)과 계약 합의 뒤 확인한다.
 
 #### 인증
 
@@ -7051,6 +7052,10 @@ HTTP `201`.
 - 비비가 제안의 이유·근거를 설명하거나 다른 대체문을 낸다(AI-A10 DISCUSS). 본문은 바꾸지 않는다.
 - 다른 대체문으로 반영하려면 DOC-A17 APPLY에 replacement_text를 함께 보낸다.
 - 대화는 그 제안의 messages에 남고 DOC-A13·A20의 검토 결과로 함께 조회한다.
+- 등록자만, 지금 작성 내용의 최신 검토(참고 승인본 포함)에서만 쓸 수 있다. 직접 수정·재업로드·참고 승인본 변경 뒤에는 409 `review_stale`, 팀장 검토 요청 중에는 409 `submission_locked`이며 AI는 부르지 않는다. 다른 문서·검토의 제안이거나 없는 제안이면 404.
+- AI 호출 동안에는 트랜잭션·프로젝트 잠금을 잡지 않는다. 응답이 돌아오면 권한·리비전·참고 해시를 다시 확인해 그동안 바뀌었으면 오래된 응답을 버린다(409 `review_stale`, 대화는 저장하지 않는다). AI 장애·시간 초과는 503 `review_unavailable`, 형식 위반(응답 식별값 불일치, `reply.text` 없음, DISCUSS 응답에 제안이 있음 등)은 502 `invalid_ai_output`이며 어느 쪽도 기존 검토 결과·대화를 바꾸지 않는다. 사용량(BEE_DRAFT)은 문서 검토와 같은 규칙으로 남긴다.
+- 대화는 검토 단위로 DB에 보존한다(창을 닫아도 남는다, Q13 기본안). 지금까지의 대화에 새 메시지를 더해 AI에 보낸다(최근 40개까지). COMMENT 제안에 대해서도 대화할 수 있다.
+- 같은 `Idempotency-Key`의 완료된 요청은 AI를 다시 부르지 않고 저장된 응답을 돌려준다(본문이 다르면 409 `idempotency_conflict`). 같은 키가 동시에 들어오면 AI는 둘 다 부를 수 있지만 저장은 한 번만 된다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7066,7 +7071,7 @@ HTTP `201`.
 
 관련 요구사항: DOC-01 (화면 PNL-02-m-review-5582)  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-231). AI-A10 `mode=REQUEST`는 AI 쪽 미구현이라 BE는 대역으로 검증했고, 실제 AI 연동은 AI 담당과 계약 합의 뒤 확인한다.
 
 #### 인증
 
@@ -7158,6 +7163,9 @@ HTTP `201`.
 - 비비가 요청을 반영한 제안 하나를 만들어 같은 검토의 suggestions에 붙인다(AI-A10 REQUEST). original_text는 지금 본문에서 한 곳과만 일치해야 한다(DOC-A17 APPLY와 같은 규칙).
 - 새 제안도 반영 또는 넘겨야 DOC-A18로 제출할 수 있다.
 - (수정안 요청) replacement_text가 ""이면 original_text를 지운다. 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡아 순서만 바꾼 replacement_text로 낸다(AI-A10).
+- 등록자만, `expected_revision`이 지금 작성 리비전과 같고 `review_id`가 그 리비전의 최신 검토일 때만 쓸 수 있다(리비전이 다르면 409 `version_conflict`, 직접 수정 등으로 검토가 오래되면 409 `review_stale`, 검토 요청 중이면 409 `submission_locked`). 한 검토에서 직접 요청은 20번까지(초과 시 409 `review_request_limit`).
+- 새 제안은 같은 검토의 `suggestions`에 `origin=DIRECT_REQUEST`, `decision=PENDING`인 PATCH로 붙는다. 검토 결과(`summary`·`steps`·참고 해시)는 바꾸지 않고, 응답이 검증을 통과해야만 저장한다: 식별값 일치, 제안 정확히 1개, 검토 때 완료된 단계와 출처 규칙, `original_text`가 지금 본문에서 한 곳과만 일치하고 아직 처리하지 않은 다른 제안의 구간과 겹치지 않음(위반 시 502 `invalid_ai_output`). 호출 중에 본문이 바뀌었으면 409 `review_stale`.
+- AI 호출·사용량·멱등은 DOC-A22와 같다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7173,7 +7181,7 @@ HTTP `201`.
 
 관련 요구사항: DOC-01 (화면 PNL-02-m-review 최종본 확인)  
 담당: BE: 오서현 / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-231)
 
 #### 인증
 
@@ -7231,6 +7239,9 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - SUBMITTED인 자기 제출만 거둔다. 제출은 지우지 않고 WITHDRAWN 같은 종결 상태로 이력에 남기며, 작성 건은 EDITING으로 돌아가 revision을 올린다.
 - 제출 잠금(DOC-A14 submission_locked)과 맞추려면 제출 상태 값을 하나 더 두어야 한다. 이 API를 둘지, 반려만으로 다시 열지는 오서현과 정한다.
 - 팀장에게 간 알림은 남지만 열면 지금 상태를 보인다.
+- (구현) 등록자(제출한 사람)만 취소할 수 있다. 제출은 지우지 않고 `WITHDRAWN`으로 종결하며 제출 당시 본문·비비 검토·제안·대화는 그대로 조회된다(DOC-A20). 작성 건은 `EDITING`으로 돌아가고 revision이 올라 이전 검토는 `review_stale`이 된다 — 반려 뒤 재작성과 같게 고친 뒤 비비 검토를 다시 받아 재제출한다(새 제출·새 문서 버전이 만들어지고 이전 `WITHDRAWN` 제출은 그대로 남는다).
+- 팀장의 결정(DOC-A21)과 같은 프로젝트 잠금을 잡아 승인·반려와 취소가 동시에 와도 하나만 성립한다. 결정이 먼저면 409 `submission_decided`, 취소가 먼저면 DOC-A21이 409 `submission_withdrawn`이다. 같은 제출을 다시 취소하면 같은 결과(멱등), 다른 사람은 403, 다른 문서·제출은 404. 기준 설계 이후에는 변경 제안 경로라 쓰지 않는다.
+- 취소한 제출의 문서 버전은 반려와 같이 REJECTED로 두고 제출 이력의 상태(WITHDRAWN)로 구분한다. 취소 알림은 217/237 이후.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

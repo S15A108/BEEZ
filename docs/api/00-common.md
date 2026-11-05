@@ -132,7 +132,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 대상 | 값·주요 조건 |
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
-| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토 |
+| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토. 팀장 결정 전에 등록자가 취소하면(DOC-A24) 제출은 WITHDRAWN으로 종결하고 작성 건은 EDITING으로 돌아간다 |
 | 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
@@ -712,10 +712,11 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
 | `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
 | `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
+| `applied_replacement_text` | `string` | N | 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영했을 때 실제로 쓴 문장. S15P31A108-231 |
 | `sources` | `DocumentReviewSource[]` | Y | 검증된 참고 승인본 근거. BODY 및 과거 제안은 []. 아래 검토 전용 구조 사용 |
 | `messages` | [ReviewMessage[]](00-common.md#schema-reviewmessage) | N | 이 제안에 대한 비비와의 대화(DOC-A22). 수정안 요청 |
 
-`DocumentReviewSource`는 `{reference_id, document_id, document_version_id, kind, version_no, quote?}`다. 식별 메타데이터는 BE가 검토 입력에서 붙이고 quote가 있으면 해당 승인본 본문에 존재하는지 검증한다. 일반 RAG `Source`와 별개다. A22/A23의 신규 대화·직접 요청 구현은 231 후속이며 216에 포함하지 않는다.
+`DocumentReviewSource`는 `{reference_id, document_id, document_version_id, kind, version_no, quote?}`다. 식별 메타데이터는 BE가 검토 입력에서 붙이고 quote가 있으면 해당 승인본 본문에 존재하는지 검증한다. 일반 RAG `Source`와 별개다. A22/A23 대화·직접 요청은 S15P31A108-231에서 구현했다.
 
 <a id="schema-documentbeereview"></a>
 
@@ -750,7 +751,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `document_version_id` | `ID` | Y | 제출한 정확한 문서 버전 |
 | `submitted_by` | `ID` | Y | 제출한 작성자 계정 |
 | `revision` | `integer` | Y | 제출 당시 작성 리비전 |
-| `status` | `SUBMITTED\|APPROVED\|REJECTED` | Y | 심사 상태 |
+| `status` | `SUBMITTED\|APPROVED\|REJECTED\|WITHDRAWN` | Y | 심사 상태. WITHDRAWN은 등록자가 결정 전에 취소한 제출(S15P31A108-231) |
 | `content_hash` | `string` | Y | 제출 원본 bytes의 해시 |
 | `submitted_at` | `Time` | Y | 제출 시각 |
 | `decided_by` | `ID` | N | 심사한 팀장 계정 |
