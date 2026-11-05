@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useParams } from 'react-router'
 import { authApi, membersApi } from '@/api/services'
 import {
   DEMO_EMAIL,
@@ -35,6 +35,17 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// 어느 프로젝트로 갔는지 확인할 수 있게 주소의 ID도 그린다.
+function ProjectScreen() {
+  const { id } = useParams()
+  return (
+    <>
+      <p>프로젝트 화면</p>
+      <p>프로젝트 ID {id}</p>
+    </>
+  )
+}
+
 function open(entry = `/invite?token=${token}`) {
   render(
     <QueryClientProvider
@@ -45,7 +56,8 @@ function open(entry = `/invite?token=${token}`) {
       <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/invite" element={<InvitationPage />} />
-          <Route path="/projects/:id" element={<p>프로젝트 화면</p>} />
+          <Route path="/projects/:id" element={<ProjectScreen />} />
+          <Route path="/" element={<p>나의 도시</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -81,6 +93,21 @@ it('메일 링크로 돌아왔는데 이미 팀원이면 그 프로젝트로 간
   await register('mail@beez.local')
   open(`/invite?invite=${token}&project=101`)
   expect(await screen.findByText('프로젝트 화면')).toBeInTheDocument()
+  expect(screen.getByText('프로젝트 ID 101')).toBeInTheDocument()
+})
+
+it('메일 링크의 project가 프로젝트 ID 모양이 아니면 이미 팀원이어도 나의 도시로 간다', async () => {
+  await membersApi.createEmailInvitations('101', {
+    emails: ['mail@beez.local'],
+  })
+  token = loadMockDatabase().invitations.findLast(
+    (item) => item.invited_email === 'mail@beez.local',
+  )!.token
+  await register('mail@beez.local')
+  open(
+    `/invite?invite=${token}&project=${encodeURIComponent('../account/withdraw')}`,
+  )
+  expect(await screen.findByText('나의 도시')).toBeInTheDocument()
 })
 
 it('로그아웃 상태로 메일 링크를 열면 프로젝트 소개를 보이고 로그인·가입에 프로젝트도 넘긴다', async () => {

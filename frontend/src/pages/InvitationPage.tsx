@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { LoaderCircle, TriangleAlert } from 'lucide-react'
+import { idSchema } from '@/api/contracts/common'
 import { authApi, membersApi } from '@/api/services'
 import { useSession } from '@/features/auth/useSession'
 import { invitationQuery } from '@/features/members/invitationQuery'
@@ -20,7 +21,8 @@ import NotFoundPage from './NotFoundPage'
 export default function InvitationPage() {
   const [params] = useSearchParams()
   const token = params.get('token') ?? params.get('invite') ?? ''
-  const projectId = params.get('project')
+  // 주소창 값이라 '../account/withdraw'처럼 앱 안 다른 곳을 가리킬 수 있다. ID 모양일 때만 프로젝트로 보낸다.
+  const projectId = idSchema.safeParse(params.get('project')).data
   const session = useSession()
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -30,7 +32,7 @@ export default function InvitationPage() {
     enabled: Boolean(token),
     retry: false,
   })
-  const openProject = async (id?: string | null) => {
+  const openProject = async (id?: string) => {
     await client.invalidateQueries({ queryKey: ['projects'] })
     navigate(id ? `/projects/${id}` : '/', { replace: true })
   }
