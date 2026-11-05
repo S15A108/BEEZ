@@ -284,7 +284,8 @@ class ValidationResilienceIntegrationTests extends IntegrationTestSupport {
         doAnswer(inv -> aiResponse(inv.getArgument(0))).when(analyzer).analyze(any());
         // DB 장애: 결과 저장(검증 종결)과 실패 기록(역시 검증 종결) 모두 실패한다
         doThrow(new IllegalStateException("DB 장애 (시험용)")).when(repository).finish(anyLong(), any(), any());
-        assertThatThrownBy(() -> worker.runOnce()).isInstanceOf(IllegalStateException.class);
+        // 저장소(@Repository)를 지나며 스프링이 DB 접근 예외(InvalidDataAccessApiUsageException)로 감싸 던진다
+        assertThatThrownBy(() -> worker.runOnce()).isInstanceOf(RuntimeException.class).hasMessageContaining("DB 장애");
 
         // 두 트랜잭션이 모두 롤백돼 검증·실행은 RUNNING, 작업은 LEASED 로 남는다 (11-validation-rollback §5 첫 줄)
         assertThat(one("select status from validation where id = " + id)).isEqualTo("RUNNING");
