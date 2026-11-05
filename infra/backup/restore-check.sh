@@ -30,7 +30,13 @@ DUMP=${DUMP:-$(ls -1 "$ROOT"/db/beez-*.dump 2> /dev/null | sort | tail -n 1)}
 BUCKET=${DOCUMENT_S3_BUCKET:-beez-documents}
 OBJECTS=$ROOT/objects/$BUCKET
 [[ -f $DUMP ]] || { echo "덤프가 없음: ${DUMP:-$ROOT/db/beez-*.dump}" >&2; exit 2; }
-[[ -d $OBJECTS ]] || { echo "원본 폴더가 없음: $OBJECTS" >&2; exit 2; }
+[[ -d $ROOT/objects ]] || { echo "백업 폴더가 아님(objects 없음): $ROOT" >&2; exit 2; }
+# objects/<bucket> 이 없으면 문서 0건일 때의 백업이다(빈 폴더는 PC 사본으로 옮겨지지 않는다). 빈 폴더로 대신한다
+empty_objects=
+if [[ ! -d $OBJECTS ]]; then
+    empty_objects=$(mktemp -d)
+    OBJECTS=$empty_objects
+fi
 
 # 이미지는 운영과 같은 digest 를 compose.yaml 에서 읽는다. 버전을 올릴 때 이 파일을 따로 고치지 않는다
 COMPOSE_FILE=$(cd "$(dirname "$0")/.." && pwd)/compose.yaml
@@ -48,6 +54,8 @@ log() { echo "[restore-check $(date +%H:%M:%S)] $*"; }
 cleanup() {
     docker rm -f -v "$N-pg" "$N-sw" > /dev/null 2>&1 || true
     docker network rm "$N" > /dev/null 2>&1 || true
+    [[ -n $empty_objects ]] && rm -rf "$empty_objects"
+    true
 }
 trap cleanup EXIT
 trap 'exit 130' INT

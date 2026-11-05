@@ -21,7 +21,11 @@ CURL_IMAGE=curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699
 
 [[ -r $ENV_FILE ]] || { echo "env 파일을 읽을 수 없음: $ENV_FILE" >&2; exit 2; }
 # env 파일을 source 하지 않는다(값이 셸 코드로 실행되지 않게). 필요한 줄만 꺼낸다
-env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
+# env 파일은 배포(compose)와 같은 규칙으로 읽는다(따옴표·인라인 주석·CRLF). check-port.sh 의 envs() 와 같은 방식.
+# compose 오류 문구에는 값이 섞일 수 있어 원문을 내보내지 않는다
+ENV_ALL=$(printf 'services: {}\n' | docker compose -f - --env-file "$ENV_FILE" config --environment 2> /dev/null) ||
+    { echo "env 파일을 compose 로 해석하지 못함(형식 오류일 수 있어 문구는 숨김). 서버에서 docker compose 로 직접 확인한다" >&2; exit 2; }
+env_value() { printf '%s\n' "$ENV_ALL" | sed -n "s/^$1=//p" | tail -n 1; }
 BUCKET=$(env_value DOCUMENT_S3_BUCKET); BUCKET=${BUCKET:-beez-documents}
 AK=$(env_value SEAWEEDFS_BACKUP_ACCESS_KEY); SK=$(env_value SEAWEEDFS_BACKUP_SECRET_KEY)
 [[ -n $AK && -n $SK ]] || { echo "env 파일에 SEAWEEDFS_BACKUP_* 가 없음" >&2; exit 2; }

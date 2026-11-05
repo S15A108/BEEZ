@@ -228,6 +228,11 @@ RUNNING lease는 10분이며, 만료 시 새 attempt로 자동 복구한다. aut
 - `check-live.sh`: DB 조회 실패는 종료 코드 2와 "DB 조회 실패", 0건은 통과다.
 - seaweedfs를 멈춘 채 backend를 다시 만들어도 backend는 `(healthy)`다(`depends_on: service_started`).
 
+2026-11-05 hyunneee 리뷰 반영:
+- env 읽기: 스크립트가 env 파일을 sed가 아니라 `docker compose config --environment`(check-port.sh와 같은 방식)로 읽는다. 키를 `"…" # 주석` 형태로 쓴 env에서 compose 배포, backend 키 PUT, `backup.sh`, `check-live.sh`가 모두 같은 키로 동작했다.
+- 문서 0건: 빈 bucket의 백업은 `objects/beez-documents`를 만들고 `LAST_OK`를 쓴다. PC 사본에는 빈 폴더가 없어도 `restore-check.sh`가 통과하고, `restore.sh all`은 "올릴 원본 0개"로 넘어가 backend가 healthy로 뜬다. 문서 1건을 넣은 뒤 백업·받기·복원 시험도 그대로 통과했다(실제 컨테이너).
+- 시험 `infra/backup/test_backup_scripts.py`(9개, 가짜 docker·진짜 compose): 고치기 전 스크립트에서는 env 4건·빈 bucket 3건이 실패한다. CI `deploy-scripts` 잡에서 돈다.
+
 문서 HTTP 통합 시험은 실제 PostgreSQL과 SeaweedFS를 함께 사용해 업로드/다운로드·DB rollback 시 객체 삭제·현재 승인 범위 검색을 검증한다. DB 등록 서비스만 독립 검증하는 일부 시험은 src/test 전용 메모리 대역을 사용하며 제품에 등록하지 않는다.
 
 - [SeaweedFS 공식 README](https://github.com/seaweedfs/seaweedfs): Docker/mini·S3_BUCKET·영속 경로.

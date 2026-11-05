@@ -46,10 +46,17 @@ log() { echo "[restore $(date +%H:%M:%S)] $*"; }
 # stderr 로 낸다. $(cid …) 안에서 불려도 메시지가 변수에 삼켜지지 않게
 fail() { log "실패: $*" >&2; exit 1; }
 [[ -r $ENV_FILE ]] || fail "env 파일을 읽을 수 없음: $ENV_FILE"
-env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
+# env 파일은 배포(compose)와 같은 규칙으로 읽는다(따옴표·인라인 주석·CRLF). check-port.sh 의 envs() 와 같은 방식.
+# compose 오류 문구에는 값이 섞일 수 있어 원문을 내보내지 않는다
+ENV_ALL=$(printf 'services: {}\n' | docker compose -f - --env-file "$ENV_FILE" config --environment 2> /dev/null) ||
+    fail "env 파일을 compose 로 해석하지 못함(형식 오류일 수 있어 문구는 숨김). 서버에서 docker compose 로 직접 확인한다"
+env_value() { printf '%s\n' "$ENV_ALL" | sed -n "s/^$1=//p" | tail -n 1; }
 BUCKET=$(env_value DOCUMENT_S3_BUCKET); BUCKET=${BUCKET:-beez-documents}
 OBJECTS=$BACKUP_ROOT/objects/$BUCKET
-[[ -d $OBJECTS ]] || fail "원본 백업 폴더가 없음: $OBJECTS"
+[[ -d $BACKUP_ROOT/objects ]] || fail "백업 폴더가 아님(objects 없음): $BACKUP_ROOT"
+# objects/<bucket> 이 없으면 문서 0건일 때의 백업이다(빈 폴더는 PC 사본·옛 backup.sh 에서 빠질 수 있다). 원본 0개로 본다
+n_objects=0
+[[ -d $OBJECTS ]] && n_objects=$(find "$OBJECTS" -type f | wc -l)
 
 cid() {
     local id
@@ -68,7 +75,7 @@ if [[ $MODE == all ]]; then
 fi
 
 log "환경 $ENV_NAME, 할 일: $([[ $MODE == all ]] && echo "DB 를 $(basename "$DUMP") 시점으로 되돌리고(지금 DB 는 지움) 원본 올리기" || echo "원본 올리기")"
-log "원본 백업: $OBJECTS ($(find "$OBJECTS" -type f | wc -l)개) → bucket $BUCKET"
+log "원본 백업: $OBJECTS (${n_objects}개) → bucket $BUCKET"
 if (( ! YES )); then
     log "바꾸지 않음. 진행하려면 끝에 --yes 를 붙인다"
     exit 0
@@ -82,6 +89,10 @@ flock -w 1800 7 || fail "서버 백업이 30분 넘게 진행 중. 끝난 뒤 �
 log "백업 잠금 잡음(이 스크립트가 끝나면 풀림)"
 
 put_objects() {
+    if (( n_objects == 0 )); then
+        log "올릴 원본 0개(문서 0건 백업) — 건너뜀"
+        return 0
+    fi
     log "원본 올리기"
     RCLONE_CONFIG_DST_ACCESS_KEY_ID=$(env_value SEAWEEDFS_BOOTSTRAP_ACCESS_KEY) \
     RCLONE_CONFIG_DST_SECRET_ACCESS_KEY=$(env_value SEAWEEDFS_BOOTSTRAP_SECRET_KEY) \

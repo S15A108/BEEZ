@@ -32,14 +32,21 @@ RCLONE_IMAGE=rclone/rclone:1.71.2@sha256:3103526c506266a9ecdf064efe99bf3677d92ef
 
 [[ -r $ENV_FILE ]] || { echo "env 파일을 읽을 수 없음: $ENV_FILE" >&2; exit 2; }
 # env 파일을 source 하지 않는다(값이 셸 코드로 실행되지 않게). 필요한 줄만 꺼낸다
-env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
+# env 파일은 배포(compose)와 같은 규칙으로 읽는다 — 따옴표·인라인 주석·CRLF·중복 키(마지막 값). check-port.sh 의 envs() 와
+# 같은 방식이다. sed 로 직접 읽으면 KEY="값" 의 따옴표까지 키에 들어가 배포는 되는데 이 스크립트만 인증에 실패한다.
+# compose 오류 문구에는 값이 섞일 수 있어 원문을 내보내지 않는다
+ENV_ALL=$(printf 'services: {}\n' | docker compose -f - --env-file "$ENV_FILE" config --environment 2> /dev/null) ||
+    { echo "env 파일을 compose 로 해석하지 못함(형식 오류일 수 있어 문구는 숨김). 서버에서 docker compose 로 직접 확인한다" >&2; exit 2; }
+env_value() { printf '%s\n' "$ENV_ALL" | sed -n "s/^$1=//p" | tail -n 1; }
 BUCKET=$(env_value DOCUMENT_S3_BUCKET); BUCKET=${BUCKET:-beez-documents}
 
 log() { echo "[backup $(date +%H:%M:%S)] $*"; }
 
 # 덤프에는 계정·토큰 해시가 들어 있다. 만드는 파일을 주인만 읽게 한다
 umask 077
-mkdir -p "$BACKUP_ROOT/db" "$BACKUP_ROOT/objects"
+# objects/<bucket> 까지 만든다. 문서가 0건이면 rclone 은 대상 폴더를 만들지 않아, 빈 bucket 의 백업이 복원할 때
+# "원본 폴더 없음"이 된다(2026-11-05 hyunneee 리뷰, 실측)
+mkdir -p "$BACKUP_ROOT/db" "$BACKUP_ROOT/objects/$BUCKET"
 # 한 번에 하나만 돈다(손 실행과 예약 실행이 겹치지 않게). 겹치면 앞 실행이 끝날 때까지 기다린다 — 바로 끝내면
 # 손 실행과 예약 시각이 겹친 날 예약 백업이 빠진다. PC 의 pull-backup.sh 는 이 잠금을 잡지 않는다(받기가 백업을 막지 않게)
 exec 9> "$BACKUP_ROOT/.backup.lock"
