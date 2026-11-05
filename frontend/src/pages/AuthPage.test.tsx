@@ -108,3 +108,37 @@ it('비밀번호 찾기를 너무 자주 요청해 429가 오면 잠시 뒤에 �
     '임시 비밀번호를 너무 자주 요청했어요. 잠시 뒤에 다시 시도해 주세요.',
   )
 })
+
+// 캔버스 SCR-01-v2-forgot-temp: 보내면 입력 화면에 머물지 않고 완료 화면으로 바뀐다. 서버는 이름·이메일이 맞지 않아도
+// 같은 202를 주므로(가입 여부를 숨김) '보냈어요'라고 단정하지 않고 '맞으면'으로 안내한다.
+it('비밀번호 찾기를 보내면 완료 화면을 보이고, 로그인하러 가면 그 이메일이 채워져 있다', async () => {
+  vi.spyOn(authApi, 'forgotPassword').mockResolvedValue({
+    message: '입력한 정보가 맞으면 임시 비밀번호를 메일로 보냅니다.',
+  })
+  const user = userEvent.setup()
+  renderLogin(new QueryClient())
+  await user.click(screen.getByRole('button', { name: '비밀번호 찾기' }))
+  await user.type(screen.getByRole('textbox', { name: '이름' }), '김동료')
+  await user.clear(screen.getByRole('textbox', { name: '이메일' }))
+  await user.type(
+    screen.getByRole('textbox', { name: '이메일' }),
+    'member@beez.local',
+  )
+  await user.click(screen.getByRole('button', { name: '임시 비밀번호 받기' }))
+
+  expect(
+    await screen.findByRole('heading', { name: '메일을 확인해 주세요' }),
+  ).toBeInTheDocument()
+  expect(screen.getByText('member@beez.local')).toBeInTheDocument()
+  expect(
+    screen.getByText('입력한 정보가 맞으면 임시 비밀번호를 메일로 보냅니다.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '임시 비밀번호 받기' }),
+  ).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: '로그인하러 가기' }))
+  expect(screen.getByRole('textbox', { name: /이메일/ })).toHaveValue(
+    'member@beez.local',
+  )
+})
