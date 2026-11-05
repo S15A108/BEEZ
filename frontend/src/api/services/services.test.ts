@@ -332,10 +332,11 @@ describe('계약 경계', () => {
   })
 
   // S15P31A108-283: 폐지 예정이고 서버(PR #118)가 만들지 않은 재설정 링크(ACC-A08·A09)를 빼고 탈퇴 가능 여부(ACC-A13)를 더해 120개다.
-  it('120개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(120)
+  // S15P31A108-203: 서버에 있는데 등록이 빠져 있던 승인 미리 보기(CHG-A14)를 더해 121개다.
+  it('121개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(121)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      120,
+      121,
     )
     expect(
       new Set(
@@ -343,7 +344,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(120)
+    ).toBe(121)
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')
@@ -380,6 +381,60 @@ describe('계약 경계', () => {
     const read = await changesApi.impact('101', '71')
     expect(read.analysis_status).toBe('COMPLETED')
     expect(read.explicit).toEqual([{ task_id: '501', design_item_id: '211' }])
+  })
+
+  // CHG-A14: 서버는 CREATE 의 design_item_id 와 유지 항목의 proposal_item_index 를 빼고(전역 non_null),
+  // 후보 수는 믿을 수 없을 때 null 로 늘 보낸다(ALWAYS). 조회만 하므로 멱등 키가 없다.
+  it('승인 미리 보기는 GET 으로 읽고 생략되는 키와 null 후보를 그대로 받는다', async () => {
+    const body = {
+      next_baseline_version_no: 2,
+      baseline_items: [
+        {
+          title: '새 안내',
+          version_no: 1,
+          operation: 'CREATE',
+          proposal_item_index: 0,
+        },
+        {
+          design_item_id: '702',
+          title: 'REQ-002',
+          version_no: 1,
+          operation: 'UNCHANGED',
+        },
+      ],
+      validations_to_stale: [],
+      tasks_to_wait: [{ task_id: '503', title: '작업' }],
+      unchanged: { items: 1, documents: 4 },
+      unreviewed: {
+        ai_candidates: null,
+        open_review_requests: 0,
+        ai_analysis: {
+          status: 'NOT_EVALUATED',
+          is_current: false,
+          error_code: 'analysis_not_started',
+          reanalysis_in_progress: false,
+        },
+        requires_override_reason: true,
+      },
+    }
+    respond(body)
+    const preview = await changesApi.approvalPreview('101', '71')
+    expect(lastRequest?.method).toBe('get')
+    expect(lastRequest?.url).toBe(
+      '/projects/101/change-proposals/71/approval-preview',
+    )
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBeFalsy()
+    expect(preview.baseline_items[0]).not.toHaveProperty('design_item_id')
+    expect(preview.baseline_items[1]).not.toHaveProperty('proposal_item_index')
+    expect(preview.tasks_to_wait[0]).not.toHaveProperty('assignee_member_id')
+    expect(preview.unreviewed.ai_candidates).toBeNull()
+    respond({
+      ...body,
+      unreviewed: { ...body.unreviewed, ai_candidates: undefined },
+    })
+    await expect(
+      changesApi.approvalPreview('101', '71'),
+    ).rejects.toBeInstanceOf(ZodError)
   })
 
   it('영향 조회에서 담당자 추천과 근거를 보존한다', async () => {

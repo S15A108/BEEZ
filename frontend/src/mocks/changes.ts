@@ -24,6 +24,8 @@ import type { MockContext, MockReply } from './helpers'
 import { normalizeDocument } from '../features/changes/normalizeDocument'
 import { describeContent } from '../lib/display'
 import { copy, nextId, now } from './state'
+import type { MockProject } from './state'
+import type { ApprovalPreviewItem } from '../features/changes/schemas'
 
 function proposalView(
   context: MockContext,
@@ -119,6 +121,214 @@ function expectSubmission(context: MockContext, proposal: ChangeProposal) {
     )
 }
 
+// 개발 서버에서 승인 확인 화면의 여러 상태를 눈으로 보려는 스위치(목 전용, live 빌드에는 들어가지 않는다).
+// localStorage 'beez.mock.approvalPreview' = override(분석 실패) | unevaluated(안 돌림) | running(재분석 중) | conflict(기준 충돌)
+type PreviewScenario =
+  'override' | 'unevaluated' | 'running' | 'conflict' | 'indexing'
+function previewScenario(): PreviewScenario | undefined {
+  try {
+    const value = localStorage.getItem('beez.mock.approvalPreview')
+    return value === 'override' ||
+      value === 'unevaluated' ||
+      value === 'running' ||
+      value === 'conflict' ||
+      value === 'indexing'
+      ? value
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function draftScenario() {
+  try {
+    const value = localStorage.getItem('beez.mock.draft')
+    return value === 'unavailable' ||
+      value === 'timeout' ||
+      value === 'conflict' ||
+      value === 'partial'
+      ? value
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// 이 제안을 발행하면 영향을 받는 작업. 발행(publish)과 승인 미리 보기가 같은 기준을 쓴다.
+function affectedTasks(project: MockProject, proposal: ChangeProposal) {
+  const itemIds = new Set(proposal.items.map((item) => item.design_item_id))
+  const documentIds = new Set(
+    proposal.documents.map((document) => document.document_id),
+  )
+  return project.tasks.filter((task) => {
+    if (['COMPLETED', 'CANCELLED'].includes(task.status)) return false
+    return task.current_plan_revision.plan.design_refs.some(
+      (reference) =>
+        itemIds.has(reference.design_item_id) ||
+        project.items.some(
+          (item) =>
+            item.design_item_id === reference.design_item_id &&
+            !!item.source &&
+            documentIds.has(item.source.document_id),
+        ),
+    )
+  })
+}
+
+function previewAnalysis(scenario: PreviewScenario | undefined) {
+  if (scenario === 'override')
+    return {
+      status: 'FAILED',
+      is_current: false,
+      error_code: 'analysis_failed',
+      reanalysis_in_progress: false,
+    } as const
+  if (scenario === 'unevaluated')
+    return {
+      status: 'NOT_EVALUATED',
+      is_current: false,
+      error_code: 'analysis_not_started',
+      reanalysis_in_progress: false,
+    } as const
+  if (scenario === 'running')
+    return {
+      status: 'COMPLETED',
+      is_current: true,
+      reanalysis_in_progress: true,
+    } as const
+  return {
+    status: 'COMPLETED',
+    is_current: true,
+    reanalysis_in_progress: false,
+  } as const
+}
+
+// CHG-A14: 저장 없이 승인하면 같이 바뀌는 것을 계산한다(서버 PublishPlanner 와 같은 모양).
+function approvalPreview(
+  context: MockContext,
+  proposal: ChangeProposal,
+): MockReply {
+  requireLeader(context)
+  const project = requireProject(context)
+  const scenario = previewScenario()
+  const current =
+    project.baselines.at(-1) ??
+    fail(409, 'baseline_conflict', '먼저 초기 기준 설계를 발행해 주세요.')
+  // 제안한 문서 버전의 색인이 아직 없으면 미리 보기도 승인도 409(PublishPlanner). 실제 BE 점검에서 확인한 응답이다.
+  if (scenario === 'indexing')
+    fail(
+      409,
+      'analysis_not_completed',
+      '제안 문서 버전의 색인이 준비되지 않았습니다.',
+    )
+  if (scenario === 'conflict' || current.id !== proposal.base_baseline_id)
+    fail(409, 'baseline_conflict', '제안을 올린 뒤 기준이 바뀌었어요.')
+  if (!['PROPOSED', 'IN_REVIEW'].includes(proposal.status))
+    fail(409, 'invalid_transition', '검토 중인 제안만 미리 볼 수 있어요.')
+  const changed = new Map(
+    proposal.items.map((item, index) => [item.design_item_id, { item, index }]),
+  )
+  const titleOf = (item: { key: string; content: unknown }) =>
+    `${item.key} ${describeContent(item.content)}`
+  const baselineItems: ApprovalPreviewItem[] = [
+    ...current.items.flatMap((reference): ApprovalPreviewItem[] => {
+      const version = findById(project.items, reference.design_item_version_id)
+      const change = changed.get(reference.design_item_id)
+      if (change?.item.operation === 'RETIRE') return []
+      if (change)
+        return [
+          {
+            design_item_id: version.design_item_id,
+            title: change.item.proposed_content
+              ? titleOf({
+                  key: version.key,
+                  content: change.item.proposed_content,
+                })
+              : titleOf(version),
+            version_no:
+              Math.max(
+                ...project.items
+                  .filter(
+                    (item) => item.design_item_id === version.design_item_id,
+                  )
+                  .map((item) => item.version_no),
+              ) + 1,
+            operation: 'UPDATE' as const,
+            proposal_item_index: change.index,
+          },
+        ]
+      return [
+        {
+          design_item_id: version.design_item_id,
+          title: titleOf(version),
+          version_no: version.version_no,
+          operation: 'UNCHANGED' as const,
+        },
+      ]
+    }),
+    ...proposal.items.flatMap((item, index) =>
+      item.operation === 'CREATE'
+        ? [
+            {
+              title: describeContent(item.proposed_content),
+              version_no: 1,
+              operation: 'CREATE' as const,
+              proposal_item_index: index,
+            },
+          ]
+        : [],
+    ),
+  ]
+  const affected = affectedTasks(project, proposal)
+  const changedDocuments = new Set(
+    proposal.documents.map((document) => document.document_id),
+  )
+  const trusted = !scenario || scenario === 'running'
+  return {
+    data: {
+      next_baseline_version_no: current.version_no + 1,
+      baseline_items: baselineItems,
+      validations_to_stale: affected.flatMap((task) =>
+        task.validation && task.validation.status !== 'STALE'
+          ? [
+              {
+                validation_id: task.validation.id,
+                task_id: task.id,
+                task_title: task.current_plan_revision.plan.title,
+              },
+            ]
+          : [],
+      ),
+      tasks_to_wait: affected
+        .filter((task) => task.status === 'IN_PROGRESS')
+        .map((task) => ({
+          task_id: task.id,
+          title: task.current_plan_revision.plan.title,
+          assignee_member_id: task.assignee_member_id,
+        })),
+      unchanged: {
+        items: baselineItems.filter((item) => item.operation === 'UNCHANGED')
+          .length,
+        documents: current.documents.filter(
+          (reference) => !changedDocuments.has(reference.document_id),
+        ).length,
+      },
+      unreviewed: {
+        // 영향 분석이 완료·최신일 때만 숫자. 아니면 null 로 보내 미평가를 0건으로 보이지 않게 한다.
+        ai_candidates: trusted ? 0 : null,
+        open_review_requests: project.comments.filter(
+          (comment) =>
+            comment.proposal_id === proposal.id &&
+            comment.kind === 'REVIEW_REQUEST',
+        ).length,
+        ai_analysis: previewAnalysis(scenario),
+        requires_override_reason:
+          scenario === 'override' || scenario === 'unevaluated',
+      },
+    },
+  }
+}
+
 function publish(context: MockContext, proposal: ChangeProposal): MockReply {
   requireLeader(context)
   // 서버처럼 사유는 1~1000자(공백만 불가). 목 서버는 영향 분석을 늘 완료·최신으로 보므로 게이트로 막지 않고 보낸 사유만 이력에 남긴다.
@@ -143,6 +353,21 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
   expectSubmission(context, proposal)
   if (!['PROPOSED', 'IN_REVIEW'].includes(proposal.status))
     fail(400, 'invalid_transition', '검토 중인 변경만 승인할 수 있어요.')
+  // 승인 확인 화면의 상태를 눈으로 보려는 스위치(previewScenario)와 같은 규칙으로 막는다(S15P31A108-241).
+  const scenario = previewScenario()
+  if (scenario === 'indexing')
+    fail(
+      409,
+      'analysis_not_completed',
+      '제안 문서 버전의 색인이 준비되지 않았습니다.',
+    )
+  if (scenario === 'running')
+    fail(409, 'analysis_running', '영향 분석이 진행 중이에요.')
+  if (
+    (scenario === 'override' || scenario === 'unevaluated') &&
+    typeof overrideReason !== 'string'
+  )
+    fail(409, 'impact_not_confirmed', '영향 분석을 확인하지 못했어요.')
   // Check every referenced object before changing the browser's stored state.
   for (const change of proposal.documents) {
     const document = findById(project.documents, change.document_id)
@@ -166,12 +391,6 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
     approved_by: requireAccount(context).id,
     created_at: now(),
   }
-  const affectedItemIds = new Set(
-    proposal.items.map((item) => item.design_item_id),
-  )
-  const affectedDocumentIds = new Set(
-    proposal.documents.map((document) => document.document_id),
-  )
   for (const change of proposal.documents) {
     const document = findById(project.documents, change.document_id)
     const oldVersion = document.approved_version!
@@ -254,20 +473,7 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
       ? { impact_override_reason: overrideReason.trim() }
       : {}),
   })
-  for (const task of project.tasks) {
-    if (['COMPLETED', 'CANCELLED'].includes(task.status)) continue
-    const references = task.current_plan_revision.plan.design_refs
-    const affected = references.some(
-      (reference) =>
-        affectedItemIds.has(reference.design_item_id) ||
-        project.items.some(
-          (item) =>
-            item.design_item_id === reference.design_item_id &&
-            !!item.source &&
-            affectedDocumentIds.has(item.source.document_id),
-        ),
-    )
-    if (!affected) continue
+  for (const task of affectedTasks(project, proposal)) {
     task.validation_status = 'STALE'
     for (const validation of project.validations.filter(
       (item) =>
@@ -527,14 +733,45 @@ export function changeRoutes(
       if (version.document_id !== document.id)
         fail(404, 'not_found', '문서 버전을 찾을 수 없어요.')
       const instruction = requiredString(body, 'instruction')
+      if (!instruction.trim() || instruction.length > 2000)
+        fail(400, 'validation_failed', '수정 요청은 2,000자 이하여야 해요.')
+      // 서버처럼 지금 기준의 승인본에 대한 초안만 만든다(CHG-A07 version_conflict).
+      if (document.approved_version?.id !== version.id)
+        fail(409, 'version_conflict', '이 문서의 승인본이 바뀌었어요.')
+      // 개발 서버에서 초안 화면의 여러 상태를 눈으로 보려는 스위치(목 전용).
+      // localStorage 'beez.mock.draft' = unavailable(502) | timeout(504) | conflict(409) | partial(일부만 반영)
+      const scenario = draftScenario()
+      if (scenario === 'unavailable')
+        fail(502, 'ai_unavailable', '초안을 만들지 못했어요.')
+      if (scenario === 'timeout')
+        fail(504, 'ai_timeout', '초안을 만드는 데 시간이 걸렸어요.')
+      if (scenario === 'conflict')
+        fail(409, 'version_conflict', '초안을 만드는 동안 승인본이 바뀌었어요.')
+      const generation = templateGeneration(
+        '입력한 수정 지시를 검토할 초안에 덧붙였어요.',
+        scenario === 'partial'
+          ? [
+              {
+                document_id: document.id,
+                document_version_id: version.id,
+                version_no: version.version_no,
+                location: 'L3-L8',
+              },
+            ]
+          : [],
+      )
       return {
         data: {
           document_id: document.id,
           base_document_version_id: version.id,
           after_content: `${version.content ?? ''}\n\n## 검토할 수정 초안\n${instruction}\n`,
-          generation: templateGeneration(
-            '입력한 수정 지시를 검토할 초안에 덧붙였어요.',
-          ),
+          generation:
+            scenario === 'partial'
+              ? {
+                  ...generation,
+                  unresolved: ['관련 설계 항목 63개 중 50개만 전달했어요.'],
+                }
+              : generation,
         },
       }
     }
@@ -561,6 +798,8 @@ export function changeRoutes(
       proposal!.rejection_reason = requiredString(body, 'reason')
       proposal!.updated_at = now()
       return { data: proposalView(context, proposal!) }
+    case 'CHG-A14':
+      return approvalPreview(context, proposal!)
     case 'CHG-A15': {
       // 거두기(PR #46): 제안자만, 올렸거나 반려된 제안만. 응답은 사용자 결정대로 ChangeProposal 그대로.
       if (proposal!.proposer_account_id !== requireAccount(context).id)
