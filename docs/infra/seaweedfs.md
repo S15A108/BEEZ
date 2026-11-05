@@ -25,7 +25,7 @@ DocumentStorage의 제품 구현은 S3DocumentStorage 하나다. AWS SDK는 S3 �
 | DOCUMENT_S3_BUCKET | 사전에 만든 비공개 bucket |
 | DOCUMENT_S3_ACCESS_KEY / SECRET_KEY | backend 전용 bucket 권한 키, 실행 환경/Secret에서 주입 |
 
-**prod 프로필에는 개발용 기본 endpoint/bucket/키가 없다. 필수 설정 누락은 기동 실패다.** local 파일 저장으로 대체하지 않는다. 설정은 유효하지만 SeaweedFS가 꺼져 있거나 키가 틀리면 앱은 기동할 수 있어도 실제 원본 요청은 실패한다. 그러므로 이번 버전 배포 전에 인프라 담당과 적용 순서를 맞춘다.
+**prod 프로필에는 개발용 기본 endpoint/bucket/키가 없다. 필수 설정 누락은 기동 실패다.** local 파일 저장으로 대체하지 않는다. 설정은 유효하지만 SeaweedFS가 꺼져 있거나 키가 틀리면 앱은 기동할 수 있어도 실제 원본 요청은 실패한다. 그래서 health 200 만으로 판단하지 않고 원본 해시를 대조한다(`infra/backup/check-live.sh`). dev 서버 적용과 확인 기록은 [운영 안내 2026-11-05 서버 적용·확인](operations.md#2026-11-05-서버-적용확인).
 
 ## 서버 구성 — 키 분리와 내부망 (S15P31A108-211)
 
@@ -194,11 +194,11 @@ PostgreSQL과 SeaweedFS를 함께 커밋하는 분산 트랜잭션은 사용하�
 
 RUNNING lease는 10분이며, 만료 시 새 attempt로 자동 복구한다. automatic_recoveries는 최초 실행 이후 최대 2회(총 3회 실행)이고, 다시 만료되면 FAILED / lease_recovery_exhausted로 종료한다. 사람 팀장의 명시적 재시도는 복구 예산만 초기화하며 attempt는 증가시켜 이전 결과를 계속 차단한다. 일반 AI 호출 실패는 즉시 FAILED가 된다. 기본 AI 연결/읽기 제한은 3초/20초이며 lease보다 짧다. AI_READ_TIMEOUT을 늘릴 경우 두 호출과 처리 시간을 포함한 실행이 lease를 넘지 않도록 함께 검토한다.
 
-## 배포 전 역할
+## 역할
 
 - 오서현: 저장 실패·DB rollback·멱등 요청·기존 승인본 보존 검증, 실패 추적 로그와 문서 구현.
-- 전진: 운영 SeaweedFS·영속 volume·비공개 bucket·backend 전용 키·내부 네트워크·환경변수 준비, DB와 원본 백업·복원 절차 확인.
-- 공동: 인증 PR #22 반영 후 실제 서버에서 업로드·다운로드·재배포 보존을 확인. 저장소 준비 전 이 PR을 배포하지 않는다.
+- 전진: 운영 SeaweedFS·영속 volume·비공개 bucket·backend 전용 키·내부 네트워크·환경변수, DB와 원본 백업·복원 절차.
+- dev 서버 적용(2026-11-05, S15P31A108-211 PR #144): 업로드 해시 일치, backend·SeaweedFS 재생성 뒤 보존, 백업 복원 뒤 해시 일치를 확인했다([운영 안내 기록](operations.md#2026-11-05-서버-적용확인)). 새 서버(-73 운영 등)는 위 "서버에 처음 적용하기"부터 같은 순서로 한다.
 
 문서 변경 요청은 기존 CORS_ALLOWED_ORIGINS를 출처 검증에도 사용하므로 실제 프론트 origin을 정확히 설정한다. 로그인·공통 SecurityConfig는 인증 담당 구현을 사용하며 문서 PR에서 수정하지 않는다.
 

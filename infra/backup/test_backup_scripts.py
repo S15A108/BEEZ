@@ -9,6 +9,7 @@
 실행: python infra/backup/test_backup_scripts.py  (pytest 로도 돈다)
 필요: bash, docker compose v2(config --environment 지원). Windows 는 Git Bash 를 쓴다.
 """
+import atexit
 import os
 from pathlib import Path
 import shutil
@@ -77,6 +78,7 @@ def posix(p):
 def run(script, *args, env_extra="", backup_root=None, **fake):
     """env_extra 를 local.env 뒤에 붙인 env 파일로 스크립트를 돌리고 (exit code, 출력, 받은 키 목록, 호출 목록, tmp) 를 돌려준다."""
     tmp = Path(tempfile.mkdtemp(prefix="beez-bk-test-"))
+    atexit.register(shutil.rmtree, tmp, True)   # check() 전에 assert 가 실패해도 프로세스가 끝날 때 지운다
     bin_dir = tmp / "bin"
     bin_dir.mkdir()
     for name, body in STUBS.items():
@@ -142,8 +144,8 @@ def test_restore_reads_env_like_compose():
 def test_env_syntax_error_is_hidden():
     # compose 는 따옴표가 안 닫힌 값을 오류 문구에 그대로 찍는다
     for script, args in (("backup.sh", ["dev"]), ("check-live.sh", ["dev"]), ("restore.sh", ["dev", "objects"])):
-        check(run(script, *args, env_extra=f'SEAWEEDFS_BACKUP_SECRET_KEY="{SECRET}\n'), 2 if script != "restore.sh" else 1,
-              "compose 로 해석하지 못함")
+        check(run(script, *args, env_extra=f'SEAWEEDFS_BACKUP_SECRET_KEY="{SECRET}\n'), 2,
+              "compose 로 해석하지 못함")   # 환경 오류는 세 스크립트 모두 2
 
 
 # --- 문서 0건(빈 bucket) -------------------------------------------------------

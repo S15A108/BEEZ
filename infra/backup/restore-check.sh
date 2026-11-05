@@ -87,8 +87,12 @@ tar -C "$OBJECTS" -cf - . | docker run -i --rm --network "$N" --entrypoint sh \
 
 # 3) storage_key 로 내려받아 해시 대조. content_hash 형식은 "sha256:<16진수 64자>"(DocumentInputValidator)
 log "문서 버전 원본 대조"
-docker exec "$N-pg" psql -U beez -d beez -XAt -F ' ' -v ON_ERROR_STOP=1 \
-    -c 'SELECT id, storage_key, content_hash FROM document_version ORDER BY id' \
+# DB 조회를 먼저 끝내고 결과를 넘긴다. 파이프로 바로 이으면 조회 실패도 "원본이 DB 와 맞지 않는다"로 보인다(check-live.sh 와 같음)
+rows=$(docker exec "$N-pg" psql -U beez -d beez -XAt -F ' ' -v ON_ERROR_STOP=1 \
+    -c 'SELECT id, storage_key, content_hash FROM document_version ORDER BY id') ||
+    { log "실패: 복원한 DB 조회 실패 — 덤프 복원이 끝나지 않았거나 스키마가 다르다"; exit 2; }
+# 0건이면 빈 줄 하나도 넘기지 않는다(빈 줄은 key 없는 "없음" 한 건으로 세어진다)
+{ [[ -n $rows ]] && printf '%s\n' "$rows"; true; } \
   | docker run -i --rm --network "$N" --entrypoint sh -e AK="$AK" -e SK="$SK" -e EP="http://$N-sw:8333/$BUCKET" \
     "$CURL_IMAGE" -c '
       ok=0; bad=0

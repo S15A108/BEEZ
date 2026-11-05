@@ -5,6 +5,7 @@
 #   infra/backup/restore.sh <환경> objects --yes            # 원본만: 백업 폴더 → bucket. 이미 있는 원본은 건너뛴다
 #   infra/backup/restore.sh <환경> all [덤프 파일] --yes    # DB 를 덤프 시점으로 + 원본. 덤프 기본값은 LAST_OK 의 것
 # --yes 가 없으면 할 일만 보여 주고 아무것도 바꾸지 않는다.
+# 종료 코드: 0 = 완료(미리보기 포함), 1 = 실패(사전 검증·복원 단계), 2 = 사용법·환경 오류(env 파일 등) — 다른 백업 스크립트와 같다
 #
 # all 의 순서: 백업·배포 잠금 → 사전 검증(덤프가 가리키는 원본이 백업 폴더나 bucket 에 다 있는가. 없으면 아무것도
 #   바꾸지 않고 멈춤) → backend 멈춤 → DB 를 지우고 빈 DB 로 다시 만듦 → pg_restore → 원본 올리기 → backend 켬
@@ -46,11 +47,13 @@ RCLONE_IMAGE=rclone/rclone:1.71.2@sha256:3103526c506266a9ecdf064efe99bf3677d92ef
 log() { echo "[restore $(date +%H:%M:%S)] $*"; }
 # stderr 로 낸다. $(cid …) 안에서 불려도 메시지가 변수에 삼켜지지 않게
 fail() { log "실패: $*" >&2; exit 1; }
-[[ -r $ENV_FILE ]] || fail "env 파일을 읽을 수 없음: $ENV_FILE"
+# 환경 오류는 2 로 끝낸다(backup.sh·check-live.sh 와 같은 종료 코드)
+env_fail() { log "실패: $*" >&2; exit 2; }
+[[ -r $ENV_FILE ]] || env_fail "env 파일을 읽을 수 없음: $ENV_FILE"
 # env 파일은 배포(compose)와 같은 규칙으로 읽는다(따옴표·인라인 주석·CRLF). check-port.sh 의 envs() 와 같은 방식.
 # compose 오류 문구에는 값이 섞일 수 있어 원문을 내보내지 않는다
 ENV_ALL=$(printf 'services: {}\n' | docker compose -f - --env-file "$ENV_FILE" config --environment 2> /dev/null) ||
-    fail "env 파일을 compose 로 해석하지 못함(형식 오류일 수 있어 문구는 숨김). 서버에서 docker compose 로 직접 확인한다"
+    env_fail "env 파일을 compose 로 해석하지 못함(형식 오류일 수 있어 문구는 숨김). 서버에서 docker compose 로 직접 확인한다"
 env_value() { printf '%s\n' "$ENV_ALL" | sed -n "s/^$1=//p" | tail -n 1; }
 BUCKET=$(env_value DOCUMENT_S3_BUCKET); BUCKET=${BUCKET:-beez-documents}
 OBJECTS=$BACKUP_ROOT/objects/$BUCKET
