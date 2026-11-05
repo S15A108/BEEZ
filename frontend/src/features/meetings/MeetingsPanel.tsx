@@ -474,7 +474,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                               .title
                                           }
                                           {task &&
-                                            ` · ${nameOfMember(task.assignee_member_id)}`}
+                                            ` · ${task.assignee_member_id ? nameOfMember(task.assignee_member_id) : '담당자 없음'}`}
                                         </button>
                                       </li>
                                     )

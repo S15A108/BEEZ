@@ -135,7 +135,7 @@ export function WorkspaceHud({
     id: string
     key: string
     status: string
-    assignee_member_id: string
+    assignee_member_id?: string
   }[]
   myTasks: TaskDetail[]
 }) {

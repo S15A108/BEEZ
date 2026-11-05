@@ -775,7 +775,8 @@ export const taskDetailSchema = z
     id: idSchema,
     key: z.string(),
     project_id: idSchema,
-    assignee_member_id: idSchema,
+    // 담당자가 나가거나 제외돼 비면(미배정) 서버가 생략한다(11-04 사용자 결정, MEM-A09·A10).
+    assignee_member_id: idSchema.optional(),
     status: z.enum([
       'DRAFT',
       'READY',

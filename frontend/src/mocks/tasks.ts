@@ -23,8 +23,12 @@ import {
 import type { MockContext, MockReply } from './helpers'
 import { copy, nextId, now } from './state'
 
+// 담당자 없는(미배정) 작업은 누가 맡을 때까지 아무도 계획 수정·검증·시작·재개하지 못한다(11-04 사용자 결정).
+const isAssignee = (context: MockContext, task: TaskDetail) =>
+  !!task.assignee_member_id && task.assignee_member_id === context.member?.id
+
 function taskOwner(context: MockContext, task: TaskDetail): void {
-  if (task.assignee_member_id !== context.member?.id)
+  if (!isAssignee(context, task))
     fail(403, 'forbidden', '현재 작업 담당자만 진행할 수 있어요.')
 }
 
@@ -473,7 +477,7 @@ export function taskRoutes(
       const input = taskStateInputSchema.parse(body)
       // 서버 TaskStateService: 담당자만 보고한다. 예외로 사람 팀장은 보고가 끊긴(IN_PROGRESS이고 30분 넘게 보고 없음)
       // 남의 작업을 취소할 수 있다. 이미 취소된 작업은 그대로 돌려준다(LA-TC-08).
-      if (task!.assignee_member_id !== context.member?.id) {
+      if (!isAssignee(context, task!)) {
         if (input.event !== 'CANCEL' || context.member?.role !== 'LEADER')
           taskOwner(context, task!)
         else if (task!.status === 'CANCELLED') return { data: task! }
@@ -659,10 +663,13 @@ export function taskRoutes(
     case 'BEE-A02':
       return {
         data: {
+          // 예시 추천은 지금 담당자를 그대로 보여 줄 뿐이라, 담당자 없는 작업은 추천하지 않는다.
           suggestions: project.tasks
             .filter(
               (item) =>
-                Array.isArray(body.task_ids) && body.task_ids.includes(item.id),
+                !!item.assignee_member_id &&
+                Array.isArray(body.task_ids) &&
+                body.task_ids.includes(item.id),
             )
             .map((item) => ({
               task_id: item.id,

@@ -868,3 +868,106 @@ it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 
   ).toBeInTheDocument()
   slot.remove()
 })
+
+// 11-04 사용자 결정(S15P31A108-282): 담당자가 나가거나 제외되면 서버는 assignee_member_id를 생략한다.
+const withoutAssignee = () => {
+  const unassigned: Record<string, unknown> = { ...task }
+  delete unassigned.assignee_member_id
+  return taskDetailSchema.parse(unassigned)
+}
+
+it('담당자가 없는 작업도 읽어서 목록에 담당자 없음 칩을, 상세에 비어 있다는 안내를 보여 준다', async () => {
+  task = withoutAssignee()
+  show(true)
+  expect(await screen.findByText('담당자가 비어 있어요')).toBeInTheDocument()
+  expect(screen.getByText(/TASK-001 · 담당자 없음/)).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '작업 시작' }),
+  ).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('tab', { name: '팀 전체' }))
+  const entry = await screen.findByRole('button', {
+    name: /사용자 프로필 구현/,
+  })
+  expect(within(entry).getByText('담당자 없음')).toBeInTheDocument()
+})
+
+it('팀원이 담당자 없는 작업에서 내가 맡기를 누르면 확인 뒤 내 멤버 ID와 잠금 번호로 맡는다', async () => {
+  task = withoutAssignee()
+  const assign = vi.spyOn(tasksApi, 'assign').mockImplementation(async () => {
+    task = { ...task, assignee_member_id: '21', lock_version: 8 }
+    return task
+  })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '내가 맡기' }),
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: '이 작업을 내가 맡을까요?',
+  })
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '내가 맡기' }),
+  )
+  await waitFor(() =>
+    expect(assign).toHaveBeenCalledWith('101', '501', {
+      assignee_member_id: '21',
+      expected_lock_version: 7,
+    }),
+  )
+  expect(
+    await screen.findByRole('button', { name: '작업 시작' }),
+  ).toBeInTheDocument()
+})
+
+it('다른 팀원이 먼저 맡아 409 revision_conflict가 오면 먼저 맡은 사람을 알린다', async () => {
+  task = withoutAssignee()
+  vi.spyOn(tasksApi, 'assign').mockImplementation(async () => {
+    task = { ...task, assignee_member_id: '22', lock_version: 8 }
+    const config = { headers: new AxiosHeaders() }
+    throw new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config,
+      data: { error: { code: 'revision_conflict' } },
+    })
+  })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '내가 맡기' }),
+  )
+  await userEvent.click(
+    within(await screen.findByRole('dialog')).getByRole('button', {
+      name: '내가 맡기',
+    }),
+  )
+  const taken = await screen.findByRole('dialog', {
+    name: '다른 팀원이 먼저 맡았어요',
+  })
+  expect(
+    within(taken).getByText(/다른 팀원님이 조금 전에 TASK-001 작업을 맡았어요/),
+  ).toBeInTheDocument()
+})
+
+it('팀장이 담당자 없는 작업의 담당자를 정할 때는 첫 팀원을 미리 고르지 않는다', async () => {
+  task = withoutAssignee()
+  const assign = vi
+    .spyOn(tasksApi, 'assign')
+    .mockImplementation(async () => task)
+  show(true)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '담당자 정하기' }),
+  )
+  await userEvent.click(await screen.findByRole('button', { name: '저장' }))
+  expect(
+    await screen.findByText('새 담당자를 골라 주세요.'),
+  ).toBeInTheDocument()
+  expect(assign).not.toHaveBeenCalled()
+  await userEvent.selectOptions(screen.getByLabelText(/새 담당자/), '다른 팀원')
+  await userEvent.click(screen.getByRole('button', { name: '저장' }))
+  await waitFor(() =>
+    expect(assign).toHaveBeenCalledWith('101', '501', {
+      assignee_member_id: '22',
+      expected_lock_version: 7,
+    }),
+  )
+})

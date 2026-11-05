@@ -144,6 +144,7 @@ export function TeamPanel({
   const openTasksOf = (memberId?: string) =>
     tasks.data?.items.filter(
       (task) =>
+        !!memberId &&
         task.assignee_member_id === memberId &&
         !['COMPLETED', 'CANCELLED'].includes(task.status),
     ) ?? []
