@@ -54,6 +54,9 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
 | `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 S15P31A108-295 | backend |
+| `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | | | 기본 `false`. Kafka 힌트 consumer. **위 스캔 없이 켜면 기동 거부**. Kafka 가 없어도 기동하고 30초마다 다시 붙습니다(-298) | backend |
+| `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS`·`_GROUP_ID`·`_TOPIC` | | | 기본 `kafka:9092`·`beez-published-analysis`·`beez.public.published_change_analysis`(계획 D7). 바꿀 일 없음 | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
 | `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
 | `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |

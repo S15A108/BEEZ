@@ -10,9 +10,9 @@ rule_files:
 evaluation_interval: 15s
 
 tests:
-  # 깨지면: consumer 가 꺼진 dev(Kafka 없음)에서 오래된 PENDING·없는 Kafka 지표로 거짓 알림이 간다(264 완료 조건).
-  # 스냅샷은 신선하게 둔다 — 신선도 필터 때문에 안 우는 것이 아니라 consumer 조건 때문에 안 우는지를 본다
-  - name: consumer 꺼짐 — 지연·Kafka 알림 없음
+  # 깨지면: 스캔·consumer 가 꺼진 dev(Kafka 없음)에서 오래된 PENDING·없는 Kafka 지표로 거짓 알림이 간다(264 완료 조건).
+  # 스냅샷은 신선하게 둔다 — 신선도 필터 때문에 안 우는 것이 아니라 설정 조건 때문에 안 우는지를 본다
+  - name: 스캔·consumer 꺼짐 — 지연·Kafka 알림 없음
     interval: 1m
     input_series:
       - series: 'beez_cdc_analysis_oldest_pending_seconds{instance="backend:8080",job="backend"}'
@@ -23,13 +23,17 @@ tests:
         values: '0+60x40'
       - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
         values: '0x40'
+      - series: 'beez_cdc_analysis_recovery_enabled{instance="backend:8080",job="backend"}'
+        values: '0x40'
     alert_rule_test:
       - {eval_time: 30m, alertname: CdcPendingDelay, exp_alerts: []}
+      - {eval_time: 30m, alertname: CdcConsumerDown, exp_alerts: []}
       - {eval_time: 30m, alertname: CdcKafkaReceiveFailures, exp_alerts: []}
       - {eval_time: 30m, alertname: CdcKafkaFailureMetricMissing, exp_alerts: []}
 
-  # 깨지면: 켜진 consumer 의 지연을 놓치거나, 244 결정의 "600초 + 5분 지속"보다 이르게·늦게 운다
-  - name: consumer 켜짐 — 600초 넘은 PENDING 이 5분 지속되면 지연 알림
+  # 깨지면: 처리(스캔)가 켜졌는데 지연을 놓치거나, 244 결정의 "600초 + 5분 지속"보다 이르게·늦게 운다.
+  # consumer 는 꺼 둔다 — Kafka 가 죽어 스캔만 도는 동안에도 지연을 알려야 한다(298)
+  - name: 스캔 켜짐 — 600초 넘은 PENDING 이 5분 지속되면 지연 알림
     interval: 1m
     input_series:
       # 0분에 대기 시작 → 10분에 600초 → 15분 무렵 알림
@@ -39,9 +43,9 @@ tests:
         values: '1x30'
       - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="backend:8080",job="backend"}'
         values: '0+60x30'
-      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
+      - series: 'beez_cdc_analysis_recovery_enabled{instance="backend:8080",job="backend"}'
         values: '1x30'
-      - series: 'beez_cdc_kafka_receive_failures_total{instance="backend:8080",job="backend"}'
+      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
         values: '0x30'
     alert_rule_test:
       - {eval_time: 14m, alertname: CdcPendingDelay, exp_alerts: []}
@@ -60,7 +64,7 @@ tests:
         values: 'NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN'
       - series: 'beez_cdc_analysis_snapshot_available{instance="backend:8080",job="backend"}'
         values: '0x20'
-      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
+      - series: 'beez_cdc_analysis_recovery_enabled{instance="backend:8080",job="backend"}'
         values: '1x20'
     alert_rule_test:
       - {eval_time: 10m, alertname: CdcPendingDelay, exp_alerts: []}
@@ -164,6 +168,7 @@ tests:
       - {series: 'beez_cdc_analysis_snapshot_available{instance="a:8080",job="backend"}', values: '1x20'}
       - {series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="a:8080",job="backend"}', values: '0+60x20'}
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="a:8080",job="backend"}', values: '0x20'}
+      - {series: 'beez_cdc_analysis_recovery_enabled{instance="a:8080",job="backend"}', values: '0x20'}
       - {series: 'beez_cdc_analysis_intakes{instance="a:8080",job="backend",status="PENDING"}', values: '0x20'}
       - {series: 'up{instance="b:8080",job="backend"}', values: '1x20'}
       # c 는 intakes 만 빠짐(나머지 필수 지표는 있음) — 조건이 지표마다 걸려 있는지 본다
@@ -171,6 +176,7 @@ tests:
       - {series: 'beez_cdc_analysis_snapshot_available{instance="c:8080",job="backend"}', values: '1x20'}
       - {series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="c:8080",job="backend"}', values: '0+60x20'}
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="c:8080",job="backend"}', values: '0x20'}
+      - {series: 'beez_cdc_analysis_recovery_enabled{instance="c:8080",job="backend"}', values: '0x20'}
     alert_rule_test:
       - {eval_time: 4m, alertname: CdcMetricsMissing, exp_alerts: []}
       - eval_time: 10m
@@ -238,3 +244,30 @@ tests:
         exp_alerts:
           - exp_labels: {team: app, status: FAILED}
             exp_annotations: {summary: "분석 FAILED 2건 남아 있음(자동 재처리 없음)"}
+
+  # 깨지면: consumer 가 Kafka 에 못 붙은 채(시작 재시도 중·broker 멈춤·up 지표 없음) 조용히 있다(S15P31A108-298 완료 조건 4).
+  # 복구 스캔이 30초 안에 처리를 이어 가므로 CdcPendingDelay 로는 보이지 않는 장애다.
+  # a: 처음 3분은 붙어 있다가 끊김(heartbeat 끊김 → up 0) → 끊긴 지 5분 지나 알림. b: up 지표 없음 → 알림.
+  # c: 계속 붙어 있음 → 없음. d: consumer 꺼짐(up 없음) → 없음
+  - name: consumer 켜짐 — Kafka 에 5분 넘게 못 붙으면 CdcConsumerDown
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="a:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_kafka_consumer_up{instance="a:8080",job="backend"}', values: '1 1 1 0x17'}
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="b:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="c:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_kafka_consumer_up{instance="c:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="d:8080",job="backend"}', values: '0x20'}
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: CdcConsumerDown
+        exp_alerts:
+          - exp_labels: {team: infra, instance: "b:8080", job: backend}
+            exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 (b:8080)"}
+      - eval_time: 10m
+        alertname: CdcConsumerDown
+        exp_alerts:
+          - exp_labels: {team: infra, instance: "a:8080", job: backend}
+            exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 (a:8080)"}
+          - exp_labels: {team: infra, instance: "b:8080", job: backend}
+            exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 (b:8080)"}
