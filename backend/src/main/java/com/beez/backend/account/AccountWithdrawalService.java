@@ -2,10 +2,13 @@ package com.beez.backend.account;
 
 import com.beez.backend.agenttoken.AgentTokenRepository;
 import com.beez.backend.auth.AccountPasswordService;
+import com.beez.backend.auth.recovery.PasswordRecoveryService;
+import com.beez.backend.auth.verification.EmailVerificationService;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.invitation.InvitationService;
 import com.beez.backend.project.BlockedProjectResponse;
 import com.beez.backend.project.ProjectWithdrawalService;
 import jakarta.persistence.EntityManager;
@@ -19,7 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 회원 탈퇴 (S15P31A108-171, ACC-A10·A13). 한 트랜잭션에서 프로젝트 정리 → 에이전트 토큰 전부 폐기 → 개인정보 삭제를 한다.
+ * 회원 탈퇴 (S15P31A108-171, ACC-A10·A13). 한 트랜잭션에서 초대 정리 → 프로젝트 정리 → 에이전트 토큰 전부 폐기 →
+ * 개인정보 삭제를 한다. 개인정보는 계정 행만이 아니다 — 그 이메일이 남은 초대·임시 비밀번호·가입 인증 행도 정리한다 (-277).
  * 세션 정리는 커밋 뒤 웹 계층(MeController)이 한다.
  * <p>
  * 작업·토큰·문서·회의 기록은 계정 ID 를 가리킨 채 남고, 이름은 '탈퇴한 사용자'로 보인다 ({@link Account#withdraw}).
@@ -34,16 +38,24 @@ public class AccountWithdrawalService {
     private final AccountPasswordService passwords;
     private final ProjectWithdrawalService projects;
     private final AgentTokenRepository tokens;
+    private final InvitationService invitations;
+    private final PasswordRecoveryService recovery;
+    private final EmailVerificationService verifications;
     private final EntityManager em;
 
     public AccountWithdrawalService(ProjectAccessChecker access, AccountRepository accounts,
                                     AccountPasswordService passwords, ProjectWithdrawalService projects,
-                                    AgentTokenRepository tokens, EntityManager em) {
+                                    AgentTokenRepository tokens, InvitationService invitations,
+                                    PasswordRecoveryService recovery, EmailVerificationService verifications,
+                                    EntityManager em) {
         this.access = access;
         this.accounts = accounts;
         this.passwords = passwords;
         this.projects = projects;
         this.tokens = tokens;
+        this.invitations = invitations;
+        this.recovery = recovery;
+        this.verifications = verifications;
         this.em = em;
     }
 
@@ -76,12 +88,21 @@ public class AccountWithdrawalService {
             throw AccessErrors.unauthenticated();
         }
         long accountId = me.getId();
+        String email = me.getEmail();
         Instant now = Instant.now();
+        // 초대는 프로젝트 행보다 먼저 잠근다 (초대 → 프로젝트, 자동 참여·팀원 제외와 같은 순서).
+        // 대기 초대를 여기서 취소해 두면 leaveAll 사이에 자동 참여로 새 프로젝트에 들어오지도 않는다
+        int forgottenInvitations = invitations.forgetOnAccountWithdrawal(email);
         projects.leaveAll(accountId, now);
         int revoked = tokens.revokeAllOfAccount(accountId, now);
+        // 발송 한도를 세는 데만 쓰던 행이라 보존할 이유가 없다 (-277 결정: 탈퇴 때 바로 삭제)
+        int temporaryRows = recovery.forgetOnAccountWithdrawal(email);
+        int verificationRows = verifications.forgetOnAccountWithdrawal(email);
         me.withdraw(now);
         accounts.saveAndFlush(me);
-        log.info("회원 탈퇴: account_id={} revoked_tokens={}", accountId, revoked);
+        log.info("회원 탈퇴: account_id={} revoked_tokens={} forgotten_invitations={} deleted_temporary_passwords={}"
+                        + " deleted_email_verifications={}", accountId, revoked, forgottenInvitations, temporaryRows,
+                verificationRows);
         return accountId;
     }
 }
