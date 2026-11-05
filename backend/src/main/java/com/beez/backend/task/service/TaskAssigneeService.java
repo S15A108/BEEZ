@@ -61,8 +61,8 @@ public class TaskAssigneeService {
         if (!access.isActiveMember(newAssigneeMemberId, projectId)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", "같은 프로젝트의 활성 멤버가 아닙니다");
         }
-        handover.reassign(task, newAssigneeMemberId);
-        tasks.saveAndFlush(task);
+        // 저장(flush)·활동·알림은 reassign 이 한다 (-288)
+        handover.reassign(caller, task, newAssigneeMemberId);
         return query.toDetail(task);
     }
 }

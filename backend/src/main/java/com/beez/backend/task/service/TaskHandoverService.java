@@ -1,6 +1,17 @@
 package com.beez.backend.task.service;
 
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.notification.NotificationRequest;
+import com.beez.backend.notification.NotificationRequester;
+import com.beez.backend.notification.NotificationTargetType;
+import com.beez.backend.notification.event.NotificationMessages;
+import com.beez.backend.notification.event.NotificationMessages.Message;
+import com.beez.backend.project.ProjectMember;
+import com.beez.backend.project.ProjectMemberRepository;
 import com.beez.backend.task.entity.Task;
 import com.beez.backend.task.entity.TaskStatus;
 import com.beez.backend.task.repository.TaskRepository;
@@ -23,6 +34,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 검증 무효화는 {@link ValidationStatusLookup#invalidateForReassign} 를 쓴다. 진행 중 계획 변경(S2, markStaleForTask)과 달리
  * 계획 리비전이 그대로라 도는(RUNNING) 검증이 늦게 PASS 가 되면 쓸 수 있게 되므로 그것까지 막는다. 완료 보고에서 서버가 접수하는
  * DELTA 검증만 담당자와 무관해 그대로 둔다.
+ * <p>
+ * 담당자가 실제로 바뀐 작업마다 {@code TASK_ASSIGNEE_CHANGED} 활동과 새 담당자에게 {@code TASK_ASSIGNED} 알림을 같은 트랜잭션에서
+ * 남긴다 (S15P31A108-288, 계약 docs/design/10-notification-activity-contract.md 6.1·6.2·7절). 호출 지점은 이 한 곳이다.
  */
 @Service
 public class TaskHandoverService {
@@ -30,26 +44,40 @@ public class TaskHandoverService {
     /** 검증을 무효로 만든 이유 (validation.stale_reason) */
     static final String STALE_REASON = "ASSIGNEE_CHANGED";
 
+    /** 활동 유형 (계약 6.2) */
+    static final String ACTIVITY_ASSIGNEE_CHANGED = "TASK_ASSIGNEE_CHANGED";
+
+    /** 알림 유형 (계약 6.1). 새 담당자에게, 행위자 본인이면 보내지 않는다 */
+    static final String NOTIFICATION_ASSIGNED = "TASK_ASSIGNED";
+
     private static final Set<TaskStatus> OPEN = EnumSet.of(
             TaskStatus.DRAFT, TaskStatus.READY, TaskStatus.IN_PROGRESS, TaskStatus.WAITING);
 
     private final TaskRepository tasks;
     private final ValidationStatusLookup validations;
+    private final ProjectMemberRepository members;
+    private final ActivityRecorder activities;
+    private final NotificationRequester notifications;
 
-    public TaskHandoverService(TaskRepository tasks, ValidationStatusLookup validations) {
+    public TaskHandoverService(TaskRepository tasks, ValidationStatusLookup validations, ProjectMemberRepository members,
+                               ActivityRecorder activities, NotificationRequester notifications) {
         this.tasks = tasks;
         this.validations = validations;
+        this.members = members;
+        this.activities = activities;
+        this.notifications = notifications;
     }
 
     /**
      * fromMemberId 의 열린 작업을 toMemberId 에게 넘긴다. 열린 작업이 있는데 toMemberId 가 없으면 409 active_tasks_exist.
      * 멤버십 종료와 같은 트랜잭션이어야 해서 바깥 트랜잭션을 요구한다.
      *
+     * @param caller     제외(팀장)·나가기(본인)를 요청한 사람. 활동 행위자이고, 새 담당자가 이 사람이면 알림을 보내지 않는다
      * @param toMemberId 같은 프로젝트의 활성 멤버, fromMemberId 아님 (부르는 쪽이 확인). 열린 작업이 없으면 null 이어도 된다
      * @return 넘긴 작업 수
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public int handOver(long projectId, long fromMemberId, Long toMemberId) {
+    public int handOver(CallerContext caller, long projectId, long fromMemberId, Long toMemberId) {
         List<Task> open = tasks.findByProjectIdAndAssigneeMemberIdAndStatusIn(projectId, fromMemberId, OPEN);
         if (open.isEmpty()) {
             return 0;
@@ -58,23 +86,34 @@ public class TaskHandoverService {
             throw new ApiException(HttpStatus.CONFLICT, "active_tasks_exist",
                     "정리되지 않은 열린 작업이 " + open.size() + "개 있습니다. 인계 대상을 지정하세요");
         }
-        for (Task task : open) {
-            reassign(task, toMemberId);
-        }
+        long toAccountId = accountOf(toMemberId);
         // 동시에 상태가 바뀐 작업이 있으면 lock_version 이 달라 409 revision_conflict 로 전체가 되돌아간다
-        tasks.saveAllAndFlush(open);
+        for (Task task : open) {
+            reassign(caller, task, toMemberId, toAccountId);
+        }
         return open.size();
     }
 
     /**
-     * 열린 작업 하나의 담당자를 바꾼다. 저장(flush)은 부르는 쪽이 한다 — lock_version 비교가 그때 일어난다.
-     * 같은 담당자로 바꾸면 아무것도 하지 않는다(상태·검증을 건드릴 이유가 없다). 닫힌 작업은 부르는 쪽이 거른다.
+     * 열린 작업 하나의 담당자를 바꾸고 저장(flush)한 뒤 활동·알림을 남긴다. lock_version 비교는 이 flush 에서 일어난다
+     * (다르면 409 revision_conflict). 같은 담당자로 바꾸면 아무것도 하지 않는다(상태·검증·활동·알림 모두). 닫힌 작업은 부르는 쪽이 거른다.
+     *
+     * @param caller 담당자를 바꾼 사람(TSK-A06 팀장). 활동 행위자이고, 새 담당자가 이 사람이면 알림을 보내지 않는다
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void reassign(Task task, long toMemberId) {
-        if (task.getAssigneeMemberId() != null && task.getAssigneeMemberId() == toMemberId) {
+    public void reassign(CallerContext caller, Task task, long toMemberId) {
+        if (isSameAssignee(task, toMemberId)) {
             return;
         }
+        reassign(caller, task, toMemberId, accountOf(toMemberId));
+    }
+
+    private void reassign(CallerContext caller, Task task, long toMemberId, long toAccountId) {
+        if (isSameAssignee(task, toMemberId)) {
+            return;
+        }
+        // 키는 변경 전 잠금 버전(계약 6.2 예외) — 담당자 변경마다 버전이 오르므로 다음 변경과 겹치지 않는다
+        int lockBefore = task.getLockVersion();
         if (task.getStatus().isOccupied()) {
             validations.invalidateForReassign(task.getId(), STALE_REASON);
         }
@@ -82,5 +121,28 @@ public class TaskHandoverService {
             task.holdForRevalidation();
         }
         task.changeAssignee(toMemberId);
+        // 활동·알림 입구는 네이티브 쿼리라 실행 전에 영속성 컨텍스트를 flush 한다. 거기서 잠금 충돌이 나면 저장소 예외 변환을 거치지 않아
+        // 409 가 아니라 500 이 되므로, 저장소로 먼저 flush 해 충돌을 ObjectOptimisticLockingFailureException(409)로 낸다
+        tasks.saveAndFlush(task);
+
+        String key = "task:" + task.getId() + ":lock:" + lockBefore + ":ASSIGNEE_CHANGED";
+        activities.record(caller, ActivityEvent.of(key, task.getProjectId(), ACTIVITY_ASSIGNEE_CHANGED,
+                ActivityTargetType.TASK, task.getId()));
+        // 자기에게 배정한 경우(팀장 자기 배정 등)는 자기가 고른 일이라 알리지 않는다 (계약 6.1, 11-04 결정)
+        if (toAccountId != caller.accountId()) {
+            Message message = NotificationMessages.taskAssigned(task.getTitle());
+            notifications.request(new NotificationRequest(key + ":to:" + toAccountId, task.getProjectId(), toAccountId,
+                    NOTIFICATION_ASSIGNED, message.title(), message.body(), NotificationTargetType.TASK, task.getId(), null));
+        }
+    }
+
+    private static boolean isSameAssignee(Task task, long toMemberId) {
+        return task.getAssigneeMemberId() != null && task.getAssigneeMemberId() == toMemberId;
+    }
+
+    /** 새 담당자의 계정. 부르는 쪽이 활성 멤버임을 이미 확인했다 */
+    private long accountOf(long memberId) {
+        return members.findById(memberId).map(ProjectMember::getAccountId)
+                .orElseThrow(() -> new IllegalStateException("assignee member missing: " + memberId));
     }
 }

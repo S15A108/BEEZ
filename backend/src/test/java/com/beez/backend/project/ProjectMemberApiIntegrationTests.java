@@ -10,6 +10,9 @@ import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import com.beez.backend.task.entity.Task;
+import com.beez.backend.task.repository.TaskRepository;
+import com.beez.backend.task.service.TaskHandoverService;
 import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -26,6 +29,9 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -45,6 +51,15 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ProjectAccessChecker access;
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
+
+    @Autowired
+    TaskHandoverService handover;
+
+    @Autowired
+    TaskRepository taskRepository;
 
     TaskApiSupport api;
     Long projectId;
@@ -261,6 +276,89 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
+     * 깨지면: 담당자 변경(TSK-A06)이 타임라인에 남지 않거나 새 담당자가 알림을 못 받거나, 같은 담당자로 다시 지정했을 뿐인데
+     * 활동·알림이 생기거나, 팀장이 자기에게 배정했는데 자기 알림함에 알림이 쌓인다 (-288, 계약 6.1·6.2·7절, 11-04 결정).
+     * 연속 변경은 키(변경 전 잠금 버전)가 달라 매번 남아야 한다 — 겹치면 두 번째 변경이 ON CONFLICT 로 조용히 사라진다.
+     */
+    @Test
+    void assigneeChange_recordsActivity_andNotifiesNewAssigneeExceptSelf() {
+        long task = createTaskAsMember("배정 알림 대상");
+        long memberMemberId = api.memberId("member@test");
+        long leaderMemberId = api.memberId("leader@test");
+        long carol = joinAsMember();
+
+        assertThat(changeAssignee(task, memberMemberId).statusCode()).isEqualTo(200);
+        assertThat(assigneeActivities(task)).isEmpty();
+        assertThat(assignedRecipients(task)).isEmpty();
+
+        assertThat(changeAssignee(task, memberIdOf(carol)).statusCode()).isEqualTo(200);
+        assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader);
+        assertThat(assignedRecipients(task)).containsExactly(carol);
+
+        // 팀장 자기 배정: 활동은 남고 알림은 없다
+        assertThat(changeAssignee(task, leaderMemberId).statusCode()).isEqualTo(200);
+        assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader, "HUMAN|" + leader);
+        assertThat(assignedRecipients(task)).containsExactly(carol);
+    }
+
+    /**
+     * 깨지면: 팀원 제외·나가기로 넘어간 작업이 타임라인에 남지 않거나, 넘겨받은 사람이 몇 개를 받았는지 모르거나,
+     * 나가는 사람이 팀장에게 넘겼는데 팀장이 알림을 못 받는다 (-288 완료 조건, 작업마다 한 건씩).
+     */
+    @Test
+    void handover_onRemoveAndLeave_recordsOnePerTask_andNotifiesNewAssignee() {
+        long first = createTaskAsMember("인계 1");
+        long second = createTaskAsMember("인계 2");
+        long memberMemberId = api.memberId("member@test");
+        long carol = joinAsMember();
+
+        assertThat(api.post(removePath(memberMemberId), body("reassign_to_member_id", memberIdOf(carol)), leader)
+                .statusCode()).isEqualTo(204);
+        for (long task : new long[] {first, second}) {
+            assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader);
+            assertThat(assignedRecipients(task)).containsExactly(carol);
+        }
+
+        // 나가기는 나가는 본인이 행위자, 받는 팀장에게 알림
+        String leavePath = "/api/projects/" + projectId + "/leave";
+        assertThat(api.post(leavePath, body("reassign_to_member_id", api.memberId("leader@test")), carol).statusCode())
+                .isEqualTo(204);
+        for (long task : new long[] {first, second}) {
+            assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader, "HUMAN|" + carol);
+            assertThat(assignedRecipients(task)).containsExactly(carol, leader);
+        }
+    }
+
+    /**
+     * 깨지면: 담당자 변경이 롤백돼도 활동·알림만 남거나, 동시에 바뀐 작업의 잠금 충돌이 409 revision_conflict 가 아닌 다른 예외(500)로 난다.
+     * 활동·알림 입구는 네이티브 쿼리라 실행 전에 flush 하는데, 거기서 충돌이 나면 저장소의 예외 변환을 거치지 않는다(-288 실측 함정).
+     */
+    @Test
+    void reassign_rollsBackWithDomain_andConflictStaysOptimisticLockFailure() {
+        long task = createTaskAsMember("롤백 대상");
+        long carolMemberId = memberIdOf(joinAsMember());
+        CallerContext caller = CallerContext.human(leader);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+
+        tx.executeWithoutResult(status -> {
+            handover.reassign(caller, taskRepository.findById(task).orElseThrow(), carolMemberId);
+            status.setRollbackOnly();
+        });
+        assertThat(taskRow(task)).endsWith("|" + api.memberId("member@test"));
+        assertThat(assigneeActivities(task)).isEmpty();
+        assertThat(assignedRecipients(task)).isEmpty();
+
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            Task loaded = taskRepository.findById(task).orElseThrow();
+            // 읽은 뒤 다른 트랜잭션이 작업을 바꿔 커밋했다
+            api.jdbc.sql("update task set lock_version = lock_version + 1 where id = :t").param("t", task).update();
+            handover.reassign(caller, loaded, carolMemberId);
+        })).isInstanceOf(ObjectOptimisticLockingFailureException.class);
+        assertThat(assigneeActivities(task)).isEmpty();
+        assertThat(assignedRecipients(task)).isEmpty();
+    }
+
+    /**
      * 깨지면: 팀장 위임이 커밋되는 동안 프로젝트 잠금을 기다린 팀장 전용 요청이 이미 팀장이 아닌 사람으로 처리된다
      * (MEM-A08 "요청 처리 시점의 팀장 권한 재확인"). 대상은 담당자 변경(TSK-A06)·표시 수정(MEM-A07)·프로젝트 수정·삭제(PRJ-A04·A05).
      * 잠금을 쥔 트랜잭션에서 위임을 흉내 내 커밋해, 겹치는 순서를 매번 똑같이 만든다.
@@ -450,6 +548,22 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
             }
             Thread.sleep(20);
         }
+    }
+
+    /** TASK_ASSIGNEE_CHANGED 활동의 행위자 종류|계정, 저장 순 */
+    private List<String> assigneeActivities(long taskId) {
+        return api.jdbc.sql("""
+                        select actor_kind || '|' || actor_id from activity_event
+                         where task_id = :t and event_type = 'TASK_ASSIGNEE_CHANGED' order by id
+                        """).param("t", taskId).query(String.class).list();
+    }
+
+    /** TASK_ASSIGNED 알림 수신 계정, 저장 순 */
+    private List<Long> assignedRecipients(long taskId) {
+        return api.jdbc.sql("""
+                        select recipient_account_id from notification
+                         where ref_kind = 'TASK' and ref_id = :t and type = 'TASK_ASSIGNED' order by id
+                        """).param("t", taskId).query(Long.class).list();
     }
 
     /** 상태|대기 사유|담당 멤버 */
