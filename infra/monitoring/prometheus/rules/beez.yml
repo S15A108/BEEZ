@@ -8,9 +8,12 @@
 #   Alertmanager 는 alertname 으로 묶고, FAILED·확인 필요 미평가만 24시간마다 다시 알린다(alertmanager.yml).
 #
 # 집계 규칙(244 결정 3)
-#   DB gauge 는 인스턴스마다 같은 DB 전체를 센 값이라 더하면 중복된다. 마지막 집계가 성공한(snapshot_available == 1)
-#   인스턴스만 남겨 max 로 하나로 만든다. 집계가 실패한 인스턴스의 DB gauge 는 NaN 이라 이 식에서 빠진다.
-#   → 집계 실패 중에는 아래 beez_cdc:* 시계열이 사라지고 그 값으로 거는 알림도 풀린다. 그 동안은 CdcSnapshotFailing 이 대신 운다.
+#   DB gauge 는 인스턴스마다 같은 DB 전체를 센 값이라 더하면 중복된다. 집계가 성공했고(snapshot_available == 1)
+#   마지막 성공이 120초 이내인 인스턴스(beez_cdc:snapshot_fresh)만 남겨 max 로 하나로 만든다.
+#   성공 1 인 채 갱신이 멈춘 인스턴스의 옛 값이 max 에 남아 이미 해소된 건을 알리지 않게 신선도까지 본다(PR #121 리뷰).
+#   → 집계가 실패하거나 멈추면 아래 beez_cdc:* 시계열이 사라진다. 그 동안은 CdcSnapshotFailing 이 운다.
+#     CDC 상태 알림에는 keep_firing_for: 10m 을 붙여, 값이 사라지자마자 "해소" 글이 먼저 가지 않게 한다
+#     (CdcSnapshotFailing 이 오기까지 갱신 멈춤 120초 + 지속 5분 + 묶음 대기 30초 ≈ 7.5분). 실제 해소 글도 최대 10분 늦다.
 #   프로세스 counter(Kafka 수신 실패)는 인스턴스별 increase() 를 더한다. gauge 에는 increase() 를 쓰지 않는다.
 #
 # or vector(0) 은 여기서 쓰지 않는다. "시계열 없음"과 "0"을 섞으면 수집 장애가 정상으로 보인다. 대시보드 표시용으로만 쓴다.
@@ -20,18 +23,24 @@ groups:
   # 기록 값을 읽는다. 그룹을 나누면 두 그룹이 따로 돌아 알림이 한 주기(15초) 전 값을 읽을 수도 있다.
   - name: beez-cdc
     rules:
+      # 인스턴스별: 집계 성공 + 마지막 성공 120초 이내일 때만 시계열이 있다(값 1). 아래 기록 규칙과 대시보드가 이것으로 거른다.
+      # 120초는 CdcSnapshotFailing 의 갱신 멈춤 기준과 같다(평소 나이는 캐시 15초 + 수집 15초 안쪽)
+      - record: beez_cdc:snapshot_fresh
+        expr: |
+          beez_cdc_analysis_snapshot_available == 1
+          and on(instance) (time() - beez_cdc_analysis_snapshot_last_success_epoch_seconds) <= 120
       - record: beez_cdc:oldest_pending_seconds:max
-        expr: max(beez_cdc_analysis_oldest_pending_seconds and on(instance) beez_cdc_analysis_snapshot_available == 1)
+        expr: max(beez_cdc_analysis_oldest_pending_seconds and on(instance) beez_cdc:snapshot_fresh)
       - record: beez_cdc:expired_leases:max
-        expr: max(beez_cdc_analysis_expired_leases and on(instance) beez_cdc_analysis_snapshot_available == 1)
+        expr: max(beez_cdc_analysis_expired_leases and on(instance) beez_cdc:snapshot_fresh)
       - record: beez_cdc:blocked_projects:max
-        expr: max(beez_cdc_analysis_blocked_projects and on(instance) beez_cdc_analysis_snapshot_available == 1)
+        expr: max(beez_cdc_analysis_blocked_projects and on(instance) beez_cdc:snapshot_fresh)
       - record: beez_cdc:not_evaluated_requires_review:max
-        expr: max(beez_cdc_analysis_not_evaluated_requires_review and on(instance) beez_cdc_analysis_snapshot_available == 1)
+        expr: max(beez_cdc_analysis_not_evaluated_requires_review and on(instance) beez_cdc:snapshot_fresh)
       - record: beez_cdc:intakes:max
-        expr: max by (status) (beez_cdc_analysis_intakes and on(instance) beez_cdc_analysis_snapshot_available == 1)
+        expr: max by (status) (beez_cdc_analysis_intakes and on(instance) beez_cdc:snapshot_fresh)
       - record: beez_cdc:evaluations:max
-        expr: max by (result) (beez_cdc_analysis_evaluations and on(instance) beez_cdc_analysis_snapshot_available == 1)
+        expr: max by (result) (beez_cdc_analysis_evaluations and on(instance) beez_cdc:snapshot_fresh)
       # 설정값이라 DB 집계와 무관하다. 인스턴스 중 하나라도 켜져 있으면 1
       - record: beez_cdc:consumer_enabled:max
         expr: max(beez_cdc_analysis_consumer_enabled)
@@ -42,6 +51,7 @@ groups:
       - alert: CdcPendingDelay
         expr: beez_cdc:oldest_pending_seconds:max > 600 and on() beez_cdc:consumer_enabled:max == 1
         for: 5m
+        keep_firing_for: 10m
         labels: {team: app}
         annotations:
           summary: "분석 대기(PENDING)가 {{ $value | humanizeDuration }}째 처리되지 않음"
@@ -57,9 +67,23 @@ groups:
         annotations:
           summary: "CDC 상태 집계 실패 또는 갱신 멈춤 ({{ $labels.instance }})"
 
+      # 수집은 되는데(up == 1) CDC 필수 지표가 빠짐 = 지표가 빠진 배포·롤백, 등록 실패. 두 식 모두 시계열이 없어
+      # 위 CdcSnapshotFailing 도 BackendScrapeDown 도 울리지 않는 경우다(PR #121 리뷰). 인스턴스별로 하나라도 없으면 운다
+      - alert: CdcMetricsMissing
+        expr: |
+          (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_snapshot_available)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_snapshot_last_success_epoch_seconds)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_consumer_enabled)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_intakes)
+        for: 5m
+        labels: {team: app}
+        annotations:
+          summary: "backend 는 수집되는데 CDC 필수 지표가 없음 ({{ $labels.instance }})"
+
       - alert: CdcExpiredLeases
         expr: beez_cdc:expired_leases:max > 0
         for: 5m
+        keep_firing_for: 10m
         labels: {team: app}
         annotations:
           summary: "lease 가 만료된 RUNNING {{ $value }}건"
@@ -67,6 +91,7 @@ groups:
       - alert: CdcBlockedProjects
         expr: beez_cdc:blocked_projects:max > 0
         for: 10m
+        keep_firing_for: 10m
         labels: {team: app}
         annotations:
           summary: "순서상 막힌 프로젝트 {{ $value }}개"
@@ -75,12 +100,14 @@ groups:
       # gauge 라 이미 남은 건이 있을 때 새로 생긴 건을 따로 알리지 않는다(한계, monitoring-alerts.md).
       - alert: CdcFailedIntakes
         expr: beez_cdc:intakes:max{status="FAILED"} > 0
+        keep_firing_for: 10m
         labels: {team: app}
         annotations:
           summary: "분석 FAILED {{ $value }}건 남아 있음(자동 재처리 없음)"
 
       - alert: CdcNotEvaluatedRequiresReview
         expr: beez_cdc:not_evaluated_requires_review:max > 0
+        keep_firing_for: 10m
         labels: {team: app}
         annotations:
           summary: "확인 필요 미평가 {{ $value }}건 남아 있음"
@@ -92,13 +119,15 @@ groups:
         annotations:
           summary: "최근 5분 Kafka 레코드 처리 실패 {{ $value | printf \"%.0f\" }}회"
 
-      # consumer 가 켜졌는데 실패 counter 가 없다 = 리스너가 등록되지 않았거나 지표가 빠짐. 기동 직후를 거르려고 5분
+      # consumer 가 켜진 인스턴스에 그 인스턴스의 실패 counter 가 없다 = 리스너가 등록되지 않았거나 지표가 빠짐.
+      # absent() 는 전체에 하나도 없을 때만 참이라, 인스턴스가 둘 이상이면 한쪽 누락을 놓친다(PR #121 리뷰).
+      # backend 가 내려가면 consumer_enabled 도 사라져 함께 조용해진다(BackendScrapeDown 이 운다). 기동 직후를 거르려고 5분
       - alert: CdcKafkaFailureMetricMissing
-        expr: absent(beez_cdc_kafka_receive_failures_total) and on() beez_cdc:consumer_enabled:max == 1
+        expr: beez_cdc_analysis_consumer_enabled == 1 unless on(instance) beez_cdc_kafka_receive_failures_total
         for: 5m
         labels: {team: infra}
         annotations:
-          summary: "consumer 가 켜졌는데 Kafka 수신 실패 지표가 없음"
+          summary: "consumer 가 켜졌는데 Kafka 수신 실패 지표가 없음 ({{ $labels.instance }})"
 
   - name: beez-infra-alerts
     rules:

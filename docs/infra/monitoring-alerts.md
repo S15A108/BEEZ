@@ -19,12 +19,13 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 |---|---|---|---|---|
 | [CdcPendingDelay](#cdcpendingdelay) | 가장 오래된 PENDING > 600초 **그리고** consumer 켜짐 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcSnapshotFailing](#cdcsnapshotfailing) | DB 집계 실패, 또는 마지막 성공 120초 초과 | 5분 | 4시간 | 앱 · 양지훈 |
+| [CdcMetricsMissing](#cdcmetricsmissing) | backend 수집은 되는데(`up == 1`) CDC 필수 지표가 없음(인스턴스별) | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcExpiredLeases](#cdcexpiredleases) | lease 만료 RUNNING > 0 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcBlockedProjects](#cdcblockedprojects) | 순서상 막힌 프로젝트 > 0 | 10분 | 4시간 | 앱 · 양지훈 |
 | [CdcFailedIntakes](#cdcfailedintakes) | FAILED > 0 | 바로 | **24시간** | 앱 · 양지훈 |
 | [CdcNotEvaluatedRequiresReview](#cdcnotevaluatedrequiresreview) | 확인 필요 미평가 > 0 | 바로 | **24시간** | 앱 · 양지훈 |
 | [CdcKafkaReceiveFailures](#cdckafkareceivefailures) | 최근 5분 Kafka 수신 실패 증가 **그리고** consumer 켜짐 | 바로 | 4시간 | 인프라 · 전진 |
-| [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜짐인데 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜진 인스턴스에 그 인스턴스의 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -40,6 +41,13 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
   디스크 15%(약 46GB)는 244 결정에 값이 없어 정한 초기값입니다. 루트만 봅니다(아래 DiskSpaceLow).
 - 1차 대응자는 알림 글에 찍힙니다. 담당이 바뀌면 `alertmanager/templates/beez.tmpl`의
   `beez.owner`, 이 표, 규칙 파일 머리말을 함께 고칩니다.
+- **CDC 건수 값은 신선한 스냅샷만 씁니다.** 인스턴스별로 집계 성공이고 마지막 성공이 120초
+  이내인 것(`beez_cdc:snapshot_fresh`)만 남겨 `max`로 합칩니다. 갱신이 멈춘 인스턴스의 옛 값이
+  이미 해소된 건을 계속 알리지 않게 하려는 것입니다(PR #121 리뷰).
+- **CDC 상태 알림(지연·lease·막힘·FAILED·미평가)은 조건이 풀린 뒤 10분 더 유지합니다**
+  (`keep_firing_for`). 집계가 멈추면 건수 값이 사라지는데, 그때 바로 "해소" 글이 가면 실제로
+  풀린 것처럼 보입니다. 10분은 `CdcSnapshotFailing`이 먼저 오기에 충분한 시간입니다(약 7.5분).
+  그래서 **실제 해소 글도 최대 10분 늦게 옵니다.**
 - 묶음: 같은 알림 이름은 한 글로 옵니다. 처음 발생 뒤 30초 모아서 보내고, 묶음에 새
   대상이 붙으면 5분 간격으로 다시 보냅니다. 해소되면 `✅ … 해소` 글이 옵니다.
 
@@ -98,6 +106,15 @@ backend가 지표용 DB 집계에 실패하거나, 집계 값이 120초 넘게 �
   Hikari 대기. backend 로그(집계 실패는 예외 원문 없이 상태만 남깁니다).
 - DB 자체 문제(연결 고갈·DB 다운)면 인프라(전진)와 같이 봅니다.
 
+### CdcMetricsMissing
+
+backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지표(`snapshot_available`·
+`last_success`·`consumer_enabled`·`intakes`) 중 하나라도 5분 넘게 없습니다. 이때는
+`CdcSnapshotFailing`도 `BackendScrapeDown`도 울리지 않아 CDC 감시가 통째로 빠집니다.
+
+- 볼 곳: 그 인스턴스에 배포된 커밋(CDC 지표가 없는 커밋으로 배포·롤백했는지), backend 기동
+  로그의 지표 등록. Prometheus에서 `{__name__=~"beez_cdc.*", instance="<대상>"}` 조회.
+
 ### CdcExpiredLeases
 
 `RUNNING`인데 lease가 만료된 접수가 5분 넘게 있습니다. 워커가 처리 중에 죽었거나 멈춘
@@ -141,8 +158,9 @@ consumer가 켜진 상태에서 최근 5분 동안 Kafka 레코드 처리 실패
 
 ### CdcKafkaFailureMetricMissing
 
-consumer 설정은 켜졌는데 Kafka 수신 실패 counter가 5분 넘게 없습니다. counter는 리스너가
-등록될 때 0으로 생기므로, 리스너가 뜨지 않았거나 지표 등록이 빠진 것입니다.
+consumer 설정이 켜진 인스턴스에 그 인스턴스의 Kafka 수신 실패 counter가 5분 넘게 없습니다.
+counter는 리스너가 등록될 때 0으로 생기므로, 리스너가 뜨지 않았거나 지표 등록이 빠진 것입니다.
+인스턴스별로 대조하므로 backend가 여럿일 때 한쪽만 빠져도 잡습니다.
 
 - 볼 곳: backend 기동 로그의 Kafka 리스너 등록, 배포된 설정(consumer 관련 env).
 
@@ -307,8 +325,9 @@ cd ../..
 ```
 
 - `MSYS_NO_PATHCONV=1`: Git Bash가 `/p` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
-- 시험은 244 결정의 계약만 봅니다(consumer 꺼짐에서 안 울림, 600초 + 5분, 집계 실패·갱신
-  멈춤, Kafka 실패·지표 누락, FAILED 중복 제거). 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
+- 시험은 244 결정과 PR #121 리뷰의 계약만 봅니다(consumer 꺼짐에서 안 울림, 600초 + 5분,
+  집계 실패·갱신 멈춤, 오래된 스냅샷 제외, 집계가 멈춰도 FAILED가 먼저 해소되지 않음, CDC 지표
+  누락, Kafka 실패·인스턴스별 지표 누락, FAILED 중복 제거). 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
 - CI에서는 돌지 않습니다(S15P31A108-264 범위 밖, 후속 과제). 규칙을 바꾼 PR은 위 세 명령의
   결과를 PR 본문에 붙입니다.
 
@@ -334,9 +353,10 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
   파일에서 돌아옵니다. 올리기 뒤에는 항상 다시 띄우기까지 합니다.
 
 - CDC 건수 패널은 기록 규칙(`beez_cdc:*`)을 씁니다. 기록 규칙이 없는 지표는 같은 중복 제거
-  식(`max(지표 and on(instance) beez_cdc_analysis_snapshot_available == 1)`)을 씁니다.
-- `or vector(0)`은 "Kafka 수신 실패" 표시에만 씁니다(consumer가 꺼져 지표가 없을 때 0으로
-  보이게). 알림 규칙에는 쓰지 않습니다.
+  식(`max(지표 and on(instance) beez_cdc:snapshot_fresh)`)을 씁니다. "DB 집계" 칸도 이 신선도
+  기준입니다.
+- `or vector(0)`은 표시에만 씁니다. "Kafka 수신 실패"는 consumer가 꺼져 지표가 없을 때 0으로,
+  "DB 집계"는 신선한 스냅샷이 없을 때 실패로 보이게 합니다. 알림 규칙에는 쓰지 않습니다.
 
 ## 검증 기록
 
@@ -364,3 +384,4 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 | consumer 꺼짐 | `beez_cdc:consumer_enabled:max` 0, Kafka 실패 지표 없음(`absent` = 1)인데 `CdcKafkaFailureMetricMissing`·`CdcPendingDelay` 비활성 — consumer 조건이 막음 |
 | 실제 수신 | `mon stop node-exporter`(17:39) → `MonitoringTargetDown` pending 17:39:22, firing 17:41:22 → 팀 채널에 발생 글. `mon start`(17:42) → 해소 글. Mattermost 전송 2건, 실패 0 |
 | 리뷰 반영 재배포 | 커밋 `f386d84`를 올려 `moncheck` 통과 뒤 다시 띄움. 규칙 그룹 `beez-cdc`(15개)·`beez-infra-alerts`(4개) 모두 health ok, 울리는 알림 없음, 수집 대상 5개 UP, DiskSpaceLow 식이 `/`만 봄, `beez_cdc:*` 기록 계속(consumer 0, 상태 5개), 대시보드 프로비저닝 오류 없음 |
+| PR #121 리뷰 반영 | 리뷰 지적 3건(갱신이 멈춘 인스턴스의 옛 값이 `max`에 남음, `up=1`인데 CDC 지표가 전부 빠지면 무알림, 인스턴스별 Kafka counter 누락)을 먼저 promtool로 재현 → 신선도 기록 규칙 `beez_cdc:snapshot_fresh`, `CdcMetricsMissing`, 인스턴스별 `unless`, CDC 상태 알림 `keep_firing_for: 10m`. 시험 10개 통과, 각 수정을 되돌린 사본에서 대응 시험이 실패하는 것 확인 |

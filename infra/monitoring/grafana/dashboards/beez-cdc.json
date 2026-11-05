@@ -110,7 +110,7 @@
     {
       "type": "stat",
       "title": "DB 집계",
-      "description": "마지막 DB 집계 성공 1, 실패 0. 실패 중에는 아래 CDC 건수가 비어 보인다(NaN 은 표시에서 뺌)",
+      "description": "집계 성공이고 마지막 성공이 120초 이내면 정상(beez_cdc:snapshot_fresh). 실패·멈춤·지표 없음이면 실패(표시용 or vector(0)). 실패 중에는 아래 CDC 건수가 비어 보인다",
       "targets": [
         {
           "refId": "A",
@@ -118,7 +118,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(beez_cdc_analysis_snapshot_available)",
+          "expr": "max(beez_cdc:snapshot_fresh) or vector(0)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true
@@ -658,7 +658,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max (beez_cdc_analysis_pending_retries and on(instance) beez_cdc_analysis_snapshot_available == 1)",
+          "expr": "max (beez_cdc_analysis_pending_retries and on(instance) beez_cdc:snapshot_fresh)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true
@@ -783,7 +783,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max (beez_cdc_analysis_not_evaluated_expected and on(instance) beez_cdc_analysis_snapshot_available == 1)",
+          "expr": "max (beez_cdc_analysis_not_evaluated_expected and on(instance) beez_cdc:snapshot_fresh)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true
@@ -1176,7 +1176,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max (beez_cdc_analysis_pending_retries and on(instance) beez_cdc_analysis_snapshot_available == 1)",
+          "expr": "max (beez_cdc_analysis_pending_retries and on(instance) beez_cdc:snapshot_fresh)",
           "legendFormat": "재시도 예정 PENDING",
           "range": true,
           "instant": false
@@ -1187,7 +1187,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max (beez_cdc_analysis_started_retries and on(instance) beez_cdc_analysis_snapshot_available == 1)",
+          "expr": "max (beez_cdc_analysis_started_retries and on(instance) beez_cdc:snapshot_fresh)",
           "legendFormat": "시작된 재시도 합",
           "range": true,
           "instant": false
@@ -1198,7 +1198,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max (beez_cdc_analysis_recorded_retry_attempts and on(instance) beez_cdc_analysis_snapshot_available == 1)",
+          "expr": "max (beez_cdc_analysis_recorded_retry_attempts and on(instance) beez_cdc:snapshot_fresh)",
           "legendFormat": "기록된 재시도 시도",
           "range": true,
           "instant": false
@@ -1268,7 +1268,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (result) (beez_cdc_analysis_attempt_records and on(instance) beez_cdc_analysis_snapshot_available == 1)",
+          "expr": "max by (result) (beez_cdc_analysis_attempt_records and on(instance) beez_cdc:snapshot_fresh)",
           "legendFormat": "{{result}}",
           "range": true,
           "instant": false
@@ -1419,8 +1419,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(beez_cdc_analysis_snapshot_available)",
-          "legendFormat": "DB 집계 성공",
+          "expr": "max(beez_cdc:snapshot_fresh) or vector(0)",
+          "legendFormat": "DB 집계 정상(신선)",
           "range": true,
           "instant": false
         },
