@@ -154,16 +154,3 @@ export interface Snapshot {
   tasks: Task[]
   events: LeadEvent[]
 }
-export interface WorldProject {
-  id: string
-  name: string
-  lot?: number | null
-  design: string
-  floors: number
-  status: string
-  has_badge: boolean
-}
-export interface WorldSummary {
-  lots: { index: number; project_id: string | null }[]
-  projects: WorldProject[]
-}

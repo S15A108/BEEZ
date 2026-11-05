@@ -41,7 +41,7 @@ public class ContextAccessLog extends BaseTimeEntity {
     @Column(name = "tool", nullable = false)
     private String tool;
 
-    /** 본 대상의 종류. 예: BASELINE, PACKET, CONTEXT_RECORD */
+    /** 본 대상의 종류. 예: BASELINE, PACKET, CONTEXT_RECORD, DOCUMENT_VERSION */
     @Column(name = "target_kind", nullable = false)
     private String targetKind;
 

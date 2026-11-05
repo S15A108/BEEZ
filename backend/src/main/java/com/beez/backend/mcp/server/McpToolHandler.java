@@ -23,14 +23,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.exc.InvalidDefinitionException;
+import tools.jackson.databind.exc.UnrecognizedPropertyException;
 
 /**
  * 모든 도구 호출의 공통 처리 (-176). {@link McpTool} 을 SDK 도구 등록 객체로 감싼다.
  * <ol>
  *   <li>호출자: 필터가 검증한 토큰 주체({@link AgentPrincipal})에서 {@code CallerContext.agent} 와 프로젝트를 만든다</li>
- *   <li>인수: snake_case JSON → 인수 레코드. 변환 실패(타입·enum 이름)는 400 validation_failed</li>
+ *   <li>인수: snake_case JSON → 인수 레코드. 변환 실패(타입·enum 이름·모르는 키)는 400 validation_failed</li>
  *   <li>결과: 성공은 payload 를 snake_case JSON 으로, 업무 오류는 {@code {"error":{"code","message"}}} 를 도구 실패 결과(isError)로</li>
  *   <li>로그: 요청 ID(MDC)와 도구·프로젝트·계정·결과 코드·지연. 인수·결과 본문은 남기지 않는다 (비밀값·개인 대화 원문 — MCP-09)</li>
  * </ol>
@@ -118,20 +121,36 @@ public class McpToolHandler {
         }
     }
 
+    /**
+     * 모르는 인수 키는 거부한다(-179 결정). REST 는 Boot 기본대로 무시하지만, 도구에서 선택 인수 오타(task_id → taskid)를
+     * 무시하면 upsert_task_plan 이 수정 대신 새 작업을 만드는 식으로 뜻이 바뀐 채 성공한다. 그래서 인수 변환에만 켠다.
+     * 중첩 객체(plan·items 등)도 같다. 자유 객체 칸(Map)은 그대로 받는다.
+     */
     private <A> A convertArgs(McpTool<A> tool, Map<String, Object> arguments) {
         try {
-            return json.convertValue(arguments == null ? Map.of() : arguments, tool.argsType());
+            return json.readerFor(tool.argsType())
+                    .with(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue((JsonNode) json.valueToTree(arguments == null ? Map.of() : arguments));
         } catch (InvalidDefinitionException e) {
             // 인수 레코드를 만들 수 없는 정의(서버 버그)다. 입력 탓으로 돌리지 않고 internal + 스택 로그로 보낸다
             throw new IllegalStateException("MCP 도구 " + tool.name() + " 의 인수 타입을 만들 수 없습니다", e);
         } catch (JacksonException e) {
-            // Jackson 3 의 convertValue 는 변환 오류를 감싸지 않고 그대로 던진다
+            // Jackson 3 은 변환 오류를 감싸지 않고 그대로 던진다 (모르는 키는 UnrecognizedPropertyException)
             throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed", argumentMessage(e));
         }
     }
 
-    /** 칸 경로만 알려 준다. Jackson 원문 메시지는 클래스 이름 등 내부 정보를 담아 내보내지 않는다 */
+    /** 칸 경로만 알려 준다. 모르는 키면 그렇다고 적는다 — 에이전트가 오타를 고칠 수 있게 */
     private static String argumentMessage(JacksonException e) {
+        String path = argumentPath(e);
+        if (e instanceof UnrecognizedPropertyException) {
+            return path + " 은(는) 이 도구에 없는 인수입니다";
+        }
+        return path.isEmpty() ? "도구 인수가 올바르지 않습니다" : path + " 값이 올바르지 않습니다";
+    }
+
+    /** Jackson 원문 메시지는 클래스 이름 등 내부 정보를 담아 내보내지 않고, 칸 경로만 만든다 */
+    private static String argumentPath(JacksonException e) {
         StringBuilder path = new StringBuilder();
         for (JacksonException.Reference ref : e.getPath()) {
             if (ref.getPropertyName() != null) {
@@ -141,7 +160,7 @@ public class McpToolHandler {
                 path.append('[').append(ref.getIndex()).append(']');
             }
         }
-        return path.isEmpty() ? "도구 인수가 올바르지 않습니다" : path + " 값이 올바르지 않습니다";
+        return path.toString();
     }
 
     private CallToolResult success(Object payload) {

@@ -5,31 +5,8 @@ import type {
   SceneTask,
   Snapshot,
   TaskStatus,
-  WorldSummary,
 } from './types'
 import { RECEPTIONIST } from './office/social'
-
-export function citySceneData(projects: readonly SceneProject[]): WorldSummary {
-  const visible = projects.filter(
-    (project) => project.lot != null && project.lot >= 0 && project.lot < 8,
-  )
-  return {
-    lots: Array.from({ length: 8 }, (_, index) => ({
-      index,
-      project_id: visible.find((project) => project.lot === index)?.id ?? null,
-    })),
-    projects: visible.map((project) => ({
-      ...project,
-      design: project.design ?? 'glass',
-      status:
-        project.status === 'constructing' || project.status === 'DRAFT'
-          ? 'constructing'
-          : 'ready',
-      floors: project.floors ?? 5,
-      has_badge: true,
-    })),
-  }
-}
 
 export function officeSceneAgents(agents: readonly SceneAgent[]): Agent[] {
   return agents.map((agent) => {

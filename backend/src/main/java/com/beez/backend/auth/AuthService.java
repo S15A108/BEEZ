@@ -2,6 +2,7 @@ package com.beez.backend.auth;
 
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
+import com.beez.backend.auth.recovery.PasswordRecoveryService;
 import com.beez.backend.auth.verification.EmailVerificationService;
 import com.beez.backend.common.api.ApiException;
 import java.nio.charset.StandardCharsets;
@@ -27,14 +28,17 @@ public class AuthService {
     private final AccountRepository accounts;
     private final PasswordEncoder encoder;
     private final EmailVerificationService verifications;
+    private final PasswordRecoveryService recovery;
     /** 없는 이메일에도 같은 시간만큼 해시 비교를 해서, 응답 시간으로 가입 여부가 드러나지 않게 한다. */
     private static final String DUMMY_RAW = "beez-timing-equalizer-0";
     private final String dummyHash;
 
-    public AuthService(AccountRepository accounts, PasswordEncoder encoder, EmailVerificationService verifications) {
+    public AuthService(AccountRepository accounts, PasswordEncoder encoder, EmailVerificationService verifications,
+                       PasswordRecoveryService recovery) {
         this.accounts = accounts;
         this.encoder = encoder;
         this.verifications = verifications;
+        this.recovery = recovery;
         this.dummyHash = encoder.encode(DUMMY_RAW);
     }
 
@@ -65,8 +69,11 @@ public class AuthService {
         return false;
     }
 
-    /** 이메일·비밀번호가 맞는 활성 계정. 틀리면 가입 여부와 관계없이 같은 401. */
-    @Transactional(readOnly = true)
+    /**
+     * 이메일·비밀번호가 맞는 활성 계정. 틀리면 가입 여부와 관계없이 같은 401.
+     * 비밀번호가 틀려도 쓸 수 있는 임시 비밀번호(ACC-A07)와 맞으면 로그인된다 — 그때 계정을 바꾸므로 읽기 전용 트랜잭션이 아니다 (-171).
+     */
+    @Transactional
     public Account authenticate(String email, String password) {
         if (password.getBytes(StandardCharsets.UTF_8).length > PasswordPolicy.MAX_BYTES) {
             // 가입 정책상 나올 수 없는 길이라 계정을 찾지 않고 바로 불일치. bcrypt 는 이 길이를 받지 않으므로 더미 비교로 응답 시간만 맞춘다
@@ -75,6 +82,9 @@ public class AuthService {
         }
         Optional<Account> found = accounts.findByEmailAndDeletedAtIsNull(Account.normalizeEmail(email));
         boolean matches = matches(password, found.map(Account::getPasswordHash).orElse(dummyHash));
+        if (found.isPresent() && !matches && recovery.redeem(found.get(), password)) {
+            return found.get();
+        }
         if (found.isEmpty() || !matches) {
             throw invalidCredentials();
         }
