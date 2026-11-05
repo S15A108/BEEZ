@@ -8,7 +8,7 @@
 >
 > | 티켓 | 범위 | 결정 | 선행 |
 > |---|---|---|---|
-> | S15P31A108-293 | PostgreSQL 논리 복제 준비(`wal_level`·복제 계정·publication) | D4·D5 | 279 |
+> | S15P31A108-293 | PostgreSQL 논리 복제 준비(`wal_level`·복제 계정·publication·비밀 파일) | D4·D5·D3 일부 | 279 |
 > | S15P31A108-294 | Kafka·Connect 스택 `beez-cdc` 배포(토픽 생성 포함) | D1·D2·D3 | 279 |
 > | S15P31A108-295 | 커넥터 등록과 backend consumer 켜기, 발행 1건·재시작 확인 | D6·D7 | 293·294 |
 >
@@ -30,8 +30,8 @@
 - **Kafka가 줄여 주는 시간은 약 30초다.** 복구 스캔은 2초마다 돌지만, 요청된 지 30초가 지난 PENDING만 집는다
   (`PublishedAnalysisRepository.findCandidates`의 `requested_at <= now - 30초`). 그래서 Kafka가 없거나 멈추면
   새 발행은 약 30~32초 뒤에 처리되고, Kafka가 있으면 바로 깨어난다.
-- **검토했지만 택하지 않은 우회**: 닿지 않는 bootstrap 주소를 넣고 `enabled=true`로 켜면, broker 없이도 기동하므로
-  복구 스캔만 돌릴 수 있다. 하지만 consumer가 연결 실패 경고를 계속 남기고, `beez_cdc_analysis_consumer_enabled`가
+- **검토했지만 택하지 않은 우회**: 이름은 풀리지만 broker가 없는 bootstrap 주소를 넣고 `enabled=true`로 켜면
+  복구 스캔만 돌릴 수 있다(이름이 아예 안 풀리는 주소면 기동이 실패한다 — D7). 하지만 consumer가 연결 실패 경고를 계속 남기고, `beez_cdc_analysis_consumer_enabled`가
   1이 돼 대시보드가 CDC가 켜진 것처럼 보인다. 코드가 의도한 구성이 아니므로(#227 문서 "소비자만 따로 켜는 구성은
   지원하지 않는다"의 반대 경우) dev에서도 쓰지 않는다. 일정이 밀려 분석을 먼저 돌려야 하면 D8에서 다시 정한다.
 
@@ -73,8 +73,13 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
   라벨의 컨테이너만 지우므로 `beez-cdc`는 지우지 않는다.
 - **대안**: 본 compose에 profile로 추가. CD와 한 몸이 되어 위 위험이 생기므로 택하지 않는다.
 - **CD**: `infra/cdc/**`를 `cd.yml` `paths-ignore`에 넣는다(모니터링과 같은 방식).
-- **주의**: `beez-cdc`가 `beez_default`에 붙어 있는 동안 본 스택을 `docker compose down`하면 네트워크가 지워지지
-  않는다. 본 스택을 내릴 일이 있으면 `beez-cdc`부터 내린다.
+- **주의 — 내리는 순서**: consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 기동하지 못한다(D7). 그래서
+  **`beez-cdc`를 내리거나 Kafka를 멈추기 전에는 반드시 consumer부터 끈다**(§4 되돌리기 1번). consumer가 켜진 채
+  Kafka가 내려가 있는 동안 dev 머지가 들어오면, CD가 새로 만든 backend가 뜨지 못해 dev가 멈춘다.
+  - 본 스택을 `docker compose down`할 일이 있으면 consumer 끄기 → `beez-cdc` 내리기 → 본 스택 내리기 순서로 한다.
+    `beez-cdc`가 `beez_default`에 붙어 있으면 본 스택을 내려도 네트워크가 지워지지 않는다.
+  - 서버 재부팅 때는 두 스택이 동시에 뜬다. backend가 Kafka보다 먼저 뜨면 기동에 실패하지만
+    `restart: unless-stopped`로 다시 시도해 Kafka가 뜬 뒤 정상이 된다. 재부팅 뒤에는 backend가 healthy인지 본다.
 
 ### D2. Kafka·Connect 구성 (승인: 전진) → 294
 
@@ -98,7 +103,7 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
   없어서 성립한다. worker를 늘리면 `rest.advertised.*`와 REST 노출을 다시 정해야 한다.
 - 단일 broker라 broker가 죽으면 전달이 멈춘다. 위 성질대로 복구 스캔이 받쳐 주므로 dev에서는 수용한다.
 
-### D3. 보안 — dev는 Docker 내부망 PLAINTEXT (승인: **양지훈**, 검토안과 다름) → 294
+### D3. 보안 — dev는 Docker 내부망 PLAINTEXT (승인: **양지훈**, 검토안과 다름) → 294(비밀 파일 작성은 293)
 
 - **제안**: dev에서는 Kafka를 TLS·SASL 없이 Docker 내부망에서만 쓴다. Connect→PostgreSQL도 같은 내부망이라
   `sslmode=disable`로 둔다. 보안 경계는 244 결정 2번과 같게 **외부 인터넷 차단**이다.
@@ -112,11 +117,17 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 - **비밀 파일**: 바인드 마운트는 호스트 파일 권한을 그대로 쓰는데, Connect 컨테이너는 `uid=1001(kafka)`로 돈다.
   600으로 두면 Connect가 읽지 못해 커넥터 등록이 실패한다(모니터링의 Mattermost 웹훅 파일과 같은 함정,
   `infra/monitoring/compose.yaml`의 secrets 주석).
-  - 디렉터리 `/opt/beez/cdc/secrets`는 `root:1001` `750`, 파일 `database.properties`(`password=…` 한 줄)는
-    `root:1001` `640`으로 둔다. 컨테이너에는 디렉터리를 읽기 전용으로 붙인다(`/run/cdc-secrets`).
+  - 위치는 **스택 폴더 밖** `/opt/beez/.cdc-secrets/`이다. 스택 폴더 `/opt/beez/cdc`는 모니터링처럼 올릴 때마다
+    통째로 바뀌므로(`docs/infra/monitoring.md` "올리기·업데이트"의 `mv … .old`), 그 안에 두면 다음 올리기에서
+    비밀 파일이 밀려나고 지워진다. 모니터링 웹훅 파일도 같은 이유로 `/opt/beez/` 바로 아래에 있다.
+  - 디렉터리는 `root:1001` `750`, 파일 `database.properties`(`password=…` 한 줄)는 `root:1001` `640`으로 둔다.
+    컨테이너에는 디렉터리를 읽기 전용으로 붙인다(`/run/cdc-secrets`).
   - 파일은 **293**에서 복제 계정을 만들 때 비밀번호와 함께 쓴다(디렉터리가 없으면 293이 위 권한으로 만든다).
-    294는 디렉터리 마운트와 provider 설정(`CONNECT_CONFIG_PROVIDERS=file`)만 한다. provider는 커넥터를 등록할 때
-    (295) 파일을 읽으므로, 293과 294 중 어느 쪽이 먼저 끝나도 된다.
+    294는 디렉터리 마운트와 provider 설정만 한다. provider는 두 줄이 다 있어야 생긴다:
+    `CONNECT_CONFIG_PROVIDERS=file`, `CONNECT_CONFIG_PROVIDERS_FILE_CLASS=org.apache.kafka.common.config.provider.FileConfigProvider`
+    (검토안 `infra/cdc/worker.properties.template`과 같다). provider는 커넥터를 등록할 때(295) 파일을 읽으므로,
+    293과 294 중 어느 쪽이 먼저 끝나도 된다. 294를 먼저 올리면 디렉터리가 없어 Docker가 root 소유 빈 디렉터리를
+    만들 수 있으므로, 294가 디렉터리부터 위 권한으로 만든다.
 - **남는 위험 (수용 여부를 함께 승인한다)**: Kafka는 `beez_default`에 붙은 모든 컨테이너(ai·backend·seaweedfs·postgres,
   모니터링의 prometheus·postgres-exporter)가 **읽고 쓸 수 있다.**
   - Connect 설정 토픽에 직접 쓰면 REST를 막은 효과를 우회해 커넥터를 바꿀 수 있다. 복제 권한은 publication과
@@ -212,12 +223,19 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 - `beez.cdc.kafka-security.properties`는 비운다(D3). 비우면 PLAINTEXT로 동작하는 것이 현재 코드다
   (`CdcKafkaSecurityProperties`).
 - **켜는 순서**: 커넥터·task RUNNING과 슬롯 `active`를 확인한 **뒤** 서버 env를 바꾸고 backend를 재배포한다.
-  반대 순서면 consumer가 연결 실패를 계속 재시도한다.
+  Kafka 컨테이너가 없을 때 켜면 backend가 뜨지 못하고(아래 "헬스체크와 기동 영향"), 커넥터가 아직 없으면 토픽에
+  아무것도 오지 않아 연결 확인이 안 된다.
 - **켜는 순간 밀린 분석이 한꺼번에 돈다**: 켜기 전까지 쌓인 PENDING 접수행은 켜자마자 복구 스캔이 집어 AI를
   호출한다. 켜기 직전에 PENDING 개수를 확인하고 결과에 적는다(11-05 기준 0행).
-- **헬스체크 영향 없음**: backend 헬스 설정에 Kafka 항목이 없고(`application.yml` `management.health`), spring-kafka
-  기본값 `missingTopicsFatal=false`라 broker가 없어도 기동한다. Kafka가 죽어도 `/actuator/health`는 DB 상태만
-  따른다. 295에서 Kafka를 멈춘 상태로 backend를 재시작해 실제로 확인한다.
+- **헬스체크와 기동 영향** — Kafka가 어떻게 죽었는지에 따라 다르다.
+  - **Kafka 컨테이너는 있고 broker만 응답하지 않을 때**: backend 헬스 설정에 Kafka 항목이 없고
+    (`application.yml` `management.health`), spring-kafka 기본값 `missingTopicsFatal=false`라 기동한다.
+    `/actuator/health`는 DB 상태만 따른다. 이미 떠 있는 backend는 Kafka가 멈추고 다시 떠도 계속 healthy다.
+  - **Kafka 컨테이너가 멈췄거나 없을 때**: Docker 내장 DNS에서 `kafka` 이름이 빠진다. Kafka 클라이언트는 consumer를
+    만들 때 bootstrap 주소 이름이 하나도 안 풀리면 `No resolvable bootstrap urls`로 실패한다(재점검에서
+    kafka-clients로 실측). 그래서 이때 **새로 뜨는 backend는 기동에 실패한다**(Spring 기동까지 이어지는 것은 295에서
+    확인). 이 때문에 D1 "내리는 순서"를 지킨다.
+  - 295 재시작 시험에서 두 경우를 나눠 확인한다(§4 9단계).
 
 ### D8. 일정 (승인: 팀·양지훈)
 
@@ -236,20 +254,21 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
 | # | 티켓 | 단계 | 확인 |
 |---|---|---|---|
 | 1 | 293 | PR: `infra/compose.yaml` postgres `command`(D4), 런북. 공지한 시각에 머지 → 약 3분 뒤 CD가 postgres 재생성 | `SHOW wal_level` = `logical`, backend healthy |
-| 2 | 293 | 복제 계정·publication 생성, 비밀 파일 배치(D3·D5) | `pg_publication_tables.attnames` = `{id,status}`, `beez_cdc`로 다른 컬럼 SELECT 거부, 파일 `root:1001 640` |
-| 3 | 294 | PR: dev용 compose·Connect 설정 템플릿, `cd.yml` paths-ignore, 런북. `beez-cdc` 기동(D1~D3) | 컨테이너 healthy, `ss -tlnp`에 새 포트 없음, backend·ai에서 Connect REST 안 닿음 |
+| 2 | 293 | 복제 계정·publication 생성, 비밀 파일 배치(D3·D5) | `pg_publication_tables.attnames` = `{id,status}`, `beez_cdc`로 다른 컬럼 SELECT 거부, `/opt/beez/.cdc-secrets/database.properties` `root:1001 640` |
+| 3 | 294 | PR: dev용 compose·Connect 설정 템플릿, `cd.yml` paths-ignore, 런북. `beez-cdc` 기동(D1~D3) | 컨테이너 healthy, `ss -tlnp`에 새 포트 없음, backend·ai에서 Connect REST 안 닿음, 293이 끝났으면 `docker exec <connect> test -r /run/cdc-secrets/database.properties`(내용은 출력하지 않음) |
 | 4 | 294 | 접수 토픽 생성(D2) | `kafka-topics --describe` |
-| 5 | 295 | **로컬 리허설**: 서버와 같은 pgvector digest + `debezium/connect:2.7.3.Final`로 이 계획의 publication·계정 권한·커넥터 설정(override 포함)을 그대로 돌림 | 초기 스냅샷 `r`과 이후 `c`/`u`가 id·status만 담아 도착, Connect가 비밀 파일을 읽음 |
+| 5 | 295 | **로컬 리허설**: 서버와 같은 pgvector digest + `debezium/connect:2.7.3.Final`로 이 계획의 publication·계정 권한·커넥터 설정(override 포함)·file config provider를 그대로 돌림. 파일 권한 함정은 Windows 바인드 마운트로 재현되지 않으므로 서버 3단계에서 따로 본다 | 초기 스냅샷 `r`과 이후 `c`/`u`가 id·status만 담아 도착, provider로 비밀번호를 읽어 접속 |
 | 6 | 295 | PR: backend env 기본 꺼짐(D7). 서버에 커넥터 등록(D6) | connector·task RUNNING, 슬롯 `active` |
 | 7 | 295 | PENDING 개수 확인 → 서버 env로 consumer 켜고 backend 재배포(D7) | `consumer_enabled`=1, Kafka 수신 실패 0 |
-| 8 | 295 | 변경 제안 1건 발행 | 접수행 PENDING → COMPLETED가 30초보다 빨리 끝남(Kafka 경로), 대시보드 `beez_cdc_*` |
-| 9 | 295 | 재시작 시험: backend·Connect·Kafka 각각, Kafka를 멈춘 채 backend 재시작 | 유실 없이 이어짐, backend healthy |
+| 8 | 295 | 변경 제안 1건 발행 | `started_at - requested_at` < 30초(Kafka 경로로 깨어남. COMPLETED까지는 AI 시간이 더해지므로 기준으로 쓰지 않음), 최종 COMPLETED, 대시보드 `beez_cdc_*` |
+| 9 | 295 | 재시작 시험: backend·Connect·Kafka 각각 재시작. 이어서 (가) Kafka 컨테이너는 둔 채 broker만 응답하지 않게 하고(`docker pause`, 이름은 계속 풀림) backend 재시작, (나) Kafka 컨테이너를 멈춘 채 backend 재시작 | 유실 없이 이어짐. (가) backend healthy, (나) backend 기동 실패를 확인한 뒤 Kafka를 다시 올려 backend가 스스로 healthy로 돌아옴 |
 
 1~2(293)와 3~4(294)는 순서가 없다. 5는 293·294와 상관없이 언제든 할 수 있지만, 실패하면 6 이후를 멈추고
 D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므로 229와 함께 설계한다.
 
 **되돌리기는 반드시 역순으로 한다.** 앞 단계를 먼저 되돌리면 다음 문제가 생긴다.
 
+- consumer가 켜진 채로 Kafka를 내리면 그 뒤 새로 뜨는 backend가 기동하지 못한다(D7).
 - 슬롯이 남은 채로 `wal_level`을 내리면 PostgreSQL이 기동하지 않는다.
 - 슬롯이 남은 채로 Connect만 멈추면 WAL이 쌓인다.
 - 커넥터를 지운 뒤에는 offset을 지울 수 없다(D6).
@@ -261,7 +280,7 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 | 2 | 커넥터 (6) | 같은 이름을 다시 쓸 계획이면 `PUT …/stop` → `DELETE …/offsets` → `DELETE /connectors/{name}`. 아니면 바로 삭제(다음엔 새 이름으로 등록) |
 | 3 | 슬롯 (6) | 커넥터가 없어 슬롯이 `active = false`인 것을 본 뒤 `SELECT pg_drop_replication_slot('beez_published_analysis')`, `pg_replication_slots`에서 사라졌는지 확인 |
 | 4 | Kafka·Connect (3·4) | `docker compose -p beez-cdc down`(볼륨 유지) |
-| 5 | publication·계정·비밀 파일 (2) | `DROP PUBLICATION beez_published_analysis_cdc` → `REVOKE SELECT (id, status) ON published_change_analysis FROM beez_cdc` → `DROP ROLE beez_cdc` → 비밀 파일 삭제 |
+| 5 | publication·계정·비밀 파일 (2) | `DROP PUBLICATION beez_published_analysis_cdc` → `REVOKE SELECT (id, status) ON published_change_analysis FROM beez_cdc` → `DROP ROLE beez_cdc` → `/opt/beez/.cdc-secrets/database.properties` 삭제 |
 | 6 | `wal_level` (1) | `pg_replication_slots`가 0행인 것을 확인한 뒤 `command` 제거 PR을 공지한 시각에 머지 |
 
 `infra/cdc/OPERATIONS.md`는 "slot, Connect offset, 내부 토픽을 독립적으로 삭제·초기화하지 않는다"고 한다. 이 표는
@@ -270,6 +289,9 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 
 ## 5. 위험과 한계
 
+- **backend가 Kafka 컨테이너에 기동을 기댄다**: consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 새로 뜨지
+  못한다(D7). 그래서 CDC를 내릴 때는 consumer부터 끈다(D1 "내리는 순서"). 이 결합을 없애려면 backend 쪽 변경이 필요하고,
+  이 계획의 범위 밖이다.
 - **단일 서버·단일 broker**: 서버나 broker가 죽으면 CDC가 멈춘다. 이때 복구 스캔이 처리를 이어 가지만, 모니터링도
   같은 서버라 알림이 가지 않는다(263 런북 한계와 같음).
 - **WAL 보유**: 슬롯이 멈추면 WAL이 쌓인다. 접수 테이블이 조용한 동안에도 다른 테이블 쓰기만큼 보유량이 늘어난다
@@ -295,7 +317,8 @@ D2·D5·D6을 다시 정한다. 8·9는 229 장애 시험과 범위가 겹치므
 
 - [ ] D1 별도 compose 프로젝트 `beez-cdc`, dev용 compose 파일 신설, 수동 배포 — 전진·팀
 - [ ] D2 Kafka 3.9.1 단일 broker(내부 토픽 복제 수 1, 토픽 수동 생성), Connect 2.7.3 유지 또는 3.x 재검증 — 전진
-- [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `root:1001 640`(293이 작성) — **양지훈**
+- [ ] D3 dev 한정 PLAINTEXT·`sslmode=disable` 예외, Connect REST 컨테이너 안에서만, **같은 망 컨테이너의 Kafka 쓰기 노출 수용**, 비밀 파일 `/opt/beez/.cdc-secrets/` `root:1001 640`(293이 작성) — **양지훈**
+- [ ] D1·D7 consumer를 켠 뒤에는 Kafka 컨테이너가 없으면 backend가 기동하지 못하므로, CDC를 내릴 때 consumer부터 끄는 규칙 — 전진·**양지훈**
 - [ ] D4 compose `command`로 `wal_level=logical`·`max_slot_wal_keep_size=10GB`, 293 머지 시각부터 10분을 재시작 공지 창으로 — 전진·**팀**
 - [ ] D5 publication·복제 계정·슬롯 이름, 접수행 삭제 금지, 계약 확인은 DB 직접 조회 — **양지훈**
 - [ ] D6 커넥터 값(토픽 이름·`snapshot.mode=initial`), heartbeat 미사용, 재생성은 새 이름 기본 — **양지훈**
