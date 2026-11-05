@@ -32,7 +32,7 @@
 - `RETRY`: 같은 입력으로 다시 돌리면 나아질 수 있는 실패다. `ai_timeout`·`ai_unavailable`·`ai_invalid_output`·`evidence_fetch_failed`·`validation_lease_expired`·`validation_worker_interrupted`·`validation_execution_failed`가 여기에 든다. 재시도 버튼이 보인다.
 - `HUMAN_REVIEW`: 근거 부족·지원하지 않는 내용(부분 분석)이다. 사람이 보완한 뒤 새 검증을 요청해야 하고, 재시도는 거절한다.
 - 서버도 AI도 스스로 재시도하지 않는다. 같은 입력으로 실제 검증 AI를 부르는 횟수는 새 검증과 재시도를 합쳐 3번까지다(VAL-A01 처리 규칙).
-- 모델을 부른 실패는 사용량을 그 실행에 남긴다(비용 조회에 잡힌다). 판정을 버린 늦은 결과도 같다.
+- AI 응답(성공·오류 본문)으로 사용량을 받으면 그 실행에 남긴다(비용 조회에 잡힌다). 판정을 버린 늦은 결과도 같다. 요청을 보낸 뒤 읽기 시간 초과·연결 단절로 응답을 받지 못하면 모델이 이미 돌았어도 사용량을 받을 수 없어 비용 조회에서 빠진다. 이 경우도 횟수 제한에는 센다(4절).
 
 > 확인 요청 (양지훈·박상은): 위 흐름·상태·실패 응답이 AI 쪽 계약(03-ai-internal 재시도 규칙, AI-A02 오류 규약)과 같은지 이 문서 리뷰로 확정한다.
 
@@ -52,7 +52,8 @@
 
 | 분류 | 경우 | 기대 동작 | 시험 |
 | --- | --- | --- | --- |
-| AI 실패 | 시간 초과(504·읽기 시간 초과) | `ERROR`(ai_timeout, RETRY), 실행 `TIMEOUT`, 사용량 보존 | `ValidationApiIntegrationTests.worker_timeout_isErrorRetry_withTimeoutRun` |
+| AI 실패 | 시간 초과 — AI가 오류 본문에 사용량을 담아 응답(504) | `ERROR`(ai_timeout, RETRY), 실행 `TIMEOUT`, 받은 사용량 보존 | `ValidationApiIntegrationTests.worker_timeout_isErrorRetry_withTimeoutRun` |
+| | 시간 초과 — 응답을 받지 못함(읽기 시간 초과·연결 단절) | `ERROR`(ai_timeout, RETRY), 사용량은 비어 있음(받지 못함), 횟수 제한에는 셈 | `ValidationRetryIntegrationTests.readTimeoutWithoutUsageStillCounts_becauseTheRequestReachedTheAi` |
 | | 출력 계약 위반·본문 깨짐 | `ERROR`(ai_invalid_output, RETRY). 빈 결과를 PASS로 보지 않음 | `…worker_contractViolation_isErrorRetry`, `…worker_malformedResponses_areInvalidOutput_notPass` |
 | | 부분 분석(근거 부족) | `ERROR`(HUMAN_REVIEW), 재시도 거절 | `…worker_partial_isErrorForHumanReview`, `ValidationRetryIntegrationTests.refusesWhenRetryingCannotHelp` |
 | | 연결 실패(요청이 닿지 않음) | `ERROR`(ai_unavailable, RETRY), 횟수에 안 셈 | `ValidationRetryIntegrationTests.failuresBeforeTheModelIsCalledDoNotCount` |
@@ -82,6 +83,7 @@
 ## 4. 범위 밖·알려진 한계
 
 - **결과 재사용(AC-16)은 없다.** 같은 입력의 새 요청도 매번 모델을 부르고 횟수에 들어간다. 그래서 "캐시 재사용 검증"은 이번 시험 범위에 넣지 않았다.
+- **AI 응답을 받지 못한 호출의 사용량은 남지 않는다.** 요청을 보낸 뒤 읽기 시간 초과·연결 단절이 나면 모델이 이미 돌아 비용이 났을 수 있지만, 백엔드는 사용량을 받지 못해 비용 조회에서 빠진다. 대신 요청이 AI까지 갔으므로 횟수 제한에는 센다. 실제 비용은 AI 쪽 사용량 기록과 비교해야 알 수 있다.
 - **결과 저장과 실패 기록이 모두 실패하면 그 호출의 사용량은 남지 않는다.** 두 트랜잭션이 함께 롤백되기 때문이다. 리스 만료로 닫힌 실행은 횟수 제한에도 세지 않는다. AI 쪽 사용량 기록과 비교해야 알 수 있다.
 - **REST 검증 접수는 `Idempotency-Key`를 처리하지 않는다**(Q12). 접수 응답을 잃으면 작업의 검증 이력(VAL-A03)에서 확인한다. 다시 요청하면 새 검증이 생기고, 의미 분석이면 횟수에 들어간다. MCP 접수는 `idempotency_key`로 처리한다.
 - 실시간 밀어 주기·로컬 실행 제어는 2절대로 하지 않는다.
@@ -89,3 +91,4 @@
 ## 변경 이력
 
 - v1.0 (2026-11-05) 최초 작성 (변준성, -65). 구현된 비동기 작업 계약을 정리하고, 실행 중 변경 전파(NTF-07)를 조회 방식으로 결정했다. 장애 시나리오별 시험을 대응시켰고, 빠져 있던 네 경우(두 워커 동시 꺼냄, 회수 동시 실행, 모델 도는 중 취소, 이중 실패 뒤 회수)에 시험을 추가했다.
+- v1.1 (2026-11-05) 리뷰 반영(양지훈): 사용량은 AI 응답으로 받은 것만 남는다고 바로잡음. 응답을 받지 못한 시간 초과·연결 단절은 비용 조회에서 빠지고 횟수에는 센다 — 1-3절, 3절 대응표(시간 초과를 둘로 나눔), 4절 한계에 반영.
