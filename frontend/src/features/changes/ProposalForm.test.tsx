@@ -324,3 +324,74 @@ it('파일 올리기로 .md 파일을 고르면 내용을 고친 글에 넣고, 
   )
   expect(text()).toHaveValue('# 요구사항\n고친 원문')
 })
+
+// PR #135 리뷰: file.text()는 UTF-8이 아닌 바이트를 U+FFFD로 조용히 바꿔 CP949 .txt의 한글이 깨진 채 들어갔다.
+// 읽다 실패한 파일도 처리하지 않은 거절(unhandled rejection)이 되지 않고 안내로 끝나야 한다.
+it('UTF-8이 아니거나 읽지 못한 파일은 고친 글에 넣지 않고 UTF-8로 저장한 파일을 올리라고 알린다', async () => {
+  const user = userEvent.setup()
+  const { text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  // CP949로 저장한 '# 한글'
+  await user.upload(
+    screen.getByLabelText('고친 문서 파일'),
+    new File([new Uint8Array([0x23, 0x20, 0xc7, 0xd1, 0xb1, 0xdb])], 'a.txt'),
+  )
+  expect(
+    await screen.findByText(/UTF-8로 저장한 파일만 올릴 수 있어요/),
+  ).toBeInTheDocument()
+  const unreadable = new File(['# 요구사항'], 'b.md')
+  const fail = () =>
+    Promise.reject(new DOMException('읽기 실패', 'NotReadableError'))
+  Object.assign(unreadable, { text: fail, arrayBuffer: fail })
+  await user.upload(screen.getByLabelText('고친 문서 파일'), unreadable)
+  expect(
+    await screen.findByText(/UTF-8로 저장한 파일만 올릴 수 있어요/),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  expect(text()).toHaveValue('# 요구사항\n옛 원문')
+})
+
+// 서버(DocumentInputValidator)는 정규화한 본문이 100,000자(코드 포인트)를 넘거나 줄바꿈·탭 말고 제어 문자가 있으면
+// 거절한다. 300KB 영문 .md가 ①을 통과하고 ④에서야 413 file_too_large로 막히지 않게 파일을 넣을 때 같은 규칙으로 막는다.
+it('100,000자를 넘거나 제어 문자가 든 파일은 넣지 않고, 이모지 100,000자는 코드 포인트로 세어 받는다', async () => {
+  const user = userEvent.setup()
+  const { text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  const file = () => screen.getByLabelText('고친 문서 파일')
+  await user.upload(file(), new File(['a'.repeat(100_001)], 'long.md'))
+  expect(
+    await screen.findByText('고친 글은 100,000자까지 쓸 수 있어요.'),
+  ).toBeInTheDocument()
+  await user.upload(file(), new File(['# 제목\u0007종소리'], 'bell.md'))
+  expect(
+    await screen.findByText('글에 쓸 수 없는 제어 문자가 들어 있어요.'),
+  ).toBeInTheDocument()
+  // 줄 끝 CRLF는 정규화한 뒤에 센다.
+  const emoji = `\t${'😀'.repeat(99_998)}\r\n`
+  await user.upload(file(), new File([emoji], 'emoji.md'))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'emoji.md 내용을 고친 글에 넣었어요.',
+  )
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('직접 쓴 고친 글에 제어 문자가 있으면 올리지 않는다', async () => {
+  const user = userEvent.setup()
+  const { onSubmit, text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(text())
+  await user.paste('\u000B세로 탭')
+  await user.click(screen.getByRole('button', { name: '제안 올리기' }))
+  expect(
+    await screen.findByText('글에 쓸 수 없는 제어 문자가 들어 있어요.'),
+  ).toBeInTheDocument()
+  expect(onSubmit).not.toHaveBeenCalled()
+})

@@ -1,9 +1,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { ProposalFormValues } from './proposalItems'
 import { ProposeFlow } from './ProposeFlow'
+import { proposeChanges } from './proposeDiff'
+
+// 부모가 영향 분석을 1.5초마다 다시 받아 다시 그려도 줄 비교를 되풀이하지 않는지 세려고 실제 함수를 감싼다.
+vi.mock('./proposeDiff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./proposeDiff')>()
+  return { ...actual, proposeChanges: vi.fn(actual.proposeChanges) }
+})
 
 const doc = (versionNo: number, versionId: string) => ({
   id: '203',
@@ -13,7 +20,7 @@ const doc = (versionNo: number, versionId: string) => ({
   versionNo,
 })
 
-function renderFlow() {
+function renderFlow(itemKinds: Record<string, string> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -22,7 +29,7 @@ function renderFlow() {
     <QueryClientProvider client={client}>
       <ProposeFlow
         documents={documents}
-        itemKinds={{}}
+        itemKinds={itemKinds}
         tasks={[]}
         fetchDocumentContent={async () => ({
           content: 'REQ-001 이메일로 가입한다.',
@@ -46,6 +53,7 @@ function renderFlow() {
   return {
     onSubmit,
     approveNewVersion: () => view.rerender(flow([doc(2, '302')])),
+    rerenderSame: () => view.rerender(flow([doc(1, '301')])),
   }
 }
 
@@ -84,4 +92,59 @@ it('단계 중간에 승인본이 바뀌면 비교한 버전을 그대로 보이
     screen.getByRole('button', { name: '새 승인본과 다시 비교' }),
   )
   expect(screen.getByLabelText('제목 *')).toHaveValue('가입 안내 추가')
+})
+
+async function register(edit: (text: HTMLElement) => Promise<void>) {
+  const user = userEvent.setup()
+  const text = screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text).toHaveValue('REQ-001 이메일로 가입한다.'))
+  await user.type(screen.getByLabelText('제목 *'), '가입 규칙 바꾸기')
+  await user.type(
+    screen.getByLabelText('바꾸려는 이유 *'),
+    '규칙이 바뀌었어요.',
+  )
+  await edit(text)
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  return user
+}
+
+// PR #135 리뷰: 승인된 REQ-001 줄을 지우고 그 자리에 REQ-002를 쓰면 REQ-001은 '고치기'가 아니라 '없애기'다.
+it('지운 항목 키는 바뀐 줄의 설계 항목에 없애기로, 새 키는 새 항목으로 보인다', async () => {
+  renderFlow({ 'REQ-001': '요구사항' })
+  await register(async (text) => {
+    await userEvent.clear(text)
+    await userEvent.type(text, 'REQ-002 이메일 인증 후 가입한다.')
+  })
+  const items = within(
+    screen.getByRole('region', { name: '바뀐 줄의 설계 항목' }),
+  ).getAllByRole('listitem')
+  expect(items.map((item) => item.textContent)).toEqual([
+    'REQ-001요구사항없애기',
+    'REQ-002새 항목',
+  ])
+})
+
+// PR #135 리뷰: 빈 줄이나 끝 줄바꿈만 바뀌면 바뀐 곳이 0개인데도 다음 단계로 넘어가 빈 제안을 올릴 수 있었다.
+it('빈 줄만 바꾸면 비비 검토로 넘어가지 않고 다시 고치게 한다', async () => {
+  renderFlow()
+  const user = await register((text) => userEvent.type(text, '{Enter}{Enter}'))
+  expect(screen.getByText('바뀐 곳 0개를 찾았어요')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '비비 검토 받기' })).toBeDisabled()
+  expect(screen.getByText(/빈 줄 말고는 바뀐 곳이 없어요/)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '다시 고치기' }))
+  expect(
+    screen.getByRole('button', { name: '등록하고 변경점 찾기' }),
+  ).toBeInTheDocument()
+})
+
+it('같은 내용으로 다시 그려도 줄 비교를 되풀이하지 않는다', async () => {
+  const { rerenderSame } = renderFlow()
+  await register((text) =>
+    userEvent.type(text, '{Enter}REQ-002 환영 메일을 보낸다.'),
+  )
+  expect(screen.getByText('바뀐 곳 1개를 찾았어요')).toBeInTheDocument()
+  vi.mocked(proposeChanges).mockClear()
+  rerenderSame()
+  rerenderSame()
+  expect(proposeChanges).not.toHaveBeenCalled()
 })

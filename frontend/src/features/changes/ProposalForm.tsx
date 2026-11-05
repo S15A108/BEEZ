@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { normalizeDocument } from './normalizeDocument'
+import { documentTextError, normalizeDocument } from './normalizeDocument'
 import { proposalFormSchema } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
 
@@ -145,20 +145,38 @@ export function ProposalForm({
   const [source, setSource] = useState<'write' | 'file'>('write')
   const [fileNote, setFileNote] = useState('')
   // 파일 한 개를 읽어 고친 글로 넣고 글 쓰기 탭으로 돌아가 내용을 보여 준다. 크기는 CHG-A01 본문 한도(1 MiB)를 따른다.
+  // 서버처럼 UTF-8로만 읽고(깨진 바이트를 U+FFFD로 바꾸지 않는다) 글자 수·제어 문자도 넣기 전에 본다. 맞지 않는 파일은
+  // 고친 글을 바꾸지 않고 알리기만 한다. 읽기 실패도 여기서 받아 처리하지 않은 거절이 남지 않는다(PR #135 리뷰).
   const readFile = async (input: HTMLInputElement) => {
     const file = input.files?.[0]
     input.value = ''
     if (!file) return
+    setFileNote('')
     if (!/\.(md|markdown|txt)$/i.test(file.name) || file.size > 1024 * 1024) {
-      setFileNote('')
       setError('after_content', {
         message: '1MB 이하의 .md·.markdown·.txt 파일 한 개를 올려 주세요.',
       })
       return
     }
-    setValue('after_content', normalizeDocument(await file.text()), {
-      shouldValidate: true,
-    })
+    let text: string
+    try {
+      text = normalizeDocument(
+        new TextDecoder('utf-8', { fatal: true }).decode(
+          await file.arrayBuffer(),
+        ),
+      )
+    } catch {
+      setError('after_content', {
+        message: '파일을 읽지 못했어요. UTF-8로 저장한 파일만 올릴 수 있어요.',
+      })
+      return
+    }
+    const textError = documentTextError(text)
+    if (textError) {
+      setError('after_content', { message: textError })
+      return
+    }
+    setValue('after_content', text, { shouldValidate: true })
     setFileNote(`${file.name} 내용을 고친 글에 넣었어요.`)
     setSource('write')
   }

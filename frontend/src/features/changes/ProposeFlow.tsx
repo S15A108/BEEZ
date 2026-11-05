@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentProps, ReactNode } from 'react'
 import { ArrowLeft, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -61,9 +61,13 @@ export function ProposeFlow({
     !!document?.versionId &&
     document.versionId !== values.base_version_id
   const shownNo = comparedNo ?? document?.versionNo
-  const found =
-    values &&
-    proposeChanges(values.base_content ?? '', values.after_content ?? '')
+  // 부모가 영향 분석을 1.5초마다 다시 받아 다시 그려도, 등록한 글이 바뀔 때만 줄 비교를 다시 한다(PR #135 리뷰).
+  const found = useMemo(
+    () =>
+      values &&
+      proposeChanges(values.base_content ?? '', values.after_content ?? ''),
+    [values],
+  )
   const task = tasks.find((item) => item.id === values?.task_id)
   const taskLabel =
     task && `${task.key} ${task.current_plan_revision.plan.title}`
@@ -172,11 +176,19 @@ export function ProposeFlow({
                   줄 +{found.addedLines} · -{found.removedLines}
                 </span>
               </div>
-              <ul className="grid gap-2">
-                {found.changes.map((change, index) => (
-                  <ChangeCard key={index} change={change} />
-                ))}
-              </ul>
+              {found.changes.length ? (
+                <ul className="grid gap-2">
+                  {found.changes.map((change, index) => (
+                    <ChangeCard key={index} change={change} />
+                  ))}
+                </ul>
+              ) : (
+                // 빈 줄·끝 줄바꿈만 다르면 서버는 받지만 내용 없는 제안이 되므로 다음 단계로 보내지 않는다(PR #135 리뷰).
+                <p className="rounded-xl border px-3 py-2.5 text-[13px]">
+                  빈 줄 말고는 바뀐 곳이 없어요. 다시 고치기에서 내용을 고쳐
+                  주세요.
+                </p>
+              )}
             </section>
             <aside className="grid gap-3">
               <Card title="비교한 문서">
@@ -211,7 +223,9 @@ export function ProposeFlow({
             note="다음 단계에서 비비가 영향받는 작업과 빠진 부분을 찾아요."
             back={['다시 고치기', () => setStep(0)]}
           >
-            <Button onClick={() => setStep(2)}>비비 검토 받기</Button>
+            <Button disabled={!found.changes.length} onClick={() => setStep(2)}>
+              비비 검토 받기
+            </Button>
           </Footer>
         </>
       )}
@@ -406,6 +420,13 @@ function ItemKeys({
   itemKinds: Record<string, string>
 }) {
   const keys = [...new Set(changes.flatMap((change) => change.key ?? []))]
+  // 그 키가 지운 줄에만 있으면 없애기, 아니면 지금 기준에 승인된 키는 고치기, 처음 보는 키는 새 항목이다(PR #135 리뷰).
+  const operationOf = (key: string) =>
+    changes.every((change) => change.key !== key || change.kind === 'RETIRE')
+      ? 'RETIRE'
+      : itemKinds[key]
+        ? 'UPDATE'
+        : 'CREATE'
   return (
     <>
       <p className="text-xs text-muted-foreground">
@@ -424,7 +445,7 @@ function ItemKeys({
                 {itemKinds[key]}
               </span>
               <span className="ml-auto text-xs text-muted-foreground">
-                {itemKinds[key] ? operationLabel.UPDATE : operationLabel.CREATE}
+                {operationLabel[operationOf(key)]}
               </span>
             </li>
           ))}

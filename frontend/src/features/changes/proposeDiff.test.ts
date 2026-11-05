@@ -56,3 +56,42 @@ it('지운 줄은 삭제로 세고, 빈 줄과 줄바꿈 방식(CRLF)만 다른 
   ])
   expect(proposeChanges(base, base).changes).toEqual([])
 })
+
+// PR #135 리뷰: 빠진 줄과 새 줄을 차례로 짝지어 모두 '수정'으로 보면, REQ-002를 지우고 그 자리에 REQ-003을 쓴 것이
+// 'REQ-003 수정'으로만 보이고 승인된 REQ-002가 없어지는 것이 화면에서 사라진다.
+it('항목 키가 다른 줄끼리는 수정으로 짝짓지 않고 삭제와 추가로 나눈다', () => {
+  const result = proposeChanges(
+    base,
+    base.replace(
+      'REQ-002 팀장만 설계 변경을 승인한다.',
+      'REQ-003 팀원도 설계 변경을 제안한다.',
+    ),
+  )
+  expect(
+    result.changes.map(({ kind, key, before, after }) => [
+      kind,
+      key,
+      before,
+      after,
+    ]),
+  ).toEqual([
+    ['RETIRE', 'REQ-002', 'REQ-002 팀장만 설계 변경을 승인한다.', undefined],
+    ['CREATE', 'REQ-003', undefined, 'REQ-003 팀원도 설계 변경을 제안한다.'],
+  ])
+  expect([
+    result.count('UPDATE'),
+    result.count('CREATE'),
+    result.count('RETIRE'),
+  ]).toEqual([0, 1, 1])
+})
+
+it('항목 키는 서버가 만드는 REQ·API·ENT·POL·CON-숫자 3자리 이상만 읽는다', () => {
+  const keyOf = (line: string) =>
+    proposeChanges('', line).changes.map((change) => change.key)[0]
+  expect(keyOf('UTF-8로 저장하고 ISO-8601 시각과 SHA-256 해시를 쓴다.')).toBe(
+    undefined,
+  )
+  expect(keyOf('REQ-01 두 자리 번호는 키가 아니다.')).toBe(undefined)
+  expect(keyOf('UTF-8 응답은 API-012 규칙을 따른다.')).toBe('API-012')
+  expect(keyOf('ENT-1000 프로젝트 테이블')).toBe('ENT-1000')
+})
