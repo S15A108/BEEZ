@@ -107,6 +107,10 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
     "DB_PASSWORD=$(openssl rand -hex 24)" \
     "DOCUMENT_S3_ACCESS_KEY=$(openssl rand -hex 12)" \
     "DOCUMENT_S3_SECRET_KEY=$(openssl rand -hex 24)" \
+    "SEAWEEDFS_BOOTSTRAP_ACCESS_KEY=$(openssl rand -hex 12)" \
+    "SEAWEEDFS_BOOTSTRAP_SECRET_KEY=$(openssl rand -hex 24)" \
+    "SEAWEEDFS_BACKUP_ACCESS_KEY=$(openssl rand -hex 12)" \
+    "SEAWEEDFS_BACKUP_SECRET_KEY=$(openssl rand -hex 24)" \
     "AI_INTERNAL_TOKEN=$(openssl rand -hex 32)" \
     'PUBLIC_ORIGIN=https://dev.beez.ai.kr' \
     'BACKEND_HOST_PORT=8081' \
@@ -120,7 +124,8 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
   함께 바꿔야 합니다.
 - `umask 027`로 `640`이 됩니다. Nginx(`www-data`)는 읽지 못합니다.
 - `openssl rand -hex`는 16진수만 내므로 env 파일에서 따옴표·`$` 해석 문제가
-  없습니다.
+  없습니다. SeaweedFS 키 셋은 compose가 JSON 신원 파일에 그대로 넣으므로 16진수가
+  아닌 값(따옴표·역슬래시)을 쓰지 않습니다([seaweedfs.md](seaweedfs.md#s3-신원-셋)).
 - `BACKEND_HOST_PORT`는 8080이 아닌 값이어야 합니다. 8080은 Jenkins가
   씁니다. Nginx `upstream beez_backend`의 포트와 같아야 합니다.
 - 변수마다의 의미·필수 여부, 빠졌을 때의 문구, 배포 전 점검 명령은
