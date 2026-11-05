@@ -17,6 +17,7 @@ dev 서버(`dev.beez.ai.kr`)에 문제가 생겼을 때 팀원 누구나 상태�
 | 서버 env 값을 바꿈 | 같은 SHA로 다시 배포 | [3. 재시작](#env-값을-바꿨을-때) |
 | 검증 결과가 `STALE`·`ERROR`가 됨 | 배포 문제가 아닙니다 | [5. 배포 복구와 검증 롤백](#5-배포-복구와-검증업무-롤백) |
 | 문서 원본 다운로드가 안 됨·데이터를 잃음 | `beez-check-live dev`로 원본 대조 | [8. 백업·복원](#8-백업복원) |
+| PC 매일 확인(`pull-backup.sh`)이 종료 코드 1·경고를 냄 | 서버에서 `tail -50 /var/backups/beez/backup.log` | [8. 매일 확인](#매일-확인-pc-git-bash) |
 
 ## 1. 상태 보기
 
@@ -403,4 +404,26 @@ beez-check-live dev               # 일치 N개, 문제 0개
 - **실패하면 backend를 켜지 않고 멈춥니다.** 비었거나 반쯤 복원된 DB로 켜면 Flyway가 빈 스키마를 새로 만들어, 데이터가 없는 정상 서비스처럼 보이기 때문입니다. 원인을 고쳐 같은 명령을 다시 돌립니다(DB를 다시 지우고 처음부터 합니다).
   - 스크립트가 끝나면 배포 잠금도 풀립니다. 실패한 채 두는 동안 dev에 머지가 일어나면 자동 배포가 backend를 그 DB로 켭니다. 복원 전에 팀 채널에 "복원 끝날 때까지 dev 머지 멈춤"을 알리고, 실패하면 다시 돌릴 때까지 그 상태를 유지합니다.
 - 접속 중인 세션(모니터링 exporter 등)은 `DROP DATABASE … WITH (FORCE)`가 끊습니다.
-- 2026-11-05 로컬 확인: 실제 backend 이미지(Flyway)로 띄운 DB를 덤프한 뒤 "나중 마이그레이션"(테이블 + Flyway 이력 한 줄)을 더하고 `all --yes`로 되돌렸습니다. 나중 테이블과 이력이 사라지고 backend가 `healthy`로 켜졌고, `check-live`도 일치했습니다. 원본 2개를 지운 bucket은 `objects --yes`로 되살렸습니다. 운영 서버에서의 복원 시험 기록은 아래에 남깁니다.
+- 2026-11-05 로컬 확인: 실제 backend 이미지(Flyway)로 띄운 DB를 덤프한 뒤 "나중 마이그레이션"(테이블 + Flyway 이력 한 줄)을 더하고 `all --yes`로 되돌렸습니다. 나중 테이블과 이력이 사라지고 backend가 `healthy`로 켜졌고, `check-live`도 일치했습니다. 원본 2개를 지운 bucket은 `objects --yes`로 되살렸습니다. 운영 서버 기록은 아래 [2026-11-05 서버 적용·확인](#2026-11-05-서버-적용확인)에 있습니다.
+
+### 2026-11-05 서버 적용·확인
+
+PR #144(머지 커밋 `fdb18439`)를 dev 서버에 적용하고 확인했습니다. S15P31A108-211.
+
+| 확인 | 결과 |
+|---|---|
+| 배포 | seaweedfs가 `beez_storage`에만 붙어 healthy, backend는 default+storage, ai·postgres는 default만. `docker inspect`에 비밀값 0건 |
+| 내부망 | 적용 전 ai → filer(`seaweedfs:8888`) 200(무인증) → 적용 뒤 이름 해석 실패 |
+| 설치 | `/usr/local/sbin/beez-{backup,check-live,restore}` 755 root(머지 커밋 파일과 sha256 같음), `/var/backups/beez` 700 ubuntu, crontab `17 4 * * *` |
+| 첫 백업(문서 0건) | `원본 0개`, `objects/beez-documents` 빈 폴더 생성, `LAST_OK` 기록. PC 받기 `--check` 통과 |
+| 화면 업로드 | 시험 계정으로 필수 4종 업로드 → 검토 → 승인. 문서 분석 4건 `COMPLETED` |
+| 원본 해시 | `beez-check-live dev` 일치 4, 문제 0 |
+| backend 재생성 뒤 | 다른 PR 배포로 backend 재생성 → 일치 4 |
+| seaweedfs 재생성 뒤 | `docker rm -f beez-seaweedfs-1` → 같은 SHA 재배포 → 새 컨테이너(같은 volume)에서 일치 4 |
+| 백업(문서 4건)·복원 | `beez-backup dev` 원본 4개·덤프의 문서 버전 4개 확인 → PC 받기 `--check`로 임시 복원 → storage_key 다운로드 해시 일치 4 |
+
+- seaweedfs를 지우고 다시 만드는 사이에 백업을 돌렸더니, rclone이 약 2분 재시도한 뒤 성공하고 `LAST_OK`를 기록했습니다.
+- **dev에서 시험하지 못한 것**
+  - 수정 초안 업로드(DOC-A12): 개발 기준선이 필요한데, 기준선을 만드는 `POST /api/projects/{id}/design-drafts`가 backend에 없습니다(404, 프론트 계약만 있음). 그래서 `409 version_conflict`로 끝납니다. 이때 먼저 쓴 원본은 보상 삭제되어 bucket에 남지 않았습니다(4개 그대로).
+  - 분석 재시도: 실패한 분석이 없어 해당 없습니다(재시도는 `FAILED`만 허용).
+- **시험 계정**: SMTP(-272)가 아직 없어 화면 가입이 503입니다. 그래서 시험 팀장 계정(`leader-211@example.com`)을 DB에 직접 넣었습니다. bcrypt 해시에 `{bcrypt}` 접두어를 붙였고, 비밀번호는 전진님이 갖고 있습니다.

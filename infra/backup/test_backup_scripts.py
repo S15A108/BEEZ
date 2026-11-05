@@ -9,6 +9,7 @@
 실행: python infra/backup/test_backup_scripts.py  (pytest 로도 돈다)
 필요: bash, docker compose v2(config --environment 지원). Windows 는 Git Bash 를 쓴다.
 """
+import atexit
 import os
 from pathlib import Path
 import shutil
@@ -27,7 +28,7 @@ BUCKET = "beez-documents"
 DOCKER = r'''
 case "$1" in
   compose) exec "$REAL_DOCKER" "$@" ;;
-  ps) echo fakecontainer ;;
+  ps) printf '%s' "${FAKE_PS-fakecontainer}" ;;   # FAKE_PS= 이면 컨테이너 없음
   stop|start) echo "$1" >> "$CALL_LOG" ;;
   inspect) echo healthy ;;
   exec)
@@ -77,6 +78,7 @@ def posix(p):
 def run(script, *args, env_extra="", backup_root=None, **fake):
     """env_extra 를 local.env 뒤에 붙인 env 파일로 스크립트를 돌리고 (exit code, 출력, 받은 키 목록, 호출 목록, tmp) 를 돌려준다."""
     tmp = Path(tempfile.mkdtemp(prefix="beez-bk-test-"))
+    atexit.register(shutil.rmtree, tmp, True)   # check() 전에 assert 가 실패해도 프로세스가 끝날 때 지운다
     bin_dir = tmp / "bin"
     bin_dir.mkdir()
     for name, body in STUBS.items():
@@ -142,8 +144,8 @@ def test_restore_reads_env_like_compose():
 def test_env_syntax_error_is_hidden():
     # compose 는 따옴표가 안 닫힌 값을 오류 문구에 그대로 찍는다
     for script, args in (("backup.sh", ["dev"]), ("check-live.sh", ["dev"]), ("restore.sh", ["dev", "objects"])):
-        check(run(script, *args, env_extra=f'SEAWEEDFS_BACKUP_SECRET_KEY="{SECRET}\n'), 2 if script != "restore.sh" else 1,
-              "compose 로 해석하지 못함")
+        check(run(script, *args, env_extra=f'SEAWEEDFS_BACKUP_SECRET_KEY="{SECRET}\n'), 2,
+              "compose 로 해석하지 못함")   # 환경 오류는 세 스크립트 모두 2
 
 
 # --- 문서 0건(빈 bucket) -------------------------------------------------------
@@ -167,7 +169,7 @@ def test_restore_objects_without_bucket_folder_is_zero_objects():
 
 def test_restore_requires_backup_folder():
     with tempfile.TemporaryDirectory() as root:
-        check(run("restore.sh", "dev", "objects", "--yes", backup_root=Path(root) / "nope"), 1, "백업 폴더가 아님")
+        check(run("restore.sh", "dev", "objects", "--yes", backup_root=Path(root) / "nope"), 2, "백업 폴더가 아님")   # 환경 오류(2)
 
 
 # --- restore.sh all 사전 검증: 원본 폴더가 없다는 것만으로 "문서 0건"이라 보지 않는다 ---------------------
@@ -226,6 +228,9 @@ def test_restore_all_preview_runs_precheck():
         check(r, 1, "원본 1개가 백업 폴더와 bucket 어디에도 없음")
     with tempfile.TemporaryDirectory() as tmp:
         check(run("restore.sh", "dev", "all", backup_root=restore_root(tmp)), 0, "바꾸지 않음")
+    # postgres 컨테이너가 없으면 미리보기도 환경 오류(2)로 끝난다(빈 ID 로 검증을 이어 1 로 끝나지 않게)
+    with tempfile.TemporaryDirectory() as tmp:
+        check(run("restore.sh", "dev", "all", backup_root=restore_root(tmp), FAKE_PS=""), 2, "컨테이너를 하나로 찾지 못함")
 
 
 def test_restore_all_originals_in_folder_restores():

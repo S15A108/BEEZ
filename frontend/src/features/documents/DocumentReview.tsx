@@ -72,8 +72,16 @@ export function DocumentReview({
   const copy = useQuery({
     queryKey: ['projects', projectId, 'working-copy', documentId],
     queryFn: () => documentsApi.workingCopy(projectId, documentId),
-    // 다른 창에서 이미 검토 중이면 끝날 때까지 다시 읽는다.
-    refetchInterval: running ? 3000 : false,
+    // 다른 창에서 이미 검토 중이면 끝날 때까지 다시 읽는다. 올린 사람이 아닌 팀원은 검토를 부르지 않아
+    // review_in_progress를 받지 못하므로, 작업본이 비비 검토 단계(1단계, 반려 아님)면 끝날 때까지 다시 읽는다(PR #142 리뷰).
+    refetchInterval: ({ state: { data } }) =>
+      running ||
+      (data &&
+        data.owner_account_id !== session.data?.id &&
+        data.status !== 'REJECTED' &&
+        reviewStage(data).step === 1)
+        ? 3000
+        : false,
   })
   const current = copy.data
   const currentStage = current && reviewStage(current)

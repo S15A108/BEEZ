@@ -14,7 +14,7 @@ import {
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { targetLabel, targetPane } from './notificationTarget'
+import { targetFocus, targetLabel, targetPane } from './notificationTarget'
 
 // 벨 아래 팝오버. 알림을 누르면 그 창으로 가고 그 알림만 읽음 처리한다.
 export function InboxPopover({ projectId }: { projectId: string }) {
@@ -50,7 +50,7 @@ export function InboxPopover({ projectId }: { projectId: string }) {
     if (!item.read_at) read.mutate({ ids: [item.id] })
     setOpen(false)
     // 정할 것: 대상이 지워졌거나 권한이 없을 때의 안내
-    openPane(targetPane[item.target_type], item.target_id)
+    openPane(targetPane[item.target_type], targetFocus(item))
   }
   return (
     <Popover open={open} onOpenChange={setOpen}>

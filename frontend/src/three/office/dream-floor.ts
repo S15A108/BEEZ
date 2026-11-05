@@ -39,3 +39,19 @@ export function makeDreamFloor(base: Floor, phase: number): Floor {
     ),
   }
 }
+
+// 워크스페이스 사무실의 단계별 바닥. 시작 전(3)에도 사무실 바닥 전체와 엘리베이터를 보여 준다. 엘리베이터 문은
+// outdoorExit로 그려서, 시작 전에 이를 비우면 문까지 사라지고 엘리베이터 앞에서 시작하지도 못했다(S15P31A108-305).
+// 바깥 산책으로 나가는 동작만 OfficeScene이 시작 뒤(4)에 연다. 1인칭으로 엘리베이터를 가리킬 때 보이는 안내도 그에 맞춘다.
+export function officeFloorAt(base: Floor, phase: number): Floor {
+  if (phase !== 3) return makeDreamFloor(base, phase)
+  const floor = makeDreamFloor(base, 4)
+  return {
+    ...floor,
+    staticKey: 'dream-3',
+    outdoorExit: floor.outdoorExit && {
+      ...floor.outdoorExit,
+      label: '엘리베이터 · 프로젝트를 시작하면 산책할 수 있어요',
+    },
+  }
+}

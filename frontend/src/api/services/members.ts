@@ -19,6 +19,35 @@ const service = {
       },
       options,
     ),
+  createEmailInvitations: (
+    projectId: string,
+    input: schemas.CreateEmailInvitationsInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.createEmailInvitationsResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/invitations`,
+        data: schemas.createEmailInvitationsInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  resendInvitation: (
+    projectId: string,
+    invitationId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.resendInvitationResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/invitations/${encodeURIComponent(String(idSchema.parse(invitationId)))}/resend`,
+        idempotent: true,
+      },
+      options,
+    ),
   invitations: (
     projectId: string,
     query?: schemas.InvitationsQuery,

@@ -29,7 +29,7 @@ class PublishedAnalysisMetricsTest {
         var reader = mock(PublishedAnalysisMetricsReader.class);
         when(reader.read()).thenReturn(snapshot(3, 1, 0), snapshot(1, 2, 1));
         var registry = new SimpleMeterRegistry();
-        var metrics = new PublishedAnalysisMetrics(registry, reader, true, 15000);
+        var metrics = new PublishedAnalysisMetrics(registry, reader, true, true, 15000);
 
         assertThat(gauge(registry, "beez.cdc.analysis.intakes", "status", "PENDING")).isEqualTo(3);
         assertThat(gauge(registry, "beez.cdc.analysis.evaluations", "result", "INSUFFICIENT_EVIDENCE")).isEqualTo(2);
@@ -55,7 +55,7 @@ class PublishedAnalysisMetricsTest {
                 .thenThrow(new IllegalStateException("secret database data"))
                 .thenReturn(snapshot(2, 1, 0));
         var registry = new SimpleMeterRegistry();
-        var metrics = new PublishedAnalysisMetrics(registry, reader, false, 15000);
+        var metrics = new PublishedAnalysisMetrics(registry, reader, false, false, 15000);
         Gauge available = registry.get("beez.cdc.analysis.snapshot.available").gauge();
         Gauge lastSuccess = registry.get("beez.cdc.analysis.snapshot.last.success.epoch.seconds").gauge();
 
@@ -86,7 +86,7 @@ class PublishedAnalysisMetricsTest {
                 .newInstance(configType.getField("DEFAULT").get(null));
         var reader = mock(PublishedAnalysisMetricsReader.class);
         when(reader.read()).thenReturn(snapshot(3, 1, 0)).thenThrow(new IllegalStateException("secret"));
-        var metrics = new PublishedAnalysisMetrics(registry, reader, true, 15000);
+        var metrics = new PublishedAnalysisMetrics(registry, reader, true, true, 15000);
         var listener = new AnalysisIntakeKafkaListener((key, value) -> { throw new IllegalArgumentException("secret"); },
                 new AnalysisIntakeSignalHandler(ref -> { }), registry);
         assertThatThrownBy(() -> listener.receive(new ConsumerRecord<>("intake", 0, 0, "key", "payload")))
@@ -103,7 +103,8 @@ class PublishedAnalysisMetricsTest {
                 "beez_cdc_analysis_pending_retries", "beez_cdc_analysis_expired_leases",
                 "beez_cdc_analysis_started_retries", "beez_cdc_analysis_recorded_retry_attempts",
                 "beez_cdc_analysis_oldest_pending_seconds", "beez_cdc_analysis_snapshot_available",
-                "beez_cdc_analysis_snapshot_last_success_epoch_seconds", "beez_cdc_analysis_consumer_enabled"
+                "beez_cdc_analysis_snapshot_last_success_epoch_seconds", "beez_cdc_analysis_consumer_enabled",
+                "beez_cdc_analysis_recovery_enabled"
         }) {
             assertThat(scrape).contains("# TYPE " + name + " gauge");
         }

@@ -242,4 +242,4 @@ sudo rm /opt/beez/.cdc-secrets/database.properties
 | 11-05 | 서버 2 비밀 파일 (전진) | `만듦`, 디렉터리 `0:1001 2750`(setgid는 `/opt/beez`에서 물려받음), 파일 `0:1001 640`, 길이 `48` |
 | 11-05 | 서버 3-2·3-3 계정·publication·비밀번호 (전진, 머지 전) | `CREATE ROLE`·`GRANT`·`CREATE PUBLICATION`(`wal_level` 경고는 머지 전이라 정상), 3-3 `exit=0` |
 | 11-05 | 서버 4 검증 (읽기 전용) | 4-1 `{id,status}`. `beez_cdc` = LOGIN·REPLICATION·슈퍼유저 아님·비밀번호 있음, 권한은 `id:SELECT,status:SELECT`뿐. 4-2(`1001:1001`) [1] `0`(접수행 0) [2] `permission denied` [3] `IDENTIFY_SYSTEM` 성공(`beez`). 다른 uid(1002)는 파일 읽기 거부. 서버 로그에 `ALTER ROLE` 문장 0건. 슬롯 0 |
-| — | 1 머지 뒤 확인 | 남음: `SHOW wal_level`=`logical`·`max_slot_wal_keep_size`=`10GB`, backend healthy |
+| 11-05 | 1 머지 뒤 확인 (PR #155 14:47 KST 머지, `1d22b6f1`) | CD 성공, Jenkins 배포로 backend·프론트 같은 SHA. `wal_level`=`logical`, `max_slot_wal_keep_size`=`10GB`, postgres 기동 명령이 compose와 같음. postgres·ai·backend healthy, `/actuator/health` 200 UP, postgres 로그 FATAL·PANIC 0건. 재시작 뒤 publication `{id,status}`·`beez_cdc` 유지, 슬롯 0 |

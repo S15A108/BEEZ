@@ -29,4 +29,13 @@ export const beeApi = {
       },
       options,
     ),
+  status: (projectId: string, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.statusResponseSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/bee/status`,
+      },
+      options,
+    ),
 }
