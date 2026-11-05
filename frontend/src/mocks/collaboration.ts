@@ -478,22 +478,34 @@ export function collaborationRoutes(
         data: {
           ...members,
           items: members.items.map((member) => {
-            const task = project.tasks.find(
-              (item) =>
-                item.assignee_member_id === member.id &&
-                item.status === 'IN_PROGRESS',
+            // 지금 맡은 작업: 진행 중 → 대기 → 검증 중인 시작 전 작업 순(사무실 에이전트 자리, D37)
+            const mine = project.tasks.filter(
+              (item) => item.assignee_member_id === member.id,
             )
+            const task =
+              mine.find((item) => item.status === 'IN_PROGRESS') ??
+              mine.find((item) => item.status === 'WAITING') ??
+              mine.find(
+                (item) =>
+                  item.status === 'READY' &&
+                  item.validation_status === 'RUNNING',
+              )
             const agent = project.agents.find(
               (item) => item.member_id === member.id,
             )
             return {
               member_id: member.id,
-              ...(agent ? { agent_session_id: agent.id } : {}),
+              // 서버는 폐기되지 않은 토큰에 세션이 있을 때만 이 행에 세션을 싣고, 같은 조건으로 agent_connected를 정한다.
+              // 예시 DB에서는 연결된 에이전트만 세션이 있는 것으로 둔다(PR #128 리뷰).
+              ...(agent?.connected ? { agent_session_id: agent.id } : {}),
               ...(task
                 ? {
                     current_task_id: task.id,
                     task_status: task.status,
                     validation_status: task.validation_status,
+                    ...(task.waiting_reason
+                      ? { waiting_reason: task.waiting_reason }
+                      : {}),
                   }
                 : {}),
             }
