@@ -683,6 +683,7 @@ export const findingSchema = z.object({
   sources: sourceSchema.array(),
   resolution: z.enum(['FIX_PLAN', 'PROPOSE_CHANGE', 'HUMAN_REVIEW', 'RETRY']),
   next_action: z.string().optional(),
+  ai_suggested_action: z.string().optional(),
   validation_run_id: idSchema.optional(),
   policy_need_id: z.string().optional(),
   conflicting_design_refs: z

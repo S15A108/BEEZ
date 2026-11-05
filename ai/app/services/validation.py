@@ -80,6 +80,9 @@ MISSING_INPUT, MISSING_POLICY, CONFLICT or STALE_REF), severity (INFO, WARNING,
 BLOCKING), message, optional design_item_id, design_item_version_id, related_task_id,
 sources, evidence_ids, suggested_action. Use only supplied IDs and exact source
 objects, including document_id, document_version_id, version_no and location.
+Every finding MUST include both sources and evidence_ids as arrays. When a finding
+has no applicable source or evidence, return "sources": [] and "evidence_ids": [];
+never omit either field, including for missing plan input.
 For unknown optional IDs use null, never guess. related_task_id means only a
 DIFFERENT task identified by the check's related_plan_revision_ids. The current
 plan_revision.task_id is not a related task; when no related plan is supplied,
@@ -97,7 +100,9 @@ separate documents or separate tasks can be CONFLICT. Never output a MISMATCH or
 CONFLICT merely to note agreement, make an optional suggestion, or point out a
 detail the plan does not explicitly contradict. If no actual issue is established,
 return no finding. Do not mark a check unassessed solely because an explicit
-contradiction exists. An undecided policy is not proof of a contract mismatch.
+contradiction exists. An undecided policy is not proof of a contract mismatch: if
+the plan merely says to apply an approved policy and its details are undecided,
+do not invent a MISMATCH or a second finding for the same undecided policy.
 Findings must refer to their check's provided items/tasks. MISSING_INPUT
 and confirmed MISSING_POLICY must be BLOCKING. Only emit MISSING_POLICY when an
 original evidence excerpt explicitly states a policy is undecided in a complete
@@ -105,6 +110,11 @@ line such as "재시도 정책: 미정" or "policy: TBD". Cite that evidence_id 
 exact source and identify its design item version. Otherwise use an
 EVIDENCE_INSUFFICIENT unassessed check instead. If citing an evidence_id include its
 exact source. Never output a final decision or invent a responsible member.
+In suggested_action, propose a concrete next step grounded in this finding. Distinguish
+approved policy from a proposed change, and describe changes or consultation as
+suggestions, never as an already approved decision. Do not invent a person, member
+ID, assignment, authority, or claim that an action has already been performed. Keep
+suggested_action concise (at most 2000 UTF-16 code units) and do not include NUL.
 Write messages and actions in Korean."""
 
 POLICY_PROMPT = """
@@ -142,7 +152,10 @@ MISMATCH or CONFLICT finding. Each policy finding needs policy_need_id matching
 its assessment. A CONFLICT between distinct approved designs also needs
 conflicting_design_refs: each contains the other design_item_id,
 design_item_version_id, evidence_ids and content_paths (paths from that
-assessment's approved_content_refs). Cite evidence from both versions when
+assessment's approved_content_refs). Its top-level design_item_id and
+design_item_version_id MUST identify one representative approved design and its
+matching version from the assessment; neither may be null. Put the other design(s)
+in conflicting_design_refs without repeating the representative. Cite evidence from both versions when
 available; every cited evidence requires its exact source. All evidence IDs in
 conflicting_design_refs MUST also occur in the finding's
 top-level evidence_ids, and the finding's sources MUST include the exact source
@@ -442,6 +455,55 @@ def validate_output(raw: Any, body: ValidateRequest) -> ValidateResult:
     return result
 
 
+# AI-A02 has only a text field for recommendations. Keep it wire-compatible;
+# the BE remains the authority for routing, assignment, approval and status.
+_FOLLOWUP_PATHS = {
+    "MISSING_INPUT": ("계획 보완 검토", "필요한 입력이 부족하다는 발견 때문입니다"),
+    "STALE_REF": ("계획의 참조 갱신 검토", "참조가 오래되었을 가능성이 보고되었기 때문입니다"),
+    "MISSING_POLICY": (
+        "정책 협의 및 설계 변경 제안 검토",
+        "제공된 근거에 정책이 미정으로 명시되어 있기 때문입니다",
+    ),
+    "CONFLICT": (
+        "관련 담당자 협의와 계획 또는 설계 변경 제안 검토",
+        "확인된 내용 사이에 충돌이 보고되었기 때문입니다",
+    ),
+    "MISMATCH": ("계획 보완 또는 설계 변경 제안 검토", "불일치 검토 결과가 보고되었기 때문입니다"),
+}
+
+
+def add_followup_suggestions(result: ValidateResult) -> ValidateResult:
+    """Annotate validated findings without assigning people or changing policy.
+
+    The request identifies tasks and design versions, but supplies no member or
+    role roster. The roles below are therefore review targets to verify, not
+    known assignees. Only validated references can identify another task.
+    """
+    findings = []
+    for finding in result.findings:
+        path, reason = _FOLLOWUP_PATHS[finding.kind]
+        roles = ["현재 작업 담당자 확인 필요"]
+        if finding.related_task_id is not None:
+            roles.append(f"관련 작업 {finding.related_task_id} 담당자 확인 필요")
+        if finding.design_item_version_id is not None:
+            roles.append("연결된 설계의 담당 역할 확인 필요")
+        suggestion = (
+            f"AI 제안 경로: {path}. 제안 내용: {finding.suggested_action} "
+            f"확인할 역할: {', '.join(roles)}. 이유: {reason} "
+            "담당자와 승인 여부는 별도 절차에서 확인합니다."
+        )
+        # Match the BE storage contract without truncating a model's message.
+        # UTF-16 code units match Java String.length(), including astral characters.
+        if (
+            not finding.suggested_action.strip()
+            or "\x00" in suggestion
+            or len(suggestion.encode("utf-16-le")) // 2 > 4000
+        ):
+            raise ValueError("invalid suggested action")
+        findings.append(finding.model_copy(update={"suggested_action": suggestion}))
+    return result.model_copy(update={"findings": findings})
+
+
 def structured_response_format(*, policy: bool = False) -> dict[str, Any]:
     """Build the provider schema from the DTO; application validation still applies.
 
@@ -562,7 +624,7 @@ async def analyze(
                     if isinstance(response.result, str)
                     else response.result
                 )
-                result = validate_output(raw, body)
+                result = add_followup_suggestions(validate_output(raw, body))
             except (ValueError, TypeError, ValidationError) as exc:
                 raise response.invalid_output_error() from exc
             if time.monotonic() >= deadline:
