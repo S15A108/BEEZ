@@ -9,7 +9,7 @@ import { avatarAppearance, officeActors } from './office-actors'
 import { isOfficeWorkingStatus, PERSONAL_SPACE } from './office-life'
 import { officeHomeSeats } from './office-work'
 
-// D24: 계정 avatar(회원 설정 캐릭터)로 사무실 모양을 정한다. 옛 bee-*는 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람.
+// D34: 계정 avatar(회원 설정 캐릭터)로 사무실 모양을 정한다. 옛 bee-*는 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람.
 test('계정 avatar를 사무실 모양으로 바꾼다', () => {
   expect(avatarAppearance('human')).toBe('human')
   expect(avatarAppearance('robot')).toBe('member-robot')
@@ -19,7 +19,7 @@ test('계정 avatar를 사무실 모양으로 바꾼다', () => {
   expect(avatarAppearance(undefined)).toBe('human')
 })
 
-// avatar 없는 팀원의 기대값을 기본 로봇(검은 바이저)에서 사람으로 바꿨다(사용자 승인 2026-11-03, D27).
+// avatar 없는 팀원의 기대값을 기본 로봇(검은 바이저)에서 사람으로 바꿨다(사용자 승인 2026-11-03, D35).
 test('팀원은 avatar 모양(없으면 사람)으로, 팀원의 AI 에이전트는 에이전트 모양으로 그린다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 2, lead: 1, humandesk: 1 })
@@ -56,7 +56,7 @@ test('팀원은 avatar 모양(없으면 사람)으로, 팀원의 AI 에이전트
   expect(actors.find((actor) => actor.id === 'agent:22')?.stationary).toBe(true)
 })
 
-// D27: 에이전트는 팀원과 키가 비슷하고(안테나 끝 1.74 m), 사무실 걷기·앉기 자세가 돌릴 관절을 가진다.
+// D35: 에이전트는 팀원과 키가 비슷하고(안테나 끝 1.74 m), 사무실 걷기·앉기 자세가 돌릴 관절을 가진다.
 test('에이전트는 팀원 키의 관절 있는 로봇이고 주인 색 띠를 두른다', () => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   const agent = buildAgent('#4f86c6', 'online')
@@ -107,7 +107,7 @@ test('회원 캐릭터 로봇·벌은 보드 크기 그대로 팔·다리 축을
   }
 })
 
-// D29: 고정 사무실에서 팀원은 자기 자리 옆에 서 있고(위치 API 없음, 가구는 쓰지 않음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
+// D37: 고정 사무실에서 팀원은 자기 자리 옆에 서 있고(위치 API 없음, 가구는 쓰지 않음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
 test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리로 간다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
@@ -215,7 +215,7 @@ test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리
 })
 
 // 사용자 결정 '라운지 가운데에 세움'(2026-11-03): 고정 사무실에서는 프로젝트를 시작한 뒤(lead 에이전트가 있어도) 비비가
-// lead 자리에 서 있다. 걷지 않으므로 평소에는 Idle만 돈다(D27).
+// lead 자리에 서 있다. 걷지 않으므로 평소에는 Idle만 돈다(D35).
 test('고정 사무실에서는 시작한 뒤에도 비비가 라운지 가운데 lead 자리에 서 있다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })

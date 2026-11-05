@@ -1,6 +1,6 @@
 // 사무실 배치(캔버스 SCR-06-rec-office v488, 그림 코드 office2_plan_final.json). 사용자가 고른 '3번 구조 + 1번 색 +
 // 기둥 제거'다. 단위는 m, 방 가운데가 (0, 0), 북쪽(-z)과 동쪽(+x)이 유리벽, 서쪽 벽에 엘리베이터가 있다.
-// 가구는 Kenney Furniture Kit(CC0, public/models/kenney/furniture) 모델과 직접 그리는 보드·화면이다(D28).
+// 가구는 Kenney Furniture Kit(CC0, public/models/kenney/furniture) 모델과 직접 그리는 보드·화면이다(D36).
 // 사람 사이 거리(PERSONAL_SPACE)보다 가까운 의자·스툴 몇 개만 1.1 m 간격으로 벌렸다.
 export const OFFICE_ROOM = { w: 24, d: 14, h: 3 }
 export interface OfficeZone {

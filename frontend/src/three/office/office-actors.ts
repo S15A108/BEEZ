@@ -6,7 +6,7 @@ import type { Floor } from './floors'
 import { officeWorkZone } from './office-layout'
 import { RECEPTIONIST } from './social'
 
-// 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D24).
+// 계정 avatar(사람·로봇·벌)를 사무실 모양으로. 옛 bee-* 값은 회원 설정처럼 가장 가까운 새 캐릭터, 없으면 사람(D34).
 // 회원 캐릭터 로봇(member-robot)은 팀원의 AI 에이전트(agent)와 다른 모양이다.
 export function avatarAppearance(avatar?: string): OfficeAppearance {
   const key = avatar ? characterOf(avatar).key : 'human'
@@ -25,7 +25,7 @@ export function officeActors(
 ) {
   const result: (OfficeEntity3D & { name: string; stationary?: boolean })[] = []
   const lead = bibiOf(agents) ?? RECEPTIONIST
-  // 고정 사무실(D28)에서는 단계와 관계없이 라운지 가운데(lead 자리)에 서 있다(사용자 결정 '라운지 가운데에 세움').
+  // 고정 사무실(D36)에서는 단계와 관계없이 라운지 가운데(lead 자리)에 서 있다(사용자 결정 '라운지 가운데에 세움').
   const bibiSpot = floor.seats.lead?.[0]
   if (phase < 3 || !bibiOf(agents) || floor.zoneSigns)
     result.push({
@@ -70,7 +70,7 @@ export function officeActors(
       floor: 1,
       color: agent.color,
       status: agent.status,
-      // 팀원의 AI 에이전트(hired_by = 주인)는 하늘색 로봇이다(D27). 팀원은 계정 avatar 모양, 모르면 사람이다(D24,
+      // 팀원의 AI 에이전트(hired_by = 주인)는 하늘색 로봇이다(D35). 팀원은 계정 avatar 모양, 모르면 사람이다(D34,
       // 명세 요청 MEM-A01 avatar).
       appearance:
         agent.kind === 'lead'
@@ -86,7 +86,7 @@ export function officeActors(
 }
 
 type Spot = { x: number; y: number; facing: OfficeEntity3D['dir'] }
-// 사무실 에이전트 상태(D29) → 이름표 문구·로봇 모습(캔버스 상태 넷)·걷기 시뮬레이션 상태
+// 사무실 에이전트 상태(D37) → 이름표 문구·로봇 모습(캔버스 상태 넷)·걷기 시뮬레이션 상태
 const STATE: Record<string, { label: string; look: string; life: string }> = {
   offline: { label: '연결 끊김', look: 'offline', life: 'meeting' },
   working: { label: '작업 중', look: 'working', life: 'working' },
@@ -96,7 +96,7 @@ const STATE: Record<string, { label: string; look: string; life: string }> = {
 }
 
 /**
- * 고정 사무실(D28·D29)의 사람과 에이전트.
+ * 고정 사무실(D36·D37)의 사람과 에이전트.
  * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리 옆에 서 있다.
  *   팀원은 가구를 쓰지 않는다(사용자 결정 "가구랑 상호작용하는 건 에이전트만 가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
  * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 끊김은 라운지 충전 자리(리클라이너),

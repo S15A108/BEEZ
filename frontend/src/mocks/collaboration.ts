@@ -478,7 +478,7 @@ export function collaborationRoutes(
         data: {
           ...members,
           items: members.items.map((member) => {
-            // 지금 맡은 작업: 진행 중 → 대기 → 검증 중인 시작 전 작업 순(사무실 에이전트 자리, D29)
+            // 지금 맡은 작업: 진행 중 → 대기 → 검증 중인 시작 전 작업 순(사무실 에이전트 자리, D37)
             const mine = project.tasks.filter(
               (item) => item.assignee_member_id === member.id,
             )

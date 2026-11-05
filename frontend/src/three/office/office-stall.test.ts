@@ -13,7 +13,7 @@ import { officeSceneAgents } from '../sceneData'
 
 // PR #72 전수 리뷰 THREE-01 재현(full-review/proofs/three-crowd)을 회귀 테스트로 옮겼다.
 // 겹침 방지가 걸음을 막으면 같은 정적 경로를 다시 찾아 서로 마주 선 채 멈췄다.
-// 고정 사무실(D28)의 가운데 통로(7번 줄)로 두 사람의 자리를 옮겼다. 기대값은 그대로다.
+// 고정 사무실(D36)의 가운데 통로(7번 줄)로 두 사람의 자리를 옮겼다. 기대값은 그대로다.
 
 it('통로에서 마주 걸어오는 두 사람이 비켜 지나 자기 자리에 닿는다', () => {
   const floor = makeDreamFloor(

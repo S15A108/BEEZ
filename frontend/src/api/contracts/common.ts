@@ -75,7 +75,7 @@ export const memberSchema = z.object({
   domain: z.string().optional(),
   role_label: z.string().optional(),
   color: z.string().optional(),
-  // 명세 요청 중(MEM-A01 팀원 목록에 avatar). 오면 사무실에서 그 팀원을 회원 설정 캐릭터로 그린다(D24).
+  // 명세 요청 중(MEM-A01 팀원 목록에 avatar). 오면 사무실에서 그 팀원을 회원 설정 캐릭터로 그린다(D34).
   avatar: z.string().optional(),
   agent_connected: z.boolean(),
 })

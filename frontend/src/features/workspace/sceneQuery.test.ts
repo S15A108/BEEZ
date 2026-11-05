@@ -40,7 +40,7 @@ it('초기 설정 현황 API가 없으면 그 계정의 에이전트 연결로 �
     ],
     has_more: false,
   } as never)
-  // 사무실 에이전트 자리(D29)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
+  // 사무실 에이전트 자리(D37)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
   vi.spyOn(dashboardApi, 'agentWork').mockResolvedValue({
     items: [],
     has_more: false,

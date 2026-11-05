@@ -21,7 +21,7 @@ import { RECEPTIONIST } from './social'
 const office = (population: OfficePopulation) =>
   makeBuilding(ALL_KEYS, 'glass', null, population).floors[1]
 const feet = (x: number, y: number) => ({ x: x * 32 + 16, y: y * 32 + 27 })
-// D28: 사무실은 캔버스 v488의 고정 배치라 인원에 따라 넓어지거나 좁아지지 않는다. 늘고 주는 사무실을 확인하던
+// D36: 사무실은 캔버스 v488의 고정 배치라 인원에 따라 넓어지거나 좁아지지 않는다. 늘고 주는 사무실을 확인하던
 // 기대값을 고정 방 기준으로 바꿨다(사용자 승인 2026-11-03). 길찾기·좌석 도달·출구 검사는 그대로다.
 const populations: OfficePopulation[] = [
   { dev: 1, lead: 1, humandesk: 1 },

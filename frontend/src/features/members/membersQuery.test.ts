@@ -44,7 +44,7 @@ it('워크스페이스 첫 조회도 팀원을 마지막 페이지까지 읽는�
   twoPages()
   vi.spyOn(projectsApi, 'get').mockResolvedValue({ id: '10' } as never)
   vi.spyOn(projectsApi, 'onboarding').mockResolvedValue({} as never)
-  // 사무실 에이전트 자리(D29)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
+  // 사무실 에이전트 자리(D37)를 위해 첫 조회가 작업 현황(MON-A05)도 읽는다.
   vi.spyOn(dashboardApi, 'agentWork').mockResolvedValue({
     items: [],
     has_more: false,

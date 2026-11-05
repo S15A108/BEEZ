@@ -79,7 +79,7 @@ const SOLID = new Set([
 const onTop = (piece: OfficePiece) => piece.y > 0.2
 
 /**
- * 고정 사무실(캔버스 SCR-06-rec-office v488, D28). 팀원 수와 상관없이 같은 방이다.
+ * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이다.
  * 작업 자리는 아일랜드 두 개의 12석이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
  */
 export function makeTeamOffice(): Floor {
@@ -92,7 +92,7 @@ export function makeTeamOffice(): Floor {
         if (grid[y]?.[x] !== undefined) grid[y][x] = tile
   }
   fill(-ROOM_W / 2, -ROOM_D / 2, ROOM_W / 2, ROOM_D / 2, 'h')
-  // 바닥 재질은 구역 글자로 정한다: 작업 현황·허들은 카펫(d·m), 그 밖은 오크(D28).
+  // 바닥 재질은 구역 글자로 정한다: 작업 현황·허들은 카펫(d·m), 그 밖은 오크(D36).
   const ZONE_TILE: Record<number, Tile> = {
     1: 'b',
     2: 'r',
@@ -235,7 +235,7 @@ export function makeTeamOffice(): Floor {
   const outdoorExit = {
     x: tx(OFFICE_ENTRANCE.x),
     y: ty(doorZ) - 0.8,
-    // 벽에 붙은 문틀처럼 얇게(D30)
+    // 벽에 붙은 문틀처럼 얇게(D38)
     w: 0.35,
     h: 1.6,
     landing: {
@@ -280,7 +280,7 @@ export function makeTeamOffice(): Floor {
     blocked,
     furniture,
     seats: {
-      // 작업 자리 12석(아일랜드 둘), 넘으면 허들·워룸. 팀원은 바깥 자리부터 앉아 옆자리를 에이전트에게 남긴다(D29).
+      // 작업 자리 12석(아일랜드 둘), 넘으면 허들·워룸. 팀원은 바깥 자리부터 앉아 옆자리를 에이전트에게 남긴다(D37).
       dev: [...spread(work.island, work.center), ...work.huddle, ...work.war],
       humandesk: [...work.library, ...work.change],
       meeting: work.huddle,

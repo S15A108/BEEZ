@@ -41,7 +41,7 @@ export interface OfficeSceneProps {
   onHintChange?: (hint: string | null) => void
   phase?: 0 | 1 | 2 | 3 | 4
   currentUserId?: string
-  /** 내 계정 avatar. 사무실의 '나' 모양을 회원 설정 캐릭터로 그린다(D24). */
+  /** 내 계정 avatar. 사무실의 '나' 모양을 회원 설정 캐릭터로 그린다(D34). */
   avatar?: string
   interactive?: boolean
   className?: string

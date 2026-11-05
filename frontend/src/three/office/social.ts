@@ -51,7 +51,7 @@ export function officeSeats(floor: Floor): OfficeSeat[] {
       return [
         {
           id: `${floor.id}/chair/${index}`,
-          // 라운지 리클라이너는 소파처럼 쉬러 가는 자리다(D28).
+          // 라운지 리클라이너는 소파처럼 쉬러 가는 자리다(D36).
           ...(f.tag === 'lounge' ? { kind: 'sofa' as const } : {}),
           x: (f.x + f.w / 2) * T,
           y: (f.y + f.h / 2) * T,

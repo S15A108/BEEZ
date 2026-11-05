@@ -29,7 +29,7 @@ import type {
 import { contractExamples } from './contract-examples'
 
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
-// v10: 사무실 에이전트 상태 예시(D29) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
+// v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
 export const MOCK_STORAGE_KEY = 'beez.mock.api.v10'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
@@ -359,7 +359,7 @@ function seededProject(
     },
   }
   delete other.current_plan_revision.plan.context_packet_id
-  // 사무실 에이전트 예시(D29): 김동료의 작업은 팀장 승인을 기다린다.
+  // 사무실 에이전트 예시(D37): 김동료의 작업은 팀장 승인을 기다린다.
   other.status = 'WAITING'
   other.waiting_reason = 'APPROVAL'
   state.tasks.push(other)
@@ -385,7 +385,7 @@ function seededProject(
     },
   }
   delete third.current_plan_revision.plan.context_packet_id
-  // 사무실 에이전트 예시(D29): 박팀원의 에이전트가 진행 중인 작업이다.
+  // 사무실 에이전트 예시(D37): 박팀원의 에이전트가 진행 중인 작업이다.
   third.status = 'IN_PROGRESS'
   third.validation_status = 'PASS'
   state.tasks.push(third)
@@ -512,7 +512,7 @@ function seededProject(
     last_report_at: created,
     status_check_required: true,
   })
-  // 팀원 예시 에이전트는 사무실 화면 확인용으로 연결됨을 두되(사용자 결정 2026-11-03, D29), 사용자가 mock에서 새로
+  // 팀원 예시 에이전트는 사무실 화면 확인용으로 연결됨을 두되(사용자 결정 2026-11-03, D37), 사용자가 mock에서 새로
   // 발급한 토큰은 연결을 만들지 않는다. 박팀원(TASK-003 진행 중)·김동료(TASK-002 승인 대기)는 연결됨, 최팀원은 세션만
   // 있고 끊김, 내 에이전트(51)는 연결 전이다.
   state.agents.push(

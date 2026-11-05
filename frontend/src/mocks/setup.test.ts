@@ -190,7 +190,7 @@ describe('documented REST mock adapter', () => {
   it('issues only mock tokens and keeps connection and provider status honest', async () => {
     await login()
     // 팀원 예시 에이전트는 시드에서 연결됨이라, 새로 발급한 mock 토큰이 연결을 만들지 않는지(발급 전후 연결 수가 같은지)만
-    // 본다(사용자 승인 2026-11-03, D29).
+    // 본다(사용자 승인 2026-11-03, D37).
     const connected = async () =>
       (await agentsApi.list('101')).items.filter((agent) => agent.connected)
         .length

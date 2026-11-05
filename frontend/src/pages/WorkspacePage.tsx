@@ -104,7 +104,7 @@ function Workspace({ projectId }: { projectId: string }) {
         avatar: member.avatar,
         status: 'idle',
       })),
-      // 팀원의 AI 에이전트(D27·D29): 연결된 에이전트, 작업 현황에 세션이 있는 에이전트, 아직 연결하지 않은 내 에이전트.
+      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트, 작업 현황에 세션이 있는 에이전트, 아직 연결하지 않은 내 에이전트.
       // 상태는 작업 현황(MON-A05)을 따르고, 그 API가 없으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
       ...(query.data?.members.items ?? [])
         .filter((member) =>

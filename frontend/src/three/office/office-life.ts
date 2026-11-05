@@ -27,7 +27,7 @@ export interface OfficeLifeActor extends Point {
   dir: Dir
   status?: string
   stationary?: boolean
-  /** 집 자리(x, y)에 앉지 않고 서 있는다(D29: 할 일 없는 에이전트가 주인 자리 뒤에 선다) */
+  /** 집 자리(x, y)에 앉지 않고 서 있는다(D37: 할 일 없는 에이전트가 주인 자리 뒤에 선다) */
   standing?: boolean
   moving: boolean
   heading?: number

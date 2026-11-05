@@ -39,9 +39,9 @@ export interface OfficeAimTarget extends OfficeSceneHit {
 /** Positions keep the existing simulation's 32 px tile coordinate system. */
 export interface OfficeEntity3D {
   id: string
-  /** 에이전트 로봇의 모습 상태(online·working·idle·offline). 없으면 status로 정한다(D29). */
+  /** 에이전트 로봇의 모습 상태(online·working·idle·offline). 없으면 status로 정한다(D37). */
   agentStatus?: string
-  /** 머리 위 이름표와 그 아래 말풍선(D29) */
+  /** 머리 위 이름표와 그 아래 말풍선(D37) */
   tag?: string
   note?: string
   x: number
@@ -106,7 +106,7 @@ const AGENT_STATUSES: readonly string[] = [
 ]
 const agentStatusOf = (status?: string) =>
   (AGENT_STATUSES.includes(status ?? '') ? status : 'online') as AgentStatus
-// 사무실 캐릭터 모양(D24, D27). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440), agent는 팀원의 AI 에이전트
+// 사무실 캐릭터 모양(D34, D35). human·member-robot·bee는 회원 설정 캐릭터(SCR-05 v440), agent는 팀원의 AI 에이전트
 // (하늘색 포인트 흰 로봇), bibi는 AI 팀장이다(캔버스 SCR-06-rec-office-chars).
 export type OfficeAppearance =
   'human' | 'member-robot' | 'bee' | 'agent' | 'bibi'
@@ -144,7 +144,7 @@ const C = {
   navy: '#293840',
 }
 
-// ───── 고정 사무실(D28) 가구 재질·그림 ─────
+// ───── 고정 사무실(D36) 가구 재질·그림 ─────
 // Kit 재질 이름별 색(캔버스 PAL + 사용자가 고른 1번 색 테마: 따뜻한 나무, 초록 화분). 모델은 앱 전체가 나눠 써서 한 번만 칠한다.
 const KIT_PALETTE: Record<string, [string, number, number]> = {
   wood: ['#c99a6b', 0.6, 0],
@@ -370,7 +370,7 @@ export class OfficeRenderer3D {
   private readonly firstPersonEnclosure = new THREE.Group()
   private readonly rearWindows = new THREE.Group()
   private readonly sideWindows = new THREE.Group()
-  /** 고정 사무실(D30)의 남·동쪽 벽. 3인칭에서도 보이고, 카메라 쪽이면 낮게 자른다. */
+  /** 고정 사무실(D38)의 남·동쪽 벽. 3인칭에서도 보이고, 카메라 쪽이면 낮게 자른다. */
   private frontWall: THREE.Group | null = null
   private rightWall: THREE.Group | null = null
   private wallBounds = { left: 0, back: 0, right: 0, front: 0 }
@@ -1105,7 +1105,7 @@ export class OfficeRenderer3D {
       this.chair(parent, x, f.y + f.h + 0.62, 'up')
   }
 
-  // ───── 고정 사무실(D28): Kenney Furniture Kit 모델과 직접 그리는 보드·화면 (캔버스 office2.html piece()·board()) ─────
+  // ───── 고정 사무실(D36): Kenney Furniture Kit 모델과 직접 그리는 보드·화면 (캔버스 office2.html piece()·board()) ─────
   private kitPiece(parent: THREE.Object3D, f: Furniture) {
     const kit = f.kit!
     const group = new THREE.Group()
@@ -2386,7 +2386,7 @@ export class OfficeRenderer3D {
         palette[floor.grid[z][x]] ?? '#efeadb',
         0.025,
       )
-      // 고정 사무실(D28): 따뜻한 오크 바닥, 작업 현황·허들은 베이지 카펫 타일
+      // 고정 사무실(D36): 따뜻한 오크 바닥, 작업 현황·허들은 베이지 카펫 타일
       if (floor.zoneSigns)
         mesh.material = this.floorMaterial(floor.grid[z][x], x, z)
       mesh.visible = false
@@ -2762,7 +2762,7 @@ export class OfficeRenderer3D {
       this.materials.set('office-curtain-glass', glass)
     }
 
-    // 막힌 벽(D30): 크림 벽에 걸레받이. inside는 벽 안쪽이 지역 z의 어느 쪽인지(+1·-1), slat은 나무 슬랫을 댈 구간(지역 x).
+    // 막힌 벽(D38): 크림 벽에 걸레받이. inside는 벽 안쪽이 지역 z의 어느 쪽인지(+1·-1), slat은 나무 슬랫을 댈 구간(지역 x).
     const solidWall = (
       parent: THREE.Group,
       length: number,
@@ -3139,7 +3139,7 @@ export class OfficeRenderer3D {
         figure.getObjectByName('arm-right')?.rotation.set(0, 0, PERSON_ARMS)
         figure.getObjectByName('arm-left')?.rotation.set(0, 0, -PERSON_ARMS)
         attach(figure, (bibi ? BIBI_HEIGHT : FIGURE_HEIGHT) / model.size.y)
-        // 비비 GLB(D27)의 Idle·Walk 클립. Wave는 쓸 곳이 생길 때 붙인다.
+        // 비비 GLB(D35)의 Idle·Walk 클립. Wave는 쓸 곳이 생길 때 붙인다.
         const clip = (name: string) =>
           model.animations.find((item) => item.name === name)
         if (bibi && clip('Idle')) {
@@ -3174,7 +3174,7 @@ export class OfficeRenderer3D {
     return template
   }
 
-  // 이름표(D29): 흰 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
+  // 이름표(D37): 흰 알약에 이름 · 상태, 아래에 노란 말풍선(대기 이유). 클릭 판정에서 빠지도록 몸(body)이 아닌 루트에 단다.
   private nameTag(robot: Robot, tag?: string, note?: string) {
     const text = tag
       ? `${tag}
@@ -3670,7 +3670,7 @@ ${note ?? ''}`
     } else if (this.car) this.car.visible = false
     // Open the wall nearest an outside orbit camera, like an architectural cutaway.
     if (this.frontWall && this.rightWall) {
-      // 고정 사무실(D30): 돌하우스 단면. 카메라 반대편 두 벽은 제 높이, 카메라 쪽 두 벽은 무릎 높이로 자른다.
+      // 고정 사무실(D38): 돌하우스 단면. 카메라 반대편 두 벽은 제 높이, 카메라 쪽 두 벽은 무릎 높이로 자른다.
       // 카메라를 돌리면 자르는 벽도 바뀐다. 1인칭에서는 네 벽 모두 제 높이다.
       const { left, back, right, front } = this.wallBounds,
         at = this.camera.position

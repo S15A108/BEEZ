@@ -1,6 +1,6 @@
 import type { AgentWork } from '@/api/contracts/common'
 
-// 사무실 AI 에이전트의 상태(D29). 캔버스 SCR-06-rec-office-chars의 네 상태에 '검증 중'을 더해 자리를 나눈다.
+// 사무실 AI 에이전트의 상태(D37). 캔버스 SCR-06-rec-office-chars의 네 상태에 '검증 중'을 더해 자리를 나눈다.
 // offline 연결 끊김(라운지 충전 자리) · working 작업 중(주인 옆 아일랜드) · validating 검증 중(칸반 워룸 화면 앞)
 // · waiting 대기(허들 스툴) · online 연결됨·할 일 없음(주인 자리 근처에 서 있음)
 export type OfficeAgentState =

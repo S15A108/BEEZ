@@ -176,7 +176,7 @@ test('street traffic yields ahead of a walker, queues with a gap, and resumes wh
   }
 })
 
-// 산책 버그(2026-11-03): 고정 사무실(D28, 26칸 폭)에서는 기본 시작점이 가로수 기둥과 겹쳐 어느 쪽으로도 걷지 못했다.
+// 산책 버그(2026-11-03): 고정 사무실(D36, 26칸 폭)에서는 기본 시작점이 가로수 기둥과 겹쳐 어느 쪽으로도 걷지 못했다.
 test('고정 사무실 폭에서도 산책 시작점은 걸을 수 있는 보도이고 문 가까이에 있다', () => {
   const floor = makeDreamFloor(
     makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
