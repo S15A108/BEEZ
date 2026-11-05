@@ -31,7 +31,7 @@
 - 도메인 트랜잭션이 없는 곳(토큰 필터·MCP 어댑터·스케줄러)에서 남겨야 하면 `TransactionTemplate`으로 짧은 쓰기 트랜잭션을 열고 그 안에서 부른다. 이때 롤백·유실의 범위는 그 짧은 트랜잭션 하나다.
 - `readOnly` 트랜잭션 안에서는 부르지 않는다(PostgreSQL이 INSERT를 거부한다). 읽기 경로에서 남겨야 하면 그 서비스 호출이 끝난 뒤 호출측(어댑터)에서 위처럼 짧은 트랜잭션을 연다. `REQUIRES_NEW`로 안에서 열면 바깥 연결을 쥔 채 연결을 하나 더 잡아, 자주 불리는 읽기 경로에서 연결 풀이 빨리 바닥난다.
 - 저장은 `INSERT … ON CONFLICT (dedupe_key) DO NOTHING`이다. 같은 키가 다시 오면 **처음 것을 유지**하고 오류를 내지 않는다. 내용이 달라도 마찬가지다.
-- 이 INSERT와 수신자 확인 조회는 **`EntityManager` 네이티브 쿼리**로 한다. `JdbcTemplate`은 Hibernate를 거치지 않아, 같은 트랜잭션에서 도메인이 JPA로 바꾸고 아직 flush하지 않은 변경(방금 제외·되살린 멤버십, 바뀐 담당자)을 보지 못한다. 네이티브 쿼리는 실행 전에 자동 flush된다.
+- 이 INSERT와 수신자 확인 조회는 **Hibernate를 거치는 쿼리(JPQL 또는 `EntityManager` 네이티브 쿼리)**로 한다. `JdbcTemplate`은 Hibernate를 거치지 않아, 같은 트랜잭션에서 도메인이 JPA로 바꾸고 아직 flush하지 않은 변경(방금 제외·되살린 멤버십, 바뀐 담당자)을 보지 못한다. Hibernate를 거치는 쿼리는 실행 전에 자동 flush된다(-181은 수신자 확인을 JPQL, INSERT를 네이티브로 한다).
 - `requestAll`은 수신자들이 활성 멤버인지 **조회 한 번**(`account_id IN (…)`)으로 거른다. 발행처럼 project 행 잠금을 쥔 트랜잭션에서 불리므로 수신자 수만큼 조회하지 않는다.
 - 도메인 이벤트(`ApplicationEvent`)로 넘기고 싶으면 듣는 쪽은 `@TransactionalEventListener(phase = BEFORE_COMMIT)` 또는 `@EventListener`(같은 트랜잭션)를 쓴다. **`AFTER_COMMIT`에서는 부르지 않는다** — 이미 커밋이 끝난 뒤라 저장이 반영되지 않을 수 있고(Spring `TransactionSynchronization.afterCommit` 주의 사항), 유실 틈도 그대로 남는다.
 - 도메인 이벤트에는 계정 ID가 아니라 **`CallerContext`를 담는다.** 계정 ID만 담으면 같은 계정의 사람 행위와 에이전트 행위를 구분할 수 없고, 에이전트 세션도 연결할 수 없다. 사람·에이전트가 아니라 시스템 판단으로 생긴 변화(검증 결과에 따른 전이 등)는 `CallerContext` 없이 `recordBy(SystemActor.SYSTEM, …)`로 남긴다.
