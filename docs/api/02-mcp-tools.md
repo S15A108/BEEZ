@@ -1340,7 +1340,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: VAL 재시도 계약  
 담당: BE: 전진(도구) / 변준성(재시도) / AI: 양지훈(실패 정보) / FE: —  
-상태: 도구명·분리 담당자 검토. BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구 연결은 -179
+상태: 도구명·분리 담당자 검토. BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구는 명세 이름 `retry_validation`으로 연결 (S15P31A108-271, `RetryValidationTool`)
 
 #### 인증
 
