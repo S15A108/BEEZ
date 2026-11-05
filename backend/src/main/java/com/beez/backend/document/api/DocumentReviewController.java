@@ -2,6 +2,8 @@ package com.beez.backend.document.api;
 
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.document.dto.*;
+import com.beez.backend.document.dto.ReviewChatDtos.*;
+import com.beez.backend.document.service.DocumentReviewChatService;
 import com.beez.backend.document.service.DocumentReviewService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -18,9 +20,10 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/projects/{projectId}")
 public class DocumentReviewController {
     private final DocumentReviewService reviews;
+    private final DocumentReviewChatService chat;
     private final DocumentRequestOriginVerifier origins;
-    public DocumentReviewController(DocumentReviewService reviews, DocumentRequestOriginVerifier origins) {
-        this.reviews = reviews; this.origins = origins;
+    public DocumentReviewController(DocumentReviewService reviews, DocumentReviewChatService chat, DocumentRequestOriginVerifier origins) {
+        this.reviews = reviews; this.chat = chat; this.origins = origins;
     }
 
     @GetMapping("/documents/{documentId}/working-copy")
@@ -65,6 +68,35 @@ public class DocumentReviewController {
             @Valid @RequestBody SuggestionDecisionRequest input) {
         origins.requireTrustedOrigin(request);
         return reviews.decideSuggestion(caller, projectId, documentId, reviewId, suggestionId, input);
+    }
+
+
+    @PostMapping("/documents/{documentId}/bee-reviews/{reviewId}/suggestions/{suggestionId}/messages")
+    @Operation(summary = "DOC-A22 보완 제안에 대해 비비와 대화 — 본문은 바꾸지 않는다")
+    @ResponseStatus(HttpStatus.CREATED)
+    public MessageResponse message(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+            @PathVariable long documentId, @PathVariable long reviewId, @PathVariable long suggestionId,
+            @Valid @RequestBody MessageRequest input, @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return chat.discuss(caller, projectId, documentId, reviewId, suggestionId, input, key);
+    }
+
+    @PostMapping("/documents/{documentId}/bee-reviews/{reviewId}/requests")
+    @Operation(summary = "DOC-A23 비비에게 직접 보완 요청 — 같은 검토에 새 PATCH 제안을 더한다")
+    @ResponseStatus(HttpStatus.CREATED)
+    public DirectResponse directRequest(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+            @PathVariable long documentId, @PathVariable long reviewId, @Valid @RequestBody DirectRequest input,
+            @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return chat.request(caller, projectId, documentId, reviewId, input, key);
+    }
+
+    @PostMapping("/documents/{documentId}/review-submissions/{submissionId}/withdraw")
+    @Operation(summary = "DOC-A24 팀장 검토 요청 취소 — 결정 전에만, 이력은 보존")
+    public DocumentWorkingCopyResponse withdraw(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+            @PathVariable long documentId, @PathVariable long submissionId, @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return reviews.withdraw(caller, projectId, documentId, submissionId, key);
     }
 
     @PostMapping("/documents/{documentId}/review-submissions")
