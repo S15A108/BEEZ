@@ -24,7 +24,7 @@ interface WorkspaceState {
   viewMode: 'first' | 'third'
   outdoor: boolean
   placements: Record<string, Placement>
-  /** 계정 id → 마지막으로 연 프로젝트 id. 나의 도시가 그 건물을 가운데에 두고 시작한다(D26). */
+  /** 계정 id → 마지막으로 연 프로젝트 id. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33). */
   lastVisited: Record<string, string>
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
   setViewMode: (viewMode: 'first' | 'third') => void

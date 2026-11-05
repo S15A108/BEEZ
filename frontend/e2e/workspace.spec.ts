@@ -223,7 +223,7 @@ test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르
   await expect(page.getByRole('dialog')).toContainText('부지 3')
 })
 
-// 사용자 요청 '가장 마지막에 방문한 프로젝트 건물이 가운데로'(D26): 1번 칸 프로젝트에 들어갔다 나오면 그 건물이 가운데에 온다.
+// 사용자 요청 '가장 마지막에 방문한 프로젝트 건물이 가운데로'(D33): 1번 칸 프로젝트에 들어갔다 나오면 그 건물이 가운데에 온다.
 test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', async ({ page }) => {
   await login(page)
   const city = page.getByRole('group', { name: /돌리는 원형 도시/ })

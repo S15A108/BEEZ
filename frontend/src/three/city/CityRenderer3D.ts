@@ -3,7 +3,7 @@ import { cloneKenney, loadKenney } from '../kenney'
 import { kenneyBuildingOf, kenneyBuildingUrl } from '../buildingModels'
 import { RING_RADIUS as R, RING_SLOTS as N } from './ring'
 
-// 나의 도시(D26): 원형 도시(캔버스 SCR-04-v2-city v474, 그림 코드 ring2.html)를 앞쪽 호만 보이게 그린다(캔버스 미리보기
+// 나의 도시(D33): 원형 도시(캔버스 SCR-04-v2-city v474, 그림 코드 ring2.html)를 앞쪽 호만 보이게 그린다(캔버스 미리보기
 // city-ring-queue-preview 4번, 사용자 결정 '12칸 유지'). 칸은 고리를 따라 놓이고 고리가 통째로 돈다. 화면은 고리 앞쪽만 담아
 // 부지가 가로로 한 줄 선 것처럼 보이고, 양 끝 칸은 가라앉지 않고 고리를 따라 뒤로 돌아 화면 밖으로 나간다.
 // 주변(순환 도로·보도·가로수·공원·가로등·벤치·흐린 먼 건물)은 고리와 함께 돌고, 고리 안쪽은 비워 둔다.

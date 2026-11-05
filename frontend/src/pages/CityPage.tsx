@@ -135,7 +135,7 @@ function City() {
               </div>
               <section
                 // 높이는 화면의 54%(최소 384px)지만 폭의 80%를 넘지 않는다. 좁은 세로 화면에서 키가 크면 고리 전체가 보여 원으로
-                // 읽히므로, 넓은 화면과 같은 가로세로 비율로 고리 앞쪽 호만 담는다(D26).
+                // 읽히므로, 넓은 화면과 같은 가로세로 비율로 고리 앞쪽 호만 담는다(D33).
                 className="relative h-[min(max(54dvh,24rem),80vw)] overflow-hidden rounded-3xl border bg-card shadow-sm"
                 aria-label="내 프로젝트 도시"
               >
@@ -160,7 +160,7 @@ function City() {
                     projects={sceneProjects}
                     nextLot={nextLot ?? null}
                     // 마지막으로 연 프로젝트(이 계정·이 브라우저)가 도시에 있으면 그 건물을 가운데에 둔다. 지웠거나 나간 프로젝트는
-                    // 목록에 없어 처음 화면 규칙을 쓴다(D26).
+                    // 목록에 없어 처음 화면 규칙을 쓴다(D33).
                     visitedLot={
                       sceneProjects.find(
                         (project) => project.id === lastVisited,

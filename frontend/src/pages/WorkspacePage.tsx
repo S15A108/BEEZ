@@ -86,7 +86,7 @@ function Workspace({ projectId }: { projectId: string }) {
     setParams({}, { replace: true })
   }, [settingsParam, openPane, setParams])
   const query = useQuery(sceneQuery(projectId, session.data?.id))
-  // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D26).
+  // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
   const visitProject = useWorkspaceStore((state) => state.visitProject)
   const accountId = session.data?.id
   useEffect(() => {

@@ -18,7 +18,7 @@ export function projectPlacements(
   ]
   return ids.map((id) => {
     const lot = order.indexOf(id)
-    // 원형 도시 한 바퀴(12칸)까지 놓고, 넘는 프로젝트는 부지 없이 목록에만 남긴다(D26).
+    // 원형 도시 한 바퀴(12칸)까지 놓고, 넘는 프로젝트는 부지 없이 목록에만 남긴다(D33).
     return {
       id,
       lot: lot < RING_SLOTS ? lot : null,

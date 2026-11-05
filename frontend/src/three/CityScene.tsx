@@ -9,7 +9,7 @@ import type { SceneProject } from './types'
 
 export interface CitySceneProps {
   projects: readonly SceneProject[]
-  /** 마지막으로 연 프로젝트의 칸. 도시에 들어오면 이 칸을 가운데에 둔다(D26). */
+  /** 마지막으로 연 프로젝트의 칸. 도시에 들어오면 이 칸을 가운데에 둔다(D33). */
   visitedLot?: number | null
   /** 빈 부지(새 프로젝트 자리) 칸. 모두 쓰면 null */
   nextLot: number | null
