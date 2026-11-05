@@ -86,6 +86,12 @@ function Workspace({ projectId }: { projectId: string }) {
     setParams({}, { replace: true })
   }, [settingsParam, openPane, setParams])
   const query = useQuery(sceneQuery(projectId, session.data?.id))
+  // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
+  const visitProject = useWorkspaceStore((state) => state.visitProject)
+  const accountId = session.data?.id
+  useEffect(() => {
+    if (query.isSuccess && accountId) visitProject(accountId, projectId)
+  }, [query.isSuccess, accountId, projectId, visitProject])
   const sceneAgents = useMemo<SceneAgent[]>(
     () => [
       { id: 'bibi', name: '비비', kind: 'lead', color: '#f5b800' },
@@ -173,28 +179,31 @@ function Workspace({ projectId }: { projectId: string }) {
               data-tour="view"
               className="absolute bottom-4 left-4 z-10 flex items-center gap-2"
             >
-              <div className="rounded-xl border bg-card/95 p-1 shadow-sm">
-                <Button
-                  size="sm"
-                  variant={viewMode === 'first' ? 'secondary' : 'ghost'}
-                  onClick={() => {
-                    setViewMode('first')
-                    focusScene()
-                  }}
-                >
-                  1인칭
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'third' ? 'secondary' : 'ghost'}
-                  onClick={() => {
-                    setViewMode('third')
-                    focusScene()
-                  }}
-                >
-                  3인칭
-                </Button>
-              </div>
+              {/* 거리(산책)는 늘 1인칭으로 그려서 시점 버튼이 듣지 않는다. 산책 중에는 숨긴다(사용자 결정 2026-11-03). */}
+              {!outdoor && (
+                <div className="rounded-xl border bg-card/95 p-1 shadow-sm">
+                  <Button
+                    size="sm"
+                    variant={viewMode === 'first' ? 'secondary' : 'ghost'}
+                    onClick={() => {
+                      setViewMode('first')
+                      focusScene()
+                    }}
+                  >
+                    1인칭
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={viewMode === 'third' ? 'secondary' : 'ghost'}
+                    onClick={() => {
+                      setViewMode('third')
+                      focusScene()
+                    }}
+                  >
+                    3인칭
+                  </Button>
+                </div>
+              )}
               <Button
                 variant="secondary"
                 onClick={() => {

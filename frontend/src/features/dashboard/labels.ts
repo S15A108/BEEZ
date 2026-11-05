@@ -27,15 +27,13 @@ export function costText(
 ) {
   if (amount === undefined) return missing
   const known = `${amount} ${currency ?? ''}`.trim()
-  if (unknownCalls > 0)
-    return `${known} + 미보고 ${unknownCalls.toLocaleString('ko-KR')}건`
-  return known
+  const unknown = unknownText(unknownCalls)
+  return unknown ? `${known} + ${unknown}` : known
 }
 
-// 토큰 수 표시. 토큰을 모르는 호출은 합계에 없으므로 그 건수를 붙인다.
-export function tokenText(tokens: number, unknownCalls = 0) {
-  const known = tokens.toLocaleString('ko-KR')
-  if (unknownCalls > 0)
-    return `${known} + 미보고 ${unknownCalls.toLocaleString('ko-KR')}건`
-  return known
+// 토큰·비용을 몰라 합계에 들어가지 못한 호출 수. 없으면 null.
+export function unknownText(unknownCalls = 0) {
+  return unknownCalls > 0
+    ? `미보고 ${unknownCalls.toLocaleString('ko-KR')}건`
+    : null
 }
