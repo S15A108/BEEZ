@@ -116,14 +116,19 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
         long document = sql.queryForObject(
                 "insert into document (project_id, type, title, created_by) values (?, 'PLAN', '기획', ?) returning id",
                 Long.class, p.projectId(), registrant);
+        long version = sql.queryForObject("""
+                insert into document_version (document_id, version_no, status, storage_key, content_hash)
+                values (?, 1, 'DRAFT', 'fixture/plan-v1', 'fixture-hash') returning id
+                """, Long.class, document);
+        // 키 첫 조각은 문서 도메인 몫이라 계약 5절 예시(doc-submission)를 따른다 — 실제 키는 문서 도메인(-217)이 정한다
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> requester.request(new NotificationRequest(
-                "doc-version:900:approved:to:" + registrant, p.projectId(), registrant, "DOCUMENT_APPROVED", "문서 승인",
-                "등록한 문서가 승인되었습니다", NotificationTargetType.DOCUMENT_VERSION, 900L, document)));
+                "doc-submission:" + version + ":approved:to:" + registrant, p.projectId(), registrant, "DOCUMENT_APPROVED",
+                "문서 승인", "등록한 문서가 승인되었습니다", NotificationTargetType.DOCUMENT_VERSION, version, document)));
         ApiClient me = client().login(fixtures().emailOf(registrant), AccessFixtures.PASSWORD);
 
         JsonNode item = body(me.get("/api/me/notifications?project_id=" + p.projectId())).get("items").get(0);
         assertThat(item.get("target_type").asString()).isEqualTo("DOCUMENT_VERSION");
-        assertThat(item.get("target_id").asString()).isEqualTo("900");
+        assertThat(item.get("target_id").asString()).isEqualTo(String.valueOf(version));
         assertThat(item.get("document_id").asString()).isEqualTo(String.valueOf(document));
     }
 
