@@ -72,6 +72,9 @@ export const loginResponseSchema = z.object({
   name: z.string(),
   avatar: z.string().optional(),
   created_at: common.timeSchema,
+  // 임시 비밀번호(ACC-A07)로 로그인했으면 true다. 회원 설정 › 비밀번호 변경으로 안내한다(Q04, 강제 이동 없음).
+  // 서버(PR #118)는 로그인·내 계정 조회·프로필 수정 응답에 싣는다. 예전 응답도 받도록 선택 필드로 둔다.
+  must_change_password: z.boolean().optional(),
 })
 export type LoginResponse = z.infer<typeof loginResponseSchema>
 
@@ -81,6 +84,7 @@ export const meResponseSchema = z.object({
   name: z.string(),
   avatar: z.string().optional(),
   created_at: common.timeSchema,
+  must_change_password: z.boolean().optional(),
 })
 export type MeResponse = z.infer<typeof meResponseSchema>
 
@@ -101,6 +105,7 @@ export const updateMeResponseSchema = z.object({
   name: z.string(),
   avatar: z.string().optional(),
   created_at: common.timeSchema,
+  must_change_password: z.boolean().optional(),
 })
 export type UpdateMeResponse = z.infer<typeof updateMeResponseSchema>
 
@@ -124,26 +129,30 @@ export type ForgotPasswordResponse = z.infer<
   typeof forgotPasswordResponseSchema
 >
 
-export const verifyResetTokenInputSchema = z.object({
-  token: z.string(),
-})
-export type VerifyResetTokenInput = z.infer<typeof verifyResetTokenInputSchema>
-
-export const verifyResetTokenResponseSchema = z.object({
-  valid: z.boolean(),
-  expires_at: common.timeSchema,
-})
-export type VerifyResetTokenResponse = z.infer<
-  typeof verifyResetTokenResponseSchema
->
-
-export const resetPasswordInputSchema = z.object({
-  token: z.string(),
-  new_password: z.string(),
-})
-export type ResetPasswordInput = z.infer<typeof resetPasswordInputSchema>
-
 export const withdrawInputSchema = z.object({
   password: z.string(),
 })
 export type WithdrawInput = z.infer<typeof withdrawInputSchema>
+
+// 00-common BlockedProject: 회원 탈퇴를 막는 프로젝트(ACC-A13, ACC-A10 409 leader_of_team_projects의 error.details).
+// member_count는 본인을 뺀 활성 팀원 수다.
+export const blockedProjectSchema = z.object({
+  project_id: common.idSchema,
+  name: z.string(),
+  my_role: z.literal('LEADER'),
+  member_count: z.number().int(),
+})
+export type BlockedProject = z.infer<typeof blockedProjectSchema>
+
+// ACC-A13 탈퇴 가능 여부. 참고용이고 최종 판정은 ACC-A10이 요청 때 다시 한다.
+export const withdrawalCheckResponseSchema = z.object({
+  can_withdraw: z.boolean(),
+  blocked_projects: z.array(blockedProjectSchema),
+})
+export type WithdrawalCheckResponse = z.infer<
+  typeof withdrawalCheckResponseSchema
+>
+
+// ACC-A10 409 leader_of_team_projects의 error.details
+export const leaderOfTeamProjectsDetailsSchema =
+  withdrawalCheckResponseSchema.pick({ blocked_projects: true })
