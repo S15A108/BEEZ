@@ -19,8 +19,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * MEM-A01 ~ A05 (S15P31A108-174). Jira 완료 조건 "만료·잘못된 초대 거부", 1회 사용, -173 에서 넘어온
+ * MEM-A01 ~ A05 링크 초대 (S15P31A108-174). "잘못된 초대 거부", 1회 사용, -173 에서 넘어온
  * "삭제된 프로젝트 초대 수락 차단"을 실제 DB·필터 체인 위에서 확인한다.
+ * 무효 초대가 404 하나로 합쳐지고 만료가 없어진 것(-220)도 여기서 본다. 이메일 초대·자동 참여는 {@link InvitationAutoJoinIntegrationTests}.
  */
 class InvitationApiIntegrationTests extends IntegrationTestSupport {
 
@@ -57,20 +58,21 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(body.get("member").get("agent_connected").asBoolean()).isFalse();
         assertThat(bob.get("/api/projects/" + p.projectId()).statusCode()).isEqualTo(200);
 
+        // 이미 쓴 링크는 다른 무효 초대와 같은 404 다 (MEM-A05 수정안 — 409 invitation_used 를 합침)
         HttpResponse<String> again = loginAsNewAccount().post("/api/invitations/accept", tokenBody(token));
-        assertThat(again.statusCode()).isEqualTo(409);
-        assertThat(again.body()).contains("invitation_used");
+        assertThat(again.statusCode()).isEqualTo(404);
         assertThat(client().post("/api/invitations/preview", tokenBody(token)).statusCode()).isEqualTo(404);
 
         // 목록에는 수락 시각이 보이고 토큰은 어디에도 없다 (MEM-A01 처리 규칙)
         HttpResponse<String> list = leader.get(invitations(p.projectId()));
         assertThat(list.body()).doesNotContain(token);
         assertThat(read(list).get("items").get(0).has("accepted_at")).isTrue();
+        assertThat(read(list).get("items").get(0).has("expires_at")).isFalse();   // 만료 없음 (Q05 6)
     }
 
-    /** 깨지면: 잘못된·만료된·폐기된 링크로 팀에 들어올 수 있다 (Jira 완료 조건 1, MEM-A03). */
+    /** 깨지면: 잘못된·폐기된 링크로 팀에 들어올 수 있다 (MEM-A03), 또는 무효 사유가 404 말고 다른 코드로 드러난다 (-220 완료 조건). */
     @Test
-    void invalid_expired_revoked_areRejected() {
+    void invalid_revoked_areRejected() {
         var p = fixtures().projectWithLeader();
         ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
         ApiClient bob = loginAsNewAccount();
@@ -78,14 +80,6 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(client().post("/api/invitations/preview", tokenBody("no-such-token")).statusCode()).isEqualTo(404);
         assertThat(bob.post("/api/invitations/accept", tokenBody("no-such-token")).statusCode()).isEqualTo(404);
         assertThat(bob.post("/api/invitations/accept", "{\"token\":\" \"}").statusCode()).isEqualTo(400);
-
-        HttpResponse<String> expiring = leader.post(invitations(p.projectId()), "{}");
-        jdbc.update("UPDATE invitation SET expires_at = now() - interval '1 second' WHERE id = ?",
-                Long.parseLong(read(expiring).get("invitation").get("id").asString()));
-        HttpResponse<String> expired = bob.post("/api/invitations/accept", tokenBody(tokenOf(expiring)));
-        assertThat(expired.statusCode()).isEqualTo(410);
-        assertThat(expired.body()).contains("invitation_expired");
-        assertThat(client().post("/api/invitations/preview", tokenBody(tokenOf(expiring))).statusCode()).isEqualTo(410);
 
         HttpResponse<String> revoking = leader.post(invitations(p.projectId()), "{}");
         String revokePath = invitations(p.projectId()) + "/" + read(revoking).get("invitation").get("id").asString();
@@ -158,8 +152,11 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(byMember.statusCode()).isEqualTo(409);
         assertThat(byMember.body()).contains("already_member");
 
+        // carol 은 로그인하는 순간 자동 참여로 들어온다(-220). 그 뒤 메일 링크로 돌아와도 already_member 라 화면이 프로젝트로 보낸다
         ApiClient carol = client().login(carolEmail, AccessFixtures.PASSWORD);
-        assertThat(carol.post("/api/invitations/accept", tokenBody(token)).statusCode()).isEqualTo(200);
+        HttpResponse<String> back = carol.post("/api/invitations/accept", tokenBody(token));
+        assertThat(back.statusCode()).isEqualTo(409);
+        assertThat(back.body()).contains("already_member");
         assertThat(carol.post("/api/invitations/accept", tokenBody(tokenOf(open))).statusCode()).isEqualTo(409);
     }
 
@@ -229,7 +226,7 @@ class InvitationApiIntegrationTests extends IntegrationTestSupport {
             pool.shutdown();
         }
 
-        assertThat(statuses).containsExactlyInAnyOrder(200, 409, 409);
+        assertThat(statuses).containsExactlyInAnyOrder(200, 404, 404);   // 이미 쓴 링크는 404 (-220)
         assertThat(jdbc.queryForObject("SELECT count(*) FROM project_member WHERE project_id = ?", Integer.class,
                 p.projectId())).isEqualTo(2);
     }
