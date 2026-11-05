@@ -266,4 +266,27 @@ CDC_SECRETS_DIR=<더미 디렉터리> docker compose -f infra/cdc/dev/compose.ya
 
 ## 서버 실행 기록
 
-(서버에 올린 뒤 채운다)
+### 2026-11-05 처음 올리기 (전진 실행, 검증은 읽기 전용)
+
+올린 커밋 `ad274ccc`(PR #156 브랜치). "처음 올리기" 1~4단계를 그대로 실행했다.
+
+| 단계 | 결과 |
+|---|---|
+| 1. 비밀 디렉터리 | `drwxr-s--- root 1001`. `s`는 `/opt/beez`의 setgid가 이어진 것이라 안에 만드는 파일의 그룹이 1001이 된다(문제없음) |
+| 2. 파일 올리기 | `/opt/beez/cdc`에 `compose.yaml`·`REVISION`. 처음에 서버 셸에서 쳐서 `not a git repository`로 멈췄다 — 이 명령은 **로컬 PC**에서 친다 |
+| 3. 띄우기 | 이미지 받기 약 50초, kafka 12초·connect 23초 뒤 healthy. 볼륨 `beez-cdc_kafka-data` 생성 |
+| 4. 접수 토픽 | 생성, `--describe` 파티션 1·복제 1·`retention.ms=604800000` |
+
+확인(위 "확인" 절):
+
+| 확인 | 결과 |
+|---|---|
+| 1) 상태 | kafka·connect healthy, `REVISION` = `ad274ccc` |
+| 2) 호스트 새 리슨 주소 | 없음 |
+| 3) backend·ai에서 | `connect:8083`·`kafka:9093` 연결 안 됨(backend `000`, ai `False`), `kafka:9092`만 연결 |
+| 4) REST(컨테이너 안) | Connect 3.7.0 응답, 커넥터 `[]`(295 전). 컨테이너 안 리슨은 `127.0.0.1:8083`뿐, kafka는 `*:9092`·`127.0.0.1:9093` |
+| 5) worker 설정 | `listeners=http://127.0.0.1:8083`, `config.providers=file` |
+| 6) 비밀 파일 | 293이 쓴 `database.properties` `root:1001` `640`, Connect 사용자로 `test -r` 통과(내용은 보지 않음) |
+| 7) 토픽 | 접수 토픽, Connect 내부 토픽 셋(파티션 1·25·5, compact·복제 1), `__consumer_offsets` |
+| 메모리 | kafka 413MiB·connect 564MiB(상한 각 1GiB), 서버 사용 가능 약 12.4GB |
+| 본 스택 | backend·ai·postgres healthy 그대로. 이름 없는(dangling) 볼륨 0 |
