@@ -19,6 +19,8 @@
 # 같은 key 의 내용이 다르면 덮어쓰지 않고 실패한다.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # Git Bash 에서 시험할 때 컨테이너 경로가 바뀌지 않게. 리눅스에서는 영향 없음
+# root 로 돌면 백업 잠금 파일이 root 소유로 생겨 ubuntu crontab 의 백업이 매일 실패한다(backup.sh 와 같은 이유)
+[[ $(id -u) != 0 ]] || { echo "root(sudo)로 실행하지 않는다. docker 그룹의 ubuntu 로 실행한다" >&2; exit 2; }
 
 usage() { echo "사용: restore.sh <환경> objects --yes | restore.sh <환경> all [덤프 파일] --yes" >&2; exit 2; }
 ENV_NAME=${1:-}; MODE=${2:-}

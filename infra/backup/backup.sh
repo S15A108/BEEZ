@@ -18,6 +18,8 @@
 # 키는 env 파일의 읽기 전용 백업 키(SEAWEEDFS_BACKUP_*)를 쓴다. 이 스크립트는 원본을 지울 수 없다.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1   # Git Bash 에서 시험할 때 /backup 같은 컨테이너 경로가 바뀌지 않게. 리눅스에서는 영향 없음
+# root 로 돌면 잠금 파일·덤프·LAST_OK 가 root 소유가 되어 ubuntu crontab 의 다음 백업이 쓰지 못하고 매일 실패한다
+[[ $(id -u) != 0 ]] || { echo "root(sudo)로 실행하지 않는다. docker 그룹의 ubuntu 로 실행한다" >&2; exit 2; }
 
 ENV_NAME=${1:?"사용: backup.sh <환경>"}
 [[ $ENV_NAME =~ ^[a-z]+$ ]] || { echo "환경 이름이 잘못됨: $ENV_NAME" >&2; exit 2; }

@@ -359,6 +359,8 @@ d=$(mktemp -d) && git -C /c/git/BEEZ fetch -q origin && \
 
 스크립트를 고쳤으면 1번만 다시 합니다.
 
+**`beez-backup`·`beez-restore`는 sudo 없이 `ubuntu`로 실행합니다.** root로 실행하면 잠금 파일·덤프가 root 소유가 되어 다음 날부터 예약 백업이 실패하므로, 두 스크립트는 root로 실행하면 바로 멈춥니다(`ubuntu`는 docker 그룹이라 sudo가 필요 없습니다).
+
 ### 원본 몇 개가 없어졌을 때
 
 `beez-check-live dev`가 `없음`을 찍으면, 서버 백업에서 bucket으로 되살립니다. 이미 있는 원본은 건너뛰고 없는 것만 올라갑니다.
