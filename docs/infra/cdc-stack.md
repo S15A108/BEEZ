@@ -3,7 +3,7 @@
 dev 서버에 Kafka 단일 broker와 Debezium Connect를 compose 프로젝트 `beez-cdc`로 띄우는 절차다.
 결정과 이유는 [CDC 배포 계획](cdc-deploy-plan-279.md) D1~D3이 정본이고, 이 문서는 그 실행 방법만 적는다.
 
-- PostgreSQL 쪽 준비(`wal_level`·복제 계정·publication·비밀 파일)는 S15P31A108-293 런북 `cdc-postgres.md`.
+- PostgreSQL 쪽 준비(`wal_level`·복제 계정·publication·비밀 파일)는 S15P31A108-293 런북 [cdc-postgres.md](cdc-postgres.md).
 - 커넥터 등록과 backend consumer 켜기는 S15P31A108-295. **이 스택만 올린 상태에서는 아무것도 흐르지 않는다.**
 
 ## 구성
@@ -226,7 +226,7 @@ cdc down -v && docker volume ls | grep beez-cdc    # 출력이 없으면 정리 
 | 대상 | 내용 | 백업 | 잃었을 때 |
 |---|---|---|---|
 | `infra/cdc/dev/` | 설정 전부 | 저장소가 정본 | 다시 올리기 |
-| `/opt/beez/.cdc-secrets/database.properties` | 복제 계정 비밀번호 | 하지 않음 | 293 런북대로 비밀번호를 새로 만들어 계정과 파일을 맞춤 |
+| `/opt/beez/.cdc-secrets/database.properties` | 복제 계정 비밀번호 | 하지 않음 | [293 런북](cdc-postgres.md) "2. 비밀 파일 만들기"부터 다시 해 비밀번호를 새로 만들어 계정과 파일을 맞춤 |
 | `beez-cdc_kafka-data` | 토픽 데이터, Connect 설정·offset | 하지 않음 | 메시지는 힌트일 뿐이라 복구 스캔이 처리를 이어 간다. 커넥터는 새 이름으로 다시 등록(계획 D6) |
 
 ## 한계
