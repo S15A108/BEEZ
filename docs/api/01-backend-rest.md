@@ -1004,7 +1004,7 @@ HTTP `204`.
 
 #### 처리 규칙
 
-- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 회원 탈퇴 화면의 기본안은 팀원으로 참여한 프로젝트에서 자동으로 빠지고, 혼자 쓰는 프로젝트는 함께 삭제하며, 팀 프로젝트에 남긴 문서와 작업 기록은 보존이다. 확정은 Q05다.
+- (수정안 요청) 본인 말고 활성 팀원이 1명 이상 있는 프로젝트의 팀장이면 막는다. 혼자 쓰는 프로젝트와 팀원으로만 참여한 프로젝트는 막지 않는다. 팀원으로 참여한 프로젝트에서는 자동으로 빠지고, 혼자 쓰는 프로젝트는 함께 삭제하며, 팀 프로젝트에 남긴 문서와 작업 기록은 보존한다. Q05에서 정함(11-05, PR #118 구현).
 - 계정 개인정보는 제거·익명화하고 토큰 전부 폐기·세션 종료를 처리한다.
 - 작업·편집·사용량 이력은 탈퇴한 사용자로 보존한다.
 - (수정안 요청) 판정은 탈퇴 요청 때 서버가 다시 한다. 화면을 연 뒤 팀원 수가 바뀌어도 ACC-A13 결과를 믿지 않는다. 탈퇴 뒤 완료 화면 없이 랜딩으로 간다.
@@ -9274,6 +9274,7 @@ HTTP `200`.
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 현재 계획 검증 |
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
+| `completion_review` | [CompletionReview](00-common.md#schema-completionreview) | N | 완료 보고와 계획의 규칙 대조(-269). 완료됐거나 delta 재검증을 기다리는 작업의 상세 조회(TSK-A03)와 COMPLETED 보고 응답(TSK-A07·MCP-12)에만 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
 
@@ -9368,6 +9369,7 @@ HTTP `200`.
 
 - 현재 계획에 해당하는 검증을 계산해 반환한다. 현재 포인터 중복 저장을 요구하지 않는다.
 - (BE 구현, -161) `validation`은 현재 계획의 가장 최근 검증(`validation_status`와 같은 기준) 전체 객체다(VAL-A02와 같은 모양, `findings`는 현재 시도만). 검증이 없으면 칸이 빠진다. 화면은 이 값으로 오류 뒤 재시도(VAL-A04) 버튼을 그린다. 목록(TSK-A02)·상태 보고·계획 변경 응답의 TaskDetail에는 넣지 않는다.
+- (BE 구현, -269) `completion_review`는 완료 보고를 계획과 규칙으로 대조한 결과다([CompletionReview](00-common.md#schema-completionreview)). COMPLETED면 현재 계획의 가장 최근 완료 보고, WAITING(REVALIDATION)이고 delta 보고의 DELTA 검증을 기다리는 중이면 그 보고를 대조한다. 그 밖의 상태(RESUME으로 보고를 거둔 뒤 등)에는 없다. 목록에는 넣지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10418,6 +10420,7 @@ HTTP `202`.
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 
 ```json
 {
@@ -10445,6 +10448,7 @@ HTTP `200`.
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | Y | 현재 계획 검증 |
 | `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획 검증 결과 |
 | `started_validation_id` | `ID` | N | 시작에 사용한 검증 |
+| `completion_review` | [CompletionReview](00-common.md#schema-completionreview) | N | 완료 보고와 계획의 규칙 대조(-269). 완료됐거나 delta 재검증을 기다리는 작업의 상세 조회(TSK-A03)와 COMPLETED 보고 응답(TSK-A07·MCP-12)에만 포함 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 갱신 시각 |
 
@@ -10626,6 +10630,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - 사람 세션의 LEADER는 보고가 끊긴 작업을 CANCEL할 수 있다(AC-14). 그 밖의 전이는 담당자만 한다. CANCEL은 큐 취소·점유 해제·늦은 결과 차단을 수행한다.
 - COMPLETED는 불변 완료 보고를 저장한다. delta가 있으면 WAITING(REVALIDATION)으로 두고 trigger=DELTA 검증을 접수하며 응답에 delta_validation_id를 포함한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
 - (BE 구현, -163) delta 가 있으면 같은 트랜잭션에서 DELTA 검증을 **먼저** 접수하고(`ValidationAcceptService.acceptBySystem`, 담당자·잠금 번호 확인 없음) 그 번호를 완료 보고에 넣어 저장한 뒤 WAITING(REVALIDATION)·202. DELTA 검증은 완료 보고의 `delta` 를 분석 입력(AI-A02 `completion_delta`, 입력 스냅샷 해시에도 포함 — 검증 종류 `trigger` 와 함께)에 넣고 검사 목록에 완료 delta 검사(`completion-delta`, PLAN_COMPLETENESS)를 항상 넣으므로 규칙만으로 PASS 하지 않는다. AI(-184)가 이 칸을 받기 전에는 DELTA 요청이 AI 입력 오류로 ERROR 가 된다(조용히 통과하지 않음; 03-ai-internal AI-A02 Request 참조) — READS 만 참조하는 계획이라도 의미 분석으로 가고, 완료 보고 자리에서 바로 COMPLETED 되는 경우는 없다(규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 대기). 워커가 DELTA 를 PASS 로 끝내면 같은 트랜잭션에서 작업을 COMPLETED 로 바꾼다(`DeltaCompletion`, S4) — 조건은 작업이 아직 WAITING(REVALIDATION) 이고 그 검증이 현재 계획의 가장 최근 DELTA 일 때. 가짜 분석기를 끈 서버에서는 가짜 분석기가 낸 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙). NEEDS_INPUT·NEEDS_REVIEW·ERROR 면 작업은 그대로다(04-task-lifecycle.md §2.3 출구). RESUME 은 기다리던 DELTA 검증을 ERROR 로 끝난 것까지 STALE(`TASK_RESUMED`)로 바꾸고 대기 job 을 취소한다(그 완료 대기가 끝났다는 뜻. 옛 DELTA 의 늦은 PASS 가 나중에 작업을 완료시키지 못하게, 그리고 인계로 다시 WAITING 이 된 작업이 옛 DELTA 를 기다리는 것으로 보이지 않게. 오류 이력은 실행·발견 항목에 남는다). delta 있는 COMPLETED 의 재전송은 "지금 기다리는 것이 그 보고"(WAITING(REVALIDATION) + 현재 계획의 delta 완료 보고 + 가장 최근 DELTA 가 STALE 아님)이고 plan_revision_id·delta·summary·completion_checks 가 같을 때만 같은 결과(202)이고, 내용이 다르면 409 `revision_conflict`(바꾸려면 RESUME 뒤 다시 보고), 기다리는 보고가 없으면(RESUME 뒤 인계 등으로 WAITING 이 된 경우) WAITING + COMPLETED 전이 오류 400 이다. TaskDetail.delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호(현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때)이며, 재전송 판정과 같은 기준이다 — RESUME 뒤 인계로 WAITING 이 된 작업에는 없다.
+- (BE 구현, -269) 작업 완료 검증(작은 범위, 11/5 결정). COMPLETED에 `changed_design_item_ids`(실제로 바꾼 설계 항목)를 실을 수 있다. 서버는 정렬·중복 제거해 완료 보고에 저장하고, 응답 `completion_review`에 계획과의 규칙 대조 결과(범위 이탈 후보·바꾸기로 했는데 보고 안 한 항목·못 채운/확인 안 한 완료 기준·인수인계 기록 유무)를 싣는다. **표시만 한다** — 범위 이탈 후보가 있어도 전이는 위 규칙 그대로다(담당자 확인 전 보류 AC-18안은 하지 않음). delta 있는 COMPLETED의 재전송 판정에 `changed_design_item_ids`도 들어간다(순서는 무관, 보내지 않음과 빈 목록은 다른 보고). AI 분석·설계 일치 검사(보고된 변경 vs 현재 승인 계약)·TRC-07 기록 분리는 이번 범위가 아니다([13-completion-review](../design/13-completion-review.md)).
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
