@@ -54,6 +54,7 @@ jobs:
             # local.env 는 시험이 compose 필수값의 더미로 읽는다.
             deploy_scripts:
               - 'infra/deploy/**'
+              - 'infra/backup/**'
               - 'infra/compose.yaml'
               - 'infra/local.env'
               - '.github/workflows/ci.yml'
@@ -159,7 +160,8 @@ jobs:
       - name: Pytest
         run: pytest -q
 
-  # 5) 배포 스크립트: infra/deploy/check-port.sh 의 경계 처리 시험(test_check_port.py).
+  # 5) 배포·백업 스크립트: infra/deploy/check-port.sh 의 경계 처리 시험(test_check_port.py)과
+  #    infra/backup/ 스크립트 시험(test_backup_scripts.py).
   #    실제 docker compose 로 env 파일을 해석만 하고(데몬 불필요) docker ps·ss·curl 은 가짜로 둔다.
   #    표준 라이브러리만 써서 설치할 것이 없다. Python 은 ai 잡과 같은 3.12.
   deploy-scripts:
@@ -182,6 +184,10 @@ jobs:
 
       - name: check-port.sh tests
         run: python infra/deploy/test_check_port.py
+
+      # 백업·복원 스크립트: env 를 compose 와 같게 읽는지, 문서 0건 백업도 복원 가능한지(S15P31A108-211). 같은 가짜 docker 방식
+      - name: backup scripts tests
+        run: python infra/backup/test_backup_scripts.py
 
   # 6) 모니터링: 알림 규칙 시험과 Prometheus·Alertmanager 설정 검사(S15P31A108-292).
   #    서버에는 수동 배포라(cd.yml paths-ignore) 머지본이 그대로 올라간다. 깨진 설정은 여기서 막는다.
