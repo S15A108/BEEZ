@@ -1,7 +1,13 @@
 import { queryOptions } from '@tanstack/react-query'
 import { unlessMissing } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
-import { documentsApi, membersApi, projectsApi, tasksApi } from '@/api/services'
+import {
+  dashboardApi,
+  documentsApi,
+  membersApi,
+  projectsApi,
+  tasksApi,
+} from '@/api/services'
 import { onboardingFrom } from '@/features/projects/onboardingFrom'
 
 // 워크스페이스 첫 화면 데이터. 초기 설정 현황(PRJ-A06)이 서버에 없으면 대체 계산이 내 계정의 에이전트 연결을
@@ -35,5 +41,26 @@ export function sceneQuery(projectId: string, accountId?: string) {
           ),
       }
     },
+  })
+}
+
+// 사무실 에이전트의 자리(D37): 작업 현황(MON-A05). 첫 화면 조회에 묶지 않아 실패해도 첫 화면은 열리고(PR #128 리뷰),
+// 열어 둔 사무실에도 다른 사람·에이전트의 상태 변화가 보이게 30초마다 다시 부른다. 다시 부르다 실패하면 TanStack이
+// 마지막으로 받은 값을 그대로 두고, 한 번도 받지 못했으면 data가 없어 화면은 연결 여부로 어림한다. 서버에 없는
+// API(404·405·501)면 null로 두고 더 부르지 않는다.
+// ponytail: 30초 폴링. 서버에 상태 변경 알림이 생기면 그 신호로 이 쿼리를 무효화한다.
+export function agentWorkQuery(projectId: string, accountId?: string) {
+  return queryOptions({
+    queryKey: ['projects', projectId, 'agent-work', accountId],
+    enabled: !!accountId,
+    queryFn: async () =>
+      (
+        await unlessMissing(
+          readAllPages((cursor) =>
+            dashboardApi.agentWork(projectId, { cursor, limit: 100 }),
+          ),
+        )
+      )?.items ?? null,
+    refetchInterval: (query) => (query.state.data === null ? false : 30_000),
   })
 }

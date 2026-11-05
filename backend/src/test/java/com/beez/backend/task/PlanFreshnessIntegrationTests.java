@@ -118,6 +118,9 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
     void titleOnlyChange_keepsValidation_andStartResumeAcceptTheOldNumber() throws Exception {
         long[] t = createTask("A", api.implementsRef("API-01"));
         long v = passValidation(t[0], t[1]);
+        // 저장된 선택 필드는 이어받기에서도 보존된다 (기존 null 행도 마이그레이션으로 허용).
+        api.jdbc.sql("update validation_finding set ai_suggested_action = :suggestion where validation_id = :v")
+                .param("suggestion", "AI 제안: 검토").param("v", v).update();
 
         // 제목만 바꾼 리비전: 검증 입력이 같다 → 이전 PASS 는 그대로, 새 리비전에 그 검증을 이어 받은 복사본이 생긴다
         HttpResponse<String> renamed = revise(t[0], "A (이름만)", api.implementsRef("API-01"), 1, t[2], Map.of());
@@ -135,6 +138,8 @@ class PlanFreshnessIntegrationTests extends IntegrationTestSupport {
         assertThat(count("select count(*) from validation_design_ref where validation_id = " + copy))
                 .isEqualTo(count("select count(*) from validation_design_ref where validation_id = " + v)).isEqualTo(1);
         assertThat(count("select count(*) from validation_finding where validation_id = " + copy)).isEqualTo(1);
+        assertThat(api.jdbc.sql("select ai_suggested_action from validation_finding where validation_id = :v")
+                .param("v", copy).query(String.class).single()).isEqualTo("AI 제안: 검토");
         assertThat(count("select count(*) from validation_run where validation_id = " + copy)).isZero();   // 실행은 원본 것
 
         // 에이전트가 쥔 옛 번호로 START — G1 이 현재 리비전의 복사본으로 판정한다. 시작 검증 번호는 보낸 번호 그대로(멱등 비교 기준)

@@ -16,7 +16,11 @@ import { BibiPanel } from '@/features/bee/BibiPanel'
 import { ContextPanel } from '@/features/contexts/ContextPanel'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
-import { sceneQuery } from '@/features/workspace/sceneQuery'
+import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
+import {
+  officeAgentState,
+  showsOfficeAgent,
+} from '@/features/workspace/officeAgents'
 import { AsyncState } from '@/components/AsyncState'
 import { PaneSheetHost } from '@/components/PaneSheet'
 import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
@@ -86,6 +90,9 @@ function Workspace({ projectId }: { projectId: string }) {
     setParams({}, { replace: true })
   }, [settingsParam, openPane, setParams])
   const query = useQuery(sceneQuery(projectId, session.data?.id))
+  // 작업 현황(MON-A05)은 따로 30초마다 다시 부른다. 없거나 아직 못 받았으면 undefined라 연결 여부로 어림한다(D37).
+  const agentWork =
+    useQuery(agentWorkQuery(projectId, session.data?.id)).data ?? undefined
   // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
   const visitProject = useWorkspaceStore((state) => state.visitProject)
   const accountId = session.data?.id
@@ -103,10 +110,35 @@ function Workspace({ projectId }: { projectId: string }) {
             ? ('human' as const)
             : ('agent' as const),
         color: member.color ?? '#8ca9a0',
+        avatar: member.avatar,
         status: 'idle',
       })),
+      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결과 상태는 작업 현황(MON-A05)의
+      // 세션을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
+      ...(query.data?.members.items ?? [])
+        .filter((member) =>
+          showsOfficeAgent(member, agentWork, session.data?.id),
+        )
+        .map((member) => {
+          const { state, note } = officeAgentState(
+            member,
+            agentWork,
+            query.data?.tasks.items.filter(
+              (task) => task.assignee_member_id === member.id,
+            ) ?? [],
+          )
+          return {
+            id: `agent:${member.id}`,
+            name: `${member.name}의 에이전트`,
+            kind: 'agent' as const,
+            owner: member.id,
+            color: member.color ?? '#8ca9a0',
+            status: state,
+            note,
+          }
+        }),
     ],
-    [query.data?.members, session.data?.id],
+    [query.data?.members, query.data?.tasks, agentWork, session.data?.id],
   )
   const sceneTasks = useMemo<SceneTask[]>(
     () =>
@@ -154,6 +186,7 @@ function Workspace({ projectId }: { projectId: string }) {
                 currentUserId={
                   currentUser ? `member:${currentUser.id}` : undefined
                 }
+                avatar={session.data?.avatar}
                 viewMode={viewMode}
                 outdoor={outdoor}
                 interactive={pane === null}
@@ -219,9 +252,9 @@ function Workspace({ projectId }: { projectId: string }) {
                 {outdoor ? '사무실로' : '산책'}
               </Button>
             </div>
-            {/* 조작 안내는 처음(기준 v1 전)에만, 단축 바 위 가운데에 보여 준다(SCR-06-v2-workspace-preparing). */}
+            {/* 조작 안내는 처음(기준 v1 전)에만, 단축 바 위 가운데에 보여 준다(SCR-06-v2-workspace-preparing). 80px 비비 원(위 끝이 바닥에서 97px) 위로 띄운다. */}
             {!pane && !data.project.current_baseline && (
-              <p className="pointer-events-none absolute bottom-[82px] left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/85 px-3 py-1 text-[11px] leading-4 whitespace-nowrap text-[#737373]">
+              <p className="pointer-events-none absolute bottom-[106px] left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/85 px-3 py-1 text-[11px] leading-4 whitespace-nowrap text-[#737373]">
                 WASD 이동 · Shift 달리기 · 드래그로 둘러보기 · 숫자 키로 메뉴
                 열기
               </p>
@@ -284,8 +317,11 @@ function Workspace({ projectId }: { projectId: string }) {
                     className={pane === 'documents' ? 'sr-only' : undefined}
                   >
                     {data.project.name}
-                    {data.project.current_baseline &&
-                      ` · 기준 v${data.project.current_baseline.version_no}`}
+                    {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
+                    {pane === 'meetings'
+                      ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
+                      : data.project.current_baseline &&
+                        ` · 기준 v${data.project.current_baseline.version_no}`}
                   </DialogDescription>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>

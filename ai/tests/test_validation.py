@@ -706,3 +706,106 @@ def test_http_auth_input_and_output_error_mapping(monkeypatch):
             assert response.json()["usage"][0]["failed"] is True
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "check_key", "expected_path"),
+    [
+        ("MISSING_INPUT", "plan-completeness", "계획 보완 검토"),
+        ("STALE_REF", "plan-completeness", "참조 갱신 검토"),
+        ("MISMATCH", "design-api-login", "계획 보완 또는 설계 변경 제안 검토"),
+        ("CONFLICT", "related-task-502", "담당자 협의"),
+        ("MISSING_POLICY", "design-api-login", "정책 협의 및 설계 변경 제안 검토"),
+    ],
+)
+async def test_followup_proposals_use_validated_references_and_preserve_contract(
+    kind, check_key, expected_path
+):
+    body = fixture_request()
+    result = result_for(body)
+    finding = {
+        "check_key": check_key,
+        "kind": kind,
+        "severity": "BLOCKING",
+        "message": "검토할 발견 내용",
+        "sources": [],
+        "evidence_ids": [],
+        "suggested_action": "관련 내용을 검토해 주세요.",
+    }
+    if kind in {"MISMATCH", "MISSING_POLICY"}:
+        finding.update(design_item_id="301", design_item_version_id="311")
+    if kind == "MISSING_POLICY":
+        body["evidence"][0]["text"] = "재시도 정책: 미정\n"
+        body["evidence"][0]["locator"]["end_line"] = body["evidence"][0]["locator"][
+            "start_line"
+        ]
+        finding.update(
+            sources=[body["evidence"][0]["source"]],
+            evidence_ids=["evidence-login-response"],
+        )
+    if kind == "CONFLICT":
+        finding["related_task_id"] = "502"
+    result["findings"] = [finding]
+    provider = Provider(result)
+    output = await analyze(
+        ValidateRequest.model_validate(body), LLMClient(provider), "test-model"
+    )
+    actual = output["result"]["findings"][0]
+    action = actual["suggested_action"]
+    assert expected_path in action
+    assert "AI 제안" in action and "관련 내용을 검토해 주세요" in action
+    assert "현재 작업 담당자 확인 필요" in action
+    assert "이유:" in action and "승인 여부는 별도 절차" in action
+    assert ("관련 작업 502 담당자 확인 필요" in action) == (kind == "CONFLICT")
+    assert ("연결된 설계의 담당 역할 확인 필요" in action) == (
+        kind in {"MISMATCH", "MISSING_POLICY"}
+    )
+    for field in ("kind", "check_key", "message", "sources", "evidence_ids"):
+        assert actual[field] == finding[field]
+    assert "Do not invent a person, member" in provider.calls[0].messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_unassessed_policy_does_not_generate_a_missing_policy_suggestion():
+    body = fixture_request()
+    result = result_for(body)
+    result["checked_keys"].remove("design-api-login")
+    result["analysis_status"] = "PARTIAL"
+    result["unassessed"] = [
+        {
+            "check_key": "design-api-login",
+            "reason": "EVIDENCE_INSUFFICIENT",
+            "message": "근거 부족",
+        }
+    ]
+    output = await analyze(
+        ValidateRequest.model_validate(body), LLMClient(Provider(result)), "test-model"
+    )
+    assert output["result"]["findings"] == []
+    assert output["result"]["unassessed"][0]["reason"] == "EVIDENCE_INSUFFICIENT"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["   ", "확인\x00필요", "😀" * 2000])
+async def test_followup_rejects_actions_that_cannot_be_stored(action):
+    body = fixture_request()
+    result = result_for(body)
+    result["findings"] = [
+        {
+            "check_key": "plan-completeness",
+            "kind": "MISSING_INPUT",
+            "severity": "BLOCKING",
+            "message": "계획 입력 부족",
+            "sources": [],
+            "evidence_ids": [],
+            "suggested_action": action,
+        }
+    ]
+    with pytest.raises(LLMError) as caught:
+        await analyze(
+            ValidateRequest.model_validate(body),
+            LLMClient(Provider(result)),
+            "test-model",
+        )
+    assert caught.value.code == "invalid_output"

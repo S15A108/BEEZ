@@ -1,0 +1,240 @@
+# rules/beez.yml 시험 (S15P31A108-264). 실행 절차는 docs/infra/monitoring-alerts.md "규칙 바꿀 때".
+# 서버에 올라가도 쓰이지 않는다(prometheus 컨테이너에 붙이지 않음).
+#
+# 시험은 244 결정과 PR #121 리뷰에서 정한 계약만 본다. 깨지면 알게 되는 것을 각 시험 위에 적는다.
+# 시험 시각 t초에 마지막 성공 시각을 t 로 두면(values '0+60x..', interval 1m) "신선한 스냅샷"이다.
+
+rule_files:
+  - ../rules/beez.yml
+
+evaluation_interval: 15s
+
+tests:
+  # 깨지면: consumer 가 꺼진 dev(Kafka 없음)에서 오래된 PENDING·없는 Kafka 지표로 거짓 알림이 간다(264 완료 조건).
+  # 스냅샷은 신선하게 둔다 — 신선도 필터 때문에 안 우는 것이 아니라 consumer 조건 때문에 안 우는지를 본다
+  - name: consumer 꺼짐 — 지연·Kafka 알림 없음
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_oldest_pending_seconds{instance="backend:8080",job="backend"}'
+        values: '3600+60x40'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="backend:8080",job="backend"}'
+        values: '1x40'
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="backend:8080",job="backend"}'
+        values: '0+60x40'
+      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
+        values: '0x40'
+    alert_rule_test:
+      - {eval_time: 30m, alertname: CdcPendingDelay, exp_alerts: []}
+      - {eval_time: 30m, alertname: CdcKafkaReceiveFailures, exp_alerts: []}
+      - {eval_time: 30m, alertname: CdcKafkaFailureMetricMissing, exp_alerts: []}
+
+  # 깨지면: 켜진 consumer 의 지연을 놓치거나, 244 결정의 "600초 + 5분 지속"보다 이르게·늦게 운다
+  - name: consumer 켜짐 — 600초 넘은 PENDING 이 5분 지속되면 지연 알림
+    interval: 1m
+    input_series:
+      # 0분에 대기 시작 → 10분에 600초 → 15분 무렵 알림
+      - series: 'beez_cdc_analysis_oldest_pending_seconds{instance="backend:8080",job="backend"}'
+        values: '0+60x30'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="backend:8080",job="backend"}'
+        values: '1x30'
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="backend:8080",job="backend"}'
+        values: '0+60x30'
+      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
+        values: '1x30'
+      - series: 'beez_cdc_kafka_receive_failures_total{instance="backend:8080",job="backend"}'
+        values: '0x30'
+    alert_rule_test:
+      - {eval_time: 14m, alertname: CdcPendingDelay, exp_alerts: []}
+      - eval_time: 17m
+        alertname: CdcPendingDelay
+        exp_alerts:
+          - exp_labels: {team: app}
+            exp_annotations: {summary: "분석 대기(PENDING)가 17m 0s째 처리되지 않음"}
+
+  # 깨지면: 집계가 실패해 NaN 이 된 인스턴스의 옛 값으로 지연을 판단하거나, 집계 실패 자체를 놓치거나,
+  #         CDC 상태 알림을 억제할 원인(CdcDataUnavailable)이 생기지 않는다
+  - name: 집계 실패 — 지연 알림 대신 집계 실패 알림
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_oldest_pending_seconds{instance="backend:8080",job="backend"}'
+        values: 'NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="backend:8080",job="backend"}'
+        values: '0x20'
+      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
+        values: '1x20'
+    alert_rule_test:
+      - {eval_time: 10m, alertname: CdcPendingDelay, exp_alerts: []}
+      # 신선한 스냅샷이 없으니 억제 원인이 운다(Alertmanager 가 CDC 상태 알림의 거짓 해소를 막음)
+      - eval_time: 10m
+        alertname: CdcDataUnavailable
+        exp_alerts:
+          - exp_labels: {team: app}
+            exp_annotations: {summary: "신선한 CDC 스냅샷 없음(억제 원인 전용, 알림 글 없음)"}
+      - eval_time: 10m
+        alertname: CdcSnapshotFailing
+        exp_alerts:
+          - exp_labels: {team: app, instance: "backend:8080", job: backend}
+            exp_annotations: {summary: "CDC 상태 집계 실패 또는 갱신 멈춤 (backend:8080)"}
+
+  # 깨지면: 집계가 "성공 1"에 멈춘 채 갱신되지 않는 경우(캐시·스케줄 멈춤)를 놓친다
+  - name: 집계 갱신 멈춤 — snapshot_available 이 1 이어도 마지막 성공이 120초 넘으면 알림
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_snapshot_available{instance="backend:8080",job="backend"}'
+        values: '1x20'
+      # 마지막 성공 시각이 0초(시험 시작)에서 멈춤
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="backend:8080",job="backend"}'
+        values: '0x20'
+    alert_rule_test:
+      - {eval_time: 6m, alertname: CdcSnapshotFailing, exp_alerts: []}
+      - eval_time: 8m
+        alertname: CdcSnapshotFailing
+        exp_alerts:
+          - exp_labels: {team: app, instance: "backend:8080", job: backend}
+            exp_annotations: {summary: "CDC 상태 집계 실패 또는 갱신 멈춤 (backend:8080)"}
+
+  # 깨지면: 갱신이 멈춘 인스턴스의 옛 값이 max 에 남아 이미 해소된 FAILED 를 알리거나(PR #121 리뷰 1),
+  #         한 인스턴스만 멈췄는데 CDC 상태 알림 전체를 억제한다
+  - name: 오래된 스냅샷 제외 — 멈춘 A(FAILED 2)와 신선한 B(FAILED 0)가 같이 있으면 B 값
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_intakes{instance="a:8080",job="backend",status="FAILED"}'
+        values: '2x20'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="a:8080",job="backend"}'
+        values: '1x20'
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="a:8080",job="backend"}'
+        values: '0x20'
+      - series: 'beez_cdc_analysis_intakes{instance="b:8080",job="backend",status="FAILED"}'
+        values: '0x20'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="b:8080",job="backend"}'
+        values: '1x20'
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="b:8080",job="backend"}'
+        values: '0+60x20'
+    promql_expr_test:
+      - expr: beez_cdc:intakes:max{status="FAILED"}
+        eval_time: 15m
+        exp_samples:
+          - {labels: 'beez_cdc:intakes:max{status="FAILED"}', value: 0}
+    alert_rule_test:
+      - {eval_time: 15m, alertname: CdcFailedIntakes, exp_alerts: []}
+      # 한쪽이 신선하면 값이 있으므로 억제 원인이 생기지 않는다(인스턴스가 여럿일 때 과잉 억제 방지)
+      - {eval_time: 15m, alertname: CdcDataUnavailable, exp_alerts: []}
+
+  # 깨지면: 집계가 멈춰 값이 사라지자마자 FAILED 가 풀려, 억제 원인(CdcDataUnavailable)이 Alertmanager 에 닿기 전에
+  #         거짓 "해소" 글이 갈 수 있다(keep_firing_for + inhibit 순서)
+  - name: 집계가 멈추면 억제 원인이 먼저 생기고 FAILED 는 그 뒤까지 유지
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_intakes{instance="backend:8080",job="backend",status="FAILED"}'
+        values: '2x30'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="backend:8080",job="backend"}'
+        values: '1x30'
+      # 10분(600초)까지 신선, 그 뒤 마지막 성공 시각이 멈춤 → 12분부터 신선하지 않음
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="backend:8080",job="backend"}'
+        values: '0+60x10 600x20'
+    alert_rule_test:
+      # 12분부터 신선하지 않음 → 억제 원인이 바로 생긴다. FAILED 는 keep_firing_for 로 아직 울리는 중이라 해소가 억제된다
+      - eval_time: 13m
+        alertname: CdcDataUnavailable
+        exp_alerts:
+          - exp_labels: {team: app}
+            exp_annotations: {summary: "신선한 CDC 스냅샷 없음(억제 원인 전용, 알림 글 없음)"}
+      - eval_time: 13m
+        alertname: CdcFailedIntakes
+        exp_alerts:
+          - exp_labels: {team: app, status: FAILED}
+            exp_annotations: {summary: "분석 FAILED 2건 남아 있음(자동 재처리 없음)"}
+      - eval_time: 18m
+        alertname: CdcSnapshotFailing
+        exp_alerts:
+          - exp_labels: {team: app, instance: "backend:8080", job: backend}
+            exp_annotations: {summary: "CDC 상태 집계 실패 또는 갱신 멈춤 (backend:8080)"}
+      - eval_time: 18m
+        alertname: CdcFailedIntakes
+        exp_alerts:
+          - exp_labels: {team: app, status: FAILED}
+            exp_annotations: {summary: "분석 FAILED 2건 남아 있음(자동 재처리 없음)"}
+      - {eval_time: 24m, alertname: CdcFailedIntakes, exp_alerts: []}
+
+  # 깨지면: 수집은 되는데(up=1) CDC 지표가 빠진 배포·롤백에서 아무 알림도 울리지 않는다(PR #121 리뷰 2)
+  - name: CDC 지표 누락 — 수집 중인 인스턴스 중 지표가 (일부라도) 빠진 쪽만 알림
+    interval: 1m
+    input_series:
+      - {series: 'up{instance="a:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_snapshot_available{instance="a:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="a:8080",job="backend"}', values: '0+60x20'}
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="a:8080",job="backend"}', values: '0x20'}
+      - {series: 'beez_cdc_analysis_intakes{instance="a:8080",job="backend",status="PENDING"}', values: '0x20'}
+      - {series: 'up{instance="b:8080",job="backend"}', values: '1x20'}
+      # c 는 intakes 만 빠짐(나머지 필수 지표는 있음) — 조건이 지표마다 걸려 있는지 본다
+      - {series: 'up{instance="c:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_snapshot_available{instance="c:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="c:8080",job="backend"}', values: '0+60x20'}
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="c:8080",job="backend"}', values: '0x20'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: CdcMetricsMissing, exp_alerts: []}
+      - eval_time: 10m
+        alertname: CdcMetricsMissing
+        exp_alerts:
+          - exp_labels: {team: app, instance: "b:8080", job: backend}
+            exp_annotations: {summary: "backend 는 수집되는데 CDC 필수 지표가 없음 (b:8080)"}
+          - exp_labels: {team: app, instance: "c:8080", job: backend}
+            exp_annotations: {summary: "backend 는 수집되는데 CDC 필수 지표가 없음 (c:8080)"}
+
+  # 깨지면: consumer 가 켜졌을 때 Kafka 수신 실패나 실패 지표 누락을 놓친다(PR #111 양지훈 지적)
+  - name: consumer 켜짐 — Kafka 수신 실패 증가와 지표 누락
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}'
+        values: '1x25'
+      - series: 'beez_cdc_kafka_receive_failures_total{instance="backend:8080",job="backend"}'
+        values: '0 0 0 3 3 3 3 3 3 3 3'   # 3분에 3회 실패, 10분 뒤 시계열 사라짐
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CdcKafkaReceiveFailures
+        exp_alerts:
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "최근 5분 Kafka 레코드 처리 실패 3회"}
+      - {eval_time: 5m, alertname: CdcKafkaFailureMetricMissing, exp_alerts: []}
+      - eval_time: 22m
+        alertname: CdcKafkaFailureMetricMissing
+        exp_alerts:
+          - exp_labels: {team: infra, instance: "backend:8080", job: backend}
+            exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 수신 실패 지표가 없음 (backend:8080)"}
+
+  # 깨지면: 인스턴스가 둘 이상일 때 한쪽만 counter 가 빠지면 놓친다(PR #121 리뷰 3)
+  - name: Kafka counter 누락은 인스턴스별 — A 만 빠지면 A 만 알림
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="a:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="b:8080",job="backend"}', values: '1x20'}
+      - {series: 'beez_cdc_kafka_receive_failures_total{instance="b:8080",job="backend"}', values: '0x20'}
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CdcKafkaFailureMetricMissing
+        exp_alerts:
+          - exp_labels: {team: infra, instance: "a:8080", job: backend}
+            exp_annotations: {summary: "consumer 가 켜졌는데 Kafka 수신 실패 지표가 없음 (a:8080)"}
+
+  # 깨지면: 남은 FAILED 를 알리지 않거나, 인스턴스가 둘일 때 두 번 센다(244 결정 3 중복 제거)
+  - name: FAILED 는 바로 알리고 인스턴스 중복을 세지 않음
+    interval: 1m
+    input_series:
+      - series: 'beez_cdc_analysis_intakes{instance="a:8080",job="backend",status="FAILED"}'
+        values: '2x5'
+      - series: 'beez_cdc_analysis_intakes{instance="b:8080",job="backend",status="FAILED"}'
+        values: '2x5'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="a:8080",job="backend"}'
+        values: '1x5'
+      - series: 'beez_cdc_analysis_snapshot_available{instance="b:8080",job="backend"}'
+        values: '1x5'
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="a:8080",job="backend"}'
+        values: '0+60x5'
+      - series: 'beez_cdc_analysis_snapshot_last_success_epoch_seconds{instance="b:8080",job="backend"}'
+        values: '0+60x5'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: CdcFailedIntakes
+        exp_alerts:
+          - exp_labels: {team: app, status: FAILED}
+            exp_annotations: {summary: "분석 FAILED 2건 남아 있음(자동 재처리 없음)"}

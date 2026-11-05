@@ -59,6 +59,7 @@ export const unlessMissing = <T>(request: Promise<T>) =>
 const messages: Record<string, string> = {
   unauthenticated: '로그인이 필요합니다.',
   invalid_credentials: '이메일 또는 비밀번호를 확인해 주세요.',
+  current_password_mismatch: '현재 비밀번호가 맞지 않아요.',
   forbidden: '이 작업의 권한이 없습니다.',
   not_found: '이 항목을 찾을 수 없습니다.',
   email_already_exists: '이미 가입된 이메일입니다.',
@@ -81,12 +82,13 @@ const messages: Record<string, string> = {
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',
   unsupported_media_type: '지원하지 않는 파일 형식입니다.',
   invitation_expired: '초대 링크가 만료되었습니다.',
-  reset_token_expired: '비밀번호 재설정 링크가 만료되었습니다.',
   leader_transfer_required: '인간 팀장을 먼저 위임해 주세요.',
   leader_not_removable: '팀장은 회의에서 뺄 수 없어요.',
   meeting_closed: '끝난 회의라 바꿀 수 없어요.',
   invalid_transfer_target: '이 팀원에게는 넘길 수 없어요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
+  leader_of_team_projects:
+    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 위임하거나 프로젝트를 삭제해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
   document_not_approved:

@@ -1018,6 +1018,21 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                             {finding.next_action}
                           </p>
                         )}
+                        {finding.ai_suggested_action && (
+                          <section
+                            aria-label="AI 후속 행동 제안"
+                            className="mt-3 space-y-1 rounded-md bg-muted p-3 text-sm"
+                          >
+                            <h4 className="font-medium">AI 후속 행동 제안</h4>
+                            <p className="break-words whitespace-pre-wrap">
+                              {finding.ai_suggested_action}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              참고용 제안이에요. 담당자와 승인 여부를 확인해
+                              주세요.
+                            </p>
+                          </section>
+                        )}
                         {finding.sources.map((source, index) => (
                           <p
                             key={index}
