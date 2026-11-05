@@ -1,8 +1,17 @@
+/// <reference types="node" />
+import { webcrypto } from 'node:crypto'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
-import { inboxApi } from '@/api/services'
+import { authApi, inboxApi } from '@/api/services'
+import { DocumentsPanel } from '@/features/documents/DocumentsPanel'
+import {
+  DEMO_EMAIL,
+  DEMO_PASSWORD,
+  resetMockApi,
+  setupMockApi,
+} from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { InboxPopover } from './InboxPopover'
 
@@ -109,4 +118,65 @@ it('문서 알림을 누르면 버전 ID가 아니라 그 문서의 상세를 �
     pane: 'documents',
     focusId: '7',
   })
+})
+
+// 워크스페이스(WorkspacePage)처럼 고른 창이 문서함이면 공용 문서함을 연다.
+function DocumentsPane({ projectId }: { projectId: string }) {
+  const pane = useWorkspaceStore((state) => state.pane)
+  return pane === 'documents' ? (
+    <DocumentsPanel projectId={projectId} isLeader />
+  ) : null
+}
+
+// PR #150 리뷰(오서현): 승인 전 문서의 승인 요청 알림을 상세로 열면 승인본이 없어 오류 안내가 떴다.
+// 저장소에 넣은 값만 보지 않고, 알림을 눌러 실제 공용 문서함의 검토 화면이 열리는지까지 본다.
+it('승인 전 문서의 승인 요청 알림을 누르면 공용 문서함에서 그 문서의 검토 화면을 연다', async () => {
+  Object.defineProperty(globalThis.crypto, 'subtle', {
+    configurable: true,
+    value: webcrypto.subtle,
+  })
+  localStorage.clear()
+  resetMockApi()
+  const restore = setupMockApi()
+  try {
+    const user = userEvent.setup()
+    await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+    useWorkspaceStore.setState({ pane: null, focusId: null })
+    vi.spyOn(inboxApi, 'list').mockResolvedValue({
+      items: [
+        {
+          ...notification('31', false),
+          project_id: '102',
+          type: 'DOCUMENT_REVIEW_REQUESTED',
+          title: '기획안 승인 요청',
+          target_type: 'DOCUMENT_VERSION' as const,
+          target_id: '901',
+          document_id: '221',
+        },
+      ],
+      has_more: false,
+    })
+    vi.spyOn(inboxApi, 'markRead').mockResolvedValue({ updated_count: 1 })
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <InboxPopover projectId="102" />
+        <DocumentsPane projectId="102" />
+      </QueryClientProvider>,
+    )
+    await user.click(await screen.findByRole('button', { name: '알림 1건' }))
+    await user.click(screen.getByText('기획안 승인 요청'))
+    const review = await screen.findByRole('region', { name: '기획안 검토' })
+    expect(
+      await within(review).findByRole('list', { name: '검토 단계' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/정보를 불러오지 못했어요/),
+    ).not.toBeInTheDocument()
+  } finally {
+    restore()
+  }
 })
