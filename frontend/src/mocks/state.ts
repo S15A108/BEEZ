@@ -55,6 +55,10 @@ export async function passwordFingerprint(value: string): Promise<string> {
 export interface StoredAccount {
   profile: Account
   password_fingerprint: string
+  /** 임시 비밀번호로 로그인해 비밀번호를 바꿔야 한다(ACC-A02 must_change_password) */
+  must_change_password?: boolean
+  /** 받아 두고 아직 쓰지 않은 임시 비밀번호(ACC-A07). 계정마다 하나이고 원문은 남기지 않는다. */
+  temporary_password?: { fingerprint: string; expires_at: string }
 }
 
 export interface StoredInvitation extends Invitation {
@@ -103,12 +107,8 @@ export interface MockDatabase {
   invitations: StoredInvitation[]
   tokens: (AgentToken & { account_id: string })[]
   notifications: (Notification & { account_id: string })[]
-  reset_tokens: {
-    token: string
-    account_id: string
-    expires_at: string
-    used: boolean
-  }[]
+  /** 비밀번호 찾기(ACC-A07) 요청 기록. 서버처럼 맞지 않은 요청도 남겨 다시 요청 간격과 이메일당 한도를 센다. */
+  temporary_password_requests?: { email: string; created_at: string }[]
   pending_validations: Record<string, number>
 }
 
@@ -607,7 +607,6 @@ export function createMockDatabase(): MockDatabase {
         created_at: now(),
       })),
     ],
-    reset_tokens: [],
     pending_validations: {},
   }
 }

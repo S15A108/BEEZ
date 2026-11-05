@@ -139,18 +139,25 @@ describe('documented REST mock adapter', () => {
       email: user.email,
       password: 'changed-password-8832',
     })
-    await authApi.forgotPassword({ email: user.email, name: user.name })
+    // S15P31A108-283: 재설정 링크(ACC-A08·A09) 대신 임시 비밀번호(ACC-A07)를 받는다(PR #118). 임시 비밀번호로 로그인하면
+    // must_change_password가 붙고, 그것을 현재 비밀번호로 보내 바꾸면 풀린다. 원문은 저장소에 남기지 않는다.
+    const sent = await authApi.forgotPassword({
+      email: user.email,
+      name: user.name,
+    })
+    const temporary = sent.message.match(/임시 비밀번호: (\S+)/)![1]
+    await authApi.logout()
     expect(
-      (await authApi.verifyResetToken({ token: `mock-reset-${user.id}` }))
-        .valid,
+      (await authApi.login({ email: user.email, password: temporary }))
+        .must_change_password,
     ).toBe(true)
-    await authApi.resetPassword({
-      token: `mock-reset-${user.id}`,
+    expect((await authApi.me()).must_change_password).toBe(true)
+    expect(localStorage.getItem(MOCK_STORAGE_KEY)).not.toContain(temporary)
+    await authApi.changePassword({
+      current_password: temporary,
       new_password: 'reset-password-1921',
     })
-    await expect(
-      authApi.verifyResetToken({ token: `mock-reset-${user.id}` }),
-    ).rejects.toMatchObject({ response: { status: 410 } })
+    expect((await authApi.me()).must_change_password).toBe(false)
   })
 
   it('creates, edits and deletes a project and keeps access scoped to membership', async () => {
