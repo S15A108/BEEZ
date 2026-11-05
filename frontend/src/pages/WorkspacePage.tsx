@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
 import { Footprints } from 'lucide-react'
 import type { SceneAgent, SceneTask } from '@/three/types'
@@ -355,6 +355,17 @@ function Workspace({ projectId }: { projectId: string }) {
 
 export default function WorkspacePage() {
   const { projectId = '' } = useParams()
+  const [params] = useSearchParams()
+  const invite = params.get('invite')
+  // 초대 메일의 '프로젝트로 가기'(/projects/{id}?invite=토큰, MEM-A01). 아직 팀원이 아니면 이 프로젝트를 열 수 없어(404)
+  // 로그인 여부와 상관없이 초대 화면(MEM-A04·A05)이 먼저 받는다. 이미 팀원이면 그 화면이 이 프로젝트로 되돌려 보낸다.
+  if (invite)
+    return (
+      <Navigate
+        replace
+        to={`/invite?${new URLSearchParams({ invite, project: projectId })}`}
+      />
+    )
   return (
     <RequireAccount>
       <Workspace key={projectId} projectId={projectId} />
