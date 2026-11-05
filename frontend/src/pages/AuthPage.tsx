@@ -97,8 +97,13 @@ export default function AuthPage() {
                   placeholder: 'name@example.com',
                 },
               ]}
-              // API 없음: 임시 비밀번호 발급 계약 전까지는 기존 재설정 메일 요청을 보낸다.
               submitLabel="임시 비밀번호 받기"
+              // 같은 이메일로 곧바로 다시 요청하거나 한도를 넘으면 429 rate_limited다(ACC-A07, PR #118).
+              errorMessage={(cause) =>
+                getApiErrorCode(cause) === 'rate_limited'
+                  ? '임시 비밀번호를 너무 자주 요청했어요. 잠시 뒤에 다시 시도해 주세요.'
+                  : getApiErrorMessage(cause)
+              }
               onSubmit={async (values) => {
                 const result = await authApi.forgotPassword({
                   email: values.email,
