@@ -26,6 +26,7 @@ import {
   useMeetingList,
 } from '@/features/meetings/useMeetingList'
 import { targetLabel, targetPane } from '@/features/inbox/notificationTarget'
+import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { Toast } from '@/components/Toast'
 import { Hotbar } from './Hotbar'
 import { TourGuide } from './TourGuide'
@@ -186,6 +187,11 @@ export function WorkspaceHud({
     // 창이 열린 동안은 '지금 할 일'이 가려지므로 부르지 않는다(목 모드 부하, E2E 시간).
     enabled:
       started && !pane && (changeCounts.data?.review_required_count ?? 0) > 0,
+  })
+  // '지금 할 일'의 담당자 없는 작업(TSK-A02 unassigned=true). 대시보드와 같은 키라 한 번만 부른다.
+  const unassigned = useQuery({
+    ...openTasksQuery(project.id, { unassigned: true }),
+    enabled: started && !pane,
   })
   const firstReview = reviewList.data?.items.find((item) =>
     ['PROPOSED', 'IN_REVIEW'].includes(item.status),
@@ -513,8 +519,24 @@ export function WorkspaceHud({
     : '승인을 기다리는 제안이 있어요'
   const firstUnread = unreadItems[0]
   const firstReady = readyTasks[0]
+  const orphans = unassigned.data?.items ?? []
   const todos = (
     [
+      // 담당자가 나가거나 제외돼 빈 열린 작업(SCR-06-v2-workspace-unassigned). 팀장은 정하고, 팀원은 열어서 맡는다.
+      // API 없음: 누가 나가서 비었는지('김동료가 오늘 나갔어요')는 작업 응답에 없어 쓰지 않는다.
+      unassigned.data &&
+        orphans.length > 0 && {
+          key: 'unassigned',
+          mark: '!',
+          tone: 'review',
+          title: `담당자 없는 작업 ${openTaskCount(unassigned.data)}`,
+          detail: `${orphans
+            .slice(0, 3)
+            .map((task) => `${task.key} ${taskText[task.status]}`)
+            .join(', ')} · 상태와 검증은 그대로예요`,
+          action: isLeader ? '담당자 정하기' : '작업 열기',
+          open: () => openPane('tasks', orphans[0].id),
+        },
       reviewCount > 0 && {
         key: 'review',
         mark: '!',

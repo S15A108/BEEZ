@@ -336,12 +336,22 @@ export function taskRoutes(
       activity(context, 'TASK_CREATED', { task_id: taskId })
       return { status: 201, data: next }
     }
-    case 'TSK-A02':
+    case 'TSK-A02': {
+      // 11-04 사용자 결정: status는 여러 번 주면 그중 하나, unassigned=true면 담당자 없는 작업만. 둘 다 AND다.
+      const statuses = query.getAll('status')
+      const unassigned = query.get('unassigned') === 'true'
+      if (unassigned && query.get('assignee_member_id'))
+        fail(
+          400,
+          'validation_failed',
+          'unassigned와 assignee_member_id는 함께 쓸 수 없어요.',
+        )
       return {
         data: page(
           project.tasks.filter(
             (item) =>
-              (!query.get('status') || item.status === query.get('status')) &&
+              (!statuses.length || statuses.includes(item.status)) &&
+              (!unassigned || !item.assignee_member_id) &&
               (!query.get('assignee_member_id') ||
                 item.assignee_member_id === query.get('assignee_member_id')) &&
               // 서버처럼 validation_status도 페이지를 자르기 전에 건다(LA-TC-05).
@@ -351,6 +361,7 @@ export function taskRoutes(
           query,
         ),
       }
+    }
     case 'TSK-A03':
       return { data: task! }
     case 'TSK-A04': {
@@ -407,13 +418,23 @@ export function taskRoutes(
         ),
       }
     case 'TSK-A06': {
-      if (context.member?.role !== 'LEADER')
-        fail(403, 'forbidden', '인간 팀장이 담당자를 지정할 수 있어요.')
+      // 잠금 번호를 먼저 본다. 같은 미배정 작업을 두 사람이 맡으면 늦은 쪽은 403이 아니라 409 revision_conflict다(11-04).
       expectValue(
         task!.lock_version,
         body.expected_lock_version,
         'revision_conflict',
       )
+      // 예외: 팀원은 담당자 없는 작업을 자기에게만 맡길 수 있다(11-04 사용자 결정).
+      if (
+        context.member?.role !== 'LEADER' &&
+        (task!.assignee_member_id ||
+          body.assignee_member_id !== context.member?.id)
+      )
+        fail(
+          403,
+          'forbidden',
+          '팀원은 담당자 없는 작업을 자기에게만 맡길 수 있어요.',
+        )
       if (['COMPLETED', 'CANCELLED'].includes(task!.status))
         fail(
           400,

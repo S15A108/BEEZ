@@ -1112,7 +1112,8 @@ export const endpointRegistry = [
     title: '작업 담당자 변경',
     method: 'PATCH',
     path: '/projects/{id}/tasks/{task_id}/assignee',
-    auth: 'LEADER',
+    // 11-04 사용자 결정: 담당자 없는 작업을 자기에게 맡길 때는 MEMBER도 된다. 권한은 목 라우트가 본다.
+    auth: 'LEADER (미배정 작업을 자기에게 맡길 때는 MEMBER)',
     domain: 'tasks',
     operation: 'assign',
     multipart: false,
