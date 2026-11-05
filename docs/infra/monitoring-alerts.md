@@ -347,8 +347,13 @@ cd ../..
   집계 실패·갱신 멈춤, 오래된 스냅샷 제외·한 인스턴스만 멈추면 억제하지 않음, 집계가 멈추면
   억제 원인이 FAILED 해소보다 먼저 생김, CDC 지표 전부·일부 누락, Kafka 실패·인스턴스별 지표
   누락, FAILED 중복 제거). 억제 자체(Alertmanager)는 promtool이 보지 못해 아래 기록처럼 실측했습니다. 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
-- CI에서는 돌지 않습니다(S15P31A108-264 범위 밖, 후속 과제). 규칙을 바꾼 PR은 위 세 명령의
-  결과를 PR 본문에 붙입니다.
+- `infra/monitoring/**`를 바꾼 PR에서는 CI `monitoring` 잡이 같은 검사를 돌리고, 실패하면
+  `ci-gate`가 실패해 머지할 수 없습니다(S15P31A108-292). 잡은 위 명령에 더해
+  `promtool check config`(prometheus.yml과 `rule_files`가 가리키는 규칙)를 돌리고,
+  routes test는 `--verify.receivers=null`로 경로가 바뀌면 실패합니다. 로컬 실행은 PR 전에
+  빨리 보려는 용도이고, 결과를 PR 본문에 붙이지 않아도 됩니다.
+- FAILED·확인 필요 미평가의 24시간 재통지는 routes test가 수신처만 보여 주어 CI에서 고정하지
+  않습니다. 바꿀 때는 `config routes show`로 직접 확인합니다.
 
 알림 문구까지 보려면 [로컬에서 검증하기](monitoring.md#로컬에서-검증하기)로 스택을 띄웁니다.
 `compose.local.yaml`의 `webhook-catcher`가 가짜 Mattermost로 받아 본문을 로그에 찍습니다.

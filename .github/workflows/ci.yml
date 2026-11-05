@@ -1,5 +1,5 @@
 # PR 검증 CI.
-# 바뀐 영역(backend / frontend / ai / 배포 스크립트)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
+# 바뀐 영역(backend / frontend / ai / 배포 스크립트 / 모니터링)의 잡만 돌리고, 항상 도는 `ci-gate` 잡 하나가
 # 전체 결과를 대표한다. 룰셋의 "필수 상태 검사"에는 ci-gate 만 등록한다 —
 # 영역 잡은 건너뛸 수 있어서 직접 등록하면 문서만 바꾼 PR 이 영원히 대기한다.
 #
@@ -33,6 +33,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       ai: ${{ steps.filter.outputs.ai }}
       deploy_scripts: ${{ steps.filter.outputs.deploy_scripts }}
+      monitoring: ${{ steps.filter.outputs.monitoring }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
@@ -54,6 +55,9 @@ jobs:
               - 'infra/deploy/**'
               - 'infra/compose.yaml'
               - 'infra/local.env'
+              - '.github/workflows/ci.yml'
+            monitoring:
+              - 'infra/monitoring/**'
               - '.github/workflows/ci.yml'
 
   # 2) backend: 빠른 층(test) → 느린 층(integrationTest, Testcontainers).
@@ -175,9 +179,57 @@ jobs:
       - name: check-port.sh tests
         run: python infra/deploy/test_check_port.py
 
-  # 6) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
+  # 6) 모니터링: 알림 규칙 시험과 Prometheus·Alertmanager 설정 검사(S15P31A108-292).
+  #    서버에는 수동 배포라(cd.yml paths-ignore) 머지본이 그대로 올라간다. 깨진 설정은 여기서 막는다.
+  #    이미지는 infra/monitoring/compose.yaml 과 같은 태그·digest. 올릴 때 두 곳을 같이 바꾼다.
+  #    파일은 서버 컨테이너와 같은 경로(/etc/prometheus, /etc/alertmanager)에 붙인다 —
+  #    prometheus.yml 의 rule_files 와 alertmanager.yml 의 templates 가 그 경로를 가리킨다.
+  #    웹훅 주소 파일(webhook_url_file)은 check-config 가 읽지 않아 붙이지 않는다(알림 보낼 때만 읽음).
+  monitoring:
+    needs: changes
+    if: needs.changes.outputs.monitoring == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: infra/monitoring
+    env:
+      PROMETHEUS_IMAGE: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+      ALERTMANAGER_IMAGE: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    steps:
+      - uses: actions/checkout@v5
+
+      # rule_files 의 모든 규칙 파일까지 읽어 검사한다(check rules 를 따로 두지 않는 이유).
+      - name: promtool check config
+        run: >-
+          docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro"
+          --entrypoint promtool "$PROMETHEUS_IMAGE"
+          check config /etc/prometheus/prometheus.yml
+
+      - name: promtool test rules
+        run: >-
+          docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" -w /etc/prometheus/tests
+          --entrypoint promtool "$PROMETHEUS_IMAGE"
+          test rules beez_test.yml
+
+      - name: amtool check-config
+        run: >-
+          docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro"
+          --entrypoint amtool "$ALERTMANAGER_IMAGE"
+          check-config /etc/alertmanager/alertmanager.yml
+
+      # 깨지면: 억제 원인 전용 알림 CdcDataUnavailable 이 Mattermost 로 나가 "데이터 없음" 글이 쌓인다.
+      # (FAILED 계열의 24시간 재통지는 routes test 가 수신처만 보여 주어 여기서 고정하지 못한다)
+      - name: amtool routes test
+        run: >-
+          docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro"
+          --entrypoint amtool "$ALERTMANAGER_IMAGE"
+          config routes test --config.file=/etc/alertmanager/alertmanager.yml
+          --verify.receivers=null alertname=CdcDataUnavailable
+
+  # 7) 게이트: 항상 돈다. 영역 잡이 skipped 면 통과, failure/cancelled 면 실패.
   ci-gate:
-    needs: [changes, backend, frontend, ai, deploy-scripts]
+    needs: [changes, backend, frontend, ai, deploy-scripts, monitoring]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
