@@ -1,7 +1,5 @@
 package com.beez.backend.notification.event;
 
-import com.beez.backend.changeproposal.dto.PublicationDtos.ImpactResult;
-import com.beez.backend.changeproposal.dto.PublicationDtos.WaitingTask;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.impactanalysis.OwnerRecommendationDtos.DirectResult;
 import com.beez.backend.impactanalysis.OwnerRecommendationService;
@@ -75,7 +73,7 @@ public class ChangeNotifications {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void published(CallerContext caller, long project, long proposal, long proposerAccount, int revision,
-                          String snapshotHash, ImpactResult impact) {
+                          String snapshotHash, Collection<Long> affectedTaskIds) {
         String title = title(project, proposal);
         requester.requestAll(proposalRequests(project, proposal, "change-proposal:" + proposal + ":approved",
                 "CHANGE_PROPOSAL_APPROVED", NotificationMessages.proposalApproved(title),
@@ -83,7 +81,7 @@ public class ChangeNotifications {
         requester.requestAll(proposalRequests(project, proposal, "change-proposal:" + proposal + ":published",
                 "CHANGE_PROPOSAL_PUBLISHED", NotificationMessages.proposalPublished(title),
                 withoutActor(caller, relatedOwners(caller, project, proposal, revision, snapshotHash))));
-        revalidationRequired(project, proposal, impact);
+        revalidationRequired(project, proposal, affectedTaskIds);
     }
 
     /** 의견에서 멤버를 지정했을 때. 검토 요청이면 REVIEW_REQUESTED, 그냥 의견이면 COMMENTED. 의견 원문은 넣지 않는다 */
@@ -117,23 +115,33 @@ public class ChangeNotifications {
         requester.requestAll(requests);
     }
 
-    /** 발행으로 WAITING(재검증)이 된 작업의 담당자에게 작업마다 한 건. 담당자가 없는 작업은 건너뛴다 */
-    private void revalidationRequired(long project, long proposal, ImpactResult impact) {
-        if (impact == null || impact.waitingTasks().isEmpty()) {
+    /**
+     * 발행으로 재검증 대기(WAITING)가 됐거나 검증이 STALE 이 된 작업의 담당자에게 작업마다 한 건(계약 7절). READY 작업도 새 PASS 가
+     * 있어야 시작할 수 있어 함께 보낸다. 완료·취소 작업과 담당자가 없거나 비활성인 작업은 뺀다. 같은 작업이 두 목록에 있어도
+     * 키(task:{작업}:revalidation:{제안}:to:{계정})가 같아 한 건만 남는다.
+     */
+    private void revalidationRequired(long project, long proposal, Collection<Long> taskIds) {
+        if (taskIds.isEmpty()) {
             return;
         }
-        Map<Long, Long> accounts = accountsByMember(project, impact.waitingTasks().stream()
-                .map(WaitingTask::assigneeMemberId).filter(id -> id != null).map(Long::parseLong).toList());
+        record TaskRow(long id, String title, long member) { }
+        List<TaskRow> tasks = jdbc.sql("""
+                select t.id, t.title, t.assignee_member_id from task t
+                 where t.project_id = :project and t.id in (:ids)
+                   and t.status not in ('COMPLETED', 'CANCELLED') and t.assignee_member_id is not null
+                 order by t.id
+                """).param("project", project).param("ids", new LinkedHashSet<>(taskIds))
+                .query((rs, n) -> new TaskRow(rs.getLong("id"), rs.getString("title"), rs.getLong("assignee_member_id"))).list();
+        Map<Long, Long> accounts = accountsByMember(project, tasks.stream().map(TaskRow::member).toList());
         List<NotificationRequest> requests = new ArrayList<>();
-        for (WaitingTask task : impact.waitingTasks()) {
-            Long account = task.assigneeMemberId() == null ? null : accounts.get(Long.parseLong(task.assigneeMemberId()));
+        for (TaskRow task : tasks) {
+            Long account = accounts.get(task.member());
             if (account == null) {
                 continue;
             }
             Message message = NotificationMessages.revalidationRequired(task.title());
-            long taskId = Long.parseLong(task.taskId());
-            requests.add(new NotificationRequest("task:" + taskId + ":revalidation:" + proposal + ":to:" + account, project,
-                    account, "REVALIDATION_REQUIRED", message.title(), message.body(), NotificationTargetType.TASK, taskId, null));
+            requests.add(new NotificationRequest("task:" + task.id() + ":revalidation:" + proposal + ":to:" + account, project,
+                    account, "REVALIDATION_REQUIRED", message.title(), message.body(), NotificationTargetType.TASK, task.id(), null));
         }
         requester.requestAll(requests);
     }

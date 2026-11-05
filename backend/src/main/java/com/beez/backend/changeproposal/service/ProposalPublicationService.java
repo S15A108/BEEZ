@@ -134,7 +134,7 @@ public class ProposalPublicationService {
         // The proposal is PUBLISHED and the new baseline is visible now, which forNotification requires. A non-duplicate
         // storage failure rolls back the whole publication.
         notifications.published(caller,project,proposal,id(current,"proposer_account_id"),input.expectedRevision(),
-                input.expectedSnapshotHash(),impactResult);
+                input.expectedSnapshotHash(),affectedTasks(impactResult));
         // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_APPROVED and CHANGE_PROPOSAL_PUBLISHED,
         //  key change-proposal:{id}:published (duplicate keys are skipped).
         return result;
@@ -153,6 +153,13 @@ public class ProposalPublicationService {
                 new Unreviewed(aiCandidates,repository.openReviewRequests(proposal,plan.impact().revision()),
                         new AiAnalysis(gateDecision.status(),gateDecision.isCurrent(),gateDecision.errorCode(),gateDecision.reanalysis()),
                         gateDecision.needsReason()));
+    }
+    /** Tasks whose validation went STALE or that now wait for revalidation; the notification layer filters status and assignee. */
+    private static Set<Long> affectedTasks(ImpactResult result) {
+        var ids=new LinkedHashSet<Long>();
+        for (var task : result.waitingTasks()) ids.add(Long.parseLong(task.taskId()));
+        for (var validation : result.staleValidations()) if (validation.taskId()!=null) ids.add(Long.parseLong(validation.taskId()));
+        return ids;
     }
     private static void positive(long project, long proposal) {
         if (project<1 || proposal<1) throw invalid("프로젝트·제안 ID는 양수여야 합니다.");
