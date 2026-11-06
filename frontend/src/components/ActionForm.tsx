@@ -33,7 +33,7 @@ export interface FormField {
   options?: { value: string; label: string }[]
   /** 추가 규칙. 틀리면 보여 줄 문구를 돌려준다. */
   check?: (value: string) => string | undefined
-  /** 입력 칸 오른쪽 위에 글자 수를 보여 준다. max가 있어야 한다. */
+  /** 입력 칸 오른쪽 위에 글자 수를 보여 주고, max를 넘겨 입력하거나 붙여 넣지 못하게 한다. max가 있어야 한다. */
   counter?: boolean
   /** 틀린 곳이 없을 때 칸 아래에 둘 안내 */
   hint?: string
@@ -207,6 +207,7 @@ export function ActionForm({
                   id={`${formId}-${field.name}`}
                   rows={4}
                   placeholder={field.placeholder}
+                  maxLength={field.counter ? field.max : undefined}
                   disabled={isSubmitting}
                   aria-invalid={Boolean(errors[field.name])}
                   {...register(field.name)}
@@ -328,6 +329,7 @@ export function ActionForm({
                   autoComplete={field.type === 'email' ? 'email' : 'off'}
                   className={cn(auth && 'h-10')}
                   placeholder={field.placeholder}
+                  maxLength={field.counter ? field.max : undefined}
                   disabled={isSubmitting}
                   aria-invalid={Boolean(errors[field.name])}
                   {...register(field.name)}

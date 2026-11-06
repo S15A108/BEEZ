@@ -141,12 +141,13 @@
 | `DOCUMENT_REVIEW_REQUESTED` | 문서(오서현) | 문서 승인 요청 | 팀장 | 아니오 | DOCUMENT_VERSION |
 | `DOCUMENT_APPROVED` | 문서(오서현) | 문서 승인 | 등록자 | 아니오 | DOCUMENT_VERSION |
 | `DOCUMENT_REJECTED` | 문서(오서현) | 문서 반려(사유는 상세에서) | 등록자 | 아니오 | DOCUMENT_VERSION |
-| `DOCUMENT_CHANGED_BY_MEETING` | 회의(오서현) | 회의가 끝나 문서가 바뀜 | 관련 작업 담당자 | 아니오 | DOCUMENT_VERSION |
+| `DOCUMENT_CHANGED_BY_MEETING` | 회의(오서현) | 회의가 끝나 문서가 바뀜. **MTG-A13에서는 쓰지 않는다** — 종료로 문서는 바뀌지 않고 제안만 생긴다(문서는 CHG-A09 승인 때 바뀐다). 대신 `MEETING_PROPOSAL_CREATED` | 관련 작업 담당자 | 아니오 | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | 기준 v1 생김 | 활성 팀원 | 아니오 | BASELINE |
 | `MEETING_OPENED` | 회의(오서현) | 비비가 회의를 엶 | 참여자 | — (행위자가 비비) | MEETING |
 | `MEETING_PARTICIPANT_ADDED` | 회의(오서현) | 참여자로 추가됨(MTG-A04, 이유를 문구에 포함) | 추가된 사람 | 아니오 | MEETING |
 | `MEETING_PARTICIPANT_REMOVED` | 회의(오서현) | 참여자에서 제외됨(MTG-A14, 이미 빠진 경우 멱등 204는 보내지 않음) | 빠진 사람 | — (팀장이 제외) | MEETING |
 | `MEETING_RECORD_ADDED` | 회의(오서현) | 회의에 새 기록 | 다른 참여자 | 아니오 | MEETING |
+| `MEETING_PROPOSAL_CREATED` | 회의(오서현, -297) | 회의 끝내기(MTG-A13)로 변경 제안이 만들어짐. 문서 변경이 없어 제안이 없으면 보내지 않음 | 회의 작업 묶음의 담당자(활성 멤버, 담당자 없는 작업은 건너뜀) | 아니오 (끝낸 팀장 제외) | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_SUBMITTED` | 변경(오서현) | 제안 올림 | 관련 작업 담당자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REVIEW_REQUESTED` | 변경(오서현) | 검토 요청 | 지정 검토자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_COMMENTED` | 변경(오서현) | 의견에서 멤버 지정 | 지정 멤버 | 아니오 | CHANGE_PROPOSAL |
@@ -167,6 +168,7 @@
 | `DOCUMENT_REGISTERED`·`DOCUMENT_APPROVED`·`DOCUMENT_REJECTED` | 문서(오서현) | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | BASELINE |
 | `CHANGE_PROPOSAL_SUBMITTED`·`_WITHDRAWN`·`_REVIEW_STARTED`·`_REVIEW_REQUESTED`·`_COMMENTED`·`_APPROVED`·`_REJECTED`·`_PUBLISHED` | 변경(오서현) | CHANGE_PROPOSAL |
+| `MEETING_CLOSED` | 회의(오서현, -297) | MEETING (보조 참조: 만든 제안의 `change_proposal_id`, 없으면 비움). 행위자는 끝낸 팀장 |
 | `PROJECT_CREATED` | 프로젝트(전진) · `ProjectActivities`(-289) | PROJECT — 아래 "프로젝트·멤버 활동 정하기" |
 | `MEMBER_JOINED`·`MEMBER_LEFT`·`MEMBER_REMOVED`·`LEADER_TRANSFERRED` | 프로젝트(전진) · `ProjectActivities`(-289) | MEMBER — 아래 "프로젝트·멤버 활동 정하기" |
 | `AGENT_CONNECTED`·`AGENT_DISCONNECTED` | 에이전트(전진 -178) | AGENT_SESSION |

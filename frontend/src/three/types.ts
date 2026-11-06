@@ -16,6 +16,8 @@ export interface SceneProject {
   design?: string
   status?: string
   floors?: number
+  /** 도시 이름표의 안 읽은 알림 배지 */
+  unread?: { text: string; label: string }
 }
 
 export interface SceneAgent {
