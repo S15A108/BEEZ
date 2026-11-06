@@ -136,7 +136,8 @@ public class ProposalQueryService {
                 "REJECTED".equals(status) ? nullable((historical == null ? row : historical).get("rejection_reason")) : null,
                 nullable(row.get("previous_proposal_id")),
                 "WITHDRAWN".equals(status) ? nullable(row.get("withdrawn_by")) : null,
-                "WITHDRAWN".equals(status) ? time(row.get("withdrawn_at")) : null);
+                "WITHDRAWN".equals(status) ? time(row.get("withdrawn_at")) : null,
+                nullable(row.get("meeting_id")));
     }
     private String currentDocument(long project, long baseline, long id) {
         try { return Objects.toString(repository.baseDocument(project, baseline, id).get("content_text"), ""); }
