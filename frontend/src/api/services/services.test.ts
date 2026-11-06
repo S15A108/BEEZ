@@ -26,6 +26,7 @@ import {
   changesApi,
   documentsApi,
   projectsApi,
+  tasksApi,
   validationsApi,
 } from './index'
 
@@ -333,11 +334,12 @@ describe('계약 경계', () => {
 
   // S15P31A108-283: 폐지 예정이고 서버(PR #118)가 만들지 않은 재설정 링크(ACC-A08·A09)를 빼고 탈퇴 가능 여부(ACC-A13)를 더해 120개였고,
   // S15P31A108-290·284가 2개, S15P31A108-137이 선택 범위 조회·초안 2개,
-  // S15P31A108-203이 승인 미리 보기(CHG-A14) 1개를 더해 125개다.
-  it('125개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(125)
+  // S15P31A108-203이 승인 미리 보기(CHG-A14) 1개를 더해 125개,
+  // S15P31A108-202가 비비 대화·직접 요청·검토 요청 취소(DOC-A22~A24) 3개를 더해 128개다.
+  it('128개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(128)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      125,
+      128,
     )
     expect(
       new Set(
@@ -345,7 +347,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(125)
+    ).toBe(128)
     expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
       expect.arrayContaining([
         'CHG-A07-SCOPED-BLOCKS',
@@ -369,6 +371,19 @@ describe('계약 경계', () => {
         (capability) => capability.availability === 'UNSPECIFIED',
       ),
     ).toBe(true)
+  })
+
+  // TSK-A02(11-04 사용자 결정): status는 같은 이름을 반복하고, unassigned=true면 담당자 없는 작업만 받는다.
+  it('작업 목록의 여러 상태는 같은 이름을 반복하고 담당자 없음 필터를 함께 보낸다', async () => {
+    respond({ items: [], has_more: false })
+    await tasksApi.list('101', {
+      unassigned: true,
+      status: ['DRAFT', 'READY', 'IN_PROGRESS', 'WAITING'],
+      limit: 100,
+    })
+    expect(api.getUri(lastRequest)).toBe(
+      '/api/projects/101/tasks?status=DRAFT&status=READY&status=IN_PROGRESS&status=WAITING&unassigned=true&limit=100',
+    )
   })
 
   // 서버(ExplicitImpactCalculator)는 담당자가 없는 작업이면 explicit 항목에서 member_id를 생략한다.
