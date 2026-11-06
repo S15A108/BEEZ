@@ -2,10 +2,15 @@ package com.beez.backend.activity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.beez.backend.common.api.GlobalExceptionHandler;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.support.AccessFixtures.ProjectWithLeader;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.task.repository.TaskRepository;
+import jakarta.persistence.OptimisticLockException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -13,7 +18,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver;
 
 /**
  * 활동 입구 (S15P31A108-182, 계약 10-notification-activity-contract.md 2·4절).
@@ -29,6 +36,12 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     JdbcTemplate sql;
+
+    @Autowired
+    TaskRepository tasks;
+
+    @Autowired
+    GlobalExceptionHandler exceptionHandler;
 
     private void inTransaction(Runnable work) {
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> work.run());
@@ -130,6 +143,35 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
         readOnly.setReadOnly(true);
         assertThatThrownBy(() -> readOnly.executeWithoutResult(status -> recorder.recordBy(SystemActor.SYSTEM, e)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("readOnly");
+        assertThat(rowsOf(p.projectId())).isEmpty();
+    }
+
+    @Test
+    void versionConflictFlushedByEntry_isRevisionConflict409() {
+        // 함정(-288 실측): 입구는 네이티브 쿼리라 실행 전에 auto-flush 한다. 그때 난 @Version 충돌은 Spring 변환을 거치지 않아
+        // ObjectOptimisticLockingFailureException 이 아니라 jakarta OptimisticLockException 으로 온다 — 공용 처리기가 409 로 받아야 한다
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long taskId = draftTask(p.projectId());
+        TransactionTemplate other = new TransactionTemplate(transactionManager);
+        other.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        Throwable thrown = catchThrowable(() -> inTransaction(() -> {
+            var task = tasks.findById(taskId).orElseThrow();
+            // 읽은 뒤 다른 요청이 먼저 바꾸고 커밋했다
+            other.executeWithoutResult(s -> sql.update("update task set lock_version = lock_version + 1 where id = ?", taskId));
+            task.changeAssignee(null);
+            task.applyNewPlanRevision(null, "바뀐 제목");
+            recorder.record(CallerContext.human(p.leaderAccountId()), ActivityEvent.of("task:" + taskId + ":created",
+                    p.projectId(), "TASK_CREATED", ActivityTargetType.TASK, taskId));
+        }));
+
+        assertThat(thrown).isInstanceOf(OptimisticLockException.class);
+        // 실제 요청처럼 @ExceptionHandler 목록으로 처리기를 고른다 — 목록에서 빠지면 handleUnexpected(500)로 간다
+        var handler = new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class).resolveMethod((Exception) thrown);
+        assertThat(handler).isNotNull().extracting(Method::getName).isEqualTo("handleOptimisticLock");
+        var response = exceptionHandler.handleOptimisticLock((Exception) thrown);
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody().error().code()).isEqualTo("revision_conflict");
         assertThat(rowsOf(p.projectId())).isEmpty();
     }
 }

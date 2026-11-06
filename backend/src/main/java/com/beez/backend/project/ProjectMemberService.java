@@ -147,7 +147,7 @@ public class ProjectMemberService {
                 .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
         lockProjectAsLeader(projectId, actor);
         ProjectMember target = lockMember(memberId, projectId);
-        end(target, reassignTo, MembershipEndReason.REMOVED);
+        end(caller, target, reassignTo, MembershipEndReason.REMOVED);
     }
 
     /** MEM-A10. 본인 멤버십만 끝낸다. 원치 않는 초대로 들어온 사람도 이것으로 빠진다 (Q05). 팀장은 위임이 먼저다. */
@@ -160,14 +160,14 @@ public class ProjectMemberService {
                 .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
         projectService.lockActive(projectId);
         ProjectMember me = lockMember(actor.memberId(), projectId);
-        end(me, reassignTo, MembershipEndReason.LEFT);
+        end(caller, me, reassignTo, MembershipEndReason.LEFT);
     }
 
     /**
      * 제외·나가기 공통. 프로젝트·멤버십 행을 잠근 뒤에 부른다. 열린 작업 인계 → 멤버십 종료 → 토큰 폐기를 한 트랜잭션에서 한다.
      * 권한 검사가 매 요청 멤버십을 읽으므로(캐시 없음) 커밋 직후 다음 요청부터 그 사람·토큰은 막힌다.
      */
-    private void end(ProjectMember member, Long reassignTo, MembershipEndReason reason) {
+    private void end(CallerContext caller, ProjectMember member, Long reassignTo, MembershipEndReason reason) {
         long projectId = member.getProjectId();
         if (member.getRole() == ProjectRole.LEADER) {
             throw new ApiException(HttpStatus.CONFLICT, "leader_transfer_required", reason == MembershipEndReason.LEFT
@@ -183,7 +183,7 @@ public class ProjectMemberService {
                         "reassign_to_member_id: 같은 프로젝트의 활성 멤버가 아닙니다");
             }
         }
-        handover.handOver(projectId, member.getId(), reassignTo);
+        handover.handOver(caller, projectId, member.getId(), reassignTo);
         Instant now = Instant.now();
         member.end(reason, now);
         members.saveAndFlush(member);
