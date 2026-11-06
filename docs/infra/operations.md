@@ -181,15 +181,17 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    sum='import sys,zlib; t=sys.stdin.buffer.read().decode("utf-8").lstrip(chr(0xfeff)); c=zlib.crc32(t.replace("\r","").replace("\n","").encode()); print(c-(1<<32) if c>=1<<31 else c)'
    if ! python -c "$sum" < /dev/null > /dev/null; then echo "python 을 실행하지 못함 — 중단"
    elif ! g fetch -q origin || ! g cat-file -e "$OLD^{commit}" 2> /dev/null; then echo "fetch 실패 또는 없는 SHA — 중단"
-   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
+   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success, type from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
      echo "DB 이력을 받지 못함 — 중단"
    else
      g ls-tree -r --name-only "$OLD" -- "$DIR/" "$JDIR/" | grep -E '/V[0-9][0-9_]*__' | while read -r f; do
        v=${f##*/V}; v=${v%%__*}; v=${v//_/.}   # V1_1__ 은 DB 에 1.1 로 기록된다
        case $f in *.sql) echo "$v|$(g show "$OLD:$f" | python -c "$sum")" ;; *) echo "$v|" ;; esac   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
      done > "$T/old"
-     # Flyway 기본 검증(outOfOrder 꺼짐, *:future 만 무시)으로 예전 backend 가 어떻게 되는지 번호마다 가른다
+     # Flyway 기본 검증(outOfOrder 꺼짐, *:future 만 무시)으로 예전 backend 가 어떻게 되는지 번호마다 가른다.
+     # 번호의 높낮이는 수로 비교하므로 정수 번호(V1, V2 …)만 맞다. 점 버전(V1_10 과 V1_9)은 순서가 틀릴 수 있다
      awk -F'|' 'NR == FNR { o[$1] = $2; if ($1 + 0 > om) om = $1 + 0; next }
+          $4 != "SQL" && $4 != "JDBC" { next }   # 스키마 생성·baseline 같은 Flyway 기록용 행은 마이그레이션이 아니다
           { d[$1] = 1; if ($1 + 0 > dm) dm = $1 + 0 }
           $3 != "t" { print "V" $1 ": 실패한 마이그레이션 — 어느 backend도 기동 못 함. 되돌리기 전에 스키마 상태부터 확인"; next }
           !($1 in o) && $1 + 0 > om { print "V" $1 ": 되돌릴 SHA가 모르는 상위 번호 — 판단 대상 (DB checksum " $2 ")"; next }
@@ -198,7 +200,7 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
           END { for (v in o) if (!(v in d)) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
                   (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음") }' \
        "$T/old" "$T/db" | sort -n -k1.2
-     echo "대조 끝 (DB $(wc -l < "$T/db")개, 되돌릴 SHA $(wc -l < "$T/old")개)"
+     echo "대조 끝 (DB $(grep -cE '\|(SQL|JDBC)$' "$T/db")개, 되돌릴 SHA $(wc -l < "$T/old")개)"
    fi; rm -rf "$T"
    ```
 
@@ -241,10 +243,10 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    checksum을 찍어, 대조 결과의 `DB checksum`과 같은 줄을 찾습니다. 위 대조 블록을 실행한 같은 셸에서 이어 칩니다(`sum`·`g`·`DIR`).
 
    ```bash
-   V=<번호>
-   f=$(g ls-tree --name-only origin/dev -- "$DIR/" | grep "/V${V}__"); [ -n "$f" ] && echo "dev 판: $(g show "origin/dev:$f" | python -c "$sum") ${f##*/}"
-   g log --branches --remotes --format=%h -- "$DIR/V${V}__*" | while read -r c; do
-     g ls-tree --name-only "$c" -- "$DIR/" | grep "/V${V}__" | while read -r f; do
+   V=<번호>; F=${V//./_}   # 대조 결과의 번호 그대로. 점 버전 1.1 은 파일 이름 V1_1__ 로 찾는다
+   f=$(g ls-tree -r --name-only origin/dev -- "$DIR/" | grep "/V${F}__"); [ -n "$f" ] && echo "dev 판: $(g show "origin/dev:$f" | python -c "$sum") ${f##*/}"
+   g log --branches --remotes --format=%h -- ":(glob)$DIR/**/V${F}__*" | while read -r c; do
+     g ls-tree -r --name-only "$c" -- "$DIR/" | grep "/V${F}__" | while read -r f; do
        echo "$(g show "$c:$f" | python -c "$sum") $c ${f##*/}"
      done
    done | sort -u -k1,1
