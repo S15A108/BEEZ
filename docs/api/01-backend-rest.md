@@ -11578,7 +11578,7 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 
 관련 요구사항: BEE-10  
 담당: BE: 변준성 / AI: 박상은 / FE: 박상은  
-상태: 설계 초안
+상태: 구현 제안 (S15P31A108-136, 계약 리뷰 필요)
 
 #### 인증
 
@@ -11591,7 +11591,7 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 사용하지 않음. 요청마다 모델을 새로 호출할 수 있음 |
 
 #### Path Parameters
 
@@ -11607,7 +11607,7 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `task_ids` | `ID[]` | Y | 추천 대상 작업 |
+| `task_ids` | `ID[]` | Y | 같은 프로젝트의 미완료 작업 1~20개, 중복 불가 |
 
 ```json
 {
@@ -11623,8 +11623,8 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `suggestions` | [AssignmentSuggestion[]](00-common.md#schema-assignmentsuggestion) | Y | 담당 후보 |
-| `generation` | [Generation](00-common.md#schema-generation) | Y | 추천 이유·출처 |
+| `suggestions` | [AssignmentSuggestion[]](00-common.md#schema-assignmentsuggestion) | Y | 작업별 후보·이유와 `alternatives`(대안별 `member_id`, `reason`) |
+| `generation` | [Generation](00-common.md#schema-generation) | Y | 생성 출처와 미확인 정보. 문서 출처는 빈 배열 |
 
 ```json
 {
@@ -11632,36 +11632,18 @@ HTTP `200`.
     {
       "task_id": "501",
       "member_id": "21",
-      "reason": "backend 담당 영역과 일치합니다."
+      "reason": "담당 영역과 관측된 업무량을 참고했습니다.",
+      "alternatives": [
+        { "member_id": "22", "reason": "대안의 담당 영역을 참고했습니다." }
+      ]
     }
   ],
   "generation": {
     "origin": "MODEL",
     "model": "configured-model",
-    "text": "현재 승인 계약에 따라 이메일과 비밀번호를 입력합니다.",
-    "sources": [
-      {
-        "document_id": "201",
-        "document_version_id": "211",
-        "version_no": 1,
-        "location": "3. 계정 관리 / ACC-02"
-      }
-    ],
-    "unresolved": [],
-    "usage": [
-      {
-        "request_key": "llm-validate-601-attempt-1",
-        "feature": "TASK_VALIDATION",
-        "model": "configured-model",
-        "input_tokens": 1200,
-        "output_tokens": 300,
-        "latency_ms": 1800,
-        "failed": false,
-        "estimated_cost_amount": "0.0042",
-        "currency": "USD",
-        "tokens_known": true
-      }
-    ]
+    "text": "입력된 담당 영역과 업무량, 선행 작업을 참고한 제안입니다. 사람이 확인해 주세요.",
+    "sources": [],
+    "unresolved": ["일부 선행 작업의 상태와 담당자를 확인하지 못했습니다."]
   }
 }
 ```
@@ -11671,8 +11653,11 @@ HTTP `200`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 사람만 허용하는 조건을 충족하지 않음 |
+| 403 | `request_origin_rejected` | 신뢰할 수 있는 Origin 또는 Referer가 없거나 일치하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `recommendation_stale` | AI 호출 중 작업 또는 팀원 정보가 바뀜 |
 | 502 | `ai_unavailable` | 분석 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
 
@@ -11688,7 +11673,9 @@ HTTP `200`.
 #### 처리 규칙
 
 - 같은 프로젝트의 작업·활성 팀원만 분석한다.
+- CORS에서 먼저 차단하는 출처 오류도 HTTP 403이며 본문은 공통 CORS 구현을 따른다. REST API는 사람 세션으로 인증하므로 에이전트 토큰만으로 호출하면 401이다.
 - 추천으로 작업 담당자를 자동 변경하지 않는다. 확정은 TSK-A06이다.
+- BE는 같은 프로젝트의 열린 담당 작업과 선행 작업 스냅샷을 구성하고, 호출 전후 변경되면 결과를 버린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

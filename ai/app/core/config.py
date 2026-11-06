@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     # negation); "tokens": the deterministic checks only, one call.
     bee_chat_claim_verification: str = "entailment"
 
+    # #136 is opt-in until the BE has agreed to pass workload snapshots and
+    # handle the proposed alternative-candidate fields.
+    assignment_recommendation_enabled: bool = False
+    assignment_recommendation_max_body_bytes: str = "2097152"
+    assignment_recommendation_timeout_seconds: str = "15"
+    assignment_recommendation_output_token_limit: str = "4096"
+
 
 @lru_cache
 def get_settings() -> Settings:
