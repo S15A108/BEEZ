@@ -154,12 +154,13 @@ export function Hotbar({
         type="button"
         aria-label="비비와 대화"
         aria-keyshortcuts="Enter"
-        data-tour="bibi"
         aria-pressed={pane === 'chat'}
         onClick={() => openPane(pane === 'chat' ? null : 'chat')}
         className="relative mx-[3px] block h-[34px] w-24 rounded-full"
       >
+        {/* 둘러보기 강조는 칸 높이의 버튼이 아니라 바 위로 솟은 원을 감싼다. */}
         <span
+          data-tour="bibi"
           className={cn(
             'absolute top-[5px] left-1/2 block size-20 -translate-1/2 overflow-hidden rounded-full shadow-[0_0_0_3px_#fff,0_0_0_5px_var(--primary),0_14px_22px_-10px_rgba(44,41,31,0.55)]',
             // 비비 대화가 열려 있으면 열린 칸처럼 테두리를 검정으로(PNL-12-v2-bibi-hotbar).

@@ -483,7 +483,8 @@ function MapNote({
               ? { right: width - area.left + 18, top: area.top + 30 }
               : note.target === 'top'
                 ? { right: width - area.left + 10, top: area.top + 4 }
-                : { left: area.left + area.width + 14, bottom: 30 }
+                : // 비비: 원 위쪽(보드 SCR-06-v2-tour-map). 옆에 두면 단축 바 4~6칸을 가린다.
+                  { left: area.left + 14, bottom: height - area.top + 38 }
   return (
     <div
       className={cn(
