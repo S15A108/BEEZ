@@ -20,6 +20,6 @@ it('건물 디자인을 고르면 미리 보기 이름과 설명이 바뀐다', 
   const preview = screen.getByRole('figure', {
     name: '선택한 건물 미리 보기: 목조 스튜디오',
   })
-  expect(preview).toHaveTextContent('나무색 외벽 · 낮은 두 동 · 초록 차양')
+  expect(preview).toHaveTextContent('나무색 외벽 · 낮은 두 동 · 평지붕')
   expect(screen.getByRole('radio', { name: /목조 스튜디오/ })).toBeChecked()
 })
