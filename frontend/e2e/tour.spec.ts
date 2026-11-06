@@ -7,7 +7,9 @@ test('워크스페이스에 처음 들어오면 환영 창이 한 번 뜨고 ? �
 }) => {
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
   await page.goto('/projects/101')
   const welcome = page.getByRole('dialog', {
     name: 'BEEZ 사무실에 오신 걸 환영해요',

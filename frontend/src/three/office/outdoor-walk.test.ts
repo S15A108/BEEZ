@@ -29,7 +29,10 @@ test('small and expanded offices have a reachable elevator with a free return la
       free((exit.x + exit.w / 2) * 32, (exit.y + 0.5) * 32),
       false,
     )
-    const start = { x: 7.5 * 32, y: 4.5 * 32 }
+    // 비비 자리(배치마다 비어 있는 칸)에서 걷기 시작한다. 고정 좌표 (7.5, 4.5)는 유리 오피스(D39)에서 유리 회의실
+    // 벽이라 바꿨다(사용자 승인 2026-11-04).
+    const bibi = floor.seats.lead![0]
+    const start = { x: bibi.x * 32 + 16, y: bibi.y * 32 + 27 }
     const cells = findPath(
       floor.blocked,
       Math.floor(start.x / 32),

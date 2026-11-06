@@ -15,7 +15,9 @@ test('대시보드 네 탭에서 기간, 날짜별 호출, 보기 필터, 에이
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
   await page.goto('/projects/101')
   await page.getByRole('button', { name: '대시보드', exact: true }).click()
   const dashboard = page.getByRole('dialog')
