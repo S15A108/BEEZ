@@ -4,11 +4,12 @@ import { ArrowLeft, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ProposalForm } from './ProposalForm'
-import { operationLabel, operationTone } from './proposalItems'
+import { operationLabel } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
 import { proposeChanges } from './proposeDiff'
 import type { ProposedChange } from './proposeDiff'
 import { Tag } from './Tag'
+import { operationTone } from './tagTones'
 
 // 새 문서 수정 제안(캔버스 PNL-04-v2-propose-doc·changes·review·confirm, v491): 문서 등록처럼 네 단계로 나눈다.
 // ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 팀장 승인. ④에서 '팀장에게 올리기'를 누를 때 처음 CHG-A01을

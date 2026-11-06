@@ -121,6 +121,9 @@ public class PublishedAnalysisProcessor {
         final Object recordedUsage = safeUsage;
         final String recordedStatus = safeStatus;
         tx.executeWithoutResult(ignored -> {
+            // 프로젝트 행을 맨 먼저 잠근다 — 선점·결과 저장과 같은 잠금 순서. 사용량 기록이 프로젝트 행을 외래 키로 먼저 잡은 뒤
+            // 잠금을 올리면 그 사이 프로젝트 행을 기다리는 선점과 엇갈릴 수 있다 (S15P31A108-221 리뷰)
+            repository.lockProjectOf(claim.id());
             // 비용 집계에는 시도 기록에 넣기에 너무 커서 비운 경우에도 받은 사용량 그대로 (같은 키는 한 번만)
             repository.recordUsage(claim, usage, model);
             repository.recordFailure(claim, code, retryable, recordedUsage, recordedStatus);

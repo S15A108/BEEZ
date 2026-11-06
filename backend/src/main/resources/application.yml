@@ -58,7 +58,7 @@ spring:
   task:
     scheduling:
       pool:
-        size: ${SCHEDULING_POOL_SIZE:3}
+        size: ${SCHEDULING_POOL_SIZE:8}
 
   docker:
     compose:
@@ -130,6 +130,15 @@ beez:
     embedding-profile: ${DOCUMENT_EMBEDDING_PROFILE:unconfigured}
     embedding-model: ${DOCUMENT_EMBEDDING_MODEL:unconfigured}
     embedding-dimension: 1024
+  meeting:
+    # 비비 회의 정리(AI-A08 SUMMARY) 요청 크기 예산 — 모두 바이트(한글은 글자당 3바이트). 실연동 때 AI 서버 한도에 맞춰 조정한다
+    summary:
+      max-request-bytes: ${MEETING_SUMMARY_MAX_REQUEST_BYTES:900000}
+      max-documents: ${MEETING_SUMMARY_MAX_DOCUMENTS:10}
+      max-document-bytes: ${MEETING_SUMMARY_MAX_DOCUMENT_BYTES:300000}
+      recent-entries-reserve-bytes: ${MEETING_SUMMARY_RECENT_ENTRIES_RESERVE_BYTES:100000}
+      max-entries: ${MEETING_SUMMARY_MAX_ENTRIES:200}
+      max-items: ${MEETING_SUMMARY_MAX_ITEMS:100}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   validation:
@@ -150,8 +159,7 @@ beez:
     connect-timeout: ${AI_CONNECT_TIMEOUT:3s}
     read-timeout: ${AI_READ_TIMEOUT:20s}
   invitation:
-    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 초대 링크 = {base-url}/invite?token=…
-    ttl: ${INVITE_TTL:7d}
+    base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
   mail:
     mode: ${MAIL_MODE:log}                         # smtp 면 실제로 보낸다. 로컬·테스트는 log (보내지 않음)
     from: ${MAIL_FROM:BEEZ <no-reply@beez.ai.kr>}

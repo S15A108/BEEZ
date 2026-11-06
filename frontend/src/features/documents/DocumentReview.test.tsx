@@ -247,6 +247,40 @@ it('올린 사람이 아니면 검토를 부르지 않고 자동 검토 안내�
   request.mockRestore()
 })
 
+// PR #142 리뷰(양지훈): 올린 사람이 아닌 팀원은 검토를 부르지 않아 review_in_progress를 받지 못한다. 그래서 작업본을
+// 다시 읽지 않아, 검토가 끝나도 창을 다시 열 때까지 '비비 검토 중'에 머물렀다. 검토 중인 작업본이면 끝날 때까지 다시 읽는다.
+it('올린 사람이 아니어도 비비 검토가 끝나면 창을 다시 열지 않고 결과를 본다', async () => {
+  // 올린 사람(데모 계정)이 검토를 마친 상태를 만들어 두고, 팀원 화면에는 끝나기 전까지 검토 결과를 빼고 돌려준다.
+  const before = await documentsApi.workingCopy('102', '221')
+  await documentsApi.requestBeeReview('102', '221', {
+    expected_revision: before.revision,
+  })
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  let finished = false
+  const original = documentsApi.workingCopy.bind(documentsApi)
+  const read = vi
+    .spyOn(documentsApi, 'workingCopy')
+    .mockImplementation(async (...args) => {
+      const copy = await original(...args)
+      return finished ? copy : { ...copy, latest_review: undefined }
+    })
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    mount(false)
+    expect(
+      await screen.findByText(/올린 문서는 비비가 바로 검토해요/),
+    ).toBeInTheDocument()
+    finished = true
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(
+      await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
+    ).toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+    read.mockRestore()
+  }
+})
+
 // review_stale 테스트가 모듈의 무효 검토 목록에 같은 검토 id를 남기므로 그보다 앞에 둔다.
 // 사용자 요청(11-02): 팀장이 승인하면 부르는 쪽(공용 문서함)이 목록으로 돌아가 같은 알림을 띄운다. 승인이 실패하면 검토 화면에 남는다.
 it('승인에 성공했을 때만 승인 알림 문구로 목록에 돌아가라고 알린다', async () => {

@@ -34,10 +34,12 @@ import tools.jackson.databind.exc.UnrecognizedPropertyException;
  * <ol>
  *   <li>호출자: 필터가 검증한 토큰 주체({@link AgentPrincipal})에서 {@code CallerContext.agent} 와 프로젝트를 만든다</li>
  *   <li>인수: snake_case JSON → 인수 레코드. 변환 실패(타입·enum 이름·모르는 키)는 400 validation_failed</li>
- *   <li>결과: 성공은 payload 를 snake_case JSON 으로, 업무 오류는 {@code {"error":{"code","message"}}} 를 도구 실패 결과(isError)로</li>
+ *   <li>결과: 성공은 payload 를 snake_case JSON 으로, 업무 오류는 {@code {"error":{"code","message","details"?}}} 를 도구 실패 결과(isError)로</li>
  *   <li>로그: 요청 ID(MDC)와 도구·프로젝트·계정·결과 코드·지연. 인수·결과 본문은 남기지 않는다 (비밀값·개인 대화 원문 — MCP-09)</li>
+ *   <li>감사: 성공·실패 모두 mcp_audit_log 한 줄 (-177, {@link McpAuditEntry}). 접근 거부는 DENIED + 사유 종류.
+ *       업무와 따로 저장하고, 저장이 실패해도 도구 결과는 그대로 돌려준다 — 이미 커밋된 변경을 실패로 알리면 에이전트가 다시 부른다</li>
  * </ol>
- * 감사 기록(mcp_audit_log)은 -177 이 이 자리에 붙인다.
+ * 접근 제어 자체(멤버십·역할·대상 소속)는 각 서비스가 {@code ProjectAccessChecker} 로 한다(08 계약 1절). 여기서 다시 판정하지 않는다.
  */
 @Component
 public class McpToolHandler {
@@ -50,16 +52,19 @@ public class McpToolHandler {
 
     private final ObjectMapper json;
     private final GlobalExceptionHandler restErrors;
+    private final McpAuditRecorder audits;
     private final ExceptionHandlerMethodResolver restErrorMethods =
             new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class);
 
     /**
      * @param json       Spring 이 만든 ObjectMapper — REST 와 같은 snake_case·non_null 설정을 쓴다
      * @param restErrors ApiException 밖의 예외(낙관적 잠금·DB 제약 등)를 REST 와 같은 code 로 바꾸려고 재사용한다
+     * @param audits     감사 기록 저장 (-177)
      */
-    public McpToolHandler(ObjectMapper json, GlobalExceptionHandler restErrors) {
+    McpToolHandler(ObjectMapper json, GlobalExceptionHandler restErrors, McpAuditRecorder audits) {
         this.json = json;
         this.restErrors = restErrors;
+        this.audits = audits;
     }
 
     <A> SyncToolSpecification specification(McpTool<A> tool) {
@@ -94,6 +99,7 @@ public class McpToolHandler {
         AgentPrincipal principal = context.get(PRINCIPAL_KEY) instanceof AgentPrincipal p ? p : null;
         // 성공·오류 결과를 만든 뒤에만 바꾼다. 그 사이에 Error 등이 새면 로그가 ok 로 남지 않게 한다
         String outcome = "internal";
+        Exception failure = null;
         try {
             if (principal == null) {
                 // /mcp 필터 체인이 인증을 요구하므로 정상 경로에서는 오지 않는다
@@ -106,6 +112,7 @@ public class McpToolHandler {
             outcome = "ok";
             return result;
         } catch (Exception e) {
+            failure = e;
             ApiErrorResponse body = toError(e);
             outcome = body.error().code();
             return failure(body);
@@ -115,9 +122,23 @@ public class McpToolHandler {
                     principal == null ? "-" : principal.projectId(),
                     principal == null ? "-" : principal.accountId(),
                     principal == null ? "-" : principal.agentTokenId(), outcome, ms);
+            audit(principal, tool.name(), arguments, failure, outcome, ms);
             if (ownMdc) {
                 MDC.remove(RequestIdFilter.MDC_KEY);
             }
+        }
+    }
+
+    /**
+     * 감사 기록이 실패해도(행 만들기·저장 모두) 결과를 바꾸지 않는다 (전진 결정, -177).
+     * 남지 않은 호출은 위 com.beez.mcp 줄과 이 오류 로그로 추적한다
+     */
+    private void audit(AgentPrincipal principal, String tool, Map<String, Object> arguments, Exception failure,
+                       String outcome, long ms) {
+        try {
+            audits.record(McpAuditEntry.of(principal, tool, arguments, failure, "ok".equals(outcome) ? null : outcome, ms));
+        } catch (RuntimeException e) {
+            log.error("mcp audit write failed tool={} outcome={}", tool, outcome, e);
         }
     }
 
@@ -183,10 +204,13 @@ public class McpToolHandler {
                 .build();
     }
 
-    /** ApiException 은 그대로, 나머지는 REST 의 {@link GlobalExceptionHandler} 대응표를 그대로 탄다 (같은 오류 = 같은 code) */
+    /**
+     * ApiException 은 REST {@code handleApi} 와 같은 본문(code·message·details)으로, 나머지는 REST 의
+     * {@link GlobalExceptionHandler} 대응표를 그대로 탄다 (같은 오류 = 같은 본문, -267). details 가 없으면 non_null 로 빠진다
+     */
     private ApiErrorResponse toError(Exception e) {
         if (e instanceof ApiException api) {
-            return ApiErrorResponse.of(api.getCode(), api.getMessage());
+            return ApiErrorResponse.of(api.getCode(), api.getMessage(), api.getDetails());
         }
         Method method = restErrorMethods.resolveMethodByThrowable(e);
         if (method != null) {

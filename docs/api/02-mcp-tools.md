@@ -18,7 +18,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 ## 업무 오류
 
-인증 실패는 전송 인증 단계에서 401로 거부한다. 업무 오류의 `error.code/message`는 SDK의 도구 실패 결과로 전달한다. 도구별 Error 표의 숫자는 REST 대응 상태 의미다. MCP 성공 payload에 가짜 HTTP 상태를 넣지 않는다. 구체 오류 봉투와 input/output schema 등록은 전진이 주관한다. 오류 봉투(`structuredContent.error`·`isError`)와 도구 등록 방법은 [MCP 서버 기반](../design/mcp-server-S15P31A108-176.md) 3·4절.
+인증 실패는 전송 인증 단계에서 401로 거부한다. 업무 오류의 `error.code/message`(명세가 정한 오류는 `error.details`까지)는 REST와 같은 본문으로 SDK의 도구 실패 결과에 전달한다. 도구별 Error 표의 숫자는 REST 대응 상태 의미다. MCP 성공 payload에 가짜 HTTP 상태를 넣지 않는다. 구체 오류 봉투와 input/output schema 등록은 전진이 주관한다. 오류 봉투(`structuredContent.error`·`isError`)와 도구 등록 방법은 [MCP 서버 기반](../design/mcp-server-S15P31A108-176.md) 3·4절.
 
 ## 작업 호출 순서
 
@@ -30,7 +30,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 6. 변경이 발행되면 다음 호출에서 확인하고 계획 수정·재검증 후 RESUME한다.
 7. 완료 결과·계획 대비 변경을 `report_task_state(COMPLETED)`로 보고한다.
 
-`get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`의 분리·명칭은 담당자 검토 대상이다. 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
+`get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`은 `validate_task_plan`과 나눈 별도 도구다(변준성 확정, S15P31A108-271). 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
 
 ## 탐색
 
@@ -318,7 +318,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `since_version` | `integer` | Y | 마지막으로 확인한 기준 번호. 최초 0 |
 | `task_id` | `ID` | N | 작업 범위 |
 | `cursor` | `string` | N | 이전 응답의 next_cursor. 최초 요청은 생략 |
-| `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100 |
+| `limit` | `integer` | N | 페이지 크기. 기본 20, 최대 100. 영향 결과(`impact_updates`)에도 같은 크기 |
+| `result_cursor` | `string` | N | 이전 응답의 `next_result_cursor`. 처음이면 생략 — 결과 없이 시작점만 받는다(지금부터) |
 
 아래는 도구 인수 객체다.
 
@@ -327,7 +328,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
   "since_version": 0,
   "task_id": "501",
   "cursor": "page-token",
-  "limit": 20
+  "limit": 20,
+  "result_cursor": "result-token"
 }
 ```
 
@@ -342,6 +344,9 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | Y | 호출자 작업의 검증 유효성 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
 | `next_cursor` | `string` | N | 다음 조회 cursor |
+| `impact_updates` | [ImpactUpdate[]](00-common.md#schema-impactupdate) | Y | `result_cursor` 이후 정해진 발행 후 영향 분석 결과. 처음(생략)이면 빈 배열 |
+| `result_has_more` | `boolean` | Y | 영향 결과가 더 있음 |
+| `next_result_cursor` | `string` | Y | 다음에 보낼 `result_cursor` |
 
 ```json
 {
@@ -377,7 +382,32 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
       "reason": "참조 설계 버전이 변경되었습니다."
     }
   ],
-  "has_more": false
+  "has_more": false,
+  "impact_updates": [
+    {
+      "result_seq": 7,
+      "baseline": {
+        "id": "401",
+        "version_no": 1,
+        "created_at": "2026-10-23T03:00:00Z"
+      },
+      "proposal_id": "71",
+      "analysis_status": "COMPLETED",
+      "evaluation_status": "COMPLETED",
+      "candidates": [
+        {
+          "origin": "RULE",
+          "task_id": "501",
+          "design_item_id": "301",
+          "member_id": "21"
+        }
+      ],
+      "candidates_truncated": 0,
+      "analyzed_at": "2026-10-23T03:01:00Z"
+    }
+  ],
+  "result_has_more": false,
+  "next_result_cursor": "result-token"
 }
 ```
 
@@ -407,6 +437,14 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 발행된 승인 변경만 반환한다. pending 제안을 승인된 변경으로 표시하지 않는다.
 - 페이지 마지막까지 읽은 뒤 기준 번호를 갱신한다. 실패를 변경 없음으로 처리하지 않는다.
 - 작업을 지정하면 그 작업, 지정하지 않으면 호출자의 열린 작업 전체의 검증 현재성을 포함한다.
+- (BE 구현, -221) 발행 후 영향 분석 결과는 발행 변경과 **따로** `result_cursor`로 이어 받는다. 결과가 정해질 때(완료·미평가·최종 실패) 프로젝트 안에서 1씩 오르는 결과 순번이 붙고, 순번은 커밋 순서대로 오르므로 "마지막으로 받은 순번 다음"만 읽어도 빠지는 결과가 없다. 재시도 대기·진행 중은 결과가 아니다.
+  - 처음(`result_cursor` 생략)은 **지금부터**다. 이미 정해진 결과는 주지 않고 지금의 마지막 순번을 `next_result_cursor`로 준다. 과거 후보는 대시보드에서 본다.
+  - `result_has_more`이면 `next_result_cursor`로 이어 부른다. 발행 변경(`has_more`·`next_cursor`)과 영향 결과는 각자 끝까지 읽는다. 받은 결과를 처리한 뒤 `next_result_cursor`를 저장한다. 같은 `result_seq`를 다시 받으면 같은 결과다.
+  - `task_id`를 주면 그 작업이 후보에 든 결과만, 후보도 그 작업 것만 준다. `result_cursor`는 만든 작업 범위(작업 하나 / 프로젝트 전체)에서만 쓸 수 있다 — 다르면 400 `validation_failed`. 범위를 바꾸면 `result_cursor` 없이 다시 시작한다.
+  - 후보는 규칙(RULE)·AI 둘 다, 같은 출처·같은 대상은 한 번만, 결과당 최대 10개(규칙 먼저·작업·항목 번호 순). 넘치면 `candidates_truncated`에 빠진 수를 주고 전체는 대시보드에서 본다.
+  - 미평가(`NOT_EVALUATED`)·실패(`FAILED`)도 결과로 준다 — 영향 0건이 아니다. 후보가 없으므로 `task_id` 범위에는 나오지 않는다.
+  - 후보는 승인된 설계가 아니고 작업 상태·검증을 바꾸지 않는다(도구 안내에도 적음). 직접 참조 영향(D5)은 기존대로 `affected_task_ids`·검증 STALE·WAITING(REVALIDATION)이다.
+  - 이번에 하지 않은 것: 결과가 재분석으로 바뀔 때 빠진 후보 작업에 알리기(지금은 재분석 경로가 없어 결과가 한 번만 정해짐), 미완료·재시도 대기 상태 노출, 권한별 전체 후보 REST 페이지, 결과 보존 기간·오래된 cursor 처리. [14 설계 변경 영향 결과](../design/14-design-changes-impact-updates.md) 참고.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1340,7 +1378,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: VAL 재시도 계약  
 담당: BE: 전진(도구) / 변준성(재시도) / AI: 양지훈(실패 정보) / FE: —  
-상태: 도구명·분리 담당자 검토. BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구 연결은 -179
+상태: 도구명·분리 확정 — 별도 도구 `retry_validation`(변준성, S15P31A108-271 리뷰: 받는 조건(ERROR·전부 RETRY·입력 그대로)과 오류 코드 의미가 새 검증과 달라 합치지 않는다). BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구 연결 S15P31A108-271 (`RetryValidationTool`)
 
 #### 인증
 
@@ -1476,6 +1514,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
 아래는 도구 인수 객체다.
@@ -1642,6 +1681,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (BE 구현, -269) COMPLETED에 `changed_design_item_ids`를 실으면 결과 `task.completion_review`에 계획과 규칙으로 대조한 범위 이탈 후보가 나온다([CompletionReview](00-common.md#schema-completionreview)). 표시만 하고 완료를 막지 않는다. 코드 품질을 보증하지 않는다. 규칙은 REST TSK-A07과 같다.
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
 - `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
 - (수정안 요청) summary는 AgentWork.last_summary로 HUD·대시보드에 원문 그대로 보인다. AI로 다시 요약하지 않는다.

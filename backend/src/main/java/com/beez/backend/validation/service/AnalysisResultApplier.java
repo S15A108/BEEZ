@@ -12,6 +12,7 @@ import com.beez.backend.common.auth.CallerContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Value;
 import com.beez.backend.task.service.ValidationStatusLookup;
+import com.beez.backend.validation.event.ConflictFindingsSaved;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -25,8 +26,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +53,7 @@ public class AnalysisResultApplier {
     private static final Set<String> KINDS = Set.of("MISMATCH", "MISSING_INPUT", "MISSING_POLICY", "CONFLICT", "STALE_REF");
     private static final Set<String> SEVERITIES = Set.of("INFO", "WARNING", "BLOCKING");
     private static final Set<String> REASONS = Set.of("EVIDENCE_INSUFFICIENT", "UNSUPPORTED_CONTENT");
+    private static final int MAX_AI_SUGGESTED_ACTION_LENGTH = 4000;
     /** 필수 누락 후보. 명세상 BLOCKING 으로만 온다 — 아니면 필수 누락이 있는 계획이 PASS 될 수 있어 계약 위반으로 본다 */
     private static final Set<String> BLOCKING_ONLY_KINDS = Set.of("MISSING_INPUT", "MISSING_POLICY");
     private static final java.util.regex.Pattern EXPLICIT_UNDECIDED_POLICY = java.util.regex.Pattern.compile(
@@ -70,6 +74,7 @@ public class AnalysisResultApplier {
     private final DeltaCompletion deltaCompletion;
     private final TaskCompletionReportRepository reports;
     private final ValidationStatusLookup statusLookup;
+    private final ApplicationEventPublisher publisher;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
@@ -77,7 +82,7 @@ public class AnalysisResultApplier {
                                  ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks, JdbcClient jdbc,
                                  @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
                                  DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports,
-                                 ValidationStatusLookup statusLookup) {
+                                 ValidationStatusLookup statusLookup, ApplicationEventPublisher publisher) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
@@ -91,6 +96,7 @@ public class AnalysisResultApplier {
         this.deltaCompletion = deltaCompletion;
         this.reports = reports;
         this.statusLookup = statusLookup;
+        this.publisher = publisher;
     }
 
     /** An incomplete search cannot establish PASS, even when the model was never called. */
@@ -389,6 +395,7 @@ public class AnalysisResultApplier {
         // 후보 저장. 출처는 AI 가 보낸 값 대신 요청에 넣은 출처 객체로 바꿔 저장한다
         // (계약 검사는 네 칸을 문자열로 비교하므로, 숫자 ID·명세에 없는 칸이 섞인 값을 그대로 내보내지 않게)
         Map<String, Map<String, Object>> requestSources = requestSources(request);
+        Set<Long> conflictRelated = new TreeSet<>();   // 회의 자동 개설 대상 (S15P31A108-248)
         for (Map<String, Object> f : objects(result.get("findings"))) {
             String kind = (String) f.get("kind");
             String severity = (String) f.get("severity");
@@ -418,10 +425,13 @@ public class AnalysisResultApplier {
             } else if (blocking) {
                 needsReview = true;              // MISMATCH·CONFLICT 는 BLOCKING 일 때만 막는다
             }
+            Long relatedTask = id(f.get("related_task_id"));
+            if ("CONFLICT".equals(kind) && blocking && relatedTask != null) conflictRelated.add(relatedTask);
             validations.insertFinding(v.id(), new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
-                    id(f.get("related_task_id")), (String) f.get("message"), canonicalSources(f, requestSources), resolution,
+                    relatedTask, (String) f.get("message"), canonicalSources(f, requestSources), resolution,
                     nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids")),
-                    (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs"))));
+                    (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs")),
+                    (String) f.get("suggested_action")));
         }
         String status = "PASS";
         if (needsReview) {
@@ -460,6 +470,10 @@ public class AnalysisResultApplier {
         }
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
+        // 저장된 결과일 때만 나간다(앞의 늦은 결과·입력 변경·리스 만료 분기는 이미 return). 회의 개설은 커밋 뒤 리스너가 맡는다
+        if (!conflictRelated.isEmpty()) {
+            publisher.publishEvent(new ConflictFindingsSaved(v.projectId(), v.id(), v.taskId(), List.copyOf(conflictRelated)));
+        }
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
@@ -603,7 +617,7 @@ public class AnalysisResultApplier {
         out.put("analysis_status", analysisStatus);
         out.put("checked_keys", result.get("checked_keys"));
         out.put("unassessed", result.get("unassessed"));
-        out.put("partial_findings", result.get("findings"));
+        out.put("partial_findings", safeDiagnosticFindings(result.get("findings")));
         out.put("model", response.get("model"));
         // 비용 기록(-168)에서 실패한 실행의 사용량도 빠지지 않게. 다만 모양이 틀린 값(배열이 아님 등)은 실행의 usage 칸이
         // 객체 배열만 받으므로 저장하지 않는다 — 저장이 실패하면 원래 오류 분류(ai_invalid_output)가 BE 오류로 바뀐다
@@ -614,6 +628,24 @@ public class AnalysisResultApplier {
             out.put("usage_rejected", String.valueOf(response.get("usage")));   // 진단용 원문 (문자열이라 어떤 모양이든 안전)
         }
         return out;
+    }
+
+    /** 계약에 맞지 않는 제안 원문을 JSONB에 다시 넣으면 오류 기록 자체가 실패할 수 있다. */
+    private static Object safeDiagnosticFindings(Object value) {
+        if (!(value instanceof List<?> findings)) return value;
+        List<Object> safe = new ArrayList<>();
+        for (Object entry : findings) {
+            if (entry instanceof Map<?, ?> finding && finding.containsKey("suggested_action")
+                    && (!(finding.get("suggested_action") instanceof String action)
+                    || action.length() > MAX_AI_SUGGESTED_ACTION_LENGTH || action.indexOf('\0') >= 0)) {
+                Map<Object, Object> copy = new LinkedHashMap<>(finding);
+                copy.put("suggested_action", "[invalid suggestion omitted]");
+                safe.add(copy);
+            } else {
+                safe.add(entry);
+            }
+        }
+        return safe;
     }
 
     private static void copyPolicyAnalysis(Map<String, Object> result, Map<String, Object> destination) {
@@ -916,6 +948,10 @@ public class AnalysisResultApplier {
             }
             if (!isText(f.get("suggested_action"))) {
                 return "finding.suggested_action 누락";
+            }
+            String suggestion = (String) f.get("suggested_action");
+            if (suggestion.length() > MAX_AI_SUGGESTED_ACTION_LENGTH || suggestion.indexOf('\0') >= 0) {
+                return "finding.suggested_action 길이 또는 문자 오류";
             }
             Object item = f.get("design_item_id");
             Object version = f.get("design_item_version_id");

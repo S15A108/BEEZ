@@ -28,6 +28,11 @@ public interface EmailVerificationRepository extends JpaRepository<EmailVerifica
     @Query("update EmailVerification v set v.closedAt = :now where v.email = :email and v.closedAt is null")
     int closeOpen(@Param("email") String email, @Param("now") Instant now);
 
+    /** 회원 탈퇴(ACC-A10, -277): 이 이메일의 인증 요청 행을 모두 지운다. 가입 때 쓴 행도 함께다. */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from EmailVerification v where v.email = :email")
+    int deleteByEmail(@Param("email") String email);
+
     /** 코드 확인: 같은 요청에 동시에 들어온 시도가 틀린 횟수를 함께 세도록 행을 잠그고 읽는다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select v from EmailVerification v where v.publicId = :publicId")

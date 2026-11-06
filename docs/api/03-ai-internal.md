@@ -50,6 +50,147 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/document-chunks](#ai-a09)
 - [/v1/document-reviews](#ai-a10)
 - [/v1/design-reference-recommendations](#ai-a11)
+- [/v1/document-revisions](#ai-a12)
+- [/v1/document-revision-blocks](#ai-a13)
+
+---
+
+<a id="ai-a12"></a>
+
+## AI-A12. 선택 범위 문서 수정 초안
+
+### POST `/v1/document-revisions`
+
+상태: S15P31A108-137 AI 내부 구현. 기존 AI-A06 `/v1/bee/draft`와
+별도 경로다. 기존 CHG-A07은 유지하며, 선택 범위용 BE 경로와 FE 화면은
+이 경로를 사용한다. 이 응답은 검토할 초안이며 AI는 저장, 승인 또는
+발행하지 않는다.
+
+#### 인증과 공통 제한
+
+`Authorization: Bearer {AI_INTERNAL_TOKEN}`과 JSON 본문이 필요하다.
+`X-Request-Id`는 선택적 추적 헤더다. 본문 한도는 2 MiB다.
+BE는 호출 전에 프로젝트·문서 접근을 허가하고 승인된 원문을 준비해야 한다.
+AI의 버전 비교는 요청 내부 값의 일치만 검사하므로, BE는 모델 호출 후에도
+현재 승인 버전과 선택 범위가 유효한지 확인해야 한다.
+
+#### 요청
+
+최상위와 `source`는 아래 필드만 허용한다.
+
+| 필드 | 필수 | 설명 |
+| --- | --- | --- |
+| `source` | Y | 권한 확인된 원문 스냅샷. 아래 필드를 모두 포함 |
+| `expected_document_version_id` | Y | 1~256자. `source.document_version_id`와 일치 |
+| `selected_block_ids` | Y | 동일 스냅샷에서 파싱된 블록 ID 1~30개. 중복 불가 |
+| `instruction` | Y | 공백만으로 구성되지 않은 수정 지시, 최대 4,000자 |
+| `agreements` | N | 합의 문자열 목록, 최대 30개. 각 항목은 공백만일 수 없고 최대 4,000자 |
+| `related_proposals` | N | 관련 제안 문자열 목록. 개수·항목 제한은 `agreements`와 같음 |
+| `request_key` | Y | 공백만으로 구성되지 않은 요청 식별자, 최대 128자 |
+
+| `source` 필드 | 설명 |
+| --- | --- |
+| `project_id`, `document_version_id` | 각 1~256자 문자열 |
+| `kind` | `PLAN`, `REQUIREMENTS`, `API_SPEC`, `ERD` 중 하나 |
+| `media_type` | `text/markdown` 또는 `text/plain` |
+| `content` | `utf8-lf-v1`로 정규화된 원문. 정규화 후 최대 100,000자, 입력 최대 1 MiB |
+| `content_hash` | 원본 콘텐츠의 SHA-256, 접두사 없는 소문자 16진수 64자 |
+| `text_hash` | 정규화된 `content`의 SHA-256, 접두사 없는 소문자 16진수 64자. AI가 원문과 비교 |
+| `normalization_version` | `utf8-lf-v1` |
+| `parser_profile` | Markdown은 `markdown-v1`, 일반 텍스트는 `plain-v1` |
+
+블록 ID는 문서 버전, 원문 해시와 파서 프로필 등에 종속된다. AI-A13에서
+같은 스냅샷의 선택 가능한 블록을 조회할 수 있다. BE의 선택 범위용
+외부 API와 FE 선택 UI가 이를 이용한다.
+범위가 없거나 스냅샷에 없는 ID를 전체 문서 선택으로 해석하지 않는다.
+모델에는 선택 블록 원문과 수정 지시·합의·제안만 전달한다.
+
+#### 응답
+
+HTTP 200은 `origin: "MODEL"`, 실제 `model`, 호출별 `usage`,
+`result`를 반환한다. `usage`의 `request_key`는 실제 모델 호출의 고유
+식별자다. 공통 Usage 필드와 실패 시 사용량 기록은 위 성공·실패 규약을 따른다.
+
+| `result` 필드 | 설명 |
+| --- | --- |
+| `document_version_id` | 입력 원문의 기준 버전 ID |
+| `after_content` | 선택 블록을 교체하고 선택 밖 원문을 이어 붙인 전체 초안 |
+| `changes[]` | 각 변경의 `block_id`, `before`, `after`, `reason`, `evidence[]` |
+| `unresolved[]` | 해결할 수 없거나 확인이 필요한 내용. 변경 없이 반환할 수 있음 |
+
+`evidence`는 입력된 합의 또는 제안에 실제 포함된 문자열만 허용한다.
+모델이 범위 밖 ID, 중복 ID, 유효하지 않은 근거 또는 줄 경계를 침범하는
+출력을 내면 실패 처리한다. Markdown 초안은 다시 파싱하여 선택하지 않은
+블록의 위치와 유형, 제목·표·목록 등 구조 맥락과 토큰을 비교하며
+참조 정의의 변경이 선택하지 않은 블록에 영향을 줄 수 있는 경우에도 거부한다.
+이는 구조 검증이며 요청의 의미와 문서의 정확성을 판정하지 않으므로
+사람이 전체 초안을 검토해야 한다.
+
+#### 오류
+
+| HTTP | 코드 | 설명 |
+| --- | --- | --- |
+| 400 | `validation_failed` | JSON 또는 필드 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 토큰 누락 또는 불일치 |
+| 413 | `file_too_large` | 본문이 2 MiB 초과 |
+| 422 | `invalid_ai_input` | 버전 불일치, 원문·해시·프로필 오류, 선택 범위 등 의미상 입력 오류 |
+| 502 | `model_unavailable` | 모델 사용 불가 또는 모델 응답 검증 실패 |
+| 504 | `model_timeout` | 모델 호출 시간 초과 |
+
+모델 호출 후 실패했으면 오류에 실제 `usage`가 포함될 수 있다. 모델
+실제 서버 연결은 합성 문서와 jsdom FE 폼으로 확인했다. 실제 브라우저와
+다양한 실데이터를 이용한 품질 검토는 별도 검증이 필요하다.
+
+---
+
+<a id="ai-a13"></a>
+
+## AI-A13. 문서 수정용 선택 블록 조회
+
+### POST `/v1/document-revision-blocks`
+
+상태: S15P31A108-137 AI 내부 구현. AI-A12에 전달할 선택 블록의 ID,
+유형, 원문 위치와 텍스트를 반환한다. 이 API는 사용자의 문서 접근이나
+승인 상태를 판정하지 않는다. BE가 권한과 현재 승인 버전을 확인하고
+인가된 스냅샷만 전달해야 한다. 선택 범위용 BE·FE 경로가 이 응답을
+사용한다.
+
+#### 인증 및 요청
+
+`Authorization: Bearer {AI_INTERNAL_TOKEN}`과 JSON 본문이 필요하며
+`X-Request-Id`는 선택 추적 헤더다. 요청 본문은 AI-A12의 `source`
+객체 자체이며, 그 표의 모든 필드와 정규화·해시·프로필 제약이 동일하게
+적용된다. `source`라는 래퍼 없이 전송한다. 본문 크기 한도는 2 MiB다.
+
+#### 응답
+
+HTTP 200은 아래 필드를 가진 JSON 객체를 반환한다. 모델 호출이 없으므로
+`origin`, `model`, `usage`는 없다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `document_version_id` | 파싱한 문서 버전 ID |
+| `text_hash` | 정규화 원문 SHA-256 |
+| `normalization_version` | 원문 정규화 버전 |
+| `parser_profile`, `parser_version` | 파서 프로필과 구현 버전 |
+| `blocks[]` | 선택 가능한 파서 블록 목록 |
+| `blocks[].block_id` | AI-A12 `selected_block_ids`에 전달할 ID |
+| `blocks[].block_type` | 파서의 블록 유형 |
+| `blocks[].locator` | `type: "text_lines"`, 1부터 시작하는 양끝 포함 `start_line`, `end_line` |
+| `blocks[].text` | 해당 줄 범위의 원문. 줄바꿈을 포함할 수 있음 |
+
+블록은 입력한 문서 스냅샷에만 유효하다. 원문, 버전 또는 파서가 바뀌면
+다시 조회하고 선택해야 한다. 공백 등 파서가 제외한 범위는 목록에
+포함되지 않는다. 응답 JSON이 2 MiB를 초과하면 실패한다.
+
+#### 오류
+
+| HTTP | 코드 | 설명 |
+| --- | --- | --- |
+| 400 | `validation_failed` | JSON 또는 필드 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 토큰 누락 또는 불일치 |
+| 413 | `file_too_large` | 요청 본문이 2 MiB 초과 |
+| 422 | `invalid_ai_input` | 정규화·해시·프로필·파싱 오류 또는 응답 크기 한도 초과 |
 
 ---
 
@@ -1602,7 +1743,7 @@ HTTP `200`.
 관련 요구사항: MTG-06·08  
 담당: BE: 오서현 / AI: 양지훈 / FE: —
 
-상태: 내부 계약 초안
+상태: 내부 계약 초안. SUMMARY 는 BE 가 호출하는 경계를 구현했다(S15P31A108-235). AI 서버는 2026-11-05 기준 SUMMARY 를 아직 받지 않아(`SUMMARY contract is not agreed`) 실제 연동은 AI 구현 뒤 확인한다
 
 #### 인증
 
@@ -1792,9 +1933,11 @@ HTTP `200`.
 - QUESTIONS는 질문·누락 후보, MINUTES는 요약·결정·후속 행동을 반환한다.
 - 원문 기록 ID/입력 범위를 고정한다. 실제 설계 수정안은 박상은의 draft 모듈을 사용한다. 단 SUMMARY의 document_changes.after는 이 API가 직접 만들고 draft 모듈(AI-A06)을 부르지 않는다.
 - 전사 입력 범위 Q09. 이 요청은 텍스트 기록을 입력받는다.
-- (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 한다.
+- (수정안 요청) SUMMARY는 팀장이 요청한 회의 정리다. conflicts·decisions·document_changes·action_items를 돌려준다. document_changes.after는 회의를 끝내면 BE가 만드는 변경 제안(MTG-A13)에 들어갈 문장이고, locator는 입력 documents의 행 범위, evidence_entry_ids는 입력 entries의 ID만 쓴다. before는 그 범위 원문과 정확히 같아야 하며 각 줄의 LF를 포함한다(원문이 a\nb\n이면 1행의 before는 a\n, 문서가 LF로 끝나지 않으면 마지막 줄만 LF 없음). 회의 끝내기(MTG-A13)도 같은 기준을 쓴다.
 - (수정안 요청) 수정 요청이면 previous_summary와 feedback을 함께 받아 다시 정리한다.
 - (수정안 요청) QUESTIONS·MINUTES는 회의실 수정안에서 쓰지 않는다(MTG-A07·A08 폐지 예정).
+- (BE 구현, S15P31A108-235) BE가 SUMMARY로 보내는 입력: `entries`는 정리 범위의 TEXT·CONFLICT_BRIEF 기록(최근 것부터 최대 200건), `related_tasks`는 회의가 가리키는 작업, `approved_items`는 그 작업의 현재 계획이 참조하는 설계 항목의 지금 기준 승인 버전(최대 100개), `documents`는 그 항목의 출처 문서의 지금 기준 승인본 원문(utf8-lf-v1 정규화, 최대 10개·문서당 300,000바이트, 통째로만), 수정 요청이면 `previous_summary`·`feedback`(4,000자 이하). `entries`는 최소 한 건을 보장하도록 설계 항목보다 먼저 예산을 잡고, 한 건도 담을 수 없으면 AI 호출 전에 400으로 끝낸다. 요청 본문은 바이트 예산(기본 900,000바이트, 설정값)을 기록·문서·항목이 나눠 쓰며 AI 쪽 한도(1 MiB)보다 약 14% 낮다 — 실연동 때 조정한다. `change_proposal`은 보내지 않는다.
+- (BE 구현, S15P31A108-235) BE가 검증하는 출력: `result`는 객체, `origin`은 MODEL/TEMPLATE, `conflicts`·`decisions`·`document_changes`·`action_items`는 배열이어야 한다. `decisions`는 문자열 배열이면 BE가 `{text}`로 감싸고 `{text, decided_by_member_id}` 객체도 받는다. `document_changes[]`는 입력 `documents`의 문서·버전이고 `locator`가 `text_lines` 줄 범위 안이며 `before`가 그 범위 원문과(각 줄의 LF 포함) 정확히 같고 `evidence_entry_ids`가 입력 `entries`의 ID이며 같은 문서 안에서 줄 범위가 겹치지 않아야 한다. 틀린 항목은 버려 `unresolved`에 개수를 남기고, 한 목록이 통째로 쓸 수 없으면 502 `ai_unavailable`로 응답하며 아무것도 저장하지 않는다. `result.sources`는 입력 문서·버전과 같은 것만 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1875,7 +2018,15 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 | COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
 | 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
 
-[정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN/DISCUSS/REQUEST 신규 기능은 후속 범위다.
+[정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN 신규 기능은 후속 범위다. DISCUSS/REQUEST는 아래 BE 제안(S15P31A108-231)으로 BE를 구현했고 AI 쪽은 미구현이다.
+
+#### DISCUSS·REQUEST BE 제안 (S15P31A108-231, AI 담당과 합의 전)
+
+BE는 v2 요청 필드(contract_version=2, 지금 본문, content_hash, reference_hash, references, request_key `document-chat-…`/`document-request-…`)에 아래를 더해 같은 `/v1/document-reviews`를 부른다. 응답은 v2 식별값(document_id·revision·content_hash·reference_hash·request_key)을 그대로 돌려주고 `origin=MODEL`, 실제 호출 `usage[]`(feature=BEE_DRAFT)를 가져야 한다. 템플릿 결과는 받지 않는다. 합의되면 이 절을 확정 계약으로 바꾼다.
+
+- DISCUSS 요청: `mode=DISCUSS`, `suggestion`(`{id,type,step,explanation,original_text,replacement_text,decision}`), `messages`(`[{author_kind: HUMAN|BEE, text, proposed_text?}]`, 지금까지의 대화 + 새 사람 메시지, 최대 40개). 응답 result: `reply: {text(≤10,000자), proposed_text?(≤100,000자, 빈 문자열이면 그 부분을 지운다)}`. `suggestions`는 없거나 []이어야 하며 본문은 바꾸지 않는다.
+- REQUEST 요청: `mode=REQUEST`, `request_text`(≤5,000자). 응답 result: `suggestions` 정확히 1개 `{type: PATCH, step, explanation, original_text, replacement_text, sources[]}`. step은 해당 검토에서 완료된 단계, sources는 그 단계의 출처 규칙(BODY는 [], 비교 단계는 해당 단계 승인본 1개 이상)을 따른다. original_text는 입력 본문에서 한 곳과만 일치하고 아직 처리하지 않은 다른 제안의 구간과 겹치지 않아야 한다(요청에는 그 구간을 싣지 않으며, BE가 저장 전에 검증하고 어기면 502 invalid_ai_output으로 거절한다).
+
 
 222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
 

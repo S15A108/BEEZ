@@ -73,7 +73,8 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         assertThat(wrong.statusCode()).isEqualTo(400);
         assertThat(wrong.body()).contains("\"code\":\"current_password_mismatch\"");
         assertThat(changePassword(here, AccessFixtures.PASSWORD, "short1").body())
-                .as("정책 위반은 가입과 같은 오류").contains("\"code\":\"validation_failed\"");
+                .as("정책 위반은 가입과 같은 오류").contains("\"code\":\"validation_failed\"")
+                .contains("\"message\":\"password:");
         assertThat(elsewhere.get("/api/me").statusCode()).as("실패한 변경은 세션을 건드리지 않는다").isEqualTo(200);
 
         assertThat(changePassword(here, AccessFixtures.PASSWORD, NEW_PASSWORD).statusCode()).isEqualTo(204);
@@ -94,6 +95,12 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         long mate = fixtures().account();
         long mateMemberId = fixtures().member(p.projectId(), mate, ProjectRole.MEMBER);
         ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        // 탈퇴는 초대 정리를 팀장 판정보다 먼저 한다(-277). 409 면 그 정리도 되돌려져야 한다. 로그인 뒤에 넣어 자동 참여되지 않게 한다
+        var inviting = fixtures().projectWithLeader();
+        long pendingInvite = db.queryForObject("""
+                INSERT INTO invitation (project_id, email, token_hash, invited_by) VALUES (?, ?, ?, ?) RETURNING id
+                """, Long.class, inviting.projectId(), p.leaderEmail(), "h-blocked-" + p.leaderAccountId(),
+                inviting.leaderAccountId());
 
         JsonNode check = json.readTree(leader.get("/api/me/withdrawal-check").body());
         assertThat(check.get("can_withdraw").asBoolean()).isFalse();
@@ -110,6 +117,10 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(String.valueOf(p.projectId()));
         assertThat(db.queryForObject("SELECT deleted_at IS NULL FROM account WHERE id = ?", Boolean.class,
                 p.leaderAccountId())).as("막히면 아무것도 바꾸지 않는다").isTrue();
+        assertThat(db.queryForMap("SELECT email, revoked_at FROM invitation WHERE id = ?", pendingInvite))
+                .as("막히면 대기 초대도 주소·대기 상태 그대로")
+                .containsEntry("email", p.leaderEmail())
+                .containsEntry("revoked_at", null);
 
         assertThat(leader.post("/api/projects/" + p.projectId() + "/leadership-transfer",
                 "{\"target_member_id\":\"" + mateMemberId + "\"}").statusCode()).isEqualTo(200);
@@ -162,15 +173,15 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         assertThat(row.get("password_hash")).isNull();
         assertThat(row.get("display_name")).isEqualTo("탈퇴한 사용자");
         assertThat(row.get("deleted_at")).isNotNull();
-        // 프로젝트: 혼자 쓰던 것은 삭제, 팀 프로젝트는 멤버십만 끝나고 작업 기록은 그대로
+        // 프로젝트: 혼자 쓰던 것은 삭제, 팀 프로젝트는 멤버십이 끝나고 작업 행은 남는다(열린 작업의 담당자는 비워진다, -281)
         assertThat(db.queryForObject("SELECT archived_at IS NOT NULL FROM project WHERE id = ?", Boolean.class,
                 solo.projectId())).isTrue();
         assertThat(db.queryForObject("SELECT archived_at IS NULL FROM project WHERE id = ?", Boolean.class,
                 team.projectId())).isTrue();
         assertThat(db.queryForObject("SELECT active FROM project_member WHERE id = ?", Boolean.class, myMemberId))
                 .isFalse();
-        assertThat(db.queryForObject("SELECT assignee_member_id FROM task WHERE id = ?", Long.class, taskId))
-                .isEqualTo(myMemberId);
+        assertThat(db.queryForObject("SELECT count(*) FROM task WHERE id = ? AND assignee_member_id IS NULL",
+                Integer.class, taskId)).isEqualTo(1);
         // 다시 로그인할 수 없고, 같은 이메일로 새 계정을 만들 수 있다
         assertThat(login(email, AccessFixtures.PASSWORD).statusCode()).isEqualTo(401);
         HttpResponse<String> again = client().post("/api/auth/register", "{\"email\":\"" + email
@@ -178,5 +189,171 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
                 + fixtures().verifiedToken(email) + "\"}");
         assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
         assertThat(json.readTree(again.body()).get("id").asString()).isNotEqualTo(String.valueOf(me));
+    }
+
+    private long insertTask(long projectId, String key, Long assigneeMemberId, String status) {
+        return db.queryForObject("""
+                INSERT INTO task (project_id, key, title, assignee_member_id, status, cancelled_at)
+                VALUES (?, ?, ?, ?, ?, CASE WHEN ? = 'CANCELLED' THEN now() END) RETURNING id
+                """, Long.class, projectId, key, key, assigneeMemberId, status, status);
+    }
+
+    /** 담당 멤버|상태|잠금 번호 (담당자 없으면 null) */
+    private String taskRow(long taskId) {
+        return db.queryForObject("SELECT coalesce(assignee_member_id::text, 'null') || '|' || status || '|' || lock_version"
+                + " FROM task WHERE id = ?", String.class, taskId);
+    }
+
+    /** 이 작업들의 담당자 변경 활동(행위 종류|행위 계정|작업), 배정 알림 수 */
+    private String assigneeTrail(long... taskIds) {
+        String ids = java.util.Arrays.stream(taskIds).mapToObj(Long::toString)
+                .collect(java.util.stream.Collectors.joining(","));
+        String activities = String.join(",", db.queryForList("SELECT actor_kind || '|' || actor_id || '|' || task_id"
+                + " FROM activity_event WHERE event_type = 'TASK_ASSIGNEE_CHANGED' AND task_id IN (" + ids + ") ORDER BY id",
+                String.class));
+        Integer notifications = db.queryForObject("SELECT count(*) FROM notification WHERE type = 'TASK_ASSIGNED'"
+                + " AND ref_kind = 'TASK' AND ref_id IN (" + ids + ")", Integer.class);
+        return activities + " / notifications=" + notifications;
+    }
+
+    /**
+     * 깨지면: 탈퇴한 팀원의 열린 작업이 끝난 멤버십을 담당자로 가리켜 '담당자 없는 작업'에서 빠지거나(-281, ACC-A10 → MEM-A10 팀원 규칙),
+     * 닫힌 작업·다른 팀원의 작업·함께 삭제되는 혼자 쓰는 프로젝트의 작업까지 바뀌거나, 비운 경위가 활동에 남지 않거나,
+     * 받을 사람이 없는데 배정 알림이 생긴다.
+     */
+    @Test
+    void withdraw_unassignsOnlyMyOpenTasksInTeamProjects_withActivityAndNoNotification() {
+        var solo = fixtures().projectWithLeader();
+        long me = solo.leaderAccountId();
+        var team = fixtures().projectWithLeader();
+        long myMemberId = fixtures().member(team.projectId(), me, ProjectRole.MEMBER);
+        long mateMemberId = fixtures().member(team.projectId(), fixtures().account(), ProjectRole.MEMBER);
+        long myOpen = insertTask(team.projectId(), "T-1", myMemberId, "DRAFT");
+        long myClosed = insertTask(team.projectId(), "T-2", myMemberId, "CANCELLED");
+        long matesOpen = insertTask(team.projectId(), "T-3", mateMemberId, "DRAFT");
+        long soloOpen = insertTask(solo.projectId(), "T-1", solo.leaderMemberId(), "DRAFT");
+        String closedBefore = taskRow(myClosed);
+        String matesBefore = taskRow(matesOpen);
+        String soloBefore = taskRow(soloOpen);
+        ApiClient user = client().login(solo.leaderEmail(), AccessFixtures.PASSWORD);
+
+        assertThat(withdraw(user, AccessFixtures.PASSWORD).statusCode()).isEqualTo(204);
+
+        assertThat(taskRow(myOpen)).as("담당자만 비고 상태는 그대로, 잠금 번호는 오른다").isEqualTo("null|DRAFT|1");
+        assertThat(taskRow(myClosed)).isEqualTo(closedBefore);
+        assertThat(taskRow(matesOpen)).isEqualTo(matesBefore);
+        assertThat(taskRow(soloOpen)).as("혼자 쓰던 프로젝트는 보관될 뿐 작업은 건드리지 않는다").isEqualTo(soloBefore);
+        assertThat(assigneeTrail(myOpen, myClosed, matesOpen, soloOpen))
+                .isEqualTo("HUMAN|" + me + "|" + myOpen + " / notifications=0");
+    }
+
+    /**
+     * 깨지면: 탈퇴가 뒤 단계에서 실패해도 담당자 비우기와 그 활동만 따로 커밋돼, 탈퇴하지 않은 팀원의 작업이 미배정이 된다
+     * (handOver 는 탈퇴와 같은 트랜잭션이어야 한다 — Propagation.MANDATORY).
+     */
+    @Test
+    void withdraw_failingAfterUnassign_rollsBackAssigneeAndActivity() {
+        var team = fixtures().projectWithLeader();
+        long me = fixtures().account();
+        long myMemberId = fixtures().member(team.projectId(), me, ProjectRole.MEMBER);
+        long myOpen = insertTask(team.projectId(), "T-1", myMemberId, "DRAFT");
+        ApiClient user = client().login(fixtures().emailOf(me), AccessFixtures.PASSWORD);
+        // 담당자를 비운 뒤의 마지막 단계(계정 익명화)를 이 계정에 한해서만 실패시킨다
+        String fn = "test_fail_withdraw_" + me;
+        db.execute("CREATE FUNCTION " + fn + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                + " IF NEW.id = " + me + " AND NEW.deleted_at IS NOT NULL THEN RAISE EXCEPTION 'test failure'; END IF;"
+                + " RETURN NEW; END $$");
+        db.execute("CREATE TRIGGER " + fn + " BEFORE UPDATE ON account FOR EACH ROW EXECUTE FUNCTION " + fn + "()");
+        try {
+            assertThat(withdraw(user, AccessFixtures.PASSWORD).statusCode()).isEqualTo(500);
+        } finally {
+            db.execute("DROP TRIGGER " + fn + " ON account");
+            db.execute("DROP FUNCTION " + fn + "()");
+        }
+
+        assertThat(taskRow(myOpen)).isEqualTo(myMemberId + "|DRAFT|0");
+        assertThat(assigneeTrail(myOpen)).isEqualTo(" / notifications=0");
+        assertThat(db.queryForObject("SELECT active FROM project_member WHERE id = ?", Boolean.class, myMemberId))
+                .isTrue();
+        assertThat(user.get("/api/me").statusCode()).as("실패한 탈퇴는 세션을 끊지 않는다").isEqualTo(200);
+    }
+
+    /**
+     * 깨지면: 탈퇴한 사람의 이메일이 임시 비밀번호·가입 인증·초대 행에 남거나(-277 완료 조건), 탈퇴 전에 받아 둔 대기 초대로
+     * 같은 이메일의 새 계정이 자동 참여하거나, 주소를 지운 대기 초대가 링크 초대처럼 열려 있거나, 다른 사람의 초대까지 지워지거나,
+     * 탈퇴 뒤 팀장이 새로 초대해도 들어오지 못한다.
+     */
+    @Test
+    void withdraw_erasesEmailFromRecoveryVerificationAndInvitations_andSameEmailCanBeInvitedAgain() {
+        long me = fixtures().account();
+        String email = fixtures().emailOf(me);
+        var pendingTeam = fixtures().projectWithLeader();   // 아직 로그인하지 않아 대기 중인 초대
+        var joinedTeam = fixtures().projectWithLeader();    // 초대를 받아 들어간 팀
+        fixtures().member(joinedTeam.projectId(), me, ProjectRole.MEMBER);
+        // 로그인하면 대기 초대가 자동 참여로 수락되므로, 초대는 로그인한 뒤에 보낸다
+        ApiClient user = client().login(email, AccessFixtures.PASSWORD);
+        ApiClient pendingLeader = client().login(pendingTeam.leaderEmail(), AccessFixtures.PASSWORD);
+        assertThat(pendingLeader.post("/api/projects/" + pendingTeam.projectId() + "/invitations",
+                "{\"emails\":[\"" + email + "\"]}").statusCode()).isEqualTo(201);
+        long pending = db.queryForObject("SELECT id FROM invitation WHERE project_id = ? AND email = ?", Long.class,
+                pendingTeam.projectId(), email);
+        long accepted = db.queryForObject("""
+                INSERT INTO invitation (project_id, email, token_hash, invited_by, accepted_at, accepted_account_id)
+                VALUES (?, ?, ?, ?, now(), ?) RETURNING id
+                """, Long.class, joinedTeam.projectId(), email, "h-acc-" + me, joinedTeam.leaderAccountId(), me);
+        String otherEmail = AccessFixtures.uniqueEmail();
+        long others = db.queryForObject("""
+                INSERT INTO invitation (project_id, email, token_hash, invited_by) VALUES (?, ?, ?, ?) RETURNING id
+                """, Long.class, joinedTeam.projectId(), otherEmail, "h-other-" + me, joinedTeam.leaderAccountId());
+        // 임시 비밀번호: 이 계정에 발급된 열린 행과, 계정이 맞지 않아 한도만 센 행
+        db.update("""
+                INSERT INTO temporary_password (email, account_id, password_hash, expires_at, created_at, updated_at)
+                VALUES (?, ?, 'hash', now() + interval '30 minutes', now(), now())
+                """, email, me);
+        db.update("""
+                INSERT INTO temporary_password (email, expires_at, closed_at, created_at, updated_at)
+                VALUES (?, now(), now(), now(), now())
+                """, email);
+        fixtures().verifiedToken(email);   // 가입 인증 행
+        // 다른 사람의 행: 지워지면 안 된다
+        db.update("""
+                INSERT INTO temporary_password (email, expires_at, closed_at, created_at, updated_at)
+                VALUES (?, now(), now(), now(), now())
+                """, otherEmail);
+        fixtures().verifiedToken(otherEmail);
+
+        assertThat(withdraw(user, AccessFixtures.PASSWORD).statusCode()).isEqualTo(204);
+
+        assertThat(db.queryForObject("SELECT count(*) FROM temporary_password WHERE email = ? OR account_id = ?",
+                Integer.class, email, me)).isZero();
+        assertThat(db.queryForObject("SELECT count(*) FROM email_verification WHERE email = ?", Integer.class, email))
+                .isZero();
+        assertThat(db.queryForObject("SELECT count(*) FROM invitation WHERE email = ?", Integer.class, email)).isZero();
+        assertThat(db.queryForObject("SELECT count(*) FROM temporary_password WHERE email = ?", Integer.class,
+                otherEmail)).as("다른 사람의 임시 비밀번호 요청은 그대로").isEqualTo(1);
+        assertThat(db.queryForObject("SELECT count(*) FROM email_verification WHERE email = ?", Integer.class,
+                otherEmail)).as("다른 사람의 가입 인증은 그대로").isEqualTo(1);
+        assertThat(db.queryForObject("SELECT revoked_at IS NOT NULL FROM invitation WHERE id = ?", Boolean.class,
+                pending)).as("대기 초대는 취소 — 주소 없는 링크 초대로 남지 않는다").isTrue();
+        assertThat(db.queryForObject("SELECT accepted_account_id FROM invitation WHERE id = ?", Long.class, accepted))
+                .as("팀의 초대 기록은 남는다").isEqualTo(me);
+        assertThat(db.queryForMap("SELECT email, revoked_at FROM invitation WHERE id = ?", others))
+                .as("다른 사람의 초대는 그대로").containsEntry("email", otherEmail).containsEntry("revoked_at", null);
+
+        // 같은 이메일로 새로 가입해도 예전 초대로는 들어오지 않는다
+        HttpResponse<String> again = client().post("/api/auth/register", "{\"email\":\"" + email
+                + "\",\"password\":\"" + NEW_PASSWORD + "\",\"name\":\"다시\",\"verified_token\":\""
+                + fixtures().verifiedToken(email) + "\"}");
+        assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
+        long reborn = Long.parseLong(json.readTree(again.body()).get("id").asString());
+        String memberCount = "SELECT count(*) FROM project_member WHERE project_id = ? AND account_id = ? AND active";
+        assertThat(db.queryForObject(memberCount, Integer.class, pendingTeam.projectId(), reborn)).isZero();
+
+        // 팀장이 새로 초대하면 다음 로그인에 들어온다 (Q05 자동 참여)
+        HttpResponse<String> reinvite = pendingLeader.post("/api/projects/" + pendingTeam.projectId() + "/invitations",
+                "{\"emails\":[\"" + email + "\"]}");
+        assertThat(reinvite.statusCode()).as(reinvite.body()).isEqualTo(201);
+        assertThat(login(email, NEW_PASSWORD).statusCode()).isEqualTo(200);
+        assertThat(db.queryForObject(memberCount, Integer.class, pendingTeam.projectId(), reborn)).isEqualTo(1);
     }
 }

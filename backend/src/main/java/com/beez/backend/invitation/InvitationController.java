@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * MEM-A01 ~ A05. 컨트롤러는 HTTP ↔ 서비스 변환만 한다. 규칙·권한은 전부 InvitationService 안에 있다.
+ * MEM-A01 ~ A05, A11. 컨트롤러는 HTTP ↔ 서비스 변환만 한다. 규칙·권한은 전부 InvitationService 안에 있다.
  * Idempotency-Key 는 아직 처리하지 않는다 (저장 방식 Q12 미결, ProjectController 와 같음).
  */
 @Tag(name = "invitation", description = "팀원 초대 (MEM)")
@@ -30,7 +30,7 @@ public class InvitationController {
         this.invitations = invitations;
     }
 
-    @Operation(summary = "MEM-A01 팀원 초대 생성 (팀장, 초대 링크 반환)")
+    @Operation(summary = "MEM-A01 팀원 초대 생성 (팀장). email 이면 초대 링크 반환, emails 면 이메일마다 초대 메일 발송")
     @PostMapping("/api/projects/{id}/invitations")
     @ResponseStatus(HttpStatus.CREATED)
     public CreatedInvitationResponse create(CallerContext caller, @PathVariable("id") Long projectId,
@@ -54,12 +54,20 @@ public class InvitationController {
         invitations.revoke(caller, projectId, invitationId);
     }
 
-    /** PUBLIC 경로라 CallerContext 인자(없으면 401)를 받지 않고, 세션이 있는지만 본다. */
+    @Operation(summary = "MEM-A11 초대 다시 보내기 (팀장, 새 링크로 메일 발송 — 이전 링크는 무효)")
+    @PostMapping("/api/projects/{id}/invitations/{invitation_id}/resend")
+    public ResentInvitationResponse resend(CallerContext caller, @PathVariable("id") Long projectId,
+                                           @PathVariable("invitation_id") Long invitationId) {
+        return new ResentInvitationResponse(invitations.resend(caller, projectId, invitationId));
+    }
+
+    /** PUBLIC 경로라 CallerContext 인자(없으면 401)를 받지 않고, 사람 세션이 있으면 그 계정만 넘긴다. */
     @Operation(summary = "MEM-A04 초대 미리보기 (로그인 불필요)")
     @PostMapping("/api/invitations/preview")
     public InvitationPreviewResponse preview(@Valid @RequestBody InvitationTokenRequest body) {
-        boolean loggedIn = SecurityCallerResolver.find().filter(CallerContext::isHuman).isPresent();
-        return invitations.preview(body.token(), loggedIn);
+        Long accountId = SecurityCallerResolver.find().filter(CallerContext::isHuman)
+                .map(CallerContext::accountId).orElse(null);
+        return invitations.preview(body.token(), accountId);
     }
 
     @Operation(summary = "MEM-A05 초대 수락 (로그인 계정이 MEMBER 로 참여)")

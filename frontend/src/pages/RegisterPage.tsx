@@ -4,6 +4,7 @@ import { getApiErrorCode } from '@/api/error'
 import { authApi } from '@/api/services'
 import { ActionForm, type FormField } from '@/components/ActionForm'
 import { EmailVerification } from '@/features/auth/EmailVerification'
+import { invitationQuery } from '@/features/members/invitationQuery'
 import { PASSWORD_HINT, passwordRule } from '@/features/auth/passwordRule'
 
 const passwordFields: FormField[] = [
@@ -34,10 +35,8 @@ export default function RegisterPage() {
   const [needVerify, setNeedVerify] = useState(false)
   // 토큰이 만료·사용됐다는 가입 오류(email_not_verified) 뒤에 인증 칸을 처음 상태로 다시 그린다.
   const [verifyKey, setVerifyKey] = useState(0)
-  const invite = params.get('invite')
-  const login = invite
-    ? `/login?invite=${encodeURIComponent(invite)}`
-    : '/login'
+  // 초대 화면에서 왔으면 초대 토큰과 메일 링크의 프로젝트 ID를 로그인까지 넘긴다.
+  const login = `/login${invitationQuery(params)}`
   return (
     // 캔버스 SCR-01-v2-register: 위쪽에 둔 카드 하나, 이름 → 이메일·인증 코드 → 비밀번호 → 확인 순서
     <main className="px-4 py-10">

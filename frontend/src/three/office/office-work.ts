@@ -102,6 +102,8 @@ export function officeHomeSeats(
   const result = new Map<string, Seat>(),
     occupied: Partial<Record<Zone, number>> = {}
   for (const agent of agents) {
+    // 팀원의 AI 에이전트(hired_by)는 자기 자리 없이 주인 자리를 기준으로 움직인다(D37). 작업 자리와 그 모니터는 팀원만 받는다(PR #128 리뷰).
+    if (agent.hired_by) continue
     const zone = floor.footprint ? officeWorkZone(agent) : agent.home_zone
     const seats = floor.seats[zone]
     if (!seats?.length) continue

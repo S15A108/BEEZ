@@ -5,7 +5,8 @@ import java.nio.charset.StandardCharsets;
 import org.springframework.http.HttpStatus;
 
 /**
- * 비밀번호 정책 (Q04 제안안): 8자 이상, UTF-8 72바이트 이하, 영문·숫자 각 1자 이상.
+ * 비밀번호 정책 (Q04 정함, 11-06 S15P31A108-309): 8자 이상, UTF-8 72바이트 이하, 영문·숫자 각 1자 이상. 특수문자는 필수가 아니다.
+ * 위반은 400 validation_failed 이고 message 는 "password:" 로 시작한다 (ACC-A01·A06).
  * 72바이트는 bcrypt 가 실제로 읽는 길이다. 넘는 부분은 무시되어 다른 비밀번호가 같은 해시가 된다.
  */
 final class PasswordPolicy {

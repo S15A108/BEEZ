@@ -12,12 +12,6 @@ export const kindLabel = {
   POLICY: '정책',
   CONSTRAINT: '제약',
 } as const
-// 작업 칩 색(Tag). 상태 칩도 이 색을 나눠 쓴다.
-export const operationTone = {
-  UPDATE: 'bg-[#fdf0c8] text-[#6e5200]',
-  CREATE: 'bg-[#e8f3ec] text-[#00753a]',
-  RETIRE: 'bg-[#fdecec] text-[#b42318]',
-} as const
 export const operationLabel = {
   UPDATE: '고치기',
   CREATE: '새 항목',

@@ -39,6 +39,14 @@ public class DocumentReviewRepository {
                 """, Map.of("project", project, "account", account)).stream().findFirst().map(row -> row.get("role").toString());
     }
 
+    /** 검토 요청 알림을 받을 현재 활성 팀장 계정. 프로젝트당 활성 팀장은 한 명이다 */
+    public Optional<Long> leaderAccount(long project) {
+        return jdbc.sql("""
+                SELECT m.account_id FROM project_member m JOIN account a ON a.id=m.account_id
+                WHERE m.project_id=:project AND m.role='LEADER' AND m.active=true AND a.deleted_at IS NULL
+                """).param("project", project).query(Long.class).optional();
+    }
+
     public boolean hasBaseline(long project) {
         return !rows("SELECT id FROM baseline WHERE project_id=:project LIMIT 1", Map.of("project", project)).isEmpty();
     }
@@ -107,8 +115,15 @@ public class DocumentReviewRepository {
     }
 
     public void decideSuggestion(long suggestion, String decision, long review, long revision) {
-        jdbc.sql("UPDATE document_bee_suggestion SET decision=:decision,decided_at=now() WHERE id=:id")
-                .params(Map.of("id", suggestion, "decision", decision)).update();
+        decideSuggestion(suggestion, decision, review, revision, null);
+    }
+
+    /** appliedText 는 대화(DOC-A22)에서 받은 다른 대체문으로 반영했을 때만 있다. */
+    public void decideSuggestion(long suggestion, String decision, long review, long revision, String appliedText) {
+        var p = new java.util.HashMap<String, Object>();
+        p.put("id", suggestion); p.put("decision", decision); p.put("applied", appliedText);
+        jdbc.sql("UPDATE document_bee_suggestion SET decision=:decision,decided_at=now(),applied_replacement_text=:applied WHERE id=:id")
+                .params(p).update();
         jdbc.sql("UPDATE document_bee_review SET resolved_revision=:revision WHERE id=:review")
                 .params(Map.of("review", review, "revision", revision)).update();
     }
@@ -271,5 +286,69 @@ public class DocumentReviewRepository {
                     ON CONFLICT(request_key) DO NOTHING
                     """).params(p).update();
         }
+    }
+    // ---- DOC-A22 대화 · DOC-A23 직접 요청 ----
+
+    /** 이 검토의 모든 대화(제안별로 묶어 쓴다). */
+    public List<Map<String, Object>> messages(long review) {
+        return rows("SELECT * FROM document_bee_message WHERE review_id=:review ORDER BY id", Map.of("review", review));
+    }
+
+    public List<Map<String, Object>> messagesOf(long suggestion) {
+        return rows("SELECT * FROM document_bee_message WHERE suggestion_id=:suggestion ORDER BY id", Map.of("suggestion", suggestion));
+    }
+
+    public Map<String, Object> insertMessage(long review, long suggestion, String kind, Long account, String body, String proposed) {
+        var p = new java.util.HashMap<String, Object>();
+        p.put("review", review); p.put("suggestion", suggestion); p.put("kind", kind); p.put("account", account);
+        p.put("body", body); p.put("proposed", proposed);
+        return jdbc.sql("""
+                INSERT INTO document_bee_message(review_id,suggestion_id,author_kind,author_account_id,body,proposed_text)
+                VALUES(:review,:suggestion,:kind,:account,:body,:proposed) RETURNING *
+                """).params(p).query().singleRow();
+    }
+
+    public int humanMessageCount(long review) {
+        return jdbc.sql("SELECT count(*) FROM document_bee_message WHERE review_id=:review AND author_kind='HUMAN'")
+                .param("review", review).query(Integer.class).single();
+    }
+
+    public int directRequestCount(long review) {
+        return jdbc.sql("SELECT count(*) FROM document_bee_suggestion WHERE review_id=:review AND origin='DIRECT_REQUEST'")
+                .param("review", review).query(Integer.class).single();
+    }
+
+    /** 비비가 직접 요청에 답해 만든 PATCH 제안. 같은 검토에 붙고 처리 전(PENDING)이다. */
+    public Map<String, Object> insertRequestedSuggestion(long review, Map<?, ?> suggestion) {
+        var p = new java.util.HashMap<String, Object>();
+        p.put("review", review); p.put("step", suggestion.get("step")); p.put("sources", canonical(suggestion.get("sources")));
+        p.put("explanation", suggestion.get("explanation"));
+        p.put("original", suggestion.get("original_text")); p.put("replacement", suggestion.get("replacement_text"));
+        return jdbc.sql("""
+                INSERT INTO document_bee_suggestion(review_id,type,step,sources,explanation,original_text,replacement_text,decision,origin)
+                VALUES(:review,'PATCH',:step,cast(:sources AS jsonb),:explanation,:original,:replacement,'PENDING','DIRECT_REQUEST') RETURNING *
+                """).params(p).query().singleRow();
+    }
+
+    // ---- DOC-A24 제출 취소 ----
+
+    /** SUBMITTED 인 제출만 취소한다. 취소했으면 true. 결정과 동시에 오면 프로젝트 잠금이 한쪽만 통과시키지만 조건부로 한 번 더 막는다. */
+    public boolean withdraw(long submission, long actor) {
+        return jdbc.sql("""
+                UPDATE document_review_submission SET status='WITHDRAWN',withdrawn_at=now(),withdrawn_by=:actor
+                 WHERE id=:id AND status='SUBMITTED'
+                """).params(Map.of("id", submission, "actor", actor)).update() == 1;
+    }
+
+    /**
+     * 취소한 제출의 문서 버전은 반려와 같이 REJECTED 로 두고(제출 이력은 WITHDRAWN 으로 구분), 작성 사본을 EDITING 으로 되돌린 뒤
+     * revision 을 올린다. 상태와 revision 은 두 번에 나눠 쓴다 — 제출 중 잠금 트리거가 한 번에 둘을 바꾸는 것을 막는다.
+     */
+    public void reopenAfterWithdraw(long document, long version) {
+        jdbc.sql("UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1 WHERE id=:version AND status='DRAFT'")
+                .param("version", version).update();
+        jdbc.sql("UPDATE document_working_copy SET status='EDITING',updated_at=now() WHERE document_id=:document AND status='SUBMITTED'")
+                .param("document", document).update();
+        jdbc.sql("UPDATE document_working_copy SET revision=revision+1 WHERE document_id=:document").param("document", document).update();
     }
 }

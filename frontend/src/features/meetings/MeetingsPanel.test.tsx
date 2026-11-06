@@ -69,6 +69,13 @@ it('팀장은 메시지를 보내고 비비 정리를 받은 뒤 회의 끝내�
   expect(
     await within(log).findByText(/회의 내용을 정리했어요 · 메시지 4개 기준/),
   ).toBeInTheDocument()
+  // 정리 뒤에는 앞의 대화를 접고 마지막 두 메시지와 정리만 보인다(캔버스 PNL-06-v2-bibi-review, 기대값 변경 사용자 승인 11-04).
+  expect(
+    within(log).getAllByText('예시 템플릿 · 실제 AI 호출 없음'),
+  ).toHaveLength(1)
+  await user.click(
+    within(log).getByRole('button', { name: /^앞의 대화 \d+개$/ }),
+  )
   expect(
     within(log).getAllByText('예시 템플릿 · 실제 AI 호출 없음'),
   ).toHaveLength(2)
@@ -79,6 +86,34 @@ it('팀장은 메시지를 보내고 비비 정리를 받은 뒤 회의 끝내�
   expect(
     screen.getByRole('button', { name: '회의 끝내고 변경 제안 만들기' }),
   ).toBeDisabled()
+})
+
+// 회의 끝내기 버튼은 고칠 점 입력 폼 안에 있다. 눌러도 그 폼을 제출하지 않아야 한다.
+it('고칠 점을 적은 채 회의 끝내기를 누르면 수정 요청을 보내지 않고 끝내기 확인만 연다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  const log = await screen.findByRole('log', { name: '회의 대화' })
+  await within(log).findByText('TASK-002에서 만료 전용 안내는 뺄게요.')
+  await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
+  await within(log).findByText(/회의 내용을 정리했어요/)
+  const addEntry = vi.spyOn(meetingsApi, 'addEntry')
+  await user.type(
+    screen.getByRole('textbox', { name: '비비에게 고칠 점' }),
+    '만료 안내 문구를 다시 정리해 주세요.',
+  )
+  await user.click(screen.getByRole('button', { name: '회의 끝내기' }))
+  expect(
+    await screen.findByRole('heading', { name: '회의를 끝낼까요?' }),
+  ).toBeInTheDocument()
+  expect(addEntry).not.toHaveBeenCalled()
+  vi.restoreAllMocks()
+})
+
+// 좁은 화면(lg 미만)에서도 대화 칸 안에서 스크롤해야 새 메시지로 내려간다. jsdom은 레이아웃을 계산하지 않아 높이 제한 클래스로 확인한다.
+it('대화 칸은 lg 미만에서 높이를 화면 절반으로 묶고 lg부터는 창 높이에 맡긴다', async () => {
+  renderPanel(true)
+  const log = await screen.findByRole('log', { name: '회의 대화' })
+  expect(log).toHaveClass('max-h-[50vh]', 'lg:max-h-none', 'overflow-auto')
 })
 
 it('팀원은 대화만 하고 검토 요청은 팀장만 할 수 있다고 안내받는다', async () => {
@@ -114,6 +149,20 @@ it('관련자 창에서 이름을 찾아 체크하면 바로 부르고, 팀장�
   ).not.toBeInTheDocument()
 })
 
+// 체크 상자는 눈에 안 보이므로(sr-only) 키보드 초점 테두리는 줄(label) 전체에 그린다. 체크 표시는 체크한 줄에만 보여서 거기에 두면 안 보인다.
+it('관련자 창에서 체크하지 않은 팀원 줄도 키보드 초점 테두리를 줄 전체에 그린다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await screen.findByRole('heading', { name: '초대 안내 문구 검토' })
+  await user.click(screen.getByRole('button', { name: '관련자' }))
+  const unchecked = await screen.findByRole('checkbox', { name: /박팀원/ })
+  expect(unchecked).not.toBeChecked()
+  expect(unchecked.closest('label')).toHaveClass(
+    'has-focus-visible:ring-2',
+    'has-focus-visible:ring-ring',
+  )
+})
+
 // 10-29 수정안: 진행 중/끝난 회의, 안건 고정, 단계 표시, 끝난 회의는 읽기만
 it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝난 회의에는 쓸 수 없다', async () => {
   const user = userEvent.setup()
@@ -144,6 +193,17 @@ it('진행 중과 끝난 회의를 나누고, 안건과 단계를 보이며, 끝
   expect(
     screen.queryByRole('button', { name: '비비에게 정리 요청' }),
   ).not.toBeInTheDocument()
+})
+
+// 캔버스 PNL-06-v2: 참여자 수는 비비를 포함하고, 칩마다 이 회의에서 맡은 작업을 보인다.
+it('참여자 칩은 비비를 포함해 세고 사람마다 이 회의의 작업을 보인다', async () => {
+  renderPanel(true)
+  await screen.findByRole('heading', { name: '초대 안내 문구 검토' })
+  const people = screen.getByRole('group', { name: '참여자' })
+  expect(within(people).getByText('AI 팀장')).toBeInTheDocument()
+  expect(await within(people).findByText('팀장 · TASK-001')).toBeInTheDocument()
+  expect(within(people).getByText('TASK-002')).toBeInTheDocument()
+  expect(within(people).getByText(/^참여자 \d+$/)).toHaveTextContent('참여자 4')
 })
 
 // live 모드: dev 백엔드에 회의 API가 아직 없으면 회의 칸만 '준비 중'으로 두고 창은 그대로 연다.

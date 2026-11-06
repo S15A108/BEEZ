@@ -6,7 +6,6 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import java.time.Duration;
 import java.util.List;
-import org.hibernate.validator.constraints.time.DurationMin;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -28,8 +27,8 @@ public record BeezProperties(@Valid @NotNull Cors cors, @Valid @NotNull Ai ai, @
 
     /**
      * 팀원 초대 링크 (MEM-A01). 링크는 프론트 화면 주소라 baseUrl 은 프론트 오리진이다.
-     * 만료 7일·1회 사용은 Q05 제안값이다.
+     * 초대는 만료가 없다 (Q05 6, -220 에서 ttl 을 뺐다).
      */
-    public record Invitation(@NotBlank String baseUrl, @NotNull @DurationMin(seconds = 1) Duration ttl) {
+    public record Invitation(@NotBlank String baseUrl) {
     }
 }

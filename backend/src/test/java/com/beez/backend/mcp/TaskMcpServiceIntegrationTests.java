@@ -126,7 +126,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
             vid = String.valueOf(validationId);
         }
         return mcp.reportTaskState(agent, projectId, new ReportTaskStateArgs(task.id(), event,
-                task.currentPlanRevision().id(), task.lockVersion(), vid, reason, null, null, null, key));
+                task.currentPlanRevision().id(), task.lockVersion(), vid, reason, null, null, null, null, key));
     }
 
     @Test
@@ -202,7 +202,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
 
         // 에이전트: 돌려받은 기준 번호·같은 작업·next_cursor 로 이어 본다
         DesignChangesResponse rest = designChanges.getChanges(agent, projectId, new DesignChangesQuery(
-                waited.changesSinceVersion(), task.id(), waited.changes().nextCursor(), null));
+                waited.changesSinceVersion(), task.id(), waited.changes().nextCursor(), null, null));
         assertThat(rest.items()).extracting(c -> c.baseline().versionNo()).containsExactly(4, 3);
         assertThat(rest.hasMore()).isFalse();
     }
@@ -300,7 +300,7 @@ class TaskMcpServiceIntegrationTests extends IntegrationTestSupport {
     void report_requiresTaskIdAndIdempotencyKey_andKeepsStateRules() {
         TaskDetailResponse task = create("A");
         assertDenied(() -> mcp.reportTaskState(agent, projectId, new ReportTaskStateArgs(null, TaskEvent.START,
-                task.currentPlanRevision().id(), task.lockVersion(), null, null, null, null, null, "k")),
+                task.currentPlanRevision().id(), task.lockVersion(), null, null, null, null, null, null, "k")),
                 HttpStatus.BAD_REQUEST, "validation_failed");
         assertDenied(() -> report(task, TaskEvent.START, null, null, ""), HttpStatus.BAD_REQUEST, "validation_failed");
         // 규칙은 TSK-A07 그대로: PASS 없는 START 는 400(validation_id 누락)

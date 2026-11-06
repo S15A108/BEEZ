@@ -32,3 +32,13 @@ export const suggestAssignmentsResponseSchema = z.object({
 export type SuggestAssignmentsResponse = z.infer<
   typeof suggestAssignmentsResponseSchema
 >
+
+// BEE-A04 비비 현재 상태. 한가하면(IDLE) activity만 오고 나머지는 빠진다.
+// 문서 검토의 target_id는 문서 ID, label은 서버가 만든 문구('문서 이름 검토 중', "'회의 제목' 진행 중")다.
+export const statusResponseSchema = z.object({
+  activity: z.enum(['DOCUMENT_REVIEW', 'MEETING', 'IDLE']),
+  target_type: z.enum(['DOCUMENT', 'MEETING']).optional(),
+  target_id: common.idSchema.optional(),
+  label: z.string().optional(),
+})
+export type StatusResponse = z.infer<typeof statusResponseSchema>
