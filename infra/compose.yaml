@@ -72,6 +72,8 @@ services:
       # dev 에서 켜려면 서버 env 파일에 =true 를 쓴다. 어느 환경에서 켤지는 AI 담당과 정한다.
       PLANNING_QUESTIONS_ENABLED: ${PLANNING_QUESTIONS_ENABLED:-false}
       DESIGN_DRAFTS_ENABLED: ${DESIGN_DRAFTS_ENABLED:-false}
+      # 역할 추천(#136)은 BE 계약 합의 전 기본 비활성이다.
+      ASSIGNMENT_RECOMMENDATION_ENABLED: ${ASSIGNMENT_RECOMMENDATION_ENABLED:-false}
     healthcheck:
       # slim 이미지에는 curl 이 없어 파이썬 표준 라이브러리로 확인한다.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
