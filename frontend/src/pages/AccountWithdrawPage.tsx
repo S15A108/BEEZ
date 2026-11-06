@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, TriangleAlert } from 'lucide-react'
-import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
+import { getApiErrorCode, getHandoverErrorMessage } from '@/api/error'
 import type { Project } from '@/api/contracts/common'
 import { authApi, projectsApi } from '@/api/services'
 import { RequireAccount } from '@/features/auth/RequireAccount'
@@ -66,10 +66,11 @@ function AccountWithdraw() {
                 <h3 id="after-title" className="text-sm font-semibold">
                   탈퇴하면 기존 프로젝트는 이렇게 돼요
                 </h3>
-                {/* 서버(PR #118) 처리: 팀원 프로젝트에서는 빠지고, 혼자 쓰는 프로젝트는 지우며, 남긴 기록은 '탈퇴한 사용자'로 보인다. */}
+                {/* 서버(PR #118·#182) 처리: 팀원 프로젝트에서는 빠지며 맡은 열린 작업의 담당자를 비우고, 혼자 쓰는 프로젝트는 지우며, 남긴 기록은 '탈퇴한 사용자'로 보인다. */}
                 <ul className="mt-2 grid gap-1 text-[13px] leading-5">
                   {[
                     '팀원으로 참여한 프로젝트에서는 자동으로 빠져요.',
+                    '그 프로젝트에서 맡은 열린 작업은 담당자가 비워져요.',
                     `혼자 쓰는 프로젝트${solo.length ? `(${solo.map((item) => item.name).join(', ')})` : ''}는 함께 삭제돼요.`,
                     "팀 프로젝트에 남긴 문서와 작업 기록은 '탈퇴한 사용자'로 남아요.",
                   ].map((text) => (
@@ -96,14 +97,14 @@ function AccountWithdraw() {
                     프로젝트 때문에 지금은 탈퇴할 수 없어요
                   </h3>
                   <p className="mt-1.5 text-[13px] leading-5 text-[#57534e]">
-                    팀원이 있는 프로젝트의 팀장이에요. 팀장을 위임하면 탈퇴할 수
-                    있어요.
+                    팀원이 있는 프로젝트의 팀장이에요. 팀장을 위임하거나
+                    프로젝트를 삭제하면 탈퇴할 수 있어요.
                   </p>
                   <ul className="mt-3 grid gap-2">
                     {blockers.map((project) => (
                       <li
                         key={project.project_id}
-                        className="flex items-center justify-between gap-3 rounded-[10px] bg-card px-3 py-2.5 text-sm ring-1 ring-border"
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] bg-card px-3 py-2.5 text-sm ring-1 ring-border"
                       >
                         <span>
                           <strong className="font-semibold">
@@ -114,13 +115,20 @@ function AccountWithdraw() {
                             팀장 · 팀원 {project.member_count}명
                           </span>
                         </span>
-                        {/* 팀장 위임(MEM-A08). 프로젝트 삭제 링크는 설정 창이 팀원이 있어도 삭제를 허용하면(S15P31A108-282) 다시 넣는다. */}
-                        <Link
-                          to={`/projects/${project.project_id}?settings=team`}
-                          className="shrink-0 text-[13px] font-semibold underline underline-offset-3"
-                        >
-                          팀장 위임
-                        </Link>
+                        {/* 팀장 위임(MEM-A08) 또는 프로젝트 삭제(PRJ-A05, 팀원이 있어도 지울 수 있다). 삭제는 팀장의 나가기 창에 있다. */}
+                        <span className="flex shrink-0 items-center gap-3 text-[13px] font-semibold [&>a]:underline [&>a]:underline-offset-3">
+                          <Link
+                            to={`/projects/${project.project_id}?settings=team`}
+                          >
+                            팀장 위임
+                          </Link>
+                          <Link
+                            to={`/projects/${project.project_id}?settings=remove`}
+                            className="text-[#c10007]"
+                          >
+                            프로젝트 삭제
+                          </Link>
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -174,7 +182,7 @@ function AccountWithdraw() {
                   errorMessage={(cause) =>
                     getApiErrorCode(cause) === 'invalid_credentials'
                       ? '비밀번호를 확인해 주세요.'
-                      : getApiErrorMessage(cause)
+                      : getHandoverErrorMessage(cause)
                   }
                 />
                 {blockers.length > 0 && (

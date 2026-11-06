@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 
 export type TourMode = 'welcome' | 'map' | number | null
 
@@ -197,13 +198,17 @@ function bubbleOf(target: Target, area: Area | undefined) {
 // API 없음: 봤는지를 계정 기준으로 서버에 저장하는 필드가 없어 이 브라우저에만 남긴다(백엔드 메모 1).
 export function TourGuide({
   accountId,
-  mode,
+  mode: requested,
   onChange,
 }: {
   accountId?: string
   mode: TourMode
   onChange: (mode: TourMode) => void
 }) {
+  // 설정 링크(?settings=team)처럼 다른 창이 열린 채 처음 들어오면 모달 둘이 겹쳐 서로를 화면 읽기 프로그램에서 숨긴다.
+  // 환영 창은 그 창을 닫은 뒤로 미룬다. 아직 안 봤으니 봤다고 남기지 않는다.
+  const pane = useWorkspaceStore((state) => state.pane)
+  const mode = requested === 'welcome' && pane ? null : requested
   const [, setSize] = useState(0)
   useEffect(() => {
     const resize = () => setSize((value) => value + 1)

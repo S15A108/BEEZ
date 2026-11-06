@@ -59,3 +59,21 @@ test('둘러보기 6단계는 비비 원을 다 밝히고, 화면 안내의 비�
     expect(note.y + note.height).toBeLessThanOrEqual(slot.y)
   }
 })
+
+test('설정 링크로 처음 들어오면 설정 창만 열고 닫은 뒤에 환영 창을 보여 준다', async ({
+  page,
+}) => {
+  await page.goto('/login')
+  await page.getByRole('button', { name: '로그인', exact: true }).click()
+  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await page.goto('/projects/101?settings=team')
+  const settings = page.getByRole('dialog', { name: '설정' })
+  await expect(settings).toBeVisible()
+  const welcome = page.getByRole('dialog', {
+    name: 'BEEZ 사무실에 오신 걸 환영해요',
+  })
+  await expect(welcome).toHaveCount(0)
+  await settings.getByRole('button', { name: '닫기' }).click()
+  await expect(settings).toHaveCount(0)
+  await expect(welcome).toBeVisible()
+})

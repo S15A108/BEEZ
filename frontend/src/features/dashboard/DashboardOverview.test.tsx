@@ -5,6 +5,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { agentsApi } from '@/api/services/agents'
 import { dashboardApi } from '@/api/services/dashboard'
+import { tasksApi } from '@/api/services/tasks'
+import type { TaskDetail } from '@/api/contracts/common'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { DashboardOverview } from './DashboardOverview'
 import type {
@@ -16,6 +18,7 @@ import type {
 vi.mock('@/api/services/dashboard', () => ({
   dashboardApi: { changes: vi.fn(), tasks: vi.fn() },
 }))
+vi.mock('@/api/services/tasks', () => ({ tasksApi: { list: vi.fn() } }))
 const query = <T,>(data: T) => ({ data }) as UseQueryResult<T>
 const usage = (call_count: number): UsageResponse => ({
   from: '2026-10-01T00:00:00Z',
@@ -53,6 +56,7 @@ beforeEach(() => {
     by_status: [{ status: 'IN_PROGRESS', count: 2 }],
     by_waiting_reason: [],
   })
+  vi.mocked(tasksApi.list).mockResolvedValue({ items: [], has_more: false })
 })
 
 function mount(calls: number) {
@@ -170,6 +174,35 @@ it('아직 기록이 없으면 시작 순서 3개를 보여 준다', async () =>
   expect(useWorkspaceStore.getState()).toMatchObject({
     pane: 'settings',
     focusId: 'agent',
+  })
+})
+
+// 11-04 사용자 결정(S15P31A108-282): 담당자 없는 열린 작업은 unassigned=true로 불러 진행 중 작업 칸에 알린다.
+it('담당자 없는 작업이 있으면 진행 중 작업 칸에 그 수를 붙이고 누르면 첫 작업을 연다', async () => {
+  vi.mocked(tasksApi.list).mockResolvedValue({
+    items: [
+      { id: '502', status: 'DRAFT' },
+      { id: '503', status: 'IN_PROGRESS' },
+      // 서버가 unassigned 필터를 아직 무시해도 담당자 있는 작업은 세지 않는다.
+      { id: '501', status: 'READY', assignee_member_id: '21' },
+    ] as TaskDetail[],
+    has_more: false,
+  })
+  const user = userEvent.setup()
+  mount(96)
+  await user.click(
+    await screen.findByRole('button', {
+      name: /진행 중 작업\s*2\s*담당자 없는 작업 2개 ›/,
+    }),
+  )
+  expect(tasksApi.list).toHaveBeenCalledWith('10', {
+    unassigned: true,
+    status: ['DRAFT', 'READY', 'IN_PROGRESS', 'WAITING'],
+    limit: 100,
+  })
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'tasks',
+    focusId: '502',
   })
 })
 

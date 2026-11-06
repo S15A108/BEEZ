@@ -148,7 +148,10 @@ function Workspace({ projectId }: { projectId: string }) {
         id: task.id,
         title: task.current_plan_revision.plan.title,
         state: task.status,
-        assignee_id: `member:${task.assignee_member_id}`,
+        // 담당자 없는(미배정) 작업은 사무실에서 누구의 자리에도 두지 않는다.
+        assignee_id: task.assignee_member_id
+          ? `member:${task.assignee_member_id}`
+          : null,
         description: task.current_plan_revision.plan.goal,
         waiting_reason: task.waiting_reason,
       })),
@@ -208,7 +211,8 @@ function Workspace({ projectId }: { projectId: string }) {
               onboarding={data.onboarding}
               tasks={data.tasks.items}
               myTasks={data.tasks.items.filter(
-                (task) => task.assignee_member_id === currentUser?.id,
+                (task) =>
+                  !!currentUser && task.assignee_member_id === currentUser.id,
               )}
             />
             <div
