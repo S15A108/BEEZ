@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   ArrowLeft,
   Check,
@@ -35,12 +40,16 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate } from '@/lib/formatDate'
-import { describeContent, LIST_SELECTED, statusLabel } from '@/lib/display'
+import { describeContent, LIST_SELECTED } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalForm } from './ProposalForm'
+import { ApprovalPreview } from './ApprovalPreview'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
+import { StatusTag } from './StatusTag'
+import { Tag } from './Tag'
+import { operationTone } from './tagTones'
 import {
   isStaleDocument,
   kindLabel,
@@ -148,6 +157,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const [discussing, setDiscussing] = useState(false)
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
+  const queryClient = useQueryClient()
   const changes = useInfiniteQuery({
     queryKey: ['projects', projectId, 'changes', filter],
     initialPageParam: undefined as string | undefined,
@@ -204,6 +214,31 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     enabled: !!selectedId,
     refetchInterval: (query) =>
       query.state.data && isImpactRunning(query.state.data) ? 1500 : false,
+  })
+  // 승인 확인 화면에서만, 팀장만 읽는다(CHG-A14는 LEADER 전용). 제안이 바뀌면(리비전·해시) 다시 읽는다.
+  // 키를 ['projects', id] 밖에 둔다: 승인에 성공하면 프로젝트 전체를 새로 고치는데, 그때 이미 발행된 제안의
+  // 미리 보기를 다시 불러 409 가 나기 때문이다(실제 BE 점검에서 확인). 화면이 열릴 때마다 새로 읽으므로 갱신은 잃지 않는다.
+  const preview = useQuery({
+    queryKey: [
+      'approval-preview',
+      projectId,
+      selectedId,
+      detail.data?.proposal.revision,
+      detail.data?.proposal.snapshot_hash,
+    ],
+    queryFn: () => changesApi.approvalPreview(projectId, selectedId!),
+    enabled: mode.kind === 'approve' && isLeader && !!detail.data,
+    // 계산 결과는 그 순간의 기준·분석 상태에 달려 있어 캐시를 믿지 않는다. 오류도 재시도하지 않고 바로 보인다.
+    gcTime: 0,
+    retry: false,
+    // 분석이 도는 동안은 끝났는지 계속 읽는다. 읽지 않으면 분석이 끝나도 승인 버튼이 계속 막혀 있다.
+    refetchInterval: (query) => {
+      const analysis = query.state.data?.unreviewed.ai_analysis
+      return analysis &&
+        (analysis.reanalysis_in_progress || analysis.status === 'RUNNING')
+        ? 1500
+        : false
+    },
   })
   const comments = useInfiniteQuery({
     queryKey: ['projects', projectId, 'change-comments', selectedId],
@@ -320,14 +355,41 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const [approveReason, setApproveReason] = useState('')
   const [approveNotice, setApproveNotice] = useState('')
   const openApprove = () => {
+    // 같은 제안의 승인 확인을 다시 열 때 이전 미리 보기가 잠깐 보이고 버튼이 눌리지 않게 비워 둔다.
+    queryClient.removeQueries({ queryKey: ['approval-preview', projectId] })
     setReasonRequired(false)
     setApproveReason('')
     setApproveNotice('')
     setMode({ kind: 'approve' })
   }
+  // 미리 보기가 '사유가 필요하다'고 알려 주면 409를 기다리지 않고 처음부터 사유 칸을 연다. 그사이 상태가 바뀌어 409가 오면 아래 catch 가 연다.
+  const overrideNeeded =
+    reasonRequired || !!preview.data?.unreviewed.requires_override_reason
+  const previewAnalysis = preview.data?.unreviewed.ai_analysis
+  // 분석이 도는 중이면(첫 분석이든 재분석이든) 서버가 409 analysis_running 으로 막는다. 사유로도 우회할 수 없다.
+  const analysisRunning =
+    !!previewAnalysis &&
+    (previewAnalysis.reanalysis_in_progress ||
+      previewAnalysis.status === 'RUNNING')
+  // 미리 보기가 이 409들로 막히면 승인(CHG-A09)도 같은 검사로 반드시 실패한다(PublishPlanner 공유). 버튼을 막고 이유를 알린다.
+  // 그 밖의 실패(네트워크 등)는 미리 보기만 못 받은 것이라 승인은 막지 않는다. 실제 BE 점검(live)에서 확인했다.
+  const previewBlockedMessage =
+    {
+      baseline_conflict:
+        '제안을 올린 뒤 기준이 바뀌었어요. 목록을 새로고침해서 최신 기준으로 다시 확인해 주세요.',
+      analysis_not_completed:
+        '제안한 문서의 색인이 아직 준비되지 않았어요. 준비가 끝난 뒤 다시 확인해 주세요.',
+      invalid_transition:
+        '이미 처리했거나 지금은 승인할 수 없는 제안이에요. 목록을 새로고침해 주세요.',
+      // 아래 둘은 제안 자체의 문제(스냅샷·참조 불일치, 항목 내용)라 다시 불러와도 풀리지 않는다. 승인도 같은 검사로 실패한다.
+      version_conflict:
+        '제안의 문서·항목 참조가 지금 기준과 맞지 않아요. 이 제안을 반려하고 제안자가 다시 올리게 해 주세요.',
+      validation_failed:
+        '제안의 항목 내용에 문제가 있어 승인할 수 없어요. 반려하고 제안자가 고쳐 다시 올리게 해 주세요.',
+    }[getApiErrorCode(preview.error) ?? ''] ?? undefined
   const approveNow = async (proposal: ChangeProposal, nextVersion: number) => {
     setApproveNotice('')
-    const reason = reasonRequired ? approveReason.trim() : ''
+    const reason = overrideNeeded ? approveReason.trim() : ''
     try {
       await action.run(
         () =>
@@ -346,11 +408,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       if (code === 'impact_not_confirmed') {
         action.reset()
         setReasonRequired(true)
+        void preview.refetch()
       } else if (code === 'analysis_running') {
         action.reset()
         setApproveNotice(
           '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
         )
+        void preview.refetch()
       } else setMode({ kind: 'detail' })
     }
   }
@@ -563,6 +627,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                   versionId: result.version.id,
                 }))
               }
+              requestDraft={(input) =>
+                changesApi.generateDraft(projectId, input)
+              }
+              onDraftConflict={() => void documents.refetch()}
               sourceDocuments={mode.source?.documents.map((change) => ({
                 id: change.document_id,
                 title:
@@ -784,15 +852,49 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           </ul>
                         </>
                       )}
-                      <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
-                        승인하면 이 항목을 쓰는 검증은 &apos;다시 검증
-                        필요&apos;, 진행 중 작업은 &apos;대기 · 재검증&apos;으로
-                        바뀌어요. 문서 원문도 함께 새 기준이 돼요.
-                        {/* API 없음: 승인 전에 바뀔 검증·작업 목록을 미리 받는 응답(백엔드 메모 4). 지금은 영향 탭의 확인된 관계로 대신한다. */}
-                        {impact.data?.explicit.length
-                          ? ` 확인된 관련 작업: ${impact.data.explicit.map((entry) => taskKey(entry.task_id)).join(', ')}`
-                          : ''}
-                      </p>
+                      {/* 미리 보기가 있으면 실제로 바뀌는 검증·작업을 보여 주므로 일반 안내는 미리 보기를 못 받았을 때만 둔다. */}
+                      {!preview.data && (
+                        <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
+                          승인하면 이 항목을 쓰는 검증은 &apos;다시 검증
+                          필요&apos;, 진행 중 작업은 &apos;대기 ·
+                          재검증&apos;으로 바뀌어요. 문서 원문도 함께 새 기준이
+                          돼요.
+                        </p>
+                      )}
+                      {preview.isLoading && (
+                        <p
+                          role="status"
+                          className="text-sm text-muted-foreground"
+                        >
+                          승인하면 같이 바뀌는 것을 계산하는 중이에요…
+                        </p>
+                      )}
+                      {preview.data && (
+                        <ApprovalPreview
+                          preview={preview.data}
+                          changedDocuments={current.documents.length}
+                          nameOfMember={nameOfMember}
+                        />
+                      )}
+                      {preview.error && (
+                        <div
+                          role="alert"
+                          className="grid gap-2 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+                        >
+                          <p>
+                            {previewBlockedMessage ??
+                              '승인하면 같이 바뀌는 것을 불러오지 못했어요. 영향을 직접 확인한 뒤 승인해 주세요.'}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="justify-self-start"
+                            onClick={() => void preview.refetch()}
+                          >
+                            다시 불러오기
+                          </Button>
+                        </div>
+                      )}
                       {approveNotice && (
                         <p
                           role="alert"
@@ -801,7 +903,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           {approveNotice}
                         </p>
                       )}
-                      {reasonRequired && (
+                      {overrideNeeded && (
                         <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
                           <p className="text-sm leading-6">
                             이 제안의 영향 분석이 끝나지 않았거나(실패·근거
@@ -835,11 +937,14 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         <Button
                           disabled={
                             action.busy ||
-                            (reasonRequired && !approveReason.trim())
+                            preview.isFetching ||
+                            !!previewBlockedMessage ||
+                            analysisRunning ||
+                            (overrideNeeded && !approveReason.trim())
                           }
                           onClick={() => void approveNow(current, nextVersion)}
                         >
-                          {reasonRequired
+                          {overrideNeeded
                             ? `사유 남기고 기준 v${nextVersion} 발행`
                             : `승인하고 기준 v${nextVersion} 발행`}
                         </Button>
@@ -1666,35 +1771,6 @@ const overviewHead =
   'mb-2.5 flex items-center justify-between gap-2 text-[15px] leading-[22px] font-bold'
 const overviewLink =
   'text-[13px] font-semibold whitespace-nowrap text-[#8a6a00] hover:underline'
-// 변경 제안 화면의 칩(캔버스 PNL-04-v2 통일감 개선: 높이 22px, 12px·600, 상태마다 색). 작업 칩과 상태 칩이 같은 모양을 쓴다.
-const operationTone = {
-  UPDATE: 'bg-[#fdf0c8] text-[#6e5200]',
-  CREATE: 'bg-[#e8f3ec] text-[#00753a]',
-  RETIRE: 'bg-[#fdecec] text-[#b42318]',
-} as const
-const statusTone: Record<string, string> = {
-  PROPOSED: operationTone.UPDATE,
-  IN_REVIEW: 'bg-[#e6effa] text-[#1d4f91]',
-  APPROVED: operationTone.CREATE,
-  PUBLISHED: operationTone.CREATE,
-  REJECTED: operationTone.RETIRE,
-}
-function Tag({ tone, children }: { tone?: string; children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-[22px] shrink-0 items-center rounded-full px-2 text-xs font-semibold whitespace-nowrap',
-        tone ?? 'bg-muted text-muted-foreground',
-      )}
-    >
-      {children}
-    </span>
-  )
-}
-function StatusTag({ value }: { value: string }) {
-  return <Tag tone={statusTone[value]}>{statusLabel(value)}</Tag>
-}
-
 // 바뀌는 내용 · 항목마다 한 줄로 접어 두고, 펼치면 기준 문장과 제안 문장을 −/+로 보여 준다.
 
 function Diff({
