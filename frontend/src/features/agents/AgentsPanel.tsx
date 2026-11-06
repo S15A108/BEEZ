@@ -55,7 +55,8 @@ function CodeLine({
   const [copied, setCopied] = useState(false)
   return (
     <div className="flex items-center justify-between gap-3 rounded-[10px] bg-foreground px-3 py-2.5">
-      <code className="min-w-0 truncate font-mono text-[12.5px] text-[#f5f1e3] select-text">
+      {/* w-0: 줄바꿈 없는 긴 코드가 바깥 grid 칸의 최소 너비를 늘려 '복사'를 창 밖으로 밀지 않게 한다. */}
+      <code className="w-0 flex-1 truncate font-mono text-[12.5px] text-[#f5f1e3] select-text">
         {value.split('\n')[0]}
         {value.includes('\n') && ' …'}
       </code>
@@ -280,8 +281,7 @@ export function AgentsPanel({
                   </button>
                 )}
               </div>
-              {/* 긴 명령 줄이 칸을 밀어내지 않게 칸 너비를 창에 묶는다. 그래야 코드 줄이 말줄임되고 '복사'가 보인다. */}
-              <ol className="grid grid-cols-[minmax(0,1fr)] gap-4">
+              <ol className="grid gap-4">
                 <Step
                   number={1}
                   title={
