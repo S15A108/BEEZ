@@ -55,18 +55,16 @@ public class PlanningQuestionService {
         return response;
     }
 
-    /** 커서는 마지막 질문의 정렬 키 "버전:id" 다. 번호나 rank 가 아니라서 쪽 사이에 목록이 바뀌거나 재분석이 rank 를 고쳐도 겹치거나 빠지지 않는다. */
+    /** 커서는 마지막 질문의 id 다. 번호나 rank 가 아니라서 쪽 사이에 목록이 바뀌거나 재분석이 rank 를 고쳐도 겹치거나 빠지지 않는다. */
     static String cursorOf(Map<String, Object> row) {
-        return ((Number) row.get("document_version_id")).longValue() + ":" + ((Number) row.get("id")).longValue();
+        return String.valueOf(((Number) row.get("id")).longValue());
     }
 
     private static PlanningQuestionRepository.Position position(String cursor) {
-        String[] part = cursor.split(":", -1);
-        if (part.length != 2) throw invalid("cursor가 올바르지 않습니다.");
         try {
-            long version = Long.parseLong(part[0]), id = Long.parseLong(part[1]);
-            if (version < 0 || id < 0) throw invalid("cursor가 올바르지 않습니다.");
-            return new PlanningQuestionRepository.Position(version, id);
+            long id = Long.parseLong(cursor);
+            if (id < 0) throw invalid("cursor가 올바르지 않습니다.");
+            return new PlanningQuestionRepository.Position(id);
         } catch (NumberFormatException e) {
             throw invalid("cursor가 올바르지 않습니다.");
         }

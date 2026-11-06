@@ -157,7 +157,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(items(page1)).extracting(i -> i.get("number")).containsExactly(1L, 2L);
         assertThat(page1).containsEntry("total_count", 3L).containsEntry("has_more", true);
         long secondId = Long.parseLong(((Map<String, Object>) items(page1).get(1)).get("id").toString());
-        assertThat((String) page1.get("next_cursor")).isEqualTo(version + ":" + secondId);
+        assertThat((String) page1.get("next_cursor")).isEqualTo(String.valueOf(secondId));
         var first = items(page1).get(0);
         assertThat(first).containsEntry("question_type", "ESSAY").containsEntry("status", "OPEN").containsEntry("evidence_status", "REVIEW_CANDIDATE");
         assertThat(first.get("source")).isEqualTo(Map.of("document_id", "" + document, "document_version_id", "" + version, "version_no", 1, "location", "기획서 / L3"));
@@ -192,13 +192,37 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(page2).containsEntry("has_more", false);
     }
 
+    @Test void questionAddedToAnEarlierDocumentVersionWhilePagingIsStillReturnedOnTheNextPage() {
+        generator.runOnce();
+        long newer = documentVersion(document, 2, "# 두 번째 버전");
+        var all = jdbc.queryForList("SELECT id FROM planning_question WHERE document_version_id=? ORDER BY id", Long.class, version);
+        // 앞 두 질문은 새 버전(커서가 문서 버전 순이었다면 뒤쪽)에 둔다
+        jdbc.update("UPDATE planning_question SET document_version_id=? WHERE id IN (?,?)", newer, all.get(0), all.get(1));
+        var page1 = questions.list(memberCaller, project, null, null, 2);
+        var shown = items(page1).stream().map(i -> i.get("id").toString()).toList();
+        // 쪽 사이에 이전 문서 버전에 새 질문이 생긴다(비동기 생성·재분석)
+        long added = jdbc.queryForObject("""
+                INSERT INTO planning_question(project_id,document_version_id,kind,question,origin,question_key,question_type,answer_format,evidence_status,evidence,rank)
+                SELECT project_id,?,kind,'나중에 생긴 질문입니다.',origin,'q-late',question_type,answer_format,evidence_status,evidence,rank
+                  FROM planning_question WHERE id=? RETURNING id
+                """, Long.class, version, all.get(2));
+        var seen = new java.util.ArrayList<>(shown);
+        String cursor = (String) page1.get("next_cursor");
+        while (cursor != null) {
+            var next = questions.list(memberCaller, project, null, cursor, 2);
+            items(next).forEach(i -> seen.add(i.get("id").toString()));
+            cursor = (String) next.get("next_cursor");
+        }
+        assertThat(seen).doesNotHaveDuplicates().contains(String.valueOf(added)).hasSize(4);
+    }
+
     @Test void listValidatesInputAndProjectAccess() {
         generator.runOnce();
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, null, 0));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, null, 101));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "x", null));
-        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "2", null));
-        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "1:-3", null));
+        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "1:2", null));
+        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "-3", null));
         var outsider = com.beez.backend.common.auth.CallerContext.human(fixtures().account());
         fails(HttpStatus.NOT_FOUND, "not_found", () -> questions.list(outsider, project, null, null, null));
     }

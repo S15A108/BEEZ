@@ -118,10 +118,10 @@ public class PlanningQuestionRepository {
     }
 
     /**
-     * 목록 정렬 키(문서 버전, id). 둘 다 만든 뒤에 바뀌지 않는다 — 재분석이 기존 질문의 rank 를 고쳐도 목록 자리는 그대로라,
-     * 쪽 사이에 질문이 생기거나 SUPERSEDED 되거나 rank 가 바뀌어도 다음 쪽이 밀리지 않는다.
+     * 목록 정렬 키는 id 하나다. id 는 만든 뒤 바뀌지 않고 새 질문은 항상 더 큰 id 를 받으므로, 쪽 사이에 어느 문서에서든
+     * 질문이 생기거나 SUPERSEDED 되거나 rank 가 바뀌어도 다음 쪽이 밀리지 않고 새 질문은 끝에서 이어서 나온다.
      */
-    public record Position(long versionId, long id) { }
+    public record Position(long id) { }
 
     /**
      * 번호(number)는 필터가 적용된 목록 안의 1부터 이어지는 표시용 순번이다(쪽마다 다시 센다). 쪽 경계는 번호가 아니라
@@ -134,14 +134,14 @@ public class PlanningQuestionRepository {
         if (version != null) { filter = " AND q.document_version_id=:version"; p.put("version", version); }
         String cursor = "";
         if (after != null) {
-            cursor = " WHERE (t.document_version_id, t.id) > (:av, :ai)";
-            p.put("av", after.versionId()); p.put("ai", after.id());
+            cursor = " WHERE t.id > :ai";
+            p.put("ai", after.id());
         }
         return jdbc.sql("SELECT * FROM (SELECT q.*,v.version_no,v.document_id,"
-                + " row_number() OVER (ORDER BY q.document_version_id,q.id) AS number"
+                + " row_number() OVER (ORDER BY q.id) AS number"
                 + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id"
                 + " WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter + ") t" + cursor
-                + " ORDER BY t.document_version_id,t.id LIMIT :limit").params(p).query().listOfRows();
+                + " ORDER BY t.id LIMIT :limit").params(p).query().listOfRows();
     }
 
     public long count(long project, Long version) {
