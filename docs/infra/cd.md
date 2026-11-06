@@ -240,9 +240,11 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   `nginx 다름`이면 대개 env의 포트를 바꾸고 Nginx를 reload하지 않은
   것이라 직전 SHA로 되돌려도 고쳐지지 않습니다. `sudo nginx -t && sudo
   systemctl reload nginx` 뒤 같은 SHA로 다시 배포합니다. `nginx 확인
-  실패`면 찍힌 원인(curl 종료 코드·HTTP 상태)을 보고 Nginx·인증서·backend
-  상태를 고친 뒤 같은 SHA로 다시 배포합니다. 문구 뜻은
-  [Nginx 반영 확인](env.md#nginx-반영-확인).
+  실패`면 어느 쪽이 실패했는지 봅니다. `backend 직접=` 쪽이 실패했으면
+  새 backend의 회귀라 직전 SHA로 되돌리는 것이 복구 방법이 될 수 있고,
+  `Nginx 경유=` 쪽만 실패했으면 Nginx·인증서를 고친 뒤 같은 SHA로 다시
+  배포합니다. 판단 표는 [운영 안내](operations.md#nginx-경유-확인이-실패했을-때),
+  문구 뜻은 [Nginx 반영 확인](env.md#nginx-반영-확인).
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
 - **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
   다른 배포가 돌고 있으면 최대 5분 기다리고, 그래도 안 끝나면 컨테이너를
@@ -560,13 +562,14 @@ curl -s http://127.0.0.1:8081/actuator/prometheus | grep -m1 '^jvm_memory_used_b
   사람은 읽을 수 있습니다. 계정 분리는 운영 환경 결정(S15P31A108-73) 때
   다룹니다.
 - **DB 데이터는 `beez_pgdata` 볼륨에 있습니다.** `docker compose down -v`나
-  볼륨 삭제는 데이터를 지웁니다. 백업 절차는 아직 없습니다.
-- SeaweedFS는 지금 backend와 같은 키를 씁니다. bootstrap 키와 backend 전용
-  키 분리는 S15P31A108-211입니다.
-- **배포할 때마다 웹 사용자가 모두 로그아웃됩니다.** 웹 세션이 backend 메모리에
-  있어(`application.yml` `server.servlet.session`) 컨테이너가 바뀌면 사라집니다.
-  dev 머지가 곧 배포라 자주 일어납니다. 세션을 DB(JDBC)로 옮기는 건 backend
-  후속 작업입니다.
+  볼륨 삭제는 데이터를 지웁니다. 백업·복원은
+  [운영 안내 8. 백업·복원](operations.md#8-백업복원)에 있습니다.
+- SeaweedFS 키는 bootstrap·backend·백업 셋으로 나뉘어 있습니다
+  ([S3 신원 셋](seaweedfs.md#s3-신원-셋), S15P31A108-211).
+- 웹 세션은 PostgreSQL에 있어(Spring Session JDBC, S15P31A108-242) 배포로
+  backend 컨테이너가 바뀌어도 로그인이 유지됩니다. 그 전(`af6b7ac` 이전)에는
+  세션이 backend 메모리에 있어 배포마다 모두 로그아웃됐습니다. 그 이전 SHA로
+  되돌리면 다시 그렇게 됩니다.
 - backend는 종료 신호를 받으면 진행 중인 요청을 최대 30초 기다립니다(Spring
   graceful shutdown). compose의 `stop_grace_period: 30s`가 이에 맞춰 docker가
   그 전에 강제 종료하지 않게 합니다. 그래서 진행 중 요청이 있으면 교체가 최대
