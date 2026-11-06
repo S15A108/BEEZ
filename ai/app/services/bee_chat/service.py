@@ -544,7 +544,8 @@ def _judge_item_text(item: ApprovedDesignItem, mention: Mention, limit: int) -> 
     """One referenced item for the judge, its fields cut to `limit` each."""
     content = _judge_value(item.content.model_dump(mode="json"), mention, limit)
     return clip_text(
-        f"{item.key} ({item.kind}): {json.dumps(content, ensure_ascii=False)}"
+        f"{item.key} ({item.kind}, version_no={item.version_no}): "
+        f"{json.dumps(content, ensure_ascii=False)}"
     )
 
 
@@ -592,7 +593,9 @@ def reference_support(
     texts: list[str] = []
     for item in items:
         content = json.dumps(item.content.model_dump(mode="json"), ensure_ascii=False)
-        texts.append(f"{item.key} ({item.kind}): {content}")
+        texts.append(
+            f"{item.key} ({item.kind}, version_no={item.version_no}): {content}"
+        )
     for task in tasks:
         parts = [f"{task.key} {task.status}"]
         if task.assignee_member_id:
