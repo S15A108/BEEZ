@@ -230,9 +230,11 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    checksum을 찍어, 대조 결과의 `DB checksum`과 같은 줄을 찾습니다.
 
    ```bash
-   bash infra/deploy/check-rollback-migrations.sh find <번호>   # 대조 결과의 번호 그대로(점 버전 1.1 은 파일 V1_1__ 로 찾음)
+   bash infra/deploy/check-rollback-migrations.sh find <번호>   # 대조 결과의 번호 그대로(V40 도 됨. 점 버전 1.1 은 파일 V1_1__ 로 찾음)
    # 출력: dev 판: <checksum> <파일 이름> (같은 번호 파일이 둘이면 두 줄) / 그 아래 <checksum> <그 판이 있던 커밋> <파일 이름>
    ```
+
+   어디에도 없으면 `V<번호> 파일 없음`이 나옵니다. checksum 자리에 `읽지못함`이 찍힌 줄은 그 판을 확인하지 못한 것입니다.
 
    - `DB checksum`이 `dev 판`과 같으면 dev 파일로(위 의심 줄 grep 포함) 판단합니다.
    - 다르면 같은 checksum의 줄에 찍힌 커밋의 파일을 읽고 판단합니다. dev 파일로 판단하지 않습니다.

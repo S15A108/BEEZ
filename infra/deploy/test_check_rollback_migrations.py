@@ -59,6 +59,10 @@ def row(v, checksum=None, success="t", typ="SQL", desc=None):
 
 MATCH = [row(1), row(2), row(3), row(5, typ="JDBC")]
 PIPE_SQL = "create table p (id int);\n"
+KOREAN_FILE, KOREAN_SQL = "V6__한글_설명.sql", "create table k (id int);\n"
+# 가짜 git: FAIL_BLOB 이 있으면 파일 내용 읽기(cat-file blob)만 실패하고 나머지는 진짜 git 으로 넘긴다
+FAIL_BLOB_GIT = ('[ -n "$FAIL_BLOB" ] && case "$*" in *"cat-file blob"*) exit 128 ;; esac\n'
+                 'exec "$REAL_GIT" "$@"\n')
 
 
 def git(repo, *args):
@@ -92,6 +96,8 @@ def make_repo(tmp):
     commit(repo, {f"{DIR}/V3__more_tables.sql": "create table c (id bigint);\n"}, "work 판")
     git(repo, "checkout", "-qb", "dev", old)
     commit(repo, {f"{DIR}/V3__duplicate_number.sql": "create table d (id int);\n"}, "같은 번호 둘")
+    git(repo, "checkout", "-qb", "korean", old)   # 한글 파일 이름(ls-tree 가 따옴표·8진수로 찍는 경우)
+    commit(repo, {f"{DIR}/{KOREAN_FILE}": KOREAN_SQL}, "한글 이름")
     # pipe 브랜치: 설명에 "|" 가 든 파일. Windows 는 이런 파일 이름을 못 만들어 git 에 직접 넣는다
     blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=PIPE_SQL.encode(),
                           check=True, capture_output=True).stdout.decode().strip()
@@ -109,10 +115,11 @@ def make_repo(tmp):
     return repo, old
 
 
-def run(*args, db=None, old=True, ref=None, **fake):
+def run(*args, db=None, old=True, ref=None, stubs=None, **fake):
     """스크립트를 돌려 (exit code, 출력, ssh 인자) 를 돌려준다.
 
     db 는 이력 행 목록, old=True 면 첫 인자로 OLD SHA, ref 를 주면 그 브랜치의 SHA 를 대신 넣는다.
+    stubs 는 ssh 말고 더 둘 가짜 명령 {이름: 본문}.
     """
     with tempfile.TemporaryDirectory(prefix="beez-rollback-check-") as tmp:
         tmp = Path(tmp)
@@ -120,8 +127,11 @@ def run(*args, db=None, old=True, ref=None, **fake):
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
         (bin_dir / "ssh").write_bytes(SSH.encode())
+        for name, body in (stubs or {}).items():
+            (bin_dir / name).write_bytes(("#!/usr/bin/env bash\n" + body).encode())
         ssh_args = tmp / "ssh-args"
         env = os.environ.copy()
+        env["REAL_GIT"] = posix(shutil.which("git"))
         env.update({"FAKE_DB": "".join(r + "\n" for r in (MATCH if db is None else db)), "SSH_ARGS": posix(ssh_args)})
         env.pop("FAKE_SSH_RC", None)
         env.update(fake)
@@ -270,6 +280,27 @@ def test_unknown_sha_stops():
     assert r[2] is None, "SHA 가 없으면 서버에 묻지 않는다"
 
 
+def test_awk_failure_stops():
+    # 대조 계산이 깨지면 줄 없는 "대조 끝"(= 되돌려도 됨)이 아니라 중단이어야 한다
+    r = run(stubs={"awk": "exit 2\n"})
+    expect(r, 2, "대조 계산(awk) 실패 — 중단")
+    assert "대조 끝" not in r[1], r[1]
+
+
+def test_unreadable_file_stops():
+    # 파일을 못 읽으면 빈 입력의 checksum(0)으로 대조하지 않는다
+    r = run(stubs={"git": FAIL_BLOB_GIT}, FAIL_BLOB="1")
+    expect(r, 2, "되돌릴 SHA 의 파일을 읽지 못함: " + DIR + "/V1__init_schema.sql — 중단")
+    assert "대조 끝" not in r[1], r[1]
+
+
+def test_korean_file_name():
+    db = MATCH + [row(6, checksum=flyway_checksum(KOREAN_SQL), desc="한글 설명")]
+    r = run(db=db, ref="korean")
+    expect(r, 0, "대조 끝 (DB 5개, 되돌릴 SHA 5개)")
+    assert not lines(r), r[1]
+
+
 def test_usage():
     expect(run(old=False), 2, "사용: check-rollback-migrations.sh")
 
@@ -282,6 +313,22 @@ def test_find_prints_each_dev_file_on_its_own_line():
     dev = [x for x in r[1].splitlines() if x.startswith("dev 판: ")]
     assert dev == [f"dev 판: {flyway_checksum('create table d (id int);' )} V3__duplicate_number.sql",
                    f"dev 판: {flyway_checksum('create table c (id int);')} V3__more_tables.sql"], r[1]
+
+
+def test_find_accepts_v_prefix():
+    # 대조 결과 줄은 "V3: …" 이라 V 를 붙여 치기 쉽다
+    r = run("find", "V3", old=False)
+    expect(r, 0, "dev 판: ", "V3__duplicate_number.sql")
+
+
+def test_find_missing_number_says_so():
+    expect(run("find", "9", old=False), 1, "V9 파일 없음")
+
+
+def test_find_unreadable_file_is_marked():
+    r = run("find", "3", old=False, stubs={"git": FAIL_BLOB_GIT}, FAIL_BLOB="1")
+    expect(r, 0, "dev 판: 읽지못함 V3__duplicate_number.sql")
+    assert "dev 판: 0 " not in r[1], r[1]
 
 
 def test_find_lists_versions_from_other_branches():

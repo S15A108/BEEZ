@@ -35,21 +35,28 @@ case $1 in
 esac
 
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2> /dev/null) || stop "이 스크립트가 git 저장소 안에 없음"
-g() { git -C "$REPO" "$@"; }
+# quotePath 를 끄지 않으면 ls-tree 가 한글 파일 이름을 "V1__\355…" 처럼 따옴표·8진수로 찍어 git show 가 그 경로를 못 찾는다
+g() { git -c core.quotePath=false -C "$REPO" "$@"; }
+T=$(mktemp -d) || stop "임시 폴더를 만들지 못함"
+trap 'rm -rf "$T"' EXIT
+# <커밋>:<경로> 의 checksum. 파일을 읽지 못하면 빈 입력의 checksum(0)을 찍지 않고 실패를 돌려준다
+blob_sum() { g cat-file blob "$1" > "$T/blob" 2> /dev/null && flyway_sum < "$T/blob"; }
 
 if [ "$1" = find ]; then
     [ $# -eq 2 ] || { echo "$usage"; exit 2; }
-    V=$2; F=${V//./_}   # 대조 결과의 번호 그대로. 점 버전 1.1 은 파일 이름 V1_1__ 로 찾는다
+    V=${2#[Vv]}; F=${V//./_}   # 대조 결과의 번호 그대로(V40 처럼 V 가 붙어도 됨). 점 버전 1.1 은 파일 이름 V1_1__ 로 찾는다
     g fetch -q origin || stop "fetch 실패"
     # 같은 번호 파일이 둘 이상이어도 한 줄에 하나씩 찍는다
     g ls-tree -r --name-only origin/dev -- "$DIR/" | grep "/V${F}__" | while read -r f; do
-        echo "dev 판: $(g show "origin/dev:$f" | flyway_sum) ${f##*/}"
-    done
+        echo "dev 판: $(blob_sum "origin/dev:$f" || echo 읽지못함) ${f##*/}"
+    done > "$T/found"
     g log --branches --remotes --format=%h -- ":(glob)$DIR/**/V${F}__*" | while read -r c; do
         g ls-tree -r --name-only "$c" -- "$DIR/" | grep "/V${F}__" | while read -r f; do
-            echo "$(g show "$c:$f" | flyway_sum) $c ${f##*/}"
+            echo "$(blob_sum "$c:$f" || echo 읽지못함) $c ${f##*/}"
         done
-    done | sort -u -k1,1
+    done | sort -u -k1,1 >> "$T/found"
+    [ -s "$T/found" ] || { echo "V$V 파일 없음 (dev·저장소 이력 모두. 번호를 확인하거나 손 배포한 사람에게 파일을 받음)"; exit 1; }
+    cat "$T/found"
     exit 0
 fi
 
@@ -57,9 +64,6 @@ fi
 OLD=$1
 g fetch -q origin || stop "fetch 실패"
 g cat-file -e "$OLD^{commit}" 2> /dev/null || stop "없는 SHA: $OLD"
-
-T=$(mktemp -d) || stop "임시 폴더를 만들지 못함"
-trap 'rm -rf "$T"' EXIT
 # installed_rank 순서가 중요하다. 같은 번호의 나중 행(repair 의 DELETE, 다시 적용한 행)이 앞의 행을 덮는다
 ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success, type, description from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" ||
     stop "DB 이력을 받지 못함"
@@ -70,7 +74,8 @@ while read -r f; do
     v=${f##*/V}; v=${v%%__*}; v=${v//_/.}   # V1_1__ 은 DB 에 1.1 로 기록된다
     s=${f#*__}; s=${s%.*}; s=${s//_/ }       # 설명 = 파일 이름의 __ 뒤에서 확장자를 빼고 _ 를 공백으로
     case $f in
-        *.sql) echo "$v|$(g show "$OLD:$f" | flyway_sum)|SQL|$s" ;;
+        *.sql) s_sum=$(blob_sum "$OLD:$f") || stop "되돌릴 SHA 의 파일을 읽지 못함: $f" >&2   # 표준 출력은 $T/old 로 가므로 오류로 보인다
+               echo "$v|$s_sum|SQL|$s" ;;
         *) echo "$v||JDBC|$s" ;;   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
     esac
 done < "$T/files" > "$T/old"
@@ -101,6 +106,8 @@ awk -F'|' -v nfile="$T/n" '
         for (v in o) if (!(v in a) && v + 0 > bl) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
             (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음")
     }' "$T/old" "$T/db" | sort -n -k1.2 > "$T/out"
+# awk 가 깨지면 줄 없이 "대조 끝" 이 나와 되돌려도 되는 것처럼 보인다. 파이프 끝(sort)이 아니라 awk 의 결과를 본다
+[ "${PIPESTATUS[0]}" -eq 0 ] && [ -s "$T/n" ] || stop "대조 계산(awk) 실패"
 
 cat "$T/out"
 echo "대조 끝 (DB $(cat "$T/n")개, 되돌릴 SHA $(wc -l < "$T/old" | tr -d ' ')개)"
