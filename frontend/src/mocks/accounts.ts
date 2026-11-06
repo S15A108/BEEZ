@@ -50,6 +50,21 @@ const withPasswordState = (stored: StoredAccount) => ({
 })
 
 // 회원 탈퇴를 막는 프로젝트(ACC-A10·A13): 본인 말고 활성 팀원이 있는 프로젝트의 팀장. member_count는 본인을 뺀 수다.
+type MockProject = MockDatabase['projects'][number]
+// 나가기·제외·탈퇴로 떠나는 팀원이 맡은 열린 작업
+const openTasksOf = (project: MockProject, memberId: string) =>
+  project.tasks.filter(
+    (task) =>
+      task.assignee_member_id === memberId &&
+      !['COMPLETED', 'CANCELLED'].includes(task.status),
+  )
+// 인계 대상이 없으면 상태·검증은 그대로 두고 담당자만 비운다. 잠금 번호는 오른다(서버 TaskHandoverService).
+function unassignTask(task: MockProject['tasks'][number]) {
+  delete task.assignee_member_id
+  task.lock_version++
+  task.updated_at = now()
+}
+
 function blockedProjects(database: MockDatabase, accountId: string) {
   return database.projects.flatMap(({ project, members }) => {
     const others = members.filter((item) => item.account_id !== accountId)
@@ -318,16 +333,19 @@ export async function accountRoutes(
           '팀원이 있는 프로젝트의 팀장입니다. 팀장을 위임하거나 프로젝트를 삭제한 뒤에 탈퇴할 수 있습니다',
           { blocked_projects: blocked },
         )
-      // 혼자 쓰는 프로젝트는 함께 지우고, 팀원으로 참여한 프로젝트에서는 빠진다. 맡은 작업의 담당자는 그대로 둔다
-      // (서버 ProjectWithdrawalService). 에이전트 토큰은 모두 폐기한다.
+      // 혼자 쓰는 프로젝트는 함께 지우고, 팀원으로 참여한 프로젝트에서는 빠지며 맡은 열린 작업은 담당자만 비운다
+      // (서버 ProjectWithdrawalService, S15P31A108-281). 에이전트 토큰은 모두 폐기한다.
       database.projects = database.projects.filter(
         (project) =>
           !project.members.every((member) => member.account_id === accountId),
       )
       database.projects.forEach((project) => {
-        project.members = project.members.filter(
-          (member) => member.account_id !== accountId,
+        const member = project.members.find(
+          (item) => item.account_id === accountId,
         )
+        if (!member) return
+        openTasksOf(project, member.id).forEach(unassignTask)
+        project.members = project.members.filter((item) => item !== member)
       })
       database.tokens
         .filter((token) => token.account_id === accountId)
@@ -712,19 +730,11 @@ export async function accountRoutes(
         )
       // 11-04 사용자 결정: 열린 작업이 있어도 막지 않는다(active_tasks_exist 없음). 인계 대상이 있으면 TSK-A06과 같은
       // 규칙으로 넘기고, 없으면 담당자만 비운다. 상태·검증은 그대로 두고 잠금 번호만 올린다.
-      project.tasks
-        .filter(
-          (task) =>
-            task.assignee_member_id === member.id &&
-            !['COMPLETED', 'CANCELLED'].includes(task.status),
-        )
-        .forEach((task) => {
-          if (typeof reassigned === 'string')
-            return reassignTask(context, task, reassigned)
-          delete task.assignee_member_id
-          task.lock_version++
-          task.updated_at = now()
-        })
+      openTasksOf(project, member.id).forEach((task) => {
+        if (typeof reassigned === 'string')
+          return reassignTask(context, task, reassigned)
+        unassignTask(task)
+      })
       project.members = project.members.filter((item) => item !== member)
       if (id === 'MEM-A10')
         project.left_account_ids = [

@@ -604,3 +604,58 @@ it('추방할 때 넘겨받을 동료를 고르지 않으면 담당자만 비우
     }),
   )
 })
+
+// MEM-A09·A10: 담당자를 넘기거나 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 전체가 되돌아간다. 다시 누르면 된다.
+const RETRY_MESSAGE = '작업 상태가 방금 바뀌었어요. 다시 시도해 주세요.'
+const revisionConflict = () =>
+  new AxiosError('conflict', '409', undefined, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+    data: { error: { code: 'revision_conflict', message: 'conflict' } },
+  })
+
+it('팀원 나가기가 작업 상태 변경으로 409면 다시 시도하라고 알린다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  vi.spyOn(membersApi, 'leave').mockRejectedValueOnce(revisionConflict())
+  renderRemoveView(false)
+  await screen.findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(await screen.findByText(RETRY_MESSAGE)).toBeInTheDocument()
+  expect(screen.queryByText('나의 도시')).not.toBeInTheDocument()
+})
+
+it('위임하고 나가기가 작업 상태 변경으로 409면 다시 시도하라고 알린다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(membersApi, 'leave').mockRejectedValueOnce(revisionConflict())
+  renderRemoveView(true)
+  const handoff = await screen.findByRole('region', {
+    name: '위임하고 나가기',
+  })
+  await within(handoff).findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.selectOptions(
+    within(handoff).getByLabelText(/팀장을 넘겨받을 팀원/),
+    '김동료',
+  )
+  await user.click(
+    within(handoff).getByRole('button', { name: '위임하고 나가기' }),
+  )
+  expect(await within(handoff).findByText(RETRY_MESSAGE)).toBeInTheDocument()
+})
+
+it('추방이 작업 상태 변경으로 409면 다시 시도하라고 알리고 창을 닫지 않는다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(membersApi, 'remove').mockRejectedValueOnce(revisionConflict())
+  renderTeam()
+  await screen.findByText('김동료')
+  await user.click(screen.getByRole('button', { name: '김동료 더보기' }))
+  await user.click(await screen.findByRole('menuitem', { name: '추방' }))
+  await screen.findByText('김동료님이 맡은 열린 작업 1개')
+  await user.click(screen.getByRole('button', { name: '추방' }))
+  expect(await screen.findByText(RETRY_MESSAGE)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '추방' })).toBeEnabled()
+})

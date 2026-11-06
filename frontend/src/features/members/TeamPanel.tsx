@@ -37,6 +37,7 @@ import {
   getApiErrorCode,
   getApiErrorMessage,
   getApiErrorStatus,
+  getHandoverErrorMessage,
 } from '@/api/error'
 import {
   Dialog,
@@ -614,6 +615,7 @@ export function TeamPanel({
                         fields={[...reassign, confirmName]}
                         destructive
                         submitLabel="프로젝트 나가기"
+                        errorMessage={getHandoverErrorMessage}
                         onSubmit={(values) =>
                           leave({
                             reassign_to_member_id:
@@ -655,6 +657,7 @@ export function TeamPanel({
                           ]}
                           destructive
                           submitLabel="위임하고 나가기"
+                          errorMessage={getHandoverErrorMessage}
                           onSubmit={(values) =>
                             leave({
                               transfer_leader_to_member_id:
@@ -816,6 +819,7 @@ export function TeamPanel({
           ]}
           submitLabel="추방"
           destructive
+          errorMessage={getHandoverErrorMessage}
           onClose={() => setDialog(null)}
           onSubmit={async (values) => {
             await action.run(
