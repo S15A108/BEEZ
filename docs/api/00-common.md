@@ -353,6 +353,11 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A13 변경 제안 의견 목록](01-backend-rest.md#chg-a13) | GET `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A14 승인 미리 보기](01-backend-rest.md#chg-a14) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval-preview` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
 | [CHG-A15 변경 제안 거두기](01-backend-rest.md#chg-a15) | POST `/api/projects/{id}/change-proposals/{proposal_id}/withdraw` | MEMBER (제안자) | 오서현 | — | 오서현 |
+| [CHG-A16 작성 중 변경 제안 저장](01-backend-rest.md#chg-a16) | POST `/api/projects/{id}/change-proposal-drafts` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A17 작성 중 변경 제안 조회](01-backend-rest.md#chg-a17) | GET `/api/projects/{id}/change-proposal-drafts/{draft_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A18 작성 중 변경 제안 수정](01-backend-rest.md#chg-a18) | PUT `/api/projects/{id}/change-proposal-drafts/{draft_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A19 올리기 전 비비 검토 요청](01-backend-rest.md#chg-a19) | POST `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews` | MEMBER (작성 계정) | 오서현 | 박상은·양지훈 | 박민용 |
+| [CHG-A20 올리기 전 검토 수정안 반영·넘기기](01-backend-rest.md#chg-a20) | PATCH `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
 | [TSK-A01 작업 계획 등록](01-backend-rest.md#tsk-a01) | POST `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A02 작업 목록](01-backend-rest.md#tsk-a02) | GET `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A03 작업 상세](01-backend-rest.md#tsk-a03) | GET `/api/projects/{id}/tasks/{task_id}` | MEMBER | 변준성 | — | 박민용 |
@@ -962,6 +967,8 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
+| `draft_id` | `ID` | N | (수정안 요청 · 11-05) 검토를 마친 작성 중 제안으로 올릴 때(CHG-A01) |
+| `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수 |
 
 <a id="schema-changeproposal"></a>
 
@@ -1066,6 +1073,51 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `design_item_id` | `ID` | N | 후보 항목 |
 | `reason` | `string` | Y | 후보 근거 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+
+<a id="schema-changeproposaldraft"></a>
+
+### ChangeProposalDraft
+
+(수정안 요청 · 11-05) 팀장에게 가지 않는 작성 중 변경 제안(CHG-A16~A18). 작성 계정만 본다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 초안 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `revision` | `integer` | Y | 저장·수정안 반영마다 1씩 오르는 리비전 |
+| `base_baseline_id` | `ID` | Y | 초안 기준 |
+| `title` | `string` | Y | 제안 제목 |
+| `reason` | `string` | Y | 변경 이유 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `validation_id` | `ID` | N | 관련 검증 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |
+| `latest_review` | [ChangeDraftReview](00-common.md#schema-changedraftreview) | N | 가장 최근 올리기 전 비비 검토 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `updated_at` | `Time` | Y | 최종 갱신 |
+
+<a id="schema-changedraftreview"></a>
+
+### ChangeDraftReview
+
+(수정안 요청 · 11-05) 올리기 전 비비 검토(CHG-A19). 화면 '3단계 / 4단계', '영향 작업 1 · 빠진 부분 1 · 충돌 1'을 그린다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 검토 ID |
+| `status` | `RUNNING\|COMPLETED\|FAILED` | Y | 검토 상태 |
+| `error_code` | `string` | N | FAILED일 때만 |
+| `input_revision` | `integer` | Y | 검토한 초안 리비전 |
+| `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전 |
+| `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED, count} |
+| `tasks_to_wait` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '대기 · 재검증'이 될 진행 중 작업 |
+| `validations_to_stale` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '다시 검증 필요'가 될 검증 |
+| `ai_candidates` | `object[]` | N | {task_id, title, reason, evidence}. 평가하지 못하면 null(0건과 구분) |
+| `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 빠진 부분·충돌 수정안. `category`에 OMISSION·CONSISTENCY를 쓰고 이어진 설계 항목 키를 `design_item_key`로 더한다 |
+| `summary` | `string` | N | 검토 요약. COMPLETED일 때 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | Y | 실제 모델 호출 사용량 |
+| `created_at` | `Time` | Y | 요청 시각 |
+| `completed_at` | `Time` | N | 끝난 시각 |
 
 <a id="schema-changeimpact"></a>
 
