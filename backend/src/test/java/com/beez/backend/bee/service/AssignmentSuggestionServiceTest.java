@@ -83,4 +83,15 @@ class AssignmentSuggestionServiceTest {
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("validation_failed"));
         verifyNoInteractions(ai);
     }
+
+    @Test void agentIsRejectedByHumanOnlyServiceRule() {
+        CallerContext agent = CallerContext.agent(11L, 99L);
+        when(access.requireMember(agent, 101)).thenReturn(new ProjectActor(11, 21, 101, ProjectRole.MEMBER, ActorType.AGENT, 99L));
+        assertThatThrownBy(() -> service.suggest(agent, 101, List.of("501")))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(e.getCode()).isEqualTo("forbidden");
+                });
+        verifyNoInteractions(ai, snapshots);
+    }
 }

@@ -103,12 +103,12 @@ async def test_recommendations_and_alternatives_include_snapshot_based_reasons()
     suggestion = result["result"]["suggestions"][0]
     assert suggestion["task_id"] == "501" and suggestion["member_id"] == "21"
     assert "backend" in suggestion["reason"]
-    assert "다른 준비·진행·대기 작업은 2건" in suggestion["reason"]
+    assert "다른 초안·준비·진행·대기 작업은 2건" in suggestion["reason"]
     assert "선행 작업 1건 중 이 사람이 담당한 작업은 1건" in suggestion["reason"]
     assert "선행 작업 1건의 상태와 담당자는 확인되지 않았습니다" in suggestion["reason"]
     alternative = suggestion["alternatives"][0]
     assert alternative["member_id"] == "22" and alternative["reason"].strip()
-    assert "다른 준비·진행·대기 작업은 0건" in alternative["reason"]
+    assert "다른 초안·준비·진행·대기 작업은 0건" in alternative["reason"]
     sent = json.loads(provider.calls[0].messages[1].content)
     assert sent["workload_complete"] is True
     assert sent["members"][0]["observed_open_tasks"] == 2
@@ -143,31 +143,69 @@ async def test_unknown_workload_is_never_presented_as_zero():
 async def test_partial_workload_is_described_as_observed_not_total():
     raw = request_data()
     raw["current_tasks_complete"] = False
+    provider = Provider()
     result = await recommend_assignments(
-        AssignmentRequest.model_validate(raw), LLMClient(Provider()), "test-model"
+        AssignmentRequest.model_validate(raw), LLMClient(provider), "test-model"
     )
     reason = result["result"]["suggestions"][0]["reason"]
-    assert "제공된 목록의 다른 준비·진행·대기 작업은 2건" in reason
+    assert "제공된 목록의 다른 초안·준비·진행·대기 작업은 2건" in reason
     assert "전체 업무량은 확인되지 않았습니다" in reason
 
 
 @pytest.mark.asyncio
-async def test_current_target_is_not_counted_as_another_task():
+async def test_draft_is_counted_but_unassigned_and_closed_tasks_are_not():
+    raw = request_data()
+    raw["current_tasks"].extend(
+        [
+            {
+                "id": "504",
+                "project_id": "101",
+                "status": "DRAFT",
+                "assignee_member_id": "22",
+            },
+            {"id": "505", "project_id": "101", "status": "DRAFT"},
+            {
+                "id": "506",
+                "project_id": "101",
+                "status": "CANCELLED",
+                "assignee_member_id": "22",
+            },
+        ]
+    )
+    provider = Provider()
+    result = await recommend_assignments(
+        AssignmentRequest.model_validate(raw), LLMClient(provider), "test-model"
+    )
+    sent = json.loads(provider.calls[0].messages[1].content)
+    assert sent["members"][1]["observed_open_tasks"] == 1
+    alternative = result["result"]["suggestions"][0]["alternatives"][0]
+    assert "다른 초안·준비·진행·대기 작업은 1건" in alternative["reason"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["READY", "DRAFT"])
+async def test_current_target_is_not_counted_as_another_task(status):
     raw = request_data()
     raw["tasks"][0]["assignee_member_id"] = "21"
+    raw["tasks"][0]["status"] = status
     raw["current_tasks"].append(
         {
             "id": "501",
             "project_id": "101",
-            "status": "READY",
+            "status": status,
             "assignee_member_id": "21",
         }
     )
+    provider = Provider()
     result = await recommend_assignments(
-        AssignmentRequest.model_validate(raw), LLMClient(Provider()), "test-model"
+        AssignmentRequest.model_validate(raw), LLMClient(provider), "test-model"
     )
+    sent = json.loads(provider.calls[0].messages[1].content)
+    assert sent["members"][0]["observed_open_tasks"] == 3
+    assert sent["tasks"][0]["counted_in_workload"] is True
     assert (
-        "다른 준비·진행·대기 작업은 2건" in result["result"]["suggestions"][0]["reason"]
+        "다른 초안·준비·진행·대기 작업은 2건"
+        in result["result"]["suggestions"][0]["reason"]
     )
 
 
@@ -283,6 +321,7 @@ async def test_model_cannot_claim_a_basis_that_was_not_supplied(basis):
         "duplicate_member",
         "inconsistent_target",
         "false_complete",
+        "false_complete_draft",
     ],
 )
 def test_snapshot_rejects_inconsistent_scope_and_completeness(variant):
@@ -298,6 +337,9 @@ def test_snapshot_rejects_inconsistent_scope_and_completeness(variant):
             {"id": "501", "project_id": "101", "status": "WAITING"}
         )
     elif variant == "false_complete":
+        raw["tasks"][0]["assignee_member_id"] = "21"
+    elif variant == "false_complete_draft":
+        raw["tasks"][0]["status"] = "DRAFT"
         raw["tasks"][0]["assignee_member_id"] = "21"
     with pytest.raises(ValidationError):
         AssignmentRequest.model_validate(raw)

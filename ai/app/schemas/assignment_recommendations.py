@@ -12,7 +12,7 @@ MemberText = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 TaskStatus = Literal[
     "DRAFT", "READY", "IN_PROGRESS", "WAITING", "COMPLETED", "CANCELLED"
 ]
-ACTIVE_STATUSES = frozenset({"READY", "IN_PROGRESS", "WAITING"})
+ACTIVE_STATUSES = frozenset({"DRAFT", "READY", "IN_PROGRESS", "WAITING"})
 
 
 class InputModel(BaseModel):

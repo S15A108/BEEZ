@@ -59,6 +59,13 @@ class AssignmentSuggestionIntegrationTest extends IntegrationTestSupport {
                                 "reason", "Alternative area")))), "unresolved", List.of()));
     }
 
+    private long draft(Long assignee) {
+        return db.queryForObject("""
+                insert into task(project_id, key, title, assignee_member_id, status)
+                values (?, 'T-DRAFT', 'Draft task', ?, 'DRAFT') returning id
+                """, Long.class, project.projectId(), assignee);
+    }
+
     @Test void realDatabaseSnapshotAndResultLeaveTheTaskUnchanged() {
         AtomicReference<Map<String, Object>> input = new AtomicReference<>();
         when(ai.assignmentRecommendations(anyMap())).thenAnswer(invocation -> {
@@ -85,6 +92,54 @@ class AssignmentSuggestionIntegrationTest extends IntegrationTestSupport {
         var response = suggest(leader);
         assertThat(response.statusCode()).as(response.body()).isEqualTo(409);
         assertThat(JSON.readTree(response.body()).path("error").path("code").asString()).isEqualTo("recommendation_stale");
+    }
+
+    @Test void assignedDraftIsIncludedInTheCompleteWorkload() {
+        long draftId = draft(memberId);
+        AtomicReference<Map<String, Object>> input = new AtomicReference<>();
+        when(ai.assignmentRecommendations(anyMap())).thenAnswer(invocation -> {
+            input.set(invocation.getArgument(0));
+            return reply();
+        });
+        var response = suggest(leader);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        assertThat(input.get()).containsEntry("current_tasks_complete", true);
+        List<?> current = (List<?>) input.get().get("current_tasks");
+        assertThat(current).hasSize(2);
+        assertThat(current).anySatisfy(row -> {
+            Map<?, ?> task = (Map<?, ?>) row;
+            assertThat(task.get("id")).isEqualTo(String.valueOf(draftId));
+            assertThat(task.get("status")).isEqualTo("DRAFT");
+            assertThat(task.get("assignee_member_id")).isEqualTo(String.valueOf(memberId));
+        });
+    }
+
+    @Test void lockVersionOnlyChangesDoNotDiscardTheRecommendation() {
+        long draftId = draft(memberId);
+        when(ai.assignmentRecommendations(anyMap())).thenAnswer(invocation -> {
+            db.update("update task set lock_version = lock_version + 1 where id in (?, ?)", Long.valueOf(taskId), draftId);
+            return reply();
+        });
+        var response = suggest(leader);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+    }
+
+    @Test void assigneeChangedDuringTheModelCallDiscardsTheRecommendation() {
+        when(ai.assignmentRecommendations(anyMap())).thenAnswer(invocation -> {
+            db.update("update task set assignee_member_id = ?, lock_version = lock_version + 1 where id = ?",
+                    memberId, Long.valueOf(taskId));
+            return reply();
+        });
+        var response = suggest(leader);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(409);
+        assertThat(JSON.readTree(response.body()).path("error").path("code").asString()).isEqualTo("recommendation_stale");
+    }
+
+    @Test void untrustedRefererIsRejectedWithTheOriginErrorCode() {
+        var response = leader.post(path(), "{\"task_ids\":[\"" + taskId + "\"]}", "Referer", "https://untrusted.test/");
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(403);
+        assertThat(JSON.readTree(response.body()).path("error").path("code").asString()).isEqualTo("request_origin_rejected");
+        verifyNoInteractions(ai);
     }
 
     @Test void nonMemberAndUnknownTaskAreNotSentToAi() {

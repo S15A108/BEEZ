@@ -178,7 +178,7 @@ def _reason(
         ):
             count -= 1
         qualifier = "전체" if body.current_tasks_complete else "제공된 목록의"
-        pieces.append(f"{qualifier} 다른 준비·진행·대기 작업은 {count}건입니다.")
+        pieces.append(f"{qualifier} 다른 초안·준비·진행·대기 작업은 {count}건입니다.")
         if not body.current_tasks_complete:
             pieces.append("전체 업무량은 확인되지 않았습니다.")
     dependencies = (

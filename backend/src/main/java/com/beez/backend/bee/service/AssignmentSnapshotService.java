@@ -32,7 +32,7 @@ public class AssignmentSnapshotService {
     static final int MAX_TASKS = 20;
     static final int MAX_MEMBERS = 100;
     static final int MAX_CURRENT = 500;
-    private static final List<TaskStatus> OPEN = List.of(TaskStatus.READY, TaskStatus.IN_PROGRESS, TaskStatus.WAITING);
+    private static final List<TaskStatus> OPEN = List.of(TaskStatus.DRAFT, TaskStatus.READY, TaskStatus.IN_PROGRESS, TaskStatus.WAITING);
 
     private final ProjectAccessChecker access;
     private final ProjectMemberRepository members;
@@ -114,7 +114,6 @@ public class AssignmentSnapshotService {
         result.put("id", Ids.str(task.getId()));
         result.put("project_id", Ids.str(task.getProjectId()));
         result.put("status", task.getStatus().name());
-        result.put("lock_version", task.getLockVersion());
         if (task.getAssigneeMemberId() != null) result.put("assignee_member_id", Ids.str(task.getAssigneeMemberId()));
         return result;
     }
