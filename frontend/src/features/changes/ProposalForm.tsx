@@ -180,6 +180,7 @@ export function ProposalForm({
     }
     const request = ++fileRequest.current
     const startedFor = getValues('document_id')
+    const startedText = getValues('after_content') ?? ''
     let text: string | undefined
     try {
       text = normalizeDocument(
@@ -206,6 +207,19 @@ export function ProposalForm({
     const textError = documentTextError(text)
     if (textError) {
       setError('after_content', { message: textError })
+      return
+    }
+    // 읽는 동안 글을 직접 고쳤거나 초안을 넣었으면 그 글을 지키고 탭도 그대로 둔다(PR #135 리뷰). 기준 원문이 빈 글을
+    // 채운 것은 손댄 글이 아니므로 파일을 넣는다.
+    const current = getValues('after_content') ?? ''
+    if (
+      current !== startedText &&
+      current &&
+      current !== getValues('base_content')
+    ) {
+      setFileNote(
+        `파일을 읽는 동안 글을 고쳐서 ${file.name} 내용을 넣지 않았어요. 고친 글은 그대로예요.`,
+      )
       return
     }
     setValue('after_content', text, { shouldValidate: true })

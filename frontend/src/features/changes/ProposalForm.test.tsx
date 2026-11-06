@@ -526,6 +526,103 @@ it('파일을 읽는 동안 고칠 문서를 바꾸면 늦게 끝난 파일 내�
   ).not.toBeInTheDocument()
 })
 
+// 파일 읽기를 멈춰 둔 채로 폼을 그린다. 읽기가 끝나는 때를 시험이 정한다.
+function renderSlowFile(fetchOriginal: () => Promise<Loaded>) {
+  let finish: () => void = () => undefined
+  const slow = new File(['# 요구사항\n파일 내용'], 'a.md')
+  Object.assign(slow, {
+    arrayBuffer: () =>
+      new Promise<ArrayBuffer>((done) => {
+        finish = () =>
+          done(
+            new TextEncoder().encode('# 요구사항\n파일 내용')
+              .buffer as ArrayBuffer,
+          )
+      }),
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[{ id: '203', label: '요구사항 명세서', versionId: '2031' }]}
+        fetchDocumentContent={fetchOriginal}
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  return { slow, finish: () => finish() }
+}
+
+// PR #135 리뷰(오서현): 파일을 읽는 동안 '고친 글 쓰기'로 돌아가 직접 고친 글이, 늦게 끝난 파일 내용으로 확인 없이 덮어써졌다.
+it('파일을 읽는 동안 글을 직접 고치면 늦게 끝난 파일 내용으로 덮어쓰지 않고 그대로 뒀다고 알린다', async () => {
+  const user = userEvent.setup()
+  const { slow, finish } = renderSlowFile(() =>
+    Promise.resolve({ content: '# 요구사항\n원문', versionId: '2031' }),
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  await user.type(text(), ' 직접 고침')
+  finish()
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '파일을 읽는 동안 글을 고쳐서 a.md 내용을 넣지 않았어요.',
+  )
+  expect(text()).toHaveValue('# 요구사항\n원문 직접 고침')
+})
+
+it('파일을 읽는 동안 탭만 옮기고 글을 고치지 않으면 파일 내용을 넣는다', async () => {
+  const user = userEvent.setup()
+  const { slow, finish } = renderSlowFile(() =>
+    Promise.resolve({ content: '# 요구사항\n원문', versionId: '2031' }),
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  finish()
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'a.md 내용을 고친 글에 넣었어요.',
+  )
+  expect(text()).toHaveValue('# 요구사항\n파일 내용')
+})
+
+// 기준 원문이 빈 글을 채운 것은 직접 고친 글이 아니므로, 고른 파일을 그대로 넣는다.
+it('파일을 읽는 동안 기준 원문이 도착해도 파일 내용을 넣는다', async () => {
+  const user = userEvent.setup()
+  let arrive: (loaded: Loaded) => void = () => undefined
+  const original = vi.fn(() => new Promise<Loaded>((done) => (arrive = done)))
+  const { slow, finish } = renderSlowFile(original)
+  await waitFor(() => expect(original).toHaveBeenCalled())
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  arrive({ content: '# 요구사항\n원문', versionId: '2031' })
+  await waitFor(() =>
+    expect(screen.queryByText('기준 원문을 불러오는 중…')).toBeNull(),
+  )
+  finish()
+  expect(
+    await screen.findByText('a.md 내용을 고친 글에 넣었어요.'),
+  ).toBeInTheDocument()
+  expect(screen.getByLabelText('고친 글')).toHaveValue('# 요구사항\n파일 내용')
+})
+
 // S15P31A108-203: 비비에게 초안 받기(CHG-A07). 기준 원문의 버전과 고른 작업을 담아 요청하고, 손대지 않은 글만 초안으로 채운다.
 function renderDraftForm(requestDraft: () => Promise<unknown>) {
   const client = new QueryClient({
