@@ -4,11 +4,11 @@ Internal interface only. The caller passes one BE-authorized question with
 the search results, the approved items and the related tasks. Every citation
 is checked against its evidence text, every item and task reference against
 the input, and every checkable fact in each sentence of the answer (numbers,
-keys, paths, identifiers, codes) against the quotes that sentence cites and
-the items and tasks the answer references. With a claim verifier, a second
-model call then judges each sentence against those quotes, which is what
-catches a flipped subject or negation that keeps every token. A citation the
-evidence does not hold, a fact nothing cited supports or a sentence the judge
+keys, paths, identifiers, codes) against the cited quotes and their document
+metadata, and the items and tasks the answer references. With a claim
+verifier, a second model call then judges each sentence against those supports,
+which is what catches a flipped subject or negation that keeps every token. A
+citation the evidence does not hold, a fact nothing cited supports or a sentence the judge
 calls unsupported rejects the whole output; an answer that names no
 grounding at all is replaced by the fixed "not found" text instead of being
 shown as a guess. Nothing is stored and nothing is decided here.
@@ -47,6 +47,7 @@ from app.services.bee_chat.proposer import (
     MAX_SHARED_SUPPORT_CHARS,
     AnswerProposal,
     AnswerProposer,
+    CitationSupport,
     Claim,
     ClaimVerdicts,
     ClaimVerifier,
@@ -667,10 +668,11 @@ def verify_answer(
     a quote that is not an exact substring of its evidence; a `[n]` outside
     1..k (so `[0]` and `[100]` too); a blank ANSWERED text; and, sentence by
     sentence, a fact (number, key, path, identifier, code) that neither the
-    quotes that sentence cites nor a referenced item or task states as the
-    same whole token, so "50 MB" over a 30 MB (or 150 MB) quote never
-    passes and a number from another sentence of the same chunk is no
-    support. A citation no `[n]` refers to backs nothing and is dropped;
+    quotes and document metadata that sentence cites nor a referenced item or
+    task states as the same whole token. Tokens do not establish the meaning
+    of a number: a line number alone cannot prove a capacity or version. A
+    number from another sentence of the same chunk is no support. A citation
+    no `[n]` refers to backs nothing and is dropped;
     repeated citations collapse to one number. An ANSWERED answer that then
     keeps no citation, approved item or related task is not shown: it
     becomes INSUFFICIENT_EVIDENCE with the fixed text. For the two
@@ -764,7 +766,14 @@ def verify_answer(
                 for index in dict.fromkeys(markers):
                     chunk = by_evidence[answer.citations[index - 1].evidence_id]
                     parts.extend(
-                        [quotes[index], chunk.title or "", chunk.section_title or ""]
+                        [
+                            quotes[index],
+                            chunk.title or "",
+                            chunk.section_title or "",
+                            str(chunk.version_no),
+                            str(chunk.locator.start_line),
+                            str(chunk.locator.end_line),
+                        ]
                     )
                 known = shared | support_tokens(parts)
                 if any(_canonical(t) not in known for t in fact_tokens(segment)):
@@ -911,7 +920,15 @@ async def generate_bee_chat(
     usage = proposal.usage
     if verifier is not None and result.answer_status == "ANSWERED":
         claims, shared = claims_from(result, request)
-        quotes = [cited.quote for cited in result.citations]
+        quotes = [
+            CitationSupport(
+                text=cited.quote,
+                version_no=cited.version_no,
+                start_line=cited.locator.start_line,
+                end_line=cited.locator.end_line,
+            )
+            for cited in result.citations
+        ]
         try:
             verdicts = await verifier.verify(request.question, quotes, shared, claims)
         except LLMError as error:

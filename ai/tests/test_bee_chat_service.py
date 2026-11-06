@@ -17,6 +17,7 @@ from app.services.bee_chat import (
     UNGROUNDED_NOTE,
     VERIFY_CALL_KEY_PREFIX,
     AnswerProposal,
+    CitationSupport,
     ClaimVerdicts,
     LLMAnswerProposer,
     LLMClaimVerifier,
@@ -422,7 +423,7 @@ async def test_the_judge_rejects_a_sentence_its_quotes_do_not_support():
     assert [u.request_key for u in outcome.usage] == ["answer", "verify"]
     question, quotes, shared, claims = judge.seen
     assert question == "파일 한도는 얼마인가요?"
-    assert quotes == [PUBLISH] and shared == []
+    assert [quote.text for quote in quotes] == [PUBLISH] and shared == []
     assert [(c.index, c.text, c.quotes) for c in claims] == [
         (1, "발행은 리더만 할 수 있습니다.", (1,))
     ]
@@ -457,7 +458,8 @@ async def test_claims_give_each_sentence_its_quote_numbers_and_the_shared_refere
         'PLN-001 (POLICY, version_no=1): {"description": "발행은 리더만 수행한다."}',
         "TASK-001 READY / 담당 21",
     ]
-    assert judge.seen[1] == [LIMIT, PUBLISH] and judge.seen[2] == shared
+    assert [quote.text for quote in judge.seen[1]] == [LIMIT, PUBLISH]
+    assert judge.seen[2] == shared
     assert judge.seen[3] == claims
 
 
@@ -493,7 +495,7 @@ async def test_a_huge_task_goal_keeps_the_judge_input_small():
     assert time.perf_counter() - started < 1.0
     assert result.answer_status == "ANSWERED" and result.verification.claims == 4
     _question, quotes, shared, claims = judge.seen
-    assert quotes == [LIMIT] and len(shared) == 1
+    assert [quote.text for quote in quotes] == [LIMIT] and len(shared) == 1
     assert len(shared[0]) <= 2000 and shared[0].startswith(
         "TASK-001 READY / 담당 21 / 계획 업로드 / 목표"
     )
@@ -501,7 +503,7 @@ async def test_a_huge_task_goal_keeps_the_judge_input_small():
         len(
             json.dumps(
                 {
-                    "quotes": quotes,
+                    "quotes": [quote.text for quote in quotes],
                     "shared": shared,
                     "claims": [c.text for c in claims],
                 },
@@ -1149,6 +1151,177 @@ async def test_approved_item_version_is_available_to_both_verification_steps():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "이 문서의 승인 버전은 2입니다 [1].",
+        "근거는 3행에 있습니다 [1].",
+        "근거는 8행까지입니다 [1].",
+    ],
+)
+async def test_cited_document_metadata_reaches_both_verification_steps(text):
+    passage = "문서에는 접근 정책이 적혀 있다."
+    chunk = evidence("ev-1", passage, line=3)
+    chunk["locator"]["end_line"] = 8
+    body = {
+        "retrieved_evidence": [chunk],
+        "approved_items": [],
+        "related_tasks": [],
+    }
+    judge = Judge()
+    result = (
+        await run(
+            answer(text=text, citations=[{"evidence_id": "ev-1", "quote": passage}]),
+            judge,
+            **body,
+        )
+    ).result
+    assert result.answer_status == "ANSWERED"
+    assert result.citations[0].quote == passage
+    question, quotes, shared, claims = judge.seen
+    payload = json.loads(verify_payload(question, quotes, shared, claims))
+    assert payload["quotes"] == [
+        {
+            "n": 1,
+            "text": passage,
+            "version_no": 2,
+            "locator": {"type": "text_lines", "start_line": 3, "end_line": 8},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_metadata_of_another_citation_cannot_support_this_sentence():
+    first, second = "접근 정책입니다.", "발행 정책입니다."
+    other = {
+        **evidence("ev-2", second, line=11),
+        "document_version_id": "213",
+        "version_no": 7,
+    }
+    body = {
+        "retrieved_evidence": [evidence("ev-1", first), other],
+        "approved_items": [],
+        "related_tasks": [],
+        "scope": {
+            "mode": "APPROVED",
+            "document_version_ids": ["212", "213"],
+            "baseline_id": "401",
+        },
+    }
+    raw = answer(
+        text="첫 문서의 승인 버전은 7입니다 [1]. 다음 문서의 근거입니다 [2].",
+        citations=[
+            {"evidence_id": "ev-1", "quote": first},
+            {"evidence_id": "ev-2", "quote": second},
+        ],
+    )
+    await rejected(raw, **body)
+
+
+@pytest.mark.asyncio
+async def test_judge_keeps_each_citations_metadata_with_its_claim():
+    first, second = "접근 정책입니다.", "발행 정책입니다."
+    other = {
+        **evidence("ev-2", second, line=11),
+        "document_version_id": "213",
+        "version_no": 7,
+    }
+    judge = Judge()
+    await run(
+        answer(
+            text="첫 문서 버전은 2입니다 [1]. 다음 문서 버전은 7입니다 [2].",
+            citations=[
+                {"evidence_id": "ev-1", "quote": first},
+                {"evidence_id": "ev-2", "quote": second},
+            ],
+        ),
+        judge,
+        retrieved_evidence=[evidence("ev-1", first), other],
+        approved_items=[],
+        related_tasks=[],
+        scope={
+            "mode": "APPROVED",
+            "document_version_ids": ["212", "213"],
+            "baseline_id": "401",
+        },
+    )
+    question, quotes, shared, claims = judge.seen
+    payload = json.loads(verify_payload(question, quotes, shared, claims))
+    assert [quote["version_no"] for quote in payload["quotes"]] == [2, 7]
+    assert [quote["locator"]["start_line"] for quote in payload["quotes"]] == [3, 11]
+    assert [claim["quotes"] for claim in payload["claims"]] == [[1], [2]]
+    assert payload["shared_support"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["문서 버전은 7입니다 [1].", "근거는 11행입니다 [1]."])
+async def test_incorrect_document_metadata_is_rejected(text):
+    passage = "접근 정책입니다."
+    body = {
+        "retrieved_evidence": [evidence("ev-1", passage)],
+        "approved_items": [],
+        "related_tasks": [],
+    }
+    await rejected(
+        answer(text=text, citations=[{"evidence_id": "ev-1", "quote": passage}]),
+        **body,
+    )
+
+
+@pytest.mark.asyncio
+async def test_judge_receives_separate_metadata_to_reject_a_wrong_interpretation():
+    # The token stage sees the same number in the line range; only the judge
+    # checks that a line number cannot prove a document's version number.
+    passage = "문서에는 접근 정책이 적혀 있다."
+    raw = answer(
+        text="문서 버전은 3입니다 [1].",
+        citations=[{"evidence_id": "ev-1", "quote": passage}],
+    )
+    judge = Judge(flagged=["버전은 3"])
+    error = await rejected(
+        raw,
+        judge,
+        retrieved_evidence=[evidence("ev-1", passage, line=3)],
+        approved_items=[],
+        related_tasks=[],
+    )
+    question, quotes, shared, claims = judge.seen
+    payload = json.loads(verify_payload(question, quotes, shared, claims))
+    assert payload["quotes"][0]["version_no"] == 2
+    assert payload["quotes"][0]["locator"]["start_line"] == 3
+    assert [(item.request_key, item.failed) for item in error.usage] == [
+        ("answer", True),
+        ("verify", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_full_length_quote_with_metadata_still_reaches_the_judge():
+    passage = "정" * 1000
+    judge = Judge()
+    result = (
+        await run(
+            answer(
+                text="문서 버전은 2입니다 [1].",
+                citations=[{"evidence_id": "ev-1", "quote": passage}],
+            ),
+            judge,
+            retrieved_evidence=[evidence("ev-1", passage)],
+            approved_items=[],
+            related_tasks=[],
+        )
+    ).result
+    assert result.citations[0].quote == passage
+    question, quotes, shared, claims = judge.seen
+    payload = verify_payload(question, quotes, shared, claims)
+    assert json.loads(payload)["quotes"][0]["text"] == passage
+    assert len(payload.encode("utf-8")) <= MAX_PAYLOAD_BYTES
+    with pytest.raises(LLMError) as info:
+        await verifier(FakeProvider("{}")).verify(question, quotes, shared, claims)
+    assert info.value.code == "invalid_output"
+
+
+@pytest.mark.asyncio
 async def test_a_fact_the_citation_does_not_support_rejects_the_answer():
     # PR #96 P1 (3rd round): a real 30 MB quote under a 50 MB claim.
     error = await rejected(answer(text="한도는 50 MB입니다 [1]."))
@@ -1537,10 +1710,21 @@ async def test_llm_verifier_sends_sentences_with_numbered_quotes_once():
     ]
     judge_call = provider.requests[1]
     assert "검증자" in judge_call.messages[0].content
+    assert "문서 버전과 행 번호를 서로 다른 의미" in judge_call.messages[0].content
+    assert (
+        "다른 번호의 인용과 메타데이터는 근거가 아니" in judge_call.messages[0].content
+    )
     payload = json.loads(judge_call.messages[1].content)
     assert payload == {
         "question": "파일 한도는 얼마인가요?",
-        "quotes": [{"n": 1, "text": LIMIT}],
+        "quotes": [
+            {
+                "n": 1,
+                "text": LIMIT,
+                "version_no": 2,
+                "locator": {"type": "text_lines", "start_line": 3, "end_line": 3},
+            }
+        ],
         "shared_support": [],
         "claims": [
             {"index": 1, "text": "한도는 30 MB이고 초과하면 413입니다.", "quotes": [1]}
@@ -1616,12 +1800,28 @@ async def test_llm_verifier_sends_sentences_with_numbered_quotes_once():
 
     with pytest.raises(LLMError) as info:
         await verifier(provider).verify(
-            "q", [LIMIT], ["x" * 2001], [Claim(index=1, text="t", quotes=(1,))]
+            "q",
+            [CitationSupport(LIMIT, 2, 3, 3)],
+            ["x" * 2001],
+            [Claim(index=1, text="t", quotes=(1,))],
         )
     assert info.value.code == "invalid_input"
+    for invalid in (
+        CitationSupport(LIMIT, 0, 3, 3),
+        CitationSupport(LIMIT, True, 3, 3),
+        CitationSupport(LIMIT, 2, 4, 3),
+    ):
+        with pytest.raises(LLMError) as info:
+            await verifier(provider).verify(
+                "q", [invalid], [], [Claim(index=1, text="t", quotes=(1,))]
+            )
+        assert info.value.code == "invalid_input"
     with pytest.raises(LLMError) as info:
         await verifier(provider).verify(
-            "q", [LIMIT], [], [Claim(index=1, text="t", quotes=(2,))]
+            "q",
+            [CitationSupport(LIMIT, 2, 3, 3)],
+            [],
+            [Claim(index=1, text="t", quotes=(2,))],
         )
     assert info.value.code == "invalid_input"
 

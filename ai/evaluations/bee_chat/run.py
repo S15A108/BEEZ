@@ -22,6 +22,7 @@ from app.schemas.bee_chat import BeeChatRequest, RetrievedEvidence, citation_mar
 from app.services.bee_chat import (
     VERIFY_CALL_KEY_PREFIX,
     AnswerProposal,
+    CitationSupport,
     Claim,
     ClaimVerdicts,
     LLMAnswerProposer,
@@ -86,7 +87,7 @@ class ScriptedClaimVerifier:
     async def verify(
         self,
         question: str,
-        quotes: Sequence[str],
+        quotes: Sequence[CitationSupport],
         shared: Sequence[str],
         claims: Sequence[Claim],
     ) -> ClaimVerdicts:
