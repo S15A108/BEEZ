@@ -149,6 +149,302 @@ def test_unresolved_keeps_source_unchanged():
     assert result["result"]["after_content"] == body.source.content
 
 
+def test_repeated_long_request_keys_have_distinct_usage_call_keys():
+    body, _ = make_request()
+    body = body.model_copy(update={"request_key": "x" * 128})
+    output = {"changes": [], "unresolved": ["검토 필요"]}
+    first, _ = run(body, output)
+    second, _ = run(body, output)
+    assert first["usage"][0]["request_key"] != second["usage"][0]["request_key"]
+    assert len(first["usage"][0]["request_key"]) <= 128
+
+
+def markdown_request(text, line=1):
+    digest = text_digest(text)
+    original = SourceInput(
+        project_id="1",
+        document_version_id="21",
+        kind="PLAN",
+        media_type="text/markdown",
+        content=text,
+        content_hash=digest,
+        text_hash=digest,
+        normalization_version="utf8-lf-v1",
+        parser_profile="markdown-v1",
+    )
+    target = next(
+        b for b in parse_source(original).blocks if b.locator.start_line == line
+    )
+    return RevisionRequest(
+        source=original,
+        expected_document_version_id="21",
+        selected_block_ids=[target.block_id],
+        instruction="수정",
+        request_key="md-test",
+    ), target.block_id
+
+
+@pytest.mark.parametrize(
+    ("text", "replacement"),
+    [
+        ("```py\nprint(1)\n```\n\n다음 문단\n", "```py\nprint(2)\n"),
+        ("첫 문단\n\n다음 문단\n", "# 바뀐 제목\n"),
+        ("# 원래 제목\n\n다음 문단\n", "# 바뀐 제목\n"),
+    ],
+)
+def test_markdown_change_cannot_alter_unselected_structure(text, replacement):
+    body, selected = markdown_request(text)
+    with pytest.raises(LLMError):
+        run(
+            body,
+            {
+                "changes": [
+                    {
+                        "block_id": selected,
+                        "replacement": replacement,
+                        "reason": "수정",
+                        "evidence": [],
+                    }
+                ],
+                "unresolved": [],
+            },
+        )
+
+
+def test_markdown_paragraph_change_preserving_other_structure_is_allowed():
+    body, selected = markdown_request("첫 문단\n\n다음 문단\n")
+    result, _ = run(
+        body,
+        {
+            "changes": [
+                {
+                    "block_id": selected,
+                    "replacement": "수정 문단\n",
+                    "reason": "수정",
+                    "evidence": [],
+                }
+            ],
+            "unresolved": [],
+        },
+    )
+    assert result["result"]["after_content"] == "수정 문단\n\n다음 문단\n"
+
+
+def test_markdown_ordered_list_start_cannot_change_unselected_numbering():
+    body, selected = markdown_request("1. 첫 항목\n2. 다음 항목\n")
+    with pytest.raises(LLMError):
+        run(
+            body,
+            {
+                "changes": [
+                    {
+                        "block_id": selected,
+                        "replacement": "8. 첫 항목\n",
+                        "reason": "수정",
+                        "evidence": [],
+                    }
+                ],
+                "unresolved": [],
+            },
+        )
+
+
+def test_markdown_reference_cannot_change_unselected_link_destination():
+    body, selected = markdown_request("[site]: https://example.com\n\n[링크][site]\n")
+    with pytest.raises(LLMError):
+        run(
+            body,
+            {
+                "changes": [
+                    {
+                        "block_id": selected,
+                        "replacement": "[site]: https://other.example\n",
+                        "reason": "수정",
+                        "evidence": [],
+                    }
+                ],
+                "unresolved": [],
+            },
+        )
+
+
+def test_unused_reference_can_change_without_affecting_unselected_text():
+    text = "[site]: https://example.com\n\n다른 문단\n"
+    body, selected = markdown_request(text)
+    result, _ = run(
+        body,
+        {
+            "changes": [
+                {
+                    "block_id": selected,
+                    "replacement": "[site]: https://other.example\n",
+                    "reason": "수정",
+                    "evidence": [],
+                }
+            ],
+            "unresolved": [],
+        },
+    )
+    assert result["result"]["after_content"] == text.replace(
+        "https://example.com", "https://other.example"
+    )
+
+
+def test_new_reference_cannot_turn_unselected_text_into_link():
+    body, selected = markdown_request("선택 문단\n\n[site]\n")
+    with pytest.raises(LLMError):
+        run(
+            body,
+            {
+                "changes": [
+                    {
+                        "block_id": selected,
+                        "replacement": "[site]: https://example.com\n",
+                        "reason": "수정",
+                        "evidence": [],
+                    }
+                ],
+                "unresolved": [],
+            },
+        )
+
+
+def test_markdown_list_tightness_cannot_change_unselected_item():
+    body, selected = markdown_request("- 첫 항목\n- 다음 항목\n")
+    with pytest.raises(LLMError):
+        run(
+            body,
+            {
+                "changes": [
+                    {
+                        "block_id": selected,
+                        "replacement": "- 첫 수정 항목\n\n",
+                        "reason": "수정",
+                        "evidence": [],
+                    }
+                ],
+                "unresolved": [],
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("text", "line", "before", "replacement"),
+    [
+        (
+            "| 제목 | 값 |\n| --- | --- |\n| 하나 | 이전 |\n| 둘 | 유지 |\n",
+            3,
+            "| 하나 | 이전 |\n",
+            "| 하나 | 변경 |\n",
+        ),
+        ("- 첫 항목\n- 둘째 항목\n", 1, "- 첫 항목\n", "- 변경 항목\n"),
+        ("1. 첫 항목\n2. 둘째 항목\n", 2, "2. 둘째 항목\n", "2. 변경 항목\n"),
+        ("> 첫 문단\n>\n> 둘째 문단\n", 1, "> 첫 문단\n", "> 변경 문단\n"),
+        ("- 상위\n  - 첫 하위\n  - 둘 하위\n", 2, "  - 첫 하위\n", "  - 수정 하위\n"),
+    ],
+)
+def test_markdown_adjacent_block_edits_preserve_other_blocks(
+    text, line, before, replacement
+):
+    body, selected = markdown_request(text, line)
+    result, _ = run(
+        body,
+        {
+            "changes": [
+                {
+                    "block_id": selected,
+                    "replacement": replacement,
+                    "reason": "수정",
+                    "evidence": [],
+                }
+            ],
+            "unresolved": [],
+        },
+    )
+    assert result["result"]["after_content"] == text.replace(before, replacement, 1)
+
+
+def test_markdown_multiple_selected_table_rows_preserve_middle_row():
+    text = "| 항목 | 값 |\n| --- | --- |\n| 첫째 | 이전 |\n| 둘째 | 유지 |\n| 셋째 | 이전 |\n"
+    body, first = markdown_request(text, 3)
+    third = next(
+        b.block_id
+        for b in parse_source(body.source).blocks
+        if b.locator.start_line == 5
+    )
+    body = body.model_copy(update={"selected_block_ids": [first, third]})
+    result, _ = run(
+        body,
+        {
+            "changes": [
+                {
+                    "block_id": first,
+                    "replacement": "| 첫째 | 새 값 |\n",
+                    "reason": "수정",
+                    "evidence": [],
+                },
+                {
+                    "block_id": third,
+                    "replacement": "| 셋째 | 변경 |\n",
+                    "reason": "수정",
+                    "evidence": [],
+                },
+            ],
+            "unresolved": [],
+        },
+    )
+    assert result["result"]["after_content"] == text.replace(
+        "| 첫째 | 이전 |", "| 첫째 | 새 값 |"
+    ).replace("| 셋째 | 이전 |", "| 셋째 | 변경 |")
+
+
+def test_markdown_validation_does_not_block_event_loop(monkeypatch):
+    import threading
+
+    import app.services.document_revision as revision
+
+    body, selected = markdown_request("첫 문단\n\n다음 문단\n")
+    started, release = threading.Event(), threading.Event()
+    original = revision._check_markdown_scope
+
+    def slow_validation(*args):
+        started.set()
+        if not release.wait(2):
+            raise RuntimeError("event loop could not run")
+        return original(*args)
+
+    monkeypatch.setattr(revision, "_check_markdown_scope", slow_validation)
+    provider = Provider(
+        {
+            "changes": [
+                {
+                    "block_id": selected,
+                    "replacement": "수정 문단\n",
+                    "reason": "수정",
+                    "evidence": [],
+                }
+            ],
+            "unresolved": [],
+        }
+    )
+
+    async def exercise():
+        task = asyncio.create_task(
+            generate_revision(body, LLMClient(provider), "test-model")
+        )
+        try:
+            while not started.is_set():
+                await asyncio.sleep(0.001)
+            release.set()
+            return await task
+        finally:
+            release.set()
+
+    assert (
+        asyncio.run(exercise())["result"]["after_content"] == "수정 문단\n\n다음 문단\n"
+    )
+
+
 def test_endpoint_authenticates_and_rejects_missing_scope_before_generation():
     body, _ = make_request()
     provider = Provider({"changes": [], "unresolved": ["검토 필요"]})

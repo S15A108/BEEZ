@@ -99,6 +99,7 @@
 - [CHG-A05 변경 영향 조회](#chg-a05)
 - [CHG-A06 변경 영향 AI 재분석](#chg-a06)
 - [CHG-A07 문서 수정 초안 생성](#chg-a07)
+- [CHG-A07 선택 범위 문서 수정 초안](#chg-a07-scoped)
 - [CHG-A08 변경 제안 검토 시작](#chg-a08)
 - [CHG-A09 변경 제안 승인·발행](#chg-a09)
 - [CHG-A10 변경 제안 반려](#chg-a10)
@@ -8064,6 +8065,119 @@ HTTP `200`.
 - 다시 시도해도 되는 오류: 502 ai_unavailable, 504 ai_timeout(잠시 뒤 같은 요청). 기준을 새로 확인한 뒤 보내야 하는 오류: 409 version_conflict. 입력을 고쳐야 하는 오류: 400 validation_failed, 404 not_found. 409 baseline_missing·analysis_not_completed는 기준 v1 발행이나 문서 준비가 끝난 뒤에 다시 보낸다.
 - AI 호출 한 번마다 사용량 줄을 남긴다. 모델 호출 뒤에 실패한 경우 AI가 오류 본문에 실은 `usage[]`(알려진 토큰·비용, 여러 모델 호출 포함)를 그대로 남기고(03-ai-internal 공통 규칙), 응답 본문을 받지 못했거나 `usage`가 없을 때만 토큰 수를 모르는 실패 한 줄(`tokens_known=false`, `failed=true`)을 남긴다. 0토큰으로 단정하지 않는다. 사용량 기록이 실패해도 응답은 막지 않는다.
 - 회의 끝내기(MTG-A13)는 이 API를 부르지 않는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="chg-a07-scoped"></a>
+
+## CHG-A07. 선택 범위 문서 수정 초안
+
+### POST `/api/projects/{id}/change-drafts/scoped/blocks`
+
+현재 기준의 승인된 Markdown 또는 일반 텍스트 문서를 파싱해 선택 가능한 블록을
+조회한다. 본문과 블록 위치가 응답에 포함되므로 프로젝트 멤버만 호출할 수 있다.
+목록 조회와 초안 생성 사이에 승인본이나 파서가 바뀌면 이전 블록 ID를 다시
+사용할 수 없다. 이 경우 목록을 새로 조회해 선택한다.
+
+#### 인증 및 헤더
+
+`MEMBER` 세션이 필요하다. `Content-Type: application/json`과 신뢰할 수 있는
+`Origin`을 보낸다. `Origin`이 없으면 허용된 출처의 `Referer` 하나가 필요하다.
+`Origin`이 존재하지만 잘못된 경우에는 `Referer`로 대체하지 않는다. 선택적
+`X-Request-Id`를 사용할 수 있다. `{id}`는 프로젝트 ID다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 프로젝트에 속한 대상 문서 |
+| `base_document_version_id` | `ID` | Y | 현재 기준에 포함된 해당 문서의 승인 버전 |
+
+```json
+{
+  "document_id": "201",
+  "base_document_version_id": "211"
+}
+```
+
+#### Response
+
+HTTP `200`. `document_id`, `base_document_version_id`, `document_version_id`,
+`text_hash`, `normalization_version`, `parser_profile`, `parser_version`과
+`blocks`를 반환한다. 각 블록은 `block_id`, `block_type`, `text`,
+`locator`를 가진다. `locator`는 `type: "text_lines"`, 1부터 시작하는
+포함 범위 `start_line`, `end_line`이다. ID는 문서 스냅샷과 파서에 종속된다.
+
+### POST `/api/projects/{id}/change-drafts/scoped`
+
+선택된 블록만 바꾸는 미승인 문서 수정 초안을 생성한다. 위와 같은 세션 및
+출처 검사가 적용된다. `Idempotency-Key`는 필수이며 제어 문자 없는 1~128자다.
+같은 프로젝트·계정·호출자 종류에서 같은 키와 본문의 성공 결과는 24시간
+재생하며, 같은 키의 다른 본문은 `409 idempotency_conflict`다. 재생 시에도
+현재 권한과 문서 기준을 확인한다. 실패한 요청은 결과를 저장하지 않는다.
+같은 키의 동시 요청 공유는 단일 서버 프로세스 안에서만 보장된다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 대상 문서 |
+| `base_document_version_id` | `ID` | Y | 현재 기준의 대상 승인본 |
+| `selected_block_ids` | `string[]` | Y | 위 목록에서 받은 중복 없는 블록 ID 1~30개 |
+| `instruction` | `string` | Y | 공백만이 아닌 수정 지시, 4,000자 이하 |
+| `task_id` | `ID` | N | 같은 프로젝트의 관련 작업. 사용량 귀속용 |
+| `agreements` | `string[]` | N | 사용자가 직접 입력한 참고 합의. 최대 30개, 각 항목 1~4,000자 |
+| `related_proposals` | `string[]` | N | 사용자가 직접 입력한 관련 제안의 참고 내용. 최대 30개, 각 항목 1~4,000자 |
+
+```json
+{
+  "document_id": "201",
+  "base_document_version_id": "211",
+  "selected_block_ids": ["blk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+  "instruction": "삭제 권한을 팀장으로 제한해 주세요.",
+  "agreements": ["삭제 권한은 팀장만 가진다"],
+  "related_proposals": ["삭제 권한 변경을 제안한다"]
+}
+```
+
+합의와 관련 제안은 **직접 입력한 문자열**이다. 서버가 회의 합의의 확정 여부나
+프로젝트의 변경 제안 ID·내용과의 일치를 조회·보증하지 않는다. 모델의 `evidence`는
+이 입력 문자열에서 확인된 인용이며, 팀의 확정 사실임을 뜻하지 않는다.
+
+#### Response
+
+HTTP `200`. `document_id`, `base_document_version_id`, 전체 수정 초안
+`after_content`, `changes`, `unresolved`, `generation`을 반환한다. 각 변경은
+`block_id`, `before`, `after`, `reason`, `evidence`를 포함한다. 해결할 수 없는
+요청은 `changes: []`와 설명이 담긴 `unresolved`로 반환될 수 있다.
+`generation`에는 `origin: "MODEL"`, `model`, `usage`가 있다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값, 선택 블록, 입력 길이 또는 멱등 키 오류 |
+| 401 | `unauthenticated` | 세션이 유효하지 않음 |
+| 403 | `request_origin_rejected` | 허용 출처의 Origin 또는 Referer가 없음 |
+| 404 | `not_found` | 프로젝트 멤버가 아니거나 대상 문서·작업에 접근할 수 없음 |
+| 409 | `version_conflict` | 기준 승인본 또는 선택 범위가 바뀜 |
+| 409 | `analysis_not_completed` | 원문이 없거나 저장된 파일 형식·정규화가 적합하지 않음 |
+| 409 | `idempotency_conflict` | 같은 키로 다른 본문을 보냄 |
+| 502 | `ai_unavailable` | AI 연결 또는 출력 검증 실패 |
+| 504 | `ai_timeout` | AI 호출 또는 동시 요청 대기 시간 초과 |
+
+#### 처리 규칙
+
+- BE는 문서의 현재 승인 스냅샷을 조회하고 블록의 원문 위치를 검증한다. AI 호출
+  후에도 활성 멤버 권한과 현재 승인본을 다시 확인한다.
+- BE는 선택된 블록별 변경을 원문에 다시 조립해 AI의 전체 결과와 비교한다.
+  선택 밖 원문이 바뀌면 결과를 거절한다. Markdown 구조 검증은 AI가 수행한다.
+- 문서·기준·제안을 저장하거나 승인·발행하지 않는다. 사람이 내용을 확인한 뒤
+  CHG-A01로 별도 제안한다. 모델 호출 사용량과 성공한 멱등 응답은 기록한다.
+- 기존 `POST /change-drafts`와 별도 계약이며, 선택 범위가 없을 때 원문 전체를
+  자동 선택하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -22,6 +22,10 @@ import {
 } from './helpers'
 import type { MockContext, MockReply } from './helpers'
 import { normalizeDocument } from '../features/changes/normalizeDocument'
+import {
+  scopedBlocksInputSchema,
+  scopedDraftInputSchema,
+} from '../features/changes/schemas'
 import { describeContent } from '../lib/display'
 import { copy, nextId, now } from './state'
 
@@ -313,6 +317,81 @@ export function changeRoutes(
     ? findById(project.proposals, params.proposal_id)
     : undefined
   switch (id) {
+    case 'CHG-A07-SCOPED-BLOCKS':
+    case 'CHG-A07-SCOPED': {
+      const input =
+        id === 'CHG-A07-SCOPED'
+          ? scopedDraftInputSchema.parse(body)
+          : scopedBlocksInputSchema.parse(body)
+      const doc = findById(project.documents, input.document_id)
+      expectValue(doc.approved_version?.id, input.base_document_version_id)
+      const version = findById(project.versions, input.base_document_version_id)
+      const content = normalizeDocument(version.content ?? '')
+      const lines = content.match(/[^\n]*\n|[^\n]+$/g) ?? []
+      const blocks = lines.flatMap((text, index) =>
+        text.trim()
+          ? [
+              {
+                block_id: `mock-line-${index}`,
+                block_type: 'paragraph',
+                locator: {
+                  type: 'text_lines',
+                  start_line: index + 1,
+                  end_line: index + 1,
+                },
+                text,
+              },
+            ]
+          : [],
+      )
+      if (id === 'CHG-A07-SCOPED-BLOCKS')
+        return {
+          data: {
+            ...input,
+            text_hash: mockHash(content),
+            parser_profile: 'mock',
+            parser_version: 'mock',
+            blocks,
+          },
+        }
+      const draftInput = scopedDraftInputSchema.parse(body)
+      if (
+        new Set(draftInput.selected_block_ids).size !==
+          draftInput.selected_block_ids.length ||
+        draftInput.selected_block_ids.some(
+          (key) => !blocks.some((block) => block.block_id === key),
+        )
+      )
+        fail(422, 'invalid_ai_input', '선택한 부분을 다시 확인해 주세요.')
+      const changes = blocks
+        .filter((block) =>
+          draftInput.selected_block_ids.includes(block.block_id),
+        )
+        .map((block) => {
+          const newline = block.text.endsWith('\n') ? '\n' : ''
+          const after = `[예시 수정] ${draftInput.instruction}${newline}`
+          lines[block.locator.start_line - 1] = after
+          return {
+            block_id: block.block_id,
+            before: block.text,
+            after,
+            reason: '예시 모드 결과',
+            evidence: [],
+          }
+        })
+      return {
+        data: {
+          document_id: input.document_id,
+          base_document_version_id: input.base_document_version_id,
+          after_content: lines.join(''),
+          changes,
+          unresolved: [
+            '예시 모드의 가상 결과예요. 실제 모델이 생성한 내용이 아닙니다.',
+          ],
+          generation: { origin: 'TEMPLATE', model: 'mock', usage: [] },
+        },
+      }
+    }
     case 'CHG-A01': {
       const input = changeProposalInputSchema.parse(body)
       if (!project.project.current_baseline)

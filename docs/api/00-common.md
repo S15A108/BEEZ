@@ -345,6 +345,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A05 변경 영향 조회](01-backend-rest.md#chg-a05) | GET `/api/projects/{id}/change-proposals/{proposal_id}/impact` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A06 변경 영향 AI 재분석](01-backend-rest.md#chg-a06) | POST `/api/projects/{id}/change-proposals/{proposal_id}/impact/retry` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A07 문서 수정 초안 생성](01-backend-rest.md#chg-a07) | POST `/api/projects/{id}/change-drafts` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [CHG-A07 선택 범위 조회](01-backend-rest.md#chg-a07-scoped) | POST `/api/projects/{id}/change-drafts/scoped/blocks` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [CHG-A07 선택 범위 초안 생성](01-backend-rest.md#chg-a07-scoped) | POST `/api/projects/{id}/change-drafts/scoped` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [CHG-A08 변경 제안 검토 시작](01-backend-rest.md#chg-a08) | POST `/api/projects/{id}/change-proposals/{proposal_id}/review` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A09 변경 제안 승인·발행](01-backend-rest.md#chg-a09) | POST `/api/projects/{id}/change-proposals/{proposal_id}/approve` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
 | [CHG-A10 변경 제안 반려](01-backend-rest.md#chg-a10) | POST `/api/projects/{id}/change-proposals/{proposal_id}/reject` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -434,6 +436,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
 | [AI-A08 회의 질문·요약·결정 추출](03-ai-internal.md#ai-a08) | POST `/v1/bee/meeting-analysis` | 오서현 | 양지훈 |
 | [AI-A10 문서 검토·수정 제안](03-ai-internal.md#ai-a10) | POST `/v1/document-reviews` | 오서현 | 박상은 |
+| [AI-A12 선택 범위 문서 수정 초안](03-ai-internal.md#ai-a12) | POST `/v1/document-revisions` | 오서현 | 박상은 |
+| [AI-A13 문서 수정용 선택 블록 조회](03-ai-internal.md#ai-a13) | POST `/v1/document-revision-blocks` | 오서현 | 박상은 |
 
 ### 확장 후보
 

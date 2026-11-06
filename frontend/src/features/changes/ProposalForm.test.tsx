@@ -3,8 +3,83 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it, vi } from 'vitest'
 import { ProposalForm } from './ProposalForm'
+import { changesApi } from '@/api/services/changes'
 
 type Loaded = { content: string; versionId: string }
+
+it('선택 초안은 확인 후 고친 글에만 적용하고 직접 쓴 글은 덮어쓰지 않는다', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  vi.spyOn(changesApi, 'scopedBlocks').mockResolvedValue({
+    document_id: '203',
+    base_document_version_id: '2031',
+    text_hash: 'hash',
+    parser_profile: 'plain-v1',
+    parser_version: '1',
+    blocks: [
+      {
+        block_id: 'block',
+        block_type: 'paragraph',
+        locator: { type: 'text_lines', start_line: 1, end_line: 1 },
+        text: '기준 원문',
+      },
+    ],
+  })
+  vi.spyOn(changesApi, 'scopedDraft').mockResolvedValue({
+    document_id: '203',
+    base_document_version_id: '2031',
+    after_content: '새 초안',
+    changes: [
+      {
+        block_id: 'block',
+        before: '기준 원문',
+        after: '새 초안',
+        reason: '변경',
+        evidence: [],
+      },
+    ],
+    unresolved: [],
+    generation: { origin: 'MODEL', model: 'test', usage: [] },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        projectId="101"
+        heading="제안"
+        submitLabel="올리기"
+        tasks={[]}
+        documents={[{ id: '203', label: '문서', versionId: '2031' }]}
+        fetchDocumentContent={() =>
+          Promise.resolve({ content: '기준 원문', versionId: '2031' })
+        }
+        defaultValues={{
+          title: '',
+          reason: '',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  await screen.findByDisplayValue('기준 원문')
+  await user.click(screen.getByRole('button', { name: '수정 범위 불러오기' }))
+  await user.click(await screen.findByRole('checkbox', { name: /기준 원문/ }))
+  await user.type(screen.getByLabelText('수정 요청'), '변경해줘')
+  await user.click(
+    screen.getByRole('button', { name: '선택 범위 초안 만들기' }),
+  )
+  await screen.findByText('새 초안')
+  expect(screen.getByLabelText('고친 글')).toHaveValue('기준 원문')
+  await user.click(screen.getByRole('button', { name: '초안 적용' }))
+  expect(screen.getByLabelText('고친 글')).toHaveValue('새 초안')
+  expect(screen.getByText(/직접 고친 글은 유지돼요/)).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
 
 // 문서함 '고치기'로 연 문서 수정 제안 폼. 목록은 승인 버전 2031을 알려 주고, 그 원문이 캐시에 남아 있다.
 function renderForm(fetchContent: () => Promise<Loaded>) {

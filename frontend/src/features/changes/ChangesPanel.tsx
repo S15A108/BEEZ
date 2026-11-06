@@ -554,6 +554,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         <div className="min-w-0">
           {mode.kind === 'form' ? (
             <ProposalForm
+              projectId={projectId}
               key={documents.isSuccess ? 'documents' : 'loading'}
               documents={documentOptions}
               // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
