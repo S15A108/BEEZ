@@ -1,5 +1,6 @@
 import type { Agent } from '../types'
 import { agentDisplayName, bibiOf } from '../agentIdentity'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { characterOf } from '@/lib/characters'
 import type { OfficeAppearance, OfficeEntity3D } from './OfficeRenderer3D'
 import type { Floor } from './floors'
@@ -88,18 +89,22 @@ export function officeActors(
 type Spot = { x: number; y: number; facing: OfficeEntity3D['dir'] }
 // 사무실 에이전트 상태(D37) → 이름표 문구·로봇 모습(캔버스 상태 넷)·걷기 시뮬레이션 상태
 const STATE: Record<string, { label: string; look: string; life: string }> = {
-  offline: { label: '연결 끊김', look: 'offline', life: 'meeting' },
+  offline: { label: agentStatusLabels.none, look: 'offline', life: 'meeting' },
   working: { label: '작업 중', look: 'working', life: 'working' },
   validating: { label: '검증 중', look: 'working', life: 'meeting' },
   waiting: { label: '대기', look: 'idle', life: 'meeting' },
-  online: { label: '연결됨', look: 'online', life: 'meeting' },
+  online: {
+    label: agentStatusLabels.connected,
+    look: 'online',
+    life: 'meeting',
+  },
 }
 
 /**
  * 고정 사무실(D36·D37)의 사람과 에이전트.
  * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리 옆에 서 있다.
  *   팀원은 가구를 쓰지 않는다(사용자 결정 "가구랑 상호작용하는 건 에이전트만 가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
- * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 끊김은 라운지 충전 자리(리클라이너),
+ * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 전은 라운지 충전 자리(리클라이너),
  *   작업 중은 주인의 빈 아일랜드 의자(주인은 옆에 서 있음), 검증 중은 칸반 워룸 화면 앞, 대기는 허들 스툴, 연결됨(할 일 없음)은 주인 자리 뒤에 선다.
  *   상태가 바뀔 때만 새 자리로 걷고, 산책은 하지 않는다.
  */

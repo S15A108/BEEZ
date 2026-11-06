@@ -380,6 +380,72 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
   await expect.poll(centre).toBeLessThan(30)
 })
 
+// S15P31A108-285: 팀장 시작 가이드 1단계에 에이전트 연결이 없었다(SCR-06-v2-workspace-preparing, -docs-ready).
+test('팀장 시작 가이드 1단계에서 초대와 에이전트 연결을 하고, 건너뛰면 링크로 다시 간다', async ({
+  page,
+}) => {
+  await login(page)
+  await page
+    .getByRole('button', { name: '프로젝트 만들기', exact: true })
+    .first()
+    .click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('프로젝트 이름').fill('가이드 확인')
+  await dialog.getByLabel('프로젝트 소개').fill('시작 가이드 1단계')
+  await dialog
+    .getByRole('button', { name: '프로젝트 만들기', exact: true })
+    .click()
+  await expect(
+    page.getByRole('heading', { name: '가이드 확인', exact: true }),
+  ).toBeVisible()
+  const setup = page.getByRole('list', { name: '팀원 초대와 에이전트 연결' })
+  await setup.getByRole('button', { name: '내 에이전트 연결 연결하기' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Claude Code에 BEEZ 추가' }),
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(
+    setup.getByRole('button', { name: '팀원 초대 초대하기' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '나중에 할게요' }).click()
+  await expect(setup).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: '지금 초대하기' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '에이전트 연결하기' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Claude Code에 BEEZ 추가' }),
+  ).toBeVisible()
+})
+
+// S15P31A108-285: 창이 검색칸에 포커스를 주면서 창을 연 숫자가 검색어로 들어갔다.
+test('숫자 키 1로 공용 문서함을 열어도 검색칸이 비어 있다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.keyboard.press('1')
+  const search = page.getByLabel('검색어')
+  await expect(search).toBeVisible()
+  await expect(search).toHaveValue('')
+})
+
+// S15P31A108-285: 2단계 명령 줄이 칸을 밀어내 '복사' 버튼이 창 밖으로 나갔다. 레이아웃이라 브라우저에서만 잡힌다.
+test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 안에 있다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '설정', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: '설정 메뉴' })
+    .getByRole('button', { name: /에이전트/ })
+    .click()
+  const copy = page.getByRole('button', { name: 'MCP 주소 복사' })
+  await expect(copy).toBeVisible()
+  const dialog = (await page.getByRole('dialog').boundingBox())!
+  const button = (await copy.boundingBox())!
+  expect(button.x + button.width).toBeLessThanOrEqual(dialog.x + dialog.width)
+})
+
 // 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인 → 팀장에게 올리기.
 test('문서 수정 제안을 세 단계로 등록하고 마지막에 팀장에게 올린다', async ({
   page,

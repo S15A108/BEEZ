@@ -7,6 +7,9 @@ import { z } from 'zod'
 import { agentsApi, membersApi } from '@/api/services'
 import type { IssueTokenResponse } from './schemas'
 import { allTokens } from './allTokens'
+import { useAgentCheckStore } from './agentCheckStore'
+import { agentStatusLabels } from './agentStatus'
+import { agentConnectionsQuery, useAgentStatusOf } from './useAgentStatusOf'
 import { getApiErrorMessage, unlessMissing } from '@/api/error'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useSession } from '@/features/auth/useSession'
@@ -53,7 +56,8 @@ function CodeLine({
   const [copied, setCopied] = useState(false)
   return (
     <div className="flex items-center justify-between gap-3 rounded-[10px] bg-foreground px-3 py-2.5">
-      <code className="min-w-0 truncate font-mono text-[12.5px] text-[#f5f1e3] select-text">
+      {/* w-0: 줄바꿈 없는 긴 코드가 바깥 grid 칸의 최소 너비를 늘려 '복사'를 창 밖으로 밀지 않게 한다. */}
+      <code className="w-0 flex-1 truncate font-mono text-[12.5px] text-[#f5f1e3] select-text">
         {value.split('\n')[0]}
         {value.includes('\n') && ' …'}
       </code>
@@ -139,7 +143,8 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
   const [revoking, setRevoking] = useState<string | null>(null)
   // 발급 오류(예: 활성 토큰 5개 한도)는 토큰 이름 폼이 알려 주고, 폐기 오류는 폐기 확인 상자에 둔다.
   const [revokeError, setRevokeError] = useState('')
-  const [checked, setChecked] = useState(false)
+  const setCheckedMember = useAgentCheckStore((state) => state.setCheckedMember)
+  const statusOf = useAgentStatusOf(projectId)
   // 토큰(AGT-A01~A03)과 팀원은 따로 불러 연결 안내·현황이 없어도 발급·목록·폐기는 그대로 쓴다.
   const query = useQuery({
     queryKey: ['projects', projectId, 'agent-settings'],
@@ -156,10 +161,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
     queryKey: ['projects', projectId, 'agent-guide'],
     queryFn: () => unlessMissing(agentsApi.connectionGuide(projectId)),
   })
-  const agents = useQuery({
-    queryKey: ['projects', projectId, 'agent-connections'],
-    queryFn: () => unlessMissing(agentsApi.list(projectId)),
-  })
+  const agents = useQuery(agentConnectionsQuery(projectId))
   const shownGuide =
     guide.data ??
     (fresh
@@ -190,17 +192,11 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
           const me = data.members.items.find(
             (member) => member.account_id === session.data?.id,
           )
-          const mine = agents.data?.items.find(
-            (agent) => agent.member_id === me?.id,
-          )
           const tokens = data.tokens.filter((token) => !token.revoked_at)
-          const state = mine?.connected
-            ? mine.status_check_required
-              ? 'recheck'
-              : 'connected'
-            : checked
-              ? 'failed'
-              : 'none'
+          const { status: state, lastReportAt } = statusOf({
+            id: me?.id,
+            agent_connected: Boolean(me?.agent_connected),
+          })
           const revokingToken = tokens.find((token) => token.id === revoking)
           return (
             <>
@@ -238,17 +234,15 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                 >
                   {!statusReady
                     ? '연결 상태 확인은 준비 중이에요'
-                    : state === 'connected'
-                      ? '연결됨'
-                      : state === 'recheck'
-                        ? '연결 미확인'
-                        : state === 'failed'
-                          ? '연결 실패'
-                          : '연결 전'}
+                    : agentStatusLabels[state]}
                 </strong>
                 <span className="min-w-0 flex-1 text-[#57534e]">
-                  {mine?.last_report_at &&
-                    `최근 보고 ${formatDate(mine.last_report_at)} · `}
+                  {/* 실패·연결 전에 옛 보고 시각을 붙이면 말이 엇갈린다(보드 '방금 확인 · …'). */}
+                  {state === 'failed'
+                    ? '방금 확인 · '
+                    : (state === 'connected' || state === 'recheck') &&
+                      lastReportAt &&
+                      `최근 보고 ${formatDate(lastReportAt)} · `}
                   {!statusReady
                     ? '토큰 발급과 연결 안내는 그대로 쓸 수 있어요. 연결 여부는 서버가 준비되면 여기에 보여요.'
                     : state === 'connected'
@@ -263,9 +257,11 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   <button
                     type="button"
                     className="ml-auto shrink-0 text-[12.5px] font-semibold whitespace-nowrap hover:underline"
-                    disabled={agents.isFetching}
+                    disabled={agents.isFetching || !me}
                     onClick={() =>
-                      void agents.refetch().then(() => setChecked(true))
+                      void agents
+                        .refetch()
+                        .then(() => setCheckedMember(me?.id ?? null))
                     }
                   >
                     {agents.isFetching
