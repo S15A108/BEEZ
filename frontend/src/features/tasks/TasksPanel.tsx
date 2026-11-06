@@ -4,12 +4,7 @@ import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ClipboardCheck, Ellipsis, Play, Plus, RefreshCw } from 'lucide-react'
-import {
-  contextsApi,
-  planningApi,
-  tasksApi,
-  validationsApi,
-} from '@/api/services'
+import { contextsApi, planningApi, tasksApi } from '@/api/services'
 import {
   idSchema,
   taskPlanInputSchema,
@@ -55,6 +50,11 @@ import { describeContent, LIST_SELECTED, lines } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import {
+  toValidationView,
+  useValidationActions,
+  useValidationQuery,
+} from '@/features/validations/useValidation'
 
 interface Props {
   projectId: string
@@ -103,6 +103,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryFn: ({ pageParam }) =>
       tasksApi.list(projectId, { cursor: pageParam, limit: 50 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    // 다른 작업을 선택해도 검증과 완료 보고 재검증이 끝날 때 목록을 갱신한다.
     refetchInterval: (query) =>
       query.state.data?.pages.some((page) => page.items.some(settling))
         ? 1500
@@ -121,6 +122,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       : entries
   const selectedId =
     selected?.focus === focusId ? selected.id : (focusId ?? shown[0]?.id)
+  // 다른 작업으로 전환한 뒤에는 이전 작업의 처리 결과를 새 화면에 표시하지 않는다.
+  const selectionScope = JSON.stringify([projectId, selectedId])
+  const [feedbackScope, setFeedbackScope] = useState(selectionScope)
+  const [showActionFeedback, setShowActionFeedback] = useState(false)
+  if (feedbackScope !== selectionScope) {
+    setFeedbackScope(selectionScope)
+    setShowActionFeedback(false)
+  }
   const detail = useQuery({
     queryKey: ['projects', projectId, 'task', selectedId],
     queryFn: () => tasksApi.get(projectId, selectedId!),
@@ -148,24 +157,13 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   // 서버 작업 상세의 validation 은 현재 계획의 가장 최근 검증이다(완료 보고 재검증 DELTA 가 가장 최근이면 그것).
   // DELTA 가 오류로 끝난 뒤 계획 검증을 새로 받았으면 새 검증을 보여 주고(시작·재개에 쓴다), 기다리는 DELTA 는 따로 알린다.
   const validationId = task?.validation?.id ?? task?.delta_validation_id
-  const validation = useQuery({
-    queryKey: ['projects', projectId, 'validation', validationId],
-    queryFn: () => validationsApi.get(projectId, validationId!),
-    enabled: !!validationId,
-    refetchInterval: (query) =>
-      query.state.data?.status === 'RUNNING' ? 1500 : false,
-  })
+  const validation = useValidationQuery(projectId, validationId)
+  const validationActions = useValidationActions(projectId, selectedId)
   const pendingDeltaId =
     task?.delta_validation_id && task.delta_validation_id !== validationId
       ? task.delta_validation_id
       : undefined
-  const pendingDelta = useQuery({
-    queryKey: ['projects', projectId, 'validation', pendingDeltaId],
-    queryFn: () => validationsApi.get(projectId, pendingDeltaId!),
-    enabled: !!pendingDeltaId,
-    refetchInterval: (query) =>
-      query.state.data?.status === 'RUNNING' ? 1500 : false,
-  })
+  const pendingDelta = useValidationQuery(projectId, pendingDeltaId)
   const records = useQuery({
     queryKey: ['projects', projectId, 'task-records', selectedId],
     queryFn: () =>
@@ -188,22 +186,26 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   })
   const isOwner = !!task && memberId === task.assignee_member_id
   const active = !!task && !['COMPLETED', 'CANCELLED'].includes(task.status)
-  const result = validation.data ?? task?.validation
-  const policyAnalysis = result?.policy_analysis
-  const needsHumanReview = result?.findings.some(
-    (finding) =>
-      finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
-  )
-  const delta = pendingDeltaId ? pendingDelta.data : undefined
-  const deltaRetryable =
-    delta?.status === 'ERROR' &&
-    !delta.findings.some(
-      (finding) =>
-        finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
-    )
+  // 조회 응답과 상세의 요약이 현재 선택된 검증에 속할 때만 사용한다.
+  const result =
+    validationId && validation.data?.id === validationId
+      ? validation.data
+      : validationId && task?.validation?.id === validationId
+        ? task.validation
+        : undefined
+  const view = result ? toValidationView(result) : undefined
+  const policyAnalysis = view?.policyAnalysis
+  const needsHumanReview = view?.needsHumanReview
+  const delta =
+    pendingDeltaId && pendingDelta.data?.id === pendingDeltaId
+      ? pendingDelta.data
+      : undefined
+  const deltaRetryable = delta ? toValidationView(delta).retryable : false
   const canStart =
     isOwner &&
     active &&
+    !validationActions.busy &&
+    !validation.error &&
     result?.status === 'PASS' &&
     result.plan_revision_id === task?.current_plan_revision.id &&
     ['READY', 'WAITING'].includes(task?.status ?? '')
@@ -225,8 +227,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
         : canStart
           ? 2
           : 1
-  const startBlocked =
-    result?.status === 'RUNNING'
+  const startBlocked = validation.error
+    ? '검증 결과를 다시 불러와야 시작할 수 있어요.'
+    : result?.status === 'RUNNING'
       ? '계획 검증 중이라 시작할 수 없어요.'
       : blocked
         ? '검증에서 막힌 항목을 고쳐야 시작할 수 있어요.'
@@ -259,8 +262,12 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   }) => {
     return `${approvedLabel(reference.design_item_version_id, reference.design_item_id)} · ${relationLabel[reference.relation as keyof typeof relationLabel]}`
   }
+  const runAction = (operation: () => Promise<unknown>, message: string) => {
+    setShowActionFeedback(true)
+    return action.run(operation, message)
+  }
   const perform = (operation: () => Promise<unknown>, message: string) => {
-    void action.run(operation, message).catch(() => undefined)
+    void runAction(operation, message).catch(() => undefined)
   }
   const report = (event: StateEvent) => {
     if (!task) return
@@ -295,12 +302,12 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           작업 계획
         </Button>
       </PaneHeaderAction>
-      {action.message && (
+      {showActionFeedback && action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
         </p>
       )}
-      {action.error && (
+      {showActionFeedback && action.error && (
         <p
           role="alert"
           className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
@@ -541,11 +548,15 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         <Button
                           variant={primary === 'validate' ? 'default' : 'link'}
                           size={primary === 'validate' ? 'default' : 'sm'}
-                          disabled={action.busy || result?.status === 'RUNNING'}
+                          disabled={
+                            action.busy ||
+                            validationActions.busy ||
+                            result?.status === 'RUNNING'
+                          }
                           onClick={() =>
                             perform(
                               () =>
-                                validationsApi.create(projectId, current.id, {
+                                validationActions.create({
                                   plan_revision_id:
                                     current.current_plan_revision.id,
                                   expected_lock_version: current.lock_version,
@@ -701,19 +712,45 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {validation.error &&
-                      (isMissingApi(validation.error) ? (
-                        <p
-                          role="status"
-                          className="text-sm text-muted-foreground"
+                    {validation.error && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isMissingApi(validation.error) ? (
+                          <p
+                            role="status"
+                            className="text-sm text-muted-foreground"
+                          >
+                            검증 결과는 서버에서 아직 준비 중이에요.
+                          </p>
+                        ) : (
+                          <p role="alert" className="text-sm text-destructive">
+                            검증 결과를 불러오지 못했어요.
+                          </p>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={validation.isFetching}
+                          onClick={() => void validation.refetch()}
                         >
-                          검증 결과는 서버에서 아직 준비 중이에요.
-                        </p>
-                      ) : (
+                          검증 결과 다시 불러오기
+                        </Button>
+                      </div>
+                    )}
+                    {pendingDeltaId && pendingDelta.error && (
+                      <div className="flex flex-wrap items-center gap-2">
                         <p role="alert" className="text-sm text-destructive">
-                          검증 결과를 불러오지 못했어요.
+                          완료 보고 재검증 결과를 불러오지 못했어요.
                         </p>
-                      ))}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pendingDelta.isFetching}
+                          onClick={() => void pendingDelta.refetch()}
+                        >
+                          완료 보고 재검증 결과 다시 불러오기
+                        </Button>
+                      </div>
+                    )}
                     {current.waiting_reason && (
                       <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
                         대기 이유: <StatusPill value={current.waiting_reason} />
@@ -744,11 +781,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={action.busy}
+                            disabled={action.busy || validationActions.busy}
                             onClick={() =>
                               perform(
                                 () =>
-                                  validationsApi.retry(projectId, result.id, {
+                                  validationActions.retry(result.id, {
                                     expected_attempt: result.current_attempt,
                                   }),
                                 '검증 재시도를 접수했어요.',
@@ -773,11 +810,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={action.busy}
+                            disabled={action.busy || validationActions.busy}
                             onClick={() =>
                               perform(
                                 () =>
-                                  validationsApi.retry(projectId, delta.id, {
+                                  validationActions.retry(delta.id, {
                                     expected_attempt: delta.current_attempt,
                                   }),
                                 '완료 보고 재검증 재시도를 접수했어요.',
@@ -860,7 +897,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         ))}
                       </section>
                     )}
-                    {result?.findings.map((finding) => (
+                    {view?.findings.map((finding) => (
                       <article
                         key={finding.id}
                         className="rounded-lg border p-4"
@@ -947,7 +984,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         </div>
                       </article>
                     ))}
-                    {!result?.findings.length && (
+                    {!view?.findings.length && (
                       <p className="text-sm text-muted-foreground">
                         {result?.status === 'PASS'
                           ? '현재 계획과 입력에서 시작을 막는 항목을 찾지 못했어요. 시작 직전에 서버가 참조와 선행 작업을 다시 확인해요.'
@@ -1112,7 +1149,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           onMoreItems={() => void approved.fetchNextPage()}
           onClose={() => setEditing(null)}
           onSubmit={async (plan) => {
-            await action.run(async () => {
+            await runAction(async () => {
               const result =
                 editing === 'edit' && formTask
                   ? await tasksApi.savePlan(projectId, formTask.id, {
@@ -1155,7 +1192,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           ]}
           onClose={() => setAssigning(false)}
           onSubmit={async (values) => {
-            await action.run(
+            await runAction(
               () =>
                 tasksApi.assign(projectId, formTask.id, {
                   assignee_member_id: values.member_id,
@@ -1196,7 +1233,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           submitLabel="대기로 보고"
           onClose={() => setReporting(null)}
           onSubmit={async (values) => {
-            await action.run(
+            await runAction(
               () =>
                 tasksApi.state(projectId, formTask.id, {
                   event: 'WAIT',
@@ -1218,7 +1255,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           criteria={formTask.current_plan_revision.plan.completion_criteria}
           onClose={() => setReporting(null)}
           onSubmit={async (report) => {
-            await action.run(
+            await runAction(
               () =>
                 tasksApi.state(projectId, formTask.id, {
                   event: 'COMPLETED',
@@ -1274,7 +1311,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           ]}
           onClose={() => setRecording(false)}
           onSubmit={async (values) => {
-            await action.run(
+            await runAction(
               () =>
                 contextsApi.create(projectId, {
                   task_id: formTask.id,
