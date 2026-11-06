@@ -129,8 +129,8 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     Optional<ProjectMember> findByProjectIdAndAccountId(long projectId, long accountId);
 
     /**
-     * accountIds 중 에이전트가 연결된 계정 (Member.agent_connected). 폐기 안 된 토큰에 agent_session 이 있으면 연결로 본다
-     * (-173 A06 합의, -178 에서 재조정). 빈 목록이면 쿼리하지 않는다 — {@code in ()} 은 SQL 문법 오류다.
+     * accountIds 중 에이전트가 연결된 계정 (Member.agent_connected). 폐기 안 된 토큰에 끝나지 않은 agent_session 이 있으면 연결로 본다
+     * (-173 A06 합의, -178 재조정: 닫히거나 새 연결에 밀려난 세션은 세지 않는다. 통신이 끊긴 지 오래된 세션의 판정은 -75). 빈 목록이면 쿼리하지 않는다 — {@code in ()} 은 SQL 문법 오류다.
      */
     default List<Long> agentConnectedAccountIds(long projectId, Collection<Long> accountIds) {
         if (accountIds.isEmpty()) {
@@ -143,7 +143,7 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     @Query(value = """
             select distinct t.account_id
               from agent_token t
-              join agent_session s on s.agent_token_id = t.id
+              join agent_session s on s.agent_token_id = t.id and s.ended_at is null
              where t.project_id = :projectId
                and t.revoked_at is null
                and t.account_id in (:accountIds)

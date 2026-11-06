@@ -33,7 +33,7 @@ public class TaskStatusRepository {
 
     /**
      * 에이전트 세션 한 페이지 (세션 번호 내림차순, beforeId 미만, limit 개).
-     * 폐기되지 않은 토큰 + 아직 활성인 멤버의 세션만. 세션이 보고한 현재 작업이 이 프로젝트 것이면 작업 칸을 채운다.
+     * 폐기되지 않은 토큰 + 아직 활성인 멤버의 끝나지 않은 세션만 (-178: 재연결마다 세션 행이 생기고 이전 것은 ended_at 이 찍힌다). 세션이 보고한 현재 작업이 이 프로젝트 것이면 작업 칸을 채운다.
      * 행: session_id, member_id, agent_name, task_id, task_title, task_status, waiting_reason, current_plan_revision_id
      */
     public List<Map<String, Object>> agentSessions(Long projectId, Long memberId, long beforeId, int limit) {
@@ -46,6 +46,7 @@ public class TaskStatusRepository {
                           join project_member m on m.project_id = k.project_id and m.account_id = k.account_id and m.active = true
                           left join task t on t.id = s.current_task_id and t.project_id = :p
                          where s.id < :before
+                           and s.ended_at is null
                            and (:member is null or m.id = :member)
                          order by s.id desc
                          limit :limit

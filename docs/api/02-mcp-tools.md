@@ -11,6 +11,10 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 전송: MCP Streamable HTTP, 서버 경로 `/mcp`.
 - 인증: `Authorization: Bearer {agent_token}`. 매 요청 토큰 폐기·현재 멤버십·객체 소속을 확인한다.
 - 연결 설정: 서버가 반환한 `mcp_url`에 클라이언트에서 토큰을 설정하고 초기화·도구 조회로 시험한다. 사용자 계정·토큰·MCP 세션 ID는 서로 다른 식별자다.
+- (S15P31A108-178 구현) 연결 기록: 초기화가 성공하면 MCP 세션 ID·토큰·클라이언트 이름(`clientInfo`)을 연결 기록(`agent_session`) 한 행으로 남긴다. 초기화 응답의 `instructions`는 작업 절차 지침(AGT-A01 `claude_md_snippet`과 같은 글)이다. 연결 시험은 [check_connection](#mcp-15)이다.
+- (S15P31A108-178 구현) 1인 1에이전트(Q06): 한 계정이 한 프로젝트에 가진 살아 있는 연결은 하나다. 토큰이 달라도(다른 PC) 같은 사람이면 **나중 연결이 이긴다**. 밀려난 연결의 다음 요청은 HTTP 409 `{"error":{"code":"agent_session_replaced",…}}`다. 404로 주면 클라이언트가 다시 초기화해 두 클라이언트가 서로 밀어내므로 409로 끊는다. 클라이언트를 다시 시작하면 그쪽이 새 연결이 된다. 다른 팀원의 연결은 건드리지 않는다.
+- (S15P31A108-178 구현) 세션은 만든 토큰에만 쓸 수 있다. 다른 토큰으로 남의 `Mcp-Session-Id`를 보내면(이어 쓰기·DELETE로 끊기) 없는 세션처럼 HTTP 404 `not_found`다.
+- (S15P31A108-178 구현) 해제: 클라이언트가 DELETE `/mcp`로 닫으면 연결이 끝난다. 토큰을 폐기(AGT-A03)하면 열려 있던 세션도 다음 요청부터 401 `token_revoked`다. 마지막 통신 시각(`last_report_at`)은 요청마다 1분 단위로 남는다. 연결 현황 조회(AGT-A05·A06)는 S15P31A108-75다.
 - 세션·프로토콜 버전 협상·전송 봉투는 채택 SDK의 MCP 계약을 따른다. 아래 JSON은 봉투 안의 업무 인수·결과다.
 - 프로젝트는 토큰에서 결정한다. `project_id`를 받으면 동일성만 확인한다.
 - 변경 도구의 `idempotency_key`는 사용자·프로젝트·도구 범위에서 식별한다. 같은 키·같은 입력은 기존 결과, 다른 입력은 업무 충돌이다. 재요청도 인증·권한을 재검사한다.
@@ -46,6 +50,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - [get_validation](#mcp-13)
 - [retry_validation](#mcp-14)
 - [report_task_state](#mcp-12)
+- [check_connection](#mcp-15)
 
 ---
 
@@ -1685,6 +1690,80 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
 - `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
 - (수정안 요청) summary는 AgentWork.last_summary로 HUD·대시보드에 원문 그대로 보인다. AI로 다시 요약하지 않는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mcp-15"></a>
+
+## MCP-15. 연결 확인
+
+### `check_connection`
+
+연결 시험 도구. 이 토큰·세션이 누구로 어느 프로젝트에 붙었는지 돌려준다. 아무것도 바꾸지 않는다.
+
+관련 요구사항: AGT-05  
+담당: BE: 전진  
+상태: 구현(S15P31A108-178)
+
+#### 인증
+
+에이전트 토큰. 다른 도구와 같은 토큰 검증·멤버십 검사를 거친다. 그래서 이 도구가 성공하면 업무 도구도 같은 조건으로 부를 수 있다.
+
+#### Request
+
+받는 칸이 없다. 모르는 키는 `validation_failed`다.
+
+```json
+{}
+```
+
+#### Response
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `connected` | `boolean` | Y | 항상 true. 실패는 401 또는 도구 실패 결과로 온다 |
+| `project_id` | `ID` | Y | 토큰의 프로젝트 |
+| `account_id` | `ID` | Y | 토큰 소유 계정 |
+| `member_id` | `ID` | Y | 그 프로젝트의 멤버 ID |
+| `agent_token_id` | `ID` | Y | 토큰 ID |
+| `token_label` | `string` | N | 토큰 이름. 이름 없는 토큰이면 생략 |
+| `session_id` | `string` | Y | MCP 세션 ID(`Mcp-Session-Id`) |
+| `agent_session_id` | `ID` | N | 연결 기록 ID. 연결 현황(AGT-A06)과 활동의 `agent_session_id`에 쓰인다. 기록이 없으면 생략 |
+| `client_name` | `string` | N | 초기화 때 클라이언트가 보낸 이름(예: `claude-code`). 클라이언트가 보낸 값 그대로다 |
+| `client_version` | `string` | N | 클라이언트 버전 |
+| `connected_at` | `Time` | N | 이 연결이 열린 시각 |
+
+```json
+{
+  "connected": true,
+  "project_id": "101",
+  "account_id": "7",
+  "member_id": "21",
+  "agent_token_id": "41",
+  "token_label": "개발 PC",
+  "session_id": "3f0c…",
+  "agent_session_id": "51",
+  "client_name": "claude-code",
+  "client_version": "2.1.0",
+  "connected_at": "2026-11-06T05:00:00Z"
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 에이전트 토큰이 없거나 모르는 토큰 |
+| 401 | `token_revoked` | 폐기·멤버십 종료·프로젝트 삭제·탈퇴 뒤의 토큰 |
+| 404 | `not_found` | 다른 토큰이 연 세션 ID를 보냄(전송 단계) |
+| 409 | `agent_session_replaced` | 같은 계정이 이 프로젝트에 새로 연결해 이 세션은 끊김(전송 단계) |
+
+#### 처리 규칙
+
+- 401·404·409는 전송 단계의 HTTP 응답이라 도구 결과가 아니다. 감사 행도 없다.
+- 호출은 다른 도구처럼 `mcp_audit_log`에 남는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
