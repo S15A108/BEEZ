@@ -156,6 +156,58 @@ groups:
         annotations:
           summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 ({{ $labels.instance }})"
 
+      # ── 논리 복제 슬롯(S15P31A108-295, 계획 D6) ──
+      # 복구 스캔이 처리를 이어 가므로 Connect 가 멈추거나 슬롯이 사라져도 분석 지연 알림은 울지 않는다. 그래서 슬롯을 따로 본다.
+      # 지표는 postgres-exporter 기본 수집이다: slot_is_active 는 replication_slots 수집기, pg_wal_lsn_diff 는 기본 쿼리
+      # (pg_monitor 계정으로 나옴, 11-05 실측). consumer_enabled 기록 규칙을 읽는 알림이 있어 이 그룹에 둔다(같은 주기 값).
+      # 10분: Connect·Kafka 재시작(실측 약 10초~1분)은 거른다
+      - alert: CdcSlotInactive
+        expr: pg_replication_slots_slot_is_active{slot_type="logical"} == 0
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "논리 복제 슬롯 {{ $labels.slot_name }} 이 10분 넘게 비활성 — Connect 가 읽지 않아 WAL 이 쌓인다"
+
+      # 슬롯이 붙잡은 WAL(현재 위치 - 슬롯 확인 위치, 바이트). 1GiB: dev WAL 생성량(1주 약 19MB)으로는 정상일 때 닿지 않는다.
+      # 상한 max_slot_wal_keep_size=10GB(계획 D4)에 닿으면 슬롯이 무효화돼 커넥터를 새 이름으로 다시 만들어야 한다
+      - alert: CdcSlotWalRetained
+        expr: pg_replication_slots_pg_wal_lsn_diff > 1073741824
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "슬롯 {{ $labels.slot_name }} 이 WAL {{ $value | humanize1024 }}B 를 붙잡고 있음(무효화 상한 10GB)"
+
+      # 위 두 알림은 시계열이 있어야 운다. consumer 를 켠 뒤(= CDC 켜짐) 기대 슬롯의 시계열이 없으면 슬롯이 지워졌거나 커넥터가
+      # 다른 이름으로 만든 것이라 두 감시가 조용히 빠진다(PR #166 리뷰). 슬롯 이름은 커넥터 설정 slot.name 과 같다
+      # (infra/cdc/dev/intake-connector.json, 커넥터를 새 이름으로 다시 만들어도 slot.name 은 그대로).
+      # - consumer 를 켜기 전(커넥터 등록 전)·되돌리기(1번에서 consumer 를 먼저 끔)에는 울지 않는다. 같은 이유로 consumer 만 끈
+      #   점검 중에 슬롯이 사라지는 것도 잡지 못한다(한계: 커넥터 존재를 알리는 지표는 261 에서 생긴다).
+      # - exporter 가 DB 에 못 붙거나(pg_up) 수집기가 실패하면 시계열이 없는 것이 당연하므로 여기서 빼고 PostgresDown·
+      #   MonitoringTargetDown·아래 CdcSlotCollectorFailing 이 운다. 앞 줄은 수집기 지표, 뒷 줄은 기본 쿼리 지표가 빠진 경우다.
+      # 10분: 커넥터를 다시 만드는 동안(슬롯 삭제→재등록, 수 분)은 거른다
+      - alert: CdcSlotMissing
+        expr: |
+          (beez_cdc:consumer_enabled:max == 1 and on() pg_up == 1
+            and on() pg_scrape_collector_success{collector="replication_slots"} == 1
+            unless on() pg_replication_slots_slot_is_active{slot_name="beez_published_analysis"})
+          or (beez_cdc:consumer_enabled:max == 1 and on() pg_up == 1
+            unless on() pg_replication_slots_pg_wal_lsn_diff{slot_name="beez_published_analysis"})
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "consumer 가 켜졌는데 슬롯 beez_published_analysis 지표가 없음 — 슬롯이 사라졌거나 다른 이름으로 만들어짐"
+
+      # replication_slots 수집기 실패 = 슬롯 시계열이 통째로 빠져 위 감시가 모두 꺼진다. consumer 조건을 두지 않는다 —
+      # consumer 만 끈 점검(cdc-stack.md "중지·내리기" 1번)에도 슬롯은 WAL 을 붙잡으므로 감시가 필요하다(PR #166 코드 리뷰).
+      # 이 수집기는 슬롯이 없어도 성공(1)하므로 CDC 전·되돌린 뒤에도 거짓으로 울지 않는다(서버 11-05 확인).
+      # exporter 가 DB 에 못 붙으면(pg_up 0) 수집기도 함께 실패하므로 PostgresDown 에 맡기고 여기서는 뺀다
+      - alert: CdcSlotCollectorFailing
+        expr: pg_scrape_collector_success{collector="replication_slots"} == 0 and on() pg_up == 1
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "postgres-exporter replication_slots 수집 실패 — 슬롯 감시가 멈춤"
+
   - name: beez-infra-alerts
     rules:
       # backend 는 따로 둔다. 이게 울리는 동안 CDC 지표가 없어 CDC 알림은 울리지 않는다.
