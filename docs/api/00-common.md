@@ -984,6 +984,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `draft_id` | `ID` | N | (수정안 요청 · 11-06) 작성 중 제안으로 올릴 때(CHG-A01·A04). 보내면 본문 필드를 함께 보내지 않는다 |
 | `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수 |
 | `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 검토 상태를 사용자가 확인했다는 표시 |
+| `expected_review_state_hash` | `string` | N | (수정안 요청 · 11-06) `review_acknowledged`=true이고 초안에 검토가 있을 때 필수. 사용자가 본 `review_state_hash` |
 
 (수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다.
 
@@ -1096,16 +1097,34 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 
 ### PreSubmitReview
 
-(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보인다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다. 팀장은 작성 중 제안과 그 검토를 읽지 못하므로 수정안을 여기에 복사해 둔다.
+(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보이는 제출 리비전의 불변 스냅샷이다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다. 팀장은 작성 중 제안과 그 검토를 읽지 못하므로 수정안을 여기에 복사해 둔다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `status` | `NOT_REQUESTED\|COMPLETED\|FAILED` | Y | 올릴 때의 최신 검토 상태 |
+| `status` | `NOT_REQUESTED\|COMPLETED\|FAILED\|CANCELLED` | Y | 올릴 때의 최신 검토 상태. CANCELLED는 진행 중인 검토를 확인 후 끊고 올린 경우 |
 | `review_id` | `ID` | N | 그 검토의 기록용 ID. NOT_REQUESTED면 없음. 팀장이 이 ID로 읽는 API는 없다 |
 | `edited_after_review` | `boolean` | Y | 검토 뒤 글을 고쳤는지 |
-| `pending_suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 처리하지 않은 PATCH 수정안 |
-| `skipped_suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 넘긴 PATCH 수정안과 COMMENT 의견 |
+| `pending_suggestions` | [SubmittedReviewSuggestion[]](00-common.md#schema-submittedreviewsuggestion) | Y | 처리하지 않은 PATCH 수정안 |
+| `skipped_suggestions` | [SubmittedReviewSuggestion[]](00-common.md#schema-submittedreviewsuggestion) | Y | 넘긴 PATCH 수정안과 COMMENT 의견 |
 | `acknowledged` | `boolean` | Y | 사용자가 위 상태를 확인하고 올렸는지. 확인할 상태가 없었으면 false |
+
+<a id="schema-submittedreviewsuggestion"></a>
+
+### SubmittedReviewSuggestion
+
+(수정안 요청 · 11-06) 제출 리비전에 복사해 남기는 수정안과 의견. 개인 대화(`messages`)와 내부 실행 정보는 담지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `type` | `PATCH\|COMMENT` | Y | 수정안 또는 의견 |
+| `document_id` | `ID` | PATCH Y | 대상 문서 |
+| `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+| `category` | `OMISSION\|CONSISTENCY` | N | 빠진 부분 또는 충돌 |
+| `explanation` | `string` | Y | 이유 |
+| `original_text` | `string` | PATCH Y | 수정 전 문장 |
+| `replacement_text` | `string` | PATCH Y | 수정 후 문장 |
+| `sources` | `DocumentReviewSource[]` | Y | 근거. 없으면 [] |
+| `decision` | `PENDING\|SKIPPED` | PATCH Y | 올릴 때의 선택 상태. COMMENT는 없음 |
 
 <a id="schema-changeproposaldraft"></a>
 
@@ -1128,6 +1147,7 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |
 | `latest_review` | [ChangeDraftReview](00-common.md#schema-changedraftreview) | N | 가장 최근 올리기 전 비비 검토 |
+| `review_state_hash` | `string` | N | (수정안 요청 · 11-06) 검토 ID·상태·수정안 선택 상태를 합친 해시. 검토가 있을 때만. 올릴 때 `expected_review_state_hash`로 돌려보낸다 |
 | `source_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 반려된 제안을 보완하는 초안이면 그 제안 |
 | `submitted_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 제출 뒤 연결된 제안. 있으면 수정할 수 없다 |
 | `created_at` | `Time` | Y | 생성 시각 |
@@ -1142,8 +1162,8 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 검토 ID |
-| `status` | `RUNNING\|COMPLETED\|FAILED` | Y | 검토 상태 |
-| `error_code` | `string` | N | FAILED일 때만 |
+| `status` | `RUNNING\|COMPLETED\|FAILED\|CANCELLED` | Y | 검토 상태. CANCELLED는 진행 중에 확인 후 올려 끊긴 검토 |
+| `error_code` | `string` | N | FAILED일 때만. 제한 시간 초과는 `review_timeout` |
 | `input_revision` | `integer` | Y | 검토한 초안 리비전. `tasks_to_wait`·`validations_to_stale`·`ai_candidates`는 이 리비전 기준이다 |
 | `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전. 수정안 처리 확인용이고, 영향 결과가 이 리비전 기준이라는 뜻은 아니다 |
 | `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED\|NOT_EVALUATED, count}. NOT_EVALUATED는 입력 계약이 없어 평가하지 않은 단계로, 모델 실패(FAILED)와 구분한다 |
