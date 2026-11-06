@@ -1,9 +1,13 @@
+import json
 from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from app.services.llm_client import LLMError, LLMUsage
+from app.schemas.documents import SourceInput
+from app.services.document_parsing.normalization import text_digest
+from app.services.document_parsing.pipeline import parse_source
+from app.services.llm_client import LLMClient, LLMError, LLMUsage, ProviderResponse
 from app.services.meeting_revision_bridge import (
     DecisionRef,
     EntryRef,
@@ -11,7 +15,9 @@ from app.services.meeting_revision_bridge import (
     RevisionModuleUnavailable,
     RevisionOutputError,
     connect_meeting_revision,
+    generate_meeting_revision,
 )
+from app.services.meeting_revision_interface import prepare_meeting_revision
 
 
 class Source(BaseModel):
@@ -181,3 +187,105 @@ async def test_unavailable_shared_module_never_falls_back(monkeypatch):
     monkeypatch.setattr("app.services.meeting_revision_bridge.import_module", missing)
     with pytest.raises(RevisionModuleUnavailable):
         await connect_meeting_revision(context(), prepared(), None, "test")
+
+
+def real_input():
+    text = "첫 문단\n\n삭제 권한은 모든 사용자에게 있습니다.\n\n마지막 문단\n"
+    digest = text_digest(text)
+    source = SourceInput(
+        project_id="101",
+        document_version_id="211",
+        kind="PLAN",
+        media_type="text/plain",
+        content=text,
+        content_hash=digest,
+        text_hash=digest,
+        normalization_version="utf8-lf-v1",
+        parser_profile="plain-v1",
+    )
+    selected = next(
+        b.block_id for b in parse_source(source).blocks if b.locator.start_line == 3
+    )
+    return {
+        "project_id": "101",
+        "meeting_id": "901",
+        "document_id": "201",
+        "document_version_id": "211",
+        "source": source.model_dump(),
+        "entries": [{"id": "911", "meeting_id": "901"}],
+        "decisions": [
+            {
+                "id": "summary:1:decision:0",
+                "text": "삭제 권한은 팀장만 가진다",
+                "evidence_entry_ids": ["911"],
+            }
+        ],
+        "selected_block_ids": [selected],
+        "instruction": "삭제 권한을 팀장으로 제한",
+        "request_key": "meeting-revision-test",
+    }
+
+
+class RealModuleProvider:
+    def __init__(self, selected):
+        self.selected = selected
+        self.calls = 0
+
+    async def complete(self, request, *, timeout_seconds):
+        self.calls += 1
+        output = {
+            "changes": [
+                {
+                    "block_id": self.selected,
+                    "replacement": "삭제 권한은 팀장만 가진다.\n",
+                    "reason": "결정 반영",
+                    "evidence": ["삭제 권한은 팀장만 가진다"],
+                }
+            ],
+            "unresolved": [],
+        }
+        return ProviderResponse(
+            json.dumps(output, ensure_ascii=False), request.model, 10, 5
+        )
+
+
+@pytest.mark.asyncio
+async def test_actual_138_to_191_to_137_preserves_scope_and_meeting_links():
+    data = real_input()
+    provider = RealModuleProvider(data["selected_block_ids"][0])
+    result = await generate_meeting_revision(data, LLMClient(provider), "test-model")
+    assert provider.calls == 1
+    assert result["meeting"]["decisions"] == data["decisions"]
+    assert result["draft"]["result"]["after_content"] == data["source"][
+        "content"
+    ].replace("삭제 권한은 모든 사용자에게 있습니다.", "삭제 권한은 팀장만 가진다.")
+    assert result["draft"]["usage"][0]["feature"] == "BEE_DRAFT"
+    assert "evidence_entry_ids" not in result["draft"]["result"]["changes"][0]
+
+
+@pytest.mark.asyncio
+async def test_bridge_accepts_138_meeting_dict_directly():
+    data = real_input()
+    prepared = prepare_meeting_revision(data)
+    provider = RealModuleProvider(data["selected_block_ids"][0])
+    result = await connect_meeting_revision(
+        prepared["meeting"], prepared["request"], LLMClient(provider), "test-model"
+    )
+    assert result["meeting"]["decisions"] == data["decisions"]
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["missing_evidence", "wrong_scope", "version"])
+async def test_138_invalid_input_never_calls_137_model(variant):
+    data = real_input()
+    provider = RealModuleProvider(data["selected_block_ids"][0])
+    if variant == "missing_evidence":
+        data["decisions"][0]["evidence_entry_ids"] = []
+    elif variant == "wrong_scope":
+        data["selected_block_ids"] = ["unknown"]
+    else:
+        data["document_version_id"] = "other"
+    with pytest.raises(ValueError):
+        await generate_meeting_revision(data, LLMClient(provider), "test-model")
+    assert provider.calls == 0

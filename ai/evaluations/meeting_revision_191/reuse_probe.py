@@ -17,12 +17,7 @@ from app.services.document_parsing.normalization import text_digest
 from app.services.document_parsing.pipeline import parse_source
 from app.services.llm_client import LLMClient, LLMError, ProviderResponse
 from app.services.meeting_analysis import analyze
-from app.services.meeting_revision_bridge import (
-    DecisionRef,
-    EntryRef,
-    MeetingRevisionContext,
-    connect_meeting_revision,
-)
+from app.services.meeting_revision_bridge import generate_meeting_revision
 
 
 class Provider:
@@ -117,19 +112,21 @@ async def probe():
         "evidence": [decision],
     }
     provider = Provider({"changes": [change], "unresolved": []})
-    context = MeetingRevisionContext(
-        project_id="101",
-        meeting_id="901",
-        document_id="201",
-        document_version_id="211",
-        entries=[EntryRef(id="911", meeting_id="901")],
-        decisions=[
-            DecisionRef(id="decision-1", text=decision, evidence_entry_ids=["911"])
+    data = {
+        "project_id": "101",
+        "meeting_id": "901",
+        "document_id": "201",
+        "document_version_id": "211",
+        "source": source.model_dump(),
+        "entries": [{"id": "911", "meeting_id": "901"}],
+        "decisions": [
+            {"id": "decision-1", "text": decision, "evidence_entry_ids": ["911"]}
         ],
-    )
-    linked = await connect_meeting_revision(
-        context, revision.model_dump(mode="json"), LLMClient(provider), "test-model"
-    )
+        "selected_block_ids": [selected],
+        "instruction": revision.instruction,
+        "request_key": "probe-revision",
+    }
+    linked = await generate_meeting_revision(data, LLMClient(provider), "test-model")
     draft = linked["draft"]
     assert linked["meeting"]["decisions"][0]["evidence_entry_ids"] == ["911"]
     assert draft["result"]["after_content"] == text.replace(

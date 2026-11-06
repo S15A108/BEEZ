@@ -5,10 +5,13 @@ and an already scoped #138 request. This module does not establish whether a
 statement was agreed or whether a caller may access a project/document.
 """
 
+import asyncio
 from importlib import import_module
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.services.meeting_revision_interface import prepare_meeting_revision
 
 
 class Contract(BaseModel):
@@ -93,7 +96,7 @@ def _module() -> RevisionModule:
 
 
 async def connect_meeting_revision(
-    context: MeetingRevisionContext,
+    context: MeetingRevisionContext | dict[str, Any],
     prepared_request: dict[str, Any],
     client: Any,
     model: str,
@@ -106,7 +109,9 @@ async def connect_meeting_revision(
     real membership, approval, document ownership or live baseline freshness.
     The caller must recheck those before storing an unapproved draft.
     """
-    context = MeetingRevisionContext.model_validate(context.model_dump())
+    context = MeetingRevisionContext.model_validate(
+        context.model_dump() if isinstance(context, MeetingRevisionContext) else context
+    )
     shared = revision_module if revision_module is not None else _module()
     request = shared.RevisionRequest.model_validate(prepared_request)
     if (
@@ -142,3 +147,16 @@ async def connect_meeting_revision(
         "meeting": context.model_dump(),
         "draft": response,
     }
+
+
+async def generate_meeting_revision(
+    data: dict[str, Any], client: Any, model: str
+) -> dict[str, Any]:
+    """Connect #138's prepared data to #137 without storing or approving it.
+
+    The caller must confirm decisions and entry links, authorize the request,
+    and recheck the meeting snapshot and current document before any use.
+    """
+    prepared = await asyncio.to_thread(prepare_meeting_revision, data)
+    context = MeetingRevisionContext.model_validate(prepared["meeting"])
+    return await connect_meeting_revision(context, prepared["request"], client, model)
