@@ -46,17 +46,21 @@ crest() { local p=$1; shift; docker exec beez-cdc-connect-1 curl -sS "$@" "http:
 # 기존 두 줄을 뺀 새 파일에 두 줄을 덧붙여 바꾼다(umask 027 + /opt/beez setgid 로 640·beez-deploy 유지).
 # 원본을 읽지 못하면 바꾸지 않는다: grep -v 는 0(남은 줄 있음)·1(남은 줄 없음)이 정상이고 2 이상이 읽기 오류다.
 # 오류를 묶음 안에서 흘려보내면 뒤의 echo 가 성공해 원본이 두 줄짜리 파일로 바뀐다(PR #166 리뷰)
+# .new 는 지우고 새로 만든다 — 남은 .new 에 쓰면 umask 가 안 먹어 그 파일의 옛 권한이 env 파일로 넘어간다.
+# 바꿔 넣기(mv)에 실패해도 .new 를 남기지 않는다(S15P31A108-321)
 cdcenv() {
   case "$1 $2" in "true true"|"true false"|"false false") ;;
     *) echo "쓰지 않음: '$1 $2' — 가능한 값은 'true true'(켜기)·'true false'(Kafka 경로만 끔)·'false false'(끄기)"; return 1;; esac
   local f=/opt/beez/.env.dev
   [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않는다"; return 1; }
   ( umask 027
+    rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
     grep -Ev '^BEEZ_CDC_INTAKE_(ENABLED|CONSUMER_ENABLED)=' "$f" > "$f.new"; rc=$?
     if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
     { echo "BEEZ_CDC_INTAKE_ENABLED=$1"; echo "BEEZ_CDC_INTAKE_CONSUMER_ENABLED=$2"; } >> "$f.new" \
-      || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; } ) \
-    && mv "$f.new" "$f" && grep '^BEEZ_CDC_INTAKE_' "$f" && ls -l "$f"
+      || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+    mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; } ) \
+    && grep '^BEEZ_CDC_INTAKE_' "$f" && ls -l "$f"
 }
 ```
 
