@@ -81,9 +81,10 @@ export function TeamPanel({
   const placements = useWorkspaceStore((state) => state.placements)
   const placeProjects = useWorkspaceStore((state) => state.placeProjects)
   const accountId = session.data?.id ?? ''
-  const [design, setDesign] = useState<BuildingDesign>(
-    placements[placementKey(accountId, projectId)]?.design ?? 'modern',
-  )
+  const savedDesign =
+    placements[placementKey(accountId, projectId)]?.design ?? 'modern'
+  const [pickedDesign, setPickedDesign] = useState<BuildingDesign>()
+  const design = pickedDesign ?? savedDesign
   const [dialog, setDialog] = useState<DialogAction | null>(null)
   const project = useQuery({
     queryKey: ['projects', projectId, 'team-project'],
@@ -106,6 +107,8 @@ export function TeamPanel({
   const lot = cityProjects.data
     ? assigned.find((item) => item.id === projectId)?.lot
     : placements[placementKey(accountId, projectId)]?.lot
+  // 부지가 없으면 디자인을 저장할 자리가 없으니 바뀐 것으로 치지 않는다.
+  const designChanged = typeof lot === 'number' && design !== savedDesign
   const members = useInfiniteQuery({
     // 다른 창은 같은 팀원 목록을 useQuery로 ['projects', id, 'members']에 담는다. 모양이 달라 키를 나눈다.
     queryKey: ['projects', projectId, 'team-members'],
@@ -218,7 +221,13 @@ export function TeamPanel({
       </header>
       {view === 'team' && isLeader && <InviteForm projectId={projectId} />}
       {/* 결과는 화면 안 글 대신 오른쪽 위 토스트로 잠깐 보여 준다. */}
-      {action.message && <Toast>{action.message}</Toast>}
+      {action.message && (
+        <Toast>
+          <span className={view === 'project' ? 'text-green-700' : undefined}>
+            {action.message}
+          </span>
+        </Toast>
+      )}
       {handoff.done && (
         <Toast tone="success">
           <strong className="block">팀장을 넘겼어요</strong>
@@ -483,7 +492,7 @@ export function TeamPanel({
               {/* API 없음: 건물 디자인은 이 브라우저에만 저장된다. Project에 design 필드가 생기면 수정 요청에 넣는다. */}
               <BuildingDesignPicker
                 value={design}
-                onChange={setDesign}
+                onChange={setPickedDesign}
                 small
                 note={
                   typeof lot === 'number' && (
@@ -497,6 +506,11 @@ export function TeamPanel({
                 }
               />
               <ActionForm
+                // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
+                key={`${data.name}\n${data.description ?? ''}`}
+                disableWhen={(values) =>
+                  !designChanged && !projectInfoChanged(values, data)
+                }
                 fields={[
                   {
                     name: 'name',
@@ -521,11 +535,14 @@ export function TeamPanel({
                 submitLabel="저장"
                 onSubmit={async (values) => {
                   await action.run(
-                    () =>
-                      projectsApi.update(projectId, {
-                        name: values.name,
-                        description: values.description,
-                      }),
+                    // 건물 디자인은 이 브라우저에만 저장하므로, 이름·소개가 그대로면 서버에 보내지 않는다.
+                    async () => {
+                      if (projectInfoChanged(values, data))
+                        await projectsApi.update(projectId, {
+                          name: values.name,
+                          description: values.description,
+                        })
+                    },
                     '프로젝트 정보를 저장했어요.',
                   )
                   // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
@@ -838,6 +855,17 @@ export function TeamPanel({
         </FormDialog>
       )}
     </section>
+  )
+}
+
+// 프로젝트 이름·소개가 서버 값과 다른지. 앞뒤 공백은 서버가 빼므로(PRJ-A04) 바뀐 것으로 치지 않는다.
+function projectInfoChanged(
+  values: Record<string, string | undefined>,
+  project: { name: string; description?: string },
+) {
+  return (
+    (values.name ?? '').trim() !== project.name.trim() ||
+    (values.description ?? '').trim() !== (project.description ?? '').trim()
   )
 }
 

@@ -103,7 +103,7 @@ function ProfileForm({
           {isSubmitSuccessful && !changed && (
             <p
               role="status"
-              className="flex items-center gap-1 text-[13px] text-muted-foreground"
+              className="flex items-center gap-1 text-[13px] text-green-700"
             >
               <Check aria-hidden="true" className="size-3.5" />
               저장했어요

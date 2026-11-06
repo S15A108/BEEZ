@@ -13,6 +13,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { TeamPanel } from './TeamPanel'
 
 let restore: () => void
@@ -271,6 +272,122 @@ it('프로젝트 정보를 저장해도 다른 프로젝트의 부지를 덮어�
   const placements = useWorkspaceStore.getState().placements
   expect(placements[`${account.id}:101`].lot).not.toBe(0)
   expect(placements[`${account.id}:102`]).toEqual({ lot: 0, design: 'wood' })
+})
+
+async function renderProjectInfo() {
+  useWorkspaceStore.setState({ placements: {} })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TeamPanel projectId="101" isLeader view="project" />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  return {
+    user: userEvent.setup(),
+    name: await screen.findByLabelText(/프로젝트 이름/),
+    description: screen.getByLabelText('프로젝트 소개'),
+    // 서버 값이 바뀌면 폼을 새로 그리므로 그때그때 찾는다.
+    save: () => screen.getByRole('button', { name: '저장' }),
+  }
+}
+
+it('프로젝트 정보를 바꾸지 않으면 저장이 꺼져 있고 Enter를 눌러도 보내지 않는다', async () => {
+  const update = vi.spyOn(projectsApi, 'update')
+  const { user, name, save } = await renderProjectInfo()
+  expect(save()).toBeDisabled()
+  await user.type(name, '{Enter}')
+  expect(update).not.toHaveBeenCalled()
+})
+
+it('프로젝트 정보에 앞뒤 공백만 더하거나 고친 값을 되돌리면 저장이 꺼진다', async () => {
+  const { user, name, description, save } = await renderProjectInfo()
+  await user.type(name, '  ')
+  await user.type(description, '  ')
+  expect(save()).toBeDisabled()
+  await user.type(name, '요')
+  expect(save()).toBeEnabled()
+  await user.type(name, '{Backspace}')
+  expect(save()).toBeDisabled()
+})
+
+it('프로젝트 이름을 바꿔 저장하면 한 번만 보내고 알린 뒤 저장을 다시 끈다', async () => {
+  const update = vi.spyOn(projectsApi, 'update')
+  const { user, name, description, save } = await renderProjectInfo()
+  const introduction = (description as HTMLTextAreaElement).value
+  await user.clear(name)
+  await user.type(name, '새 이름')
+  expect(save()).toBeEnabled()
+  await user.click(save())
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '프로젝트 정보를 저장했어요.',
+  )
+  expect(update).toHaveBeenCalledTimes(1)
+  expect(update).toHaveBeenCalledWith('101', {
+    name: '새 이름',
+    description: introduction,
+  })
+  await waitFor(() => expect(save()).toBeDisabled())
+
+  await user.type(screen.getByLabelText(/프로젝트 이름/), '요')
+  expect(save()).toBeEnabled()
+})
+
+it('건물 디자인만 바꾸면 저장이 켜지고, 저장해도 서버에는 보내지 않은 뒤 다시 꺼진다', async () => {
+  const update = vi.spyOn(projectsApi, 'update')
+  const { user, save } = await renderProjectInfo()
+  const account = await authApi.me()
+  await screen.findByText(/지금 부지 \d/)
+  await user.click(screen.getByRole('radio', { name: /유리 오피스/ }))
+  expect(save()).toBeEnabled()
+  await user.click(screen.getByRole('radio', { name: /모던 화이트/ }))
+  expect(save()).toBeDisabled()
+
+  await user.click(screen.getByRole('radio', { name: /유리 오피스/ }))
+  await user.click(save())
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '프로젝트 정보를 저장했어요.',
+  )
+  expect(update).not.toHaveBeenCalled()
+  expect(
+    useWorkspaceStore.getState().placements[`${account.id}:101`],
+  ).toMatchObject({ design: 'glass' })
+  await waitFor(() => expect(save()).toBeDisabled())
+})
+
+it('도시 부지가 없는 프로젝트는 디자인을 저장할 수 없어 골라도 저장이 켜지지 않는다', async () => {
+  const others = Array.from({ length: 12 }, (_, index) => ({
+    id: String(200 + index),
+  }))
+  vi.spyOn(projectsApi, 'list').mockResolvedValue({
+    items: [...others, { id: '101' }],
+  } as never)
+  const { user, save } = await renderProjectInfo()
+  await user.click(screen.getByRole('radio', { name: /유리 오피스/ }))
+  expect(save()).toBeDisabled()
+})
+
+it('서버 값이 다시 들어오면 입력과 비교 기준이 그 값을 따른다', async () => {
+  const { save } = await renderProjectInfo()
+  await projectsApi.update('101', { name: '다른 곳에서 바꾼 이름' })
+  await client.invalidateQueries({ queryKey: ['projects', '101'] })
+  await waitFor(() =>
+    expect(screen.getByLabelText(/프로젝트 이름/)).toHaveValue(
+      '다른 곳에서 바꾼 이름',
+    ),
+  )
+  expect(save()).toBeDisabled()
+})
+
+it('프로젝트 정보 저장이 실패하면 쓴 값을 두고 다시 누를 수 있다', async () => {
+  vi.spyOn(projectsApi, 'update').mockRejectedValueOnce(new Error('서버 오류'))
+  const { user, name, save } = await renderProjectInfo()
+  await user.clear(name)
+  await user.type(name, '새 이름')
+  await user.click(save())
+  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0)
+  expect(screen.getByLabelText(/프로젝트 이름/)).toHaveValue('새 이름')
+  expect(save()).toBeEnabled()
 })
 
 // PR #72 mock/live 전수 대조 LIVE-AMP-05의 후속: 초대 만료는 없어졌고(PR #134) 이미 초대 중인지는 서버가 이메일마다 판정한다.
