@@ -131,9 +131,9 @@ describe('edgeRoute', () => {
   it('왼쪽으로 가는 선은 상자의 왼쪽에서 나와 오른쪽 면으로 들어간다', () => {
     const route = edgeRoute({ col: 2, row: 0 }, { col: 1, row: 0 }, lastCol)
     expect(route.d.startsWith(`M${nodeX(2)},`)).toBe(true)
-    expect(route.d.endsWith(`${nodeX(1) + NODE_W},${nodeY(0) + NODE_H / 2}`)).toBe(
-      true,
-    )
+    expect(
+      route.d.endsWith(`${nodeX(1) + NODE_W},${nodeY(0) + NODE_H / 2}`),
+    ).toBe(true)
   })
 
   it('두 칸 이상 건너는 선은 사이 열의 상자를 피해 상자 위 빈 줄로 간다', () => {

@@ -79,7 +79,9 @@ it('상자마다 테두리 색과 함께 종류를 글로 쓰고 종류가 다�
 it('접근성 이름으로 색 없이도 종류와 관계를 읽을 수 있다', () => {
   const { svg } = graph()
   expect(svg).toHaveAccessibleName(
-    expect.stringContaining('작업 TASK-001 목록 화면 → 설계 항목 REQ-001: 구현'),
+    expect.stringContaining(
+      '작업 TASK-001 목록 화면 → 설계 항목 REQ-001: 구현',
+    ),
   )
   expect(svg).toHaveAccessibleName(
     expect.stringContaining(
