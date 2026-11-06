@@ -3,8 +3,83 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it, vi } from 'vitest'
 import { ProposalForm } from './ProposalForm'
+import { changesApi } from '@/api/services/changes'
 
 type Loaded = { content: string; versionId: string }
+
+it('선택 초안은 확인 후 고친 글에만 적용하고 직접 쓴 글은 덮어쓰지 않는다', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  vi.spyOn(changesApi, 'scopedBlocks').mockResolvedValue({
+    document_id: '203',
+    base_document_version_id: '2031',
+    text_hash: 'hash',
+    parser_profile: 'plain-v1',
+    parser_version: '1',
+    blocks: [
+      {
+        block_id: 'block',
+        block_type: 'paragraph',
+        locator: { type: 'text_lines', start_line: 1, end_line: 1 },
+        text: '기준 원문',
+      },
+    ],
+  })
+  vi.spyOn(changesApi, 'scopedDraft').mockResolvedValue({
+    document_id: '203',
+    base_document_version_id: '2031',
+    after_content: '새 초안',
+    changes: [
+      {
+        block_id: 'block',
+        before: '기준 원문',
+        after: '새 초안',
+        reason: '변경',
+        evidence: [],
+      },
+    ],
+    unresolved: [],
+    generation: { origin: 'MODEL', model: 'test', usage: [] },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        projectId="101"
+        heading="제안"
+        submitLabel="올리기"
+        tasks={[]}
+        documents={[{ id: '203', label: '문서', versionId: '2031' }]}
+        fetchDocumentContent={() =>
+          Promise.resolve({ content: '기준 원문', versionId: '2031' })
+        }
+        defaultValues={{
+          title: '',
+          reason: '',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  await screen.findByDisplayValue('기준 원문')
+  await user.click(screen.getByRole('button', { name: '수정 범위 불러오기' }))
+  await user.click(await screen.findByRole('checkbox', { name: /기준 원문/ }))
+  await user.type(screen.getByLabelText('수정 요청'), '변경해줘')
+  await user.click(
+    screen.getByRole('button', { name: '선택 범위 초안 만들기' }),
+  )
+  await screen.findByText('새 초안')
+  expect(screen.getByLabelText('고친 글')).toHaveValue('기준 원문')
+  await user.click(screen.getByRole('button', { name: '초안 적용' }))
+  expect(screen.getByLabelText('고친 글')).toHaveValue('새 초안')
+  expect(screen.getByText(/직접 고친 글은 유지돼요/)).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
 
 // 문서함 '고치기'로 연 문서 수정 제안 폼. 목록은 승인 버전 2031을 알려 주고, 그 원문이 캐시에 남아 있다.
 function renderForm(fetchContent: () => Promise<Loaded>) {
@@ -294,6 +369,258 @@ it('다시 내는 제안에서 고칠 문서를 바꾸면 원래 제안의 그 �
     after_content: '# API\n수정안\n보완한 줄',
     base_version_id: '2041',
   })
+})
+
+// 캔버스 PNL-04-v2-propose-doc '파일 올리기': .md 파일 한 개를 브라우저에서 읽어 고친 글로 넣는다(BOM·CRLF는 정규화).
+it('파일 올리기로 .md 파일을 고르면 내용을 고친 글에 넣고, 다른 파일은 받지 않는다', async () => {
+  const user = userEvent.setup({ applyAccept: false })
+  const { text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(
+    screen.getByLabelText('고친 문서 파일'),
+    new File(['\uFEFF# 요구사항\r\n고친 원문'], 'spec.png'),
+  )
+  expect(
+    await screen.findByText(/\.md·\.markdown·\.txt 파일 한 개를 올려 주세요/),
+  ).toBeInTheDocument()
+  await user.upload(
+    screen.getByLabelText('고친 문서 파일'),
+    new File(['\uFEFF# 요구사항\r\n고친 원문'], 'spec.md'),
+  )
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'spec.md 내용을 고친 글에 넣었어요.',
+  )
+  expect(screen.getByRole('tab', { name: '고친 글 쓰기' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  expect(text()).toHaveValue('# 요구사항\n고친 원문')
+})
+
+// PR #135 리뷰: file.text()는 UTF-8이 아닌 바이트를 U+FFFD로 조용히 바꿔 CP949 .txt의 한글이 깨진 채 들어갔다.
+// 읽다 실패한 파일도 처리하지 않은 거절(unhandled rejection)이 되지 않고 안내로 끝나야 한다.
+it('UTF-8이 아니거나 읽지 못한 파일은 고친 글에 넣지 않고 UTF-8로 저장한 파일을 올리라고 알린다', async () => {
+  const user = userEvent.setup()
+  const { text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  // CP949로 저장한 '# 한글'
+  await user.upload(
+    screen.getByLabelText('고친 문서 파일'),
+    new File([new Uint8Array([0x23, 0x20, 0xc7, 0xd1, 0xb1, 0xdb])], 'a.txt'),
+  )
+  expect(
+    await screen.findByText(/UTF-8로 저장한 파일만 올릴 수 있어요/),
+  ).toBeInTheDocument()
+  const unreadable = new File(['# 요구사항'], 'b.md')
+  const fail = () =>
+    Promise.reject(new DOMException('읽기 실패', 'NotReadableError'))
+  Object.assign(unreadable, { text: fail, arrayBuffer: fail })
+  await user.upload(screen.getByLabelText('고친 문서 파일'), unreadable)
+  expect(
+    await screen.findByText(/UTF-8로 저장한 파일만 올릴 수 있어요/),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  expect(text()).toHaveValue('# 요구사항\n옛 원문')
+})
+
+// 서버(DocumentInputValidator)는 정규화한 본문이 100,000자(코드 포인트)를 넘거나 줄바꿈·탭 말고 제어 문자가 있으면
+// 거절한다. 300KB 영문 .md가 ①을 통과하고 마지막 단계에서야 413 file_too_large로 막히지 않게 파일을 넣을 때 같은 규칙으로 막는다.
+it('100,000자를 넘거나 제어 문자가 든 파일은 넣지 않고, 이모지 100,000자는 코드 포인트로 세어 받는다', async () => {
+  const user = userEvent.setup()
+  const { text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  const file = () => screen.getByLabelText('고친 문서 파일')
+  await user.upload(file(), new File(['a'.repeat(100_001)], 'long.md'))
+  expect(
+    await screen.findByText('고친 글은 100,000자까지 쓸 수 있어요.'),
+  ).toBeInTheDocument()
+  await user.upload(file(), new File(['# 제목\u0007종소리'], 'bell.md'))
+  expect(
+    await screen.findByText('글에 쓸 수 없는 제어 문자가 들어 있어요.'),
+  ).toBeInTheDocument()
+  // 줄 끝 CRLF는 정규화한 뒤에 센다.
+  const emoji = `\t${'😀'.repeat(99_998)}\r\n`
+  await user.upload(file(), new File([emoji], 'emoji.md'))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'emoji.md 내용을 고친 글에 넣었어요.',
+  )
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('직접 쓴 고친 글에 제어 문자가 있으면 올리지 않는다', async () => {
+  const user = userEvent.setup()
+  const { onSubmit, text } = renderForm(() =>
+    Promise.resolve({ content: '# 요구사항\n옛 원문', versionId: '2031' }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n옛 원문'))
+  await user.click(text())
+  await user.paste('\u000B세로 탭')
+  await user.click(screen.getByRole('button', { name: '제안 올리기' }))
+  expect(
+    await screen.findByText('글에 쓸 수 없는 제어 문자가 들어 있어요.'),
+  ).toBeInTheDocument()
+  expect(onSubmit).not.toHaveBeenCalled()
+})
+
+// PR #135 리뷰(오서현): A 문서에서 고른 파일을 읽는 동안 B 문서로 바꾸면, 늦게 끝난 A 파일 내용이 B의 고친 글에 들어가
+// B의 문서 ID·기준 버전에 A의 본문이 붙어 올라갔다. 읽기를 시작한 문서와 요청이 그대로일 때만 고친 글에 넣는다.
+it('파일을 읽는 동안 고칠 문서를 바꾸면 늦게 끝난 파일 내용을 바꾼 문서의 고친 글에 넣지 않는다', async () => {
+  const user = userEvent.setup()
+  const originals: Record<string, Loaded> = {
+    '203': { content: '# 요구사항\n원문', versionId: '2031' },
+    '204': { content: '# API\n원문', versionId: '2041' },
+  }
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[
+          { id: '203', label: '요구사항 명세서', versionId: '2031' },
+          { id: '204', label: 'API 명세서', versionId: '2041' },
+        ]}
+        fetchDocumentContent={(id) => Promise.resolve(originals[id])}
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n원문'))
+  let finish: (buffer: ArrayBuffer) => void = () => undefined
+  const slow = new File(['# 요구사항\nA 파일'], 'a.md')
+  Object.assign(slow, {
+    arrayBuffer: () => new Promise<ArrayBuffer>((done) => (finish = done)),
+  })
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '204')
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  await waitFor(() => expect(text()).toHaveValue('# API\n원문'))
+  finish(new TextEncoder().encode('# 요구사항\nA 파일').buffer as ArrayBuffer)
+  await new Promise((done) => setTimeout(done, 0))
+  expect(text()).toHaveValue('# API\n원문')
+  expect(
+    screen.queryByText('a.md 내용을 고친 글에 넣었어요.'),
+  ).not.toBeInTheDocument()
+})
+
+// 파일 읽기를 멈춰 둔 채로 폼을 그린다. 읽기가 끝나는 때를 시험이 정한다.
+function renderSlowFile(fetchOriginal: () => Promise<Loaded>) {
+  let finish: () => void = () => undefined
+  const slow = new File(['# 요구사항\n파일 내용'], 'a.md')
+  Object.assign(slow, {
+    arrayBuffer: () =>
+      new Promise<ArrayBuffer>((done) => {
+        finish = () =>
+          done(
+            new TextEncoder().encode('# 요구사항\n파일 내용')
+              .buffer as ArrayBuffer,
+          )
+      }),
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[{ id: '203', label: '요구사항 명세서', versionId: '2031' }]}
+        fetchDocumentContent={fetchOriginal}
+        defaultValues={{
+          title: '빈 목록 안내',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  return { slow, finish: () => finish() }
+}
+
+// PR #135 리뷰(오서현): 파일을 읽는 동안 '고친 글 쓰기'로 돌아가 직접 고친 글이, 늦게 끝난 파일 내용으로 확인 없이 덮어써졌다.
+it('파일을 읽는 동안 글을 직접 고치면 늦게 끝난 파일 내용으로 덮어쓰지 않고 그대로 뒀다고 알린다', async () => {
+  const user = userEvent.setup()
+  const { slow, finish } = renderSlowFile(() =>
+    Promise.resolve({ content: '# 요구사항\n원문', versionId: '2031' }),
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  await user.type(text(), ' 직접 고침')
+  finish()
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '파일을 읽는 동안 글을 고쳐서 a.md 내용을 넣지 않았어요.',
+  )
+  expect(text()).toHaveValue('# 요구사항\n원문 직접 고침')
+})
+
+it('파일을 읽는 동안 탭만 옮기고 글을 고치지 않으면 파일 내용을 넣는다', async () => {
+  const user = userEvent.setup()
+  const { slow, finish } = renderSlowFile(() =>
+    Promise.resolve({ content: '# 요구사항\n원문', versionId: '2031' }),
+  )
+  const text = () => screen.getByLabelText('고친 글')
+  await waitFor(() => expect(text()).toHaveValue('# 요구사항\n원문'))
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  await user.click(screen.getByRole('tab', { name: '고친 글 쓰기' }))
+  finish()
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'a.md 내용을 고친 글에 넣었어요.',
+  )
+  expect(text()).toHaveValue('# 요구사항\n파일 내용')
+})
+
+// 기준 원문이 빈 글을 채운 것은 직접 고친 글이 아니므로, 고른 파일을 그대로 넣는다.
+it('파일을 읽는 동안 기준 원문이 도착해도 파일 내용을 넣는다', async () => {
+  const user = userEvent.setup()
+  let arrive: (loaded: Loaded) => void = () => undefined
+  const original = vi.fn(() => new Promise<Loaded>((done) => (arrive = done)))
+  const { slow, finish } = renderSlowFile(original)
+  await waitFor(() => expect(original).toHaveBeenCalled())
+  await user.click(screen.getByRole('tab', { name: '파일 올리기' }))
+  await user.upload(screen.getByLabelText('고친 문서 파일'), slow)
+  arrive({ content: '# 요구사항\n원문', versionId: '2031' })
+  await waitFor(() =>
+    expect(screen.queryByText('기준 원문을 불러오는 중…')).toBeNull(),
+  )
+  finish()
+  expect(
+    await screen.findByText('a.md 내용을 고친 글에 넣었어요.'),
+  ).toBeInTheDocument()
+  expect(screen.getByLabelText('고친 글')).toHaveValue('# 요구사항\n파일 내용')
 })
 
 // S15P31A108-203: 비비에게 초안 받기(CHG-A07). 기준 원문의 버전과 고른 작업을 담아 요청하고, 손대지 않은 글만 초안으로 채운다.

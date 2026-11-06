@@ -335,10 +335,12 @@ describe('계약 경계', () => {
   // S15P31A108-290이 초대 메일 다시 보내기(MEM-A11)를, S15P31A108-284가 비비 현재 상태(BEE-A04)를 더하고,
   // S15P31A108-203이 서버에 있는데 등록이 빠져 있던 승인 미리 보기(CHG-A14)를 더하고,
   // S15P31A108-202가 비비 대화·직접 요청·검토 요청 취소(DOC-A22~A24)를 더해 126개다.
-  it('126개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(126)
+  // S15P31A108-290·284가 2개, S15P31A108-137이 선택 범위 조회·초안 2개,
+  // S15P31A108-203이 승인 미리 보기(CHG-A14) 1개를 더해 125개다.
+  it('128개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(125)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      126,
+      128,
     )
     expect(
       new Set(
@@ -346,7 +348,14 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(126)
+    ).toBe(128)
+    expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
+      expect.arrayContaining([
+        'CHG-A07-SCOPED-BLOCKS',
+        'CHG-A07-SCOPED',
+        'CHG-A14',
+      ]),
+    )
     expect(
       endpointRegistry.find((endpoint) => endpoint.id === 'PLN-A10')?.path,
     ).toBe('/human/baselines')

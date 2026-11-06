@@ -104,6 +104,12 @@ public final class NotificationMessages {
         return new Message("작업 충돌로 회의가 열렸습니다: " + name(meetingTitle), "비비가 작업 충돌을 감지해 회의를 열었습니다. 회의에서 어느 쪽을 따를지 정해 주세요.");
     }
 
+    /** MTG-A13. 회의 결과가 변경 제안으로 올라갔다. 문서와 기준은 팀장이 제안을 승인할 때 바뀌므로 "바뀌었다"고 쓰지 않는다 */
+    public static Message meetingProposalCreated(String meetingTitle, String proposalTitle) {
+        return new Message("회의 결과가 변경 제안으로 올라갔습니다: " + name(meetingTitle),
+                "회의에서 정리한 문서 변경이 제안되었습니다. 제안: " + name(proposalTitle));
+    }
+
     /** 이름이 길면 줄이고, 비어 있으면 일반 표현으로 바꾼다 */
     static String name(String value) {
         if (value == null || value.isBlank()) {

@@ -93,7 +93,7 @@ public class AccountWithdrawalService {
         // 초대는 프로젝트 행보다 먼저 잠근다 (초대 → 프로젝트, 자동 참여·팀원 제외와 같은 순서).
         // 대기 초대를 여기서 취소해 두면 leaveAll 사이에 자동 참여로 새 프로젝트에 들어오지도 않는다
         int forgottenInvitations = invitations.forgetOnAccountWithdrawal(email);
-        projects.leaveAll(accountId, now);
+        projects.leaveAll(caller, accountId, now);
         int revoked = tokens.revokeAllOfAccount(accountId, now);
         // 발송 한도를 세는 데만 쓰던 행이라 보존할 이유가 없다 (-277 결정: 탈퇴 때 바로 삭제)
         int temporaryRows = recovery.forgetOnAccountWithdrawal(email);

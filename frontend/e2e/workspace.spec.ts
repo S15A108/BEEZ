@@ -262,3 +262,51 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
   await expect(tag).toBeVisible()
   await expect.poll(centre).toBeLessThan(30)
 })
+
+// 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인 → 팀장에게 올리기.
+test('문서 수정 제안을 세 단계로 등록하고 마지막에 팀장에게 올린다', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const shot = (name: string) =>
+    page.screenshot({ path: test.info().outputPath(`propose-${name}.png`) })
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '공용 문서함', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog
+    .getByRole('button', { name: /요구사항 명세서/ })
+    .first()
+    .click()
+  await dialog.getByRole('button', { name: '수정 제안하기' }).click()
+  const steps = dialog.getByRole('list', { name: '문서 수정 제안 단계' })
+  await expect(steps).toBeVisible()
+  const text = dialog.getByLabel('고친 글')
+  await expect(text).toHaveValue(/REQ-001/)
+  await dialog.getByLabel('제목 *').fill('프로젝트 목록 빈 화면 안내')
+  await dialog
+    .getByLabel('바꾸려는 이유 *')
+    .fill('참여한 프로젝트가 없는 사람은 빈 목록에서 멈춰요.')
+  await text.press('ControlOrMeta+End')
+  await text.pressSequentially(
+    '\nREQ-006 참여한 프로젝트가 없으면 받은 초대를 먼저 보여 준다.',
+  )
+  await shot('1-doc')
+  await dialog.getByRole('button', { name: '등록하고 변경점 찾기' }).click()
+  await expect(
+    dialog.getByRole('heading', { name: '바뀐 곳 1개를 찾았어요' }),
+  ).toBeVisible()
+  await shot('2-changes')
+  await dialog.getByRole('button', { name: '다음', exact: true }).click()
+  await expect(
+    dialog.getByRole('heading', { name: '올리기 전에 확인해요' }),
+  ).toBeVisible()
+  await shot('3-confirm')
+  await dialog.getByRole('button', { name: '팀장에게 올리기' }).click()
+  await expect(dialog.getByText('변경 제안을 올렸어요.')).toBeVisible()
+  await expect(
+    dialog.getByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ }),
+  ).toBeVisible()
+  await shot('4-mine')
+  expect(errors).toEqual([])
+})

@@ -47,6 +47,7 @@ import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalForm } from './ProposalForm'
 import { ApprovalPreview } from './ApprovalPreview'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
+import { ProposeFlow } from './ProposeFlow'
 import { StatusTag } from './StatusTag'
 import { Tag } from './Tag'
 import { operationTone } from './tagTones'
@@ -616,8 +617,45 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
           )}
         </div>
         <div className="min-w-0">
-          {mode.kind === 'form' ? (
+          {mode.kind === 'form' && !mode.source ? (
+            <ProposeFlow
+              projectId={projectId}
+              key={documents.isSuccess ? 'documents' : 'loading'}
+              requestDraft={(input) =>
+                changesApi.generateDraft(projectId, input)
+              }
+              onDraftConflict={() => void documents.refetch()}
+              documents={documentOptions}
+              baselineVersion={baseline.data?.version_no}
+              itemKinds={Object.fromEntries(
+                approved.map((item) => [item.key, kindLabel[item.kind]]),
+              )}
+              tasks={taskList}
+              // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
+              fetchDocumentContent={(documentId) =>
+                documentsApi.get(projectId, documentId).then((result) => ({
+                  content: result.version.content ?? '',
+                  versionId: result.version.id,
+                }))
+              }
+              defaultValues={
+                mode.documentId
+                  ? {
+                      title: '',
+                      reason: '',
+                      task_id: '',
+                      document_id: mode.documentId,
+                      // 기준 원문은 폼이 받아서 채운다.
+                      after_content: '',
+                    }
+                  : undefined
+              }
+              onCancel={() => setMode({ kind: 'detail' })}
+              onSubmit={(values) => submitForm(values)}
+            />
+          ) : mode.kind === 'form' ? (
             <ProposalForm
+              projectId={projectId}
               key={documents.isSuccess ? 'documents' : 'loading'}
               documents={documentOptions}
               // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
@@ -905,12 +943,32 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                       )}
                       {overrideNeeded && (
                         <div className="grid gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                          <strong className="text-sm">
+                            AI 영향 분석이 끝나지 않았어요
+                          </strong>
                           <p className="text-sm leading-6">
                             이 제안의 영향 분석이 끝나지 않았거나(실패·근거
-                            부족·아직 안 돌림·제안이 바뀜) 믿을 수 없는
-                            상태예요. 영향 범위를 직접 확인했다면 사유를 남기고
-                            승인할 수 있어요. 사유는 승인 이력에 남아요.
+                            부족·아직 안 돌림·제안이 바뀜·문서 변경이라 분석 못
+                            함) 믿을 수 없는 상태예요. 분석하지 못한 결과는 영향
+                            0건으로 보지 않아요. 영향 범위를 직접 확인했다면
+                            사유를 남기고 승인할 수 있어요. 사유는 승인 이력에
+                            남아요.
                           </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="justify-self-start"
+                            disabled={action.busy}
+                            onClick={() =>
+                              void perform(
+                                () =>
+                                  changesApi.retryImpact(projectId, current.id),
+                                '다시 분석을 요청했어요.',
+                              )
+                            }
+                          >
+                            영향 다시 분석
+                          </Button>
                           <label
                             htmlFor="impact-override-reason"
                             className="text-sm font-semibold"
