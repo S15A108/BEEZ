@@ -385,3 +385,184 @@ it('초안 요청 입력은 제안 폼을 제출하지 않는다', async () => {
   ).not.toBeInTheDocument()
   expect(requestDraft).not.toHaveBeenCalled()
 })
+
+// 코드 리뷰(높음): 문서 A 로 초안을 요청하고 기다리는 동안 고칠 문서를 B 로 바꾸면 A 의 초안이 B 의 고친 글에 들어갔다.
+function renderTwoDocumentForm(requestDraft: () => Promise<unknown>) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const contents: Record<string, { content: string; versionId: string }> = {
+    '203': { content: '# A 문서\n기준 원문', versionId: '2031' },
+    '204': { content: '# B 문서\n기준 원문', versionId: '2041' },
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[
+          {
+            id: '203',
+            label: 'A 문서 · 기준 v1',
+            title: 'A 문서',
+            versionId: '2031',
+          },
+          {
+            id: '204',
+            label: 'B 문서 · 기준 v1',
+            title: 'B 문서',
+            versionId: '2041',
+          },
+        ]}
+        fetchDocumentContent={(id) => Promise.resolve(contents[id])}
+        requestDraft={requestDraft as never}
+        defaultValues={{
+          title: '안내 추가',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  return { text: () => screen.getByLabelText('고친 글') }
+}
+
+async function askForDraft(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole('button', { name: '비비에게 초안 받기' }),
+  )
+  await user.type(
+    screen.getByLabelText('어떻게 고칠지 알려 주세요'),
+    '안내를 추가해 주세요.',
+  )
+  await user.click(screen.getByRole('button', { name: '초안 만들기' }))
+}
+
+it('초안을 기다리는 동안 고칠 문서를 바꾸면 이전 문서의 초안을 새 문서에 넣지 않는다', async () => {
+  const user = userEvent.setup()
+  let resolve: (value: unknown) => void = () => undefined
+  const { text } = renderTwoDocumentForm(
+    () => new Promise((done) => (resolve = done)),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# A 문서\n기준 원문'))
+  await askForDraft(user)
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '204')
+  await waitFor(() => expect(text()).toHaveValue('# B 문서\n기준 원문'))
+  // 문서가 바뀌면 열려 있던 초안 패널과 받은 결과도 사라진다.
+  expect(
+    screen.queryByLabelText('어떻게 고칠지 알려 주세요'),
+  ).not.toBeInTheDocument()
+  resolve({
+    document_id: '203',
+    base_document_version_id: '2031',
+    after_content: '# A 문서\nA 의 초안',
+    generation: { origin: 'MODEL', text: '초안', sources: [], unresolved: [] },
+  })
+  await new Promise((done) => setTimeout(done, 50))
+  expect(text()).toHaveValue('# B 문서\n기준 원문')
+})
+
+it('다른 문서로 바꾸면 열려 있던 초안 패널을 닫고 새 문서로 다시 받게 한다', async () => {
+  const user = userEvent.setup()
+  const { text } = renderTwoDocumentForm(() => Promise.resolve(draftResponse))
+  await waitFor(() => expect(text()).toHaveValue('# A 문서\n기준 원문'))
+  await user.click(
+    await screen.findByRole('button', { name: '비비에게 초안 받기' }),
+  )
+  expect(screen.getByLabelText('어떻게 고칠지 알려 주세요')).toBeInTheDocument()
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), '204')
+  await waitFor(() => expect(text()).toHaveValue('# B 문서\n기준 원문'))
+  expect(
+    screen.queryByLabelText('어떻게 고칠지 알려 주세요'),
+  ).not.toBeInTheDocument()
+  expect(
+    await screen.findByRole('button', { name: '비비에게 초안 받기' }),
+  ).toBeEnabled()
+})
+
+it('손댄 글이 있으면 초안이 와도 덮어쓰지 않고 바꾸기를 눌러야 바뀐다', async () => {
+  const user = userEvent.setup()
+  const { text } = renderTwoDocumentForm(() =>
+    Promise.resolve({
+      document_id: '203',
+      base_document_version_id: '2031',
+      after_content: '# A 문서\n비비 초안',
+      generation: {
+        origin: 'MODEL',
+        text: '초안',
+        sources: [],
+        unresolved: [],
+      },
+    }),
+  )
+  await waitFor(() => expect(text()).toHaveValue('# A 문서\n기준 원문'))
+  await user.type(text(), '\n내가 쓴 줄')
+  await askForDraft(user)
+  expect(
+    await screen.findByText(/지금 쓰고 있는 글이 있어서 바꾸지 않았어요/),
+  ).toBeInTheDocument()
+  expect(text()).toHaveValue('# A 문서\n기준 원문\n내가 쓴 줄')
+  await user.click(screen.getByRole('button', { name: '초안으로 바꾸기' }))
+  expect(text()).toHaveValue('# A 문서\n비비 초안')
+})
+
+// 코드 리뷰(낮음): 초안이 409 version_conflict 로 실패해도 문서·원문을 다시 읽지 않아 같은 409 가 반복됐다.
+it('초안이 기준 변경 409 로 실패하면 기준 원문과 문서 목록을 다시 읽는다', async () => {
+  const user = userEvent.setup()
+  const fetchContent = vi.fn().mockResolvedValue({
+    content: '# A 문서\n기준 원문',
+    versionId: '2031',
+  })
+  const onDraftConflict = vi.fn()
+  const conflictError = Object.assign(new Error('conflict'), {
+    isAxiosError: true,
+    response: {
+      status: 409,
+      data: { error: { code: 'version_conflict', message: 'x' } },
+    },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ProposalForm
+        heading="문서 수정 제안"
+        submitLabel="제안 올리기"
+        tasks={[]}
+        documents={[
+          {
+            id: '203',
+            label: 'A 문서 · 기준 v1',
+            title: 'A 문서',
+            versionId: '2031',
+          },
+        ]}
+        fetchDocumentContent={fetchContent}
+        requestDraft={() => Promise.reject(conflictError)}
+        onDraftConflict={onDraftConflict}
+        defaultValues={{
+          title: '안내 추가',
+          reason: '안내가 필요해요.',
+          task_id: '',
+          document_id: '203',
+          after_content: '',
+        }}
+        onSubmit={vi.fn().mockResolvedValue(undefined)}
+        onCancel={vi.fn()}
+      />
+    </QueryClientProvider>,
+  )
+  await waitFor(() =>
+    expect(screen.getByLabelText('고친 글')).toHaveValue('# A 문서\n기준 원문'),
+  )
+  expect(fetchContent).toHaveBeenCalledTimes(1)
+  await askForDraft(user)
+  await waitFor(() => expect(onDraftConflict).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(fetchContent).toHaveBeenCalledTimes(2))
+})

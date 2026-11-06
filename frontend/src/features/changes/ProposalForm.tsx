@@ -34,6 +34,8 @@ interface Props {
   ) => Promise<{ content: string; versionId: string }>
   /** 비비에게 문서 수정 초안을 받는다(CHG-A07). 없으면 버튼을 그리지 않는다. */
   requestDraft?: (input: GenerateDraftInput) => Promise<GenerateDraftResponse>
+  /** 초안이 기준 변경(409)으로 실패하면 문서 목록을 다시 읽는다. */
+  onDraftConflict?: () => void
   /** 다시 내는 제안의 문서 변경. 폼에서 고치는 문서 말고는 그대로 함께 올라가고, 기준이 바뀐 문서(stale)는 빠진다. */
   sourceDocuments?: {
     id: string
@@ -73,6 +75,7 @@ export function ProposalForm({
   documents = [],
   fetchDocumentContent,
   requestDraft,
+  onDraftConflict,
   sourceDocuments = [],
   baseChangedTo,
   fixedItems = [],
@@ -389,6 +392,8 @@ export function ProposalForm({
                   )}
                   {requestDraft && (
                     <DraftRequest
+                      // 고칠 문서나 기준 버전이 바뀌면 열린 패널과 받은 결과를 버린다. 다른 문서의 초안이 남아 보이면 안 된다.
+                      key={`${documentId}:${shownVersion ?? ''}`}
                       ready={!!shownVersion && !outdated && !content.isLoading}
                       notReadyReason={
                         outdated
@@ -405,6 +410,17 @@ export function ProposalForm({
                             : {}),
                         })
                       }
+                      // 요청하는 동안 문서나 기준 버전을 바꿨으면 응답은 다른 폼의 초안이라 쓰지 않는다.
+                      isCurrent={(draft) =>
+                        draft.document_id === getValues('document_id') &&
+                        draft.base_document_version_id ===
+                          getValues('base_version_id')
+                      }
+                      // 기준이 바뀌었다는 409 면 문서 목록과 기준 원문을 다시 읽어 '새 원문으로 다시 쓰기'가 뜨게 한다.
+                      onConflict={() => {
+                        void content.refetch()
+                        onDraftConflict?.()
+                      }}
                       // 손대지 않은 글(비었거나 기준 원문 그대로)만 초안으로 채우고, 손댄 글은 묻고 나서 바꾼다.
                       isUntouched={() => {
                         const text = getValues('after_content') ?? ''

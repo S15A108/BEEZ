@@ -114,6 +114,20 @@ export const generateDraftInputSchema = z.object({
 })
 export type GenerateDraftInput = z.infer<typeof generateDraftInputSchema>
 
+// CHG-A07 수정 요청 입력. 공백뿐이면 안 되고 2,000자 이하(명세). 폼 검증 규칙은 여기에만 둔다.
+export const MAX_INSTRUCTION = 2000
+export const draftRequestFormSchema = z.object({
+  instruction: z
+    .string()
+    .trim()
+    .min(1, '어떻게 고칠지 입력해 주세요.')
+    .max(
+      MAX_INSTRUCTION,
+      `수정 요청은 ${MAX_INSTRUCTION.toLocaleString()}자까지 쓸 수 있어요.`,
+    ),
+})
+export type DraftRequestFormValues = z.infer<typeof draftRequestFormSchema>
+
 export const generateDraftResponseSchema = z.object({
   document_id: common.idSchema,
   base_document_version_id: common.idSchema,
