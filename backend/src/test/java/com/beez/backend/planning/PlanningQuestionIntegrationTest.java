@@ -155,13 +155,27 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         generator.runOnce();
         var page1 = questions.list(memberCaller, project, version, null, 2);
         assertThat(items(page1)).extracting(i -> i.get("number")).containsExactly(1L, 2L);
-        assertThat(page1).containsEntry("total_count", 3L).containsEntry("has_more", true).containsEntry("next_cursor", "2");
+        assertThat(page1).containsEntry("total_count", 3L).containsEntry("has_more", true);
+        long secondId = Long.parseLong(((Map<String, Object>) items(page1).get(1)).get("id").toString());
+        assertThat((String) page1.get("next_cursor")).matches("[0-9]+:[0-9]+:" + secondId);
         var first = items(page1).get(0);
         assertThat(first).containsEntry("question_type", "ESSAY").containsEntry("status", "OPEN").containsEntry("evidence_status", "REVIEW_CANDIDATE");
         assertThat(first.get("source")).isEqualTo(Map.of("document_id", "" + document, "document_version_id", "" + version, "version_no", 1, "location", "기획서 / L3"));
-        var page2 = questions.list(memberCaller, project, version, "2", 2);
+        var page2 = questions.list(memberCaller, project, version, (String) page1.get("next_cursor"), 2);
         assertThat(items(page2)).extracting(i -> i.get("number")).containsExactly(3L);
         assertThat(page2).containsEntry("has_more", false).doesNotContainKey("next_cursor");
+    }
+
+    @Test void cursorIsASortKeyNotAPositionSoChangesBetweenPagesNeitherRepeatNorSkip() {
+        generator.runOnce();
+        var page1 = questions.list(memberCaller, project, version, null, 2);
+        var shown = items(page1).stream().map(i -> i.get("id")).toList();
+        // 쪽을 넘기는 사이 앞쪽 질문이 SUPERSEDED 된다
+        jdbc.update("UPDATE planning_question SET status='SUPERSEDED' WHERE id=?", Long.parseLong(shown.get(0).toString()));
+        var page2 = questions.list(memberCaller, project, version, (String) page1.get("next_cursor"), 2);
+        assertThat(items(page2)).hasSize(1);
+        assertThat(items(page2).get(0).get("id")).isNotIn(shown);
+        assertThat(page2).containsEntry("total_count", 2L).containsEntry("has_more", false);
     }
 
     @Test void listValidatesInputAndProjectAccess() {
@@ -169,6 +183,8 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, null, 0));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, null, 101));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "x", null));
+        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "2", null));
+        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "1:2:-3", null));
         var outsider = com.beez.backend.common.auth.CallerContext.human(fixtures().account());
         fails(HttpStatus.NOT_FOUND, "not_found", () -> questions.list(outsider, project, null, null, null));
     }

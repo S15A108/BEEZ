@@ -117,19 +117,32 @@ public class PlanningQuestionRepository {
         }
     }
 
-    /** 번호(number)는 필터가 적용된 목록 안의 1부터 이어지는 순번이다. after 는 앞 페이지의 마지막 번호. */
-    public List<Map<String, Object>> page(long project, Long version, long after, int limit) {
+    /** rank 가 없는 질문을 맨 뒤로 보내는 정렬값(목록 정렬 키의 두 번째 칸). */
+    public static final long NO_RANK = Integer.MAX_VALUE;
+
+    /** 목록 정렬 키(문서 버전, rank, id). 커서는 이 키라서 앞쪽에 질문이 생기거나 SUPERSEDED 돼도 다음 쪽이 밀리지 않는다. */
+    public record Position(long versionId, long rank, long id) { }
+
+    /**
+     * 번호(number)는 필터가 적용된 목록 안의 1부터 이어지는 표시용 순번이다(쪽마다 다시 센다). 쪽 경계는 번호가 아니라
+     * 앞 쪽 마지막 질문의 정렬 키({@code after}) 뒤부터다.
+     */
+    public List<Map<String, Object>> page(long project, Long version, Position after, int limit) {
         var p = new HashMap<String, Object>();
-        p.put("project", project); p.put("after", after); p.put("limit", limit);
+        p.put("project", project); p.put("limit", limit);
         String filter = "";
         if (version != null) { filter = " AND q.document_version_id=:version"; p.put("version", version); }
-        return jdbc.sql("""
-                SELECT * FROM (
-                  SELECT q.*,v.version_no,v.document_id,row_number() OVER (ORDER BY q.document_version_id,q.rank NULLS LAST,q.id) AS number
-                    FROM planning_question q JOIN document_version v ON v.id=q.document_version_id
-                   WHERE q.project_id=:project AND q.status<>'SUPERSEDED'""" + filter + """
-                ) t WHERE t.number>:after ORDER BY t.number LIMIT :limit
-                """).params(p).query().listOfRows();
+        String cursor = "";
+        if (after != null) {
+            cursor = " WHERE (t.document_version_id, t.sort_rank, t.id) > (:av, :ar, :ai)";
+            p.put("av", after.versionId()); p.put("ar", after.rank()); p.put("ai", after.id());
+        }
+        String sortRank = "COALESCE(q.rank," + NO_RANK + ")";
+        return jdbc.sql("SELECT * FROM (SELECT q.*,v.version_no,v.document_id," + sortRank + " AS sort_rank,"
+                + " row_number() OVER (ORDER BY q.document_version_id," + sortRank + ",q.id) AS number"
+                + " FROM planning_question q JOIN document_version v ON v.id=q.document_version_id"
+                + " WHERE q.project_id=:project AND q.status<>'SUPERSEDED'" + filter + ") t" + cursor
+                + " ORDER BY t.document_version_id,t.sort_rank,t.id LIMIT :limit").params(p).query().listOfRows();
     }
 
     public long count(long project, Long version) {

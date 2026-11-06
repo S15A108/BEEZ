@@ -42,11 +42,7 @@ public class PlanningQuestionService {
         access.requireMember(caller, project);
         int size = limit == null ? DEFAULT_LIMIT : limit;
         if (size < 1 || size > MAX_LIMIT) throw invalid("limit은 1~" + MAX_LIMIT + "입니다.");
-        long after = 0;
-        if (cursor != null && !cursor.isBlank()) {
-            try { after = Long.parseLong(cursor.trim()); } catch (NumberFormatException e) { throw invalid("cursor가 올바르지 않습니다."); }
-            if (after < 0) throw invalid("cursor가 올바르지 않습니다.");
-        }
+        var after = cursor == null || cursor.isBlank() ? null : position(cursor.trim());
         var rows = questions.page(project, version, after, size + 1);
         boolean more = rows.size() > size;
         var items = new ArrayList<Map<String, Object>>();
@@ -55,8 +51,26 @@ public class PlanningQuestionService {
         response.put("items", items);
         response.put("total_count", questions.count(project, version));
         response.put("has_more", more);
-        if (more) response.put("next_cursor", items.getLast().get("number").toString());
+        if (more) response.put("next_cursor", cursorOf(rows.get(size - 1)));
         return response;
+    }
+
+    /** 커서는 마지막 질문의 정렬 키 "버전:rank:id" 다. 번호가 아니라서 쪽 사이에 목록이 바뀌어도 질문이 겹치거나 빠지지 않는다. */
+    static String cursorOf(Map<String, Object> row) {
+        long rank = row.get("rank") == null ? PlanningQuestionRepository.NO_RANK : ((Number) row.get("rank")).longValue();
+        return ((Number) row.get("document_version_id")).longValue() + ":" + rank + ":" + ((Number) row.get("id")).longValue();
+    }
+
+    private static PlanningQuestionRepository.Position position(String cursor) {
+        String[] part = cursor.split(":", -1);
+        if (part.length != 3) throw invalid("cursor가 올바르지 않습니다.");
+        try {
+            long version = Long.parseLong(part[0]), rank = Long.parseLong(part[1]), id = Long.parseLong(part[2]);
+            if (version < 0 || rank < 0 || id < 0) throw invalid("cursor가 올바르지 않습니다.");
+            return new PlanningQuestionRepository.Position(version, rank, id);
+        } catch (NumberFormatException e) {
+            throw invalid("cursor가 올바르지 않습니다.");
+        }
     }
 
     @Transactional
