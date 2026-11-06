@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { authApi, membersApi, projectsApi } from '@/api/services'
@@ -58,7 +59,7 @@ async function withdraw(password: string) {
   await user.click(screen.getByRole('button', { name: '회원 탈퇴' }))
 }
 
-it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝트마다 팀장 위임으로만 잇는다', async () => {
+it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝트마다 팀장 위임과 프로젝트 삭제로 잇는다', async () => {
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
   const memberLists = vi.spyOn(membersApi, 'list')
   renderPage()
@@ -72,11 +73,13 @@ it('탈퇴를 막는 프로젝트를 서버 판정으로 보여 주고 프로젝
   expect(
     within(first).getByRole('link', { name: '팀장 위임' }),
   ).toHaveAttribute('href', '/projects/101?settings=team')
-  // 설정 창이 팀원이 있는 프로젝트의 삭제를 아직 막아서(S15P31A108-282) 삭제 링크는 두지 않는다.
+  // 팀장의 나가기 창에 '프로젝트 삭제'가 있고 팀원이 있어도 지울 수 있다(PRJ-A05, S15P31A108-282).
   expect(
-    within(blocked).queryByRole('link', { name: '프로젝트 삭제' }),
-  ).not.toBeInTheDocument()
-  expect(blocked).not.toHaveTextContent('삭제')
+    within(first).getByRole('link', { name: '프로젝트 삭제' }),
+  ).toHaveAttribute('href', '/projects/101?settings=remove')
+  expect(blocked).toHaveTextContent(
+    '팀장을 위임하거나 프로젝트를 삭제하면 탈퇴할 수 있어요.',
+  )
   expect(screen.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
   // 팀원 목록으로 세지 않고 ACC-A13 결과를 쓴다.
   expect(memberLists).not.toHaveBeenCalled()
@@ -105,7 +108,7 @@ it('화면을 연 뒤 팀 프로젝트의 팀장이 되어 409로 막히면 서�
   const blocked = await screen.findByRole('region', { name: BLOCKED_TITLE })
   expect(within(blocked).getAllByRole('listitem')).toHaveLength(2)
   expect(screen.getByRole('alert')).toHaveTextContent(
-    '팀장이라 탈퇴할 수 없어요',
+    '팀장을 위임하거나 프로젝트를 삭제해 주세요.',
   )
   expect(screen.getByRole('button', { name: '회원 탈퇴' })).toBeDisabled()
 })
@@ -137,5 +140,41 @@ it('탈퇴하면 첫 화면인 로그인으로 간다', async () => {
   renderPage()
   await withdraw(DEMO_PASSWORD)
 
+  expect(await screen.findByText('로그인 화면')).toBeInTheDocument()
+})
+
+// S15P31A108-281(PR #182): 인계 단계가 없어 작업 수를 보여 줘도 달라지는 결정이 없으므로 고정 문구로 알린다.
+it('탈퇴하면 팀 프로젝트에서 맡은 열린 작업의 담당자가 비워진다고 미리 알린다', async () => {
+  await authApi.login({ email: MEMBER_EMAIL, password: DEMO_PASSWORD })
+  renderPage()
+
+  expect(
+    await screen.findByRole('region', {
+      name: '탈퇴하면 기존 프로젝트는 이렇게 돼요',
+    }),
+  ).toHaveTextContent('맡은 열린 작업은 담당자가 비워져요.')
+})
+
+// ACC-A10: 담당자를 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 탈퇴 전체가 되돌아간다. 다시 누르면 된다.
+it('담당자를 비우는 동안 작업 상태가 바뀌어 409로 막히면 다시 시도하라고 알리고 다시 눌러 탈퇴할 수 있다', async () => {
+  await authApi.login({ email: MEMBER_EMAIL, password: DEMO_PASSWORD })
+  vi.spyOn(authApi, 'withdraw').mockRejectedValueOnce(
+    new AxiosError('conflict', '409', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'revision_conflict', message: 'conflict' } },
+    }),
+  )
+  renderPage()
+  await withdraw(DEMO_PASSWORD)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    /^작업 상태가 방금 바뀌었어요\. 다시 시도해 주세요\.$/,
+  )
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: '회원 탈퇴' }))
   expect(await screen.findByText('로그인 화면')).toBeInTheDocument()
 })

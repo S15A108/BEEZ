@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { api } from '@/api/client'
-import { authApi, membersApi, tasksApi } from '@/api/services'
+import { authApi, membersApi, projectsApi, tasksApi } from '@/api/services'
 import { getApiErrorCode, getApiErrorStatus } from '@/api/error'
 import { DEMO_EMAIL, DEMO_PASSWORD, resetMockApi, setupMockApi } from './setup'
 
@@ -98,4 +98,97 @@ it('진행 중 작업의 담당자를 바꾸면 재검증 대기가 되고 검�
     expected_lock_version: moved.lock_version,
   })
   expect(same.lock_version).toBe(moved.lock_version)
+})
+
+// 11-04 사용자 결정(S15P31A108-282): 나가기·제외는 열린 작업이 있어도 막지 않고, 인계 대상이 없으면 담당자만 비운다.
+const OPEN = ['DRAFT', 'READY', 'IN_PROGRESS', 'WAITING'] as const
+const as = (email: string) => authApi.login({ email, password: DEMO_PASSWORD })
+
+it('팀원은 열린 작업이 있어도 나가고, 넘겨받을 사람이 없으면 상태는 두고 담당자만 비운다', async () => {
+  const before = await tasksApi.get('101', '502')
+  await as('member@beez.local')
+  await membersApi.leave('101', {})
+  await as(DEMO_EMAIL)
+  const after = await tasksApi.get('101', '502')
+  expect(after).not.toHaveProperty('assignee_member_id')
+  expect(after.status).toBe(before.status)
+  expect(after.validation_status).toBe(before.validation_status)
+  const unassigned = await tasksApi.list('101', {
+    unassigned: true,
+    status: [...OPEN],
+  })
+  expect(unassigned.items.map((task) => task.id)).toEqual(['502'])
+})
+
+it('팀장은 넘길 팀원을 골라야 나가고, 위임과 나가기를 한 번에 한다', async () => {
+  const required = await membersApi.leave('101', {}).catch((cause) => cause)
+  expect(getApiErrorCode(required)).toBe('leader_transfer_required')
+  const self = await membersApi
+    .leave('101', { transfer_leader_to_member_id: '21' })
+    .catch((cause) => cause)
+  expect(getApiErrorCode(self)).toBe('invalid_transfer_target')
+  await membersApi.leave('101', {
+    transfer_leader_to_member_id: '22',
+    reassign_to_member_id: '25',
+  })
+  await as('member@beez.local')
+  const members = (await membersApi.list('101')).items
+  expect(members.find((member) => member.id === '22')?.role).toBe('LEADER')
+  expect(members.some((member) => member.id === '21')).toBe(false)
+  expect((await tasksApi.get('101', '501')).assignee_member_id).toBe('25')
+})
+
+it('팀원은 담당자 없는 작업만 자기에게 맡고, 늦게 맡으면 409 revision_conflict', async () => {
+  await membersApi.remove('101', '22', {})
+  const open = await tasksApi.get('101', '502')
+  await as('designer@beez.local')
+  const other = await tasksApi
+    .assign('101', '502', {
+      assignee_member_id: '26',
+      expected_lock_version: open.lock_version,
+    })
+    .catch((cause) => cause)
+  expect(getApiErrorStatus(other)).toBe(403)
+  const assigned = await tasksApi.get('101', '501')
+  const taken = await tasksApi
+    .assign('101', '501', {
+      assignee_member_id: '25',
+      expected_lock_version: assigned.lock_version,
+    })
+    .catch((cause) => cause)
+  expect(getApiErrorStatus(taken)).toBe(403)
+  const claimed = await tasksApi.assign('101', '502', {
+    assignee_member_id: '25',
+    expected_lock_version: open.lock_version,
+  })
+  expect(claimed.assignee_member_id).toBe('25')
+  await as('backend@beez.local')
+  const late = await tasksApi
+    .assign('101', '502', {
+      assignee_member_id: '26',
+      expected_lock_version: open.lock_version,
+    })
+    .catch((cause) => cause)
+  expect(getApiErrorCode(late)).toBe('revision_conflict')
+})
+
+it('작업 목록에 unassigned와 assignee_member_id를 함께 주면 400 validation_failed', async () => {
+  const error = await tasksApi
+    .list('101', { unassigned: true, assignee_member_id: '21' })
+    .catch((cause) => cause)
+  expect(getApiErrorCode(error)).toBe('validation_failed')
+  const mine = await tasksApi.list('101', {
+    assignee_member_id: '21',
+    status: ['READY', 'IN_PROGRESS'],
+  })
+  expect(mine.items.map((task) => task.id)).toEqual(['501'])
+})
+
+it('팀장은 팀원이 있어도 프로젝트 이름이 맞으면 프로젝트를 삭제한다', async () => {
+  const { name } = await projectsApi.get('101')
+  await projectsApi.remove('101', { confirm_name: name })
+  await as('member@beez.local')
+  expect(getApiErrorStatus(await projectsApi.get('101').catch((e) => e))).toBe(
+    404,
+  )
 })

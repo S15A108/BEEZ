@@ -95,10 +95,9 @@ const messages: Record<string, string> = {
   leader_not_removable: '팀장은 회의에서 뺄 수 없어요.',
   meeting_closed: '끝난 회의라 바꿀 수 없어요.',
   invalid_transfer_target: '이 팀원에게는 넘길 수 없어요.',
-  active_tasks_exist: '진행 중인 작업의 담당자를 먼저 정리해 주세요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
   leader_of_team_projects:
-    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 먼저 위임해 주세요.',
+    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 위임하거나 프로젝트를 삭제해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
   document_not_approved:
@@ -140,4 +139,11 @@ export function getApiErrorMessage(error: unknown): string {
   if (isAxiosError(error) && !error.response)
     return '서버에 연결할 수 없습니다. 연결 상태를 확인해 주세요.'
   return '요청을 완료하지 못했습니다. 다시 시도해 주세요.'
+}
+// 나가기·제외·탈퇴는 담당자를 넘기거나 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 전체가 되돌아간다(MEM-A09·A10, ACC-A10).
+// 계획을 고치는 화면과 달리 다시 확인할 내용이 없으므로 다시 시도하라고 알린다.
+export function getHandoverErrorMessage(error: unknown): string {
+  return getApiErrorCode(error) === 'revision_conflict'
+    ? '작업 상태가 방금 바뀌었어요. 다시 시도해 주세요.'
+    : getApiErrorMessage(error)
 }

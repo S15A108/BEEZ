@@ -26,6 +26,7 @@ import {
   changesApi,
   documentsApi,
   projectsApi,
+  tasksApi,
   validationsApi,
 } from './index'
 
@@ -370,6 +371,19 @@ describe('계약 경계', () => {
         (capability) => capability.availability === 'UNSPECIFIED',
       ),
     ).toBe(true)
+  })
+
+  // TSK-A02(11-04 사용자 결정): status는 같은 이름을 반복하고, unassigned=true면 담당자 없는 작업만 받는다.
+  it('작업 목록의 여러 상태는 같은 이름을 반복하고 담당자 없음 필터를 함께 보낸다', async () => {
+    respond({ items: [], has_more: false })
+    await tasksApi.list('101', {
+      unassigned: true,
+      status: ['DRAFT', 'READY', 'IN_PROGRESS', 'WAITING'],
+      limit: 100,
+    })
+    expect(api.getUri(lastRequest)).toBe(
+      '/api/projects/101/tasks?status=DRAFT&status=READY&status=IN_PROGRESS&status=WAITING&unassigned=true&limit=100',
+    )
   })
 
   // 서버(ExplicitImpactCalculator)는 담당자가 없는 작업이면 explicit 항목에서 member_id를 생략한다.
