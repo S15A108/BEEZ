@@ -125,10 +125,13 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
         ProjectWithLeader other = fixtures().projectWithLeader();
         long otherTask = draftTask(other.projectId());
 
-        assertThatThrownBy(() -> inTransaction(() -> recorder.recordBy(SystemActor.SYSTEM,
+        Throwable thrown = catchThrowable(() -> inTransaction(() -> recorder.recordBy(SystemActor.SYSTEM,
                 ActivityEvent.of("validation:89:finished:1", p.projectId(), "VALIDATION_FINISHED",
-                        ActivityTargetType.VALIDATION, 89L).withTaskId(otherTask))))
-                .rootCause().hasMessageContaining("fk_activity_task");
+                        ActivityTargetType.VALIDATION, 89L).withTaskId(otherTask))));
+        assertThat(thrown).rootCause().hasMessageContaining("fk_activity_task");
+        // -308: 입구 INSERT 자체의 위반은 호출한 서비스의 버그다 — 400(요청 잘못)으로 바뀌지 않고 500 으로 드러나야 한다
+        var handler = new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class).resolveMethod((Exception) thrown);
+        assertThat(handler).isNotNull().extracting(Method::getName).isEqualTo("handleUnexpected");
         assertThat(rowsOf(p.projectId())).isEmpty();
     }
 
@@ -165,7 +168,7 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
                     p.projectId(), "TASK_CREATED", ActivityTargetType.TASK, taskId));
         }));
 
-        // -308: 입구 INSERT 실행부가 @Repository 라 Spring 변환을 거친다. 변환 전(-300 때)에는 jakarta OptimisticLockException 이었다
+        // -308: 입구가 저장 전에 @Repository(PersistenceContextFlusher)로 flush 해 Spring 변환을 거친다. 변환 전(-300 때)에는 jakarta OptimisticLockException 이었다
         assertThat(thrown).isInstanceOf(ObjectOptimisticLockingFailureException.class);
         // 실제 요청처럼 @ExceptionHandler 목록으로 처리기를 고른다 — 목록에서 빠지면 handleUnexpected(500)로 간다
         var handler = new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class).resolveMethod((Exception) thrown);

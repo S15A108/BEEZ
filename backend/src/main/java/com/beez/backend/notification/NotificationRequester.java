@@ -1,6 +1,8 @@
 package com.beez.backend.notification;
 
+import com.beez.backend.common.persistence.PersistenceContextFlusher;
 import com.beez.backend.project.ProjectMemberRepository;
+import jakarta.persistence.EntityManager;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,9 +28,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *   <li>수신자가 그 프로젝트의 활성 멤버가 아니면(나감·제외·탈퇴·보관) 그 수신자만 건너뛴다</li>
  *   <li>제목 100자·본문 500자를 넘으면 코드 포인트 기준으로 잘라(끝에 '…') 저장한다</li>
  * </ul>
- * 조회·저장은 모두 EntityManager(Hibernate)를 거친다. JdbcTemplate 은 같은 트랜잭션에서 JPA 로 바꾸고
- * 아직 flush 하지 않은 변경(방금 제외한 멤버십 등)을 보지 못한다. 저장({@link NotificationWriter}) 전 auto-flush 에서 난
- * 도메인 쪽 제약 위반·버전 충돌은 Spring 예외로 바뀌어 나간다(-308).
+ * 조회·저장은 모두 {@link EntityManager}(Hibernate)를 거친다. JdbcTemplate 은 같은 트랜잭션에서 JPA 로 바꾸고
+ * 아직 flush 하지 않은 변경(방금 제외한 멤버십 등)을 보지 못한다. 그 변경은 처음에 {@link PersistenceContextFlusher} 로 flush 해
+ * 도메인 쪽 제약 위반·버전 충돌이 Spring 예외(400·409)로 나가게 하고, 저장 쿼리 자체의 위반은 원형 그대로 둔다(-308).
  */
 @Service
 public class NotificationRequester {
@@ -38,11 +40,13 @@ public class NotificationRequester {
     private static final String ELLIPSIS = "…";
 
     private final ProjectMemberRepository members;
-    private final NotificationWriter writer;
+    private final EntityManager em;
+    private final PersistenceContextFlusher flusher;
 
-    public NotificationRequester(ProjectMemberRepository members, NotificationWriter writer) {
+    public NotificationRequester(ProjectMemberRepository members, EntityManager em, PersistenceContextFlusher flusher) {
         this.members = members;
-        this.writer = writer;
+        this.em = em;
+        this.flusher = flusher;
     }
 
     /** 알림 한 건. 수신자가 비멤버이거나 키가 이미 있으면 아무것도 남기지 않는다. */
@@ -61,6 +65,7 @@ public class NotificationRequester {
             // PostgreSQL 이 INSERT 를 거부하기 전에 원인을 분명히 알린다 (계약 2.1)
             throw new IllegalStateException("NotificationRequester must not be called inside a readOnly transaction");
         }
+        flusher.flush();   // 도메인 쪽 위반은 여기서 Spring 예외로. 아래 INSERT 자체의 위반은 서버 버그라 500 그대로
         Map<Long, List<NotificationRequest>> byProject = requests.stream()
                 .collect(Collectors.groupingBy(NotificationRequest::projectId, LinkedHashMap::new, Collectors.toList()));
         byProject.forEach((projectId, group) -> {
@@ -75,7 +80,23 @@ public class NotificationRequester {
     }
 
     private void insert(NotificationRequest r) {
-        writer.insert(r, truncate(r.title(), TITLE_MAX), truncate(r.body(), BODY_MAX));
+        em.createNativeQuery("""
+                        insert into notification (project_id, recipient_account_id, type, title, body, ref_kind, ref_id,
+                                                  document_id, dedupe_key, created_at, updated_at)
+                        values (:projectId, :recipient, :type, :title, :body, :refKind, :refId,
+                                cast(:documentId as bigint), :key, clock_timestamp(), clock_timestamp())
+                        on conflict (dedupe_key) do nothing
+                        """)
+                .setParameter("projectId", r.projectId())
+                .setParameter("recipient", r.recipientAccountId())
+                .setParameter("type", r.type())
+                .setParameter("title", truncate(r.title(), TITLE_MAX))
+                .setParameter("body", truncate(r.body(), BODY_MAX))
+                .setParameter("refKind", r.targetType().name())
+                .setParameter("refId", r.targetId())
+                .setParameter("documentId", r.documentId())
+                .setParameter("key", r.notificationKey())
+                .executeUpdate();
     }
 
     /** 코드 포인트 max 개를 넘으면 max-1 개 + '…'. UTF-16 단위로 자르면 이모지가 반으로 갈린다. */
