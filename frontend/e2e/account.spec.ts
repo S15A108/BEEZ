@@ -65,7 +65,9 @@ test('회원 설정에서 비밀번호 변경과 회원 탈퇴를 별도 페이�
 }) => {
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
   await page.getByRole('link', { name: '회원 설정' }).click()
   await page.getByRole('link', { name: '비밀번호 변경' }).click()
   await expect(page).toHaveURL(/\/account\/password$/)
