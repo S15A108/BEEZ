@@ -548,9 +548,10 @@ curl -s http://127.0.0.1:8081/actuator/prometheus | grep -m1 '^jvm_memory_used_b
   사람은 읽을 수 있습니다. 계정 분리는 운영 환경 결정(S15P31A108-73) 때
   다룹니다.
 - **DB 데이터는 `beez_pgdata` 볼륨에 있습니다.** `docker compose down -v`나
-  볼륨 삭제는 데이터를 지웁니다. 백업 절차는 아직 없습니다.
-- SeaweedFS는 지금 backend와 같은 키를 씁니다. bootstrap 키와 backend 전용
-  키 분리는 S15P31A108-211입니다.
+  볼륨 삭제는 데이터를 지웁니다. 백업·복원은
+  [운영 안내 8. 백업·복원](operations.md#8-백업복원)에 있습니다.
+- SeaweedFS 키는 bootstrap·backend·백업 셋으로 나뉘어 있습니다
+  ([S3 신원 셋](seaweedfs.md#s3-신원-셋), S15P31A108-211).
 - 웹 세션은 PostgreSQL에 있어(Spring Session JDBC, S15P31A108-242) 배포로
   backend 컨테이너가 바뀌어도 로그인이 유지됩니다. 그 전(`af6b7ac` 이전)에는
   세션이 backend 메모리에 있어 배포마다 모두 로그아웃됐습니다. 그 이전 SHA로
