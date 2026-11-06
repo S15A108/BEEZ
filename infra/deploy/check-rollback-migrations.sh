@@ -21,7 +21,7 @@ for c in python3 python; do
     if "$c" -c "$sum" < /dev/null > /dev/null 2>&1; then PY=$c; break; fi
 done
 [ -n "$PY" ] || stop "python 을 실행하지 못함"
-cksum() { "$PY" -c "$sum"; }
+flyway_sum() { "$PY" -c "$sum"; }
 
 case $1 in
     checksum)
@@ -29,7 +29,7 @@ case $1 in
         [ $# -gt 0 ] || { echo "$usage"; exit 2; }
         rc=0
         for f in "$@"; do
-            if [ -r "$f" ]; then echo "$(cksum < "$f") $f"; else echo "읽지 못함: $f"; rc=2; fi
+            if [ -f "$f" ] && [ -r "$f" ]; then echo "$(flyway_sum < "$f") $f"; else echo "읽지 못함: $f"; rc=2; fi
         done
         exit $rc ;;
 esac
@@ -43,11 +43,11 @@ if [ "$1" = find ]; then
     g fetch -q origin || stop "fetch 실패"
     # 같은 번호 파일이 둘 이상이어도 한 줄에 하나씩 찍는다
     g ls-tree -r --name-only origin/dev -- "$DIR/" | grep "/V${F}__" | while read -r f; do
-        echo "dev 판: $(g show "origin/dev:$f" | cksum) ${f##*/}"
+        echo "dev 판: $(g show "origin/dev:$f" | flyway_sum) ${f##*/}"
     done
     g log --branches --remotes --format=%h -- ":(glob)$DIR/**/V${F}__*" | while read -r c; do
         g ls-tree -r --name-only "$c" -- "$DIR/" | grep "/V${F}__" | while read -r f; do
-            echo "$(g show "$c:$f" | cksum) $c ${f##*/}"
+            echo "$(g show "$c:$f" | flyway_sum) $c ${f##*/}"
         done
     done | sort -u -k1,1
     exit 0
@@ -70,7 +70,7 @@ while read -r f; do
     v=${f##*/V}; v=${v%%__*}; v=${v//_/.}   # V1_1__ 은 DB 에 1.1 로 기록된다
     s=${f#*__}; s=${s%.*}; s=${s//_/ }       # 설명 = 파일 이름의 __ 뒤에서 확장자를 빼고 _ 를 공백으로
     case $f in
-        *.sql) echo "$v|$(g show "$OLD:$f" | cksum)|SQL|$s" ;;
+        *.sql) echo "$v|$(g show "$OLD:$f" | flyway_sum)|SQL|$s" ;;
         *) echo "$v||JDBC|$s" ;;   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
     esac
 done < "$T/files" > "$T/old"
@@ -78,10 +78,13 @@ done < "$T/files" > "$T/old"
 # Flyway 기본 검증(outOfOrder 꺼짐, *:future 만 무시)으로 예전 backend 가 어떻게 되는지 번호마다 가른다.
 # 번호의 높낮이는 수로 비교하므로 정수 번호(V1, V2 …)만 맞다. 점 버전(V1_10 과 V1_9)은 순서가 틀릴 수 있다
 awk -F'|' -v nfile="$T/n" '
-    NR == FNR { o[$1] = $2; ot[$1] = $3; od[$1] = $4; if ($1 + 0 > om) om = $1 + 0; next }
+    # 설명은 마지막 칸이라 "|" 가 들어 있어도 끝까지 한 칸으로 읽는다
+    function rest(k,   r, i) { r = $0; for (i = 1; i < k; i++) sub(/^[^|]*[|]/, "", r); return r }
+    NR == FNR { o[$1] = $2; ot[$1] = $3; od[$1] = rest(4); if ($1 + 0 > om) om = $1 + 0; next }
     $4 == "DELETE" { delete a[$1]; next }    # flyway repair 가 지움 처리한 번호. 앞서 적용된 행을 없던 것으로 본다
-    $4 != "SQL" && $4 != "JDBC" { next }     # 스키마 생성·baseline 같은 Flyway 기록용 행은 마이그레이션이 아니다
-    { a[$1] = 1; c[$1] = $2; ok[$1] = $3; t[$1] = $4; ds[$1] = $5 }
+    $4 == "BASELINE" { if ($1 + 0 > bl) bl = $1 + 0; next }   # 이 번호 이하는 Flyway 가 적용된 것으로 보고 검사하지 않는다
+    $4 != "SQL" && $4 != "JDBC" { next }     # 스키마 생성 같은 Flyway 기록용 행은 마이그레이션이 아니다
+    { a[$1] = 1; c[$1] = $2; ok[$1] = $3; t[$1] = $4; ds[$1] = rest(5) }
     END {
         for (v in a) { n++; if (v + 0 > dm) dm = v + 0 }
         print n + 0 > nfile
@@ -95,7 +98,7 @@ awk -F'|' -v nfile="$T/n" '
             if (od[v] != ds[v]) m = m " 설명(DB \"" ds[v] "\", 되돌릴 SHA \"" od[v] "\")"
             if (m != "") print "V" v ": 기록 다름 —" m " — 되돌리면 예전 backend 기동 실패"
         }
-        for (v in o) if (!(v in a)) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
+        for (v in o) if (!(v in a) && v + 0 > bl) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
             (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음")
     }' "$T/old" "$T/db" | sort -n -k1.2 > "$T/out"
 

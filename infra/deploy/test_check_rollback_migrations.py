@@ -58,6 +58,7 @@ def row(v, checksum=None, success="t", typ="SQL", desc=None):
 
 
 MATCH = [row(1), row(2), row(3), row(5, typ="JDBC")]
+PIPE_SQL = "create table p (id int);\n"
 
 
 def git(repo, *args):
@@ -91,6 +92,16 @@ def make_repo(tmp):
     commit(repo, {f"{DIR}/V3__more_tables.sql": "create table c (id bigint);\n"}, "work 판")
     git(repo, "checkout", "-qb", "dev", old)
     commit(repo, {f"{DIR}/V3__duplicate_number.sql": "create table d (id int);\n"}, "같은 번호 둘")
+    # pipe 브랜치: 설명에 "|" 가 든 파일. Windows 는 이런 파일 이름을 못 만들어 git 에 직접 넣는다
+    blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=PIPE_SQL.encode(),
+                          check=True, capture_output=True).stdout.decode().strip()
+    index_env = {**os.environ, "GIT_INDEX_FILE": str(tmp / "pipe-index")}
+    for args in (["read-tree", old], ["update-index", "--add", "--cacheinfo", f"100644,{blob},{DIR}/V4__a|b.sql"]):
+        subprocess.run(["git", "-c", "core.protectNTFS=false", "-C", str(repo), *args], env=index_env, check=True,
+                       capture_output=True)
+    tree = subprocess.run(["git", "-C", str(repo), "write-tree"], env=index_env, check=True,
+                          capture_output=True).stdout.decode().strip()
+    git(repo, "branch", "pipe", git(repo, "commit-tree", tree, "-p", old, "-m", "pipe"))
     git(repo, "remote", "add", "origin", posix(repo))   # fetch 가 진짜로 돌도록 자기 자신을 origin 으로
     deploy = repo / "infra/deploy"
     deploy.mkdir(parents=True)
@@ -98,8 +109,11 @@ def make_repo(tmp):
     return repo, old
 
 
-def run(*args, db=None, old=True, **fake):
-    """스크립트를 돌려 (exit code, 출력, ssh 인자) 를 돌려준다. db 는 이력 행 목록, old=True 면 첫 인자로 OLD SHA."""
+def run(*args, db=None, old=True, ref=None, **fake):
+    """스크립트를 돌려 (exit code, 출력, ssh 인자) 를 돌려준다.
+
+    db 는 이력 행 목록, old=True 면 첫 인자로 OLD SHA, ref 를 주면 그 브랜치의 SHA 를 대신 넣는다.
+    """
     with tempfile.TemporaryDirectory(prefix="beez-rollback-check-") as tmp:
         tmp = Path(tmp)
         repo, sha = make_repo(tmp)
@@ -111,6 +125,8 @@ def run(*args, db=None, old=True, **fake):
         env.update({"FAKE_DB": "".join(r + "\n" for r in (MATCH if db is None else db)), "SSH_ARGS": posix(ssh_args)})
         env.pop("FAKE_SSH_RC", None)
         env.update(fake)
+        if ref:
+            sha = git(repo, "rev-parse", ref)
         argv = ([sha] if old else []) + list(args)
         cmd = (f'b=$(cygpath -u "{posix(bin_dir)}" 2>/dev/null || echo "{posix(bin_dir)}"); '
                'chmod +x "$b"/*; PATH="$b:$PATH" exec bash "$@"')
@@ -134,6 +150,7 @@ def lines(result):
 # --- 일치·기록용 행 ------------------------------------------------------------
 
 def test_match_prints_only_summary():
+    # Java(V5)는 DB 에도 checksum 이 비어 있어 번호·설명·유형만 맞으면 일치다
     r = run()
     expect(r, 0)
     assert r[1].strip() == "대조 끝 (DB 4개, 되돌릴 SHA 4개)", r[1]
@@ -154,9 +171,20 @@ def test_schema_and_baseline_rows_are_ignored():
     assert not lines(r), r[1]
 
 
-def test_java_migration_matches_without_checksum():
-    # Java 는 DB 에도 checksum 이 비어 있어 번호·설명·유형만 맞으면 일치다
-    expect(run(), 0)
+def test_numbers_up_to_baseline_are_not_required():
+    # V2 에서 baseline 한 DB 는 V1·V2 의 적용 행이 없다. Flyway 는 baseline 이하를 적용된 것으로 본다
+    r = run(db=["2||t|BASELINE|<< Flyway Baseline >>", row(3), row(5, typ="JDBC")])
+    expect(r, 0, "대조 끝 (DB 2개, 되돌릴 SHA 4개)")
+    assert not lines(r), r[1]
+
+
+def test_description_with_pipe():
+    db = MATCH[:3] + [row(4, checksum=flyway_checksum(PIPE_SQL), desc="a|b"), row(5, typ="JDBC")]
+    r = run(db=db, ref="pipe")
+    expect(r, 0, "대조 끝 (DB 5개, 되돌릴 SHA 5개)")
+    assert not lines(r), r[1]
+    r = run(db=MATCH[:3] + [row(4, checksum=flyway_checksum(PIPE_SQL), desc="a|c"), row(5, typ="JDBC")], ref="pipe")
+    expect(r, 1, 'V4: 기록 다름 — 설명(DB "a|c", 되돌릴 SHA "a|b")')
 
 
 # --- 기록 다름: checksum·설명·유형 각각 -----------------------------------------
@@ -263,9 +291,13 @@ def test_find_lists_versions_from_other_branches():
 
 # --- checksum: 서버 값과 고정 대조 ---------------------------------------------------
 
+def run_checksum(*paths):
+    return subprocess.run([find_bash(), posix(SCRIPT), "checksum", *map(posix, paths)],
+                          capture_output=True, text=True, encoding="utf-8")
+
+
 def checksum_of(*paths):
-    r = subprocess.run([find_bash(), posix(SCRIPT), "checksum", *map(posix, paths)],
-                       capture_output=True, text=True, encoding="utf-8")
+    r = run_checksum(*paths)
     assert r.returncode == 0, r.stdout + r.stderr
     return [int(x.split()[0]) for x in r.stdout.splitlines()]
 
@@ -284,6 +316,13 @@ def test_checksum_ignores_bom_and_line_endings():
         b.write_bytes("\ufeffselect 1;\r\nselect '한글';\r\n".encode())
         x, y = checksum_of(a, b)
         assert x == y == flyway_checksum("select 1;\nselect '한글';\n"), (x, y)
+
+
+def test_checksum_of_directory_fails():
+    # 폴더를 넘기면 빈 값으로 성공하지 않고 읽지 못함으로 멈춘다
+    with tempfile.TemporaryDirectory() as tmp:
+        r = run_checksum(Path(tmp))
+        assert r.returncode == 2 and "읽지 못함" in r.stdout, r.stdout + r.stderr
 
 
 if __name__ == "__main__":

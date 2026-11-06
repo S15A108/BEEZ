@@ -180,9 +180,14 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    bash infra/deploy/check-rollback-migrations.sh <되돌릴 SHA>
    ```
 
+   이 체크아웃이 최신 dev여야 합니다. 스크립트가 없는 브랜치(-328 전)에서는 돌지 않고, 옛 판이면 옛 판정을 씁니다.
+   작업 중이라 브랜치를 바꿀 수 없으면 `git -C /c/git/BEEZ worktree add /c/git/BEEZ-rollback origin/dev`로 따로 받아
+   그 안에서 돌립니다(쓴 뒤 `git -C /c/git/BEEZ worktree remove /c/git/BEEZ-rollback`).
+
    결과는 번호마다 한 줄이고, 마지막에 `대조 끝 (DB <N>개, 되돌릴 SHA <M>개)`가 붙습니다. `… — 중단`으로 끝나면
    (python 없음·fetch 실패·없는 SHA·DB 이력 못 받음·빈 응답) 대조하지 못한 것이니 원인을 고친 뒤 다시 돌립니다.
-   `flyway repair`가 지움 처리한(`type=DELETE`) 번호는 DB에 없는 것으로 봅니다.
+   `flyway repair`가 지움 처리한(`type=DELETE`) 번호는 DB에 없는 것으로 보고, baseline(`type=BASELINE`) 번호 이하는
+   Flyway처럼 적용된 것으로 보아 검사하지 않습니다.
 
    - **`대조 끝` 줄만 나오면** DB에 들어간 마이그레이션이 모두 되돌릴 SHA의 파일과 같습니다. 스키마 걱정 없이 되돌릴 수 있습니다.
    - 마이그레이션은 SQL(`backend/src/main/resources/db/migration`)과 Java(`backend/src/main/java/db/migration`,
