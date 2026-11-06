@@ -429,7 +429,12 @@ it('완료 보고 재검증이 오류인데 새 계획 검증이 있으면 새 �
     await screen.findByRole('button', { name: '완료 보고 재검증 재시도' }),
   )
   await waitFor(() =>
-    expect(retry).toHaveBeenCalledWith('101', '602', { expected_attempt: 1 }),
+    expect(retry).toHaveBeenCalledWith(
+      '101',
+      '602',
+      { expected_attempt: 1 },
+      { signal: expect.any(AbortSignal) },
+    ),
   )
   const resume = await screen.findByRole('button', { name: '재개' })
   await waitFor(() => expect(resume).toBeEnabled())
@@ -536,6 +541,154 @@ it('검증이 끝나면 목록의 상태 칩도 다시 불러와 바뀐다', asy
     { timeout: 4000 },
   )
 }, 10000)
+it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한다', async () => {
+  const running = {
+    ...task,
+    validation_status: 'RUNNING' as const,
+    validation: { ...task.validation!, status: 'RUNNING' as const },
+  }
+  vi.mocked(tasksApi.list)
+    .mockResolvedValueOnce({ items: [running], has_more: false })
+    .mockImplementation(async () => ({ items: [task], has_more: false }))
+
+  show(false)
+  expect(
+    await screen.findByRole('button', { name: /TASK-001.*검증 중/ }),
+  ).toBeInTheDocument()
+  expect(
+    await screen.findByRole(
+      'button',
+      { name: /TASK-001.*계획 통과/ },
+      { timeout: 4000 },
+    ),
+  ).toBeInTheDocument()
+})
+
+it('검증 요청 중 중복 호출과 이전 PASS를 이용한 시작을 막는다', async () => {
+  let finish!: (value: NonNullable<TaskDetail['validation']>) => void
+  const create = vi.spyOn(validationsApi, 'create').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  show(false)
+  const validate = await screen.findByRole('button', { name: '다시 검증' })
+  fireEvent.click(validate)
+  fireEvent.click(validate)
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+  expect(create).toHaveBeenCalledWith(
+    '101',
+    '501',
+    { plan_revision_id: '511', expected_lock_version: 7 },
+    { signal: expect.any(AbortSignal) },
+  )
+  expect(screen.getByRole('button', { name: '작업 시작' })).toBeDisabled()
+  expect(validate).toBeDisabled()
+
+  task = {
+    ...task,
+    validation_status: 'RUNNING',
+    validation: { ...task.validation!, id: '602', status: 'RUNNING' },
+  }
+  await act(async () => finish(task.validation!))
+  await waitFor(() =>
+    expect(
+      screen.getByText('계획 검증 중이라 시작할 수 없어요.'),
+    ).toBeInTheDocument(),
+  )
+  expect(screen.getByRole('button', { name: '작업 시작' })).toBeDisabled()
+})
+
+it('새 검증 조회에 다른 검증의 PASS 응답이 와도 현재 RUNNING 결과를 유지한다', async () => {
+  const oldPass = task.validation!
+  task = {
+    ...task,
+    validation_status: 'RUNNING',
+    validation: { ...oldPass, id: '602', status: 'RUNNING' },
+  }
+  vi.spyOn(validationsApi, 'get').mockResolvedValue(oldPass)
+  show(false)
+  await waitFor(() => expect(validationsApi.get).toHaveBeenCalled())
+  expect(
+    await screen.findByText('계획 검증 중이라 시작할 수 없어요.'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '작업 시작' })).toBeDisabled()
+})
+
+it('요청 중 작업을 전환해도 서버 접수 결과를 목록에 반영하고 새 작업에는 오류를 표시하지 않는다', async () => {
+  let first = task
+  const second: TaskDetail = {
+    ...first,
+    id: '502',
+    key: 'TASK-002',
+    current_plan_revision: {
+      ...first.current_plan_revision,
+      task_id: '502',
+      plan: { ...first.current_plan_revision.plan, title: '두 번째 작업' },
+    },
+    validation: undefined,
+    validation_status: 'NOT_RUN',
+  }
+  vi.spyOn(tasksApi, 'list').mockImplementation(async () => ({
+    items: [first, second],
+    has_more: false,
+  }))
+  vi.spyOn(tasksApi, 'get').mockImplementation(async (_project, id) =>
+    id === '501' ? first : second,
+  )
+  let resolve!: (value: NonNullable<TaskDetail['validation']>) => void
+  const create = vi.spyOn(validationsApi, 'create').mockImplementation(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      }),
+  )
+  show(false)
+  fireEvent.click(await screen.findByRole('button', { name: '다시 검증' }))
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+  fireEvent.click(screen.getByRole('button', { name: /두 번째 작업/ }))
+  await waitFor(() =>
+    expect(
+      screen.getByText('TASK-002 · 담당자 담당자 · 계획 r2'),
+    ).toBeInTheDocument(),
+  )
+  expect(create.mock.calls[0][3]?.signal?.aborted).toBe(false)
+  first = {
+    ...first,
+    validation_status: 'RUNNING',
+    validation: { ...first.validation!, id: '602', status: 'RUNNING' },
+  }
+  await act(async () => resolve(first.validation!))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: /TASK-001.*검증 중/ }),
+    ).toBeInTheDocument(),
+  )
+  expect(
+    screen.queryByText(
+      '요청을 처리하지 못했어요. 최신 상태와 권한을 확인해 주세요.',
+    ),
+  ).not.toBeInTheDocument()
+})
+
+it('조회 실패 시 시작을 막고 다시 불러올 수 있다', async () => {
+  vi.spyOn(validationsApi, 'get')
+    .mockRejectedValueOnce(new Error('네트워크 오류'))
+    .mockImplementation(async () => task.validation!)
+  show(false)
+  const retry = await screen.findByRole('button', {
+    name: '검증 결과 다시 불러오기',
+  })
+  expect(screen.getByRole('button', { name: '작업 시작' })).toBeDisabled()
+  fireEvent.click(retry)
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: '검증 결과 다시 불러오기' }),
+    ).not.toBeInTheDocument(),
+  )
+  expect(screen.getByRole('button', { name: '작업 시작' })).toBeEnabled()
+})
 
 it('완료 보고는 완료 기준을 모두 체크해야 보내고 달라진 점은 줄마다 보낸다', async () => {
   task = { ...task, status: 'IN_PROGRESS' }
