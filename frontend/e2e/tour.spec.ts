@@ -65,7 +65,9 @@ test('설정 링크로 처음 들어오면 설정 창만 열고 닫은 뒤에 �
 }) => {
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
   await page.goto('/projects/101?settings=team')
   const settings = page.getByRole('dialog', { name: '설정' })
   await expect(settings).toBeVisible()
