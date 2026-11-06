@@ -301,14 +301,22 @@ Actions의 초록불은 "Jenkins가 배포 요청을 접수했다"까지입니�
 1. 앞 작업이 끝났는지 보고, 지금 떠 있는 SHA를 확인합니다([1. 상태 보기](#1-상태-보기)의 backend 이미지 태그).
 2. 그 작업이 무엇이었는지 팀 채널에서 확인합니다. **되돌리기·복원이었으면 다시 배포하지 않습니다.** 되돌린 사람과
    언제 다시 올릴지 정합니다.
-3. 지금 SHA가 다시 배포하려던 SHA와 같거나 그보다 새것이면 다시 배포하지 않습니다. 로컬 PC(Git Bash):
+3. 두 SHA의 선후를 양쪽 방향으로 봅니다. 로컬 PC(Git Bash):
 
    ```bash
-   git -C /c/git/BEEZ fetch -q origin
-   git -C /c/git/BEEZ merge-base --is-ancestor <다시 배포하려던 SHA> <지금 SHA> && echo "지금 것이 같거나 새것 — 다시 배포하지 않음"
+   R=<다시 배포하려던 SHA>; N=<지금 SHA>; g() { git -C /c/git/BEEZ "$@"; }
+   if ! g fetch -q origin || ! g cat-file -e "$R^{commit}" 2> /dev/null || ! g cat-file -e "$N^{commit}" 2> /dev/null; then
+     echo "비교 불가(fetch 실패 또는 로컬에 없는 SHA) — 중단"
+   elif g merge-base --is-ancestor "$R" "$N"; then echo "지금 것이 같거나 새것 — 다시 배포하지 않음"
+   elif g merge-base --is-ancestor "$N" "$R"; then echo "지금 것이 더 오래됨 — 다시 배포 가능"
+   else echo "갈라짐(다른 브랜치 손 배포 등) — 중단"; fi
    ```
 
-4. 셋 다 아니면(지금 것이 더 오래됐고 되돌리기도 아님) 같은 SHA로 다시 배포합니다.
+   - `merge-base --is-ancestor`는 "조상 아님"과 "비교 실패"를 모두 성공이 아닌 값으로 끝내므로, 한 방향만 보면 갈라진
+     커밋이나 없는 SHA도 "더 오래됨"처럼 보입니다. 그래서 양쪽을 다 보고, 어느 쪽도 아니면 멈춥니다.
+   - `갈라짐`이면 지금 떠 있는 것은 dev가 아닌 브랜치를 손으로 올린 것입니다. 배포한 사람과 언제 dev로 돌릴지 정합니다.
+   - `비교 불가`면 네트워크를 확인하고, 지금 SHA가 아직 push하지 않은 로컬 브랜치의 것인지 배포한 사람에게 묻습니다.
+4. **`다시 배포 가능`이 나왔고 2번의 되돌리기·복원도 아닐 때만** 같은 SHA로 다시 배포합니다.
 
 #### Nginx 경유 확인이 실패했을 때
 
