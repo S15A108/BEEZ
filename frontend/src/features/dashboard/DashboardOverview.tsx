@@ -6,6 +6,7 @@ import { dashboardApi } from '@/api/services/dashboard'
 import { tasksApi } from '@/api/services/tasks'
 import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
+import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { countText, statusLabel } from '@/lib/display'
 import { formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
@@ -63,6 +64,9 @@ export function DashboardOverview({
     queryKey: ['projects', projectId, 'dashboard-counts', 'tasks'],
     queryFn: () => dashboardApi.tasks(projectId),
   })
+  // 담당자가 나가거나 제외돼 빈 열린 작업(PNL-09-v2-dashboard-unassigned). HUD와 같은 키다.
+  const unassigned = useQuery(openTasksQuery(projectId, { unassigned: true }))
+  const orphans = unassigned.data?.items ?? []
   const countOf = (status: string) =>
     tasks.data?.by_status.find((entry) => entry.status === status)?.count ?? 0
   const inProgress = countOf('IN_PROGRESS')
@@ -81,7 +85,7 @@ export function DashboardOverview({
   const runningTasks = useQuery({
     queryKey: ['projects', projectId, 'dashboard-counts', 'running-task'],
     queryFn: () =>
-      tasksApi.list(projectId, { status: 'IN_PROGRESS', limit: 1 }),
+      tasksApi.list(projectId, { status: ['IN_PROGRESS'], limit: 1 }),
     enabled: inProgress > 0,
   })
   const running = runningTasks.data?.items[0]
@@ -130,7 +134,11 @@ export function DashboardOverview({
     {
       label: '진행 중 작업',
       value: countText(tasks, inProgress),
-      onClick: () => openPane('tasks'),
+      onClick: () => openPane('tasks', orphans[0]?.id),
+      todo:
+        unassigned.data && orphans.length
+          ? `담당자 없는 작업 ${openTaskCount(unassigned.data)} ›`
+          : undefined,
       note: [
         running?.key,
         running &&
@@ -174,9 +182,10 @@ export function DashboardOverview({
     },
   ]
   // 할 일이 있는 칸(검토할 변경, 연결 안 된 에이전트)을 노란 바탕으로 앞에 둔다. 없으면 원래 순서다(PNL-09 수정안).
-  const ordered = [...metrics].sort(
-    (a, b) => Number(!!b.todo) - Number(!!a.todo),
-  )
+  // 담당자 없는 작업이 있어도 진행 중 작업 칸은 그 뒤다(PNL-09-v2-dashboard-unassigned).
+  const rank = (metric: (typeof metrics)[number]) =>
+    !metric.todo ? 2 : metric.label === '진행 중 작업' ? 1 : 0
+  const ordered = [...metrics].sort((a, b) => rank(a) - rank(b))
   return (
     <section
       id="dashboard-overview"
