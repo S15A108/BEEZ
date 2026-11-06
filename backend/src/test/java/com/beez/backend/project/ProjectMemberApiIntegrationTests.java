@@ -61,6 +61,9 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     @Autowired
     TaskRepository taskRepository;
 
+    @Autowired
+    ProjectMemberService memberService;
+
     TaskApiSupport api;
     Long projectId;
     Long leader;
@@ -221,6 +224,13 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         // 새 팀장이 바로 팀장 일을 한다
         assertThat(api.patch(projectPath, "{\"name\":\"새 팀장\"}", member).statusCode()).isEqualTo(200);
 
+        // 제외(MEM-A09)는 위임 값을 쓰지 않는다 — 팀장(member)은 그대로, 대상만 빠진다
+        long dave = joinAsMember();
+        assertThat(api.post(removePath(memberIdOf(dave)), body("transfer_leader_to_member_id", memberIdOf(dave)), member)
+                .statusCode()).isEqualTo(204);
+        assertThat(roleOf(memberIdOf(dave))).isEqualTo("MEMBER");
+        assertThat(leftReason(memberIdOf(dave))).isEqualTo("REMOVED");
+
         // 팀원이 보낸 위임 대상은 무시된다 — 역할은 그대로, 본인만 나간다
         long carol = joinAsMember();
         assertThat(api.post(projectPath + "/leave", body("transfer_leader_to_member_id", memberIdOf(carol)), carol)
@@ -251,6 +261,11 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
                     409, "invalid_transfer_target");
         }
         assertThat(api.post(leavePath, "{\"transfer_leader_to_member_id\":\"x\"}", leader).statusCode()).isEqualTo(400);
+        // 위임은 사람만 한다(MEM-A08 과 같음). 에이전트 요청은 REST 세션이 아니라 서비스로 직접 부른다
+        CallerContext leaderAgent = CallerContext.agent(leader, api.leaderAgentTokenId());
+        assertThatThrownBy(() -> memberService.leave(leaderAgent, projectId,
+                new EndMembershipRequest(null, String.valueOf(memberMemberId))))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("forbidden"));
 
         // 위임 뒤 인계 대상 검사(400)에서 실패 → 위임도 되돌아간다
         assertThat(api.post(leavePath, leaveBody(memberMemberId, elsewhere), leader).statusCode()).isEqualTo(400);
@@ -277,6 +292,37 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
                         body("transfer_leader_to_member_id", carolMemberId), leader)), 403, "forbidden");
         assertThat(roleOf(carolMemberId)).isEqualTo("MEMBER");
         assertThat(leftReason(leaderMemberId)).isNull();
+    }
+
+    /**
+     * 깨지면: 요청 때는 팀원이었다가 잠금을 기다리는 사이 팀장이 된 사람이 넘길 팀원을 보냈는데도, 요청 때 역할로 판정해 그 값을 버리고
+     * 409 leader_transfer_required 로 막는다 (명세 "역할은 행을 잠근 뒤 요청 시점 값으로 다시 판정", -304 리뷰 지적 1).
+     */
+    @Test
+    void leave_byMemberPromotedWhileWaiting_usesTransferValue() throws Exception {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        long carolMemberId = memberIdOf(joinAsMember());
+
+        HttpResponse<String> res = whileRowLocked("select id from project where id = ? for update", projectId,
+                () -> api.post("/api/projects/" + projectId + "/leave",
+                        body("transfer_leader_to_member_id", carolMemberId), member),
+                lock -> {
+                    // 팀장이 member 에게 위임(MEM-A08 흉내). 내리는 쪽이 먼저다(ux_member_one_leader)
+                    try (PreparedStatement ps = lock.prepareStatement("update project_member set role = ? where id = ?")) {
+                        ps.setString(1, "MEMBER");
+                        ps.setLong(2, leaderMemberId);
+                        ps.executeUpdate();
+                        ps.setString(1, "LEADER");
+                        ps.setLong(2, memberMemberId);
+                        ps.executeUpdate();
+                    }
+                });
+
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(204);
+        assertThat(roleOf(carolMemberId)).isEqualTo("LEADER");
+        assertThat(leftReason(memberMemberId)).isEqualTo("LEFT");
+        assertThat(activeLeaders()).isEqualTo(1L);
     }
 
     /**

@@ -174,26 +174,27 @@ public class ProjectMemberService {
     public void leave(CallerContext caller, long projectId, EndMembershipRequest req) {
         ProjectActor actor = access.requireMember(caller, projectId);
         Long reassignTo = reassignTarget(req);
-        // 팀원이 보낸 위임 대상은 무시한다(명세). 팀장이 보냈으면 위임은 사람만 한다(MEM-A08 과 같음)
-        Long transferTo = actor.isLeader() ? transferTarget(req) : null;
+        // 나가기 전에 받은 대기 초대를 취소한다(-220) — 다시 초대받아야만 링크로 돌아온다(Q05 4). 잠금 순서는 제외와 같다(초대 → 프로젝트)
+        accounts.findById(actor.accountId())
+                .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
+        projectService.lockActive(projectId);
+        ProjectMember me = lockMember(actor.memberId(), projectId);
+
+        // 역할은 잠근 뒤 값으로 판정한다(명세). 요청 때도 지금도 팀원이면 위임 값은 무시한다
+        boolean leaderNow = me.getRole() == ProjectRole.LEADER;
+        Long transferTo = leaderNow || actor.isLeader() ? transferTarget(req) : null;
         if (transferTo != null) {
+            // 요청 때 팀장이었는데 지금 아니면 같은 팀장의 위임(MEM-A08)이나 위임하고 나가기가 먼저 커밋된 것 — 403.
+            // 이미 넘긴 팀장 자리를 또 넘기거나, 고른 사람과 다른 사람이 팀장인 채로 나가 버리지 않는다
+            access.requireLeaderAfterLock(actor);
             actor.requireHuman();
             if (transferTo == actor.memberId()) {
                 throw invalidTransferTarget("본인에게는 위임할 수 없습니다");
             }
-        }
-        // 나가기 전에 받은 대기 초대를 취소한다(-220) — 다시 초대받아야만 링크로 돌아온다(Q05 4). 잠금 순서는 제외와 같다(초대 → 프로젝트)
-        accounts.findById(actor.accountId())
-                .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
-        ProjectMember me;
-        if (transferTo != null) {
-            // 같은 팀장의 위임(MEM-A08)이나 위임하고 나가기가 먼저 커밋됐으면 여기서 403 — 이미 넘긴 팀장 자리를 또 넘기지 않는다
-            lockProjectAsLeader(projectId, actor);
+            // 내 행은 이미 잠겼다. 대상 행을 내 행 뒤에 잠그게 될 수 있지만, 여러 멤버십 행을 잠그는 요청(위임·나가기·제외)은
+            // 모두 프로젝트 행에서 먼저 줄을 서므로 교착이 생기지 않는다
             me = swapLeader(projectId, actor.memberId(), transferTo,
                     () -> invalidTransferTarget("같은 프로젝트의 활성 팀원에게만 위임할 수 있습니다")).current();
-        } else {
-            projectService.lockActive(projectId);
-            me = lockMember(actor.memberId(), projectId);
         }
         end(caller, me, reassignTo, MembershipEndReason.LEFT);
     }
