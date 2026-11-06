@@ -298,14 +298,39 @@ sudo journalctl -u ssh --since "1 hour ago" | grep Accepted
 
 ### 해제
 
+`N='이름@beez'`의 이름만 바꿔 서버에서 실행합니다.
+
 ```bash
-cp ~/.ssh/authorized_keys ~/.ssh/authorized_keys.bak
-grep -v ' 이름@beez$' ~/.ssh/authorized_keys.bak > ~/.ssh/authorized_keys
+( N='이름@beez'; f="$HOME/.ssh/authorized_keys"; umask 077
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 그대로 둠"; exit 1; }
+  cp "$f" "$f.bak" || { echo "백업 실패 — 그대로 둠"; exit 1; }
+  rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
+  grep -v -- " $N\$" "$f" > "$f.new"; rc=$?
+  if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+  if cmp -s "$f" "$f.new"; then rm -f "$f.new"; echo "'$N' 줄이 없음 — 그대로 둠"; exit 1; fi
+  n=$(grep -cvE '^[[:space:]]*(#|$)' "$f.new")
+  if [ "$n" -eq 0 ]; then rm -f "$f.new"; echo "남는 키가 없음(접속이 막힘) — 원본 그대로"; exit 1; fi
+  mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; }
+  echo "해제함 — 남은 키 $n 개" )
 ssh-keygen -lf ~/.ssh/authorized_keys   # 해당 줄이 빠졌는지 확인
 ```
 
-`grep -v`는 일치하는 줄을 뺀 나머지만 출력합니다. 주석(키 끝의 이름)이 같은
-키가 둘이면 함께 지워지므로 지문 목록으로 결과를 확인합니다.
+- `grep -v`는 일치하는 줄을 뺀 나머지만 출력합니다. 주석(키 끝의 이름)이
+  같은 키가 둘이면 함께 지워지므로 지문 목록으로 결과를 확인합니다.
+- 원본에는 마지막 `mv` 전까지 손대지 않습니다. 백업(`.bak`)을 만들지 못했거나
+  원본을 읽지 못했으면(`grep -v`가 2 이상) 바꾸지 않습니다. `grep -v`는
+  0(남은 줄 있음)·1(남은 줄 없음)이 정상입니다
+  ([cd.md](cd.md)의 env 수정 명령과 같은 방식, S15P31A108-324).
+- 지울 줄이 없거나, 지우고 나면 키가 하나도 남지 않으면 바꾸지 않습니다.
+  pem 줄까지 지워지는 경우를 막습니다.
+- `umask 077`로 `.new`가 `600`으로 만들어지고, `mv`로 그 권한 그대로
+  `authorized_keys`가 됩니다. `.new`는 지우고 새로 만듭니다. 이전 실행이 남긴
+  `.new`에 그대로 쓰면 umask가 적용되지 않아 그 파일의 옛 권한이 넘어갑니다.
+- **실행한 접속을 닫지 않습니다.** 다른 터미널에서 `ssh beez`(본인 키)와
+  `ssh beez-pem`이 새로 접속되는지 확인한 뒤에 닫습니다. 안 되면 열어 둔
+  접속에서 `cp ~/.ssh/authorized_keys.bak ~/.ssh/authorized_keys`로 되돌립니다.
+- 해제한 사람에게는 접속이 거부되는지(`Permission denied (publickey)`)
+  확인을 부탁합니다.
 
 ### 등록 표
 
