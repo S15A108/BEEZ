@@ -1,34 +1,44 @@
 import { useId } from 'react'
-import type { RelationNode } from '@/api/contracts/common'
-import { useWorkspaceStore } from '@/stores/workspaceStore'
+import {
+  COLUMN_GAP,
+  NODE_H,
+  NODE_TYPES,
+  NODE_W,
+  edgeLabel,
+  edgeRoute,
+  graphLabel,
+  lineLabel,
+  nodeKind,
+  nodeX,
+  nodeY,
+  relationLabel,
+} from '@/features/relations/relationDisplay'
+import { cn } from '@/lib/utils'
 import type { RelationsResponse } from './schemas'
 
-const NODE_TYPES = [
-  'TASK',
-  'DESIGN_ITEM',
-  'VALIDATION',
-  'CHANGE_PROPOSAL',
-] as const
-
-const NODE_LABELS: Record<RelationNode['type'], string> = {
-  TASK: '작업',
-  DESIGN_ITEM: '설계 항목',
-  VALIDATION: '검증',
-  CHANGE_PROPOSAL: '변경 요청',
+// 모르는 종류는 맨 끝 '기타' 열에 모은다.
+const columnOf = (type: string) => {
+  const index = NODE_TYPES.indexOf(type)
+  return index < 0 ? NODE_TYPES.length : index
 }
 
-export function RelationGraph({ data }: { data: RelationsResponse }) {
+export function RelationGraph({
+  data,
+  onOpen,
+}: {
+  data: RelationsResponse
+  onOpen: (type: string, id: string) => void
+}) {
   const markerId = useId()
-  const openPane = useWorkspaceStore((state) => state.openPane)
-  const visible = NODE_TYPES.flatMap((type, column) =>
-    data.nodes
-      .filter((node) => node.type === type)
-      .slice(0, 8)
-      .map((node, row) => ({
-        ...node,
-        x: 10 + column * 220,
-        y: 45 + row * 82,
-      })),
+  const columnCount = Math.max(
+    NODE_TYPES.length,
+    ...data.nodes.map((node) => columnOf(node.type) + 1),
+  )
+  const columns = Array.from({ length: columnCount }, (_, col) =>
+    data.nodes.filter((node) => columnOf(node.type) === col).slice(0, 8),
+  )
+  const visible = columns.flatMap((nodes, col) =>
+    nodes.map((node, row) => ({ ...node, col, row })),
   )
   const byKey = new Map(
     visible.map((node) => [`${node.type}:${node.id}`, node]),
@@ -36,22 +46,13 @@ export function RelationGraph({ data }: { data: RelationsResponse }) {
   const edges = data.edges.flatMap((edge) => {
     const from = byKey.get(`${edge.from_type}:${edge.from_id}`),
       to = byKey.get(`${edge.to_type}:${edge.to_id}`)
-    return from && to ? [{ ...edge, from, to }] : []
+    return from && to
+      ? [{ ...edge, from, to, route: edgeRoute(from, to, columnCount - 1) }]
+      : []
   })
-  const height =
-    60 +
-    Math.max(
-      1,
-      ...NODE_TYPES.map(
-        (type) => visible.filter((node) => node.type === type).length,
-      ),
-    ) *
-      82
-  const selectNode = (node: RelationNode) => {
-    if (node.type === 'TASK') openPane('tasks', node.id)
-    else if (node.type === 'CHANGE_PROPOSAL') openPane('changes', node.id)
-    else if (node.type === 'DESIGN_ITEM') openPane('planning')
-  }
+  const width = nodeX(columnCount) - COLUMN_GAP
+  const rows = Math.max(1, ...columns.map((nodes) => nodes.length))
+  const height = nodeY(rows - 1) + NODE_H + 8
   return (
     <div className="grid gap-4">
       {/* 범례(캔버스 PNL-09-v2-relations). 후보는 확정된 의존 관계로 보지 않는다. */}
@@ -72,8 +73,9 @@ export function RelationGraph({ data }: { data: RelationsResponse }) {
       <div className="overflow-x-auto rounded-xl border bg-card p-3 shadow-xs">
         <svg
           role="img"
-          aria-label="작업·설계·검증·변경 요청 관계 그래프"
-          viewBox={`0 0 880 ${height}`}
+          aria-label={graphLabel(edges)}
+          // 상자 테두리 두께만큼 양옆을 넓혀 맨 끝 열의 테두리가 잘리지 않게 한다.
+          viewBox={`-2 0 ${width + 4} ${height}`}
           className="w-full min-w-[740px]"
         >
           <defs>
@@ -85,75 +87,103 @@ export function RelationGraph({ data }: { data: RelationsResponse }) {
               refY="3"
               orient="auto"
             >
-              <path d="M0,0 L0,6 L6,3 z" fill="currentColor" />
+              <path d="M0,0 L0,6 L6,3 z" fill="context-stroke" />
             </marker>
           </defs>
-          {NODE_TYPES.map((type, index) => (
+          {columns.map((_, col) => (
             <text
-              key={type}
-              x={100 + index * 220}
+              key={col}
+              x={nodeX(col) + NODE_W / 2}
               y="20"
               textAnchor="middle"
               className="fill-muted-foreground text-[12px]"
             >
-              {NODE_LABELS[type]}
+              {nodeKind(NODE_TYPES[col]).label}
             </text>
           ))}
+          {/* 키보드로는 아래 '전체 항목과 관계 읽기' 목록의 버튼으로 같은 화면에 간다. */}
+          {visible.map((node) => {
+            const kind = nodeKind(node.type)
+            const x = nodeX(node.col)
+            const y = nodeY(node.row)
+            return (
+              <g
+                key={`${node.type}:${node.id}`}
+                className={kind.link && 'cursor-pointer'}
+                onClick={
+                  kind.link ? () => onOpen(node.type, node.id) : undefined
+                }
+              >
+                <title>
+                  {kind.label} {node.label}
+                </title>
+                <rect
+                  x={x}
+                  y={y}
+                  width={NODE_W}
+                  height={NODE_H}
+                  rx="12"
+                  stroke={kind.color}
+                  strokeWidth="2"
+                  className="fill-card"
+                />
+                <text
+                  x={x + 12}
+                  y={y + 17}
+                  fill={kind.color}
+                  className="text-[11px] font-bold"
+                >
+                  {kind.label}
+                </text>
+                <text
+                  x={x + NODE_W - 12}
+                  y={y + 17}
+                  textAnchor="end"
+                  className="fill-muted-foreground text-[10px]"
+                >
+                  #{node.id}
+                </text>
+                <foreignObject
+                  x={x + 12}
+                  y={y + 22}
+                  width={NODE_W - 24}
+                  height={NODE_H - 26}
+                >
+                  <div className="line-clamp-2 text-xs/[15px] break-keep text-foreground">
+                    {node.label}
+                  </div>
+                </foreignObject>
+              </g>
+            )
+          })}
+          {/* 선은 상자 면에서 시작하고 상자 사이로만 다녀서 상자 위에 그려도 상자를 가리지 않는다. */}
           {edges.map((edge, index) => (
-            <path
+            <g
               key={`${edge.from.type}:${edge.from.id}:${edge.to.type}:${edge.to.id}:${index}`}
-              d={`M${edge.from.x + 90},${edge.from.y + 25} L${edge.to.x + 90},${edge.to.y + 25}`}
-              className="text-muted-foreground/60"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeDasharray={edge.confirmed ? undefined : '5 5'}
-              fill="none"
-              markerEnd={`url(#${markerId})`}
             >
               <title>
-                {edge.from.label} → {edge.to.label}: {edge.relation} (
-                {edge.confirmed ? '확인됨' : '후보'})
+                {edge.from.label} → {edge.to.label}: {edgeLabel(edge)}
               </title>
-            </path>
-          ))}
-          {/* 키보드로는 아래 '전체 항목과 관계 읽기' 목록의 버튼으로 같은 화면에 간다. */}
-          {visible.map((node) => (
-            <g
-              key={`${node.type}:${node.id}`}
-              className={
-                node.type === 'VALIDATION' ? undefined : 'cursor-pointer'
-              }
-              onClick={
-                node.type === 'VALIDATION' ? undefined : () => selectNode(node)
-              }
-            >
-              <rect
-                x={node.x}
-                y={node.y}
-                width="180"
-                height="50"
-                rx="10"
-                className="fill-card stroke-border"
+              <path
+                d={edge.route.d}
+                stroke={edge.confirmed ? '#57534e' : '#b8b3a5'}
+                strokeWidth="1.5"
+                strokeDasharray={edge.confirmed ? undefined : '6 5'}
+                fill="none"
+                markerEnd={`url(#${markerId})`}
               />
               <text
-                x={node.x + 90}
-                y={node.y + 22}
+                x={edge.route.labelX}
+                y={edge.route.labelY}
                 textAnchor="middle"
-                className="fill-foreground text-[12px]"
+                dominantBaseline="central"
+                className={cn(
+                  'stroke-card stroke-[6px] text-[11px] font-medium [paint-order:stroke]',
+                  edge.confirmed ? 'fill-[#57534e]' : 'fill-muted-foreground',
+                )}
               >
-                {node.label.length > 17
-                  ? `${node.label.slice(0, 16)}…`
-                  : node.label}
+                {lineLabel(edge)}
               </text>
-              <text
-                x={node.x + 90}
-                y={node.y + 38}
-                textAnchor="middle"
-                className="fill-muted-foreground text-[10px]"
-              >
-                #{node.id}
-              </text>
-              <title>{node.label}</title>
             </g>
           ))}
         </svg>
@@ -175,18 +205,18 @@ export function RelationGraph({ data }: { data: RelationsResponse }) {
               className="flex flex-wrap items-center gap-2"
             >
               <span className="text-xs text-muted-foreground">
-                {NODE_LABELS[node.type]} #{node.id}
+                {nodeKind(node.type).label} #{node.id}
               </span>
-              {node.type === 'VALIDATION' ? (
-                <span>{node.label}</span>
-              ) : (
+              {nodeKind(node.type).link ? (
                 <button
                   type="button"
                   className="text-primary hover:underline"
-                  onClick={() => selectNode(node)}
+                  onClick={() => onOpen(node.type, node.id)}
                 >
                   {node.label}
                 </button>
+              ) : (
+                <span>{node.label}</span>
               )}
             </li>
           ))}
@@ -194,8 +224,9 @@ export function RelationGraph({ data }: { data: RelationsResponse }) {
         <ul className="mt-4 grid gap-2 border-t pt-4 text-xs text-muted-foreground">
           {data.edges.map((edge, index) => (
             <li key={index}>
-              {NODE_LABELS[edge.from_type]} #{edge.from_id} →{' '}
-              {NODE_LABELS[edge.to_type]} #{edge.to_id} · {edge.relation} ·{' '}
+              {nodeKind(edge.from_type).label} #{edge.from_id} →{' '}
+              {nodeKind(edge.to_type).label} #{edge.to_id} ·{' '}
+              {relationLabel(edge.relation)} ·{' '}
               {edge.confirmed ? '확인됨' : '후보'}
             </li>
           ))}

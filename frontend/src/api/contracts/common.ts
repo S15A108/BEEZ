@@ -1077,18 +1077,20 @@ export const assignmentSuggestionSchema = z.object({
 })
 export type AssignmentSuggestion = z.infer<typeof assignmentSuggestionSchema>
 
+// 지금 종류는 TASK, DESIGN_ITEM, VALIDATION, CHANGE_PROPOSAL이다. 새 종류 하나로 그래프 전체가 오류가 되지 않게
+// 문자열로 받고 화면에서 '기타'로 보여 준다(features/relations/relationDisplay.ts).
 export const relationNodeSchema = z.object({
   id: idSchema,
-  type: z.enum(['TASK', 'DESIGN_ITEM', 'VALIDATION', 'CHANGE_PROPOSAL']),
+  type: z.string(),
   label: z.string(),
 })
 export type RelationNode = z.infer<typeof relationNodeSchema>
 
 export const relationEdgeSchema = z.object({
   from_id: idSchema,
-  from_type: z.enum(['TASK', 'DESIGN_ITEM', 'VALIDATION', 'CHANGE_PROPOSAL']),
+  from_type: z.string(),
   to_id: idSchema,
-  to_type: z.enum(['TASK', 'DESIGN_ITEM', 'VALIDATION', 'CHANGE_PROPOSAL']),
+  to_type: z.string(),
   relation: z.string(),
   confirmed: z.boolean(),
 })

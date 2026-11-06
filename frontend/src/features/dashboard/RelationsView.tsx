@@ -7,34 +7,14 @@ import { readAllPages } from '@/api/readAllPages'
 import { changesApi, tasksApi } from '@/api/services'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
+import { StatusPill } from '@/components/StatusPill'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { edgeLabel, nodeKind } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
 import { LIST_SELECTED } from '@/lib/display'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { RelationGraph } from './RelationGraph'
-
-const relationLabel: Record<string, string> = {
-  IMPLEMENTS: '구현',
-  READS: '참고',
-  CHANGES: '고침',
-  DEPENDENCY: '의존',
-  VALIDATED_BY: '검증',
-  // 서버(RelationGraphService) 관계 이름
-  PROPOSED_FROM: '이 작업에서 나온 제안',
-  UPDATE: '고침',
-  RETIRE: '없앰',
-  BLOCKS: '선행',
-  RELATES: '관련',
-  COMPARED_WITH: '대조',
-  DEPENDS_ON: '의존',
-}
-const NODE_LINKS: Record<RelationNode['type'], string> = {
-  TASK: '작업 보기',
-  DESIGN_ITEM: '설계 보기',
-  VALIDATION: '검증 보기',
-  CHANGE_PROPOSAL: '제안 보기',
-}
 
 // 작업·설계 관계 · 단축 바 5번 단독 창. 왼쪽에서 작업을 고르면 그 작업 기준으로 설계 항목·검증·변경 제안 관계를 그린다.
 // 관계 API(MON-A03)는 기준 작업이나 설계 항목이 있어야 조회돼서 작업 목록에서 골라 그린다(백엔드 메모 4).
@@ -58,6 +38,7 @@ export function RelationsView({ projectId }: { projectId: string }) {
     ),
   )
   const selected = picked ?? shown[0]?.id
+  const selectedTask = all.find((task) => task.id === selected)
   const relations = useQuery({
     queryKey: ['projects', projectId, 'relations', selected],
     queryFn: () => dashboardApi.relations(projectId, { task_id: selected! }),
@@ -162,7 +143,23 @@ export function RelationsView({ projectId }: { projectId: string }) {
           }
         </AsyncState>
       </div>
-      <div className="min-w-0">
+      <div className="grid min-w-0 content-start gap-4">
+        {/* 캔버스 PNL-09-v2-relations 오른쪽 위. 관계를 못 읽어도 작업 현황으로 갈 수 있게 관계 응답 밖에 둔다. */}
+        {selectedTask && (
+          <div className="flex items-start justify-between gap-4">
+            <h3 className="flex min-w-0 flex-wrap items-center gap-1.5 text-lg/[26px] font-bold">
+              {selectedTask.current_plan_revision.plan.title}
+              <StatusPill value={selectedTask.status} />
+            </h3>
+            <Button
+              variant="outline"
+              className="shrink-0"
+              onClick={() => openPane('tasks', selectedTask.id)}
+            >
+              작업 현황에서 보기
+            </Button>
+          </div>
+        )}
         {!all.length && !tasks.isPending ? (
           <EmptyState>
             <strong className="text-base text-foreground">
@@ -208,7 +205,7 @@ export function RelationsView({ projectId }: { projectId: string }) {
                         </Button>
                       </div>
                     ))}
-                  <RelationGraph data={data} />
+                  <RelationGraph data={data} onOpen={go} />
                   <section
                     aria-labelledby="relation-list"
                     className="grid gap-2"
@@ -227,10 +224,7 @@ export function RelationsView({ projectId }: { projectId: string }) {
                             )}
                           >
                             <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold">
-                              {edge.confirmed
-                                ? (relationLabel[edge.relation] ??
-                                  edge.relation)
-                                : '후보'}
+                              {edgeLabel(edge)}
                             </span>
                             {label(edge.from_type, edge.from_id)} →{' '}
                             {label(edge.to_type, edge.to_id)}
@@ -248,13 +242,15 @@ export function RelationsView({ projectId }: { projectId: string }) {
                             </span>
                             {/* API 없음: 비비가 이 후보를 본 이유는 관계 응답(MON-A03)에 아직 없다. */}
                             {edge.confirmed ? (
-                              <button
-                                type="button"
-                                className="text-xs font-semibold whitespace-nowrap hover:underline"
-                                onClick={() => go(edge.to_type, edge.to_id)}
-                              >
-                                {NODE_LINKS[edge.to_type]} ›
-                              </button>
+                              nodeKind(edge.to_type).link && (
+                                <button
+                                  type="button"
+                                  className="text-xs font-semibold whitespace-nowrap hover:underline"
+                                  onClick={() => go(edge.to_type, edge.to_id)}
+                                >
+                                  {nodeKind(edge.to_type).link} ›
+                                </button>
+                              )
                             ) : (
                               <Button
                                 size="xs"
