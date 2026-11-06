@@ -73,7 +73,8 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         assertThat(wrong.statusCode()).isEqualTo(400);
         assertThat(wrong.body()).contains("\"code\":\"current_password_mismatch\"");
         assertThat(changePassword(here, AccessFixtures.PASSWORD, "short1").body())
-                .as("정책 위반은 가입과 같은 오류").contains("\"code\":\"validation_failed\"");
+                .as("정책 위반은 가입과 같은 오류").contains("\"code\":\"validation_failed\"")
+                .contains("\"message\":\"password:");
         assertThat(elsewhere.get("/api/me").statusCode()).as("실패한 변경은 세션을 건드리지 않는다").isEqualTo(200);
 
         assertThat(changePassword(here, AccessFixtures.PASSWORD, NEW_PASSWORD).statusCode()).isEqualTo(204);
@@ -172,15 +173,15 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         assertThat(row.get("password_hash")).isNull();
         assertThat(row.get("display_name")).isEqualTo("탈퇴한 사용자");
         assertThat(row.get("deleted_at")).isNotNull();
-        // 프로젝트: 혼자 쓰던 것은 삭제, 팀 프로젝트는 멤버십만 끝나고 작업 기록은 그대로
+        // 프로젝트: 혼자 쓰던 것은 삭제, 팀 프로젝트는 멤버십이 끝나고 작업 행은 남는다(열린 작업의 담당자는 비워진다, -281)
         assertThat(db.queryForObject("SELECT archived_at IS NOT NULL FROM project WHERE id = ?", Boolean.class,
                 solo.projectId())).isTrue();
         assertThat(db.queryForObject("SELECT archived_at IS NULL FROM project WHERE id = ?", Boolean.class,
                 team.projectId())).isTrue();
         assertThat(db.queryForObject("SELECT active FROM project_member WHERE id = ?", Boolean.class, myMemberId))
                 .isFalse();
-        assertThat(db.queryForObject("SELECT assignee_member_id FROM task WHERE id = ?", Long.class, taskId))
-                .isEqualTo(myMemberId);
+        assertThat(db.queryForObject("SELECT count(*) FROM task WHERE id = ? AND assignee_member_id IS NULL",
+                Integer.class, taskId)).isEqualTo(1);
         // 다시 로그인할 수 없고, 같은 이메일로 새 계정을 만들 수 있다
         assertThat(login(email, AccessFixtures.PASSWORD).statusCode()).isEqualTo(401);
         HttpResponse<String> again = client().post("/api/auth/register", "{\"email\":\"" + email
@@ -188,6 +189,93 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
                 + fixtures().verifiedToken(email) + "\"}");
         assertThat(again.statusCode()).as(again.body()).isEqualTo(201);
         assertThat(json.readTree(again.body()).get("id").asString()).isNotEqualTo(String.valueOf(me));
+    }
+
+    private long insertTask(long projectId, String key, Long assigneeMemberId, String status) {
+        return db.queryForObject("""
+                INSERT INTO task (project_id, key, title, assignee_member_id, status, cancelled_at)
+                VALUES (?, ?, ?, ?, ?, CASE WHEN ? = 'CANCELLED' THEN now() END) RETURNING id
+                """, Long.class, projectId, key, key, assigneeMemberId, status, status);
+    }
+
+    /** 담당 멤버|상태|잠금 번호 (담당자 없으면 null) */
+    private String taskRow(long taskId) {
+        return db.queryForObject("SELECT coalesce(assignee_member_id::text, 'null') || '|' || status || '|' || lock_version"
+                + " FROM task WHERE id = ?", String.class, taskId);
+    }
+
+    /** 이 작업들의 담당자 변경 활동(행위 종류|행위 계정|작업), 배정 알림 수 */
+    private String assigneeTrail(long... taskIds) {
+        String ids = java.util.Arrays.stream(taskIds).mapToObj(Long::toString)
+                .collect(java.util.stream.Collectors.joining(","));
+        String activities = String.join(",", db.queryForList("SELECT actor_kind || '|' || actor_id || '|' || task_id"
+                + " FROM activity_event WHERE event_type = 'TASK_ASSIGNEE_CHANGED' AND task_id IN (" + ids + ") ORDER BY id",
+                String.class));
+        Integer notifications = db.queryForObject("SELECT count(*) FROM notification WHERE type = 'TASK_ASSIGNED'"
+                + " AND ref_kind = 'TASK' AND ref_id IN (" + ids + ")", Integer.class);
+        return activities + " / notifications=" + notifications;
+    }
+
+    /**
+     * 깨지면: 탈퇴한 팀원의 열린 작업이 끝난 멤버십을 담당자로 가리켜 '담당자 없는 작업'에서 빠지거나(-281, ACC-A10 → MEM-A10 팀원 규칙),
+     * 닫힌 작업·다른 팀원의 작업·함께 삭제되는 혼자 쓰는 프로젝트의 작업까지 바뀌거나, 비운 경위가 활동에 남지 않거나,
+     * 받을 사람이 없는데 배정 알림이 생긴다.
+     */
+    @Test
+    void withdraw_unassignsOnlyMyOpenTasksInTeamProjects_withActivityAndNoNotification() {
+        var solo = fixtures().projectWithLeader();
+        long me = solo.leaderAccountId();
+        var team = fixtures().projectWithLeader();
+        long myMemberId = fixtures().member(team.projectId(), me, ProjectRole.MEMBER);
+        long mateMemberId = fixtures().member(team.projectId(), fixtures().account(), ProjectRole.MEMBER);
+        long myOpen = insertTask(team.projectId(), "T-1", myMemberId, "DRAFT");
+        long myClosed = insertTask(team.projectId(), "T-2", myMemberId, "CANCELLED");
+        long matesOpen = insertTask(team.projectId(), "T-3", mateMemberId, "DRAFT");
+        long soloOpen = insertTask(solo.projectId(), "T-1", solo.leaderMemberId(), "DRAFT");
+        String closedBefore = taskRow(myClosed);
+        String matesBefore = taskRow(matesOpen);
+        String soloBefore = taskRow(soloOpen);
+        ApiClient user = client().login(solo.leaderEmail(), AccessFixtures.PASSWORD);
+
+        assertThat(withdraw(user, AccessFixtures.PASSWORD).statusCode()).isEqualTo(204);
+
+        assertThat(taskRow(myOpen)).as("담당자만 비고 상태는 그대로, 잠금 번호는 오른다").isEqualTo("null|DRAFT|1");
+        assertThat(taskRow(myClosed)).isEqualTo(closedBefore);
+        assertThat(taskRow(matesOpen)).isEqualTo(matesBefore);
+        assertThat(taskRow(soloOpen)).as("혼자 쓰던 프로젝트는 보관될 뿐 작업은 건드리지 않는다").isEqualTo(soloBefore);
+        assertThat(assigneeTrail(myOpen, myClosed, matesOpen, soloOpen))
+                .isEqualTo("HUMAN|" + me + "|" + myOpen + " / notifications=0");
+    }
+
+    /**
+     * 깨지면: 탈퇴가 뒤 단계에서 실패해도 담당자 비우기와 그 활동만 따로 커밋돼, 탈퇴하지 않은 팀원의 작업이 미배정이 된다
+     * (handOver 는 탈퇴와 같은 트랜잭션이어야 한다 — Propagation.MANDATORY).
+     */
+    @Test
+    void withdraw_failingAfterUnassign_rollsBackAssigneeAndActivity() {
+        var team = fixtures().projectWithLeader();
+        long me = fixtures().account();
+        long myMemberId = fixtures().member(team.projectId(), me, ProjectRole.MEMBER);
+        long myOpen = insertTask(team.projectId(), "T-1", myMemberId, "DRAFT");
+        ApiClient user = client().login(fixtures().emailOf(me), AccessFixtures.PASSWORD);
+        // 담당자를 비운 뒤의 마지막 단계(계정 익명화)를 이 계정에 한해서만 실패시킨다
+        String fn = "test_fail_withdraw_" + me;
+        db.execute("CREATE FUNCTION " + fn + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                + " IF NEW.id = " + me + " AND NEW.deleted_at IS NOT NULL THEN RAISE EXCEPTION 'test failure'; END IF;"
+                + " RETURN NEW; END $$");
+        db.execute("CREATE TRIGGER " + fn + " BEFORE UPDATE ON account FOR EACH ROW EXECUTE FUNCTION " + fn + "()");
+        try {
+            assertThat(withdraw(user, AccessFixtures.PASSWORD).statusCode()).isEqualTo(500);
+        } finally {
+            db.execute("DROP TRIGGER " + fn + " ON account");
+            db.execute("DROP FUNCTION " + fn + "()");
+        }
+
+        assertThat(taskRow(myOpen)).isEqualTo(myMemberId + "|DRAFT|0");
+        assertThat(assigneeTrail(myOpen)).isEqualTo(" / notifications=0");
+        assertThat(db.queryForObject("SELECT active FROM project_member WHERE id = ?", Boolean.class, myMemberId))
+                .isTrue();
+        assertThat(user.get("/api/me").statusCode()).as("실패한 탈퇴는 세션을 끊지 않는다").isEqualTo(200);
     }
 
     /**

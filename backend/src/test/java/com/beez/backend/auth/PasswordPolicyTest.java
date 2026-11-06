@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.beez.backend.common.api.ApiException;
 import org.junit.jupiter.api.Test;
 
-/** Q04 제안 정책의 경계. 72바이트 상한은 bcrypt 가 넘는 부분을 조용히 버리는 함정 때문이다. */
+/** Q04 비밀번호 정책(11-06 정함)의 경계. 72바이트 상한은 bcrypt 가 넘는 부분을 조용히 버리는 함정 때문이다. */
 class PasswordPolicyTest {
 
     @Test

@@ -136,6 +136,59 @@ export const generateDraftResponseSchema = z.object({
 })
 export type GenerateDraftResponse = z.infer<typeof generateDraftResponseSchema>
 
+export const scopedBlocksInputSchema = z.object({
+  document_id: common.idSchema,
+  base_document_version_id: common.idSchema,
+})
+export const scopedBlocksResponseSchema = scopedBlocksInputSchema.extend({
+  text_hash: z.string(),
+  parser_profile: z.string(),
+  parser_version: z.string(),
+  blocks: z.array(
+    z.object({
+      block_id: z.string(),
+      block_type: z.string(),
+      locator: z.object({
+        type: z.literal('text_lines'),
+        start_line: z.number().int().positive(),
+        end_line: z.number().int().positive(),
+      }),
+      text: z.string(),
+    }),
+  ),
+})
+export type ScopedBlocksResponse = z.infer<typeof scopedBlocksResponseSchema>
+export const scopedDraftInputSchema = scopedBlocksInputSchema.extend({
+  selected_block_ids: z.array(z.string()).min(1).max(30),
+  instruction: z.string().trim().min(1).max(4000),
+  task_id: common.idSchema.optional(),
+  agreements: z.array(z.string().trim().min(1).max(4000)).max(30).optional(),
+  related_proposals: z
+    .array(z.string().trim().min(1).max(4000))
+    .max(30)
+    .optional(),
+})
+export type ScopedDraftInput = z.infer<typeof scopedDraftInputSchema>
+export const scopedDraftResponseSchema = scopedBlocksInputSchema.extend({
+  after_content: z.string(),
+  changes: z.array(
+    z.object({
+      block_id: z.string(),
+      before: z.string(),
+      after: z.string(),
+      reason: z.string(),
+      evidence: z.array(z.string()),
+    }),
+  ),
+  unresolved: z.array(z.string()),
+  generation: z.object({
+    origin: z.enum(['MODEL', 'TEMPLATE']),
+    model: z.string().optional(),
+    usage: z.array(common.usageSchema).optional(),
+  }),
+})
+export type ScopedDraftResponse = z.infer<typeof scopedDraftResponseSchema>
+
 export const reviewInputSchema = z.object(expectedSubmission)
 export type ReviewInput = z.infer<typeof reviewInputSchema>
 

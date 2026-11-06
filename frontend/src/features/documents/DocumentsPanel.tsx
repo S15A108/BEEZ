@@ -451,6 +451,11 @@ export function DocumentsPanel({
               <span className="text-sm text-muted-foreground">
                 {current.length}개
               </span>
+              {current.length > 0 && (
+                <p className="w-full text-sm text-muted-foreground">
+                  팀장이 승인해 지금 기준으로 쓰는 문서예요.
+                </p>
+              )}
             </div>
             <AsyncState query={documents}>
               {() =>

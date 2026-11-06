@@ -109,6 +109,15 @@ public class Task extends BaseTimeEntity {
         this.assigneeMemberId = newAssigneeMemberId;
     }
 
+    /**
+     * 담당자를 비운다(미배정). 담당자가 나가거나 제외될 때 인계 대상이 없으면 (MEM-A09·A10, -301).
+     * 상태·검증·점유는 그대로다. 엔티티로 바꾸므로 저장할 때 lock_version 이 오른다 — 일괄 UPDATE 로 바꾸면 오르지 않아
+     * 화면이 쥔 잠금 번호로 그대로 상태를 바꿀 수 있게 된다.
+     */
+    public void unassign() {
+        this.assigneeMemberId = null;
+    }
+
     // ---- 상태 전이 (S15P31A108-158 에서 사용) ----
 
     public void start(Long validationId, Instant now) {
