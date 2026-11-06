@@ -196,14 +196,14 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | `tool` | 도구 이름 |
 | `target_ids` | 인수 중 `id`·`*_id`·`*_ids` 칸의 값만 `[{"field":"task_id","id":"12"}]`. 중첩 인수도 보고, 숫자 ID(십진 19자리 이하)가 아니면 버린다 — 토큰·키 같은 영숫자 값이 모르는 `*_id` 칸으로 들어와도 남지 않게. 최대 50개 |
 | `result` | `OK` / `DENIED`(`AccessErrors`가 만든 거부 — `AccessDeniedApiException`) / `ERROR`(그 밖의 실패) |
-| `deny_reason` (V39) | `DENIED`일 때 서버만 아는 사유의 종류(`not_member`·`task_not_in_project`·`packet_project_mismatch` 등). 로그 사유의 첫 낱말이라 번호가 없다 |
-| `error_code` (V39) | 실패면 응답 `error.code`, 성공이면 NULL |
+| `deny_reason` (V38) | `DENIED`일 때 서버만 아는 사유의 종류(`not_member`·`task_not_in_project`·`packet_project_mismatch` 등). 로그 사유의 첫 낱말이라 번호가 없다 |
+| `error_code` (V38) | 실패면 응답 `error.code`, 성공이면 NULL |
 | `latency_ms`·`called_at` | 지연·시각 |
 
 - **남기지 않는 것**: 인수 본문(요청 문장·기록 원문·제안 내용)·멱등 키·토큰 값·응답 본문(MCP-09, Jira -177 작업 4).
 - 없는 ID와 다른 프로젝트 ID는 같은 404라 둘 다 `DENIED`다(존재를 숨기는 정책 그대로). 서비스가 `AccessErrors`를 거치지 않고 `ApiException(NOT_FOUND)`를 직접 던지는 곳(예: 패킷 없음)은 `ERROR` + `not_found`로 남는다.
 - **트랜잭션**: 업무는 서비스 안에서 이미 끝났다. 감사는 새 트랜잭션(REQUIRES_NEW)이라 업무가 롤백된 실패도 남는다. **감사 저장이 실패해도 도구 결과는 그대로 돌려준다**(전진 결정 — 이미 커밋된 변경을 실패로 알리면 에이전트가 다시 부른다). 그 호출은 `com.beez.mcp` 요청 줄과 `mcp audit write failed` 오류 로그로 추적한다.
-- 감사 행은 고치지 않는다(V39 UPDATE 금지 트리거).
+- 감사 행은 고치지 않는다(V38 UPDATE 금지 트리거).
 - 인증 실패(HTTP 401)·프로토콜 오류(없는 도구·세션)는 도구 처리 전에 끝나 감사 행이 없다. 요청 로그(`com.beez.access`)에만 남는다.
 
 **이번에 하지 않은 것**: 감사 로그 조회 API(팀장 공개안 — REST 명세 없음), 권한 실패 응답의 `details`(명세 없음 — 지금 형식 유지), 보존 기간·정리.
