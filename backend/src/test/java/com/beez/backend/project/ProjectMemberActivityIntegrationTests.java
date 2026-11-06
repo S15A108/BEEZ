@@ -87,6 +87,29 @@ class ProjectMemberActivityIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
+     * 깨지면: 이미 팀원인 사람이 로그인할 때 대기 초대를 닫기만 하는 자동 참여(ALREADY_ACTIVE)가 참여를 한 번 더 남긴다
+     * (-289 Jira 코멘트 — 들어온 게 아니라 초대만 닫는다).
+     */
+    @Test
+    void autoJoin_alreadyActive_closesInvitationWithoutJoinActivity() {
+        var p = fixtures().projectWithLeader();
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        String email = AccessFixtures.uniqueEmail();
+        fixtures().account(email);
+        ApiClient session = client().login(email, AccessFixtures.PASSWORD);
+
+        long emailInv = emailInvitation(leader, p.projectId(), email);   // 대기로 남는 이메일 초대
+        await().atMost(Duration.ofSeconds(10)).until(() -> mail.countTo(email) == 1);
+        linkInvitation(leader, p.projectId());
+        assertThat(session.post("/api/invitations/accept", tokenBody(lastLinkToken)).statusCode()).isEqualTo(200);
+        client().login(email, AccessFixtures.PASSWORD);   // 자동 참여: 이미 팀원 → 이메일 초대만 닫음
+
+        assertThat(db.queryForObject("SELECT accepted_at IS NOT NULL FROM invitation WHERE id = ?", Boolean.class,
+                emailInv)).as("자동 참여가 실제로 돌았다").isTrue();
+        assertThat(activities(p.projectId())).singleElement().asString().startsWith("MEMBER_JOINED|");
+    }
+
+    /**
      * 깨지면: 위임 대상(새 팀장)이 아닌 쪽에 남거나, 늦게 온 같은 위임(403)이 한 건 더 남기거나, 위임하고 나가기(-304)에서
      * 위임·나가기 중 하나가 빠지거나 순서가 뒤집히거나, 같은 사람이 두 번째로 팀장을 받을 때 키가 겹쳐 건너뛰어진다.
      */
