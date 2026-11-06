@@ -3,13 +3,14 @@ import { passwordRule } from './passwordRule'
 import { objectParticle } from '@/lib/display'
 
 describe('비밀번호 규칙', () => {
-  it('영문·숫자·특수문자가 모두 있으면 통과한다', () => {
+  it('영문과 숫자가 있으면 특수문자가 없어도 통과한다', () => {
+    expect(passwordRule('beezdemo2026')).toBeUndefined()
     expect(passwordRule('beez-demo-2026')).toBeUndefined()
   })
-  it('하나라도 빠지면 안내 문구를 돌려준다', () => {
-    expect(passwordRule('beezdemo2026')).toMatch('특수문자')
-    expect(passwordRule('beez-demo')).toMatch('특수문자')
-    expect(passwordRule('2026-10-28')).toMatch('특수문자')
+  it('영문이나 숫자가 빠지면 빠진 것을 알려 준다', () => {
+    expect(passwordRule('beez-demo')).toMatch('숫자가 없어요.')
+    expect(passwordRule('2026-10-28')).toMatch('영문이 없어요.')
+    expect(passwordRule('!!!!!!!!')).toMatch('영문, 숫자가 없어요.')
   })
   // PR #72 mock/live 전수 대조 LIVE-AMP-02: 서버(PasswordPolicy)처럼 8자 이상, UTF-8 72바이트 이하로 보고 상황별로 알린다.
   it('짧으면 8자 이상, UTF-8 72바이트를 넘으면 너무 길다고 알린다', () => {
@@ -23,7 +24,7 @@ describe('비밀번호 규칙', () => {
       '비밀번호가 너무 길어요. 더 짧게 입력해 주세요.',
     )
     expect(passwordRule('onlyletters')).toBe(
-      '영문, 숫자, 특수문자를 모두 넣어 8자 이상으로 입력하세요. 숫자, 특수문자가 없어요.',
+      '영문과 숫자를 모두 넣어 8자 이상으로 입력하세요. 숫자가 없어요.',
     )
   })
 })
