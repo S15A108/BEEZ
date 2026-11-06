@@ -194,12 +194,13 @@ test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리
   })
   // 검증 중: 칸반 워룸 화면 앞
   expect(spots(floor.seats.board)).toContainEqual(place('agent:23'))
-  // 연결 끊김: 라운지 충전 자리에서 움직이지 않는다
+  // 연결 전: 라운지 충전 자리에서 움직이지 않는다
   expect(spots(floor.seats.lobby)).toContainEqual(place('agent:25'))
   expect(at('agent:25')).toMatchObject({
     stationary: true,
     agentStatus: 'offline',
   })
+  expect(at('agent:25').tag).toMatch(/ · 연결 전$/)
   // 연결됨(할 일 없음): 주인 자리 뒤에 서 있다
   const mine = spots([homes.get('member:21')!])[0]
   expect(at('agent:21')).toMatchObject({
@@ -209,7 +210,7 @@ test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리
   expect(
     Math.hypot(mine.x - at('agent:21').x, mine.y - at('agent:21').y),
   ).toBeLessThan(32)
-  // 에이전트는 산책하지 않는다: 연결 끊김 말고도 모두 자리에 묶인 상태로 걷는다
+  // 에이전트는 산책하지 않는다: 연결 전 말고도 모두 자리에 묶인 상태로 걷는다
   for (const id of ['agent:26', 'agent:22', 'agent:23', 'agent:21'])
     expect(isOfficeWorkingStatus(at(id).status)).toBe(true)
 })

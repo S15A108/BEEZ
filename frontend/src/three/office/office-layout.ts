@@ -32,7 +32,7 @@ const OFFICE_PLANS: Record<OfficeDesign, OfficePlan> = {
   tower: TOWER_PLAN,
   wood: WOOD_PLAN,
 }
-// 충전 자리(D37 연결 끊김)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
+// 충전 자리(D37 연결 전)로 쓰는 라운지 의자. 리클라이너가 없는 배치는 가장 가까운 라운지 안락의자를 쓴다.
 const LOUNGE_SEATS = ['loungeChairRelax', 'loungeDesignChair']
 // 의자 방향(ry, 모델 앞 = +z)을 앉은 사람이 보는 쪽으로
 const facingOf = (ry: number): Dir => {
