@@ -33,6 +33,7 @@ import {
 import { Toast } from '@/components/Toast'
 import { BibiStatusRow } from './BibiStatusRow'
 import { Hotbar } from './Hotbar'
+import { leaderSetupStep } from './leaderSetupStep'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 import { Button } from '@/components/ui/button'
@@ -111,6 +112,8 @@ type Step = {
   required?: boolean
   /** 건너뛴 선택 단계: 완료로 세고 '건너뜀'과 다시 하기 링크를 둔다 */
   skipped?: boolean
+  /** 건너뛴 뒤 설정에서 다시 할 링크 */
+  links?: { label: string; focus: string }[]
   locked?: boolean
   optional?: boolean
   action?: {
@@ -220,8 +223,12 @@ export function WorkspaceHud({
   const readKey = guideKey(project.id, 'baseline-read')
   // API 없음: 가이드 상태 저장 필드(시작 가이드 백엔드 메모 1). 건너뛴 초대는 브라우저에 둔다.
   const inviteSkipKey = guideKey(project.id, 'invite-skipped')
-  const invited = onboarding.member_count > 1
-  const inviteSkipped = !invited && readFlag(inviteSkipKey)
+  const setup = leaderSetupStep({
+    invited: onboarding.member_count > 1,
+    agentConnected: onboarding.my_agent_connected,
+    skipFlag: readFlag(inviteSkipKey),
+    started,
+  })
   const uploaded = onboarding.required_documents.filter(
     (item) => item.uploaded,
   ).length
@@ -254,16 +261,44 @@ export function WorkspaceHud({
   // 10-29: 팀원 초대(선택)를 1순위로, 건너뛸 수 있게. 시작 조건은 그대로 4종 승인.
   const leaderSteps: Step[] = [
     {
-      title: '팀원 초대하기',
-      detail: invited
-        ? '팀원이 들어왔어요.'
-        : inviteSkipped
-          ? '나중에 초대해도 돼요.'
-          : '선택 · 같이 일할 사람을 먼저 불러요. 건너뛰어도 문서는 올릴 수 있어요.',
-      done: invited || inviteSkipped,
-      skipped: inviteSkipped,
+      title: '팀원 초대 · 에이전트 연결',
+      detail: setup.detail,
+      done: setup.done,
+      skipped: setup.skipped,
+      links: setup.links,
       optional: true,
-      action: { label: '팀원 초대하기', pane: 'settings', focus: 'team' },
+      children: (
+        <ul
+          aria-label="팀원 초대와 에이전트 연결"
+          className="mt-2 grid gap-1"
+        >
+          {setup.rows.map((row) => (
+            <li
+              key={row.focus}
+              className="flex items-center justify-between rounded-lg bg-muted/50 px-2.5 py-1.5 text-xs"
+            >
+              <span className="flex items-center gap-1.5">
+                {row.done && <Check className="size-3.5 text-green-700" />}
+                {row.label}
+              </span>
+              {!row.done && (
+                <button
+                  type="button"
+                  className="font-semibold underline"
+                  aria-label={`${row.label} ${row.action}`}
+                  onClick={() => openPane('settings', row.focus)}
+                >
+                  {row.action}
+                </button>
+              )}
+            </li>
+          ))}
+          <li className="text-[11px] text-muted-foreground">
+            에이전트는 설정 › 에이전트에서 토큰을 발급하고 Claude Code에 BEEZ
+            MCP를 추가하면 연결돼요.
+          </li>
+        </ul>
+      ),
     },
     {
       title: '문서 초안 4종 올리기',
@@ -825,6 +860,11 @@ export function WorkspaceHud({
                               필수
                             </span>
                           )}
+                          {step.optional && !step.done && (
+                            <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                              선택
+                            </span>
+                          )}
                           {step.done && !step.skipped && (
                             <span className="ml-1.5 text-[11px] font-semibold text-green-700">
                               완료
@@ -840,19 +880,28 @@ export function WorkspaceHud({
                           {step.detail}
                         </span>
                         {!step.done && !locked && step.children}
-                        {/* 건너뛴 초대: 시작 전에는 링크, 시작 뒤에는 노란 칸에 버튼을 다시 보여 준다(10-29). */}
-                        {step.skipped && step.action && (
-                          <span className="mt-1">
-                            <Button
-                              size="xs"
-                              variant={started ? 'default' : 'link'}
-                              className={started ? undefined : 'h-auto p-0'}
-                              onClick={() =>
-                                openPane(step.action!.pane!, step.action!.focus)
-                              }
-                            >
-                              {started ? step.action.label : '지금 초대하기'}
-                            </Button>
+                        {/* 건너뛴 1단계: 시작 전에는 링크, 시작 뒤에는 노란 칸에 버튼을 다시 보여 준다(10-29). */}
+                        {step.skipped && (
+                          <span className="mt-1 flex flex-wrap items-center gap-2">
+                            {step.links?.map((link, linkIndex) => (
+                              <Button
+                                key={link.focus}
+                                size="xs"
+                                variant={
+                                  !started
+                                    ? 'link'
+                                    : linkIndex === 0
+                                      ? 'default'
+                                      : 'outline'
+                                }
+                                className={started ? undefined : 'h-auto p-0'}
+                                onClick={() =>
+                                  openPane('settings', link.focus)
+                                }
+                              >
+                                {link.label}
+                              </Button>
+                            ))}
                           </span>
                         )}
                         {!step.done && !locked && (
