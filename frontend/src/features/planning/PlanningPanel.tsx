@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import { FileCheck2, RefreshCw } from 'lucide-react'
 import { documentsApi, planningApi } from '@/api/services'
@@ -22,10 +22,10 @@ import { hasActiveJob } from './draftJobs'
 import { PlanningQuestions } from './PlanningQuestions'
 import type { QuestionGenerationView } from './PlanningQuestions'
 import {
-  START_WAIT_MS,
   generationOf,
   isGenerating,
-  shouldPollAnalysis,
+  isQuestionTarget,
+  pollIntervalOf,
 } from './questionGeneration'
 import type { AnalysisResponse } from './schemas'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
@@ -61,23 +61,6 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       const version = versionOf(document)
       return version ? [version] : []
     }) ?? []
-  // 분석 직후 질문 생성이 아직 시작되지 않은 문서를 기다리는 시간이 끝난 문서(START_WAIT_MS).
-  const [graceOver, setGraceOver] = useState<string[]>([])
-  const analyses = useQueries({
-    queries: versions.map((version) => ({
-      queryKey: ['projects', projectId, 'analysis', version.id],
-      queryFn: () =>
-        planningApi.analysis(projectId, version.document_id, {
-          document_version_id: version.id,
-        }),
-      refetchInterval: (query: {
-        state: { data: AnalysisResponse | undefined }
-      }) =>
-        shouldPollAnalysis(query.state.data, graceOver.includes(version.id))
-          ? 1500
-          : false,
-    })),
-  })
   const baseline = useQuery({
     queryKey: ['projects', projectId, 'baseline'],
     queryFn: async () => {
@@ -88,6 +71,24 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         throw error
       }
     },
+  })
+  // 서버는 기준 설계가 없을 때만 질문을 만든다. 기준 조회 전에는 대상으로 보고 기다린다.
+  const hasBaseline = !!baseline.data
+  const analyses = useQueries({
+    queries: versions.map((version) => ({
+      queryKey: ['projects', projectId, 'analysis', version.id],
+      queryFn: () =>
+        planningApi.analysis(projectId, version.document_id, {
+          document_version_id: version.id,
+        }),
+      refetchInterval: (query: {
+        state: { data: AnalysisResponse | undefined }
+      }) =>
+        pollIntervalOf(
+          query.state.data,
+          isQuestionTarget(version, hasBaseline),
+        ),
+    })),
   })
   const drafts = useInfiniteQuery({
     queryKey: ['projects', projectId, 'design-drafts'],
@@ -179,24 +180,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     version,
     generation: generationOf(
       analyses[index]?.data,
-      graceOver.includes(version.id),
+      isQuestionTarget(version, hasBaseline),
     ),
   }))
-  const waitingKey = documentGenerations
-    .filter(({ generation }) => generation?.status === 'WAITING')
-    .map(({ version }) => version.id)
-    .join(',')
-  useEffect(() => {
-    if (!waitingKey) return
-    const timer = setTimeout(
-      () =>
-        setGraceOver((current) => [
-          ...new Set([...current, ...waitingKey.split(',')]),
-        ]),
-      START_WAIT_MS,
-    )
-    return () => clearTimeout(timer)
-  }, [waitingKey])
   const generations: QuestionGenerationView[] = documentGenerations.flatMap(
     ({ version, generation }) =>
       generation && (isGenerating(generation) || generation.status === 'FAILED')

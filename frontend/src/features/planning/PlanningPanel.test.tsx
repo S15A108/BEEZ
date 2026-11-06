@@ -464,3 +464,61 @@ it('한 문서의 질문 생성이 실패해도 다른 문서의 진행을 따�
     screen.getByRole('button', { name: '질문 다시 만들기' }),
   ).toBeInTheDocument()
 }, 25_000)
+
+// 리뷰 반영: 서버 워커는 문서를 하나씩 처리해서 뒤 문서는 첫 AI 호출이 길면 한참 실행 행이 없다.
+// 대기 상태는 시간으로 끊지 않고, 나중에 실패·완료가 와도 새로고침 없이 따라간다.
+it('여러 문서가 대기하고 첫 AI 호출이 15초를 넘겨도 계속 읽어 나중의 실패와 완료를 보여 준다', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    // 세 문서가 이어서 대기: REQUIREMENTS 는 AI 호출 중(RUNNING), ERD·API_SPEC 은 아직 행이 없다(순서 대기).
+    let phase: 'running' | 'later' = 'running'
+    const calls = await stubAnalyses((kind) => {
+      if (kind === 'PLAN') return { status: 'COMPLETED' }
+      if (phase === 'running')
+        return kind === 'REQUIREMENTS' ? { status: 'RUNNING' } : undefined
+      // 25초쯤 뒤: 앞 문서는 끝나고 ERD 는 실패, API_SPEC 은 이제 막 진행 중이다.
+      return kind === 'REQUIREMENTS'
+        ? { status: 'COMPLETED' }
+        : kind === 'ERD'
+          ? { status: 'FAILED', error_code: 'ai_unavailable', retryable: true }
+          : { status: 'RUNNING' }
+    })
+    renderPanel()
+    expect(
+      await screen.findByText(/비비가 보완 질문을 만들고 있어요/),
+    ).toBeInTheDocument()
+    const before = calls.ERD
+    // 15초(예전 제한)를 훌쩍 넘겨도 대기 문서를 계속 읽는다.
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(calls.ERD).toBeGreaterThan(before + 5)
+    expect(
+      screen.getByText(/비비가 보완 질문을 만들고 있어요/),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/보완 질문을 만들지 못했어요/),
+    ).not.toBeInTheDocument()
+    phase = 'later'
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(
+      await screen.findByText(/ERD v1 보완 질문을 만들지 못했어요/),
+    ).toBeInTheDocument()
+    // API_SPEC 은 계속 진행 중이라 진행 안내도 남는다.
+    expect(
+      screen.getByText(/비비가 보완 질문을 만들고 있어요/),
+    ).toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+  }
+}, 30_000)
+
+it('기준 설계가 발행된 프로젝트는 질문 생성을 기다리지 않는다', async () => {
+  const calls = await stubAnalyses(() => undefined)
+  renderPanel(true, '101')
+  await screen.findByText('기준 설계가 발행되어 답변을 바꿀 수 없어요.')
+  expect(
+    screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
+  ).not.toBeInTheDocument()
+  const seen = { ...calls }
+  await new Promise((resolve) => setTimeout(resolve, 3_500))
+  expect(calls).toEqual(seen)
+})
