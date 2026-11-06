@@ -1,0 +1,54 @@
+{
+  "result": {
+    "answer_status": "INSUFFICIENT_EVIDENCE",
+    "grounded": false,
+    "text": "찾지 못했어요. 지금 승인된 문서와 설계 항목에서는 이 질문에 답할 근거를 찾지 못했습니다. 짐작해서 답하지 않습니다.",
+    "citations": [],
+    "sources": [],
+    "design_refs": [],
+    "task_refs": [],
+    "unresolved": [
+      "비밀번호 정책은 공용 문서에 없다."
+    ],
+    "next_actions": [
+      "요구사항 문서에 비밀번호 정책을 추가한다."
+    ],
+    "notices": [],
+    "scope": {
+      "mode": "APPROVED",
+      "document_version_ids": [
+        "311",
+        "212",
+        "312",
+        "313"
+      ],
+      "baseline_id": "401"
+    },
+    "embedding_profile_id": "gms-small-1024-v1",
+    "evidence_considered": 4,
+    "evidence_omitted": 0,
+    "instance": {
+      "profile_version": "bee-v1",
+      "system_prompt_hash": "a629f4e7b66c8a8a4e88952db002f219c24850f47ae278bd144105a0017209bd"
+    },
+    "verification": {
+      "level": "NONE",
+      "claims": 0,
+      "model": null
+    }
+  },
+  "origin": "MODEL",
+  "model": "gpt-6-luna",
+  "usage": [
+    {
+      "request_key": "llm-bee-chat-00000000-0000-4000-8000-000000000135",
+      "feature": "BEE_CHAT",
+      "model": "gpt-6-luna",
+      "latency_ms": 0,
+      "failed": false,
+      "tokens_known": true,
+      "input_tokens": 1800,
+      "output_tokens": 320
+    }
+  ]
+}
