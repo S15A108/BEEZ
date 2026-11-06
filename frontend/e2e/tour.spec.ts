@@ -35,7 +35,7 @@ test('둘러보기 6단계는 비비 원을 다 밝히고, 화면 안내의 비�
 }) => {
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(page).toHaveURL('/')
   await page.goto('/projects/101')
   await page.getByRole('button', { name: '1분 둘러보기' }).click()
   for (let step = 0; step < 5; step++)
