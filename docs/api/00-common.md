@@ -1100,24 +1100,38 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 
 ### ChangeDraftReview
 
-(수정안 요청 · 11-05) 올리기 전 비비 검토(CHG-A19). 화면 '3단계 / 4단계', '영향 작업 1 · 빠진 부분 1 · 충돌 1'을 그린다.
+(수정안 요청 · 11-05) 올리기 전 비비 검토(CHG-A19). 화면 '3단계 / 4단계', '영향 작업 1 · 빠진 부분 1 · 충돌 1'을 그린다. 영향 결과는 `input_revision` 시점의 미리보기이고, 올린 뒤의 판단은 CHG-A05 결과를 따른다(11-06).
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 검토 ID |
 | `status` | `RUNNING\|COMPLETED\|FAILED` | Y | 검토 상태 |
 | `error_code` | `string` | N | FAILED일 때만 |
-| `input_revision` | `integer` | Y | 검토한 초안 리비전 |
-| `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전 |
-| `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED, count} |
+| `input_revision` | `integer` | Y | 검토한 초안 리비전. `tasks_to_wait`·`validations_to_stale`·`ai_candidates`는 이 리비전 기준이다 |
+| `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전. 수정안 처리 확인용이고, 영향 결과가 이 리비전 기준이라는 뜻은 아니다 |
+| `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED\|NOT_EVALUATED, count}. NOT_EVALUATED는 입력 계약이 없어 평가하지 않은 단계로, 모델 실패(FAILED)와 구분한다 |
 | `tasks_to_wait` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '대기 · 재검증'이 될 진행 중 작업 |
 | `validations_to_stale` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '다시 검증 필요'가 될 검증 |
-| `ai_candidates` | `object[]` | N | {task_id, title, reason, evidence}. 평가하지 못하면 null(0건과 구분) |
-| `suggestions` | [DocumentReviewSuggestion[]](00-common.md#schema-documentreviewsuggestion) | Y | 빠진 부분·충돌 수정안. `category`에 OMISSION·CONSISTENCY를 쓰고 이어진 설계 항목 키를 `design_item_key`로 더한다 |
+| `ai_candidates` | `object[]` | N | {task_id, title, reason, evidence}. 평가하지 못하면 null(0건과 구분). 이유는 AI_CANDIDATES 단계의 `status`로 안다 |
+| `suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 빠진 부분·충돌 수정안 |
 | `summary` | `string` | N | 검토 요약. COMPLETED일 때 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | Y | 실제 모델 호출 사용량 |
 | `created_at` | `Time` | Y | 요청 시각 |
 | `completed_at` | `Time` | N | 끝난 시각 |
+
+<a id="schema-changedraftsuggestion"></a>
+
+### ChangeDraftSuggestion
+
+(수정안 요청 · 11-06) 올리기 전 비비 검토의 수정안. [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion)의 필드에 아래를 더한다. `category`는 OMISSION·CONSISTENCY를 쓴다. 초안은 문서를 여러 개 고칠 수 있어, 같은 글귀가 두 문서에 있어도 대상을 가릴 수 있게 한다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | PATCH Y | 고칠 문서. 초안 `documents` 중 하나 |
+| `base_document_version_id` | `ID` | PATCH Y | 그 문서의 기준 버전 |
+| `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+
+PATCH는 문서 변경에만 쓴다. `original_text`는 대상 문서의 고친 글에서 유일한 구간이다. 설계 항목 변경에 대한 의견은 COMMENT로만 주고 이때 `document_id`는 생략한다.
 
 <a id="schema-changeimpact"></a>
 

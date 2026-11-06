@@ -18,6 +18,8 @@
 
 2026-11-05: 변경 제안을 올리기 전 비비 검토 수정안을 붙였다(S15P31A108-218, 사용자 결정). 팀장에게 가지 않는 작성 중 제안(CHG-A16~A18), 올리기 전 비비 검토(CHG-A19), 수정안 반영·넘기기(CHG-A20)를 두고, CHG-A01은 검토를 마친 초안(`draft_id`)으로 올린다. 첫 문서 등록의 비비 검토(DOC-A16·A17)와 같은 구조다.
 
+2026-11-06: 변경 제안 올리기 전 비비 검토 수정안을 AI 담당 리뷰(PR #176)대로 고쳤다(S15P31A108-218). 수정안은 대상 문서를 밝히고(ChangeDraftSuggestion), 검토 결과는 검토한 리비전의 미리보기이며, 올린 내용으로 CHG-A05를 다시 돌린다. 초안 입력 계약 전에는 AI 영향 후보를 NOT_EVALUATED로 둔다.
+
 2026-11-06: ACC-A01 비밀번호 규칙을 구현(PasswordPolicy, 프론트 D23)에 맞췄다(S15P31A108-218). 서버는 8자 이상, UTF-8 72바이트 이하, 영문·숫자 포함이고 특수문자 필수는 화면 규칙이다.
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
@@ -7271,8 +7273,9 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 - CHG-A01/A04/A15는 design_http_command의 24시간 응답 보존을 재사용한다. 프로젝트·계정·동작·사람/에이전트 토큰별 요청 키를 분리하고 재요청 시 현재 권한을 검사한다.
 - 제출 후 잠금이다. 승인·검토 시작·반려·발행 명령은 198, 의견·검토 요청은 196, 심층 영향 분석·저장은 188·197이 담당한다. 알림은 공통 알림 서비스 요청으로만 저장하며(S15P31A108-217) 직접 INSERT하지 않는다. 활동 이벤트는 S15P31A108-237 TODO다.
 - (#218 수정안 요청 · 195 미구현) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 현재 195는 구조화된 content v1만 받는다.
-- (수정안 요청 · 11-05) `draft_id`로 올리면 그 초안 내용으로 제안을 만든다. 초안의 최신 비비 검토(CHG-A19)가 COMPLETED이고 `resolved_revision`이 지금 초안 리비전과 같아야 하며, PATCH 수정안이 모두 정해져 있어야 한다(아니면 409 `review_required`). 검토 결과(영향 작업·검증, AI 후보, 넘긴 의견)는 제안에 이어 붙여 팀장 상세의 영향 탭에 보인다.
-- (협의 필요) 올린 뒤 CHG-A05 영향 분석을 검토 결과로 대신할지 다시 돌릴지, 초안 없이 바로 올리는 경로를 남길지 정한다. 화면(PR #135)은 초안 경로만 쓴다.
+- (수정안 요청 · 11-05) `draft_id`로 올리면 그 초안 내용으로 제안을 만든다. 초안의 최신 비비 검토(CHG-A19)가 COMPLETED이고 `resolved_revision`이 지금 초안 리비전과 같아야 하며, PATCH 수정안이 모두 정해져 있어야 한다(아니면 409 `review_required`). 넘긴 의견은 제안에 이어 붙여 팀장 상세에 보인다.
+- (수정안 요청 · 11-06) 검토의 영향 결과(`tasks_to_wait`·`validations_to_stale`·`ai_candidates`)는 `input_revision` 시점의 미리보기다. 수정안을 반영했거나 검토 뒤 작업·검증·관계가 바뀌었을 수 있어 최종 판단에 쓰지 않는다. 올리면 올린 내용으로 CHG-A05 영향 분석을 지금처럼 새로 돌리고, 승인 판단(CHG-A09·A14)은 그 결과를 따른다. 결과 재사용은 최종 내용과 기준·관계·작업·검증 등 분석 입력 전체가 같을 때만 나중에 검토한다.
+- (협의 필요) 초안 없이 바로 올리는 경로를 남길지 정한다. 화면(PR #135)은 초안 경로만 쓴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9055,9 +9058,11 @@ HTTP `202`. [ChangeDraftReview](00-common.md#schema-changedraftreview). `status`
 #### 처리 규칙
 
 - (수정안 요청 · 11-05) 지금 리비전을 검토한다. 바로 돌려주고, 끝나면 작성자에게 알린다. 창을 닫아도 검토는 이어진다(알림 유형 추가는 협의 필요).
-- (수정안 요청 · 11-05) 단계는 네 개다. READ_CHANGES는 바뀐 곳(items·documents)을 읽는다. FIND_RELATED는 CHG-A14와 같은 계산으로 `tasks_to_wait`·`validations_to_stale`을 만든다. AI_CANDIDATES는 AI-A03을 작성 중 제안에 돌려 영향 후보를 찾는다. GAPS_CONFLICTS는 빠진 부분과 다른 문서·정책과의 충돌을 찾아 수정안(`suggestions`)을 만든다.
-- (협의 필요) GAPS_CONFLICTS에 AI-A10(문서 검토)을 새 모드로 쓸지 별도 AI API를 둘지 정한다. 입력은 기준 승인본, 고친 글, 바뀐 곳 목록, 이어진 설계 항목이다.
-- (수정안 요청 · 11-05) 모델 실패·시간 초과는 `status`=FAILED와 `error_code`로 알리고 다시 요청할 수 있다. 실패를 '의견 없음'으로 보이지 않는다. AI 후보를 평가하지 못하면 `ai_candidates`는 null이다(CHG-A14와 같음).
+- (수정안 요청 · 11-05) 단계는 네 개다. READ_CHANGES는 바뀐 곳(items·documents)을 읽는다. FIND_RELATED는 CHG-A14와 같은 계산으로 `tasks_to_wait`·`validations_to_stale`을 만든다. AI_CANDIDATES는 작성 중 제안의 영향 후보를 찾는다. GAPS_CONFLICTS는 빠진 부분과 다른 문서·정책과의 충돌을 찾아 수정안(`suggestions`)을 만든다.
+- (수정안 요청 · 11-06) AI_CANDIDATES: AI-A03은 `proposal_id`와 항목 변경을 받고 제출 리비전 기준으로 조립하며, 문서 변경이 든 제안은 지금 분석하지 않는다(`document_change_unavailable`). 초안 ID·리비전을 구분하는 입력과 문서 변경 계약이 생기기 전에는 이 단계의 `status`를 NOT_EVALUATED로, `ai_candidates`를 null로 둔다. 화면은 PNL-04-v2-propose-review의 'AI 영향 후보' 자리에 '확인하지 못함'을 보이고, 0건·모델 실패와 구분한다.
+- (수정안 요청 · 11-06) GAPS_CONFLICTS: AI-A10은 한 문서 본문과 승인 참고 문서를 받는 계약이라 전후 내용·여러 문서·설계 항목을 담지 못한다. AI-A10은 그대로 두고 변경 제안 검토용 내부 요청·응답을 따로 두되, 문서 검토의 수정안·근거 검증 로직을 재사용한다. 입력은 기준 승인본, 고친 글, 바뀐 곳 목록, 이어진 설계 항목이다. 세부 계약은 AI가 정한다.
+- (수정안 요청 · 11-06) 수정안은 고칠 문서를 밝힌다. PATCH는 초안 `documents` 중 하나를 `document_id`·`base_document_version_id`로 가리키고, 그 문서의 고친 글에 `original_text`가 정확히 한 번 있어야 한다. 설계 항목 변경에는 수정안을 만들지 않고 COMMENT(설명)만 준다([ChangeDraftSuggestion](00-common.md#schema-changedraftsuggestion)).
+- (수정안 요청 · 11-05) 모델 실패·시간 초과는 `status`=FAILED와 `error_code`로 알리고 다시 요청할 수 있다. 실패를 '의견 없음'으로 보이지 않는다. 실제 `usage`는 보존하고, 응답을 받지 못한 호출의 사용량은 미확인으로 남긴다.
 - (수정안 요청 · 11-05) 모델 호출 중 잠금을 잡지 않는다. 끝난 뒤 초안 리비전과 기준이 그대로일 때만 결과를 채택한다(DOC-A16과 같음).
 - 근거 보드: PNL-04-v2-propose-running(진행), PNL-04-v2-propose-review(결과).
 
@@ -9111,7 +9116,7 @@ HTTP `202`. [ChangeDraftReview](00-common.md#schema-changedraftreview). `status`
 
 #### Response
 
-HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). 고친 글이 바뀌면 `revision`이 1 오르고 `latest_review.resolved_revision`도 같이 오른다.
+HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). 고친 글이 바뀌면 `revision`이 1 오르고 `latest_review.resolved_revision`도 같이 오른다. `input_revision`은 그대로라 영향 결과가 반영 전 내용 기준임을 알 수 있다.
 
 #### Error
 
@@ -9123,10 +9128,11 @@ HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). 고�
 | 404 | `not_found` | 없는 초안·다른 프로젝트·작성 계정이 아님 |
 | 409 | `version_conflict` | `expected_revision`이 지금 초안 리비전과 다름 |
 | 409 | `invalid_transition` | COMMENT 수정안이거나 최신 검토가 아님 |
+| 409 | `review_stale` | 수정안의 대상 문서가 초안에 없거나 기준 버전이 다르거나, 그 문서의 고친 글에 `original_text`가 정확히 한 번 있지 않음 |
 
 #### 처리 규칙
 
-- (수정안 요청 · 11-05) DOC-A17과 같다. APPLIED는 `original_text`를 `replacement_text`로 바꿔 넣는다. PENDING(되돌리기)은 반영했던 글을 되돌린다. SKIPPED는 글을 그대로 두고 넘긴 의견으로 남긴다.
+- (수정안 요청 · 11-05) DOC-A17과 같다. APPLIED는 `document_id`가 가리키는 문서에서만 `original_text`를 `replacement_text`로 바꿔 넣는다(11-06). PENDING(되돌리기)은 반영했던 글을 되돌린다. SKIPPED는 글을 그대로 두고 넘긴 의견으로 남긴다.
 - (수정안 요청 · 11-05) PATCH 수정안이 모두 APPLIED 또는 SKIPPED여야 올릴 수 있다. COMMENT는 올리기를 막지 않는다.
 - 근거 보드: PNL-04-v2-propose-review(넘기기·반영하기·되돌리기), PNL-04-v2-propose-confirm(최종본 확인).
 
