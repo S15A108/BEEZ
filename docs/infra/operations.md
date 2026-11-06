@@ -167,7 +167,7 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
 
    ```bash
    docker compose -p beez exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
-     "select version, description, success, installed_on from flyway_schema_history order by installed_rank desc limit 10"'
+     "select version, description, checksum, success, installed_on from flyway_schema_history order by installed_rank desc limit 10"'
    ```
 
    로컬 PC(Git Bash)에서 되돌릴 SHA가 아는 최신 버전과, 그보다 새 마이그레이션의 의심 줄을 봅니다.
@@ -196,15 +196,29 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
      예전 코드가 건드리지 않는 새 테이블, NULL을 허용하거나 기본값이 남는 칼럼, UNIQUE가 아닌 인덱스만이면 되돌려도 됩니다
      (예전 backend의 Flyway는 모르는 상위 버전을 경고만 하고, 엔티티 검증 `ddl-auto: validate`는 남는 칼럼을 문제 삼지 않습니다).
      판단이 애매하면 되돌리지 않고 고친 커밋을 배포합니다.
-   - 판단 대상 버전마다 서버 결과의 `description`이 `origin/dev`의 `V<번호>__<description>.sql` 파일과 맞는지 봅니다
-     (파일 이름의 `_`는 공백으로 바뀌어 기록됩니다). 셋째 명령이 보여 주는 것은 dev에 있는 파일뿐이라, 작업 브랜치를
-     손으로 배포해 들어간 마이그레이션이나 revert된 마이그레이션은 빠집니다.
-     - **dev에 그 번호가 없으면** `git -C /c/git/BEEZ log --all --oneline -- "$DIR/V<번호>__*"`로 그 파일이 있던 커밋을 찾아
-       읽습니다. 로컬에 없으면(push하지 않은 브랜치) 손 배포한 사람에게 받습니다. 읽지 못하면 되돌리지 않습니다.
-     - **같은 번호가 dev에 다른 이름으로 있으면** 다른 브랜치가 같은 번호를 쓴 것입니다. DB에 실제로 들어간 것은 브랜치
-       쪽 파일이므로, 위처럼 그 파일을 찾아 읽고 같은 기준으로 판단합니다(dev 파일로 판단하지 않음). 그와 별개로 그 번호를
-       아는 dev backend는 Flyway 검증(체크섬·설명 불일치)에서 기동에 실패해 다음 dev 배포가 막히므로, 팀 채널에 알려 번호를
-       정리합니다.
+   - **읽는 파일이 DB에 실제로 들어간 판인지 checksum으로 확인합니다.** 셋째 명령은 dev에 있는 파일만 보여 줍니다.
+     작업 브랜치를 손으로 배포해 들어간 마이그레이션, revert된 마이그레이션, 같은 번호·이름인데 브랜치에서 내용을 바꾼
+     파일은 dev 파일과 다릅니다. 판단 대상 번호마다 저장소 이력에 있던 그 번호 파일의 모든 판과 Flyway checksum을 찍어,
+     서버 결과의 `checksum`과 같은 줄을 찾습니다. 로컬 PC(Git Bash, `python` 필요):
+
+     ```bash
+     V=<번호>; DIR=backend/src/main/resources/db/migration; g() { git -C /c/git/BEEZ "$@"; }
+     # Flyway checksum = BOM 과 줄바꿈 문자(\r·\n)를 뺀 UTF-8 내용의 CRC32 를 부호 있는 32비트로 (2026-11-06 서버 V10·V13·V37 과 일치 확인)
+     sum='import sys,zlib; t=sys.stdin.buffer.read().decode("utf-8").removeprefix("﻿"); c=zlib.crc32(t.replace("\r","").replace("\n","").encode()); print(c-(1<<32) if c>=1<<31 else c)'
+     g log --all --format=%h -- "$DIR/V${V}__*" | while read -r c; do
+       g ls-tree --name-only "$c" -- "$DIR/" | grep "/V${V}__" | while read -r f; do
+         echo "$(g show "$c:$f" | python -c "$sum") $c ${f##*/}"
+       done
+     done | sort -u -k1,1
+     # 출력: <checksum> <그 판이 있던 커밋> <파일 이름>
+     ```
+
+     - 서버 `checksum`과 같은 줄이 있으면 그 커밋의 파일이 실제로 적용된 내용입니다. 그 파일을 읽고 위 기준으로 판단합니다.
+       dev 파일과 다른 판이면 dev 파일로 판단하지 않습니다.
+     - 같은 줄이 없으면(push하지 않은 브랜치를 손 배포 등) 손 배포한 사람에게 그 파일을 받아 같은 방식으로 checksum을
+       맞춰 본 뒤 판단합니다. **확인하지 못하면 되돌리지 않습니다.**
+     - 같은 번호의 dev 파일이 적용된 것과 다르면, 그 번호를 아는 dev backend는 Flyway 검증(checksum·설명 불일치)에서
+       기동에 실패해 다음 dev 배포가 막힙니다. 되돌리기와 별개로 팀 채널에 알려 정리합니다.
    - 판단 대상 버전이 10개보다 많으면 서버 명령의 `limit 10`을 늘립니다.
    - `success`가 `f`인 행이 있으면 마이그레이션이 중간에 실패한 것입니다. 되돌리기 전에 그 버전의 스키마 상태부터 확인합니다.
 3. **팀 채널에 알립니다.** "dev 서버 되돌림: `<지금 SHA 7자>` → `<되돌릴 SHA 7자>`, 원인 PR #번호, 그동안 dev 머지 보류".
