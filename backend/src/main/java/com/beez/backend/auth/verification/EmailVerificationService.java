@@ -114,6 +114,7 @@ public class EmailVerificationService {
         record Result(Outcome outcome, int remaining, EmailVerification verification) {
         }
         Result result = tx.execute(status -> {
+            // 프로젝트와 무관한 가입 전 단계라 AccessErrors(프로젝트 접근 거부) 대상이 아니다. 명세 ACC-A12 문구 그대로 (S15P31A108-322)
             EmailVerification v = verifications.findByPublicIdForUpdate(verificationId)
                     .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "없는 인증 요청"));
             Instant now = Instant.now();
