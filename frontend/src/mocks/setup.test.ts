@@ -268,6 +268,18 @@ describe('documented REST mock adapter', () => {
     await planningApi.generateDrafts(project.id, {
       document_version_ids: [version.id],
     })
+    // S15P31A108-202: 생성 결과는 후보이고, 채택해야 설계 항목 초안이 된다.
+    expect(
+      (await planningApi.items(project.id, { status: 'DRAFT' })).items,
+    ).toHaveLength(0)
+    await planningApi.drafts(project.id)
+    const { jobs } = await planningApi.drafts(project.id)
+    expect(jobs[0].status).toBe('COMPLETED')
+    const candidate = jobs[0].candidates.find(
+      (item) => item.support !== 'NONE',
+    )!
+    expect(candidate.change).toBe('CREATE')
+    await planningApi.adoptCandidate(project.id, candidate.id)
     expect(
       (await planningApi.items(project.id, { status: 'DRAFT' })).items,
     ).toHaveLength(1)
@@ -286,6 +298,13 @@ describe('documented REST mock adapter', () => {
         (document) => document.latest_draft!.id,
       ),
     })
+    await planningApi.drafts('102')
+    const { jobs } = await planningApi.drafts('102')
+    const update = jobs
+      .flatMap((job) => job.candidates)
+      .find((candidate) => candidate.change === 'UPDATE')!
+    expect(update.conflicting_fields).toEqual([])
+    await planningApi.adoptCandidate('102', update.id)
     const items = await planningApi.items('102', { status: 'DRAFT' })
     expect(items.draft_snapshot_hash).not.toBe(
       previousItems.draft_snapshot_hash,
