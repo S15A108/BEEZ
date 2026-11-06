@@ -21,7 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>혼자 쓰는 프로젝트(팀장, 다른 활성 팀원 없음)는 함께 삭제한다 — PRJ-A05 와 같이 archived_at 과 토큰 전부 폐기.</li>
  *   <li>팀원으로 참여한 프로젝트는 멤버십을 끝낸다(LEFT). 맡은 열린 작업은 인계 대상 없는 나가기(MEM-A10)와 같이 담당자만 비운다
  *       (S15P31A108-281, 미배정 — 상태·검증은 그대로, 작업마다 TASK_ASSIGNEE_CHANGED 활동). 팀장이 TSK-A06 으로 정하거나
- *       팀원이 스스로 맡는다. 탈퇴는 인계 대상을 받지 않는다.</li>
+ *       팀원이 스스로 맡는다. 탈퇴는 인계 대상을 받지 않는다. 나가기와 같이 MEMBER_LEFT 활동을 남긴다(-289). 함께 삭제하는
+ *       혼자 쓰는 프로젝트에는 남기지 않는다 — 볼 사람이 없다.</li>
  * </ul>
  * 잠금 순서는 팀원 관리(ProjectMemberService)와 같은 프로젝트 행 → 멤버십 행 → 작업(lock_version)이다. 프로젝트가 여럿이면
  * id 순서로 잠가 교착을 피한다.
@@ -33,14 +34,17 @@ public class ProjectWithdrawalService {
     private final ProjectRepository projects;
     private final AgentTokenRepository tokens;
     private final TaskHandoverService handover;
+    private final ProjectActivities activities;
     private final EntityManager em;
 
     public ProjectWithdrawalService(ProjectMemberRepository members, ProjectRepository projects,
-                                    AgentTokenRepository tokens, TaskHandoverService handover, EntityManager em) {
+                                    AgentTokenRepository tokens, TaskHandoverService handover,
+                                    ProjectActivities activities, EntityManager em) {
         this.members = members;
         this.projects = projects;
         this.tokens = tokens;
         this.handover = handover;
+        this.activities = activities;
         this.em = em;
     }
 
@@ -58,7 +62,7 @@ public class ProjectWithdrawalService {
      * 계정 탈퇴와 같은 트랜잭션이어야 해서 바깥 트랜잭션을 요구한다.
      * 담당자를 비우는 동안 그 작업 상태가 동시에 바뀌면 409 revision_conflict 로 탈퇴 전체가 되돌아간다(다시 시도하면 된다).
      *
-     * @param caller 탈퇴하는 본인. 담당자를 비운 활동의 행위자다
+     * @param caller 탈퇴하는 본인. 담당자를 비운 활동·MEMBER_LEFT 의 행위자다
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void leaveAll(CallerContext caller, long accountId, Instant now) {
@@ -92,6 +96,9 @@ public class ProjectWithdrawalService {
             }
             member.end(MembershipEndReason.LEFT, now);
             members.saveAndFlush(member);
+            if (!row.soloLeader()) {
+                activities.membershipEnded(caller, member, MembershipEndReason.LEFT);
+            }
         }
     }
 }
