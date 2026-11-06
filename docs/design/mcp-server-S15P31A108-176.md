@@ -194,7 +194,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | --- | --- |
 | `agent_token_id`·`account_id`·`project_id` | 토큰 주체 |
 | `tool` | 도구 이름 |
-| `target_ids` | 인수 중 `id`·`*_id`·`*_ids` 칸의 값만 `[{"field":"task_id","id":"12"}]`. 중첩 인수도 보고, ID 모양(영숫자·`_`·`-`, 64자 이하)이 아니면 버린다. 최대 50개 |
+| `target_ids` | 인수 중 `id`·`*_id`·`*_ids` 칸의 값만 `[{"field":"task_id","id":"12"}]`. 중첩 인수도 보고, 숫자 ID(십진 19자리 이하)가 아니면 버린다 — 토큰·키 같은 영숫자 값이 모르는 `*_id` 칸으로 들어와도 남지 않게. 최대 50개 |
 | `result` | `OK` / `DENIED`(`AccessErrors`가 만든 거부 — `AccessDeniedApiException`) / `ERROR`(그 밖의 실패) |
 | `deny_reason` (V39) | `DENIED`일 때 서버만 아는 사유의 종류(`not_member`·`task_not_in_project`·`packet_project_mismatch` 등). 로그 사유의 첫 낱말이라 번호가 없다 |
 | `error_code` (V39) | 실패면 응답 `error.code`, 성공이면 NULL |
