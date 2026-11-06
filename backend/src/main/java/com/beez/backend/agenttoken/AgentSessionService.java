@@ -22,7 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>식별: initialize 가 성공하면 MCP 세션 ID·토큰·클라이언트 이름을 한 행으로 남긴다</li>
  *   <li>1인 1에이전트(Q06): 한 계정이 한 프로젝트에 가진 살아 있는 세션은 하나다. 나중 연결이 이기고 이전 세션은 REPLACED 로 끝난다.
  *       먼저 연결을 지키면, DELETE 없이 꺼진 클라이언트(비정상 종료)가 정리될 때까지 1~2시간 다시 붙지 못한다</li>
- *   <li>결속: 세션은 만든 토큰에만 쓸 수 있다. 다른 토큰이 남의 세션 ID 를 보내면 없는 세션처럼 거부한다 (-176 PR #103 메모)</li>
+ *   <li>결속: 세션은 만든 토큰에만 쓸 수 있다. 다른 토큰이 남의 세션 ID 를 보내거나 기록이 없는 세션이면 없는 세션처럼 거부한다
+ *       (-176 PR #103 메모)</li>
  *   <li>마지막 통신: 요청마다 last_report_at 을 1분 단위로 갱신한다. 연결 현황 조회는 -75</li>
  * </ul>
  * 토큰 폐기·멤버십 종료는 이 표가 아니라 토큰 검증({@link StoredAgentTokenVerifier})이 매 요청 401 로 막는다.
@@ -37,16 +38,15 @@ public class AgentSessionService {
 
     /** 세션 ID 가 붙은 /mcp 요청을 받아도 되는지 */
     public enum Admission {
-        /** 기록이 없는 세션 — 기록 전 실패 등. SDK 가 판단한다 (없는 세션이면 SDK 가 404) */
-        UNTRACKED,
         /** 이 토큰이 연 살아 있는 세션 */
         OK,
-        /** 다른 토큰이 연 세션. 없는 세션처럼 404 */
-        FOREIGN,
+        /**
+         * 없는 세션으로 404 — 기록이 없거나(기록이 실패한 연결 포함), 다른 토큰이 열었거나, 클라이언트가 이미 닫았다.
+         * 기록이 없는 세션을 통과시키면 결속이 기록 성공에 기대게 되므로 막는다(fail-closed)
+         */
+        NOT_FOUND,
         /** 같은 계정의 새 연결에 밀려난 세션. 409 agent_session_replaced */
-        REPLACED,
-        /** 클라이언트가 닫은 세션. SDK 도 이미 지웠으니 SDK 가 404 를 낸다 */
-        CLOSED
+        REPLACED
     }
 
     private final AgentSessionRepository sessions;
@@ -72,7 +72,12 @@ public class AgentSessionService {
         if (member.isEmpty()) {
             return;
         }
+        // 잠근 뒤 활성 여부는 쿼리로 다시 본다. 위에서 읽은 엔티티는 잠금을 기다리는 사이 커밋된 제외·나가기를 모른다
+        // (AgentTokenService.issue 와 같은 함정)
         members.findForUpdate(member.get().getId());
+        if (!members.isActiveMember(member.get().getId(), principal.projectId())) {
+            return;
+        }
         Instant now = Instant.now();
         int replaced = sessions.replaceLiveOfMember(principal.projectId(), principal.accountId(), now);
         AgentSession saved = sessions.save(
@@ -87,16 +92,16 @@ public class AgentSessionService {
     public Admission admit(AgentPrincipal principal, String sessionKey) {
         Optional<AgentSession> found = sessions.findBySessionKey(sessionKey);
         if (found.isEmpty()) {
-            return Admission.UNTRACKED;
+            return Admission.NOT_FOUND;
         }
         AgentSession s = found.get();
         if (s.getAgentTokenId() != principal.agentTokenId()) {
             log.info("mcp session rejected reason=foreign_token agent_session={} token={}", s.getId(),
                     principal.agentTokenId());
-            return Admission.FOREIGN;
+            return Admission.NOT_FOUND;
         }
         if (s.getEndedAt() != null) {
-            return "REPLACED".equals(s.getEndReason()) ? Admission.REPLACED : Admission.CLOSED;
+            return "REPLACED".equals(s.getEndReason()) ? Admission.REPLACED : Admission.NOT_FOUND;
         }
         Instant now = Instant.now();
         sessions.touch(s.getId(), now, now.minus(TOUCH_INTERVAL));

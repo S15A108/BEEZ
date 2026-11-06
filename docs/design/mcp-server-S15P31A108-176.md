@@ -219,8 +219,8 @@ SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터�
 
 | 요청 | 하는 일 |
 | --- | --- |
-| 세션 ID 없는 POST(initialize) | 요청 본문을 남겨 두었다가, 응답에 새 `Mcp-Session-Id`가 있으면 한 행을 만든다. 행에는 세션 ID·토큰·`clientInfo.name/version`(200자로 자름)·`last_report_at`이 들어간다. 이때 **같은 계정·같은 프로젝트의 살아 있는 세션을 `REPLACED`로 끝낸다**(1인 1에이전트). 멤버십 행을 잠가(토큰 발급·팀원 제외와 같은 행) 동시 연결이 둘 다 살아남지 않게 한다 |
-| 세션 ID 있는 요청 | 다른 토큰의 세션이면 404 `not_found`(남의 세션이 있다는 것을 알리지 않는다). `REPLACED`면 409 `agent_session_replaced`. 그 밖에는 `last_report_at`을 1분 단위로 갱신하고 SDK로 보낸다 |
+| 세션 ID 없는 POST(initialize) | 요청 본문과 **응답을 붙잡아 두었다가**, 응답에 새 `Mcp-Session-Id`가 있으면 한 행을 만든 뒤에 응답을 내보낸다(클라이언트가 세션 ID를 받기 전에 기록이 커밋되어 바로 이어지는 요청이 막히지 않는다). SDK는 initialize를 요청 스레드에서 JSON 한 번으로 응답한다. 행에는 세션 ID·토큰·`clientInfo.name/version`(200자로 자름)·`last_report_at`이 들어간다. 이때 **같은 계정·같은 프로젝트의 살아 있는 세션을 `REPLACED`로 끝낸다**(1인 1에이전트). 멤버십 행을 잠가(토큰 발급·팀원 제외와 같은 행) 동시 연결이 둘 다 살아남지 않게 하고, 잠근 뒤 멤버십이 끝났으면 기록하지 않는다. 기록이 실패하면 initialize는 500이다 |
+| 세션 ID 있는 요청 | 기록이 없거나·다른 토큰의 세션이거나·이미 닫힌 세션이면 404 `not_found`(fail-closed). 기록이 없는 ID는 SDK까지 가지 않으므로 남의 세션과 없는 세션의 응답이 같다. `REPLACED`면 409 `agent_session_replaced`. 그 밖에는 `last_report_at`을 1분 단위로 갱신하고 SDK로 보낸다 |
 | DELETE | 밀려난 세션이어도 SDK까지 보내 서버 메모리의 세션을 지우게 한다. 성공하면 `CLOSED`로 끝낸다 |
 
 - **정한 것(전진 11-06, Q06)**: 단위는 토큰이 아니라 계정·프로젝트다. **나중 연결이 이긴다.**
@@ -230,21 +230,23 @@ SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터�
 - 연결 시험은 MCP-15 `check_connection`이다(02-mcp-tools). 다른 도구와 같은 토큰 검증·`requireMember`를 거친다.
 - 작업 절차 안내(AGT-04)는 initialize 응답의 `instructions`로 간다. 글은 토큰 발급 응답의 `claude_md_snippet`과 같은 `AgentTokenService.CLAUDE_MD_SNIPPET`이다.
 - 토큰 폐기·멤버십 종료는 이 표가 아니라 토큰 검증이 매 요청 401로 막는다. 폐기된 토큰의 세션 행에는 `ended_at`이 찍히지 않는다. 연결 판정은 토큰의 `revoked_at`과 함께 본다.
-- 세션 기록이 실패해도 MCP 요청은 그대로 처리한다(오류 로그 `mcp session … failed`). 기록은 관측이고, 접근 제어는 토큰 검증과 서비스가 한다.
+- 세션 확인·기록이 DB 오류로 실패하면 500이다(오류 로그 `mcp session … failed`). 결속을 건너뛴 채 통과시키지 않는다(fail-closed) — 기록이 없는 세션을 통과시키면 결속이 기록 성공에 기댄다. 닫기(DELETE) 기록만은 실패해도 SDK 응답을 그대로 둔다(SDK는 이미 세션을 지웠다).
 - 연결 기록을 읽는 곳 두 군데는 끝난 세션(`ended_at`)을 세지 않게 바꿨다.
-  - 팀원 목록의 `agent_connected`: `ProjectMemberRepository.findAgentConnectedAccountIds`
-  - 에이전트 작업 현황 MON-A05: `TaskStatusRepository.agentSessions`
+  - 팀원 목록의 `agent_connected`: `ProjectMemberRepository.findAgentConnectedAccountIds`. **최근 2시간 안에 통신한 세션만** 연결로 본다 — DELETE 없이 꺼진 클라이언트·배포 재시작으로 사라진 세션은 끝남이 찍히지 않는데, SDK가 유휴 세션을 마지막 요청 후 1~2시간에 지우므로 그보다 오래 조용하면 세션이 남아 있지 않다.
+  - 에이전트 작업 현황 MON-A05: `TaskStatusRepository.agentSessions`. 시간 창은 걸지 않았다 — 보고가 늦은 에이전트를 '확인 필요'로 보여야 하는 화면이라 판정은 -75·변준성과 맞춘다.
 
 **남긴 것**
 
 - **SDK 메모리의 밀려난 세션**: SDK에 서버 쪽에서 세션을 닫는 공개 API가 없다. 그래서 밀려난 세션은 요청이 409로 막힐 뿐, 메모리에서는 정리 주기(1시간)까지 남는다. 같은 토큰으로 initialize를 반복하면 메모리 세션이 쌓인다. DB의 살아 있는 세션은 계정·프로젝트당 하나다.
-- **SDK 정리로 사라진 세션**: 오래 쉬어 SDK가 지운 세션에는 `ended_at`이 찍히지 않는다. 통신이 끊긴 지 오래된 세션을 끊긴 것으로 보는 판정은 -75(마지막 통신 시각 임계값)에서 한다.
+- **SDK 정리로 사라진 세션**: 오래 쉬어 SDK가 지운 세션에는 `ended_at`이 찍히지 않는다. 팀원 목록은 2시간 창으로 거르고, 연결 현황(AGT-A05·A06)의 판정은 -75에서 한다.
+- **요청마다 트랜잭션 하나 더**: 세션 확인이 토큰 검증과 따로 돈다. 둘을 한 트랜잭션으로 묶는 것은 후속이다.
+- **SDK의 없는 세션 404 본문**: SDK는 `McpError` 예외를 통째로 직렬화해 스택 트레이스까지 내보낸다. 기록이 있는 세션을 SDK가 이미 지웠을 때(배포 재시작·유휴 정리)만 이 응답이 나간다.
 - **`last_report_at`의 뜻**: 04-task-lifecycle의 보고 끊김(30분)은 이 칸을 "마지막 상태 보고"로 읽고, AgentConnection은 "마지막 통신 시각"으로 읽는다. 지금은 통신 시각을 쓴다. -75에서 맞춘다.
 - **활동 기록의 세션**: `activity_event.agent_session_id` 채우기(`ActivityRecorder`의 TODO)와 AGT-A04 연결 안내 REST API는 후속이다.
 
 시험: `AgentConnectionIntegrationTests`(실제 MCP 클라이언트).
 
-- 연결 → 확인 → 해제
-- 같은 사람의 재연결(409, 팀원은 유지)
-- 남의 세션 이어 쓰기·끊기(404)
+- 연결 → 확인 → 해제, 팀원 목록 연결 표시(2시간 창 포함)
+- 같은 사람의 재연결(409, 팀원은 유지, MON-A05에 새 세션만)
+- 남의 세션 이어 쓰기·끊기(404, 없는 세션과 같은 응답)
 - 폐기 토큰(401)

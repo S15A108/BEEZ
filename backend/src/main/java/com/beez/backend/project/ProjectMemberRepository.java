@@ -129,8 +129,11 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     Optional<ProjectMember> findByProjectIdAndAccountId(long projectId, long accountId);
 
     /**
-     * accountIds 중 에이전트가 연결된 계정 (Member.agent_connected). 폐기 안 된 토큰에 끝나지 않은 agent_session 이 있으면 연결로 본다
-     * (-173 A06 합의, -178 재조정: 닫히거나 새 연결에 밀려난 세션은 세지 않는다. 통신이 끊긴 지 오래된 세션의 판정은 -75). 빈 목록이면 쿼리하지 않는다 — {@code in ()} 은 SQL 문법 오류다.
+     * accountIds 중 에이전트가 연결된 계정 (Member.agent_connected). 폐기 안 된 토큰에 끝나지 않고 최근 2시간 안에 통신한
+     * agent_session 이 있으면 연결로 본다 (-173 A06 합의, -178 재조정). 닫히거나 새 연결에 밀려난 세션은 세지 않는다.
+     * 2시간: DELETE 없이 꺼진 클라이언트·배포 재시작으로 사라진 세션은 끝남이 찍히지 않는다. MCP 서버는 마지막 요청 후 1~2시간에
+     * 유휴 세션을 지우므로(McpServerConfig sessionSweepInterval) 그보다 오래 조용하면 세션이 남아 있지 않다. 보고 지연 판정은 -75.
+     * 빈 목록이면 쿼리하지 않는다 — {@code in ()} 은 SQL 문법 오류다.
      */
     default List<Long> agentConnectedAccountIds(long projectId, Collection<Long> accountIds) {
         if (accountIds.isEmpty()) {
@@ -139,11 +142,13 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
         return findAgentConnectedAccountIds(projectId, accountIds);
     }
 
-    /** {@link #agentConnectedAccountIds} 로만 부른다. agent_session 엔티티가 아직 없어 SQL 로 읽는다. */
+    /** {@link #agentConnectedAccountIds} 로만 부른다. 프로젝트 쪽에서 토큰·세션을 함께 보려고 SQL 로 읽는다. */
     @Query(value = """
             select distinct t.account_id
               from agent_token t
-              join agent_session s on s.agent_token_id = t.id and s.ended_at is null
+              join agent_session s on s.agent_token_id = t.id
+                                  and s.ended_at is null
+                                  and s.last_report_at > now() - interval '2 hours'
              where t.project_id = :projectId
                and t.revoked_at is null
                and t.account_id in (:accountIds)

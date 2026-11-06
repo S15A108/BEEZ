@@ -48,7 +48,8 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
     @Test
     void connect_call_close_isRecordedPerSession() {
         var p = fixtures().projectWithLeader();
-        Issued issued = issue(p.leaderEmail(), p.projectId(), "개발 PC");
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        Issued issued = issue(leader, p.projectId(), "개발 PC");
 
         McpSyncClient client = connect(issued.token(), "claude-code");
         String sessionId;
@@ -73,9 +74,19 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
             assertThat(row.get("agent_token_id")).isEqualTo(issued.tokenId());
             assertThat(row.get("last_report_at")).isNotNull();
             assertThat(row.get("ended_at")).isNull();
+            // 팀원 목록(MEM-A06)의 연결 표시
+            assertThat(agentConnected(leader, p.projectId(), p.leaderAccountId())).isTrue();
+
+            // 2시간 넘게 통신이 없으면(DELETE 없이 꺼진 클라이언트·재시작) 연결로 보지 않는다. 다시 통신하면 돌아온다
+            db.update("update agent_session set last_report_at = now() - interval '3 hours' where session_key = ?",
+                    sessionId);
+            assertThat(agentConnected(leader, p.projectId(), p.leaderAccountId())).isFalse();
+            ok(client, "check_connection");
+            assertThat(agentConnected(leader, p.projectId(), p.leaderAccountId())).isTrue();
         } finally {
             client.closeGracefully();
         }
+        assertThat(agentConnected(leader, p.projectId(), p.leaderAccountId())).isFalse();
 
         // 해제: 클라이언트가 DELETE /mcp 로 닫으면 연결이 끝난다
         Map<String, Object> closed = session(sessionId);
@@ -115,12 +126,14 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
             assertThat(session(firstSession).get("end_reason")).isEqualTo("REPLACED");
             assertThat(ok(teammate, "check_connection").get("account_id").asString()).isEqualTo(String.valueOf(mate));
 
-            // 팀원 목록의 연결 표시는 살아 있는 세션만 센다
-            Integer live = db.queryForObject("""
-                    select count(*) from agent_session s join agent_token t on t.id = s.agent_token_id
-                     where t.project_id = ? and t.account_id = ? and s.ended_at is null""",
-                    Integer.class, p.projectId(), p.leaderAccountId());
-            assertThat(live).isEqualTo(1);
+            // 밀려난 세션은 에이전트 작업 현황(MON-A05)에 남지 않는다 — 팀장 세션은 새 연결 하나만
+            ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+            String secondSession = ok(second, "check_connection").get("agent_session_id").asString();
+            JsonNode work = json.readTree(leader.get("/api/projects/" + p.projectId() + "/agents/work-status?member_id="
+                    + p.leaderMemberId()).body());
+            assertThat(work.get("items")).extracting(i -> i.get("agent_session_id").asString())
+                    .containsExactly(secondSession);
+            assertThat(agentConnected(leader, p.projectId(), p.leaderAccountId())).isTrue();
         } finally {
             // 밀려난 세션의 DELETE 는 거부하지 않는다 — SDK 가 서버 메모리의 세션을 지울 수 있게
             first.closeGracefully();
@@ -154,6 +167,11 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
             HttpResponse<String> hijack = raw.post("/mcp", call, "Accept", "application/json, text/event-stream",
                     "Authorization", "Bearer " + intruder.token(), "Mcp-Session-Id", sessionId);
             assertThat(hijack.statusCode()).isEqualTo(404);
+            // 남의 세션과 없는 세션은 같은 응답이다 — 응답으로 남의 세션이 있는지 알 수 없다
+            HttpResponse<String> unknown = raw.post("/mcp", call, "Accept", "application/json, text/event-stream",
+                    "Authorization", "Bearer " + owner.token(), "Mcp-Session-Id", "00000000-0000-0000-0000-000000000000");
+            assertThat(unknown.statusCode()).isEqualTo(404);
+            assertThat(json.readTree(hijack.body())).isEqualTo(json.readTree(unknown.body()));
             assertThat(json.readTree(hijack.body()).get("error").get("code").asString()).isEqualTo("not_found");
 
             HttpResponse<String> kill = raw.send(raw.request("/mcp", "Authorization", "Bearer " + intruder.token(),
@@ -217,6 +235,17 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
         String body = label == null ? "{}" : "{\"label\":\"" + label + "\"}";
         JsonNode issued = json.readTree(user.post("/api/projects/" + projectId + "/agent-tokens", body).body());
         return new Issued(issued.get("token").asString(), issued.get("token_info").get("id").asLong());
+    }
+
+    /** 팀원 목록(MEM-A06)에서 이 계정의 agent_connected */
+    private boolean agentConnected(ApiClient viewer, long projectId, long accountId) {
+        JsonNode page = json.readTree(viewer.get("/api/projects/" + projectId + "/members").body());
+        for (JsonNode m : page.get("items")) {
+            if (m.get("account_id").asString().equals(String.valueOf(accountId))) {
+                return m.get("agent_connected").asBoolean();
+            }
+        }
+        throw new AssertionError("member not found: " + accountId);
     }
 
     private Map<String, Object> session(String sessionKey) {

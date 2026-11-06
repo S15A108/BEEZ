@@ -6,8 +6,9 @@
 --   client_name·client_version : initialize 의 clientInfo — 어떤 클라이언트인지 (예: claude-code). 클라이언트가 보낸 값 그대로
 --   ended_at·end_reason : 연결이 끝난 시각과 이유. CLOSED = 클라이언트가 DELETE /mcp 로 닫음,
 --                         REPLACED = 같은 계정이 같은 프로젝트에 새로 연결해 밀려남 (1인 1에이전트, Q06)
---   last_report_at : 마지막 통신 시각 (AgentConnection.last_report_at). 1분 단위로 갱신한다
--- 지금까지 행이 없어 채울 값이 없다.
+--   last_report_at : 마지막 통신 시각 (AgentConnection.last_report_at). 1분 단위로 갱신한다.
+--                    기본값 now() — 연결 기록은 만들 때 늘 채우고, 팀원 목록의 '연결됨'은 최근 2시간 통신으로 본다
+-- 지금까지 앱이 쓴 행이 없어 채울 값이 없다.
 
 ALTER TABLE agent_session
   ADD COLUMN client_name    TEXT,
@@ -17,6 +18,8 @@ ALTER TABLE agent_session
   ADD CONSTRAINT ck_agent_session_end
     CHECK ((ended_at IS NULL AND end_reason IS NULL)
         OR (ended_at IS NOT NULL AND end_reason IN ('CLOSED', 'REPLACED')));
+
+ALTER TABLE agent_session ALTER COLUMN last_report_at SET DEFAULT now();
 
 -- 요청마다 세션 ID 로 찾는다. SDK 가 만드는 세션 ID 는 UUID 라 토큰을 넘어서도 겹치지 않는다.
 -- 기존 UNIQUE (agent_token_id, session_key) 는 그대로 둔다
