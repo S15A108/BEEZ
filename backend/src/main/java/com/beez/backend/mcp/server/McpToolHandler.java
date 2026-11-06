@@ -34,7 +34,7 @@ import tools.jackson.databind.exc.UnrecognizedPropertyException;
  * <ol>
  *   <li>호출자: 필터가 검증한 토큰 주체({@link AgentPrincipal})에서 {@code CallerContext.agent} 와 프로젝트를 만든다</li>
  *   <li>인수: snake_case JSON → 인수 레코드. 변환 실패(타입·enum 이름·모르는 키)는 400 validation_failed</li>
- *   <li>결과: 성공은 payload 를 snake_case JSON 으로, 업무 오류는 {@code {"error":{"code","message"}}} 를 도구 실패 결과(isError)로</li>
+ *   <li>결과: 성공은 payload 를 snake_case JSON 으로, 업무 오류는 {@code {"error":{"code","message","details"?}}} 를 도구 실패 결과(isError)로</li>
  *   <li>로그: 요청 ID(MDC)와 도구·프로젝트·계정·결과 코드·지연. 인수·결과 본문은 남기지 않는다 (비밀값·개인 대화 원문 — MCP-09)</li>
  * </ol>
  * 감사 기록(mcp_audit_log)은 -177 이 이 자리에 붙인다.
@@ -183,10 +183,13 @@ public class McpToolHandler {
                 .build();
     }
 
-    /** ApiException 은 그대로, 나머지는 REST 의 {@link GlobalExceptionHandler} 대응표를 그대로 탄다 (같은 오류 = 같은 code) */
+    /**
+     * ApiException 은 REST {@code handleApi} 와 같은 본문(code·message·details)으로, 나머지는 REST 의
+     * {@link GlobalExceptionHandler} 대응표를 그대로 탄다 (같은 오류 = 같은 본문, -267). details 가 없으면 non_null 로 빠진다
+     */
     private ApiErrorResponse toError(Exception e) {
         if (e instanceof ApiException api) {
-            return ApiErrorResponse.of(api.getCode(), api.getMessage());
+            return ApiErrorResponse.of(api.getCode(), api.getMessage(), api.getDetails());
         }
         Method method = restErrorMethods.resolveMethodByThrowable(e);
         if (method != null) {

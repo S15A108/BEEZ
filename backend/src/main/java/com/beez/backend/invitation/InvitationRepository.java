@@ -60,6 +60,14 @@ public interface InvitationRepository extends JpaRepository<Invitation, Long> {
     List<Invitation> findPendingByProjectAndEmailForUpdate(@Param("projectId") long projectId,
                                                            @Param("email") String email);
 
+    /**
+     * 회원 탈퇴(ACC-A10, -277): 이 이메일로 온 초대를 상태와 관계없이 id 순으로 잠그고 읽는다.
+     * 대기 초대는 자동 참여·제외와 같은 id 순이라 잠금이 엇갈리지 않는다. 탈퇴는 이것을 프로젝트 행보다 먼저 잠근다 (초대 → 프로젝트).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from Invitation i where i.email = :email order by i.id")
+    List<Invitation> findAllByEmailForUpdate(@Param("email") String email);
+
     /** 이메일 초대(MEM-A01 emails)의 ALREADY_INVITED 판정: 이 프로젝트에서 이 이메일의 대기 초대 중 가장 오래된 것. */
     Optional<Invitation> findFirstByProjectIdAndEmailAndAcceptedAtIsNullAndRevokedAtIsNullOrderByIdAsc(
             long projectId, String email);

@@ -586,6 +586,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               </ul>
                             </section>
                           ))}
+                        {/* lg 미만은 창이 내용 높이로 늘어나므로 대화 칸 높이를 묶어 안에서 스크롤한다(새 메시지로 내리기). lg부터는 창 높이를 따른다. */}
                         <AsyncState query={entries}>
                           {() => (
                             <div
@@ -593,7 +594,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               role="log"
                               aria-label="회의 대화"
                               className={cn(
-                                'grid min-h-48 flex-1 content-start gap-3.5 overflow-auto rounded-2xl border bg-white p-4',
+                                'grid max-h-[50vh] min-h-48 flex-1 content-start gap-3.5 overflow-auto rounded-2xl border bg-white p-4 lg:max-h-none',
                                 line,
                               )}
                             >
@@ -669,7 +670,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 }, '비비가 다시 정리했어요.')
                               }}
                             >
-                              <Button onClick={() => setEnding(true)}>
+                              {/* 고칠 점 폼 안에 있으므로 제출 버튼이 되지 않게 한다. */}
+                              <Button
+                                type="button"
+                                onClick={() => setEnding(true)}
+                              >
                                 회의 끝내기
                               </Button>
                             </InlineMessage>
@@ -1064,15 +1069,16 @@ function ParticipantPicker({
             const role = roleOf(member)
             return (
               <li key={member.id}>
+                {/* 체크 상자가 sr-only라 키보드 초점 테두리는 줄 전체에 그린다(ActionForm 칩과 같은 클래스). 목록이 스크롤 영역이라 바깥 테두리가 잘리지 않게 안쪽으로 그린다. */}
                 <label
                   className={cn(
-                    'flex cursor-pointer items-center gap-2.5 px-3 py-1.5 hover:bg-[#fbfaf6]',
+                    'flex cursor-pointer items-center gap-2.5 px-3 py-1.5 hover:bg-[#fbfaf6] has-focus-visible:ring-2 has-focus-visible:ring-ring has-focus-visible:ring-inset',
                     locked && 'cursor-default',
                   )}
                 >
                   <input
                     type="checkbox"
-                    className="peer sr-only"
+                    className="sr-only"
                     checked={joined}
                     disabled={locked}
                     onChange={() =>
@@ -1082,7 +1088,7 @@ function ParticipantPicker({
                   <Check
                     aria-hidden="true"
                     className={cn(
-                      'size-4 shrink-0 text-[#2c291f] peer-focus-visible:ring-2',
+                      'size-4 shrink-0 text-[#2c291f]',
                       !joined && 'invisible',
                       locked && 'text-[#c9c4b8]',
                     )}

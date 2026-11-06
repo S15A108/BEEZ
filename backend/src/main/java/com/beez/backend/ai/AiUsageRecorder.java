@@ -1,4 +1,4 @@
-package com.beez.backend.changeproposal.service;
+package com.beez.backend.ai;
 
 import java.math.BigDecimal;
 import java.sql.Types;
@@ -10,47 +10,46 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
 /**
- * 문서 수정 초안(CHG-A07)의 모델 사용량을 공통 사용량 표({@code llm_usage}, feature BEE_DRAFT)에 남긴다.
+ * AI 호출의 모델 사용량을 공통 사용량 표({@code llm_usage})에 남긴다. feature 는 호출하는 쪽이 정한다(문서 수정 초안 BEE_DRAFT, 회의 정리 MEETING_ANALYSIS).
  * 호출 한 번마다 {@code request_key} 가 새로 만들어지므로 같은 요청을 다시 보내도 실제로 일어난 호출은 모두 센다.
  * 기록이 실패해도 응답을 막지 않는다(경고 로그). 트랜잭션 밖에서 호출한다 — 한 줄 실패가 다른 줄이나 응답을 되돌리지 않게 한다.
  */
 @Component
-public class DraftUsageRecorder {
-    private static final Logger log = LoggerFactory.getLogger(DraftUsageRecorder.class);
-    static final String FEATURE = "BEE_DRAFT";
+public class AiUsageRecorder {
+    private static final Logger log = LoggerFactory.getLogger(AiUsageRecorder.class);
     private static final BigDecimal COST_MAX = new BigDecimal("999999.999999");
 
     private final JdbcClient jdbc;
-    public DraftUsageRecorder(JdbcClient jdbc) { this.jdbc = jdbc; }
+    public AiUsageRecorder(JdbcClient jdbc) { this.jdbc = jdbc; }
 
     /** AI 응답의 usage 배열을 한 줄씩 기록한다. 기록을 시도한 줄 수를 돌려준다. */
-    public int record(long project, Long task, String requestKey, Map<String, Object> response, long observedMillis) {
+    public int record(String feature, long project, Long task, String requestKey, Map<String, Object> response, long observedMillis) {
         if (!(response.get("usage") instanceof List<?> list)) return 0;
-        return recordLines(project, task, requestKey, list, "TEMPLATE".equals(response.get("origin")), response.get("model"), observedMillis);
+        return recordLines(feature, project, task, requestKey, list, "TEMPLATE".equals(response.get("origin")), response.get("model"), observedMillis);
     }
 
     /**
      * usage 줄 목록을 한 줄씩 기록한다. 성공 응답의 usage 와 오류 본문의 usage(모델 호출 뒤 실패, 실제 토큰·비용) 모두 이 경로다.
      * 기록을 시도한 줄 수를 돌려준다 — 0 이면 호출한 쪽이 "미확인" 한 줄을 따로 남긴다.
      */
-    public int recordLines(long project, Long task, String requestKey, List<?> list, boolean template, Object responseModel,
+    public int recordLines(String feature, long project, Long task, String requestKey, List<?> list, boolean template, Object responseModel,
                            long observedMillis) {
         int tried = 0;
         for (int index = 0; index < list.size(); index++) {
             if (!(list.get(index) instanceof Map<?, ?> raw)) continue;
             tried++;
             @SuppressWarnings("unchecked") Map<String, Object> entry = (Map<String, Object>) raw;
-            insertQuietly(project, task, entry, requestKey + ":" + index, responseModel, template, observedMillis);
+            insertQuietly(feature, project, task, entry, requestKey + ":" + index, responseModel, template, observedMillis);
         }
         return tried;
     }
 
     /** 호출이 실패했거나 쓸 수 없는 응답이 왔을 때. 토큰 수를 모르므로 0 으로 채우지 않는다. */
-    public void recordFailure(long project, Long task, String requestKey, long observedMillis) {
-        insertQuietly(project, task, Map.of("failed", true, "tokens_known", false), requestKey + ":failed", null, false, observedMillis);
+    public void recordFailure(String feature, long project, Long task, String requestKey, long observedMillis) {
+        insertQuietly(feature, project, task, Map.of("failed", true, "tokens_known", false), requestKey + ":failed", null, false, observedMillis);
     }
 
-    private void insertQuietly(long project, Long task, Map<String, Object> entry, String fallbackKey, Object responseModel,
+    private void insertQuietly(String feature, long project, Long task, Map<String, Object> entry, String fallbackKey, Object responseModel,
                                boolean template, long observedMillis) {
         try {
             boolean known = Boolean.TRUE.equals(entry.get("tokens_known"));
@@ -72,7 +71,7 @@ public class DraftUsageRecorder {
                     VALUES(:project,:feature,:key,:task,:provider,:model,:known,:input,:output,:cache,:latency,:cost,:currency,:failed,:origin)
                     ON CONFLICT(request_key) DO NOTHING
                     """)
-                    .param("project", project).param("feature", FEATURE).param("key", key).param("task", task, Types.BIGINT)
+                    .param("project", project).param("feature", feature).param("key", key).param("task", task, Types.BIGINT)
                     .param("provider", provider).param("model", model).param("known", known)
                     .param("input", known ? nonNegativeInt(entry.get("input_tokens")) : null, Types.INTEGER)
                     .param("output", known ? nonNegativeInt(entry.get("output_tokens")) : null, Types.INTEGER)
@@ -81,7 +80,7 @@ public class DraftUsageRecorder {
                     .param("failed", Boolean.TRUE.equals(entry.get("failed"))).param("origin", template ? "template" : "model")
                     .update();
         } catch (RuntimeException e) {
-            log.warn("BEE_DRAFT usage not recorded (project {}): {}", project, e.getMessage());
+            log.warn("{} usage not recorded (project {}): {}", feature, project, e.getMessage());
         }
     }
 

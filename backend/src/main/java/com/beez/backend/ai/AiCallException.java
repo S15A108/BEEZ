@@ -1,4 +1,4 @@
-package com.beez.backend.changeproposal.port;
+package com.beez.backend.ai;
 
 import com.beez.backend.common.api.ApiException;
 import java.util.List;

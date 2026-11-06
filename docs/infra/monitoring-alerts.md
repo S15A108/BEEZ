@@ -17,7 +17,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 
 | 알림 | 조건 | 지속 | 재통지 | 1차 대응 |
 |---|---|---|---|---|
-| [CdcPendingDelay](#cdcpendingdelay) | 가장 오래된 PENDING > 600초 **그리고** consumer 켜짐 | 5분 | 4시간 | 앱 · 양지훈 |
+| [CdcPendingDelay](#cdcpendingdelay) | 가장 오래된 PENDING > 600초 **그리고** 복구 스캔 켜짐 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcSnapshotFailing](#cdcsnapshotfailing) | DB 집계 실패, 또는 마지막 성공 120초 초과 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcMetricsMissing](#cdcmetricsmissing) | backend 수집은 되는데(`up == 1`) CDC 필수 지표가 없음(인스턴스별) | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcExpiredLeases](#cdcexpiredleases) | lease 만료 RUNNING > 0 | 5분 | 4시간 | 앱 · 양지훈 |
@@ -26,6 +26,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcNotEvaluatedRequiresReview](#cdcnotevaluatedrequiresreview) | 확인 필요 미평가 > 0 | 바로 | **24시간** | 앱 · 양지훈 |
 | [CdcKafkaReceiveFailures](#cdckafkareceivefailures) | 최근 5분 Kafka 수신 실패 증가 **그리고** consumer 켜짐 | 바로 | 4시간 | 인프라 · 전진 |
 | [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜진 인스턴스에 그 인스턴스의 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcConsumerDown](#cdcconsumerdown) | consumer 켜진 인스턴스가 Kafka에 붙어 있지 않음(`consumer_up` ≠ 1 또는 없음) | 5분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -105,7 +106,9 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
   프로젝트". backend 로그의 분석 워커 오류.
 - 재시도 예정이 같이 늘었으면 AI 호출 실패로 재시도 중일 가능성, 막힌 프로젝트가 같이
   있으면 선행 접수 미완료로 순서 대기일 가능성이 큽니다.
-- consumer가 꺼진 환경(dev에 Kafka 없음)에서는 울리지 않습니다.
+- 복구 스캔이 꺼진 환경(`BEEZ_CDC_INTAKE_ENABLED=false`)에서는 울리지 않습니다. 처리는 스캔이 맡으므로
+  consumer 설정이 아니라 스캔 설정(`beez_cdc_analysis_recovery_enabled`)을 봅니다(S15P31A108-298) — Kafka가
+  죽어 스캔만 도는 동안에도 지연은 알립니다.
 
 ### CdcSnapshotFailing
 
@@ -121,7 +124,7 @@ backend가 지표용 DB 집계에 실패하거나, 집계 값이 120초 넘게 �
 ### CdcMetricsMissing
 
 backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지표(`snapshot_available`·
-`last_success`·`consumer_enabled`·`intakes`) 중 하나라도 5분 넘게 없습니다. 이때는
+`last_success`·`consumer_enabled`·`recovery_enabled`·`intakes`) 중 하나라도 5분 넘게 없습니다. 이때는
 `CdcSnapshotFailing`도 `BackendScrapeDown`도 울리지 않아 CDC 감시가 통째로 빠집니다.
 
 - 볼 곳: 그 인스턴스에 배포된 커밋(CDC 지표가 없는 커밋으로 배포·롤백했는지), backend 기동
@@ -175,6 +178,17 @@ counter는 리스너가 등록될 때 0으로 생기므로, 리스너가 뜨지 
 인스턴스별로 대조하므로 backend가 여럿일 때 한쪽만 빠져도 잡습니다.
 
 - 볼 곳: backend 기동 로그의 Kafka 리스너 등록, 배포된 설정(consumer 관련 env).
+
+### CdcConsumerDown
+
+consumer 설정이 켜진 인스턴스가 5분 넘게 Kafka에 붙어 있지 않습니다(S15P31A108-298).
+`beez_cdc_kafka_consumer_up`은 리스너가 돌고, 파티션을 받았고, 최근 30초 안에 그룹 heartbeat를 보냈을 때만 1입니다.
+이 동안에도 분석은 복구 스캔이 30초 늦게 처리하므로 `CdcPendingDelay`는 울리지 않습니다. 급하지 않지만 Kafka 경로가 멈춘 상태입니다.
+
+- 볼 곳: `cdc ps`(Kafka·Connect가 떠 있는지), backend 로그의 "CDC intake Kafka consumer could not start"
+  (Kafka 이름이 안 풀려 시작을 30초마다 재시도 중), Kafka 연결 경고. 지표가 아예 없으면 리스너 설정이 빠진 배포다.
+- Kafka가 돌아오면 backend 재시작 없이 다시 붙습니다(최대 30초 + 재연결 대기 10초). 붙으면 저절로 풀립니다.
+- 계획된 Kafka 점검이면 알림 일시 중지를 걸거나 consumer만 끕니다(`cdc-stack.md` "중지·내리기").
 
 ### BackendScrapeDown
 
@@ -335,20 +349,31 @@ read -rsp "webhook URL: " U && echo && \
 # 로컬 PC (Git Bash, 저장소 루트)
 P=prom/prometheus:v3.15.1; A=prom/alertmanager:v0.34.2   # compose.yaml 과 같은 태그
 cd infra/monitoring
-MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool $P check rules ../rules/beez.yml
-MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/p" -w /p/tests --entrypoint promtool $P test rules beez_test.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" --entrypoint promtool $P check config /etc/prometheus/prometheus.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/prometheus:/etc/prometheus:ro" -w /etc/prometheus/tests --entrypoint promtool $P test rules beez_test.yml
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A check-config /etc/alertmanager/alertmanager.yml
-MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A config routes test --config.file=/etc/alertmanager/alertmanager.yml alertname=CdcDataUnavailable   # null 이어야 한다
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/alertmanager:/etc/alertmanager:ro" --entrypoint amtool $A config routes test --config.file=/etc/alertmanager/alertmanager.yml --verify.receivers=null alertname=CdcDataUnavailable
 cd ../..
 ```
 
-- `MSYS_NO_PATHCONV=1`: Git Bash가 `/p` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
+- `MSYS_NO_PATHCONV=1`: Git Bash가 `/etc/...` 같은 컨테이너 경로를 Windows 경로로 바꾸지 않게 합니다.
+- `check config`는 prometheus.yml과 `rule_files`(`rules/*.yml`)가 가리키는 규칙 파일을 함께
+  검사합니다. 서버 컨테이너와 같은 경로에 붙여야 `rule_files` 경로가 맞습니다.
+- routes test는 `CdcDataUnavailable`이 `null`이 아닌 수신처로 가면 실패(종료 코드 1)합니다.
 - 시험은 244 결정과 PR #121 리뷰의 계약만 봅니다(consumer 꺼짐에서 안 울림, 600초 + 5분,
   집계 실패·갱신 멈춤, 오래된 스냅샷 제외·한 인스턴스만 멈추면 억제하지 않음, 집계가 멈추면
   억제 원인이 FAILED 해소보다 먼저 생김, CDC 지표 전부·일부 누락, Kafka 실패·인스턴스별 지표
   누락, FAILED 중복 제거). 억제 자체(Alertmanager)는 promtool이 보지 못해 아래 기록처럼 실측했습니다. 각 시험 위에 깨지면 알게 되는 것을 적었습니다.
-- CI에서는 돌지 않습니다(S15P31A108-264 범위 밖, 후속 과제). 규칙을 바꾼 PR은 위 세 명령의
-  결과를 PR 본문에 붙입니다.
+- `infra/monitoring/**`를 바꾼 PR에서는 CI `monitoring` 잡이 같은 검사를 돌리고, 실패하면
+  `ci-gate`가 실패해 머지할 수 없습니다(S15P31A108-292). 잡은 위 네 명령에 더해, 이미지를
+  `compose.yaml`에서 읽고(위 `P`·`A`처럼 손으로 맞추지 않음) `rules/`에 `*.yml`이 아닌
+  파일·하위 디렉터리가 있으면 실패합니다(서버가 읽지 않는 규칙 파일). 또 alertmanager.yml에서
+  `{{`가 든 값(제목·본문·링크)을 모두 뽑아 `amtool template render`로 실제로 그려 봅니다.
+  `check-config`는 템플릿 파일을 읽기만 해서, 없는 템플릿 이름·함수 오타·`templates` 글롭에서
+  빠진 파일을 통과시키고 서버에서는 알림을 보낼 때 실패합니다. 로컬 실행은 PR 전에
+  빨리 보려는 용도이고, 결과를 PR 본문에 붙이지 않아도 됩니다.
+- FAILED·확인 필요 미평가의 24시간 재통지는 routes test가 수신처만 보여 주어 CI에서 고정하지
+  않습니다. 바꿀 때는 `config routes show`로 직접 확인합니다.
 
 알림 문구까지 보려면 [로컬에서 검증하기](monitoring.md#로컬에서-검증하기)로 스택을 띄웁니다.
 `compose.local.yaml`의 `webhook-catcher`가 가짜 Mattermost로 받아 본문을 로그에 찍습니다.

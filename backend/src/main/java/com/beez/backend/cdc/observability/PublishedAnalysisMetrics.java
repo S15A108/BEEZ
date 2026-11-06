@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 public class PublishedAnalysisMetrics {
     private static final Logger log = LoggerFactory.getLogger(PublishedAnalysisMetrics.class);
     private final PublishedAnalysisMetricsReader reader;
+    private final boolean recoveryEnabled;
     private final boolean consumerEnabled;
     private final long cacheNanos;
     private volatile Observation observation;
@@ -23,9 +24,11 @@ public class PublishedAnalysisMetrics {
     private record Observation(PublishedAnalysisMetricsSnapshot data, long capturedNanos, double lastSuccessEpochSeconds) { }
 
     public PublishedAnalysisMetrics(MeterRegistry registry, PublishedAnalysisMetricsReader reader,
-                                    @Value("${beez.cdc.intake.enabled:false}") boolean consumerEnabled,
+                                    @Value("${beez.cdc.intake.enabled:false}") boolean recoveryEnabled,
+                                    @Value("${beez.cdc.intake.consumer-enabled:false}") boolean consumerEnabled,
                                     @Value("${beez.cdc.observability.cache-millis:15000}") long cacheMillis) {
         this.reader = reader;
+        this.recoveryEnabled = recoveryEnabled;
         this.consumerEnabled = consumerEnabled;
         // A zero or negative value must not turn each meter into a separate database query.
         this.cacheNanos = TimeUnit.MILLISECONDS.toNanos(Math.min(300000, Math.max(1000, cacheMillis)));
@@ -56,8 +59,10 @@ public class PublishedAnalysisMetrics {
                 .description("Whether the latest database snapshot succeeded").register(registry);
         Gauge.builder("beez.cdc.analysis.snapshot.last.success.epoch.seconds", this, m -> m.current().lastSuccessEpochSeconds())
                 .description("Unix time of the most recent successful database snapshot").register(registry);
+        Gauge.builder("beez.cdc.analysis.recovery.enabled", this, m -> m.recoveryEnabled ? 1 : 0)
+                .description("Recovery scan configuration flag (analysis intake processing)").register(registry);
         Gauge.builder("beez.cdc.analysis.consumer.enabled", this, m -> m.consumerEnabled ? 1 : 0)
-                .description("Consumer configuration flag; not a consumer health check").register(registry);
+                .description("Kafka consumer configuration flag; see beez.cdc.kafka.consumer.up for health").register(registry);
     }
 
     private void gauge(MeterRegistry registry, String name, String description,

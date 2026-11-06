@@ -1,9 +1,11 @@
 package com.beez.backend.common.api;
 
+import jakarta.persistence.OptimisticLockException;
 import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import org.hibernate.StaleObjectStateException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
@@ -68,9 +70,14 @@ public class GlobalExceptionHandler {
                 .body(ApiErrorResponse.of("method_not_allowed", "지원하지 않는 HTTP 메서드입니다"));
     }
 
-    /** @Version 충돌: 내가 읽은 뒤 누군가 먼저 바꿨다. 명세 00-common 5절 → 409 revision_conflict */
-    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
-    public ResponseEntity<ApiErrorResponse> handleOptimisticLock(ObjectOptimisticLockingFailureException e) {
+    /**
+     * @Version 충돌: 내가 읽은 뒤 누군가 먼저 바꿨다. 명세 00-common 5절 → 409 revision_conflict.
+     * 저장소·커밋에서 나면 Spring 이 {@link ObjectOptimisticLockingFailureException} 으로 바꿔 주지만, EntityManager 네이티브
+     * 쿼리(활동·알림 입구 등)가 실행 전에 auto-flush 하다 나면 변환을 거치지 않고 JPA·Hibernate 예외 그대로 온다 (S15P31A108-288 실측).
+     */
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, OptimisticLockException.class,
+            StaleObjectStateException.class})
+    public ResponseEntity<ApiErrorResponse> handleOptimisticLock(Exception e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of("revision_conflict", "다른 요청이 먼저 변경했습니다. 다시 조회한 뒤 시도하세요"));
     }
