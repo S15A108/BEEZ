@@ -309,7 +309,7 @@ sudo journalctl -u ssh --since "1 hour ago" | grep Accepted
   if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
   if cmp -s "$f" "$f.new"; then rm -f "$f.new"; echo "'$N' 줄이 없음 — 그대로 둠"; exit 1; fi
   n=$(grep -cvE '^[[:space:]]*(#|$)' "$f.new")
-  if [ "$n" -eq 0 ]; then rm -f "$f.new"; echo "남는 키가 없음(접속이 막힘) — 원본 그대로"; exit 1; fi
+  if ! [ "$n" -gt 0 ]; then rm -f "$f.new"; echo "남는 키가 없음(접속이 막힘) — 원본 그대로"; exit 1; fi
   mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; }
   echo "해제함 — 남은 키 $n 개" )
 ssh-keygen -lf ~/.ssh/authorized_keys   # 해당 줄이 빠졌는지 확인
@@ -321,8 +321,9 @@ ssh-keygen -lf ~/.ssh/authorized_keys   # 해당 줄이 빠졌는지 확인
   원본을 읽지 못했으면(`grep -v`가 2 이상) 바꾸지 않습니다. `grep -v`는
   0(남은 줄 있음)·1(남은 줄 없음)이 정상입니다
   ([cd.md](cd.md)의 env 수정 명령과 같은 방식, S15P31A108-324).
-- 지울 줄이 없거나, 지우고 나면 키가 하나도 남지 않으면 바꾸지 않습니다.
-  pem 줄까지 지워지는 경우를 막습니다.
+- 지울 줄이 없거나(이름 오타), 지우고 나면 키가 하나도 남지 않으면(주석·빈
+  줄은 세지 않음) 바꾸지 않습니다. 아무도 접속할 수 없게 되는 경우를 막습니다.
+  남은 키 수를 세지 못해도 바꾸지 않습니다.
 - `umask 077`로 `.new`가 `600`으로 만들어지고, `mv`로 그 권한 그대로
   `authorized_keys`가 됩니다. `.new`는 지우고 새로 만듭니다. 이전 실행이 남긴
   `.new`에 그대로 쓰면 umask가 적용되지 않아 그 파일의 옛 권한이 넘어갑니다.
