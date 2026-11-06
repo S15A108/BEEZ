@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.PageRequest;
@@ -110,15 +111,30 @@ public class ProjectMemberService {
             throw invalidTransferTarget("본인에게는 위임할 수 없습니다");
         }
         lockProjectAsLeader(projectId, actor);
+        Swap swap = swapLeader(projectId, actor.memberId(), targetId, () -> AccessErrors.notFound(
+                "member_not_in_project member=" + targetId + " project=" + projectId));
+        List<MemberResponse> changed = toResponses(projectId, List.of(swap.current(), swap.target()));
+        return new LeadershipTransferResponse(changed);
+    }
 
-        // 두 멤버십 행을 id 순서로 잠근다 (잠금 순서를 고정해 교착을 피한다)
-        boolean meFirst = actor.memberId() < targetId;
-        ProjectMember first = lockMemberRow(meFirst ? actor.memberId() : targetId, projectId);
-        ProjectMember second = lockMemberRow(meFirst ? targetId : actor.memberId(), projectId);
+    /** 위임으로 바뀐 두 멤버십. current 는 이제 MEMBER, target 은 LEADER */
+    private record Swap(ProjectMember current, ProjectMember target) {
+    }
+
+    /**
+     * 위임 공통(MEM-A08, MEM-A10 위임하고 나가기). 프로젝트 행을 잠그고 요청자가 아직 팀장인지 다시 본 뒤에 부른다.
+     * 두 멤버십 행을 id 순서로 잠그고(교착 방지), 대상이 활성 멤버인지 본 뒤 역할을 바꿔 flush 한다.
+     *
+     * @param notInProject 대상이 이 프로젝트 소속이 아닐 때의 오류. MEM-A08 은 경로 대상이라 404, MEM-A10 은 본문 값이라 409
+     */
+    private Swap swapLeader(long projectId, long currentId, long targetId, Supplier<ApiException> notInProject) {
+        boolean meFirst = currentId < targetId;
+        ProjectMember first = lockMemberRow(meFirst ? currentId : targetId, projectId);
+        ProjectMember second = lockMemberRow(meFirst ? targetId : currentId, projectId);
         ProjectMember current = meFirst ? first : second;
         ProjectMember target = meFirst ? second : first;
         if (target == null) {
-            throw AccessErrors.notFound("member_not_in_project member=" + targetId + " project=" + projectId);
+            throw notInProject.get();
         }
         if (!members.isActiveMember(targetId, projectId)) {
             throw invalidTransferTarget("활성 팀원에게만 위임할 수 있습니다");
@@ -129,9 +145,7 @@ public class ProjectMemberService {
         members.saveAndFlush(current);
         target.changeRole(ProjectRole.LEADER);
         members.saveAndFlush(target);
-
-        List<MemberResponse> changed = toResponses(projectId, List.of(current, target));
-        return new LeadershipTransferResponse(changed);
+        return new Swap(current, target);
     }
 
     /** MEM-A09. 팀장이 팀원을 제외한다. 팀장 자신(현재 팀장)은 위임 전에 제외할 수 없다. */
@@ -150,16 +164,37 @@ public class ProjectMemberService {
         end(caller, target, reassignTo, MembershipEndReason.REMOVED);
     }
 
-    /** MEM-A10. 본인 멤버십만 끝낸다. 원치 않는 초대로 들어온 사람도 이것으로 빠진다 (Q05). 팀장은 위임이 먼저다. */
+    /**
+     * MEM-A10. 본인 멤버십만 끝낸다. 원치 않는 초대로 들어온 사람도 이것으로 빠진다 (Q05).
+     * 팀장은 transfer_leader_to_member_id 로 넘길 팀원을 고르면 위임(MEM-A08 과 같은 규칙)과 나가기를 한 트랜잭션에서 한다
+     * (S15P31A108-304). 위임 뒤에는 팀원이 되어 팀원 규칙으로 나가고, 인계·종료·토큰 폐기 중 하나가 실패하면 위임도 되돌아간다.
+     * 넘길 팀원 없이 나가려는 팀장은 {@link #end} 가 409 leader_transfer_required 로 막는다.
+     */
     @Transactional
     public void leave(CallerContext caller, long projectId, EndMembershipRequest req) {
         ProjectActor actor = access.requireMember(caller, projectId);
         Long reassignTo = reassignTarget(req);
+        // 팀원이 보낸 위임 대상은 무시한다(명세). 팀장이 보냈으면 위임은 사람만 한다(MEM-A08 과 같음)
+        Long transferTo = actor.isLeader() ? transferTarget(req) : null;
+        if (transferTo != null) {
+            actor.requireHuman();
+            if (transferTo == actor.memberId()) {
+                throw invalidTransferTarget("본인에게는 위임할 수 없습니다");
+            }
+        }
         // 나가기 전에 받은 대기 초대를 취소한다(-220) — 다시 초대받아야만 링크로 돌아온다(Q05 4). 잠금 순서는 제외와 같다(초대 → 프로젝트)
         accounts.findById(actor.accountId())
                 .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
-        projectService.lockActive(projectId);
-        ProjectMember me = lockMember(actor.memberId(), projectId);
+        ProjectMember me;
+        if (transferTo != null) {
+            // 같은 팀장의 위임(MEM-A08)이나 위임하고 나가기가 먼저 커밋됐으면 여기서 403 — 이미 넘긴 팀장 자리를 또 넘기지 않는다
+            lockProjectAsLeader(projectId, actor);
+            me = swapLeader(projectId, actor.memberId(), transferTo,
+                    () -> invalidTransferTarget("같은 프로젝트의 활성 팀원에게만 위임할 수 있습니다")).current();
+        } else {
+            projectService.lockActive(projectId);
+            me = lockMember(actor.memberId(), projectId);
+        }
         end(caller, me, reassignTo, MembershipEndReason.LEFT);
     }
 
@@ -171,7 +206,7 @@ public class ProjectMemberService {
         long projectId = member.getProjectId();
         if (member.getRole() == ProjectRole.LEADER) {
             throw new ApiException(HttpStatus.CONFLICT, "leader_transfer_required", reason == MembershipEndReason.LEFT
-                    ? "팀장은 다른 팀원에게 위임한 뒤에 나갈 수 있습니다"
+                    ? "팀장은 팀장을 넘겨받을 팀원을 골라야 나갈 수 있습니다"
                     : "팀장은 위임하기 전에 제외할 수 없습니다");
         }
         if (reassignTo != null) {
@@ -233,6 +268,14 @@ public class ProjectMemberService {
             return null;
         }
         return Ids.parse(req.reassignToMemberId(), "reassign_to_member_id");
+    }
+
+    /** 본문이 없거나 위임 대상을 안 줬으면 null. 숫자가 아니면 400. 팀장의 나가기에서만 부른다. */
+    private static Long transferTarget(EndMembershipRequest req) {
+        if (req == null) {
+            return null;
+        }
+        return Ids.parse(req.transferLeaderToMemberId(), "transfer_leader_to_member_id");
     }
 
     /** 앞뒤 공백을 뺀 표시 문자열. 비었으면 null(지우기), 길면 400. 생략(null)은 null 로 돌려주고 부르는 쪽이 유지로 처리한다. */

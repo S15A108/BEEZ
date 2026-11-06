@@ -193,6 +193,93 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
+     * 깨지면: 팀장이 넘길 팀원을 골라도 나가지 못하거나, 나간 뒤 팀장이 0명·2명이 되거나, 나간 팀장의 세션·토큰이 계속 통하거나,
+     * 팀장이 맡던 열린 작업이 넘겨받을 사람에게 가지 않는다 (MEM-A10 transfer_leader_to_member_id, S15P31A108-304).
+     * 팀원이 같은 값을 보내면 무시하고 팀원으로 나가야 한다(명세 "보내도 서버가 무시한다").
+     */
+    @Test
+    void leaderLeave_withTransfer_handsOverLeadershipAndTasks_thenLeaves() {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        long leaderToken = api.leaderAgentTokenId();
+        String projectPath = "/api/projects/" + projectId;
+        HttpResponse<String> created = api.post(tasksPath(), api.planJson("팀장 작업", api.readsRef("API-01"), "[]"), leader);
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        long leaderTask = TaskApiSupport.longField(created.body(), "id");
+
+        HttpResponse<String> res = api.post(projectPath + "/leave",
+                leaveBody(memberMemberId, memberMemberId), leader);
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(204);
+
+        assertThat(roleOf(memberMemberId)).isEqualTo("LEADER");
+        assertThat(leftReason(leaderMemberId)).isEqualTo("LEFT");
+        assertThat(api.get(projectPath, leader).statusCode()).isEqualTo(404);
+        assertTokenRevoked(leader, leaderToken);
+        assertThat(activeLeaders()).isEqualTo(1L);
+        assertThat(taskRow(leaderTask)).isEqualTo("READY|null|" + memberMemberId);
+        assertThat(assignedRecipients(leaderTask)).containsExactly(member);
+        // 새 팀장이 바로 팀장 일을 한다
+        assertThat(api.patch(projectPath, "{\"name\":\"새 팀장\"}", member).statusCode()).isEqualTo(200);
+
+        // 팀원이 보낸 위임 대상은 무시된다 — 역할은 그대로, 본인만 나간다
+        long carol = joinAsMember();
+        assertThat(api.post(projectPath + "/leave", body("transfer_leader_to_member_id", memberIdOf(carol)), carol)
+                .statusCode()).isEqualTo(204);
+        assertThat(roleOf(memberIdOf(carol))).isEqualTo("MEMBER");
+        assertThat(roleOf(memberMemberId)).isEqualTo("LEADER");
+        assertThat(leftReason(memberIdOf(carol))).isEqualTo("LEFT");
+    }
+
+    /**
+     * 깨지면: 팀장이 자기·나간 사람·탈퇴한 사람·다른 프로젝트 사람에게 팀장을 넘기고 빠지거나, 위임은 됐는데 인계가 실패해
+     * 팀장 없이 역할만 바뀐 채 남는다 (MEM-A10 오류 표 409 invalid_transfer_target, -304 "실패하면 역할 교체도 롤백").
+     */
+    @Test
+    void leaderLeave_rejectsBadTransferTarget_andRollsBackOnLaterFailure() {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        String leavePath = "/api/projects/" + projectId + "/leave";
+        long gone = joinAsMember();
+        fixtures().removeMember(memberIdOf(gone));
+        long withdrawn = joinAsMember();
+        api.jdbc.sql("update account set deleted_at = now() where id = :a").param("a", withdrawn).update();
+        long elsewhere = fixtures().projectWithLeader().leaderMemberId();
+
+        assertCode(api.post(leavePath, "{}", leader), 409, "leader_transfer_required");
+        for (long target : new long[] {leaderMemberId, memberIdOf(gone), memberIdOf(withdrawn), elsewhere}) {
+            assertCode(api.post(leavePath, body("transfer_leader_to_member_id", target), leader),
+                    409, "invalid_transfer_target");
+        }
+        assertThat(api.post(leavePath, "{\"transfer_leader_to_member_id\":\"x\"}", leader).statusCode()).isEqualTo(400);
+
+        // 위임 뒤 인계 대상 검사(400)에서 실패 → 위임도 되돌아간다
+        assertThat(api.post(leavePath, leaveBody(memberMemberId, elsewhere), leader).statusCode()).isEqualTo(400);
+
+        assertThat(roleOf(leaderMemberId)).isEqualTo("LEADER");
+        assertThat(roleOf(memberMemberId)).isEqualTo("MEMBER");
+        assertThat(leftReason(leaderMemberId)).isNull();
+        assertThat(api.get("/api/projects/" + projectId, leader).statusCode()).isEqualTo(200);
+    }
+
+    /**
+     * 깨지면: 같은 팀장의 위임(MEM-A08)이 커밋되는 동안 프로젝트 잠금을 기다린 '위임하고 나가기'가 이미 넘긴 팀장 자리를 다시 넘기거나,
+     * 팀장이 아닌 사람으로 나가 버린다 (-304 "같은 팀장의 MEM-A08 위임과 겹치면 뒤의 것이 막혀야 한다").
+     * 잠금을 쥔 트랜잭션에서 위임을 흉내 내 커밋해 겹치는 순서를 매번 똑같이 만든다.
+     */
+    @Test
+    void leaderLeave_waitingOnLock_isRejectedAfterConcurrentTransfer() throws Exception {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        long carolMemberId = memberIdOf(joinAsMember());
+
+        assertCode(whileLeadershipMoves(leaderMemberId, memberMemberId,
+                () -> api.post("/api/projects/" + projectId + "/leave",
+                        body("transfer_leader_to_member_id", carolMemberId), leader)), 403, "forbidden");
+        assertThat(roleOf(carolMemberId)).isEqualTo("MEMBER");
+        assertThat(leftReason(leaderMemberId)).isNull();
+    }
+
+    /**
      * 깨지면: 열린 작업을 담당자 없는 사람에게 남긴 채 빠지거나, 넘겨받은 사람이 떠난 사람의 검증(도는 중이던 것 포함)으로
      * 진행 중 작업을 이어 가거나, 끝난 작업까지 담당자가 바뀌거나, 담당자와 무관한 DELTA 검증까지 버려져 자동 완료(S4)가 막힌다
      * (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경·§2.3, 2026-10-29 결정).
@@ -615,6 +702,21 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
     private static String body(String field, long id) {
         return "{\"" + field + "\":\"" + id + "\"}";
+    }
+
+    /** 팀장의 위임하고 나가기 본문 (MEM-A10) */
+    private static String leaveBody(long transferTo, long reassignTo) {
+        return "{\"transfer_leader_to_member_id\":\"" + transferTo + "\",\"reassign_to_member_id\":\"" + reassignTo + "\"}";
+    }
+
+    private String roleOf(long memberId) {
+        return api.jdbc.sql("select role from project_member where id = :m").param("m", memberId)
+                .query(String.class).single();
+    }
+
+    private long activeLeaders() {
+        return api.jdbc.sql("select count(*) from project_member where project_id = :p and role = 'LEADER' and active")
+                .param("p", projectId).query(Long.class).single();
     }
 
     private JsonNode read(HttpResponse<String> res) {
