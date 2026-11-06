@@ -14,11 +14,17 @@ public final class TaskSpecifications {
         return (root, query, cb) -> cb.equal(root.get("projectId"), projectId);
     }
 
-    public static Specification<Task> statusIs(TaskStatus status) {
-        if (status == null) {
+    /** 상태가 이 중 하나 (status 를 여러 번 준 경우, -301). null·빈 목록이면 조건 없음 */
+    public static Specification<Task> statusIn(java.util.List<TaskStatus> statuses) {
+        if (statuses == null || statuses.isEmpty()) {
             return Specification.unrestricted();
         }
-        return (root, query, cb) -> cb.equal(root.get("status"), status);
+        return (root, query, cb) -> root.get("status").in(statuses);
+    }
+
+    /** 담당자가 없는 작업 (담당자가 나가거나 제외될 때 인계 대상 없이 비워진 것, -301) */
+    public static Specification<Task> unassigned() {
+        return (root, query, cb) -> cb.isNull(root.get("assigneeMemberId"));
     }
 
     public static Specification<Task> assigneeIs(Long assigneeMemberId) {
