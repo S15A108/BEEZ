@@ -431,11 +431,14 @@ function OfficeRuntime(
     }
     const free = (x: number, y: number) => officeWalkable(state.floor, x, y)
     if (lastFloor.current !== state.floor) {
-      // 처음에는 엘리베이터에서 내리는 칸에 선다. 건물마다 배치가 달라(D39) 고정 좌표는 벽이나 가구 옆일 수 있다.
+      // 처음에는 엘리베이터에서 내리는 칸에 서서 방 안(동쪽)을 본다. 건물마다 배치가 달라(D39) 고정 좌표는 벽이나
+      // 가구 옆일 수 있고, 서쪽을 보면 1인칭이 엘리베이터 문과 벽만 본다.
       if (!lastFloor.current && state.phase >= 3)
         Object.assign(player.current, {
           x: state.floor.exit.x * 32 + 16,
           y: state.floor.exit.y * 32 + 27,
+          heading: Math.PI / 2,
+          dir: 'right',
         })
       lastFloor.current = state.floor
       route.current = []
