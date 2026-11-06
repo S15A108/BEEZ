@@ -66,6 +66,24 @@ const plan = (overrides = {}) => ({
 })
 
 describe('documented REST mock adapter', () => {
+  it('선택 블록의 예시 초안을 반환하고 승인 원문은 바꾸지 않는다', async () => {
+    await login()
+    const before = await documentsApi.get('101', '201')
+    const input = { document_id: '201', base_document_version_id: '211' }
+    const blocks = await changesApi.scopedBlocks('101', input)
+    expect(blocks.blocks.length).toBeGreaterThan(0)
+    const draft = await changesApi.scopedDraft('101', {
+      ...input,
+      selected_block_ids: [blocks.blocks[0].block_id],
+      instruction: '예시 요청',
+    })
+    expect(draft.generation.origin).toBe('TEMPLATE')
+    expect(draft.changes[0].before).toBe(blocks.blocks[0].text)
+    expect(draft.changes[0].after).toContain('[예시 수정]')
+    expect((await documentsApi.get('101', '201')).version.content).toBe(
+      before.version.content,
+    )
+  })
   it('never sends requests to the network, including unsupported and legacy paths', async () => {
     const fetch = vi
       .spyOn(globalThis, 'fetch')
