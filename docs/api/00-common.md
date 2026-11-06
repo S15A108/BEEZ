@@ -1771,15 +1771,17 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `analysis_status` | `COMPLETED\|NOT_EVALUATED\|FAILED` | Y | 분석 실행 결과. 미평가·실패는 영향 0건이 아니다 |
 | `evaluation_status` | `COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED` | N | 분석이 끝났을 때 근거가 충분했는지 |
 | `error_code` | `string` | N | 실패·미평가 사유 |
-| `candidates` | [ImpactCandidate[]](00-common.md#schema-impactcandidate) | Y | 영향 후보. 최대 10개, 규칙 후보 먼저·작업·항목 번호 순 |
+| `candidates` | [PublishedImpactCandidate[]](00-common.md#schema-publishedimpactcandidate) | Y | 영향 후보. 최대 10개, 규칙 후보 먼저·작업·항목 번호 순 |
 | `candidates_truncated` | `integer` | Y | 10개를 넘어 빠진 후보 수. 0보다 크면 전체를 본 것이 아니며 대시보드에서 확인한다 |
 | `analyzed_at` | `Time` | N | 결과가 정해진 시각 |
 
-<a id="schema-impactcandidate"></a>
+<a id="schema-publishedimpactcandidate"></a>
 
-### ImpactCandidate
+### PublishedImpactCandidate
 
-영향받을 수 있는 대상 하나. **승인된 설계가 아니며 작업 상태·검증을 바꾸지 않는다** — 확인할 거리다.
+발행 후 영향 분석이 낸, 영향받을 수 있는 대상 하나(MCP-03 `impact_updates`, S15P31A108-221). **승인된 설계가 아니며 작업 상태·검증을 바꾸지 않는다** — 확인할 거리다.
+
+승인 전 분석의 [ImpactCandidate](00-common.md#schema-impactcandidate)와 모양이 달라 따로 둔다. 규칙·AI 후보를 함께 담아 `origin`이 필수이고, AI 근거 원문(`sources`)은 싣지 않는다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |

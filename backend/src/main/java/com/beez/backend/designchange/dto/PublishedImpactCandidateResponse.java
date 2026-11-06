@@ -10,7 +10,7 @@ package com.beez.backend.designchange.dto;
  * @param validationId 영향받을 수 있는 검증
  * @param reason       AI 후보의 사유. 규칙 후보에는 없다
  */
-public record ImpactCandidateResponse(
+public record PublishedImpactCandidateResponse(
         String origin,
         String taskId,
         String designItemId,

@@ -23,7 +23,7 @@ public record ImpactUpdateResponse(
         String analysisStatus,
         String evaluationStatus,
         String errorCode,
-        List<ImpactCandidateResponse> candidates,
+        List<PublishedImpactCandidateResponse> candidates,
         int candidatesTruncated,
         Instant analyzedAt
 ) {

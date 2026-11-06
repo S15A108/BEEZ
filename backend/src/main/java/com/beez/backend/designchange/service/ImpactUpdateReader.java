@@ -3,7 +3,7 @@ package com.beez.backend.designchange.service;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.designchange.dto.BaselineSummaryResponse;
 import com.beez.backend.designchange.dto.DesignChangesResponse.ImpactUpdates;
-import com.beez.backend.designchange.dto.ImpactCandidateResponse;
+import com.beez.backend.designchange.dto.PublishedImpactCandidateResponse;
 import com.beez.backend.designchange.dto.ImpactUpdateResponse;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -85,14 +85,14 @@ public class ImpactUpdateReader {
             last = page.get(page.size() - 1).resultSeq();
         }
 
-        Map<Long, List<ImpactCandidateResponse>> candidates = findCandidates(page);
+        Map<Long, List<PublishedImpactCandidateResponse>> candidates = findCandidates(page);
         List<ImpactUpdateResponse> items = new ArrayList<>();
         for (Row row : page) {
-            List<ImpactCandidateResponse> all = candidates.get(row.id());
+            List<PublishedImpactCandidateResponse> all = candidates.get(row.id());
             if (all == null) {
                 all = List.of();
             }
-            List<ImpactCandidateResponse> picked = pick(all, taskId);
+            List<PublishedImpactCandidateResponse> picked = pick(all, taskId);
             int truncated = 0;
             if (picked.size() > CANDIDATE_LIMIT) {
                 truncated = picked.size() - CANDIDATE_LIMIT;
@@ -114,15 +114,15 @@ public class ImpactUpdateReader {
      * 같은 출처·같은 대상은 하나로, task_id 범위면 그 작업 것만, 그리고 규칙 먼저·작업·항목 번호 순으로 줄 세운다.
      * LinkedHashSet 은 넣은 순서를 지키면서 같은 값은 한 번만 담는 집합이다 (record 는 모든 칸이 같으면 같은 값).
      */
-    static List<ImpactCandidateResponse> pick(List<ImpactCandidateResponse> all, Long taskId) {
-        Set<ImpactCandidateResponse> unique = new LinkedHashSet<>();
-        for (ImpactCandidateResponse c : all) {
+    static List<PublishedImpactCandidateResponse> pick(List<PublishedImpactCandidateResponse> all, Long taskId) {
+        Set<PublishedImpactCandidateResponse> unique = new LinkedHashSet<>();
+        for (PublishedImpactCandidateResponse c : all) {
             if (taskId != null && !String.valueOf(taskId).equals(c.taskId())) {
                 continue;
             }
             unique.add(c);
         }
-        List<ImpactCandidateResponse> out = new ArrayList<>(unique);
+        List<PublishedImpactCandidateResponse> out = new ArrayList<>(unique);
         // Comparator.comparing(...).thenComparing(...) 는 "앞 기준이 같으면 다음 기준으로" 비교하는 정렬 규칙을 만든다.
         // sort 는 안정 정렬이라 기준이 모두 같으면 원래 순서(분석이 낸 순서)를 지킨다
         out.sort(Comparator.comparing(ImpactUpdateReader::originRank)
@@ -131,7 +131,7 @@ public class ImpactUpdateReader {
         return out;
     }
 
-    private static int originRank(ImpactCandidateResponse c) {
+    private static int originRank(PublishedImpactCandidateResponse c) {
         if ("RULE".equals(c.origin())) {
             return 0;
         }
@@ -189,8 +189,8 @@ public class ImpactUpdateReader {
      * ->> 는 JSON 객체에서 칸 값을 글자로 꺼내는 Postgres 연산자다. 객체가 아닌 원소면 null 이다.
      * 미평가·실패 결과는 후보 칸이 비어 있어 줄이 없다.
      */
-    private Map<Long, List<ImpactCandidateResponse>> findCandidates(List<Row> page) {
-        Map<Long, List<ImpactCandidateResponse>> out = new HashMap<>();
+    private Map<Long, List<PublishedImpactCandidateResponse>> findCandidates(List<Row> page) {
+        Map<Long, List<PublishedImpactCandidateResponse>> out = new HashMap<>();
         if (page.isEmpty()) {
             return out;
         }
@@ -217,7 +217,7 @@ public class ImpactUpdateReader {
             if (!out.containsKey(id)) {
                 out.put(id, new ArrayList<>());
             }
-            out.get(id).add(new ImpactCandidateResponse(origin, (String) r.get("task_id"), (String) r.get("design_item_id"),
+            out.get(id).add(new PublishedImpactCandidateResponse(origin, (String) r.get("task_id"), (String) r.get("design_item_id"),
                     (String) r.get("member_id"), (String) r.get("validation_id"), reason));
         }
         return out;

@@ -10,7 +10,7 @@ S15P31A108-221 · MCP-03 `get_design_changes` · 담당 변준성 · 2026-11-05
 - 발행 변경(`items`)은 기존대로 `since_version`·`cursor`로 받는다.
 - 영향 결과(`impact_updates`)는 **따로** `result_cursor`로 받는다. 분석은 발행보다 늦게 끝나고, 옛 발행의 분석이 나중에 끝날 수도 있어서 기준 번호로는 놓친다.
 
-응답 모양은 [ImpactUpdate](../api/00-common.md#schema-impactupdate)·[ImpactCandidate](../api/00-common.md#schema-impactcandidate), 처리 규칙은 [MCP-03](../api/02-mcp-tools.md#mcp-03).
+응답 모양은 [ImpactUpdate](../api/00-common.md#schema-impactupdate)·[PublishedImpactCandidate](../api/00-common.md#schema-publishedimpactcandidate), 처리 규칙은 [MCP-03](../api/02-mcp-tools.md#mcp-03).
 
 ## 2. 결과 순번 (V36)
 

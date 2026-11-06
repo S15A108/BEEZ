@@ -7,18 +7,30 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.designchange.dto.DesignChangesQuery;
 import com.beez.backend.designchange.dto.DesignChangesResponse;
-import com.beez.backend.designchange.dto.ImpactCandidateResponse;
+import com.beez.backend.designchange.dto.PublishedImpactCandidateResponse;
 import com.beez.backend.designchange.dto.ImpactUpdateResponse;
 import com.beez.backend.designchange.service.DesignChangesService;
+import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository;
+import com.beez.backend.impactanalysis.intake.PublishedAnalysisRepository.Claim;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * S15P31A108-221 get_design_changes 의 impact_updates — 발행 후 영향 분석 결과를 결과 순번(result_cursor)으로 이어 받는다.
@@ -32,6 +44,12 @@ class DesignChangesImpactUpdatesIntegrationTests extends IntegrationTestSupport 
 
     @Autowired
     DesignChangesService service;
+
+    @Autowired
+    PublishedAnalysisRepository analyses;
+
+    @Autowired
+    PlatformTransactionManager transactions;
 
     TaskApiSupport api;
     Long projectId;
@@ -131,8 +149,8 @@ class DesignChangesImpactUpdatesIntegrationTests extends IntegrationTestSupport 
         assertThat(update.analysisStatus()).isEqualTo("COMPLETED");
         assertThat(update.evaluationStatus()).isEqualTo("COMPLETED");
         assertThat(update.analyzedAt()).isNotNull();
-        assertThat(update.candidates()).extracting(ImpactCandidateResponse::origin, ImpactCandidateResponse::taskId,
-                        ImpactCandidateResponse::designItemId, ImpactCandidateResponse::reason)
+        assertThat(update.candidates()).extracting(PublishedImpactCandidateResponse::origin, PublishedImpactCandidateResponse::taskId,
+                        PublishedImpactCandidateResponse::designItemId, PublishedImpactCandidateResponse::reason)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("RULE", "501", "301", null),
                         org.assertj.core.groups.Tuple.tuple("AI", "502", null, "응답 필드를 같이 씀"));
         assertThat(update.candidatesTruncated()).isZero();
@@ -156,8 +174,8 @@ class DesignChangesImpactUpdatesIntegrationTests extends IntegrationTestSupport 
 
         ImpactUpdateResponse update = call(null, start, null).impactUpdates().get(0);
         assertThat(update.candidates()).hasSize(10);
-        assertThat(update.candidates()).extracting(ImpactCandidateResponse::origin).containsOnly("RULE");
-        assertThat(update.candidates()).extracting(ImpactCandidateResponse::taskId)
+        assertThat(update.candidates()).extracting(PublishedImpactCandidateResponse::origin).containsOnly("RULE");
+        assertThat(update.candidates()).extracting(PublishedImpactCandidateResponse::taskId)
                 .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10");
         // 규칙 11개(중복 1개 제외) + AI 1개 = 12개 중 10개만 → 2개 빠짐. 출처가 다르면 같은 작업이어도 따로 센다
         assertThat(update.candidatesTruncated()).isEqualTo(2);
@@ -180,8 +198,8 @@ class DesignChangesImpactUpdatesIntegrationTests extends IntegrationTestSupport 
         DesignChangesResponse scoped = call("100", taskStart, null);
         assertThat(scoped.impactUpdates()).extracting(ImpactUpdateResponse::resultSeq)
                 .containsExactly(resultSeq(named), resultSeq(aiOnly));
-        assertThat(scoped.impactUpdates().get(0).candidates()).extracting(ImpactCandidateResponse::taskId).containsExactly("100");
-        assertThat(scoped.impactUpdates().get(1).candidates()).extracting(ImpactCandidateResponse::origin).containsExactly("AI");
+        assertThat(scoped.impactUpdates().get(0).candidates()).extracting(PublishedImpactCandidateResponse::taskId).containsExactly("100");
+        assertThat(scoped.impactUpdates().get(1).candidates()).extracting(PublishedImpactCandidateResponse::origin).containsExactly("AI");
 
         // 아무 후보에도 없는 작업은 받을 것이 없다
         assertThat(call("300", call("300", null, null).nextResultCursor(), null).impactUpdates()).isEmpty();
@@ -234,6 +252,65 @@ class DesignChangesImpactUpdatesIntegrationTests extends IntegrationTestSupport 
                         values (:p, :b, 'NOT_EVALUATED', now()) returning id
                         """).param("p", projectId).param("b", baseline).query(Long.class).single();
         assertThat(resultSeq(notEvaluated)).isEqualTo(decided + 1);
+    }
+
+    /**
+     * 깨지면: 프로젝트의 첫 결과를 실패로 확정하는 트랜잭션과, 프로젝트 행을 쥔 채 같은 분석 행을 바꾸려는 선점(claim)이 서로 기다려
+     * DB 교착(40P01)으로 한쪽이 죽는다 (PR #167 오서현 리뷰 재현 순서). 실패 확정이 분석 행보다 프로젝트 행을 먼저 잠가야
+     * 선점이 먼저 끝나고 실패 확정이 그 뒤에 이어진다.
+     */
+    @Test
+    void failingTheFirstResultWhileAClaimHoldsTheProject_waitsInsteadOfDeadlocking() throws Exception {
+        long analysis = pendingAnalysis();
+        Instant lease = api.jdbc.sql("""
+                        update published_change_analysis
+                           set status = 'RUNNING', attempt = 1, started_at = now(), lease_until = clock_timestamp() + interval '5 minutes'
+                         where id = :id returning lease_until
+                        """).param("id", analysis).query(java.sql.Timestamp.class).single().toInstant();
+        // 이 프로젝트에는 아직 결과 순번 카운터가 없다 — 첫 결과가 카운터 행을 만들며 외래 키로 프로젝트 행을 본다
+        assertThat(api.jdbc.sql("select count(*) from published_analysis_result_counter where project_id = :p")
+                .param("p", projectId).query(Integer.class).single()).isZero();
+
+        TransactionTemplate tx = new TransactionTemplate(transactions);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (Connection claimer = dataSource.getConnection()) {
+            claimer.setAutoCommit(false);
+            try (Statement st = claimer.createStatement()) {
+                // 기다림이 길어지면 교착 대신 시간 초과로 실패하게 (교착 검출은 1초라 그보다 길게)
+                st.execute("set local lock_timeout = '5s'");
+                st.execute("select id from project where id = " + projectId + " for update");
+            }
+            // 실패 확정: 결과 저장소의 실제 경로 (Processor 의 실패 처리가 부르는 것)
+            Future<Boolean> failure = pool.submit(() -> tx.execute(status ->
+                    analyses.recordFailure(new Claim(analysis, 1, lease), "model_unavailable", false, List.of(), "UNKNOWN")));
+            awaitLockWaiter();
+            // 선점이 그 분석 행을 바꾼다 — 실패 확정이 이 행을 먼저 잡았다면 여기서 서로 기다리게 된다
+            try (PreparedStatement ps = claimer.prepareStatement(
+                    "update published_change_analysis set next_attempt_at = next_attempt_at where id = ?")) {
+                ps.setLong(1, analysis);
+                ps.executeUpdate();
+            }
+            claimer.commit();
+
+            assertThat(failure.get(15, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(api.jdbc.sql("select status from published_change_analysis where id = :id").param("id", analysis)
+                .query(String.class).single()).isEqualTo("FAILED");
+        assertThat(resultSeq(analysis)).isEqualTo(1L);
+    }
+
+    /** 다른 트랜잭션이 행 잠금을 기다리기 시작할 때까지 (pg_stat_activity 의 대기 종류가 Lock) */
+    private void awaitLockWaiter() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (api.jdbc.sql("select count(*) from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'")
+                .query(Integer.class).single() == 0) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("실패 확정이 프로젝트 잠금을 기다리지 않았다");
+            }
+            Thread.sleep(20);
+        }
     }
 
     @Test
