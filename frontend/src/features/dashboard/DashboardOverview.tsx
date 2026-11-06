@@ -3,6 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { dashboardApi } from '@/api/services/dashboard'
 import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { countText, statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -34,6 +35,7 @@ export function DashboardOverview({
   onTab: (tab: DashboardTab) => void
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
+  const statusOf = useAgentStatusOf(projectId)
   // API 없음: 대시보드 숫자를 한 번에 주는 요약 응답(백엔드 메모 8). 지금은 작업·변경 제안 집계를 따로 부른다.
   // 하나가 실패해도 다른 집계는 보이도록 따로 받고, 실패한 칸은 0 대신 '—'로 둔다(PR #72 전수 리뷰 TC-5).
   const changes = useQuery({
@@ -49,7 +51,10 @@ export function DashboardOverview({
       ?.count ?? 0
   const review = changes.data?.review_required_count ?? 0
   const calls = usage.data?.call_count ?? 0
-  const connected = members.filter((member) => member.agent_connected).length
+  // agent_connected는 보고가 끊겨 '연결 미확인'인 에이전트도 참이다. 이름과 같은 기준으로 '연결됨'만 센다.
+  const connected = members.filter(
+    (member) => statusOf(member).status === 'connected',
+  ).length
   const recent: Activity[] = activities.data?.items.slice(0, 4) ?? []
   const agents: AgentWork[] = work.data?.items.slice(0, 2) ?? []
   const features = [...(usage.data?.by_feature ?? [])].sort(
