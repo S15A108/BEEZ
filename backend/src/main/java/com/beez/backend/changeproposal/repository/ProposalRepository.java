@@ -198,6 +198,12 @@ public class ProposalRepository {
                 .param("project", project).param("meeting", meeting).query(Long.class).optional();
     }
 
+    /** 회의 행을 잠그고 그 회의에 연결된(종료로 묶인) 제안을 돌려준다. 없으면 null. 프로젝트 잠금을 먼저 잡은 호출만 쓴다. */
+    public Long lockMeetingLink(long project, long meeting) {
+        return jdbc.sql("SELECT change_proposal_id FROM meeting WHERE id=:meeting AND project_id=:project FOR UPDATE")
+                .param("meeting", meeting).param("project", project).query(Long.class).optional().orElse(null);
+    }
+
     public void withdraw(long project, long proposal, long account) {
         jdbc.sql("""
                 UPDATE change_proposal SET status='WITHDRAWN',withdrawn_by=:account,withdrawn_at=clock_timestamp(),

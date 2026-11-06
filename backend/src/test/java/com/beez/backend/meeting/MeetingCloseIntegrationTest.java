@@ -441,6 +441,59 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         assertThat(liveProposals()).isEqualTo(1);
     }
 
+    @Test void aLateCleanupOfAFailedCloseDoesNotWithdrawTheProposalAnotherRetryAlreadyClosedWith() throws Exception {
+        long first = summarize(e2);
+        var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var secondEntry = new java.util.concurrent.atomic.AtomicLong();
+        // 요청 A: 제안을 만든 직후 새 기록이 들어와 종료가 summary_outdated 로 실패한다
+        doAnswer(call -> {
+            Object created = call.callRealMethod();
+            if (armed.getAndSet(false)) secondEntry.set(entry("방금 한 말인데요, 7일이 맞아요."));
+            return created;
+        }).when(proposalCommands).createFromMeeting(any(), anyLong(), anyLong(), any());
+        // A 의 뒤늦은 정리가 돌기 전에, 새 정리로 재시도한 요청 B 가 같은 제안을 재사용해 회의를 닫는다
+        var retried = new java.util.concurrent.atomic.AtomicReference<HttpResponse<String>>();
+        doAnswer(call -> {
+            long second = summarize(secondEntry.get());
+            retried.set(close(leader, second, "close-b"));
+            return call.callRealMethod();
+        }).when(proposalCommands).withdrawMeetingProposal(any(), anyLong(), anyLong(), anyLong());
+
+        expect(close(leader, first, "close-a"), 409, "summary_outdated");
+
+        expect(retried.get(), 200, null);
+        String proposal = body(retried.get()).path("change_proposal_id").asString();
+        assertThat(meetingStatus()).isEqualTo("CLOSED");
+        assertThat(jdbc.queryForObject("SELECT change_proposal_id FROM meeting WHERE id=?", Long.class, meeting)).isEqualTo(Long.parseLong(proposal));
+        // A 의 정리가 B 가 닫은 회의의 제안을 거두면 안 된다
+        assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(proposal))).isEqualTo("PROPOSED");
+        assertThat(proposals()).isEqualTo(1);
+        assertThat(liveProposals()).isEqualTo(1);
+    }
+
+    @Test void aRetryDoesNotCloseTheMeetingOnAProposalThatWasWithdrawnAfterItWasReused() throws Exception {
+        var earlier = proposalCommands.createFromMeeting(CallerContext.human(leader), project, meeting, proposalInput(APPLIED));
+        long summary = summarize(e2);
+        var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        // 재시도가 제안을 재사용해 돌려받은 직후, 앞선 요청의 뒤늦은 정리가 그 제안을 거둔다
+        doAnswer(call -> {
+            Object reused = call.callRealMethod();
+            if (armed.getAndSet(false)) {
+                proposalCommands.withdrawMeetingProposal(CallerContext.human(leader), project, meeting, Long.parseLong(earlier.id()));
+            }
+            return reused;
+        }).when(proposalCommands).createFromMeeting(any(), anyLong(), anyLong(), any());
+
+        expect(close(leader, summary, "close-reused"), 409, "meeting_proposal_changed");
+        assertThat(meetingStatus()).isEqualTo("OPEN");
+        assertThat(jdbc.queryForObject("SELECT change_proposal_id FROM meeting WHERE id=?", Long.class, meeting)).isNull();
+        // 다시 시도하면 거둔 제안 대신 새로 만들어 닫힌다
+        var again = body(close(leader, summary, "close-again"));
+        assertThat(again.path("change_proposal_id").asString()).isNotEqualTo(earlier.id());
+        assertThat(meetingStatus()).isEqualTo("CLOSED");
+        assertThat(liveProposals()).isEqualTo(1);
+    }
+
     @Test void aRetryDoesNotTieTheMeetingToARejectedProposal() throws Exception {
         var earlier = proposalCommands.createFromMeeting(CallerContext.human(leader), project, meeting, proposalInput(APPLIED));
         proposalCommands.reject(CallerContext.human(leader), project, Long.parseLong(earlier.id()),

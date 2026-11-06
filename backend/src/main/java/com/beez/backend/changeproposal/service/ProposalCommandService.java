@@ -107,13 +107,30 @@ public class ProposalCommandService {
     /**
      * 회의 끝내기가 종료 직전에 정리가 오래됐음을 알았을 때, 방금 만든 제안을 거둔다(최선 노력). 이미 거뒀거나 검토 단계를 넘은
      * 제안은 건드리지 않는다. 호출하는 쪽은 실패해도 원래 오류(409 summary_outdated)를 그대로 돌려준다.
+     *
+     * <p>이 정리는 실패한 종료 트랜잭션이 끝난 뒤에 도는데, 그 사이 다른 재시도가 같은 제안을 재사용해 회의를 이미 닫았을 수 있다.
+     * 그래서 프로젝트 → 회의 순서로 잠근 뒤, 그 제안이 닫힌 회의에 연결돼 있으면 거두지 않는다.
      */
     @Transactional
-    public void withdrawMeetingProposal(CallerContext caller, long project, long proposal) {
+    public void withdrawMeetingProposal(CallerContext caller, long project, long meeting, long proposal) {
         lock(caller, project);
+        Long linked = repository.lockMeetingLink(project, meeting);
+        if (linked != null && linked == proposal) return;
         var current = repository.proposal(project, proposal);
         if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
             repository.withdraw(project, proposal, caller.accountId());
+        }
+    }
+
+    /**
+     * 회의 끝내기가 종료 직전에(프로젝트·회의 잠금 안에서) 자기가 받은 제안이 아직 이 회의의 살아 있는 제안인지 확인한다.
+     * 다른 요청의 뒤늦은 정리가 그 사이 제안을 거뒀다면 거둔 제안에 회의를 묶지 않도록 막는다. 다시 시도하면 새로 만든다.
+     */
+    @Transactional
+    public void requireLiveMeetingProposal(long project, long meeting, long proposal) {
+        var live = repository.liveProposalForMeeting(project, meeting);
+        if (live.isEmpty() || live.get() != proposal) {
+            throw error("meeting_proposal_changed", "회의에 올린 제안이 그 사이 거두어졌어요. 다시 끝내 주세요.");
         }
     }
 

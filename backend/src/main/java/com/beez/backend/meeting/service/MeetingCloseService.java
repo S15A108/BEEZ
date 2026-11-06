@@ -113,7 +113,7 @@ public class MeetingCloseService {
             return transaction.execute(status -> finish(caller, actor, projectId, meetingId, summaryId, operation, input, key, created));
         } catch (ApiException e) {
             // 정리가 그 사이 오래됐다: 방금 만든 제안은 쓸 곳이 없다. 다른 오류(저장 실패 등)는 제안을 남겨 다음 시도가 재사용한다
-            if (created != null && "summary_outdated".equals(e.getCode())) withdrawQuietly(caller, projectId, created.id());
+            if (created != null && "summary_outdated".equals(e.getCode())) withdrawQuietly(caller, projectId, meetingId, created.id());
             throw e;
         }
     }
@@ -211,6 +211,8 @@ public class MeetingCloseService {
         // 이번 정리에 문서 변경이 없으면 제안을 새로 만들지 않는다. 앞선 시도가 남긴 제안이 있으면 같이 거둬 제안 없이 닫힌 회의에
         // 승인될 수 있는 제안이 남지 않게 한다(회의 종료와 같은 트랜잭션).
         if (proposal == null) proposals.withdrawLiveMeetingProposal(caller, projectId, meetingId);
+        // 제안을 받은 뒤 다른 요청의 뒤늦은 정리가 그 제안을 거뒀을 수 있다(거둔 제안에 회의를 묶지 않는다)
+        else proposals.requireLiveMeetingProposal(projectId, meetingId, Long.parseLong(proposal.id()));
 
         Long proposalId = proposal == null ? null : Long.parseLong(proposal.id());
         meetings.close(meetingId, actor.accountId(), proposalId);
@@ -239,9 +241,9 @@ public class MeetingCloseService {
         return owners.stream().map(owner -> Long.toString(owner.memberId())).toList();
     }
 
-    private void withdrawQuietly(CallerContext caller, long projectId, String proposalId) {
+    private void withdrawQuietly(CallerContext caller, long projectId, long meetingId, String proposalId) {
         try {
-            proposals.withdrawMeetingProposal(caller, projectId, Long.parseLong(proposalId));
+            proposals.withdrawMeetingProposal(caller, projectId, meetingId, Long.parseLong(proposalId));
         } catch (RuntimeException e) {
             log.warn("회의 끝내기 실패 뒤 제안을 거두지 못했습니다 project={} proposal={}: {}", projectId, proposalId, e.toString());
         }
