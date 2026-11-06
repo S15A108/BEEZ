@@ -37,6 +37,7 @@ RequestIdFilter (X-Request-Id, MDC) → mcpChain (Bearer 토큰 → AgentPrincip
 | 결과 | 성공 payload를 snake_case JSON으로 `structuredContent`와 `content[0].text`에 같이 싣는다 |
 | 오류 | 아래 3절 형식의 도구 실패 결과(`isError: true`) |
 | 로그 | `com.beez.mcp` 한 줄: 도구·프로젝트·계정·토큰 ID·결과 코드·지연. 인수·결과 본문은 남기지 않는다(비밀값·개인 대화 원문, MCP-09). 요청 ID는 MDC로 붙고, `com.beez.access`의 `POST /mcp -> 상태` 줄과 같은 ID다 |
+| 감사 | 성공·실패 모두 `mcp_audit_log` 한 줄(-177, 8절) |
 
 **모르는 인수 키는 거부한다**(-179 결정). 인수 변환에만 `FAIL_ON_UNKNOWN_PROPERTIES`를 켜고 중첩 객체(`plan`·`items` 등)에도 적용된다. 메시지는 칸 경로로 낸다(예: `taskid 은(는) 이 도구에 없는 인수입니다`). REST는 Boot 기본대로 무시하지만, 도구에서 선택 인수 오타를 무시하면 뜻이 바뀐 채 성공한다 — `upsert_task_plan`의 `task_id` 오타는 계획 수정 대신 새 작업을 만든다. 그래서 인수 레코드는 스키마의 모든 키를 칸으로 가져야 하고, 스키마에는 `additionalProperties: false`를 적는다. 자유 객체 칸(`Map`, 예: `proposed_content`·`delta`)은 그대로 받는다.
 
@@ -58,7 +59,7 @@ HTTP는 200이고 JSON-RPC 응답 안의 도구 결과가 실패다. 본문은 R
 
 | 원인 | code | 비고 |
 | --- | --- | --- |
-| 서비스가 던진 `ApiException` | 그 `code`·`message` 그대로 | 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
+| 서비스가 던진 `ApiException` | 그 `code`·`message`·`details` 그대로 | REST와 같은 본문이다. `details`는 명세가 정한 오류만 채우고 없으면 키가 빠진다(-267). 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
 | 인수 타입·enum 변환 실패, 모르는 키 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다`, `plan.titel 은(는) 이 도구에 없는 인수입니다` |
 | 인수 레코드를 만들 수 없음(레코드 정의 오류) | `internal` | 입력 탓이 아니라 서버 버그라 `validation_failed`로 숨기지 않고 스택을 남긴다 |
 | 그 밖의 예외 | REST `GlobalExceptionHandler`와 같은 code | 같은 대응표를 그대로 쓴다. 낙관적 잠금 충돌 → `revision_conflict`, DB 제약 → `validation_failed`, 나머지 → `internal`(서버 로그에 스택) |
@@ -146,7 +147,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 
 | 항목 | 티켓 |
 | --- | --- |
-| 도구 호출마다 감사 기록, 권한 실패 응답 형식 확인 | -177 (`McpToolHandler.handle`의 성공·실패 지점) |
+| ~~도구 호출마다 감사 기록, 권한 실패 응답 형식 확인~~ | -177 완료 — 8절 |
 | 세션과 토큰을 묶기 — 지금은 다른 토큰이 남의 세션 ID로 POST하면 **보낸 토큰의 권한으로** 처리되지만, DELETE로 남의 세션을 끊을 수 있다 | -178 |
 | 토큰·계정당 세션 수 상한(지금은 initialize마다 세션이 생겨 마지막 요청 후 최대 2시간, 정리될 때까지 쌓인다), 1인 1에이전트, 연결 상태·해제, 작업 절차 안내(`instructions`) | -178 |
 | 도메인 도구 어댑터(MCP-01\~07·10\~13)와 입력 스키마 | -179 (7절) |
@@ -165,11 +166,46 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | MCP-10 `upsert_task_plan` | `UpsertTaskPlanTool` | `TaskMcpService.upsertTaskPlan` | 변준성 |
 | MCP-11 `validate_task_plan` | `ValidateTaskPlanTool` | `ValidationMcpService.validateTaskPlan` | 변준성 |
 | MCP-13 `get_validation` | `GetValidationTool` | `ValidationQueryService.get` (REST VAL-A02와 같음, 08 계약 2절) | 변준성 |
+| MCP-14 `retry_validation` | `RetryValidationTool` | `ValidationMcpService.retryValidation` (REST VAL-A04와 같은 `ValidationRetryService`, -161). 연결은 -271 — 별도 도구로 확정(변준성) | 변준성 |
 | MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
 
 - MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).
 - `get_document`는 버전을 생략하면 현재 기준 설계의 `baseline_document` 버전을 준다(새 승인으로 SUPERSEDED가 됐어도 기준이 다시 발행되기 전까지는 그 버전). 버전을 지정하면 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 주고 DRAFT·REJECTED는 `not_found`다. 문서 화면용 칸 중 `document.preview_text`(작업 중 사본)·`latest_draft`는 빼고 `approved_version`은 현재 기준 버전으로 바꾸며, 조회 이력을 `target_kind=DOCUMENT_VERSION`으로 같은 트랜잭션에 남긴다.
-- 등록하지 않은 것: MCP-14 `retry_validation`(도구명·분리 담당자 검토 중), 제안 재제출·거두기 도구(02-mcp-tools MCP-04 "이번 티켓에서 등록하지 않는다").
+- 등록하지 않은 것: 제안 재제출·거두기 도구(02-mcp-tools MCP-04 "이번 티켓에서 등록하지 않는다").
 - `propose_design_change` 스키마에는 서비스가 지금 받는 칸만 싣는다. 명세의 수정안 요청 칸 `items[].proposed_text`·`meeting_id`는 서비스(`ProposalDtos`)에 아직 없어, 보내면 모르는 키로 거부된다.
 - 출력 스키마(`outputSchema`)는 싣지 않는다. 실패 결과도 `structuredContent`(`{"error":…}`)를 쓰므로 성공 모양의 출력 스키마를 걸면 스키마를 검사하는 클라이언트에서 실패 결과가 어긋난다. 응답 모양은 02-mcp-tools가 기준이다.
 - 시험: `McpToolsIntegrationTests`(실제 MCP 클라이언트 경유). 서비스 규칙은 각 서비스 시험에 있다.
+
+## 8. 접근 제어·감사 기록 (-177)
+
+**접근 제어는 서비스가 한다.** 도구 어댑터와 `McpToolHandler`는 권한을 다시 판정하지 않는다(08 계약 1절). 한 호출이 지나는 검사는 아래 셋이고, 처음 걸린 곳의 응답이 나간다(05 문서 참고 2 검사 순서).
+
+| 단계 | 하는 곳 | 거부 |
+| --- | --- | --- |
+| 토큰 폐기·멤버십 종료·프로젝트 보관 | `AgentTokenAuthenticationFilter` → `StoredAgentTokenVerifier` (-175) | HTTP 401 (`token_revoked`), 감사 행 없음(도구까지 오지 않음) |
+| 토큰 프로젝트 = 호출 프로젝트, 활성 멤버, 역할 | 서비스 첫 줄 `ProjectAccessChecker.requireMember` | 도구 실패 `not_found`·`forbidden` |
+| 대상 객체 소속(작업·검증·기록·문서) | 서비스의 `…AndProjectId` 조회·소속 확인 | 도구 실패 `not_found` |
+
+에이전트 토큰에는 프로젝트 말고 다른 권한 범위(scope)가 없다. 인수의 `project_id`는 토큰 프로젝트와 같은지만 본다.
+
+**감사 기록.** `McpToolHandler.handle`의 `finally`에서 호출마다 `mcp_audit_log`에 한 줄 쓴다(`McpAuditEntry` → `McpAuditRecorder`).
+
+| 칸 | 값 |
+| --- | --- |
+| `agent_token_id`·`account_id`·`project_id` | 토큰 주체 |
+| `tool` | 도구 이름 |
+| `target_ids` | 인수 중 `id`·`*_id`·`*_ids` 칸의 값만 `[{"field":"task_id","id":"12"}]`. 중첩 인수도 보고, 숫자 ID(십진 19자리 이하)가 아니면 버린다 — 토큰·키 같은 영숫자 값이 모르는 `*_id` 칸으로 들어와도 남지 않게. 최대 50개 |
+| `result` | `OK` / `DENIED`(`AccessErrors`가 만든 거부 — `AccessDeniedApiException`) / `ERROR`(그 밖의 실패) |
+| `deny_reason` (V38) | `DENIED`일 때 서버만 아는 사유의 종류(`not_member`·`task_not_in_project`·`packet_project_mismatch` 등). 로그 사유의 첫 낱말이라 번호가 없다 |
+| `error_code` (V38) | 실패면 응답 `error.code`, 성공이면 NULL |
+| `latency_ms`·`called_at` | 지연·시각 |
+
+- **남기지 않는 것**: 인수 본문(요청 문장·기록 원문·제안 내용)·멱등 키·토큰 값·응답 본문(MCP-09, Jira -177 작업 4).
+- 없는 ID와 다른 프로젝트 ID는 같은 404라 둘 다 `DENIED`다(존재를 숨기는 정책 그대로). 서비스가 `AccessErrors`를 거치지 않고 `ApiException(NOT_FOUND)`를 직접 던지는 곳(예: 패킷 없음)은 `ERROR` + `not_found`로 남는다.
+- **트랜잭션**: 업무는 서비스 안에서 이미 끝났다. 감사는 새 트랜잭션(REQUIRES_NEW)이라 업무가 롤백된 실패도 남는다. **감사 저장이 실패해도 도구 결과는 그대로 돌려준다**(전진 결정 — 이미 커밋된 변경을 실패로 알리면 에이전트가 다시 부른다). 그 호출은 `com.beez.mcp` 요청 줄과 `mcp audit write failed` 오류 로그로 추적한다.
+- 감사 행은 고치지 않는다(V38 UPDATE 금지 트리거).
+- 인증 실패(HTTP 401)·프로토콜 오류(없는 도구·세션)는 도구 처리 전에 끝나 감사 행이 없다. 요청 로그(`com.beez.access`)에만 남는다.
+
+**이번에 하지 않은 것**: 감사 로그 조회 API(팀장 공개안 — REST 명세 없음), 권한 실패 응답의 `details`(명세 없음 — 지금 형식 유지), 보존 기간·정리.
+
+시험: 결과 분류·저장 실패 처리는 `McpToolHandlerTest`, 대상 ID는 `McpAuditEntryTest`, 실제 MCP 연결의 거부·감사 행·위조 `result_cursor`는 `McpToolsIntegrationTests`.

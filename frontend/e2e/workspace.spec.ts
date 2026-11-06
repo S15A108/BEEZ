@@ -103,6 +103,9 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await expect(
     dialog.getByRole('heading', { name: '현재 문서', exact: true }),
   ).toBeVisible()
+  await expect(
+    dialog.getByText('팀장이 승인해 지금 기준으로 쓰는 문서예요.'),
+  ).toBeVisible()
   await dialog.getByLabel('검색어').fill('로그인')
   await dialog.getByRole('button', { name: '검색', exact: true }).click()
   await expect(dialog.getByRole('heading', { name: '검색 결과' })).toBeVisible()
@@ -142,6 +145,14 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
     dialog.getByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ }),
   ).toBeVisible()
   await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  // 승인 확인 화면은 승인하면 같이 바뀌는 것(CHG-A14)을 먼저 보여 준다.
+  const preview = dialog.getByRole('group', {
+    name: '승인하면 같이 바뀌는 것',
+  })
+  await expect(preview).toContainText('기준 v2에')
+  await expect(
+    preview.getByRole('region', { name: '확인하지 못한 것' }),
+  ).toBeVisible()
   await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
   const status = dialog.getByRole('region', { name: '발행 후 분석 상태' })
   await expect(status).toContainText('상태 확인 필요')

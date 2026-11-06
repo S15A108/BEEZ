@@ -15,6 +15,33 @@ export type CreateInvitationResponse = z.infer<
   typeof createInvitationResponseSchema
 >
 
+// MEM-A01 이메일 초대(PR #134): 서버가 이메일마다 대기 초대를 만들고 메일을 보낸다. 응답은 이메일별 결과뿐이고
+// invitation·invite_url이 없어 링크 초대(email)와 스키마를 나눈다. emails는 1~20개, message는 500자까지다.
+export const createEmailInvitationsInputSchema = z.object({
+  emails: z.array(z.string()).min(1).max(20),
+  message: z.string().max(500).optional(),
+})
+export type CreateEmailInvitationsInput = z.infer<
+  typeof createEmailInvitationsInputSchema
+>
+
+export const emailInvitationResultSchema = z.object({
+  email: z.string(),
+  status: z.enum(['INVITED', 'ALREADY_MEMBER', 'ALREADY_INVITED']),
+  // INVITED·ALREADY_INVITED에만 있다.
+  invitation_id: common.idSchema.optional(),
+})
+export type EmailInvitationResult = z.infer<typeof emailInvitationResultSchema>
+
+export const createEmailInvitationsResponseSchema = z.object({
+  results: z.array(emailInvitationResultSchema),
+})
+
+// MEM-A11: 새 링크로 메일을 다시 보낸다. 새 토큰은 메일에만 담기고 응답에는 없다.
+export const resendInvitationResponseSchema = z.object({
+  invitation: common.invitationSchema,
+})
+
 export const invitationsQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional(),
@@ -35,9 +62,8 @@ export type PreviewInvitationInput = z.infer<
 
 export const previewInvitationResponseSchema = z.object({
   project_name: z.string(),
-  expires_at: common.timeSchema.optional(),
   login_required: z.boolean(),
-  // MEM-A04 수정안 요청 필드(docs/api 01-backend-rest). 서버가 아직 안 줄 수 있어 모두 선택으로 받는다.
+  // MEM-A04 수정안 요청 필드(PR #134). inviter는 초대한 계정이 탈퇴했으면 빠지고, account_matches는 로그인 상태에서만 온다.
   inviter: z.object({ name: z.string(), email: z.string() }).optional(),
   project_description: z.string().optional(),
   invited_email: z.string().optional(),

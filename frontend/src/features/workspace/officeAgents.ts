@@ -30,9 +30,10 @@ export function officeAgentState(
         : 'online',
     }
   }
+  // 작업 현황이 있으면 그 세션으로 연결을 본다. 서버는 agent_connected와 이 행을 같은 조건(폐기되지 않은 토큰에
+  // 에이전트 세션이 있음)으로 만들고, 작업 현황은 30초마다 새로 받으므로 사무실을 연 뒤의 연결·끊김도 반영된다(PR #128 리뷰).
   const mine = work.find((item) => item.member_id === member.id)
-  if (!member.agent_connected || !mine?.agent_session_id)
-    return { state: 'offline' }
+  if (!mine?.agent_session_id) return { state: 'offline' }
   if (mine.validation_status === 'RUNNING') return { state: 'validating' }
   if (mine.task_status === 'IN_PROGRESS') return { state: 'working' }
   if (mine.task_status === 'WAITING')
@@ -45,12 +46,16 @@ export function officeAgentState(
   return { state: 'online' }
 }
 
-/** 사무실에 그릴 에이전트: 연결된 에이전트, 작업 현황에 세션이 있는 에이전트, 그리고 아직 연결하지 않은 내 에이전트 */
+/**
+ * 사무실에 그릴 에이전트: 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 작업 현황이 있으면 첫 조회의
+ * agent_connected 대신 그 세션으로 연결을 본다(officeAgentState와 같은 기준, PR #128 리뷰).
+ */
 export const showsOfficeAgent = (
   member: { id: string; account_id: string; agent_connected: boolean },
   work: readonly AgentWork[] | undefined,
   accountId: string | undefined,
 ) =>
-  member.agent_connected ||
   member.account_id === accountId ||
-  !!work?.find((item) => item.member_id === member.id)?.agent_session_id
+  (work
+    ? !!work.find((item) => item.member_id === member.id)?.agent_session_id
+    : member.agent_connected)

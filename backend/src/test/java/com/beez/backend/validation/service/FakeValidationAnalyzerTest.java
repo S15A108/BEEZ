@@ -53,7 +53,7 @@ class FakeValidationAnalyzerTest {
                 mock(TaskPlanRevisionRepository.class), mock(TaskPlanDesignRefRepository.class),
                 mock(ValidationInputAssembler.class), mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), true,
                 mock(DeltaCompletion.class), mock(TaskCompletionReportRepository.class),
-                mock(ValidationStatusLookup.class));
+                mock(ValidationStatusLookup.class), mock(org.springframework.context.ApplicationEventPublisher.class));
         assertThat(applier.contractViolation(request, response)).isNull();
     }
 }

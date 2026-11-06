@@ -122,6 +122,9 @@ export function DocumentsPanel({
     // 발행한 변경 제안의 '기준 vN 보기'는 'baseline:N'으로 들어와 그 기준의 문서를 보인다(ROUND2-DOC-02).
     if (focus?.startsWith('baseline:'))
       return { name: 'baseline', versionNo: Number(focus.slice(9)) }
+    // HUD 비비 줄의 '문서 검토 중'은 'review:문서 ID'로 들어와 검토 화면을 연다. 승인 전 문서는 상세(DOC-A03)로 열 수 없다.
+    if (focus?.startsWith('review:'))
+      return { name: 'review', id: focus.slice(7) }
     return focus ? { name: 'detail', id: focus } : { name: 'list' }
   })
   const [query, setQuery] = useState('')
@@ -448,6 +451,11 @@ export function DocumentsPanel({
               <span className="text-sm text-muted-foreground">
                 {current.length}개
               </span>
+              {current.length > 0 && (
+                <p className="w-full text-sm text-muted-foreground">
+                  팀장이 승인해 지금 기준으로 쓰는 문서예요.
+                </p>
+              )}
             </div>
             <AsyncState query={documents}>
               {() =>

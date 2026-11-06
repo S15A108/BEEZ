@@ -10,6 +10,9 @@ import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import com.beez.backend.task.entity.Task;
+import com.beez.backend.task.repository.TaskRepository;
+import com.beez.backend.task.service.TaskHandoverService;
 import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -26,6 +29,9 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -45,6 +51,18 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ProjectAccessChecker access;
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
+
+    @Autowired
+    TaskHandoverService handover;
+
+    @Autowired
+    TaskRepository taskRepository;
+
+    @Autowired
+    ProjectMemberService memberService;
 
     TaskApiSupport api;
     Long projectId;
@@ -178,12 +196,142 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     }
 
     /**
-     * 깨지면: 열린 작업을 담당자 없는 사람에게 남긴 채 빠지거나, 넘겨받은 사람이 떠난 사람의 검증(도는 중이던 것 포함)으로
-     * 진행 중 작업을 이어 가거나, 끝난 작업까지 담당자가 바뀌거나, 담당자와 무관한 DELTA 검증까지 버려져 자동 완료(S4)가 막힌다
-     * (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경·§2.3, 2026-10-29 결정).
+     * 깨지면: 팀장이 넘길 팀원을 골라도 나가지 못하거나, 나간 뒤 팀장이 0명·2명이 되거나, 나간 팀장의 세션·토큰이 계속 통하거나,
+     * 팀장이 맡던 열린 작업이 넘겨받을 사람에게 가지 않는다 (MEM-A10 transfer_leader_to_member_id, S15P31A108-304).
+     * 팀원이 같은 값을 보내면 무시하고 팀원으로 나가야 한다(명세 "보내도 서버가 무시한다").
      */
     @Test
-    void openTasks_blockUntilReassigned_inProgressGoesBackToRevalidation() {
+    void leaderLeave_withTransfer_handsOverLeadershipAndTasks_thenLeaves() {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        long leaderToken = api.leaderAgentTokenId();
+        String projectPath = "/api/projects/" + projectId;
+        HttpResponse<String> created = api.post(tasksPath(), api.planJson("팀장 작업", api.readsRef("API-01"), "[]"), leader);
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        long leaderTask = TaskApiSupport.longField(created.body(), "id");
+
+        HttpResponse<String> res = api.post(projectPath + "/leave",
+                leaveBody(memberMemberId, memberMemberId), leader);
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(204);
+
+        assertThat(roleOf(memberMemberId)).isEqualTo("LEADER");
+        assertThat(leftReason(leaderMemberId)).isEqualTo("LEFT");
+        assertThat(api.get(projectPath, leader).statusCode()).isEqualTo(404);
+        assertTokenRevoked(leader, leaderToken);
+        assertThat(activeLeaders()).isEqualTo(1L);
+        assertThat(taskRow(leaderTask)).isEqualTo("READY|null|" + memberMemberId);
+        assertThat(assignedRecipients(leaderTask)).containsExactly(member);
+        // 새 팀장이 바로 팀장 일을 한다
+        assertThat(api.patch(projectPath, "{\"name\":\"새 팀장\"}", member).statusCode()).isEqualTo(200);
+
+        // 제외(MEM-A09)는 위임 값을 쓰지 않는다 — 팀장(member)은 그대로, 대상만 빠진다
+        long dave = joinAsMember();
+        assertThat(api.post(removePath(memberIdOf(dave)), body("transfer_leader_to_member_id", memberIdOf(dave)), member)
+                .statusCode()).isEqualTo(204);
+        assertThat(roleOf(memberIdOf(dave))).isEqualTo("MEMBER");
+        assertThat(leftReason(memberIdOf(dave))).isEqualTo("REMOVED");
+
+        // 팀원이 보낸 위임 대상은 무시된다 — 역할은 그대로, 본인만 나간다
+        long carol = joinAsMember();
+        assertThat(api.post(projectPath + "/leave", body("transfer_leader_to_member_id", memberIdOf(carol)), carol)
+                .statusCode()).isEqualTo(204);
+        assertThat(roleOf(memberIdOf(carol))).isEqualTo("MEMBER");
+        assertThat(roleOf(memberMemberId)).isEqualTo("LEADER");
+        assertThat(leftReason(memberIdOf(carol))).isEqualTo("LEFT");
+    }
+
+    /**
+     * 깨지면: 팀장이 자기·나간 사람·탈퇴한 사람·다른 프로젝트 사람에게 팀장을 넘기고 빠지거나, 위임은 됐는데 인계가 실패해
+     * 팀장 없이 역할만 바뀐 채 남는다 (MEM-A10 오류 표 409 invalid_transfer_target, -304 "실패하면 역할 교체도 롤백").
+     */
+    @Test
+    void leaderLeave_rejectsBadTransferTarget_andRollsBackOnLaterFailure() {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        String leavePath = "/api/projects/" + projectId + "/leave";
+        long gone = joinAsMember();
+        fixtures().removeMember(memberIdOf(gone));
+        long withdrawn = joinAsMember();
+        api.jdbc.sql("update account set deleted_at = now() where id = :a").param("a", withdrawn).update();
+        long elsewhere = fixtures().projectWithLeader().leaderMemberId();
+
+        assertCode(api.post(leavePath, "{}", leader), 409, "leader_transfer_required");
+        for (long target : new long[] {leaderMemberId, memberIdOf(gone), memberIdOf(withdrawn), elsewhere}) {
+            assertCode(api.post(leavePath, body("transfer_leader_to_member_id", target), leader),
+                    409, "invalid_transfer_target");
+        }
+        assertThat(api.post(leavePath, "{\"transfer_leader_to_member_id\":\"x\"}", leader).statusCode()).isEqualTo(400);
+        // 위임은 사람만 한다(MEM-A08 과 같음). 에이전트 요청은 REST 세션이 아니라 서비스로 직접 부른다
+        CallerContext leaderAgent = CallerContext.agent(leader, api.leaderAgentTokenId());
+        assertThatThrownBy(() -> memberService.leave(leaderAgent, projectId,
+                new EndMembershipRequest(null, String.valueOf(memberMemberId))))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("forbidden"));
+
+        // 위임 뒤 인계 대상 검사(400)에서 실패 → 위임도 되돌아간다
+        assertThat(api.post(leavePath, leaveBody(memberMemberId, elsewhere), leader).statusCode()).isEqualTo(400);
+
+        assertThat(roleOf(leaderMemberId)).isEqualTo("LEADER");
+        assertThat(roleOf(memberMemberId)).isEqualTo("MEMBER");
+        assertThat(leftReason(leaderMemberId)).isNull();
+        assertThat(api.get("/api/projects/" + projectId, leader).statusCode()).isEqualTo(200);
+    }
+
+    /**
+     * 깨지면: 같은 팀장의 위임(MEM-A08)이 커밋되는 동안 프로젝트 잠금을 기다린 '위임하고 나가기'가 이미 넘긴 팀장 자리를 다시 넘기거나,
+     * 팀장이 아닌 사람으로 나가 버린다 (-304 "같은 팀장의 MEM-A08 위임과 겹치면 뒤의 것이 막혀야 한다").
+     * 잠금을 쥔 트랜잭션에서 위임을 흉내 내 커밋해 겹치는 순서를 매번 똑같이 만든다.
+     */
+    @Test
+    void leaderLeave_waitingOnLock_isRejectedAfterConcurrentTransfer() throws Exception {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        long carolMemberId = memberIdOf(joinAsMember());
+
+        assertCode(whileLeadershipMoves(leaderMemberId, memberMemberId,
+                () -> api.post("/api/projects/" + projectId + "/leave",
+                        body("transfer_leader_to_member_id", carolMemberId), leader)), 403, "forbidden");
+        assertThat(roleOf(carolMemberId)).isEqualTo("MEMBER");
+        assertThat(leftReason(leaderMemberId)).isNull();
+    }
+
+    /**
+     * 깨지면: 요청 때는 팀원이었다가 잠금을 기다리는 사이 팀장이 된 사람이 넘길 팀원을 보냈는데도, 요청 때 역할로 판정해 그 값을 버리고
+     * 409 leader_transfer_required 로 막는다 (명세 "역할은 행을 잠근 뒤 요청 시점 값으로 다시 판정", -304 리뷰 지적 1).
+     */
+    @Test
+    void leave_byMemberPromotedWhileWaiting_usesTransferValue() throws Exception {
+        long leaderMemberId = api.memberId("leader@test");
+        long memberMemberId = api.memberId("member@test");
+        long carolMemberId = memberIdOf(joinAsMember());
+
+        HttpResponse<String> res = whileRowLocked("select id from project where id = ? for update", projectId,
+                () -> api.post("/api/projects/" + projectId + "/leave",
+                        body("transfer_leader_to_member_id", carolMemberId), member),
+                lock -> {
+                    // 팀장이 member 에게 위임(MEM-A08 흉내). 내리는 쪽이 먼저다(ux_member_one_leader)
+                    try (PreparedStatement ps = lock.prepareStatement("update project_member set role = ? where id = ?")) {
+                        ps.setString(1, "MEMBER");
+                        ps.setLong(2, leaderMemberId);
+                        ps.executeUpdate();
+                        ps.setString(1, "LEADER");
+                        ps.setLong(2, memberMemberId);
+                        ps.executeUpdate();
+                    }
+                });
+
+        assertThat(res.statusCode()).as(res.body()).isEqualTo(204);
+        assertThat(roleOf(carolMemberId)).isEqualTo("LEADER");
+        assertThat(leftReason(memberMemberId)).isEqualTo("LEFT");
+        assertThat(activeLeaders()).isEqualTo(1L);
+    }
+
+    /**
+     * 깨지면: 넘겨받은 사람이 떠난 사람의 검증(도는 중이던 것 포함)으로 진행 중 작업을 이어 가거나, 끝난 작업까지 담당자가 바뀌거나,
+     * 담당자와 무관한 DELTA 검증까지 버려져 자동 완료(S4)가 막힌다
+     * (완료 조건 4, 04-task-lifecycle.md §6 진행 중 담당자 변경·§2.3, 2026-10-29 결정). 인계 대상이 없을 때는 아래 미배정 시험.
+     */
+    @Test
+    void openTasks_reassignedOnRemoveAndLeave_inProgressGoesBackToRevalidation() {
         long ready = createTaskAsMember("준비된 작업");
         long running = createTaskAsMember("진행 중 작업");
         long pass = api.passValidation(running);
@@ -204,8 +352,6 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
                 "\"summary\":\"끝\",\"delta\":[],\"completion_checks\":[{\"criterion\":\"테스트 통과\",\"met\":true}]");
 
         long memberMemberId = api.memberId("member@test");
-        assertCode(api.post(removePath(memberMemberId), null, leader), 409, "active_tasks_exist");
-        assertThat(api.get("/api/projects/" + projectId, member).statusCode()).isEqualTo(200);
         assertThat(api.post(removePath(memberMemberId), body("reassign_to_member_id", memberMemberId), leader)
                 .statusCode()).isEqualTo(400);
         long elsewhere = fixtures().projectWithLeader().leaderMemberId();
@@ -229,7 +375,6 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
         // 나가기도 같은 규칙: 인계 대상을 주면 넘기고 빠진다
         String leavePath = "/api/projects/" + projectId + "/leave";
-        assertCode(api.post(leavePath, null, carol), 409, "active_tasks_exist");
         long leaderMemberId = api.memberId("leader@test");
         assertThat(api.post(leavePath, body("reassign_to_member_id", leaderMemberId), carol).statusCode()).isEqualTo(204);
         assertThat(taskRow(ready)).isEqualTo("READY|null|" + leaderMemberId);
@@ -258,6 +403,120 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         assertThat(TaskApiSupport.stringField(res.body(), "status")).isEqualTo("WAITING");
         assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + leaderMemberId);
         assertThat(validationRow(pass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+    }
+
+    /**
+     * 깨지면: 담당자 변경(TSK-A06)이 타임라인에 남지 않거나 새 담당자가 알림을 못 받거나, 같은 담당자로 다시 지정했을 뿐인데
+     * 활동·알림이 생기거나, 팀장이 자기에게 배정했는데 자기 알림함에 알림이 쌓인다 (-288, 계약 6.1·6.2·7절, 11-04 결정).
+     * 연속 변경은 키(변경 전 잠금 버전)가 달라 매번 남아야 한다 — 겹치면 두 번째 변경이 ON CONFLICT 로 조용히 사라진다.
+     */
+    @Test
+    void assigneeChange_recordsActivity_andNotifiesNewAssigneeExceptSelf() {
+        long task = createTaskAsMember("배정 알림 대상");
+        long memberMemberId = api.memberId("member@test");
+        long leaderMemberId = api.memberId("leader@test");
+        long carol = joinAsMember();
+
+        assertThat(changeAssignee(task, memberMemberId).statusCode()).isEqualTo(200);
+        assertThat(assigneeActivities(task)).isEmpty();
+        assertThat(assignedRecipients(task)).isEmpty();
+
+        assertThat(changeAssignee(task, memberIdOf(carol)).statusCode()).isEqualTo(200);
+        assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader);
+        assertThat(assignedRecipients(task)).containsExactly(carol);
+
+        // 팀장 자기 배정: 활동은 남고 알림은 없다
+        assertThat(changeAssignee(task, leaderMemberId).statusCode()).isEqualTo(200);
+        assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader, "HUMAN|" + leader);
+        assertThat(assignedRecipients(task)).containsExactly(carol);
+    }
+
+    /**
+     * 깨지면: 팀원 제외·나가기로 넘어간 작업이 타임라인에 남지 않거나, 넘겨받은 사람이 몇 개를 받았는지 모르거나,
+     * 나가는 사람이 팀장에게 넘겼는데 팀장이 알림을 못 받는다 (-288 완료 조건, 작업마다 한 건씩).
+     */
+    @Test
+    void handover_onRemoveAndLeave_recordsOnePerTask_andNotifiesNewAssignee() {
+        long first = createTaskAsMember("인계 1");
+        long second = createTaskAsMember("인계 2");
+        long memberMemberId = api.memberId("member@test");
+        long carol = joinAsMember();
+
+        assertThat(api.post(removePath(memberMemberId), body("reassign_to_member_id", memberIdOf(carol)), leader)
+                .statusCode()).isEqualTo(204);
+        for (long task : new long[] {first, second}) {
+            assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader);
+            assertThat(assignedRecipients(task)).containsExactly(carol);
+        }
+
+        // 나가기는 나가는 본인이 행위자, 받는 팀장에게 알림
+        String leavePath = "/api/projects/" + projectId + "/leave";
+        assertThat(api.post(leavePath, body("reassign_to_member_id", api.memberId("leader@test")), carol).statusCode())
+                .isEqualTo(204);
+        for (long task : new long[] {first, second}) {
+            assertThat(assigneeActivities(task)).containsExactly("HUMAN|" + leader, "HUMAN|" + carol);
+            assertThat(assignedRecipients(task)).containsExactly(carol, leader);
+        }
+    }
+
+    /**
+     * 깨지면: 담당자 변경이 롤백돼도 활동·알림만 남거나, 동시에 바뀐 작업의 잠금 충돌이 409 revision_conflict 가 아닌 다른 예외(500)로 난다.
+     * 활동·알림 입구는 네이티브 쿼리라 실행 전에 flush 하는데, 거기서 충돌이 나면 저장소의 예외 변환을 거치지 않는다(-288 실측 함정).
+     */
+    @Test
+    void reassign_rollsBackWithDomain_andConflictStaysOptimisticLockFailure() {
+        long task = createTaskAsMember("롤백 대상");
+        long carolMemberId = memberIdOf(joinAsMember());
+        CallerContext caller = CallerContext.human(leader);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+
+        tx.executeWithoutResult(status -> {
+            handover.reassign(caller, taskRepository.findById(task).orElseThrow(), carolMemberId);
+            status.setRollbackOnly();
+        });
+        assertThat(taskRow(task)).endsWith("|" + api.memberId("member@test"));
+        assertThat(assigneeActivities(task)).isEmpty();
+        assertThat(assignedRecipients(task)).isEmpty();
+
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            Task loaded = taskRepository.findById(task).orElseThrow();
+            // 읽은 뒤 DB 의 버전만 올린다. api.jdbc 는 이 트랜잭션에 참여하므로 커밋된 경합이 아니라 저장(UPDATE … where lock_version)이
+            // 0행이 되는 경로만 본다. 다른 커넥션의 실제 경합은 handover_conflictWithConcurrentTaskChange_is409_andLeavesNothing 이 본다
+            api.jdbc.sql("update task set lock_version = lock_version + 1 where id = :t").param("t", task).update();
+            handover.reassign(caller, loaded, carolMemberId);
+        })).isInstanceOf(ObjectOptimisticLockingFailureException.class);
+        assertThat(assigneeActivities(task)).isEmpty();
+        assertThat(assignedRecipients(task)).isEmpty();
+    }
+
+    /**
+     * 깨지면: 팀원 제외 중 넘길 작업이 동시에 바뀌었을 때 409 revision_conflict 가 아니라 500 이 나거나, 실패했는데 활동·알림·멤버십 종료가 남는다.
+     * 작업 행을 쥔 별도 트랜잭션에서 잠금 버전을 올려 커밋해, 요청의 작업 저장(UPDATE … where lock_version)이 매번 충돌하게 만든다 (-288).
+     */
+    @Test
+    void handover_conflictWithConcurrentTaskChange_is409_andLeavesNothing() throws Exception {
+        long first = createTaskAsMember("인계 충돌 1");
+        long second = createTaskAsMember("인계 충돌 2");
+        long memberMemberId = api.memberId("member@test");
+        long carolMemberId = memberIdOf(joinAsMember());
+
+        HttpResponse<String> res = whileRowLocked("select id from task where id = ? for update", second,
+                () -> api.post(removePath(memberMemberId), body("reassign_to_member_id", carolMemberId), leader),
+                lock -> {
+                    try (PreparedStatement ps = lock.prepareStatement(
+                            "update task set lock_version = lock_version + 1 where id = ?")) {
+                        ps.setLong(1, second);
+                        ps.executeUpdate();
+                    }
+                });
+
+        assertCode(res, 409, "revision_conflict");
+        assertThat(leftReason(memberMemberId)).isNull();
+        for (long task : new long[] {first, second}) {
+            assertThat(taskRow(task)).endsWith("|" + memberMemberId);
+            assertThat(assigneeActivities(task)).isEmpty();
+            assertThat(assignedRecipients(task)).isEmpty();
+        }
     }
 
     /**
@@ -314,6 +573,118 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
     // ------------------------------------------------------------------
     // 도우미
     // ------------------------------------------------------------------
+
+    /**
+     * 깨지면: 넘겨받을 사람을 고르지 않은 제외·나가기가 막히거나(409), 담당자만 비워야 하는데 상태·검증까지 바뀌거나,
+     * 잠금 번호가 오르지 않아 화면이 쥔 옛 번호로 미배정 작업을 바꿀 수 있거나, 받을 사람이 없는데 배정 알림이 생긴다
+     * (S15P31A108-301 완료 조건 1, MEM-A09·A10 수정안, 04 §6 "제외된 팀원의 진행 중 작업").
+     */
+    @Test
+    void openTasks_withoutReassignTarget_areUnassigned_keepingStateAndValidation() {
+        long ready = createTaskAsMember("준비된 작업");
+        long running = createTaskAsMember("진행 중 작업");
+        long pass = api.passValidation(running);
+        report(running, "START", "\"validation_id\":\"" + pass + "\"");
+        long done = createTaskAsMember("끝난 작업");
+        report(done, "START", "\"validation_id\":\"" + api.passValidation(done) + "\"");
+        report(done, "COMPLETED",
+                "\"summary\":\"끝\",\"delta\":[],\"completion_checks\":[{\"criterion\":\"테스트 통과\",\"met\":true}]");
+        int readyLock = lockOf(ready);
+        int runningLock = lockOf(running);
+        long memberMemberId = api.memberId("member@test");
+
+        assertThat(api.post(removePath(memberMemberId), null, leader).statusCode()).isEqualTo(204);
+
+        assertThat(taskRow(ready)).isEqualTo("READY|null|null");
+        assertThat(taskRow(running)).isEqualTo("IN_PROGRESS|null|null");     // 상태·점유 그대로
+        assertThat(validationRow(pass)).isEqualTo("PASS|null");               // 검증 그대로
+        assertThat(taskRow(done)).isEqualTo("COMPLETED|null|" + memberMemberId); // 닫힌 작업은 건드리지 않는다
+        assertThat(lockOf(ready)).isEqualTo(readyLock + 1);
+        assertThat(lockOf(running)).isEqualTo(runningLock + 1);
+        // 담당자가 바뀐 것이므로 활동은 남고, 받을 사람이 없으니 배정 알림은 없다
+        assertThat(assigneeActivities(ready)).containsExactly("HUMAN|" + leader);
+        assertThat(assignedRecipients(ready)).isEmpty();
+
+        // 나가기도 같다: 팀장이 carol 에게 맡긴 작업을 carol 이 인계 대상 없이 나가면 담당자만 빈다
+        long carol = joinAsMember();
+        assertThat(changeAssignee(ready, memberIdOf(carol)).statusCode()).isEqualTo(200);
+        assertThat(api.post("/api/projects/" + projectId + "/leave", null, carol).statusCode()).isEqualTo(204);
+        assertThat(taskRow(ready)).isEqualTo("READY|null|null");
+        assertThat(assigneeActivities(ready)).containsExactly("HUMAN|" + leader, "HUMAN|" + leader, "HUMAN|" + carol);
+    }
+
+    /**
+     * 깨지면: 팀원이 미배정 작업을 맡지 못하거나, 남의 작업·남을 지정하는 것까지 팀원에게 열리거나, 두 팀원이 동시에 맡을 때
+     * 늦은 쪽이 409 가 아니라 403 을 받아 화면의 "다른 팀원이 먼저 맡았어요"가 틀리거나, 맡은 뒤 진행 중 작업이 옛 검증으로
+     * 계속 가거나, 스스로 맡았는데 배정 알림이 간다 (S15P31A108-301 완료 조건 2, TSK-A06 수정안, 04 §2.2 S5, 계약 6.1).
+     */
+    @Test
+    void member_claimsUnassignedTask_forSelfOnly_andLateClaimIs409() {
+        long ready = createTaskAsMember("맡을 작업");
+        long running = createTaskAsMember("진행 중이던 작업");
+        long pass = api.passValidation(running);
+        report(running, "START", "\"validation_id\":\"" + pass + "\"");
+        long carol = joinAsMember();
+        long dave = joinAsMember();
+        long carolMemberId = memberIdOf(carol);
+        long daveMemberId = memberIdOf(dave);
+        assertThat(api.post(removePath(api.memberId("member@test")), null, leader).statusCode()).isEqualTo(204);
+
+        // 팀원이 남을 지정하면 403
+        int lock = lockOf(ready);
+        assertCode(assignAs(carol, ready, daveMemberId, lock), 403, "forbidden");
+
+        // 두 팀원이 같은 잠금 번호로 맡으려 함 → 먼저 처리된 carol 만 성공, dave 는 409
+        HttpResponse<String> claimed = assignAs(carol, ready, carolMemberId, lock);
+        assertThat(claimed.statusCode()).as(claimed.body()).isEqualTo(200);
+        assertThat(TaskApiSupport.longField(claimed.body(), "assignee_member_id")).isEqualTo(carolMemberId);
+        assertCode(assignAs(dave, ready, daveMemberId, lock), 409, "revision_conflict");
+        // 새 번호로 다시 와도 이제 담당자가 있으니 403
+        assertCode(assignAs(dave, ready, daveMemberId, lockOf(ready)), 403, "forbidden");
+        // 스스로 맡으면 활동만 남고 알림은 없다
+        assertThat(assigneeActivities(ready)).containsExactly("HUMAN|" + leader, "HUMAN|" + carol);
+        assertThat(assignedRecipients(ready)).isEmpty();
+
+        // 진행 중이던 미배정 작업을 맡으면 S5: 재검증 대기, 옛 검증은 STALE
+        assertThat(assignAs(dave, running, daveMemberId, lockOf(running)).statusCode()).isEqualTo(200);
+        assertThat(taskRow(running)).isEqualTo("WAITING|REVALIDATION|" + daveMemberId);
+        assertThat(validationRow(pass)).isEqualTo("STALE|ASSIGNEE_CHANGED");
+
+        // 팀장은 그대로 누구에게나
+        assertThat(changeAssignee(ready, daveMemberId).statusCode()).isEqualTo(200);
+        assertThat(taskRow(ready)).isEqualTo("READY|null|" + daveMemberId);
+    }
+
+    /**
+     * 깨지면: 화면의 '담당자 없는 작업'(unassigned=true + 열린 상태 여러 개)이 비거나, 상태를 여러 개 주면 첫 값만 걸리거나,
+     * 서로 어긋나는 필터(unassigned + assignee_member_id)를 조용히 받는다 (S15P31A108-301 완료 조건 3, TSK-A02 수정안).
+     */
+    @Test
+    void taskList_filtersByManyStatuses_andUnassigned() {
+        long ready = createTaskAsMember("준비");
+        long running = createTaskAsMember("진행");
+        report(running, "START", "\"validation_id\":\"" + api.passValidation(running) + "\"");
+        long done = createTaskAsMember("끝");
+        report(done, "START", "\"validation_id\":\"" + api.passValidation(done) + "\"");
+        report(done, "COMPLETED",
+                "\"summary\":\"끝\",\"delta\":[],\"completion_checks\":[{\"criterion\":\"테스트 통과\",\"met\":true}]");
+        long leaderMemberId = api.memberId("leader@test");
+        long mine = createTaskAsMember("팀장 것");
+        assertThat(changeAssignee(mine, leaderMemberId).statusCode()).isEqualTo(200);
+
+        assertThat(listIds("status=READY&status=IN_PROGRESS")).containsExactlyInAnyOrder(ready, running, mine);
+        assertThat(listIds("status=COMPLETED")).containsExactly(done);
+
+        assertThat(api.post(removePath(api.memberId("member@test")), null, leader).statusCode()).isEqualTo(204);
+        String open = "status=DRAFT&status=READY&status=IN_PROGRESS&status=WAITING";
+        assertThat(listIds("unassigned=true&" + open)).containsExactlyInAnyOrder(ready, running);
+        assertThat(listIds("unassigned=true")).containsExactlyInAnyOrder(ready, running);   // 끝난 작업은 담당자가 남아 있다
+        assertThat(listIds("unassigned=false&" + open)).containsExactlyInAnyOrder(ready, running, mine);
+        assertThat(listIds("assignee_member_id=" + leaderMemberId)).containsExactly(mine);
+
+        assertCode(api.get(tasksPath() + "?unassigned=true&assignee_member_id=" + leaderMemberId, leader), 400, "validation_failed");
+        assertCode(api.get(tasksPath() + "?status=READY&status=NOPE", leader), 400, "validation_failed");
+    }
 
     private String membersPath() {
         return "/api/projects/" + projectId + "/members";
@@ -452,10 +823,44 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
         }
     }
 
-    /** 상태|대기 사유|담당 멤버 */
+    /** TASK_ASSIGNEE_CHANGED 활동의 행위자 종류|계정, 저장 순 */
+    private List<String> assigneeActivities(long taskId) {
+        return api.jdbc.sql("""
+                        select actor_kind || '|' || actor_id from activity_event
+                         where task_id = :t and event_type = 'TASK_ASSIGNEE_CHANGED' order by id
+                        """).param("t", taskId).query(String.class).list();
+    }
+
+    /** TASK_ASSIGNED 알림 수신 계정, 저장 순 */
+    private List<Long> assignedRecipients(long taskId) {
+        return api.jdbc.sql("""
+                        select recipient_account_id from notification
+                         where ref_kind = 'TASK' and ref_id = :t and type = 'TASK_ASSIGNED' order by id
+                        """).param("t", taskId).query(Long.class).list();
+    }
+
+    /** 상태|대기 사유|담당 멤버 (담당자 없으면 null) */
     private String taskRow(long taskId) {
-        return api.jdbc.sql("select status || '|' || coalesce(waiting_reason, 'null') || '|' || assignee_member_id"
+        return api.jdbc.sql("select status || '|' || coalesce(waiting_reason, 'null') || '|' || coalesce(assignee_member_id::text, 'null')"
                         + " from task where id = :t").param("t", taskId).query(String.class).single();
+    }
+
+    private int lockOf(long taskId) {
+        return api.jdbc.sql("select lock_version from task where id = :t").param("t", taskId).query(Integer.class).single();
+    }
+
+    /** 담당자 변경(TSK-A06)을 account 의 세션으로, 잠금 번호를 직접 정해 보낸다 */
+    private HttpResponse<String> assignAs(long account, long taskId, long assigneeMemberId, int lock) {
+        return api.patch(tasksPath() + "/" + taskId + "/assignee",
+                "{\"assignee_member_id\":\"" + assigneeMemberId + "\",\"expected_lock_version\":" + lock + "}", account);
+    }
+
+    /** 작업 목록(TSK-A02) 의 작업 번호들 */
+    private List<Long> listIds(String query) {
+        HttpResponse<String> res = api.get(tasksPath() + "?" + query, leader);
+        List<Long> ids = new ArrayList<>();
+        read(res).get("items").forEach(t -> ids.add(Long.parseLong(t.get("id").asString())));
+        return ids;
     }
 
     private void assertTokenRevoked(long accountId, long tokenId) {
@@ -470,6 +875,21 @@ class ProjectMemberApiIntegrationTests extends IntegrationTestSupport {
 
     private static String body(String field, long id) {
         return "{\"" + field + "\":\"" + id + "\"}";
+    }
+
+    /** 팀장의 위임하고 나가기 본문 (MEM-A10) */
+    private static String leaveBody(long transferTo, long reassignTo) {
+        return "{\"transfer_leader_to_member_id\":\"" + transferTo + "\",\"reassign_to_member_id\":\"" + reassignTo + "\"}";
+    }
+
+    private String roleOf(long memberId) {
+        return api.jdbc.sql("select role from project_member where id = :m").param("m", memberId)
+                .query(String.class).single();
+    }
+
+    private long activeLeaders() {
+        return api.jdbc.sql("select count(*) from project_member where project_id = :p and role = 'LEADER' and active")
+                .param("p", projectId).query(Long.class).single();
     }
 
     private JsonNode read(HttpResponse<String> res) {

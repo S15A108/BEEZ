@@ -35,6 +35,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 class PublishedAnalysisKafkaIntegrationTest extends IntegrationTestSupport {
     @DynamicPropertySource static void cdc(DynamicPropertyRegistry p) {
         p.add("beez.cdc.intake.enabled", () -> "true");
+        p.add("beez.cdc.intake.consumer-enabled", () -> "true");
         p.add("beez.cdc.intake.bootstrap-servers", () -> System.getenv("BEEZ_227_KAFKA_BOOTSTRAP"));
         p.add("beez.cdc.intake.topic", () -> System.getenv("BEEZ_227_KAFKA_TOPIC"));
         p.add("beez.cdc.intake.group-id", () -> System.getenv("BEEZ_227_KAFKA_GROUP"));

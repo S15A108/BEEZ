@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useIsMutating, useQuery } from '@tanstack/react-query'
 import { Footprints } from 'lucide-react'
 import type { SceneAgent, SceneTask } from '@/three/types'
@@ -115,8 +115,8 @@ function Workspace({ projectId }: { projectId: string }) {
         avatar: member.avatar,
         status: 'idle',
       })),
-      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트, 작업 현황에 세션이 있는 에이전트, 아직 연결하지 않은 내 에이전트.
-      // 상태는 작업 현황(MON-A05)을 따르고, 그 API가 없으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
+      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결과 상태는 작업 현황(MON-A05)의
+      // 세션을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
       ...(query.data?.members.items ?? [])
         .filter((member) =>
           showsOfficeAgent(member, agentWork, session.data?.id),
@@ -316,8 +316,11 @@ function Workspace({ projectId }: { projectId: string }) {
                     className={pane === 'documents' ? 'sr-only' : undefined}
                   >
                     {data.project.name}
-                    {data.project.current_baseline &&
-                      ` · 기준 v${data.project.current_baseline.version_no}`}
+                    {/* 회의실 부제목은 회의가 어떻게 열리는지 쓴다(캔버스 PNL-06-v2). */}
+                    {pane === 'meetings'
+                      ? ' · 작업이 부딪히면 비비가 관련된 사람을 불러 회의를 열어요'
+                      : data.project.current_baseline &&
+                        ` · 기준 v${data.project.current_baseline.version_no}`}
                   </DialogDescription>
                 </DialogHeader>
                 <PaneHeaderSlot value={headerSlot}>
@@ -355,6 +358,17 @@ function Workspace({ projectId }: { projectId: string }) {
 
 export default function WorkspacePage() {
   const { projectId = '' } = useParams()
+  const [params] = useSearchParams()
+  const invite = params.get('invite')
+  // 초대 메일의 '프로젝트로 가기'(/projects/{id}?invite=토큰, MEM-A01). 아직 팀원이 아니면 이 프로젝트를 열 수 없어(404)
+  // 로그인 여부와 상관없이 초대 화면(MEM-A04·A05)이 먼저 받는다. 이미 팀원이면 그 화면이 이 프로젝트로 되돌려 보낸다.
+  if (invite)
+    return (
+      <Navigate
+        replace
+        to={`/invite?${new URLSearchParams({ invite, project: projectId })}`}
+      />
+    )
   return (
     <RequireAccount>
       <Workspace key={projectId} projectId={projectId} />

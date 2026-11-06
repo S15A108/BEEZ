@@ -1,9 +1,11 @@
 package com.beez.backend.common.api;
 
+import jakarta.persistence.OptimisticLockException;
 import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import org.hibernate.StaleObjectStateException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
@@ -68,9 +70,18 @@ public class GlobalExceptionHandler {
                 .body(ApiErrorResponse.of("method_not_allowed", "지원하지 않는 HTTP 메서드입니다"));
     }
 
-    /** @Version 충돌: 내가 읽은 뒤 누군가 먼저 바꿨다. 명세 00-common 5절 → 409 revision_conflict */
-    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
-    public ResponseEntity<ApiErrorResponse> handleOptimisticLock(ObjectOptimisticLockingFailureException e) {
+    /**
+     * @Version 충돌: 내가 읽은 뒤 누군가 먼저 바꿨다. 명세 00-common 5절 → 409 revision_conflict.
+     * 저장소({@code @Repository})·커밋에서 나면 Spring 이 {@link ObjectOptimisticLockingFailureException} 으로 바꿔 준다.
+     * {@code @Repository} 밖에서 EntityManager 쿼리가 auto-flush 하다 나면 변환을 거치지 않고 JPA·Hibernate 예외 그대로 온다
+     * (S15P31A108-288 실측). 활동·알림 입구는 -308 에서 저장 전에 {@code PersistenceContextFlusher} 로 flush 해 변환을 거친다.
+     * 원형 버전 충돌도 받는 건 방어다 — 버전 충돌은 어디서 나든 동시 수정의 결과라 409 가 맞다. 반대로 원형 Hibernate 제약 위반은
+     * 받지 않는다: {@code @Repository} 밖에서 난 제약 위반은 입구 INSERT 자체의 위반(호출 서비스의 버그)일 수 있어 400 이 아니라
+     * 500 으로 드러나야 한다.
+     */
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, OptimisticLockException.class,
+            StaleObjectStateException.class})
+    public ResponseEntity<ApiErrorResponse> handleOptimisticLock(Exception e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of("revision_conflict", "다른 요청이 먼저 변경했습니다. 다시 조회한 뒤 시도하세요"));
     }

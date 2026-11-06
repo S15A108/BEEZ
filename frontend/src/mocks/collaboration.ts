@@ -495,7 +495,9 @@ export function collaborationRoutes(
             )
             return {
               member_id: member.id,
-              ...(agent ? { agent_session_id: agent.id } : {}),
+              // 서버는 폐기되지 않은 토큰에 세션이 있을 때만 이 행에 세션을 싣고, 같은 조건으로 agent_connected를 정한다.
+              // 예시 DB에서는 연결된 에이전트만 세션이 있는 것으로 둔다(PR #128 리뷰).
+              ...(agent?.connected ? { agent_session_id: agent.id } : {}),
               ...(task
                 ? {
                     current_task_id: task.id,

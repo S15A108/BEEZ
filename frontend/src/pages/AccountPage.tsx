@@ -3,8 +3,9 @@ import { Link, useLocation } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, CircleCheckBig } from 'lucide-react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
+import { getApiErrorMessage } from '@/api/error'
 import { agentsApi, authApi, projectsApi } from '@/api/services'
 import { allTokens } from '@/features/agents/allTokens'
 import { RequireAccount } from '@/features/auth/RequireAccount'
@@ -31,23 +32,36 @@ type ProfileInput = z.infer<typeof profileSchema>
 function ProfileForm({
   name,
   email,
+  avatarChanged,
   onSave,
 }: {
   name: string
   email: string
+  avatarChanged: boolean
   onSave: (name: string) => Promise<unknown>
 }) {
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    control,
+    setError,
+    formState: { errors, isSubmitting, isSubmitSuccessful },
   } = useForm<ProfileInput>({
     resolver: zodResolver(profileSchema),
     defaultValues: { name },
   })
+  // name은 서버 값이라, 저장 뒤 계정을 다시 읽으면 입력과 같아져 버튼이 저절로 꺼진다.
+  const typedName = useWatch({ control, name: 'name' })
+  const changed = avatarChanged || typedName.trim() !== name
   return (
     <form
-      onSubmit={handleSubmit((values) => onSave(values.name))}
+      onSubmit={handleSubmit(async (values) => {
+        try {
+          await onSave(values.name)
+        } catch (cause) {
+          setError('root', { message: getApiErrorMessage(cause) })
+        }
+      })}
       className="grid gap-5"
     >
       <div className="grid gap-4 sm:grid-cols-2">
@@ -76,13 +90,29 @@ function ProfileForm({
           />
         </div>
       </div>
-      <div className="flex items-center justify-between gap-3">
+      {errors.root && (
+        <p role="alert" className="text-sm text-destructive">
+          {errors.root.message}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-muted-foreground">
           저장하면 워크스페이스 HUD, 팀 목록, 3D 사무실에 이 캐릭터로 보여요.
         </p>
-        <Button type="submit" disabled={isSubmitting}>
-          프로필 저장
-        </Button>
+        <div className="ml-auto flex items-center gap-3">
+          {isSubmitSuccessful && !changed && (
+            <p
+              role="status"
+              className="flex items-center gap-1 text-[13px] text-muted-foreground"
+            >
+              <Check aria-hidden="true" className="size-3.5" />
+              저장했어요
+            </p>
+          )}
+          <Button type="submit" disabled={isSubmitting || !changed}>
+            프로필 저장
+          </Button>
+        </div>
       </div>
     </form>
   )
@@ -203,6 +233,8 @@ function Account() {
           key={session.data?.id}
           name={session.data?.name ?? ''}
           email={session.data?.email ?? ''}
+          // 예전 값(bee-yellow)이나 빈 값도 모든 화면에서 같은 캐릭터로 보이므로, 화면에 보이는 캐릭터가 같으면 바뀌지 않은 것이다.
+          avatarChanged={picked.key !== characterOf(session.data?.avatar).key}
           onSave={(name) =>
             mutation.mutateAsync(() =>
               authApi.updateMe({ name, avatar: picked.key }),

@@ -56,6 +56,10 @@ export async function passwordFingerprint(value: string): Promise<string> {
 export interface StoredAccount {
   profile: Account
   password_fingerprint: string
+  /** 임시 비밀번호로 로그인해 비밀번호를 바꿔야 한다(ACC-A02 must_change_password) */
+  must_change_password?: boolean
+  /** 받아 두고 아직 쓰지 않은 임시 비밀번호(ACC-A07). 계정마다 하나이고 원문은 남기지 않는다. */
+  temporary_password?: { fingerprint: string; expires_at: string }
 }
 
 export interface StoredInvitation extends Invitation {
@@ -93,6 +97,11 @@ export interface MockProject {
   activities: Activity[]
   /** 스스로 나간 계정. 로그인만으로는 되살리지 않고 메일 링크(MEM-A05)로만 다시 참여한다(Q05 4). */
   left_account_ids?: string[]
+  /**
+   * 실행 중인 비비 문서 검토(서버 document_bee_review_request RUNNING). BEE-A04가 읽는다.
+   * 예시 DOC-A16은 한 요청 안에서 바로 끝나서 평소에는 비어 있다. 검토 중 표시를 보려면 여기에 넣는다.
+   */
+  running_bee_reviews?: { document_id: string; started_at: string }[]
 }
 
 export interface MockDatabase {
@@ -104,12 +113,8 @@ export interface MockDatabase {
   invitations: StoredInvitation[]
   tokens: (AgentToken & { account_id: string })[]
   notifications: (Notification & { account_id: string })[]
-  reset_tokens: {
-    token: string
-    account_id: string
-    expires_at: string
-    used: boolean
-  }[]
+  /** 비밀번호 찾기(ACC-A07) 요청 기록. 서버처럼 맞지 않은 요청도 남겨 다시 요청 간격과 이메일당 한도를 센다. */
+  temporary_password_requests?: { email: string; created_at: string }[]
   pending_validations: Record<string, number>
 }
 
@@ -513,8 +518,8 @@ function seededProject(
     status_check_required: true,
   })
   // 팀원 예시 에이전트는 사무실 화면 확인용으로 연결됨을 두되(사용자 결정 2026-11-03, D37), 사용자가 mock에서 새로
-  // 발급한 토큰은 연결을 만들지 않는다. 박팀원(TASK-003 진행 중)·김동료(TASK-002 승인 대기)는 연결됨, 최팀원은 세션만
-  // 있고 끊김, 내 에이전트(51)는 연결 전이다.
+  // 발급한 토큰은 연결을 만들지 않는다. 박팀원(TASK-003 진행 중)·김동료(TASK-002 승인 대기)는 연결됨, 최팀원은 연결이
+  // 끊겨 작업 현황에 세션이 없고, 내 에이전트(51)는 연결 전이다(사무실 충전 자리에 보임).
   state.agents.push(
     {
       id: '52',
@@ -634,7 +639,6 @@ export function createMockDatabase(): MockDatabase {
         created_at: now(),
       })),
     ],
-    reset_tokens: [],
     pending_validations: {},
   }
 }

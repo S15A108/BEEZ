@@ -1,0 +1,246 @@
+# BEEZ 기록·알림 규칙 (S15P31A108-264). 기준값은 S15P31A108-244 [결정 (11-04)] 4번 표의 초기값이다.
+# 알림을 받았을 때 할 일은 docs/infra/monitoring-alerts.md (알림 이름이 절 제목).
+# 시험: prometheus/tests/beez_test.yml — 절차는 monitoring-alerts.md "규칙 바꿀 때"
+#
+# 라벨
+#   team: app   → 앱 처리 지표, 1차 대응 양지훈
+#         infra → 수집·서버·DB·Kafka 인프라, 1차 대응 전진
+#   Alertmanager 는 alertname 으로 묶고, FAILED·확인 필요 미평가만 24시간마다 다시 알린다(alertmanager.yml).
+#
+# 집계 규칙(244 결정 3)
+#   DB gauge 는 인스턴스마다 같은 DB 전체를 센 값이라 더하면 중복된다. 집계가 성공했고(snapshot_available == 1)
+#   마지막 성공이 120초 이내인 인스턴스(beez_cdc:snapshot_fresh)만 남겨 max 로 하나로 만든다.
+#   성공 1 인 채 갱신이 멈춘 인스턴스의 옛 값이 max 에 남아 이미 해소된 건을 알리지 않게 신선도까지 본다(PR #121 리뷰).
+#   → 집계가 실패하거나 멈추면 아래 beez_cdc:* 시계열이 사라진다. 그 동안은 CdcSnapshotFailing 이 운다.
+#     값이 사라지면 CDC 상태 알림(지연·lease·막힘·FAILED·미평가)이 풀려 "해소" 글이 가는데, 실제로 풀린 것이 아니다.
+#     두 겹으로 막는다:
+#       ① CdcDataUnavailable(신선한 스냅샷이 어디에도 없음, 바로 발생)을 원인으로 Alertmanager 가 위 알림을 억제한다
+#          (alertmanager.yml inhibit_rules). 억제 중에 풀린 알림은 해소 글 없이 사라진다(2026-11-05 실측).
+#       ② CDC 상태 알림에 keep_firing_for: 10m — 값이 사라진 뒤에도 잠시 유지해, 억제 원인이 Alertmanager 에 먼저 닿게 한다.
+#     한계: 장애 중에 실제로 해소된 알림은 해소 글이 오지 않는다. 장애 해소 글을 받으면 대시보드로 다시 확인한다(런북).
+#   프로세스 counter(Kafka 수신 실패)는 인스턴스별 increase() 를 더한다. gauge 에는 increase() 를 쓰지 않는다.
+#
+# or vector(0) 은 여기서 쓰지 않는다. "시계열 없음"과 "0"을 섞으면 수집 장애가 정상으로 보인다. 대시보드 표시용으로만 쓴다.
+
+groups:
+  # 기록 규칙과 그 값을 읽는 알림을 한 그룹에 둔다. 그룹 안의 규칙은 위에서부터 차례로 평가되므로 알림이 같은 주기의
+  # 기록 값을 읽는다. 그룹을 나누면 두 그룹이 따로 돌아 알림이 한 주기(15초) 전 값을 읽을 수도 있다.
+  - name: beez-cdc
+    rules:
+      # 인스턴스별: 집계 성공 + 마지막 성공 120초 이내일 때만 시계열이 있다(값 1). 아래 기록 규칙과 대시보드가 이것으로 거른다.
+      # 120초: 평소 나이는 캐시 15초 + 수집 15초 안쪽이라 여러 번 놓친 것. CdcSnapshotFailing 도 이 규칙에서 유도한다
+      - record: beez_cdc:snapshot_fresh
+        expr: |
+          beez_cdc_analysis_snapshot_available == 1
+          and on(instance) (time() - beez_cdc_analysis_snapshot_last_success_epoch_seconds) <= 120
+      - record: beez_cdc:oldest_pending_seconds:max
+        expr: max(beez_cdc_analysis_oldest_pending_seconds and on(instance) beez_cdc:snapshot_fresh)
+      - record: beez_cdc:expired_leases:max
+        expr: max(beez_cdc_analysis_expired_leases and on(instance) beez_cdc:snapshot_fresh)
+      - record: beez_cdc:blocked_projects:max
+        expr: max(beez_cdc_analysis_blocked_projects and on(instance) beez_cdc:snapshot_fresh)
+      - record: beez_cdc:not_evaluated_requires_review:max
+        expr: max(beez_cdc_analysis_not_evaluated_requires_review and on(instance) beez_cdc:snapshot_fresh)
+      - record: beez_cdc:intakes:max
+        expr: max by (status) (beez_cdc_analysis_intakes and on(instance) beez_cdc:snapshot_fresh)
+      - record: beez_cdc:evaluations:max
+        expr: max by (result) (beez_cdc_analysis_evaluations and on(instance) beez_cdc:snapshot_fresh)
+      # 설정값이라 DB 집계와 무관하다. 인스턴스 중 하나라도 켜져 있으면 1
+      - record: beez_cdc:consumer_enabled:max
+        expr: max(beez_cdc_analysis_consumer_enabled)
+      # 복구 스캔(분석 접수 처리) 설정. consumer 와 따로 켠다(S15P31A108-298). consumer 만 켠 구성은 backend 가 기동을 거부한다
+      - record: beez_cdc:recovery_enabled:max
+        expr: max(beez_cdc_analysis_recovery_enabled)
+
+      # ── 알림(위 기록 규칙 뒤에 둔다) ──
+      # 244 결정 4: PENDING > 600초 그리고 처리가 켜짐, 5분 지속. 대기 시작부터 약 15분 뒤에 온다.
+      # 처리를 맡는 것은 복구 스캔이다(Kafka 는 30초를 줄이는 힌트). 그래서 298 부터 consumer 가 아니라 스캔 설정을 본다 —
+      # Kafka 가 죽어 스캔만 도는 동안에도 지연은 알려야 한다. 스캔이 꺼진 dev 에서는 오래된 PENDING 을 장애로 보지 않는다.
+      - alert: CdcPendingDelay
+        expr: beez_cdc:oldest_pending_seconds:max > 600 and on() beez_cdc:recovery_enabled:max == 1
+        for: 5m
+        keep_firing_for: 10m
+        labels: {team: app}
+        annotations:
+          summary: "분석 대기(PENDING)가 {{ $value | humanizeDuration }}째 처리되지 않음"
+
+      # 억제 원인 전용(글을 보내지 않음, alertmanager.yml 의 "null" 경로). 신선한 스냅샷이 어떤 인스턴스에도 없으면
+      # CDC 건수 값이 없으므로 그 값으로 거는 알림의 "해소"를 믿을 수 없다. 인스턴스 하나만 고장 나고 다른 쪽이
+      # 신선하면 값이 있으므로 억제하지 않는다. 바로 발생시켜(for 없음) 아래 keep_firing_for 10분 안에 억제가 걸리게 한다
+      - alert: CdcDataUnavailable
+        expr: absent(beez_cdc:snapshot_fresh)
+        labels: {team: app}
+        annotations:
+          summary: "신선한 CDC 스냅샷 없음(억제 원인 전용, 알림 글 없음)"
+
+      # 집계 실패: 집계 실패이거나 성공 값이 120초 넘게 갱신되지 않음 = 인스턴스가 신선하지 않음.
+      # 기준(120초)은 위 beez_cdc:snapshot_fresh 한 곳에만 둔다. 성공한 적이 없으면(마지막 성공 NaN) 신선하지 않으므로 잡힌다
+      - alert: CdcSnapshotFailing
+        expr: beez_cdc_analysis_snapshot_available unless on(instance) beez_cdc:snapshot_fresh
+        for: 5m
+        labels: {team: app}
+        annotations:
+          summary: "CDC 상태 집계 실패 또는 갱신 멈춤 ({{ $labels.instance }})"
+
+      # 수집은 되는데(up == 1) CDC 필수 지표가 빠짐 = 지표가 빠진 배포·롤백, 등록 실패. 두 식 모두 시계열이 없어
+      # 위 CdcSnapshotFailing 도 BackendScrapeDown 도 울리지 않는 경우다(PR #121 리뷰). 인스턴스별로 하나라도 없으면 운다
+      - alert: CdcMetricsMissing
+        expr: |
+          (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_snapshot_available)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_snapshot_last_success_epoch_seconds)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_consumer_enabled)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_recovery_enabled)
+          or (up{job="backend"} == 1 unless on(instance) beez_cdc_analysis_intakes)
+        for: 5m
+        labels: {team: app}
+        annotations:
+          summary: "backend 는 수집되는데 CDC 필수 지표가 없음 ({{ $labels.instance }})"
+
+      - alert: CdcExpiredLeases
+        expr: beez_cdc:expired_leases:max > 0
+        for: 5m
+        keep_firing_for: 10m
+        labels: {team: app}
+        annotations:
+          summary: "lease 가 만료된 RUNNING {{ $value }}건"
+
+      - alert: CdcBlockedProjects
+        expr: beez_cdc:blocked_projects:max > 0
+        for: 10m
+        keep_firing_for: 10m
+        labels: {team: app}
+        annotations:
+          summary: "순서상 막힌 프로젝트 {{ $value }}개"
+
+      # FAILED·확인 필요 미평가: 남아 있으면 처음 한 번, 해소될 때까지 24시간마다(alertmanager.yml).
+      # gauge 라 이미 남은 건이 있을 때 새로 생긴 건을 따로 알리지 않는다(한계, monitoring-alerts.md).
+      - alert: CdcFailedIntakes
+        expr: beez_cdc:intakes:max{status="FAILED"} > 0
+        keep_firing_for: 10m
+        labels: {team: app}
+        annotations:
+          summary: "분석 FAILED {{ $value }}건 남아 있음(자동 재처리 없음)"
+
+      - alert: CdcNotEvaluatedRequiresReview
+        expr: beez_cdc:not_evaluated_requires_review:max > 0
+        keep_firing_for: 10m
+        labels: {team: app}
+        annotations:
+          summary: "확인 필요 미평가 {{ $value }}건 남아 있음"
+
+      # Kafka 수신 실패 counter 는 consumer 가 켜졌을 때만 0 부터 생긴다. 꺼져 있으면 시계열이 없다.
+      - alert: CdcKafkaReceiveFailures
+        expr: sum(increase(beez_cdc_kafka_receive_failures_total[5m])) > 0 and on() beez_cdc:consumer_enabled:max == 1
+        labels: {team: infra}
+        annotations:
+          summary: "최근 5분 Kafka 레코드 처리 실패 {{ $value | printf \"%.0f\" }}회"
+
+      # consumer 가 켜진 인스턴스에 그 인스턴스의 실패 counter 가 없다 = 리스너가 등록되지 않았거나 지표가 빠짐.
+      # absent() 는 전체에 하나도 없을 때만 참이라, 인스턴스가 둘 이상이면 한쪽 누락을 놓친다(PR #121 리뷰).
+      # backend 가 내려가면 consumer_enabled 도 사라져 함께 조용해진다(BackendScrapeDown 이 운다). 기동 직후를 거르려고 5분
+      - alert: CdcKafkaFailureMetricMissing
+        expr: beez_cdc_analysis_consumer_enabled == 1 unless on(instance) beez_cdc_kafka_receive_failures_total
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "consumer 가 켜졌는데 Kafka 수신 실패 지표가 없음 ({{ $labels.instance }})"
+
+      # consumer 가 켜졌는데 Kafka 에 붙어 있지 않음(S15P31A108-298). up 은 자식 컨테이너 실행 + 파티션 할당 + 최근 30초 안의
+      # 그룹 heartbeat 일 때만 1 이다. Kafka 가 없어 시작을 재시도하는 중(0), 기동 뒤 broker 가 멈춤(heartbeat 끊김 → 0),
+      # up 지표 자체가 없음(리스너 설정 빠짐)을 모두 잡는다. 이 동안 분석은 복구 스캔이 처리하므로 CdcPendingDelay 는 울리지 않는다.
+      # 5분: broker 재기동·재할당(실측 약 10초~1분)은 거른다
+      - alert: CdcConsumerDown
+        expr: beez_cdc_analysis_consumer_enabled == 1 unless on(instance) beez_cdc_kafka_consumer_up == 1
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "consumer 가 켜졌는데 Kafka 에 붙어 있지 않음 ({{ $labels.instance }})"
+
+      # ── 논리 복제 슬롯(S15P31A108-295, 계획 D6) ──
+      # 복구 스캔이 처리를 이어 가므로 Connect 가 멈추거나 슬롯이 사라져도 분석 지연 알림은 울지 않는다. 그래서 슬롯을 따로 본다.
+      # 지표는 postgres-exporter 기본 수집이다: slot_is_active 는 replication_slots 수집기, pg_wal_lsn_diff 는 기본 쿼리
+      # (pg_monitor 계정으로 나옴, 11-05 실측). consumer_enabled 기록 규칙을 읽는 알림이 있어 이 그룹에 둔다(같은 주기 값).
+      # 10분: Connect·Kafka 재시작(실측 약 10초~1분)은 거른다
+      - alert: CdcSlotInactive
+        expr: pg_replication_slots_slot_is_active{slot_type="logical"} == 0
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "논리 복제 슬롯 {{ $labels.slot_name }} 이 10분 넘게 비활성 — Connect 가 읽지 않아 WAL 이 쌓인다"
+
+      # 슬롯이 붙잡은 WAL(현재 위치 - 슬롯 확인 위치, 바이트). 1GiB: dev WAL 생성량(1주 약 19MB)으로는 정상일 때 닿지 않는다.
+      # 상한 max_slot_wal_keep_size=10GB(계획 D4)에 닿으면 슬롯이 무효화돼 커넥터를 새 이름으로 다시 만들어야 한다
+      - alert: CdcSlotWalRetained
+        expr: pg_replication_slots_pg_wal_lsn_diff > 1073741824
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "슬롯 {{ $labels.slot_name }} 이 WAL {{ $value | humanize1024 }}B 를 붙잡고 있음(무효화 상한 10GB)"
+
+      # 위 두 알림은 시계열이 있어야 운다. consumer 를 켠 뒤(= CDC 켜짐) 기대 슬롯의 시계열이 없으면 슬롯이 지워졌거나 커넥터가
+      # 다른 이름으로 만든 것이라 두 감시가 조용히 빠진다(PR #166 리뷰). 슬롯 이름은 커넥터 설정 slot.name 과 같다
+      # (infra/cdc/dev/intake-connector.json, 커넥터를 새 이름으로 다시 만들어도 slot.name 은 그대로).
+      # - consumer 를 켜기 전(커넥터 등록 전)·되돌리기(1번에서 consumer 를 먼저 끔)에는 울지 않는다. 같은 이유로 consumer 만 끈
+      #   점검 중에 슬롯이 사라지는 것도 잡지 못한다(한계: 커넥터 존재를 알리는 지표는 261 에서 생긴다).
+      # - exporter 가 DB 에 못 붙거나(pg_up) 수집기가 실패하면 시계열이 없는 것이 당연하므로 여기서 빼고 PostgresDown·
+      #   MonitoringTargetDown·아래 CdcSlotCollectorFailing 이 운다. 앞 줄은 수집기 지표, 뒷 줄은 기본 쿼리 지표가 빠진 경우다.
+      # 10분: 커넥터를 다시 만드는 동안(슬롯 삭제→재등록, 수 분)은 거른다
+      - alert: CdcSlotMissing
+        expr: |
+          (beez_cdc:consumer_enabled:max == 1 and on() pg_up == 1
+            and on() pg_scrape_collector_success{collector="replication_slots"} == 1
+            unless on() pg_replication_slots_slot_is_active{slot_name="beez_published_analysis"})
+          or (beez_cdc:consumer_enabled:max == 1 and on() pg_up == 1
+            unless on() pg_replication_slots_pg_wal_lsn_diff{slot_name="beez_published_analysis"})
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "consumer 가 켜졌는데 슬롯 beez_published_analysis 지표가 없음 — 슬롯이 사라졌거나 다른 이름으로 만들어짐"
+
+      # replication_slots 수집기 실패 = 슬롯 시계열이 통째로 빠져 위 감시가 모두 꺼진다. consumer 조건을 두지 않는다 —
+      # consumer 만 끈 점검(cdc-stack.md "중지·내리기" 1번)에도 슬롯은 WAL 을 붙잡으므로 감시가 필요하다(PR #166 코드 리뷰).
+      # 이 수집기는 슬롯이 없어도 성공(1)하므로 CDC 전·되돌린 뒤에도 거짓으로 울지 않는다(서버 11-05 확인).
+      # exporter 가 DB 에 못 붙으면(pg_up 0) 수집기도 함께 실패하므로 PostgresDown 에 맡기고 여기서는 뺀다
+      - alert: CdcSlotCollectorFailing
+        expr: pg_scrape_collector_success{collector="replication_slots"} == 0 and on() pg_up == 1
+        for: 5m
+        labels: {team: infra}
+        annotations:
+          summary: "postgres-exporter replication_slots 수집 실패 — 슬롯 감시가 멈춤"
+
+  - name: beez-infra-alerts
+    rules:
+      # backend 는 따로 둔다. 이게 울리는 동안 CDC 지표가 없어 CDC 알림은 울리지 않는다.
+      # 2분: 배포(deploy.sh)의 backend 재시작으로 잠깐 끊기는 것은 거른다
+      - alert: BackendScrapeDown
+        expr: up{job="backend"} == 0
+        for: 2m
+        labels: {team: infra}
+        annotations:
+          summary: "backend 지표 수집 실패 — 앱이 죽었거나 /actuator/prometheus 가 닫힘"
+
+      - alert: MonitoringTargetDown
+        expr: up{job!="backend"} == 0
+        for: 2m
+        labels: {team: infra}
+        annotations:
+          summary: "수집 대상 {{ $labels.job }} 응답 없음"
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels: {team: infra}
+        annotations:
+          summary: "postgres-exporter 가 DB 에 접속하지 못함"
+
+      # 루트(/)만 본다. 데이터(DB·Docker 볼륨·Prometheus)가 모두 / 에 있다(2026-11-04 서버: /·/boot·/boot/efi 뿐).
+      # 초기값 15%: 309GB 에서 약 46GB. 같은 비율을 약 900MB 인 /boot 에 걸면 135MB 라 커널 업데이트만으로 울려 뺐다.
+      # 하루 증가량을 보고 조정한다
+      - alert: DiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+          and node_filesystem_readonly{mountpoint="/"} == 0
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "{{ $labels.mountpoint }} 남은 공간 {{ $value | humanizePercentage }}"

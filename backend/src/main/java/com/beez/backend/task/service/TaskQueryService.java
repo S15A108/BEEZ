@@ -48,11 +48,12 @@ public class TaskQueryService {
     private final ValidationStatusLookup validationLookup;
     private final ValidationRepository validations;
     private final ValidationResponses validationResponses;
+    private final CompletionReviewer completionReviewer;
 
     public TaskQueryService(TaskRepository tasks, TaskPlanRevisionRepository revisions,
                             TaskPlanDesignRefRepository designRefs, ProjectAccessChecker access,
                             ValidationStatusLookup validationLookup, ValidationRepository validations,
-                            ValidationResponses validationResponses) {
+                            ValidationResponses validationResponses, CompletionReviewer completionReviewer) {
         this.tasks = tasks;
         this.revisions = revisions;
         this.designRefs = designRefs;
@@ -60,6 +61,7 @@ public class TaskQueryService {
         this.validationLookup = validationLookup;
         this.validations = validations;
         this.validationResponses = validationResponses;
+        this.completionReviewer = completionReviewer;
     }
 
     public TaskDetailResponse getTask(CallerContext caller, Long projectId, Long taskId) {
@@ -69,7 +71,8 @@ public class TaskQueryService {
     }
 
     /**
-     * TSK-A03 상세 응답: {@link #getTask} 에 명세 TaskDetail.validation(현재 계획의 가장 최근 검증, validation_status 와 같은 기준)을 붙인다.
+     * TSK-A03 상세 응답: {@link #getTask} 에 명세 TaskDetail.validation(현재 계획의 가장 최근 검증, validation_status 와 같은 기준)과
+     * completion_review(완료 보고와 계획의 규칙 대조, -269. 완료됐거나 delta 재검증을 기다릴 때만)를 붙인다.
      * 없으면 칸이 빠진다. 검증 입력 조립처럼 계획만 필요한 서버 안 호출은 {@link #getTask} 를 쓴다 (참조·발견 항목을 더 읽지 않게)
      */
     public TaskDetailResponse getTaskDetail(CallerContext caller, Long projectId, Long taskId) {
@@ -77,27 +80,44 @@ public class TaskQueryService {
         Task task = requireTask(projectId, taskId);
         // validation_status 와 validation 을 같은 줄(현재 계획의 가장 최근 검증)에서 한 번 읽어 채운다
         Optional<Map<String, Object>> latest = validationLookup.latest(task.getId(), task.getCurrentPlanRevisionId());
+        TaskDetailResponse detail;
         if (latest.isEmpty()) {
-            return toDetail(task, ValidationStatusLookup.NOT_RUN);
+            detail = toDetail(task, ValidationStatusLookup.NOT_RUN);
+        } else {
+            TaskDetailResponse base = toDetail(task, (String) latest.get().get("status"));
+            long latestId = ((Number) latest.get().get("id")).longValue();
+            detail = validations.find(projectId, latestId)
+                    .map(row -> base.withValidation(validationResponses.toResponse(row)))
+                    .orElse(base);
         }
-        TaskDetailResponse detail = toDetail(task, (String) latest.get().get("status"));
-        long latestId = ((Number) latest.get().get("id")).longValue();
-        return validations.find(projectId, latestId)
-                .map(row -> detail.withValidation(validationResponses.toResponse(row)))
-                .orElse(detail);
+        return completionReviewer.currentReview(task).map(detail::withCompletionReview).orElse(detail);
     }
 
-    public PageResponse<TaskDetailResponse> listTasks(CallerContext caller, Long projectId, TaskStatus status,
-                                                      String validationStatus, Long assigneeMemberId,
+    /**
+     * TSK-A02. 필터는 모두 AND 이고 페이지를 자르기 전에 건다 (명세 00-common 3절).
+     *
+     * @param statuses   여러 값이면 그중 하나 (-301). 비었거나 null 이면 조건 없음
+     * @param unassigned true 면 담당자가 없는 작업만 (-301). assigneeMemberId 와 함께 오면 400
+     */
+    public PageResponse<TaskDetailResponse> listTasks(CallerContext caller, Long projectId, List<TaskStatus> statuses,
+                                                      String validationStatus, Long assigneeMemberId, Boolean unassigned,
                                                       String cursor, Integer limit) {
         access.requireMember(caller, projectId);
+        boolean onlyUnassigned = Boolean.TRUE.equals(unassigned);
+        if (onlyUnassigned && assigneeMemberId != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    "unassigned 와 assignee_member_id 는 함께 줄 수 없습니다");
+        }
         int size = normalizeLimit(limit);
         Long cursorId = parseCursor(cursor);
 
         Specification<Task> spec = TaskSpecifications.projectIs(projectId)
-                .and(TaskSpecifications.statusIs(status))
+                .and(TaskSpecifications.statusIn(statuses))
                 .and(TaskSpecifications.assigneeIs(assigneeMemberId))
                 .and(TaskSpecifications.idBefore(cursorId));
+        if (onlyUnassigned) {
+            spec = spec.and(TaskSpecifications.unassigned());
+        }
         // validation_status 필터도 페이지를 자르기 전에 건다 (명세 00-common 3절 "필터는 페이지·검색·집계 전")
         if (validationStatus != null) {
             if (!ValidationStatusLookup.ALL.contains(validationStatus)) {

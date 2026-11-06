@@ -23,7 +23,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 | --- | --- | --- | --- |
 | MCP-10 `upsert_task_plan` | `TaskMcpService.upsertTaskPlan(caller, projectId, args)` | `UpsertTaskPlanArgs(plan, taskId, expectedRevisionNo, expectedLockVersion, idempotencyKey)` | `TaskDetailResponse` |
 | MCP-12 `report_task_state` | `TaskMcpService.reportTaskState(caller, projectId, args)` | `ReportTaskStateArgs(taskId, event, planRevisionId, expectedLockVersion, validationId, waitingReason, summary, delta, completionChecks, idempotencyKey)` | `ReportTaskStateResult(task, changes, changesSinceVersion)` |
-| MCP-03 `get_design_changes` | `DesignChangesService.getChanges(caller, projectId, query)` | `DesignChangesQuery(sinceVersion, taskId, cursor, limit)` | `DesignChangesResponse` |
+| MCP-03 `get_design_changes` | `DesignChangesService.getChanges(caller, projectId, query)` | `DesignChangesQuery(sinceVersion, taskId, cursor, limit, resultCursor)` | `DesignChangesResponse` |
 | MCP-11 `validate_task_plan` | `ValidationMcpService.validateTaskPlan(caller, projectId, args)` | `ValidateTaskPlanArgs(taskId, planRevisionId, expectedLockVersion, idempotencyKey)` | `ValidationResponse` (명세 Validation). 규칙으로 끝나면 PASS·NEEDS_*, 의미 분석이면 RUNNING — 조회는 MCP-13(-179 연결 때 `ValidationQueryService.get`) |
 | MCP-14 `retry_validation` | `ValidationMcpService.retryValidation(caller, projectId, args)` | `RetryValidationArgs(validationId, expectedAttempt, idempotencyKey)` | `ValidationResponse` (명세 Validation). 다시 열면 RUNNING. 규칙은 REST VAL-A04 와 같은 `ValidationRetryService` (-161) |
 

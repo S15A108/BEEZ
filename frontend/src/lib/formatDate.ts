@@ -22,3 +22,22 @@ export const formatAgo = (value: string) => {
   if (minutes < 60 * 24 * 30) return `${Math.floor(minutes / 60 / 24)}일 전`
   return formatDate(value)
 }
+
+// 시각만('오전 10:46'). 회의 대화처럼 날짜를 머리에 따로 보일 때 쓴다.
+const timeFormatter = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  timeStyle: 'short',
+})
+export const formatTime = (value: string) =>
+  timeFormatter.format(new Date(value))
+
+// 목록용 짧은 날짜(캔버스 PNL-06-v2-meetings): 오늘이면 '오늘 오전 10:40', 아니면 '10월 26일'(한국시간 기준).
+const monthDay = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  month: 'long',
+  day: 'numeric',
+})
+export const formatShort = (value: string, now = new Date()) =>
+  formatDay(value) === formatDay(now.toISOString())
+    ? `오늘 ${formatTime(value)}`
+    : monthDay.format(new Date(value))
