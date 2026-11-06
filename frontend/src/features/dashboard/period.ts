@@ -2,16 +2,15 @@
 const seoulDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' })
 export const seoulDay = (value: Date | string | number) =>
   seoulDate.format(new Date(value))
-const dayStart = (day: string) =>
-  new Date(`${day}T00:00:00.000+09:00`).toISOString()
-const dayEnd = (day: string) =>
-  new Date(`${day}T23:59:59.999+09:00`).toISOString()
+const DAY_MS = 86_400_000
+const dayStart = (day: string) => Date.parse(`${day}T00:00:00.000+09:00`)
 
 export type DayRange = { from: string; to: string }
 
+// 서버의 기간은 [from, to)다(MON-A02). 끝은 다음날 00:00으로 보내야 그날의 마지막 순간까지 들어간다.
 export const usageQueryOf = (range: DayRange) => ({
-  from: dayStart(range.from),
-  to: dayEnd(range.to),
+  from: new Date(dayStart(range.from)).toISOString(),
+  to: new Date(dayStart(range.to) + DAY_MS).toISOString(),
 })
 
 export const periods = [
@@ -32,13 +31,13 @@ export function periodRange(period: Period, now = new Date()): DayRange {
     return { from: utcDay(year, month - 1, 1), to: today }
   if (period === 'last_month')
     return { from: utcDay(year, month - 2, 1), to: utcDay(year, month - 1, 0) }
-  return { from: seoulDay(now.getTime() - 6 * 86_400_000), to: today }
+  return { from: seoulDay(now.getTime() - 6 * DAY_MS), to: today }
 }
 
 // 서버가 받는 가장 긴 기간(by_day를 0으로 채우는 범위, UsageQueryService.MAX_DAYS).
 export const MAX_RANGE_DAYS = 366
 export const rangeDays = ({ from, to }: DayRange) =>
-  (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1
+  (Date.parse(to) - Date.parse(from)) / DAY_MS + 1
 
 // 날짜 키('2026-10-27')는 이미 한국시간 날짜라 시간대를 다시 바꾸지 않는다.
 const weekday = new Intl.DateTimeFormat('ko-KR', {

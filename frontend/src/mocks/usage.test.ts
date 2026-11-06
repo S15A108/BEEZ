@@ -15,7 +15,7 @@ const total = (rows: { call_count: number }[]) =>
 
 it('예시 프로젝트의 사용량은 기능별·날짜별·에이전트별 합이 전체 합과 같고 스키마를 통과한다', () => {
   const usage = usageResponseSchema.parse(
-    mockUsage(seeded(), '2026-10-31T15:00:00.000Z', '2026-11-06T14:59:59.999Z'),
+    mockUsage(seeded(), '2026-10-31T15:00:00.000Z', '2026-11-06T15:00:00.000Z'),
   )
   expect(usage.call_count).toBeGreaterThan(0)
   expect(total(usage.by_feature)).toBe(usage.call_count)
@@ -35,7 +35,7 @@ it('예시 프로젝트의 사용량은 기능별·날짜별·에이전트별 �
 
 it('프로젝트가 생기기 전 기간과 새 프로젝트는 호출이 없고 비용을 생략한다', () => {
   const before = usageResponseSchema.parse(
-    mockUsage(seeded(), '2026-09-30T15:00:00.000Z', '2026-10-10T14:59:59.999Z'),
+    mockUsage(seeded(), '2026-09-30T15:00:00.000Z', '2026-10-10T15:00:00.000Z'),
   )
   expect(before.call_count).toBe(0)
   expect(before.currency).toBeUndefined()
@@ -43,7 +43,7 @@ it('프로젝트가 생기기 전 기간과 새 프로젝트는 호출이 없고
   expect(before.by_day).toHaveLength(10)
   const other = createMockDatabase().projects[1]
   expect(
-    mockUsage(other, '2026-10-31T15:00:00.000Z', '2026-11-06T14:59:59.999Z')
+    mockUsage(other, '2026-10-31T15:00:00.000Z', '2026-11-06T15:00:00.000Z')
       .call_count,
   ).toBe(0)
 })

@@ -17,6 +17,10 @@ export const dashboardTabs = [
 ] as const
 export type DashboardTab = (typeof dashboardTabs)[number][0]
 
+// 호출이 있는데 서버가 호출자별로 나누지 않아 에이전트별 줄이 비었을 때의 안내.
+export const UNSPLIT_USAGE_NOTICE =
+  '에이전트별로 나눈 기록이 없어요. 사용량·비용 탭의 기능별 보기에서 전체 호출을 볼 수 있어요.'
+
 // 추정 비용 표시. 비용이 하나도 보고되지 않으면 missing을, 일부 호출의 비용을 모르면
 // 그 건수를 붙여 0원·전체 금액처럼 보이지 않게 한다.
 export function costText(

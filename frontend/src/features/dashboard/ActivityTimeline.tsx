@@ -20,17 +20,27 @@ const clock = (value: string) =>
     hourCycle: 'h23',
     timeZone: 'Asia/Seoul',
   }).format(new Date(value))
-// 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일'
+// 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일', 올해가 아니면 '2025년 10월 27일'
 function groupByDay<T extends { created_at: string }>(items: T[]) {
   const today = seoulDay(Date.now())
   const yesterday = seoulDay(Date.now() - 86_400_000)
   const groups = new Map<string, T[]>()
   for (const item of items) {
     const day = seoulDay(item.created_at)
-    const name = `${day === today ? '오늘 · ' : day === yesterday ? '어제 · ' : ''}${monthDayText(day)}`
-    groups.set(name, [...(groups.get(name) ?? []), item])
+    groups.set(day, [...(groups.get(day) ?? []), item])
   }
-  return [...groups]
+  return [...groups].map(([day, dayItems]) => {
+    const year = day.slice(0, 4)
+    const prefix =
+      day === today
+        ? '오늘 · '
+        : day === yesterday
+          ? '어제 · '
+          : year === today.slice(0, 4)
+            ? ''
+            : `${year}년 `
+    return { day, name: `${prefix}${monthDayText(day)}`, items: dayItems }
+  })
 }
 
 // 활동 타임라인(MON-A04). 보기를 바꾸면 처음부터 다시 받고, '이전 활동 더 보기'는 아래에 이어 붙인다.
@@ -133,14 +143,14 @@ export function ActivityTimeline({
             return (
               <>
                 <div className="grid gap-3">
-                  {groupByDay(items).map(([day, dayItems]) => (
+                  {groupByDay(items).map(({ day, name, items: dayItems }) => (
                     <section
                       key={day}
-                      aria-label={day}
+                      aria-label={name}
                       className="rounded-2xl border bg-card px-4 py-2"
                     >
                       <h4 className="py-1.5 text-[11.5px] text-muted-foreground">
-                        {day}
+                        {name}
                       </h4>
                       <ol>
                         {dayItems.map((item) => (

@@ -15,7 +15,8 @@ describe('periodRange', () => {
     expect(range).toEqual({ from: '2026-11-01', to: '2026-11-01' })
     expect(usageQueryOf(range)).toEqual({
       from: '2026-10-31T15:00:00.000Z',
-      to: '2026-11-01T14:59:59.999Z',
+      // 서버는 끝을 빼고 계산한다([from, to)). 다음날 00:00이어야 그날 마지막 순간까지 들어간다.
+      to: '2026-11-01T15:00:00.000Z',
     })
   })
 

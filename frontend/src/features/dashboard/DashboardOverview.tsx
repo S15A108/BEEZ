@@ -90,12 +90,14 @@ export function DashboardOverview({
     },
     {
       label: '선택 기간 AI 호출',
-      // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다. 못 받았으면 0회로 보이지 않는다.
+      // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다. 받는 중이거나 못 받았으면 0회로 보이지 않는다.
       value: usage.isError
         ? '—'
-        : calls
-          ? `${calls.toLocaleString('ko-KR')}회 · ${cost}`
-          : '0회',
+        : usage.isPending
+          ? '…'
+          : calls
+            ? `${calls.toLocaleString('ko-KR')}회 · ${cost}`
+            : '0회',
       onClick: () => onTab('usage'),
     },
     {
@@ -200,28 +202,29 @@ export function DashboardOverview({
           </div>
           <div className="grid content-start gap-2 rounded-xl border bg-card p-4 shadow-xs">
             <h4 className="text-sm font-semibold">기능별 AI 사용</h4>
-            {features.length ? (
-              features.map((row) => (
-                <div key={row.key} className="grid gap-1 text-xs">
-                  <span className="flex justify-between">
-                    {FEATURE_LABELS[row.key] ?? row.key}
-                    <span className="text-muted-foreground">
-                      {row.call_count}회
+            {features.length
+              ? features.map((row) => (
+                  <div key={row.key} className="grid gap-1 text-xs">
+                    <span className="flex justify-between">
+                      {FEATURE_LABELS[row.key] ?? row.key}
+                      <span className="text-muted-foreground">
+                        {row.call_count}회
+                      </span>
                     </span>
-                  </span>
-                  <span className="h-2 rounded-full bg-muted">
-                    <span
-                      className="block h-2 rounded-full bg-primary"
-                      style={{ width: `${(row.call_count / most) * 100}%` }}
-                    />
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                이 기간에 기록된 AI 호출이 없어요.
-              </p>
-            )}
+                    <span className="h-2 rounded-full bg-muted">
+                      <span
+                        className="block h-2 rounded-full bg-primary"
+                        style={{ width: `${(row.call_count / most) * 100}%` }}
+                      />
+                    </span>
+                  </div>
+                ))
+              : // 받는 중이거나 못 받았으면 호출이 없다고 말하지 않는다. 상태는 옆 그래프 칸에 보인다.
+                usage.data && (
+                  <p className="text-xs text-muted-foreground">
+                    이 기간에 기록된 AI 호출이 없어요.
+                  </p>
+                )}
           </div>
           <div className="grid content-start gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
             <h4 className="text-sm font-semibold">최근 활동</h4>

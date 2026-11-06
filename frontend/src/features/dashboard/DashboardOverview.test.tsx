@@ -249,3 +249,33 @@ it('사용량을 못 받으면 호출 칸은 0회 대신 —이고 그래프 자
     '정보를 불러오지 못했어요',
   )
 })
+
+it('기간을 바꿔 받는 동안 호출 칸은 0회 대신 …이고 호출이 없다고 말하지 않는다', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={
+          {
+            data: undefined,
+            isError: false,
+            error: null,
+            isPending: true,
+            refetch: vi.fn(),
+          } as unknown as UseQueryResult<UsageResponse>
+        }
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByRole('button', { name: /선택 기간 AI 호출\s*…/ }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('이 기간에 기록된 AI 호출이 없어요.'),
+  ).not.toBeInTheDocument()
+})

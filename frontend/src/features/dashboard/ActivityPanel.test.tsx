@@ -107,7 +107,7 @@ it('한국시간 날짜 범위를 UTC로 전달하고 역전된 기간은 조회
   await waitFor(() =>
     expect(dashboardApi.usage).toHaveBeenCalledWith('10', {
       from: '2026-10-21T15:00:00.000Z',
-      to: '2026-10-23T14:59:59.999Z',
+      to: '2026-10-23T15:00:00.000Z',
     }),
   )
   const count = vi.mocked(dashboardApi.usage).mock.calls.length
@@ -295,14 +295,14 @@ describe('기간', () => {
     await waitFor(() =>
       expect(dashboardApi.usage).toHaveBeenCalledWith('10', {
         from: '2026-10-31T15:00:00.000Z',
-        to: '2026-11-01T14:59:59.999Z',
+        to: '2026-11-01T15:00:00.000Z',
       }),
     )
     await user.selectOptions(select, 'last_month')
     await waitFor(() =>
       expect(dashboardApi.usage).toHaveBeenCalledWith('10', {
         from: '2026-09-30T15:00:00.000Z',
-        to: '2026-10-31T14:59:59.999Z',
+        to: '2026-10-31T15:00:00.000Z',
       }),
     )
   })
@@ -379,12 +379,12 @@ describe('활동 타임라인', () => {
     await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
     await screen.findByRole('button', { name: '이전 활동 더 보기' })
     await user.click(screen.getByRole('button', { name: '이전 활동 더 보기' }))
-    await screen.findByRole('region', { name: '10월 26일' })
-    expect(screen.getByRole('region', { name: '10월 27일' })).toHaveTextContent(
+    await screen.findByRole('region', { name: /10월 26일/ })
+    expect(screen.getByRole('region', { name: /10월 27일/ })).toHaveTextContent(
       '민수',
     )
     expect(
-      within(screen.getByRole('region', { name: '10월 26일' })).getByText(
+      within(screen.getByRole('region', { name: /10월 26일/ })).getByText(
         '민수의 에이전트',
       ),
     ).toBeInTheDocument()
@@ -409,7 +409,7 @@ describe('활동 타임라인', () => {
       '이전 활동을 불러오지 못했어요',
     )
     expect(
-      screen.getByRole('region', { name: '10월 27일' }),
+      screen.getByRole('region', { name: /10월 27일/ }),
     ).toBeInTheDocument()
   })
 
@@ -447,6 +447,62 @@ describe('활동 타임라인', () => {
     expect(
       await screen.findByText('이 보기에 맞는 활동이 없어요.'),
     ).toBeInTheDocument()
+  })
+
+  it('연도가 다른 같은 날짜는 합치지 않고 연도를 붙여 나눈다', async () => {
+    vi.useFakeTimers({
+      now: new Date('2026-11-06T03:00:00Z'),
+      toFake: ['Date'],
+    })
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [
+        activity('2', { created_at: '2026-10-27T01:00:00Z' }),
+        activity('1', { created_at: '2025-10-27T01:00:00Z' }),
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    expect(
+      await screen.findByRole('region', { name: '10월 27일' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('region', { name: '2025년 10월 27일' }),
+    ).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('에이전트 현황에서 쪽을 넘겨도 보기 칩은 첫 쪽 에이전트를 쓴다', async () => {
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [],
+      has_more: false,
+    })
+    vi.mocked(dashboardApi.agentWork).mockImplementation((_id, query) =>
+      Promise.resolve(
+        query?.cursor
+          ? {
+              items: [{ member_id: '2', agent_session_id: '92' }],
+              has_more: false,
+            }
+          : { items: [session], has_more: true, next_cursor: 'w2' },
+      ),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
+    await user.click(
+      await screen.findByRole('button', { name: '다음 작업 현황' }),
+    )
+    expect(await screen.findByText('팀원 #2')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    const filters = screen.getByRole('group', { name: '보기' })
+    expect(
+      await within(filters).findByRole('button', { name: '민수의 에이전트' }),
+    ).toBeInTheDocument()
+    expect(
+      within(filters).queryByRole('button', { name: '팀원 #2의 에이전트' }),
+    ).not.toBeInTheDocument()
   })
 
   it('비비·시스템·못 찾은 에이전트를 이름으로 구분하고 실패 결과를 한국어로 보인다', async () => {
@@ -559,13 +615,13 @@ describe('에이전트 현황', () => {
     expect(await within(row).findByText('2회 · 0.5 USD')).toBeInTheDocument()
     expect(dashboardApi.usage).toHaveBeenCalledWith('10', {
       from: '2026-10-31T15:00:00.000Z',
-      to: '2026-11-06T14:59:59.999Z',
+      to: '2026-11-06T15:00:00.000Z',
     })
     expect(screen.getByText('웹에서 직접 한 호출')).toBeInTheDocument()
     expect(screen.getByText('1회 · 0.5 USD')).toBeInTheDocument()
   })
 
-  it('서버가 호출자별로 나누지 않으면 0회로 단정하지 않고 기록 없음으로 보인다', async () => {
+  it('호출이 있는데 서버가 호출자별로 나누지 않으면 0회로 단정하지 않고 사용량 탭과 같은 안내를 보인다', async () => {
     vi.mocked(dashboardApi.agentWork).mockResolvedValue({
       items: [session],
       has_more: false,
@@ -577,8 +633,29 @@ describe('에이전트 현황', () => {
     mount()
     await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
     await screen.findByText('민수')
-    expect(await screen.findAllByText('기록 없음')).toHaveLength(2)
+    expect(await screen.findAllByText('나눈 기록 없음')).toHaveLength(2)
+    expect(
+      screen.getByText(/에이전트별로 나눈 기록이 없어요/),
+    ).toBeInTheDocument()
     expect(screen.queryByText('0회')).not.toBeInTheDocument()
+  })
+
+  it('이번 달 호출이 없으면 0회로 보이고 안내는 없다', async () => {
+    vi.mocked(dashboardApi.agentWork).mockResolvedValue({
+      items: [session],
+      has_more: false,
+    })
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({ call_count: 0 }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
+    await screen.findByText('민수')
+    expect(await screen.findAllByText('0회')).toHaveLength(2)
+    expect(
+      screen.queryByText(/에이전트별로 나눈 기록이 없어요/),
+    ).not.toBeInTheDocument()
   })
 
   it('이번 달 사용량을 못 받으면 0회나 기록 없음 대신 —로 보인다', async () => {
@@ -594,6 +671,6 @@ describe('에이전트 현황', () => {
     await waitFor(() =>
       expect(screen.getAllByText('—').length).toBeGreaterThan(1),
     )
-    expect(screen.queryByText('기록 없음')).not.toBeInTheDocument()
+    expect(screen.queryByText('나눈 기록 없음')).not.toBeInTheDocument()
   })
 })

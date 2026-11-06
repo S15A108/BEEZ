@@ -14,6 +14,7 @@ import { DashboardOverview } from './DashboardOverview'
 import { RelationsView } from './RelationsView'
 import {
   FEATURE_LABELS,
+  UNSPLIT_USAGE_NOTICE,
   callsText,
   costText,
   dashboardTabs,
@@ -63,6 +64,13 @@ const dateRangeSchema = z
     message: `기간은 ${MAX_RANGE_DAYS}일 이하로 골라 주세요.`,
   })
 
+const agentWorkQuery = (projectId: string, cursor?: string) => ({
+  queryKey: ['projects', projectId, 'agent-work', cursor],
+  // API 없음: 서버에 아직 없으면(404) 에이전트 현황은 '준비 중'으로 둔다(AGT-A04·A05 -178 구현 전과 같은 규칙).
+  queryFn: () =>
+    unlessMissing(dashboardApi.agentWork(projectId, { cursor, limit: 20 })),
+})
+
 // 단축 바 5번(설계 관계)과 6번(대시보드)이 같이 쓴다.
 export function ActivityPanel({
   projectId,
@@ -94,14 +102,9 @@ export function ActivityPanel({
     queryKey: ['projects', projectId, 'activities', 'recent'],
     queryFn: () => dashboardApi.activities(projectId, { limit: 4 }),
   })
-  const work = useQuery({
-    queryKey: ['projects', projectId, 'agent-work', workCursor],
-    // API 없음: 서버에 아직 없으면(404) 에이전트 현황은 '준비 중'으로 둔다(AGT-A04·A05 -178 구현 전과 같은 규칙).
-    queryFn: () =>
-      unlessMissing(
-        dashboardApi.agentWork(projectId, { cursor: workCursor, limit: 20 }),
-      ),
-  })
+  // 에이전트 현황 탭의 쪽 넘김이 다른 탭의 칩·라벨·요약을 바꾸지 않게 첫 쪽을 따로 둔다. 첫 쪽을 볼 때는 같은 요청 하나다.
+  const work = useQuery(agentWorkQuery(projectId, workCursor))
+  const firstWork = useQuery(agentWorkQuery(projectId))
   const members = useQuery(membersQuery(projectId))
   const memberName = (memberId: string) =>
     members.data?.items.find((member) => member.id === memberId)?.name ??
@@ -116,18 +119,21 @@ export function ActivityPanel({
       return owner ? `${owner}의 에이전트` : (item.actor_name ?? '에이전트')
     return owner ?? item.actor_name ?? `회원 #${item.actor_account_id}`
   }
-  // 에이전트별 줄이 하나도 없으면 서버가 아직 호출자별로 나누지 않은 것이라 0회로 단정하지 않는다.
+  // 호출이 있는데 에이전트별 줄이 하나도 없으면 서버가 호출자별로 나누지 않은 것이라 0회로 단정하지 않는다.
+  const usageUnsplit =
+    !!monthUsage.data?.call_count && !monthUsage.data.by_agent.length
   const agentUsageText = (key?: string) => {
     if (monthUsage.isError) return '—'
     if (!monthUsage.data) return '…'
+    if (usageUnsplit) return '나눈 기록 없음'
     const { by_agent: rows, currency } = monthUsage.data
     const row = rows.find((entry) => entry.key === key)
-    return row ? callsText(row, currency) : rows.length ? '0회' : '기록 없음'
+    return row ? callsText(row, currency) : '0회'
   }
   const rowLabels: Record<UsageView, (row: UsageBucket) => ReactNode> = {
     by_agent: (row) => {
       const web = row.key === 'WEB'
-      const agent = work.data?.items.find(
+      const agent = firstWork.data?.items.find(
         (item) => item.agent_session_id === row.key,
       )
       return (
@@ -199,7 +205,7 @@ export function ActivityPanel({
           projectId={projectId}
           usage={usage}
           activities={activities}
-          work={work}
+          work={firstWork}
           members={members.data?.items ?? []}
           actorName={actorName}
         />
@@ -207,7 +213,7 @@ export function ActivityPanel({
       {tab === 'timeline' && (
         <ActivityTimeline
           projectId={projectId}
-          agents={work.data?.items ?? []}
+          agents={firstWork.data?.items ?? []}
           memberName={memberName}
           actorName={actorName}
         />
@@ -398,6 +404,11 @@ export function ActivityPanel({
               </span>
               <span className="font-semibold">{agentUsageText('WEB')}</span>
             </p>
+            {usageUnsplit && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {UNSPLIT_USAGE_NOTICE}
+              </p>
+            )}
             <p className="mt-4 text-xs leading-[18px] text-muted-foreground/70">
               에이전트가 보고하지 않은 실행 중·완료 상태는 추정하지 않아요. 연결
               여부는 연결 보고, 작업 상태는 작업 보고를 따로 봐요.
@@ -508,7 +519,7 @@ export function ActivityPanel({
                       // 호출이 있어도 서버가 호출자를 적지 않으면 에이전트별 줄이 비어 있다. 호출이 없다고 말하지 않는다.
                       empty={
                         usageView === 'by_agent' && data.call_count > 0
-                          ? '에이전트별로 나눈 기록이 없어요. 기능별 보기에서 전체 호출을 볼 수 있어요.'
+                          ? UNSPLIT_USAGE_NOTICE
                           : undefined
                       }
                       onSelect={
