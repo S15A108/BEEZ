@@ -31,6 +31,21 @@ export function costText(
   return unknown ? `${known} + ${unknown}` : known
 }
 
+// '27회 · 0.51 USD'. 호출이 없으면 서버가 비용을 생략하므로 '0회'만 쓴다.
+export function callsText(
+  row: {
+    call_count: number
+    estimated_cost_amount?: string
+    cost_unknown_call_count?: number
+  },
+  currency: string | undefined,
+) {
+  const calls = `${row.call_count.toLocaleString('ko-KR')}회`
+  return row.call_count
+    ? `${calls} · ${costText(row.estimated_cost_amount, currency, row.cost_unknown_call_count, '비용 미보고')}`
+    : calls
+}
+
 // 토큰·비용을 몰라 합계에 들어가지 못한 호출 수. 없으면 null.
 export function unknownText(unknownCalls = 0) {
   return unknownCalls > 0

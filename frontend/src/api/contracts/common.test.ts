@@ -67,6 +67,8 @@ it('사용량 합계와 항목별 비용도 숫자로 와도 읽는다', () => {
     ],
     by_task: [],
     by_validation: [],
+    by_agent: [],
+    by_day: [],
   })
   expect(summary.estimated_cost_amount).toBe('1.25')
   expect(summary.by_feature[0].estimated_cost_amount).toBe('1.25')
@@ -162,6 +164,8 @@ it('사용량의 미보고 호출 수를 버리지 않는다', () => {
     ],
     by_task: [],
     by_validation: [],
+    by_agent: [],
+    by_day: [],
   })
   expect(summary.tokens_unknown_call_count).toBe(1)
   expect(summary.cost_unknown_call_count).toBe(1)

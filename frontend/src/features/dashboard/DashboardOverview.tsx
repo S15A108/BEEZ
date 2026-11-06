@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button'
 import { countText, statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { AsyncState } from '@/components/AsyncState'
+import { DailyCallsChart } from './DailyCallsChart'
 import { FEATURE_LABELS, costText } from './labels'
+import { rangeText } from './period'
 import type { DashboardTab } from './labels'
 import type {
   ActivitiesResponse,
@@ -30,7 +33,7 @@ export function DashboardOverview({
   // 서버에 아직 없으면(404) data가 undefined(unlessMissing)
   work: UseQueryResult<AgentWorkResponse | undefined>
   members: Member[]
-  actorName: (accountId?: string) => string
+  actorName: (item: Activity) => string
   onTab: (tab: DashboardTab) => void
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -52,9 +55,11 @@ export function DashboardOverview({
   const connected = members.filter((member) => member.agent_connected).length
   const recent: Activity[] = activities.data?.items.slice(0, 4) ?? []
   const agents: AgentWork[] = work.data?.items.slice(0, 2) ?? []
-  const features = [...(usage.data?.by_feature ?? [])].sort(
-    (a, b) => b.call_count - a.call_count,
-  )
+  // 서버는 기능별을 호출이 없어도 0으로 채워 보낸다. 호출이 있는 기능만 보인다.
+  const features = (usage.data?.by_feature ?? [])
+    .filter((row) => row.call_count > 0)
+    .sort((a, b) => b.call_count - a.call_count)
+  const days = usage.data?.by_day ?? []
   const most = features[0]?.call_count || 1
   // 집계를 모두 받아 0건일 때만 '아직 기록이 없어요'로 본다.
   const empty =
@@ -85,8 +90,12 @@ export function DashboardOverview({
     },
     {
       label: '선택 기간 AI 호출',
-      // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다.
-      value: calls ? `${calls.toLocaleString('ko-KR')}회 · ${cost}` : '0회',
+      // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다. 못 받았으면 0회로 보이지 않는다.
+      value: usage.isError
+        ? '—'
+        : calls
+          ? `${calls.toLocaleString('ko-KR')}회 · ${cost}`
+          : '0회',
       onClick: () => onTab('usage'),
     },
     {
@@ -168,8 +177,29 @@ export function DashboardOverview({
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="grid content-start gap-2 rounded-xl border bg-card p-4 shadow-xs">
+            <div className="flex items-baseline gap-2">
+              <h4 className="text-sm font-semibold">날짜별 AI 호출</h4>
+              {days.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {rangeText(days[0].key, days[days.length - 1].key)}
+                </span>
+              )}
+              <button
+                type="button"
+                className="ml-auto text-xs underline"
+                onClick={() => onTab('usage')}
+              >
+                사용량·비용에서 더 보기
+              </button>
+            </div>
+            <AsyncState query={usage}>
+              {(data) => (
+                <DailyCallsChart rows={data.by_day} currency={data.currency} />
+              )}
+            </AsyncState>
+          </div>
+          <div className="grid content-start gap-2 rounded-xl border bg-card p-4 shadow-xs">
             <h4 className="text-sm font-semibold">기능별 AI 사용</h4>
-            {/* API 없음: 날짜별(한국시간) 호출 막대 그래프는 사용량 API에 by_day가 생기면 그린다(백엔드 메모 7). */}
             {features.length ? (
               features.map((row) => (
                 <div key={row.key} className="grid gap-1 text-xs">
@@ -193,53 +223,51 @@ export function DashboardOverview({
               </p>
             )}
           </div>
-          <div className="grid content-start gap-4">
-            <div className="grid gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
-              <h4 className="text-sm font-semibold">최근 활동</h4>
-              {recent.length ? (
-                recent.map((item) => (
-                  <p key={item.id} className="text-xs">
-                    {`${actorName(item.actor_account_id)} · ${statusLabel(item.type) || item.type}`}
-                  </p>
-                ))
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  최근 활동이 없어요.
+          <div className="grid content-start gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
+            <h4 className="text-sm font-semibold">최근 활동</h4>
+            {recent.length ? (
+              recent.map((item) => (
+                <p key={item.id} className="text-xs">
+                  {`${actorName(item)} · ${statusLabel(item.type) || item.type}`}
                 </p>
-              )}
-              <button
-                type="button"
-                className="justify-self-start text-xs underline"
-                onClick={() => onTab('timeline')}
-              >
-                활동 타임라인에서 더 보기
-              </button>
-            </div>
-            <div className="grid gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
-              <h4 className="text-sm font-semibold">에이전트</h4>
-              {agents.length ? (
-                agents.map((agent) => (
-                  <p key={agent.member_id} className="text-xs">
-                    {`${members.find((member) => member.id === agent.member_id)?.name ?? '팀원'}의 에이전트 · ${
-                      agent.current_task_id
-                        ? `작업 #${agent.current_task_id} ${statusLabel(agent.task_status)}`
-                        : '맡은 작업 없음'
-                    }`}
-                  </p>
-                ))
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  연결된 에이전트가 없어요.
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                최근 활동이 없어요.
+              </p>
+            )}
+            <button
+              type="button"
+              className="justify-self-start text-xs underline"
+              onClick={() => onTab('timeline')}
+            >
+              활동 타임라인에서 더 보기
+            </button>
+          </div>
+          <div className="grid content-start gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
+            <h4 className="text-sm font-semibold">에이전트</h4>
+            {agents.length ? (
+              agents.map((agent) => (
+                <p key={agent.member_id} className="text-xs">
+                  {`${members.find((member) => member.id === agent.member_id)?.name ?? '팀원'}의 에이전트 · ${
+                    agent.current_task_id
+                      ? `${agent.task_title ?? `작업 #${agent.current_task_id}`} ${statusLabel(agent.task_status)}`
+                      : '맡은 작업 없음'
+                  }`}
                 </p>
-              )}
-              <button
-                type="button"
-                className="justify-self-start text-xs underline"
-                onClick={() => onTab('agents')}
-              >
-                에이전트 현황에서 더 보기
-              </button>
-            </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                연결된 에이전트가 없어요.
+              </p>
+            )}
+            <button
+              type="button"
+              className="justify-self-start text-xs underline"
+              onClick={() => onTab('agents')}
+            >
+              에이전트 현황에서 더 보기
+            </button>
           </div>
         </div>
       )}

@@ -105,7 +105,8 @@ export interface MockProject {
 }
 
 export interface MockDatabase {
-  schema_version: 1
+  // 활동에 행위자 종류가 생겨 2로 올렸다. 옛 형식으로 저장된 예시 데이터는 새로 만든다.
+  schema_version: 2
   next_id: number
   session_account_id: string | null
   accounts: StoredAccount[]
@@ -162,6 +163,49 @@ export function blankProject(
     agents: [],
     activities: [],
   }
+}
+
+// 활동 타임라인의 보기와 '이전 활동 더 보기'를 볼 수 있게 사람·에이전트·비비 활동을 한 쪽(20개)보다 많이 둔다.
+function seededActivities(account: Account, created: string): Activity[] {
+  const actors: Partial<Activity>[] = [
+    {
+      actor_type: 'HUMAN',
+      actor_account_id: '12',
+      actor_name: '김동료',
+      task_id: '502',
+    },
+    {
+      actor_type: 'AGENT',
+      actor_account_id: '12',
+      agent_session_id: '53',
+      actor_name: '김동료 노트북',
+      task_id: '502',
+    },
+    {
+      actor_type: 'AGENT',
+      actor_account_id: '14',
+      agent_session_id: '52',
+      actor_name: '박팀원 노트북',
+      task_id: '503',
+    },
+    {
+      actor_type: 'HUMAN',
+      actor_account_id: account.id,
+      actor_name: account.name,
+      task_id: '501',
+    },
+    { actor_type: 'BEE' },
+  ]
+  return Array.from({ length: 24 }, (_, index) => ({
+    id: String(1002 + index),
+    type: 'MOCK_UPDATE',
+    actor_type: 'SYSTEM',
+    ...actors[index % actors.length],
+    result: index === 7 ? 'FAILURE' : 'SUCCESS',
+    created_at: new Date(
+      Date.parse(created) + (index + 1) * 6 * 3_600_000,
+    ).toISOString(),
+  }))
 }
 
 function seededProject(
@@ -549,10 +593,13 @@ function seededProject(
     {
       id: '1001',
       type: 'MOCK_PROJECT_PREPARED',
+      actor_type: 'HUMAN',
       actor_account_id: account.id,
+      actor_name: account.name,
       result: 'SUCCESS',
       created_at: created,
     },
+    ...(first ? seededActivities(account, created) : []),
   ]
   return state
 }
@@ -566,7 +613,7 @@ export function createMockDatabase(): MockDatabase {
     created_at: '2026-10-23T03:00:00Z',
   }
   return {
-    schema_version: 1,
+    schema_version: 2,
     next_id: 2000,
     session_account_id: null,
     accounts: [
@@ -652,7 +699,7 @@ export function loadMockDatabase(): MockDatabase {
     if (stored) {
       const parsed = JSON.parse(stored) as MockDatabase
       if (
-        parsed.schema_version === 1 &&
+        parsed.schema_version === 2 &&
         Array.isArray(parsed.accounts) &&
         Array.isArray(parsed.projects)
       )

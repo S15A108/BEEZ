@@ -34,6 +34,8 @@ const usage = (call_count: number): UsageResponse => ({
     : [],
   by_task: [],
   by_validation: [],
+  by_agent: [],
+  by_day: [],
 })
 const none: ActivitiesResponse = { items: [], has_more: false }
 const noWork: AgentWorkResponse = { items: [], has_more: false }
@@ -166,4 +168,84 @@ it('작업 집계만 실패하면 변경 제안 수는 그대로 두고 작업 �
   expect(
     screen.queryByText('아직 기록이 없어요. 이렇게 시작해 보세요.'),
   ).not.toBeInTheDocument()
+})
+
+const day = (key: string, call_count: number) => ({
+  key,
+  input_tokens: 0,
+  output_tokens: 0,
+  call_count,
+})
+function mountWith(data: UsageResponse) {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(data)}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+}
+
+it('날짜별 AI 호출을 기간과 합계와 함께 보여 준다', async () => {
+  mountWith({
+    ...usage(12),
+    by_day: [day('2026-10-30', 3), day('2026-10-31', 0), day('2026-11-01', 9)],
+  })
+  expect(await screen.findByText('날짜별 AI 호출')).toBeInTheDocument()
+  expect(screen.getByText('10월 30일~11월 1일')).toBeInTheDocument()
+  const table = screen.getByRole('table', {
+    name: /합계 12회, 가장 많은 날은 11월 1일 9회/,
+  })
+  expect(table).toHaveTextContent('10월 31일')
+})
+
+it('기간에 호출이 없으면 그래프와 기능별 칸이 비어 있다고 보인다', async () => {
+  // 서버처럼 날짜와 기능을 0으로 채워 준다. 진행 중 작업이 있어 시작 안내 대신 칸이 보인다.
+  mountWith({
+    ...usage(0),
+    by_feature: [day('BEE_CHAT', 0)],
+    by_day: [day('2026-11-01', 0), day('2026-11-02', 0)],
+  })
+  expect(await screen.findByText('날짜별 AI 호출')).toBeInTheDocument()
+  expect(
+    screen.getAllByText('이 기간에 기록된 AI 호출이 없어요.'),
+  ).toHaveLength(2)
+  expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  expect(screen.queryByText('비비 대화')).not.toBeInTheDocument()
+})
+
+it('사용량을 못 받으면 호출 칸은 0회 대신 —이고 그래프 자리에 오류를 보인다', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={
+          {
+            data: undefined,
+            isError: true,
+            error: new Error('500'),
+            isPending: false,
+            refetch: vi.fn(),
+          } as unknown as UseQueryResult<UsageResponse>
+        }
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByRole('button', { name: /선택 기간 AI 호출\s*—/ }),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    '정보를 불러오지 못했어요',
+  )
 })

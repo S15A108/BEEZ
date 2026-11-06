@@ -1,0 +1,246 @@
+import { useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { Activity as ActivityIcon } from 'lucide-react'
+import { dashboardApi } from '@/api/services/dashboard'
+import type { Activity, AgentWork } from '@/api/contracts/common'
+import { AsyncState } from '@/components/AsyncState'
+import { EmptyState } from '@/components/EmptyState'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { statusLabel } from '@/lib/display'
+import { cn } from '@/lib/utils'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { ActorAvatar } from './ActorAvatar'
+import { monthDayText, seoulDay } from './period'
+
+const clock = (value: string) =>
+  new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone: 'Asia/Seoul',
+  }).format(new Date(value))
+// 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일'
+function groupByDay<T extends { created_at: string }>(items: T[]) {
+  const today = seoulDay(Date.now())
+  const yesterday = seoulDay(Date.now() - 86_400_000)
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const day = seoulDay(item.created_at)
+    const name = `${day === today ? '오늘 · ' : day === yesterday ? '어제 · ' : ''}${monthDayText(day)}`
+    groups.set(name, [...(groups.get(name) ?? []), item])
+  }
+  return [...groups]
+}
+
+// 활동 타임라인(MON-A04). 보기를 바꾸면 처음부터 다시 받고, '이전 활동 더 보기'는 아래에 이어 붙인다.
+export function ActivityTimeline({
+  projectId,
+  agents,
+  memberName,
+  actorName,
+}: {
+  projectId: string
+  // ponytail: 작업 현황 한 쪽(20개) 안의 세션만 칩이 된다. 세션이 더 많은 프로젝트가 생기면 다 받아 온다.
+  agents: AgentWork[]
+  memberName: (memberId: string) => string
+  actorName: (item: Activity) => string
+}) {
+  const openPane = useWorkspaceStore((state) => state.openPane)
+  const sessions = agents.filter((agent) => agent.agent_session_id)
+  const views = [
+    { key: 'all', label: '전체', query: {} },
+    { key: 'human', label: '사람', query: { actor_type: 'HUMAN' as const } },
+    ...sessions.map((agent) => ({
+      key: agent.agent_session_id!,
+      // 토큰이 둘이면 이름이 같아지므로 토큰 이름을 붙여 구분한다.
+      label: `${memberName(agent.member_id)}의 에이전트${
+        agent.agent_name &&
+        sessions.filter((other) => other.member_id === agent.member_id).length >
+          1
+          ? ` · ${agent.agent_name}`
+          : ''
+      }`,
+      query: { agent_session_id: agent.agent_session_id },
+    })),
+  ]
+  const [viewKey, setViewKey] = useState('all')
+  const view = views.find((entry) => entry.key === viewKey) ?? views[0]
+  const timeline = useInfiniteQuery({
+    queryKey: ['projects', projectId, 'activities', 'timeline', view.query],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      dashboardApi.activities(projectId, {
+        ...view.query,
+        cursor: pageParam,
+        limit: 20,
+      }),
+    getNextPageParam: (last) => (last.has_more ? last.next_cursor : undefined),
+  })
+  return (
+    <Card id="dashboard-timeline">
+      <CardHeader className="gap-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ActivityIcon className="size-4" />
+          활동 타임라인
+        </CardTitle>
+        <div
+          role="group"
+          aria-label="보기"
+          className="flex flex-wrap items-center gap-1 text-xs"
+        >
+          <span aria-hidden="true" className="mr-1 text-muted-foreground">
+            보기
+          </span>
+          {views.map((entry) => (
+            <button
+              key={entry.key}
+              type="button"
+              aria-pressed={entry.key === view.key}
+              onClick={() => setViewKey(entry.key)}
+              className={cn(
+                'rounded-full px-2.5 py-0.5 font-semibold',
+                entry.key === view.key
+                  ? 'bg-foreground text-background'
+                  : 'bg-muted',
+              )}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {/* 다음 쪽만 실패하면 받아 둔 목록은 그대로 두고 버튼 옆에 알린다. */}
+        <AsyncState
+          query={{
+            data: timeline.data,
+            isPending: timeline.isPending,
+            error: timeline.isFetchNextPageError ? null : timeline.error,
+            refetch: () => timeline.refetch(),
+          }}
+        >
+          {(data) => {
+            const items = data.pages.flatMap((page) => page.items)
+            if (!items.length)
+              return (
+                <EmptyState>
+                  {view.key === 'all'
+                    ? '아직 기록된 프로젝트 활동이 없어요.'
+                    : '이 보기에 맞는 활동이 없어요.'}
+                </EmptyState>
+              )
+            return (
+              <>
+                <div className="grid gap-3">
+                  {groupByDay(items).map(([day, dayItems]) => (
+                    <section
+                      key={day}
+                      aria-label={day}
+                      className="rounded-2xl border bg-card px-4 py-2"
+                    >
+                      <h4 className="py-1.5 text-[11.5px] text-muted-foreground">
+                        {day}
+                      </h4>
+                      <ol>
+                        {dayItems.map((item) => (
+                          <li
+                            key={item.id}
+                            className="flex items-center gap-3 border-t py-2.5 text-[13px]"
+                          >
+                            <time
+                              className="w-11 shrink-0 text-xs text-muted-foreground tabular-nums"
+                              dateTime={item.created_at}
+                            >
+                              {clock(item.created_at)}
+                            </time>
+                            <ActorAvatar
+                              agent={item.actor_type === 'AGENT'}
+                              label={
+                                item.actor_type === 'AGENT'
+                                  ? 'AI'
+                                  : actorName(item).slice(0, 1)
+                              }
+                            />
+                            <span className="min-w-0 flex-1">
+                              <strong className="font-semibold">
+                                {actorName(item)}
+                              </strong>{' '}
+                              {statusLabel(item.type)}
+                              {item.task_id && (
+                                <Button
+                                  variant="link"
+                                  className="ml-2 h-auto p-0 text-xs"
+                                  onClick={() =>
+                                    openPane('tasks', item.task_id)
+                                  }
+                                >
+                                  작업 #{item.task_id}
+                                </Button>
+                              )}
+                              {item.change_proposal_id && (
+                                <Button
+                                  variant="link"
+                                  className="ml-2 h-auto p-0 text-xs"
+                                  onClick={() =>
+                                    openPane('changes', item.change_proposal_id)
+                                  }
+                                >
+                                  변경 요청 #{item.change_proposal_id}
+                                </Button>
+                              )}
+                              {item.baseline_id && (
+                                <Button
+                                  variant="link"
+                                  className="ml-2 h-auto p-0 text-xs"
+                                  onClick={() => openPane('documents')}
+                                >
+                                  기준 설계 #{item.baseline_id}
+                                </Button>
+                              )}
+                            </span>
+                            <span
+                              className={cn(
+                                'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                                item.result === 'SUCCESS'
+                                  ? 'bg-emerald-50 text-[#00753a]'
+                                  : item.result === 'FAILURE'
+                                    ? 'bg-[#fdecec] text-[#a3141b]'
+                                    : 'bg-muted text-muted-foreground',
+                              )}
+                            >
+                              {statusLabel(item.result) || item.result}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    </section>
+                  ))}
+                </div>
+                {timeline.isFetchNextPageError && (
+                  <p role="alert" className="mt-4 text-xs text-destructive">
+                    이전 활동을 불러오지 못했어요. 다시 눌러 주세요.
+                  </p>
+                )}
+                {timeline.hasNextPage && (
+                  <div className="mt-4 flex justify-center">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={timeline.isFetchingNextPage}
+                      onClick={() => void timeline.fetchNextPage()}
+                    >
+                      {timeline.isFetchingNextPage
+                        ? '불러오는 중…'
+                        : '이전 활동 더 보기'}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )
+          }}
+        </AsyncState>
+      </CardContent>
+    </Card>
+  )
+}
