@@ -18,7 +18,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 ## 업무 오류
 
-인증 실패는 전송 인증 단계에서 401로 거부한다. 업무 오류의 `error.code/message`는 SDK의 도구 실패 결과로 전달한다. 도구별 Error 표의 숫자는 REST 대응 상태 의미다. MCP 성공 payload에 가짜 HTTP 상태를 넣지 않는다. 구체 오류 봉투와 input/output schema 등록은 전진이 주관한다. 오류 봉투(`structuredContent.error`·`isError`)와 도구 등록 방법은 [MCP 서버 기반](../design/mcp-server-S15P31A108-176.md) 3·4절.
+인증 실패는 전송 인증 단계에서 401로 거부한다. 업무 오류의 `error.code/message`(명세가 정한 오류는 `error.details`까지)는 REST와 같은 본문으로 SDK의 도구 실패 결과에 전달한다. 도구별 Error 표의 숫자는 REST 대응 상태 의미다. MCP 성공 payload에 가짜 HTTP 상태를 넣지 않는다. 구체 오류 봉투와 input/output schema 등록은 전진이 주관한다. 오류 봉투(`structuredContent.error`·`isError`)와 도구 등록 방법은 [MCP 서버 기반](../design/mcp-server-S15P31A108-176.md) 3·4절.
 
 ## 작업 호출 순서
 
