@@ -2,8 +2,11 @@ package com.beez.backend.ai;
 
 import com.beez.backend.config.BeezProperties;
 import java.net.http.HttpClient;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -19,18 +22,40 @@ public class AiClient {
 
     private static final Logger log = LoggerFactory.getLogger(AiClient.class);
 
+    /** 질문 생성(30초)·초안 생성(45초) 모델 제한보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
+    static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
+    static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
+
     private final RestClient rest;
+    private final RestClient questionRest;
+    private final RestClient draftRest;
 
     public AiClient(BeezProperties props) {
+        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT);
+    }
+
+    @Autowired
+    public AiClient(BeezProperties props,
+                    @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
+                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout) {
         BeezProperties.Ai ai = props.ai();
+        this.rest = client(ai, ai.readTimeout());
+        // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
+        this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
+        this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
+    }
+
+    private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
+
+    private static RestClient client(BeezProperties.Ai ai, Duration readTimeout) {
         // Uvicorn uses HTTP/1.1; avoid h2c upgrades on streamed request bodies.
         HttpClient http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(ai.connectTimeout())
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
-        factory.setReadTimeout(ai.readTimeout());
-        this.rest = RestClient.builder()
+        factory.setReadTimeout(readTimeout);
+        return RestClient.builder()
                 .baseUrl(ai.baseUrl())
                 .requestFactory(factory)
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + ai.internalToken())
@@ -85,15 +110,16 @@ public class AiClient {
         return rest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
     }
 
+    /** 기획 보완 질문 생성(AI 모델 제한 30초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> planningQuestions(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/planning-questions").body(input).retrieve().body(java.util.Map.class);
+        return questionRest.post().uri("/v1/planning-questions").body(input).retrieve().body(java.util.Map.class);
     }
 
     /** 답변 반영 설계 초안 ({@code POST /v1/design-drafts}, S15P31A108-134 계약). 실패 분류는 부르는 쪽이 한다. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> designDrafts(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/design-drafts").body(input).retrieve().body(java.util.Map.class);
+        return draftRest.post().uri("/v1/design-drafts").body(input).retrieve().body(java.util.Map.class);
     }
 
     /**
