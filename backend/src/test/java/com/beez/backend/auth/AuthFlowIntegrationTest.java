@@ -72,7 +72,8 @@ class AuthFlowIntegrationTest extends IntegrationTestSupport {
         HttpResponse<String> res = client().post("/api/auth/register",
                 registerJson(AccessFixtures.uniqueEmail(), "short1"));
         assertThat(res.statusCode()).isEqualTo(400);
-        assertThat(res.body()).contains("\"code\":\"validation_failed\"");
+        assertThat(res.body()).contains("\"code\":\"validation_failed\"")
+                .as("정책 위반은 message 접두어로 구분한다(Q04, ACC-A01)").contains("\"message\":\"password:");
     }
 
     @Test
