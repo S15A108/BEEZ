@@ -392,6 +392,7 @@ tests:
       - {eval_time: 12m, alertname: CdcSlotMissing, exp_alerts: []}
 
   # ── Kafka·Connect (S15P31A108-261) ──
+  # 시험에서 "Kafka 에 닿음"은 up{job="kafka"} 1 + 접수 토픽 offset 시계열이 있는 것이다(rules 의 beez_cdc:kafka_reachable).
   # 깨지면: CDC 가 켜졌는데 broker·Connect 가 죽은 것을 놓치거나(복구 스캔이 받쳐 다른 알림이 없음), 재시작(1분 안쪽)에도
   # 울거나, MonitoringTargetDown 과 같은 글이 두 번 간다(261 에서 kafka·connect job 을 거기서 뺌)
   - name: CDC 켜짐 — Kafka·Connect 수집 5분 실패면 전용 알림, MonitoringTargetDown 은 없음
@@ -399,20 +400,39 @@ tests:
     input_series:
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
       - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1 1 0x18'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5 5 stale'}
       - {series: 'up{instance="connect:9404",job="connect"}', values: '1 1 0x18'}
     alert_rule_test:
       - {eval_time: 6m, alertname: CdcKafkaUnreachable, exp_alerts: []}
       - eval_time: 8m
         alertname: CdcKafkaUnreachable
         exp_alerts:
-          - exp_labels: {team: infra, instance: "kafka-exporter:9308", job: kafka}
-            exp_annotations: {summary: "Kafka broker 에 닿지 않음(또는 kafka-exporter 다운) — CDC 전달이 멈추고 복구 스캔만 돈다"}
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "Kafka 접수 토픽을 읽지 못함(broker·kafka-exporter 다운 또는 토픽 없음) — CDC 전달이 멈추고 복구 스캔만 돈다"}
       - eval_time: 8m
         alertname: CdcConnectDown
         exp_alerts:
           - exp_labels: {team: infra, instance: "connect:9404", job: connect}
             exp_annotations: {summary: "Debezium Connect 지표 수집 실패 — Connect 가 죽었거나 javaagent 가 멈춤"}
       - {eval_time: 15m, alertname: MonitoringTargetDown, exp_alerts: []}
+
+  # 깨지면: broker 가 오래 죽어 exporter 긁기가 다시 빨라졌을 때(up 1, offset 없음) 거짓 해소가 가고 CdcConnectorMissing 이
+  # 원인을 잘못 짚어 운다(PR #186 리뷰). 0~2분 정상, 2~6분 up 0, 6분부터 up 1 인데 offset 없음 → 계속 울고 해소 없음
+  - name: Kafka 장애가 길어져 긁기가 성공해도 offset 이 없으면 CdcKafkaUnreachable 유지
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1 1 0 0 0 0 1x14'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5 5 stale'}
+      - {series: 'up{instance="connect:9404",job="connect"}', values: '1x20'}
+      - {series: 'kafka_connect_connector_status{connector="beez-published-analysis-1",status="running",job="connect",instance="connect:9404"}', values: '1 1 stale'}
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: CdcKafkaUnreachable
+        exp_alerts:
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "Kafka 접수 토픽을 읽지 못함(broker·kafka-exporter 다운 또는 토픽 없음) — CDC 전달이 멈추고 복구 스캔만 돈다"}
+      - {eval_time: 18m, alertname: CdcConnectorMissing, exp_alerts: []}
 
   # 깨지면: CDC 를 계획해서 내린 점검(consumer 먼저 끔)·CDC 전 dev 에서 Kafka·Connect 가 없다고 운다
   - name: CDC 꺼짐 — Kafka·Connect 가 없어도 알림 없음
@@ -442,19 +462,35 @@ tests:
       - eval_time: 6m
         alertname: CdcConnectorNotRunning
         exp_alerts:
-          - exp_labels: {team: infra, connector: b, status: paused, job: connect, instance: "connect:9404"}
-            exp_annotations: {summary: "커넥터 b 상태 paused"}
-          - exp_labels: {team: infra, connector: b, task: "0", status: paused, job: connect, instance: "connect:9404"}
-            exp_annotations: {summary: "커넥터 b task 0 상태 paused"}
+          - exp_labels: {team: infra, connector: b}
+            exp_annotations: {summary: "커넥터 b: 5분 넘게 RUNNING 아님(지금 paused)"}
+          - exp_labels: {team: infra, connector: b, task: "0"}
+            exp_annotations: {summary: "커넥터 b task 0: 5분 넘게 RUNNING 아님(지금 paused)"}
       - eval_time: 8m
         alertname: CdcConnectorNotRunning
         exp_alerts:
-          - exp_labels: {team: infra, connector: a, task: "0", status: failed, job: connect, instance: "connect:9404"}
-            exp_annotations: {summary: "커넥터 a task 0 상태 failed"}
-          - exp_labels: {team: infra, connector: b, status: paused, job: connect, instance: "connect:9404"}
-            exp_annotations: {summary: "커넥터 b 상태 paused"}
-          - exp_labels: {team: infra, connector: b, task: "0", status: paused, job: connect, instance: "connect:9404"}
-            exp_annotations: {summary: "커넥터 b task 0 상태 paused"}
+          - exp_labels: {team: infra, connector: a, task: "0"}
+            exp_annotations: {summary: "커넥터 a task 0: 5분 넘게 RUNNING 아님(지금 failed)"}
+          - exp_labels: {team: infra, connector: b}
+            exp_annotations: {summary: "커넥터 b: 5분 넘게 RUNNING 아님(지금 paused)"}
+          - exp_labels: {team: infra, connector: b, task: "0"}
+            exp_annotations: {summary: "커넥터 b task 0: 5분 넘게 RUNNING 아님(지금 paused)"}
+
+  # 깨지면: task 가 failed·restarting 을 5분 안쪽 간격으로 오가는 동안 status 마다 시계열이 바뀌어 for 가 처음부터 다시
+  # 세어 영영 울지 않는다(PR #186 리뷰). 1분부터 2분씩 failed → restarting 을 되풀이 → 6분 지나 알림, 요약은 그때 상태
+  - name: task 상태가 failed·restarting 을 오가도 RUNNING 이 아닌 채 5분이면 CdcConnectorNotRunning
+    interval: 1m
+    input_series:
+      - {series: 'kafka_connect_task_status{connector="d",task="0",status="running",job="connect",instance="connect:9404"}', values: '1 stale'}
+      - {series: 'kafka_connect_task_status{connector="d",task="0",status="failed",job="connect",instance="connect:9404"}', values: '_ 1 1 stale _ 1 1 stale _ 1 1 stale _ 1 1'}
+      - {series: 'kafka_connect_task_status{connector="d",task="0",status="restarting",job="connect",instance="connect:9404"}', values: '_ _ _ 1 1 stale _ 1 1 stale _ 1 1 stale _'}
+    alert_rule_test:
+      - {eval_time: 5m, alertname: CdcConnectorNotRunning, exp_alerts: []}
+      - eval_time: 8m
+        alertname: CdcConnectorNotRunning
+        exp_alerts:
+          - exp_labels: {team: infra, connector: d, task: "0"}
+            exp_annotations: {summary: "커넥터 d task 0: 5분 넘게 RUNNING 아님(지금 restarting)"}
 
   # 깨지면: CDC 가 켜진 채 커넥터가 지워진 것을 놓치거나(295 슬롯 알림이 남긴 한계), 다시 만드는 몇 분 동안에도 운다.
   # 2분부터 커넥터 지표가 사라짐(stale = 수집에서 빠질 때 Prometheus 가 넣는 표시) → 사라진 지 10분 지나 알림. Connect 수집 실패(up 0)는 CdcConnectDown 이 맡는다(아래 시험)
@@ -464,6 +500,7 @@ tests:
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
       - {series: 'up{instance="connect:9404",job="connect"}', values: '1x20'}
       - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1x20'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5x20'}
       - {series: 'kafka_connect_connector_status{connector="beez-published-analysis-1",status="running",job="connect",instance="connect:9404"}', values: '1 1 stale'}
     alert_rule_test:
       - {eval_time: 11m, alertname: CdcConnectorMissing, exp_alerts: []}
@@ -472,6 +509,7 @@ tests:
         exp_alerts:
           - exp_labels: {team: infra}
             exp_annotations: {summary: "CDC 가 켜졌는데 Connect 에 커넥터가 없음 — 커넥터가 지워졌거나 등록에 실패함"}
+      - {eval_time: 13m, alertname: CdcKafkaUnreachable, exp_alerts: []}
 
   - name: Connect 수집 실패 중에는 CdcConnectorMissing 대신 CdcConnectDown 만
     interval: 1m
@@ -479,6 +517,7 @@ tests:
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
       - {series: 'up{instance="connect:9404",job="connect"}', values: '0x20'}
       - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1x20'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5x20'}
     alert_rule_test:
       - {eval_time: 15m, alertname: CdcConnectorMissing, exp_alerts: []}
 
@@ -489,14 +528,15 @@ tests:
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
       - {series: 'up{instance="connect:9404",job="connect"}', values: '1x20'}
       - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1 1 0x18'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5 5 stale'}
       - {series: 'kafka_connect_connector_status{connector="beez-published-analysis-1",status="running",job="connect",instance="connect:9404"}', values: '1 1 stale'}
     alert_rule_test:
       - {eval_time: 15m, alertname: CdcConnectorMissing, exp_alerts: []}
       - eval_time: 15m
         alertname: CdcKafkaUnreachable
         exp_alerts:
-          - exp_labels: {team: infra, instance: "kafka-exporter:9308", job: kafka}
-            exp_annotations: {summary: "Kafka broker 에 닿지 않음(또는 kafka-exporter 다운) — CDC 전달이 멈추고 복구 스캔만 돈다"}
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "Kafka 접수 토픽을 읽지 못함(broker·kafka-exporter 다운 또는 토픽 없음) — CDC 전달이 멈추고 복구 스캔만 돈다"}
 
   # 깨지면: consumer 는 붙어 있는데 같은 레코드에 막혀 처리가 멈춘 것을 놓치거나(heartbeat 는 정상이라 CdcConsumerDown 이
   # 울지 않음), 끊긴 동안(CdcConsumerDown 몫)·잠깐 밀린 것에도 운다

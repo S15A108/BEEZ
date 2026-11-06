@@ -31,7 +31,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcSlotWalRetained](#cdcslotwalretained) | 슬롯이 붙잡은 WAL > 1GiB | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcSlotMissing](#cdcslotmissing) | consumer 켜짐 **그리고** 기대 슬롯(`beez_published_analysis`) 지표 없음(exporter·수집기는 정상) | 10분 | 4시간 | 인프라 · 전진 |
 | [CdcSlotCollectorFailing](#cdcslotcollectorfailing) | `replication_slots` 수집기 실패(exporter 는 DB 에 붙어 있음) | 5분 | 4시간 | 인프라 · 전진 |
-| [CdcKafkaUnreachable](#cdckafkaunreachable) | consumer 켜짐 **그리고** kafka-exporter 수집 실패(`up{job="kafka"} == 0`, broker 다운이면 이렇게 보임) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcKafkaUnreachable](#cdckafkaunreachable) | consumer 켜짐 **그리고** 접수 토픽 offset을 못 읽음(kafka-exporter 수집 실패이거나 수집은 되는데 offset 없음) | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConnectDown](#cdcconnectdown) | consumer 켜짐 **그리고** Connect 지표 수집 실패(`up{job="connect"} == 0`) | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConnectorNotRunning](#cdcconnectornotrunning) | 커넥터나 task 상태가 RUNNING 아님(failed·paused·stopped 등) | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConnectorMissing](#cdcconnectormissing) | consumer 켜짐 **그리고** Connect·Kafka는 수집되는데 커넥터 지표 없음 | 10분 | 4시간 | 인프라 · 전진 |
@@ -257,11 +257,15 @@ Debezium 연결 여부를 냅니다(Connect REST는 그대로 컨테이너 안�
 
 ### CdcKafkaUnreachable
 
-CDC가 켜졌는데 kafka-exporter를 5분 넘게 긁지 못합니다. broker가 죽으면 exporter는 마지막 메타데이터로 broker 수 1을 계속 내지만,
-한 번 긁는 데 15~30초가 걸려 수집 시간 초과(10초)가 납니다(11-06 로컬 실측). 그래서 broker 다운과 exporter 다운이 같은 모양입니다.
+CDC가 켜졌는데 5분 넘게 접수 토픽 offset을 읽지 못합니다. 기록 규칙 `beez_cdc:kafka_reachable`(kafka-exporter 수집 성공 **그리고**
+접수 토픽 offset 시계열 있음)이 없는 상태입니다. broker가 죽으면 exporter는 마지막 메타데이터로 broker 수 1을 계속 내므로 broker 수는
+보지 않습니다. 죽은 직후에는 한 번 긁는 데 15~30초가 걸려 수집 시간 초과(10초)가 나고, 긁기가 성공하더라도 offset을 못 읽어 그
+시계열을 빼고 냅니다(11-06 로컬 실측). 그래서 broker 다운·exporter 다운·접수 토픽 없음이 같은 글로 옵니다.
 
 - 볼 곳: `cdc ps`([cdc-stack.md](cdc-stack.md) `cdc` 함수)로 kafka가 healthy인지, `mon ps`로 kafka-exporter가 떠 있는지.
   둘 다 떠 있으면 `mon logs kafka-exporter`의 `Cannot get ...` 줄과 Prometheus `targets` 화면의 오류 문구를 봅니다.
+  broker는 정상인데 이것만 울면 접수 토픽이 없는지(`kt kafka-topics.sh --bootstrap-server localhost:9092 --list`), 토픽 이름을 바꾸고
+  exporter 필터(`infra/monitoring/compose.yaml`)와 규칙의 토픽 이름을 함께 고치지 않았는지 봅니다.
 - broker가 돌아오면 exporter·backend consumer·Connect 모두 재시작 없이 다시 붙습니다(298·295 실측).
 
 ### CdcConnectDown
@@ -275,8 +279,9 @@ CDC가 켜졌는데 Connect의 지표(`connect:9404`)를 5분 넘게 긁지 못�
 
 ### CdcConnectorNotRunning
 
-커넥터나 task 상태가 5분 넘게 RUNNING이 아닙니다. 글에 커넥터 이름·task 번호·상태가 찍힙니다(같은 커넥터의 connector 줄과
-task 줄은 한 글로 묶임).
+커넥터나 task 상태가 5분 넘게 RUNNING이 아닙니다. 글에 커넥터 이름·task 번호와 글을 보낼 때의 상태가 찍힙니다(같은 커넥터의
+connector 줄과 task 줄은 한 글로 묶임). 상태가 failed↔restarting처럼 바뀌어도 RUNNING이 아닌 채로 5분이면 웁니다 — 상태 라벨을
+빼고 커넥터·task로 묶어 셉니다(PR #186 리뷰). 그래서 해소 글은 RUNNING으로 돌아왔을 때만 옵니다.
 
 - `failed`: [cdc-connector.md "등록 확인"](cdc-connector.md#4-등록-확인)의 오류 문구를 보고 task를 재시작합니다. 같은 오류로 다시
   실패하면 원인(DB 권한·publication·비밀 파일)부터 고칩니다.
@@ -288,7 +293,7 @@ task 줄은 한 글로 묶임).
 
 CDC가 켜졌고 Connect·Kafka 지표도 수집되는데, 커넥터 상태 지표가 10분 넘게 없습니다. 커넥터가 지워졌거나 등록에 실패한 것입니다.
 슬롯은 남아 WAL을 붙잡으므로 `CdcSlotInactive`도 곧 웁니다. broker가 죽으면 worker가 커넥터를 내려 이 지표도 사라지지만(REST는 옛
-RUNNING을 그대로 보여 줌), 그때는 원인인 `CdcKafkaUnreachable`만 울도록 Kafka 수집 정상을 조건에 넣었습니다(11-06 로컬 실측).
+RUNNING을 그대로 보여 줌), 그때는 원인인 `CdcKafkaUnreachable`만 울도록 `beez_cdc:kafka_reachable`을 조건에 넣었습니다(11-06 로컬 실측).
 
 - 볼 곳: `crest /connectors`([cdc-connector.md "0. 준비"](cdc-connector.md#0-준비-서버-bash-셸을-새로-열-때마다)). `[]`이면
   [cdc-connector.md "다시 만들기"](cdc-connector.md#다시-만들기)대로 새 이름으로 등록하거나, 일부러 내린 것이면 되돌리기 순서
@@ -382,7 +387,9 @@ am silence expire <ID>                           # 일찍 풀기
   가지 않지만, 장애 중에는 될 수 있으면 다시 띄우지 않습니다.
 - Kafka·Connect 알림(261)은 consumer 켜짐을 조건으로 둡니다. consumer를 끈 채 Kafka·Connect가 죽은 것은 알리지 않고, 그
   동안 슬롯이 WAL을 쌓으면 `CdcSlotInactive`·`CdcSlotWalRetained`가 웁니다.
-- broker 하나만 있어 broker 다운과 kafka-exporter 다운을 지표로 구분하지 못합니다(`CdcKafkaUnreachable` 글이 둘 다 뜻함).
+- broker 하나만 있어 broker 다운·kafka-exporter 다운·접수 토픽 없음을 지표로 구분하지 못합니다(`CdcKafkaUnreachable` 글이 셋 다 뜻함).
+- Connect javaagent 설정(`infra/cdc/dev/connect-metrics.yaml`)이 틀리면 에이전트가 JVM을 끝내 **Connect가 뜨지 않습니다**. CI
+  `cdc-stack` 잡이 서버와 같은 jar로 설정을 읽어 보고 알림이 읽는 시계열 이름을 확인합니다(`infra/cdc/dev/tests/check-connect-metrics.sh`).
 - 웹훅 주소가 틀리거나 Mattermost가 응답하지 않으면 Alertmanager 로그
   (`mon logs alertmanager`)에 `Notify for alerts failed`가 남고 재시도합니다. 이를 따로
   알리는 경로는 없습니다.
@@ -559,7 +566,8 @@ Docker Desktop에 `beez_default`를 만들고 서버와 같은 pgvector(`wal_lev
 
 | 항목 | 결과 |
 |---|---|
-| promtool | 규칙 33개, 시험 32개 통과. 새 조건 다섯 가지(CDC 켜짐 조건, Kafka 수집 정상 조건, MonitoringTargetDown 제외, lag 의 consumer_up 조건 등)를 하나씩 뺀 사본에서 대응 시험이 실패 |
+| promtool | 규칙 34개, 시험 34개 통과. 새 조건(CDC 켜짐 조건, Kafka 닿음 조건, MonitoringTargetDown 제외, lag 의 consumer_up 조건, 상태 라벨 묶음 등)을 하나씩 빼거나 옛 식으로 되돌린 사본에서 대응 시험이 실패 |
+| javaagent 설정 시험 | `tests/check-connect-metrics.sh`가 정상 설정에서 통과. 상태 패턴·커넥터 패턴·소문자 설정을 망가뜨린 사본과 깨진 YAML·정규식·없는 파일에서 실패(JVM exit 1) |
 | 수집 | job `kafka`·`connect` UP. 새 대시보드 패널 식 18개 모두 조회 성공(로컬 postgres-exporter는 수집 계정이 없어 슬롯 값만 빔) |
 | Connect 지표 | `kafka_connect_connector_status`·`task_status`(status 라벨), task 수, `debezium_streaming_connected` 1. 에이전트 지표 120줄 |
 | kafka-exporter | 필터 없으면 `__consumer_offsets` 50파티션 등으로 수백 줄 → 접수 토픽·group 필터. lag·offset 정상, 메모리 약 8MiB |

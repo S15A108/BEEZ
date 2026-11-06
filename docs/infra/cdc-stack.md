@@ -57,6 +57,12 @@ sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /op
   `stat -c %G`에는 `UNKNOWN`으로 나온다. 정상이다.
 - 비밀번호 파일(`database.properties`)은 293이 쓴다. 이 스택은 파일이 없어도 뜬다(등록 때만 읽음).
 
+### 1-2. javaagent jar (261부터)
+
+아래 ["지표" → "jar 받기"](#jar-받기-서버당-한-번-버전을-올릴-때마다)를 먼저 한다. jar가 없으면 3단계에서 connect가
+`bind source path does not exist`로 뜨지 않는다(CDC 전달이 멈추고 복구 스캔만 돈다). 서버를 새로 세우거나 `/opt/beez`를
+옮길 때도 이 단계를 빼먹지 않는다.
+
 ### 2. 파일 올리기
 
 아래 "올리기·업데이트"의 명령을 그대로 쓴다. 처음에는 기존 폴더가 없어 옮기는 단계를 건너뛴다.
@@ -171,6 +177,16 @@ kafka-exporter(job `kafka`)가 broker에 Kafka 프로토콜로 붙어 센다([mo
   Kafka 도구는 kafka 컨테이너의 `kt`로 돌린다. `curl`(REST 조회 `crest`)은 상관없다.
 - 상태 문자열은 Connect 소문자 그대로다: `running`·`paused`·`failed`·`unassigned`·`restarting`·`stopped`. pause한 커넥터도 슬롯은
   활성으로 남는다(11-06 로컬).
+- **설정이 틀리면 Connect가 뜨지 않는다.** YAML·정규식 오류나 파일이 없으면 javaagent가 JVM을 `exit 1`로 끝낸다(11-06 로컬 실측).
+  그래서 `connect-metrics.yaml`을 바꾸면 PR 전에 아래로 시험한다. CI `cdc-stack` 잡도 같은 것을 돌린다(jar 버전은 compose의 기본
+  경로에서 읽고 sha256으로 확인). Connect와 같은 이름의 가짜 MBean을 올린 빈 JVM에 jar를 붙여, 기동하는지와 알림이 읽는 시계열
+  네 개가 그 이름·라벨로 나오는지 본다.
+
+```bash
+# 로컬 PC (Git Bash, infra/cdc/dev). java 11 이상. jar 는 아래 "jar 받기"와 같은 파일(sha256 확인한 것)
+bash tests/check-connect-metrics.sh <jar 경로>
+# ok: javaagent 기동, 알림이 읽는 시계열 4개
+```
 
 ### jar 받기 (서버당 한 번, 버전을 올릴 때마다)
 

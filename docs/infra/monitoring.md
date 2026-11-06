@@ -200,7 +200,8 @@ moncheck && mon up -d && mon ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 
 ```bash
 # 서버 (ssh beez)
-# 1) 수집 대상. 다섯 job(alertmanager·backend·node·postgres·prometheus) 모두 up
+# 1) 수집 대상. 일곱 job(alertmanager·backend·node·postgres·prometheus, 261부터 kafka·connect) 모두 up.
+#    kafka·connect 는 CDC 스택(beez-cdc)이 떠 있을 때만 up 이다. CDC 전·되돌린 뒤에는 down 이 정상(알림 없음)
 curl -s 127.0.0.1:9090/api/v1/targets | python3 -c '
 import sys, json
 for t in json.load(sys.stdin)["data"]["activeTargets"]:

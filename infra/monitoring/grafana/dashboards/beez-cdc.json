@@ -1505,8 +1505,8 @@
     },
     {
       "type": "stat",
-      "title": "Kafka 수집",
-      "description": "kafka-exporter 를 긁는지. broker 가 죽으면 긁기가 시간 초과로 DOWN(kafka_brokers 는 마지막 값 1 이 남아 쓰지 않는다). CDC 켜짐이면 CdcKafkaUnreachable",
+      "title": "Kafka 연결",
+      "description": "접수 토픽 offset 을 읽는지(beez_cdc:kafka_reachable = kafka-exporter 수집 성공 + offset 있음). broker 가 죽으면 kafka_brokers 는 마지막 값 1 이 남고, 오래 죽어 있으면 긁기는 성공해도 offset 이 빠져 여기서 DOWN. CDC 켜짐이면 CdcKafkaUnreachable",
       "targets": [
         {
           "refId": "A",
@@ -1514,7 +1514,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(up{job=\"kafka\"})",
+          "expr": "max(beez_cdc:kafka_reachable) or vector(0)",
           "legendFormat": "__auto",
           "range": false,
           "instant": true
@@ -2237,8 +2237,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(up{job=\"kafka\"})",
-          "legendFormat": "Kafka 수집",
+          "expr": "max(beez_cdc:kafka_reachable) or vector(0)",
+          "legendFormat": "Kafka 연결(offset 읽음)",
           "range": true,
           "instant": false
         },
