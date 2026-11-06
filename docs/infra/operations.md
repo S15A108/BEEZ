@@ -167,7 +167,7 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
 
    ```bash
    docker compose -p beez exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
-     "select version, success, installed_on from flyway_schema_history order by installed_rank desc limit 5"'
+     "select version, description, success, installed_on from flyway_schema_history order by installed_rank desc limit 10"'
    ```
 
    로컬 PC(Git Bash)에서 되돌릴 SHA가 아는 최신 버전과, 그보다 새 마이그레이션의 의심 줄을 봅니다.
@@ -178,7 +178,7 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    git -C /c/git/BEEZ ls-tree --name-only "$OLD" -- "$DIR/" | grep -oE 'V[0-9]+__' | tr -dc '0-9\n' | sort -n | tail -n 1
    git -C /c/git/BEEZ diff --name-status "$OLD" origin/dev -- "$DIR"
    git -C /c/git/BEEZ diff "$OLD" origin/dev -- "$DIR" \
-     | grep -inE '^\+ *(update|delete|insert) |^\+.*(drop |rename |alter column .* type |not null|unique|references|foreign key|check *\(|trigger)'
+     | grep -inE '^\+ *(update|delete|insert) |^\+.*(drop |rename |alter (column )?[^ ]+ (set data )?type |not null|primary key|unique|references|foreign key|check *\(|trigger)'
    ```
 
    - DB의 최신 버전이 되돌릴 SHA가 아는 최신 버전 **이하**면 스키마 걱정 없이 되돌릴 수 있습니다.
@@ -196,8 +196,16 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
      예전 코드가 건드리지 않는 새 테이블, NULL을 허용하거나 기본값이 남는 칼럼, UNIQUE가 아닌 인덱스만이면 되돌려도 됩니다
      (예전 backend의 Flyway는 모르는 상위 버전을 경고만 하고, 엔티티 검증 `ddl-auto: validate`는 남는 칼럼을 문제 삼지 않습니다).
      판단이 애매하면 되돌리지 않고 고친 커밋을 배포합니다.
-   - DB 최신 버전의 파일이 `origin/dev`에 없으면(마이그레이션을 revert한 경우)
-     `git -C /c/git/BEEZ log --all --oneline -- "$DIR/V<번호>__*"`로 그 파일이 있던 커밋을 찾아 봅니다.
+   - 판단 대상 버전마다 서버 결과의 `description`이 `origin/dev`의 `V<번호>__<description>.sql` 파일과 맞는지 봅니다
+     (파일 이름의 `_`는 공백으로 바뀌어 기록됩니다). 셋째 명령이 보여 주는 것은 dev에 있는 파일뿐이라, 작업 브랜치를
+     손으로 배포해 들어간 마이그레이션이나 revert된 마이그레이션은 빠집니다.
+     - **dev에 그 번호가 없으면** `git -C /c/git/BEEZ log --all --oneline -- "$DIR/V<번호>__*"`로 그 파일이 있던 커밋을 찾아
+       읽습니다. 로컬에 없으면(push하지 않은 브랜치) 손 배포한 사람에게 받습니다. 읽지 못하면 되돌리지 않습니다.
+     - **같은 번호가 dev에 다른 이름으로 있으면** 다른 브랜치가 같은 번호를 쓴 것입니다. DB에 실제로 들어간 것은 브랜치
+       쪽 파일이므로, 위처럼 그 파일을 찾아 읽고 같은 기준으로 판단합니다(dev 파일로 판단하지 않음). 그와 별개로 그 번호를
+       아는 dev backend는 Flyway 검증(체크섬·설명 불일치)에서 기동에 실패해 다음 dev 배포가 막히므로, 팀 채널에 알려 번호를
+       정리합니다.
+   - 판단 대상 버전이 10개보다 많으면 서버 명령의 `limit 10`을 늘립니다.
    - `success`가 `f`인 행이 있으면 마이그레이션이 중간에 실패한 것입니다. 되돌리기 전에 그 버전의 스키마 상태부터 확인합니다.
 3. **팀 채널에 알립니다.** "dev 서버 되돌림: `<지금 SHA 7자>` → `<되돌릴 SHA 7자>`, 원인 PR #번호, 그동안 dev 머지 보류".
    되돌린 뒤 누가 dev에 머지하면 그 머지가 자동 배포되면서 문제 커밋까지 다시 올라갑니다.
@@ -305,16 +313,20 @@ Actions의 초록불은 "Jenkins가 배포 요청을 접수했다"까지입니�
 
    ```bash
    R=<다시 배포하려던 SHA>; N=<지금 SHA>; g() { git -C /c/git/BEEZ "$@"; }
-   if ! g fetch -q origin || ! g cat-file -e "$R^{commit}" 2> /dev/null || ! g cat-file -e "$N^{commit}" 2> /dev/null; then
+   if ! g fetch -q origin || ! R=$(g rev-parse -q --verify "$R^{commit}") || ! N=$(g rev-parse -q --verify "$N^{commit}"); then
      echo "비교 불가(fetch 실패 또는 로컬에 없는 SHA) — 중단"
+   elif ! g rev-list --first-parent origin/dev | grep -qx "$N"; then
+     echo "지금 것은 dev 본줄기(PR 머지 커밋)가 아님(작업 브랜치 손 배포 등) — 중단"
    elif g merge-base --is-ancestor "$R" "$N"; then echo "지금 것이 같거나 새것 — 다시 배포하지 않음"
    elif g merge-base --is-ancestor "$N" "$R"; then echo "지금 것이 더 오래됨 — 다시 배포 가능"
-   else echo "갈라짐(다른 브랜치 손 배포 등) — 중단"; fi
+   else echo "선후를 가릴 수 없음 — 중단"; fi
    ```
 
-   - `merge-base --is-ancestor`는 "조상 아님"과 "비교 실패"를 모두 성공이 아닌 값으로 끝내므로, 한 방향만 보면 갈라진
-     커밋이나 없는 SHA도 "더 오래됨"처럼 보입니다. 그래서 양쪽을 다 보고, 어느 쪽도 아니면 멈춥니다.
-   - `갈라짐`이면 지금 떠 있는 것은 dev가 아닌 브랜치를 손으로 올린 것입니다. 배포한 사람과 언제 dev로 돌릴지 정합니다.
+   - 지금 SHA가 dev 본줄기(Jenkins Verify와 같은 `--first-parent` 검사)에 있는지 먼저 봅니다. 최신 dev에서 딴 작업 브랜치를
+     손으로 올렸으면 그 커밋은 재시도 SHA의 자손이라, 선후만 보면 "같거나 새것"으로 나와 본줄기가 아닌 버전이 계속 떠 있게
+     됩니다. `본줄기가 아님`이 나오면 배포한 사람과 언제 dev로 돌릴지 정합니다.
+   - `merge-base --is-ancestor`는 "조상 아님"과 "비교 실패"를 모두 성공이 아닌 값으로 끝내므로, 한 방향만 보면 없는 SHA도
+     "더 오래됨"처럼 보입니다. 그래서 SHA가 있는지 먼저 보고 양쪽 방향을 다 봅니다. 둘 다 본줄기라 마지막 줄은 보통 나오지 않습니다.
    - `비교 불가`면 네트워크를 확인하고, 지금 SHA가 아직 push하지 않은 로컬 브랜치의 것인지 배포한 사람에게 묻습니다.
 4. **`다시 배포 가능`이 나왔고 2번의 되돌리기·복원도 아닐 때만** 같은 SHA로 다시 배포합니다.
 
