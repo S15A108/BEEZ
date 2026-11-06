@@ -1226,7 +1226,10 @@ export class OfficeRenderer3D {
           return
         }
         const plane = new THREE.Mesh(
-          new THREE.PlaneGeometry(width, height),
+          this.geometry(
+            `ui${width},${height}`,
+            () => new THREE.PlaneGeometry(width, height),
+          ),
           this.kitUi(kit.ui!),
         )
         plane.position.set(0, y, z)
@@ -1277,7 +1280,10 @@ export class OfficeRenderer3D {
         0.01,
       )
       const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        this.geometry(
+          `ui${length - 0.06},${kit.h - 0.06}`,
+          () => new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        ),
         this.kitUi(ui),
       )
       plane.position.set(0, kit.y + kit.h / 2, 0.026)
@@ -1299,7 +1305,10 @@ export class OfficeRenderer3D {
       0.005,
     )
     const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(length, panel),
+      this.geometry(
+        `ui${length},${panel}`,
+        () => new THREE.PlaneGeometry(length, panel),
+      ),
       this.kitUi(ui),
     )
     plane.position.set(0, bottom + panel / 2, 0.019)
@@ -1950,7 +1959,8 @@ export class OfficeRenderer3D {
     }
   }
 
-  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다.
+  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다. 지오메트리는
+  // this.geometry가 나눠 쓰고 dispose에서 한 번 정리하므로 여기서 지우지 않는다.
   private resetLook() {
     this.workSurfaces.forEach(({ surface }) => surface.dispose())
     this.workSurfaces.length = 0
