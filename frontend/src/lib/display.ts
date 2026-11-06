@@ -34,6 +34,7 @@ export const statusLabels: Record<string, string> = {
   SUPERSEDED: '이전 버전',
   PENDING: '대기 중',
   FAILED: '실패',
+  FAILURE: '실패',
   SUCCESS: '성공',
   LEADER: '인간 팀장',
   MEMBER: '팀원',
