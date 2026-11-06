@@ -521,6 +521,24 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `current_baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | N | 현재 기준 설계. 최초 발행 전 생략 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 시각 |
+| `summary` | [ProjectCardSummary](00-common.md#schema-projectcardsummary) | N | (수정안 요청 · 11-06) PRJ-A02 목록에서만 준다. 나의 도시 프로젝트 카드 |
+
+<a id="schema-projectcardsummary"></a>
+
+### ProjectCardSummary
+
+(수정안 요청 · 11-06) 나의 도시 프로젝트 카드(SCR-04-v2-city)에 쓰는 요약. 조회 시점 값이고, 워크스페이스 HUD와 같은 기준으로 센다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `review_required_count` | `integer` | Y | 검토할 변경. MON-C01 `review_required_count`와 같다(PROPOSED·IN_REVIEW) |
+| `in_progress_task_count` | `integer` | Y | 진행 중 작업. MON-T01 `by_status`의 IN_PROGRESS와 같다 |
+| `approved_document_count` | `integer` | Y | 승인 문서. MON-D01 `approved_count`의 합과 같다 |
+| `required_documents_uploaded` | `integer` | Y | 필수 문서 4종 중 올라온 종 수. PRJ-A06 `uploaded`와 같은 기준 |
+| `required_documents_approved` | `integer` | Y | 필수 문서 4종 중 승인된 종 수. PRJ-A06 `approved`와 같은 기준 |
+| `connected_agent_count` | `integer` | Y | Member.agent_status가 CONNECTED인 활성 멤버 수 |
+| `member_preview` | `object[]` | Y | 활성 멤버 최대 3명 {id, name, color}. 팀장 먼저 |
+| `last_activity_at` | `Time` | N | MON-A04 타임라인의 가장 최근 활동 시각. 활동이 없으면 생략 |
 
 <a id="schema-member"></a>
 

@@ -1,6 +1,6 @@
 # BEEZ Backend REST API
 
-버전: 0.7 · 갱신일: 2026-11-05 · 개발 계약 초안
+버전: 0.7 · 갱신일: 2026-11-06 · 개발 계약 초안
 
 2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, MEM-A11, DOC-A22~A24, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. 문서 검토·승인(DOC-A13~A21)과 최초 기준 생성(PLN-A10)은 PR #37 계약을 그대로 두고 화면에 더 필요한 것만 그 절에 붙였다. ACC-A08·A09와 MTG-A01·A05·A07·A08·A09는 폐지 예정이다. MTG-A04는 팀장과 회의 참여자가 관련자를 직접 추가하는 API로 남긴다. 기준 v1 뒤의 문서 변경은 회의 결과를 포함해 모두 변경 제안으로 간다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q24다.
 
@@ -15,6 +15,8 @@
 2026-11-05: 화면 캔버스·데모 비교에서 dev 백엔드에 아직 없는 수정안을 해당 API 아래 "(dev 미구현 · 11-05 확인)"으로 표시했다(S15P31A108-218). 팀원 제외·나가기의 담당자 비우기와 팀장 위임 나가기(MEM-A09·A10), 미배정 작업 필터·`status` 여러 값과 스스로 맡기(TSK-A02·A06), 탈퇴 때 팀원 프로젝트의 담당자 비우기(ACC-A10), 프로젝트 건물 디자인(PRJ-A01~A04 `design`, PRJ-A02 `member_count`)이다. 이메일 초대(MEM-A01·A11)는 PR #134에서 구현 중이라 표시하지 않았다.
 
 2026-11-05: 계정 설정 명세를 구현(PR #118)에 맞췄다(S15P31A108-278). 만료된 임시 비밀번호는 `temporary_password_expired`가 아니라 401 `invalid_credentials`다(ACC-A02). ACC-A04·A05 응답에 `must_change_password`가 있다. 임시 비밀번호의 세부값·발송 실패·기존 비밀번호 처리(ACC-A07)와 비밀번호 변경·탈퇴 때 세션·개인정보 처리(ACC-A06·A10)를 적었다. 재설정 링크 API(ACC-A08·A09)는 폐지로 확정했다. 비밀번호 규칙 위반 코드는 아직 정하지 않았다(ACC-A01·A06). 초대 응답(MEM-A02·A04)의 `expires_at`은 V33에서 컬럼을 지워 응답에 없으므로 처리 규칙·필드 표·예시에서 뺐다(PR #134).
+
+2026-11-06: 나의 도시 프로젝트 카드 요약 수정안을 붙였다(S15P31A108-218, 사용자 결정). PRJ-A02 항목에 `summary`(검토할 변경·진행 중 작업·승인 문서 수, 필수 문서 진척, 연결된 에이전트 수, 멤버 미리 보기, 최근 활동 시각)를 넣는다. 숫자는 워크스페이스 HUD와 같은 기준이다.
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -1328,7 +1330,19 @@ HTTP `200`.
         "created_at": "2026-10-23T03:00:00Z"
       },
       "created_at": "2026-10-23T03:00:00Z",
-      "updated_at": "2026-10-23T03:00:00Z"
+      "updated_at": "2026-10-23T03:00:00Z",
+      "summary": {
+        "review_required_count": 1,
+        "in_progress_task_count": 0,
+        "approved_document_count": 4,
+        "required_documents_uploaded": 4,
+        "required_documents_approved": 4,
+        "connected_agent_count": 2,
+        "member_preview": [
+          {"id": "501", "name": "이팀장", "color": "#efeafa"}
+        ],
+        "last_activity_at": "2026-10-23T03:00:00Z"
+      }
     }
   ],
   "has_more": false
@@ -1356,6 +1370,11 @@ HTTP `200`.
 - 삭제 프로젝트는 노출하지 않는다.
 - (수정안 요청) 각 항목에 design·member_count를 넣어 도시 화면이 추가 호출 없이 건물을 그린다. '준비 중'과 '기준 v1'은 기존 current_baseline 유무로 구분한다. 프로젝트 시작은 PLN-A10 최초 기준 생성이며 따로 시작 상태를 두지 않는다. 검색·정렬은 화면에서 처리하고 `q`·`sort` 파라미터는 필요해지면 추가한다. 부지 번호 저장은 Q22다.
 - (dev 미구현 · 11-05 확인) 항목에 `design`·`member_count`가 없다. `member_count`는 지금 PRJ-A06 응답에만 있다.
+- (수정안 요청 · 11-06) 각 항목에 `summary`([ProjectCardSummary](00-common.md#schema-projectcardsummary))를 넣는다. 프로젝트 카드가 프로젝트마다 MON-C01·T01·D01, PRJ-A06, MON-A04를 따로 부르지 않게 한다. 다른 API의 Project에는 넣지 않는다.
+- (수정안 요청 · 11-06) 값은 조회 시점 값이고 실시간으로 바꾸지 않는다. 페이지의 프로젝트 ID를 모아 한 번에 세어 항목마다 쿼리가 늘지 않게 한다.
+- (수정안 요청 · 11-06) 기준 전 카드의 '문서 초안 0 / 4 올림'과 '다음: …' 안내는 `required_documents_uploaded`·`required_documents_approved`와 `current_baseline` 유무로 화면이 정한다.
+- (협의 필요) 목록 응답 비용이 크면 `summary`를 별도 API로 뺄지, 에이전트를 멤버 수와 세션 수 중 무엇으로 셀지 정한다.
+- 근거 보드: SCR-04-v2-city(시작 준비 중, 진행 중 카드).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
