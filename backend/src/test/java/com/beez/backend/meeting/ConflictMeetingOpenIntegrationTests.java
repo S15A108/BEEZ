@@ -95,6 +95,8 @@ class ConflictMeetingOpenIntegrationTests extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM meeting_participant p JOIN meeting m ON m.id = p.meeting_id WHERE m.project_id = ?
                 """, Integer.class, project.projectId())).isEqualTo(3);   // 팀장 + 두 담당자
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM notification WHERE project_id = ? AND type = 'MEETING_OPENED'",
+                Integer.class, project.projectId())).isEqualTo(3);   // 참여자 전원
     }
 
     @Test void twoConflictsOnOnePairAreBothInTheBrief() {
@@ -121,6 +123,8 @@ class ConflictMeetingOpenIntegrationTests extends IntegrationTestSupport {
         publishCommitted(a, b);
         publishCommitted(a, b);
         assertThat(meetings()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM notification WHERE project_id = ? AND type = 'MEETING_OPENED'",
+                Integer.class, project.projectId())).isEqualTo(3);   // 재검증으로 알림이 늘지 않는다
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM meeting_entry e JOIN meeting m ON m.id = e.meeting_id WHERE m.project_id = ?
                 """, Integer.class, project.projectId())).isEqualTo(1);

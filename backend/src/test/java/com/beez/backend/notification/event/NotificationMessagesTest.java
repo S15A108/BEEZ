@@ -47,7 +47,7 @@ class NotificationMessagesTest {
                 NotificationMessages.documentReviewRequested("a.md"), NotificationMessages.documentApproved("a.md"),
                 NotificationMessages.documentRejected("a.md"), NotificationMessages.documentBeeReviewDone("a.md"),
                 NotificationMessages.meetingParticipantAdded("m", "r"), NotificationMessages.meetingParticipantRemoved("m"),
-                NotificationMessages.meetingRecordAdded("m"));
+                NotificationMessages.meetingRecordAdded("m"), NotificationMessages.meetingOpened("m"));
 
         assertThat(all).allSatisfy(message -> {
             assertThat(message.title()).isNotBlank();

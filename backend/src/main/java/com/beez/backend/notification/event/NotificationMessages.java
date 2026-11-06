@@ -94,6 +94,11 @@ public final class NotificationMessages {
         return new Message("회의에 새 기록이 올라왔습니다: " + name(meetingTitle), "참여 중인 회의에 새 기록이 추가되었습니다.");
     }
 
+    /** 비비가 작업 충돌로 연 회의. 충돌 내용 원문은 넣지 않는다 — 회의 안에서 본다 */
+    public static Message meetingOpened(String meetingTitle) {
+        return new Message("작업 충돌로 회의가 열렸습니다: " + name(meetingTitle), "비비가 작업 충돌을 감지해 회의를 열었습니다. 회의에서 어느 쪽을 따를지 정해 주세요.");
+    }
+
     /** 이름이 길면 줄이고, 비어 있으면 일반 표현으로 바꾼다 */
     static String name(String value) {
         if (value == null || value.isBlank()) {

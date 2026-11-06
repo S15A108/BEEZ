@@ -29,7 +29,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 회의 조회·참여자·기록과 충돌 회의 내부 개설 (MTG-A02·A03·A04·A06·A10·A14, S15P31A108-205).
- * 충돌 감지 연결은 ConflictMeetingOpenIntegrationTests, 알림 전달은 후속(S15P31A108-237).
+ * 충돌 감지 연결은 ConflictMeetingOpenIntegrationTests. MEETING_OPENED 알림은 개설 서비스가 보낸다(S15P31A108-237).
  */
 class MeetingIntegrationTests extends IntegrationTestSupport {
 
@@ -152,6 +152,22 @@ class MeetingIntegrationTests extends IntegrationTestSupport {
         assertThat(brief.get("author_kind").asString()).isEqualTo("BEE");
         assertThat(brief.has("author_account_id")).isFalse();
         assertThat(brief.get("refs").get(0).get("type").asString()).isEqualTo("TASK");
+    }
+
+    @Test
+    void open_notifiesEveryParticipantOnce_andNotWhenAnExistingMeetingIsReturned() {
+        OpenResult first = open(project.projectId(), List.of(taskA, taskB));
+        open(project.projectId(), List.of(taskB, taskA));   // 같은 묶음: 기존 회의를 돌려주므로 새 알림이 없다
+
+        assertThat(first.created()).isTrue();
+        var rows = notifications("MEETING_OPENED");
+        assertThat(rows).extracting(row -> row.get("recipient_account_id"))
+                .containsExactlyInAnyOrder(project.leaderAccountId(), ownerAccount);   // 팀장 + 작업 담당자
+        assertThat(rows).allSatisfy(row -> {
+            assertThat(row.get("ref_kind")).isEqualTo("MEETING");
+            assertThat(row.get("ref_id")).isEqualTo(Long.parseLong(first.meeting().id()));
+            assertThat(row.get("dedupe_key").toString()).startsWith("meeting:" + first.meeting().id() + ":opened:to:");
+        });
     }
 
     @Test
