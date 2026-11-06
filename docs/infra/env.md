@@ -54,7 +54,7 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
 | `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
-| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 S15P31A108-295 | backend |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 [cdc-connector.md](cdc-connector.md#6-consumer-켜기)(-295) | backend |
 | `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | | | 기본 `false`. Kafka 힌트 consumer. **위 스캔 없이 켜면 기동 거부**. Kafka 가 없어도 기동하고 30초마다 다시 붙습니다(-298) | backend |
 | `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS`·`_GROUP_ID`·`_TOPIC` | | | 기본 `kafka:9092`·`beez-published-analysis`·`beez.public.published_change_analysis`(계획 D7). 바꿀 일 없음 | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
@@ -108,7 +108,8 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
 | `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |
 | `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
-| `SCHEDULING_POOL_SIZE` | | `3` (워커마다 스레드 하나: 문서 색인·원본 정리·검증) | 기본값 |
+| `SCHEDULING_POOL_SIZE` | | `8` (워커마다 스레드 하나: 문서 색인·원본 정리·검증·CDC 복구 스캔·기획 질문·설계 초안 등) | 기본값 |
+| `BEEZ_PLANNING_QUESTION_READ_TIMEOUT`·`BEEZ_PLANNING_DRAFT_READ_TIMEOUT` | | `40s`·`55s` | 기본값. AI 모델 제한(질문 30초·초안 45초)보다 길어야 하며, `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다 |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
 | `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
 | `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
@@ -129,11 +130,11 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 생기거나, `beez.cors`·`beez.ai`·`beez.invitation`·`beez.agent` 필수값에 기본값이 다시 들어가면 실패합니다.
 `DB_URL`·`DB_PASSWORD` 에 기본값을 넣는 것은 잡지 못하므로 리뷰에서 봅니다.
 
-**CDC(`beez.cdc.*`)는 위 표에 없습니다.** 기본으로 꺼진 실험 설정이라 `application.yml` 에도, 서버 compose 에도 없습니다.
-`enabled`·`bootstrap-servers`·`group-id`·`topic`·`kafka-security.properties` 의 뜻과 켜는 조건은
-[cdc README](../../backend/src/main/java/com/beez/backend/cdc/README.md)를 봅니다. 서버에서 켜려면 env 파일만으로는 안 되고
-`infra/compose.yaml` 의 backend `environment` 에도 넘겨야 합니다(compose 는 적힌 변수만 컨테이너에 넣습니다).
-그때 이 문서의 표에 옮겨 적습니다.
+**CDC 분석 접수(`beez.cdc.intake.*`)는 `application.yml` 에 없고 compose 가 넘깁니다.** compose 의 기본값은 꺼짐이고
+나머지 셋은 계획 D7 값이라, 서버에서는 위 "서버 env 파일" 표의 `BEEZ_CDC_INTAKE_*` 두 줄만 env 파일에 씁니다(-298).
+켜는 절차는 [cdc-connector.md](cdc-connector.md#6-consumer-켜기), 키의 뜻은
+[cdc README](../../backend/src/main/java/com/beez/backend/cdc/README.md)를 봅니다. `kafka-security.properties` 는 dev 에서
+비워 둡니다(PLAINTEXT, 계획 D3).
 
 ### ai (FastAPI)
 
@@ -148,8 +149,8 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `VALIDATION_RESPONSE_FORMAT` | | 기본 `json_object`. 모델이 strict 출력을 지원할 때만 `json_schema` |
 | `DESIGN_RECOMMENDATION_ENABLED` | | 설계 근거 추천(#185). 기본 `false` |
 | `CONTEXT_SELECTION_ENABLED`·`CONTEXT_SELECTION_*` | | 컨텍스트 선택(#131). 기본 `false`, 한도 값은 기본 없음 |
-| `PLANNING_QUESTIONS_ENABLED`·`PLANNING_QUESTIONS_*` | | 기획 보완 질문(#133). 기본 `false`. 켜면 `GMS_KEY`·`BEE_DEFAULT_MODEL` 로 호출 |
-| `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`. 〃 |
+| `PLANNING_QUESTIONS_ENABLED`·`PLANNING_QUESTIONS_*` | | 기획 보완 질문(#133). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다(S15P31A108-232). 켜면 `GMS_KEY`·`BEE_DEFAULT_MODEL` 로 호출 |
+| `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
 | `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 `model_unavailable` |
 | `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
@@ -157,7 +158,7 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
 | `TIKTOKEN_CACHE_DIR` | | 어휘 파일 위치. 이미지에는 `/app/.tiktoken` 으로 고정 |
 
-**서버에서는 위 기능 스위치가 모두 기본값(꺼짐)입니다**(2026-11-04, 이미지 `5f1a593`). compose 는 `environment` 에 적힌
+**서버에서는 위 기능 스위치가 모두 기본값(꺼짐)입니다**(2026-11-04, 이미지 `5f1a593`). 예외로 `PLANNING_QUESTIONS_ENABLED`·`DESIGN_DRAFTS_ENABLED` 는 S15P31A108-232 부터 compose 가 ai 에 전달하므로(기본 `false`) 서버 env 파일에 `=true` 만 쓰면 켜집니다. compose 는 `environment` 에 적힌
 변수만 컨테이너에 넣으므로, 서버 env 파일에 `PLANNING_QUESTIONS_ENABLED=true` 를 써도 ai 에는 닿지 않습니다. 켜려면
 `infra/compose.yaml` 의 ai `environment` 에 그 변수를 추가하고(비밀값이면 이 문서 맨 위 표에도), 서버 env 파일에 값을 넣은
 뒤 배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은 [5절](#5-비밀값-규칙)을 따릅니다. 어느 기능을 dev 에서 켤지는 AI 담당과 정합니다.

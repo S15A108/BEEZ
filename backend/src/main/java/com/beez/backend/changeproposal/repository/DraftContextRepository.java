@@ -35,8 +35,9 @@ public class DraftContextRepository {
     /** 그 기준에 들어 있는 문서의 승인본. 기준에 없는 문서면 비어 있다. */
     public Optional<Map<String, Object>> baselineVersion(long baseline, long document) {
         return jdbc.sql("""
-                SELECT v.id,v.document_id,v.version_no,v.status,v.storage_key,v.content_hash,v.content_text,v.created_by,v.created_at
+                SELECT v.id,v.document_id,v.version_no,v.status,v.storage_key,v.content_hash,v.content_text,v.created_by,v.created_at,d.type
                 FROM baseline_document bd JOIN document_version v ON v.id=bd.document_version_id AND v.document_id=bd.document_id
+                JOIN document d ON d.id=bd.document_id
                 WHERE bd.baseline_id=:baseline AND bd.document_id=:document
                 """).param("baseline", baseline).param("document", document).query().listOfRows().stream().findFirst();
     }

@@ -18,6 +18,8 @@ spring:
 beez:
   validation:
     worker-enabled: false   # 시험은 ValidationWorker.runOnce 를 직접 부른다
+  planning:
+    worker-enabled: false   # 시험은 PlanningQuestionGenerator/DesignDraftRunner 의 runOnce 를 직접 부른다
   document:
     worker-enabled: false
     object-storage:

@@ -1,0 +1,8 @@
+{
+  "project_id": "101",
+  "request_key": "bee-instance-101",
+  "project": {
+    "name": "나래",
+    "description": "팀이 함께 작성한 문서와 변경 이력을 한 화면에서 검토하는 협업 도구"
+  }
+}

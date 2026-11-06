@@ -27,6 +27,10 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcKafkaReceiveFailures](#cdckafkareceivefailures) | 최근 5분 Kafka 수신 실패 증가 **그리고** consumer 켜짐 | 바로 | 4시간 | 인프라 · 전진 |
 | [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜진 인스턴스에 그 인스턴스의 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConsumerDown](#cdcconsumerdown) | consumer 켜진 인스턴스가 Kafka에 붙어 있지 않음(`consumer_up` ≠ 1 또는 없음) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotInactive](#cdcslotinactive) | 논리 복제 슬롯 `slot_is_active == 0`(커넥터 등록 뒤에만 시계열 있음) | 10분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotWalRetained](#cdcslotwalretained) | 슬롯이 붙잡은 WAL > 1GiB | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotMissing](#cdcslotmissing) | consumer 켜짐 **그리고** 기대 슬롯(`beez_published_analysis`) 지표 없음(exporter·수집기는 정상) | 10분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotCollectorFailing](#cdcslotcollectorfailing) | `replication_slots` 수집기 실패(exporter 는 DB 에 붙어 있음) | 5분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -189,6 +193,46 @@ consumer 설정이 켜진 인스턴스가 5분 넘게 Kafka에 붙어 있지 않
   (Kafka 이름이 안 풀려 시작을 30초마다 재시도 중), Kafka 연결 경고. 지표가 아예 없으면 리스너 설정이 빠진 배포다.
 - Kafka가 돌아오면 backend 재시작 없이 다시 붙습니다(최대 30초 + 재연결 대기 10초). 붙으면 저절로 풀립니다.
 - 계획된 Kafka 점검이면 알림 일시 중지를 걸거나 consumer만 끕니다(`cdc-stack.md` "중지·내리기").
+
+### CdcSlotInactive
+
+PostgreSQL 논리 복제 슬롯을 10분 넘게 아무도 읽지 않습니다(S15P31A108-295, 계획 D6). 슬롯은 Debezium 커넥터가 쓰며,
+읽히지 않는 동안 WAL이 쌓입니다. 분석은 복구 스캔이 이어 가므로 다른 CDC 알림은 울리지 않습니다.
+
+- 볼 곳: [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)의 커넥터·task 상태와 슬롯 쿼리, `cdc ps`.
+  task가 `FAILED`면 그 절의 오류 문구를 보고 task를 재시작합니다. Connect·Kafka가 내려가 있으면 [cdc-stack.md](cdc-stack.md)대로 올립니다.
+- 커넥터를 일부러 지웠다면 슬롯도 정리합니다(계획 §4 되돌리기 2·3번). 남겨 두면 다음 알림 `CdcSlotWalRetained`로 이어집니다.
+
+### CdcSlotWalRetained
+
+슬롯이 붙잡은 WAL(현재 WAL 위치 − 슬롯이 확인한 위치)이 1GiB를 5분 넘게 넘었습니다. dev의 WAL 생성량(1주 약 19MB)으로는
+정상일 때 닿지 않으므로 슬롯이 오래 멈춘 것입니다. `max_slot_wal_keep_size`(10GB, 계획 D4)에 닿으면 슬롯이 무효화되고,
+커넥터를 새 이름으로 다시 만들어야 합니다([cdc-connector.md "다시 만들기"](cdc-connector.md#다시-만들기)).
+
+- 먼저 위 `CdcSlotInactive`와 같은 곳을 봅니다. 대개 함께 울립니다.
+- 5GB를 넘으면 원인을 찾기 전이라도 계획 §4 되돌리기 1~3번(커넥터·슬롯 정리)을 합니다(계획 D6).
+
+### CdcSlotMissing
+
+consumer가 켜져 있는데(= CDC 켜짐) 기대 슬롯 `beez_published_analysis`의 지표가 10분 넘게 없습니다. 위 두 슬롯 알림은 시계열이
+있어야 울기 때문에, 이 상태에서는 슬롯 감시가 조용히 빠져 있습니다(PR #166 리뷰). exporter가 DB에 붙어 있고 수집기도 성공할
+때만 울리므로 원인은 슬롯 쪽입니다.
+
+- 볼 곳: [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)의 슬롯 쿼리. 0행이면 누가 슬롯을 지웠거나 커넥터가 없는 것이고,
+  다른 이름의 슬롯만 있으면 커넥터 설정의 `slot.name`이 바뀐 것입니다(이 알림은 이름을 고정해서 봅니다).
+- 일부러 내린 것이면 되돌리기 순서(consumer 먼저 끄기)를 지켰는지 봅니다. consumer를 끄면 이 알림은 풀립니다.
+- 한계: consumer를 끈 점검 중에는 슬롯이 사라져도 울지 않습니다(커넥터가 있는지 알리는 지표는 S15P31A108-261에서 생김).
+- 슬롯 이름을 바꾸기로 했으면 규칙 파일의 `slot_name`도 함께 고칩니다.
+
+### CdcSlotCollectorFailing
+
+postgres-exporter의 `replication_slots` 수집기가 5분 넘게 실패합니다. 슬롯 시계열이 통째로 빠져 위 슬롯 알림이 모두 멈춘
+상태입니다. consumer를 끈 점검 중에도 슬롯은 WAL을 붙잡으므로 consumer와 상관없이 울립니다. 이 수집기는 슬롯이 없어도 성공하므로
+CDC 전에는 울지 않고, exporter가 DB에 못 붙을 때(`pg_up` 0)는 `PostgresDown`에 맡깁니다.
+
+- 볼 곳: `mon logs postgres-exporter`의 오류 문구. 권한 문제면 수집 계정 `beez_monitor`의 `pg_monitor` 역할을
+  ([monitoring.md 수집 계정](monitoring.md#2-db-수집-계정)), 그 밖이면 exporter 버전 변경을 의심합니다.
+- 그동안은 [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)로 슬롯을 손으로 봅니다.
 
 ### BackendScrapeDown
 

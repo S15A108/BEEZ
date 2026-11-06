@@ -200,7 +200,7 @@ public class ProjectMemberService {
     }
 
     /**
-     * 제외·나가기 공통. 프로젝트·멤버십 행을 잠근 뒤에 부른다. 열린 작업 인계 → 멤버십 종료 → 토큰 폐기를 한 트랜잭션에서 한다.
+     * 제외·나가기 공통. 프로젝트·멤버십 행을 잠근 뒤에 부른다. 열린 작업 인계(인계 대상이 없으면 담당자 비우기, -301) → 멤버십 종료 → 토큰 폐기를 한 트랜잭션에서 한다.
      * 권한 검사가 매 요청 멤버십을 읽으므로(캐시 없음) 커밋 직후 다음 요청부터 그 사람·토큰은 막힌다.
      */
     private void end(CallerContext caller, ProjectMember member, Long reassignTo, MembershipEndReason reason) {

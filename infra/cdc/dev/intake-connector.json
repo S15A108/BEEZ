@@ -1,0 +1,20 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "plugin.name": "pgoutput",
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.user": "beez_cdc",
+  "database.password": "${file:/run/cdc-secrets/database.properties:password}",
+  "database.dbname": "beez",
+  "database.sslmode": "disable",
+  "topic.prefix": "beez",
+  "slot.name": "beez_published_analysis",
+  "publication.name": "beez_published_analysis_cdc",
+  "publication.autocreate.mode": "disabled",
+  "table.include.list": "public\\.published_change_analysis",
+  "column.include.list": "public\\.published_change_analysis\\.(id|status)",
+  "snapshot.mode": "initial",
+  "snapshot.select.statement.overrides": "public.published_change_analysis",
+  "snapshot.select.statement.overrides.public.published_change_analysis": "SELECT id, status FROM public.published_change_analysis",
+  "tombstones.on.delete": "true"
+}
