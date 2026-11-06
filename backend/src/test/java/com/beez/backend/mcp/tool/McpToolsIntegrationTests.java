@@ -335,16 +335,7 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 .containsEntry("code", "validation_failed");
 
         // 다른 프로젝트: 그 프로젝트 토큰으로는 이 검증이 없는 것과 같다
-        String otherToken = SecretTokens.generate();
-        api.jdbc.sql("insert into project (name, owner_account_id) select 'Q', id from account where email = 'outsider@test'").update();
-        api.jdbc.sql("""
-                insert into project_member (project_id, account_id, role)
-                select p.id, a.id, 'LEADER' from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""").update();
-        api.jdbc.sql("""
-                insert into agent_token (project_id, account_id, name, token_hash)
-                select p.id, a.id, 'outsider-laptop', :h from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""")
-                .param("h", SecretTokens.hash(otherToken)).update();
-        McpSyncClient other = connect(otherToken);
+        McpSyncClient other = connect(outsiderProjectToken());
         try {
             other.initialize();
             assertThat(error(call(other, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2,
@@ -382,7 +373,142 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 + " and title = '사용자 목록 설명 보완'")).isEqualTo(1);
     }
 
+    /**
+     * 깨지면: 다른 프로젝트 토큰이 이 프로젝트의 작업·검증·기록 ID 를 임의로 넣어 읽거나 바꾸고, 그 시도가 감사에서 거부로 보이지 않거나,
+     * 감사 행에 요청 문장·토큰이 남는다 (Jira -177 완료 조건 "다른 프로젝트 ID 접근 거부"·"감사 기록에 인증정보 미포함", 05 참고 2 상황표).
+     */
+    @Test
+    void otherProjectIds_areDenied_andAuditedWithoutBodies() {
+        JsonNode created = ok(call(member, "upsert_task_plan", Map.of("plan", plan("로그인"), "idempotency_key", "k-plan")));
+        String taskId = created.get("id").asString();
+        String revisionId = created.get("current_plan_revision").get("id").asString();
+        String validationId = ok(call(member, "validate_task_plan", Map.of("task_id", taskId,
+                "plan_revision_id", revisionId, "expected_lock_version", created.get("lock_version").asInt(),
+                "idempotency_key", "k-val"))).get("id").asString();
+        String recordId = ok(call(member, "write_context", Map.of("kind", "HANDOVER", "visibility", "SHARED",
+                "summary", "로그인 UI 연결 완료", "detail", "비밀 메모 원문", "design_refs", List.of(),
+                "idempotency_key", "k-w1"))).get("id").asString();
+        int lock = count("select lock_version from task where id = " + taskId);
+        call(member, "upsert_task_plan", Map.of("plan", plan("A"), "taskid", "1", "idempotency_key", "k-typo"));
+
+        String outsiderToken = outsiderProjectToken();
+        McpSyncClient other = connect(outsiderToken);
+        try {
+            other.initialize();
+            assertThat(error(call(other, "get_validation", Map.of("validation_id", validationId)))).containsEntry("code", "not_found");
+            assertThat(error(call(other, "read_context", Map.of("type", "RECORD", "id", recordId)))).containsEntry("code", "not_found");
+            assertThat(error(call(other, "report_task_state", Map.of("task_id", taskId, "event", "CANCEL",
+                    "plan_revision_id", revisionId, "expected_lock_version", lock, "idempotency_key", "k-x"))))
+                    .containsEntry("code", "not_found");
+            assertThat(error(call(other, "upsert_task_plan", Map.of("task_id", taskId, "plan", plan("빼앗기"),
+                    "expected_revision_no", 1, "expected_lock_version", lock, "idempotency_key", "k-y"))))
+                    .containsEntry("code", "not_found");
+            // 인수의 project_id 는 대조만 한다 — 토큰 프로젝트와 다르면 없는 것과 같다
+            assertThat(error(call(other, "get_development_context", Map.of("request", "로그인 화면 구현",
+                    "project_id", String.valueOf(projectId))))).containsEntry("code", "not_found");
+        } finally {
+            other.closeGracefully(); // tearDown 과 같은 이유 — 종료 DELETE 가 다음 시험의 truncate 와 겹치지 않게
+        }
+        // 이 프로젝트의 작업은 그대로다
+        assertThat(count("select lock_version from task where id = " + taskId)).isEqualTo(lock);
+        assertThat(count("select count(*) from task where project_id = " + projectId + " and title = '빼앗기'")).isZero();
+
+        long outsiderTokenId = api.jdbc.sql("select id from agent_token where name = 'outsider-laptop'").query(Long.class).single();
+        List<Map<String, Object>> denied = api.jdbc.sql("""
+                select tool, result, deny_reason, error_code, target_ids::text as targets, latency_ms
+                  from mcp_audit_log where agent_token_id = :t order by id""")
+                .param("t", outsiderTokenId).query().listOfRows();
+        assertThat(denied).extracting(r -> r.get("tool")).containsExactly("get_validation", "read_context",
+                "report_task_state", "upsert_task_plan", "get_development_context");
+        assertThat(denied).allSatisfy(r -> {
+            assertThat(r.get("result")).isEqualTo("DENIED");
+            assertThat(r.get("error_code")).isEqualTo("not_found");
+            // 사유는 종류만 — 프로젝트·계정 번호가 섞이지 않는다
+            assertThat((String) r.get("deny_reason")).matches("[a-z0-9_]+");
+            assertThat(r.get("latency_ms")).isNotNull();
+        });
+        assertThat(denied.get(0).get("targets").toString()).contains("\"validation_id\"", "\"" + validationId + "\"");
+        assertThat(denied.get(4).get("deny_reason")).isEqualTo("packet_project_mismatch");
+
+        // 이 프로젝트 쪽: 성공은 OK(코드 없음), 인수 오류는 거부가 아닌 ERROR
+        assertThat(count("select count(*) from mcp_audit_log where project_id = " + projectId
+                + " and result = 'OK' and error_code is null and deny_reason is null")).isEqualTo(3);
+        assertThat(count("select count(*) from mcp_audit_log where project_id = " + projectId
+                + " and result = 'ERROR' and error_code = 'validation_failed' and deny_reason is null")).isEqualTo(1);
+        // 감사 행 어디에도 요청 문장·기록 원문·토큰 원문이 없다
+        for (String secret : List.of("로그인", "비밀 메모", memberToken, outsiderToken)) {
+            assertThat(api.jdbc.sql("select count(*) from mcp_audit_log a where position(:s in cast(a as text)) > 0")
+                    .param("s", secret).query(Integer.class).single()).as(secret).isZero();
+        }
+    }
+
+    /**
+     * 깨지면: 손으로 고친 result_cursor(서명 없는 Base64)로 다른 프로젝트의 영향 분석 결과를 받는다
+     * (Jira -177 코멘트 1, -221 — cursor 는 진행점일 뿐 조회는 토큰 프로젝트 조건으로만 한다).
+     */
+    @Test
+    void forgedResultCursor_fromAnotherProject_seesNoImpactUpdates() {
+        long leader = api.accountId("leader@test");
+        long baseline = api.jdbc.sql("insert into baseline (project_id, version_no, published_by) values (:p, 2, :a) returning id")
+                .param("p", projectId).param("a", leader).query(Long.class).single();
+        // 분석 대기 → 결과 확정 (DesignChangesImpactUpdatesIntegrationTests 의 pendingAnalysis·complete 와 같은 칸)
+        long analysis = api.jdbc.sql("""
+                insert into published_change_analysis (project_id, published_baseline_id, status)
+                values (:p, :b, 'PENDING') returning id""")
+                .param("p", projectId).param("b", baseline).query(Long.class).single();
+        api.jdbc.sql("""
+                update published_change_analysis
+                   set status = 'COMPLETED', evaluation_status = 'COMPLETED', explicit_result = cast(:r as jsonb), finished_at = now()
+                 where id = :id""")
+                .param("id", analysis)
+                .param("r", "[{\"task_id\":\"501\",\"design_item_id\":\"301\",\"member_id\":\"9\"}]").update();
+        String fromStart = cursor("u1|0|");
+        // 대조군: 이 프로젝트 멤버는 같은 cursor 로 결과를 받는다
+        assertThat(ok(call(member, "get_design_changes", Map.of("since_version", 1, "result_cursor", fromStart)))
+                .get("impact_updates")).hasSize(1);
+
+        String outsiderToken = outsiderProjectToken();
+        // 다른 프로젝트 Q 에도 기준 설계 v1 이 있어야 get_design_changes 가 영향 결과까지 간다(없으면 baseline_missing)
+        api.jdbc.sql("""
+                with b as (insert into baseline (project_id, version_no, published_by)
+                           select p.id, 1, p.owner_account_id from project p where p.name = 'Q' returning id, project_id)
+                update project set current_baseline_id = b.id from b where project.id = b.project_id""").update();
+        McpSyncClient other = connect(outsiderToken);
+        try {
+            other.initialize();
+            assertThat(ok(call(other, "get_design_changes", Map.of("since_version", 1, "result_cursor", fromStart)))
+                    .get("impact_updates")).isEmpty();
+            // 이 프로젝트 작업 범위로 위조해도 조회는 토큰 프로젝트 조건이라 결과가 없다
+            assertThat(ok(call(other, "get_design_changes", Map.of("since_version", 1, "task_id", "501",
+                    "result_cursor", cursor("u1|0|501")))).get("impact_updates")).isEmpty();
+            // 범위를 바꿔 끼운 cursor 는 400
+            assertThat(error(call(other, "get_design_changes", Map.of("since_version", 1, "result_cursor", cursor("u1|0|501")))))
+                    .containsEntry("code", "validation_failed");
+        } finally {
+            other.closeGracefully(); // tearDown 과 같은 이유
+        }
+    }
+
     // ---- 도우미 ----
+
+    private static String cursor(String raw) {
+        return java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /** outsider@test 가 팀장인 다른 프로젝트 Q 와 그 토큰(이름 outsider-laptop)을 만들고 토큰 원문을 돌려준다 */
+    private String outsiderProjectToken() {
+        String token = SecretTokens.generate();
+        api.jdbc.sql("insert into project (name, owner_account_id) select 'Q', id from account where email = 'outsider@test'").update();
+        api.jdbc.sql("""
+                insert into project_member (project_id, account_id, role)
+                select p.id, a.id, 'LEADER' from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""").update();
+        api.jdbc.sql("""
+                insert into agent_token (project_id, account_id, name, token_hash)
+                select p.id, a.id, 'outsider-laptop', :h from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""")
+                .param("h", SecretTokens.hash(token)).update();
+        return token;
+    }
 
     private Map<String, Object> plan(String title) {
         return plan(title, "READS");
