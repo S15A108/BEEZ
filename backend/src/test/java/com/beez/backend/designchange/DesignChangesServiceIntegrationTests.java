@@ -106,7 +106,7 @@ class DesignChangesServiceIntegrationTests extends IntegrationTestSupport {
     }
 
     private DesignChangesResponse call(CallerContext caller, int since, String taskId, String cursor, Integer limit) {
-        return service.getChanges(caller, projectId, new DesignChangesQuery(since, taskId, cursor, limit));
+        return service.getChanges(caller, projectId, new DesignChangesQuery(since, taskId, cursor, limit, null));
     }
 
     private long createTask(String title, String key, Long account) throws Exception {

@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * MCP-03 get_design_changes (S15P31A108-164). "마지막으로 본 기준 번호 이후에 발행된 설계 변경"과 내 작업 검증의 유효성을 돌려준다.
+ * 발행 후 영향 분석 결과(impact_updates)는 {@link ImpactUpdateReader} 가 result_cursor 로 따로 이어 준다 (S15P31A108-221).
  * 도구 등록은 전진(-179)이 하고, 이 서비스는 REST 없이 MCP 어댑터와 report_task_state(MCP-12 응답 changes)에서 쓴다.
  *
  * <p>근거: 02-mcp-tools MCP-03 요청·응답·오류표·처리 규칙, 00-common 3절 페이지, ERD baseline·baseline_item.
@@ -58,11 +59,14 @@ public class DesignChangesService {
     private final ProjectAccessChecker access;
     private final JdbcClient jdbc;
     private final ContextAccessRecorder accessLog;
+    private final ImpactUpdateReader impactUpdates;
 
-    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc, ContextAccessRecorder accessLog) {
+    public DesignChangesService(ProjectAccessChecker access, JdbcClient jdbc, ContextAccessRecorder accessLog,
+                                ImpactUpdateReader impactUpdates) {
         this.access = access;
         this.jdbc = jdbc;
         this.accessLog = accessLog;
+        this.impactUpdates = impactUpdates;
     }
 
     /** 읽기 전용이 아닌 이유: 조회 이력(-165)을 같은 트랜잭션에 남긴다 */
@@ -78,8 +82,11 @@ public class DesignChangesService {
         // 현재 기준. 없으면 발행이 한 번도 안 된 프로젝트
         BaselineRow latest = findCurrentBaseline(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, "baseline_missing", "승인된 기준 설계가 아직 없습니다"));
-        return build(actor, projectId, latest, in.sinceVersion(), true, taskId, in.cursor(), normalizeLimit(in.limit()),
+        int limit = normalizeLimit(in.limit());
+        DesignChangesResponse changes = build(actor, projectId, latest, in.sinceVersion(), true, taskId, in.cursor(), limit,
                 "get_design_changes");
+        // 발행 후 영향 분석 결과는 발행 변경과 따로 이어 받는다 (result_cursor, S15P31A108-221). 같은 트랜잭션에서 읽는다
+        return changes.withImpactUpdates(impactUpdates.read(projectId, taskId, in.resultCursor(), limit));
     }
 
     /**
@@ -203,7 +210,8 @@ public class DesignChangesService {
         // 조회 이력 (CTX-05·06): 어느 기준 설계를 기준으로 변경을 봤는지. 작업 소속 확인은 recorder 가 한다
         accessLog.record(actor, taskId, tool, ContextAccessRecorder.KIND_BASELINE,
                 current.id(), current.id(), null);
-        return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor);
+        // 영향 결과 칸은 비워 둔다 — get_design_changes 만 getChanges 에서 채운다 (report_task_state 의 changes 에는 없다)
+        return new DesignChangesResponse(toSummary(current), items, validity, hasMore, nextCursor, null, null, null);
     }
 
     // ---- 조회 ----

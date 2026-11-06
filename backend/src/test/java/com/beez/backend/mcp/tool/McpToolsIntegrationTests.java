@@ -177,6 +177,13 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         JsonNode none = ok(call(member, "get_design_changes", Map.of("since_version", 1)));
         assertThat(none.get("items")).isEmpty();
         assertThat(none.get("has_more").asBoolean()).isFalse();
+        // 영향 분석 결과(-221): 처음엔 시작점만 받고, 그 값을 result_cursor 로 보내 이어 본다
+        assertThat(none.get("impact_updates")).isEmpty();
+        String resultCursor = none.get("next_result_cursor").asString();
+        assertThat(resultCursor).isNotBlank();
+        JsonNode next = ok(call(member, "get_design_changes", Map.of("since_version", 1, "result_cursor", resultCursor)));
+        assertThat(next.get("impact_updates")).isEmpty();
+        assertThat(next.get("result_has_more").asBoolean()).isFalse();
 
         assertThat(error(call(member, "get_design_changes", Map.of()))).containsEntry("code", "validation_failed");
     }
