@@ -15,6 +15,7 @@ import com.beez.backend.task.service.TaskQueryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -57,12 +58,14 @@ public class TaskController {
     @Operation(summary = "TSK-A02 작업 목록 (커서)")
     @GetMapping
     public PageResponse<TaskDetailResponse> list(CallerContext caller, @PathVariable("id") Long projectId,
-                                                 @RequestParam(name = "status", required = false) TaskStatus status,
+                                                 @RequestParam(name = "status", required = false) List<TaskStatus> statuses,
                                                  @RequestParam(name = "validation_status", required = false) String validationStatus,
                                                  @RequestParam(name = "assignee_member_id", required = false) Long assigneeMemberId,
+                                                 @RequestParam(name = "unassigned", required = false) Boolean unassigned,
                                                  @RequestParam(name = "cursor", required = false) String cursor,
                                                  @RequestParam(name = "limit", required = false) Integer limit) {
-        return queryService.listTasks(caller, projectId, status, validationStatus, assigneeMemberId, cursor, limit);
+        // status 는 여러 번 줄 수 있다(status=READY&status=IN_PROGRESS → 그중 하나). Spring 이 같은 이름의 값을 목록으로 모아 준다 (-301)
+        return queryService.listTasks(caller, projectId, statuses, validationStatus, assigneeMemberId, unassigned, cursor, limit);
     }
 
     @Operation(summary = "TSK-A03 작업 상세")
