@@ -3,6 +3,7 @@ import type {
   DocumentChange,
   ResolvedDocumentChange,
 } from '@/api/contracts/common'
+import { documentTextError } from './normalizeDocument'
 
 export const kindLabel = {
   REQUIREMENT: '요구사항',
@@ -57,6 +58,15 @@ export const proposalFormSchema = z
         code: 'custom',
         path: ['after_content'],
         message: '고친 글을 입력해 주세요.',
+      })
+    // 직접 쓴 글도 서버가 같은 규칙으로 거절하므로 올리기 전에 막는다(PR #135 리뷰).
+    const textError =
+      form.document_id && documentTextError(form.after_content ?? '')
+    if (textError)
+      context.addIssue({
+        code: 'custom',
+        path: ['after_content'],
+        message: textError,
       })
   })
 export type ProposalFormValues = z.infer<typeof proposalFormSchema>
