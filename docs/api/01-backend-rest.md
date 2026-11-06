@@ -7284,6 +7284,8 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 | `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수. 조회한 초안 리비전 |
 | `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 처리 규칙의 검토 상태를 사용자가 확인했다는 표시. 기본 false |
 
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다.
+
 ```json
 {
   "base_baseline_id": "401",
@@ -7340,8 +7342,8 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 - (수정안 요청 · 11-06) `draft_id`로 올리면 서버에 저장된 초안이 제안 내용의 기준이다. 본문을 따로 받아 검토를 우회하지 못하게, `draft_id`와 함께 `base_baseline_id`·`title`·`reason`·`task_id`·`validation_id`·`meeting_id`·`previous_proposal_id`·`items`·`documents`를 보내면 400 `validation_failed`다.
 - (수정안 요청 · 11-06, 사용자 결정) 비비 검토는 권장이고 올리는 조건이 아니다. 기준 v1 뒤의 변경 제안은 첫 문서 등록과 다른 흐름이라 DOC-A18의 필수 검토를 옮기지 않는다.
 - (수정안 요청 · 11-06) 다음 중 하나면 화면이 그 상태를 보여 주고, 사용자가 확인한 뒤 `review_acknowledged`=true로 올린다: 검토를 안 함, 최신 검토가 FAILED, 검토 뒤 고침(`resolved_revision`이 지금 초안 리비전과 다름), 처리하지 않은 PATCH 수정안이 있음. 확인 없이 보내면 409 `review_acknowledgement_required`다. 검토가 진행 중이면 409 `review_in_progress`다. 권한 오류, `baseline_conflict`, `version_conflict`는 확인해도 막는다.
-- (수정안 요청 · 11-06) 제출 당시 검토 상태와 확인 여부를 그 리비전의 `pre_submit_review`([PreSubmitReview](00-common.md#schema-presubmitreview))로 남기고 팀장 상세에 보인다. 넘긴 의견도 제안에 이어 붙여 함께 보인다.
-- (수정안 요청 · 11-06) 제출하면 초안을 제안에 연결하고 수정할 수 없게 한다. 같은 초안을 다시 올리면 409 `draft_already_submitted`다. 같은 요청 키의 재요청은 지금처럼 기존 응답을 돌려준다.
+- (수정안 요청 · 11-06) 제출 당시 검토 상태와 확인 여부를 그 리비전의 `pre_submit_review`([PreSubmitReview](00-common.md#schema-presubmitreview))로 남기고 팀장 상세에 보인다. 넘긴 의견과 처리하지 않은 수정안도 여기에 복사해 둔다. 팀장은 작성 중 제안과 그 검토(CHG-A17)를 읽지 못한다.
+- (수정안 요청 · 11-06) 제출하면 초안을 제안에 연결하고 수정할 수 없게 한다. 같은 초안을 다시 올리면 409 `draft_already_submitted`다. `source_proposal_id`가 있는 초안은 CHG-A04로 그 제안에만 올리며, CHG-A01로 보내면 400 `validation_failed`다. 같은 요청 키의 재요청은 지금처럼 기존 응답을 돌려준다.
 - (수정안 요청 · 11-06) 검토의 영향 결과(`tasks_to_wait`·`validations_to_stale`·`ai_candidates`)는 `input_revision` 시점의 미리보기다. 수정안을 반영했거나 검토 뒤 작업·검증·관계가 바뀌었을 수 있어 최종 판단에 쓰지 않는다. 올리면 올린 내용으로 CHG-A05 영향 분석을 지금처럼 새로 돌리고, 승인 판단(CHG-A09·A14)은 그 결과를 따른다. 결과 재사용은 최종 내용과 기준·관계·작업·검증 등 분석 입력 전체가 같을 때만 나중에 검토한다.
 - (수정안 요청 · 11-06) 초안 없이 바로 올리는 기존 경로를 유지한다. 화면의 새 제안과 반려 후 재제출(CHG-A04)은 초안·검토 흐름을 쓴다. 지금 화면(PR #135)은 초안 API가 없어 기존 경로로 올린다.
 - (수정안 요청 · 11-06) 이번 범위 밖: MCP-04는 기존 호출 계약을 유지하고 자동 검토 연동은 따로 정한다. MTG-A13도 제출 전 검토가 필요하지만 회의 정리·종료·제안 생성 계약에 영향을 주므로 별도 연동 범위로 두고, 검토 실패로 회의 종료가 막히지 않게 한다.
@@ -7566,6 +7568,8 @@ HTTP `200`: items 배열의 각 원소는 revision, snapshot_hash, submitted_by,
 | `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-06) `draft_id`와 함께 필수 |
 | `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. CHG-A01과 같다 |
 
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다. `expected_revision`·`expected_snapshot_hash`는 그대로 필수다.
+
 ```json
 {
   "base_baseline_id": "401",
@@ -7617,7 +7621,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 - previous_proposal_id는 생성 때 정한 연결을 유지하며 PUT 입력에는 지정할 수 없다. 거둔 제안의 수정은 새 제안을 생성해야 한다.
 - 그 외 입력·원문 연결·원자성·24시간 멱등성은 CHG-A01과 같다.
 - (#218 수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'하면 제안자가 CHG-A04로 최신 기준에 맞춰 재제출한다.
-- (수정안 요청 · 11-06) 화면의 반려 후 재제출도 초안·검토 흐름을 쓴다. `source_proposal_id`로 만든 초안을 `draft_id`로 보내면 같은 제안 번호의 새 리비전이 된다. 본문 필드를 함께 보내지 않는 규칙, 검토 상태 확인, 중복 제출 규칙은 CHG-A01과 같다. 위의 '서버에 별도 편집 중 초안을 저장하지 않는다'는 지금 구현이고 이 경로에는 적용하지 않는다.
+- (수정안 요청 · 11-06) 화면의 반려 후 재제출도 초안·검토 흐름을 쓴다. `source_proposal_id`로 만든 초안을 `draft_id`로 보내면 같은 제안 번호의 새 리비전이 된다. `source_proposal_id`가 이 제안이 아닌 초안은 400 `validation_failed`다. 본문 필드를 함께 보내지 않는 규칙, 검토 상태 확인, 중복 제출 규칙은 CHG-A01과 같다. 위의 '서버에 별도 편집 중 초안을 저장하지 않는다'는 지금 구현이고 이 경로에는 적용하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9008,7 +9012,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 ### POST `/api/projects/{id}/change-proposal-drafts`
 
 관련 요구사항: CHG-01 (화면 수정안 연계)
-담당: BE: 오서현 / AI: 박상은·양지훈 / FE: 박민용
+담당: BE: 오서현 / AI: — / FE: 박민용
 상태: 수정안 요청
 
 #### 인증
@@ -9073,7 +9077,7 @@ HTTP `201`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). `rev
 ### GET `/api/projects/{id}/change-proposal-drafts/{draft_id}`
 
 관련 요구사항: CHG-01 (화면 수정안 연계)
-담당: BE: 오서현 / AI: 박상은·양지훈 / FE: 박민용
+담당: BE: 오서현 / AI: — / FE: 박민용
 상태: 수정안 요청
 
 #### 인증
@@ -9129,7 +9133,7 @@ HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). 가�
 ### PUT `/api/projects/{id}/change-proposal-drafts/{draft_id}`
 
 관련 요구사항: CHG-01 (화면 수정안 연계)
-담당: BE: 오서현 / AI: 박상은·양지훈 / FE: 박민용
+담당: BE: 오서현 / AI: — / FE: 박민용
 상태: 수정안 요청
 
 #### 인증
@@ -9254,6 +9258,7 @@ HTTP `202`. [ChangeDraftReview](00-common.md#schema-changedraftreview). `status`
 #### 처리 규칙
 
 - (수정안 요청 · 11-06) 지금 리비전을 검토한다. 바로 돌려주고 서버 작업으로 이어 간다. 창을 닫아도 계속되고, 서버가 다시 시작해도 복구하며, 끝나면 작성자에게 한 번만 알린다. 새 알림 유형과 초안으로 가는 이동 대상을 더한다. 유형·대상 이름은 BE가 공통 알림 담당과 정한다.
+- (수정안 요청 · 11-06) 진행 중인 검토는 고치기와 올리기를 막으므로(409 `review_in_progress`), 정한 시간 안에 끝나지 않으면 FAILED로 끝낸다. DOC-A16은 10분이고, 시간은 BE가 정한다.
 - (수정안 요청 · 11-05) 단계는 네 개다. READ_CHANGES는 바뀐 곳(items·documents)을 읽는다. FIND_RELATED는 CHG-A14와 같은 계산으로 `tasks_to_wait`·`validations_to_stale`을 만든다. AI_CANDIDATES는 작성 중 제안의 영향 후보를 찾는다. GAPS_CONFLICTS는 빠진 부분과 다른 문서·정책과의 충돌을 찾아 수정안(`suggestions`)을 만든다.
 - (수정안 요청 · 11-06) FIND_RELATED: CHG-A14의 팀장 권한은 그대로 둔다. 이 API는 작성자 권한을 검사한 뒤 같은 영향 계산을 부른다. 결과는 '검토 당시 예상 영향'으로 보이고, 평가하지 못한 것을 0건으로 보이지 않는다. 명시적 관계만 보므로 문서 문장 변경의 영향을 모두 찾지는 못한다. 이 결과는 검토 이력으로 남고 CHG-A05를 대신하지 않는다.
 - (수정안 요청 · 11-06) AI_CANDIDATES: AI-A03은 `proposal_id`와 항목 변경을 받고 제출 리비전 기준으로 조립하며, 문서 변경이 든 제안은 지금 분석하지 않는다(`document_change_unavailable`). 초안 ID·리비전을 구분하는 입력과 문서 변경 계약이 생기기 전에는 이 단계의 `status`를 NOT_EVALUATED로, `ai_candidates`를 null로 둔다. 화면은 PNL-04-v2-propose-review의 'AI 영향 후보' 자리에 '확인하지 못함'을 보이고, 0건·모델 실패와 구분한다.
@@ -9274,7 +9279,7 @@ HTTP `202`. [ChangeDraftReview](00-common.md#schema-changedraftreview). `status`
 ### PATCH `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}`
 
 관련 요구사항: CHG-01 (화면 수정안 연계)
-담당: BE: 오서현 / AI: 박상은·양지훈 / FE: 박민용
+담당: BE: 오서현 / AI: — / FE: 박민용
 상태: 수정안 요청
 
 #### 인증

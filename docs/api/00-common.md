@@ -985,6 +985,8 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수 |
 | `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 검토 상태를 사용자가 확인했다는 표시 |
 
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다.
+
 <a id="schema-changeproposal"></a>
 
 ### ChangeProposal
@@ -1094,16 +1096,16 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 
 ### PreSubmitReview
 
-(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보인다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다.
+(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보인다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다. 팀장은 작성 중 제안과 그 검토를 읽지 못하므로 수정안을 여기에 복사해 둔다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `status` | `NOT_REQUESTED\|COMPLETED\|FAILED` | Y | 올릴 때의 최신 검토 상태 |
-| `review_id` | `ID` | N | 그 검토. NOT_REQUESTED면 없음 |
+| `review_id` | `ID` | N | 그 검토의 기록용 ID. NOT_REQUESTED면 없음. 팀장이 이 ID로 읽는 API는 없다 |
 | `edited_after_review` | `boolean` | Y | 검토 뒤 글을 고쳤는지 |
-| `pending_suggestion_count` | `integer` | Y | 처리하지 않은 PATCH 수정안 수 |
-| `skipped_suggestion_count` | `integer` | Y | 넘긴 PATCH 수정안 수 |
-| `acknowledged` | `boolean` | Y | 사용자가 위 상태를 확인하고 올렸는지 |
+| `pending_suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 처리하지 않은 PATCH 수정안 |
+| `skipped_suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 넘긴 PATCH 수정안과 COMMENT 의견 |
+| `acknowledged` | `boolean` | Y | 사용자가 위 상태를 확인하고 올렸는지. 확인할 상태가 없었으면 false |
 
 <a id="schema-changeproposaldraft"></a>
 
@@ -1121,6 +1123,8 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
+| `meeting_id` | `ID` | N | 관련 회의 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |
 | `latest_review` | [ChangeDraftReview](00-common.md#schema-changedraftreview) | N | 가장 최근 올리기 전 비비 검토 |
@@ -1143,8 +1147,8 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `input_revision` | `integer` | Y | 검토한 초안 리비전. `tasks_to_wait`·`validations_to_stale`·`ai_candidates`는 이 리비전 기준이다 |
 | `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전. 수정안 처리 확인용이고, 영향 결과가 이 리비전 기준이라는 뜻은 아니다 |
 | `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED\|NOT_EVALUATED, count}. NOT_EVALUATED는 입력 계약이 없어 평가하지 않은 단계로, 모델 실패(FAILED)와 구분한다 |
-| `tasks_to_wait` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '대기 · 재검증'이 될 진행 중 작업 |
-| `validations_to_stale` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '다시 검증 필요'가 될 검증 |
+| `tasks_to_wait` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '대기 · 재검증'이 될 진행 중 작업. FIND_RELATED 단계가 DONE일 때만 유효하고, 아니면 빈 배열이며 화면은 0건으로 보이지 않는다 |
+| `validations_to_stale` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '다시 검증 필요'가 될 검증. FIND_RELATED 단계가 DONE일 때만 유효하고, 아니면 빈 배열이며 화면은 0건으로 보이지 않는다 |
 | `ai_candidates` | `object[]` | N | {task_id, title, reason, evidence}. 평가하지 못하면 null(0건과 구분). 이유는 AI_CANDIDATES 단계의 `status`로 안다 |
 | `suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 빠진 부분·충돌 수정안 |
 | `summary` | `string` | N | 검토 요약. COMPLETED일 때 |
