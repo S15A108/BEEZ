@@ -87,6 +87,7 @@ const messages: Record<string, string> = {
   task_conflict: '같은 설계를 변경하는 작업을 확인해 주세요.',
   ai_unavailable: '분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   ai_timeout: '분석 시간이 초과되었습니다. 다시 시도해 주세요.',
+  recommendation_stale: '작업이나 팀원 정보가 바뀌었어요. 다시 추천해 주세요.',
   rate_limited: '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',

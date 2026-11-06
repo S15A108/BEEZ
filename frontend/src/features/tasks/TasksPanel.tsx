@@ -55,6 +55,7 @@ import { describeContent, LIST_SELECTED, lines } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import { AssignmentRecommendations } from './AssignmentRecommendations'
 
 interface Props {
   projectId: string
@@ -402,6 +403,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           <AsyncState query={detail}>
             {(current) => (
               <div className="space-y-5">
+                {!['COMPLETED', 'CANCELLED'].includes(current.status) && (
+                  <AssignmentRecommendations
+                    key={`${current.id}-${current.lock_version}`}
+                    projectId={projectId}
+                    taskId={current.id}
+                    members={members.data?.items ?? []}
+                  />
+                )}
                 <Card>
                   <CardHeader>
                     <div className="flex flex-wrap items-center justify-between gap-3">
