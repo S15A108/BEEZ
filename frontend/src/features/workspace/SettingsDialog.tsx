@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
 import { Link } from 'react-router'
 import { useIsMutating } from '@tanstack/react-query'
 import { AgentsPanel } from '@/features/agents/AgentsPanel'
+import { useAgentCheckStore } from '@/features/agents/agentCheckStore'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { TeamPanel } from '@/features/members/TeamPanel'
@@ -26,7 +27,9 @@ export function SettingsDialog({
   memberId?: string
 }) {
   const statusOf = useAgentStatusOf(projectId)
-  const [agentChecked, setAgentChecked] = useState(false)
+  const setCheckedMember = useAgentCheckStore((state) => state.setCheckedMember)
+  // 이 창은 워크스페이스와 같이 생기고 없어진다(프로젝트마다 다시 만든다).
+  useEffect(() => () => setCheckedMember(null), [setCheckedMember])
   const pane = useWorkspaceStore((state) => state.pane)
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -98,10 +101,8 @@ export function SettingsDialog({
               'agent',
               '에이전트',
               agentStatusLabels[
-                statusOf(
-                  { id: memberId, agent_connected: agentConnected },
-                  agentChecked,
-                ).status
+                statusOf({ id: memberId, agent_connected: agentConnected })
+                  .status
               ],
             )}
             {item('remove', isLeader ? '프로젝트 제거' : '프로젝트 나가기')}
@@ -123,11 +124,7 @@ export function SettingsDialog({
         </nav>
         <PaneSheetHost className="min-w-0 overflow-y-auto px-8 py-7">
           {section === 'agent' ? (
-            <AgentsPanel
-              projectId={projectId}
-              checkedBefore={agentChecked}
-              onChecked={() => setAgentChecked(true)}
-            />
+            <AgentsPanel projectId={projectId} />
           ) : (
             <TeamPanel
               key={section}

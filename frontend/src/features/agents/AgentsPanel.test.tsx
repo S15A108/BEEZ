@@ -13,10 +13,12 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { useAgentCheckStore } from './agentCheckStore'
 import { AgentsPanel } from './AgentsPanel'
 
 let restore: () => void
 beforeEach(async () => {
+  useAgentCheckStore.setState({ checkedMemberId: null })
   Object.defineProperty(globalThis.crypto, 'subtle', {
     configurable: true,
     value: webcrypto.subtle,

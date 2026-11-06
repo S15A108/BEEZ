@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { authApi } from '@/api/services'
+import { useAgentCheckStore } from '@/features/agents/agentCheckStore'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -28,10 +29,10 @@ beforeEach(async () => {
 afterEach(() => restore())
 
 // S15P31A108-285: 메뉴는 '연결 미확인', 본문은 '연결 전'처럼 갈렸고 확인에 실패해도 메뉴는 그대로였다.
-it('설정 메뉴와 에이전트 화면이 같은 상태 이름을 보이고, 다른 메뉴에 갔다 와도 유지한다', async () => {
+it('연결 확인 실패를 메뉴·에이전트 화면·팀 목록의 내 줄이 같이 보이고, 워크스페이스를 나가면 지운다', async () => {
   const user = userEvent.setup()
   useWorkspaceStore.getState().openPane('settings', 'agent')
-  render(
+  const { unmount } = render(
     <QueryClientProvider
       client={
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -61,10 +62,16 @@ it('설정 메뉴와 에이전트 화면이 같은 상태 이름을 보이고, �
     within(menu).getByRole('button', { name: /에이전트/ }),
   ).toHaveTextContent('연결 실패')
   await user.click(within(menu).getByRole('button', { name: '팀' }))
+  // 실패는 내 에이전트에만 붙는다. 다른 팀원은 서버 값 그대로다.
+  expect(await screen.findByText('에이전트 연결 실패')).toBeInTheDocument()
+  expect(screen.getAllByText('에이전트 연결 실패')).toHaveLength(1)
+  expect(screen.getAllByText('에이전트 연결됨').length).toBeGreaterThan(0)
   await user.click(within(menu).getByRole('button', { name: /에이전트/ }))
   await waitFor(() =>
     expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
   )
+  unmount()
+  expect(useAgentCheckStore.getState().checkedMemberId).toBeNull()
 })
 
 // PR #72 재전수 SECOND-AMP-02: 토큰 발급처럼 요청이 처리 중이면 다른 메뉴로 옮기지 않아 한 번만 보이는 토큰을 잃지 않는다.

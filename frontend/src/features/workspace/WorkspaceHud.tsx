@@ -493,7 +493,7 @@ export function WorkspaceHud({
           detail:
             status === 'recheck' && lastReportAt
               ? `마지막 보고 ${formatShort(lastReportAt)}`
-              : status === 'none' && mine
+              : (status === 'none' || status === 'failed') && mine
                 ? '설정에서 연결해요'
                 : '',
           open: () =>
