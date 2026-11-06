@@ -111,13 +111,21 @@ public class ProjectAccessChecker {
     }
 
     /**
+     * {@link #requireLeaderAfterLock} 과 같은 판정을 예외 없이 돌려준다. 팀장이 아니어도 다른 길이 있는 곳에서 쓴다
+     * (TSK-A06 팀원이 미배정 작업을 스스로 맡기, -301). 프로젝트 행 잠금 뒤에 부른다.
+     */
+    public boolean isLeaderAfterLock(ProjectActor actor) {
+        return members.isActiveLeader(actor.memberId(), actor.projectId());
+    }
+
+    /**
      * 프로젝트 행을 잠근 뒤 요청자가 아직 활성 팀장인지 다시 본다 (MEM-A08 "요청 처리 시점의 팀장 권한 재확인").
      * 팀장 위임이 같은 행을 잠그므로, 잠금을 기다리는 동안 위임이 커밋됐으면 이전 팀장의 요청은 여기서 403 이다.
      * {@link #requireMember} 를 다시 부르지 않는 이유: 앞서 읽은 멤버십 엔티티가 영속성 컨텍스트에 남아 옛 역할 그대로 돌아온다.
      * 그래서 엔티티가 아니라 값(역할)을 DB 에서 읽는다. 팀장 전용 변경 요청은 프로젝트 행 잠금 직후 이걸 부른다.
      */
     public void requireLeaderAfterLock(ProjectActor actor) {
-        if (!members.isActiveLeader(actor.memberId(), actor.projectId())) {
+        if (!isLeaderAfterLock(actor)) {
             throw AccessErrors.forbidden("leader_changed project=" + actor.projectId() + " member=" + actor.memberId(),
                     "팀장만 할 수 있습니다");
         }

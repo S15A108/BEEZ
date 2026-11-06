@@ -4,16 +4,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.routers import (
+    bee_chat,
     context_selection,
     design_drafts,
     design_recommendations,
     document_chunks,
     document_review,
+    document_revision,
     embeddings,
     health,
     impact,
     meeting_analysis,
     planning_questions,
+    revision_blocks,
     validation,
 )
 from app.services.retrieval.tokenization import EmbeddingTokenCounter
@@ -41,12 +44,15 @@ app.include_router(embeddings.router)
 app.include_router(document_chunks.router)
 app.include_router(validation.router)
 app.include_router(document_review.router)
+app.include_router(document_revision.router)
+app.include_router(revision_blocks.router)
 app.include_router(design_recommendations.router)
 app.include_router(context_selection.router)
 app.include_router(impact.router)
 app.include_router(meeting_analysis.router)
 app.include_router(planning_questions.router)
 app.include_router(design_drafts.router)
+app.include_router(bee_chat.router)
 
 
 @app.get("/")

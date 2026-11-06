@@ -59,6 +59,7 @@ export const unlessMissing = <T>(request: Promise<T>) =>
 const messages: Record<string, string> = {
   unauthenticated: '로그인이 필요합니다.',
   invalid_credentials: '이메일 또는 비밀번호를 확인해 주세요.',
+  current_password_mismatch: '현재 비밀번호가 맞지 않아요.',
   forbidden: '이 작업의 권한이 없습니다.',
   not_found: '이 항목을 찾을 수 없습니다.',
   email_already_exists: '이미 가입된 이메일입니다.',
@@ -70,6 +71,16 @@ const messages: Record<string, string> = {
   baseline_conflict:
     '기준 설계가 변경되었습니다. 최신 기준으로 다시 검토해 주세요.',
   proposal_changed: '제안이 변경되었습니다. 최신 내용을 확인해 주세요.',
+  // S15P31A108-204: 승인 게이트(241)와 상태 전이 오류. 화면이 따로 다루는 코드(analysis_running 등)도 일반 안내를 둔다.
+  invalid_transition:
+    '이미 처리했거나 지금은 할 수 없는 상태예요. 목록을 새로고침해 주세요.',
+  baseline_missing: '먼저 첫 기준 설계를 만들어 주세요.',
+  analysis_running: '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
+  impact_not_confirmed:
+    '영향 분석이 완료되지 않았어요. 영향을 직접 확인했다면 사유를 남기고 승인해 주세요.',
+  proposal_locked: '제출한 제안은 잠겨 있어요. 반려된 뒤에 고칠 수 있어요.',
+  idempotency_conflict:
+    '같은 요청이 다른 내용으로 이미 처리됐어요. 새로고침해서 확인해 주세요.',
   draft_changed: '검토 후 초안이 변경되었습니다.',
   validation_not_passed: '현재 계획의 검증을 먼저 완료해 주세요.',
   dependency_not_completed: '선행 작업이 아직 완료되지 않았습니다.',
@@ -80,14 +91,14 @@ const messages: Record<string, string> = {
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',
   unsupported_media_type: '지원하지 않는 파일 형식입니다.',
-  invitation_expired: '초대 링크가 만료되었습니다.',
-  reset_token_expired: '비밀번호 재설정 링크가 만료되었습니다.',
   leader_transfer_required: '인간 팀장을 먼저 위임해 주세요.',
   leader_not_removable: '팀장은 회의에서 뺄 수 없어요.',
   meeting_closed: '끝난 회의라 바꿀 수 없어요.',
   invalid_transfer_target: '이 팀원에게는 넘길 수 없어요.',
   active_tasks_exist: '진행 중인 작업의 담당자를 먼저 정리해 주세요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
+  leader_of_team_projects:
+    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 먼저 위임해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
   document_not_approved:
@@ -104,6 +115,7 @@ const messages: Record<string, string> = {
   submission_decided: '이미 결정한 검토 요청이에요.',
   already_member: '이미 팀원이에요.',
   invitation_email_mismatch: '초대받은 이메일로 로그인해 주세요.',
+  invitation_not_pending: '이미 참여했거나 취소된 초대예요.',
   agent_limit_reached:
     '활성 토큰은 프로젝트마다 5개까지예요. 쓰지 않는 토큰을 폐기한 뒤 다시 발급해 주세요.',
 }

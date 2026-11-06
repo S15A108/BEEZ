@@ -1,12 +1,14 @@
 # BEEZ API Common
 
-버전: 0.8 · 갱신일: 2026-10-29 · 개발 계약 초안
+버전: 0.8 · 갱신일: 2026-11-05 · 개발 계약 초안
 
 2026-10-27: 원문 RAG의 SourceLocator·RetrievalScope·RetrievedEvidence를 추가했다. 관련 내부 호출은 AI-A09와 AI-A04/05 확장을 따른다. 기존 문서/승인 상태나 비RAG 계약을 일괄 변경하지 않는다.
 
 2026-10-28: 컨텍스트 조회 이력 CTX-A06과 ContextAccessLog 스키마를 추가했다(S15P31A108-165).
 
 2026-11-05: Q05의 남은 항목이던 탈퇴 처리(혼자 쓰는 프로젝트 삭제, 팀원 참여 프로젝트 자동 탈퇴)를 PR #118 구현대로 정함으로 고쳤다(S15P31A108-218).
+
+2026-11-05: 계정 설정을 구현(PR #118)에 맞췄다(S15P31A108-278). 재설정 링크 API(ACC-A08·A09)와 `reset_token_expired`를 폐지로 확정해 목록에서 뺐다. Q04에 임시 비밀번호·세션 처리의 구현값을 적었다. Account에 `must_change_password`를 더했다. Invitation에서 `expires_at`을 뺐다(V33에서 컬럼 삭제, 응답에 없음, PR #134).
 
 2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 팀장의 나가기는 넘길 팀원을 골라 위임과 한 번에 하고(넘길 사람이 없으면 `leader_transfer_required`), 삭제는 PRJ-A05로만 한다(PR #113 리뷰). 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
@@ -109,7 +111,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 404 | 리소스 없음 또는 소속 비노출 | not_found |
 | 405 | 지원하지 않는 메서드 | method_not_allowed |
 | 409 | 현재 상태·버전·중복·의존 충돌 | version_conflict, revision_conflict, baseline_conflict, baseline_missing(기준 v1 전) |
-| 410 | 링크 만료 | invitation_expired, reset_token_expired. 수정안 요청: 초대는 만료 없는 자동 참여(Q05)라 invitation_expired를 쓰지 않고 쓸 수 없는 초대는 404 not_found(MEM-A04)다. 재설정 링크(ACC-A09)는 폐지 예정이다 |
+| 410 | 링크 만료 | invitation_expired. 수정안 요청: 초대는 만료 없는 자동 참여(Q05)라 invitation_expired를 쓰지 않고 쓸 수 없는 초대는 404 not_found(MEM-A04)다. 재설정 링크(ACC-A08·A09)와 reset_token_expired는 폐지했다(11-05) |
 | 413 | 파일 용량 초과 | file_too_large |
 | 415 | 본문·파일 형식 불가 | unsupported_media_type |
 | 429 | 호출 제한 | rate_limited. 인증 코드를 여러 번 틀린 경우만 too_many_attempts(ACC-A12, 수정안 요청) |
@@ -273,8 +275,6 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [ACC-A05 프로필 수정](01-backend-rest.md#acc-a05) | PATCH `/api/me` | USER | 전진 | — | 박민용 |
 | [ACC-A06 비밀번호 변경](01-backend-rest.md#acc-a06) | PUT `/api/me/password` | USER | 전진 | — | 박민용 |
 | [ACC-A07 임시 비밀번호 발급](01-backend-rest.md#acc-a07) | POST `/api/auth/password/forgot` | PUBLIC | 전진 | — | 박민용 |
-| [ACC-A08 재설정 링크 확인 (폐지 예정)](01-backend-rest.md#acc-a08) | POST `/api/auth/password/reset/verify` | PUBLIC | 전진 | — | 박민용 |
-| [ACC-A09 비밀번호 재설정 (폐지 예정)](01-backend-rest.md#acc-a09) | POST `/api/auth/password/reset` | PUBLIC | 전진 | — | 박민용 |
 | [ACC-A10 회원 탈퇴](01-backend-rest.md#acc-a10) | POST `/api/me/withdraw` | USER | 전진 | — | 박민용 |
 | [ACC-A11 가입 인증 코드 보내기](01-backend-rest.md#acc-a11) | POST `/api/auth/email-verifications` | PUBLIC | 전진 | — | 박민용 |
 | [ACC-A12 가입 인증 코드 확인](01-backend-rest.md#acc-a12) | POST `/api/auth/email-verifications/{verification_id}/confirm` | PUBLIC | 전진 | — | 박민용 |
@@ -345,6 +345,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A05 변경 영향 조회](01-backend-rest.md#chg-a05) | GET `/api/projects/{id}/change-proposals/{proposal_id}/impact` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A06 변경 영향 AI 재분석](01-backend-rest.md#chg-a06) | POST `/api/projects/{id}/change-proposals/{proposal_id}/impact/retry` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A07 문서 수정 초안 생성](01-backend-rest.md#chg-a07) | POST `/api/projects/{id}/change-drafts` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [CHG-A07 선택 범위 조회](01-backend-rest.md#chg-a07-scoped) | POST `/api/projects/{id}/change-drafts/scoped/blocks` | MEMBER | 오서현 | 박상은 | 오서현 |
+| [CHG-A07 선택 범위 초안 생성](01-backend-rest.md#chg-a07-scoped) | POST `/api/projects/{id}/change-drafts/scoped` | MEMBER | 오서현 | 박상은 | 오서현 |
 | [CHG-A08 변경 제안 검토 시작](01-backend-rest.md#chg-a08) | POST `/api/projects/{id}/change-proposals/{proposal_id}/review` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A09 변경 제안 승인·발행](01-backend-rest.md#chg-a09) | POST `/api/projects/{id}/change-proposals/{proposal_id}/approve` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
 | [CHG-A10 변경 제안 반려](01-backend-rest.md#chg-a10) | POST `/api/projects/{id}/change-proposals/{proposal_id}/reject` | LEADER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -434,6 +436,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [AI-A07 작업 담당 후보 추천](03-ai-internal.md#ai-a07) | POST `/v1/bee/assignments` | 변준성 | 박상은 |
 | [AI-A08 회의 질문·요약·결정 추출](03-ai-internal.md#ai-a08) | POST `/v1/bee/meeting-analysis` | 오서현 | 양지훈 |
 | [AI-A10 문서 검토·수정 제안](03-ai-internal.md#ai-a10) | POST `/v1/document-reviews` | 오서현 | 박상은 |
+| [AI-A12 선택 범위 문서 수정 초안](03-ai-internal.md#ai-a12) | POST `/v1/document-revisions` | 오서현 | 박상은 |
+| [AI-A13 문서 수정용 선택 블록 조회](03-ai-internal.md#ai-a13) | POST `/v1/document-revision-blocks` | 오서현 | 박상은 |
 
 ### 확장 후보
 
@@ -454,8 +458,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | --- | --- | --- | --- |
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위. (수정안 요청 · 11-04 사용자 결정) 미배정 작업을 팀원이 스스로 맡기(TSK-A06)는 팀 합의 항목이다(TSK-A06 담당 변준성 동의 필요, PR #113 리뷰) |
-| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 알림 연결은 TODO(승인 게이트는 241에서 구현). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
-| Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부 |
+| Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 알림 요청은 S15P31A108-217에서 같은 트랜잭션으로 연결했고 활동 이벤트는 S15P31A108-237에서 연결한다(승인 게이트는 241에서 구현). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
+| Q04 | 계정·세션 | 전진 | 비밀번호 정책(수정안 기본안: 영문·숫자·특수문자 포함 8~128자), 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부. 임시 비밀번호는 기본안으로 구현됨(PR #118, S15P31A108-171): 12자·30분·다시 요청 60초·이메일당 1시간 5회·서버 전체 1시간 100통, 발급만으로는 기존 비밀번호·세션을 바꾸지 않고, 임시 비밀번호로 로그인하면 그것이 계정 비밀번호가 되며 다른 API는 막지 않는다(must_change_password로 알림). 비밀번호 변경(ACC-A06) 때 이 세션만 남기고 다른 세션을 끊는다. 남은 것: 비밀번호 정책(구현은 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상으로 기본안과 다르다)과 규칙 위반 코드(구현 `validation_failed`, 명세 `password_policy_violation`), IP별 한도(S15P31A108-273) |
 | Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 탈퇴 처리는 PR #118(S15P31A108-171) 구현으로 정함(2026-11-05): 혼자 쓰는 프로젝트는 함께 삭제(PRJ-A05처럼 보관·토큰 전부 폐기), 팀원으로만 참여한 프로젝트는 자동으로 빠지고(LEFT), 남긴 기록은 보존. 팀원 참여 프로젝트의 열린 작업은 지금은 담당자를 그대로 두고, #113 구현 때 MEM-A10 팀원 규칙대로 비운다. (수정안 요청 · 11-04 사용자 결정) 나가기: 팀원은 열린 작업이 있어도 경고만 보고 나가며, 인계 대상을 고르지 않으면 담당자가 비워진다. 팀장은 나가기 창에서 넘길 팀원을 골라 위임과 나가기를 한 번에 하거나, 프로젝트를 삭제한다(팀원이 있어도 됨, 이름 확인). 나가기는 프로젝트를 삭제하지 않는다(MEM-A10·PRJ-A05, PR #113 리뷰). 팀장 나가기·삭제 규칙은 팀 합의 항목이다. 제외(MEM-A09)도 나가기와 같다. 탈퇴(ACC-A10)는 팀 프로젝트의 팀장을 지금처럼 막는다 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값 |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
@@ -468,7 +472,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
 | Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 정함(2026-10-29, dev 기준): 기준 v1 뒤 문서 변경은 변경 제안 승인(CHG-A09)으로만 반영되고 승인마다 기준 v2, v3이 생긴다. 재검증·영향 분석도 CHG-A09 규칙 그대로다. 회의 결과도 회의 끝내기(MTG-A13)가 변경 제안을 만들 뿐 문서를 바로 바꾸지 않는다. 잘못 반영된 결과는 새 변경 제안으로 되돌린다 |
-| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김). 구현됨(S15P31A108-205): 내부 개설 서비스(`MeetingOpenService.openForConflict`)만 있고 HTTP 로 노출하지 않으며, 충돌 감지 연결과 담당 영역 팀원 계산은 후속 티켓이다 |
+| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김). 구현됨(S15P31A108-205): 내부 개설 서비스(`MeetingOpenService.openForConflict`)만 있고 HTTP 로 노출하지 않는다. 충돌 감지 연결(S15P31A108-248): 검증 결과가 저장돼 커밋된 뒤(AFTER_COMMIT) `source=MODEL`·`kind=CONFLICT`·`severity=BLOCKING`·`related_task_id` 가 있는 발견 항목마다, 두 작업의 담당자가 다르고 둘 다 COMPLETED·CANCELLED 가 아니면 쌍마다 회의를 연다(같은 작업 묶음에 OPEN 회의가 있으면 새로 열지 않는다). 첫 기록(CONFLICT_BRIEF)은 같은 작업 쌍을 가리키는 BLOCKING 충돌 발견 항목의 message 를 모두 담는다(한 건이면 그 message 그대로, 여러 건이면 첫 줄에 "(N가지)" 를 쓰고 번호를 붙여 나열하며 같은 문구는 한 번만, 하나도 없으면 템플릿 문구). 참여자는 팀장과 두 작업 담당자. 실패 전파: 개설은 검증 결과 저장과 별개의 새 트랜잭션이라 실패해도 검증 결과는 롤백되지 않고 서버 로그만 남으며 다음 재검증에서 다시 시도된다. 충돌한 설계 항목의 담당 영역 팀원 계산과 AI 가 만드는 브리핑은 후속이다 |
 | Q18 | 접속·위치 공개 | 전진·박민용 | 사람의 위치를 '사무실 안 자리'까지만 보일지 열어 둔 메뉴까지 보일지, 보고 주기·TTL, 폴링·SSE·WebSocket 중 전송 수단(NTF-07 확장 후보와 함께) |
 | Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | PR #37 DOC-A16의 검토 정책(승인본만 참고, 참고 자료가 없어 비교하지 못한 단계는 사유를 보이고 제출 허용, 모델 실패는 새 요청 키로 재시도)을 따른다. 남은 것: 단계 이름과 목표 소요 시간, 단계 진행을 보이려면 검토를 동기 호출로 둘지 접수 후 조회로 바꿀지, 업로드마다 드는 AI 비용 상한 |
 | Q20 | 같은 종류 문서 여러 개 | 오서현·박상은 | DOC-A01 확정 정책은 종류마다 문서 1개다. 수정안 예시('알림 API 명세서'를 두 번째 API 명세서로 등록)는 복수 등록이 필요하다. 허용하면 필수 4종 충족은 '그 종류에 승인 문서가 하나 이상'으로 판정한다 |
@@ -494,6 +498,7 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `name` | `string` | Y | 표시 이름 |
 | `avatar` | `string` | N | 아바타 식별값 또는 URL |
 | `created_at` | `Time` | Y | 가입 시각 |
+| `must_change_password` | `boolean` | N | 임시 비밀번호로 로그인한 뒤 아직 비밀번호를 바꾸지 않았으면 true. 로그인·내 계정 조회·프로필 수정(ACC-A02·A04·A05) 응답에만 있고 가입(ACC-A01) 응답에는 없다 |
 
 <a id="schema-baselinesummary"></a>
 
@@ -546,7 +551,6 @@ Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으�
 | `id` | `ID` | Y | 초대 ID |
 | `project_id` | `ID` | Y | 대상 프로젝트 |
 | `invited_email` | `string` | N | 주소를 지정한 초대의 대상 |
-| `expires_at` | `Time` | N | 만료 시각. 초대는 만료가 없다(Q05 정함). 수정안 요청 |
 | `accepted_at` | `Time` | N | 팀원이 된 시각. 초대받은 사람이 로그인·가입할 때나 메일 링크로 참여(MEM-A05)할 때 채움(Q05). 수정안 요청 |
 | `revoked_at` | `Time` | N | 폐기 시각 |
 
@@ -867,9 +871,17 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `id` | `ID` | Y | 질문 ID |
+| `number` | `integer` | N | 목록 안의 순번(1부터 이어짐). 조회 조건이 같으면 같은 순서이며 재분석으로 질문이 바뀌면 달라질 수 있다. 목록(PLN-A03) 응답에만 있다. S15P31A108-232 |
 | `question` | `string` | Y | 보완 질문 |
-| `source` | [Source](00-common.md#schema-source) | N | 출처 |
-| `answer` | `string` | N | 답변 |
+| `kind` | `MISSING_CANDIDATE\|CLARIFICATION\|CONFLICT` | N | 누락 후보 / 모호 / 충돌. 예전 질문은 있음. S15P31A108-232 |
+| `question_type` | `CHOICE\|SHORT_ANSWER\|ESSAY` | N | 선택·단답·서술. AI가 만든 질문에만 있다. S15P31A108-232 |
+| `answer_format` | `object` | N | 질문 유형별 답변 형식(선택지·`multiple`·`allow_other`·`max_length`). 133 계약 §6. S15P31A108-232 |
+| `status` | `OPEN\|ANSWERED\|DISMISSED` | N | 답변 상태. `SUPERSEDED`(재분석으로 대체됨)는 목록에 내지 않는다. S15P31A108-232 |
+| `evidence_status` | `REVIEW_CANDIDATE\|UNVERIFIED` | N | `UNVERIFIED`면 화면에 "근거 미확인"으로 구분한다. S15P31A108-232 |
+| `summary` | `string` | N | 무엇이 비었거나 모호한지. S15P31A108-232 |
+| `source` | [Source](00-common.md#schema-source) | N | 출처(첫 근거의 위치) |
+| `answer` | `string` | N | 답변. 선택형은 선택한 항목과 기타 입력을 `, `로 이은 표시 문장 |
+| `answer_payload` | `object` | N | 구조 답변 `{type, text}` 또는 `{type:"CHOICE", selected[], other_text?}`. 설계 초안 생성이 선택지를 복원하는 데 쓴다. S15P31A108-232 |
 | `answered_by` | `ID` | N | 답변 계정 |
 | `answered_at` | `Time` | N | 답변 시각 |
 
@@ -1450,8 +1462,8 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `author_member_id` | `ID` | N | HUMAN이면 작성 멤버. 수정안 요청 |
 | `author_name` | `string` | N | HUMAN이면 표시 이름. 수정안 요청 |
 | `refs` | `object[]` | N | 비비 기록이 가리키는 대상 [{type: TASK\|DESIGN_ITEM\|DOCUMENT_VERSION, id, label}]. 화면은 칩으로 보임. 수정안 요청 |
-| `through_entry_id` | `ID` | N | 분석 마지막 입력 기록 |
-| `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거 |
+| `through_entry_id` | `ID` | N | 분석 마지막 입력 기록. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
+| `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
 | `created_at` | `Time` | Y | 작성 시각 |
 
 <a id="schema-meeting"></a>
@@ -1563,6 +1575,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `target_type` | `TASK\|VALIDATION\|CHANGE_PROPOSAL\|BASELINE\|MEETING\|DOCUMENT_VERSION` | Y | 이동 대상 종류. DOCUMENT_VERSION은 수정안 요청 |
 | `target_id` | `ID` | Y | 이동 대상 |
 | `document_id` | `ID` | N | DOCUMENT_VERSION이면 소속 문서. 수정안 요청 |
+| `baseline_version_no` | `integer` | N | BASELINE이면 그 기준의 버전 번호(BASELINE 조회 API가 버전 번호로 열린다). `target_id`는 기준 ID. 저장하지 않고 조회 때 찾는다 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `read_at` | `Time` | N | 읽은 시각 |
 
@@ -1752,6 +1765,44 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | N | 작업 관련 검증 유효성 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
 | `next_cursor` | `string` | N | 다음 조회 cursor |
+| `impact_updates` | [ImpactUpdate[]](00-common.md#schema-impactupdate) | N | MCP-03에만. `result_cursor` 이후 정해진 발행 후 영향 분석 결과(-221). MCP-12 `changes`에는 없음 |
+| `result_has_more` | `boolean` | N | MCP-03에만. 영향 결과가 더 있음. `has_more`(발행 변경)와 따로 본다 |
+| `next_result_cursor` | `string` | N | MCP-03에만. 다음에 보낼 `result_cursor`. 받은 결과를 처리한 뒤 저장한다 |
+
+<a id="schema-impactupdate"></a>
+
+### ImpactUpdate
+
+발행 한 건의 발행 후 영향 분석 결과가 정해졌다는 알림(S15P31A108-221). 결과가 정해질 때(완료·미평가·최종 실패) 프로젝트 안에서 1씩 오르는 결과 순번이 붙는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `result_seq` | `integer` | Y | 프로젝트 안 결과 순번. 같은 순번은 같은 결과(중복 판단용) |
+| `baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 분석한 발행 |
+| `proposal_id` | `ID` | N | 그 발행의 변경 제안. 제안 없이 발행됐으면 생략 |
+| `analysis_status` | `COMPLETED\|NOT_EVALUATED\|FAILED` | Y | 분석 실행 결과. 미평가·실패는 영향 0건이 아니다 |
+| `evaluation_status` | `COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED` | N | 분석이 끝났을 때 근거가 충분했는지 |
+| `error_code` | `string` | N | 실패·미평가 사유 |
+| `candidates` | [PublishedImpactCandidate[]](00-common.md#schema-publishedimpactcandidate) | Y | 영향 후보. 최대 10개, 규칙 후보 먼저·작업·항목 번호 순 |
+| `candidates_truncated` | `integer` | Y | 10개를 넘어 빠진 후보 수. 0보다 크면 전체를 본 것이 아니며 대시보드에서 확인한다 |
+| `analyzed_at` | `Time` | N | 결과가 정해진 시각 |
+
+<a id="schema-publishedimpactcandidate"></a>
+
+### PublishedImpactCandidate
+
+발행 후 영향 분석이 낸, 영향받을 수 있는 대상 하나(MCP-03 `impact_updates`, S15P31A108-221). **승인된 설계가 아니며 작업 상태·검증을 바꾸지 않는다** — 확인할 거리다.
+
+승인 전 분석의 [ImpactCandidate](00-common.md#schema-impactcandidate)와 모양이 달라 따로 둔다. 규칙·AI 후보를 함께 담아 `origin`이 필수이고, AI 근거 원문(`sources`)은 싣지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `origin` | `RULE\|AI` | Y | RULE: 확정 관계·계획 참조로 계산한 규칙 후보, AI: 모델이 근거와 함께 낸 후보 |
+| `task_id` | `ID` | N | 영향받을 수 있는 작업 |
+| `design_item_id` | `ID` | N | 그 작업이 닿는 바뀐 설계 항목 |
+| `member_id` | `ID` | N | 작업 담당 멤버 |
+| `validation_id` | `ID` | N | 영향받을 수 있는 검증 |
+| `reason` | `string` | N | AI 후보의 사유. 규칙 후보에는 없음 |
 
 <a id="schema-findingcandidate"></a>
 

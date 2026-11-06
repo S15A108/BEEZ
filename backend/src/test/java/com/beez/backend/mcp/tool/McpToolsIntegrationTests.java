@@ -7,6 +7,7 @@ import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
+import com.beez.backend.validation.worker.ValidationWorker;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -32,10 +33,10 @@ import tools.jackson.databind.ObjectMapper;
  */
 class McpToolsIntegrationTests extends IntegrationTestSupport {
 
-    /** 02-mcp-tools 의 도구 중 이 PR 이 붙이는 것. MCP-14 retry_validation 은 명칭·분리 검토 중이라 빠진다 */
+    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 (-179, MCP-14 retry_validation 은 -271) */
     private static final List<String> TOOLS = List.of("get_development_context", "get_document", "get_design_changes",
             "propose_design_change", "find_context", "read_context", "write_context", "upsert_task_plan",
-            "validate_task_plan", "get_validation", "report_task_state");
+            "validate_task_plan", "get_validation", "retry_validation", "report_task_state");
 
     @Autowired
     DataSource dataSource;
@@ -45,6 +46,9 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ObjectMapper json;
+
+    @Autowired
+    ValidationWorker worker;
 
     TaskApiSupport api;
     long projectId;
@@ -100,7 +104,7 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         CallToolResult nested = call(member, "upsert_task_plan", Map.of("plan", withExtra(plan("A"), "titel", "x"),
                 "idempotency_key", "k-nested"));
 
-        assertThat(error(typo)).containsEntry("code", "validation_failed");
+        assertThat(error(typo)).containsEntry("code", "validation_failed").doesNotContainKey("details");
         assertThat(error(typo).get("message").toString()).contains("taskid");
         assertThat(error(nested)).containsEntry("code", "validation_failed");
         assertThat(error(nested).get("message").toString()).contains("plan.titel");
@@ -114,7 +118,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 Map.of("request", "로그인 화면 구현", "project_id", String.valueOf(projectId)));
 
         assertThat(result.isError()).isTrue();
-        assertThat(error(result)).containsEntry("code", "context_not_ready");
+        // details 를 정하지 않은 오류는 REST 처럼 키가 빠진다 — "details": null 로 새지 않는다 (-267 완료 조건 2)
+        assertThat(error(result)).containsEntry("code", "context_not_ready").doesNotContainKey("details");
         assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
 
@@ -172,6 +177,13 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         JsonNode none = ok(call(member, "get_design_changes", Map.of("since_version", 1)));
         assertThat(none.get("items")).isEmpty();
         assertThat(none.get("has_more").asBoolean()).isFalse();
+        // 영향 분석 결과(-221): 처음엔 시작점만 받고, 그 값을 result_cursor 로 보내 이어 본다
+        assertThat(none.get("impact_updates")).isEmpty();
+        String resultCursor = none.get("next_result_cursor").asString();
+        assertThat(resultCursor).isNotBlank();
+        JsonNode next = ok(call(member, "get_design_changes", Map.of("since_version", 1, "result_cursor", resultCursor)));
+        assertThat(next.get("impact_updates")).isEmpty();
+        assertThat(next.get("result_has_more").asBoolean()).isFalse();
 
         assertThat(error(call(member, "get_design_changes", Map.of()))).containsEntry("code", "validation_failed");
     }
@@ -279,6 +291,76 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     }
 
     /** 깨지면: 에이전트가 설계 변경을 제안할 수 없거나 같은 키 재시도가 제안을 두 번 만든다 (MCP-04, -195 서비스). */
+    /**
+     * 깨지면: 에이전트가 실행 오류로 끝난 검증을 MCP 로 다시 돌리지 못하거나, 재전송이 시도를 더 만들거나,
+     * 없는·다른 프로젝트 검증과 폐기 토큰을 받는다 (Jira -271 완료 조건, MCP-14 Error 표). 재시도 규칙 자체는 ValidationRetryIntegrationTests.
+     */
+    @Test
+    void retryValidation_reopensErroredValidation_once_andRefusesOutsideCallers() {
+        // 의미 분석까지 가는 계획: 내용을 채운 API-01 을 구현한다 (ValidationRetryIntegrationTests.passableTask 와 같은 조건)
+        publishCompleteApi01();
+        JsonNode created = ok(call(member, "upsert_task_plan", Map.of("plan", plan("재시도", "IMPLEMENTS"),
+                "idempotency_key", "k-plan")));
+        String validationId = ok(call(member, "validate_task_plan", Map.of("task_id", created.get("id").asString(),
+                "plan_revision_id", created.get("current_plan_revision").get("id").asString(),
+                "expected_lock_version", created.get("lock_version").asInt(), "idempotency_key", "k-val")))
+                .get("id").asString();
+        // 시험 프로필의 AI 서버는 닫힌 포트라 실행이 ERROR(RETRY) 로 닫힌다
+        assertThat(worker.runOnce()).isTrue();
+        JsonNode failed = ok(call(member, "get_validation", Map.of("validation_id", validationId)));
+        assertThat(failed.get("status").asString()).isEqualTo("ERROR");
+        assertThat(failed.get("current_attempt").asInt()).isEqualTo(1);
+        assertThat(failed.get("error_code")).isNotNull();   // ERROR 면 필수 (MCP-14 Response, 실패 정보 계약)
+
+        Map<String, Object> args = Map.of("validation_id", validationId, "expected_attempt", 1, "idempotency_key", "k-retry");
+        JsonNode retried = ok(call(member, "retry_validation", args));
+        assertThat(retried.get("id").asString()).isEqualTo(validationId);
+        assertThat(retried.get("status").asString()).isEqualTo("RUNNING");
+        assertThat(retried.get("current_attempt").asInt()).isEqualTo(2);
+        // ERROR 가 아니면 error_code 생략 — MCP 결과도 REST 와 같은 non_null 직렬화 (서비스 규칙은 ValidationRetryIntegrationTests)
+        assertThat(retried.has("error_code")).isFalse();
+        // 같은 키 재전송은 처음 결과, 새 시도 없음 (공통 5절)
+        assertThat(ok(call(member, "retry_validation", args)).get("current_attempt").asInt()).isEqualTo(2);
+        assertThat(count("select count(*) from validation_run where validation_id = " + validationId)).isEqualTo(2);
+
+        // 중복 거부: 도는 중인 시도를 다시 / 같은 키에 다른 인수
+        assertThat(error(call(member, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2,
+                "idempotency_key", "k-retry-2")))).containsEntry("code", "invalid_transition");
+        assertThat(error(call(member, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2,
+                "idempotency_key", "k-retry")))).containsEntry("code", "idempotency_conflict");
+        // 없는 검증, 키 누락
+        assertThat(error(call(member, "retry_validation", Map.of("validation_id", "999999", "expected_attempt", 1,
+                "idempotency_key", "k-missing")))).containsEntry("code", "not_found");
+        assertThat(error(call(member, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2))))
+                .containsEntry("code", "validation_failed");
+
+        // 다른 프로젝트: 그 프로젝트 토큰으로는 이 검증이 없는 것과 같다
+        String otherToken = SecretTokens.generate();
+        api.jdbc.sql("insert into project (name, owner_account_id) select 'Q', id from account where email = 'outsider@test'").update();
+        api.jdbc.sql("""
+                insert into project_member (project_id, account_id, role)
+                select p.id, a.id, 'LEADER' from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""").update();
+        api.jdbc.sql("""
+                insert into agent_token (project_id, account_id, name, token_hash)
+                select p.id, a.id, 'outsider-laptop', :h from project p, account a where p.name = 'Q' and a.email = 'outsider@test'""")
+                .param("h", SecretTokens.hash(otherToken)).update();
+        McpSyncClient other = connect(otherToken);
+        try {
+            other.initialize();
+            assertThat(error(call(other, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2,
+                    "idempotency_key", "k-other")))).containsEntry("code", "not_found");
+        } finally {
+            other.closeGracefully(); // tearDown 과 같은 이유 — 종료 DELETE 가 다음 시험의 truncate 와 겹치지 않게
+        }
+        assertThat(count("select count(*) from validation_run where validation_id = " + validationId)).isEqualTo(2);
+
+        // 폐기한 토큰은 전송 인증에서 거부된다
+        ApiClient web = client().login("member@test", com.beez.backend.support.AccessFixtures.PASSWORD);
+        web.send(web.request("/api/agent-tokens/" + api.agentTokenId()).DELETE());
+        assertThatThrownBy(() -> call(member, "retry_validation", Map.of("validation_id", validationId, "expected_attempt", 2,
+                "idempotency_key", "k-revoked"))).isInstanceOf(McpHttpClientTransportAuthorizationException.class);
+    }
+
     @Test
     void proposeDesignChange_createsProposal_once() {
         Map<String, Object> args = Map.of(
@@ -303,11 +385,27 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     // ---- 도우미 ----
 
     private Map<String, Object> plan(String title) {
+        return plan(title, "READS");
+    }
+
+    private Map<String, Object> plan(String title, String relation) {
         return Map.of("title", title, "goal", "목표", "included_scope", List.of("a"), "excluded_scope", List.of(),
                 "approach", "방법", "completion_criteria", List.of("테스트 통과"), "dependency_task_ids", List.of(),
                 "design_refs", List.of(Map.of("design_item_id", String.valueOf(api.designItemId("API-01")),
-                        "design_item_version_id", String.valueOf(api.currentVersionId("API-01")), "relation", "READS")),
+                        "design_item_version_id", String.valueOf(api.currentVersionId("API-01")), "relation", relation)),
                 "unlinked", List.of(), "no_contract_change", true);
+    }
+
+    /** API-01 의 내용을 채운 버전 2 를 기준 2 로 발행한다 (ValidationRetryIntegrationTests.provideCompleteApiContent 와 같다) */
+    private void publishCompleteApi01() {
+        Long version = api.jdbc.sql("""
+                insert into design_item_version (design_item_id, version_no, status, title, schema_version,
+                    content, content_hash, origin, approved_at)
+                values (:item, 2, 'APPROVED', 'API-01 complete', 1, cast(:content as jsonb), 'complete-API-01', 'HUMAN', now())
+                returning id
+                """).param("item", api.designItemId("API-01"))
+                .param("content", "{\"request_fields\":[],\"responses\":[{\"fields\":[]}]}").query(Long.class).single();
+        api.publish(2, Map.of("API-01", version, "API-02", api.currentVersionId("API-02")));
     }
 
     private static Map<String, Object> withExtra(Map<String, Object> base, String key, Object value) {

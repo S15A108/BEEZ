@@ -71,7 +71,7 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
         Long baseline = api.jdbc.sql("select current_baseline_id from project where id = :p").param("p", projectId).query(Long.class).single();
 
         designChanges.getChanges(CallerContext.agent(member, api.agentTokenId()), projectId,
-                new DesignChangesQuery(0, String.valueOf(task), null, null));
+                new DesignChangesQuery(0, String.valueOf(task), null, null, null));
 
         List<Map<String, Object>> rows = logRows();
         assertThat(rows).hasSize(1);
@@ -94,7 +94,7 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
         Long otherTask = api.jdbc.sql("select id from task where project_id = :p").param("p", other).query(Long.class).single();
 
         designChanges.getChanges(CallerContext.human(member), projectId,
-                new DesignChangesQuery(0, String.valueOf(otherTask), null, null));
+                new DesignChangesQuery(0, String.valueOf(otherTask), null, null, null));
 
         Map<String, Object> row = logRows().get(0);
         assertThat(((Number) row.get("account_id")).longValue()).isEqualTo(member);
@@ -106,7 +106,7 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
     void deniedCall_leavesNoRow() {
         Long outsider = api.accountId("outsider@test");
         assertThatThrownBy(() -> designChanges.getChanges(CallerContext.human(outsider), projectId,
-                new DesignChangesQuery(0, null, null, null))).isInstanceOf(com.beez.backend.common.api.ApiException.class);
+                new DesignChangesQuery(0, null, null, null, null))).isInstanceOf(com.beez.backend.common.api.ApiException.class);
         assertThat(logRows()).isEmpty();
     }
 
@@ -132,7 +132,7 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
 
     @Test
     void storedRow_cannotBeUpdated() {
-        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, null, null, null));
+        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, null, null, null, null));
         assertThatThrownBy(() -> api.jdbc.sql("update context_access_log set tool = 'x'").update())
                 .hasMessageContaining("append-only");
     }
@@ -162,9 +162,9 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
     void list_isLeaderOnly_newestFirst_withTaskFilterAndCursor() throws Exception {
         long t1 = createTask("A", member);
         long t2 = createTask("B", member);
-        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, String.valueOf(t1), null, null));
-        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, String.valueOf(t2), null, null));
-        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, String.valueOf(t1), null, null));
+        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, String.valueOf(t1), null, null, null));
+        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, String.valueOf(t2), null, null, null));
+        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, String.valueOf(t1), null, null, null));
 
         assertThat(api.get(path(), member).statusCode()).isEqualTo(403);          // 팀원
         assertThat(api.get(path(), api.accountId("outsider@test")).statusCode()).isEqualTo(404);
@@ -188,7 +188,7 @@ class ContextAccessLogIntegrationTests extends IntegrationTestSupport {
         Long other = api.jdbc.sql("select id from project where name = 'Q'").query(Long.class).single();
         api.jdbc.sql("insert into task (project_id, key, title, status) values (:p, 'T-1', 'q', 'DRAFT')").param("p", other).update();
         Long otherTask = api.jdbc.sql("select id from task where project_id = :p").param("p", other).query(Long.class).single();
-        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, null, null, null));
+        designChanges.getChanges(CallerContext.human(member), projectId, new DesignChangesQuery(0, null, null, null, null));
 
         HttpResponse<String> res = api.get(path() + "?task_id=" + otherTask, leader);
         assertThat(res.statusCode()).isEqualTo(200);

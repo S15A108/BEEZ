@@ -65,6 +65,18 @@ class Settings(BaseSettings):
     design_drafts_llm_output_token_limit: str = "4096"
     design_drafts_llm_output_token_parameter: str = "max_completion_tokens"
 
+    # Provisional #135 transport is disabled until explicitly configured; the
+    # model call reuses gms_key and bee_default_model like #133 and #134.
+    bee_chat_enabled: bool = False
+    bee_chat_max_body_bytes: str = "2097152"
+    bee_chat_llm_timeout_seconds: str = "30"
+    bee_chat_llm_output_token_limit: str = "2048"
+    bee_chat_llm_output_token_parameter: str = "max_completion_tokens"
+    # "entailment": a second, smaller model call judges every answer
+    # sentence against the quotes it cites (catches a flipped subject or
+    # negation); "tokens": the deterministic checks only, one call.
+    bee_chat_claim_verification: str = "entailment"
+
 
 @lru_cache
 def get_settings() -> Settings:

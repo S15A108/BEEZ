@@ -132,6 +132,12 @@ public class PasswordRecoveryService implements DisposableBean {
         temporaries.closeOpen(accountId, Instant.now());
     }
 
+    /** 회원 탈퇴(ACC-A10, -277)와 같은 트랜잭션에서 부른다. 그 이메일의 요청 행을 모두 지우고 지운 수를 돌려준다. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public int forgetOnAccountWithdrawal(String normalizedEmail) {
+        return temporaries.deleteByEmail(normalizedEmail);
+    }
+
     /** 임시 비밀번호 원문. 비밀번호 정책(영문·숫자 각 1자 이상)을 만족할 때까지 다시 뽑는다. */
     public static String generate() {
         while (true) {

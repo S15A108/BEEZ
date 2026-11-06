@@ -14,10 +14,12 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** NTF-A01 내 알림함·NTF-A02 읽음 처리 (S15P31A108-276). 실제 HTTP·세션·SQL 로 본다. */
+/** NTF-A01 내 알림함·NTF-A02 읽음 처리 (S15P31A108-276·-280). 실제 HTTP·세션·SQL 로 본다. */
 class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
@@ -25,6 +27,12 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     ObjectMapper json;
+
+    @Autowired
+    NotificationRequester requester;
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
 
     /** 입구(-181)를 거치지 않고 바로 넣는다 — 조회·읽음만 본다. */
     private long notify(long projectId, long recipient) {
@@ -96,6 +104,34 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
                 .allSatisfy(row -> assertThat(row.get("read_at")).isNull());
     }
 
+    /**
+     * 깨지면 입구(-181)의 document_id 저장이나 조회 매핑이 빠져, 화면이 DOCUMENT_VERSION 알림의 문서 상세 주소를 만들지 못한다
+     * (계약 3절 document_id 필수). 다른 시험은 SQL 로 바로 넣어 document_id 가 늘 비어 있다 (S15P31A108-280).
+     */
+    @Test
+    void documentVersionNotification_keepsDocumentId_fromRequesterToInbox() {
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long registrant = fixtures().account();
+        fixtures().member(p.projectId(), registrant, ProjectRole.MEMBER);
+        long document = sql.queryForObject(
+                "insert into document (project_id, type, title, created_by) values (?, 'PLAN', '기획', ?) returning id",
+                Long.class, p.projectId(), registrant);
+        long version = sql.queryForObject("""
+                insert into document_version (document_id, version_no, status, storage_key, content_hash)
+                values (?, 1, 'DRAFT', 'fixture/plan-v1', 'fixture-hash') returning id
+                """, Long.class, document);
+        // 키 첫 조각은 문서 도메인 몫이라 계약 5절 예시(doc-submission)를 따른다 — 실제 키는 문서 도메인(-217)이 정한다
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> requester.request(new NotificationRequest(
+                "doc-submission:" + version + ":approved:to:" + registrant, p.projectId(), registrant, "DOCUMENT_APPROVED",
+                "문서 승인", "등록한 문서가 승인되었습니다", NotificationTargetType.DOCUMENT_VERSION, version, document)));
+        ApiClient me = client().login(fixtures().emailOf(registrant), AccessFixtures.PASSWORD);
+
+        JsonNode item = body(me.get("/api/me/notifications?project_id=" + p.projectId())).get("items").get(0);
+        assertThat(item.get("target_type").asString()).isEqualTo("DOCUMENT_VERSION");
+        assertThat(item.get("target_id").asString()).isEqualTo(String.valueOf(version));
+        assertThat(item.get("document_id").asString()).isEqualTo(String.valueOf(document));
+    }
+
     /** 깨지면 탈퇴 뒤 남은 세션으로 알림을 보고 읽음 처리까지 할 수 있다(PR #126 리뷰에서 재현된 회귀). */
     @Test
     void withdrawnAccount_leftoverSession_is401_andChangesNothing() {
@@ -153,5 +189,28 @@ class NotificationInboxApiIntegrationTest extends IntegrationTestSupport {
         assertThat(res.get("updated_count").asInt()).isEqualTo(2);
         assertThat(body(me.get("/api/me/notifications?project_id=" + p.projectId())).get("unread_count").asLong()).isZero();
         assertThat(ids(body(me.get("/api/me/notifications?unread=true")))).containsExactly(String.valueOf(elsewhere));
+    }
+
+    /** 기준 화면·조회 API 는 버전 번호로 열린다. 알림 target_id 는 기준 ID 라서 버전 번호를 함께 내려야 한다. */
+    @Test
+    void baselineNotification_carriesTheBaselineVersionNo_otherTargetsDoNot() {
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long baseline = sql.queryForObject(
+                "insert into baseline (project_id, version_no, published_by) values (?, 3, ?) returning id",
+                Long.class, p.projectId(), p.leaderAccountId());
+        sql.update("""
+                insert into notification (project_id, recipient_account_id, type, title, body, ref_kind, ref_id, dedupe_key)
+                values (?, ?, 'BASELINE_CREATED', '기준', '기준이 생겼습니다', 'BASELINE', ?, ?)
+                """, p.projectId(), p.leaderAccountId(), baseline, "baseline:" + baseline + ":created:to:" + p.leaderAccountId());
+        notify(p.projectId(), p.leaderAccountId());
+        ApiClient me = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+
+        JsonNode items = body(me.get("/api/me/notifications?project_id=" + p.projectId())).get("items");
+
+        JsonNode baselineItem = items.get(1);   // 먼저 만든 쪽이 뒤에 온다(id 내림차순)
+        assertThat(baselineItem.get("target_type").asString()).isEqualTo("BASELINE");
+        assertThat(baselineItem.get("target_id").asString()).isEqualTo(String.valueOf(baseline));
+        assertThat(baselineItem.get("baseline_version_no").asInt()).isEqualTo(3);
+        assertThat(items.get(0).has("baseline_version_no")).isFalse();
     }
 }

@@ -41,7 +41,7 @@ sequenceDiagram
     W->>B: 제출 결정 요청
     B-->>B: project 행 FOR UPDATE → 문서 버전·제출 결정 저장, baseline 생성 없음
     Note over B: 반려 후 같은 작성 건에서 보완·재검토·새 제출, 이전 이력 보존
-    Note over B: 제출·결정 알림은 전진 담당 공통 서비스 연동 TODO
+    Note over B: 제출·결정 알림은 같은 트랜잭션에서 공통 알림 서비스에 요청(S15P31A108-217)
   end
   L->>W: 문서 4종 승인·색인 완료 후 별도 최초 baseline 생성 (PLN-A10)
   W->>B: POST /api/human/baselines (전체 검토 집합·해시)

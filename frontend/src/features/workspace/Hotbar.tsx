@@ -23,7 +23,7 @@ const hotbarSlots = [
 ] satisfies { pane: WorkspacePane; label: string; icon: typeof FileText }[]
 
 // 단축 바 D안(캔버스 v437~438 이름 보이는 얇은 핫바): 높이 44 바에 칸을 하나씩 떼어 숫자 키캡·아이콘·이름을 늘 보이고,
-// 비비는 가운데 46px 둥근 버튼(Enter). 배지는 칸 오른쪽 위.
+// 비비는 가운데 80px 둥근 버튼(Enter, 캔버스 v483). 배지는 칸 오른쪽 위.
 export function Hotbar({
   locked,
   badges,
@@ -145,7 +145,7 @@ export function Hotbar({
       )}
     >
       {hotbarSlots.slice(0, 3).map((item, index) => slot(item, index))}
-      {/* 비비는 가운데 46px 둥근 버튼. 칸 높이(34px) 자리만 차지하고 위아래로 넘친다. */}
+      {/* 비비는 가운데 80px 둥근 버튼. 칸 높이(34px) 자리만 차지하고, 원 가운데가 칸 위 5px에 와서 바 위로 솟는다(캔버스 v483). */}
       <button
         type="button"
         aria-label="비비와 대화"
@@ -153,11 +153,11 @@ export function Hotbar({
         data-tour="bibi"
         aria-pressed={pane === 'chat'}
         onClick={() => openPane(pane === 'chat' ? null : 'chat')}
-        className="relative mx-[3px] block h-[34px] w-[58px] rounded-full"
+        className="relative mx-[3px] block h-[34px] w-24 rounded-full"
       >
         <span
           className={cn(
-            'absolute top-1/2 left-1/2 block size-[46px] -translate-1/2 overflow-hidden rounded-full shadow-[0_0_0_3px_#fff,0_0_0_5px_var(--primary),0_14px_22px_-10px_rgba(44,41,31,0.55)]',
+            'absolute top-[5px] left-1/2 block size-20 -translate-1/2 overflow-hidden rounded-full shadow-[0_0_0_3px_#fff,0_0_0_5px_var(--primary),0_14px_22px_-10px_rgba(44,41,31,0.55)]',
             // 비비 대화가 열려 있으면 열린 칸처럼 테두리를 검정으로(PNL-12-v2-bibi-hotbar).
             pane === 'chat' &&
               'shadow-[0_0_0_3px_#fff,0_0_0_5px_var(--foreground),0_14px_22px_-10px_rgba(44,41,31,0.55)]',
@@ -167,7 +167,7 @@ export function Hotbar({
         </span>
         <span
           aria-hidden="true"
-          className="absolute -bottom-[13px] left-1/2 inline-grid h-[15px] -translate-x-1/2 place-items-center rounded-[4px] border border-[#e2ddcf] bg-white px-1 text-[8.5px] leading-none font-bold text-[#8a8478]"
+          className="absolute -bottom-[18px] left-1/2 inline-grid h-[15px] -translate-x-1/2 place-items-center rounded-[4px] border border-[#e2ddcf] bg-white px-1 text-[8.5px] leading-none font-bold text-[#8a8478]"
         >
           Enter
         </span>

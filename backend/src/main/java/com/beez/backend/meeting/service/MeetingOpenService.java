@@ -6,6 +6,10 @@ import com.beez.backend.meeting.dto.MeetingRef;
 import com.beez.backend.meeting.dto.MeetingResponse;
 import com.beez.backend.meeting.repository.MeetingRepository;
 import com.beez.backend.meeting.repository.MeetingRepository.MeetingRow;
+import com.beez.backend.notification.NotificationRequest;
+import com.beez.backend.notification.NotificationRequester;
+import com.beez.backend.notification.NotificationTargetType;
+import com.beez.backend.notification.event.NotificationMessages;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,7 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 작업 충돌 회의 내부 개설 (S15P31A108-205). HTTP 로 노출하지 않는다 — 사람이 회의를 만드는 API 는 없다.
- * 충돌 감지(변준성 검증)가 이 서비스를 호출하는 연결은 후속 티켓이고, 여기서는 개설 규칙만 맡는다.
+ * 충돌 감지 이벤트를 받는 ConflictMeetingListener 가 부른다(S15P31A108-248). 여기서는 개설 규칙만 맡는다.
  * 호출하는 쪽의 트랜잭션에 참여한다(단독 호출도 가능).
  */
 @Service
@@ -46,10 +50,12 @@ public class MeetingOpenService {
 
     private final MeetingRepository meetings;
     private final MeetingAssembler assembler;
+    private final NotificationRequester notifier;
 
-    public MeetingOpenService(MeetingRepository meetings, MeetingAssembler assembler) {
+    public MeetingOpenService(MeetingRepository meetings, MeetingAssembler assembler, NotificationRequester notifier) {
         this.meetings = meetings;
         this.assembler = assembler;
+        this.notifier = notifier;
     }
 
     /**
@@ -109,8 +115,13 @@ public class MeetingOpenService {
                 ? null : DesignJson.JSON.writeValueAsString(command.briefRefs());
         meetings.insertEntry(meetingId, "CONFLICT_BRIEF", "BEE", null, brief, refs);
 
-        // TODO(알림 공통 서비스, S15P31A108-237): 참여자에게 MEETING_OPENED 알림·활동을 전달한다.
-        //  이미 열린 회의를 돌려주는 위의 경로에서는 전달하지 않는다.
+        // 새로 열린 회의에만 보낸다(위의 기존 회의 반환 경로는 이미 return). 행위자가 비비라 제외할 사람이 없고 참여자 전원이 받는다.
+        // 활동 이벤트는 계약 6.2 에 MEETING_OPENED 가 없어 남기지 않는다. 알림은 이 트랜잭션에 함께 저장된다(NotificationRequester 는 MANDATORY).
+        var message = NotificationMessages.meetingOpened(title(summary));
+        notifier.requestAll(roles.keySet().stream()
+                .map(account -> new NotificationRequest("meeting:" + meetingId + ":opened:to:" + account, projectId, account,
+                        "MEETING_OPENED", message.title(), message.body(), NotificationTargetType.MEETING, meetingId, null))
+                .toList());
         return new OpenResult(true, assembler.toResponse(projectId, meetings.findMeeting(projectId, meetingId).orElseThrow()));
     }
 

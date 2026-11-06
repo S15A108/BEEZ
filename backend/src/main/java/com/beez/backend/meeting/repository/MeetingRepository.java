@@ -32,6 +32,10 @@ public class MeetingRepository {
                            Instant createdAt) {
     }
 
+    /** 충돌 회의 개설 판정용 작업 한 줄. assigneeMemberId 는 담당자가 없으면 null */
+    public record TaskState(long id, String title, Long assigneeMemberId, String status) {
+    }
+
     private static final String MEETING_COLUMNS = "id, project_id, title, change_proposal_id, origin, conflict_summary,"
             + " status, closed_at, closed_by, created_at";
 
@@ -100,6 +104,32 @@ public class MeetingRepository {
                     return null;
                 }).list();
         return out;
+    }
+
+    /** 이 프로젝트 작업의 제목·담당 멤버·상태. 이 프로젝트의 작업이 아니면 나오지 않는다 */
+    public Map<Long, TaskState> taskStates(long projectId, Collection<Long> taskIds) {
+        Map<Long, TaskState> out = new LinkedHashMap<>();
+        if (taskIds.isEmpty()) {
+            return out;
+        }
+        jdbc.sql("select id, title, assignee_member_id, status from task where project_id = :p and id in (:ids) order by id")
+                .param("p", projectId).param("ids", taskIds)
+                .query((rs, n) -> {
+                    out.put(rs.getLong("id"), new TaskState(rs.getLong("id"), rs.getString("title"),
+                            nullableLong(rs, "assignee_member_id"), rs.getString("status")));
+                    return null;
+                }).list();
+        return out;
+    }
+
+    /** 한 검증에서 이 관련 작업을 가리키는 모델의 BLOCKING 충돌 발견 항목 메시지 전부(저장 순서, 없으면 빈 목록) */
+    public List<String> conflictFindingMessages(long validationId, long relatedTaskId) {
+        return jdbc.sql("""
+                select message from validation_finding
+                 where validation_id = :v and related_task_id = :t
+                   and source = 'MODEL' and kind = 'CONFLICT' and severity = 'BLOCKING'
+                 order by id
+                """).param("v", validationId).param("t", relatedTaskId).query(String.class).list();
     }
 
     // ---- 회의 ----
@@ -230,6 +260,36 @@ public class MeetingRepository {
     public List<EntryRow> listEntries(long projectId, long meetingId, long afterId, int limit) {
         return jdbc.sql(entrySelect() + " where e.meeting_id = :m and e.id > :after order by e.id limit :limit")
                 .param("p", projectId).param("m", meetingId).param("after", afterId).param("limit", limit)
+                .query(MeetingRepository::mapEntry).list();
+    }
+
+    // ---- 비비 회의 정리의 입력 (S15P31A108-235) ----
+
+    /** 정리에 쓸 수 있는 기록 종류. 비비의 이전 정리·분석은 입력에 넣지 않는다 */
+    private static final String SUMMARIZABLE = "e.kind in ('TEXT', 'CONFLICT_BRIEF')";
+
+    /** 이 회의의 기록 한 건의 종류. 이 회의의 기록이 아니면 empty */
+    public Optional<String> entryKind(long meetingId, long entryId) {
+        return jdbc.sql("select kind from meeting_entry where id = :id and meeting_id = :m")
+                .param("id", entryId).param("m", meetingId).query(String.class).optional();
+    }
+
+    /** 정리에 쓸 수 있는 마지막 기록(TEXT·CONFLICT_BRIEF)의 ID */
+    public Optional<Long> lastSummarizableEntryId(long meetingId) {
+        return jdbc.sql("select max(e.id) from meeting_entry e where e.meeting_id = :m and " + SUMMARIZABLE)
+                .param("m", meetingId).query(Long.class).optional();
+    }
+
+    public int countSummarizableThrough(long meetingId, long throughId) {
+        return jdbc.sql("select count(*) from meeting_entry e where e.meeting_id = :m and e.id <= :through and " + SUMMARIZABLE)
+                .param("m", meetingId).param("through", throughId).query(Integer.class).single();
+    }
+
+    /** throughId 까지의 정리 입력 기록 중 가장 최근 limit 건을 최근 것부터(id 내림차순) */
+    public List<EntryRow> summarizableNewestFirst(long projectId, long meetingId, long throughId, int limit) {
+        return jdbc.sql(entrySelect() + " where e.meeting_id = :m and e.id <= :through and " + SUMMARIZABLE
+                        + " order by e.id desc limit :limit")
+                .param("p", projectId).param("m", meetingId).param("through", throughId).param("limit", limit)
                 .query(MeetingRepository::mapEntry).list();
     }
 

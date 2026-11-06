@@ -15,6 +15,11 @@ import com.beez.backend.document.validation.DocumentInputValidator;
 import com.beez.backend.document.validation.DocumentReviewUsageValidator;
 import com.beez.backend.document.validation.DocumentReviewReferenceHasher;
 import com.beez.backend.document.validation.DocumentReviewResultValidator;
+import com.beez.backend.notification.NotificationRequest;
+import com.beez.backend.notification.NotificationRequester;
+import com.beez.backend.notification.NotificationTargetType;
+import com.beez.backend.notification.event.NotificationMessages;
+import com.beez.backend.notification.event.NotificationMessages.Message;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.http.HttpStatus;
@@ -33,12 +38,25 @@ public class DocumentReviewService {
     private final TransactionTemplate tx;
     private final DocumentOriginalWriter originals;
     private final DocumentStorage storage;
+    private final NotificationRequester notifier;
 
     public DocumentReviewService(DocumentReviewRepository repository, ProjectAccessChecker access,
             DocumentInputValidator validator, DocumentReviewGateway ai, DocumentStorage storage,
-            PlatformTransactionManager manager) {
+            PlatformTransactionManager manager, NotificationRequester notifier) {
+        this.notifier = notifier;
         this.repository = repository; this.access = access; this.validator = validator; this.ai = ai;
         tx = new TransactionTemplate(manager); originals = new DocumentOriginalWriter(storage, manager); this.storage = storage;
+    }
+
+    /** 문서 알림 한 건. 대상은 문서 버전이고 화면이 문서 상세 주소를 만들도록 documentId 를 함께 보낸다 */
+    private void notifyDocument(long project, long document, long version, long recipient, String keyBase, String type, Message message) {
+        notifier.request(new NotificationRequest(keyBase + ":to:" + recipient, project, recipient, type, message.title(),
+                message.body(), NotificationTargetType.DOCUMENT_VERSION, version, document));
+    }
+
+    /** 작성본의 기준이 되는 가장 최근 문서 버전. 아직 승인 전이면 처음 만든 초안 버전이다 */
+    private long latestVersion(Map<String, Object> copy) {
+        return id(copy, copy.get("base_version_id") != null ? "base_version_id" : "initial_version_id");
     }
 
     private void member(CallerContext caller, long project) { access.requireMember(caller, project).requireHuman(); }
@@ -194,6 +212,11 @@ public class DocumentReviewService {
                 }
                 if (!repository.finishReview(document, caller.accountId(), key, review, null, actualUsage)) throw conflict("review_stale");
                 repository.recordUsage(project, actualUsage);
+                // 새 검토를 저장한 이 트랜잭션에서만 알린다. 완료된 요청의 재생은 위에서 반환해 여기까지 오지 않는다.
+                // 행위자가 비비라서 요청한 등록자 본인도 받는다(계약 6.1).
+                var done = NotificationMessages.documentBeeReviewDone(copy.get("file_name").toString());
+                notifyDocument(project, document, latestVersion(copy), caller.accountId(),
+                        "document-review:" + review + ":bee-review-done", "DOCUMENT_BEE_REVIEW_DONE", done);
                 return reviewView(repository.review(document, review).orElseThrow());
             });
         } catch (RuntimeException failure) {
@@ -309,8 +332,13 @@ public class DocumentReviewService {
             if (previous.isPresent()) return JSON.readValue(previous.get(), DocumentSubmissionResponse.class);
             validateSubmission(project, document, copy, input.expectedRevision(), review);
             long submission = repository.submit(copy, review, original.reference(), source.contentHash(), source.textHash());
-            // [TODO] 전진님 공통 알림 서비스 계약 확정 후 팀장 검토 요청 알림 로직 넣기. 수신자·중복 키·전달 보장을 합의한다.
-            var response = submissionView(repository.submission(project, document, submission).orElseThrow());
+            var saved = repository.submission(project, document, submission).orElseThrow();
+            // 위의 replay 분기는 이미 반환했으므로 새 제출에서만 팀장에게 알린다. 팀장이 직접 제출하면 본인은 받지 않는다.
+            var requested = NotificationMessages.documentReviewRequested(copy.get("file_name").toString());
+            repository.leaderAccount(project).filter(leader -> !leader.equals(caller.accountId()))
+                    .ifPresent(leader -> notifyDocument(project, document, id(saved, "document_version_id"), leader,
+                            "doc-submission:" + submission + ":review-requested", "DOCUMENT_REVIEW_REQUESTED", requested));
+            var response = submissionView(saved);
             repository.remember(project, caller.accountId(), operation, key, fingerprint, response);
             return response;
         });
@@ -376,7 +404,17 @@ public class DocumentReviewService {
         var copy = copy(project, document);
         if (!"SUBMITTED".equals(copy.get("status")) || id(copy, "revision") != id(row, "revision")) throw conflict("version_conflict");
         repository.decide(row, caller.accountId(), state, reason);
-        // [TODO] 전진님 공통 알림 서비스 계약 확정 후 등록자 승인·반려 알림 로직 넣기. 제출 ID·결정·반려 사유를 전달한다.
+        // 이미 결정된 제출의 재요청은 위에서 반환했다. 등록자에게만 알리고(본인이 결정한 경우 제외) 반려 사유는 알림에 넣지 않는다.
+        long registrant = id(row, "submitted_by");
+        if (registrant != caller.accountId()) {
+            boolean approved = "APPROVED".equals(state);
+            String fileName = copy.get("file_name").toString();
+            notifyDocument(project, document, id(row, "document_version_id"), registrant,
+                    "doc-submission:" + submission + (approved ? ":approved" : ":rejected"),
+                    approved ? "DOCUMENT_APPROVED" : "DOCUMENT_REJECTED",
+                    approved ? NotificationMessages.documentApproved(fileName) : NotificationMessages.documentRejected(fileName));
+        }
+        // TODO(S15P31A108-237): ActivityRecorder.record DOCUMENT_APPROVED / DOCUMENT_REJECTED, key doc-submission:{id}:approved|rejected
         return submissionView(repository.submission(project, document, submission).orElseThrow());
     }
 

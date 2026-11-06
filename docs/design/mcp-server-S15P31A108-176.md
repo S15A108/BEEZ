@@ -58,7 +58,7 @@ HTTP는 200이고 JSON-RPC 응답 안의 도구 결과가 실패다. 본문은 R
 
 | 원인 | code | 비고 |
 | --- | --- | --- |
-| 서비스가 던진 `ApiException` | 그 `code`·`message` 그대로 | 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
+| 서비스가 던진 `ApiException` | 그 `code`·`message`·`details` 그대로 | REST와 같은 본문이다. `details`는 명세가 정한 오류만 채우고 없으면 키가 빠진다(-267). 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
 | 인수 타입·enum 변환 실패, 모르는 키 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다`, `plan.titel 은(는) 이 도구에 없는 인수입니다` |
 | 인수 레코드를 만들 수 없음(레코드 정의 오류) | `internal` | 입력 탓이 아니라 서버 버그라 `validation_failed`로 숨기지 않고 스택을 남긴다 |
 | 그 밖의 예외 | REST `GlobalExceptionHandler`와 같은 code | 같은 대응표를 그대로 쓴다. 낙관적 잠금 충돌 → `revision_conflict`, DB 제약 → `validation_failed`, 나머지 → `internal`(서버 로그에 스택) |
@@ -165,11 +165,12 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | MCP-10 `upsert_task_plan` | `UpsertTaskPlanTool` | `TaskMcpService.upsertTaskPlan` | 변준성 |
 | MCP-11 `validate_task_plan` | `ValidateTaskPlanTool` | `ValidationMcpService.validateTaskPlan` | 변준성 |
 | MCP-13 `get_validation` | `GetValidationTool` | `ValidationQueryService.get` (REST VAL-A02와 같음, 08 계약 2절) | 변준성 |
+| MCP-14 `retry_validation` | `RetryValidationTool` | `ValidationMcpService.retryValidation` (REST VAL-A04와 같은 `ValidationRetryService`, -161). 연결은 -271 — 별도 도구로 확정(변준성) | 변준성 |
 | MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
 
 - MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).
 - `get_document`는 버전을 생략하면 현재 기준 설계의 `baseline_document` 버전을 준다(새 승인으로 SUPERSEDED가 됐어도 기준이 다시 발행되기 전까지는 그 버전). 버전을 지정하면 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 주고 DRAFT·REJECTED는 `not_found`다. 문서 화면용 칸 중 `document.preview_text`(작업 중 사본)·`latest_draft`는 빼고 `approved_version`은 현재 기준 버전으로 바꾸며, 조회 이력을 `target_kind=DOCUMENT_VERSION`으로 같은 트랜잭션에 남긴다.
-- 등록하지 않은 것: MCP-14 `retry_validation`(도구명·분리 담당자 검토 중), 제안 재제출·거두기 도구(02-mcp-tools MCP-04 "이번 티켓에서 등록하지 않는다").
+- 등록하지 않은 것: 제안 재제출·거두기 도구(02-mcp-tools MCP-04 "이번 티켓에서 등록하지 않는다").
 - `propose_design_change` 스키마에는 서비스가 지금 받는 칸만 싣는다. 명세의 수정안 요청 칸 `items[].proposed_text`·`meeting_id`는 서비스(`ProposalDtos`)에 아직 없어, 보내면 모르는 키로 거부된다.
 - 출력 스키마(`outputSchema`)는 싣지 않는다. 실패 결과도 `structuredContent`(`{"error":…}`)를 쓰므로 성공 모양의 출력 스키마를 걸면 스키마를 검사하는 클라이언트에서 실패 결과가 어긋난다. 응답 모양은 02-mcp-tools가 기준이다.
 - 시험: `McpToolsIntegrationTests`(실제 MCP 클라이언트 경유). 서비스 규칙은 각 서비스 시험에 있다.
