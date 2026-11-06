@@ -104,7 +104,7 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         CallToolResult nested = call(member, "upsert_task_plan", Map.of("plan", withExtra(plan("A"), "titel", "x"),
                 "idempotency_key", "k-nested"));
 
-        assertThat(error(typo)).containsEntry("code", "validation_failed");
+        assertThat(error(typo)).containsEntry("code", "validation_failed").doesNotContainKey("details");
         assertThat(error(typo).get("message").toString()).contains("taskid");
         assertThat(error(nested)).containsEntry("code", "validation_failed");
         assertThat(error(nested).get("message").toString()).contains("plan.titel");
@@ -118,7 +118,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 Map.of("request", "로그인 화면 구현", "project_id", String.valueOf(projectId)));
 
         assertThat(result.isError()).isTrue();
-        assertThat(error(result)).containsEntry("code", "context_not_ready");
+        // details 를 정하지 않은 오류는 REST 처럼 키가 빠진다 — "details": null 로 새지 않는다 (-267 완료 조건 2)
+        assertThat(error(result)).containsEntry("code", "context_not_ready").doesNotContainKey("details");
         assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
 
