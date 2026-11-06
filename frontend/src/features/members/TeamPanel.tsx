@@ -218,7 +218,13 @@ export function TeamPanel({
       </header>
       {view === 'team' && isLeader && <InviteForm projectId={projectId} />}
       {/* 결과는 화면 안 글 대신 오른쪽 위 토스트로 잠깐 보여 준다. */}
-      {action.message && <Toast>{action.message}</Toast>}
+      {action.message && (
+        <Toast>
+          <span className={view === 'project' ? 'text-green-700' : undefined}>
+            {action.message}
+          </span>
+        </Toast>
+      )}
       {handoff.done && (
         <Toast tone="success">
           <strong className="block">팀장을 넘겼어요</strong>
