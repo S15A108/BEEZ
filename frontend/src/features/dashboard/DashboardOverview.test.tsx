@@ -499,3 +499,226 @@ it('에이전트 요약은 연결 상태와 사용량을 보이고, 서버가 �
     (await screen.findByText('이팀장의 에이전트')).closest('li'),
   ).not.toHaveTextContent('0회')
 })
+
+const failed = <T,>(error = new Error('500')) =>
+  ({
+    data: undefined,
+    isError: true,
+    error,
+    isPending: false,
+    refetch: vi.fn(),
+  }) as unknown as UseQueryResult<T>
+
+it('건수가 0이면 캐시에 남은 제안과 작업을 보조 줄에 쓰지 않는다', async () => {
+  vi.mocked(dashboardApi.changes).mockResolvedValue({
+    by_status: [],
+    review_required_count: 0,
+  })
+  vi.mocked(dashboardApi.tasks).mockResolvedValue({
+    by_status: [],
+    by_waiting_reason: [],
+  })
+  const client = new QueryClient()
+  client.setQueryData(['projects', '10', 'hud-review'], {
+    items: [{ id: '71', title: '지난 제안', status: 'PROPOSED' }],
+    has_more: false,
+  })
+  client.setQueryData(['projects', '10', 'dashboard-counts', 'running-task'], {
+    items: [{ id: '503', key: 'TASK-003', assignee_member_id: '22' }],
+    has_more: false,
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  await screen.findByRole('button', { name: /검토할 변경 제안\s*0/ })
+  await screen.findByRole('button', { name: /진행 중 작업\s*0/ })
+  expect(screen.queryByText(/지난 제안/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/TASK-003/)).not.toBeInTheDocument()
+})
+
+it('기능별 줄은 비용을 모르는 호출 수를 함께 보인다', async () => {
+  mountWith({
+    ...usage(3),
+    estimated_cost_amount: '0.5',
+    currency: 'USD',
+    cost_unknown_call_count: 1,
+    by_feature: [
+      {
+        key: 'TASK_VALIDATION',
+        input_tokens: 0,
+        output_tokens: 0,
+        call_count: 3,
+        estimated_cost_amount: '0.5',
+        cost_unknown_call_count: 1,
+      },
+    ],
+  })
+  const row = (await screen.findByText('작업 검증')).closest('li')!
+  expect(row).toHaveTextContent('0.5 USD')
+  expect(row).toHaveTextContent('미보고 1건')
+})
+
+it.each([
+  ['error', '—'],
+  ['pending', '…'],
+] as const)(
+  '팀원을 %s 상태면 연결 칸을 단정하지 않고 에이전트 줄은 연결 상태 미확인으로 보인다',
+  async (membersStatus, value) => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <DashboardOverview
+          projectId="10"
+          usage={query(usage(1))}
+          activities={query(none)}
+          work={query({
+            items: [{ member_id: '21', agent_session_id: '51' }],
+            has_more: false,
+          })}
+          members={[]}
+          membersStatus={membersStatus}
+          actorName={() => '시스템'}
+          onTab={() => undefined}
+        />
+      </QueryClientProvider>,
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: new RegExp(`^에이전트 연결\\s*${value}`),
+      }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('0 / 0')).not.toBeInTheDocument()
+    expect(screen.getByText('연결 상태 미확인')).toBeInTheDocument()
+    expect(screen.queryByText(/연결을 확인해요/)).not.toBeInTheDocument()
+    expect(screen.getByText('보고된 작업 없음')).toBeInTheDocument()
+  },
+)
+
+it('활동을 못 받았으면 시작 안내 대신 못 받았다고 보인다', async () => {
+  vi.mocked(dashboardApi.changes).mockResolvedValue({
+    by_status: [],
+    review_required_count: 0,
+  })
+  vi.mocked(dashboardApi.tasks).mockResolvedValue({
+    by_status: [],
+    by_waiting_reason: [],
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(0))}
+        activities={failed<ActivitiesResponse>()}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByText('최근 활동을 불러오지 못했어요.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('아직 기록이 없어요. 이렇게 시작해 보세요.'),
+  ).not.toBeInTheDocument()
+})
+
+it('할 것이 있으면 시작 안내를 띄우지 않는다', async () => {
+  vi.mocked(dashboardApi.changes).mockResolvedValue({
+    by_status: [],
+    review_required_count: 0,
+  })
+  vi.mocked(dashboardApi.tasks).mockResolvedValue({
+    by_status: [{ status: 'DRAFT', count: 2 }],
+    by_waiting_reason: [],
+  })
+  mount(0)
+  expect(await screen.findByText('할 것 2')).toBeInTheDocument()
+  expect(
+    screen.queryByText('아직 기록이 없어요. 이렇게 시작해 보세요.'),
+  ).not.toBeInTheDocument()
+})
+
+it('작업 현황이 서버에 없으면 준비 중, 못 받으면 오류로 보이고 없다고 말하지 않는다', async () => {
+  const show = (work: UseQueryResult<AgentWorkResponse | undefined>) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <DashboardOverview
+          projectId="10"
+          usage={query(usage(1))}
+          activities={query(none)}
+          work={work}
+          members={[]}
+          actorName={() => '시스템'}
+          onTab={() => undefined}
+        />
+      </QueryClientProvider>,
+    )
+  const missing = show(query<AgentWorkResponse | undefined>(undefined))
+  expect(
+    await screen.findByText('에이전트 현황은 준비 중이에요.'),
+  ).toBeInTheDocument()
+  missing.unmount()
+  show(failed())
+  expect(
+    await screen.findByText('에이전트 현황을 불러오지 못했어요.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('연결된 에이전트가 없어요.'),
+  ).not.toBeInTheDocument()
+})
+
+it('담당자 이름을 못 찾으면 담당자 없음으로 말하지 않고, 정말 없을 때만 그렇게 적는다', async () => {
+  vi.mocked(dashboardApi.tasks).mockResolvedValue({
+    by_status: [{ status: 'IN_PROGRESS', count: 1 }],
+    by_waiting_reason: [],
+  })
+  vi.mocked(tasksApi.list).mockResolvedValue({
+    items: [{ id: '503', key: 'TASK-003', assignee_member_id: '99' }],
+    has_more: false,
+  } as never)
+  const first = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText('TASK-003')).toBeInTheDocument()
+  expect(screen.queryByText(/담당자 없음/)).not.toBeInTheDocument()
+  first.unmount()
+  vi.mocked(tasksApi.list).mockResolvedValue({
+    items: [{ id: '503', key: 'TASK-003' }],
+    has_more: false,
+  } as never)
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText('TASK-003 · 담당자 없음')).toBeInTheDocument()
+})

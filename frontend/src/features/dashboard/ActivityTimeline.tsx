@@ -9,7 +9,7 @@ import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ActorAvatar } from './ActorAvatar'
-import { activityChip } from './labels'
+import { activityChip, agentLabel } from './labels'
 import { monthDayText, seoulClock, seoulDay } from './period'
 
 // 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일', 올해가 아니면 '2025년 10월 27일'
@@ -55,14 +55,7 @@ export function ActivityTimeline({
     { key: 'human', label: '사람', query: { actor_type: 'HUMAN' as const } },
     ...sessions.map((agent) => ({
       key: agent.agent_session_id!,
-      // 토큰이 둘이면 이름이 같아지므로 토큰 이름을 붙여 구분한다.
-      label: `${memberName(agent.member_id)}의 에이전트${
-        agent.agent_name &&
-        sessions.filter((other) => other.member_id === agent.member_id).length >
-          1
-          ? ` · ${agent.agent_name}`
-          : ''
-      }`,
+      label: agentLabel(agent, sessions, memberName),
       query: { agent_session_id: agent.agent_session_id },
     })),
   ]

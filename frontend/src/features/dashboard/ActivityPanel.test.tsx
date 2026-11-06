@@ -557,7 +557,10 @@ describe('에이전트별 사용량', () => {
 
   it('호출 없는 세션도 0회 줄로 보이고 웹 직접은 맨 아래에 온다', async () => {
     vi.mocked(dashboardApi.agentWork).mockResolvedValue({
-      items: [session, { member_id: '1', agent_session_id: '95' }],
+      items: [
+        { ...session, agent_name: '노트북' },
+        { member_id: '1', agent_session_id: '95', agent_name: '데스크톱' },
+      ],
       has_more: false,
     })
     vi.mocked(dashboardApi.usage).mockResolvedValue(
@@ -572,10 +575,12 @@ describe('에이전트별 사용량', () => {
     mount()
     await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
     const list = (await screen.findByText('웹에서 직접')).closest('ul')!
-    await within(list).findAllByText('민수의 에이전트')
+    await within(list).findByText('민수의 에이전트 · 노트북')
     const rows = within(list).getAllByRole('listitem')
     expect(rows).toHaveLength(3)
+    expect(rows[0]).toHaveTextContent('민수의 에이전트 · 노트북')
     expect(rows[0]).toHaveTextContent('2회')
+    expect(rows[1]).toHaveTextContent('민수의 에이전트 · 데스크톱')
     expect(rows[1]).toHaveTextContent('0회')
     expect(rows[2]).toHaveTextContent('웹에서 직접')
   })
@@ -616,6 +621,21 @@ describe('에이전트별 사용량', () => {
       screen.queryByText('기록된 사용량이 없어요.'),
     ).not.toBeInTheDocument()
   })
+})
+
+it('팀원 조회가 실패하면 한눈에 보기가 연결을 단정하지 않고 다시 불러오기를 보인다', async () => {
+  vi.mocked(membersApi.list).mockRejectedValue(new Error('500'))
+  mount()
+  expect(
+    await screen.findByText(/팀원 이름과 연결 상태를 불러오지 못했어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: /에이전트 연결\s*—/ }),
+  ).toBeInTheDocument()
+  expect(screen.queryByText('0 / 0')).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '다시 불러오기' }),
+  ).toBeInTheDocument()
 })
 
 describe('에이전트 현황', () => {

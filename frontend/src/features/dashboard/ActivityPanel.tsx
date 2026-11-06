@@ -14,6 +14,7 @@ import { RelationsView } from './RelationsView'
 import {
   FEATURE_LABELS,
   UNSPLIT_USAGE_NOTICE,
+  agentLabel,
   callsText,
   costText,
   dashboardTabs,
@@ -163,7 +164,7 @@ export function ActivityPanel({
             {web
               ? '웹에서 직접'
               : agent
-                ? `${memberName(agent.member_id)}의 에이전트`
+                ? agentLabel(agent, firstWork.data?.items ?? [], memberName)
                 : (row.label ?? `에이전트 #${row.key}`)}
           </span>
         </span>
@@ -227,6 +228,7 @@ export function ActivityPanel({
           activities={activities}
           work={firstWork}
           members={members.data?.items ?? []}
+          membersStatus={members.data ? 'success' : members.status}
           actorName={actorName}
           periodName={periodNameOf(period)}
         />
@@ -284,7 +286,7 @@ export function ActivityPanel({
                                   'ml-auto inline-flex items-center gap-1.5 text-xs',
                                   member?.agent_connected
                                     ? 'text-[#00753a]'
-                                    : 'text-[#c99e1e]',
+                                    : 'text-[#8a6a00]',
                                 )}
                               >
                                 <span
@@ -316,7 +318,7 @@ export function ActivityPanel({
                                         `작업 #${item.current_task_id}`}
                                     </Button>
                                   ) : (
-                                    <span className="text-muted-foreground/70">
+                                    <span className="text-muted-foreground">
                                       보고된 작업 없음
                                     </span>
                                   ),
@@ -334,7 +336,7 @@ export function ActivityPanel({
                                       {statusLabel(item.task_status)}
                                     </span>
                                   ) : (
-                                    <span className="text-muted-foreground/70">
+                                    <span className="text-muted-foreground">
                                       미보고
                                     </span>
                                   ),
@@ -346,7 +348,7 @@ export function ActivityPanel({
                                   ) : item.validation_status ? (
                                     statusLabel(item.validation_status)
                                   ) : (
-                                    <span className="text-muted-foreground/70">
+                                    <span className="text-muted-foreground">
                                       미보고
                                     </span>
                                   ),
@@ -362,7 +364,7 @@ export function ActivityPanel({
                               <td key={label} className="grid gap-0.5">
                                 <span
                                   aria-hidden="true"
-                                  className="text-[11.5px] text-muted-foreground/70"
+                                  className="text-[11.5px] text-muted-foreground"
                                 >
                                   {label}
                                 </span>
@@ -427,22 +429,10 @@ export function ActivityPanel({
               {UNSPLIT_USAGE_NOTICE}
             </p>
           )}
-          <p className="mt-4 text-xs leading-[18px] text-muted-foreground/70">
+          <p className="mt-4 text-xs leading-[18px] text-muted-foreground">
             에이전트가 보고하지 않은 실행 중·완료 상태는 추정하지 않아요. 연결
             여부는 연결 보고, 작업 상태는 작업 보고를 따로 봐요.
           </p>
-          {members.error && (
-            <p className="mt-3 text-xs text-destructive">
-              팀원 이름과 연결 상태를 불러오지 못했어요.{' '}
-              <button
-                type="button"
-                className="underline"
-                onClick={() => void members.refetch()}
-              >
-                다시 불러오기
-              </button>
-            </p>
-          )}
         </div>
       )}
       {tab === 'usage' && (
@@ -490,7 +480,7 @@ export function ActivityPanel({
                           unknown={metric.unknown}
                         />
                         {metric.note && (
-                          <span className="block text-[11.5px] leading-4 font-normal text-muted-foreground/70">
+                          <span className="block text-[11.5px] leading-4 font-normal text-muted-foreground">
                             {metric.note}
                           </span>
                         )}
@@ -545,7 +535,7 @@ export function ActivityPanel({
                     }
                   />
                 </section>
-                <p className="text-xs leading-5 text-muted-foreground/70">
+                <p className="text-xs leading-5 text-muted-foreground">
                   BEEZ에 기록된 AI 호출만 모아요. 외부 에이전트가 자기 계정으로
                   쓴 사용량과 실제 청구액은 포함하지 않아요.
                 </p>
@@ -553,6 +543,19 @@ export function ActivityPanel({
             )}
           </AsyncState>
         </div>
+      )}
+      {/* 한눈에 보기와 에이전트 현황이 같이 쓰는 안내 */}
+      {(tab === 'overview' || tab === 'agents') && members.error && (
+        <p className="text-xs text-destructive">
+          팀원 이름과 연결 상태를 불러오지 못했어요.{' '}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => void members.refetch()}
+          >
+            다시 불러오기
+          </button>
+        </p>
       )}
     </div>
   )

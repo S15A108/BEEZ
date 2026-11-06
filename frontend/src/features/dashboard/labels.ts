@@ -38,7 +38,8 @@ export function activityChip(item: { type: string; result: string }) {
     return {
       label: '진행 중',
       className: 'bg-[#fff4cf] text-[#8a6a00]',
-      notable: true,
+      // 보드: 타임라인에는 이 칩이 있고 한눈에 보기의 같은 줄에는 없다(PNL-09-v2-timeline, PNL-09-v2-dashboard).
+      notable: false,
     }
   if (item.result === 'SUCCESS')
     return {
@@ -51,6 +52,21 @@ export function activityChip(item: { type: string; result: string }) {
     className: 'bg-muted text-muted-foreground',
     notable: true,
   }
+}
+
+// '민수의 에이전트'. 한 팀원의 토큰이 둘 이상이면 이름이 같아지므로 토큰 이름을 붙여 구분한다.
+export function agentLabel(
+  agent: { member_id: string; agent_session_id?: string; agent_name?: string },
+  all: { member_id: string; agent_session_id?: string }[],
+  memberName: (memberId: string) => string,
+) {
+  const base = `${memberName(agent.member_id)}의 에이전트`
+  const sessions = all.filter(
+    (other) => other.agent_session_id && other.member_id === agent.member_id,
+  )
+  return sessions.length > 1
+    ? `${base} · ${agent.agent_name ?? `#${agent.agent_session_id}`}`
+    : base
 }
 
 // 호출이 있는데 서버가 호출자별로 나누지 않아 에이전트별 줄이 비었을 때의 안내.

@@ -13,7 +13,13 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { AsyncState } from '@/components/AsyncState'
 import { ActorAvatar } from './ActorAvatar'
 import { DailyCallsChart } from './DailyCallsChart'
-import { FEATURE_LABELS, activityChip, callsText, costText } from './labels'
+import {
+  FEATURE_LABELS,
+  activityChip,
+  callsText,
+  costText,
+  unknownText,
+} from './labels'
 import { rangeText, seoulClock, seoulDay } from './period'
 import type { DashboardTab } from './labels'
 import type {
@@ -37,6 +43,7 @@ export function DashboardOverview({
   activities,
   work,
   members,
+  membersStatus = 'success',
   actorName,
   onTab,
   periodName = '선택 기간',
@@ -47,6 +54,8 @@ export function DashboardOverview({
   // 서버에 아직 없으면(404) data가 undefined(unlessMissing)
   work: UseQueryResult<AgentWorkResponse | undefined>
   members: Member[]
+  // 팀원을 받는 중이거나 못 받았으면 연결 상태를 모른다. 0 / 0이나 연결 미확인으로 단정하지 않는다.
+  membersStatus?: 'pending' | 'error' | 'success'
   actorName: (item: Activity) => string
   onTab: (tab: DashboardTab) => void
   // 고른 기간의 이름: '11월', '최근 7일', '선택 기간'
@@ -75,23 +84,30 @@ export function DashboardOverview({
       changesApi.list(projectId, { group: 'IN_PROGRESS', limit: 20 }),
     enabled: review > 0,
   })
-  const firstReview = reviewList.data?.items.find((item) =>
-    ['PROPOSED', 'IN_REVIEW'].includes(item.status),
-  )
+  // 건수가 0이면 쿼리는 꺼져도 캐시에 지난 목록이 남아 있으니 쓰지 않는다.
+  const firstReview =
+    review > 0
+      ? reviewList.data?.items.find((item) =>
+          ['PROPOSED', 'IN_REVIEW'].includes(item.status),
+        )
+      : undefined
   const runningTasks = useQuery({
     queryKey: ['projects', projectId, 'dashboard-counts', 'running-task'],
     queryFn: () =>
       tasksApi.list(projectId, { status: 'IN_PROGRESS', limit: 1 }),
     enabled: inProgress > 0,
   })
-  const running = runningTasks.data?.items[0]
+  const running = inProgress > 0 ? runningTasks.data?.items[0] : undefined
   const memberName = (memberId?: string) =>
     members.find((member) => member.id === memberId)?.name
   const runningAgent = work.data?.items.find(
     (agent) => running && agent.current_task_id === running.id,
   )
   const calls = usage.data?.call_count ?? 0
-  const disconnected = members.filter((member) => !member.agent_connected)
+  const membersKnown = membersStatus === 'success'
+  const disconnected = membersKnown
+    ? members.filter((member) => !member.agent_connected)
+    : []
   const connected = members.length - disconnected.length
   const recent: Activity[] = activities.data?.items.slice(0, 4) ?? []
   const agents: AgentWork[] = work.data?.items.slice(0, 2) ?? []
@@ -106,7 +122,9 @@ export function DashboardOverview({
     changes.isSuccess &&
     tasks.isSuccess &&
     usage.data !== undefined &&
+    activities.data !== undefined &&
     !inProgress &&
+    !todoCount &&
     !review &&
     !calls &&
     !recent.length
@@ -136,7 +154,10 @@ export function DashboardOverview({
         running &&
           (runningAgent
             ? `${memberName(runningAgent.member_id) ?? '팀원'}의 에이전트`
-            : (memberName(running.assignee_member_id) ?? '담당자 없음')),
+            : // 이름을 못 찾은 것과 담당자가 없는 것은 다르다. 모르면 적지 않는다.
+              running.assignee_member_id
+              ? memberName(running.assignee_member_id)
+              : '담당자 없음'),
         todoCount ? `할 것 ${todoCount}` : '',
       ]
         .filter(Boolean)
@@ -166,7 +187,12 @@ export function DashboardOverview({
     },
     {
       label: '에이전트 연결',
-      value: `${connected} / ${members.length}`,
+      value:
+        membersStatus === 'error'
+          ? '—'
+          : membersStatus === 'pending'
+            ? '…'
+            : `${connected} / ${members.length}`,
       onClick: () => onTab('agents'),
       todo: disconnected.length ? '연결 확인 ›' : undefined,
       note: disconnected[0] && `${disconnected[0].name}의 에이전트 연결 미확인`,
@@ -310,11 +336,17 @@ export function DashboardOverview({
                           0,
                           '—',
                         )}
+                        {/* 일부 호출의 비용을 모르면 전체 금액처럼 보이지 않게 건수를 값 아래에 붙인다. */}
+                        {unknownText(row.cost_unknown_call_count) && (
+                          <span className="block text-[11px]">
+                            {unknownText(row.cost_unknown_call_count)}
+                          </span>
+                        )}
                       </span>
                     </li>
                   ))}
                 </ul>
-                <span className="mt-auto text-[11.5px] leading-4 text-muted-foreground/70">
+                <span className="mt-auto text-[11.5px] leading-4 text-muted-foreground">
                   {`합계 ${calls.toLocaleString('ko-KR')}회 · ${costNote}`}
                 </span>
               </>
@@ -351,7 +383,7 @@ export function DashboardOverview({
                         : undefined
                   const row = (
                     <>
-                      <span className="text-[11.5px] text-muted-foreground/70 tabular-nums">
+                      <span className="text-[11.5px] text-muted-foreground tabular-nums">
                         {recentTime(item.created_at)}
                       </span>
                       <ActorAvatar
@@ -405,7 +437,11 @@ export function DashboardOverview({
               </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
-                최근 활동이 없어요.
+                {activities.isError
+                  ? '최근 활동을 불러오지 못했어요.'
+                  : activities.isPending
+                    ? '불러오는 중…'
+                    : '최근 활동이 없어요.'}
               </p>
             )}
           </div>
@@ -428,9 +464,11 @@ export function DashboardOverview({
             {agents.length ? (
               <ul>
                 {agents.map((agent) => {
-                  const isConnected = members.find(
-                    (member) => member.id === agent.member_id,
-                  )?.agent_connected
+                  // 팀원을 못 찾으면 연결 상태를 모른다(에이전트 현황 탭과 같은 표기).
+                  const member = members.find(
+                    (entry) => entry.id === agent.member_id,
+                  )
+                  const isConnected = member?.agent_connected
                   const row = usage.data?.by_agent.find(
                     (entry) => entry.key === agent.agent_session_id,
                   )
@@ -447,18 +485,27 @@ export function DashboardOverview({
                         <span
                           className={cn(
                             'ml-auto inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap',
-                            isConnected ? 'text-[#00753a]' : 'text-[#c99e1e]',
+                            !member
+                              ? 'text-muted-foreground'
+                              : isConnected
+                                ? 'text-[#00753a]'
+                                : 'text-[#8a6a00]',
                           )}
                         >
-                          {isConnected ? (
-                            <Check aria-hidden="true" className="size-3" />
-                          ) : (
-                            <TriangleAlert
-                              aria-hidden="true"
-                              className="size-3"
-                            />
-                          )}
-                          {isConnected ? '연결됨' : '연결 미확인'}
+                          {member &&
+                            (isConnected ? (
+                              <Check aria-hidden="true" className="size-3" />
+                            ) : (
+                              <TriangleAlert
+                                aria-hidden="true"
+                                className="size-3"
+                              />
+                            ))}
+                          {!member
+                            ? '연결 상태 미확인'
+                            : isConnected
+                              ? '연결됨'
+                              : '연결 미확인'}
                         </span>
                       </span>
                       <span className="flex justify-between gap-2 pl-8.5 text-xs text-muted-foreground">
@@ -469,8 +516,8 @@ export function DashboardOverview({
                                 ? ` · ${formatShort(agent.reported_at)} 보고`
                                 : ''
                             }`
-                          ) : isConnected ? (
-                            '맡은 작업 없음'
+                          ) : isConnected || !member ? (
+                            '보고된 작업 없음'
                           ) : (
                             <>
                               연결을 확인해요 ·{' '}
@@ -497,7 +544,13 @@ export function DashboardOverview({
               </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
-                연결된 에이전트가 없어요.
+                {work.isPending
+                  ? '불러오는 중…'
+                  : work.isError
+                    ? '에이전트 현황을 불러오지 못했어요.'
+                    : work.data
+                      ? '연결된 에이전트가 없어요.'
+                      : '에이전트 현황은 준비 중이에요.'}
               </p>
             )}
           </div>
