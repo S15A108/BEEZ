@@ -15,7 +15,12 @@ import { statusLabel } from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { reviewStage } from './reviewStage'
+import { reviewStage, stepOutcome } from './reviewStage'
+import { CancelSubmission } from './CancelSubmission'
+import { DirectRequest } from './DirectRequest'
+import { PartialReviewNotice } from './PartialReviewNotice'
+import { SuggestionCard } from './SuggestionCard'
+import { SubmissionHistory } from './SubmissionHistory'
 import { membersQuery } from '@/features/members/membersQuery'
 
 const STEPS = ['파일 등록', '비비 검토', '수정 제안 반영', '팀장 승인'] as const
@@ -117,21 +122,37 @@ export function DocumentReview({
     members.data?.items.find((member) => member.account_id === accountId)
       ?.name ?? '팀원'
   const [, rerender] = useReducer((count: number) => count + 1, 0)
+  // 서버가 준 오류 코드별 안내(경합·잠김·AI 장애). 일반 오류 띠 대신 보인다.
+  const [failure, setFailure] = useState('')
+  const markStale = (reviewId: string) => {
+    staleReviews.add(reviewId)
+    rerender()
+  }
   const run = (
     operation: () => Promise<unknown>,
     message: string,
     done?: () => void,
-  ) =>
-    void action
+  ) => {
+    setFailure('')
+    return action
       .run(operation, message)
       .then(done)
       .catch((cause: unknown) => {
+        const code = getApiErrorCode(cause)
         const reviewId = currentStage?.review?.id
-        if (getApiErrorCode(cause) === 'review_stale' && reviewId) {
+        if (code === 'review_stale' && reviewId) {
           staleReviews.add(reviewId)
           rerender()
         }
+        setFailure(
+          code === 'submission_locked'
+            ? `${getApiErrorMessage(cause)} 먼저 검토 요청을 취소한 뒤 고쳐 주세요.`
+            : code
+              ? getApiErrorMessage(cause)
+              : '',
+        )
       })
+  }
   const reviewStale =
     !!currentStage?.review &&
     current?.status !== 'SUBMITTED' &&
@@ -176,12 +197,12 @@ export function DocumentReview({
           </Button>
         </div>
       )}
-      {action.error && (
+      {(failure || action.error) && (
         <p
           role="alert"
           className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
         >
-          {action.error}
+          {failure || action.error}
         </p>
       )}
       <AsyncState query={copy}>
@@ -190,6 +211,25 @@ export function DocumentReview({
           const owner = !locked && data.owner_account_id === session.data?.id
           const rejected = data.submissions.find(
             (item) => item.status === 'REJECTED',
+          )
+          // 올린 사람만, 팀장이 결정하기 전에 거둘 수 있다(DOC-A24).
+          const cancelable =
+            !locked && !!pending && pending.submitted_by === session.data?.id
+          const cancel = pending && (
+            <CancelSubmission
+              busy={action.busy}
+              onConfirm={() =>
+                run(
+                  () =>
+                    documentsApi.cancelSubmission(
+                      projectId,
+                      documentId,
+                      pending.id,
+                    ),
+                  '검토 요청을 취소했어요. 문서를 고친 뒤 다시 요청해 주세요.',
+                )
+              }
+            />
           )
           return (
             <>
@@ -310,10 +350,13 @@ export function DocumentReview({
               )}
               {stage.step === 2 && stage.review && !reviewStale && (
                 <Suggestions
+                  projectId={projectId}
+                  documentId={documentId}
                   review={stage.review}
                   owner={owner}
                   busy={action.busy}
-                  onDecide={(suggestionId, decision) =>
+                  onStale={() => markStale(stage.review!.id)}
+                  onDecide={(suggestionId, decision, replacementText) =>
                     run(
                       () =>
                         documentsApi.decideSuggestion(
@@ -321,7 +364,13 @@ export function DocumentReview({
                           documentId,
                           stage.review!.id,
                           suggestionId,
-                          { expected_revision: data.revision, decision },
+                          {
+                            expected_revision: data.revision,
+                            decision,
+                            ...(replacementText !== undefined
+                              ? { replacement_text: replacementText }
+                              : {}),
+                          },
                         ),
                       decision === 'APPLY'
                         ? '제안을 반영했어요.'
@@ -377,7 +426,16 @@ export function DocumentReview({
                       />
                     )}
                     {owner && !editing && (
-                      <div className="flex flex-wrap gap-2">
+                      <DirectRequest
+                        projectId={projectId}
+                        documentId={documentId}
+                        reviewId={stage.review.id}
+                        revision={data.revision}
+                        onStale={() => markStale(stage.review!.id)}
+                      />
+                    )}
+                    {owner && !editing && (
+                      <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           variant="outline"
                           onClick={() => setEditing(true)}
@@ -435,10 +493,12 @@ export function DocumentReview({
                             ).length
                           }
                           개
-                          {submission.review.unavailable_references.length >
-                            0 &&
+                          {submission.review.review_status !== 'PARTIAL' &&
+                            submission.review.unavailable_references.length >
+                              0 &&
                             ` · 비교하지 못한 문서: ${submission.review.unavailable_references.map(statusLabel).join(', ')}`}
                         </p>
+                        <PartialReviewNotice review={submission.review} />
                         {rejecting ? (
                           <ActionForm
                             fields={[
@@ -501,15 +561,23 @@ export function DocumentReview({
                           </div>
                         )}
                         {/* API 없음: 승인·반려 결과를 올린 사람에게 알리는 공통 알림 연동(dev TODO) */}
+                        {cancelable && cancel}
                       </div>
                     )}
                   </AsyncState>
                 ) : (
-                  <p className="text-sm text-muted-foreground">
-                    팀장 승인을 기다리고 있어요. 결과는 이 화면에서 확인할 수
-                    있어요.
-                  </p>
+                  <div className="grid gap-2">
+                    <p className="text-sm text-muted-foreground">
+                      팀장 승인을 기다리고 있어요. 결과는 이 화면에서 확인할 수
+                      있어요.
+                    </p>
+                    {cancelable && cancel}
+                  </div>
                 ))}
+              <SubmissionHistory
+                submissions={data.submissions}
+                nameOf={nameOf}
+              />
               {data.status === 'APPROVED' && (
                 <p className="text-sm">
                   팀장이 승인했어요. 목록의 현재 문서에서 볼 수 있어요.
@@ -555,15 +623,25 @@ function ReviewNotes({ review }: { review: DocumentBeeReview }) {
 }
 
 function Suggestions({
+  projectId,
+  documentId,
   review,
   owner,
   busy,
   onDecide,
+  onStale,
 }: {
+  projectId: string
+  documentId: string
   review: DocumentBeeReview
   owner: boolean
   busy: boolean
-  onDecide: (suggestionId: string, decision: 'APPLY' | 'SKIP') => void
+  onDecide: (
+    suggestionId: string,
+    decision: 'APPLY' | 'SKIP',
+    replacementText?: string,
+  ) => void
+  onStale: () => void
 }) {
   const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
   return (
@@ -587,12 +665,7 @@ function Suggestions({
             {review.steps.map((step, index) => (
               <li key={step.step}>
                 {index + 1}단계 / {review.steps.length}단계 ·{' '}
-                {statusLabel(step.step)} ·{' '}
-                {step.status === 'COMPLETE'
-                  ? '검토함'
-                  : step.reason === 'SAME_KIND'
-                    ? '같은 문서라 건너뜀'
-                    : '승인본이 없어 건너뜀'}
+                {statusLabel(step.step)} · {stepOutcome(step)}
               </li>
             ))}
           </ol>
@@ -600,53 +673,19 @@ function Suggestions({
       </div>
       <ol className="grid gap-2">
         {review.suggestions.map((suggestion, index) => (
-          <li
+          <SuggestionCard
             key={suggestion.id}
-            className="grid gap-2 rounded-xl border p-3 text-sm"
-          >
-            <p className="flex flex-wrap items-center justify-between gap-2">
-              <strong>
-                {suggestion.type === 'COMMENT' ? '의견' : '제안'} {index + 1} ·{' '}
-                {suggestion.explanation}
-              </strong>
-              {suggestion.type === 'PATCH' &&
-                suggestion.decision !== 'PENDING' && (
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                    {suggestion.decision === 'APPLIED' ? '반영함' : '넘김'}
-                  </span>
-                )}
-            </p>
-            {/* 의견(COMMENT)은 읽기만 하고, 반영·넘기기 없이 제출을 막지 않는다. */}
-            {suggestion.type === 'PATCH' && (
-              <div className="grid gap-1 font-mono text-xs leading-6 whitespace-pre-wrap select-text">
-                <p className="rounded bg-destructive/5 px-2 text-destructive">
-                  − {suggestion.original_text}
-                </p>
-                <p className="rounded bg-primary/10 px-2">
-                  + {suggestion.replacement_text}
-                </p>
-              </div>
-            )}
-            {owner && suggestion.decision === 'PENDING' && (
-              <span className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => onDecide(suggestion.id, 'SKIP')}
-                >
-                  넘기기
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => onDecide(suggestion.id, 'APPLY')}
-                >
-                  반영하기
-                </Button>
-              </span>
-            )}
-          </li>
+            projectId={projectId}
+            documentId={documentId}
+            reviewId={review.id}
+            suggestion={suggestion}
+            index={index}
+            owner={owner}
+            stale={false}
+            busy={busy}
+            onDecide={onDecide}
+            onStale={onStale}
+          />
         ))}
       </ol>
       {!owner && (
