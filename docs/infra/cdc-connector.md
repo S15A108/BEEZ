@@ -237,7 +237,8 @@ docker restart beez-cdc-kafka-1   # 60초 정리 대기가 있다(stop_grace_per
 
 ## 상태 보기
 
-S15P31A108-261(Connect 지표 수집)이 끝나기 전까지 전진이 **평일 오전 한 번, 배포·재시작 뒤**에 본다(계획 D6).
+261부터는 커넥터·task 상태를 Prometheus가 수집하고 알린다([cdc-stack.md "지표"](cdc-stack.md#지표-s15p31a108-261),
+대시보드 `BEEZ CDC 분석` "Kafka·Connect·슬롯"). 알림을 받았거나 배포·재시작 뒤에는 아래로 직접 본다.
 
 ```bash
 # 서버 (0 준비 뒤)
@@ -246,7 +247,8 @@ pgsql -c "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wa
 ```
 
 - task `FAILED` → 4의 대응. 슬롯 `retained` > 1GB → 원인 확인, > 5GB → 아래 "되돌리기" 2·3번(계획 D6).
-- 슬롯 비활성·WAL은 알림도 운다(`CdcSlotInactive`·`CdcSlotWalRetained`). Connect·task 상태 자체는 알림이 없다(261).
+- 슬롯 비활성·WAL은 알림도 운다(`CdcSlotInactive`·`CdcSlotWalRetained`). Connect·task 상태는 261의 `CdcConnectDown`·
+  `CdcConnectorNotRunning`·`CdcConnectorMissing`이 운다.
 
 ## 다시 만들기
 

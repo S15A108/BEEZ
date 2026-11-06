@@ -134,7 +134,9 @@ consumer를 켠 뒤에는 메시지가 사라져도 복구 스캔이 30초 넘�
     293과 294 중 어느 쪽이 먼저 끝나도 된다. 294를 먼저 올리면 디렉터리가 없어 Docker가 root 소유 빈 디렉터리를
     만들 수 있으므로, 294가 디렉터리부터 위 권한으로 만든다.
 - **남는 위험 (수용 여부를 함께 승인한다)**: Kafka는 `beez_default`에 붙은 모든 컨테이너(ai·backend·seaweedfs·postgres,
-  모니터링의 prometheus·postgres-exporter)가 **읽고 쓸 수 있다.**
+  모니터링의 prometheus·postgres-exporter, 261부터 kafka-exporter)가 **읽고 쓸 수 있다.**
+  - (S15P31A108-261 추가) Connect 지표 포트 `connect:9404`(JMX exporter javaagent)도 같은 망에서 읽힌다. 읽기 전용이고 허용 목록
+    (커넥터·task 상태, Debezium 연결 여부, JVM 메모리)만 내보낸다. REST·JMX 원격 포트는 그대로 닫혀 있다([cdc-stack.md "지표"](cdc-stack.md#지표-s15p31a108-261)).
   - Connect 설정 토픽에 직접 쓰면 REST를 막은 효과를 우회해 커넥터를 바꿀 수 있다. 복제 권한은 publication과
     상관없이 WAL 전체를 읽을 수 있는 강한 권한이다(검토안 4번). 그래서 컨테이너 하나가 뚫리면 DB 변경 내용 전체가
     새어 나갈 수 있다.
