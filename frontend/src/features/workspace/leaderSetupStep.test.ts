@@ -47,15 +47,23 @@ it('건너뛰면 완료로 세고 시작 전에는 설정에서 다시 할 수 �
   expect(links(step)).toEqual(['지금 초대하기', '에이전트 연결하기'])
 })
 
-it('건너뛴 채로 시작하면 아까 건너뛰었다고 알리고 남은 쪽 링크만 둔다', () => {
+it('건너뛴 채로 시작하면 아까 건너뛰었다고 알리고 남은 쪽 안내와 링크만 둔다', () => {
   const skipped = { ...base, skipFlag: true, started: true }
-  const step = leaderSetupStep(skipped)
-  expect(step.detail).toMatch(/^아까 건너뛰었어요 · /)
-  expect(links(step)).toEqual(['팀원 초대하기', '에이전트 연결하기'])
-  expect(links(leaderSetupStep({ ...skipped, invited: true }))).toEqual([
-    '에이전트 연결하기',
-  ])
-  expect(links(leaderSetupStep({ ...skipped, agentConnected: true }))).toEqual([
-    '팀원 초대하기',
-  ])
+  const both = leaderSetupStep(skipped)
+  expect(both.detail).toBe(
+    '아까 건너뛰었어요 · 팀원을 부르면 같이 작업 계획을 올릴 수 있어요. 에이전트는 설정 › 에이전트에서 연결해요.',
+  )
+  expect(links(both)).toEqual(['팀원 초대하기', '에이전트 연결하기'])
+
+  const invited = leaderSetupStep({ ...skipped, invited: true })
+  expect(invited.detail).toBe(
+    '아까 건너뛰었어요 · 에이전트는 설정 › 에이전트에서 연결해요.',
+  )
+  expect(links(invited)).toEqual(['에이전트 연결하기'])
+
+  const connected = leaderSetupStep({ ...skipped, agentConnected: true })
+  expect(connected.detail).toBe(
+    '아까 건너뛰었어요 · 팀원을 부르면 같이 작업 계획을 올릴 수 있어요.',
+  )
+  expect(links(connected)).toEqual(['팀원 초대하기'])
 })

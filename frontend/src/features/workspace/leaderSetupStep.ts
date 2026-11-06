@@ -22,7 +22,12 @@ export function leaderSetupStep({
       : !skipped
         ? '둘 다 안 해도 다음 단계로 넘어갈 수 있어요.'
         : started
-          ? '아까 건너뛰었어요 · 팀원을 부르면 같이 작업 계획을 올릴 수 있어요. 에이전트는 설정 › 에이전트에서 연결해요.'
+          ? `아까 건너뛰었어요 · ${[
+              !invited && '팀원을 부르면 같이 작업 계획을 올릴 수 있어요.',
+              !agentConnected && '에이전트는 설정 › 에이전트에서 연결해요.',
+            ]
+              .filter(Boolean)
+              .join(' ')}`
           : '설정에서 언제든 할 수 있어요.',
     rows: [
       { label: '팀원 초대', action: '초대하기', done: invited, focus: 'team' },
