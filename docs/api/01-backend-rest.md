@@ -1,6 +1,6 @@
 # BEEZ Backend REST API
 
-버전: 0.7 · 갱신일: 2026-11-05 · 개발 계약 초안
+버전: 0.7 · 갱신일: 2026-11-06 · 개발 계약 초안
 
 2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 새 API(ACC-A11~A13, MEM-A11, DOC-A22~A24, CHG-A14·A15, BEE-A03·A04, MTG-A11~A13, MON-A06·A07)와 기존 API에서 바뀐 부분은 '수정안 요청'으로 표시했다. 문서 검토·승인(DOC-A13~A21)과 최초 기준 생성(PLN-A10)은 PR #37 계약을 그대로 두고 화면에 더 필요한 것만 그 절에 붙였다. ACC-A08·A09와 MTG-A01·A05·A07·A08·A09는 폐지 예정이다. MTG-A04는 팀장과 회의 참여자가 관련자를 직접 추가하는 API로 남긴다. 기준 v1 뒤의 문서 변경은 회의 결과를 포함해 모두 변경 제안으로 간다. 미정 정책은 [검토 항목](00-common.md#9-검토-항목) Q14~Q24다.
 
@@ -15,6 +15,8 @@
 2026-11-05: 화면 캔버스·데모 비교에서 dev 백엔드에 아직 없는 수정안을 해당 API 아래 "(dev 미구현 · 11-05 확인)"으로 표시했다(S15P31A108-218). 팀원 제외·나가기의 담당자 비우기와 팀장 위임 나가기(MEM-A09·A10), 미배정 작업 필터·`status` 여러 값과 스스로 맡기(TSK-A02·A06), 탈퇴 때 팀원 프로젝트의 담당자 비우기(ACC-A10), 프로젝트 건물 디자인(PRJ-A01~A04 `design`, PRJ-A02 `member_count`)이다. 이메일 초대(MEM-A01·A11)는 PR #134에서 구현 중이라 표시하지 않았다. 2026-11-06: 팀원 제외·나가기의 담당자 비우기, 미배정 작업 필터·`status` 여러 값, 스스로 맡기를 구현해 그 표시를 지웠다(S15P31A108-301). 팀장 위임 나가기는 S15P31A108-304에서 구현돼 그 표시도 지워졌다.
 
 2026-11-05: 계정 설정 명세를 구현(PR #118)에 맞췄다(S15P31A108-278). 만료된 임시 비밀번호는 `temporary_password_expired`가 아니라 401 `invalid_credentials`다(ACC-A02). ACC-A04·A05 응답에 `must_change_password`가 있다. 임시 비밀번호의 세부값·발송 실패·기존 비밀번호 처리(ACC-A07)와 비밀번호 변경·탈퇴 때 세션·개인정보 처리(ACC-A06·A10)를 적었다. 재설정 링크 API(ACC-A08·A09)는 폐지로 확정했다. 비밀번호 규칙 위반 코드는 아직 정하지 않았다(ACC-A01·A06). 초대 응답(MEM-A02·A04)의 `expires_at`은 V33에서 컬럼을 지워 응답에 없으므로 처리 규칙·필드 표·예시에서 뺐다(PR #134).
+
+2026-11-06: 비밀번호 규칙과 위반 코드를 정했다(Q04, S15P31A108-309). 규칙은 구현 그대로 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상이고 특수문자는 필수가 아니다(ACC-A01). 위반은 `password_policy_violation`을 두지 않고 400 `validation_failed`(`message`가 `password:`로 시작)로 둔다(ACC-A01·A06). 서버 동작은 바뀌지 않는다.
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -199,7 +201,7 @@
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `email` | `string` | Y | 가입할 이메일 |
-| `password` | `string` | Y | 비밀번호. 영문·숫자·특수문자를 모두 포함한 8~128자(기본안, Q04) |
+| `password` | `string` | Y | 비밀번호. 8자 이상, UTF-8 72바이트 이하, 영문·숫자 각 1자 이상(Q04 정함). 특수문자는 필수가 아니다 |
 | `name` | `string` | Y | 표시 이름 |
 | `verified_token` | `string` | Y | ACC-A12에서 받은 가입 인증 토큰. 수정안 요청 |
 
@@ -240,7 +242,7 @@ HTTP `201`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `email_already_exists` | 이미 등록된 이메일 |
-| 400 | `password_policy_violation` | 비밀번호 규칙 위반. 어긴 조건은 `error.details.violations` |
+| 400 | `validation_failed` | 비밀번호 규칙 위반. `message`가 `password:`로 시작하고 `details`는 없다(Q04 정함) |
 | 400 | `email_not_verified` | 인증 토큰이 없거나 만료됐거나 다른 이메일의 토큰 |
 
 ```json
@@ -257,7 +259,8 @@ HTTP `201`.
 - 계정 생성과 이메일 유일성 검사를 원자적으로 처리한다.
 - 가입 응답으로 로그인 세션을 만들지 않는다. 로그인 API를 별도로 호출한다.
 - (수정안 요청) 가입 전에 ACC-A11·A12로 이메일을 인증한다. `verified_token`의 이메일과 요청 email이 같아야 하고, 토큰은 가입 성공 때 소비한다.
-- 검사 순서(-219 구현): 필드 검사(`validation_failed`) → 비밀번호 규칙(`validation_failed`, `message`가 `password:`로 시작) → `verified_token`(`email_not_verified`) → 이메일 중복(409 `email_already_exists`). 비밀번호 규칙 위반은 지금 구현에서 위 오류 표의 `password_policy_violation`이 아니라 `validation_failed`이고 `details.violations`도 없다. `password_policy_violation`으로 옮길지는 ACC-A06과 함께 따로 정한다(PR #118 알려진 한계 6). 그래서 토큰 없이 보내면 이미 가입한 이메일이어도 400 `email_not_verified`가 먼저 나온다. 이미 가입한 이메일은 보통 ACC-A11에서 409로 걸러진다. 토큰 검사 뒤 409로 실패하면 가입이 되돌려져 토큰은 소비되지 않는다.
+- 검사 순서(-219 구현): 필드 검사(`validation_failed`) → 비밀번호 규칙(`validation_failed`, `message`가 `password:`로 시작) → `verified_token`(`email_not_verified`) → 이메일 중복(409 `email_already_exists`). 그래서 토큰 없이 보내면 이미 가입한 이메일이어도 400 `email_not_verified`가 먼저 나온다. 이미 가입한 이메일은 보통 ACC-A11에서 409로 걸러진다. 토큰 검사 뒤 409로 실패하면 가입이 되돌려져 토큰은 소비되지 않는다.
+- 비밀번호 규칙 위반은 따로 이름 붙인 코드 없이 `validation_failed`로 둔다(Q04 정함, 11-06). 화면이 제출 전에 같은 규칙을 먼저 검사해 따로 반응할 일이 없어서다. 서버만 아는 규칙(유출 비밀번호 목록 등)이 생기면 그때 전용 코드를 둔다.
 - (수정안 요청) 비밀번호 규칙은 ACC-A06·임시 비밀번호와 같다. 화면도 같은 규칙으로 미리 검사하지만 최종 판정은 서버다.
 - (수정안 요청 · 자동 참여, Q05 정함) 가입하면 그 이메일로 대기(PENDING) 중인 초대를 멤버십으로 바꾸고 초대의 `accepted_at`을 채운다. 규칙은 ACC-A02 로그인과 같다. 인증한 이메일(verified_token)로만 바꾸므로 ACC-A11·A12와 같이 또는 그 뒤에 배포한다.
 
@@ -672,7 +675,7 @@ HTTP `204`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `current_password_mismatch` | 현재 비밀번호 불일치 |
-| 400 | `password_policy_violation` | 비밀번호 규칙 위반. 지금 구현은 아래 처리 규칙대로 `validation_failed`다 |
+| 400 | `validation_failed` | 새 비밀번호 규칙 위반. `message`가 `password:`로 시작하고 `details`는 없다(ACC-A01과 같음) |
 
 ```json
 {
@@ -688,7 +691,7 @@ HTTP `204`.
 - 비밀번호 해시를 갱신한다.
 - (-171 구현, Q04 기본안) 성공하면 이 요청의 세션만 남기고 같은 계정의 다른 세션을 모두 끊는다. 받아 두고 쓰지 않은 임시 비밀번호도 닫는다.
 - (-171 구현) 검사 순서: 필드 검사(400 `validation_failed`) → 현재 비밀번호(400 `current_password_mismatch`) → 새 비밀번호 규칙. 세션은 유효하므로 현재 비밀번호가 틀려도 401이 아니다.
-- 비밀번호 규칙 위반은 지금 구현에서 위 오류 표의 `password_policy_violation`이 아니라 가입(ACC-A01)과 같은 400 `validation_failed`이고, `message`가 `password:`로 시작한다. 어느 코드로 맞출지는 ACC-A01과 함께 정한다(PR #118 알려진 한계 6).
+- 새 비밀번호 규칙 위반은 가입(ACC-A01)과 같은 400 `validation_failed`이고, `message`가 `password:`로 시작한다(Q04 정함, 11-06).
 - 비밀번호·인증정보를 응답이나 로그에 남기지 않는다.
 - (수정안 요청) 임시 비밀번호로 로그인한 사람은 current_password에 임시 비밀번호를 보낸다. 성공하면 must_change_password가 풀린다. 변경 뒤 완료 화면 없이 회원 설정으로 돌아간다.
 
