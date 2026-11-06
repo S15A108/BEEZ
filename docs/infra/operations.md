@@ -171,8 +171,8 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
      "select version, description, checksum, success, installed_on from flyway_schema_history order by installed_rank desc limit 10"'
    ```
 
-   로컬 PC(Git Bash, `python` 필요)에서 되돌릴 SHA의 마이그레이션 파일과 DB 적용 이력을 **버전마다 checksum으로** 대조합니다.
-   DB 이력은 `ssh beez`로 조회만 합니다.
+   로컬 PC(Git Bash, `python` 필요)에서 되돌릴 SHA의 마이그레이션 파일과 DB 적용 이력을 **버전마다 checksum·설명·유형으로**
+   대조합니다(Flyway 검증이 셋 다 봅니다). DB 이력은 `ssh beez`로 조회만 합니다.
 
    ```bash
    OLD=<되돌릴 SHA>; DIR=backend/src/main/resources/db/migration; JDIR=backend/src/main/java/db/migration
@@ -181,37 +181,42 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    sum='import sys,zlib; t=sys.stdin.buffer.read().decode("utf-8").lstrip(chr(0xfeff)); c=zlib.crc32(t.replace("\r","").replace("\n","").encode()); print(c-(1<<32) if c>=1<<31 else c)'
    if ! python -c "$sum" < /dev/null > /dev/null; then echo "python 을 실행하지 못함 — 중단"
    elif ! g fetch -q origin || ! g cat-file -e "$OLD^{commit}" 2> /dev/null; then echo "fetch 실패 또는 없는 SHA — 중단"
-   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success, type from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
+   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success, type, description from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
      echo "DB 이력을 받지 못함 — 중단"
    else
      g ls-tree -r --name-only "$OLD" -- "$DIR/" "$JDIR/" | grep -E '/V[0-9][0-9_]*__' | while read -r f; do
        v=${f##*/V}; v=${v%%__*}; v=${v//_/.}   # V1_1__ 은 DB 에 1.1 로 기록된다
-       case $f in *.sql) echo "$v|$(g show "$OLD:$f" | python -c "$sum")" ;; *) echo "$v|" ;; esac   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
+       s=${f#*__}; s=${s%.*}; s=${s//_/ }       # 설명 = 파일 이름의 __ 뒤에서 확장자를 빼고 _ 를 공백으로
+       case $f in *.sql) echo "$v|$(g show "$OLD:$f" | python -c "$sum")|SQL|$s" ;; *) echo "$v||JDBC|$s" ;; esac   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
      done > "$T/old"
      # Flyway 기본 검증(outOfOrder 꺼짐, *:future 만 무시)으로 예전 backend 가 어떻게 되는지 번호마다 가른다.
      # 번호의 높낮이는 수로 비교하므로 정수 번호(V1, V2 …)만 맞다. 점 버전(V1_10 과 V1_9)은 순서가 틀릴 수 있다
-     awk -F'|' 'NR == FNR { o[$1] = $2; if ($1 + 0 > om) om = $1 + 0; next }
+     awk -F'|' 'NR == FNR { o[$1] = $2; ot[$1] = $3; od[$1] = $4; if ($1 + 0 > om) om = $1 + 0; next }
           $4 != "SQL" && $4 != "JDBC" { next }   # 스키마 생성·baseline 같은 Flyway 기록용 행은 마이그레이션이 아니다
           { d[$1] = 1; if ($1 + 0 > dm) dm = $1 + 0 }
           $3 != "t" { print "V" $1 ": 실패한 마이그레이션 — 어느 backend도 기동 못 함. 되돌리기 전에 스키마 상태부터 확인"; next }
           !($1 in o) && $1 + 0 > om { print "V" $1 ": 되돌릴 SHA가 모르는 상위 번호 — 판단 대상 (DB checksum " $2 ")"; next }
           !($1 in o) { print "V" $1 ": DB에만 있는데 되돌릴 SHA의 최신 번호보다 낮음 — 되돌리면 예전 backend 기동 실패"; next }
-          o[$1] != $2 { print "V" $1 ": checksum 다름 — 되돌리면 예전 backend 기동 실패 (DB " $2 ", 되돌릴 SHA " o[$1] ")" }
+          { m = "" }
+          o[$1] != $2 { m = m " checksum(DB " $2 ", 되돌릴 SHA " o[$1] ")" }
+          ot[$1] != $4 { m = m " 유형(DB " $4 ", 되돌릴 SHA " ot[$1] ")" }
+          od[$1] != $5 { m = m " 설명(DB \"" $5 "\", 되돌릴 SHA \"" od[$1] "\")" }
+          m != "" { print "V" $1 ": 기록 다름 —" m " — 되돌리면 예전 backend 기동 실패" }
           END { for (v in o) if (!(v in d)) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
                   (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음") }' \
        "$T/old" "$T/db" | sort -n -k1.2
-     echo "대조 끝 (DB $(grep -cE '\|(SQL|JDBC)$' "$T/db")개, 되돌릴 SHA $(wc -l < "$T/old")개)"
+     echo "대조 끝 (DB $(grep -cE '^([^|]*\|){3}(SQL|JDBC)\|' "$T/db")개, 되돌릴 SHA $(wc -l < "$T/old")개)"
    fi; rm -rf "$T"
    ```
 
    - **`대조 끝` 줄만 나오면** DB에 들어간 마이그레이션이 모두 되돌릴 SHA의 파일과 같습니다. 스키마 걱정 없이 되돌릴 수 있습니다.
    - 마이그레이션은 SQL(`$DIR`)과 Java(`$JDIR`, 예: `V21__backfill_llm_usage.java`)가 같은 번호 체계를 씁니다. Java는
-     checksum이 없어 번호만 대조하므로, 같은 번호의 Java 내용이 바뀐 것은 이 대조로 알 수 없습니다. 판단 대상이 Java면
+     checksum이 없어 번호·설명·유형만 대조하므로, 같은 번호의 Java 내용이 바뀐 것은 이 대조로 알 수 없습니다. 판단 대상이 Java면
      그 파일을 직접 읽습니다(아래 의심 줄 grep·판 찾기는 SQL만 봅니다).
    - **`기동 실패`가 하나라도 있으면 되돌리지 않습니다.** 예전 backend의 Flyway가 기본 검증(설정에서 바꾸지 않음)에서
-     멈춥니다. 경우는 셋입니다. 되돌릴 SHA도 아는 번호인데 DB에 다른 내용이 들어감(`checksum 다름`, 작업 브랜치에서 같은
-     번호 파일을 고쳐 손 배포 등), DB에만 있는 번호가 되돌릴 SHA의 최신 번호보다 낮음(Flyway가 "적용됐는데 로컬에 없음"으로
-     봄), 되돌릴 SHA에만 있는 번호가 DB 최신 번호보다 낮음(`outOfOrder`가 꺼져 있어 적용하지 않고 멈춤).
+     멈춥니다. 경우는 셋입니다. 되돌릴 SHA도 아는 번호인데 DB에 다른 판이 들어감(`기록 다름` — checksum·설명·유형 중
+     하나라도 다름. 작업 브랜치에서 같은 번호 파일의 내용이나 이름을 고쳐 손 배포 등), DB에만 있는 번호가 되돌릴 SHA의
+     최신 번호보다 낮음(Flyway가 "적용됐는데 로컬에 없음"으로 봄), 되돌릴 SHA에만 있는 번호가 DB 최신 번호보다 낮음(`outOfOrder`가 꺼져 있어 적용하지 않고 멈춤).
      앞의 둘은 그 번호를 아는 다음 dev 배포도 막을 수 있으니 팀 채널에 알려 정리합니다.
    - **`실패한 마이그레이션`이 있으면** 지금 backend도 다시 켜지지 않습니다. 되돌리기보다 그 버전의 스키마 상태 확인이 먼저입니다.
    - **`되돌리는 순간 이 마이그레이션이 실행됨`은** 되돌릴 SHA에만 있는 번호가 DB 최신보다 높은 경우입니다. 되돌리면서
