@@ -57,6 +57,12 @@ sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /op
   `stat -c %G`에는 `UNKNOWN`으로 나온다. 정상이다.
 - 비밀번호 파일(`database.properties`)은 293이 쓴다. 이 스택은 파일이 없어도 뜬다(등록 때만 읽음).
 
+### 1-2. javaagent jar (261부터)
+
+아래 ["지표" → "jar 받기"](#jar-받기-서버당-한-번-버전을-올릴-때마다)를 먼저 한다. jar가 없으면 3단계에서 connect가
+`bind source path does not exist`로 뜨지 않는다(CDC 전달이 멈추고 복구 스캔만 돈다). 서버를 새로 세우거나 `/opt/beez`를
+옮길 때도 이 단계를 빼먹지 않는다.
+
 ### 2. 파일 올리기
 
 아래 "올리기·업데이트"의 명령을 그대로 쓴다. 처음에는 기존 폴더가 없어 옮기는 단계를 건너뛴다.
@@ -67,8 +73,12 @@ sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /op
 # 서버 (ssh beez)
 cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
 kt() { docker exec -e KAFKA_HEAP_OPTS=-Xmx128m beez-cdc-kafka-1 /opt/kafka/bin/"$@"; }
+cdcjar() { local f=/opt/beez/cdc/compose.yaml j; [ -f "$f" ] || { echo "compose 없음: $f"; return 1; }
+  if ! grep -q '/opt/beez/\.cdc-agents/' "$f"; then echo "이 compose 는 javaagent jar 를 쓰지 않음(261 이전) — 검사 생략"; return 0; fi
+  j=${CDC_JMX_AGENT_JAR:-$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' "$f" | head -n 1)}
+  if [ -n "$j" ] && [ -f "$j" ]; then echo "javaagent jar 있음: $j"; else echo "javaagent jar 없음: ${j:-compose 에서 경로를 못 읽음} — cdc-stack.md \"지표\" → \"jar 받기\" 먼저"; return 1; fi; }
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
-cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
+cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 # kafka    Up ... (healthy)   9092/tcp
 # connect  Up ... (healthy)   8083/tcp, 8778/tcp, 9092/tcp
 ```
@@ -141,16 +151,86 @@ kt kafka-topics.sh --bootstrap-server localhost:9092 --list
 - 1)의 healthy는 **worker 상태**다. kafka는 broker 응답, connect는 worker가 그룹에 들어가 REST가 답하는지만 본다.
   295에서 커넥터를 등록한 뒤에는 커넥터·task가 FAILED여도 healthy로 보인다. 그때부터는 커넥터 상태를 따로 본다:
   `docker exec beez-cdc-connect-1 curl -s 'http://127.0.0.1:8083/connectors?expand=status'` (connector·task 모두 RUNNING).
-  자동 수집·알림은 S15P31A108-261, 그 전까지는 계획 D6의 수동 확인(평일 오전·배포 뒤)으로 본다.
+  261부터는 아래 "지표"로 자동 수집하고 `CdcConnectorNotRunning` 등이 알린다.
 - 3)에서 `000`은 연결 거부다. 두 포트는 컨테이너 안 127.0.0.1에만 열려 있다. broker `kafka:9092`는 같은 망에서
   닿는 것이 정상이다(backend consumer가 쓴다).
 - 6)이 실패하면 파일·디렉터리 소유자와 권한(`root:1001`, 디렉터리 2750·파일 640)을 본다. 600이면 Connect가 읽지 못해 295의 커넥터
   등록이 실패한다.
 
+## 지표 (S15P31A108-261)
+
+Connect의 커넥터·task 상태를 Prometheus로 보낸다. Connect JVM 안에 **Prometheus JMX exporter javaagent**를 붙여 MBean을
+`connect:9404`의 HTTP로 내고, 모니터링 스택의 Prometheus가 job `connect`로 긁는다. Kafka lag은 이 스택이 아니라 모니터링 스택의
+kafka-exporter(job `kafka`)가 broker에 Kafka 프로토콜로 붙어 센다([monitoring.md 구성](monitoring.md#구성)). 알림은
+[monitoring-alerts.md "Kafka·Connect 알림 공통"](monitoring-alerts.md#kafkaconnect-알림-공통-s15p31a108-261).
+
+| 항목 | 값 |
+|---|---|
+| javaagent | `jmx_prometheus_javaagent-1.6.0.jar` — [prometheus/jmx_exporter 릴리스 1.6.0](https://github.com/prometheus/jmx_exporter/releases/tag/1.6.0) (1.1.0부터 Maven Central에 없음) |
+| sha256 | `a95983fd96e865d2bcdf911cc500e7c82808c27ab9fd226bf96732b6c3d8c46e` (릴리스의 `.sha256`과 같음, 11-06 로컬 확인) |
+| 서버 위치 | `/opt/beez/.cdc-agents/` — 스택 폴더 밖(올리기 때 폴더가 통째로 바뀜). 비밀이 아니라 `root` 소유 `644` |
+| 붙이는 법 | compose의 connect `KAFKA_OPTS=-javaagent:…=9404:…/connect-metrics.yaml`. jar는 `create_host_path: false` 바인드 마운트라 **없으면 connect가 뜨지 않는다** |
+| 내보내는 것 | `infra/cdc/dev/connect-metrics.yaml`의 허용 목록뿐: 커넥터·task 상태(`kafka_connect_connector_status`·`kafka_connect_task_status`, 상태는 라벨), 커넥터별 task 수, worker 커넥터·task 수, Debezium 스트리밍 연결 여부·마지막 이벤트 뒤 시간·본 이벤트 수, 에이전트 기본 JVM 지표(힙·RSS) |
+| 라벨 | 커넥터 이름·task 번호·상태 문자열·Debezium `server`(`beez`)뿐. 설정값·비밀번호·접수행 값 없음 |
+| 메모리 | 붙이기 전후 connect 638 → 641MiB(11-06 로컬, 커넥터 RUNNING) |
+| 노출 | 호스트 포트 없음. 9404는 `beez_default` 안에서 열려 **같은 망 컨테이너가 읽을 수 있다**(읽기 전용 지표). 계획 D3 "남는 위험"에 더한 것 |
+
+- 이미지의 `ENABLE_JMX_EXPORTER` 훅은 쓰지 않는다. jar가 이미지에 없고(debezium 2.7.3에는 jolokia만 있음), 훅이 읽는
+  설정 경로 `/kafka/config`가 이 compose에서 tmpfs다.
+- `KAFKA_OPTS`는 컨테이너 env라 `docker exec`로 connect 안에서 JVM 도구를 돌리면 같은 javaagent가 9404를 다시 열려다 실패한다.
+  Kafka 도구는 kafka 컨테이너의 `kt`로 돌린다. `curl`(REST 조회 `crest`)은 상관없다.
+- 상태 문자열은 Connect 소문자 그대로다: `running`·`paused`·`failed`·`unassigned`·`restarting`·`stopped`. pause한 커넥터도 슬롯은
+  활성으로 남는다(11-06 로컬).
+- **설정이 틀리면 Connect가 뜨지 않는다.** YAML·정규식 오류나 파일이 없으면 javaagent가 JVM을 `exit 1`로 끝낸다(11-06 로컬 실측).
+  그래서 `connect-metrics.yaml`을 바꾸면 PR 전에 아래로 시험한다. CI `cdc-stack` 잡도 같은 것을 돌린다(jar 버전은 compose의 기본
+  경로에서 읽고 sha256으로 확인). Connect와 같은 이름의 가짜 MBean을 올린 빈 JVM에 jar를 붙여, 기동하는지와 알림이 읽는 시계열
+  네 개가 그 이름·라벨로 나오는지 본다.
+
+```bash
+# 로컬 PC (Git Bash, infra/cdc/dev). java 11 이상. jar 는 아래 "jar 받기"와 같은 파일(sha256 확인한 것)
+bash tests/check-connect-metrics.sh <jar 경로>
+# ok: javaagent 기동, 알림이 읽는 시계열 4개
+```
+
+### jar 받기 (서버당 한 번, 버전을 올릴 때마다)
+
+이 스택을 261 이후 커밋으로 올리기 **전에** 한다. jar가 없으면 `cdc up`이 connect를 만들다 `bind source path does not exist`로 멈춘다.
+
+```bash
+# 서버 (ssh beez). 받은 파일을 sha256 으로 확인한 뒤에만 옮긴다. 확인이 실패하면 아무것도 바뀌지 않는다
+V=1.6.0; SUM=a95983fd96e865d2bcdf911cc500e7c82808c27ab9fd226bf96732b6c3d8c46e; J=jmx_prometheus_javaagent-$V.jar
+curl -fsSL -o "/tmp/$J" "https://github.com/prometheus/jmx_exporter/releases/download/$V/$J" &&
+  echo "$SUM  /tmp/$J" | sha256sum -c - &&
+  sudo install -d -o root -g root -m 755 /opt/beez/.cdc-agents &&
+  sudo install -o root -g root -m 644 "/tmp/$J" "/opt/beez/.cdc-agents/$J"
+rm -f "/tmp/$J"; ls -l /opt/beez/.cdc-agents/
+# -rw-r--r-- 1 root root 10714619 ... jmx_prometheus_javaagent-1.6.0.jar
+```
+
+- 버전을 올릴 때는 이 블록의 `V`·`SUM`, compose의 기본 경로(`CDC_JMX_AGENT_JAR`), 위 표를 함께 바꾸고, 새 jar를 먼저 받은 뒤
+  스택을 올린다. 옛 jar는 되돌릴 때까지 남겨 둔다.
+
+### 지표 확인
+
+```bash
+# 서버 (ssh beez). mon 함수는 monitoring.md "처음 올리기" 4단계. prometheus 컨테이너가 beez_default 에서 connect 를 긁는 경로 그대로 본다
+mon exec -T prometheus wget -qO- http://connect:9404/metrics | grep -E '^(kafka_connect_(connector|task)_status|debezium_streaming_connected)'
+# kafka_connect_connector_status{connector="beez-published-analysis-1",status="running"} 1.0
+# kafka_connect_task_status{connector="beez-published-analysis-1",status="running",task="0"} 1.0
+# debezium_streaming_connected{server="beez"} 1.0
+```
+
+- `connect-metrics.yaml`만 바꾼 올리기는 compose 설정이 그대로라 connect가 다시 만들어지지 않는다. 이 파일은 바인드 마운트라
+  옛 폴더(`cdc.old`)의 파일을 계속 본다. 그래서 그때는 `cdc up -d --wait --force-recreate connect`로 다시 만든다.
+
 ## 올리기·업데이트
 
 설정이나 이미지 버전을 바꿀 때는 PR로 `infra/cdc/dev/`를 고쳐 dev에 넣은 뒤 아래를 돌린다. 서버에서 파일을 직접
 고치지 않는다(다음 올리기에 덮인다).
+
+**선행 조건(261부터)**: 올릴 compose가 가리키는 javaagent jar가 서버 `/opt/beez/.cdc-agents/`에 있어야 한다. 없으면
+connect가 `bind source path does not exist`로 뜨지 않는다. 이 버전을 처음 올리는 서버이거나 jar 버전을 올린 PR이면 먼저
+["지표" → "jar 받기"](#jar-받기-서버당-한-번-버전을-올릴-때마다)를 한다. 아래 서버 명령의 `cdcjar`가 jar가 없으면 `up` 전에 멈춘다.
 
 ```bash
 # 로컬 PC (Git Bash, 저장소 루트). REV 는 올릴 커밋. PR 검증 중이면 그 브랜치의 커밋(HEAD 등)
@@ -171,24 +251,38 @@ git archive "$SHA" infra/cdc/dev | ssh beez "set -e; cd /opt/beez
 그다음 서버에서 다시 띄운다.
 
 ```bash
-# 서버 (ssh beez). cdc 함수는 "처음 올리기" 3단계. 첫 줄은 "확인" 2)의 기준을 이번 올리기 직전으로 새로 잡는다
+# 서버 (ssh beez). 함수 두 개는 셸마다 다시 정의한다("처음 올리기" 3단계와 같음). cdcjar 는 올린 compose 가 가리키는
+# javaagent jar 가 서버에 있는지 본다 — 없으면 connect 가 뜨지 않으므로 up 하지 않고 멈춘다(S15P31A108-261, PR #186 리뷰).
+# compose 가 /opt/beez/.cdc-agents/ 를 가리키지 않으면(261 이전 버전으로 되돌린 경우) jar 가 필요 없으므로 검사를 건너뛴다.
+# 셸에 CDC_JMX_AGENT_JAR 가 있으면 compose 처럼 그 경로를 본다(compose 의 기본 경로를 덮어쓰는 env).
+# ss 줄은 "확인" 2)의 기준을 이번 올리기 직전으로 새로 잡는다
+cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
+cdcjar() { local f=/opt/beez/cdc/compose.yaml j; [ -f "$f" ] || { echo "compose 없음: $f"; return 1; }
+  if ! grep -q '/opt/beez/\.cdc-agents/' "$f"; then echo "이 compose 는 javaagent jar 를 쓰지 않음(261 이전) — 검사 생략"; return 0; fi
+  j=${CDC_JMX_AGENT_JAR:-$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' "$f" | head -n 1)}
+  if [ -n "$j" ] && [ -f "$j" ]; then echo "javaagent jar 있음: $j"; else echo "javaagent jar 없음: ${j:-compose 에서 경로를 못 읽음} — cdc-stack.md \"지표\" → \"jar 받기\" 먼저"; return 1; fi; }
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
-cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
+cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 ```
 
-- 설정 파일을 바인드 마운트하지 않으므로 compose 파일이 바뀌면 compose가 알아채 바뀐 컨테이너만 다시 만든다.
+- compose 파일이 바뀌면 compose가 알아채 바뀐 컨테이너만 다시 만든다. 바인드 마운트하는 설정 파일은 connect의
+  `connect-metrics.yaml` 하나(261)이고, 이것만 바뀌었으면 위 "지표 확인"대로 connect를 `--force-recreate`한다.
 - **consumer를 켠 뒤(295 이후)에 kafka 컨테이너가 다시 만들어지면** 그동안 broker가 응답하지 않는다. 이미 떠 있는
   backend는 계속 healthy이고 처리는 복구 스캔이 30초 지연으로 이어 간다(계획 D7). 다만 그 사이 dev 머지 배포가
   겹치면 backend가 뜨지 못할 수 있으므로, Kafka를 바꾸는 올리기는 머지가 없는 시간에 한다(298 전까지).
 - 이미지 버전을 올릴 때는 태그와 digest를 함께 바꾼다. digest는
   `docker buildx imagetools inspect <이미지>:<태그>`의 `Digest:`(멀티 아키텍처 인덱스)를 쓴다.
-- 되돌리기: 서버에서 `cd /opt/beez && mv cdc cdc.bad && mv cdc.old cdc` 뒤 위 명령으로 다시 띄운다.
+- 되돌리기: 서버에서 `cd /opt/beez && mv cdc cdc.bad && mv cdc.old cdc` 뒤 위 명령으로 다시 띄운다. 되돌린 compose가
+  javaagent를 쓰지 않는 261 이전 버전이면 `cdcjar`는 검사를 건너뛰고 통과한다. 이전 jar 버전을 쓰는 compose면 그 jar가
+  남아 있어야 한다("jar 받기"에서 옛 jar를 지우지 않는 이유).
 
 ## 중지·내리기
 
 S15P31A108-298부터는 consumer가 켜진 채 Kafka를 내려도 backend가 기동하고 healthy다. 분석은 복구 스캔이 이어
 가고, Kafka가 돌아오면 consumer가 재시작 없이 다시 붙는다. 그래서 **consumer를 먼저 끄는 것은 필수가 아니다.**
 다만 5분 넘게 내리면 `CdcConsumerDown`이 울리므로, 계획된 점검이면 1번처럼 consumer만 끄거나 알림을 일시 중지한다.
+261부터는 같은 조건(consumer 켜짐)에서 `CdcKafkaUnreachable`·`CdcConnectDown`도 5분 뒤 함께 운다. 일시 중지는 이름을
+`alertname=~"CdcConsumerDown|CdcKafkaUnreachable|CdcConnectDown|CdcConnectorNotRunning"`처럼 묶어 건다.
 
 | 순서 | 할 일 | 비고 |
 |---|---|---|
@@ -226,10 +320,10 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 | 6 | 처리 재개 확인 | `beez_cdc_analysis_consumer_enabled` = 1, `beez_cdc_kafka_consumer_up` = 1, 4번에서 적은 PENDING이 줄어든다 |
 
 ```bash
-# 서버 (ssh beez). cdc·kt 함수는 "처음 올리기" 3단계, PG·pgsql 은 cdc-postgres.md "0. 준비"
+# 서버 (ssh beez). cdc·kt·cdcjar 함수는 "처음 올리기" 3단계, PG·pgsql 은 cdc-postgres.md "0. 준비"
 # 2) "확인" 2)의 기준을 띄우기 직전으로 새로 잡고 띄운다. up 은 stop 으로 멈춘 것도 다시 띄우고 healthy 까지 기다린다
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
-cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
+cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 # 3) 커넥터·task 상태. 커넥터가 없으면(295 전) {}
 docker exec beez-cdc-connect-1 curl -s 'http://127.0.0.1:8083/connectors?expand=status'; echo
 #    슬롯. Connect 가 다시 붙기까지 몇 초 걸릴 수 있다. retained 는 슬롯이 붙잡고 있는 WAL 양
@@ -279,7 +373,7 @@ cdc down -v && docker volume ls | grep beez-cdc    # 출력이 없으면 정리 
   버전으로 돈 것이 근거다(계획 D2, 11-05 전진 확인). 실제 커넥터 조합은 295 로컬 리허설이 처음이다.
 - 단일 서버·단일 broker. broker가 죽으면 전달이 멈추고 복구 스캔이 받친다.
 - 같은 망 컨테이너가 broker를 읽고 쓸 수 있다(계획 D3 "남는 위험").
-- Connect·task 상태 수집은 S15P31A108-261. 그 전까지는 계획 D6의 수동 확인으로 본다.
+- Connect 지표 포트 9404는 같은 망 컨테이너가 읽을 수 있다(위 "지표", 허용 목록으로 좁힘). 쓰기·설정 변경 경로는 없다.
 - 비밀 파일 권한 함정(uid 1001)은 Windows 바인드 마운트에서 재현되지 않아 로컬에서 확인하지 못했다. 서버 "확인" 6)으로 본다.
 
 ## 로컬 확인 기록 (11-05, Docker Desktop 29.6.1)
@@ -334,3 +428,21 @@ CDC_SECRETS_DIR=<더미 디렉터리> docker compose -f infra/cdc/dev/compose.ya
 | 7) 토픽 | 접수 토픽, Connect 내부 토픽 셋(파티션 1·25·5, compact·복제 1), `__consumer_offsets` |
 | 메모리 | kafka 413MiB·connect 564MiB(상한 각 1GiB), 서버 사용 가능 약 12.4GB |
 | 본 스택 | backend·ai·postgres healthy 그대로. 이름 없는(dangling) 볼륨 0 |
+
+### 2026-11-06 지표(261) 로컬 확인
+
+javaagent를 붙인 이 compose로 로컬 리허설과 같은 구성(pgvector `wal_level=logical`, 커넥터 등록)을 띄웠다.
+
+| 확인 | 결과 |
+|---|---|
+| 리슨 | connect 컨테이너 안 `*:9404`(javaagent)가 새로 생기고 `127.0.0.1:8083`(REST)은 그대로. kafka는 변화 없음 |
+| 메모리 | 커넥터 RUNNING 상태에서 javaagent 없이 638MiB, 붙인 뒤 641MiB |
+| 지표 | `connect:9404/metrics`에 허용 목록 지표만(위 "지표" 표). pause하면 connector·task 모두 `status="paused"` |
+| jar 없음 | (서버와 같은 리눅스 경로 기준) `create_host_path: false`라 `bind source path does not exist`로 connect가 뜨지 않는다 — 비밀 디렉터리와 같은 동작이라 따로 재현하지 않음 |
+
+### 2026-11-06 지표(261) 서버 적용 (전진 실행, 검증은 읽기 전용)
+
+jar 받기(`/opt/beez/.cdc-agents/jmx_prometheus_javaagent-1.6.0.jar`, `root:root 644`, sha256 `OK`) 뒤 PR #186 브랜치 커밋 `d295ecef`를
+"올리기·업데이트"로 올렸다. connect만 다시 만들어져 18초 뒤 healthy, kafka는 그대로였다. 커넥터·task RUNNING, 슬롯 active, 호스트
+리슨 주소 변화 없음, connect 565MiB. 결과 상세는 [monitoring-alerts.md 검증 기록](monitoring-alerts.md#2026-11-06-서버-s15p31a108-261).
+머지 뒤 `REV=origin/dev`로 다시 올린다.

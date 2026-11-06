@@ -50,7 +50,7 @@ services:
       # kafka-run-class.sh 는 이 값이 비어 있으면 -Dcom.sun.management.jmxremote 를 넣는다. 그러면 JVM 이 JMX(RMI)
       # 커넥터를 모든 인터페이스의 임의 포트에 연다(루프백 접속만 받지만 같은 망에 열린 포트가 생김). 쓰지 않으므로
       # 해가 없는 값으로 채워 막는다. jmxremote=false 로는 안 된다 — 속성이 있기만 해도 JVM 이 커넥터를 연다(로컬 실측).
-      # 지표 수집(S15P31A108-261)은 프로세스 안 javaagent 라 이것이 필요 없다
+      # broker 지표(S15P31A108-261)는 모니터링 스택의 kafka-exporter 가 Kafka 프로토콜(9092)로 읽어 JMX 가 필요 없다
       KAFKA_JMX_OPTS: -Djava.awt.headless=true
     volumes:
       - kafka-data:/var/lib/kafka/data
@@ -107,7 +107,23 @@ services:
       HEAP_OPTS: -Xms512m -Xmx512m
       # kafka 서비스의 KAFKA_JMX_OPTS 와 같은 이유로 JMX 커넥터 포트를 막는다
       KAFKA_JMX_OPTS: -Djava.awt.headless=true
+      # 지표(S15P31A108-261): Prometheus JMX exporter javaagent 를 같은 JVM 에 붙여 MBean 을 9404 HTTP 로 낸다.
+      # REST(127.0.0.1:8083)·JMX 원격 포트는 열지 않는다. 9404 는 beez_default 안에서만 닿고(호스트 publish 없음)
+      # 내보내는 MBean 은 connect-metrics.yaml 의 허용 목록뿐이다(계획 D3 "남는 위험"에 더함).
+      # 이미지의 ENABLE_JMX_EXPORTER 훅은 jar 가 /kafka/libs 에, 설정이 /kafka/config(여기선 tmpfs)에 있어야 해서 쓰지 않는다.
+      # 이 env 는 docker exec 로 이 컨테이너에서 돌리는 JVM 도구에도 물려 9404 충돌로 실패한다 — 도구는 kafka 컨테이너에서 돌린다
+      KAFKA_OPTS: -javaagent:/opt/jmx-exporter/jmx_prometheus_javaagent.jar=9404:/opt/jmx-exporter/connect-metrics.yaml
     volumes:
+      # javaagent jar(prometheus/jmx_exporter GitHub 릴리스, 버전·sha256 은 docs/infra/cdc-stack.md "지표(261)").
+      # 비밀 디렉터리처럼 스택 폴더 밖에 둔다(올리기 때 폴더가 통째로 바뀜). 없으면 Docker 가 빈 디렉터리를 만들지 않고
+      # 기동을 멈춘다 — 그래서 jar 를 먼저 받아 두고 스택을 올린다
+      - type: bind
+        source: ${CDC_JMX_AGENT_JAR:-/opt/beez/.cdc-agents/jmx_prometheus_javaagent-1.6.0.jar}
+        target: /opt/jmx-exporter/jmx_prometheus_javaagent.jar
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./connect-metrics.yaml:/opt/jmx-exporter/connect-metrics.yaml:ro
       # 복제 계정 비밀번호 파일(database.properties)이 든 서버 디렉터리. 스택 폴더 밖에 둔다(올리기 때 폴더가 통째로 바뀜).
       # 컨테이너가 uid 1001 로 돌므로 서버에서 root:1001 750(디렉터리)·640(파일). 파일은 S15P31A108-293 이 쓴다.
       # create_host_path: false — 디렉터리가 없으면 Docker 가 root 소유 빈 디렉터리를 만들지 않고 기동을 멈춘다
