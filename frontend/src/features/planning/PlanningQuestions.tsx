@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { Lightbulb, RefreshCw } from 'lucide-react'
 import type { PlanningQuestion } from '@/api/contracts/common'
 import { planningApi } from '@/api/services'
@@ -50,17 +50,32 @@ export function PlanningQuestions({
   isLeader,
   busy,
   generation,
+  answerable,
+  published,
   onAnswer,
 }: {
   projectId: string
   isLeader: boolean
   busy: boolean
   generation?: QuestionGenerationView
+  /** 기준 설계가 발행되면 서버가 답변을 막는다(409 design_already_published) */
+  answerable: boolean
+  published: boolean
   onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
 }) {
   const [answering, setAnswering] = useState<PlanningQuestion | null>(null)
   const generating =
     generation?.status === 'PENDING' || generation?.status === 'RUNNING'
+  const queryClient = useQueryClient()
+  // 질문 생성이 끝나는 순간에는 마지막 목록이 완료 직전 값일 수 있어, 끝날 때 한 번 더 읽는다.
+  const wasGenerating = useRef(false)
+  useEffect(() => {
+    if (wasGenerating.current && !generating)
+      void queryClient.invalidateQueries({
+        queryKey: ['projects', projectId, 'planning-questions'],
+      })
+    wasGenerating.current = generating
+  }, [generating, projectId, queryClient])
   const questions = useInfiniteQuery({
     queryKey: ['projects', projectId, 'planning-questions'],
     initialPageParam: undefined as string | undefined,
@@ -136,6 +151,8 @@ export function PlanningQuestions({
                         question={question}
                         isLeader={isLeader}
                         busy={busy}
+                        answerable={answerable}
+                        published={published}
                         onAnswer={() => setAnswering(question)}
                       />
                     ))}
@@ -172,16 +189,20 @@ function QuestionCard({
   question,
   isLeader,
   busy,
+  answerable,
+  published,
   onAnswer,
 }: {
   question: PlanningQuestion
   isLeader: boolean
   busy: boolean
+  answerable: boolean
+  published: boolean
   onAnswer: () => void
 }) {
   const dismissed = question.status === 'DISMISSED'
   const answered = !!question.answer && !dismissed
-  const clickable = isLeader && !busy
+  const clickable = isLeader && !busy && answerable
   return (
     <article
       className={cn(
@@ -236,6 +257,11 @@ function QuestionCard({
       {answered && (
         <p className="mt-3 rounded-md bg-muted/50 p-3 text-sm whitespace-pre-wrap">
           {question.answer}
+        </p>
+      )}
+      {isLeader && published && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          기준 설계가 발행되어 답변을 바꿀 수 없어요.
         </p>
       )}
       {clickable && (

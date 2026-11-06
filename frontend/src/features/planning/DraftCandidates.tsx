@@ -60,12 +60,22 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
         ))}
       </dl>
     )
-  const changed = keys.filter(
-    (key) =>
-      candidate.changed_fields.includes(key) ||
-      candidate.conflicting_fields.includes(key),
+  const changes = new Map(
+    candidate.changed_fields.map((change) => [change.field, change]),
   )
+  // 충돌만 있고 값은 그대로인 필드도 보인다(AI 계약: 제안이 저장값으로 돌아온 경우).
+  const changed = [
+    ...new Set([...changes.keys(), ...candidate.conflicting_fields]),
+  ]
   const same = keys.filter((key) => !changed.includes(key))
+  const valueOf = (key: string, side: 'before' | 'after') => {
+    const change = changes.get(key)
+    const content = side === 'before' ? before : after
+    if (change?.change === (side === 'before' ? 'ADDED' : 'REMOVED'))
+      return side === 'before' ? '(없음)' : '(삭제)'
+    if (change) return textOf(change[side])
+    return key in content ? textOf(content[key]) : '(없음)'
+  }
   return (
     <div className="grid gap-2">
       {changed.map((key) => {
@@ -81,6 +91,8 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
           >
             <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
               {labelOf(key)}
+              {changes.get(key)?.change === 'ADDED' && <Tag>추가</Tag>}
+              {changes.get(key)?.change === 'REMOVED' && <Tag>삭제</Tag>}
               {conflict && (
                 <Tag tone={operationTone.UPDATE}>원문과 답변이 달라요</Tag>
               )}
@@ -91,7 +103,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
                   이전
                 </p>
                 <p className="break-words whitespace-pre-wrap">
-                  {key in before ? textOf(before[key]) : '(없음)'}
+                  {valueOf(key, 'before')}
                 </p>
               </div>
               <div className="rounded bg-[#e8f3ec] p-2 text-sm">
@@ -99,7 +111,7 @@ function Compare({ candidate }: { candidate: DraftCandidate }) {
                   이후
                 </p>
                 <p className="break-words whitespace-pre-wrap">
-                  {key in after ? textOf(after[key]) : '(삭제)'}
+                  {valueOf(key, 'after')}
                 </p>
               </div>
             </div>

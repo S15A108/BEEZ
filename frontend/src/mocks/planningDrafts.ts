@@ -185,9 +185,23 @@ function candidatesFor(
           description: `${String(item.content.description ?? '')} (답변을 반영해 구체화)`,
           ...(clarification ? { clarification } : {}),
         },
-        changed_fields: clarification
-          ? ['description', 'clarification']
-          : ['description'],
+        changed_fields: [
+          {
+            field: 'description',
+            change: 'CHANGED',
+            before: item.content.description,
+            after: `${String(item.content.description ?? '')} (답변을 반영해 구체화)`,
+          },
+          ...(clarification
+            ? [
+                {
+                  field: 'clarification',
+                  change: 'ADDED' as const,
+                  after: clarification,
+                },
+              ]
+            : []),
+        ],
         conflicting_fields: conflicted ? ['description'] : [],
         sources: item.source
           ? [{ ...item.source, quote: line.slice(0, 120) }]

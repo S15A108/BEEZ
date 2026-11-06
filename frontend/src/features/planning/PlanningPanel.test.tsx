@@ -5,6 +5,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authApi, documentsApi, planningApi } from '@/api/services'
+import { vi } from 'vitest'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -29,7 +30,7 @@ afterEach(() => {
   localStorage.clear()
 })
 
-function renderPanel(isLeader = true) {
+function renderPanel(isLeader = true, projectId = '102') {
   const user = userEvent.setup()
   render(
     <QueryClientProvider
@@ -37,7 +38,7 @@ function renderPanel(isLeader = true) {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <PlanningPanel projectId="102" isLeader={isLeader} />
+      <PlanningPanel projectId={projectId} isLeader={isLeader} />
     </QueryClientProvider>,
   )
   return user
@@ -216,6 +217,9 @@ it('충돌한 필드는 확정해야 채택하고 채택하면 설계 항목이 
     'article',
   ) as HTMLElement
   expect(within(card).getByText('원문과 답변이 달라요')).toBeInTheDocument()
+  // changed_fields 는 {field, change, before, after} 객체다. 답변으로 새로 생긴 필드는 '추가'로 보인다.
+  expect(within(card).getByText('추가')).toBeInTheDocument()
+  expect(within(card).getByText('답변 반영 내용')).toBeInTheDocument()
   const adopt = within(card).getByRole('button', { name: '채택' })
   expect(adopt).toBeDisabled()
   await user.click(
@@ -325,4 +329,39 @@ it('다시 만들기가 실패해도 이전에 완료된 후보를 계속 보인
   expect(
     (await screen.findAllByText(/초안을 만들지 못했어요/)).length,
   ).toBeGreaterThan(0)
+})
+
+// 리뷰 반영: 닫으면 서버가 이전 답변을 지우므로 이미 답한 질문에는 닫기를 보이지 않는다.
+it('이미 답한 질문의 수정 창에는 답하지 않고 닫기를 보이지 않는다', async () => {
+  await planningApi.answerQuestion('102', '65', { answer: '팀장만 승인해요.' })
+  const user = renderPanel()
+  await screen.findByText('전체 질문 5개')
+  await user.click(cardOf(CONFLICT_QUESTION))
+  const dialog = await screen.findByRole('dialog')
+  expect(
+    within(dialog).queryByRole('button', { name: '답변하지 않고 닫기' }),
+  ).not.toBeInTheDocument()
+  expect(within(dialog).getByRole('textbox', { name: '답변' })).toHaveValue(
+    '팀장만 승인해요.',
+  )
+})
+
+it('기준 설계가 발행된 프로젝트에서는 질문 카드를 눌러 답할 수 없다', async () => {
+  renderPanel(true, '101')
+  const question = await screen.findByText(
+    '프로젝트 삭제 권한은 인간 팀장만 가지나요?',
+  )
+  expect(
+    await screen.findByText('기준 설계가 발행되어 답변을 바꿀 수 없어요.'),
+  ).toBeInTheDocument()
+  expect(question.closest('article')).not.toHaveAttribute('role', 'button')
+})
+
+it('초안 작업 조회에 실패하면 후보 자리에 안내와 다시 불러오기를 보인다', async () => {
+  vi.spyOn(planningApi, 'drafts').mockRejectedValue(new Error('network'))
+  renderPanel()
+  expect(
+    await screen.findByRole('button', { name: '다시 불러오기' }),
+  ).toBeInTheDocument()
+  vi.restoreAllMocks()
 })

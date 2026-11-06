@@ -317,7 +317,16 @@ describe('명세 응답 모양', () => {
               base_status: 'DRAFT',
               before: { description: '이전' },
               after: { description: '이후' },
-              changed_fields: ['description'],
+              changed_fields: [
+                {
+                  field: 'description',
+                  change: 'CHANGED',
+                  before: '이전',
+                  after: '이후',
+                },
+                { field: 'memo', change: 'ADDED', before: null, after: '메모' },
+                { field: 'old', change: 'REMOVED', before: 1, after: null },
+              ],
               conflicting_fields: [],
               sources: [
                 {
@@ -357,6 +366,9 @@ describe('명세 응답 모양', () => {
       block_id: 'b1',
     })
     expect(parsed.jobs[0].candidates[1].conflicting_fields).toEqual([])
+    expect(
+      parsed.jobs[0].candidates[0].changed_fields.map((item) => item.change),
+    ).toEqual(['CHANGED', 'ADDED', 'REMOVED'])
     expect(parsed.jobs[1].retryable).toBe(true)
   })
 })

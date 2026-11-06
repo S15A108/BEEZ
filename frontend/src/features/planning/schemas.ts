@@ -115,6 +115,15 @@ export const draftCandidateSourceSchema = z.looseObject({
 })
 export type DraftCandidateSource = z.infer<typeof draftCandidateSourceSchema>
 
+// 후보의 changed_fields: 본문의 최상위 필드 하나가 어떻게 달라졌는지(AI 계약 134 FieldChange). ADDED 는 이전에 없던 필드, REMOVED 는 이후에 없는 필드다.
+export const draftFieldChangeSchema = z.object({
+  field: z.string(),
+  change: z.enum(['ADDED', 'CHANGED', 'REMOVED']),
+  before: z.unknown().optional(),
+  after: z.unknown().optional(),
+})
+export type DraftFieldChange = z.infer<typeof draftFieldChangeSchema>
+
 export const draftCandidateSchema = z.object({
   id: common.idSchema,
   job_id: common.idSchema.optional(),
@@ -126,7 +135,7 @@ export const draftCandidateSchema = z.object({
   base_status: z.string().optional(),
   before: common.structuredContentSchema.optional(),
   after: common.structuredContentSchema,
-  changed_fields: z.string().array().default([]),
+  changed_fields: draftFieldChangeSchema.array().default([]),
   conflicting_fields: z.string().array().default([]),
   sources: draftCandidateSourceSchema.array().default([]),
   answer_refs: z.string().array().default([]),

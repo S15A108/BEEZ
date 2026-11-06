@@ -106,7 +106,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'design-draft-jobs'],
     queryFn: () => planningApi.drafts(projectId),
     refetchInterval: (query) =>
-      hasActiveJob(query.state.data?.jobs ?? []) ? 1500 : false,
+      !query.state.error && hasActiveJob(query.state.data?.jobs ?? [])
+        ? 1500
+        : false,
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
@@ -318,6 +320,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           isLeader={isLeader}
           busy={action.busy}
           generation={generation}
+          answerable={!baseline.isPending && !baseline.data}
+          published={!!baseline.data}
           onAnswer={(id, input) =>
             action.run(
               () => planningApi.answerQuestion(projectId, id, input),
@@ -328,28 +332,37 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           }
         />
         <div className="space-y-6">
-          {!baseline.data && draftJobs.data && (
-            <DraftCandidates
-              jobs={draftJobs.data.jobs}
-              labelOfVersion={labelOfVersion}
-              isLeader={isLeader}
-              busy={action.busy}
-              canGenerate={analysesReady}
-              onGenerate={generate}
-              onAdopt={(candidate, input) =>
-                action.run(
-                  () =>
-                    planningApi.adoptCandidate(projectId, candidate.id, input),
-                  '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
-                )
-              }
-              onDiscard={(candidate) =>
-                action.run(
-                  () => planningApi.discardCandidate(projectId, candidate.id),
-                  '후보를 폐기했어요.',
-                )
-              }
-            />
+          {!baseline.isPending && !baseline.data && (
+            <AsyncState query={draftJobs}>
+              {(data) => (
+                <DraftCandidates
+                  jobs={data.jobs}
+                  labelOfVersion={labelOfVersion}
+                  isLeader={isLeader}
+                  busy={action.busy}
+                  canGenerate={analysesReady}
+                  onGenerate={generate}
+                  onAdopt={(candidate, input) =>
+                    action.run(
+                      () =>
+                        planningApi.adoptCandidate(
+                          projectId,
+                          candidate.id,
+                          input,
+                        ),
+                      '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
+                    )
+                  }
+                  onDiscard={(candidate) =>
+                    action.run(
+                      () =>
+                        planningApi.discardCandidate(projectId, candidate.id),
+                      '후보를 폐기했어요.',
+                    )
+                  }
+                />
+              )}
+            </AsyncState>
           )}
           <Card>
             <CardHeader>

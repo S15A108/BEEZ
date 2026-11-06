@@ -11,7 +11,12 @@ import { cn } from '@/lib/utils'
 import type { AnswerQuestionInput } from './schemas'
 
 const OTHER_MAX = 200
-const TEXT_MAX = 2000
+// 서버(PlanningAnswers)의 글자 수 기본값과 상한. 질문에 max_length 가 없거나 더 크면 이 값을 쓴다.
+const TEXT_LIMITS = {
+  SHORT_ANSWER: { fallback: 200, hard: 500 },
+  ESSAY: { fallback: 2000, hard: 4000 },
+} as const
+const LEGACY_TEXT_MAX = 2000
 
 function initialChoice(question: PlanningQuestion) {
   const payload =
@@ -48,7 +53,12 @@ export function QuestionAnswerForm({
   const [text, setText] = useState(() => initialText(question))
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const maxLength = format?.max_length ?? TEXT_MAX
+  const limit = type === 'CHOICE' || !type ? undefined : TEXT_LIMITS[type]
+  const maxLength = limit
+    ? Math.min(format?.max_length ?? limit.fallback, limit.hard)
+    : (format?.max_length ?? LEGACY_TEXT_MAX)
+  // 닫으면 서버가 이전 답변을 지우므로, 이미 답한 질문에서는 닫기를 보이지 않는다.
+  const canDismiss = !question.answer && question.status !== 'DISMISSED'
 
   const run = async (input: AnswerQuestionInput) => {
     setError('')
@@ -213,20 +223,22 @@ export function QuestionAnswerForm({
             {error}
           </p>
         )}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            onClick={() => void run({ status: 'DISMISSED' })}
-          >
-            답변하지 않고 닫기
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            닫아도 나중에 다시 답할 수 있어요.
-          </p>
-        </div>
+        {canDismiss && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => void run({ status: 'DISMISSED' })}
+            >
+              답변하지 않고 닫기
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              닫아도 나중에 다시 답할 수 있어요.
+            </p>
+          </div>
+        )}
         <SheetSubmit disabled={busy}>저장</SheetSubmit>
       </form>
     </PaneSheet>
