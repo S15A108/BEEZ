@@ -61,7 +61,11 @@ export function Hotbar({
         if (slot?.pane === pane) openPane(null)
         return
       }
-      if (slot && !locked.includes(slot.pane)) openPane(slot.pane)
+      if (slot && !locked.includes(slot.pane)) {
+        // 창이 입력칸에 포커스를 주면 keydown 뒤에 오는 글자 입력이 그 칸으로 들어간다. 글자 입력을 막는다.
+        event.preventDefault()
+        openPane(slot.pane)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

@@ -263,6 +263,15 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
   await expect.poll(centre).toBeLessThan(30)
 })
 
+// S15P31A108-285: 창이 검색칸에 포커스를 주면서 창을 연 숫자가 검색어로 들어갔다.
+test('숫자 키 1로 공용 문서함을 열어도 검색칸이 비어 있다', async ({ page }) => {
+  await openWorkspace(page)
+  await page.keyboard.press('1')
+  const search = page.getByLabel('검색어')
+  await expect(search).toBeVisible()
+  await expect(search).toHaveValue('')
+})
+
 // S15P31A108-285: 2단계 명령 줄이 칸을 밀어내 '복사' 버튼이 창 밖으로 나갔다. 레이아웃이라 브라우저에서만 잡힌다.
 test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 안에 있다', async ({
   page,
