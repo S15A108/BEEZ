@@ -574,3 +574,23 @@ Docker Desktop에 `beez_default`를 만들고 서버와 같은 pgvector(`wal_lev
 | broker 중지 | exporter가 마지막 메타데이터로 `kafka_brokers` 1을 계속 냄, 한 번 긁는 데 15~30초 → Prometheus `context deadline exceeded`, `up{job="kafka"}` 0(중지 22초 뒤). 이때 Connect worker가 커넥터를 내려 커넥터 지표가 사라짐(REST는 RUNNING) → `CdcConnectorMissing`에 Kafka 수집 정상 조건 추가. 다시 띄우면 13초 뒤 커넥터·task running |
 | 실제 전달 | 커넥터 pause(14:11) → `CdcConnectorNotRunning` pending 14:11:46, 가짜 Mattermost에 "🚨 CdcConnectorNotRunning 발생 (2건)"(커넥터 줄·task 0 줄, 담당 인프라 · 전진, 런북 링크 `#cdcconnectornotrunning`) 14:17 → resume(14:17:43) → "✅ 해소" 14:22(묶음 간격 5분) |
 | pause 중 슬롯 | `active = t` 그대로 |
+| broker 장시간 중지(리뷰 반영 뒤) | 28분 중지하며 약 2분 간격으로 긁음: 2분째만 40초 만에 200(접수 토픽 offset·broker 수 지표 없음), 그 뒤 12번은 모두 60초 넘게 응답 없음. Prometheus 시간 초과(10초)로 보면 계속 수집 실패이고, 응답이 오더라도 offset 이 빠져 `beez_cdc:kafka_reachable` 이 없다 → `CdcKafkaUnreachable` 유지 |
+
+### 2026-11-06 서버 (S15P31A108-261)
+
+PR #186 브랜치 커밋 `d295ecef`를 올렸습니다. 순서: javaagent jar 받기(sha256 `OK`) → `/opt/beez/cdc` 올리기 → `/opt/beez/monitoring` 올리기 → 수신 시험.
+명령은 전진이 실행했고, 검증은 읽기 전용으로 했습니다.
+
+| 항목 | 결과 |
+|---|---|
+| cdc 올리기 | connect만 다시 만들어짐(18초 뒤 healthy), kafka는 그대로(`Up 2 hours`). 커넥터·task RUNNING, 슬롯 active, backend `consumer_up` 1 유지 |
+| Connect 지표 | prometheus 컨테이너에서 `connect:9404` 조회 — connector·task `status="running"`, `debezium_streaming_connected` 1, 커넥터 수 1. connect 로그에 ERROR 없음 |
+| 노출 | 호스트 리슨 주소가 올리기 전과 같음, cdc 컨테이너 publish 포트 없음 |
+| 메모리 | connect 565MiB(294 때 564MiB), kafka-exporter 6.5MiB |
+| 모니터링 올리기 | 수집 대상 일곱 job 모두 up, 규칙 34개 health ok, 새 알림 5개 비활성, `beez_cdc:kafka_reachable` 1, 접수 lag 0 |
+| 라벨 | kafka·connect job 라벨은 커넥터 이름·task 번호·토픽·group·버전·JVM 영역 이름뿐(프로젝트 ID·원문 없음). 시계열 kafka·connect 195, 전체 5,355 |
+| **실제 수신** | 커넥터 pause(14:58:30) → `CdcConnectorNotRunning` pending 14:58:31(connector 줄·task 0 줄) → firing 15:03:31 → 팀 채널에 발생 글(요약 "…: 5분 넘게 RUNNING 아님(지금 paused)", 전진 확인) → resume(15:09:22) → 해소 글 15:14. Alertmanager Mattermost 전송 2건, 실패 0. pause 동안 슬롯 active, resume 뒤 lag 0 |
+
+- resume 첫 시도는 새 ssh 셸에 `crest` 함수가 없어 실행되지 않았습니다(15:08). 함수 정의를 넣어 다시 쳤습니다. 서버 명령을 줄 때는
+  셸마다 함수 정의를 함께 줍니다.
+- 머지 뒤 두 폴더를 dev 커밋으로 다시 올려 `REVISION`을 맞춥니다.

@@ -420,3 +420,10 @@ javaagent를 붙인 이 compose로 로컬 리허설과 같은 구성(pgvector `w
 | 메모리 | 커넥터 RUNNING 상태에서 javaagent 없이 638MiB, 붙인 뒤 641MiB |
 | 지표 | `connect:9404/metrics`에 허용 목록 지표만(위 "지표" 표). pause하면 connector·task 모두 `status="paused"` |
 | jar 없음 | (서버와 같은 리눅스 경로 기준) `create_host_path: false`라 `bind source path does not exist`로 connect가 뜨지 않는다 — 비밀 디렉터리와 같은 동작이라 따로 재현하지 않음 |
+
+### 2026-11-06 지표(261) 서버 적용 (전진 실행, 검증은 읽기 전용)
+
+jar 받기(`/opt/beez/.cdc-agents/jmx_prometheus_javaagent-1.6.0.jar`, `root:root 644`, sha256 `OK`) 뒤 PR #186 브랜치 커밋 `d295ecef`를
+"올리기·업데이트"로 올렸다. connect만 다시 만들어져 18초 뒤 healthy, kafka는 그대로였다. 커넥터·task RUNNING, 슬롯 active, 호스트
+리슨 주소 변화 없음, connect 565MiB. 결과 상세는 [monitoring-alerts.md 검증 기록](monitoring-alerts.md#2026-11-06-서버-s15p31a108-261).
+머지 뒤 `REV=origin/dev`로 다시 올린다.
