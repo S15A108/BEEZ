@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authApi, documentsApi, planningApi } from '@/api/services'
@@ -26,6 +26,7 @@ beforeEach(async () => {
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
 })
 afterEach(() => {
+  vi.restoreAllMocks()
   restore()
   localStorage.clear()
 })
@@ -161,10 +162,13 @@ it('팀원에게는 답변 입력을 보이지 않는다', async () => {
 it('질문 생성이 실패하면 안내하고 다시 만들 수 있다', async () => {
   localStorage.setItem('beez.mock.planQuestions', 'failed')
   const user = renderPanel()
+  // 문서마다 따로 안내한다(예시 API 는 4종 모두 실패한다).
   expect(
-    await screen.findByText(/보완 질문을 만들지 못했어요/),
-  ).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '질문 다시 만들기' }))
+    (await screen.findAllByText(/보완 질문을 만들지 못했어요/)).length,
+  ).toBe(4)
+  await user.click(
+    screen.getAllByRole('button', { name: '질문 다시 만들기' })[0],
+  )
   expect(
     await screen.findByText('보완 질문을 다시 만들도록 접수했어요.'),
   ).toBeInTheDocument()
@@ -365,3 +369,98 @@ it('초안 작업 조회에 실패하면 후보 자리에 안내와 다시 불�
   ).toBeInTheDocument()
   vi.restoreAllMocks()
 })
+
+// 리뷰 반영: 질문 생성 상태는 문서마다 따로 따라간다.
+async function stubAnalyses(
+  reply: (kind: string, call: number) => object | undefined,
+) {
+  const docs = (await documentsApi.list('102')).items
+  const calls: Record<string, number> = {}
+  vi.spyOn(planningApi, 'analysis').mockImplementation(
+    async (_projectId, documentId, query) => {
+      const doc = docs.find((item) => item.id === documentId)!
+      calls[doc.kind] = (calls[doc.kind] ?? 0) + 1
+      const generation = reply(doc.kind, calls[doc.kind])
+      return {
+        document_version_id: query.document_version_id,
+        status: 'COMPLETED',
+        items: [],
+        questions: [],
+        ...(generation ? { question_generation: generation } : {}),
+      } as never
+    },
+  )
+  return calls
+}
+
+it('분석 직후 질문 생성 행이 아직 없어도 기다렸다가 진행·완료를 따라가고 목록을 갱신한다', async () => {
+  // REQUIREMENTS: 처음 두 번은 question_generation 없음 → RUNNING → COMPLETED
+  const calls = await stubAnalyses((kind, call) =>
+    kind !== 'REQUIREMENTS' || call >= 4
+      ? { status: 'COMPLETED' }
+      : call === 3
+        ? { status: 'RUNNING' }
+        : undefined,
+  )
+  let created = false
+  const original = planningApi.questions
+  vi.spyOn(planningApi, 'questions').mockImplementation(
+    async (projectId, query, options) => {
+      const result = await original(projectId, query, options)
+      return created ? result : { ...result, items: [], total_count: 0 }
+    },
+  )
+  renderPanel()
+  expect(
+    await screen.findByText(/비비가 보완 질문을 만들고 있어요/),
+  ).toBeInTheDocument()
+  created = true
+  await waitFor(() => expect(calls.REQUIREMENTS).toBeGreaterThanOrEqual(4), {
+    timeout: 9000,
+  })
+  await waitFor(
+    () =>
+      expect(
+        screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
+      ).not.toBeInTheDocument(),
+    { timeout: 9000 },
+  )
+  expect(await screen.findByText('전체 질문 5개')).toBeInTheDocument()
+}, 25_000)
+
+it('한 문서의 질문 생성이 실패해도 다른 문서의 진행을 따라가고 끝나면 목록을 갱신한다', async () => {
+  const calls = await stubAnalyses((kind, call) =>
+    kind === 'PLAN'
+      ? { status: 'FAILED', error_code: 'ai_unavailable', retryable: true }
+      : kind === 'ERD'
+        ? call >= 3
+          ? { status: 'COMPLETED' }
+          : { status: 'RUNNING' }
+        : { status: 'COMPLETED' },
+  )
+  renderPanel()
+  expect(
+    await screen.findByText(/기획안 v1 보완 질문을 만들지 못했어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText(/비비가 보완 질문을 만들고 있어요/),
+  ).toBeInTheDocument()
+  // 실패한 문서가 있어도 진행 중인 문서(ERD)는 끝날 때까지 계속 읽는다.
+  await waitFor(() => expect(calls.ERD).toBeGreaterThanOrEqual(3), {
+    timeout: 9000,
+  })
+  await waitFor(
+    () =>
+      expect(
+        screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
+      ).not.toBeInTheDocument(),
+    { timeout: 9000 },
+  )
+  // 실패 안내와 다시 만들기는 그대로 남는다.
+  expect(
+    screen.getByText(/기획안 v1 보완 질문을 만들지 못했어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '질문 다시 만들기' }),
+  ).toBeInTheDocument()
+}, 25_000)

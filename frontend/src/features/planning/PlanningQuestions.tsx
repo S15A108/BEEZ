@@ -19,6 +19,7 @@ import { Tag } from '@/features/changes/Tag'
 import { operationTone } from '@/features/changes/tagTones'
 import { cn } from '@/lib/utils'
 import { QuestionAnswerForm } from './QuestionAnswerForm'
+import type { GenerationStatus } from './questionGeneration'
 import type { AnswerQuestionInput } from './schemas'
 
 const kindLabel = {
@@ -38,8 +39,10 @@ const typeLabel = {
 } as const
 
 export interface QuestionGenerationView {
-  /** 분석이 끝난 문서 중 질문 생성이 도는 중이거나 실패한 상태 */
-  status: 'PENDING' | 'RUNNING' | 'FAILED'
+  /** 질문 생성이 도는 중이거나 실패한 문서 하나(문서 버전마다 따로 온다) */
+  versionId: string
+  label: string
+  status: GenerationStatus
   errorCode?: string
   retryable?: boolean
   onRetry: () => void
@@ -49,7 +52,7 @@ export function PlanningQuestions({
   projectId,
   isLeader,
   busy,
-  generation,
+  generations,
   answerable,
   published,
   onAnswer,
@@ -57,25 +60,30 @@ export function PlanningQuestions({
   projectId: string
   isLeader: boolean
   busy: boolean
-  generation?: QuestionGenerationView
+  generations: QuestionGenerationView[]
   /** 기준 설계가 발행되면 서버가 답변을 막는다(409 design_already_published) */
   answerable: boolean
   published: boolean
   onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
 }) {
   const [answering, setAnswering] = useState<PlanningQuestion | null>(null)
-  const generating =
-    generation?.status === 'PENDING' || generation?.status === 'RUNNING'
+  const failed = generations.filter((item) => item.status === 'FAILED')
+  const activeIds = generations
+    .filter((item) => item.status !== 'FAILED')
+    .map((item) => item.versionId)
+  const generating = activeIds.length > 0
   const queryClient = useQueryClient()
-  // 질문 생성이 끝나는 순간에는 마지막 목록이 완료 직전 값일 수 있어, 끝날 때 한 번 더 읽는다.
-  const wasGenerating = useRef(false)
+  // 문서 하나라도 질문 생성이 끝나는 순간에는 마지막 목록이 완료 직전 값일 수 있어, 그때 한 번 더 읽는다.
+  const previousActive = useRef<string[]>([])
+  const activeKey = activeIds.join(',')
   useEffect(() => {
-    if (wasGenerating.current && !generating)
+    const now = activeKey ? activeKey.split(',') : []
+    if (previousActive.current.some((id) => !now.includes(id)))
       void queryClient.invalidateQueries({
         queryKey: ['projects', projectId, 'planning-questions'],
       })
-    wasGenerating.current = generating
-  }, [generating, projectId, queryClient])
+    previousActive.current = now
+  }, [activeKey, projectId, queryClient])
   const questions = useInfiniteQuery({
     queryKey: ['projects', projectId, 'planning-questions'],
     initialPageParam: undefined as string | undefined,
@@ -97,37 +105,36 @@ export function PlanningQuestions({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {generation && (
+        {failed.map((item) => (
           <div
-            role={generation.status === 'FAILED' ? 'alert' : 'status'}
-            className={
-              generation.status === 'FAILED'
-                ? 'mb-3 rounded-lg bg-destructive/5 p-3 text-sm text-destructive'
-                : 'mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900'
-            }
+            key={item.versionId}
+            role="alert"
+            className="mb-3 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
           >
-            {generation.status === 'FAILED' ? (
-              <>
-                <p>
-                  보완 질문을 만들지 못했어요.{' '}
-                  {getErrorCodeMessage(generation.errorCode) ?? ''}
-                </p>
-                {isLeader && generation.retryable !== false && (
-                  <Button
-                    className="mt-2"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={generation.onRetry}
-                  >
-                    <RefreshCw />
-                    질문 다시 만들기
-                  </Button>
-                )}
-              </>
-            ) : (
-              <p>비비가 보완 질문을 만들고 있어요. 잠시만 기다려 주세요.</p>
+            <p>
+              {item.label} 보완 질문을 만들지 못했어요.{' '}
+              {getErrorCodeMessage(item.errorCode) ?? ''}
+            </p>
+            {isLeader && item.retryable !== false && (
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={item.onRetry}
+              >
+                <RefreshCw />
+                질문 다시 만들기
+              </Button>
             )}
+          </div>
+        ))}
+        {generating && (
+          <div
+            role="status"
+            className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <p>비비가 보완 질문을 만들고 있어요. 잠시만 기다려 주세요.</p>
           </div>
         )}
         <AsyncState query={questions}>

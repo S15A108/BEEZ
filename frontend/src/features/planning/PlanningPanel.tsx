@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import { FileCheck2, RefreshCw } from 'lucide-react'
 import { documentsApi, planningApi } from '@/api/services'
@@ -21,6 +21,13 @@ import { DraftCandidates } from './DraftCandidates'
 import { hasActiveJob } from './draftJobs'
 import { PlanningQuestions } from './PlanningQuestions'
 import type { QuestionGenerationView } from './PlanningQuestions'
+import {
+  START_WAIT_MS,
+  generationOf,
+  isGenerating,
+  shouldPollAnalysis,
+} from './questionGeneration'
+import type { AnalysisResponse } from './schemas'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
@@ -54,6 +61,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       const version = versionOf(document)
       return version ? [version] : []
     }) ?? []
+  // 분석 직후 질문 생성이 아직 시작되지 않은 문서를 기다리는 시간이 끝난 문서(START_WAIT_MS).
+  const [graceOver, setGraceOver] = useState<string[]>([])
   const analyses = useQueries({
     queries: versions.map((version) => ({
       queryKey: ['projects', projectId, 'analysis', version.id],
@@ -62,19 +71,9 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           document_version_id: version.id,
         }),
       refetchInterval: (query: {
-        state: {
-          data:
-            | {
-                status: string
-                question_generation?: { status: string }
-              }
-            | undefined
-        }
+        state: { data: AnalysisResponse | undefined }
       }) =>
-        ['PENDING', 'RUNNING'].includes(query.state.data?.status ?? '') ||
-        ['PENDING', 'RUNNING'].includes(
-          query.state.data?.question_generation?.status ?? '',
-        )
+        shouldPollAnalysis(query.state.data, graceOver.includes(version.id))
           ? 1500
           : false,
     })),
@@ -155,36 +154,6 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     !drafts.hasNextPage &&
     snapshotConsistent &&
     !documents.data?.has_more
-  // 분석이 끝난 문서의 보완 질문 생성이 실패했거나 도는 중이면 질문 카드에 알린다(PLN-A01 question_generation).
-  const generationIndex = analyses.findIndex(
-    (query) => query.data?.question_generation?.status === 'FAILED',
-  )
-  const runningIndex = analyses.findIndex((query) =>
-    ['PENDING', 'RUNNING'].includes(
-      query.data?.question_generation?.status ?? '',
-    ),
-  )
-  const shownIndex = generationIndex >= 0 ? generationIndex : runningIndex
-  const shown =
-    shownIndex >= 0 ? analyses[shownIndex].data?.question_generation : undefined
-  const generation: QuestionGenerationView | undefined =
-    shown && versions[shownIndex]
-      ? {
-          status: shown.status as QuestionGenerationView['status'],
-          errorCode: shown.error_code,
-          retryable: shown.retryable,
-          onRetry: () =>
-            perform(
-              () =>
-                planningApi.retryAnalysis(
-                  projectId,
-                  versions[shownIndex].document_id,
-                  { document_version_id: versions[shownIndex].id },
-                ),
-              '보완 질문을 다시 만들도록 접수했어요.',
-            ),
-        }
-      : undefined
   const labelOfVersion = (versionId: string) => {
     const version = versions.find((item) => item.id === versionId)
     const document = documents.data?.items.find(
@@ -205,6 +174,51 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
   }
+  // 문서마다 따로 본다. 한 문서가 실패해도 다른 문서의 진행·완료는 계속 따라간다.
+  const documentGenerations = versions.map((version, index) => ({
+    version,
+    generation: generationOf(
+      analyses[index]?.data,
+      graceOver.includes(version.id),
+    ),
+  }))
+  const waitingKey = documentGenerations
+    .filter(({ generation }) => generation?.status === 'WAITING')
+    .map(({ version }) => version.id)
+    .join(',')
+  useEffect(() => {
+    if (!waitingKey) return
+    const timer = setTimeout(
+      () =>
+        setGraceOver((current) => [
+          ...new Set([...current, ...waitingKey.split(',')]),
+        ]),
+      START_WAIT_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [waitingKey])
+  const generations: QuestionGenerationView[] = documentGenerations.flatMap(
+    ({ version, generation }) =>
+      generation && (isGenerating(generation) || generation.status === 'FAILED')
+        ? [
+            {
+              versionId: version.id,
+              label: labelOfVersion(version.id),
+              status: generation.status,
+              errorCode: generation.errorCode,
+              retryable: generation.retryable,
+              onRetry: () =>
+                perform(
+                  () =>
+                    planningApi.retryAnalysis(projectId, version.document_id, {
+                      document_version_id: version.id,
+                    }),
+                  '보완 질문을 다시 만들도록 접수했어요.',
+                ),
+            },
+          ]
+        : [],
+  )
 
   return (
     <section className="space-y-6">
@@ -319,7 +333,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           projectId={projectId}
           isLeader={isLeader}
           busy={action.busy}
-          generation={generation}
+          generations={generations}
           answerable={!baseline.isPending && !baseline.data}
           published={!!baseline.data}
           onAnswer={(id, input) =>
