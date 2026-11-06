@@ -58,7 +58,7 @@ spring:
   task:
     scheduling:
       pool:
-        size: ${SCHEDULING_POOL_SIZE:5}
+        size: ${SCHEDULING_POOL_SIZE:8}
 
   docker:
     compose:
