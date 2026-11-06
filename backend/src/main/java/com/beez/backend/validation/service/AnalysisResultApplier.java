@@ -50,6 +50,7 @@ public class AnalysisResultApplier {
     private static final Set<String> KINDS = Set.of("MISMATCH", "MISSING_INPUT", "MISSING_POLICY", "CONFLICT", "STALE_REF");
     private static final Set<String> SEVERITIES = Set.of("INFO", "WARNING", "BLOCKING");
     private static final Set<String> REASONS = Set.of("EVIDENCE_INSUFFICIENT", "UNSUPPORTED_CONTENT");
+    private static final int MAX_AI_SUGGESTED_ACTION_LENGTH = 4000;
     /** 필수 누락 후보. 명세상 BLOCKING 으로만 온다 — 아니면 필수 누락이 있는 계획이 PASS 될 수 있어 계약 위반으로 본다 */
     private static final Set<String> BLOCKING_ONLY_KINDS = Set.of("MISSING_INPUT", "MISSING_POLICY");
     private static final java.util.regex.Pattern EXPLICIT_UNDECIDED_POLICY = java.util.regex.Pattern.compile(
@@ -421,7 +422,8 @@ public class AnalysisResultApplier {
             validations.insertFinding(v.id(), new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
                     id(f.get("related_task_id")), (String) f.get("message"), canonicalSources(f, requestSources), resolution,
                     nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids")),
-                    (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs"))));
+                    (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs")),
+                    (String) f.get("suggested_action")));
         }
         String status = "PASS";
         if (needsReview) {
@@ -573,7 +575,7 @@ public class AnalysisResultApplier {
         }
         fail(lease, current.get().validation(), current.get().runId(), "validation_lease_expired", "ERROR",
                 "분석 실행이 시간 안에 결과를 반영하지 못했습니다 (워커 중단·재배포)", "RETRY",
-                "같은 계획으로 다시 검증을 요청하세요", null, 0, Map.of());
+                "같은 입력으로 다시 실행합니다 (VAL-A04)", null, 0, Map.of());
     }
 
     /**
@@ -603,7 +605,7 @@ public class AnalysisResultApplier {
         out.put("analysis_status", analysisStatus);
         out.put("checked_keys", result.get("checked_keys"));
         out.put("unassessed", result.get("unassessed"));
-        out.put("partial_findings", result.get("findings"));
+        out.put("partial_findings", safeDiagnosticFindings(result.get("findings")));
         out.put("model", response.get("model"));
         // 비용 기록(-168)에서 실패한 실행의 사용량도 빠지지 않게. 다만 모양이 틀린 값(배열이 아님 등)은 실행의 usage 칸이
         // 객체 배열만 받으므로 저장하지 않는다 — 저장이 실패하면 원래 오류 분류(ai_invalid_output)가 BE 오류로 바뀐다
@@ -614,6 +616,24 @@ public class AnalysisResultApplier {
             out.put("usage_rejected", String.valueOf(response.get("usage")));   // 진단용 원문 (문자열이라 어떤 모양이든 안전)
         }
         return out;
+    }
+
+    /** 계약에 맞지 않는 제안 원문을 JSONB에 다시 넣으면 오류 기록 자체가 실패할 수 있다. */
+    private static Object safeDiagnosticFindings(Object value) {
+        if (!(value instanceof List<?> findings)) return value;
+        List<Object> safe = new ArrayList<>();
+        for (Object entry : findings) {
+            if (entry instanceof Map<?, ?> finding && finding.containsKey("suggested_action")
+                    && (!(finding.get("suggested_action") instanceof String action)
+                    || action.length() > MAX_AI_SUGGESTED_ACTION_LENGTH || action.indexOf('\0') >= 0)) {
+                Map<Object, Object> copy = new LinkedHashMap<>(finding);
+                copy.put("suggested_action", "[invalid suggestion omitted]");
+                safe.add(copy);
+            } else {
+                safe.add(entry);
+            }
+        }
+        return safe;
     }
 
     private static void copyPolicyAnalysis(Map<String, Object> result, Map<String, Object> destination) {
@@ -716,7 +736,7 @@ public class AnalysisResultApplier {
         if (mode == Mode.RESULT && expired) {
             fail(lease, v, runId, "validation_lease_expired", "ERROR",
                     "분석 결과가 리스 유효기간이 지난 뒤 도착해 반영하지 않았습니다", "RETRY",
-                    "같은 계획으로 다시 검증을 요청하세요", null, 0, lateDiagnostics);
+                    "같은 입력으로 다시 실행합니다 (VAL-A04)", null, 0, lateDiagnostics);
             log.info("validation {} attempt {} result arrived after lease expired — closed as lease expired", v.id(), lease.attempt());
             return Optional.empty();
         }
@@ -916,6 +936,10 @@ public class AnalysisResultApplier {
             }
             if (!isText(f.get("suggested_action"))) {
                 return "finding.suggested_action 누락";
+            }
+            String suggestion = (String) f.get("suggested_action");
+            if (suggestion.length() > MAX_AI_SUGGESTED_ACTION_LENGTH || suggestion.indexOf('\0') >= 0) {
+                return "finding.suggested_action 길이 또는 문자 오류";
             }
             Object item = f.get("design_item_id");
             Object version = f.get("design_item_version_id");

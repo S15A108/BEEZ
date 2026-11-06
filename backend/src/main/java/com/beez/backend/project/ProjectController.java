@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * PRJ-A01 ~ A05. 컨트롤러는 HTTP ↔ 서비스 변환만 한다. 규칙·권한은 전부 ProjectService 안에 있다.
+ * PRJ-A01 ~ A06. 컨트롤러는 HTTP ↔ 서비스 변환만 한다. 규칙·권한은 전부 ProjectService 안에 있다.
  * Idempotency-Key 는 아직 처리하지 않는다 (저장 방식 Q12 미결).
  */
 @Tag(name = "project", description = "프로젝트 (PRJ)")
@@ -51,6 +51,12 @@ public class ProjectController {
     @GetMapping("/{id}")
     public ProjectResponse get(CallerContext caller, @PathVariable("id") Long projectId) {
         return projects.get(caller, projectId);
+    }
+
+    @Operation(summary = "PRJ-A06 초기 설정 현황 (필수 문서·기준 발행·팀원 수·내 에이전트 연결)")
+    @GetMapping("/{id}/onboarding")
+    public OnboardingResponse onboarding(CallerContext caller, @PathVariable("id") Long projectId) {
+        return projects.onboarding(caller, projectId);
     }
 
     @Operation(summary = "PRJ-A04 프로젝트 정보 수정 (팀장)")

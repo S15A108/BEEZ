@@ -29,7 +29,8 @@ import type {
 import { contractExamples } from './contract-examples'
 
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
-export const MOCK_STORAGE_KEY = 'beez.mock.api.v9'
+// v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
+export const MOCK_STORAGE_KEY = 'beez.mock.api.v10'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
 export const MOCK_NOTICE =
@@ -55,6 +56,10 @@ export async function passwordFingerprint(value: string): Promise<string> {
 export interface StoredAccount {
   profile: Account
   password_fingerprint: string
+  /** 임시 비밀번호로 로그인해 비밀번호를 바꿔야 한다(ACC-A02 must_change_password) */
+  must_change_password?: boolean
+  /** 받아 두고 아직 쓰지 않은 임시 비밀번호(ACC-A07). 계정마다 하나이고 원문은 남기지 않는다. */
+  temporary_password?: { fingerprint: string; expires_at: string }
 }
 
 export interface StoredInvitation extends Invitation {
@@ -92,6 +97,11 @@ export interface MockProject {
   activities: Activity[]
   /** 스스로 나간 계정. 로그인만으로는 되살리지 않고 메일 링크(MEM-A05)로만 다시 참여한다(Q05 4). */
   left_account_ids?: string[]
+  /**
+   * 실행 중인 비비 문서 검토(서버 document_bee_review_request RUNNING). BEE-A04가 읽는다.
+   * 예시 DOC-A16은 한 요청 안에서 바로 끝나서 평소에는 비어 있다. 검토 중 표시를 보려면 여기에 넣는다.
+   */
+  running_bee_reviews?: { document_id: string; started_at: string }[]
 }
 
 export interface MockDatabase {
@@ -103,12 +113,8 @@ export interface MockDatabase {
   invitations: StoredInvitation[]
   tokens: (AgentToken & { account_id: string })[]
   notifications: (Notification & { account_id: string })[]
-  reset_tokens: {
-    token: string
-    account_id: string
-    expires_at: string
-    used: boolean
-  }[]
+  /** 비밀번호 찾기(ACC-A07) 요청 기록. 서버처럼 맞지 않은 요청도 남겨 다시 요청 간격과 이메일당 한도를 센다. */
+  temporary_password_requests?: { email: string; created_at: string }[]
   pending_validations: Record<string, number>
 }
 
@@ -358,6 +364,9 @@ function seededProject(
     },
   }
   delete other.current_plan_revision.plan.context_packet_id
+  // 사무실 에이전트 예시(D37): 김동료의 작업은 팀장 승인을 기다린다.
+  other.status = 'WAITING'
+  other.waiting_reason = 'APPROVAL'
   state.tasks.push(other)
   state.revisions.push(copy(other.current_plan_revision))
   // 수정안 예시 데이터: TASK-003은 박팀원의 백엔드 작업
@@ -381,6 +390,9 @@ function seededProject(
     },
   }
   delete third.current_plan_revision.plan.context_packet_id
+  // 사무실 에이전트 예시(D37): 박팀원의 에이전트가 진행 중인 작업이다.
+  third.status = 'IN_PROGRESS'
+  third.validation_status = 'PASS'
   state.tasks.push(third)
   state.revisions.push(copy(third.current_plan_revision))
   const packet = example<ContextPacket>('CTX-A01')
@@ -505,14 +517,34 @@ function seededProject(
     last_report_at: created,
     status_check_required: true,
   })
-  // 에이전트 2: 박팀원의 Claude Code. 목은 실제 연결을 하지 않아 연결됨으로 두지 않는다.
-  state.agents.push({
-    id: '52',
-    member_id: '26',
-    connected: false,
-    last_report_at: '2026-10-28T05:20:00Z',
-    status_check_required: true,
-  })
+  // 팀원 예시 에이전트는 사무실 화면 확인용으로 연결됨을 두되(사용자 결정 2026-11-03, D37), 사용자가 mock에서 새로
+  // 발급한 토큰은 연결을 만들지 않는다. 박팀원(TASK-003 진행 중)·김동료(TASK-002 승인 대기)는 연결됨, 최팀원은 연결이
+  // 끊겨 작업 현황에 세션이 없고, 내 에이전트(51)는 연결 전이다(사무실 충전 자리에 보임).
+  state.agents.push(
+    {
+      id: '52',
+      member_id: '26',
+      connected: true,
+      last_report_at: '2026-10-28T05:20:00Z',
+      status_check_required: false,
+    },
+    {
+      id: '53',
+      member_id: '22',
+      connected: true,
+      last_report_at: '2026-10-28T05:10:00Z',
+      status_check_required: false,
+    },
+    {
+      id: '54',
+      member_id: '25',
+      connected: false,
+      last_report_at: '2026-10-27T09:00:00Z',
+      status_check_required: true,
+    },
+  )
+  for (const member of state.members)
+    if (member.id === '22' || member.id === '26') member.agent_connected = true
   state.activities = [
     {
       id: '1001',
@@ -607,7 +639,6 @@ export function createMockDatabase(): MockDatabase {
         created_at: now(),
       })),
     ],
-    reset_tokens: [],
     pending_validations: {},
   }
 }

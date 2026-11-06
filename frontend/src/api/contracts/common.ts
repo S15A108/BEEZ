@@ -75,6 +75,8 @@ export const memberSchema = z.object({
   domain: z.string().optional(),
   role_label: z.string().optional(),
   color: z.string().optional(),
+  // 명세 요청 중(MEM-A06 팀원 목록에 avatar). 오면 사무실에서 그 팀원을 회원 설정 캐릭터로 그린다(D34).
+  avatar: z.string().optional(),
   agent_connected: z.boolean(),
 })
 export type Member = z.infer<typeof memberSchema>
@@ -83,8 +85,7 @@ export const invitationSchema = z.object({
   id: idSchema,
   project_id: idSchema,
   invited_email: z.string().optional(),
-  // Q05 6(2026-10-29 확정): 초대 만료는 없다. dev 명세는 아직 필수라 둘 다 받는다.
-  expires_at: timeSchema.optional(),
+  // Q05 6: 초대 만료는 없다. 서버(PR #134)도 expires_at을 보내지 않는다.
   accepted_at: timeSchema.optional(),
   revoked_at: timeSchema.optional(),
 })
@@ -683,6 +684,7 @@ export const findingSchema = z.object({
   sources: sourceSchema.array(),
   resolution: z.enum(['FIX_PLAN', 'PROPOSE_CHANGE', 'HUMAN_REVIEW', 'RETRY']),
   next_action: z.string().optional(),
+  ai_suggested_action: z.string().optional(),
   validation_run_id: idSchema.optional(),
   policy_need_id: z.string().optional(),
   conflicting_design_refs: z
@@ -1109,8 +1111,13 @@ export const notificationSchema = z.object({
     'CHANGE_PROPOSAL',
     'BASELINE',
     'MEETING',
+    'DOCUMENT_VERSION',
   ]),
+  // DOCUMENT_VERSION이면 target_id는 문서 버전 ID이고, 문서 상세를 열 문서 ID는 document_id로 온다(계약 10 3절).
   target_id: idSchema,
+  document_id: idSchema.optional(),
+  // BASELINE이면 target_id는 기준 ID이고, 기준 화면을 열 기준 버전 번호는 baseline_version_no로 온다(PR #133).
+  baseline_version_no: z.number().int().optional(),
   created_at: timeSchema,
   read_at: timeSchema.optional(),
 })

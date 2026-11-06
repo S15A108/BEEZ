@@ -24,14 +24,17 @@ interface WorkspaceState {
   viewMode: 'first' | 'third'
   outdoor: boolean
   placements: Record<string, Placement>
+  /** 계정 id → 마지막으로 연 프로젝트 id. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33). */
+  lastVisited: Record<string, string>
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
   setViewMode: (viewMode: 'first' | 'third') => void
   setOutdoor: (outdoor: boolean) => void
-  placeProject: (
+  /** 도시에 보이는 칸(빈 칸을 당긴 번호)을 한꺼번에 저장한다. 칸 없는(lot null) 항목은 건너뛴다. */
+  placeProjects: (
     accountId: string,
-    projectId: string,
-    placement: Placement,
+    items: { id: string; lot: number | null; design: BuildingDesign }[],
   ) => void
+  visitProject: (accountId: string, projectId: string) => void
 }
 export const placementKey = (accountId: string, projectId: string) =>
   `${accountId}:${projectId}`
@@ -43,21 +46,33 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       viewMode: 'third',
       outdoor: false,
       placements: {},
+      lastVisited: {},
       openPane: (pane, focusId = null) => set({ pane, focusId }),
       setViewMode: (viewMode) => set({ viewMode }),
       setOutdoor: (outdoor) => set({ outdoor }),
-      placeProject: (accountId, projectId, placement) =>
+      placeProjects: (accountId, items) =>
         set((state) => ({
           placements: {
             ...state.placements,
-            [placementKey(accountId, projectId)]: placement,
+            ...Object.fromEntries(
+              items.flatMap(({ id, lot, design }) =>
+                lot === null
+                  ? []
+                  : [[placementKey(accountId, id), { lot, design }]],
+              ),
+            ),
           },
+        })),
+      visitProject: (accountId, projectId) =>
+        set((state) => ({
+          lastVisited: { ...state.lastVisited, [accountId]: projectId },
         })),
     }),
     {
       name: 'beez.scene.preferences.v1',
       partialize: (state) => ({
         placements: state.placements,
+        lastVisited: state.lastVisited,
         viewMode: state.viewMode,
       }),
     },

@@ -305,6 +305,7 @@ React Three Fiber(R3F)로 three.js를 React 컴포넌트처럼 씁니다. 씬을
 - three.js는 번들이 큽니다. `<Canvas>`를 쓰는 컴포넌트는 `React.lazy`로 불러와 첫 화면 번들에서 분리합니다.
 - 모델 파일은 `public/models/`에 두고 `/models/xxx.glb` URL로 로드합니다. Vite는 `.glb`를 import 대상으로 인식하지 않습니다.
 - 도시 화면과 사무실 창밖 건물은 Kenney City Kit CC0 에셋(`public/models/kenney/city`)이고, `License.txt`를 같이 둡니다. 읽기와 복제는 `src/three/kenney.ts`가 맡습니다([D21](docs/decisions.md)).
+- 사무실의 사람 캐릭터는 Kenney Mini Characters CC0 에셋(`public/models/kenney/characters`, `License.txt` 포함)이고, 로봇·벌 캐릭터는 `src/three/office/memberFigures.ts`가 만듭니다. 계정 avatar로 고릅니다([D34](docs/decisions.md)). 팀원의 AI 에이전트는 `src/three/office/agentFigure.ts`가 만들고, 비비는 `public/models/bibi.glb` 하나에서 읽습니다. 같은 이름의 GLB(앞 = +z, 발바닥 y = 0)로 바꾸면 비비 모델이 바뀌고, GLB에 Idle·Walk 애니메이션이 있으면 서 있을 때와 걸을 때 재생합니다([D35](docs/decisions.md)). 사무실 가구는 Kenney Furniture Kit CC0 에셋(`public/models/kenney/furniture`, `License.txt` 포함)이고, 배치는 캔버스 v488의 고정 배치입니다(`src/three/office/officePlan.ts`, [D36](docs/decisions.md)). 사무실 팀원은 가구를 쓰지 않고 자기 자리 옆에 서 있으며, 에이전트는 작업 현황(MON-A05)대로 자리를 옮깁니다([D37](docs/decisions.md)). 외벽은 남·서쪽이 막힌 벽, 북·동쪽이 유리창입니다([D38](docs/decisions.md)).
 - 모델은 텍스처 해상도를 줄이고 압축한 뒤 커밋합니다. 10MB를 넘으면 팀과 상의해 Git LFS나 외부 스토리지를 씁니다.
 - 매 프레임 바뀌는 값은 `useFrame` 안에서 ref로 직접 바꿉니다. 프레임마다 `setState`를 호출하면 React가 매번 리렌더링합니다.
 - 움직임이 없는 씬은 `<Canvas frameloop="demand">`로 필요할 때만 렌더링합니다.
@@ -353,7 +354,7 @@ npm run check
 | `src/stores/workspaceStore.ts`               | 선택한 패널·시점과 브라우저별 부지·외관 설정                                 |
 | `src/api/`, `src/mocks/`                     | 실제 REST 서비스 경계와 브라우저 예시 어댑터                                 |
 
-도시의 건물이나 빈 부지를 누르면 프로젝트 또는 생성 창이 열립니다. 사무실에서는 드래그로 둘러보고 WASD·방향키로 이동하며, Shift로 달리고 Enter로 가까운 대상을 선택합니다. 아래 단축 바의 메뉴는 숫자 키 1~6으로 엽니다. ? 키나 오른쪽 위 도움말 버튼은 화면 안내와 1분 둘러보기를 엽니다. 휠로 확대·축소하고 1·3인칭을 전환할 수 있습니다. 출입구를 통해 실외 산책으로 이동합니다.
+도시는 원형 고리를 앞쪽 호만 보이게 그려 부지가 가로로 한 줄 선 것처럼 보이고, 끌거나 휠을 굴려 고리를 돌리면 빈 부지 다음에 꾸밈 칸을 건너 첫 프로젝트가 다시 이어집니다([D33](docs/decisions.md)). 건물이나 빈 부지, 그 위 이름표를 누르면 프로젝트 또는 생성 창이 열립니다. 사무실에서는 드래그로 둘러보고 WASD·방향키로 이동하며, Shift로 달리고 Enter로 가까운 대상을 선택합니다. 아래 단축 바의 메뉴는 숫자 키 1~6으로 엽니다. ? 키나 오른쪽 위 도움말 버튼은 화면 안내와 1분 둘러보기를 엽니다. 휠로 확대·축소하고 1·3인칭을 전환할 수 있습니다. 출입구를 통해 실외 산책으로 이동합니다.
 
 문서 등록이나 기준 설계 승인 전에도 사무실에서 걸을 수 있습니다. 시점 버튼을 누르거나 업무 창을 닫으면 이동 입력이 사무실로 돌아옵니다. 업무 창을 연 동안에는 캐릭터 이동 입력을 멈추므로 문서와 검색어를 안전하게 입력할 수 있습니다.
 

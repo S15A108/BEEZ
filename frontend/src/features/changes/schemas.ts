@@ -28,9 +28,47 @@ export const listResponseSchema = common.pageSchema(
 )
 export type ListResponse = z.infer<typeof listResponseSchema>
 
+// CHG-A03 발행 후 접수 상태. 승인 전 영향 분석(CHG-A05)과 별개다.
+export const publishedAnalysisSchema = z.object({
+  status: z.enum([
+    'PENDING',
+    'RUNNING',
+    'COMPLETED',
+    'FAILED',
+    'NOT_EVALUATED',
+    'UNKNOWN',
+  ]),
+  evaluation_status: z
+    .enum(['COMPLETED', 'INSUFFICIENT_EVIDENCE', 'NOT_EVALUATED'])
+    .optional(),
+  error_code: z.string().optional(),
+  attempt: z.number().int().nonnegative().optional(),
+  requested_at: common.timeSchema.optional(),
+  started_at: common.timeSchema.optional(),
+  finished_at: common.timeSchema.optional(),
+  next_attempt_at: common.timeSchema.optional(),
+  lease_expired: z.boolean().optional(),
+  current_baseline: z.boolean().optional(),
+  guidance: z.enum([
+    'WAIT',
+    'RETRY_SCHEDULED',
+    'RECOVERY_PENDING',
+    'CONTACT_OPERATOR',
+    'REVIEW_REASON',
+    'REVIEW_EVIDENCE',
+    'CHECK_RESULT',
+    'NONE',
+  ]),
+})
+export type PublishedAnalysis = z.infer<typeof publishedAnalysisSchema>
+
 export const getResponseSchema = z.object({
   proposal: common.changeProposalSchema,
   comparisons: common.comparisonSchema.array(),
+  // 부가 상태의 새 enum이나 잘못된 값은 상세 전체 오류 대신 확인 필요로 표시한다.
+  published_analysis: publishedAnalysisSchema
+    .catch({ status: 'UNKNOWN', guidance: 'CHECK_RESULT' })
+    .optional(),
   // 직접 참조 후보는 화면에서 아직 쓰지 않아 모양만 받아 둔다(영향 탭은 CHG-A05).
   explicit_candidates: z.record(z.string(), z.unknown()).array().optional(),
   candidates_truncated: z.boolean().optional(),

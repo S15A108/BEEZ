@@ -9,6 +9,20 @@ export const streetSpawn = (bounds: OfficeCityBounds): Point => ({
   x: (bounds.left + bounds.right) * 16,
   y: (bounds.front + 3.2) * 32,
 })
+/**
+ * 산책 시작점. 기본 자리(문 앞 보도, streetSpawn)는 가로수 줄 위라 사무실 폭에 따라 가로수 기둥과 겹칠 수 있다(고정
+ * 사무실 26칸 폭에서 그랬다). 겹치면 시작하자마자 어느 쪽으로도 걷지 못하므로, 같은 보도에서 좌우로 가장 가까운 빈 곳을 쓴다.
+ */
+export function walkableStreetSpawn(
+  bounds: OfficeCityBounds,
+  canWalk: (x: number, y: number) => boolean,
+): Point {
+  const base = streetSpawn(bounds)
+  for (let step = 0; step <= 8; step++)
+    for (const dx of step ? [step * 8, -step * 8] : [0])
+      if (canWalk(base.x + dx, base.y)) return { x: base.x + dx, y: base.y }
+  return base
+}
 export const streetDoor = (bounds: OfficeCityBounds): Point => ({
   x: (bounds.left + bounds.right) * 16,
   y: (bounds.front + 0.2) * 32,

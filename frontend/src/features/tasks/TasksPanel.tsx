@@ -68,6 +68,10 @@ const relationLabel = {
 } as const
 
 const taskSteps = ['계획 작성', '계획 검증', '작업 시작', '완료 보고']
+// 서버가 상태를 바꾸는 중인 작업. 끝날 때까지 상세와 목록을 다시 불러온다.
+const settling = (task?: TaskDetail) =>
+  task?.validation_status === 'RUNNING' ||
+  task?.waiting_reason === 'REVALIDATION'
 // 서버가 검증을 무효로 만든 이유 코드(stale_reason). 모르는 값은 그대로 보여 준다.
 const staleReasonLabel: Record<string, string> = {
   ASSIGNEE_CHANGED: '담당자가 바뀌어 새 담당자가 다시 검증받아야 해요.',
@@ -99,6 +103,10 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryFn: ({ pageParam }) =>
       tasksApi.list(projectId, { cursor: pageParam, limit: 50 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) => page.items.some(settling))
+        ? 1500
+        : false,
   })
   const members = useQuery(membersQuery(projectId))
   const memberId = members.data?.items.find(
@@ -117,11 +125,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'task', selectedId],
     queryFn: () => tasksApi.get(projectId, selectedId!),
     enabled: !!selectedId,
-    refetchInterval: (query) =>
-      query.state.data?.validation_status === 'RUNNING' ||
-      query.state.data?.waiting_reason === 'REVALIDATION'
-        ? 1500
-        : false,
+    refetchInterval: (query) => (settling(query.state.data) ? 1500 : false),
   })
   const task = detail.data
   const approved = useInfiniteQuery({
@@ -141,11 +145,24 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       tasksApi.planRevisions(projectId, selectedId!, { limit: 100 }),
     enabled: !!selectedId,
   })
-  const validationId = task?.delta_validation_id ?? task?.validation?.id
+  // 서버 작업 상세의 validation 은 현재 계획의 가장 최근 검증이다(완료 보고 재검증 DELTA 가 가장 최근이면 그것).
+  // DELTA 가 오류로 끝난 뒤 계획 검증을 새로 받았으면 새 검증을 보여 주고(시작·재개에 쓴다), 기다리는 DELTA 는 따로 알린다.
+  const validationId = task?.validation?.id ?? task?.delta_validation_id
   const validation = useQuery({
     queryKey: ['projects', projectId, 'validation', validationId],
     queryFn: () => validationsApi.get(projectId, validationId!),
     enabled: !!validationId,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'RUNNING' ? 1500 : false,
+  })
+  const pendingDeltaId =
+    task?.delta_validation_id && task.delta_validation_id !== validationId
+      ? task.delta_validation_id
+      : undefined
+  const pendingDelta = useQuery({
+    queryKey: ['projects', projectId, 'validation', pendingDeltaId],
+    queryFn: () => validationsApi.get(projectId, pendingDeltaId!),
+    enabled: !!pendingDeltaId,
     refetchInterval: (query) =>
       query.state.data?.status === 'RUNNING' ? 1500 : false,
   })
@@ -177,6 +194,13 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     (finding) =>
       finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
   )
+  const delta = pendingDeltaId ? pendingDelta.data : undefined
+  const deltaRetryable =
+    delta?.status === 'ERROR' &&
+    !delta.findings.some(
+      (finding) =>
+        finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
+    )
   const canStart =
     isOwner &&
     active &&
@@ -737,6 +761,35 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         )}
                       </div>
                     )}
+                    {delta && (
+                      <div
+                        className="flex flex-wrap items-center gap-3 rounded-lg border p-3"
+                        aria-label="완료 보고 재검증"
+                      >
+                        <p className="text-sm">
+                          완료 보고 재검증: <StatusPill value={delta.status} />
+                        </p>
+                        {isOwner && deltaRetryable && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={action.busy}
+                            onClick={() =>
+                              perform(
+                                () =>
+                                  validationsApi.retry(projectId, delta.id, {
+                                    expected_attempt: delta.current_attempt,
+                                  }),
+                                '완료 보고 재검증 재시도를 접수했어요.',
+                              )
+                            }
+                          >
+                            <RefreshCw />
+                            완료 보고 재검증 재시도
+                          </Button>
+                        )}
+                      </div>
+                    )}
                     {policyAnalysis && (
                       <section
                         className="space-y-3 rounded-lg border p-4"
@@ -825,6 +878,21 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <p className="mt-2 text-sm text-muted-foreground">
                             {finding.next_action}
                           </p>
+                        )}
+                        {finding.ai_suggested_action && (
+                          <section
+                            aria-label="AI 후속 행동 제안"
+                            className="mt-3 space-y-1 rounded-md bg-muted p-3 text-sm"
+                          >
+                            <h4 className="font-medium">AI 후속 행동 제안</h4>
+                            <p className="break-words whitespace-pre-wrap">
+                              {finding.ai_suggested_action}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              참고용 제안이에요. 담당자와 승인 여부를 확인해
+                              주세요.
+                            </p>
+                          </section>
                         )}
                         {finding.sources.map((source, index) => (
                           <p

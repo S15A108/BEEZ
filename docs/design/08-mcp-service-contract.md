@@ -12,7 +12,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 | 프로젝트 | 토큰의 프로젝트 번호를 `projectId` 인수로 넘긴다. 도구 인수의 `project_id`는 서비스가 같은지만 본다(다르면 not_found) | MCP Tools "연결과 인증" |
 | 입력 검증 | 서비스가 DTO 검증 표시(@NotBlank 등)를 직접 적용한다(`InputValidator`). 어댑터는 JSON → 인수 객체 변환만 한다 | 컨트롤러를 거치지 않으므로 |
 | 오류 | 서비스는 `ApiException(상태, code, message)`을 던진다. 어댑터는 `code`·`message`를 도구 실패 결과로 옮긴다. 숫자 상태는 REST 대응 의미 | MCP Tools "업무 오류" |
-| `idempotency_key` | 변경 도구(MCP-10·12·07)는 필수(비면 400). 키 범위는 계정·프로젝트·동작. 같은 키·같은 입력은 처음 결과를 그대로, 다른 입력은 409 `idempotency_conflict`. 재요청도 현재 권한을 먼저 확인한다(작업 대상 도구는 현재 담당자인지까지). 결과는 `mcp_command`(V8)에 24시간 보존 — 문서·설계 항목의 `*_http_command`와 같은 범위 한정 결정 | 공통 5절, Q12 |
+| `idempotency_key` | 변경 도구(MCP-10·11·12·14·07)는 필수(비면 400). 키 범위는 계정·프로젝트·동작. 같은 키·같은 입력은 처음 결과를 그대로, 다른 입력은 409 `idempotency_conflict`. 재요청도 현재 권한을 먼저 확인한다(작업 대상 도구는 현재 담당자인지까지). 결과는 `mcp_command`(V8)에 24시간 보존 — 문서·설계 항목의 `*_http_command`와 같은 범위 한정 결정 | 공통 5절, Q12 |
 | 트랜잭션 | 서비스 메서드 하나 = 트랜잭션 하나. 어댑터는 트랜잭션을 열지 않는다 | — |
 | 조회 이력 | 설계 내용을 돌려주는 도구는 서비스 안에서 `context_access_log`에 남긴다. 어댑터가 따로 남기지 않는다 | -165, REST CTX-A06 |
 | 감사 기록 | `mcp_audit_log`는 어댑터(-177) 몫. 서비스는 남기지 않는다 | MCP-08·09 |
@@ -25,6 +25,7 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 | MCP-12 `report_task_state` | `TaskMcpService.reportTaskState(caller, projectId, args)` | `ReportTaskStateArgs(taskId, event, planRevisionId, expectedLockVersion, validationId, waitingReason, summary, delta, completionChecks, idempotencyKey)` | `ReportTaskStateResult(task, changes, changesSinceVersion)` |
 | MCP-03 `get_design_changes` | `DesignChangesService.getChanges(caller, projectId, query)` | `DesignChangesQuery(sinceVersion, taskId, cursor, limit)` | `DesignChangesResponse` |
 | MCP-11 `validate_task_plan` | `ValidationMcpService.validateTaskPlan(caller, projectId, args)` | `ValidateTaskPlanArgs(taskId, planRevisionId, expectedLockVersion, idempotencyKey)` | `ValidationResponse` (명세 Validation). 규칙으로 끝나면 PASS·NEEDS_*, 의미 분석이면 RUNNING — 조회는 MCP-13(-179 연결 때 `ValidationQueryService.get`) |
+| MCP-14 `retry_validation` | `ValidationMcpService.retryValidation(caller, projectId, args)` | `RetryValidationArgs(validationId, expectedAttempt, idempotencyKey)` | `ValidationResponse` (명세 Validation). 다시 열면 RUNNING. 규칙은 REST VAL-A04 와 같은 `ValidationRetryService` (-161) |
 
 - MCP-10: `task_id`가 없으면 새 작업(TSK-A01), 있으면 새 계획 리비전(TSK-A04). 수정이면 `expected_revision_no`·`expected_lock_version` 필수(없으면 400). 나머지 규칙·오류는 REST TSK-A01·A04와 같다.
 - MCP-12: 전이 규칙·오류는 REST TSK-A07과 같다. REST의 202(완료 델타 → 재검증 대기)는 도구 결과에서 구분하지 않는다 — `task.status`·`waiting_reason`으로 본다.
@@ -54,8 +55,6 @@ MCP 도구가 부를 업무 서비스의 입구·입력·출력·오류를 적�
 
 | 항목 | 언제 |
 | --- | --- |
-| MCP 경유 호출 테스트 (Jira -166 완료 조건) | MCP 서버(-176)·도구 연결(-179) 뒤. 지금은 서비스 직접 호출 테스트 |
-| MCP-11 검증 요청 | -159 |
 | 패킷 내용 구성(업무 서비스 안 호출 지점만 있음, 지금은 503) | 박상은 -131·-132 |
 | 근거(`sources`)의 원문 발췌 계약: 발췌는 저장하지 않고 참조·해시로 검증하는 방향. 정확한 span·순서·정규화, 발췌 해시 범위(전체 원문 `text_hash`와 구분)는 미정이며 지금의 `SourceDto`·`content_hash`가 그 계약을 구현한 것은 아니다 | 박상은 -131·-132와 별도 계약(#40 검토) |
 | 의미 검색·기록 임베딩 | 박상은 모듈 연결 때. 기록 임베딩 칸은 1024차원 고정이라 임베딩 설정과 차원 확인 필요 |

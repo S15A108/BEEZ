@@ -268,6 +268,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(kinds(v.get("findings"))).containsExactly("MISSING_INPUT");
         assertThat(v.get("findings").get(0).get("source").asText()).isEqualTo("RULE");
         assertThat(v.get("findings").get(0).get("next_action").asText()).isNotBlank();
+        assertThat(v.get("findings").get(0).has("ai_suggested_action")).isFalse();
         assertThat(v.has("error_code")).isFalse();
         assertThat(v.get("finished_at").isNull()).isFalse();
         assertThat(count("select count(*) from validation_job")).isZero();
@@ -576,6 +577,10 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(r1.get("status").asText()).isEqualTo("NEEDS_INPUT");
         assertThat(r1.get("findings").get(0).get("source").asText()).isEqualTo("MODEL");
         assertThat(r1.get("findings").get(0).get("resolution").asText()).isEqualTo("FIX_PLAN");
+        assertThat(r1.get("findings").get(0).get("next_action").asText()).isNotEqualTo("계획을 보완하세요");
+        assertThat(r1.get("findings").get(0).get("ai_suggested_action").asText()).isEqualTo("계획을 보완하세요");
+        assertThat(column("validation_finding", "ai_suggested_action", r1.get("findings").get(0).get("id").asLong()))
+                .isEqualTo("계획을 보완하세요");
         assertThat(column("validation_finding", "check_key", r1.get("findings").get(0).get("id").asLong())).isEqualTo("plan-completeness");
 
         // ② MISSING_INPUT + BLOCKING 불일치 → 검토 필요 우선
@@ -628,6 +633,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(f.get("kind").asText()).isEqualTo("ERROR");
         assertThat(f.get("severity").asText()).isEqualTo("BLOCKING");
         assertThat(f.get("resolution").asText()).isEqualTo("HUMAN_REVIEW");
+        assertThat(f.has("ai_suggested_action")).isFalse();
         // 모델은 돌았으니 사용량·검사 키·미검사 사유를 진단용으로 남긴다 (비용 기록에서 빠지지 않게)
         assertThat(column("validation", "summary", id)).contains("llm-validate-" + id + "-attempt-1-call-1")
                 .contains("\"analysis_status\": \"PARTIAL\"").contains("EVIDENCE_INSUFFICIENT").contains("partial_findings");
@@ -700,6 +706,19 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         broken.add(req -> {
             Map<String, Object> f = candidate(design, "MISMATCH", "INFO", String.valueOf(item), String.valueOf(version));
             f.remove("suggested_action");
+            return aiResponse(req, List.of(f), List.of());
+        });
+        // 지나치게 긴 문구 및 PostgreSQL에서 저장할 수 없는 NUL은 자르거나 저장하지 않고 계약 위반 처리한다.
+        for (String value : List.of("x".repeat(4001), "확인\0필요", "   ")) {
+            broken.add(req -> {
+                Map<String, Object> f = candidate(design, "MISMATCH", "INFO", String.valueOf(item), String.valueOf(version));
+                f.put("suggested_action", value);
+                return aiResponse(req, List.of(f), List.of());
+            });
+        }
+        broken.add(req -> {
+            Map<String, Object> f = candidate(design, "MISMATCH", "INFO", String.valueOf(item), String.valueOf(version));
+            f.put("suggested_action", List.of("\0"));
             return aiResponse(req, List.of(f), List.of());
         });
 

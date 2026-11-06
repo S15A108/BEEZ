@@ -150,6 +150,54 @@ it('현재 담당자는 PASS에 연결된 계획·검증·잠금 번호로 시�
   )
 })
 
+it('서버 안내와 AI 후속 행동 제안을 구분해 보여 주고 이전 결과도 표시한다', async () => {
+  task = taskDetailSchema.parse({
+    ...task,
+    validation_status: 'NEEDS_REVIEW',
+    validation: {
+      ...task.validation!,
+      status: 'NEEDS_REVIEW',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL',
+          kind: 'MISMATCH',
+          severity: 'BLOCKING',
+          message: '계획과 승인 설계가 달라요',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+          next_action: '팀과 검토하세요',
+          ai_suggested_action: '관련 작업 담당자와 협의를 검토하세요',
+        },
+        {
+          id: '702',
+          source: 'RULE',
+          kind: 'MISSING_INPUT',
+          severity: 'BLOCKING',
+          message: '기존 검증 결과',
+          sources: [],
+          resolution: 'FIX_PLAN',
+          next_action: '계획을 보완하세요',
+        },
+      ],
+    },
+  })
+  show(false)
+
+  const proposal = await screen.findByRole('region', {
+    name: 'AI 후속 행동 제안',
+  })
+  expect(
+    within(proposal).getByText('관련 작업 담당자와 협의를 검토하세요'),
+  ).toBeInTheDocument()
+  expect(within(proposal).getByText(/참고용 제안/)).toBeInTheDocument()
+  expect(screen.getByText('팀과 검토하세요')).toBeInTheDocument()
+  expect(screen.getByText('계획을 보완하세요')).toBeInTheDocument()
+  expect(
+    screen.getAllByRole('region', { name: 'AI 후속 행동 제안' }),
+  ).toHaveLength(1)
+})
+
 it('정책 분석과 모순 근거를 읽을 수 있는 설계 이름으로 보여 준다', async () => {
   vi.mocked(planningApi.items).mockResolvedValue({
     items: [
@@ -344,6 +392,57 @@ it('사람 검토가 아닌 분석 오류는 실행 재시도를 제공한다', 
   ).toBeInTheDocument()
 })
 
+it('완료 보고 재검증이 오류인데 새 계획 검증이 있으면 새 검증으로 재개하고 재검증 재시도도 따로 제공한다', async () => {
+  const deltaError = {
+    ...task.validation!,
+    id: '602',
+    status: 'ERROR' as const,
+    trigger: 'DELTA' as const,
+    findings: [
+      {
+        id: '704',
+        source: 'MODEL' as const,
+        kind: 'ERROR' as const,
+        severity: 'BLOCKING' as const,
+        message: '분석 실패',
+        sources: [],
+        resolution: 'RETRY' as const,
+      },
+    ],
+  }
+  task = {
+    ...task,
+    status: 'WAITING',
+    waiting_reason: 'REVALIDATION',
+    delta_validation_id: '602',
+    validation: { ...task.validation!, id: '603', status: 'PASS' },
+  }
+  vi.spyOn(validationsApi, 'get').mockImplementation(async (_project, id) =>
+    id === '602' ? deltaError : task.validation!,
+  )
+  const retry = vi
+    .spyOn(validationsApi, 'retry')
+    .mockImplementation(async () => ({ ...deltaError, status: 'RUNNING' }))
+  const state = vi.spyOn(tasksApi, 'state').mockImplementation(async () => task)
+  show(false)
+  fireEvent.click(
+    await screen.findByRole('button', { name: '완료 보고 재검증 재시도' }),
+  )
+  await waitFor(() =>
+    expect(retry).toHaveBeenCalledWith('101', '602', { expected_attempt: 1 }),
+  )
+  const resume = await screen.findByRole('button', { name: '재개' })
+  await waitFor(() => expect(resume).toBeEnabled())
+  fireEvent.click(resume)
+  await waitFor(() =>
+    expect(state).toHaveBeenCalledWith(
+      '101',
+      '501',
+      expect.objectContaining({ event: 'RESUME', validation_id: '603' }),
+    ),
+  )
+})
+
 it('팀장도 담당자가 아니면 시작·검증을 대신하지 않고 취소 개입만 제공한다', async () => {
   task = { ...task, assignee_member_id: '22' }
   show(true)
@@ -417,6 +516,26 @@ it('검증 중에는 시작을 끄고 옆에 이유를 적는다', async () => {
     screen.getByText('계획 검증 중이라 시작할 수 없어요.'),
   ).toBeInTheDocument()
 })
+
+it('검증이 끝나면 목록의 상태 칩도 다시 불러와 바뀐다', async () => {
+  const passed = task
+  task = {
+    ...task,
+    validation_status: 'RUNNING',
+    validation: { ...task.validation!, status: 'RUNNING' },
+  }
+  show(false)
+  const entry = await screen.findByRole('button', {
+    name: /사용자 프로필 구현/,
+  })
+  expect(within(entry).getByText('검증 중')).toBeInTheDocument()
+
+  task = passed
+  await waitFor(
+    () => expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
+    { timeout: 4000 },
+  )
+}, 10000)
 
 it('완료 보고는 완료 기준을 모두 체크해야 보내고 달라진 점은 줄마다 보낸다', async () => {
   task = { ...task, status: 'IN_PROGRESS' }

@@ -75,6 +75,45 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
     List<MemberRow> findActiveMembers(@Param("projectId") long projectId, @Param("beforeId") long beforeId,
                                       Pageable pageable);
 
+    /** 활성 멤버 수 (PRJ-A06 member_count). 조건은 {@link #findActiveMembers} 와 같아 팀원 목록 건수와 맞는다. */
+    @Query("""
+            select count(m) from ProjectMember m
+              join Project p on p.id = m.projectId
+              join Account a on a.id = m.accountId
+             where m.projectId = :projectId
+               and m.active = true
+               and p.archivedAt is null
+               and a.deletedAt is null
+            """)
+    long countActiveMembers(@Param("projectId") long projectId);
+
+    /**
+     * accountIds 중 이 프로젝트의 활성 멤버인 계정 (알림 수신자 거르기, -181). 조건은 {@link #findActiveMembership} 과 같다.
+     * 수신자가 몇 명이든 조회 한 번이다 — 발행처럼 project 행 잠금을 쥔 트랜잭션에서도 불린다.
+     * Hibernate 를 거치는 쿼리라 실행 전에 자동 flush 되어, 같은 트랜잭션에서 방금 바꾼(아직 flush 전) 멤버십도 반영된다.
+     * 빈 목록이면 쿼리하지 않는다 — {@code in ()} 은 SQL 문법 오류다.
+     */
+    default List<Long> activeAccountIdsAmong(long projectId, Collection<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return List.of();
+        }
+        return findActiveAccountIdsAmong(projectId, accountIds);
+    }
+
+    /** {@link #activeAccountIdsAmong} 로만 부른다. */
+    @Query("""
+            select m.accountId from ProjectMember m
+              join Project p on p.id = m.projectId
+              join Account a on a.id = m.accountId
+             where m.projectId = :projectId
+               and m.accountId in (:accountIds)
+               and m.active = true
+               and p.archivedAt is null
+               and a.deletedAt is null
+            """)
+    List<Long> findActiveAccountIdsAmong(@Param("projectId") long projectId,
+                                         @Param("accountIds") Collection<Long> accountIds);
+
     /**
      * 멤버십 행을 잠그고 읽는다 (SELECT … FOR UPDATE). 토큰 발급(AGT-A01)이 이걸로 줄을 세워 동시 발급이 한도를 넘지 않게 한다.
      * 이미 영속성 컨텍스트에 있는 엔티티는 옛 값 그대로 돌아오므로, 잠근 뒤 상태는 값 조회({@link #isActiveMember})로 다시 본다.
@@ -111,4 +150,25 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
             """, nativeQuery = true)
     List<Long> findAgentConnectedAccountIds(@Param("projectId") long projectId,
                                             @Param("accountIds") Collection<Long> accountIds);
+
+    /**
+     * 회원 탈퇴 판정(ACC-A10·A13, -171): 이 계정의 활성 멤버십마다 프로젝트와 본인 말고 활성 팀원 수. 프로젝트 id 순서.
+     * 활성 조건은 {@link #findActiveMembership} 과 같다 — 탈퇴한 팀원은 세지 않는다.
+     */
+    @Query("""
+            select new com.beez.backend.project.WithdrawalMembershipRow(m.id, p.id, p.name, m.role,
+                   (select count(o) from ProjectMember o
+                      join Account oa on oa.id = o.accountId
+                     where o.projectId = m.projectId
+                       and o.active = true
+                       and oa.deletedAt is null
+                       and o.id <> m.id))
+              from ProjectMember m
+              join Project p on p.id = m.projectId
+             where m.accountId = :accountId
+               and m.active = true
+               and p.archivedAt is null
+             order by p.id
+            """)
+    List<WithdrawalMembershipRow> findMembershipsForWithdrawal(@Param("accountId") long accountId);
 }
