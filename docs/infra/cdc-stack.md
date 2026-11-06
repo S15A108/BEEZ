@@ -192,7 +192,7 @@ S15P31A108-298부터는 consumer가 켜진 채 Kafka를 내려도 backend가 기
 
 | 순서 | 할 일 | 비고 |
 |---|---|---|
-| 1 | (선택) backend consumer만 끄기: 서버 env `BEEZ_CDC_INTAKE_CONSUMER_ENABLED=false` → backend 재배포 | 295 전이면 건너뛴다. **`BEEZ_CDC_INTAKE_ENABLED`(복구 스캔)는 켜 둔다** — 끄면 분석이 멈춘다(계획 §1). 점검이 끝나면 아래 "다시 켜기"로 되살린다 |
+| 1 | (선택) backend consumer만 끄기: [cdc-connector.md](cdc-connector.md#0-준비-서버-bash-셸을-새로-열-때마다)의 `cdcenv true false` → 같은 SHA 재배포(cdc-connector.md 6) | 295 전이면 건너뛴다. **`BEEZ_CDC_INTAKE_ENABLED`(복구 스캔)는 켜 둔다** — 끄면 분석이 멈춘다(계획 §1). 점검이 끝나면 아래 "다시 켜기"로 되살린다 |
 | 2 | 본 스택을 그대로 두면 `cdc stop`, 본 스택도 내릴 거면 **`cdc down`** | 아래 명령. 이유는 3번 |
 | 3 | 본 스택을 내려야 할 때만 본 스택 `down` | `beez-cdc`가 떠 있으면 "has active endpoints"로 실패한다. `cdc stop`으로 멈추기만 했으면 `down`은 되지만 `beez_default`가 지워졌다가 새로 만들어져, 멈춘 컨테이너가 옛 네트워크를 가리킨 채 남는다. 그러면 `cdc start`·`cdc up` 모두 `network … not found`로 실패한다(로컬 실측). 그래서 2번에서 `cdc down`으로 컨테이너를 지운다 |
 
@@ -222,7 +222,7 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 | 2 | 기준 파일을 새로 잡은 뒤 `cdc up -d --wait`(stop·down 어느 쪽이든 같음, 아래 명령) | "확인" 1) 둘 다 healthy. `network … not found`가 나면 아래 첫 번째 주의 |
 | 3 | 295 이후: 커넥터·task·슬롯 확인(아래 명령) | connector·task 모두 `RUNNING`, 슬롯 `active` = `t`. 아니면 여기서 멈추고 원인을 본다(계획 D6) |
 | 4 | 켜기 직전 접수 상태를 적는다(아래 명령) | 켜는 순간 그동안 쌓인 PENDING을 복구 스캔이 한꺼번에 집어 AI를 호출한다(계획 D7) |
-| 5 | 1번에서 껐다면 consumer 켜기: 서버 env `BEEZ_CDC_INTAKE_CONSUMER_ENABLED=true` → backend 재배포 | [cdc-connector.md "6. consumer 켜기"](cdc-connector.md#6-consumer-켜기)의 2)에서 `CONSUMER_ENABLED` 줄만 `true`로, 이어서 같은 SHA 재배포 |
+| 5 | 1번에서 껐다면 consumer 켜기: `cdcenv true true` → 같은 SHA 재배포 | [cdc-connector.md "6. consumer 켜기"](cdc-connector.md#6-consumer-켜기)의 2)·재배포를 그대로 한다. 명령을 손으로 고쳐 한 줄만 남기지 않는다 — consumer만 켜진 env는 backend 기동 거부(298) |
 | 6 | 처리 재개 확인 | `beez_cdc_analysis_consumer_enabled` = 1, `beez_cdc_kafka_consumer_up` = 1, 4번에서 적은 PENDING이 줄어든다 |
 
 ```bash

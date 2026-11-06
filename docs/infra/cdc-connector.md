@@ -41,9 +41,20 @@ kt() { docker exec -e KAFKA_HEAP_OPTS=-Xmx128m beez-cdc-kafka-1 /opt/kafka/bin/"
 # Connect REST 는 컨테이너 안 127.0.0.1 에만 열려 있다(계획 D3). 경로 뒤에 curl 옵션을 더 줄 수 있다.
 # -i 를 주지 않는다 — 주면 함께 붙여 넣은 다음 줄을 입력으로 삼킨다. 파일을 보내는 등록(3)만 따로 -i 를 쓴다
 crest() { local p=$1; shift; docker exec beez-cdc-connect-1 curl -sS "$@" "http://127.0.0.1:8083$p"; echo; }
+# 분석 켜기 env 두 줄을 항상 함께 쓴다: cdcenv <복구 스캔 true|false> <consumer true|false>.
+# 명령을 손으로 고치다 한 줄만 남기면 consumer 만 켜진 env 가 되어 backend 가 기동을 거부하므로(298) 그 조합은 쓰기 전에 막는다.
+# 기존 두 줄을 빼고 덧붙인 새 파일로 바꾼다(cd.md 의 GMS_KEY 와 같은 방식, umask 027 + /opt/beez setgid 로 640·beez-deploy 유지)
+cdcenv() {
+  case "$1 $2" in "true true"|"true false"|"false false") ;;
+    *) echo "쓰지 않음: '$1 $2' — 가능한 값은 'true true'(켜기)·'true false'(Kafka 경로만 끔)·'false false'(끄기)"; return 1;; esac
+  ( umask 027; { grep -Ev '^BEEZ_CDC_INTAKE_(ENABLED|CONSUMER_ENABLED)=' /opt/beez/.env.dev
+      echo "BEEZ_CDC_INTAKE_ENABLED=$1"; echo "BEEZ_CDC_INTAKE_CONSUMER_ENABLED=$2"; } > /opt/beez/.env.dev.new ) \
+    && mv /opt/beez/.env.dev.new /opt/beez/.env.dev && grep '^BEEZ_CDC_INTAKE_' /opt/beez/.env.dev && ls -l /opt/beez/.env.dev
+}
 ```
 
 - `pgsql`은 `docker exec -i`라 뒤에 붙여 넣은 줄까지 입력으로 삼킨다. 한 줄짜리 조회는 `</dev/null`을 붙인다.
+- `cdcenv`로 env를 바꾼 뒤에는 6의 같은 SHA 재배포를 해야 컨테이너에 반영된다.
 
 ## 1. 사전 점검 (읽기 전용)
 
@@ -67,6 +78,27 @@ docker exec beez-cdc-connect-1 test -r /run/cdc-secrets/database.properties && e
 [cdc-stack.md "올리기·업데이트"](cdc-stack.md#올리기업데이트)의 명령을 그대로 쓴다. 머지 전에 등록할 때는 `REV`에 이 PR 브랜치의
 커밋을 준다. 그랬다면 머지 뒤 `REV=origin/dev`로 한 번 더 올려 서버 폴더의 `REVISION`을 dev 커밋으로 맞춘다.
 compose 파일이 그대로면 그다음 `cdc up -d --wait`는 아무것도 다시 만들지 않는다.
+
+**브랜치 커밋을 올리기 전에** 그 커밋이 서버 폴더에 지금 올라가 있는 커밋을 포함하는지 본다. 올리기는 폴더를 통째로 바꾸므로,
+브랜치가 dev보다 뒤처져 있으면 그 사이 다른 PR이 서버에 올린 설정이 조용히 사라진다. `포함 안 됨`이면 브랜치를 dev와 동기화한 뒤
+다시 확인한다. 5의 모니터링 올리기도 같은 함수로 확인한다(`revcheck monitoring`).
+
+```bash
+# 로컬 PC (Git Bash, 저장소 루트). 셸마다 함수를 붙여 넣는다. REV 는 바로 뒤 올리기 명령에 줄 값과 같게
+revcheck() {  # 사용: revcheck <cdc|monitoring>   (REV 변수를 먼저 정한다)
+  [ -n "$REV" ] || { echo "REV 를 먼저 정한다"; return 1; }
+  # ssh 가 실패하면 빈 값이 되므로 "파일 없음"(NONE)과 구분한다
+  local cur; cur=$(ssh beez "if [ -f /opt/beez/$1/REVISION ]; then cat /opt/beez/$1/REVISION; else echo NONE; fi") \
+    && [ -n "$cur" ] || { echo "서버에서 REVISION 을 읽지 못함(ssh 실패) — 올리지 않는다"; return 1; }
+  git fetch -q origin || return 1
+  if [ "$cur" = NONE ]; then echo "서버에 REVISION 없음(처음 올리기) — 그대로 올려도 됨"
+  elif ! git cat-file -e "$cur^{commit}" 2>/dev/null; then echo "서버 커밋 $cur 을 로컬에서 못 찾음 — 확인 불가, 올리지 않는다"; return 1
+  elif git merge-base --is-ancestor "$cur" "$REV"; then echo "포함됨($cur) — 올려도 됨"
+  else echo "포함 안 됨 — $REV 에 서버 커밋 $cur 이 없다. 브랜치를 dev 와 동기화한 뒤 다시"; return 1; fi
+}
+REV=origin/dev   # 머지 전이면 이 PR 브랜치 커밋
+revcheck cdc
+```
 
 ```bash
 # 서버. 올라온 설정 확인 — 커넥터 이름은 파일에 없고 아래 3의 경로에 있다. 비밀번호 줄이 자리표시자인지 본다
@@ -109,6 +141,7 @@ cdc logs connect --since 5m 2>&1 | grep -E "Snapshot (ended|completed)| ERROR " 
 
 - [monitoring.md "올리기·업데이트"](monitoring.md#올리기업데이트)대로 모니터링 스택을 올린다. 머지 전이면 `REV`에 이 PR 브랜치
   커밋을 주고, 머지 뒤 `REV=origin/dev`로 한 번 더 올려 `REVISION`을 맞춘다(2와 같은 방식).
+  올리기 전에 2의 `revcheck monitoring`이 `포함됨`인지 본다(모니터링 폴더는 다른 PR도 올리므로 뒤처진 브랜치로 덮으면 그 규칙이 사라진다).
 - 확인(읽기 전용): 다시 띄우고 **30초쯤 뒤**에 아래 명령을 친다. 슬롯 알림 네 개가 모두 보이고 health 가 `ok` 면 들어간 것이다.
   바로 치면 첫 평가 전이라 `unknown unknown`이 나온다(11-06 서버).
 
@@ -123,7 +156,7 @@ cat /opt/beez/monitoring/REVISION
 ```
 
 - 알림 네 개: `CdcSlotInactive`(10분 비활성)·`CdcSlotWalRetained`(WAL 1GiB)·`CdcSlotMissing`(consumer가 켜졌는데 슬롯 지표 없음)·
-  `CdcSlotCollectorFailing`(수집기 실패). 대응은 [monitoring-alerts.md](monitoring-alerts.md#cdcslotinactive).
+  `CdcSlotCollectorFailing`(수집기 실패, consumer와 상관없이). 대응은 [monitoring-alerts.md](monitoring-alerts.md#cdcslotinactive).
 - 알림을 올리기 전에 consumer를 켜야 하는 사정이 있으면, 올릴 때까지 아래 "상태 보기"를 하루 두 번(오전·오후) 하고
   실행 기록에 그 사실을 적는다.
 
@@ -135,10 +168,9 @@ cat /opt/beez/monitoring/REVISION
 ```bash
 # 서버. 1) 켜기 직전 접수 상태 — 결과를 아래 "실행 기록"에 적는다
 pgsql -c "SELECT status, count(*) FROM published_change_analysis GROUP BY status ORDER BY status" </dev/null
-# 2) env 두 줄. 기존 줄을 빼고 다시 쓴다(cd.md 의 GMS_KEY 와 같은 방식, 권한·그룹 유지)
-( umask 027; { grep -Ev '^BEEZ_CDC_INTAKE_(ENABLED|CONSUMER_ENABLED)=' /opt/beez/.env.dev
-    echo 'BEEZ_CDC_INTAKE_ENABLED=true'; echo 'BEEZ_CDC_INTAKE_CONSUMER_ENABLED=true'; } > /opt/beez/.env.dev.new ) \
-  && mv /opt/beez/.env.dev.new /opt/beez/.env.dev && grep '^BEEZ_CDC_INTAKE_' /opt/beez/.env.dev && ls -l /opt/beez/.env.dev
+# 2) env 두 줄(0 준비의 cdcenv). 스캔·consumer 모두 켬
+cdcenv true true
+sudo -u jenkins test -r /opt/beez/.env.dev && echo "jenkins can read"
 # 3) 지금 떠 있는 SHA — 재배포에 쓴다
 docker inspect -f '{{.Config.Image}}' beez-backend-1
 ```
@@ -225,7 +257,7 @@ pgsql -c "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wa
 
 | 순서 | 되돌리는 것 | 방법 |
 |---|---|---|
-| 1 | consumer·스캔 (6) | env 두 줄을 `false`로(6의 2)에서 `true`를 `false`로) → 같은 SHA 재배포. Kafka 경로만 끄려면 `CONSUMER_ENABLED`만 `false`(분석은 스캔으로 계속) |
+| 1 | consumer·스캔 (6) | `cdcenv false false`(0 준비) → 같은 SHA 재배포. 이때부터 분석이 멈춘다. Kafka 경로만 끄려면 `cdcenv true false`(분석은 스캔으로 계속) |
 | 2 | 커넥터 (3) | 아래 명령. 지우기 전에 stop·offset 삭제 |
 | 3 | 슬롯 (3) | 커넥터가 없어 `active = f`인 것을 본 뒤 삭제 |
 

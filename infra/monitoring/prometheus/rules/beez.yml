@@ -180,7 +180,8 @@ groups:
       # 위 두 알림은 시계열이 있어야 운다. consumer 를 켠 뒤(= CDC 켜짐) 기대 슬롯의 시계열이 없으면 슬롯이 지워졌거나 커넥터가
       # 다른 이름으로 만든 것이라 두 감시가 조용히 빠진다(PR #166 리뷰). 슬롯 이름은 커넥터 설정 slot.name 과 같다
       # (infra/cdc/dev/intake-connector.json, 커넥터를 새 이름으로 다시 만들어도 slot.name 은 그대로).
-      # - consumer 를 켜기 전(커넥터 등록 전)·되돌리기(1번에서 consumer 를 먼저 끔)에는 울지 않는다.
+      # - consumer 를 켜기 전(커넥터 등록 전)·되돌리기(1번에서 consumer 를 먼저 끔)에는 울지 않는다. 같은 이유로 consumer 만 끈
+      #   점검 중에 슬롯이 사라지는 것도 잡지 못한다(한계: 커넥터 존재를 알리는 지표는 261 에서 생긴다).
       # - exporter 가 DB 에 못 붙거나(pg_up) 수집기가 실패하면 시계열이 없는 것이 당연하므로 여기서 빼고 PostgresDown·
       #   MonitoringTargetDown·아래 CdcSlotCollectorFailing 이 운다. 앞 줄은 수집기 지표, 뒷 줄은 기본 쿼리 지표가 빠진 경우다.
       # 10분: 커넥터를 다시 만드는 동안(슬롯 삭제→재등록, 수 분)은 거른다
@@ -196,9 +197,12 @@ groups:
         annotations:
           summary: "consumer 가 켜졌는데 슬롯 beez_published_analysis 지표가 없음 — 슬롯이 사라졌거나 다른 이름으로 만들어짐"
 
-      # replication_slots 수집기 실패 = 슬롯 시계열이 통째로 빠져 위 감시가 모두 꺼진다. CDC 가 켜졌을 때만 알린다
+      # replication_slots 수집기 실패 = 슬롯 시계열이 통째로 빠져 위 감시가 모두 꺼진다. consumer 조건을 두지 않는다 —
+      # consumer 만 끈 점검(cdc-stack.md "중지·내리기" 1번)에도 슬롯은 WAL 을 붙잡으므로 감시가 필요하다(PR #166 코드 리뷰).
+      # 이 수집기는 슬롯이 없어도 성공(1)하므로 CDC 전·되돌린 뒤에도 거짓으로 울지 않는다(서버 11-05 확인).
+      # exporter 가 DB 에 못 붙으면(pg_up 0) 수집기도 함께 실패하므로 PostgresDown 에 맡기고 여기서는 뺀다
       - alert: CdcSlotCollectorFailing
-        expr: pg_scrape_collector_success{collector="replication_slots"} == 0 and on() beez_cdc:consumer_enabled:max == 1
+        expr: pg_scrape_collector_success{collector="replication_slots"} == 0 and on() pg_up == 1
         for: 5m
         labels: {team: infra}
         annotations:

@@ -30,7 +30,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcSlotInactive](#cdcslotinactive) | 논리 복제 슬롯 `slot_is_active == 0`(커넥터 등록 뒤에만 시계열 있음) | 10분 | 4시간 | 인프라 · 전진 |
 | [CdcSlotWalRetained](#cdcslotwalretained) | 슬롯이 붙잡은 WAL > 1GiB | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcSlotMissing](#cdcslotmissing) | consumer 켜짐 **그리고** 기대 슬롯(`beez_published_analysis`) 지표 없음(exporter·수집기는 정상) | 10분 | 4시간 | 인프라 · 전진 |
-| [CdcSlotCollectorFailing](#cdcslotcollectorfailing) | consumer 켜짐 **그리고** `replication_slots` 수집기 실패 | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcSlotCollectorFailing](#cdcslotcollectorfailing) | `replication_slots` 수집기 실패(exporter 는 DB 에 붙어 있음) | 5분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -221,12 +221,14 @@ consumer가 켜져 있는데(= CDC 켜짐) 기대 슬롯 `beez_published_analysi
 - 볼 곳: [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)의 슬롯 쿼리. 0행이면 누가 슬롯을 지웠거나 커넥터가 없는 것이고,
   다른 이름의 슬롯만 있으면 커넥터 설정의 `slot.name`이 바뀐 것입니다(이 알림은 이름을 고정해서 봅니다).
 - 일부러 내린 것이면 되돌리기 순서(consumer 먼저 끄기)를 지켰는지 봅니다. consumer를 끄면 이 알림은 풀립니다.
+- 한계: consumer를 끈 점검 중에는 슬롯이 사라져도 울지 않습니다(커넥터가 있는지 알리는 지표는 S15P31A108-261에서 생김).
 - 슬롯 이름을 바꾸기로 했으면 규칙 파일의 `slot_name`도 함께 고칩니다.
 
 ### CdcSlotCollectorFailing
 
 postgres-exporter의 `replication_slots` 수집기가 5분 넘게 실패합니다. 슬롯 시계열이 통째로 빠져 위 슬롯 알림이 모두 멈춘
-상태입니다. consumer가 켜졌을 때만 울립니다.
+상태입니다. consumer를 끈 점검 중에도 슬롯은 WAL을 붙잡으므로 consumer와 상관없이 울립니다. 이 수집기는 슬롯이 없어도 성공하므로
+CDC 전에는 울지 않고, exporter가 DB에 못 붙을 때(`pg_up` 0)는 `PostgresDown`에 맡깁니다.
 
 - 볼 곳: `mon logs postgres-exporter`의 오류 문구. 권한 문제면 수집 계정 `beez_monitor`의 `pg_monitor` 역할을
   ([monitoring.md 수집 계정](monitoring.md#2-db-수집-계정)), 그 밖이면 exporter 버전 변경을 의심합니다.

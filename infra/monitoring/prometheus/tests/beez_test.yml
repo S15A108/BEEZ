@@ -322,15 +322,43 @@ tests:
           - exp_labels: {team: infra}
             exp_annotations: {summary: "consumer 가 켜졌는데 슬롯 beez_published_analysis 지표가 없음 — 슬롯이 사라졌거나 다른 이름으로 만들어짐"}
 
+  # 깨지면: CDC 전(지금 서버 상태: 수집기 성공·슬롯 없음)이나 되돌린 뒤에 슬롯 알림이 거짓으로 운다
   - name: consumer 꺼짐(커넥터 등록 전·되돌리기) — 슬롯이 없어도 알림 없음
     interval: 1m
     input_series:
       - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '0x30'}
       - {series: 'pg_up{job="postgres"}', values: '1x30'}
-      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '0x30'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '1x30'}
     alert_rule_test:
       - {eval_time: 30m, alertname: CdcSlotMissing, exp_alerts: []}
       - {eval_time: 30m, alertname: CdcSlotCollectorFailing, exp_alerts: []}
+
+  # 깨지면: consumer 만 끈 점검 중(슬롯은 살아 WAL 을 붙잡음)에 수집기가 실패해도 조용하다(PR #166 코드 리뷰)
+  - name: consumer 꺼짐이어도 수집기 실패는 CdcSlotCollectorFailing
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '0x20'}
+      - {series: 'pg_up{job="postgres"}', values: '1x20'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '0x20'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: CdcSlotCollectorFailing, exp_alerts: []}
+      - eval_time: 6m
+        alertname: CdcSlotCollectorFailing
+        exp_alerts:
+          - exp_labels: {team: infra, collector: replication_slots, job: postgres}
+            exp_annotations: {summary: "postgres-exporter replication_slots 수집 실패 — 슬롯 감시가 멈춤"}
+      - {eval_time: 20m, alertname: CdcSlotMissing, exp_alerts: []}
+
+  # 깨지면: exporter 가 DB 에 못 붙을 때(DB 재시작 등) PostgresDown 과 함께 슬롯 알림까지 울어 원인 판단이 흐려진다
+  - name: pg_up 0 — 슬롯 부재·수집기 실패 알림 없음(PostgresDown 이 맡음)
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'pg_up{job="postgres"}', values: '0x20'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '0x20'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: CdcSlotMissing, exp_alerts: []}
+      - {eval_time: 20m, alertname: CdcSlotCollectorFailing, exp_alerts: []}
 
   # 깨지면: 기본 쿼리 쪽(WAL 보유량) 지표만 빠져 CdcSlotWalRetained 가 조용히 꺼진 것을 놓친다
   - name: consumer 켜짐 — WAL 보유량 지표만 없어도 CdcSlotMissing
