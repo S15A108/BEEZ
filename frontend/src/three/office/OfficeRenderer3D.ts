@@ -2989,7 +2989,7 @@ export class OfficeRenderer3D {
     }
     windowWall(this.rearWindows, width)
     this.rearWindows.position.set(left, 0, back - 0.12)
-    // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(남쪽 끝 4.7 m)에 나무 슬랫을 댄다(캔버스 v488).
+    // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(floor.wallSlat)에 나무 슬랫을 댄다.
     if (fixed)
       solidWall(
         this.sideWindows,

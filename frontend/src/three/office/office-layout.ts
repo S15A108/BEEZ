@@ -1,6 +1,6 @@
 import type { Agent, Zone } from '../types'
 import type { Dir, Floor, Furniture, FurnitureKind, Seat, Tile } from './floors'
-import { V488_PLAN, type OfficePiece, type OfficePlan } from './officePlan'
+import type { OfficePiece, OfficePlan } from './officePlan'
 import { OFFICE_THEMES, officeDesignOf, type OfficeDesign } from './officeLook'
 import { BRICK_PLAN } from './plans/brick'
 import { GLASS_PLAN } from './plans/glass'
@@ -24,8 +24,8 @@ export function officePopulationOf(
   }, {})
 }
 
-// 건물 외관별 배치(D39). 아직 옮기지 않은 외관은 v488 배치(D36)를 쓴다.
-const OFFICE_PLANS: Partial<Record<OfficeDesign, OfficePlan>> = {
+// 건물 외관별 배치(D39)
+const OFFICE_PLANS: Record<OfficeDesign, OfficePlan> = {
   brick: BRICK_PLAN,
   glass: GLASS_PLAN,
   modern: MODERN_PLAN,
@@ -82,12 +82,12 @@ const SOLID = new Set([
 const onTop = (piece: OfficePiece) => piece.y > 0.2
 
 /**
- * 고정 사무실(캔버스 SCR-06-rec-office v488, D36). 팀원 수와 상관없이 같은 방이고, 배치는 건물 외관을 따른다(D39).
+ * 고정 사무실(D36). 팀원 수와 상관없이 같은 방이고, 배치는 건물 외관을 따른다(D39).
  * 작업 자리는 작업 현황 구역과 방 가운데 책상이고, 넘는 인원은 허들 스툴과 워룸 스툴에 앉는다.
  */
 export function makeTeamOffice(design?: string): Floor {
   const look = officeDesignOf(design)
-  const plan = OFFICE_PLANS[look] ?? V488_PLAN
+  const plan = OFFICE_PLANS[look]
   // 캔버스 배치(m, 방 가운데 원점)를 타일로 옮긴다. 1 m = 1타일이고 서쪽·북쪽 벽이 0번 칸이다.
   const ROOM_W = plan.room.w
   const ROOM_D = plan.room.d
@@ -125,7 +125,6 @@ export function makeTeamOffice(design?: string): Floor {
   for (const zone of plan.zones)
     fill(zone.x0, zone.z0, zone.x1, zone.z1, ZONE_TILE[zone.n])
   fill(plan.lounge.x0, plan.lounge.z0, plan.lounge.x1, plan.lounge.z1, 'l')
-  if (plan === V488_PLAN) fill(3.2, 1, 8.8, 4.4, 'u')
   for (let x = 0; x < W; x++) {
     grid[H - 3][x] = 's'
     grid[H - 2][x] = 's'
@@ -257,7 +256,7 @@ export function makeTeamOffice(design?: string): Floor {
   })
   // 유리 회의실(캔버스 office3 gwall): 통로 쪽 벽(동쪽 끝 1.4 m는 문)과 양 끝 벽. 벽이 지나는 칸을 막는다.
   const room = plan.zones.find((zone) => zone.n === 3)
-  if (room && plan !== V488_PLAN && OFFICE_THEMES[look].glassRoom)
+  if (room && OFFICE_THEMES[look].glassRoom)
     for (const [ax, az, bx, bz] of [
       [room.x0, room.z1, room.x1 - 1.4, room.z1],
       [room.x0, room.z0, room.x0, room.z1],
@@ -379,11 +378,8 @@ export function makeTeamOffice(design?: string): Floor {
     },
     outdoorExit,
     footprint: { left: 1, back: 1, right: W - 1, front: H - 3 },
-    // 서쪽 벽 나무 슬랫 구간(북쪽 벽에서 m). 캔버스 office3처럼 방 깊이의 0.9/14~6.9/14 남쪽, v488은 라운지 끝 4.7 m.
-    wallSlat:
-      plan === V488_PLAN
-        ? [ROOM_D - 4.8, ROOM_D - 0.1]
-        : [ROOM_D * (0.5 + 0.9 / 14), ROOM_D * (0.5 + 6.9 / 14)],
+    // 서쪽 벽 나무 슬랫 구간(북쪽 벽에서 m). 캔버스 office3처럼 방 깊이의 0.9/14~6.9/14 남쪽.
+    wallSlat: [ROOM_D * (0.5 + 0.9 / 14), ROOM_D * (0.5 + 6.9 / 14)],
     zoneSigns: plan.zones.map((zone) => ({
       n: zone.n,
       name: zone.name,

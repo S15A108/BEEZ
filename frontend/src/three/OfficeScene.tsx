@@ -519,7 +519,7 @@ function OfficeRuntime(
     focus.current.y += (target.y - focus.current.y) * ease
     me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
-      // 건물별 28 × 16 m 방(D39)도 v488 방(폭 26칸)과 같은 크기로 화면에 담는다.
+      // 건물별 28 × 16 m 방(D39)도 폭 26칸 방과 같은 크기로 화면에 담는다.
       zoom:
         [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] *
         zoom.current *
