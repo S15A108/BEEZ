@@ -12,7 +12,7 @@ class ActivityRecorderTest {
     @Test
     void agentCallerWithoutToken_isRejectedBeforeSaving() {
         // 토큰 없는 에이전트 행위가 저장되면 -178 에서 세션을 이을 근거가 없어 에이전트 필터에서 영구히 빠진다
-        ActivityRecorder recorder = new ActivityRecorder(null);   // EntityManager 까지 가면 NPE 로 다른 실패가 된다
+        ActivityRecorder recorder = new ActivityRecorder(null);   // 저장 실행부까지 가면 NPE 로 다른 실패가 된다
         CallerContext tokenless = new CallerContext(1L, null, CallerKind.AGENT);
 
         assertThatThrownBy(() -> recorder.record(tokenless,

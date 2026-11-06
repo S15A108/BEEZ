@@ -2,7 +2,6 @@ package com.beez.backend.activity;
 
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.common.auth.CallerKind;
-import jakarta.persistence.EntityManager;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -22,16 +21,17 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * </ul>
  *
  * <p><b>저장 규칙.</b> 같은 키가 이미 있으면 조용히 건너뛴다(처음 것 유지, 내용이 달라도). {@code ON CONFLICT (dedupe_key) DO NOTHING}.
- * {@code occurred_at} 은 {@code clock_timestamp()}(실제 저장 시각). 저장은 {@link EntityManager} 네이티브 쿼리라 실행 전에
- * 영속성 컨텍스트가 flush 된다 — 도메인 쪽 제약 위반은 커밋 때가 아니라 이 호출에서 난다.
+ * {@code occurred_at} 은 {@code clock_timestamp()}(실제 저장 시각). 저장은 {@link ActivityEventWriter} 의 네이티브 쿼리라 실행 전에
+ * 영속성 컨텍스트가 flush 된다 — 도메인 쪽 제약 위반은 커밋 때가 아니라 이 호출에서 난다. 그 예외는 Spring 예외로 바뀌어 나간다
+ * (제약 위반 {@code DataIntegrityViolationException}, 버전 충돌 {@code ObjectOptimisticLockingFailureException}, -308).
  */
 @Service
 public class ActivityRecorder {
 
-    private final EntityManager em;
+    private final ActivityEventWriter writer;
 
-    public ActivityRecorder(EntityManager em) {
-        this.em = em;
+    public ActivityRecorder(ActivityEventWriter writer) {
+        this.writer = writer;
     }
 
     /** 사람·에이전트 행위. 행위 계정은 {@code caller.accountId()}(에이전트면 토큰 주인). */
@@ -62,28 +62,6 @@ public class ActivityRecorder {
             // PostgreSQL 이 INSERT 를 거부하기 전에 원인을 분명히 알린다 (계약 2.1)
             throw new IllegalStateException("ActivityRecorder must not be called inside a readOnly transaction");
         }
-        em.createNativeQuery("""
-                        insert into activity_event (project_id, actor_kind, actor_id, agent_session_id, event_type,
-                                                    ref_kind, ref_id, task_id, change_proposal_id, baseline_id, result,
-                                                    dedupe_key, occurred_at, created_at, updated_at)
-                        values (:projectId, :actorKind, cast(:actorId as bigint), cast(:agentSessionId as bigint), :type,
-                                :refKind, :refId, cast(:taskId as bigint), cast(:changeProposalId as bigint),
-                                cast(:baselineId as bigint), :result,
-                                :key, clock_timestamp(), clock_timestamp(), clock_timestamp())
-                        on conflict (dedupe_key) do nothing
-                        """)
-                .setParameter("projectId", e.projectId())
-                .setParameter("actorKind", actorKind)
-                .setParameter("actorId", actorAccountId)
-                .setParameter("agentSessionId", agentSessionId)
-                .setParameter("type", e.type())
-                .setParameter("refKind", e.targetType().name())
-                .setParameter("refId", e.targetId())
-                .setParameter("taskId", e.taskId())
-                .setParameter("changeProposalId", e.changeProposalId())
-                .setParameter("baselineId", e.baselineId())
-                .setParameter("result", e.result().name())
-                .setParameter("key", e.eventKey())
-                .executeUpdate();
+        writer.insert(actorKind, actorAccountId, agentSessionId, e);
     }
 }

@@ -72,8 +72,10 @@ public class GlobalExceptionHandler {
 
     /**
      * @Version 충돌: 내가 읽은 뒤 누군가 먼저 바꿨다. 명세 00-common 5절 → 409 revision_conflict.
-     * 저장소·커밋에서 나면 Spring 이 {@link ObjectOptimisticLockingFailureException} 으로 바꿔 주지만, EntityManager 네이티브
-     * 쿼리(활동·알림 입구 등)가 실행 전에 auto-flush 하다 나면 변환을 거치지 않고 JPA·Hibernate 예외 그대로 온다 (S15P31A108-288 실측).
+     * 저장소({@code @Repository})·커밋에서 나면 Spring 이 {@link ObjectOptimisticLockingFailureException} 으로 바꿔 준다.
+     * {@code @Repository} 밖에서 EntityManager 쿼리가 auto-flush 하다 나면 변환을 거치지 않고 JPA·Hibernate 예외 그대로 온다
+     * (S15P31A108-288 실측). 활동·알림 입구는 -308 에서 실행부를 {@code @Repository} 로 옮겨 변환을 거치지만, 같은 실수가 다시
+     * 생겨도 500 으로 새지 않게 원형 예외도 받는다.
      */
     @ExceptionHandler({ObjectOptimisticLockingFailureException.class, OptimisticLockException.class,
             StaleObjectStateException.class})

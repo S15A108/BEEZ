@@ -9,13 +9,14 @@ import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.support.AccessFixtures.ProjectWithLeader;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.repository.TaskRepository;
-import jakarta.persistence.OptimisticLockException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -148,8 +149,7 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void versionConflictFlushedByEntry_isRevisionConflict409() {
-        // 함정(-288 실측): 입구는 네이티브 쿼리라 실행 전에 auto-flush 한다. 그때 난 @Version 충돌은 Spring 변환을 거치지 않아
-        // ObjectOptimisticLockingFailureException 이 아니라 jakarta OptimisticLockException 으로 온다 — 공용 처리기가 409 로 받아야 한다
+        // 함정(-288 실측): 입구는 네이티브 쿼리라 실행 전에 auto-flush 한다. 그때 난 @Version 충돌도 409 revision_conflict 여야 한다
         ProjectWithLeader p = fixtures().projectWithLeader();
         long taskId = draftTask(p.projectId());
         TransactionTemplate other = new TransactionTemplate(transactionManager);
@@ -165,13 +165,36 @@ class ActivityRecorderIntegrationTest extends IntegrationTestSupport {
                     p.projectId(), "TASK_CREATED", ActivityTargetType.TASK, taskId));
         }));
 
-        assertThat(thrown).isInstanceOf(OptimisticLockException.class);
+        // -308: 입구 INSERT 실행부가 @Repository 라 Spring 변환을 거친다. 변환 전(-300 때)에는 jakarta OptimisticLockException 이었다
+        assertThat(thrown).isInstanceOf(ObjectOptimisticLockingFailureException.class);
         // 실제 요청처럼 @ExceptionHandler 목록으로 처리기를 고른다 — 목록에서 빠지면 handleUnexpected(500)로 간다
         var handler = new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class).resolveMethod((Exception) thrown);
         assertThat(handler).isNotNull().extracting(Method::getName).isEqualTo("handleOptimisticLock");
         var response = exceptionHandler.handleOptimisticLock((Exception) thrown);
         assertThat(response.getStatusCode().value()).isEqualTo(409);
         assertThat(response.getBody().error().code()).isEqualTo("revision_conflict");
+        assertThat(rowsOf(p.projectId())).isEmpty();
+    }
+
+    @Test
+    void constraintViolationFlushedByEntry_isValidationFailed400() {
+        // -308 실측: 입구의 auto-flush 에서 난 FK 위반이 Spring 변환 없이 오면 DataIntegrityViolationException 처리기(400)를
+        // 비켜 가 handleUnexpected(500)로 간다
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long taskId = draftTask(p.projectId());
+
+        Throwable thrown = catchThrowable(() -> inTransaction(() -> {
+            tasks.findById(taskId).orElseThrow().changeAssignee(Long.MAX_VALUE);   // 없는 멤버 → (assignee, project) FK 위반
+            recorder.record(CallerContext.human(p.leaderAccountId()), ActivityEvent.of("task:" + taskId + ":assigned",
+                    p.projectId(), "TASK_ASSIGNED", ActivityTargetType.TASK, taskId));
+        }));
+
+        assertThat(thrown).isInstanceOf(DataIntegrityViolationException.class);
+        var handler = new ExceptionHandlerMethodResolver(GlobalExceptionHandler.class).resolveMethod((Exception) thrown);
+        assertThat(handler).isNotNull().extracting(Method::getName).isEqualTo("handleIntegrity");
+        var response = exceptionHandler.handleIntegrity((DataIntegrityViolationException) thrown);
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody().error().code()).isEqualTo("validation_failed");
         assertThat(rowsOf(p.projectId())).isEmpty();
     }
 }
