@@ -27,7 +27,7 @@ public interface McpTool<A> {
 
     /**
      * @return 도구 성공 결과의 업무 payload. 레코드·Map 처럼 JSON 객체가 되는 값을 돌려준다 (snake_case 로 직렬화)
-     * @throws com.beez.backend.common.api.ApiException 업무 오류. code·message 가 도구 실패 결과로 나간다
+     * @throws com.beez.backend.common.api.ApiException 업무 오류. code·message·details 가 도구 실패 결과로 나간다
      */
     Object call(McpCall call, A args);
 }
