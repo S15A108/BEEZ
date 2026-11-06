@@ -157,7 +157,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(items(page1)).extracting(i -> i.get("number")).containsExactly(1L, 2L);
         assertThat(page1).containsEntry("total_count", 3L).containsEntry("has_more", true);
         long secondId = Long.parseLong(((Map<String, Object>) items(page1).get(1)).get("id").toString());
-        assertThat((String) page1.get("next_cursor")).matches("[0-9]+:[0-9]+:" + secondId);
+        assertThat((String) page1.get("next_cursor")).isEqualTo(version + ":" + secondId);
         var first = items(page1).get(0);
         assertThat(first).containsEntry("question_type", "ESSAY").containsEntry("status", "OPEN").containsEntry("evidence_status", "REVIEW_CANDIDATE");
         assertThat(first.get("source")).isEqualTo(Map.of("document_id", "" + document, "document_version_id", "" + version, "version_no", 1, "location", "기획서 / L3"));
@@ -178,13 +178,27 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(page2).containsEntry("total_count", 2L).containsEntry("has_more", false);
     }
 
+    @Test void rankChangesBetweenPagesNeitherRepeatNorSkip() {
+        generator.runOnce();
+        var page1 = questions.list(memberCaller, project, version, null, 2);
+        var shown = items(page1).stream().map(i -> i.get("id").toString()).toList();
+        var all = jdbc.queryForList("SELECT id FROM planning_question WHERE document_version_id=? AND status<>'SUPERSEDED' ORDER BY id", Long.class, version);
+        long unseen = all.stream().filter(id -> !shown.contains(id.toString())).findFirst().orElseThrow();
+        // 쪽 사이에 재분석이 rank 를 바꾼다: 안 본 질문은 맨 앞으로, 이미 본 질문은 맨 뒤로
+        jdbc.update("UPDATE planning_question SET rank=1 WHERE id=?", unseen);
+        jdbc.update("UPDATE planning_question SET rank=999 WHERE id=?", Long.parseLong(shown.get(0)));
+        var page2 = questions.list(memberCaller, project, version, (String) page1.get("next_cursor"), 5);
+        assertThat(items(page2)).extracting(i -> i.get("id").toString()).containsExactly(String.valueOf(unseen));
+        assertThat(page2).containsEntry("has_more", false);
+    }
+
     @Test void listValidatesInputAndProjectAccess() {
         generator.runOnce();
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, null, 0));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, null, 101));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "x", null));
         fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "2", null));
-        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "1:2:-3", null));
+        fails(HttpStatus.BAD_REQUEST, "validation_failed", () -> questions.list(memberCaller, project, null, "1:-3", null));
         var outsider = com.beez.backend.common.auth.CallerContext.human(fixtures().account());
         fails(HttpStatus.NOT_FOUND, "not_found", () -> questions.list(outsider, project, null, null, null));
     }

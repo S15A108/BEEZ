@@ -111,7 +111,10 @@ public class PlanningQuestionGenerator {
             if (row.get("question_key") != null) byKey.putIfAbsent((String) row.get("question_key"), row);
         }
         Set<String> seen = new HashSet<>();
-        for (var q : parsed) {
+        // 목록 자리는 만들어진 순서(id)로 고정된다 — 처음 만들 때는 우선순위(rank) 순으로 넣어 그 순서가 곧 우선순위가 되게 한다.
+        var ordered = new ArrayList<>(parsed);
+        ordered.sort(java.util.Comparator.comparingInt(row -> ((Number) row.get("rank")).intValue()));
+        for (var q : ordered) {
             q = new HashMap<>(q);
             q.put("project", project); q.put("version", version); q.put("run", runKey);
             String key = (String) q.get("key");
