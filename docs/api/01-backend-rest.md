@@ -7209,7 +7209,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 최대 100개. 원문만 수정하면 빈 배열 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 최대 4개. 항목만 수정하면 빈 배열 |
 | `previous_proposal_id` | `ID` | N | 같은 프로젝트에서 본인이 거둔 WITHDRAWN 제안. 새 제안의 연결 정보 |
-| `meeting_id` | `ID` | N | 관련 회의. #218 수정안 요청 · 195 미구현 |
+| `meeting_id` | `ID` | — | 받지 않는다(보내도 무시한다). 회의 출처는 회의 끝내기(MTG-A13)만 채우고 응답의 `meeting_id`로 보인다(S15P31A108-297, Q24) |
 
 ```json
 {
@@ -13100,7 +13100,7 @@ HTTP `201`.
 
 관련 요구사항: MTG-09 (화면 PNL-06-v2-draft, PNL-06-v2-draft-result)  
 담당: BE: 오서현 / AI: — (문안은 MTG-A11 비비 정리에서 옴) / FE: 오서현  
-상태: 수정안 요청 (협의 필요)
+상태: 구현됨(S15P31A108-297). 알림·활동은 아래 처리 규칙
 
 #### 인증
 
@@ -13169,8 +13169,8 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `summary_outdated` | 정리 뒤 새 기록이 있거나, 최신 정리가 아니거나, 정리에 쓴 문서 버전이 지금 기준과 다름 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류. 정리를 적용한 문서가 제출 규칙(100,000자·1 MiB)을 넘거나 비게 되는 경우도 같다 — 회의는 열어 둔다 |
+| 409 | `summary_outdated` | 정리 뒤 새 사람 기록(TEXT)이 있거나, 최신 정리가 아니거나, 정리에 쓴 문서 버전이 지금 기준과 다르거나, 정리의 줄 범위·`before`가 지금 원문과 맞지 않음. 회의는 열린 채이고 제안은 남지 않는다 |
 | 409 | `meeting_closed` | 이미 끝난 회의 |
 | 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
 
@@ -13190,11 +13190,18 @@ HTTP `200`.
 - (수정안 요청) 끝내기 전에 정리의 document_changes[].base_version_id가 지금 기준의 그 문서 승인본과 같은지 다시 확인한다. 정리 뒤 다른 변경 제안이 발행돼 기준이 바뀌었으면 409 summary_outdated로 회의를 끝내지 않는다. 화면은 '정리한 뒤 기준이 바뀌었어요'를 안내하고, 팀장이 비비에게 다시 정리(MTG-A11)를 요청한다. 아직 발행되지 않은 다른 제안은 기준이 아니므로 여기서 막지 않고, 승인할 때 CHG-A09의 requires_refresh 규칙을 따른다.
 - 이 API는 문서와 기준을 바꾸지 않는다. 팀장이 CHG-A08 검토와 CHG-A09 승인을 하면 기준 v2, v3이 생기고, 재검증·영향 분석·MCP-03 노출도 CHG-A09 규칙을 따른다.
 - 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다(Q24 정함).
-- task_ids의 담당자에게 회의 결과가 변경 제안으로 올라갔다고 알리고 활동에 남긴다.
+- task_ids의 담당자에게 회의 결과가 변경 제안으로 올라갔다고 알리고 활동에 남긴다. 구체적인 동작은 아래 구현 규칙을 따른다.
 - 끝난 회의는 읽기만 한다(MTG-A06 409 meeting_closed).
 - 회의 결과는 공용 문서함의 비비 검토·제출(DOC-A16·A18)을 거치지 않는다. 비비 회의 정리(MTG-A11)와 변경 제안 검토(CHG-A08)가 검토를 맡는다.
 - (수정안 요청) 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
-- 구현(S15P31A108-205): 팀장만 호출한다(사람 세션). 잠금 뒤 팀장을 다시 확인하고, 회의 행 잠금으로 기록·참여자 추가와 직렬화한다. 실제로 빠진 사람에게 `MEETING_PARTICIPANT_REMOVED` 알림을 저장하고 멱등 204(이미 빠짐)에서는 남기지 않는다(S15P31A108-217). 활동은 S15P31A108-237 TODO다.
+- 구현(S15P31A108-297): 팀장(사람 세션)이면서 회의 참여자만 호출하고 `Idempotency-Key`가 필수다. 팀원·비참여 팀장은 403, 에이전트는 403이다. 기준 v1 전이면 409 `baseline_missing`이다.
+- 구현(S15P31A108-297) 순서: ① 짧은 트랜잭션에서 권한·멱등 재생·열림·정리 유효성을 확인하고 문안을 만든다 → ② 바뀔 문서가 있으면 변경 제안을 만든다 → ③ 짧은 트랜잭션에서 회의 행을 잠그고 ①의 유효성을 다시 확인한 뒤 회의를 닫고 알림·활동·멱등 기록을 같은 트랜잭션에 남긴다. 원문 저장이 DB 트랜잭션 밖이라 ②와 ③은 한 트랜잭션이 아니다.
+- 구현(S15P31A108-297) 정리 유효성(409 `summary_outdated`): `summary_id`가 이 회의의 최신 정리이고, 정리의 `through_entry_id` 뒤에 사람 기록(TEXT)이 없고, 정리가 인용한 모든 문서의 `base_version_id`가 지금 기준의 승인본과 같아야 한다. 비비 기록(SUMMARY·CONFLICT_BRIEF)은 사람 기록이 아니다. 이 회의의 정리가 아닌 `summary_id`는 404다.
+- 구현(S15P31A108-297) 문안: 정리의 줄 변경(`locator`·`before`·`after`)을 기준 승인본 원문에 `DocumentLineEditor`로 적용한다. 줄은 정규화한 원문(`NormalizedText.lines`)으로 세고 뒤에서부터 적용한다. 범위가 원문 밖이거나 겹치거나 `before`가 지금 원문과 다르면 409 `summary_outdated`다. 빈 `after`는 그 줄을 지운다. 원문이 LF로 끝났는지는 결과에서도 같다. 적용한 결과가 기준 본문과 같은 문서는 제안에서 뺀다. 문서 변경이 하나도 남지 않으면 제안 없이 회의만 닫고 응답의 `change_proposal_id`를 생략한다. 결정·충돌은 제안의 사유(`reason`)에 적고 제목은 `회의 결과: {회의 이름}`이다.
+- 구현(S15P31A108-297) 제안: CHG-A01과 같은 검증·저장 규칙으로 `change_proposal`을 만든다. 제안자는 끝낸 팀장(`actor_type=HUMAN`), `task_id`·`validation_id`·`items`는 비고 `documents`만 있다. 회의 출처는 `change_proposal.meeting_id`(회의당 거두지 않은 제안 1건, 부분 UNIQUE)이고 제안 응답의 `meeting_id`로 보인다. 스냅샷 해시·멱등 지문에는 들어가지 않는다. 이 제안은 `CHANGE_PROPOSAL_SUBMITTED` 알림을 따로 보내지 않는다(아래 알림이 대신한다). 문서·기준은 종료로 바뀌지 않는다.
+- 구현(S15P31A108-297) 재시도: 같은 `Idempotency-Key`는 처음 응답을 돌려준다(보존 24시간). 다른 키로 다시 누르면 이미 끝난 회의라 409 `meeting_closed`다. 제안은 만들었는데 종료가 실패한 뒤의 재시도는 같은 회의의 살아 있는 제안을 만나, 문안이 같으면 그 제안을 재사용하고(새로 올린 원문은 지운다) 정리가 바뀌어 문안이 다르면 옛 제안을 거두고(WITHDRAWN) 새로 만든다. ③에서 새 기록·기준 변경을 발견하면 방금 만든 제안을 거두고(최선 노력) 409를 돌려준다.
+- 구현(S15P31A108-297) 알림: 제안이 만들어졌을 때만, 회의 작업 묶음(`meeting_task`)의 현재 담당자 중 활성 멤버에게(끝낸 팀장 본인은 제외) `MEETING_PROPOSAL_CREATED` 알림을 같은 트랜잭션에 저장한다. 대상은 `CHANGE_PROPOSAL`(제안), 키는 `meeting:{id}:closed:to:{계정}`이다. 응답의 `notified_member_ids`는 받은 담당자의 프로젝트 멤버 ID이고 받은 사람이 없으면 빈 배열이다. 담당자가 없는 작업은 건너뛴다.
+- 구현(S15P31A108-297) 활동: 끝낸 팀장이 행위자(HUMAN)인 `MEETING_CLOSED`(대상 MEETING, 제안이 있으면 `change_proposal_id`)를 같은 트랜잭션에 남긴다. 키는 `meeting:{id}:closed`다. 제안 생성 자체의 활동(`CHANGE_PROPOSAL_SUBMITTED`)은 변경 제안 활동 연결에서 채운다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13276,6 +13283,7 @@ HTTP `204`.
 - (수정안 요청) 빠진 사람에게 누가 뺐는지 담아 `target_type=MEETING` 알림을 보내고 활동에 남긴다. 알림 대상·내용은 회의 서비스가 정해 공통 알림 서비스로 전달한다.
 - (수정안 요청) 비비가 부른 작업 담당자를 빼도, 회의를 끝낼 때 task_ids 담당자에게 가는 알림(MTG-A13)은 그대로 간다. 비비는 회의를 열 때만 참여자를 정하므로 뺀 사람을 같은 회의에 다시 부르지 않는다.
 - (수정안 요청) 끝난 회의는 409 meeting_closed이고, 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
+- 구현(S15P31A108-205): 팀장만 호출한다(사람 세션). 잠금 뒤 팀장을 다시 확인하고, 회의 행 잠금으로 기록·참여자 추가와 직렬화한다. 실제로 빠진 사람에게 `MEETING_PARTICIPANT_REMOVED` 알림을 저장하고 멱등 204(이미 빠짐)에서는 남기지 않는다(S15P31A108-217). 활동은 S15P31A108-237 TODO다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
