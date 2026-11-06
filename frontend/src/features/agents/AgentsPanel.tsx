@@ -276,7 +276,8 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   </button>
                 )}
               </div>
-              <ol className="grid gap-4">
+              {/* 긴 명령 줄이 칸을 밀어내지 않게 칸 너비를 창에 묶는다. 그래야 코드 줄이 말줄임되고 '복사'가 보인다. */}
+              <ol className="grid grid-cols-[minmax(0,1fr)] gap-4">
                 <Step
                   number={1}
                   title={

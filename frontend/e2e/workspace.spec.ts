@@ -262,3 +262,20 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
   await expect(tag).toBeVisible()
   await expect.poll(centre).toBeLessThan(30)
 })
+
+// S15P31A108-285: 2단계 명령 줄이 칸을 밀어내 '복사' 버튼이 창 밖으로 나갔다. 레이아웃이라 브라우저에서만 잡힌다.
+test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 안에 있다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '설정', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: '설정 메뉴' })
+    .getByRole('button', { name: /에이전트/ })
+    .click()
+  const copy = page.getByRole('button', { name: 'MCP 주소 복사' })
+  await expect(copy).toBeVisible()
+  const dialog = (await page.getByRole('dialog').boundingBox())!
+  const button = (await copy.boundingBox())!
+  expect(button.x + button.width).toBeLessThanOrEqual(dialog.x + dialog.width)
+})
