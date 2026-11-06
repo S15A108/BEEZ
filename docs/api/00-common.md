@@ -481,7 +481,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q21 | 대시보드 비용·집계 | 변준성·전진 | 비용을 팀장만 볼지(지금 MEMBER), 에이전트를 토큰별로 셀지 팀원별로 묶을지, 프로젝트 전체 관계 그래프가 필요한지 |
 | Q22 | 화면 상태 저장 | 전진·변준성·박민용 | 가이드 표시 상태는 브라우저 저장으로 정함(서버 저장은 8절 확장 후보). 시작 가이드 종료 조건(팀장 = 발행+초대, 팀원 = 에이전트 연결+첫 계획), 팀장을 넘겨받은 사람에게 가이드를 다시 띄울지, 기준 발행 전 팀원이 할 수 있는 일, 도시 부지 번호를 멤버십별로 서버에 둘지와 부지 상한 |
 | Q23 | 변경 제안 검토 시작 | 오서현 | 정함(2026-10-29): CHG-A08은 선택이다. 승인·반려는 PROPOSED와 IN_REVIEW 모두에서 할 수 있고, A08은 팀장이 검토를 시작했음을 표시하는 용도다 |
-| Q24 | 회의에서 나온 변경 제안의 제안자 | 오서현·박상은 | 정함(2026-10-29): 회의 끝내기(MTG-A13)로 만든 제안의 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다. actor_type에 BEE를 더하지 않는다 |
+| Q24 | 회의에서 나온 변경 제안의 제안자 | 오서현·박상은 | 정함(2026-10-29): 회의 끝내기(MTG-A13)로 만든 제안의 제안자(proposer_account_id)는 회의를 끝낸 팀장이고 actor_type=HUMAN이다. 회의 출처는 meeting_id로 보인다. actor_type에 BEE를 더하지 않는다. 구현됨(S15P31A108-297): `change_proposal.meeting_id`는 회의 끝내기만 채우고 공개 CHG-A01은 받지 않는다 |
 
 Q07 중 업로드는 2026-10-27 [DOC-A01 정책](01-backend-rest.md#doc-a01)으로 확정했다. 문서 API의 사용자 식별은 공통 로그인·CallerContext 계약(PR #22)을 따른다. 문서 전용 세션 속성·CSRF 토큰 발급 API·X-CSRF-Token 헤더는 사용하지 않는다. 문서 변경 요청은 Origin(없을 때 Referer)의 scheme·host·유효 port를 beez.cors.allowed-origins와 정확히 대조하며, 출처 누락·불일치·잘못된 형식은 403 request_origin_rejected로 거부한다. 이 검사는 문서 API 범위이며 전역 인증 정책을 변경하지 않는다.
 
@@ -972,7 +972,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
-| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
+| `meeting_id` | `ID` | — | 받지 않는다(보내도 무시한다). 회의 출처는 회의 끝내기(MTG-A13)만 채운다(S15P31A108-297) |
 | `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
@@ -993,7 +993,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
-| `meeting_id` | `ID` | N | 관련 회의. 수정안 요청 |
+| `meeting_id` | `ID` | N | 이 제안을 만든 회의. 회의 끝내기(MTG-A13)가 만든 제안에만 있고 그 외에는 생략한다. 응답에서만 보이며 스냅샷 해시에 들어가지 않는다(S15P31A108-297) |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경 |
 | `status` | `PROPOSED\|IN_REVIEW\|APPROVED\|PUBLISHED\|REJECTED\|WITHDRAWN` | Y | 제안 상태 |
