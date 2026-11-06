@@ -494,6 +494,31 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         assertThat(liveProposals()).isEqualTo(1);
     }
 
+    @Test void aProposalRejectedBetweenCreationAndTheEndOfTheMeetingIsNotTiedToItAndNobodyIsNotified() throws Exception {
+        long summary = summarize(e2);
+        var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        // 제안을 받은 뒤 종료가 잠금을 얻기 전에 검토에서 반려된다
+        doAnswer(call -> {
+            var created = (com.beez.backend.changeproposal.dto.ProposalDtos.Proposal) call.callRealMethod();
+            if (armed.getAndSet(false)) {
+                proposalCommands.reject(CallerContext.human(leader), project, Long.parseLong(created.id()),
+                        new com.beez.backend.changeproposal.dto.ProposalDtos.RejectRequest("보완", created.revision(), created.snapshotHash()), "reject-in-flight");
+            }
+            return created;
+        }).when(proposalCommands).createFromMeeting(any(), anyLong(), anyLong(), any());
+
+        expect(close(leader, summary, "close-rejected-meanwhile"), 409, "meeting_proposal_changed");
+        assertThat(meetingStatus()).isEqualTo("OPEN");
+        assertThat(jdbc.queryForObject("SELECT change_proposal_id FROM meeting WHERE id=?", Long.class, meeting)).isNull();
+        assertThat(count("SELECT count(*) FROM notification WHERE type='MEETING_PROPOSAL_CREATED' AND project_id=?", project)).isZero();
+        assertThat(count("SELECT count(*) FROM activity_event WHERE event_type='MEETING_CLOSED' AND project_id=?", project)).isZero();
+        // 다시 끝내면 반려된 제안은 거두고 새로 만들어 닫는다
+        var again = body(close(leader, summary, "close-after-rejected-meanwhile"));
+        assertThat(meetingStatus()).isEqualTo("CLOSED");
+        assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(again.path("change_proposal_id").asString()))).isEqualTo("PROPOSED");
+        assertThat(liveProposals()).isEqualTo(1);
+    }
+
     @Test void aRetryDoesNotTieTheMeetingToARejectedProposal() throws Exception {
         var earlier = proposalCommands.createFromMeeting(CallerContext.human(leader), project, meeting, proposalInput(APPLIED));
         proposalCommands.reject(CallerContext.human(leader), project, Long.parseLong(earlier.id()),

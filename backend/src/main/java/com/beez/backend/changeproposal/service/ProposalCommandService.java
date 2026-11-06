@@ -124,13 +124,16 @@ public class ProposalCommandService {
 
     /**
      * 회의 끝내기가 종료 직전에(프로젝트·회의 잠금 안에서) 자기가 받은 제안이 아직 이 회의의 살아 있는 제안인지 확인한다.
-     * 다른 요청의 뒤늦은 정리가 그 사이 제안을 거뒀다면 거둔 제안에 회의를 묶지 않도록 막는다. 다시 시도하면 새로 만든다.
+     * 다른 요청의 뒤늦은 정리가 그 사이 제안을 거뒀거나 검토에서 반려됐다면 그 제안에 회의를 묶지 않도록 막는다. 다시 시도하면
+     * 새로 만든다(반려된 제안은 재시도가 거두고 새로 만든다). 이미 승인 단계로 간 제안은 재사용 규칙처럼 그대로 받아들인다.
      */
     @Transactional
     public void requireLiveMeetingProposal(long project, long meeting, long proposal) {
         var live = repository.liveProposalForMeeting(project, meeting);
-        if (live.isEmpty() || live.get() != proposal) {
-            throw error("meeting_proposal_changed", "회의에 올린 제안이 그 사이 거두어졌어요. 다시 끝내 주세요.");
+        boolean usable = live.isPresent() && live.get() == proposal
+                && !"REJECTED".equals(repository.proposal(project, proposal).get("status"));
+        if (!usable) {
+            throw error("meeting_proposal_changed", "회의에 올린 제안이 그 사이 거두어지거나 반려됐어요. 다시 끝내 주세요.");
         }
     }
 
