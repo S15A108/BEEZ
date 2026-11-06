@@ -1,7 +1,8 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { authApi } from '@/api/services'
@@ -25,6 +26,46 @@ beforeEach(async () => {
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
 })
 afterEach(() => restore())
+
+// S15P31A108-285: 메뉴는 '연결 미확인', 본문은 '연결 전'처럼 갈렸고 확인에 실패해도 메뉴는 그대로였다.
+it('설정 메뉴와 에이전트 화면이 같은 상태 이름을 보이고, 다른 메뉴에 갔다 와도 유지한다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.getState().openPane('settings', 'agent')
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <MemoryRouter>
+        <SettingsDialog
+          projectId="101"
+          isLeader
+          agentConnected={false}
+          memberId="21"
+        />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  const menu = await screen.findByRole('navigation', { name: '설정 메뉴' })
+  const status = await screen.findByRole('status')
+  await waitFor(() => expect(status).toHaveTextContent(/^연결 미확인/))
+  expect(
+    within(menu).getByRole('button', { name: /에이전트/ }),
+  ).toHaveTextContent('연결 미확인')
+  await user.click(within(status).getByRole('button', { name: '연결 확인' }))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
+  )
+  expect(
+    within(menu).getByRole('button', { name: /에이전트/ }),
+  ).toHaveTextContent('연결 실패')
+  await user.click(within(menu).getByRole('button', { name: '팀' }))
+  await user.click(within(menu).getByRole('button', { name: /에이전트/ }))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
+  )
+})
 
 // PR #72 재전수 SECOND-AMP-02: 토큰 발급처럼 요청이 처리 중이면 다른 메뉴로 옮기지 않아 한 번만 보이는 토큰을 잃지 않는다.
 it('요청이 처리 중이면 설정의 다른 메뉴로 옮기지 못하고 안내를 보인다', async () => {

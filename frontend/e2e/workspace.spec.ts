@@ -302,7 +302,9 @@ test('팀장 시작 가이드 1단계에서 초대와 에이전트 연결을 하
 })
 
 // S15P31A108-285: 창이 검색칸에 포커스를 주면서 창을 연 숫자가 검색어로 들어갔다.
-test('숫자 키 1로 공용 문서함을 열어도 검색칸이 비어 있다', async ({ page }) => {
+test('숫자 키 1로 공용 문서함을 열어도 검색칸이 비어 있다', async ({
+  page,
+}) => {
   await openWorkspace(page)
   await page.keyboard.press('1')
   const search = page.getByLabel('검색어')

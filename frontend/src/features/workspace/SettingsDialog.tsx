@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { useIsMutating } from '@tanstack/react-query'
 import { AgentsPanel } from '@/features/agents/AgentsPanel'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { TeamPanel } from '@/features/members/TeamPanel'
 import type { TeamView } from '@/features/members/TeamPanel'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -15,11 +18,15 @@ export function SettingsDialog({
   projectId,
   isLeader,
   agentConnected,
+  memberId,
 }: {
   projectId: string
   isLeader: boolean
   agentConnected: boolean
+  memberId?: string
 }) {
+  const statusOf = useAgentStatusOf(projectId)
+  const [agentChecked, setAgentChecked] = useState(false)
   const pane = useWorkspaceStore((state) => state.pane)
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -90,7 +97,12 @@ export function SettingsDialog({
             {item(
               'agent',
               '에이전트',
-              agentConnected ? '연결됨' : '연결 미확인',
+              agentStatusLabels[
+                statusOf(
+                  { id: memberId, agent_connected: agentConnected },
+                  agentChecked,
+                ).status
+              ],
             )}
             {item('remove', isLeader ? '프로젝트 제거' : '프로젝트 나가기')}
           </div>
@@ -111,7 +123,11 @@ export function SettingsDialog({
         </nav>
         <PaneSheetHost className="min-w-0 overflow-y-auto px-8 py-7">
           {section === 'agent' ? (
-            <AgentsPanel projectId={projectId} />
+            <AgentsPanel
+              projectId={projectId}
+              checkedBefore={agentChecked}
+              onChecked={() => setAgentChecked(true)}
+            />
           ) : (
             <TeamPanel
               key={section}

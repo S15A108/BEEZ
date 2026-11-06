@@ -17,6 +17,8 @@ import {
   inboxApi,
 } from '@/api/services'
 import type { Member, TaskDetail } from '@/api/contracts/common'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import type { GetResponse as Project } from '@/features/projects/schemas'
 import type { OnboardingResponse } from '@/features/projects/schemas'
 import { useProjectStart } from '@/features/projects/useProjectStart'
@@ -38,7 +40,7 @@ import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 import { Button } from '@/components/ui/button'
 import { countText, describeContent, statusLabel } from '@/lib/display'
-import { formatAgo } from '@/lib/formatDate'
+import { formatAgo, formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
@@ -153,6 +155,7 @@ export function WorkspaceHud({
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const isLeader = project.my_role === 'LEADER'
   const started = onboarding.baseline_published
+  const statusOf = useAgentStatusOf(project.id)
   // 집계는 따로 받는다. 하나가 실패해도(dev 백엔드에 작업 집계 API가 아직 없음) 다른 숫자와 시작 안내는 그대로 보인다
   // (PR #72 전수 리뷰 TC-5). 실패한 칸은 0 대신 '—'.
   const documentCounts = useQuery({
@@ -268,10 +271,7 @@ export function WorkspaceHud({
       links: setup.links,
       optional: true,
       children: (
-        <ul
-          aria-label="팀원 초대와 에이전트 연결"
-          className="mt-2 grid gap-1"
-        >
+        <ul aria-label="팀원 초대와 에이전트 연결" className="mt-2 grid gap-1">
           {setup.rows.map((row) => (
             <li
               key={row.focus}
@@ -481,18 +481,27 @@ export function WorkspaceHud({
     // 에이전트 줄: 연결된 에이전트, 그리고 아직 연결하지 않은 내 에이전트(설정에서 연결)
     ...members
       .filter((member) => member.agent_connected || member.id === me?.id)
-      .map((member) => ({
-        key: `agent:${member.id}`,
-        initial: 'AI',
-        color: undefined,
-        name: `${member.name}의 에이전트`,
-        place: member.agent_connected ? '연결됨' : '연결 전',
-        detail: member.agent_connected ? '' : '설정에서 연결해요',
-        open: () =>
-          member.id === me?.id && !member.agent_connected
-            ? openPane('settings', 'agent')
-            : openPane('dashboard'),
-      })),
+      .map((member) => {
+        const { status, lastReportAt } = statusOf(member)
+        const mine = member.id === me?.id
+        return {
+          key: `agent:${member.id}`,
+          initial: 'AI',
+          color: undefined,
+          name: `${member.name}의 에이전트`,
+          place: agentStatusLabels[status],
+          detail:
+            status === 'recheck' && lastReportAt
+              ? `마지막 보고 ${formatShort(lastReportAt)}`
+              : status === 'none' && mine
+                ? '설정에서 연결해요'
+                : '',
+          open: () =>
+            mine && status !== 'connected'
+              ? openPane('settings', 'agent')
+              : openPane('dashboard'),
+        }
+      }),
   ]
   const approved =
     documentCounts.data?.by_kind.reduce(
@@ -895,9 +904,7 @@ export function WorkspaceHud({
                                       : 'outline'
                                 }
                                 className={started ? undefined : 'h-auto p-0'}
-                                onClick={() =>
-                                  openPane('settings', link.focus)
-                                }
+                                onClick={() => openPane('settings', link.focus)}
                               >
                                 {link.label}
                               </Button>

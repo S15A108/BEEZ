@@ -21,6 +21,8 @@ import { Label } from '@/components/ui/label'
 import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { membersQuery } from '@/features/members/membersQuery'
 
 const calendarDay = (date: Date) =>
@@ -121,6 +123,7 @@ export function ActivityPanel({
       ),
   })
   const members = useQuery(membersQuery(projectId))
+  const statusOf = useAgentStatusOf(projectId)
   const memberName = (memberId: string) =>
     members.data?.items.find((member) => member.id === memberId)?.name ??
     `팀원 #${memberId}`
@@ -354,6 +357,10 @@ export function ActivityPanel({
                           const member = members.data?.items.find(
                             (entry) => entry.id === item.member_id,
                           )
+                          // 팀원 목록을 못 받았으면 연결 여부를 모른다.
+                          const agentStatus = member
+                            ? statusOf(member).status
+                            : 'recheck'
                           return (
                             <tr
                               key={`${item.member_id}:${item.agent_session_id ?? ''}`}
@@ -373,7 +380,7 @@ export function ActivityPanel({
                                 <span
                                   className={cn(
                                     'ml-auto inline-flex items-center gap-1.5 text-xs',
-                                    member?.agent_connected
+                                    agentStatus === 'connected'
                                       ? 'text-[#00753a]'
                                       : 'text-[#c99e1e]',
                                   )}
@@ -382,11 +389,7 @@ export function ActivityPanel({
                                     aria-hidden="true"
                                     className="size-1.75 rounded-full bg-current"
                                   />
-                                  {member
-                                    ? member.agent_connected
-                                      ? '연결됨'
-                                      : '미연결'
-                                    : '연결 상태 미확인'}
+                                  {agentStatusLabels[agentStatus]}
                                 </span>
                               </td>
                               {(
