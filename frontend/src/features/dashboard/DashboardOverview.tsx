@@ -1,21 +1,34 @@
 import { useQuery } from '@tanstack/react-query'
 import type { UseQueryResult } from '@tanstack/react-query'
+import { Check, TriangleAlert } from 'lucide-react'
+import { changesApi } from '@/api/services/changes'
 import { dashboardApi } from '@/api/services/dashboard'
+import { tasksApi } from '@/api/services/tasks'
 import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
 import { countText, statusLabel } from '@/lib/display'
+import { formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { AsyncState } from '@/components/AsyncState'
+import { ActorAvatar } from './ActorAvatar'
 import { DailyCallsChart } from './DailyCallsChart'
-import { FEATURE_LABELS, costText } from './labels'
-import { rangeText } from './period'
+import { FEATURE_LABELS, activityChip, callsText, costText } from './labels'
+import { rangeText, seoulClock, seoulDay } from './period'
 import type { DashboardTab } from './labels'
 import type {
   ActivitiesResponse,
   AgentWorkResponse,
   UsageResponse,
 } from './schemas'
+
+const LINK = 'ml-auto text-[12.5px] font-semibold text-[#8a6a00]'
+// 최근 활동의 시각. 오늘이면 '10:42', 아니면 '10/27'
+const recentTime = (value: string) => {
+  const day = seoulDay(value)
+  const [, month, date] = day.split('-').map(Number)
+  return day === seoulDay(Date.now()) ? seoulClock(value) : `${month}/${date}`
+}
 
 // 대시보드 · 한눈에 보기. 숫자는 위에서 고른 기간의 사용량·비용과 같은 값이다.
 export function DashboardOverview({
@@ -26,6 +39,7 @@ export function DashboardOverview({
   members,
   actorName,
   onTab,
+  periodName = '선택 기간',
 }: {
   projectId: string
   usage: UseQueryResult<UsageResponse>
@@ -35,6 +49,8 @@ export function DashboardOverview({
   members: Member[]
   actorName: (item: Activity) => string
   onTab: (tab: DashboardTab) => void
+  // 고른 기간의 이름: '11월', '최근 7일', '선택 기간'
+  periodName?: string
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   // API 없음: 대시보드 숫자를 한 번에 주는 요약 응답(백엔드 메모 8). 지금은 작업·변경 제안 집계를 따로 부른다.
@@ -47,12 +63,36 @@ export function DashboardOverview({
     queryKey: ['projects', projectId, 'dashboard-counts', 'tasks'],
     queryFn: () => dashboardApi.tasks(projectId),
   })
-  const inProgress =
-    tasks.data?.by_status.find((entry) => entry.status === 'IN_PROGRESS')
-      ?.count ?? 0
+  const countOf = (status: string) =>
+    tasks.data?.by_status.find((entry) => entry.status === status)?.count ?? 0
+  const inProgress = countOf('IN_PROGRESS')
+  const todoCount = countOf('DRAFT') + countOf('READY')
   const review = changes.data?.review_required_count ?? 0
+  // 숫자 칸 보조 줄에 쓸 첫 제안과 첫 작업. 집계에는 이름이 없어 있을 때만 목록을 부른다. 제안은 HUD와 같은 키다.
+  const reviewList = useQuery({
+    queryKey: ['projects', projectId, 'hud-review'],
+    queryFn: () =>
+      changesApi.list(projectId, { group: 'IN_PROGRESS', limit: 20 }),
+    enabled: review > 0,
+  })
+  const firstReview = reviewList.data?.items.find((item) =>
+    ['PROPOSED', 'IN_REVIEW'].includes(item.status),
+  )
+  const runningTasks = useQuery({
+    queryKey: ['projects', projectId, 'dashboard-counts', 'running-task'],
+    queryFn: () =>
+      tasksApi.list(projectId, { status: 'IN_PROGRESS', limit: 1 }),
+    enabled: inProgress > 0,
+  })
+  const running = runningTasks.data?.items[0]
+  const memberName = (memberId?: string) =>
+    members.find((member) => member.id === memberId)?.name
+  const runningAgent = work.data?.items.find(
+    (agent) => running && agent.current_task_id === running.id,
+  )
   const calls = usage.data?.call_count ?? 0
-  const connected = members.filter((member) => member.agent_connected).length
+  const disconnected = members.filter((member) => !member.agent_connected)
+  const connected = members.length - disconnected.length
   const recent: Activity[] = activities.data?.items.slice(0, 4) ?? []
   const agents: AgentWork[] = work.data?.items.slice(0, 2) ?? []
   // 서버는 기능별을 호출이 없어도 0으로 채워 보낸다. 호출이 있는 기능만 보인다.
@@ -76,81 +116,118 @@ export function DashboardOverview({
     usage.data?.cost_unknown_call_count,
     '비용 미보고',
   )
-  const metrics = [
+  // 비용을 하나도 모르면 '추정'을 붙이지 않는다.
+  const costNote =
+    usage.data?.estimated_cost_amount === undefined ? cost : `추정 ${cost}`
+  const metrics: {
+    label: string
+    value: string
+    onClick: () => void
+    todo?: string
+    note?: string
+    warn?: boolean
+  }[] = [
     {
       label: '진행 중 작업',
       value: countText(tasks, inProgress),
       onClick: () => openPane('tasks'),
+      note: [
+        running?.key,
+        running &&
+          (runningAgent
+            ? `${memberName(runningAgent.member_id) ?? '팀원'}의 에이전트`
+            : (memberName(running.assignee_member_id) ?? '담당자 없음')),
+        todoCount ? `할 것 ${todoCount}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · '),
     },
     {
       label: '검토할 변경 제안',
       value: countText(changes, review),
       onClick: () => openPane('changes'),
       todo: review > 0 ? '검토하기 ›' : undefined,
+      note:
+        firstReview &&
+        (review > 1
+          ? `'${firstReview.title}' 외 ${review - 1}건`
+          : `'${firstReview.title}' ${firstReview.status === 'IN_REVIEW' ? '검토 중' : '검토 대기'}`),
     },
     {
-      label: '선택 기간 AI 호출',
+      label: `${periodName} AI 호출`,
       // 호출이 없으면 서버가 비용을 생략한다. '비용 미보고'를 붙이지 않는다. 받는 중이거나 못 받았으면 0회로 보이지 않는다.
       value: usage.isError
         ? '—'
         : usage.isPending
           ? '…'
-          : calls
-            ? `${calls.toLocaleString('ko-KR')}회 · ${cost}`
-            : '0회',
+          : `${calls.toLocaleString('ko-KR')}회`,
       onClick: () => onTab('usage'),
+      note: calls ? costNote : undefined,
     },
     {
       label: '에이전트 연결',
       value: `${connected} / ${members.length}`,
       onClick: () => onTab('agents'),
-      todo: connected < members.length ? '연결 확인 ›' : undefined,
+      todo: disconnected.length ? '연결 확인 ›' : undefined,
+      note: disconnected[0] && `${disconnected[0].name}의 에이전트 연결 미확인`,
+      warn: true,
     },
   ]
+  // 할 일이 있는 칸(검토할 변경, 연결 안 된 에이전트)을 노란 바탕으로 앞에 둔다. 없으면 원래 순서다(PNL-09 수정안).
+  const ordered = [...metrics].sort(
+    (a, b) => Number(!!b.todo) - Number(!!a.todo),
+  )
   return (
     <section
       id="dashboard-overview"
       aria-labelledby="dashboard-overview-title"
-      className="grid gap-4"
+      className="grid gap-3"
     >
-      <h3 id="dashboard-overview-title" className="text-base font-semibold">
+      <h3 id="dashboard-overview-title" className="sr-only">
         한눈에 보기
       </h3>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {metrics.map((metric) => {
-          const body = (
-            <>
-              <span className="block text-xs text-muted-foreground">
-                {metric.label}
+        {ordered.map((metric) => (
+          // 읽는 순서는 이름, 값, 할 일, 보조 줄이고 할 일은 이름 줄 오른쪽에 그린다.
+          <button
+            key={metric.label}
+            type="button"
+            className={cn(
+              'grid grid-cols-[minmax(0,1fr)_auto] content-start gap-x-2 gap-y-0.5 rounded-[14px] border bg-card px-4 py-3 text-left shadow-xs hover:bg-muted/40',
+              metric.todo && 'border-[#f3d77a] bg-[#fffaeb] hover:bg-[#fff4cf]',
+              empty && 'opacity-60',
+            )}
+            onClick={metric.onClick}
+          >
+            <span className="col-start-1 row-start-1 text-xs text-muted-foreground">
+              {metric.label}
+            </span>
+            <span className="col-span-2 row-start-2 text-[26px] leading-8 font-bold tabular-nums">
+              {metric.value}
+            </span>
+            {metric.todo && (
+              <span className="col-start-2 row-start-1 text-xs font-bold whitespace-nowrap text-[#8a6a00]">
+                {metric.todo}
               </span>
-              <span className="mt-2 block text-lg font-semibold">
-                {metric.value}
+            )}
+            {metric.note && (
+              <span
+                className={cn(
+                  'col-span-2 row-start-3 flex min-w-0 items-center gap-1 text-xs',
+                  metric.warn ? 'text-[#8a6a00]' : 'text-muted-foreground',
+                )}
+              >
+                {metric.warn && (
+                  <TriangleAlert
+                    aria-hidden="true"
+                    className="size-3 shrink-0"
+                  />
+                )}
+                <span className="truncate">{metric.note}</span>
               </span>
-              {metric.todo && (
-                <span className="mt-1 block text-xs font-semibold">
-                  {metric.todo}
-                </span>
-              )}
-            </>
-          )
-          // 할 일이 있는 칸(검토할 변경, 연결 안 된 에이전트)만 노란 바탕으로 먼저 보이게 한다(PNL-09 수정안).
-          const className = cn(
-            'rounded-xl border bg-card p-4 text-left shadow-xs hover:bg-muted/40',
-            metric.todo &&
-              'border-primary/50 bg-primary/10 hover:bg-primary/20',
-            empty && 'opacity-60',
-          )
-          return (
-            <button
-              key={metric.label}
-              type="button"
-              className={className}
-              onClick={metric.onClick}
-            >
-              {body}
-            </button>
-          )
-        })}
+            )}
+          </button>
+        ))}
       </div>
       {empty ? (
         <div className="grid gap-3 rounded-xl border border-dashed bg-card p-5 text-sm">
@@ -177,10 +254,10 @@ export function DashboardOverview({
           </ol>
         </div>
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
-          <div className="grid content-start gap-2 rounded-xl border bg-card p-4 shadow-xs">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+          <div className="grid content-start gap-2 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
             <div className="flex items-baseline gap-2">
-              <h4 className="text-sm font-semibold">날짜별 AI 호출</h4>
+              <h4 className="text-sm font-bold">날짜별 AI 호출</h4>
               {days.length > 0 && (
                 <span className="text-xs text-muted-foreground">
                   {rangeText(days[0].key, days[days.length - 1].key)}
@@ -188,10 +265,10 @@ export function DashboardOverview({
               )}
               <button
                 type="button"
-                className="ml-auto text-xs underline"
+                className={LINK}
                 onClick={() => onTab('usage')}
               >
-                사용량·비용에서 더 보기
+                사용량·비용 ›
               </button>
             </div>
             <AsyncState query={usage}>
@@ -200,77 +277,229 @@ export function DashboardOverview({
               )}
             </AsyncState>
           </div>
-          <div className="grid content-start gap-2 rounded-xl border bg-card p-4 shadow-xs">
-            <h4 className="text-sm font-semibold">기능별 AI 사용</h4>
-            {features.length
-              ? features.map((row) => (
-                  <div key={row.key} className="grid gap-1 text-xs">
-                    <span className="flex justify-between">
-                      {FEATURE_LABELS[row.key] ?? row.key}
-                      <span className="text-muted-foreground">
-                        {row.call_count}회
+          <div className="flex flex-col gap-2.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
+            <div className="flex items-baseline gap-2">
+              <h4 className="text-sm font-bold">기능별 사용</h4>
+              <span className="text-xs text-muted-foreground">
+                {periodName}
+              </span>
+            </div>
+            {features.length ? (
+              <>
+                <ul className="grid gap-2.5">
+                  {features.map((row) => (
+                    <li
+                      key={row.key}
+                      className="grid grid-cols-[92px_minmax(0,1fr)_40px_64px] items-center gap-2.5 text-[12.5px]"
+                    >
+                      <span className="truncate">
+                        {FEATURE_LABELS[row.key] ?? row.key}
                       </span>
-                    </span>
-                    <span className="h-2 rounded-full bg-muted">
                       <span
-                        className="block h-2 rounded-full bg-primary"
+                        aria-hidden="true"
+                        className="block h-2.5 rounded-r-[4px] bg-[#2a78d6]"
                         style={{ width: `${(row.call_count / most) * 100}%` }}
                       />
-                    </span>
-                  </div>
-                ))
-              : // 받는 중이거나 못 받았으면 호출이 없다고 말하지 않는다. 상태는 옆 그래프 칸에 보인다.
-                usage.data && (
-                  <p className="text-xs text-muted-foreground">
-                    이 기간에 기록된 AI 호출이 없어요.
-                  </p>
-                )}
-          </div>
-          <div className="grid content-start gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
-            <h4 className="text-sm font-semibold">최근 활동</h4>
-            {recent.length ? (
-              recent.map((item) => (
-                <p key={item.id} className="text-xs">
-                  {`${actorName(item)} · ${statusLabel(item.type) || item.type}`}
+                      <span className="text-right tabular-nums">
+                        {row.call_count}회
+                      </span>
+                      <span className="text-right whitespace-nowrap text-muted-foreground tabular-nums">
+                        {costText(
+                          row.estimated_cost_amount,
+                          usage.data?.currency,
+                          0,
+                          '—',
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <span className="mt-auto text-[11.5px] leading-4 text-muted-foreground/70">
+                  {`합계 ${calls.toLocaleString('ko-KR')}회 · ${costNote}`}
+                </span>
+              </>
+            ) : (
+              // 받는 중이거나 못 받았으면 호출이 없다고 말하지 않는다. 상태는 옆 그래프 칸에 보인다.
+              usage.data && (
+                <p className="text-xs text-muted-foreground">
+                  이 기간에 기록된 AI 호출이 없어요.
                 </p>
-              ))
+              )
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
+            <div className="flex items-baseline gap-2">
+              <h4 className="text-sm font-bold">최근 활동</h4>
+              <button
+                type="button"
+                className={LINK}
+                onClick={() => onTab('timeline')}
+              >
+                활동 타임라인 ›
+              </button>
+            </div>
+            {recent.length ? (
+              <ul>
+                {recent.map((item) => {
+                  const chip = activityChip(item)
+                  const open = item.task_id
+                    ? () => openPane('tasks', item.task_id)
+                    : item.change_proposal_id
+                      ? () => openPane('changes', item.change_proposal_id)
+                      : item.baseline_id
+                        ? () => openPane('documents')
+                        : undefined
+                  const row = (
+                    <>
+                      <span className="text-[11.5px] text-muted-foreground/70 tabular-nums">
+                        {recentTime(item.created_at)}
+                      </span>
+                      <ActorAvatar
+                        agent={item.actor_type === 'AGENT'}
+                        label={
+                          item.actor_type === 'AGENT'
+                            ? 'AI'
+                            : actorName(item).slice(0, 1)
+                        }
+                      />
+                      <span className="truncate">
+                        <strong className="font-semibold">
+                          {actorName(item)}
+                        </strong>{' '}
+                        <span className="text-[#57534e]">
+                          {statusLabel(item.type) || item.type}
+                        </span>
+                      </span>
+                      {chip.notable ? (
+                        <span
+                          className={cn(
+                            'rounded-full px-2 py-0.5 text-[11px] font-bold',
+                            chip.className,
+                          )}
+                        >
+                          {chip.label}
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                    </>
+                  )
+                  const rowClass =
+                    'grid w-full grid-cols-[40px_26px_minmax(0,1fr)_auto] items-center gap-2.5 py-1.5 text-left text-[12.5px]'
+                  return (
+                    <li key={item.id} className="border-b last:border-0">
+                      {open ? (
+                        <button
+                          type="button"
+                          className={cn(rowClass, 'hover:bg-muted/40')}
+                          onClick={open}
+                        >
+                          {row}
+                        </button>
+                      ) : (
+                        <div className={rowClass}>{row}</div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
                 최근 활동이 없어요.
               </p>
             )}
-            <button
-              type="button"
-              className="justify-self-start text-xs underline"
-              onClick={() => onTab('timeline')}
-            >
-              활동 타임라인에서 더 보기
-            </button>
           </div>
-          <div className="grid content-start gap-1.5 rounded-xl border bg-card p-4 shadow-xs">
-            <h4 className="text-sm font-semibold">에이전트</h4>
+          <div className="flex flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3.5 shadow-xs">
+            <div className="flex items-baseline gap-2">
+              <h4 className="text-sm font-bold">에이전트</h4>
+              {!!work.data?.items.length && (
+                <span className="text-xs text-muted-foreground">
+                  {work.data.items.length}개
+                </span>
+              )}
+              <button
+                type="button"
+                className={LINK}
+                onClick={() => onTab('agents')}
+              >
+                에이전트 현황 ›
+              </button>
+            </div>
             {agents.length ? (
-              agents.map((agent) => (
-                <p key={agent.member_id} className="text-xs">
-                  {`${members.find((member) => member.id === agent.member_id)?.name ?? '팀원'}의 에이전트 · ${
-                    agent.current_task_id
-                      ? `${agent.task_title ?? `작업 #${agent.current_task_id}`} ${statusLabel(agent.task_status)}`
-                      : '맡은 작업 없음'
-                  }`}
-                </p>
-              ))
+              <ul>
+                {agents.map((agent) => {
+                  const isConnected = members.find(
+                    (member) => member.id === agent.member_id,
+                  )?.agent_connected
+                  const row = usage.data?.by_agent.find(
+                    (entry) => entry.key === agent.agent_session_id,
+                  )
+                  return (
+                    <li
+                      key={`${agent.member_id}:${agent.agent_session_id ?? ''}`}
+                      className="grid grid-cols-[minmax(0,1fr)] gap-0.5 border-b py-2 last:border-0"
+                    >
+                      <span className="flex items-center gap-2 text-[13px]">
+                        <ActorAvatar agent label="AI" />
+                        <strong className="font-semibold">
+                          {`${memberName(agent.member_id) ?? '팀원'}의 에이전트`}
+                        </strong>
+                        <span
+                          className={cn(
+                            'ml-auto inline-flex items-center gap-1 text-xs font-semibold whitespace-nowrap',
+                            isConnected ? 'text-[#00753a]' : 'text-[#c99e1e]',
+                          )}
+                        >
+                          {isConnected ? (
+                            <Check aria-hidden="true" className="size-3" />
+                          ) : (
+                            <TriangleAlert
+                              aria-hidden="true"
+                              className="size-3"
+                            />
+                          )}
+                          {isConnected ? '연결됨' : '연결 미확인'}
+                        </span>
+                      </span>
+                      <span className="flex justify-between gap-2 pl-8.5 text-xs text-muted-foreground">
+                        <span className="min-w-0 truncate">
+                          {agent.current_task_id ? (
+                            `${agent.task_title ?? `작업 #${agent.current_task_id}`} ${statusLabel(agent.task_status)}${
+                              agent.reported_at
+                                ? ` · ${formatShort(agent.reported_at)} 보고`
+                                : ''
+                            }`
+                          ) : isConnected ? (
+                            '맡은 작업 없음'
+                          ) : (
+                            <>
+                              연결을 확인해요 ·{' '}
+                              <button
+                                type="button"
+                                className="font-semibold text-[#8a6a00]"
+                                onClick={() => openPane('settings', 'agent')}
+                              >
+                                연결 확인
+                              </button>
+                            </>
+                          )}
+                        </span>
+                        {/* 서버가 호출자별로 나누지 않으면(빈 배열) 사용량을 적지 않는다. 0회로 단정하지 않는다. */}
+                        {!!usage.data?.by_agent.length && (
+                          <span className="whitespace-nowrap tabular-nums">
+                            {row ? callsText(row, usage.data.currency) : '0회'}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
                 연결된 에이전트가 없어요.
               </p>
             )}
-            <button
-              type="button"
-              className="justify-self-start text-xs underline"
-              onClick={() => onTab('agents')}
-            >
-              에이전트 현황에서 더 보기
-            </button>
           </div>
         </div>
       )}

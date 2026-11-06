@@ -82,7 +82,7 @@ it('연결·대기 작업·통과한 계획을 분리하며 누락 비용을 0�
   const row = name.closest('tr')!
   expect(within(row).getByText('연결됨')).toBeInTheDocument()
   expect(within(row).getByText('대기', { exact: true })).toBeInTheDocument()
-  expect(within(row).getByText('계획 통과')).toBeInTheDocument()
+  expect(within(row).getByText('통과')).toBeInTheDocument()
   expect(within(row).getByText('선행 작업 대기')).toBeInTheDocument()
   await user.click(within(row).getByRole('button', { name: '작업 #8' }))
   expect(useWorkspaceStore.getState().focusId).toBe('8')
@@ -555,6 +555,53 @@ describe('에이전트별 사용량', () => {
     expect(within(web).getByText('1회')).toBeInTheDocument()
   })
 
+  it('호출 없는 세션도 0회 줄로 보이고 웹 직접은 맨 아래에 온다', async () => {
+    vi.mocked(dashboardApi.agentWork).mockResolvedValue({
+      items: [session, { member_id: '1', agent_session_id: '95' }],
+      has_more: false,
+    })
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 3,
+        currency: 'USD',
+        estimated_cost_amount: '1',
+        by_agent: [bucket('WEB', 1), bucket('91', 2)],
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    const list = (await screen.findByText('웹에서 직접')).closest('ul')!
+    await within(list).findAllByText('민수의 에이전트')
+    const rows = within(list).getAllByRole('listitem')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toHaveTextContent('2회')
+    expect(rows[1]).toHaveTextContent('0회')
+    expect(rows[2]).toHaveTextContent('웹에서 직접')
+  })
+
+  it('합계 칸은 호출을 회로 적고 비용 아래에 안내를 붙이며, 아래 문구는 목업과 같다', async () => {
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 96,
+        currency: 'USD',
+        estimated_cost_amount: '1.84',
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    expect(
+      await screen.findByText('96회', { selector: 'dd' }),
+    ).toBeInTheDocument()
+    const cost = screen.getByText('1.84 USD', { selector: 'dd' })
+    expect(within(cost).getByText('단가가 없으면 숨겨요')).toBeInTheDocument()
+    expect(
+      screen.getByText(/BEEZ에 기록된 AI 호출만 모아요/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('기간별 사용량')).not.toBeInTheDocument()
+  })
+
   it('호출이 있는데 에이전트별 줄이 비면 호출이 없다고 말하지 않고 기능별 보기를 안내한다', async () => {
     vi.mocked(dashboardApi.usage).mockResolvedValue(
       usageWith({ call_count: 5 }),
@@ -575,6 +622,35 @@ describe('에이전트 현황', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
+  it('연결되지 않은 에이전트는 연결 미확인으로 보이고 카드 제목은 없다', async () => {
+    vi.mocked(dashboardApi.agentWork).mockResolvedValue({
+      items: [session],
+      has_more: false,
+    })
+    vi.mocked(membersApi.list).mockResolvedValue({
+      items: [
+        {
+          id: '1',
+          account_id: '11',
+          name: '민수',
+          role: 'MEMBER',
+          agent_connected: false,
+        },
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
+    const row = (await screen.findByText('민수')).closest('tr')!
+    expect(within(row).getByText('연결 미확인')).toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        '연결 여부, 작업 상태, 계획 검증 결과를 각각 확인해요.',
+      ),
+    ).not.toBeInTheDocument()
+  })
+
   it('작업 제목, 마지막 보고 시각, 이번 달 사용량, 웹 직접 호출 줄을 보인다', async () => {
     vi.useFakeTimers({
       now: new Date('2026-11-06T03:00:00Z'),

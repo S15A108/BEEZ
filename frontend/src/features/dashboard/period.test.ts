@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   axisMax,
+  periodNameOf,
   periodRange,
   rangeDays,
   rangeText,
@@ -68,4 +69,14 @@ it('세로축 끝은 가장 큰 값을 넘는 깔끔한 수다', () => {
   expect([0, 1, 3, 9, 10, 11, 96, 240].map(axisMax)).toEqual([
     1, 1, 5, 10, 10, 20, 100, 500,
   ])
+})
+
+it('기간 이름은 달로 고르면 그 달, 직접 넣은 기간은 선택 기간이다', () => {
+  const now = new Date('2026-12-31T15:00:00Z') // 한국시간 2027년 1월 1일
+  expect(periodNameOf('this_month', now)).toBe('1월')
+  expect(periodNameOf('last_month', now)).toBe('12월')
+  expect(periodNameOf('last_7_days', now)).toBe('최근 7일')
+  expect(periodNameOf({ from: '2026-09-01', to: '2026-09-30' }, now)).toBe(
+    '선택 기간',
+  )
 })

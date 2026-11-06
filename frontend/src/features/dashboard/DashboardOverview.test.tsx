@@ -3,7 +3,9 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
+import { changesApi } from '@/api/services/changes'
 import { dashboardApi } from '@/api/services/dashboard'
+import { tasksApi } from '@/api/services/tasks'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { DashboardOverview } from './DashboardOverview'
 import type {
@@ -14,6 +16,12 @@ import type {
 
 vi.mock('@/api/services/dashboard', () => ({
   dashboardApi: { changes: vi.fn(), tasks: vi.fn() },
+}))
+vi.mock('@/api/services/changes', () => ({
+  changesApi: { list: vi.fn() },
+}))
+vi.mock('@/api/services/tasks', () => ({
+  tasksApi: { list: vi.fn() },
 }))
 const query = <T,>(data: T) => ({ data }) as UseQueryResult<T>
 const usage = (call_count: number): UsageResponse => ({
@@ -50,6 +58,14 @@ beforeEach(() => {
     by_status: [{ status: 'IN_PROGRESS', count: 2 }],
     by_waiting_reason: [],
   })
+  vi.mocked(changesApi.list).mockResolvedValue({
+    items: [],
+    has_more: false,
+  } as never)
+  vi.mocked(tasksApi.list).mockResolvedValue({
+    items: [],
+    has_more: false,
+  } as never)
 })
 
 function mount(calls: number) {
@@ -75,7 +91,9 @@ it('숫자 4개를 보여 주고 누르면 그 화면을 연다', async () => {
     await screen.findByRole('button', { name: /진행 중 작업\s*2/ }),
   )
   expect(useWorkspaceStore.getState().pane).toBe('tasks')
-  expect(screen.getByText('96회 · 비용 미보고')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: /AI 호출\s*96회\s*비용 미보고/ }),
+  ).toBeInTheDocument()
   expect(screen.getByText('비비 대화')).toBeInTheDocument()
 })
 
@@ -99,7 +117,9 @@ it('비용을 모르는 호출이 있으면 요약 숫자에 그 건수를 붙�
     </QueryClientProvider>,
   )
   expect(
-    await screen.findByText('5회 · 0.2 USD + 미보고 2건'),
+    await screen.findByRole('button', {
+      name: /AI 호출\s*5회\s*추정 0\.2 USD \+ 미보고 2건/,
+    }),
   ).toBeInTheDocument()
 })
 
@@ -278,4 +298,204 @@ it('기간을 바꿔 받는 동안 호출 칸은 0회 대신 …이고 호출이
   expect(
     screen.queryByText('이 기간에 기록된 AI 호출이 없어요.'),
   ).not.toBeInTheDocument()
+})
+
+it('할 일이 있는 칸을 앞에 두고 칸마다 보조 줄을 보인다', async () => {
+  vi.mocked(dashboardApi.tasks).mockResolvedValue({
+    by_status: [
+      { status: 'IN_PROGRESS', count: 1 },
+      { status: 'DRAFT', count: 1 },
+      { status: 'READY', count: 1 },
+    ],
+    by_waiting_reason: [],
+  })
+  vi.mocked(changesApi.list).mockResolvedValue({
+    items: [{ id: '71', title: '빈 화면 안내', status: 'IN_REVIEW' }],
+    has_more: false,
+  } as never)
+  vi.mocked(tasksApi.list).mockResolvedValue({
+    items: [{ id: '503', key: 'TASK-003', assignee_member_id: '22' }],
+    has_more: false,
+  } as never)
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query({
+          ...usage(9),
+          estimated_cost_amount: '1.84',
+          currency: 'USD',
+        })}
+        activities={query(none)}
+        work={query({
+          items: [{ member_id: '22', current_task_id: '503' }],
+          has_more: false,
+        })}
+        members={
+          [
+            { id: '21', name: '이팀장', agent_connected: false },
+            { id: '22', name: '김동료', agent_connected: true },
+          ] as never
+        }
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+        periodName="11월"
+      />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText("'빈 화면 안내' 검토 중")).toBeInTheDocument()
+  expect(
+    await screen.findByText('TASK-003 · 김동료의 에이전트 · 할 것 2'),
+  ).toBeInTheDocument()
+  expect(screen.getByText('이팀장의 에이전트 연결 미확인')).toBeInTheDocument()
+  expect(screen.getByText('추정 1.84 USD')).toBeInTheDocument()
+  const cards = screen
+    .getAllByRole('button')
+    .slice(0, 4)
+    .map((button) => button.textContent)
+  expect(cards[0]).toContain('검토할 변경 제안')
+  expect(cards[1]).toContain('에이전트 연결')
+  expect(cards[2]).toContain('진행 중 작업')
+  expect(cards[3]).toContain('11월 AI 호출')
+})
+
+it('기능별 줄에 비용과 합계를 보인다', async () => {
+  mountWith({
+    ...usage(9),
+    estimated_cost_amount: '0.5',
+    currency: 'USD',
+    by_feature: [
+      {
+        key: 'TASK_VALIDATION',
+        input_tokens: 0,
+        output_tokens: 0,
+        call_count: 9,
+        estimated_cost_amount: '0.5',
+      },
+    ],
+  })
+  const row = (await screen.findByText('작업 검증')).closest('li')!
+  expect(row).toHaveTextContent('9회')
+  expect(row).toHaveTextContent('0.5 USD')
+  expect(screen.getByText('합계 9회 · 추정 0.5 USD')).toBeInTheDocument()
+})
+
+it('최근 활동 줄을 누르면 그 화면으로 가고 성공 칩은 보이지 않는다', async () => {
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query({
+          items: [
+            {
+              id: '2',
+              type: 'VALIDATION_FINISHED',
+              actor_type: 'AGENT',
+              task_id: '503',
+              result: 'SUCCESS',
+              created_at: '2026-10-27T01:00:00Z',
+            },
+            {
+              id: '1',
+              type: 'TASK_STARTED',
+              actor_type: 'HUMAN',
+              result: 'SUCCESS',
+              created_at: '2026-10-27T01:00:00Z',
+            },
+          ],
+          has_more: false,
+        })}
+        work={query(noWork)}
+        members={[]}
+        actorName={() => '김동료'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText('통과')).toBeInTheDocument()
+  expect(screen.queryByText('성공')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /VALIDATION_FINISHED/ }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'tasks',
+    focusId: '503',
+  })
+})
+
+it('에이전트 요약은 연결 상태와 사용량을 보이고, 서버가 나누지 않으면 사용량을 적지 않는다', async () => {
+  const user = userEvent.setup()
+  const members = [
+    { id: '22', name: '김동료', agent_connected: true },
+    { id: '21', name: '이팀장', agent_connected: false },
+  ] as never
+  const work = query({
+    items: [
+      {
+        member_id: '22',
+        agent_session_id: '53',
+        current_task_id: '503',
+        task_title: '목록 구현',
+        task_status: 'IN_PROGRESS' as const,
+        reported_at: '2026-10-28T05:10:00Z',
+      },
+      { member_id: '21', agent_session_id: '51' },
+    ],
+    has_more: false,
+  })
+  const { unmount } = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query({
+          ...usage(2),
+          currency: 'USD',
+          by_agent: [
+            {
+              key: '53',
+              input_tokens: 0,
+              output_tokens: 0,
+              call_count: 2,
+              estimated_cost_amount: '0.5',
+            },
+          ],
+        })}
+        activities={query(none)}
+        work={work}
+        members={members}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  const first = (await screen.findByText('김동료의 에이전트')).closest('li')!
+  expect(first).toHaveTextContent('연결됨')
+  expect(first).toHaveTextContent('목록 구현 진행 중')
+  expect(first).toHaveTextContent('10월 28일 보고')
+  expect(first).toHaveTextContent('2회 · 0.5 USD')
+  const second = screen.getByText('이팀장의 에이전트').closest('li')!
+  expect(second).toHaveTextContent('연결 미확인')
+  expect(second).toHaveTextContent('0회')
+  await user.click(screen.getByRole('button', { name: '연결 확인' }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'settings',
+    focusId: 'agent',
+  })
+  unmount()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(2))}
+        activities={query(none)}
+        work={work}
+        members={members}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    (await screen.findByText('이팀장의 에이전트')).closest('li'),
+  ).not.toHaveTextContent('0회')
 })

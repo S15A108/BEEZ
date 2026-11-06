@@ -1,3 +1,5 @@
+import { statusLabel } from '@/lib/display'
+
 export const FEATURE_LABELS: Record<string, string> = {
   DOCUMENT_PARSE: '문서 분석',
   TASK_VALIDATION: '작업 검증',
@@ -16,6 +18,40 @@ export const dashboardTabs = [
   ['usage', '사용량·비용'],
 ] as const
 export type DashboardTab = (typeof dashboardTabs)[number][0]
+
+// 활동 결과 칩. 명세의 result는 SUCCESS·FAILURE뿐이라 검증 통과와 검토 시작은 유형으로 구분한다(공통 계약 6.2).
+// notable: 한눈에 보기처럼 좁은 곳에서는 '성공'을 빼고 의미 있는 결과만 보인다.
+export function activityChip(item: { type: string; result: string }) {
+  if (item.result === 'FAILURE')
+    return {
+      label: '실패',
+      className: 'bg-[#fdecec] text-[#a3141b]',
+      notable: true,
+    }
+  if (item.type === 'VALIDATION_FINISHED')
+    return {
+      label: '통과',
+      className: 'bg-emerald-50 text-[#00753a]',
+      notable: true,
+    }
+  if (item.type === 'CHANGE_PROPOSAL_REVIEW_STARTED')
+    return {
+      label: '진행 중',
+      className: 'bg-[#fff4cf] text-[#8a6a00]',
+      notable: true,
+    }
+  if (item.result === 'SUCCESS')
+    return {
+      label: '성공',
+      className: 'bg-emerald-50 text-[#00753a]',
+      notable: false,
+    }
+  return {
+    label: statusLabel(item.result) || item.result,
+    className: 'bg-muted text-muted-foreground',
+    notable: true,
+  }
+}
 
 // 호출이 있는데 서버가 호출자별로 나누지 않아 에이전트별 줄이 비었을 때의 안내.
 export const UNSPLIT_USAGE_NOTICE =

@@ -1,25 +1,17 @@
 import { useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { Activity as ActivityIcon } from 'lucide-react'
 import { dashboardApi } from '@/api/services/dashboard'
 import type { Activity, AgentWork } from '@/api/contracts/common'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ActorAvatar } from './ActorAvatar'
-import { monthDayText, seoulDay } from './period'
+import { activityChip } from './labels'
+import { monthDayText, seoulClock, seoulDay } from './period'
 
-const clock = (value: string) =>
-  new Intl.DateTimeFormat('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-    timeZone: 'Asia/Seoul',
-  }).format(new Date(value))
 // 한국시간 날짜로 묶는다: '오늘 · 10월 27일', '어제 · 10월 26일', '10월 23일', 올해가 아니면 '2025년 10월 27일'
 function groupByDay<T extends { created_at: string }>(items: T[]) {
   const today = seoulDay(Date.now())
@@ -88,169 +80,155 @@ export function ActivityTimeline({
     getNextPageParam: (last) => (last.has_more ? last.next_cursor : undefined),
   })
   return (
-    <Card id="dashboard-timeline">
-      <CardHeader className="gap-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <ActivityIcon className="size-4" />
-          활동 타임라인
-        </CardTitle>
-        <div
-          role="group"
-          aria-label="보기"
-          className="flex flex-wrap items-center gap-1 text-xs"
-        >
-          <span aria-hidden="true" className="mr-1 text-muted-foreground">
-            보기
-          </span>
-          {views.map((entry) => (
-            <button
-              key={entry.key}
-              type="button"
-              aria-pressed={entry.key === view.key}
-              onClick={() => setViewKey(entry.key)}
-              className={cn(
-                'rounded-full px-2.5 py-0.5 font-semibold',
-                entry.key === view.key
-                  ? 'bg-foreground text-background'
-                  : 'bg-muted',
-              )}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
-      </CardHeader>
-      <CardContent>
-        {/* 다음 쪽만 실패하면 받아 둔 목록은 그대로 두고 버튼 옆에 알린다. */}
-        <AsyncState
-          query={{
-            data: timeline.data,
-            isPending: timeline.isPending,
-            error: timeline.isFetchNextPageError ? null : timeline.error,
-            refetch: () => timeline.refetch(),
-          }}
-        >
-          {(data) => {
-            const items = data.pages.flatMap((page) => page.items)
-            if (!items.length)
-              return (
-                <EmptyState>
-                  {view.key === 'all'
-                    ? '아직 기록된 프로젝트 활동이 없어요.'
-                    : '이 보기에 맞는 활동이 없어요.'}
-                </EmptyState>
-              )
+    <div id="dashboard-timeline" className="grid gap-3.5">
+      <div
+        role="group"
+        aria-label="보기"
+        className="flex flex-wrap items-center gap-1 text-xs"
+      >
+        <span aria-hidden="true" className="mr-1 text-muted-foreground">
+          보기
+        </span>
+        {views.map((entry) => (
+          <button
+            key={entry.key}
+            type="button"
+            aria-pressed={entry.key === view.key}
+            onClick={() => setViewKey(entry.key)}
+            className={cn(
+              'rounded-full px-2.5 py-0.5 font-semibold',
+              entry.key === view.key
+                ? 'bg-foreground text-background'
+                : 'bg-muted',
+            )}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+      {/* 다음 쪽만 실패하면 받아 둔 목록은 그대로 두고 버튼 옆에 알린다. */}
+      <AsyncState
+        query={{
+          data: timeline.data,
+          isPending: timeline.isPending,
+          error: timeline.isFetchNextPageError ? null : timeline.error,
+          refetch: () => timeline.refetch(),
+        }}
+      >
+        {(data) => {
+          const items = data.pages.flatMap((page) => page.items)
+          if (!items.length)
             return (
-              <>
-                <div className="grid gap-3">
-                  {groupByDay(items).map(({ day, name, items: dayItems }) => (
-                    <section
-                      key={day}
-                      aria-label={name}
-                      className="rounded-2xl border bg-card px-4 py-2"
-                    >
-                      <h4 className="py-1.5 text-[11.5px] text-muted-foreground">
-                        {name}
-                      </h4>
-                      <ol>
-                        {dayItems.map((item) => (
-                          <li
-                            key={item.id}
-                            className="flex items-center gap-3 border-t py-2.5 text-[13px]"
-                          >
-                            <time
-                              className="w-11 shrink-0 text-xs text-muted-foreground tabular-nums"
-                              dateTime={item.created_at}
-                            >
-                              {clock(item.created_at)}
-                            </time>
-                            <ActorAvatar
-                              agent={item.actor_type === 'AGENT'}
-                              label={
-                                item.actor_type === 'AGENT'
-                                  ? 'AI'
-                                  : actorName(item).slice(0, 1)
-                              }
-                            />
-                            <span className="min-w-0 flex-1">
-                              <strong className="font-semibold">
-                                {actorName(item)}
-                              </strong>{' '}
-                              {statusLabel(item.type)}
-                              {item.task_id && (
-                                <Button
-                                  variant="link"
-                                  className="ml-2 h-auto p-0 text-xs"
-                                  onClick={() =>
-                                    openPane('tasks', item.task_id)
-                                  }
-                                >
-                                  작업 #{item.task_id}
-                                </Button>
-                              )}
-                              {item.change_proposal_id && (
-                                <Button
-                                  variant="link"
-                                  className="ml-2 h-auto p-0 text-xs"
-                                  onClick={() =>
-                                    openPane('changes', item.change_proposal_id)
-                                  }
-                                >
-                                  변경 요청 #{item.change_proposal_id}
-                                </Button>
-                              )}
-                              {item.baseline_id && (
-                                <Button
-                                  variant="link"
-                                  className="ml-2 h-auto p-0 text-xs"
-                                  onClick={() => openPane('documents')}
-                                >
-                                  기준 설계 #{item.baseline_id}
-                                </Button>
-                              )}
-                            </span>
-                            <span
-                              className={cn(
-                                'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                                item.result === 'SUCCESS'
-                                  ? 'bg-emerald-50 text-[#00753a]'
-                                  : item.result === 'FAILURE'
-                                    ? 'bg-[#fdecec] text-[#a3141b]'
-                                    : 'bg-muted text-muted-foreground',
-                              )}
-                            >
-                              {statusLabel(item.result) || item.result}
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-                  ))}
-                </div>
-                {timeline.isFetchNextPageError && (
-                  <p role="alert" className="mt-4 text-xs text-destructive">
-                    이전 활동을 불러오지 못했어요. 다시 눌러 주세요.
-                  </p>
-                )}
-                {timeline.hasNextPage && (
-                  <div className="mt-4 flex justify-center">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={timeline.isFetchingNextPage}
-                      onClick={() => void timeline.fetchNextPage()}
-                    >
-                      {timeline.isFetchingNextPage
-                        ? '불러오는 중…'
-                        : '이전 활동 더 보기'}
-                    </Button>
-                  </div>
-                )}
-              </>
+              <EmptyState>
+                {view.key === 'all'
+                  ? '아직 기록된 프로젝트 활동이 없어요.'
+                  : '이 보기에 맞는 활동이 없어요.'}
+              </EmptyState>
             )
-          }}
-        </AsyncState>
-      </CardContent>
-    </Card>
+          return (
+            <>
+              <div className="grid gap-3">
+                {groupByDay(items).map(({ day, name, items: dayItems }) => (
+                  <section
+                    key={day}
+                    aria-label={name}
+                    className="rounded-2xl border bg-card px-4 py-2"
+                  >
+                    <h4 className="py-1.5 text-[11.5px] text-muted-foreground">
+                      {name}
+                    </h4>
+                    <ol>
+                      {dayItems.map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex items-center gap-3 border-t py-2.5 text-[13px]"
+                        >
+                          <time
+                            className="w-11 shrink-0 text-xs text-muted-foreground tabular-nums"
+                            dateTime={item.created_at}
+                          >
+                            {seoulClock(item.created_at)}
+                          </time>
+                          <ActorAvatar
+                            agent={item.actor_type === 'AGENT'}
+                            label={
+                              item.actor_type === 'AGENT'
+                                ? 'AI'
+                                : actorName(item).slice(0, 1)
+                            }
+                          />
+                          <span className="min-w-0 flex-1">
+                            <strong className="font-semibold">
+                              {actorName(item)}
+                            </strong>{' '}
+                            {statusLabel(item.type)}
+                            {item.task_id && (
+                              <Button
+                                variant="link"
+                                className="ml-2 h-auto p-0 text-xs"
+                                onClick={() => openPane('tasks', item.task_id)}
+                              >
+                                작업 #{item.task_id}
+                              </Button>
+                            )}
+                            {item.change_proposal_id && (
+                              <Button
+                                variant="link"
+                                className="ml-2 h-auto p-0 text-xs"
+                                onClick={() =>
+                                  openPane('changes', item.change_proposal_id)
+                                }
+                              >
+                                변경 요청 #{item.change_proposal_id}
+                              </Button>
+                            )}
+                            {item.baseline_id && (
+                              <Button
+                                variant="link"
+                                className="ml-2 h-auto p-0 text-xs"
+                                onClick={() => openPane('documents')}
+                              >
+                                기준 설계 #{item.baseline_id}
+                              </Button>
+                            )}
+                          </span>
+                          <span
+                            className={cn(
+                              'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                              activityChip(item).className,
+                            )}
+                          >
+                            {activityChip(item).label}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+                ))}
+              </div>
+              {timeline.isFetchNextPageError && (
+                <p role="alert" className="mt-4 text-xs text-destructive">
+                  이전 활동을 불러오지 못했어요. 다시 눌러 주세요.
+                </p>
+              )}
+              {timeline.hasNextPage && (
+                <div className="mt-4 flex justify-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={timeline.isFetchingNextPage}
+                    onClick={() => void timeline.fetchNextPage()}
+                  >
+                    {timeline.isFetchingNextPage
+                      ? '불러오는 중…'
+                      : '이전 활동 더 보기'}
+                  </Button>
+                </div>
+              )}
+            </>
+          )
+        }}
+      </AsyncState>
+    </div>
   )
 }
