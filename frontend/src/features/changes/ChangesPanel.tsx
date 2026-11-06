@@ -619,7 +619,12 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         <div className="min-w-0">
           {mode.kind === 'form' && !mode.source ? (
             <ProposeFlow
+              projectId={projectId}
               key={documents.isSuccess ? 'documents' : 'loading'}
+              requestDraft={(input) =>
+                changesApi.generateDraft(projectId, input)
+              }
+              onDraftConflict={() => void documents.refetch()}
               documents={documentOptions}
               baselineVersion={baseline.data?.version_no}
               itemKinds={Object.fromEntries(

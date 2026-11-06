@@ -270,9 +270,8 @@ it('문서함에서 고치기로 들어오면 그 문서를 고른 새 제안으
     '참여한 프로젝트가 없으면 안내가 필요해요.',
   )
   await user.type(text, '\nREQ-006 참여한 프로젝트가 없으면 만들기를 안내한다.')
-  // 새 제안은 네 단계(캔버스 v491)로 올린다. 누르는 버튼만 바꾸고 기대값은 그대로 둔다(사용자 승인 2026-11-03).
+  // 새 제안은 세 단계로 올린다. 누르는 버튼만 바꾸고 기대값은 그대로 둔다(사용자 승인 2026-11-03).
   await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
-  await user.click(screen.getByRole('button', { name: '비비 검토 받기' }))
   await user.click(screen.getByRole('button', { name: '다음' }))
   await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
   expect(await screen.findByRole('status')).toHaveTextContent(
@@ -896,9 +895,9 @@ it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 
   ).toBeInTheDocument()
 })
 
-// 캔버스 v491 문서 수정 제안 흐름: ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 팀장 승인.
-// ④에서 '팀장에게 올리기'를 누르기 전에는 제안을 만들지 않는다(등록해도 팀장에게 가지 않는다).
-it('새 문서 수정 제안은 네 단계를 지나 마지막에만 팀장에게 올린다', async () => {
+// 문서 수정 제안 흐름: ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인.
+// ③에서 '팀장에게 올리기'를 누르기 전에는 제안을 만들지 않는다(등록해도 팀장에게 가지 않는다).
+it('새 문서 수정 제안은 세 단계를 지나 마지막에만 팀장에게 올린다', async () => {
   const user = userEvent.setup()
   const create = vi.spyOn(changesApi, 'create')
   useWorkspaceStore.getState().openPane('changes', 'doc:203')
@@ -930,12 +929,6 @@ it('새 문서 수정 제안은 네 단계를 지나 마지막에만 팀장에�
   await user.click(screen.getByRole('button', { name: '다시 고치기' }))
   expect(screen.getByLabelText('제목 *')).toHaveValue('빈 목록 안내 추가')
   await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
-  await user.click(screen.getByRole('button', { name: '비비 검토 받기' }))
-  expect(
-    screen.getByRole('heading', {
-      name: '올리기 전 비비 검토는 준비 중이에요',
-    }),
-  ).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '다음' }))
   expect(
     screen.getByRole('heading', { name: '올리기 전에 확인해요' }),
@@ -956,42 +949,6 @@ it('새 문서 수정 제안은 네 단계를 지나 마지막에만 팀장에�
   expect(
     await screen.findByRole('heading', { name: /빈 목록 안내 추가/ }),
   ).toBeInTheDocument()
-})
-
-// 캔버스 approve-gate(v491): 문서를 고친 제안은 영향 분석이 미평가(document_change_unavailable)라, 승인 확인을 열 때부터
-// 사유 칸을 보이고 사유를 담아 승인한다(409를 먼저 받지 않는다).
-it('영향 분석이 끝나지 않은 제안은 승인 확인을 열 때부터 사유를 받는다', async () => {
-  const user = userEvent.setup()
-  const detail = await changesApi.get('101', '71')
-  vi.spyOn(changesApi, 'impact').mockResolvedValue({
-    explicit: [],
-    candidates: [],
-    analysis_status: 'NOT_EVALUATED',
-    error_code: 'document_change_unavailable',
-    is_current: true,
-  })
-  const approve = vi.spyOn(changesApi, 'approve').mockResolvedValue({
-    proposal: detail.proposal,
-    baseline: await documentsApi.baseline('101'),
-  })
-  renderPanel()
-  await user.click(
-    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
-  )
-  expect(
-    await screen.findByText('AI 영향 분석이 끝나지 않았어요'),
-  ).toBeVisible()
-  const send = screen.getByRole('button', { name: '사유 남기고 기준 v2 발행' })
-  expect(send).toBeDisabled()
-  await user.type(
-    screen.getByLabelText('영향 분석 없이 승인하는 사유'),
-    '담당자와 직접 확인했어요.',
-  )
-  await user.click(send)
-  await waitFor(() => expect(approve).toHaveBeenCalledTimes(1))
-  expect(approve.mock.calls[0][2]).toMatchObject({
-    impact_override_reason: '담당자와 직접 확인했어요.',
-  })
 })
 
 // S15P31A108-203·204: 승인 확인 화면은 CHG-A14 미리 보기로 승인하면 같이 바뀌는 것을 먼저 보여 준다.
@@ -1064,6 +1021,18 @@ it('영향 분석을 안 돌린 제안도 같은 방식으로 사유를 받는�
   expect(
     screen.getByRole('region', { name: '확인하지 못한 것' }),
   ).toHaveTextContent('아직 영향 분석을 하지 않았어요.')
+})
+
+// 캔버스 approve-gate(v491): 사유를 받는 승인 확인에서 영향 분석을 다시 요청할 수 있다.
+it('사유가 필요한 승인 확인에서 영향 분석을 다시 요청할 수 있다', async () => {
+  useScenario('override')
+  const retry = vi.spyOn(changesApi, 'retryImpact')
+  const user = await openApprove()
+  expect(
+    await screen.findByText('AI 영향 분석이 끝나지 않았어요'),
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: '영향 다시 분석' }))
+  await waitFor(() => expect(retry).toHaveBeenCalledWith('101', '71'))
 })
 
 it('재분석이 진행 중이면 사유 칸 없이 승인 버튼을 막고 끝난 뒤 승인하라고 알린다', async () => {

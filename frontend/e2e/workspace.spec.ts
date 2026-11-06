@@ -263,8 +263,8 @@ test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', as
   await expect.poll(centre).toBeLessThan(30)
 })
 
-// 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 팀장에게 올리기
-test('문서 수정 제안을 네 단계로 등록하고 마지막에 팀장에게 올린다', async ({
+// 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인 → 팀장에게 올리기.
+test('문서 수정 제안을 세 단계로 등록하고 마지막에 팀장에게 올린다', async ({
   page,
 }) => {
   const errors: string[] = []
@@ -297,23 +297,16 @@ test('문서 수정 제안을 네 단계로 등록하고 마지막에 팀장에�
     dialog.getByRole('heading', { name: '바뀐 곳 1개를 찾았어요' }),
   ).toBeVisible()
   await shot('2-changes')
-  await dialog.getByRole('button', { name: '비비 검토 받기' }).click()
-  await expect(
-    dialog.getByRole('heading', {
-      name: '올리기 전 비비 검토는 준비 중이에요',
-    }),
-  ).toBeVisible()
-  await shot('3-review')
   await dialog.getByRole('button', { name: '다음', exact: true }).click()
   await expect(
     dialog.getByRole('heading', { name: '올리기 전에 확인해요' }),
   ).toBeVisible()
-  await shot('4-confirm')
+  await shot('3-confirm')
   await dialog.getByRole('button', { name: '팀장에게 올리기' }).click()
   await expect(dialog.getByText('변경 제안을 올렸어요.')).toBeVisible()
   await expect(
     dialog.getByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ }),
   ).toBeVisible()
-  await shot('5-mine')
+  await shot('4-mine')
   expect(errors).toEqual([])
 })

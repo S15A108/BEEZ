@@ -83,7 +83,6 @@ it('단계 중간에 승인본이 바뀌면 비교한 버전을 그대로 보이
   expect(screen.getByRole('alert')).toHaveTextContent(
     '승인본이 v2로 바뀌었어요',
   )
-  await user.click(screen.getByRole('button', { name: '비비 검토 받기' }))
   await user.click(screen.getByRole('button', { name: '다음' }))
   expect(screen.getByRole('button', { name: '팀장에게 올리기' })).toBeDisabled()
   expect(onSubmit).not.toHaveBeenCalled()
@@ -125,11 +124,11 @@ it('지운 항목 키는 바뀐 줄의 설계 항목에 없애기로, 새 키는
 })
 
 // PR #135 리뷰: 빈 줄이나 끝 줄바꿈만 바뀌면 바뀐 곳이 0개인데도 다음 단계로 넘어가 빈 제안을 올릴 수 있었다.
-it('빈 줄만 바꾸면 비비 검토로 넘어가지 않고 다시 고치게 한다', async () => {
+it('빈 줄만 바꾸면 다음 단계로 넘어가지 않고 다시 고치게 한다', async () => {
   renderFlow()
   const user = await register((text) => userEvent.type(text, '{Enter}{Enter}'))
   expect(screen.getByText('바뀐 곳 0개를 찾았어요')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '비비 검토 받기' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '다음' })).toBeDisabled()
   expect(screen.getByText(/빈 줄 말고는 바뀐 곳이 없어요/)).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '다시 고치기' }))
   expect(

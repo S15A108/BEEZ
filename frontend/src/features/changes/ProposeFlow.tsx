@@ -11,15 +11,20 @@ import type { ProposedChange } from './proposeDiff'
 import { Tag } from './Tag'
 import { operationTone } from './tagTones'
 
-// 새 문서 수정 제안(캔버스 PNL-04-v2-propose-doc·changes·review·confirm, v491): 문서 등록처럼 네 단계로 나눈다.
-// ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 팀장 승인. ④에서 '팀장에게 올리기'를 누를 때 처음 CHG-A01을
-// 부르므로 그 전에는 팀장에게 가지 않는다. 반려 고치기·거둔 제안 다시 내기는 지금 폼(ProposalForm) 그대로 쓴다.
-const STEPS = ['고친 문서 등록', '변경점 확인', '비비 검토', '팀장 승인']
+// 새 문서 수정 제안(캔버스 PNL-04-v2-propose-doc·changes·confirm): ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인.
+// ③에서 '팀장에게 올리기'를 눌러야 CHG-A01을 부르므로 그 전에는 팀장에게 가지 않는다. 반려 고치기·거둔 제안 다시 내기는 지금 폼(ProposalForm) 그대로다.
+// 캔버스의 '비비 검토' 단계(propose-running·review)는 뺐다. 올리기 전 검토 API가 없어서고, 명세 수정안(CHG-A16~A20, PR #176)이 구현되면 ②와 ③ 사이에 넣는다.
+const STEPS = ['고친 문서 등록', '변경점 확인', '올리기 전 확인']
 const changeLabel = { UPDATE: '수정', CREATE: '추가', RETIRE: '삭제' } as const
 
 type FormProps = Pick<
   ComponentProps<typeof ProposalForm>,
-  'tasks' | 'fetchDocumentContent' | 'defaultValues'
+  | 'projectId'
+  | 'tasks'
+  | 'fetchDocumentContent'
+  | 'requestDraft'
+  | 'onDraftConflict'
+  | 'defaultValues'
 >
 interface Props extends FormProps {
   documents: {
@@ -34,16 +39,19 @@ interface Props extends FormProps {
   /** 지금 기준에 승인된 설계 항목의 키 → 종류 이름 */
   itemKinds: Record<string, string>
   onCancel: () => void
-  /** CHG-A01로 올린다. ④ '팀장에게 올리기'에서만 부른다. */
+  /** CHG-A01로 올린다. ③ '팀장에게 올리기'에서만 부른다. */
   onSubmit: (values: ProposalFormValues) => Promise<unknown>
 }
 
 export function ProposeFlow({
+  projectId,
   documents,
   baselineVersion,
   itemKinds,
   tasks,
   fetchDocumentContent,
+  requestDraft,
+  onDraftConflict,
   defaultValues,
   onCancel,
   onSubmit,
@@ -76,7 +84,6 @@ export function ProposeFlow({
     document ? `${document.title} v${document.versionNo}` : '변경 제안',
     '고친 문서',
     '변경점',
-    '비비 검토',
   ][step]
   // 단계가 바뀌면 창 안을 맨 위(단계 표시)로 올린다. 긴 고친 글을 쓰다 넘어가면 다음 단계가 중간부터 보인다.
   const top = useRef<HTMLDivElement>(null)
@@ -102,13 +109,16 @@ export function ProposeFlow({
       {step === 0 && (
         <ProposalForm
           heading="문서 수정 제안"
-          description={`고친 문서를 등록하면 비비가 기준${baselineVersion ? ` v${baselineVersion}` : ''}과 비교해 바뀐 곳을 찾고 검토해요. 팀장에게는 검토를 마친 뒤 올려요.`}
+          description={`고친 문서를 등록하면 기준${baselineVersion ? ` v${baselineVersion}` : ''}과 비교해 바뀐 곳을 보여 줘요. 확인한 뒤 팀장에게 올려요.`}
           submitLabel="등록하고 변경점 찾기"
           footnote="등록해도 아직 팀장에게 가지 않아요."
           contentHint="고친 글을 쓰거나 .md 파일 한 개를 올려요. 바뀐 곳은 다음 단계에서 찾아요."
+          projectId={projectId}
           documents={documents}
           tasks={tasks}
           fetchDocumentContent={fetchDocumentContent}
+          requestDraft={requestDraft}
+          onDraftConflict={onDraftConflict}
           defaultValues={values ?? defaultValues}
           onCancel={onCancel}
           onSubmit={async (form) => {
@@ -162,7 +172,7 @@ export function ProposeFlow({
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
               {document?.title ?? '문서'} 기준 v{shownNo}과 고친 문서를 줄마다
-              비교했어요. 고를 것은 없어요. 확인하고 비비 검토로 넘어가요.
+              비교했어요. 고를 것은 없어요. 확인하고 다음으로 넘어가요.
             </p>
           </div>
           <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -221,54 +231,16 @@ export function ProposeFlow({
             </aside>
           </div>
           <Footer
-            note="다음 단계에서 비비가 영향받는 작업과 빠진 부분을 찾아요."
+            note="다음 단계에서 올릴 내용을 마지막으로 확인해요."
             back={['다시 고치기', () => setStep(0)]}
           >
             <Button disabled={!found.changes.length} onClick={() => setStep(2)}>
-              비비 검토 받기
+              다음
             </Button>
           </Footer>
         </>
       )}
-      {step === 2 && (
-        <>
-          <div>
-            <h3 className="text-lg font-bold">
-              올리기 전 비비 검토는 준비 중이에요
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              아직 팀장에게 가지 않았어요. 확인한 내용 그대로 다음 단계로 갈 수
-              있어요.
-            </p>
-          </div>
-          {/* API 없음(캔버스 수정안 요청): 올리기 전 영향 검토(CHG-A05·A06은 올린 제안만), 문서 변경의 AI 영향 후보,
-              빠진 부분·충돌 검토와 넘긴 의견 저장. API가 생기면 이 단계에 검토 결과와 넘기기·반영하기(CHG-A07)를 둔다. */}
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Card title="영향받는 작업·검증">
-              <p className="text-[13px]">
-                {taskLabel ? `연결한 작업: ${taskLabel}` : '연결한 작업 없음'}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                바뀐 곳에서 영향받는 작업과 AI 영향 후보를 찾는 검토는 아직
-                없어요.
-              </p>
-            </Card>
-            <Card title="빠진 부분·충돌">
-              <p className="text-xs text-muted-foreground">
-                고친 글에서 빠진 부분과 다른 문서와의 충돌을 찾는 검토는 아직
-                없어요.
-              </p>
-            </Card>
-          </div>
-          <Footer
-            note="검토가 준비되면 여기서 비비 의견을 넘기거나 반영해요."
-            back={['다시 고치기', () => setStep(0)]}
-          >
-            <Button onClick={() => setStep(3)}>다음</Button>
-          </Footer>
-        </>
-      )}
-      {step === 3 && values && found && (
+      {step === 2 && values && found && (
         <>
           <div>
             <h3 className="text-lg font-bold">올리기 전에 확인해요</h3>
@@ -313,7 +285,7 @@ export function ProposeFlow({
           </div>
           <Footer
             note="올리면 팀장에게 알림이 가요."
-            back={['검토로 돌아가기', () => setStep(2)]}
+            back={['변경점으로 돌아가기', () => setStep(1)]}
           >
             <Button
               disabled={sending || outdated}
