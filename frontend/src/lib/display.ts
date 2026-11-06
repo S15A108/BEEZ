@@ -99,3 +99,7 @@ export const countText = (
 // 업무 창 목록에서 고른 항목 표시. 작업 목록의 노란 테두리·바탕을 기준으로 작업·변경 제안·회의·설계 관계 목록이 같이 쓴다
 // (사용자 요청 11-02). 탭 밑줄, 단축 바의 열린 칸, 비비 대화 테두리는 목록 선택이 아니라 따로 둔다.
 export const LIST_SELECTED = 'border-primary/30 bg-primary/5'
+
+// 나의 도시의 안 읽은 알림 배지. 이름표와 프로젝트 카드의 오른쪽 위에 걸친다.
+export const UNREAD_BADGE =
+  'absolute -top-[9px] -right-[9px] inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-destructive px-1.5 text-xs leading-4 font-bold text-white ring-2 ring-white'

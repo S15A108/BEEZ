@@ -11,7 +11,9 @@ test.beforeEach(async ({ page }) => {
 async function office(page: Page, projectId: string) {
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
   await page.goto(`/projects/${projectId}`)
   const canvas = page.locator('canvas')
   await expect(canvas).toHaveAttribute('data-player-x', /\d/)

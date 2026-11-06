@@ -29,6 +29,8 @@ export const tasksApi = {
         method: 'GET',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/tasks`,
         params: schemas.listQuerySchema.parse(query ?? {}),
+        // axios 기본값은 status[]=A로 보낸다. 명세는 같은 이름 반복(status=A&status=B)이다.
+        paramsSerializer: { indexes: null },
       },
       options,
     ),

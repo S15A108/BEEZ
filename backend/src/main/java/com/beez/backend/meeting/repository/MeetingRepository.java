@@ -132,11 +132,55 @@ public class MeetingRepository {
                 """).param("v", validationId).param("t", relatedTaskId).query(String.class).list();
     }
 
+    /** 작업 담당자의 프로젝트 멤버 번호와 계정. 담당자가 없거나 비활성·탈퇴인 작업은 나오지 않는다 */
+    public record OwnerRow(long memberId, long accountId) {
+    }
+
+    /** 이 프로젝트 작업들의 현재 담당자(멤버 번호 오름차순, 같은 사람은 한 번) */
+    public List<OwnerRow> taskOwners(long projectId, Collection<Long> taskIds) {
+        if (taskIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                select distinct m.id as member_id, a.id as account_id
+                  from task t
+                  join project_member m on m.id = t.assignee_member_id and m.project_id = t.project_id and m.active
+                  join account a on a.id = m.account_id and a.deleted_at is null
+                 where t.project_id = :p and t.id in (:ids)
+                 order by m.id
+                """).param("p", projectId).param("ids", taskIds)
+                .query((rs, n) -> new OwnerRow(rs.getLong("member_id"), rs.getLong("account_id"))).list();
+    }
+
     // ---- 회의 ----
+
+    /** 회의를 끝낸다(회의 행을 잠근 트랜잭션 안에서). 제안이 없으면 changeProposalId 는 null */
+    public void close(long meetingId, long closedByAccountId, Long changeProposalId) {
+        jdbc.sql("""
+                update meeting set status = 'CLOSED', closed_at = now(), closed_by = :by,
+                       change_proposal_id = :proposal, updated_at = now()
+                 where id = :id and status = 'OPEN'
+                """).param("id", meetingId).param("by", closedByAccountId).param("proposal", changeProposalId).update();
+    }
+
+    /** throughEntryId 뒤에 올라온 사람 기록(TEXT)이 있는가. 비비 기록(SUMMARY·CONFLICT_BRIEF)은 세지 않는다 */
+    public boolean hasHumanEntryAfter(long meetingId, long throughEntryId) {
+        return jdbc.sql("select exists (select 1 from meeting_entry where meeting_id = :m and id > :through and kind = 'TEXT')")
+                .param("m", meetingId).param("through", throughEntryId).query(Boolean.class).single();
+    }
 
     public Optional<MeetingRow> findMeeting(long projectId, long meetingId) {
         return jdbc.sql("select " + MEETING_COLUMNS + " from meeting where id = :id and project_id = :p")
                 .param("id", meetingId).param("p", projectId).query(MeetingRepository::mapMeeting).optional();
+    }
+
+    /**
+     * 제안 승인·발행이 쓰는 것과 같은 프로젝트 행 잠금. 회의 끝내기가 기준 확인부터 종료까지 발행과 겹치지 않게 한다.
+     * 잠금 순서는 프로젝트 → 회의다. 보관된 프로젝트면 false.
+     */
+    public boolean lockProject(long projectId) {
+        return jdbc.sql("select id from project where id = :p and archived_at is null for update")
+                .param("p", projectId).query(Long.class).optional().isPresent();
     }
 
     /** 참여자 변경·기록·종료를 한 줄로 세우기 위해 회의 행을 잠그고 읽는다 */

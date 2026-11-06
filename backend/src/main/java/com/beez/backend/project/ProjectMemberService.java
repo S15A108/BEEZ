@@ -50,11 +50,13 @@ public class ProjectMemberService {
     private final AgentTokenRepository tokens;
     private final TaskHandoverService handover;
     private final InvitationService invitations;
+    private final ProjectActivities activities;
     private final EntityManager em;
 
     public ProjectMemberService(ProjectAccessChecker access, ProjectService projectService,
                                 ProjectMemberRepository members, AccountRepository accounts, AgentTokenRepository tokens,
-                                TaskHandoverService handover, InvitationService invitations, EntityManager em) {
+                                TaskHandoverService handover, InvitationService invitations, ProjectActivities activities,
+                                EntityManager em) {
         this.access = access;
         this.projectService = projectService;
         this.members = members;
@@ -62,6 +64,7 @@ public class ProjectMemberService {
         this.tokens = tokens;
         this.handover = handover;
         this.invitations = invitations;
+        this.activities = activities;
         this.em = em;
     }
 
@@ -111,7 +114,7 @@ public class ProjectMemberService {
             throw invalidTransferTarget("본인에게는 위임할 수 없습니다");
         }
         lockProjectAsLeader(projectId, actor);
-        Swap swap = swapLeader(projectId, actor.memberId(), targetId, () -> AccessErrors.notFound(
+        Swap swap = swapLeader(caller, projectId, actor.memberId(), targetId, () -> AccessErrors.notFound(
                 "member_not_in_project member=" + targetId + " project=" + projectId));
         List<MemberResponse> changed = toResponses(projectId, List.of(swap.current(), swap.target()));
         return new LeadershipTransferResponse(changed);
@@ -123,11 +126,12 @@ public class ProjectMemberService {
 
     /**
      * 위임 공통(MEM-A08, MEM-A10 위임하고 나가기). 프로젝트 행을 잠그고 요청자가 아직 팀장인지 다시 본 뒤에 부른다.
-     * 두 멤버십 행을 id 순서로 잠그고(교착 방지), 대상이 활성 멤버인지 본 뒤 역할을 바꿔 flush 한다.
+     * 두 멤버십 행을 id 순서로 잠그고(교착 방지), 대상이 활성 멤버인지 본 뒤 역할을 바꿔 flush 하고 LEADER_TRANSFERRED 를 남긴다(-289).
      *
      * @param notInProject 대상이 이 프로젝트 소속이 아닐 때의 오류. MEM-A08 은 경로 대상이라 404, MEM-A10 은 본문 값이라 409
      */
-    private Swap swapLeader(long projectId, long currentId, long targetId, Supplier<ApiException> notInProject) {
+    private Swap swapLeader(CallerContext caller, long projectId, long currentId, long targetId,
+                            Supplier<ApiException> notInProject) {
         boolean meFirst = currentId < targetId;
         ProjectMember first = lockMemberRow(meFirst ? currentId : targetId, projectId);
         ProjectMember second = lockMemberRow(meFirst ? targetId : currentId, projectId);
@@ -145,6 +149,7 @@ public class ProjectMemberService {
         members.saveAndFlush(current);
         target.changeRole(ProjectRole.LEADER);
         members.saveAndFlush(target);
+        activities.leaderTransferred(caller, target);
         return new Swap(current, target);
     }
 
@@ -193,14 +198,15 @@ public class ProjectMemberService {
             }
             // 내 행은 이미 잠겼다. 대상 행을 내 행 뒤에 잠그게 될 수 있지만, 여러 멤버십 행을 잠그는 요청(위임·나가기·제외)은
             // 모두 프로젝트 행에서 먼저 줄을 서므로 교착이 생기지 않는다
-            me = swapLeader(projectId, actor.memberId(), transferTo,
+            me = swapLeader(caller, projectId, actor.memberId(), transferTo,
                     () -> invalidTransferTarget("같은 프로젝트의 활성 팀원에게만 위임할 수 있습니다")).current();
         }
         end(caller, me, reassignTo, MembershipEndReason.LEFT);
     }
 
     /**
-     * 제외·나가기 공통. 프로젝트·멤버십 행을 잠근 뒤에 부른다. 열린 작업 인계(인계 대상이 없으면 담당자 비우기, -301) → 멤버십 종료 → 토큰 폐기를 한 트랜잭션에서 한다.
+     * 제외·나가기 공통. 프로젝트·멤버십 행을 잠근 뒤에 부른다. 열린 작업 인계(인계 대상이 없으면 담당자 비우기, -301) → 멤버십 종료와
+     * 활동(MEMBER_REMOVED·MEMBER_LEFT, -289) → 토큰 폐기를 한 트랜잭션에서 한다. 위임하고 나가기면 활동은 LEADER_TRANSFERRED 다음에 남는다.
      * 권한 검사가 매 요청 멤버십을 읽으므로(캐시 없음) 커밋 직후 다음 요청부터 그 사람·토큰은 막힌다.
      */
     private void end(CallerContext caller, ProjectMember member, Long reassignTo, MembershipEndReason reason) {
@@ -223,6 +229,7 @@ public class ProjectMemberService {
         Instant now = Instant.now();
         member.end(reason, now);
         members.saveAndFlush(member);
+        activities.membershipEnded(caller, member, reason);
         tokens.revokeAllOfMember(projectId, member.getAccountId(), now);
     }
 
