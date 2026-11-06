@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import {
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { z } from 'zod'
-import { Copy, Ellipsis, Pencil, TriangleAlert } from 'lucide-react'
+import { Ellipsis, Pencil, TriangleAlert } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import type { Member, TaskDetail } from '@/api/contracts/common'
+import type { Invitation, Member, TaskDetail } from '@/api/contracts/common'
 import { membersApi, projectsApi, tasksApi } from '@/api/services'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
@@ -24,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Toast } from '@/components/Toast'
 import { useSession } from '@/features/auth/useSession'
 import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
@@ -41,6 +43,7 @@ import {
 import { formatDate } from '@/lib/formatDate'
 import { placementKey, useWorkspaceStore } from '@/stores/workspaceStore'
 import type { BuildingDesign } from '@/stores/workspaceStore'
+import type { EmailInvitationResult } from './schemas'
 
 type DialogAction = { action: 'edit' | 'remove' | 'transfer'; member: Member }
 
@@ -69,19 +72,12 @@ export function TeamPanel({
     done?: string
   }>({})
   const placements = useWorkspaceStore((state) => state.placements)
-  const placeProject = useWorkspaceStore((state) => state.placeProject)
+  const placeProjects = useWorkspaceStore((state) => state.placeProjects)
   const accountId = session.data?.id ?? ''
   const [design, setDesign] = useState<BuildingDesign>(
     placements[placementKey(accountId, projectId)]?.design ?? 'modern',
   )
   const [dialog, setDialog] = useState<DialogAction | null>(null)
-  const [fresh, setFresh] = useState<
-    { id: string; url: string; email: string }[]
-  >([])
-  const [copyMessage, setCopyMessage] = useState('')
-  const [inviteFailures, setInviteFailures] = useState<
-    { email: string; message: string }[]
-  >([])
   const project = useQuery({
     queryKey: ['projects', projectId, 'team-project'],
     queryFn: () => projectsApi.get(projectId),
@@ -93,12 +89,15 @@ export function TeamPanel({
     queryFn: () => projectsApi.list({ limit: 100 }),
     enabled: view === 'project',
   })
-  const lot = cityProjects.data
+  const assigned = cityProjects.data
     ? projectPlacements(
         cityProjects.data.items.map((item) => item.id),
         accountId,
         placements,
-      ).find((item) => item.id === projectId)?.lot
+      )
+    : []
+  const lot = cityProjects.data
+    ? assigned.find((item) => item.id === projectId)?.lot
     : placements[placementKey(accountId, projectId)]?.lot
   const members = useInfiniteQuery({
     // 다른 창은 같은 팀원 목록을 useQuery로 ['projects', id, 'members']에 담는다. 모양이 달라 키를 나눈다.
@@ -115,6 +114,16 @@ export function TeamPanel({
       membersApi.invitations(projectId, { cursor: pageParam }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
     enabled: isLeader && view === 'team',
+  })
+  // 메일 다시 보내기(MEM-A11)는 새 링크로 보내 이전 링크를 막는다. 메일을 못 보내면(503) 토큰이 그대로라 이전 링크가 산다.
+  // PR #146 리뷰: 보내는 줄의 버튼만 끄고, 결과 문구에 어느 이메일 건인지 붙인다.
+  const resend = useMutation({
+    mutationFn: (invitation: Invitation) =>
+      membersApi.resendInvitation(projectId, invitation.id),
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: ['projects', projectId, 'invitations'],
+      }),
   })
   // 서버는 최근 들어온 순(PR #50 MEM-A06)이다. 팀장을 맨 위, 다음은 나, 나머지는 서버 순서로 그린다.
   const teamOrder = (member: Member) =>
@@ -151,62 +160,6 @@ export function TeamPanel({
   const myHandover = openTasksOf(
     people.find((member) => member.account_id === session.data?.id)?.id,
   )
-  // 여러 명은 한 명씩 만든다. 이미 초대 중이거나 이미 팀원(409 already_member)이면 건너뛴다(Q05 3 ALREADY_INVITED).
-  // API 없음: 초대 메일 발송·여러 명 한 번에(emails, PR #42). 지금은 만든 링크를 아래 '초대 중'에 보여 준다.
-  // 초대 목록 조회는 링크(토큰)를 다시 주지 않아, 만든 링크는 바로 보관한다. 중간에 하나가 실패해도 나머지를 계속 만들고
-  // 목록을 새로 고친 뒤 성공과 실패를 나눠 보여 준다(PR #72 전수 리뷰 AMP-03). 실패한 이메일은 입력 칸에 남긴다.
-  const invite = async (emails: string[]) => {
-    const pending = new Set(
-      invitations.data?.pages
-        .flatMap((page) => page.items)
-        // 명세에는 만료가 없지만 백엔드는 7일 뒤 만료한다. 만료된 초대는 대기로 세지 않아 같은 이메일로 다시 초대한다
-        // (PR #72 mock/live 전수 대조 LIVE-AMP-05).
-        .filter(
-          (item) =>
-            !item.accepted_at &&
-            !item.revoked_at &&
-            !(item.expires_at && Date.parse(item.expires_at) <= Date.now()),
-        )
-        .map((item) => item.invited_email?.toLowerCase()),
-    )
-    let created = 0
-    let skipped = 0
-    const failed: { email: string; message: string }[] = []
-    setInviteFailures([])
-    setCopyMessage('')
-    for (const email of emails) {
-      if (pending.has(email.toLowerCase())) {
-        skipped++
-        continue
-      }
-      try {
-        const result = await membersApi.createInvitation(projectId, {
-          email,
-        })
-        created++
-        setFresh((items) => [
-          ...items,
-          { id: result.invitation.id, url: result.invite_url, email },
-        ])
-      } catch (cause) {
-        if (getApiErrorCode(cause) === 'already_member') skipped++
-        else failed.push({ email, message: getApiErrorMessage(cause) })
-      }
-    }
-    await queryClient.invalidateQueries({
-      queryKey: ['projects', projectId, 'invitations'],
-    })
-    setInviteFailures(failed)
-    setCopyMessage(
-      [
-        created > 0 && `초대 링크 ${created}개를 만들었어요.`,
-        skipped > 0 && `이미 팀원이거나 초대 중인 ${skipped}명은 건너뛰었어요.`,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    )
-    return failed.map((item) => item.email)
-  }
   // 제거·나가기 뒤에는 바로 도시로 간다. 이 프로젝트를 다시 부르면 404·403이라 캐시에서 지우고, 목록만 뒤에서 새로 고친다.
   const leaveProject = () => {
     navigate('/')
@@ -238,25 +191,7 @@ export function TeamPanel({
           )}
         </div>
       </header>
-      {view === 'team' && isLeader && <InviteForm onInvite={invite} />}
-      {inviteFailures.length > 0 && (
-        <div
-          role="alert"
-          className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
-        >
-          <strong className="block">
-            {inviteFailures.length}명은 초대하지 못했어요. 입력 칸에 남겨
-            뒀어요.
-          </strong>
-          <ul className="mt-1 grid gap-0.5">
-            {inviteFailures.map((item) => (
-              <li key={item.email}>
-                {item.email} · {item.message}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {view === 'team' && isLeader && <InviteForm projectId={projectId} />}
       {/* 결과는 화면 안 글 대신 오른쪽 위 토스트로 잠깐 보여 준다. */}
       {action.message && <Toast>{action.message}</Toast>}
       {handoff.done && (
@@ -267,7 +202,6 @@ export function TeamPanel({
           </span>
         </Toast>
       )}
-      {copyMessage && <Toast key={copyMessage}>{copyMessage}</Toast>}
       {action.error && (
         <p
           role="alert"
@@ -407,28 +341,30 @@ export function TeamPanel({
         </AsyncState>
       )}
       {/* 초대가 하나도 없다고 확인되면 '초대 중' 칸을 숨긴다(캔버스 SCR-06-v2-settings). 목록을 불러오는 중이거나
-          실패했으면 칸을 두고 AsyncState로 오류·다시 시도를 보인다. 방금 만든 초대 링크는 한 번만 받으므로 목록에 아직
-          없어도(목록 조회 실패 포함) 따로 보인다(PR #72 4차 조사 FOURTH-AMP-01). */}
+          실패했으면 칸을 두고 AsyncState로 오류·다시 시도를 보인다. */}
       {view === 'team' &&
         isLeader &&
         (!invitations.isSuccess ||
-          invitations.data.pages.some((page) => page.items.length) ||
-          fresh.length > 0) && (
+          invitations.data.pages.some((page) => page.items.length)) && (
           <div className="space-y-3">
             <h3 className="text-sm font-semibold">초대 중</h3>
-            {fresh
-              .filter(
-                (item) =>
-                  !invitations.data?.pages.some((page) =>
-                    page.items.some((invitation) => invitation.id === item.id),
-                  ),
-              )
-              .map((item) => (
-                <div key={item.id} className="grid gap-1 text-sm">
-                  <b className="font-medium">{item.email} · 방금 초대</b>
-                  <FreshLink url={item.url} onCopied={setCopyMessage} />
-                </div>
-              ))}
+            {resend.isSuccess && (
+              <Toast key={resend.submittedAt}>
+                {`${resend.variables.invited_email} · 초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.`}
+              </Toast>
+            )}
+            {resend.isError && (
+              <p
+                role="alert"
+                className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+              >
+                {`${resend.variables.invited_email} · ${
+                  getApiErrorCode(resend.error) === 'mail_send_failed'
+                    ? '초대 메일을 보내지 못했어요. 이전에 보낸 링크는 그대로 쓸 수 있어요.'
+                    : getApiErrorMessage(resend.error)
+                }`}
+              </p>
+            )}
             <AsyncState query={invitations}>
               {(data) => (
                 <>
@@ -452,9 +388,6 @@ export function TeamPanel({
                                   </span>
                                 )}
                               <small className="mt-1 block text-muted-foreground">
-                                {fresh.some((item) => item.id === invitation.id)
-                                  ? '방금 초대 · '
-                                  : ''}
                                 {/* Q05(2026-10-29 확정): 초대받은 사람이 로그인·가입해야 팀원이 된다. 만료는 없다. */}
                                 {invitation.accepted_at
                                   ? `참여함 · ${formatDate(invitation.accepted_at)}`
@@ -463,27 +396,18 @@ export function TeamPanel({
                                     : '같은 이메일로 로그인하거나 가입하면 팀원이 돼요'}
                               </small>
                             </span>
-                            {/* API 없음: 초대 메일 발송이 없어 방금 만든 초대는 링크를 직접 전달한다. 메일이 생기면 토스트를 '초대 메일을 보냈어요'로 바꾼다. */}
-                            {fresh.some(
-                              (item) => item.id === invitation.id,
-                            ) && (
-                              <FreshLink
-                                url={
-                                  fresh.find(
-                                    (item) => item.id === invitation.id,
-                                  )!.url
-                                }
-                                onCopied={setCopyMessage}
-                              />
-                            )}
-                            {!invitation.revoked_at &&
+                            {/* 이메일 없는 링크 초대(기존 호환)는 보낼 곳이 없어 서버가 404로 답한다. */}
+                            {invitation.invited_email &&
+                              !invitation.revoked_at &&
                               !invitation.accepted_at && (
-                                // API 없음: 초대 메일 다시 보내기
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  disabled
-                                  title="메일 발송이 준비되면 열려요"
+                                  disabled={
+                                    resend.isPending &&
+                                    resend.variables.id === invitation.id
+                                  }
+                                  onClick={() => resend.mutate(invitation)}
                                 >
                                   메일 다시 보내기
                                 </Button>
@@ -579,9 +503,13 @@ export function TeamPanel({
                       }),
                     '프로젝트 정보를 저장했어요.',
                   )
-                  // 도시 부지 8칸 밖(9번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                  // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                  // 도시와 같이 지금 보이는 칸을 함께 저장해, 당겨진 칸 번호로 다른 프로젝트와 순서가 뒤바뀌지 않는다(S15P31A108-256).
                   if (typeof lot === 'number')
-                    placeProject(accountId, projectId, { lot, design })
+                    placeProjects(accountId, [
+                      ...assigned,
+                      { id: projectId, lot, design },
+                    ])
                   await queryClient.invalidateQueries({
                     queryKey: ['projects'],
                   })
@@ -891,10 +819,15 @@ const inviteSchema = z.object({
       (value) =>
         splitEmails(value).every((email) => z.email().safeParse(email).success),
       '이메일 형식을 확인해 주세요.',
+    )
+    // MEM-A01 emails는 1~20개다(PR #134).
+    .refine(
+      (value) => splitEmails(value).length <= 20,
+      '한 번에 20명까지 초대할 수 있어요.',
     ),
+  message: z.string().trim().max(500, '함께 보낼 말은 500자까지 쓸 수 있어요.'),
 })
 
-// 팀 목록 위 초대 칸(노션처럼). 쉼표나 줄바꿈으로 여러 명을 넣고, 보내면 칸을 비운다.
 // 추방·나가기에서 넘길 열린 작업 목록
 function HandoverTasks({ tasks }: { tasks: TaskDetail[] }) {
   return (
@@ -924,65 +857,55 @@ function HandoverTasks({ tasks }: { tasks: TaskDetail[] }) {
   )
 }
 
-// 방금 만든 초대 링크. 응답에서 한 번만 받으므로 복사하게 둔다.
-function FreshLink({
-  url,
-  onCopied,
-}: {
-  url: string
-  onCopied: (message: string) => void
-}) {
-  return (
-    <span className="flex w-full gap-2">
-      <Input
-        aria-label="팀원 초대 링크"
-        readOnly
-        value={url}
-        className="min-w-48 flex-1"
-        onFocus={(event) => event.currentTarget.select()}
-      />
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() =>
-          void navigator.clipboard
-            .writeText(url)
-            .then(() => onCopied('초대 링크를 복사했어요.'))
-            .catch(() => onCopied('링크를 선택해 직접 복사해 주세요.'))
-        }
-      >
-        <Copy />
-        복사
-      </Button>
-    </span>
-  )
+// PR #146 리뷰: 서버는 초대를 저장한 뒤 메일을 따로 보내서, 발송이 실패해도 INVITED로 답한다. 그래서 "보냈어요"라고 하지 않는다.
+// 첫 메일이 조용히 실패한 사람을 다시 초대하면 ALREADY_INVITED가 오므로, 다시 보낼 곳을 알려 준다.
+const inviteResultLabels: Record<EmailInvitationResult['status'], string> = {
+  INVITED: '초대했어요',
+  ALREADY_INVITED: '이미 초대 중이에요. 아래에서 메일을 다시 보낼 수 있어요',
+  ALREADY_MEMBER: '이미 팀원이에요',
 }
 
-function InviteForm({
-  onInvite,
-}: {
-  /** 초대하지 못한 이메일을 돌려준다. 그 이메일은 입력 칸에 남긴다. */
-  onInvite: (emails: string[]) => Promise<string[]>
-}) {
+// 팀 목록 위 초대 칸(노션처럼). 쉼표나 줄바꿈으로 여러 명을 넣고 한 번에 초대 메일을 보낸다(MEM-A01 emails, PR #134).
+// 이미 팀원인지·초대 중인지는 서버가 이메일마다 알려 준다. 보내면 칸을 비우고, 요청이 실패하면 칸을 그대로 둔다.
+function InviteForm({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient()
+  // 결과는 mutation이 들고 있다. 다시 보내면 비워지고, 실패하면 남지 않는다.
+  const invite = useMutation({
+    mutationFn: (values: z.infer<typeof inviteSchema>) =>
+      membersApi.createEmailInvitations(projectId, {
+        emails: splitEmails(values.emails),
+        message: values.message || undefined,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ['projects', projectId, 'invitations'],
+      }),
+  })
+  const results = invite.data?.results ?? []
   const {
     register,
     handleSubmit,
     reset,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<z.infer<typeof inviteSchema>>({
     resolver: zodResolver(inviteSchema),
-    defaultValues: { emails: '' },
+    defaultValues: { emails: '', message: '' },
   })
+  const error = errors.emails ?? errors.message ?? errors.root
   return (
     <form
       noValidate
       aria-label="팀원 초대"
       className="grid gap-1.5"
-      onSubmit={handleSubmit((values) =>
-        onInvite(splitEmails(values.emails))
-          .then((failed) => reset({ emails: failed.join(', ') }))
-          .catch(() => undefined),
-      )}
+      onSubmit={handleSubmit(async (values) => {
+        try {
+          await invite.mutateAsync(values)
+          reset()
+        } catch (cause) {
+          setError('root', { message: getApiErrorMessage(cause) })
+        }
+      })}
     >
       <span className="flex gap-2">
         <Input
@@ -997,15 +920,32 @@ function InviteForm({
           초대
         </Button>
       </span>
-      {errors.emails ? (
+      <Textarea
+        aria-label="함께 보낼 말"
+        placeholder="함께 보낼 말 (선택) · 초대 메일에 넣어요"
+        rows={2}
+        aria-invalid={!!errors.message}
+        disabled={isSubmitting}
+        {...register('message')}
+      />
+      {error ? (
         <p role="alert" className="text-xs text-destructive">
-          {errors.emails.message}
+          {error.message}
         </p>
       ) : (
         <span className="text-xs text-muted-foreground">
           받은 사람이 같은 이메일로 로그인하거나 가입하면 팀원이 돼요. 들어오기
           전까지는 &apos;초대 중&apos;으로 보여요.
         </span>
+      )}
+      {results.length > 0 && (
+        <ul aria-label="초대 결과" className="grid gap-0.5 text-xs">
+          {results.map((result) => (
+            <li key={result.email}>
+              {result.email} · {inviteResultLabels[result.status]}
+            </li>
+          ))}
+        </ul>
       )}
     </form>
   )

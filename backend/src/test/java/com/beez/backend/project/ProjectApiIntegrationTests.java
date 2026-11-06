@@ -141,6 +141,94 @@ class ProjectApiIntegrationTests extends IntegrationTestSupport {
         assertThat(listed.get("id").asString()).isEqualTo(String.valueOf(baselineId));
     }
 
+    /** 깨지면: 남의 프로젝트나 삭제된 프로젝트의 초기 설정 현황이 드러난다 (S15P31A108-239 완료 조건 2). */
+    @Test
+    void onboarding_outsiderAndArchivedProject_notFound() {
+        var p = fixtures().projectWithLeader();
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        String path = "/api/projects/" + p.projectId() + "/onboarding";
+
+        assertThat(leader.get(path).statusCode()).isEqualTo(200);
+        assertThat(loginAsNewAccount().get(path).statusCode()).isEqualTo(404);
+        fixtures().archiveProject(p.projectId());
+        assertThat(leader.get(path).statusCode()).isEqualTo(404);
+    }
+
+    /**
+     * 깨지면: 문서 업로드·승인, 기준 발행, 팀원 변동, 내 에이전트 연결이 현황에 반영되지 않는다 (S15P31A108-239 완료 조건 3).
+     * REQUIREMENTS 는 DB 에 REQ_SPEC 으로 저장되므로 이름 변환이 빠지면 여기서 깨진다.
+     */
+    @Test
+    void onboarding_reflectsDocumentsBaselineMembersAndMyAgent() {
+        var p = fixtures().projectWithLeader();
+        ApiClient leader = client().login(p.leaderEmail(), AccessFixtures.PASSWORD);
+        String path = "/api/projects/" + p.projectId() + "/onboarding";
+
+        JsonNode empty = read(leader.get(path));
+        assertThat(empty.get("required_documents")).hasSize(4);
+        assertThat(requiredDocument(empty, "PLAN").get("uploaded").asBoolean()).isFalse();
+        assertThat(empty.get("baseline_published").asBoolean()).isFalse();
+        assertThat(empty.get("member_count").asInt()).isEqualTo(1);
+        assertThat(empty.get("my_agent_connected").asBoolean()).isFalse();
+
+        documentWithVersion(p, "PLAN", "DRAFT");
+        documentWithVersion(p, "REQ_SPEC", "APPROVED");
+        long baselineId = jdbc.queryForObject(
+                "INSERT INTO baseline (project_id, version_no, published_by) VALUES (?, 1, ?) RETURNING id",
+                Long.class, p.projectId(), p.leaderAccountId());
+        jdbc.update("UPDATE project SET current_baseline_id = ? WHERE id = ?", baselineId, p.projectId());
+        long bob = fixtures().account();
+        long bobMember = fixtures().member(p.projectId(), bob, ProjectRole.MEMBER);
+        // 다른 팀원의 연결은 내 연결이 아니다
+        connectAgent(fixtures().agentToken(p.projectId(), bob));
+
+        JsonNode filled = read(leader.get(path));
+        assertThat(requiredDocument(filled, "PLAN").get("uploaded").asBoolean()).isTrue();
+        assertThat(requiredDocument(filled, "PLAN").get("approved").asBoolean()).isFalse();
+        assertThat(requiredDocument(filled, "REQUIREMENTS").get("uploaded").asBoolean()).isTrue();
+        assertThat(requiredDocument(filled, "REQUIREMENTS").get("approved").asBoolean()).isTrue();
+        assertThat(requiredDocument(filled, "ERD").get("uploaded").asBoolean()).isFalse();
+        assertThat(filled.get("baseline_published").asBoolean()).isTrue();
+        assertThat(filled.get("member_count").asInt()).isEqualTo(2);
+        assertThat(filled.get("my_agent_connected").asBoolean()).isFalse();
+
+        long myToken = fixtures().agentToken(p.projectId(), p.leaderAccountId());
+        connectAgent(myToken);
+        fixtures().removeMember(bobMember);
+        JsonNode connected = read(leader.get(path));
+        assertThat(connected.get("my_agent_connected").asBoolean()).isTrue();
+        assertThat(connected.get("member_count").asInt()).isEqualTo(1);
+
+        // 폐기된 토큰의 세션은 연결로 보지 않는다
+        fixtures().revokeToken(myToken);
+        assertThat(read(leader.get(path)).get("my_agent_connected").asBoolean()).isFalse();
+    }
+
+    private void documentWithVersion(AccessFixtures.ProjectWithLeader p, String dbType, String status) {
+        long document = jdbc.queryForObject(
+                "INSERT INTO document (project_id, type, title, created_by) VALUES (?, ?, ?, ?) RETURNING id",
+                Long.class, p.projectId(), dbType, dbType, p.leaderAccountId());
+        jdbc.update("""
+                INSERT INTO document_version (document_id, version_no, status, storage_key, content_hash, content_text,
+                                              created_by, approved_by, approved_at)
+                VALUES (?, 1, ?, 'k', ?, 'text', ?, CASE WHEN ? = 'APPROVED' THEN ? END,
+                        CASE WHEN ? = 'APPROVED' THEN now() END)
+                """, document, status, "h-" + document, p.leaderAccountId(), status, p.leaderAccountId(), status);
+    }
+
+    private void connectAgent(long tokenId) {
+        jdbc.update("INSERT INTO agent_session (agent_token_id, session_key) VALUES (?, ?)", tokenId, "s-" + tokenId);
+    }
+
+    private static JsonNode requiredDocument(JsonNode body, String kind) {
+        for (JsonNode n : body.get("required_documents")) {
+            if (kind.equals(n.get("kind").asString())) {
+                return n;
+            }
+        }
+        throw new AssertionError("종류 없음: " + kind);
+    }
+
     private ApiClient loginAsNewAccount() {
         long accountId = fixtures().account();
         return client().login(fixtures().emailOf(accountId), AccessFixtures.PASSWORD);

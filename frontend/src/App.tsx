@@ -69,9 +69,7 @@ export default function App() {
               로그아웃
             </Button>
           </nav>
-        ) : ['/', '/login', '/register', '/reset-password'].includes(
-            pathname,
-          ) ? (
+        ) : ['/', '/login', '/register'].includes(pathname) ? (
           apiMode === 'mock' && (
             <p className="text-xs text-muted-foreground">
               목데이터로 미리 보기 · 실제 서버 호출 없음
@@ -84,6 +82,23 @@ export default function App() {
           </Link>
         )}
       </header>
+      {/* 임시 비밀번호(ACC-A07)로 로그인했으면 비밀번호 변경으로 안내만 하고 강제로 옮기지 않는다(Q04). */}
+      {session.data?.must_change_password &&
+        pathname !== '/account/password' && (
+          <p
+            role="status"
+            className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b bg-primary/10 px-5 py-2.5 text-sm"
+          >
+            임시 비밀번호로 로그인했어요. 회원 설정에서 새 비밀번호로 바꿔
+            주세요.
+            <Link
+              to="/account/password"
+              className="font-semibold underline underline-offset-3"
+            >
+              비밀번호 변경
+            </Link>
+          </p>
+        )}
       <Outlet />
     </div>
   )

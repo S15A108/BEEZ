@@ -10,6 +10,7 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.invitation.InvitationService;
 import com.beez.backend.task.service.TaskHandoverService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -30,7 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * MEM-A06 ~ A10 팀원 목록·표시 수정·팀장 위임·제외·나가기 (S15P31A108-212). 권한 검사는 각 메서드 첫 줄.
  * <p>
- * 잠금 순서는 프로젝트 행 → 멤버십 행. 변경 요청은 모두 프로젝트 행을 잠가 서로 줄을 세우고(위임과 제외가 겹쳐 새 팀장이 제외되는 일),
+ * 잠금 순서는 프로젝트 행 → 멤버십 행. 제외·나가기는 그 앞에 대상 이메일의 대기 초대 행을 잠근다(-220, 초대 → 프로젝트 순은 초대 수락·자동 참여와 같다). 변경 요청은 모두 프로젝트 행을 잠가 서로 줄을 세우고(위임과 제외가 겹쳐 새 팀장이 제외되는 일),
  * 바꿀 멤버십 행도 잠근다. 토큰 발급(AGT-A01)이 멤버십 행을, 작업 생성·담당자 변경이 프로젝트 행을 잠그므로
  * 제외·나가기 뒤에 폐기 안 된 토큰이나 나간 사람이 담당인 열린 작업이 남지 않는다.
  * 잠근 뒤에는 {@link #lockMember} 로 행을 다시 읽는다 — 권한 검사가 먼저 읽어 둔 엔티티는 잠금 조회에서 옛 상태 그대로 돌아온다.
@@ -47,17 +48,19 @@ public class ProjectMemberService {
     private final AccountRepository accounts;
     private final AgentTokenRepository tokens;
     private final TaskHandoverService handover;
+    private final InvitationService invitations;
     private final EntityManager em;
 
     public ProjectMemberService(ProjectAccessChecker access, ProjectService projectService,
                                 ProjectMemberRepository members, AccountRepository accounts, AgentTokenRepository tokens,
-                                TaskHandoverService handover, EntityManager em) {
+                                TaskHandoverService handover, InvitationService invitations, EntityManager em) {
         this.access = access;
         this.projectService = projectService;
         this.members = members;
         this.accounts = accounts;
         this.tokens = tokens;
         this.handover = handover;
+        this.invitations = invitations;
         this.em = em;
     }
 
@@ -136,9 +139,15 @@ public class ProjectMemberService {
     public void remove(CallerContext caller, long projectId, long memberId, EndMembershipRequest req) {
         ProjectActor actor = access.requireHumanLeader(caller, projectId);
         Long reassignTo = reassignTarget(req);
+        // 그 사람 이메일의 대기 초대를 먼저 취소한다(-220). 초대 행을 프로젝트 행보다 먼저 잠가 수락·자동 참여와 잠금 순서를 맞춘다.
+        // 대상이 없거나 다른 프로젝트면 아무것도 안 하고, 아래 lockMember 가 404 를 낸다
+        members.findById(memberId)
+                .filter(m -> m.getProjectId().equals(projectId))
+                .flatMap(m -> accounts.findById(m.getAccountId()))
+                .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
         lockProjectAsLeader(projectId, actor);
         ProjectMember target = lockMember(memberId, projectId);
-        end(target, reassignTo, MembershipEndReason.REMOVED);
+        end(caller, target, reassignTo, MembershipEndReason.REMOVED);
     }
 
     /** MEM-A10. 본인 멤버십만 끝낸다. 원치 않는 초대로 들어온 사람도 이것으로 빠진다 (Q05). 팀장은 위임이 먼저다. */
@@ -146,16 +155,19 @@ public class ProjectMemberService {
     public void leave(CallerContext caller, long projectId, EndMembershipRequest req) {
         ProjectActor actor = access.requireMember(caller, projectId);
         Long reassignTo = reassignTarget(req);
+        // 나가기 전에 받은 대기 초대를 취소한다(-220) — 다시 초대받아야만 링크로 돌아온다(Q05 4). 잠금 순서는 제외와 같다(초대 → 프로젝트)
+        accounts.findById(actor.accountId())
+                .ifPresent(a -> invitations.revokePendingOnMembershipEnd(projectId, a.getEmail()));
         projectService.lockActive(projectId);
         ProjectMember me = lockMember(actor.memberId(), projectId);
-        end(me, reassignTo, MembershipEndReason.LEFT);
+        end(caller, me, reassignTo, MembershipEndReason.LEFT);
     }
 
     /**
      * 제외·나가기 공통. 프로젝트·멤버십 행을 잠근 뒤에 부른다. 열린 작업 인계 → 멤버십 종료 → 토큰 폐기를 한 트랜잭션에서 한다.
      * 권한 검사가 매 요청 멤버십을 읽으므로(캐시 없음) 커밋 직후 다음 요청부터 그 사람·토큰은 막힌다.
      */
-    private void end(ProjectMember member, Long reassignTo, MembershipEndReason reason) {
+    private void end(CallerContext caller, ProjectMember member, Long reassignTo, MembershipEndReason reason) {
         long projectId = member.getProjectId();
         if (member.getRole() == ProjectRole.LEADER) {
             throw new ApiException(HttpStatus.CONFLICT, "leader_transfer_required", reason == MembershipEndReason.LEFT
@@ -171,7 +183,7 @@ public class ProjectMemberService {
                         "reassign_to_member_id: 같은 프로젝트의 활성 멤버가 아닙니다");
             }
         }
-        handover.handOver(projectId, member.getId(), reassignTo);
+        handover.handOver(caller, projectId, member.getId(), reassignTo);
         Instant now = Instant.now();
         member.end(reason, now);
         members.saveAndFlush(member);

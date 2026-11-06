@@ -9,6 +9,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 
 /** Listener for the #197 intake contract. Disabled unless explicitly configured. */
 public final class AnalysisIntakeKafkaListener {
+    /** Container id; {@link AnalysisIntakeConsumerStarter} starts it instead of the context (autoStartup=false). */
+    public static final String LISTENER_ID = "cdc-intake";
     private final AnalysisIntakeRecordDecoder decoder;
     private final AnalysisIntakeSignalHandler handler;
     private final Counter receiveFailures;
@@ -26,7 +28,8 @@ public final class AnalysisIntakeKafkaListener {
                 .register(registry);
     }
 
-    @KafkaListener(topics = "${beez.cdc.intake.topic:}", groupId = "${beez.cdc.intake.group-id:}",
+    @KafkaListener(id = LISTENER_ID, autoStartup = "false",
+            topics = "${beez.cdc.intake.topic:}", groupId = "${beez.cdc.intake.group-id:}",
             containerFactory = "cdcIntakeKafkaListenerContainerFactory")
     public void receive(ConsumerRecord<String, String> record) {
         try {

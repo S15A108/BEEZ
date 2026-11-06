@@ -10,7 +10,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.Locale;
 
-/** 계정 (V2 account). 탈퇴하면 email 이 NULL 이 되고 deleted_at 이 찍힌다 (ACC-A10, 후속 PR). */
+/** 계정 (V2 account). 탈퇴하면 email 이 NULL 이 되고 deleted_at 이 찍힌다 (ACC-A10, {@link #withdraw}). */
 @Entity
 @Table(name = "account")
 public class Account extends BaseTimeEntity {
@@ -33,6 +33,10 @@ public class Account extends BaseTimeEntity {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
+    /** 임시 비밀번호(ACC-A07)로 로그인했으면 true. 비밀번호 변경(ACC-A06)으로 풀린다 (V27). */
+    @Column(name = "must_change_password")
+    private boolean mustChangePassword;
+
     protected Account() {
     }
 
@@ -42,6 +46,40 @@ public class Account extends BaseTimeEntity {
         a.passwordHash = passwordHash;
         a.displayName = displayName;
         return a;
+    }
+
+    /** 탈퇴한 계정의 표시 이름. 작업·회의·문서 기록이 이 이름으로 남는다 (ACC-A10 "탈퇴한 사용자로 보존"). */
+    public static final String WITHDRAWN_NAME = "탈퇴한 사용자";
+
+    /** ACC-A05. 값은 서비스가 정리해서 넘긴다 — avatar null 은 지우기다. */
+    public void changeProfile(String displayName, String avatarUrl) {
+        this.displayName = displayName;
+        this.avatarUrl = avatarUrl;
+    }
+
+    /** ACC-A06. 인코딩한 해시를 받는다. 임시 비밀번호로 로그인한 뒤 바꾼 것이면 변경 요구도 풀린다. */
+    public void changePasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+        this.mustChangePassword = false;
+    }
+
+    /** ACC-A07·A02. 임시 비밀번호로 로그인하면 그것이 비밀번호가 되고, 바꾸라는 표시가 붙는다. */
+    public void adoptTemporaryPassword(String temporaryPasswordHash) {
+        this.passwordHash = temporaryPasswordHash;
+        this.mustChangePassword = true;
+    }
+
+    /**
+     * ACC-A10. 개인정보(이메일·이름·아바타·비밀번호 해시)를 지우고 탈퇴 시각을 찍는다. 행은 남긴다 — 작업·토큰·문서 기록이 계정 ID 를 가리킨다.
+     * email 이 NULL 이 되므로 UNIQUE 에 걸리지 않아 같은 이메일로 새로 가입할 수 있다(새 계정 ID).
+     */
+    public void withdraw(Instant now) {
+        this.email = null;
+        this.displayName = WITHDRAWN_NAME;
+        this.avatarUrl = null;
+        this.passwordHash = null;
+        this.mustChangePassword = false;
+        this.deletedAt = now;
     }
 
     /**
@@ -69,6 +107,10 @@ public class Account extends BaseTimeEntity {
 
     public String getAvatarUrl() {
         return avatarUrl;
+    }
+
+    public boolean isMustChangePassword() {
+        return mustChangePassword;
     }
 
     public Instant getDeletedAt() {

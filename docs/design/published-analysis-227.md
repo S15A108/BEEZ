@@ -22,7 +22,7 @@
 
 ## 활성화와 검증 범위
 
-기본값은 OFF다. 켜려면 `beez.cdc.intake.enabled=true`, `bootstrap-servers`, `group-id`, `topic`을 모두 지정한다. `beez.cdc.intake.recovery-poll-millis` 기본값은 2000이다. 이 설정은 복구 스캔도 함께 켜므로 소비자만 따로 켜서 PENDING을 읽고 ACK하는 구성은 지원하지 않는다. legacy outbox PoC와 동시 활성화는 금지한다.
+기본값은 OFF다. 복구 스캔은 `beez.cdc.intake.enabled=true`로 켜고(`beez.cdc.intake.recovery-poll-millis` 기본값 2000), Kafka 소비자는 따로 `beez.cdc.intake.consumer-enabled=true`와 `bootstrap-servers`, `group-id`, `topic`을 모두 지정해 켠다(S15P31A108-298). 소비자만 켜고 스캔은 끈 구성(PENDING을 읽고 ACK만 하는 구성)은 기동 때 거부한다. 소비자는 컨텍스트 기동과 함께 시작하지 않고 30초마다 시작을 다시 시도하므로 Kafka가 없어도 앱은 뜬다. legacy outbox PoC와 동시 활성화는 금지한다.
 
 [접수행 publication 검토안](../../infra/cdc/intake.publication.review.sql)과 [커넥터 검토안](../../infra/cdc/intake.connector.review.json)은 id·status만 캡처하는 수동 설정 예시다. Kafka key는 기본 PK(id)를 사용하며 프로젝트별 완료 순서는 DB가 보장한다. Debezium Connect와 PostgreSQL publication, Kafka 토픽·접근 권한은 이 코드가 만들거나 배포하지 않는다. JSON converter가 schema wrapper 유무와 관계없이 Debezium `source`, `op`, `after`를 보존하고 접수행 ID·status를 제공해야 한다. 운영 TLS/SASL, replication slot, 보관·DELETE, snapshot 경계, Connect 및 Kafka 장애 대응은 [운영 검토안](../../infra/cdc/OPERATIONS.md)에 따라 담당자가 별도로 검토해야 한다. #228 표시/API, #243/#244 모니터링 및 #229 장애 운영 검증은 이 변경에 포함되지 않는다.
 

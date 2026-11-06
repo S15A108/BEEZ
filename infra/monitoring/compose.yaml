@@ -1,0 +1,129 @@
+# BEEZ 모니터링 스택 (S15P31A108-263). 운영 절차는 docs/infra/monitoring.md.
+#
+# 본 스택(infra/compose.yaml, 프로젝트 beez)과 따로 띄우고 따로 내린다. 프로젝트 이름을 다르게 둔 이유:
+# deploy.sh 가 `compose up --remove-orphans` 로 beez 프로젝트의 고아 컨테이너를 지우므로, 같은 이름이면 배포 때마다
+# 모니터링 컨테이너가 지워진다.
+#
+# 네트워크 두 개:
+#   monitoring   — 이 스택 안의 통신(prometheus ↔ grafana·alertmanager·node-exporter)
+#   beez_default — 본 스택 네트워크(외부). 수집에 필요한 prometheus(→ backend)·postgres-exporter(→ postgres)만 붙는다.
+#                  grafana·alertmanager 는 붙이지 않아 backend·ai 컨테이너에서 닿지 않는다.
+# 본 스택이 먼저 떠 있어야 beez_default 가 있다.
+#
+# 호스트 포트는 127.0.0.1 에만 연다(SSH 터널 전용). 0.0.0.0 으로 열면 Docker 가 ufw 를 우회한다(docs/infra/server-setup.md).
+# 필수 값은 ${VAR:?} 로 적어 빠지면 compose 가 바로 멈춘다. 비밀값을 이 파일에 쓰지 않는다.
+# 이미지는 버전 태그 + digest(멀티 아키텍처 인덱스)로 고정한다. 올릴 때 태그와 digest 를 같이 바꾼다.
+
+name: beez-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 보존 기간·디스크 상한은 prometheus.yml 의 storage.tsdb.retention 에 있다
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro   # 알림 규칙(S15P31A108-264). tests/ 는 붙이지 않는다
+      - prometheus-data:/prometheus
+    networks:
+      - monitoring
+      - beez_default
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 1g
+    # 종료 때 head 블록을 디스크에 쓴다. 기본 10초면 잘려 다음 기동이 WAL 재생으로 길어질 수 있다
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=   # 한 대만 띄운다. 기본값이면 쓰지 않는 클러스터 포트(9094)를 연다
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager   # 알림 일시 중지(silence)·통지 이력
+    # Mattermost 웹훅 주소(비밀값). 서버 파일을 /run/secrets/mattermost_webhook_url 로 붙인다.
+    # 파일 secret 은 바인드 마운트라 호스트 파일 권한이 그대로 간다. 컨테이너가 nobody(65534)로 돌므로
+    # 서버 파일은 그룹 65534 에 읽기 권한을 준다(docs/infra/monitoring-alerts.md "웹훅 넣기")
+    secrets:
+      - mattermost_webhook_url
+    networks:
+      - monitoring   # 기본 브리지라 밖(Mattermost)으로 나갈 수 있다
+    # 포트를 열지 않는다. 일시 중지는 컨테이너 안의 amtool 로 건다
+    mem_limit: 128m
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    environment:
+      # 관리자 비밀번호는 grafana-data 볼륨이 처음 만들어질 때만 쓰인다. 바꾸는 법은 monitoring.md
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_SERVER_ROOT_URL: http://localhost:3000   # SSH 터널로만 연다
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro   # 대시보드 JSON(S15P31A108-264). 경로는 provisioning/dashboards/beez.yaml
+      - grafana-data:/var/lib/grafana
+    networks:
+      - monitoring
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    mem_limit: 1g   # 빈 상태 기동 직후 약 250MiB(로컬 실측). 대시보드가 늘어도 여유가 있게
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    command:
+      - --path.rootfs=/host
+      # 컨테이너·가상 파일시스템은 빼고 실제 디스크만 남긴다(디스크 임계치 알림 대상)
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/snap/.+)($$|/)
+    # 호스트의 프로세스 수·CPU 를 보려고 pid 네임스페이스를 공유한다.
+    # 네트워크는 공유하지 않는다(host 네트워크면 9100 이 호스트에 열린다). 그래서 호스트 NIC 트래픽 지표는 없다
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - monitoring
+    mem_limit: 128m
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      # pg_monitor 만 받은 전용 계정. 만드는 SQL 은 postgres/monitor-role.sql, 절차는 monitoring.md
+      DATA_SOURCE_URI: postgres:5432/${DB_NAME:-beez}?sslmode=disable
+      DATA_SOURCE_USER: ${MONITOR_DB_USER:-beez_monitor}
+      DATA_SOURCE_PASS: ${MONITOR_DB_PASSWORD:?MONITOR_DB_PASSWORD is required}
+    # 기본 수집기만 쓴다. stat_statements(쿼리 원문을 라벨로 냄)는 기본 꺼짐이고 켜지 않는다
+    networks:
+      - monitoring
+      - beez_default
+    mem_limit: 128m
+    restart: unless-stopped
+
+secrets:
+  mattermost_webhook_url:
+    file: ${ALERTMANAGER_WEBHOOK_URL_FILE:?ALERTMANAGER_WEBHOOK_URL_FILE is required}
+
+networks:
+  monitoring:
+  beez_default:
+    external: true
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:

@@ -73,6 +73,8 @@ public final class DocumentRegistrationService {
         Document document = documents.saveAndFlush(new Document(input.projectId(), input.kind(), input.title(), input.domain(), actor));
         DocumentVersion version = versions.saveAndFlush(DocumentVersion.initialDraft(document.getId(),
                 original.reference(), source.contentHash(), source.text(), actor));
+        // 문서 등록은 알림 유형이 없다(계약 6.1). 활동만 남는다.
+        // TODO(S15P31A108-237): ActivityRecorder.record DOCUMENT_REGISTERED, key document-version:{id}:registered
         return new StoredDraft(document.getId(), version.getId(), version.getVersionNo(), source.textHash());
     }
 }

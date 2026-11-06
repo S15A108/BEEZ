@@ -113,7 +113,8 @@ public class TaskMcpService {
         }
         Long taskId = Ids.parse(args.taskId(), "task_id");
         TaskStateInput state = new TaskStateInput(args.event(), args.planRevisionId(), args.expectedLockVersion(),
-                args.validationId(), args.waitingReason(), args.summary(), args.delta(), args.completionChecks());
+                args.validationId(), args.waitingReason(), args.summary(), args.delta(), args.completionChecks(),
+                args.changedDesignItemIds());
         validator.check(state, "arguments");
 
         // 같은 키 재시도면 처음 결과를 그대로 돌려준다 (공통 5절). 멤버 확인은 첫 줄에서 했다

@@ -3,8 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { LoaderCircle, TriangleAlert } from 'lucide-react'
+import { idSchema } from '@/api/contracts/common'
 import { authApi, membersApi } from '@/api/services'
 import { useSession } from '@/features/auth/useSession'
+import { invitationQuery } from '@/features/members/invitationQuery'
 import { Button } from '@/components/ui/button'
 import {
   getApiErrorCode,
@@ -15,10 +17,12 @@ import NotFoundPage from './NotFoundPage'
 
 // Q05 초대 규칙(PR #42, 2026-10-29 확정): 수락 버튼은 없다.
 // 로그인한 채로 링크를 열면 저절로 참여(MEM-A05)하고 프로젝트로 간다. 로그아웃이면 로그인·가입을 거쳐 같은 화면으로 돌아온다.
-// 미리보기(MEM-A04)는 조회만 한다. 만료는 없다.
+// 미리보기(MEM-A04)는 조회만 한다. 만료는 없다. 메일 링크(/projects/{id}?invite=)는 WorkspacePage가 여기로 보낸다.
 export default function InvitationPage() {
   const [params] = useSearchParams()
   const token = params.get('token') ?? params.get('invite') ?? ''
+  // 주소창 값이라 '../account/withdraw'처럼 앱 안 다른 곳을 가리킬 수 있다. ID 모양일 때만 프로젝트로 보낸다.
+  const projectId = idSchema.safeParse(params.get('project')).data
   const session = useSession()
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -28,13 +32,21 @@ export default function InvitationPage() {
     enabled: Boolean(token),
     retry: false,
   })
+  const openProject = async (id?: string) => {
+    await client.invalidateQueries({ queryKey: ['projects'] })
+    navigate(id ? `/projects/${id}` : '/', { replace: true })
+  }
+  // 이미 팀원(409 already_member, 예: 로그인할 때 자동 참여)이면 그 프로젝트로 보낸다(PR #134).
+  // 프로젝트 ID는 메일 링크에서만 알 수 있어, 옛 링크(/invite?token=)는 나의 도시로 보낸다.
   const accept = useMutation({
     mutationFn: () => membersApi.acceptInvitation({ token }),
-    onSuccess: async (data) => {
-      await client.invalidateQueries({ queryKey: ['projects'] })
-      navigate(`/projects/${data.project.id}`, { replace: true })
-    },
+    onSuccess: (data) => openProject(data.project.id),
+    onError: (error) =>
+      getApiErrorCode(error) === 'already_member'
+        ? openProject(projectId)
+        : undefined,
   })
+  const joined = getApiErrorCode(accept.error) === 'already_member'
   const signedIn = Boolean(session.data)
   const ready = Boolean(invitation.data)
   // 서버는 다른 이메일 계정의 수락을 무효 초대와 같은 404로 준다(MEM-A05, Q05 -174). 그래서 오류 코드에 기대지 않고,
@@ -57,11 +69,11 @@ export default function InvitationPage() {
     ((isAxiosError(invitation.error) && !invitation.error.response) ||
       (status !== undefined && status >= 500))
   if (!token || (invitation.error && !networkFailure)) return <NotFoundPage />
-  const encoded = encodeURIComponent(token)
+  const query = invitationQuery(params)
   const relogin = async () => {
     await authApi.logout().catch(() => undefined)
     await client.invalidateQueries()
-    navigate(`/login?invite=${encoded}`)
+    navigate(`/login${query}`)
   }
   return (
     <main className="px-4 pt-[72px] pb-10">
@@ -113,7 +125,7 @@ export default function InvitationPage() {
               )}
             </div>
             {signedIn ? (
-              otherAccount || accept.error ? (
+              otherAccount || (accept.error && !joined) ? (
                 otherAccount ? (
                   <>
                     <div
@@ -177,14 +189,12 @@ export default function InvitationPage() {
                   asChild
                   className="mt-5 h-11 w-full rounded-xl text-[15px] font-bold"
                 >
-                  <Link to={`/login?invite=${encoded}`}>
-                    로그인하고 프로젝트 열기
-                  </Link>
+                  <Link to={`/login${query}`}>로그인하고 프로젝트 열기</Link>
                 </Button>
                 <p className="mt-4 text-center text-sm text-muted-foreground">
                   계정이 없나요?{' '}
                   <Link
-                    to={`/register?invite=${encoded}`}
+                    to={`/register${query}`}
                     className="font-semibold text-foreground"
                   >
                     이 이메일로 회원가입하기

@@ -22,6 +22,44 @@ test('회원가입은 별도 페이지이고 비밀번호 규칙을 칸 아래�
   )
 })
 
+// S15P31A108-266: 가입 이메일 인증(ACC-A11·A12)을 거쳐 verified_token으로 가입한다. 목 모드는 예시 코드를 화면에 보여 준다.
+test('이메일 인증 코드를 받아 확인하면 가입하고 로그인 화면으로 간다', async ({
+  page,
+}) => {
+  await page.goto('/register')
+  await page.getByRole('textbox', { name: '이름', exact: true }).fill('새 팀원')
+  await page
+    .getByRole('textbox', { name: '이메일', exact: true })
+    .fill('verify-e2e@beez.local')
+  await page.getByRole('button', { name: '인증 코드 받기' }).click()
+  await expect(page.getByText(/남은 시간 0[45]:\d\d/)).toBeVisible()
+  const hint = await page.getByText(/예시 코드: \d{6}/).textContent()
+  const code = hint!.slice(-6)
+
+  await page
+    .getByRole('textbox', { name: '인증 코드' })
+    .fill(code === '000000' ? '111111' : '000000')
+  await page.getByRole('button', { name: '확인', exact: true }).click()
+  await expect(
+    page.getByText('코드가 맞지 않아요 (남은 시도 4번)'),
+  ).toBeVisible()
+  await page.getByRole('textbox', { name: '인증 코드' }).fill(code)
+  await page.getByRole('button', { name: '확인', exact: true }).click()
+  await expect(page.getByText('인증됨')).toBeVisible()
+
+  await page
+    .getByRole('textbox', { name: '비밀번호', exact: true })
+    .fill('beez-2026!')
+  await page
+    .getByRole('textbox', { name: '비밀번호 확인', exact: true })
+    .fill('beez-2026!')
+  await page.getByRole('button', { name: '가입하기' }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(
+    page.getByText('가입했어요. 등록한 계정으로 로그인해 주세요.'),
+  ).toBeVisible()
+})
+
 test('회원 설정에서 비밀번호 변경과 회원 탈퇴를 별도 페이지로 연다', async ({
   page,
 }) => {

@@ -58,7 +58,7 @@ class ValidationInputAssemblerTest {
         var refs = version == null ? List.<DesignRefInput>of() : List.of(new DesignRefInput("10", version, PlanRelation.READS, null));
         var plan = new TaskPlanInput("회원 조회", "조회", List.of("API"), List.of(), "GET 구현", List.of("조회"), List.of(), refs, List.of(), true, null);
         var rev = new TaskPlanRevisionResponse("4", "3", 1, plan, Instant.parse("2026-01-01T00:00:00Z"), "1", null);
-        return new TaskDetailResponse("3", "T-1", "1", "1", TaskStatus.DRAFT, null, 0, rev, "NOT_RUN", null, null, Instant.now(), Instant.now());
+        return new TaskDetailResponse("3", "T-1", "1", "1", TaskStatus.DRAFT, null, 0, rev, "NOT_RUN", null, null, null, null, Instant.now(), Instant.now());
     }
 
     @Test void assemblesAndKeepsCoverageUnknownWithoutPromotingChunkToDesign() {
@@ -331,7 +331,7 @@ class ValidationInputAssemblerTest {
                 List.of("조회"), List.of(), List.of(), List.of(), true, "22");
         var rev = new TaskPlanRevisionResponse("4", "3", 1, plan, Instant.parse("2026-01-01T00:00:00Z"), "1", null);
         var target = new TaskDetailResponse("3", "T-1", "1", "1", TaskStatus.DRAFT, null, 0,
-                rev, "NOT_RUN", null, null, Instant.now(), Instant.now());
+                rev, "NOT_RUN", null, null, null, null, Instant.now(), Instant.now());
         when(tasks.getTask(caller, 1L, 3L)).thenReturn(target);
         when(jdbc.sql(contains("select baseline_id,content::text as content")).param(anyString(), any())
                 .param(anyString(), any()).param(anyString(), any()).query().listOfRows()).thenReturn(List.of(

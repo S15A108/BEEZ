@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
+import com.beez.backend.auth.recovery.PasswordRecoveryService;
+import com.beez.backend.auth.verification.EmailVerificationService;
 import com.beez.backend.common.api.ApiException;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -21,7 +23,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 class AuthServiceTest {
 
     private final AccountRepository accounts = mock(AccountRepository.class);
-    private final AuthService auth = new AuthService(accounts, PasswordEncoderFactories.createDelegatingPasswordEncoder());
+    private final AuthService auth = new AuthService(accounts, PasswordEncoderFactories.createDelegatingPasswordEncoder(),
+            mock(EmailVerificationService.class), mock(PasswordRecoveryService.class));
 
     @Test
     void storedHashWithoutEncoderPrefix_isInvalidCredentials_not500() {
@@ -37,7 +40,7 @@ class AuthServiceTest {
     void passwordOver72Bytes_isInvalidCredentials_withoutHashComparison_forKnownAndUnknownEmail() {
         // bcrypt 는 72바이트를 넘는 원문에 예외를 던진다. 비교에 넘기면 "unreadable password hash" WARN 이 잘못 쌓인다
         PasswordEncoder encoder = spy(PasswordEncoderFactories.createDelegatingPasswordEncoder());
-        AuthService service = new AuthService(accounts, encoder);
+        AuthService service = new AuthService(accounts, encoder, mock(EmailVerificationService.class), mock(PasswordRecoveryService.class));
         Account known = Account.register("known@example.com", encoder.encode("secret-pass-1"), "있음");
         when(accounts.findByEmailAndDeletedAtIsNull("known@example.com")).thenReturn(Optional.of(known));
         String tooLong = "a1" + "x".repeat(PasswordPolicy.MAX_BYTES - 1);   // 73바이트
