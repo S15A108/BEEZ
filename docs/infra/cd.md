@@ -141,10 +141,11 @@ read -rsp "GMS key: " K && echo && \
   if [[ "$K" =~ ^[A-Za-z0-9._-]{20,}$ ]]; then \
     ( f=/opt/beez/.env.dev; umask 027
       [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 넣지 않음"; exit 1; }
+      rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
       grep -v '^GMS_KEY=' "$f" > "$f.new"; rc=$?
       if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
       printf 'GMS_KEY=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
-      mv "$f.new" "$f" ) && echo "saved (${#K} chars)"; \
+      mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; } ) && echo "saved (${#K} chars)"; \
   else echo "형식이 예상과 다름(영문·숫자·._- 20자 이상). 넣지 않음"; fi; unset K
 ```
 
@@ -156,6 +157,9 @@ read -rsp "GMS key: " K && echo && \
   없음)이 정상이고 2 이상이 읽기 오류입니다. 오류를 흘려보내면 뒤의 `printf`가
   성공해 env 파일이 `GMS_KEY` 한 줄짜리로 바뀌고 DB 비밀번호 등을 잃습니다
   ([cdc-connector.md](cdc-connector.md)의 `cdcenv`와 같은 방식, S15P31A108-321).
+- `.env.dev.new`는 지우고 새로 만듭니다. 이전 실행이 남긴 `.new`에 그대로 쓰면
+  umask가 적용되지 않아 그 파일의 옛 권한이 env 파일로 넘어갑니다. 바꿔
+  넣기(`mv`)에 실패해도 키가 든 `.new`를 남기지 않습니다.
 - 바꾼 값은 다음 배포 때 ai 컨테이너가 다시 만들어지면서 적용됩니다.
 
 값을 보지 않고 확인하기:
