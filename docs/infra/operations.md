@@ -181,16 +181,23 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    sum='import sys,zlib; t=sys.stdin.buffer.read().decode("utf-8").lstrip(chr(0xfeff)); c=zlib.crc32(t.replace("\r","").replace("\n","").encode()); print(c-(1<<32) if c>=1<<31 else c)'
    if ! python -c "$sum" < /dev/null > /dev/null; then echo "python 을 실행하지 못함 — 중단"
    elif ! g fetch -q origin || ! g cat-file -e "$OLD^{commit}" 2> /dev/null; then echo "fetch 실패 또는 없는 SHA — 중단"
-   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \" \" -c \"select version, checksum from flyway_schema_history where version is not null and success order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
+   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
      echo "DB 이력을 받지 못함 — 중단"
    else
-     g ls-tree --name-only "$OLD" -- "$DIR/" "$JDIR/" | grep -E '/V[0-9]+__' | while read -r f; do
-       v=${f##*/V}; v=${v%%__*}
-       case $f in *.sql) echo "$v $(g show "$OLD:$f" | python -c "$sum")" ;; *) echo "$v" ;; esac   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
+     g ls-tree -r --name-only "$OLD" -- "$DIR/" "$JDIR/" | grep -E '/V[0-9][0-9_]*__' | while read -r f; do
+       v=${f##*/V}; v=${v%%__*}; v=${v//_/.}   # V1_1__ 은 DB 에 1.1 로 기록된다
+       case $f in *.sql) echo "$v|$(g show "$OLD:$f" | python -c "$sum")" ;; *) echo "$v|" ;; esac   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
      done > "$T/old"
-     awk 'NR == FNR { o[$1] = $2; next }
-          !($1 in o) { print "V" $1 ": 되돌릴 SHA가 모름 — 판단 대상 (DB checksum " $2 ")"; next }
-          o[$1] != $2 { print "V" $1 ": checksum 다름 — 되돌리면 예전 backend 기동 실패 (DB " $2 ", 되돌릴 SHA " o[$1] ")" }' "$T/old" "$T/db"
+     # Flyway 기본 검증(outOfOrder 꺼짐, *:future 만 무시)으로 예전 backend 가 어떻게 되는지 번호마다 가른다
+     awk -F'|' 'NR == FNR { o[$1] = $2; if ($1 + 0 > om) om = $1 + 0; next }
+          { d[$1] = 1; if ($1 + 0 > dm) dm = $1 + 0 }
+          $3 != "t" { print "V" $1 ": 실패한 마이그레이션 — 어느 backend도 기동 못 함. 되돌리기 전에 스키마 상태부터 확인"; next }
+          !($1 in o) && $1 + 0 > om { print "V" $1 ": 되돌릴 SHA가 모르는 상위 번호 — 판단 대상 (DB checksum " $2 ")"; next }
+          !($1 in o) { print "V" $1 ": DB에만 있는데 되돌릴 SHA의 최신 번호보다 낮음 — 되돌리면 예전 backend 기동 실패"; next }
+          o[$1] != $2 { print "V" $1 ": checksum 다름 — 되돌리면 예전 backend 기동 실패 (DB " $2 ", 되돌릴 SHA " o[$1] ")" }
+          END { for (v in o) if (!(v in d)) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
+                  (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음") }' \
+       "$T/old" "$T/db" | sort -n -k1.2
      echo "대조 끝 (DB $(wc -l < "$T/db")개, 되돌릴 SHA $(wc -l < "$T/old")개)"
    fi; rm -rf "$T"
    ```
@@ -199,11 +206,16 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    - 마이그레이션은 SQL(`$DIR`)과 Java(`$JDIR`, 예: `V21__backfill_llm_usage.java`)가 같은 번호 체계를 씁니다. Java는
      checksum이 없어 번호만 대조하므로, 같은 번호의 Java 내용이 바뀐 것은 이 대조로 알 수 없습니다. 판단 대상이 Java면
      그 파일을 직접 읽습니다(아래 의심 줄 grep·판 찾기는 SQL만 봅니다).
-   - **`checksum 다름`이 있으면 되돌리지 않습니다.** 되돌릴 SHA도 아는 번호인데 DB에는 다른 내용이 들어가 있습니다
-     (작업 브랜치에서 같은 번호 파일을 고쳐 손 배포한 경우 등). 예전 backend는 Flyway 검증에서 기동에 실패합니다.
-     같은 이유로 그 번호를 아는 다음 dev 배포도 막힐 수 있으니 팀 채널에 알려 정리합니다.
-   - **`판단 대상`은 되돌릴 SHA가 모르는, DB에만 있는 번호입니다.** 예전 backend의 Flyway는 이런 상위 버전을 경고만 하고
-     넘어가므로, 그 내용이 예전 backend와 맞는지가 기준입니다. 먼저 아래 "실제 적용된 판 찾기"로 DB에 들어간 판의 파일을
+   - **`기동 실패`가 하나라도 있으면 되돌리지 않습니다.** 예전 backend의 Flyway가 기본 검증(설정에서 바꾸지 않음)에서
+     멈춥니다. 경우는 셋입니다. 되돌릴 SHA도 아는 번호인데 DB에 다른 내용이 들어감(`checksum 다름`, 작업 브랜치에서 같은
+     번호 파일을 고쳐 손 배포 등), DB에만 있는 번호가 되돌릴 SHA의 최신 번호보다 낮음(Flyway가 "적용됐는데 로컬에 없음"으로
+     봄), 되돌릴 SHA에만 있는 번호가 DB 최신 번호보다 낮음(`outOfOrder`가 꺼져 있어 적용하지 않고 멈춤).
+     앞의 둘은 그 번호를 아는 다음 dev 배포도 막을 수 있으니 팀 채널에 알려 정리합니다.
+   - **`실패한 마이그레이션`이 있으면** 지금 backend도 다시 켜지지 않습니다. 되돌리기보다 그 버전의 스키마 상태 확인이 먼저입니다.
+   - **`되돌리는 순간 이 마이그레이션이 실행됨`은** 되돌릴 SHA에만 있는 번호가 DB 최신보다 높은 경우입니다. 되돌리면서
+     스키마를 바꾸므로 되돌릴 SHA의 그 파일(`git show "$OLD:<경로>"`)을 판단 대상과 같은 기준으로 읽습니다.
+   - **`판단 대상`은 되돌릴 SHA가 모르는, DB 최신 쪽 상위 번호입니다.** 예전 backend의 Flyway는 이런 상위 번호만 경고하고
+     넘어가므로(`*:future`), 그 내용이 예전 backend와 맞는지가 기준입니다. 먼저 아래 "실제 적용된 판 찾기"로 DB에 들어간 판의 파일을
      찾아 **처음부터 끝까지** 읽습니다. 아래 의심 줄 grep은 후보를 좁힐 뿐 판정이 아닙니다.
      기준은 "예전 backend가 하던 읽기·쓰기가 이 마이그레이션 뒤에도 통하는가"입니다. 아래가 하나라도 있으면 되돌리지 않고
      **고친 커밋을 배포**합니다.
