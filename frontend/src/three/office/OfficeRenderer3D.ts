@@ -3,7 +3,12 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import type { Floor, Furniture, WallDecor } from './floors'
 import { stepDrop, type DropBody } from './drop-physics'
 import { OfficeOrbit, officeOrbitFrame } from './office-orbit'
-import { FirstPersonLook, firstPersonFrame } from './first-person'
+import {
+  FIGURE_HEIGHT,
+  FirstPersonLook,
+  METER,
+  firstPersonFrame,
+} from './first-person'
 import { OfficeCity } from './office-city'
 import { WindowCityView } from './window-city-view'
 import type { OfficeLifeActivity } from './office-life'
@@ -114,10 +119,6 @@ export type OfficeAppearance =
 // 비비는 GLB 파일 하나다. 비비 GLB는 파일만 바꾸면 다른 모델로 바뀐다(앞 = +z, 발바닥 y = 0이면 된다).
 const PERSON_MODEL = '/models/kenney/characters/character-female-d.glb'
 const BIBI_MODEL = '/models/bibi.glb'
-// 보드처럼 팀원 셋을 같은 키로 맞춘다. 1.5타일이면 가장 넓은 사람도 폭이 약 1타일이라 개인 거리 34px(약 1.06타일)에서 겹치지 않는다.
-const FIGURE_HEIGHT = 1.5
-// 캔버스에서 팀원은 1.7 m, 에이전트는 안테나 끝까지 1.74 m(모델 단위 m), 비비는 1.35 m다(v478). 팀원 1.5타일을 1.7 m로 본다.
-const METER = FIGURE_HEIGHT / 1.7
 const BIBI_HEIGHT = 1.35 * METER
 // 보드 그림의 사람 팔 각도. 모델의 기본 자세는 팔을 옆으로 편 T자다.
 const PERSON_ARMS = 1.15
@@ -3287,6 +3288,9 @@ ${note ?? ''}`
 
   get viewHeading() {
     return this.firstLook.yaw
+  }
+  get orbitYaw() {
+    return this.orbit.yaw
   }
   get isFirstPerson() {
     return this.firstPerson

@@ -54,6 +54,11 @@ public final class NotificationMessages {
                 "변경 발행으로 작업이 재검증 대기 상태가 되었습니다. 변경 내용을 확인하고 이어서 진행해 주세요.");
     }
 
+    public static Message taskAssigned(String taskTitle) {
+        return new Message("작업 담당자로 지정되었습니다: " + name(taskTitle),
+                "작업의 담당자가 나로 바뀌었습니다. 작업 상세에서 계획과 상태를 확인해 주세요.");
+    }
+
     // ---- 기준 ----
 
     public static Message baselineCreated() {

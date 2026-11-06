@@ -6,7 +6,61 @@ import {
   OFFICE_ORBIT_MAX_PITCH,
   OFFICE_ORBIT_MIN_PITCH,
   officeOrbitFrame,
+  orbitMove,
 } from './office-orbit'
+
+const KEY_INPUTS = [
+  { x: 0, y: -1 },
+  { x: 0, y: 1 },
+  { x: -1, y: 0 },
+  { x: 1, y: 0 },
+  { x: Math.SQRT1_2, y: -Math.SQRT1_2 },
+  { x: -Math.SQRT1_2, y: Math.SQRT1_2 },
+]
+
+/** 바닥 위 이동 방향이 화면에서 어느 쪽을 향하는지(카메라 공간 방향). */
+function onScreen(move: { x: number; y: number }, yaw: number) {
+  const frame = officeOrbitFrame(
+    30,
+    20,
+    900,
+    640,
+    1,
+    yaw,
+    OFFICE_ORBIT_HOME.pitch,
+  )
+  const camera = new THREE.OrthographicCamera()
+  camera.position.set(frame.offset.x, frame.offset.y, frame.offset.z)
+  camera.lookAt(0, 0, 0)
+  camera.updateMatrixWorld(true)
+  return new THREE.Vector3(move.x, 0, move.y).transformDirection(
+    camera.matrixWorldInverse,
+  )
+}
+
+test('3인칭 기본 시점에서는 WASD 이동이 지금과 똑같다', () => {
+  assert.deepStrictEqual(orbitMove({ x: 0, y: 0 }, OFFICE_ORBIT_HOME.yaw), {
+    x: 0,
+    y: 0,
+  })
+  for (const input of KEY_INPUTS)
+    assert.deepStrictEqual(orbitMove(input, OFFICE_ORBIT_HOME.yaw), input)
+})
+
+test('3인칭 시점을 돌려도 W는 화면 위쪽으로 가고 키마다 화면 기준 방향과 속도가 그대로다', () => {
+  for (let degrees = -720; degrees <= 720; degrees += 23) {
+    const yaw = OFFICE_ORBIT_HOME.yaw + (degrees * Math.PI) / 180
+    for (const input of KEY_INPUTS) {
+      const move = orbitMove(input, yaw)
+      assert.closeTo(Math.hypot(move.x, move.y), 1, 1e-10)
+      const home = onScreen(input, OFFICE_ORBIT_HOME.yaw)
+      const turned = onScreen(move, yaw)
+      assert.closeTo(turned.x, home.x, 1e-10)
+      assert.closeTo(turned.y, home.y, 1e-10)
+    }
+    assert.isAbove(onScreen(orbitMove({ x: 0, y: -1 }, yaw), yaw).y, 0)
+  }
+})
 
 test('a complete orbit keeps camera distance and projection scale constant', () => {
   const first = officeOrbitFrame(

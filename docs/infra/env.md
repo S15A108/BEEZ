@@ -40,8 +40,12 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `DB_USERNAME` | 필수 | | DB 계정 | postgres 초기화, backend |
 | `DB_PASSWORD` | 필수 | 비밀 | DB 비밀번호. **DB 를 처음 띄울 때 값으로 굳습니다** — 아래 [교체](#값이-샜을-때) 참고 | postgres 초기화, backend |
 | `DB_NAME` | | | 기본 `beez` | postgres, backend `DB_URL` |
-| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소 키 | seaweedfs, backend |
-| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs, backend |
+| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소의 **backend 전용** 키(`beez-documents` 읽기·쓰기·삭제·목록만) | seaweedfs 신원 파일, backend |
+| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, backend |
+| `SEAWEEDFS_BOOTSTRAP_ACCESS_KEY` | 필수 | 비밀 | SeaweedFS 관리 키(모든 bucket). 운영자의 관리·복원 작업에만 씁니다 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BOOTSTRAP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BACKUP_ACCESS_KEY` | 필수 | 비밀 | 백업 키(`beez-documents` 읽기·목록만) | seaweedfs 신원 파일, `backup.sh` |
+| `SEAWEEDFS_BACKUP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, `backup.sh` |
 | `DOCUMENT_S3_BUCKET` | | | 기본 `beez-documents` | seaweedfs, backend |
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
 | `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
@@ -50,9 +54,18 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
 | `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 S15P31A108-295 | backend |
+| `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | | | 기본 `false`. Kafka 힌트 consumer. **위 스캔 없이 켜면 기동 거부**. Kafka 가 없어도 기동하고 30초마다 다시 붙습니다(-298) | backend |
+| `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS`·`_GROUP_ID`·`_TOPIC` | | | 기본 `kafka:9092`·`beez-published-analysis`·`beez.public.published_change_analysis`(계획 D7). 바꿀 일 없음 | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
 | `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
 | `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |
+| `MAIL_HOST` | | | 가입 인증 메일 SMTP 서버. 비우면 기동은 하고 인증 메일이 503 `mail_send_failed` (-272) | backend |
+| `MAIL_PORT` | | | 기본 `587`(STARTTLS) | backend |
+| `MAIL_USERNAME` | | | SMTP 인증 계정 | backend |
+| `MAIL_PASSWORD` | | 비밀 | SMTP 인증 비밀번호(앱 비밀번호) | backend |
+| `MAIL_FROM` | | | 보내는 사람. 기본 `BEEZ <no-reply@beez.ai.kr>`. **SMTP 인증 계정 주소와 맞춥니다** — 다르면 제공자가 거부합니다 | backend |
+| `EMAIL_VERIFY_GLOBAL_SEND_LIMIT` | | | 기본 `100`. 서버 전체 시간당 가입 인증 메일 수. SMTP 계정의 발송 한도보다 낮게 | backend |
 
 - `BACKEND_HOST_PORT` 는 기본값이 없습니다. 예전 기본값 `8080` 은 서버의 Jenkins 와 겹치는데도 점검을 통과했습니다.
   값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.
@@ -101,10 +114,10 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
 | `VALIDATION_BUDGET_MS` | | `15000`. `AI_READ_TIMEOUT` 보다 짧게 | 기본값 |
 | `VALIDATION_FAKE_ANALYZER` | | `false` | env 파일, 없으면 `false` |
-| `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 아직 compose 가 넘기지 않음 (-219) |
-| `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | 〃. prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |
+| `MAIL_MODE` | | `log` (보내지 않음. local 은 인증 코드를 로그에 찍음) · prod 기본 `smtp` | 넘기지 않음 (프로필 기본값) |
+| `MAIL_HOST`·`MAIL_PORT`·`MAIL_USERNAME`·`MAIL_PASSWORD`(비밀)·`MAIL_FROM` | | 없음·`587`·없음·없음·`BEEZ <no-reply@beez.ai.kr>` | env 파일 (위 표). prod 에서 `MAIL_HOST` 가 비면 기동은 하고 가입 인증 메일이 503 `mail_send_failed` |
 | `MAIL_SMTP_AUTH`·`MAIL_SMTP_STARTTLS` | | `true`·`true` | 기본값 |
-| `EMAIL_VERIFY_RESEND_INTERVAL`·`SEND_LIMIT`·`GLOBAL_SEND_LIMIT`·`MAX_ATTEMPTS` | | `60s`·`5`(이메일당 시간당)·`100`(서버 전체 시간당, SMTP 계정 한도보다 낮게)·`5` (Q04 기본안) | 기본값 |
+| `EMAIL_VERIFY_RESEND_INTERVAL`·`SEND_LIMIT`·`GLOBAL_SEND_LIMIT`·`MAX_ATTEMPTS` | | `60s`·`5`(이메일당 시간당)·`100`(서버 전체 시간당, SMTP 계정 한도보다 낮게)·`5` (Q04 기본안) | 기본값. `GLOBAL_SEND_LIMIT` 만 env 파일로 바꿀 수 있음 |
 
 prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 적습니다. `${X}` 로 적으면 값이 없을 때 Spring 이
 오류 없이 `"${X}"` 글자를 그대로 넣고, 이 글자는 비어 있지 않아 `@NotBlank` 를 통과해 그대로 기동합니다(2026-10-30
@@ -383,7 +396,7 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 |---|---|
 | `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용 |
 | `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
-| `DOCUMENT_S3_*` | 지금은 seaweedfs 관리 키와 backend 키가 같은 값입니다. 키를 나누고 교체 절차를 확인하는 일은 S15P31A108-211 에서 합니다 |
+| `DOCUMENT_S3_*`·`SEAWEEDFS_*` | 새 키를 넣고 같은 SHA 로 다시 배포. **access key 와 secret key 를 함께** 바꿉니다 — [seaweedfs.md 키 교체](seaweedfs.md#키-교체) |
 | `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
 | `JENKINS_API_TOKEN` | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
 | Jenkins 비밀번호 | [jenkins.md 비밀번호 바꾸기](jenkins.md#비밀번호-바꾸기) |

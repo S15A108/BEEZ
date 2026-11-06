@@ -17,7 +17,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 
 | 알림 | 조건 | 지속 | 재통지 | 1차 대응 |
 |---|---|---|---|---|
-| [CdcPendingDelay](#cdcpendingdelay) | 가장 오래된 PENDING > 600초 **그리고** consumer 켜짐 | 5분 | 4시간 | 앱 · 양지훈 |
+| [CdcPendingDelay](#cdcpendingdelay) | 가장 오래된 PENDING > 600초 **그리고** 복구 스캔 켜짐 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcSnapshotFailing](#cdcsnapshotfailing) | DB 집계 실패, 또는 마지막 성공 120초 초과 | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcMetricsMissing](#cdcmetricsmissing) | backend 수집은 되는데(`up == 1`) CDC 필수 지표가 없음(인스턴스별) | 5분 | 4시간 | 앱 · 양지훈 |
 | [CdcExpiredLeases](#cdcexpiredleases) | lease 만료 RUNNING > 0 | 5분 | 4시간 | 앱 · 양지훈 |
@@ -26,6 +26,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcNotEvaluatedRequiresReview](#cdcnotevaluatedrequiresreview) | 확인 필요 미평가 > 0 | 바로 | **24시간** | 앱 · 양지훈 |
 | [CdcKafkaReceiveFailures](#cdckafkareceivefailures) | 최근 5분 Kafka 수신 실패 증가 **그리고** consumer 켜짐 | 바로 | 4시간 | 인프라 · 전진 |
 | [CdcKafkaFailureMetricMissing](#cdckafkafailuremetricmissing) | consumer 켜진 인스턴스에 그 인스턴스의 실패 지표 없음 | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcConsumerDown](#cdcconsumerdown) | consumer 켜진 인스턴스가 Kafka에 붙어 있지 않음(`consumer_up` ≠ 1 또는 없음) | 5분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -105,7 +106,9 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
   프로젝트". backend 로그의 분석 워커 오류.
 - 재시도 예정이 같이 늘었으면 AI 호출 실패로 재시도 중일 가능성, 막힌 프로젝트가 같이
   있으면 선행 접수 미완료로 순서 대기일 가능성이 큽니다.
-- consumer가 꺼진 환경(dev에 Kafka 없음)에서는 울리지 않습니다.
+- 복구 스캔이 꺼진 환경(`BEEZ_CDC_INTAKE_ENABLED=false`)에서는 울리지 않습니다. 처리는 스캔이 맡으므로
+  consumer 설정이 아니라 스캔 설정(`beez_cdc_analysis_recovery_enabled`)을 봅니다(S15P31A108-298) — Kafka가
+  죽어 스캔만 도는 동안에도 지연은 알립니다.
 
 ### CdcSnapshotFailing
 
@@ -121,7 +124,7 @@ backend가 지표용 DB 집계에 실패하거나, 집계 값이 120초 넘게 �
 ### CdcMetricsMissing
 
 backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지표(`snapshot_available`·
-`last_success`·`consumer_enabled`·`intakes`) 중 하나라도 5분 넘게 없습니다. 이때는
+`last_success`·`consumer_enabled`·`recovery_enabled`·`intakes`) 중 하나라도 5분 넘게 없습니다. 이때는
 `CdcSnapshotFailing`도 `BackendScrapeDown`도 울리지 않아 CDC 감시가 통째로 빠집니다.
 
 - 볼 곳: 그 인스턴스에 배포된 커밋(CDC 지표가 없는 커밋으로 배포·롤백했는지), backend 기동
@@ -175,6 +178,17 @@ counter는 리스너가 등록될 때 0으로 생기므로, 리스너가 뜨지 
 인스턴스별로 대조하므로 backend가 여럿일 때 한쪽만 빠져도 잡습니다.
 
 - 볼 곳: backend 기동 로그의 Kafka 리스너 등록, 배포된 설정(consumer 관련 env).
+
+### CdcConsumerDown
+
+consumer 설정이 켜진 인스턴스가 5분 넘게 Kafka에 붙어 있지 않습니다(S15P31A108-298).
+`beez_cdc_kafka_consumer_up`은 리스너가 돌고, 파티션을 받았고, 최근 30초 안에 그룹 heartbeat를 보냈을 때만 1입니다.
+이 동안에도 분석은 복구 스캔이 30초 늦게 처리하므로 `CdcPendingDelay`는 울리지 않습니다. 급하지 않지만 Kafka 경로가 멈춘 상태입니다.
+
+- 볼 곳: `cdc ps`(Kafka·Connect가 떠 있는지), backend 로그의 "CDC intake Kafka consumer could not start"
+  (Kafka 이름이 안 풀려 시작을 30초마다 재시도 중), Kafka 연결 경고. 지표가 아예 없으면 리스너 설정이 빠진 배포다.
+- Kafka가 돌아오면 backend 재시작 없이 다시 붙습니다(최대 30초 + 재연결 대기 10초). 붙으면 저절로 풀립니다.
+- 계획된 Kafka 점검이면 알림 일시 중지를 걸거나 consumer만 끕니다(`cdc-stack.md` "중지·내리기").
 
 ### BackendScrapeDown
 

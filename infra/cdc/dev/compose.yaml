@@ -1,0 +1,146 @@
+# BEEZ dev 서버 CDC 스택 — Kafka(단일 broker) + Debezium Connect (S15P31A108-294).
+# 계획은 docs/infra/cdc-deploy-plan-279.md D1~D3, 운영 절차는 docs/infra/cdc-stack.md.
+#
+# 같은 폴더 위의 infra/cdc/compose.yaml 은 운영(TLS·전용 망) 검토안이고 이 파일과 관계없다.
+#
+# 본 스택(infra/compose.yaml, 프로젝트 beez)과 따로 띄우고 따로 내린다. 프로젝트 이름이 다른 이유:
+# deploy.sh 가 `compose up --remove-orphans` 로 beez 프로젝트의 고아 컨테이너를 지우므로, 같은 이름이면 dev 머지
+# 배포 때마다 Kafka·Connect 가 지워진다. 모니터링 스택(beez-monitoring)과 같은 방식이다.
+#
+# 네트워크는 본 스택의 beez_default(외부) 하나다. Connect → postgres, backend → kafka 를 서비스 이름으로 찾는다.
+# 본 스택이 먼저 떠 있어야 beez_default 가 있다.
+#
+# 보안(dev 한정, D3): TLS·SASL 없이 Docker 내부망 PLAINTEXT. 그래서
+#   - 호스트 포트를 하나도 publish 하지 않는다(ports 없음).
+#   - Connect REST 는 컨테이너 안 127.0.0.1 에만 연다. 관리는 docker exec 로 한다.
+#   - Kafka controller 포트도 127.0.0.1 에만 연다(같은 망의 다른 컨테이너가 닿지 않게).
+#   - beez_default 의 다른 컨테이너는 broker(9092)를 읽고 쓸 수 있다. 계획 D3 "남는 위험"으로 수용했다.
+# 이미지는 버전 태그 + digest(멀티 아키텍처 인덱스)로 고정한다. 올릴 때 태그와 digest 를 같이 바꾼다.
+
+name: beez-cdc
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    environment:
+      # KRaft 단일 노드: broker 와 controller 를 한 프로세스가 맡는다
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      # 볼륨을 처음 포맷할 때 쓰는 클러스터 ID. 비밀값이 아니다. 바꾸면 기존 볼륨과 맞지 않아 기동하지 않는다
+      CLUSTER_ID: lGbBAJOLSYK-3s5CK-VD3g
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://127.0.0.1:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # broker 내부 토픽의 복제 수. 기본값 3 이면 broker 가 하나뿐이라 __consumer_offsets 를 만들지 못하고
+      # consumer group 이 붙지 못한다(계획 D2)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      # 토픽은 손으로 만든다(docs/infra/cdc-stack.md "접수 토픽"). 이름을 잘못 쓴 consumer·producer 가
+      # 엉뚱한 토픽을 만들지 않게 막는다. Connect 내부 토픽은 Connect 가 관리 API 로 직접 만든다
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: "1"
+      # 이미지 기본값은 /tmp 아래라 컨테이너를 다시 만들면 데이터가 사라진다. 볼륨 경로로 옮긴다
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+      # kafka-run-class.sh 는 이 값이 비어 있으면 -Dcom.sun.management.jmxremote 를 넣는다. 그러면 JVM 이 JMX(RMI)
+      # 커넥터를 모든 인터페이스의 임의 포트에 연다(루프백 접속만 받지만 같은 망에 열린 포트가 생김). 쓰지 않으므로
+      # 해가 없는 값으로 채워 막는다. jmxremote=false 로는 안 된다 — 속성이 있기만 해도 JVM 이 커넥터를 연다(로컬 실측).
+      # 지표 수집(S15P31A108-261)은 프로세스 안 javaagent 라 이것이 필요 없다
+      KAFKA_JMX_OPTS: -Djava.awt.headless=true
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    # 이미지가 VOLUME 으로 선언한 나머지 경로. 그냥 두면 익명 볼륨이 생겨 `down` 때마다 이름 없는 볼륨이 남는다.
+    # 둘 다 이 구성에서는 비어 있다(설정은 env, 비밀값 없음)
+    tmpfs:
+      - /etc/kafka/secrets:size=1m
+      - /mnt/shared/config:size=1m
+    networks:
+      - beez_default
+    healthcheck:
+      # JVM 도구라 한 번에 1~2초 CPU 를 쓴다. 그래서 간격을 넓게 둔다.
+      # 도구도 컨테이너 env 의 KAFKA_HEAP_OPTS(512m)를 물려받아 broker 와 같은 1g 상한을 나눠 쓴다(로컬 실측: 도구 한 번에
+      # 컨테이너 최대 사용량 536→704MB). 상한에 닿으면 OOM 이 가장 큰 프로세스인 broker 를 죽이므로 도구 힙을 작게 준다.
+      # 런북의 docker exec 도 같은 이유로 -e KAFKA_HEAP_OPTS 를 준다(docs/infra/cdc-stack.md 의 kt 함수)
+      test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+    mem_limit: 1g
+    # 종료 때 로그를 정리하고 내린다. 기본 10초에 잘리면 다음 기동이 로그 복구로 길어진다
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  connect:
+    # 2.7.3 을 쓰는 이유와 한계(PG17 공식 지원 밖)는 계획 D2. 안에 든 Kafka Connect 는 3.7.0, uid=1001(kafka)
+    image: debezium/connect:2.7.3.Final@sha256:997b67feff614549acd20d54bfed398fc73b339881c649d42821c1e55ec9972b
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      # 아래 대문자 이름은 이미지 진입 스크립트가 CONNECT_* 로 바꿔 worker 설정에 쓴다
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: beez-cdc-connect
+      CONFIG_STORAGE_TOPIC: beez-cdc-connect-configs
+      OFFSET_STORAGE_TOPIC: beez-cdc-connect-offsets
+      STATUS_STORAGE_TOPIC: beez-cdc-connect-status
+      # 내부 토픽 셋은 Connect 가 compact 로 만든다. broker 가 하나라 복제 1. 이미지 기본 설정도 1 이지만
+      # 이미지 버전을 올려 기본값이 바뀌어도 의도가 남도록 적어 둔다
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      # REST 는 컨테이너 안에서만(계획 D3). worker 가 하나라 다른 worker 로 요청을 넘길 일이 없어 성립한다.
+      # worker 를 늘리면 이 두 줄과 REST 노출을 다시 정해야 한다
+      CONNECT_LISTENERS: http://127.0.0.1:8083
+      ADVERTISED_HOST_NAME: 127.0.0.1
+      # 커넥터 설정의 ${file:/run/cdc-secrets/database.properties:password} 를 풀어 준다. 두 줄이 다 있어야 생긴다
+      CONNECT_CONFIG_PROVIDERS: file
+      CONNECT_CONFIG_PROVIDERS_FILE_CLASS: org.apache.kafka.common.config.provider.FileConfigProvider
+      # 메시지에 스키마를 싣지 않는다(운영 검토안 worker.properties.template 과 같음). backend 디코더는 둘 다 읽는다
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      HEAP_OPTS: -Xms512m -Xmx512m
+      # kafka 서비스의 KAFKA_JMX_OPTS 와 같은 이유로 JMX 커넥터 포트를 막는다
+      KAFKA_JMX_OPTS: -Djava.awt.headless=true
+    volumes:
+      # 복제 계정 비밀번호 파일(database.properties)이 든 서버 디렉터리. 스택 폴더 밖에 둔다(올리기 때 폴더가 통째로 바뀜).
+      # 컨테이너가 uid 1001 로 돌므로 서버에서 root:1001 750(디렉터리)·640(파일). 파일은 S15P31A108-293 이 쓴다.
+      # create_host_path: false — 디렉터리가 없으면 Docker 가 root 소유 빈 디렉터리를 만들지 않고 기동을 멈춘다
+      - type: bind
+        source: ${CDC_SECRETS_DIR:-/opt/beez/.cdc-secrets}
+        target: /run/cdc-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    # 진입 스크립트가 시작할 때마다 이 폴더의 worker 설정에 env 를 덧쓴다. 이미지가 익명 볼륨으로 잡아 두면
+    # env 에서 지운 값이 옛 설정 파일에 남으므로, 매번 비어 있는 tmpfs 로 시작한다
+    # /kafka/data·/kafka/logs 도 이미지가 VOLUME 으로 선언한 경로라, 익명 볼륨이 남지 않게 tmpfs 로 덮는다.
+    # distributed 모드라 상태는 Kafka 토픽에 있고 여기엔 남길 것이 없다. 로그는 stdout 으로 나간다
+    tmpfs:
+      - /kafka/config:size=16m
+      - /kafka/data:size=16m
+      - /kafka/logs:size=64m
+    networks:
+      - beez_default
+    healthcheck:
+      # worker 가 그룹에 들어가 커넥터 목록을 줄 수 있어야 200 이다(REST 만 뜬 상태와 구분)
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8083/connectors"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    mem_limit: 1g
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+networks:
+  beez_default:
+    external: true
+
+volumes:
+  kafka-data:
