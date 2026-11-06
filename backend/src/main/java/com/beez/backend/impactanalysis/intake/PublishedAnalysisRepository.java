@@ -122,6 +122,8 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, Post
     }
 
     private boolean finish(Claim claim, Instant now, String status, String code, Instant next) {
+        // 분석 행을 바꾸기 전에 프로젝트 행부터 잠근다 — 선점(claim)·결과 저장과 같은 순서 (S15P31A108-221 리뷰)
+        lockProjectOf(claim.id());
         return jdbc.sql("""
                 UPDATE published_change_analysis SET status=:status,error_code=:code,next_attempt_at=:next,
                   finished_at=CASE WHEN :status='PENDING' THEN NULL ELSE cast(:now AS timestamptz) END,lease_until=NULL
@@ -151,6 +153,20 @@ public class PublishedAnalysisRepository implements IntakeRecoveryScanPort, Post
                 .param("generation", canonical(generation)).param("usage", canonical(usage)).param("usageStatus", usageStatus).update();
         if (updated == 1) insertAttempt(claim, evaluation, code, usage, usageStatus);
         return updated == 1;
+    }
+
+    /**
+     * 분석 행의 프로젝트 행을 잠근다. 분석 행을 바꾸는 모든 트랜잭션은 <b>프로젝트 행 → 분석 행 → 결과 순번 카운터</b> 순서로 잠근다.
+     * 선점(claim)·결과 저장은 원래 이 순서였고, 실패 확정만 프로젝트 행 없이 분석 행을 먼저 잡았다. 그러면 결과 순번 트리거(V36)가
+     * 프로젝트의 첫 카운터 행을 만들 때 외래 키 검사로 프로젝트 행을 기다려, 프로젝트 행을 쥐고 그 분석 행을 기다리는 선점과
+     * 서로 기다리게 된다(40P01, S15P31A108-221 리뷰). 같은 트랜잭션에서 여러 번 불러도 된다(이미 쥔 잠금).
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void lockProjectOf(long intakeId) {
+        var project = jdbc.sql("SELECT project_id FROM published_change_analysis WHERE id=:id")
+                .param("id", intakeId).query(Long.class).optional();
+        if (project.isEmpty()) return;
+        jdbc.sql("SELECT id FROM project WHERE id=:project FOR UPDATE").param("project", project.get()).query(Long.class).single();
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
