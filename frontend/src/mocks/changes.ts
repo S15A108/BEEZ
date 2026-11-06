@@ -214,17 +214,18 @@ function approvalPreview(
   const current =
     project.baselines.at(-1) ??
     fail(409, 'baseline_conflict', '먼저 초기 기준 설계를 발행해 주세요.')
-  // 제안한 문서 버전의 색인이 아직 없으면 미리 보기도 승인도 409(PublishPlanner). 실제 BE 점검에서 확인한 응답이다.
+  // 서버(PublishPlanner)의 검사 순서: 상태(invalid_transition) → 기준(baseline_conflict) → 색인(analysis_not_completed).
+  if (!['PROPOSED', 'IN_REVIEW'].includes(proposal.status))
+    fail(409, 'invalid_transition', '검토 중인 제안만 미리 볼 수 있어요.')
+  if (scenario === 'conflict' || current.id !== proposal.base_baseline_id)
+    fail(409, 'baseline_conflict', '제안을 올린 뒤 기준이 바뀌었어요.')
+  // 제안한 문서 버전의 색인이 아직 없으면 미리 보기도 승인도 409. 실제 BE 점검에서 확인한 응답이다.
   if (scenario === 'indexing')
     fail(
       409,
       'analysis_not_completed',
       '제안 문서 버전의 색인이 준비되지 않았습니다.',
     )
-  if (scenario === 'conflict' || current.id !== proposal.base_baseline_id)
-    fail(409, 'baseline_conflict', '제안을 올린 뒤 기준이 바뀌었어요.')
-  if (!['PROPOSED', 'IN_REVIEW'].includes(proposal.status))
-    fail(409, 'invalid_transition', '검토 중인 제안만 미리 볼 수 있어요.')
   const changed = new Map(
     proposal.items.map((item, index) => [item.design_item_id, { item, index }]),
   )
@@ -283,7 +284,8 @@ function approvalPreview(
   const changedDocuments = new Set(
     proposal.documents.map((document) => document.document_id),
   )
-  const trusted = !scenario || scenario === 'running'
+  // 서버는 완료 · 최신 · 재분석 아님일 때만 후보 수를 준다. 재분석 중이면 이전 결과가 보여도 null 이다(ImpactApprovalGate).
+  const trusted = !scenario
   return {
     data: {
       next_baseline_version_no: current.version_no + 1,
@@ -316,10 +318,18 @@ function approvalPreview(
       unreviewed: {
         // 영향 분석이 완료·최신일 때만 숫자. 아니면 null 로 보내 미평가를 0건으로 보이지 않게 한다.
         ai_candidates: trusted ? 0 : null,
+        // 서버는 현재 리비전의 검토 요청 중 지정 대상이 아직 답하지 않은 것만 센다. mock 댓글에는 대상·리비전이 없어,
+        // 요청한 사람이 아닌 누군가의 뒤 댓글이 하나라도 있으면 답한 것으로 근사한다.
         open_review_requests: project.comments.filter(
-          (comment) =>
-            comment.proposal_id === proposal.id &&
-            comment.kind === 'REVIEW_REQUEST',
+          (request) =>
+            request.proposal_id === proposal.id &&
+            request.kind === 'REVIEW_REQUEST' &&
+            !project.comments.some(
+              (reply) =>
+                reply.proposal_id === proposal.id &&
+                Number(reply.id) > Number(request.id) &&
+                reply.author_account_id !== request.author_account_id,
+            ),
         ).length,
         ai_analysis: previewAnalysis(scenario),
         requires_override_reason:
