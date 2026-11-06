@@ -3,8 +3,8 @@
 dev 서버의 서버·PostgreSQL·백엔드 지표를 Prometheus로 모으고 Grafana로 보는
 스택입니다. 결정 근거는 S15P31A108-244 [결정 (11-04)]이고, 이 문서는 수집 스택
 (S15P31A108-263) 범위입니다. 대시보드·알림 규칙·Mattermost 연결과 알림 대응은
-[모니터링 알림 런북](monitoring-alerts.md)(S15P31A108-264), Kafka·Connect·WAL 수집은
-S15P31A108-261에서 더합니다.
+[모니터링 알림 런북](monitoring-alerts.md)(S15P31A108-264), Kafka·Connect 수집은
+S15P31A108-261에서 더했습니다(아래 kafka-exporter, [cdc-stack.md "지표"](cdc-stack.md#지표-s15p31a108-261)).
 
 [서버 세팅](server-setup.md) · [CD](cd.md) 런북을 마쳐 본 스택(compose 프로젝트
 `beez`)이 떠 있는 상태를 전제로 합니다.
@@ -39,6 +39,13 @@ S15P31A108-261에서 더합니다.
 | alertmanager | `prom/alertmanager:v0.34.2` | 알림 묶음·Mattermost 전달 | 128MiB |
 | node-exporter | `prom/node-exporter:v1.12.1` | 서버 CPU·메모리·디스크 | 128MiB |
 | postgres-exporter | `prometheuscommunity/postgres-exporter:v0.20.1` | PostgreSQL 통계 | 128MiB |
+| kafka-exporter | `danielqsj/kafka-exporter:v1.10.0` | 접수 토픽·group의 Kafka lag(S15P31A108-261) | 64MiB |
+
+- **CDC 스택 수집(S15P31A108-261)**: kafka-exporter는 `beez_default`에 붙어 broker(`kafka:9092`)에 Kafka 프로토콜로
+  붙습니다(JMX 아님). 접수 토픽·group만 보도록 필터를 둡니다. Connect는 이 스택이 아니라 Connect JVM 안의 javaagent가
+  `connect:9404`로 지표를 내고 Prometheus가 직접 긁습니다([cdc-stack.md "지표"](cdc-stack.md#지표-s15p31a108-261)).
+  수집 job은 `kafka`·`connect`가 더해져 일곱 개입니다. CDC 스택이 없는 동안 두 job은 DOWN이 정상이고, 알림은 CDC 켜짐일
+  때만 웁니다([알림 런북](monitoring-alerts.md#kafkaconnect-알림-공통-s15p31a108-261)).
 
 - **본 스택과 프로젝트를 나눕니다.** `deploy.sh`는 `compose up --remove-orphans`로
   `beez` 프로젝트에 없는 컨테이너를 지웁니다. 같은 프로젝트에 넣으면 배포할 때마다
@@ -193,7 +200,8 @@ moncheck && mon up -d && mon ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 
 ```bash
 # 서버 (ssh beez)
-# 1) 수집 대상. 다섯 job(alertmanager·backend·node·postgres·prometheus) 모두 up
+# 1) 수집 대상. 일곱 job(alertmanager·backend·node·postgres·prometheus, 261부터 kafka·connect) 모두 up.
+#    kafka·connect 는 CDC 스택(beez-cdc)이 떠 있을 때만 up 이다. CDC 전·되돌린 뒤에는 down 이 정상(알림 없음)
 curl -s 127.0.0.1:9090/api/v1/targets | python3 -c '
 import sys, json
 for t in json.load(sys.stdin)["data"]["activeTargets"]:
@@ -424,6 +432,6 @@ docker compose -f infra/compose.yaml --env-file infra/local.env down
 
 | 할 일 | 어디서 |
 |---|---|
-| Kafka lag·Connect 상태·replication slot WAL 수집 | S15P31A108-261 |
+| ~~Kafka lag·Connect 상태·replication slot WAL 수집~~ | S15P31A108-261에서 함(슬롯은 295) |
 | 배포 자동화(Jenkins 잡 연결) | 미정. 변경이 잦아지면 별도 티켓 |
 | 별도 모니터링 서버·서버 생존 외부 확인 | 244 작업 내용 4번, 2서버 구조 결정 때 |

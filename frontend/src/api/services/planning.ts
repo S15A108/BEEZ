@@ -79,6 +79,48 @@ export const planningApi = {
       },
       options,
     ),
+  drafts: (
+    projectId: string,
+    query?: schemas.DraftsQuery,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.draftsResponseSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/design-drafts`,
+        params: schemas.draftsQuerySchema.parse(query ?? {}),
+      },
+      options,
+    ),
+  adoptCandidate: (
+    projectId: string,
+    candidateId: string,
+    input?: schemas.AdoptCandidateInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.adoptCandidateResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/design-draft-candidates/${encodeURIComponent(String(idSchema.parse(candidateId)))}/adopt`,
+        data: schemas.adoptCandidateInputSchema.parse(input ?? {}),
+      },
+      options,
+    ),
+  discardCandidate: (
+    projectId: string,
+    candidateId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.discardCandidateResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/design-draft-candidates/${encodeURIComponent(String(idSchema.parse(candidateId)))}/discard`,
+      },
+      options,
+    ),
   items: (
     projectId: string,
     query?: schemas.ItemsQuery,
