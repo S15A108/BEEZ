@@ -248,11 +248,7 @@ export default function AuthPage() {
                   />
                   아이디 저장
                 </label>
-                {/* API 없음: 로그인 유지(세션 기간) 계약이 정해지면 로그인 요청에 넣는다. */}
-                <label className="inline-flex items-center gap-2">
-                  <input type="checkbox" className="size-4 accent-primary" />
-                  로그인 유지
-                </label>
+                {/* 로그인 유지는 서버에 remember_me가 없어(ACC-A02 수정안 요청, Q04) 세션이 2시간 고정이라 숨겼다. 생기면 체크박스를 다시 두고 로그인 요청에 넣는다. */}
               </div>
             }
             submitLabel="로그인"
