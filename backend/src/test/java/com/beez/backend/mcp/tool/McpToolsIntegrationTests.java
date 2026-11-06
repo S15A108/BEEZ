@@ -104,7 +104,7 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         CallToolResult nested = call(member, "upsert_task_plan", Map.of("plan", withExtra(plan("A"), "titel", "x"),
                 "idempotency_key", "k-nested"));
 
-        assertThat(error(typo)).containsEntry("code", "validation_failed");
+        assertThat(error(typo)).containsEntry("code", "validation_failed").doesNotContainKey("details");
         assertThat(error(typo).get("message").toString()).contains("taskid");
         assertThat(error(nested)).containsEntry("code", "validation_failed");
         assertThat(error(nested).get("message").toString()).contains("plan.titel");
@@ -118,7 +118,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 Map.of("request", "로그인 화면 구현", "project_id", String.valueOf(projectId)));
 
         assertThat(result.isError()).isTrue();
-        assertThat(error(result)).containsEntry("code", "context_not_ready");
+        // details 를 정하지 않은 오류는 REST 처럼 키가 빠진다 — "details": null 로 새지 않는다 (-267 완료 조건 2)
+        assertThat(error(result)).containsEntry("code", "context_not_ready").doesNotContainKey("details");
         assertThat(count("select count(*) from dev_context_packet")).isZero();
     }
 
@@ -176,6 +177,13 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         JsonNode none = ok(call(member, "get_design_changes", Map.of("since_version", 1)));
         assertThat(none.get("items")).isEmpty();
         assertThat(none.get("has_more").asBoolean()).isFalse();
+        // 영향 분석 결과(-221): 처음엔 시작점만 받고, 그 값을 result_cursor 로 보내 이어 본다
+        assertThat(none.get("impact_updates")).isEmpty();
+        String resultCursor = none.get("next_result_cursor").asString();
+        assertThat(resultCursor).isNotBlank();
+        JsonNode next = ok(call(member, "get_design_changes", Map.of("since_version", 1, "result_cursor", resultCursor)));
+        assertThat(next.get("impact_updates")).isEmpty();
+        assertThat(next.get("result_has_more").asBoolean()).isFalse();
 
         assertThat(error(call(member, "get_design_changes", Map.of()))).containsEntry("code", "validation_failed");
     }

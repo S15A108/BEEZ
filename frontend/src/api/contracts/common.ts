@@ -1022,7 +1022,14 @@ export type Participant = z.infer<typeof participantSchema>
 export const meetingEntrySchema = z.object({
   id: idSchema,
   meeting_id: idSchema,
-  kind: z.enum(['TEXT', 'BEE_ANALYSIS', 'MINUTES']),
+  // CONFLICT_BRIEF: 충돌 회의를 열 때 비비가 남기는 첫 기록, SUMMARY: MTG-A11 정리 (명세 MeetingEntry)
+  kind: z.enum([
+    'TEXT',
+    'BEE_ANALYSIS',
+    'MINUTES',
+    'CONFLICT_BRIEF',
+    'SUMMARY',
+  ]),
   text: z.string(),
   author_account_id: idSchema.optional(),
   through_entry_id: idSchema.optional(),

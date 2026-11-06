@@ -114,6 +114,20 @@ export const generateDraftInputSchema = z.object({
 })
 export type GenerateDraftInput = z.infer<typeof generateDraftInputSchema>
 
+// CHG-A07 수정 요청 입력. 공백뿐이면 안 되고 2,000자 이하(명세). 폼 검증 규칙은 여기에만 둔다.
+export const MAX_INSTRUCTION = 2000
+export const draftRequestFormSchema = z.object({
+  instruction: z
+    .string()
+    .trim()
+    .min(1, '어떻게 고칠지 입력해 주세요.')
+    .max(
+      MAX_INSTRUCTION,
+      `수정 요청은 ${MAX_INSTRUCTION.toLocaleString()}자까지 쓸 수 있어요.`,
+    ),
+})
+export type DraftRequestFormValues = z.infer<typeof draftRequestFormSchema>
+
 export const generateDraftResponseSchema = z.object({
   document_id: common.idSchema,
   base_document_version_id: common.idSchema,
@@ -248,3 +262,55 @@ export const commentsResponseSchema = common.pageSchema(
   common.changeCommentSchema,
 )
 export type CommentsResponse = z.infer<typeof commentsResponseSchema>
+
+// CHG-A14 승인 미리 보기. 저장 없이 승인하면 같이 바뀌는 것을 계산해 준다.
+// CREATE 항목은 ID가 없고(전역 non_null이라 키가 빠진다), 유지 항목은 proposal_item_index가 없다.
+export const approvalPreviewItemSchema = z.object({
+  design_item_id: common.idSchema.optional(),
+  title: z.string(),
+  version_no: z.number().int().positive(),
+  operation: z.enum(['CREATE', 'UPDATE', 'UNCHANGED']),
+  proposal_item_index: z.number().int().nonnegative().optional(),
+})
+export type ApprovalPreviewItem = z.infer<typeof approvalPreviewItemSchema>
+
+export const approvalPreviewAnalysisSchema = z.object({
+  status: common.impactStatusSchema,
+  is_current: z.boolean(),
+  error_code: z.string().optional(),
+  // 새 재분석이 도는 중이면 이전 결과가 그대로 보이고, 이때 승인은 409 analysis_running 이다.
+  reanalysis_in_progress: z.boolean(),
+})
+
+export const approvalPreviewResponseSchema = z.object({
+  next_baseline_version_no: z.number().int().positive(),
+  baseline_items: approvalPreviewItemSchema.array(),
+  validations_to_stale: z
+    .object({
+      validation_id: common.idSchema,
+      task_id: common.idSchema,
+      task_title: z.string(),
+    })
+    .array(),
+  tasks_to_wait: z
+    .object({
+      task_id: common.idSchema,
+      title: z.string(),
+      assignee_member_id: common.idSchema.optional(),
+    })
+    .array(),
+  unchanged: z.object({
+    items: z.number().int().nonnegative(),
+    documents: z.number().int().nonnegative(),
+  }),
+  unreviewed: z.object({
+    // 영향 분석이 완료·최신일 때만 숫자다. 아니면 null(미평가를 0건으로 보이지 않기 위함)이며 키는 늘 온다.
+    ai_candidates: z.number().int().nonnegative().nullable(),
+    open_review_requests: z.number().int().nonnegative(),
+    ai_analysis: approvalPreviewAnalysisSchema.nullable(),
+    requires_override_reason: z.boolean(),
+  }),
+})
+export type ApprovalPreviewResponse = z.infer<
+  typeof approvalPreviewResponseSchema
+>

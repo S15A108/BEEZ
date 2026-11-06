@@ -1054,6 +1054,19 @@ export const endpointRegistry = [
     noContent: false,
     idempotent: false,
   },
+  {
+    id: 'CHG-A14',
+    title: '승인 미리 보기',
+    method: 'GET',
+    path: '/projects/{id}/change-proposals/{proposal_id}/approval-preview',
+    auth: 'LEADER',
+    domain: 'changes',
+    operation: 'approvalPreview',
+    multipart: false,
+    binary: false,
+    noContent: false,
+    idempotent: false,
+  },
   // PR #46(195)에 구현된 거두기. dev 명세에는 아직 없다.
   {
     id: 'CHG-A15',

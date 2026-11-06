@@ -11,9 +11,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
+import { DraftRequest } from './DraftRequest'
 import { normalizeDocument } from './normalizeDocument'
 import { ScopedDraft } from './ScopedDraft'
 import { proposalFormSchema } from './proposalItems'
+import type { GenerateDraftInput, GenerateDraftResponse } from './schemas'
 import type { ProposalFormValues } from './proposalItems'
 
 interface Props {
@@ -22,11 +24,20 @@ interface Props {
   submitLabel: string
   tasks: TaskDetail[]
   /** 고칠 수 있는 현재 문서와 목록이 알려 준 승인 버전. 본문은 fetchDocumentContent로 따로 받는다. */
-  documents?: { id: string; label: string; versionId?: string }[]
+  documents?: {
+    id: string
+    label: string
+    title?: string
+    versionId?: string
+  }[]
   /** 고른 문서의 기준 원문과 그 버전(DOC-A03 문서 원문 조회) */
   fetchDocumentContent?: (
     documentId: string,
   ) => Promise<{ content: string; versionId: string }>
+  /** 비비에게 문서 수정 초안을 받는다(CHG-A07). 없으면 버튼을 그리지 않는다. */
+  requestDraft?: (input: GenerateDraftInput) => Promise<GenerateDraftResponse>
+  /** 초안이 기준 변경(409)으로 실패하면 문서 목록을 다시 읽는다. */
+  onDraftConflict?: () => void
   /** 다시 내는 제안의 문서 변경. 폼에서 고치는 문서 말고는 그대로 함께 올라가고, 기준이 바뀐 문서(stale)는 빠진다. */
   sourceDocuments?: {
     id: string
@@ -66,6 +77,8 @@ export function ProposalForm({
   tasks,
   documents = [],
   fetchDocumentContent,
+  requestDraft,
+  onDraftConflict,
   sourceDocuments = [],
   baseChangedTo,
   fixedItems = [],
@@ -381,6 +394,51 @@ export function ProposalForm({
                         새 원문으로 다시 쓰기
                       </Button>
                     </div>
+                  )}
+                  {requestDraft && (
+                    <DraftRequest
+                      // 고칠 문서나 기준 버전이 바뀌면 열린 패널과 받은 결과를 버린다. 다른 문서의 초안이 남아 보이면 안 된다.
+                      key={`${documentId}:${shownVersion ?? ''}`}
+                      ready={!!shownVersion && !outdated && !content.isLoading}
+                      notReadyReason={
+                        outdated
+                          ? '새 원문으로 다시 쓴 뒤에 받을 수 있어요.'
+                          : '기준 원문을 받은 뒤에 쓸 수 있어요.'
+                      }
+                      request={(instruction) =>
+                        requestDraft({
+                          document_id: documentId!,
+                          base_document_version_id: shownVersion!,
+                          instruction,
+                          ...(getValues('task_id')
+                            ? { task_id: getValues('task_id') }
+                            : {}),
+                        })
+                      }
+                      // 요청하는 동안 문서나 기준 버전을 바꿨으면 응답은 다른 폼의 초안이라 쓰지 않는다.
+                      isCurrent={(draft) =>
+                        draft.document_id === getValues('document_id') &&
+                        draft.base_document_version_id ===
+                          getValues('base_version_id')
+                      }
+                      // 기준이 바뀌었다는 409 면 문서 목록과 기준 원문을 다시 읽어 '새 원문으로 다시 쓰기'가 뜨게 한다.
+                      onConflict={() => {
+                        void content.refetch()
+                        onDraftConflict?.()
+                      }}
+                      // 손대지 않은 글(비었거나 기준 원문 그대로)만 초안으로 채우고, 손댄 글은 묻고 나서 바꾼다.
+                      isUntouched={() => {
+                        const text = getValues('after_content') ?? ''
+                        return !text || text === getValues('base_content')
+                      }}
+                      onApply={(text) =>
+                        setValue('after_content', text, { shouldDirty: true })
+                      }
+                      titleOf={(id) =>
+                        documents.find((item) => item.id === id)?.title ??
+                        '문서'
+                      }
+                    />
                   )}
                   <Textarea
                     aria-label="고친 글"

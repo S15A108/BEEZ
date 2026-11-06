@@ -197,6 +197,19 @@ export const changesApi = {
       },
       options,
     ),
+  approvalPreview: (
+    projectId: string,
+    proposalId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.approvalPreviewResponseSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals/${encodeURIComponent(String(idSchema.parse(proposalId)))}/approval-preview`,
+      },
+      options,
+    ),
   comment: (
     projectId: string,
     proposalId: string,

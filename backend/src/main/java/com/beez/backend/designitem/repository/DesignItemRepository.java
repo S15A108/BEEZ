@@ -83,6 +83,10 @@ public class DesignItemRepository {
     }
 
     public long insertDraft(long item, String title, String content, String hash, Long source, String locator, long actor) {
+        return insertDraft(item, title, content, hash, source, locator, actor, "HUMAN");
+    }
+
+    public long insertDraft(long item, String title, String content, String hash, Long source, String locator, long actor, String origin) {
         var parameters = new HashMap<String, Object>();
         parameters.put("item", item);
         parameters.put("title", title);
@@ -91,10 +95,11 @@ public class DesignItemRepository {
         parameters.put("source", source);
         parameters.put("locator", locator);
         parameters.put("actor", actor);
+        parameters.put("origin", origin);
         return jdbc.sql("""
                 INSERT INTO design_item_version(design_item_id,version_no,status,title,schema_version,content,
                                                 content_hash,source_document_version_id,source_locator,origin,created_by)
-                VALUES(:item,1,'DRAFT',:title,1,cast(:content AS jsonb),:hash,:source,cast(:locator AS jsonb),'HUMAN',:actor)
+                VALUES(:item,1,'DRAFT',:title,1,cast(:content AS jsonb),:hash,:source,cast(:locator AS jsonb),:origin,:actor)
                 RETURNING id
                 """).params(parameters).query(Long.class).single();
     }

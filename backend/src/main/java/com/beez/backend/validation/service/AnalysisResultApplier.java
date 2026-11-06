@@ -12,6 +12,7 @@ import com.beez.backend.common.auth.CallerContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Value;
 import com.beez.backend.task.service.ValidationStatusLookup;
+import com.beez.backend.validation.event.ConflictFindingsSaved;
 import com.beez.backend.validation.repository.FindingRow;
 import com.beez.backend.validation.repository.JobLease;
 import com.beez.backend.validation.repository.ValidationRepository;
@@ -25,8 +26,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -71,6 +74,7 @@ public class AnalysisResultApplier {
     private final DeltaCompletion deltaCompletion;
     private final TaskCompletionReportRepository reports;
     private final ValidationStatusLookup statusLookup;
+    private final ApplicationEventPublisher publisher;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
@@ -78,7 +82,7 @@ public class AnalysisResultApplier {
                                  ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks, JdbcClient jdbc,
                                  @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
                                  DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports,
-                                 ValidationStatusLookup statusLookup) {
+                                 ValidationStatusLookup statusLookup, ApplicationEventPublisher publisher) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
@@ -92,6 +96,7 @@ public class AnalysisResultApplier {
         this.deltaCompletion = deltaCompletion;
         this.reports = reports;
         this.statusLookup = statusLookup;
+        this.publisher = publisher;
     }
 
     /** An incomplete search cannot establish PASS, even when the model was never called. */
@@ -390,6 +395,7 @@ public class AnalysisResultApplier {
         // 후보 저장. 출처는 AI 가 보낸 값 대신 요청에 넣은 출처 객체로 바꿔 저장한다
         // (계약 검사는 네 칸을 문자열로 비교하므로, 숫자 ID·명세에 없는 칸이 섞인 값을 그대로 내보내지 않게)
         Map<String, Map<String, Object>> requestSources = requestSources(request);
+        Set<Long> conflictRelated = new TreeSet<>();   // 회의 자동 개설 대상 (S15P31A108-248)
         for (Map<String, Object> f : objects(result.get("findings"))) {
             String kind = (String) f.get("kind");
             String severity = (String) f.get("severity");
@@ -419,8 +425,10 @@ public class AnalysisResultApplier {
             } else if (blocking) {
                 needsReview = true;              // MISMATCH·CONFLICT 는 BLOCKING 일 때만 막는다
             }
+            Long relatedTask = id(f.get("related_task_id"));
+            if ("CONFLICT".equals(kind) && blocking && relatedTask != null) conflictRelated.add(relatedTask);
             validations.insertFinding(v.id(), new FindingRow(null, v.id(), runId, "MODEL", kind, severity, item, version,
-                    id(f.get("related_task_id")), (String) f.get("message"), canonicalSources(f, requestSources), resolution,
+                    relatedTask, (String) f.get("message"), canonicalSources(f, requestSources), resolution,
                     nextAction, (String) f.get("check_key"), strings(f.get("evidence_ids")),
                     (String) f.get("policy_need_id"), objects(f.get("conflicting_design_refs")),
                     (String) f.get("suggested_action")));
@@ -462,6 +470,10 @@ public class AnalysisResultApplier {
         }
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
+        // 저장된 결과일 때만 나간다(앞의 늦은 결과·입력 변경·리스 만료 분기는 이미 return). 회의 개설은 커밋 뒤 리스너가 맡는다
+        if (!conflictRelated.isEmpty()) {
+            publisher.publishEvent(new ConflictFindingsSaved(v.projectId(), v.id(), v.taskId(), List.copyOf(conflictRelated)));
+        }
         validations.finishJob(lease.jobId(), "DONE");
         if ("PASS".equals(status) && "DELTA".equals(v.trigger())) {
             deltaCompletion.completeIfDeltaPassed(v.taskId(), v.id(), model, Instant.now());
