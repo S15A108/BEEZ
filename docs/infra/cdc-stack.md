@@ -73,7 +73,9 @@ sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /op
 # 서버 (ssh beez)
 cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
 kt() { docker exec -e KAFKA_HEAP_OPTS=-Xmx128m beez-cdc-kafka-1 /opt/kafka/bin/"$@"; }
-cdcjar() { local j; j=$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' /opt/beez/cdc/compose.yaml | head -n 1)
+cdcjar() { local f=/opt/beez/cdc/compose.yaml j; [ -f "$f" ] || { echo "compose 없음: $f"; return 1; }
+  if ! grep -q '/opt/beez/\.cdc-agents/' "$f"; then echo "이 compose 는 javaagent jar 를 쓰지 않음(261 이전) — 검사 생략"; return 0; fi
+  j=$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' "$f" | head -n 1)
   if [ -n "$j" ] && [ -f "$j" ]; then echo "javaagent jar 있음: $j"; else echo "javaagent jar 없음: ${j:-compose 에서 경로를 못 읽음} — cdc-stack.md \"지표\" → \"jar 받기\" 먼저"; return 1; fi; }
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
 cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
@@ -251,9 +253,12 @@ git archive "$SHA" infra/cdc/dev | ssh beez "set -e; cd /opt/beez
 ```bash
 # 서버 (ssh beez). 함수 두 개는 셸마다 다시 정의한다("처음 올리기" 3단계와 같음). cdcjar 는 올린 compose 가 가리키는
 # javaagent jar 가 서버에 있는지 본다 — 없으면 connect 가 뜨지 않으므로 up 하지 않고 멈춘다(S15P31A108-261, PR #186 리뷰).
+# compose 가 /opt/beez/.cdc-agents/ 를 가리키지 않으면(261 이전 버전으로 되돌린 경우) jar 가 필요 없으므로 검사를 건너뛴다.
 # ss 줄은 "확인" 2)의 기준을 이번 올리기 직전으로 새로 잡는다
 cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
-cdcjar() { local j; j=$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' /opt/beez/cdc/compose.yaml | head -n 1)
+cdcjar() { local f=/opt/beez/cdc/compose.yaml j; [ -f "$f" ] || { echo "compose 없음: $f"; return 1; }
+  if ! grep -q '/opt/beez/\.cdc-agents/' "$f"; then echo "이 compose 는 javaagent jar 를 쓰지 않음(261 이전) — 검사 생략"; return 0; fi
+  j=$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' "$f" | head -n 1)
   if [ -n "$j" ] && [ -f "$j" ]; then echo "javaagent jar 있음: $j"; else echo "javaagent jar 없음: ${j:-compose 에서 경로를 못 읽음} — cdc-stack.md \"지표\" → \"jar 받기\" 먼저"; return 1; fi; }
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
 cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
@@ -266,7 +271,9 @@ cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
   겹치면 backend가 뜨지 못할 수 있으므로, Kafka를 바꾸는 올리기는 머지가 없는 시간에 한다(298 전까지).
 - 이미지 버전을 올릴 때는 태그와 digest를 함께 바꾼다. digest는
   `docker buildx imagetools inspect <이미지>:<태그>`의 `Digest:`(멀티 아키텍처 인덱스)를 쓴다.
-- 되돌리기: 서버에서 `cd /opt/beez && mv cdc cdc.bad && mv cdc.old cdc` 뒤 위 명령으로 다시 띄운다.
+- 되돌리기: 서버에서 `cd /opt/beez && mv cdc cdc.bad && mv cdc.old cdc` 뒤 위 명령으로 다시 띄운다. 되돌린 compose가
+  javaagent를 쓰지 않는 261 이전 버전이면 `cdcjar`는 검사를 건너뛰고 통과한다. 이전 jar 버전을 쓰는 compose면 그 jar가
+  남아 있어야 한다("jar 받기"에서 옛 jar를 지우지 않는 이유).
 
 ## 중지·내리기
 
