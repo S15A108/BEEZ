@@ -50,6 +50,147 @@ HTTP 오류는 `{error: {code, message}}`를 기본으로 한다. 모델 호출�
 - [/v1/document-chunks](#ai-a09)
 - [/v1/document-reviews](#ai-a10)
 - [/v1/design-reference-recommendations](#ai-a11)
+- [/v1/document-revisions](#ai-a12)
+- [/v1/document-revision-blocks](#ai-a13)
+
+---
+
+<a id="ai-a12"></a>
+
+## AI-A12. 선택 범위 문서 수정 초안
+
+### POST `/v1/document-revisions`
+
+상태: S15P31A108-137 AI 내부 구현. 기존 AI-A06 `/v1/bee/draft`와
+별도 경로다. 기존 CHG-A07은 유지하며, 선택 범위용 BE 경로와 FE 화면은
+이 경로를 사용한다. 이 응답은 검토할 초안이며 AI는 저장, 승인 또는
+발행하지 않는다.
+
+#### 인증과 공통 제한
+
+`Authorization: Bearer {AI_INTERNAL_TOKEN}`과 JSON 본문이 필요하다.
+`X-Request-Id`는 선택적 추적 헤더다. 본문 한도는 2 MiB다.
+BE는 호출 전에 프로젝트·문서 접근을 허가하고 승인된 원문을 준비해야 한다.
+AI의 버전 비교는 요청 내부 값의 일치만 검사하므로, BE는 모델 호출 후에도
+현재 승인 버전과 선택 범위가 유효한지 확인해야 한다.
+
+#### 요청
+
+최상위와 `source`는 아래 필드만 허용한다.
+
+| 필드 | 필수 | 설명 |
+| --- | --- | --- |
+| `source` | Y | 권한 확인된 원문 스냅샷. 아래 필드를 모두 포함 |
+| `expected_document_version_id` | Y | 1~256자. `source.document_version_id`와 일치 |
+| `selected_block_ids` | Y | 동일 스냅샷에서 파싱된 블록 ID 1~30개. 중복 불가 |
+| `instruction` | Y | 공백만으로 구성되지 않은 수정 지시, 최대 4,000자 |
+| `agreements` | N | 합의 문자열 목록, 최대 30개. 각 항목은 공백만일 수 없고 최대 4,000자 |
+| `related_proposals` | N | 관련 제안 문자열 목록. 개수·항목 제한은 `agreements`와 같음 |
+| `request_key` | Y | 공백만으로 구성되지 않은 요청 식별자, 최대 128자 |
+
+| `source` 필드 | 설명 |
+| --- | --- |
+| `project_id`, `document_version_id` | 각 1~256자 문자열 |
+| `kind` | `PLAN`, `REQUIREMENTS`, `API_SPEC`, `ERD` 중 하나 |
+| `media_type` | `text/markdown` 또는 `text/plain` |
+| `content` | `utf8-lf-v1`로 정규화된 원문. 정규화 후 최대 100,000자, 입력 최대 1 MiB |
+| `content_hash` | 원본 콘텐츠의 SHA-256, 접두사 없는 소문자 16진수 64자 |
+| `text_hash` | 정규화된 `content`의 SHA-256, 접두사 없는 소문자 16진수 64자. AI가 원문과 비교 |
+| `normalization_version` | `utf8-lf-v1` |
+| `parser_profile` | Markdown은 `markdown-v1`, 일반 텍스트는 `plain-v1` |
+
+블록 ID는 문서 버전, 원문 해시와 파서 프로필 등에 종속된다. AI-A13에서
+같은 스냅샷의 선택 가능한 블록을 조회할 수 있다. BE의 선택 범위용
+외부 API와 FE 선택 UI가 이를 이용한다.
+범위가 없거나 스냅샷에 없는 ID를 전체 문서 선택으로 해석하지 않는다.
+모델에는 선택 블록 원문과 수정 지시·합의·제안만 전달한다.
+
+#### 응답
+
+HTTP 200은 `origin: "MODEL"`, 실제 `model`, 호출별 `usage`,
+`result`를 반환한다. `usage`의 `request_key`는 실제 모델 호출의 고유
+식별자다. 공통 Usage 필드와 실패 시 사용량 기록은 위 성공·실패 규약을 따른다.
+
+| `result` 필드 | 설명 |
+| --- | --- |
+| `document_version_id` | 입력 원문의 기준 버전 ID |
+| `after_content` | 선택 블록을 교체하고 선택 밖 원문을 이어 붙인 전체 초안 |
+| `changes[]` | 각 변경의 `block_id`, `before`, `after`, `reason`, `evidence[]` |
+| `unresolved[]` | 해결할 수 없거나 확인이 필요한 내용. 변경 없이 반환할 수 있음 |
+
+`evidence`는 입력된 합의 또는 제안에 실제 포함된 문자열만 허용한다.
+모델이 범위 밖 ID, 중복 ID, 유효하지 않은 근거 또는 줄 경계를 침범하는
+출력을 내면 실패 처리한다. Markdown 초안은 다시 파싱하여 선택하지 않은
+블록의 위치와 유형, 제목·표·목록 등 구조 맥락과 토큰을 비교하며
+참조 정의의 변경이 선택하지 않은 블록에 영향을 줄 수 있는 경우에도 거부한다.
+이는 구조 검증이며 요청의 의미와 문서의 정확성을 판정하지 않으므로
+사람이 전체 초안을 검토해야 한다.
+
+#### 오류
+
+| HTTP | 코드 | 설명 |
+| --- | --- | --- |
+| 400 | `validation_failed` | JSON 또는 필드 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 토큰 누락 또는 불일치 |
+| 413 | `file_too_large` | 본문이 2 MiB 초과 |
+| 422 | `invalid_ai_input` | 버전 불일치, 원문·해시·프로필 오류, 선택 범위 등 의미상 입력 오류 |
+| 502 | `model_unavailable` | 모델 사용 불가 또는 모델 응답 검증 실패 |
+| 504 | `model_timeout` | 모델 호출 시간 초과 |
+
+모델 호출 후 실패했으면 오류에 실제 `usage`가 포함될 수 있다. 모델
+실제 서버 연결은 합성 문서와 jsdom FE 폼으로 확인했다. 실제 브라우저와
+다양한 실데이터를 이용한 품질 검토는 별도 검증이 필요하다.
+
+---
+
+<a id="ai-a13"></a>
+
+## AI-A13. 문서 수정용 선택 블록 조회
+
+### POST `/v1/document-revision-blocks`
+
+상태: S15P31A108-137 AI 내부 구현. AI-A12에 전달할 선택 블록의 ID,
+유형, 원문 위치와 텍스트를 반환한다. 이 API는 사용자의 문서 접근이나
+승인 상태를 판정하지 않는다. BE가 권한과 현재 승인 버전을 확인하고
+인가된 스냅샷만 전달해야 한다. 선택 범위용 BE·FE 경로가 이 응답을
+사용한다.
+
+#### 인증 및 요청
+
+`Authorization: Bearer {AI_INTERNAL_TOKEN}`과 JSON 본문이 필요하며
+`X-Request-Id`는 선택 추적 헤더다. 요청 본문은 AI-A12의 `source`
+객체 자체이며, 그 표의 모든 필드와 정규화·해시·프로필 제약이 동일하게
+적용된다. `source`라는 래퍼 없이 전송한다. 본문 크기 한도는 2 MiB다.
+
+#### 응답
+
+HTTP 200은 아래 필드를 가진 JSON 객체를 반환한다. 모델 호출이 없으므로
+`origin`, `model`, `usage`는 없다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `document_version_id` | 파싱한 문서 버전 ID |
+| `text_hash` | 정규화 원문 SHA-256 |
+| `normalization_version` | 원문 정규화 버전 |
+| `parser_profile`, `parser_version` | 파서 프로필과 구현 버전 |
+| `blocks[]` | 선택 가능한 파서 블록 목록 |
+| `blocks[].block_id` | AI-A12 `selected_block_ids`에 전달할 ID |
+| `blocks[].block_type` | 파서의 블록 유형 |
+| `blocks[].locator` | `type: "text_lines"`, 1부터 시작하는 양끝 포함 `start_line`, `end_line` |
+| `blocks[].text` | 해당 줄 범위의 원문. 줄바꿈을 포함할 수 있음 |
+
+블록은 입력한 문서 스냅샷에만 유효하다. 원문, 버전 또는 파서가 바뀌면
+다시 조회하고 선택해야 한다. 공백 등 파서가 제외한 범위는 목록에
+포함되지 않는다. 응답 JSON이 2 MiB를 초과하면 실패한다.
+
+#### 오류
+
+| HTTP | 코드 | 설명 |
+| --- | --- | --- |
+| 400 | `validation_failed` | JSON 또는 필드 형식 오류 |
+| 401 | `invalid_internal_token` | 내부 토큰 누락 또는 불일치 |
+| 413 | `file_too_large` | 요청 본문이 2 MiB 초과 |
+| 422 | `invalid_ai_input` | 정규화·해시·프로필·파싱 오류 또는 응답 크기 한도 초과 |
 
 ---
 

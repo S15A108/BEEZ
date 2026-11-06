@@ -3,6 +3,35 @@ import { idSchema } from '@/api/contracts/common'
 import { callEndpoint, type RequestOptions } from './request'
 
 export const changesApi = {
+  scopedBlocks: (
+    projectId: string,
+    input: { document_id: string; base_document_version_id: string },
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.scopedBlocksResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-drafts/scoped/blocks`,
+        data: schemas.scopedBlocksInputSchema.parse(input),
+      },
+      options,
+    ),
+  scopedDraft: (
+    projectId: string,
+    input: schemas.ScopedDraftInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.scopedDraftResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-drafts/scoped`,
+        data: schemas.scopedDraftInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
   create: (
     projectId: string,
     input: schemas.CreateInput,

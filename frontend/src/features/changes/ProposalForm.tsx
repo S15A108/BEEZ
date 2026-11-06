@@ -13,11 +13,13 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { DraftRequest } from './DraftRequest'
 import { normalizeDocument } from './normalizeDocument'
+import { ScopedDraft } from './ScopedDraft'
 import { proposalFormSchema } from './proposalItems'
 import type { GenerateDraftInput, GenerateDraftResponse } from './schemas'
 import type { ProposalFormValues } from './proposalItems'
 
 interface Props {
+  projectId?: string
   heading: string
   submitLabel: string
   tasks: TaskDetail[]
@@ -69,6 +71,7 @@ function FieldError({ message }: { message?: string }) {
 // 문서 수정 제안 · 창 안에서. 공용 문서함 '고치기'로 그 문서를 고른 채 열리고, 필수는 제목, 이유, 고친 글이다.
 // 제안 고치기는 같은 폼에 지금 내용을 채우고 받은 의견을 옆에 둔다. 설계 항목 변경은 보기만 한다.
 export function ProposalForm({
+  projectId,
   heading,
   submitLabel,
   tasks,
@@ -149,6 +152,8 @@ export function ProposalForm({
   }, [keptFresh.length, setValue])
   const shownVersion = useWatch({ control, name: 'base_version_id' })
   const latestVersion = useWatch({ control, name: 'latest_version_id' })
+  const currentContent = useWatch({ control, name: 'after_content' }) ?? ''
+  const taskId = useWatch({ control, name: 'task_id' })
   const outdated =
     !!shownVersion && !!latestVersion && shownVersion !== latestVersion
   const rewriteFromLatest = () => {
@@ -441,6 +446,31 @@ export function ProposalForm({
                     aria-invalid={!!errors.after_content}
                     {...register('after_content')}
                   />
+                  {projectId &&
+                    content.data &&
+                    shownVersion === content.data.versionId &&
+                    !outdated &&
+                    (normalizeDocument(currentContent) ===
+                    normalizeDocument(content.data.content) ? (
+                      <ScopedDraft
+                        projectId={projectId}
+                        documentId={documentId}
+                        versionId={content.data.versionId}
+                        taskId={taskId || undefined}
+                        currentContent={currentContent}
+                        onApply={(text) =>
+                          setValue('after_content', text, {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                          })
+                        }
+                      />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        직접 고친 글은 유지돼요. 비비 초안은 기준 원문에서
+                        시작할 때 만들 수 있어요.
+                      </p>
+                    ))}
                   <FieldError message={errors.after_content?.message} />
                   {/* API 없음: '파일 올리기'(DOC-A12 변경용 원문 → proposed_document_version_id)는 화면만 정해져 있어 고친 글 쓰기만 둔다. */}
                   <p className="text-xs text-muted-foreground">
