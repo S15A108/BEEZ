@@ -981,8 +981,9 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
-| `draft_id` | `ID` | N | (수정안 요청 · 11-05) 검토를 마친 작성 중 제안으로 올릴 때(CHG-A01) |
+| `draft_id` | `ID` | N | (수정안 요청 · 11-06) 작성 중 제안으로 올릴 때(CHG-A01·A04). 보내면 본문 필드를 함께 보내지 않는다 |
 | `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수 |
+| `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 검토 상태를 사용자가 확인했다는 표시 |
 
 <a id="schema-changeproposal"></a>
 
@@ -1016,6 +1017,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 같은 작성자가 거둔 이전 제안. 반려 후 재제출과 구분 |
 | `withdrawn_by` | `ID` | N | WITHDRAWN일 때 거둔 계정 |
 | `withdrawn_at` | `Time` | N | WITHDRAWN일 때 거둔 시각 |
+| `pre_submit_review` | [PreSubmitReview](00-common.md#schema-presubmitreview) | N | (수정안 요청 · 11-06) 이 리비전을 초안으로 올릴 때의 비비 검토 상태 |
 
 <a id="schema-resolveddocumentchange"></a>
 
@@ -1088,11 +1090,26 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `reason` | `string` | Y | 후보 근거 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 
+<a id="schema-presubmitreview"></a>
+
+### PreSubmitReview
+
+(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보인다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `status` | `NOT_REQUESTED\|COMPLETED\|FAILED` | Y | 올릴 때의 최신 검토 상태 |
+| `review_id` | `ID` | N | 그 검토. NOT_REQUESTED면 없음 |
+| `edited_after_review` | `boolean` | Y | 검토 뒤 글을 고쳤는지 |
+| `pending_suggestion_count` | `integer` | Y | 처리하지 않은 PATCH 수정안 수 |
+| `skipped_suggestion_count` | `integer` | Y | 넘긴 PATCH 수정안 수 |
+| `acknowledged` | `boolean` | Y | 사용자가 위 상태를 확인하고 올렸는지 |
+
 <a id="schema-changeproposaldraft"></a>
 
 ### ChangeProposalDraft
 
-(수정안 요청 · 11-05) 팀장에게 가지 않는 작성 중 변경 제안(CHG-A16~A18). 작성 계정만 본다.
+(수정안 요청 · 11-06) 팀장에게 가지 않는 작성 중 변경 제안(CHG-A16~A18). 별도 자원이고 작성 계정만 본다. 제출하면 제안과 연결되고 수정할 수 없다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
@@ -1107,6 +1124,8 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |
 | `latest_review` | [ChangeDraftReview](00-common.md#schema-changedraftreview) | N | 가장 최근 올리기 전 비비 검토 |
+| `source_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 반려된 제안을 보완하는 초안이면 그 제안 |
+| `submitted_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 제출 뒤 연결된 제안. 있으면 수정할 수 없다 |
 | `created_at` | `Time` | Y | 생성 시각 |
 | `updated_at` | `Time` | Y | 최종 갱신 |
 
@@ -1144,6 +1163,7 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `document_id` | `ID` | PATCH Y | 고칠 문서. 초안 `documents` 중 하나 |
 | `base_document_version_id` | `ID` | PATCH Y | 그 문서의 기준 버전 |
 | `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+| `reviewed_content_hash` | `string` | PATCH Y | (11-06) 검토 당시 대상 문서 고친 글의 해시. 어떤 글을 검토했는지 가리키며, 수정안을 반영해도 값은 그대로다 |
 
 PATCH는 문서 변경에만 쓴다. `original_text`는 대상 문서의 고친 글에서 유일한 구간이다. 설계 항목 변경에 대한 의견은 COMMENT로만 주고 이때 `document_id`는 생략한다.
 
