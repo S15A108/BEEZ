@@ -598,4 +598,6 @@ PR #186 브랜치 커밋 `d295ecef`를 올렸습니다. 순서: javaagent jar �
 
 - resume 첫 시도는 새 ssh 셸에 `crest` 함수가 없어 실행되지 않았습니다(15:08). 함수 정의를 넣어 다시 쳤습니다. 서버 명령을 줄 때는
   셸마다 함수 정의를 함께 줍니다.
+- 리뷰 반영(lag 정체 알림에 offset 전진 조건) 뒤 모니터링만 `153f2c3f`로 다시 올렸습니다(15:34, cdc 폴더는 바뀐 것이 없어 `d295ecef`
+  그대로). 규칙 34개 health ok, `CdcConsumerLagStuck`이 새 식으로 비활성, 수집 대상 일곱 job up, lag 0.
 - 머지 뒤 두 폴더를 dev 커밋으로 다시 올려 `REVISION`을 맞춥니다.
