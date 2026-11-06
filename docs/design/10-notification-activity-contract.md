@@ -140,19 +140,20 @@
 | `DOCUMENT_REVIEW_REQUESTED` | 문서(오서현) | 문서 승인 요청 | 팀장 | 아니오 | DOCUMENT_VERSION |
 | `DOCUMENT_APPROVED` | 문서(오서현) | 문서 승인 | 등록자 | 아니오 | DOCUMENT_VERSION |
 | `DOCUMENT_REJECTED` | 문서(오서현) | 문서 반려(사유는 상세에서) | 등록자 | 아니오 | DOCUMENT_VERSION |
-| `DOCUMENT_CHANGED_BY_MEETING` | 회의(오서현) | 회의가 끝나 문서가 바뀜 | 관련 작업 담당자 | 아니오 | DOCUMENT_VERSION |
+| `DOCUMENT_CHANGED_BY_MEETING` | 회의(오서현) | 회의가 끝나 문서가 바뀜. **MTG-A13에서는 쓰지 않는다** — 종료로 문서는 바뀌지 않고 제안만 생긴다(문서는 CHG-A09 승인 때 바뀐다). 대신 `MEETING_PROPOSAL_CREATED` | 관련 작업 담당자 | 아니오 | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | 기준 v1 생김 | 활성 팀원 | 아니오 | BASELINE |
 | `MEETING_OPENED` | 회의(오서현) | 비비가 회의를 엶 | 참여자 | — (행위자가 비비) | MEETING |
 | `MEETING_PARTICIPANT_ADDED` | 회의(오서현) | 참여자로 추가됨(MTG-A04, 이유를 문구에 포함) | 추가된 사람 | 아니오 | MEETING |
 | `MEETING_PARTICIPANT_REMOVED` | 회의(오서현) | 참여자에서 제외됨(MTG-A14, 이미 빠진 경우 멱등 204는 보내지 않음) | 빠진 사람 | — (팀장이 제외) | MEETING |
 | `MEETING_RECORD_ADDED` | 회의(오서현) | 회의에 새 기록 | 다른 참여자 | 아니오 | MEETING |
+| `MEETING_PROPOSAL_CREATED` | 회의(오서현, -297) | 회의 끝내기(MTG-A13)로 변경 제안이 만들어짐. 문서 변경이 없어 제안이 없으면 보내지 않음 | 회의 작업 묶음의 담당자(활성 멤버, 담당자 없는 작업은 건너뜀) | 아니오 (끝낸 팀장 제외) | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_SUBMITTED` | 변경(오서현) | 제안 올림 | 관련 작업 담당자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REVIEW_REQUESTED` | 변경(오서현) | 검토 요청 | 지정 검토자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_COMMENTED` | 변경(오서현) | 의견에서 멤버 지정 | 지정 멤버 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_APPROVED` | 변경(오서현) | 승인 | 제안자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REJECTED` | 변경(오서현) | 반려 | 제안자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_PUBLISHED` | 변경(오서현) | 발행 | 관련 작업 담당자. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | 아니오 | CHANGE_PROPOSAL |
-| `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `reassign`을 거친다 | 새 담당자. (수정안 요청 · 11-04 사용자 결정) 자기에게 배정하면(팀장 자기 배정, 팀원 스스로 맡기) 보내지 않음 | 아니오 (수정안 요청 · 11-04 사용자 결정) | TASK |
+| `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `TaskHandoverService`를 거친다. 담당자를 비울 때(인계 대상 없음·탈퇴)는 받을 사람이 없어 보내지 않음 | 새 담당자. (수정안 요청 · 11-04 사용자 결정) 자기에게 배정하면(팀장 자기 배정, 팀원 스스로 맡기) 보내지 않음 | 아니오 (수정안 요청 · 11-04 사용자 결정) | TASK |
 | `REVALIDATION_REQUIRED` | 작업(변준성) | 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 됨(완료·취소 작업 제외) | 작업 담당자, 작업마다 한 건. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | **예** | TASK |
 
 ### 6.2 활동 유형
@@ -161,11 +162,12 @@
 | --- | --- | --- |
 | `TASK_CREATED`·`TASK_PLAN_REVISED` | 작업(변준성) | TASK |
 | `TASK_STARTED`·`TASK_RESUMED`·`TASK_WAITING`·`TASK_COMPLETION_REPORTED`·`TASK_COMPLETED`·`TASK_CANCELLED` | 작업(변준성) | TASK — 아래 "작업 유형 정하기"를 따른다 |
-| `TASK_ASSIGNEE_CHANGED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진, TSK-A06·제외·나가기 모두) | TASK |
+| `TASK_ASSIGNEE_CHANGED` | 작업(변준성) · 호출은 `TaskHandoverService`(전진, TSK-A06·제외·나가기·탈퇴 모두). 담당자를 비울 때(인계 대상 없는 제외·나가기, 탈퇴)도 남긴다(-301·-281) | TASK |
 | `VALIDATION_FINISHED` | 작업(변준성) | VALIDATION — 아래 "검증 완료 정하기"를 따른다 |
 | `DOCUMENT_REGISTERED`·`DOCUMENT_APPROVED`·`DOCUMENT_REJECTED` | 문서(오서현) | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | BASELINE |
 | `CHANGE_PROPOSAL_SUBMITTED`·`_WITHDRAWN`·`_REVIEW_STARTED`·`_REVIEW_REQUESTED`·`_COMMENTED`·`_APPROVED`·`_REJECTED`·`_PUBLISHED` | 변경(오서현) | CHANGE_PROPOSAL |
+| `MEETING_CLOSED` | 회의(오서현, -297) | MEETING (보조 참조: 만든 제안의 `change_proposal_id`, 없으면 비움). 행위자는 끝낸 팀장 |
 | `PROJECT_CREATED` | 프로젝트(전진) | PROJECT |
 | `MEMBER_JOINED`·`MEMBER_LEFT`·`MEMBER_REMOVED`·`LEADER_TRANSFERRED` | 프로젝트(전진) | MEMBER |
 | `AGENT_CONNECTED`·`AGENT_DISCONNECTED` | 에이전트(전진 -178) | AGENT_SESSION |
@@ -187,9 +189,10 @@
   - S1 설계 발행 → `CHANGE_PROPOSAL_PUBLISHED` 활동 + 담당자에게 `REVALIDATION_REQUIRED` 알림
   - S2 진행 중 계획 변경(TSK-A04) → `TASK_PLAN_REVISED`
   - S5 담당자 인계(TSK-A06·MEM-A09·A10) → `TASK_ASSIGNEE_CHANGED`
+  - 담당자 비우기(인계 대상 없는 MEM-A09·A10, 탈퇴 ACC-A10)는 상태를 바꾸지 않지만 담당자가 바뀐 것이라 `TASK_ASSIGNEE_CHANGED`를 남긴다. 받을 새 담당자가 없어 `TASK_ASSIGNED` 알림은 없다(-301·-281)
 - `TASK_COMPLETED`는 작업이 실제로 COMPLETED가 된 순간에만 남긴다. 그래서 delta가 있는 작업에는 `TASK_COMPLETION_REPORTED`와 `TASK_COMPLETED` 두 건이 남는다.
 - 작업 활동의 키는 `task:{id}:lock:{저장·flush 뒤 잠금 버전}:{동작}`이다. 상태 보고는 `TaskEvent` 이름을, 그 밖은 `PLAN_REVISED`처럼 동작 이름을 쓴다(`TASK_CREATED`는 `task:{id}:created`).
-  - **예외 — 담당자 변경**: `TaskHandoverService.reassign`은 저장을 호출측에 맡기므로(`handOver`는 루프 뒤 `saveAllAndFlush`) 기록 시점에 잠금 버전이 아직 오르지 않았다. 그래서 `task:{id}:lock:{변경 전 잠금 버전}:ASSIGNEE_CHANGED`(알림은 끝에 `:to:{계정}`)를 쓴다. 동작 이름이 달라 다른 작업 키와 겹치지 않고, 담당자 변경마다 버전이 오르므로 다음 변경과도 겹치지 않는다. S3 완료 보고는 `task:{id}:lock:{n}:COMPLETED`, S4는 작업을 COMPLETED로 저장한 뒤의 버전으로 `task:{id}:lock:{m}:COMPLETED`를 쓴다. 작업 행이 바뀔 때마다 `@Version`이 올라가므로 m > n이라 두 키는 겹치지 않는다.
+  - **예외 — 담당자 변경**: `TaskHandoverService`는 작업을 저장소로 flush 한 뒤에 기록한다(입구의 auto-flush 에서 잠금 충돌이 나면 409 가 아니라 500 이 되므로, -288). 그래서 바꾸기 전에 잠금 버전을 잡아 두고 `task:{id}:lock:{변경 전 잠금 버전}:ASSIGNEE_CHANGED`(알림은 끝에 `:to:{계정}`)를 쓴다. 동작 이름이 달라 다른 작업 키와 겹치지 않고, 담당자 변경마다 버전이 오르므로 다음 변경과도 겹치지 않는다. S3 완료 보고는 `task:{id}:lock:{n}:COMPLETED`, S4는 작업을 COMPLETED로 저장한 뒤의 버전으로 `task:{id}:lock:{m}:COMPLETED`를 쓴다. 작업 행이 바뀔 때마다 `@Version`이 올라가므로 m > n이라 두 키는 겹치지 않는다.
 
 **검증 완료(`VALIDATION_FINISHED`) 정하기.**
 
@@ -214,7 +217,7 @@
 | 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |
 | 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서, 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 된 작업의 담당자에게 작업마다 한 건씩 `REVALIDATION_REQUIRED` 알림(본인 포함). S1은 IN_PROGRESS만 WAITING으로 바꾸고 READY 등은 검증만 STALE로 두는데, READY 작업도 새 PASS가 있어야 시작할 수 있으므로 함께 보낸다. STALE 대상은 작업 상태로 거르지 않으므로([04 문서](04-task-lifecycle.md) S1) 완료·취소 작업은 여기서 뺀다(이 제외 기준은 MCP-03 `affected_task_ids`와 같다 — 대상 선정 기준까지 같은 것은 아니다). 담당자가 없는 작업(`assignee_member_id` NULL)은 건너뛴다. 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다 | -163(변준성) |
 | `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
-| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
+| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 이 서비스를 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다. 인계 대상 없이 담당자를 비우면 활동만 남긴다(-301). 탈퇴(`ProjectWithdrawalService.leaveAll`)도 탈퇴하는 본인의 `caller`로 `handOver(…, null)`을 부른다(-281) | 전진(-212 코드 작성자, -182와 함께) · -288·-301·-281 |
 | 코드 TODO 7곳 | 변경 제안 4(생성·거두기·검토 시작/반려 — `ProposalCommandService`, 승인·발행 — `ProposalPublicationService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
