@@ -1142,7 +1142,6 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `reason` | `string` | Y | 변경 이유 |
 | `task_id` | `ID` | N | 관련 작업 |
 | `validation_id` | `ID` | N | 관련 검증 |
-| `meeting_id` | `ID` | N | 관련 회의 |
 | `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |

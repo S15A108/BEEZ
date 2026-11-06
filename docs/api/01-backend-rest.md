@@ -7344,7 +7344,7 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 - CHG-A01/A04/A15는 design_http_command의 24시간 응답 보존을 재사용한다. 프로젝트·계정·동작·사람/에이전트 토큰별 요청 키를 분리하고 재요청 시 현재 권한을 검사한다.
 - 제출 후 잠금이다. 승인·검토 시작·반려·발행 명령은 198, 의견·검토 요청은 196, 심층 영향 분석·저장은 188·197이 담당한다. 알림은 공통 알림 서비스 요청으로만 저장하며(S15P31A108-217) 직접 INSERT하지 않는다. 활동 이벤트는 S15P31A108-237 TODO다.
 - (#218 수정안 요청 · 195 미구현) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 현재 195는 구조화된 content v1만 받는다.
-- (수정안 요청 · 11-06) `draft_id`로 올리면 서버에 저장된 초안이 제안 내용의 기준이다. 본문을 따로 받아 검토를 우회하지 못하게, `draft_id`와 함께 `base_baseline_id`·`title`·`reason`·`task_id`·`validation_id`·`meeting_id`·`previous_proposal_id`·`items`·`documents`를 보내면 400 `validation_failed`다.
+- (수정안 요청 · 11-06) `draft_id`로 올리면 서버에 저장된 초안이 제안 내용의 기준이다. 본문을 따로 받아 검토를 우회하지 못하게, `draft_id`와 함께 `base_baseline_id`·`title`·`reason`·`task_id`·`validation_id`·`previous_proposal_id`·`items`·`documents`를 보내면 400 `validation_failed`다.
 - (수정안 요청 · 11-06, 사용자 결정) 비비 검토는 권장이고 올리는 조건이 아니다. 기준 v1 뒤의 변경 제안은 첫 문서 등록과 다른 흐름이라 DOC-A18의 필수 검토를 옮기지 않는다.
 - (수정안 요청 · 11-06) 다음 중 하나면 화면이 그 상태를 보여 주고, 사용자가 확인한 뒤 `review_acknowledged`=true로 올린다: 검토를 안 함, 검토가 진행 중, 최신 검토가 FAILED, 검토 뒤 고침(`resolved_revision`이 지금 초안 리비전과 다름), 처리하지 않은 PATCH 수정안이 있음. 확인 없이 보내면 409 `review_acknowledgement_required`다. 권한 오류, `baseline_conflict`, `version_conflict`는 확인해도 막는다.
 - (수정안 요청 · 11-06) 확인은 사용자가 본 상태에만 유효하다. 검토가 있으면 초안 응답의 `review_state_hash`를 `expected_review_state_hash`로 돌려보낸다. 넘기기는 초안 리비전을 올리지 않으므로 리비전만으로는 알 수 없다. `expected_draft_revision`이나 이 값이 지금과 다르면 409 `version_conflict`이고, 화면은 달라진 상태를 다시 보여 주고 확인을 받는다.
@@ -9048,7 +9048,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 #### Request
 
-CHG-A01과 같은 입력이다(`base_baseline_id`, `title`, `reason`, `task_id`, `validation_id`, `meeting_id`, `previous_proposal_id`, `items`, `documents`). `draft_id`·`expected_draft_revision`·`review_acknowledged`은 받지 않는다. 더해 `source_proposal_id`(`ID`, 선택)를 받는다. 반려된 제안을 보완할 때 그 제안이고, 작성 계정의 REJECTED 제안이어야 한다.
+CHG-A01과 같은 입력이다(`base_baseline_id`, `title`, `reason`, `task_id`, `validation_id`, `previous_proposal_id`, `items`, `documents`). `meeting_id`·`draft_id`·`expected_draft_revision`·`review_acknowledged`은 받지 않는다. 더해 `source_proposal_id`(`ID`, 선택)를 받는다. 반려된 제안을 보완할 때 그 제안이고, 작성 계정의 REJECTED 제안이어야 한다.
 
 #### Response
 
