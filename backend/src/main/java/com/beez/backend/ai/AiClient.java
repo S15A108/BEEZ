@@ -142,6 +142,11 @@ public class AiClient {
         return rest.post().uri("/v1/document-revisions").body(input).retrieve().body(java.util.Map.class);
     }
 
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> meetingRevision(java.util.Map<String, Object> input) {
+        return draftRest.post().uri("/v1/meeting-revisions").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /**
      * AI-A08 회의 분석 ({@code POST /v1/bee/meeting-analysis}). BE 는 SUMMARY 모드(회의 정리)로 부른다.
      * 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다. AI 서버는 2026-11-05 기준 SUMMARY 를

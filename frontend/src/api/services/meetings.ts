@@ -4,6 +4,34 @@ import { idSchema } from '@/api/contracts/common'
 import { callEndpoint, type RequestOptions } from './request'
 
 export const meetingsApi = {
+  summary: (projectId: string, meetingId: string, throughEntryId: string) =>
+    callEndpoint(schemas.summaryResponseSchema, {
+      method: 'POST',
+      url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/bee-summary`,
+      data: { through_entry_id: idSchema.parse(throughEntryId) },
+      idempotent: true,
+    }),
+  latestSummary: (projectId: string, meetingId: string) =>
+    callEndpoint(schemas.summaryResponseSchema, {
+      method: 'GET',
+      url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/bee-summary/latest`,
+    }),
+  revisionDraft: (
+    projectId: string,
+    meetingId: string,
+    input: schemas.RevisionDraftInput,
+  ) =>
+    callEndpoint(schemas.revisionDraftResponseSchema, {
+      method: 'POST',
+      url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/revision-drafts`,
+      data: schemas.revisionDraftInputSchema.parse(input),
+      idempotent: true,
+    }),
+  latestRevisionDraft: (projectId: string, meetingId: string) =>
+    callEndpoint(schemas.revisionDraftResponseSchema, {
+      method: 'GET',
+      url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/revision-drafts/latest`,
+    }),
   create: (
     projectId: string,
     input: schemas.CreateInput,

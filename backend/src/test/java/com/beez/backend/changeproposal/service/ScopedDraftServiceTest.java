@@ -180,4 +180,40 @@ class ScopedDraftServiceTest {
         assertThatThrownBy(() -> service.generate(caller, 1, input, "key"))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("ai_unavailable"));
     }
+
+    @Test void meetingBridgeRejectsMismatchedContextAfterRecordingUsage() {
+        when(ai.revisionBlocks(any())).thenAnswer(call -> {
+            Map<?, ?> source = call.getArgument(0);
+            return Map.of("document_version_id", "4", "text_hash", source.get("text_hash"), "parser_profile", "plain-v1",
+                    "normalization_version", "utf8-lf-v1", "parser_version", "v1", "blocks", List.of(Map.of(
+                            "block_id", blockId, "block_type", "paragraph", "locator", Map.of("type", "text_lines", "start_line", 1, "end_line", 1), "text", "원문\n")));
+        });
+        var draft = Map.<String,Object>of("origin", "MODEL", "model", "test", "usage", List.of(Map.of("tokens", 1)),
+                "result", Map.of());
+        when(ai.meetingRevision(any())).thenReturn(Map.of("meeting", Map.of("meeting_id", "other"), "draft", draft));
+        when(usage.record(anyString(), anyLong(), any(), anyString(), anyMap(), anyLong())).thenReturn(1);
+        var request = new ScopedDraftService.ScopedRequest("2", "4", List.of(blockId), "수정", null, List.of("결정"), List.of());
+        assertThatThrownBy(() -> service.generateMeeting(caller, 1, request, "key", Map.of("meeting_id", "3")))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("ai_unavailable"));
+        verify(usage).record(eq("BEE_DRAFT"), eq(1L), isNull(), anyString(), eq(draft), anyLong());
+        verify(usage, never()).recordFailure(anyString(), anyLong(), any(), anyString(), anyLong());
+        verify(idempotency, never()).save(anyLong(), anyLong(), anyString(), anyString(), any(), any());
+    }
+
+    @Test void meetingBridgeCallsSharedEndpointAndChecksScopedResult() {
+        when(ai.revisionBlocks(any())).thenAnswer(call -> {
+            Map<?, ?> source = call.getArgument(0);
+            return Map.of("document_version_id", "4", "text_hash", source.get("text_hash"), "parser_profile", "plain-v1",
+                    "normalization_version", "utf8-lf-v1", "parser_version", "v1", "blocks", List.of(Map.of(
+                            "block_id", blockId, "block_type", "paragraph", "locator", Map.of("type", "text_lines", "start_line", 1, "end_line", 1), "text", "원문\n")));
+        });
+        Map<String,Object> meeting = Map.of("meeting_id", "3");
+        var draft = Map.<String,Object>of("origin", "MODEL", "model", "test", "usage", List.of(), "result", Map.of(
+                "document_version_id", "4", "after_content", "수정\n", "changes", List.of(Map.of("block_id", blockId,
+                        "before", "원문\n", "after", "수정\n", "reason", "결정", "evidence", List.of("결정"))), "unresolved", List.of()));
+        when(ai.meetingRevision(any())).thenReturn(Map.of("meeting", meeting, "draft", draft));
+        var request = new ScopedDraftService.ScopedRequest("2", "4", List.of(blockId), "수정", null, List.of("결정"), List.of());
+        assertThat(service.generateMeeting(caller, 1, request, "key", meeting)).containsEntry("after_content", "수정\n");
+        verify(ai, never()).documentRevision(any());
+    }
 }

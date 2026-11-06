@@ -101,6 +101,15 @@ public class MeetingSummaryService {
     private record Prepared(Built built, long throughEntryId, Long previousSummaryId, String feedback) { }
     private record Step(MeetingSummaryResponse replayed, Prepared prepared) { }
 
+    /** Latest structured summary, available to active project members. */
+    public MeetingSummaryResponse latest(CallerContext caller, long projectId, String meetingIdRaw) {
+        access.requireMember(caller, projectId);
+        long meetingId = Ids.parse(meetingIdRaw, "meeting_id");
+        meetings.findMeeting(projectId, meetingId).orElseThrow(() -> missing(projectId, meetingId));
+        return toResponse(projectId, summaries.findLatest(meetingId)
+                .orElseThrow(() -> AccessErrors.notFound("meeting_summary_missing meeting=" + meetingId)));
+    }
+
     /** MTG-A11 */
     public MeetingSummaryResponse summarize(CallerContext caller, long projectId, String meetingIdRaw, SummarizeRequest body, String key) {
         ProjectActor actor = requireLeader(caller, projectId);
