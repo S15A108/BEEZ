@@ -93,17 +93,31 @@ public class TaskQueryService {
         return completionReviewer.currentReview(task).map(detail::withCompletionReview).orElse(detail);
     }
 
-    public PageResponse<TaskDetailResponse> listTasks(CallerContext caller, Long projectId, TaskStatus status,
-                                                      String validationStatus, Long assigneeMemberId,
+    /**
+     * TSK-A02. 필터는 모두 AND 이고 페이지를 자르기 전에 건다 (명세 00-common 3절).
+     *
+     * @param statuses   여러 값이면 그중 하나 (-301). 비었거나 null 이면 조건 없음
+     * @param unassigned true 면 담당자가 없는 작업만 (-301). assigneeMemberId 와 함께 오면 400
+     */
+    public PageResponse<TaskDetailResponse> listTasks(CallerContext caller, Long projectId, List<TaskStatus> statuses,
+                                                      String validationStatus, Long assigneeMemberId, Boolean unassigned,
                                                       String cursor, Integer limit) {
         access.requireMember(caller, projectId);
+        boolean onlyUnassigned = Boolean.TRUE.equals(unassigned);
+        if (onlyUnassigned && assigneeMemberId != null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "validation_failed",
+                    "unassigned 와 assignee_member_id 는 함께 줄 수 없습니다");
+        }
         int size = normalizeLimit(limit);
         Long cursorId = parseCursor(cursor);
 
         Specification<Task> spec = TaskSpecifications.projectIs(projectId)
-                .and(TaskSpecifications.statusIs(status))
+                .and(TaskSpecifications.statusIn(statuses))
                 .and(TaskSpecifications.assigneeIs(assigneeMemberId))
                 .and(TaskSpecifications.idBefore(cursorId));
+        if (onlyUnassigned) {
+            spec = spec.and(TaskSpecifications.unassigned());
+        }
         // validation_status 필터도 페이지를 자르기 전에 건다 (명세 00-common 3절 "필터는 페이지·검색·집계 전")
         if (validationStatus != null) {
             if (!ValidationStatusLookup.ALL.contains(validationStatus)) {

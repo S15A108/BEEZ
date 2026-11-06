@@ -73,7 +73,8 @@ class AccountSettingsIntegrationTest extends IntegrationTestSupport {
         assertThat(wrong.statusCode()).isEqualTo(400);
         assertThat(wrong.body()).contains("\"code\":\"current_password_mismatch\"");
         assertThat(changePassword(here, AccessFixtures.PASSWORD, "short1").body())
-                .as("정책 위반은 가입과 같은 오류").contains("\"code\":\"validation_failed\"");
+                .as("정책 위반은 가입과 같은 오류").contains("\"code\":\"validation_failed\"")
+                .contains("\"message\":\"password:");
         assertThat(elsewhere.get("/api/me").statusCode()).as("실패한 변경은 세션을 건드리지 않는다").isEqualTo(200);
 
         assertThat(changePassword(here, AccessFixtures.PASSWORD, NEW_PASSWORD).statusCode()).isEqualTo(204);
