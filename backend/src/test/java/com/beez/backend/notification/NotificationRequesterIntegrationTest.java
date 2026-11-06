@@ -8,11 +8,13 @@ import com.beez.backend.project.ProjectMemberRepository;
 import com.beez.backend.project.ProjectRole;
 import com.beez.backend.support.AccessFixtures.ProjectWithLeader;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.task.repository.TaskRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -35,6 +37,9 @@ class NotificationRequesterIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     JdbcTemplate sql;
+
+    @Autowired
+    TaskRepository tasks;
 
     private static NotificationRequest request(String key, long projectId, long recipient, String title) {
         return new NotificationRequest(key, projectId, recipient, "TASK_ASSIGNED", title, "작업이 배정되었습니다",
@@ -101,6 +106,22 @@ class NotificationRequesterIntegrationTest extends IntegrationTestSupport {
         readOnly.setReadOnly(true);
         assertThatThrownBy(() -> readOnly.executeWithoutResult(status -> requester.request(r)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("readOnly");
+        assertThat(rowsOf(p.projectId())).isEmpty();
+    }
+
+    @Test
+    void constraintViolationFlushedByEntry_isDataIntegrityViolation() {
+        // -308: 입구 INSERT 직전 auto-flush 에서 난 FK 위반도 Spring 변환을 거쳐야 공용 처리기가 400 validation_failed 로 받는다
+        ProjectWithLeader p = fixtures().projectWithLeader();
+        long taskId = sql.queryForObject(
+                "insert into task (project_id, key, title, status) values (?, ?, '작업', 'DRAFT') returning id",
+                Long.class, p.projectId(), "T-" + System.nanoTime());
+
+        assertThatThrownBy(() -> inTransaction(() -> {
+            tasks.findById(taskId).orElseThrow().changeAssignee(Long.MAX_VALUE);   // 없는 멤버 → (assignee, project) FK 위반
+            requester.request(request("task:" + taskId + ":assigned:to:" + p.leaderAccountId(), p.projectId(),
+                    p.leaderAccountId(), "배정"));
+        })).isInstanceOf(DataIntegrityViolationException.class);
         assertThat(rowsOf(p.projectId())).isEmpty();
     }
 }
