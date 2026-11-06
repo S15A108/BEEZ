@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
-import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
-import { statusTone } from './tagTones'
 
 export function Tag({
   tone,
@@ -20,7 +18,4 @@ export function Tag({
       {children}
     </span>
   )
-}
-export function StatusTag({ value }: { value: string }) {
-  return <Tag tone={statusTone[value]}>{statusLabel(value)}</Tag>
 }

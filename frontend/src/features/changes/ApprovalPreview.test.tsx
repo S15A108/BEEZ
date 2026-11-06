@@ -118,21 +118,21 @@ it('영향 분석이 믿을 수 없어 후보가 null 이면 0개가 아니라 �
   expect(box).toHaveTextContent('AI 영향 후보: 아직 평가하지 못했어요')
   expect(box).not.toHaveTextContent('AI 영향 후보: 0개')
   expect(box).toHaveTextContent('영향 분석에 실패했어요.')
-  expect(box).toHaveClass('border-amber-300')
+  expect(box).toHaveTextContent('아직 확인하지 못한 것이 있어요')
 })
 
 it('답하지 않은 검토 요청이 있으면 개수를 알리고 경고색으로 보인다', () => {
   renderPreview(parse({ open_review_requests: 2 }))
   const box = screen.getByRole('region', { name: '확인하지 못한 것' })
   expect(box).toHaveTextContent('답하지 않은 검토 요청: 2개')
-  expect(box).toHaveClass('border-amber-300')
+  expect(box).toHaveTextContent('아직 확인하지 못한 것이 있어요')
 })
 
 it('확인하지 못한 것이 없으면 차분하게 보인다', () => {
   renderPreview(parse({ open_review_requests: 0 }))
   const box = screen.getByRole('region', { name: '확인하지 못한 것' })
   expect(box).toHaveTextContent('확인하지 못한 것이 없어요')
-  expect(box).not.toHaveClass('border-amber-300')
+  expect(box).not.toHaveTextContent('아직 확인하지 못한 것이 있어요')
   expect(box).toHaveTextContent('영향 분석이 끝났어요.')
 })
 
@@ -175,7 +175,8 @@ it.each([
     '제안이 바뀌어 이전 분석이 오래됐어요.',
   ],
 ])('영향 분석 상태 %j 는 "%s" 로 알린다', (analysis, text) => {
-  renderPreview(parse({ ai_analysis: analysis as never }))
+  // 서버는 완료 · 최신 · 재분석 아님일 때만 후보 수를 주므로 믿을 수 없는 상태에서는 늘 null 이다.
+  renderPreview(parse({ ai_candidates: null, ai_analysis: analysis as never }))
   expect(
     screen.getByRole('region', { name: '확인하지 못한 것' }),
   ).toHaveTextContent(text)
@@ -203,10 +204,12 @@ it('서버가 후보 키를 빼면 영향 없음으로 오해하지 않도록 �
   ).toBe(true)
 })
 
-// 실제 화면 확인에서 찾은 문제: 재분석 중에는 후보가 0개여도 '확인하지 못한 것이 없어요'라고 하면 안 된다.
-it('분석이 믿을 수 없는 상태면 후보가 0개여도 경고색으로 보인다', () => {
+// 실제 화면 확인에서 찾은 문제: 재분석 중에 '확인하지 못한 것이 없어요'라고 하면 안 된다.
+// 서버는 재분석 중이면 이전 결과가 보여도 후보 수를 null 로 보낸다(ImpactApprovalGate).
+it('재분석 중이면 후보를 평가하지 못했다고 하고 확인할 것이 남았다고 말한다', () => {
   renderPreview(
     parse({
+      ai_candidates: null,
       open_review_requests: 0,
       ai_analysis: {
         status: 'COMPLETED',
@@ -216,9 +219,23 @@ it('분석이 믿을 수 없는 상태면 후보가 0개여도 경고색으로 �
     }),
   )
   const box = screen.getByRole('region', { name: '확인하지 못한 것' })
-  expect(box).toHaveClass('border-amber-300')
   expect(box).toHaveTextContent('아직 확인하지 못한 것이 있어요')
+  expect(box).toHaveTextContent('AI 영향 후보: 아직 평가하지 못했어요')
   expect(box).not.toHaveTextContent('확인하지 못한 것이 없어요')
+})
+
+it('담당자가 없는 작업은 담당자 확인 필요가 아니라 미배정으로 보인다', () => {
+  renderPreview({
+    ...parse(),
+    tasks_to_wait: [{ task_id: '504', title: '담당 없는 작업' }],
+  })
+  const waiting = screen.getByRole('region', {
+    name: '대기 · 재검증이 되는 작업 1개',
+  })
+  expect(within(waiting).getByText('담당 미배정')).toBeInTheDocument()
+  expect(
+    within(waiting).queryByText(/담당자 확인 필요/),
+  ).not.toBeInTheDocument()
 })
 
 it('항목만 수정하는 제안은 무엇이 수정되는지 밝혀 적는다', () => {

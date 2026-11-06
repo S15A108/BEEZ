@@ -1001,7 +1001,8 @@ it('미리 보기를 불러오지 못해도 승인은 막지 않고 직접 확�
   ).toBeEnabled()
 })
 
-it('팀장이 아니면 승인 미리 보기를 요청하지 않는다', async () => {
+// 팀원은 승인 버튼이 없어 승인 확인 화면에 들어갈 수 없다. isLeader 가드는 방어용이라 이 시험이 그 가드를 직접 검증하지는 않는다.
+it('팀원 화면에는 승인 버튼이 없고 승인 미리 보기를 요청하지 않는다', async () => {
   const preview = vi.spyOn(changesApi, 'approvalPreview')
   render(
     <QueryClientProvider client={client}>
@@ -1031,7 +1032,9 @@ it('제안 문서의 색인이 준비되지 않아 미리 보기가 409면 이�
 
 it.each([
   ['invalid_transition', '이미 처리했거나 지금은 승인할 수 없는 제안이에요'],
-  ['version_conflict', '제안이 그사이 바뀌었어요'],
+  // 아래 둘은 제안 자체의 문제라 다시 불러와도 풀리지 않는다. 승인도 같은 검사로 실패하므로 반려하고 다시 올리게 안내한다.
+  ['version_conflict', '이 제안을 반려하고 제안자가 다시 올리게 해 주세요'],
+  ['validation_failed', '항목 내용에 문제가 있어 승인할 수 없어요'],
 ])(
   '미리 보기가 %s 로 막히면 이유를 알리고 승인 버튼을 막는다',
   async (code, text) => {
@@ -1054,4 +1057,78 @@ it('승인에 성공한 뒤에는 이미 발행된 제안의 미리 보기를 �
   )
   await screen.findByText(/새 기준을 발행했어요/)
   expect(preview).toHaveBeenCalledTimes(1)
+})
+
+// 코드 리뷰(중간): 분석이 끝나도 미리 보기를 다시 읽지 않아 승인 버튼이 계속 막혀 있었다.
+async function runningPreview() {
+  const base = await changesApi.approvalPreview('101', '71')
+  return {
+    ...base,
+    unreviewed: {
+      ...base.unreviewed,
+      ai_candidates: null,
+      ai_analysis: {
+        status: 'RUNNING' as const,
+        is_current: false,
+        reanalysis_in_progress: false,
+      },
+    },
+  }
+}
+
+it('분석이 도는 동안은 미리 보기를 다시 읽어, 끝나면 승인 버튼이 풀린다', async () => {
+  const running = await runningPreview()
+  const preview = vi
+    .spyOn(changesApi, 'approvalPreview')
+    .mockResolvedValueOnce(running)
+  await openApprove()
+  const button = screen.getByRole('button', { name: '승인하고 기준 v2 발행' })
+  await waitFor(() => expect(preview).toHaveBeenCalledTimes(1))
+  expect(button).toBeDisabled()
+  await waitFor(() => expect(button).toBeEnabled(), { timeout: 5000 })
+  expect(preview.mock.calls.length).toBeGreaterThanOrEqual(2)
+})
+
+it.each(['analysis_running', 'impact_not_confirmed'])(
+  '승인이 %s 로 막히면 미리 보기를 다시 읽어 지금 상태를 맞춘다',
+  async (code) => {
+    const preview = vi.spyOn(changesApi, 'approvalPreview')
+    vi.spyOn(changesApi, 'approve').mockRejectedValue(conflict(code))
+    const user = await openApprove()
+    await screen.findByRole('group', { name: '승인하면 같이 바뀌는 것' })
+    expect(preview).toHaveBeenCalledTimes(1)
+    await user.click(
+      screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+    )
+    await waitFor(() => expect(preview).toHaveBeenCalledTimes(2))
+  },
+)
+
+it('같은 제안의 승인 확인을 다시 열면 이전 미리 보기를 지우고 새로 받을 때까지 승인을 막는다', async () => {
+  const user = await openApprove()
+  await screen.findByRole('group', { name: '승인하면 같이 바뀌는 것' })
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  const base = await changesApi.approvalPreview('101', '71')
+  let release: (value: typeof base) => void = () => undefined
+  vi.spyOn(changesApi, 'approvalPreview').mockImplementationOnce(
+    () => new Promise((done) => (release = done)),
+  )
+  await user.click(
+    await screen.findByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  await screen.findByRole('heading', { name: '기준 v2 발행을 승인할까요?' })
+  expect(
+    screen.queryByRole('group', { name: '승인하면 같이 바뀌는 것' }),
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('계산하는 중')
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeDisabled()
+  release(base)
+  expect(
+    await screen.findByRole('group', { name: '승인하면 같이 바뀌는 것' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  ).toBeEnabled()
 })

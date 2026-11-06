@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   ArrowLeft,
   Check,
@@ -42,7 +47,8 @@ import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalForm } from './ProposalForm'
 import { ApprovalPreview } from './ApprovalPreview'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
-import { StatusTag, Tag } from './Tag'
+import { StatusTag } from './StatusTag'
+import { Tag } from './Tag'
 import { operationTone } from './tagTones'
 import {
   isStaleDocument,
@@ -151,6 +157,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const [discussing, setDiscussing] = useState(false)
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
+  const queryClient = useQueryClient()
   const changes = useInfiniteQuery({
     queryKey: ['projects', projectId, 'changes', filter],
     initialPageParam: undefined as string | undefined,
@@ -224,6 +231,14 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     // 계산 결과는 그 순간의 기준·분석 상태에 달려 있어 캐시를 믿지 않는다. 오류도 재시도하지 않고 바로 보인다.
     gcTime: 0,
     retry: false,
+    // 분석이 도는 동안은 끝났는지 계속 읽는다. 읽지 않으면 분석이 끝나도 승인 버튼이 계속 막혀 있다.
+    refetchInterval: (query) => {
+      const analysis = query.state.data?.unreviewed.ai_analysis
+      return analysis &&
+        (analysis.reanalysis_in_progress || analysis.status === 'RUNNING')
+        ? 1500
+        : false
+    },
   })
   const comments = useInfiniteQuery({
     queryKey: ['projects', projectId, 'change-comments', selectedId],
@@ -340,6 +355,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const [approveReason, setApproveReason] = useState('')
   const [approveNotice, setApproveNotice] = useState('')
   const openApprove = () => {
+    // 같은 제안의 승인 확인을 다시 열 때 이전 미리 보기가 잠깐 보이고 버튼이 눌리지 않게 비워 둔다.
+    queryClient.removeQueries({ queryKey: ['approval-preview', projectId] })
     setReasonRequired(false)
     setApproveReason('')
     setApproveNotice('')
@@ -353,7 +370,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
   const analysisRunning =
     !!previewAnalysis &&
     (previewAnalysis.reanalysis_in_progress ||
-      ['PENDING', 'RUNNING'].includes(previewAnalysis.status))
+      previewAnalysis.status === 'RUNNING')
   // 미리 보기가 이 409들로 막히면 승인(CHG-A09)도 같은 검사로 반드시 실패한다(PublishPlanner 공유). 버튼을 막고 이유를 알린다.
   // 그 밖의 실패(네트워크 등)는 미리 보기만 못 받은 것이라 승인은 막지 않는다. 실제 BE 점검(live)에서 확인했다.
   const previewBlockedMessage =
@@ -364,8 +381,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         '제안한 문서의 색인이 아직 준비되지 않았어요. 준비가 끝난 뒤 다시 확인해 주세요.',
       invalid_transition:
         '이미 처리했거나 지금은 승인할 수 없는 제안이에요. 목록을 새로고침해 주세요.',
+      // 아래 둘은 제안 자체의 문제(스냅샷·참조 불일치, 항목 내용)라 다시 불러와도 풀리지 않는다. 승인도 같은 검사로 실패한다.
       version_conflict:
-        '제안이 그사이 바뀌었어요. 최신 내용을 불러온 뒤 다시 확인해 주세요.',
+        '제안의 문서·항목 참조가 지금 기준과 맞지 않아요. 이 제안을 반려하고 제안자가 다시 올리게 해 주세요.',
+      validation_failed:
+        '제안의 항목 내용에 문제가 있어 승인할 수 없어요. 반려하고 제안자가 고쳐 다시 올리게 해 주세요.',
     }[getApiErrorCode(preview.error) ?? ''] ?? undefined
   const approveNow = async (proposal: ChangeProposal, nextVersion: number) => {
     setApproveNotice('')
@@ -388,11 +408,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       if (code === 'impact_not_confirmed') {
         action.reset()
         setReasonRequired(true)
+        void preview.refetch()
       } else if (code === 'analysis_running') {
         action.reset()
         setApproveNotice(
           '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
         )
+        void preview.refetch()
       } else setMode({ kind: 'detail' })
     }
   }
@@ -608,6 +630,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
               requestDraft={(input) =>
                 changesApi.generateDraft(projectId, input)
               }
+              onDraftConflict={() => void documents.refetch()}
               sourceDocuments={mode.source?.documents.map((change) => ({
                 id: change.document_id,
                 title:
@@ -914,7 +937,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         <Button
                           disabled={
                             action.busy ||
-                            preview.isLoading ||
+                            preview.isFetching ||
                             !!previewBlockedMessage ||
                             analysisRunning ||
                             (overrideNeeded && !approveReason.trim())

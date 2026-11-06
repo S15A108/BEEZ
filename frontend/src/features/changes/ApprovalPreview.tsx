@@ -17,7 +17,7 @@ function analysisText(analysis: Analysis) {
   if (!analysis) return '영향 분석 상태를 확인하지 못했어요.'
   if (analysis.reanalysis_in_progress)
     return '다시 분석하는 중이에요. 끝난 뒤에 승인할 수 있어요.'
-  if (['PENDING', 'RUNNING'].includes(analysis.status))
+  if (analysis.status === 'RUNNING')
     return '영향 분석이 진행 중이에요. 끝난 뒤에 승인할 수 있어요.'
   if (
     analysis.status === 'NOT_EVALUATED' &&
@@ -63,15 +63,9 @@ export function ApprovalPreview({
   ].filter(Boolean)
   const { unreviewed } = preview
   const analysis = unreviewed.ai_analysis
-  // 승인 게이트가 믿는 분석은 '완료 · 최신 · 재분석 아님' 하나뿐이다. 아니면 후보 수가 0이어도 확인한 것이 아니다.
-  const analysisTrusted =
-    !!analysis &&
-    analysis.status === 'COMPLETED' &&
-    analysis.is_current &&
-    !analysis.reanalysis_in_progress
-  // 사람이 더 봐야 할 것이 있으면 경고색, 없으면 차분하게.
+  // 사람이 더 봐야 할 것이 있으면 경고색, 없으면 차분하게. 서버는 분석을 믿을 수 있을 때(완료 · 최신 · 재분석 아님)만
+  // 후보 수를 주고 아니면 null 이라, 믿을 수 없는 분석은 후보 null 로 이미 '확인할 것이 있음'에 들어간다.
   const attention =
-    !analysisTrusted ||
     unreviewed.ai_candidates === null ||
     unreviewed.ai_candidates > 0 ||
     unreviewed.open_review_requests > 0 ||
@@ -120,7 +114,10 @@ export function ApprovalPreview({
                 <Tag tone={statusTone.IN_REVIEW}>대기 · 재검증</Tag>
                 <span className="min-w-0 break-words">{entry.title}</span>
                 <span className="text-xs text-muted-foreground">
-                  담당 {nameOfMember(entry.assignee_member_id)}
+                  담당{' '}
+                  {entry.assignee_member_id
+                    ? nameOfMember(entry.assignee_member_id)
+                    : '미배정'}
                 </span>
               </li>
             ))}
