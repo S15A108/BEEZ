@@ -122,6 +122,75 @@ public class ValidationRepository {
                 .param("reason", reason).param("add", toJson(summaryAdditions)).param("v", validationId).update();
     }
 
+    /**
+     * 재시도(VAL-A04): ERROR 로 끝난 시도를 다음 시도로 다시 연다. 상태 RUNNING, 시도 번호 +1, 완료 시각을 비운다.
+     * 아직 ERROR 이고 시도 번호가 expectedAttempt 일 때만 바꾼다 (바뀐 줄 수 0 이면 그 사이 다른 경로가 바꿨다).
+     * 요약(summary)은 호출자가 지난 시도의 진단 값을 걷어 내고 넘긴다
+     */
+    public int reopenForRetry(long validationId, int expectedAttempt, Map<String, Object> summary) {
+        return jdbc.sql("""
+                        update validation
+                           set status = 'RUNNING', current_attempt = current_attempt + 1, finished_at = null,
+                               summary = cast(:sum as jsonb), lock_version = lock_version + 1, updated_at = now()
+                         where id = :v and status = 'ERROR' and current_attempt = :a
+                        """)
+                .param("sum", toJson(summary)).param("v", validationId).param("a", expectedAttempt).update();
+    }
+
+    /**
+     * 작업에 이 검증보다 나중에 만든 <b>같은 갈래</b>의 검증이 있는가. 재시도는 갈래마다 가장 최근 검증만 받는다.
+     * 갈래는 완료 보고 재검증(DELTA)과 계획 검증(그 밖)이다 — DELTA 가 오류로 끝난 뒤 계획 검증을 새로 받아도(RESUME 준비) DELTA 재시도는
+     * 막지 않는다. 둘 중 어느 쪽으로 나가도 된다 (생애주기 §2.3: DELTA 재시도로 완료, 또는 새 검증 PASS 로 RESUME)
+     */
+    public boolean hasNewerValidation(long taskId, long validationId) {
+        return jdbc.sql("""
+                        select exists (
+                          select 1 from validation n, validation v
+                           where v.id = :v and n.task_id = :t and n.id > v.id
+                             and (n.trigger = 'DELTA') = (v.trigger = 'DELTA'))
+                        """)
+                .param("t", taskId).param("v", validationId).query(Boolean.class).single();
+    }
+
+    /**
+     * 같은 작업·같은 검증 입력으로 지금까지 <b>실제 검증 AI(모델)를 부른</b> 실행 수 (횟수 제한, S15P31A108-161).
+     * 새 검증 요청과 재시도의 실행을 함께 센다. "같은 입력" 은 입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같은 것이다 —
+     * 해시에는 패킷이 없지만 결과 반영의 입력 비교({@code AnalysisResultApplier.inputChange})는 패킷이 바뀌면 다른 입력으로 보므로 맞춘다.
+     * 세는 실행 (모델이 돌았거나, 요청이 AI 에 닿았는데 결과를 확인하지 못한 실행):
+     * <ul>
+     *   <li>도는 중(RUNNING) — 같은 입력으로 동시에 여러 번 요청해 제한을 넘기지 못하게</li>
+     *   <li>실제 분석기로 끝까지 돈 실행(OK)</li>
+     *   <li>시간 초과(TIMEOUT, ai_timeout) — 504 든 읽기 시간 초과든 요청은 AI 에 닿았고 모델이 돌았을 수 있다. 사용량을 못 받아도 센다</li>
+     *   <li>출력 계약 위반(ai_invalid_output) — AI 가 응답을 돌려줬다 (모델이 돌았다)</li>
+     *   <li>그 밖에 모델 호출 사용량이 한 건 이상 남은 실패 (부분 분석·오류 본문에 사용량을 실은 502 등)</li>
+     * </ul>
+     * 세지 않는 실행: 가짜 분석기(analyzer_version = fakeModel)로 끝난 실행, AI 에 요청이 닿지 않았거나 AI 가 모델을 부르지 않았다고
+     * 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502 — 분류는 {@code AiValidationAnalyzer}),
+     * 버린 실행(DISCARDED), 서버 쪽 중단(리스 만료·워커 중단 — 늦게 온 응답의 사용량이 남아도 세지 않는다).
+     * 오류 칸은 "코드: 문장" 모양이다({@code AnalysisResultApplier.fail})
+     */
+    public int countedModelAttempts(long taskId, String inputSnapshotHash, Long contextPacketId, String fakeModel) {
+        return jdbc.sql("""
+                        select count(*)
+                          from validation_run r
+                          join validation v on v.id = r.validation_id
+                          join task_plan_revision pr on pr.id = v.plan_revision_id
+                         where v.task_id = :t and v.input_snapshot_hash = :h and r.kind = 'MODEL'
+                           and pr.context_packet_id is not distinct from :pkt
+                           and (r.status = 'RUNNING'
+                                or (r.status in ('OK', 'TIMEOUT', 'ERROR')
+                                    and r.analyzer_version is distinct from :fake
+                                    and (r.error is null
+                                         or (r.error not like 'validation\\_lease\\_expired%'
+                                             and r.error not like 'validation\\_worker\\_interrupted%'))
+                                    and (r.status in ('OK', 'TIMEOUT')
+                                         or r.error like 'ai\\_invalid\\_output%'
+                                         or (r.usage is not null and jsonb_array_length(r.usage) > 0))))
+                        """)
+                .param("t", taskId).param("h", inputSnapshotHash).param("pkt", contextPacketId, Types.BIGINT)
+                .param("fake", fakeModel).query(Integer.class).single();
+    }
+
     /** 작업의 현재 계획 리비전 */
     public Optional<Long> currentPlanRevision(long taskId) {
         return jdbc.sql("select current_plan_revision_id from task where id = :t").param("t", taskId)
@@ -273,9 +342,10 @@ public class ValidationRepository {
         return jdbc.sql("""
                         insert into validation_finding (validation_id, validation_run_id, source, kind, severity, design_item_id,
                                                         design_item_version_id, related_task_id, message, sources, resolution,
-                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs)
+                                                        next_action, check_key, evidence_ids, policy_need_id, conflicting_design_refs,
+                                                        ai_suggested_action)
                         values (:v, :run, :src, :k, :sev, :item, :ver, :task, :msg, cast(:sources as jsonb), :res, :next,
-                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb))
+                                :ck, cast(:ev as jsonb), :need, cast(:conflicts as jsonb), :suggestion)
                         returning id
                         """)
                 .param("v", validationId).param("run", f.validationRunId(), Types.BIGINT).param("src", f.source())
@@ -285,17 +355,45 @@ public class ValidationRepository {
                 .param("next", f.nextAction(), Types.VARCHAR).param("ck", f.checkKey(), Types.VARCHAR)
                 .param("ev", toJson(f.evidenceIds()))
                 .param("need", f.policyNeedId(), Types.VARCHAR).param("conflicts", toJson(f.conflictingDesignRefs()))
+                .param("suggestion", f.aiSuggestedAction(), Types.VARCHAR)
                 .query(Long.class).single();
     }
 
+    /**
+     * 응답에 싣는 발견 항목: 규칙 항목과 <b>현재 시도</b>의 실행이 낸 항목 (공통 6절 "현재 판정용 DTO 의 ERROR finding 은 current_attempt 에
+     * 해당하는 실행의 것으로 한정"). 재시도(VAL-A04) 전 시도의 오류 항목은 이력으로 표에 남지만 응답에는 싣지 않는다.
+     * 이어 받은 검증(carryForward)의 항목은 원본 실행을 가리키고 시도 번호도 원본과 같으므로 그대로 나온다
+     */
     public List<FindingRow> findings(long validationId) {
         return jdbc.sql("""
-                        select id, validation_id, validation_run_id, source, kind, severity, design_item_id, design_item_version_id,
-                               related_task_id, message, sources::text as sources, resolution, next_action, check_key,
-                               evidence_ids::text as evidence_ids, policy_need_id, conflicting_design_refs::text as conflicting_design_refs
-                          from validation_finding where validation_id = :v order by id
+                        select f.id, f.validation_id, f.validation_run_id, f.source, f.kind, f.severity, f.design_item_id,
+                               f.design_item_version_id, f.related_task_id, f.message, f.sources::text as sources, f.resolution,
+                               f.next_action, f.check_key, f.evidence_ids::text as evidence_ids, f.policy_need_id,
+                               f.conflicting_design_refs::text as conflicting_design_refs, f.ai_suggested_action
+                          from validation_finding f
+                          join validation v on v.id = f.validation_id
+                          left join validation_run r on r.id = f.validation_run_id
+                         where f.validation_id = :v
+                           and (f.validation_run_id is null or r.attempt = v.current_attempt)
+                         order by f.id
                         """)
                 .param("v", validationId).query(this::finding).list();
+    }
+
+    /**
+     * 현재 시도의 실행 오류 항목(kind=ERROR)의 처리 방법(resolution) 목록. 재시도(VAL-A04)는 이것이 비어 있지 않고 모두 RETRY 일 때만
+     * 받는다. 지난 시도의 항목은 보지 않는다 (공통 6절 "과거 attempt 의 RETRY finding 을 재시도 근거로 쓰지 않는다")
+     */
+    public List<String> currentErrorResolutions(long validationId) {
+        return jdbc.sql("""
+                        select f.resolution
+                          from validation_finding f
+                          join validation v on v.id = f.validation_id
+                          join validation_run r on r.id = f.validation_run_id and r.validation_id = v.id
+                         where f.validation_id = :v and f.kind = 'ERROR' and r.attempt = v.current_attempt
+                         order by f.id
+                        """)
+                .param("v", validationId).query(String.class).list();
     }
 
     // ---- 실행(run) ----
@@ -418,6 +516,19 @@ public class ValidationRepository {
     }
 
     /**
+     * 재시도(VAL-A04): 검증의 큐 작업을 다시 대기(QUEUED)로 돌린다. 큐 작업은 검증마다 하나다(V2 UNIQUE). 리스를 비우고 바로 꺼낼 수 있게 한다.
+     * 바뀐 줄 수 (큐 작업이 없으면 0 — 호출자가 새로 만든다)
+     */
+    public int requeueJob(long validationId) {
+        return jdbc.sql("""
+                        update validation_job set status = 'QUEUED', lease_token = null, lease_until = null, next_run_at = now(),
+                               updated_at = now()
+                         where validation_id = :v
+                        """)
+                .param("v", validationId).update();
+    }
+
+    /**
      * 대기 중인 작업 하나를 잡는다. FOR UPDATE SKIP LOCKED: 다른 워커가 잡은 줄은 건너뛴다.
      * 잡으면 LEASED 로 바꾸고 리스 토큰·만료 시각을 남긴다. 토큰은 현재 시도의 실행(run)에도 같이 적어 결과 반영 때 대조한다.
      */
@@ -526,7 +637,7 @@ public class ValidationRepository {
                 rs.getString("source"), rs.getString("kind"), rs.getString("severity"), nullableLong(rs, "design_item_id"),
                 nullableLong(rs, "design_item_version_id"), nullableLong(rs, "related_task_id"), rs.getString("message"),
                 sources, rs.getString("resolution"), rs.getString("next_action"), rs.getString("check_key"), evidence,
-                rs.getString("policy_need_id"), conflicts);
+                rs.getString("policy_need_id"), conflicts, rs.getString("ai_suggested_action"));
     }
 
     private String toJson(Object value) {

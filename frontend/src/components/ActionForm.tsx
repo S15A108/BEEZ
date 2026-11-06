@@ -59,6 +59,8 @@ interface Props {
   columns?: boolean
   /** 다이얼로그 폼: 제출 버튼 왼쪽에 '취소'를 둔다(캔버스 SCR-04-v2-create-project). */
   onCancel?: () => void
+  /** 제출 실패 문구. 화면마다 다르게 안내할 오류 코드가 있을 때 넘긴다. 기본은 공통 문구(getApiErrorMessage)다. */
+  errorMessage?: (cause: unknown) => string
 }
 
 export function ActionForm({
@@ -73,6 +75,7 @@ export function ActionForm({
   auth,
   columns,
   onCancel,
+  errorMessage = getApiErrorMessage,
 }: Props) {
   const formId = useId()
   const [error, setError] = useState('')
@@ -156,7 +159,7 @@ export function ActionForm({
         try {
           await onSubmit(values)
         } catch (cause) {
-          setError(getApiErrorMessage(cause))
+          setError(errorMessage(cause))
         } finally {
           onBusyChange?.(false)
         }

@@ -16,6 +16,7 @@ import {
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ChangesPanel } from './ChangesPanel'
+import { getResponseSchema } from './schemas'
 
 let restore: () => void
 let client: QueryClient
@@ -45,6 +46,134 @@ function renderPanel() {
     </QueryClientProvider>,
   )
 }
+
+it('알 수 없는 발행 후 상태는 상세를 유지하고 확인 필요로 표시한다', async () => {
+  const base = await changesApi.get('101', '71')
+  const payload = {
+    ...base,
+    proposal: { ...base.proposal, status: 'PUBLISHED' },
+    published_analysis: { status: 'PENDING', guidance: 'FUTURE_GUIDANCE' },
+  }
+  const response = getResponseSchema.parse(payload)
+  expect(response.published_analysis).toEqual({
+    status: 'UNKNOWN',
+    guidance: 'CHECK_RESULT',
+  })
+  expect(
+    getResponseSchema.safeParse({ ...payload, proposal: null }).success,
+  ).toBe(false)
+  vi.spyOn(changesApi, 'get').mockResolvedValue(response)
+  renderPanel()
+  expect(await screen.findByText('상태 확인 필요')).toBeInTheDocument()
+  expect(screen.queryByText('처리 대기 중')).not.toBeInTheDocument()
+})
+
+it('발행된 제안은 상세 응답의 후속 분석 실패를 표시하고 발행 전 재분석 버튼을 숨긴다', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.get('101', '71')
+  const response = getResponseSchema.parse({
+    ...base,
+    proposal: { ...base.proposal, status: 'PUBLISHED' },
+    published_analysis: {
+      status: 'FAILED',
+      guidance: 'CONTACT_OPERATOR',
+      attempt: 4,
+      requested_at: '2026-11-04T00:00:00Z',
+    },
+  })
+  expect(response.published_analysis?.status).toBe('FAILED')
+  vi.spyOn(changesApi, 'get').mockResolvedValue(response)
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'analysis_not_started',
+    is_current: true,
+  })
+  const retry = vi.spyOn(changesApi, 'retryImpact')
+
+  renderPanel()
+  expect(await screen.findByText('처리 실패')).toBeInTheDocument()
+  expect(screen.getByText(/발행 후 분석을 마치지 못했어요/)).toBeInTheDocument()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(screen.getByText(/발행 전 영향 분석 결과예요/)).toBeInTheDocument()
+  expect(
+    screen.getByText('발행 전 영향 분석이 진행되지 않았어요.'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '다시 분석' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '영향 분석 시작' }),
+  ).not.toBeInTheDocument()
+  expect(retry).not.toHaveBeenCalled()
+})
+
+it('영향 분석이 실패했으면 개요와 영향 탭에서 0건으로 대신 표시하지 않는다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    explicit: [],
+    candidates: [],
+    analysis_status: 'FAILED',
+    is_current: true,
+  })
+  renderPanel()
+  expect(await screen.findByText('분석하지 못했어요.')).toBeInTheDocument()
+  expect(screen.queryByText(/확인된 관계 0/)).not.toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: '영향' })).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: '영향' }))
+  expect(
+    screen.getByText('확인된 관계를 아직 판단할 수 없어요.'),
+  ).toBeInTheDocument()
+})
+
+it('상태를 새로고침하면 같은 제안의 변경된 발행 후 처리 결과를 보여 준다', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.get('101', '71')
+  const published = {
+    ...base,
+    proposal: { ...base.proposal, status: 'PUBLISHED' as const },
+  }
+  vi.spyOn(changesApi, 'get')
+    .mockResolvedValueOnce({
+      ...published,
+      published_analysis: { status: 'PENDING', guidance: 'WAIT' },
+    })
+    .mockResolvedValue({
+      ...published,
+      published_analysis: { status: 'FAILED', guidance: 'CONTACT_OPERATOR' },
+    })
+
+  renderPanel()
+  expect(await screen.findByText('처리 대기 중')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '상태 새로고침' }))
+  expect(await screen.findByText('처리 실패')).toBeInTheDocument()
+  expect(screen.queryByText('처리 대기 중')).not.toBeInTheDocument()
+})
+
+it('상태 재조회가 실패하면 이전 결과를 최신 상태로 계속 보여 주지 않는다', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'get')
+    .mockResolvedValueOnce({
+      ...base,
+      proposal: { ...base.proposal, status: 'PUBLISHED' },
+      published_analysis: {
+        status: 'COMPLETED',
+        evaluation_status: 'COMPLETED',
+        guidance: 'NONE',
+      },
+    })
+    .mockRejectedValue(new Error('unavailable'))
+
+  renderPanel()
+  expect(await screen.findByText('분석 완료')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '상태 새로고침' }))
+  expect(
+    await screen.findByText(/정보를 불러오지 못했어요/),
+  ).toBeInTheDocument()
+  expect(screen.queryByText('분석 완료')).not.toBeInTheDocument()
+})
 
 it('팀장은 탭으로 제안을 살펴보고 창 안에서 확인한 뒤 기준 v2를 발행한다', async () => {
   const user = userEvent.setup()
@@ -474,6 +603,40 @@ it('팀장도 본인이 올린 제안을 거둔다', async () => {
 })
 
 // 사용자 요청(11-02): 업무 창 목록의 선택 표시는 작업 목록과 같은 노란 테두리·바탕으로 통일한다.
+it('최신순은 처음 올린 순서를 지켜 발행된 제안이 맨 위로 올라오지 않는다', async () => {
+  const list = changesApi.list
+  // 서버는 제안 ID 내림차순으로 준다. 먼저 올린 71이 나중에 발행되어 updated_at이 더 늦다.
+  vi.spyOn(changesApi, 'list').mockImplementation(async (...args) => {
+    const page = await list(...args)
+    const first = page.items[0]
+    return {
+      ...page,
+      items: [
+        {
+          ...first,
+          id: '72',
+          key: 'CP-72',
+          title: '나중에 올린 제안',
+          status: 'PROPOSED',
+          updated_at: '2026-10-20T00:00:00Z',
+        },
+        {
+          ...first,
+          title: '먼저 올리고 방금 발행한 제안',
+          status: 'PUBLISHED',
+          updated_at: '2026-11-03T00:00:00Z',
+        },
+      ],
+    }
+  })
+  renderPanel()
+  const later = await screen.findByText('나중에 올린 제안')
+  const earlier = screen.getByText('먼저 올리고 방금 발행한 제안')
+  expect(
+    later.compareDocumentPosition(earlier) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+})
+
 it('고른 제안은 작업 목록과 같은 노란 선택 표시로 보인다', async () => {
   renderPanel()
   await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })

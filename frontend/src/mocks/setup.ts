@@ -11,6 +11,7 @@ import { accountRoutes } from './accounts'
 import { changeRoutes } from './changes'
 import { collaborationRoutes } from './collaboration'
 import { documentRoutes } from './documents'
+import { resetEmailVerifications } from './emailVerifications'
 import { fail, MockApiError } from './helpers'
 import type { MockContext, MockReply } from './helpers'
 import {
@@ -204,7 +205,13 @@ async function dispatch(
             )
     const failedResponse = response({
       status: failure.status,
-      data: { error: { code: failure.code, message: failure.message } },
+      data: {
+        error: {
+          code: failure.code,
+          message: failure.message,
+          details: failure.details,
+        },
+      },
     })
     throw new AxiosError(
       failure.message,
@@ -243,5 +250,6 @@ export function setupMockApi(): () => void {
 
 export function resetMockApi(): void {
   idempotency.clear()
+  resetEmailVerifications()
   resetMockDatabase()
 }

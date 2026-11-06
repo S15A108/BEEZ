@@ -13,6 +13,13 @@ services:
   postgres:
     # backend/compose.yaml 과 같은 digest. 올릴 때 두 파일과 테스트의 DockerImageName 을 같이 바꾼다
     image: pgvector/pgvector@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    # CDC(Debezium) 논리 복제용 설정 (S15P31A108-293, 계획 docs/infra/cdc-deploy-plan-279.md D4).
+    # wal_level 은 재시작해야 바뀐다. 이 줄이 바뀐 PR 이 dev 에 머지되면 CD 가 postgres 를 다시 만드므로 머지 시각을 팀에 공지한다.
+    # max_slot_wal_keep_size 는 슬롯이 멈춰도 WAL 이 디스크를 다 먹지 않게 두는 상한이다.
+    # 되돌릴 때는 논리 복제 슬롯을 먼저 지운다. 슬롯이 남은 채 wal_level 을 내리면 PostgreSQL 이 기동을 거부한다
+    # (순서는 docs/infra/cdc-postgres.md "되돌리기").
+    # 이 command 는 서버(이 파일) 전용이다. 로컬 개발용 backend/compose.yaml 은 replica 그대로라 거기서는 슬롯을 만들 수 없다.
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_slot_wal_keep_size=10GB"]
     environment:
       POSTGRES_DB: ${DB_NAME:-beez}
       POSTGRES_USER: ${DB_USERNAME:?DB_USERNAME is required}
@@ -28,15 +35,31 @@ services:
 
   seaweedfs:
     image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    # S3 신원은 아래 configs 의 파일로만 준다(bootstrap·backend·backup 셋, docs/infra/seaweedfs.md). S15P31A108-211
+    # telemetry=false: 기본값은 저장량 10 GiB 부터 하루 한 번 외부로 통계를 보낸다
+    command: ["mini", "-dir=/data", "-s3.config=/etc/seaweedfs/s3.json", "-master.telemetry=false"]
+    configs:
+      - source: seaweedfs-s3
+        target: /etc/seaweedfs/s3.json
     environment:
-      # 지금은 backend 와 같은 키를 쓴다. 서버 배포 때 bootstrap 키와 backend 전용 bucket 키를 나눈다 (S15P31A108-211).
-      AWS_ACCESS_KEY_ID: ${DOCUMENT_S3_ACCESS_KEY:?DOCUMENT_S3_ACCESS_KEY is required}
-      AWS_SECRET_ACCESS_KEY: ${DOCUMENT_S3_SECRET_KEY:?DOCUMENT_S3_SECRET_KEY is required}
       S3_BUCKET: ${DOCUMENT_S3_BUCKET:-beez-documents}
+      # compose 는 configs 내용만 바뀐 것을 변경으로 보지 않아 키를 바꿔도 컨테이너를 다시 만들지 않는다.
+      # 비밀이 아닌 access key 셋을 여기 두어, 키를 바꾸면 배포가 seaweedfs 를 다시 만들게 한다
+      S3_CONFIG_ACCESS_KEYS: ${SEAWEEDFS_BOOTSTRAP_ACCESS_KEY}/${DOCUMENT_S3_ACCESS_KEY}/${SEAWEEDFS_BACKUP_ACCESS_KEY}
     volumes:
       - document-originals:/data
+    networks:
+      - storage
+    healthcheck:
+      # 인증 없이 200 을 주는 S3 헬스 경로. 신원 파일이 깨지면 S3 가 뜨지 않아 배포 --wait 가 실패한다
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
-    # 포트를 열지 않는다. backend 만 같은 네트워크에서 seaweedfs:8333 으로 닿는다.
+    # 포트를 열지 않는다. storage 네트워크에 붙은 backend 만 seaweedfs:8333 으로 닿는다.
+    # filer(8888)는 인증 없이 객체를 읽고 쓰고 지울 수 있어, ai·postgres 와 같은 네트워크에 두지 않는다.
 
   ai:
     image: ${AI_IMAGE:-beez-ai:local}
@@ -58,10 +81,15 @@ services:
   backend:
     image: ${BACKEND_IMAGE:-beez-backend:local}
     build: ../backend
+    networks:
+      - default
+      - storage   # seaweedfs 에 닿는 서비스는 backend 하나뿐이다
     depends_on:
       postgres:
         condition: service_healthy   # Flyway 가 기동 중에 DB 에 붙으므로 DB 가 준비된 뒤에 띄운다
       seaweedfs:
+        # healthy 를 기다리지 않는다. seaweedfs 가 아파도 로그인·프로젝트 등 문서 밖 기능은 떠야 한다.
+        # seaweedfs 이상은 그 자신의 healthcheck 로 배포 --wait 가 실패해 알려 준다
         condition: service_started
       ai:
         condition: service_started   # 기동에는 ai 가 필요 없다. 순서만 맞춘다
@@ -72,8 +100,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DOCUMENT_S3_ENDPOINT: http://seaweedfs:8333
       DOCUMENT_S3_BUCKET: ${DOCUMENT_S3_BUCKET:-beez-documents}
-      DOCUMENT_S3_ACCESS_KEY: ${DOCUMENT_S3_ACCESS_KEY}
-      DOCUMENT_S3_SECRET_KEY: ${DOCUMENT_S3_SECRET_KEY}
+      DOCUMENT_S3_ACCESS_KEY: ${DOCUMENT_S3_ACCESS_KEY:?DOCUMENT_S3_ACCESS_KEY is required}
+      DOCUMENT_S3_SECRET_KEY: ${DOCUMENT_S3_SECRET_KEY:?DOCUMENT_S3_SECRET_KEY is required}
       AI_BASE_URL: http://ai:8000
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN}
       # 문서 색인 임베딩 프로필. AI 가 실제로 쓰는 값(gms-small-{dimension}-v1, GMS_EMBEDDING_MODEL)과 같아야 한다.
@@ -88,6 +116,23 @@ services:
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       # 검증 가짜 분석기. AI /v1/validate(-184)가 붙기 전까지 개발 서버 env 파일에서만 true 로 둔다 (기본 false)
       VALIDATION_FAKE_ANALYZER: ${VALIDATION_FAKE_ANALYZER:-false}
+      # CDC 분석 접수 (S15P31A108-298, 계획 docs/infra/cdc-deploy-plan-279.md D7). 기본은 둘 다 꺼짐 — 켜는 값은 서버 env 파일에만 둔다.
+      # ENABLED = 복구 스캔(분석 접수 처리), CONSUMER_ENABLED = Kafka 힌트 consumer. consumer 만 켜면 backend 가 기동을 거부한다.
+      # consumer 를 켜도 Kafka 가 없으면 기동은 하고(스캔이 처리) 30초마다 연결을 다시 시도한다. 나머지 셋은 비밀이 아닌 D7 값
+      BEEZ_CDC_INTAKE_ENABLED: ${BEEZ_CDC_INTAKE_ENABLED:-false}
+      BEEZ_CDC_INTAKE_CONSUMER_ENABLED: ${BEEZ_CDC_INTAKE_CONSUMER_ENABLED:-false}
+      BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS: ${BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS:-kafka:9092}
+      BEEZ_CDC_INTAKE_GROUP_ID: ${BEEZ_CDC_INTAKE_GROUP_ID:-beez-published-analysis}
+      BEEZ_CDC_INTAKE_TOPIC: ${BEEZ_CDC_INTAKE_TOPIC:-beez.public.published_change_analysis}
+      # 가입 인증 메일 SMTP (S15P31A108-272). 비어 있어도 기동은 하고, prod 는 발송만 503 mail_send_failed 가 된다(-219).
+      # MAIL_MODE 는 넘기지 않는다: prod 프로필은 smtp, 로컬 compose(local 프로필)는 log 가 기본이다.
+      # MAIL_FROM 은 SMTP 인증 계정 주소와 맞춘다 — 다르면 메일 제공자가 거부한다
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: "${MAIL_FROM:-BEEZ <no-reply@beez.ai.kr>}"
+      EMAIL_VERIFY_GLOBAL_SEND_LIMIT: ${EMAIL_VERIFY_GLOBAL_SEND_LIMIT:-100}   # 서버 전체 시간당 발송 상한. SMTP 계정 한도보다 낮게
     ports:
       # 127.0.0.1 에만 연다. 서버는 BACKEND_HOST_PORT=8081 이고 호스트 Nginx 가 그리로 프록시한다(S15P31A108-123).
       # 기본값을 두지 않는다. 기본값 8080 은 서버의 Jenkins 와 겹치는데 env 점검(config)을 통과해 버렸다 (S15P31A108-27)
@@ -107,3 +152,30 @@ services:
 volumes:
   pgdata:
   document-originals:
+
+networks:
+  default:
+  storage:
+    # 바깥으로 나가는 길이 없는 내부망. seaweedfs·backend 와 백업 스크립트의 rclone 만 붙는다 (infra/backup/backup.sh)
+    internal: true
+
+configs:
+  # SeaweedFS S3 신원 파일. 값은 env 파일에서 채워 컨테이너 안에만 만든다(docker inspect 에 비밀값이 보이지 않는다).
+  # 값은 openssl rand -hex 로 만든 16진수라 JSON 안에서 따옴표·역슬래시 문제가 없다 (docs/infra/cd.md 2. env 파일)
+  seaweedfs-s3:
+    content: |
+      {"identities": [
+        {"name": "bootstrap",
+         "credentials": [{"accessKey": "${SEAWEEDFS_BOOTSTRAP_ACCESS_KEY:?SEAWEEDFS_BOOTSTRAP_ACCESS_KEY is required}",
+                          "secretKey": "${SEAWEEDFS_BOOTSTRAP_SECRET_KEY:?SEAWEEDFS_BOOTSTRAP_SECRET_KEY is required}"}],
+         "actions": ["Admin", "Read", "List", "Tagging", "Write"]},
+        {"name": "backend",
+         "credentials": [{"accessKey": "${DOCUMENT_S3_ACCESS_KEY:?DOCUMENT_S3_ACCESS_KEY is required}",
+                          "secretKey": "${DOCUMENT_S3_SECRET_KEY:?DOCUMENT_S3_SECRET_KEY is required}"}],
+         "actions": ["Read:${DOCUMENT_S3_BUCKET:-beez-documents}", "Write:${DOCUMENT_S3_BUCKET:-beez-documents}",
+                     "List:${DOCUMENT_S3_BUCKET:-beez-documents}"]},
+        {"name": "backup",
+         "credentials": [{"accessKey": "${SEAWEEDFS_BACKUP_ACCESS_KEY:?SEAWEEDFS_BACKUP_ACCESS_KEY is required}",
+                          "secretKey": "${SEAWEEDFS_BACKUP_SECRET_KEY:?SEAWEEDFS_BACKUP_SECRET_KEY is required}"}],
+         "actions": ["Read:${DOCUMENT_S3_BUCKET:-beez-documents}", "List:${DOCUMENT_S3_BUCKET:-beez-documents}"]}
+      ]}

@@ -14,6 +14,33 @@ export const authApi = {
       },
       options,
     ),
+  sendEmailVerification: (
+    input: schemas.SendEmailVerificationInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.sendEmailVerificationResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/email-verifications`,
+        data: schemas.sendEmailVerificationInputSchema.parse(input),
+      },
+      options,
+    ),
+  confirmEmailVerification: (
+    verificationId: string,
+    input: schemas.ConfirmEmailVerificationInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.confirmEmailVerificationResponseSchema,
+      {
+        method: 'POST',
+        url: `/auth/email-verifications/${encodeURIComponent(verificationId)}/confirm`,
+        data: schemas.confirmEmailVerificationInputSchema.parse(input),
+      },
+      options,
+    ),
   login: (input: schemas.LoginInput, options?: RequestOptions) =>
     callEndpoint(
       schemas.loginResponseSchema,
@@ -68,33 +95,6 @@ export const authApi = {
       },
       options,
     ),
-  verifyResetToken: (
-    input: schemas.VerifyResetTokenInput,
-    options?: RequestOptions,
-  ) =>
-    callEndpoint(
-      schemas.verifyResetTokenResponseSchema,
-      {
-        method: 'POST',
-        url: `/auth/password/reset/verify`,
-        data: schemas.verifyResetTokenInputSchema.parse(input),
-      },
-      options,
-    ),
-  resetPassword: (
-    input: schemas.ResetPasswordInput,
-    options?: RequestOptions,
-  ) =>
-    callEndpoint(
-      z.void(),
-      {
-        method: 'POST',
-        url: `/auth/password/reset`,
-        data: schemas.resetPasswordInputSchema.parse(input),
-        idempotent: true,
-      },
-      options,
-    ),
   withdraw: (input: schemas.WithdrawInput, options?: RequestOptions) =>
     callEndpoint(
       z.void(),
@@ -104,6 +104,12 @@ export const authApi = {
         data: schemas.withdrawInputSchema.parse(input),
         idempotent: true,
       },
+      options,
+    ),
+  withdrawalCheck: (options?: RequestOptions) =>
+    callEndpoint(
+      schemas.withdrawalCheckResponseSchema,
+      { method: 'GET', url: `/me/withdrawal-check` },
       options,
     ),
 }

@@ -30,7 +30,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 6. 변경이 발행되면 다음 호출에서 확인하고 계획 수정·재검증 후 RESUME한다.
 7. 완료 결과·계획 대비 변경을 `report_task_state(COMPLETED)`로 보고한다.
 
-`get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`의 분리·명칭은 담당자 검토 대상이다. 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
+`get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`은 `validate_task_plan`과 나눈 별도 도구다(변준성 확정, S15P31A108-271). 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
 
 ## 탐색
 
@@ -287,6 +287,8 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 #### 처리 규칙
 
 - 생략 시 현재 baseline_document의 승인본만 반환한다.
+- 지정 시 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 반환한다. DRAFT·REJECTED는 `not_found`다. REST DOC-A02는 문서 검토용이라 이 제한을 두지 않는다.
+- 조회 이력을 `context_access_log`에 남긴다(`target_kind=DOCUMENT_VERSION`).
 - 바이너리는 파일 정보와 읽을 수 있는 추출 내용만 제공한다. 원문 변환 범위 Q07.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -1012,7 +1014,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `id` | `ID` | Y | 작업 ID |
 | `key` | `string` | Y | 표시 키 |
 | `project_id` | `ID` | Y | 프로젝트 |
-| `assignee_member_id` | `ID` | Y | 담당 멤버 |
+| `assignee_member_id` | `ID` | N | 담당 멤버. (수정안 요청 · 11-04 사용자 결정) 담당자가 나가거나 제외돼 미배정이면 생략(MEM-A09·A10) |
 | `status` | `DRAFT\|READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | Y | 작업 상태 |
 | `waiting_reason` | `INPUT\|APPROVAL\|DEPENDENCY\|REVALIDATION` | N | WAITING일 때만 포함 |
 | `lock_version` | `integer` | Y | 상태 충돌 검사 번호 |
@@ -1198,6 +1200,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `invalid_transition` | 완료·취소된 작업 (BE 구현, -159) |
 | 409 | `revision_conflict` | 현재 계획 아님 |
+| 409 | `validation_attempt_limit` | 의미 분석이 필요한데 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름. 재시도(MCP-14)와 같은 수 (BE 구현, -161) |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1337,7 +1340,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 관련 요구사항: VAL 재시도 계약  
 담당: BE: 전진(도구) / 변준성(재시도) / AI: 양지훈(실패 정보) / FE: —  
-상태: 도구명·분리 담당자 검토
+상태: 도구명·분리 확정 — 별도 도구 `retry_validation`(변준성, S15P31A108-271 리뷰: 받는 조건(ERROR·전부 RETRY·입력 그대로)과 오류 코드 의미가 새 검증과 달라 합치지 않는다). BE 업무 서비스 구현 반영안 (S15P31A108-161, `ValidationMcpService.retryValidation`) — 도구 연결 S15P31A108-271 (`RetryValidationTool`)
 
 #### 인증
 
@@ -1348,7 +1351,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `validation_id` | `ID` | Y | 현재 실패 attempt의 ERROR finding이 RETRY인 ERROR 검증 |
-| `expected_attempt` | `integer` | Y | 현재 시도 |
+| `expected_attempt` | `integer` | Y | 현재 시도 (1 이상). 같은 값으로 다시 보내면 새 시도를 만들지 않는다 |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
 아래는 도구 인수 객체다.
@@ -1416,7 +1419,10 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | 403 | `forbidden` | 해당 역할·소유 조건을 충족하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 409 | `invalid_transition` | ERROR가 아니거나 현재 실패 실행의 오류가 RETRY 대상이 아님, 또는 이미 재실행 |
+| 409 | `invalid_transition` | ERROR가 아니거나(이미 재실행 중 포함) 현재 실패 실행의 오류가 RETRY 대상이 아님. 완료·취소된 작업, 같은 갈래(DELTA / 계획 검증)의 더 최근 검증이 있음 |
+| 409 | `revision_conflict` | 입력·참조 변경. `expected_attempt`가 현재 시도도, 현재 시도 - 1(재전송)도 아님 |
+| 409 | `validation_attempt_limit` | 같은 작업·같은 입력으로 실제 검증 AI를 정한 횟수(기본 3)만큼 부름 (REST VAL-A01 처리 규칙) |
+| 409 | `idempotency_conflict` | 같은 `idempotency_key`에 다른 인수 |
 
 업무 실패 내용 예시다. 아래 객체를 SDK의 도구 실패 결과로 전달한다. 표의 업무 상태는 REST 대응 의미이며 HTTP 성공 여부를 뜻하지 않는다.
 
@@ -1435,6 +1441,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - 현재 실행에 HUMAN_REVIEW 오류가 하나라도 있으면 invalid_transition으로 거부한다. 근거 부족·미지원 내용은 보완한 뒤 새 검증을 요청한다. REST와 같은 서비스 규칙을 적용한다.
 - STALE·입력 변경은 새 검증을 요청한다.
 - 기존 attempt·lease의 늦은 결과는 반영하지 않는다.
+- (BE 구현, -161) REST VAL-A04와 같은 서비스(`ValidationRetryService`)다 — 순서·입력 확인·횟수 제한·중복 요청 규칙은 VAL-A04 처리 규칙을 따른다. `idempotency_key`가 같고 인수가 같으면 처음 결과를 그대로 돌려주고(그 사이 담당자가 바뀌었으면 거부), 키가 달라도 `expected_attempt`가 현재 시도 - 1이면(바로 앞 요청의 재전송) 새 시도를 만들지 않고 지금 검증을 돌려준다. 워커가 검색할 때 쓰는 요청자는 다시 돌린 에이전트(토큰)로 바뀐다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -1469,6 +1476,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 | `summary` | `string` | N | 진행/완료 요약 |
 | `delta` | `object[]` | N | 완료 시 계획 대비 변경. 있으면 WAITING(REVALIDATION)으로 두고 delta 검증이 PASS하면 서버가 COMPLETED로 전이 |
 | `completion_checks` | [CompletionCheck[]](00-common.md#schema-completioncheck) | N | 완료 기준 확인 |
+| `changed_design_item_ids` | `ID[]` | N | COMPLETED에서만. 실제로 바꾼 설계 항목(최대 200). 계획과 대조해 응답 `completion_review`에 범위 이탈 후보를 보여 준다(완료는 막지 않음). 보내지 않으면 범위를 판단하지 않는다. 다른 이벤트에 보내거나 이 프로젝트에 없는 항목이면 400 `validation_failed` |
 | `idempotency_key` | `string` | Y | 같은 업무 요청의 재시도 식별값 |
 
 아래는 도구 인수 객체다.
@@ -1635,6 +1643,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (BE 구현, -269) COMPLETED에 `changed_design_item_ids`를 실으면 결과 `task.completion_review`에 계획과 규칙으로 대조한 범위 이탈 후보가 나온다([CompletionReview](00-common.md#schema-completionreview)). 표시만 하고 완료를 막지 않는다. 코드 품질을 보증하지 않는다. 규칙은 REST TSK-A07과 같다.
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
 - `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
 - (수정안 요청) summary는 AgentWork.last_summary로 HUD·대시보드에 원문 그대로 보인다. AI로 다시 요약하지 않는다.

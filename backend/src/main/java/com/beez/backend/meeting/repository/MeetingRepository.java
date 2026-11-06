@@ -233,6 +233,36 @@ public class MeetingRepository {
                 .query(MeetingRepository::mapEntry).list();
     }
 
+    // ---- 비비 회의 정리의 입력 (S15P31A108-235) ----
+
+    /** 정리에 쓸 수 있는 기록 종류. 비비의 이전 정리·분석은 입력에 넣지 않는다 */
+    private static final String SUMMARIZABLE = "e.kind in ('TEXT', 'CONFLICT_BRIEF')";
+
+    /** 이 회의의 기록 한 건의 종류. 이 회의의 기록이 아니면 empty */
+    public Optional<String> entryKind(long meetingId, long entryId) {
+        return jdbc.sql("select kind from meeting_entry where id = :id and meeting_id = :m")
+                .param("id", entryId).param("m", meetingId).query(String.class).optional();
+    }
+
+    /** 정리에 쓸 수 있는 마지막 기록(TEXT·CONFLICT_BRIEF)의 ID */
+    public Optional<Long> lastSummarizableEntryId(long meetingId) {
+        return jdbc.sql("select max(e.id) from meeting_entry e where e.meeting_id = :m and " + SUMMARIZABLE)
+                .param("m", meetingId).query(Long.class).optional();
+    }
+
+    public int countSummarizableThrough(long meetingId, long throughId) {
+        return jdbc.sql("select count(*) from meeting_entry e where e.meeting_id = :m and e.id <= :through and " + SUMMARIZABLE)
+                .param("m", meetingId).param("through", throughId).query(Integer.class).single();
+    }
+
+    /** throughId 까지의 정리 입력 기록 중 가장 최근 limit 건을 최근 것부터(id 내림차순) */
+    public List<EntryRow> summarizableNewestFirst(long projectId, long meetingId, long throughId, int limit) {
+        return jdbc.sql(entrySelect() + " where e.meeting_id = :m and e.id <= :through and " + SUMMARIZABLE
+                        + " order by e.id desc limit :limit")
+                .param("p", projectId).param("m", meetingId).param("through", throughId).param("limit", limit)
+                .query(MeetingRepository::mapEntry).list();
+    }
+
     /** 같은 키의 동시 요청을 한 줄로 세운다. 트랜잭션이 끝나면 풀린다 */
     public void lockIdempotency(long meetingId, long accountId, String key) {
         jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:k, 0))")

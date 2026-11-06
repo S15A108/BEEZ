@@ -23,6 +23,12 @@ export interface SceneAgent {
   name: string
   kind: 'human' | 'lead' | 'agent'
   color?: string
+  /** 계정 avatar(human·robot·bee, 옛 bee-*). 있으면 사무실 모양을 이것으로 정한다(D34). */
+  avatar?: string
+  /** AI 에이전트면 주인 팀원 id. 주인 색 띠를 두른 하늘색 로봇으로 그린다(D35). */
+  owner?: string
+  /** 이름표 아래 말풍선(대기 이유 등, D37) */
+  note?: string
   status?: string
   home_zone?: Zone
   zone?: Zone
@@ -44,6 +50,7 @@ export interface Agent {
   name: string
   role: string
   kind: 'human' | 'lead' | 'agent'
+  avatar?: string
   builtin: boolean
   color: string
   home_zone: Zone
@@ -153,17 +160,4 @@ export interface Snapshot {
   agents: Agent[]
   tasks: Task[]
   events: LeadEvent[]
-}
-export interface WorldProject {
-  id: string
-  name: string
-  lot?: number | null
-  design: string
-  floors: number
-  status: string
-  has_badge: boolean
-}
-export interface WorldSummary {
-  lots: { index: number; project_id: string | null }[]
-  projects: WorldProject[]
 }

@@ -2,12 +2,24 @@ import { isAxiosError } from 'axios'
 import { z } from 'zod'
 
 export const apiErrorSchema = z.object({
-  error: z.object({ code: z.string(), message: z.string().optional() }),
+  error: z.object({
+    code: z.string(),
+    message: z.string().optional(),
+    // 명세가 정한 오류만 채운다(예: ACC-A12 remaining_attempts). 없으면 빠진다.
+    details: z.record(z.string(), z.unknown()).optional(),
+  }),
 })
 export function getApiErrorCode(error: unknown): string | undefined {
   if (!isAxiosError(error)) return undefined
   const parsed = apiErrorSchema.safeParse(error.response?.data)
   return parsed.success ? parsed.data.error.code : undefined
+}
+// 오류 본문의 error.details 객체(예: ACC-A12 remaining_attempts). 서버 문구 원문은 아래 getApiErrorDetail이다.
+export function getApiErrorDetails(
+  error: unknown,
+): Record<string, unknown> | undefined {
+  if (!isAxiosError(error)) return undefined
+  return apiErrorSchema.safeParse(error.response?.data).data?.error.details
 }
 // 서버가 보낸 오류 문구 원문. 'design_item_id=301'처럼 어느 항목 때문인지 찾을 때 쓰고, 화면 문구는 getApiErrorMessage로 보인다.
 export function getApiErrorDetail(error: unknown): string | undefined {
@@ -47,9 +59,12 @@ export const unlessMissing = <T>(request: Promise<T>) =>
 const messages: Record<string, string> = {
   unauthenticated: '로그인이 필요합니다.',
   invalid_credentials: '이메일 또는 비밀번호를 확인해 주세요.',
+  current_password_mismatch: '현재 비밀번호가 맞지 않아요.',
   forbidden: '이 작업의 권한이 없습니다.',
   not_found: '이 항목을 찾을 수 없습니다.',
   email_already_exists: '이미 가입된 이메일입니다.',
+  email_not_verified:
+    '이메일 인증이 만료됐거나 이미 사용됐어요. 이메일을 다시 인증해 주세요.',
   validation_failed: '입력 내용을 확인해 주세요.',
   version_conflict: '설계가 변경되었습니다. 최신 내용을 확인해 주세요.',
   revision_conflict: '작업 계획이 변경되었습니다. 다시 확인해 주세요.',
@@ -66,14 +81,14 @@ const messages: Record<string, string> = {
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',
   unsupported_media_type: '지원하지 않는 파일 형식입니다.',
-  invitation_expired: '초대 링크가 만료되었습니다.',
-  reset_token_expired: '비밀번호 재설정 링크가 만료되었습니다.',
   leader_transfer_required: '인간 팀장을 먼저 위임해 주세요.',
   leader_not_removable: '팀장은 회의에서 뺄 수 없어요.',
   meeting_closed: '끝난 회의라 바꿀 수 없어요.',
   invalid_transfer_target: '이 팀원에게는 넘길 수 없어요.',
   active_tasks_exist: '진행 중인 작업의 담당자를 먼저 정리해 주세요.',
   project_membership_remaining: '참여 중인 프로젝트를 먼저 정리해 주세요.',
+  leader_of_team_projects:
+    '팀원이 있는 프로젝트의 팀장이라 탈퇴할 수 없어요. 팀장을 먼저 위임해 주세요.',
   analysis_not_completed:
     '문서 4종의 색인이 아직 끝나지 않았어요. 색인이 끝난 뒤 다시 기준을 만들어 주세요.',
   document_not_approved:
@@ -90,6 +105,7 @@ const messages: Record<string, string> = {
   submission_decided: '이미 결정한 검토 요청이에요.',
   already_member: '이미 팀원이에요.',
   invitation_email_mismatch: '초대받은 이메일로 로그인해 주세요.',
+  invitation_not_pending: '이미 참여했거나 취소된 초대예요.',
   agent_limit_reached:
     '활성 토큰은 프로젝트마다 5개까지예요. 쓰지 않는 토큰을 폐기한 뒤 다시 발급해 주세요.',
 }

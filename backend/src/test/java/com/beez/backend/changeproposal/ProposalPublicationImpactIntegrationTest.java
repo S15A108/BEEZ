@@ -231,6 +231,43 @@ class ProposalPublicationImpactIntegrationTest extends IntegrationTestSupport {
                 .param("p", projectId).query(String.class).list());
     }
 
+    // ---- 재검증 알림 (S15P31A108-217): 대기가 된 작업 + STALE 만 된 준비 작업의 담당자, 완료·미배정 제외 ----
+
+    private List<Map<String, Object>> revalidationNotifications() {
+        return api.jdbc.sql("select * from notification where project_id = :p and type = 'REVALIDATION_REQUIRED' order by ref_id")
+                .param("p", projectId).query().listOfRows();
+    }
+
+    @Test
+    void approval_notifiesAssigneesOfWaitingAndStaleReadyTasks_notCompletedOrUnrelated_andReplayAddsNothing() {
+        Scenario s = scenario();
+        Proposal proposal = propose("renotify", updateApi01());
+
+        approve(proposal, "renotify-approve", null);
+        approve(proposal, "renotify-approve", null);   // 멱등 재생
+        approve(proposal, "renotify-again", null);     // 이미 발행된 제안 재요청
+
+        // A: 진행 중 → 재검증 대기, B: 검증만 STALE 이 된 준비 작업. C(무관)·D(완료)는 대상이 아니다
+        var rows = revalidationNotifications();
+        assertThat(rows).extracting(r -> r.get("ref_id")).containsExactly(s.a(), s.b());
+        assertThat(rows).allSatisfy(r -> {
+            assertThat(r.get("recipient_account_id")).isEqualTo(member);
+            assertThat(r.get("ref_kind")).isEqualTo("TASK");
+        });
+        assertThat(rows.getFirst().get("dedupe_key"))
+                .isEqualTo("task:" + s.a() + ":revalidation:" + proposal.id() + ":to:" + member);
+    }
+
+    @Test
+    void approval_skipsTasksWithoutAssignee() {
+        Scenario s = scenario();
+        api.jdbc.sql("update task set assignee_member_id = null where id = :t").param("t", s.b()).update();
+
+        approve(propose("renotify-unassigned", updateApi01()), "renotify-unassigned-approve", null);
+
+        assertThat(revalidationNotifications()).extracting(r -> r.get("ref_id")).containsExactly(s.a());
+    }
+
     // ---- T1: 승인 → STALE · WAITING ----
 
     @Test

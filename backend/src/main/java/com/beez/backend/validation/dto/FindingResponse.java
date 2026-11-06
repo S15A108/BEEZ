@@ -7,5 +7,5 @@ import java.util.Map;
 public record FindingResponse(String id, String validationRunId, String source, String kind, String severity, String message,
                               String designItemId, String designItemVersionId, String relatedTaskId,
                               List<Map<String, Object>> sources, String resolution, String nextAction,
-                              String policyNeedId, List<Map<String, Object>> conflictingDesignRefs) {
+                              String policyNeedId, List<Map<String, Object>> conflictingDesignRefs, String aiSuggestedAction) {
 }

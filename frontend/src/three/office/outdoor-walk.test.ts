@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { ALL_KEYS, makeBuilding } from './building'
 import { makeDreamFloor } from './dream-floor'
 import { OfficeCity, CITY_WALK_RADIUS } from './office-city'
-import { streetSpawn } from './OutdoorStreetRenderer'
+import { streetSpawn, walkableStreetSpawn } from './OutdoorStreetRenderer'
 import { nearOfficeExit } from './office-exit'
 import { gridWalkable, moveContinuous, smoothRoute } from './motion'
 import { findPath } from './path'
@@ -171,6 +171,36 @@ test('street traffic yields ahead of a walker, queues with a gap, and resumes wh
     for (let i = 201; i <= 210; i++)
       city.update(i / 10, camera, true, { x: 15, z: 19.2 })
     assert.isOk(Math.abs(at(0).x - initial.x) > 1.5)
+  } finally {
+    city.dispose()
+  }
+})
+
+// 산책 버그(2026-11-03): 고정 사무실(D36, 26칸 폭)에서는 기본 시작점이 가로수 기둥과 겹쳐 어느 쪽으로도 걷지 못했다.
+test('고정 사무실 폭에서도 산책 시작점은 걸을 수 있는 보도이고 문 가까이에 있다', () => {
+  const floor = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
+      .floors[1],
+    4,
+  )
+  const fixed = floor.footprint!
+  const city = new OfficeCity(fixed)
+  try {
+    const walk = (x: number, y: number) => city.canWalk(x / 32, y / 32)
+    const spawn = walkableStreetSpawn(fixed, walk)
+    assert.strictEqual(walk(spawn.x, spawn.y), true)
+    assert.isBelow(Math.abs(spawn.x - streetSpawn(fixed).x), 2 * 32)
+    assert.strictEqual(spawn.y, streetSpawn(fixed).y)
+    // 앞뒤·좌우 한 걸음씩 걸을 수 있다
+    for (const [dx, dy] of [
+      [0, -4],
+      [4, 0],
+      [-4, 0],
+      [0, 4],
+    ]) {
+      const next = moveContinuous(spawn, { x: dx, y: dy }, walk)
+      assert.isAbove(Math.hypot(next.x - spawn.x, next.y - spawn.y), 0)
+    }
   } finally {
     city.dispose()
   }

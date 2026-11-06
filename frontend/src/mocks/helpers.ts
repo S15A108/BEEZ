@@ -5,11 +5,18 @@ import { nextId, now } from './state'
 export class MockApiError extends Error {
   status: number
   code: string
+  details?: Record<string, unknown>
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -30,8 +37,13 @@ export interface MockReply {
   headers?: Record<string, string>
 }
 
-export function fail(status: number, code: string, message: string): never {
-  throw new MockApiError(status, code, message)
+export function fail(
+  status: number,
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): never {
+  throw new MockApiError(status, code, message, details)
 }
 
 export function omit<T extends object, K extends keyof T>(
@@ -159,6 +171,7 @@ export function notification(
   targetType:
     'TASK' | 'VALIDATION' | 'CHANGE_PROPOSAL' | 'BASELINE' | 'MEETING',
   targetId: string,
+  extra: { baseline_version_no?: number } = {},
 ): void {
   const project = requireProject(context)
   context.database.notifications.push({
@@ -170,6 +183,7 @@ export function notification(
     body: '브라우저 예시 데이터가 변경됐어요.',
     target_type: targetType,
     target_id: targetId,
+    ...extra,
     created_at: now(),
   })
 }

@@ -443,6 +443,13 @@ export function taskRoutes(
     case 'VAL-A04': {
       const currentTask = findById(project.tasks, validation!.task_id)
       taskOwner(context, currentTask)
+      // 서버 ValidationRetryService: 보낸 시도 번호가 현재보다 작으면 그 요청이 이미 연 시도가 있는 것이다(응답을 잃고 다시 보냄).
+      // 새로 열지 않고 지금 검증을 그대로 돌려준다
+      if (
+        typeof body.expected_attempt === 'number' &&
+        body.expected_attempt < validation!.current_attempt
+      )
+        return { status: 202, data: validation! }
       expectValue(
         validation!.current_attempt,
         body.expected_attempt,
@@ -667,6 +674,50 @@ export function taskRoutes(
           ),
         },
       }
+    case 'BEE-A04': {
+      // 서버 BeeRepository.latestActivity와 같은 규칙: 시작한 지 10분 안의 검토와 OPEN 회의 중 가장 최근 하나.
+      const since = Date.now() - 10 * 60_000
+      const latest = [
+        ...(project.running_bee_reviews ?? [])
+          .filter((review) => Date.parse(review.started_at) > since)
+          .flatMap((review) => {
+            const document = project.documents.find(
+              (item) => item.id === review.document_id,
+            )
+            return document
+              ? [
+                  {
+                    at: review.started_at,
+                    id: document.id,
+                    status: {
+                      activity: 'DOCUMENT_REVIEW',
+                      target_type: 'DOCUMENT',
+                      target_id: document.id,
+                      label: `${document.title} 검토 중`,
+                    },
+                  },
+                ]
+              : []
+          }),
+        ...project.meetings
+          .filter((meeting) => meeting.status === 'OPEN')
+          .map((meeting) => ({
+            at: meeting.created_at,
+            id: meeting.id,
+            status: {
+              activity: 'MEETING',
+              target_type: 'MEETING',
+              target_id: meeting.id,
+              label: `'${meeting.title}' 진행 중`,
+            },
+          })),
+      ].sort(
+        (a, b) =>
+          Date.parse(b.at) - Date.parse(a.at) ||
+          Number(BigInt(b.id) - BigInt(a.id)),
+      )[0]
+      return { data: latest?.status ?? { activity: 'IDLE' } }
+    }
     default:
       return undefined
   }

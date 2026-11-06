@@ -13,6 +13,7 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.designitem.service.DesignCommandService;
+import com.beez.backend.notification.event.ChangeNotifications;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,9 +45,11 @@ public class ChangeDiscussionService {
     private final ProjectAccessChecker access;
     private final ChangeCommentRepository comments;
     private final DesignCommandService idempotency;
+    private final ChangeNotifications notifications;
 
     public ChangeDiscussionService(ProjectAccessChecker access, ChangeCommentRepository comments,
-                                   DesignCommandService idempotency) {
+                                   DesignCommandService idempotency, ChangeNotifications notifications) {
+        this.notifications = notifications;
         this.access = access;
         this.comments = comments;
         this.idempotency = idempotency;
@@ -101,8 +104,11 @@ public class ChangeDiscussionService {
         if (key != null) {
             idempotency.save(projectId, actor.accountId(), operation, key, input, response);
         }
-        // TODO(알림 공통 서비스, 전진): 저장한 의견의 지정 멤버를 알림 요청(notification_key = 의견 ID + 대상 계정)으로 전달한다.
-        //  서비스 계약이 준비되기 전이라 전달하지 않는다. 멱등 재요청은 위에서 기존 응답을 돌려주므로 여기까지 오지 않는다.
+        // 멱등 재요청은 위에서 기존 응답을 돌려주므로 여기까지 오지 않는다. 지정한 멤버가 없으면 보낼 곳이 없다.
+        // 알림은 의견과 같은 트랜잭션에 저장되고 행위자 본인은 빠진다. 의견 원문은 알림에 넣지 않는다.
+        notifications.discussed(caller, projectId, proposalId, id, kind.equals(REVIEW_REQUEST), accounts.values());
+        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_COMMENTED (검토 요청은 CHANGE_PROPOSAL_REVIEW_REQUESTED),
+        //  key change-discussion:{commentId}:...
         return response;
     }
 

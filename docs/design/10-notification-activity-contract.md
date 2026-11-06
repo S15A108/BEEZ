@@ -31,7 +31,7 @@
 - 도메인 트랜잭션이 없는 곳(토큰 필터·MCP 어댑터·스케줄러)에서 남겨야 하면 `TransactionTemplate`으로 짧은 쓰기 트랜잭션을 열고 그 안에서 부른다. 이때 롤백·유실의 범위는 그 짧은 트랜잭션 하나다.
 - `readOnly` 트랜잭션 안에서는 부르지 않는다(PostgreSQL이 INSERT를 거부한다). 읽기 경로에서 남겨야 하면 그 서비스 호출이 끝난 뒤 호출측(어댑터)에서 위처럼 짧은 트랜잭션을 연다. `REQUIRES_NEW`로 안에서 열면 바깥 연결을 쥔 채 연결을 하나 더 잡아, 자주 불리는 읽기 경로에서 연결 풀이 빨리 바닥난다.
 - 저장은 `INSERT … ON CONFLICT (dedupe_key) DO NOTHING`이다. 같은 키가 다시 오면 **처음 것을 유지**하고 오류를 내지 않는다. 내용이 달라도 마찬가지다.
-- 이 INSERT와 수신자 확인 조회는 **`EntityManager` 네이티브 쿼리**로 한다. `JdbcTemplate`은 Hibernate를 거치지 않아, 같은 트랜잭션에서 도메인이 JPA로 바꾸고 아직 flush하지 않은 변경(방금 제외·되살린 멤버십, 바뀐 담당자)을 보지 못한다. 네이티브 쿼리는 실행 전에 자동 flush된다.
+- 이 INSERT와 수신자 확인 조회는 **Hibernate를 거치는 쿼리(JPQL 또는 `EntityManager` 네이티브 쿼리)**로 한다. `JdbcTemplate`은 Hibernate를 거치지 않아, 같은 트랜잭션에서 도메인이 JPA로 바꾸고 아직 flush하지 않은 변경(방금 제외·되살린 멤버십, 바뀐 담당자)을 보지 못한다. Hibernate를 거치는 쿼리는 실행 전에 자동 flush된다(-181은 수신자 확인을 JPQL, INSERT를 네이티브로 한다).
 - `requestAll`은 수신자들이 활성 멤버인지 **조회 한 번**(`account_id IN (…)`)으로 거른다. 발행처럼 project 행 잠금을 쥔 트랜잭션에서 불리므로 수신자 수만큼 조회하지 않는다.
 - 도메인 이벤트(`ApplicationEvent`)로 넘기고 싶으면 듣는 쪽은 `@TransactionalEventListener(phase = BEFORE_COMMIT)` 또는 `@EventListener`(같은 트랜잭션)를 쓴다. **`AFTER_COMMIT`에서는 부르지 않는다** — 이미 커밋이 끝난 뒤라 저장이 반영되지 않을 수 있고(Spring `TransactionSynchronization.afterCommit` 주의 사항), 유실 틈도 그대로 남는다.
 - 도메인 이벤트에는 계정 ID가 아니라 **`CallerContext`를 담는다.** 계정 ID만 담으면 같은 계정의 사람 행위와 에이전트 행위를 구분할 수 없고, 에이전트 세션도 연결할 수 없다. 사람·에이전트가 아니라 시스템 판단으로 생긴 변화(검증 결과에 따른 전이 등)는 `CallerContext` 없이 `recordBy(SystemActor.SYSTEM, …)`로 남긴다.
@@ -45,6 +45,7 @@
 | 제목·본문이 길이 제한을 넘음 | 공통 모듈이 **코드 포인트 기준**으로 잘라서(끝에 `…`) 저장. 오류 아님 — 사용자가 입력한 제목이 문구에 들어가기 때문. UTF-16 단위로 자르면 이모지가 반으로 갈려 깨진다 |
 | 필수 필드 누락, 키·유형이 형식(5·6절)에 맞지 않음 | 예외 → 도메인 처리도 롤백. 사용자 입력과 무관한 호출 코드 버그이므로 테스트에서 잡는다 |
 | 그 밖 DB 오류 | 예외 → 도메인 처리도 롤백 |
+| 수신자 계산 실패(관련 담당자 조회 `forNotification` 의 예외, 리비전·해시 불일치 포함) | 예외 → 도메인 처리도 롤백. 저장 실패와 같은 취급이다. 직접 후보가 미확인(INCOMPLETE·STALE·NOT_APPLICABLE)인 것은 실패가 아니라 "관련자 없음"으로 보고 알림만 건너뛴다 |
 
 알림·활동 저장 실패가 도메인 처리를 되돌릴 수 있다는 것이 이 방식의 대가다. 사용자 입력으로 생길 수 있는 경우(키 충돌·비멤버·길이 초과)는 모두 건너뛰거나 잘라서 저장하므로, 남는 것은 호출 코드 버그와 DB 장애뿐이라 받아들인다. 이 결정으로 [D7](01-system-architecture.md)의 "알림·타임라인은 커밋 후"를 "같은 트랜잭션, 키 충돌은 건너뜀"으로 바꾼다(Q03).
 
@@ -70,10 +71,11 @@
 
 - **수신자는 호출 도메인이 고른다.** 관련자가 없으면 아무도 부르지 않는다 — 전체 팀으로 바꿔 보내지 않는다(NTF-02).
 - **행위 자체를 알리는 알림**(승인됨·반려됨·올림·검토 요청·의견 지정·기준 생김 등)은 행위자 본인을 빼고 넘긴다. 자기가 한 일을 자기에게 알리지 않는다.
-- **받는 사람이 후속 조치를 해야 하는 알림**(`REVALIDATION_REQUIRED`·`TASK_ASSIGNED`)은 행위자 본인이어도 보낸다. 팀장이 발행한 변경으로 팀장 자신의 작업이 재검증 대기가 되거나, 팀장이 자기에게 작업을 배정해도 알림함에 남아야 한다. 6.1 표의 "본인 포함" 열을 따른다.
+- **받는 사람이 후속 조치를 해야 하는 알림**(`REVALIDATION_REQUIRED`)은 행위자 본인이어도 보낸다. 팀장이 발행한 변경으로 팀장 자신의 작업이 재검증 대기가 되어도 알림함에 남아야 한다. (수정안 요청 · 11-04 사용자 결정) `TASK_ASSIGNED`는 자기에게 배정한 경우(팀장이 자기에게 배정, 팀원이 미배정 작업을 스스로 맡기) 보내지 않는다. 자기가 고른 일이라 알릴 후속 조치가 없고, 두 경우를 한 규칙으로 둔다(PR #113 리뷰). 6.1 표의 "본인 포함" 열을 따른다.
 - **문구에 원문을 넣지 않는다.** 제목·본문은 "어떤 일이 있었다"까지만 쓰고, 문서 내용·의견 원문·토큰 값은 넣지 않는다. 자세한 내용은 대상 화면에서 권한 검사를 거쳐 본다.
 - 읽음(`read_at`)은 공통 모듈이 관리한다(NTF-A02). 해결 상태(`resolved_at`)는 이번 계약에서 쓰지 않는다 — 응답 필드가 없다.
 - 보관 기한은 두지 않는다(MVP). 대상이 지워졌거나 권한이 없으면 화면이 404를 받고 읽음 처리한다(NTF-A01 처리 규칙).
+- `document_id`가 같은 프로젝트의 문서인지는 **확인하지 않는다**(-280). 사용자 입력이 아니라 호출 도메인이 채우는 값이고, FK로 실제 문서임은 보장된다. 호출 코드 버그로 다른 프로젝트 문서를 가리켜도 응답에 나가는 것은 ID뿐이고, 화면이 문서를 열 때 문서 API 권한 검사에서 404를 받아 읽음 처리하는 데서 끝난다. DB에서 막아야 할 일이 생기면 `notification(document_id, project_id)` → `document(id, project_id)` 복합 FK를 건다(`document`에 이미 `UNIQUE (id, project_id)`가 있다, 마이그레이션 필요).
 
 ## 4. 활동 이벤트
 
@@ -97,7 +99,7 @@
 | `actor_name`(응답) | 계정 이름 또는 토큰 이름 |
 | `occurred_at` | `clock_timestamp()`(실제 저장 시각). `now()`는 트랜잭션 시작 시각이라 쓰지 않는다 |
 
-- 타임라인 정렬·cursor는 **id 내림차순**으로 한다(-183에서 MON-A04 처리 규칙에 반영). 시각 기준 정렬은 시각이 트랜잭션 시작 쪽으로 당겨질수록, 늦게 커밋된 활동이 cursor로 이미 지나간 위치에 끼어 이어 보기에서 빠질 수 있다. id는 저장하는 순간에 정해지므로 그 틈이 저장~커밋 사이로 줄어든다(완전히 없어지지는 않는다 — 처음부터 다시 읽으면 보인다).
+- 타임라인 정렬·cursor는 **id 내림차순**으로 한다(MON-A04 처리 규칙, -183). 시각 기준 정렬은 시각이 트랜잭션 시작 쪽으로 당겨질수록, 늦게 커밋된 활동이 cursor로 이미 지나간 위치에 끼어 이어 보기에서 빠질 수 있다. id는 저장하는 순간에 정해지므로 그 틈이 저장~커밋 사이로 줄어든다(완전히 없어지지는 않는다 — 처음부터 다시 읽으면 보인다).
 - 타임라인은 프로젝트 **멤버 전원**이 본다. 멤버에게 보여도 되는 사실만 남기고 원문·민감정보는 넣지 않는다.
 - 화면 응답(Activity)에는 주 대상 `target_type`·`target_id`도 내보낸다(공통 명세 Activity 스키마 수정안). 문서·멤버·세션처럼 보조 참조가 없는 활동도 무엇에 대한 일인지 보이게.
 
@@ -109,9 +111,10 @@
 ```
 
 - **도메인 사실만으로 정해지게** 만든다. 난수·현재 시각을 넣지 않는다. 같은 처리를 다시 해도(멱등 재요청·재시도) 같은 키가 나와야 한 건만 남는다.
+- `{ID}` 자리에는 **테이블 전체에서 유일한 DB id**를 쓴다. 프로젝트 안에서만 유일한 번호(작업 key `T-101`, 기준 `version_no` 등)를 쓰면 안 된다. `dedupe_key`는 프로젝트 구분 없이 테이블 전체에서 유일해서, 다른 프로젝트의 같은 키에 막혀 오류 없이 건너뛰어진다(-182).
 - 같은 동작이 여러 번 정당하게 일어날 수 있으면 구분 값을 붙인다. 버전 번호·잠금 버전·리비전 번호처럼 매번 달라지는 도메인 값을 쓴다.
 - 첫 조각(`{대상}`)은 그 대상을 가진 도메인만 쓴다. 영문 소문자와 `-`.
-- 공통 모듈이 검사하는 형식: `^[a-z][a-z0-9-]*(:[A-Za-z0-9_-]+)+$`, 최대 200자. 맞지 않으면 예외(2.2).
+- 공통 모듈이 검사하는 형식: `^[a-z][a-z0-9-]*(:[A-Za-z0-9_-]+)+$`, 최대 200자. 알림 키는 `:to:{recipient_account_id}`로 끝나야 한다(-181) — 수신자 조각이 빠지면 여러 수신자가 한 키를 나눠 써 첫 수신자 말고는 조용히 건너뛰어진다. 맞지 않으면 예외(2.2).
 - 알림과 활동은 테이블이 달라 같은 키 앞부분을 써도 된다.
 
 | 예 | 뜻 |
@@ -140,15 +143,17 @@
 | `DOCUMENT_CHANGED_BY_MEETING` | 회의(오서현) | 회의가 끝나 문서가 바뀜 | 관련 작업 담당자 | 아니오 | DOCUMENT_VERSION |
 | `BASELINE_CREATED` | 기준(오서현) | 기준 v1 생김 | 활성 팀원 | 아니오 | BASELINE |
 | `MEETING_OPENED` | 회의(오서현) | 비비가 회의를 엶 | 참여자 | — (행위자가 비비) | MEETING |
+| `MEETING_PARTICIPANT_ADDED` | 회의(오서현) | 참여자로 추가됨(MTG-A04, 이유를 문구에 포함) | 추가된 사람 | 아니오 | MEETING |
+| `MEETING_PARTICIPANT_REMOVED` | 회의(오서현) | 참여자에서 제외됨(MTG-A14, 이미 빠진 경우 멱등 204는 보내지 않음) | 빠진 사람 | — (팀장이 제외) | MEETING |
 | `MEETING_RECORD_ADDED` | 회의(오서현) | 회의에 새 기록 | 다른 참여자 | 아니오 | MEETING |
 | `CHANGE_PROPOSAL_SUBMITTED` | 변경(오서현) | 제안 올림 | 관련 작업 담당자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REVIEW_REQUESTED` | 변경(오서현) | 검토 요청 | 지정 검토자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_COMMENTED` | 변경(오서현) | 의견에서 멤버 지정 | 지정 멤버 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_APPROVED` | 변경(오서현) | 승인 | 제안자 | 아니오 | CHANGE_PROPOSAL |
 | `CHANGE_PROPOSAL_REJECTED` | 변경(오서현) | 반려 | 제안자 | 아니오 | CHANGE_PROPOSAL |
-| `CHANGE_PROPOSAL_PUBLISHED` | 변경(오서현) | 발행 | 관련 작업 담당자 | 아니오 | CHANGE_PROPOSAL |
-| `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `reassign`을 거친다 | 새 담당자 | **예** | TASK |
-| `REVALIDATION_REQUIRED` | 작업(변준성) | 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 됨(완료·취소 작업 제외) | 작업 담당자, 작업마다 한 건 | **예** | TASK |
+| `CHANGE_PROPOSAL_PUBLISHED` | 변경(오서현) | 발행 | 관련 작업 담당자. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | 아니오 | CHANGE_PROPOSAL |
+| `TASK_ASSIGNED` | 작업(변준성) · 호출은 `TaskHandoverService.reassign`(전진) | 담당자 변경(TSK-A06)·인계(멤버 제외·나가기) — 모두 `reassign`을 거친다 | 새 담당자. (수정안 요청 · 11-04 사용자 결정) 자기에게 배정하면(팀장 자기 배정, 팀원 스스로 맡기) 보내지 않음 | 아니오 (수정안 요청 · 11-04 사용자 결정) | TASK |
+| `REVALIDATION_REQUIRED` | 작업(변준성) | 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 됨(완료·취소 작업 제외) | 작업 담당자, 작업마다 한 건. 담당자 없는(미배정) 작업은 건너뜀(수정안 요청 · 11-04 사용자 결정) | **예** | TASK |
 
 ### 6.2 활동 유형
 
@@ -203,13 +208,13 @@
 | --- | --- | --- |
 | `notification` | `document_id` 컬럼 추가 | -181 |
 | `activity_event` | `actor_kind` CHECK에 `BEE` 추가, `agent_session_id`·`task_id`·`change_proposal_id`·`baseline_id`·`result` 저장(필터 대상은 인덱스 가능한 컬럼), `occurred_at` 기본값 `clock_timestamp()` | -182 |
-| MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id` | -183 |
+| MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id`·`actor_type`·`actor_name`. 인덱스 `(project_id, id DESC)`와 `change_proposal_id` 부분 인덱스(V35) | -183 |
 | `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
 | 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |
 | 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서, 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 된 작업의 담당자에게 작업마다 한 건씩 `REVALIDATION_REQUIRED` 알림(본인 포함). S1은 IN_PROGRESS만 WAITING으로 바꾸고 READY 등은 검증만 STALE로 두는데, READY 작업도 새 PASS가 있어야 시작할 수 있으므로 함께 보낸다. STALE 대상은 작업 상태로 거르지 않으므로([04 문서](04-task-lifecycle.md) S1) 완료·취소 작업은 여기서 뺀다(이 제외 기준은 MCP-03 `affected_task_ids`와 같다 — 대상 선정 기준까지 같은 것은 아니다). 담당자가 없는 작업(`assignee_member_id` NULL)은 건너뛴다. 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다 | -163(변준성) |
 | `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
-| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림(본인 포함). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
+| `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 `reassign`을 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다 | 전진(-212 코드 작성자, -182와 함께) |
 | 코드 TODO 7곳 | 변경 제안 4(생성·거두기·검토 시작/반려 — `ProposalCommandService`, 승인·발행 — `ProposalPublicationService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
