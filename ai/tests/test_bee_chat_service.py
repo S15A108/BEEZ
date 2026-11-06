@@ -454,7 +454,7 @@ async def test_claims_give_each_sentence_its_quote_numbers_and_the_shared_refere
     ]
     # PR #96 P2 (8th round): the references travel once, not once per claim.
     assert shared == [
-        'PLN-001 (POLICY): {"description": "발행은 리더만 수행한다."}',
+        'PLN-001 (POLICY, version_no=1): {"description": "발행은 리더만 수행한다."}',
         "TASK-001 READY / 담당 21",
     ]
     assert judge.seen[1] == [LIMIT, PUBLISH] and judge.seen[2] == shared
@@ -584,7 +584,7 @@ async def test_the_judge_gets_short_item_fields_and_plan_references_first():
     item_text, task_text = judge.seen[2]
     assert len(item_text) <= 2000 and len(task_text) <= 2000
     assert item_text.startswith(
-        'API-001 (API_CONTRACT): {"method": "POST", '
+        'API-001 (API_CONTRACT, version_no=1): {"method": "POST", '
         '"path": "/api/projects/{projectId}/documents", '
     )
     assert '"description": "' + "문" * (MAX_JUDGE_FIELD_CHARS - 1) + "…" in item_text
@@ -1129,6 +1129,23 @@ async def test_a_quote_the_evidence_does_not_hold_rejects_the_whole_answer():
     await rejected(answer(text="한도는 30 MB입니다 [1]. 삭제는 불가합니다 [2]."))
     await rejected(answer(text="누구나 발행 가능 [0]. 한도는 30 MB [1]."))
     await rejected(answer(text="한도는 30 MB [1]. 발행은 리더만 [100]."))
+
+
+@pytest.mark.asyncio
+async def test_approved_item_version_is_available_to_both_verification_steps():
+    item = {**approved_item(), "version_no": 2}
+    body = {"approved_items": [item], "retrieved_evidence": [], "related_tasks": []}
+    raw = answer(
+        text="PLN-001의 승인 버전은 2입니다.", citations=[], design_refs=["1101"]
+    )
+    judge = Judge()
+    result = (await run(raw, judge, **body)).result
+    assert result.answer_status == "ANSWERED"
+    assert result.design_refs[0].version_no == 2
+    assert "PLN-001 (POLICY, version_no=2)" in judge.seen[2][0]
+
+    wrong = {**raw, "text": "PLN-001의 승인 버전은 3입니다."}
+    await rejected(wrong, **body)
 
 
 @pytest.mark.asyncio
