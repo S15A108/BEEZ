@@ -211,6 +211,57 @@ def test_markdown_change_cannot_alter_unselected_structure(text, replacement):
         )
 
 
+def test_selected_heading_can_change_when_its_unchanged_paragraph_is_selected():
+    text = "# 기존 제목\n\n본문\n\n# 다른 절\n\n그대로\n"
+    body, heading = markdown_request(text)
+    blocks = parse_source(body.source).blocks
+    paragraph = next(b.block_id for b in blocks if b.locator.start_line == 3)
+    body = body.model_copy(update={"selected_block_ids": [heading, paragraph]})
+    result, _ = run(
+        body,
+        {
+            "changes": [
+                {
+                    "block_id": heading,
+                    "replacement": "# 변경 제목\n",
+                    "reason": "제목 수정",
+                    "evidence": [],
+                }
+            ],
+            "unresolved": [],
+        },
+    )
+    assert result["result"]["after_content"] == text.replace("기존 제목", "변경 제목")
+    assert [change["block_id"] for change in result["result"]["changes"]] == [heading]
+
+
+def test_selected_heading_still_cannot_change_context_of_unselected_paragraph():
+    text = "# 기존 제목\n\n선택한 본문\n\n선택하지 않은 본문\n"
+    body, heading = markdown_request(text)
+    selected_paragraph = next(
+        b.block_id
+        for b in parse_source(body.source).blocks
+        if b.locator.start_line == 3
+    )
+    body = body.model_copy(update={"selected_block_ids": [heading, selected_paragraph]})
+    with pytest.raises(LLMError) as error:
+        run(
+            body,
+            {
+                "changes": [
+                    {
+                        "block_id": heading,
+                        "replacement": "# 변경 제목\n",
+                        "reason": "제목 수정",
+                        "evidence": [],
+                    }
+                ],
+                "unresolved": [],
+            },
+        )
+    assert error.value.code == "invalid_output"
+
+
 def test_markdown_paragraph_change_preserving_other_structure_is_allowed():
     body, selected = markdown_request("첫 문단\n\n다음 문단\n")
     result, _ = run(

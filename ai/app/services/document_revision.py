@@ -79,8 +79,8 @@ with a newline character (encode it as \\n in JSON).
 """
 
 
-def _check_markdown_scope(source, document, after, changes):
-    """Reparse and ensure every unchanged block retains its structural context."""
+def _check_markdown_scope(source, document, after, changes, selected_block_ids):
+    """Reparse and preserve the structural context of unselected blocks."""
     digest = text_digest(after)
     updated = parse_source(
         source.model_copy(
@@ -116,8 +116,8 @@ def _check_markdown_scope(source, document, after, changes):
     old_by_id = {b.block_id: b for b in document.blocks}
     new_by_id = {b.block_id: b for b in updated.blocks}
     new_by_bounds = {bounds(b, new_starts): b for b in updated.blocks}
-    changed_ids = {change.block_id for _, _, change, _ in ordered}
-    unchanged = [b for b in document.blocks if b.block_id not in changed_ids]
+    selected = set(selected_block_ids)
+    protected = [b for b in document.blocks if b.block_id not in selected]
     parser = MarkdownIt(
         "commonmark", {"html": True, "inline_definitions": True, "maxNesting": 64}
     ).enable("table")
@@ -164,7 +164,7 @@ def _check_markdown_scope(source, document, after, changes):
             signatures[block.block_id] = tuple(signature)
         return signatures
 
-    old_signatures = token_signatures(old_tokens, unchanged)
+    old_signatures = token_signatures(old_tokens, protected)
     new_signatures = token_signatures(new_tokens, updated.blocks)
 
     def raw(block, text, starts):
@@ -198,7 +198,7 @@ def _check_markdown_scope(source, document, after, changes):
             tuple(containers),
         )
 
-    for block in unchanged:
+    for block in protected:
         start, end = bounds(block, old_starts)
         candidate = new_by_bounds.get((translate(start), translate(end)))
         if (
@@ -312,7 +312,12 @@ async def generate_revision(
             raise ValueError("invalid resulting document")
         if request.source.media_type == "text/markdown":
             await asyncio.to_thread(
-                _check_markdown_scope, request.source, document, after, changes
+                _check_markdown_scope,
+                request.source,
+                document,
+                after,
+                changes,
+                request.selected_block_ids,
             )
     except (ValidationError, ValueError, TypeError, UnicodeError, SourceParsingError):
         raise result.invalid_output_error() from None
