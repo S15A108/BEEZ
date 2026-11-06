@@ -175,13 +175,14 @@ export function TeamPanel({
     queryClient.removeQueries({ queryKey: ['projects', projectId] })
     void queryClient.invalidateQueries({ queryKey: ['projects'] })
   }
-  // 성공하면 이 프로젝트를 다시 부르지 않도록 action.run 없이 부른다. 409(leader_transfer_required·invalid_transfer_target)는
-  // 그사이 역할이나 팀원이 바뀐 것이라 다시 불러오고, 이유는 폼이 보이도록 오류를 다시 던진다.
+  // 성공하면 이 프로젝트를 다시 부르지 않도록 action.run 없이 부른다. 409(leader_transfer_required·invalid_transfer_target)와
+  // 403(이미 위임해 팀장이 아님, PR #170)은 그사이 역할이나 팀원이 바뀐 것이라 다시 불러오고, 이유는 폼이 보이도록 오류를 다시 던진다.
   const leave = async (input: Parameters<typeof membersApi.leave>[1]) => {
     try {
       await membersApi.leave(projectId, input)
     } catch (cause) {
-      if (getApiErrorStatus(cause) === 409)
+      const status = getApiErrorStatus(cause)
+      if (status === 403 || status === 409)
         await queryClient.invalidateQueries({
           queryKey: ['projects', projectId],
         })

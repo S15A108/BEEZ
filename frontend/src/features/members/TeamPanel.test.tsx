@@ -534,6 +534,39 @@ it('팀장은 넘길 팀원을 골라야 위임하고 나가고, 위임과 나�
   })
 })
 
+// PR #170: 다른 창에서 이미 위임한 뒤 위임하고 나가기를 누르면 서버가 403 forbidden을 준다. 창이 팀장 모양으로
+// 남으면 같은 오류만 반복되므로 역할과 팀원 목록을 다시 불러온다.
+it('이미 위임해 위임하고 나가기가 403으로 막히면 이유를 보이고 역할과 팀원 목록을 다시 불러온다', async () => {
+  const user = userEvent.setup()
+  const invalidate = vi.spyOn(client, 'invalidateQueries')
+  vi.spyOn(membersApi, 'leave').mockRejectedValueOnce(
+    new AxiosError('forbidden', '403', undefined, undefined, {
+      status: 403,
+      statusText: 'Forbidden',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'forbidden', message: 'forbidden' } },
+    }),
+  )
+  renderRemoveView(true)
+  const handoff = await screen.findByRole('region', {
+    name: '위임하고 나가기',
+  })
+  await within(handoff).findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.selectOptions(
+    within(handoff).getByLabelText(/팀장을 넘겨받을 팀원/),
+    '김동료',
+  )
+  await user.click(
+    within(handoff).getByRole('button', { name: '위임하고 나가기' }),
+  )
+  expect(
+    await screen.findByText('이 작업의 권한이 없습니다.'),
+  ).toBeInTheDocument()
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects', '101'] })
+  expect(screen.queryByText('나의 도시')).not.toBeInTheDocument()
+})
+
 it('팀장은 팀원이 있어도 프로젝트 이름을 입력하면 삭제하고 남은 팀원도 못 쓴다고 알린다', async () => {
   const user = userEvent.setup()
   const { name } = await projectsApi.get('101')
