@@ -5,12 +5,11 @@ import {
   NODE_TYPES,
   NODE_W,
   edgeLabel,
-  edgeRoute,
   graphLabel,
+  layoutEdges,
   lineLabel,
   nodeKind,
   nodeX,
-  nodeY,
   relationLabel,
 } from '@/features/relations/relationDisplay'
 import { cn } from '@/lib/utils'
@@ -43,16 +42,15 @@ export function RelationGraph({
   const byKey = new Map(
     visible.map((node) => [`${node.type}:${node.id}`, node]),
   )
-  const edges = data.edges.flatMap((edge) => {
+  const drawn = data.edges.flatMap((edge) => {
     const from = byKey.get(`${edge.from_type}:${edge.from_id}`),
       to = byKey.get(`${edge.to_type}:${edge.to_id}`)
-    return from && to
-      ? [{ ...edge, from, to, route: edgeRoute(from, to, columnCount - 1) }]
-      : []
+    return from && to ? [{ ...edge, from, to, text: lineLabel(edge) }] : []
   })
-  const width = nodeX(columnCount) - COLUMN_GAP
   const rows = Math.max(1, ...columns.map((nodes) => nodes.length))
-  const height = nodeY(rows - 1) + NODE_H + 8
+  const { routes, rowTops, height } = layoutEdges(drawn, rows, columnCount - 1)
+  const edges = drawn.map((edge, index) => ({ ...edge, route: routes[index] }))
+  const width = nodeX(columnCount) - COLUMN_GAP
   return (
     <div className="grid gap-4">
       {/* 범례(캔버스 PNL-09-v2-relations). 후보는 확정된 의존 관계로 보지 않는다. */}
@@ -105,7 +103,7 @@ export function RelationGraph({
           {visible.map((node) => {
             const kind = nodeKind(node.type)
             const x = nodeX(node.col)
-            const y = nodeY(node.row)
+            const y = rowTops[node.row]
             return (
               <g
                 key={`${node.type}:${node.id}`}
@@ -172,19 +170,23 @@ export function RelationGraph({
                 fill="none"
                 markerEnd={`url(#${markerId})`}
               />
-              <text
-                x={edge.route.labelX}
-                y={edge.route.labelY}
-                textAnchor="middle"
-                dominantBaseline="central"
-                className={cn(
-                  'stroke-card stroke-[6px] text-[11px] font-medium [paint-order:stroke]',
-                  edge.confirmed ? 'fill-[#57534e]' : 'fill-muted-foreground',
-                )}
-              >
-                {lineLabel(edge)}
-              </text>
             </g>
+          ))}
+          {/* 이름은 다른 선에 가리지 않게 모든 선 뒤에 그린다. */}
+          {edges.map((edge, index) => (
+            <text
+              key={`${edge.from.type}:${edge.from.id}:${edge.to.type}:${edge.to.id}:${index}`}
+              x={edge.route.labelX}
+              y={edge.route.labelY}
+              textAnchor="middle"
+              dominantBaseline="central"
+              className={cn(
+                'stroke-card stroke-[6px] text-[11px] font-medium [paint-order:stroke]',
+                edge.confirmed ? 'fill-[#57534e]' : 'fill-muted-foreground',
+              )}
+            >
+              {edge.text}
+            </text>
           ))}
         </svg>
       </div>

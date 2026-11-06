@@ -26,7 +26,11 @@ beforeEach(async () => {
   restore = setupMockApi()
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
 })
-afterEach(() => restore())
+// 테스트가 실패해도 spy가 다음 테스트로 새지 않게 여기서 되돌린다.
+afterEach(() => {
+  restore()
+  vi.restoreAllMocks()
+})
 
 it('왼쪽에서 고른 작업 기준으로 확인된 관계와 검토할 후보를 나눠 보여 준다', async () => {
   const user = userEvent.setup()
@@ -98,7 +102,6 @@ it('그래프의 검증 상자를 누르면 고른 작업의 작업 현황을 �
     pane: 'tasks',
     focusId: task.id,
   })
-  vi.restoreAllMocks()
 })
 
 // PR #72 리뷰 8: 관계 목록에서 선행 작업을 누르면 지금 작업이 아니라 그 작업을 연다.
@@ -135,7 +138,6 @@ it('관계 목록의 작업 보기는 누른 작업을 연다', async () => {
     pane: 'tasks',
     focusId: '502',
   })
-  vi.restoreAllMocks()
 })
 
 // PR #72 mock/live 전수 대조 LA-TC-10: PROPOSED_FROM(이 작업에서 나온 제안)은 영향 경고가 아니다.

@@ -132,6 +132,48 @@ it('모르는 종류와 관계가 와도 기타 칸에 그리고 누를 수 없�
   expect(screen.queryByRole('button', { name: '새 종류 항목' })).toBeNull()
 })
 
+it('같은 작업에서 나온 제안 두 개는 선과 이름이 따로 보인다', () => {
+  const proposal = (id: string) => ({
+    from_id: id,
+    from_type: 'CHANGE_PROPOSAL',
+    to_id: '501',
+    to_type: 'TASK',
+    relation: 'PROPOSED_FROM',
+    confirmed: true,
+  })
+  const { svg } = graph({
+    nodes: [
+      { id: '501', type: 'TASK', label: 'TASK-001 목록 화면' },
+      { id: '71', type: 'CHANGE_PROPOSAL', label: '빈 화면 안내' },
+      { id: '72', type: 'CHANGE_PROPOSAL', label: '로그인 흐름 바꾸기' },
+    ],
+    edges: [proposal('71'), proposal('72')],
+  })
+  const labels = within(svg).getAllByText('나온 제안')
+  expect(labels).toHaveLength(2)
+  expect(labels[0].getAttribute('y')).not.toBe(labels[1].getAttribute('y'))
+  const lines = within(svg)
+    .getAllByText(/이 작업에서 나온 제안/, { selector: 'title' })
+    .map((title) =>
+      title.parentElement?.querySelector('path')?.getAttribute('d'),
+    )
+  expect(lines).toHaveLength(2)
+  expect(lines[0]).not.toBe(lines[1])
+})
+
+it('이름을 모든 선보다 나중에 그려 다른 선에 가리지 않는다', () => {
+  const { svg } = graph()
+  const firstLabel = within(svg).getByText('구현')
+  const lines = within(svg).getAllByText(/→/, { selector: 'title' })
+  expect(lines).toHaveLength(3)
+  for (const line of lines) {
+    expect(
+      line.parentElement!.compareDocumentPosition(firstLabel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  }
+})
+
 it('연결된 노드가 그래프 밖에 있어도 깨지지 않고 그릴 수 있는 관계만 그린다', () => {
   const { svg } = graph({
     nodes: [{ id: '501', type: 'TASK', label: 'TASK-001 목록 화면' }],

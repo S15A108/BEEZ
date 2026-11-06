@@ -5,12 +5,11 @@ import {
   NODE_H,
   NODE_W,
   edgeLabel,
-  edgeRoute,
   graphLabel,
+  layoutEdges,
   lineLabel,
   nodeKind,
   nodeX,
-  nodeY,
   relationLabel,
 } from './relationDisplay'
 
@@ -116,62 +115,150 @@ describe('graphLabel', () => {
   })
 })
 
-describe('edgeRoute', () => {
+describe('layoutEdges', () => {
   const lastCol = 3
+  type Spec = [
+    fromCol: number,
+    fromRow: number,
+    toCol: number,
+    toRow: number,
+    text?: string,
+  ]
+  const layout = (specs: Spec[], rows = 8) =>
+    layoutEdges(
+      specs.map(([fromCol, fromRow, toCol, toRow, text = '구현']) => ({
+        from: { col: fromCol, row: fromRow },
+        to: { col: toCol, row: toRow },
+        text,
+      })),
+      rows,
+      lastCol,
+    )
   const inGap = (x: number, col: number) =>
     x > nodeX(col) + NODE_W && x < nodeX(col) + NODE_W + COLUMN_GAP
+  const expectNoOverlap = ({ routes }: ReturnType<typeof layout>) => {
+    routes.forEach((a, index) =>
+      routes.slice(index + 1).forEach((b) => {
+        const apart =
+          Math.abs(a.labelX - b.labelX) >= (a.labelW + b.labelW) / 2 ||
+          Math.abs(a.labelY - b.labelY) >= 14
+        expect(apart, `${JSON.stringify(a)} ${JSON.stringify(b)}`).toBe(true)
+      }),
+    )
+  }
 
   it('이웃한 열을 잇는 선의 이름은 두 열 사이 빈 칸에 온다', () => {
-    const route = edgeRoute({ col: 0, row: 0 }, { col: 1, row: 2 }, lastCol)
-    expect(inGap(route.labelX, 0)).toBe(true)
-    expect(route.d.startsWith(`M${NODE_W},`)).toBe(true)
-    expect(route.d.endsWith(`${nodeX(1)},${nodeY(2) + NODE_H / 2}`)).toBe(true)
+    const { routes, rowTops } = layout([[0, 0, 1, 2]])
+    expect(inGap(routes[0].labelX, 0)).toBe(true)
+    expect(routes[0].d.startsWith(`M${NODE_W},`)).toBe(true)
+    expect(routes[0].d.endsWith(`${nodeX(1)},${rowTops[2] + NODE_H / 2}`)).toBe(
+      true,
+    )
   })
 
   it('왼쪽으로 가는 선은 상자의 왼쪽에서 나와 오른쪽 면으로 들어간다', () => {
-    const route = edgeRoute({ col: 2, row: 0 }, { col: 1, row: 0 }, lastCol)
-    expect(route.d.startsWith(`M${nodeX(2)},`)).toBe(true)
+    const { routes, rowTops } = layout([[2, 0, 1, 0]])
+    expect(routes[0].d.startsWith(`M${nodeX(2)},`)).toBe(true)
     expect(
-      route.d.endsWith(`${nodeX(1) + NODE_W},${nodeY(0) + NODE_H / 2}`),
+      routes[0].d.endsWith(`${nodeX(1) + NODE_W},${rowTops[0] + NODE_H / 2}`),
     ).toBe(true)
   })
 
   it('두 칸 이상 건너는 선은 사이 열의 상자를 피해 상자 위 빈 줄로 간다', () => {
-    const route = edgeRoute({ col: 0, row: 1 }, { col: 2, row: 1 }, lastCol)
-    expect(route.labelY).toBeLessThan(nodeY(1))
-    expect(route.labelY).toBeGreaterThan(nodeY(0) + NODE_H)
+    const { routes, rowTops } = layout([[0, 1, 2, 1]])
+    expect(routes[0].labelY + 7).toBeLessThanOrEqual(rowTops[1])
+    expect(routes[0].labelY - 7).toBeGreaterThanOrEqual(rowTops[0] + NODE_H)
   })
 
-  it('건너는 칸 수가 다른 선은 다른 높이로 가서 겹치지 않는다', () => {
-    const two = edgeRoute({ col: 0, row: 0 }, { col: 2, row: 0 }, lastCol)
-    const three = edgeRoute({ col: 3, row: 0 }, { col: 0, row: 0 }, lastCol)
-    expect(two.labelY).not.toBe(three.labelY)
-    expect(three.labelY).toBeGreaterThan(0)
+  // 같은 작업에서 나온 제안 두 개는 같은 줄을 지나 선과 이름이 완전히 겹쳤다.
+  it('같은 작업에서 나온 제안 두 개는 선과 이름이 따로 보인다', () => {
+    const graph = layout([
+      [3, 0, 0, 0, '나온 제안'],
+      [3, 1, 0, 0, '나온 제안'],
+    ])
+    expect(graph.routes[0].d).not.toBe(graph.routes[1].d)
+    expect(
+      Math.abs(graph.routes[0].labelY - graph.routes[1].labelY),
+    ).toBeGreaterThanOrEqual(14)
+    expectNoOverlap(graph)
   })
 
-  it('같은 두 열을 오가는 선은 높이와 이름 자리가 달라 이름이 겹치지 않는다', () => {
-    const going = edgeRoute({ col: 0, row: 0 }, { col: 2, row: 0 }, lastCol)
-    const coming = edgeRoute({ col: 2, row: 0 }, { col: 0, row: 1 }, lastCol)
-    expect(going.labelY).not.toBe(coming.labelY)
-    expect(Math.abs(going.labelX - coming.labelX)).toBeGreaterThanOrEqual(40)
+  it('같은 줄을 지나는 선이 많으면 줄이 넓어져 상자와 열 제목을 가리지 않는다', () => {
+    const graph = layout(
+      [0, 1, 2, 3, 4, 5, 6, 7].map((row): Spec => [3, row, 0, 0, '나온 제안']),
+    )
+    expectNoOverlap(graph)
+    graph.routes.forEach((route) => {
+      expect(route.labelY - 7).toBeGreaterThanOrEqual(24)
+      expect(route.labelY + 7).toBeLessThanOrEqual(graph.rowTops[0])
+    })
+  })
+
+  it('같은 두 열을 오가는 선은 줄이 달라 이름이 겹치지 않는다', () => {
+    const graph = layout([
+      [0, 0, 2, 0, '검증'],
+      [2, 0, 0, 1, '대조'],
+    ])
+    expect(graph.routes[0].labelY).not.toBe(graph.routes[1].labelY)
+    expectNoOverlap(graph)
   })
 
   it('같은 열의 상자끼리는 옆 빈 칸으로 돌아서 잇는다', () => {
-    const route = edgeRoute({ col: 0, row: 0 }, { col: 0, row: 2 }, lastCol)
-    expect(inGap(route.labelX, 0)).toBe(true)
-    expect(route.labelY).toBeGreaterThan(nodeY(0))
-    expect(route.labelY).toBeLessThan(nodeY(2) + NODE_H)
+    const { routes, rowTops } = layout([[0, 0, 0, 2]])
+    expect(inGap(routes[0].labelX, 0)).toBe(true)
+    expect(routes[0].labelY).toBeGreaterThan(rowTops[0])
+    expect(routes[0].labelY).toBeLessThan(rowTops[2] + NODE_H)
   })
 
-  it('같은 열 관계의 이름은 옆 열로 가는 선의 이름과 겹치지 않는다', () => {
-    const same = edgeRoute({ col: 0, row: 0 }, { col: 0, row: 1 }, lastCol)
-    const next = edgeRoute({ col: 0, row: 0 }, { col: 1, row: 1 }, lastCol)
-    expect(Math.abs(same.labelY - next.labelY)).toBeGreaterThanOrEqual(14)
+  it('같은 열 관계의 이름은 어느 행이든 옆 열로 가는 선의 이름과 겹치지 않는다', () => {
+    for (const sameRow of [1, 2, 3, 4, 5, 6, 7])
+      for (const nextRow of [0, 1, 2, 3, 4, 5, 6, 7]) {
+        const graph = layout([
+          [0, 0, 0, sameRow, '선행'],
+          [0, 0, 1, nextRow, '구현'],
+        ])
+        expectNoOverlap(graph)
+        graph.routes.forEach((route) =>
+          expect(inGap(route.labelX, 0)).toBe(true),
+        )
+      }
+  })
+
+  it('같은 두 상자를 잇는 관계가 여럿이어도 이름이 겹치지 않는다', () => {
+    expectNoOverlap(
+      layout([
+        [0, 0, 1, 0, '구현'],
+        [0, 0, 1, 0, '참고'],
+        [0, 0, 1, 0, '고침'],
+      ]),
+    )
+  })
+
+  it('여러 모양의 선이 섞여도 이름이 겹치지 않고 그림 안에 있다', () => {
+    const graph = layout([
+      [0, 0, 1, 0, '구현'],
+      [0, 0, 1, 1, '참고'],
+      [0, 0, 1, 2, '고침'],
+      [0, 0, 2, 0, '검증'],
+      [0, 0, 0, 1, '선행'],
+      [2, 0, 1, 0, '구현'],
+      [2, 0, 0, 1, '대조'],
+      [3, 0, 0, 0, '나온 제안'],
+      [3, 1, 0, 0, '나온 제안'],
+      [3, 0, 1, 0, '고침'],
+      [3, 1, 1, 1, '후보'],
+      [0, 0, 3, 0, 'NEW_REL…'],
+    ])
+    expectNoOverlap(graph)
+    graph.routes.forEach((route) => {
+      expect(route.labelY - 7).toBeGreaterThanOrEqual(24)
+      expect(route.labelY + 7).toBeLessThanOrEqual(graph.height)
+    })
   })
 
   it('마지막 열의 같은 열 관계는 그림 밖으로 나가지 않게 왼쪽으로 돈다', () => {
-    const route = edgeRoute({ col: 3, row: 0 }, { col: 3, row: 1 }, lastCol)
-    expect(inGap(route.labelX, 2)).toBe(true)
+    const { routes } = layout([[3, 0, 3, 1]])
+    expect(inGap(routes[0].labelX, 2)).toBe(true)
   })
 })
 

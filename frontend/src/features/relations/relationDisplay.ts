@@ -78,18 +78,27 @@ export const NODE_W = 172
 export const NODE_H = 56
 export const COLUMN_GAP = 64
 const ROW_GAP = 32
-const TOP = 64
+const HEADER = 32 // 열 제목 자리
+const LANE = 14 // 선 하나와 그 이름이 들어가는 줄 높이
 
 export const nodeX = (col: number) => col * (NODE_W + COLUMN_GAP)
-export const nodeY = (row: number) => TOP + row * (NODE_H + ROW_GAP)
 
 type Cell = { col: number; row: number }
 
-// 상자 면에서 면으로 잇는 선 경로와 이름 자리. 상자가 없는 열 사이 칸과 행 사이 줄로만 다녀서 이름이 상자에 가리지 않는다.
-// ponytail: 같은 두 상자를 잇는 관계가 여럿이면 이름이 겹친다. 그런 응답이 실제로 나오면 이름을 묶는다.
-export function edgeRoute(from: Cell, to: Cell, lastCol: number) {
-  const fromY = nodeY(from.row) + NODE_H / 2
-  const toY = nodeY(to.row) + NODE_H / 2
+// 이름이 들어갈 폭의 어림값(11px 글자와 양옆 테두리).
+const labelWidth = (text: string) =>
+  [...text].reduce((width, char) => width + (char > '⹿' ? 11 : 7), 6)
+
+// 상자 면에서 면으로 잇는 선 경로와 이름 자리. 상자가 없는 열 사이 칸과 행 사이 줄로만 다닌다.
+function edgeRoute(
+  from: Cell,
+  to: Cell,
+  lastCol: number,
+  rowTops: number[],
+  lane = 0,
+) {
+  const fromY = rowTops[from.row] + NODE_H / 2
+  const toY = rowTops[to.row] + NODE_H / 2
   const span = Math.abs(to.col - from.col)
 
   if (span === 0) {
@@ -98,7 +107,7 @@ export function edgeRoute(from: Cell, to: Cell, lastCol: number) {
     const bulge = x + side * COLUMN_GAP
     return {
       d: `M${x},${fromY} C${bulge},${fromY} ${bulge},${toY} ${x},${toY}`,
-      // 곡선의 3/4 지점(t = 0.75). 가운데에 두면 옆 열로 가는 선의 이름과 같은 높이에서 겹친다.
+      // 곡선의 3/4 지점(t = 0.75)
       labelX: x + side * COLUMN_GAP * 0.5625,
       labelY: fromY + (toY - fromY) * 0.84375,
     }
@@ -117,20 +126,75 @@ export function edgeRoute(from: Cell, to: Cell, lastCol: number) {
     }
   }
 
-  // 사이 열을 건너면 위쪽 상자 바로 위의 빈 줄로 간다. 작업 → 검증과 검증 → 다른 작업처럼 같은 두 열을 오가거나,
-  // 제안 → 작업처럼 더 멀리 가는 선이 겹치지 않게 줄 높이와 상자 면의 시작점을 나눈다.
-  const lane = span > 2 ? 3 : dir > 0 ? 1 : 2
-  const laneY = nodeY(Math.min(from.row, to.row)) - lane * 8
-  const startY = fromY - lane * 6
-  const endY = toY - lane * 6
+  // 줄마다 상자 면의 시작점도 달리해 나오는 곳에서부터 선이 갈린다.
+  const laneY = rowTops[Math.min(from.row, to.row)] - 9 - lane * LANE
+  const anchor = Math.min((lane + 1) * 6, NODE_H / 2 - 6)
+  const startY = fromY - anchor
+  const endY = toY - anchor
   const leaveX = startX + (dir * COLUMN_GAP) / 2
   const enterX = endX - (dir * COLUMN_GAP) / 2
   return {
     d:
       `M${startX},${startY} C${leaveX},${startY} ${leaveX},${laneY} ${startX + dir * COLUMN_GAP},${laneY} ` +
       `L${endX - dir * COLUMN_GAP},${laneY} C${enterX},${laneY} ${enterX},${endY} ${endX},${endY}`,
-    // 이름을 시작점 쪽으로 조금 옮겨, 오가는 두 선의 이름이 같은 자리에 오지 않게 한다.
-    labelX: labelX - dir * 24,
+    labelX,
     labelY: laneY,
   }
+}
+
+// 그래프의 행 높이와 선 경로, 이름 자리를 함께 정한다. text는 선 위에 쓸 이름이다.
+export function layoutEdges(
+  edges: { from: Cell; to: Cell; text: string }[],
+  rows: number,
+  lastCol: number,
+) {
+  // 사이 열을 건너는 선은 위쪽 상자 바로 위의 빈 줄을 지난다. 짧게 건너는 선부터 상자 가까운 쪽에 한 줄씩 줘서,
+  // 같은 작업에서 나온 제안 두 개처럼 같은 길을 가는 선도 선과 이름이 겹치지 않게 한다.
+  const crossing = edges
+    .map((edge, index) => ({
+      index,
+      span: Math.abs(edge.to.col - edge.from.col),
+      gutter: Math.min(edge.from.row, edge.to.row),
+    }))
+    .filter(({ span }) => span > 1)
+    .sort((a, b) => a.span - b.span)
+  const laneCounts = Array.from({ length: rows }, () => 0)
+  const lanes = new Map(
+    crossing.map(({ index, gutter }) => [index, laneCounts[gutter]++]),
+  )
+
+  // 줄이 많으면 그 빈 줄을 넓힌다.
+  const rowTops: number[] = []
+  let bottom = HEADER
+  for (const count of laneCounts) {
+    rowTops.push(bottom + Math.max(ROW_GAP, count * LANE + 4))
+    bottom = rowTops[rowTops.length - 1] + NODE_H
+  }
+
+  const routes = edges.map((edge, index) => ({
+    ...edgeRoute(edge.from, edge.to, lastCol, rowTops, lanes.get(index)),
+    labelW: labelWidth(edge.text),
+  }))
+
+  // 빈 줄의 이름은 자기 줄에 두고, 열 사이 칸의 이름은 다른 이름과 겹치면 위아래로 비킨다. x는 그대로라 상자에 닿지 않는다.
+  const placed = routes.filter((_, index) => lanes.has(index))
+  const clashes = (route: (typeof routes)[number]) =>
+    route.labelY - 7 < HEADER ||
+    placed.some(
+      (other) =>
+        Math.abs(route.labelX - other.labelX) <
+          (route.labelW + other.labelW) / 2 &&
+        Math.abs(route.labelY - other.labelY) < LANE,
+    )
+  routes.forEach((route, index) => {
+    if (lanes.has(index)) return
+    const start = route.labelY
+    for (let step = 1; clashes(route); step++)
+      route.labelY = start + (step % 2 ? LANE : -LANE) * Math.ceil(step / 2)
+    placed.push(route)
+  })
+
+  const height =
+    Math.max(bottom, ...routes.map((route) => route.labelY + 7)) + 8
+  return { routes, rowTops, height }
 }
