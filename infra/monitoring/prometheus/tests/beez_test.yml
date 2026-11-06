@@ -302,3 +302,63 @@ tests:
         exp_alerts:
           - exp_labels: {team: infra, slot_name: c, database: beez, job: postgres}
             exp_annotations: {summary: "슬롯 c 이 WAL 2GiB 를 붙잡고 있음(무효화 상한 10GB)"}
+
+  # 깨지면: consumer 를 켠 뒤 기대 슬롯이 사라져(지워짐·다른 이름) 슬롯 감시 두 개가 조용히 꺼진 것을 놓치거나(PR #166 리뷰),
+  # 커넥터 등록 전(consumer 꺼짐)에 거짓으로 운다.
+  # a: consumer 켜짐, 3분에 슬롯 시계열이 사라짐(stale) → 10분 지나 알림. b(별도 시험): consumer 꺼짐·슬롯 없음 → 없음
+  - name: consumer 켜짐 — 기대 슬롯 지표가 10분 넘게 없으면 CdcSlotMissing
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'pg_up{job="postgres"}', values: '1x20'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '1x20'}
+      - {series: 'pg_replication_slots_slot_is_active{slot_name="beez_published_analysis",slot_type="logical",job="postgres"}', values: '1 1 1 stale'}
+      - {series: 'pg_replication_slots_pg_wal_lsn_diff{slot_name="beez_published_analysis",database="beez",job="postgres"}', values: '0 0 0 stale'}
+    alert_rule_test:
+      - {eval_time: 12m, alertname: CdcSlotMissing, exp_alerts: []}
+      - eval_time: 14m
+        alertname: CdcSlotMissing
+        exp_alerts:
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "consumer 가 켜졌는데 슬롯 beez_published_analysis 지표가 없음 — 슬롯이 사라졌거나 다른 이름으로 만들어짐"}
+
+  - name: consumer 꺼짐(커넥터 등록 전·되돌리기) — 슬롯이 없어도 알림 없음
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '0x30'}
+      - {series: 'pg_up{job="postgres"}', values: '1x30'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '0x30'}
+    alert_rule_test:
+      - {eval_time: 30m, alertname: CdcSlotMissing, exp_alerts: []}
+      - {eval_time: 30m, alertname: CdcSlotCollectorFailing, exp_alerts: []}
+
+  # 깨지면: 기본 쿼리 쪽(WAL 보유량) 지표만 빠져 CdcSlotWalRetained 가 조용히 꺼진 것을 놓친다
+  - name: consumer 켜짐 — WAL 보유량 지표만 없어도 CdcSlotMissing
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'pg_up{job="postgres"}', values: '1x20'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '1x20'}
+      - {series: 'pg_replication_slots_slot_is_active{slot_name="beez_published_analysis",slot_type="logical",job="postgres"}', values: '1x20'}
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: CdcSlotMissing
+        exp_alerts:
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "consumer 가 켜졌는데 슬롯 beez_published_analysis 지표가 없음 — 슬롯이 사라졌거나 다른 이름으로 만들어짐"}
+
+  # 깨지면: replication_slots 수집기가 실패해 슬롯 감시가 통째로 꺼진 것을 놓치거나, 그때 CdcSlotMissing 이 원인을 잘못 짚어 함께 운다
+  - name: consumer 켜짐 — 수집기 실패는 CdcSlotCollectorFailing 만
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_analysis_consumer_enabled{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'pg_up{job="postgres"}', values: '1x20'}
+      - {series: 'pg_scrape_collector_success{collector="replication_slots",job="postgres"}', values: '0x20'}
+      - {series: 'pg_replication_slots_pg_wal_lsn_diff{slot_name="beez_published_analysis",database="beez",job="postgres"}', values: '0x20'}
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: CdcSlotCollectorFailing
+        exp_alerts:
+          - exp_labels: {team: infra, collector: replication_slots, job: postgres}
+            exp_annotations: {summary: "postgres-exporter replication_slots 수집 실패 — 슬롯 감시가 멈춤"}
+      - {eval_time: 12m, alertname: CdcSlotMissing, exp_alerts: []}

@@ -6,7 +6,7 @@
 
 - 앞 단계: PostgreSQL 논리 복제·계정·publication·비밀 파일은 [cdc-postgres.md](cdc-postgres.md)(293),
   Kafka·Connect 스택과 접수 토픽은 [cdc-stack.md](cdc-stack.md)(294), 스캔·consumer 분리와 자동 재연결은 S15P31A108-298(PR #164).
-- 이 문서가 만드는 것: 커넥터 `beez-published-analysis-1`과 그 복제 슬롯 `beez_published_analysis`, 슬롯 알림 두 개,
+- 이 문서가 만드는 것: 커넥터 `beez-published-analysis-1`과 그 복제 슬롯 `beez_published_analysis`, 슬롯 알림 네 개,
   서버 env의 CDC 켜기 두 줄.
 
 | 무엇 | 어디에 | 누가 바꾸나 |
@@ -14,7 +14,7 @@
 | 커넥터 설정 | `infra/cdc/dev/intake-connector.json` → 서버 `/opt/beez/cdc/intake-connector.json` | PR → [cdc-stack.md "올리기·업데이트"](cdc-stack.md#올리기업데이트) → 손으로 등록(아래 3) |
 | 커넥터 상태·offset | Connect 내부 토픽(`beez-cdc-connect-*`) | REST(`docker exec`)로만 |
 | 복제 슬롯 | PostgreSQL. 커넥터가 처음 붙을 때 만든다 | 커넥터. 지우는 것만 손으로(아래 "되돌리기") |
-| 슬롯 알림 `CdcSlotInactive`·`CdcSlotWalRetained` | `infra/monitoring/prometheus/rules/beez.yml` | PR → [monitoring.md "올리기·업데이트"](monitoring.md#올리기업데이트) |
+| 슬롯 알림 `CdcSlotInactive`·`CdcSlotWalRetained`·`CdcSlotMissing`·`CdcSlotCollectorFailing` | `infra/monitoring/prometheus/rules/beez.yml` | PR → [monitoring.md "올리기·업데이트"](monitoring.md#올리기업데이트) |
 | 분석 켜기 `BEEZ_CDC_INTAKE_ENABLED`·`BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | 서버 `/opt/beez/.env.dev` (compose 전달은 298이 넣음, 기본 꺼짐) | 손으로(아래 6) → 같은 SHA 재배포 |
 
 ## 꼭 지킬 것
@@ -102,15 +102,33 @@ cdc logs connect --since 5m 2>&1 | grep -E "Snapshot (ended|completed)| ERROR " 
   `publication … does not exist`면 293 4-1을 다시 본다. 고친 뒤 `crest /connectors/beez-published-analysis-1/tasks/0/restart -X POST`.
 - **접수 토픽에 시험 메시지를 쓰지 않는다.** consumer가 모르는 형식을 받으면 재시도로 파티션이 막힌다(계획 D3).
 
-## 5. 슬롯 알림 올리기 (PR 머지 뒤)
+## 5. 슬롯 알림 올리기 (6의 선행 조건)
 
-[monitoring.md "올리기·업데이트"](monitoring.md#올리기업데이트)대로 모니터링 스택을 이 PR이 머지된 dev로 올린다. 298의
-`CdcConsumerDown`도 같은 올리기로 들어간다. 확인은 Prometheus 규칙 화면(SSH 터널)에서 `CdcSlotInactive`·`CdcSlotWalRetained`가
-`inactive`(초록)인지 본다. 알림 대응은 [monitoring-alerts.md](monitoring-alerts.md#cdcslotinactive).
+**consumer를 켜기 전에 슬롯 알림이 서버 Prometheus에 들어가 있어야 한다**(PR #166 리뷰). 켠 뒤에는 복구 스캔이 분석을 이어
+가므로 Connect가 멈추거나 슬롯이 사라져도 다른 알림이 울지 않는다.
+
+- [monitoring.md "올리기·업데이트"](monitoring.md#올리기업데이트)대로 모니터링 스택을 올린다. 머지 전이면 `REV`에 이 PR 브랜치
+  커밋을 주고, 머지 뒤 `REV=origin/dev`로 한 번 더 올려 `REVISION`을 맞춘다(2와 같은 방식).
+- 확인(읽기 전용): 아래 명령에서 슬롯 알림 네 개가 모두 보이고 health 가 `ok` 면 들어간 것이다.
+
+```bash
+# 서버. Prometheus 는 호스트 127.0.0.1:9090 에만 열려 있다(monitoring.md "확인"). 슬롯 규칙의 이름·상태·건강만 뽑는다
+curl -s 127.0.0.1:9090/api/v1/rules | python3 -c '
+import sys, json
+for g in json.load(sys.stdin)["data"]["groups"]:
+    for r in g["rules"]:
+        if r["name"].startswith("CdcSlot"): print(g["name"], r["name"], r.get("state"), r["health"])'
+cat /opt/beez/monitoring/REVISION
+```
+
+- 알림 네 개: `CdcSlotInactive`(10분 비활성)·`CdcSlotWalRetained`(WAL 1GiB)·`CdcSlotMissing`(consumer가 켜졌는데 슬롯 지표 없음)·
+  `CdcSlotCollectorFailing`(수집기 실패). 대응은 [monitoring-alerts.md](monitoring-alerts.md#cdcslotinactive).
+- 알림을 올리기 전에 consumer를 켜야 하는 사정이 있으면, 올릴 때까지 아래 "상태 보기"를 하루 두 번(오전·오후) 하고
+  실행 기록에 그 사실을 적는다.
 
 ## 6. consumer 켜기
 
-**4가 RUNNING·`active = t`인 뒤에만 한다**(계획 D7 "켜는 순서"). 켜면 복구 스캔도 같이 켜져, 그동안 쌓인 PENDING을 한꺼번에
+**5가 확인되고, 4가 RUNNING·`active = t`인 뒤에만 한다**(계획 D7 "켜는 순서"). 켜면 복구 스캔도 같이 켜져, 그동안 쌓인 PENDING을 한꺼번에
 집어 AI를 부른다. 그래서 켜기 직전 접수 상태를 적어 둔다.
 
 ```bash
@@ -252,6 +270,7 @@ pgsql -c "SELECT count(*) FROM pg_replication_slots" </dev/null
 | 11-05 | 1 사전 점검 (전진, 머지 전) | 슬롯 0행, publication `{id,status}`, kafka·connect healthy, 커넥터 `{}`, 토픽 파티션 1·복제 1·`retention.ms=604800000`, 비밀 파일 `읽힘` |
 | 11-05 | 2 설정 올리기 (브랜치 커밋 `1bb781bd`) | `/opt/beez/cdc` = `REVISION`·`compose.yaml`·`intake-connector.json`, password 줄은 자리표시자. `cdc up -d --wait` 재생성 없음(Up 3 hours 유지) |
 | 11-05 17:41 KST | 3 등록 · 4 확인 | `PUT …/config` 응답의 password 자리표시자. connector·task `RUNNING`, 슬롯 `beez_published_analysis` `pgoutput` `active = t`, retained 152 bytes. `Snapshot ended … status=COMPLETED`, `totalEventCount=0`(접수행 0) |
+| 11-05 | 5 슬롯 알림 — **6 전에 하지 않음** | 서버 모니터링은 298 반영본(REVISION `629ab6e0`, `CdcConsumerDown` 포함)이고 이 PR의 슬롯 알림은 없는 채로 6을 진행했다(머지 전 켜기를 택함). 그 사이 감시는 "상태 보기" 수동 확인뿐이었다. 리뷰 지적으로 5를 6의 선행 조건으로 바꿈 |
 | 11-05 17:43~17:46 KST | 6 consumer 켜기 | 켜기 직전 접수행 0행. env 두 줄 `true`, `.env.dev` `-rw-r----- ubuntu beez-deploy`·jenkins 읽기 OK. 같은 SHA `9727f475` 손 배포 → backend만 재생성(healthy 22.6초, ai·postgres·seaweedfs 유지), Nginx 확인 OK. `recovery_enabled` 1·`consumer_enabled` 1·`kafka_consumer_up` 1·`kafka_receive_failures_total` 0 |
 | 11-06 12:42 KST | 7 앞단계: 프로젝트 1 시작 | 설계 초안 생성(`design-drafts`, S15P31A108-232)은 dev에서 AI 스위치 꺼짐·채택 화면 없음 → 기획 분석 "항목 추가"(REQUIREMENT 1개)로 초안을 만들고 프로젝트 시작. 배포 `bbc75d74`(새 이미지로 backend 재생성 뒤에도 `consumer_up` 1). 접수행 id 1 `NOT_EVALUATED`(change_proposal_id 없음) → 그룹 offset 1/1·LAG 0, 수신 실패 0 = **dev 첫 CDC 이벤트 수신** |
 | 11-06 | 7 발행 1건 | 공용 문서함 "수정 제안하기"로 문서 변경 제안 1건 → 영향 분석 생략 사유로 승인(기준 v2). 접수행 id 2(제안 1) **`wake_seconds` 0.8**(Kafka 경로), `NOT_EVALUATED`·`document_change_unavailable`(문서 변경 제안은 AI 없이 닫는 설계), 0.87초에 종료. 그룹 offset 4/4·LAG 0, 수신 실패 0 |
