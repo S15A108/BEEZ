@@ -593,6 +593,53 @@ tests:
     alert_rule_test:
       - {eval_time: 20m, alertname: CdcConsumerLagStuck, exp_alerts: []}
 
+  # 깨지면: backend group id 를 바꿔 kafka-exporter 가 접수 group 을 못 보는데(lag 감시가 꺼짐) 아무도 모르거나,
+  # Kafka 장애·consumer 끊김처럼 다른 알림이 맡는 경우에 겹쳐 운다(PR #186 코드 리뷰).
+  # consumer 붙음·Kafka 닿음인데 group 지표는 다른 이름(beez-renamed)뿐 → 10분 뒤 알림
+  - name: consumer 붙어 있고 Kafka 닿는데 접수 group 지표가 없으면 10분 뒤 CdcConsumerGroupMissing
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_kafka_consumer_up{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1x20'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5x20'}
+      - {series: 'kafka_consumergroup_current_offset_sum{consumergroup="beez-renamed",topic="beez.public.published_change_analysis",job="kafka",instance="kafka-exporter:9308"}', values: '5x20'}
+    alert_rule_test:
+      - {eval_time: 9m, alertname: CdcConsumerGroupMissing, exp_alerts: []}
+      - eval_time: 11m
+        alertname: CdcConsumerGroupMissing
+        exp_alerts:
+          - exp_labels: {team: infra}
+            exp_annotations: {summary: "consumer 가 붙어 있는데 kafka-exporter 에 접수 group 지표가 없음 — group 이름 불일치, lag 감시가 꺼짐"}
+
+  - name: 접수 group 지표가 있으면 CdcConsumerGroupMissing 없음
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_kafka_consumer_up{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1x20'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5x20'}
+      - {series: 'kafka_consumergroup_current_offset_sum{consumergroup="beez-published-analysis",topic="beez.public.published_change_analysis",job="kafka",instance="kafka-exporter:9308"}', values: '5x20'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: CdcConsumerGroupMissing, exp_alerts: []}
+
+  # Kafka 에 닿지 않으면 group 지표도 없다 — 그때는 CdcKafkaUnreachable 몫
+  - name: Kafka 에 닿지 않으면 group 지표가 없어도 CdcConsumerGroupMissing 없음
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_kafka_consumer_up{instance="backend:8080",job="backend"}', values: '1x20'}
+      - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '0x20'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: CdcConsumerGroupMissing, exp_alerts: []}
+
+  # consumer 가 끊기면 group 이 비어 exporter 가 못 볼 수 있다 — 그때는 CdcConsumerDown 몫
+  - name: consumer 가 끊겼으면 group 지표가 없어도 CdcConsumerGroupMissing 없음
+    interval: 1m
+    input_series:
+      - {series: 'beez_cdc_kafka_consumer_up{instance="backend:8080",job="backend"}', values: '0x20'}
+      - {series: 'up{instance="kafka-exporter:9308",job="kafka"}', values: '1x20'}
+      - {series: 'kafka_topic_partition_current_offset{partition="0",topic="beez.public.published_change_analysis",instance="kafka-exporter:9308",job="kafka"}', values: '5x20'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: CdcConsumerGroupMissing, exp_alerts: []}
+
   # ── 서버·DB 알림(S15P31A108-264 규칙, 244 를 닫을 때 시험 없이 남긴 것) ──
   # 깨지면: 루트 디스크가 15% 아래로 내려가도 조용하거나, /boot·읽기 전용 마운트처럼 대상이 아닌 곳에서 운다(264 리뷰)
   - name: 루트 남은 공간 15% 미만 10분이면 DiskSpaceLow, /boot 는 제외

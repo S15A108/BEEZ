@@ -329,7 +329,7 @@ jobs:
           ver=$(sed -nE 's/.*jmx_prometheus_javaagent-([0-9.]+)\.jar$/\1/p' <<<"$src")
           test -n "$ver" || { echo "::error::compose 에서 javaagent 버전을 읽지 못함: $src"; exit 1; }
           jar="$RUNNER_TEMP/jmx_prometheus_javaagent-$ver.jar"
-          curl -fsSL -o "$jar" "https://github.com/prometheus/jmx_exporter/releases/download/$ver/jmx_prometheus_javaagent-$ver.jar"
+          curl -fsSL --retry 3 --retry-all-errors -o "$jar" "https://github.com/prometheus/jmx_exporter/releases/download/$ver/jmx_prometheus_javaagent-$ver.jar"
           echo "$JMX_AGENT_SHA256  $jar" | sha256sum -c -
           bash tests/check-connect-metrics.sh "$jar"
 

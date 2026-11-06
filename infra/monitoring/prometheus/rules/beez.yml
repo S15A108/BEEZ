@@ -296,6 +296,20 @@ groups:
         annotations:
           summary: "consumer 가 붙어 있는데 접수 group offset 이 10분 넘게 전진하지 않음(밀린 레코드 {{ $value }}건)"
 
+      # consumer 는 붙어 있고 Kafka 도 닿는데 접수 group 지표가 없음 = kafka-exporter 가 그 group 을 보지 못함. group 이름이
+      # 바뀌었거나(backend env BEEZ_CDC_INTAKE_GROUP_ID ↔ 위 식·kafka-exporter --group.filter 불일치) exporter 가 group 을 못 읽는
+      # 경우다. 이 동안 CdcConsumerLagStuck 은 지표가 없어 울 수 없으므로 감시가 꺼진 것을 따로 알린다(PR #186 코드 리뷰).
+      # Kafka 에 닿지 않을 때는 CdcKafkaUnreachable, consumer 가 끊겼을 때는 CdcConsumerDown 이 맡는다.
+      # 10분: consumer 가 처음 붙은 직후 group 이 생기고 exporter 가 다음 수집에서 보기까지는 거른다
+      - alert: CdcConsumerGroupMissing
+        expr: |
+          max(beez_cdc_kafka_consumer_up) == 1 and on() beez_cdc:kafka_reachable
+          unless on() kafka_consumergroup_current_offset_sum{consumergroup="beez-published-analysis"}
+        for: 10m
+        labels: {team: infra}
+        annotations:
+          summary: "consumer 가 붙어 있는데 kafka-exporter 에 접수 group 지표가 없음 — group 이름 불일치, lag 감시가 꺼짐"
+
   - name: beez-infra-alerts
     rules:
       # backend 는 따로 둔다. 이게 울리는 동안 CDC 지표가 없어 CDC 알림은 울리지 않는다.

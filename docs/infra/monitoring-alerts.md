@@ -36,6 +36,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcConnectorNotRunning](#cdcconnectornotrunning) | 커넥터나 task 상태가 RUNNING 아님(failed·paused·stopped 등) | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConnectorMissing](#cdcconnectormissing) | consumer 켜짐 **그리고** Connect·Kafka는 수집되는데 커넥터 지표 없음 | 10분 | 4시간 | 인프라 · 전진 |
 | [CdcConsumerLagStuck](#cdcconsumerlagstuck) | consumer가 Kafka에 붙어 있는데(`consumer_up` 1) 접수 group lag > 0 **그리고** 커밋 offset이 5분 동안 그대로 | 5분(멈춘 뒤 약 10분) | 4시간 | 인프라 · 전진 |
+| [CdcConsumerGroupMissing](#cdcconsumergroupmissing) | consumer가 붙어 있고 Kafka에 닿는데 kafka-exporter에 접수 group `beez-published-analysis` 지표가 없음 | 10분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend·kafka·connect 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -314,6 +315,19 @@ backend consumer는 Kafka에 붙어 있는데(`consumer_up` 1), 접수 group `be
   이어 가지만 Kafka 경로는 그 레코드에서 멈춥니다. 앱 쪽 원인이면 양지훈님과 같이 봅니다.
 - consumer가 끊긴 경우는 `CdcConsumerDown`이 맡고 이 알림은 울지 않습니다.
 
+### CdcConsumerGroupMissing
+
+backend consumer는 Kafka에 붙어 있고(`consumer_up` 1) Kafka에도 닿는데(`beez_cdc:kafka_reachable`), kafka-exporter에 접수
+group `beez-published-analysis` 지표가 10분 넘게 없습니다. 이 동안 `CdcConsumerLagStuck`은 지표가 없어 울 수 없으므로, 처리
+막힘 감시가 꺼졌다는 뜻입니다(PR #186 코드 리뷰).
+
+- 가장 흔한 원인: backend env `BEEZ_CDC_INTAKE_GROUP_ID`를 바꿨는데 `infra/monitoring/compose.yaml`의 kafka-exporter
+  `--group.filter`와 `rules/beez.yml`의 group 이름을 함께 바꾸지 않은 경우입니다. 세 곳을 같은 이름으로 맞춰 다시 올립니다.
+- 볼 곳: prometheus 컨테이너에서 `kafka_consumergroup_current_offset_sum` 조회(어떤 group 이름이 보이는지), `mon logs kafka-exporter`.
+- Kafka에 닿지 않을 때는 `CdcKafkaUnreachable`, consumer가 끊겼을 때는 `CdcConsumerDown`이 맡고 이 알림은 울지 않습니다.
+- 커밋한 offset이 한 번도 없는 group은 exporter가 지표를 내지 않을 수 있습니다(확인하지 않음). dev는 295부터 커밋 이력이 있어
+  해당하지 않지만, 새 환경에서 레코드가 하나도 오기 전에 이 알림이 울면 이 경우인지 먼저 봅니다.
+
 ### BackendScrapeDown
 
 Prometheus가 `backend:8080/actuator/prometheus`를 2분 넘게 긁지 못합니다. 이 동안 CDC
@@ -580,6 +594,7 @@ Docker Desktop에 `beez_default`를 만들고 서버와 같은 pgvector(`wal_lev
 | 실제 전달 | 커넥터 pause(14:11) → `CdcConnectorNotRunning` pending 14:11:46, 가짜 Mattermost에 "🚨 CdcConnectorNotRunning 발생 (2건)"(커넥터 줄·task 0 줄, 담당 인프라 · 전진, 런북 링크 `#cdcconnectornotrunning`) 14:17 → resume(14:17:43) → "✅ 해소" 14:22(묶음 간격 5분) |
 | pause 중 슬롯 | `active = t` 그대로 |
 | broker 장시간 중지(리뷰 반영 뒤) | 28분 중지하며 약 2분 간격으로 긁음: 2분째만 40초 만에 200(접수 토픽 offset·broker 수 지표 없음), 그 뒤 12번은 모두 60초 넘게 응답 없음. Prometheus 시간 초과(10초)로 보면 계속 수집 실패이고, 응답이 오더라도 offset 이 빠져 `beez_cdc:kafka_reachable` 이 없다 → `CdcKafkaUnreachable` 유지 |
+| group 없음 알림(코드 리뷰 반영) | `CdcConsumerGroupMissing` 추가 뒤 promtool 규칙 35개, 시험 40개 통과. Kafka 닿음 조건·consumer 조건·group 지표 조건을 각각 뺀 사본에서 대응 시험(Kafka 안 닿음·consumer 끊김·group 있음)이 실패 |
 
 ### 2026-11-06 서버 (S15P31A108-261)
 
@@ -600,4 +615,5 @@ PR #186 브랜치 커밋 `d295ecef`를 올렸습니다. 순서: javaagent jar �
   셸마다 함수 정의를 함께 줍니다.
 - 리뷰 반영(lag 정체 알림에 offset 전진 조건) 뒤 모니터링만 `153f2c3f`로 다시 올렸습니다(15:34, cdc 폴더는 바뀐 것이 없어 `d295ecef`
   그대로). 규칙 34개 health ok, `CdcConsumerLagStuck`이 새 식으로 비활성, 수집 대상 일곱 job up, lag 0.
-- 머지 뒤 두 폴더를 dev 커밋으로 다시 올려 `REVISION`을 맞춥니다.
+- 머지 뒤 두 폴더를 dev 커밋으로 다시 올려 `REVISION`을 맞춥니다. 코드 리뷰로 더한 `CdcConsumerGroupMissing`(규칙 35개)은 그때
+  서버에 들어갑니다.

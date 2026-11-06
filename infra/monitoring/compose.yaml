@@ -118,7 +118,7 @@ services:
   # Kafka consumer group lag·broker 정보(S15P31A108-261). broker 에 Kafka 프로토콜(kafka:9092)로 붙는다 — broker JMX 는
   # 쓰지 않는다(lag 은 broker JMX 에 없고, beez-cdc compose 가 JMX 원격 포트를 막아 둠).
   # 접수 토픽·group 만 본다. 필터가 없으면 __consumer_offsets 50파티션 등으로 시계열이 수백 개 는다(11-06 로컬 실측).
-  # 토픽·group 이름은 backend env 기본값(infra/compose.yaml BEEZ_CDC_INTAKE_*)과 같다. 바꾸면 여기와 rules 를 함께 고친다.
+  # 토픽·group 이름은 backend env 기본값(infra/compose.yaml BEEZ_CDC_INTAKE_*)과 같다. 바꾸면 여기와 rules 를 함께 고친다(놓치면 CdcConsumerGroupMissing·CdcKafkaUnreachable 이 운다).
   # broker 가 없으면 HTTP 는 열려 있지만 긁기가 시간 초과로 실패한다(up 0). CDC 스택이 없는 동안에도 같아 CDC 켜짐 조건으로 알린다
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.10.0@sha256:346a53c2489a3530790d01f7b96632496d0d58926662f4c35bb65f569db2ab42
