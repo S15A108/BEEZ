@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, AxiosHeaders } from 'axios'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MISSING_API_MESSAGE } from '@/api/error'
@@ -112,6 +112,113 @@ it('연결 안내·연결 현황이 404여도 토큰을 발급하고 발급 응�
   expect(
     screen.getByRole('button', { name: 'CLAUDE.md 내용 복사' }),
   ).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+// PR #195 리뷰: refetch()는 실패해도 reject하지 않는다. 조회를 못 했으면 연결 실패가 아니라 확인하지 못한 것이다.
+const serverError = () =>
+  Promise.reject(
+    new AxiosError('Server Error', 'ERR_BAD_RESPONSE', undefined, undefined, {
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'internal_error', message: '서버 오류' } },
+    }),
+  )
+const notConnected = {
+  items: [
+    {
+      id: '51',
+      member_id: '21',
+      connected: false,
+      status_check_required: false,
+    },
+  ],
+  has_more: false,
+}
+const mountPanel = () =>
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <AgentsPanel projectId="101" />
+    </QueryClientProvider>,
+  )
+const checkButton = (name: string) => screen.findByRole('button', { name })
+
+it('첫 조회가 실패하면 확인하지 못했다고 알리고, 다시 확인해 성공하면 결과를 보인다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockImplementation(serverError)
+  const user = userEvent.setup()
+  mountPanel()
+  await screen.findByText('연결 상태를 확인하지 못했어요')
+  expect(useAgentCheckStore.getState().checkedMemberId).toBeNull()
+  list.mockResolvedValue(notConnected)
+  await user.click(await checkButton('다시 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
+  )
+  expect(useAgentCheckStore.getState().checkedMemberId).toBe('21')
+  vi.restoreAllMocks()
+})
+
+it('정상 조회 뒤 재조회만 실패하면 연결 실패로 저장하지 않고 앞선 결과도 지운다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockResolvedValue(notConnected)
+  const user = userEvent.setup()
+  mountPanel()
+  await user.click(await checkButton('연결 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
+  )
+  list.mockImplementation(serverError)
+  await user.click(await checkButton('다시 확인'))
+  await screen.findByText('연결 상태를 확인하지 못했어요')
+  expect(screen.getByRole('status')).not.toHaveTextContent('연결 실패')
+  expect(useAgentCheckStore.getState().checkedMemberId).toBeNull()
+  vi.restoreAllMocks()
+})
+
+it('재조회가 실패한 뒤 다시 확인해 연결을 받으면 연결됨을 보인다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockResolvedValue(notConnected)
+  const user = userEvent.setup()
+  mountPanel()
+  await checkButton('연결 확인')
+  list.mockImplementation(serverError)
+  await user.click(await checkButton('연결 확인'))
+  await screen.findByText('연결 상태를 확인하지 못했어요')
+  list.mockResolvedValue({
+    items: [{ ...notConnected.items[0], connected: true }],
+    has_more: false,
+  })
+  await user.click(await checkButton('다시 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결됨/),
+  )
+  vi.restoreAllMocks()
+})
+
+it('연결 현황 API가 없으면(404) 준비 중으로 두고 확인 결과를 저장하지 않는다', async () => {
+  vi.spyOn(agentsApi, 'list').mockImplementation(() =>
+    Promise.reject(
+      new AxiosError('Not Found', 'ERR_BAD_REQUEST', undefined, undefined, {
+        status: 404,
+        statusText: 'Not Found',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: { error: { code: 'not_found', message: MISSING_API_MESSAGE } },
+      }),
+    ),
+  )
+  mountPanel()
+  expect(
+    await screen.findByText('연결 상태 확인은 준비 중이에요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('연결 상태를 확인하지 못했어요'),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /확인/ })).not.toBeInTheDocument()
   vi.restoreAllMocks()
 })
 
