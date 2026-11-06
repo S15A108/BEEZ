@@ -340,20 +340,42 @@ mon down                 # 컨테이너·monitoring 네트워크 삭제. 볼륨(
 env 파일만 바꾸면 Grafana에는 반영되지 않습니다.
 
 ```bash
-# 서버 (ssh beez). 새 값을 만들어 Grafana 와 env 파일에 같이 넣는다
+# 서버 (ssh beez). 새 값을 만들어 Grafana 와 env 파일에 같이 넣는다.
+# 새 env 파일(.new)을 다 만든 뒤에 Grafana 를 바꾸고, 마지막에 바꿔 넣는다 — 재설정 뒤에 실패할 수 있는 단계는 mv 하나뿐.
+# 원본을 읽지 못하면 아무것도 바꾸지 않는다. grep -v 는 0(남은 줄 있음)·1(남은 줄 없음)이 정상, 2 이상이 읽기 오류.
+# .new 는 지우고 새로 만든다 — 남은 .new 에 쓰면 umask 가 안 먹어 그 파일의 옛 권한이 env 파일로 넘어간다
 K=$(openssl rand -hex 16)
-printf '%s' "$K" | mon exec -T grafana grafana cli admin reset-admin-password --password-from-stdin &&
-( umask 027; { grep -v '^GRAFANA_ADMIN_PASSWORD=' /opt/beez/.env.monitoring; printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$K"; } > /opt/beez/.env.monitoring.new ) &&
-mv /opt/beez/.env.monitoring.new /opt/beez/.env.monitoring && unset K && echo saved
+( f=/opt/beez/.env.monitoring; umask 027
+  [ -n "$K" ] || { echo "새 값을 만들지 못함(openssl) — 바꾸지 않음"; exit 1; }
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
+  rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
+  grep -v '^GRAFANA_ADMIN_PASSWORD=' "$f" > "$f.new"; rc=$?
+  if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+  printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+  printf '%s' "$K" | mon exec -T grafana grafana cli admin reset-admin-password --password-from-stdin \
+    || { rm -f "$f.new"; echo "Grafana 재설정 실패 — Grafana·env 모두 그대로"; exit 1; }
+  mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — Grafana 는 새 값, env 는 옛 값"; exit 1; } ) && echo saved; unset K
 ```
+
+- `saved`가 나오지 않으면 원인을 고친 뒤 위 블록 전체를 다시 실행합니다. 다시
+  실행하면 새 값을 만들어 Grafana와 env 파일에 함께 넣습니다. "바꿔 넣기 실패"일
+  때만 다시 실행하기 전까지 둘이 어긋나 있습니다(S15P31A108-321).
 
 ### DB 수집 계정
 
 ```bash
 # 서버 (ssh beez). env 파일 값을 바꾼 뒤 2단계 SQL 을 다시 돌려 DB 를 맞추고 exporter 를 다시 만든다
+# 원본을 읽지 못하면 바꾸지 않는다(Grafana 관리자와 같은 방식). saved 가 안 나오면 env 는 그대로라 아래 mon up 도 바꾸는 것이 없다.
+# 원인을 고친 뒤 이 블록을 다시 실행한다
 K=$(openssl rand -hex 24)
-( umask 027; { grep -v '^MONITOR_DB_PASSWORD=' /opt/beez/.env.monitoring; printf 'MONITOR_DB_PASSWORD=%s\n' "$K"; } > /opt/beez/.env.monitoring.new ) &&
-mv /opt/beez/.env.monitoring.new /opt/beez/.env.monitoring && unset K && echo saved
+( f=/opt/beez/.env.monitoring; umask 027
+  [ -n "$K" ] || { echo "새 값을 만들지 못함(openssl) — 바꾸지 않음"; exit 1; }
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
+  rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
+  grep -v '^MONITOR_DB_PASSWORD=' "$f" > "$f.new"; rc=$?
+  if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+  printf 'MONITOR_DB_PASSWORD=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+  mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; } ) && echo saved; unset K
 # → "처음 올리기" 2단계 명령을 그대로 다시 실행
 mon up -d postgres-exporter   # env 값이 바뀌어 이 컨테이너만 다시 만들어진다
 ```
