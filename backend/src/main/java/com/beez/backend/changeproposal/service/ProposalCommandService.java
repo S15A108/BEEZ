@@ -68,6 +68,65 @@ public class ProposalCommandService {
         return publish(stage, stored -> createLocked(caller, project, input, key, operation, stage, stored));
     }
 
+    /**
+     * MTG-A13 (S15P31A108-297): 회의 끝내기가 만드는 제안. 공개 CHG-A01 과 같은 검증·저장 규칙이지만 회의 출처를 채운다.
+     * 호출하는 쪽(회의 끝내기)이 자기 멱등 키를 가지므로 여기서는 Idempotency-Key 를 쓰지 않는다.
+     *
+     * <p>이미 이 회의로 만든 살아 있는 제안이 있으면(제안은 만들었는데 종료가 실패한 뒤의 재시도) 프로젝트 잠금 안에서 본다:
+     * 같은 문안이면 그 제안을 그대로 돌려주고(올려 둔 원문은 참조되지 않아 지워진다), 문안이 달라졌으면 — 그 사이 정리가
+     * 바뀐 것이다 — 옛 제안을 거두고 새로 만든다. 알림은 회의 쪽이 보내므로 제출 알림은 보내지 않는다.
+     */
+    public Proposal createFromMeeting(CallerContext caller, long project, long meeting, Input input) {
+        preflight(caller, project, input, false);
+        Stage stage = stage(project, input);
+        return publish(stage, stored -> createFromMeetingLocked(caller, project, meeting, input, stage, stored));
+    }
+
+    private Proposal createFromMeetingLocked(CallerContext caller, long project, long meeting, Input input, Stage stage,
+            List<Original> stored) {
+        lock(caller, project);
+        var live = repository.liveProposalForMeeting(project, meeting);
+        if (live.isPresent()) {
+            Proposal existing = queries.current(project, live.get());
+            if (sameDocuments(existing, input, stage)) return existing;
+            // 이미 승인·발행 단계로 간 제안은 되돌리지 않는다(그 경우 정리의 기준 문서가 바뀌어 종료가 먼저 막힌다).
+            if (!Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(existing.status())) return existing;
+            repository.withdraw(project, live.get(), caller.accountId());
+        }
+        Snapshot snapshot = resolve(caller, project, null, input, stage, stored);
+        long proposal = repository.create(project, caller, snapshot.input(), meeting);
+        repository.saveRevision(project, proposal, 1, caller, snapshot, hash(snapshot));
+        return queries.current(project, proposal);
+    }
+
+    /**
+     * 회의 끝내기가 종료 직전에 정리가 오래됐음을 알았을 때, 방금 만든 제안을 거둔다(최선 노력). 이미 거뒀거나 검토 단계를 넘은
+     * 제안은 건드리지 않는다. 호출하는 쪽은 실패해도 원래 오류(409 summary_outdated)를 그대로 돌려준다.
+     */
+    @Transactional
+    public void withdrawMeetingProposal(CallerContext caller, long project, long proposal) {
+        lock(caller, project);
+        var current = repository.proposal(project, proposal);
+        if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
+            repository.withdraw(project, proposal, caller.accountId());
+        }
+    }
+
+    /** 같은 문서들이 같은 본문(해시)으로 올라가 있는가. 올려 둔 원문과 비교하므로 순서는 보지 않는다. */
+    private static boolean sameDocuments(Proposal existing, Input input, Stage stage) {
+        if (existing.documents().size() != input.documents().size()) return false;
+        var proposed = new HashMap<String, String>();
+        for (int index = 0; index < input.documents().size(); index++) {
+            Integer at = stage.byDocument().get(index);
+            if (at == null) return false;
+            proposed.put(input.documents().get(index).documentId(), textHash(stage.files().get(at).text()));
+        }
+        for (ResolvedDocument doc : existing.documents()) {
+            if (!Objects.equals(proposed.get(doc.documentId()), doc.contentHash())) return false;
+        }
+        return true;
+    }
+
     private Proposal createLocked(CallerContext caller, long project, Input input, String key, String operation,
             Stage stage, List<Original> stored) {
         lock(caller, project);

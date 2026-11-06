@@ -172,18 +172,30 @@ public class ProposalRepository {
     }
 
     public long create(long project, CallerContext caller, Input input) {
+        return create(project, caller, input, null);
+    }
+
+    /** {@code meeting} 는 MTG-A13 이 만든 제안만 채운다(공개 CHG-A01 은 null). */
+    public long create(long project, CallerContext caller, Input input, Long meeting) {
         return jdbc.sql("""
                 WITH allocated AS (SELECT nextval(pg_get_serial_sequence('change_proposal','id')) AS id)
                 INSERT INTO change_proposal(id,project_id,key,status,base_baseline_id,proposer_kind,proposer_account_id,
-                  proposer_token_id,title,reason,task_id,validation_id,previous_proposal_id)
+                  proposer_token_id,title,reason,task_id,validation_id,previous_proposal_id,meeting_id)
                 OVERRIDING SYSTEM VALUE
-                SELECT id,:project,'CP-'||id,'PROPOSED',:baseline,:kind,:account,:token,:title,:reason,:task,:validation,:previous FROM allocated
+                SELECT id,:project,'CP-'||id,'PROPOSED',:baseline,:kind,:account,:token,:title,:reason,:task,:validation,:previous,:meeting FROM allocated
                 RETURNING id
                 """).param("project", project).param("baseline", Long.parseLong(input.baseBaselineId()))
+                .param("meeting", meeting)
                 .param("kind", caller.kind().name()).param("account", caller.accountId()).param("token", caller.agentTokenId())
                 .param("title", input.title()).param("reason", input.reason())
                 .param("task", number(input.taskId())).param("validation", number(input.validationId()))
                 .param("previous", number(input.previousProposalId())).query(Long.class).single();
+    }
+
+    /** 이 회의로 만든, 거두지 않은 제안(부분 UNIQUE 로 최대 1건). */
+    public Optional<Long> liveProposalForMeeting(long project, long meeting) {
+        return jdbc.sql("SELECT id FROM change_proposal WHERE project_id=:project AND meeting_id=:meeting AND status<>'WITHDRAWN'")
+                .param("project", project).param("meeting", meeting).query(Long.class).optional();
     }
 
     public void withdraw(long project, long proposal, long account) {
