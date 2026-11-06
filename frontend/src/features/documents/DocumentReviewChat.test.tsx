@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, AxiosHeaders } from 'axios'
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authApi } from '@/api/services'
@@ -56,12 +56,39 @@ function apiError(status: number, code: string, message: string) {
   })
 }
 
-it('제안마다 분류·중요도 칩과 근거가 보인다', async () => {
+// 지금 서버(BE·AI)는 category·severity를 내려 주지 않는다. 내려 줄 때(선택 필드) 칩이 보이는지만 확인한다.
+it('서버가 분류·중요도를 주면 칩으로 보이고, 주지 않으면 칩 없이도 제안이 보인다', async () => {
+  mount(true)
+  await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/)
+  expect(screen.queryByText('누락')).not.toBeInTheDocument()
+  expect(screen.queryByText('중요')).not.toBeInTheDocument()
+  cleanup()
+  const read = documentsApi.workingCopy.bind(documentsApi)
+  const spy = vi
+    .spyOn(documentsApi, 'workingCopy')
+    .mockImplementation(async (...args) => {
+      const copy = await read(...args)
+      const latest = copy.latest_review
+      return latest
+        ? {
+            ...copy,
+            latest_review: {
+              ...latest,
+              suggestions: latest.suggestions.map((item, index) => ({
+                ...item,
+                category: index ? 'CONSISTENCY' : 'OMISSION',
+                severity: index ? 'MINOR' : 'MAJOR',
+              })),
+            },
+          }
+        : copy
+    })
   mount(true)
   expect(await screen.findByText('누락')).toBeInTheDocument()
   expect(screen.getByText('중요')).toBeInTheDocument()
   expect(screen.getByText('일관성')).toBeInTheDocument()
   expect(screen.getByText('가벼움')).toBeInTheDocument()
+  spy.mockRestore()
 })
 
 it('제안에 대해 비비와 대화하고, 비비가 낸 다른 문장으로 반영한다', async () => {

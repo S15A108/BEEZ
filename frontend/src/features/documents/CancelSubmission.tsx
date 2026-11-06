@@ -34,8 +34,8 @@ export function CancelSubmission({
             <DialogHeader>
               <DialogTitle>팀장 검토 요청을 취소할까요?</DialogTitle>
               <DialogDescription>
-                취소하면 문서를 다시 고칠 수 있어요. 고친 뒤에는 비비 검토를
-                다시 받고 팀장에게 새로 요청해야 해요. 이번 요청은 이력에
+                취소하면 비비가 문서를 다시 검토해요. 검토가 끝나면 문서를 다시
+                고치거나 팀장에게 새로 요청할 수 있어요. 이번 요청은 이력에
                 &lsquo;취소됨&rsquo;으로 남아요.
               </DialogDescription>
             </DialogHeader>

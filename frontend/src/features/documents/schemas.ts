@@ -186,9 +186,10 @@ export const decideSuggestionInputSchema = z.object({
 })
 export type DecideSuggestionInput = z.infer<typeof decideSuggestionInputSchema>
 
-// 명세 Request 표에 길이 상한이 없어 비어 있지 않은 글만 검증한다.
+// 서버(ReviewChatDtos)는 대화·직접 요청 글을 5,000자로 제한한다. 명세 Request 표에는 상한이 적혀 있지 않다.
+export const REVIEW_TEXT_MAX = 5000
 export const discussSuggestionInputSchema = z.object({
-  text: z.string().trim().min(1),
+  text: z.string().trim().min(1).max(REVIEW_TEXT_MAX),
 })
 export type DiscussSuggestionInput = z.infer<
   typeof discussSuggestionInputSchema
@@ -203,7 +204,7 @@ export type DiscussSuggestionResponse = z.infer<
 
 export const requestBeeSuggestionInputSchema = z.object({
   expected_revision: z.number().int().positive(),
-  text: z.string().trim().min(1),
+  text: z.string().trim().min(1).max(REVIEW_TEXT_MAX),
 })
 export type RequestBeeSuggestionInput = z.infer<
   typeof requestBeeSuggestionInputSchema

@@ -7,6 +7,7 @@ import type { DocumentReviewSuggestion } from '@/api/contracts/common'
 import { PaneSheet } from '@/components/PaneSheet'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { REVIEW_TEXT_MAX } from './schemas'
 import { cn } from '@/lib/utils'
 
 // 제안 카드 아래에서 그 제안에 대해 비비와 상의한다(DOC-A22). 대화는 본문을 바꾸지 않고, 비비가 다른 문장을
@@ -220,6 +221,7 @@ function Thread({
         >
           <Textarea
             aria-label="비비에게 보낼 말"
+            maxLength={REVIEW_TEXT_MAX}
             placeholder="이 제안에 대해 비비에게 물어보거나 다른 문장을 부탁해요"
             value={text}
             disabled={sending}

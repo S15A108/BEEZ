@@ -226,7 +226,7 @@ export function DocumentReview({
                       documentId,
                       pending.id,
                     ),
-                  '검토 요청을 취소했어요. 문서를 고친 뒤 다시 요청해 주세요.',
+                  '검토 요청을 취소했어요. 비비가 다시 검토한 뒤 고치거나 다시 요청할 수 있어요.',
                 )
               }
             />
@@ -322,12 +322,14 @@ export function DocumentReview({
                   role="alert"
                   className="grid gap-2 rounded-xl border border-[#c99e1e]/45 bg-primary/10 p-4 text-sm"
                 >
-                  <strong>
-                    참고하던 승인 문서가 바뀌어 이 검토는 더 쓸 수 없어요
-                  </strong>
+                  <strong>이 검토는 더 쓸 수 없어요</strong>
+                  {/* 서버는 같은 review_stale을 본문·참고 승인본이 바뀐 경우, 더 새로운 검토가 생긴 경우,
+                      제안한 원문이 본문에서 더 찾아지지 않는 경우(앞 제안을 반영한 뒤)에 모두 준다. 원인을 단정하지 않는다. */}
                   <span className="text-muted-foreground">
-                    비비 검토를 다시 받으면 지금 승인본을 기준으로 수정 제안을
-                    새로 받아요.
+                    본문이나 참고하던 승인 문서가 바뀌었거나, 앞서 반영한 제안
+                    때문에 제안한 부분이 달라졌을 수 있어요. 비비 검토를 다시
+                    받으면 지금 본문과 승인본을 기준으로 수정 제안을 새로
+                    받아요.
                   </span>
                   {bee.error && !running && (
                     <span className="text-destructive">
@@ -386,10 +388,20 @@ export function DocumentReview({
                   <div className="grid gap-3">
                     <h4 className="font-semibold">최종본 확인</h4>
                     <p className="rounded-lg bg-primary/10 px-3 py-2 text-sm">
-                      비비 제안을 반영한 최종본이에요. 팀장이 보게 될 화면과
-                      같아요.
+                      {stage.review.suggestions.some(
+                        (item) => item.decision === 'APPLIED',
+                      )
+                        ? '비비 제안을 반영한 최종본이에요. 팀장이 보게 될 화면과 같아요.'
+                        : '반영한 제안 없이 지금 본문 그대로예요. 팀장이 보게 될 화면과 같아요.'}
                     </p>
-                    <ReviewNotes review={stage.review} />
+                    <ReviewNotes
+                      projectId={projectId}
+                      documentId={documentId}
+                      review={stage.review}
+                      owner={owner}
+                      busy={action.busy}
+                      onStale={() => markStale(stage.review!.id)}
+                    />
                     {editing ? (
                       <ActionForm
                         fields={[
@@ -596,19 +608,44 @@ const unavailableText = (review: DocumentBeeReview) =>
 
 // 처리할 수정 제안이 없으면 최종본 단계로 바로 넘어가므로, 그 단계에서도 비비 의견(COMMENT)과
 // 비교하지 못한 문서를 읽기 전용으로 보여 준다. 의견만 온 검토도 여기서 보인다(PR #89 리뷰).
-function ReviewNotes({ review }: { review: DocumentBeeReview }) {
+// 의견에 대해서도 비비와 대화할 수 있어야 하므로(DOC-A22) 수정 제안 단계와 같은 카드로 보여 준다.
+function ReviewNotes({
+  projectId,
+  documentId,
+  review,
+  owner,
+  busy,
+  onStale,
+}: {
+  projectId: string
+  documentId: string
+  review: DocumentBeeReview
+  owner: boolean
+  busy: boolean
+  onStale: () => void
+}) {
   const comments = review.suggestions.filter((item) => item.type === 'COMMENT')
   if (!comments.length && !review.unavailable_references.length) return null
   return (
-    <div className="grid gap-1.5 rounded-xl border p-3 text-sm">
+    <div className="grid gap-2 rounded-xl border p-3 text-sm">
       {comments.length > 0 && (
         <>
           <strong>비비 의견 {comments.length}개</strong>
-          <ol aria-label="비비 의견" className="grid gap-1">
+          <ol aria-label="비비 의견" className="grid gap-2">
             {comments.map((comment, index) => (
-              <li key={comment.id}>
-                의견 {index + 1} · {comment.explanation}
-              </li>
+              <SuggestionCard
+                key={comment.id}
+                projectId={projectId}
+                documentId={documentId}
+                reviewId={review.id}
+                suggestion={comment}
+                index={index}
+                owner={owner}
+                stale={false}
+                busy={busy}
+                onDecide={() => undefined}
+                onStale={onStale}
+              />
             ))}
           </ol>
         </>

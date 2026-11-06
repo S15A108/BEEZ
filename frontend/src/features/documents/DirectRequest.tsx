@@ -5,6 +5,7 @@ import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { documentsApi } from '@/api/services/documents'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { REVIEW_TEXT_MAX } from './schemas'
 
 // 최종본 본문 아래 '비비에게 직접 요청하기'(DOC-A23). 비비가 요청을 반영한 새 제안 하나를 만들어 주고,
 // 그 제안은 반영하거나 넘겨야 팀장에게 요청할 수 있어 화면은 제안 확인 단계로 돌아간다.
@@ -49,6 +50,7 @@ export function DirectRequest({
       <strong>비비에게 직접 요청하기</strong>
       <Textarea
         aria-label="비비에게 요청할 내용"
+        maxLength={REVIEW_TEXT_MAX}
         placeholder="예: 오류 표에 권한 없음(403) 행을 추가해 줘"
         value={text}
         disabled={request.isPending}
