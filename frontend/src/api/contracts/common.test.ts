@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import {
   comparisonSchema,
   documentBeeReviewSchema,
+  meetingEntrySchema,
   notificationSchema,
   pageSchema,
   usageSummarySchema,
@@ -177,6 +178,22 @@ it('비교 응답은 target_id 키가 없어도 읽는다', () => {
       proposed_content: { description: '새 API' },
     }).target_id,
   ).toBeUndefined()
+})
+
+// 충돌 회의는 서버가 열고, 첫 기록은 비비의 CONFLICT_BRIEF다. 이 종류가 파싱 실패하면 기록 목록이 통째로 안 열린다.
+it('회의 기록은 충돌 브리핑과 정리 종류도 읽는다', () => {
+  const entry = {
+    id: '1',
+    meeting_id: '9',
+    text: '두 작업이 충돌해요',
+    created_at: '2026-11-05T01:40:00Z',
+  }
+  expect(
+    meetingEntrySchema.parse({ ...entry, kind: 'CONFLICT_BRIEF' }).kind,
+  ).toBe('CONFLICT_BRIEF')
+  expect(meetingEntrySchema.parse({ ...entry, kind: 'SUMMARY' }).kind).toBe(
+    'SUMMARY',
+  )
 })
 
 // S15P31A108-296: PR #133의 문서 알림은 target_type=DOCUMENT_VERSION(target_id는 문서 버전 ID)에 document_id를 함께 준다.

@@ -71,6 +71,16 @@ const messages: Record<string, string> = {
   baseline_conflict:
     '기준 설계가 변경되었습니다. 최신 기준으로 다시 검토해 주세요.',
   proposal_changed: '제안이 변경되었습니다. 최신 내용을 확인해 주세요.',
+  // S15P31A108-204: 승인 게이트(241)와 상태 전이 오류. 화면이 따로 다루는 코드(analysis_running 등)도 일반 안내를 둔다.
+  invalid_transition:
+    '이미 처리했거나 지금은 할 수 없는 상태예요. 목록을 새로고침해 주세요.',
+  baseline_missing: '먼저 첫 기준 설계를 만들어 주세요.',
+  analysis_running: '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
+  impact_not_confirmed:
+    '영향 분석이 완료되지 않았어요. 영향을 직접 확인했다면 사유를 남기고 승인해 주세요.',
+  proposal_locked: '제출한 제안은 잠겨 있어요. 반려된 뒤에 고칠 수 있어요.',
+  idempotency_conflict:
+    '같은 요청이 다른 내용으로 이미 처리됐어요. 새로고침해서 확인해 주세요.',
   draft_changed: '검토 후 초안이 변경되었습니다.',
   validation_not_passed: '현재 계획의 검증을 먼저 완료해 주세요.',
   dependency_not_completed: '선행 작업이 아직 완료되지 않았습니다.',
