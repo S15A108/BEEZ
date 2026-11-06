@@ -86,18 +86,24 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | `llm_usage` | `request_key` 유니크, `tokens_known`(모르면 토큰 수 NULL), `estimated_cost_amount`+`currency`, `failed`, 검증 호출은 `validation_run_id`·`task_id` 를 채운다(-168, 실행을 닫을 때 `validation_run.usage` 에서 옮겨 적음), `feature` 값 = `DOCUMENT_PARSE`·`TASK_VALIDATION`·`CHANGE_IMPACT`·`EMBEDDING`·`BEE_CHAT`·`BEE_DRAFT`·`TASK_ASSIGNMENT`·`MEETING_ANALYSIS`. 비용 조회(MON-A02)는 이 표만 읽으므로 모델을 부르는 기능은 모두 여기 적는다 — 변경 영향 분석도 `change_impact_run.usage`·`published_analysis_attempt.usage` 와 함께 적는다(-169, `LlmUsageRecorder`). V21(Java 마이그레이션)이 그 전에 실행 기록에만 남은 사용량(검증 실행·승인 전·발행 뒤 영향 분석)을 실행 중 기록기와 같은 거르기 코드로 옮겼다(같은 `request_key` 는 한 번, `created_at` 은 실행이 끝난 시각, 넣다가 실패한 항목만 건너뜀) |
 | `notification` (V26, -181) | `document_id` 추가(`target_type=DOCUMENT_VERSION` 이면 입구가 필수로 검사). 저장은 `NotificationRequester` 입구로만 — `dedupe_key` 충돌은 건너뜀, `created_at` 은 `clock_timestamp()`([알림·활동 계약](10-notification-activity-contract.md)) |
 | `activity_event` (V29, -182) | `actor_kind` 에 `BEE` 추가, `actor_id` 는 HUMAN·AGENT 만 채움(CHECK). `agent_session_id`(AGENT 만, -178 전에는 NULL)·`task_id`·`change_proposal_id`·`baseline_id`(보조 참조, `(id, project_id)` 복합 FK 로 같은 프로젝트만)·`result`(`SUCCESS`·`FAILURE`, 기본 `SUCCESS`) 추가, `occurred_at` 기본값 `clock_timestamp()`. 저장은 `ActivityRecorder` 입구로만 — `dedupe_key` 충돌은 건너뜀. 정렬·필터 인덱스는 -183 |
+| `email_verification` (V25, -219) | 새 테이블. 가입 이메일 인증 요청 한 번이 한 행(ACC-A11·A12, ACC-A01 `verified_token`). API의 `verification_id`는 순번이 아닌 난수 `public_id`(UNIQUE). 코드·토큰은 해시만(`code_hash` bcrypt, `token_hash` SHA-256). `closed_at`(다시 받기·틀린 횟수 초과·확인 성공)과 `code_expires_at`을 따로 둔다. 이메일당 열린 코드 하나(`closed_at IS NULL` 부분 UNIQUE), 가입 때 `token_consumed_at`을 채운다. 탈퇴(ACC-A10) 때 그 계정 이메일의 행은 모두 삭제한다(-277) |
+| `account` (V27, -171) | `must_change_password BOOLEAN NOT NULL DEFAULT false` 추가. 임시 비밀번호로 로그인하면 true, 비밀번호 변경(ACC-A06)이 성공하면 false. 탈퇴(ACC-A10)는 행을 남기고 `email`·`avatar_url`·`password_hash`를 NULL로, `display_name`을 "탈퇴한 사용자"로 바꾸고 `deleted_at`을 찍는다(V2부터 이 컬럼들은 NULL 허용). `email` UNIQUE에 NULL은 걸리지 않으므로 같은 이메일로 다시 가입하면 새 계정 행이 생긴다 |
+| `temporary_password` (V27, -171) | 새 테이블. 임시 비밀번호 요청(ACC-A07) 한 번이 한 행. 계정이 없거나 이름이 틀린 요청도 `account_id`·`password_hash` NULL로 남기고 바로 닫는다(이메일당 한도를 똑같이 세려는 것, `(account_id IS NULL) = (password_hash IS NULL)` CHECK). `password_hash`는 bcrypt, 원문은 메일에만. `used_at`(로그인에 쓴 시각, 쓰면 `closed_at`도 필수)·`closed_at`(사용·새로 발급·비밀번호 변경·발송 실패)·`expires_at`. 계정당 열린 임시 비밀번호 하나(`ux_temporary_password_open`, `closed_at IS NULL` 부분 UNIQUE). 탈퇴(ACC-A10) 때 그 계정 이메일의 행은 모두 삭제한다(-277). 그 밖의 지난 행 정리 작업은 아직 없다(-273) |
+| `invitation` (V33, -220) | `expires_at` 삭제 — 초대는 만료가 없다(Q05). 로그인·가입 때 대기 초대를 찾는 `ix_invitation_pending_email`(`email`이 있고 `accepted_at`·`revoked_at`이 NULL인 행의 `email`) 추가. 탈퇴(ACC-A10) 때 그 이메일의 대기 초대는 폐기(`revoked_at`)하고 그 이메일의 모든 초대 행에서 `email`을 NULL로 바꾼다. 행은 남긴다(-277) |
 
 작업 상태·전이·시작 게이트 규칙은 [04-task-lifecycle.md](04-task-lifecycle.md) 에 따로 정리했다.
 
-## 1. 테이블과 소유자 (44개)
+## 1. 테이블과 소유자 (V2 기준 43개)
+
+이름 뒤의 (Vn)은 V2 뒤 마이그레이션으로 더한 테이블이다. 뒤에 더한 테이블을 이 표에 모두 담지는 않았다. 전체 목록은 `backend/src/main/resources/db/migration`이 기준이다.
 
 | 묶음 | 테이블 | 소유 |
 |---|---|---|
-| A. 계정·프로젝트·에이전트 | account, project, project_member, invitation, agent_token, agent_session | 전진 |
+| A. 계정·프로젝트·에이전트 | account, project, project_member, invitation, agent_token, agent_session, email_verification (V25), temporary_password (V27) | 전진 |
 | B. 문서·설계·기준 설계 | document, document_version, design_item, design_item_version, baseline, baseline_item, baseline_document, planning_question | 오서현 |
 | B. 설계 의존관계·이력 | design_item_dependency, design_item_dependency_history (V9), design_relation_set (V9) | 변준성 (진입점은 오서현, #40 합의) |
 | B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
-| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target, approval, meeting, meeting_participant, meeting_entry, meeting_summary | 오서현 |
+| B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target (V12), approval, meeting, meeting_participant, meeting_entry, meeting_summary (V34) | 오서현 |
 | C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding | 변준성 |
 | C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |
@@ -249,6 +255,7 @@ erDiagram
   project_member ||--o{ agent_token : "멤버만 발급"
   agent_token ||--o{ agent_session : ""
   project ||--o{ invitation : ""
+  account |o--o{ temporary_password : "임시 비밀번호 (V27, 계정 없는 요청은 NULL)"
 
   project ||--o{ document : ""
   document ||--o{ document_version : ""
@@ -372,7 +379,7 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 
 ## 6. 남은 결정
 
-### V30 비비 회의 정리 저장 (S15P31A108-235)
+### V34 비비 회의 정리 저장 (S15P31A108-235)
 
 `meeting_summary`는 팀장이 요청한 비비 회의 정리(MTG-A11)와 수정 요청(MTG-A12)을 저장한다. 정리는 고치거나 지우지 않고, 수정 요청은 새 행이며 이전 정리는 `previous_summary_id`로 이어진다. 회의별 최신 정리는 `max(id)`다.
 
