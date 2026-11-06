@@ -635,7 +635,8 @@ export function WorkspaceHud({
         aria-label="프로젝트"
         data-tour="card"
         hidden={chatOpen}
-        className="pointer-events-auto absolute top-4 left-4 z-10 grid w-80 gap-3 rounded-2xl border bg-card/95 p-3.5 shadow-lg backdrop-blur"
+        // 열을 패널 폭에 묶는다. 자동 폭 열이면 긴 프로젝트 이름을 따라 패널 밖으로 늘어나 말줄임이 되지 않는다.
+        className="pointer-events-auto absolute top-4 left-4 z-10 grid w-80 grid-cols-[minmax(0,1fr)] gap-3 rounded-2xl border bg-card/95 p-3.5 shadow-lg backdrop-blur"
       >
         <div className="flex items-center gap-2">
           <Button
@@ -651,7 +652,9 @@ export function WorkspaceHud({
             <ChevronLeft />
           </Button>
           <div className="min-w-0">
-            <h2 className="truncate text-base font-bold">{project.name}</h2>
+            <h2 title={project.name} className="truncate text-base font-bold">
+              {project.name}
+            </h2>
             <p className="text-xs text-muted-foreground">
               {isLeader
                 ? '인간 팀장'

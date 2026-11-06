@@ -1,8 +1,6 @@
-// 사무실 배치(캔버스 SCR-06-rec-office v488, 그림 코드 office2_plan_final.json). 사용자가 고른 '3번 구조 + 1번 색 +
-// 기둥 제거'다. 단위는 m, 방 가운데가 (0, 0), 북쪽(-z)과 동쪽(+x)이 유리벽, 서쪽 벽에 엘리베이터가 있다.
-// 가구는 Kenney Furniture Kit(CC0, public/models/kenney/furniture) 모델과 직접 그리는 보드·화면이다(D36).
-// 사람 사이 거리(PERSONAL_SPACE)보다 가까운 의자·스툴 몇 개만 1.1 m 간격으로 벌렸다.
-export const OFFICE_ROOM = { w: 24, d: 14, h: 3 }
+// 사무실 배치의 형식. 배치는 건물 외관마다 plans/<외관>.ts에 있다(D39). 단위는 m, 방 가운데가 (0, 0), 북쪽(-z)과 동쪽(+x)이
+// 유리벽, 서쪽 벽에 엘리베이터가 있다. 가구는 Kenney Furniture Kit(CC0, public/models/kenney/furniture) 모델과 직접 그리는
+// 보드·화면이다(D36).
 export interface OfficeZone {
   n: number
   name: string
@@ -14,78 +12,6 @@ export interface OfficeZone {
   floor: 'wood' | 'carpet'
   sign: [number, number]
 }
-export const OFFICE_ZONES: OfficeZone[] = [
-  {
-    n: 1,
-    name: '공용 문서함',
-    what: '서가 · 열람 테이블',
-    x0: -12,
-    z0: -7,
-    x1: -7,
-    z1: -1.6,
-    floor: 'wood',
-    sign: [-9.5, -1.6],
-  },
-  {
-    n: 3,
-    name: '회의실',
-    what: '열린 허들 · 하이 테이블 · 칸반 보드 둘',
-    x0: -6.2,
-    z0: -7,
-    x1: -0.2,
-    z1: -2.6,
-    floor: 'carpet',
-    sign: [-3.2, -2.6],
-  },
-  {
-    n: 4,
-    name: '작업 현황',
-    what: '6인 아일랜드 · 모니터 6',
-    x0: 0.8,
-    z0: -7,
-    x1: 12,
-    z1: -0.6,
-    floor: 'carpet',
-    sign: [6.4, -0.6],
-  },
-  {
-    n: 5,
-    name: '설계 관계',
-    what: '칸반 워룸 · 큰 화면',
-    x0: -5.6,
-    z0: 1.4,
-    x1: -0.8,
-    z1: 5.4,
-    floor: 'wood',
-    sign: [-3.2, 1.4],
-  },
-  {
-    n: 2,
-    name: '변경 제안',
-    what: '메모 벽 · 하이 테이블',
-    x0: -0.2,
-    z0: 4.2,
-    x1: 4.6,
-    z1: 7,
-    floor: 'wood',
-    sign: [2.2, 4.2],
-  },
-  {
-    n: 6,
-    name: '대시보드',
-    what: '벽 화면 두 대 · 스탠딩 테이블',
-    x0: 5.4,
-    z0: 4.2,
-    x1: 11.6,
-    z1: 7,
-    floor: 'wood',
-    sign: [8.5, 4.2],
-  },
-]
-export const OFFICE_LOUNGE = { x0: -11.6, z0: 1, x1: -6.4, z1: 7 }
-export const OFFICE_ENTRANCE = { x: -12, z: 2.4 }
-/** 비비가 손을 흔드는 라운지 가운데 */
-export const OFFICE_BIBI = { type: 'bibi', x: -9.2, z: 4.6, ry: -0.6 }
 export interface OfficePiece {
   zone: number
   kind: string
@@ -101,7 +27,7 @@ export interface OfficePiece {
   h: number
   tint: Record<string, string> | null
 }
-type Row = [
+export type Row = [
   number,
   string,
   string | null,
@@ -116,133 +42,8 @@ type Row = [
   number,
   Record<string, string> | null,
 ]
-// prettier-ignore
-const ROWS: Row[] = [
-  [4,"cabinet","bookcaseClosedDoors",null,11.7,-3.78,0,-1.571,[1.3,1.3,1.3],0.325,0.52,1.105,{"wood":"#efece6"}],
-  [4,"cabinet","bookcaseClosedDoors",null,11.7,-3.26,0,-1.571,[1.3,1.3,1.3],0.325,0.52,1.105,{"wood":"#efece6"}],
-  [4,"cabinet","bookcaseClosedDoors",null,11.7,-2.74,0,-1.571,[1.3,1.3,1.3],0.325,0.52,1.105,{"wood":"#efece6"}],
-  [4,"cabinet","bookcaseClosedDoors",null,11.7,-2.22,0,-1.571,[1.3,1.3,1.3],0.325,0.52,1.105,{"wood":"#efece6"}],
-  [4,"plant","plantSmall3",null,11.7,-3.55,1.1,-1.571,[2.4,2.4,2.4],0.202,0.235,0.348,null],
-  [4,"books","books",null,11.7,-2.5,1.1,-1.571,[2,2,2],0.19,0.3,0.208,null],
-  [4,"plant","pottedPlant",null,11.4,-0.95,0,0,[2.294,2.294,2.294],0.486,0.555,1.5,null],
-  [4,"plant","pottedPlant",null,1.3,-6.5,0,0,[1.988,1.988,1.988],0.421,0.481,1.3,null],
-  [4,"board",null,"kanban",1,-3.8,0,1.571,null,0.1,2.2,1.9,null],
-  [3,"plant","pottedPlant",null,-0.65,-6.55,0,0,[1.835,1.835,1.835],0.389,0.444,1.2,null],
-  [1,"bookcase","bookcaseOpen",null,-11.7,-6,0,1.571,[2.3,2.3,2.3],0.575,0.92,2.024,null],
-  [1,"books","books",null,-11.68,-5.83,0.36,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-5.8,0.36,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-6.18,0.86,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"bookcase","bookcaseOpen",null,-11.7,-5.08,0,1.571,[2.3,2.3,2.3],0.575,0.92,2.024,null],
-  [1,"books","books",null,-11.68,-5.26,0.36,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-4.88,0.86,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-5.26,1.39,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"bookcase","bookcaseOpen",null,-11.7,-4.16,0,1.571,[2.3,2.3,2.3],0.575,0.92,2.024,null],
-  [1,"books","books",null,-11.68,-4.34,0.86,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-3.99,1.39,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-3.96,1.39,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"bookcase","bookcaseOpen",null,-11.7,-3.24,0,1.571,[2.3,2.3,2.3],0.575,0.92,2.024,null],
-  [1,"books","books",null,-11.68,-3.42,0.36,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"books","books",null,-11.68,-3.07,0.86,1.571,[2,2,2],0.19,0.3,0.208,null],
-  [1,"bookcase","bookcaseClosedWide",null,-9.6,-6.7,0,0,[1.3,1.3,1.3],1.04,0.325,1.027,null],
-  [1,"bookcase","bookcaseClosedWide",null,-8.5,-6.7,0,0,[1.3,1.3,1.3],1.04,0.325,1.027,null],
-  [1,"plant","plantSmall1",null,-9.9,-6.7,1.03,0,[2.4,2.4,2.4],0.226,0.226,0.336,null],
-  [1,"books","books",null,-8.3,-6.72,1.03,0,[2,2,2],0.3,0.19,0.208,null],
-  [1,"table","table",null,-9.2,-4,0,0,[2.14,2.263,2.013],1.8,0.9,0.74,null],
-  [1,"chair","chairCushion",null,-9.75,-3.2,0,3.142,[2.2,2.2,2.2],0.44,0.44,1.012,{"carpet":"#c4683f"}],
-  [1,"chair","chairCushion",null,-9.75,-4.8,0,0,[2.2,2.2,2.2],0.44,0.44,1.012,{"carpet":"#c4683f"}],
-  [1,"chair","chairCushion",null,-8.65,-3.2,0,3.142,[2.2,2.2,2.2],0.44,0.44,1.012,{"carpet":"#c4683f"}],
-  [1,"chair","chairCushion",null,-8.65,-4.8,0,0,[2.2,2.2,2.2],0.44,0.44,1.012,{"carpet":"#c4683f"}],
-  [1,"lamp","lampSquareTable",null,-8.5,-4.1,0.74,0,[1.8,1.8,1.8],0.216,0.216,0.522,null],
-  [1,"books","books",null,-9.6,-4.05,0.74,0,[2,2,2],0.3,0.19,0.208,null],
-  [1,"lamp","lampRoundFloor",null,-7.5,-6.6,0,0,[1.861,1.861,1.861],0.283,0.327,1.6,null],
-  [5,"cabinet","cabinetTelevision",null,-3.2,4.95,0,3.142,[2.25,1.936,2],1.8,0.5,0.6,{"wood":"#efece6"}],
-  [5,"tv","televisionModern","graph",-3.2,4.95,0.6,3.142,[2.5,2.5,2.5],1.71,0.32,1.137,{"metal":"screen"}],
-  [5,"plant","pottedPlant",null,-5.2,5,0,0,[1.988,1.988,1.988],0.421,0.481,1.3,null],
-  [2,"board",null,"notes",2.2,6.9,0,3.142,null,3.6,0.1,1.6,null],
-  [2,"table","table",null,2.2,5.4,0,0,[1.903,3.211,1.566],1.6,0.7,1.05,null],
-  [2,"stool","stoolBar",null,1.65,4.85,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#c4683f"}],
-  [2,"stool","stoolBar",null,2.75,4.85,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#d9a441"}],
-  [2,"stool","stoolBar",null,3.5,5.6,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#c4683f"}],
-  [6,"screen",null,"dash1",7.3,6.92,1,3.142,null,1.9,0.08,1.1,null],
-  [6,"screen",null,"dash2",9.6,6.92,1,3.142,null,1.9,0.08,1.1,null],
-  [6,"table","table",null,8.5,5.3,0,0,[2.14,3.211,1.342],1.8,0.6,1.05,null],
-  [6,"laptop","laptop",null,8.1,5.25,1.05,0,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [6,"plant","pottedPlant",null,11.35,6.55,0,0,[2.294,2.294,2.294],0.486,0.555,1.5,null],
-  [0,"rug","rugRectangle",null,-8.6,5.25,0,0,[1.9,1.9,1.9],2.983,1.748,0.019,{"carpet":"#cfc8bb","carpetDarker":"#a8a093"}],
-  [0,"lamp","lampRoundFloor",null,-9.75,6.55,0,0,[1.861,1.861,1.861],0.283,0.327,1.6,null],
-  [0,"plant","pottedPlant",null,-6.75,3.55,0,0,[2.294,2.294,2.294],0.486,0.555,1.5,null],
-  [0,"plant","pottedPlant",null,-11.55,2.55,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
-  [4,"chair","chairDesk",null,3.8,-4.85,0,0,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#d9a441"}],
-  [4,"keyboard","computerKeyboard",null,3.75,-4.22,0.74,3.142,[1.638,1.638,1.638],0.462,0.193,0.046,null],
-  [4,"mouse","computerMouse",null,4.12,-4.22,0.74,3.142,[1.638,1.638,1.638],0.082,0.139,0.039,null],
-  [4,"chair","chairDesk",null,3.8,-2.75,0,3.142,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#c4683f"}],
-  [4,"keyboard","computerKeyboard",null,3.75,-3.38,0.74,0,[1.638,1.638,1.638],0.462,0.193,0.046,null],
-  [4,"mouse","computerMouse",null,4.12,-3.38,0.74,0,[1.638,1.638,1.638],0.082,0.139,0.039,null],
-  [4,"monitor","computerScreen","app",3.8,-3.95,0.74,3.142,[1.542,1.542,1.542],0.606,0.16,0.453,{"metal":"screen"}],
-  [4,"monitor","computerScreen","code",3.8,-3.65,0.74,0,[1.542,1.542,1.542],0.606,0.16,0.453,{"metal":"screen"}],
-  [4,"chair","chairDesk",null,5.6,-4.85,0,0,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#d9a441"}],
-  [4,"keyboard","computerKeyboard",null,5.55,-4.22,0.74,3.142,[1.638,1.638,1.638],0.462,0.193,0.046,null],
-  [4,"mouse","computerMouse",null,5.92,-4.22,0.74,3.142,[1.638,1.638,1.638],0.082,0.139,0.039,null],
-  [4,"chair","chairDesk",null,5.6,-2.75,0,3.142,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#c4683f"}],
-  [4,"keyboard","computerKeyboard",null,5.55,-3.38,0.74,0,[1.638,1.638,1.638],0.462,0.193,0.046,null],
-  [4,"mouse","computerMouse",null,5.92,-3.38,0.74,0,[1.638,1.638,1.638],0.082,0.139,0.039,null],
-  [4,"monitor","computerScreen","app",5.6,-3.95,0.74,3.142,[1.542,1.542,1.542],0.606,0.16,0.453,{"metal":"screen"}],
-  [4,"monitor","computerScreen","code",5.6,-3.65,0.74,0,[1.542,1.542,1.542],0.606,0.16,0.453,{"metal":"screen"}],
-  [4,"chair","chairDesk",null,7.4,-4.85,0,0,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#d9a441"}],
-  [4,"keyboard","computerKeyboard",null,7.35,-4.22,0.74,3.142,[1.638,1.638,1.638],0.462,0.193,0.046,null],
-  [4,"mouse","computerMouse",null,7.72,-4.22,0.74,3.142,[1.638,1.638,1.638],0.082,0.139,0.039,null],
-  [4,"chair","chairDesk",null,7.4,-2.75,0,3.142,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#c4683f"}],
-  [4,"keyboard","computerKeyboard",null,7.35,-3.38,0.74,0,[1.638,1.638,1.638],0.462,0.193,0.046,null],
-  [4,"mouse","computerMouse",null,7.72,-3.38,0.74,0,[1.638,1.638,1.638],0.082,0.139,0.039,null],
-  [4,"monitor","computerScreen","app",7.4,-3.95,0.74,3.142,[1.542,1.542,1.542],0.606,0.16,0.453,{"metal":"screen"}],
-  [4,"monitor","computerScreen","code",7.4,-3.65,0.74,0,[1.542,1.542,1.542],0.606,0.16,0.453,{"metal":"screen"}],
-  [4,"table","table",null,5.6,-3.8,0,0,[6.659,2.263,3.356],5.6,1.5,0.74,{"wood":"#c99a6b"}],
-  [0,"chair","chairDesk",null,4.2,1.4,0,0,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#d9a441"}],
-  [0,"laptop","laptop",null,4.2,2.25,0.74,3.142,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [0,"chair","chairDesk",null,4.2,4,0,3.142,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#c4683f"}],
-  [0,"laptop","laptop",null,4.2,3.15,0.74,0,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [0,"chair","chairDesk",null,6,1.4,0,0,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#d9a441"}],
-  [0,"laptop","laptop",null,6,2.25,0.74,3.142,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [0,"chair","chairDesk",null,6,4,0,3.142,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#c4683f"}],
-  [0,"laptop","laptop",null,6,3.15,0.74,0,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [0,"chair","chairDesk",null,7.8,1.4,0,0,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#d9a441"}],
-  [0,"laptop","laptop",null,7.8,2.25,0.74,3.142,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [0,"chair","chairDesk",null,7.8,4,0,3.142,[1.727,1.727,1.727],0.579,0.542,1.05,{"carpet":"#c4683f"}],
-  [0,"laptop","laptop",null,7.8,3.15,0.74,0,[1.734,1.734,1.734],0.458,0.416,0.281,null],
-  [0,"table","table",null,6,2.7,0,0,[6.659,2.263,3.356],5.6,1.5,0.74,{"wood":"#c99a6b"}],
-  [3,"table","table",null,-3.2,-4.8,0,0,[1.427,3.211,2.685],1.2,1.2,1.05,null],
-  [3,"stool","stoolBar",null,-3.2,-3.7,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#d9a441"}],
-  [3,"stool","stoolBar",null,-2.247,-4.25,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#c4683f"}],
-  [3,"stool","stoolBar",null,-2.247,-5.35,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#d9a441"}],
-  [3,"stool","stoolBar",null,-3.2,-5.9,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#c4683f"}],
-  [3,"stool","stoolBar",null,-4.153,-5.35,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#d9a441"}],
-  [3,"stool","stoolBar",null,-4.153,-4.25,0,0,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#c4683f"}],
-  [3,"board",null,"kanban",-5.7,-4.8,0,1.571,null,0.1,2.2,1.9,null],
-  [3,"board",null,"kanban",-0.7,-4.8,0,-1.571,null,0.1,2.2,1.9,null],
-  [5,"board",null,"kanban",-4.6,3.2,0,1.571,null,0.1,2.2,1.9,null],
-  [5,"board",null,"kanban",-1.8,3.2,0,-1.571,null,0.1,2.2,1.9,null],
-  [5,"stool","stoolBar",null,-3.75,2.6,0,3.142,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#d9a441"}],
-  [5,"stool","stoolBar",null,-2.65,2.6,0,3.142,[1.75,1.75,1.75],0.464,0.403,0.761,{"carpet":"#c4683f"}],
-  [4,"lamp","lampSquareFloor",null,1.4,-6.5,0,0,[1.977,1.977,1.977],0.237,0.237,1.7,null],
-  [4,"lamp","lampSquareFloor",null,10.6,-6.5,0,0,[1.977,1.977,1.977],0.237,0.237,1.7,null],
-  [0,"cabinet","cabinetTelevision",null,-9.4,1.35,0,0,[2.25,1.774,1.8],1.8,0.45,0.55,{"wood":"#b7835a"}],
-  [0,"tv","televisionModern","dash1",-9.4,1.35,0.55,0,[2.2,2.2,2.2],1.505,0.282,1.001,{"metal":"screen"}],
-  [0,"chair","loungeChairRelax",null,-10.6,3,0,3.142,[1.9,1.9,1.9],0.931,1.282,1.197,{"carpet":"#c4683f"}],
-  [0,"chair","loungeChairRelax",null,-9.4,3.2,0,3.142,[1.9,1.9,1.9],0.931,1.282,1.197,{"carpet":"#d9a441"}],
-  [0,"chair","loungeChairRelax",null,-8.2,3,0,3.142,[1.9,1.9,1.9],0.931,1.282,1.197,{"carpet":"#c4683f"}],
-  [0,"speaker","speaker",null,-10.9,1.35,0,0,[1.6,1.6,1.6],0.237,0.237,1.018,null],
-  [0,"speaker","speaker",null,-7.9,1.35,0,0,[1.6,1.6,1.6],0.237,0.237,1.018,null],
-  [0,"rug","rugRectangle",null,-9.4,2.6,0,0,[1.9,1.9,1.9],2.983,1.748,0.019,{"carpet":"#e6cfae","carpetDarker":"#c69c6d"}],
-  [0,"rug","rugRound",null,-3.2,-4.8,0,0,[2.8,2.8,2.8],2.576,2.576,0.028,{"carpet":"#e6cfae","carpetDarker":"#c69c6d"}],
-  [0,"rug","rugRound",null,-9.2,-4,0,0,[2.4,2.4,2.4],2.208,2.208,0.024,{"carpet":"#e6cfae","carpetDarker":"#c69c6d"}],
-  [0,"rug","rugRound",null,2.2,5.4,0,0,[2,2,2],1.84,1.84,0.02,{"carpet":"#e6cfae","carpetDarker":"#c69c6d"}],
-  [0,"plant","pottedPlant",null,-0.65,-1.2,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
-  [0,"plant","pottedPlant",null,11.4,-6.5,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
-  [0,"plant","pottedPlant",null,-6,-1.3,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
-  [0,"plant","pottedPlant",null,2,1.6,0,0,[2.141,2.141,2.141],0.454,0.518,1.4,null],
-]
-export const OFFICE_PIECES: OfficePiece[] = ROWS.map(
-  ([zone, kind, model, ui, x, z, y, ry, s, w, d, h, tint]) => ({
+export const piecesOf = (rows: Row[]): OfficePiece[] =>
+  rows.map(([zone, kind, model, ui, x, z, y, ry, s, w, d, h, tint]) => ({
     zone,
     kind,
     model,
@@ -256,5 +57,14 @@ export const OFFICE_PIECES: OfficePiece[] = ROWS.map(
     d,
     h,
     tint,
-  }),
-)
+  }))
+
+/** 사무실 배치 한 벌. 건물 외관마다 하나씩 있다(D39). */
+export interface OfficePlan {
+  room: { w: number; d: number; h: number }
+  zones: OfficeZone[]
+  lounge: { x0: number; z0: number; x1: number; z1: number }
+  entrance: { x: number; z: number }
+  bibi: { x: number; z: number; ry: number }
+  pieces: OfficePiece[]
+}

@@ -11,7 +11,9 @@ test.beforeEach(async ({ page }) => {
 async function login(page: Page) {
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
 }
 
 async function openWorkspace(page: Page) {
@@ -241,6 +243,121 @@ test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await tag.click()
   await expect(page.getByRole('dialog')).toContainText('부지 3')
+})
+
+// 목록 API에 없는 값은 올린 프로젝트만 불러 호버 카드로 보인다(D39). 배지는 호버 카드가 열려도 보인다.
+test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카드가 열리고 배지가 보인다', async ({
+  page,
+}) => {
+  await login(page)
+  const running = page.getByRole('link', { name: /우리 팀 협업 서비스/ })
+  const preparing = page.getByRole('link', { name: /동네 책방 예약/ })
+  const tooltip = page.getByRole('tooltip')
+  await expect(running).toHaveAccessibleName(/안 읽은 알림 2건/)
+  await expect(running.getByText('2', { exact: true })).toBeVisible()
+  await expect(preparing).toHaveAccessibleName('동네 책방 예약')
+  await expect(tooltip).toHaveCount(0)
+
+  await running.hover()
+  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await expect(tooltip).toContainText('팀장')
+  await expect(tooltip).toContainText('검토할 변경')
+  await expect(tooltip).toContainText('승인 문서')
+  await expect(tooltip).toContainText('안 읽은 알림 2건')
+  await expect(running.getByText('2', { exact: true })).toBeVisible()
+  const card = (await running.boundingBox())!
+  const shown = (await tooltip.boundingBox())!
+  // 올린 카드 위에 겹치고 폭은 카드에 맞춘다.
+  expect(Math.abs(shown.x - (card.x - 6))).toBeLessThan(1)
+  expect(Math.abs(shown.width - (card.width + 12))).toBeLessThan(1)
+
+  await preparing.hover()
+  await expect(tooltip).toHaveCount(1)
+  await expect(tooltip).toContainText('시작 준비 중')
+  await expect(tooltip).toContainText('문서 초안')
+  await expect(tooltip).toContainText(/다음: /)
+  await expect(tooltip).not.toContainText('안 읽은 알림')
+
+  await page.mouse.move(0, 0)
+  await expect(tooltip).toHaveCount(0)
+  await page.getByLabel('정렬').focus()
+  await page.keyboard.press('Tab')
+  await expect(tooltip).toHaveCount(1)
+  await page.keyboard.press('Shift+Tab')
+  await expect(tooltip).toHaveCount(0)
+})
+
+test('지도 이름표에 올리면 호버 카드가 제목 아래 고정 자리에 열리고 키보드로도 열린다', async ({
+  page,
+}) => {
+  await login(page)
+  const city = page.getByRole('group', { name: /돌리는 원형 도시/ })
+  const tag = city.getByRole('button', { name: /우리 팀 협업 서비스/ })
+  const tooltip = page.getByRole('tooltip')
+  await expect(tag).toBeVisible()
+  await expect(tag).toHaveAccessibleName(/안 읽은 알림 2건/)
+  await tag.hover()
+  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  const box = (await page
+    .getByRole('region', { name: '내 프로젝트 도시' })
+    .boundingBox())!
+  const shown = (await tooltip.boundingBox())!
+  expect(shown.width).toBe(272)
+  expect(Math.round(shown.x - box.x)).toBeLessThanOrEqual(25)
+  expect(Math.round(shown.y - box.y)).toBeLessThanOrEqual(69)
+  await page.mouse.move(0, 0)
+  await expect(tooltip).toHaveCount(0)
+  // 이름표 아래 건물에 올려도 같은 카드가 열린다.
+  const at = (await tag.boundingBox())!
+  await page.mouse.move(at.x + at.width / 2, at.y + at.height + 40)
+  await expect(tooltip).toContainText('진행 중 · 기준 v1')
+  await page.mouse.move(0, 0)
+  await expect(tooltip).toHaveCount(0)
+  await tag.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(tooltip).toHaveCount(1)
+})
+
+// 띄어쓰기 없는 긴 이름이 사무실 왼쪽 위 패널을 밀어내지 않고, 이름표와 카드도 제 폭 안에 머문다.
+test('띄어쓰기 없는 긴 이름도 이름표·카드·사무실 패널을 깨뜨리지 않는다', async ({
+  page,
+}) => {
+  const name = 'ㅁ'.repeat(40)
+  await login(page)
+  await page
+    .getByRole('button', { name: '프로젝트 만들기', exact: true })
+    .first()
+    .click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('프로젝트 이름').fill(name)
+  await dialog.getByLabel('프로젝트 소개').fill('ㄴ'.repeat(120))
+  await dialog
+    .getByRole('button', { name: '프로젝트 만들기', exact: true })
+    .click()
+
+  const panel = page.getByRole('region', { name: '프로젝트', exact: true })
+  await expect(panel.getByRole('heading', { name })).toBeVisible()
+  const outer = (await panel.boundingBox())!
+  const title = (await panel.getByRole('heading', { name }).boundingBox())!
+  expect(outer.width).toBe(320)
+  expect(title.x + title.width).toBeLessThanOrEqual(outer.x + outer.width)
+
+  await page.getByRole('button', { name: '나의 도시로', exact: true }).click()
+  const tag = page
+    .getByRole('group', { name: /돌리는 원형 도시/ })
+    .getByRole('button', { name })
+  await expect(tag).toBeVisible()
+  expect((await tag.boundingBox())!.width).toBeLessThanOrEqual(200)
+  const card = page.getByRole('link', { name })
+  // 설명은 한 줄로 잘리지 않고 줄을 바꿔 두 줄(19px씩)에서 끝나고, 카드 밖으로 나가지 않는다.
+  const description = card.getByText('ㄴ'.repeat(120))
+  expect((await description.boundingBox())!.height).toBe(38)
+  expect(
+    await card.evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true)
 })
 
 // 사용자 요청 '가장 마지막에 방문한 프로젝트 건물이 가운데로'(D33): 1번 칸 프로젝트에 들어갔다 나오면 그 건물이 가운데에 온다.

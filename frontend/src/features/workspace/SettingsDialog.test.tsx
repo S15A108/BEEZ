@@ -107,3 +107,27 @@ it('요청이 처리 중이면 설정의 다른 메뉴로 옮기지 못하고 �
     'true',
   )
 })
+
+// D39: 사무실 시간대는 기본 자동(한국 시각)이고, 설정에서 낮·노을·밤 중 하나로 고정해 이 브라우저에 남긴다.
+it('사무실 화면 설정에서 시간대를 밤으로 고정하면 브라우저에 저장한다', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  useWorkspaceStore.getState().openPane('settings', 'team')
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <SettingsDialog projectId="101" isLeader agentConnected={false} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await user.click(screen.getByRole('button', { name: '사무실 화면' }))
+  expect(screen.getByRole('radio', { name: /자동/ })).toBeChecked()
+  await user.click(screen.getByRole('radio', { name: /^밤/ }))
+  expect(useWorkspaceStore.getState().officeTime).toBe('night')
+  expect(localStorage.getItem('beez.scene.preferences.v1')).toContain(
+    '"officeTime":"night"',
+  )
+  useWorkspaceStore.getState().setOfficeTime('auto')
+})

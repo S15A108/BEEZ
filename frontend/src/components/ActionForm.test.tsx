@@ -163,4 +163,58 @@ describe('공용 입력 폼', () => {
     expect(cancel).toHaveBeenCalledOnce()
     expect(submit).not.toHaveBeenCalled()
   })
+
+  it('글자 수를 세는 칸은 max를 넘겨 입력하거나 붙여 넣을 수 없다', async () => {
+    render(
+      <ActionForm
+        fields={[
+          { name: 'name', label: '이름', max: 5, counter: true },
+          {
+            name: 'description',
+            label: '소개',
+            type: 'textarea',
+            max: 5,
+            counter: true,
+          },
+        ]}
+        onSubmit={vi.fn()}
+        submitLabel="저장"
+      />,
+    )
+    await userEvent.type(screen.getByLabelText('이름'), '가나다라마바사')
+    expect(screen.getByLabelText('이름')).toHaveValue('가나다라마')
+    await userEvent.click(screen.getByLabelText('소개'))
+    await userEvent.paste('가나다라마바사')
+    expect(screen.getByLabelText('소개')).toHaveValue('가나다라마')
+    expect(screen.getAllByText('5 / 5')).toHaveLength(2)
+  })
+
+  it('이미 max를 넘긴 값은 그대로 두고 줄여야 저장할 수 있다', async () => {
+    const submit = vi.fn().mockResolvedValue(undefined)
+    render(
+      <ActionForm
+        fields={[
+          {
+            name: 'name',
+            label: '이름',
+            max: 3,
+            counter: true,
+            value: '가나다라',
+          },
+        ]}
+        onSubmit={submit}
+        submitLabel="저장"
+      />,
+    )
+    const input = screen.getByLabelText('이름')
+    expect(input).toHaveValue('가나다라')
+    await userEvent.click(screen.getByRole('button', { name: '저장' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '3자 이하로 입력해 주세요.',
+    )
+    expect(submit).not.toHaveBeenCalled()
+    await userEvent.type(input, '{Backspace}')
+    await userEvent.click(screen.getByRole('button', { name: '저장' }))
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ name: '가나다' }))
+  })
 })
