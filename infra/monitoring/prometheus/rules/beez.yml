@@ -280,18 +280,21 @@ groups:
         annotations:
           summary: "CDC 가 켜졌는데 Connect 에 커넥터가 없음 — 커넥터가 지워졌거나 등록에 실패함"
 
-      # consumer 는 Kafka 에 붙어 있는데(consumer_up 1) 접수 group 이 밀린 레코드를 10분 넘게 못 줄임 = 처리 중 막힘
-      # (예: 같은 레코드를 계속 재시도). 평소 dev 에서는 레코드가 1초 안에 처리돼 lag 이 0 으로 돌아온다(295 실측 0.8초).
+      # consumer 는 Kafka 에 붙어 있는데(consumer_up 1) 밀린 레코드가 있고, 접수 group 의 커밋 offset 이 전진하지 않음
+      # = 처리 중 막힘(예: 같은 레코드를 계속 재시도). lag 만 보면 레코드가 계속 들어오고 정상 처리되는데 lag 이 1~2건으로
+      # 유지될 때도 울어서(PR #186 리뷰) offset 전진 여부를 함께 본다. 평소 레코드는 1초 안에 처리돼 커밋된다(295 실측 0.8초).
+      # 시간: 막힌 순간부터 offset 이 5분 그대로여야 changes(..[5m]) 가 0 이 되고, 그 상태가 5분(for) 이어지면 운다 → 약 10분.
       # consumer 가 끊긴 경우는 CdcConsumerDown 이 맡고, 그 동안 consumer_up 이 1 이 아니어서 여기서는 울지 않는다.
       # group 이름은 backend env BEEZ_CDC_INTAKE_GROUP_ID 기본값(infra/compose.yaml)과 같다. kafka-exporter 도 이 group 만 본다
       - alert: CdcConsumerLagStuck
         expr: |
           max(kafka_consumergroup_lag_sum{consumergroup="beez-published-analysis"}) > 0
+          and on() max(changes(kafka_consumergroup_current_offset_sum{consumergroup="beez-published-analysis"}[5m])) == 0
           and on() max(beez_cdc_kafka_consumer_up) == 1
-        for: 10m
+        for: 5m
         labels: {team: infra}
         annotations:
-          summary: "consumer 가 붙어 있는데 접수 레코드 {{ $value }}건이 10분 넘게 처리되지 않음"
+          summary: "consumer 가 붙어 있는데 접수 group offset 이 10분 넘게 전진하지 않음(밀린 레코드 {{ $value }}건)"
 
   - name: beez-infra-alerts
     rules:

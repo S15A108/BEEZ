@@ -73,8 +73,10 @@ sudo install -d -o root -g 1001 -m 750 /opt/beez/.cdc-secrets && sudo ls -ld /op
 # 서버 (ssh beez)
 cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
 kt() { docker exec -e KAFKA_HEAP_OPTS=-Xmx128m beez-cdc-kafka-1 /opt/kafka/bin/"$@"; }
+cdcjar() { local j; j=$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' /opt/beez/cdc/compose.yaml | head -n 1)
+  if [ -n "$j" ] && [ -f "$j" ]; then echo "javaagent jar 있음: $j"; else echo "javaagent jar 없음: ${j:-compose 에서 경로를 못 읽음} — cdc-stack.md \"지표\" → \"jar 받기\" 먼저"; return 1; fi; }
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
-cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
+cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}\t{{.Ports}}'
 # kafka    Up ... (healthy)   9092/tcp
 # connect  Up ... (healthy)   8083/tcp, 8778/tcp, 9092/tcp
 ```
@@ -224,6 +226,10 @@ mon exec -T prometheus wget -qO- http://connect:9404/metrics | grep -E '^(kafka_
 설정이나 이미지 버전을 바꿀 때는 PR로 `infra/cdc/dev/`를 고쳐 dev에 넣은 뒤 아래를 돌린다. 서버에서 파일을 직접
 고치지 않는다(다음 올리기에 덮인다).
 
+**선행 조건(261부터)**: 올릴 compose가 가리키는 javaagent jar가 서버 `/opt/beez/.cdc-agents/`에 있어야 한다. 없으면
+connect가 `bind source path does not exist`로 뜨지 않는다. 이 버전을 처음 올리는 서버이거나 jar 버전을 올린 PR이면 먼저
+["지표" → "jar 받기"](#jar-받기-서버당-한-번-버전을-올릴-때마다)를 한다. 아래 서버 명령의 `cdcjar`가 jar가 없으면 `up` 전에 멈춘다.
+
 ```bash
 # 로컬 PC (Git Bash, 저장소 루트). REV 는 올릴 커밋. PR 검증 중이면 그 브랜치의 커밋(HEAD 등)
 REV=origin/dev
@@ -243,9 +249,14 @@ git archive "$SHA" infra/cdc/dev | ssh beez "set -e; cd /opt/beez
 그다음 서버에서 다시 띄운다.
 
 ```bash
-# 서버 (ssh beez). cdc 함수는 "처음 올리기" 3단계. 첫 줄은 "확인" 2)의 기준을 이번 올리기 직전으로 새로 잡는다
+# 서버 (ssh beez). 함수 두 개는 셸마다 다시 정의한다("처음 올리기" 3단계와 같음). cdcjar 는 올린 compose 가 가리키는
+# javaagent jar 가 서버에 있는지 본다 — 없으면 connect 가 뜨지 않으므로 up 하지 않고 멈춘다(S15P31A108-261, PR #186 리뷰).
+# ss 줄은 "확인" 2)의 기준을 이번 올리기 직전으로 새로 잡는다
+cdc() { docker compose -f /opt/beez/cdc/compose.yaml "$@"; }
+cdcjar() { local j; j=$(sed -nE 's#.*(/opt/beez/\.cdc-agents/jmx_prometheus_javaagent-[0-9.]+\.jar).*#\1#p' /opt/beez/cdc/compose.yaml | head -n 1)
+  if [ -n "$j" ] && [ -f "$j" ]; then echo "javaagent jar 있음: $j"; else echo "javaagent jar 없음: ${j:-compose 에서 경로를 못 읽음} — cdc-stack.md \"지표\" → \"jar 받기\" 먼저"; return 1; fi; }
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
-cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
+cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 ```
 
 - compose 파일이 바뀌면 compose가 알아채 바뀐 컨테이너만 다시 만든다. 바인드 마운트하는 설정 파일은 connect의
@@ -301,10 +312,10 @@ cdc down        # 컨테이너 삭제. 볼륨(토픽·Connect 설정·offset)은
 | 6 | 처리 재개 확인 | `beez_cdc_analysis_consumer_enabled` = 1, `beez_cdc_kafka_consumer_up` = 1, 4번에서 적은 PENDING이 줄어든다 |
 
 ```bash
-# 서버 (ssh beez). cdc·kt 함수는 "처음 올리기" 3단계, PG·pgsql 은 cdc-postgres.md "0. 준비"
+# 서버 (ssh beez). cdc·kt·cdcjar 함수는 "처음 올리기" 3단계, PG·pgsql 은 cdc-postgres.md "0. 준비"
 # 2) "확인" 2)의 기준을 띄우기 직전으로 새로 잡고 띄운다. up 은 stop 으로 멈춘 것도 다시 띄우고 healthy 까지 기다린다
 sudo ss -Htln | awk '{print $4}' | sort > /tmp/ss-before-cdc.txt
-cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
+cdcjar && cdc up -d --wait && cdc ps --format '{{.Service}}\t{{.Status}}'
 # 3) 커넥터·task 상태. 커넥터가 없으면(295 전) {}
 docker exec beez-cdc-connect-1 curl -s 'http://127.0.0.1:8083/connectors?expand=status'; echo
 #    슬롯. Connect 가 다시 붙기까지 몇 초 걸릴 수 있다. retained 는 슬롯이 붙잡고 있는 WAL 양

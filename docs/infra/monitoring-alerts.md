@@ -35,7 +35,7 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcConnectDown](#cdcconnectdown) | consumer 켜짐 **그리고** Connect 지표 수집 실패(`up{job="connect"} == 0`) | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConnectorNotRunning](#cdcconnectornotrunning) | 커넥터나 task 상태가 RUNNING 아님(failed·paused·stopped 등) | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcConnectorMissing](#cdcconnectormissing) | consumer 켜짐 **그리고** Connect·Kafka는 수집되는데 커넥터 지표 없음 | 10분 | 4시간 | 인프라 · 전진 |
-| [CdcConsumerLagStuck](#cdcconsumerlagstuck) | consumer가 Kafka에 붙어 있는데(`consumer_up` 1) 접수 group lag > 0 | 10분 | 4시간 | 인프라 · 전진 |
+| [CdcConsumerLagStuck](#cdcconsumerlagstuck) | consumer가 Kafka에 붙어 있는데(`consumer_up` 1) 접수 group lag > 0 **그리고** 커밋 offset이 5분 동안 그대로 | 5분(멈춘 뒤 약 10분) | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [MonitoringTargetDown](#monitoringtargetdown) | backend·kafka·connect 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
@@ -301,9 +301,14 @@ RUNNING을 그대로 보여 줌), 그때는 원인인 `CdcKafkaUnreachable`만 �
 
 ### CdcConsumerLagStuck
 
-backend consumer는 Kafka에 붙어 있는데(`consumer_up` 1), 접수 group `beez-published-analysis`의 밀린 레코드가 10분 넘게 0으로
-돌아오지 않습니다. 평소 레코드는 1초 안에 처리됩니다(295 실측 0.8초). 같은 레코드를 계속 재시도하며 막혀 있을 가능성이 큽니다
-(예: 접수행 삭제 이벤트, [cdc-connector.md "꼭 지킬 것"](cdc-connector.md#꼭-지킬-것)).
+backend consumer는 Kafka에 붙어 있는데(`consumer_up` 1), 접수 group `beez-published-analysis`에 밀린 레코드가 있고 그 group의
+커밋 offset이 약 10분 동안 전진하지 않습니다(offset이 5분 그대로인 상태가 5분 더 이어짐). 평소 레코드는 1초 안에 처리돼
+커밋됩니다(295 실측 0.8초). 같은 레코드를 계속 재시도하며 막혀 있을 가능성이 큽니다(예: 접수행 삭제 이벤트,
+[cdc-connector.md "꼭 지킬 것"](cdc-connector.md#꼭-지킬-것)).
+
+- lag만 보지 않는 이유: 레코드가 계속 들어오고 정상 처리되는데 lag이 1~2건으로 유지되는 경우까지 정체로 알리게 되기 때문입니다
+  (PR #186 리뷰). 그래서 lag이 남아 있어도 offset이 5분 안에 한 번이라도 전진하면 울지 않습니다. 계속 쌓이기만 하는 대기량
+  자체는 이 알림이 보지 않습니다(대시보드 "접수 lag").
 
 - 볼 곳: 대시보드 "접수 lag", backend 로그의 리스너 오류, `CdcKafkaReceiveFailures`가 같이 울었는지. 처리 자체는 복구 스캔이
   이어 가지만 Kafka 경로는 그 레코드에서 멈춥니다. 앱 쪽 원인이면 양지훈님과 같이 봅니다.
@@ -409,7 +414,7 @@ S15P31A108-229(CDC 통합·장애 복구 검증, 양지훈)가 Sprint5에 지연
 | Kafka 중지(261) | `CdcConsumerDown`·`CdcKafkaUnreachable`이 5분 뒤 함께 오는지, 다시 띄우면 둘 다 해소 글이 오는지 |
 | Connect 중지·커넥터 실패(261) | `CdcConnectDown`(Connect 중지), `CdcConnectorNotRunning`(task failed), 10분 넘으면 `CdcSlotInactive` |
 | 커넥터 삭제(261) | `CdcConnectorMissing`·`CdcSlotInactive`(슬롯이 남는 경우) |
-| 레코드 처리 막힘(261) | `CdcConsumerLagStuck`이 10분 뒤 오는지(consumer는 붙어 있음) |
+| 레코드 처리 막힘(261) | `CdcConsumerLagStuck`이 offset이 멈춘 지 약 10분 뒤 오는지(consumer는 붙어 있음) |
 
 264에서 확인한 범위는 아래 "검증 기록"입니다. 위 표의 CDC 시나리오는 Kafka·consumer가
 있는 환경이 필요해 #229에서 확인합니다.
@@ -566,7 +571,7 @@ Docker Desktop에 `beez_default`를 만들고 서버와 같은 pgvector(`wal_lev
 
 | 항목 | 결과 |
 |---|---|
-| promtool | 규칙 34개, 시험 34개 통과. 새 조건(CDC 켜짐 조건, Kafka 닿음 조건, MonitoringTargetDown 제외, lag 의 consumer_up 조건, 상태 라벨 묶음 등)을 하나씩 빼거나 옛 식으로 되돌린 사본에서 대응 시험이 실패 |
+| promtool | 규칙 34개, 시험 36개 통과. 새 조건(CDC 켜짐 조건, Kafka 닿음 조건, MonitoringTargetDown 제외, lag 의 consumer_up·offset 정체 조건, 상태 라벨 묶음 등)을 하나씩 빼거나 옛 식으로 되돌린 사본에서 대응 시험이 실패. lag 알림을 리뷰 전 식(lag > 0 만 10분)으로 되돌리면 "lag 1~2건 유지 + offset 전진"·"offset 4분마다 전진" 시험이 실패(PR #186 리뷰) |
 | javaagent 설정 시험 | `tests/check-connect-metrics.sh`가 정상 설정에서 통과. 상태 패턴·커넥터 패턴·소문자 설정을 망가뜨린 사본과 깨진 YAML·정규식·없는 파일에서 실패(JVM exit 1) |
 | 수집 | job `kafka`·`connect` UP. 새 대시보드 패널 식 18개 모두 조회 성공(로컬 postgres-exporter는 수집 계정이 없어 슬롯 값만 빔) |
 | Connect 지표 | `kafka_connect_connector_status`·`task_status`(status 라벨), task 수, `debezium_streaming_connected` 1. 에이전트 지표 120줄 |
