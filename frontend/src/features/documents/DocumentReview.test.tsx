@@ -150,6 +150,8 @@ const comment = {
   explanation: '참고 · 용어를 문서 전체에서 같게 써요.',
   type: 'COMMENT' as const,
   step: 'BODY' as const,
+  sources: [],
+  messages: [],
 }
 
 // 서버가 준 검토에 의견(COMMENT)을 섞는다. onlyComments면 수정 제안 없이 의견만 남긴다.

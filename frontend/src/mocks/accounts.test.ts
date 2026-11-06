@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { authApi, membersApi, projectsApi } from '@/api/services'
+import { authApi, membersApi, projectsApi, tasksApi } from '@/api/services'
 import {
   getApiErrorCode,
   getApiErrorDetails,
@@ -134,4 +134,30 @@ it('탈퇴하면 혼자 쓰는 프로젝트는 지우고 팀원으로 참여한 
   expect(
     loadMockDatabase().projects.map((item) => item.project.id),
   ).not.toContain(solo.id)
+})
+
+// S15P31A108-281(PR #182): 탈퇴도 인계 대상 없는 나가기(MEM-A10)와 같다. 닫힌 작업과 다른 팀원의 작업은 그대로다.
+it('탈퇴하면 팀 프로젝트에서 맡은 열린 작업의 담당자만 비우고 상태·검증은 그대로 둔다', async () => {
+  await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+  const before = await tasksApi.get('101', '502')
+  const mates = await tasksApi.get('101', '503')
+  const closed = loadMockDatabase()
+    .projects.find((item) => item.project.id === '101')!
+    .tasks.find((task) => task.id === '501')!
+  closed.assignee_member_id = '22'
+  closed.status = 'COMPLETED'
+
+  await authApi.login({ email: MEMBER_EMAIL, password: DEMO_PASSWORD })
+  await authApi.withdraw({ password: DEMO_PASSWORD })
+
+  await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+  const after = await tasksApi.get('101', '502')
+  expect(after).not.toHaveProperty('assignee_member_id')
+  expect(after.status).toBe(before.status)
+  expect(after.validation_status).toBe(before.validation_status)
+  expect(after.lock_version).toBe(before.lock_version + 1)
+  expect((await tasksApi.get('101', '501')).assignee_member_id).toBe('22')
+  expect((await tasksApi.get('101', '503')).assignee_member_id).toBe(
+    mates.assignee_member_id,
+  )
 })

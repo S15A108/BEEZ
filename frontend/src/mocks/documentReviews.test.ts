@@ -125,3 +125,175 @@ it('반려하면 같은 작성 건을 다시 열고, 기준이 생긴 프로젝�
     ),
   ).toBe('change_proposal_required')
 })
+
+it('비비와 대화하면 내 말과 비비 답이 제안에 남고, 비비의 다른 대체문으로 반영할 수 있다', async () => {
+  const documentId = '221'
+  const copy = await documentsApi.workingCopy('102', documentId)
+  const review = await documentsApi.requestBeeReview('102', documentId, {
+    expected_revision: copy.revision,
+  })
+  const [first] = review.suggestions
+  const chat = await documentsApi.discussSuggestion(
+    '102',
+    documentId,
+    review.id,
+    first.id,
+    { text: '목적을 더 짧게 쓸 수 있을까?' },
+  )
+  expect(chat.message.author_kind).toBe('HUMAN')
+  expect(chat.reply.author_kind).toBe('BEE')
+  expect(chat.reply.proposed_text).toBeTruthy()
+  const reread = await documentsApi.workingCopy('102', documentId)
+  expect(reread.latest_review?.suggestions[0].messages).toHaveLength(2)
+  const applied = await documentsApi.decideSuggestion(
+    '102',
+    documentId,
+    review.id,
+    first.id,
+    {
+      expected_revision: copy.revision,
+      decision: 'APPLY',
+      replacement_text: chat.reply.proposed_text,
+    },
+  )
+  expect(applied.content).toContain(chat.reply.proposed_text)
+  expect(applied.latest_review?.suggestions[0].applied_replacement_text).toBe(
+    chat.reply.proposed_text,
+  )
+  // 직접 고쳐 이전 검토가 무효가 되면 그 검토로 대화할 수 없다.
+  await documentsApi.updateWorkingCopy('102', documentId, {
+    expected_revision: applied.revision,
+    content: '직접 고침',
+    file_name: 'plan.md',
+  })
+  expect(
+    await codeOf(
+      documentsApi.discussSuggestion(
+        '102',
+        documentId,
+        review.id,
+        review.suggestions[1].id,
+        { text: '이건?' },
+      ),
+    ),
+  ).toBe('review_stale')
+})
+
+it('직접 요청하면 DIRECT_REQUEST 제안이 붙고, 팀장 검토 요청 중에는 대화·요청이 잠긴다', async () => {
+  const documentId = '222'
+  const copy = await documentsApi.workingCopy('102', documentId)
+  const review = await documentsApi.requestBeeReview('102', documentId, {
+    expected_revision: copy.revision,
+  })
+  const added = await documentsApi.requestBeeSuggestion(
+    '102',
+    documentId,
+    review.id,
+    { expected_revision: copy.revision, text: '오류 표에 403 행을 추가해 줘.' },
+  )
+  expect(added.suggestion.origin).toBe('DIRECT_REQUEST')
+  expect(added.suggestion.decision).toBe('PENDING')
+  let current = copy
+  const all = (await documentsApi.workingCopy('102', documentId)).latest_review!
+  for (const suggestion of all.suggestions)
+    current = await documentsApi.decideSuggestion(
+      '102',
+      documentId,
+      review.id,
+      suggestion.id,
+      { expected_revision: current.revision, decision: 'SKIP' },
+    )
+  await documentsApi.submitReview('102', documentId, {
+    expected_revision: current.revision,
+    review_id: review.id,
+  })
+  expect(
+    await codeOf(
+      documentsApi.requestBeeSuggestion('102', documentId, review.id, {
+        expected_revision: current.revision,
+        text: '하나 더',
+      }),
+    ),
+  ).toBe('submission_locked')
+  expect(
+    await codeOf(
+      documentsApi.discussSuggestion(
+        '102',
+        documentId,
+        review.id,
+        all.suggestions[0].id,
+        { text: '하나 더' },
+      ),
+    ),
+  ).toBe('submission_locked')
+})
+
+it('검토 요청을 취소하면 작성 건이 다시 열리고 이력에 WITHDRAWN 으로 남으며, 팀장 결정은 막힌다', async () => {
+  const documentId = '223'
+  const copy = await documentsApi.workingCopy('102', documentId)
+  const review = await documentsApi.requestBeeReview('102', documentId, {
+    expected_revision: copy.revision,
+  })
+  let current = copy
+  for (const suggestion of review.suggestions)
+    current = await documentsApi.decideSuggestion(
+      '102',
+      documentId,
+      review.id,
+      suggestion.id,
+      { expected_revision: current.revision, decision: 'SKIP' },
+    )
+  const submission = await documentsApi.submitReview('102', documentId, {
+    expected_revision: current.revision,
+    review_id: review.id,
+  })
+  const reopened = await documentsApi.cancelSubmission(
+    '102',
+    documentId,
+    submission.id,
+  )
+  expect(reopened.status).toBe('EDITING')
+  expect(reopened.revision).toBe(current.revision + 1)
+  expect(reopened.latest_review).toBeUndefined()
+  expect(reopened.submissions[0].status).toBe('WITHDRAWN')
+  // 같은 제출을 다시 취소해도 같은 결과(멱등)다.
+  await expect(
+    documentsApi.cancelSubmission('102', documentId, submission.id),
+  ).resolves.toMatchObject({ status: 'EDITING' })
+  expect(
+    await codeOf(
+      documentsApi.decideSubmission('102', documentId, submission.id, {
+        decision: 'APPROVE',
+      }),
+    ),
+  ).toBe('submission_withdrawn')
+})
+
+it('팀장이 먼저 결정했으면 취소는 submission_decided 로 막힌다', async () => {
+  const documentId = '224'
+  const copy = await documentsApi.workingCopy('102', documentId)
+  const review = await documentsApi.requestBeeReview('102', documentId, {
+    expected_revision: copy.revision,
+  })
+  let current = copy
+  for (const suggestion of review.suggestions)
+    current = await documentsApi.decideSuggestion(
+      '102',
+      documentId,
+      review.id,
+      suggestion.id,
+      { expected_revision: current.revision, decision: 'SKIP' },
+    )
+  const submission = await documentsApi.submitReview('102', documentId, {
+    expected_revision: current.revision,
+    review_id: review.id,
+  })
+  await documentsApi.decideSubmission('102', documentId, submission.id, {
+    decision: 'APPROVE',
+  })
+  expect(
+    await codeOf(
+      documentsApi.cancelSubmission('102', documentId, submission.id),
+    ),
+  ).toBe('submission_decided')
+})
