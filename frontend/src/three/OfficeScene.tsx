@@ -24,13 +24,16 @@ import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
 import { findPath } from './office/path'
+import { officeDesignOf, type OfficeTime } from './office/officeLook'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
 import type { SceneAgent, SceneProject, SceneTask } from './types'
 
 export interface OfficeSceneProps {
   project: Pick<SceneProject, 'name' | 'id'>
-  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그린다. */
+  /** 건물 디자인(D22). 산책 화면의 우리 건물을 도시와 같은 Kenney 모델로 그리고, 사무실 재질·배치를 고른다(D39). */
   design?: string
+  /** 사무실 시간대(D39). 없으면 낮이다. */
+  time?: OfficeTime
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -68,10 +71,11 @@ function OfficeRuntime(
   const floor = useMemo(
     () =>
       officeFloorAt(
-        makeBuilding(ALL_KEYS, 'glass', undefined, {}).floors[1],
+        makeBuilding(ALL_KEYS, officeDesignOf(props.design), undefined, {})
+          .floors[1],
         phase,
       ),
-    [phase],
+    [phase, props.design],
   )
   const snapshot = useMemo(
     () => officeSceneSnapshot(props.project, agents, props.tasks),
@@ -427,6 +431,15 @@ function OfficeRuntime(
     }
     const free = (x: number, y: number) => officeWalkable(state.floor, x, y)
     if (lastFloor.current !== state.floor) {
+      // 처음에는 엘리베이터에서 내리는 칸에 서서 방 안(동쪽)을 본다. 건물마다 배치가 달라(D39) 고정 좌표는 벽이나
+      // 가구 옆일 수 있고, 서쪽을 보면 1인칭이 엘리베이터 문과 벽만 본다.
+      if (!lastFloor.current && state.phase >= 3)
+        Object.assign(player.current, {
+          x: state.floor.exit.x * 32 + 16,
+          y: state.floor.exit.y * 32 + 27,
+          heading: Math.PI / 2,
+          dir: 'right',
+        })
       lastFloor.current = state.floor
       route.current = []
       pendingExit.current = false
@@ -506,10 +519,15 @@ function OfficeRuntime(
     focus.current.y += (target.y - focus.current.y) * ease
     me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
-      zoom: [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] * zoom.current,
+      // 건물별 28 × 16 m 방(D39)도 폭 26칸 방과 같은 크기로 화면에 담는다.
+      zoom:
+        [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] *
+        zoom.current *
+        Math.min(1, 26 / state.floor.W),
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
       work: state.work,
+      time: state.props.time,
     })
     const nextHint =
       state.props.viewMode === 'first'

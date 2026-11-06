@@ -163,7 +163,7 @@ export async function documentRoutes(
   context: MockContext,
 ): Promise<MockReply | undefined> {
   if (!/^(DOC|PLN|TRC)-/.test(id)) return undefined
-  if (/^DOC-A(1[3-9]|2[01])$/.test(id)) return reviewRoutes(id, context)
+  if (/^DOC-A(1[3-9]|2[0-4])$/.test(id)) return reviewRoutes(id, context)
   const planning = planningDraftRoutes(id, context)
   if (planning) return planning
   const project = requireProject(context)

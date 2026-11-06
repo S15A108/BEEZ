@@ -18,6 +18,7 @@ import com.beez.backend.invitation.CreatedInvitationResponse.Status;
 import com.beez.backend.project.MemberResponse;
 import com.beez.backend.project.MembershipEndReason;
 import com.beez.backend.project.Project;
+import com.beez.backend.project.ProjectActivities;
 import com.beez.backend.project.ProjectMember;
 import com.beez.backend.project.ProjectMemberRepository;
 import com.beez.backend.project.ProjectRepository;
@@ -67,6 +68,7 @@ public class InvitationService implements DisposableBean {
     private final ProjectMemberRepository members;
     private final AccountRepository accounts;
     private final ProjectService projectService;
+    private final ProjectActivities activities;
     private final MailGateway mail;
     private final TransactionTemplate tx;
     private final BeezProperties.Invitation config;
@@ -75,13 +77,15 @@ public class InvitationService implements DisposableBean {
 
     public InvitationService(ProjectAccessChecker access, InvitationRepository invitations, ProjectRepository projects,
                              ProjectMemberRepository members, AccountRepository accounts, ProjectService projectService,
-                             MailGateway mail, PlatformTransactionManager manager, BeezProperties properties) {
+                             ProjectActivities activities, MailGateway mail, PlatformTransactionManager manager,
+                             BeezProperties properties) {
         this.access = access;
         this.invitations = invitations;
         this.projects = projects;
         this.members = members;
         this.accounts = accounts;
         this.projectService = projectService;
+        this.activities = activities;
         this.mail = mail;
         this.tx = new TransactionTemplate(manager);
         this.config = properties.invitation();
@@ -300,6 +304,7 @@ public class InvitationService implements DisposableBean {
 
         ProjectMember member = joinAsMember(project.getId(), me.getId(), existing);
         invitation.accept(me.getId(), Instant.now());
+        activities.memberJoined(caller, member, invitation.getId());
 
         // 새 멤버십엔 토큰이 있을 수 없다 (agent_token 이 멤버십 행을 참조). 되살린 멤버십만 예전 토큰을 본다
         boolean agentConnected = existing.isPresent()
@@ -347,7 +352,9 @@ public class InvitationService implements DisposableBean {
                 case SKIP -> {
                     continue;
                 }
-                case JOIN, REVIVE -> joinAsMember(invitation.getProjectId(), accountId, existing);
+                // 행위자는 로그인·가입한 본인이다(-289). ALREADY_ACTIVE 는 들어온 게 아니라 초대만 닫으므로 남기지 않는다
+                case JOIN, REVIVE -> activities.memberJoined(CallerContext.human(accountId),
+                        joinAsMember(invitation.getProjectId(), accountId, existing), invitation.getId());
                 case ALREADY_ACTIVE -> {
                     // 이미 팀원이다(링크 초대 등으로 먼저 들어옴). 대기로 남겨 두면 설정 화면에 '아직 로그인 전'으로 보여 수락으로 닫는다
                 }
