@@ -145,7 +145,16 @@ kt kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group
 
 ## 7. 발행 1건 확인
 
-dev 화면에서 시험 프로젝트의 변경 제안 하나를 승인·발행한다(계획 §4 8단계). 그다음:
+dev 화면에서 시작된 프로젝트의 변경 제안 하나를 승인·발행한다(계획 §4 8단계).
+
+- 사람이 화면에서 내는 제안은 문서 변경이다: 공용 문서함 → 문서 열기 → **수정 제안하기**(변경 제안 창에는 새 제안 버튼이 없다,
+  설계 항목 변경은 에이전트·회의 경로). 승인할 때 영향 분석을 돌리지 않았으면 생략 사유를 적는다.
+- 문서 변경 제안의 발행 후 분석은 AI 없이 `NOT_EVALUATED`(`document_change_unavailable`)로 닫힌다. 판정은 상태가 아니라
+  `wake_seconds`로 한다(`RUNNING`으로 집을 때 `started_at`이 찍힌다).
+- 프로젝트가 아직 시작 전이면(기준 v1 없음) 설계 초안이 있어야 시작할 수 있다. 초안 생성(`design-drafts`)은 AI 스위치
+  `DESIGN_DRAFTS_ENABLED`와 후보 채택 화면이 필요하고, 없으면 기획 분석 창의 **항목 추가**로 DRAFT를 만든다(11-06 서버).
+
+그다음:
 
 ```bash
 # 서버. 최근 접수행. wake_seconds 가 30 미만이면 Kafka 경로로 깨어난 것(복구 스캔은 30초 지난 것만 집음)
@@ -244,3 +253,6 @@ pgsql -c "SELECT count(*) FROM pg_replication_slots" </dev/null
 | 11-05 | 2 설정 올리기 (브랜치 커밋 `1bb781bd`) | `/opt/beez/cdc` = `REVISION`·`compose.yaml`·`intake-connector.json`, password 줄은 자리표시자. `cdc up -d --wait` 재생성 없음(Up 3 hours 유지) |
 | 11-05 17:41 KST | 3 등록 · 4 확인 | `PUT …/config` 응답의 password 자리표시자. connector·task `RUNNING`, 슬롯 `beez_published_analysis` `pgoutput` `active = t`, retained 152 bytes. `Snapshot ended … status=COMPLETED`, `totalEventCount=0`(접수행 0) |
 | 11-05 17:43~17:46 KST | 6 consumer 켜기 | 켜기 직전 접수행 0행. env 두 줄 `true`, `.env.dev` `-rw-r----- ubuntu beez-deploy`·jenkins 읽기 OK. 같은 SHA `9727f475` 손 배포 → backend만 재생성(healthy 22.6초, ai·postgres·seaweedfs 유지), Nginx 확인 OK. `recovery_enabled` 1·`consumer_enabled` 1·`kafka_consumer_up` 1·`kafka_receive_failures_total` 0 |
+| 11-06 12:42 KST | 7 앞단계: 프로젝트 1 시작 | 설계 초안 생성(`design-drafts`, S15P31A108-232)은 dev에서 AI 스위치 꺼짐·채택 화면 없음 → 기획 분석 "항목 추가"(REQUIREMENT 1개)로 초안을 만들고 프로젝트 시작. 배포 `bbc75d74`(새 이미지로 backend 재생성 뒤에도 `consumer_up` 1). 접수행 id 1 `NOT_EVALUATED`(change_proposal_id 없음) → 그룹 offset 1/1·LAG 0, 수신 실패 0 = **dev 첫 CDC 이벤트 수신** |
+| 11-06 | 7 발행 1건 | 공용 문서함 "수정 제안하기"로 문서 변경 제안 1건 → 영향 분석 생략 사유로 승인(기준 v2). 접수행 id 2(제안 1) **`wake_seconds` 0.8**(Kafka 경로), `NOT_EVALUATED`·`document_change_unavailable`(문서 변경 제안은 AI 없이 닫는 설계), 0.87초에 종료. 그룹 offset 4/4·LAG 0, 수신 실패 0 |
+| 11-06 | 8 재시작 | backend: 그 사이 dev 배포로 두 번 재생성 → 매번 `consumer_up` 1로 스스로 회복(consumer ID 바뀜). Connect: 20초 안에 connector·task RUNNING, 슬롯 `t`. Kafka: 1분 뒤 healthy, connector RUNNING, `consumer_up` 1, offset 4/4 그대로(중복·누락 없음), 수신 실패 0 |
