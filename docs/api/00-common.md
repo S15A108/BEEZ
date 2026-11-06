@@ -468,7 +468,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
 | Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 정함(2026-10-29, dev 기준): 기준 v1 뒤 문서 변경은 변경 제안 승인(CHG-A09)으로만 반영되고 승인마다 기준 v2, v3이 생긴다. 재검증·영향 분석도 CHG-A09 규칙 그대로다. 회의 결과도 회의 끝내기(MTG-A13)가 변경 제안을 만들 뿐 문서를 바로 바꾸지 않는다. 잘못 반영된 결과는 새 변경 제안으로 되돌린다 |
-| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김). 구현됨(S15P31A108-205): 내부 개설 서비스(`MeetingOpenService.openForConflict`)만 있고 HTTP 로 노출하지 않으며, 충돌 감지 연결과 담당 영역 팀원 계산은 후속 티켓이다 |
+| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김). 구현됨(S15P31A108-205): 내부 개설 서비스(`MeetingOpenService.openForConflict`)만 있고 HTTP 로 노출하지 않는다. 충돌 감지 연결(S15P31A108-248): 검증 결과가 저장돼 커밋된 뒤(AFTER_COMMIT) `source=MODEL`·`kind=CONFLICT`·`severity=BLOCKING`·`related_task_id` 가 있는 발견 항목마다, 두 작업의 담당자가 다르고 둘 다 COMPLETED·CANCELLED 가 아니면 쌍마다 회의를 연다(같은 작업 묶음에 OPEN 회의가 있으면 새로 열지 않는다). 첫 기록(CONFLICT_BRIEF)은 같은 작업 쌍을 가리키는 BLOCKING 충돌 발견 항목의 message 를 모두 담는다(한 건이면 그 message 그대로, 여러 건이면 첫 줄에 "(N가지)" 를 쓰고 번호를 붙여 나열하며 같은 문구는 한 번만, 하나도 없으면 템플릿 문구). 참여자는 팀장과 두 작업 담당자. 실패 전파: 개설은 검증 결과 저장과 별개의 새 트랜잭션이라 실패해도 검증 결과는 롤백되지 않고 서버 로그만 남으며 다음 재검증에서 다시 시도된다. 충돌한 설계 항목의 담당 영역 팀원 계산과 AI 가 만드는 브리핑은 후속이다 |
 | Q18 | 접속·위치 공개 | 전진·박민용 | 사람의 위치를 '사무실 안 자리'까지만 보일지 열어 둔 메뉴까지 보일지, 보고 주기·TTL, 폴링·SSE·WebSocket 중 전송 수단(NTF-07 확장 후보와 함께) |
 | Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | PR #37 DOC-A16의 검토 정책(승인본만 참고, 참고 자료가 없어 비교하지 못한 단계는 사유를 보이고 제출 허용, 모델 실패는 새 요청 키로 재시도)을 따른다. 남은 것: 단계 이름과 목표 소요 시간, 단계 진행을 보이려면 검토를 동기 호출로 둘지 접수 후 조회로 바꿀지, 업로드마다 드는 AI 비용 상한 |
 | Q20 | 같은 종류 문서 여러 개 | 오서현·박상은 | DOC-A01 확정 정책은 종류마다 문서 1개다. 수정안 예시('알림 API 명세서'를 두 번째 API 명세서로 등록)는 복수 등록이 필요하다. 허용하면 필수 4종 충족은 '그 종류에 승인 문서가 하나 이상'으로 판정한다 |
@@ -1761,6 +1761,44 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `validation_validity` | [ValidationValidity[]](00-common.md#schema-validationvalidity) | N | 작업 관련 검증 유효성 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
 | `next_cursor` | `string` | N | 다음 조회 cursor |
+| `impact_updates` | [ImpactUpdate[]](00-common.md#schema-impactupdate) | N | MCP-03에만. `result_cursor` 이후 정해진 발행 후 영향 분석 결과(-221). MCP-12 `changes`에는 없음 |
+| `result_has_more` | `boolean` | N | MCP-03에만. 영향 결과가 더 있음. `has_more`(발행 변경)와 따로 본다 |
+| `next_result_cursor` | `string` | N | MCP-03에만. 다음에 보낼 `result_cursor`. 받은 결과를 처리한 뒤 저장한다 |
+
+<a id="schema-impactupdate"></a>
+
+### ImpactUpdate
+
+발행 한 건의 발행 후 영향 분석 결과가 정해졌다는 알림(S15P31A108-221). 결과가 정해질 때(완료·미평가·최종 실패) 프로젝트 안에서 1씩 오르는 결과 순번이 붙는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `result_seq` | `integer` | Y | 프로젝트 안 결과 순번. 같은 순번은 같은 결과(중복 판단용) |
+| `baseline` | [BaselineSummary](00-common.md#schema-baselinesummary) | Y | 분석한 발행 |
+| `proposal_id` | `ID` | N | 그 발행의 변경 제안. 제안 없이 발행됐으면 생략 |
+| `analysis_status` | `COMPLETED\|NOT_EVALUATED\|FAILED` | Y | 분석 실행 결과. 미평가·실패는 영향 0건이 아니다 |
+| `evaluation_status` | `COMPLETED\|INSUFFICIENT_EVIDENCE\|NOT_EVALUATED` | N | 분석이 끝났을 때 근거가 충분했는지 |
+| `error_code` | `string` | N | 실패·미평가 사유 |
+| `candidates` | [PublishedImpactCandidate[]](00-common.md#schema-publishedimpactcandidate) | Y | 영향 후보. 최대 10개, 규칙 후보 먼저·작업·항목 번호 순 |
+| `candidates_truncated` | `integer` | Y | 10개를 넘어 빠진 후보 수. 0보다 크면 전체를 본 것이 아니며 대시보드에서 확인한다 |
+| `analyzed_at` | `Time` | N | 결과가 정해진 시각 |
+
+<a id="schema-publishedimpactcandidate"></a>
+
+### PublishedImpactCandidate
+
+발행 후 영향 분석이 낸, 영향받을 수 있는 대상 하나(MCP-03 `impact_updates`, S15P31A108-221). **승인된 설계가 아니며 작업 상태·검증을 바꾸지 않는다** — 확인할 거리다.
+
+승인 전 분석의 [ImpactCandidate](00-common.md#schema-impactcandidate)와 모양이 달라 따로 둔다. 규칙·AI 후보를 함께 담아 `origin`이 필수이고, AI 근거 원문(`sources`)은 싣지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `origin` | `RULE\|AI` | Y | RULE: 확정 관계·계획 참조로 계산한 규칙 후보, AI: 모델이 근거와 함께 낸 후보 |
+| `task_id` | `ID` | N | 영향받을 수 있는 작업 |
+| `design_item_id` | `ID` | N | 그 작업이 닿는 바뀐 설계 항목 |
+| `member_id` | `ID` | N | 작업 담당 멤버 |
+| `validation_id` | `ID` | N | 영향받을 수 있는 검증 |
+| `reason` | `string` | N | AI 후보의 사유. 규칙 후보에는 없음 |
 
 <a id="schema-findingcandidate"></a>
 

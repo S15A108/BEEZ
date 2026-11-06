@@ -58,7 +58,7 @@ HTTP는 200이고 JSON-RPC 응답 안의 도구 결과가 실패다. 본문은 R
 
 | 원인 | code | 비고 |
 | --- | --- | --- |
-| 서비스가 던진 `ApiException` | 그 `code`·`message` 그대로 | 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
+| 서비스가 던진 `ApiException` | 그 `code`·`message`·`details` 그대로 | REST와 같은 본문이다. `details`는 명세가 정한 오류만 채우고 없으면 키가 빠진다(-267). 숫자 상태는 내보내지 않는다(02-mcp-tools "가짜 HTTP 상태를 넣지 않는다") |
 | 인수 타입·enum 변환 실패, 모르는 키 | `validation_failed` | 메시지는 칸 경로만 적는다. 예: `mode 값이 올바르지 않습니다`, `completion_checks[0].status 값이 올바르지 않습니다`, `plan.titel 은(는) 이 도구에 없는 인수입니다` |
 | 인수 레코드를 만들 수 없음(레코드 정의 오류) | `internal` | 입력 탓이 아니라 서버 버그라 `validation_failed`로 숨기지 않고 스택을 남긴다 |
 | 그 밖의 예외 | REST `GlobalExceptionHandler`와 같은 code | 같은 대응표를 그대로 쓴다. 낙관적 잠금 충돌 → `revision_conflict`, DB 제약 → `validation_failed`, 나머지 → `internal`(서버 로그에 스택) |
