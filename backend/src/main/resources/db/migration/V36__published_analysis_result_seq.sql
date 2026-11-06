@@ -1,5 +1,5 @@
 -- 발행 후 영향 분석 결과를 에이전트가 이어 받기 위한 결과 순번 (S15P31A108-221, MCP-03 get_design_changes 의 impact_updates).
--- 번호: dev 가 V33 까지, 열린 회의 요약 브랜치가 V34 를 쓴다.
+-- 번호: dev 가 V35(활동 이력 색인)까지라 V36.
 --
 -- 결과가 정해질 때(COMPLETED·NOT_EVALUATED·FAILED 로 바뀔 때)마다 프로젝트 안에서 1씩 오르는 번호를 붙인다.
 -- 에이전트는 "마지막으로 받은 번호" 이후만 받는다 (result_cursor).

@@ -12,7 +12,7 @@ S15P31A108-221 · MCP-03 `get_design_changes` · 담당 변준성 · 2026-11-05
 
 응답 모양은 [ImpactUpdate](../api/00-common.md#schema-impactupdate)·[ImpactCandidate](../api/00-common.md#schema-impactcandidate), 처리 규칙은 [MCP-03](../api/02-mcp-tools.md#mcp-03).
 
-## 2. 결과 순번 (V35)
+## 2. 결과 순번 (V36)
 
 | 정한 것 | 이유 |
 | --- | --- |
@@ -44,7 +44,7 @@ S15P31A108-221 · MCP-03 `get_design_changes` · 담당 변준성 · 2026-11-05
 
 ## 5. 코드 자리
 
-- `V35__published_analysis_result_seq.sql` — 순번 칸·카운터 표·트리거
+- `V36__published_analysis_result_seq.sql` — 순번 칸·카운터 표·트리거
 - `designchange/service/ImpactUpdateReader` — 결과 페이지·후보 정리
 - `designchange/service/ImpactUpdatesCursor` — `result_cursor`
 - `designchange/service/DesignChangesService#getChanges` — 응답에 붙이기

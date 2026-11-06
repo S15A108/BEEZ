@@ -23,7 +23,7 @@ import org.springframework.http.HttpStatus;
 /**
  * S15P31A108-221 get_design_changes 의 impact_updates — 발행 후 영향 분석 결과를 결과 순번(result_cursor)으로 이어 받는다.
  * 분석 실행(오서현 -227)은 돌리지 않고 published_change_analysis 행을 SQL 로 바꿔 결과가 정해진 상태를 만든다.
- * 결과 순번은 V35 트리거가 매기므로 SQL 로 바꿔도 실제 실행과 같은 번호가 붙는다.
+ * 결과 순번은 V36 트리거가 매기므로 SQL 로 바꿔도 실제 실행과 같은 번호가 붙는다.
  */
 class DesignChangesImpactUpdatesIntegrationTests extends IntegrationTestSupport {
 

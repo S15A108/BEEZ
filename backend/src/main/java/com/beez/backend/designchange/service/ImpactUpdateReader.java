@@ -19,12 +19,12 @@ import org.springframework.stereotype.Component;
 
 /**
  * get_design_changes 의 impact_updates (S15P31A108-221). 발행 후 영향 분석(published_change_analysis, 오서현 -197·-227)의 결과가
- * 정해진 것을 결과 순번(result_seq, V35) 순서로 이어 준다.
+ * 정해진 것을 결과 순번(result_seq, V36) 순서로 이어 준다.
  *
  * <p>정한 것 (상세는 docs/design/14-design-changes-impact-updates.md):
  * <ol>
  *   <li>result_cursor 가 없으면 "지금부터": 결과 없이 지금의 마지막 순번을 시작점으로 준다. 과거 후보는 대시보드에서 본다</li>
- *   <li>결과 순번은 커밋 순서대로 오른다(V35 카운터 잠금). 그래서 "마지막으로 받은 순번 다음" 만 읽어도 건너뛰는 결과가 없다</li>
+ *   <li>결과 순번은 커밋 순서대로 오른다(V36 카운터 잠금). 그래서 "마지막으로 받은 순번 다음" 만 읽어도 건너뛰는 결과가 없다</li>
  *   <li>후보는 규칙(explicit_result)·AI(ai_result.candidates) 둘 다. 같은 출처·같은 대상은 한 번만, 규칙 먼저, 작업·항목 번호 순, 최대 10개.
  *       넘친 수는 candidates_truncated</li>
  *   <li>task_id 를 주면 그 작업이 후보에 든 결과만, 후보도 그 작업 것만. 상한은 같다</li>
