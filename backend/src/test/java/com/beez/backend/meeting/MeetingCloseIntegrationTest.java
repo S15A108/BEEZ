@@ -424,6 +424,109 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         assertThat(count("SELECT count(*) FROM change_proposal WHERE meeting_id=?", meeting)).isEqualTo(2);
     }
 
+    @Test void aRetryDoesNotReuseAProposalMadeOnAnOlderBaseline() throws Exception {
+        var earlier = proposalCommands.createFromMeeting(CallerContext.human(leader), project, meeting, proposalInput(APPLIED));
+        // 종료가 실패한 사이 정리가 인용하지 않은 다른 문서의 발행으로 기준만 바뀌었다(인용 문서 버전은 그대로)
+        long b2 = jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,2,?) RETURNING id", Long.class, project, leader);
+        jdbc.update("INSERT INTO baseline_document VALUES(?,?,?,?)", b2, project, document, version);
+        jdbc.update("INSERT INTO baseline_item(baseline_id,project_id,design_item_id,design_item_version_id) "
+                + "SELECT ?,project_id,design_item_id,design_item_version_id FROM baseline_item WHERE baseline_id=?", b2, baseline);
+        jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?", b2, project);
+        long summary = summarize(e2);
+        var out = body(close(leader, summary, "close-new-baseline"));
+        String created = out.path("change_proposal_id").asString();
+        assertThat(created).isNotEqualTo(earlier.id());
+        assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(earlier.id()))).isEqualTo("WITHDRAWN");
+        assertThat(jdbc.queryForObject("SELECT base_baseline_id FROM change_proposal WHERE id=?", Long.class, Long.parseLong(created))).isEqualTo(b2);
+        assertThat(liveProposals()).isEqualTo(1);
+    }
+
+    @Test void aRetryDoesNotTieTheMeetingToARejectedProposal() throws Exception {
+        var earlier = proposalCommands.createFromMeeting(CallerContext.human(leader), project, meeting, proposalInput(APPLIED));
+        proposalCommands.reject(CallerContext.human(leader), project, Long.parseLong(earlier.id()),
+                new com.beez.backend.changeproposal.dto.ProposalDtos.RejectRequest("보완", earlier.revision(), earlier.snapshotHash()), "reject-earlier");
+        long summary = summarize(e2);
+        var out = body(close(leader, summary, "close-after-reject"));
+        String created = out.path("change_proposal_id").asString();
+        assertThat(created).isNotEqualTo(earlier.id());
+        assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(earlier.id()))).isEqualTo("WITHDRAWN");
+        assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(created))).isEqualTo("PROPOSED");
+        assertThat(liveProposals()).isEqualTo(1);
+        // 알림은 반려된 제안이 아니라 새 제안을 가리킨다
+        assertThat(count("SELECT count(*) FROM notification WHERE type='MEETING_PROPOSAL_CREATED' AND ref_id=?", Long.parseLong(earlier.id()))).isZero();
+    }
+
+    @Test void aRetryWhoseSummaryHasNoDocumentChangesWithdrawsTheProposalOfThePreviousAttempt() throws Exception {
+        // 첫 시도: 제안은 만들었는데 종료가 실패했다. 재시도 때의 새 정리에는 문서 변경이 없다
+        var earlier = proposalCommands.createFromMeeting(CallerContext.human(leader), project, meeting, proposalInput(APPLIED));
+        aiReturns(List.of());
+        long summary = summarize(e2);
+        var res = close(leader, summary, "close-no-change-retry");
+        expect(res, 200, null);
+        assertThat(body(res).has("change_proposal_id")).isFalse();
+        assertThat(meetingStatus()).isEqualTo("CLOSED");
+        assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(earlier.id()))).isEqualTo("WITHDRAWN");
+        assertThat(liveProposals()).isZero();
+        assertThat(jdbc.queryForObject("SELECT change_proposal_id FROM meeting WHERE id=?", Long.class, meeting)).isNull();
+        assertThat(count("SELECT count(*) FROM notification WHERE type='MEETING_PROPOSAL_CREATED' AND project_id=?", project)).isZero();
+    }
+
+    @Test void aPublicationOverlappingTheEndOfTheMeetingMakesTheSummaryOutdatedInsteadOfClosingOnAStaleBaseline() throws Exception {
+        long summary = summarize(e2);
+        long next = approvedVersion(document, 2, "# 초대\n다른 제안이 바꾼 본문\n");
+        var holding = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            // 발행: 프로젝트 잠금을 쥔 채 새 기준을 만들고, 풀어 주면 커밋한다
+            Callable<Void> publication = () -> {
+                try (var connection = dataSource.getConnection()) {
+                    connection.setAutoCommit(false);
+                    try (var statement = connection.createStatement()) {
+                        statement.execute("SELECT id FROM project WHERE id=" + project + " FOR UPDATE");
+                        holding.countDown();
+                        assertThat(release.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                        statement.execute("UPDATE document_version SET status='SUPERSEDED' WHERE id=" + version);
+                        long b2;
+                        try (var rs = statement.executeQuery("INSERT INTO baseline(project_id,version_no,published_by) VALUES("
+                                + project + ",2," + leader + ") RETURNING id")) {
+                            rs.next();
+                            b2 = rs.getLong(1);
+                        }
+                        statement.execute("INSERT INTO baseline_document VALUES(" + b2 + "," + project + "," + document + "," + next + ")");
+                        statement.execute("INSERT INTO baseline_item(baseline_id,project_id,design_item_id,design_item_version_id) "
+                                + "SELECT " + b2 + ",project_id,design_item_id,design_item_version_id FROM baseline_item WHERE baseline_id=" + baseline);
+                        statement.execute("UPDATE project SET current_baseline_id=" + b2 + " WHERE id=" + project);
+                    }
+                    connection.commit();
+                }
+                return null;
+            };
+            var publishing = new java.util.concurrent.atomic.AtomicReference<Future<Void>>();
+            // 제안을 만든 직후 = 종료 직전에 발행이 프로젝트 잠금을 잡는다(제안 생성이 끝난 뒤에 시작해야 생성이 막히지 않는다)
+            doAnswer(call -> {
+                Object created = call.callRealMethod();
+                publishing.set(pool.submit(publication));
+                assertThat(holding.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return created;
+            }).when(proposalCommands).createFromMeeting(any(), anyLong(), anyLong(), any());
+
+            Future<HttpResponse<String>> closing = pool.submit(() -> close(leader, summary, "close-vs-publication"));
+            Thread.sleep(1500);
+            // 종료는 기준을 확인하기 전에 발행이 끝나기를 기다린다
+            assertThat(closing.isDone()).as("종료가 발행의 프로젝트 잠금을 기다리지 않고 끝났다").isFalse();
+            release.countDown();
+            publishing.get().get(30, java.util.concurrent.TimeUnit.SECONDS);
+            expect(closing.get(30, java.util.concurrent.TimeUnit.SECONDS), 409, "summary_outdated");
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+        assertThat(meetingStatus()).isEqualTo("OPEN");
+        assertThat(jdbc.queryForObject("SELECT change_proposal_id FROM meeting WHERE id=?", Long.class, meeting)).isNull();
+        assertThat(liveProposals()).isZero();
+    }
+
     @Test void aHumanEntryThatArrivesWhileTheProposalIsBeingMadeWithdrawsItAndKeepsTheMeetingOpen() throws Exception {
         long summary = summarize(e2);
         // 제안을 만든 직후, 회의를 닫기 전에 새 기록이 들어온다

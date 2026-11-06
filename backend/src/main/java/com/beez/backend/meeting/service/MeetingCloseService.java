@@ -196,6 +196,9 @@ public class MeetingCloseService {
 
     private CloseMeetingResponse finish(CallerContext caller, ProjectActor actor, long projectId, long meetingId, long summaryId,
                                         String operation, CloseInput input, String key, ProposalDtos.Proposal proposal) {
+        // 다른 제안의 승인·발행이 쓰는 프로젝트 잠금을 먼저 잡는다(프로젝트 → 회의 순서). 기준 확인부터 종료까지 발행과 겹치면
+        // 방금 확인한 기준이 종료 직전에 바뀌어 오래된 정리와 제안이 묶인 채 회의가 닫힐 수 있다.
+        if (!meetings.lockProject(projectId)) throw missing(projectId, meetingId);
         MeetingRow meeting = meetings.lockMeeting(projectId, meetingId).orElseThrow(() -> missing(projectId, meetingId));
         // 잠금을 기다리는 동안 팀장이 바뀌었거나 회의에서 빠졌으면 여기서 403
         access.requireLeaderAfterLock(actor);
@@ -205,6 +208,9 @@ public class MeetingCloseService {
         if (replay.isPresent()) return replay.get();
         requireOpen(meeting);
         requireCurrent(projectId, meetingId, summaryId); // 제안을 만드는 동안 들어온 기록·바뀐 기준을 잠근 상태에서 다시 본다
+        // 이번 정리에 문서 변경이 없으면 제안을 새로 만들지 않는다. 앞선 시도가 남긴 제안이 있으면 같이 거둬 제안 없이 닫힌 회의에
+        // 승인될 수 있는 제안이 남지 않게 한다(회의 종료와 같은 트랜잭션).
+        if (proposal == null) proposals.withdrawLiveMeetingProposal(caller, projectId, meetingId);
 
         Long proposalId = proposal == null ? null : Long.parseLong(proposal.id());
         meetings.close(meetingId, actor.accountId(), proposalId);

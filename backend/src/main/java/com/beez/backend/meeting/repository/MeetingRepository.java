@@ -174,6 +174,15 @@ public class MeetingRepository {
                 .param("id", meetingId).param("p", projectId).query(MeetingRepository::mapMeeting).optional();
     }
 
+    /**
+     * 제안 승인·발행이 쓰는 것과 같은 프로젝트 행 잠금. 회의 끝내기가 기준 확인부터 종료까지 발행과 겹치지 않게 한다.
+     * 잠금 순서는 프로젝트 → 회의다. 보관된 프로젝트면 false.
+     */
+    public boolean lockProject(long projectId) {
+        return jdbc.sql("select id from project where id = :p and archived_at is null for update")
+                .param("p", projectId).query(Long.class).optional().isPresent();
+    }
+
     /** 참여자 변경·기록·종료를 한 줄로 세우기 위해 회의 행을 잠그고 읽는다 */
     public Optional<MeetingRow> lockMeeting(long projectId, long meetingId) {
         return jdbc.sql("select " + MEETING_COLUMNS + " from meeting where id = :id and project_id = :p for update")

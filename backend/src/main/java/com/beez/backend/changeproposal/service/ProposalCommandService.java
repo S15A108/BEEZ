@@ -73,8 +73,8 @@ public class ProposalCommandService {
      * 호출하는 쪽(회의 끝내기)이 자기 멱등 키를 가지므로 여기서는 Idempotency-Key 를 쓰지 않는다.
      *
      * <p>이미 이 회의로 만든 살아 있는 제안이 있으면(제안은 만들었는데 종료가 실패한 뒤의 재시도) 프로젝트 잠금 안에서 본다:
-     * 같은 문안이면 그 제안을 그대로 돌려주고(올려 둔 원문은 참조되지 않아 지워진다), 문안이 달라졌으면 — 그 사이 정리가
-     * 바뀐 것이다 — 옛 제안을 거두고 새로 만든다. 알림은 회의 쪽이 보내므로 제출 알림은 보내지 않는다.
+     * 같은 기준·같은 문안이고 아직 검토 중이면 그 제안을 그대로 돌려주고(올려 둔 원문은 참조되지 않아 지워진다), 문안이나 기준이
+     * 달라졌거나 반려됐으면 옛 제안을 거두고 새로 만든다. 알림은 회의 쪽이 보내므로 제출 알림은 보내지 않는다.
      */
     public Proposal createFromMeeting(CallerContext caller, long project, long meeting, Input input) {
         preflight(caller, project, input, false);
@@ -88,7 +88,12 @@ public class ProposalCommandService {
         var live = repository.liveProposalForMeeting(project, meeting);
         if (live.isPresent()) {
             Proposal existing = queries.current(project, live.get());
-            if (sameDocuments(existing, input, stage)) return existing;
+            // 재사용은 아직 검토 중이고 같은 기준 위에 같은 문서로 만든 제안에 한정한다. 기준이 바뀌었거나(requires_refresh)
+            // 반려된 제안에 회의를 묶으면 쓸 수 없는 제안으로 닫히고 담당자 알림도 잘못 나간다.
+            boolean reusable = Set.of("PROPOSED", "IN_REVIEW").contains(existing.status())
+                    && Objects.equals(existing.baseBaselineId(), input.baseBaselineId())
+                    && sameDocuments(existing, input, stage);
+            if (reusable) return existing;
             // 이미 승인·발행 단계로 간 제안은 되돌리지 않는다(그 경우 정리의 기준 문서가 바뀌어 종료가 먼저 막힌다).
             if (!Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(existing.status())) return existing;
             repository.withdraw(project, live.get(), caller.accountId());
@@ -109,6 +114,21 @@ public class ProposalCommandService {
         var current = repository.proposal(project, proposal);
         if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
             repository.withdraw(project, proposal, caller.accountId());
+        }
+    }
+
+    /**
+     * 회의가 제안 없이 닫힐 때, 앞선 시도가 이 회의로 만들어 둔 살아 있는 제안을 거둔다. 호출하는 쪽의 트랜잭션에 합류하므로
+     * 회의 종료와 함께 커밋·롤백된다. 이미 승인·발행 단계로 간 제안은 건드리지 않는다.
+     */
+    @Transactional
+    public void withdrawLiveMeetingProposal(CallerContext caller, long project, long meeting) {
+        lock(caller, project);
+        var live = repository.liveProposalForMeeting(project, meeting);
+        if (live.isEmpty()) return;
+        var current = repository.proposal(project, live.get());
+        if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
+            repository.withdraw(project, live.get(), caller.accountId());
         }
     }
 
