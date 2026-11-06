@@ -2,6 +2,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import { Plus } from 'lucide-react'
+import { UNREAD_BADGE } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { CityRenderer3D } from './city/CityRenderer3D'
 import { nearestStop, RING_PITCH, startRotation, stepStop } from './city/ring'
@@ -19,6 +20,10 @@ export interface CitySceneProps {
   titleRef?: RefObject<HTMLElement | null>
   onProjectSelect: (id: string) => void
   onLotSelect: (lot: number) => void
+  /** 건물·이름표에 마우스를 올리거나 이름표에 키보드로 들어오면 그 프로젝트, 벗어나면 null. 터치에서는 부르지 않는다. */
+  onProjectHover?: (id: string | null) => void
+  /** 호버 카드를 이름표의 설명으로 잇는다(aria-describedby). */
+  describedBy?: (id: string) => string | undefined
   className?: string
 }
 type View = { rot: number; target: number; hover: number | null }
@@ -63,6 +68,12 @@ function CityRuntime({
     let press: { x: number; rot: number; moved: boolean } | null = null
     // 끈 뒤에는 이름표의 클릭(열기)을 한 번 막는다.
     let dragged = false
+    let hovered: string | null = null
+    const hover = (id: string | null) => {
+      if (id === hovered) return
+      hovered = id
+      latest.current.onProjectHover?.(id)
+    }
     const down = (event: PointerEvent) => {
       if (event.button !== 0) return
       dragged = false
@@ -76,6 +87,7 @@ function CityRuntime({
         if (!press.moved && Math.abs(dx) > 4) {
           press.moved = dragged = true
           area.setPointerCapture(event.pointerId)
+          hover(null)
         }
         if (!press.moved) return
         view.current.rot = view.current.target =
@@ -83,11 +95,20 @@ function CityRuntime({
         canvas.style.cursor = 'grabbing'
         return
       }
-      // 이름표 위는 버튼이 커서와 클릭을 맡는다.
-      const slot =
-        event.target === canvas ? renderer.pick(...local(event)) : undefined
+      // 이름표 위는 버튼이 커서와 클릭을 맡고, 건물은 같이 강조한다.
+      const tag = (event.target as Element).closest<HTMLElement>('[data-slot]')
+      const slot = tag
+        ? Number(tag.dataset.slot)
+        : event.target === canvas
+          ? renderer.pick(...local(event))
+          : undefined
       view.current.hover = slot ?? null
       canvas.style.cursor = slot === undefined ? 'grab' : 'pointer'
+      // 터치에는 호버가 없다. 호버 카드 없이 배지만 보인다.
+      if (event.pointerType !== 'touch')
+        hover(
+          latest.current.projects.find((item) => item.lot === slot)?.id ?? null,
+        )
     }
     const up = (event: PointerEvent) => {
       if (!press) return
@@ -112,6 +133,7 @@ function CityRuntime({
     }
     const leave = () => {
       view.current.hover = null
+      hover(null)
     }
     // 휠·트랙패드 스크롤도 고리를 돌린다. 250px마다 다음 멈춤 자리(아래·오른쪽이면 다음 칸)로 가고, 빈 부지 다음은
     // 꾸밈 칸을 한 번에 지나 1번이 온다(사용자 결정 '꾸밈 구간 한 번에 넘기기'). 250px에 못 미친 만큼은 다음 자리 쪽으로
@@ -121,6 +143,8 @@ function CityRuntime({
     let rolled = 0
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
+      // 고리가 돌면 포인터 아래 건물이 바뀐다. 다음 움직임에서 다시 고른다.
+      hover(null)
       const delta =
         Math.abs(event.deltaX) > Math.abs(event.deltaY)
           ? event.deltaX
@@ -252,23 +276,27 @@ export default function CityScene(props: CitySceneProps) {
               data-slot={project.lot}
               type="button"
               style={{ visibility: 'hidden' }}
+              aria-describedby={props.describedBy?.(project.id)}
               className={cn(
                 tagClass,
-                'gap-[7px] bg-white text-[#2c291f] shadow-[0_6px_16px_-8px_rgba(44,41,31,0.45),0_0_0_1px_rgba(44,41,31,0.08)]',
+                'max-w-[200px] bg-white text-[#2c291f] shadow-[0_6px_16px_-8px_rgba(44,41,31,0.45),0_0_0_1px_rgba(44,41,31,0.08)]',
               )}
               onClick={() => props.onProjectSelect(project.id)}
+              onFocus={(event) => {
+                if (event.currentTarget.matches(':focus-visible'))
+                  props.onProjectHover?.(project.id)
+              }}
+              onBlur={() => props.onProjectHover?.(null)}
             >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  'size-2 rounded-full',
-                  project.status === 'ready' ? 'bg-[#22a35a]' : 'bg-[#e0b400]',
-                )}
-              />
-              {project.name}
-              <span className="font-medium text-[#737373]">
-                {project.status === 'ready' ? '진행 중' : '준비 중'}
-              </span>
+              <span className="truncate">{project.name}</span>
+              {project.unread && (
+                <span
+                  aria-label={project.unread.label}
+                  className={UNREAD_BADGE}
+                >
+                  {project.unread.text}
+                </span>
+              )}
               <span
                 aria-hidden="true"
                 className="absolute -bottom-[5px] left-1/2 -ml-[5px] size-2.5 rotate-45 bg-white shadow-[1px_1px_0_0_rgba(44,41,31,0.08)]"

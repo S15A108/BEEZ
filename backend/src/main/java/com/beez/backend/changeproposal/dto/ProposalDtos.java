@@ -29,7 +29,9 @@ public final class ProposalDtos {
                            String actorType, String currentBaselineId, boolean requiresRefresh,
                            String publishedBaselineId, int revision, String snapshotHash,
                            String createdAt, String updatedAt, String rejectionReason,
-                           String previousProposalId, String withdrawnBy, String withdrawnAt) { }
+                           String previousProposalId, String withdrawnBy, String withdrawnAt,
+                           /** MTG-A13 이 만든 제안만. 스냅샷 해시에 들어가지 않는다. */
+                           String meetingId) { }
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Summary(String id, String key, String title, String status, int revision,
                           String baseBaselineId, String proposerAccountId, String updatedAt) { }

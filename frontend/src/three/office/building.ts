@@ -61,7 +61,7 @@ export function makeBuilding(
     (k) => k === 'lobby' || (keys ?? ALL_KEYS).includes(k),
   )
   const floor = withPocketInterior(
-    makePocketOffice(order, developerCount),
+    makePocketOffice(order, developerCount, design),
     interior,
   )
   const floors: Building['floors'] = { 1: { ...floor, key: 'lobby' } }
