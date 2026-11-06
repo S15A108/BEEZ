@@ -113,6 +113,18 @@ const messages: Record<string, string> = {
   review_decisions_pending:
     '처리하지 않은 보완 제안이 있어요. 반영하거나 넘겨 주세요.',
   submission_decided: '이미 결정한 검토 요청이에요.',
+  // 202 PR-2: 문서 검토 대화·직접 요청·검토 요청 취소
+  submission_withdrawn:
+    '올린 사람이 이 검토 요청을 거뒀어요. 목록을 새로고침해 주세요.',
+  review_in_progress:
+    '비비가 이 문서를 검토하고 있어요. 잠시 뒤 다시 확인해 주세요.',
+  review_unavailable:
+    '지금은 비비를 부를 수 없어요. 잠시 뒤 다시 시도해 주세요.',
+  invalid_ai_output: '비비의 답을 확인하지 못했어요. 다시 시도해 주세요.',
+  review_chat_limit:
+    '이 검토에서 비비와 나눌 수 있는 대화를 모두 썼어요. 직접 고치거나 비비 검토를 다시 받아 주세요.',
+  review_request_limit:
+    '이 검토에서 비비에게 직접 요청할 수 있는 횟수를 모두 썼어요.',
   already_member: '이미 팀원이에요.',
   invitation_email_mismatch: '초대받은 이메일로 로그인해 주세요.',
   invitation_not_pending: '이미 참여했거나 취소된 초대예요.',

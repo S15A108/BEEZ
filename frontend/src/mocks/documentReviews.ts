@@ -73,10 +73,38 @@ function guardOwner(
 const occursOnce = (content: string, text: string) =>
   !!text && content.split(text).length === 2
 
+// 개발 서버에서 비비 대화·직접 요청의 실패 장면을 눈으로 보려는 스위치(목 전용, live 빌드에는 들어가지 않는다).
+// localStorage 'beez.mock.review' = unavailable(503) | invalid(502)
+function guardAi() {
+  let scenario: string | null
+  try {
+    scenario = localStorage.getItem('beez.mock.review')
+  } catch {
+    scenario = null
+  }
+  if (scenario === 'unavailable')
+    fail(503, 'review_unavailable', '비비를 부를 수 없어요.')
+  if (scenario === 'invalid')
+    fail(502, 'invalid_ai_output', '비비 결과를 확인하지 못했어요.')
+}
+
+// 대화·직접 요청은 지금 작성 내용의 최신 검토에서만 쓴다(DOC-A22·A23).
+function latestReview(target: StoredWorkingCopy, reviewId: string) {
+  const review = target.latest_review
+  // 직접 고치거나 다시 올리면 이전 검토가 사라지므로, 검토 id가 낡았을 때는 review_stale이다.
+  if (!review) fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
+  if (review.id !== reviewId)
+    fail(404, 'not_found', '비비 검토를 찾을 수 없어요.')
+  if (review.resolved_revision !== target.revision)
+    fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
+  return review
+}
+
 // 규칙 기반 예시 제안: 제목 줄에 목적, 마지막 줄에 예외 상황을 덧붙이자고 한다.
 function suggestionsFor(
   context: MockContext,
   content: string,
+  sources: DocumentReviewSuggestion['sources'] = [],
 ): DocumentReviewSuggestion[] {
   const lines = content.split('\n').filter((line) => line.trim())
   const heading = lines.find((line) => line.startsWith('#'))
@@ -85,22 +113,32 @@ function suggestionsFor(
   if (heading && occursOnce(content, heading))
     result.push({
       id: nextId(context.database),
-      explanation: '누락 · 이 문서가 무엇을 정하는지 목적이 없어요.',
+      explanation: '이 문서가 무엇을 정하는지 목적이 없어요.',
       type: 'PATCH',
       step: 'BODY',
       original_text: heading,
       replacement_text: `${heading}\n\n목적: 이 문서가 정하는 범위를 한 줄로 적어요.`,
       decision: 'PENDING',
+      category: 'OMISSION',
+      severity: 'MAJOR',
+      origin: 'REVIEW',
+      sources: [],
+      messages: [],
     })
   if (last && last !== heading && occursOnce(content, last))
     result.push({
       id: nextId(context.database),
-      explanation: '일관성 · 실패하거나 비어 있을 때의 동작이 없어요.',
+      explanation: '실패하거나 비어 있을 때의 동작이 없어요.',
       type: 'PATCH',
       step: 'BODY',
       original_text: last,
       replacement_text: `${last}\n- 실패하거나 비어 있을 때 어떻게 보이는지 적는다.`,
       decision: 'PENDING',
+      category: 'CONSISTENCY',
+      severity: 'MINOR',
+      origin: 'REVIEW',
+      sources,
+      messages: [],
     })
   return result
 }
@@ -166,7 +204,22 @@ export async function reviewRoutes(
       guardOwner(context, project, target, body.expected_revision)
       const document = findById(project.documents, target.document_id)
       const others = project.documents.filter((item) => item.id !== document.id)
-      const suggestions = suggestionsFor(context, target.content)
+      const approvedFirst = others.find((item) => item.approved_version)
+      const suggestions = suggestionsFor(
+        context,
+        target.content,
+        approvedFirst?.approved_version
+          ? [
+              {
+                reference_id: `ref-${approvedFirst.id}`,
+                document_id: approvedFirst.id,
+                document_version_id: approvedFirst.approved_version.id,
+                kind: approvedFirst.kind,
+                version_no: approvedFirst.approved_version.version_no,
+              },
+            ]
+          : [],
+      )
       // 서버 v2 단계 규칙(DocumentReviewResultValidator): 본문은 늘 검토하고, 같은 종류는 SAME_KIND로,
       // 승인본이 없는 종류는 REFERENCE_UNAVAILABLE로 건너뛴다. 요구사항 명세서의 단계 코드는 REQ_SPEC이다.
       const approved = others.filter((item) => item.approved_version)
@@ -235,6 +288,11 @@ export async function reviewRoutes(
         suggestions,
         usage: [],
         steps,
+        contract_version: 2,
+        content_hash: `sha256:mock-content-${target.document_id}-${target.revision}`,
+        references_used: [
+          ...new Set(steps.flatMap((item) => item.reference_ids)),
+        ].sort(),
         review_status: unavailable.length ? 'PARTIAL' : 'COMPLETE',
         ...(rejected && target.status === 'REJECTED'
           ? { rejection_submission_id: rejected.id }
@@ -262,10 +320,19 @@ export async function reviewRoutes(
       if (body.decision === 'APPLY') {
         if (!occursOnce(target.content, original))
           fail(409, 'review_stale', '제안한 원문을 본문에서 찾지 못했어요.')
-        target.content = target.content.replace(original, replacement)
+        // 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영하면 그 문장을 쓰고 기록한다.
+        const other =
+          typeof body.replacement_text === 'string'
+            ? body.replacement_text
+            : undefined
+        target.content = target.content.replace(
+          original,
+          () => other ?? replacement,
+        )
         target.revision += 1
         review.resolved_revision = target.revision
         suggestion.decision = 'APPLIED'
+        if (other !== undefined) suggestion.applied_replacement_text = other
       } else if (body.decision === 'SKIP') suggestion.decision = 'SKIPPED'
       else fail(400, 'validation_failed', '반영하기나 넘기기를 골라 주세요.')
       return { data: view(project, target) }
@@ -359,6 +426,8 @@ export async function reviewRoutes(
       const submission = findById(project.submissions, params.submission_id)
       if (submission.document_id !== params.document_id)
         fail(404, 'not_found', '제출을 찾을 수 없어요.')
+      if (submission.status === 'WITHDRAWN')
+        fail(409, 'submission_withdrawn', '올린 사람이 요청을 거뒀어요.')
       if (submission.status !== 'SUBMITTED')
         fail(409, 'submission_decided', '이미 결정한 제출이에요.')
       const target = workingCopy(project, submission.document_id)
@@ -401,6 +470,115 @@ export async function reviewRoutes(
       submission.decided_by = requireAccount(context).id
       submission.decided_at = now()
       return { data: strip(submission) }
+    }
+    case 'DOC-A22': {
+      const target = workingCopy(project, params.document_id)
+      if (requireAccount(context).id !== target.owner_account_id)
+        fail(403, 'forbidden', '등록한 사람만 할 수 있어요.')
+      if (target.status === 'SUBMITTED')
+        fail(
+          409,
+          'submission_locked',
+          '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
+        )
+      const review = latestReview(target, params.review_id)
+      const suggestion = findById(review.suggestions, params.suggestion_id)
+      const text = requiredString(body, 'text').trim()
+      if (!text)
+        fail(400, 'validation_failed', '비비에게 보낼 말을 적어 주세요.')
+      const used = review.suggestions.reduce(
+        (sum, item) =>
+          sum + item.messages.filter((m) => m.author_kind === 'HUMAN').length,
+        0,
+      )
+      if (used >= 80)
+        fail(409, 'review_chat_limit', '이 검토에서 나눌 대화를 모두 썼어요.')
+      guardAi()
+      const message = {
+        id: nextId(database),
+        author_kind: 'HUMAN' as const,
+        text,
+        created_at: now(),
+      }
+      // 규칙 기반 예시 답: PATCH 제안이면 다른 대체문을 하나 낸다. COMMENT 는 대체문을 내지 않는다(형식 위반).
+      const reply = {
+        id: nextId(database),
+        author_kind: 'BEE' as const,
+        text:
+          suggestion.type === 'COMMENT'
+            ? '예시 답 · 실제 AI 호출 없음. 이 의견은 읽기 전용이라 본문은 바뀌지 않아요.'
+            : '예시 답 · 실제 AI 호출 없음. 말씀하신 내용을 담아 이렇게 바꿀 수 있어요.',
+        ...(suggestion.type === 'PATCH' &&
+        suggestion.replacement_text !== undefined
+          ? {
+              proposed_text: `${suggestion.replacement_text}\n- ${text}`,
+            }
+          : {}),
+        created_at: now(),
+      }
+      suggestion.messages.push(message, reply)
+      return { status: 201, data: { message, reply } }
+    }
+    case 'DOC-A23': {
+      const target = workingCopy(project, params.document_id)
+      guardOwner(context, project, target, body.expected_revision)
+      const review = latestReview(target, params.review_id)
+      const text = requiredString(body, 'text').trim()
+      if (!text) fail(400, 'validation_failed', '요청 내용을 적어 주세요.')
+      if (
+        review.suggestions.filter((item) => item.origin === 'DIRECT_REQUEST')
+          .length >= 20
+      )
+        fail(409, 'review_request_limit', '직접 요청을 모두 썼어요.')
+      guardAi()
+      // 규칙 기반 예시: 본문 마지막 줄 뒤에 요청 내용을 덧붙이는 제안 하나를 만든다.
+      const last = target.content
+        .split('\n')
+        .filter((line) => line.trim())
+        .at(-1)
+      if (!last || !occursOnce(target.content, last))
+        fail(502, 'invalid_ai_output', '비비 결과를 확인하지 못했어요.')
+      const suggestion: DocumentReviewSuggestion = {
+        id: nextId(database),
+        explanation: `요청대로 반영해요 · ${text}`,
+        type: 'PATCH',
+        step: 'BODY',
+        original_text: last,
+        replacement_text: `${last}\n- ${text}`,
+        decision: 'PENDING',
+        category: 'OMISSION',
+        severity: 'MINOR',
+        origin: 'DIRECT_REQUEST',
+        sources: [],
+        messages: [],
+      }
+      review.suggestions.push(suggestion)
+      return { status: 201, data: { suggestion } }
+    }
+    case 'DOC-A24': {
+      const submission = findById(project.submissions, params.submission_id)
+      if (submission.document_id !== params.document_id)
+        fail(404, 'not_found', '제출을 찾을 수 없어요.')
+      const target = workingCopy(project, submission.document_id)
+      if (requireAccount(context).id !== submission.submitted_by)
+        fail(403, 'forbidden', '올린 사람만 취소할 수 있어요.')
+      if (project.project.current_baseline)
+        fail(
+          409,
+          'change_proposal_required',
+          '기준 설계가 생긴 뒤에는 변경 제안으로 바꿔 주세요.',
+        )
+      // 같은 제출을 다시 취소하면 같은 결과(멱등)다.
+      if (submission.status === 'WITHDRAWN')
+        return { data: view(project, target) }
+      if (submission.status !== 'SUBMITTED')
+        fail(409, 'submission_decided', '팀장이 이미 결정했어요.')
+      submission.status = 'WITHDRAWN'
+      // 작성 건을 다시 열고 리비전을 올려 이전 검토를 무효로 한다(반려 뒤 재작성과 같다).
+      target.status = 'EDITING'
+      target.revision += 1
+      delete target.latest_review
+      return { data: view(project, target) }
     }
     default:
       return undefined
