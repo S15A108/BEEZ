@@ -43,13 +43,20 @@ kt() { docker exec -e KAFKA_HEAP_OPTS=-Xmx128m beez-cdc-kafka-1 /opt/kafka/bin/"
 crest() { local p=$1; shift; docker exec beez-cdc-connect-1 curl -sS "$@" "http://127.0.0.1:8083$p"; echo; }
 # 분석 켜기 env 두 줄을 항상 함께 쓴다: cdcenv <복구 스캔 true|false> <consumer true|false>.
 # 명령을 손으로 고치다 한 줄만 남기면 consumer 만 켜진 env 가 되어 backend 가 기동을 거부하므로(298) 그 조합은 쓰기 전에 막는다.
-# 기존 두 줄을 빼고 덧붙인 새 파일로 바꾼다(cd.md 의 GMS_KEY 와 같은 방식, umask 027 + /opt/beez setgid 로 640·beez-deploy 유지)
+# 기존 두 줄을 뺀 새 파일에 두 줄을 덧붙여 바꾼다(umask 027 + /opt/beez setgid 로 640·beez-deploy 유지).
+# 원본을 읽지 못하면 바꾸지 않는다: grep -v 는 0(남은 줄 있음)·1(남은 줄 없음)이 정상이고 2 이상이 읽기 오류다.
+# 오류를 묶음 안에서 흘려보내면 뒤의 echo 가 성공해 원본이 두 줄짜리 파일로 바뀐다(PR #166 리뷰)
 cdcenv() {
   case "$1 $2" in "true true"|"true false"|"false false") ;;
     *) echo "쓰지 않음: '$1 $2' — 가능한 값은 'true true'(켜기)·'true false'(Kafka 경로만 끔)·'false false'(끄기)"; return 1;; esac
-  ( umask 027; { grep -Ev '^BEEZ_CDC_INTAKE_(ENABLED|CONSUMER_ENABLED)=' /opt/beez/.env.dev
-      echo "BEEZ_CDC_INTAKE_ENABLED=$1"; echo "BEEZ_CDC_INTAKE_CONSUMER_ENABLED=$2"; } > /opt/beez/.env.dev.new ) \
-    && mv /opt/beez/.env.dev.new /opt/beez/.env.dev && grep '^BEEZ_CDC_INTAKE_' /opt/beez/.env.dev && ls -l /opt/beez/.env.dev
+  local f=/opt/beez/.env.dev
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않는다"; return 1; }
+  ( umask 027
+    grep -Ev '^BEEZ_CDC_INTAKE_(ENABLED|CONSUMER_ENABLED)=' "$f" > "$f.new"; rc=$?
+    if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+    { echo "BEEZ_CDC_INTAKE_ENABLED=$1"; echo "BEEZ_CDC_INTAKE_CONSUMER_ENABLED=$2"; } >> "$f.new" \
+      || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; } ) \
+    && mv "$f.new" "$f" && grep '^BEEZ_CDC_INTAKE_' "$f" && ls -l "$f"
 }
 ```
 
