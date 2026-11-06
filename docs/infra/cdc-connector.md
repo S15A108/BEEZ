@@ -109,7 +109,8 @@ cdc logs connect --since 5m 2>&1 | grep -E "Snapshot (ended|completed)| ERROR " 
 
 - [monitoring.md "올리기·업데이트"](monitoring.md#올리기업데이트)대로 모니터링 스택을 올린다. 머지 전이면 `REV`에 이 PR 브랜치
   커밋을 주고, 머지 뒤 `REV=origin/dev`로 한 번 더 올려 `REVISION`을 맞춘다(2와 같은 방식).
-- 확인(읽기 전용): 아래 명령에서 슬롯 알림 네 개가 모두 보이고 health 가 `ok` 면 들어간 것이다.
+- 확인(읽기 전용): 다시 띄우고 **30초쯤 뒤**에 아래 명령을 친다. 슬롯 알림 네 개가 모두 보이고 health 가 `ok` 면 들어간 것이다.
+  바로 치면 첫 평가 전이라 `unknown unknown`이 나온다(11-06 서버).
 
 ```bash
 # 서버. Prometheus 는 호스트 127.0.0.1:9090 에만 열려 있다(monitoring.md "확인"). 슬롯 규칙의 이름·상태·건강만 뽑는다
@@ -275,3 +276,4 @@ pgsql -c "SELECT count(*) FROM pg_replication_slots" </dev/null
 | 11-06 12:42 KST | 7 앞단계: 프로젝트 1 시작 | 설계 초안 생성(`design-drafts`, S15P31A108-232)은 dev에서 AI 스위치 꺼짐·채택 화면 없음 → 기획 분석 "항목 추가"(REQUIREMENT 1개)로 초안을 만들고 프로젝트 시작. 배포 `bbc75d74`(새 이미지로 backend 재생성 뒤에도 `consumer_up` 1). 접수행 id 1 `NOT_EVALUATED`(change_proposal_id 없음) → 그룹 offset 1/1·LAG 0, 수신 실패 0 = **dev 첫 CDC 이벤트 수신** |
 | 11-06 | 7 발행 1건 | 공용 문서함 "수정 제안하기"로 문서 변경 제안 1건 → 영향 분석 생략 사유로 승인(기준 v2). 접수행 id 2(제안 1) **`wake_seconds` 0.8**(Kafka 경로), `NOT_EVALUATED`·`document_change_unavailable`(문서 변경 제안은 AI 없이 닫는 설계), 0.87초에 종료. 그룹 offset 4/4·LAG 0, 수신 실패 0 |
 | 11-06 | 8 재시작 | backend: 그 사이 dev 배포로 두 번 재생성 → 매번 `consumer_up` 1로 스스로 회복(consumer ID 바뀜). Connect: 20초 안에 connector·task RUNNING, 슬롯 `t`. Kafka: 1분 뒤 healthy, connector RUNNING, `consumer_up` 1, offset 4/4 그대로(중복·누락 없음), 수신 실패 0 |
+| 11-06 13:00 KST | 5 슬롯 알림 (리뷰 반영 뒤) | 브랜치 커밋 `e3f5c121`으로 모니터링 올리기, `mon up -d --force-recreate` 5개 Up. 30초 뒤 `beez-cdc` 그룹에 `CdcSlotInactive`·`CdcSlotWalRetained`·`CdcSlotMissing`·`CdcSlotCollectorFailing` 모두 `inactive ok`. 입력 지표: `slot_is_active` 1, `pg_wal_lsn_diff` 142776, 수집기 성공 1, `beez_cdc:consumer_enabled:max` 1. 머지 뒤 `origin/dev`로 다시 올려 `REVISION` 맞춤 예정 |
