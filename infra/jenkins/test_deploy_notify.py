@@ -120,7 +120,7 @@ def test_curl_failure_hides_url_and_exits_zero():
 
 # 깨지면: Mattermost 가 거절(웹훅 삭제 등)했는데도 "보냄"이라고 찍어 알림이 끊긴 것을 모른다
 def test_http_error_is_reported():
-    expect(run(FAKE_HTTP="404", **FULL), "배포 실패 알림을 보내지 못함(HTTP 404, curl 종료 코드 0)")
+    expect(run(FAKE_HTTP="404", **FULL), "배포 실패 알림을 보내지 못함(HTTP 999, curl 종료 코드 0)")
 
 
 # 깨지면: 설정 파일이 없는 서버(새 서버·파일 권한 오류)에서 알림 단계가 배포 결과를 바꾸거나 이유 없이 조용하다
