@@ -139,8 +139,12 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
 ```bash
 read -rsp "GMS key: " K && echo && \
   if [[ "$K" =~ ^[A-Za-z0-9._-]{20,}$ ]]; then \
-    ( umask 027; { grep -v '^GMS_KEY=' /opt/beez/.env.dev; printf 'GMS_KEY=%s\n' "$K"; } > /opt/beez/.env.dev.new ) \
-    && mv /opt/beez/.env.dev.new /opt/beez/.env.dev && echo "saved (${#K} chars)"; \
+    ( f=/opt/beez/.env.dev; umask 027
+      [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 넣지 않음"; exit 1; }
+      grep -v '^GMS_KEY=' "$f" > "$f.new"; rc=$?
+      if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+      printf 'GMS_KEY=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+      mv "$f.new" "$f" ) && echo "saved (${#K} chars)"; \
   else echo "형식이 예상과 다름(영문·숫자·._- 20자 이상). 넣지 않음"; fi; unset K
 ```
 
@@ -148,6 +152,10 @@ read -rsp "GMS key: " K && echo && \
   화면과 셸 기록에 남지 않습니다. Git Bash에서는 `Shift+Insert`로 붙여
   넣습니다(`Ctrl+V`는 안 먹을 수 있음).
 - `printf`는 셸 내장 명령이라 키가 프로세스 목록에 드러나지 않습니다.
+- 원본을 읽지 못하면 바꾸지 않습니다. `grep -v`는 0(남은 줄 있음)·1(남은 줄
+  없음)이 정상이고 2 이상이 읽기 오류입니다. 오류를 흘려보내면 뒤의 `printf`가
+  성공해 env 파일이 `GMS_KEY` 한 줄짜리로 바뀌고 DB 비밀번호 등을 잃습니다
+  ([cdc-connector.md](cdc-connector.md)의 `cdcenv`와 같은 방식, S15P31A108-321).
 - 바꾼 값은 다음 배포 때 ai 컨테이너가 다시 만들어지면서 적용됩니다.
 
 값을 보지 않고 확인하기:

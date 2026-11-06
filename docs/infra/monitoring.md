@@ -332,20 +332,36 @@ mon down                 # 컨테이너·monitoring 네트워크 삭제. 볼륨(
 env 파일만 바꾸면 Grafana에는 반영되지 않습니다.
 
 ```bash
-# 서버 (ssh beez). 새 값을 만들어 Grafana 와 env 파일에 같이 넣는다
-K=$(openssl rand -hex 16)
-printf '%s' "$K" | mon exec -T grafana grafana cli admin reset-admin-password --password-from-stdin &&
-( umask 027; { grep -v '^GRAFANA_ADMIN_PASSWORD=' /opt/beez/.env.monitoring; printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$K"; } > /opt/beez/.env.monitoring.new ) &&
-mv /opt/beez/.env.monitoring.new /opt/beez/.env.monitoring && unset K && echo saved
+# 서버 (ssh beez). 새 값을 만들어 Grafana 와 env 파일에 같이 넣는다.
+# env 파일을 읽을 수 없으면 Grafana 도 바꾸지 않는다. grep -v 는 0(남은 줄 있음)·1(남은 줄 없음)이 정상, 2 이상이 읽기 오류
+f=/opt/beez/.env.monitoring; K=$(openssl rand -hex 16)
+if [ -f "$f" ] && [ -r "$f" ]; then
+  printf '%s' "$K" | mon exec -T grafana grafana cli admin reset-admin-password --password-from-stdin &&
+  ( umask 027
+    grep -v '^GRAFANA_ADMIN_PASSWORD=' "$f" > "$f.new"; rc=$?
+    if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+    printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+    mv "$f.new" "$f" ) && unset K && echo saved
+else echo "$f 를 읽을 수 없음 — 바꾸지 않음"; unset K; fi
 ```
+
+- `saved` 없이 "원본 그대로"로 멈추면 Grafana 비밀번호는 이미 새 값입니다. `K`가
+  셸에 남아 있으니 원인을 고친 뒤 `( umask 027` 부터 `mv … )` 까지만 다시
+  실행합니다(S15P31A108-321). 셸을 닫았다면 위 블록 전체를 다시 실행합니다.
 
 ### DB 수집 계정
 
 ```bash
 # 서버 (ssh beez). env 파일 값을 바꾼 뒤 2단계 SQL 을 다시 돌려 DB 를 맞추고 exporter 를 다시 만든다
+# 원본을 읽지 못하면 바꾸지 않는다(Grafana 관리자와 같은 방식). saved 가 안 나오면 env 는 그대로라 아래 mon up 도 바꾸는 것이 없다.
+# 원인을 고친 뒤 이 블록을 다시 실행한다
 K=$(openssl rand -hex 24)
-( umask 027; { grep -v '^MONITOR_DB_PASSWORD=' /opt/beez/.env.monitoring; printf 'MONITOR_DB_PASSWORD=%s\n' "$K"; } > /opt/beez/.env.monitoring.new ) &&
-mv /opt/beez/.env.monitoring.new /opt/beez/.env.monitoring && unset K && echo saved
+( f=/opt/beez/.env.monitoring; umask 027
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
+  grep -v '^MONITOR_DB_PASSWORD=' "$f" > "$f.new"; rc=$?
+  if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+  printf 'MONITOR_DB_PASSWORD=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+  mv "$f.new" "$f" ) && echo saved; unset K
 # → "처음 올리기" 2단계 명령을 그대로 다시 실행
 mon up -d postgres-exporter   # env 값이 바뀌어 이 컨테이너만 다시 만들어진다
 ```
