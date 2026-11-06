@@ -3,7 +3,6 @@ package com.beez.backend.task.service;
 import com.beez.backend.activity.ActivityEvent;
 import com.beez.backend.activity.ActivityRecorder;
 import com.beez.backend.activity.ActivityTargetType;
-import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.notification.NotificationRequest;
 import com.beez.backend.notification.NotificationRequester;
@@ -18,7 +17,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -70,12 +68,12 @@ public class TaskHandoverService {
     }
 
     /**
-     * fromMemberId 의 열린 작업을 toMemberId 에게 넘긴다. 열린 작업이 있는데 toMemberId 가 없으면 409 active_tasks_exist.
+     * fromMemberId 의 열린 작업을 toMemberId 에게 넘긴다. toMemberId 가 없으면 담당자만 비운다(미배정, -301).
      * 멤버십 종료와 같은 트랜잭션이어야 해서 바깥 트랜잭션을 요구한다.
      *
      * @param caller     제외(팀장)·나가기(본인)를 요청한 사람. 활동 행위자이고, 새 담당자가 이 사람이면 알림을 보내지 않는다
-     * @param toMemberId 같은 프로젝트의 활성 멤버, fromMemberId 아님 (부르는 쪽이 확인). 열린 작업이 없으면 null 이어도 된다
-     * @return 넘긴 작업 수
+     * @param toMemberId 같은 프로젝트의 활성 멤버, fromMemberId 아님 (부르는 쪽이 확인). null 이면 담당자를 비운다
+     * @return 넘기거나 비운 작업 수
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public int handOver(CallerContext caller, long projectId, long fromMemberId, Long toMemberId) {
@@ -84,8 +82,8 @@ public class TaskHandoverService {
             return 0;
         }
         if (toMemberId == null) {
-            throw new ApiException(HttpStatus.CONFLICT, "active_tasks_exist",
-                    "정리되지 않은 열린 작업이 " + open.size() + "개 있습니다. 인계 대상을 지정하세요");
+            unassignAll(caller, open);
+            return open.size();
         }
         List<Changed> changed = new ArrayList<>();
         for (Task task : open) {
@@ -112,6 +110,24 @@ public class TaskHandoverService {
         }
         tasks.saveAndFlush(task);
         recordChanged(caller, changed, toMemberId);
+    }
+
+    /**
+     * 인계 대상 없이 담당자만 비운다 (MEM-A09·A10 수정안, 11-04 사용자 결정, -301). 상태·검증·점유는 그대로다 —
+     * 새 담당자가 정해질 때(팀장 배정 또는 팀원이 스스로 맡기, TSK-A06) {@link #reassign} 의 S5 규칙을 따른다.
+     * 담당자가 바뀐 것이므로 작업마다 {@code TASK_ASSIGNEE_CHANGED} 활동을 남긴다. 받을 새 담당자가 없어 알림은 없다.
+     */
+    private void unassignAll(CallerContext caller, List<Task> open) {
+        List<Changed> changed = new ArrayList<>(open.size());
+        for (Task task : open) {
+            changed.add(new Changed(task, task.getLockVersion()));
+            task.unassign();
+        }
+        // 동시에 상태가 바뀐 작업이 있으면 lock_version 이 달라 409 revision_conflict 로 전체가 되돌아간다
+        tasks.saveAllAndFlush(open);
+        for (Changed c : changed) {
+            recordActivity(caller, c);
+        }
     }
 
     /** 담당자가 실제로 바뀐 작업 하나와 바꾸기 전 잠금 버전 */
@@ -150,9 +166,7 @@ public class TaskHandoverService {
         List<NotificationRequest> requests = new ArrayList<>(changed.size());
         for (Changed c : changed) {
             Task task = c.task();
-            String key = "task:" + task.getId() + ":lock:" + c.lockBefore() + ":ASSIGNEE_CHANGED";
-            activities.record(caller, ActivityEvent.of(key, task.getProjectId(), ACTIVITY_ASSIGNEE_CHANGED,
-                    ActivityTargetType.TASK, task.getId()));
+            String key = recordActivity(caller, c);
             if (notify) {
                 Message message = NotificationMessages.taskAssigned(task.getTitle());
                 requests.add(new NotificationRequest(key + ":to:" + toAccountId, task.getProjectId(), toAccountId,
@@ -162,6 +176,15 @@ public class TaskHandoverService {
         }
         // 활성 멤버 확인을 한 번에 (requestAll 은 프로젝트마다 조회 한 번)
         notifications.requestAll(requests);
+    }
+
+    /** 담당자 변경 활동 하나. 키는 변경 전 잠금 버전(계약 6.2 예외)이고, 같은 키로 알림 키도 만든다 */
+    private String recordActivity(CallerContext caller, Changed c) {
+        Task task = c.task();
+        String key = "task:" + task.getId() + ":lock:" + c.lockBefore() + ":ASSIGNEE_CHANGED";
+        activities.record(caller, ActivityEvent.of(key, task.getProjectId(), ACTIVITY_ASSIGNEE_CHANGED,
+                ActivityTargetType.TASK, task.getId()));
+        return key;
     }
 
     /**

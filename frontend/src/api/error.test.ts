@@ -37,6 +37,19 @@ it('기준 v1 뒤 문서 수정은 변경 제안으로 안내한다', () => {
   )
 })
 
+// S15P31A108-204: 승인 게이트(241)와 상태 전이 오류는 서버 문구를 노출하지 않고 할 일을 알려 준다.
+it.each([
+  ['invalid_transition', '이미 처리했거나 지금은 할 수 없는 상태예요'],
+  ['analysis_running', '영향 분석이 진행 중이에요'],
+  ['impact_not_confirmed', '사유를 남기고 승인해 주세요'],
+  ['baseline_missing', '먼저 첫 기준 설계를 만들어 주세요'],
+  ['proposal_locked', '제출한 제안은 잠겨 있어요'],
+  ['idempotency_conflict', '새로고침해서 확인해 주세요'],
+])('승인·제안 오류 %s 는 한국어 안내로 바꾼다', (code, text) => {
+  expect(getApiErrorMessage(failure(code))).toContain(text)
+  expect(getApiErrorMessage(failure(code))).not.toContain('server text')
+})
+
 const response = (status: number, data?: unknown) =>
   new AxiosError('failed', 'ERR_BAD_REQUEST', undefined, undefined, {
     status,

@@ -53,13 +53,16 @@ class AiClientTest {
     @AfterEach void stopStub() { if (server != null) server.stop(0); }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/v1/document-reviews", "/v1/document-chunks", "/v1/embeddings", "/v1/impact"})
+    @ValueSource(strings = {"/v1/document-reviews", "/v1/document-chunks", "/v1/embeddings", "/v1/impact",
+            "/v1/document-revision-blocks", "/v1/document-revisions"})
     void postsAuthenticatedJsonAndReadsEnvelope(String endpoint) {
         var input = Map.<String, Object>of("document_id", "194", "content", "검토할 문서");
         Map<String, Object> result = switch (endpoint) {
             case "/v1/document-reviews" -> client.documentReview(input);
             case "/v1/document-chunks" -> client.documentChunks(input);
             case "/v1/impact" -> client.changeImpact(input);
+            case "/v1/document-revision-blocks" -> client.revisionBlocks(input);
+            case "/v1/document-revisions" -> client.documentRevision(input);
             default -> client.documentEmbeddings(input);
         };
         assertThat(path.get()).isEqualTo(endpoint);

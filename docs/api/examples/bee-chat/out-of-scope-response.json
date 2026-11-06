@@ -1,0 +1,50 @@
+{
+  "result": {
+    "answer_status": "OUT_OF_SCOPE",
+    "grounded": false,
+    "text": "이 질문은 이 프로젝트의 문서·설계 범위 밖이라 답하지 않습니다. 프로젝트 문서나 승인 설계에 대해 물어봐 주세요.",
+    "citations": [],
+    "sources": [],
+    "design_refs": [],
+    "task_refs": [],
+    "unresolved": [],
+    "next_actions": [],
+    "notices": [],
+    "scope": {
+      "mode": "APPROVED",
+      "document_version_ids": [
+        "311",
+        "212",
+        "312",
+        "313"
+      ],
+      "baseline_id": "401"
+    },
+    "embedding_profile_id": "gms-small-1024-v1",
+    "evidence_considered": 3,
+    "evidence_omitted": 0,
+    "instance": {
+      "profile_version": "bee-v1",
+      "system_prompt_hash": "a629f4e7b66c8a8a4e88952db002f219c24850f47ae278bd144105a0017209bd"
+    },
+    "verification": {
+      "level": "NONE",
+      "claims": 0,
+      "model": null
+    }
+  },
+  "origin": "MODEL",
+  "model": "gpt-6-luna",
+  "usage": [
+    {
+      "request_key": "llm-bee-chat-00000000-0000-4000-8000-000000000135",
+      "feature": "BEE_CHAT",
+      "model": "gpt-6-luna",
+      "latency_ms": 0,
+      "failed": false,
+      "tokens_known": true,
+      "input_tokens": 1800,
+      "output_tokens": 320
+    }
+  ]
+}

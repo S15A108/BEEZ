@@ -12,7 +12,7 @@
 
 2026-11-04: 가입 이메일 인증 명세를 구현(PR #114)에 맞췄다(S15P31A108-274). ACC-A12 판정 순서와 이미 쓴 코드의 410, ACC-A11 `rate_limited`가 덮는 경우, ACC-A01 검사 순서를 적었다. 동작은 바뀌지 않는다.
 
-2026-11-05: 화면 캔버스·데모 비교에서 dev 백엔드에 아직 없는 수정안을 해당 API 아래 "(dev 미구현 · 11-05 확인)"으로 표시했다(S15P31A108-218). 팀원 제외·나가기의 담당자 비우기와 팀장 위임 나가기(MEM-A09·A10), 미배정 작업 필터·`status` 여러 값과 스스로 맡기(TSK-A02·A06), 탈퇴 때 팀원 프로젝트의 담당자 비우기(ACC-A10), 프로젝트 건물 디자인(PRJ-A01~A04 `design`, PRJ-A02 `member_count`)이다. 이메일 초대(MEM-A01·A11)는 PR #134에서 구현 중이라 표시하지 않았다.
+2026-11-05: 화면 캔버스·데모 비교에서 dev 백엔드에 아직 없는 수정안을 해당 API 아래 "(dev 미구현 · 11-05 확인)"으로 표시했다(S15P31A108-218). 팀원 제외·나가기의 담당자 비우기와 팀장 위임 나가기(MEM-A09·A10), 미배정 작업 필터·`status` 여러 값과 스스로 맡기(TSK-A02·A06), 탈퇴 때 팀원 프로젝트의 담당자 비우기(ACC-A10), 프로젝트 건물 디자인(PRJ-A01~A04 `design`, PRJ-A02 `member_count`)이다. 이메일 초대(MEM-A01·A11)는 PR #134에서 구현 중이라 표시하지 않았다. 2026-11-06: 팀원 제외·나가기의 담당자 비우기, 미배정 작업 필터·`status` 여러 값, 스스로 맡기를 구현해 그 표시를 지웠다(S15P31A108-301). 팀장 위임 나가기는 S15P31A108-304에서 구현돼 그 표시도 지워졌다.
 
 2026-11-05: 계정 설정 명세를 구현(PR #118)에 맞췄다(S15P31A108-278). 만료된 임시 비밀번호는 `temporary_password_expired`가 아니라 401 `invalid_credentials`다(ACC-A02). ACC-A04·A05 응답에 `must_change_password`가 있다. 임시 비밀번호의 세부값·발송 실패·기존 비밀번호 처리(ACC-A07)와 비밀번호 변경·탈퇴 때 세션·개인정보 처리(ACC-A06·A10)를 적었다. 재설정 링크 API(ACC-A08·A09)는 폐지로 확정했다. 비밀번호 규칙 위반 코드는 아직 정하지 않았다(ACC-A01·A06). 초대 응답(MEM-A02·A04)의 `expires_at`은 V33에서 컬럼을 지워 응답에 없으므로 처리 규칙·필드 표·예시에서 뺐다(PR #134).
 
@@ -20,7 +20,7 @@
 
 2026-11-06: 변경 제안 올리기 전 비비 검토 수정안을 AI 담당 리뷰(PR #176)대로 고쳤다(S15P31A108-218). 수정안은 대상 문서를 밝히고(ChangeDraftSuggestion), 검토 결과는 검토한 리비전의 미리보기이며, 올린 내용으로 CHG-A05를 다시 돌린다. 초안 입력 계약 전에는 AI 영향 후보를 NOT_EVALUATED로 둔다.
 
-2026-11-06: ACC-A01 비밀번호 규칙을 구현(PasswordPolicy, 프론트 D23)에 맞췄다(S15P31A108-218). 서버는 8자 이상, UTF-8 72바이트 이하, 영문·숫자 포함이고 특수문자 필수는 화면 규칙이다.
+2026-11-06: 비밀번호 규칙과 위반 코드를 정했다(Q04, S15P31A108-309). 규칙은 구현 그대로 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상이고 특수문자는 필수가 아니다(ACC-A01). 위반은 `password_policy_violation`을 두지 않고 400 `validation_failed`(`message`가 `password:`로 시작)로 둔다(ACC-A01·A06). 서버 동작은 바뀌지 않는다.
 
 웹 클라이언트가 backend를 호출하는 API를 정의한다. [공통 규약·권한·전체 목록](00-common.md), [MCP 도구](02-mcp-tools.md), [AI 내부 API](03-ai-internal.md)를 함께 참조한다. 경로의 `{id}`는 프로젝트 경로에서는 프로젝트 ID, 그 밖에는 해당 리소스 ID다.
 
@@ -107,6 +107,7 @@
 - [CHG-A05 변경 영향 조회](#chg-a05)
 - [CHG-A06 변경 영향 AI 재분석](#chg-a06)
 - [CHG-A07 문서 수정 초안 생성](#chg-a07)
+- [CHG-A07 선택 범위 문서 수정 초안](#chg-a07-scoped)
 - [CHG-A08 변경 제안 검토 시작](#chg-a08)
 - [CHG-A09 변경 제안 승인·발행](#chg-a09)
 - [CHG-A10 변경 제안 반려](#chg-a10)
@@ -209,7 +210,7 @@
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `email` | `string` | Y | 가입할 이메일 |
-| `password` | `string` | Y | 비밀번호. 8자 이상, UTF-8 72바이트 이하, 영문·숫자 포함(서버 규칙, Q04). 특수문자 필수는 화면만 더 요구한다 |
+| `password` | `string` | Y | 비밀번호. 8자 이상, UTF-8 72바이트 이하, 영문·숫자 각 1자 이상(Q04 정함). 특수문자는 필수가 아니다 |
 | `name` | `string` | Y | 표시 이름 |
 | `verified_token` | `string` | Y | ACC-A12에서 받은 가입 인증 토큰. 수정안 요청 |
 
@@ -250,7 +251,7 @@ HTTP `201`.
 | --- | --- | --- |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `email_already_exists` | 이미 등록된 이메일 |
-| 400 | `password_policy_violation` | 비밀번호 규칙 위반. 어긴 조건은 `error.details.violations` |
+| 400 | `validation_failed` | 비밀번호 규칙 위반. `message`가 `password:`로 시작하고 `details`는 없다(Q04 정함) |
 | 400 | `email_not_verified` | 인증 토큰이 없거나 만료됐거나 다른 이메일의 토큰 |
 
 ```json
@@ -267,7 +268,8 @@ HTTP `201`.
 - 계정 생성과 이메일 유일성 검사를 원자적으로 처리한다.
 - 가입 응답으로 로그인 세션을 만들지 않는다. 로그인 API를 별도로 호출한다.
 - (수정안 요청) 가입 전에 ACC-A11·A12로 이메일을 인증한다. `verified_token`의 이메일과 요청 email이 같아야 하고, 토큰은 가입 성공 때 소비한다.
-- 검사 순서(-219 구현): 필드 검사(`validation_failed`) → 비밀번호 규칙(`validation_failed`, `message`가 `password:`로 시작) → `verified_token`(`email_not_verified`) → 이메일 중복(409 `email_already_exists`). 비밀번호 규칙 위반은 지금 구현에서 위 오류 표의 `password_policy_violation`이 아니라 `validation_failed`이고 `details.violations`도 없다. `password_policy_violation`으로 옮길지는 ACC-A06과 함께 따로 정한다(PR #118 알려진 한계 6). 그래서 토큰 없이 보내면 이미 가입한 이메일이어도 400 `email_not_verified`가 먼저 나온다. 이미 가입한 이메일은 보통 ACC-A11에서 409로 걸러진다. 토큰 검사 뒤 409로 실패하면 가입이 되돌려져 토큰은 소비되지 않는다.
+- 검사 순서(-219 구현): 필드 검사(`validation_failed`) → 비밀번호 규칙(`validation_failed`, `message`가 `password:`로 시작) → `verified_token`(`email_not_verified`) → 이메일 중복(409 `email_already_exists`). 그래서 토큰 없이 보내면 이미 가입한 이메일이어도 400 `email_not_verified`가 먼저 나온다. 이미 가입한 이메일은 보통 ACC-A11에서 409로 걸러진다. 토큰 검사 뒤 409로 실패하면 가입이 되돌려져 토큰은 소비되지 않는다.
+- 비밀번호 규칙 위반은 따로 이름 붙인 코드 없이 `validation_failed`로 둔다(Q04 정함, 11-06). 화면이 제출 전에 같은 규칙을 먼저 검사해 따로 반응할 일이 없어서다. 서버만 아는 규칙(유출 비밀번호 목록 등)이 생기면 그때 전용 코드를 둔다.
 - (수정안 요청) 비밀번호 규칙은 ACC-A06·임시 비밀번호와 같다. 화면도 같은 규칙으로 미리 검사하지만 최종 판정은 서버다.
 - (수정안 요청 · 자동 참여, Q05 정함) 가입하면 그 이메일로 대기(PENDING) 중인 초대를 멤버십으로 바꾸고 초대의 `accepted_at`을 채운다. 규칙은 ACC-A02 로그인과 같다. 인증한 이메일(verified_token)로만 바꾸므로 ACC-A11·A12와 같이 또는 그 뒤에 배포한다.
 
@@ -682,7 +684,7 @@ HTTP `204`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 400 | `current_password_mismatch` | 현재 비밀번호 불일치 |
-| 400 | `password_policy_violation` | 비밀번호 규칙 위반. 지금 구현은 아래 처리 규칙대로 `validation_failed`다 |
+| 400 | `validation_failed` | 새 비밀번호 규칙 위반. `message`가 `password:`로 시작하고 `details`는 없다(ACC-A01과 같음) |
 
 ```json
 {
@@ -698,7 +700,7 @@ HTTP `204`.
 - 비밀번호 해시를 갱신한다.
 - (-171 구현, Q04 기본안) 성공하면 이 요청의 세션만 남기고 같은 계정의 다른 세션을 모두 끊는다. 받아 두고 쓰지 않은 임시 비밀번호도 닫는다.
 - (-171 구현) 검사 순서: 필드 검사(400 `validation_failed`) → 현재 비밀번호(400 `current_password_mismatch`) → 새 비밀번호 규칙. 세션은 유효하므로 현재 비밀번호가 틀려도 401이 아니다.
-- 비밀번호 규칙 위반은 지금 구현에서 위 오류 표의 `password_policy_violation`이 아니라 가입(ACC-A01)과 같은 400 `validation_failed`이고, `message`가 `password:`로 시작한다. 어느 코드로 맞출지는 ACC-A01과 함께 정한다(PR #118 알려진 한계 6).
+- 새 비밀번호 규칙 위반은 가입(ACC-A01)과 같은 400 `validation_failed`이고, `message`가 `password:`로 시작한다(Q04 정함, 11-06).
 - 비밀번호·인증정보를 응답이나 로그에 남기지 않는다.
 - (수정안 요청) 임시 비밀번호로 로그인한 사람은 current_password에 임시 비밀번호를 보낸다. 성공하면 must_change_password가 풀린다. 변경 뒤 완료 화면 없이 회원 설정으로 돌아간다.
 
@@ -2614,7 +2616,6 @@ HTTP `204`.
 - (수정안 요청 · 자동 참여, Q05 정함) 제외한 사람을 다시 초대하면 그 사람이 로그인·가입할 때 멤버십을 MEMBER로 되살린다(ACC-A02). 서버는 멤버십이 끝난 이유(제외·나가기)를 구분해 둔다.
 - (-220 구현) 제외하면 그 사람 이메일로 이 프로젝트에 남아 있던 대기 초대를 함께 취소한다(나가기 MEM-A10도 같다). 제외 전에 보낸 초대로 다음 로그인이나 예전 메일 링크로 바로 돌아오지 않게 하려는 것이다. 제외한 뒤 새로 초대하면 그 초대로 되살아난다.
 - (수정안 요청 · 11-04 사용자 결정) 나가기(MEM-A10)와 같다. 대상이 맡은 열린 작업이 있어도 막지 않고, 화면이 팀장에게 경고만 보인다. 409 `active_tasks_exist`를 없앤다. `reassign_to_member_id`가 있으면 그 멤버에게 넘기고(TSK-A06과 같은 인계 규칙), 없으면 담당자만 비운다. 작업 상태·검증은 그대로다.
-- (dev 미구현 · 11-05 확인) 넘겨받을 사람 없이 열린 작업이 있으면 409 `active_tasks_exist`를 돌려준다. 담당자 비우기(미배정)는 아직 없다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -2686,6 +2687,7 @@ HTTP `204`.
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `leader_transfer_required` | (수정안 요청 · 11-04 사용자 결정) 팀장이 `transfer_leader_to_member_id` 없이 나가려 함. 다른 활성 팀원이 없으면 나갈 수 없고 프로젝트 삭제(PRJ-A05)로 정리한다 |
 | 409 | `invalid_transfer_target` | (수정안 요청 · 11-04 사용자 결정) 넘겨받을 대상이 본인이거나 활성 멤버가 아님(MEM-A08과 같음) |
+| 403 | `forbidden` | (-304 구현) `transfer_leader_to_member_id`를 보냈는데 프로젝트를 잠근 뒤 보니 이미 팀장이 아님(같은 팀장의 위임이 먼저 처리됨), 또는 에이전트 토큰으로 위임하려 함(MEM-A08과 같음). 화면은 팀원 목록을 다시 불러 지금 역할로 창을 다시 보인다 |
 
 ```json
 {
@@ -2709,7 +2711,7 @@ HTTP `204`.
 - (수정안 요청 · 11-04 사용자 결정) 팀장(LEADER)은 `transfer_leader_to_member_id`로 넘길 팀원을 고르면 위임(MEM-A08과 같은 규칙)과 나가기를 한 트랜잭션에서 처리한다. 위임 뒤에는 팀원이 되어 위 규칙으로 나간다(열린 작업은 `reassign_to_member_id`가 있으면 인계, 없으면 미배정). 넘길 팀원을 고르지 않으면 409 `leader_transfer_required`로 되묻는다. 다른 활성 팀원이 없는 팀장은 나갈 수 없고 프로젝트 삭제(PRJ-A05)로 정리한다. 나가기는 프로젝트를 삭제하지 않는다.
 - (수정안 요청 · 11-04 사용자 결정) 화면은 팀장의 나가기 창에 두 길을 보인다. '위임하고 나가기'는 넘길 팀원을 고르고 열린 작업 경고를 보인 뒤 이 API를 부르고, '프로젝트 삭제'는 프로젝트 이름을 입력받아 PRJ-A05를 부른다. 혼자 쓰는 프로젝트면 '프로젝트 삭제'만 보인다. 역할은 프로젝트·멤버십 행을 잠근 뒤 요청 시점 값으로 다시 판정한다.
 - (수정안 요청 · 11-04 사용자 결정) 근거(PR #113 2차 리뷰): 나가기와 삭제를 섞지 않는다. 삭제는 늘 이름을 확인받는 명시적 동작(PRJ-A05)으로만 하고, 따로 위임해야 하는 번거로움은 나가기 창에서 바로 위임하는 것으로 줄인다. 처음 안("팀장은 팀장을 안넘기고 나가면 그냥 프로젝트가 삭제되어버리는거야")을 바꾼 것이며, 팀 합의 항목이다(Q05).
-- (dev 미구현 · 11-05 확인) `transfer_leader_to_member_id`를 받지 않는다. 넘겨받을 사람 없이 열린 작업이 있으면 409 `active_tasks_exist`를 돌려준다. 팀장은 지금 MEM-A08로 위임한 뒤 나간다.
+- (-304 구현) 팀장 위임하고 나가기는 위 규칙대로다. 대상이 본인이거나 이 프로젝트의 활성 멤버가 아니면(다른 프로젝트·나감·탈퇴 포함) 409 `invalid_transfer_target`이다. 역할은 프로젝트·멤버십 행을 잠근 뒤 값으로 판정한다. 요청 때 팀장이었는데 잠근 뒤 아니면 403 `forbidden`이고, 요청 때 팀원이었는데 그사이 팀장이 됐으면 보낸 위임 값을 쓴다. 에이전트 토큰으로는 위임하지 못한다(403, MEM-A08과 같음). 위임·나가기 활동(`LEADER_TRANSFERRED`·`MEMBER_LEFT`)은 아직 남기지 않는다(-289).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -4067,6 +4069,8 @@ HTTP `200`.
 
 2026-10-27 원문 RAG 구현: status는 전체 실행 상태다. source_status/index_status(PENDING/RUNNING/READY/FAILED), attempt, message를 추가한다. COMPLETED는 청킹·임베딩·청크/manifest 원자적 게시 완료다. 자동 추출은 후속이므로 items/questions는 []이며 미도입 EXTRACTION을 대기/실패로 표시하지 않는다. SOURCE 성공 뒤 임베딩 실패는 READY/FAILED로 구분한다. 진행 문구는 ‘분석 중입니다.’다. 아래 자동 추출 예시는 후속 기능이며 현재 원문 RAG 완료 조건과 구분한다.
 
+2026-11-03 (S15P31A108-232): 응답에 `question_generation`(`status` PENDING/RUNNING/COMPLETED/FAILED, 실패 시 `error_code`·`retryable`)을 더한다. 보완 질문 생성은 분석이 COMPLETED가 된 뒤의 별도 단계라 이 값이 FAILED여도 위 `status`는 COMPLETED다. 질문 목록은 PLN-A03으로 조회하고 이 응답의 `questions`는 계속 []다. PLN-A02는 분석이 COMPLETED이고 질문 생성만 FAILED일 때 질문 생성만 다시 대기시킨다(202, 같은 응답 모양).
+
 ### GET `/api/projects/{id}/documents/{document_id}/analysis`
 
 문서 분석 상태·결과 조회 기능을 제공한다.
@@ -4293,7 +4297,7 @@ HTTP `202`.
 
 관련 요구사항: PLN-05  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-232). 질문은 문서 분석이 끝난 뒤 BE가 AI(133 `/v1/planning-questions`)를 자동으로 불러 만든다. 실제 모델 평가는 AI 쪽에서 가짜 공급자까지만 했다.
 
 #### 인증
 
@@ -4329,27 +4333,36 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `items` | [PlanningQuestion[]](00-common.md#schema-planningquestion) | Y | 조회된 항목 |
+| `items` | [PlanningQuestion[]](00-common.md#schema-planningquestion) | Y | 조회된 항목. 항목마다 `number`(1부터 이어지는 순번) |
+| `total_count` | `integer` | Y | 조회 조건(`document_version_id`)에 맞는 전체 질문 수. 화면이 질문 수로 페이지를 나눌 때 쓴다 |
 | `has_more` | `boolean` | Y | 다음 페이지 존재 |
-| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환 |
+| `next_cursor` | `string` | N | 다음 페이지가 있으면 반환. 앞 페이지 마지막 질문의 `id`이며 값을 해석하지 말고 그대로 다음 요청에 보낸다 |
 
 ```json
 {
   "items": [
     {
       "id": "61",
+      "number": 1,
       "question": "프로젝트 삭제 권한은 팀장만 가지나요?",
+      "kind": "MISSING_CANDIDATE",
+      "question_type": "CHOICE",
+      "answer_format": {"type": "CHOICE", "options": ["팀장만", "팀원도"], "multiple": false, "allow_other": true},
+      "status": "ANSWERED",
+      "evidence_status": "REVIEW_CANDIDATE",
       "source": {
         "document_id": "201",
         "document_version_id": "211",
         "version_no": 1,
         "location": "3. 계정 관리 / ACC-02"
       },
-      "answer": "팀장만 삭제할 수 있습니다.",
+      "answer": "팀장만",
+      "answer_payload": {"type": "CHOICE", "selected": ["팀장만"]},
       "answered_by": "11",
       "answered_at": "2026-10-23T03:00:00Z"
     }
   ],
+  "total_count": 1,
   "has_more": false
 }
 ```
@@ -4373,6 +4386,9 @@ HTTP `200`.
 #### 처리 규칙
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
+- 목록은 `id` 순, 곧 만들어진 순서다(한 문서를 처음 분석할 때는 우선순위 `rank` 순으로 넣으므로 그 문서 안에서는 처음에 우선순위 순). 재분석이 기존 질문의 `rank`를 고쳐도 목록 자리는 바뀌지 않고, 쪽을 넘기는 사이 어느 문서에서든 새로 생긴 질문은 `id`가 더 커서 목록 끝에서 이어서 나온다. 전체 문서 목록에서는 문서 버전별로 묶여 있지 않다(각 항목의 `source`로 구분). `number`는 그 목록 안의 표시용 순번이다. 같은 문서를 다시 분석하면 새 결과로 바뀌므로 질문 식별에는 `id`를 쓴다. `number`는 쪽마다 다시 세는 표시용 순번이고 쪽 경계는 커서의 정렬 키(바뀌지 않는 값)로 정하므로, 쪽을 넘기는 사이 질문이 새로 생기거나 SUPERSEDED 되거나 `rank`가 바뀌어도 질문이 겹치거나 빠지지 않는다(그때는 뒤 쪽의 `number`와 `total_count`만 달라진다). `limit` 범위(1~100)와 `cursor` 형식이 틀리면 400 `validation_failed`다.
+- 목록에는 재분석으로 대체된 질문(`SUPERSEDED`)을 내지 않는다. 답변되거나 닫은 질문은 재분석해도 문구·답변이 바뀌지 않고 남는다. 새 결과에 없는 미답변 질문만 목록에서 사라진다.
+- 질문 생성은 문서 분석(PLN-A01)이 `COMPLETED`가 된 뒤 BE가 자동으로 한 번 실행한다(기준 설계 발행 전만). 생성이 실패해도 분석 `status`는 그대로이고, PLN-A01 응답의 `question_generation`(`status`·`error_code`·`retryable`)에만 드러난다. PLN-A02가 질문 생성만 다시 대기시킨다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -4388,7 +4404,7 @@ HTTP `200`.
 
 관련 요구사항: PLN-05  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-232)
 
 #### 인증
 
@@ -4417,7 +4433,11 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `answer` | `string` | Y | 답변 |
+| `answer` | `string` | 조건부 | 문장 답변. 선택형 질문은 선택지와 정확히 같은 문장이면 선택으로, 아니면 기타 입력으로 본다(기타를 받지 않는 질문은 400) |
+| `answer_payload` | `object` | 조건부 | 구조 답변 `{type, text}` 또는 `{type:"CHOICE", selected[], other_text?}`. 있으면 `answer`보다 우선하고 표시 문장은 서버가 만든다 |
+| `status` | `DISMISSED` | N | 질문을 답변 없이 닫는다. 이때 답변은 함께 보내지 않으며 이전 답변은 지워진다 |
+
+`answer`·`answer_payload` 중 하나, 또는 `status=DISMISSED`가 필요하다. 답은 질문의 `answer_format`을 따라야 한다(선택지 부분집합, `multiple`, `allow_other`, 길이 상한).
 
 ```json
 {
@@ -4463,6 +4483,7 @@ HTTP `200`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `design_already_published` | 이미 발행된 초안 |
+| 409 | `question_superseded` | 문서가 다시 분석되어 대체된 질문. 목록을 새로 불러온다 |
 
 ```json
 {
@@ -4476,6 +4497,7 @@ HTTP `200`.
 #### 처리 규칙
 
 - 팀장이 답변을 저장한다. 답변 자체가 승인 설계 변경은 아니다.
+- 화면은 질문 하나에 답하고 "다음"을 누를 때마다 이 API로 저장한다. 서버에 저장된 답이 곧 임시 저장이며, 같은 질문에 다시 보내면 덮어쓴다. 임시 저장 전용 상태나 일괄 제출 API는 없다. 마지막 질문을 저장한 뒤 PLN-A05를 호출한다.
 - 초안 재생성은 PLN-A05, 발행은 PLN-A10을 사용한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -4492,7 +4514,7 @@ HTTP `200`.
 
 관련 요구사항: PLN-06  
 담당: BE: 오서현 / AI: 박상은 / FE: 오서현  
-상태: 설계 초안
+상태: 구현됨(S15P31A108-232). AI(134 `/v1/design-drafts`)는 병합됐고 실제 모델 평가는 AI 쪽에서 가짜 공급자까지만 했다. 생성 결과는 **후보**로 보존하고 팀장이 채택할 때만 설계 항목 DRAFT가 된다(아래 PLN-A05 후보 API).
 
 #### 인증
 
@@ -4542,6 +4564,7 @@ HTTP `202`.
 | --- | --- | --- | --- |
 | `status` | `PENDING` | Y | 접수 상태 |
 | `document_version_ids` | `ID[]` | Y | 대상 원본 |
+| `jobs` | `{id, document_version_id}[]` | Y | 문서 버전마다 만들어진 생성 작업. 결과는 `GET /design-drafts`로 조회 |
 
 ```json
 {
@@ -4551,6 +4574,9 @@ HTTP `202`.
     "212",
     "213",
     "214"
+  ],
+  "jobs": [
+    {"id": "71", "document_version_id": "211"}
   ]
 }
 ```
@@ -4564,6 +4590,9 @@ HTTP `202`.
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
 | 409 | `analysis_not_completed` | 선행 분석 미완료 |
+| 409 | `baseline_exists` | 이미 기준 설계가 발행됨. 이후 변경은 변경 제안 |
+| 409 | `draft_in_progress` | 같은 문서 버전의 생성 작업이 아직 진행 중 |
+| 409 | `idempotency_conflict` | 같은 `Idempotency-Key`로 다른 본문 |
 
 ```json
 {
@@ -4576,8 +4605,36 @@ HTTP `202`.
 
 #### 처리 규칙
 
-- 선택한 원문·보완 답변으로 DRAFT 항목을 생성한다.
-- 장시간 생성 결과는 PLN-A06으로 조회한다. 별도 job 상태 보관과 기존 초안 보존은 Q07이다.
+- 최초 기준 설계 발행 **전**에만 쓴다. 문서 버전마다 생성 작업(`design_draft_job`)을 만들고 AI를 버전마다 한 번씩 부른다. 접수 때 문서 원문·질문(답변 포함)·그 문서에서 나온 현재 설계 항목(항목당 한 버전: 사람이 고친 DRAFT가 있으면 그 본문)을 스냅샷으로 보존한다.
+- 순서는 권한 → 입력 스냅샷 저장 → 트랜잭션 밖 AI 호출 → 결과 검증·저장이다. 접수 응답은 AI 호출을 기다리지 않는다.
+- AI 결과는 설계 항목이 아니라 **생성 후보**로 저장한다. 후보를 만드는 것만으로는 `design_item`·`design_item_version`이 하나도 바뀌지 않아, PLN-A07~A09로 만든 수동 초안은 재생성으로 덮이지 않는다.
+- 응답이 요청한 문서 버전·텍스트 해시와 다르거나, 항목·변경 목록이 짝이 아니거나, 변경 전 본문이 보낸 본문과 다르거나, 답변 참조가 보낸 답변 질문이 아니거나, 설계 본문 규칙을 어기면 작업 전체를 실패(`invalid_ai_output`)로 둔다. 일부만 저장하지 않는다.
+- 실패 시 작업은 `FAILED`(`error_code`·`retryable`)로 남기고 기존 설계 항목·후보는 바꾸지 않는다. 모델 호출 뒤 실패면 실제 사용량(`BEE_DRAFT`)을, 응답을 못 받았으면 토큰 수 미확인 한 줄을 기록한다. 실패한 문서는 같은 본문을 새 `Idempotency-Key`로 다시 보내 만든다.
+- 생성 중 기준 설계가 발행되면 작업은 `baseline_exists`(재시도 불가)로 실패한다.
+
+#### 생성 작업·후보 조회
+
+`GET /api/projects/{id}/design-drafts?document_version_id=` — `MEMBER`. 최근 작업 20건과 완료된 작업의 후보를 돌려준다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `jobs[].id`, `document_version_id`, `status`(`PENDING\|RUNNING\|COMPLETED\|FAILED`), `error_code`·`retryable`(실패 시), `created_at`, `updated_at` | 작업 |
+| `jobs[].unresolved[]`, `unanswered_question_keys[]`, `untouched_existing_ids[]`, `omitted_items` | AI가 남긴 결과 전체 정보 |
+| `jobs[].candidates[]` | `id`, `candidate_key`, `change`(`CREATE\|UPDATE`), `kind`, `status`(`PENDING\|ADOPTED\|DISCARDED`), `base_design_item_version_id`·`base_status`·`before`(UPDATE), `after`, `changed_fields[]`, `conflicting_fields[]`, `sources[]`, `answer_refs[]`, `support`(`DOCUMENT\|ANSWER\|DOCUMENT_AND_ANSWER\|NONE`), `rationale`, `adopted_design_item_version_id` |
+
+`before`는 후보를 만든 당시의 기준 본문 그대로이며 이후 바뀌지 않는다(DB 트리거로 후보 본문·근거 변경을 막는다).
+
+#### 후보 채택
+
+`POST /api/projects/{id}/design-draft-candidates/{candidate_id}/adopt` — `LEADER`(사람). 본문(선택): `{"confirm_no_evidence": boolean, "resolved_fields": string[]}`.
+
+- CREATE는 새 설계 항목과 v1 DRAFT(`origin=AI_PROPOSED`, `source_document_version_id`=요청 문서 버전, `source_locator`=첫 근거 위치)를 만든다. UPDATE는 대상 DRAFT의 본문을 후보의 `after`로 바꾼다(출처·`origin`은 그대로).
+- `support=NONE`은 `confirm_no_evidence=true`로 근거 없음을 확인해야 채택한다. `conflicting_fields`가 있으면 모두 `resolved_fields`에 담아 사용자가 확정해야 한다. 아니면 400 `validation_failed`.
+- 반영 직전 프로젝트 잠금 뒤 후보를 만든 당시와 지금이 같은지 확인한다: 기준 설계 없음(아니면 409 `baseline_exists`), 원문 분석 텍스트 해시 동일, 쓰인 답변(`answer_refs`)의 구조 답변 동일, UPDATE는 대상 DRAFT가 그대로이고 본문 해시가 후보의 `before`와 같음. 하나라도 다르면 **그 후보만** 409 `candidate_stale`로 막고 초안을 다시 만들도록 안내한다. 사람이 고친 본문은 그대로 남는다.
+- 같은 후보를 다시 채택하면 처음 결과를 그대로 돌려준다(후보 ID 기준 멱등, 중복 반영 없음). 폐기한 후보는 409 `candidate_discarded`. 응답은 후보와 `design_item_version_id`.
+- 다른 프로젝트의 후보는 404 `not_found`, 팀장이 아니면 403.
+
+`POST /api/projects/{id}/design-draft-candidates/{candidate_id}/discard` — `LEADER`(사람). 후보를 폐기한다. 설계 항목에는 영향이 없다. 이미 폐기한 후보는 같은 결과, 채택한 후보는 409 `candidate_adopted`.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7961,6 +8018,119 @@ HTTP `200`.
 
 ---
 
+<a id="chg-a07-scoped"></a>
+
+## CHG-A07. 선택 범위 문서 수정 초안
+
+### POST `/api/projects/{id}/change-drafts/scoped/blocks`
+
+현재 기준의 승인된 Markdown 또는 일반 텍스트 문서를 파싱해 선택 가능한 블록을
+조회한다. 본문과 블록 위치가 응답에 포함되므로 프로젝트 멤버만 호출할 수 있다.
+목록 조회와 초안 생성 사이에 승인본이나 파서가 바뀌면 이전 블록 ID를 다시
+사용할 수 없다. 이 경우 목록을 새로 조회해 선택한다.
+
+#### 인증 및 헤더
+
+`MEMBER` 세션이 필요하다. `Content-Type: application/json`과 신뢰할 수 있는
+`Origin`을 보낸다. `Origin`이 없으면 허용된 출처의 `Referer` 하나가 필요하다.
+`Origin`이 존재하지만 잘못된 경우에는 `Referer`로 대체하지 않는다. 선택적
+`X-Request-Id`를 사용할 수 있다. `{id}`는 프로젝트 ID다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 프로젝트에 속한 대상 문서 |
+| `base_document_version_id` | `ID` | Y | 현재 기준에 포함된 해당 문서의 승인 버전 |
+
+```json
+{
+  "document_id": "201",
+  "base_document_version_id": "211"
+}
+```
+
+#### Response
+
+HTTP `200`. `document_id`, `base_document_version_id`, `document_version_id`,
+`text_hash`, `normalization_version`, `parser_profile`, `parser_version`과
+`blocks`를 반환한다. 각 블록은 `block_id`, `block_type`, `text`,
+`locator`를 가진다. `locator`는 `type: "text_lines"`, 1부터 시작하는
+포함 범위 `start_line`, `end_line`이다. ID는 문서 스냅샷과 파서에 종속된다.
+
+### POST `/api/projects/{id}/change-drafts/scoped`
+
+선택된 블록만 바꾸는 미승인 문서 수정 초안을 생성한다. 위와 같은 세션 및
+출처 검사가 적용된다. `Idempotency-Key`는 필수이며 제어 문자 없는 1~128자다.
+같은 프로젝트·계정·호출자 종류에서 같은 키와 본문의 성공 결과는 24시간
+재생하며, 같은 키의 다른 본문은 `409 idempotency_conflict`다. 재생 시에도
+현재 권한과 문서 기준을 확인한다. 실패한 요청은 결과를 저장하지 않는다.
+같은 키의 동시 요청 공유는 단일 서버 프로세스 안에서만 보장된다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | Y | 대상 문서 |
+| `base_document_version_id` | `ID` | Y | 현재 기준의 대상 승인본 |
+| `selected_block_ids` | `string[]` | Y | 위 목록에서 받은 중복 없는 블록 ID 1~30개 |
+| `instruction` | `string` | Y | 공백만이 아닌 수정 지시, 4,000자 이하 |
+| `task_id` | `ID` | N | 같은 프로젝트의 관련 작업. 사용량 귀속용 |
+| `agreements` | `string[]` | N | 사용자가 직접 입력한 참고 합의. 최대 30개, 각 항목 1~4,000자 |
+| `related_proposals` | `string[]` | N | 사용자가 직접 입력한 관련 제안의 참고 내용. 최대 30개, 각 항목 1~4,000자 |
+
+```json
+{
+  "document_id": "201",
+  "base_document_version_id": "211",
+  "selected_block_ids": ["blk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+  "instruction": "삭제 권한을 팀장으로 제한해 주세요.",
+  "agreements": ["삭제 권한은 팀장만 가진다"],
+  "related_proposals": ["삭제 권한 변경을 제안한다"]
+}
+```
+
+합의와 관련 제안은 **직접 입력한 문자열**이다. 서버가 회의 합의의 확정 여부나
+프로젝트의 변경 제안 ID·내용과의 일치를 조회·보증하지 않는다. 모델의 `evidence`는
+이 입력 문자열에서 확인된 인용이며, 팀의 확정 사실임을 뜻하지 않는다.
+
+#### Response
+
+HTTP `200`. `document_id`, `base_document_version_id`, 전체 수정 초안
+`after_content`, `changes`, `unresolved`, `generation`을 반환한다. 각 변경은
+`block_id`, `before`, `after`, `reason`, `evidence`를 포함한다. 해결할 수 없는
+요청은 `changes: []`와 설명이 담긴 `unresolved`로 반환될 수 있다.
+`generation`에는 `origin: "MODEL"`, `model`, `usage`가 있다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값, 선택 블록, 입력 길이 또는 멱등 키 오류 |
+| 401 | `unauthenticated` | 세션이 유효하지 않음 |
+| 403 | `request_origin_rejected` | 허용 출처의 Origin 또는 Referer가 없음 |
+| 404 | `not_found` | 프로젝트 멤버가 아니거나 대상 문서·작업에 접근할 수 없음 |
+| 409 | `version_conflict` | 기준 승인본 또는 선택 범위가 바뀜 |
+| 409 | `analysis_not_completed` | 원문이 없거나 저장된 파일 형식·정규화가 적합하지 않음 |
+| 409 | `idempotency_conflict` | 같은 키로 다른 본문을 보냄 |
+| 502 | `ai_unavailable` | AI 연결 또는 출력 검증 실패 |
+| 504 | `ai_timeout` | AI 호출 또는 동시 요청 대기 시간 초과 |
+
+#### 처리 규칙
+
+- BE는 문서의 현재 승인 스냅샷을 조회하고 블록의 원문 위치를 검증한다. AI 호출
+  후에도 활성 멤버 권한과 현재 승인본을 다시 확인한다.
+- BE는 선택된 블록별 변경을 원문에 다시 조립해 AI의 전체 결과와 비교한다.
+  선택 밖 원문이 바뀌면 결과를 거절한다. Markdown 구조 검증은 AI가 수행한다.
+- 문서·기준·제안을 저장하거나 승인·발행하지 않는다. 사람이 내용을 확인한 뒤
+  CHG-A01로 별도 제안한다. 모델 호출 사용량과 성공한 멱등 응답은 기록한다.
+- 기존 `POST /change-drafts`와 별도 계약이며, 선택 범위가 없을 때 원문 전체를
+  자동 선택하지 않는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
 <a id="chg-a08"></a>
 
 ## CHG-A08. 변경 제안 검토 시작
@@ -9465,7 +9635,6 @@ HTTP `200`.
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
 - (수정안 요청 · 11-04 사용자 결정) 필터는 모두 AND로 묶는다. `status`를 여러 번 주면 그중 하나에 맞는 작업이다. `unassigned=true`면 담당자가 없는 작업만 돌려준다. 화면의 '담당자 없는 작업'(작업 현황·HUD·대시보드)은 `unassigned=true&status=DRAFT&status=READY&status=IN_PROGRESS&status=WAITING`으로 부른다.
-- (dev 미구현 · 11-05 확인) `unassigned` 필터가 없고, `status`는 한 값만 받는다(여러 번 주면 첫 값만 쓴다).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10090,7 +10259,6 @@ HTTP `200`.
 - (수정안 요청 · 11-04 사용자 결정) 예외: 미배정 작업은 팀원이 스스로 맡을 수 있다. 작업에 담당자가 없고 `assignee_member_id`가 호출자 본인의 멤버 ID일 때만이다. 다른 사람을 지정하거나 이미 담당자가 있는 작업이면 지금처럼 팀장만 하고, 팀원 요청은 403 `forbidden`이다. 근거: 새 작업 등록(TSK-A01)도 MEMBER다.
 - (수정안 요청 · 11-04 사용자 결정) `expected_lock_version`이 지금 값과 다르면 409 `revision_conflict`로 거절한다. 두 사람이 같은 미배정 작업을 동시에 맡으면 먼저 처리된 쪽만 성공한다. 권한과 미배정 여부는 작업 행을 잠근 뒤 다시 본다.
 - (수정안 요청 · 11-04 사용자 결정) 맡은 뒤 상태·검증은 아래 인계 규칙과 같다. IN_PROGRESS면 WAITING(REVALIDATION)이 되고, 검증은 STALE(`ASSIGNEE_CHANGED`)이 된다.
-- (dev 미구현 · 11-05 확인) 지금은 사람 팀장만 담당자를 바꾼다. 팀원이 미배정 작업을 스스로 맡는 것과 미배정 작업(`assignee_member_id` 생략)은 아직 없다.
 - (수정안 요청 · -212, 2026-10-29 변준성 동의) 점유 중 작업은 팀원 제외·나가기(MEM-A09·A10)의 인계와 같은 규칙으로 넘긴다. IN_PROGRESS는 WAITING(REVALIDATION)으로 내리고, 점유 중 작업의 검증(진행 중인 것 포함)은 STALE(`ASSIGNEE_CHANGED`)로 바꾼다. 새 담당자는 새 PASS를 받아 RESUME한다. 완료 보고에서 서버가 접수한 DELTA 검증은 담당자와 무관해 그대로 둔다(PASS면 그대로 완료). 같은 담당자로 바꾸면 상태·검증을 바꾸지 않는다.
 - 이전 작업 판단·패킷·검증을 새 담당자가 조회할 수 있게 유지한다.
 - (수정안 요청) 바뀐 담당자에게 TASK 알림을 보낸다.
