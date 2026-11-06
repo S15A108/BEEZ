@@ -1774,7 +1774,7 @@ function PlanDialog({
           )}
           {items.length > 0 && !shownItems.length && (
             <p className="text-sm text-muted-foreground">
-              ‘{itemQuery.trim()}’와 맞는 설계 항목이 없어요.
+              ‘{itemQuery.trim()}’에 맞는 설계 항목이 없어요.
             </p>
           )}
           {moreItems && (

@@ -975,7 +975,7 @@ it('찾는 설계 항목이 없으면 안내하고, 더 있으면 더 불러오�
   await screen.findByLabelText(/^REQ-001 /)
   await userEvent.type(itemSearch(), '없는 항목')
   expect(
-    screen.getByText(/‘없는 항목’와 맞는 설계 항목이 없어요/),
+    screen.getByText(/‘없는 항목’에 맞는 설계 항목이 없어요/),
   ).toBeVisible()
   expect(
     screen.getByRole('button', { name: '설계 항목 더 보기' }),
