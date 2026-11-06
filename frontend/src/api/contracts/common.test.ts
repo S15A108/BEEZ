@@ -194,6 +194,7 @@ it('회의 기록은 충돌 브리핑과 정리 종류도 읽는다', () => {
   expect(meetingEntrySchema.parse({ ...entry, kind: 'SUMMARY' }).kind).toBe(
     'SUMMARY',
   )
+})
 
 // S15P31A108-296: PR #133의 문서 알림은 target_type=DOCUMENT_VERSION(target_id는 문서 버전 ID)에 document_id를 함께 준다.
 // 한 건이라도 못 읽으면 알림 목록 전체가 실패하므로, 다른 알림과 섞인 페이지로 확인한다.
