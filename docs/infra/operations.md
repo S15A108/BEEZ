@@ -436,7 +436,7 @@ beez-deploy 고정 파이프라인(JCasC) ── 실패·중단·시간 초과 �
 | `/etc/jenkins/deploy-notify.curl` | `640 root:jenkins` | 저장소에 없음(웹훅 주소 = 비밀값) |
 
 스크립트를 고치면 [`infra/jenkins/test_deploy_notify.py`](../../infra/jenkins/test_deploy_notify.py)를 돌립니다
-(`python infra/jenkins/test_deploy_notify.py`, bash 필요, CI에는 없음). 가짜 curl로 메시지 JSON, 웹훅 주소가 출력·명령줄에
+(`python infra/jenkins/test_deploy_notify.py`, bash 필요, CI는 `deploy-scripts` 잡). 가짜 curl로 메시지 JSON, 웹훅 주소가 출력·명령줄에
 없는지, 설정이 없거나 비었거나 curl이 실패해도 exit 0인지, 빈 값이 `?`가 되는지를 봅니다. 서버에 반영하는 것은
 아래 설치 2번입니다.
 
