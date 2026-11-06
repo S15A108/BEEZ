@@ -4,7 +4,7 @@ import static com.beez.backend.designitem.support.DesignJson.JSON;
 import static com.beez.backend.designitem.support.DesignJson.canonical;
 import static com.beez.backend.designitem.support.DesignJson.hash;
 
-import com.beez.backend.changeproposal.service.DraftUsageRecorder;
+import com.beez.backend.ai.AiUsageRecorder;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.validation.DesignContentValidator;
@@ -35,16 +35,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class DesignDraftRunner {
     private static final Logger log = LoggerFactory.getLogger(DesignDraftRunner.class);
     static final int LEASE_SECONDS = 300;
+    static final String FEATURE = "BEE_DRAFT";
     private static final Set<String> SUPPORTS = Set.of("DOCUMENT", "ANSWER", "DOCUMENT_AND_ANSWER", "NONE");
 
     private final DesignDraftRepository drafts;
     private final DesignDraftGateway gateway;
-    private final DraftUsageRecorder usage;
+    private final AiUsageRecorder usage;
     private final DesignProjectRepository projects;
     private final DesignContentValidator content;
     private final TransactionTemplate tx;
 
-    public DesignDraftRunner(DesignDraftRepository drafts, DesignDraftGateway gateway, DraftUsageRecorder usage,
+    public DesignDraftRunner(DesignDraftRepository drafts, DesignDraftGateway gateway, AiUsageRecorder usage,
                              DesignProjectRepository projects, DesignContentValidator content, PlatformTransactionManager manager) {
         this.drafts = drafts; this.gateway = gateway; this.usage = usage; this.projects = projects; this.content = content;
         this.tx = new TransactionTemplate(manager);
@@ -75,17 +76,17 @@ public class DesignDraftRunner {
             return true;
         } catch (RuntimeException e) {
             log.error("design-drafts call failed unexpectedly: {}", e.toString(), e);
-            usage.recordFailure(project, null, requestKey, elapsed(started));
+            usage.recordFailure(FEATURE, project, null, requestKey, elapsed(started));
             fail(id, lease, "ai_unavailable", true, null);
             return true;
         }
-        int recorded = response == null ? 0 : usage.record(project, null, requestKey, response, elapsed(started));
+        int recorded = response == null ? 0 : usage.record(FEATURE, project, null, requestKey, response, elapsed(started));
         Parsed parsed;
         try {
             parsed = parse(response, snapshot, id, project);
         } catch (IllegalArgumentException | ApiException e) {
             log.warn("design-drafts output unusable for job {}: {}", id, e.getMessage());
-            if (recorded == 0) usage.recordFailure(project, null, requestKey, elapsed(started));
+            if (recorded == 0) usage.recordFailure(FEATURE, project, null, requestKey, elapsed(started));
             fail(id, lease, "invalid_ai_output", true, usageOf(response));
             return true;
         }
@@ -220,8 +221,8 @@ public class DesignDraftRunner {
 
     private void recordFailedCall(long project, String requestKey, AiFailure error, long elapsed) {
         int recorded = 0;
-        if (error.usage() != null) recorded = usage.recordLines(project, null, requestKey, error.usage(), false, null, elapsed);
-        if (recorded == 0) usage.recordFailure(project, null, requestKey, elapsed);
+        if (error.usage() != null) recorded = usage.recordLines(FEATURE, project, null, requestKey, error.usage(), false, null, elapsed);
+        if (recorded == 0) usage.recordFailure(FEATURE, project, null, requestKey, elapsed);
     }
 
     private static long elapsed(long startedNanos) { return (System.nanoTime() - startedNanos) / 1_000_000; }

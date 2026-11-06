@@ -22,6 +22,7 @@ BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 
 | CD 배포 호출 (`cd.yml` deploy 잡) | Environment `dev` 시크릿 | `JENKINS_API_TOKEN` |
 | 서버 컨테이너 | `/opt/beez/.env.<환경>` → `deploy.sh` 가 `--env-file` 로 넘김 | 그 파일 (`640 ubuntu:beez-deploy`) |
 | Jenkins | `/etc/jenkins/casc.env` | 그 파일 (`600 root:root`) |
+| 서버 모니터링 스택 | `/opt/beez/.env.monitoring` ([아래 표](#모니터링-env-파일-optbeezenvmonitoring)) | 그 파일 (`640 ubuntu:beez-deploy`), 웹훅 주소 파일 (`640 root:nogroup`) |
 | 저장소 자동화 | 저장소 시크릿 | `PR_AUTOMERGE_TOKEN`, `GITLAB_SYNC_TOKEN` |
 
 서버 env 파일을 처음 만드는 명령과 GMS 키를 넣는 명령은 [cd.md 서버 준비](cd.md#2-env-파일)에 있습니다.
@@ -39,8 +40,12 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `DB_USERNAME` | 필수 | | DB 계정 | postgres 초기화, backend |
 | `DB_PASSWORD` | 필수 | 비밀 | DB 비밀번호. **DB 를 처음 띄울 때 값으로 굳습니다** — 아래 [교체](#값이-샜을-때) 참고 | postgres 초기화, backend |
 | `DB_NAME` | | | 기본 `beez` | postgres, backend `DB_URL` |
-| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소 키 | seaweedfs, backend |
-| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs, backend |
+| `DOCUMENT_S3_ACCESS_KEY` | 필수 | 비밀 | 문서 원본 저장소의 **backend 전용** 키(`beez-documents` 읽기·쓰기·삭제·목록만) | seaweedfs 신원 파일, backend |
+| `DOCUMENT_S3_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, backend |
+| `SEAWEEDFS_BOOTSTRAP_ACCESS_KEY` | 필수 | 비밀 | SeaweedFS 관리 키(모든 bucket). 운영자의 관리·복원 작업에만 씁니다 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BOOTSTRAP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일 |
+| `SEAWEEDFS_BACKUP_ACCESS_KEY` | 필수 | 비밀 | 백업 키(`beez-documents` 읽기·목록만) | seaweedfs 신원 파일, `backup.sh` |
+| `SEAWEEDFS_BACKUP_SECRET_KEY` | 필수 | 비밀 | 〃 | seaweedfs 신원 파일, `backup.sh` |
 | `DOCUMENT_S3_BUCKET` | | | 기본 `beez-documents` | seaweedfs, backend |
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
 | `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
@@ -49,6 +54,9 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
 | `VALIDATION_FAKE_ANALYZER` | | | 기본 `false`. 켜면 검증이 AI 를 부르지 않고 후보 없이 PASS — 운영에서는 끕니다 | backend |
+| `BEEZ_CDC_INTAKE_ENABLED` | | | 기본 `false`. 발행 분석 접수의 복구 스캔(처리)을 켭니다. 켜는 절차는 S15P31A108-295 | backend |
+| `BEEZ_CDC_INTAKE_CONSUMER_ENABLED` | | | 기본 `false`. Kafka 힌트 consumer. **위 스캔 없이 켜면 기동 거부**. Kafka 가 없어도 기동하고 30초마다 다시 붙습니다(-298) | backend |
+| `BEEZ_CDC_INTAKE_BOOTSTRAP_SERVERS`·`_GROUP_ID`·`_TOPIC` | | | 기본 `kafka:9092`·`beez-published-analysis`·`beez.public.published_change_analysis`(계획 D7). 바꿀 일 없음 | backend |
 | `DOCUMENT_EMBEDDING_PROFILE` | | | 기본 `gms-small-1024-v1`. ai 실제 프로필과 같아야 합니다 | backend |
 | `DOCUMENT_EMBEDDING_MODEL` | | | 기본 `text-embedding-3-small`. 〃 | backend |
 | `SPRING_PROFILES_ACTIVE` | | | 기본 `prod` | backend |
@@ -57,6 +65,17 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
   값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.
 - `BACKEND_IMAGE`·`AI_IMAGE` 는 `deploy.sh` 가 배포 SHA 로 채웁니다. env 파일에 쓰지 않습니다.
 - `LOCAL_HTTP_PORT` 는 로컬 nginx 전용입니다(`compose.local.yaml`).
+
+### 모니터링 env 파일 (`/opt/beez/.env.monitoring`)
+
+모니터링 스택(compose 프로젝트 `beez-monitoring`)만 읽는 파일입니다. 본 스택 env 파일과 나눠 두며 배포 잡은 읽지 않습니다.
+만드는 법·키 설명은 [monitoring.md "env 파일"](monitoring.md#1-env-파일), 로컬판은 `infra/monitoring/local.env` 입니다.
+
+| 이름 | 필수 | 비밀 | 의미 |
+|---|---|---|---|
+| `GRAFANA_ADMIN_PASSWORD` | 필수 | 비밀 | Grafana 관리자. grafana 볼륨을 처음 만들 때만 쓰임 |
+| `MONITOR_DB_PASSWORD` | 필수 | 비밀 | postgres-exporter 전용 DB 계정 `beez_monitor` |
+| `ALERTMANAGER_WEBHOOK_URL_FILE` | 필수 | | Mattermost 웹훅 주소가 든 **파일 경로**(서버 `/opt/beez/.alertmanager-webhook-url`). 주소 자체는 그 파일에만 둡니다 — [monitoring-alerts.md "웹훅 넣기"](monitoring-alerts.md#웹훅-넣기-서버당-한-번) |
 
 ### backend (Spring)
 
@@ -80,7 +99,6 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `AI_INTERNAL_TOKEN` | 필수 | `change-me` | env 파일 |
 | `AI_CONNECT_TIMEOUT`·`AI_READ_TIMEOUT` | | `3s`·`20s` | 기본값 |
 | `INVITE_BASE_URL` | 필수 | `http://localhost:5173` | `PUBLIC_ORIGIN` |
-| `INVITE_TTL` | | `7d` | 기본값 |
 | `MCP_URL` | 필수 | `http://localhost:8080/mcp` | `PUBLIC_ORIGIN/mcp` |
 | `AGENT_MAX_ACTIVE_TOKENS` | | `5` | 기본값 |
 | `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
@@ -372,7 +390,7 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 |---|---|
 | `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용 |
 | `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
-| `DOCUMENT_S3_*` | 지금은 seaweedfs 관리 키와 backend 키가 같은 값입니다. 키를 나누고 교체 절차를 확인하는 일은 S15P31A108-211 에서 합니다 |
+| `DOCUMENT_S3_*`·`SEAWEEDFS_*` | 새 키를 넣고 같은 SHA 로 다시 배포. **access key 와 secret key 를 함께** 바꿉니다 — [seaweedfs.md 키 교체](seaweedfs.md#키-교체) |
 | `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
 | `JENKINS_API_TOKEN` | [cd.md 토큰 발급·교체](cd.md#토큰-발급교체) |
 | Jenkins 비밀번호 | [jenkins.md 비밀번호 바꾸기](jenkins.md#비밀번호-바꾸기) |

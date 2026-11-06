@@ -1,6 +1,6 @@
 package com.beez.backend.planning.port;
 
-import com.beez.backend.changeproposal.port.AiCallException;
+import com.beez.backend.ai.AiCallException;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;

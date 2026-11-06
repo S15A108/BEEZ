@@ -68,6 +68,10 @@ const relationLabel = {
 } as const
 
 const taskSteps = ['계획 작성', '계획 검증', '작업 시작', '완료 보고']
+// 서버가 상태를 바꾸는 중인 작업. 끝날 때까지 상세와 목록을 다시 불러온다.
+const settling = (task?: TaskDetail) =>
+  task?.validation_status === 'RUNNING' ||
+  task?.waiting_reason === 'REVALIDATION'
 // 서버가 검증을 무효로 만든 이유 코드(stale_reason). 모르는 값은 그대로 보여 준다.
 const staleReasonLabel: Record<string, string> = {
   ASSIGNEE_CHANGED: '담당자가 바뀌어 새 담당자가 다시 검증받아야 해요.',
@@ -99,6 +103,10 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryFn: ({ pageParam }) =>
       tasksApi.list(projectId, { cursor: pageParam, limit: 50 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) => page.items.some(settling))
+        ? 1500
+        : false,
   })
   const members = useQuery(membersQuery(projectId))
   const memberId = members.data?.items.find(
@@ -117,11 +125,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'task', selectedId],
     queryFn: () => tasksApi.get(projectId, selectedId!),
     enabled: !!selectedId,
-    refetchInterval: (query) =>
-      query.state.data?.validation_status === 'RUNNING' ||
-      query.state.data?.waiting_reason === 'REVALIDATION'
-        ? 1500
-        : false,
+    refetchInterval: (query) => (settling(query.state.data) ? 1500 : false),
   })
   const task = detail.data
   const approved = useInfiniteQuery({
@@ -874,6 +878,21 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <p className="mt-2 text-sm text-muted-foreground">
                             {finding.next_action}
                           </p>
+                        )}
+                        {finding.ai_suggested_action && (
+                          <section
+                            aria-label="AI 후속 행동 제안"
+                            className="mt-3 space-y-1 rounded-md bg-muted p-3 text-sm"
+                          >
+                            <h4 className="font-medium">AI 후속 행동 제안</h4>
+                            <p className="break-words whitespace-pre-wrap">
+                              {finding.ai_suggested_action}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              참고용 제안이에요. 담당자와 승인 여부를 확인해
+                              주세요.
+                            </p>
+                          </section>
                         )}
                         {finding.sources.map((source, index) => (
                           <p

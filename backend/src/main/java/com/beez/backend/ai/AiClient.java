@@ -105,4 +105,14 @@ public class AiClient {
     public java.util.Map<String, Object> beeDraft(java.util.Map<String, Object> input) {
         return rest.post().uri("/v1/bee/draft").body(input).retrieve().body(java.util.Map.class);
     }
+
+    /**
+     * AI-A08 회의 분석 ({@code POST /v1/bee/meeting-analysis}). BE 는 SUMMARY 모드(회의 정리)로 부른다.
+     * 호출 실패·HTTP 오류는 그대로 던진다 — 분류는 부르는 쪽이 한다. AI 서버는 2026-11-05 기준 SUMMARY 를
+     * 아직 받지 않는다(S15P31A108-235). 읽기 시간 제한은 다른 호출과 같은 {@code ai.read-timeout} 이다.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> meetingAnalysis(java.util.Map<String, Object> input) {
+        return rest.post().uri("/v1/bee/meeting-analysis").body(input).retrieve().body(java.util.Map.class);
+    }
 }

@@ -31,6 +31,8 @@ test('선택한 부지의 프로젝트와 외관이 새로고침 뒤에도 유�
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (request) => {
     const url = new URL(request.url())
+    // GLB 안의 텍스처는 three가 메모리 주소(blob:)로 읽는다. 네트워크 요청만 센다(사용자 승인 2026-11-03).
+    if (url.protocol === 'blob:' || url.protocol === 'data:') return
     if (
       url.pathname.startsWith('/api/') ||
       !['localhost', '127.0.0.1'].includes(url.hostname)
@@ -61,7 +63,14 @@ test('선택한 부지의 프로젝트와 외관이 새로고침 뒤에도 유�
   await expect(
     page.getByRole('button', { name: '사무실로', exact: true }),
   ).toBeVisible()
+  // 거리는 늘 1인칭이라 산책 중에는 시점 버튼을 숨긴다.
+  await expect(
+    page.getByRole('button', { name: '3인칭', exact: true }),
+  ).toHaveCount(0)
   await page.getByRole('button', { name: '사무실로', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: '3인칭', exact: true }),
+  ).toBeVisible()
   await page.reload()
   await expect(
     page.getByRole('heading', { name: '부지 이식 확인', exact: true }),
@@ -123,6 +132,33 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   })
 })
 
+test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전 분석과 구분한다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '변경 제안', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(
+    dialog.getByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ }),
+  ).toBeVisible()
+  await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  await dialog.getByRole('button', { name: '승인하고 기준 v2 발행' }).click()
+  const status = dialog.getByRole('region', { name: '발행 후 분석 상태' })
+  await expect(status).toContainText('상태 확인 필요')
+  await expect(status).toContainText('발행 전 영향 분석과는 별도의 처리 상태')
+  await dialog.getByRole('tab', { name: /^영향/ }).click()
+  await expect(dialog.getByText(/발행 전 영향 분석 결과예요/)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '다시 분석' })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click()
+  await page.getByRole('button', { name: '대시보드', exact: true }).click()
+  const dashboard = page.getByRole('dialog')
+  await dashboard.getByRole('tab', { name: '활동 타임라인' }).click()
+  await dashboard.getByRole('button', { name: '변경 요청 #71' }).click()
+  await expect(
+    page.getByRole('region', { name: '발행 후 분석 상태' }),
+  ).toContainText('상태 확인 필요')
+})
+
 test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장한다', async ({
   page,
 }) => {
@@ -160,4 +196,58 @@ test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장
         exact: true,
       }),
   ).toBeVisible()
+})
+
+// 이름표(HTML 버튼)는 캔버스 위에 겹쳐 있다. 이름표 위에서 굴린 휠과 이름표에서 시작한 끌기도 고리를 돌리고 페이지는
+// 스크롤하지 않는다. 끌지 않고 누르면 이름표가 그대로 연다(preview 확인에서 찾은 버그, 2026-11-03).
+test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르면 연다', async ({
+  page,
+}) => {
+  await login(page)
+  const tag = page
+    .getByRole('group', { name: /돌리는 원형 도시/ })
+    .getByRole('button', { name: /새 프로젝트/ })
+  await expect(tag).toBeVisible()
+  const x = async () => (await tag.boundingBox())!.x
+  const start = await tag.boundingBox()
+  await page.mouse.move(
+    start!.x + start!.width / 2,
+    start!.y + start!.height / 2,
+  )
+  await page.mouse.wheel(0, 250)
+  await expect.poll(x).toBeLessThan(start!.x - 100)
+  expect(await page.evaluate('window.scrollY')).toBe(0)
+  const centred = (await tag.boundingBox())!
+  const cx = centred.x + centred.width / 2
+  const cy = centred.y + centred.height / 2
+  await page.mouse.move(cx, cy)
+  await page.mouse.down()
+  // 빈 부지에서 프로젝트 쪽(오른쪽)으로 한 칸 끌면 고리가 돌아 빈 부지가 오른쪽으로 간다. 꾸밈 칸 쪽으로 끌면 가장
+  // 가까운 멈춤 자리인 빈 부지로 돌아온다(꾸밈 칸에는 멈추지 않는다).
+  await page.mouse.move(cx + 230, cy, { steps: 12 })
+  await page.mouse.up()
+  await expect.poll(x).toBeGreaterThan(centred.x + 100)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await tag.click()
+  await expect(page.getByRole('dialog')).toContainText('부지 3')
+})
+
+// 사용자 요청 '가장 마지막에 방문한 프로젝트 건물이 가운데로'(D33): 1번 칸 프로젝트에 들어갔다 나오면 그 건물이 가운데에 온다.
+test('마지막으로 연 프로젝트 건물이 도시 가운데에 온다', async ({ page }) => {
+  await login(page)
+  const city = page.getByRole('group', { name: /돌리는 원형 도시/ })
+  const tag = city.getByRole('button', { name: /동네 책방 예약/ })
+  const centre = async () => {
+    const box = (await city.boundingBox())!
+    const at = (await tag.boundingBox())!
+    return Math.abs(at.x + at.width / 2 - (box.x + box.width / 2))
+  }
+  // 처음에는 가장 최근 칸(우리 팀 협업 서비스)이 가운데라 1번은 왼쪽에 있다
+  await expect(tag).toBeVisible()
+  expect(await centre()).toBeGreaterThan(100)
+  await page.goto('/projects/102')
+  await expect(page.locator('canvas')).toBeVisible()
+  await page.goto('/')
+  await expect(tag).toBeVisible()
+  await expect.poll(centre).toBeLessThan(30)
 })

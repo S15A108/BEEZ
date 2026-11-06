@@ -2,7 +2,6 @@ package com.beez.backend.changeproposal.service;
 
 import static com.beez.backend.changeproposal.validation.ProposalValidator.requiredId;
 import static com.beez.backend.designitem.support.DesignJson.JSON;
-import static com.beez.backend.designitem.support.DesignJson.conflict;
 import static com.beez.backend.designitem.support.DesignJson.hash;
 import static com.beez.backend.designitem.support.DesignJson.id;
 import static com.beez.backend.designitem.support.DesignJson.invalid;
@@ -11,7 +10,8 @@ import static com.beez.backend.designitem.support.DesignJson.time;
 import com.beez.backend.changeproposal.dto.DraftDtos.Draft;
 import com.beez.backend.changeproposal.dto.DraftDtos.Generation;
 import com.beez.backend.changeproposal.dto.DraftDtos.Request;
-import com.beez.backend.changeproposal.port.AiCallException;
+import com.beez.backend.ai.AiCallException;
+import com.beez.backend.ai.AiUsageRecorder;
 import com.beez.backend.changeproposal.port.ChangeDraftGateway;
 import com.beez.backend.changeproposal.repository.DraftContextRepository;
 import com.beez.backend.changeproposal.repository.ProposalRepository;
@@ -20,6 +20,7 @@ import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
+import com.beez.backend.common.concurrent.SingleFlight;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.designitem.service.DesignCommandService;
 import java.util.ArrayList;
@@ -27,11 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -50,7 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 기준 확인(호출 동안 다른 제안이 발행됐을 수 있다)을 하고 응답을 저장한다. ⑤ 의 확인은 문서 승인본뿐 아니라 AI 에 보낸
  * 관련 설계 항목의 목록·버전도 지금 기준과 대조한다.
  *
- * <p><b>같은 키의 동시 요청</b>은 하나만 AI 를 부르고 나머지는 그 결과(성공이든 실패든)를 기다려 받는다({@link #flights}).
+ * <p><b>같은 키의 동시 요청</b>은 하나만 AI 를 부르고 나머지는 그 결과(성공이든 실패든)를 기다려 받는다({@link SingleFlight}).
  * 결과가 저장되기 전에는 DB 의 멱등 기록으로 구분할 수 없기 때문이다. 이 표는 <b>프로세스 안</b>에만 있어 백엔드 인스턴스가
  * 둘 이상이면 서로 보지 못한다(지금은 단일 인스턴스). 늘리게 되면 DB 쪽 진행 중 표시가 필요하다.
  */
@@ -59,22 +55,23 @@ public class ChangeDraftService {
     private static final Logger log = LoggerFactory.getLogger(ChangeDraftService.class);
     static final int MAX_ITEMS = 50;
     static final int MAX_INSTRUCTION = 2000;
-    /** 먼저 온 요청을 기다리는 최대 시간. AI 읽기 시간 제한(기본 20초)과 저장 시간보다 충분히 길다. */
-    static final long FOLLOW_WAIT_SECONDS = 120;
+    private static final String FEATURE = "BEE_DRAFT";
 
     private final ProjectAccessChecker access;
     private final DesignProjectRepository projects;
     private final ProposalRepository proposals;
     private final DraftContextRepository context;
     private final ChangeDraftGateway gateway;
-    private final DraftUsageRecorder usage;
+    private final AiUsageRecorder usage;
     private final DesignCommandService idempotency;
     private final TransactionTemplate transaction;
     /** 진행 중인 요청. 키는 프로젝트·계정·작업 종류·Idempotency-Key. */
-    private final ConcurrentHashMap<String, Flight> flights = new ConcurrentHashMap<>();
+    private final SingleFlight<Draft> flights = new SingleFlight<>(
+            () -> new ApiException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", AiChangeDraftAdapter.TIMEOUT),
+            ChangeDraftService::unavailable);
 
     public ChangeDraftService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository proposals,
-            DraftContextRepository context, ChangeDraftGateway gateway, DraftUsageRecorder usage, DesignCommandService idempotency,
+            DraftContextRepository context, ChangeDraftGateway gateway, AiUsageRecorder usage, DesignCommandService idempotency,
             PlatformTransactionManager manager) {
         this.access = access; this.projects = projects; this.proposals = proposals; this.context = context;
         this.gateway = gateway; this.usage = usage; this.idempotency = idempotency;
@@ -85,7 +82,6 @@ public class ChangeDraftService {
     private record Prepared(long document, long version, int versionNo, Long task, Map<String, Object> documentVersion,
                             List<Map<String, Object>> items, List<String> itemKeys, int totalItems) { }
     private record Step(Draft replayed, Prepared prepared) { }
-    private record Flight(String fingerprint, CompletableFuture<Draft> result) { }
 
     public Draft generate(CallerContext caller, long project, Request input, String key) {
         validate(project, input);
@@ -95,35 +91,7 @@ public class ChangeDraftService {
         if (key == null || key.isBlank() || key.length() > 128) return run(caller, project, input, key, operation);
 
         String flightKey = project + "|" + caller.accountId() + "|" + operation + "|" + key;
-        Flight mine = new Flight(hash(input), new CompletableFuture<>());
-        Flight leader = flights.putIfAbsent(flightKey, mine);
-        if (leader != null) return follow(leader, mine.fingerprint());
-        try {
-            Draft draft = run(caller, project, input, key, operation);
-            mine.result().complete(draft);
-            return draft;
-        } catch (RuntimeException e) {
-            mine.result().completeExceptionally(e);
-            throw e;
-        } finally {
-            flights.remove(flightKey, mine);
-        }
-    }
-
-    /** 같은 키로 이미 진행 중인 요청의 결과를 기다려 그대로 받는다. 본문이 다르면 멱등 충돌이다. */
-    private Draft follow(Flight leader, String fingerprint) {
-        if (!leader.fingerprint().equals(fingerprint)) throw conflict("idempotency_conflict");
-        try {
-            return leader.result().get(FOLLOW_WAIT_SECONDS, TimeUnit.SECONDS);
-        } catch (ExecutionException e) {
-            if (e.getCause() instanceof RuntimeException cause) throw cause;
-            throw unavailable();
-        } catch (TimeoutException e) {
-            throw new ApiException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", AiChangeDraftAdapter.TIMEOUT);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw unavailable();
-        }
+        return flights.run(flightKey, hash(input), () -> run(caller, project, input, key, operation));
     }
 
     private Draft run(CallerContext caller, long project, Request input, String key, String operation) {
@@ -145,16 +113,16 @@ public class ChangeDraftService {
             throw e;
         } catch (RuntimeException e) {
             log.error("AI-A06 call failed unexpectedly: {}", e.toString(), e);
-            usage.recordFailure(project, prepared.task(), requestKey, elapsedMillis(started));
+            usage.recordFailure(FEATURE, project, prepared.task(), requestKey, elapsedMillis(started));
             throw unavailable();
         }
         long elapsed = elapsedMillis(started);
-        int recorded = response == null ? 0 : usage.record(project, prepared.task(), requestKey, response, elapsed);
+        int recorded = response == null ? 0 : usage.record(FEATURE, project, prepared.task(), requestKey, response, elapsed);
         Draft draft;
         try {
             draft = toDraft(response, prepared, input);
         } catch (ApiException e) {
-            if (recorded == 0) usage.recordFailure(project, prepared.task(), requestKey, elapsed);
+            if (recorded == 0) usage.recordFailure(FEATURE, project, prepared.task(), requestKey, elapsed);
             throw e;
         }
         return transaction.execute(status -> {
@@ -176,9 +144,9 @@ public class ChangeDraftService {
     private void recordFailedCall(long project, Prepared prepared, String requestKey, ApiException error, long elapsed) {
         int recorded = 0;
         if (error instanceof AiCallException call && call.usage() != null) {
-            recorded = usage.recordLines(project, prepared.task(), requestKey, call.usage(), false, null, elapsed);
+            recorded = usage.recordLines(FEATURE, project, prepared.task(), requestKey, call.usage(), false, null, elapsed);
         }
-        if (recorded == 0) usage.recordFailure(project, prepared.task(), requestKey, elapsed);
+        if (recorded == 0) usage.recordFailure(FEATURE, project, prepared.task(), requestKey, elapsed);
     }
 
     private static void validate(long project, Request input) {

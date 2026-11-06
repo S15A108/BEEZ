@@ -2,7 +2,7 @@ package com.beez.backend.planning.service;
 
 import static com.beez.backend.designitem.support.DesignJson.canonical;
 
-import com.beez.backend.changeproposal.service.DraftUsageRecorder;
+import com.beez.backend.ai.AiUsageRecorder;
 import com.beez.backend.document.DocumentKindMapper;
 import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.planning.port.AiFailure;
@@ -42,11 +42,11 @@ public class PlanningQuestionGenerator {
 
     private final PlanningQuestionRepository questions;
     private final PlanningQuestionGateway gateway;
-    private final DraftUsageRecorder usage;
+    private final AiUsageRecorder usage;
     private final DesignProjectRepository projects;
     private final TransactionTemplate tx;
 
-    public PlanningQuestionGenerator(PlanningQuestionRepository questions, PlanningQuestionGateway gateway, DraftUsageRecorder usage,
+    public PlanningQuestionGenerator(PlanningQuestionRepository questions, PlanningQuestionGateway gateway, AiUsageRecorder usage,
                                      DesignProjectRepository projects, PlatformTransactionManager manager) {
         this.questions = questions; this.gateway = gateway; this.usage = usage; this.projects = projects;
         this.tx = new TransactionTemplate(manager);

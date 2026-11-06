@@ -1,6 +1,6 @@
 package com.beez.backend.planning.service;
 
-import static com.beez.backend.changeproposal.service.AiChangeDraftAdapter.usageIn;
+import static com.beez.backend.ai.AiErrorBodies.usageIn;
 
 import com.beez.backend.ai.AiClient;
 import com.beez.backend.planning.port.AiFailure;

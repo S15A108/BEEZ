@@ -2,6 +2,8 @@ import { expect, it } from 'vitest'
 import {
   comparisonSchema,
   documentBeeReviewSchema,
+  notificationSchema,
+  pageSchema,
   usageSummarySchema,
 } from './common'
 
@@ -175,4 +177,58 @@ it('비교 응답은 target_id 키가 없어도 읽는다', () => {
       proposed_content: { description: '새 API' },
     }).target_id,
   ).toBeUndefined()
+})
+
+// S15P31A108-296: PR #133의 문서 알림은 target_type=DOCUMENT_VERSION(target_id는 문서 버전 ID)에 document_id를 함께 준다.
+// 한 건이라도 못 읽으면 알림 목록 전체가 실패하므로, 다른 알림과 섞인 페이지로 확인한다.
+it('문서 알림이 섞인 알림 목록을 읽고 document_id를 남긴다', () => {
+  const base = {
+    project_id: '1',
+    title: '문서 승인',
+    body: '등록한 문서가 승인되었습니다',
+    created_at: '2026-11-05T01:00:00Z',
+  }
+  const page = pageSchema(notificationSchema).parse({
+    items: [
+      {
+        ...base,
+        id: '11',
+        type: 'TASK_ASSIGNED',
+        target_type: 'TASK',
+        target_id: '5',
+      },
+      {
+        ...base,
+        id: '10',
+        type: 'DOCUMENT_APPROVED',
+        target_type: 'DOCUMENT_VERSION',
+        target_id: '42',
+        document_id: '7',
+      },
+    ],
+    has_more: false,
+  })
+  expect(page.items[1]).toMatchObject({
+    target_type: 'DOCUMENT_VERSION',
+    target_id: '42',
+    document_id: '7',
+  })
+  expect(page.items[0]).not.toHaveProperty('document_id')
+})
+
+// PR #133 답변: 기준 알림에만 baseline_version_no가 오고, target_id는 기준 ID 그대로다.
+it('기준 알림의 기준 버전 번호를 남긴다', () => {
+  expect(
+    notificationSchema.parse({
+      id: '12',
+      project_id: '1',
+      type: 'BASELINE_CREATED',
+      title: '새 기준',
+      body: '',
+      target_type: 'BASELINE',
+      target_id: '900',
+      baseline_version_no: 3,
+      created_at: '2026-11-05T01:00:00Z',
+    }),
+  ).toMatchObject({ target_id: '900', baseline_version_no: 3 })
 })

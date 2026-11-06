@@ -139,18 +139,25 @@ describe('documented REST mock adapter', () => {
       email: user.email,
       password: 'changed-password-8832',
     })
-    await authApi.forgotPassword({ email: user.email, name: user.name })
+    // S15P31A108-283: 재설정 링크(ACC-A08·A09) 대신 임시 비밀번호(ACC-A07)를 받는다(PR #118). 임시 비밀번호로 로그인하면
+    // must_change_password가 붙고, 그것을 현재 비밀번호로 보내 바꾸면 풀린다. 원문은 저장소에 남기지 않는다.
+    const sent = await authApi.forgotPassword({
+      email: user.email,
+      name: user.name,
+    })
+    const temporary = sent.message.match(/임시 비밀번호: (\S+)/)![1]
+    await authApi.logout()
     expect(
-      (await authApi.verifyResetToken({ token: `mock-reset-${user.id}` }))
-        .valid,
+      (await authApi.login({ email: user.email, password: temporary }))
+        .must_change_password,
     ).toBe(true)
-    await authApi.resetPassword({
-      token: `mock-reset-${user.id}`,
+    expect((await authApi.me()).must_change_password).toBe(true)
+    expect(localStorage.getItem(MOCK_STORAGE_KEY)).not.toContain(temporary)
+    await authApi.changePassword({
+      current_password: temporary,
       new_password: 'reset-password-1921',
     })
-    await expect(
-      authApi.verifyResetToken({ token: `mock-reset-${user.id}` }),
-    ).rejects.toMatchObject({ response: { status: 410 } })
+    expect((await authApi.me()).must_change_password).toBe(false)
   })
 
   it('creates, edits and deletes a project and keeps access scoped to membership', async () => {
@@ -170,10 +177,12 @@ describe('documented REST mock adapter', () => {
     const token = new URL(invitation.invite_url).searchParams.get('token')!
     await authApi.logout()
     await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-    // Q05(2026-10-29 확정): 초대받은 이메일로 로그인하면 그때 팀원이 된다. 링크 참여(MEM-A05)도 그대로 된다.
+    // Q05(2026-10-29 확정): 초대받은 이메일로 로그인하면 그때 팀원이 된다. 이미 들어온 뒤 링크를 열면(MEM-A05)
+    // 409 already_member이고 화면은 그 프로젝트로 보낸다(PR #134).
     expect((await projectsApi.get(created.id)).my_role).toBe('MEMBER')
-    const accepted = await membersApi.acceptInvitation({ token })
-    expect(accepted.member.role).toBe('MEMBER')
+    await expect(membersApi.acceptInvitation({ token })).rejects.toMatchObject({
+      response: { status: 409 },
+    })
     expect((await projectsApi.get(created.id)).my_role).toBe('MEMBER')
     await membersApi.leave(created.id, {})
     await expect(projectsApi.get(created.id)).rejects.toMatchObject({
@@ -189,13 +198,17 @@ describe('documented REST mock adapter', () => {
 
   it('issues only mock tokens and keeps connection and provider status honest', async () => {
     await login()
+    // 팀원 예시 에이전트는 시드에서 연결됨이라, 새로 발급한 mock 토큰이 연결을 만들지 않는지(발급 전후 연결 수가 같은지)만
+    // 본다(사용자 승인 2026-11-03, D37).
+    const connected = async () =>
+      (await agentsApi.list('101')).items.filter((agent) => agent.connected)
+        .length
+    const before = await connected()
     const result = await agentsApi.issueToken('101', { label: '예시 PC' })
     expect(result.token).toMatch(/^mock-only-/)
     expect(result.mcp_url).toContain('mock.invalid')
     expect(localStorage.getItem(MOCK_STORAGE_KEY)).not.toContain(result.token)
-    expect(
-      (await agentsApi.list('101')).items.every((agent) => !agent.connected),
-    ).toBe(true)
+    expect(await connected()).toBe(before)
     await agentsApi.revokeToken(result.token_info.id)
     expect((await agentsApi.myTokens()).items[0].revoked_at).toBeTruthy()
     const usage = await dashboardApi.usage('101', {

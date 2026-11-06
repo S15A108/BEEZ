@@ -137,6 +137,8 @@ update validation set status = 'ERROR', finished_at = now(), lock_version = lock
 | 사용량 보존 | `ValidationRepository.finishRun` / `recordLateUsage` (-168) |
 | 재시도(새 시도) | `ValidationRetryService.retry` (VAL-A04·MCP-14, -161) |
 
+장애·동시성 경우별로 어느 시험이 확인하는지는 [12 검증 장애·동시성](12-validation-resilience.md) 3절에 모았다.
+
 ## 변경 이력
 
 - v1.0 (2026-11-02) 최초 작성 (변준성, -160). 구현된 R1~R11 과 기록 위치를 정리하고, 롤백 실패 시 수동 조치·배포 복구와의 구분을 담당자 결정으로 제안.

@@ -1,12 +1,9 @@
 package com.beez.backend.changeproposal.service;
 
-import static com.beez.backend.designitem.support.DesignJson.JSON;
-
 import com.beez.backend.ai.AiClient;
-import com.beez.backend.changeproposal.port.AiCallException;
+import com.beez.backend.ai.AiCallException;
+import com.beez.backend.ai.AiErrorBodies;
 import com.beez.backend.changeproposal.port.ChangeDraftGateway;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,12 +38,12 @@ public class AiChangeDraftAdapter implements ChangeDraftGateway {
             return ai.beeDraft(input);
         } catch (HttpServerErrorException.GatewayTimeout e) {
             log.warn("AI-A06 timed out: {}", e.toString());
-            throw new AiCallException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", TIMEOUT, usageIn(e));
+            throw new AiCallException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", TIMEOUT, AiErrorBodies.usageIn(e));
         } catch (RestClientResponseException e) {
             if (!e.getStatusCode().is5xxServerError() && e.getStatusCode().value() != 404) {
                 log.error("AI-A06 rejected the request: status={} body={}", e.getStatusCode().value(), e.getResponseBodyAsString());
             }
-            throw new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", UNAVAILABLE, usageIn(e));
+            throw new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", UNAVAILABLE, AiErrorBodies.usageIn(e));
         } catch (ResourceAccessException e) {
             Throwable cause = e.getCause();
             // JDK 의 연결 시간 초과(HttpConnectTimeoutException)는 HttpTimeoutException 을 상속하므로 먼저 걸러 연결 실패로 본다
@@ -63,28 +60,5 @@ public class AiChangeDraftAdapter implements ChangeDraftGateway {
             log.warn("AI-A06 response body was not readable: {}", e.toString());
             throw new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", UNAVAILABLE, null);
         }
-    }
-
-    /**
-     * 오류 본문의 usage 배열. 본문이 JSON 객체가 아니거나 usage 가 객체 배열이 아니면 null — 오류 분류는 그대로 두고
-     * 사용량만 "미확인"으로 남기게 한다(알 수 없는 값을 0 으로 단정하지 않는다).
-     */
-    public static List<Map<String, Object>> usageIn(RestClientResponseException e) {
-        String body = e.getResponseBodyAsString();
-        if (body == null || body.isBlank()) return null;
-        Object parsed;
-        try {
-            parsed = JSON.readValue(body, Object.class);
-        } catch (RuntimeException ignored) {
-            return null;
-        }
-        if (!(parsed instanceof Map<?, ?> map) || !(map.get("usage") instanceof List<?> list)) return null;
-        List<Map<String, Object>> usage = new ArrayList<>();
-        for (Object item : list) {
-            if (!(item instanceof Map<?, ?> m)) return null;
-            @SuppressWarnings("unchecked") Map<String, Object> entry = (Map<String, Object>) m;
-            usage.add(entry);
-        }
-        return usage;
     }
 }

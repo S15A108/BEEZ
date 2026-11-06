@@ -4,6 +4,8 @@ import com.beez.backend.common.mail.MailDeliveryException;
 import com.beez.backend.common.mail.MailGateway;
 import com.beez.backend.common.mail.MailMessage;
 import java.util.Deque;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
@@ -22,10 +24,12 @@ public class RecordingMailGateway implements MailGateway {
 
     private final Deque<MailMessage> sent = new ConcurrentLinkedDeque<>();
     private final AtomicBoolean failNext = new AtomicBoolean();
+    /** 주소별 실패 예약. 다른 시험의 비동기 메일이 실패를 대신 가져가지 않게 한다 (failNext 는 아무 메일이나 가져간다) */
+    private final Set<String> failNextTo = ConcurrentHashMap.newKeySet();
 
     @Override
     public void send(MailMessage message) {
-        if (failNext.getAndSet(false)) {
+        if (failNextTo.remove(message.to()) || failNext.getAndSet(false)) {
             throw new MailDeliveryException("시험용 발송 실패");
         }
         sent.add(message);
@@ -34,6 +38,16 @@ public class RecordingMailGateway implements MailGateway {
     /** 다음 발송 한 번을 실패시킨다. */
     public void failNext() {
         failNext.set(true);
+    }
+
+    /** 이 주소로 가는 다음 발송 한 번을 실패시킨다. */
+    public void failNextTo(String email) {
+        failNextTo.add(email);
+    }
+
+    /** failNextTo 예약이 아직 쓰이지 않았는지 (비동기 발송이 실패를 가져갔는지 기다릴 때). */
+    public boolean failPendingTo(String email) {
+        return failNextTo.contains(email);
     }
 
     /** 이 주소로 마지막에 보낸 인증 코드. */
@@ -48,6 +62,28 @@ public class RecordingMailGateway implements MailGateway {
             }
         }
         throw new AssertionError("보낸 인증 메일이 없음: " + email);
+    }
+
+    /** 이 주소로 마지막에 보낸 메일. 없으면 null (비동기 발송을 기다릴 때 쓴다). */
+    public MailMessage lastTo(String email) {
+        for (var it = sent.descendingIterator(); it.hasNext(); ) {
+            MailMessage m = it.next();
+            if (m.to().equals(email)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    /** 이 주소로 마지막에 보낸 메일 중 본문에 marker 가 든 것. 없으면 null (한 주소로 여러 종류가 갈 때). */
+    public MailMessage lastTo(String email, String marker) {
+        for (var it = sent.descendingIterator(); it.hasNext(); ) {
+            MailMessage m = it.next();
+            if (m.to().equals(email) && m.text().contains(marker)) {
+                return m;
+            }
+        }
+        return null;
     }
 
     public long countTo(String email) {

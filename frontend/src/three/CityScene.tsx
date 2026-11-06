@@ -1,103 +1,235 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useRef } from 'react'
+import type { RefObject } from 'react'
+import { Plus } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { CityRenderer3D } from './city/CityRenderer3D'
-import { citySceneData } from './sceneData'
+import { nearestStop, RING_PITCH, startRotation, stepStop } from './city/ring'
 import type { SceneProject } from './types'
 
 export interface CitySceneProps {
   projects: readonly SceneProject[]
+  /** 마지막으로 연 프로젝트의 칸. 도시에 들어오면 이 칸을 가운데에 둔다(D33). */
+  visitedLot?: number | null
+  /** 빈 부지(새 프로젝트 자리) 칸. 모두 쓰면 null */
+  nextLot: number | null
+  /** 프로젝트 만들기 창 뒤에 깔 때. 이름표를 숨기고 더 가깝게 본다. */
+  backdrop?: boolean
+  /** 도시 위에 겹쳐 놓은 제목 영역. 제목 글자·버튼과 겹치는 이름표는 숨긴다. */
+  titleRef?: RefObject<HTMLElement | null>
   onProjectSelect: (id: string) => void
   onLotSelect: (lot: number) => void
   className?: string
 }
+type View = { rot: number; target: number; hover: number | null }
 
-function CityRuntime(props: CitySceneProps) {
+function CityRuntime({
+  props,
+  overlay,
+  root,
+}: {
+  props: CitySceneProps
+  overlay: RefObject<HTMLDivElement | null>
+  /** 캔버스와 이름표를 함께 담은 도시 영역. 끌기·휠은 여기서 받는다. */
+  root: RefObject<HTMLDivElement | null>
+}) {
   const { gl, size } = useThree()
   const engine = useRef<CityRenderer3D | null>(null)
   const latest = useRef(props)
-  const zoom = useRef(1)
-  const hover = useRef<number | null>(null)
-  const data = useMemo(() => citySceneData(props.projects), [props.projects])
+  const start = startRotation(props.visitedLot, props.nextLot)
+  const view = useRef<View>({ rot: start, target: start, hover: null })
   useEffect(() => {
     latest.current = props
+    engine.current?.setProjects(cityLots(props.projects), props.nextLot)
   }, [props])
 
   useEffect(() => {
     const renderer = new CityRenderer3D(gl.domElement, true, gl)
     engine.current = renderer
+    renderer.setProjects(
+      cityLots(latest.current.projects),
+      latest.current.nextLot,
+    )
     const canvas = gl.domElement
-    const hit = (event: PointerEvent) => {
+    // 끌기·휠은 캔버스가 아니라 도시 영역 전체에서 받는다. 이름표(HTML 버튼)는 캔버스 위에 겹쳐 있어, 캔버스에만 걸면
+    // 이름표 위에서 굴린 휠은 페이지를 스크롤하고 이름표에서 시작한 끌기는 거리를 넘기지 못한다.
+    const area: HTMLElement = root.current ?? canvas
+    const local = (event: PointerEvent) => {
       const rect = canvas.getBoundingClientRect()
-      return renderer.screenToWorld(
-        event.clientX - rect.left,
-        event.clientY - rect.top,
-      )?.lot
+      return [event.clientX - rect.left, event.clientY - rect.top] as const
     }
+    const ppu = () =>
+      renderer.pixelsPerUnit({ ...view.current, backdrop: false })
+    let press: { x: number; rot: number; moved: boolean } | null = null
+    // 끈 뒤에는 이름표의 클릭(열기)을 한 번 막는다.
+    let dragged = false
+    const down = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      dragged = false
+      press = { x: event.clientX, rot: view.current.rot, moved: false }
+    }
+    // 끌면 고리가 손을 따라 돈다. 앞 칸 근처에서 끈 거리 RING_PITCH만큼이 한 칸이다.
     const move = (event: PointerEvent) => {
-      const lot = hit(event)
-      hover.current = lot ?? null
-      canvas.style.cursor = lot === undefined ? 'default' : 'pointer'
+      if (press) {
+        const dx = event.clientX - press.x
+        // 실제로 끌기 시작할 때 포인터를 잡는다. 누르자마자 잡으면 이름표 클릭이 이름표에 가지 않는다.
+        if (!press.moved && Math.abs(dx) > 4) {
+          press.moved = dragged = true
+          area.setPointerCapture(event.pointerId)
+        }
+        if (!press.moved) return
+        view.current.rot = view.current.target =
+          press.rot - dx / ppu() / RING_PITCH
+        canvas.style.cursor = 'grabbing'
+        return
+      }
+      // 이름표 위는 버튼이 커서와 클릭을 맡는다.
+      const slot =
+        event.target === canvas ? renderer.pick(...local(event)) : undefined
+      view.current.hover = slot ?? null
+      canvas.style.cursor = slot === undefined ? 'grab' : 'pointer'
     }
-    const click = (event: PointerEvent) => {
-      const lot = hit(event)
-      if (lot === undefined) return
-      const project = latest.current.projects.find(
-        (project) => project.lot === lot,
-      )
-      if (project) latest.current.onProjectSelect(project.id)
-      else latest.current.onLotSelect(lot)
+    const up = (event: PointerEvent) => {
+      if (!press) return
+      const moved = press.moved
+      press = null
+      canvas.style.cursor = 'grab'
+      // 놓으면 가장 가까운 멈춤 자리(프로젝트 칸·빈 부지)로 간다. 꾸밈 칸에는 멈추지 않는다.
+      if (moved) {
+        view.current.target = nearestStop(
+          view.current.rot,
+          stopsOf(latest.current),
+        )
+        return
+      }
+      if (event.target !== canvas) return
+      const slot = renderer.pick(...local(event))
+      if (slot === undefined) return
+      const { projects, nextLot, onProjectSelect, onLotSelect } = latest.current
+      const project = projects.find((item) => item.lot === slot)
+      if (project) onProjectSelect(project.id)
+      else if (slot === nextLot) onLotSelect(slot)
     }
+    const leave = () => {
+      view.current.hover = null
+    }
+    // 휠·트랙패드 스크롤도 고리를 돌린다. 250px마다 다음 멈춤 자리(아래·오른쪽이면 다음 칸)로 가고, 빈 부지 다음은
+    // 꾸밈 칸을 한 번에 지나 1번이 온다(사용자 결정 '꾸밈 구간 한 번에 넘기기'). 250px에 못 미친 만큼은 다음 자리 쪽으로
+    // 그만큼 돌려 보이고, 멈추면 반을 넘었으면 다음 자리, 아니면 원래 자리로 간다. 도시 위에서만 페이지 스크롤을 막는다.
+    let settle = 0
+    let base: number | null = null
+    let rolled = 0
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
-      zoom.current = Math.max(
-        0.8,
-        Math.min(1.8, zoom.current * (event.deltaY < 0 ? 1.1 : 1 / 1.1)),
-      )
+      const delta =
+        Math.abs(event.deltaX) > Math.abs(event.deltaY)
+          ? event.deltaX
+          : event.deltaY
+      const stops = stopsOf(latest.current)
+      base ??= nearestStop(view.current.target, stops)
+      rolled += event.deltaMode === 1 ? delta * 40 : delta
+      while (Math.abs(rolled) >= 250) {
+        const dir = rolled > 0 ? 1 : -1
+        base = stepStop(base, stops, dir)
+        rolled -= dir * 250
+      }
+      const from = base
+      const toward = stepStop(from, stops, rolled < 0 ? -1 : 1)
+      view.current.target = from + ((toward - from) * Math.abs(rolled)) / 250
+      window.clearTimeout(settle)
+      settle = window.setTimeout(() => {
+        view.current.target = Math.abs(rolled) >= 125 ? toward : from
+        base = null
+        rolled = 0
+      }, 160)
     }
-    canvas.addEventListener('pointermove', move)
-    canvas.addEventListener('pointerup', click)
-    canvas.addEventListener('wheel', wheel, { passive: false })
+    const click = (event: MouseEvent) => {
+      if (!dragged) return
+      dragged = false
+      event.stopPropagation()
+      event.preventDefault()
+    }
+    area.addEventListener('pointerdown', down)
+    area.addEventListener('pointermove', move)
+    area.addEventListener('pointerup', up)
+    area.addEventListener('pointerleave', leave)
+    area.addEventListener('click', click, true)
+    area.addEventListener('wheel', wheel, { passive: false })
     return () => {
-      canvas.removeEventListener('pointermove', move)
-      canvas.removeEventListener('pointerup', click)
-      canvas.removeEventListener('wheel', wheel)
+      area.removeEventListener('pointerdown', down)
+      area.removeEventListener('pointermove', move)
+      area.removeEventListener('pointerup', up)
+      area.removeEventListener('pointerleave', leave)
+      area.removeEventListener('click', click, true)
+      area.removeEventListener('wheel', wheel)
+      window.clearTimeout(settle)
       renderer.dispose()
       engine.current = null
     }
-  }, [gl])
+  }, [gl, root])
   useEffect(() => {
     engine.current?.setSize(size.width, size.height)
   }, [size.width, size.height])
 
-  // A positive priority owns rendering; the original procedural scene renders into R3F's canvas.
-  useFrame(({ clock }) => {
-    engine.current?.render(
-      data,
-      { x: 0, y: 0, dir: 'up', moving: false },
-      clock.elapsedTime,
-      {
-        zoom: zoom.current,
-        focus: { x: 0, y: 0 },
-        hover: hover.current,
+  // A positive priority owns rendering; the city scene renders into R3F's canvas.
+  useFrame((_, delta) => {
+    const renderer = engine.current
+    if (!renderer) return
+    const v = view.current
+    v.rot += (v.target - v.rot) * Math.min(1, delta * 8)
+    renderer.render({ ...v, backdrop: latest.current.backdrop })
+    // 이름표가 도시 위에 겹친 제목·설명·만들기 버튼(넓은 화면)과 겹치면 숨긴다. 좁은 화면에서 제목이 도시 바깥 위에 있으면
+    // 겹칠 일이 없다.
+    const origin = gl.domElement.getBoundingClientRect()
+    const blocked = [...(latest.current.titleRef?.current?.children ?? [])].map(
+      (element) => {
+        const rect = element.getBoundingClientRect()
+        return {
+          left: rect.left - origin.left - 8,
+          right: rect.right - origin.left + 8,
+          top: rect.top - origin.top - 8,
+          bottom: rect.bottom - origin.top + 8,
+        }
       },
     )
+    renderer.placeTags(overlay.current, blocked)
   }, 1)
   return null
 }
 
+/** 멈춤 자리: 부지가 있는 프로젝트 칸과 빈 부지 칸 */
+const stopsOf = ({ projects, nextLot }: CitySceneProps) => [
+  ...cityLots(projects).map((lot) => lot.slot),
+  ...(nextLot === null ? [] : [nextLot]),
+]
+
+const cityLots = (projects: readonly SceneProject[]) =>
+  projects.flatMap((project) =>
+    project.lot == null
+      ? []
+      : [{ id: project.id, slot: project.lot, design: project.design ?? '' }],
+  )
+
+const tagClass =
+  'pointer-events-auto absolute top-0 left-0 inline-flex h-[30px] items-center rounded-full px-3 text-[13px] font-bold whitespace-nowrap'
+
 export default function CityScene(props: CitySceneProps) {
+  const overlay = useRef<HTMLDivElement>(null)
+  const root = useRef<HTMLDivElement>(null)
+  const placed = props.projects.filter((project) => project.lot != null)
   return (
     <div
-      className={props.className ?? 'h-full w-full'}
-      role="img"
-      aria-label="3D 프로젝트 도시. 건물을 눌러 입장하거나 빈 부지를 선택하세요. 마우스 휠로 확대할 수 있어요."
+      ref={root}
+      className={cn('relative cursor-grab', props.className ?? 'h-full w-full')}
+      role="group"
+      aria-label={`돌리는 원형 도시. 프로젝트 ${placed.length}개${props.nextLot === null ? '' : '와 빈 부지 하나'}가 고리를 따라 이어져요`}
     >
       <Canvas
+        flat
         dpr={[1, 1.75]}
         gl={{
           antialias: true,
           alpha: false,
-          stencil: true,
           powerPreference: 'high-performance',
         }}
         fallback={
@@ -106,8 +238,64 @@ export default function CityScene(props: CitySceneProps) {
           </p>
         }
       >
-        <CityRuntime {...props} />
+        <CityRuntime props={props} overlay={overlay} root={root} />
       </Canvas>
+      {/* 캔버스 SCR-04-v2-city의 이름표. 칸 위를 따라다니며 누르면 들어가거나 만든다. */}
+      {!props.backdrop && (
+        <div
+          ref={overlay}
+          className="pointer-events-none absolute inset-0 z-[2] overflow-hidden"
+        >
+          {placed.map((project) => (
+            <button
+              key={project.id}
+              data-slot={project.lot}
+              type="button"
+              style={{ visibility: 'hidden' }}
+              className={cn(
+                tagClass,
+                'gap-[7px] bg-white text-[#2c291f] shadow-[0_6px_16px_-8px_rgba(44,41,31,0.45),0_0_0_1px_rgba(44,41,31,0.08)]',
+              )}
+              onClick={() => props.onProjectSelect(project.id)}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'size-2 rounded-full',
+                  project.status === 'ready' ? 'bg-[#22a35a]' : 'bg-[#e0b400]',
+                )}
+              />
+              {project.name}
+              <span className="font-medium text-[#737373]">
+                {project.status === 'ready' ? '진행 중' : '준비 중'}
+              </span>
+              <span
+                aria-hidden="true"
+                className="absolute -bottom-[5px] left-1/2 -ml-[5px] size-2.5 rotate-45 bg-white shadow-[1px_1px_0_0_rgba(44,41,31,0.08)]"
+              />
+            </button>
+          ))}
+          {props.nextLot !== null && (
+            <button
+              data-slot={props.nextLot}
+              type="button"
+              style={{ visibility: 'hidden' }}
+              className={cn(
+                tagClass,
+                'gap-1.5 bg-primary text-[#322710] shadow-[0_6px_16px_-8px_rgba(44,41,31,0.45)]',
+              )}
+              onClick={() => props.onLotSelect(props.nextLot!)}
+            >
+              <Plus aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
+              새 프로젝트
+              <span
+                aria-hidden="true"
+                className="absolute -bottom-[5px] left-1/2 -ml-[5px] size-2.5 rotate-45 bg-primary"
+              />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
