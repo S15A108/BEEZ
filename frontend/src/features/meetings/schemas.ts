@@ -1,6 +1,68 @@
 // BEEZ REST v0.2 및 공통 v0.3: snake_case 응답을 그대로 검증한다.
 import { z } from 'zod'
 import * as common from '@/api/contracts/common'
+import { scopedDraftResponseSchema } from '@/features/changes/schemas'
+
+export const summaryResponseSchema = z.object({
+  id: common.idSchema,
+  meeting_id: common.idSchema,
+  entry: common.meetingEntrySchema,
+  through_entry_id: common.idSchema,
+  conflicts: z.array(z.string()),
+  decisions: z.array(
+    z.object({
+      text: z.string(),
+      decided_by_member_id: common.idSchema.optional(),
+    }),
+  ),
+  document_changes: z.array(z.unknown()),
+  action_items: z.array(z.unknown()),
+  created_at: common.timeSchema,
+})
+export type SummaryResponse = z.infer<typeof summaryResponseSchema>
+
+export const revisionDraftInputSchema = z.object({
+  summary_id: common.idSchema,
+  document_id: common.idSchema,
+  base_document_version_id: common.idSchema,
+  selected_block_ids: z.array(z.string()).min(1).max(30),
+  instruction: z.string().trim().min(1).max(4000),
+  confirmed: z.literal(true),
+  decisions: z
+    .array(
+      z.object({
+        decision_index: z.number().int().nonnegative(),
+        evidence_entry_ids: common.idSchema.array().min(1),
+      }),
+    )
+    .min(1),
+})
+export type RevisionDraftInput = z.infer<typeof revisionDraftInputSchema>
+
+export const revisionDraftResponseSchema = z.object({
+  draft_id: common.idSchema,
+  summary_id: common.idSchema,
+  document_id: common.idSchema,
+  base_document_version_id: common.idSchema,
+  meeting: z.object({
+    project_id: common.idSchema,
+    meeting_id: common.idSchema,
+    document_id: common.idSchema,
+    document_version_id: common.idSchema,
+    entries: z.array(
+      z.object({ id: common.idSchema, meeting_id: common.idSchema }),
+    ),
+    decisions: z.array(
+      z.object({
+        id: z.string(),
+        text: z.string(),
+        evidence_entry_ids: common.idSchema.array(),
+      }),
+    ),
+  }),
+  draft: scopedDraftResponseSchema,
+})
+export type RevisionDraftResponse = z.infer<typeof revisionDraftResponseSchema>
 
 export const createInputSchema = z.object({
   title: z.string(),
