@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { isAxiosError } from 'axios'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { changesApi, documentsApi, meetingsApi } from '@/api/services'
@@ -78,11 +78,20 @@ function Editor({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState(false)
+  const checkingDraft = useRef(false)
   const summary = newSummary ?? savedSummary.data
   const draft = newDraft ?? savedDraft.data
+  // 서버는 승인 문서의 최신 버전이 아니라 현재 기준 설계의 문서 버전을 검사한다.
+  const currentBaseline = useQuery({
+    queryKey: ['projects', projectId, 'meeting-revision-baseline'],
+    queryFn: () => documentsApi.baseline(projectId),
+    enabled: !!draft || !!summary,
+    retry: false,
+  })
   const documentList = documents.data?.pages.flatMap((page) => page.items) ?? []
-  const document = documentList.find((item) => item.id === documentId)
-  const versionId = document?.approved_version?.id
+  const versionId = currentBaseline.data?.documents.find(
+    (item) => item.document_id === documentId,
+  )?.document_version_id
   const textEntries = entries.filter((entry) => entry.kind === 'TEXT')
   // 회의 기록 API는 오래된 순서로 페이지를 반환한다. 마지막 페이지까지 받아야 최신 시점을 알 수 있다.
   const latestEntry = entries
@@ -93,28 +102,42 @@ function Editor({
     !hasMore &&
     !!latestEntry &&
     latestEntry.id !== summary.through_entry_id
-  const draftDocument = documentList.find(
-    (item) => item.id === draft?.document_id,
-  )
   const draftOutdated =
     !!draft &&
     ((!!summary && draft.summary_id !== summary.id) ||
       summaryOutdated ||
-      (!!draftDocument &&
-        draftDocument.approved_version?.id !== draft.base_document_version_id))
+      (currentBaseline.isSuccess &&
+        !currentBaseline.data.documents.some(
+          (document) =>
+            document.document_id === draft.document_id &&
+            document.document_version_id === draft.base_document_version_id,
+        )))
+  const draftUnverified =
+    !!draft &&
+    (!summary ||
+      hasMore ||
+      !latestEntry ||
+      (!newSummary && (savedSummary.isError || savedSummary.isFetching)) ||
+      currentBaseline.isFetching ||
+      !currentBaseline.isSuccess)
   const unavailable = (cause: unknown) =>
     !!cause && !(isAxiosError(cause) && cause.response?.status === 404)
   const decisions = Object.entries(selectedDecisions).map(([index, ids]) => ({
     decision_index: Number(index),
     evidence_entry_ids: ids,
   }))
+  const evidenceIds = new Set(Object.values(selectedDecisions).flat())
   const valid =
     !!summary &&
     !!latestEntry &&
     !hasMore &&
     !summaryOutdated &&
+    currentBaseline.isSuccess &&
+    !currentBaseline.isFetching &&
     !!versionId &&
     !!blocks &&
+    blocks.document_id === documentId &&
+    blocks.base_document_version_id === versionId &&
     selectedBlocks.length > 0 &&
     decisions.length > 0 &&
     decisions.every((decision) => decision.evidence_entry_ids.length > 0) &&
@@ -175,6 +198,76 @@ function Editor({
       setNewDraft(value)
     })
 
+  // 다른 창에서 정리, 기준 설계 또는 회의 기록이 변경될 수 있으므로 사용 직전에 다시 조회한다.
+  const applyDraftAction = async (action: 'copy' | 'open') => {
+    if (!draft || checkingDraft.current) return
+    checkingDraft.current = true
+    setPending(true)
+    setError(undefined)
+    setCopied(false)
+    try {
+      const [latestSummary, baseline] = await Promise.all([
+        meetingsApi.latestSummary(projectId, meetingId),
+        documentsApi.baseline(projectId),
+      ])
+      if (
+        latestSummary.id !== draft.summary_id ||
+        !baseline.documents.some(
+          (ref) =>
+            ref.document_id === draft.document_id &&
+            ref.document_version_id === draft.base_document_version_id,
+        )
+      ) {
+        setError(
+          '회의 정리 또는 기준 문서가 바뀌었어요. 최신 내용을 확인한 뒤 새 초안을 만들어 주세요.',
+        )
+        return
+      }
+      let cursor = latestSummary.through_entry_id
+      const seen = new Set([cursor])
+      for (;;) {
+        const page = await meetingsApi.entries(projectId, meetingId, {
+          cursor,
+          limit: 100,
+        })
+        if (
+          page.items.some(
+            (entry) => entry.kind === 'TEXT' || entry.kind === 'CONFLICT_BRIEF',
+          )
+        ) {
+          setError(
+            '회의 정리 이후 새 기록이 있어요. 다시 정리하고 새 초안을 만들어 주세요.',
+          )
+          return
+        }
+        if (!page.has_more) break
+        if (!page.next_cursor || seen.has(page.next_cursor))
+          throw new Error('invalid cursor')
+        cursor = page.next_cursor
+        seen.add(cursor)
+      }
+      if (action === 'open') {
+        openPane('changes', `doc:${draft.document_id}`)
+      } else if (!navigator.clipboard) {
+        setError('복사할 수 없어요. 내용을 직접 선택해 복사해 주세요.')
+      } else {
+        try {
+          await navigator.clipboard.writeText(draft.draft.after_content)
+          setCopied(true)
+        } catch {
+          setError('복사할 수 없어요. 내용을 직접 선택해 복사해 주세요.')
+        }
+      }
+    } catch {
+      setError(
+        '회의 기록과 기준 설계의 최신 상태를 확인하지 못했어요. 다시 시도해 주세요.',
+      )
+    } finally {
+      checkingDraft.current = false
+      setPending(false)
+    }
+  }
+
   return (
     <section
       aria-label="회의 수정 초안"
@@ -220,18 +313,45 @@ function Editor({
           회의 정리 이후 새 기록이 있어요. 최신 대화로 다시 정리해 주세요.
         </p>
       )}
+      {currentBaseline.isError && (
+        <div role="alert">
+          <p>현재 기준 설계를 확인하지 못했어요.</p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void currentBaseline.refetch()}
+          >
+            기준 문서 다시 확인
+          </Button>
+        </div>
+      )}
       {summary && (
         <>
           <fieldset className="grid gap-3">
             <legend className="mb-2 font-semibold">
               확인한 결정과 근거 발언 선택
             </legend>
+            <p className="text-xs text-muted-foreground">
+              결정은 최대 30개, 결정마다 근거는 최대 100개, 서로 다른 근거는
+              전체 200개까지 선택할 수 있어요. 내용이 같은 결정은 하나만 선택해
+              주세요.
+            </p>
+            {summary.decisions.some(
+              (item) => !item.text.trim() || item.text !== item.text.trim(),
+            ) && (
+              <p>비어 있거나 앞뒤에 공백이 있는 결정은 다시 정리해 주세요.</p>
+            )}
             {summary.decisions.length === 0 && (
               <p>정리된 결정이 없어요. 대화를 보완한 뒤 다시 정리해 주세요.</p>
             )}
             {summary.decisions.map((decision, index) => {
               const selected = Object.hasOwn(selectedDecisions, index)
               const evidence = selectedDecisions[index] ?? []
+              const duplicate = decisions.some(
+                (item) =>
+                  summary.decisions[item.decision_index]?.text ===
+                  decision.text,
+              )
               return (
                 <div
                   key={`${index}:${decision.text}`}
@@ -241,7 +361,14 @@ function Editor({
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={pending}
+                      disabled={
+                        pending ||
+                        (!selected &&
+                          (decisions.length >= 30 ||
+                            duplicate ||
+                            !decision.text.trim() ||
+                            decision.text !== decision.text.trim()))
+                      }
                       onChange={(event) => {
                         setSelectedDecisions((old) => {
                           const next = { ...old }
@@ -268,7 +395,13 @@ function Editor({
                             <input
                               type="checkbox"
                               checked={evidence.includes(entry.id)}
-                              disabled={pending}
+                              disabled={
+                                pending ||
+                                (!evidence.includes(entry.id) &&
+                                  (evidence.length >= 100 ||
+                                    (evidenceIds.size >= 200 &&
+                                      !evidenceIds.has(entry.id))))
+                              }
                               onChange={(event) => {
                                 setSelectedDecisions((old) => ({
                                   ...old,
@@ -314,7 +447,11 @@ function Editor({
             >
               <option value="">문서 선택</option>
               {documentList
-                .filter((item) => item.approved_version)
+                .filter((item) =>
+                  currentBaseline.data?.documents.some(
+                    (ref) => ref.document_id === item.id,
+                  ),
+                )
                 .map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.title}
@@ -338,13 +475,24 @@ function Editor({
           <Button
             type="button"
             variant="outline"
-            disabled={pending || !versionId}
+            disabled={
+              pending ||
+              !versionId ||
+              !currentBaseline.isSuccess ||
+              currentBaseline.isFetching
+            }
             onClick={() => void loadBlocks()}
           >
             수정 범위 불러오기
           </Button>
           {blocks && (
             <>
+              {(blocks.document_id !== documentId ||
+                blocks.base_document_version_id !== versionId) && (
+                <p role="status">
+                  기준 문서가 바뀌었어요. 수정 범위를 다시 불러와 주세요.
+                </p>
+              )}
               <fieldset className="grid max-h-56 gap-2 overflow-auto">
                 <legend>수정할 부분 (최대 30개)</legend>
                 {blocks.blocks.map((block) => (
@@ -405,6 +553,12 @@ function Editor({
               현재 내용과 다시 비교해 주세요.
             </p>
           )}
+          {!draftOutdated && draftUnverified && (
+            <p role="status">
+              회의 기록과 기준 문서의 최신 상태를 확인한 뒤 초안을 이용해
+              주세요.
+            </p>
+          )}
           <div>
             <strong>확인한 회의 결정과 근거</strong>
             {draft.meeting.decisions.map((decision) => (
@@ -448,23 +602,8 @@ function Editor({
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
-                setCopied(false)
-                if (!navigator.clipboard) {
-                  setError(
-                    '복사할 수 없어요. 내용을 직접 선택해 복사해 주세요.',
-                  )
-                  return
-                }
-                void navigator.clipboard
-                  .writeText(draft.draft.after_content)
-                  .then(() => setCopied(true))
-                  .catch(() =>
-                    setError(
-                      '복사할 수 없어요. 내용을 직접 선택해 복사해 주세요.',
-                    ),
-                  )
-              }}
+              disabled={pending || draftOutdated || draftUnverified}
+              onClick={() => void applyDraftAction('copy')}
             >
               전체 초안 복사
             </Button>
@@ -472,7 +611,8 @@ function Editor({
             <Button
               type="button"
               variant="outline"
-              onClick={() => openPane('changes', `doc:${draft.document_id}`)}
+              disabled={pending || draftOutdated || draftUnverified}
+              onClick={() => void applyDraftAction('open')}
             >
               변경 제안 작성으로 이동
             </Button>

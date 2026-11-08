@@ -21,22 +21,55 @@ export const summaryResponseSchema = z.object({
 })
 export type SummaryResponse = z.infer<typeof summaryResponseSchema>
 
-export const revisionDraftInputSchema = z.object({
-  summary_id: common.idSchema,
-  document_id: common.idSchema,
-  base_document_version_id: common.idSchema,
-  selected_block_ids: z.array(z.string()).min(1).max(30),
-  instruction: z.string().trim().min(1).max(4000),
-  confirmed: z.literal(true),
-  decisions: z
-    .array(
-      z.object({
-        decision_index: z.number().int().nonnegative(),
-        evidence_entry_ids: common.idSchema.array().min(1),
-      }),
+export const revisionDraftInputSchema = z
+  .object({
+    summary_id: common.idSchema,
+    document_id: common.idSchema,
+    base_document_version_id: common.idSchema,
+    selected_block_ids: z.array(z.string()).min(1).max(30),
+    instruction: z.string().trim().min(1).max(4000),
+    confirmed: z.literal(true),
+    decisions: z
+      .array(
+        z.object({
+          decision_index: z.number().int().nonnegative(),
+          evidence_entry_ids: common.idSchema.array().min(1).max(100),
+        }),
+      )
+      .min(1)
+      .max(30),
+  })
+  .superRefine((value, ctx) => {
+    const indices = new Set(
+      value.decisions.map((decision) => decision.decision_index),
     )
-    .min(1),
-})
+    const entries = value.decisions.flatMap(
+      (decision) => decision.evidence_entry_ids,
+    )
+    if (indices.size !== value.decisions.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['decisions'],
+        message: '같은 결정을 중복 선택할 수 없습니다.',
+      })
+    if (new Set(entries).size > 200)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['decisions'],
+        message: '근거 기록은 최대 200개입니다.',
+      })
+    value.decisions.forEach((decision, index) => {
+      if (
+        new Set(decision.evidence_entry_ids).size !==
+        decision.evidence_entry_ids.length
+      )
+        ctx.addIssue({
+          code: 'custom',
+          path: ['decisions', index, 'evidence_entry_ids'],
+          message: '같은 근거를 중복 선택할 수 없습니다.',
+        })
+    })
+  })
 export type RevisionDraftInput = z.infer<typeof revisionDraftInputSchema>
 
 export const revisionDraftResponseSchema = z.object({
