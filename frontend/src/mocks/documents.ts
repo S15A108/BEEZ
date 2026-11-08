@@ -19,18 +19,18 @@ import {
   requireAccount,
   requireLeader,
   requireProject,
-  requiredString,
   strings,
 } from './helpers'
 import type { MockContext, MockReply } from './helpers'
 import { copy, nextId, now } from './state'
 import type { MockProject } from './state'
 import { reviewRoutes } from './documentReviews'
+import { planningDraftRoutes, questionGeneration } from './planningDrafts'
 
 export function draftSnapshotHash(project: MockProject): string {
   return `sha256:mock-drafts-${project.project.id}-${project.items
     .filter((item) => item.status === 'DRAFT')
-    .map((item) => item.id)
+    .map((item) => `${item.id}.${item.content_hash ?? ''}`)
     .sort()
     .join('-')}`
 }
@@ -59,38 +59,12 @@ export function analyzeDocument(
   project.questions.push({
     id: nextId(context.database),
     question: `${document.title}의 완료 기준을 어떻게 확인하나요? (규칙 기반 예시)`,
+    kind: 'CLARIFICATION',
+    question_type: 'SHORT_ANSWER',
+    answer_format: { type: 'SHORT_ANSWER', max_length: 200 },
+    status: 'OPEN',
+    evidence_status: 'REVIEW_CANDIDATE',
     source: sourceOf(version),
-  })
-}
-
-// 초안 만들기(PLN-A05): 원문 첫 줄로 요구사항 초안 하나를 만든다(규칙 기반 예시).
-function draftFromDocument(context: MockContext, version: DocumentVersion) {
-  const project = requireProject(context)
-  if (
-    project.items.some(
-      (item) => item.source?.document_version_id === version.id,
-    )
-  )
-    return
-  const source = sourceOf(version)
-  const document = findById(project.documents, version.document_id)
-  project.items.push({
-    id: nextId(context.database),
-    design_item_id: nextId(context.database),
-    key: `REQ-${String(project.items.length + 1).padStart(3, '0')}`,
-    kind: 'REQUIREMENT',
-    version_no: 1,
-    status: 'DRAFT',
-    schema_version: 1,
-    content: {
-      description:
-        version.content
-          ?.split('\n')
-          .find((line) => line.trim() && !line.startsWith('#')) ??
-        document.title,
-    },
-    source,
-    content_hash: `sha256:mock-${version.id}`,
   })
 }
 
@@ -189,7 +163,9 @@ export async function documentRoutes(
   context: MockContext,
 ): Promise<MockReply | undefined> {
   if (!/^(DOC|PLN|TRC)-/.test(id)) return undefined
-  if (/^DOC-A(1[3-9]|2[01])$/.test(id)) return reviewRoutes(id, context)
+  if (/^DOC-A(1[3-9]|2[0-4])$/.test(id)) return reviewRoutes(id, context)
+  const planning = planningDraftRoutes(id, context)
+  if (planning) return planning
   const project = requireProject(context)
   const { body, params, query, database } = context
   switch (id) {
@@ -330,68 +306,8 @@ export async function documentRoutes(
           questions: project.questions.filter(
             (question) => question.source?.document_version_id === version.id,
           ),
+          question_generation: questionGeneration(id === 'PLN-A02'),
         },
-      }
-    }
-    case 'PLN-A03':
-      return {
-        data: page(
-          project.questions.filter(
-            (question) =>
-              !query.get('document_version_id') ||
-              question.source?.document_version_id ===
-                query.get('document_version_id'),
-          ),
-          query,
-        ),
-      }
-    case 'PLN-A04': {
-      const question = findById(project.questions, params.question_id)
-      question.answer = requiredString(body, 'answer')
-      question.answered_by = requireAccount(context).id
-      question.answered_at = now()
-      return { data: question }
-    }
-    case 'PLN-A05': {
-      const ids = strings(body.document_version_ids)
-      if (!ids.length)
-        fail(400, 'validation_failed', '초안의 원문 버전을 선택해 주세요.')
-      ids.forEach((versionId) => {
-        const version = findById(project.versions, versionId)
-        analyzeDocument(context, version)
-        draftFromDocument(context, version)
-      })
-      const sourceIds = new Set(ids)
-      const previousDrafts = project.items.filter(
-        (item) =>
-          item.status === 'DRAFT' &&
-          item.source &&
-          sourceIds.has(item.source.document_version_id),
-      )
-      for (const previous of previousDrafts) {
-        const answers = project.questions
-          .filter(
-            (question) =>
-              question.source?.document_version_id ===
-                previous.source?.document_version_id && question.answer,
-          )
-          .map((question) => `${question.question} ${question.answer}`)
-        const revised: DesignItemVersion = {
-          ...copy(previous),
-          id: nextId(database),
-          version_no: previous.version_no + 1,
-          content_hash: `sha256:mock-draft-${database.next_id}`,
-          content: {
-            ...previous.content,
-            ...(answers.length ? { clarification: answers.join('\n') } : {}),
-          },
-        }
-        previous.status = 'SUPERSEDED'
-        project.items.push(revised)
-      }
-      return {
-        status: 202,
-        data: { status: 'PENDING', document_version_ids: ids },
       }
     }
     case 'PLN-A06': {

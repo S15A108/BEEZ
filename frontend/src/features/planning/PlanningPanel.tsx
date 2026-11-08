@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
-import { FileCheck2, Lightbulb, RefreshCw, Sparkles } from 'lucide-react'
+import { FileCheck2, RefreshCw } from 'lucide-react'
 import { documentsApi, planningApi } from '@/api/services'
 import type { DesignItemVersion, DocumentVersion } from '@/api/contracts/common'
 import { structuredContentSchema } from '@/api/contracts/common'
@@ -17,6 +17,17 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { DraftCandidates } from './DraftCandidates'
+import { hasActiveJob } from './draftJobs'
+import { PlanningQuestions } from './PlanningQuestions'
+import type { QuestionGenerationView } from './PlanningQuestions'
+import {
+  generationOf,
+  isGenerating,
+  isQuestionTarget,
+  pollIntervalOf,
+} from './questionGeneration'
+import type { AnalysisResponse } from './schemas'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
@@ -29,18 +40,12 @@ interface Props {
 export function PlanningPanel({ projectId, isLeader }: Props) {
   const action = useProjectAction(projectId)
   const [editing, setEditing] = useState<DesignItemVersion | null>(null)
-  const [answering, setAnswering] = useState<{
-    id: string
-    question: string
-    answer?: string
-  } | null>(null)
   const [publishing, setPublishing] = useState<{
     hash: string
     documents: string[]
     items: string[]
   } | null>(null)
   const [adding, setAdding] = useState(false)
-  const [generationHash, setGenerationHash] = useState<string | null>(null)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const documents = useQuery({
     queryKey: ['projects', projectId, 'planning-documents'],
@@ -56,21 +61,6 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       const version = versionOf(document)
       return version ? [version] : []
     }) ?? []
-  const analyses = useQueries({
-    queries: versions.map((version) => ({
-      queryKey: ['projects', projectId, 'analysis', version.id],
-      queryFn: () =>
-        planningApi.analysis(projectId, version.document_id, {
-          document_version_id: version.id,
-        }),
-      refetchInterval: (query: {
-        state: { data: { status: string } | undefined }
-      }) =>
-        ['PENDING', 'RUNNING'].includes(query.state.data?.status ?? '')
-          ? 1500
-          : false,
-    })),
-  })
   const baseline = useQuery({
     queryKey: ['projects', projectId, 'baseline'],
     queryFn: async () => {
@@ -82,6 +72,24 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       }
     },
   })
+  // 서버는 기준 설계가 없을 때만 질문을 만든다. 기준 조회 전에는 대상으로 보고 기다린다.
+  const hasBaseline = !!baseline.data
+  const analyses = useQueries({
+    queries: versions.map((version) => ({
+      queryKey: ['projects', projectId, 'analysis', version.id],
+      queryFn: () =>
+        planningApi.analysis(projectId, version.document_id, {
+          document_version_id: version.id,
+        }),
+      refetchInterval: (query: {
+        state: { data: AnalysisResponse | undefined }
+      }) =>
+        pollIntervalOf(
+          query.state.data,
+          isQuestionTarget(version, hasBaseline),
+        ),
+    })),
+  })
   const drafts = useInfiniteQuery({
     queryKey: ['projects', projectId, 'design-drafts'],
     initialPageParam: undefined as string | undefined,
@@ -92,19 +100,15 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         limit: 100,
       }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+  })
+  // 초안 생성 작업과 후보(PLN-A05). 작업이 도는 동안에는 끝날 때까지 다시 불러온다.
+  const draftJobs = useQuery({
+    queryKey: ['projects', projectId, 'design-draft-jobs'],
+    queryFn: () => planningApi.drafts(projectId),
     refetchInterval: (query) =>
-      generationHash !== null &&
-      query.state.data?.pages[0]?.draft_snapshot_hash === generationHash &&
-      !query.state.error
+      !query.state.error && hasActiveJob(query.state.data?.jobs ?? [])
         ? 1500
         : false,
-  })
-  const questions = useInfiniteQuery({
-    queryKey: ['projects', projectId, 'planning-questions'],
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      planningApi.questions(projectId, { cursor: pageParam, limit: 100 }),
-    getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
@@ -151,9 +155,56 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     !drafts.hasNextPage &&
     snapshotConsistent &&
     !documents.data?.has_more
+  const labelOfVersion = (versionId: string) => {
+    const version = versions.find((item) => item.id === versionId)
+    const document = documents.data?.items.find(
+      (item) => item.id === version?.document_id,
+    )
+    return document && version
+      ? `${statusLabel(document.kind)} v${version.version_no}`
+      : '문서'
+  }
+  const generate = () =>
+    perform(
+      () =>
+        planningApi.generateDrafts(projectId, {
+          document_version_ids: versions.map((version) => version.id),
+        }),
+      '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
+    )
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
   }
+  // 문서마다 따로 본다. 한 문서가 실패해도 다른 문서의 진행·완료는 계속 따라간다.
+  const documentGenerations = versions.map((version, index) => ({
+    version,
+    generation: generationOf(
+      analyses[index]?.data,
+      isQuestionTarget(version, hasBaseline),
+    ),
+  }))
+  const generations: QuestionGenerationView[] = documentGenerations.flatMap(
+    ({ version, generation }) =>
+      generation && (isGenerating(generation) || generation.status === 'FAILED')
+        ? [
+            {
+              versionId: version.id,
+              label: labelOfVersion(version.id),
+              status: generation.status,
+              errorCode: generation.errorCode,
+              retryable: generation.retryable,
+              onRetry: () =>
+                perform(
+                  () =>
+                    planningApi.retryAnalysis(projectId, version.document_id, {
+                      document_version_id: version.id,
+                    }),
+                  '보완 질문을 다시 만들도록 접수했어요.',
+                ),
+            },
+          ]
+        : [],
+  )
 
   return (
     <section className="space-y-6">
@@ -264,187 +315,156 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         )}
       </AsyncState>
       <div className="grid gap-6 lg:grid-cols-[.85fr_1.15fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Lightbulb className="size-4 text-primary" />
-              아직 정하지 않은 내용
-            </CardTitle>
-            <CardDescription>
-              답변은 초안 생성의 참고 자료이며 설계 승인과 구분해요.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <AsyncState query={questions}>
-              {(data) => {
-                const entries = data.pages.flatMap((page) => page.items)
-                return (
+        <PlanningQuestions
+          projectId={projectId}
+          isLeader={isLeader}
+          busy={action.busy}
+          generations={generations}
+          answerable={!baseline.isPending && !baseline.data}
+          published={!!baseline.data}
+          onAnswer={(id, input) =>
+            action.run(
+              () => planningApi.answerQuestion(projectId, id, input),
+              input.status === 'DISMISSED'
+                ? '질문을 답변 없이 닫았어요.'
+                : '답변을 저장했어요.',
+            )
+          }
+        />
+        <div className="space-y-6">
+          {!baseline.isPending && !baseline.data && (
+            <AsyncState query={draftJobs}>
+              {(data) => (
+                <DraftCandidates
+                  jobs={data.jobs}
+                  labelOfVersion={labelOfVersion}
+                  isLeader={isLeader}
+                  busy={action.busy}
+                  canGenerate={analysesReady}
+                  onGenerate={generate}
+                  onAdopt={(candidate, input) =>
+                    action.run(
+                      () =>
+                        planningApi.adoptCandidate(
+                          projectId,
+                          candidate.id,
+                          input,
+                        ),
+                      '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
+                    )
+                  }
+                  onDiscard={(candidate) =>
+                    action.run(
+                      () =>
+                        planningApi.discardCandidate(projectId, candidate.id),
+                      '후보를 폐기했어요.',
+                    )
+                  }
+                />
+              )}
+            </AsyncState>
+          )}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <CardTitle>검토할 설계 항목</CardTitle>
+                {isLeader && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setAdding(true)}
+                    >
+                      항목 추가
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <CardDescription>
+                초안은 승인 전까지 프로젝트 정책으로 사용하지 않아요.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AsyncState query={drafts}>
+                {() => (
                   <div className="space-y-3">
-                    {entries.length ? (
-                      entries.map((question) => (
+                    {items.length ? (
+                      items.map((item) => (
                         <article
-                          key={question.id}
+                          key={item.id}
                           className="rounded-lg border p-4"
                         >
-                          <p className="text-sm leading-6">
-                            {question.question}
+                          <div className="flex items-center justify-between gap-3">
+                            <strong className="text-sm">{item.key}</strong>
+                            <StatusPill value={item.status} />
+                          </div>
+                          <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
+                            {typeof item.content.description === 'string'
+                              ? item.content.description
+                              : JSON.stringify(item.content, null, 2)}
                           </p>
-                          {question.source && (
+                          {item.source && (
                             <p className="mt-2 text-xs text-muted-foreground">
-                              원문 v{question.source.version_no} ·{' '}
-                              {question.source.location}
-                            </p>
-                          )}
-                          {question.answer && (
-                            <p className="mt-3 rounded-md bg-muted/50 p-3 text-sm whitespace-pre-wrap">
-                              {question.answer}
+                              문서 v{item.source.version_no} ·{' '}
+                              {item.source.location}
                             </p>
                           )}
                           {isLeader && (
-                            <Button
-                              className="mt-3"
-                              size="sm"
-                              variant="outline"
-                              disabled={action.busy}
-                              onClick={() => setAnswering(question)}
-                            >
-                              {question.answer ? '답변 수정' : '답변 작성'}
-                            </Button>
+                            <div className="mt-3 flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={action.busy || !item.content_hash}
+                                onClick={() => setEditing(item)}
+                              >
+                                내용 수정
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={action.busy || !item.content_hash}
+                                onClick={() =>
+                                  perform(
+                                    () =>
+                                      planningApi.removeItem(
+                                        item.design_item_id,
+                                        {
+                                          project_id: projectId,
+                                          expected_version_id: item.id,
+                                          expected_content_hash:
+                                            item.content_hash!,
+                                        },
+                                      ),
+                                    '발행 대상에서 제외했어요. 기록은 유지해요.',
+                                  )
+                                }
+                              >
+                                발행 대상에서 제외
+                              </Button>
+                            </div>
                           )}
                         </article>
                       ))
                     ) : (
-                      <EmptyState>현재 등록된 보완 질문이 없어요.</EmptyState>
+                      <EmptyState>
+                        문서 분석을 완료하면 설계 항목 초안을 만들 수 있어요.
+                      </EmptyState>
                     )}
-                    {questions.hasNextPage && (
+                    {drafts.hasNextPage && (
                       <Button
                         variant="outline"
-                        onClick={() => void questions.fetchNextPage()}
-                        disabled={questions.isFetchingNextPage}
+                        disabled={drafts.isFetchingNextPage}
+                        onClick={() => void drafts.fetchNextPage()}
                       >
-                        질문 더 보기
+                        다음 항목 검토
                       </Button>
                     )}
                   </div>
-                )
-              }}
-            </AsyncState>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle>검토할 설계 항목</CardTitle>
-              {isLeader && (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setAdding(true)}
-                  >
-                    항목 추가
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={action.busy || !analysesReady}
-                    onClick={() =>
-                      perform(async () => {
-                        setGenerationHash(snapshotHash ?? '')
-                        await planningApi.generateDrafts(projectId, {
-                          document_version_ids: versions.map(
-                            (version) => version.id,
-                          ),
-                        })
-                      }, '초안 생성을 접수했어요. 생성된 항목을 확인해 주세요.')
-                    }
-                  >
-                    <Sparkles />
-                    답변으로 초안 만들기
-                  </Button>
-                </div>
-              )}
-            </div>
-            <CardDescription>
-              초안은 승인 전까지 프로젝트 정책으로 사용하지 않아요.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <AsyncState query={drafts}>
-              {() => (
-                <div className="space-y-3">
-                  {items.length ? (
-                    items.map((item) => (
-                      <article key={item.id} className="rounded-lg border p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <strong className="text-sm">{item.key}</strong>
-                          <StatusPill value={item.status} />
-                        </div>
-                        <p className="mt-2 text-sm leading-6 break-words whitespace-pre-wrap">
-                          {typeof item.content.description === 'string'
-                            ? item.content.description
-                            : JSON.stringify(item.content, null, 2)}
-                        </p>
-                        {item.source && (
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            문서 v{item.source.version_no} ·{' '}
-                            {item.source.location}
-                          </p>
-                        )}
-                        {isLeader && (
-                          <div className="mt-3 flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={action.busy || !item.content_hash}
-                              onClick={() => setEditing(item)}
-                            >
-                              내용 수정
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={action.busy || !item.content_hash}
-                              onClick={() =>
-                                perform(
-                                  () =>
-                                    planningApi.removeItem(
-                                      item.design_item_id,
-                                      {
-                                        project_id: projectId,
-                                        expected_version_id: item.id,
-                                        expected_content_hash:
-                                          item.content_hash!,
-                                      },
-                                    ),
-                                  '발행 대상에서 제외했어요. 기록은 유지해요.',
-                                )
-                              }
-                            >
-                              발행 대상에서 제외
-                            </Button>
-                          </div>
-                        )}
-                      </article>
-                    ))
-                  ) : (
-                    <EmptyState>
-                      문서 분석을 완료하면 설계 항목 초안을 만들 수 있어요.
-                    </EmptyState>
-                  )}
-                  {drafts.hasNextPage && (
-                    <Button
-                      variant="outline"
-                      disabled={drafts.isFetchingNextPage}
-                      onClick={() => void drafts.fetchNextPage()}
-                    >
-                      다음 항목 검토
-                    </Button>
-                  )}
-                </div>
-              )}
-            </AsyncState>
-          </CardContent>
-        </Card>
+                )}
+              </AsyncState>
+            </CardContent>
+          </Card>
+        </div>
       </div>
       <Card className="border-primary/20 bg-primary/5">
         <CardHeader>
@@ -506,32 +526,6 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           )}
         </CardContent>
       </Card>
-      {answering && (
-        <FormDialog
-          title="기획 보완 질문에 답변"
-          description={answering.question}
-          fields={[
-            {
-              name: 'answer',
-              label: '답변',
-              type: 'textarea',
-              required: true,
-              value: answering.answer,
-            },
-          ]}
-          onClose={() => setAnswering(null)}
-          onSubmit={async (values) => {
-            await action.run(
-              () =>
-                planningApi.answerQuestion(projectId, answering.id, {
-                  answer: values.answer,
-                }),
-              '답변을 저장했어요.',
-            )
-            setAnswering(null)
-          }}
-        />
-      )}
       {editing && (
         <FormDialog
           title={`${editing.key} 초안 수정`}

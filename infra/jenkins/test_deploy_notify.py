@@ -3,7 +3,7 @@
 약속: 메시지는 올바른 JSON 이고, 웹훅 주소는 어디에도 찍히지 않으며, 알림이 실패해도 항상 exit 0 이다.
 curl 은 가짜로 둔다. 가짜는 진짜 curl 처럼 -K 설정 파일에서 주소를 읽고, 실패하면 그 주소를 stderr 에 찍는다
 (진짜 curl 의 오류 문구에 주소가 섞일 수 있는 경우를 흉내 낸다).
-실행: python infra/jenkins/test_deploy_notify.py  (pytest 로도 돈다. CI 에는 넣지 않음)
+실행: python infra/jenkins/test_deploy_notify.py  (pytest 로도 돈다. CI 는 deploy-scripts 잡)
 필요: bash. Windows 는 Git Bash 를 쓴다.
 """
 import json

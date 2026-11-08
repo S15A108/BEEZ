@@ -127,6 +127,7 @@
 | `change-discussion:88:mentioned:to:12` | 의견 88에서 지정된 멤버 12에게 알림(`ChangeDiscussionService` TODO의 "의견 ID + 대상 계정"에 동작을 붙인 것) |
 | `doc-submission:33:review-requested:to:11` | 문서 제출 33 검토 요청, 팀장 11에게 |
 | `project:101:created` | 프로젝트 101 생성 |
+| `member:205:joined:31` | 멤버 205가 초대 31로 참여(되살아난 멤버십도 초대가 달라 구분된다, 6.2) |
 
 ## 6. 유형표
 
@@ -168,8 +169,8 @@
 | `BASELINE_CREATED` | 기준(오서현) | BASELINE |
 | `CHANGE_PROPOSAL_SUBMITTED`·`_WITHDRAWN`·`_REVIEW_STARTED`·`_REVIEW_REQUESTED`·`_COMMENTED`·`_APPROVED`·`_REJECTED`·`_PUBLISHED` | 변경(오서현) | CHANGE_PROPOSAL |
 | `MEETING_CLOSED` | 회의(오서현, -297) | MEETING (보조 참조: 만든 제안의 `change_proposal_id`, 없으면 비움). 행위자는 끝낸 팀장 |
-| `PROJECT_CREATED` | 프로젝트(전진) | PROJECT |
-| `MEMBER_JOINED`·`MEMBER_LEFT`·`MEMBER_REMOVED`·`LEADER_TRANSFERRED` | 프로젝트(전진) | MEMBER |
+| `PROJECT_CREATED` | 프로젝트(전진) · `ProjectActivities`(-289) | PROJECT — 아래 "프로젝트·멤버 활동 정하기" |
+| `MEMBER_JOINED`·`MEMBER_LEFT`·`MEMBER_REMOVED`·`LEADER_TRANSFERRED` | 프로젝트(전진) · `ProjectActivities`(-289) | MEMBER — 아래 "프로젝트·멤버 활동 정하기" |
 | `AGENT_CONNECTED`·`AGENT_DISCONNECTED` | 에이전트(전진 -178) | AGENT_SESSION |
 
 - 활동 키 요약(-310): `change-proposal:{id}:submitted:{revision}`·`:withdrawn`·`:review-started:{revision}`·`:rejected:{revision}`·`:approved`·`:published`, `change-discussion:{commentId}:commented|review-requested`, `doc-submission:{id}:approved|rejected`, `document-version:{versionId}:registered`, `baseline:{id}:created`. 거두기는 회의 끝내기 재시도가 앞선 시도의 제안을 정리할 때도 남고, 멱등 재생·이미 같은 상태의 재요청(검토 시작 등)에서는 남기지 않는다. 회의 참여자 추가·제외는 활동 유형을 두지 않는다.
@@ -196,6 +197,19 @@
 - 작업 활동의 키는 `task:{id}:lock:{저장·flush 뒤 잠금 버전}:{동작}`이다. 상태 보고는 `TaskEvent` 이름을, 그 밖은 `PLAN_REVISED`처럼 동작 이름을 쓴다(`TASK_CREATED`는 `task:{id}:created`).
   - **예외 — 담당자 변경**: `TaskHandoverService`는 작업을 저장소로 flush 한 뒤에 기록한다(입구의 auto-flush 에서 잠금 충돌이 나면 409 가 아니라 500 이 되므로, -288). 그래서 바꾸기 전에 잠금 버전을 잡아 두고 `task:{id}:lock:{변경 전 잠금 버전}:ASSIGNEE_CHANGED`(알림은 끝에 `:to:{계정}`)를 쓴다. 동작 이름이 달라 다른 작업 키와 겹치지 않고, 담당자 변경마다 버전이 오르므로 다음 변경과도 겹치지 않는다. S3 완료 보고는 `task:{id}:lock:{n}:COMPLETED`, S4는 작업을 COMPLETED로 저장한 뒤의 버전으로 `task:{id}:lock:{m}:COMPLETED`를 쓴다. 작업 행이 바뀔 때마다 `@Version`이 올라가므로 m > n이라 두 키는 겹치지 않는다.
 
+**프로젝트·멤버 활동 정하기 (-289).** 모두 도메인 변경을 저장(flush)한 뒤 같은 트랜잭션에서 남기고, 행위자는 요청자의 `CallerContext`다.
+
+| 경로 | 활동 | 대상 | 키 |
+| --- | --- | --- | --- |
+| 프로젝트 생성(PRJ-A01) | `PROJECT_CREATED`. 생성자의 팀장 멤버십은 참여 활동을 따로 남기지 않는다 | PROJECT | `project:{프로젝트 id}:created` |
+| 링크 수락(MEM-A05) · 가입·로그인 자동 참여(ACC-A01·A02의 JOIN·REVIVE) | `MEMBER_JOINED`. 자동 참여의 행위자는 로그인·가입한 본인. 이미 팀원이라 초대만 닫는 경우(ALREADY_ACTIVE)는 남기지 않는다 | 들어온 멤버 | `member:{멤버 id}:joined:{수락으로 닫은 초대 id}` |
+| 팀원 제외(MEM-A09) | `MEMBER_REMOVED` | 제외된 멤버 | `member:{멤버 id}:removed:{n}` |
+| 나가기(MEM-A10) · 회원 탈퇴(ACC-A10)로 팀 프로젝트에서 빠짐 | `MEMBER_LEFT`. 탈퇴로 함께 삭제되는 혼자 쓰던 프로젝트에는 남기지 않는다 | 나간 멤버 | `member:{멤버 id}:left:{n}` |
+| 위임(MEM-A08) · 위임하고 나가기(MEM-A10) | `LEADER_TRANSFERRED`. 위임하고 나가기는 이것 다음에 `MEMBER_LEFT`가 남는다(두 건) | **새 팀장** 멤버 | `member:{새 팀장 멤버 id}:leader-transferred:{n}` |
+
+- `project_member`는 (프로젝트, 계정)마다 한 행이라 나갔다 돌아오면 같은 멤버 id가 되살아난다. 그래서 같은 멤버에게 같은 동작이 되풀이된다. 참여는 매번 새 초대를 닫으므로 초대 id로 구분한다.
+- `{n}`은 그 멤버에게 그 유형이 몇 번째인지(이미 남은 같은 유형 활동 수 + 1)다. 이 경로들은 모두 대상 멤버십 행을 잠근 뒤에 세므로 겹치지 않는다(새 호출부도 이 잠금을 지킨다 — 어기면 같은 키가 나와 뒤의 활동이 조용히 건너뛰어진다). 이미 커밋된 제외·나가기·위임을 다시 보내면 도메인이 먼저 거절해(404·403) 더 남지 않는다.
+
 **검증 완료(`VALIDATION_FINISHED`) 정하기.**
 
 | 항목 | 규칙 |
@@ -221,6 +235,7 @@
 | `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
 | `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 이 서비스를 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다. 인계 대상 없이 담당자를 비우면 활동만 남긴다(-301). 탈퇴(`ProjectWithdrawalService.leaveAll`)도 탈퇴하는 본인의 `caller`로 `handOver(…, null)`을 부른다(-281) | 전진(-212 코드 작성자, -182와 함께) · -288·-301·-281 |
 | 코드 TODO 11곳 (연결됨) | 변경 제안 5곳(`ProposalCommandService` 제출·보완 재제출·거두기·검토 시작/반려, `ProposalPublicationService` 승인·발행)·의견 1곳(`ChangeDiscussionService`)·문서 3곳(`DocumentApplicationService.upload` 등록, `DocumentReviewService.decide` 승인·반려)·기준 1곳(`BaselinePublishService`)에서 같은 트랜잭션으로 호출한다. 회의로 만든 제안의 제출·정리 거두기는 `ProposalCommandService` 회의 경로에서 남긴다. 회의 참여자 추가·제외(`MeetingService`)는 6.2에 유형이 없고 알림이 같은 사실을 전하므로 활동으로 남기지 않는다 | -310(오서현, -237 활동 부분) |
+| `ProjectService.create`·`ProjectMemberService`·`ProjectWithdrawalService.leaveAll`·`InvitationService.accept`·자동 참여 | 6.2 "프로젝트·멤버 활동 정하기"대로 `ProjectActivities`를 거쳐 남긴다 | -289(전진) |
 
 ## 8. 일정
 
