@@ -17,7 +17,7 @@ import {
 import {
   changesApi,
   documentsApi,
-  meetingsApi,
+  // meetingsApi, // '회의로 논의'(주석 처리 중)
   planningApi,
   tasksApi,
 } from '@/api/services'
@@ -32,7 +32,7 @@ import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { EmptyState } from '@/components/EmptyState'
-import { FormDialog } from '@/components/FormDialog'
+// import { FormDialog } from '@/components/FormDialog' // '회의로 논의'(주석 처리 중)
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -155,7 +155,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
       : { kind: 'detail' },
   )
-  const [discussing, setDiscussing] = useState(false)
+  // const [discussing, setDiscussing] = useState(false) // '회의로 논의'(주석 처리 중)
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
   const queryClient = useQueryClient()
@@ -1646,14 +1646,12 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           )}
                           <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             의견은 승인과 달라요. 승인은 팀장이 해요.
-                            {/* 열린 질문 Q5: 사람이 회의를 만들지 않는 결정과 부딪혀 '회의로 논의'는 그대로 둔다. */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setDiscussing(true)}
-                            >
+                            {/*
+                              회의 생성(MTG-A01)은 폐지 예정이고 BE 에도 라우트가 없어, 열린 질문 Q5 가 정해질 때까지 '회의로 논의'를 주석으로 보존한다.
+                              <Button size="sm" variant="ghost" onClick={() => setDiscussing(true)}>
                               회의로 논의
-                            </Button>
+                              </Button>
+                            */}
                           </p>
                         </div>
                       )}
@@ -1752,46 +1750,49 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                         </Button>
                       </div>
                     )}
-                    {discussing && (
+                    {/*
+                      '회의로 논의' 다이얼로그(주석 처리 중). 회의 생성(MTG-A01)은 폐지 예정이고 BE 에도 라우트가 없어, 열린 질문 Q5 가 정해질 때까지 '회의로 논의'를 주석으로 보존한다.
+                      {discussing && (
                       <FormDialog
-                        title="변경 제안을 함께 논의하기"
-                        description="관련 팀원을 골라 회의를 만들어요. 전체 팀원을 자동으로 부르지 않아요."
-                        fields={[
-                          {
-                            name: 'title',
-                            label: '회의 제목',
-                            value: current.title,
-                            required: true,
-                          },
-                          {
-                            name: 'member_id',
-                            label: '함께 논의할 팀원',
-                            type: 'select',
-                            required: true,
-                            options: people.map((member) => ({
-                              value: member.id,
-                              label: member.name,
-                            })),
-                          },
-                        ]}
-                        submitLabel="회의 만들기"
-                        onClose={() => setDiscussing(false)}
-                        onSubmit={async (values) => {
-                          await action.run(async () => {
-                            const meeting = await meetingsApi.create(
-                              projectId,
-                              {
-                                title: values.title,
-                                change_proposal_id: current.id,
-                                participant_member_ids: [values.member_id],
-                              },
-                            )
-                            setDiscussing(false)
-                            openPane('meetings', meeting.id)
-                          }, '관련 팀원과 논의할 회의를 만들었어요.')
-                        }}
+                      title="변경 제안을 함께 논의하기"
+                      description="관련 팀원을 골라 회의를 만들어요. 전체 팀원을 자동으로 부르지 않아요."
+                      fields={[
+                      {
+                      name: 'title',
+                      label: '회의 제목',
+                      value: current.title,
+                      required: true,
+                      },
+                      {
+                      name: 'member_id',
+                      label: '함께 논의할 팀원',
+                      type: 'select',
+                      required: true,
+                      options: people.map((member) => ({
+                      value: member.id,
+                      label: member.name,
+                      })),
+                      },
+                      ]}
+                      submitLabel="회의 만들기"
+                      onClose={() => setDiscussing(false)}
+                      onSubmit={async (values) => {
+                      await action.run(async () => {
+                      const meeting = await meetingsApi.create(
+                      projectId,
+                      {
+                      title: values.title,
+                      change_proposal_id: current.id,
+                      participant_member_ids: [values.member_id],
+                      },
+                      )
+                      setDiscussing(false)
+                      openPane('meetings', meeting.id)
+                      }, '관련 팀원과 논의할 회의를 만들었어요.')
+                      }}
                       />
-                    )}
+                      )}
+                    */}
                   </div>
                 )
               }}
