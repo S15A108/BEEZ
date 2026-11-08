@@ -18,6 +18,7 @@ import type {
   Invitation,
   Meeting,
   MeetingEntry,
+  MeetingSummary,
   Member,
   Notification,
   PlanningQuestion,
@@ -97,6 +98,8 @@ export interface MockProject {
   records: ContextRecord[]
   meetings: Meeting[]
   entries: MeetingEntry[]
+  /** MTG-A11·A12 비비 회의 정리. 예전에 저장한 예시 데이터에는 없어서 선택이다. */
+  summaries?: MeetingSummary[]
   agents: AgentConnection[]
   activities: Activity[]
   /** 스스로 나간 계정. 로그인만으로는 되살리지 않고 메일 링크(MEM-A05)로만 다시 참여한다(Q05 4). */
@@ -499,7 +502,7 @@ function seededProject(
     documents: [],
   })
   // 회의실 예시(수정안 PNL-06): 작업이 부딪혀 비비가 연 회의.
-  // 비비 메시지의 작성자 구분이 계약에 없어 비비가 쓴 기록 종류(BEE_ANALYSIS)로 둔다.
+  // 비비가 충돌 회의를 열며 남기는 첫 기록은 CONFLICT_BRIEF 다.
   const meeting = example<Meeting>('MTG-A01')
   delete meeting.change_proposal_id
   state.meetings.push({
@@ -563,8 +566,9 @@ function seededProject(
     {
       id: '911',
       meeting_id: '901',
-      kind: 'BEE_ANALYSIS',
+      kind: 'CONFLICT_BRIEF',
       text: opened.text,
+      author_kind: 'BEE',
       generation: opened,
       created_at: '2026-10-28T01:40:00Z',
     },
@@ -580,6 +584,40 @@ function seededProject(
       account.id,
       '52',
       '그렇게 가요. 요구사항에 이 문장을 넣어 주세요.',
+    ),
+  )
+  // 끝난 회의 예시의 대화: 끝난 회의도 기록은 그대로 읽을 수 있다(MTG-A10).
+  const closedSaid = (
+    id: string,
+    author: string,
+    minute: string,
+    text: string,
+  ): MeetingEntry => ({
+    id,
+    meeting_id: '902',
+    kind: 'TEXT',
+    text,
+    author_account_id: author,
+    created_at: `2026-10-26T05:${minute}:00Z`,
+  })
+  state.entries.push(
+    closedSaid(
+      '921',
+      '12',
+      '45',
+      '오류 응답을 error.code 하나로 맞추면 좋겠어요.',
+    ),
+    closedSaid(
+      '922',
+      '14',
+      '52',
+      '좋아요. 메시지는 화면용 문장으로 따로 두죠.',
+    ),
+    closedSaid(
+      '923',
+      account.id,
+      '58',
+      '그렇게 정리할게요. 이 내용을 계약 문서에 반영해 주세요.',
     ),
   )
   state.agents.push({

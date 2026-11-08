@@ -74,21 +74,6 @@ export const meetingsApi = {
       },
       options,
     ),
-  respond: (
-    projectId: string,
-    meetingId: string,
-    input: schemas.RespondInput,
-    options?: RequestOptions,
-  ) =>
-    callEndpoint(
-      schemas.respondResponseSchema,
-      {
-        method: 'PATCH',
-        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/participation`,
-        data: schemas.respondInputSchema.parse(input),
-      },
-      options,
-    ),
   addEntry: (
     projectId: string,
     meetingId: string,
@@ -105,50 +90,68 @@ export const meetingsApi = {
       },
       options,
     ),
-  analyze: (
+  // MTG-A11: 팀장(회의 참여자)만. AI(SUMMARY)를 서버가 아직 거절하면 502 ai_unavailable 이다.
+  summarize: (
     projectId: string,
     meetingId: string,
-    input: schemas.AnalyzeInput,
+    input: schemas.SummarizeInput,
     options?: RequestOptions,
   ) =>
     callEndpoint(
-      schemas.analyzeResponseSchema,
+      schemas.summaryResponseSchema,
       {
         method: 'POST',
-        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/bee-analysis`,
-        data: schemas.analyzeInputSchema.parse(input),
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/bee-summary`,
+        data: schemas.summarizeInputSchema.parse(input),
         idempotent: true,
       },
       options,
     ),
-  minutes: (
+  // MTG-A15: 회의의 최신 정리를 구조화한 값으로 읽는다. 정리가 아직 없으면 404 not_found.
+  latestSummary: (
     projectId: string,
     meetingId: string,
-    input: schemas.MinutesInput,
     options?: RequestOptions,
   ) =>
     callEndpoint(
-      schemas.minutesResponseSchema,
+      schemas.summaryResponseSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/bee-summary`,
+      },
+      options,
+    ),
+  // MTG-A12: 최신 정리만 고칠 수 있다(아니면 409 summary_outdated). 새 정리가 최신이 되고 이전 정리는 기록에 남는다.
+  reviseSummary: (
+    projectId: string,
+    meetingId: string,
+    summaryId: string,
+    input: schemas.ReviseSummaryInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.summaryResponseSchema,
       {
         method: 'POST',
-        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/minutes`,
-        data: schemas.minutesInputSchema.parse(input),
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/bee-summary/${encodeURIComponent(String(idSchema.parse(summaryId)))}/revise`,
+        data: schemas.reviseSummaryInputSchema.parse(input),
         idempotent: true,
       },
       options,
     ),
-  changeDraft: (
+  // MTG-A13: 팀장(회의 참여자)만. AI 를 부르지 않고, 정리에 바꿀 문서가 있으면 변경 제안을 만든다.
+  close: (
     projectId: string,
     meetingId: string,
-    input: schemas.ChangeDraftInput,
+    input: schemas.CloseInput,
     options?: RequestOptions,
   ) =>
     callEndpoint(
-      schemas.changeDraftResponseSchema,
+      schemas.closeResponseSchema,
       {
         method: 'POST',
-        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/change-drafts`,
-        data: schemas.changeDraftInputSchema.parse(input),
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/meetings/${encodeURIComponent(String(idSchema.parse(meetingId)))}/close`,
+        data: schemas.closeInputSchema.parse(input),
         idempotent: true,
       },
       options,

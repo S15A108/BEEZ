@@ -11,9 +11,9 @@ import {
   requireProject,
   requiredString,
   strings,
-  templateGeneration,
 } from './helpers'
 import type { MockContext, MockReply } from './helpers'
+import { summaryRoutes } from './meetingSummaries'
 import { nextId, now } from './state'
 
 function counts(items: { status: string }[]) {
@@ -140,16 +140,6 @@ export function collaborationRoutes(
       )
       return { status: 204 }
     }
-    case 'MTG-A05': {
-      const participant =
-        meeting!.participants.find(
-          (item) => item.member_id === context.member?.id,
-        ) ?? fail(403, 'forbidden', '초대된 회의 참여자만 응답할 수 있어요.')
-      if (body.status !== 'JOINED' && body.status !== 'DECLINED')
-        fail(400, 'validation_failed', '참여 상태를 확인해 주세요.')
-      participant.status = body.status
-      return { data: meeting! }
-    }
     case 'MTG-A06': {
       if (
         !meeting!.participants.some(
@@ -163,97 +153,41 @@ export function collaborationRoutes(
         meeting_id: meeting!.id,
         kind: 'TEXT',
         text: requiredString(body, 'text'),
+        author_kind: 'HUMAN',
         author_account_id: requireAccount(context).id,
+        author_member_id: context.member!.id,
         created_at: now(),
       }
       project.entries.push(entry)
       return { status: 201, data: entry }
     }
-    case 'MTG-A07':
-    case 'MTG-A08': {
-      const through = findById(
-        project.entries.filter((item) => item.meeting_id === meeting!.id),
-        requiredString(body, 'through_entry_id'),
+    case 'MTG-A11':
+    case 'MTG-A12':
+    case 'MTG-A13':
+    case 'MTG-A15':
+      return summaryRoutes(id, context, meeting!)
+    case 'MTG-A10': {
+      // 서버(MTG-A10)처럼 작성 순서(오래된 순)이고 cursor 는 이전 페이지 마지막 기록 ID 다.
+      const limit = Math.min(100, Math.max(1, Number(query.get('limit')) || 20))
+      const after = BigInt(
+        query.get('cursor') ?? query.get('after_entry_id') ?? '0',
       )
-      const included = project.entries.filter(
-        (item) =>
-          item.meeting_id === meeting!.id &&
-          BigInt(item.id) <= BigInt(through.id) &&
-          item.kind === 'TEXT',
-      )
-      const summary = included.map((entry) => entry.text).join('\n')
-      const author = (accountId?: string) =>
-        project.members.find((member) => member.account_id === accountId)
-          ?.name ?? '팀원'
-      // 비비 정리 예시: 누가 무슨 말을 했는지만 모은다. 충돌·결정·할 일을 고르는 실제 AI 정리는 아니다.
-      const generation = templateGeneration(
-        id === 'MTG-A07'
-          ? [
-              `회의 내용을 정리했어요 · 메시지 ${included.length}개 기준`,
-              ...included.map(
-                (entry) =>
-                  `- ${author(entry.author_account_id)}: ${entry.text}`,
-              ),
-              '실제 AI 정리는 실행하지 않았어요.',
-            ].join('\n')
-          : `회의 텍스트를 모았어요. 실제 AI 요약은 실행하지 않았어요.\n${summary}`,
-      )
-      const entry: MeetingEntry = {
-        id: nextId(database),
-        meeting_id: meeting!.id,
-        kind: id === 'MTG-A07' ? 'BEE_ANALYSIS' : 'MINUTES',
-        text: generation.text,
-        through_entry_id: through.id,
-        generation,
-        created_at: now(),
-      }
-      project.entries.push(entry)
-      return {
-        status: 201,
-        data:
-          id === 'MTG-A07'
-            ? generation
-            : {
-                entry,
-                summary,
-                decisions: [],
-                action_items: [],
-                unresolved: [
-                  '예시 환경의 회의록입니다. 실제 합의와 할 일을 직접 확인해 주세요.',
-                ],
-              },
-      }
-    }
-    case 'MTG-A09': {
-      const minutes = findById(
-        project.entries.filter(
+      const rows = project.entries
+        .filter(
           (entry) =>
-            entry.meeting_id === meeting!.id && entry.kind === 'MINUTES',
-        ),
-        requiredString(body, 'minutes_entry_id'),
-      )
-      const version = findById(
-        project.versions,
-        requiredString(body, 'base_document_version_id'),
-      )
-      if (version.document_id !== body.document_id)
-        fail(404, 'not_found', '문서 버전을 찾을 수 없어요.')
+            entry.meeting_id === meeting!.id && BigInt(entry.id) > after,
+        )
+        .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))
+      const selected = rows.slice(0, limit)
+      const hasMore = rows.length > limit
       return {
         data: {
-          after_content: `${version.content ?? ''}\n\n## 회의 기반 검토 초안\n${minutes.text}`,
-          generation: templateGeneration(
-            '회의 기록을 수정 초안에 첨부했어요. 문서에 반영하려면 변경 제안과 인간 팀장 승인이 필요해요.',
-          ),
+          items: selected,
+          has_more: hasMore,
+          ...(hasMore ? { next_cursor: selected.at(-1)!.id } : {}),
         },
       }
     }
-    case 'MTG-A10':
-      return {
-        data: page(
-          project.entries.filter((entry) => entry.meeting_id === meeting!.id),
-          query,
-        ),
-      }
     case 'MON-D01':
       return {
         data: {
