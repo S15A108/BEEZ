@@ -392,6 +392,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | — (문안은 MTG-A11 정리) | 오서현 |
 | [MTG-A14 회의 참여자 제외](01-backend-rest.md#mtg-a14) | DELETE `/api/projects/{id}/meetings/{meeting_id}/participants/{member_id}` | LEADER (회의 참여자. 수정안 요청) | 오서현 | — | 오서현 |
+| [MTG-A15 회의 최신 정리 조회](01-backend-rest.md#mtg-a15) | GET `/api/projects/{id}/meetings/{meeting_id}/bee-summary` | MEMBER | 오서현 | — | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
@@ -1464,6 +1465,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `author_member_id` | `ID` | N | HUMAN이면 작성 멤버. 수정안 요청 |
 | `author_name` | `string` | N | HUMAN이면 표시 이름. 수정안 요청 |
 | `refs` | `object[]` | N | 비비 기록이 가리키는 대상 [{type: TASK\|DESIGN_ITEM\|DOCUMENT_VERSION, id, label}]. 화면은 칩으로 보임. 수정안 요청 |
+| `summary_id` | `ID` | N | 이 기록이 남긴 정리 ID. kind=SUMMARY일 때만 실린다. 새로 고친 화면도 이 값으로 회의 끝내기(MTG-A13)·정리 수정 요청(MTG-A12)을 하고, 구조화한 정리는 최신 정리 조회(MTG-A15)로 읽는다(S15P31A108-206) |
 | `through_entry_id` | `ID` | N | 분석 마지막 입력 기록. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
 | `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
 | `created_at` | `Time` | Y | 작성 시각 |
