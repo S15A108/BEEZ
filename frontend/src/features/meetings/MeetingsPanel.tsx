@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { Check, ChevronLeft, Settings, Users, X } from 'lucide-react'
 import { BibiFace } from '@/components/BibiFace'
-import { meetingsApi, membersApi, tasksApi } from '@/api/services'
-import type { MeetingEntry, Member } from '@/api/contracts/common'
+import { documentsApi, meetingsApi, membersApi, tasksApi } from '@/api/services'
+import type {
+  MeetingEntry,
+  MeetingSummary,
+  Member,
+} from '@/api/contracts/common'
+import { getApiErrorCode } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
 import { SourceLinks } from '@/components/SourceLinks'
+import { Toast } from '@/components/Toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -22,6 +32,8 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { meetingErrorMessage } from './meetingErrors'
+import { SummaryCard } from './SummaryCard'
 import { useMeetingList } from './useMeetingList'
 
 interface Props {
@@ -55,6 +67,17 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const [ending, setEnding] = useState(false)
   const [agendaOpen, setAgendaOpen] = useState(false)
   const [earlierOpen, setEarlierOpen] = useState(false)
+  // 회의 정리·끝내기 오류는 회의가 열린 채 어떻게 이어 가면 되는지를 알려 준다(meetingErrors.ts).
+  const [notice, setNotice] = useState<{ text: string; id: number } | null>(
+    null,
+  )
+  const client = useQueryClient()
+  // 방금 끝낸 회의의 결과(MTG-A13): 변경 제안을 만들었는지와 알림 받은 사람
+  const [closeResult, setClosedResult] = useState<{
+    meetingId: string
+    proposalId?: string
+    notified: string[]
+  } | null>(null)
   const list = useMeetingList(projectId)
   const meetings = list.data?.pages.flatMap((page) => page.items) ?? []
   const open = meetings.filter((meeting) => meeting.status !== 'CLOSED')
@@ -86,6 +109,13 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'meeting-tasks'],
     queryFn: () => tasksApi.list(projectId, { limit: 100 }),
   })
+  const documents = useQuery({
+    queryKey: ['projects', projectId, 'meeting-documents'],
+    queryFn: () => documentsApi.list(projectId, { limit: 100 }),
+  })
+  const documentTitleOf = (id: string) =>
+    documents.data?.items.find((document) => document.id === id)?.title ??
+    '문서'
   const taskOf = (id: string) =>
     tasks.data?.items.find((task) => task.id === id)
   const nameOfMember = (id: string) =>
@@ -93,15 +123,45 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const nameOfAccount = (id?: string) =>
     people.find((member) => member.account_id === id)?.name ?? '팀장'
   const me = people.find((member) => member.account_id === session.data?.id)
-  // 목록은 최신순으로 온다. 대화는 오래된 것부터 보여 준다.
-  const notes = entries.data?.pages.flatMap((page) => page.items) ?? []
+  // 기록 목록(MTG-A10)은 작성 순서(오래된 순)이고 cursor 는 이전 페이지 마지막 기록 ID 다. 최신 기록과 최신 정리를 놓치지
+  // 않도록 남은 쪽을 모두 읽고, 화면은 항상 최신순(notes[0] 이 가장 최근)으로 다룬다. 대화는 오래된 것부터 보여 준다.
+  const notes = (entries.data?.pages.flatMap((page) => page.items) ?? []).sort(
+    (a, b) => (BigInt(a.id) < BigInt(b.id) ? 1 : -1),
+  )
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = entries
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
   const latest = notes[0]
   const log = useRef<HTMLDivElement>(null)
   // 새 메시지가 오면 대화 맨 아래로 내린다. 이전 기록을 더 불러올 때는 그대로 둔다.
   useEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight
   }, [latest?.id])
-  const review = latest?.kind === 'BEE_ANALYSIS' ? latest : undefined
+  // 비비 정리(MTG-A11): 가장 최근 SUMMARY 기록. 구조화한 정리(summary_id·바뀔 문서 등)는 최신 정리 조회(MTG-A15)로 받아서
+  // 새로 고치거나 다른 기기에서 열어도 끝내기·수정 요청을 이어 갈 수 있다.
+  const review = notes.find((entry) => entry.kind === 'SUMMARY')
+  const summaryKey = ['projects', projectId, 'meeting-summary', selectedId]
+  const summaryQuery = useQuery({
+    queryKey: summaryKey,
+    queryFn: () => meetingsApi.latestSummary(projectId, selectedId!),
+    enabled: !!selectedId && !!review,
+    retry: false,
+  })
+  const summary =
+    review && summaryQuery.data?.entry.id === review.id
+      ? summaryQuery.data
+      : undefined
+  // 정리 뒤에 사람이 쓴 기록이 있으면 그 정리로는 끝낼 수 없다(서버가 409 summary_outdated 로 막는다).
+  const talkedAfterSummary =
+    !!review &&
+    notes.some(
+      (entry) => entry.kind === 'TEXT' && BigInt(entry.id) > BigInt(review.id),
+    )
+  // 정리에 쓸 마지막 기록: 사람 기록(TEXT)이나 비비가 연 첫 기록(CONFLICT_BRIEF)
+  const throughEntry = notes.find(
+    (entry) => entry.kind === 'TEXT' || entry.kind === 'CONFLICT_BRIEF',
+  )
   const participant = detail.data?.participants.find(
     (item) => item.member_id === me?.id,
   )
@@ -122,16 +182,51 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       .filter(Boolean)
       .join(' · ')
   }
-  const perform = (operation: () => Promise<unknown>, message: string) => {
-    void action.run(operation, message).catch(() => undefined)
+  // 실패하면 회의 전용 안내를 보이고 오류를 다시 던진다(입력줄이 입력을 지우지 않게).
+  const runWithNotice = async (
+    operation: () => Promise<unknown>,
+    message: string,
+  ) => {
+    setNotice(null)
+    try {
+      return await action.run(operation, message)
+    } catch (error) {
+      setNotice({ text: meetingErrorMessage(error), id: 1 })
+      throw error
+    }
   }
-  const requestReview = (throughId: string) =>
-    meetingsApi.analyze(projectId, selectedId!, { through_entry_id: throughId })
+  const perform = (operation: () => Promise<unknown>, message: string) => {
+    void runWithNotice(operation, message).catch(() => undefined)
+  }
+  const remember = (meetingId: string, next: MeetingSummary) =>
+    client.setQueryData(
+      ['projects', projectId, 'meeting-summary', meetingId],
+      next,
+    )
+  // MTG-A11: 가장 최근 기록까지의 대화를 비비가 정리한다.
+  const requestSummary = (meetingId: string, throughId: string) =>
+    runWithNotice(async () => {
+      remember(
+        meetingId,
+        await meetingsApi.summarize(projectId, meetingId, {
+          through_entry_id: throughId,
+        }),
+      )
+    }, '비비가 회의 내용을 정리했어요.')
+  const scrollToEntry = (entryId: string) => {
+    setEarlierOpen(true)
+    requestAnimationFrame(() =>
+      document
+        .getElementById(`entry-${entryId}`)
+        ?.scrollIntoView({ block: 'center' }),
+    )
+  }
   const select = (id: string) => {
     setSelection({ id, focus })
     setEnding(false)
     setAgendaOpen(false)
     setEarlierOpen(false)
+    setNotice(null)
   }
   return (
     // 창 본문을 베이지로 채운다(캔버스 PNL-06-v2: 머리 아래 #f3f1ea). 창의 안쪽 여백만큼 밖으로 넓힌다.
@@ -142,21 +237,16 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
         line,
       )}
     >
+      {/* 결과·오류 안내는 토스트로 잠깐 보였다 사라진다(회의는 열린 채 어떻게 이어 가면 되는지를 알려 준다). */}
       {action.message && (
-        <p
-          role="status"
-          className="rounded-xl bg-primary/10 px-3.5 py-2.5 text-sm"
-        >
+        <Toast key={action.message} tone="success">
           {action.message}
-        </p>
+        </Toast>
       )}
-      {action.error && (
-        <p
-          role="alert"
-          className="rounded-xl bg-destructive/5 px-3.5 py-2.5 text-sm text-destructive"
-        >
-          {action.error}
-        </p>
+      {(notice || action.error) && (
+        <Toast key={notice?.id ?? 'error'} tone="danger">
+          {notice?.text ?? action.error}
+        </Toast>
       )}
       <AsyncState query={list}>
         {() =>
@@ -164,13 +254,13 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
             // 회의 끝내기 확인은 목록 없이 창 전체를 쓴다(캔버스 PNL-06-v2-draft).
             <div
               className={
-                ending && review
+                ending && review && summary
                   ? 'flex flex-1 flex-col'
                   : 'grid flex-1 gap-5 lg:min-h-0 lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]'
               }
             >
               <div
-                hidden={!!(ending && review)}
+                hidden={!!(ending && review && summary)}
                 className={cn(
                   'grid content-start gap-4 self-start rounded-2xl border bg-white p-3.5 lg:max-h-full lg:overflow-y-auto',
                   line,
@@ -277,7 +367,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                           ]
                         : []
                     })
-                    if (ending && review)
+                    if (ending && review && summary)
                       return (
                         <div className="flex flex-1 flex-col gap-3.5">
                           <Button
@@ -312,23 +402,36 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                   변경 제안에 담길 내용
                                 </span>
                               </h4>
-                              <p className="leading-6 whitespace-pre-wrap">
-                                {review.text}
-                              </p>
-                              {/* API 없음(MTG-A11 수정안 요청): 바뀔 문서·문장(diff)과 근거 발언은 구조화한 비비 정리가 생기면 그린다. */}
+                              <SummaryCard
+                                summary={summary}
+                                documentTitleOf={documentTitleOf}
+                                nameOfMember={nameOfMember}
+                                onShowEvidence={(entryId) => {
+                                  setEnding(false)
+                                  scrollToEntry(entryId)
+                                }}
+                              />
                             </article>
                             <ul className="list-disc pl-[18px] text-[13px] leading-[21px] text-[#57534e]">
-                              {notify.length > 0 && (
+                              {summary.document_changes.length > 0 ? (
+                                notify.length > 0 && (
+                                  <li>
+                                    {notify.join(', ')}에게 변경 제안을 알려요.
+                                  </li>
+                                )
+                              ) : (
                                 <li>
-                                  {notify.join(', ')}에게 변경 제안을 알려요.
+                                  바뀔 문서가 없어 변경 제안은 만들어지지
+                                  않아요.
                                 </li>
                               )}
                               <li>끝난 회의에는 더 쓸 수 없어요.</li>
                             </ul>
                           </div>
                           <div
+                            // 카드가 길어도 버튼 줄은 창 아래에 붙어 항상 보인다(대화 입력줄과 같은 방식).
                             className={cn(
-                              'flex flex-wrap items-center justify-between gap-2 border-t pt-3.5',
+                              'sticky -bottom-5 z-10 -mb-5 flex flex-wrap items-center justify-between gap-2 border-t bg-[#f3f1ea] pt-3.5 pb-5 sm:-bottom-8',
                               line,
                             )}
                           >
@@ -336,17 +439,57 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               팀장만 끝낼 수 있어요. 기준은 변경 제안에서
                               승인·발행해야 바뀌어요.
                             </p>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                variant="outline"
+                                disabled={action.busy || !throughEntry}
+                                onClick={() =>
+                                  void requestSummary(
+                                    meeting.id,
+                                    throughEntry!.id,
+                                  ).catch(() => undefined)
+                                }
+                              >
+                                비비에게 정리 요청
+                              </Button>
                               <Button
                                 variant="outline"
                                 onClick={() => setEnding(false)}
                               >
                                 취소
                               </Button>
-                              {/* API 없음: 회의 끝내기(MTG-A13 수정안 요청)와 회의 결과 변경 제안(제안자 = 회의를 끝낸 팀장)으로 잇기. 끝낸 뒤에는 그 제안을 변경 제안 창에서 연다. */}
                               <Button
-                                disabled
-                                title="서버 기능이 준비되면 열려요"
+                                disabled={action.busy || !isLeader}
+                                onClick={() =>
+                                  void runWithNotice(async () => {
+                                    try {
+                                      const result = await meetingsApi.close(
+                                        projectId,
+                                        meeting.id,
+                                        { summary_id: summary.id },
+                                      )
+                                      setClosedResult({
+                                        meetingId: meeting.id,
+                                        proposalId: result.change_proposal_id,
+                                        notified:
+                                          result.notified_member_ids.map(
+                                            nameOfMember,
+                                          ),
+                                      })
+                                      // 진행 중 목록에서 빠져도 방금 끝낸 회의를 계속 보여 준다.
+                                      setSelection({ id: meeting.id, focus })
+                                      setEnding(false)
+                                    } catch (error) {
+                                      const code = getApiErrorCode(error)
+                                      // 오래된 정리로는 끝낼 수 없다. 대화로 돌아가 정리를 다시 요청하게 한다.
+                                      if (code === 'summary_outdated')
+                                        setEnding(false)
+                                      if (code === 'meeting_closed')
+                                        setEnding(false)
+                                      throw error
+                                    }
+                                  }, '').catch(() => undefined)
+                                }
                               >
                                 회의 끝내고 변경 제안 만들기
                               </Button>
@@ -362,6 +505,28 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                         : 0
                     return (
                       <div className="flex min-h-0 min-w-0 flex-col gap-3">
+                        {closeResult?.meetingId === meeting.id && (
+                          <section
+                            aria-label="회의 끝낸 결과"
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#f3e2a6] bg-[#fff8e0] px-3.5 py-3 text-sm"
+                          >
+                            <span className="grid gap-0.5">
+                              <strong>
+                                {closeResult.proposalId
+                                  ? '회의를 끝내고 변경 제안을 올렸어요.'
+                                  : '회의를 끝냈어요. 바뀔 문서가 없어 변경 제안은 만들지 않았어요.'}
+                              </strong>
+                              {closeResult.proposalId && (
+                                <span className="text-xs text-muted-foreground">
+                                  {closeResult.notified.length
+                                    ? `${closeResult.notified.join(', ')}에게 알렸어요. `
+                                    : ''}
+                                  기준은 변경 제안을 승인·발행해야 바뀌어요.
+                                </span>
+                              )}
+                            </span>
+                          </section>
+                        )}
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="grid gap-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -404,21 +569,30 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             )
                           ) : (
                             <span className="grid justify-items-end gap-1">
-                              <Button
-                                disabled={
-                                  !isLeader ||
-                                  latest?.kind !== 'TEXT' ||
-                                  action.busy
-                                }
-                                onClick={() =>
-                                  perform(
-                                    () => requestReview(latest!.id),
-                                    '비비가 회의 내용을 정리했어요.',
-                                  )
-                                }
-                              >
-                                비비에게 정리 요청
-                              </Button>
+                              <span className="flex flex-wrap justify-end gap-2">
+                                <Button
+                                  variant={summary ? 'outline' : 'default'}
+                                  disabled={
+                                    !isLeader ||
+                                    !participant ||
+                                    !throughEntry ||
+                                    action.busy
+                                  }
+                                  onClick={() =>
+                                    void requestSummary(
+                                      meeting.id,
+                                      throughEntry!.id,
+                                    ).catch(() => undefined)
+                                  }
+                                >
+                                  비비에게 정리 요청
+                                </Button>
+                                {isLeader && !!participant && !!summary && (
+                                  <Button onClick={() => setEnding(true)}>
+                                    회의 끝내기
+                                  </Button>
+                                )}
+                              </span>
                               {!isLeader && (
                                 <span className="text-xs text-muted-foreground">
                                   팀장만 요청할 수 있어요
@@ -462,6 +636,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 name={member?.name ?? '팀원'}
                                 role={[
                                   roleOf(member, meeting.task_ids),
+                                  item.added_by_member_id &&
+                                    `${nameOfMember(item.added_by_member_id)}이 추가`,
                                   participationLabel[item.status],
                                 ]
                                   .filter(Boolean)
@@ -523,6 +699,16 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             />
                           )}
                         </div>
+                        {review &&
+                          !summary &&
+                          summaryQuery.isError &&
+                          !closedMeeting &&
+                          isLeader && (
+                            <p className="rounded-xl border border-dashed border-[#d6d1c4] bg-white px-3.5 py-2.5 text-[13px] text-muted-foreground">
+                              비비 정리를 불러오지 못했어요. 비비에게 정리를
+                              다시 요청하면 새로 받아요.
+                            </p>
+                          )}
                         {meeting.conflict_summary &&
                           (review && !agendaOpen ? (
                             <section
@@ -606,18 +792,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 >
                                   앞의 대화 {folded}개
                                 </button>
-                              ) : (
-                                entries.hasNextPage && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="justify-self-center"
-                                    onClick={() => void entries.fetchNextPage()}
-                                  >
-                                    이전 기록 더 보기
-                                  </Button>
-                                )
-                              )}
+                              ) : null}
                               {conversation.length ? (
                                 conversation.slice(folded).map((entry) => {
                                   const author = people.find(
@@ -634,6 +809,15 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                         session.data?.id
                                       }
                                       author={author}
+                                      summary={
+                                        entry.id === review?.id
+                                          ? summary
+                                          : undefined
+                                      }
+                                      latestSummary={entry.id === review?.id}
+                                      documentTitleOf={documentTitleOf}
+                                      nameOfMember={nameOfMember}
+                                      onShowEvidence={scrollToEntry}
                                     />
                                   )
                                 })
@@ -645,39 +829,41 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             </div>
                           )}
                         </AsyncState>
-                        {/* 입력줄은 창 아래 끝에 붙여 둔다(창 전체가 스크롤해도 보이게). 창의 안쪽 여백만큼 내려 아래로 지나가는 대화를 가린다.
-                            API 없음(MTG-A12 수정안 요청): 정리 수정 요청 전용 필드. 지금은 고칠 점을 메시지로 남기고 그 시점까지 다시 정리한다. */}
+                        {/* 입력줄은 창 아래 끝에 붙여 둔다(창 전체가 스크롤해도 보이게). 창의 안쪽 여백만큼 내려 아래로 지나가는 대화를 가린다. */}
                         <div className="sticky -bottom-5 z-10 -mb-5 bg-[#f3f1ea] pt-1 pb-5 sm:-bottom-8">
                           {closedMeeting ? (
                             <p className="rounded-[10px] border border-dashed border-[#d6d1c4] bg-white px-3 py-2.5 text-[13px] text-muted-foreground">
                               끝난 회의라 메시지를 보낼 수 없어요.
                             </p>
-                          ) : isLeader && review ? (
-                            <InlineMessage
-                              key={`fix:${review.id}`}
-                              label="비비에게 고칠 점"
-                              placeholder="정리에서 고칠 점을 비비에게 말해 주세요"
-                              submitLabel="수정 요청"
-                              outline
-                              onSubmit={async (text) => {
-                                await action.run(async () => {
-                                  const entry = await meetingsApi.addEntry(
-                                    projectId,
-                                    meeting.id,
-                                    { text },
-                                  )
-                                  await requestReview(entry.id)
-                                }, '비비가 다시 정리했어요.')
-                              }}
-                            >
-                              {/* 고칠 점 폼 안에 있으므로 제출 버튼이 되지 않게 한다. */}
-                              <Button
-                                type="button"
-                                onClick={() => setEnding(true)}
-                              >
-                                회의 끝내기
-                              </Button>
-                            </InlineMessage>
+                          ) : isLeader && summary ? (
+                            <div className="grid gap-1.5">
+                              {talkedAfterSummary && (
+                                <p className="text-xs text-[#8a6a00]">
+                                  정리한 뒤에 새 대화가 있어요. 끝내기 전에
+                                  비비에게 정리를 다시 요청해 주세요.
+                                </p>
+                              )}
+                              <InlineMessage
+                                key={`fix:${summary.id}`}
+                                label="비비에게 고칠 점"
+                                placeholder="정리에서 고칠 점을 비비에게 말해 주세요"
+                                submitLabel="수정 요청"
+                                outline
+                                onSubmit={async (text) => {
+                                  await runWithNotice(async () => {
+                                    remember(
+                                      meeting.id,
+                                      await meetingsApi.reviseSummary(
+                                        projectId,
+                                        meeting.id,
+                                        summary.id,
+                                        { feedback: text },
+                                      ),
+                                    )
+                                  }, '비비가 다시 정리했어요.')
+                                }}
+                              />
+                            </div>
                           ) : participant?.status === 'JOINED' ? (
                             <InlineMessage
                               key={`${meeting.id}:${notes.length}`}
@@ -685,7 +871,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               placeholder="메시지 보내기"
                               submitLabel="보내기"
                               onSubmit={async (text) => {
-                                await action.run(
+                                await runWithNotice(
                                   () =>
                                     meetingsApi.addEntry(
                                       projectId,
@@ -698,30 +884,6 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 )
                               }}
                             />
-                          ) : participant?.status === 'INVITED' ? (
-                            // API 없음: 비비가 부르면 바로 참여하는지 정해지면 이 단계를 뺀다.
-                            <p className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                              회의에 참여하면 메시지를 보낼 수 있어요.
-                              <Button
-                                size="sm"
-                                disabled={action.busy}
-                                onClick={() =>
-                                  perform(
-                                    () =>
-                                      meetingsApi.respond(
-                                        projectId,
-                                        meeting.id,
-                                        {
-                                          status: 'JOINED',
-                                        },
-                                      ),
-                                    '회의에 참여했어요.',
-                                  )
-                                }
-                              >
-                                참여하기
-                              </Button>
-                            </p>
                           ) : (
                             <p className="text-sm text-muted-foreground">
                               비비가 부른 사람만 메시지를 보낼 수 있어요.
@@ -777,7 +939,7 @@ function MeetingChip({
           : 'bg-[#fdf0c8] text-[#6e5200]',
       )}
     >
-      {status === 'CLOSED' ? '끝남' : '작업 충돌'}
+      {status === 'CLOSED' ? '완료' : '작업 충돌'}
     </span>
   )
 }
@@ -871,26 +1033,73 @@ function Bubble({
   entry,
   mine,
   author,
+  summary,
+  latestSummary,
+  documentTitleOf,
+  nameOfMember,
+  onShowEvidence,
 }: {
   entry: MeetingEntry
   mine: boolean
   author?: Member
+  /** 이 기록이 최신 정리일 때 구조화된 정리(이 화면에서 요청했을 때만 있다) */
+  summary?: MeetingSummary
+  latestSummary: boolean
+  documentTitleOf: (documentId: string) => string
+  nameOfMember: (memberId: string) => string
+  onShowEvidence: (entryId: string) => void
 }) {
   const time = formatTime(entry.created_at)
+  if (entry.kind === 'SUMMARY') {
+    // 비비 정리(MTG-A11)는 노란 말풍선이다. 최신 정리는 구조화한 카드로, 이전 정리는 문장으로 보인다.
+    const [title, ...rest] = entry.text.split('\n')
+    return (
+      <div id={`entry-${entry.id}`} className="flex items-start gap-2.5">
+        <BibiFace className="size-8 shrink-0" />
+        <div className="max-w-[80%] min-w-0 flex-1">
+          <p className="text-xs text-muted-foreground">
+            <strong className="text-foreground">비비</strong> · {time}
+            {!latestSummary && ' · 이전 정리'}
+          </p>
+          <article className="mt-1 rounded-2xl rounded-tl-sm border border-[#f3e2a6] bg-[#fdf5d8] px-3 py-2.5 text-sm">
+            <p className="font-semibold">{title}</p>
+            {entry.generation?.origin === 'TEMPLATE' && (
+              <p className="text-xs text-muted-foreground">
+                예시 템플릿 · 실제 AI 호출 없음
+              </p>
+            )}
+            {summary ? (
+              <div className="mt-2">
+                <SummaryCard
+                  summary={summary}
+                  documentTitleOf={documentTitleOf}
+                  nameOfMember={nameOfMember}
+                  onShowEvidence={onShowEvidence}
+                />
+              </div>
+            ) : (
+              rest.length > 0 && (
+                <p className="mt-1 leading-6 whitespace-pre-wrap">
+                  {rest.join('\n')}
+                </p>
+              )
+            )}
+          </article>
+        </div>
+      </div>
+    )
+  }
   if (entry.kind !== 'TEXT') {
     // 비비 말은 첫 줄을 제목처럼 굵게 쓴다(캔버스 '작업이 부딪혀서 회의를 열었어요').
     const [title, ...rest] = entry.text.split('\n')
     return (
-      <div className="flex items-start gap-2.5">
+      <div id={`entry-${entry.id}`} className="flex items-start gap-2.5">
         <BibiFace className="size-8 shrink-0" />
         <div className="max-w-[80%] min-w-0">
           <p className="text-xs text-muted-foreground">
             <strong className="text-foreground">비비</strong> · {time}
           </p>
           <article className="mt-1 rounded-2xl rounded-tl-sm border border-[#f3e2a6] bg-[#fdf5d8] px-3 py-2.5 text-sm">
-            {entry.kind === 'MINUTES' && (
-              <strong className="block text-[13px]">회의록</strong>
-            )}
             {entry.generation && (
               <p className="text-xs text-muted-foreground">
                 {entry.generation.origin === 'TEMPLATE'
@@ -914,7 +1123,10 @@ function Bubble({
   }
   if (mine)
     return (
-      <div className="grid max-w-[80%] justify-items-end justify-self-end">
+      <div
+        id={`entry-${entry.id}`}
+        className="grid max-w-[80%] justify-items-end justify-self-end"
+      >
         <p className="text-xs text-muted-foreground">
           {time} · <strong className="text-foreground">나</strong>
         </p>
@@ -924,7 +1136,7 @@ function Bubble({
       </div>
     )
   return (
-    <div className="flex items-start gap-2.5">
+    <div id={`entry-${entry.id}`} className="flex items-start gap-2.5">
       <Initial name={author?.name} color={author?.color} large />
       <div className="max-w-[80%] min-w-0">
         <p className="text-xs text-muted-foreground">
