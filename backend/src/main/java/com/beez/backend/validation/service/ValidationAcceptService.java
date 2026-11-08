@@ -60,11 +60,12 @@ public class ValidationAcceptService {
     private final ValidationResponses responses;
     private final ObjectMapper json;
     private final ValidationProperties properties;
+    private final ValidationActivities activities;
 
     public ValidationAcceptService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
                                    TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                    ValidationRepository validations, ValidationRules rules, ValidationResponses responses,
-                                   ObjectMapper json, ValidationProperties properties) {
+                                   ObjectMapper json, ValidationProperties properties, ValidationActivities activities) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
@@ -75,6 +76,7 @@ public class ValidationAcceptService {
         this.responses = responses;
         this.json = json;
         this.properties = properties;
+        this.activities = activities;
     }
 
     @Transactional
@@ -183,6 +185,10 @@ public class ValidationAcceptService {
             validations.insertFinding(validationId, f);
         }
         ValidationRow row = validations.find(projectId, validationId).orElseThrow();
+        if (finished) {
+            // 요청 처리 안에서 규칙만으로 끝났다 — 행위자는 요청자 (계약 6.2 "검증 완료 정하기"). 워커가 끝내면 결과 반영이 남긴다
+            activities.finishedBy(caller, row, outcome.decidedStatus());
+        }
         return new AcceptResult(responses.toResponse(row), finished);
     }
 
