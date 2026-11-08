@@ -14,7 +14,7 @@ test('비비와 대화해 반영하고 팀장에게 요청한 뒤 취소하면 �
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /님의 프로젝트/ })).toBeVisible()
   await page.goto('/projects/102')
   await expect(page.locator('canvas')).toBeVisible()
   await page.getByRole('button', { name: '공용 문서함', exact: true }).click()
