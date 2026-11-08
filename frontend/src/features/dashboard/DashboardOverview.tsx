@@ -3,6 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { dashboardApi } from '@/api/services/dashboard'
 import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
+import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { countText, statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -44,6 +45,9 @@ export function DashboardOverview({
     queryKey: ['projects', projectId, 'dashboard-counts', 'tasks'],
     queryFn: () => dashboardApi.tasks(projectId),
   })
+  // 담당자가 나가거나 제외돼 빈 열린 작업(PNL-09-v2-dashboard-unassigned). HUD와 같은 키다.
+  const unassigned = useQuery(openTasksQuery(projectId, { unassigned: true }))
+  const orphans = unassigned.data?.items ?? []
   const inProgress =
     tasks.data?.by_status.find((entry) => entry.status === 'IN_PROGRESS')
       ?.count ?? 0
@@ -75,7 +79,11 @@ export function DashboardOverview({
     {
       label: '진행 중 작업',
       value: countText(tasks, inProgress),
-      onClick: () => openPane('tasks'),
+      onClick: () => openPane('tasks', orphans[0]?.id),
+      todo:
+        unassigned.data && orphans.length
+          ? `담당자 없는 작업 ${openTaskCount(unassigned.data)} ›`
+          : undefined,
     },
     {
       label: '검토할 변경 제안',

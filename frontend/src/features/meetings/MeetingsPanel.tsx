@@ -270,10 +270,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                 <AsyncState query={detail}>
                   {(meeting) => {
                     const closedMeeting = meeting.status === 'CLOSED'
-                    // 회의 결과 변경 제안을 알릴 관련 작업 담당자(나 말고)
+                    // 회의 결과 변경 제안을 알릴 관련 작업 담당자(나 말고). 담당자 없는 작업은 알릴 사람이 없다.
                     const notify = (meeting.task_ids ?? []).flatMap((id) => {
                       const task = taskOf(id)
-                      return task && task.assignee_member_id !== me?.id
+                      return task?.assignee_member_id &&
+                        task.assignee_member_id !== me?.id
                         ? [
                             `${task.key} 담당 ${nameOfMember(task.assignee_member_id)}`,
                           ]
@@ -580,7 +581,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                         </strong>{' '}
                                         {task?.current_plan_revision.plan.title}
                                         {task &&
-                                          ` · ${nameOfMember(task.assignee_member_id)}`}
+                                          ` · ${task.assignee_member_id ? nameOfMember(task.assignee_member_id) : '담당자 없음'}`}
                                       </button>
                                     </li>
                                   )

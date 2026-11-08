@@ -171,6 +171,7 @@ it('팀원 줄 ⋯에서 팀장으로 위임을 누르면 확인 창에서 팀�
 })
 
 // 사용자 지적 10-30: 제거한 프로젝트를 다시 불러 '접근 권한' 오류가 뜨지 않고 바로 도시로 간다.
+// 11-04 사용자 결정: 혼자 쓰는 프로젝트면 '프로젝트 삭제'만 보인다(버튼 이름 '프로젝트 제거' → '프로젝트 삭제').
 it('혼자 쓰는 프로젝트를 제거하면 바로 나의 도시로 간다', async () => {
   const user = userEvent.setup()
   const project = await projectsApi.create({ name: '혼자 프로젝트' })
@@ -193,7 +194,10 @@ it('혼자 쓰는 프로젝트를 제거하면 바로 나의 도시로 간다', 
     await screen.findByLabelText(/프로젝트 이름 입력/),
     '혼자 프로젝트',
   )
-  await user.click(screen.getByRole('button', { name: '프로젝트 제거' }))
+  expect(
+    screen.queryByRole('button', { name: '위임하고 나가기' }),
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '프로젝트 삭제' }))
   expect(await screen.findByText('나의 도시')).toBeInTheDocument()
   expect(screen.queryByText(/접근 권한/)).not.toBeInTheDocument()
 })
@@ -213,7 +217,7 @@ it('팀원 목록을 못 불러오면 프로젝트 삭제 폼을 보이지 않�
   ).toBeInTheDocument()
   expect(screen.queryByLabelText(/프로젝트 이름 입력/)).not.toBeInTheDocument()
   expect(
-    screen.queryByRole('button', { name: '프로젝트 제거' }),
+    screen.queryByRole('button', { name: '프로젝트 삭제' }),
   ).not.toBeInTheDocument()
   vi.restoreAllMocks()
 })
@@ -418,20 +422,19 @@ it('초대 목록 조회가 실패해도 오류와 방금 보낸 초대 결과�
   ).toBeInTheDocument()
 })
 
-// PR #72 5차 조사 FIFTH-AMP-01: 열린 작업이 있는 팀원은 넘겨받을 동료를 골라야 나갈 수 있다(서버 409 active_tasks_exist).
-it('열린 작업이 있는 팀원은 넘겨받을 동료를 골라 프로젝트를 나간다', async () => {
-  const user = userEvent.setup()
-  const { name } = await projectsApi.get('101')
-  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-  const leave = vi.spyOn(membersApi, 'leave')
+function renderRemoveView(isLeader: boolean, projectId = '101') {
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/projects/101']}>
+      <MemoryRouter initialEntries={[`/projects/${projectId}`]}>
         <Routes>
           <Route
             path="/projects/:id"
             element={
-              <TeamPanel projectId="101" isLeader={false} view="remove" />
+              <TeamPanel
+                projectId={projectId}
+                isLeader={isLeader}
+                view="remove"
+              />
             }
           />
           <Route path="/" element={<p>나의 도시</p>} />
@@ -439,19 +442,220 @@ it('열린 작업이 있는 팀원은 넘겨받을 동료를 골라 프로젝트
       </MemoryRouter>
     </QueryClientProvider>,
   )
-  const section = await screen.findByRole('region', { name: '넘길 작업' })
-  expect(within(section).getByText(/TASK-002/)).toBeInTheDocument()
+}
+
+// 11-04 사용자 결정(S15P31A108-282): 팀원은 열린 작업이 있어도 경고만 보고 나간다. 고르지 않으면 담당자를 비운다.
+// (이전: PR #72 5차 조사 FIFTH-AMP-01, 넘겨받을 동료를 골라야 나갈 수 있었다.)
+it('열린 작업이 있는 팀원은 경고를 보고, 넘겨받을 사람을 고르지 않으면 담당자를 비우고 나간다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  const leave = vi.spyOn(membersApi, 'leave')
+  renderRemoveView(false)
+  expect(
+    await screen.findByText('내가 맡은 열린 작업이 1개 있어요'),
+  ).toBeInTheDocument()
+  expect(screen.getByLabelText(/넘겨받을 사람 선택/)).toHaveDisplayValue(
+    '고르지 않음 · 담당자 비우기',
+  )
+  await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(await screen.findByText('나의 도시')).toBeInTheDocument()
+  expect(leave).toHaveBeenCalledWith('101', {
+    reassign_to_member_id: undefined,
+  })
+})
+
+it('팀원이 넘겨받을 사람을 고르면 열린 작업을 그 사람에게 넘기고 나간다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  const leave = vi.spyOn(membersApi, 'leave')
+  renderRemoveView(false)
+  await user.selectOptions(
+    await screen.findByLabelText(/넘겨받을 사람 선택/),
+    '이팀장 (팀장)',
+  )
+  await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(await screen.findByText('나의 도시')).toBeInTheDocument()
+  expect(leave).toHaveBeenCalledWith('101', { reassign_to_member_id: '21' })
+})
+
+it('나가기가 409로 막히면 이유를 보이고 역할과 팀원 목록을 다시 불러온다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  const invalidate = vi.spyOn(client, 'invalidateQueries')
+  // 그사이 팀장이 되었는데 창은 아직 팀원 나가기 모양이다. 서버는 409 leader_transfer_required로 막는다.
+  renderRemoveView(false)
+  // 열린 작업을 알게 되면 폼을 새로 그리므로 경고가 보인 뒤에 입력한다.
+  await screen.findByText('내가 맡은 열린 작업이 1개 있어요')
   await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
   await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
   expect(
-    await screen.findByText('작업을 넘겨받을 동료를 골라 주세요.'),
+    await screen.findByText('인간 팀장을 먼저 위임해 주세요.'),
+  ).toBeInTheDocument()
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects', '101'] })
+  expect(screen.queryByText('나의 도시')).not.toBeInTheDocument()
+})
+
+// 11-04 사용자 결정: 팀장의 나가기 창은 '위임하고 나가기'와 '프로젝트 삭제' 두 길이다(MEM-A10·PRJ-A05).
+it('팀장은 넘길 팀원을 골라야 위임하고 나가고, 위임과 나가기를 한 번에 요청한다', async () => {
+  const user = userEvent.setup()
+  const leave = vi.spyOn(membersApi, 'leave')
+  renderRemoveView(true)
+  const handoff = await screen.findByRole('region', {
+    name: '위임하고 나가기',
+  })
+  expect(
+    await within(handoff).findByText('내가 맡은 열린 작업이 1개 있어요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '프로젝트 삭제' }),
+  ).toBeInTheDocument()
+  await user.click(
+    within(handoff).getByRole('button', { name: '위임하고 나가기' }),
+  )
+  expect(
+    await within(handoff).findByText('팀장을 넘겨받을 팀원을 골라 주세요.'),
   ).toBeInTheDocument()
   expect(leave).not.toHaveBeenCalled()
   await user.selectOptions(
-    screen.getByLabelText(/작업을 넘겨받을 동료/),
-    '이팀장',
+    within(handoff).getByLabelText(/팀장을 넘겨받을 팀원/),
+    '김동료',
   )
-  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  await user.click(
+    within(handoff).getByRole('button', { name: '위임하고 나가기' }),
+  )
   expect(await screen.findByText('나의 도시')).toBeInTheDocument()
-  expect(leave.mock.calls[0][1]?.reassign_to_member_id).toBeTruthy()
+  expect(leave).toHaveBeenCalledWith('101', {
+    transfer_leader_to_member_id: '22',
+    reassign_to_member_id: undefined,
+  })
+})
+
+// PR #170: 다른 창에서 이미 위임한 뒤 위임하고 나가기를 누르면 서버가 403 forbidden을 준다. 창이 팀장 모양으로
+// 남으면 같은 오류만 반복되므로 역할과 팀원 목록을 다시 불러온다.
+it('이미 위임해 위임하고 나가기가 403으로 막히면 이유를 보이고 역할과 팀원 목록을 다시 불러온다', async () => {
+  const user = userEvent.setup()
+  const invalidate = vi.spyOn(client, 'invalidateQueries')
+  vi.spyOn(membersApi, 'leave').mockRejectedValueOnce(
+    new AxiosError('forbidden', '403', undefined, undefined, {
+      status: 403,
+      statusText: 'Forbidden',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'forbidden', message: 'forbidden' } },
+    }),
+  )
+  renderRemoveView(true)
+  const handoff = await screen.findByRole('region', {
+    name: '위임하고 나가기',
+  })
+  await within(handoff).findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.selectOptions(
+    within(handoff).getByLabelText(/팀장을 넘겨받을 팀원/),
+    '김동료',
+  )
+  await user.click(
+    within(handoff).getByRole('button', { name: '위임하고 나가기' }),
+  )
+  expect(
+    await screen.findByText('이 작업의 권한이 없습니다.'),
+  ).toBeInTheDocument()
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects', '101'] })
+  expect(screen.queryByText('나의 도시')).not.toBeInTheDocument()
+})
+
+it('팀장은 팀원이 있어도 프로젝트 이름을 입력하면 삭제하고 남은 팀원도 못 쓴다고 알린다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  const remove = vi.spyOn(projectsApi, 'remove')
+  renderRemoveView(true)
+  const removal = await screen.findByRole('region', { name: '프로젝트 삭제' })
+  expect(
+    within(removal).getByText(/팀원 3명도 이 프로젝트를 더 쓸 수 없어요/),
+  ).toBeInTheDocument()
+  await user.type(within(removal).getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(
+    within(removal).getByRole('button', { name: '프로젝트 삭제' }),
+  )
+  expect(await screen.findByText('나의 도시')).toBeInTheDocument()
+  expect(remove).toHaveBeenCalledWith('101', { confirm_name: name })
+})
+
+it('추방할 때 넘겨받을 동료를 고르지 않으면 담당자만 비우고 제외한다', async () => {
+  const user = userEvent.setup()
+  const remove = vi.spyOn(membersApi, 'remove')
+  renderTeam()
+  await screen.findByText('김동료')
+  await user.click(screen.getByRole('button', { name: '김동료 더보기' }))
+  await user.click(await screen.findByRole('menuitem', { name: '추방' }))
+  expect(
+    await screen.findByText('김동료님이 맡은 열린 작업 1개'),
+  ).toBeInTheDocument()
+  expect(screen.getByLabelText(/작업을 넘겨받을 동료 선택/)).toHaveDisplayValue(
+    '고르지 않음 · 담당자 비우기',
+  )
+  await user.click(screen.getByRole('button', { name: '추방' }))
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledWith('101', '22', {
+      reassign_to_member_id: undefined,
+    }),
+  )
+})
+
+// MEM-A09·A10: 담당자를 넘기거나 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 전체가 되돌아간다. 다시 누르면 된다.
+const RETRY_MESSAGE = '작업 상태가 방금 바뀌었어요. 다시 시도해 주세요.'
+const revisionConflict = () =>
+  new AxiosError('conflict', '409', undefined, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+    data: { error: { code: 'revision_conflict', message: 'conflict' } },
+  })
+
+it('팀원 나가기가 작업 상태 변경으로 409면 다시 시도하라고 알린다', async () => {
+  const user = userEvent.setup()
+  const { name } = await projectsApi.get('101')
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  vi.spyOn(membersApi, 'leave').mockRejectedValueOnce(revisionConflict())
+  renderRemoveView(false)
+  await screen.findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.type(screen.getByLabelText(/프로젝트 이름 입력/), name)
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(await screen.findByText(RETRY_MESSAGE)).toBeInTheDocument()
+  expect(screen.queryByText('나의 도시')).not.toBeInTheDocument()
+})
+
+it('위임하고 나가기가 작업 상태 변경으로 409면 다시 시도하라고 알린다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(membersApi, 'leave').mockRejectedValueOnce(revisionConflict())
+  renderRemoveView(true)
+  const handoff = await screen.findByRole('region', {
+    name: '위임하고 나가기',
+  })
+  await within(handoff).findByText('내가 맡은 열린 작업이 1개 있어요')
+  await user.selectOptions(
+    within(handoff).getByLabelText(/팀장을 넘겨받을 팀원/),
+    '김동료',
+  )
+  await user.click(
+    within(handoff).getByRole('button', { name: '위임하고 나가기' }),
+  )
+  expect(await within(handoff).findByText(RETRY_MESSAGE)).toBeInTheDocument()
+})
+
+it('추방이 작업 상태 변경으로 409면 다시 시도하라고 알리고 창을 닫지 않는다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(membersApi, 'remove').mockRejectedValueOnce(revisionConflict())
+  renderTeam()
+  await screen.findByText('김동료')
+  await user.click(screen.getByRole('button', { name: '김동료 더보기' }))
+  await user.click(await screen.findByRole('menuitem', { name: '추방' }))
+  await screen.findByText('김동료님이 맡은 열린 작업 1개')
+  await user.click(screen.getByRole('button', { name: '추방' }))
+  expect(await screen.findByText(RETRY_MESSAGE)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '추방' })).toBeEnabled()
 })

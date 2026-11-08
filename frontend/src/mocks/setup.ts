@@ -113,11 +113,13 @@ async function dispatch(
       ]),
     )
     const query = new URLSearchParams(url.search)
+    // 배열은 실제 요청처럼 같은 이름을 반복한다(TSK-A02 status=A&status=B). 라우트는 getAll로 읽는다.
     if (config.params && typeof config.params === 'object')
       Object.entries(config.params as Record<string, unknown>).forEach(
         ([key, value]) => {
-          if (value !== undefined && value !== null)
-            query.set(key, String(value))
+          if (value === undefined || value === null) return
+          query.delete(key)
+          for (const item of [value].flat()) query.append(key, String(item))
         },
       )
     const input = parseInput(config)

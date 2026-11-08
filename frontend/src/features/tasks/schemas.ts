@@ -20,6 +20,7 @@ export type CreateInput = z.infer<typeof createInputSchema>
 export const createResponseSchema = common.taskDetailSchema
 export type CreateResponse = z.infer<typeof createResponseSchema>
 
+// TSK-A02(11-04 사용자 결정): status는 여러 값을 받고(같은 이름 반복), unassigned=true면 담당자 없는 작업만.
 export const listQuerySchema = z.object({
   status: z
     .enum([
@@ -30,7 +31,9 @@ export const listQuerySchema = z.object({
       'COMPLETED',
       'CANCELLED',
     ])
+    .array()
     .optional(),
+  unassigned: z.boolean().optional(),
   validation_status: z
     .enum([
       'NOT_RUN',

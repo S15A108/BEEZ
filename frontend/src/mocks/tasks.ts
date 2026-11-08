@@ -23,8 +23,12 @@ import {
 import type { MockContext, MockReply } from './helpers'
 import { copy, nextId, now } from './state'
 
+// 담당자 없는(미배정) 작업은 누가 맡을 때까지 아무도 계획 수정·검증·시작·재개하지 못한다(11-04 사용자 결정).
+const isAssignee = (context: MockContext, task: TaskDetail) =>
+  !!task.assignee_member_id && task.assignee_member_id === context.member?.id
+
 function taskOwner(context: MockContext, task: TaskDetail): void {
-  if (task.assignee_member_id !== context.member?.id)
+  if (!isAssignee(context, task))
     fail(403, 'forbidden', '현재 작업 담당자만 진행할 수 있어요.')
 }
 
@@ -332,12 +336,22 @@ export function taskRoutes(
       activity(context, 'TASK_CREATED', { task_id: taskId })
       return { status: 201, data: next }
     }
-    case 'TSK-A02':
+    case 'TSK-A02': {
+      // 11-04 사용자 결정: status는 여러 번 주면 그중 하나, unassigned=true면 담당자 없는 작업만. 둘 다 AND다.
+      const statuses = query.getAll('status')
+      const unassigned = query.get('unassigned') === 'true'
+      if (unassigned && query.get('assignee_member_id'))
+        fail(
+          400,
+          'validation_failed',
+          'unassigned와 assignee_member_id는 함께 쓸 수 없어요.',
+        )
       return {
         data: page(
           project.tasks.filter(
             (item) =>
-              (!query.get('status') || item.status === query.get('status')) &&
+              (!statuses.length || statuses.includes(item.status)) &&
+              (!unassigned || !item.assignee_member_id) &&
               (!query.get('assignee_member_id') ||
                 item.assignee_member_id === query.get('assignee_member_id')) &&
               // 서버처럼 validation_status도 페이지를 자르기 전에 건다(LA-TC-05).
@@ -347,6 +361,7 @@ export function taskRoutes(
           query,
         ),
       }
+    }
     case 'TSK-A03':
       return { data: task! }
     case 'TSK-A04': {
@@ -403,13 +418,23 @@ export function taskRoutes(
         ),
       }
     case 'TSK-A06': {
-      if (context.member?.role !== 'LEADER')
-        fail(403, 'forbidden', '인간 팀장이 담당자를 지정할 수 있어요.')
+      // 잠금 번호를 먼저 본다. 같은 미배정 작업을 두 사람이 맡으면 늦은 쪽은 403이 아니라 409 revision_conflict다(11-04).
       expectValue(
         task!.lock_version,
         body.expected_lock_version,
         'revision_conflict',
       )
+      // 예외: 팀원은 담당자 없는 작업을 자기에게만 맡길 수 있다(11-04 사용자 결정).
+      if (
+        context.member?.role !== 'LEADER' &&
+        (task!.assignee_member_id ||
+          body.assignee_member_id !== context.member?.id)
+      )
+        fail(
+          403,
+          'forbidden',
+          '팀원은 담당자 없는 작업을 자기에게만 맡길 수 있어요.',
+        )
       if (['COMPLETED', 'CANCELLED'].includes(task!.status))
         fail(
           400,
@@ -473,7 +498,7 @@ export function taskRoutes(
       const input = taskStateInputSchema.parse(body)
       // 서버 TaskStateService: 담당자만 보고한다. 예외로 사람 팀장은 보고가 끊긴(IN_PROGRESS이고 30분 넘게 보고 없음)
       // 남의 작업을 취소할 수 있다. 이미 취소된 작업은 그대로 돌려준다(LA-TC-08).
-      if (task!.assignee_member_id !== context.member?.id) {
+      if (!isAssignee(context, task!)) {
         if (input.event !== 'CANCEL' || context.member?.role !== 'LEADER')
           taskOwner(context, task!)
         else if (task!.status === 'CANCELLED') return { data: task! }
@@ -659,10 +684,13 @@ export function taskRoutes(
     case 'BEE-A02':
       return {
         data: {
+          // 예시 추천은 지금 담당자를 그대로 보여 줄 뿐이라, 담당자 없는 작업은 추천하지 않는다.
           suggestions: project.tasks
             .filter(
               (item) =>
-                Array.isArray(body.task_ids) && body.task_ids.includes(item.id),
+                !!item.assignee_member_id &&
+                Array.isArray(body.task_ids) &&
+                body.task_ids.includes(item.id),
             )
             .map((item) => ({
               task_id: item.id,

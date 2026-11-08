@@ -394,6 +394,18 @@ PostgreSQL 16.15 + pgvector에서 실행한 검증 결과 (2026-10-22).
 
 `meeting_entry`에는 `UNIQUE (id, meeting_id)`를 추가해 복합 FK의 대상으로 쓴다.
 
+### V40 변경 제안의 회의 출처 (S15P31A108-297)
+
+회의 끝내기(MTG-A13)가 만든 변경 제안이 어느 회의에서 왔는지 `change_proposal.meeting_id`로 남긴다. 공개 CHG-A01은 이 값을 받지 않는다. V38·V39는 다른 작업이 쓰고 있어 건너뛰고 V40으로 추가한다.
+
+| 열·제약 | 설명 |
+| --- | --- |
+| `meeting_id` (NULL 허용) | 회의 끝내기가 만든 제안만 채운다. 스냅샷 해시·멱등 지문에는 들어가지 않는다 |
+| `(meeting_id, project_id)` → `meeting (id, project_id)` | 회의와 프로젝트 소속을 함께 묶는다 |
+| UNIQUE `(meeting_id)` WHERE `meeting_id IS NOT NULL AND status <> 'WITHDRAWN'` | 회의당 거두지 않은 제안은 1건. 거두면 같은 회의로 새 제안을 만들 수 있다 |
+
+`meeting.change_proposal_id`(V2)는 회의를 끝낼 때 만든 제안을 가리키도록 같은 트랜잭션에서 채운다.
+
 ### V18 변경 영향 결과·발행 후 분석 접수 (#197)
 
 원격 dev에 V17__document_review_contract.sql이 추가되어 번호 충돌을 피하기 위해 `V18__change_impact_results.sql`로 추가한다. 두 테이블은 서로 다른 분석 생명주기다.

@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 
-function Harness() {
-  const [mode, setMode] = useState<TourMode>(null)
+function Harness({ initial = null }: { initial?: TourMode }) {
+  const [mode, setMode] = useState<TourMode>(initial)
   return (
     <>
       {['office', 'card', 'hotbar', 'todo', 'top', 'bibi'].map((target) => (
@@ -17,7 +18,29 @@ function Harness() {
   )
 }
 
-beforeEach(() => localStorage.clear())
+beforeEach(() => {
+  localStorage.clear()
+  useWorkspaceStore.getState().openPane(null)
+})
+
+// 설정 링크(?settings=team)로 처음 들어오면 설정 창과 환영 창이 함께 열려, 모달 둘이 서로를 화면 읽기 프로그램에서 숨겼다.
+it('다른 창이 열려 있으면 환영 창을 미루고, 창을 닫은 뒤 보여 주며 봤다고 남기지 않는다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.getState().openPane('settings', 'team')
+  render(<Harness initial="welcome" />)
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+  // 열린 창을 닫는 Esc가 미뤄 둔 환영 창까지 없애면 안 된다.
+  await user.keyboard('{Escape}')
+  act(() => useWorkspaceStore.getState().openPane(null))
+
+  expect(
+    await screen.findByRole('dialog', {
+      name: 'BEEZ 사무실에 오신 걸 환영해요',
+    }),
+  ).toBeInTheDocument()
+  expect(localStorage.getItem('beez.tour.11')).toBeNull()
+})
 
 it('? 키로 화면 안내를 열고 처음부터 둘러보기 6단계를 마치면 봤다고 남긴다', async () => {
   const user = userEvent.setup()

@@ -1,6 +1,5 @@
 package com.beez.backend.common.access;
 
-import com.beez.backend.common.api.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -11,6 +10,7 @@ import org.springframework.http.HttpStatus;
  * 404 는 사유와 관계없이 같은 code·message 로 응답하고, 실제 사유(reason)는 서버 로그에만 남긴다.
  * 403 은 code {@code forbidden} 하나에 사용자가 알아야 할 사유를 메시지로 담는다 — 같은 프로젝트 멤버에게만 가는 응답이라 숨기지 않는다.
  * 매핑이 바뀌면 이 파일만 고친다.
+ * 돌려주는 예외는 {@link AccessDeniedApiException} 이다 — 응답은 ApiException 과 같고, MCP 감사 기록이 거부 사유 종류를 읽는다 (-177).
  */
 public final class AccessErrors {
 
@@ -28,28 +28,28 @@ public final class AccessErrors {
     }
 
     /** 401. 세션 없음·만료, 에이전트 토큰으로 /api/** 호출. */
-    public static ApiException unauthenticated() {
-        return new ApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", UNAUTHENTICATED_MESSAGE);
+    public static AccessDeniedApiException unauthenticated() {
+        return new AccessDeniedApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", UNAUTHENTICATED_MESSAGE, null);
     }
 
     /** 401. 에이전트 호출인데 토큰 정보가 없음. */
-    public static ApiException agentUnauthenticated() {
-        return new ApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", AGENT_UNAUTHENTICATED_MESSAGE);
+    public static AccessDeniedApiException agentUnauthenticated() {
+        return new AccessDeniedApiException(HttpStatus.UNAUTHORIZED, "unauthenticated", AGENT_UNAUTHENTICATED_MESSAGE, null);
     }
 
     /** 401. 폐기됐거나 호출 계정의 것이 아닌 에이전트 토큰. reason 은 로그에만. */
-    public static ApiException tokenRevoked(String reason) {
+    public static AccessDeniedApiException tokenRevoked(String reason) {
         log.info("access denied status=401 reason={}", logReason(reason));
-        return new ApiException(HttpStatus.UNAUTHORIZED, "token_revoked", AGENT_UNAUTHENTICATED_MESSAGE);
+        return new AccessDeniedApiException(HttpStatus.UNAUTHORIZED, "token_revoked", AGENT_UNAUTHENTICATED_MESSAGE, reason);
     }
 
     /**
      * 404. 존재를 숨겨야 하는 모든 거부. reason 예: project_missing, not_member, cross_project, private_record.
      * 객체 소속 확인 예: {@code repo.findByIdAndProjectId(id, projectId).orElseThrow(() -> AccessErrors.notFound("cross_project"))}
      */
-    public static ApiException notFound(String reason) {
+    public static AccessDeniedApiException notFound(String reason) {
         log.info("access denied status=404 reason={}", logReason(reason));
-        return new ApiException(HttpStatus.NOT_FOUND, "not_found", NOT_FOUND_MESSAGE);
+        return new AccessDeniedApiException(HttpStatus.NOT_FOUND, "not_found", NOT_FOUND_MESSAGE, reason);
     }
 
     /**
@@ -58,9 +58,9 @@ public final class AccessErrors {
      * @param reason  로그용 사유 (예: "role_required_leader project=3 account=7")
      * @param message 응답 메시지 — 사용자가 알아야 할 사유 (예: "팀장만 할 수 있습니다")
      */
-    public static ApiException forbidden(String reason, String message) {
+    public static AccessDeniedApiException forbidden(String reason, String message) {
         log.info("access denied status=403 reason={}", logReason(reason));
-        return new ApiException(HttpStatus.FORBIDDEN, "forbidden", message);
+        return new AccessDeniedApiException(HttpStatus.FORBIDDEN, "forbidden", message, reason);
     }
 
     private static String logReason(String reason) {
