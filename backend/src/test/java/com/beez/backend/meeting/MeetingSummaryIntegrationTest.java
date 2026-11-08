@@ -741,4 +741,50 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
         entries.forEach(e -> ids.add(e.get("id")));
         assertThat(ids).doesNotContain("" + summaryEntry);
     }
+
+    // ---- S11 새로 고쳐도 이어지게: SUMMARY 기록의 summary_id 와 최신 정리 조회(MTG-A15) ----
+    HttpResponse<String> latest(Long who) { return api.get(base(), who); }
+
+    @Test void theSummaryEntryCarriesTheSummaryIdSoTheLatestSummaryCanBeFoundAgainAfterAReload() throws Exception {
+        var made = body(summarize(leader, e2, "k-id"));
+        String summaryId = made.path("id").asString();
+        // 기록 목록(MTG-A10)의 SUMMARY 기록에 정리 ID 가 실린다. 사람 기록에는 없다.
+        var listed = body(api.get("/api/projects/" + project + "/meetings/" + meeting + "/entries", leader)).path("items");
+        boolean found = false;
+        for (JsonNode entry : listed) {
+            if ("SUMMARY".equals(entry.path("kind").asString())) {
+                found = true;
+                assertThat(entry.path("summary_id").asString()).isEqualTo(summaryId);
+                assertThat(entry.path("through_entry_id").asString()).isEqualTo("" + e2);
+            } else {
+                assertThat(entry.has("summary_id")).as("사람 기록에는 summary_id 가 없다").isFalse();
+            }
+        }
+        assertThat(found).isTrue();
+        // 응답의 entry 에도 같은 값이 있다
+        assertThat(made.path("entry").path("summary_id").asString()).isEqualTo(summaryId);
+    }
+
+    @Test void latestSummaryReturnsTheStructuredNewestSummaryToAnyProjectMemberAndIsNotFoundBeforeTheFirst() throws Exception {
+        expect(latest(leader), 404, "not_found");
+        var first = body(summarize(leader, e2, "k-l1"));
+        var read = latest(member);
+        expect(read, 200, null);
+        assertThat(body(read).path("id").asString()).isEqualTo(first.path("id").asString());
+        assertThat(body(read).path("document_changes").size()).isEqualTo(1);
+        assertThat(body(read).path("decisions").get(0).path("text").asString()).isEqualTo("초대 만료는 7일로 통일");
+        // 수정 요청으로 새 정리가 생기면 그것이 최신이다. 이전 정리는 previous_summary_id 로 이어진다
+        var revised = body(revise(leader, Long.parseLong(first.path("id").asString()), "14일로 정했어요.", "k-l2"));
+        var newest = body(latest(leader));
+        assertThat(newest.path("id").asString()).isEqualTo(revised.path("id").asString());
+        assertThat(newest.path("previous_summary_id").asString()).isEqualTo(first.path("id").asString());
+        assertThat(newest.path("entry").path("summary_id").asString()).isEqualTo(revised.path("id").asString());
+    }
+
+    @Test void latestSummaryIsHiddenFromNonMembersAndReadableAfterTheMeetingIsClosed() throws Exception {
+        summarize(leader, e2, "k-l3");
+        expect(latest(outsider), 404, "not_found");
+        jdbc.update("UPDATE meeting SET status='CLOSED', closed_at=now(), closed_by=? WHERE id=?", leader, meeting);
+        expect(latest(member), 200, null);
+    }
 }

@@ -25,7 +25,7 @@ public class MeetingSummaryRepository {
     }
 
     /** SUMMARY 기록 응답에 싣는 값 */
-    public record EntrySummaryMeta(long entryId, long throughEntryId, String generation) {
+    public record EntrySummaryMeta(long entryId, long summaryId, long throughEntryId, String generation) {
     }
 
     private static final String COLUMNS = "id, meeting_id, project_id, entry_id, through_entry_id, previous_summary_id,"
@@ -60,16 +60,16 @@ public class MeetingSummaryRepository {
                 .param("id", summaryId).param("m", meetingId).query(MeetingSummaryRepository::map).optional();
     }
 
-    /** SUMMARY 기록마다 정리에 쓴 마지막 기록과 생성 근거 */
+    /** SUMMARY 기록마다 정리 ID, 정리에 쓴 마지막 기록과 생성 근거 */
     public Map<Long, EntrySummaryMeta> metaByEntry(Collection<Long> entryIds) {
         Map<Long, EntrySummaryMeta> out = new HashMap<>();
         if (entryIds.isEmpty()) {
             return out;
         }
-        jdbc.sql("select entry_id, through_entry_id, generation::text as generation from meeting_summary where entry_id in (:ids)")
+        jdbc.sql("select id, entry_id, through_entry_id, generation::text as generation from meeting_summary where entry_id in (:ids)")
                 .param("ids", entryIds)
                 .query((rs, n) -> out.put(rs.getLong("entry_id"), new EntrySummaryMeta(rs.getLong("entry_id"),
-                        rs.getLong("through_entry_id"), rs.getString("generation")))).list();
+                        rs.getLong("id"), rs.getLong("through_entry_id"), rs.getString("generation")))).list();
         return out;
     }
 

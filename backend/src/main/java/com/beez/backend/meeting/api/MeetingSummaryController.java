@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,10 +20,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * MTG-A11 비비 회의 정리, MTG-A12 회의 정리 수정 요청 (S15P31A108-235). 팀장이면서 회의 참여자만, Idempotency-Key 필수.
+ * MTG-A11 비비 회의 정리, MTG-A12 회의 정리 수정 요청 (S15P31A108-235), MTG-A15 최신 정리 조회 (S15P31A108-206). 팀장이면서 회의 참여자만, Idempotency-Key 필수.
  * 쓰기 요청은 Origin 을 먼저 보고, 본문 검증은 서비스에서 한다(@Valid 를 쓰면 본문 오류가 Origin 검사보다 먼저 400 이 된다).
  */
-@Tag(name = "meeting-summary", description = "비비 회의 정리·수정 요청 (MTG-A11·A12)")
+@Tag(name = "meeting-summary", description = "비비 회의 정리·수정 요청·최신 정리 조회 (MTG-A11·A12·A15)")
 @RestController
 @RequestMapping("/api/projects/{projectId}/meetings/{meetingId}/bee-summary")
 public class MeetingSummaryController {
@@ -33,6 +34,13 @@ public class MeetingSummaryController {
     public MeetingSummaryController(MeetingSummaryService summaries, DocumentRequestOriginVerifier origins) {
         this.summaries = summaries;
         this.origins = origins;
+    }
+
+    @Operation(summary = "회의의 최신 비비 정리 조회 (MTG-A15). 프로젝트 멤버, 정리가 없으면 404")
+    @GetMapping
+    public MeetingSummaryResponse latest(CallerContext caller, @PathVariable("projectId") Long projectId,
+                                         @PathVariable("meetingId") String meetingId) {
+        return summaries.latest(caller, projectId, meetingId);
     }
 
     @Operation(summary = "비비 회의 정리 (MTG-A11). 팀장·회의 참여자, Idempotency-Key 필수")

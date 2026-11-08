@@ -37,6 +37,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.type.TypeReference;
 
@@ -248,7 +249,7 @@ public class MeetingSummaryService {
         SummaryResult result = JSON.readValue(row.result(), SummaryResult.class);
         MeetingGeneration generation = MeetingAssembler.generation(row.generation());
         MeetingEntryResponse entry = MeetingAssembler.toResponse(meetings.findEntry(projectId, row.entryId()).orElseThrow(),
-                Ids.str(row.throughEntryId()), generation);
+                Ids.str(row.id()), Ids.str(row.throughEntryId()), generation);
         return new MeetingSummaryResponse(Ids.str(row.id()), Ids.str(row.meetingId()), entry, Ids.str(row.throughEntryId()),
                 result.conflicts(), result.decisions(), result.documentChanges(), result.actionItems(),
                 Ids.str(row.previousSummaryId()), row.feedback(), generation, row.createdAt());
@@ -276,6 +277,20 @@ public class MeetingSummaryService {
     }
 
     // ---- 확인 ----
+
+    /**
+     * MTG-A15. 회의의 최신 정리를 읽는다(구조화한 값 전부). 새로 고치거나 다른 기기·다른 팀장이 열어도 끝내기·수정 요청에 필요한
+     * summary_id 와 정리 내용을 다시 받을 수 있게 한다. 프로젝트 멤버면 읽고, 정리가 아직 없으면 404 다.
+     */
+    @Transactional(readOnly = true)
+    public MeetingSummaryResponse latest(CallerContext caller, long projectId, String meetingIdRaw) {
+        access.requireMember(caller, projectId);
+        requireBaseline(projectId);
+        long meetingId = Ids.parse(meetingIdRaw, "meeting_id");
+        meetings.findMeeting(projectId, meetingId).orElseThrow(() -> missing(projectId, meetingId));
+        return toResponse(projectId, summaries.findLatest(meetingId)
+                .orElseThrow(() -> AccessErrors.notFound("summary_missing project=" + projectId + " meeting=" + meetingId)));
+    }
 
     /** 팀장(사람)만. 팀원은 403 */
     private ProjectActor requireLeader(CallerContext caller, long projectId) {
