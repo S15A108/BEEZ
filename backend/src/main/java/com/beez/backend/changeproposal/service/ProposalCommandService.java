@@ -2,6 +2,9 @@ package com.beez.backend.changeproposal.service;
 
 import static com.beez.backend.designitem.support.DesignJson.*;
 import static com.beez.backend.changeproposal.validation.ProposalValidator.requiredId;
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
 import com.beez.backend.changeproposal.repository.ProposalRepository;
 import com.beez.backend.changeproposal.validation.ProposalValidator;
@@ -40,10 +43,12 @@ public class ProposalCommandService {
     private final DocumentOriginalWriter originals;
     private final TransactionTemplate transaction;
     private final ChangeNotifications notifications;
+    private final ActivityRecorder activities;
     public ProposalCommandService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository repository,
             ProposalValidator validator, DesignContentValidator contents, DesignCommandService idempotency, ProposalQueryService queries,
             DocumentInputValidator documents, DocumentStorage storage, PlatformTransactionManager manager,
-            ChangeNotifications notifications) {
+            ChangeNotifications notifications, ActivityRecorder activities) {
+        this.activities=activities;
         this.access=access; this.projects=projects; this.repository=repository; this.validator=validator;
         this.notifications=notifications;
         this.contents=contents; this.idempotency=idempotency; this.queries=queries; this.documentInputs=documents;
@@ -68,6 +73,110 @@ public class ProposalCommandService {
         return publish(stage, stored -> createLocked(caller, project, input, key, operation, stage, stored));
     }
 
+    /**
+     * MTG-A13 (S15P31A108-297): 회의 끝내기가 만드는 제안. 공개 CHG-A01 과 같은 검증·저장 규칙이지만 회의 출처를 채운다.
+     * 호출하는 쪽(회의 끝내기)이 자기 멱등 키를 가지므로 여기서는 Idempotency-Key 를 쓰지 않는다.
+     *
+     * <p>이미 이 회의로 만든 살아 있는 제안이 있으면(제안은 만들었는데 종료가 실패한 뒤의 재시도) 프로젝트 잠금 안에서 본다:
+     * 같은 기준·같은 문안이고 아직 검토 중이면 그 제안을 그대로 돌려주고(올려 둔 원문은 참조되지 않아 지워진다), 문안이나 기준이
+     * 달라졌거나 반려됐으면 옛 제안을 거두고 새로 만든다. 알림은 회의 쪽이 보내므로 제출 알림은 보내지 않는다.
+     */
+    public Proposal createFromMeeting(CallerContext caller, long project, long meeting, Input input) {
+        preflight(caller, project, input, false);
+        Stage stage = stage(project, input);
+        return publish(stage, stored -> createFromMeetingLocked(caller, project, meeting, input, stage, stored));
+    }
+
+    private Proposal createFromMeetingLocked(CallerContext caller, long project, long meeting, Input input, Stage stage,
+            List<Original> stored) {
+        lock(caller, project);
+        var live = repository.liveProposalForMeeting(project, meeting);
+        if (live.isPresent()) {
+            Proposal existing = queries.current(project, live.get());
+            // 재사용은 아직 검토 중이고 같은 기준 위에 같은 문서로 만든 제안에 한정한다. 기준이 바뀌었거나(requires_refresh)
+            // 반려된 제안에 회의를 묶으면 쓸 수 없는 제안으로 닫히고 담당자 알림도 잘못 나간다.
+            boolean reusable = Set.of("PROPOSED", "IN_REVIEW").contains(existing.status())
+                    && Objects.equals(existing.baseBaselineId(), input.baseBaselineId())
+                    && sameDocuments(existing, input, stage);
+            if (reusable) return existing;
+            // 이미 승인·발행 단계로 간 제안은 되돌리지 않는다(그 경우 정리의 기준 문서가 바뀌어 종료가 먼저 막힌다).
+            if (!Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(existing.status())) return existing;
+            repository.withdraw(project, live.get(), caller.accountId());
+            recordActivity(caller, project, live.get(), "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
+        }
+        Snapshot snapshot = resolve(caller, project, null, input, stage, stored);
+        long proposal = repository.create(project, caller, snapshot.input(), meeting);
+        repository.saveRevision(project, proposal, 1, caller, snapshot, hash(snapshot));
+        // 알림은 회의 쪽이 보내지만 제안의 지나온 길은 여기서 시작한다. 재사용(위의 return)은 새로 만들지 않으므로 남기지 않는다.
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_SUBMITTED", "submitted:1");
+        return queries.current(project, proposal);
+    }
+
+    /**
+     * 회의 끝내기가 종료 직전에 정리가 오래됐음을 알았을 때, 방금 만든 제안을 거둔다(최선 노력). 이미 거뒀거나 검토 단계를 넘은
+     * 제안은 건드리지 않는다. 호출하는 쪽은 실패해도 원래 오류(409 summary_outdated)를 그대로 돌려준다.
+     *
+     * <p>이 정리는 실패한 종료 트랜잭션이 끝난 뒤에 도는데, 그 사이 다른 재시도가 같은 제안을 재사용해 회의를 이미 닫았을 수 있다.
+     * 그래서 프로젝트 → 회의 순서로 잠근 뒤, 그 제안이 닫힌 회의에 연결돼 있으면 거두지 않는다.
+     */
+    @Transactional
+    public void withdrawMeetingProposal(CallerContext caller, long project, long meeting, long proposal) {
+        lock(caller, project);
+        Long linked = repository.lockMeetingLink(project, meeting);
+        if (linked != null && linked == proposal) return;
+        var current = repository.proposal(project, proposal);
+        if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
+            repository.withdraw(project, proposal, caller.accountId());
+            recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
+        }
+    }
+
+    /**
+     * 회의 끝내기가 종료 직전에(프로젝트·회의 잠금 안에서) 자기가 받은 제안이 아직 이 회의의 살아 있는 제안인지 확인한다.
+     * 다른 요청의 뒤늦은 정리가 그 사이 제안을 거뒀거나 검토에서 반려됐다면 그 제안에 회의를 묶지 않도록 막는다. 다시 시도하면
+     * 새로 만든다(반려된 제안은 재시도가 거두고 새로 만든다). 이미 승인 단계로 간 제안은 재사용 규칙처럼 그대로 받아들인다.
+     */
+    @Transactional
+    public void requireLiveMeetingProposal(long project, long meeting, long proposal) {
+        var live = repository.liveProposalForMeeting(project, meeting);
+        boolean usable = live.isPresent() && live.get() == proposal
+                && !"REJECTED".equals(repository.proposal(project, proposal).get("status"));
+        if (!usable) {
+            throw error("meeting_proposal_changed", "회의에 올린 제안이 그 사이 거두어지거나 반려됐어요. 다시 끝내 주세요.");
+        }
+    }
+
+    /**
+     * 회의가 제안 없이 닫힐 때, 앞선 시도가 이 회의로 만들어 둔 살아 있는 제안을 거둔다. 호출하는 쪽의 트랜잭션에 합류하므로
+     * 회의 종료와 함께 커밋·롤백된다. 이미 승인·발행 단계로 간 제안은 건드리지 않는다.
+     */
+    @Transactional
+    public void withdrawLiveMeetingProposal(CallerContext caller, long project, long meeting) {
+        lock(caller, project);
+        var live = repository.liveProposalForMeeting(project, meeting);
+        if (live.isEmpty()) return;
+        var current = repository.proposal(project, live.get());
+        if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
+            repository.withdraw(project, live.get(), caller.accountId());
+            recordActivity(caller, project, live.get(), "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
+        }
+    }
+
+    /** 같은 문서들이 같은 본문(해시)으로 올라가 있는가. 올려 둔 원문과 비교하므로 순서는 보지 않는다. */
+    private static boolean sameDocuments(Proposal existing, Input input, Stage stage) {
+        if (existing.documents().size() != input.documents().size()) return false;
+        var proposed = new HashMap<String, String>();
+        for (int index = 0; index < input.documents().size(); index++) {
+            Integer at = stage.byDocument().get(index);
+            if (at == null) return false;
+            proposed.put(input.documents().get(index).documentId(), textHash(stage.files().get(at).text()));
+        }
+        for (ResolvedDocument doc : existing.documents()) {
+            if (!Objects.equals(proposed.get(doc.documentId()), doc.contentHash())) return false;
+        }
+        return true;
+    }
+
     private Proposal createLocked(CallerContext caller, long project, Input input, String key, String operation,
             Stage stage, List<Original> stored) {
         lock(caller, project);
@@ -81,7 +190,7 @@ public class ProposalCommandService {
         idempotency.save(project, caller.accountId(), operation, key, input, response);
         // 멱등 재생은 위에서 반환해 여기까지 오지 않는다. 알림은 이 트랜잭션에서 저장해 제안과 함께 커밋·롤백된다.
         notifications.submitted(caller, project, proposal, 1, response.snapshotHash());
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_SUBMITTED, key change-proposal:{id}:submitted:1
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_SUBMITTED", "submitted:1");
         return response;
     }
 
@@ -113,7 +222,7 @@ public class ProposalCommandService {
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
         notifications.submitted(caller, project, proposal, revision, response.snapshotHash());
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_SUBMITTED, key change-proposal:{id}:submitted:{revision}
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_SUBMITTED", "submitted:" + revision);
         return response;
     }
 
@@ -222,7 +331,7 @@ public class ProposalCommandService {
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
         // 거두기는 알림 유형이 없다(계약 6.1). 활동만 남는다.
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_WITHDRAWN, key change-proposal:{id}:withdrawn
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
         return response;
     }
 
@@ -273,10 +382,18 @@ public class ProposalCommandService {
         // 멱등 재생·리비전 충돌은 위에서 반환·예외로 끝난다. 반려만 제안자에게 알림이 가고 검토 시작은 알림이 없다.
         if ("reject".equals(command)) {
             notifications.rejected(caller, project, proposal, id(current, "proposer_account_id"), expectedRevision);
+            recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_REJECTED", "rejected:" + expectedRevision);
+        } else if ("review".equals(command) && !"IN_REVIEW".equals(current.get("status"))) {
+            // 이미 IN_REVIEW 인 검토 시작 재요청은 no-op 성공이라 남기지 않는다(current 는 apply 이전 상태).
+            recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_REVIEW_STARTED", "review-started:" + expectedRevision);
         }
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_REVIEW_STARTED(key ...:review-started:{revision}),
-        //  CHANGE_PROPOSAL_REJECTED(key ...:rejected:{revision}). 이미 IN_REVIEW 인 검토 시작 재요청은 남기지 않는다.
         return response;
+    }
+
+    /** 계약 10 §6.2. 같은 트랜잭션에서 저장하고, 같은 키(대상·동작·리비전)는 입구가 한 건으로 합친다. */
+    private void recordActivity(CallerContext caller, long project, long proposal, String type, String keySuffix) {
+        activities.record(caller, ActivityEvent.of("change-proposal:" + proposal + ":" + keySuffix, project, type,
+                ActivityTargetType.CHANGE_PROPOSAL, proposal));
     }
 
     private static void requireDecidable(Map<String, Object> current, Set<String> allowed, String message) {

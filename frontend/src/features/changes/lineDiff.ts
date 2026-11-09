@@ -2,10 +2,39 @@
 export type DiffLine = { kind: 'same' | 'removed' | 'added'; text: string }
 export type FoldedLine = DiffLine | { kind: 'folded'; count: number }
 
-// ponytail: LCS 표가 줄 수의 곱만큼 커진다. 수천 줄 문서가 느려지면 Myers 알고리즘으로 바꾼다.
+// LCS 표는 바뀐 가운데 줄 수의 곱만큼 커진다. 앞뒤의 같은 줄은 표 없이 덜어 내고, 가운데가 이 칸 수를 넘으면 표를
+// 만들지 않고 가운데를 통째로 빠진 줄·더한 줄로 보인다. 허용 크기(1MB) 안의 긴 문서에서 메모리가 폭증했다(PR #135 리뷰).
+// ponytail: 큰 가운데는 줄을 맞추지 않는다. 큰 문서를 줄마다 맞춰야 하면 Myers 알고리즘으로 바꾼다.
+const MAX_TABLE_CELLS = 2_000_000
+
 export function lineDiff(before: string, after: string): DiffLine[] {
   const a = before.split('\n')
   const b = after.split('\n')
+  let head = 0
+  while (head < a.length && head < b.length && a[head] === b[head]) head++
+  let tail = 0
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  )
+    tail++
+  const same = (text: string): DiffLine => ({ kind: 'same', text })
+  const oldMiddle = a.slice(head, a.length - tail)
+  const newMiddle = b.slice(head, b.length - tail)
+  return [
+    ...a.slice(0, head).map(same),
+    ...middleDiff(oldMiddle, newMiddle),
+    ...a.slice(a.length - tail).map(same),
+  ]
+}
+
+function middleDiff(a: string[], b: string[]): DiffLine[] {
+  if ((a.length + 1) * (b.length + 1) > MAX_TABLE_CELLS)
+    return [
+      ...a.map((text): DiffLine => ({ kind: 'removed', text })),
+      ...b.map((text): DiffLine => ({ kind: 'added', text })),
+    ]
   const lcs = Array.from({ length: a.length + 1 }, () =>
     new Array<number>(b.length + 1).fill(0),
   )

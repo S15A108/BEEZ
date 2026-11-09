@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>그 ID 는 프로젝트 멤버 ID 라서 계정 ID 로 바꿔 넘긴다.</li>
  *   <li>행위 자체를 알리는 알림은 행위자 본인을 뺀다. {@code REVALIDATION_REQUIRED} 는 후속 조치가 필요해 본인도 받는다.</li>
  * </ul>
- * 활동 이벤트(ActivityRecorder) 호출은 S15P31A108-237 에서 같은 지점에 추가한다.
+ * 활동 이벤트(ActivityRecorder)는 이 클래스가 아니라 각 도메인 서비스가 같은 지점에서 직접 남긴다(S15P31A108-310).
  */
 @Service
 public class ChangeNotifications {

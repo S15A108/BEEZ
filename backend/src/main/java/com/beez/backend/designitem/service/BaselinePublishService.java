@@ -7,6 +7,9 @@ import static com.beez.backend.designitem.support.DesignJson.invalid;
 import static com.beez.backend.designitem.support.DesignJson.object;
 import static com.beez.backend.designitem.support.DesignJson.time;
 
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
@@ -44,13 +47,15 @@ public class BaselinePublishService {
     private final DocumentProperties properties;
     private final PostPublishAnalysisIntake intake;
     private final ChangeNotifications notifications;
+    private final ActivityRecorder activities;
 
     public BaselinePublishService(BaselineRepository baselines, PublicationOutboxRepository outbox, DesignProjectRepository projects, DesignProjectLock locks, DesignCommandService commands,
                                    DesignSnapshotService snapshots, DesignItemCommandService items,
                                    DesignContentValidator content, DocumentProperties properties,
-                                   PostPublishAnalysisIntake intake, ChangeNotifications notifications,
+                                   PostPublishAnalysisIntake intake, ChangeNotifications notifications, ActivityRecorder activities,
                                    @Value("${beez.cdc.legacy-outbox-poc-enabled:false}") boolean legacyOutboxPocEnabled) {
         this.notifications = notifications;
+        this.activities = activities;
         this.baselines = baselines;
         this.outbox = outbox;
         this.legacyOutboxPocEnabled = legacyOutboxPocEnabled;
@@ -138,7 +143,8 @@ public class BaselinePublishService {
         commands.save(project, caller.accountId(), "initial-baseline", key, command, result);
         // 멱등 재생은 위에서 반환해 여기까지 오지 않는다. 활성 팀원(팀장 본인 제외)에게 같은 트랜잭션으로 저장한다.
         notifications.baselineCreated(caller, project, baselineId);
-        // TODO(S15P31A108-237): ActivityRecorder.record BASELINE_CREATED, key baseline:{id}:created
+        activities.record(caller, ActivityEvent.of("baseline:" + baselineId + ":created", project, "BASELINE_CREATED",
+                ActivityTargetType.BASELINE, baselineId));
         return result;
     }
 

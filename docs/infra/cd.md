@@ -139,8 +139,13 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
 ```bash
 read -rsp "GMS key: " K && echo && \
   if [[ "$K" =~ ^[A-Za-z0-9._-]{20,}$ ]]; then \
-    ( umask 027; { grep -v '^GMS_KEY=' /opt/beez/.env.dev; printf 'GMS_KEY=%s\n' "$K"; } > /opt/beez/.env.dev.new ) \
-    && mv /opt/beez/.env.dev.new /opt/beez/.env.dev && echo "saved (${#K} chars)"; \
+    ( f=/opt/beez/.env.dev; umask 027
+      [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 넣지 않음"; exit 1; }
+      rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
+      grep -v '^GMS_KEY=' "$f" > "$f.new"; rc=$?
+      if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+      printf 'GMS_KEY=%s\n' "$K" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+      mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; } ) && echo "saved (${#K} chars)"; \
   else echo "형식이 예상과 다름(영문·숫자·._- 20자 이상). 넣지 않음"; fi; unset K
 ```
 
@@ -148,6 +153,13 @@ read -rsp "GMS key: " K && echo && \
   화면과 셸 기록에 남지 않습니다. Git Bash에서는 `Shift+Insert`로 붙여
   넣습니다(`Ctrl+V`는 안 먹을 수 있음).
 - `printf`는 셸 내장 명령이라 키가 프로세스 목록에 드러나지 않습니다.
+- 원본을 읽지 못하면 바꾸지 않습니다. `grep -v`는 0(남은 줄 있음)·1(남은 줄
+  없음)이 정상이고 2 이상이 읽기 오류입니다. 오류를 흘려보내면 뒤의 `printf`가
+  성공해 env 파일이 `GMS_KEY` 한 줄짜리로 바뀌고 DB 비밀번호 등을 잃습니다
+  ([cdc-connector.md](cdc-connector.md)의 `cdcenv`와 같은 방식, S15P31A108-321).
+- `.env.dev.new`는 지우고 새로 만듭니다. 이전 실행이 남긴 `.new`에 그대로 쓰면
+  umask가 적용되지 않아 그 파일의 옛 권한이 env 파일로 넘어갑니다. 바꿔
+  넣기(`mv`)에 실패해도 키가 든 `.new`를 남기지 않습니다.
 - 바꾼 값은 다음 배포 때 ai 컨테이너가 다시 만들어지면서 적용됩니다.
 
 값을 보지 않고 확인하기:
@@ -191,6 +203,11 @@ backend로 넘기는 세 경로(`snippets/beez-backend-proxy.conf`)는 경로에
 location을 고르지만 원래 경로를 넘기고, Tomcat은 `;` 뒤를 지우기 때문에
 `/api/;/../actuator/prometheus`가 backend에서 `/actuator/prometheus`가 되는
 틈을 막습니다(Spring 방화벽도 400으로 막지만 한 겹 더 둡니다).
+같은 스니펫이 클라이언트 주소·https 여부를 `X-Real-IP`·`X-Forwarded-For`·
+`X-Forwarded-Proto`로 넘기고, `X-Forwarded-Host`·`X-Forwarded-Port`는 Nginx 값으로
+덮어씁니다. backend는 이 헤더를 믿으므로(`server.forward-headers-strategy=native`,
+S15P31A108-273) 덮어쓰지 않으면 클라이언트가 보낸 Host·Port가 그대로 들어갑니다.
+스니펫을 바꾸면 배포로는 반영되지 않으니 위 설치 명령으로 서버에 넣고 reload합니다.
 관리 포트를 따로 두지 않는 건 헬스체크·Nginx·`deploy.sh`가 모두
 8080의 `/actuator/health`를 보기 때문입니다.
 
@@ -228,9 +245,11 @@ infra/deploy/deploy.sh <git SHA 40자> <환경>
   `nginx 다름`이면 대개 env의 포트를 바꾸고 Nginx를 reload하지 않은
   것이라 직전 SHA로 되돌려도 고쳐지지 않습니다. `sudo nginx -t && sudo
   systemctl reload nginx` 뒤 같은 SHA로 다시 배포합니다. `nginx 확인
-  실패`면 찍힌 원인(curl 종료 코드·HTTP 상태)을 보고 Nginx·인증서·backend
-  상태를 고친 뒤 같은 SHA로 다시 배포합니다. 문구 뜻은
-  [Nginx 반영 확인](env.md#nginx-반영-확인).
+  실패`면 어느 쪽이 실패했는지 봅니다. `backend 직접=` 쪽이 실패했으면
+  새 backend의 회귀라 직전 SHA로 되돌리는 것이 복구 방법이 될 수 있고,
+  `Nginx 경유=` 쪽만 실패했으면 Nginx·인증서를 고친 뒤 같은 SHA로 다시
+  배포합니다. 판단 표는 [운영 안내](operations.md#nginx-경유-확인이-실패했을-때),
+  문구 뜻은 [Nginx 반영 확인](env.md#nginx-반영-확인).
 - 같은 SHA로 다시 돌리면 아무것도 다시 만들지 않습니다(2026-10-29 확인).
 - **한 번에 하나만 돕니다.** `/var/www/beez/.deploy.lock`을 `flock`으로 잡고,
   다른 배포가 돌고 있으면 최대 5분 기다리고, 그래도 안 끝나면 컨테이너를
@@ -548,17 +567,20 @@ curl -s http://127.0.0.1:8081/actuator/prometheus | grep -m1 '^jvm_memory_used_b
   사람은 읽을 수 있습니다. 계정 분리는 운영 환경 결정(S15P31A108-73) 때
   다룹니다.
 - **DB 데이터는 `beez_pgdata` 볼륨에 있습니다.** `docker compose down -v`나
-  볼륨 삭제는 데이터를 지웁니다. 백업 절차는 아직 없습니다.
-- SeaweedFS는 지금 backend와 같은 키를 씁니다. bootstrap 키와 backend 전용
-  키 분리는 S15P31A108-211입니다.
-- **배포할 때마다 웹 사용자가 모두 로그아웃됩니다.** 웹 세션이 backend 메모리에
-  있어(`application.yml` `server.servlet.session`) 컨테이너가 바뀌면 사라집니다.
-  dev 머지가 곧 배포라 자주 일어납니다. 세션을 DB(JDBC)로 옮기는 건 backend
-  후속 작업입니다.
-- backend는 종료 신호를 받으면 진행 중인 요청을 최대 30초 기다립니다(Spring
-  graceful shutdown). compose의 `stop_grace_period: 30s`가 이에 맞춰 docker가
-  그 전에 강제 종료하지 않게 합니다. 그래서 진행 중 요청이 있으면 교체가 최대
-  30초 늦어질 수 있습니다.
+  볼륨 삭제는 데이터를 지웁니다. 백업·복원은
+  [운영 안내 8. 백업·복원](operations.md#8-백업복원)에 있습니다.
+- SeaweedFS 키는 bootstrap·backend·백업 셋으로 나뉘어 있습니다
+  ([S3 신원 셋](seaweedfs.md#s3-신원-셋), S15P31A108-211).
+- 웹 세션은 PostgreSQL에 있어(Spring Session JDBC, S15P31A108-242) 배포로
+  backend 컨테이너가 바뀌어도 로그인이 유지됩니다. 그 전(`af6b7ac` 이전)에는
+  세션이 backend 메모리에 있어 배포마다 모두 로그아웃됐습니다. 그 이전 SHA로
+  되돌리면 다시 그렇게 됩니다.
+- backend는 종료 신호를 받으면 진행 중인 요청을 최대 20초 기다리고(Spring
+  graceful shutdown, `spring.lifecycle.timeout-per-shutdown-phase`), 이어서
+  보내던 초대·임시 비밀번호 메일을 종료 시작부터 25초까지 기다립니다
+  (`beez.mail.shutdown-wait`, S15P31A108-334). compose의 `stop_grace_period: 30s`가
+  그 전에 docker가 강제 종료하지 않게 합니다. 그래서 진행 중 요청이나 메일이
+  있으면 교체가 최대 30초 늦어질 수 있고, 20초 넘게 걸리는 요청은 배포 때 잘립니다.
 
 ## 2026-10-29 결과
 

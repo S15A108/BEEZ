@@ -24,6 +24,12 @@ final class DocumentValues {
         };
         return new ApiException(HttpStatus.CONFLICT, code, message);
     }
+    /**
+     * 업무 상태 404 — 호출자가 멤버이고 대상 문서도 그 프로젝트 것인데 찾는 값이 없을 때만 쓴다
+     * (지정 버전 번호 없음, 승인된 적 없는 버전, 기준 미발행, 분석 행 없음). 숨길 존재가 없어 접근 거부가 아니다 —
+     * MCP 감사에는 ERROR + not_found 로 남는다 (S15P31A108-322).
+     * 문서·버전 ID 소속, 프로젝트 잠금, 멤버십 재확인 실패는 {@code AccessErrors.notFound} 로 거부한다.
+     */
     static ApiException missing() { return new ApiException(HttpStatus.NOT_FOUND, "not_found", "문서를 찾을 수 없습니다."); }
     static long number(Map<String, Object> row, String field) { return ((Number) row.get(field)).longValue(); }
     static String time(Object value) {
