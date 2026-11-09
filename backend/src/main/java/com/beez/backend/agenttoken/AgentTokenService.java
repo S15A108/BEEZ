@@ -43,6 +43,7 @@ public class AgentTokenService {
             5. 설계를 바꿔야 하면 직접 바꾸지 말고 `propose_design_change` 로 제안한다.
             6. 설계 변경이 발행되면 `get_design_changes` 로 확인하고, 계획을 고쳐 다시 검증한 뒤 `report_task_state(RESUME)` 로 이어 간다.
             7. 끝나면 결과와 계획 대비 변경을 `report_task_state(COMPLETED)` 로 보고한다.
+            작업을 넘겨받았거나 `revision_conflict` 를 받으면 `get_task` 로 `lock_version` 과 현재 계획을 다시 읽고, 그 값으로 다시 검증한 뒤 `report_task_state(RESUME)` 로 이어 간다.
             """;
 
     private final ProjectAccessChecker access;

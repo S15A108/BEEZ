@@ -425,6 +425,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MCP-13](02-mcp-tools.md#mcp-13) | `get_validation` | 전진(도구) / 변준성(조회) | — |
 | [MCP-14](02-mcp-tools.md#mcp-14) | `retry_validation` | 전진(도구) / 변준성(재시도) | 양지훈(실패 정보) |
 | [MCP-12](02-mcp-tools.md#mcp-12) | `report_task_state` | 전진(도구) / 변준성(전이·점유) | — |
+| [MCP-16](02-mcp-tools.md#mcp-16) | `get_task` | 전진(도구) / 변준성(조회, TSK-A03과 같음) | — |
 
 ### AI Internal
 
