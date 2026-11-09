@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { dashboardApi } from '@/api/services/dashboard'
-import type { Activity, AgentWork } from '@/api/contracts/common'
+import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
-import { statusLabel } from '@/lib/display'
+import { activityText, actorParticle } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ActorAvatar } from './ActorAvatar'
@@ -39,12 +39,14 @@ function groupByDay<T extends { created_at: string }>(items: T[]) {
 export function ActivityTimeline({
   projectId,
   agents,
+  members,
   memberName,
   actorName,
 }: {
   projectId: string
   // ponytail: 작업 현황 한 쪽(20개) 안의 세션만 칩이 된다. 세션이 더 많은 프로젝트가 생기면 다 받아 온다.
   agents: AgentWork[]
+  members: Member[]
   memberName: (memberId: string) => string
   actorName: (item: Activity) => string
 }) {
@@ -153,8 +155,9 @@ export function ActivityTimeline({
                           <span className="min-w-0 flex-1">
                             <strong className="font-semibold">
                               {actorName(item)}
-                            </strong>{' '}
-                            {statusLabel(item.type)}
+                            </strong>
+                            {actorParticle(item.actor_type, actorName(item))}{' '}
+                            {activityText(item, members)}
                             {item.task_id && (
                               <Button
                                 variant="link"
