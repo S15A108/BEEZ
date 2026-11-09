@@ -18,7 +18,14 @@ import { RelationGraph } from './RelationGraph'
 
 // 작업·설계 관계 · 단축 바 5번 단독 창. 왼쪽에서 작업을 고르면 그 작업 기준으로 설계 항목·검증·변경 제안 관계를 그린다.
 // 관계 API(MON-A03)는 기준 작업이나 설계 항목이 있어야 조회돼서 작업 목록에서 골라 그린다(백엔드 메모 4).
-export function RelationsView({ projectId }: { projectId: string }) {
+export function RelationsView({
+  projectId,
+  hasBaseline,
+}: {
+  projectId: string
+  /** 기준 설계가 발행됐는지. 모르면(undefined) 기준 안내를 붙이지 않는다. */
+  hasBaseline?: boolean
+}) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [search, setSearch] = useState('')
   const [picked, setPicked] = useState<string | null>(null)
@@ -166,8 +173,10 @@ export function RelationsView({ projectId }: { projectId: string }) {
               아직 그릴 관계가 없어요
             </strong>
             작업 계획을 올리면 그 작업이 쓰는 설계 항목, 계획 검증, 관련 변경
-            제안을 이어서 그려요. 기준 v1이 생기기 전에는 작업 계획을 올릴 수
-            없어요.
+            제안을 이어서 그려요.
+            {/* 기준이 이미 있으면 이 안내는 틀린 말이라 기준이 없을 때만 붙인다(S15P31A108-346). */}
+            {hasBaseline === false &&
+              ' 기준 v1이 생기기 전에는 작업 계획을 올릴 수 없어요.'}
             <Button size="sm" onClick={() => openPane('tasks')}>
               작업 계획 등록
             </Button>
