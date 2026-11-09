@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { useProjectStart } from '@/features/projects/useProjectStart'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useSession } from '@/features/auth/useSession'
+import { membersQuery } from '@/features/members/membersQuery'
 import type { DocumentVersion } from '@/api/contracts/common'
 import { DocumentReview } from './DocumentReview'
 import { reviewStage } from './reviewStage'
@@ -95,6 +96,15 @@ function Chip({ tone, children }: { tone: string; children: ReactNode }) {
       {children}
     </span>
   )
+}
+
+// 버전 이력의 상태 칩 색. 승인 = 현재 기준 후보, 초안 = 아직 쓸 수 있는 후보, 이전 버전 = 대체된 승인본,
+// 반려됨 = 채택되지 않았고 다시 쓸 수 없는 것(제안을 거뒀거나 다른 제안이 먼저 발행됨).
+const versionTone: Record<DocumentVersion['status'], string> = {
+  APPROVED: 'green',
+  DRAFT: 'orange',
+  SUPERSEDED: 'muted',
+  REJECTED: 'red',
 }
 
 type View =
@@ -692,6 +702,11 @@ const uploadFailure: Record<string, { file?: true; text: string }> = {
     file: true,
     text: '파일이 너무 커요. 1 MiB 이하 Markdown 파일만 올릴 수 있어요.',
   },
+  // 서버는 UTF-8이 아니거나 비어 있는 파일을 400으로 거절한다.
+  validation_failed: {
+    file: true,
+    text: '파일을 읽지 못했어요. 비어 있지 않은 UTF-8 Markdown(.md) 파일인지 확인해 주세요.',
+  },
   document_kind_exists: {
     text: '이 종류의 문서는 이미 있어요. 공용 문서함에서 그 칸을 눌러 열어 주세요.',
   },
@@ -1033,6 +1048,15 @@ function DocumentDetail({
   onEdit: () => void
 }) {
   const action = useProjectAction(projectId)
+  const openPane = useWorkspaceStore((state) => state.openPane)
+  const members = useQuery(membersQuery(projectId))
+  // 올린 계정 이름. 구성원에서 못 찾으면 표시하지 않는다.
+  const uploaderName = (version: DocumentVersion) =>
+    version.created_by
+      ? members.data?.items.find(
+          (item) => item.account_id === version.created_by,
+        )?.name
+      : undefined
   const [picked, setVersionNo] = useState<number>()
   const [tab, setTab] = useState<'content' | 'history'>('content')
   const [classification, setClassification] = useState(false)
@@ -1231,30 +1255,44 @@ function DocumentDetail({
                       >
                         <span className="flex flex-wrap items-center gap-2">
                           <strong>v{version.version_no}</strong>
-                          <Chip
-                            tone={
-                              version.status === 'APPROVED' ? 'green' : 'orange'
-                            }
-                          >
-                            {statusLabel(version.status)}
+                          <Chip tone={versionTone[version.status]}>
+                            {version.status === 'REJECTED'
+                              ? '반려됨'
+                              : statusLabel(version.status)}
                           </Chip>
-                          {version.id === base?.id && (
+                          {(version.is_current_baseline ??
+                            version.id === base?.id) && (
                             <Chip tone="muted">현재 기준</Chip>
                           )}
                           <span className="text-xs text-muted-foreground">
                             {version.file_name} · {stamp(version.created_at)}
+                            {uploaderName(version) &&
+                              ` · ${uploaderName(version)}`}
                           </span>
                         </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setVersionNo(version.version_no)
-                            setTab('content')
-                          }}
-                        >
-                          보기
-                        </Button>
+                        <span className="flex flex-wrap gap-2">
+                          {version.change_proposal_id && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                openPane('changes', version.change_proposal_id)
+                              }
+                            >
+                              변경 제안 보기
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setVersionNo(version.version_no)
+                              setTab('content')
+                            }}
+                          >
+                            보기
+                          </Button>
+                        </span>
                       </li>
                     ))}
                   </ul>
