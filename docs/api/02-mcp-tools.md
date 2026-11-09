@@ -1,8 +1,10 @@
 # BEEZ MCP Tools
 
-버전: 0.6 · 갱신일: 2026-10-29 · 개발 계약 초안
+버전: 0.7 · 갱신일: 2026-11-09 · 개발 계약 초안
 
 2026-10-28: 화면 수정안(v2) 요청을 반영했다(S15P31A108-218). 기준 v1 전에는 작업 계획을 받지 않는다. 기준 v1 뒤 문서 변경은 회의 결과를 포함해 모두 변경 제안 발행이라 get_design_changes 계약은 그대로다. 바뀐 부분은 '수정안 요청'으로 표시했다.
+
+2026-11-09: 작업 조회 도구 [get_task](#mcp-16)(MCP-16)를 더했다(S15P31A108-335). 작업을 넘겨받은 새 에이전트가 현재 계획과 `lock_version`을 MCP만으로 읽고 다시 검증해 RESUME한다. 기존 도구의 요청·응답은 바뀌지 않았다.
 
 Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한다. [공통 규약·권한·담당자](00-common.md)와 [동일 업무 REST 계약](01-backend-rest.md)을 참조한다.
 
@@ -32,6 +34,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 4. PASS 뒤 `report_task_state(START)`를 호출한다. 서버는 시작 직전 최신성·선행·점유를 다시 검사한다.
 5. 구현 중 필요한 공유 판단은 `write_context`, 설계 변경은 `propose_design_change`로 제출한다.
 6. 변경이 발행되면 다음 호출에서 확인하고 계획 수정·재검증 후 RESUME한다.
+   - (S15P31A108-335) 작업을 넘겨받았거나 `revision_conflict`를 받았으면 `get_task`로 현재 계획과 `lock_version`을 다시 읽고, 그 값으로 `validate_task_plan`을 다시 요청한 뒤 RESUME한다.
 7. 완료 결과·계획 대비 변경을 `report_task_state(COMPLETED)`로 보고한다.
 
 `get_validation`은 시스템 플로우 F2의 조회 도구다. `retry_validation`은 `validate_task_plan`과 나눈 별도 도구다(변준성 확정, S15P31A108-271). 접근 제어(MCP-08)·감사(MCP-09)는 모든 도구에 적용하는 공통 처리다.
@@ -51,6 +54,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - [retry_validation](#mcp-14)
 - [report_task_state](#mcp-12)
 - [check_connection](#mcp-15)
+- [get_task](#mcp-16)
 
 ---
 
@@ -1764,6 +1768,59 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 - 401·404·409는 전송 단계의 HTTP 응답이라 도구 결과가 아니다. 감사 행도 없다.
 - 호출은 다른 도구처럼 `mcp_audit_log`에 남는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mcp-16"></a>
+
+## MCP-16. 작업 조회
+
+### `get_task`
+
+작업의 현재 상태·잠금 번호·현재 계획을 읽는 조회 도구다. 아무것도 바꾸지 않는다. (S15P31A108-335) 작업을 넘겨받은 새 에이전트가 `validate_task_plan`·`report_task_state`에 넣을 `expected_lock_version`과 현재 계획을 MCP만으로 얻게 한다. 이 도구가 생기기 전에는 `revision_conflict` 문구를 읽거나 웹(TSK-A03)에서 봐야 했다.
+
+관련 요구사항: TSK-01~03, AC-11  
+담당: BE: 전진(도구) / 변준성(조회) / AI: — / FE: —  
+상태: 구현(S15P31A108-335)
+
+#### 인증
+
+`AGENT`. 토큰의 현재 멤버십·프로젝트·대상 소속을 매 호출 검사한다. REST TSK-A03과 같다. 담당자가 아니어도 같은 프로젝트 멤버면 읽는다.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `task_id` | `ID` | Y | 작업 ID |
+
+아래는 도구 인수 객체다.
+
+```json
+{
+  "task_id": "501"
+}
+```
+
+#### Response
+
+도구 성공 결과의 업무 payload. MCP 전송 봉투와 분리한다. REST TSK-A03 응답과 같은 [TaskDetail](00-common.md#schema-taskdetail)이다. 칸 정의는 그 스키마 하나로 관리하고 여기서 다시 적지 않는다. `validation`(현재 계획의 가장 최근 검증)·`delta_validation_id`·`completion_review`도 TSK-A03과 같은 조건으로 실린다. 예시는 [MCP-10 Response](#mcp-10)와 같은 모양이다.
+
+에이전트가 이어 갈 때 쓰는 칸은 `lock_version`(→ `expected_lock_version`), `current_plan_revision.id`(→ `plan_revision_id`), `current_plan_revision.revision_no`(→ 계획 수정 때 `expected_revision_no`), `current_plan_revision.plan`(현재 계획 본문)이다.
+
+#### Error
+
+| 업무 상태 | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 에이전트 토큰이 유효하지 않음 |
+| 404 | `not_found` | 작업이 없거나 다른 프로젝트 작업. 공통 거부 문구로 응답하고 감사에는 `DENIED`(`task_not_in_project`)로 남는다 |
+| 400 | `validation_failed` | `task_id` 누락·형식 오류, 모르는 인수 키 |
+
+#### 처리 규칙
+
+- 조회로 상태·검증·잠금 번호를 바꾸지 않는다.
+- 인계 뒤 순서: `get_task` → (계획을 고칠 때만 `upsert_task_plan`) → 응답의 `lock_version`과 `current_plan_revision.id`로 `validate_task_plan` → PASS면 `report_task_state(RESUME)`. 다른 도구에서 `revision_conflict`를 받았을 때도 `get_task`로 다시 읽는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

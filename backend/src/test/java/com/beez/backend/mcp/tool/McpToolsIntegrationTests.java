@@ -6,15 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.support.McpTestClient;
 import com.beez.backend.task.TaskApiSupport;
 import com.beez.backend.validation.worker.ValidationWorker;
-import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.McpHttpClientTransportAuthorizationException;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -33,10 +31,10 @@ import tools.jackson.databind.ObjectMapper;
  */
 class McpToolsIntegrationTests extends IntegrationTestSupport {
 
-    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 (-179, MCP-14 retry_validation 은 -271, MCP-15 check_connection 은 -178) */
+    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 (-179, MCP-14 retry_validation 은 -271, MCP-15 check_connection 은 -178, MCP-16 get_task 는 -335) */
     private static final List<String> TOOLS = List.of("get_development_context", "get_document", "get_design_changes",
             "propose_design_change", "find_context", "read_context", "write_context", "upsert_task_plan",
-            "validate_task_plan", "get_validation", "retry_validation", "report_task_state", "check_connection");
+            "validate_task_plan", "get_validation", "retry_validation", "report_task_state", "check_connection", "get_task");
 
     @Autowired
     DataSource dataSource;
@@ -437,6 +435,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
         try {
             other.initialize();
             assertThat(error(call(other, "get_validation", Map.of("validation_id", validationId)))).containsEntry("code", "not_found");
+            // 작업 조회도 같다 — 다른 프로젝트 에이전트가 이 작업의 잠금 번호·계획을 읽지 못한다 (MCP-16, -335)
+            assertThat(error(call(other, "get_task", Map.of("task_id", taskId)))).containsEntry("code", "not_found");
             assertThat(error(call(other, "read_context", Map.of("type", "RECORD", "id", recordId)))).containsEntry("code", "not_found");
             assertThat(error(call(other, "report_task_state", Map.of("task_id", taskId, "event", "CANCEL",
                     "plan_revision_id", revisionId, "expected_lock_version", lock, "idempotency_key", "k-x"))))
@@ -459,8 +459,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 select tool, result, deny_reason, error_code, target_ids::text as targets, latency_ms
                   from mcp_audit_log where agent_token_id = :t order by id""")
                 .param("t", outsiderTokenId).query().listOfRows();
-        assertThat(denied).extracting(r -> r.get("tool")).containsExactly("get_validation", "read_context",
-                "report_task_state", "upsert_task_plan", "get_development_context");
+        assertThat(denied).extracting(r -> r.get("tool")).containsExactly("get_validation", "get_task",
+                "read_context", "report_task_state", "upsert_task_plan", "get_development_context");
         assertThat(denied).allSatisfy(r -> {
             assertThat(r.get("result")).isEqualTo("DENIED");
             assertThat(r.get("error_code")).isEqualTo("not_found");
@@ -469,7 +469,8 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
             assertThat(r.get("latency_ms")).isNotNull();
         });
         assertThat(denied.get(0).get("targets").toString()).contains("\"validation_id\"", "\"" + validationId + "\"");
-        assertThat(denied.get(4).get("deny_reason")).isEqualTo("packet_project_mismatch");
+        assertThat(denied.get(1).get("deny_reason")).isEqualTo("task_not_in_project");
+        assertThat(denied.get(5).get("deny_reason")).isEqualTo("packet_project_mismatch");
 
         // 이 프로젝트 쪽: 성공은 OK(코드 없음), 인수 오류는 거부가 아닌 ERROR
         assertThat(count("select count(*) from mcp_audit_log where project_id = " + projectId
@@ -586,28 +587,19 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     }
 
     private McpSyncClient connect(String token) {
-        var transport = HttpClientStreamableHttpTransport
-                .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))
-                .endpoint("/mcp")
-                .httpRequestCustomizer((builder, method, uri, body, context) ->
-                        builder.header("Authorization", "Bearer " + token))
-                .build();
-        return McpClient.sync(transport).requestTimeout(Duration.ofSeconds(10)).build();
+        return McpTestClient.connect(Integer.parseInt(env.getRequiredProperty("local.server.port")), token);
     }
 
     private static CallToolResult call(McpSyncClient client, String tool, Map<String, Object> args) {
-        return client.callTool(McpSchema.CallToolRequest.builder().name(tool).arguments(args).build());
+        return McpTestClient.call(client, tool, args);
     }
 
     /** 성공 결과의 payload. 실패면 오류 본문을 보이며 깨진다 */
     private JsonNode ok(CallToolResult result) {
-        assertThat(result.isError()).as("도구 실패: %s", ((McpSchema.TextContent) result.content().get(0)).text()).isFalse();
-        return json.valueToTree(result.structuredContent());
+        return McpTestClient.ok(json, result);
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> error(CallToolResult result) {
-        assertThat(result.isError()).isTrue();
-        return (Map<String, Object>) ((Map<String, Object>) result.structuredContent()).get("error");
+        return McpTestClient.error(result);
     }
 }

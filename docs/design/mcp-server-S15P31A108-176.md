@@ -171,6 +171,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | MCP-14 `retry_validation` | `RetryValidationTool` | `ValidationMcpService.retryValidation` (REST VAL-A04와 같은 `ValidationRetryService`, -161). 연결은 -271 — 별도 도구로 확정(변준성) | 변준성 |
 | MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
 | MCP-15 `check_connection` | `CheckConnectionTool` | `AgentSessionService.check` (-178, 9절) | 전진 |
+| MCP-16 `get_task` | `GetTaskTool` | `TaskQueryService.getTaskDetail` (REST TSK-A03과 같음, -335) — 인계받은 에이전트가 현재 계획·`lock_version`을 읽는 조회 | 전진 / 변준성 |
 
 - MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).
 - `get_document`는 버전을 생략하면 현재 기준 설계의 `baseline_document` 버전을 준다(새 승인으로 SUPERSEDED가 됐어도 기준이 다시 발행되기 전까지는 그 버전). 버전을 지정하면 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 주고 DRAFT·REJECTED는 `not_found`다. 문서 화면용 칸 중 `document.preview_text`(작업 중 사본)·`latest_draft`는 빼고 `approved_version`은 현재 기준 버전으로 바꾸며, 조회 이력을 `target_kind=DOCUMENT_VERSION`으로 같은 트랜잭션에 남긴다.
@@ -245,7 +246,7 @@ SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터�
 - **요청마다 트랜잭션 하나 더**: 세션 확인이 토큰 검증과 따로 돈다. 둘을 한 트랜잭션으로 묶는 것은 후속이다.
 - **SDK의 없는 세션 404 본문**: SDK는 `McpError` 예외를 통째로 직렬화해 스택 트레이스까지 내보낸다. 기록이 있는 세션을 SDK가 이미 지웠을 때(배포 재시작·유휴 정리)만 이 응답이 나간다.
 - **`last_report_at`의 뜻**: 04-task-lifecycle의 보고 끊김(30분)은 이 칸을 "마지막 상태 보고"로 읽고, AgentConnection은 "마지막 통신 시각"으로 읽는다. 지금은 통신 시각을 쓴다. -75에서 맞춘다.
-- **활동 기록의 세션**: `activity_event.agent_session_id` 채우기(`ActivityRecorder`의 TODO)와 AGT-A04 연결 안내 REST API는 후속이다.
+- **활동 기록의 세션**: `activity_event.agent_session_id`는 -333에서 채운다. 세션 필터가 확인한 연결 기록 ID를 요청 속성 → transport context → `CallerContext.agentSessionId`로 넘긴다. AGT-A04 연결 안내 REST API는 후속이다.
 
 시험: `AgentConnectionIntegrationTests`(실제 MCP 클라이언트).
 
