@@ -692,11 +692,28 @@ export function taskRoutes(
                 Array.isArray(body.task_ids) &&
                 body.task_ids.includes(item.id),
             )
-            .map((item) => ({
-              task_id: item.id,
-              member_id: item.assignee_member_id,
-              reason: '예시 추천입니다. 현재 담당자와 역할을 검토해 주세요.',
-            })),
+            .flatMap((item) => {
+              const primary =
+                project.members.find(
+                  (member) => member.id === item.assignee_member_id,
+                ) ?? project.members[0]
+              if (!primary) return []
+              return [
+                {
+                  task_id: item.id,
+                  member_id: primary.id,
+                  reason:
+                    '예시 추천입니다. 현재 담당자와 역할을 검토해 주세요.',
+                  alternatives: project.members
+                    .filter((member) => member.id !== primary.id)
+                    .slice(0, 1)
+                    .map((member) => ({
+                      member_id: member.id,
+                      reason: '예시 대안입니다. 담당 영역을 확인해 주세요.',
+                    })),
+                },
+              ]
+            }),
           generation: templateGeneration(
             '현재 담당자를 제안으로 표시했어요. 자동 배정하지 않아요.',
           ),
