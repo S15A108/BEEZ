@@ -72,6 +72,10 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
+  # 호스트 Nginx 가 넘긴 X-Forwarded-For·X-Forwarded-Proto 를 Tomcat(RemoteIpValve)이 읽는다 (Q04, S15P31A108-273).
+  # getRemoteAddr() 가 Nginx(docker 게이트웨이)가 아니라 실제 클라이언트가 되어 IP 한도(beez.auth-guard)에 쓴다.
+  # 믿는 프록시는 Tomcat 기본 내부망 목록(127/8·10/8·172.16/12·192.168/16 …)이다. backend 포트는 127.0.0.1 에만 열려 있다
+  forward-headers-strategy: native
   error:
     include-message: never
     include-stacktrace: never
@@ -180,6 +184,12 @@ beez:
     send-limit: 5               # 이메일당 send-limit-window 안 요청 수 (계정 유무와 관계없이 센다)
     send-limit-window: 1h
     global-send-limit: 100      # 서버 전체 send-limit-window 안 발송 수. SMTP 계정 한도보다 낮게
+  # 가입 인증(ACC-A11)·비밀번호 찾기(ACC-A07) 남용 대책 (Q04 결정 2026-11-09, S15P31A108-273)
+  auth-guard:
+    ip-limit: ${AUTH_IP_LIMIT:10}           # IP 하나가 ip-limit-window 안에 두 API 를 합쳐 부를 수 있는 횟수. 메모리 카운터(재시작하면 초기화)
+    ip-limit-window: 1h
+    row-retention: 7d                       # 끝난(만료·소비·닫힘) email_verification·temporary_password 행 보존 기간
+    row-cleanup-cron: "0 30 4 * * *"        # 행 정리 시각. 매일 04:30 (Asia/Seoul)
   agent:
     mcp-url: ${MCP_URL:http://localhost:8080/mcp}   # 토큰 발급 응답의 연결 URL (AGT-A01)
     max-active-tokens: ${AGENT_MAX_ACTIVE_TOKENS:5}  # 프로젝트당 한 계정의 폐기 안 된 토큰 수 (Q06)

@@ -66,6 +66,7 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `MAIL_PASSWORD` | | 비밀 | SMTP 인증 비밀번호(앱 비밀번호) | backend |
 | `MAIL_FROM` | | | 보내는 사람. 기본 `BEEZ <no-reply@beez.ai.kr>`. **SMTP 인증 계정 주소와 맞춥니다** — 다르면 제공자가 거부합니다 | backend |
 | `EMAIL_VERIFY_GLOBAL_SEND_LIMIT` | | | 기본 `100`. 서버 전체 시간당 가입 인증 메일 수. SMTP 계정의 발송 한도보다 낮게 | backend |
+| `AUTH_IP_LIMIT` | | | 기본 `10`. IP 하나의 시간당 가입 인증 코드(ACC-A11)+비밀번호 찾기(ACC-A07) 요청 수(합산, 메모리 카운터). 한 공유기(캠퍼스 등) 뒤에서 여럿이 가입하는 시연 때 올린다 (Q04, -273) | backend |
 
 - `BACKEND_HOST_PORT` 는 기본값이 없습니다. 예전 기본값 `8080` 은 서버의 Jenkins 와 겹치는데도 점검을 통과했습니다.
   값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.

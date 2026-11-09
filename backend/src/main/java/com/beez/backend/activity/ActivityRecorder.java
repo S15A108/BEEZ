@@ -38,7 +38,10 @@ public class ActivityRecorder {
         this.flusher = flusher;
     }
 
-    /** 사람·에이전트 행위. 행위 계정은 {@code caller.accountId()}(에이전트면 토큰 주인). */
+    /**
+     * 사람·에이전트 행위. 행위 계정은 {@code caller.accountId()}(에이전트면 토큰 주인),
+     * agent_session_id 는 {@code caller.agentSessionId()}(MCP 도구 호출의 연결 기록, -333).
+     */
     @Transactional(propagation = Propagation.MANDATORY)
     public void record(CallerContext caller, ActivityEvent event) {
         Objects.requireNonNull(caller, "caller");
@@ -49,8 +52,9 @@ public class ActivityRecorder {
             // 토큰이 없으면 세션(-178)을 이을 근거가 없어 에이전트 필터에서 영구히 빠진다
             throw new IllegalArgumentException("agent caller must carry agentTokenId: " + event.eventKey());
         }
-        // TODO(-178): 에이전트면 caller.agentTokenId() 의 현재 연결 세션을 agent_session_id 로. 세션 기록이 생기기 전에는 비운다(계약 4절)
-        insert(caller.kind().name(), caller.accountId(), null, event);
+        // 요청이 들어온 연결 기록(-333). 토큰의 현재 세션을 여기서 다시 찾지 않는다 — 그 사이 새 연결에 밀려나면 다른 세션이 잡힌다.
+        // 사람은 늘 null(CallerContext 가 막는다), 검증 워커가 다시 만든 에이전트 호출자도 null
+        insert(caller.kind().name(), caller.accountId(), caller.agentSessionId(), event);
     }
 
     /** 비비·시스템 행위. 행위 계정은 비운다. */
