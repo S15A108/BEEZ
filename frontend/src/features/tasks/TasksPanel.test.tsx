@@ -133,6 +133,21 @@ function show(isLeader: boolean) {
   return { ...view, client }
 }
 
+it('계획 PASS가 있어도 실제 코드 검증이나 테스트 통과로 표시하지 않는다', async () => {
+  task = { ...task, status: 'IN_PROGRESS' }
+  show(false)
+  const card = (
+    await screen.findByText('설계와 계획의 검증 결과')
+  ).closest<HTMLElement>('[data-slot="card"]')!
+  expect(within(card).getByText('계획 통과')).toBeInTheDocument()
+  expect(
+    within(card).getByText(
+      /계획 검증은 코드 품질이나 테스트 통과를 보장하지 않아요/,
+    ),
+  ).toBeInTheDocument()
+  expect(within(card).queryByText('구현 검증 완료')).not.toBeInTheDocument()
+})
+
 it('현재 담당자는 PASS에 연결된 계획·검증·잠금 번호로 시작한다', async () => {
   const state = vi.spyOn(tasksApi, 'state').mockImplementation(async () => {
     task = { ...task, status: 'IN_PROGRESS', lock_version: 8 }
