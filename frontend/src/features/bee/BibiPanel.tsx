@@ -37,6 +37,8 @@ export function BibiPanel({ projectId }: { projectId: string }) {
   const errorId = useId()
   const [scope, setScope] = useState<AskScope>('APPROVED')
   const [messages, setMessages] = useState<(Ask & { answer: Generation })[]>([])
+  // 상태가 다시 그려지기 전에 이어진 제출도 하나의 요청으로 묶는다.
+  const sending = useRef<Promise<void> | null>(null)
   const mutation = useMutation({
     mutationFn: (input: Ask) => beeApi.ask(projectId, input),
     onSuccess: (answer, input) =>
@@ -53,12 +55,21 @@ export function BibiPanel({ projectId }: { projectId: string }) {
     defaultValues: { question: '' },
   })
   // 보내면 입력칸을 바로 비우고, 실패하면 그사이 새로 쓴 글이 없을 때만 질문을 돌려준다.
-  const send = handleSubmit(({ question }) => {
+  const send = ({ question }: QuestionInput) => {
+    if (sending.current) return sending.current
     setValue('question', '')
-    return mutation.mutateAsync({ question, scope }).catch(() => {
-      if (!getValues('question')) setValue('question', question)
-    })
-  })
+    const request = mutation
+      .mutateAsync({ question, scope })
+      .then(() => undefined)
+      .catch(() => {
+        if (!getValues('question')) setValue('question', question)
+      })
+      .finally(() => {
+        sending.current = null
+      })
+    sending.current = request
+    return request
+  }
   const end = useRef<HTMLDivElement>(null)
   // 새 질문·답이 붙으면 입력줄까지 내려 마지막 대화가 보이게 한다.
   useEffect(() => {
@@ -175,7 +186,11 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         </div>
         {/* 대화가 길어져도 입력줄은 창 아래에 붙어 있다. 업무 창의 아래 여백(최대 2rem)으로 흘러내린 대화는 그림자로 가린다. */}
         <div className="sticky bottom-0 grid gap-2 border-t bg-background pt-3 shadow-[0_2rem_0_var(--background)]">
-          <form noValidate onSubmit={send} className="flex gap-2">
+          <form
+            noValidate
+            onSubmit={(event) => void handleSubmit(send)(event)}
+            className="flex gap-2"
+          >
             <Input
               aria-label="설계 질문"
               placeholder="공용 문서에 대해 물어보세요"
@@ -186,7 +201,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               {...register('question')}
             />
             <Button type="submit" className="h-10 px-4" disabled={!!pending}>
-              보내기
+              {mutation.isError ? '다시 보내기' : '보내기'}
             </Button>
           </form>
           {errors.question && (

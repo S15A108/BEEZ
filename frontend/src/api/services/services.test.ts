@@ -23,6 +23,7 @@ import {
 } from '@/api/error'
 import {
   authApi,
+  beeApi,
   changesApi,
   documentsApi,
   projectsApi,
@@ -60,6 +61,43 @@ afterEach(() => {
 })
 
 describe('명세 REST 교환', () => {
+  it('비비 질문을 멱등 키와 함께 보내고 근거가 포함된 응답을 검증한다', async () => {
+    const answer = {
+      origin: 'MODEL',
+      text: '승인된 문서의 내용입니다.',
+      sources: [
+        {
+          document_id: '201',
+          document_version_id: '301',
+          version_no: 2,
+          location: '인증 정책',
+        },
+      ],
+      unresolved: [],
+    }
+    respond(answer)
+    await expect(
+      beeApi.ask(
+        '101',
+        { question: '인증 정책은 무엇인가요?' },
+        { idempotencyKey: 'bee-question-once' },
+      ),
+    ).resolves.toEqual(answer)
+    expect(lastRequest?.method).toBe('post')
+    expect(lastRequest?.url).toBe('/projects/101/bee/questions')
+    expect(JSON.parse(String(lastRequest?.data))).toEqual({
+      question: '인증 정책은 무엇인가요?',
+    })
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBe(
+      'bee-question-once',
+    )
+
+    respond({ ...answer, sources: [{ ...answer.sources[0], version_no: '2' }] })
+    await expect(
+      beeApi.ask('101', { question: '인증 정책은 무엇인가요?' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
   it('응답을 잃은 같은 동작의 재시도는 키를 유지하고 확인된 새 동작은 새 키를 쓴다', async () => {
     const keys: string[] = []
     api.defaults.adapter = async (config) => {
