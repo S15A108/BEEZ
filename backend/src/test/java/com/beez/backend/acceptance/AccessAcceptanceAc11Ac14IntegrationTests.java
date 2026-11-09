@@ -102,7 +102,8 @@ class AccessAcceptanceAc11Ac14IntegrationTests extends IntegrationTestSupport {
 
     /**
      * 깨지면: 진행 중 작업을 넘겨받은 새 에이전트가 MCP 만으로는 이전 검증이 왜 무효인지·계획이 어느 승인 버전을 참조했는지·이전 담당자가
-     * 남긴 공유 판단과 미해결 항목을 알 수 없거나(이전 담당자의 비공개 기록이 섞이거나), 옛 PASS 로 바로 이어 가거나,
+     * 남긴 공유 판단과 미해결 항목을 알 수 없거나(이전 담당자의 비공개 기록이 섞이거나), 현재 계획과 잠금 번호를 읽어 다시 검증·RESUME 하지
+     * 못하거나(-335), 옛 PASS 로 바로 이어 가거나,
      * 이전 담당자의 에이전트가 계속 보고한다 (AC-11, 04-task-lifecycle §6 진행 중 담당자 변경 S5).
      */
     @Test
@@ -151,15 +152,28 @@ class AccessAcceptanceAc11Ac14IntegrationTests extends IntegrationTestSupport {
         assertThat(own.get("items")).extracting(n -> n.get("id").asString())
                 .containsExactlyInAnyOrder(decision, issue, privateNote);
 
-        // 4) 최신성 확인: 옛 PASS 로는 이어 가지 못한다. 이전 담당자의 에이전트는 이 작업을 더 보고하지 못한다.
-        //    잠금 번호는 DB 에서 읽는다 — MCP 에는 작업의 lock_version·계획 본문을 읽는 도구가 없다(PR 본문 발견 사항)
-        long lock = lockVersion(taskId);
+        // 4) 현재 계획 본문과 잠금 번호도 MCP 로 읽는다 (MCP-16 get_task, -335). 인계로 잠금 번호가 올라 처음 값으로는 못 쓴다
+        JsonNode task = ok(call(leaderMcp, "get_task", Map.of("task_id", String.valueOf(taskId))));
+        assertThat(task.get("status").asString()).isEqualTo("WAITING");
+        assertThat(task.get("waiting_reason").asString()).isEqualTo("REVALIDATION");
+        assertThat(task.get("current_plan_revision").get("id").asString()).isEqualTo(String.valueOf(revisionId));
+        assertThat(task.get("current_plan_revision").get("plan").get("title").asString()).isEqualTo("AC11 결제 연동");
+        long lock = task.get("lock_version").asLong();
+
+        // 5) 최신성 확인: 옛 PASS 로는 이어 가지 못한다. 이전 담당자의 에이전트는 이 작업을 더 보고하지 못한다.
+        //    잠금 번호가 맞으므로 거부 이유는 revision_conflict 가 아니라 검증이다
         assertThat(error(resume(leaderMcp, taskId, revisionId, lock, oldPass, "k-r1")))
                 .containsEntry("code", "validation_not_passed");
         assertThat(error(resume(memberMcp, taskId, revisionId, lock, oldPass, "k-r2"))).containsEntry("code", "forbidden");
 
-        // 대조군: 새 담당자 쪽에서 다시 검증해 PASS 가 나면 같은 호출로 이어 간다
-        long newPass = api.passValidation(taskId);
+        // 6) 대조군: 새 에이전트가 get_task 로 읽은 값으로 다시 검증을 요청하고(MCP-11), PASS 가 나면 같은 호출로 이어 간다
+        JsonNode revalidation = ok(call(leaderMcp, "validate_task_plan", Map.of("task_id", String.valueOf(taskId),
+                "plan_revision_id", task.get("current_plan_revision").get("id").asString(),
+                "expected_lock_version", lock, "idempotency_key", "k-v1")));
+        // 시험 설정(정책 분석 꺼짐)에서는 규칙 검사만으로 결정돼 접수 때 끝난다 — 워커를 돌리지 않아도 된다
+        JsonNode passed = ok(call(leaderMcp, "get_validation", Map.of("validation_id", revalidation.get("id").asString())));
+        assertThat(passed.get("status").asString()).as(passed.toString()).isEqualTo("PASS");
+        long newPass = passed.get("id").asLong();
         JsonNode resumed = ok(resume(leaderMcp, taskId, revisionId, lock, newPass, "k-r3"));
         assertThat(resumed.get("task").get("status").asString()).isEqualTo("IN_PROGRESS");
     }

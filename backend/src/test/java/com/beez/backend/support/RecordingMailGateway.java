@@ -4,6 +4,7 @@ import com.beez.backend.common.mail.MailDeliveryException;
 import com.beez.backend.common.mail.MailGateway;
 import com.beez.backend.common.mail.MailMessage;
 import java.util.Deque;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -27,8 +28,15 @@ public class RecordingMailGateway implements MailGateway {
     /** 주소별 실패 예약. 다른 시험의 비동기 메일이 실패를 대신 가져가지 않게 한다 (failNext 는 아무 메일이나 가져간다) */
     private final Set<String> failNextTo = ConcurrentHashMap.newKeySet();
 
+    /** 주소별로 다음 발송 도중(받기 전에) 한 번 돌릴 일. 발송하는 사이 다른 요청이 끼어드는 경쟁을 만든다 */
+    private final Map<String, Runnable> duringNextSendTo = new ConcurrentHashMap<>();
+
     @Override
     public void send(MailMessage message) {
+        Runnable during = duringNextSendTo.remove(message.to());
+        if (during != null) {
+            during.run();
+        }
         if (failNextTo.remove(message.to()) || failNext.getAndSet(false)) {
             throw new MailDeliveryException("시험용 발송 실패");
         }
@@ -38,6 +46,11 @@ public class RecordingMailGateway implements MailGateway {
     /** 다음 발송 한 번을 실패시킨다. */
     public void failNext() {
         failNext.set(true);
+    }
+
+    /** 이 주소로 가는 다음 발송 도중에 action 을 발송 스레드에서 돌린다. */
+    public void duringNextSendTo(String email, Runnable action) {
+        duringNextSendTo.put(email, action);
     }
 
     /** 이 주소로 가는 다음 발송 한 번을 실패시킨다. */
