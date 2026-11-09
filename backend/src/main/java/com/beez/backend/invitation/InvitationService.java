@@ -241,8 +241,9 @@ public class InvitationService {
      * 초대 행 잠금을 쥔 채 SMTP 를 기다리지 않는다 (-334). 예전(-220)에는 잠근 채 보내고 실패하면 트랜잭션을 되돌려 이전 링크를 살렸는데,
      * 그동안(SMTP 시간 제한, 최대 약 25초) 같은 이메일의 로그인 자동 참여와 제외·나가기가 기다렸다. 지금은
      * <ol>
-     *   <li>짧은 트랜잭션에서 검사하고 발송 한도를 센다. 아무것도 바꾸지 않는다.</li>
-     *   <li>잠금 밖에서 새 토큰으로 보낸다. 실패하면 503 이고 토큰을 바꾸지 않아 이전 링크가 그대로 산다 (한도도 돌려준다).</li>
+     *   <li>짧은 트랜잭션에서 검사만 하고(아무것도 바꾸지 않는다), 커밋한 뒤 발송 한도를 센다.</li>
+     *   <li>잠금 밖에서 새 토큰으로 보낸다. 실패하면 503 이고 토큰을 바꾸지 않아 이전 링크가 그대로 산다 (한도도 돌려준다).
+     *       보낸 뒤 토큰 교체가 DB 오류로 실패해도 이전 링크가 살고 한도를 돌려준다.</li>
      *   <li>보냈으면 다시 잠그고 아직 대기 중일 때만 토큰을 바꾼다. 그사이 수락·폐기됐으면 409 invitation_not_pending 이고
      *       나간 메일의 링크는 무효다 — 수락됐으면 받은 사람은 이미 팀원이고, 폐기됐으면 무효가 맞다.
      *       다시 보내기 둘이 겹치면 나중에 바꾼 쪽이 이긴다 — 메일함에서 가장 늦게 온 메일의 링크가 산다.</li>
@@ -250,7 +251,7 @@ public class InvitationService {
      * 보내는 사이 팀장이 바뀌어도 다시 묻지 않는다. 메일은 이미 나갔고, 토큰 교체는 권한을 넓히지 않는다.
      */
     public InvitationResponse resend(CallerContext caller, long projectId, long invitationId) {
-        record Prepared(long accountId, Instant acquiredAt, String email, String projectName, String inviterName) {
+        record Prepared(long accountId, String email, String projectName, String inviterName) {
         }
         Prepared prepared = tx.execute(status -> {
             ProjectActor actor = access.requireHumanLeader(caller, projectId);
@@ -262,16 +263,17 @@ public class InvitationService {
             requirePending(invitation);
             Project project = projects.findById(projectId).orElseThrow();
             String inviterName = accounts.findById(actor.accountId()).map(Account::getDisplayName).orElse(null);
-            Instant acquiredAt = sendLimiter.acquire(actor.accountId(), 1);   // 마지막에 센다 — 뒤에서 되돌려질 일이 없게
-            return new Prepared(actor.accountId(), acquiredAt, invitation.getEmail(), project.getName(), inviterName);
+            return new Prepared(actor.accountId(), invitation.getEmail(), project.getName(), inviterName);
         });
+        // 검사 트랜잭션이 커밋된 뒤에 센다 — 커밋이 실패해 메일도 안 나갔는데 한도만 쓰는 일이 없게
+        Instant acquiredAt = sendLimiter.acquire(prepared.accountId(), 1);
 
         String token = SecretTokens.generate();
         try {
             mail.send(inviteMail(prepared.email(), projectId, token, prepared.projectName(), prepared.inviterName(),
                     null));
         } catch (RuntimeException e) {
-            sendLimiter.release(prepared.accountId(), prepared.acquiredAt(), 1);
+            sendLimiter.release(prepared.accountId(), acquiredAt, 1);
             if (!(e instanceof MailDeliveryException)) {
                 throw e;
             }
@@ -281,17 +283,28 @@ public class InvitationService {
                     "초대 메일을 보내지 못했습니다. 잠시 뒤에 다시 시도하세요");
         }
 
-        return tx.execute(status -> {
-            Invitation invitation = lockInvitation(projectId, invitationId);
-            if (!invitation.isPending()) {
-                log.info("초대 메일을 다시 보내는 사이 수락·폐기됨(토큰 그대로): invitation_id={}", invitationId);
-            }
-            requirePending(invitation);
-            invitation.rotateToken(SecretTokens.hash(token));
-            invitations.flush();
-            log.info("초대 메일 다시 보냄: invitation_id={}", invitationId);
-            return InvitationResponse.of(invitation);
-        });
+        try {
+            return tx.execute(status -> {
+                Invitation invitation = lockInvitation(projectId, invitationId);
+                if (!invitation.isPending()) {
+                    log.info("초대 메일을 다시 보내는 사이 수락·폐기됨(토큰 그대로): invitation_id={}", invitationId);
+                }
+                requirePending(invitation);
+                invitation.rotateToken(SecretTokens.hash(token));
+                invitations.flush();
+                log.info("초대 메일 다시 보냄: invitation_id={}", invitationId);
+                return InvitationResponse.of(invitation);
+            });
+        } catch (ApiException e) {
+            throw e;   // 보내는 사이 수락·폐기(409)·삭제(404): 메일은 나갔으므로 센 그대로 둔다
+        } catch (RuntimeException e) {
+            // 메일은 나갔지만 토큰을 바꾸지 못했다(DB 오류 등). 나간 링크는 무효이고 이전 링크가 산다.
+            // 서버 사정이므로 503 발송 실패처럼 한도를 돌려준다 — 팀장이 다시 누르면 된다
+            sendLimiter.release(prepared.accountId(), acquiredAt, 1);
+            log.warn("초대 메일을 다시 보냈으나 토큰을 바꾸지 못함(이전 링크 유지): invitation_id={} exception_type={}",
+                    invitationId, e.getClass().getSimpleName());
+            throw e;
+        }
     }
 
     private Invitation lockInvitation(long projectId, long invitationId) {

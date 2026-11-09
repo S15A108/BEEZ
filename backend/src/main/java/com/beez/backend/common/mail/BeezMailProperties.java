@@ -12,8 +12,8 @@ import org.springframework.validation.annotation.Validated;
  * @param mode    smtp 면 실제로 보내고, log 면 로그에만 남긴다 (로컬·테스트)
  * @param from    보내는 사람 주소
  * @param logBody log 구현이 본문(인증 코드 포함)까지 찍을지. 로컬에서 코드를 받을 방법이 로그뿐이라 local 프로필만 켠다
- * @param shutdownWait 종료할 때 비동기로 보내던 메일을 기다리는 최대 시간 ({@link AsyncMailSender}, -334).
- *                     compose stop_grace_period(30초) 안에 끝나게 둔다
+ * @param shutdownWait 종료가 시작된 때(SIGTERM)부터 비동기로 보내던 메일을 기다리는 한계 ({@link AsyncMailSender}, -334).
+ *                     웹 서버가 요청을 기다린 시간도 여기 든다. compose stop_grace_period(30초)보다 짧게 둔다
  */
 @Validated
 @ConfigurationProperties(prefix = "beez.mail")

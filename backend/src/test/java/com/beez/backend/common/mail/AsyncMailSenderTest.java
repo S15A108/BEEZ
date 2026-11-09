@@ -41,6 +41,29 @@ class AsyncMailSenderTest {
         assertThat(sender.inFlight()).isZero();
     }
 
+    /**
+     * 깨지면: 컨텍스트를 멈췄다 다시 켠 뒤(테스트 컨텍스트 캐시 일시정지 등) 비동기 메일이 모두 거부되거나,
+     * 보낸 뒤 후처리(onSent)가 실패했다고 이미 보낸 메일을 실패 처리(임시 비밀번호 닫기)한다.
+     */
+    @Test
+    void 멈췄다_다시_켜면_다시_보내고_후처리_실패는_발송_실패가_아니다() throws Exception {
+        AtomicInteger sent = new AtomicInteger();
+        AsyncMailSender sender = sender(m -> sent.incrementAndGet(), Duration.ofSeconds(5));
+        sender.stop();
+        sender.start();
+
+        AtomicInteger failed = new AtomicInteger();
+        CountDownLatch done = new CountDownLatch(1);
+        sender.send(MESSAGE, () -> {
+            done.countDown();
+            throw new IllegalStateException("후처리 실패");
+        }, e -> failed.incrementAndGet());
+        assertThat(done.await(5, TimeUnit.SECONDS)).as("다시 켠 뒤에도 보낸다").isTrue();
+        sender.stop();
+        assertThat(sent.get()).isEqualTo(1);
+        assertThat(failed.get()).as("보낸 메일은 실패 처리하지 않는다").isZero();
+    }
+
     /** 깨지면: SMTP 가 멈춘 채면 종료가 끝나지 않아 docker 가 30초 뒤 강제로 끈다 — 그 사이 다른 종료 처리도 못 한다. */
     @Test
     void 종료_대기는_정한_시간까지만() throws Exception {

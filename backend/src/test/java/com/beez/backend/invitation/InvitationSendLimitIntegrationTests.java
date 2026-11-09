@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -111,20 +112,20 @@ class InvitationSendLimitIntegrationTests extends IntegrationTestSupport {
         await().atMost(Duration.ofSeconds(10)).until(() -> mail.countTo(email) == 1);
         String tokenHash = tokenHash(id);
 
-        boolean[] joinedDuringSend = {false};
+        AtomicBoolean joinedDuringSend = new AtomicBoolean();   // 서버 요청 스레드가 쓰고 시험 스레드가 읽는다
         mail.duringNextSendTo(email, () -> {
             // 다시 보내기가 SMTP 를 기다리는 중이다. 잠금을 쥐고 있으면 이 로그인이 시간 안에 끝나지 않는다
             CompletableFuture<Integer> login = CompletableFuture.supplyAsync(() ->
                     client().login(email, AccessFixtures.PASSWORD).get("/api/projects/" + p.projectId()).statusCode());
             try {
-                joinedDuringSend[0] = login.get(5, TimeUnit.SECONDS) == 200;
+                joinedDuringSend.set(login.get(5, TimeUnit.SECONDS) == 200);
             } catch (Exception e) {
-                joinedDuringSend[0] = false;
+                joinedDuringSend.set(false);
             }
         });
 
         HttpResponse<String> res = leader.post(resend(p.projectId(), id), null);
-        assertThat(joinedDuringSend[0]).as("발송 중 로그인 자동 참여가 기다리지 않음").isTrue();
+        assertThat(joinedDuringSend.get()).as("발송 중 로그인 자동 참여가 기다리지 않음").isTrue();
         assertThat(res.statusCode()).isEqualTo(409);
         assertThat(res.body()).contains("invitation_not_pending");
         assertThat(tokenHash(id)).as("수락된 초대의 토큰은 그대로").isEqualTo(tokenHash);
