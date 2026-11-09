@@ -1026,6 +1026,222 @@ it('폐기된 설계 참조 때문에 저장이 막히면 그 줄에 알리고, 
   expect(save.mock.calls[1][2]).toMatchObject({ design_refs: [] })
 })
 
+// S15P31A108-319: 설계 항목 검색과 완료 기준 칸(캔버스 PNL-05-v2-plan)
+const designItem = (
+  id: string,
+  key: string,
+  kind: string,
+  description: string,
+) => ({
+  id: `${id}1`,
+  design_item_id: id,
+  key,
+  kind,
+  version_no: 1,
+  status: 'APPROVED',
+  schema_version: 1,
+  content: { description },
+})
+const designItems = [
+  designItem('301', 'REQ-001', 'REQUIREMENT', '참여 프로젝트를 조회한다.'),
+  designItem('302', 'API-001', 'API_CONTRACT', '주문을 만든다.'),
+  designItem('303', 'ENT-001', 'DATA_CONTRACT', '주문 테이블'),
+]
+async function openPlanEditor(items = designItems, hasMore = false) {
+  vi.spyOn(planningApi, 'items').mockResolvedValue({
+    items,
+    has_more: hasMore,
+    ...(hasMore ? { next_cursor: 'c2' } : {}),
+  } as never)
+  const save = vi
+    .spyOn(tasksApi, 'savePlan')
+    .mockImplementation(async () => task)
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '계획 수정' }),
+  )
+  await screen.findByLabelText('어떻게 진행하나요?')
+  return save
+}
+const itemSearch = () =>
+  screen.getByRole('searchbox', { name: '설계 항목 검색' })
+const itemBox = (key: string) => screen.queryByLabelText(new RegExp(`^${key} `))
+
+it('설계 항목을 대소문자 없이 키와 설명으로 찾는다', async () => {
+  await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'api')
+  expect(itemBox('API-001')).toBeInTheDocument()
+  expect(itemBox('REQ-001')).toBeNull()
+  await userEvent.clear(itemSearch())
+  await userEvent.type(itemSearch(), '테이블')
+  expect(itemBox('ENT-001')).toBeInTheDocument()
+  expect(itemBox('API-001')).toBeNull()
+})
+
+// 서버의 데이터 계약 키는 ENT-지만 캔버스와 문서는 ERD라고 부른다.
+it('ERD로 찾으면 데이터 계약 항목이 나온다', async () => {
+  await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'ERD')
+  expect(itemBox('ENT-001')).toBeInTheDocument()
+  expect(itemBox('REQ-001')).toBeNull()
+})
+
+it('검색으로 찾아 고르고 관계를 정한 항목은 검색에 가려져도 함께 보낸다', async () => {
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'API')
+  await userEvent.click(itemBox('API-001')!)
+  await userEvent.selectOptions(
+    screen.getByLabelText('API-001의 참조 관계'),
+    'READS',
+  )
+  await userEvent.clear(itemSearch())
+  await userEvent.type(itemSearch(), 'REQ')
+  expect(itemBox('API-001')).toBeNull()
+  expect(screen.getByText(/^1개 선택/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({
+    design_refs: [
+      {
+        design_item_id: '302',
+        design_item_version_id: '3021',
+        relation: 'READS',
+      },
+    ],
+  })
+})
+
+it('검색칸에서 Enter를 눌러도 계획을 저장하지 않는다', async () => {
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'API{Enter}')
+  expect(itemBox('API-001')).toBeInTheDocument()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('찾는 설계 항목이 없으면 안내하고, 더 있으면 더 불러오는 버튼을 둔다', async () => {
+  await openPlanEditor(designItems, true)
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), '없는 항목')
+  expect(
+    screen.getByText(/‘없는 항목’에 맞는 설계 항목이 없어요/),
+  ).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: '설계 항목 더 보기' }),
+  ).toBeVisible()
+})
+
+it('검색에 가려진 항목 때문에 저장이 막히면 검색을 풀어 그 줄의 안내를 보인다', async () => {
+  const save = await openPlanEditor()
+  save.mockRejectedValueOnce(
+    new AxiosError('bad request', '400', undefined, undefined, {
+      status: 400,
+      statusText: 'Bad Request',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {
+        error: {
+          code: 'validation_failed',
+          message: '현재 기준 설계에 없는 항목입니다 (design_item_id=302)',
+        },
+      },
+    }),
+  )
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.click(itemBox('API-001')!)
+  await userEvent.type(itemSearch(), 'REQ')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  expect(
+    await screen.findByText(
+      '이 항목 때문에 저장하지 못했어요. 현재 승인본으로 갱신하거나 빼 주세요.',
+    ),
+  ).toBeInTheDocument()
+  expect(itemSearch()).toHaveValue('')
+})
+
+it('완료 기준을 줄마다 더하면 빈 줄을 빼고 문자열 배열로 보낸다', async () => {
+  const save = await openPlanEditor()
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('응답 필드 확인')
+  await userEvent.click(screen.getByRole('button', { name: '기준 추가' }))
+  await userEvent.type(
+    screen.getByLabelText('완료 기준 2'),
+    '  오류 응답 확인 ',
+  )
+  await userEvent.click(screen.getByRole('button', { name: '기준 추가' }))
+  await userEvent.type(screen.getByLabelText('완료 기준 3'), '   ')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2].completion_criteria).toEqual([
+    '응답 필드 확인',
+    '오류 응답 확인',
+  ])
+})
+
+it('완료 기준 줄을 지우면 그 줄만 사라지고, 마지막 한 줄은 비운다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        completion_criteria: ['첫째 기준', '둘째 기준'],
+      },
+    },
+  }
+  await openPlanEditor()
+  await userEvent.click(
+    screen.getByRole('button', { name: '완료 기준 1 지우기' }),
+  )
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('둘째 기준')
+  expect(screen.queryByLabelText('완료 기준 2')).toBeNull()
+  await userEvent.click(
+    screen.getByRole('button', { name: '완료 기준 1 지우기' }),
+  )
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('')
+})
+
+it('완료 기준이 모두 비어 있으면 저장하지 않고 칸에 알린다', async () => {
+  const save = await openPlanEditor()
+  await userEvent.clear(screen.getByLabelText('완료 기준 1'))
+  await userEvent.click(screen.getByRole('button', { name: '기준 추가' }))
+  await userEvent.type(screen.getByLabelText('완료 기준 2'), '   ')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  expect(await screen.findByText('내용을 입력해 주세요.')).toBeInTheDocument()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('완료 기준 칸에서 Enter를 누르면 저장하지 않고 다음 줄로 간다', async () => {
+  const save = await openPlanEditor()
+  await userEvent.type(screen.getByLabelText('완료 기준 1'), '{Enter}')
+  expect(screen.getByLabelText('완료 기준 2')).toHaveFocus()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('한글 조합을 끝내는 Enter로는 완료 기준 줄을 더하지 않는다', async () => {
+  await openPlanEditor()
+  fireEvent.keyDown(screen.getByLabelText('완료 기준 1'), {
+    key: 'Enter',
+    isComposing: true,
+  })
+  expect(screen.queryByLabelText('완료 기준 2')).toBeNull()
+})
+
+it('완료 기준이 없던 계획을 고칠 때도 빈 줄 하나로 시작한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: { ...task.current_plan_revision.plan, completion_criteria: [] },
+    },
+  }
+  await openPlanEditor()
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('')
+})
+
 // PR #88 리뷰(재현 경로): 계획을 고쳐 저장하는 동안 머리의 '+ 작업 계획'으로 새 폼을 열면,
 // 앞의 저장이 끝나며 새 폼과 입력이 사라졌다. 계획 폼이 열려 있거나 저장 중이면 머리 버튼을 숨긴다.
 it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 버튼을 숨긴다', async () => {
@@ -1068,4 +1284,165 @@ it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 
     await within(slot).findByRole('button', { name: '작업 계획' }),
   ).toBeInTheDocument()
   slot.remove()
+})
+
+// 11-04 사용자 결정(S15P31A108-282): 담당자가 나가거나 제외되면 서버는 assignee_member_id를 생략한다.
+const withoutAssignee = () => {
+  const unassigned: Record<string, unknown> = { ...task }
+  delete unassigned.assignee_member_id
+  return taskDetailSchema.parse(unassigned)
+}
+
+it('담당자가 없는 작업도 읽어서 목록에 담당자 없음 칩을, 상세에 비어 있다는 안내를 보여 준다', async () => {
+  task = withoutAssignee()
+  show(true)
+  expect(await screen.findByText('담당자가 비어 있어요')).toBeInTheDocument()
+  expect(screen.getByText(/TASK-001 · 담당자 없음/)).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '작업 시작' }),
+  ).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('tab', { name: '팀 전체' }))
+  const entry = await screen.findByRole('button', {
+    name: /사용자 프로필 구현/,
+  })
+  expect(within(entry).getByText('담당자 없음')).toBeInTheDocument()
+})
+
+it('팀원이 담당자 없는 작업에서 내가 맡기를 누르면 확인 뒤 내 멤버 ID와 잠금 번호로 맡는다', async () => {
+  task = withoutAssignee()
+  const assign = vi.spyOn(tasksApi, 'assign').mockImplementation(async () => {
+    task = { ...task, assignee_member_id: '21', lock_version: 8 }
+    return task
+  })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '내가 맡기' }),
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: '이 작업을 내가 맡을까요?',
+  })
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '내가 맡기' }),
+  )
+  await waitFor(() =>
+    expect(assign).toHaveBeenCalledWith('101', '501', {
+      assignee_member_id: '21',
+      expected_lock_version: 7,
+    }),
+  )
+  expect(
+    await screen.findByRole('button', { name: '작업 시작' }),
+  ).toBeInTheDocument()
+})
+
+const revisionConflict = () => {
+  const config = { headers: new AxiosHeaders() }
+  return new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config,
+    data: { error: { code: 'revision_conflict' } },
+  })
+}
+
+it('다른 팀원이 먼저 맡아 409 revision_conflict가 오면 먼저 맡은 사람을 알린다', async () => {
+  task = withoutAssignee()
+  // 기본 픽스처 이름 '다른 팀원'은 이름을 못 찾을 때 쓰는 문구와 같아, 이 테스트에서는 다른 이름을 쓴다.
+  vi.spyOn(membersApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '21',
+        account_id: '11',
+        name: '담당자',
+        role: 'MEMBER',
+        agent_connected: false,
+      },
+      {
+        id: '22',
+        account_id: '12',
+        name: '김동료',
+        role: 'LEADER',
+        agent_connected: false,
+      },
+    ],
+    has_more: false,
+  })
+  vi.spyOn(tasksApi, 'assign').mockImplementation(async () => {
+    task = { ...task, assignee_member_id: '22', lock_version: 8 }
+    throw revisionConflict()
+  })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '내가 맡기' }),
+  )
+  await userEvent.click(
+    within(await screen.findByRole('dialog')).getByRole('button', {
+      name: '내가 맡기',
+    }),
+  )
+  const taken = await screen.findByRole('dialog', {
+    name: '다른 팀원이 먼저 맡았어요',
+  })
+  expect(
+    within(taken).getByText(/김동료님이 조금 전에 TASK-001 작업을 맡았어요/),
+  ).toBeInTheDocument()
+})
+
+it('409 뒤에도 담당자가 비어 있으면 다시 누를 때 새로 받은 잠금 번호로 맡는다', async () => {
+  task = withoutAssignee()
+  const assign = vi
+    .spyOn(tasksApi, 'assign')
+    .mockImplementationOnce(async () => {
+      // 다른 변경으로 잠금 번호만 올랐고 담당자는 여전히 비어 있다.
+      task = { ...task, lock_version: 8 }
+      throw revisionConflict()
+    })
+    .mockImplementationOnce(async () => {
+      task = { ...task, assignee_member_id: '21', lock_version: 9 }
+      return task
+    })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '내가 맡기' }),
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: '이 작업을 내가 맡을까요?',
+  })
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '내가 맡기' }),
+  )
+  expect(await within(dialog).findByRole('alert')).toBeInTheDocument()
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '내가 맡기' }),
+  )
+  await waitFor(() => expect(assign).toHaveBeenCalledTimes(2))
+  expect(assign).toHaveBeenLastCalledWith('101', '501', {
+    assignee_member_id: '21',
+    expected_lock_version: 8,
+  })
+})
+
+it('팀장이 담당자 없는 작업의 담당자를 정할 때는 첫 팀원을 미리 고르지 않는다', async () => {
+  task = withoutAssignee()
+  const assign = vi
+    .spyOn(tasksApi, 'assign')
+    .mockImplementation(async () => task)
+  show(true)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '담당자 정하기' }),
+  )
+  await userEvent.click(await screen.findByRole('button', { name: '저장' }))
+  expect(
+    await screen.findByText('새 담당자를 골라 주세요.'),
+  ).toBeInTheDocument()
+  expect(assign).not.toHaveBeenCalled()
+  await userEvent.selectOptions(screen.getByLabelText(/새 담당자/), '다른 팀원')
+  await userEvent.click(screen.getByRole('button', { name: '저장' }))
+  await waitFor(() =>
+    expect(assign).toHaveBeenCalledWith('101', '501', {
+      assignee_member_id: '22',
+      expected_lock_version: 7,
+    }),
+  )
 })

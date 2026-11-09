@@ -11,6 +11,12 @@ import {
 } from './first-person'
 import { OfficeCity } from './office-city'
 import { WindowCityView } from './window-city-view'
+import {
+  OFFICE_THEMES,
+  OFFICE_TIMES,
+  officeDesignOf,
+  type OfficeTime,
+} from './officeLook'
 import type { OfficeLifeActivity } from './office-life'
 import { cloneKenney, loadKenney } from '../kenney'
 import { buildBee, buildRobot, disposeFigure } from './memberFigures'
@@ -379,6 +385,22 @@ export class OfficeRenderer3D {
   private city: OfficeCity | null = null
   // Clear air across the surrounding districts; only the far horizon meets the sky.
   private readonly cityFog = new THREE.Fog(CITY_SKY, 650, 850)
+  // 건물 외관별 재질(D39)과 시간대 빛. 외관은 바닥(floor.design)을 따르고, 시간대는 render의 opts.time이다.
+  private theme = OFFICE_THEMES.modern
+  private design = ''
+  private time: OfficeTime = 'day'
+  private timeKey = ''
+  /** 외관이 바뀌어 바닥·가구를 다시 놓을 때는 떨어뜨리지 않고 바로 세운다. */
+  private relook = false
+  private ceilingMaterial: THREE.MeshStandardMaterial | null = null
+  private readonly lights: {
+    sky: THREE.HemisphereLight
+    sun: THREE.DirectionalLight
+    fill: THREE.DirectionalLight
+    room: THREE.HemisphereLight
+    outsideSky: THREE.HemisphereLight
+    outsideSun: THREE.DirectionalLight
+  }
   private environmentKey = ''
   private environmentEdge = { x: 0, z: 0 }
   private readonly people = new THREE.Group()
@@ -512,9 +534,11 @@ export class OfficeRenderer3D {
     // 따뜻한 조명(캔버스 v488 1번 색: 조명 #ffe2bf, 햇빛 #ffe2bd)
     const ambient = new THREE.HemisphereLight('#fff1dc', '#c9b89a', 1.5)
     this.scene.add(ambient)
-    this.exteriorScene.add(
-      new THREE.HemisphereLight('#e0f4ff', '#a09b90', 1.75),
-    )
+    const outsideSky = new THREE.HemisphereLight('#e0f4ff', '#a09b90', 1.75)
+    this.exteriorScene.add(outsideSky)
+    // 천장 등(노을·밤에 켜는 방 빛). 낮에는 끈다.
+    const room = new THREE.HemisphereLight('#fff6e8', '#7a7064', 0)
+    this.scene.add(room)
     const light = new THREE.DirectionalLight('#ffe2bd', 2.2)
     light.position.set(7, 26, 14)
     light.castShadow = true
@@ -544,6 +568,14 @@ export class OfficeRenderer3D {
     exteriorFill.color.set('#b6d7ff')
     exteriorFill.intensity = 0.45
     this.exteriorScene.add(exteriorFill)
+    this.lights = {
+      sky: ambient,
+      sun: light,
+      fill,
+      room,
+      outsideSky,
+      outsideSun: exteriorSun,
+    }
     const shadow = document.createElement('canvas')
     shadow.width = shadow.height = 128
     const ctx = shadow.getContext('2d')!
@@ -1148,15 +1180,23 @@ export class OfficeRenderer3D {
             mesh.material,
           ].flat() as THREE.MeshStandardMaterial[]
           materials.forEach(kitPalette)
-          if (kit.tint) {
-            const tinted = materials.map((material) =>
-              this.kitTint(material, kit.tint!),
-            )
-            mesh.material = tinted.length === 1 ? tinted[0] : tinted
+          // 건물 테마의 나무·화분 색(D39) 위에 가구마다 정한 색을 얹는다.
+          const tint: Record<string, string> = {
+            wood: this.theme.wood,
+            plant: this.theme.plant,
+            ...kit.tint,
           }
+          const tinted = materials.map((material) =>
+            KIT_PALETTE[material.name]?.[0] === tint[material.name]
+              ? material
+              : this.kitTint(material, tint),
+          )
+          mesh.material = tinted.length === 1 ? tinted[0] : tinted
         })
         const scaled = new THREE.Group()
-        scaled.position.y = kit.y
+        // 천장 펜던트는 이 장면의 천장(높이 4.58) 바로 아래에 매단다. 캔버스는 3 m 천장이라 2.45 m였다.
+        scaled.position.y =
+          kit.model === 'lampSquareCeiling' ? 4.58 - kit.h : kit.y
         scaled.scale.set(...(kit.s ?? [1, 1, 1]))
         scaled.add(inner)
         group.add(scaled)
@@ -1186,7 +1226,10 @@ export class OfficeRenderer3D {
           return
         }
         const plane = new THREE.Mesh(
-          new THREE.PlaneGeometry(width, height),
+          this.geometry(
+            `ui${width},${height}`,
+            () => new THREE.PlaneGeometry(width, height),
+          ),
           this.kitUi(kit.ui!),
         )
         plane.position.set(0, y, z)
@@ -1237,7 +1280,10 @@ export class OfficeRenderer3D {
         0.01,
       )
       const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        this.geometry(
+          `ui${length - 0.06},${kit.h - 0.06}`,
+          () => new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        ),
         this.kitUi(ui),
       )
       plane.position.set(0, kit.y + kit.h / 2, 0.026)
@@ -1259,7 +1305,10 @@ export class OfficeRenderer3D {
       0.005,
     )
     const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(length, panel),
+      this.geometry(
+        `ui${length},${panel}`,
+        () => new THREE.PlaneGeometry(length, panel),
+      ),
       this.kitUi(ui),
     )
     plane.position.set(0, bottom + panel / 2, 0.019)
@@ -1910,6 +1959,60 @@ export class OfficeRenderer3D {
     }
   }
 
+  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다. 지오메트리는
+  // this.geometry가 나눠 쓰고 dispose에서 한 번 정리하므로 여기서 지우지 않는다.
+  private resetLook() {
+    this.workSurfaces.forEach(({ surface }) => surface.dispose())
+    this.workSurfaces.length = 0
+    this.workSurfacesDirty = true
+    for (const { mesh } of this.dreamTiles.values()) mesh.removeFromParent()
+    for (const { group } of this.dreamObjects.values()) group.removeFromParent()
+    this.dreamTiles.clear()
+    this.dreamObjects.clear()
+    this.furnitureObjects.length = 0
+    this.floorKey = ''
+    this.environmentKey = ''
+    this.relook = !!this.floor
+  }
+
+  // 시간대 빛(D39): 하늘·해·방 빛·천장 등. 건물 테마의 햇빛·방 빛 색과 어두운 방의 밤 보정을 함께 쓴다.
+  private applyTime() {
+    const t = OFFICE_TIMES[this.time],
+      theme = this.theme
+    const [sunColor, sunPower, dx, dy, dz] = t.sun
+    const { sky, sun, fill, room, outsideSky, outsideSun } = this.lights
+    sun.color.set(sunColor ?? theme.sun)
+    sun.intensity = sunPower
+    sun.position.copy(sun.target.position).add(new THREE.Vector3(dx, dy, dz))
+    outsideSun.color.copy(sun.color)
+    outsideSun.intensity = sunPower * 1.1
+    outsideSun.position.copy(sun.position)
+    sky.color.set(t.hemisphere[0])
+    sky.groundColor.set(t.hemisphere[1])
+    sky.intensity = t.hemisphere[2]
+    fill.intensity = t.fill
+    room.color.set(theme.light)
+    // 캔버스 nightLight(사각 조명 세기)를 반구광에 그대로 곱하면 너무 밝아 제곱근만 쓴다.
+    room.intensity =
+      t.room *
+      (this.time === 'night' ? Math.sqrt((theme.nightLight ?? 3.6) / 3.6) : 1)
+    outsideSky.intensity = t.outside
+    this.renderer.toneMappingExposure =
+      this.time === 'night'
+        ? (theme.nightExposure ?? 0.86) / 0.86
+        : this.time === 'sunset'
+          ? (theme.sunsetExposure ?? 0.86) / 0.86
+          : 1
+    this.cityFog.color.set(t.sky)
+    this.windowCityView.setSky(t.sky)
+    this.material('office-linear-light').emissiveIntensity = t.lamps
+    if (this.ceilingMaterial)
+      this.ceilingMaterial.emissiveIntensity =
+        (this.time === 'night'
+          ? (theme.nightCeilingGlow ?? theme.ceilingGlow)
+          : theme.ceilingGlow) * 0.3
+  }
+
   private buildFloor(floor: Floor) {
     if (this.dream) {
       this.buildDreamFloor(floor)
@@ -2317,7 +2420,8 @@ export class OfficeRenderer3D {
   }
 
   private buildDreamFloor(floor: Floor) {
-    const hydrate = this.settleInitial && !this.floor
+    const hydrate = (this.settleInitial && !this.floor) || this.relook
+    this.relook = false
     this.floor = floor
     this.buildOfficeSurroundings(floor)
     this.buildOutdoorPortal(floor)
@@ -2450,11 +2554,46 @@ export class OfficeRenderer3D {
     this.cameraKey = ''
   }
 
+  // 벽돌 벽(캔버스 office3 brick): 0.26 m × 0.075 m 벽돌을 반씩 엇갈려 쌓는다. 그림 한 장이 0.52 m × 0.6 m(8단)다.
+  private brickMaterial(length: number) {
+    const key = `office-brick/${this.theme.brick}/${length.toFixed(2)}`
+    let material = this.materials.get(key)
+    if (material) return material
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 256
+    const g = canvas.getContext('2d')
+    if (g) {
+      g.fillStyle = '#d9cfc2'
+      g.fillRect(0, 0, 256, 256)
+      const base = new THREE.Color(this.theme.brick)
+      let seed = 7
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+      for (let row = 0; row < 8; row++)
+        for (let i = -1; i < 3; i++) {
+          g.fillStyle = `#${base
+            .clone()
+            .offsetHSL(0, 0, (rnd() - 0.5) * 0.08)
+            .getHexString()}`
+          g.fillRect(i * 128 + (row % 2 ? 64 : 0) + 3, row * 32 + 3, 122, 26)
+        }
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+    // 벽 높이 4.5(방 3 m)에 그림 다섯 장
+    texture.repeat.set(length / 0.52, 5)
+    this.textures.push(texture)
+    material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.95 })
+    this.materials.set(key, material)
+    return material
+  }
+
   // 오크 판재(1 m 칸에 0.2 m 판 다섯 줄, 칸마다 무늬 넷 중 하나)와 0.5 m 카펫 타일(캔버스 1번 색: 베이지 두 톤)
   private floorMaterial(tile: string, x: number, z: number) {
-    const carpet = tile === 'd' || tile === 'm'
+    const theme = this.theme
+    const carpet = (tile === 'd' || tile === 'm') && !!theme.carpet
     const variant = carpet ? (x + z) % 2 : (x * 7 + z * 3) % 4
-    const key = `office-floor/${carpet ? 'carpet' : 'oak'}/${variant}`
+    const key = `office-floor/${this.design}/${carpet ? 'carpet' : 'oak'}/${variant}`
     let material = this.materials.get(key)
     if (material) return material
     let seed = 11 + variant * 97
@@ -2465,8 +2604,7 @@ export class OfficeRenderer3D {
     if (g && carpet)
       for (let i = 0; i < 2; i++)
         for (let j = 0; j < 2; j++) {
-          const [r, gg, b] =
-            (i + j + variant) % 2 ? [196, 174, 146] : [204, 183, 156]
+          const [r, gg, b] = theme.carpet![(i + j + variant) % 2 ? 0 : 1]
           g.fillStyle = `rgb(${r},${gg},${b})`
           g.fillRect(i * 128, j * 128, 128, 128)
           g.strokeStyle = 'rgba(255,255,255,0.06)'
@@ -2486,12 +2624,19 @@ export class OfficeRenderer3D {
           g.lineWidth = 1
           g.strokeRect(i * 128, j * 128, 128, 128)
         }
-    else if (g)
+    else if (g && theme.floorColor) {
+      // 유리·모던·타워: 한 색 바닥(캔버스 floorColor)에 1 m 줄눈만
+      g.fillStyle = theme.floorColor
+      g.fillRect(0, 0, 256, 256)
+      g.strokeStyle = 'rgba(0,0,0,0.07)'
+      g.lineWidth = 2
+      g.strokeRect(0, 0, 256, 256)
+    } else if (g)
       for (let row = 0; row < 5; row++) {
         let left = -rnd() * 120
         while (left < 256) {
           const length = 80 + rnd() * 120,
-            base = 186 + rnd() * 22
+            base = (theme.oakBase ?? 205) + rnd() * 22
           g.fillStyle = `rgb(${base + 12},${base - 18},${base - 62})`
           g.fillRect(left, row * 51.2, length, 51.2)
           g.fillStyle = 'rgba(90,60,30,0.35)'
@@ -2507,7 +2652,7 @@ export class OfficeRenderer3D {
     this.textures.push(texture)
     material = new THREE.MeshStandardMaterial({
       map: texture,
-      roughness: carpet ? 1 : 0.55,
+      roughness: carpet ? 1 : (theme.floorRough ?? 0.55),
     })
     this.materials.set(key, material)
     return material
@@ -2714,7 +2859,7 @@ export class OfficeRenderer3D {
     if (key === this.environmentKey) return
     this.environmentKey = key
     this.windowCityView.dispose()
-    this.windowCityView = new WindowCityView(CITY_SKY)
+    this.windowCityView = new WindowCityView(OFFICE_TIMES[this.time].sky)
     this.architecture.clear()
     this.overhead.clear()
     this.firstPersonEnclosure.clear()
@@ -2737,6 +2882,8 @@ export class OfficeRenderer3D {
       this.firstPersonEnclosure,
     )
     this.city = new OfficeCity({ left, back, right, front })
+    // 다크 타워는 높은 층이라 창밖 도시가 아래에 있다(캔버스 elev, 높이는 이 장면의 1.5배 높이 단위로).
+    this.city.root.position.y = -(this.theme.elev ?? 0) * 1.5
     this.exteriorScene.add(this.city.root)
     const width = right - left,
       depth = front - back
@@ -2746,21 +2893,23 @@ export class OfficeRenderer3D {
       this.dreamGround.position.set(cx, -0.04, cz)
       this.dreamGround.scale.set(width, depth, 1)
     }
-    const frame = '#b6b2a9',
+    // 창틀·유리·벽·슬랫·천장은 건물 테마 색이다(D39). 유리는 창밖 도시가 보이게 캔버스 불투명도의 절반쯤만 쓴다.
+    const theme = this.theme
+    const frame = theme.mullion,
       sill = '#d4d2bf'
-    let glass = this.materials.get('office-curtain-glass')
+    let glass = this.materials.get(`office-curtain-glass/${this.design}`)
     if (!glass) {
       glass = new THREE.MeshStandardMaterial({
-        color: '#d7d4cf',
+        color: theme.glass,
         transparent: true,
-        opacity: 0.06,
+        opacity: theme.glassOpacity * 0.45,
         roughness: 1,
         metalness: 0,
         envMapIntensity: 0,
         depthWrite: false,
         side: THREE.DoubleSide,
       })
-      this.materials.set('office-curtain-glass', glass)
+      this.materials.set(`office-curtain-glass/${this.design}`, glass)
     }
 
     // 막힌 벽(D38): 크림 벽에 걸레받이. inside는 벽 안쪽이 지역 z의 어느 쪽인지(+1·-1), slat은 나무 슬랫을 댈 구간(지역 x).
@@ -2770,7 +2919,7 @@ export class OfficeRenderer3D {
       inside: number,
       slat?: [number, number],
     ) => {
-      this.box(
+      const wall = this.box(
         parent,
         length / 2,
         2.25,
@@ -2778,9 +2927,10 @@ export class OfficeRenderer3D {
         length + 0.24,
         4.5,
         0.2,
-        C.plaster,
+        theme.wall,
         0,
       )
+      if (theme.brick) wall.material = this.brickMaterial(length + 0.24)
       this.box(
         parent,
         length / 2,
@@ -2794,7 +2944,17 @@ export class OfficeRenderer3D {
       )
       if (slat)
         for (let x = slat[0]; x < slat[1]; x += 0.12)
-          this.box(parent, x, 2.2, inside * 0.13, 0.05, 4.3, 0.05, '#b07a48', 0)
+          this.box(
+            parent,
+            x,
+            2.2,
+            inside * 0.13,
+            0.05,
+            4.3,
+            0.05,
+            theme.slat,
+            0,
+          )
     }
     const fixed = !!floor.zoneSigns
 
@@ -2839,9 +2999,14 @@ export class OfficeRenderer3D {
     }
     windowWall(this.rearWindows, width)
     this.rearWindows.position.set(left, 0, back - 0.12)
-    // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(남쪽 끝 4.7 m)에 나무 슬랫을 댄다(캔버스 v488).
+    // 고정 사무실의 서쪽은 엘리베이터가 붙은 크림 벽이고, 라운지 쪽(floor.wallSlat)에 나무 슬랫을 댄다.
     if (fixed)
-      solidWall(this.sideWindows, depth, -1, [depth - 4.8, depth - 0.1])
+      solidWall(
+        this.sideWindows,
+        depth,
+        -1,
+        theme.brick ? undefined : floor.wallSlat,
+      )
     else windowWall(this.sideWindows, depth)
     this.sideWindows.rotation.y = -Math.PI / 2
     this.sideWindows.position.set(left - 0.12, 0, back)
@@ -2943,6 +3108,34 @@ export class OfficeRenderer3D {
       0,
     )
     ceiling.name = 'office-ceiling'
+    // 목조 스튜디오: 3 m마다 남북으로 지나는 나무 보(캔버스 beams, 1인칭에서만)
+    if (theme.beams)
+      for (let x = left + 1.5; x < right; x += 3)
+        this.box(
+          this.firstPersonEnclosure,
+          x,
+          4.355,
+          cz,
+          0.22,
+          0.45,
+          depth,
+          theme.beams,
+          0,
+        )
+    // 천장은 등 빛을 받아 밝게 보인다(캔버스 ceilingGlow). 세기는 시간대마다 applyTime이 바꾼다.
+    const ceilingKey = `office-ceiling/${this.design}`
+    let ceilingMaterial = this.materials.get(ceilingKey)
+    if (!ceilingMaterial) {
+      ceilingMaterial = new THREE.MeshStandardMaterial({
+        color: theme.ceiling,
+        emissive: theme.ceiling,
+        roughness: 1,
+      })
+      this.materials.set(ceilingKey, ceilingMaterial)
+    }
+    ceiling.material = ceilingMaterial
+    this.ceilingMaterial = ceilingMaterial
+    this.applyTime()
     // Preserve the existing soft room lighting when closing the shell.
     ceiling.castShadow = false
     for (let x = left + 2; x < right; x += 2)
@@ -3429,6 +3622,8 @@ ${note ?? ''}`
       decorMode?: boolean
       firstPersonId?: string
       work?: OfficeWorkState
+      /** 사무실 시간대(D39). 없으면 낮이다. */
+      time?: OfficeTime
     },
   ) {
     const elapsed = this.lastTime
@@ -3436,6 +3631,17 @@ ${note ?? ''}`
       : 1 / 60
     this.lastTime = time
     this.dreamTime = (time / 1000) * DREAM_BUILD_SPEED
+    const design = officeDesignOf(floor.design)
+    if (design !== this.design) {
+      this.design = design
+      this.theme = OFFICE_THEMES[design]
+      this.resetLook()
+    }
+    if (`${design}/${opts.time ?? 'day'}` !== this.timeKey) {
+      this.timeKey = `${design}/${opts.time ?? 'day'}`
+      this.time = opts.time ?? 'day'
+      this.applyTime()
+    }
     const floorKey = `${floor.id}/${floor.key ?? ''}/${floor.staticKey ?? ''}/${floor.theme ?? ''}/${floor.furniture.length}`
     if (floorKey !== this.floorKey || this.floor !== floor) {
       // A replaced immutable floor can have the same static key, but new decor.

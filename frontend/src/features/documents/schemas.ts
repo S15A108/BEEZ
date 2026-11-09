@@ -181,8 +181,40 @@ export type RequestBeeReviewInput = z.infer<typeof requestBeeReviewInputSchema>
 export const decideSuggestionInputSchema = z.object({
   expected_revision: z.number().int().positive(),
   decision: z.enum(['APPLY', 'SKIP']),
+  // APPLY일 때만. 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영할 때 그 문장
+  replacement_text: z.string().optional(),
 })
 export type DecideSuggestionInput = z.infer<typeof decideSuggestionInputSchema>
+
+// 서버(ReviewChatDtos)는 대화·직접 요청 글을 5,000자로 제한한다. 명세 Request 표에는 상한이 적혀 있지 않다.
+export const REVIEW_TEXT_MAX = 5000
+export const discussSuggestionInputSchema = z.object({
+  text: z.string().trim().min(1).max(REVIEW_TEXT_MAX),
+})
+export type DiscussSuggestionInput = z.infer<
+  typeof discussSuggestionInputSchema
+>
+export const discussSuggestionResponseSchema = z.object({
+  message: common.reviewMessageSchema,
+  reply: common.reviewMessageSchema,
+})
+export type DiscussSuggestionResponse = z.infer<
+  typeof discussSuggestionResponseSchema
+>
+
+export const requestBeeSuggestionInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+  text: z.string().trim().min(1).max(REVIEW_TEXT_MAX),
+})
+export type RequestBeeSuggestionInput = z.infer<
+  typeof requestBeeSuggestionInputSchema
+>
+export const requestBeeSuggestionResponseSchema = z.object({
+  suggestion: common.documentReviewSuggestionSchema,
+})
+export type RequestBeeSuggestionResponse = z.infer<
+  typeof requestBeeSuggestionResponseSchema
+>
 
 export const submitReviewInputSchema = z.object({
   expected_revision: z.number().int().positive(),

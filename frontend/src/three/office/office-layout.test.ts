@@ -21,7 +21,7 @@ import { RECEPTIONIST } from './social'
 const office = (population: OfficePopulation) =>
   makeBuilding(ALL_KEYS, 'glass', null, population).floors[1]
 const feet = (x: number, y: number) => ({ x: x * 32 + 16, y: y * 32 + 27 })
-// D36: 사무실은 캔버스 v488의 고정 배치라 인원에 따라 넓어지거나 좁아지지 않는다. 늘고 주는 사무실을 확인하던
+// D36: 사무실은 고정 배치라 인원에 따라 넓어지거나 좁아지지 않는다. 늘고 주는 사무실을 확인하던
 // 기대값을 고정 방 기준으로 바꿨다(사용자 승인 2026-11-03). 길찾기·좌석 도달·출구 검사는 그대로다.
 const populations: OfficePopulation[] = [
   { dev: 1, lead: 1, humandesk: 1 },
@@ -55,24 +55,26 @@ test('human owners and invited members get desks even when the server places the
   )
 })
 
-test('any team gets the same fixed room: two six-seat islands, an open huddle, a war room and the lounge', () => {
+// D39: 'glass' 외관은 캔버스 유리 오피스 배치(28 × 16 m)다. 테스트 뜻(인원과 상관없이 같은 방)은 그대로 두고 숫자를
+// 유리 안으로 바꿨다(기대값 변경 사용자 승인 2026-11-04).
+test('any team gets the same fixed room: team desks, a glass meeting room, a war room and the lounge', () => {
   const floors = populations.map(office)
   for (const floor of floors) {
-    assert.strictEqual(floor.W, 26)
-    assert.strictEqual(floor.furniture.length, 122)
+    assert.strictEqual(floor.W, 30)
+    assert.strictEqual(floor.furniture.length, 132)
     assert.deepStrictEqual(floor.furniture, floors[0].furniture)
     assert.strictEqual(
       floor.furniture.filter((item) => item.tag?.startsWith('workstation/'))
         .length,
-      12,
+      8,
     )
     assert.strictEqual(
       floor.furniture.some((item) => item.kind === 'glass-partition'),
-      false,
+      true,
     )
   }
-  // 작업 자리는 아일랜드 12석, 넘는 인원은 허들 스툴 6석과 워룸 스툴 2석
-  assert.strictEqual(floors[0].seats.dev?.length, 20)
+  // 작업 자리는 팀 책상 8석, 넘는 인원은 유리 회의실 6석과 워룸 3석
+  assert.strictEqual(floors[0].seats.dev?.length, 17)
   assert.strictEqual(floors[0].seats.meeting?.length, 6)
   assert.strictEqual(floors[0].seats.lobby?.length, 3)
 })

@@ -48,3 +48,14 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["backend:8080"]
+
+  # CDC 스택(S15P31A108-261). 둘 다 beez_default 에서 서비스 이름으로 닿는다.
+  # kafka: 이 스택의 kafka-exporter. broker 가 죽으면 한 번 긁는 데 15~30초 걸려 시간 초과(10초) → up 0(rules 의 CdcKafkaUnreachable)
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  # connect: beez-cdc 스택 Connect JVM 안의 JMX exporter javaagent(infra/cdc/dev/connect-metrics.yaml). REST(8083)는 거치지 않는다
+  - job_name: connect
+    static_configs:
+      - targets: ["connect:9404"]

@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { officeTimeAt, type OfficeTime } from '@/three/office/officeLook'
 
 // 단축 바 1~6(documents, changes, meetings, tasks, relations, dashboard)과 가운데 비비(chat),
 // 톱니(settings), 지난 알림(inbox). planning·context는 단축 바에서 뺐지만 문서함·작업에서 아직 연다.
@@ -26,6 +27,9 @@ interface WorkspaceState {
   placements: Record<string, Placement>
   /** 계정 id → 마지막으로 연 프로젝트 id. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33). */
   lastVisited: Record<string, string>
+  /** 사무실 시간대. auto는 한국 시각을 따르고, 나머지는 그 시간대로 고정한다(D39). */
+  officeTime: 'auto' | OfficeTime
+  setOfficeTime: (officeTime: 'auto' | OfficeTime) => void
   openPane: (pane: WorkspacePane | null, focusId?: string | null) => void
   setViewMode: (viewMode: 'first' | 'third') => void
   setOutdoor: (outdoor: boolean) => void
@@ -47,6 +51,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       outdoor: false,
       placements: {},
       lastVisited: {},
+      officeTime: 'auto',
+      setOfficeTime: (officeTime) => set({ officeTime }),
       openPane: (pane, focusId = null) => set({ pane, focusId }),
       setViewMode: (viewMode) => set({ viewMode }),
       setOutdoor: (outdoor) => set({ outdoor }),
@@ -74,6 +80,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         placements: state.placements,
         lastVisited: state.lastVisited,
         viewMode: state.viewMode,
+        officeTime: state.officeTime,
       }),
     },
   ),
@@ -84,4 +91,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 export function useClearPaneOnLeave() {
   const openPane = useWorkspaceStore((state) => state.openPane)
   useEffect(() => () => openPane(null), [openPane])
+}
+
+const everyMinute = (onChange: () => void) => {
+  const timer = setInterval(onChange, 60_000)
+  return () => clearInterval(timer)
+}
+
+/** 사무실에 쓸 시간대(D39). 자동이면 그릴 때마다 지금 한국 시각을 보고, 1분마다 다시 그린다. */
+export function useOfficeTime(): OfficeTime {
+  const setting = useWorkspaceStore((state) => state.officeTime)
+  const now = useSyncExternalStore(everyMinute, () => officeTimeAt(new Date()))
+  return setting === 'auto' ? now : setting
 }
