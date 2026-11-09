@@ -54,7 +54,7 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
         try {
             McpSchema.InitializeResult init = client.initialize();
             // 작업 절차 안내(AGT-04)가 연결할 때 함께 간다
-            assertThat(init.instructions()).contains("validate_task_plan").contains("check_connection");
+            assertThat(init.instructions()).contains("validate_task_plan").contains("check_connection").contains("get_task");
 
             JsonNode check = ok(client, "check_connection");
             sessionId = check.get("session_id").asString();
