@@ -1676,6 +1676,45 @@ it('검색하면 키나 제목이 맞는 작업만 남기고, 없으면 안내�
   ).toBeInTheDocument()
 })
 
+it('작업이 한 페이지(50개)를 넘으면 뒤 페이지까지 받아 타일을 세고 검색한다', async () => {
+  const first = [
+    task,
+    ...Array.from({ length: 49 }, (_, index) =>
+      listed(`6${index}`, `TASK-${100 + index}`, 'READY', `앞 페이지 ${index}`),
+    ),
+  ]
+  const list = vi
+    .spyOn(tasksApi, 'list')
+    .mockImplementation(async (_projectId, params) =>
+      params?.cursor === 'c2'
+        ? {
+            items: [listed('701', 'TASK-701', 'IN_PROGRESS', '뒤 페이지 작업')],
+            has_more: false,
+          }
+        : { items: first, has_more: true, next_cursor: 'c2' },
+    )
+  show(false)
+  const tiles = await screen.findByRole('list', { name: '상태별 작업 수' })
+  await waitFor(() =>
+    expect(
+      within(tiles)
+        .getAllByRole('listitem')
+        .map((tile) => tile.textContent),
+    ).toEqual(['50할 것', '1진행 중', '0대기', '0끝남']),
+  )
+  expect(list).toHaveBeenCalledWith('101', { cursor: 'c2', limit: 50 })
+  await userEvent.type(
+    screen.getByRole('searchbox', { name: '작업 검색' }),
+    'task-701',
+  )
+  expect(
+    screen.getByRole('button', { name: /뒤 페이지 작업/ }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'),
+  ).toBeNull()
+})
+
 it('검증을 통과하면 검증 결과를 접어 두고 단계는 번호 원과 상태 글로 보인다', async () => {
   show(false)
   const steps = await screen.findByRole('list', { name: '작업 단계' })

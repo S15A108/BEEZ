@@ -21,6 +21,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
+import { readAllPages } from '@/api/readAllPages'
 import { contextsApi, planningApi, tasksApi } from '@/api/services'
 import {
   idSchema,
@@ -238,30 +239,27 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   const [recording, setRecording] = useState(false)
   const queryClient = useQueryClient()
   const action = useProjectAction(projectId)
-  const tasks = useInfiniteQuery({
+  // 상태 타일 개수와 검색이 목록 전체를 보도록 마지막 페이지까지 읽은 뒤 보인다(PR #224 리뷰).
+  const tasks = useQuery({
     queryKey: ['projects', projectId, 'tasks'],
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      tasksApi.list(projectId, { cursor: pageParam, limit: 50 }),
-    getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    queryFn: () =>
+      readAllPages((cursor) => tasksApi.list(projectId, { cursor, limit: 50 })),
     // 다른 작업을 선택해도 검증과 완료 보고 재검증이 끝날 때 목록을 갱신한다.
     refetchInterval: (query) =>
-      query.state.data?.pages.some((page) => page.items.some(settling))
-        ? ACTIVE_POLL_MS
-        : false,
+      query.state.data?.items.some(settling) ? ACTIVE_POLL_MS : false,
   })
   const members = useQuery(membersQuery(projectId))
   const memberId = members.data?.items.find(
     (member) => member.account_id === session.data?.id,
   )?.id
   const [tab, setTab] = useState<'mine' | 'team'>('mine')
-  const entries = tasks.data?.pages.flatMap((page) => page.items) ?? []
+  const entries = tasks.data?.items ?? []
   // ponytail: 불러온 목록을 화면에서 거른다. 목록이 길어지면 assignee_member_id 파라미터로 옮긴다.
   // 담당자 없는 작업(assignee_member_id 생략)은 팀원 목록을 받기 전에도 내 작업으로 세지 않는다.
   const mine = (entry?: TaskDetail) =>
     !!entry?.assignee_member_id && entry.assignee_member_id === memberId
   const shown = tab === 'mine' ? entries.filter(mine) : entries
-  // ponytail: 검색도 불러온 목록에서 키·제목으로 거른다. 목록이 커지면 서버 검색으로 옮긴다.
+  // ponytail: 검색도 다 받은 목록에서 키·제목으로 거른다. 작업이 수백 개를 넘어 느려지면 서버 검색·개수로 옮긴다.
   const [query, setQuery] = useState('')
   const search = query.trim().toLowerCase()
   const groupOf = (status?: TaskDetail['status']) =>
@@ -642,15 +640,6 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.
                       </p>
                     )
-                  )}
-                  {tasks.hasNextPage && (
-                    <Button
-                      variant="outline"
-                      disabled={tasks.isFetchingNextPage}
-                      onClick={() => void tasks.fetchNextPage()}
-                    >
-                      작업 더 보기
-                    </Button>
                   )}
                 </div>
               )}
