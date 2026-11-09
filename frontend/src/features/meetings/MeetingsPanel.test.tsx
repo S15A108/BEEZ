@@ -282,7 +282,7 @@ it('기록이 한 페이지를 넘어도 대화를 오래된 순으로 보이고
     await within(log).findByRole('region', { name: '바뀔 문서' }),
   ).toBeInTheDocument()
   const texts = within(log)
-    .getAllByText(/^(추가 의견 d+|정리 뒤 마지막 말)$/)
+    .getAllByText(/^(추가 의견 \d+|정리 뒤 마지막 말)$/)
     .map((node) => node.textContent)
   expect(texts.at(-1)).toBe('정리 뒤 마지막 말')
   expect(texts.indexOf('추가 의견 22')).toBeLessThan(texts.length - 1)
@@ -290,6 +290,38 @@ it('기록이 한 페이지를 넘어도 대화를 오래된 순으로 보이고
   expect(
     await screen.findByText(/정리한 뒤에 새 대화가 있어요/),
   ).toBeInTheDocument()
+})
+
+// 다음 페이지 조회가 실패해도 자동으로 계속 다시 부르지 않고, 사람이 '다시 불러오기'를 눌러야 이어 간다.
+it('기록의 다음 페이지 조회가 실패하면 자동 재시도를 멈추고 다시 불러오기를 보인다', async () => {
+  for (let index = 1; index <= 22; index++)
+    await meetingsApi.addEntry('101', '901', { text: `추가 의견 ${index}` })
+  const real = meetingsApi.entries.bind(meetingsApi)
+  const spy = vi
+    .spyOn(meetingsApi, 'entries')
+    .mockImplementation((projectId, meetingId, query) =>
+      query?.cursor
+        ? // 실제 네트워크처럼 잠시 뒤에 실패해 '불러오는 중' 상태를 거치게 한다.
+          new Promise((_, reject) =>
+            setTimeout(() => reject(apiError(503, 'server_error')), 20),
+          )
+        : real(projectId, meetingId, query),
+    )
+  const user = userEvent.setup()
+  renderPanel(true)
+  expect(
+    await screen.findByRole('button', { name: '다시 불러오기' }),
+  ).toBeInTheDocument()
+  const calls = spy.mock.calls.length
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  expect(spy.mock.calls.length).toBe(calls)
+  // 다시 불러오기를 누르면 조회를 다시 시작한다.
+  spy.mockImplementation(real)
+  await user.click(screen.getByRole('button', { name: '다시 불러오기' }))
+  expect(
+    await screen.findByRole('log', { name: '회의 대화' }),
+  ).toBeInTheDocument()
+  vi.restoreAllMocks()
 })
 
 it('올린 제안이 종료 직전에 거두어지면 끝내기 확인을 그대로 두고 다시 끝내라고 안내한다', async () => {

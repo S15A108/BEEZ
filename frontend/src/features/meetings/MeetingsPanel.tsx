@@ -128,10 +128,11 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const notes = (entries.data?.pages.flatMap((page) => page.items) ?? []).sort(
     (a, b) => (BigInt(a.id) < BigInt(b.id) ? 1 : -1),
   )
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = entries
+  const { hasNextPage, isFetchingNextPage, isError, fetchNextPage } = entries
+  // 조회가 실패하면 자동 호출을 멈춘다(계속 두드리지 않는다). 아래 AsyncState 의 '다시 불러오기'로 사람이 다시 시작한다.
   useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+    if (hasNextPage && !isFetchingNextPage && !isError) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, isError, fetchNextPage])
   const latest = notes[0]
   const log = useRef<HTMLDivElement>(null)
   // 새 메시지가 오면 대화 맨 아래로 내린다. 이전 기록을 더 불러올 때는 그대로 둔다.
