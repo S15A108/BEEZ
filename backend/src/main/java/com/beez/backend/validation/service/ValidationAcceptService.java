@@ -171,6 +171,15 @@ public class ValidationAcceptService {
         String inputHash = inputHash(plan, baselineId, refs, relatedPlanHashes(relatedOpen), trigger, completionDelta, ruleVersion);
 
         boolean finished = outcome.decidedStatus() != null;
+        // Search and model versions are not pinned well enough to prove an AI result is reusable.
+        // Re-run current rules under the project lock and reuse only a rules-only PASS for the
+        // identical revision/baseline; DELTA and model-backed results always follow the normal path.
+        if ("AGENT".equals(trigger) && "PASS".equals(outcome.decidedStatus()) && outcome.findings().isEmpty()) {
+            var previous = validations.reusableRulesOnlyPass(projectId, taskId, planRevisionId, baselineId, inputHash, ruleVersion);
+            if (previous.isPresent()) {
+                return new AcceptResult(responses.toResponse(previous.get(), true), true);
+            }
+        }
         if (!finished && "AGENT".equals(trigger)) {
             requireAttemptsLeft(validations, properties, taskId, inputHash, plan.getContextPacketId());
         }
@@ -260,7 +269,8 @@ public class ValidationAcceptService {
      * 계획은 리비전 번호가 아니라 계획 입력 해시(task_plan_revision.input_hash — 제목·접근 방식을 뺀 내용, AC-13)로 넣는다 —
      * 제목만 바꾼 새 리비전은 같은 입력이다 (-162). 관련 작업의 계획도 같은 이유로 그 계획의 입력 해시다.
      * 검증 종류(trigger)와 delta 가 들어가는 이유: 같은 계획이라도 AGENT 검증과 DELTA 검증은 검사 범위가 다르고, 같은 계획에 다른 delta 를
-     * 보고하면 분석 입력이 다르다. 결과 재사용(AC-16)은 아직 없다 — 붙이면 이 해시가 같을 때만 한다. 횟수 제한(-161)도 이 해시로 센다
+     * 보고하면 분석 입력이 다르다. 규칙 전용 PASS 재사용은 이 해시 외에도 작업·리비전·기준과 현재 규칙을 확인한다.
+     * 횟수 제한(-161)도 이 해시로 센다
      */
     private String inputHash(TaskPlanRevision plan, Long baselineId, List<TaskPlanDesignRef> refs, Map<Long, String> relatedPlans,
                              String trigger, List<Map<String, Object>> completionDelta, String ruleVersion) {

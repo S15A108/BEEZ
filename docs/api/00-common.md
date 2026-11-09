@@ -1298,7 +1298,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
 | `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
 | `findings` | [Finding[]](00-common.md#schema-finding) | Y | 발견 항목 |
-| `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
+| `cache_hit` | `boolean` | Y | 접수 응답에서 기존 검증을 재사용했는지 여부. 현재는 규칙 전용 PASS만 대상이며 조회·재시도 응답은 false |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
