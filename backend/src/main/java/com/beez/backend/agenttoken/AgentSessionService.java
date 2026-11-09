@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>식별: initialize 가 성공하면 MCP 세션 ID·토큰·클라이언트 이름을 한 행으로 남긴다</li>
  *   <li>1인 1에이전트(Q06): 한 계정이 한 프로젝트에 가진 살아 있는 세션은 하나다. 나중 연결이 이기고 이전 세션은 REPLACED 로 끝난다.
- *       먼저 연결을 지키면, DELETE 없이 꺼진 클라이언트(비정상 종료)가 정리될 때까지 1~2시간 다시 붙지 못한다</li>
+ *       먼저 연결을 지키면, DELETE 없이 꺼진 클라이언트(Claude Code 는 정상 종료도 DELETE 를 보내지 않는다, 11-09 실측)가 정리될 때까지 1~2시간 다시 붙지 못한다</li>
  *   <li>결속: 세션은 만든 토큰에만 쓸 수 있다. 다른 토큰이 남의 세션 ID 를 보내거나 기록이 없는 세션이면 없는 세션처럼 거부한다
  *       (-176 PR #103 메모)</li>
  *   <li>마지막 통신: 요청마다 last_report_at 을 1분 단위로 갱신한다. 연결 현황 조회는 -75</li>
