@@ -2,7 +2,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { unlessMissing } from '@/api/error'
 import { agentsApi } from '@/api/services'
 import { useAgentCheckStore } from './agentCheckStore'
-import { agentStatusOf } from './agentStatus'
+import { agentStatusOf, pickAgentRow } from './agentStatus'
 
 // API 없음: AGT-A05가 404면 null이다. 이때 상태는 팀원 목록의 agent_connected로 정한다.
 // undefined를 돌려주면 TanStack Query가 조회 오류로 처리해, 없는 API와 진짜 조회 실패를 가를 수 없다.
@@ -18,8 +18,8 @@ export function useAgentStatusOf(projectId: string) {
   const agents = useQuery(agentConnectionsQuery(projectId))
   const checkedMemberId = useAgentCheckStore((state) => state.checkedMemberId)
   return (member: { id?: string; agent_connected: boolean }) => {
-    const row = agents.data?.items.find(
-      (agent) => agent.member_id === member.id,
+    const row = pickAgentRow(
+      agents.data?.items.filter((agent) => agent.member_id === member.id) ?? [],
     )
     return {
       status: agentStatusOf(
