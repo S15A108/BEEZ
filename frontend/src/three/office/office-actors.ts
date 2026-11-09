@@ -102,7 +102,8 @@ export function officeActors(
             ? 'agent'
             : avatarAppearance(agent.avatar),
       // 연결이 끊긴 에이전트는 자리에서 고개를 떨군 채 있는다.
-      stationary: agent.kind === 'human' || agent.status === 'offline',
+      stationary:
+        agent.kind === 'human' || STATE[agent.status]?.look === 'offline',
     })
   }
   return result
@@ -110,8 +111,15 @@ export function officeActors(
 
 type Spot = { x: number; y: number; facing: OfficeEntity3D['dir'] }
 // 사무실 에이전트 상태(D37) → 이름표 문구·로봇 모습(캔버스 상태 넷)·걷기 시뮬레이션 상태
+// 연결 전·연결 끊김·연결 실패는 이름표만 다르고 자리와 모습은 같다(S15P31A108-341).
 const STATE: Record<string, { label: string; look: string; life: string }> = {
   offline: { label: agentStatusLabels.none, look: 'offline', life: 'meeting' },
+  disconnected: {
+    label: agentStatusLabels.disconnected,
+    look: 'offline',
+    life: 'meeting',
+  },
+  failed: { label: agentStatusLabels.failed, look: 'offline', life: 'meeting' },
   working: { label: '작업 중', look: 'working', life: 'working' },
   validating: { label: '검증 중', look: 'working', life: 'meeting' },
   waiting: { label: '대기', look: 'idle', life: 'meeting' },
@@ -233,7 +241,7 @@ function fixedOfficeActors(
     else if (state === 'validating')
       spot = take(floor.seats.board) ?? take(floor.seats.meeting)
     else if (state === 'waiting') spot = take(floor.seats.meeting)
-    else if (state === 'offline')
+    else if (STATE[state].look === 'offline')
       spot = take(floor.seats.lobby) ?? take(floor.seats.humandesk)
     else {
       spot = owner ? behind(owner) : undefined
@@ -258,7 +266,7 @@ function fixedOfficeActors(
       appearance: 'agent',
       standing,
       // 연결이 끊긴 에이전트는 충전 자리에서 고개를 떨군 채 움직이지 않는다.
-      ...(state === 'offline' ? { stationary: true, seated: true } : {}),
+      ...(look === 'offline' ? { stationary: true, seated: true } : {}),
     })
   }
   return result

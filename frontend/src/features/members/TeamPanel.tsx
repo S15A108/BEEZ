@@ -64,6 +64,7 @@ const agentDots: Record<AgentStatus, string> = {
   connected: 'bg-green-600',
   recheck: 'bg-[#e0b400]',
   failed: 'bg-[#c10007]',
+  disconnected: 'bg-[#c4c4c4]',
   none: 'bg-[#c4c4c4]',
 }
 
