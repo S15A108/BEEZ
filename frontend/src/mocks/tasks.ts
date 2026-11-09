@@ -152,7 +152,7 @@ function evaluate(context: MockContext, validation: Validation): void {
   const revision = findById(project.revisions, validation.plan_revision_id)
   if (revision.id !== task.current_plan_revision.id) {
     validation.status = 'STALE'
-    validation.stale_reason = '검증 중 작업 계획의 새 리비전이 저장됐어요.'
+    validation.stale_reason = 'PLAN_CHANGED'
     validation.finished_at = now()
     delete context.database.pending_validations[validation.id]
     return
