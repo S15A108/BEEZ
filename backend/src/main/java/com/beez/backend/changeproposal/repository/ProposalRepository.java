@@ -210,7 +210,8 @@ public class ProposalRepository {
                   lock_version=lock_version+1,updated_at=clock_timestamp() WHERE id=:proposal AND project_id=:project
                 """).param("project", project).param("proposal", proposal).param("account", account).update();
         // 거둔 제안은 되살릴 수 없으므로 그 제안에 귀속된 초안 문서 버전도 채택되지 않은 것(REJECTED)으로 닫는다.
-        // 반려(REJECTED 제안)는 같은 제안의 새 리비전으로 다시 제출하며 같은 초안을 쓰므로 여기서 건드리지 않는다.
+        // 반려(REJECTED 제안)는 같은 제안의 새 리비전으로 다시 제출하므로 여기서 건드리지 않는다.
+        // 이전 초안은 새 리비전이 쓰지 않을 때 saveRevision 이 닫는다.
         jdbc.sql("""
                 UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1
                 WHERE change_proposal_id=:proposal AND status='DRAFT'
@@ -289,6 +290,15 @@ public class ProposalRepository {
                         .param("proposal", proposal).param("version", number(doc.proposedDocumentVersionId())).update();
             }
         }
+        // 반려 뒤 다시 제출하면 화면은 본문(after_content)만 보내 서버가 문서마다 새 초안을 만든다. 이번 리비전이 쓰지 않는
+        // 이 제안의 이전 초안은 다시 쓰이지 않으므로 채택되지 않은 것(REJECTED)으로 닫아 버전 이력에 초안이 겹쳐 남지 않게 한다.
+        var keep = snapshot.documents().stream().map(ResolvedDocument::proposedDocumentVersionId).filter(Objects::nonNull)
+                .map(Long::parseLong).toList();
+        var close = jdbc.sql("""
+                UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1
+                WHERE change_proposal_id=:proposal AND status='DRAFT'
+                """ + (keep.isEmpty() ? "" : " AND id NOT IN (:keep)")).param("proposal", proposal);
+        (keep.isEmpty() ? close : close.param("keep", keep)).update();
     }
 
     public List<Candidate> candidates(long project, long baseline, Set<Long> changedItems, Set<Long> changedDocuments, int limit) {
