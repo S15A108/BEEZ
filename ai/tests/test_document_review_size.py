@@ -68,18 +68,6 @@ def make_case(count):
 
 
 def canonical_size(result):
-    # Current BE v2 rebuilds saved suggestions without these new fields.
-    result = {
-        **result,
-        "suggestions": [
-            {
-                key: value
-                for key, value in item.items()
-                if key not in {"category", "severity"}
-            }
-            for item in result["suggestions"]
-        ],
-    }
     return len(
         json.dumps(
             result, ensure_ascii=False, sort_keys=True, separators=(",", ":")

@@ -260,14 +260,7 @@ async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) ->
                 if "quote" in source:
                     item["quote"] = source["quote"]
                 enriched.append(item)
-            # The current BE v2 validator rebuilds each suggestion and does not
-            # persist the new classification fields yet.
-            be_suggestion = {
-                key: value
-                for key, value in suggestion.items()
-                if key not in {"category", "severity"}
-            }
-            saved["suggestions"].append({**be_suggestion, "sources": enriched})
+            saved["suggestions"].append({**suggestion, "sources": enriched})
         if (
             len(
                 json.dumps(

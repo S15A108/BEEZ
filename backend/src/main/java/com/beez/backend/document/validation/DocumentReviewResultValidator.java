@@ -70,6 +70,13 @@ public final class DocumentReviewResultValidator {
             saved.put("type", type); saved.put("step", step);
             saved.put("explanation", text(suggestion.get("explanation"), 10000));
             saved.put("sources", sources(suggestion.get("sources"), byStep.get(step), refs));
+            Object category = suggestion.get("category"), severity = suggestion.get("severity");
+            // Legacy model responses have neither field. New classifications must be a complete pair.
+            if (category != null || severity != null) {
+                if (!(category instanceof String c) || !Set.of("OMISSION", "CONSISTENCY", "READABILITY", "REJECTION_FIX").contains(c)
+                        || !(severity instanceof String s) || !Set.of("MAJOR", "MINOR").contains(s)) throw invalidAi();
+                saved.put("category", category); saved.put("severity", severity);
+            }
             if ("PATCH".equals(type)) {
                 if (!(suggestion.get("original_text") instanceof String original)
                         || original.isEmpty() || original.length() > 100000) throw invalidAi();

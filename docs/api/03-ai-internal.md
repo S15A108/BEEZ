@@ -2033,7 +2033,7 @@ BE는 v2 요청 필드(contract_version=2, 지금 본문, content_hash, referenc
 
 329 AI 구현은 BE가 기존 검토의 완료 단계와 미처리 구간을 요청에 싣지 않으므로 REQUEST에서 본문과 사용자 요청만 모델에 전달하고 `step=BODY`, `sources=[]`인 PATCH 하나만 반환한다. 참고 문서를 근거로 한 비교 제안은 이 경로가 지원하지 않으며, 다른 미처리 제안과의 겹침은 BE가 검사한다. DISCUSS는 대화 응답과 적용 가능한 `PENDING` PATCH의 대체문을 제안하며 문서를 직접 바꾸지 않는다. 현재 요청에는 기존 제안의 출처가 없어 답변과 제안 출처의 일치를 검증하지 못한다.
 
-RERUN은 양의 문자열 `rejection_submission_id`와 비어 있지 않은 `rejection_reason`(Java UTF-16 기준 최대 10,000자)을 필수로 받아 반려 사유를 데이터로 모델에 제공한다. RERUN 및 mode를 생략한 기존 호출을 포함한 REVIEW의 모든 제안에 category·severity를 요구하고 열거형을 검증한다. 해결된 반려 사유에 대해 제안을 강제로 만들지 않는다. 기존 REVIEW 입력은 그대로 지원하며 응답에 분류 필드가 추가된다. 현재 BE는 추가 필드를 무시하므로 저장·표시하지 않는다. BE의 RERUN 호출과 분류 저장·표시는 아직 구현되지 않았고 계약 합의도 필요하다.
+RERUN은 양의 문자열 `rejection_submission_id`와 비어 있지 않은 `rejection_reason`(Java UTF-16 기준 최대 10,000자)을 필수로 받아 반려 사유를 데이터로 모델에 제공한다. RERUN 및 mode를 생략한 기존 호출을 포함한 REVIEW의 모든 제안에 category·severity를 요구하고 열거형을 검증한다. 해결된 반려 사유에 대해 제안을 강제로 만들지 않는다. BE는 가장 최근 제출이 REJECTED인 경우 이 필드를 전달하고, 제안의 분류 쌍을 검증·저장·반환한다. 기존 모델과 과거 제안에는 두 필드를 모두 생략할 수 있다. FE 표시와 실제 모델 연동 및 계약 합의는 별도 확인이 필요하다.
 
 
 222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
@@ -2228,7 +2228,7 @@ result 필드:
 - original_text로 위치를 잡고 행 번호를 쓰지 않는다. 앞 제안을 반영해도 뒤 제안이 어긋나지 않는다(DOC-A17 APPLY 규칙). replacement_text는 그 원문을 그대로 바꿀 문장이다. 반영·저장·승인은 BE와 사람이 한다.
 - 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡고 순서를 바꾼 문장을 replacement_text로 낸다.
 - (수정안 요청) evidence는 입력 references 안의 버전만 쓴다. quote가 그 버전 content에 없으면 잘못된 출력이다. BE는 references의 document_id·version_no를 붙이고 quote를 location에 넣어 DocumentReviewSuggestion.sources로 옮긴다.
-- (수정안 요청) 지금 BE는 summary와 제안의 explanation·original_text·replacement_text만 저장한다. category·severity·evidence·steps·reply를 화면에 보이려면 BE 저장을 넓혀야 한다.
+- BE는 제안의 category·severity를 한 쌍으로 검증해 저장·반환한다. 과거 미분류 제안은 null이다. evidence와 화면 표시는 별도 연동이 필요하다.
 - (수정안 요청) mode별 결과: REVIEW·RERUN은 suggestions 목록, REQUEST는 suggestions 1개다. DISCUSS는 reply가 필수이고 suggestions는 []다. 네 mode 모두 result의 식별값 4개와 summary를 돌려준다.
 - (수정안 요청) steps는 BE가 DOC-A16의 단계 표시(DocumentBeeReview.steps)에 쓴다. REVIEW 기본: 문서 읽기 → 승인된 API 명세서와 비교 → ERD와 맞춰 보기 → 요구사항과 비교 → 수정 제안 정리. RERUN: 반려 사유 읽기 → 관련 문단 찾기 → ERD와 맞춰 보기 → 수정 제안 정리. 비교할 승인본이 없는 단계는 result에 그 사유를 쓴다.
 - (수정안 요청) RERUN은 BE가 DOC-A16 선택 규칙으로 고른 rejection_submission_id와 그 rejection_reason을 넣는다. 비비는 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만든다. 팀장은 문단을 고르지 않는다.

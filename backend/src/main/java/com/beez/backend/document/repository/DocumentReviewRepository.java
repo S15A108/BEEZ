@@ -97,10 +97,11 @@ public class DocumentReviewRepository {
         params.put("step", suggestion.get("step")); params.put("sources", canonical(suggestion.get("sources")));
         params.put("explanation", suggestion.get("explanation"));
         params.put("original", suggestion.get("original_text")); params.put("replacement", suggestion.get("replacement_text"));
+        params.put("category", suggestion.get("category")); params.put("severity", suggestion.get("severity"));
         params.put("decision", "PATCH".equals(suggestion.get("type")) ? "PENDING" : null);
         jdbc.sql("""
-                INSERT INTO document_bee_suggestion(review_id,type,step,sources,explanation,original_text,replacement_text,decision)
-                VALUES(:review,:type,:step,cast(:sources AS jsonb),:explanation,:original,:replacement,:decision)
+                INSERT INTO document_bee_suggestion(review_id,type,step,sources,explanation,original_text,replacement_text,decision,category,severity)
+                VALUES(:review,:type,:step,cast(:sources AS jsonb),:explanation,:original,:replacement,:decision,:category,:severity)
                 """).params(params).update();
     }
 
@@ -135,6 +136,13 @@ public class DocumentReviewRepository {
         if (document != null) { sql += " AND s.document_id=:document"; p.put("document", document); }
         if (status != null) { sql += " AND s.status=:status"; p.put("status", status); }
         return rows(sql + " ORDER BY s.id DESC", p);
+    }
+
+    public Optional<Map<String, Object>> latestSubmission(long project, long document) {
+        return rows("""
+                SELECT s.* FROM document_review_submission s JOIN document d ON d.id=s.document_id
+                WHERE d.project_id=:project AND s.document_id=:document ORDER BY s.id DESC LIMIT 1
+                """, Map.of("project", project, "document", document)).stream().findFirst();
     }
 
     public Optional<Map<String, Object>> submission(long project, long document, long submission) {
