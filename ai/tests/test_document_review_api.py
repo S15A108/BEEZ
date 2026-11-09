@@ -133,6 +133,26 @@ def test_explicit_review_rejects_invalid_classification_as_failed_model_call(
     assert response.json()["usage"][0]["failed"] is True
 
 
+@pytest.mark.parametrize("mode", [None, "REVIEW"])
+def test_review_cannot_claim_rejection_fix_without_rejection_context(api, mode):
+    payload = fixture("review-contract-partial.json")["input"]
+    if mode is not None:
+        payload["mode"] = mode
+    api[1].output["suggestions"] = [
+        {
+            "type": "COMMENT",
+            "step": "BODY",
+            "explanation": "반려 사유 보완",
+            "sources": [],
+            "category": "REJECTION_FIX",
+            "severity": "MAJOR",
+        }
+    ]
+    response = post(api, payload)
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
 @pytest.mark.parametrize(
     "changes",
     [
