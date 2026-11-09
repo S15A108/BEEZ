@@ -44,8 +44,8 @@ import tools.jackson.databind.ObjectMapper;
  * 조회(VAL-A02)는 새 실행을 만들지 않는다. 판정은 규칙이 내리고 AI 는 발견 후보만 더한다 (공통 6절).
  *
  * <p>서버가 스스로 접수하는 경우({@link #acceptBySystem}): delta 가 있는 완료 보고의 DELTA 검증(S3)과, 설계 발행으로 DELTA 검증이
- * STALE 이 된 작업의 새 DELTA 검증(-163). 권한·잠금 번호 확인 없이, 호출자가 이미 프로젝트 행을 잠근 트랜잭션 안에서 같은 입력
- * 고정·규칙 검사·큐 넣기를 한다.
+ * STALE 이 된 작업의 새 DELTA 검증(-163, {@link #reacceptAfterPublication}). 권한·잠금 번호 확인 없이, 호출자가 이미 프로젝트 행을
+ * 잠근 트랜잭션 안에서 같은 입력 고정·규칙 검사·큐 넣기를 한다.
  */
 @Service
 public class ValidationAcceptService {
@@ -60,11 +60,12 @@ public class ValidationAcceptService {
     private final ValidationResponses responses;
     private final ObjectMapper json;
     private final ValidationProperties properties;
+    private final ValidationActivities activities;
 
     public ValidationAcceptService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskRepository tasks,
                                    TaskPlanRevisionRepository revisions, TaskPlanDesignRefRepository designRefs,
                                    ValidationRepository validations, ValidationRules rules, ValidationResponses responses,
-                                   ObjectMapper json, ValidationProperties properties) {
+                                   ObjectMapper json, ValidationProperties properties, ValidationActivities activities) {
         this.access = access;
         this.designLookup = designLookup;
         this.tasks = tasks;
@@ -75,6 +76,7 @@ public class ValidationAcceptService {
         this.responses = responses;
         this.json = json;
         this.properties = properties;
+        this.activities = activities;
     }
 
     @Transactional
@@ -101,7 +103,7 @@ public class ValidationAcceptService {
                             + ", lock_version=" + task.getLockVersion() + ")");
         }
 
-        return accept(caller, projectId, task, planRevisionId, baselineId, "AGENT", null);
+        return accept(caller, projectId, task, planRevisionId, baselineId, "AGENT", null, false);
     }
 
     /**
@@ -113,32 +115,49 @@ public class ValidationAcceptService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public AcceptResult acceptBySystem(CallerContext caller, Long projectId, Task task, String trigger, List<Map<String, Object>> completionDelta) {
-        return acceptBySystem(caller, projectId, task, trigger, designLookup.requireCurrentBaseline(projectId), completionDelta);
-    }
-
-    /**
-     * @param baselineId      참조 버전을 대조하고 검증에 적을 기준. 설계 발행 트랜잭션 안에서는 현재 포인터가 아직 바뀌기 전이라
-     *                        발행 중인 새 기준 번호를 직접 받는다
-     * @param completionDelta 이 DELTA 검증이 검사할 완료 보고의 delta. 분석 입력의 일부라 입력 스냅샷 해시에 들어간다
-     *                        (같은 계획에 다른 delta 를 보고하면 다른 입력이다)
-     */
-    @Transactional(propagation = Propagation.MANDATORY)
-    public AcceptResult acceptBySystem(CallerContext caller, Long projectId, Task task, String trigger, Long baselineId, List<Map<String, Object>> completionDelta) {
-        // The server-triggered work delegates the authenticated operation's project access;
-        // the worker rechecks it before searching. A missing or revoked actor fails closed.
-        access.requireMember(caller, projectId);
         if (!"DELTA".equals(trigger)) {
             throw new IllegalArgumentException("서버 접수는 DELTA 만 지원합니다: " + trigger);
         }
+        // 완료 보고한 사람의 요청 안에서 끝나면 그 사람이 검증 완료의 행위자다
+        return acceptDelta(caller, projectId, task, designLookup.requireCurrentBaseline(projectId), completionDelta, false);
+    }
+
+    /**
+     * 설계 발행으로 DELTA 검증이 STALE 이 된, delta 완료 보고로 기다리던 작업의 새 DELTA 검증(-163). 규칙만으로 끝나도 검증 완료
+     * 활동의 행위자는 시스템이다 — 발행한 사람은 이 작업의 완료를 보고하지 않았다(발행에 딸려 서버가 다시 접수했다, PR #202 리뷰).
+     * 워커 검색 권한({@code request_actor})은 여전히 발행한 사람이다.
+     *
+     * @param baselineId 발행 중인 새 기준. 발행 트랜잭션 안에서는 현재 포인터가 아직 바뀌기 전이라 직접 받는다
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public AcceptResult reacceptAfterPublication(CallerContext caller, Long projectId, Task task, Long baselineId,
+                                                 List<Map<String, Object>> completionDelta) {
+        return acceptDelta(caller, projectId, task, baselineId, completionDelta, true);
+    }
+
+    /**
+     * @param completionDelta    이 DELTA 검증이 검사할 완료 보고의 delta. 분석 입력의 일부라 입력 스냅샷 해시에 들어간다
+     *                           (같은 계획에 다른 delta 를 보고하면 다른 입력이다)
+     * @param finishedBySystem   규칙만으로 끝났을 때 검증 완료 활동을 시스템 행위자로 남길지
+     */
+    private AcceptResult acceptDelta(CallerContext caller, Long projectId, Task task, Long baselineId,
+                                     List<Map<String, Object>> completionDelta, boolean finishedBySystem) {
+        // The server-triggered work delegates the authenticated operation's project access;
+        // the worker rechecks it before searching. A missing or revoked actor fails closed.
+        access.requireMember(caller, projectId);
         if (completionDelta == null || completionDelta.isEmpty()) {
             throw new IllegalArgumentException("DELTA 검증에는 완료 보고의 delta 가 있어야 합니다");
         }
-        return accept(caller, projectId, task, task.getCurrentPlanRevisionId(), baselineId, trigger, completionDelta);
+        return accept(caller, projectId, task, task.getCurrentPlanRevisionId(), baselineId, "DELTA", completionDelta, finishedBySystem);
     }
 
-    /** 공통 접수: 입력 고정 → 규칙 검사 → 확정 또는 큐. 호출자가 권한·잠금·기준을 이미 확인했다. completionDelta 는 DELTA 에만 있다 */
+    /**
+     * 공통 접수: 입력 고정 → 규칙 검사 → 확정 또는 큐. 호출자가 권한·잠금·기준을 이미 확인했다. completionDelta 는 DELTA 에만 있다
+     *
+     * @param finishedBySystem 규칙만으로 끝났을 때 검증 완료 활동의 행위자를 시스템으로 (아니면 요청자)
+     */
     private AcceptResult accept(CallerContext caller, Long projectId, Task task, Long planRevisionId, Long baselineId, String trigger,
-                                List<Map<String, Object>> completionDelta) {
+                                List<Map<String, Object>> completionDelta, boolean finishedBySystem) {
         Long taskId = task.getId();
         TaskPlanRevision plan = revisions.findByIdAndTaskId(planRevisionId, taskId)
                 .orElseThrow(() -> AccessErrors.notFound("plan_revision_missing revision=" + planRevisionId));
@@ -183,6 +202,12 @@ public class ValidationAcceptService {
             validations.insertFinding(validationId, f);
         }
         ValidationRow row = validations.find(projectId, validationId).orElseThrow();
+        if (finished && finishedBySystem) {
+            activities.finishedBySystem(row, outcome.decidedStatus());
+        } else if (finished) {
+            // 요청 처리 안에서 규칙만으로 끝났다 — 행위자는 요청자 (계약 6.2 "검증 완료 정하기"). 워커가 끝내면 결과 반영이 남긴다
+            activities.finishedBy(caller, row, outcome.decidedStatus());
+        }
         return new AcceptResult(responses.toResponse(row), finished);
     }
 
