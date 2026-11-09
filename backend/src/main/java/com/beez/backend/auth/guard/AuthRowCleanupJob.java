@@ -3,6 +3,7 @@ package com.beez.backend.auth.guard;
 import com.beez.backend.auth.recovery.TemporaryPasswordRepository;
 import com.beez.backend.auth.verification.EmailVerificationRepository;
 import java.time.Instant;
+import java.util.function.IntSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Configuration;
@@ -43,23 +44,29 @@ public class AuthRowCleanupJob {
 
     @Scheduled(cron = "${beez.auth-guard.row-cleanup-cron}", zone = "Asia/Seoul")
     public void run() {
-        try {
-            purge(Instant.now());
-        } catch (RuntimeException e) {
-            // 다음 날 다시 돈다. 행이 하루 더 남을 뿐이다
-            log.warn("인증 행 정리 실패: exception_type={}", e.getClass().getSimpleName(), e);
-        }
+        purge(Instant.now());
     }
 
-    /** now 기준 보존 기간 전에 끝난 행을 지운다. 표마다 따로 커밋한다 — 한쪽이 실패해도 다른 쪽은 지운다. */
+    /**
+     * now 기준 보존 기간 전에 끝난 행을 지운다. 표마다 따로 커밋하고 실패도 따로 받는다 — 한쪽이 실패해도 다른 쪽은 지운다.
+     * 실패한 표는 -1 이고 다음 날 다시 돈다(행이 하루 더 남을 뿐이다).
+     */
     public Purged purge(Instant now) {
         Instant cutoff = now.minus(props.rowRetention());
-        Integer v = tx.execute(status -> verifications.deleteEndedBefore(cutoff));
-        Integer t = tx.execute(status -> temporaries.deleteEndedBefore(cutoff));
-        Purged purged = new Purged(v == null ? 0 : v, t == null ? 0 : t);
-        log.info("인증 행 정리: email_verification={} temporary_password={} cutoff={}", purged.emailVerifications(),
-                purged.temporaryPasswords(), cutoff);
-        return purged;
+        int v = deleteOrWarn("email_verification", () -> verifications.deleteEndedBefore(cutoff));
+        int t = deleteOrWarn("temporary_password", () -> temporaries.deleteEndedBefore(cutoff));
+        log.info("인증 행 정리: email_verification={} temporary_password={} cutoff={}", v, t, cutoff);
+        return new Purged(v, t);
+    }
+
+    private int deleteOrWarn(String table, IntSupplier delete) {
+        try {
+            Integer deleted = tx.execute(status -> delete.getAsInt());
+            return deleted == null ? 0 : deleted;
+        } catch (RuntimeException e) {
+            log.warn("인증 행 정리 실패: table={} exception_type={}", table, e.getClass().getSimpleName(), e);
+            return -1;
+        }
     }
 
     /** IP 한도 표 정리와 행 정리(@Scheduled)를 쓰므로 스케줄링을 켠다. 다른 설정에 기대지 않는다 (여러 번 켜도 하나로 동작). */
