@@ -17,6 +17,7 @@ import { DailyCallsChart } from './DailyCallsChart'
 import {
   FEATURE_LABELS,
   activityChip,
+  agentTokenSuffix,
   callsText,
   costText,
   unknownText,
@@ -489,7 +490,7 @@ export function DashboardOverview({
                       <span className="flex items-center gap-2 text-[13px]">
                         <ActorAvatar agent label="AI" />
                         <strong className="font-semibold">
-                          {`${memberName(agent.member_id) ?? '팀원'}의 에이전트`}
+                          {`${memberName(agent.member_id) ?? '팀원'}의 에이전트${agentTokenSuffix(agent, work.data?.items ?? [])}`}
                         </strong>
                         <span
                           className={cn(

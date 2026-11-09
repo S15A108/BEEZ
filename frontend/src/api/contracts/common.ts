@@ -978,8 +978,16 @@ export const agentWorkSchema = z.object({
   agent_name: z.string().optional(),
   current_task_id: idSchema.optional(),
   task_title: z.string().optional(),
+  // 명세에는 없지만 DB는 DRAFT를 허용하고 MON-A05가 작업 상태를 그대로 넘긴다. 이 값 하나로 응답 전체가 깨지지 않게 받는다.
   task_status: z
-    .enum(['READY', 'IN_PROGRESS', 'WAITING', 'COMPLETED', 'CANCELLED'])
+    .enum([
+      'DRAFT',
+      'READY',
+      'IN_PROGRESS',
+      'WAITING',
+      'COMPLETED',
+      'CANCELLED',
+    ])
     .optional(),
   validation_status: z
     .enum([

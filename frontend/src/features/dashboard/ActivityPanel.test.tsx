@@ -607,6 +607,27 @@ describe('에이전트별 사용량', () => {
     expect(screen.queryByText('기간별 사용량')).not.toBeInTheDocument()
   })
 
+  it('작업별 줄은 서버가 준 작업 키를 쓰고, 없으면 작업 번호를 쓴다', async () => {
+    vi.mocked(dashboardApi.usage).mockResolvedValue(
+      usageWith({
+        call_count: 3,
+        currency: 'USD',
+        estimated_cost_amount: '1',
+        by_task: [{ ...bucket('501', 2), label: 'T-3' }, bucket('502', 1)],
+      }),
+    )
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+    await user.click(await screen.findByRole('tab', { name: '작업별' }))
+    expect(
+      await screen.findByRole('button', { name: 'T-3' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '작업 #502' }),
+    ).toBeInTheDocument()
+  })
+
   it('호출이 있는데 에이전트별 줄이 비면 호출이 없다고 말하지 않고 기능별 보기를 안내한다', async () => {
     vi.mocked(dashboardApi.usage).mockResolvedValue(
       usageWith({ call_count: 5 }),
@@ -639,6 +660,25 @@ it('팀원 조회가 실패하면 한눈에 보기가 연결을 단정하지 않
 })
 
 describe('에이전트 현황', () => {
+  it('토큰이 둘인 팀원의 카드에 토큰 이름을 붙여 구분한다', async () => {
+    vi.mocked(dashboardApi.agentWork).mockResolvedValue({
+      items: [
+        { ...session, agent_name: '노트북' },
+        { member_id: '1', agent_session_id: '95', agent_name: '데스크톱' },
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
+    const rows = (await screen.findAllByText('민수')).map((name) =>
+      name.closest('tr')!,
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveTextContent('민수의 에이전트 · 노트북')
+    expect(rows[1]).toHaveTextContent('민수의 에이전트 · 데스크톱')
+  })
+
   afterEach(() => {
     vi.useRealTimers()
   })

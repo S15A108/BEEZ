@@ -15,6 +15,7 @@ import {
   FEATURE_LABELS,
   UNSPLIT_USAGE_NOTICE,
   agentLabel,
+  agentTokenSuffix,
   callsText,
   costText,
   dashboardTabs,
@@ -171,7 +172,7 @@ export function ActivityPanel({
       )
     },
     by_feature: (row) => FEATURE_LABELS[row.key] ?? row.key,
-    by_task: (row) => `작업 #${row.key}`,
+    by_task: (row) => row.label ?? `작업 #${row.key}`,
     by_validation: (row) => `검증 #${row.key}`,
   }
   if (view === 'relations') return <RelationsView projectId={projectId} />
@@ -280,6 +281,7 @@ export function ActivityPanel({
                               <strong className="text-sm font-bold">
                                 <span>{memberName(item.member_id)}</span>의
                                 에이전트
+                                {agentTokenSuffix(item, data.items)}
                               </strong>
                               <span
                                 className={cn(

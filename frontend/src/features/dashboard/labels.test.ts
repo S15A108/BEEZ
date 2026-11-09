@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { activityChip, agentLabel } from './labels'
+import { activityChip, agentLabel, agentTokenSuffix } from './labels'
 
 it('검증 통과와 검토 시작은 유형으로 구분하고, 통과만 좁은 곳에도 남긴다', () => {
   expect(
@@ -26,4 +26,12 @@ it('토큰이 하나면 팀원 이름만, 둘이면 토큰 이름이나 세션 �
   expect(agentLabel(one, [one], name)).toBe('민수의 에이전트')
   expect(agentLabel(one, [one, two], name)).toBe('민수의 에이전트 · 노트북')
   expect(agentLabel(two, [one, two], name)).toBe('민수의 에이전트 · #95')
+})
+
+it('이름 뒤에 붙는 토큰 구분은 토큰이 둘 이상일 때만 생긴다', () => {
+  const one = { member_id: '1', agent_session_id: '91', agent_name: '노트북' }
+  const two = { member_id: '1', agent_session_id: '95' }
+  expect(agentTokenSuffix(one, [one])).toBe('')
+  expect(agentTokenSuffix(one, [one, two])).toBe(' · 노트북')
+  expect(agentTokenSuffix(two, [one, two])).toBe(' · #95')
 })

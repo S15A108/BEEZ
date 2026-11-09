@@ -1,3 +1,4 @@
+import { agentWorkResponseSchema } from '@/features/dashboard/schemas'
 import { expect, it } from 'vitest'
 import {
   comparisonSchema,
@@ -252,4 +253,12 @@ it('기준 알림의 기준 버전 번호를 남긴다', () => {
       created_at: '2026-11-05T01:00:00Z',
     }),
   ).toMatchObject({ target_id: '900', baseline_version_no: 3 })
+})
+
+it('에이전트 작업 현황은 작업 상태가 DRAFT여도 응답 전체를 읽는다', () => {
+  const page = agentWorkResponseSchema.parse({
+    items: [{ member_id: '21', agent_session_id: '51', task_status: 'DRAFT' }],
+    has_more: false,
+  })
+  expect(page.items[0].task_status).toBe('DRAFT')
 })
