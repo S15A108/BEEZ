@@ -241,6 +241,7 @@ export function ActivityPanel({
         <ActivityTimeline
           projectId={projectId}
           agents={firstWork.data?.items ?? []}
+          members={members.data?.items ?? []}
           memberName={memberName}
           actorName={actorName}
         />

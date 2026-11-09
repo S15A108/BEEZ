@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { validationsApi } from '@/api/services'
 import { validationSchema } from '@/api/contracts/common'
+import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import {
   toValidationView,
   useValidationActions,
@@ -42,19 +43,24 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 it('polls a running validation until completion and then stops', async () => {
+  let finished = false
   const get = vi
     .spyOn(validationsApi, 'get')
-    .mockResolvedValueOnce(validation)
-    .mockResolvedValue({ ...validation, status: 'PASS' })
+    .mockImplementation(async () =>
+      finished ? { ...validation, status: 'PASS' } : validation,
+    )
   const { result, unmount } = renderHook(
     () => useValidationQuery('101', '601'),
     { wrapper },
   )
   await waitFor(() => expect(result.current.data?.status).toBe('RUNNING'))
-  await waitFor(() => expect(result.current.data?.status).toBe('PASS'), {
-    timeout: 3000,
-  })
-  expect(get).toHaveBeenCalledTimes(2)
+  await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(2))
+  finished = true
+  await waitFor(() => expect(result.current.data?.status).toBe('PASS'))
+  // 끝난 뒤에는 몇 주기를 기다려도 다시 읽지 않는다.
+  const settled = get.mock.calls.length
+  await new Promise((resolve) => setTimeout(resolve, ACTIVE_POLL_MS * 5))
+  expect(get).toHaveBeenCalledTimes(settled)
   unmount()
 })
 
@@ -75,11 +81,13 @@ it('cancels an in-flight lookup on unmount', async () => {
 })
 
 it('can recover from a lookup error and resumes polling when still running', async () => {
+  let finished = false
   const get = vi
     .spyOn(validationsApi, 'get')
     .mockRejectedValueOnce(new Error('offline'))
-    .mockResolvedValueOnce(validation)
-    .mockResolvedValue({ ...validation, status: 'PASS' })
+    .mockImplementation(async () =>
+      finished ? { ...validation, status: 'PASS' } : validation,
+    )
   const { result } = renderHook(() => useValidationQuery('101', '601'), {
     wrapper,
   })
@@ -88,10 +96,10 @@ it('can recover from a lookup error and resumes polling when still running', asy
     await result.current.refetch()
   })
   await waitFor(() => expect(result.current.data?.status).toBe('RUNNING'))
-  await waitFor(() => expect(result.current.data?.status).toBe('PASS'), {
-    timeout: 3000,
-  })
-  expect(get).toHaveBeenCalledTimes(3)
+  const resumed = get.mock.calls.length
+  await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(resumed))
+  finished = true
+  await waitFor(() => expect(result.current.data?.status).toBe('PASS'))
 })
 
 it('rejects a response for a different validation and recovers on retry', async () => {

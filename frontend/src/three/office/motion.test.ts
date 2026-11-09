@@ -1,5 +1,6 @@
 import { assert, test } from 'vitest'
 import {
+  bibiWave,
   clearSegment,
   gridWalkable,
   hasMovementKeys,
@@ -156,4 +157,24 @@ test('real floor entrances, elevator exits and smoothed paths remain walkable', 
     free,
   )
   assert.deepStrictEqual(route.at(-1), feet(LOBBY_ENTRY.x, LOBBY_ENTRY.y))
+})
+
+test('비비는 내가 2칸 안으로 오면 한 번 손을 흔들고, 3칸 밖으로 멀어져야 다시 흔든다', () => {
+  let waved = false
+  const near = (distance: number, walking = false) => {
+    const next = bibiWave(distance, waved, walking)
+    waved = next.waved
+    return next.wave
+  }
+  assert.isFalse(near(2.5))
+  assert.isTrue(near(1.5))
+  assert.isFalse(near(1))
+  assert.isFalse(near(2.5))
+  assert.isFalse(near(1.5))
+  assert.isFalse(near(3.5))
+  assert.isTrue(near(1.9))
+  near(4)
+  // 걷는 중에는 흔들지 않고, 멈춘 뒤 가까이 있으면 흔든다.
+  assert.isFalse(near(1, true))
+  assert.isTrue(near(1))
 })

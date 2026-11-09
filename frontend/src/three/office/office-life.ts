@@ -74,6 +74,8 @@ export const PERSONAL_SPACE = 34
 const AVOID_RADIUS = 50
 // 이만큼 못 나아가면 지금 자리에서 길을 다시 찾는다(초).
 const STUCK_SECONDS = 1.2
+// 돌아갈 길 없이 막혀 서 있는 사람이 길을 다시 찾기까지 기다리는 시간(초)
+const BLOCKED_RETRY_SECONDS = 5
 const hash = (id: string) =>
   [...id].reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 7)
 const feet = (x: number, y: number): Point => ({ x: x * T + 16, y: y * T + 27 })
@@ -105,6 +107,8 @@ interface Resident {
   blocked?: boolean
   transfer?: { from: Point; to: Point; progress: number; leaving: boolean }
   stuck?: number
+  /** 다음 지점까지 남은 거리 중 가장 가까웠던 값. 실제로 나아가는지 본다. */
+  progress?: { to: Point; left: number }
 }
 
 /** Stateful positions survive snapshots; routes and collisions use the same floor as the player. */
@@ -744,16 +748,14 @@ export class OfficeLifeSimulation {
               vy = (vy / length) * step
             }
             const moved = moveContinuous(resident, { x: vx, y: vy }, this.free)
+            const stuckBefore = resident.stuck ?? 0
             // 벽에 막혀 한 걸음도 못 나간 것도 막힌 것으로 센다(옆걸음 뒤 지름길이 벽을 지날 때).
             if (
               keepsSpace(resident, moved, others) &&
               Math.hypot(moved.x - resident.x, moved.y - resident.y) > 0.001
             ) {
               Object.assign(resident, moved)
-              resident.stuck = 0
             } else {
-              const stuckBefore = resident.stuck ?? 0
-              resident.stuck = stuckBefore + dt
               // 막히면 오른쪽, 왼쪽 순서로 옆걸음을 해 본다. 마주 오는 두 사람이 서로 오른쪽으로 비켜 지나간다.
               // 같은 정적 경로를 다시 찾기만 하면 서로 마주 선 채 멈췄다(PR #72 전수 리뷰 THREE-01).
               const ux = (next.x - resident.x) / distance,
@@ -772,42 +774,55 @@ export class OfficeLifeSimulation {
                       0.001 && keepsSpace(resident, point, others),
                 )
               if (sidestep) Object.assign(resident, sidestep)
-              // 오래 막힐 때마다 막고 있는 사람의 칸을 피해 같은 목적지로 길을 다시 찾는다. 돌아갈 길이 없으면
-              // 쉬러 다니는 사람은 다른 곳으로 간다. 일하러 가는 사람은 비켜 줄 때까지 기다린다.
-              if (
-                Math.floor(stuckBefore / STUCK_SECONDS) <
-                  Math.floor(resident.stuck / STUCK_SECONDS) &&
-                resident.target
+            }
+            // 다음 지점에 실제로 가까워져야 막힘을 푼다. 곁의 사람 앞에서 옆걸음과 앞걸음을 되풀이하면 제자리걸음이다.
+            const left = Math.hypot(next.x - resident.x, next.y - resident.y)
+            if (
+              resident.progress?.to !== next ||
+              left < resident.progress.left - 0.5
+            ) {
+              resident.progress = { to: next, left }
+              resident.stuck = 0
+            } else resident.stuck = stuckBefore + dt
+            // 오래 막힐 때마다 막고 있는 사람의 칸을 피해 같은 목적지로 길을 다시 찾는다. 돌아갈 길이 없으면
+            // 쉬러 다니는 사람은 다른 곳으로 간다. 일하러 가는 사람은 제자리걸음 없이 서서 기다리다 다시 찾는다.
+            if (
+              Math.floor(stuckBefore / STUCK_SECONDS) <
+                Math.floor((resident.stuck ?? 0) / STUCK_SECONDS) &&
+              resident.target
+            ) {
+              const blockers = others.filter(
+                (other) =>
+                  Math.hypot(other.x - resident.x, other.y - resident.y) <
+                  AVOID_RADIUS,
+              )
+              // 길을 막고 서서 쉬는 사람은 쉬기를 끝내고 다른 곳으로 비켜 준다.
+              for (const [id, other] of this.residents)
+                if (
+                  id !== actor.id &&
+                  !other.route.length &&
+                  !other.transfer &&
+                  !other.working &&
+                  !other.seated &&
+                  (!other.behavior || other.behavior === 'autonomous') &&
+                  Math.hypot(other.x - resident.x, other.y - resident.y) <
+                    AVOID_RADIUS
+                )
+                  other.dwell = 0
+              const detour = this.route(
+                resident,
+                resident.target.landing,
+                blockers,
+              )
+              if (detour) resident.route = detour
+              else if (
+                !resident.behavior ||
+                resident.behavior === 'autonomous'
               ) {
-                const blockers = others.filter(
-                  (other) =>
-                    Math.hypot(other.x - resident.x, other.y - resident.y) <
-                    AVOID_RADIUS,
-                )
-                // 길을 막고 서서 쉬는 사람은 쉬기를 끝내고 다른 곳으로 비켜 준다.
-                for (const [id, other] of this.residents)
-                  if (
-                    id !== actor.id &&
-                    !other.route.length &&
-                    !other.transfer &&
-                    !other.working &&
-                    !other.seated &&
-                    (!other.behavior || other.behavior === 'autonomous') &&
-                    Math.hypot(other.x - resident.x, other.y - resident.y) <
-                      AVOID_RADIUS
-                  )
-                    other.dwell = 0
-                const detour = this.route(
-                  resident,
-                  resident.target.landing,
-                  blockers,
-                )
-                if (detour) resident.route = detour
-                else if (
-                  !resident.working &&
-                  (!resident.behavior || resident.behavior === 'autonomous')
-                )
-                  this.choose(resident, actor, false)
+                if (resident.working) {
+                  this.hold(resident, 'waiting')
+                  resident.stuck = 0
+                } else this.choose(resident, actor, false)
               }
             }
           }
@@ -816,7 +831,10 @@ export class OfficeLifeSimulation {
             resident.activity = target.activity
             resident.dir = target.dir
             resident.heading = target.heading
-            resident.dwell = 11 + (hash(`${actor.id}/${resident.visits}`) % 10)
+            resident.dwell =
+              target.id === 'hold/waiting'
+                ? BLOCKED_RETRY_SECONDS
+                : 11 + (hash(`${actor.id}/${resident.visits}`) % 10)
             if (
               target.seated &&
               Math.hypot(
@@ -833,7 +851,8 @@ export class OfficeLifeSimulation {
             else resident.seated = target.seated
           }
         } else if (
-          !resident.working &&
+          // 일하는 사람은 자기 자리에 닿으면 머문다. 막혀 서 있거나 길을 못 찾았으면 다시 찾는다.
+          (!resident.working || resident.target?.id !== `desk/${actor.id}`) &&
           (!resident.behavior || resident.behavior === 'autonomous')
         ) {
           resident.dwell -= dt

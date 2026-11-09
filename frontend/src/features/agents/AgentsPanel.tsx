@@ -215,6 +215,8 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
             agent_connected: Boolean(me?.agent_connected),
           })
           const tone = statusFailed ? 'recheck' : state
+          // 연결 끊김은 연결 전과 같은 회색이다(사용자 결정 2026-11-09, S15P31A108-341).
+          const idle = tone === 'none' || tone === 'disconnected'
           const revokingToken = tokens.find((token) => token.id === revoking)
           return (
             <>
@@ -226,7 +228,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                     ? 'bg-emerald-50'
                     : tone === 'failed'
                       ? 'bg-[#fdecec]'
-                      : tone === 'none'
+                      : idle
                         ? 'bg-muted'
                         : 'bg-primary/14',
                 )}
@@ -239,7 +241,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                       ? 'bg-emerald-600'
                       : tone === 'failed'
                         ? 'bg-[#c10007]'
-                        : tone === 'none'
+                        : idle
                           ? 'bg-[#c4c4c4]'
                           : 'bg-[#e0b400]',
                   )}
@@ -261,9 +263,12 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   {!statusFailed &&
                     (state === 'failed'
                       ? '방금 확인 · '
-                      : (state === 'connected' || state === 'recheck') &&
-                        lastReportAt &&
-                        `최근 보고 ${formatDate(lastReportAt)} · `)}
+                      : state === 'disconnected'
+                        ? lastReportAt &&
+                          `마지막 통신 ${formatDate(lastReportAt)} · `
+                        : (state === 'connected' || state === 'recheck') &&
+                          lastReportAt &&
+                          `최근 보고 ${formatDate(lastReportAt)} · `)}
                   {statusFailed
                     ? '서버에서 연결 현황을 받지 못했어요. 잠시 뒤 다시 확인해 주세요.'
                     : !statusReady
@@ -274,7 +279,9 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                           ? '아직 보고가 오지 않았어요. 토큰과 MCP 주소를 확인하고 Claude Code를 다시 시작해 주세요.'
                           : state === 'recheck'
                             ? '상태를 다시 확인해 주세요.'
-                            : '아래 단계를 마친 뒤 연결 확인을 눌러 주세요.'}
+                            : state === 'disconnected'
+                              ? '2시간 넘게 통신이 없거나 세션이 끝났어요. Claude Code를 다시 시작한 뒤 연결 확인을 눌러 주세요.'
+                              : '아래 단계를 마친 뒤 연결 확인을 눌러 주세요.'}
                 </span>
                 {!statusFailed &&
                   (state === 'failed' || state === 'recheck') && (

@@ -1,6 +1,6 @@
 import type { Agent, Zone } from '../types'
 import type { Dir, Floor, Furniture, FurnitureKind, Seat, Tile } from './floors'
-import type { OfficePiece, OfficePlan } from './officePlan'
+import type { BibiSpot, OfficePiece, OfficePlan } from './officePlan'
 import { OFFICE_THEMES, officeDesignOf, type OfficeDesign } from './officeLook'
 import { BRICK_PLAN } from './plans/brick'
 import { GLASS_PLAN } from './plans/glass'
@@ -118,6 +118,7 @@ function narrowPlan(plan: OfficePlan): OfficePlan {
   }
   const entrance = narrowAt(plan.entrance.x, plan.entrance.z)
   const bibi = narrowAt(plan.bibi.x, plan.bibi.z)
+  const spot = (at: BibiSpot) => ({ ...at, ...narrowAt(at.x, at.z) })
   return {
     ...plan,
     room: { ...plan.room, w: plan.room.w - 2, d: plan.room.d - 2 },
@@ -128,6 +129,10 @@ function narrowPlan(plan: OfficePlan): OfficePlan {
     lounge: box(plan.lounge),
     entrance,
     bibi: { ...plan.bibi, ...bibi },
+    bibiSpots: {
+      documents: spot(plan.bibiSpots.documents),
+      meeting: spot(plan.bibiSpots.meeting),
+    },
     pieces: plan.pieces.map((piece) => ({
       ...piece,
       ...narrowAt(piece.x, piece.z),
@@ -368,6 +373,7 @@ export function makeTeamOffice(design?: string): Floor {
     )
       blocked[y][x] = true
   const bibi = seatAt(plan.bibi.x, plan.bibi.z, 'down')
+  const bibiSpotAt = ({ x, z, facing }: BibiSpot) => seatAt(x, z, facing)
   // 작업 현황 칸반(없으면 아무 칸반) 앞에서 작업 현황을 연다.
   const kanban =
     plan.pieces.find((piece) => piece.ui === 'kanban' && piece.zone === 4) ??
@@ -407,6 +413,10 @@ export function makeTeamOffice(design?: string): Floor {
       review: work.war,
       control: work.change,
       hr: work.change,
+    },
+    bibiSpots: {
+      documents: bibiSpotAt(plan.bibiSpots.documents),
+      meeting: bibiSpotAt(plan.bibiSpots.meeting),
     },
     points: [
       {
