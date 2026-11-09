@@ -71,7 +71,16 @@ export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
               {citation.claim}
             </p>
           )}
-          <SourceLinks sources={[citationSource(citation)]} />
+          <SourceLinks
+            sources={[citationSource(citation)]}
+            citation={{
+              document_id: citation.document_id,
+              document_version_id: citation.document_version_id,
+              start_line: citation.locator.start_line,
+              end_line: citation.locator.end_line,
+              quote: citation.quote,
+            }}
+          />
         </section>
       ))}
       {!!answer.design_refs?.length && (
@@ -104,8 +113,8 @@ export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
       )}
       {!!answer.citations?.length && (
         <p className="text-xs text-muted-foreground">
-          문서를 열면 인용한 버전으로 이동해요. 표시된 행은 문서에서 직접 확인해
-          주세요.
+          문서를 열면 인용한 버전과 확인된 원문 위치로 이동해요. 원문이 일치하지
+          않으면 위치를 표시하지 않아요.
         </p>
       )}
     </div>
