@@ -124,7 +124,11 @@ export function ProposeFlow({
   const [stored, setStored] = useState(() => readStored(key))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [acknowledged, setAcknowledged] = useState(false)
+  // 올리기 전 확인은 그때 본 초안 리비전·검토 상태 해시에만 유효하다. 자동 갱신 등으로 바뀌면 체크가 풀리고 다시 받는다(PR #227 리뷰).
+  const [acknowledgedAt, setAcknowledgedAt] = useState<{
+    revision: number
+    hash?: string
+  }>()
   // 기준이 바뀌어 저장·검토·올리기가 409 baseline_conflict로 막혔다. 최신 기준과 다시 비교해 저장해야 풀린다.
   const [rebase, setRebase] = useState(false)
   // ①에서 등록할 때 비교한 기준 버전 번호. 그 뒤 승인본이 바뀌어도 비교·제출은 이 버전이므로 화면도 이 번호를 보인다.
@@ -180,6 +184,11 @@ export function ProposeFlow({
   const taskLabel =
     task && `${task.key} ${task.current_plan_revision.plan.title}`
   const reasons = draft ? acknowledgementReasons(draft) : []
+  const acknowledged =
+    !!draft &&
+    acknowledgedAt?.revision === draft.revision &&
+    acknowledgedAt.hash === draft.review_state_hash
+  const acknowledgedStale = !!acknowledgedAt && !acknowledged
   const reviewRunning = draft?.latest_review?.status === 'RUNNING'
   const back = [
     document ? `${document.title} v${document.versionNo}` : '변경 제안',
@@ -298,7 +307,7 @@ export function ProposeFlow({
       )
       // 검토 상태 해시(review_state_hash)는 초안을 다시 읽어야 온다.
       void draftQuery.refetch()
-      setAcknowledged(false)
+      setAcknowledgedAt(undefined)
       setStep(2)
     })
   const decide = (
@@ -316,19 +325,20 @@ export function ProposeFlow({
           { expected_revision: draft.revision, decision },
         ),
       )
-      setAcknowledged(false)
+      setAcknowledgedAt(undefined)
     })
   const submit = () =>
     run(async () => {
       if (!draft) return
-      // 확인할 상태가 있으면 사용자가 본 상태(review_state_hash)에만 확인이 유효하다.
+      // 확인할 상태가 있으면 사용자가 확인한 그 상태(리비전·review_state_hash)로만 올린다.
       const confirm = reasons.length > 0
+      if (confirm && !acknowledged) return
       const body = {
         draft_id: draft.id,
         expected_draft_revision: draft.revision,
         review_acknowledged: confirm,
-        ...(confirm && draft.latest_review && draft.review_state_hash
-          ? { expected_review_state_hash: draft.review_state_hash }
+        ...(confirm && draft.latest_review && acknowledgedAt?.hash
+          ? { expected_review_state_hash: acknowledgedAt.hash }
           : {}),
       }
       try {
@@ -342,7 +352,7 @@ export function ProposeFlow({
         writeStored(key)
         onSubmitted(proposal)
       } catch (cause) {
-        setAcknowledged(false)
+        setAcknowledgedAt(undefined)
         throw cause
       }
     }, '확인한 뒤 작성 중 제안이나 검토 상태가 바뀌었어요. 바뀐 상태를 다시 확인해 주세요.')
@@ -442,7 +452,7 @@ export function ProposeFlow({
                 )?.versionNo,
               )
               setRebase(false)
-              setAcknowledged(false)
+              setAcknowledgedAt(undefined)
               setStep(1)
             })
           }
@@ -623,12 +633,27 @@ export function ProposeFlow({
                 비비 검토는 권장이에요. 이 상태 그대로 올려도 팀장 상세에 함께
                 남아요.
               </p>
+              {acknowledgedStale && (
+                <p className="text-[13px] font-semibold text-destructive">
+                  확인한 뒤 검토 상태가 바뀌었어요. 바뀐 상태를 보고 다시 확인해
+                  주세요.
+                </p>
+              )}
               <label className="flex items-center gap-2 font-semibold">
                 <input
                   type="checkbox"
                   className="size-4 accent-primary"
                   checked={acknowledged}
-                  onChange={(event) => setAcknowledged(event.target.checked)}
+                  onChange={(event) =>
+                    setAcknowledgedAt(
+                      event.target.checked && draft
+                        ? {
+                            revision: draft.revision,
+                            hash: draft.review_state_hash,
+                          }
+                        : undefined,
+                    )
+                  }
                 />
                 이 상태 그대로 올릴게요
               </label>

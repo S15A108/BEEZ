@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -117,6 +117,7 @@ function renderFlow(
   )
   const view = render(flow([doc(1, '301')]))
   return {
+    client,
     onSubmitted,
     approveNewVersion: () => view.rerender(flow([doc(2, '302')])),
     rerenderSame: () => view.rerender(flow([doc(1, '301')])),
@@ -422,6 +423,57 @@ it('진행 중인 검토를 두고 올리면 사용자가 본 검토 상태 해�
       expected_draft_revision: 1,
       review_acknowledged: true,
       expected_review_state_hash: 'state-1',
+    }),
+  )
+})
+
+// PR #227 리뷰(오서현): '검토 진행 중'을 확인한 뒤 자동 갱신으로 처리하지 않은 수정안이 생겨도 체크가 남아, 올릴 때 새 상태의
+// 해시를 보내 새 상태까지 확인한 것이 됐다. 확인은 그때 본 초안 리비전·검토 상태 해시에 묶고, 바뀌면 풀어서 다시 받는다.
+it('확인한 뒤 자동 갱신으로 검토 상태가 바뀌면 체크를 풀고 다시 확인한 상태의 해시로 올린다', async () => {
+  const { client } = renderFlow()
+  const user = await registerAddedLine()
+  vi.spyOn(changesApi, 'requestDraftReview').mockImplementation(async () => {
+    withReview({ status: 'RUNNING', suggestions: [] })
+    return current!.latest_review!
+  })
+  await user.click(screen.getByRole('button', { name: '비비 검토 받기' }))
+  await screen.findByRole('heading', {
+    name: '비비가 바뀐 곳을 검토하고 있어요',
+  })
+  await user.click(screen.getByRole('button', { name: '다음' }))
+  const checkbox = () =>
+    screen.getByRole('checkbox', { name: '이 상태 그대로 올릴게요' })
+  await user.click(checkbox())
+  expect(checkbox()).toBeChecked()
+
+  // 그 사이 검토가 끝나 처리하지 않은 수정안이 생겼고, 자동 갱신으로 다시 읽었다.
+  current = { ...withReview(), review_state_hash: 'state-1-done' }
+  await act(() => client.refetchQueries())
+  const group = screen.getByRole('group', {
+    name: '올리기 전 확인할 검토 상태',
+  })
+  await waitFor(() =>
+    expect(group).toHaveTextContent('처리하지 않은 수정안이 1개 있어요.'),
+  )
+  expect(checkbox()).not.toBeChecked()
+  expect(group).toHaveTextContent(
+    '확인한 뒤 검토 상태가 바뀌었어요. 바뀐 상태를 보고 다시 확인해 주세요.',
+  )
+  const button = screen.getByRole('button', { name: '팀장에게 올리기' })
+  expect(button).toBeDisabled()
+
+  const submitDraft = vi
+    .spyOn(changesApi, 'submitDraft')
+    .mockResolvedValue({ id: '74' } as ChangeProposal)
+  await user.click(checkbox())
+  expect(group).not.toHaveTextContent('확인한 뒤 검토 상태가 바뀌었어요.')
+  await user.click(button)
+  await waitFor(() =>
+    expect(submitDraft).toHaveBeenCalledWith('101', {
+      draft_id: '900',
+      expected_draft_revision: 1,
+      review_acknowledged: true,
+      expected_review_state_hash: 'state-1-done',
     }),
   )
 })
