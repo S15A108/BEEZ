@@ -2,6 +2,9 @@ package com.beez.backend.document.service;
 
 import static com.beez.backend.designitem.support.DesignJson.*;
 
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
@@ -39,11 +42,13 @@ public class DocumentReviewService {
     private final DocumentOriginalWriter originals;
     private final DocumentStorage storage;
     private final NotificationRequester notifier;
+    private final ActivityRecorder activities;
 
     public DocumentReviewService(DocumentReviewRepository repository, ProjectAccessChecker access,
             DocumentInputValidator validator, DocumentReviewGateway ai, DocumentStorage storage,
-            PlatformTransactionManager manager, NotificationRequester notifier) {
+            PlatformTransactionManager manager, NotificationRequester notifier, ActivityRecorder activities) {
         this.notifier = notifier;
+        this.activities = activities;
         this.repository = repository; this.access = access; this.validator = validator; this.ai = ai;
         tx = new TransactionTemplate(manager); originals = new DocumentOriginalWriter(storage, manager); this.storage = storage;
     }
@@ -414,7 +419,10 @@ public class DocumentReviewService {
                     approved ? "DOCUMENT_APPROVED" : "DOCUMENT_REJECTED",
                     approved ? NotificationMessages.documentApproved(fileName) : NotificationMessages.documentRejected(fileName));
         }
-        // TODO(S15P31A108-237): ActivityRecorder.record DOCUMENT_APPROVED / DOCUMENT_REJECTED, key doc-submission:{id}:approved|rejected
+        // 활동은 알림과 달리 등록자 본인이 결정해도 남긴다. 반려 사유는 넣지 않는다(타임라인은 멤버 전원이 본다).
+        activities.record(caller, ActivityEvent.of("doc-submission:" + submission + ("APPROVED".equals(state) ? ":approved" : ":rejected"),
+                project, "APPROVED".equals(state) ? "DOCUMENT_APPROVED" : "DOCUMENT_REJECTED",
+                ActivityTargetType.DOCUMENT_VERSION, id(row, "document_version_id")));
         return submissionView(repository.submission(project, document, submission).orElseThrow());
     }
 

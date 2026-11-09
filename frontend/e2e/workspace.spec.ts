@@ -172,6 +172,36 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
   ).toContainText('상태 확인 필요')
 })
 
+// S15P31A108-202: 기획 분석에서 질문에 답하고, 초안 생성이 만든 후보를 채택하면 설계 항목 초안이 된다(예시 API).
+test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await login(page)
+  await page.goto('/projects/102')
+  await expect(page.locator('canvas')).toBeVisible()
+  // 기획 분석 창은 단축 바에 없어 개발 서버의 저장소로 연다.
+  await page.evaluate(async () => {
+    const path = '/src/stores/workspaceStore.ts'
+    const store = await import(/* @vite-ignore */ path)
+    store.useWorkspaceStore.getState().openPane('planning')
+  })
+  const dialog = page.getByRole('dialog')
+  await dialog.getByText('프로젝트 삭제 권한은 인간 팀장만 가지나요?').click()
+  await dialog.getByRole('textbox', { name: '답변' }).fill('팀장만 삭제해요.')
+  await dialog.getByRole('button', { name: '저장', exact: true }).click()
+  await expect(dialog.getByText('답변을 저장했어요.')).toBeVisible()
+  await dialog.getByRole('button', { name: '답변으로 초안 만들기' }).click()
+  const candidate = dialog
+    .locator('article')
+    .filter({ hasText: '새 항목' })
+    .filter({ hasNotText: '근거 없음' })
+    .first()
+  await expect(candidate).toBeVisible({ timeout: 15_000 })
+  await candidate.getByRole('button', { name: '채택' }).click()
+  await expect(dialog.getByText('후보를 채택했어요.').first()).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장한다', async ({
   page,
 }) => {
@@ -245,7 +275,7 @@ test('도시 이름표 위에서도 휠과 끌기로 고리를 돌리고, 누르
   await expect(page.getByRole('dialog')).toContainText('부지 3')
 })
 
-// 목록 API에 없는 값은 올린 프로젝트만 불러 호버 카드로 보인다(D39). 배지는 호버 카드가 열려도 보인다.
+// 목록 API에 없는 값은 올린 프로젝트만 불러 호버 카드로 보인다(D41). 배지는 호버 카드가 열려도 보인다.
 test('프로젝트 카드에 올리거나 키보드로 들어가면 호버 카드가 열리고 배지가 보인다', async ({
   page,
 }) => {

@@ -28,10 +28,14 @@ public class AgentTokenService {
 
     static final int LABEL_MAX = 100;
 
-    /** 발급 응답의 작업 절차 지침. MCP Tools 명세 "작업 호출 순서"를 줄였다 — 도구가 붙는 -178 에서 다시 맞춘다. */
-    static final String CLAUDE_MD_SNIPPET = """
+    /**
+     * 작업 절차 지침 (AGT-04). 발급 응답의 claude_md_snippet 이고, MCP initialize 의 instructions 로도 간다(-178).
+     * MCP Tools 명세 "작업 호출 순서"를 줄였다 — 순서를 바꾸면 명세와 함께 고친다.
+     */
+    public static final String CLAUDE_MD_SNIPPET = """
             ## BEEZ 작업 절차
-            이 저장소의 작업은 BEEZ MCP 도구를 거친다.
+            이 저장소의 작업은 BEEZ MCP 도구를 거친다. 연결이 되는지는 `check_connection` 으로 확인한다.
+            한 사람은 프로젝트마다 에이전트 하나만 연결된다 — 다른 곳에서 새로 연결하면 이전 연결은 끊긴다.
             1. `get_development_context` 로 승인 설계와 근거를 읽는다.
             2. `upsert_task_plan` 으로 계획과 참조한 설계 버전을 저장한다.
             3. `validate_task_plan` 을 호출하고, 결과가 PASS 일 때만 다음으로 간다 (RUNNING 이면 `get_validation`).
@@ -39,6 +43,7 @@ public class AgentTokenService {
             5. 설계를 바꿔야 하면 직접 바꾸지 말고 `propose_design_change` 로 제안한다.
             6. 설계 변경이 발행되면 `get_design_changes` 로 확인하고, 계획을 고쳐 다시 검증한 뒤 `report_task_state(RESUME)` 로 이어 간다.
             7. 끝나면 결과와 계획 대비 변경을 `report_task_state(COMPLETED)` 로 보고한다.
+            작업을 넘겨받았거나 `revision_conflict` 를 받으면 `get_task` 로 `lock_version` 과 현재 계획을 다시 읽고, 그 값으로 다시 검증한 뒤 `report_task_state(RESUME)` 로 이어 간다.
             """;
 
     private final ProjectAccessChecker access;

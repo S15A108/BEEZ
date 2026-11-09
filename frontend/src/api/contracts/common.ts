@@ -306,11 +306,42 @@ export const baselineSchema = z.object({
 })
 export type Baseline = z.infer<typeof baselineSchema>
 
+// S15P31A108-232: 질문 유형·답변 형식·근거 상태는 AI가 만든 질문에만 있어 모두 선택으로 받는다.
+export const planningAnswerFormatSchema = z.object({
+  type: z.enum(['CHOICE', 'SHORT_ANSWER', 'ESSAY']).optional(),
+  options: z.string().array().optional(),
+  multiple: z.boolean().optional(),
+  allow_other: z.boolean().optional(),
+  max_length: z.number().int().positive().optional(),
+})
+export type PlanningAnswerFormat = z.infer<typeof planningAnswerFormatSchema>
+
+export const planningAnswerPayloadSchema = z.union([
+  z.object({
+    type: z.literal('CHOICE'),
+    selected: z.string().array(),
+    other_text: z.string().optional(),
+  }),
+  z.object({
+    type: z.enum(['SHORT_ANSWER', 'ESSAY']),
+    text: z.string(),
+  }),
+])
+export type PlanningAnswerPayload = z.infer<typeof planningAnswerPayloadSchema>
+
 export const planningQuestionSchema = z.object({
   id: idSchema,
+  number: z.number().int().optional(),
   question: z.string(),
+  kind: z.enum(['MISSING_CANDIDATE', 'CLARIFICATION', 'CONFLICT']).optional(),
+  question_type: z.enum(['CHOICE', 'SHORT_ANSWER', 'ESSAY']).optional(),
+  answer_format: planningAnswerFormatSchema.optional(),
+  status: z.enum(['OPEN', 'ANSWERED', 'DISMISSED']).optional(),
+  evidence_status: z.enum(['REVIEW_CANDIDATE', 'UNVERIFIED']).optional(),
+  summary: z.string().optional(),
   source: sourceSchema.optional(),
   answer: z.string().optional(),
+  answer_payload: planningAnswerPayloadSchema.optional(),
   answered_by: idSchema.optional(),
   answered_at: timeSchema.optional(),
 })
@@ -975,9 +1006,19 @@ export type AgentConnection = z.infer<typeof agentConnectionSchema>
 export const agentWorkSchema = z.object({
   member_id: idSchema,
   agent_session_id: idSchema.optional(),
+  agent_name: z.string().optional(),
   current_task_id: idSchema.optional(),
+  task_title: z.string().optional(),
+  // 명세에는 없지만 DB는 DRAFT를 허용하고 MON-A05가 작업 상태를 그대로 넘긴다. 이 값 하나로 응답 전체가 깨지지 않게 받는다.
   task_status: z
-    .enum(['READY', 'IN_PROGRESS', 'WAITING', 'COMPLETED', 'CANCELLED'])
+    .enum([
+      'DRAFT',
+      'READY',
+      'IN_PROGRESS',
+      'WAITING',
+      'COMPLETED',
+      'CANCELLED',
+    ])
     .optional(),
   validation_status: z
     .enum([
@@ -991,6 +1032,8 @@ export const agentWorkSchema = z.object({
     ])
     .optional(),
   waiting_reason: z.string().optional(),
+  // 명세의 마지막 작업 보고 시각. dev 백엔드는 아직 주지 않는다(11-06 확인). 오면 보여 준다.
+  reported_at: timeSchema.optional(),
 })
 export type AgentWork = z.infer<typeof agentWorkSchema>
 
@@ -1131,10 +1174,14 @@ export const relationEdgeSchema = z.object({
 })
 export type RelationEdge = z.infer<typeof relationEdgeSchema>
 
+export const actorTypeSchema = z.enum(['HUMAN', 'AGENT', 'BEE', 'SYSTEM'])
 export const activitySchema = z.object({
   id: idSchema,
   type: z.string(),
+  actor_type: actorTypeSchema,
   actor_account_id: idSchema.optional(),
+  agent_session_id: idSchema.optional(),
+  actor_name: z.string().optional(),
   task_id: idSchema.optional(),
   change_proposal_id: idSchema.optional(),
   baseline_id: idSchema.optional(),
@@ -1169,6 +1216,7 @@ export type Notification = z.infer<typeof notificationSchema>
 
 export const usageBucketSchema = z.object({
   key: z.string(),
+  label: z.string().optional(),
   input_tokens: z.number().int(),
   output_tokens: z.number().int(),
   call_count: z.number().int(),
@@ -1192,6 +1240,8 @@ export const usageSummarySchema = z.object({
   by_feature: usageBucketSchema.array(),
   by_task: usageBucketSchema.array(),
   by_validation: usageBucketSchema.array(),
+  by_agent: usageBucketSchema.array(),
+  by_day: usageBucketSchema.array(),
 })
 export type UsageSummary = z.infer<typeof usageSummarySchema>
 

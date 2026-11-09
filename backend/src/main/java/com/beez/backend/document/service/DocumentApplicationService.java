@@ -2,6 +2,10 @@ package com.beez.backend.document.service;
 
 import static com.beez.backend.document.service.DocumentValues.*;
 
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.common.api.ApiException;
@@ -35,12 +39,14 @@ public class DocumentApplicationService {
     private final DocumentIndexWorker worker;
     private final DocumentReviewRepository reviews;
     private final ContextAccessRecorder accessLog;
+    private final ActivityRecorder activities;
 
     public DocumentApplicationService(JdbcClient jdbc, ProjectAccessChecker access, DocumentRepository documents,
             DocumentVersionRepository versions, DocumentStorage storage, DocumentInputValidator validator,
             PlatformTransactionManager transactions, DocumentIndexWorker worker, DocumentReviewRepository reviews,
-            ContextAccessRecorder accessLog) {
+            ContextAccessRecorder accessLog, ActivityRecorder activities) {
         this.accessLog = accessLog;
+        this.activities = activities;
         this.jdbc = jdbc; this.access = access; this.documents = documents; this.versions = versions;
         this.storage = storage; this.validator = validator; this.transactions = transactions; this.worker = worker;
         this.transaction = new TransactionTemplate(transactions);
@@ -51,10 +57,18 @@ public class DocumentApplicationService {
     private List<Map<String, Object>> rows(String sql, Map<String, ?> parameters) {
         return jdbc.sql(sql).params(parameters).query().listOfRows();
     }
+    /** 없으면 업무 상태 404({@link DocumentValues#missing}). 존재를 숨겨야 하는 조회는 거부 사유를 받는 아래 오버로드를 쓴다. */
     private Map<String, Object> one(String sql, Map<String, ?> parameters) {
         return rows(sql, parameters).stream().findFirst().orElseThrow(DocumentValues::missing);
     }
-    private void lock(long project) { if (documents.lockProject(project) == null) throw missing(); }
+    private Map<String, Object> one(String sql, Map<String, ?> parameters, String deniedReason) {
+        return rows(sql, parameters).stream().findFirst().orElseThrow(() -> AccessErrors.notFound(deniedReason));
+    }
+    private void lock(long project) { if (documents.lockProject(project) == null) throw AccessErrors.notFound("document_project_missing"); }
+    /** 앞선 requireMember 뒤 잠금 사이에 멤버십·프로젝트가 바뀐 경우 — DocumentReviewService.lock 과 같은 거부 */
+    private void lockMember(CallerContext caller, long project) {
+        if (!reviews.lockMember(project, caller.accountId(), false)) throw AccessErrors.notFound("document_membership_changed");
+    }
     private void requireAuthor(CallerContext caller, long project, long id) {
         access.requireMember(caller, project).requireHuman();
         var doc = document(project, id);
@@ -67,10 +81,13 @@ public class DocumentApplicationService {
     }
     private String dbKind(DocumentKind kind) { return new DocumentKindMapper().convertToDatabaseColumn(kind); }
     private Map<String, Object> document(long project, long id) {
-        return one("SELECT * FROM document WHERE id=:id AND project_id=:project", Map.of("id", id, "project", project));
+        // 없는 문서와 다른 프로젝트 문서는 같은 404 (05 참고 2 — 3단계)
+        return one("SELECT * FROM document WHERE id=:id AND project_id=:project", Map.of("id", id, "project", project), "document_not_in_project");
     }
     private Map<String, Object> version(long document, long id) {
-        return one("SELECT * FROM document_version WHERE document_id=:document AND id=:id", Map.of("document", document, "id", id));
+        // 버전 ID 는 다른 문서·프로젝트의 ID 가 들어올 수 있어 접근 거부로 숨긴다
+        return one("SELECT * FROM document_version WHERE document_id=:document AND id=:id", Map.of("document", document, "id", id),
+                "document_version_not_in_document");
     }
     private Optional<Map<String, Object>> approved(long document) {
         return rows("""
@@ -80,6 +97,7 @@ public class DocumentApplicationService {
     }
     private Map<String, Object> versionNumber(long document, int no) {
         if (no < 1) throw invalid("version_no는 양수입니다.");
+        // 버전 번호는 이미 소속을 확인한 문서 안의 번호라 숨길 대상이 없다 — 업무 상태 404 (MCP-02 "지정 버전 없음")
         return one("SELECT * FROM document_version WHERE document_id=:document AND version_no=:no", Map.of("document", document, "no", no));
     }
 
@@ -177,10 +195,13 @@ public class DocumentApplicationService {
         if (previous.isPresent()) return previous.get();
         return originals.write(originalBytes, source.extension(), original -> {
             lock(project); access.requireMember(caller, project).requireHuman();
-            if (!reviews.lockMember(project, caller.accountId(), false)) throw missing();
+            lockMember(caller, project);
             var concurrent = replay(caller, project, "upload", key, fp);
             if (concurrent.isPresent()) return concurrent.get();
             var saved = registration.persist(input, source, original);
+            // 멱등 재생(concurrent)은 위에서 반환했다. 등록은 알림 유형이 없어(계약 6.1) 활동만 남긴다.
+            activities.record(caller, ActivityEvent.of("document-version:" + saved.documentVersionId() + ":registered", project,
+                    "DOCUMENT_REGISTERED", ActivityTargetType.DOCUMENT_VERSION, saved.documentVersionId()));
             reviews.initialize(saved.documentId(), saved.documentVersionId(), caller.accountId(), filename);
             enqueue(saved.documentVersionId(), saved.textHash());
             var response = Map.<String, Object>of("document", documentView(document(project, saved.documentId())), "analysis_status", "PENDING");
@@ -238,6 +259,7 @@ public class DocumentApplicationService {
             selected = baselineVersion.orElseThrow(DocumentApplicationService::notInBaseline);
         } else {
             selected = versionNumber(id, no);
+            // DRAFT·REJECTED 는 MCP-02 오류표의 "승인본 또는 지정 버전 없음" — 같은 프로젝트 문서라 업무 상태 404
             if (!Set.of("APPROVED", "SUPERSEDED").contains(selected.get("status"))) throw missing();
         }
         accessLog.record(actor, null, "get_document", ContextAccessRecorder.KIND_DOCUMENT_VERSION, number(selected, "id"), baseline, null);
@@ -247,6 +269,10 @@ public class DocumentApplicationService {
         baselineVersion.ifPresent(v -> view.put("approved_version", versionView(v, false)));
         return Map.of("document", view, "version", versionView(selected, true));
     }
+    /**
+     * 업무 상태 404 — 멤버가 자기 프로젝트 문서를 조회했는데 현재 기준 설계에 그 문서 승인본이 없다(MCP-02 "승인본 또는 지정 버전 없음").
+     * 숨길 존재가 없으므로 AccessErrors 가 아니다. MCP 감사에는 ERROR + not_found 로 남는다 (S15P31A108-322).
+     */
     private static ApiException notInBaseline() {
         return new ApiException(org.springframework.http.HttpStatus.NOT_FOUND, "not_found", "현재 기준 설계에 이 문서의 승인본이 없습니다.");
     }
@@ -276,7 +302,7 @@ public class DocumentApplicationService {
     @Transactional
     public Map<String, Object> classify(CallerContext caller, long project, long id, Map<String, String> body, String key) {
         requireAuthor(caller, project, id); lock(project); requireAuthor(caller, project, id);
-        if (!reviews.lockMember(project, caller.accountId(), false)) throw missing();
+        lockMember(caller, project);
         if (body == null || body.size() != 1 || !body.containsKey("domain") || body.get("domain") == null) throw invalid("domain만 수정할 수 있습니다.");
         String operation = "classify:" + id, fp = fingerprint(body);
         var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();

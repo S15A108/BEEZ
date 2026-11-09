@@ -130,6 +130,7 @@ it('최근 활동이 있으면 활동 시각을, 없으면 만든 시각을 보�
       {
         id: '1',
         type: 'TASK_STARTED',
+        actor_type: 'HUMAN',
         result: 'SUCCESS',
         created_at: new Date().toISOString(),
       },

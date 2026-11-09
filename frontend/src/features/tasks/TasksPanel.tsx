@@ -13,7 +13,9 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   TriangleAlert,
+  X,
 } from 'lucide-react'
 import { contextsApi, planningApi, tasksApi } from '@/api/services'
 import {
@@ -67,10 +69,16 @@ import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { describeContent, LIST_SELECTED, lines } from '@/lib/display'
+import {
+  describeContent,
+  LIST_SELECTED,
+  lines,
+  statusLabel,
+} from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
   toValidationView,
   useValidationActions,
@@ -512,6 +520,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           <AsyncState query={detail}>
             {(current) => (
               <div className="space-y-5">
+                {!['COMPLETED', 'CANCELLED'].includes(current.status) && (
+                  <AssignmentRecommendations
+                    key={`${current.id}-${current.lock_version}`}
+                    projectId={projectId}
+                    taskId={current.id}
+                    members={members.data?.items ?? []}
+                  />
+                )}
                 <Card>
                   <CardHeader>
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1540,7 +1556,9 @@ const editorSchema = z.object({
   included_scope: z.string(),
   excluded_scope: z.string(),
   approach: z.string().trim().min(1),
-  completion_criteria: z.string().trim().min(1),
+  completion_criteria: z
+    .array(z.object({ text: z.string() }))
+    .refine((rows) => rows.some((row) => row.text.trim())),
   dependency_task_ids: idSchema.array(),
   context_packet_id: z.string(),
   no_contract_change: z.boolean(),
@@ -1586,6 +1604,12 @@ function missingDetails(findings: { kind: string; message: string }[]) {
     .map(([name]) => name)
 }
 
+// 불러온 승인 항목을 화면에서 거른다. 서버의 데이터 계약 키는 ENT-지만 캔버스와 문서가 ERD라고 부르므로 ERD로도 찾는다.
+const matchesDesignItem = (item: DesignItemVersion, query: string) =>
+  `${item.key} ${statusLabel(item.kind)} ${item.kind === 'DATA_CONTRACT' ? 'ERD' : ''} ${describeContent(item.content)}`
+    .toLowerCase()
+    .includes(query.trim().toLowerCase())
+
 function PlanDialog({
   task,
   items,
@@ -1608,6 +1632,7 @@ function PlanDialog({
 }) {
   const plan = task?.current_plan_revision.plan
   const [error, setError] = useState('')
+  const [itemQuery, setItemQuery] = useState('')
   // 저장이 서버에서 막히면 오류 문구의 design_item_id=·task_id=로 어느 항목 때문인지 그 줄에 표시한다(PR #72 3차 조사 THIRD-TC-01).
   const [blame, setBlame] = useState<{ item?: string; task?: string }>({})
   const blameNote = (text: string) => (
@@ -1648,7 +1673,9 @@ function PlanDialog({
       included_scope: plan?.included_scope.join('\n') ?? '',
       excluded_scope: plan?.excluded_scope.join('\n') ?? '',
       approach: plan?.approach ?? '',
-      completion_criteria: plan?.completion_criteria.join('\n') ?? '',
+      completion_criteria: plan?.completion_criteria.length
+        ? plan.completion_criteria.map((text) => ({ text }))
+        : [{ text: '' }],
       dependency_task_ids: plan?.dependency_task_ids ?? [],
       context_packet_id: plan?.context_packet_id ?? '',
       no_contract_change: plan?.no_contract_change ?? false,
@@ -1666,18 +1693,14 @@ function PlanDialog({
   })
   const refs = useWatch({ control, name: 'refs' })
   const unlinkedRows = useFieldArray({ control, name: 'unlinked' })
+  const criteriaRows = useFieldArray({ control, name: 'completion_criteria' })
   const dependencyIds = useWatch({ control, name: 'dependency_task_ids' })
   const selectedRefs = new Set(
     refs.map((reference) => reference.design_item_id),
   )
+  const shownItems = items.filter((item) => matchesDesignItem(item, itemQuery))
   const field = (
-    name:
-      | 'title'
-      | 'goal'
-      | 'included_scope'
-      | 'excluded_scope'
-      | 'approach'
-      | 'completion_criteria',
+    name: 'title' | 'goal' | 'included_scope' | 'excluded_scope' | 'approach',
     label: string,
     multiline = true,
   ) => (
@@ -1685,9 +1708,7 @@ function PlanDialog({
       {/* 필수 표시는 라벨 밖에 둔다(L4). 라벨 이름은 그대로 남아 화면 읽기 프로그램에 같은 이름으로 읽힌다. */}
       <span className="flex gap-1">
         <Label htmlFor={`plan-${name}`}>{label}</Label>
-        {['title', 'goal', 'approach', 'completion_criteria'].includes(
-          name,
-        ) && (
+        {['title', 'goal', 'approach'].includes(name) && (
           <span aria-hidden="true" className="text-sm text-destructive">
             *
           </span>
@@ -1744,7 +1765,9 @@ function PlanDialog({
               ...values,
               included_scope: lines(values.included_scope),
               excluded_scope: lines(values.excluded_scope),
-              completion_criteria: lines(values.completion_criteria),
+              completion_criteria: values.completion_criteria
+                .map((row) => row.text.trim())
+                .filter(Boolean),
               context_packet_id: values.context_packet_id || undefined,
               // 계획 수정은 기존 계획의 객체에서 시작해 고친 것만 바꾼다(PR #72 리뷰). 객체마다 원래 순번(source)으로
               // 짝을 맞춰, 설명이 그대로면 원래 객체를 두고 고쳤으면 다른 필드(method·path 등)는 두고 description만
@@ -1801,6 +1824,8 @@ function PlanDialog({
             }
             setBlame(culprit)
             if (culprit.task) setDetailsOpen(true)
+            // 막힌 항목이 검색에 가려져 있으면 그 줄의 안내가 보이지 않는다.
+            if (culprit.item) setItemQuery('')
           }
         })}
       >
@@ -1808,7 +1833,23 @@ function PlanDialog({
         {field('goal', '이번 작업의 목표', false)}
         <fieldset className="space-y-3 rounded-lg border p-4">
           <legend className="px-2 text-sm font-medium">관련 설계 항목</legend>
-          {items.map((item) => {
+          <label className="relative block">
+            <span className="sr-only">설계 항목 검색</span>
+            <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              type="search"
+              className="pl-8"
+              placeholder="설계 항목 검색 · REQ, API, ERD"
+              disabled={isSubmitting}
+              value={itemQuery}
+              onChange={(event) => setItemQuery(event.target.value)}
+              // 검색칸의 Enter가 계획 저장으로 이어지지 않게 막는다.
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.preventDefault()
+              }}
+            />
+          </label>
+          {shownItems.map((item) => {
             const index = refs.findIndex(
               (reference) => reference.design_item_id === item.design_item_id,
             )
@@ -1960,13 +2001,83 @@ function PlanDialog({
               현재 조회된 승인 설계 항목이 없어요.
             </p>
           )}
+          {items.length > 0 && !shownItems.length && (
+            <p className="text-sm text-muted-foreground">
+              ‘{itemQuery.trim()}’에 맞는 설계 항목이 없어요.
+            </p>
+          )}
           {moreItems && (
             <Button type="button" variant="outline" onClick={onMoreItems}>
               설계 항목 더 보기
             </Button>
           )}
+          {/* 고른 항목이 검색에 가려져도 함께 저장된다는 것을 개수로 알린다. */}
+          {items.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {refs.length}개 선택 · 승인된 항목만 보여요
+            </p>
+          )}
         </fieldset>
-        {field('completion_criteria', '완료 기준 · 한 줄에 하나씩')}
+        <fieldset className="grid content-start gap-2">
+          <legend className="mb-2 flex gap-1 text-sm font-medium">
+            완료 기준
+            <span aria-hidden="true" className="text-destructive">
+              *
+            </span>
+          </legend>
+          {criteriaRows.fields.map((row, index) => (
+            <div key={row.id} className="flex items-center gap-1.5">
+              <Input
+                aria-label={`완료 기준 ${index + 1}`}
+                placeholder={
+                  index === 0
+                    ? '예: 로그인하면 프로젝트 목록이 보인다'
+                    : undefined
+                }
+                disabled={isSubmitting}
+                {...register(`completion_criteria.${index}.text`)}
+                // 여러 줄 칸일 때처럼 Enter는 다음 줄로 간다. 한글 조합을 끝내는 Enter는 줄을 더하지 않는다.
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  if (!event.nativeEvent.isComposing)
+                    criteriaRows.append({ text: '' })
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`완료 기준 ${index + 1} 지우기`}
+                disabled={isSubmitting}
+                onClick={() =>
+                  criteriaRows.fields.length > 1
+                    ? criteriaRows.remove(index)
+                    : criteriaRows.replace([{ text: '' }])
+                }
+              >
+                <X />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="justify-self-start"
+            disabled={isSubmitting}
+            onClick={() => criteriaRows.append({ text: '' })}
+          >
+            <Plus />
+            기준 추가
+          </Button>
+          <p className="text-xs text-muted-foreground">한 줄에 하나씩 적어요</p>
+          {errors.completion_criteria && (
+            <p className="text-xs text-destructive" role="alert">
+              내용을 입력해 주세요.
+            </p>
+          )}
+        </fieldset>
         {/* 접근 방법은 서버 필수값이라 기본 칸에 둔다(PR #72 리뷰, 사용자가 줄인 4칸 구성에서 1칸 늘어남). */}
         {field('approach', '어떻게 진행하나요?')}
         <details

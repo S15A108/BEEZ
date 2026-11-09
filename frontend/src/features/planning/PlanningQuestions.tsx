@@ -1,0 +1,281 @@
+import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { Lightbulb, RefreshCw } from 'lucide-react'
+import type { PlanningQuestion } from '@/api/contracts/common'
+import { planningApi } from '@/api/services'
+import { getErrorCodeMessage } from '@/api/error'
+import { AsyncState } from '@/components/AsyncState'
+import { EmptyState } from '@/components/EmptyState'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Tag } from '@/features/changes/Tag'
+import { operationTone } from '@/features/changes/tagTones'
+import { cn } from '@/lib/utils'
+import { QuestionAnswerForm } from './QuestionAnswerForm'
+import type { GenerationStatus } from './questionGeneration'
+import type { AnswerQuestionInput } from './schemas'
+
+const kindLabel = {
+  MISSING_CANDIDATE: '누락 후보',
+  CLARIFICATION: '모호한 내용',
+  CONFLICT: '문서 간 충돌',
+} as const
+const kindTone = {
+  MISSING_CANDIDATE: 'bg-[#e6effa] text-[#1d4f91]',
+  CLARIFICATION: undefined,
+  CONFLICT: operationTone.RETIRE,
+} as const
+const typeLabel = {
+  CHOICE: '선택형',
+  SHORT_ANSWER: '단답형',
+  ESSAY: '서술형',
+} as const
+
+export interface QuestionGenerationView {
+  /** 질문 생성이 도는 중이거나 실패한 문서 하나(문서 버전마다 따로 온다) */
+  versionId: string
+  label: string
+  status: GenerationStatus
+  errorCode?: string
+  retryable?: boolean
+  onRetry: () => void
+}
+
+export function PlanningQuestions({
+  projectId,
+  isLeader,
+  busy,
+  generations,
+  answerable,
+  published,
+  onAnswer,
+}: {
+  projectId: string
+  isLeader: boolean
+  busy: boolean
+  generations: QuestionGenerationView[]
+  /** 기준 설계가 발행되면 서버가 답변을 막는다(409 design_already_published) */
+  answerable: boolean
+  published: boolean
+  onAnswer: (id: string, input: AnswerQuestionInput) => Promise<unknown>
+}) {
+  const [answering, setAnswering] = useState<PlanningQuestion | null>(null)
+  const failed = generations.filter((item) => item.status === 'FAILED')
+  const activeIds = generations
+    .filter((item) => item.status !== 'FAILED')
+    .map((item) => item.versionId)
+  const generating = activeIds.length > 0
+  const queryClient = useQueryClient()
+  // 문서 하나라도 질문 생성이 끝나는 순간에는 마지막 목록이 완료 직전 값일 수 있어, 그때 한 번 더 읽는다.
+  const previousActive = useRef<string[]>([])
+  const activeKey = activeIds.join(',')
+  useEffect(() => {
+    const now = activeKey ? activeKey.split(',') : []
+    if (previousActive.current.some((id) => !now.includes(id)))
+      void queryClient.invalidateQueries({
+        queryKey: ['projects', projectId, 'planning-questions'],
+      })
+    previousActive.current = now
+  }, [activeKey, projectId, queryClient])
+  const questions = useInfiniteQuery({
+    queryKey: ['projects', projectId, 'planning-questions'],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      planningApi.questions(projectId, { cursor: pageParam, limit: 100 }),
+    getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    // 질문을 만드는 동안에는 끝날 때까지 목록을 다시 불러온다.
+    refetchInterval: generating ? 1500 : false,
+  })
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Lightbulb className="size-4 text-primary" />
+          아직 정하지 않은 내용
+        </CardTitle>
+        <CardDescription>
+          답변은 초안 생성의 참고 자료이며 설계 승인과 구분해요.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {failed.map((item) => (
+          <div
+            key={item.versionId}
+            role="alert"
+            className="mb-3 rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
+          >
+            <p>
+              {item.label} 보완 질문을 만들지 못했어요.{' '}
+              {getErrorCodeMessage(item.errorCode) ?? ''}
+            </p>
+            {isLeader && item.retryable !== false && (
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={item.onRetry}
+              >
+                <RefreshCw />
+                질문 다시 만들기
+              </Button>
+            )}
+          </div>
+        ))}
+        {generating && (
+          <div
+            role="status"
+            className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <p>비비가 보완 질문을 만들고 있어요. 잠시만 기다려 주세요.</p>
+          </div>
+        )}
+        <AsyncState query={questions}>
+          {(data) => {
+            const entries = data.pages.flatMap((page) => page.items)
+            const total = data.pages[0]?.total_count
+            return (
+              <div className="space-y-3">
+                {entries.length ? (
+                  <>
+                    {total !== undefined && (
+                      <p className="text-xs text-muted-foreground">
+                        전체 질문 {total}개
+                        {entries.length < total &&
+                          ` · ${entries.length}개 표시`}
+                      </p>
+                    )}
+                    {entries.map((question) => (
+                      <QuestionCard
+                        key={question.id}
+                        question={question}
+                        isLeader={isLeader}
+                        busy={busy}
+                        answerable={answerable}
+                        published={published}
+                        onAnswer={() => setAnswering(question)}
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <EmptyState>현재 등록된 보완 질문이 없어요.</EmptyState>
+                )}
+                {questions.hasNextPage && (
+                  <Button
+                    variant="outline"
+                    onClick={() => void questions.fetchNextPage()}
+                    disabled={questions.isFetchingNextPage}
+                  >
+                    질문 더 보기
+                  </Button>
+                )}
+              </div>
+            )
+          }}
+        </AsyncState>
+      </CardContent>
+      {answering && (
+        <QuestionAnswerForm
+          question={answering}
+          onClose={() => setAnswering(null)}
+          onSubmit={(input) => onAnswer(answering.id, input)}
+        />
+      )}
+    </Card>
+  )
+}
+
+function QuestionCard({
+  question,
+  isLeader,
+  busy,
+  answerable,
+  published,
+  onAnswer,
+}: {
+  question: PlanningQuestion
+  isLeader: boolean
+  busy: boolean
+  answerable: boolean
+  published: boolean
+  onAnswer: () => void
+}) {
+  const dismissed = question.status === 'DISMISSED'
+  const answered = !!question.answer && !dismissed
+  const clickable = isLeader && !busy && answerable
+  return (
+    <article
+      className={cn(
+        'rounded-lg border p-4',
+        clickable &&
+          'cursor-pointer transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+      )}
+      {...(clickable
+        ? {
+            role: 'button',
+            tabIndex: 0,
+            onClick: onAnswer,
+            onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+              if (event.target !== event.currentTarget) return
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onAnswer()
+              }
+            },
+          }
+        : {})}
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {question.number !== undefined && (
+          <span className="mr-1 text-xs font-semibold text-muted-foreground">
+            질문 {question.number}
+          </span>
+        )}
+        {question.kind && (
+          <Tag tone={kindTone[question.kind]}>{kindLabel[question.kind]}</Tag>
+        )}
+        {question.question_type && (
+          <Tag>{typeLabel[question.question_type]}</Tag>
+        )}
+        {question.evidence_status === 'UNVERIFIED' && (
+          <Tag tone={operationTone.UPDATE}>근거 미확인</Tag>
+        )}
+        {dismissed && <Tag>답변 없이 닫음</Tag>}
+        {answered && <Tag tone={operationTone.CREATE}>답변 완료</Tag>}
+      </div>
+      <p className="text-sm leading-6">{question.question}</p>
+      {question.summary && (
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          {question.summary}
+        </p>
+      )}
+      {question.source && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          원문 v{question.source.version_no} · {question.source.location}
+        </p>
+      )}
+      {answered && (
+        <p className="mt-3 rounded-md bg-muted/50 p-3 text-sm whitespace-pre-wrap">
+          {question.answer}
+        </p>
+      )}
+      {isLeader && published && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          기준 설계가 발행되어 답변을 바꿀 수 없어요.
+        </p>
+      )}
+      {clickable && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {answered ? '눌러서 답변 수정' : '눌러서 답변하기'}
+        </p>
+      )}
+    </article>
+  )
+}

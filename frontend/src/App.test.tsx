@@ -8,7 +8,7 @@ import App from './App'
 
 afterEach(() => vi.restoreAllMocks())
 
-it('기존 앱 진입점에서 BEEZ 브랜드와 목데이터 안내를 보여준다', () => {
+it('기존 앱 진입점에서 BEEZ 브랜드를 보여주고 목데이터 안내는 없다', () => {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
@@ -18,8 +18,8 @@ it('기존 앱 진입점에서 BEEZ 브랜드와 목데이터 안내를 보여�
   )
   expect(screen.getByRole('heading', { name: 'BEEZ' })).toBeInTheDocument()
   expect(
-    screen.getByText('목데이터로 미리 보기 · 실제 서버 호출 없음'),
-  ).toBeInTheDocument()
+    screen.queryByText('목데이터로 미리 보기 · 실제 서버 호출 없음'),
+  ).not.toBeInTheDocument()
 })
 
 const account = (must_change_password: boolean): MeResponse => ({

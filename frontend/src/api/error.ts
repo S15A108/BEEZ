@@ -87,6 +87,7 @@ const messages: Record<string, string> = {
   task_conflict: '같은 설계를 변경하는 작업을 확인해 주세요.',
   ai_unavailable: '분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   ai_timeout: '분석 시간이 초과되었습니다. 다시 시도해 주세요.',
+  recommendation_stale: '작업이나 팀원 정보가 바뀌었어요. 다시 추천해 주세요.',
   rate_limited: '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',
@@ -129,6 +130,24 @@ const messages: Record<string, string> = {
   invitation_not_pending: '이미 참여했거나 취소된 초대예요.',
   agent_limit_reached:
     '활성 토큰은 프로젝트마다 5개까지예요. 쓰지 않는 토큰을 폐기한 뒤 다시 발급해 주세요.',
+}
+// S15P31A108-202 기획 보완 질문·초안 후보(PR-1)의 오류. 다른 PR과 겹치지 않게 따로 둔다.
+Object.assign(messages, {
+  candidate_stale:
+    '후보를 만든 뒤 문서나 답변, 설계 항목이 바뀌었어요. 초안을 다시 만들어 주세요.',
+  candidate_discarded: '이미 폐기한 후보예요. 목록을 새로고침해 주세요.',
+  candidate_adopted: '이미 채택한 후보예요. 목록을 새로고침해 주세요.',
+  draft_in_progress: '초안을 만드는 중이에요. 끝난 뒤 다시 시도해 주세요.',
+  question_superseded:
+    '문서가 다시 분석되어 질문이 바뀌었어요. 목록을 새로고침해 주세요.',
+  design_already_published:
+    '이미 기준 설계가 발행되어 답변을 바꿀 수 없어요. 변경 제안에서 요청해 주세요.',
+  invalid_ai_output:
+    '비비가 만든 결과를 쓸 수 없었어요. 잠시 후 다시 시도해 주세요.',
+})
+// 오류 코드만 있을 때(초안 작업 실패의 error_code 등) 안내 문구. 없으면 undefined.
+export function getErrorCodeMessage(code: string | undefined) {
+  return code ? messages[code] : undefined
 }
 export function getApiErrorMessage(error: unknown): string {
   if (error instanceof z.ZodError)
