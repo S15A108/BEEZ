@@ -12,6 +12,7 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.document.service.DocumentIndexWorker;
 import com.beez.backend.task.service.TaskQueryService;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -22,6 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
@@ -56,6 +58,11 @@ public class BeeQuestionService {
     static final int MAX_TITLE = 500;
     /** 거부·502 일 때 새 request key 로 다시 부르는 횟수. 시간 초과는 다시 부르지 않는다 */
     static final int RETRIES = 1;
+    /**
+     * 질문 하나를 처리하는 전체 시간의 목표 상한(검색 임베딩 최대 20초 + AI 호출 + 재시도). 이 값에 AI 읽기 제한을 더해도
+     * 넘지 않을 때만 재시도한다. Nginx 의 비비 질문 경로 proxy_read_timeout(180초)보다 짧아야 한다(infra/nginx).
+     */
+    static final Duration ANSWER_BUDGET = Duration.ofSeconds(150);
     static final String TEMPLATE_TEXT = "지금은 비비가 답을 만들지 못했어요. 질문과 가까운 문서를 아래에 보여 드려요. 잠시 뒤 다시 질문해 주세요.";
     static final String TEMPLATE_TEXT_NO_SOURCE = "지금은 비비가 답을 만들지 못했어요. 승인된 문서에서 질문과 가까운 내용도 찾지 못했어요. 잠시 뒤 다시 질문해 주세요.";
 
@@ -66,9 +73,12 @@ public class BeeQuestionService {
     private final AiUsageRecorder usage;
     private final TaskQueryService tasks;
     private final ObjectMapper json;
+    private final Duration chatReadTimeout;
 
     public BeeQuestionService(ProjectAccessChecker access, DocumentIndexWorker search, BeeRepository repository,
-                              BeeChatGateway gateway, AiUsageRecorder usage, TaskQueryService tasks, ObjectMapper json) {
+                              BeeChatGateway gateway, AiUsageRecorder usage, TaskQueryService tasks, ObjectMapper json,
+                              @Value("${beez.bee.chat-read-timeout:70s}") Duration chatReadTimeout) {
+        this.chatReadTimeout = chatReadTimeout;
         this.access = access;
         this.search = search;
         this.repository = repository;
@@ -79,6 +89,7 @@ public class BeeQuestionService {
     }
 
     public Map<String, Object> ask(CallerContext caller, long projectId, BeeAskRequest body) {
+        long askStarted = System.nanoTime();
         ProjectActor actor = access.requireMember(caller, projectId);
         actor.requireHuman();
         String question = question(body);
@@ -99,6 +110,12 @@ public class BeeQuestionService {
         Map<String, Object> response = null;
         AiCallException failure = null;
         for (int attempt = 1; attempt <= 1 + RETRIES; attempt++) {
+            // 다시 부르면 최악의 경우 AI 읽기 제한만큼 더 걸린다. 앞 단계(임베딩·첫 호출)가 오래 걸렸으면 예산을 넘기지 않게
+            // 재시도를 건너뛰고 템플릿으로 끝낸다. Nginx 읽기 대기(180초)가 이 예산보다 길어야 브라우저가 먼저 끊지 않는다.
+            if (attempt > 1 && !retryFits(System.nanoTime() - askStarted, chatReadTimeout)) {
+                log.warn("BEE-A01 retry skipped: time budget (project {})", projectId);
+                break;
+            }
             String key = requestKey + "-a" + attempt;
             long started = System.nanoTime();
             try {
@@ -125,6 +142,11 @@ public class BeeQuestionService {
             throw new ApiException(HttpStatus.CONFLICT, "baseline_changed", "기준 설계가 변경되었습니다. 최신 기준으로 다시 질문해 주세요.");
         }
         return failure == null ? answer(actor, projectId, retrieval, sent, response, result) : template(actor, projectId, retrieval);
+    }
+
+    /** 지금까지 걸린 시간에 AI 읽기 제한을 더해도 전체 예산 안이면 재시도할 수 있다 */
+    static boolean retryFits(long elapsedNanos, Duration chatReadTimeout) {
+        return elapsedNanos + chatReadTimeout.toNanos() <= ANSWER_BUDGET.toNanos();
     }
 
     // ---- 입력 --------------------------------------------------------------------------------
@@ -155,6 +177,7 @@ public class BeeQuestionService {
 
     /** AI 에 보낸 집합. 응답 대조와 템플릿·변환에 같은 값을 쓴다 */
     record Sent(List<Map<String, Object>> evidence, Map<String, BeeAnswerValidator.SentEvidence> byId,
+                Map<String, BeeAnswerValidator.SentSource> versionSources,
                 Map<String, String> approvedVersions, Set<String> taskIds) {
 
         static Sent of(DocumentIndexWorker.Retrieval retrieval, List<Map<String, Object>> approved,
@@ -162,6 +185,7 @@ public class BeeQuestionService {
             List<Map<String, Object>> evidence = new ArrayList<>();
             Map<String, BeeAnswerValidator.SentEvidence> byId = new LinkedHashMap<>();
             Set<String> chunks = new HashSet<>();
+            Map<String, BeeAnswerValidator.SentSource> versionSources = new LinkedHashMap<>();
             for (DocumentIndexWorker.ChunkEvidence chunk : retrieval.evidence()) {
                 // 계약: 같은 (문서 버전, chunk_key) 는 한 번만, 본문은 비어 있지 않고 20,000자 이하
                 if (chunk.text().isBlank() || chunk.text().length() > MAX_EVIDENCE_TEXT
@@ -180,19 +204,29 @@ public class BeeQuestionService {
                 if (!title.isEmpty()) item.put("title", title.length() > MAX_TITLE ? title.substring(0, MAX_TITLE) : title);
                 evidence.add(item);
                 byId.put(id, new BeeAnswerValidator.SentEvidence(item.get("document_id").toString(),
-                        item.get("document_version_id").toString(), chunk.versionNo(), chunk.chunkKey(), chunk.locator(), title));
+                        item.get("document_version_id").toString(), chunk.versionNo(), chunk.chunkKey(), chunk.locator(), title,
+                        chunk.text()));
+                versionSources.putIfAbsent(item.get("document_version_id").toString(),
+                        new BeeAnswerValidator.SentSource(item.get("document_id").toString(), chunk.versionNo()));
             }
             Map<String, String> approvedVersions = new LinkedHashMap<>();
-            for (Map<String, Object> item : approved) approvedVersions.put(item.get("id").toString(), item.get("design_item_id").toString());
+            for (Map<String, Object> item : approved) {
+                approvedVersions.put(item.get("id").toString(), item.get("design_item_id").toString());
+                // 승인 항목의 저장 출처도 우리가 보낸 값이다. 근거 청크가 없는 문서 버전의 출처는 여기서 확인한다
+                if (item.get("source") instanceof Map<?, ?> source && source.get("version_no") instanceof Number no) {
+                    versionSources.putIfAbsent(String.valueOf(source.get("document_version_id")),
+                            new BeeAnswerValidator.SentSource(String.valueOf(source.get("document_id")), no.intValue()));
+                }
+            }
             Set<String> taskIds = new LinkedHashSet<>();
             for (Map<String, Object> task : tasks) taskIds.add(task.get("id").toString());
-            return new Sent(evidence, byId, approvedVersions, taskIds);
+            return new Sent(evidence, byId, versionSources, approvedVersions, taskIds);
         }
 
         BeeAnswerValidator.Sent validatorView(DocumentIndexWorker.Retrieval retrieval, String profile) {
             Set<String> versions = new LinkedHashSet<>();
             for (Long id : retrieval.documentVersionIds()) versions.add(Ids.str(id));
-            return new BeeAnswerValidator.Sent(Ids.str(retrieval.baselineId()), profile, versions, byId, approvedVersions, taskIds);
+            return new BeeAnswerValidator.Sent(Ids.str(retrieval.baselineId()), profile, versions, byId, versionSources, approvedVersions, taskIds);
         }
     }
 

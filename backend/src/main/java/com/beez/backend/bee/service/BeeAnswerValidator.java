@@ -21,18 +21,24 @@ public final class BeeAnswerValidator {
 
     /** 보낸 근거 한 건. 인용은 이 값과 정확히 같아야 한다 */
     public record SentEvidence(String documentId, String documentVersionId, int versionNo, String chunkKey,
-                               Map<String, Object> locator, String title) {
+                               Map<String, Object> locator, String title, String text) {
+    }
+
+    /** 보낸 문서 버전의 문서 ID·버전 번호. 출처(sources)는 이 값과 정확히 같아야 한다 */
+    public record SentSource(String documentId, int versionNo) {
     }
 
     /**
      * BE 가 AI 에 보낸 집합.
      * @param versionIds baseline 의 문서 버전 ID(문자열). 출처는 모두 이 안이어야 한다
      * @param evidence evidence_id → 보낸 근거
+     * @param versionSources 버전 ID → 보낸 문서 ID·버전 번호(보낸 근거와 승인 항목의 출처에서 모은다)
      * @param approvedVersions 보낸 승인 항목: 버전 ID → design_item_id
      * @param taskIds 보낸 관련 작업 ID
      */
     public record Sent(String baselineId, String embeddingProfile, Set<String> versionIds,
-                       Map<String, SentEvidence> evidence, Map<String, String> approvedVersions, Set<String> taskIds) {
+                       Map<String, SentEvidence> evidence, Map<String, SentSource> versionSources,
+                       Map<String, String> approvedVersions, Set<String> taskIds) {
     }
 
     /** 허용 집합과 어긋나거나 계약에 맞지 않는 답변 */
@@ -71,7 +77,15 @@ public final class BeeAnswerValidator {
                     || !sameLocator(known.locator(), citation.get("locator"))) {
                 throw new Rejected("citation_mismatch");
             }
-            if (string(citation.get("quote"), "citation.quote").isBlank()) throw new Rejected("citation_quote_blank");
+            String quote = string(citation.get("quote"), "citation.quote").strip();
+
+            if (quote.isEmpty()) throw new Rejected("citation_quote_blank");
+
+            // 인용문은 보낸 청크 원문의 정확한 부분 문자열이어야 한다(계약 #135). 원문에 없는 문장은 거부한다
+
+            if (!known.text().contains(quote)) throw new Rejected("citation_quote_not_in_evidence");
+
+            if (!(citation.get("version_no") instanceof Number v) || v.intValue() != known.versionNo()) throw new Rejected("citation_mismatch");
             if (!(citation.get("n") instanceof Number n) || !numbers.add(n.intValue())) throw new Rejected("citation_number");
         }
         for (int n = 1; n <= citations.size(); n++) if (!numbers.contains(n)) throw new Rejected("citation_number_gap");
@@ -85,7 +99,21 @@ public final class BeeAnswerValidator {
         List<?> sources = list(result.get("sources"), "sources");
         for (Object value : sources) {
             Map<String, Object> source = map(value, "source");
-            if (!sent.versionIds().contains(String.valueOf(source.get("document_version_id")))) throw new Rejected("source_out_of_scope");
+            String versionId = String.valueOf(source.get("document_version_id"));
+
+            if (!sent.versionIds().contains(versionId)) throw new Rejected("source_out_of_scope");
+
+            // 허용된 버전 번호만 맞아서는 부족하다 — 그 버전의 문서 ID·버전 번호도 우리가 보낸 값과 같아야 한다
+
+            SentSource known = sent.versionSources().get(versionId);
+
+            if (known == null || !known.documentId().equals(String.valueOf(source.get("document_id")))
+
+                    || !(source.get("version_no") instanceof Number no) || no.intValue() != known.versionNo()) {
+
+                throw new Rejected("source_mismatch");
+
+            }
             string(source.get("location"), "source.location");
         }
 

@@ -21,7 +21,9 @@ class BeeAnswerValidatorTest {
     static final Map<String, Object> LOCATOR = Map.of("type", "text_lines", "start_line", 3, "end_line", 4);
 
     static final Sent SENT = new Sent("401", "profile-1", Set.of("312", "313"),
-            Map.of("ev-1", new SentEvidence("302", "312", 1, "chk-1", LOCATOR, "예약 명세")),
+            Map.of("ev-1", new SentEvidence("302", "312", 1, "chk-1", LOCATOR, "예약 명세",
+                    "예약 규칙\n같은 시간대 예약은 거절한다\n취소는 24시간 전까지 가능하다")),
+            Map.of("312", new BeeAnswerValidator.SentSource("302", 1), "313", new BeeAnswerValidator.SentSource("303", 2)),
             Map.of("1104", "1004"), Set.of("501"));
 
     /** 보낸 집합과 정확히 맞는 정상 응답. 시험마다 한 군데씩 어긋나게 고친다 */
@@ -91,6 +93,35 @@ class BeeAnswerValidatorTest {
     void rejectsSourceOutsideTheAllowedVersions() {
         rejects(r -> r.put("sources", List.of(Map.of("document_id", "9", "document_version_id", "999",
                 "version_no", 1, "location", "다른 프로젝트 / L1-L1"))), "source_out_of_scope");
+    }
+
+    @Test
+    void rejectsSourceWhoseDocumentOrVersionNumberWasNotSent() {
+        // 허용된 버전 312 에 다른 문서 ID 를 붙인 출처 (리뷰에서 지적된 경우)
+        rejects(r -> r.put("sources", List.of(Map.of("document_id", "999999", "document_version_id", "312",
+                "version_no", 1, "location", "예약 명세 / L3-L4"))), "source_mismatch");
+        rejects(r -> r.put("sources", List.of(Map.of("document_id", "302", "document_version_id", "312",
+                "version_no", 7, "location", "예약 명세 / L3-L4"))), "source_mismatch");
+        rejects(r -> r.put("sources", List.of(Map.of("document_id", "302", "document_version_id", "312", "location", "예약 명세 / L3-L4"))),
+                "source_mismatch");
+        // 근거 청크는 없지만 승인 항목 출처로 보낸 버전(313)은 보낸 문서 ID 로만 허용된다
+        BeeAnswerValidator.validate(response(r -> r.put("sources", List.of(Map.of("document_id", "303",
+                "document_version_id", "313", "version_no", 2, "location", "정책 / L1-L2")))), SENT);
+        rejects(r -> r.put("sources", List.of(Map.of("document_id", "302", "document_version_id", "313",
+                "version_no", 2, "location", "정책 / L1-L2"))), "source_mismatch");
+    }
+
+    @Test
+    void rejectsQuoteThatIsNotInTheSentChunkText() {
+        rejects(r -> citation(r).put("quote", "겹치는 예약도 허용한다"), "citation_quote_not_in_evidence");
+        rejects(r -> citation(r).put("quote", "같은 시간대 예약은 거절한다."), "citation_quote_not_in_evidence");
+        // 앞뒤 공백만 다듬은 정확한 부분 문자열은 통과
+        BeeAnswerValidator.validate(response(r -> citation(r).put("quote", "  취소는 24시간 전까지 가능하다 ")), SENT);
+    }
+
+    @Test
+    void rejectsCitationWithAnotherVersionNumber() {
+        rejects(r -> citation(r).put("version_no", 2), "citation_mismatch");
     }
 
     @Test
