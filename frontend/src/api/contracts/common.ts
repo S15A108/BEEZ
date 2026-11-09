@@ -1165,10 +1165,16 @@ export type RelationEdge = z.infer<typeof relationEdgeSchema>
 export const activitySchema = z.object({
   id: idSchema,
   type: z.string(),
+  // 행위자 종류. 비비·시스템은 actor_name 이 없다(명세 00-common Activity).
+  actor_type: z.enum(['HUMAN', 'AGENT', 'BEE', 'SYSTEM']),
   actor_account_id: idSchema.optional(),
+  actor_name: z.string().optional(),
+  agent_session_id: idSchema.optional(),
   task_id: idSchema.optional(),
   change_proposal_id: idSchema.optional(),
   baseline_id: idSchema.optional(),
+  target_type: z.string().optional(),
+  target_id: idSchema.optional(),
   result: z.string(),
   created_at: timeSchema,
 })

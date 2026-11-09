@@ -128,6 +128,73 @@ export function nextId(database: MockDatabase): string {
   return String(database.next_id++)
 }
 
+type TrailRow = [
+  type: string,
+  actor: Pick<Activity, 'actor_type' | 'actor_account_id' | 'actor_name'>,
+  at: string,
+]
+const trailPeople = {
+  proposer: {
+    actor_type: 'HUMAN',
+    actor_account_id: '12',
+    actor_name: '김동료',
+  },
+  leader: { actor_type: 'HUMAN', actor_account_id: '11', actor_name: '이팀장' },
+  agent: {
+    actor_type: 'AGENT',
+    actor_account_id: '13',
+    actor_name: '민수 에이전트',
+  },
+  bee: { actor_type: 'BEE' },
+  system: { actor_type: 'SYSTEM' },
+} as const
+function proposalTrail(): Activity[] {
+  const rows: TrailRow[] = [
+    ['CHANGE_PROPOSAL_SUBMITTED', trailPeople.proposer, '2026-10-23T03:00:00Z'],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.agent, '2026-10-23T03:05:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-23T03:10:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.leader, '2026-10-23T03:12:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_REQUESTED',
+      trailPeople.bee,
+      '2026-10-23T03:15:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.proposer, '2026-10-23T03:20:00Z'],
+    ['CHANGE_PROPOSAL_SUBMITTED', trailPeople.proposer, '2026-10-23T03:30:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-23T03:40:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.agent, '2026-10-23T03:45:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_REQUESTED',
+      trailPeople.system,
+      '2026-10-23T03:50:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.leader, '2026-10-23T03:55:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-23T04:00:00Z',
+    ],
+  ]
+  return rows.map(([type, actor, created_at], index) => ({
+    id: String(1002 + index),
+    type,
+    ...actor,
+    change_proposal_id: '71',
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: '71',
+    result: 'SUCCESS',
+    created_at,
+  }))
+}
+
 export function blankProject(
   project: Project,
   account: Account,
@@ -621,10 +688,13 @@ function seededProject(
     {
       id: '1001',
       type: 'MOCK_PROJECT_PREPARED',
+      actor_type: 'HUMAN',
       actor_account_id: account.id,
       result: 'SUCCESS',
       created_at: created,
     },
+    // 변경 제안 71 의 지나온 길(303). 행위자 4종과 2페이지 이상이 보이게 한다.
+    ...proposalTrail(),
   ]
   return state
 }

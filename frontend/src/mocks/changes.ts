@@ -508,9 +508,16 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
       task.lock_version++
     }
   }
-  activity(context, 'CHANGE_PUBLISHED', {
+  activity(context, 'CHANGE_PROPOSAL_APPROVED', {
+    change_proposal_id: proposal.id,
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: proposal.id,
+  })
+  activity(context, 'CHANGE_PROPOSAL_PUBLISHED', {
     change_proposal_id: proposal.id,
     baseline_id: baseline.id,
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: proposal.id,
   })
   notification(
     context,
@@ -647,7 +654,11 @@ export function changeRoutes(
         updated_at: created,
       }
       project.proposals.push(next)
-      activity(context, 'CHANGE_PROPOSED', { change_proposal_id: next.id })
+      activity(context, 'CHANGE_PROPOSAL_SUBMITTED', {
+        change_proposal_id: next.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: next.id,
+      })
       return { status: 201, data: next }
     }
     case 'CHG-A02': {

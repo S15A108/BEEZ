@@ -158,6 +158,7 @@ export function activity(
   project.activities.push({
     id: nextId(context.database),
     type,
+    actor_type: 'HUMAN',
     actor_account_id: requireAccount(context).id,
     result: 'SUCCESS',
     created_at: now(),

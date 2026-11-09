@@ -461,7 +461,12 @@ export function collaborationRoutes(
       return {
         data: page(
           project.activities.filter(
-            (item) => !query.get('type') || item.type === query.get('type'),
+            (item) =>
+              (!query.get('type') || item.type === query.get('type')) &&
+              (!query.get('actor_type') ||
+                item.actor_type === query.get('actor_type')) &&
+              (!query.get('change_proposal_id') ||
+                item.change_proposal_id === query.get('change_proposal_id')),
           ),
           query,
         ),
