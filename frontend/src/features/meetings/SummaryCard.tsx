@@ -120,10 +120,10 @@ export function SummaryCard({
           aria-label="반영하지 못한 내용"
           className="grid gap-1 rounded-lg bg-[#fff8e0] p-3"
         >
-          <h4 className="text-xs font-bold">일부는 반영하지 못했어요</h4>
+          <h5 className="text-[13px] font-bold">일부는 반영하지 못했어요</h5>
           <ul className="list-disc pl-5 text-[13px] leading-5">
-            {summary.generation.unresolved.map((text) => (
-              <li key={text}>{text}</li>
+            {summary.generation.unresolved.map((text, index) => (
+              <li key={index}>{text}</li>
             ))}
           </ul>
         </section>

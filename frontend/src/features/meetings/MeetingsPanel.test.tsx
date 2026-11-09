@@ -305,21 +305,83 @@ it('정리하는 동안 올라온 대화도 정리한 뒤의 새 대화로 알�
 })
 
 // 서버 한도는 기록 본문·고칠 점 모두 4,000자다. 넘으면 요청 전에 칸 아래에서 안내한다.
-it('메시지와 수정 요청은 4,000자를 넘으면 칸 아래에서 안내하고 보내지 않는다', async () => {
+it('수정 요청은 4,000자를 넘으면 칸 아래에서 안내하고 보내지 않는다', async () => {
   const user = userEvent.setup()
-  const add = vi.spyOn(meetingsApi, 'addEntry')
+  const revise = vi.spyOn(meetingsApi, 'reviseSummary')
   renderPanel(true)
-  const log = await requestSummary(user)
-  expect(log).toBeInTheDocument()
-  const fix = screen.getByRole('textbox', { name: '비비에게 고칠 점' })
-  await user.click(fix)
+  await requestSummary(user)
+  await user.click(screen.getByRole('textbox', { name: '비비에게 고칠 점' }))
   await user.paste('가'.repeat(4001))
   await user.click(screen.getByRole('button', { name: '수정 요청' }))
   expect(
     await screen.findByText(/4,000자까지 쓸 수 있어요/),
   ).toBeInTheDocument()
+  expect(revise).not.toHaveBeenCalled()
+  vi.restoreAllMocks()
+})
+
+it('메시지는 4,000자를 넘으면 칸 아래에서 안내하고 보내지 않는다', async () => {
+  const user = userEvent.setup()
+  const add = vi.spyOn(meetingsApi, 'addEntry')
+  renderPanel(false)
+  await user.click(await screen.findByRole('textbox', { name: '메시지' }))
+  await user.paste('가'.repeat(4001))
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  expect(
+    await screen.findByText(/4,000자까지 쓸 수 있어요/),
+  ).toBeInTheDocument()
   expect(add).not.toHaveBeenCalled()
   vi.restoreAllMocks()
+})
+
+// 새 정리를 받은 직후 기록 목록을 다시 읽기 전에도 정리 카드는 글로 바뀌지 않고 입력줄도 그대로다.
+it('수정 요청이 성공하면 기록 목록을 다시 읽기 전에도 새 정리 카드를 바로 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  const log = await requestSummary(user)
+  // 이후의 기록 목록 재조회는 끝나지 않게 막는다
+  vi.spyOn(meetingsApi, 'entries').mockImplementation(
+    () => new Promise(() => undefined),
+  )
+  await user.type(
+    screen.getByRole('textbox', { name: '비비에게 고칠 점' }),
+    '두 번째 결정만 남겨 주세요',
+  )
+  await user.click(screen.getByRole('button', { name: '수정 요청' }))
+  expect(await within(log).findByText('수정본')).toBeInTheDocument()
+  expect(
+    within(log).getByRole('region', { name: '바뀔 문서' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('textbox', { name: '비비에게 고칠 점' }),
+  ).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+// 끝내기 확인 화면에서도 정리 뒤 새 대화를 알리고, 오래된 정리로 끝내는 것을 막는다.
+it('정리한 뒤에 새 대화가 있으면 끝내기 확인 화면에서 알리고 끝내기를 막는다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  await meetingsApi.addEntry('101', '901', { text: '정리 뒤의 새 말' })
+  await client.invalidateQueries()
+  await user.click(screen.getByRole('button', { name: '회의 끝내기' }))
+  expect(
+    await screen.findByText(/정리한 뒤에 새 대화가 있어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '회의 끝내고 변경 제안 만들기' }),
+  ).toBeDisabled()
+  // 정리를 다시 요청하면 안내가 사라지고 끝낼 수 있다
+  await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: '회의 끝내고 변경 제안 만들기' }),
+    ).toBeEnabled(),
+  )
+  expect(
+    screen.getByRole('heading', { name: '회의를 끝낼까요?' }),
+  ).toBeInTheDocument()
 })
 
 // 정리 전용 오류 문구는 정리·수정 요청·끝내기에만 쓴다. 메시지 보내기 실패에는 붙지 않는다.

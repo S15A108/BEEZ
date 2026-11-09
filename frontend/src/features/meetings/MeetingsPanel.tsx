@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import type { InfiniteData } from '@tanstack/react-query'
 import {
   useInfiniteQuery,
   useQuery,
@@ -32,8 +33,13 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { meetingErrorMessage } from './meetingErrors'
+import {
+  closedMeetingCode,
+  meetingErrorMessage,
+  staleSummaryCode,
+} from './meetingErrors'
 import { FEEDBACK_MAX } from './schemas'
+import type { EntriesResponse } from './schemas'
 import { SummaryCard } from './SummaryCard'
 import { useMeetingList } from './useMeetingList'
 
@@ -217,11 +223,32 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void runPlain(operation, message).catch(() => undefined)
   }
-  const remember = (meetingId: string, next: MeetingSummary) =>
+  // 새 정리는 정리 캐시와 기록 목록 캐시에 함께 넣는다. 기록 목록만 재조회 전이면 정리 카드가 잠깐 글로 바뀌고 입력줄이 깜빡인다.
+  const remember = (meetingId: string, next: MeetingSummary) => {
     client.setQueryData(
       ['projects', projectId, 'meeting-summary', meetingId],
       next,
     )
+    client.setQueryData<InfiniteData<EntriesResponse>>(
+      ['projects', projectId, 'meeting-entries', meetingId],
+      (data) => {
+        if (
+          !data ||
+          data.pages.some((page) =>
+            page.items.some((item) => item.id === next.entry.id),
+          )
+        )
+          return data
+        const pages = data.pages.slice()
+        const last = pages.length - 1
+        pages[last] = {
+          ...pages[last],
+          items: [...pages[last].items, next.entry],
+        }
+        return { ...data, pages }
+      },
+    )
+  }
   // MTG-A11: 가장 최근 기록까지의 대화를 비비가 정리한다.
   const requestSummary = (meetingId: string, throughId: string) =>
     runWithNotice(async () => {
@@ -454,10 +481,17 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               line,
                             )}
                           >
-                            <p className="text-xs text-muted-foreground">
-                              팀장만 끝낼 수 있어요. 기준은 변경 제안에서
-                              승인·발행해야 바뀌어요.
-                            </p>
+                            {talkedAfterSummary ? (
+                              <p className="text-xs text-[#8a6a00]">
+                                정리한 뒤에 새 대화가 있어요. 끝내기 전에
+                                비비에게 정리를 다시 요청해 주세요.
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                팀장만 끝낼 수 있어요. 기준은 변경 제안에서
+                                승인·발행해야 바뀌어요.
+                              </p>
+                            )}
                             <div className="flex flex-wrap gap-2">
                               <Button
                                 variant="outline"
@@ -480,7 +514,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 취소
                               </Button>
                               <Button
-                                disabled={action.busy || !isLeader}
+                                disabled={
+                                  action.busy || !isLeader || talkedAfterSummary
+                                }
                                 onClick={() =>
                                   void runWithNotice(async () => {
                                     try {
@@ -503,9 +539,10 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                     } catch (error) {
                                       const code = getApiErrorCode(error)
                                       // 오래된 정리로는 끝낼 수 없다. 대화로 돌아가 정리를 다시 요청하게 한다.
-                                      if (code === 'summary_outdated')
-                                        setEnding(false)
-                                      if (code === 'meeting_closed')
+                                      if (
+                                        code === staleSummaryCode ||
+                                        code === closedMeetingCode
+                                      )
                                         setEnding(false)
                                       throw error
                                     }

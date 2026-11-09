@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import * as common from '@/api/contracts/common'
 
-// 회의 생성(MTG-A01)은 폐지 예정이다. 변경 제안 화면의 '회의로 논의'가 아직 부른다(열린 질문 Q5).
+// 회의 생성(MTG-A01)은 폐지 예정이다. 변경 제안 화면의 '회의로 논의'를 주석 처리해 지금은 부르는 화면이 없다(열린 질문 Q5).
 export const createInputSchema = z.object({
   title: z.string(),
   change_proposal_id: common.idSchema.optional(),
