@@ -1,3 +1,4 @@
+import { ACTIVE_POLL_MS, SLOW_POLL_MS } from '@/lib/pollIntervals'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -181,7 +182,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ['PENDING', 'RUNNING'].includes(
         query.state.data?.published_analysis?.status ?? '',
       )
-        ? 15_000
+        ? SLOW_POLL_MS
         : false,
   })
   // 승인 확인창의 문서 새 버전 번호는 제안이 만든 문서 버전(proposed_document_version_id)을 버전 이력에서 찾는다.
@@ -214,7 +215,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryFn: () => changesApi.impact(projectId, selectedId!),
     enabled: !!selectedId,
     refetchInterval: (query) =>
-      query.state.data && isImpactRunning(query.state.data) ? 1500 : false,
+      query.state.data && isImpactRunning(query.state.data)
+        ? ACTIVE_POLL_MS
+        : false,
   })
   // 승인 확인 화면에서만, 팀장만 읽는다(CHG-A14는 LEADER 전용). 제안이 바뀌면(리비전·해시) 다시 읽는다.
   // 키를 ['projects', id] 밖에 둔다: 승인에 성공하면 프로젝트 전체를 새로 고치는데, 그때 이미 발행된 제안의
@@ -237,7 +240,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       const analysis = query.state.data?.unreviewed.ai_analysis
       return analysis &&
         (analysis.reanalysis_in_progress || analysis.status === 'RUNNING')
-        ? 1500
+        ? ACTIVE_POLL_MS
         : false
     },
   })

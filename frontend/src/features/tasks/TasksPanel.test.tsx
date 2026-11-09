@@ -536,11 +536,10 @@ it('검증이 끝나면 목록의 상태 칩도 다시 불러와 바뀐다', asy
   expect(within(entry).getByText('검증 중')).toBeInTheDocument()
 
   task = passed
-  await waitFor(
-    () => expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
-    { timeout: 4000 },
+  await waitFor(() =>
+    expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
   )
-}, 10000)
+})
 it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한다', async () => {
   const running = {
     ...task,
@@ -556,11 +555,7 @@ it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한�
     await screen.findByRole('button', { name: /TASK-001.*검증 중/ }),
   ).toBeInTheDocument()
   expect(
-    await screen.findByRole(
-      'button',
-      { name: /TASK-001.*계획 통과/ },
-      { timeout: 4000 },
-    ),
+    await screen.findByRole('button', { name: /TASK-001.*계획 통과/ }),
   ).toBeInTheDocument()
 })
 

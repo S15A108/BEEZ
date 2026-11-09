@@ -3,6 +3,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { unlessMissing } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
 import { agentsApi } from '@/api/services'
+import { BACKGROUND_POLL_MS } from '@/lib/pollIntervals'
 import { useAgentCheckStore } from './agentCheckStore'
 import { agentStatusOf, pickAgentRow } from './agentStatus'
 
@@ -20,7 +21,8 @@ export const agentConnectionsQuery = (projectId: string) =>
           agentsApi.list(projectId, { cursor, limit: 100 }),
         ),
       )) ?? null,
-    refetchInterval: (query) => (query.state.data === null ? false : 30_000),
+    refetchInterval: (query) =>
+      query.state.data === null ? false : BACKGROUND_POLL_MS,
   })
 
 // 팀원 한 명의 에이전트 상태. 설정 메뉴·에이전트 화면·팀 목록·HUD·대시보드·사무실이 같은 값으로 같은 이름을 보인다.
