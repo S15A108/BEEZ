@@ -1446,3 +1446,151 @@ it('팀장이 담당자 없는 작업의 담당자를 정할 때는 첫 팀원�
     }),
   )
 })
+
+// S15P31A108-340: 백엔드가 stale_reason에 쓰는 값 전부(ValidationStatusLookup·TaskHandoverService·TaskPlanService·
+// TaskStateService·AnalysisResultApplier·PublicationImpactAdapter)와 모르는 값.
+it.each([
+  ['ASSIGNEE_CHANGED', '새 담당자가 다시 검증받아야 해요'],
+  ['PLAN_CHANGED', '계획이 바뀌어 지금 계획으로 다시 검증해야 해요'],
+  ['RELATED_PLAN_CHANGED', '같은 설계 항목을 다루는 다른 작업이 바뀌어'],
+  ['INPUT_CHANGED', '분석하는 동안 기준 설계나 계획이 바뀌어'],
+  ['DESIGN_PUBLISHED', '참조한 설계가 새로 발행되어'],
+  ['TASK_RESUMED', '마치면 다시 완료 보고해 주세요'],
+  ['TASK_CANCELLED', '작업이 취소되어 이 검증은 더 쓰지 않아요'],
+  ['SOMETHING_NEW', '기준이 바뀌어 다시 검증해야 해요'],
+])(
+  '검증 무효 사유 %s는 코드 대신 바뀐 것과 할 일을 문장으로 보인다',
+  async (reason, sentence) => {
+    task = taskDetailSchema.parse({
+      ...task,
+      validation_status: 'STALE',
+      validation: {
+        ...task.validation!,
+        status: 'STALE',
+        stale_reason: reason,
+      },
+    })
+    show(false)
+    const card = (
+      await screen.findByText('설계와 계획의 검증 결과')
+    ).closest<HTMLElement>('[data-slot="card"]')!
+    expect(within(card).getByText(new RegExp(sentence))).toBeInTheDocument()
+    expect(screen.queryByText(reason)).not.toBeInTheDocument()
+  },
+)
+
+const attemptLimit = () => {
+  const config = { headers: new AxiosHeaders() }
+  return new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config,
+    data: {
+      error: {
+        code: 'validation_attempt_limit',
+        message:
+          '같은 계획으로 분석을 3번 돌렸습니다. 계획을 고치거나 팀에 문의하세요',
+      },
+    },
+  })
+}
+
+it('분석 횟수를 다 써 재시도가 거절되면 재시도를 거두고 계획을 고치라고 알린다', async () => {
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      current_attempt: 3,
+      findings: [
+        {
+          id: '705',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message: '분석 시간 초과',
+          sources: [],
+          resolution: 'RETRY',
+        },
+      ],
+    },
+  }
+  const retry = vi
+    .spyOn(validationsApi, 'retry')
+    .mockRejectedValue(attemptLimit())
+  show(false)
+  fireEvent.click(await screen.findByRole('button', { name: '실행 재시도' }))
+  expect(
+    await screen.findByText(/같은 계획으로 분석할 수 있는 횟수를 모두 썼어요/),
+  ).toBeInTheDocument()
+  expect(retry).toHaveBeenCalledTimes(1)
+  expect(
+    screen.queryByRole('button', { name: '실행 재시도' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      '같은 계획으로는 다시 실행할 수 없어요. 계획을 고쳐 새로 검증해 주세요.',
+    ),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/요청을 처리하지 못했어요/)).not.toBeInTheDocument()
+})
+
+it('같은 계획의 새 검증이 횟수 제한에 걸려도 일반 오류 대신 계획을 고치라고 알린다', async () => {
+  vi.spyOn(validationsApi, 'create').mockRejectedValue(attemptLimit())
+  show(false)
+  fireEvent.click(await screen.findByRole('button', { name: '다시 검증' }))
+  expect(
+    await screen.findByText(/같은 계획으로 분석할 수 있는 횟수를 모두 썼어요/),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/요청을 처리하지 못했어요/)).not.toBeInTheDocument()
+})
+
+it('검증이 함께 비교한 작업을 키·제목·담당자로 보이고, 못 읽은 작업은 따로 알린다', async () => {
+  const related = taskDetailSchema.parse({
+    ...task,
+    id: '503',
+    key: 'TASK-003',
+    assignee_member_id: '22',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '513',
+      task_id: '503',
+      plan: {
+        ...task.current_plan_revision.plan,
+        title: '참여 프로젝트 목록 API 구현',
+      },
+    },
+  })
+  task = {
+    ...task,
+    validation: {
+      ...task.validation!,
+      related_task_refs: [
+        { task_id: '503', plan_revision_id: '513' },
+        { task_id: '599', plan_revision_id: '519' },
+      ],
+    },
+  }
+  const get = vi
+    .spyOn(tasksApi, 'get')
+    .mockImplementation(async (_project, id) => {
+      if (id === '503') return related
+      if (id === '599') throw new Error('not found')
+      return task
+    })
+  show(false)
+  const section = await screen.findByRole('region', {
+    name: '함께 비교한 작업',
+  })
+  expect(
+    await within(section).findByText('참여 프로젝트 목록 API 구현'),
+  ).toBeInTheDocument()
+  expect(within(section).getByText('TASK-003')).toBeInTheDocument()
+  expect(within(section).getByText(/담당자 다른 팀원/)).toBeInTheDocument()
+  expect(
+    await within(section).findByText('작업 정보를 불러오지 못했어요.'),
+  ).toBeInTheDocument()
+  expect(get).toHaveBeenCalledWith('101', '503')
+})

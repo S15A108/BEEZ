@@ -1487,7 +1487,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `member_id` | `ID` | Y | 소유 멤버 |
 | `connected` | `boolean` | Y | 최근 연결 관측 |
 | `last_report_at` | `Time` | N | 마지막 통신 시각 |
-| `status_check_required` | `boolean` | Y | 보고 지연으로 확인 필요 |
+| `status_check_required` | `boolean` | Y | 연결됨이면서 그 멤버가 맡은 IN_PROGRESS 작업이 있고 보고 끊김 임계값(기본 30분) 넘게 통신이 없음. 끊긴 세션(`connected=false`)·할 일 없이 쉬는 세션은 false (S15P31A108-75) |
 | `last_error_code` | `token_revoked\|token_expired\|membership_ended\|no_report` | N | 마지막 연결 실패 원인. 연결 확인 화면이 이유와 할 일을 보여 줌. 수정안 요청 |
 
 <a id="schema-agentwork"></a>
@@ -1501,7 +1501,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `agent_name` | `string` | N | 토큰 label. 수정안 요청 |
 | `current_task_id` | `ID` | N | 명시 보고된 작업 |
 | `task_title` | `string` | N | 보고된 작업 제목. 수정안 요청 |
-| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태 |
+| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태. 서버 작업 상태에는 DRAFT도 있다 — 세션의 현재 작업(`current_task_id`)을 쓰기 시작하면 에이전트가 계획을 쓰는 DRAFT 작업도 나오므로 그때 이 값과 FE `agentWorkSchema`에 DRAFT를 넣는다(지금은 그 칸을 쓰는 코드가 없다, -75) |
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 작업 검증 상태 |
 | `waiting_reason` | `string` | N | 대기 사유 |
 | `last_summary` | `string` | N | MCP-12 `summary` 원문. AI로 다시 요약하지 않음. 수정안 요청 |
