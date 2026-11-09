@@ -2,9 +2,14 @@
 import { z } from 'zod'
 import * as common from '@/api/contracts/common'
 
+// BEE-A01 찾는 범위. 빠지면 서버가 APPROVED로 본다(명세 수정안 요청, dev 서버에 아직 없음).
+export const askScopeSchema = z.enum(['APPROVED', 'INCLUDE_DRAFTS'])
+export type AskScope = z.infer<typeof askScopeSchema>
+
 export const askInputSchema = z.object({
   question: z.string(),
   task_id: common.idSchema.optional(),
+  scope: askScopeSchema.optional(),
 })
 export type AskInput = z.infer<typeof askInputSchema>
 
