@@ -650,13 +650,14 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `id` | `ID` | Y | 문서 버전 ID |
 | `document_id` | `ID` | Y | 문서 ID |
 | `version_no` | `integer` | Y | 문서 내 버전 번호 |
-| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태. 문서함 반려는 버전을 REJECTED로 바꾸지 않고 제출(DocumentReviewSubmission.status)에 남긴다. REJECTED는 6절의 미채택이다 |
+| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태. 문서함 반려는 버전을 REJECTED로 바꾸지 않고 제출(DocumentReviewSubmission.status)에 남긴다. REJECTED는 6절의 미채택이다. 변경 제안으로 만든 DRAFT는 제안이 발행되면 APPROVED(이전 승인본은 SUPERSEDED), 제안을 거두면(WITHDRAWN) REJECTED가 된다. 제안이 반려(REJECTED)된 경우는 같은 제안의 새 리비전으로 다시 제출해 같은 DRAFT를 쓰므로 DRAFT로 남는다. 다른 제안이 먼저 발행되어 이전 승인본을 부모로 한 DRAFT는 다시 연결할 수 없으므로 그 발행 때 REJECTED가 된다(그 제안은 팀장이 CHG-A10으로 반려할 때까지 상태가 그대로이다) |
 | `file_name` | `string` | Y | document-{id}-v{version_no}.{md\|txt} 생성 다운로드명 |
 | `media_type` | `string` | Y | MIME |
 | `content_hash` | `string` | Y | 원본 해시 |
 | `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
 | `created_by` | `ID` | Y | 올린 계정 |
 | `is_current_baseline` | `boolean` | Y | 현재 기준에 들어 있는 버전. 수정안 요청 |
+| `change_proposal_id` | `ID` | N | 이 버전을 만든 변경 제안. 변경 제안으로 만든 버전에만 있다. 처음 올린 문서·문서별 승인 버전에는 없다 |
 | `created_at` | `Time` | Y | 생성 시각 |
 
 <a id="schema-document"></a>
