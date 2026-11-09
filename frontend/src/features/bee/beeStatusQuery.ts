@@ -1,3 +1,4 @@
+import { BACKGROUND_POLL_MS } from '@/lib/pollIntervals'
 import { queryOptions } from '@tanstack/react-query'
 import { shouldRetryQuery, unlessMissing } from '@/api/error'
 import { beeApi } from '@/api/services'
@@ -15,5 +16,5 @@ export const beeStatusQuery = (projectId: string) =>
     refetchInterval: ({ state }) =>
       state.data === null || (state.error && !shouldRetryQuery(0, state.error))
         ? false
-        : 30_000,
+        : BACKGROUND_POLL_MS,
   })
