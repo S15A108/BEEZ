@@ -244,6 +244,13 @@ def test_lower_number_only_in_sha_blocks():
     expect(r, 1, "V2: 되돌릴 SHA에만 있고 DB에 없음 — 되돌리면 예전 backend 기동 실패")
 
 
+def test_duplicate_number_in_sha_blocks():
+    # dev 브랜치에는 V3 파일이 둘이다. DB 기록을 뒤쪽 파일(V3__more_tables)에 맞춰도 Flyway 는 중복 번호로 기동을 거절한다
+    r = run(db=MATCH, ref="dev")
+    expect(r, 1, "V3: 되돌릴 SHA에 같은 번호 파일이 둘 이상 — 되돌리면 예전 backend 기동 실패")
+    assert len(lines(r)) == 1, r[1]
+
+
 def test_lines_are_sorted_by_number():
     r = run(db=[row(1), row(3, success="f"), row(10, checksum=1, desc="x"), row(5, typ="JDBC")])
     assert [x.split(":")[0] for x in lines(r)] == ["V2", "V3", "V10"], r[1]

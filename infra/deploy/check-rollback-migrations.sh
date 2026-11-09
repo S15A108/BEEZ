@@ -85,7 +85,8 @@ done < "$T/files" > "$T/old"
 awk -F'|' -v nfile="$T/n" '
     # 설명은 마지막 칸이라 "|" 가 들어 있어도 끝까지 한 칸으로 읽는다
     function rest(k,   r, i) { r = $0; for (i = 1; i < k; i++) sub(/^[^|]*[|]/, "", r); return r }
-    NR == FNR { o[$1] = $2; ot[$1] = $3; od[$1] = rest(4); if ($1 + 0 > om) om = $1 + 0; next }
+    # 같은 번호 파일이 둘 이상이면 Flyway 가 기동 때 거절한다. 마지막 파일만 남겨 비교하면 안전하다고 잘못 나온다
+    NR == FNR { if ($1 in o) dup[$1] = 1; o[$1] = $2; ot[$1] = $3; od[$1] = rest(4); if ($1 + 0 > om) om = $1 + 0; next }
     $4 == "DELETE" { delete a[$1]; next }    # flyway repair 가 지움 처리한 번호. 앞서 적용된 행을 없던 것으로 본다
     $4 == "BASELINE" { if ($1 + 0 > bl) bl = $1 + 0; next }   # 이 번호 이하는 Flyway 가 적용된 것으로 보고 검사하지 않는다
     $4 != "SQL" && $4 != "JDBC" { next }     # 스키마 생성 같은 Flyway 기록용 행은 마이그레이션이 아니다
@@ -97,13 +98,15 @@ awk -F'|' -v nfile="$T/n" '
             if (ok[v] != "t") { print "V" v ": 실패한 마이그레이션 — 어느 backend도 기동 못 함. 되돌리기 전에 스키마 상태부터 확인"; continue }
             if (!(v in o) && v + 0 > om) { print "V" v ": 되돌릴 SHA가 모르는 상위 번호 — 판단 대상 (DB checksum " c[v] ")"; continue }
             if (!(v in o)) { print "V" v ": DB에만 있는데 되돌릴 SHA의 최신 번호보다 낮음 — 되돌리면 예전 backend 기동 실패"; continue }
+            if (v in dup) continue   # 아래 dup 줄로 알린다. 어느 한 파일과의 비교는 뜻이 없다
             m = ""
             if (o[v] != c[v]) m = m " checksum(DB " c[v] ", 되돌릴 SHA " o[v] ")"
             if (ot[v] != t[v]) m = m " 유형(DB " t[v] ", 되돌릴 SHA " ot[v] ")"
             if (od[v] != ds[v]) m = m " 설명(DB \"" ds[v] "\", 되돌릴 SHA \"" od[v] "\")"
             if (m != "") print "V" v ": 기록 다름 —" m " — 되돌리면 예전 backend 기동 실패"
         }
-        for (v in o) if (!(v in a) && v + 0 > bl) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
+        for (v in dup) print "V" v ": 되돌릴 SHA에 같은 번호 파일이 둘 이상 — 되돌리면 예전 backend 기동 실패"
+        for (v in o) if (!(v in a) && !(v in dup) && v + 0 > bl) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
             (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음")
     }' "$T/old" "$T/db" | sort -n -k1.2 > "$T/out"
 # awk 가 깨지면 줄 없이 "대조 끝" 이 나와 되돌려도 되는 것처럼 보인다. 파이프 끝(sort)이 아니라 awk 의 결과를 본다
