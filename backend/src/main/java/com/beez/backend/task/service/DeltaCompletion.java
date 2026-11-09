@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>가짜 분석기(beez.validation.fake-analyzer)가 낸 PASS 는 시작 관문 G1 과 같은 규칙으로, 가짜 분석기를 끈 서버에서는 완료로 쓰지 않는다.
  *
  * <p>부르는 곳: 검증 결과 반영(워커, PASS 로 끝날 때)과 설계 발행 뒤 재접수. 모두 프로젝트 행을 잠근 트랜잭션 안이다.
- * 활동 기록(TASK_COMPLETED, 계약 10)은 -64 에서 붙인다.
+ * 완료로 바꾸면 같은 트랜잭션에서 시스템 행위로 {@code TASK_COMPLETED} 활동을 남긴다 (계약 10 6.2, -287).
  */
 @Component
 public class DeltaCompletion {
@@ -37,13 +37,16 @@ public class DeltaCompletion {
     private final TaskCompletionReportRepository reports;
     private final ValidationStatusLookup validations;
     private final boolean fakeAnalyzerEnabled;
+    private final TaskActivities activities;
 
     public DeltaCompletion(TaskRepository tasks, TaskCompletionReportRepository reports, ValidationStatusLookup validations,
-                           @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled) {
+                           @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
+                           TaskActivities activities) {
         this.tasks = tasks;
         this.reports = reports;
         this.validations = validations;
         this.fakeAnalyzerEnabled = fakeAnalyzerEnabled;
+        this.activities = activities;
     }
 
     /**
@@ -73,6 +76,7 @@ public class DeltaCompletion {
         }
         task.complete(now);
         tasks.saveAndFlush(task);
+        activities.completedBySystem(task);   // 키는 flush 뒤 잠금 버전 — 완료 보고(S3) 때보다 커서 겹치지 않는다
         log.info("task {} completed by DELTA validation {} (S4)", taskId, validationId);
         return true;
     }

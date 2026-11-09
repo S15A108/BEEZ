@@ -37,6 +37,14 @@ public interface TemporaryPasswordRepository extends JpaRepository<TemporaryPass
     @Query("delete from TemporaryPassword t where t.email = :email")
     int deleteByEmail(@Param("email") String email);
 
+    /**
+     * 행 정리(-273, AuthRowCleanupJob): cutoff 전에 만료된 행을 지운다. 행은 늦어도 만료 시각에 끝나고(사용·닫힘이 더
+     * 이를 수 있다) 계정 없는 요청은 만들 때 바로 만료로 둔다. created_at 조건은 ix_temporary_password_created 를 타게 한다.
+     */
+    @Modifying
+    @Query("delete from TemporaryPassword t where t.createdAt < :cutoff and t.expiresAt < :cutoff")
+    int deleteEndedBefore(@Param("cutoff") Instant cutoff);
+
     /** 로그인: 같은 임시 비밀번호로 동시에 로그인해도 한 번만 쓰이도록 잠그고 읽는다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from TemporaryPassword t where t.accountId = :accountId and t.closedAt is null")

@@ -119,7 +119,7 @@ public class MeetingService {
         notifier.requestAll(added.stream().map(accounts::get).filter(account -> account != actor.accountId())
                 .map(account -> meetingRequest(projectId, meetingId, "meeting:" + meetingId + ":participant-added:" + account,
                         account, "MEETING_PARTICIPANT_ADDED", message)).toList());
-        // TODO(S15P31A108-237): ActivityRecorder.record MEETING_PARTICIPANT_ADDED, key meeting:{id}:participant-added:{account}
+        // 참여자 추가는 활동으로 남기지 않는다(S15P31A108-310 결정: 계약 6.2 에 유형이 없고 알림이 있다).
         return assembler.toResponse(projectId, meeting);
     }
 
@@ -147,7 +147,7 @@ public class MeetingService {
         var message = NotificationMessages.meetingParticipantRemoved(meeting.title());
         notifier.request(meetingRequest(projectId, meetingId, "meeting:" + meetingId + ":participant-removed:" + account,
                 account, "MEETING_PARTICIPANT_REMOVED", message));
-        // TODO(S15P31A108-237): ActivityRecorder.record MEETING_PARTICIPANT_REMOVED, key meeting:{id}:participant-removed:{account}
+        // 참여자 제외도 활동으로 남기지 않는다(위와 같은 결정).
     }
 
     /**

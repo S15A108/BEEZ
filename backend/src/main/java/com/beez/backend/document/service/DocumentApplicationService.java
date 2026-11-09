@@ -2,6 +2,9 @@ package com.beez.backend.document.service;
 
 import static com.beez.backend.document.service.DocumentValues.*;
 
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.auth.CallerContext;
@@ -36,12 +39,14 @@ public class DocumentApplicationService {
     private final DocumentIndexWorker worker;
     private final DocumentReviewRepository reviews;
     private final ContextAccessRecorder accessLog;
+    private final ActivityRecorder activities;
 
     public DocumentApplicationService(JdbcClient jdbc, ProjectAccessChecker access, DocumentRepository documents,
             DocumentVersionRepository versions, DocumentStorage storage, DocumentInputValidator validator,
             PlatformTransactionManager transactions, DocumentIndexWorker worker, DocumentReviewRepository reviews,
-            ContextAccessRecorder accessLog) {
+            ContextAccessRecorder accessLog, ActivityRecorder activities) {
         this.accessLog = accessLog;
+        this.activities = activities;
         this.jdbc = jdbc; this.access = access; this.documents = documents; this.versions = versions;
         this.storage = storage; this.validator = validator; this.transactions = transactions; this.worker = worker;
         this.transaction = new TransactionTemplate(transactions);
@@ -195,6 +200,9 @@ public class DocumentApplicationService {
             var concurrent = replay(caller, project, "upload", key, fp);
             if (concurrent.isPresent()) return concurrent.get();
             var saved = registration.persist(input, source, original);
+            // 멱등 재생(concurrent)은 위에서 반환했다. 등록은 알림 유형이 없어(계약 6.1) 활동만 남긴다.
+            activities.record(caller, ActivityEvent.of("document-version:" + saved.documentVersionId() + ":registered", project,
+                    "DOCUMENT_REGISTERED", ActivityTargetType.DOCUMENT_VERSION, saved.documentVersionId()));
             reviews.initialize(saved.documentId(), saved.documentVersionId(), caller.accountId(), filename);
             enqueue(saved.documentVersionId(), saved.textHash());
             var response = Map.<String, Object>of("document", documentView(document(project, saved.documentId())), "analysis_status", "PENDING");

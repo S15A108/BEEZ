@@ -139,7 +139,8 @@ class ReportTaskStateTool implements McpTool<ReportTaskStateArgs> {
 claude mcp add --transport http beez http://localhost:8080/mcp --header "Authorization: Bearer <발급한 토큰>"
 ```
 
-4. Claude Code에서 `/mcp`로 `beez`가 connected인지, 도구 목록이 보이는지 확인한다. 도구는 `mcp/tool` 패키지의 11개다(7절).
+4. Claude Code에서 `/mcp`로 `beez`가 connected인지, 도구 목록이 보이는지 확인한다. 도구는 `mcp/tool` 패키지의 13개다(7절).
+5. Claude Code에게 "BEEZ `check_connection` 불러 줘"라고 하면 프로젝트·계정·토큰 이름·클라이언트 이름이 나온다(MCP-15). 같은 계정으로 다른 곳에서 새로 연결하면 이쪽 연결은 409 `agent_session_replaced`로 끊긴다(9절). 그때는 `/mcp`에서 다시 연결한다.
 
 SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect()`를 본다(`HttpClientStreamableHttpTransport` + `Authorization` 헤더).
 
@@ -148,8 +149,9 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | 항목 | 티켓 |
 | --- | --- |
 | ~~도구 호출마다 감사 기록, 권한 실패 응답 형식 확인~~ | -177 완료 — 8절 |
-| 세션과 토큰을 묶기 — 지금은 다른 토큰이 남의 세션 ID로 POST하면 **보낸 토큰의 권한으로** 처리되지만, DELETE로 남의 세션을 끊을 수 있다 | -178 |
-| 토큰·계정당 세션 수 상한(지금은 initialize마다 세션이 생겨 마지막 요청 후 최대 2시간, 정리될 때까지 쌓인다), 1인 1에이전트, 연결 상태·해제, 작업 절차 안내(`instructions`) | -178 |
+| ~~세션과 토큰을 묶기~~ | -178 완료 — 9절 |
+| ~~1인 1에이전트, 연결 기록·해제, 작업 절차 안내(`instructions`)~~ | -178 완료 — 9절 |
+| 연결 현황 조회(AGT-A05·A06), 통신이 끊긴 세션의 판정 | -75 |
 | 도메인 도구 어댑터(MCP-01\~07·10\~13)와 입력 스키마 | -179 (7절) |
 
 ## 7. 붙은 도구 (-179)
@@ -168,6 +170,8 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | MCP-13 `get_validation` | `GetValidationTool` | `ValidationQueryService.get` (REST VAL-A02와 같음, 08 계약 2절) | 변준성 |
 | MCP-14 `retry_validation` | `RetryValidationTool` | `ValidationMcpService.retryValidation` (REST VAL-A04와 같은 `ValidationRetryService`, -161). 연결은 -271 — 별도 도구로 확정(변준성) | 변준성 |
 | MCP-12 `report_task_state` | `ReportTaskStateTool` | `TaskMcpService.reportTaskState` | 변준성 |
+| MCP-15 `check_connection` | `CheckConnectionTool` | `AgentSessionService.check` (-178, 9절) | 전진 |
+| MCP-16 `get_task` | `GetTaskTool` | `TaskQueryService.getTaskDetail` (REST TSK-A03과 같음, -335) — 인계받은 에이전트가 현재 계획·`lock_version`을 읽는 조회 | 전진 / 변준성 |
 
 - MCP-05~07의 범위는 08 계약 3절(변준성 -166)을 그대로 따른다: 요약 문자열 검색(의미 검색은 박상은 모듈 연결 때), 패킷은 검색하지 않음(Q10).
 - `get_document`는 버전을 생략하면 현재 기준 설계의 `baseline_document` 버전을 준다(새 승인으로 SUPERSEDED가 됐어도 기준이 다시 발행되기 전까지는 그 버전). 버전을 지정하면 승인된 적 있는 버전(APPROVED·SUPERSEDED)만 주고 DRAFT·REJECTED는 `not_found`다. 문서 화면용 칸 중 `document.preview_text`(작업 중 사본)·`latest_draft`는 빼고 `approved_version`은 현재 기준 버전으로 바꾸며, 조회 이력을 `target_kind=DOCUMENT_VERSION`으로 같은 트랜잭션에 남긴다.
@@ -210,3 +214,49 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 **이번에 하지 않은 것**: 감사 로그 조회 API(팀장 공개안 — REST 명세 없음), 권한 실패 응답의 `details`(명세 없음 — 지금 형식 유지), 보존 기간·정리.
 
 시험: 결과 분류·저장 실패 처리는 `McpToolHandlerTest`, 대상 ID는 `McpAuditEntryTest`, 실제 MCP 연결의 거부·감사 행·위조 `result_cursor`는 `McpToolsIntegrationTests`.
+
+## 9. 연결·식별·해제 (-178)
+
+SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터도 transport context만 받는다). 그래서 **토큰 검증(mcpChain) 뒤, MCP 서블릿 앞**에 `McpSessionFilter`를 두고, 기록은 `AgentSessionService`가 `agent_session`(V2 테이블에 V41로 칸 추가)에 쓴다.
+
+| 요청 | 하는 일 |
+| --- | --- |
+| 세션 ID 없는 POST(initialize) | 요청 본문과 **응답을 붙잡아 두었다가**, 응답에 새 `Mcp-Session-Id`가 있으면 한 행을 만든 뒤에 응답을 내보낸다(클라이언트가 세션 ID를 받기 전에 기록이 커밋되어 바로 이어지는 요청이 막히지 않는다). SDK는 initialize를 요청 스레드에서 JSON 한 번으로 응답한다. 행에는 세션 ID·토큰·`clientInfo.name/version`(200자로 자름)·`last_report_at`이 들어간다. 이때 **같은 계정·같은 프로젝트의 살아 있는 세션을 `REPLACED`로 끝낸다**(1인 1에이전트). 멤버십 행을 잠가(토큰 발급·팀원 제외와 같은 행) 동시 연결이 둘 다 살아남지 않게 하고, 잠근 뒤 멤버십이 끝났으면 기록하지 않는다. 기록이 실패하면 initialize는 500이다 |
+| 세션 ID 있는 요청 | 기록이 없거나·다른 토큰의 세션이거나·이미 닫힌 세션이면 404 `not_found`(fail-closed). 기록이 없는 ID는 SDK까지 가지 않으므로 남의 세션과 없는 세션의 응답이 같다. `REPLACED`면 409 `agent_session_replaced`. 그 밖에는 `last_report_at`을 1분 단위로 갱신하고 SDK로 보낸다 |
+| DELETE | 밀려난 세션이어도 SDK까지 보내 서버 메모리의 세션을 지우게 한다. 성공하면 `CLOSED`로 끝낸다. **Claude Code(2.1.318·2.1.319)는 `/exit`로 끝낼 때 DELETE를 보내지 않는다**(11-09 실측) — 이 경로를 타는 클라이언트는 명세대로 닫는 다른 클라이언트뿐이다 |
+
+- **정한 것(전진 11-06, Q06)**: 단위는 토큰이 아니라 계정·프로젝트다. **나중 연결이 이긴다.**
+  - 먼저 연결을 지키면, DELETE 없이 꺼진 클라이언트(Claude Code는 정상 종료도 이렇다)가 SDK 정리로 사라질 때까지(1~2시간) 다시 붙지 못한다.
+  - 밀려난 쪽에 404를 주면 클라이언트가 조용히 다시 initialize해 두 클라이언트가 서로 끝없이 밀어낸다. 그래서 409로 끊는다.
+  - 토큰 발급 한도 5개(-175)는 그대로 둔다. 토큰은 PC마다 둘 수 있지만, 동시에 살아 있는 연결은 하나다.
+- 연결 시험은 MCP-15 `check_connection`이다(02-mcp-tools). 다른 도구와 같은 토큰 검증·`requireMember`를 거친다.
+- 작업 절차 안내(AGT-04)는 initialize 응답의 `instructions`로 간다. 글은 토큰 발급 응답의 `claude_md_snippet`과 같은 `AgentTokenService.CLAUDE_MD_SNIPPET`이다.
+- 토큰 폐기·멤버십 종료는 이 표가 아니라 토큰 검증이 매 요청 401로 막는다. 폐기된 토큰의 세션 행에는 `ended_at`이 찍히지 않는다. 연결 판정은 토큰의 `revoked_at`과 함께 본다.
+- 세션 확인·기록이 DB 오류로 실패하면 500이다(오류 로그 `mcp session … failed`). 결속을 건너뛴 채 통과시키지 않는다(fail-closed) — 기록이 없는 세션을 통과시키면 결속이 기록 성공에 기댄다. 닫기(DELETE) 기록만은 실패해도 SDK 응답을 그대로 둔다(SDK는 이미 세션을 지웠다).
+- 연결 기록을 읽는 곳 두 군데는 끝난 세션(`ended_at`)을 세지 않게 바꿨다.
+  - 팀원 목록의 `agent_connected`: `ProjectMemberRepository.findAgentConnectedAccountIds`. **최근 2시간 안에 통신한 세션만** 연결로 본다 — DELETE 없이 꺼진 클라이언트·배포 재시작으로 사라진 세션은 끝남이 찍히지 않는데, SDK가 유휴 세션을 마지막 요청 후 1~2시간에 지우므로 그보다 오래 조용하면 세션이 남아 있지 않다.
+  - 에이전트 작업 현황 MON-A05: `TaskStatusRepository.agentSessions`. -178에서는 시간 창을 걸지 않았고, -75에서 팀원 목록과 같은 2시간 창을 걸었다(아래 '남긴 것').
+  - (-75) 세 곳의 기준은 `AgentConnectionRule`의 SQL 조각 하나다. 연결 현황 AGT-A05(`AgentConnectionQueryService`)도 같은 조각을 쓰고, IN_PROGRESS 작업을 맡은 채 보고 끊김 임계값(`beez.task.stalled-after`, 기본 30분) 넘게 조용하면 `status_check_required`로 표시한다. 할 일 없이 쉬는 연결은 표시하지 않는다.
+
+**남긴 것**
+
+- **SDK 메모리의 밀려난 세션**: SDK에 서버 쪽에서 세션을 닫는 공개 API가 없다. 그래서 밀려난 세션은 요청이 409로 막힐 뿐, 메모리에서는 정리 주기(1시간)까지 남는다. 같은 토큰으로 initialize를 반복하면 메모리 세션이 쌓인다. DB의 살아 있는 세션은 계정·프로젝트당 하나다.
+- **끝남이 찍히지 않는 세션**: Claude Code는 종료 때 DELETE를 보내지 않고, 오래 쉬어 SDK가 지운 세션도 마찬가지라 **보통의 연결 끝은 `ended_at`이 비어 있다.** `ended_at`이 찍히는 것은 사실상 `REPLACED`뿐이다. 그래서 '지금 연결됨'은 `ended_at`만으로 판정할 수 없고 시간 창이 필요하다.
+  - 팀원 목록은 2시간 창으로 거른다.
+  - ~~MON-A05는 시간 창이 없어, 끝낸 세션을 같은 사람이 다시 연결해 밀어내기 전까지 계속 보여 준다.~~ -75에서 2시간 창을 걸어 해결했다. 사무실 화면(FE `officeAgents`)은 MON-A05 행이 있으면 연결됨으로 그리므로, 이전에는 꺼진 에이전트를 '작업 중'으로 그렸다.
+- **요청마다 트랜잭션 하나 더**: 세션 확인이 토큰 검증과 따로 돈다. 둘을 한 트랜잭션으로 묶는 것은 후속이다.
+- **SDK의 없는 세션 404 본문**: SDK는 `McpError` 예외를 통째로 직렬화해 스택 트레이스까지 내보낸다. 기록이 있는 세션을 SDK가 이미 지웠을 때(배포 재시작·유휴 정리)만 이 응답이 나간다.
+- **`last_report_at`의 뜻**: -75에서 '마지막 **통신** 시각'으로 정하고 04-task-lifecycle §6을 그에 맞췄다. 칸을 나누지 않는다 — 쉬는 에이전트는 요청을 보내지 않아 통신이 곧 활동이고, 나누려면 마이그레이션과 요청 필터 수정이 필요하다.
+- **작업 상태 DRAFT**: `agent_session.current_task_id`를 쓰기 시작할 때 AgentWork와 FE `agentWorkSchema`의 `task_status`에 DRAFT를 넣는다(00-common AgentWork에 적음). 지금은 그 칸을 쓰는 코드가 없어 할 일이 없다(-75).
+- **활동 기록의 세션**: `activity_event.agent_session_id`는 -333에서 채운다. 세션 필터가 확인한 연결 기록 ID를 요청 속성 → transport context → `CallerContext.agentSessionId`로 넘긴다. AGT-A04 연결 안내 REST API는 후속이다.
+
+시험: `AgentConnectionIntegrationTests`(실제 MCP 클라이언트).
+
+- 연결 → 확인 → 해제, 팀원 목록 연결 표시(2시간 창 포함)
+- 같은 사람의 재연결(409, 팀원은 유지, MON-A05에 새 세션만)
+- 남의 세션 이어 쓰기·끊기(404, 없는 세션과 같은 응답)
+- 폐기 토큰(401)
+
+-75 시험: `AgentConnectionStatusIntegrationTests`. DELETE 없이 3시간 조용한 세션은 AGT-A05·MON-A05·팀원 목록 세 곳 모두 끊김, 40분 조용한 세션은 연결됨 + 확인 필요, 재연결하면 세 곳 모두 연결됨. AGT-A05 페이지·폐기 토큰 제외·비멤버 404·커서 형식 400.
+
+실제 Claude Code 확인(11-09, 로컬 백엔드, 같은 계정의 토큰 2개): 연결하면 `client_name=claude-code`·버전이 기록되고, 두 번째 연결 순간 첫 연결이 `REPLACED`가 된다. 밀려난 쪽에는 409 문구가 그대로 보이고 저절로 다시 연결하지 않는다. 폐기 토큰은 호출·`/mcp` 재연결 모두 401이다(Authorization 헤더를 넣은 설정이라 OAuth로 넘어가지 않는다). `/exit`는 DELETE를 보내지 않아 행이 열린 채 남는다.

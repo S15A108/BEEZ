@@ -1,6 +1,7 @@
 package com.beez.backend.config;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -28,7 +29,10 @@ public record BeezProperties(@Valid @NotNull Cors cors, @Valid @NotNull Ai ai, @
     /**
      * 팀원 초대 링크 (MEM-A01). 링크는 프론트 화면 주소라 baseUrl 은 프론트 오리진이다.
      * 초대는 만료가 없다 (Q05 6, -220 에서 ttl 을 뺐다).
+     *
+     * @param sendLimit       초대한 계정 하나가 sendLimitWindow 안에 보낼 수 있는 초대 메일 수 — MEM-A01 새 초대 + MEM-A11 (Q05: 30)
+     * @param sendLimitWindow 초대 메일 한도를 세는 창 (Q05: 1시간)
      */
-    public record Invitation(@NotBlank String baseUrl) {
+    public record Invitation(@NotBlank String baseUrl, @Min(1) int sendLimit, @NotNull Duration sendLimitWindow) {
     }
 }

@@ -3,17 +3,16 @@ package com.beez.backend.auth.recovery;
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.api.ApiException;
-import com.beez.backend.common.mail.MailGateway;
+import com.beez.backend.common.concurrent.LogThrottle;
+import com.beez.backend.common.mail.AsyncMailSender;
 import com.beez.backend.common.mail.MailMessage;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,7 +37,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * </ul>
  */
 @Service
-public class PasswordRecoveryService implements DisposableBean {
+public class PasswordRecoveryService {
 
     private static final Logger log = LoggerFactory.getLogger(PasswordRecoveryService.class);
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -53,14 +52,15 @@ public class PasswordRecoveryService implements DisposableBean {
     private final TemporaryPasswordRepository temporaries;
     private final AccountRepository accounts;
     private final PasswordEncoder encoder;
-    private final MailGateway mail;
+    /** 메일은 따로 보낸다. SMTP 를 기다리는 동안 요청 스레드·DB 연결을 쥐지 않고, 응답 시간이 계정 유무로 달라지지 않게 한다 */
+    private final AsyncMailSender mail;
     private final TransactionTemplate tx;
     private final PasswordRecoveryProperties props;
-    /** 메일 발송용. SMTP 를 기다리는 동안 요청 스레드·DB 연결을 쥐지 않고, 응답 시간이 계정 유무로 달라지지 않게 한다 */
-    private final ExecutorService mailSender = Executors.newVirtualThreadPerTaskExecutor();
+    /** 서버 전체 상한 도달 WARN 은 10분에 한 번만 (공격 중 요청마다 찍히지 않게, -273) */
+    private final LogThrottle globalLimitWarn = new LogThrottle(Duration.ofMinutes(10));
 
     public PasswordRecoveryService(TemporaryPasswordRepository temporaries, AccountRepository accounts,
-                                   PasswordEncoder encoder, MailGateway mail, PlatformTransactionManager manager,
+                                   PasswordEncoder encoder, AsyncMailSender mail, PlatformTransactionManager manager,
                                    PasswordRecoveryProperties props) {
         this.temporaries = temporaries;
         this.accounts = accounts;
@@ -102,7 +102,9 @@ public class PasswordRecoveryService implements DisposableBean {
         }
         if (target.isPresent()) {
             long id = saved.getId();
-            mailSender.execute(() -> deliver(id, email, temporary));
+            mail.send(new MailMessage(email, "[BEEZ] 임시 비밀번호", mailText(temporary)),
+                    () -> log.info("임시 비밀번호 발송: temporary_password_id={}", id),
+                    e -> closeUndelivered(id, e));
         }
         return ACCEPTED_MESSAGE;
     }
@@ -152,24 +154,19 @@ public class PasswordRecoveryService implements DisposableBean {
         }
     }
 
-    private void deliver(long id, String email, String temporary) {
+    /** 받지 못한 임시 비밀번호가 열린 채 남지 않게 닫는다. 사용자는 다시 요청하면 된다(다시 받기 간격만 기다림) */
+    private void closeUndelivered(long id, RuntimeException e) {
+        log.warn("임시 비밀번호 메일 발송 실패: temporary_password_id={} exception_type={}", id,
+                e.getClass().getSimpleName());
         try {
-            mail.send(new MailMessage(email, "[BEEZ] 임시 비밀번호", mailText(temporary)));
-            log.info("임시 비밀번호 발송: temporary_password_id={}", id);
-        } catch (RuntimeException e) {
-            // 받지 못한 임시 비밀번호가 열린 채 남지 않게 닫는다. 사용자는 다시 요청하면 된다(다시 받기 간격만 기다림)
-            log.warn("임시 비밀번호 메일 발송 실패: temporary_password_id={} exception_type={}", id,
-                    e.getClass().getSimpleName());
-            try {
-                tx.executeWithoutResult(status -> temporaries.findById(id).ifPresent(t -> {
-                    if (t.usableAt(Instant.now())) {
-                        temporaries.closeOpen(t.getAccountId(), Instant.now());
-                    }
-                }));
-            } catch (RuntimeException closeFailure) {
-                log.warn("발송 실패한 임시 비밀번호를 닫지 못함: temporary_password_id={} exception_type={}", id,
-                        closeFailure.getClass().getSimpleName());
-            }
+            tx.executeWithoutResult(status -> temporaries.findById(id).ifPresent(t -> {
+                if (t.usableAt(Instant.now())) {
+                    temporaries.closeOpen(t.getAccountId(), Instant.now());
+                }
+            }));
+        } catch (RuntimeException closeFailure) {
+            log.warn("발송 실패한 임시 비밀번호를 닫지 못함: temporary_password_id={} exception_type={}", id,
+                    closeFailure.getClass().getSimpleName());
         }
     }
 
@@ -196,8 +193,11 @@ public class PasswordRecoveryService implements DisposableBean {
         }
         if (temporaries.countByAccountIdIsNotNullAndCreatedAtAfter(now.minus(props.sendLimitWindow()))
                 >= props.globalSendLimit()) {
-            log.warn("임시 비밀번호 메일 서버 전체 상한 도달: limit={} window={}", props.globalSendLimit(),
-                    props.sendLimitWindow());
+            long skipped = globalLimitWarn.tryPass(now);
+            if (skipped >= 0) {
+                log.warn("임시 비밀번호 메일 서버 전체 상한 도달: limit={} window={} suppressed_since_last={}",
+                        props.globalSendLimit(), props.sendLimitWindow(), skipped);
+            }
             throw rateLimited("지금은 요청이 많습니다. 잠시 뒤에 다시 시도하세요");
         }
     }
@@ -213,10 +213,5 @@ public class PasswordRecoveryService implements DisposableBean {
 
     private static ApiException rateLimited(String message) {
         return new ApiException(HttpStatus.TOO_MANY_REQUESTS, "rate_limited", message);
-    }
-
-    @Override
-    public void destroy() {
-        mailSender.close();   // 보내는 중인 메일은 끝까지 보낸다
     }
 }

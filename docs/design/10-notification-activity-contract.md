@@ -95,7 +95,7 @@
 | --- | --- |
 | `actor_type` | `CallerContext.kind`(HUMAN·AGENT). 비비·시스템은 `recordBy`의 `SystemActor`. DB `actor_kind` |
 | `actor_account_id` | `CallerContext.accountId`(에이전트는 토큰 주인 계정). 비비·시스템이면 비움 |
-| `agent_session_id` | `CallerContext.agentTokenId`의 현재 연결 세션. 세션 기록(-178)이 생기기 전에는 비움 |
+| `agent_session_id` | `CallerContext.agentSessionId` — 그 활동을 만든 MCP 도구 호출이 들어온 연결 기록(`Mcp-Session-Id`로 확인한 `agent_session.id`, -333). 토큰의 "지금 살아 있는 세션"을 다시 찾지 않는다(그 사이 새 연결에 밀려나면 다른 세션을 가리킨다). 사람 행위와 검증 워커가 다시 만든 호출자는 비움(에이전트 토큰은 `/mcp`로만 인증된다) |
 | `actor_name`(응답) | 계정 이름 또는 토큰 이름 |
 | `occurred_at` | `clock_timestamp()`(실제 저장 시각). `now()`는 트랜잭션 시작 시각이라 쓰지 않는다 |
 
@@ -173,6 +173,8 @@
 | `MEMBER_JOINED`·`MEMBER_LEFT`·`MEMBER_REMOVED`·`LEADER_TRANSFERRED` | 프로젝트(전진) · `ProjectActivities`(-289) | MEMBER — 아래 "프로젝트·멤버 활동 정하기" |
 | `AGENT_CONNECTED`·`AGENT_DISCONNECTED` | 에이전트(전진 -178) | AGENT_SESSION |
 
+- 활동 키 요약(-310): `change-proposal:{id}:submitted:{revision}`·`:withdrawn`·`:review-started:{revision}`·`:rejected:{revision}`·`:approved`·`:published`, `change-discussion:{commentId}:commented|review-requested`, `doc-submission:{id}:approved|rejected`, `document-version:{versionId}:registered`, `baseline:{id}:created`. 거두기는 회의 끝내기 재시도가 앞선 시도의 제안을 정리할 때도 남고, 멱등 재생·이미 같은 상태의 재요청(검토 시작 등)에서는 남기지 않는다. 회의 참여자 추가·제외는 활동 유형을 두지 않는다.
+
 **작업 유형 정하기.** 활동 유형은 보고된 `TaskEvent` 이름이 아니라 **실제 전이 결과**(바뀐 뒤 상태·대기 사유)로 정한다. 변경분(delta)이 있는 `COMPLETED` 보고는 작업을 `WAITING(REVALIDATION)`으로 보내는데, 이벤트 이름만 따르면 재검증을 기다리는 작업이 타임라인에 완료로 보인다.
 
 | 보고·원인 | 실제 전이 | 활동 유형 | 행위자 |
@@ -214,7 +216,7 @@
 | --- | --- |
 | 언제 | 검증이 끝 상태(PASS·NEEDS_INPUT·NEEDS_REVIEW·ERROR)가 된 순간, 그 결과를 저장하는 같은 트랜잭션에서 |
 | 남기지 않는 것 | NOT_RUN·RUNNING(아직 안 끝남), STALE(무효화 — 원인이 된 행위의 활동이 대신함), 시도 번호가 `current_attempt`와 달라 버려진 늦은 결과 |
-| 행위자 | 요청 처리 안에서 규칙만으로 바로 끝나면 요청자의 `CallerContext`, 워커가 끝내면 `SystemActor.SYSTEM` |
+| 행위자 | 요청 처리 안에서 규칙만으로 바로 끝나면 요청자의 `CallerContext`, 워커가 끝내면 `SystemActor.SYSTEM`. 설계 발행 뒤 서버가 다시 접수한 DELTA가 규칙으로 끝나면 `SYSTEM` — 발행한 사람은 그 작업의 완료를 보고하지 않았다(PR #202 리뷰) |
 | `result` | PASS만 `SUCCESS`. NEEDS_INPUT·NEEDS_REVIEW·ERROR는 `FAILURE`(어떤 상태였는지는 검증 상세에서 본다) |
 | 키 | `validation:{id}:finished:{attempt}` — ERROR 뒤 재실행하면 같은 검증이 다시 끝나므로 시도 번호로 구분한다 |
 | 보조 참조 | `task_id`를 함께 넣는다(작업별 타임라인 필터) |
@@ -226,14 +228,14 @@
 | `notification` | `document_id` 컬럼 추가 | -181 |
 | `activity_event` | `actor_kind` CHECK에 `BEE` 추가, `agent_session_id`·`task_id`·`change_proposal_id`·`baseline_id`·`result` 저장(필터 대상은 인덱스 가능한 컬럼), `occurred_at` 기본값 `clock_timestamp()` | -182 |
 | MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id`·`actor_type`·`actor_name`. 인덱스 `(project_id, id DESC)`와 `change_proposal_id` 부분 인덱스(V35) | -183 |
-| `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기") | -64(변준성) |
-| `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출 | -64(변준성) |
-| 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)` | -159(변준성) |
-| 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서, 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 된 작업의 담당자에게 작업마다 한 건씩 `REVALIDATION_REQUIRED` 알림(본인 포함). S1은 IN_PROGRESS만 WAITING으로 바꾸고 READY 등은 검증만 STALE로 두는데, READY 작업도 새 PASS가 있어야 시작할 수 있으므로 함께 보낸다. STALE 대상은 작업 상태로 거르지 않으므로([04 문서](04-task-lifecycle.md) S1) 완료·취소 작업은 여기서 뺀다(이 제외 기준은 MCP-03 `affected_task_ids`와 같다 — 대상 선정 기준까지 같은 것은 아니다). 담당자가 없는 작업(`assignee_member_id` NULL)은 건너뛴다. 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다 | -163(변준성) |
-| `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함) | -64(변준성) |
+| `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기"). 이벤트는 상태가 실제로 바뀐 보고에서만 나간다(멱등 반환은 그 전) | -64(변준성) → **-287(전진) 구현** |
+| `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출. 유형·키는 `TaskActivities`에 모았다 | -64(변준성) → **-287 구현** |
+| 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)`. 워커 종결 3곳(`AnalysisResultApplier` 결과 반영·모델 전 규칙 판정·실패)은 SYSTEM, 접수 때 규칙 확정(`ValidationAcceptService`)은 요청자, 발행 뒤 재접수(`reacceptAfterPublication`)의 규칙 확정은 SYSTEM. 이어 받은 복사본(`carryForward`)은 새로 끝난 것이 아니라 남기지 않는다. S4 기록은 `DeltaCompletion`에서 한다(워커·발행 뒤 재접수 두 경로가 모두 거친다) | -159(변준성) → **-287 구현** |
+| 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서, 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 된 작업의 담당자에게 작업마다 한 건씩 `REVALIDATION_REQUIRED` 알림(본인 포함). S1은 IN_PROGRESS만 WAITING으로 바꾸고 READY 등은 검증만 STALE로 두는데, READY 작업도 새 PASS가 있어야 시작할 수 있으므로 함께 보낸다. STALE 대상은 작업 상태로 거르지 않으므로([04 문서](04-task-lifecycle.md) S1) 완료·취소 작업은 여기서 뺀다(이 제외 기준은 MCP-03 `affected_task_ids`와 같다 — 대상 선정 기준까지 같은 것은 아니다). 담당자가 없는 작업(`assignee_member_id` NULL)은 건너뛴다. 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다. 발행 서비스가 `ChangeNotifications.published`로 요청한다 | -163(변준성) → **-217(오서현) 구현**, 시험 `ProposalPublicationImpactIntegrationTest` |
+| `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함). 둘 다 작업을 flush한 뒤 남긴다 | -64(변준성) → **-287 구현** |
 | `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 이 서비스를 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다. 인계 대상 없이 담당자를 비우면 활동만 남긴다(-301). 탈퇴(`ProjectWithdrawalService.leaveAll`)도 탈퇴하는 본인의 `caller`로 `handOver(…, null)`을 부른다(-281) | 전진(-212 코드 작성자, -182와 함께) · -288·-301·-281 |
+| 코드 TODO 11곳 (연결됨) | 변경 제안 5곳(`ProposalCommandService` 제출·보완 재제출·거두기·검토 시작/반려, `ProposalPublicationService` 승인·발행)·의견 1곳(`ChangeDiscussionService`)·문서 3곳(`DocumentApplicationService.upload` 등록, `DocumentReviewService.decide` 승인·반려)·기준 1곳(`BaselinePublishService`)에서 같은 트랜잭션으로 호출한다. 회의로 만든 제안의 제출·정리 거두기는 `ProposalCommandService` 회의 경로에서 남긴다. 회의 참여자 추가·제외(`MeetingService`)는 6.2에 유형이 없고 알림이 같은 사실을 전하므로 활동으로 남기지 않는다 | -310(오서현, -237 활동 부분) |
 | `ProjectService.create`·`ProjectMemberService`·`ProjectWithdrawalService.leaveAll`·`InvitationService.accept`·자동 참여 | 6.2 "프로젝트·멤버 활동 정하기"대로 `ProjectActivities`를 거쳐 남긴다 | -289(전진) |
-| 코드 TODO 7곳 | 변경 제안 4(생성·거두기·검토 시작/반려 — `ProposalCommandService`, 승인·발행 — `ProposalPublicationService`)·의견 1(`ChangeDiscussionService`)·문서 검토 2(`DocumentReviewService` 제출·결정) → 이 계약으로 호출. 모두 `@Transactional` 또는 `TransactionTemplate` 안이라 그 자리에서 부르면 된다 | -237·-217(오서현) |
 
 ## 8. 일정
 
