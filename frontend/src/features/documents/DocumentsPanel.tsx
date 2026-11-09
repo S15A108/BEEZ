@@ -1064,12 +1064,14 @@ function DocumentDetail({
     ? versions.data?.items.find((item) => item.id === versionId)?.version_no
     : undefined
   const versionNo = picked ?? pinned
+  // 버전을 지정해 열 때는 이력에서 그 버전 번호를 찾은 뒤에만 부른다.
+  // 이력 조회가 실패하거나 그 버전이 없을 때 번호 없이 부르면 승인본이 열린다(PR #218 리뷰).
+  const unresolved = !!versionId && versionNo === undefined
   const document = useQuery({
     queryKey: ['projects', projectId, 'document', documentId, versionNo],
     queryFn: () =>
       documentsApi.get(projectId, documentId, { version_no: versionNo }),
-    // 기준 버전으로 열 때는 이력에서 그 버전 번호를 찾은 뒤에 부른다.
-    enabled: !versionId || picked !== undefined || versions.isFetched,
+    enabled: !unresolved,
   })
   const download = async (version: DocumentVersion) => {
     await action.run(async () => {
@@ -1092,6 +1094,20 @@ function DocumentDetail({
       on
         ? 'border-primary font-semibold'
         : 'border-transparent text-muted-foreground',
+    )
+  if (unresolved)
+    // 이력을 읽는 중이면 불러오는 중, 실패하면 오류와 다시 불러오기를 AsyncState가 보인다.
+    return versions.isSuccess ? (
+      <p
+        role="alert"
+        className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm"
+      >
+        열려던 버전을 버전 이력에서 찾을 수 없어요. 지워졌거나 볼 수 없는
+        버전이에요. 위의 &lsquo;현재 문서&rsquo;로 돌아가 문서를 다시 열어
+        주세요.
+      </p>
+    ) : (
+      <AsyncState query={versions}>{() => null}</AsyncState>
     )
   return (
     <AsyncState query={document}>

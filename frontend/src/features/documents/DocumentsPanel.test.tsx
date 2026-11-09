@@ -152,6 +152,49 @@ it('승인본 근거는 지금처럼 그 승인본으로 연다', async () => {
   expect(screen.queryByText(/를 보고 있어요/)).not.toBeInTheDocument()
 })
 
+// PR #218 리뷰: 인용한 버전 번호를 찾기 전에는 문서를 부르지 않는다(승인본으로 넘어가지 않는다).
+it('근거로 열 때 버전 이력 조회가 실패하면 오류와 다시 불러오기를 보이고 승인본을 부르지 않는다', async () => {
+  const draft = { ...version, id: '22', version_no: 2, content: '초안 본문' }
+  vi.mocked(documentsApi.get).mockImplementation(
+    async (_project, _document, options) => ({
+      document: focusedDocument,
+      version: options?.version_no === 2 ? draft : version,
+    }),
+  )
+  vi.mocked(documentsApi.versions)
+    .mockRejectedValueOnce(new Error('network'))
+    .mockResolvedValue({ items: [draft, version], has_more: false })
+  await openFromSource({
+    document_id: '2',
+    document_version_id: '22',
+    version_no: 2,
+    location: '기획안',
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '정보를 불러오지 못했어요',
+  )
+  expect(documentsApi.get).not.toHaveBeenCalled()
+
+  await userEvent.click(screen.getByRole('button', { name: '다시 불러오기' }))
+  expect(await screen.findByText('초안 본문')).toBeInTheDocument()
+  expect(documentsApi.get).toHaveBeenCalledTimes(1)
+  expect(documentsApi.get).toHaveBeenCalledWith('10', '2', { version_no: 2 })
+})
+
+it('인용한 버전이 이력에 없으면 찾을 수 없다고 알리고 승인본을 부르지 않는다', async () => {
+  // 지워졌거나 볼 수 없는 버전. 이력에는 v1만 있다.
+  await openFromSource({
+    document_id: '2',
+    document_version_id: '29',
+    version_no: 9,
+    location: '기획안',
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '열려던 버전을 버전 이력에서 찾을 수 없어요',
+  )
+  expect(documentsApi.get).not.toHaveBeenCalled()
+})
+
 // 수정안(PNL-02-m): 문서 상세는 보기 전용. '수정 초안 작성' 대신 새 .md를 올려 비비 검토·팀장 승인을 다시 거친다.
 it('문서 상세는 보기 전용이고 수정 초안 작성 버튼이 없다', async () => {
   useWorkspaceStore.setState({ focusId: '2' })
