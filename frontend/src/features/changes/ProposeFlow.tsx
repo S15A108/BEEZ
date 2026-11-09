@@ -178,8 +178,13 @@ export function ProposeFlow({
       ),
     [values, afterContent],
   )
-  // 반려된 제안의 설계 항목·다른 문서 변경은 고치지 않아도 함께 올라간다.
-  const kept = (values?.kept_items ?? 0) + (values?.kept_documents ?? 0)
+  // 반려된 제안의 설계 항목·다른 문서 변경은 고치지 않아도 함께 올라간다. 올리는 것은 초안이므로 초안으로 센다.
+  // 이어서 열면 폼이 채우는 kept_* 값이 없어 설계 항목만 있는 초안이 변경 0건이 됐다(PR #227 리뷰).
+  const kept = draft
+    ? draft.items.length +
+      draft.documents.filter((item) => item.document_id !== values?.document_id)
+        .length
+    : (values?.kept_items ?? 0) + (values?.kept_documents ?? 0)
   const task = tasks.find((item) => item.id === values?.task_id)
   const taskLabel =
     task && `${task.key} ${task.current_plan_revision.plan.title}`

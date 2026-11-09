@@ -575,6 +575,53 @@ it('창을 닫았다 열면 작성 중 제안과 검토 결과를 이어서 본�
   expect(screen.getByText('실패했을 때 안내가 없어요.')).toBeInTheDocument()
 })
 
+// PR #227 리뷰(오서현): 초안을 이어서 열 때 함께 올라가는 설계 항목·다른 문서 변경 수를 복원하지 않아, 문서 변경 없이 설계
+// 항목만 있는 반려 제안은 변경 0건으로 보고 다음 단계 버튼을 껐다. 함께 올라가는 변경은 초안 데이터로 센다.
+it('설계 항목만 있는 반려 제안의 초안을 이어서 열어도 함께 올라가는 변경을 세어 다음 단계로 간다', async () => {
+  const source = {
+    id: '71',
+    revision: 2,
+    snapshot_hash: `sha256:${'b'.repeat(64)}`,
+  } as ChangeProposal
+  current = toDraft(
+    {
+      base_baseline_id: '401',
+      title: '프로젝트 목록 빈 화면 안내',
+      reason: '빈 화면에서 할 일을 알려 줘야 해요.',
+      items: [
+        {
+          operation: 'UPDATE',
+          design_item_id: '301',
+          base_design_item_version_id: '311',
+          schema_version: 1,
+          proposed_content: {
+            description: '없으면 초대를 기다리라고 안내한다.',
+          },
+        },
+      ],
+      documents: [],
+    },
+    1,
+  )
+  localStorage.setItem('beez.changeDraft.101.71', '900')
+  const user = userEvent.setup()
+  renderFlow({}, source)
+  const banner = (await screen.findByText(/작성 중인 제안이 있어요/)).closest(
+    '[role="status"]',
+  ) as HTMLElement
+  await user.click(within(banner).getByRole('button', { name: '이어서 하기' }))
+  expect(
+    await screen.findByText(
+      '고친 문서에서 바뀐 곳은 없어요. 원래 제안의 변경 1건이 그대로 함께 올라가요.',
+    ),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '비비 검토 받기' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: '검토 없이 다음' }))
+  expect(
+    screen.getByText('원래 제안의 변경 1건이 함께 올라가요.'),
+  ).toBeInTheDocument()
+})
+
 it('검토 실패·시간 초과와 평가하지 않은 영향은 0건으로 보이지 않고 다시 요청할 수 있다', async () => {
   renderFlow()
   const user = await registerAddedLine()
