@@ -1,6 +1,10 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router'
 import { useIsMutating } from '@tanstack/react-query'
 import { AgentsPanel } from '@/features/agents/AgentsPanel'
+import { useAgentCheckStore } from '@/features/agents/agentCheckStore'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { TeamPanel } from '@/features/members/TeamPanel'
 import type { TeamView } from '@/features/members/TeamPanel'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -16,11 +20,17 @@ export function SettingsDialog({
   projectId,
   isLeader,
   agentConnected,
+  memberId,
 }: {
   projectId: string
   isLeader: boolean
   agentConnected: boolean
+  memberId?: string
 }) {
+  const statusOf = useAgentStatusOf(projectId)
+  const setCheckedMember = useAgentCheckStore((state) => state.setCheckedMember)
+  // 이 창은 워크스페이스와 같이 생기고 없어진다(프로젝트마다 다시 만든다).
+  useEffect(() => () => setCheckedMember(null), [setCheckedMember])
   const pane = useWorkspaceStore((state) => state.pane)
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -91,7 +101,10 @@ export function SettingsDialog({
             {item(
               'agent',
               '에이전트',
-              agentConnected ? '연결됨' : '연결 미확인',
+              agentStatusLabels[
+                statusOf({ id: memberId, agent_connected: agentConnected })
+                  .status
+              ],
             )}
             {item('office', '사무실 화면')}
             {item('remove', isLeader ? '프로젝트 제거' : '프로젝트 나가기')}

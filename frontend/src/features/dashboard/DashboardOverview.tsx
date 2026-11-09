@@ -6,6 +6,8 @@ import { dashboardApi } from '@/api/services/dashboard'
 import { tasksApi } from '@/api/services/tasks'
 import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { Button } from '@/components/ui/button'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { countText, statusLabel } from '@/lib/display'
 import { formatShort } from '@/lib/formatDate'
@@ -64,6 +66,7 @@ export function DashboardOverview({
   periodName?: string
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
+  const statusOf = useAgentStatusOf(projectId)
   // API 없음: 대시보드 숫자를 한 번에 주는 요약 응답(백엔드 메모 8). 지금은 작업·변경 제안 집계를 따로 부른다.
   // 하나가 실패해도 다른 집계는 보이도록 따로 받고, 실패한 칸은 0 대신 '—'로 둔다(PR #72 전수 리뷰 TC-5).
   const changes = useQuery({
@@ -110,8 +113,9 @@ export function DashboardOverview({
   )
   const calls = usage.data?.call_count ?? 0
   const membersKnown = membersStatus === 'success'
+  // agent_connected는 보고가 끊겨 '연결 미확인'인 에이전트도 참이다. 이름과 같은 기준으로 '연결됨'만 센다.
   const disconnected = membersKnown
-    ? members.filter((member) => !member.agent_connected)
+    ? members.filter((member) => statusOf(member).status !== 'connected')
     : []
   const connected = members.length - disconnected.length
   const recent: Activity[] = activities.data?.items.slice(0, 4) ?? []
@@ -204,7 +208,9 @@ export function DashboardOverview({
             : `${connected} / ${members.length}`,
       onClick: () => onTab('agents'),
       todo: disconnected.length ? '연결 확인 ›' : undefined,
-      note: disconnected[0] && `${disconnected[0].name}의 에이전트 연결 미확인`,
+      note:
+        disconnected[0] &&
+        `${disconnected[0].name}의 에이전트 ${agentStatusLabels[statusOf(disconnected[0]).status]}`,
       warn: true,
     },
   ]
@@ -478,7 +484,10 @@ export function DashboardOverview({
                   const member = members.find(
                     (entry) => entry.id === agent.member_id,
                   )
-                  const isConnected = member?.agent_connected
+                  const agentStatus = member
+                    ? statusOf(member).status
+                    : 'recheck'
+                  const isConnected = agentStatus === 'connected'
                   const row = usage.data?.by_agent.find(
                     (entry) => entry.key === agent.agent_session_id,
                   )
@@ -511,11 +520,7 @@ export function DashboardOverview({
                                 className="size-3"
                               />
                             ))}
-                          {!member
-                            ? '연결 상태 미확인'
-                            : isConnected
-                              ? '연결됨'
-                              : '연결 미확인'}
+                          {agentStatusLabels[agentStatus]}
                         </span>
                       </span>
                       <span className="flex justify-between gap-2 pl-8.5 text-xs text-muted-foreground">

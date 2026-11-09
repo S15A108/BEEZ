@@ -266,6 +266,7 @@ function Workspace({ projectId }: { projectId: string }) {
               projectId={projectId}
               isLeader={isLeader}
               agentConnected={data.onboarding.my_agent_connected}
+              memberId={currentUser?.id}
             />
             <Dialog
               open={pane !== null && pane !== 'settings'}
