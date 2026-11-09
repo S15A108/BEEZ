@@ -13,7 +13,9 @@ test('설계 관계에서 고른 작업과 이름 붙은 선을 보고 작업 �
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/login')
   await page.getByRole('button', { name: '로그인', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /님의 도시/ })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: /님의 프로젝트/ }),
+  ).toBeVisible()
   await page.goto('/projects/101')
   await expect(page.locator('canvas')).toBeVisible()
 
