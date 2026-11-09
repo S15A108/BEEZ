@@ -508,6 +508,8 @@ export function TeamPanel({
               <ActionForm
                 // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
                 key={`${data.name}\n${data.description ?? ''}`}
+                // 새로 그려진 폼은 제출 중 상태를 모르므로, 저장 처리가 끝날 때까지 끈다(PR #199 리뷰).
+                disabled={action.busy}
                 disableWhen={(values) =>
                   !designChanged && !projectInfoChanged(values, data)
                 }

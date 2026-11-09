@@ -379,6 +379,33 @@ it('서버 값이 다시 들어오면 입력과 비교 기준이 그 값을 따�
   expect(save()).toBeDisabled()
 })
 
+// PR #199 리뷰: 저장 뒤 프로젝트를 먼저 다시 읽으면 폼이 새로 그려진다. 팀원 목록 같은 다른 조회가 끝나기 전까지는 다시 보내지 않는다.
+it('저장 처리가 끝나기 전에는 폼이 새로 그려져도 다시 보낼 수 없다', async () => {
+  const realList = membersApi.list
+  const list = vi.spyOn(membersApi, 'list')
+  const update = vi.spyOn(projectsApi, 'update')
+  const { user, name, save } = await renderProjectInfo()
+  await waitFor(() => expect(list).toHaveBeenCalled())
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  list.mockImplementation(async (...args) => {
+    await gate
+    return realList(...args)
+  })
+  await user.clear(name)
+  await user.type(name, '새 이름')
+  await user.click(save())
+  await waitFor(() =>
+    expect(screen.getByLabelText(/프로젝트 이름/)).not.toBe(name),
+  )
+  await user.type(screen.getByLabelText(/프로젝트 이름/), '요')
+  expect(save()).toBeDisabled()
+
+  release()
+  await waitFor(() => expect(save()).toBeEnabled())
+  expect(update).toHaveBeenCalledTimes(1)
+})
+
 it('프로젝트 정보 저장이 실패하면 쓴 값을 두고 다시 누를 수 있다', async () => {
   vi.spyOn(projectsApi, 'update').mockRejectedValueOnce(new Error('서버 오류'))
   const { user, name, save } = await renderProjectInfo()
