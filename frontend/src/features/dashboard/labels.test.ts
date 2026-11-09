@@ -1,5 +1,11 @@
 import { expect, it } from 'vitest'
-import { activityChip, agentLabel, agentTokenSuffix } from './labels'
+import {
+  activityChip,
+  agentLabel,
+  agentTokenSuffix,
+  callsText,
+  costText,
+} from './labels'
 
 it('검증 통과와 검토 시작은 유형으로 구분하고, 통과만 좁은 곳에도 남긴다', () => {
   expect(
@@ -34,4 +40,20 @@ it('이름 뒤에 붙는 토큰 구분은 토큰이 둘 이상일 때만 생긴�
   expect(agentTokenSuffix(one, [one])).toBe('')
   expect(agentTokenSuffix(one, [one, two])).toBe(' · 노트북')
   expect(agentTokenSuffix(two, [one, two])).toBe(' · #95')
+})
+
+// S15P31A108-346: 호출이 모두 미보고면 서버가 주는 0은 모르는 값이라 '0 USD + 미보고 N건'으로 보이면 안 된다.
+it('호출이 모두 비용 미보고면 금액 대신 미보고만, 일부만 모르면 금액에 건수를 붙인다', () => {
+  expect(costText('0', 'USD', 4, '비용 미보고', 4)).toBe('비용 미보고')
+  expect(costText('0.5', 'USD', 1, '비용 미보고', 4)).toBe(
+    '0.5 USD + 미보고 1건',
+  )
+  // 호출 수를 모르는 호출부는 이전처럼 건수를 붙인다.
+  expect(costText('0', 'USD', 4)).toBe('0 USD + 미보고 4건')
+  expect(
+    callsText(
+      { call_count: 4, estimated_cost_amount: '0', cost_unknown_call_count: 4 },
+      'USD',
+    ),
+  ).toBe('4회 · 비용 미보고')
 })

@@ -169,10 +169,45 @@ it('비용·토큰을 모르는 호출이 섞이면 0원·전체 값처럼 보�
   // 기대값 변경('0 USD + 미보고 1건' → '미보고')은 사용자 승인 2026-11-09(S15P31A108-346).
   const parse = screen.getByText('문서 분석').closest('li')!
   expect(within(parse).getAllByText('미보고', { exact: true })).toHaveLength(2)
-  expect(within(parse).queryByText(/토큰|USD|건/)).not.toBeInTheDocument()
+  expect(
+    within(parse).queryByText(/\d 토큰|\d USD|미보고 \d+건/),
+  ).not.toBeInTheDocument()
   const validation = screen.getByText('작업 검증').closest('li')!
   expect(within(validation).getByText('0.01 USD')).toBeInTheDocument()
   expect(within(validation).queryByText(/미보고/)).not.toBeInTheDocument()
+})
+// S15P31A108-346: QA에서 문서 분석이 '0 토큰 · 미보고 4건'으로 보였다. 위쪽 합계 카드도 같은 규칙을 따른다.
+it('호출이 모두 미보고면 합계 카드의 토큰·비용을 0 대신 미보고로 보인다', async () => {
+  vi.mocked(dashboardApi.usage).mockResolvedValue({
+    from: '2026-10-20T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 0,
+    output_tokens: 0,
+    call_count: 4,
+    estimated_cost_amount: '0',
+    currency: 'USD',
+    tokens_unknown_call_count: 4,
+    cost_unknown_call_count: 4,
+    by_feature: [],
+    by_task: [],
+    by_validation: [],
+    by_agent: [],
+    by_day: [],
+  })
+  const user = userEvent.setup()
+  mount()
+  await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+  const card = async (label: string) =>
+    (await screen.findByText(label, { selector: 'dt' }))
+      .nextElementSibling as HTMLElement
+  for (const label of ['입력 토큰', '출력 토큰', '추정 비용'])
+    expect(within(await card(label)).getByText(/^미보고/)).toBeInTheDocument()
+  expect(
+    within(await card('입력 토큰')).queryByText(/^0$|미보고 \d+건/),
+  ).not.toBeInTheDocument()
+  expect(
+    within(await card('추정 비용')).queryByText(/USD|미보고 \d+건/),
+  ).not.toBeInTheDocument()
 })
 it('호출이 없으면 비용을 미보고로 보이지 않고, 모든 기능이 0회면 빈 안내를 보인다', async () => {
   const empty = (key: string) => ({

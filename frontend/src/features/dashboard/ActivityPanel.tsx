@@ -20,6 +20,7 @@ import {
   costText,
   dashboardTabs,
   unknownText,
+  allUnreported,
 } from './labels'
 import type { DashboardTab } from './labels'
 import {
@@ -699,7 +700,7 @@ function UsageBars({
 }
 
 // 값 아래에 합계에 못 들어간 호출 수를 작게 붙인다. 한 줄에 이으면 좁은 칸에서 꺾인다.
-// 호출이 모두 미보고면 서버 합계(0)는 '0 토큰·0원'이 아니라 모르는 값이라 '미보고'만 보인다(S15P31A108-346).
+// 호출이 모두 미보고면 합계 대신 '미보고'만 보인다(allUnreported).
 function WithUnknown({
   value,
   unknown,
@@ -709,7 +710,7 @@ function WithUnknown({
   unknown?: number
   calls?: number
 }) {
-  if (calls && unknown !== undefined && unknown >= calls) return <>미보고</>
+  if (allUnreported(calls, unknown)) return <>미보고</>
   const note = unknownText(unknown)
   return (
     <>
