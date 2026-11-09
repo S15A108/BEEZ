@@ -1805,12 +1805,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 
 #### Response
 
-도구 성공 결과의 업무 payload. MCP 전송 봉투와 분리한다. REST TSK-A03 응답과 같은 [TaskDetail](00-common.md#schema-taskdetail)이다. 필드와 예시는 [MCP-10 Response](#mcp-10)와 같다. 그 밖에 아래 두 칸이 붙을 수 있다.
-
-| 필드 | 타입 | 필수 | 설명 |
-| --- | --- | --- | --- |
-| `validation` | [Validation](00-common.md#schema-validation) | N | 현재 계획의 가장 최근 검증. `validation_status`와 같은 기준이다. 검증이 없으면 생략 |
-| `completion_review` | `object` | N | 완료 보고와 계획의 규칙 대조. 완료됐거나 delta 재검증을 기다릴 때만 포함(TSK-A03과 같음) |
+도구 성공 결과의 업무 payload. MCP 전송 봉투와 분리한다. REST TSK-A03 응답과 같은 [TaskDetail](00-common.md#schema-taskdetail)이다. 칸 정의는 그 스키마 하나로 관리하고 여기서 다시 적지 않는다. `validation`(현재 계획의 가장 최근 검증)·`delta_validation_id`·`completion_review`도 TSK-A03과 같은 조건으로 실린다. 예시는 [MCP-10 Response](#mcp-10)와 같은 모양이다.
 
 에이전트가 이어 갈 때 쓰는 칸은 `lock_version`(→ `expected_lock_version`), `current_plan_revision.id`(→ `plan_revision_id`), `current_plan_revision.revision_no`(→ 계획 수정 때 `expected_revision_no`), `current_plan_revision.plan`(현재 계획 본문)이다.
 
