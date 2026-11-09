@@ -65,6 +65,36 @@ it('초기 설정 현황 API가 없으면 그 계정의 에이전트 연결로 �
   })
 })
 
+// PR #72 5차 UI-01: 최신 100개 밖에 있는 내 시작 대기 작업이 HUD에서 빠지지 않게 마지막 페이지까지 읽는다.
+it('작업이 100개를 넘으면 다음 페이지 작업까지 모두 읽는다', async () => {
+  vi.spyOn(projectsApi, 'get').mockResolvedValue({
+    id: '101',
+    name: '우리 팀 협업 서비스',
+    my_role: 'MEMBER',
+    created_at: '2026-10-23T03:00:00Z',
+    updated_at: '2026-10-23T03:00:00Z',
+  })
+  vi.spyOn(membersApi, 'list').mockResolvedValue({
+    items: [],
+    has_more: false,
+  } as never)
+  const list = vi
+    .spyOn(tasksApi, 'list')
+    .mockResolvedValueOnce({
+      items: [{ id: '1' }],
+      has_more: true,
+      next_cursor: 'c2',
+    } as never)
+    .mockResolvedValueOnce({
+      items: [{ id: '2', status: 'READY' }],
+      has_more: false,
+    } as never)
+  vi.spyOn(projectsApi, 'onboarding').mockResolvedValue({} as never)
+  const data = await new QueryClient().fetchQuery(sceneQuery('101', '11'))
+  expect(data.tasks.items.map((task) => task.id)).toEqual(['1', '2'])
+  expect(list).toHaveBeenLastCalledWith('101', { cursor: 'c2', limit: 100 })
+})
+
 const axiosError = (status: number, message: string) =>
   new AxiosError(message, 'ERR_BAD_RESPONSE', undefined, undefined, {
     status,
