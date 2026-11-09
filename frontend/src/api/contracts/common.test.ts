@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import {
   comparisonSchema,
   documentBeeReviewSchema,
+  documentVersionSchema,
   meetingEntrySchema,
   notificationSchema,
   pageSchema,
@@ -248,4 +249,30 @@ it('기준 알림의 기준 버전 번호를 남긴다', () => {
       created_at: '2026-11-05T01:00:00Z',
     }),
   ).toMatchObject({ target_id: '900', baseline_version_no: 3 })
+})
+
+it('문서 버전은 올린 사람·현재 기준·변경 제안이 없어도 읽고 있으면 보존한다', () => {
+  const version = {
+    id: '21',
+    document_id: '2',
+    version_no: 2,
+    status: 'DRAFT',
+    file_name: 'plan.md',
+    media_type: 'text/markdown',
+    content_hash: 'hash',
+    created_at: '2026-11-05T01:00:00Z',
+  }
+  expect(documentVersionSchema.parse(version)).toEqual(version)
+  expect(
+    documentVersionSchema.parse({
+      ...version,
+      created_by: '12',
+      is_current_baseline: false,
+      change_proposal_id: '71',
+    }),
+  ).toMatchObject({
+    created_by: '12',
+    is_current_baseline: false,
+    change_proposal_id: '71',
+  })
 })
