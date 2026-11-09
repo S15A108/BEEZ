@@ -2022,7 +2022,7 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 | COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
 | 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |
 
-[정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. RERUN 신규 기능은 후속 범위다. DISCUSS/REQUEST는 아래 BE 제안(S15P31A108-231)을 기준으로 AI 경로를 구현했다(S15P31A108-329). 계약 합의와 실제 배포 환경 연동의 완료를 뜻하지 않는다.
+[정상 완료 fixture](../../backend/src/test/resources/document/review-contract-complete.json), [자료 부족 fixture](../../backend/src/test/resources/document/review-contract-partial.json), [UTF-8 해시 벡터](../../backend/src/test/resources/document/review-reference-hash-vectors.json)를 222 인계 기준으로 사용한다. fixture의 MODEL/usage는 대역 시험용 합성값이며 실제 모델 실행 증거가 아니다. DISCUSS/REQUEST는 아래 BE 제안(S15P31A108-231)을 기준으로, RERUN은 아래 수정안 요청을 기준으로 AI 경로를 구현했다(S15P31A108-329). 계약 합의와 실제 배포 환경 연동의 완료를 뜻하지 않는다.
 
 #### DISCUSS·REQUEST BE 제안 (S15P31A108-231, AI 담당과 합의 전)
 
@@ -2031,7 +2031,9 @@ BE는 v2 요청 필드(contract_version=2, 지금 본문, content_hash, referenc
 - DISCUSS 요청: `mode=DISCUSS`, `suggestion`(`{id,type,step,explanation,original_text,replacement_text,decision}`), `messages`(`[{author_kind: HUMAN|BEE, text, proposed_text?}]`, 지금까지의 대화 + 새 사람 메시지, 최대 40개). 응답 result: `reply: {text(≤10,000자), proposed_text?(≤100,000자, 빈 문자열이면 그 부분을 지운다)}`. `suggestions`는 없거나 []이어야 하며 본문은 바꾸지 않는다.
 - REQUEST 요청: `mode=REQUEST`, `request_text`(≤5,000자). 응답 result: `suggestions` 정확히 1개 `{type: PATCH, step, explanation, original_text, replacement_text, sources[]}`. step은 해당 검토에서 완료된 단계, sources는 그 단계의 출처 규칙(BODY는 [], 비교 단계는 해당 단계 승인본 1개 이상)을 따른다. original_text는 입력 본문에서 한 곳과만 일치하고 아직 처리하지 않은 다른 제안의 구간과 겹치지 않아야 한다(요청에는 그 구간을 싣지 않으며, BE가 저장 전에 검증하고 어기면 502 invalid_ai_output으로 거절한다).
 
-329 AI 구현은 BE가 기존 검토의 완료 단계와 미처리 구간을 요청에 싣지 않으므로 REQUEST에서 본문과 사용자 요청만 모델에 전달하고 `step=BODY`, `sources=[]`인 PATCH 하나만 반환한다. 참고 문서를 근거로 한 비교 제안은 이 경로가 지원하지 않으며, 다른 미처리 제안과의 겹침은 BE가 검사한다. DISCUSS는 대화 응답과 적용 가능한 `PENDING` PATCH의 대체문을 제안하며 문서를 직접 바꾸지 않는다. 현재 요청에는 기존 제안의 출처가 없어 답변과 제안 출처의 일치를 검증하지 못한다. RERUN 및 category·severity는 호출·저장 계약이 확정되지 않아 이 구현 범위에 포함하지 않는다.
+329 AI 구현은 BE가 기존 검토의 완료 단계와 미처리 구간을 요청에 싣지 않으므로 REQUEST에서 본문과 사용자 요청만 모델에 전달하고 `step=BODY`, `sources=[]`인 PATCH 하나만 반환한다. 참고 문서를 근거로 한 비교 제안은 이 경로가 지원하지 않으며, 다른 미처리 제안과의 겹침은 BE가 검사한다. DISCUSS는 대화 응답과 적용 가능한 `PENDING` PATCH의 대체문을 제안하며 문서를 직접 바꾸지 않는다. 현재 요청에는 기존 제안의 출처가 없어 답변과 제안 출처의 일치를 검증하지 못한다.
+
+RERUN은 양의 문자열 `rejection_submission_id`와 비어 있지 않은 `rejection_reason`(Java UTF-16 기준 최대 10,000자)을 필수로 받아 반려 사유를 데이터로 모델에 제공한다. RERUN 및 mode를 생략한 기존 호출을 포함한 REVIEW의 모든 제안에 category·severity를 요구하고 열거형을 검증한다. 해결된 반려 사유에 대해 제안을 강제로 만들지 않는다. 기존 REVIEW 입력은 그대로 지원하며 응답에 분류 필드가 추가된다. 현재 BE는 추가 필드를 무시하므로 저장·표시하지 않는다. BE의 RERUN 호출과 분류 저장·표시는 아직 구현되지 않았고 계약 합의도 필요하다.
 
 
 222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.

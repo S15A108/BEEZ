@@ -66,6 +66,97 @@ def post(api, payload):
     return api[0].post("/v1/document-reviews", json=payload, headers=HEADERS)
 
 
+@pytest.mark.parametrize("mode", [None, "REVIEW", "RERUN"])
+def test_explicit_review_modes_return_classifications_and_preserve_identity(api, mode):
+    payload = fixture("review-contract-partial.json")["input"]
+    if mode is not None:
+        payload["mode"] = mode
+    if mode == "RERUN":
+        payload.update(rejection_submission_id="42", rejection_reason="반려 사유")
+    api[1].output["suggestions"] = [
+        {
+            "type": "COMMENT",
+            "step": "BODY",
+            "explanation": "확인이 필요합니다.",
+            "sources": [],
+            "category": "REJECTION_FIX" if mode == "RERUN" else "OMISSION",
+            "severity": "MAJOR",
+        }
+    ]
+    response = post(api, payload)
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["suggestions"][0]["severity"] == "MAJOR"
+    assert result["suggestions"][0]["category"] == (
+        "REJECTION_FIX" if mode == "RERUN" else "OMISSION"
+    )
+    assert result["document_id"] == payload["document_id"]
+    model_input = json.loads(api[1].requests[0].messages[1].content)
+    if mode == "RERUN":
+        assert model_input["rejection_submission_id"] == "42"
+        assert model_input["rejection_reason"] == "반려 사유"
+    else:
+        assert "rejection_reason" not in model_input
+
+
+@pytest.mark.parametrize("mode", [None, "REVIEW", "RERUN"])
+@pytest.mark.parametrize(
+    "category,severity",
+    [
+        (None, "MAJOR"),
+        ("OMISSION", None),
+        ("OTHER", "MAJOR"),
+        ("OMISSION", "BLOCKING"),
+    ],
+)
+def test_explicit_review_rejects_invalid_classification_as_failed_model_call(
+    api, category, severity, mode
+):
+    payload = fixture("review-contract-partial.json")["input"]
+    if mode is not None:
+        payload["mode"] = mode
+    if mode == "RERUN":
+        payload.update(rejection_submission_id="42", rejection_reason="반려 사유")
+    suggestion = {
+        "type": "COMMENT",
+        "step": "BODY",
+        "explanation": "설명",
+        "sources": [],
+    }
+    if category is not None:
+        suggestion["category"] = category
+    if severity is not None:
+        suggestion["severity"] = severity
+    api[1].output["suggestions"] = [suggestion]
+    response = post(api, payload)
+    assert response.status_code == 502
+    assert response.json()["usage"][0]["failed"] is True
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"mode": "RERUN", "rejection_submission_id": "42"},
+        {"mode": "RERUN", "rejection_reason": "사유"},
+        {"mode": "RERUN", "rejection_submission_id": "0", "rejection_reason": "사유"},
+        {"mode": "RERUN", "rejection_submission_id": "42", "rejection_reason": "  "},
+        {
+            "mode": "RERUN",
+            "rejection_submission_id": "42",
+            "rejection_reason": "사유",
+            "request_text": "추가 요청",
+        },
+        {"mode": "REVIEW", "rejection_submission_id": "42", "rejection_reason": "사유"},
+        {"rejection_submission_id": "42", "rejection_reason": "사유"},
+    ],
+)
+def test_invalid_mode_context_never_calls_provider(api, changes):
+    payload = {**fixture("review-contract-partial.json")["input"], **changes}
+    response = post(api, payload)
+    assert response.status_code in (400, 422)
+    assert not api[1].requests
+
+
 @pytest.mark.parametrize(
     "name", ["review-contract-complete.json", "review-contract-partial.json"]
 )
@@ -112,6 +203,7 @@ def test_be_fixture_request_produces_contract_steps_and_usage(api, name):
 def test_complete_patch_and_source_are_verified_against_be_fixture(api):
     sample = fixture("review-contract-complete.json")
     suggestion = sample["response"]["result"]["suggestions"][0]
+    suggestion.update(category="CONSISTENCY", severity="MAJOR")
     api[1].output["suggestions"] = [suggestion]
     response = post(api, sample["input"])
     assert response.status_code == 200, response.text
@@ -197,6 +289,7 @@ def test_be_utf8_hash_vectors(api, text_vector):
 def test_invalid_model_suggestions_are_errors_not_partial(api, invalid):
     sample = fixture("review-contract-complete.json")
     suggestion = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
+    suggestion.update(category="CONSISTENCY", severity="MAJOR")
     suggestions = [suggestion]
     if invalid == "forged_id":
         suggestion["sources"][0]["reference_id"] = "document-version-999"
@@ -241,6 +334,8 @@ def test_repeated_original_cannot_be_used_for_patch(api):
             "step": "BODY",
             "explanation": "명확하게",
             "sources": [],
+            "category": "READABILITY",
+            "severity": "MINOR",
             "original_text": "로그인한다.",
             "replacement_text": "인증한다.",
         }
@@ -256,6 +351,8 @@ def patch(original, replacement):
         "step": "BODY",
         "explanation": "수정 제안",
         "sources": [],
+        "category": "READABILITY",
+        "severity": "MINOR",
         "original_text": original,
         "replacement_text": replacement,
     }
@@ -485,6 +582,8 @@ def test_valid_patches_exceeding_be_result_limit_fail_with_usage(api):
             "step": "BODY",
             "explanation": "보완",
             "sources": [],
+            "category": "OMISSION",
+            "severity": "MAJOR",
             "original_text": marker,
             "replacement_text": "x" * 95000,
         }
