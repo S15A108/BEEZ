@@ -166,10 +166,27 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
   await page.getByRole('button', { name: '대시보드', exact: true }).click()
   const dashboard = page.getByRole('dialog')
   await dashboard.getByRole('tab', { name: '활동 타임라인' }).click()
-  await dashboard.getByRole('button', { name: '변경 요청 #71' }).click()
+  await dashboard.getByRole('button', { name: '변경 요청 #71' }).first().click()
   await expect(
     page.getByRole('region', { name: '발행 후 분석 상태' }),
   ).toContainText('상태 확인 필요')
+})
+
+test('변경 제안의 활동 탭에서 행위자별로 거르고 더 보기로 이어 읽는다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '변경 제안', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('tab', { name: '활동' }).click()
+  const list = dialog.getByRole('list').last()
+  await expect(list.getByRole('listitem')).toHaveCount(10)
+  await dialog.getByRole('button', { name: '더 보기' }).click()
+  await expect(list.getByRole('listitem')).toHaveCount(12)
+  await expect(dialog.getByRole('button', { name: '더 보기' })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '에이전트', exact: true }).click()
+  await expect(list.getByRole('listitem')).toHaveCount(2)
+  await expect(list).toContainText('민수 에이전트')
 })
 
 // S15P31A108-202: 기획 분석에서 질문에 답하고, 초안 생성이 만든 후보를 채택하면 설계 항목 초안이 된다(예시 API).

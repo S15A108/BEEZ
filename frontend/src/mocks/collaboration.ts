@@ -439,6 +439,8 @@ export function collaborationRoutes(
               (!query.get('type') || item.type === query.get('type')) &&
               (!query.get('actor_type') ||
                 item.actor_type === query.get('actor_type')) &&
+              (!query.get('change_proposal_id') ||
+                item.change_proposal_id === query.get('change_proposal_id')) &&
               (!query.get('agent_session_id') ||
                 item.agent_session_id === query.get('agent_session_id')),
           ),
