@@ -23,6 +23,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -116,6 +117,8 @@ public class TaskStateService {
         if (in.event() == TaskEvent.START
                 && task.getStatus() == TaskStatus.IN_PROGRESS
                 && validationId.equals(task.getStartedValidationId())) {
+            // 응답을 잃고 새 연결로 다시 보낸 START 도 "이 연결이 이 작업을 한다" 는 보고다 — 끊김 판정이 새 연결의 통신을 보게 한다
+            recordCurrentTask(caller, projectId, taskId, Instant.now(clock));
             return query.toDetail(task);
         }
         //    delta 있는 COMPLETED 재전송: 지금 기다리는 것이 "그 완료 보고" 이고 요청 내용이 같을 때만 같은 결과(202).
@@ -181,6 +184,9 @@ public class TaskStateService {
             case CANCEL -> cancel(task, now);
         }
         tasks.saveAndFlush(task);
+        if (in.event() == TaskEvent.START || in.event() == TaskEvent.RESUME) {
+            recordCurrentTask(caller, projectId, taskId, now);
+        }
 
         // 활동(계약 6.2)은 커밋 직전 같은 트랜잭션에서 남는다 (TaskStateChangedListener). 위 멱등 반환에서는 나가지 않는다
         events.publishEvent(new TaskStateChangedEvent(caller, projectId, taskId, from, task.getStatus(), task.getWaitingReason(),
@@ -250,9 +256,35 @@ public class TaskStateService {
     }
 
     /**
+     * 이 요청의 에이전트 연결(MCP 세션)에 "지금 하는 작업" 을 적는다 (agent_session.current_task_id, -336).
+     * START·RESUME 이 성공했을 때만 — 그 뒤 이 연결의 통신(last_report_at)이 이 작업의 보고로 쳐진다({@link #isStalled}).
+     * 사람 호출·REST 에이전트 호출은 연결 기록이 없어 적지 않는다. 한 연결은 작업 하나만 가리킨다 — 다른 작업을 시작하면 옮겨 간다.
+     * 이미 끝난 연결이나 다른 프로젝트 토큰의 연결은 바꾸지 않는다. 프로젝트 잠금 뒤 세션 행을 잠그므로, 세션 행을 먼저 잡는 경로
+     * (연결·통신 기록)는 프로젝트를 잠그지 않아 순서가 엇갈리지 않는다.
+     */
+    private void recordCurrentTask(CallerContext caller, Long projectId, Long taskId, Instant now) {
+        if (caller.agentSessionId() == null) {
+            return;
+        }
+        jdbc.sql("""
+                        update agent_session s
+                           set current_task_id = :taskId, updated_at = :now
+                         where s.id = :sessionId
+                           and s.ended_at is null
+                           and exists (select 1 from agent_token k where k.id = s.agent_token_id and k.project_id = :projectId)
+                        """)
+                .param("taskId", taskId)
+                .param("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+                .param("sessionId", caller.agentSessionId())
+                .param("projectId", projectId)
+                .update();
+    }
+
+    /**
      * 보고가 끊긴 작업: <b>IN_PROGRESS</b> 이고 마지막 보고 이후 stalledAfter 가 지났다 (04-task-lifecycle.md §4.1, 담당자 결정).
      * WAITING 은 보고가 멈추는 게 정상이라 넣지 않는다 — 넣으면 팀장 승인을 기다리는 작업까지 팀장이 취소할 수 있게 된다.
-     * 마지막 보고 = 에이전트 세션의 last_report_at 과 작업의 마지막 변경 시각 중 늦은 쪽.
+     * 마지막 보고 = 작업의 마지막 변경 시각과, 이 작업을 현재 작업으로 보고한 <b>지금 담당자</b> 연결의 마지막 통신(last_report_at) 중 늦은 쪽.
+     * 담당자가 바뀐 뒤 이전 담당자의 연결이 계속 통신해도 끊김을 가리지 않게 담당자로 거른다.
      * (greatest 는 Postgres 함수로, NULL 은 무시하고 가장 큰 값을 돌려준다)
      */
     private boolean isStalled(Task task) {
@@ -262,7 +294,12 @@ public class TaskStateService {
         // Postgres 드라이버는 timestamptz 를 OffsetDateTime 으로 읽는다 (Instant 로 바로는 못 읽음)
         OffsetDateTime lastReport = jdbc.sql("""
                         select greatest(t.updated_at,
-                                        (select max(s.last_report_at) from agent_session s where s.current_task_id = t.id))
+                                        (select max(s.last_report_at)
+                                           from agent_session s
+                                           join agent_token k on k.id = s.agent_token_id and k.project_id = t.project_id
+                                           join project_member m on m.project_id = k.project_id and m.account_id = k.account_id
+                                          where s.current_task_id = t.id
+                                            and m.id = t.assignee_member_id))
                           from task t
                          where t.id = :taskId
                         """)

@@ -1690,6 +1690,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - START/RESUME는 현재 계획의 PASS·참조 현재성·선행 완료·점유를 잠금 아래 검사한다.
 - 같은 task/validation START는 기존 결과다. 이 확인을 expected_lock_version 검사보다 먼저 한다. WAIT·CANCEL·COMPLETED 규칙은 REST TSK-A07과 같다.
 - 완료 델타가 있으면 보고를 보존하고 WAITING(REVALIDATION)으로 전환한다. delta 검증이 PASS하면 서버가 COMPLETED로 전이한다.
+- (BE 구현, -336) START·RESUME이 성공하면(같은 검증으로 다시 보낸 START 포함) 서버는 이 호출의 연결(`Mcp-Session-Id`)에 그 작업을 "지금 하는 작업"으로 적는다. 그 뒤 이 연결의 통신이 그 작업의 보고로 쳐져, 상태 전이 없이 일하는 동안에도 팀장 취소의 "보고 끊김"(04 §4.1)으로 판정되지 않고, 에이전트 작업 현황(MON-A05)의 작업 칸이 채워진다. 한 연결은 작업 하나만 가리킨다 — 다른 작업을 시작하면 옮겨 간다.
 - (BE 구현, -269) COMPLETED에 `changed_design_item_ids`를 실으면 결과 `task.completion_review`에 계획과 규칙으로 대조한 범위 이탈 후보가 나온다([CompletionReview](00-common.md#schema-completionreview)). 표시만 하고 완료를 막지 않는다. 코드 품질을 보증하지 않는다. 규칙은 REST TSK-A07과 같다.
 - `changes`는 그 작업의 현재 계획을 세운 시점의 기준 설계 이후 발행된 변경과 그 작업 검증의 유효성이다. 기준 설계가 한 번도 없으면 생략한다([서비스 연결 계약](../design/08-mcp-service-contract.md), S15P31A108-166).
 - `changes.has_more`이면 [MCP-03](#mcp-03)을 `since_version=changes_since_version`, 같은 `task_id`, `cursor=changes.next_cursor`로 불러 이어 본다. 이 이어 보기에는 since=0이어도 처음 연결 규칙(최근 1건)을 적용하지 않는다.
