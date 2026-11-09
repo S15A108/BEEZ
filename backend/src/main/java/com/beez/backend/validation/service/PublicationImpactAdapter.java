@@ -53,7 +53,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 여기서는 순서만 정한다. STALE 대상 계산은 한 번이고 그 결과를 무효화·재접수·응답이 함께 쓴다.
  *
  * <p>담당자 알림(계약 10 "설계 발행 수신·무효화": 작업마다 REVALIDATION_REQUIRED, 키 task:{작업}:revalidation:{제안}:to:{계정})은
- * 알림 모듈(-181)이 붙으면 이 트랜잭션 안에서 요청한다 — 대상은 돌려주는 ImpactResult 의 두 목록이다.
+ * 여기서 보내지 않는다. 발행 서비스가 같은 트랜잭션에서 {@code ChangeNotifications.published} 로 요청한다(-217) — 대상은 돌려주는
+ * ImpactResult 의 두 목록(STALE 이 된 검증의 작업, 재검증 대기가 된 작업)이다.
  */
 @Component
 public class PublicationImpactAdapter implements ValidationImpactPort {
@@ -129,7 +130,7 @@ public class PublicationImpactAdapter implements ValidationImpactPort {
             if (report.isEmpty()) {
                 continue;                                  // awaitingDelta 가 확인했으므로 오지 않지만, 없으면 접수할 delta 가 없다
             }
-            AcceptResult again = accepts.acceptBySystem(caller, projectId, task.get(), "DELTA", request.baselineId(), report.get().getDelta());
+            AcceptResult again = accepts.reacceptAfterPublication(caller, projectId, task.get(), request.baselineId(), report.get().getDelta());
             if (again.finished() && "PASS".equals(again.validation().status())) {
                 deltaCompletion.completeIfDeltaPassed(taskId, Long.parseLong(again.validation().id()), null, now);
             }

@@ -14,6 +14,8 @@
 
 2026-11-09: Q04의 남은 항목(IP별 한도·가입 여부 노출·인증 행 정리)을 정함으로 고쳤다(S15P31A108-273). ACC-A11·ACC-A07은 IP당 1시간 10회(두 API 합산), 409 `email_already_exists`도 그 한도에 센다. 응답 코드는 바뀌지 않는다. 알려진 한계 둘을 적었다.
 
+2026-11-09: Q05의 초대 메일 발송 한도를 정함으로 고쳤다(S15P31A108-334). 초대한 계정마다 1시간 30통(MEM-A01 새 초대 + MEM-A11 다시 보내기)이고, 넘으면 요청 전체를 429 `rate_limited`로 거부한다. 결과 `status` 값은 늘리지 않는다.
+
 2026-11-04: 프로젝트 나가기·삭제 규칙 수정안을 붙였다(S15P31A108-218, 사용자 결정). 오류 `active_tasks_exist`(제외·나가기)·`members_exist`(삭제)를 없앤다. 팀장의 나가기는 넘길 팀원을 골라 위임과 한 번에 하고(넘길 사람이 없으면 `leader_transfer_required`), 삭제는 PRJ-A05로만 한다(PR #113 리뷰). 나가거나 제외되는 팀원의 열린 작업은 인계 대상이 없으면 담당자만 비우고 상태·검증은 그대로 둔다. 그래서 작업 응답의 `assignee_member_id`는 선택 항목이 된다. 프로젝트 삭제 알림은 보내지 않는다(PR #113 리뷰). 미배정 작업은 팀원이 스스로 맡을 수 있고(TSK-A06), 작업 목록에서 `unassigned`로 걸러 볼 수 있다(TSK-A02). 자세한 것은 Backend REST MEM-A09·A10·PRJ-A05·TSK-A02·TSK-A06.
 
 2026-10-28: 화면 수정안(v2)이 요구하는 계약을 반영했다(S15P31A108-218). 문서 검토·승인은 PR #37(S15P31A108-194)의 DOC-A13~A21과 별도 최초 기준 생성(PLN-A10)을 그대로 따르고, 화면에 더 필요한 것은 DOC-A22~A24와 '수정안 요청' 줄로 붙였다. 회원가입 이메일 인증, 임시 비밀번호, 공용 문서함의 비비 필수 검토·팀장 승인, 비비가 여는 회의와 회의 끝내기, 접속 현황이 새로 들어갔다. 시작 가이드 상태 저장은 브라우저에 두기로 하고 확장 후보로 내렸다. 새 API와 바뀐 필드는 상태를 '수정안 요청'으로 표시했다. 정책이 정해지지 않은 부분은 기본안으로 적고 9절 Q14~Q24에 올렸다. 기준 v1 뒤의 문서 변경은 dev처럼 모두 변경 제안으로 간다.
@@ -359,6 +361,11 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A13 변경 제안 의견 목록](01-backend-rest.md#chg-a13) | GET `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A14 승인 미리 보기](01-backend-rest.md#chg-a14) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval-preview` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
 | [CHG-A15 변경 제안 거두기](01-backend-rest.md#chg-a15) | POST `/api/projects/{id}/change-proposals/{proposal_id}/withdraw` | MEMBER (제안자) | 오서현 | — | 오서현 |
+| [CHG-A16 작성 중 변경 제안 저장](01-backend-rest.md#chg-a16) | POST `/api/projects/{id}/change-proposal-drafts` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A17 작성 중 변경 제안 조회](01-backend-rest.md#chg-a17) | GET `/api/projects/{id}/change-proposal-drafts/{draft_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A18 작성 중 변경 제안 수정](01-backend-rest.md#chg-a18) | PUT `/api/projects/{id}/change-proposal-drafts/{draft_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A19 올리기 전 비비 검토 요청](01-backend-rest.md#chg-a19) | POST `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews` | MEMBER (작성 계정) | 오서현 | 박상은·양지훈 | 박민용 |
+| [CHG-A20 올리기 전 검토 수정안 반영·넘기기](01-backend-rest.md#chg-a20) | PATCH `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
 | [TSK-A01 작업 계획 등록](01-backend-rest.md#tsk-a01) | POST `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A02 작업 목록](01-backend-rest.md#tsk-a02) | GET `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A03 작업 상세](01-backend-rest.md#tsk-a03) | GET `/api/projects/{id}/tasks/{task_id}` | MEMBER | 변준성 | — | 박민용 |
@@ -425,6 +432,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MCP-13](02-mcp-tools.md#mcp-13) | `get_validation` | 전진(도구) / 변준성(조회) | — |
 | [MCP-14](02-mcp-tools.md#mcp-14) | `retry_validation` | 전진(도구) / 변준성(재시도) | 양지훈(실패 정보) |
 | [MCP-12](02-mcp-tools.md#mcp-12) | `report_task_state` | 전진(도구) / 변준성(전이·점유) | — |
+| [MCP-16](02-mcp-tools.md#mcp-16) | `get_task` | 전진(도구) / 변준성(조회, TSK-A03과 같음) | — |
 
 ### AI Internal
 
@@ -463,8 +471,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q01 | 항목 본문 스키마 | 오서현·박상은 | 수동 항목 5종 v1은 [확정 계약](00-common.md#schema-designitem-content-v1). 자동 생성·확장 스키마는 별도 검토 |
 | Q02 | 작업·검증·관계 | 변준성 주관 / 양지훈·전진 | D2 PASS 판정표, 107의 필수 검사 목록·COMPLETE/PARTIAL·정보 부족 매핑(합의 전), 관계 강도, unlinked 형식, 무효화 의존 깊이, 팀장 인계·대리 범위. (수정안 요청 · 11-04 사용자 결정) 미배정 작업을 팀원이 스스로 맡기(TSK-A06)는 팀 합의 항목이다(TSK-A06 담당 변준성 동의 필요, PR #113 리뷰) |
 | Q03 | 발행·완료·복구 | 오서현·변준성 / 전진 | D7 같은 트랜잭션, 완료 delta(6절·TSK-A07에 반영, 팀 확인). 199·200의 알림 요청은 S15P31A108-217에서 같은 트랜잭션으로 연결했고 활동 이벤트는 S15P31A108-310에서 연결했다(승인 게이트는 241에서 구현). 알림·활동 전달은 같은 트랜잭션 저장으로 정함([알림·활동 이벤트 공통 계약](../design/10-notification-activity-contract.md), 합의 중) |
-| Q04 | 계정·세션 | 전진 | 다루는 것: 비밀번호 정책, 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부. 비밀번호 정책은 정함(11-06, S15P31A108-309): 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상이고 특수문자는 필수가 아니다. 위반은 400 `validation_failed`(`message`가 `password:`로 시작, `details` 없음)이며, 서버만 아는 규칙이 생기면 그때 전용 코드를 둔다. 임시 비밀번호는 기본안으로 구현됨(PR #118, S15P31A108-171): 12자·30분·다시 요청 60초·이메일당 1시간 5회·서버 전체 1시간 100통, 발급만으로는 기존 비밀번호·세션을 바꾸지 않고, 임시 비밀번호로 로그인하면 그것이 계정 비밀번호가 되며 다른 API는 막지 않는다(must_change_password로 알림). 비밀번호 변경(ACC-A06) 때 이 세션만 남기고 다른 세션을 끊는다. 남용 대책은 정함(11-09, S15P31A108-273): backend는 Nginx가 넘긴 X-Forwarded-For로 실제 IP를 읽고(`server.forward-headers-strategy=native`, 내부망 주소만 프록시로 믿음), ACC-A11·ACC-A07에 **IP당 1시간 10회**(두 API가 카운터 하나를 같이 씀, 설정값 `beez.auth-guard.*`) 한도를 건다. 메모리 카운터라 재시작하면 처음부터 센다(서버 1대 기준). 409 `email_already_exists`·계정 없는 202도 이 한도에 세고, 넘으면 지금처럼 429 `rate_limited`다(응답·FE 변경 없음). IP 한도로 거부한 요청과 ACC-A11 메일 발송 실패(503 `mail_send_failed`)는 세지 않는다. 이메일당·서버 전체 한도는 그대로다. 끝난 `email_verification`·`temporary_password` 행은 만료 시각(코드·토큰·임시 비밀번호 중 가장 늦은 것)에서 7일이 지나면 매일 새벽 지운다. 행은 늦어도 만료 시각에 끝나므로, 일찍 닫히거나 쓰인 행은 최대 유효 시간(30분)만큼 늦게 지워진다. 서버 전체 상한·IP 한도 도달 WARN은 10분에 한 번만 찍는다. 알려진 한계: (1) 한도 안(IP당 1시간 10회)에서는 ACC-A11의 409로 가입 여부를 조회할 수 있어 Q05 "MEM-A01은 가입 여부를 숨긴다"와 다르다. (2) 임시 비밀번호가 열린 계정에 틀린 비밀번호로 로그인하면 bcrypt를 두 번 해 응답이 느려, ACC-A07 뒤 로그인 시간으로 이메일·이름이 맞았는지 짐작할 수 있다. 둘 다 IP 한도로 양만 줄인다. 탈퇴로 이메일당 한도가 되감기는 문제(-277)는 IP 한도로 갈음하고 마이그레이션은 하지 않는다. 범위 밖(Q05): 초대 메일 발송 한도 |
-| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 탈퇴 처리는 PR #118(S15P31A108-171) 구현으로 정함(2026-11-05): 혼자 쓰는 프로젝트는 함께 삭제(PRJ-A05처럼 보관·토큰 전부 폐기), 팀원으로만 참여한 프로젝트는 자동으로 빠지고(LEFT), 남긴 기록은 보존. 팀원 참여 프로젝트의 열린 작업은 MEM-A10 팀원 규칙대로 담당자만 비운다(S15P31A108-281). (수정안 요청 · 11-04 사용자 결정) 나가기: 팀원은 열린 작업이 있어도 경고만 보고 나가며, 인계 대상을 고르지 않으면 담당자가 비워진다. 팀장은 나가기 창에서 넘길 팀원을 골라 위임과 나가기를 한 번에 하거나, 프로젝트를 삭제한다(팀원이 있어도 됨, 이름 확인). 나가기는 프로젝트를 삭제하지 않는다(MEM-A10·PRJ-A05, PR #113 리뷰). 팀장 나가기·삭제 규칙은 팀 합의 항목이다. 제외(MEM-A09)도 나가기와 같다. 탈퇴(ACC-A10)는 팀 프로젝트의 팀장을 지금처럼 막는다 |
+| Q04 | 계정·세션 | 전진 | 다루는 것: 비밀번호 정책, 세션 쿠키·만료·CSRF, 로그인 유지 기간, 가입 인증 코드의 다시 받기 간격·틀린 입력·발송 횟수, 임시 비밀번호 길이·유효 기간, 발급 때 기존 비밀번호·세션 처리, 변경 전 다른 API 차단 여부. 비밀번호 정책은 정함(11-06, S15P31A108-309): 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상이고 특수문자는 필수가 아니다. 위반은 400 `validation_failed`(`message`가 `password:`로 시작, `details` 없음)이며, 서버만 아는 규칙이 생기면 그때 전용 코드를 둔다. 임시 비밀번호는 기본안으로 구현됨(PR #118, S15P31A108-171): 12자·30분·다시 요청 60초·이메일당 1시간 5회·서버 전체 1시간 100통, 발급만으로는 기존 비밀번호·세션을 바꾸지 않고, 임시 비밀번호로 로그인하면 그것이 계정 비밀번호가 되며 다른 API는 막지 않는다(must_change_password로 알림). 비밀번호 변경(ACC-A06) 때 이 세션만 남기고 다른 세션을 끊는다. 남용 대책은 정함(11-09, S15P31A108-273): backend는 Nginx가 넘긴 X-Forwarded-For로 실제 IP를 읽고(`server.forward-headers-strategy=native`, 내부망 주소만 프록시로 믿음), ACC-A11·ACC-A07에 **IP당 1시간 10회**(두 API가 카운터 하나를 같이 씀, 설정값 `beez.auth-guard.*`) 한도를 건다. 메모리 카운터라 재시작하면 처음부터 센다(서버 1대 기준). 409 `email_already_exists`·계정 없는 202도 이 한도에 세고, 넘으면 지금처럼 429 `rate_limited`다(응답·FE 변경 없음). IP 한도로 거부한 요청과 ACC-A11 메일 발송 실패(503 `mail_send_failed`)는 세지 않는다. 이메일당·서버 전체 한도는 그대로다. 끝난 `email_verification`·`temporary_password` 행은 만료 시각(코드·토큰·임시 비밀번호 중 가장 늦은 것)에서 7일이 지나면 매일 새벽 지운다. 행은 늦어도 만료 시각에 끝나므로, 일찍 닫히거나 쓰인 행은 최대 유효 시간(30분)만큼 늦게 지워진다. 서버 전체 상한·IP 한도 도달 WARN은 10분에 한 번만 찍는다. 알려진 한계: (1) 한도 안(IP당 1시간 10회)에서는 ACC-A11의 409로 가입 여부를 조회할 수 있어 Q05 "MEM-A01은 가입 여부를 숨긴다"와 다르다. (2) 임시 비밀번호가 열린 계정에 틀린 비밀번호로 로그인하면 bcrypt를 두 번 해 응답이 느려, ACC-A07 뒤 로그인 시간으로 이메일·이름이 맞았는지 짐작할 수 있다. 둘 다 IP 한도로 양만 줄인다. 탈퇴로 이메일당 한도가 되감기는 문제(-277)는 IP 한도로 갈음하고 마이그레이션은 하지 않는다. 초대 메일 발송 한도는 Q05에서 정했다(S15P31A108-334) |
+| Q05 | 초대·탈퇴·제외 | 전진 / 변준성 | 이메일 지정 초대 제한, 토큰 1회 사용, 열린 작업 인계·익명화. 초대 메일 문구·발신 주소·발송 한도. 자동 참여는 정함(2026-10-29, 오서현): 수락 버튼은 없고, 멤버십은 초대받은 사람이 그 이메일로 로그인(ACC-A02)하거나 가입(ACC-A01)할 때 대기 초대를 바꿔 만든다. 이미 로그인한 채 메일 링크를 열면 MEM-A05로 참여한다. MEM-A01 결과는 가입 여부를 드러내지 않는다. 스스로 나간 사람은 다시 초대받아도 메일 링크(MEM-A05)로만 참여한다. 가입 이메일 인증(ACC-A11·A12)과 같이 또는 그 뒤에 배포한다. 만료는 없고 잘못 보낸 초대는 MEM-A03으로 취소한다. 초대 메일 발송 한도는 정함(2026-11-09, S15P31A108-334): 초대한 계정마다 **1시간 30통**이다. MEM-A01의 새 초대(INVITED) 한 건과 MEM-A11 한 번이 각각 한 통이고, 메일을 보내지 않는 ALREADY_MEMBER·ALREADY_INVITED는 세지 않는다. 프로젝트가 아니라 계정으로 세므로 프로젝트를 새로 만들어도 한도는 그대로다. MEM-A01은 보낼 통수를 한꺼번에 세어, 남은 몫이 모자라면 요청 전체를 429 `rate_limited`로 거부하고 아무 초대도 만들지 않는다(일부만 초대하지 않는다 — 결과 `status` 값을 늘리지 않으려는 것이다). MEM-A11 메일 발송이 실패하면(503) 그 한 통은 세지 않는다. 메모리 카운터라 재시작하면 처음부터 센다(서버 1대 기준, Q04 IP 한도와 같음). 설정값은 `beez.invitation.send-limit`(env `INVITE_SEND_LIMIT`)이다. 알려진 한계: 계정을 새로 만들면 따로 센다. 가입 인증의 IP 한도(Q04)로 양만 줄인다. 탈퇴 처리는 PR #118(S15P31A108-171) 구현으로 정함(2026-11-05): 혼자 쓰는 프로젝트는 함께 삭제(PRJ-A05처럼 보관·토큰 전부 폐기), 팀원으로만 참여한 프로젝트는 자동으로 빠지고(LEFT), 남긴 기록은 보존. 팀원 참여 프로젝트의 열린 작업은 MEM-A10 팀원 규칙대로 담당자만 비운다(S15P31A108-281). (수정안 요청 · 11-04 사용자 결정) 나가기: 팀원은 열린 작업이 있어도 경고만 보고 나가며, 인계 대상을 고르지 않으면 담당자가 비워진다. 팀장은 나가기 창에서 넘길 팀원을 골라 위임과 나가기를 한 번에 하거나, 프로젝트를 삭제한다(팀원이 있어도 됨, 이름 확인). 나가기는 프로젝트를 삭제하지 않는다(MEM-A10·PRJ-A05, PR #113 리뷰). 팀장 나가기·삭제 규칙은 팀 합의 항목이다. 제외(MEM-A09)도 나가기와 같다. 탈퇴(ACC-A10)는 팀 프로젝트의 팀장을 지금처럼 막는다 |
 | Q06 | 토큰·연결 관측 | 전진 / 변준성 | 1인 1에이전트의 프로젝트별 활성 토큰 수, 보고 지연 임계값. 정한 것(11-06, S15P31A108-178): 폐기 안 된 토큰은 계정·프로젝트당 5개다(-175). **동시에 살아 있는 MCP 연결은 계정·프로젝트당 하나이고 나중 연결이 이긴다.** 밀려난 연결은 409 `agent_session_replaced`다([MCP 연결과 인증](02-mcp-tools.md#연결과-인증)). 남은 것: 보고 지연 임계값, 통신이 끊긴 연결의 판정(S15P31A108-75) |
 | Q07 | 문서 파일·분석 | 오서현·박상은 | 형식·용량·저장소·같은 kind 복수, 파싱/OCR·분할, 분석/초안 job 상태·실패·재시도·사람 수정 보존 |
 | Q08 | 초안·제안 충돌 | 오서현 | 수동 항목의 전체 초안 해시·편집·제외는 [확정 계약](01-backend-rest.md#pln-a08). 변경 제안은 CHG-A04의 expected_revision/expected_snapshot_hash로 대조 |
@@ -978,6 +986,12 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
+| `draft_id` | `ID` | N | (수정안 요청 · 11-06) 작성 중 제안으로 올릴 때(CHG-A01·A04). 보내면 본문 필드를 함께 보내지 않는다 |
+| `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수 |
+| `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 검토 상태를 사용자가 확인했다는 표시 |
+| `expected_review_state_hash` | `string` | N | (수정안 요청 · 11-06) `review_acknowledged`=true이고 초안에 검토가 있을 때 필수. 사용자가 본 `review_state_hash` |
+
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다.
 
 <a id="schema-changeproposal"></a>
 
@@ -1011,6 +1025,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 같은 작성자가 거둔 이전 제안. 반려 후 재제출과 구분 |
 | `withdrawn_by` | `ID` | N | WITHDRAWN일 때 거둔 계정 |
 | `withdrawn_at` | `Time` | N | WITHDRAWN일 때 거둔 시각 |
+| `pre_submit_review` | [PreSubmitReview](00-common.md#schema-presubmitreview) | N | (수정안 요청 · 11-06) 이 리비전을 초안으로 올릴 때의 비비 검토 상태 |
 
 <a id="schema-resolveddocumentchange"></a>
 
@@ -1082,6 +1097,103 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `design_item_id` | `ID` | N | 후보 항목 |
 | `reason` | `string` | Y | 후보 근거 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+
+<a id="schema-presubmitreview"></a>
+
+### PreSubmitReview
+
+(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보이는 제출 리비전의 불변 스냅샷이다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다. 팀장은 작성 중 제안과 그 검토를 읽지 못하므로 수정안을 여기에 복사해 둔다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `status` | `NOT_REQUESTED\|COMPLETED\|FAILED\|CANCELLED` | Y | 올릴 때의 최신 검토 상태. CANCELLED는 진행 중인 검토를 확인 후 끊고 올린 경우 |
+| `review_id` | `ID` | N | 그 검토의 기록용 ID. NOT_REQUESTED면 없음. 팀장이 이 ID로 읽는 API는 없다 |
+| `edited_after_review` | `boolean` | Y | 검토 뒤 글을 고쳤는지 |
+| `pending_suggestions` | [SubmittedReviewSuggestion[]](00-common.md#schema-submittedreviewsuggestion) | Y | 처리하지 않은 PATCH 수정안 |
+| `skipped_suggestions` | [SubmittedReviewSuggestion[]](00-common.md#schema-submittedreviewsuggestion) | Y | 넘긴 PATCH 수정안과 COMMENT 의견 |
+| `acknowledged` | `boolean` | Y | 사용자가 위 상태를 확인하고 올렸는지. 확인할 상태가 없었으면 false |
+
+<a id="schema-submittedreviewsuggestion"></a>
+
+### SubmittedReviewSuggestion
+
+(수정안 요청 · 11-06) 제출 리비전에 복사해 남기는 수정안과 의견. 개인 대화(`messages`)와 내부 실행 정보는 담지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `type` | `PATCH\|COMMENT` | Y | 수정안 또는 의견 |
+| `document_id` | `ID` | PATCH Y | 대상 문서 |
+| `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+| `category` | `OMISSION\|CONSISTENCY` | N | 빠진 부분 또는 충돌 |
+| `explanation` | `string` | Y | 이유 |
+| `original_text` | `string` | PATCH Y | 수정 전 문장 |
+| `replacement_text` | `string` | PATCH Y | 수정 후 문장 |
+| `sources` | `DocumentReviewSource[]` | Y | 근거. 없으면 [] |
+| `decision` | `PENDING\|SKIPPED` | PATCH Y | 올릴 때의 선택 상태. COMMENT는 없음 |
+
+<a id="schema-changeproposaldraft"></a>
+
+### ChangeProposalDraft
+
+(수정안 요청 · 11-06) 팀장에게 가지 않는 작성 중 변경 제안(CHG-A16~A18). 별도 자원이고 작성 계정만 본다. 제출하면 제안과 연결되고 수정할 수 없다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 초안 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `revision` | `integer` | Y | 저장·수정안 반영마다 1씩 오르는 리비전 |
+| `base_baseline_id` | `ID` | Y | 초안 기준 |
+| `title` | `string` | Y | 제안 제목 |
+| `reason` | `string` | Y | 변경 이유 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `validation_id` | `ID` | N | 관련 검증 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |
+| `latest_review` | [ChangeDraftReview](00-common.md#schema-changedraftreview) | N | 가장 최근 올리기 전 비비 검토 |
+| `review_state_hash` | `string` | N | (수정안 요청 · 11-06) 검토 ID·상태·수정안 선택 상태를 합친 해시. 검토가 있을 때만. 올릴 때 `expected_review_state_hash`로 돌려보낸다 |
+| `source_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 반려된 제안을 보완하는 초안이면 그 제안 |
+| `submitted_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 제출 뒤 연결된 제안. 있으면 수정할 수 없다 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `updated_at` | `Time` | Y | 최종 갱신 |
+
+<a id="schema-changedraftreview"></a>
+
+### ChangeDraftReview
+
+(수정안 요청 · 11-05) 올리기 전 비비 검토(CHG-A19). 화면 '3단계 / 4단계', '영향 작업 1 · 빠진 부분 1 · 충돌 1'을 그린다. 영향 결과는 `input_revision` 시점의 미리보기이고, 올린 뒤의 판단은 CHG-A05 결과를 따른다(11-06).
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 검토 ID |
+| `status` | `RUNNING\|COMPLETED\|FAILED\|CANCELLED` | Y | 검토 상태. CANCELLED는 진행 중에 확인 후 올려 끊긴 검토 |
+| `error_code` | `string` | N | FAILED일 때만. 제한 시간 초과는 `review_timeout` |
+| `input_revision` | `integer` | Y | 검토한 초안 리비전. `tasks_to_wait`·`validations_to_stale`·`ai_candidates`는 이 리비전 기준이다 |
+| `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전. 수정안 처리 확인용이고, 영향 결과가 이 리비전 기준이라는 뜻은 아니다 |
+| `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED\|NOT_EVALUATED, count}. NOT_EVALUATED는 입력 계약이 없어 평가하지 않은 단계로, 모델 실패(FAILED)와 구분한다 |
+| `tasks_to_wait` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '대기 · 재검증'이 될 진행 중 작업. FIND_RELATED 단계가 DONE일 때만 유효하고, 아니면 빈 배열이며 화면은 0건으로 보이지 않는다 |
+| `validations_to_stale` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '다시 검증 필요'가 될 검증. FIND_RELATED 단계가 DONE일 때만 유효하고, 아니면 빈 배열이며 화면은 0건으로 보이지 않는다 |
+| `ai_candidates` | `object[]` | N | {task_id, title, reason, evidence}. 평가하지 못하면 null(0건과 구분). 이유는 AI_CANDIDATES 단계의 `status`로 안다 |
+| `suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 빠진 부분·충돌 수정안 |
+| `summary` | `string` | N | 검토 요약. COMPLETED일 때 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | Y | 실제 모델 호출 사용량 |
+| `created_at` | `Time` | Y | 요청 시각 |
+| `completed_at` | `Time` | N | 끝난 시각 |
+
+<a id="schema-changedraftsuggestion"></a>
+
+### ChangeDraftSuggestion
+
+(수정안 요청 · 11-06) 올리기 전 비비 검토의 수정안. [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion)의 필드에 아래를 더한다. `category`는 OMISSION·CONSISTENCY를 쓴다. 초안은 문서를 여러 개 고칠 수 있어, 같은 글귀가 두 문서에 있어도 대상을 가릴 수 있게 한다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | PATCH Y | 고칠 문서. 초안 `documents` 중 하나 |
+| `base_document_version_id` | `ID` | PATCH Y | 그 문서의 기준 버전 |
+| `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+| `reviewed_content_hash` | `string` | PATCH Y | (11-06) 검토 당시 대상 문서 고친 글의 해시. 어떤 글을 검토했는지 가리키며, 수정안을 반영해도 값은 그대로다 |
+
+PATCH는 문서 변경에만 쓴다. `original_text`는 대상 문서의 고친 글에서 유일한 구간이다. 설계 항목 변경에 대한 의견은 COMMENT로만 주고 이때 `document_id`는 생략한다.
 
 <a id="schema-changeimpact"></a>
 
@@ -1375,7 +1487,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `member_id` | `ID` | Y | 소유 멤버 |
 | `connected` | `boolean` | Y | 최근 연결 관측 |
 | `last_report_at` | `Time` | N | 마지막 통신 시각 |
-| `status_check_required` | `boolean` | Y | 보고 지연으로 확인 필요 |
+| `status_check_required` | `boolean` | Y | 연결됨이면서 그 멤버가 맡은 IN_PROGRESS 작업이 있고 보고 끊김 임계값(기본 30분) 넘게 통신이 없음. 끊긴 세션(`connected=false`)·할 일 없이 쉬는 세션은 false (S15P31A108-75) |
 | `last_error_code` | `token_revoked\|token_expired\|membership_ended\|no_report` | N | 마지막 연결 실패 원인. 연결 확인 화면이 이유와 할 일을 보여 줌. 수정안 요청 |
 
 <a id="schema-agentwork"></a>
@@ -1389,7 +1501,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `agent_name` | `string` | N | 토큰 label. 수정안 요청 |
 | `current_task_id` | `ID` | N | 명시 보고된 작업 |
 | `task_title` | `string` | N | 보고된 작업 제목. 수정안 요청 |
-| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태 |
+| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태. 서버 작업 상태에는 DRAFT도 있다 — 세션의 현재 작업(`current_task_id`)을 쓰기 시작하면 에이전트가 계획을 쓰는 DRAFT 작업도 나오므로 그때 이 값과 FE `agentWorkSchema`에 DRAFT를 넣는다(지금은 그 칸을 쓰는 코드가 없다, -75) |
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 작업 검증 상태 |
 | `waiting_reason` | `string` | N | 대기 사유 |
 | `last_summary` | `string` | N | MCP-12 `summary` 원문. AI로 다시 요약하지 않음. 수정안 요청 |

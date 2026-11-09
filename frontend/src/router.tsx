@@ -1,10 +1,10 @@
 import { createBrowserRouter } from 'react-router'
-import App from './App'
+import DesktopGate from '@/features/desktop/DesktopGate'
 
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <App />,
+    element: <DesktopGate />,
     hydrateFallbackElement: (
       <p role="status" className="p-12 text-center">
         BEEZ를 준비하는 중…

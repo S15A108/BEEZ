@@ -67,6 +67,7 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `MAIL_FROM` | | | 보내는 사람. 기본 `BEEZ <no-reply@beez.ai.kr>`. **SMTP 인증 계정 주소와 맞춥니다** — 다르면 제공자가 거부합니다 | backend |
 | `EMAIL_VERIFY_GLOBAL_SEND_LIMIT` | | | 기본 `100`. 서버 전체 시간당 가입 인증 메일 수. SMTP 계정의 발송 한도보다 낮게 | backend |
 | `AUTH_IP_LIMIT` | | | 기본 `10`. IP 하나의 시간당 가입 인증 코드(ACC-A11)+비밀번호 찾기(ACC-A07) 요청 수(합산, 메모리 카운터). 한 공유기(캠퍼스 등) 뒤에서 여럿이 가입하는 시연 때 올린다 (Q04, -273) | backend |
+| `INVITE_SEND_LIMIT` | | | 기본 `30`. 초대한 계정 하나의 시간당 초대 메일 수(MEM-A01 새 초대 + MEM-A11 다시 보내기 합산, 메모리 카운터). 넘으면 요청 전체 429 (Q05, -334) | backend |
 
 - `BACKEND_HOST_PORT` 는 기본값이 없습니다. 예전 기본값 `8080` 은 서버의 Jenkins 와 겹치는데도 점검을 통과했습니다.
   값이 있어도 `8080` 이거나 Nginx 와 다르면 compose 는 모르므로 [포트 점검](#배포-전에-점검하기)을 따로 돌립니다.
@@ -152,6 +153,8 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `CONTEXT_SELECTION_ENABLED`·`CONTEXT_SELECTION_*` | | 컨텍스트 선택(#131). 기본 `false`, 한도 값은 기본 없음 |
 | `PLANNING_QUESTIONS_ENABLED`·`PLANNING_QUESTIONS_*` | | 기획 보완 질문(#133). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다(S15P31A108-232). 켜면 `GMS_KEY`·`BEE_DEFAULT_MODEL` 로 호출 |
 | `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
+| `ASSIGNMENT_RECOMMENDATION_ENABLED` | | 역할 분담 추천(#136). 기본 `false`; BE 계약 합의 후에만 켠다. compose 가 ai 에 전달한다 |
+| `ASSIGNMENT_RECOMMENDATION_MAX_BODY_BYTES`·`ASSIGNMENT_RECOMMENDATION_TIMEOUT_SECONDS`·`ASSIGNMENT_RECOMMENDATION_OUTPUT_TOKEN_LIMIT` | | 역할 추천 요청 크기·모델 시간·출력 토큰 한도. 기본 2 MiB·15초·4096; 직접 실행 환경에서 설정한다 |
 | `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 `model_unavailable` |
 | `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
@@ -159,10 +162,13 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
 | `TIKTOKEN_CACHE_DIR` | | 어휘 파일 위치. 이미지에는 `/app/.tiktoken` 으로 고정 |
 
-**서버에서는 위 기능 스위치가 모두 기본값(꺼짐)입니다**(2026-11-04, 이미지 `5f1a593`). 예외로 `PLANNING_QUESTIONS_ENABLED`·`DESIGN_DRAFTS_ENABLED` 는 S15P31A108-232 부터 compose 가 ai 에 전달하므로(기본 `false`) 서버 env 파일에 `=true` 만 쓰면 켜집니다. compose 는 `environment` 에 적힌
-변수만 컨테이너에 넣으므로, 서버 env 파일에 `PLANNING_QUESTIONS_ENABLED=true` 를 써도 ai 에는 닿지 않습니다. 켜려면
-`infra/compose.yaml` 의 ai `environment` 에 그 변수를 추가하고(비밀값이면 이 문서 맨 위 표에도), 서버 env 파일에 값을 넣은
-뒤 배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은 [5절](#5-비밀값-규칙)을 따릅니다. 어느 기능을 dev 에서 켤지는 AI 담당과 정합니다.
+**서버에서는 위 기능 스위치가 기본값(꺼짐)입니다.** `PLANNING_QUESTIONS_ENABLED`·
+`DESIGN_DRAFTS_ENABLED`·`ASSIGNMENT_RECOMMENDATION_ENABLED`는 compose가 ai에
+전달하므로 서버 env 파일에서 명시적으로 켤 수 있습니다. compose는 `environment`에
+적힌 변수만 컨테이너에 넣으므로, 그 밖의 변수를 서버 env 파일에 적어도 전달되지
+않습니다. 추가로 전달하려면 `infra/compose.yaml`의 ai `environment`에 변수를 넣고
+배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은 [5절](#5-비밀값-규칙)을 따릅니다.
+어느 기능을 dev에서 켤지는 담당자와 정합니다.
 
 **로컬 함정**: backend 를 `bootRun` 으로 띄우면 `AI_INTERNAL_TOKEN` 기본값이 `change-me` 입니다. `ai/.env.example` 을
 그대로 복사하면 빈 값이라 backend → ai 호출이 전부 401 입니다. 로컬에서는 `ai/.env` 에 `AI_INTERNAL_TOKEN=change-me`

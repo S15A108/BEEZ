@@ -47,7 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>expected_lock_version · plan_revision_id 비교 → 409 revision_conflict</li>
  *   <li>전이 표 → 금지면 400 invalid_transition</li>
  *   <li>START/RESUME 는 시작 게이트 4조건 → 실패 코드로 409</li>
- *   <li>전이 적용, 커밋 뒤 이벤트</li>
+ *   <li>전이 적용, 커밋 직전 같은 트랜잭션에서 활동 기록 (TaskStateChangedListener)</li>
  * </ol>
  */
 @Service
@@ -182,8 +182,9 @@ public class TaskStateService {
         }
         tasks.saveAndFlush(task);
 
-        events.publishEvent(new TaskStateChangedEvent(projectId, taskId, from, task.getStatus(), in.event(),
-                caller.accountId(), "task:" + taskId + ":lock:" + task.getLockVersion() + ":" + in.event()));
+        // 활동(계약 6.2)은 커밋 직전 같은 트랜잭션에서 남는다 (TaskStateChangedListener). 위 멱등 반환에서는 나가지 않는다
+        events.publishEvent(new TaskStateChangedEvent(caller, projectId, taskId, from, task.getStatus(), task.getWaitingReason(),
+                in.event(), task.getLockVersion()));
         return detailOf(task, in.event());
     }
 
