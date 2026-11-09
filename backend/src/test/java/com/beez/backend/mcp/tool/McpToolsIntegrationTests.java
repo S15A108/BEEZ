@@ -33,10 +33,10 @@ import tools.jackson.databind.ObjectMapper;
  */
 class McpToolsIntegrationTests extends IntegrationTestSupport {
 
-    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 (-179, MCP-14 retry_validation 은 -271) */
+    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 (-179, MCP-14 retry_validation 은 -271, MCP-15 check_connection 은 -178) */
     private static final List<String> TOOLS = List.of("get_development_context", "get_document", "get_design_changes",
             "propose_design_change", "find_context", "read_context", "write_context", "upsert_task_plan",
-            "validate_task_plan", "get_validation", "retry_validation", "report_task_state");
+            "validate_task_plan", "get_validation", "retry_validation", "report_task_state", "check_connection");
 
     @Autowired
     DataSource dataSource;
