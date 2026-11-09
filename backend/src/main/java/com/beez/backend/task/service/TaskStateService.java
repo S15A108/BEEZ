@@ -117,7 +117,8 @@ public class TaskStateService {
         if (in.event() == TaskEvent.START
                 && task.getStatus() == TaskStatus.IN_PROGRESS
                 && validationId.equals(task.getStartedValidationId())) {
-            // 응답을 잃고 새 연결로 다시 보낸 START 도 "이 연결이 이 작업을 한다" 는 보고다 — 끊김 판정이 새 연결의 통신을 보게 한다
+            // 같은 검증으로 다시 보낸 START 도 "이 연결이 이 작업을 한다" 는 보고다. 같은 idempotency_key 면 MCP 멱등 저장이 먼저 돌려줘
+            // 여기까지 오지 않으므로, 이 분기는 새 키로 보낸 경우다. 재연결만 한 경우는 연결이 이전 연결의 현재 작업을 이어 받는다(AgentSessionService)
             recordCurrentTask(caller, projectId, taskId, Instant.now(clock));
             return query.toDetail(task);
         }
