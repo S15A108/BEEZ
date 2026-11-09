@@ -46,6 +46,10 @@ export const usageResponseSchema = z.object({
   by_feature: common.usageBucketSchema.array(),
   by_task: common.usageBucketSchema.array(),
   by_validation: common.usageBucketSchema.array(),
+  // 에이전트 세션별, 웹 직접 호출은 key WEB. dev 백엔드는 호출자를 아직 적지 않아 빈 배열을 준다(-169).
+  by_agent: common.usageBucketSchema.array(),
+  // 기간이 걸치는 한국 날짜를 빠짐없이 준다(호출이 없는 날은 0).
+  by_day: common.usageBucketSchema.array(),
 })
 export type UsageResponse = z.infer<typeof usageResponseSchema>
 
@@ -63,6 +67,8 @@ export type RelationsResponse = z.infer<typeof relationsResponseSchema>
 
 export const activitiesQuerySchema = z.object({
   type: z.string().optional(),
+  actor_type: common.actorTypeSchema.optional(),
+  agent_session_id: common.idSchema.optional(),
   cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional(),
 })

@@ -1006,9 +1006,19 @@ export type AgentConnection = z.infer<typeof agentConnectionSchema>
 export const agentWorkSchema = z.object({
   member_id: idSchema,
   agent_session_id: idSchema.optional(),
+  agent_name: z.string().optional(),
   current_task_id: idSchema.optional(),
+  task_title: z.string().optional(),
+  // 명세에는 없지만 DB는 DRAFT를 허용하고 MON-A05가 작업 상태를 그대로 넘긴다. 이 값 하나로 응답 전체가 깨지지 않게 받는다.
   task_status: z
-    .enum(['READY', 'IN_PROGRESS', 'WAITING', 'COMPLETED', 'CANCELLED'])
+    .enum([
+      'DRAFT',
+      'READY',
+      'IN_PROGRESS',
+      'WAITING',
+      'COMPLETED',
+      'CANCELLED',
+    ])
     .optional(),
   validation_status: z
     .enum([
@@ -1022,6 +1032,8 @@ export const agentWorkSchema = z.object({
     ])
     .optional(),
   waiting_reason: z.string().optional(),
+  // 명세의 마지막 작업 보고 시각. dev 백엔드는 아직 주지 않는다(11-06 확인). 오면 보여 준다.
+  reported_at: timeSchema.optional(),
 })
 export type AgentWork = z.infer<typeof agentWorkSchema>
 
@@ -1145,27 +1157,33 @@ export const assignmentSuggestionSchema = z.object({
 })
 export type AssignmentSuggestion = z.infer<typeof assignmentSuggestionSchema>
 
+// 지금 종류는 TASK, DESIGN_ITEM, VALIDATION, CHANGE_PROPOSAL이다. 새 종류 하나로 그래프 전체가 오류가 되지 않게
+// 문자열로 받고 화면에서 '기타'로 보여 준다(features/relations/relationDisplay.ts).
 export const relationNodeSchema = z.object({
   id: idSchema,
-  type: z.enum(['TASK', 'DESIGN_ITEM', 'VALIDATION', 'CHANGE_PROPOSAL']),
+  type: z.string(),
   label: z.string(),
 })
 export type RelationNode = z.infer<typeof relationNodeSchema>
 
 export const relationEdgeSchema = z.object({
   from_id: idSchema,
-  from_type: z.enum(['TASK', 'DESIGN_ITEM', 'VALIDATION', 'CHANGE_PROPOSAL']),
+  from_type: z.string(),
   to_id: idSchema,
-  to_type: z.enum(['TASK', 'DESIGN_ITEM', 'VALIDATION', 'CHANGE_PROPOSAL']),
+  to_type: z.string(),
   relation: z.string(),
   confirmed: z.boolean(),
 })
 export type RelationEdge = z.infer<typeof relationEdgeSchema>
 
+export const actorTypeSchema = z.enum(['HUMAN', 'AGENT', 'BEE', 'SYSTEM'])
 export const activitySchema = z.object({
   id: idSchema,
   type: z.string(),
+  actor_type: actorTypeSchema,
   actor_account_id: idSchema.optional(),
+  agent_session_id: idSchema.optional(),
+  actor_name: z.string().optional(),
   task_id: idSchema.optional(),
   change_proposal_id: idSchema.optional(),
   baseline_id: idSchema.optional(),
@@ -1200,6 +1218,7 @@ export type Notification = z.infer<typeof notificationSchema>
 
 export const usageBucketSchema = z.object({
   key: z.string(),
+  label: z.string().optional(),
   input_tokens: z.number().int(),
   output_tokens: z.number().int(),
   call_count: z.number().int(),
@@ -1223,6 +1242,8 @@ export const usageSummarySchema = z.object({
   by_feature: usageBucketSchema.array(),
   by_task: usageBucketSchema.array(),
   by_validation: usageBucketSchema.array(),
+  by_agent: usageBucketSchema.array(),
+  by_day: usageBucketSchema.array(),
 })
 export type UsageSummary = z.infer<typeof usageSummarySchema>
 

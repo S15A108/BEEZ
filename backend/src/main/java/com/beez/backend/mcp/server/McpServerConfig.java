@@ -1,5 +1,7 @@
 package com.beez.backend.mcp.server;
 
+import com.beez.backend.agenttoken.AgentSessionService;
+import com.beez.backend.agenttoken.AgentTokenService;
 import com.beez.backend.common.access.AgentPrincipal;
 import com.beez.backend.common.api.ApiErrorResponse;
 import com.beez.backend.common.web.RequestIdFilter;
@@ -106,6 +108,14 @@ public class McpServerConfig {
         return registration;
     }
 
+    /** 연결 기록·세션↔토큰 결속·1인 1에이전트 (-178). 보안 필터(토큰 검증) 뒤에서 돈다 */
+    @Bean
+    FilterRegistrationBean<McpSessionFilter> mcpSessionFilter(AgentSessionService sessions, ObjectMapper json) {
+        var registration = new FilterRegistrationBean<>(new McpSessionFilter(sessions, json));
+        registration.addServletNames(SERVLET_NAME);
+        return registration;
+    }
+
     @Bean(destroyMethod = "closeGracefully")
     McpSyncServer mcpServer(HttpServletStreamableServerTransportProvider transport,
                             ObjectProvider<McpTool<?>> tools,   // 도구가 하나도 없어도(-179 전) 기동한다
@@ -121,6 +131,8 @@ public class McpServerConfig {
         BuildProperties info = build.getIfAvailable();
         return McpServer.sync(transport)
                 .serverInfo("beez", info == null ? "dev" : info.getVersion())
+                // 작업 절차 안내(AGT-04). initialize 응답으로 클라이언트에 간다 — 토큰 발급 응답의 claude_md_snippet 과 같은 글
+                .instructions(AgentTokenService.CLAUDE_MD_SNIPPET)
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
                 // 서블릿 전송은 요청 스레드에서 막고 기다리므로 다른 스레드로 넘길 이유가 없다 (SDK 권장: 블로킹 전송이면 true)
                 .immediateExecution(true)
@@ -131,7 +143,7 @@ public class McpServerConfig {
     }
 
     /**
-     * 요청 스레드에서 필터가 넣어 둔 인증 주체와 요청 ID 를 꺼내 도구 처리로 넘긴다.
+     * 요청 스레드에서 필터가 넣어 둔 인증 주체·연결 기록 ID·요청 ID 를 꺼내 도구 처리로 넘긴다.
      * SDK 가 처리 스레드를 바꿔도 ThreadLocal(SecurityContext·MDC)에 기대지 않으려는 것이다.
      */
     static McpTransportContext extractContext(HttpServletRequest request) {
@@ -139,6 +151,9 @@ public class McpServerConfig {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof AgentPrincipal principal) {
             values.put(McpToolHandler.PRINCIPAL_KEY, principal);
+        }
+        if (request.getAttribute(McpSessionFilter.AGENT_SESSION_ATTRIBUTE) instanceof Long agentSessionId) {
+            values.put(McpToolHandler.AGENT_SESSION_KEY, agentSessionId);
         }
         String requestId = MDC.get(RequestIdFilter.MDC_KEY);
         if (requestId != null) {

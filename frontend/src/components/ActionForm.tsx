@@ -53,6 +53,8 @@ interface Props {
   destructive?: boolean
   /** 제출 버튼을 끈다 (확인 체크 전 등) */
   disabled?: boolean
+  /** 지금 입력 값을 보고 제출 버튼을 끈다 (바꾼 것이 없을 때 등) */
+  disableWhen?: (values: Record<string, string | undefined>) => boolean
   /** 로그인·가입 화면(캔버스 SCR-01): 높이 40 입력칸, 필수 별표 없음, 칸을 벗어나면 바로 검사 */
   auth?: boolean
   /** 넓은 화면에서 두 칸으로 놓는다. column: 2인 칸은 오른쪽으로 간다. */
@@ -72,6 +74,7 @@ export function ActionForm({
   block,
   destructive,
   disabled,
+  disableWhen,
   auth,
   columns,
   onCancel,
@@ -148,6 +151,7 @@ export function ActionForm({
     ),
   })
   const watched = useWatch({ control })
+  const submitDisabled = isSubmitting || disabled || disableWhen?.(watched)
   return (
     // 입력 칸은 안쪽 격자에 둔다. 창 안 하위 화면에서는 폼이 남은 높이를 채워 버튼 줄이 맨 아래로 간다.
     <form
@@ -376,7 +380,7 @@ export function ActionForm({
           </Button>
           <SheetSubmit
             destructive={destructive}
-            disabled={isSubmitting || disabled}
+            disabled={submitDisabled}
             className={cn(
               'h-10',
               block ? 'font-semibold' : 'px-[18px] font-bold',
@@ -388,7 +392,7 @@ export function ActionForm({
       ) : (
         <SheetSubmit
           destructive={destructive}
-          disabled={isSubmitting || disabled}
+          disabled={submitDisabled}
           className={cn(block ? 'w-full' : 'self-end', auth && 'h-10')}
         >
           {isSubmitting ? '처리 중…' : submitLabel}

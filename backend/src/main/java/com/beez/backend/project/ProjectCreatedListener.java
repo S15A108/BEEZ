@@ -8,7 +8,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
  * 커밋 뒤에 받는 쪽. 지금은 로그만. -135 에서 비비 초기화 호출로 바꾼다.
- * AFTER_COMMIT 이라 롤백된 생성에 대해 AI 를 부르는 일이 없다 (TaskStateChangedListener 와 같은 방식).
+ * AFTER_COMMIT 이라 롤백된 생성에 대해 AI 를 부르는 일이 없다.
  */
 @Component
 public class ProjectCreatedListener {

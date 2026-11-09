@@ -512,6 +512,12 @@ class ProposalPublicationImpactIntegrationTest extends IntegrationTestSupport {
         // 이미 WAITING(REVALIDATION) 이던 작업은 그대로이고 승인 응답의 대기 목록에도 없다
         assertThat(column("task", "status", e[0])).isEqualTo("WAITING");
         assertThat(column("task", "waiting_reason", e[0])).isEqualTo("REVALIDATION");
+        // 규칙으로 끝난 재접수의 검증 완료 활동은 시스템이 남긴다 — 발행한 팀장이 이 작업의 완료를 보고한 것처럼 보이면 안 된다 (-287, PR #202 리뷰)
+        Map<String, Object> finished = api.jdbc.sql("""
+                select actor_kind, actor_id, result from activity_event where dedupe_key = :k
+                """).param("k", "validation:" + latest.get("id") + ":finished:0").query().singleRow();
+        assertThat(finished.get("actor_kind")).isEqualTo("SYSTEM");
+        assertThat(finished.get("result")).isEqualTo("FAILURE");
     }
 
     private int deltaValidationCount(long taskId) {
