@@ -320,13 +320,10 @@ function OfficeRuntime(
           street.current?.nearDoor(outdoorPlayer.current)
         )
           latest.current.props.onOutdoorChange(false)
-      } else if (
-        // 시작 전에도 엘리베이터 앞에서 시작하므로, 산책 출구가 닫힌 동안에는 Enter를 비비·가리킨 대상에 넘긴다.
-        latest.current.phase >= 4 &&
-        nearOfficeExit(player.current, latest.current.floor.outdoorExit)
-      )
-        exit()
-      else if (latest.current.props.viewMode === 'first') {
+      } else if (latest.current.props.viewMode === 'first') {
+        // 엘리베이터 근처라는 것만으로 Enter를 산책으로 쓰지 않는다. 사무실은 엘리베이터 앞에서 시작하고 산책에서 돌아와도
+        // 그 자리에 서서, 안내가 안 보이는 3인칭에서 첫 Enter가 늘 '나가기'가 됐다(S15P31A108-345). 산책은 1인칭으로
+        // 엘리베이터를 가리켜 안내가 보일 때의 Enter, 엘리베이터 클릭, '산책' 버튼으로 나간다.
         if (renderer.aimedTarget) activate(renderer.aimedTarget)
         // 가리킨 대상이 없으면 단축 바의 '비비 Enter'대로 비비를 연다.
         else latest.current.props.onAgentSelect('bibi')

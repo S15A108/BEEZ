@@ -74,6 +74,19 @@ test('기준 설계가 없는 새 프로젝트에서도 걷고 문서 입력 중
   await walkRight(page)
 })
 
+// S15P31A108-345: 시작한 프로젝트는 엘리베이터(산책 출구) 앞에서 시작해 첫 Enter가 비비 대신 산책으로 나갔다.
+test('시작한 프로젝트 사무실에 막 들어와 Enter를 누르면 산책 대신 비비를 연다', async ({
+  page,
+}) => {
+  const canvas = await office(page, '101')
+  await canvas.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('dialog').getByLabel('설계 질문')).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '사무실로', exact: true }),
+  ).toHaveCount(0)
+})
+
 // 산책 버그(2026-11-03): 고정 사무실(D36) 폭에서는 산책 시작점이 가로수 기둥과 겹쳐 어느 쪽으로도 걷지 못했다.
 // 산책에서 W·D를 누르면 거리 위치가 바뀌어야 한다.
 test('산책에서 키를 누르면 거리에서 걷는다', async ({ page }) => {
