@@ -13,10 +13,15 @@ import { MeetingsPanel } from '@/features/meetings/MeetingsPanel'
 import { ActivityPanel } from '@/features/dashboard/ActivityPanel'
 import { InboxPanel } from '@/features/inbox/InboxPanel'
 import { BibiPanel } from '@/features/bee/BibiPanel'
+import { beeStatusQuery } from '@/features/bee/beeStatusQuery'
 import { ContextPanel } from '@/features/contexts/ContextPanel'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
 import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
+import {
+  agentConnectionsQuery,
+  useAgentStatusOf,
+} from '@/features/agents/useAgentStatusOf'
 import {
   officeAgentState,
   showsOfficeAgent,
@@ -95,12 +100,18 @@ function Workspace({ projectId }: { projectId: string }) {
   // 작업 현황(MON-A05)은 따로 30초마다 다시 부른다. 없거나 아직 못 받았으면 undefined라 연결 여부로 어림한다(D37).
   const agentWork =
     useQuery(agentWorkQuery(projectId, session.data?.id)).data ?? undefined
+  // 비비 현재 상태(BEE-A04). HUD 비비 줄과 같은 쿼리이고, 사무실 비비가 이 값으로 자리를 옮긴다(D35).
+  const beeStatus = useQuery(beeStatusQuery(projectId)).data
   // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
   const visitProject = useWorkspaceStore((state) => state.visitProject)
   const accountId = session.data?.id
   useEffect(() => {
     if (query.isSuccess && accountId) visitProject(accountId, projectId)
   }, [query.isSuccess, accountId, projectId, visitProject])
+  // 연결 현황(AGT-A05): 작업 현황에는 확인 필요 표시가 없어 사무실도 다른 화면과 같은 상태를 이것으로 정한다
+  // (S15P31A108-341). 없는 API이거나 아직 못 받았으면 작업 현황의 세션으로 어림한다.
+  const statusOf = useAgentStatusOf(projectId)
+  const connectionsKnown = !!useQuery(agentConnectionsQuery(projectId)).data
   const sceneAgents = useMemo<SceneAgent[]>(
     () => [
       { id: 'bibi', name: '비비', kind: 'lead', color: '#f5b800' },
@@ -115,11 +126,16 @@ function Workspace({ projectId }: { projectId: string }) {
         avatar: member.avatar,
         status: 'idle',
       })),
-      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결과 상태는 작업 현황(MON-A05)의
-      // 세션을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
+      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결은 연결 현황(AGT-A05),
+      // 자리는 작업 현황(MON-A05)을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
       ...(query.data?.members.items ?? [])
         .filter((member) =>
-          showsOfficeAgent(member, agentWork, session.data?.id),
+          showsOfficeAgent(
+            member,
+            agentWork,
+            session.data?.id,
+            connectionsKnown ? statusOf(member).status : undefined,
+          ),
         )
         .map((member) => {
           const { state, note } = officeAgentState(
@@ -128,6 +144,7 @@ function Workspace({ projectId }: { projectId: string }) {
             query.data?.tasks.items.filter(
               (task) => task.assignee_member_id === member.id,
             ) ?? [],
+            connectionsKnown ? statusOf(member).status : undefined,
           )
           return {
             id: `agent:${member.id}`,
@@ -140,7 +157,14 @@ function Workspace({ projectId }: { projectId: string }) {
           }
         }),
     ],
-    [query.data?.members, query.data?.tasks, agentWork, session.data?.id],
+    [
+      query.data?.members,
+      query.data?.tasks,
+      agentWork,
+      session.data?.id,
+      statusOf,
+      connectionsKnown,
+    ],
   )
   const sceneTasks = useMemo<SceneTask[]>(
     () =>
@@ -184,6 +208,7 @@ function Workspace({ projectId }: { projectId: string }) {
                 project={data.project}
                 design={design}
                 time={officeTime}
+                bibiActivity={beeStatus && beeStatus.activity}
                 agents={sceneAgents}
                 tasks={sceneTasks}
                 currentUserId={

@@ -9,6 +9,7 @@ import {
   METER,
   firstPersonFrame,
 } from './first-person'
+import { bibiWave } from './motion'
 import { OfficeCity } from './office-city'
 import { WindowCityView } from './window-city-view'
 import {
@@ -97,14 +98,19 @@ interface Robot {
   phase: number
   lastX: number
   lastY: number
-  /** 뼈대 애니메이션이 든 GLB(비비): 서 있으면 Idle, 걸으면 Walk를 돌린다. 자세 코드 대신 쓴다. */
+  /** 뼈대 애니메이션이 든 GLB(비비): 서 있으면 Idle, 걸으면 Walk, 내가 다가오면 Wave를 한 번 돌린다. 자세 코드 대신 쓴다. */
   motion?: {
     mixer: THREE.AnimationMixer
     idle?: THREE.AnimationAction
     walk?: THREE.AnimationAction
+    wave?: THREE.AnimationAction
     playing?: THREE.AnimationAction
     /** 걸음이 끊겨도 이 시각(ms)까지는 Walk를 이어 프레임마다 바뀌지 않게 한다 */
     walkUntil: number
+    /** 이 시각(ms)까지 Wave를 돌린다 */
+    waveUntil: number
+    /** 이번에 다가왔을 때 이미 흔들었다(bibiWave) */
+    waved: boolean
   }
 }
 
@@ -3333,7 +3339,7 @@ export class OfficeRenderer3D {
         figure.getObjectByName('arm-right')?.rotation.set(0, 0, PERSON_ARMS)
         figure.getObjectByName('arm-left')?.rotation.set(0, 0, -PERSON_ARMS)
         attach(figure, (bibi ? BIBI_HEIGHT : FIGURE_HEIGHT) / model.size.y)
-        // 비비 GLB(D35)의 Idle·Walk 클립. Wave는 쓸 곳이 생길 때 붙인다.
+        // 비비 GLB(D35)의 Idle·Walk·Wave 클립. Wave는 한 번 돌고 끝 자세에서 Idle로 넘어간다.
         const clip = (name: string) =>
           model.animations.find((item) => item.name === name)
         if (bibi && clip('Idle')) {
@@ -3342,11 +3348,17 @@ export class OfficeRenderer3D {
             const found = clip(name)
             return found && mixer.clipAction(found)
           }
+          const wave = action('Wave')
+          wave?.setLoop(THREE.LoopOnce, 1)
+          if (wave) wave.clampWhenFinished = true
           robot.motion = {
             mixer,
             idle: action('Idle'),
             walk: action('Walk'),
+            wave,
             walkUntil: 0,
+            waveUntil: 0,
+            waved: false,
           }
         }
       })
@@ -3602,6 +3614,8 @@ ${note ?? ''}`
       } | null
       decorMode?: boolean
       firstPersonId?: string
+      /** 내 캐릭터. 비비가 가까이 온 나에게 손을 흔든다(D35). */
+      playerId?: string
       work?: OfficeWorkState
       /** 사무실 시간대(D39). 없으면 낮이다. */
       time?: OfficeTime
@@ -3715,6 +3729,9 @@ ${note ?? ''}`
       this.ghost.position.set(ghost.x, 0, ghost.y)
     } else if (this.ghost) this.ghost.visible = false
     const present = new Set<string>()
+    const player = opts.playerId
+      ? entities.find((entity) => entity.id === opts.playerId)
+      : undefined
     // 3인칭 이름표는 줌과 상관없이 화면에서 190px 폭으로 읽힌다(D42). 1인칭은 가까울수록 커지는 2.1 m 그대로다.
     const tagWidth = this.firstPerson
       ? 2.1
@@ -3772,11 +3789,14 @@ ${note ?? ''}`
       const breathing =
         !walking && entity.activity ? Math.sin(idleTime * 1.7) * 0.012 : 0
       robot.root.position.set(entity.x / TILE, 0, entity.y / TILE)
-      const direction =
-        entity.heading ??
-        { down: 0, left: -Math.PI / 2, up: Math.PI, right: Math.PI / 2 }[
-          entity.dir
-        ]
+      // 손을 흔드는 동안은 나를 본다(D35).
+      const waving = player && robot.motion && time < robot.motion.waveUntil
+      const direction = waving
+        ? Math.atan2(player.x - entity.x, player.y - entity.y)
+        : (entity.heading ??
+          { down: 0, left: -Math.PI / 2, up: Math.PI, right: Math.PI / 2 }[
+            entity.dir
+          ])
       let delta = direction - robot.body.rotation.y
       delta = Math.atan2(Math.sin(delta), Math.cos(delta))
       robot.body.rotation.y += delta * Math.min(1, elapsed * 14 || 1)
@@ -3789,8 +3809,22 @@ ${note ?? ''}`
       const motion = robot.motion
       if (motion) {
         if (walking) motion.walkUntil = time + 250
+        if (motion.wave && player) {
+          const near = bibiWave(
+            Math.hypot(player.x - entity.x, player.y - entity.y) / TILE,
+            motion.waved,
+            walking,
+          )
+          motion.waved = near.waved
+          if (near.wave)
+            motion.waveUntil = time + motion.wave.getClip().duration * 1000
+        }
         const next =
-          time < motion.walkUntil ? (motion.walk ?? motion.idle) : motion.idle
+          time < motion.walkUntil
+            ? (motion.walk ?? motion.idle)
+            : time < motion.waveUntil
+              ? motion.wave
+              : motion.idle
         if (next && next !== motion.playing) {
           next.reset().fadeIn(0.25).play()
           motion.playing?.fadeOut(0.25)

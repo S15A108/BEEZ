@@ -151,7 +151,7 @@ async function upload(
       file_name: fileName,
     })
   analyzeDocument(context, version)
-  activity(context, 'DOCUMENT_UPLOADED')
+  activity(context, 'DOCUMENT_REGISTERED')
   return {
     status: 201,
     data: existingId ? version : { document, analysis_status: 'PENDING' },
@@ -470,7 +470,7 @@ export async function documentRoutes(
         version_no: baseline.version_no,
         created_at: baseline.created_at,
       }
-      activity(context, 'BASELINE_PUBLISHED', { baseline_id: baseline.id })
+      activity(context, 'BASELINE_CREATED', { baseline_id: baseline.id })
       return { status: 201, data: baseline }
     }
     case 'DOC-A08':

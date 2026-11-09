@@ -118,3 +118,16 @@ test('산책에서 키를 누르면 거리에서 걷는다', async ({ page }) =>
     }
   }
 })
+
+// D35: 비비 자리는 현재 상태(BEE-A04)를 따른다. 건물 외관을 고르지 않은 예시 프로젝트는 모던 화이트 배치다.
+// 상태가 바뀔 때 걸어가는 것은 office-actors.test.ts가 확인한다.
+test('비비는 회의가 열려 있으면 회의실에, 한가하면 라운지에 서 있다', async ({
+  page,
+}) => {
+  const canvas = await office(page, '101')
+  await expect(canvas).toHaveAttribute('data-bibi-x', '236.80')
+  await expect(canvas).toHaveAttribute('data-bibi-y', '147.20')
+  await page.goto('/projects/102')
+  await expect(canvas).toHaveAttribute('data-bibi-x', '121.60')
+  await expect(canvas).toHaveAttribute('data-bibi-y', '330.05')
+})

@@ -484,11 +484,17 @@ export function WorkspaceHud({
             task ? openPane('tasks', task.id) : openPane('settings', 'team'),
         }
       }),
-    // 에이전트 줄: 연결된 에이전트, 그리고 아직 연결하지 않은 내 에이전트(설정에서 연결)
+    // 에이전트 줄: 연결된 에이전트(연결 미확인 포함), 그리고 아직 연결하지 않은 내 에이전트(설정에서 연결).
+    // 연결은 사무실과 같은 연결 현황(AGT-A05)으로 본다. 첫 조회의 agent_connected는 연 뒤의 연결·끊김을 담지 못한다.
     ...members
-      .filter((member) => member.agent_connected || member.id === me?.id)
-      .map((member) => {
-        const { status, lastReportAt } = statusOf(member)
+      .map((member) => ({ member, ...statusOf(member) }))
+      .filter(
+        ({ member, status }) =>
+          status === 'connected' ||
+          status === 'recheck' ||
+          member.id === me?.id,
+      )
+      .map(({ member, status, lastReportAt }) => {
         const mine = member.id === me?.id
         return {
           key: `agent:${member.id}`,
@@ -499,9 +505,11 @@ export function WorkspaceHud({
           detail:
             status === 'recheck' && lastReportAt
               ? `마지막 보고 ${formatShort(lastReportAt)}`
-              : (status === 'none' || status === 'failed') && mine
-                ? '설정에서 연결해요'
-                : '',
+              : status === 'disconnected' && lastReportAt
+                ? `마지막 통신 ${formatShort(lastReportAt)}`
+                : (status === 'none' || status === 'failed') && mine
+                  ? '설정에서 연결해요'
+                  : '',
           open: () =>
             mine && status !== 'connected'
               ? openPane('settings', 'agent')
