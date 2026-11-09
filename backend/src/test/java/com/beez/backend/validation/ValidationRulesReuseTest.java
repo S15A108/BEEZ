@@ -105,4 +105,17 @@ class ValidationRulesReuseTest {
         verify(validations, never()).reusableRulesOnlyPass(anyLong(), anyLong(), anyLong(), anyLong(), anyString(), anyString());
         verify(validations).insertJob(8L);
     }
+
+    @Test void policyModeFailsClosedEvenIfRulesUnexpectedlyReturnPass() {
+        when(properties.policyAnalysisEnabled()).thenReturn(true);
+        when(rules.evaluate(eq(10L), eq(30L), eq(plan), anyList(), anyList(), eq(false), eq(true)))
+                .thenReturn(new RuleOutcome("PASS", List.of(), List.of()));
+        when(validations.insertValidation(anyLong(), anyLong(), anyLong(), anyString(), anyString(),
+                anyString(), anyString(), anyInt(), anyMap(), anyBoolean())).thenReturn(9L);
+        var row = new ValidationRow(9L, 10L, 20L, 40L, 30L, "PASS", "AGENT", null, 0,
+                "hash", "{}", Instant.now(), Instant.now(), 0);
+        when(validations.find(10L, 9L)).thenReturn(Optional.of(row));
+        assertThat(service.accept(caller, 10L, 20L, 40L, 0).finished()).isTrue();
+        verify(validations, never()).reusableRulesOnlyPass(anyLong(), anyLong(), anyLong(), anyLong(), anyString(), anyString());
+    }
 }

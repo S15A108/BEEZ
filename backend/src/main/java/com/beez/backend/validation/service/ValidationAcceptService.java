@@ -174,7 +174,8 @@ public class ValidationAcceptService {
         // Search and model versions are not pinned well enough to prove an AI result is reusable.
         // Re-run current rules under the project lock and reuse only a rules-only PASS for the
         // identical revision/baseline; DELTA and model-backed results always follow the normal path.
-        if ("AGENT".equals(trigger) && "PASS".equals(outcome.decidedStatus()) && outcome.findings().isEmpty()) {
+        if (!policyEnabled && "AGENT".equals(trigger) && "PASS".equals(outcome.decidedStatus())
+                && outcome.findings().isEmpty() && outcome.checks().isEmpty()) {
             var previous = validations.reusableRulesOnlyPass(projectId, taskId, planRevisionId, baselineId, inputHash, ruleVersion);
             if (previous.isPresent()) {
                 return new AcceptResult(responses.toResponse(previous.get(), true), true);
