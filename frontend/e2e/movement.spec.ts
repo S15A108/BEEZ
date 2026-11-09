@@ -79,6 +79,8 @@ test('시작한 프로젝트 사무실에 막 들어와 Enter를 누르면 산�
   page,
 }) => {
   const canvas = await office(page, '101')
+  // 시작 위치가 출구에서 멀어지면 이 시험이 근처 판정 회귀를 잡지 못하므로 전제부터 확인한다.
+  await expect(canvas).toHaveAttribute('data-near-exit', 'true')
   await canvas.focus()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('dialog').getByLabel('설계 질문')).toBeVisible()
