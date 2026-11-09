@@ -22,7 +22,9 @@ export function RequireAccount({ children }: { children: ReactNode }) {
         로그인 상태를 확인하고 있어요…
       </p>
     )
-  if (session.error && !expired)
+  // 401이 아닌 실패(배포 중 5xx·네트워크)는 계정을 한 번도 받지 못했을 때만 오류로 막는다. 받아 둔 계정이 있으면
+  // 백그라운드 재조회가 실패해도 화면과 열린 창·입력을 그대로 둔다(S15P31A108-343).
+  if (session.error && !expired && !session.data)
     return <AsyncState query={session}>{() => children}</AsyncState>
   if (expired || !session.data)
     return (
