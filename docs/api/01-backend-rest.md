@@ -3182,7 +3182,7 @@ HTTP `200`.
 
 관련 요구사항: AGT-05, MON-07  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 (S15P31A108-75)
 
 #### 인증
 
@@ -3240,6 +3240,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | `cursor` 형식 오류 (-75) |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -3256,6 +3257,11 @@ HTTP `200`.
 
 - 연결·마지막 통신 관측만 제공한다. 통신 성공을 작업 실행 중으로 해석하지 않는다.
 - 작업·검증·대기 사유는 MON-A05로 조회한다.
+- (BE 구현, -75) 활성 멤버마다 가장 최근 에이전트 세션 한 줄이다. 폐기된 토큰의 세션은 보지 않는다. 한 번도 연결하지 않았거나 토큰을 모두 폐기한 멤버는 줄이 없다. 정렬은 멤버 번호(`member_id`) 내림차순이고 커서는 마지막 멤버 번호다. 세션 번호로 두면 페이지를 넘기는 사이 재연결한 멤버가 어느 페이지에도 나오지 않는다.
+- (BE 구현, -75) 화면 구분: 줄이 있고 `connected=true`면 연결됨, 그중 `status_check_required=true`면 연결 미확인, 줄이 있고 `connected=false`면 연결 끊김(`last_report_at`이 마지막 통신), 줄이 없으면 연결 전이다. 따로 상태 값을 두지 않는다.
+- (BE 구현, -75) 연결 판정은 팀원 목록 `agent_connected`·MON-A05와 같다. `connected`는 세션이 끝나지 않았고(`ended_at` 없음) 최근 **2시간** 안에 통신했을 때 true다. Claude Code는 `/exit` 때 DELETE를 보내지 않아(11-09 확인) 끝남만으로는 판정할 수 없다. `status_check_required`는 연결됨이고 그 멤버가 맡은 **IN_PROGRESS** 작업이 있으며 보고 끊김 임계값(설정 `beez.task.stalled-after`, 기본 **30분**) 넘게 통신이 없을 때 true다. 팀장 CANCEL의 "보고가 끊긴 작업"(AC-14)과 같은 뜻·설정이다. 끊긴 세션과 할 일 없이 쉬는 세션(쉬는 동안은 요청을 보내지 않는다)은 false다.
+- (BE 구현, -75) `last_report_at`은 마지막 **통신** 시각이다. 상태 보고만이 아니라 MCP 요청마다 1분 단위로 갱신된다. 에이전트가 쉬는 동안은 요청을 보내지 않으므로 2시간이 지나면 끊김으로 바뀐다.
+- (BE 구현, -75) `last_error_code`는 연결 실패 원인을 남기는 곳이 아직 없어 내려가지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -3271,7 +3277,7 @@ HTTP `200`.
 
 관련 요구사항: MON-07  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안 · 수정안 요청 반영
+상태: 설계 초안 · 수정안 요청 반영 · BE 미구현(-75: 부르는 화면이 없어 목록 AGT-A05만 구현)
 
 #### 인증
 
@@ -3308,7 +3314,7 @@ HTTP `200`.
 | `member_id` | `ID` | Y | 소유 멤버 |
 | `connected` | `boolean` | Y | 최근 연결 관측 |
 | `last_report_at` | `Time` | N | 마지막 통신 시각 |
-| `status_check_required` | `boolean` | Y | 보고 지연으로 확인 필요 |
+| `status_check_required` | `boolean` | Y | 연결됨이면서 그 멤버가 맡은 IN_PROGRESS 작업이 있고 보고 끊김 임계값(기본 30분) 넘게 통신이 없음. 끊긴 세션(`connected=false`)·할 일 없이 쉬는 세션은 false (S15P31A108-75) |
 
 ```json
 {
@@ -9531,6 +9537,7 @@ HTTP `201`.
 - 첫 불변 계획 리비전과 설계 참조를 저장하고 READY로 둔다. READY 자체는 시작 승인 상태가 아니다.
 - 의존 작업은 같은 프로젝트여야 하며 자기 자신·순환은 거부한다.
 - (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다. 팀원 시작 가이드와 설계 관계 빈 화면이 이 규칙을 전제로 한다(Q22).
+- (BE 구현, -287) 활동: 같은 트랜잭션에서 `TASK_CREATED`(행위자 = 요청자, 대상 TASK, 키 `task:{id}:created`)를 남긴다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10023,6 +10030,7 @@ HTTP `201`.
 - 진행 중 계획 변경은 기존 검증을 STALE로 하고 WAITING(REVALIDATION)으로 전환하며 점유는 유지한다.
 - (BE 구현, -162 검증 최신성, AC-13) 위 규칙은 **검증 입력이 바뀐** 변경에만 적용한다. 검증 입력은 계획 입력 해시(`task_plan_revision.input_hash`)로 판정한다 — 목표·포함/제외 범위·완료 기준·선행 작업·`no_contract_change`·`unlinked`·설계 참조(항목·버전·관계·CHANGES 의 `proposed_content`)가 들어가고 **제목·접근 방식·컨텍스트 패킷은 들어가지 않는다**. 직전 리비전과 해시가 같으면(제목만 변경 등) 검증을 STALE 로 바꾸지 않고 작업 상태도 두며, 단 실제 검색을 사용한 검증은 제목·접근 방식·패킷이 바뀌면 검색 입력이 달라져 재검증한다. 그 밖에 직전 리비전의 (DELTA 를 뺀) 가장 최근 검증이 끝난 것(PASS·NEEDS_INPUT·NEEDS_REVIEW)이면 새 리비전에 같은 내용의 검증을 한 줄 더 넣어 이어 받는다 — 응답 `validation_status` 가 그 상태이고, 그 검증 조회의 `summary.carried_from` 이 원본 검증 번호다(실행 기록은 원본에만). 에이전트가 쥔 옛 검증 번호로 START·RESUME 하면 시작 게이트가 현재 리비전의 그 복사본으로 판정한다. 직전 리비전을 못 읽으면 바뀐 것으로 다룬다. 세부는 [04-task-lifecycle.md §2.5](../design/04-task-lifecycle.md).
 - (BE 구현, -162) 완료 보고(delta)의 DELTA 검증이 아직 도는 동안(NOT_RUN·RUNNING)은 입력이 같아도 계획을 바꿀 수 없다 → `400 invalid_transition`(메시지에 그 검증 번호). 결과를 기다리거나 RESUME 으로 보고를 거둔다. 결과가 난 뒤(NEEDS_INPUT·NEEDS_REVIEW·ERROR)는 바꿀 수 있다 — 계획을 고쳐 새 PASS 로 RESUME 하는 출구다. 완료·취소된 작업과 같은 코드다.
+- (BE 구현, -287) 활동: 리비전을 저장한 같은 트랜잭션에서 `TASK_PLAN_REVISED`(행위자 = 요청자, 키 `task:{id}:lock:{저장 뒤 lock_version}:PLAN_REVISED`)를 남긴다. 진행 중 변경으로 WAITING(REVALIDATION)이 돼도 이 한 건이 대신한다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10482,6 +10490,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -161) 횟수 제한: 의미 분석을 큐에 넣기 전에, 같은 작업·같은 입력(입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같음)으로 **실제 검증 AI를 부른** 실행 수를 센다. 새 검증 요청과 재시도(VAL-A04)를 합쳐 세며, 값이 `beez.validation.max-model-attempts`(기본 3, 환경변수 `VALIDATION_MAX_MODEL_ATTEMPTS`)에 닿았으면 409 `validation_attempt_limit`이다. 세는 실행(모델이 돌았거나, 요청이 AI에 닿았는데 결과를 확인하지 못한 실행): 도는 중(RUNNING), 실제 분석기로 끝까지 돈 실행(OK), 시간 초과(`ai_timeout` — 504든 읽기 시간 초과든 사용량이 없어도 센다), 출력 계약 위반(`ai_invalid_output` — AI가 응답을 돌려줬다), 그 밖에 모델 호출 사용량이 한 건 이상 남은 실패(부분 분석·오류 본문에 사용량을 실은 502 등). 세지 않는 실행: 가짜 분석기(`fake-analyzer`)로 끝난 실행 — 가짜 PASS는 시작에 쓸 수 없으니 실제 AI로 바꾼 뒤 같은 계획을 다시 검증할 수 있어야 한다, AI에 요청이 닿지 않았거나 AI가 모델을 부르지 않았다고 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502), 버린 실행(DISCARDED), 서버 쪽 중단(`validation_lease_expired`·`validation_worker_interrupted` — 늦게 온 응답의 사용량이 남아도 세지 않는다). 규칙만으로 끝나는 검증(200)과 서버가 접수하는 DELTA 검증의 첫 실행은 막지 않는다(DELTA를 사람이 다시 돌리는 재시도는 센다 — VAL-A04). 계획 내용·참조·관련 계획·컨텍스트 패킷이 바뀌면 다른 입력이라 처음부터 센다(제목만 바꾼 계획은 같은 입력이다). 같은 입력의 결과 재사용(AC-16)은 아직 없어 같은 입력의 새 요청도 매번 모델을 부르고 횟수에 들어간다.
 - (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
 - (BE 구현, -186) 정책 분석이 완료되면 검증된 `policy_assessments`의 승인 내용 인용과 원문 근거가 가리키는 설계 버전만 `validation_policy_ref`에 저장한다. 계획 참조와는 별개이며 검색 범위에 있었지만 인용되지 않은 후보는 저장하지 않는다. 해당 항목이 수정·폐기되면 검증을 `STALE / DESIGN_PUBLISHED`로 만들고, 그 검증으로 시작한 진행 작업은 `WAITING / REVALIDATION`으로 전환한다. 작업 시작·재개 때도 인용 버전과 현재 기준을 비교하며, 같은 입력의 계획으로 검증을 이어 받을 때 이 참조도 복사한다. 새로운 정책 추가나 인용되지 않은 항목의 연관성까지 추적하는 것은 아니다. `VALIDATION_POLICY_ANALYSIS_ENABLED`와 `VALIDATION_FAKE_ANALYZER`를 동시에 켜면 설정 오류로 기동이 실패한다.
+- (BE 구현, -287) 활동: 검증이 끝 상태(PASS·NEEDS_INPUT·NEEDS_REVIEW·ERROR)가 되면 같은 트랜잭션에서 `VALIDATION_FINISHED`(대상 VALIDATION, `task_id` 포함, PASS만 `result=SUCCESS`)를 남긴다. 접수 때 규칙만으로 끝나면(200) 행위자는 요청자, 워커가 끝내면 SYSTEM이다. 설계 발행 뒤 서버가 다시 접수한 DELTA가 규칙으로 끝나도 SYSTEM이다(발행한 사람은 그 작업의 완료를 보고하지 않았다). 키는 `validation:{id}:finished:{시도 번호}`(규칙 확정은 0)라 재시도(VAL-A04)로 다시 끝나도 겹치지 않는다. STALE·늦게 와서 버린 결과는 남기지 않는다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11103,6 +11112,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - (BE 구현, -163) delta 가 있으면 같은 트랜잭션에서 DELTA 검증을 **먼저** 접수하고(`ValidationAcceptService.acceptBySystem`, 담당자·잠금 번호 확인 없음) 그 번호를 완료 보고에 넣어 저장한 뒤 WAITING(REVALIDATION)·202. DELTA 검증은 완료 보고의 `delta` 를 분석 입력(AI-A02 `completion_delta`, 입력 스냅샷 해시에도 포함 — 검증 종류 `trigger` 와 함께)에 넣고 검사 목록에 완료 delta 검사(`completion-delta`, PLAN_COMPLETENESS)를 항상 넣으므로 규칙만으로 PASS 하지 않는다. AI(-184)가 이 칸을 받기 전에는 DELTA 요청이 AI 입력 오류로 ERROR 가 된다(조용히 통과하지 않음; 03-ai-internal AI-A02 Request 참조) — READS 만 참조하는 계획이라도 의미 분석으로 가고, 완료 보고 자리에서 바로 COMPLETED 되는 경우는 없다(규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 대기). 워커가 DELTA 를 PASS 로 끝내면 같은 트랜잭션에서 작업을 COMPLETED 로 바꾼다(`DeltaCompletion`, S4) — 조건은 작업이 아직 WAITING(REVALIDATION) 이고 그 검증이 현재 계획의 가장 최근 DELTA 일 때. 가짜 분석기를 끈 서버에서는 가짜 분석기가 낸 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙). NEEDS_INPUT·NEEDS_REVIEW·ERROR 면 작업은 그대로다(04-task-lifecycle.md §2.3 출구). RESUME 은 기다리던 DELTA 검증을 ERROR 로 끝난 것까지 STALE(`TASK_RESUMED`)로 바꾸고 대기 job 을 취소한다(그 완료 대기가 끝났다는 뜻. 옛 DELTA 의 늦은 PASS 가 나중에 작업을 완료시키지 못하게, 그리고 인계로 다시 WAITING 이 된 작업이 옛 DELTA 를 기다리는 것으로 보이지 않게. 오류 이력은 실행·발견 항목에 남는다). delta 있는 COMPLETED 의 재전송은 "지금 기다리는 것이 그 보고"(WAITING(REVALIDATION) + 현재 계획의 delta 완료 보고 + 가장 최근 DELTA 가 STALE 아님)이고 plan_revision_id·delta·summary·completion_checks 가 같을 때만 같은 결과(202)이고, 내용이 다르면 409 `revision_conflict`(바꾸려면 RESUME 뒤 다시 보고), 기다리는 보고가 없으면(RESUME 뒤 인계 등으로 WAITING 이 된 경우) WAITING + COMPLETED 전이 오류 400 이다. TaskDetail.delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호(현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때)이며, 재전송 판정과 같은 기준이다 — RESUME 뒤 인계로 WAITING 이 된 작업에는 없다.
 - (BE 구현, -269) 작업 완료 검증(작은 범위, 11/5 결정). COMPLETED에 `changed_design_item_ids`(실제로 바꾼 설계 항목)를 실을 수 있다. 서버는 정렬·중복 제거해 완료 보고에 저장하고, 응답 `completion_review`에 계획과의 규칙 대조 결과(범위 이탈 후보·바꾸기로 했는데 보고 안 한 항목·못 채운/확인 안 한 완료 기준·인수인계 기록 유무)를 싣는다. **표시만 한다** — 범위 이탈 후보가 있어도 전이는 위 규칙 그대로다(담당자 확인 전 보류 AC-18안은 하지 않음). delta 있는 COMPLETED의 재전송 판정에 `changed_design_item_ids`도 들어간다(순서는 무관, 보내지 않음과 빈 목록은 다른 보고). AI 분석·설계 일치 검사(보고된 변경 vs 현재 승인 계약)·TRC-07 기록 분리는 이번 범위가 아니다([13-completion-review](../design/13-completion-review.md)).
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
+- (BE 구현, -287) 활동: 상태가 실제로 바뀐 보고만 커밋 직전 같은 트랜잭션에서 남긴다(행위자 = 보고자). 유형은 보고 이름이 아니라 실제 전이로 정한다 — START `TASK_STARTED`, RESUME `TASK_RESUMED`, WAIT `TASK_WAITING`, delta 없는 COMPLETED `TASK_COMPLETED`, delta 있는 COMPLETED `TASK_COMPLETION_REPORTED`(재검증 대기), CANCEL `TASK_CANCELLED`. 키는 `task:{id}:lock:{저장 뒤 lock_version}:{event}`. 멱등 재전송(같은 START·같은 delta 완료 보고·COMPLETED/CANCEL 재전송)은 남기지 않는다. DELTA 검증 통과로 서버가 완료하면(S4) SYSTEM 행위자로 `TASK_COMPLETED`를 한 건 더 남긴다([공통 계약](../design/10-notification-activity-contract.md) 6.2). delta 있는 COMPLETED는 DELTA 검증을 먼저 접수하므로, 그 검증이 규칙만으로 끝나면(NEEDS_INPUT·NEEDS_REVIEW) 같은 요청 안에서 `VALIDATION_FINISHED`(행위자 = 보고자)가 `TASK_COMPLETION_REPORTED`보다 **먼저** 남는다(전이 활동은 커밋 직전에 남기 때문). 타임라인에서 두 활동의 순서에 기대지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -14713,7 +14723,7 @@ HTTP `200`.
 
 - 연결 정보는 AGT-A05, 명시 보고된 작업·검증·대기는 이 API로 나눠 제공한다.
 - 에이전트 보고가 없으면 실행 중·완료를 추정하지 않는다.
-- (BE 구현, -64) 폐기되지 않은 토큰·아직 활성인 멤버의 에이전트 세션(`agent_session`)마다 한 줄, 세션 번호 내림차순, 커서는 마지막 세션 번호. `member_id` 는 `project_member.id`(형식 오류 400). 세션이 보고한 현재 작업(`current_task_id`)이 있으면 작업 제목·상태·대기 사유·현재 계획의 가장 최근 검증 상태(없으면 NOT_RUN)를 함께 주고, 없으면 작업 칸은 모두 빠진다. `agent_name` 은 토큰 이름. `last_summary` 는 완료 보고 summary 가 세션에 남지 않아 아직 내려가지 않는다. 세션 행(현재 작업·마지막 보고 시각)은 에이전트 연결·보고 쪽(AGT-A05·MCP-12)이 적는다 — 이 API 는 읽기만 한다.
+- (BE 구현, -64) 폐기되지 않은 토큰·아직 활성인 멤버의 살아 있는 에이전트 세션(`agent_session`)마다 한 줄(살아 있음 = 끝나지 않았고 최근 2시간 안에 통신, AGT-A05·팀원 목록과 같은 기준 -75), 세션 번호 내림차순, 커서는 마지막 세션 번호. `member_id` 는 `project_member.id`(형식 오류 400). 세션이 보고한 현재 작업(`current_task_id`)이 있으면 작업 제목·상태·대기 사유·현재 계획의 가장 최근 검증 상태(없으면 NOT_RUN)를 함께 주고, 없으면 작업 칸은 모두 빠진다. `agent_name` 은 토큰 이름. `last_summary` 는 완료 보고 summary 가 세션에 남지 않아 아직 내려가지 않는다. 세션 행(현재 작업·마지막 보고 시각)은 에이전트 연결·보고 쪽(AGT-A05·MCP-12)이 적는다 — 이 API 는 읽기만 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

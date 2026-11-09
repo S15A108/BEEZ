@@ -52,12 +52,14 @@ public class TaskPlanService {
     private final PlanInputHasher hasher;
     private final TaskQueryService query;
     private final JdbcClient jdbc;
+    private final TaskActivities activities;
 
     public TaskPlanService(TaskRepository tasks, TaskPlanRevisionRepository revisions,
                            TaskPlanDesignRefRepository designRefs, TaskDependencyRepository dependencies,
                            ProjectAccessChecker access, ProjectDesignLookup designLookup,
                            ValidationStatusLookup validationLookup, ContextPacketLookup packetLookup,
-                           PlanInputHasher hasher, TaskQueryService query, JdbcClient jdbc) {
+                           PlanInputHasher hasher, TaskQueryService query, JdbcClient jdbc,
+                           TaskActivities activities) {
         this.tasks = tasks;
         this.revisions = revisions;
         this.designRefs = designRefs;
@@ -69,6 +71,7 @@ public class TaskPlanService {
         this.hasher = hasher;
         this.query = query;
         this.jdbc = jdbc;
+        this.activities = activities;
     }
 
     // ------------------------------------------------------------------
@@ -109,6 +112,7 @@ public class TaskPlanService {
         task.applyNewPlanRevision(revision.getId(), plan.title());
         // 지금 flush 해서 응답의 lock_version 이 DB 와 같게 한다 (flush 전에는 @Version 이 아직 안 올라가 있다)
         tasks.saveAndFlush(task);
+        activities.created(caller, task);   // flush 뒤 같은 트랜잭션에서 (계약 6.2)
 
         return query.toDetail(task);
     }
@@ -200,6 +204,8 @@ public class TaskPlanService {
             }
         }
         tasks.saveAndFlush(task);
+        // 키는 flush 뒤 잠금 버전. 진행 중 변경으로 재검증 대기가 된 경우(S2)도 이 한 건이 대신한다 (계약 6.2)
+        activities.planRevised(caller, task);
 
         return query.toDetail(task);
     }

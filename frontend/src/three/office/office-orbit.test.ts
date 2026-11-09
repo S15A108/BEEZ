@@ -1,180 +1,117 @@
 import { assert, test } from 'vitest'
 import * as THREE from 'three'
 import {
-  OfficeOrbit,
-  OFFICE_ORBIT_HOME,
-  OFFICE_ORBIT_MAX_PITCH,
-  OFFICE_ORBIT_MIN_PITCH,
+  OFFICE_ZOOM,
   officeOrbitFrame,
-  orbitMove,
+  orbitFocus,
+  orbitPan,
 } from './office-orbit'
 
-const KEY_INPUTS = [
-  { x: 0, y: -1 },
-  { x: 0, y: 1 },
-  { x: -1, y: 0 },
-  { x: 1, y: 0 },
-  { x: Math.SQRT1_2, y: -Math.SQRT1_2 },
-  { x: -Math.SQRT1_2, y: Math.SQRT1_2 },
-]
-
-/** 바닥 위 이동 방향이 화면에서 어느 쪽을 향하는지(카메라 공간 방향). */
-function onScreen(move: { x: number; y: number }, yaw: number) {
-  const frame = officeOrbitFrame(
-    30,
-    20,
-    900,
-    640,
-    1,
-    yaw,
-    OFFICE_ORBIT_HOME.pitch,
-  )
-  const camera = new THREE.OrthographicCamera()
-  camera.position.set(frame.offset.x, frame.offset.y, frame.offset.z)
-  camera.lookAt(0, 0, 0)
-  camera.updateMatrixWorld(true)
-  return new THREE.Vector3(move.x, 0, move.y).transformDirection(
-    camera.matrixWorldInverse,
-  )
+const OFFICE = {
+  W: 28,
+  H: 18,
+  footprint: { left: 1, back: 1, right: 27, front: 15 },
 }
 
-test('3인칭 기본 시점에서는 WASD 이동이 지금과 똑같다', () => {
-  assert.deepStrictEqual(orbitMove({ x: 0, y: 0 }, OFFICE_ORBIT_HOME.yaw), {
-    x: 0,
-    y: 0,
-  })
-  for (const input of KEY_INPUTS)
-    assert.deepStrictEqual(orbitMove(input, OFFICE_ORBIT_HOME.yaw), input)
-})
-
-test('3인칭 시점을 돌려도 W는 화면 위쪽으로 가고 키마다 화면 기준 방향과 속도가 그대로다', () => {
-  for (let degrees = -720; degrees <= 720; degrees += 23) {
-    const yaw = OFFICE_ORBIT_HOME.yaw + (degrees * Math.PI) / 180
-    for (const input of KEY_INPUTS) {
-      const move = orbitMove(input, yaw)
-      assert.closeTo(Math.hypot(move.x, move.y), 1, 1e-10)
-      const home = onScreen(input, OFFICE_ORBIT_HOME.yaw)
-      const turned = onScreen(move, yaw)
-      assert.closeTo(turned.x, home.x, 1e-10)
-      assert.closeTo(turned.y, home.y, 1e-10)
-    }
-    assert.isAbove(onScreen(orbitMove({ x: 0, y: -1 }, yaw), yaw).y, 0)
-  }
-})
-
-test('a complete orbit keeps camera distance and projection scale constant', () => {
-  const first = officeOrbitFrame(
-    30,
-    20,
-    900,
-    640,
-    1,
-    OFFICE_ORBIT_HOME.yaw,
-    OFFICE_ORBIT_HOME.pitch,
+function cameraAt(
+  center: { x: number; y: number },
+  width: number,
+  height: number,
+  zoom: number,
+) {
+  const frame = officeOrbitFrame(OFFICE, width, height, zoom)
+  const camera = new THREE.OrthographicCamera(
+    frame.left,
+    frame.right,
+    frame.top,
+    frame.bottom,
+    0.1,
+    frame.far,
   )
-  const radius = Math.hypot(first.offset.x, first.offset.y, first.offset.z)
-  for (let degrees = 0; degrees <= 720; degrees += 5) {
-    const frame = officeOrbitFrame(
-      30,
-      20,
-      900,
-      640,
-      1,
-      (degrees * Math.PI) / 180,
-      OFFICE_ORBIT_HOME.pitch,
-    )
-    assert.deepStrictEqual(
-      [frame.left, frame.right, frame.top, frame.bottom],
-      [first.left, first.right, first.top, first.bottom],
-    )
-    assert.isOk(
-      Math.abs(
-        Math.hypot(frame.offset.x, frame.offset.y, frame.offset.z) - radius,
-      ) < 1e-10,
-    )
-  }
-})
+  const aim = new THREE.Vector3(center.x, 1.3, center.y)
+  camera.position
+    .copy(aim)
+    .add(new THREE.Vector3(frame.offset.x, frame.offset.y, frame.offset.z))
+  camera.lookAt(aim)
+  camera.updateMatrixWorld(true)
+  return { frame, camera }
+}
 
-test('the office stays in the full view at every yaw and permitted elevation, on wide and narrow screens', () => {
+test('가장 멀리 빼면 방 전체가 넓은 화면과 좁은 화면에 담긴다', () => {
   for (const [width, height] of [
+    [1440, 900],
     [1200, 640],
     [460, 720],
   ]) {
-    for (const pitch of [
-      OFFICE_ORBIT_MIN_PITCH,
-      OFFICE_ORBIT_HOME.pitch,
-      OFFICE_ORBIT_MAX_PITCH,
-    ]) {
-      for (let degrees = 0; degrees < 360; degrees += 10) {
-        const frame = officeOrbitFrame(
-          30,
-          20,
-          width,
-          height,
-          1,
-          (degrees * Math.PI) / 180,
-          pitch,
-        )
-        const camera = new THREE.OrthographicCamera(
-          frame.left,
-          frame.right,
-          frame.top,
-          frame.bottom,
-          0.1,
-          frame.far,
-        )
-        const center = new THREE.Vector3(15, 1.3, 10)
-        camera.position
-          .copy(center)
-          .add(
-            new THREE.Vector3(frame.offset.x, frame.offset.y, frame.offset.z),
-          )
-        camera.lookAt(center)
-        camera.updateMatrixWorld(true)
-        for (const x of [0, 30])
-          for (const z of [0, 20])
-            for (const y of [-0.5, 3.6]) {
-              const projected = new THREE.Vector3(x, y, z).project(camera)
-              assert.isOk(
-                Math.abs(projected.x) <= 1 &&
-                  Math.abs(projected.y) <= 1 &&
-                  Math.abs(projected.z) <= 1,
-                `clipped at ${degrees}°, pitch ${pitch}`,
-              )
-            }
-      }
-    }
+    const { camera } = cameraAt({ x: 14, y: 8 }, width, height, OFFICE_ZOOM.min)
+    for (const x of [1, 27])
+      for (const z of [1, 15])
+        for (const y of [-0.5, 3.6]) {
+          const projected = new THREE.Vector3(x, y, z).project(camera)
+          assert.isBelow(Math.abs(projected.x), 1, `${width}x${height} x`)
+          assert.isBelow(Math.abs(projected.y), 1, `${width}x${height} y`)
+          assert.isBelow(Math.abs(projected.z), 1, `${width}x${height} z`)
+        }
   }
 })
 
-test('damping gives the same rotation at different display refresh rates', () => {
-  const sixty = new OfficeOrbit(),
-    fast = new OfficeOrbit()
-  sixty.drag(400, 60)
-  fast.drag(400, 60)
-  for (let i = 0; i < 60; i++) sixty.step(1 / 60)
-  for (let i = 0; i < 144; i++) fast.step(1 / 144)
-  assert.isOk(Math.abs(sixty.yaw - fast.yaw) < 1e-5)
-  assert.isOk(Math.abs(sixty.pitch - fast.pitch) < 1e-5)
-  assert.isOk(Math.abs(sixty.yaw - (OFFICE_ORBIT_HOME.yaw - 2.4)) < 1e-5)
+test('확대는 지금 화면보다 가까운 쪽에서만 움직이고 사람 키가 900px 화면에서 60px을 넘는다', () => {
+  const { frame } = cameraAt({ x: 14, y: 8 }, 1440, 900, OFFICE_ZOOM.start)
+  assert.isAbove((900 / (frame.top - frame.bottom)) * 1.7 * 0.8, 60)
+  assert.isAbove(OFFICE_ZOOM.start, OFFICE_ZOOM.min)
+  assert.isAbove(OFFICE_ZOOM.max, OFFICE_ZOOM.start)
 })
 
-test('pole limits stay finite and reset returns by the shortest yaw after multiple full turns', () => {
-  const orbit = new OfficeOrbit()
-  orbit.drag((Math.PI * 6) / 0.006, 1e6)
-  for (let i = 0; i < 180; i++) orbit.step(1 / 60)
-  assert.strictEqual(orbit.pitch, OFFICE_ORBIT_MAX_PITCH)
-  const previous = orbit.yaw
-  orbit.reset()
-  orbit.step(1 / 60)
-  assert.isOk(
-    Math.abs(orbit.yaw - previous) < 1e-5,
-    'reset must not spin through three whole turns',
+test('끈 곳이 커서를 그대로 따라온다', () => {
+  const width = 1440,
+    height = 900,
+    zoom = 1.5,
+    start = { x: 14, y: 8 },
+    { frame, camera } = cameraAt(start, width, height, zoom),
+    point = new THREE.Vector3(10, 0, 6)
+  const before = point.clone().project(camera)
+  const by = orbitPan(120, -40, frame, height)
+  const after = point
+    .clone()
+    .project(
+      cameraAt({ x: start.x + by.x, y: start.y + by.y }, width, height, zoom)
+        .camera,
+    )
+  assert.closeTo(((after.x - before.x) * width) / 2, 120, 1e-6)
+  assert.closeTo(((before.y - after.y) * height) / 2, -40, 1e-6)
+})
+
+test('방 어느 끝에 서도 내 캐릭터가 화면 안에 있고 초점이 방 밖으로 달아나지 않는다', () => {
+  for (const zoom of [OFFICE_ZOOM.min, OFFICE_ZOOM.start, OFFICE_ZOOM.max]) {
+    const frame = officeOrbitFrame(OFFICE, 1440, 900, zoom)
+    for (const x of [1, 27])
+      for (const y of [1, 15]) {
+        const { camera } = cameraAt(
+          orbitFocus({ x, y }, OFFICE, frame, zoom),
+          1440,
+          900,
+          zoom,
+        )
+        const feet = new THREE.Vector3(x, 0, y).project(camera)
+        assert.isBelow(Math.abs(feet.x), 1, `${zoom}: ${x},${y}`)
+        assert.isBelow(Math.abs(feet.y), 1, `${zoom}: ${x},${y}`)
+      }
+    const far = orbitFocus({ x: 500, y: 500 }, OFFICE, frame, zoom)
+    assert.isBelow(Math.hypot(far.x - 14, far.y - 8), 25)
+  }
+})
+
+test('방 가운데 근처에서는 초점이 사람을 그대로 따라간다', () => {
+  const frame = officeOrbitFrame(OFFICE, 1440, 900, OFFICE_ZOOM.start)
+  const focus = orbitFocus({ x: 15, y: 9 }, OFFICE, frame, OFFICE_ZOOM.start)
+  assert.closeTo(focus.x, 15, 1e-9)
+  assert.closeTo(focus.y, 9, 1e-9)
+})
+
+test('다 빼면 어디에 서 있어도 방 가운데를 본다', () => {
+  const frame = officeOrbitFrame(OFFICE, 1440, 900, OFFICE_ZOOM.min)
+  assert.deepStrictEqual(
+    orbitFocus({ x: 1, y: 15 }, OFFICE, frame, OFFICE_ZOOM.min),
+    { x: 14, y: 8 },
   )
-  for (let i = 0; i < 180; i++) orbit.step(1 / 60)
-  assert.isOk(Math.abs(Math.sin(orbit.yaw - OFFICE_ORBIT_HOME.yaw)) < 1e-6)
-  assert.strictEqual(orbit.pitch, OFFICE_ORBIT_HOME.pitch)
-  orbit.drag(0, -1e6)
-  for (let i = 0; i < 180; i++) orbit.step(1 / 60)
-  assert.strictEqual(orbit.pitch, OFFICE_ORBIT_MIN_PITCH)
 })
