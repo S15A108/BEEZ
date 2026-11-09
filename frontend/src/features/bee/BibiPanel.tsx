@@ -5,18 +5,17 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { BibiFace } from '@/components/BibiFace'
 import { beeApi } from '@/api/services'
-import type { Generation } from '@/api/contracts/common'
 import {
   getApiErrorCode,
   getApiErrorMessage,
   getApiErrorStatus,
 } from '@/api/error'
-import { SourceLinks } from '@/components/SourceLinks'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import type { AskScope } from './schemas'
+import { BeeAnswerEvidence } from './BeeAnswerEvidence'
+import type { AskResponse, AskScope } from './schemas'
 
 // 찾는 범위 칩(캔버스 PNL-12-v2-bibi-hotbar). 값은 BEE-A01 scope다.
 const scopes: { value: AskScope; label: string }[] = [
@@ -57,14 +56,21 @@ function questionErrorMessage(error: unknown) {
 export function BibiPanel({ projectId }: { projectId: string }) {
   const scopeLabel = useId()
   const errorId = useId()
+  const sourcesId = useId()
+  const sourcesRef = useRef<HTMLElement>(null)
   const [scope, setScope] = useState<AskScope>('APPROVED')
-  const [messages, setMessages] = useState<(Ask & { answer: Generation })[]>([])
+  const [messages, setMessages] = useState<(Ask & { answer: AskResponse })[]>(
+    [],
+  )
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   // 상태가 다시 그려지기 전에 이어진 제출도 하나의 요청으로 묶는다.
   const sending = useRef<Promise<void> | null>(null)
   const mutation = useMutation({
     mutationFn: (input: Ask) => beeApi.ask(projectId, input),
-    onSuccess: (answer, input) =>
-      setMessages((previous) => [...previous, { ...input, answer }]),
+    onSuccess: (answer, input) => {
+      setMessages((previous) => [...previous, { ...input, answer }])
+      setSelectedIndex(null)
+    },
   })
   const {
     register,
@@ -98,7 +104,14 @@ export function BibiPanel({ projectId }: { projectId: string }) {
     end.current?.scrollIntoView?.({ block: 'nearest' })
   }, [messages.length, mutation.isPending])
   const pending = mutation.isPending ? mutation.variables : undefined
-  const last = messages.at(-1)
+  const selected =
+    selectedIndex === null ? messages.at(-1) : messages[selectedIndex]
+  const referenceCount = selected
+    ? (selected.answer.citations?.length ?? 0) +
+        (selected.answer.design_refs?.length ?? 0) +
+        (selected.answer.task_refs?.length ?? 0) ||
+      selected.answer.sources.length
+    : 0
   return (
     // 창 높이를 다 쓰고, 대화가 짧아도 질문 입력줄은 아래에 둔다.
     <div className="grid min-h-full gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -165,7 +178,30 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               </p>
               <article className="max-w-xl justify-self-start rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5 text-sm">
                 <p className="leading-6 whitespace-pre-wrap">
-                  {message.answer.text}
+                  {message.answer.text
+                    .split(/(\[\d+\])/g)
+                    .map((part, partIndex) => {
+                      const citation = message.answer.citations?.find(
+                        (item) => part === `[${item.n}]`,
+                      )
+                      return citation ? (
+                        <button
+                          key={partIndex}
+                          type="button"
+                          aria-label={`인용 ${citation.n}번 근거 보기`}
+                          aria-controls={sourcesId}
+                          className="font-semibold underline underline-offset-2"
+                          onClick={() => {
+                            setSelectedIndex(index)
+                            sourcesRef.current?.focus()
+                          }}
+                        >
+                          {part}
+                        </button>
+                      ) : (
+                        part
+                      )
+                    })}
                 </p>
                 {message.answer.unresolved.length > 0 && (
                   <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
@@ -185,8 +221,20 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                       ? '모델 생성'
                       : '템플릿 응답'}
                   </Badge>
-                  {/* API 없음: '도움이 됐어요 / 근거가 틀려요' 피드백 저장 */}
                 </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`${index + 1}번째 답변의 근거 보기`}
+                  aria-controls={sourcesId}
+                  onClick={() => {
+                    setSelectedIndex(index)
+                    sourcesRef.current?.focus()
+                  }}
+                >
+                  근거 보기
+                </Button>
               </article>
             </div>
           ))}
@@ -243,30 +291,27 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         <div ref={end} aria-hidden className="-mt-4 scroll-mb-8" />
       </div>
       <aside
-        aria-labelledby="bibi-sources"
+        id={sourcesId}
+        ref={sourcesRef}
+        tabIndex={-1}
+        aria-label="선택한 답의 근거"
         className="rounded-2xl border bg-muted/30 p-4"
       >
-        <h3
-          id="bibi-sources"
-          className="flex justify-between text-sm font-bold"
-        >
+        <h3 className="flex justify-between text-sm font-bold">
           이 답의 근거
-          <span className="text-muted-foreground">
-            {last?.answer.sources.length ?? 0}
-          </span>
+          <span className="text-muted-foreground">{referenceCount}</span>
         </h3>
-        {/* API 없음: 근거마다 문단 위치·인용 문장을 주면 번호와 칠한 문장으로 바꾼다. */}
-        {last?.answer.sources.length ? (
-          <SourceLinks sources={last.answer.sources} />
+        {selected ? (
+          <BeeAnswerEvidence answer={selected.answer} />
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">
             질문하면 비비가 찾은 문서가 여기에 떠요. 근거를 못 찾으면 짐작하지
             않고 못 찾았다고 답해요.
           </p>
         )}
-        {last && (
+        {selected && (
           <p className="mt-3 text-xs text-muted-foreground">
-            {last.scope === 'APPROVED'
+            {selected.scope === 'APPROVED'
               ? "승인된 문서만 찾았어요. 초안까지 찾으려면 위에서 '초안 포함'을 고르세요."
               : '초안까지 찾았어요. 초안은 아직 팀장이 승인하지 않은 내용이에요.'}
           </p>
