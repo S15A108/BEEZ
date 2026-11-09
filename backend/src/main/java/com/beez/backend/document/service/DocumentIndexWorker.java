@@ -3,6 +3,7 @@ package com.beez.backend.document.service;
 import static com.beez.backend.document.service.DocumentValues.*;
 
 import com.beez.backend.ai.AiClient;
+import com.beez.backend.ai.AiUsageRecorder;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.designitem.repository.BaselineRepository;
 import com.beez.backend.document.DocumentKindMapper;
@@ -26,10 +27,13 @@ public class DocumentIndexWorker {
     private final AiClient ai;
     private final DocumentProperties properties;
     private final BaselineRepository baselines;
+    private final AiUsageRecorder usageRecorder;
     private final TransactionTemplate tx;
 
-    public DocumentIndexWorker(JdbcClient jdbc, AiClient ai, DocumentProperties properties, BaselineRepository baselines, PlatformTransactionManager manager) {
-        this.jdbc = jdbc; this.ai = ai; this.properties = properties; this.baselines = baselines; this.tx = new TransactionTemplate(manager);
+    public DocumentIndexWorker(JdbcClient jdbc, AiClient ai, DocumentProperties properties, BaselineRepository baselines,
+                               AiUsageRecorder usageRecorder, PlatformTransactionManager manager) {
+        this.jdbc = jdbc; this.ai = ai; this.properties = properties; this.baselines = baselines;
+        this.usageRecorder = usageRecorder; this.tx = new TransactionTemplate(manager);
     }
     private List<Map<String, Object>> rows(String sql, Map<String, ?> params) { return jdbc.sql(sql).params(params).query().listOfRows(); }
     @SuppressWarnings("unchecked") private static Map<String, Object> object(Object value) {
@@ -191,11 +195,29 @@ public class DocumentIndexWorker {
         long start = System.nanoTime();
         try {
             var response = embedding ? ai.documentEmbeddings(input) : ai.documentChunks(input);
+            if (response == null) {
+                if (embedding) usageRecorder.recordFailure("EMBEDDING", ((Number) job.get("project_id")).longValue(), null,
+                        input.get("request_key").toString(), (System.nanoTime() - start) / 1_000_000);
+                throw new IllegalStateException("AI returned an empty response");
+            }
             usage(job, response, (System.nanoTime() - start) / 1_000_000);
-            return Objects.requireNonNull(response);
+            return response;
         } catch (RestClientResponseException error) {
-            try { usage(job, error.getResponseBodyAs(Map.class), (System.nanoTime() - start) / 1_000_000); }
+            @SuppressWarnings("unchecked") Map<String, Object> body = null;
+            try {
+                body = error.getResponseBodyAs(Map.class);
+                usage(job, body, (System.nanoTime() - start) / 1_000_000);
+            }
             catch (RuntimeException ignored) { LoggerFactory.getLogger(getClass()).warn("AI 호출 실패 응답의 사용량 정보를 기록할 수 없습니다."); }
+            if (embedding && error.getStatusCode().is5xxServerError()
+                    && (body == null || !(body.get("usage") instanceof List<?> lines) || lines.isEmpty())) {
+                usageRecorder.recordFailure("EMBEDDING", ((Number) job.get("project_id")).longValue(), null,
+                        input.get("request_key").toString(), (System.nanoTime() - start) / 1_000_000);
+            }
+            throw error;
+        } catch (org.springframework.web.client.ResourceAccessException error) {
+            if (embedding) usageRecorder.recordFailure("EMBEDDING", ((Number) job.get("project_id")).longValue(), null,
+                    input.get("request_key").toString(), (System.nanoTime() - start) / 1_000_000);
             throw error;
         }
     }

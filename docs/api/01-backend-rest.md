@@ -11838,7 +11838,7 @@ HTTP `200`.
 
 관련 요구사항: BEE-02~04·07  
 담당: BE: 오서현(문서 조회·생성 연결) / AI: 박상은 / FE: 박상은  
-상태: 서버 연결 담당 검토 · 수정안 요청 반영
+상태: APPROVED 범위 구현 제안 (S15P31A108-344)
 
 #### 인증
 
@@ -11851,7 +11851,7 @@ HTTP `200`.
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 필수, 1~128자. 같은 프로젝트·사용자의 사용된 키는 409이며 응답 재생을 지원하지 않음 |
 
 #### Path Parameters
 
@@ -11867,9 +11867,9 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `question` | `string` | Y | 프로젝트 설계 질문 |
+| `question` | `string` | Y | 프로젝트 설계 질문, 1~2000자 |
 | `task_id` | `ID` | N | 관련 작업 |
-| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 찾는 범위. 기본 APPROVED. INCLUDE_DRAFTS는 원문 RAG 확장의 DOCUMENT_REVIEW에 대응. 수정안 요청 |
+| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 기본 APPROVED. INCLUDE_DRAFTS는 현재 미지원이며 409 반환 |
 
 ```json
 {
@@ -11884,7 +11884,7 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `origin` | `MODEL\|TEMPLATE` | Y | 생성 출처 |
+| `origin` | `MODEL` | Y | 실제 모델 생성 출처 |
 | `model` | `string` | N | 실제 호출 시 필수 모델 |
 | `text` | `string` | Y | 응답 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
@@ -11892,38 +11892,12 @@ HTTP `200`.
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
 | `answer_id` | `ID` | Y | 답변 ID. BEE-A03 피드백에 씀. 수정안 요청 |
 | `citations` | [BeeCitation[]](00-common.md#schema-beecitation) | Y | 본문 [n]과 잇는 근거 문단. 없으면 []. 수정안 요청 |
-| `grounded` | `boolean` | Y | 근거를 하나 이상 찾았는지. 수정안 요청 |
+| `grounded` | `boolean` | Y | 검증된 문서·설계·작업 근거 존재 여부 |
+| `answer_status` | `string` | Y | 답변 또는 근거 부족 상태 |
+| `verification` | `object` | Y | 모델 검증 결과 |
+| `design_refs`, `task_refs` | `object[]` | Y | 승인 설계 및 관련 작업 참조 |
 
-```json
-{
-  "origin": "MODEL",
-  "model": "configured-model",
-  "text": "현재 승인 계약에 따라 이메일과 비밀번호를 입력합니다.",
-  "sources": [
-    {
-      "document_id": "201",
-      "document_version_id": "211",
-      "version_no": 1,
-      "location": "3. 계정 관리 / ACC-02"
-    }
-  ],
-  "unresolved": [],
-  "usage": [
-    {
-      "request_key": "llm-validate-601-attempt-1",
-      "feature": "TASK_VALIDATION",
-      "model": "configured-model",
-      "input_tokens": 1200,
-      "output_tokens": 300,
-      "latency_ms": 1800,
-      "failed": false,
-      "estimated_cost_amount": "0.0042",
-      "currency": "USD",
-      "tokens_known": true
-    }
-  ]
-}
-```
+응답의 citations와 sources는 서버가 허용한 근거에서 재구성하며, `answer_id`는 피드백에 사용한다. 실제 사용량과 검증 결과가 함께 반환된다.
 
 #### Error
 
@@ -11932,14 +11906,18 @@ HTTP `200`.
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 502 | `ai_unavailable` | 응답·폴백 모두 실패 |
+| 409 | `idempotency_conflict` | 같은 프로젝트·사용자의 이미 사용한 요청 키 |
+| 409 | `draft_search_not_supported` | INCLUDE_DRAFTS 미지원 |
+| 409 | `index_not_ready` | 승인 문서 색인 또는 프로필 미준비 |
+| 409 | `baseline_changed` | 검색 중 승인 범위·인덱스·관련 맥락 변경 |
+| 502 | `ai_unavailable` | AI 호출 실패 또는 응답 검증 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
 
 ```json
 {
   "error": {
     "code": "ai_unavailable",
-    "message": "응답·폴백 모두 실패"
+    "message": "비비 답변을 만들지 못했습니다."
   }
 }
 ```
@@ -11947,15 +11925,17 @@ HTTP `200`.
 #### 처리 규칙
 
 - 현재 승인 설계·관련 작업을 읽고 출처와 미확정 사항을 함께 응답한다.
-- 모델 장애 시 템플릿 응답은 origin=TEMPLATE다. 실제 사용량을 만든 것으로 표시하지 않는다.
+- 모델 장애 시 템플릿 대체 없이 오류를 반환한다. AI 비비 질문 기능은 AI 서버에서 활성화해야 한다.
+- 최초 호출에서 요청 키의 해시만 DB에 예약한다. 예약 뒤 오류나 응답 유실이 발생해도 동일 키는 409이며 새 키로 요청해야 한다. 질문·답변 본문과 원래 키는 저장하지 않는다. 키 해시 보존 기간은 미합의로 현재 삭제하지 않는다.
+- AI 호출 후 현재 baseline, 전체 문서 인덱스 세대, 승인 항목·작업 및 선택된 근거를 다시 검사한다. 변경 시 답변을 발급하지 않는다.
 - 장기 대화 저장은 이 API 계약에 포함하지 않는다. 공유할 판단은 기록 API로 제출한다.
 
 #### 원문 RAG 확장 — 2026-10-27
 
-BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-A09](03-ai-internal.md#ai-a09)를 따른다. 이 절은 원문 RAG 연동 시 적용할 확장 계약이며 현재 구현 완료를 뜻하지 않는다.
+BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-A09](03-ai-internal.md#ai-a09)를 따른다. 이 절은 추가 확장 제안이다. 현재 구현 범위는 APPROVED이며 DOCUMENT_REVIEW와 사용자 지정 문서 버전은 지원하지 않는다.
 
-- 요청에 `mode?: APPROVED|DOCUMENT_REVIEW`(기본 APPROVED), `document_version_ids?: ID[]`를 추가한다. DOCUMENT_REVIEW는 명시 목록 필수이며 BE가 현재 접근 권한을 재검사한다. APPROVED는 사용자 목록을 받지 않고 현재 baseline에서 정한다.
-- RAG 응답은 기존 text/sources/unresolved/usage에 `mode`, `document_version_ids`, APPROVED의 `baseline_id`를 추가한다. DOCUMENT_REVIEW 답변은 미승인 검토임을 표시한다. 내부 citations는 허용 evidence 집합으로 검증 후 기존 Source 형식에 매핑한다.
+- 향후 제안: 요청에 `mode?: APPROVED|DOCUMENT_REVIEW`(기본 APPROVED), `document_version_ids?: ID[]`를 추가한다. DOCUMENT_REVIEW는 명시 목록 필수이며 BE가 현재 접근 권한을 재검사한다. APPROVED는 사용자 목록을 받지 않고 현재 baseline에서 정한다.
+- 향후 제안: RAG 응답은 기존 text/sources/unresolved/usage에 `mode`, `document_version_ids`, APPROVED의 `baseline_id`를 추가한다. DOCUMENT_REVIEW 답변은 미승인 검토임을 표시한다. 내부 citations는 허용 evidence 집합으로 검증 후 기존 Source 형식에 매핑한다.
 - 미색인/프로필 미준비는 HTTP 409 `index_not_ready`, 최종 검사에서 baseline 변경은 HTTP 409 `baseline_changed`. 예전 승인본으로 대체하거나 자동 무한 재생성하지 않는다. 정상 검색 0건은 오류와 구분하고 근거 부족을 안내한다.
 - 기존 FE 계약은 확장 구현 시 함께 반영한다. 업로드/분석 상태 계약과 아직 미합의인 업로드 정책은 이 변경으로 덮어쓰지 않는다.
 

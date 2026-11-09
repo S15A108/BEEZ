@@ -29,20 +29,28 @@ public class AiClient {
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
+    private final RestClient beeChatRest;
 
     public AiClient(BeezProperties props) {
         this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT);
     }
 
+    public AiClient(BeezProperties props,
+                    Duration questionReadTimeout, Duration draftReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, Duration.ofSeconds(70));
+    }
+
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
-                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout) {
+                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
+                    @Value("${beez.bee.chat-read-timeout:70s}") Duration beeChatReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
+        this.beeChatRest = client(ai, max(ai.readTimeout(), beeChatReadTimeout));
     }
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
@@ -136,6 +144,12 @@ public class AiClient {
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> assignmentRecommendations(java.util.Map<String, Object> input) {
         return questionRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /** AI-A05 question and grounding verification can each call a model. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> beeChat(java.util.Map<String, Object> input) {
+        return beeChatRest.post().uri("/v1/bee/chat").body(input).retrieve().body(java.util.Map.class);
     }
 
     @SuppressWarnings("unchecked")
