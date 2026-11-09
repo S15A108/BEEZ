@@ -88,3 +88,21 @@ it('작업을 불러오지 못하면 그렇게 알린다', async () => {
     await screen.findByText('협의할 작업 정보를 불러오지 못했어요.'),
   ).toBeInTheDocument()
 })
+
+it('작업 현황 안에서는 넘겨받은 onOpen으로 작업을 고르고 창 상태는 건드리지 않는다', async () => {
+  vi.spyOn(tasksApi, 'get').mockResolvedValue(related)
+  const onOpen = vi.fn()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <FindingRelatedTask projectId="101" taskId="504" onOpen={onOpen} />
+    </QueryClientProvider>,
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: '작업 보기' }),
+  )
+  expect(onOpen).toHaveBeenCalledWith('504')
+  expect(useWorkspaceStore.getState().focusId).toBe('501')
+})

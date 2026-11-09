@@ -473,6 +473,66 @@ it('부딪힌 작업이 있는 문제는 협의할 작업과 담당자를 함께
   ).toBeInTheDocument()
 })
 
+// PR #231 리뷰: 작업 A로 연 작업 현황에서 B를 고르면 focusId는 A 그대로라, A로 openPane해도 선택이 B에 남았다.
+it('작업 A로 연 뒤 B를 고르고 B의 협의할 작업 A에서 작업 보기를 누르면 A가 선택된다', async () => {
+  const first = task
+  const second: TaskDetail = {
+    ...task,
+    id: '504',
+    key: 'TASK-004',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '514',
+      task_id: '504',
+      plan: {
+        ...task.current_plan_revision.plan,
+        title: '빈 목록 안내 API 문구',
+      },
+    },
+    validation_status: 'NEEDS_REVIEW',
+    validation: {
+      ...task.validation!,
+      id: '604',
+      task_id: '504',
+      plan_revision_id: '514',
+      status: 'NEEDS_REVIEW',
+      findings: [
+        {
+          id: '707',
+          source: 'RULE',
+          kind: 'CONFLICT',
+          severity: 'BLOCKING',
+          message: '다른 진행 작업이 같은 설계 항목의 변경을 점유하고 있어요.',
+          related_task_id: '501',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+        },
+      ],
+    },
+  }
+  const byId: Record<string, TaskDetail> = { '501': first, '504': second }
+  vi.mocked(tasksApi.list).mockImplementation(async () => ({
+    items: [first, second],
+    has_more: false,
+  }))
+  vi.mocked(tasksApi.get).mockImplementation(async (_project, id) => byId[id])
+  vi.mocked(validationsApi.get).mockImplementation(
+    async (_project, id) => (id === '604' ? second : first).validation!,
+  )
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: /TASK-004/ }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: '작업 보기' }),
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /TASK-001/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+})
+
 it('검증 결과에 BEEZ를 거치지 않은 작업은 검증하지 않는다고 적는다(AC-12)', async () => {
   show(false)
   expect(

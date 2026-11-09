@@ -1157,6 +1157,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <FindingRelatedTask
                             projectId={projectId}
                             taskId={finding.related_task_id}
+                            onOpen={(id) => setSelected({ id, focus: focusId })}
                           />
                         )}
                         <div className="mt-3">
