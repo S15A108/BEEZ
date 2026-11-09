@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { officeTimeAt, type OfficeTime } from '@/three/office/officeLook'
@@ -93,14 +93,14 @@ export function useClearPaneOnLeave() {
   useEffect(() => () => openPane(null), [openPane])
 }
 
-/** 사무실에 쓸 시간대(D39). 자동이면 한국 시각을 1분마다 다시 본다. */
+const everyMinute = (onChange: () => void) => {
+  const timer = setInterval(onChange, 60_000)
+  return () => clearInterval(timer)
+}
+
+/** 사무실에 쓸 시간대(D39). 자동이면 그릴 때마다 지금 한국 시각을 보고, 1분마다 다시 그린다. */
 export function useOfficeTime(): OfficeTime {
   const setting = useWorkspaceStore((state) => state.officeTime)
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    if (setting !== 'auto') return
-    const timer = setInterval(() => setNow(new Date()), 60_000)
-    return () => clearInterval(timer)
-  }, [setting])
-  return setting === 'auto' ? officeTimeAt(now) : setting
+  const now = useSyncExternalStore(everyMinute, () => officeTimeAt(new Date()))
+  return setting === 'auto' ? now : setting
 }

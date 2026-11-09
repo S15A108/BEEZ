@@ -31,7 +31,13 @@ export type SuggestAssignmentsInput = z.infer<
 >
 
 export const suggestAssignmentsResponseSchema = z.object({
-  suggestions: common.assignmentSuggestionSchema.array(),
+  suggestions: common.assignmentSuggestionSchema
+    .extend({
+      alternatives: z
+        .object({ member_id: common.idSchema, reason: z.string().min(1) })
+        .array(),
+    })
+    .array(),
   generation: common.generationSchema,
 })
 export type SuggestAssignmentsResponse = z.infer<

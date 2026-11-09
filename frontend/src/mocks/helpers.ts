@@ -155,10 +155,13 @@ export function activity(
   extra: Record<string, string> = {},
 ): void {
   const project = requireProject(context)
+  const account = requireAccount(context)
   project.activities.push({
     id: nextId(context.database),
     type,
-    actor_account_id: requireAccount(context).id,
+    actor_type: 'HUMAN',
+    actor_account_id: account.id,
+    actor_name: account.name,
     result: 'SUCCESS',
     created_at: now(),
     ...extra,

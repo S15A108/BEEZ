@@ -1,5 +1,6 @@
 package com.beez.backend.task.repository;
 
+import com.beez.backend.agenttoken.AgentConnectionRule;
 import java.sql.Types;
 import java.util.HashMap;
 import java.util.List;
@@ -33,7 +34,9 @@ public class TaskStatusRepository {
 
     /**
      * 에이전트 세션 한 페이지 (세션 번호 내림차순, beforeId 미만, limit 개).
-     * 폐기되지 않은 토큰 + 아직 활성인 멤버의 끝나지 않은 세션만 (-178: 재연결마다 세션 행이 생기고, 같은 사람의 새 연결에 밀려난 이전 것은 ended_at 이 찍힌다. Claude Code 는 종료 때 DELETE 를 보내지 않아 그냥 끝낸 세션은 ended_at 이 비어 남는다 — 시간 창 등 판정 기준은 -75). 세션이 보고한 현재 작업이 이 프로젝트 것이면 작업 칸을 채운다.
+     * 폐기되지 않은 토큰 + 아직 활성인 멤버의 살아 있는 세션만. 살아 있음은 팀원 목록 agent_connected·연결 현황 AGT-A05 와 같은
+     * {@link AgentConnectionRule#LIVE_SESSION_SQL}(끝나지 않았고 최근 2시간 안에 통신, -75)이다 — Claude Code 는 종료 때 DELETE 를 보내지 않아
+     * 그냥 끝낸 세션은 ended_at 이 비어 남으므로, ended_at 만 보면 꺼진 에이전트를 계속 보여 준다. 세션이 보고한 현재 작업이 이 프로젝트 것이면 작업 칸을 채운다.
      * 행: session_id, member_id, agent_name, task_id, task_title, task_status, waiting_reason, current_plan_revision_id
      */
     public List<Map<String, Object>> agentSessions(Long projectId, Long memberId, long beforeId, int limit) {
@@ -46,11 +49,11 @@ public class TaskStatusRepository {
                           join project_member m on m.project_id = k.project_id and m.account_id = k.account_id and m.active = true
                           left join task t on t.id = s.current_task_id and t.project_id = :p
                          where s.id < :before
-                           and s.ended_at is null
+                           and %s
                            and (:member is null or m.id = :member)
                          order by s.id desc
                          limit :limit
-                        """)
+                        """.formatted(AgentConnectionRule.LIVE_SESSION_SQL))
                 .param("p", projectId).param("before", beforeId).param("member", memberId, Types.BIGINT).param("limit", limit)
                 .query().listOfRows();
     }

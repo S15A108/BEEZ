@@ -34,10 +34,13 @@ export function makeDreamFloor(base: Floor, phase: number): Floor {
     decor: [],
     signs: [],
     outdoorExit: phase >= 4 ? base.outdoorExit : undefined,
-    // 가구 가운데가 열린 칸에 있으면 둔다. 양 끝 칸으로 재면 1 m보다 작거나 벽에 붙은 가구(서가·화분·벽쪽 책상)가
-    // 빠졌다(D39).
+    // 방 전체가 보이면(4) 가운데가 방 안인 가구를 모두 둔다. 벽에 걸친 가구(서가·화분·벽쪽 책상)도 빠지면 안 된다(D39).
+    // 일부만 보이는 앞 단계에서는 덮는 칸이 모두 보여야 둔다. 가운데만 재면 숨겨진 칸 위로 가구가 튀어나온다.
     furniture: base.furniture.filter((f) =>
-      visible(Math.floor(f.x + f.w / 2), Math.floor(f.y + f.h / 2)),
+      phase >= 4
+        ? visible(Math.floor(f.x + f.w / 2), Math.floor(f.y + f.h / 2))
+        : visible(Math.floor(f.x), Math.floor(f.y)) &&
+          visible(Math.ceil(f.x + f.w) - 1, Math.ceil(f.y + f.h) - 1),
     ),
   }
 }
