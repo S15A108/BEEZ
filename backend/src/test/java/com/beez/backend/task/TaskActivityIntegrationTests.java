@@ -9,11 +9,14 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
+import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.document.service.HybridDocumentCandidateSearch;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.support.McpTestClient;
 import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.service.ValidationAnalyzer;
 import com.beez.backend.validation.worker.ValidationWorker;
+import io.modelcontextprotocol.client.McpSyncClient;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -23,8 +26,10 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * 작업·검증 활동 (S15P31A108-287, 계약 10-notification-activity-contract.md 6.2 "작업 유형 정하기"·"검증 완료 정하기").
@@ -41,6 +46,12 @@ class TaskActivityIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     ValidationWorker worker;
+
+    @Autowired
+    Environment env;
+
+    @Autowired
+    ObjectMapper json;
 
     @MockitoSpyBean
     ValidationRepository repository;
@@ -169,6 +180,43 @@ class TaskActivityIntegrationTests extends IntegrationTestSupport {
                 "TASK_CREATED|task:" + t[0] + ":created|TASK|" + t[0] + "|HUMAN|" + member + "|SUCCESS",
                 "VALIDATION_FINISHED|validation:" + validationId + ":finished:0|VALIDATION|" + validationId
                         + "|HUMAN|" + member + "|FAILURE");
+    }
+
+    /**
+     * 깨지면: 에이전트가 MCP-12 로 보고한 전이가 사람이나 시스템 행위로 남거나, 어느 연결이 했는지(agent_session_id)가 빠진다.
+     * MCP 경로는 도구 처리의 바깥 트랜잭션 안에서 보고하므로 커밋 직전 기록이 그 바깥 커밋에 묶인다 — REST 경로 시험으로는 보이지 않는다.
+     */
+    @Test
+    void agentReportOverMcp_recordsAgentActorAndItsSession() throws Exception {
+        String token = SecretTokens.generate();
+        api.jdbc.sql("update agent_token set token_hash = :h where id = :id")
+                .param("h", SecretTokens.hash(token)).param("id", api.agentTokenId()).update();
+        long[] t = createTask("M", api.implementsRef("API-01"));
+        long pass = api.passValidation(t[0]);
+
+        McpSyncClient agent = McpTestClient.connect(env.getRequiredProperty("local.server.port", Integer.class), token);
+        String session;
+        long started;
+        try {
+            agent.initialize();
+            session = McpTestClient.ok(json, McpTestClient.call(agent, "check_connection", Map.of()))
+                    .get("agent_session_id").asString();
+            started = McpTestClient.ok(json, McpTestClient.call(agent, "report_task_state", Map.of(
+                    "task_id", String.valueOf(t[0]), "event", "START", "plan_revision_id", String.valueOf(t[1]),
+                    "expected_lock_version", t[2], "validation_id", String.valueOf(pass), "idempotency_key", "k-mcp-start")))
+                    .get("task").get("lock_version").asLong();
+        } finally {
+            agent.closeGracefully();                     // 종료 DELETE 를 기다려야 다음 시험의 truncate 와 교착하지 않는다
+        }
+
+        assertThat(api.jdbc.sql("""
+                        select event_type, dedupe_key, actor_kind, agent_session_id
+                          from activity_event where project_id = :p and task_id = :t and event_type = 'TASK_STARTED'
+                        """)
+                .param("p", projectId).param("t", t[0])
+                .query((rs, n) -> String.join("|", rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)))
+                .list())
+                .containsExactly("TASK_STARTED|task:" + t[0] + ":lock:" + started + ":START|AGENT|" + session);
     }
 
     // ---- 도우미 ----

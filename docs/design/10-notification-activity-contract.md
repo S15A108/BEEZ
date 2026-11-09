@@ -216,7 +216,7 @@
 | --- | --- |
 | 언제 | 검증이 끝 상태(PASS·NEEDS_INPUT·NEEDS_REVIEW·ERROR)가 된 순간, 그 결과를 저장하는 같은 트랜잭션에서 |
 | 남기지 않는 것 | NOT_RUN·RUNNING(아직 안 끝남), STALE(무효화 — 원인이 된 행위의 활동이 대신함), 시도 번호가 `current_attempt`와 달라 버려진 늦은 결과 |
-| 행위자 | 요청 처리 안에서 규칙만으로 바로 끝나면 요청자의 `CallerContext`, 워커가 끝내면 `SystemActor.SYSTEM` |
+| 행위자 | 요청 처리 안에서 규칙만으로 바로 끝나면 요청자의 `CallerContext`, 워커가 끝내면 `SystemActor.SYSTEM`. 설계 발행 뒤 서버가 다시 접수한 DELTA가 규칙으로 끝나면 `SYSTEM` — 발행한 사람은 그 작업의 완료를 보고하지 않았다(PR #202 리뷰) |
 | `result` | PASS만 `SUCCESS`. NEEDS_INPUT·NEEDS_REVIEW·ERROR는 `FAILURE`(어떤 상태였는지는 검증 상세에서 본다) |
 | 키 | `validation:{id}:finished:{attempt}` — ERROR 뒤 재실행하면 같은 검증이 다시 끝나므로 시도 번호로 구분한다 |
 | 보조 참조 | `task_id`를 함께 넣는다(작업별 타임라인 필터) |
@@ -230,7 +230,7 @@
 | MON-A04 | 정렬·cursor를 id 내림차순으로, 응답에 `target_type`·`target_id`·`actor_type`·`actor_name`. 인덱스 `(project_id, id DESC)`와 `change_proposal_id` 부분 인덱스(V35) | -183 |
 | `TaskStateChangedEvent`·`TaskStateService` | 이벤트의 `actorAccountId`를 `CallerContext`로 바꾸고, 발행부(`report`)가 받은 `caller`를 그대로 담는다. 바뀐 뒤 상태(`to`)는 이미 있으니 대기 사유(`waitingReason`)를 더해, 둘로 유형을 정한다(6.2 "작업 유형 정하기"). 이벤트는 상태가 실제로 바뀐 보고에서만 나간다(멱등 반환은 그 전) | -64(변준성) → **-287(전진) 구현** |
 | `TaskStateChangedListener` | `AFTER_COMMIT` 로그 → `BEFORE_COMMIT`에서 `ActivityRecorder` 호출. 유형·키는 `TaskActivities`에 모았다 | -64(변준성) → **-287 구현** |
-| 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)`. 워커 종결 3곳(`AnalysisResultApplier` 결과 반영·모델 전 규칙 판정·실패)은 SYSTEM, 접수 때 규칙 확정(`ValidationAcceptService`)은 요청자. 이어 받은 복사본(`carryForward`)은 새로 끝난 것이 아니라 남기지 않는다. S4 기록은 `DeltaCompletion`에서 한다(워커·발행 뒤 재접수 두 경로가 모두 거친다) | -159(변준성) → **-287 구현** |
+| 검증 결과 반영 | 끝난 검증마다 `VALIDATION_FINISHED`(6.2 "검증 완료 정하기"). S4면 같은 트랜잭션에서 작업을 COMPLETED로 바꾸고 `recordBy(SYSTEM, TASK_COMPLETED)`. 워커 종결 3곳(`AnalysisResultApplier` 결과 반영·모델 전 규칙 판정·실패)은 SYSTEM, 접수 때 규칙 확정(`ValidationAcceptService`)은 요청자, 발행 뒤 재접수(`reacceptAfterPublication`)의 규칙 확정은 SYSTEM. 이어 받은 복사본(`carryForward`)은 새로 끝난 것이 아니라 남기지 않는다. S4 기록은 `DeltaCompletion`에서 한다(워커·발행 뒤 재접수 두 경로가 모두 거친다) | -159(변준성) → **-287 구현** |
 | 설계 발행 수신·무효화(S1) | 발행 트랜잭션 안에서, 발행으로 검증이 STALE이 됐거나 WAITING(REVALIDATION)이 된 작업의 담당자에게 작업마다 한 건씩 `REVALIDATION_REQUIRED` 알림(본인 포함). S1은 IN_PROGRESS만 WAITING으로 바꾸고 READY 등은 검증만 STALE로 두는데, READY 작업도 새 PASS가 있어야 시작할 수 있으므로 함께 보낸다. STALE 대상은 작업 상태로 거르지 않으므로([04 문서](04-task-lifecycle.md) S1) 완료·취소 작업은 여기서 뺀다(이 제외 기준은 MCP-03 `affected_task_ids`와 같다 — 대상 선정 기준까지 같은 것은 아니다). 담당자가 없는 작업(`assignee_member_id` NULL)은 건너뛴다. 키는 발행한 제안에 묶어 `task:{작업 ID}:revalidation:{제안 ID}:to:{계정}`(첫 조각은 작업 도메인 몫, 5절) — 여러 작업을 한 번에 바꾸는 일괄 UPDATE면 `@Version`이 오르지 않아 잠금 버전 키를 쓸 수 없다. 발행 서비스가 `ChangeNotifications.published`로 요청한다 | -163(변준성) → **-217(오서현) 구현**, 시험 `ProposalPublicationImpactIntegrationTest` |
 | `TaskPlanService` | `createTask` → `TASK_CREATED`, `addRevision` → `TASK_PLAN_REVISED`(S2 재검증 대기 전환 포함). 둘 다 작업을 flush한 뒤 남긴다 | -64(변준성) → **-287 구현** |
 | `TaskHandoverService.reassign`·`handOver` | `CallerContext` 인자를 추가하고, `reassign` 안에서 담당자가 실제로 바뀐 작업마다 `TASK_ASSIGNEE_CHANGED` 활동 + 새 담당자에게 `TASK_ASSIGNED` 알림((수정안 요청 · 11-04 사용자 결정) 새 담당자가 행위자 본인이면 보내지 않는다: 팀장 자기 배정, 팀원 스스로 맡기). 키는 변경 전 잠금 버전(6.2 예외). 같은 담당자면 아무것도 남기지 않는다. 담당자 변경(TSK-A06, `TaskAssigneeService`)과 팀원 제외·나가기(`ProjectMemberService`)가 모두 이 서비스를 거치므로 호출 지점은 이 한 곳이다. 두 호출부도 받은 `caller`를 넘기게 바꾼다. 인계 대상 없이 담당자를 비우면 활동만 남긴다(-301). 탈퇴(`ProjectWithdrawalService.leaveAll`)도 탈퇴하는 본인의 `caller`로 `handOver(…, null)`을 부른다(-281) | 전진(-212 코드 작성자, -182와 함께) · -288·-301·-281 |
