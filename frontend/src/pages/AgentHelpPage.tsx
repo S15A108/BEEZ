@@ -1,5 +1,8 @@
+import { useEffect } from 'react'
 import type { ReactNode } from 'react'
+import { useLocation } from 'react-router'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { cn } from '@/lib/utils'
 
 // 에이전트 연결 도움말(AGT-04). 원본은 docs/guides/agent-connection.md(S15P31A108-337)이고, 문구를 바꿀 때는 그 문서를 먼저 고친다.
 // 앱에서는 해요체로 바꾸고 내부 메모(요구사항·티켓 번호, 변경 이력)와 dev 서버 주소를 뺐다(docs/decisions.md D43).
@@ -38,9 +41,19 @@ function Section({
   )
 }
 
-function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
+function Table({
+  head,
+  rows,
+  className,
+}: {
+  head: string[]
+  rows: ReactNode[][]
+  className?: string
+}) {
   return (
-    <table className="w-full border-collapse text-sm leading-[1.6]">
+    <table
+      className={cn('w-full border-collapse text-sm leading-[1.6]', className)}
+    >
       <thead>
         <tr>
           {head.map((cell) => (
@@ -76,6 +89,11 @@ const reconnect = (
 )
 
 export default function AgentHelpPage() {
+  const { hash } = useLocation()
+  // 라우트가 lazy라 새 탭 첫 로드에서 브라우저가 해시로 스크롤할 때는 절이 아직 없다. 그린 뒤 직접 내려간다(PR #230 리뷰).
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView()
+  }, [hash])
   return (
     <main className="mx-auto grid max-w-[760px] gap-9 px-6 pt-10 pb-20 text-[15px] leading-[1.7] break-keep select-text">
       <header className="grid gap-2">
@@ -195,14 +213,15 @@ export default function AgentHelpPage() {
         </p>
         <Table
           head={['표시', '뜻']}
+          className="[&_td:first-child]:whitespace-nowrap"
           rows={[
             [
               agentStatusLabels.connected,
-              '최근 2시간 안에 통신한 살아 있는 연결이 있어요.',
+              '최근 2시간 안에 통신한 살아 있는 연결이 있어요. 맡은 작업 없이 쉬는 중이어도 연결됨이에요.',
             ],
             [
               agentStatusLabels.recheck,
-              '연결은 살아 있지만 30분 넘게 통신이 없어요. 에이전트가 쉬는 중이면 정상이에요.',
+              '연결은 살아 있지만 진행 중인 작업을 맡은 채 30분 넘게 통신이 없어요. 작업이 멈췄는지 Claude Code 창을 확인해요.',
             ],
             [
               agentStatusLabels.failed,
@@ -213,6 +232,10 @@ export default function AgentHelpPage() {
                 </a>
                 을 봐요.
               </>,
+            ],
+            [
+              agentStatusLabels.disconnected,
+              '2시간 넘게 통신이 없거나 세션이 끝났어요. Claude Code를 다시 켜고 연결 확인을 눌러요.',
             ],
             [agentStatusLabels.none, '아직 연결한 적이 없어요.'],
           ]}

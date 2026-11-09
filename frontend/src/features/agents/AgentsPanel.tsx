@@ -283,10 +283,15 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                               ? '2시간 넘게 통신이 없거나 세션이 끝났어요. Claude Code를 다시 시작한 뒤 연결 확인을 눌러 주세요.'
                               : '아래 단계를 마친 뒤 연결 확인을 눌러 주세요.'}
                 </span>
+                {/* 연결 끊김은 다시 연결하는 법(404·409 등)이 문제 해결에 있다(PR #230 리뷰). */}
                 {!statusFailed &&
-                  (state === 'failed' || state === 'recheck') && (
+                  (state === 'failed' ||
+                    state === 'recheck' ||
+                    state === 'disconnected') && (
                     <HelpLink
-                      section={state === 'failed' ? 'troubleshooting' : 'check'}
+                      section={
+                        state === 'recheck' ? 'check' : 'troubleshooting'
+                      }
                       label="연결 도움말"
                     />
                   )}

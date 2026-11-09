@@ -55,37 +55,6 @@ it('토큰을 한 번만 보여 주고, 연결 확인에 보고가 없으면 연
   ).toBeInTheDocument()
 })
 
-// S15P31A108-338: 3단계 요약만으로는 처음 연결하는 팀원이 막혀 도움말 페이지로 잇는다. 같은 탭이면 설정 창이 닫힌다.
-it('연결 미확인·연결 실패 상태 줄과 2단계 명령 아래에 새 탭 도움말 링크와 한 연결 안내를 보여 준다', async () => {
-  const user = userEvent.setup()
-  render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <AgentsPanel projectId="101" />
-    </QueryClientProvider>,
-  )
-  // 예시 데이터의 내 에이전트는 보고가 끊겨 연결 미확인이다.
-  const help = await screen.findByRole('link', { name: '연결 도움말' })
-  expect(help).toHaveAttribute('href', '/help/agent-connection#check')
-  expect(help).toHaveAttribute('target', '_blank')
-  expect(
-    screen.getByText(/같은 계정의 연결은 프로젝트마다 하나만 살아 있어요/),
-  ).toHaveTextContent('나중 연결이 이기고')
-  expect(
-    screen.getByRole('link', { name: '자세한 연결 방법' }),
-  ).toHaveAttribute('href', '/help/agent-connection#add')
-  await user.click(screen.getByRole('button', { name: '연결 확인' }))
-  await waitFor(() =>
-    expect(screen.getByRole('link', { name: '연결 도움말' })).toHaveAttribute(
-      'href',
-      '/help/agent-connection#troubleshooting',
-    ),
-  )
-})
-
 it('활성 토큰이 5개면 토큰 이름 폼에 한도와 할 일을 알려 준다', async () => {
   for (let index = 0; index < 5; index++)
     await agentsApi.issueToken('101', { label: `PC ${index}` })
@@ -281,5 +250,54 @@ it('MCP 연결 명령은 발급한 토큰을 Bearer 헤더로 넣고, 모르면 
     `--header "Authorization: Bearer ${token}"`,
   )
   expect(screen.queryByText(/<에이전트 토큰> 자리에/)).not.toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+// S15P31A108-338: 3단계 요약만으로는 처음 연결하는 팀원이 막혀 도움말 페이지로 잇는다. 같은 탭이면 설정 창이 닫힌다.
+it('연결 미확인·연결 실패 상태 줄과 2단계 명령 아래에 새 탭 도움말 링크와 한 연결 안내를 보여 준다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockResolvedValue({
+    items: [
+      {
+        ...notConnected.items[0],
+        connected: true,
+        status_check_required: true,
+      },
+    ],
+    has_more: false,
+  })
+  const user = userEvent.setup()
+  mountPanel()
+  const help = await screen.findByRole('link', { name: '연결 도움말' })
+  expect(screen.getByRole('status')).toHaveTextContent(/^연결 미확인/)
+  expect(help).toHaveAttribute('href', '/help/agent-connection#check')
+  expect(help).toHaveAttribute('target', '_blank')
+  expect(
+    screen.getByText(/같은 계정의 연결은 프로젝트마다 하나만 살아 있어요/),
+  ).toHaveTextContent('나중 연결이 이기고')
+  expect(
+    screen.getByRole('link', { name: '자세한 연결 방법' }),
+  ).toHaveAttribute('href', '/help/agent-connection#add')
+  list.mockResolvedValue(notConnected)
+  await user.click(await checkButton('연결 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('link', { name: '연결 도움말' })).toHaveAttribute(
+      'href',
+      '/help/agent-connection#troubleshooting',
+    ),
+  )
+  vi.restoreAllMocks()
+})
+
+// PR #230 리뷰: #229로 생긴 연결 끊김(2시간 넘게 통신 없음·세션 종료)도 다시 연결하는 법을 문제 해결에서 찾는다.
+it('연결 끊김이면 상태 줄 도움말 링크가 문제 해결 절을 새 탭으로 연다', async () => {
+  vi.spyOn(agentsApi, 'list').mockResolvedValue(notConnected)
+  mountPanel()
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 끊김/),
+  )
+  expect(screen.getByRole('link', { name: '연결 도움말' })).toHaveAttribute(
+    'href',
+    '/help/agent-connection#troubleshooting',
+  )
   vi.restoreAllMocks()
 })

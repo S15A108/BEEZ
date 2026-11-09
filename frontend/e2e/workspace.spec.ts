@@ -477,7 +477,8 @@ test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 �
 })
 
 // S15P31A108-338: 도움말은 새 탭으로 열어 사무실과 설정 창(한 번만 보이는 토큰)을 그대로 둔다.
-test('설정 › 에이전트의 도움말 링크로 연결 단계와 오류 대처를 새 탭에서 본다', async ({
+// PR #230 리뷰: 라우트가 lazy라 새 탭 첫 로드에서 해시 절로 내려가지 않았다. 절이 화면 안에 있는지까지 본다.
+test('설정 › 에이전트의 연결 실패 도움말 링크로 새 탭의 문제 해결 절에 바로 가고 연결 단계도 본다', async ({
   page,
 }) => {
   await openWorkspace(page)
@@ -486,11 +487,17 @@ test('설정 › 에이전트의 도움말 링크로 연결 단계와 오류 대
     .getByRole('navigation', { name: '설정 메뉴' })
     .getByRole('button', { name: /에이전트/ })
     .click()
+  await page.getByRole('button', { name: '연결 확인' }).click()
+  await expect(
+    page.getByRole('status').filter({ hasText: '연결 실패' }),
+  ).toBeVisible()
   const [help] = await Promise.all([
     page.waitForEvent('popup'),
     page.getByRole('link', { name: '연결 도움말' }).click(),
   ])
-  await expect(help).toHaveURL(/\/help\/agent-connection#check$/)
+  await expect(help).toHaveURL(/\/help\/agent-connection#troubleshooting$/)
+  const errors = help.getByRole('region', { name: '문제 해결' })
+  await expect(errors).toBeInViewport()
   for (const step of [
     '1. 토큰 발급 (웹)',
     '2. Claude Code에 BEEZ 추가 (터미널)',
@@ -499,7 +506,6 @@ test('설정 › 에이전트의 도움말 링크로 연결 단계와 오류 대
     '5. 연결 해제',
   ])
     await expect(help.getByRole('heading', { name: step })).toBeVisible()
-  const errors = help.getByRole('region', { name: '문제 해결' })
   for (const code of [
     'unauthenticated',
     'token_revoked',
