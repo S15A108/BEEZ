@@ -84,13 +84,22 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         // 종료 DELETE 를 기다리지 않으면 다음 시험의 truncate 와 교착한다 (McpToolsIntegrationTests.tearDown 과 같은 이유)
-        // 하나가 닫기에 실패해도(초기화 실패한 클라이언트 등) 나머지는 닫고, 시험 본래의 실패를 가리지 않는다
+        // 하나가 닫기에 실패해도(초기화 실패한 클라이언트 등) 나머지는 닫는다. 실패는 모아서 스택과 함께 던진다
+        // (시험 본문이 이미 실패했으면 JUnit 이 이 예외를 본래 실패에 suppressed 로 붙인다)
+        RuntimeException failure = null;
         for (McpSyncClient client : opened) {
             try {
                 client.closeGracefully();
             } catch (RuntimeException e) {
-                System.err.println("MCP 클라이언트 닫기 실패: " + e);
+                if (failure == null) {
+                    failure = e;
+                } else {
+                    failure.addSuppressed(e);
+                }
             }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 

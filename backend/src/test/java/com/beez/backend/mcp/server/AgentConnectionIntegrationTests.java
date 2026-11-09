@@ -7,14 +7,12 @@ import com.beez.backend.project.ProjectRole;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
-import io.modelcontextprotocol.client.McpClient;
+import com.beez.backend.support.McpTestClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.McpHttpClientTransportAuthorizationException;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -210,21 +208,9 @@ class AgentConnectionIntegrationTests extends IntegrationTestSupport {
 
     // ---- 도우미 ----
 
-    /**
-     * 닫을 때는 closeGracefully() 를 쓴다 — close() 는 세션 종료 DELETE 를 기다리지 않아 다음 시험의 truncate 와 교착한다
-     * ({@code McpServerIntegrationTests.connect} 참고).
-     */
+    /** 닫을 때는 closeGracefully() 를 쓴다 ({@link McpTestClient} 참고) */
     private McpSyncClient connect(String token, String clientName) {
-        var transport = HttpClientStreamableHttpTransport
-                .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))
-                .endpoint("/mcp")
-                .httpRequestCustomizer((builder, method, uri, body, context) ->
-                        builder.header("Authorization", "Bearer " + token))
-                .build();
-        return McpClient.sync(transport)
-                .clientInfo(new McpSchema.Implementation(clientName, "9.9.9"))
-                .requestTimeout(Duration.ofSeconds(10))
-                .build();
+        return McpTestClient.connect(Integer.parseInt(env.getRequiredProperty("local.server.port")), token, clientName);
     }
 
     private Issued issue(String email, long projectId, String label) {
