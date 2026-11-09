@@ -165,11 +165,11 @@ it('비용·토큰을 모르는 호출이 섞이면 0원·전체 값처럼 보�
   expect(within(input).getByText('미보고 1건')).toBeInTheDocument()
   // 첫 보기는 에이전트별이라 기능별로 옮겨 본다(-312).
   await user.click(screen.getByRole('tab', { name: '기능별' }))
-  // 비용을 모르는 문서 분석 줄이 '0 USD'만으로 보이지 않는다
+  // 호출이 모두 미보고인 문서 분석 줄은 '0 토큰·0 USD'가 아니라 미보고로 보인다.
+  // 기대값 변경('0 USD + 미보고 1건' → '미보고')은 사용자 승인 2026-11-09(S15P31A108-346).
   const parse = screen.getByText('문서 분석').closest('li')!
-  expect(
-    within(within(parse).getByText('0 USD')).getByText('미보고 1건'),
-  ).toBeInTheDocument()
+  expect(within(parse).getAllByText('미보고', { exact: true })).toHaveLength(2)
+  expect(within(parse).queryByText(/토큰|USD|건/)).not.toBeInTheDocument()
   const validation = screen.getByText('작업 검증').closest('li')!
   expect(within(validation).getByText('0.01 USD')).toBeInTheDocument()
   expect(within(validation).queryByText(/미보고/)).not.toBeInTheDocument()

@@ -385,14 +385,15 @@ export function TeamPanel({
           )}
         </AsyncState>
       )}
-      {/* 초대가 하나도 없다고 확인되면 '초대 중' 칸을 숨긴다(캔버스 SCR-06-v2-settings). 목록을 불러오는 중이거나
+      {/* 초대가 하나도 없다고 확인되면 '초대 내역' 칸을 숨긴다(캔버스 SCR-06-v2-settings). 목록을 불러오는 중이거나
           실패했으면 칸을 두고 AsyncState로 오류·다시 시도를 보인다. */}
       {view === 'team' &&
         isLeader &&
         (!invitations.isSuccess ||
           invitations.data.pages.some((page) => page.items.length)) && (
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold">초대 중</h3>
+            {/* 참여함·취소됨 초대도 함께 보이므로 칸 이름은 '초대 내역'이다. 아직 참여 전인 줄에는 '초대 중' 배지가 붙는다(S15P31A108-346). */}
+            <h3 className="text-sm font-semibold">초대 내역</h3>
             {resend.isSuccess && (
               <Toast key={resend.submittedAt}>
                 {`${resend.variables.invited_email} · 초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.`}

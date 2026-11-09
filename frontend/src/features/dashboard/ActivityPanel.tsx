@@ -77,10 +77,13 @@ const agentWorkQuery = (projectId: string, cursor?: string) => ({
 export function ActivityPanel({
   projectId,
   view = 'dashboard',
+  hasBaseline,
 }: {
   projectId: string
   isLeader?: boolean
   view?: 'dashboard' | 'relations'
+  /** 기준 설계가 발행됐는지. 설계 관계 빈 화면 안내에 쓴다. */
+  hasBaseline?: boolean
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [usageView, setUsageView] = useState<UsageView>('by_agent')
@@ -178,7 +181,8 @@ export function ActivityPanel({
     by_task: (row) => row.label ?? `작업 #${row.key}`,
     by_validation: (row) => `검증 #${row.key}`,
   }
-  if (view === 'relations') return <RelationsView projectId={projectId} />
+  if (view === 'relations')
+    return <RelationsView projectId={projectId} hasBaseline={hasBaseline} />
   return (
     <div className="grid gap-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
@@ -453,11 +457,13 @@ export function ActivityPanel({
                       label: '입력 토큰',
                       value: data.input_tokens.toLocaleString('ko-KR'),
                       unknown: data.tokens_unknown_call_count,
+                      calls: data.call_count,
                     },
                     {
                       label: '출력 토큰',
                       value: data.output_tokens.toLocaleString('ko-KR'),
                       unknown: data.tokens_unknown_call_count,
+                      calls: data.call_count,
                     },
                     {
                       label: '호출',
@@ -470,6 +476,7 @@ export function ActivityPanel({
                         ? costText(data.estimated_cost_amount, data.currency)
                         : '—',
                       unknown: data.cost_unknown_call_count,
+                      calls: data.call_count,
                       note: '단가가 없으면 숨겨요',
                     },
                   ].map((metric) => (
@@ -484,6 +491,7 @@ export function ActivityPanel({
                         <WithUnknown
                           value={metric.value}
                           unknown={metric.unknown}
+                          calls={metric.calls}
                         />
                         {metric.note && (
                           <span className="block text-[11.5px] leading-4 font-normal text-muted-foreground">
@@ -667,6 +675,7 @@ function UsageBars({
               <WithUnknown
                 value={`${(row.input_tokens + row.output_tokens).toLocaleString('ko-KR')} 토큰`}
                 unknown={row.tokens_unknown_call_count}
+                calls={row.call_count}
               />
             ) : (
               '—'
@@ -677,6 +686,7 @@ function UsageBars({
               <WithUnknown
                 value={costText(row.estimated_cost_amount, currency)}
                 unknown={row.cost_unknown_call_count}
+                calls={row.call_count}
               />
             ) : (
               '—'
@@ -689,7 +699,17 @@ function UsageBars({
 }
 
 // 값 아래에 합계에 못 들어간 호출 수를 작게 붙인다. 한 줄에 이으면 좁은 칸에서 꺾인다.
-function WithUnknown({ value, unknown }: { value: string; unknown?: number }) {
+// 호출이 모두 미보고면 서버 합계(0)는 '0 토큰·0원'이 아니라 모르는 값이라 '미보고'만 보인다(S15P31A108-346).
+function WithUnknown({
+  value,
+  unknown,
+  calls,
+}: {
+  value: string
+  unknown?: number
+  calls?: number
+}) {
+  if (calls && unknown !== undefined && unknown >= calls) return <>미보고</>
   const note = unknownText(unknown)
   return (
     <>
