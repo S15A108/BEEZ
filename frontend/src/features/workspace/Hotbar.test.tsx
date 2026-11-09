@@ -88,6 +88,24 @@ it('가이드가 열린 동안에는 숫자 키로 창을 열지 않는다', asy
   expect(useWorkspaceStore.getState().pane).toBeNull()
 })
 
+// S15P31A108-285: 열린 창이 입력칸에 포커스를 주면 keydown 뒤의 글자 입력이 그 칸으로 들어갔다.
+it('숫자 키로 창을 열어도 그 숫자가 창의 입력칸에 들어가지 않는다', async () => {
+  function PaneInput() {
+    const pane = useWorkspaceStore((state) => state.pane)
+    return pane ? <input aria-label="검색어" autoFocus /> : null
+  }
+  render(
+    <>
+      <Hotbar locked={[]} badges={{}} />
+      <PaneInput />
+    </>,
+  )
+  await userEvent.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('documents')
+  expect(screen.getByLabelText('검색어')).toHaveFocus()
+  expect(screen.getByLabelText('검색어')).toHaveValue('')
+})
+
 // 사용자 요청(11-02): '여기부터 시작'으로 강조한 칸이 열려 있어도 흰 글자가 아니라 검정 글자로 보인다.
 it('강조한 칸이 열려 있어도 글자와 번호를 검정으로 보인다', () => {
   useWorkspaceStore.setState({ pane: 'documents' })

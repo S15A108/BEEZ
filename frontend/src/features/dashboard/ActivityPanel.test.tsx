@@ -682,7 +682,7 @@ describe('에이전트 현황', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
-  it('연결되지 않은 에이전트는 연결 미확인으로 보이고 카드 제목은 없다', async () => {
+  it('연결되지 않은 에이전트는 연결 전으로 보이고 카드 제목은 없다', async () => {
     vi.mocked(dashboardApi.agentWork).mockResolvedValue({
       items: [session],
       has_more: false,
@@ -703,7 +703,7 @@ describe('에이전트 현황', () => {
     mount()
     await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
     const row = (await screen.findByText('민수')).closest('tr')!
-    expect(within(row).getByText('연결 미확인')).toBeInTheDocument()
+    expect(within(row).getByText('연결 전')).toBeInTheDocument()
     expect(
       screen.queryByText(
         '연결 여부, 작업 상태, 계획 검증 결과를 각각 확인해요.',

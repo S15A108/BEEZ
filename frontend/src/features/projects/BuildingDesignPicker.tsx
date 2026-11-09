@@ -8,8 +8,9 @@ import woodArt from '@/assets/buildings/wood.png'
 import type { BuildingDesign } from '@/stores/workspaceStore'
 import { cn } from '@/lib/utils'
 
-// 이름·색·설명은 캔버스 SCR-04-v2-create-project 보드 그대로다. 그림은 도시와 같은 Kenney 건물(D22, src/three/buildingModels.ts)에
-// 같은 색을 곱해 렌더한 것이라, 고른 디자인이 도시·산책 화면에서 같은 모델로 보인다.
+// 이름·색은 캔버스 SCR-04-v2-create-project 보드 그대로다. 특징 문구는 이 창의 그림과 도시 3D에 모두 보이는 것만 쓴다(D22).
+// 그림은 도시와 같은 Kenney 건물(D22, src/three/buildingModels.ts)에 같은 색을 곱해 렌더한 것이라, 고른 디자인이 도시·산책 화면에서
+// 같은 모델로 보인다. 다만 3D의 노란·초록 차양 띠는 그림에 없다.
 const buildingDesigns: {
   value: BuildingDesign
   label: string
@@ -28,28 +29,28 @@ const buildingDesigns: {
     value: 'brick',
     label: '붉은 벽돌',
     color: '#c4704f',
-    description: '벽돌 외벽 · 흰 창틀 · 굴뚝',
+    description: '벽돌색 외벽 · 발코니 · 넓은 4층',
     art: brickArt,
   },
   {
     value: 'modern',
     label: '모던 화이트',
     color: '#ebe7dc',
-    description: '흰 외벽 · 가로 띠창 · 옥상 정원',
+    description: '흰 외벽 · 4층 · 어두운 1층',
     art: modernArt,
   },
   {
     value: 'tower',
     label: '다크 타워',
     color: '#45454e',
-    description: '짙은 외벽 · 높고 좁은 몸체 · 안테나',
+    description: '짙은 외벽 · 높고 좁은 몸체 · 옥상 기계실',
     art: towerArt,
   },
   {
     value: 'wood',
     label: '목조 스튜디오',
     color: '#b98a52',
-    description: '나무 외벽 · 박공지붕 · 큰 창',
+    description: '나무색 외벽 · 낮은 두 동 · 평지붕',
     art: woodArt,
   },
 ]

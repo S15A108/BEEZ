@@ -28,6 +28,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Toast } from '@/components/Toast'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import type { AgentStatus } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { useSession } from '@/features/auth/useSession'
 import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
 import { projectPlacements } from '@/features/projects/placements'
@@ -56,6 +59,14 @@ type DialogAction = { action: 'edit' | 'remove' | 'transfer'; member: Member }
 
 export type TeamView = 'team' | 'project' | 'remove'
 
+// 팀원 줄의 에이전트 상태 점(캔버스 SCR-06-v2-settings)
+const agentDots: Record<AgentStatus, string> = {
+  connected: 'bg-green-600',
+  recheck: 'bg-[#e0b400]',
+  failed: 'bg-[#c10007]',
+  none: 'bg-[#c4c4c4]',
+}
+
 export function TeamPanel({
   projectId,
   isLeader,
@@ -71,6 +82,7 @@ export function TeamPanel({
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const action = useProjectAction(projectId)
+  const statusOf = useAgentStatusOf(projectId)
   // 팀장 넘기기 진행·결과. 끝나면 가운데 위 토스트를 띄우고 창은 팀원 권한으로 다시 그려진다.
   const [handoff, setHandoff] = useState<{
     busy?: boolean
@@ -295,11 +307,9 @@ export function TeamPanel({
                         <span className="inline-flex items-center gap-1.5 text-xs">
                           <span
                             aria-hidden="true"
-                            className={`size-1.5 rounded-full ${member.agent_connected ? 'bg-green-600' : 'bg-primary'}`}
+                            className={`size-1.5 rounded-full ${agentDots[statusOf(member).status]}`}
                           />
-                          {member.agent_connected
-                            ? '에이전트 연결됨'
-                            : '에이전트 연결 미확인'}
+                          에이전트 {agentStatusLabels[statusOf(member).status]}
                         </span>
                         <span className="flex justify-end">
                           {isLeader && !mine && member.role !== 'LEADER' ? (
