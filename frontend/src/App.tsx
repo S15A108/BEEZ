@@ -6,7 +6,6 @@ import { useSession } from '@/features/auth/useSession'
 import { Button } from '@/components/ui/button'
 import { CharacterAvatar } from '@/components/CharacterAvatar'
 import { characterOf } from '@/lib/characters'
-import { apiMode } from '@/lib/apiMode'
 
 export default function App() {
   const { pathname } = useLocation()
@@ -69,13 +68,7 @@ export default function App() {
               로그아웃
             </Button>
           </nav>
-        ) : ['/', '/login', '/register'].includes(pathname) ? (
-          apiMode === 'mock' && (
-            <p className="text-xs text-muted-foreground">
-              목데이터로 미리 보기 · 실제 서버 호출 없음
-            </p>
-          )
-        ) : (
+        ) : ['/', '/login', '/register'].includes(pathname) ? null : (
           // 로그인 화면 밖(초대·없는 주소)에서는 머리줄 오른쪽에 로그인 링크(캔버스 SCR-03·SCR-07)
           <Link to="/login" className="text-sm font-medium">
             로그인

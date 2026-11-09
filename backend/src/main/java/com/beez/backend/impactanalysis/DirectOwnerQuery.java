@@ -214,7 +214,7 @@ class DirectOwnerQuery {
                     if (!hash.equals(calculated)) throw invalidSnapshot();
                     return new Proposal(rs.getInt("revision_no"), hash, baseline, nullableLong(rs, "current_baseline_id"),
                             nullableLong(rs, "published_baseline_id"), rs.getString("status"), snapshot);
-                }).optional().orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "변경 제안을 찾을 수 없습니다"));
+                }).optional().orElseThrow(() -> AccessErrors.notFound("proposal_not_in_project"));
     }
 
     private void validateBaselineItems(long project, long baseline, Map<Long, Long> expected) {

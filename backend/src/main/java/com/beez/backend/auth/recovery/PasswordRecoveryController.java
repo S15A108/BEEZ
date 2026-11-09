@@ -1,7 +1,9 @@
 package com.beez.backend.auth.recovery;
 
+import com.beez.backend.auth.guard.ClientIpRateLimiter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -20,9 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class PasswordRecoveryController {
 
     private final PasswordRecoveryService recovery;
+    private final ClientIpRateLimiter ipLimiter;
 
-    public PasswordRecoveryController(PasswordRecoveryService recovery) {
+    public PasswordRecoveryController(PasswordRecoveryService recovery, ClientIpRateLimiter ipLimiter) {
         this.recovery = recovery;
+        this.ipLimiter = ipLimiter;
     }
 
     public record ForgotRequest(@NotBlank @Email @Size(max = 254) String email, @NotBlank @Size(max = 50) String name) {
@@ -39,7 +43,9 @@ public class PasswordRecoveryController {
     @Operation(summary = "임시 비밀번호 발급 (ACC-A07). 이메일·이름이 맞을 때만 메일을 보내지만 응답은 항상 같은 202")
     @PostMapping("/forgot")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public ForgotResponse forgot(@Valid @RequestBody ForgotRequest body) {
+    public ForgotResponse forgot(@Valid @RequestBody ForgotRequest body, HttpServletRequest request) {
+        // 계정 없는 요청도 bcrypt 를 돌리므로 서비스보다 먼저 센다. 가입 인증(ACC-A11)과 같은 카운터다 (Q04, -273)
+        ipLimiter.acquire(request.getRemoteAddr());
         return new ForgotResponse(recovery.request(body.email(), body.name()));
     }
 }

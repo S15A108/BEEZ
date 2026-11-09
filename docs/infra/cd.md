@@ -203,6 +203,11 @@ backend로 넘기는 세 경로(`snippets/beez-backend-proxy.conf`)는 경로에
 location을 고르지만 원래 경로를 넘기고, Tomcat은 `;` 뒤를 지우기 때문에
 `/api/;/../actuator/prometheus`가 backend에서 `/actuator/prometheus`가 되는
 틈을 막습니다(Spring 방화벽도 400으로 막지만 한 겹 더 둡니다).
+같은 스니펫이 클라이언트 주소·https 여부를 `X-Real-IP`·`X-Forwarded-For`·
+`X-Forwarded-Proto`로 넘기고, `X-Forwarded-Host`·`X-Forwarded-Port`는 Nginx 값으로
+덮어씁니다. backend는 이 헤더를 믿으므로(`server.forward-headers-strategy=native`,
+S15P31A108-273) 덮어쓰지 않으면 클라이언트가 보낸 Host·Port가 그대로 들어갑니다.
+스니펫을 바꾸면 배포로는 반영되지 않으니 위 설치 명령으로 서버에 넣고 reload합니다.
 관리 포트를 따로 두지 않는 건 헬스체크·Nginx·`deploy.sh`가 모두
 8080의 `/actuator/health`를 보기 때문입니다.
 
@@ -570,10 +575,12 @@ curl -s http://127.0.0.1:8081/actuator/prometheus | grep -m1 '^jvm_memory_used_b
   backend 컨테이너가 바뀌어도 로그인이 유지됩니다. 그 전(`af6b7ac` 이전)에는
   세션이 backend 메모리에 있어 배포마다 모두 로그아웃됐습니다. 그 이전 SHA로
   되돌리면 다시 그렇게 됩니다.
-- backend는 종료 신호를 받으면 진행 중인 요청을 최대 30초 기다립니다(Spring
-  graceful shutdown). compose의 `stop_grace_period: 30s`가 이에 맞춰 docker가
-  그 전에 강제 종료하지 않게 합니다. 그래서 진행 중 요청이 있으면 교체가 최대
-  30초 늦어질 수 있습니다.
+- backend는 종료 신호를 받으면 진행 중인 요청을 최대 20초 기다리고(Spring
+  graceful shutdown, `spring.lifecycle.timeout-per-shutdown-phase`), 이어서
+  보내던 초대·임시 비밀번호 메일을 종료 시작부터 25초까지 기다립니다
+  (`beez.mail.shutdown-wait`, S15P31A108-334). compose의 `stop_grace_period: 30s`가
+  그 전에 docker가 강제 종료하지 않게 합니다. 그래서 진행 중 요청이나 메일이
+  있으면 교체가 최대 30초 늦어질 수 있고, 20초 넘게 걸리는 요청은 배포 때 잘립니다.
 
 ## 2026-10-29 결과
 
