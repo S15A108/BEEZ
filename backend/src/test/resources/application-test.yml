@@ -16,6 +16,10 @@ spring:
 
 # ai 서버는 닫힌 포트로 두어 ai_reachable=false 경로를 검증한다.
 beez:
+  # 통합 시험은 모두 127.0.0.1 에서 부른다. IP 한도(운영 10)에 걸리지 않게 넉넉히 둔다.
+  # 한도 시험(ClientIpRateLimitIntegrationTest)은 이 값을 읽어 다른 IP(X-Forwarded-For)로 채운다
+  auth-guard:
+    ip-limit: 1000
   validation:
     worker-enabled: false   # 시험은 ValidationWorker.runOnce 를 직접 부른다
   planning:
