@@ -81,6 +81,8 @@ export interface Furniture {
     h: number
     tint: Record<string, string> | null
   }
+  /** 3인칭에서 숨기는 가구(D42). 남·동쪽 벽 가까이 선 화면과 보드가 뒷면으로 방을 가리지 않게 한다. */
+  firstPersonOnly?: boolean
 }
 
 export interface Seat {
