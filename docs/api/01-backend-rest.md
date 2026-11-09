@@ -3823,7 +3823,23 @@ HTTP `200`.
       "media_type": "text/markdown",
       "content_hash": "sha256:example-document-hash",
       "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
-      "created_at": "2026-10-23T03:00:00Z"
+      "created_at": "2026-10-23T03:00:00Z",
+      "created_by": "11",
+      "is_current_baseline": true
+    },
+    {
+      "id": "212",
+      "document_id": "201",
+      "version_no": 2,
+      "status": "DRAFT",
+      "file_name": "document-201-v2.md",
+      "media_type": "text/markdown",
+      "content_hash": "sha256:example-document-hash-2",
+      "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회하고 수정한다.",
+      "created_at": "2026-10-24T03:00:00Z",
+      "created_by": "12",
+      "is_current_baseline": false,
+      "change_proposal_id": "71"
     }
   ],
   "has_more": false
@@ -8379,6 +8395,7 @@ HTTP `200`.
 - 같은 발행 트랜잭션 안에서 알림을 저장한다(S15P31A108-217): 승인은 제안자(`CHANGE_PROPOSAL_APPROVED`), 발행은 직접 관련 작업 담당자(`CHANGE_PROPOSAL_PUBLISHED`, 행위자 제외), 재검증 대기가 된 작업은 그 담당자(`REVALIDATION_REQUIRED`, 본인 포함). 멱등 재생·이미 발행 분기에서는 요청하지 않는다. 활동 저장 연결은 S15P31A108-237 TODO이며 이 응답을 활동 저장 완료로 보지 않는다.
 - (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
+- (S15P31A108-201) 같은 트랜잭션에서 문서 버전 상태도 정리한다. 발행한 버전은 APPROVED, 이전 승인본은 SUPERSEDED가 되고, 같은 문서에서 이전 승인본을 부모로 한 다른 DRAFT는 다시 연결할 수 없으므로 REJECTED(미채택)가 된다. 부모가 다른 DRAFT는 건드리지 않는다. 그 DRAFT를 가진 다른 제안의 상태는 바뀌지 않으며, 기존대로 requires_refresh로 알리고 팀장이 CHG-A10으로 반려한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8963,6 +8980,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 - 상태와 행위자/시각, 24시간 멱등 응답을 한 트랜잭션으로 저장한다. 동일 키·입력은 현재 권한을 확인한 뒤 최초 응답을 재사용한다. 다른 키로 이미 거둔 제안을 다시 거두면 invalid_transition이다.
 - 원문·리비전·문서 연결·기존 결정은 삭제하지 않고 baseline·작업 상태를 바꾸지 않는다. WITHDRAWN은 종결 상태이며 다시 작성하려면 새 CHG-A01 요청에 previous_proposal_id를 지정한다. 반려 후 같은 번호 재제출과 구분한다.
 - 이전 제안에 귀속된 업로드 DRAFT를 새 제안으로 이동하지 않는다. 새 수정본을 업로드하거나 본문을 명시적으로 입력한다.
+- (S15P31A108-201) 거두면 그 제안에 귀속된 DRAFT 문서 버전은 REJECTED(미채택)로 닫는다. WITHDRAWN은 되살릴 수 없어 그 초안을 다시 쓸 수 없기 때문이다. 반려(REJECTED)된 제안의 초안은 재제출 전까지 DRAFT로 둔다.
 - 거두기는 알림 유형이 없다(계약 6.1). 활동 이벤트는 S15P31A108-237 TODO다. 직접 notification INSERT나 발송 성공 응답을 만들지 않는다.
 - 화면 수정안의 expected_updated_at 대신 기존 195 검토 식별인 expected_revision/expected_snapshot_hash를 사용한다. FE 연동 시 이 두 필드를 맞춰야 한다. 응답은 A01·A04·A08·A10과 같은 래퍼 없는 ChangeProposal이다.
 
