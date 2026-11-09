@@ -2,11 +2,9 @@ package com.beez.backend.auth.guard;
 
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.concurrent.LogThrottle;
+import com.beez.backend.common.concurrent.SlidingWindowCounter;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -27,7 +25,7 @@ import org.springframework.stereotype.Component;
  *   <li>IP 는 {@code getRemoteAddr()} 다. {@code server.forward-headers-strategy=native} 라 Nginx 가 넘긴 X-Forwarded-For 에서
  *       Tomcat 이 실제 클라이언트 주소를 골라 넣는다 (내부망 주소만 프록시로 믿는다).</li>
  *   <li>메모리에만 센다 — 재시작하면 처음부터 다시 세고, 인스턴스가 둘 이상이면 따로 센다 (Q04: 서버 1대라 허용).
- *       IP 마다 최근 요청 시각을 한도 개수까지만 들고, 창이 지난 IP 는 주기적으로 지운다.</li>
+ *       세는 방식은 {@link SlidingWindowCounter}(초대 메일 계정 한도와 같이 씀, -334).</li>
  * </ul>
  */
 @Component
@@ -36,11 +34,12 @@ public class ClientIpRateLimiter {
     private static final Logger log = LoggerFactory.getLogger(ClientIpRateLimiter.class);
 
     private final AuthGuardProperties props;
-    private final ConcurrentHashMap<String, Deque<Instant>> hits = new ConcurrentHashMap<>();
+    private final SlidingWindowCounter counter;
     private final LogThrottle warnThrottle = new LogThrottle(Duration.ofMinutes(10));
 
     public ClientIpRateLimiter(AuthGuardProperties props) {
         this.props = props;
+        this.counter = new SlidingWindowCounter(props.ipLimit(), props.ipLimitWindow());
     }
 
     /**
@@ -61,17 +60,7 @@ public class ClientIpRateLimiter {
     }
 
     boolean tryAcquire(String clientIp, Instant now) {
-        boolean[] acquired = {false};
-        hits.compute(clientIp, (ip, times) -> {
-            Deque<Instant> q = times == null ? new ArrayDeque<>() : times;
-            dropExpired(q, now);
-            if (q.size() < props.ipLimit()) {
-                q.addLast(now);
-                acquired[0] = true;
-            }
-            return q;
-        });
-        return acquired[0];
+        return counter.tryAcquire(clientIp, 1, now);
     }
 
     /**
@@ -79,37 +68,17 @@ public class ClientIpRateLimiter {
      * SMTP 가 끊긴 동안 다시 시도한 사용자(같은 공유기 뒤 사용자 포함)가 한 시간 동안 막히지 않게.
      */
     public void release(String clientIp, Instant acquiredAt) {
-        hits.computeIfPresent(clientIp, (ip, times) -> {
-            times.removeLastOccurrence(acquiredAt);
-            return times.isEmpty() ? null : times;
-        });
+        counter.release(clientIp, acquiredAt, 1);
     }
 
     /** 창 안에서 이 IP 가 쓴 횟수. 시험용. */
     int used(String clientIp, Instant now) {
-        Deque<Instant> q = hits.computeIfPresent(clientIp, (ip, times) -> {
-            dropExpired(times, now);
-            return times;
-        });
-        return q == null ? 0 : q.size();
+        return counter.used(clientIp, now);
     }
 
     /** 창이 지난 IP 를 표에서 뺀다. 주소를 바꿔 가며 보내도 표가 한 창 분량보다 커지지 않게 한다. */
     @Scheduled(fixedDelayString = "${beez.auth-guard.ip-purge-millis:600000}")
     public void purge() {
-        Instant now = Instant.now();
-        for (String ip : hits.keySet()) {
-            hits.computeIfPresent(ip, (k, times) -> {
-                dropExpired(times, now);
-                return times.isEmpty() ? null : times;
-            });
-        }
-    }
-
-    private void dropExpired(Deque<Instant> times, Instant now) {
-        Instant since = now.minus(props.ipLimitWindow());
-        while (!times.isEmpty() && !times.peekFirst().isAfter(since)) {
-            times.pollFirst();
-        }
+        counter.purge(Instant.now());
     }
 }
