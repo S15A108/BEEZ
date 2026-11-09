@@ -144,13 +144,15 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, Lo
         return findAgentConnectedAccountIds(projectId, accountIds);
     }
 
-    /** {@link #agentConnectedAccountIds} 로만 부른다. 프로젝트 쪽에서 토큰·세션을 함께 보려고 SQL 로 읽는다. */
+    /**
+     * {@link #agentConnectedAccountIds} 로만 부른다. 프로젝트 쪽에서 토큰·세션을 함께 보려고 SQL 로 읽는다.
+     * 애너테이션 값은 상수식이어야 해서 formatted() 대신 연결 판정 조각을 이어 붙이고, 조각 뒤 줄바꿈을 "\n" 으로 적는다.
+     */
     @Query(value = """
             select distinct t.account_id
               from agent_token t
               join agent_session s on s.agent_token_id = t.id
-                                  and """ + AgentConnectionRule.LIVE_SESSION_SQL + """
-
+                                  and """ + AgentConnectionRule.LIVE_SESSION_SQL + "\n" + """
              where t.project_id = :projectId
                and t.revoked_at is null
                and t.account_id in (:accountIds)

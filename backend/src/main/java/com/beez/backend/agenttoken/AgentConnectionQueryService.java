@@ -5,8 +5,10 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,9 +23,14 @@ public class AgentConnectionQueryService {
     private final ProjectAccessChecker access;
     private final JdbcClient jdbc;
 
-    public AgentConnectionQueryService(ProjectAccessChecker access, JdbcClient jdbc) {
+    /** 확인 필요 임계값. 팀장 CANCEL 의 보고 끊김(TaskStateService)과 같은 설정을 읽어 두 판정이 어긋나지 않게 한다 */
+    private final Duration checkRequiredAfter;
+
+    public AgentConnectionQueryService(ProjectAccessChecker access, JdbcClient jdbc,
+                                       @Value("${beez.task.stalled-after:PT30M}") Duration checkRequiredAfter) {
         this.access = access;
         this.jdbc = jdbc;
+        this.checkRequiredAfter = checkRequiredAfter;
     }
 
     /**
@@ -42,7 +49,7 @@ public class AgentConnectionQueryService {
                             select distinct on (k.account_id)
                                    s.id as session_id, k.account_id, s.last_report_at,
                                    %s as connected,
-                                   %s as check_required
+                                   (%s and s.last_report_at <= now() - make_interval(secs => cast(:checkSecs as double precision))) as check_required
                               from agent_session s
                               join agent_token k on k.id = s.agent_token_id and k.project_id = :p and k.revoked_at is null
                              order by k.account_id, s.id desc
@@ -53,8 +60,8 @@ public class AgentConnectionQueryService {
                          where l.session_id < :before
                          order by l.session_id desc
                          limit :limit
-                        """.formatted(AgentConnectionRule.LIVE_SESSION_SQL, AgentConnectionRule.CHECK_REQUIRED_SQL))
-                .param("p", projectId).param("before", beforeId).param("limit", size + 1)
+                        """.formatted(AgentConnectionRule.LIVE_SESSION_SQL, AgentConnectionRule.LIVE_SESSION_SQL))
+                .param("p", projectId).param("checkSecs", checkRequiredAfter.toSeconds()).param("before", beforeId).param("limit", size + 1)
                 .query().listOfRows();
         return PageResponse.fromRows(rows, size, row -> ((Number) row.get("session_id")).longValue(),
                 page -> page.stream().map(AgentConnectionQueryService::toResponse).toList());
