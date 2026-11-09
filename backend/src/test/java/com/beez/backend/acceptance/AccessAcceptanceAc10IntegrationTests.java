@@ -1,18 +1,18 @@
 package com.beez.backend.acceptance;
 
+import static com.beez.backend.support.McpTestClient.call;
+import static com.beez.backend.support.McpTestClient.error;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.support.McpTestClient;
 import com.beez.backend.task.TaskApiSupport;
-import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
-import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -53,8 +53,10 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
     long otherProjectId;
     Long member;
     Long outsider;
-    McpSyncClient memberMcp;
-    McpSyncClient outsiderMcp;
+    String memberToken;
+    String outsiderToken;
+    /** MCP 시험에서만 연결한다 — REST 시험에 연결·종료 왕복과 truncate 교착 위험을 얹지 않는다 */
+    final List<McpSyncClient> opened = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -70,29 +72,19 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
                 .param("p", otherProjectId).param("a", outsider).update();
 
         // 픽스처 토큰에 원문을 정해 둔다 (McpToolsIntegrationTests 와 같은 방식)
-        String memberToken = SecretTokens.generate();
+        memberToken = SecretTokens.generate();
         api.jdbc.sql("update agent_token set token_hash = :h where id = :id")
                 .param("h", SecretTokens.hash(memberToken)).param("id", api.agentTokenId()).update();
-        String outsiderToken = SecretTokens.generate();
+        outsiderToken = SecretTokens.generate();
         api.jdbc.sql("""
                 insert into agent_token (project_id, account_id, name, token_hash) values (:p, :a, 'outsider-laptop', :h)""")
                 .param("p", otherProjectId).param("a", outsider).param("h", SecretTokens.hash(outsiderToken)).update();
-
-        memberMcp = connect(memberToken);
-        memberMcp.initialize();
-        outsiderMcp = connect(outsiderToken);
-        outsiderMcp.initialize();
     }
 
     @AfterEach
     void tearDown() {
         // 종료 DELETE 를 기다리지 않으면 다음 시험의 truncate 와 교착한다 (McpToolsIntegrationTests.tearDown 과 같은 이유)
-        if (memberMcp != null) {
-            memberMcp.closeGracefully();
-        }
-        if (outsiderMcp != null) {
-            outsiderMcp.closeGracefully();
-        }
+        opened.forEach(McpSyncClient::closeGracefully);
     }
 
     // ---- REST: 상세 조회 ----
@@ -140,19 +132,28 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
     @Test
     void rest_listsAndSummariesOfAnotherProject_neverCountThisProjectsData() {
         long taskId = createTaskInP();
-        api.passValidation(taskId);
+        long validationId = api.passValidation(taskId);
+        // 대기 사유별 건수도 대조할 수 있게 입력 대기로 둔다 (상태 전이 규칙은 이 시험의 관심이 아니라 SQL 로.
+        // WAITING 은 시작을 허용한 검증이 있어야 한다 — task CHECK 제약)
+        api.jdbc.sql("""
+                        update task set status = 'WAITING', waiting_reason = 'INPUT', started_validation_id = :v, started_at = now()
+                         where id = :t""")
+                .param("v", validationId).param("t", taskId).update();
         insertApprovedDocumentInP("# 원문");
 
         // 대조군: 이 프로젝트 쪽에는 잡힌다
         String p = "/api/projects/" + projectId;
-        assertThat(total(okJson(p + "/tasks/summary", member).get("by_status"))).isEqualTo(1);
+        JsonNode ownTasks = okJson(p + "/tasks/summary", member);
+        assertThat(total(ownTasks.get("by_status"))).isEqualTo(1);
+        assertThat(total(ownTasks.get("by_waiting_reason"))).isEqualTo(1);
         assertThat(total(okJson(p + "/validations/summary", member).get("by_status"))).isEqualTo(1);
         assertThat(okJson(p + "/tasks", member).get("items")).hasSize(1);
         assertThat(okJson(p + "/documents", member).get("items")).isNotEmpty();
 
         String q = "/api/projects/" + otherProjectId;
-        assertThat(total(okJson(q + "/tasks/summary", outsider).get("by_status"))).isZero();
-        assertThat(total(okJson(q + "/tasks/summary", outsider).get("by_waiting_reason"))).isZero();
+        JsonNode otherTasks = okJson(q + "/tasks/summary", outsider);
+        assertThat(total(otherTasks.get("by_status"))).isZero();
+        assertThat(total(otherTasks.get("by_waiting_reason"))).isZero();
         assertThat(total(okJson(q + "/validations/summary", outsider).get("by_status"))).isZero();
         assertThat(okJson(q + "/tasks", outsider).get("items")).isEmpty();
         assertThat(okJson(q + "/documents", outsider).get("items")).isEmpty();
@@ -166,6 +167,8 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
      */
     @Test
     void mcp_findContext_neverReturnsRecordsOfAnotherProject() {
+        McpSyncClient memberMcp = mcp(memberToken);
+        McpSyncClient outsiderMcp = mcp(outsiderToken);
         String mine = ok(call(memberMcp, "write_context", record("AC10 결제 연동 인계", "P 원문"))).get("id").asString();
         String theirs = ok(call(outsiderMcp, "write_context", record("AC10 결제 연동 메모", "Q 원문"))).get("id").asString();
 
@@ -182,6 +185,8 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
      */
     @Test
     void mcp_readContext_packetOfAnotherProject_looksMissing() {
+        McpSyncClient memberMcp = mcp(memberToken);
+        McpSyncClient outsiderMcp = mcp(outsiderToken);
         String packetId = String.valueOf(api.jdbc.sql("""
                         insert into dev_context_packet (project_id, request, baseline_id, content, content_hash)
                         select id, '로그인 화면 구현', current_baseline_id, '{}', 'h-ac10' from project where id = :p
@@ -249,28 +254,15 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
                 "design_refs", List.of(), "idempotency_key", "k-" + summary.hashCode());
     }
 
-    private McpSyncClient connect(String token) {
-        var transport = HttpClientStreamableHttpTransport
-                .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))
-                .endpoint("/mcp")
-                .httpRequestCustomizer((builder, method, uri, body, context) ->
-                        builder.header("Authorization", "Bearer " + token))
-                .build();
-        return McpClient.sync(transport).requestTimeout(Duration.ofSeconds(10)).build();
-    }
-
-    private static CallToolResult call(McpSyncClient client, String tool, Map<String, Object> args) {
-        return client.callTool(McpSchema.CallToolRequest.builder().name(tool).arguments(args).build());
+    /** 연결하고 tearDown 에서 닫도록 등록한다 */
+    private McpSyncClient mcp(String token) {
+        McpSyncClient client = McpTestClient.connect(Integer.parseInt(env.getRequiredProperty("local.server.port")), token);
+        opened.add(client);
+        client.initialize();
+        return client;
     }
 
     private JsonNode ok(CallToolResult result) {
-        assertThat(result.isError()).as("도구 실패: %s", ((McpSchema.TextContent) result.content().get(0)).text()).isFalse();
-        return json.valueToTree(result.structuredContent());
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> error(CallToolResult result) {
-        assertThat(result.isError()).isTrue();
-        return (Map<String, Object>) ((Map<String, Object>) result.structuredContent()).get("error");
+        return McpTestClient.ok(json, result);
     }
 }
