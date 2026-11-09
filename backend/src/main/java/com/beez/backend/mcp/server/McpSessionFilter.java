@@ -39,6 +39,8 @@ import tools.jackson.databind.ObjectMapper;
 class McpSessionFilter extends OncePerRequestFilter {
 
     static final String SESSION_HEADER = "Mcp-Session-Id";
+    /** 받은 요청의 연결 기록 ID(agent_session.id). 기록과 결속을 확인한 이 필터만 넣는다 */
+    static final String AGENT_SESSION_ATTRIBUTE = "beez.agentSessionId";
 
     private static final Logger log = LoggerFactory.getLogger("com.beez.mcp");
 
@@ -73,7 +75,12 @@ class McpSessionFilter extends OncePerRequestFilter {
 
         Admission admission;
         try {
-            admission = sessions.admit(principal, sessionKey);
+            AgentSessionService.Admitted admitted = sessions.admit(principal, sessionKey);
+            admission = admitted.admission();
+            if (admitted.agentSessionId() != null) {
+                // 도구 처리까지 이 요청의 연결 기록을 넘긴다 (McpServerConfig.extractContext → McpCall.caller, -333)
+                req.setAttribute(AGENT_SESSION_ATTRIBUTE, admitted.agentSessionId());
+            }
         } catch (RuntimeException e) {
             log.error("mcp session admit failed", e);
             internal(res);

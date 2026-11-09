@@ -95,7 +95,7 @@
 | --- | --- |
 | `actor_type` | `CallerContext.kind`(HUMAN·AGENT). 비비·시스템은 `recordBy`의 `SystemActor`. DB `actor_kind` |
 | `actor_account_id` | `CallerContext.accountId`(에이전트는 토큰 주인 계정). 비비·시스템이면 비움 |
-| `agent_session_id` | `CallerContext.agentTokenId`의 현재 연결 세션. 세션 기록(-178)이 생기기 전에는 비움 |
+| `agent_session_id` | `CallerContext.agentSessionId` — 그 활동을 만든 MCP 도구 호출이 들어온 연결 기록(`Mcp-Session-Id`로 확인한 `agent_session.id`, -333). 토큰의 "지금 살아 있는 세션"을 다시 찾지 않는다(그 사이 새 연결에 밀려나면 다른 세션을 가리킨다). 사람 행위와 검증 워커가 다시 만든 호출자는 비움(에이전트 토큰은 `/mcp`로만 인증된다) |
 | `actor_name`(응답) | 계정 이름 또는 토큰 이름 |
 | `occurred_at` | `clock_timestamp()`(실제 저장 시각). `now()`는 트랜잭션 시작 시각이라 쓰지 않는다 |
 
