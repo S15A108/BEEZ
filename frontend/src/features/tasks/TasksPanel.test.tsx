@@ -1589,3 +1589,281 @@ it('검증이 함께 비교한 작업을 키·제목·담당자로 보이고, �
   ).toBeInTheDocument()
   expect(get).toHaveBeenCalledWith('101', '503')
 })
+
+// S15P31A108-313: 작업 현황 목록·상세를 캔버스 배치로(PNL-05-v2-tasks·blocked·history·record, 11-05 결정)
+const listed = (
+  id: string,
+  key: string,
+  status: TaskDetail['status'],
+  title: string,
+): TaskDetail => ({
+  ...task,
+  id,
+  key,
+  status,
+  current_plan_revision: {
+    ...task.current_plan_revision,
+    id: `${id}1`,
+    task_id: id,
+    plan: { ...task.current_plan_revision.plan, title },
+  },
+})
+
+it('상태 타일은 할 것·진행 중·대기·끝남으로 불러온 목록을 세고 목록을 상태별 머리글로 묶는다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [
+      listed('509', 'TASK-009', 'COMPLETED', '끝난 작업'),
+      listed('508', 'TASK-008', 'CANCELLED', '취소한 작업'),
+      listed('507', 'TASK-007', 'WAITING', '기다리는 작업'),
+      listed('506', 'TASK-006', 'IN_PROGRESS', '진행 중인 작업'),
+      listed('505', 'TASK-005', 'DRAFT', '초안 작업'),
+      task,
+    ],
+    has_more: false,
+  })
+  show(false)
+  const tiles = await screen.findByRole('list', { name: '상태별 작업 수' })
+  expect(
+    within(tiles)
+      .getAllByRole('listitem')
+      .map((tile) => tile.textContent),
+  ).toEqual(['2할 것', '1진행 중', '1대기', '2끝남'])
+  const todo = screen.getByRole('region', { name: '지금 할 것' })
+  expect(within(todo).getByText('초안 작업')).toBeInTheDocument()
+  expect(within(todo).getByText('사용자 프로필 구현')).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('region', { name: '진행 중' })).getByText(
+      '진행 중인 작업',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('region', { name: '대기' })).getByText(
+      '기다리는 작업',
+    ),
+  ).toBeInTheDocument()
+  const done = screen.getByRole('region', { name: '끝남' })
+  expect(within(done).getByText('끝난 작업')).toBeInTheDocument()
+  expect(within(done).getByText('취소한 작업')).toBeInTheDocument()
+})
+
+it('검색하면 키나 제목이 맞는 작업만 남기고, 없으면 안내한다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [task, listed('502', 'TASK-002', 'IN_PROGRESS', '로그인 화면')],
+    has_more: false,
+  })
+  show(false)
+  const search = await screen.findByRole('searchbox', { name: '작업 검색' })
+  await userEvent.type(search, '로그인')
+  expect(
+    screen.getByRole('button', { name: /로그인 화면/ }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /TASK-001/ })).toBeNull()
+  expect(screen.queryByRole('region', { name: '지금 할 것' })).toBeNull()
+  // 타일은 검색과 상관없이 탭의 작업 수를 센다.
+  expect(
+    within(screen.getByRole('list', { name: '상태별 작업 수' }))
+      .getAllByRole('listitem')
+      .map((tile) => tile.textContent),
+  ).toEqual(['1할 것', '1진행 중', '0대기', '0끝남'])
+  await userEvent.clear(search)
+  await userEvent.type(search, 'task-001')
+  expect(screen.getByRole('button', { name: /TASK-001/ })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /로그인 화면/ })).toBeNull()
+  await userEvent.clear(search)
+  await userEvent.type(search, '없는 작업')
+  expect(
+    screen.getByText('찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'),
+  ).toBeInTheDocument()
+})
+
+it('작업이 한 페이지(50개)를 넘으면 뒤 페이지까지 받아 타일을 세고 검색한다', async () => {
+  const first = [
+    task,
+    ...Array.from({ length: 49 }, (_, index) =>
+      listed(`6${index}`, `TASK-${100 + index}`, 'READY', `앞 페이지 ${index}`),
+    ),
+  ]
+  const list = vi
+    .spyOn(tasksApi, 'list')
+    .mockImplementation(async (_projectId, params) =>
+      params?.cursor === 'c2'
+        ? {
+            items: [listed('701', 'TASK-701', 'IN_PROGRESS', '뒤 페이지 작업')],
+            has_more: false,
+          }
+        : { items: first, has_more: true, next_cursor: 'c2' },
+    )
+  show(false)
+  const tiles = await screen.findByRole('list', { name: '상태별 작업 수' })
+  await waitFor(() =>
+    expect(
+      within(tiles)
+        .getAllByRole('listitem')
+        .map((tile) => tile.textContent),
+    ).toEqual(['50할 것', '1진행 중', '0대기', '0끝남']),
+  )
+  expect(list).toHaveBeenCalledWith('101', { cursor: 'c2', limit: 50 })
+  await userEvent.type(
+    screen.getByRole('searchbox', { name: '작업 검색' }),
+    'task-701',
+  )
+  expect(
+    screen.getByRole('button', { name: /뒤 페이지 작업/ }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'),
+  ).toBeNull()
+})
+
+it('검증을 통과하면 검증 결과를 접어 두고 단계는 번호 원과 상태 글로 보인다', async () => {
+  show(false)
+  const steps = await screen.findByRole('list', { name: '작업 단계' })
+  expect(within(steps).getByText('완료')).toBeInTheDocument()
+  expect(within(steps).getByText('통과')).toBeInTheDocument()
+  expect(within(steps).getByText('지금')).toBeInTheDocument()
+  expect(screen.getByText('설계와 계획의 검증 결과')).toBeVisible()
+  expect(
+    await screen.findByText(/현재 계획과 입력에서 시작을 막는 항목을/),
+  ).not.toBeVisible()
+})
+
+it.each(['NEEDS_INPUT', 'NEEDS_REVIEW'] as const)(
+  '검증 결과가 %s이면 검증 결과를 펼쳐 막힌 항목을 보인다',
+  async (status) => {
+    task = {
+      ...task,
+      validation_status: status,
+      validation: {
+        ...task.validation!,
+        status,
+        findings: [
+          {
+            id: '701',
+            source: 'RULE',
+            kind: 'MISSING_INPUT',
+            severity: 'BLOCKING',
+            message: '포함 범위를 더 적어 주세요.',
+            sources: [],
+            resolution: 'FIX_PLAN',
+          },
+        ],
+      },
+    }
+    show(false)
+    expect(await screen.findByText('포함 범위를 더 적어 주세요.')).toBeVisible()
+  },
+)
+
+it('통과했어도 대기 이유가 있으면 검증 결과를 펼친다', async () => {
+  task = { ...task, status: 'WAITING', waiting_reason: 'INPUT' }
+  show(false)
+  expect(await screen.findByText(/대기 이유/)).toBeVisible()
+})
+
+it('계획 이력 카드는 리비전과 지금 계획의 당시 개발 맥락·작성자를 창 안 화면으로 연다', async () => {
+  const earlier = {
+    ...task.current_plan_revision,
+    id: '510',
+    revision_no: 1,
+    plan: { ...task.current_plan_revision.plan, title: '처음 계획' },
+  }
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: { ...task.current_plan_revision.plan, context_packet_id: '701' },
+    },
+  }
+  vi.spyOn(tasksApi, 'planRevisions').mockResolvedValue({
+    items: [task.current_plan_revision, earlier],
+    has_more: false,
+  })
+  vi.spyOn(contextsApi, 'packet').mockResolvedValue({
+    id: '701',
+    project_id: '101',
+    task_id: '501',
+    baseline_id: '401',
+    request: '프로필 응답을 붙여 주세요.',
+    design_items: [],
+    constraints: [],
+    unresolved: ['정렬 기준'],
+    related_tasks: [],
+    sources: [],
+    created_at: timestamp,
+    content_hash: 'sha256:0',
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PaneSheetHost>
+        <TasksPanel projectId="101" isLeader={false} />
+      </PaneSheetHost>
+    </QueryClientProvider>,
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: /계획 이력 r2 · 2개/ }),
+  )
+  const sheet = screen.getByRole('region', { name: '계획 이력' })
+  expect(within(sheet).getByText('r2 · 지금 계획')).toBeInTheDocument()
+  expect(within(sheet).getByText('r1 · 처음 계획')).toBeInTheDocument()
+  expect(
+    await within(sheet).findByText('프로필 응답을 붙여 주세요.'),
+  ).toBeInTheDocument()
+  expect(within(sheet).getByText('미정: 정렬 기준')).toBeInTheDocument()
+  expect(within(sheet).getAllByText(/담당자 · 2026/)).toHaveLength(2)
+  // 당시 개발 맥락은 지금 계획에만 있다(리비전별 맥락 API 없음).
+  expect(within(sheet).getAllByText('당시 개발 맥락')).toHaveLength(1)
+  await userEvent.click(
+    within(sheet).getByRole('button', { name: '계획 수정' }),
+  )
+  expect(await screen.findByLabelText('어떻게 진행하나요?')).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: '계획 이력' })).toBeNull()
+})
+
+it('작업 기록 카드는 기록 목록을 열고, 기록 남기기로 기록 폼을 연다', async () => {
+  vi.spyOn(contextsApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '801',
+        root_id: '801',
+        revision_no: 1,
+        task_id: '501',
+        kind: 'PROGRESS',
+        summary: '응답 필드를 붙였어요.',
+        author_account_id: '11',
+        visibility: 'SHARED',
+        is_latest_revision: true,
+        references_current: true,
+        created_at: timestamp,
+      },
+    ],
+    has_more: false,
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PaneSheetHost>
+        <TasksPanel projectId="101" isLeader={false} />
+      </PaneSheetHost>
+    </QueryClientProvider>,
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: /작업 기록 1개/ }),
+  )
+  const sheet = screen.getByRole('region', { name: '작업 기록' })
+  expect(within(sheet).getByText('응답 필드를 붙였어요.')).toBeInTheDocument()
+  expect(within(sheet).getByText('리비전 1 · 팀 공유')).toBeInTheDocument()
+  await userEvent.click(
+    within(sheet).getByRole('button', { name: '기록 남기기' }),
+  )
+  expect(
+    await screen.findByRole('region', { name: '작업 기록 남기기' }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: '작업 기록' })).toBeNull()
+})
