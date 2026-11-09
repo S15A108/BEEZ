@@ -5,7 +5,7 @@ import type { Activity, AgentWork, Member } from '@/api/contracts/common'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
-import { activityText, actorParticle } from '@/lib/display'
+import { ACTOR_PARTICLE, activityText } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { ActorAvatar } from './ActorAvatar'
@@ -156,8 +156,7 @@ export function ActivityTimeline({
                             <strong className="font-semibold">
                               {actorName(item)}
                             </strong>
-                            {actorParticle(item.actor_type, actorName(item))}{' '}
-                            {activityText(item, members)}
+                            {ACTOR_PARTICLE} {activityText(item, members)}
                             {item.task_id && (
                               <Button
                                 variant="link"

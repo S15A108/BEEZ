@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityText, actorParticle } from './display'
+import { activityText } from './display'
 
 // 공통 계약 6.2 활동 유형 전부(docs/design/10-notification-activity-contract.md)
 const CONTRACT_TYPES = [
@@ -75,15 +75,5 @@ describe('activityText', () => {
         { id: '22', name: '김동료' },
       ]),
     ).toBe('팀원을 제외했어요')
-  })
-})
-
-describe('actorParticle', () => {
-  it('사람은 님이, 비비·시스템·에이전트는 받침에 따라 이/가를 붙인다', () => {
-    expect(actorParticle('HUMAN', '이팀장')).toBe('님이')
-    expect(actorParticle('BEE', '비비')).toBe('가')
-    expect(actorParticle('SYSTEM', '시스템')).toBe('이')
-    expect(actorParticle('AGENT', '김동료의 에이전트')).toBe('가')
-    expect(actorParticle('AGENT', '나간 토큰')).toBe('이')
   })
 })

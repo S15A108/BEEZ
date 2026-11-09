@@ -584,6 +584,40 @@ describe('활동 타임라인', () => {
     expect(rows[3]).toHaveTextContent('민수님이 작업을 만들었어요')
     for (const row of rows) expect(row).not.toHaveTextContent(/[A-Z]+_[A-Z]+/)
   })
+
+  it('비비·시스템·에이전트 행위자도 이름 뒤에 님이를 붙인다', async () => {
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [
+        activity('3', {
+          type: 'CHANGE_PROPOSAL_COMMENTED',
+          actor_type: 'BEE',
+          actor_account_id: undefined,
+        }),
+        activity('2', {
+          type: 'TASK_COMPLETED',
+          actor_type: 'SYSTEM',
+          actor_account_id: undefined,
+        }),
+        activity('1', {
+          type: 'TASK_STARTED',
+          actor_type: 'AGENT',
+          agent_session_id: '91',
+        }),
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    const rows = await screen.findAllByRole('listitem')
+    expect(rows[0]).toHaveTextContent('비비님이 변경 제안에 의견을 남겼어요')
+    expect(rows[1]).toHaveTextContent('시스템님이 작업을 완료했어요')
+    await waitFor(() =>
+      expect(rows[2]).toHaveTextContent(
+        '민수의 에이전트님이 작업을 시작했어요',
+      ),
+    )
+  })
 })
 
 describe('에이전트별 사용량', () => {

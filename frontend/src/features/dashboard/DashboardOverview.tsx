@@ -10,8 +10,8 @@ import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import {
+  ACTOR_PARTICLE,
   activityText,
-  actorParticle,
   countText,
   statusLabel,
 } from '@/lib/display'
@@ -419,7 +419,7 @@ export function DashboardOverview({
                         <strong className="font-semibold">
                           {actorName(item)}
                         </strong>
-                        {actorParticle(item.actor_type, actorName(item))}{' '}
+                        {ACTOR_PARTICLE}{' '}
                         <span className="text-[#57534e]">
                           {activityText(item, members)}
                         </span>

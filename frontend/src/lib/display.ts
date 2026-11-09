@@ -114,18 +114,14 @@ export function activityText(
   return activityLabels[item.type] ?? '활동을 기록했어요'
 }
 
-// 활동 행위자 이름 뒤 조사. 사람은 '이팀장님이', 비비·시스템·에이전트는 받침대로 '비비가'·'시스템이'·'김동료의 에이전트가'.
-export const actorParticle = (actorType: string, name: string) =>
-  actorType === 'HUMAN' ? '님이' : hasBatchim(name) ? '이' : '가'
+// 활동 행위자 이름 뒤 조사. 비비·시스템·에이전트도 사람처럼 '님이'다(사용자 결정 11-09): '비비님이', '시스템님이'.
+export const ACTOR_PARTICLE = '님이'
 
-// 마지막 글자에 받침이 있는지. 한글이 아니면 받침 없음으로 본다.
-const hasBatchim = (word: string) => {
+// 받침이 있으면 '을', 없으면 '를'. 한글이 아니면 받침 없음으로 본다.
+export const objectParticle = (word: string) => {
   const code = word.trim().charCodeAt(word.trim().length - 1) - 0xac00
-  return code >= 0 && code <= 11171 && code % 28 !== 0
+  return code >= 0 && code <= 11171 && code % 28 !== 0 ? '을' : '를'
 }
-
-// 받침이 있으면 '을', 없으면 '를'.
-export const objectParticle = (word: string) => (hasBatchim(word) ? '을' : '를')
 
 // 설계 항목 내용처럼 구조가 정해지지 않은 값을 한 줄로 보여 준다. description 문장이 있으면 그것을 쓴다.
 export function describeContent(content: unknown) {
