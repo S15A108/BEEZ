@@ -16,6 +16,14 @@
 
 2026-11-05: 계정 설정 명세를 구현(PR #118)에 맞췄다(S15P31A108-278). 만료된 임시 비밀번호는 `temporary_password_expired`가 아니라 401 `invalid_credentials`다(ACC-A02). ACC-A04·A05 응답에 `must_change_password`가 있다. 임시 비밀번호의 세부값·발송 실패·기존 비밀번호 처리(ACC-A07)와 비밀번호 변경·탈퇴 때 세션·개인정보 처리(ACC-A06·A10)를 적었다. 재설정 링크 API(ACC-A08·A09)는 폐지로 확정했다. 비밀번호 규칙 위반 코드는 아직 정하지 않았다(ACC-A01·A06). 초대 응답(MEM-A02·A04)의 `expires_at`은 V33에서 컬럼을 지워 응답에 없으므로 처리 규칙·필드 표·예시에서 뺐다(PR #134).
 
+2026-11-05: 변경 제안을 올리기 전 비비 검토 수정안을 붙였다(S15P31A108-218, 사용자 결정). 팀장에게 가지 않는 작성 중 제안(CHG-A16~A18), 올리기 전 비비 검토(CHG-A19), 수정안 반영·넘기기(CHG-A20)를 두고, CHG-A01은 작성 중 제안(`draft_id`)으로 올릴 수 있다.
+
+2026-11-06: 변경 제안 올리기 전 비비 검토 수정안을 AI 담당 리뷰(PR #176)대로 고쳤다(S15P31A108-218). 수정안은 대상 문서를 밝히고(ChangeDraftSuggestion), 검토 결과는 검토한 리비전의 미리보기이며, 올린 내용으로 CHG-A05를 다시 돌린다. 초안 입력 계약 전에는 AI 영향 후보를 NOT_EVALUATED로 둔다.
+
+2026-11-06: 변경 제안 올리기 전 비비 검토를 BE 담당 의견(PR #176)대로 고쳤다(S15P31A108-218, 사용자 결정). 기준 v1 뒤의 변경 제안은 첫 문서 등록(DOC-A16~A18)과 다른 흐름이다. 검토는 권장이고 올리는 조건이 아니며, 제출 당시 검토 상태와 확인 여부를 리비전에 남겨 팀장 상세에 보인다. 작성 중 제안은 별도 자원이다. 반려 후 재제출(CHG-A04)도 초안으로 보완할 수 있다. MCP-04와 MTG-A13의 검토 연동은 별도 범위다. 첫 문서 등록의 정책은 바꾸지 않는다.
+
+2026-11-06: 변경 제안 올리기 전 비비 검토를 BE 담당 재검토(PR #176)대로 다듬었다(S15P31A108-218, 사용자 결정). 확인값을 사용자가 본 검토 상태(`expected_review_state_hash`)에 연결했다. 제출 자료는 제출용 타입 SubmittedReviewSuggestion으로 좁혀 개인 대화를 복사하지 않는다. 옛 기준 요청은 거절하고 최신 기준으로 다시 비교한 저장만 허용한다. 검토 제한 시간은 10분이고 `review_timeout`으로 끝낸다. 검토 중에도 확인 후 올릴 수 있으며 그 검토는 CANCELLED로 끝난다.
+
 2026-11-06: 비밀번호 규칙과 위반 코드를 정했다(Q04, S15P31A108-309). 규칙은 구현 그대로 8자 이상·UTF-8 72바이트 이하·영문·숫자 각 1자 이상이고 특수문자는 필수가 아니다(ACC-A01). 위반은 `password_policy_violation`을 두지 않고 400 `validation_failed`(`message`가 `password:`로 시작)로 둔다(ACC-A01·A06). 서버 동작은 바뀌지 않는다.
 
 2026-11-09: ACC-A11·ACC-A07에 IP 한도와 인증 행 정리를 적었다(Q04 결정, S15P31A108-273). IP당 1시간 10회(두 API 합산)이고 409 `email_already_exists`도 센다. 응답 코드·필드는 바뀌지 않는다(넘으면 지금처럼 429 `rate_limited`). 알려진 한계(한도 안의 가입 여부 조회, 임시 비밀번호 로그인 응답 시간 차이)를 적었다.
@@ -116,6 +124,11 @@
 - [CHG-A13 변경 제안 의견 목록](#chg-a13)
 - [CHG-A14 승인 미리 보기](#chg-a14)
 - [CHG-A15 변경 제안 거두기](#chg-a15)
+- [CHG-A16 작성 중 변경 제안 저장](#chg-a16)
+- [CHG-A17 작성 중 변경 제안 조회](#chg-a17)
+- [CHG-A18 작성 중 변경 제안 수정](#chg-a18)
+- [CHG-A19 올리기 전 비비 검토 요청](#chg-a19)
+- [CHG-A20 올리기 전 검토 수정안 반영·넘기기](#chg-a20)
 - [TSK-A01 작업 계획 등록](#tsk-a01)
 - [TSK-A02 작업 목록](#tsk-a02)
 - [TSK-A03 작업 상세](#tsk-a03)
@@ -3169,7 +3182,7 @@ HTTP `200`.
 
 관련 요구사항: AGT-05, MON-07  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안
+상태: BE 구현 (S15P31A108-75)
 
 #### 인증
 
@@ -3227,6 +3240,7 @@ HTTP `200`.
 
 | HTTP | code | 상황 |
 | --- | --- | --- |
+| 400 | `validation_failed` | `cursor` 형식 오류 (-75) |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 
@@ -3243,6 +3257,11 @@ HTTP `200`.
 
 - 연결·마지막 통신 관측만 제공한다. 통신 성공을 작업 실행 중으로 해석하지 않는다.
 - 작업·검증·대기 사유는 MON-A05로 조회한다.
+- (BE 구현, -75) 활성 멤버마다 가장 최근 에이전트 세션 한 줄이다. 폐기된 토큰의 세션은 보지 않는다. 한 번도 연결하지 않았거나 토큰을 모두 폐기한 멤버는 줄이 없다. 정렬은 멤버 번호(`member_id`) 내림차순이고 커서는 마지막 멤버 번호다. 세션 번호로 두면 페이지를 넘기는 사이 재연결한 멤버가 어느 페이지에도 나오지 않는다.
+- (BE 구현, -75) 화면 구분: 줄이 있고 `connected=true`면 연결됨, 그중 `status_check_required=true`면 연결 미확인, 줄이 있고 `connected=false`면 연결 끊김(`last_report_at`이 마지막 통신), 줄이 없으면 연결 전이다. 따로 상태 값을 두지 않는다.
+- (BE 구현, -75) 연결 판정은 팀원 목록 `agent_connected`·MON-A05와 같다. `connected`는 세션이 끝나지 않았고(`ended_at` 없음) 최근 **2시간** 안에 통신했을 때 true다. Claude Code는 `/exit` 때 DELETE를 보내지 않아(11-09 확인) 끝남만으로는 판정할 수 없다. `status_check_required`는 연결됨이고 그 멤버가 맡은 **IN_PROGRESS** 작업이 있으며 보고 끊김 임계값(설정 `beez.task.stalled-after`, 기본 **30분**) 넘게 통신이 없을 때 true다. 팀장 CANCEL의 "보고가 끊긴 작업"(AC-14)과 같은 뜻·설정이다. 끊긴 세션과 할 일 없이 쉬는 세션(쉬는 동안은 요청을 보내지 않는다)은 false다.
+- (BE 구현, -75) `last_report_at`은 마지막 **통신** 시각이다. 상태 보고만이 아니라 MCP 요청마다 1분 단위로 갱신된다. 에이전트가 쉬는 동안은 요청을 보내지 않으므로 2시간이 지나면 끊김으로 바뀐다.
+- (BE 구현, -75) `last_error_code`는 연결 실패 원인을 남기는 곳이 아직 없어 내려가지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -3258,7 +3277,7 @@ HTTP `200`.
 
 관련 요구사항: MON-07  
 담당: BE: 전진 / AI: — / FE: 박민용  
-상태: 설계 초안 · 수정안 요청 반영
+상태: 설계 초안 · 수정안 요청 반영 · BE 미구현(-75: 부르는 화면이 없어 목록 AGT-A05만 구현)
 
 #### 인증
 
@@ -3295,7 +3314,7 @@ HTTP `200`.
 | `member_id` | `ID` | Y | 소유 멤버 |
 | `connected` | `boolean` | Y | 최근 연결 관측 |
 | `last_report_at` | `Time` | N | 마지막 통신 시각 |
-| `status_check_required` | `boolean` | Y | 보고 지연으로 확인 필요 |
+| `status_check_required` | `boolean` | Y | 연결됨이면서 그 멤버가 맡은 IN_PROGRESS 작업이 있고 보고 끊김 임계값(기본 30분) 넘게 통신이 없음. 끊긴 세션(`connected=false`)·할 일 없이 쉬는 세션은 false (S15P31A108-75) |
 
 ```json
 {
@@ -7283,6 +7302,12 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 최대 4개. 항목만 수정하면 빈 배열 |
 | `previous_proposal_id` | `ID` | N | 같은 프로젝트에서 본인이 거둔 WITHDRAWN 제안. 새 제안의 연결 정보 |
 | `meeting_id` | `ID` | — | 받지 않는다(보내도 무시한다). 회의 출처는 회의 끝내기(MTG-A13)만 채우고 응답의 `meeting_id`로 보인다(S15P31A108-297, Q24) |
+| `draft_id` | `ID` | N | (수정안 요청 · 11-06) 작성 중 제안(CHG-A16)으로 올릴 때. 보내면 제안 내용은 서버에 저장된 초안을 따른다 |
+| `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수. 조회한 초안 리비전 |
+| `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 처리 규칙의 검토 상태를 사용자가 확인했다는 표시. 기본 false |
+| `expected_review_state_hash` | `string` | N | (수정안 요청 · 11-06) `review_acknowledged`=true이고 초안에 검토가 있을 때 필수. 사용자가 본 `review_state_hash` |
+
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다.
 
 ```json
 {
@@ -7319,6 +7344,9 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 | 409 | `invalid_transition` | previous_proposal_id가 WITHDRAWN이 아님 |
 | 409 | `document_already_proposed` | 업로드 DRAFT가 다른 제안에 연결됨 |
 | 409 | `idempotency_conflict` | 같은 요청 키에 다른 입력 |
+| 409 | `version_conflict` | (수정안 요청 · 11-06) `expected_draft_revision` 또는 `expected_review_state_hash`가 지금과 다름 |
+| 409 | `review_acknowledgement_required` | (수정안 요청 · 11-06) 확인할 검토 상태가 있는데 `review_acknowledged`가 true가 아님 |
+| 409 | `draft_already_submitted` | (수정안 요청 · 11-06) 이미 제출한 초안 |
 
 #### 처리 규칙
 
@@ -7333,6 +7361,17 @@ HTTP `201`. [ChangeProposal](00-common.md#schema-changeproposal)을 반환한다
 - CHG-A01/A04/A15는 design_http_command의 24시간 응답 보존을 재사용한다. 프로젝트·계정·동작·사람/에이전트 토큰별 요청 키를 분리하고 재요청 시 현재 권한을 검사한다.
 - 제출 후 잠금이다. 승인·검토 시작·반려·발행 명령은 198, 의견·검토 요청은 196, 심층 영향 분석·저장은 188·197이 담당한다. 알림은 공통 알림 서비스 요청으로만 저장하며(S15P31A108-217) 직접 INSERT하지 않는다. 활동 이벤트는 제출 시 `CHANGE_PROPOSAL_SUBMITTED`(키 `change-proposal:{id}:submitted:1`)를 같은 트랜잭션에서 저장하고 멱등 재생에서는 남기지 않는다(S15P31A108-310). 회의 끝내기(MTG-A13)가 만든 제안도 같은 활동이 시작점이다.
 - (#218 수정안 요청 · 195 미구현) 설계 항목은 ChangeItem.proposed_text 문장 하나로 받을 수 있고 구조는 서버가 채운다(Q01). 현재 195는 구조화된 content v1만 받는다.
+- (수정안 요청 · 11-06) `draft_id`로 올리면 서버에 저장된 초안이 제안 내용의 기준이다. 본문을 따로 받아 검토를 우회하지 못하게, `draft_id`와 함께 `base_baseline_id`·`title`·`reason`·`task_id`·`validation_id`·`previous_proposal_id`·`items`·`documents`를 보내면 400 `validation_failed`다.
+- (수정안 요청 · 11-06, 사용자 결정) 비비 검토는 권장이고 올리는 조건이 아니다. 기준 v1 뒤의 변경 제안은 첫 문서 등록과 다른 흐름이라 DOC-A18의 필수 검토를 옮기지 않는다.
+- (수정안 요청 · 11-06) 다음 중 하나면 화면이 그 상태를 보여 주고, 사용자가 확인한 뒤 `review_acknowledged`=true로 올린다: 검토를 안 함, 검토가 진행 중, 최신 검토가 FAILED, 검토 뒤 고침(`resolved_revision`이 지금 초안 리비전과 다름), 처리하지 않은 PATCH 수정안이 있음. 확인 없이 보내면 409 `review_acknowledgement_required`다. 권한 오류, `baseline_conflict`, `version_conflict`는 확인해도 막는다.
+- (수정안 요청 · 11-06) 확인은 사용자가 본 상태에만 유효하다. 검토가 있으면 초안 응답의 `review_state_hash`를 `expected_review_state_hash`로 돌려보낸다. 넘기기는 초안 리비전을 올리지 않으므로 리비전만으로는 알 수 없다. `expected_draft_revision`이나 이 값이 지금과 다르면 409 `version_conflict`이고, 화면은 달라진 상태를 다시 보여 주고 확인을 받는다.
+- (수정안 요청 · 11-06) 검토가 진행 중일 때 확인 후 올리면 서버가 그 검토를 CANCELLED로 끝낸다. 취소와 제출 뒤에 도착한 결과는 초안과 제출 내용을 바꾸지 못하고, 이미 발생한 사용량은 보존한다.
+- (수정안 요청 · 11-06) 제출 당시 검토 상태와 확인 여부를 그 리비전의 `pre_submit_review`([PreSubmitReview](00-common.md#schema-presubmitreview))로 남기고 팀장 상세에 보인다. 제출 리비전의 불변 스냅샷이라 재검토·재제출이 있어도 이전 리비전의 자료는 바뀌지 않는다. 팀장은 작성 중 제안과 그 검토(CHG-A17)를 읽지 못하므로 넘긴 의견과 처리하지 않은 수정안을 [SubmittedReviewSuggestion](00-common.md#schema-submittedreviewsuggestion)으로 복사해 둔다. 개인 대화와 내부 실행 정보는 복사하지 않는다.
+- (수정안 요청 · 11-06) 제출하면 초안을 제안에 연결하고 수정할 수 없게 한다. 제안 리비전 저장과 초안 제출 완료 처리는 같은 트랜잭션이다. 같은 초안을 다시 올리면 409 `draft_already_submitted`다. `source_proposal_id`가 있는 초안은 CHG-A04로 그 제안에만 올리며, CHG-A01로 보내면 400 `validation_failed`다. 같은 요청 키의 재요청은 지금처럼 기존 응답을 돌려준다.
+- (수정안 요청 · 11-06) 검토의 영향 결과(`tasks_to_wait`·`validations_to_stale`·`ai_candidates`)는 `input_revision` 시점의 미리보기다. 수정안을 반영했거나 검토 뒤 작업·검증·관계가 바뀌었을 수 있어 최종 판단에 쓰지 않는다. 올리면 올린 내용으로 CHG-A05 영향 분석을 지금처럼 새로 돌리고, 승인 판단(CHG-A09·A14)은 그 결과를 따른다. 결과 재사용은 최종 내용과 기준·관계·작업·검증 등 분석 입력 전체가 같을 때만 나중에 검토한다.
+- (수정안 요청 · 11-06) 초안 없이 바로 올리는 기존 경로를 유지한다. 화면의 새 제안과 반려 후 재제출(CHG-A04)은 초안·검토 흐름을 쓴다. 지금 화면(PR #135)은 초안 API가 없어 기존 경로로 올린다.
+- (수정안 요청 · 11-06) 이번 범위 밖: MCP-04는 기존 호출 계약을 유지하고 자동 검토 연동은 따로 정한다. MTG-A13도 제출 전 검토가 필요하지만 회의 정리·종료·제안 생성 계약에 영향을 주므로 별도 연동 범위로 두고, 검토 실패로 회의 종료가 막히지 않게 한다.
+- (수정안 요청 · 11-06) 첫 문서 등록(DOC-A16~A18)의 검토·제출 정책은 바꾸지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -7549,6 +7588,12 @@ HTTP `200`: items 배열의 각 원소는 revision, snapshot_hash, submitted_by,
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 최대 4개. 항목만 수정하면 빈 배열 |
 | `expected_revision` | `integer` | Y | 조회한 제출 리비전 번호 |
 | `expected_snapshot_hash` | `string` | Y | 조회한 sha256 해시 |
+| `draft_id` | `ID` | N | (수정안 요청 · 11-06) 반려된 이 제안을 보완한 작성 중 제안(CHG-A16 `source_proposal_id`)으로 올릴 때 |
+| `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-06) `draft_id`와 함께 필수 |
+| `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. CHG-A01과 같다 |
+| `expected_review_state_hash` | `string` | N | (수정안 요청 · 11-06) `review_acknowledged`=true이고 초안에 검토가 있을 때 필수. 사용자가 본 `review_state_hash` |
+
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다. `expected_revision`·`expected_snapshot_hash`는 그대로 필수다.
 
 ```json
 {
@@ -7589,6 +7634,8 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 | 409 | `version_conflict` | 기대 리비전·해시 불일치 |
 | 409 | `proposal_locked` | 반려 상태가 아니므로 변경 불가 |
 | 409 | `proposal_decision_missing` | 반려 결정 원본이 없음 |
+| 409 | `review_acknowledgement_required` | (수정안 요청 · 11-06) CHG-A01과 같다 |
+| 409 | `draft_already_submitted` | (수정안 요청 · 11-06) 이미 제출한 초안 |
 
 #### 처리 규칙
 
@@ -7598,6 +7645,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal). 같은 id/key�
 - previous_proposal_id는 생성 때 정한 연결을 유지하며 PUT 입력에는 지정할 수 없다. 거둔 제안의 수정은 새 제안을 생성해야 한다.
 - 그 외 입력·원문 연결·원자성·24시간 멱등성은 CHG-A01과 같다.
 - (#218 수정안 요청) 검토 중 다른 제안이 먼저 발행돼 기준이 바뀐(requires_refresh) 제안도 잠겨 있어 제안자가 고칠 수 없다. 팀장이 '기준이 바뀌어 반려'하면 제안자가 CHG-A04로 최신 기준에 맞춰 재제출한다.
+- (수정안 요청 · 11-06) 화면의 반려 후 재제출도 초안·검토 흐름을 쓴다. `source_proposal_id`로 만든 초안을 `draft_id`로 보내면 같은 제안 번호의 새 리비전이 된다. `source_proposal_id`가 이 제안이 아닌 초안은 400 `validation_failed`다. 본문 필드를 함께 보내지 않는 규칙, 검토 상태 확인, 중복 제출 규칙은 CHG-A01과 같다. 위의 '서버에 별도 편집 중 초안을 저장하지 않는다'는 지금 구현이고 이 경로에는 적용하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -8981,6 +9029,344 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 
 ---
 
+<a id="chg-a16"></a>
+
+## CHG-A16. 작성 중 변경 제안 저장
+
+### POST `/api/projects/{id}/change-proposal-drafts`
+
+관련 요구사항: CHG-01 (화면 수정안 연계)
+담당: BE: 오서현 / AI: — / FE: 박민용
+상태: 수정안 요청
+
+#### 인증
+
+`MEMBER`. 활성 멤버만 만든다. 기준 v1 전에는 409 `baseline_missing`이다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 세션 쿠키 |
+| Content-Type | application/json |
+| Origin 또는 Referer | 허용된 화면 출처 |
+| Idempotency-Key | 선택. 있을 때만 24시간 같은 응답을 돌려준다 |
+| X-Request-Id | 선택. 요청 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+CHG-A01과 같은 입력이다(`base_baseline_id`, `title`, `reason`, `task_id`, `validation_id`, `previous_proposal_id`, `items`, `documents`). `meeting_id`·`draft_id`·`expected_draft_revision`·`review_acknowledged`은 받지 않는다. 더해 `source_proposal_id`(`ID`, 선택)를 받는다. 반려된 제안을 보완할 때 그 제안이고, 작성 계정의 REJECTED 제안이어야 한다.
+
+#### Response
+
+HTTP `201`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). `revision`=1, `latest_review`는 없다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값·형식 오류 |
+| 401 | `unauthenticated` | 로그인 무효 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 409 | `baseline_missing` | 기준 v1 전 |
+| 409 | `baseline_conflict` | 초안의 기준이 현재 기준과 다름 |
+| 404 | `not_found` | (수정안 요청 · 11-06) `source_proposal_id`가 없거나 작성 계정의 제안이 아님 |
+| 409 | `invalid_transition` | (수정안 요청 · 11-06) `source_proposal_id`가 REJECTED가 아님 |
+
+#### 처리 규칙
+
+- (수정안 요청 · 11-06) 팀장에게 가지 않는 작성 중 제안이다. 활성 멤버이면서 작성 계정인 경우에만 조회·수정한다. 팀 제안 목록(CHG-A02), 팀원 알림, 공용 활동 타임라인에 나오지 않는다.
+- (수정안 요청 · 11-05) 입력 검사와 문서 해석(ResolvedDocumentChange)은 CHG-A01과 같다.
+- (수정안 요청 · 11-06) 별도 자원(`change-proposal-drafts`)으로 둔다. 제출하면 실제 ChangeProposal과 연결한다.
+- 근거 보드: PNL-04-v2-propose-doc(고친 문서 등록), PNL-04-v2-propose-changes(변경점 확인).
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="chg-a17"></a>
+
+## CHG-A17. 작성 중 변경 제안 조회
+
+### GET `/api/projects/{id}/change-proposal-drafts/{draft_id}`
+
+관련 요구사항: CHG-01 (화면 수정안 연계)
+담당: BE: 오서현 / AI: — / FE: 박민용
+상태: 수정안 요청
+
+#### 인증
+
+`MEMBER (작성 계정)`. 활성 멤버이며 초안을 만든 계정만 쓰고 읽는다. 다른 계정에는 404로 존재를 숨긴다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 세션 쿠키 |
+| X-Request-Id | 선택. 요청 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `draft_id` | `ID` | Y | 작성 중 제안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). 가장 최근 비비 검토를 `latest_review`로 함께 준다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 로그인 무효 |
+| 404 | `not_found` | 없는 초안·다른 프로젝트·작성 계정이 아님 |
+
+#### 처리 규칙
+
+- (수정안 요청 · 11-05) 창을 닫았다 다시 열거나, 검토가 끝났다는 알림에서 들어올 때 쓴다.
+- (수정안 요청 · 11-05) `latest_review.status`가 RUNNING이면 화면이 몇 초 간격으로 다시 읽는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="chg-a18"></a>
+
+## CHG-A18. 작성 중 변경 제안 수정
+
+### PUT `/api/projects/{id}/change-proposal-drafts/{draft_id}`
+
+관련 요구사항: CHG-01 (화면 수정안 연계)
+담당: BE: 오서현 / AI: — / FE: 박민용
+상태: 수정안 요청
+
+#### 인증
+
+`MEMBER (작성 계정)`. 활성 멤버이며 초안을 만든 계정만 쓰고 읽는다. 다른 계정에는 404로 존재를 숨긴다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 세션 쿠키 |
+| Content-Type | application/json |
+| Origin 또는 Referer | 허용된 화면 출처 |
+| Idempotency-Key | 선택. 있을 때만 24시간 같은 응답을 돌려준다 |
+| X-Request-Id | 선택. 요청 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `draft_id` | `ID` | Y | 작성 중 제안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `expected_revision` | `integer` | Y | 조회한 초안 리비전 |
+
+그 밖의 필드는 CHG-A16과 같다.
+
+#### Response
+
+HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). `revision`이 1 오른다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값·형식 오류 |
+| 401 | `unauthenticated` | 로그인 무효 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 404 | `not_found` | 없는 초안·다른 프로젝트·작성 계정이 아님 |
+| 409 | `version_conflict` | `expected_revision`이 지금 초안 리비전과 다름 |
+| 409 | `baseline_conflict` | 요청의 `base_baseline_id`나 문서·항목 기준 버전이 현재 기준과 다름 |
+| 409 | `review_in_progress` | 이 초안의 비비 검토가 진행 중 |
+| 409 | `draft_already_submitted` | (수정안 요청 · 11-06) 이미 제출한 초안 |
+
+#### 처리 규칙
+
+- (수정안 요청 · 11-06) 화면의 '다시 고치기'다. 저장하면 이전 검토는 지금 리비전과 맞지 않게 된다. 화면은 다시 검토를 권하고, 그대로 올리면 '검토 뒤 고침'으로 남는다(CHG-A01).
+- (수정안 요청 · 11-05) 검토가 진행 중이면 고칠 수 없다(409 `review_in_progress`).
+- (수정안 요청 · 11-06) 제출한 초안은 고칠 수 없다(409 `draft_already_submitted`).
+- (수정안 요청 · 11-06) 작성 중에 새 기준이 발행되면 초안은 그대로 남는다. 옛 기준을 쓴 저장·검토·올리기 요청은 409 `baseline_conflict`다. 사용자가 지금 기준과 다시 비교해 최신 `base_baseline_id`와 문서·항목 기준 버전으로 보내는 CHG-A18 저장은 허용한다. 서버는 기준 ID만 자동으로 바꾸지 않고 고친 글도 덮어쓰지 않으며, 이전 검토는 최신 검토로 인정하지 않는다.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="chg-a19"></a>
+
+## CHG-A19. 올리기 전 비비 검토 요청
+
+### POST `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews`
+
+관련 요구사항: CHG-01 (화면 수정안 연계)
+담당: BE: 오서현 / AI: 박상은·양지훈 / FE: 박민용
+상태: 수정안 요청 (협의 필요)
+
+#### 인증
+
+`MEMBER (작성 계정)`. 활성 멤버이며 초안을 만든 계정만 쓰고 읽는다. 다른 계정에는 404로 존재를 숨긴다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 세션 쿠키 |
+| Content-Type | application/json |
+| Origin 또는 Referer | 허용된 화면 출처 |
+| Idempotency-Key | 선택. 있을 때만 24시간 같은 응답을 돌려준다 |
+| X-Request-Id | 선택. 요청 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `draft_id` | `ID` | Y | 작성 중 제안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `expected_revision` | `integer` | Y | 조회한 초안 리비전 |
+
+#### Response
+
+HTTP `202`. [ChangeDraftReview](00-common.md#schema-changedraftreview). `status`=RUNNING으로 바로 돌려준다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값·형식 오류 |
+| 401 | `unauthenticated` | 로그인 무효 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 404 | `not_found` | 없는 초안·다른 프로젝트·작성 계정이 아님 |
+| 409 | `version_conflict` | `expected_revision`이 지금 초안 리비전과 다름 |
+| 409 | `baseline_conflict` | 초안의 기준이 현재 기준과 다름 |
+| 409 | `review_in_progress` | 이 초안의 비비 검토가 진행 중 |
+| 409 | `draft_already_submitted` | (수정안 요청 · 11-06) 이미 제출한 초안 |
+
+#### 처리 규칙
+
+- (수정안 요청 · 11-06) 지금 리비전을 검토한다. 바로 돌려주고 서버 작업으로 이어 간다. 창을 닫아도 계속되고, 서버가 다시 시작해도 복구하며, 끝나면 작성자에게 한 번만 알린다. 새 알림 유형과 초안으로 가는 이동 대상을 더한다. 유형·대상 이름은 BE가 공통 알림 담당과 정한다.
+- (수정안 요청 · 11-06) 전체 검토는 접수 시각부터 10분으로 제한한다(DOC-A16과 같다). 개별 AI 호출은 더 짧게 둔다. 재요청이 없어도 서버가 만료된 작업을 찾아 `status`=FAILED, `error_code`=`review_timeout`으로 끝낸다. 제한 시간 뒤 늦게 도착한 결과는 채택하지 않고, 이미 발생한 사용량은 보존하며, 다시 요청할 수 있다.
+- (수정안 요청 · 11-05) 단계는 네 개다. READ_CHANGES는 바뀐 곳(items·documents)을 읽는다. FIND_RELATED는 CHG-A14와 같은 계산으로 `tasks_to_wait`·`validations_to_stale`을 만든다. AI_CANDIDATES는 작성 중 제안의 영향 후보를 찾는다. GAPS_CONFLICTS는 빠진 부분과 다른 문서·정책과의 충돌을 찾아 수정안(`suggestions`)을 만든다.
+- (수정안 요청 · 11-06) FIND_RELATED: CHG-A14의 팀장 권한은 그대로 둔다. 이 API는 작성자 권한을 검사한 뒤 같은 영향 계산을 부른다. 결과는 '검토 당시 예상 영향'으로 보이고, 평가하지 못한 것을 0건으로 보이지 않는다. 명시적 관계만 보므로 문서 문장 변경의 영향을 모두 찾지는 못한다. 이 결과는 검토 이력으로 남고 CHG-A05를 대신하지 않는다.
+- (수정안 요청 · 11-06) AI_CANDIDATES: AI-A03은 `proposal_id`와 항목 변경을 받고 제출 리비전 기준으로 조립하며, 문서 변경이 든 제안은 지금 분석하지 않는다(`document_change_unavailable`). 초안 ID·리비전을 구분하는 입력과 문서 변경 계약이 생기기 전에는 이 단계의 `status`를 NOT_EVALUATED로, `ai_candidates`를 null로 둔다. 화면은 PNL-04-v2-propose-review의 'AI 영향 후보' 자리에 '확인하지 못함'을 보이고, 0건·모델 실패와 구분한다.
+- (수정안 요청 · 11-06) GAPS_CONFLICTS: AI-A10은 한 문서 본문과 승인 참고 문서를 받는 계약이라 전후 내용·여러 문서·설계 항목을 담지 못한다. AI-A10은 그대로 두고 변경 제안 검토용 내부 요청·응답을 따로 두되, 문서 검토의 수정안·근거 검증 로직을 재사용한다. 입력은 기준 승인본, 고친 글, 바뀐 곳 목록, 이어진 설계 항목이다. 세부 계약은 AI가 정한다.
+- (수정안 요청 · 11-06) 수정안은 고칠 문서를 밝힌다. PATCH는 초안 `documents` 중 하나를 `document_id`·`base_document_version_id`로 가리키고, 그 문서의 고친 글에 `original_text`가 정확히 한 번 있어야 한다. 수정안에는 검토 당시 대상 본문 해시(`reviewed_content_hash`)를 남긴다. 설계 항목 변경에는 수정안을 만들지 않고 COMMENT(설명)만 준다([ChangeDraftSuggestion](00-common.md#schema-changedraftsuggestion)).
+- (수정안 요청 · 11-05) 모델 실패·시간 초과는 `status`=FAILED와 `error_code`로 알리고 다시 요청할 수 있다. 실패를 '의견 없음'으로 보이지 않는다. 실제 `usage`는 보존하고, 응답을 받지 못한 호출의 사용량은 미확인으로 남긴다.
+- (수정안 요청 · 11-05) 모델 호출 중 잠금을 잡지 않는다. 끝난 뒤 초안 리비전과 기준이 그대로일 때만 결과를 채택한다(DOC-A16과 같음).
+- 근거 보드: PNL-04-v2-propose-running(진행), PNL-04-v2-propose-review(결과).
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="chg-a20"></a>
+
+## CHG-A20. 올리기 전 검토 수정안 반영·넘기기
+
+### PATCH `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}`
+
+관련 요구사항: CHG-01 (화면 수정안 연계)
+담당: BE: 오서현 / AI: — / FE: 박민용
+상태: 수정안 요청
+
+#### 인증
+
+`MEMBER (작성 계정)`. 활성 멤버이며 초안을 만든 계정만 쓰고 읽는다. 다른 계정에는 404로 존재를 숨긴다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 세션 쿠키 |
+| Content-Type | application/json |
+| Origin 또는 Referer | 허용된 화면 출처 |
+| Idempotency-Key | 선택. 있을 때만 24시간 같은 응답을 돌려준다 |
+| X-Request-Id | 선택. 요청 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `draft_id` | `ID` | Y | 작성 중 제안 ID |
+| `review_id` | `ID` | Y | 올리기 전 비비 검토 ID |
+| `suggestion_id` | `ID` | Y | 수정안 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `expected_revision` | `integer` | Y | 조회한 초안 리비전 |
+| `decision` | `APPLIED\|SKIPPED\|PENDING` | Y | 반영하기·넘기기·되돌리기 |
+
+#### Response
+
+HTTP `200`. [ChangeProposalDraft](00-common.md#schema-changeproposaldraft). 고친 글이 바뀌면 `revision`이 1 오르고 `latest_review.resolved_revision`도 같이 오른다. `input_revision`은 그대로라 영향 결과가 반영 전 내용 기준임을 알 수 있다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 400 | `validation_failed` | 필수 값·형식 오류 |
+| 401 | `unauthenticated` | 로그인 무효 |
+| 403 | `request_origin_rejected` | 허용된 Origin/Referer가 아님 |
+| 404 | `not_found` | 없는 초안·다른 프로젝트·작성 계정이 아님 |
+| 409 | `version_conflict` | `expected_revision`이 지금 초안 리비전과 다름 |
+| 409 | `invalid_transition` | COMMENT 수정안이거나 최신 검토가 아님 |
+| 409 | `review_stale` | 수정안의 대상 문서가 초안에 없거나 기준 버전이 다르거나, 그 문서의 고친 글에 `original_text`가 정확히 한 번 있지 않음 |
+| 409 | `draft_already_submitted` | (수정안 요청 · 11-06) 이미 제출한 초안 |
+
+#### 처리 규칙
+
+- (수정안 요청 · 11-06) APPLIED는 `document_id`가 가리키는 문서에서만 `original_text`를 `replacement_text`로 바꿔 넣는다. PENDING(되돌리기)은 반영했던 글을 되돌린다. SKIPPED는 글을 그대로 두고 넘긴 의견으로 남긴다. 되돌리기가 있어 처리한 선택을 덮어쓰지 않는 DOC-A17과 규칙이 다르다.
+- (수정안 요청 · 11-06) 처리하지 않은 PATCH 수정안이 있어도 사용자가 확인하면 올릴 수 있다(CHG-A01). COMMENT는 확인 대상이 아니다.
+- 근거 보드: PNL-04-v2-propose-review(넘기기·반영하기·되돌리기), PNL-04-v2-propose-confirm(최종본 확인).
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
 <a id="tsk-a01"></a>
 
 ## TSK-A01. 작업 계획 등록
@@ -9151,6 +9537,7 @@ HTTP `201`.
 - 첫 불변 계획 리비전과 설계 참조를 저장하고 READY로 둔다. READY 자체는 시작 승인 상태가 아니다.
 - 의존 작업은 같은 프로젝트여야 하며 자기 자신·순환은 거부한다.
 - (수정안 요청) 기준 v1 발행 전에는 409 baseline_missing다. 팀원 시작 가이드와 설계 관계 빈 화면이 이 규칙을 전제로 한다(Q22).
+- (BE 구현, -287) 활동: 같은 트랜잭션에서 `TASK_CREATED`(행위자 = 요청자, 대상 TASK, 키 `task:{id}:created`)를 남긴다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9643,6 +10030,7 @@ HTTP `201`.
 - 진행 중 계획 변경은 기존 검증을 STALE로 하고 WAITING(REVALIDATION)으로 전환하며 점유는 유지한다.
 - (BE 구현, -162 검증 최신성, AC-13) 위 규칙은 **검증 입력이 바뀐** 변경에만 적용한다. 검증 입력은 계획 입력 해시(`task_plan_revision.input_hash`)로 판정한다 — 목표·포함/제외 범위·완료 기준·선행 작업·`no_contract_change`·`unlinked`·설계 참조(항목·버전·관계·CHANGES 의 `proposed_content`)가 들어가고 **제목·접근 방식·컨텍스트 패킷은 들어가지 않는다**. 직전 리비전과 해시가 같으면(제목만 변경 등) 검증을 STALE 로 바꾸지 않고 작업 상태도 두며, 단 실제 검색을 사용한 검증은 제목·접근 방식·패킷이 바뀌면 검색 입력이 달라져 재검증한다. 그 밖에 직전 리비전의 (DELTA 를 뺀) 가장 최근 검증이 끝난 것(PASS·NEEDS_INPUT·NEEDS_REVIEW)이면 새 리비전에 같은 내용의 검증을 한 줄 더 넣어 이어 받는다 — 응답 `validation_status` 가 그 상태이고, 그 검증 조회의 `summary.carried_from` 이 원본 검증 번호다(실행 기록은 원본에만). 에이전트가 쥔 옛 검증 번호로 START·RESUME 하면 시작 게이트가 현재 리비전의 그 복사본으로 판정한다. 직전 리비전을 못 읽으면 바뀐 것으로 다룬다. 세부는 [04-task-lifecycle.md §2.5](../design/04-task-lifecycle.md).
 - (BE 구현, -162) 완료 보고(delta)의 DELTA 검증이 아직 도는 동안(NOT_RUN·RUNNING)은 입력이 같아도 계획을 바꿀 수 없다 → `400 invalid_transition`(메시지에 그 검증 번호). 결과를 기다리거나 RESUME 으로 보고를 거둔다. 결과가 난 뒤(NEEDS_INPUT·NEEDS_REVIEW·ERROR)는 바꿀 수 있다 — 계획을 고쳐 새 PASS 로 RESUME 하는 출구다. 완료·취소된 작업과 같은 코드다.
+- (BE 구현, -287) 활동: 리비전을 저장한 같은 트랜잭션에서 `TASK_PLAN_REVISED`(행위자 = 요청자, 키 `task:{id}:lock:{저장 뒤 lock_version}:PLAN_REVISED`)를 남긴다. 진행 중 변경으로 WAITING(REVALIDATION)이 돼도 이 한 건이 대신한다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10102,6 +10490,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -161) 횟수 제한: 의미 분석을 큐에 넣기 전에, 같은 작업·같은 입력(입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같음)으로 **실제 검증 AI를 부른** 실행 수를 센다. 새 검증 요청과 재시도(VAL-A04)를 합쳐 세며, 값이 `beez.validation.max-model-attempts`(기본 3, 환경변수 `VALIDATION_MAX_MODEL_ATTEMPTS`)에 닿았으면 409 `validation_attempt_limit`이다. 세는 실행(모델이 돌았거나, 요청이 AI에 닿았는데 결과를 확인하지 못한 실행): 도는 중(RUNNING), 실제 분석기로 끝까지 돈 실행(OK), 시간 초과(`ai_timeout` — 504든 읽기 시간 초과든 사용량이 없어도 센다), 출력 계약 위반(`ai_invalid_output` — AI가 응답을 돌려줬다), 그 밖에 모델 호출 사용량이 한 건 이상 남은 실패(부분 분석·오류 본문에 사용량을 실은 502 등). 세지 않는 실행: 가짜 분석기(`fake-analyzer`)로 끝난 실행 — 가짜 PASS는 시작에 쓸 수 없으니 실제 AI로 바꾼 뒤 같은 계획을 다시 검증할 수 있어야 한다, AI에 요청이 닿지 않았거나 AI가 모델을 부르지 않았다고 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502), 버린 실행(DISCARDED), 서버 쪽 중단(`validation_lease_expired`·`validation_worker_interrupted` — 늦게 온 응답의 사용량이 남아도 세지 않는다). 규칙만으로 끝나는 검증(200)과 서버가 접수하는 DELTA 검증의 첫 실행은 막지 않는다(DELTA를 사람이 다시 돌리는 재시도는 센다 — VAL-A04). 계획 내용·참조·관련 계획·컨텍스트 패킷이 바뀌면 다른 입력이라 처음부터 센다(제목만 바꾼 계획은 같은 입력이다). 같은 입력의 결과 재사용(AC-16)은 아직 없어 같은 입력의 새 요청도 매번 모델을 부르고 횟수에 들어간다.
 - (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
 - (BE 구현, -186) 정책 분석이 완료되면 검증된 `policy_assessments`의 승인 내용 인용과 원문 근거가 가리키는 설계 버전만 `validation_policy_ref`에 저장한다. 계획 참조와는 별개이며 검색 범위에 있었지만 인용되지 않은 후보는 저장하지 않는다. 해당 항목이 수정·폐기되면 검증을 `STALE / DESIGN_PUBLISHED`로 만들고, 그 검증으로 시작한 진행 작업은 `WAITING / REVALIDATION`으로 전환한다. 작업 시작·재개 때도 인용 버전과 현재 기준을 비교하며, 같은 입력의 계획으로 검증을 이어 받을 때 이 참조도 복사한다. 새로운 정책 추가나 인용되지 않은 항목의 연관성까지 추적하는 것은 아니다. `VALIDATION_POLICY_ANALYSIS_ENABLED`와 `VALIDATION_FAKE_ANALYZER`를 동시에 켜면 설정 오류로 기동이 실패한다.
+- (BE 구현, -287) 활동: 검증이 끝 상태(PASS·NEEDS_INPUT·NEEDS_REVIEW·ERROR)가 되면 같은 트랜잭션에서 `VALIDATION_FINISHED`(대상 VALIDATION, `task_id` 포함, PASS만 `result=SUCCESS`)를 남긴다. 접수 때 규칙만으로 끝나면(200) 행위자는 요청자, 워커가 끝내면 SYSTEM이다. 설계 발행 뒤 서버가 다시 접수한 DELTA가 규칙으로 끝나도 SYSTEM이다(발행한 사람은 그 작업의 완료를 보고하지 않았다). 키는 `validation:{id}:finished:{시도 번호}`(규칙 확정은 0)라 재시도(VAL-A04)로 다시 끝나도 겹치지 않는다. STALE·늦게 와서 버린 결과는 남기지 않는다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10723,6 +11112,7 @@ HTTP `202`: COMPLETED 보고의 delta가 있어 검증을 접수한 경우. Q03 
 - (BE 구현, -163) delta 가 있으면 같은 트랜잭션에서 DELTA 검증을 **먼저** 접수하고(`ValidationAcceptService.acceptBySystem`, 담당자·잠금 번호 확인 없음) 그 번호를 완료 보고에 넣어 저장한 뒤 WAITING(REVALIDATION)·202. DELTA 검증은 완료 보고의 `delta` 를 분석 입력(AI-A02 `completion_delta`, 입력 스냅샷 해시에도 포함 — 검증 종류 `trigger` 와 함께)에 넣고 검사 목록에 완료 delta 검사(`completion-delta`, PLAN_COMPLETENESS)를 항상 넣으므로 규칙만으로 PASS 하지 않는다. AI(-184)가 이 칸을 받기 전에는 DELTA 요청이 AI 입력 오류로 ERROR 가 된다(조용히 통과하지 않음; 03-ai-internal AI-A02 Request 참조) — READS 만 참조하는 계획이라도 의미 분석으로 가고, 완료 보고 자리에서 바로 COMPLETED 되는 경우는 없다(규칙으로 NEEDS_INPUT·NEEDS_REVIEW 가 나면 그대로 대기). 워커가 DELTA 를 PASS 로 끝내면 같은 트랜잭션에서 작업을 COMPLETED 로 바꾼다(`DeltaCompletion`, S4) — 조건은 작업이 아직 WAITING(REVALIDATION) 이고 그 검증이 현재 계획의 가장 최근 DELTA 일 때. 가짜 분석기를 끈 서버에서는 가짜 분석기가 낸 DELTA PASS 로 완료하지 않는다(G1 과 같은 규칙). NEEDS_INPUT·NEEDS_REVIEW·ERROR 면 작업은 그대로다(04-task-lifecycle.md §2.3 출구). RESUME 은 기다리던 DELTA 검증을 ERROR 로 끝난 것까지 STALE(`TASK_RESUMED`)로 바꾸고 대기 job 을 취소한다(그 완료 대기가 끝났다는 뜻. 옛 DELTA 의 늦은 PASS 가 나중에 작업을 완료시키지 못하게, 그리고 인계로 다시 WAITING 이 된 작업이 옛 DELTA 를 기다리는 것으로 보이지 않게. 오류 이력은 실행·발견 항목에 남는다). delta 있는 COMPLETED 의 재전송은 "지금 기다리는 것이 그 보고"(WAITING(REVALIDATION) + 현재 계획의 delta 완료 보고 + 가장 최근 DELTA 가 STALE 아님)이고 plan_revision_id·delta·summary·completion_checks 가 같을 때만 같은 결과(202)이고, 내용이 다르면 409 `revision_conflict`(바꾸려면 RESUME 뒤 다시 보고), 기다리는 보고가 없으면(RESUME 뒤 인계 등으로 WAITING 이 된 경우) WAITING + COMPLETED 전이 오류 400 이다. TaskDetail.delta_validation_id 는 WAITING(REVALIDATION) 중 지금 기다리는 DELTA 검증 번호(현재 계획의 가장 최근 DELTA 가 STALE 이 아닐 때)이며, 재전송 판정과 같은 기준이다 — RESUME 뒤 인계로 WAITING 이 된 작업에는 없다.
 - (BE 구현, -269) 작업 완료 검증(작은 범위, 11/5 결정). COMPLETED에 `changed_design_item_ids`(실제로 바꾼 설계 항목)를 실을 수 있다. 서버는 정렬·중복 제거해 완료 보고에 저장하고, 응답 `completion_review`에 계획과의 규칙 대조 결과(범위 이탈 후보·바꾸기로 했는데 보고 안 한 항목·못 채운/확인 안 한 완료 기준·인수인계 기록 유무)를 싣는다. **표시만 한다** — 범위 이탈 후보가 있어도 전이는 위 규칙 그대로다(담당자 확인 전 보류 AC-18안은 하지 않음). delta 있는 COMPLETED의 재전송 판정에 `changed_design_item_ids`도 들어간다(순서는 무관, 보내지 않음과 빈 목록은 다른 보고). AI 분석·설계 일치 검사(보고된 변경 vs 현재 승인 계약)·TRC-07 기록 분리는 이번 범위가 아니다([13-completion-review](../design/13-completion-review.md)).
 - 같은 START(task_id, validation_id)는 기존 결과를 반환한다. 검증의 PASS는 실제 코드 품질 검증을 뜻하지 않는다.
+- (BE 구현, -287) 활동: 상태가 실제로 바뀐 보고만 커밋 직전 같은 트랜잭션에서 남긴다(행위자 = 보고자). 유형은 보고 이름이 아니라 실제 전이로 정한다 — START `TASK_STARTED`, RESUME `TASK_RESUMED`, WAIT `TASK_WAITING`, delta 없는 COMPLETED `TASK_COMPLETED`, delta 있는 COMPLETED `TASK_COMPLETION_REPORTED`(재검증 대기), CANCEL `TASK_CANCELLED`. 키는 `task:{id}:lock:{저장 뒤 lock_version}:{event}`. 멱등 재전송(같은 START·같은 delta 완료 보고·COMPLETED/CANCEL 재전송)은 남기지 않는다. DELTA 검증 통과로 서버가 완료하면(S4) SYSTEM 행위자로 `TASK_COMPLETED`를 한 건 더 남긴다([공통 계약](../design/10-notification-activity-contract.md) 6.2). delta 있는 COMPLETED는 DELTA 검증을 먼저 접수하므로, 그 검증이 규칙만으로 끝나면(NEEDS_INPUT·NEEDS_REVIEW) 같은 요청 안에서 `VALIDATION_FINISHED`(행위자 = 보고자)가 `TASK_COMPLETION_REPORTED`보다 **먼저** 남는다(전이 활동은 커밋 직전에 남기 때문). 타임라인에서 두 활동의 순서에 기대지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -11589,7 +11979,7 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 
 관련 요구사항: BEE-10  
 담당: BE: 변준성 / AI: 박상은 / FE: 박상은  
-상태: 설계 초안
+상태: 구현 제안 (S15P31A108-136, 계약 리뷰 필요)
 
 #### 인증
 
@@ -11602,7 +11992,7 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 사용하지 않음. 요청마다 모델을 새로 호출할 수 있음 |
 
 #### Path Parameters
 
@@ -11618,7 +12008,7 @@ BE 저장/검색·실행 메타 담당은 오서현이다. 내부 청킹은 [AI-
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `task_ids` | `ID[]` | Y | 추천 대상 작업 |
+| `task_ids` | `ID[]` | Y | 같은 프로젝트의 미완료 작업 1~20개, 중복 불가 |
 
 ```json
 {
@@ -11634,8 +12024,8 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `suggestions` | [AssignmentSuggestion[]](00-common.md#schema-assignmentsuggestion) | Y | 담당 후보 |
-| `generation` | [Generation](00-common.md#schema-generation) | Y | 추천 이유·출처 |
+| `suggestions` | [AssignmentSuggestion[]](00-common.md#schema-assignmentsuggestion) | Y | 작업별 후보·이유와 `alternatives`(대안별 `member_id`, `reason`) |
+| `generation` | [Generation](00-common.md#schema-generation) | Y | 생성 출처와 미확인 정보. 문서 출처는 빈 배열 |
 
 ```json
 {
@@ -11643,36 +12033,18 @@ HTTP `200`.
     {
       "task_id": "501",
       "member_id": "21",
-      "reason": "backend 담당 영역과 일치합니다."
+      "reason": "담당 영역과 관측된 업무량을 참고했습니다.",
+      "alternatives": [
+        { "member_id": "22", "reason": "대안의 담당 영역을 참고했습니다." }
+      ]
     }
   ],
   "generation": {
     "origin": "MODEL",
     "model": "configured-model",
-    "text": "현재 승인 계약에 따라 이메일과 비밀번호를 입력합니다.",
-    "sources": [
-      {
-        "document_id": "201",
-        "document_version_id": "211",
-        "version_no": 1,
-        "location": "3. 계정 관리 / ACC-02"
-      }
-    ],
-    "unresolved": [],
-    "usage": [
-      {
-        "request_key": "llm-validate-601-attempt-1",
-        "feature": "TASK_VALIDATION",
-        "model": "configured-model",
-        "input_tokens": 1200,
-        "output_tokens": 300,
-        "latency_ms": 1800,
-        "failed": false,
-        "estimated_cost_amount": "0.0042",
-        "currency": "USD",
-        "tokens_known": true
-      }
-    ]
+    "text": "입력된 담당 영역과 업무량, 선행 작업을 참고한 제안입니다. 사람이 확인해 주세요.",
+    "sources": [],
+    "unresolved": ["일부 선행 작업의 상태와 담당자를 확인하지 못했습니다."]
   }
 }
 ```
@@ -11682,8 +12054,11 @@ HTTP `200`.
 | HTTP | code | 상황 |
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 403 | `forbidden` | 사람만 허용하는 조건을 충족하지 않음 |
+| 403 | `request_origin_rejected` | 신뢰할 수 있는 Origin 또는 Referer가 없거나 일치하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
 | 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
+| 409 | `recommendation_stale` | AI 호출 중 작업 또는 팀원 정보가 바뀜 |
 | 502 | `ai_unavailable` | 분석 실패 |
 | 504 | `ai_timeout` | 시간 초과 |
 
@@ -11699,7 +12074,9 @@ HTTP `200`.
 #### 처리 규칙
 
 - 같은 프로젝트의 작업·활성 팀원만 분석한다.
+- CORS에서 먼저 차단하는 출처 오류도 HTTP 403이며 본문은 공통 CORS 구현을 따른다. REST API는 사람 세션으로 인증하므로 에이전트 토큰만으로 호출하면 401이다.
 - 추천으로 작업 담당자를 자동 변경하지 않는다. 확정은 TSK-A06이다.
+- BE는 같은 프로젝트의 열린 담당 작업과 선행 작업 스냅샷을 구성하고, 호출 전후 변경되면 결과를 버린다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -14346,7 +14723,7 @@ HTTP `200`.
 
 - 연결 정보는 AGT-A05, 명시 보고된 작업·검증·대기는 이 API로 나눠 제공한다.
 - 에이전트 보고가 없으면 실행 중·완료를 추정하지 않는다.
-- (BE 구현, -64) 폐기되지 않은 토큰·아직 활성인 멤버의 에이전트 세션(`agent_session`)마다 한 줄, 세션 번호 내림차순, 커서는 마지막 세션 번호. `member_id` 는 `project_member.id`(형식 오류 400). 세션이 보고한 현재 작업(`current_task_id`)이 있으면 작업 제목·상태·대기 사유·현재 계획의 가장 최근 검증 상태(없으면 NOT_RUN)를 함께 주고, 없으면 작업 칸은 모두 빠진다. `agent_name` 은 토큰 이름. `last_summary` 는 완료 보고 summary 가 세션에 남지 않아 아직 내려가지 않는다. 세션 행(현재 작업·마지막 보고 시각)은 에이전트 연결·보고 쪽(AGT-A05·MCP-12)이 적는다 — 이 API 는 읽기만 한다.
+- (BE 구현, -64) 폐기되지 않은 토큰·아직 활성인 멤버의 살아 있는 에이전트 세션(`agent_session`)마다 한 줄(살아 있음 = 끝나지 않았고 최근 2시간 안에 통신, AGT-A05·팀원 목록과 같은 기준 -75), 세션 번호 내림차순, 커서는 마지막 세션 번호. `member_id` 는 `project_member.id`(형식 오류 400). 세션이 보고한 현재 작업(`current_task_id`)이 있으면 작업 제목·상태·대기 사유·현재 계획의 가장 최근 검증 상태(없으면 NOT_RUN)를 함께 주고, 없으면 작업 칸은 모두 빠진다. `agent_name` 은 토큰 이름. `last_summary` 는 완료 보고 summary 가 세션에 남지 않아 아직 내려가지 않는다. 세션 행(현재 작업·마지막 보고 시각)은 에이전트 연결·보고 쪽(AGT-A05·MCP-12)이 적는다 — 이 API 는 읽기만 한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

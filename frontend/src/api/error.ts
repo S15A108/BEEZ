@@ -83,10 +83,14 @@ const messages: Record<string, string> = {
     '같은 요청이 다른 내용으로 이미 처리됐어요. 새로고침해서 확인해 주세요.',
   draft_changed: '검토 후 초안이 변경되었습니다.',
   validation_not_passed: '현재 계획의 검증을 먼저 완료해 주세요.',
+  // 같은 입력으로 분석을 정한 횟수만큼 돌렸다(VAL-A01·A04). 재시도와 새 검증이 함께 막히고, 계획 입력 해시에 들지 않는 제목·접근 방법만 바꿔서는 풀리지 않는다.
+  validation_attempt_limit:
+    '같은 계획으로 분석할 수 있는 횟수를 모두 썼어요. 목표·범위·완료 기준이나 설계 참조를 고쳐 새로 검증하거나 팀에 알려 주세요.',
   dependency_not_completed: '선행 작업이 아직 완료되지 않았습니다.',
   task_conflict: '같은 설계를 변경하는 작업을 확인해 주세요.',
   ai_unavailable: '분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   ai_timeout: '분석 시간이 초과되었습니다. 다시 시도해 주세요.',
+  recommendation_stale: '작업이나 팀원 정보가 바뀌었어요. 다시 추천해 주세요.',
   rate_limited: '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
   document_kind_exists: '같은 종류의 문서가 이미 있어요.',
