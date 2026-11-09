@@ -1387,7 +1387,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `agent_name` | `string` | N | 토큰 label. 수정안 요청 |
 | `current_task_id` | `ID` | N | 명시 보고된 작업 |
 | `task_title` | `string` | N | 보고된 작업 제목. 수정안 요청 |
-| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태 |
+| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태. 서버 작업 상태에는 DRAFT도 있다 — 세션의 현재 작업(`current_task_id`)을 쓰기 시작하면 에이전트가 계획을 쓰는 DRAFT 작업도 나오므로 그때 이 값과 FE `agentWorkSchema`에 DRAFT를 넣는다(지금은 그 칸을 쓰는 코드가 없다, -75) |
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 작업 검증 상태 |
 | `waiting_reason` | `string` | N | 대기 사유 |
 | `last_summary` | `string` | N | MCP-12 `summary` 원문. AI로 다시 요약하지 않음. 수정안 요청 |
