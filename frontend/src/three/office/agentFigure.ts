@@ -5,7 +5,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 // 포인트 색은 하늘색 하나다. 둥근 흰 헬멧·어두운 얼굴 화면·큰 눈·가슴 'AI' 배지·안테나 하나로 회원 '로봇'(흰 네모 몸,
 // 청록 네모 얼굴)과 구분하고, 주황·노랑을 쓰지 않아 비비·벌 팀원과도 겹치지 않는다. 목 스카프와 왼팔 띠가 주인 색이다.
 // 상태 넷은 안테나 불빛과 눈 색, 자세로 보인다: 연결됨 하늘색, 작업 중 노랑, 대기 회색 불빛·감은 눈·등 기대기,
-// 연결 끊김 빨간 불빛·회색 몸·꺼진 화면·고개 떨굼·빨간 X.
+// 연결 전 빨간 불빛·회색 몸·꺼진 화면·고개 떨굼·빨간 X.
 // 단위는 m, 앞 = +z, 발바닥 y = 0, 안테나 공 끝 1.74. 사무실의 걷기·앉기 자세가 돌리도록 어깨·팔꿈치·엉덩이·무릎을
 // 이름 붙인 축 그룹(arm-*, elbow-*, leg-*, knee-*)으로 두었다. 엉덩이는 바로 아래 자식이라 앉는 높이를 셀 수 있다.
 export type AgentStatus = 'online' | 'working' | 'idle' | 'offline'
@@ -84,7 +84,7 @@ function texture(
   return map
 }
 
-// 어두운 화면 얼굴: 큰 눈, 눈 반짝임, 볼 터치, 작은 미소. 대기는 감은 눈, 연결 끊김은 꺼진 화면.
+// 어두운 화면 얼굴: 큰 눈, 눈 반짝임, 볼 터치, 작은 미소. 대기는 감은 눈, 연결 전은 꺼진 화면.
 function faceTexture(status: AgentStatus) {
   const w = 1024
   const h = 640

@@ -1,5 +1,6 @@
 import type { Agent } from '../types'
 import { agentDisplayName, bibiOf } from '../agentIdentity'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { characterOf } from '@/lib/characters'
 import type { OfficeAppearance, OfficeEntity3D } from './OfficeRenderer3D'
 import type { Floor } from './floors'
@@ -13,6 +14,20 @@ export function avatarAppearance(avatar?: string): OfficeAppearance {
   return key === 'robot' ? 'member-robot' : key
 }
 
+/** 비비 현재 상태(BEE-A04 activity) */
+export type BibiActivity = 'DOCUMENT_REVIEW' | 'MEETING' | 'IDLE'
+
+// 비비 상태 → 자리(D35). 문서 검토는 공용 문서함, 회의는 회의실이고, 그 밖(한가함·상태 없음·없는 API)은 라운지 가운데다.
+export function bibiSpot(floor: Floor, activity?: BibiActivity | null) {
+  const spot =
+    activity === 'DOCUMENT_REVIEW'
+      ? floor.bibiSpots?.documents
+      : activity === 'MEETING'
+        ? floor.bibiSpots?.meeting
+        : undefined
+  return spot ?? floor.seats.lead?.[0]
+}
+
 export function officeActors(
   floor: Floor,
   agents: Agent[],
@@ -22,23 +37,31 @@ export function officeActors(
     string,
     { x: number; y: number; facing: OfficeEntity3D['dir'] }
   >,
+  /** undefined는 아직 읽지 못한 것이고, null은 서버에 상태 API가 없는 것(404)이다. */
+  bibiActivity?: BibiActivity | null,
 ) {
-  const result: (OfficeEntity3D & { name: string; stationary?: boolean })[] = []
+  const result: (OfficeEntity3D & {
+    name: string
+    stationary?: boolean
+    standing?: boolean
+  })[] = []
   const lead = bibiOf(agents) ?? RECEPTIONIST
-  // 고정 사무실(D36)에서는 단계와 관계없이 라운지 가운데(lead 자리)에 서 있다(사용자 결정 '라운지 가운데에 세움').
-  const bibiSpot = floor.seats.lead?.[0]
+  const spot = bibiSpot(floor, phase < 3 ? undefined : bibiActivity)
+  // 고정 사무실(D36)에서 상태를 읽은 뒤에는 상태가 바뀔 때만 새 자리로 걸어가 머문다(D37 에이전트와 같은 방식). 'meeting'은
+  // 일하는 상태라 산책하지 않는다. 처음 자리는 걷지 않고 바로 선다.
+  const walks = phase >= 3 && !!floor.zoneSigns && bibiActivity !== undefined
   if (phase < 3 || !bibiOf(agents) || floor.zoneSigns)
     result.push({
       id: lead.id,
       name: '비비 · AI 팀장',
-      x: bibiSpot ? bibiSpot.x * 32 + 16 : 4.5 * 32,
-      y: bibiSpot ? bibiSpot.y * 32 + 27 : 3.5 * 32,
-      dir: 'down',
+      x: spot ? spot.x * 32 + 16 : 4.5 * 32,
+      y: spot ? spot.y * 32 + 27 : 3.5 * 32,
+      dir: spot?.facing ?? 'down',
       moving: false,
       floor: 1,
       color: '#d5ad42',
       appearance: 'bibi',
-      stationary: true,
+      ...(walks ? { status: 'meeting', standing: true } : { stationary: true }),
     })
   if (phase < 3) return result
   if (floor.zoneSigns)
@@ -79,7 +102,8 @@ export function officeActors(
             ? 'agent'
             : avatarAppearance(agent.avatar),
       // 연결이 끊긴 에이전트는 자리에서 고개를 떨군 채 있는다.
-      stationary: agent.kind === 'human' || agent.status === 'offline',
+      stationary:
+        agent.kind === 'human' || STATE[agent.status]?.look === 'offline',
     })
   }
   return result
@@ -87,19 +111,30 @@ export function officeActors(
 
 type Spot = { x: number; y: number; facing: OfficeEntity3D['dir'] }
 // 사무실 에이전트 상태(D37) → 이름표 문구·로봇 모습(캔버스 상태 넷)·걷기 시뮬레이션 상태
+// 연결 전·연결 끊김·연결 실패는 이름표만 다르고 자리와 모습은 같다(S15P31A108-341).
 const STATE: Record<string, { label: string; look: string; life: string }> = {
-  offline: { label: '연결 끊김', look: 'offline', life: 'meeting' },
+  offline: { label: agentStatusLabels.none, look: 'offline', life: 'meeting' },
+  disconnected: {
+    label: agentStatusLabels.disconnected,
+    look: 'offline',
+    life: 'meeting',
+  },
+  failed: { label: agentStatusLabels.failed, look: 'offline', life: 'meeting' },
   working: { label: '작업 중', look: 'working', life: 'working' },
   validating: { label: '검증 중', look: 'working', life: 'meeting' },
   waiting: { label: '대기', look: 'idle', life: 'meeting' },
-  online: { label: '연결됨', look: 'online', life: 'meeting' },
+  online: {
+    label: agentStatusLabels.connected,
+    look: 'online',
+    life: 'meeting',
+  },
 }
 
 /**
  * 고정 사무실(D36·D37)의 사람과 에이전트.
  * - 팀원: API 없음, 접속·위치(presence, MON-A07)가 생기면 위치를 받는다. 지금은 각자 아일랜드 자리 옆에 서 있다.
  *   팀원은 가구를 쓰지 않는다(사용자 결정 "가구랑 상호작용하는 건 에이전트만 가능한 일"). 의자·스툴·리클라이너는 에이전트와 비비만 쓴다.
- * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 끊김은 라운지 충전 자리(리클라이너),
+ * - 에이전트: 작업 현황(MON-A05) 상태별 자리로 걸어가 머문다. 연결 전은 라운지 충전 자리(리클라이너),
  *   작업 중은 주인의 빈 아일랜드 의자(주인은 옆에 서 있음), 검증 중은 칸반 워룸 화면 앞, 대기는 허들 스툴, 연결됨(할 일 없음)은 주인 자리 뒤에 선다.
  *   상태가 바뀔 때만 새 자리로 걷고, 산책은 하지 않는다.
  */
@@ -206,7 +241,7 @@ function fixedOfficeActors(
     else if (state === 'validating')
       spot = take(floor.seats.board) ?? take(floor.seats.meeting)
     else if (state === 'waiting') spot = take(floor.seats.meeting)
-    else if (state === 'offline')
+    else if (STATE[state].look === 'offline')
       spot = take(floor.seats.lobby) ?? take(floor.seats.humandesk)
     else {
       spot = owner ? behind(owner) : undefined
@@ -231,7 +266,7 @@ function fixedOfficeActors(
       appearance: 'agent',
       standing,
       // 연결이 끊긴 에이전트는 충전 자리에서 고개를 떨군 채 움직이지 않는다.
-      ...(state === 'offline' ? { stationary: true, seated: true } : {}),
+      ...(look === 'offline' ? { stationary: true, seated: true } : {}),
     })
   }
   return result

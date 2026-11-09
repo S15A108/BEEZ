@@ -98,6 +98,13 @@ const ALLOWED: Record<string, string[]> = {
   COMPLETED: [],
   CANCELLED: [],
 }
+const TASK_ACTIVITY: Record<string, string> = {
+  START: 'TASK_STARTED',
+  RESUME: 'TASK_RESUMED',
+  WAIT: 'TASK_WAITING',
+  COMPLETED: 'TASK_COMPLETED',
+  CANCEL: 'TASK_CANCELLED',
+}
 const IDEMPOTENT: Record<string, string[]> = {
   IN_PROGRESS: ['START'],
   COMPLETED: ['COMPLETED'],
@@ -241,7 +248,11 @@ function evaluate(context: MockContext, validation: Validation): void {
   validation.finished_at = now()
   delete context.database.pending_validations[validation.id]
   syncValidation(context, validation)
-  activity(context, 'TASK_VALIDATED', { task_id: task.id })
+  // 공통 계약 6.2: PASS만 SUCCESS, 나머지 끝 상태는 FAILURE
+  activity(context, 'VALIDATION_FINISHED', {
+    task_id: task.id,
+    result: validation.status === 'PASS' ? 'SUCCESS' : 'FAILURE',
+  })
 }
 
 function startValidation(context: MockContext, task: TaskDetail): MockReply {
@@ -591,7 +602,12 @@ export function taskRoutes(
       }
       task!.lock_version++
       task!.updated_at = now()
-      activity(context, `TASK_${input.event}`, { task_id: task!.id })
+      // 활동 유형은 실제 전이로 정한다(공통 계약 6.2 '작업 유형 정하기'). delta가 있는 완료는 재검증 대기다.
+      activity(
+        context,
+        accepted ? 'TASK_COMPLETION_REPORTED' : TASK_ACTIVITY[input.event],
+        { task_id: task!.id },
+      )
       return accepted ? { status: 202, data: task! } : { data: task! }
     }
     case 'CTX-A01':
