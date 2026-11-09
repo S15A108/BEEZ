@@ -10,7 +10,7 @@ package com.beez.backend.common.auth;
  * @param agentTokenId   에이전트 토큰 ID. 사람 세션이면 null
  * @param kind           HUMAN 또는 AGENT
  * @param agentSessionId 이 요청이 들어온 MCP 연결의 기록 ID(agent_session.id, -333). 활동의 agent_session_id 가 된다.
- *                       MCP 도구 호출만 채운다 — 사람 요청·REST 로 온 에이전트 요청·검증 워커가 다시 만든 호출자는 null
+ *                       MCP 도구 호출만 채운다 — 사람 요청·검증 워커가 다시 만든 호출자는 null (에이전트 토큰은 /mcp 로만 인증된다)
  */
 public record CallerContext(Long accountId, Long agentTokenId, CallerKind kind, Long agentSessionId) {
 

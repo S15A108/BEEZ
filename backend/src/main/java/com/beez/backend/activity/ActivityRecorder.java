@@ -53,7 +53,7 @@ public class ActivityRecorder {
             throw new IllegalArgumentException("agent caller must carry agentTokenId: " + event.eventKey());
         }
         // 요청이 들어온 연결 기록(-333). 토큰의 현재 세션을 여기서 다시 찾지 않는다 — 그 사이 새 연결에 밀려나면 다른 세션이 잡힌다.
-        // 사람은 늘 null(CallerContext 가 막는다), 연결 기록이 없는 에이전트 호출자(REST·검증 워커)도 null
+        // 사람은 늘 null(CallerContext 가 막는다), 검증 워커가 다시 만든 에이전트 호출자도 null
         insert(caller.kind().name(), caller.accountId(), caller.agentSessionId(), event);
     }
 
