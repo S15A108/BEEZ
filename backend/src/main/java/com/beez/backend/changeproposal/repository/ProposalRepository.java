@@ -209,6 +209,12 @@ public class ProposalRepository {
                 UPDATE change_proposal SET status='WITHDRAWN',withdrawn_by=:account,withdrawn_at=clock_timestamp(),
                   lock_version=lock_version+1,updated_at=clock_timestamp() WHERE id=:proposal AND project_id=:project
                 """).param("project", project).param("proposal", proposal).param("account", account).update();
+        // 거둔 제안은 되살릴 수 없으므로 그 제안에 귀속된 초안 문서 버전도 채택되지 않은 것(REJECTED)으로 닫는다.
+        // 반려(REJECTED 제안)는 같은 제안의 새 리비전으로 다시 제출하며 같은 초안을 쓰므로 여기서 건드리지 않는다.
+        jdbc.sql("""
+                UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1
+                WHERE change_proposal_id=:proposal AND status='DRAFT'
+                """).param("proposal", proposal).update();
     }
 
     public void startReview(long project, long proposal) {

@@ -478,6 +478,8 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         Proposal original=create("withdraw-base"); long id=Long.parseLong(original.id());
         Proposal withdrawn=commands.withdraw(author,project.projectId(),id,withdrawal(original),"withdraw");
         assertThat(withdrawn.status()).isEqualTo("WITHDRAWN");
+        // 거둔 제안은 되살릴 수 없으므로 귀속된 초안 문서 버전은 채택되지 않은 것(REJECTED)이 된다.
+        assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE change_proposal_id=?",String.class,id)).isEqualTo("REJECTED");
         assertThat(withdrawn.snapshotHash()).isEqualTo(original.snapshotHash());
         assertThat(withdrawn.revision()).isEqualTo(original.revision());
         assertThat(withdrawn.documents()).isEqualTo(original.documents());
