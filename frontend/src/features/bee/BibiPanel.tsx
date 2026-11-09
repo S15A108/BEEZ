@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { BibiFace } from '@/components/BibiFace'
+import { useBibiMessages } from './useBibiMessages'
 import { beeApi } from '@/api/services'
 import type { Generation } from '@/api/contracts/common'
 import { getApiErrorMessage } from '@/api/error'
@@ -36,7 +37,9 @@ export function BibiPanel({ projectId }: { projectId: string }) {
   const scopeLabel = useId()
   const errorId = useId()
   const [scope, setScope] = useState<AskScope>('APPROVED')
-  const [messages, setMessages] = useState<(Ask & { answer: Generation })[]>([])
+  const [messages, setMessages] = useBibiMessages<Ask & { answer: Generation }>(
+    projectId,
+  )
   const mutation = useMutation({
     mutationFn: (input: Ask) => beeApi.ask(projectId, input),
     onSuccess: (answer, input) =>
@@ -195,7 +198,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            대화는 이 창을 연 동안만 보여요.
+            대화는 새로 고침하면 지워져요.
           </p>
         </div>
         {/* 입력줄이 본래 놓일 자리의 끝. 붙어 있는 입력줄 안에 두면 늘 보이는 것으로 쳐서 내려가지 않는다. */}
