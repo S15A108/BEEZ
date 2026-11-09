@@ -126,7 +126,7 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await dialog
     .getByLabel('설계 질문')
     .fill('로그인 요구사항의 근거는 무엇인가요?')
-  await dialog.getByRole('button', { name: '비비에게 질문하기' }).click()
+  await dialog.getByRole('button', { name: '보내기' }).click()
   await expect(dialog.getByText('템플릿 응답', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('log')).toContainText('로그인 요구사항의 근거')
   expect(errors).toEqual([])
