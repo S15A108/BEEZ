@@ -44,11 +44,18 @@ export function RelationsView({ projectId }: { projectId: string }) {
     queryFn: () => dashboardApi.relations(projectId, { task_id: selected! }),
     enabled: !!selected,
   })
-  // 관계 응답에는 변경 제안 상태가 없어 진행 중 제안 목록과 맞춰 경고 띠를 띄운다.
+  // 관계 응답에는 변경 제안 상태가 없어 진행 중 제안 목록과 맞춰 경고 띠를 띄운다. 마지막 페이지까지 읽는다.
+  // 첫 50개만 보면 그 밖의 제안이 바꾸는 설계 항목의 경고가 사라졌다(PR #72 4차 TC-02).
   const open = useQuery({
     queryKey: ['projects', projectId, 'relation-changes'],
     queryFn: () =>
-      changesApi.list(projectId, { group: 'IN_PROGRESS', limit: 50 }),
+      readAllPages((cursor) =>
+        changesApi.list(projectId, {
+          group: 'IN_PROGRESS',
+          cursor,
+          limit: 100,
+        }),
+      ),
   })
   // 영향 경고: 진행 중 제안이 이 작업이 참조하는 설계 항목을 바꿀 때만 띄운다. 작업 기준 응답의
   // PROPOSED_FROM(제안 → 작업)은 '이 작업에서 나온 제안'이라 영향이 아니다. 서버는 제안 → 설계 항목(UPDATE·RETIRE)을
