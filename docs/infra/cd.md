@@ -203,6 +203,11 @@ backend로 넘기는 세 경로(`snippets/beez-backend-proxy.conf`)는 경로에
 location을 고르지만 원래 경로를 넘기고, Tomcat은 `;` 뒤를 지우기 때문에
 `/api/;/../actuator/prometheus`가 backend에서 `/actuator/prometheus`가 되는
 틈을 막습니다(Spring 방화벽도 400으로 막지만 한 겹 더 둡니다).
+같은 스니펫이 클라이언트 주소·https 여부를 `X-Real-IP`·`X-Forwarded-For`·
+`X-Forwarded-Proto`로 넘기고, `X-Forwarded-Host`·`X-Forwarded-Port`는 Nginx 값으로
+덮어씁니다. backend는 이 헤더를 믿으므로(`server.forward-headers-strategy=native`,
+S15P31A108-273) 덮어쓰지 않으면 클라이언트가 보낸 Host·Port가 그대로 들어갑니다.
+스니펫을 바꾸면 배포로는 반영되지 않으니 위 설치 명령으로 서버에 넣고 reload합니다.
 관리 포트를 따로 두지 않는 건 헬스체크·Nginx·`deploy.sh`가 모두
 8080의 `/actuator/health`를 보기 때문입니다.
 
