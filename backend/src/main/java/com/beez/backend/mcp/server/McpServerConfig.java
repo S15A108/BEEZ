@@ -143,7 +143,7 @@ public class McpServerConfig {
     }
 
     /**
-     * 요청 스레드에서 필터가 넣어 둔 인증 주체와 요청 ID 를 꺼내 도구 처리로 넘긴다.
+     * 요청 스레드에서 필터가 넣어 둔 인증 주체·연결 기록 ID·요청 ID 를 꺼내 도구 처리로 넘긴다.
      * SDK 가 처리 스레드를 바꿔도 ThreadLocal(SecurityContext·MDC)에 기대지 않으려는 것이다.
      */
     static McpTransportContext extractContext(HttpServletRequest request) {
@@ -151,6 +151,9 @@ public class McpServerConfig {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof AgentPrincipal principal) {
             values.put(McpToolHandler.PRINCIPAL_KEY, principal);
+        }
+        if (request.getAttribute(McpSessionFilter.AGENT_SESSION_ATTRIBUTE) instanceof Long agentSessionId) {
+            values.put(McpToolHandler.AGENT_SESSION_KEY, agentSessionId);
         }
         String requestId = MDC.get(RequestIdFilter.MDC_KEY);
         if (requestId != null) {
