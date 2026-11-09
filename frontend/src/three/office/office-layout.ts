@@ -80,6 +80,60 @@ const SOLID = new Set([
   'speaker',
 ])
 const onTop = (piece: OfficePiece) => piece.y > 0.2
+// 3인칭은 남동쪽에서 내려다봐서(D42) 남·동쪽 벽 가까이 선 화면과 보드는 뒷면으로 방을 가린다. 1인칭에서만 보인다.
+const VIEW_BLOCKERS = new Set(['board', 'screen', 'tv'])
+const NEAR_WALL = 3
+
+// 캔버스 배치(28 × 16 m)를 26 × 14 m로 좁힌다(D42). 가구 묶음은 그대로 옮기고 가운데 통로와 구역 사이 빈 줄만 덜어 낸다.
+// 통로 북쪽과 남쪽은 구역이 달라 덜어 내는 자리도 다르다. [이 x를 기준으로, 덜어 낼 폭]
+const NARROW_NORTH = [
+  [-8, 1],
+  [-0.25, 0.5],
+  [2.75, 0.5],
+]
+const NARROW_SOUTH = [
+  [-7.25, 0.5],
+  [0.25, 1.5],
+]
+// 깊이는 가운데 통로(z -2.5 ~ 1.1)에서만 2 m 덜어 낸다. 통로 북쪽에 선 화분을 북쪽 칸으로 몰아 엘리베이터에서 동쪽으로 뻗는 줄을 비운다.
+const narrowZ = (z: number) => {
+  if (z <= -2.5) return z + 1
+  if (z >= 1.1) return z - 1
+  return z < -0.5 ? -1.5 + (z + 2.5) * 0.25 : -1 + ((z + 0.5) * 1.1) / 1.6
+}
+const narrowAt = (x: number, z: number) => ({
+  x: (z < 0 ? NARROW_NORTH : NARROW_SOUTH).reduce(
+    (at, [cut, width]) => at + (x < cut ? width / 2 : -width / 2),
+    x,
+  ),
+  z: narrowZ(z),
+})
+function narrowPlan(plan: OfficePlan): OfficePlan {
+  const box = <T extends { x0: number; z0: number; x1: number; z1: number }>(
+    area: T,
+  ) => {
+    const from = narrowAt(area.x0, area.z0),
+      to = narrowAt(area.x1, area.z1)
+    return { ...area, x0: from.x, z0: from.z, x1: to.x, z1: to.z }
+  }
+  const entrance = narrowAt(plan.entrance.x, plan.entrance.z)
+  const bibi = narrowAt(plan.bibi.x, plan.bibi.z)
+  return {
+    ...plan,
+    room: { ...plan.room, w: plan.room.w - 2, d: plan.room.d - 2 },
+    zones: plan.zones.map((zone) => {
+      const sign = narrowAt(zone.sign[0], zone.sign[1])
+      return { ...box(zone), sign: [sign.x, sign.z] }
+    }),
+    lounge: box(plan.lounge),
+    entrance,
+    bibi: { ...plan.bibi, ...bibi },
+    pieces: plan.pieces.map((piece) => ({
+      ...piece,
+      ...narrowAt(piece.x, piece.z),
+    })),
+  }
+}
 
 /**
  * 고정 사무실(D36). 팀원 수와 상관없이 같은 방이고, 배치는 건물 외관을 따른다(D39).
@@ -87,7 +141,7 @@ const onTop = (piece: OfficePiece) => piece.y > 0.2
  */
 export function makeTeamOffice(design?: string): Floor {
   const look = officeDesignOf(design)
-  const plan = OFFICE_PLANS[look]
+  const plan = narrowPlan(OFFICE_PLANS[look])
   // 캔버스 배치(m, 방 가운데 원점)를 타일로 옮긴다. 1 m = 1타일이고 서쪽·북쪽 벽이 0번 칸이다.
   const ROOM_W = plan.room.w
   const ROOM_D = plan.room.d
@@ -229,6 +283,9 @@ export function makeTeamOffice(design?: string): Floor {
           ? 'lounge'
           : `${piece.model ?? piece.ui}/${index}`,
       kit,
+      firstPersonOnly:
+        VIEW_BLOCKERS.has(piece.kind) &&
+        (ROOM_D / 2 - piece.z < NEAR_WALL || ROOM_W / 2 - piece.x < NEAR_WALL),
     })
     if (solid) block(piece)
     // 의자가 없는 회의실·워룸(모던 워룸 벤치, 목조 회의실 부스 소파)은 긴 의자 하나를 두 자리로 쓴다(D37 자리 대체, D39).

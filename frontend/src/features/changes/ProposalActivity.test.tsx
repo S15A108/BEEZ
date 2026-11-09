@@ -103,6 +103,15 @@ it('회의를 끝내 제안이 만들어진 활동은 라벨로 보인다', asyn
   )
 })
 
+it('검토 시작은 대시보드 타임라인과 같은 "진행 중" 칩으로 보인다', async () => {
+  activities.mockResolvedValue({
+    items: [row('1', { type: 'CHANGE_PROPOSAL_REVIEW_STARTED' })],
+    has_more: false,
+  })
+  mount()
+  expect(await screen.findByRole('listitem')).toHaveTextContent('진행 중')
+})
+
 it('모르는 활동 유형은 원문으로, 실패 결과는 따로 표시한다', async () => {
   activities.mockResolvedValue({
     items: [row('1', { type: 'CHANGE_PROPOSAL_FUTURE', result: 'FAILURE' })],

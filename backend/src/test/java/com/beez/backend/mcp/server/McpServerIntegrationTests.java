@@ -7,14 +7,12 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
-import io.modelcontextprotocol.client.McpClient;
+import com.beez.backend.support.McpTestClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.McpHttpClientTransportAuthorizationException;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -213,18 +211,9 @@ class McpServerIntegrationTests extends IntegrationTestSupport {
         }
     }
 
-    /**
-     * 닫을 때는 close()·try-with-resources 대신 closeGracefully() 를 쓴다 — close() 는 세션 종료 DELETE 를 기다리지 않아
-     * 그 요청의 토큰 확인 트랜잭션이 다음 시험(같은 컨텍스트의 다른 클래스 포함)의 truncate … cascade 와 교착한다(CI 40P01).
-     */
+    /** 닫을 때는 closeGracefully() 를 쓴다 — 이유는 {@link McpTestClient} */
     private McpSyncClient connect(String token) {
-        var transport = HttpClientStreamableHttpTransport
-                .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))
-                .endpoint("/mcp")
-                .httpRequestCustomizer((builder, method, uri, body, context) ->
-                        builder.header("Authorization", "Bearer " + token))
-                .build();
-        return McpClient.sync(transport).requestTimeout(Duration.ofSeconds(10)).build();
+        return McpTestClient.connect(Integer.parseInt(env.getRequiredProperty("local.server.port")), token);
     }
 
     private String issueToken(String email, long projectId) {

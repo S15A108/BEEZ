@@ -4,7 +4,7 @@ import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
 import type { Activity } from '@/api/contracts/common'
-import { statusLabel } from '@/lib/display'
+import { activityChip } from '@/features/dashboard/labels'
 import { cn } from '@/lib/utils'
 import { useProposalActivities } from './useProposalActivities'
 import type { ActorFilter } from './useProposalActivities'
@@ -165,16 +165,10 @@ export function ProposalActivity({
                       <span
                         className={cn(
                           'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                          item.result === 'SUCCESS'
-                            ? 'bg-emerald-50 text-[#00753a]'
-                            : item.result === 'FAILURE'
-                              ? 'bg-[#fdecec] text-[#a3141b]'
-                              : 'bg-muted text-muted-foreground',
+                          activityChip(item).className,
                         )}
                       >
-                        {item.result === 'FAILURE'
-                          ? '실패'
-                          : statusLabel(item.result) || item.result}
+                        {activityChip(item).label}
                       </span>
                     </li>
                   )

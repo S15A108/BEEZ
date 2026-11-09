@@ -23,7 +23,8 @@ class AnalysisResultApplierUsageTest {
                 mock(ProjectDesignLookup.class), mock(ValidationRules.class), mock(TaskPlanRevisionRepository.class),
                 mock(TaskPlanDesignRefRepository.class), mock(ValidationInputAssembler.class),
                 mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), fakeEnabled, mock(DeltaCompletion.class),
-                mock(TaskCompletionReportRepository.class), mock(ValidationStatusLookup.class), mock(org.springframework.context.ApplicationEventPublisher.class));
+                mock(TaskCompletionReportRepository.class), mock(ValidationStatusLookup.class), mock(org.springframework.context.ApplicationEventPublisher.class),
+                mock(ValidationActivities.class));
     }
 
     private static boolean valid(AnalysisResultApplier applier, Map<String, Object> response) {

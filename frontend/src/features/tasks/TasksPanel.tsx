@@ -30,6 +30,7 @@ import {
   getApiErrorCode,
   getApiErrorDetail,
   getApiErrorMessage,
+  getErrorCodeMessage,
   isMissingApi,
 } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
@@ -78,11 +79,13 @@ import {
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import { AssignmentRecommendations } from './AssignmentRecommendations'
 import {
   toValidationView,
   useValidationActions,
   useValidationQuery,
 } from '@/features/validations/useValidation'
+import { RelatedTaskRefs } from './RelatedTaskRefs'
 
 interface Props {
   projectId: string
@@ -100,10 +103,21 @@ const taskSteps = ['계획 작성', '계획 검증', '작업 시작', '완료 �
 const settling = (task?: TaskDetail) =>
   task?.validation_status === 'RUNNING' ||
   task?.waiting_reason === 'REVALIDATION'
-// 서버가 검증을 무효로 만든 이유 코드(stale_reason). 모르는 값은 그대로 보여 준다.
+// 서버가 검증을 무효로 만든 이유 코드(stale_reason). 백엔드가 쓰는 값 전부이고, 모르는 값은 코드 대신 일반 문구로 보인다.
 const staleReasonLabel: Record<string, string> = {
   ASSIGNEE_CHANGED: '담당자가 바뀌어 새 담당자가 다시 검증받아야 해요.',
+  PLAN_CHANGED: '계획이 바뀌어 지금 계획으로 다시 검증해야 해요.',
+  RELATED_PLAN_CHANGED:
+    '같은 설계 항목을 다루는 다른 작업이 바뀌어 다시 검증해야 해요.',
+  INPUT_CHANGED: '분석하는 동안 기준 설계나 계획이 바뀌어 다시 검증해야 해요.',
+  DESIGN_PUBLISHED:
+    '참조한 설계가 새로 발행되어 바뀐 기준으로 다시 검증해야 해요.',
+  TASK_RESUMED:
+    '작업을 다시 진행해 완료 보고 재검증은 쓰지 않아요. 마치면 다시 완료 보고해 주세요.',
+  TASK_CANCELLED: '작업이 취소되어 이 검증은 더 쓰지 않아요.',
 }
+const staleReasonText = (reason = '') =>
+  staleReasonLabel[reason] ?? '기준이 바뀌어 다시 검증해야 해요.'
 const policyStateLabel = {
   SUPPORTED: '승인 근거 확인',
   EXPLICITLY_UNDECIDED: '정책 미확정',
@@ -334,6 +348,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
         : canStart
           ? 2
           : 1
+  // 같은 입력의 분석 횟수를 다 쓰면(409 validation_attempt_limit) 서버는 그 입력의 재시도와 새 검증을 함께 막는다.
+  // 키는 재시도한 검증 ID, 새 검증이면 'plan-<계획 리비전 ID>'다. 계획을 고쳐 새로 검증하면 다른 키라 다시 열린다.
+  const [attemptLimited, setAttemptLimited] = useState<string[]>([])
+  const planKey = `plan-${task?.current_plan_revision.id}`
+  const retryLimited = !!result && attemptLimited.includes(result.id)
+  const deltaRetryLimited = !!delta && attemptLimited.includes(delta.id)
+  const attemptLimitReached =
+    retryLimited || deltaRetryLimited || attemptLimited.includes(planKey)
   const startBlocked = validation.error
     ? '검증 결과를 다시 불러와야 시작할 수 있어요.'
     : result?.status === 'RUNNING'
@@ -341,12 +363,13 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       : blocked
         ? '검증에서 막힌 항목을 고쳐야 시작할 수 있어요.'
         : result?.status === 'STALE'
-          ? (staleReasonLabel[result.stale_reason ?? ''] ??
-            '기준이 바뀌어 다시 검증해야 해요.')
+          ? staleReasonText(result.stale_reason)
           : result?.status === 'ERROR'
             ? needsHumanReview
               ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
-              : '검증을 마치지 못했어요. 다시 실행해 주세요.'
+              : retryLimited
+                ? '같은 계획으로는 다시 실행할 수 없어요. 계획을 고쳐 새로 검증해 주세요.'
+                : '검증을 마치지 못했어요. 다시 실행해 주세요.'
             : result?.status === 'PASS'
               ? '지금 계획으로 다시 검증해 주세요.'
               : '계획 검증을 통과해야 시작할 수 있어요.'
@@ -375,6 +398,18 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   }
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void runAction(operation, message).catch(() => undefined)
+  }
+  const requestValidation = (
+    key: string,
+    operation: () => Promise<unknown>,
+    message: string,
+  ) => {
+    void runAction(operation, message).catch((cause: unknown) => {
+      if (getApiErrorCode(cause) !== 'validation_attempt_limit') return
+      // 일반 오류 띠 대신 검증 결과에 이유와 할 일을 보인다.
+      action.reset()
+      setAttemptLimited((keys) => [...keys, key])
+    })
   }
   const report = (event: StateEvent) => {
     if (!task) return
@@ -519,6 +554,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           <AsyncState query={detail}>
             {(current) => (
               <div className="space-y-5">
+                {!['COMPLETED', 'CANCELLED'].includes(current.status) && (
+                  <AssignmentRecommendations
+                    key={`${current.id}-${current.lock_version}`}
+                    projectId={projectId}
+                    taskId={current.id}
+                    members={members.data?.items ?? []}
+                  />
+                )}
                 <Card>
                   <CardHeader>
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -667,7 +710,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                             result?.status === 'RUNNING'
                           }
                           onClick={() =>
-                            perform(
+                            requestValidation(
+                              planKey,
                               () =>
                                 validationActions.create({
                                   plan_revision_id:
@@ -904,8 +948,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                     )}
                     {result?.stale_reason && (
                       <p className="text-sm text-amber-800">
-                        {staleReasonLabel[result.stale_reason] ??
-                          result.stale_reason}
+                        {staleReasonText(result.stale_reason)}
                       </p>
                     )}
                     {result?.status === 'RUNNING' && (
@@ -923,13 +966,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                             ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
                             : '분석을 완료하지 못했어요. 자동으로 통과 처리하지 않아요.'}
                         </p>
-                        {isOwner && !needsHumanReview && (
+                        {isOwner && !needsHumanReview && !retryLimited && (
                           <Button
                             size="sm"
                             variant="outline"
                             disabled={action.busy || validationActions.busy}
                             onClick={() =>
-                              perform(
+                              requestValidation(
+                                result.id,
                                 () =>
                                   validationActions.retry(result.id, {
                                     expected_attempt: result.current_attempt,
@@ -944,6 +988,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         )}
                       </div>
                     )}
+                    {attemptLimitReached && (
+                      <p role="alert" className="text-sm text-destructive">
+                        {getErrorCodeMessage('validation_attempt_limit')}
+                      </p>
+                    )}
                     {delta && (
                       <div
                         className="flex flex-wrap items-center gap-3 rounded-lg border p-3"
@@ -952,13 +1001,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         <p className="text-sm">
                           완료 보고 재검증: <StatusPill value={delta.status} />
                         </p>
-                        {isOwner && deltaRetryable && (
+                        {isOwner && deltaRetryable && !deltaRetryLimited && (
                           <Button
                             size="sm"
                             variant="outline"
                             disabled={action.busy || validationActions.busy}
                             onClick={() =>
-                              perform(
+                              requestValidation(
+                                delta.id,
                                 () =>
                                   validationActions.retry(delta.id, {
                                     expected_attempt: delta.current_attempt,
@@ -1136,6 +1186,12 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           ? '현재 계획과 입력에서 시작을 막는 항목을 찾지 못했어요. 시작 직전에 서버가 참조와 선행 작업을 다시 확인해요.'
                           : '계획 검증 후 근거와 보완 항목이 이곳에 표시돼요.'}
                       </p>
+                    )}
+                    {!!view?.relatedTaskRefs.length && (
+                      <RelatedTaskRefs
+                        projectId={projectId}
+                        refs={view.relatedTaskRefs}
+                      />
                     )}
                   </CardContent>
                 </Card>

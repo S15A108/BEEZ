@@ -15,6 +15,7 @@ import {
 } from './helpers'
 import type { MockContext, MockReply } from './helpers'
 import { nextId, now } from './state'
+import { mockUsage } from './usage'
 
 function counts(items: { status: string }[]) {
   const count = new Map<string, number>()
@@ -318,39 +319,12 @@ export function collaborationRoutes(
       return { data: { by_status: counts(project.validations) } }
     case 'MON-A02':
       return {
-        data: {
-          from:
-            query.get('from') ??
+        data: mockUsage(
+          project,
+          query.get('from') ??
             new Date(Date.now() - 7 * 86400000).toISOString(),
-          to: query.get('to') ?? now(),
-          // 실제 서버처럼: 호출이 없으면 비용·통화를 생략하고(0원으로 보이지 않게) 기능별은 8줄을 0으로 채운다.
-          input_tokens: 0,
-          output_tokens: 0,
-          call_count: 0,
-          tokens_unknown_call_count: 0,
-          cost_unknown_call_count: 0,
-          by_feature: [
-            'DOCUMENT_PARSE',
-            'TASK_VALIDATION',
-            'CHANGE_IMPACT',
-            'EMBEDDING',
-            'BEE_CHAT',
-            'BEE_DRAFT',
-            'TASK_ASSIGNMENT',
-            'MEETING_ANALYSIS',
-          ].map((key) => ({
-            key,
-            input_tokens: 0,
-            output_tokens: 0,
-            call_count: 0,
-            tokens_unknown_call_count: 0,
-            cost_unknown_call_count: 0,
-          })),
-          by_task: [],
-          by_validation: [],
-          by_agent: [],
-          by_day: [],
-        },
+          query.get('to') ?? now(),
+        ),
       }
     case 'MON-A03': {
       // task_id를 주면 그 작업 기준으로 설계 항목·검증·관련 변경 제안만 돌려준다. 변경 제안 연결은 예시로 후보(점선)로 둔다.
@@ -466,7 +440,9 @@ export function collaborationRoutes(
               (!query.get('actor_type') ||
                 item.actor_type === query.get('actor_type')) &&
               (!query.get('change_proposal_id') ||
-                item.change_proposal_id === query.get('change_proposal_id')),
+                item.change_proposal_id === query.get('change_proposal_id')) &&
+              (!query.get('agent_session_id') ||
+                item.agent_session_id === query.get('agent_session_id')),
           ),
           query,
         ),
@@ -502,10 +478,18 @@ export function collaborationRoutes(
               member_id: member.id,
               // 서버는 폐기되지 않은 토큰에 세션이 있을 때만 이 행에 세션을 싣고, 같은 조건으로 agent_connected를 정한다.
               // 예시 DB에서는 연결된 에이전트만 세션이 있는 것으로 둔다(PR #128 리뷰).
-              ...(agent?.connected ? { agent_session_id: agent.id } : {}),
+              ...(agent?.connected
+                ? {
+                    agent_session_id: agent.id,
+                    ...(agent.last_report_at
+                      ? { reported_at: agent.last_report_at }
+                      : {}),
+                  }
+                : {}),
               ...(task
                 ? {
                     current_task_id: task.id,
+                    task_title: task.current_plan_revision.plan.title,
                     task_status: task.status,
                     validation_status: task.validation_status,
                     ...(task.waiting_reason

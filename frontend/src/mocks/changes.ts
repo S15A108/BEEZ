@@ -495,12 +495,12 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
         item.plan_revision_id === task.current_plan_revision.id,
     )) {
       validation.status = 'STALE'
-      validation.stale_reason = '참조한 승인 설계가 변경됐어요.'
+      validation.stale_reason = 'DESIGN_PUBLISHED'
       delete context.database.pending_validations[validation.id]
     }
     if (task.validation) {
       task.validation.status = 'STALE'
-      task.validation.stale_reason = '참조한 승인 설계가 변경됐어요.'
+      task.validation.stale_reason = 'DESIGN_PUBLISHED'
     }
     if (task.status === 'IN_PROGRESS') {
       task.status = 'WAITING'

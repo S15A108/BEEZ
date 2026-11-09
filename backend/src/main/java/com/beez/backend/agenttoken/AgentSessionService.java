@@ -36,6 +36,13 @@ public class AgentSessionService {
 
     private static final Logger log = LoggerFactory.getLogger("com.beez.mcp");
 
+    /**
+     * 세션 확인 결과와, 받을 때(OK) 그 연결 기록 ID (-333). 도구 호출이 남기는 활동의 agent_session_id 가 이 값이다 —
+     * 토큰의 "지금 살아 있는 세션"을 나중에 다시 찾지 않는다(그 사이 새 연결이 생기면 다른 세션을 가리킨다)
+     */
+    public record Admitted(Admission admission, Long agentSessionId) {
+    }
+
     /** 세션 ID 가 붙은 /mcp 요청을 받아도 되는지 */
     public enum Admission {
         /** 이 토큰이 연 살아 있는 세션 */
@@ -87,25 +94,25 @@ public class AgentSessionService {
                 saved.getClientName(), replaced);
     }
 
-    /** 세션 ID 가 붙은 요청마다. 받아도 되면 마지막 통신 시각도 남긴다 */
+    /** 세션 ID 가 붙은 요청마다. 받아도 되면 마지막 통신 시각도 남기고 연결 기록 ID 를 돌려준다 */
     @Transactional
-    public Admission admit(AgentPrincipal principal, String sessionKey) {
+    public Admitted admit(AgentPrincipal principal, String sessionKey) {
         Optional<AgentSession> found = sessions.findBySessionKey(sessionKey);
         if (found.isEmpty()) {
-            return Admission.NOT_FOUND;
+            return new Admitted(Admission.NOT_FOUND, null);
         }
         AgentSession s = found.get();
         if (s.getAgentTokenId() != principal.agentTokenId()) {
             log.info("mcp session rejected reason=foreign_token agent_session={} token={}", s.getId(),
                     principal.agentTokenId());
-            return Admission.NOT_FOUND;
+            return new Admitted(Admission.NOT_FOUND, null);
         }
         if (s.getEndedAt() != null) {
-            return "REPLACED".equals(s.getEndReason()) ? Admission.REPLACED : Admission.NOT_FOUND;
+            return new Admitted("REPLACED".equals(s.getEndReason()) ? Admission.REPLACED : Admission.NOT_FOUND, null);
         }
         Instant now = Instant.now();
         sessions.touch(s.getId(), now, now.minus(TOUCH_INTERVAL));
-        return Admission.OK;
+        return new Admitted(Admission.OK, s.getId());
     }
 
     /** DELETE /mcp 가 성공한 뒤. 이 토큰의 세션만 닫는다 */

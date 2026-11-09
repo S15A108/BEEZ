@@ -75,6 +75,7 @@ public class AnalysisResultApplier {
     private final TaskCompletionReportRepository reports;
     private final ValidationStatusLookup statusLookup;
     private final ApplicationEventPublisher publisher;
+    private final ValidationActivities activities;
 
     public AnalysisResultApplier(ValidationRepository validations, ValidationResponses responses,
                                  ProjectDesignLookup designLookup, ValidationRules rules,
@@ -82,7 +83,8 @@ public class AnalysisResultApplier {
                                  ValidationInputAssembler assembler, RelatedTaskCandidateFinder relatedTasks, JdbcClient jdbc,
                                  @Value("${beez.validation.fake-analyzer:false}") boolean fakeAnalyzerEnabled,
                                  DeltaCompletion deltaCompletion, TaskCompletionReportRepository reports,
-                                 ValidationStatusLookup statusLookup, ApplicationEventPublisher publisher) {
+                                 ValidationStatusLookup statusLookup, ApplicationEventPublisher publisher,
+                                 ValidationActivities activities) {
         this.validations = validations;
         this.responses = responses;
         this.designLookup = designLookup;
@@ -97,6 +99,7 @@ public class AnalysisResultApplier {
         this.reports = reports;
         this.statusLookup = statusLookup;
         this.publisher = publisher;
+        this.activities = activities;
     }
 
     /** An incomplete search cannot establish PASS, even when the model was never called. */
@@ -470,6 +473,7 @@ public class AnalysisResultApplier {
         }
         validations.finishRun(runId, "OK", null, model, durationMs, response.get("usage"));
         validations.finish(v.id(), status, summary);
+        activities.finishedBySystem(v, status);
         // 저장된 결과일 때만 나간다(앞의 늦은 결과·입력 변경·리스 만료 분기는 이미 return). 회의 개설은 커밋 뒤 리스너가 맡는다
         if (!conflictRelated.isEmpty()) {
             publisher.publishEvent(new ConflictFindingsSaved(v.projectId(), v.id(), v.taskId(), List.copyOf(conflictRelated)));
@@ -538,6 +542,7 @@ public class AnalysisResultApplier {
         validations.finishRun(current.get().runId(), "DISCARDED", "모델을 부르기 전에 규칙으로 판정이 확정됨 (" + rule.decidedStatus() + ")",
                 null, 0);
         validations.finish(v.id(), rule.decidedStatus(), responses.summary(v.summary()));
+        activities.finishedBySystem(v, rule.decidedStatus());
         validations.finishJob(lease.jobId(), "DONE");
         log.info("validation {} attempt {} decided by rules before calling the model: {}", v.id(), lease.attempt(), rule.decidedStatus());
         carryIfPlanRenamed(v);
@@ -601,6 +606,7 @@ public class AnalysisResultApplier {
         summary.putAll(diagnostics);
         summary.put(ValidationResponses.SUMMARY_ERROR_CODE, errorCode);
         validations.finish(v.id(), "ERROR", summary);
+        activities.finishedBySystem(v, "ERROR");
         validations.finishJob(lease.jobId(), "FAILED");
     }
 
