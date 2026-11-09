@@ -2,6 +2,7 @@ package com.beez.backend.impactanalysis;
 
 import com.beez.backend.changeproposal.dto.ProposalDtos;
 import com.beez.backend.designitem.support.DesignJson;
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.access.ProjectAccessChecker;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -145,7 +146,7 @@ public class ImpactContextQuery {
                             rs.getInt("lock_version"), rs.getString("status"), revision.input().reason(),
                             rs.getTimestamp("updated_at").toInstant(), rs.getInt("revision_no"), storedHash);
                     return new StoredProposal(proposal, revision);
-                }).optional().orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "not_found", "변경 제안을 찾을 수 없습니다"));
+                }).optional().orElseThrow(() -> AccessErrors.notFound("proposal_not_in_project"));
         Proposal proposal = stored.proposal();
         if (publishedBaseline == null && !Set.of("PROPOSED", "IN_REVIEW").contains(proposal.status())) {
             throw new ApiException(HttpStatus.CONFLICT, "proposal_not_analyzable", "검토 중인 변경 제안이 아닙니다");

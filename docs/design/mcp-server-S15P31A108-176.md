@@ -201,7 +201,8 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 | `latency_ms`·`called_at` | 지연·시각 |
 
 - **남기지 않는 것**: 인수 본문(요청 문장·기록 원문·제안 내용)·멱등 키·토큰 값·응답 본문(MCP-09, Jira -177 작업 4).
-- 없는 ID와 다른 프로젝트 ID는 같은 404라 둘 다 `DENIED`다(존재를 숨기는 정책 그대로). 서비스가 `AccessErrors`를 거치지 않고 `ApiException(NOT_FOUND)`를 직접 던지는 곳(예: 패킷 없음)은 `ERROR` + `not_found`로 남는다.
+- 없는 ID와 다른 프로젝트 ID는 같은 404라 둘 다 `DENIED`다(존재를 숨기는 정책 그대로). 문서 ID(`get_document`)도 `AccessErrors`로 거부해 `DENIED` + `document_not_in_project`다(-322).
+- 자기 프로젝트 안의 **업무 상태 404**는 거부가 아니라 `ERROR`로 남는다: 기준 미발행(`baseline_not_published`), 현재 기준에 그 문서 승인본 없음·지정 버전 없음·초안 버전(`get_document`의 `not_found`, MCP-02 "승인본 또는 지정 버전 없음"). 숨길 존재가 없어서다. 이렇게 둔 곳은 코드에 이유를 주석으로 남겼다(-322).
 - **트랜잭션**: 업무는 서비스 안에서 이미 끝났다. 감사는 새 트랜잭션(REQUIRES_NEW)이라 업무가 롤백된 실패도 남는다. **감사 저장이 실패해도 도구 결과는 그대로 돌려준다**(전진 결정 — 이미 커밋된 변경을 실패로 알리면 에이전트가 다시 부른다). 그 호출은 `com.beez.mcp` 요청 줄과 `mcp audit write failed` 오류 로그로 추적한다.
 - 감사 행은 고치지 않는다(V38 UPDATE 금지 트리거).
 - 인증 실패(HTTP 401)·프로토콜 오류(없는 도구·세션)는 도구 처리 전에 끝나 감사 행이 없다. 요청 로그(`com.beez.access`)에만 남는다.

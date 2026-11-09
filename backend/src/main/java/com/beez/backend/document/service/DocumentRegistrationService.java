@@ -1,5 +1,6 @@
 package com.beez.backend.document.service;
 
+import com.beez.backend.common.access.AccessErrors;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.document.DocumentKind;
 import com.beez.backend.document.entity.Document;
@@ -67,7 +68,7 @@ public final class DocumentRegistrationService {
     /** Shares the publication transaction with job and idempotency response storage. */
     StoredDraft persist(Input input, NormalizedDocument source, DocumentOriginalWriter.Original original) {
         if (documents.lockProject(input.projectId()) == null) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "not_found", "프로젝트를 찾을 수 없습니다.");
+            throw AccessErrors.notFound("document_project_missing");
         }
         long actor = checkRegistration(input);
         Document document = documents.saveAndFlush(new Document(input.projectId(), input.kind(), input.title(), input.domain(), actor));
