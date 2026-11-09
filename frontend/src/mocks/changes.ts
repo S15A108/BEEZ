@@ -887,6 +887,11 @@ export function changeRoutes(
         )
       proposal!.status = 'IN_REVIEW'
       proposal!.updated_at = now()
+      activity(context, 'CHANGE_PROPOSAL_REVIEW_STARTED', {
+        change_proposal_id: proposal!.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: proposal!.id,
+      })
       return { data: proposalView(context, proposal!) }
     case 'CHG-A09':
       return publish(context, proposal!)
@@ -898,6 +903,11 @@ export function changeRoutes(
       proposal!.status = 'REJECTED'
       proposal!.rejection_reason = requiredString(body, 'reason')
       proposal!.updated_at = now()
+      activity(context, 'CHANGE_PROPOSAL_REJECTED', {
+        change_proposal_id: proposal!.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: proposal!.id,
+      })
       return { data: proposalView(context, proposal!) }
     case 'CHG-A14':
       return approvalPreview(context, proposal!)
@@ -914,6 +924,11 @@ export function changeRoutes(
         withdrawn_by: requireAccount(context).id,
         withdrawn_at: at,
         updated_at: at,
+      })
+      activity(context, 'CHANGE_PROPOSAL_WITHDRAWN', {
+        change_proposal_id: proposal!.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: proposal!.id,
       })
       return { data: proposalView(context, proposal!) }
     }
@@ -953,6 +968,17 @@ export function changeRoutes(
         created_at: now(),
       })
       project.comments.push(comment)
+      activity(
+        context,
+        comment.kind === 'REVIEW_REQUEST'
+          ? 'CHANGE_PROPOSAL_REVIEW_REQUESTED'
+          : 'CHANGE_PROPOSAL_COMMENTED',
+        {
+          change_proposal_id: proposal!.id,
+          target_type: 'CHANGE_PROPOSAL',
+          target_id: proposal!.id,
+        },
+      )
       return { status: 201, data: comment }
     }
     case 'CHG-A13':

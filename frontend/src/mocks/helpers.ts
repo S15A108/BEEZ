@@ -160,6 +160,7 @@ export function activity(
     type,
     actor_type: 'HUMAN',
     actor_account_id: requireAccount(context).id,
+    actor_name: requireAccount(context).name,
     result: 'SUCCESS',
     created_at: now(),
     ...extra,

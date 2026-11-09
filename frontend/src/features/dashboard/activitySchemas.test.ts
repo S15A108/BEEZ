@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { activitySchema } from '@/api/contracts/common'
-import { authApi, dashboardApi } from '@/api/services'
+import { authApi, changesApi, dashboardApi } from '@/api/services'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
@@ -127,5 +127,29 @@ describe('mock MON-A04', () => {
       change_proposal_id: '999',
     })
     expect(other.items).toEqual([])
+  })
+
+  it('의견·반려가 이름과 함께 제안의 활동으로 남는다', async () => {
+    const before = await dashboardApi.activities('101', {
+      change_proposal_id: '71',
+      limit: 50,
+    })
+    const { proposal } = await changesApi.get('101', '71')
+    await changesApi.comment('101', '71', { body: '확인했어요' })
+    await changesApi.reject('101', '71', {
+      reason: '범위를 줄여 주세요',
+      expected_revision: proposal.revision,
+      expected_snapshot_hash: proposal.snapshot_hash,
+    })
+    const after = await dashboardApi.activities('101', {
+      change_proposal_id: '71',
+      limit: 50,
+    })
+    const added = after.items.slice(0, after.items.length - before.items.length)
+    expect(added.map((item) => item.type)).toEqual([
+      'CHANGE_PROPOSAL_REJECTED',
+      'CHANGE_PROPOSAL_COMMENTED',
+    ])
+    expect(added.every((item) => !!item.actor_name)).toBe(true)
   })
 })

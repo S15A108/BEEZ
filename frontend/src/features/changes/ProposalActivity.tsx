@@ -18,6 +18,7 @@ const typeLabels: Record<string, string> = {
   CHANGE_PROPOSAL_APPROVED: '제안을 승인했어요',
   CHANGE_PROPOSAL_REJECTED: '제안을 반려했어요',
   CHANGE_PROPOSAL_PUBLISHED: '새 기준으로 발행했어요',
+  MEETING_CLOSED: '회의를 끝내고 제안을 만들었어요',
 }
 const actorKinds = {
   HUMAN: { label: '사람', icon: User },

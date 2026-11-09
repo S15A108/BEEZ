@@ -92,6 +92,17 @@ it('선택한 제안의 id 로 조회하고 행위자 4종을 이름과 에이�
   })
 })
 
+it('회의를 끝내 제안이 만들어진 활동은 라벨로 보인다', async () => {
+  activities.mockResolvedValue({
+    items: [row('1', { type: 'MEETING_CLOSED' })],
+    has_more: false,
+  })
+  mount()
+  expect(await screen.findByRole('listitem')).toHaveTextContent(
+    '회의를 끝내고 제안을 만들었어요',
+  )
+})
+
 it('모르는 활동 유형은 원문으로, 실패 결과는 따로 표시한다', async () => {
   activities.mockResolvedValue({
     items: [row('1', { type: 'CHANGE_PROPOSAL_FUTURE', result: 'FAILURE' })],

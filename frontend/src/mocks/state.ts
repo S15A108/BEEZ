@@ -32,7 +32,7 @@ import { contractExamples } from './contract-examples'
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
 // v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
 // v11: 보완 질문 유형(선택·단답·서술)과 초안 후보(S15P31A108-202) 시드.
-export const MOCK_STORAGE_KEY = 'beez.mock.api.v11'
+export const MOCK_STORAGE_KEY = 'beez.mock.api.v12'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
 export const MOCK_NOTICE =
