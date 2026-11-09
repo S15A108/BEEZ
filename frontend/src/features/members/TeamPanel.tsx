@@ -4,6 +4,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type UseQueryResult,
 } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { z } from 'zod'
@@ -11,7 +12,7 @@ import { Ellipsis, Pencil, TriangleAlert } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import type { Invitation, Member, TaskDetail } from '@/api/contracts/common'
-import { membersApi, projectsApi, tasksApi } from '@/api/services'
+import { membersApi, projectsApi } from '@/api/services'
 import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
@@ -30,8 +31,14 @@ import { Toast } from '@/components/Toast'
 import { useSession } from '@/features/auth/useSession'
 import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
 import { projectPlacements } from '@/features/projects/placements'
+import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
-import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
+import {
+  getApiErrorCode,
+  getApiErrorMessage,
+  getApiErrorStatus,
+  getHandoverErrorMessage,
+} from '@/api/error'
 import {
   Dialog,
   DialogContent,
@@ -139,32 +146,50 @@ export function TeamPanel({
     typeof dialog === 'object' && dialog?.action === 'remove'
       ? dialog.member
       : undefined
-  // 팀원이 나갈 때도 맡은 열린 작업을 넘겨야 한다. 넘길 동료가 없으면 서버가 409 active_tasks_exist로 막는다
-  // (PR #72 5차 조사 FIFTH-AMP-01). 추방과 같은 작업 목록과 동료 선택을 쓴다.
-  const leaving = view === 'remove' && !isLeader
-  const tasks = useQuery({
-    queryKey: ['projects', projectId, 'team-tasks'],
-    queryFn: () => tasksApi.list(projectId, { limit: 100 }),
-    enabled: !!removing || leaving,
-  })
-  const openTasksOf = (memberId?: string) =>
-    tasks.data?.items.filter(
-      (task) =>
-        task.assignee_member_id === memberId &&
-        !['COMPLETED', 'CANCELLED'].includes(task.status),
-    ) ?? []
-  const handover = openTasksOf(removing?.id)
   const otherMembers = people.filter(
     (member) => member.account_id !== session.data?.id,
   )
-  const myHandover = openTasksOf(
-    people.find((member) => member.account_id === session.data?.id)?.id,
-  )
+  // 추방 대상이나 나가는 나의 열린 작업(11-04 사용자 결정). 막지 않고 경고만 보이며, 넘겨받을 사람을 고르지 않으면
+  // 서버가 담당자만 비운다. 수는 TSK-A02를 담당자와 열린 상태로 걸러 한 번 불러 센다(MEM-A10 처리 규칙).
+  const leaverId =
+    removing?.id ??
+    (view === 'remove'
+      ? people.find((member) => member.account_id === session.data?.id)?.id
+      : undefined)
+  const openTasks = useQuery({
+    ...openTasksQuery(projectId, { assignee_member_id: leaverId ?? '' }),
+    enabled: !!leaverId,
+  })
+  // 수를 모르면(조회 실패) 고를 칸은 그대로 둔다. 고르지 않아도 나갈 수 있다.
+  const hasOpenTasks = openTasks.isError || !!openTasks.data?.items.length
+  // 빈 칸을 먼저 두어 첫 동료에게 저절로 넘기지 않는다. 기본은 '담당자 비우기'다(캔버스 SCR-06-v2-settings-member).
+  const successorOptions = (candidates: Member[], empty: string) => [
+    { value: '', label: empty },
+    ...candidates.map((member) => ({
+      value: member.id,
+      label: `${member.name}${member.role === 'LEADER' ? ' (팀장)' : ''}`,
+    })),
+  ]
   // 제거·나가기 뒤에는 바로 도시로 간다. 이 프로젝트를 다시 부르면 404·403이라 캐시에서 지우고, 목록만 뒤에서 새로 고친다.
   const leaveProject = () => {
     navigate('/')
     queryClient.removeQueries({ queryKey: ['projects', projectId] })
     void queryClient.invalidateQueries({ queryKey: ['projects'] })
+  }
+  // 성공하면 이 프로젝트를 다시 부르지 않도록 action.run 없이 부른다. 409(leader_transfer_required·invalid_transfer_target)와
+  // 403(이미 위임해 팀장이 아님, PR #170)은 그사이 역할이나 팀원이 바뀐 것이라 다시 불러오고, 이유는 폼이 보이도록 오류를 다시 던진다.
+  const leave = async (input: Parameters<typeof membersApi.leave>[1]) => {
+    try {
+      await membersApi.leave(projectId, input)
+    } catch (cause) {
+      const status = getApiErrorStatus(cause)
+      if (status === 403 || status === 409)
+        await queryClient.invalidateQueries({
+          queryKey: ['projects', projectId],
+        })
+      throw cause
+    }
+    leaveProject()
   }
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
@@ -518,8 +543,10 @@ export function TeamPanel({
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 p-4">
                 <span className="text-sm">
                   <strong className="block">프로젝트 삭제</strong>
+                  {/* 11-04 사용자 결정: PRJ-A05는 팀원이 있어도 이름이 맞으면 지운다(SCR-06-v2-settings-project). */}
                   <span className="text-muted-foreground">
-                    팀원이 있으면 팀장을 먼저 위임해야 해요.
+                    팀원이 있어도 삭제돼요. 권한은 모두 해제되고 기록은
+                    보관돼요. 이름을 입력해야 삭제돼요.
                   </span>
                 </span>
                 <Button
@@ -535,134 +562,141 @@ export function TeamPanel({
       )}
       {view === 'remove' && (
         <AsyncState query={project}>
-          {(data) => (
-            // 팀원 수를 모른 채(조회 중·실패) '혼자 쓰는 프로젝트' 삭제 폼을 보이면 팀 프로젝트가 지워질 수 있어, 팀원 조회가 성공한 뒤에만 고른다.
-            <AsyncState query={members}>
-              {() =>
-                isLeader && otherMembers.length > 0 ? (
-                  // 서버(PRJ-A05)는 아직 팀원이 있어도 지운다. 막는 응답(409)이 생기기 전까지 화면에서 먼저 막는다.
-                  <div className="space-y-5">
-                    <div
-                      role="alert"
-                      className="flex gap-2.5 rounded-xl border border-primary/50 bg-primary/10 p-4 text-sm"
-                    >
-                      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                      <div>
-                        <strong className="font-semibold">
-                          팀원 {otherMembers.length}명이 함께 쓰고 있어서 바로
-                          제거할 수 없어요
-                        </strong>
-                        <p className="mt-0.5 text-muted-foreground">
-                          먼저 설정 › 팀에서 다른 팀원에게 팀장을 위임하세요.
-                          위임하면 나는 팀원이 되고, 그다음 프로젝트에서 나갈 수
-                          있어요. 프로젝트는 남은 팀원에게 그대로 남아요.
-                        </p>
-                      </div>
+          {(data) => {
+            const confirmName = {
+              name: 'confirm_name',
+              label: '프로젝트 이름 입력',
+              required: true,
+              placeholder: data.name,
+              check: (value: string) =>
+                value === data.name
+                  ? undefined
+                  : '프로젝트 이름이 맞지 않아요.',
+            }
+            // 열린 작업을 넘겨받을 사람. 고르지 않으면 서버가 담당자만 비운다(MEM-A10 reassign_to_member_id).
+            const reassign = hasOpenTasks
+              ? [
+                  {
+                    name: 'reassign_to_member_id',
+                    label: '넘겨받을 사람 선택',
+                    type: 'select' as const,
+                    options: successorOptions(
+                      otherMembers,
+                      '고르지 않음 · 담당자 비우기',
+                    ),
+                  },
+                ]
+              : []
+            // action.run은 성공 뒤 이 프로젝트를 다시 불러 '접근 권한' 오류가 뜨므로 직접 부른다. 실패하면 폼이 이유를 보여 준다.
+            const deleteForm = (
+              <ActionForm
+                fields={[confirmName]}
+                destructive
+                submitLabel="프로젝트 삭제"
+                onSubmit={async (values) => {
+                  await projectsApi.remove(projectId, {
+                    confirm_name: values.confirm_name,
+                  })
+                  leaveProject()
+                }}
+              />
+            )
+            return (
+              // 팀원 수를 모른 채(조회 중·실패) 고르면 팀 프로젝트를 혼자 쓰는 프로젝트로 볼 수 있어, 팀원 조회가 성공한 뒤에만 그린다.
+              <AsyncState query={members}>
+                {() =>
+                  !isLeader ? (
+                    <div className="space-y-4">
+                      <LeaveWarning query={openTasks} />
+                      <LeaveNotes />
+                      <ActionForm
+                        // 열린 작업을 늦게 알게 되면 칸이 바뀌므로 폼을 새로 그린다.
+                        key={hasOpenTasks ? 'handover' : 'plain'}
+                        fields={[...reassign, confirmName]}
+                        destructive
+                        submitLabel="프로젝트 나가기"
+                        errorMessage={getHandoverErrorMessage}
+                        onSubmit={(values) =>
+                          leave({
+                            reassign_to_member_id:
+                              values.reassign_to_member_id || undefined,
+                          })
+                        }
+                      />
                     </div>
-                    <ol className="grid gap-3.5 text-sm">
-                      <li className="grid grid-cols-[24px_minmax(0,1fr)] gap-3">
-                        <span className="grid size-6 place-items-center rounded-full bg-primary text-xs font-bold">
-                          1
-                        </span>
-                        <div className="grid gap-2">
-                          <strong className="font-semibold">팀장 위임</strong>
-                          <span className="text-[12.5px] text-muted-foreground">
-                            설정 › 팀에서 넘길 팀원 줄의 ⋯ → &apos;팀장으로
-                            위임&apos;으로 넘겨요. 넘기면 나는 팀원이 되고,
-                            2단계로 이어가요.
-                          </span>
-                          <Button
-                            className="justify-self-start"
-                            onClick={() => onViewChange?.('team')}
-                          >
-                            팀에서 위임하기
-                          </Button>
-                        </div>
-                      </li>
-                      <li className="grid grid-cols-[24px_minmax(0,1fr)] gap-3 text-muted-foreground">
-                        <span className="grid size-6 place-items-center rounded-full bg-muted text-xs font-bold">
-                          2
-                        </span>
-                        <div className="grid gap-1">
-                          <strong className="font-semibold">
-                            프로젝트 나가기
-                          </strong>
-                          <span className="text-[12.5px]">
-                            위임이 끝나면 팀원 화면의 프로젝트 나가기로
-                            이어져요.
-                          </span>
-                        </div>
-                      </li>
-                    </ol>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
-                      {isLeader
-                        ? '혼자 쓰는 프로젝트예요. 제거하면 문서와 작업에 다시 들어올 수 없어요.'
-                        : '나가면 문서·작업을 볼 수 없고 이 프로젝트 토큰도 바로 막혀요. 다시 들어오려면 새 초대가 필요해요.'}
-                    </p>
-                    <ActionForm
-                      // 넘길 작업을 늦게 알게 되면 칸이 바뀌므로 폼을 새로 그린다.
-                      key={myHandover.length ? 'handover' : 'plain'}
-                      footer={
-                        !isLeader &&
-                        myHandover.length > 0 && (
-                          <HandoverTasks tasks={myHandover} />
-                        )
-                      }
-                      fields={[
-                        ...(!isLeader && myHandover.length
-                          ? [
-                              {
-                                name: 'reassign_to_member_id',
-                                label: '작업을 넘겨받을 동료',
-                                type: 'select' as const,
-                                required: true,
-                                // 빈 칸을 먼저 두어 첫 동료에게 저절로 넘기지 않고 직접 고르게 한다.
-                                options: [
-                                  { value: '', label: '동료 고르기' },
-                                  ...otherMembers.map((member) => ({
-                                    value: member.id,
-                                    label: member.name,
-                                  })),
-                                ],
-                              },
-                            ]
-                          : []),
-                        {
-                          name: 'confirm_name',
-                          label: '프로젝트 이름 입력',
-                          required: true,
-                          placeholder: data.name,
-                          check: (value) =>
-                            value === data.name
-                              ? undefined
-                              : '프로젝트 이름이 맞지 않아요.',
-                        },
-                      ]}
-                      destructive
-                      submitLabel={
-                        isLeader ? '프로젝트 제거' : '프로젝트 나가기'
-                      }
-                      onSubmit={async (values) => {
-                        // action.run은 성공 뒤 이 프로젝트를 다시 불러 '접근 권한' 오류가 뜨므로 직접 부른다. 실패하면 폼이 이유를 보여 준다.
-                        await (isLeader
-                          ? projectsApi.remove(projectId, {
-                              confirm_name: values.confirm_name,
-                            })
-                          : membersApi.leave(projectId, {
+                  ) : otherMembers.length ? (
+                    // 11-04 사용자 결정: 팀장의 나가기 창은 두 길이다. 나가기와 삭제를 섞지 않는다(MEM-A10, PR #113 2차 리뷰).
+                    <div className="space-y-8">
+                      <section
+                        aria-label="위임하고 나가기"
+                        className="space-y-4"
+                      >
+                        <h3 className="text-base font-semibold">
+                          위임하고 나가기
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          팀장을 넘겨받을 팀원을 고르면 위임과 나가기를 한 번에
+                          해요. 프로젝트는 남은 팀원에게 그대로 남아요.
+                        </p>
+                        <LeaveWarning query={openTasks} />
+                        <LeaveNotes />
+                        <ActionForm
+                          key={hasOpenTasks ? 'handover' : 'plain'}
+                          fields={[
+                            {
+                              name: 'transfer_leader_to_member_id',
+                              label: '팀장을 넘겨받을 팀원',
+                              type: 'select',
+                              required: true,
+                              options: successorOptions(
+                                otherMembers,
+                                '팀원 고르기',
+                              ),
+                            },
+                            ...reassign,
+                          ]}
+                          destructive
+                          submitLabel="위임하고 나가기"
+                          errorMessage={getHandoverErrorMessage}
+                          onSubmit={(values) =>
+                            leave({
+                              transfer_leader_to_member_id:
+                                values.transfer_leader_to_member_id,
                               reassign_to_member_id:
                                 values.reassign_to_member_id || undefined,
-                            }))
-                        leaveProject()
-                      }}
-                    />
-                  </div>
-                )
-              }
-            </AsyncState>
-          )}
+                            })
+                          }
+                        />
+                      </section>
+                      <section
+                        aria-label="프로젝트 삭제"
+                        className="space-y-4 border-t pt-6"
+                      >
+                        <h3 className="text-base font-semibold">
+                          프로젝트 삭제
+                        </h3>
+                        {/* PRJ-A05 처리 규칙: 삭제 확인 창에 남은 팀원 수를 보이고 그 팀원들도 더 쓸 수 없다고 알린다. 삭제 알림은 없다. */}
+                        <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+                          프로젝트를 지우면 팀원 {otherMembers.length}명도 이
+                          프로젝트를 더 쓸 수 없어요. 권한은 모두 해제되고
+                          기록은 보관돼요.
+                        </p>
+                        {deleteForm}
+                      </section>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+                        혼자 쓰는 프로젝트예요. 삭제하면 문서와 작업에 다시
+                        들어올 수 없어요.
+                      </p>
+                      {deleteForm}
+                    </div>
+                  )
+                }
+              </AsyncState>
+            )
+          }}
         </AsyncState>
       )}
       {typeof dialog === 'object' && dialog?.action === 'transfer' && (
@@ -771,19 +805,21 @@ export function TeamPanel({
         <FormDialog
           back="팀"
           title={`${dialog.member.name} 추방`}
-          description="프로젝트 접근과 토큰이 바로 해제돼요. 진행 중인 작업을 넘겨받을 동료를 골라 주세요."
+          description="프로젝트 접근과 토큰이 바로 해제돼요. 맡은 열린 작업은 넘겨받을 동료를 고르지 않으면 담당자만 비워져요."
           fields={[
             {
               name: 'reassign_to_member_id',
-              label: '작업을 넘겨받을 동료',
+              label: '작업을 넘겨받을 동료 선택',
               type: 'select',
-              options: people
-                .filter((member) => member.id !== dialog.member.id)
-                .map((member) => ({ value: member.id, label: member.name })),
+              options: successorOptions(
+                people.filter((member) => member.id !== dialog.member.id),
+                '고르지 않음 · 담당자 비우기',
+              ),
             },
           ]}
           submitLabel="추방"
           destructive
+          errorMessage={getHandoverErrorMessage}
           onClose={() => setDialog(null)}
           onSubmit={async (values) => {
             await action.run(
@@ -797,8 +833,8 @@ export function TeamPanel({
             setDialog(null)
           }}
         >
-          {/* 넘길 작업을 목록으로 보여 주고 넘겨받을 동료를 고른다(L9). */}
-          <HandoverTasks tasks={handover} />
+          {/* 맡은 열린 작업을 목록으로 보여 주고 넘겨받을 동료를 고른다(L9, SCR-06-v2-settings-remove). */}
+          <HandoverTasks name={dialog.member.name} query={openTasks} />
         </FormDialog>
       )}
     </section>
@@ -828,32 +864,72 @@ const inviteSchema = z.object({
   message: z.string().trim().max(500, '함께 보낼 말은 500자까지 쓸 수 있어요.'),
 })
 
-// 추방·나가기에서 넘길 열린 작업 목록
-function HandoverTasks({ tasks }: { tasks: TaskDetail[] }) {
+type OpenTasks = UseQueryResult<{ items: TaskDetail[]; has_more: boolean }>
+
+// 추방에서 그 팀원이 맡은 열린 작업 목록(SCR-06-v2-settings-remove)
+function HandoverTasks({ name, query }: { name: string; query: OpenTasks }) {
   return (
     <section aria-label="넘길 작업" className="grid gap-1.5 text-sm">
-      <p className="font-semibold">넘길 작업</p>
-      {tasks.length ? (
-        <ul className="grid gap-1">
-          {tasks.map((task) => (
-            <li key={task.id} className="rounded-lg border px-3 py-2">
-              {task.key} · {task.current_plan_revision.plan.title}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-muted-foreground">넘길 작업이 없어요.</p>
-      )}
-      {/* PR #50 d4db914: 진행 중·대기 작업은 넘기면 대기(재검증)가 된다. 보드에 없는 안내라 짧게 둔다. */}
-      {tasks.some((task) =>
-        ['IN_PROGRESS', 'WAITING'].includes(task.status),
-      ) && (
-        <p className="text-xs text-muted-foreground">
-          진행 중인 작업은 넘기면 대기(재검증)로 바뀌고, 넘겨받은 동료가 다시
-          검증받아야 해요.
-        </p>
-      )}
+      <AsyncState query={query}>
+        {(page) => (
+          <>
+            <p className="font-semibold">
+              {name}님이 맡은 열린 작업 {openTaskCount(page)}
+            </p>
+            {page.items.length > 0 && (
+              <ul className="grid gap-1">
+                {page.items.map((task) => (
+                  <li key={task.id} className="rounded-lg border px-3 py-2">
+                    {task.key} · {task.current_plan_revision.plan.title}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </AsyncState>
+      <p className="text-xs text-muted-foreground">
+        넘기면 진행 중인 작업은 대기(재검증)로 바뀌고 넘겨받은 동료가 다시
+        검증받아요. 고르지 않으면 상태는 그대로 두고 담당자만 비워요.
+      </p>
     </section>
+  )
+}
+
+// 나가기 전 내가 맡은 열린 작업 경고(SCR-06-v2-settings-member). 막지 않고 알리기만 한다.
+function LeaveWarning({ query }: { query: OpenTasks }) {
+  if (query.isError)
+    return (
+      <p className="text-sm text-muted-foreground">
+        맡은 열린 작업을 확인하지 못했어요. 넘겨받을 사람을 고르지 않으면 열린
+        작업의 담당자가 비워져요.
+      </p>
+    )
+  if (!query.data?.items.length) return null
+  return (
+    <div className="flex gap-2.5 rounded-xl border border-primary/50 bg-primary/10 p-4 text-sm">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" />
+      <div>
+        <strong className="font-semibold">
+          {`내가 맡은 열린 작업이 ${openTaskCount(query.data)} 있어요`}
+        </strong>
+        <p className="mt-0.5 text-muted-foreground">
+          나가면 이 작업들의 담당자가 비워져요. 팀장이 배정하거나 다른 팀원이
+          맡을 때까지 아무도 이어서 진행할 수 없어요. 넘겨받을 사람을 고르면
+          바로 넘어가요.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function LeaveNotes() {
+  return (
+    <ul className="grid list-inside list-disc gap-1 text-sm text-muted-foreground">
+      <li>나가면 이 프로젝트의 문서와 작업을 더 볼 수 없어요.</li>
+      <li>이 프로젝트용 에이전트 토큰은 바로 쓸 수 없게 돼요.</li>
+      <li>다시 들어오려면 팀장에게 새 초대를 받고 메일 링크를 열어야 해요.</li>
+    </ul>
   )
 }
 

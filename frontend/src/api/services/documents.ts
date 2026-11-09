@@ -256,6 +256,41 @@ const service = {
       },
       options,
     ),
+  discussSuggestion: (
+    projectId: string,
+    documentId: string,
+    reviewId: string,
+    suggestionId: string,
+    input: schemas.DiscussSuggestionInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.discussSuggestionResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/bee-reviews/${encodeURIComponent(String(idSchema.parse(reviewId)))}/suggestions/${encodeURIComponent(String(idSchema.parse(suggestionId)))}/messages`,
+        data: schemas.discussSuggestionInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  requestBeeSuggestion: (
+    projectId: string,
+    documentId: string,
+    reviewId: string,
+    input: schemas.RequestBeeSuggestionInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.requestBeeSuggestionResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/bee-reviews/${encodeURIComponent(String(idSchema.parse(reviewId)))}/requests`,
+        data: schemas.requestBeeSuggestionInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
   submitReview: (
     projectId: string,
     documentId: string,
@@ -313,6 +348,21 @@ const service = {
         method: 'POST',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/review-submissions/${encodeURIComponent(String(idSchema.parse(submissionId)))}/decision`,
         data: schemas.decideSubmissionInputSchema.parse(input),
+      },
+      options,
+    ),
+  cancelSubmission: (
+    projectId: string,
+    documentId: string,
+    submissionId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.workingCopyResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/review-submissions/${encodeURIComponent(String(idSchema.parse(submissionId)))}/withdraw`,
+        idempotent: true,
       },
       options,
     ),

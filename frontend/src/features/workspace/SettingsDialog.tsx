@@ -7,8 +7,9 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { PaneSheetHost } from '@/components/PaneSheet'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { OfficeTimeSettings } from './OfficeTimeSettings'
 
-type Section = TeamView | 'agent'
+type Section = TeamView | 'agent' | 'office'
 
 // 오른쪽 위 톱니로 여는 설정 창. 팀 관리·에이전트·프로젝트 정보를 한곳에 모았다.
 export function SettingsDialog({
@@ -27,7 +28,7 @@ export function SettingsDialog({
   const section: Section =
     focusId === 'project' && isLeader
       ? 'project'
-      : focusId === 'agent' || focusId === 'remove'
+      : focusId === 'agent' || focusId === 'remove' || focusId === 'office'
         ? focusId
         : 'team'
   const go = (next: Section) => openPane('settings', next)
@@ -92,6 +93,7 @@ export function SettingsDialog({
               '에이전트',
               agentConnected ? '연결됨' : '연결 미확인',
             )}
+            {item('office', '사무실 화면')}
             {item('remove', isLeader ? '프로젝트 제거' : '프로젝트 나가기')}
           </div>
           <div className="grid gap-0.5">
@@ -112,6 +114,8 @@ export function SettingsDialog({
         <PaneSheetHost className="min-w-0 overflow-y-auto px-8 py-7">
           {section === 'agent' ? (
             <AgentsPanel projectId={projectId} />
+          ) : section === 'office' ? (
+            <OfficeTimeSettings />
           ) : (
             <TeamPanel
               key={section}

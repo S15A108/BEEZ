@@ -145,7 +145,9 @@ export const removeInputSchema = z.object({
 })
 export type RemoveInput = z.infer<typeof removeInputSchema>
 
+// MEM-A10(11-04 사용자 결정): 팀장은 넘겨받을 팀원을 함께 보내 위임과 나가기를 한 번에 한다.
 export const leaveInputSchema = z.object({
   reassign_to_member_id: common.idSchema.optional(),
+  transfer_leader_to_member_id: common.idSchema.optional(),
 })
 export type LeaveInput = z.infer<typeof leaveInputSchema>

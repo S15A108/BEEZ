@@ -31,8 +31,14 @@ S15P31A108-244 [결정 (11-04)] 4~6번이고, 이 문서는 S15P31A108-264 범�
 | [CdcSlotWalRetained](#cdcslotwalretained) | 슬롯이 붙잡은 WAL > 1GiB | 5분 | 4시간 | 인프라 · 전진 |
 | [CdcSlotMissing](#cdcslotmissing) | consumer 켜짐 **그리고** 기대 슬롯(`beez_published_analysis`) 지표 없음(exporter·수집기는 정상) | 10분 | 4시간 | 인프라 · 전진 |
 | [CdcSlotCollectorFailing](#cdcslotcollectorfailing) | `replication_slots` 수집기 실패(exporter 는 DB 에 붙어 있음) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcKafkaUnreachable](#cdckafkaunreachable) | consumer 켜짐 **그리고** 접수 토픽 offset을 못 읽음(kafka-exporter 수집 실패이거나 수집은 되는데 offset 없음) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcConnectDown](#cdcconnectdown) | consumer 켜짐 **그리고** Connect 지표 수집 실패(`up{job="connect"} == 0`) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcConnectorNotRunning](#cdcconnectornotrunning) | 커넥터나 task 상태가 RUNNING 아님(failed·paused·stopped 등) | 5분 | 4시간 | 인프라 · 전진 |
+| [CdcConnectorMissing](#cdcconnectormissing) | consumer 켜짐 **그리고** Connect·Kafka는 수집되는데 커넥터 지표 없음 | 10분 | 4시간 | 인프라 · 전진 |
+| [CdcConsumerLagStuck](#cdcconsumerlagstuck) | consumer가 Kafka에 붙어 있는데(`consumer_up` 1) 접수 group lag > 0 **그리고** 커밋 offset이 5분 동안 그대로 | 5분(멈춘 뒤 약 10분) | 4시간 | 인프라 · 전진 |
+| [CdcConsumerGroupMissing](#cdcconsumergroupmissing) | consumer가 붙어 있고 Kafka에 닿는데 kafka-exporter에 접수 group `beez-published-analysis` 지표가 없음 | 10분 | 4시간 | 인프라 · 전진 |
 | [BackendScrapeDown](#backendscrapedown) | `up{job="backend"} == 0` | 2분 | 4시간 | 인프라 · 전진 |
-| [MonitoringTargetDown](#monitoringtargetdown) | backend 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
+| [MonitoringTargetDown](#monitoringtargetdown) | backend·kafka·connect 외 수집 대상 `up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [PostgresDown](#postgresdown) | `pg_up == 0` | 2분 | 4시간 | 인프라 · 전진 |
 | [DiskSpaceLow](#diskspacelow) | 루트(`/`) 남은 공간 < 15% | 10분 | 4시간 | 인프라 · 전진 |
 
@@ -173,7 +179,8 @@ consumer가 켜진 상태에서 최근 5분 동안 Kafka 레코드 처리 실패
 늘었습니다. 같은 레코드의 반복 실패도 각각 셉니다.
 
 - 볼 곳: backend 로그의 리스너 오류, "Kafka 수신 실패(5분)". broker 연결 실패처럼
-  리스너에 닿기 전 오류는 이 지표에 잡히지 않습니다(S15P31A108-261에서 lag·Connect로 봄).
+  리스너에 닿기 전 오류는 이 지표에 잡히지 않습니다. 그런 끊김은 `CdcConsumerDown`, 붙어 있는데 처리가 막힌 것은
+  `CdcConsumerLagStuck`(S15P31A108-261)이 봅니다.
 
 ### CdcKafkaFailureMetricMissing
 
@@ -221,7 +228,8 @@ consumer가 켜져 있는데(= CDC 켜짐) 기대 슬롯 `beez_published_analysi
 - 볼 곳: [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)의 슬롯 쿼리. 0행이면 누가 슬롯을 지웠거나 커넥터가 없는 것이고,
   다른 이름의 슬롯만 있으면 커넥터 설정의 `slot.name`이 바뀐 것입니다(이 알림은 이름을 고정해서 봅니다).
 - 일부러 내린 것이면 되돌리기 순서(consumer 먼저 끄기)를 지켰는지 봅니다. consumer를 끄면 이 알림은 풀립니다.
-- 한계: consumer를 끈 점검 중에는 슬롯이 사라져도 울지 않습니다(커넥터가 있는지 알리는 지표는 S15P31A108-261에서 생김).
+- 한계: consumer를 끈 점검 중에는 슬롯이 사라져도 울지 않습니다. 커넥터 자체가 지워진 것은 `CdcConnectorMissing`(S15P31A108-261)이
+  같은 조건(consumer 켜짐)으로 봅니다.
 - 슬롯 이름을 바꾸기로 했으면 규칙 파일의 `slot_name`도 함께 고칩니다.
 
 ### CdcSlotCollectorFailing
@@ -233,6 +241,92 @@ CDC 전에는 울지 않고, exporter가 DB에 못 붙을 때(`pg_up` 0)는 `Pos
 - 볼 곳: `mon logs postgres-exporter`의 오류 문구. 권한 문제면 수집 계정 `beez_monitor`의 `pg_monitor` 역할을
   ([monitoring.md 수집 계정](monitoring.md#2-db-수집-계정)), 그 밖이면 exporter 버전 변경을 의심합니다.
 - 그동안은 [cdc-connector.md "상태 보기"](cdc-connector.md#상태-보기)로 슬롯을 손으로 봅니다.
+
+### Kafka·Connect 알림 공통 (S15P31A108-261)
+
+수집은 둘입니다. job `kafka`는 모니터링 스택의 kafka-exporter가 broker에 Kafka 프로토콜(`kafka:9092`)로 붙어 접수
+토픽·group의 lag을 냅니다. job `connect`는 Connect JVM 안의 JMX exporter javaagent가 `connect:9404`에서 커넥터·task 상태와
+Debezium 연결 여부를 냅니다(Connect REST는 그대로 컨테이너 안에만 있음, [cdc-stack.md "지표"](cdc-stack.md#지표-s15p31a108-261)).
+대시보드는 `BEEZ CDC 분석`의 "Kafka·Connect·슬롯" 줄입니다.
+
+- 이 장애들은 복구 스캔이 분석을 30초 늦게 이어 가므로 `CdcPendingDelay` 같은 앱 알림으로는 보이지 않습니다. 급하지 않지만 Kafka
+  경로가 멈춘 상태이고, Connect가 멈추면 슬롯이 WAL을 쌓기 시작합니다.
+- `CdcKafkaUnreachable`·`CdcConnectDown`·`CdcConnectorMissing`은 consumer 켜짐(= CDC 켜짐)일 때만 웁니다. CDC 스택을 계획해서
+  내릴 때 consumer를 먼저 끄면([cdc-stack.md "중지·내리기"](cdc-stack.md#중지내리기) 1번) 울지 않고, 켠 채 내리면 `CdcConsumerDown`처럼
+  5분 뒤 웁니다 — 그때는 일시 중지를 겁니다. 커넥터만 pause·stop하는 점검도 `CdcConnectorNotRunning`이 5분 뒤 울므로 마찬가지입니다.
+- Kafka가 죽으면 `CdcConsumerDown`(5분)과 `CdcKafkaUnreachable`(5분)이 함께 옵니다. 원인은 broker 쪽부터 봅니다.
+
+### CdcKafkaUnreachable
+
+CDC가 켜졌는데 5분 넘게 접수 토픽 offset을 읽지 못합니다. 기록 규칙 `beez_cdc:kafka_reachable`(kafka-exporter 수집 성공 **그리고**
+접수 토픽 offset 시계열 있음)이 없는 상태입니다. broker가 죽으면 exporter는 마지막 메타데이터로 broker 수 1을 계속 내므로 broker 수는
+보지 않습니다. 죽은 직후에는 한 번 긁는 데 15~30초가 걸려 수집 시간 초과(10초)가 나고, 긁기가 성공하더라도 offset을 못 읽어 그
+시계열을 빼고 냅니다(11-06 로컬 실측). 그래서 broker 다운·exporter 다운·접수 토픽 없음이 같은 글로 옵니다.
+
+- 볼 곳: `cdc ps`([cdc-stack.md](cdc-stack.md) `cdc` 함수)로 kafka가 healthy인지, `mon ps`로 kafka-exporter가 떠 있는지.
+  둘 다 떠 있으면 `mon logs kafka-exporter`의 `Cannot get ...` 줄과 Prometheus `targets` 화면의 오류 문구를 봅니다.
+  broker는 정상인데 이것만 울면 접수 토픽이 없는지(`kt kafka-topics.sh --bootstrap-server localhost:9092 --list`), 토픽 이름을 바꾸고
+  exporter 필터(`infra/monitoring/compose.yaml`)와 규칙의 토픽 이름을 함께 고치지 않았는지 봅니다.
+- broker가 돌아오면 exporter·backend consumer·Connect 모두 재시작 없이 다시 붙습니다(298·295 실측).
+
+### CdcConnectDown
+
+CDC가 켜졌는데 Connect의 지표(`connect:9404`)를 5분 넘게 긁지 못합니다. Connect 프로세스가 죽었거나, javaagent가 지표를 내지
+못하는 상태입니다. 이 동안 `CdcConnectorNotRunning`·`CdcConnectorMissing`은 지표가 없어 울지 않습니다.
+
+- 볼 곳: `cdc ps`, `cdc logs connect`. 컨테이너가 `Created`에서 멈춰 있으면 javaagent jar가 서버에 없는 것입니다
+  (`bind source path does not exist`, [cdc-stack.md "지표"](cdc-stack.md#지표-s15p31a108-261)의 jar 받기).
+- 메모리 상한(1GiB)에 닿아 재시작을 반복하는지 대시보드 "Connect 메모리"로 봅니다.
+
+### CdcConnectorNotRunning
+
+커넥터나 task 상태가 5분 넘게 RUNNING이 아닙니다. 글에 커넥터 이름·task 번호와 글을 보낼 때의 상태가 찍힙니다(같은 커넥터의
+connector 줄과 task 줄은 한 글로 묶임). 상태가 failed↔restarting처럼 바뀌어도 RUNNING이 아닌 채로 5분이면 웁니다 — 상태 라벨을
+빼고 커넥터·task로 묶어 셉니다(PR #186 리뷰). 그래서 해소 글은 RUNNING으로 돌아왔을 때만 옵니다.
+
+- `failed`: [cdc-connector.md "등록 확인"](cdc-connector.md#4-등록-확인)의 오류 문구를 보고 task를 재시작합니다. 같은 오류로 다시
+  실패하면 원인(DB 권한·publication·비밀 파일)부터 고칩니다.
+- `paused`·`stopped`: 누가 일부러 멈춘 것입니다. 점검이면 일시 중지를 걸고, 끝나면 resume합니다. `stopped`는 되돌리기·다시 만들기
+  도중의 상태입니다([cdc-connector.md "되돌리기"](cdc-connector.md#되돌리기)).
+- 멈춘 동안 슬롯은 남아 있고 WAL을 붙잡습니다(paused는 슬롯이 활성으로 남음, 11-06 로컬 실측). 오래 둘 거면 `CdcSlotWalRetained`를 봅니다.
+
+### CdcConnectorMissing
+
+CDC가 켜졌고 Connect·Kafka 지표도 수집되는데, 커넥터 상태 지표가 10분 넘게 없습니다. 커넥터가 지워졌거나 등록에 실패한 것입니다.
+슬롯은 남아 WAL을 붙잡으므로 `CdcSlotInactive`도 곧 웁니다. broker가 죽으면 worker가 커넥터를 내려 이 지표도 사라지지만(REST는 옛
+RUNNING을 그대로 보여 줌), 그때는 원인인 `CdcKafkaUnreachable`만 울도록 `beez_cdc:kafka_reachable`을 조건에 넣었습니다(11-06 로컬 실측).
+
+- 볼 곳: `crest /connectors`([cdc-connector.md "0. 준비"](cdc-connector.md#0-준비-서버-bash-셸을-새로-열-때마다)). `[]`이면
+  [cdc-connector.md "다시 만들기"](cdc-connector.md#다시-만들기)대로 새 이름으로 등록하거나, 일부러 내린 것이면 되돌리기 순서
+  (consumer 먼저 끄기)를 지켰는지 봅니다.
+
+### CdcConsumerLagStuck
+
+backend consumer는 Kafka에 붙어 있는데(`consumer_up` 1), 접수 group `beez-published-analysis`에 밀린 레코드가 있고 그 group의
+커밋 offset이 약 10분 동안 전진하지 않습니다(offset이 5분 그대로인 상태가 5분 더 이어짐). 평소 레코드는 1초 안에 처리돼
+커밋됩니다(295 실측 0.8초). 같은 레코드를 계속 재시도하며 막혀 있을 가능성이 큽니다(예: 접수행 삭제 이벤트,
+[cdc-connector.md "꼭 지킬 것"](cdc-connector.md#꼭-지킬-것)).
+
+- lag만 보지 않는 이유: 레코드가 계속 들어오고 정상 처리되는데 lag이 1~2건으로 유지되는 경우까지 정체로 알리게 되기 때문입니다
+  (PR #186 리뷰). 그래서 lag이 남아 있어도 offset이 5분 안에 한 번이라도 전진하면 울지 않습니다. 계속 쌓이기만 하는 대기량
+  자체는 이 알림이 보지 않습니다(대시보드 "접수 lag").
+
+- 볼 곳: 대시보드 "접수 lag", backend 로그의 리스너 오류, `CdcKafkaReceiveFailures`가 같이 울었는지. 처리 자체는 복구 스캔이
+  이어 가지만 Kafka 경로는 그 레코드에서 멈춥니다. 앱 쪽 원인이면 양지훈님과 같이 봅니다.
+- consumer가 끊긴 경우는 `CdcConsumerDown`이 맡고 이 알림은 울지 않습니다.
+
+### CdcConsumerGroupMissing
+
+backend consumer는 Kafka에 붙어 있고(`consumer_up` 1) Kafka에도 닿는데(`beez_cdc:kafka_reachable`), kafka-exporter에 접수
+group `beez-published-analysis` 지표가 10분 넘게 없습니다. 이 동안 `CdcConsumerLagStuck`은 지표가 없어 울 수 없으므로, 처리
+막힘 감시가 꺼졌다는 뜻입니다(PR #186 코드 리뷰).
+
+- 가장 흔한 원인: backend env `BEEZ_CDC_INTAKE_GROUP_ID`를 바꿨는데 `infra/monitoring/compose.yaml`의 kafka-exporter
+  `--group.filter`와 `rules/beez.yml`의 group 이름을 함께 바꾸지 않은 경우입니다. 세 곳을 같은 이름으로 맞춰 다시 올립니다.
+- 볼 곳: prometheus 컨테이너에서 `kafka_consumergroup_current_offset_sum` 조회(어떤 group 이름이 보이는지), `mon logs kafka-exporter`.
+- Kafka에 닿지 않을 때는 `CdcKafkaUnreachable`, consumer가 끊겼을 때는 `CdcConsumerDown`이 맡고 이 알림은 울지 않습니다.
+- 커밋한 offset이 한 번도 없는 group은 exporter가 지표를 내지 않을 수 있습니다(확인하지 않음). dev는 295부터 커밋 이력이 있어
+  해당하지 않지만, 새 환경에서 레코드가 하나도 오기 전에 이 알림이 울면 이 경우인지 먼저 봅니다.
 
 ### BackendScrapeDown
 
@@ -246,7 +340,7 @@ Prometheus가 `backend:8080/actuator/prometheus`를 2분 넘게 긁지 못합니
 ### MonitoringTargetDown
 
 backend 외 수집 대상(prometheus·alertmanager·node·postgres exporter)이 2분 넘게 응답하지
-않습니다.
+않습니다. kafka·connect는 위 `CdcKafkaUnreachable`·`CdcConnectDown`이 CDC 켜짐 조건과 함께 맡아 여기서 뺐습니다(261).
 
 - 볼 곳: `mon ps`([monitoring.md](monitoring.md#4-띄우기)의 `mon` 함수), 그 컨테이너 로그.
   메모리 한도에 닿아 재시작을 반복하는지 봅니다.
@@ -310,7 +404,11 @@ am silence expire <ID>                           # 일찍 풀기
 - **모니터링을 다시 띄우면(`--force-recreate`) 유지 중이던 알림 상태가 처음부터 다시 계산됩니다.**
   CDC 데이터 장애 중이면 `CdcDataUnavailable`이 바로 다시 울려 억제가 이어지므로 거짓 해소는
   가지 않지만, 장애 중에는 될 수 있으면 다시 띄우지 않습니다.
-- Kafka lag·Connect 상태·replication slot WAL 알림은 S15P31A108-261입니다.
+- Kafka·Connect 알림(261)은 consumer 켜짐을 조건으로 둡니다. consumer를 끈 채 Kafka·Connect가 죽은 것은 알리지 않고, 그
+  동안 슬롯이 WAL을 쌓으면 `CdcSlotInactive`·`CdcSlotWalRetained`가 웁니다.
+- broker 하나만 있어 broker 다운·kafka-exporter 다운·접수 토픽 없음을 지표로 구분하지 못합니다(`CdcKafkaUnreachable` 글이 셋 다 뜻함).
+- Connect javaagent 설정(`infra/cdc/dev/connect-metrics.yaml`)이 틀리면 에이전트가 JVM을 끝내 **Connect가 뜨지 않습니다**. CI
+  `cdc-stack` 잡이 서버와 같은 jar로 설정을 읽어 보고 알림이 읽는 시계열 이름을 확인합니다(`infra/cdc/dev/tests/check-connect-metrics.sh`).
 - 웹훅 주소가 틀리거나 Mattermost가 응답하지 않으면 Alertmanager 로그
   (`mon logs alertmanager`)에 `Notify for alerts failed`가 남고 재시도합니다. 이를 따로
   알리는 경로는 없습니다.
@@ -327,6 +425,10 @@ S15P31A108-229(CDC 통합·장애 복구 검증, 양지훈)가 Sprint5에 지연
 | 선행 접수 미완료 | `CdcBlockedProjects`가 10분 뒤 오는지 |
 | 워커 강제 종료 | `CdcExpiredLeases` |
 | Kafka 수신 오류 | `CdcKafkaReceiveFailures`(consumer 켜진 환경에서만) |
+| Kafka 중지(261) | `CdcConsumerDown`·`CdcKafkaUnreachable`이 5분 뒤 함께 오는지, 다시 띄우면 둘 다 해소 글이 오는지 |
+| Connect 중지·커넥터 실패(261) | `CdcConnectDown`(Connect 중지), `CdcConnectorNotRunning`(task failed), 10분 넘으면 `CdcSlotInactive` |
+| 커넥터 삭제(261) | `CdcConnectorMissing`·`CdcSlotInactive`(슬롯이 남는 경우) |
+| 레코드 처리 막힘(261) | `CdcConsumerLagStuck`이 offset이 멈춘 지 약 10분 뒤 오는지(consumer는 붙어 있음) |
 
 264에서 확인한 범위는 아래 "검증 기록"입니다. 위 표의 CDC 시나리오는 Kafka·consumer가
 있는 환경이 필요해 #229에서 확인합니다.
@@ -475,3 +577,43 @@ docker compose -f compose.yaml -f compose.local.yaml --env-file local.env logs -
 | PR #121 리뷰 반영 | 리뷰 지적 3건(갱신이 멈춘 인스턴스의 옛 값이 `max`에 남음, `up=1`인데 CDC 지표가 전부 빠지면 무알림, 인스턴스별 Kafka counter 누락)을 먼저 promtool로 재현 → 신선도 기록 규칙 `beez_cdc:snapshot_fresh`, `CdcMetricsMissing`, 인스턴스별 `unless`, CDC 상태 알림 `keep_firing_for: 10m`. 시험 10개 통과, 각 수정을 되돌린 사본에서 대응 시험이 실패하는 것 확인 |
 | 억제(inhibit) | 로컬 Alertmanager v0.34.2로 실측. ① FAILED 발생 → `CdcDataUnavailable` → (억제 중) FAILED 풀림 → 다시 발생: 처음 "발생" 한 번만 옴(거짓 해소·중복 발생 없음). ② (억제 중) 실제로 풀린 뒤 억제 원인 해소: 해소 글이 오지 않음(한계로 기록). 실제 설정에서 `CdcFailedIntakes`는 suppressed, `CdcKafkaReceiveFailures`는 그대로, `CdcDataUnavailable`은 `null` 경로. 시험 10개 통과, 수정 7가지를 하나씩 되돌린 사본에서 모두 대응 시험이 실패 |
 | inhibit 반영 재배포 | 커밋 `15f5687`을 올림. 규칙 그룹 `beez-cdc` 18개·`beez-infra-alerts` 4개 health ok, 수집 대상 5개 UP, `beez_cdc:snapshot_fresh`가 `backend:8080`을 신선으로 잡아 `CdcDataUnavailable` 비활성, Alertmanager에 억제 규칙 적재, 울리거나 억제된 알림 없음 |
+
+### 2026-11-06 로컬 (S15P31A108-261)
+
+Docker Desktop에 `beez_default`를 만들고 서버와 같은 pgvector(`wal_level=logical`)·`infra/cdc/dev/compose.yaml`(javaagent 포함)·
+모니터링 스택(`compose.local.yaml`, 가짜 Mattermost)을 띄웠습니다. 커넥터는 `intake-connector.json` 그대로 등록했습니다.
+
+| 항목 | 결과 |
+|---|---|
+| promtool | 규칙 34개, 시험 36개 통과. 새 조건(CDC 켜짐 조건, Kafka 닿음 조건, MonitoringTargetDown 제외, lag 의 consumer_up·offset 정체 조건, 상태 라벨 묶음 등)을 하나씩 빼거나 옛 식으로 되돌린 사본에서 대응 시험이 실패. lag 알림을 리뷰 전 식(lag > 0 만 10분)으로 되돌리면 "lag 1~2건 유지 + offset 전진"·"offset 4분마다 전진" 시험이 실패(PR #186 리뷰) |
+| javaagent 설정 시험 | `tests/check-connect-metrics.sh`가 정상 설정에서 통과. 상태 패턴·커넥터 패턴·소문자 설정을 망가뜨린 사본과 깨진 YAML·정규식·없는 파일에서 실패(JVM exit 1) |
+| 수집 | job `kafka`·`connect` UP. 새 대시보드 패널 식 18개 모두 조회 성공(로컬 postgres-exporter는 수집 계정이 없어 슬롯 값만 빔) |
+| Connect 지표 | `kafka_connect_connector_status`·`task_status`(status 라벨), task 수, `debezium_streaming_connected` 1. 에이전트 지표 120줄 |
+| kafka-exporter | 필터 없으면 `__consumer_offsets` 50파티션 등으로 수백 줄 → 접수 토픽·group 필터. lag·offset 정상, 메모리 약 8MiB |
+| broker 중지 | exporter가 마지막 메타데이터로 `kafka_brokers` 1을 계속 냄, 한 번 긁는 데 15~30초 → Prometheus `context deadline exceeded`, `up{job="kafka"}` 0(중지 22초 뒤). 이때 Connect worker가 커넥터를 내려 커넥터 지표가 사라짐(REST는 RUNNING) → `CdcConnectorMissing`에 Kafka 수집 정상 조건 추가. 다시 띄우면 13초 뒤 커넥터·task running |
+| 실제 전달 | 커넥터 pause(14:11) → `CdcConnectorNotRunning` pending 14:11:46, 가짜 Mattermost에 "🚨 CdcConnectorNotRunning 발생 (2건)"(커넥터 줄·task 0 줄, 담당 인프라 · 전진, 런북 링크 `#cdcconnectornotrunning`) 14:17 → resume(14:17:43) → "✅ 해소" 14:22(묶음 간격 5분) |
+| pause 중 슬롯 | `active = t` 그대로 |
+| broker 장시간 중지(리뷰 반영 뒤) | 28분 중지하며 약 2분 간격으로 긁음: 2분째만 40초 만에 200(접수 토픽 offset·broker 수 지표 없음), 그 뒤 12번은 모두 60초 넘게 응답 없음. Prometheus 시간 초과(10초)로 보면 계속 수집 실패이고, 응답이 오더라도 offset 이 빠져 `beez_cdc:kafka_reachable` 이 없다 → `CdcKafkaUnreachable` 유지 |
+| group 없음 알림(코드 리뷰 반영) | `CdcConsumerGroupMissing` 추가 뒤 promtool 규칙 35개, 시험 40개 통과. Kafka 닿음 조건·consumer 조건·group 지표 조건을 각각 뺀 사본에서 대응 시험(Kafka 안 닿음·consumer 끊김·group 있음)이 실패 |
+
+### 2026-11-06 서버 (S15P31A108-261)
+
+PR #186 브랜치 커밋 `d295ecef`를 올렸습니다. 순서: javaagent jar 받기(sha256 `OK`) → `/opt/beez/cdc` 올리기 → `/opt/beez/monitoring` 올리기 → 수신 시험.
+명령은 전진이 실행했고, 검증은 읽기 전용으로 했습니다.
+
+| 항목 | 결과 |
+|---|---|
+| cdc 올리기 | connect만 다시 만들어짐(18초 뒤 healthy), kafka는 그대로(`Up 2 hours`). 커넥터·task RUNNING, 슬롯 active, backend `consumer_up` 1 유지 |
+| Connect 지표 | prometheus 컨테이너에서 `connect:9404` 조회 — connector·task `status="running"`, `debezium_streaming_connected` 1, 커넥터 수 1. connect 로그에 ERROR 없음 |
+| 노출 | 호스트 리슨 주소가 올리기 전과 같음, cdc 컨테이너 publish 포트 없음 |
+| 메모리 | connect 565MiB(294 때 564MiB), kafka-exporter 6.5MiB |
+| 모니터링 올리기 | 수집 대상 일곱 job 모두 up, 규칙 34개 health ok, 새 알림 5개 비활성, `beez_cdc:kafka_reachable` 1, 접수 lag 0 |
+| 라벨 | kafka·connect job 라벨은 커넥터 이름·task 번호·토픽·group·버전·JVM 영역 이름뿐(프로젝트 ID·원문 없음). 시계열 kafka·connect 195, 전체 5,355 |
+| **실제 수신** | 커넥터 pause(14:58:30) → `CdcConnectorNotRunning` pending 14:58:31(connector 줄·task 0 줄) → firing 15:03:31 → 팀 채널에 발생 글(요약 "…: 5분 넘게 RUNNING 아님(지금 paused)", 전진 확인) → resume(15:09:22) → 해소 글 15:14. Alertmanager Mattermost 전송 2건, 실패 0. pause 동안 슬롯 active, resume 뒤 lag 0 |
+
+- resume 첫 시도는 새 ssh 셸에 `crest` 함수가 없어 실행되지 않았습니다(15:08). 함수 정의를 넣어 다시 쳤습니다. 서버 명령을 줄 때는
+  셸마다 함수 정의를 함께 줍니다.
+- 리뷰 반영(lag 정체 알림에 offset 전진 조건) 뒤 모니터링만 `153f2c3f`로 다시 올렸습니다(15:34, cdc 폴더는 바뀐 것이 없어 `d295ecef`
+  그대로). 규칙 34개 health ok, `CdcConsumerLagStuck`이 새 식으로 비활성, 수집 대상 일곱 job up, lag 0.
+- 머지 뒤 두 폴더를 dev 커밋으로 다시 올려 `REVISION`을 맞춥니다. 코드 리뷰로 더한 `CdcConsumerGroupMissing`(규칙 35개)은 그때
+  서버에 들어갑니다.

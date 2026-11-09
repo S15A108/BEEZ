@@ -290,6 +290,47 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
                 .query(Long.class).single();
     }
 
+    /**
+     * 깨지면: 다른 프로젝트 문서를 노린 get_document 가 감사에서 일반 실패(ERROR)에 섞여 골라낼 수 없거나,
+     * 반대로 자기 프로젝트의 업무 상태 404(기준에 승인본 없음·초안 버전)가 접근 거부(DENIED)로 잘못 잡힌다 (Jira -322, 설계 8절).
+     */
+    @Test
+    void getDocument_otherProjectDocument_isAuditedAsDenied_butBaselineGapStaysError() {
+        long leaderAccount = api.accountId("leader@test");
+        long outsideBaseline = insertDocument("API_SPEC", leaderAccount);
+        insertVersion(outsideBaseline, 1, "APPROVED", "# 기준에 없는 문서", leaderAccount);
+        insertVersion(outsideBaseline, 2, "DRAFT", "# 초안", leaderAccount);
+
+        // 자기 프로젝트: 숨길 존재가 없는 업무 상태 404 — 문구도 공통 거부 문구가 아니다
+        assertThat(error(call(member, "get_document", Map.of("document_id", String.valueOf(outsideBaseline)))))
+                .containsEntry("code", "not_found").containsEntry("message", "현재 기준 설계에 이 문서의 승인본이 없습니다.");
+        assertThat(error(call(member, "get_document", Map.of("document_id", String.valueOf(outsideBaseline), "version_no", 2))))
+                .containsEntry("code", "not_found");
+
+        McpSyncClient other = connect(outsiderProjectToken());
+        try {
+            other.initialize();
+            // 다른 프로젝트 문서는 없는 문서와 같은 공통 404 (05 참고 2)
+            assertThat(error(call(other, "get_document", Map.of("document_id", String.valueOf(outsideBaseline)))))
+                    .containsEntry("code", "not_found")
+                    .containsEntry("message", "리소스가 없거나 프로젝트 소속·접근 권한이 없음");
+        } finally {
+            other.closeGracefully();
+        }
+
+        long outsiderTokenId = api.jdbc.sql("select id from agent_token where name = 'outsider-laptop'").query(Long.class).single();
+        List<Map<String, Object>> denied = api.jdbc.sql("""
+                select result, deny_reason, error_code from mcp_audit_log where agent_token_id = :t and tool = 'get_document'""")
+                .param("t", outsiderTokenId).query().listOfRows();
+        assertThat(denied).singleElement().satisfies(r -> {
+            assertThat(r.get("result")).isEqualTo("DENIED");
+            assertThat(r.get("deny_reason")).isEqualTo("document_not_in_project");
+            assertThat(r.get("error_code")).isEqualTo("not_found");
+        });
+        assertThat(count("select count(*) from mcp_audit_log where project_id = " + projectId
+                + " and tool = 'get_document' and result = 'ERROR' and error_code = 'not_found' and deny_reason is null")).isEqualTo(2);
+    }
+
     /** 깨지면: 에이전트가 설계 변경을 제안할 수 없거나 같은 키 재시도가 제안을 두 번 만든다 (MCP-04, -195 서비스). */
     /**
      * 깨지면: 에이전트가 실행 오류로 끝난 검증을 MCP 로 다시 돌리지 못하거나, 재전송이 시도를 더 만들거나,

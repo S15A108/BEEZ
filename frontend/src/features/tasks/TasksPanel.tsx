@@ -1,15 +1,23 @@
 import { useState } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ClipboardCheck, Ellipsis, Play, Plus, RefreshCw } from 'lucide-react'
 import {
-  contextsApi,
-  planningApi,
-  tasksApi,
-  validationsApi,
-} from '@/api/services'
+  ClipboardCheck,
+  Ellipsis,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
+import { contextsApi, planningApi, tasksApi } from '@/api/services'
 import {
   idSchema,
   taskPlanInputSchema,
@@ -19,6 +27,7 @@ import {
   type TaskStateInput,
 } from '@/api/contracts/common'
 import {
+  getApiErrorCode,
   getApiErrorDetail,
   getApiErrorMessage,
   isMissingApi,
@@ -27,7 +36,16 @@ import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
 import { StatusPill } from '@/components/StatusPill'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Card,
   CardContent,
@@ -51,10 +69,20 @@ import { Textarea } from '@/components/ui/textarea'
 import { useSession } from '@/features/auth/useSession'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { describeContent, LIST_SELECTED, lines } from '@/lib/display'
+import {
+  describeContent,
+  LIST_SELECTED,
+  lines,
+  statusLabel,
+} from '@/lib/display'
 import { formatDate } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { membersQuery } from '@/features/members/membersQuery'
+import {
+  toValidationView,
+  useValidationActions,
+  useValidationQuery,
+} from '@/features/validations/useValidation'
 
 interface Props {
   projectId: string
@@ -83,6 +111,82 @@ const policyStateLabel = {
   INSUFFICIENT: '근거 부족',
 } as const
 
+type ClaimState = { error?: string; takenBy?: string }
+
+// 담당자 없는 작업 칩(캔버스 PNL-05-v2-team-unassigned)
+function UnassignedChip() {
+  return (
+    <Badge className="border-transparent bg-amber-100 font-semibold text-amber-800">
+      담당자 없음
+    </Badge>
+  )
+}
+
+// '내가 맡기' 확인 창과, 다른 팀원이 먼저 맡았을 때의 안내(캔버스 PNL-05-v2-claim-confirm·claim-taken).
+function ClaimDialog({
+  task,
+  state,
+  onClose,
+  onClaim,
+}: {
+  task: TaskDetail
+  state: ClaimState
+  onClose: () => void
+  onClaim: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent className="sm:max-w-[420px]">
+        {state.takenBy ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>다른 팀원이 먼저 맡았어요</DialogTitle>
+              <DialogDescription>
+                {state.takenBy}님이 조금 전에 {task.key} 작업을 맡았어요. 목록을
+                새로 불러왔어요.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button onClick={onClose}>확인</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>이 작업을 내가 맡을까요?</DialogTitle>
+              <DialogDescription>
+                맡으면 내가 담당자가 되고 &apos;내 작업&apos; 탭으로 옮겨져요.
+                {task.status === 'IN_PROGRESS' &&
+                  ' 진행 중이던 작업이라 맡으면 대기(재검증)로 바뀌고 다시 검증받아요.'}
+              </DialogDescription>
+            </DialogHeader>
+            {state.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {state.error}
+              </p>
+            )}
+            <DialogFooter>
+              <Button variant="outline" disabled={busy} onClick={onClose}>
+                취소
+              </Button>
+              <Button
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  await onClaim().finally(() => setBusy(false))
+                }}
+              >
+                내가 맡기
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function TasksPanel({ projectId, isLeader }: Props) {
   const session = useSession()
   const focusId = useWorkspaceStore((state) => state.focusId)
@@ -95,7 +199,10 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   const [formTask, setFormTask] = useState<TaskDetail | undefined>()
   const [reporting, setReporting] = useState<'WAIT' | 'COMPLETED' | null>(null)
   const [assigning, setAssigning] = useState(false)
+  // 팀원이 담당자 없는 작업을 스스로 맡기(TSK-A06, 11-04). takenBy는 먼저 맡은 사람 이름이다.
+  const [claim, setClaim] = useState<ClaimState | null>(null)
   const [recording, setRecording] = useState(false)
+  const queryClient = useQueryClient()
   const action = useProjectAction(projectId)
   const tasks = useInfiniteQuery({
     queryKey: ['projects', projectId, 'tasks'],
@@ -103,6 +210,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryFn: ({ pageParam }) =>
       tasksApi.list(projectId, { cursor: pageParam, limit: 50 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
+    // 다른 작업을 선택해도 검증과 완료 보고 재검증이 끝날 때 목록을 갱신한다.
     refetchInterval: (query) =>
       query.state.data?.pages.some((page) => page.items.some(settling))
         ? 1500
@@ -115,12 +223,20 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   const [tab, setTab] = useState<'mine' | 'team'>('mine')
   const entries = tasks.data?.pages.flatMap((page) => page.items) ?? []
   // ponytail: 불러온 목록을 화면에서 거른다. 목록이 길어지면 assignee_member_id 파라미터로 옮긴다.
-  const shown =
-    tab === 'mine'
-      ? entries.filter((entry) => entry.assignee_member_id === memberId)
-      : entries
+  // 담당자 없는 작업(assignee_member_id 생략)은 팀원 목록을 받기 전에도 내 작업으로 세지 않는다.
+  const mine = (entry?: TaskDetail) =>
+    !!entry?.assignee_member_id && entry.assignee_member_id === memberId
+  const shown = tab === 'mine' ? entries.filter(mine) : entries
   const selectedId =
     selected?.focus === focusId ? selected.id : (focusId ?? shown[0]?.id)
+  // 다른 작업으로 전환한 뒤에는 이전 작업의 처리 결과를 새 화면에 표시하지 않는다.
+  const selectionScope = JSON.stringify([projectId, selectedId])
+  const [feedbackScope, setFeedbackScope] = useState(selectionScope)
+  const [showActionFeedback, setShowActionFeedback] = useState(false)
+  if (feedbackScope !== selectionScope) {
+    setFeedbackScope(selectionScope)
+    setShowActionFeedback(false)
+  }
   const detail = useQuery({
     queryKey: ['projects', projectId, 'task', selectedId],
     queryFn: () => tasksApi.get(projectId, selectedId!),
@@ -148,24 +264,13 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   // 서버 작업 상세의 validation 은 현재 계획의 가장 최근 검증이다(완료 보고 재검증 DELTA 가 가장 최근이면 그것).
   // DELTA 가 오류로 끝난 뒤 계획 검증을 새로 받았으면 새 검증을 보여 주고(시작·재개에 쓴다), 기다리는 DELTA 는 따로 알린다.
   const validationId = task?.validation?.id ?? task?.delta_validation_id
-  const validation = useQuery({
-    queryKey: ['projects', projectId, 'validation', validationId],
-    queryFn: () => validationsApi.get(projectId, validationId!),
-    enabled: !!validationId,
-    refetchInterval: (query) =>
-      query.state.data?.status === 'RUNNING' ? 1500 : false,
-  })
+  const validation = useValidationQuery(projectId, validationId)
+  const validationActions = useValidationActions(projectId, selectedId)
   const pendingDeltaId =
     task?.delta_validation_id && task.delta_validation_id !== validationId
       ? task.delta_validation_id
       : undefined
-  const pendingDelta = useQuery({
-    queryKey: ['projects', projectId, 'validation', pendingDeltaId],
-    queryFn: () => validationsApi.get(projectId, pendingDeltaId!),
-    enabled: !!pendingDeltaId,
-    refetchInterval: (query) =>
-      query.state.data?.status === 'RUNNING' ? 1500 : false,
-  })
+  const pendingDelta = useValidationQuery(projectId, pendingDeltaId)
   const records = useQuery({
     queryKey: ['projects', projectId, 'task-records', selectedId],
     queryFn: () =>
@@ -186,24 +291,28 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       ),
     enabled: !!task?.current_plan_revision.plan.context_packet_id,
   })
-  const isOwner = !!task && memberId === task.assignee_member_id
+  const isOwner = mine(task)
   const active = !!task && !['COMPLETED', 'CANCELLED'].includes(task.status)
-  const result = validation.data ?? task?.validation
-  const policyAnalysis = result?.policy_analysis
-  const needsHumanReview = result?.findings.some(
-    (finding) =>
-      finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
-  )
-  const delta = pendingDeltaId ? pendingDelta.data : undefined
-  const deltaRetryable =
-    delta?.status === 'ERROR' &&
-    !delta.findings.some(
-      (finding) =>
-        finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
-    )
+  // 조회 응답과 상세의 요약이 현재 선택된 검증에 속할 때만 사용한다.
+  const result =
+    validationId && validation.data?.id === validationId
+      ? validation.data
+      : validationId && task?.validation?.id === validationId
+        ? task.validation
+        : undefined
+  const view = result ? toValidationView(result) : undefined
+  const policyAnalysis = view?.policyAnalysis
+  const needsHumanReview = view?.needsHumanReview
+  const delta =
+    pendingDeltaId && pendingDelta.data?.id === pendingDeltaId
+      ? pendingDelta.data
+      : undefined
+  const deltaRetryable = delta ? toValidationView(delta).retryable : false
   const canStart =
     isOwner &&
     active &&
+    !validationActions.busy &&
+    !validation.error &&
     result?.status === 'PASS' &&
     result.plan_revision_id === task?.current_plan_revision.id &&
     ['READY', 'WAITING'].includes(task?.status ?? '')
@@ -225,8 +334,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
         : canStart
           ? 2
           : 1
-  const startBlocked =
-    result?.status === 'RUNNING'
+  const startBlocked = validation.error
+    ? '검증 결과를 다시 불러와야 시작할 수 있어요.'
+    : result?.status === 'RUNNING'
       ? '계획 검증 중이라 시작할 수 없어요.'
       : blocked
         ? '검증에서 막힌 항목을 고쳐야 시작할 수 있어요.'
@@ -259,8 +369,12 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   }) => {
     return `${approvedLabel(reference.design_item_version_id, reference.design_item_id)} · ${relationLabel[reference.relation as keyof typeof relationLabel]}`
   }
+  const runAction = (operation: () => Promise<unknown>, message: string) => {
+    setShowActionFeedback(true)
+    return action.run(operation, message)
+  }
   const perform = (operation: () => Promise<unknown>, message: string) => {
-    void action.run(operation, message).catch(() => undefined)
+    void runAction(operation, message).catch(() => undefined)
   }
   const report = (event: StateEvent) => {
     if (!task) return
@@ -295,12 +409,12 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           작업 계획
         </Button>
       </PaneHeaderAction>
-      {action.message && (
+      {showActionFeedback && action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
         </p>
       )}
-      {action.error && (
+      {showActionFeedback && action.error && (
         <p
           role="alert"
           className="rounded-lg bg-destructive/5 p-3 text-sm text-destructive"
@@ -356,12 +470,14 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           {entry.key}
                           {tab === 'team' &&
                             ` · ${
-                              entry.assignee_member_id === memberId
-                                ? '나'
-                                : (members.data?.items.find(
-                                    (member) =>
-                                      member.id === entry.assignee_member_id,
-                                  )?.name ?? '담당자 미정')
+                              !entry.assignee_member_id
+                                ? '담당자 없음'
+                                : mine(entry)
+                                  ? '나'
+                                  : (members.data?.items.find(
+                                      (member) =>
+                                        member.id === entry.assignee_member_id,
+                                    )?.name ?? '담당자 미정')
                             }`}
                         </span>
                         <strong className="my-2 block text-sm font-medium">
@@ -370,6 +486,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         <span className="flex flex-wrap gap-2">
                           <StatusPill value={entry.status} />
                           <StatusPill value={entry.validation_status} />
+                          {!entry.assignee_member_id && <UnassignedChip />}
                         </span>
                       </button>
                     ))
@@ -412,9 +529,12 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                     </div>
                     <CardDescription>
                       {current.key} · 담당자{' '}
-                      {members.data?.items.find(
-                        (member) => member.id === current.assignee_member_id,
-                      )?.name ?? '확인 중'}{' '}
+                      {current.assignee_member_id
+                        ? (members.data?.items.find(
+                            (member) =>
+                              member.id === current.assignee_member_id,
+                          )?.name ?? '확인 중')
+                        : '없음'}{' '}
                       · 계획 r{current.current_plan_revision.revision_no}
                     </CardDescription>
                   </CardHeader>
@@ -541,11 +661,15 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         <Button
                           variant={primary === 'validate' ? 'default' : 'link'}
                           size={primary === 'validate' ? 'default' : 'sm'}
-                          disabled={action.busy || result?.status === 'RUNNING'}
+                          disabled={
+                            action.busy ||
+                            validationActions.busy ||
+                            result?.status === 'RUNNING'
+                          }
                           onClick={() =>
                             perform(
                               () =>
-                                validationsApi.create(projectId, current.id, {
+                                validationActions.create({
                                   plan_revision_id:
                                     current.current_plan_revision.id,
                                   expected_lock_version: current.lock_version,
@@ -643,7 +767,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                                   setAssigning(true)
                                 }}
                               >
-                                담당자 바꾸기
+                                {current.assignee_member_id
+                                  ? '담당자 바꾸기'
+                                  : '담당자 정하기'}
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
@@ -657,26 +783,57 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         </DropdownMenu>
                       )}
                     </div>
-                    {!isOwner && (
-                      <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
-                          보기만 · 담당자{' '}
-                          {members.data?.items.find(
-                            (member) =>
-                              member.id === current.assignee_member_id,
-                          )?.name ?? '확인 중'}
-                        </span>
-                        계획 변경·검증·시작·완료 보고는 담당자가 해요. 의견은
-                        변경 제안으로 남겨 주세요.
-                        {/* 열린 질문 Q5: '회의로 묻기'는 사람이 회의를 만들지 않는 결정과 부딪혀 두지 않는다. */}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => openPane('changes')}
-                        >
-                          변경 제안
-                        </Button>
-                      </p>
+                    {!current.assignee_member_id ? (
+                      // 담당자가 없으면 아무도 계획 수정·시작·재개하지 못한다. 팀장은 정하고 팀원은 스스로 맡는다(TSK-A06, 11-04).
+                      // API 없음: 누가 나가서 비었는지(캔버스 '김동료 나감')는 작업 응답에 없어 쓰지 않는다.
+                      <div className="flex gap-2.5 rounded-xl border border-primary/50 bg-primary/10 p-4 text-sm">
+                        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                        <div className="grid gap-2">
+                          <strong className="font-semibold">
+                            담당자가 비어 있어요
+                          </strong>
+                          <p className="text-muted-foreground">
+                            {isLeader
+                              ? "담당자가 나가거나 제외되며 넘겨받을 사람을 고르지 않았어요. 상태와 계획 검증은 그대로예요. 담당자를 정하기 전에는 아무도 계획을 고치거나 시작할 수 없어요. 팀원은 '내가 맡기'로 스스로 맡을 수도 있어요."
+                              : `'내가 맡기'로 내가 담당자가 되거나 팀장이 정할 수 있어요. 상태와 계획 검증은 그대로예요.${current.status === 'IN_PROGRESS' ? ' 진행 중이던 작업은 맡으면 대기(재검증)로 바뀌고 다시 검증받아요.' : ''} 다른 사람에게 맡기는 건 팀장만 할 수 있어요.`}
+                          </p>
+                          {active && (
+                            <Button
+                              className="justify-self-start"
+                              disabled={action.busy || (!isLeader && !memberId)}
+                              onClick={() => {
+                                setFormTask(current)
+                                if (isLeader) setAssigning(true)
+                                else setClaim({})
+                              }}
+                            >
+                              {isLeader ? '담당자 정하기' : '내가 맡기'}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      !isOwner && (
+                        <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+                            보기만 · 담당자{' '}
+                            {members.data?.items.find(
+                              (member) =>
+                                member.id === current.assignee_member_id,
+                            )?.name ?? '확인 중'}
+                          </span>
+                          계획 변경·검증·시작·완료 보고는 담당자가 해요. 의견은
+                          변경 제안으로 남겨 주세요.
+                          {/* 열린 질문 Q5: '회의로 묻기'는 사람이 회의를 만들지 않는 결정과 부딪혀 두지 않는다. */}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => openPane('changes')}
+                          >
+                            변경 제안
+                          </Button>
+                        </p>
+                      )
                     )}
                   </CardContent>
                 </Card>
@@ -701,19 +858,45 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {validation.error &&
-                      (isMissingApi(validation.error) ? (
-                        <p
-                          role="status"
-                          className="text-sm text-muted-foreground"
+                    {validation.error && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isMissingApi(validation.error) ? (
+                          <p
+                            role="status"
+                            className="text-sm text-muted-foreground"
+                          >
+                            검증 결과는 서버에서 아직 준비 중이에요.
+                          </p>
+                        ) : (
+                          <p role="alert" className="text-sm text-destructive">
+                            검증 결과를 불러오지 못했어요.
+                          </p>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={validation.isFetching}
+                          onClick={() => void validation.refetch()}
                         >
-                          검증 결과는 서버에서 아직 준비 중이에요.
-                        </p>
-                      ) : (
+                          검증 결과 다시 불러오기
+                        </Button>
+                      </div>
+                    )}
+                    {pendingDeltaId && pendingDelta.error && (
+                      <div className="flex flex-wrap items-center gap-2">
                         <p role="alert" className="text-sm text-destructive">
-                          검증 결과를 불러오지 못했어요.
+                          완료 보고 재검증 결과를 불러오지 못했어요.
                         </p>
-                      ))}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pendingDelta.isFetching}
+                          onClick={() => void pendingDelta.refetch()}
+                        >
+                          완료 보고 재검증 결과 다시 불러오기
+                        </Button>
+                      </div>
+                    )}
                     {current.waiting_reason && (
                       <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
                         대기 이유: <StatusPill value={current.waiting_reason} />
@@ -744,11 +927,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={action.busy}
+                            disabled={action.busy || validationActions.busy}
                             onClick={() =>
                               perform(
                                 () =>
-                                  validationsApi.retry(projectId, result.id, {
+                                  validationActions.retry(result.id, {
                                     expected_attempt: result.current_attempt,
                                   }),
                                 '검증 재시도를 접수했어요.',
@@ -773,11 +956,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={action.busy}
+                            disabled={action.busy || validationActions.busy}
                             onClick={() =>
                               perform(
                                 () =>
-                                  validationsApi.retry(projectId, delta.id, {
+                                  validationActions.retry(delta.id, {
                                     expected_attempt: delta.current_attempt,
                                   }),
                                 '완료 보고 재검증 재시도를 접수했어요.',
@@ -860,7 +1043,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         ))}
                       </section>
                     )}
-                    {result?.findings.map((finding) => (
+                    {view?.findings.map((finding) => (
                       <article
                         key={finding.id}
                         className="rounded-lg border p-4"
@@ -947,7 +1130,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                         </div>
                       </article>
                     ))}
-                    {!result?.findings.length && (
+                    {!view?.findings.length && (
                       <p className="text-sm text-muted-foreground">
                         {result?.status === 'PASS'
                           ? '현재 계획과 입력에서 시작을 막는 항목을 찾지 못했어요. 시작 직전에 서버가 참조와 선행 작업을 다시 확인해요.'
@@ -1112,7 +1295,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           onMoreItems={() => void approved.fetchNextPage()}
           onClose={() => setEditing(null)}
           onSubmit={async (plan) => {
-            await action.run(async () => {
+            await runAction(async () => {
               const result =
                 editing === 'edit' && formTask
                   ? await tasksApi.savePlan(projectId, formTask.id, {
@@ -1131,9 +1314,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
       {assigning && formTask && (
         <FormDialog
           back={formTask.key}
-          title="담당자 바꾸기"
+          title={
+            formTask.assignee_member_id ? '담당자 바꾸기' : '담당자 정하기'
+          }
           // 진행 중이거나 대기 중인 작업은 넘기면 새 담당자가 다시 검증받는다(PR #50 d4db914, 보드에 없는 안내).
-          description={`바뀐 담당자에게 알림이 가요. 계획과 기록은 그대로 남아요.${
+          description={`${formTask.assignee_member_id ? '바뀐 담당자' : '정한 사람'}에게 알림이 가요. 계획과 기록은 그대로 남아요.${
             formTask.status === 'IN_PROGRESS'
               ? ' 진행 중인 작업이라 넘기면 대기(재검증)로 바뀌고, 새 담당자가 다시 검증받아야 해요.'
               : formTask.status === 'WAITING'
@@ -1146,24 +1331,72 @@ export function TasksPanel({ projectId, isLeader }: Props) {
               label: '새 담당자',
               type: 'select',
               required: true,
-              value: formTask.assignee_member_id,
-              options: members.data?.items.map((member) => ({
-                value: member.id,
-                label: member.name,
-              })),
+              value: formTask.assignee_member_id ?? '',
+              // 담당자가 없으면 첫 팀원이 저절로 골라지지 않게 빈 칸을 먼저 둔다.
+              options: [
+                ...(formTask.assignee_member_id
+                  ? []
+                  : [{ value: '', label: '담당자 고르기' }]),
+                ...(members.data?.items.map((member) => ({
+                  value: member.id,
+                  label: member.name,
+                })) ?? []),
+              ],
             },
           ]}
           onClose={() => setAssigning(false)}
           onSubmit={async (values) => {
-            await action.run(
+            await runAction(
               () =>
                 tasksApi.assign(projectId, formTask.id, {
                   assignee_member_id: values.member_id,
                   expected_lock_version: formTask.lock_version,
                 }),
-              '담당자를 변경했어요.',
+              formTask.assignee_member_id
+                ? '담당자를 변경했어요.'
+                : '담당자를 정했어요.',
             )
             setAssigning(false)
+          }}
+        />
+      )}
+      {claim && formTask && memberId && (
+        <ClaimDialog
+          task={formTask}
+          state={claim}
+          onClose={() => setClaim(null)}
+          onClaim={async () => {
+            try {
+              await tasksApi.assign(projectId, formTask.id, {
+                assignee_member_id: memberId,
+                expected_lock_version: formTask.lock_version,
+              })
+              setClaim(null)
+              setTab('mine')
+            } catch (cause) {
+              // 같은 작업을 다른 팀원이 먼저 맡으면 잠금 번호가 달라 409 revision_conflict다(TSK-A06, 11-04).
+              const latest =
+                getApiErrorCode(cause) === 'revision_conflict'
+                  ? await tasksApi
+                      .get(projectId, formTask.id)
+                      .catch(() => undefined)
+                  : undefined
+              // 아직 비어 있으면 다시 누를 수 있으니 새 잠금 번호를 들고 있어야 같은 409가 되풀이되지 않는다.
+              if (latest) setFormTask(latest)
+              setClaim(
+                latest?.assignee_member_id
+                  ? {
+                      takenBy:
+                        members.data?.items.find(
+                          (member) => member.id === latest.assignee_member_id,
+                        )?.name ?? '다른 팀원',
+                    }
+                  : { error: getApiErrorMessage(cause) },
+              )
+            }
+            await queryClient.invalidateQueries({
+              queryKey: ['projects', projectId],
+            })
           }}
         />
       )}
@@ -1196,7 +1429,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           submitLabel="대기로 보고"
           onClose={() => setReporting(null)}
           onSubmit={async (values) => {
-            await action.run(
+            await runAction(
               () =>
                 tasksApi.state(projectId, formTask.id, {
                   event: 'WAIT',
@@ -1218,7 +1451,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           criteria={formTask.current_plan_revision.plan.completion_criteria}
           onClose={() => setReporting(null)}
           onSubmit={async (report) => {
-            await action.run(
+            await runAction(
               () =>
                 tasksApi.state(projectId, formTask.id, {
                   event: 'COMPLETED',
@@ -1274,7 +1507,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
           ]}
           onClose={() => setRecording(false)}
           onSubmit={async (values) => {
-            await action.run(
+            await runAction(
               () =>
                 contextsApi.create(projectId, {
                   task_id: formTask.id,
@@ -1314,7 +1547,9 @@ const editorSchema = z.object({
   included_scope: z.string(),
   excluded_scope: z.string(),
   approach: z.string().trim().min(1),
-  completion_criteria: z.string().trim().min(1),
+  completion_criteria: z
+    .array(z.object({ text: z.string() }))
+    .refine((rows) => rows.some((row) => row.text.trim())),
   dependency_task_ids: idSchema.array(),
   context_packet_id: z.string(),
   no_contract_change: z.boolean(),
@@ -1360,6 +1595,12 @@ function missingDetails(findings: { kind: string; message: string }[]) {
     .map(([name]) => name)
 }
 
+// 불러온 승인 항목을 화면에서 거른다. 서버의 데이터 계약 키는 ENT-지만 캔버스와 문서가 ERD라고 부르므로 ERD로도 찾는다.
+const matchesDesignItem = (item: DesignItemVersion, query: string) =>
+  `${item.key} ${statusLabel(item.kind)} ${item.kind === 'DATA_CONTRACT' ? 'ERD' : ''} ${describeContent(item.content)}`
+    .toLowerCase()
+    .includes(query.trim().toLowerCase())
+
 function PlanDialog({
   task,
   items,
@@ -1382,6 +1623,7 @@ function PlanDialog({
 }) {
   const plan = task?.current_plan_revision.plan
   const [error, setError] = useState('')
+  const [itemQuery, setItemQuery] = useState('')
   // 저장이 서버에서 막히면 오류 문구의 design_item_id=·task_id=로 어느 항목 때문인지 그 줄에 표시한다(PR #72 3차 조사 THIRD-TC-01).
   const [blame, setBlame] = useState<{ item?: string; task?: string }>({})
   const blameNote = (text: string) => (
@@ -1422,7 +1664,9 @@ function PlanDialog({
       included_scope: plan?.included_scope.join('\n') ?? '',
       excluded_scope: plan?.excluded_scope.join('\n') ?? '',
       approach: plan?.approach ?? '',
-      completion_criteria: plan?.completion_criteria.join('\n') ?? '',
+      completion_criteria: plan?.completion_criteria.length
+        ? plan.completion_criteria.map((text) => ({ text }))
+        : [{ text: '' }],
       dependency_task_ids: plan?.dependency_task_ids ?? [],
       context_packet_id: plan?.context_packet_id ?? '',
       no_contract_change: plan?.no_contract_change ?? false,
@@ -1440,18 +1684,14 @@ function PlanDialog({
   })
   const refs = useWatch({ control, name: 'refs' })
   const unlinkedRows = useFieldArray({ control, name: 'unlinked' })
+  const criteriaRows = useFieldArray({ control, name: 'completion_criteria' })
   const dependencyIds = useWatch({ control, name: 'dependency_task_ids' })
   const selectedRefs = new Set(
     refs.map((reference) => reference.design_item_id),
   )
+  const shownItems = items.filter((item) => matchesDesignItem(item, itemQuery))
   const field = (
-    name:
-      | 'title'
-      | 'goal'
-      | 'included_scope'
-      | 'excluded_scope'
-      | 'approach'
-      | 'completion_criteria',
+    name: 'title' | 'goal' | 'included_scope' | 'excluded_scope' | 'approach',
     label: string,
     multiline = true,
   ) => (
@@ -1459,9 +1699,7 @@ function PlanDialog({
       {/* 필수 표시는 라벨 밖에 둔다(L4). 라벨 이름은 그대로 남아 화면 읽기 프로그램에 같은 이름으로 읽힌다. */}
       <span className="flex gap-1">
         <Label htmlFor={`plan-${name}`}>{label}</Label>
-        {['title', 'goal', 'approach', 'completion_criteria'].includes(
-          name,
-        ) && (
+        {['title', 'goal', 'approach'].includes(name) && (
           <span aria-hidden="true" className="text-sm text-destructive">
             *
           </span>
@@ -1518,7 +1756,9 @@ function PlanDialog({
               ...values,
               included_scope: lines(values.included_scope),
               excluded_scope: lines(values.excluded_scope),
-              completion_criteria: lines(values.completion_criteria),
+              completion_criteria: values.completion_criteria
+                .map((row) => row.text.trim())
+                .filter(Boolean),
               context_packet_id: values.context_packet_id || undefined,
               // 계획 수정은 기존 계획의 객체에서 시작해 고친 것만 바꾼다(PR #72 리뷰). 객체마다 원래 순번(source)으로
               // 짝을 맞춰, 설명이 그대로면 원래 객체를 두고 고쳤으면 다른 필드(method·path 등)는 두고 description만
@@ -1575,6 +1815,8 @@ function PlanDialog({
             }
             setBlame(culprit)
             if (culprit.task) setDetailsOpen(true)
+            // 막힌 항목이 검색에 가려져 있으면 그 줄의 안내가 보이지 않는다.
+            if (culprit.item) setItemQuery('')
           }
         })}
       >
@@ -1582,7 +1824,23 @@ function PlanDialog({
         {field('goal', '이번 작업의 목표', false)}
         <fieldset className="space-y-3 rounded-lg border p-4">
           <legend className="px-2 text-sm font-medium">관련 설계 항목</legend>
-          {items.map((item) => {
+          <label className="relative block">
+            <span className="sr-only">설계 항목 검색</span>
+            <Search className="absolute top-2 left-2.5 size-4 text-muted-foreground" />
+            <Input
+              type="search"
+              className="pl-8"
+              placeholder="설계 항목 검색 · REQ, API, ERD"
+              disabled={isSubmitting}
+              value={itemQuery}
+              onChange={(event) => setItemQuery(event.target.value)}
+              // 검색칸의 Enter가 계획 저장으로 이어지지 않게 막는다.
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.preventDefault()
+              }}
+            />
+          </label>
+          {shownItems.map((item) => {
             const index = refs.findIndex(
               (reference) => reference.design_item_id === item.design_item_id,
             )
@@ -1734,13 +1992,83 @@ function PlanDialog({
               현재 조회된 승인 설계 항목이 없어요.
             </p>
           )}
+          {items.length > 0 && !shownItems.length && (
+            <p className="text-sm text-muted-foreground">
+              ‘{itemQuery.trim()}’에 맞는 설계 항목이 없어요.
+            </p>
+          )}
           {moreItems && (
             <Button type="button" variant="outline" onClick={onMoreItems}>
               설계 항목 더 보기
             </Button>
           )}
+          {/* 고른 항목이 검색에 가려져도 함께 저장된다는 것을 개수로 알린다. */}
+          {items.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {refs.length}개 선택 · 승인된 항목만 보여요
+            </p>
+          )}
         </fieldset>
-        {field('completion_criteria', '완료 기준 · 한 줄에 하나씩')}
+        <fieldset className="grid content-start gap-2">
+          <legend className="mb-2 flex gap-1 text-sm font-medium">
+            완료 기준
+            <span aria-hidden="true" className="text-destructive">
+              *
+            </span>
+          </legend>
+          {criteriaRows.fields.map((row, index) => (
+            <div key={row.id} className="flex items-center gap-1.5">
+              <Input
+                aria-label={`완료 기준 ${index + 1}`}
+                placeholder={
+                  index === 0
+                    ? '예: 로그인하면 프로젝트 목록이 보인다'
+                    : undefined
+                }
+                disabled={isSubmitting}
+                {...register(`completion_criteria.${index}.text`)}
+                // 여러 줄 칸일 때처럼 Enter는 다음 줄로 간다. 한글 조합을 끝내는 Enter는 줄을 더하지 않는다.
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  if (!event.nativeEvent.isComposing)
+                    criteriaRows.append({ text: '' })
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`완료 기준 ${index + 1} 지우기`}
+                disabled={isSubmitting}
+                onClick={() =>
+                  criteriaRows.fields.length > 1
+                    ? criteriaRows.remove(index)
+                    : criteriaRows.replace([{ text: '' }])
+                }
+              >
+                <X />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="justify-self-start"
+            disabled={isSubmitting}
+            onClick={() => criteriaRows.append({ text: '' })}
+          >
+            <Plus />
+            기준 추가
+          </Button>
+          <p className="text-xs text-muted-foreground">한 줄에 하나씩 적어요</p>
+          {errors.completion_criteria && (
+            <p className="text-xs text-destructive" role="alert">
+              내용을 입력해 주세요.
+            </p>
+          )}
+        </fieldset>
         {/* 접근 방법은 서버 필수값이라 기본 칸에 둔다(PR #72 리뷰, 사용자가 줄인 4칸 구성에서 1칸 늘어남). */}
         {field('approach', '어떻게 진행하나요?')}
         <details

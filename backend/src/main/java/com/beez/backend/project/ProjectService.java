@@ -45,10 +45,11 @@ public class ProjectService {
     private final StatusRepository documentStatus;
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
+    private final ProjectActivities activities;
 
     public ProjectService(ProjectAccessChecker access, ProjectRepository projects, ProjectMemberRepository members,
                           AgentTokenRepository tokens, StatusRepository documentStatus,
-                          ApplicationEventPublisher events, JdbcClient jdbc) {
+                          ApplicationEventPublisher events, JdbcClient jdbc, ProjectActivities activities) {
         this.access = access;
         this.projects = projects;
         this.members = members;
@@ -56,15 +57,17 @@ public class ProjectService {
         this.documentStatus = documentStatus;
         this.events = events;
         this.jdbc = jdbc;
+        this.activities = activities;
     }
 
-    /** PRJ-A01. 프로젝트와 생성자의 LEADER 멤버십을 한 트랜잭션에서 만든다. */
+    /** PRJ-A01. 프로젝트와 생성자의 LEADER 멤버십을 한 트랜잭션에서 만들고 PROJECT_CREATED 활동을 남긴다(-289). 생성자의 참여 활동은 따로 없다. */
     @Transactional
     public ProjectResponse create(CallerContext caller, CreateProjectRequest req) {
         Account me = access.requireUser(caller);
         Project project = projects.save(
                 Project.create(requireName(req.name()), normalizeDescription(req.description()), me.getId()));
-        members.save(ProjectMember.leader(project.getId(), me.getId()));
+        members.saveAndFlush(ProjectMember.leader(project.getId(), me.getId()));
+        activities.projectCreated(caller, project.getId());
         events.publishEvent(new ProjectCreatedEvent(project.getId(), me.getId()));
         return ProjectResponse.of(project, ProjectRole.LEADER, null);
     }

@@ -19,8 +19,7 @@ public class ImpactRunRepository {
                 JOIN change_proposal_revision r ON r.change_proposal_id=c.id AND r.revision_no=c.revision_no
                 WHERE c.project_id=:project AND c.id=:proposal
                 """).param("project", project).param("proposal", proposal).query().listOfRows().stream().findFirst()
-                .orElseThrow(() -> new com.beez.backend.common.api.ApiException(org.springframework.http.HttpStatus.NOT_FOUND,
-                        "not_found", "변경 제안을 찾을 수 없습니다"));
+                .orElseThrow(() -> com.beez.backend.common.access.AccessErrors.notFound("proposal_not_in_project"));
     }
 
     public void expire(long project, long proposal) {

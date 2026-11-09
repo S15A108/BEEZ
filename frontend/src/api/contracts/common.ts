@@ -154,6 +154,27 @@ export const documentReviewStepCodeSchema = z.enum([
   'REQ_SPEC',
 ])
 
+// 제안이 기대는 참고 승인본 근거(00-common DocumentReviewSource). 일반 RAG Source와 별개다.
+export const documentReviewSourceSchema = z.object({
+  reference_id: z.string(),
+  document_id: idSchema,
+  document_version_id: idSchema,
+  kind: z.string(),
+  version_no: z.number().int(),
+  quote: z.string().optional(),
+})
+export type DocumentReviewSource = z.infer<typeof documentReviewSourceSchema>
+
+// 제안 카드 아래 비비와의 대화(DOC-A22). 비비가 다른 대체문을 내면 proposed_text에 담긴다.
+export const reviewMessageSchema = z.object({
+  id: idSchema,
+  author_kind: z.enum(['HUMAN', 'BEE']),
+  text: z.string(),
+  proposed_text: z.string().optional(),
+  created_at: timeSchema,
+})
+export type ReviewMessage = z.infer<typeof reviewMessageSchema>
+
 // COMMENT는 읽기 전용 의견이라 원문·바꿀 글·선택이 없다(서버는 null을 빼고 보낸다).
 // type이 없는 과거 제안은 PATCH로 본다.
 export const documentReviewSuggestionSchema = z
@@ -165,6 +186,16 @@ export const documentReviewSuggestionSchema = z
     original_text: z.string().optional(),
     replacement_text: z.string().optional(),
     decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']).optional(),
+    category: z
+      .enum(['OMISSION', 'CONSISTENCY', 'READABILITY', 'REJECTION_FIX'])
+      .optional(),
+    severity: z.enum(['MAJOR', 'MINOR']).optional(),
+    // 검토 결과인지, '비비에게 직접 요청하기'(DOC-A23)로 받은 제안인지
+    origin: z.enum(['REVIEW', 'DIRECT_REQUEST']).optional(),
+    // 비비가 대화에서 낸 다른 대체문으로 반영했을 때 실제로 쓴 문장
+    applied_replacement_text: z.string().optional(),
+    sources: documentReviewSourceSchema.array().default([]),
+    messages: reviewMessageSchema.array().default([]),
   })
   .refine(
     (item) =>
@@ -184,7 +215,8 @@ export const documentReviewSubmissionSchema = z.object({
   document_version_id: idSchema,
   submitted_by: idSchema,
   revision: z.number().int(),
-  status: z.enum(['SUBMITTED', 'APPROVED', 'REJECTED']),
+  // WITHDRAWN: 등록자가 팀장 결정 전에 거둔 제출(DOC-A24)
+  status: z.enum(['SUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN']),
   content_hash: z.string(),
   submitted_at: timeSchema,
   decided_by: idSchema.optional(),
@@ -274,11 +306,42 @@ export const baselineSchema = z.object({
 })
 export type Baseline = z.infer<typeof baselineSchema>
 
+// S15P31A108-232: 질문 유형·답변 형식·근거 상태는 AI가 만든 질문에만 있어 모두 선택으로 받는다.
+export const planningAnswerFormatSchema = z.object({
+  type: z.enum(['CHOICE', 'SHORT_ANSWER', 'ESSAY']).optional(),
+  options: z.string().array().optional(),
+  multiple: z.boolean().optional(),
+  allow_other: z.boolean().optional(),
+  max_length: z.number().int().positive().optional(),
+})
+export type PlanningAnswerFormat = z.infer<typeof planningAnswerFormatSchema>
+
+export const planningAnswerPayloadSchema = z.union([
+  z.object({
+    type: z.literal('CHOICE'),
+    selected: z.string().array(),
+    other_text: z.string().optional(),
+  }),
+  z.object({
+    type: z.enum(['SHORT_ANSWER', 'ESSAY']),
+    text: z.string(),
+  }),
+])
+export type PlanningAnswerPayload = z.infer<typeof planningAnswerPayloadSchema>
+
 export const planningQuestionSchema = z.object({
   id: idSchema,
+  number: z.number().int().optional(),
   question: z.string(),
+  kind: z.enum(['MISSING_CANDIDATE', 'CLARIFICATION', 'CONFLICT']).optional(),
+  question_type: z.enum(['CHOICE', 'SHORT_ANSWER', 'ESSAY']).optional(),
+  answer_format: planningAnswerFormatSchema.optional(),
+  status: z.enum(['OPEN', 'ANSWERED', 'DISMISSED']).optional(),
+  evidence_status: z.enum(['REVIEW_CANDIDATE', 'UNVERIFIED']).optional(),
+  summary: z.string().optional(),
   source: sourceSchema.optional(),
   answer: z.string().optional(),
+  answer_payload: planningAnswerPayloadSchema.optional(),
   answered_by: idSchema.optional(),
   answered_at: timeSchema.optional(),
 })
@@ -331,6 +394,10 @@ export const documentBeeReviewSchema = z.object({
   review_status: z.enum(['COMPLETE', 'PARTIAL']).optional(),
   // 반려 뒤 검토면 서버가 고른 반려 제출
   rejection_submission_id: idSchema.optional(),
+  contract_version: z.number().int().optional(),
+  content_hash: z.string().optional(),
+  // 실제 비교에 쓴 참고 승인본 reference_id 합집합. 과거 검토는 없다.
+  references_used: z.string().array().default([]),
 })
 export type DocumentBeeReview = z.infer<typeof documentBeeReviewSchema>
 
@@ -777,7 +844,8 @@ export const taskDetailSchema = z
     id: idSchema,
     key: z.string(),
     project_id: idSchema,
-    assignee_member_id: idSchema,
+    // 담당자가 나가거나 제외돼 비면(미배정) 서버가 생략한다(11-04 사용자 결정, MEM-A09·A10).
+    assignee_member_id: idSchema.optional(),
     status: z.enum([
       'DRAFT',
       'READY',
