@@ -34,6 +34,7 @@ class DocumentReviewResultValidatorTest {
 
     @Test void classificationsAreStoredAsAnEnumPairWhileLegacyResponsesRemainValid() {
         var input = input();
+        input.put("mode", "RERUN"); input.put("rejection_submission_id", "42"); input.put("rejection_reason", "누락 항목");
         var classified = new HashMap<String, Object>(patch("로그인한다.", "인증한다."));
         classified.put("category", "REJECTION_FIX"); classified.put("severity", "MAJOR");
         var saved = DocumentReviewResultValidator.validate(result(input, List.of(classified)), input);
@@ -46,6 +47,20 @@ class DocumentReviewResultValidatorTest {
         }
         var legacy = DocumentReviewResultValidator.validate(result(input, List.of(patch("로그인한다.", "인증한다."))), input);
         assertThat(legacy.get("suggestions").toString()).doesNotContain("category", "severity");
+    }
+
+    @Test void rejectionFixCannotBeSavedInNormalOrImplicitReview() {
+        var input = input();
+        var classified = new HashMap<String, Object>(patch("로그인한다.", "인증한다."));
+        classified.put("category", "REJECTION_FIX"); classified.put("severity", "MAJOR");
+        for (String mode : List.of("REVIEW", "DISCUSS", "REQUEST")) {
+            input.put("mode", mode);
+            assertThatThrownBy(() -> DocumentReviewResultValidator.validate(result(input, List.of(classified)), input))
+                    .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("invalid_ai_output"));
+        }
+        input.remove("mode");
+        assertThatThrownBy(() -> DocumentReviewResultValidator.validate(result(input, List.of(classified)), input))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("invalid_ai_output"));
     }
 
     @Test void completeAndMissingReferencePartialAreRecomputedAndCommentHasNoReplacement() {

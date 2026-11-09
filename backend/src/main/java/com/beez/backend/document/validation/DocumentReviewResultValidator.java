@@ -75,6 +75,7 @@ public final class DocumentReviewResultValidator {
             if (category != null || severity != null) {
                 if (!(category instanceof String c) || !Set.of("OMISSION", "CONSISTENCY", "READABILITY", "REJECTION_FIX").contains(c)
                         || !(severity instanceof String s) || !Set.of("MAJOR", "MINOR").contains(s)) throw invalidAi();
+                if ("REJECTION_FIX".equals(c) && !"RERUN".equals(input.get("mode"))) throw invalidAi();
                 saved.put("category", category); saved.put("severity", severity);
             }
             if ("PATCH".equals(type)) {
