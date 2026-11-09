@@ -4,14 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.support.McpTestClient;
 import com.beez.backend.task.TaskApiSupport;
-import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
-import io.modelcontextprotocol.spec.McpSchema;
-import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -131,20 +127,12 @@ class AgentSessionActivityIntegrationTests extends IntegrationTestSupport {
         return items;
     }
 
-    /** 닫을 때는 closeGracefully() — close() 는 종료 DELETE 를 기다리지 않아 다음 시험의 truncate 와 교착한다 (CI 40P01) */
+    /** 닫을 때는 closeGracefully() 를 쓴다 ({@link McpTestClient} 주석) */
     private McpSyncClient connect(String token) {
-        var transport = HttpClientStreamableHttpTransport
-                .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))
-                .endpoint("/mcp")
-                .httpRequestCustomizer((builder, method, uri, body, context) ->
-                        builder.header("Authorization", "Bearer " + token))
-                .build();
-        return McpClient.sync(transport).requestTimeout(Duration.ofSeconds(10)).build();
+        return McpTestClient.connect(env.getRequiredProperty("local.server.port", Integer.class), token);
     }
 
     private JsonNode ok(McpSyncClient client, String tool, Map<String, Object> args) {
-        CallToolResult result = client.callTool(McpSchema.CallToolRequest.builder().name(tool).arguments(args).build());
-        assertThat(result.isError()).as("도구 실패: %s", ((McpSchema.TextContent) result.content().get(0)).text()).isFalse();
-        return json.valueToTree(result.structuredContent());
+        return McpTestClient.ok(json, McpTestClient.call(client, tool, args));
     }
 }
