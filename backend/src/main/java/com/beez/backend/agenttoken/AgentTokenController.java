@@ -25,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentTokenController {
 
     private final AgentTokenService tokens;
+    private final AgentConnectionQueryService connections;
 
-    public AgentTokenController(AgentTokenService tokens) {
+    public AgentTokenController(AgentTokenService tokens, AgentConnectionQueryService connections) {
         this.tokens = tokens;
+        this.connections = connections;
     }
 
     /** 평문 토큰이 든 응답이라 어디에도 캐시되지 않게 no-store 를 직접 단다 (명세 응답 헤더). */
@@ -54,5 +56,13 @@ public class AgentTokenController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void revoke(CallerContext caller, @PathVariable("id") Long tokenId) {
         tokens.revoke(caller, tokenId);
+    }
+
+    @Operation(summary = "AGT-A05 에이전트 연결 현황 목록 (멤버마다 최근 세션, 커서)")
+    @GetMapping("/api/projects/{id}/agents")
+    public PageResponse<AgentConnectionResponse> connections(CallerContext caller, @PathVariable("id") Long projectId,
+                                                             @RequestParam(name = "cursor", required = false) String cursor,
+                                                             @RequestParam(name = "limit", required = false) Integer limit) {
+        return connections.list(caller, projectId, cursor, limit);
     }
 }

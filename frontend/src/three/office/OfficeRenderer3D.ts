@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 import type { Floor, Furniture, WallDecor } from './floors'
 import { stepDrop, type DropBody } from './drop-physics'
-import { OfficeOrbit, officeOrbitFrame } from './office-orbit'
+import { officeOrbitFrame } from './office-orbit'
 import {
   FIGURE_HEIGHT,
   FirstPersonLook,
@@ -437,7 +437,6 @@ export class OfficeRenderer3D {
   private floor: Floor | null = null
   private floorKey = ''
   private cameraKey = ''
-  private readonly orbit = new OfficeOrbit()
   private lastTime = 0
   private car: THREE.Group | null = null
   private carColor = ''
@@ -1226,7 +1225,10 @@ export class OfficeRenderer3D {
           return
         }
         const plane = new THREE.Mesh(
-          new THREE.PlaneGeometry(width, height),
+          this.geometry(
+            `ui${width},${height}`,
+            () => new THREE.PlaneGeometry(width, height),
+          ),
           this.kitUi(kit.ui!),
         )
         plane.position.set(0, y, z)
@@ -1277,7 +1279,10 @@ export class OfficeRenderer3D {
         0.01,
       )
       const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        this.geometry(
+          `ui${length - 0.06},${kit.h - 0.06}`,
+          () => new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        ),
         this.kitUi(ui),
       )
       plane.position.set(0, kit.y + kit.h / 2, 0.026)
@@ -1299,7 +1304,10 @@ export class OfficeRenderer3D {
       0.005,
     )
     const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(length, panel),
+      this.geometry(
+        `ui${length},${panel}`,
+        () => new THREE.PlaneGeometry(length, panel),
+      ),
       this.kitUi(ui),
     )
     plane.position.set(0, bottom + panel / 2, 0.019)
@@ -1360,6 +1368,7 @@ export class OfficeRenderer3D {
   }
 
   private furniture(parent: THREE.Object3D, f: Furniture, index: number) {
+    if (f.firstPersonOnly) parent.userData.firstPersonOnly = true
     if (f.kit) {
       this.kitPiece(parent, f)
       return
@@ -1950,7 +1959,8 @@ export class OfficeRenderer3D {
     }
   }
 
-  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다.
+  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다. 지오메트리는
+  // this.geometry가 나눠 쓰고 dispose에서 한 번 정리하므로 여기서 지우지 않는다.
   private resetLook() {
     this.workSurfaces.forEach(({ surface }) => surface.dispose())
     this.workSurfaces.length = 0
@@ -3466,22 +3476,13 @@ ${note ?? ''}`
 
   rotateView(dx: number, dy: number) {
     if (this.firstPerson) this.firstLook.drag(dx, dy)
-    else this.orbit.drag(dx, dy)
   }
 
   get viewHeading() {
     return this.firstLook.yaw
   }
-  get orbitYaw() {
-    return this.orbit.yaw
-  }
   get isFirstPerson() {
     return this.firstPerson
-  }
-
-  resetView() {
-    if (this.firstPerson) this.firstLook.level()
-    else this.orbit.reset()
   }
 
   private updateCamera(
@@ -3521,20 +3522,10 @@ ${note ?? ''}`
     this.firstPerson = false
     this.camera = this.orbitCamera
     const camera = this.orbitCamera
-    this.orbit.step(elapsed)
-    const { yaw, pitch } = this.orbit
-    const cameraKey = `${floor.W}/${floor.H}/${this.width}/${this.height}/${zoom}/${focus?.x}/${focus?.y}/${yaw}/${pitch}`
+    const cameraKey = `${floor.W}/${floor.H}/${this.width}/${this.height}/${zoom}/${focus?.x}/${focus?.y}`
     if (cameraKey === this.cameraKey) return
     this.cameraKey = cameraKey
-    const frame = officeOrbitFrame(
-      floor.W,
-      floor.H,
-      this.width,
-      this.height,
-      zoom,
-      yaw,
-      pitch,
-    )
+    const frame = officeOrbitFrame(floor, this.width, this.height, zoom)
     const target = new THREE.Vector3(
       focus ? focus.x / TILE : floor.W / 2,
       1.3,
@@ -3724,6 +3715,10 @@ ${note ?? ''}`
       this.ghost.position.set(ghost.x, 0, ghost.y)
     } else if (this.ghost) this.ghost.visible = false
     const present = new Set<string>()
+    // 3인칭 이름표는 줌과 상관없이 화면에서 190px 폭으로 읽힌다(D42). 1인칭은 가까울수록 커지는 2.1 m 그대로다.
+    const tagWidth = this.firstPerson
+      ? 2.1
+      : (190 * (this.orbitCamera.top - this.orbitCamera.bottom)) / this.height
     for (const entity of entities) {
       present.add(entity.id)
       const look = entity.look as { top?: string } | undefined
@@ -3741,6 +3736,9 @@ ${note ?? ''}`
       }
       robot ??= this.figure(entity.id, appearance, shape, color, status)
       this.nameTag(robot, entity.tag, entity.note)
+      robot.tag?.sprite.scale.multiplyScalar(
+        tagWidth / robot.tag.sprite.scale.x,
+      )
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&

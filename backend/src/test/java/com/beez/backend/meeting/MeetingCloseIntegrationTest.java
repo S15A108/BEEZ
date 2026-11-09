@@ -267,6 +267,10 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         var activity = jdbc.queryForMap("SELECT actor_kind,actor_id,ref_kind,ref_id,change_proposal_id,dedupe_key FROM activity_event WHERE event_type='MEETING_CLOSED' AND project_id=?", project);
         assertThat(activity).containsEntry("actor_kind", "HUMAN").containsEntry("actor_id", leader).containsEntry("ref_kind", "MEETING")
                 .containsEntry("ref_id", meeting).containsEntry("change_proposal_id", proposal).containsEntry("dedupe_key", "meeting:" + meeting + ":closed");
+        // S15P31A108-310: 제안의 지나온 길은 끝낸 팀장의 제출 활동에서 시작한다(제안 id 필터로 보인다)
+        var submitted = jdbc.queryForMap("SELECT actor_kind,actor_id,ref_kind,dedupe_key FROM activity_event WHERE event_type='CHANGE_PROPOSAL_SUBMITTED' AND change_proposal_id=?", proposal);
+        assertThat(submitted).containsEntry("actor_kind", "HUMAN").containsEntry("actor_id", leader).containsEntry("ref_kind", "CHANGE_PROPOSAL")
+                .containsEntry("dedupe_key", "change-proposal:" + proposal + ":submitted:1");
     }
 
     @Test void theSameKeyReturnsTheFirstResponseWithoutAnotherProposalNotificationOrActivity() throws Exception {
@@ -422,6 +426,11 @@ class MeetingCloseIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT status FROM change_proposal WHERE id=?", String.class, Long.parseLong(created))).isEqualTo("PROPOSED");
         assertThat(liveProposals()).isEqualTo(1);
         assertThat(count("SELECT count(*) FROM change_proposal WHERE meeting_id=?", meeting)).isEqualTo(2);
+        // S15P31A108-310: 옛 제안은 거둔 활동까지, 새 제안은 제출 활동 하나로 각자의 길이 이어진다
+        assertThat(jdbc.queryForList("SELECT event_type FROM activity_event WHERE change_proposal_id=? ORDER BY id", String.class, Long.parseLong(earlier.id())))
+                .containsExactly("CHANGE_PROPOSAL_SUBMITTED", "CHANGE_PROPOSAL_WITHDRAWN");
+        assertThat(jdbc.queryForList("SELECT event_type FROM activity_event WHERE change_proposal_id=? ORDER BY id", String.class, Long.parseLong(created)))
+                .contains("CHANGE_PROPOSAL_SUBMITTED").doesNotContain("CHANGE_PROPOSAL_WITHDRAWN");
     }
 
     @Test void aRetryDoesNotReuseAProposalMadeOnAnOlderBaseline() throws Exception {

@@ -132,6 +132,12 @@ public class AiClient {
         return rest.post().uri("/v1/bee/draft").body(input).retrieve().body(java.util.Map.class);
     }
 
+    /** AI-A07: 추천만 반환한다. AI의 15초 제한보다 긴 전용 읽기 제한을 사용한다. */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> assignmentRecommendations(java.util.Map<String, Object> input) {
+        return questionRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
+    }
+
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> revisionBlocks(java.util.Map<String, Object> input) {
         return rest.post().uri("/v1/document-revision-blocks").body(input).retrieve().body(java.util.Map.class);

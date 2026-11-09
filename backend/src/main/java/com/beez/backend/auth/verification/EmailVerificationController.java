@@ -1,7 +1,10 @@
 package com.beez.backend.auth.verification;
 
+import com.beez.backend.auth.guard.ClientIpRateLimiter;
+import com.beez.backend.common.api.ApiException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -23,9 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class EmailVerificationController {
 
     private final EmailVerificationService verifications;
+    private final ClientIpRateLimiter ipLimiter;
 
-    public EmailVerificationController(EmailVerificationService verifications) {
+    public EmailVerificationController(EmailVerificationService verifications, ClientIpRateLimiter ipLimiter) {
         this.verifications = verifications;
+        this.ipLimiter = ipLimiter;
     }
 
     public record SendRequest(@NotBlank @Email @Size(max = 254) String email) {
@@ -49,8 +54,20 @@ public class EmailVerificationController {
     @Operation(summary = "가입 인증 코드 보내기 (ACC-A11). 다시 받으면 이전 코드는 바로 무효")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public SendResponse send(@Valid @RequestBody SendRequest body) {
-        EmailVerificationService.Sent sent = verifications.send(body.email());
+    public SendResponse send(@Valid @RequestBody SendRequest body, HttpServletRequest request) {
+        // 409 email_already_exists 판정보다 먼저 센다 — 가입 여부 조회도 IP 한도 안으로 묶는다 (Q04, -273)
+        String clientIp = request.getRemoteAddr();
+        Instant counted = ipLimiter.acquire(clientIp);
+        EmailVerificationService.Sent sent;
+        try {
+            sent = verifications.send(body.email());
+        } catch (ApiException e) {
+            // 메일을 못 보낸 요청은 인증 행처럼 IP 한도에서도 지운다 — 명세 "바로 다시 받을 수 있다"
+            if ("mail_send_failed".equals(e.getCode())) {
+                ipLimiter.release(clientIp, counted);
+            }
+            throw e;
+        }
         return new SendResponse(sent.verificationId(), sent.expiresAt(), sent.resendAvailableAt());
     }
 

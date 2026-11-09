@@ -47,6 +47,8 @@ public class McpToolHandler {
     /** {@link McpServerConfig} 의 transport context 키 */
     static final String PRINCIPAL_KEY = "beez.agentPrincipal";
     static final String REQUEST_ID_KEY = "beez.requestId";
+    /** {@link McpSessionFilter} 가 확인한 이 요청의 연결 기록 ID (-333) */
+    static final String AGENT_SESSION_KEY = "beez.agentSessionId";
 
     private static final Logger log = LoggerFactory.getLogger("com.beez.mcp");
 
@@ -105,7 +107,9 @@ public class McpToolHandler {
                 // /mcp 필터 체인이 인증을 요구하므로 정상 경로에서는 오지 않는다
                 throw AccessErrors.agentUnauthenticated();
             }
-            McpCall call = new McpCall(CallerContext.agent(principal.accountId(), principal.agentTokenId()),
+            Long agentSessionId = context.get(AGENT_SESSION_KEY) instanceof Long id ? id : null;
+            McpCall call = new McpCall(
+                    CallerContext.agent(principal.accountId(), principal.agentTokenId(), agentSessionId),
                     principal.projectId(), exchange.sessionId());
             A args = convertArgs(tool, arguments);
             CallToolResult result = success(tool.call(call, args));

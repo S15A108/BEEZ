@@ -3,7 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { makeBuilding, ALL_KEYS } from './office/building'
 import { officeFloorAt } from './office/dream-floor'
 import { firstPersonMove } from './office/first-person'
-import { orbitMove } from './office/office-orbit'
+import {
+  OFFICE_ZOOM,
+  officeOrbitFrame,
+  orbitFocus,
+  orbitPan,
+} from './office/office-orbit'
 import {
   moveContinuous,
   movementInput,
@@ -116,8 +121,10 @@ function OfficeRuntime(
   const route = useRef<Point[]>([])
   const pendingExit = useRef(false)
   const keys = useRef(new Set<string>())
-  const zoom = useRef(1)
-  const focus = useRef({ x: 15 * 32, y: 9 * 32 })
+  const zoom = useRef(OFFICE_ZOOM.start)
+  const focus = useRef({ x: 14 * 32, y: 8 * 32 })
+  // 끌어서 옮긴 3인칭 초점(칸). 다시 걸으면 비우고 내 캐릭터를 따라간다.
+  const pan = useRef<{ x: number; y: number } | null>(null)
   const lastFloor = useRef<typeof floor | null>(null)
   const clearInput = useRef(() => {})
   const hint = useRef<string | null>(null)
@@ -216,12 +223,32 @@ function OfficeRuntime(
       )
         drag.moved = true
       if (drag.moved) {
-        if (latest.current.props.outdoor)
-          street.current?.look.drag(
-            event.clientX - drag.x,
-            event.clientY - drag.y,
+        const dx = event.clientX - drag.x,
+          dy = event.clientY - drag.y
+        if (latest.current.props.outdoor) street.current?.look.drag(dx, dy)
+        else if (latest.current.props.viewMode === 'first')
+          renderer.rotateView(dx, dy)
+        else {
+          const { floor } = latest.current
+          const rect = canvas.getBoundingClientRect()
+          const frame = officeOrbitFrame(
+            floor,
+            rect.width,
+            rect.height,
+            zoom.current,
           )
-        else renderer.rotateView(event.clientX - drag.x, event.clientY - drag.y)
+          const by = orbitPan(dx, dy, frame, rect.height)
+          const from = pan.current ?? {
+            x: focus.current.x / 32,
+            y: focus.current.y / 32,
+          }
+          pan.current = orbitFocus(
+            { x: from.x + by.x, y: from.y + by.y },
+            floor,
+            frame,
+            zoom.current,
+          )
+        }
       }
       drag.x = event.clientX
       drag.y = event.clientY
@@ -323,8 +350,11 @@ function OfficeRuntime(
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
       zoom.current = Math.max(
-        0.7,
-        Math.min(2, zoom.current * (event.deltaY < 0 ? 1.1 : 1 / 1.1)),
+        OFFICE_ZOOM.min,
+        Math.min(
+          OFFICE_ZOOM.max,
+          zoom.current * (event.deltaY < 0 ? 1.1 : 1 / 1.1),
+        ),
       )
     }
     canvas.addEventListener('pointerdown', down)
@@ -467,7 +497,7 @@ function OfficeRuntime(
                 input,
                 renderer.isFirstPerson ? renderer.viewHeading : me.heading,
               )
-            : orbitMove(input, renderer.orbitYaw),
+            : input,
         speed = movementSpeed(105, keys.current) * dt
       if (direction.x || direction.y)
         step({ x: direction.x * speed, y: direction.y * speed })
@@ -502,28 +532,28 @@ function OfficeRuntime(
     if (state.props.viewMode === 'first' && renderer.isFirstPerson)
       me.heading = renderer.viewHeading
     else if (me.moving) me.heading = Math.atan2(dx, dy)
+    if (me.moving) pan.current = null
+    const viewZoom = [2.6, 2.1, 1.6, 1, 1][state.phase] * zoom.current
+    const aim = orbitFocus(
+      pan.current ?? { x: me.x / 32, y: me.y / 32 },
+      state.floor,
+      officeOrbitFrame(state.floor, size.width, size.height, viewZoom),
+      viewZoom,
+    )
     const target =
       state.phase >= 3
-        ? {
-            x: (state.floor.W / 2) * 32,
-            y: (bounds ? (bounds.back + bounds.front) / 2 : 9) * 32,
-          }
+        ? { x: aim.x * 32, y: aim.y * 32 }
         : [
             { x: 160, y: 128 },
             { x: 160, y: 128 },
             { x: 224, y: 256 },
-            { x: 352, y: 256 },
           ][state.phase]
-    const ease = 1 - Math.exp(-dt * 2)
+    const ease = 1 - Math.exp(-dt * 6)
     focus.current.x += (target.x - focus.current.x) * ease
     focus.current.y += (target.y - focus.current.y) * ease
     me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
-      // 건물별 28 × 16 m 방(D39)도 폭 26칸 방과 같은 크기로 화면에 담는다.
-      zoom:
-        [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] *
-        zoom.current *
-        Math.min(1, 26 / state.floor.W),
+      zoom: viewZoom,
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
       work: state.work,

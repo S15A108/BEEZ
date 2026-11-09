@@ -2,6 +2,9 @@ package com.beez.backend.changeproposal.service;
 
 import static com.beez.backend.designitem.support.DesignJson.*;
 import static com.beez.backend.changeproposal.validation.ProposalValidator.requiredId;
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.changeproposal.dto.PublicationDtos.*;
 import com.beez.backend.changeproposal.port.PostPublishAnalysisIntake;
 import com.beez.backend.changeproposal.port.ValidationImpactPort;
@@ -40,12 +43,14 @@ public class ProposalPublicationService {
     private final ProposalValidator validator;
     private final ImpactApprovalGate gate;
     private final ChangeNotifications notifications;
+    private final ActivityRecorder activities;
     public ProposalPublicationService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository proposals,
             PublicationRepository repository, ProposalQueryService queries, PublishPlanner planner, BaselineRepository baselines,
             DesignItemRepository items, DesignCommandService commands, RelationStorageService relations,
             ValidationImpactPort impacts, PostPublishAnalysisIntake intake, ProposalValidator validator,
-            ImpactApprovalGate gate, ChangeNotifications notifications) {
+            ImpactApprovalGate gate, ChangeNotifications notifications, ActivityRecorder activities) {
         this.notifications=notifications;
+        this.activities=activities;
         this.access=access; this.projects=projects; this.proposals=proposals; this.repository=repository; this.queries=queries;
         this.planner=planner; this.baselines=baselines; this.items=items; this.commands=commands; this.relations=relations;
         this.impacts=impacts; this.intake=intake; this.validator=validator; this.gate=gate;
@@ -135,8 +140,12 @@ public class ProposalPublicationService {
         // storage failure rolls back the whole publication.
         notifications.published(caller,project,proposal,id(current,"proposer_account_id"),input.expectedRevision(),
                 input.expectedSnapshotHash(),affectedTasks(impactResult));
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_APPROVED and CHANGE_PROPOSAL_PUBLISHED,
-        //  key change-proposal:{id}:published (duplicate keys are skipped).
+        // Activities share this transaction too. APPROVED is stored before PUBLISHED so the id-descending timeline shows
+        // the publication on top. Replay and already-published returns above never reach here.
+        activities.record(caller,ActivityEvent.of("change-proposal:"+proposal+":approved",project,"CHANGE_PROPOSAL_APPROVED",
+                ActivityTargetType.CHANGE_PROPOSAL,proposal));
+        activities.record(caller,ActivityEvent.of("change-proposal:"+proposal+":published",project,"CHANGE_PROPOSAL_PUBLISHED",
+                ActivityTargetType.CHANGE_PROPOSAL,proposal).withBaselineId(baseline));
         return result;
     }
 
