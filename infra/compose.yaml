@@ -74,6 +74,8 @@ services:
       DESIGN_DRAFTS_ENABLED: ${DESIGN_DRAFTS_ENABLED:-false}
       # 역할 추천(#136)은 BE 계약 합의 전 기본 비활성이다.
       ASSIGNMENT_RECOMMENDATION_ENABLED: ${ASSIGNMENT_RECOMMENDATION_ENABLED:-false}
+      # 비비 대화(#135, BEE-A01). 기본 꺼짐이라 켜지 않으면 /v1/bee/chat 이 503 이다. GMS_KEY 도 필요하다.
+      BEE_CHAT_ENABLED: ${BEE_CHAT_ENABLED:-false}
     healthcheck:
       # slim 이미지에는 curl 이 없어 파이썬 표준 라이브러리로 확인한다.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
