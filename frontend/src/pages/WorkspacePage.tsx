@@ -18,6 +18,10 @@ import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
 import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
 import {
+  agentConnectionsQuery,
+  useAgentStatusOf,
+} from '@/features/agents/useAgentStatusOf'
+import {
   officeAgentState,
   showsOfficeAgent,
 } from '@/features/workspace/officeAgents'
@@ -101,6 +105,10 @@ function Workspace({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (query.isSuccess && accountId) visitProject(accountId, projectId)
   }, [query.isSuccess, accountId, projectId, visitProject])
+  // 연결 현황(AGT-A05): 작업 현황에는 확인 필요 표시가 없어 사무실도 다른 화면과 같은 상태를 이것으로 정한다
+  // (S15P31A108-341). 없는 API이거나 아직 못 받았으면 작업 현황의 세션으로 어림한다.
+  const statusOf = useAgentStatusOf(projectId)
+  const connectionsKnown = !!useQuery(agentConnectionsQuery(projectId)).data
   const sceneAgents = useMemo<SceneAgent[]>(
     () => [
       { id: 'bibi', name: '비비', kind: 'lead', color: '#f5b800' },
@@ -115,11 +123,16 @@ function Workspace({ projectId }: { projectId: string }) {
         avatar: member.avatar,
         status: 'idle',
       })),
-      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결과 상태는 작업 현황(MON-A05)의
-      // 세션을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
+      // 팀원의 AI 에이전트(D35·D37): 연결된 에이전트와 아직 연결하지 않은 내 에이전트. 연결은 연결 현황(AGT-A05),
+      // 자리는 작업 현황(MON-A05)을 따르고, 그 API가 없거나 아직 못 받았으면 연결 여부와 주인의 진행 중 작업으로 어림한다.
       ...(query.data?.members.items ?? [])
         .filter((member) =>
-          showsOfficeAgent(member, agentWork, session.data?.id),
+          showsOfficeAgent(
+            member,
+            agentWork,
+            session.data?.id,
+            connectionsKnown ? statusOf(member).status : undefined,
+          ),
         )
         .map((member) => {
           const { state, note } = officeAgentState(
@@ -128,6 +141,7 @@ function Workspace({ projectId }: { projectId: string }) {
             query.data?.tasks.items.filter(
               (task) => task.assignee_member_id === member.id,
             ) ?? [],
+            connectionsKnown ? statusOf(member).status : undefined,
           )
           return {
             id: `agent:${member.id}`,
@@ -140,7 +154,14 @@ function Workspace({ projectId }: { projectId: string }) {
           }
         }),
     ],
-    [query.data?.members, query.data?.tasks, agentWork, session.data?.id],
+    [
+      query.data?.members,
+      query.data?.tasks,
+      agentWork,
+      session.data?.id,
+      statusOf,
+      connectionsKnown,
+    ],
   )
   const sceneTasks = useMemo<SceneTask[]>(
     () =>

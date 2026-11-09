@@ -30,6 +30,8 @@ beforeEach(async () => {
 afterEach(() => restore())
 
 // S15P31A108-285: 메뉴는 '연결 미확인', 본문은 '연결 전'처럼 갈렸고 확인에 실패해도 메뉴는 그대로였다.
+// 기대값 변경(사용자 승인 2026-11-09, S15P31A108-341): 예시 데이터의 내 에이전트는 AGT-A05 정의대로 끊긴 줄이라
+// 시작 상태가 '연결 미확인'에서 '연결 끊김'이 됐다. 이 파일의 두 테스트 모두 같다.
 it('연결 확인 실패를 메뉴·에이전트 화면·팀 목록의 내 줄이 같이 보이고, 워크스페이스를 나가면 지운다', async () => {
   const user = userEvent.setup()
   useWorkspaceStore.getState().openPane('settings', 'agent')
@@ -51,10 +53,10 @@ it('연결 확인 실패를 메뉴·에이전트 화면·팀 목록의 내 줄�
   )
   const menu = await screen.findByRole('navigation', { name: '설정 메뉴' })
   const status = await screen.findByRole('status')
-  await waitFor(() => expect(status).toHaveTextContent(/^연결 미확인/))
+  await waitFor(() => expect(status).toHaveTextContent(/^연결 끊김/))
   expect(
     within(menu).getByRole('button', { name: /에이전트/ }),
-  ).toHaveTextContent('연결 미확인')
+  ).toHaveTextContent('연결 끊김')
   await user.click(within(status).getByRole('button', { name: '연결 확인' }))
   await waitFor(() =>
     expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
@@ -98,7 +100,7 @@ it('연결 확인 재조회가 실패하면 메뉴와 팀 목록에 연결 실�
   const menu = await screen.findByRole('navigation', { name: '설정 메뉴' })
   const agentItem = () => within(menu).getByRole('button', { name: /에이전트/ })
   const status = await screen.findByRole('status')
-  await waitFor(() => expect(status).toHaveTextContent(/^연결 미확인/))
+  await waitFor(() => expect(status).toHaveTextContent(/^연결 끊김/))
   await user.click(within(status).getByRole('button', { name: '연결 확인' }))
   await waitFor(() => expect(agentItem()).toHaveTextContent('연결 실패'))
   const list = vi
@@ -112,7 +114,7 @@ it('연결 확인 재조회가 실패하면 메뉴와 팀 목록에 연결 실�
   expect(
     await screen.findByText('연결 상태를 확인하지 못했어요'),
   ).toBeInTheDocument()
-  expect(agentItem()).toHaveTextContent('연결 미확인')
+  expect(agentItem()).toHaveTextContent('연결 끊김')
   expect(useAgentCheckStore.getState().checkedMemberId).toBeNull()
   await user.click(within(menu).getByRole('button', { name: '팀' }))
   await screen.findAllByText('에이전트 연결됨')

@@ -631,18 +631,20 @@ function seededProject(
     member_id: '21',
     connected: false,
     last_report_at: created,
-    status_check_required: true,
+    status_check_required: false,
   })
   // 팀원 예시 에이전트는 사무실 화면 확인용으로 연결됨을 두되(사용자 결정 2026-11-03, D37), 사용자가 mock에서 새로
-  // 발급한 토큰은 연결을 만들지 않는다. 박팀원(TASK-003 진행 중)·김동료(TASK-002 승인 대기)는 연결됨, 최팀원은 연결이
-  // 끊겨 작업 현황에 세션이 없고, 내 에이전트(51)도 보고가 끊겨 연결 미확인이다(사무실 충전 자리에 보임).
+  // 발급한 토큰은 연결을 만들지 않는다. 상태는 AGT-A05(-75) 정의를 따른다(S15P31A108-341). 김동료(TASK-002 승인
+  // 대기)는 연결됨, 박팀원은 연결됐지만 진행 중 작업(TASK-003)을 맡은 채 30분 넘게 통신이 없어 연결 미확인이다.
+  // 최팀원과 내 에이전트(51)는 연결이 끊겨(connected=false) 작업 현황에 세션이 없고 사무실 충전 자리에 보인다.
+  // 서버는 끊긴 줄에 status_check_required를 주지 않는다.
   state.agents.push(
     {
       id: '52',
       member_id: '26',
       connected: true,
       last_report_at: '2026-10-28T05:20:00Z',
-      status_check_required: false,
+      status_check_required: true,
     },
     {
       id: '53',
@@ -656,7 +658,7 @@ function seededProject(
       member_id: '25',
       connected: false,
       last_report_at: '2026-10-27T09:00:00Z',
-      status_check_required: true,
+      status_check_required: false,
     },
   )
   for (const member of state.members)

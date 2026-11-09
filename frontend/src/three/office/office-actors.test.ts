@@ -107,6 +107,44 @@ test('회원 캐릭터 로봇·벌은 보드 크기 그대로 팔·다리 축을
   }
 })
 
+// S15P31A108-341: 사무실도 연결 현황(AGT-A05)을 읽어, 줄이 있고 끊긴 에이전트는 '연결 전'이 아니라 '연결 끊김'이다
+// (사용자 결정 2026-11-09). 자리와 모습은 연결 전과 같다.
+test('연결이 끊긴 에이전트는 충전 자리에서 연결 끊김 이름표를 단다', () => {
+  const floor = makeDreamFloor(
+    makeBuilding(ALL_KEYS, 'glass', null, { dev: 8, lead: 1, humandesk: 1 })
+      .floors[1],
+    4,
+  )
+  const agents = officeSceneAgents([
+    { id: 'bibi', name: '비비', kind: 'lead' },
+    { id: 'member:21', name: '나', kind: 'human' },
+    { id: 'member:25', name: '최팀원', kind: 'agent' },
+    {
+      id: 'agent:25',
+      name: '최팀원의 에이전트',
+      kind: 'agent',
+      owner: '25',
+      status: 'disconnected',
+    },
+  ])
+  const actors = officeActors(
+    floor,
+    agents,
+    4,
+    'member:21',
+    officeHomeSeats(floor, agents),
+  )
+  const agent = actors.find((actor) => actor.id === 'agent:25')!
+  expect(agent.tag).toMatch(/ · 연결 끊김$/)
+  expect(agent).toMatchObject({ stationary: true, agentStatus: 'offline' })
+  expect(
+    (floor.seats.lobby ?? []).map((seat) => ({
+      x: seat.x * 32 + 16,
+      y: seat.y * 32 + 27,
+    })),
+  ).toContainEqual({ x: agent.x, y: agent.y })
+})
+
 // D37: 고정 사무실에서 팀원은 자기 자리 옆에 서 있고(위치 API 없음, 가구는 쓰지 않음), 에이전트는 작업 현황 상태마다 정한 자리로 간다.
 test('팀원은 자기 자리 옆에 서 있고 에이전트는 상태별 자리로 간다', () => {
   const floor = makeDreamFloor(
