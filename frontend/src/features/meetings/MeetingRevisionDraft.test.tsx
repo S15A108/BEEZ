@@ -289,6 +289,141 @@ it('모든 기록을 불러온 뒤 마지막 TEXT 또는 CONFLICT_BRIEF까지 �
   expect(meetingsApi.summary).toHaveBeenCalledWith('1', '2', '7')
 })
 
+it.each([
+  [
+    '오래된 순',
+    ['2', '9007199254740992', '9007199254740993', '99999999999999999'],
+  ],
+  [
+    '최신 순',
+    ['99999999999999999', '9007199254740993', '9007199254740992', '2'],
+  ],
+  [
+    '섞인 순서',
+    ['9007199254740993', '2', '99999999999999999', '9007199254740992'],
+  ],
+])('%s로 전달돼도 정리 가능한 최대 ID로 정리한다', async (_, order) => {
+  const user = userEvent.setup()
+  const latest = '9007199254740993'
+  const summary = await meetingsApi.latestSummary('1', '2')
+  vi.mocked(meetingsApi.latestSummary).mockResolvedValue({
+    ...summary,
+    through_entry_id: latest,
+  })
+  vi.mocked(meetingsApi.summary).mockResolvedValue({
+    ...summary,
+    through_entry_id: latest,
+  })
+  const values = [
+    { id: '2', kind: 'TEXT' as const, text: '이전 발언' },
+    { id: '9007199254740992', kind: 'TEXT' as const, text: '이전 큰 ID' },
+    { id: latest, kind: 'CONFLICT_BRIEF' as const, text: '최신 충돌' },
+    { id: '99999999999999999', kind: 'SUMMARY' as const, text: '이전 정리' },
+  ]
+  const entries = order.map((id) => ({
+    ...values.find((entry) => entry.id === id)!,
+    meeting_id: '2',
+    created_at: '2026-11-06T00:00:00Z',
+  }))
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MeetingRevisionDraft
+        projectId="1"
+        meetingId="2"
+        entries={entries}
+        hasMore={false}
+        loadingMore={false}
+        loadMore={() => {}}
+      />
+    </QueryClientProvider>,
+  )
+  const button = await screen.findByRole('button', {
+    name: '최신 대화로 다시 정리',
+  })
+  expect(screen.queryByText(/회의 정리 이후 새 기록이 있어요/)).toBeNull()
+  await user.click(button)
+  expect(meetingsApi.summary).toHaveBeenCalledWith('1', '2', latest)
+})
+
+it('역순 기록에서 정리 이후의 큰 ID 발언을 오래된 정리로 감지한다', async () => {
+  const summary = await meetingsApi.latestSummary('1', '2')
+  vi.mocked(meetingsApi.latestSummary).mockResolvedValue({
+    ...summary,
+    through_entry_id: '9007199254740992',
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MeetingRevisionDraft
+        projectId="1"
+        meetingId="2"
+        entries={[
+          {
+            id: '9007199254740993',
+            meeting_id: '2',
+            kind: 'TEXT',
+            text: '새 발언',
+            created_at: '2026-11-06T00:00:00Z',
+          },
+          {
+            id: '9007199254740992',
+            meeting_id: '2',
+            kind: 'TEXT',
+            text: '이전 발언',
+            created_at: '2026-11-06T00:00:00Z',
+          },
+        ]}
+        hasMore={false}
+        loadingMore={false}
+        loadMore={() => {}}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByText(/회의 정리 이후 새 기록이 있어요/),
+  ).toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: '팀장이 관리한다' }),
+  )
+  expect(screen.queryByRole('checkbox', { name: '새 발언' })).toBeNull()
+})
+
+it('정리 가능한 기록이 없으면 정리 버튼을 사용할 수 없다', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MeetingRevisionDraft
+        projectId="1"
+        meetingId="2"
+        entries={[
+          {
+            id: '9',
+            meeting_id: '2',
+            kind: 'SUMMARY',
+            text: '정리',
+            created_at: '2026-11-06T00:00:00Z',
+          },
+        ]}
+        hasMore={false}
+        loadingMore={false}
+        loadMore={() => {}}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByRole('button', { name: '최신 대화로 다시 정리' }),
+  ).toBeDisabled()
+  expect(screen.getByText('먼저 회의 대화를 남겨 주세요.')).toBeInTheDocument()
+  expect(meetingsApi.summary).not.toHaveBeenCalled()
+})
+
 async function showSavedDraft(hasMore = false) {
   const draft = await meetingsApi.revisionDraft('1', '2', {
     summary_id: '9',

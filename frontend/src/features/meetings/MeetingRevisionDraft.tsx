@@ -93,10 +93,17 @@ function Editor({
     (item) => item.document_id === documentId,
   )?.document_version_id
   const textEntries = entries.filter((entry) => entry.kind === 'TEXT')
-  // 회의 기록 API는 오래된 순서로 페이지를 반환한다. 마지막 페이지까지 받아야 최신 시점을 알 수 있다.
-  const latestEntry = entries
-    .filter((entry) => entry.kind === 'TEXT' || entry.kind === 'CONFLICT_BRIEF')
-    .at(-1)
+  // 서버와 같이 정리 가능한 기록의 최대 ID를 사용한다. 화면에서 기록을 다른
+  // 순서로 정렬해 넘겨도 같은 결과여야 하며, 64비트 ID를 숫자로 변환하지 않는다.
+  // 마지막 페이지까지 받아야 전체 기록의 최신 시점을 알 수 있다.
+  const latestEntry = entries.reduce<MeetingEntry | undefined>(
+    (latest, entry) => {
+      if (entry.kind !== 'TEXT' && entry.kind !== 'CONFLICT_BRIEF')
+        return latest
+      return !latest || BigInt(entry.id) > BigInt(latest.id) ? entry : latest
+    },
+    undefined,
+  )
   const summaryOutdated =
     !!summary &&
     !hasMore &&
