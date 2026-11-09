@@ -112,14 +112,15 @@ it('검토 시작은 대시보드 타임라인과 같은 "진행 중" 칩으로 
   expect(await screen.findByRole('listitem')).toHaveTextContent('진행 중')
 })
 
-it('모르는 활동 유형은 원문으로, 실패 결과는 따로 표시한다', async () => {
+it('모르는 활동 유형은 대시보드와 같은 문구로, 실패 결과는 따로 표시한다', async () => {
   activities.mockResolvedValue({
     items: [row('1', { type: 'CHANGE_PROPOSAL_FUTURE', result: 'FAILURE' })],
     has_more: false,
   })
   mount()
   const item = await screen.findByRole('listitem')
-  expect(item).toHaveTextContent('CHANGE_PROPOSAL_FUTURE')
+  expect(item).toHaveTextContent('활동을 기록했어요')
+  expect(item).not.toHaveTextContent('CHANGE_PROPOSAL_FUTURE')
   expect(item).toHaveTextContent('실패')
 })
 

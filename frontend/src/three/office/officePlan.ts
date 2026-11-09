@@ -1,3 +1,5 @@
+import type { Dir } from './floors'
+
 // 사무실 배치의 형식. 배치는 건물 외관마다 plans/<외관>.ts에 있다(D39). 단위는 m, 방 가운데가 (0, 0), 북쪽(-z)과 동쪽(+x)이
 // 유리벽, 서쪽 벽에 엘리베이터가 있다. 가구는 Kenney Furniture Kit(CC0, public/models/kenney/furniture) 모델과 직접 그리는
 // 보드·화면이다(D36).
@@ -66,5 +68,12 @@ export interface OfficePlan {
   lounge: { x0: number; z0: number; x1: number; z1: number }
   entrance: { x: number; z: number }
   bibi: { x: number; z: number; ry: number }
+  /** 비비가 문서를 검토하거나 회의를 여는 동안 서는 자리(D35) */
+  bibiSpots: Record<'documents' | 'meeting', BibiSpot>
   pieces: OfficePiece[]
+}
+export interface BibiSpot {
+  x: number
+  z: number
+  facing: Dir
 }

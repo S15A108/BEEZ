@@ -3,6 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
+import { agentsApi } from '@/api/services/agents'
 import { changesApi } from '@/api/services/changes'
 import { dashboardApi } from '@/api/services/dashboard'
 import { tasksApi } from '@/api/services/tasks'
@@ -51,6 +52,10 @@ const noWork: AgentWorkResponse = { items: [], has_more: false }
 
 beforeEach(() => {
   useWorkspaceStore.setState({ pane: 'dashboard', focusId: null })
+  vi.spyOn(agentsApi, 'list').mockResolvedValue({
+    items: [],
+    has_more: false,
+  })
   vi.mocked(dashboardApi.changes).mockResolvedValue({
     by_status: [],
     review_required_count: 1,
@@ -96,6 +101,50 @@ it('숫자 4개를 보여 주고 누르면 그 화면을 연다', async () => {
     screen.getByRole('button', { name: /AI 호출\s*96회\s*비용 미보고/ }),
   ).toBeInTheDocument()
   expect(screen.getByText('비비 대화')).toBeInTheDocument()
+})
+
+// S15P31A108-285: agent_connected로 세어 '연결 미확인'도 연결로 셌다.
+it('에이전트 연결 수에는 연결됨만 세고 연결 미확인은 뺀다', async () => {
+  vi.spyOn(agentsApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '51',
+        member_id: '1',
+        connected: true,
+        status_check_required: true,
+      },
+      {
+        id: '52',
+        member_id: '2',
+        connected: true,
+        status_check_required: false,
+      },
+    ],
+    has_more: false,
+  })
+  const member = (id: string) => ({
+    id,
+    account_id: `1${id}`,
+    name: id,
+    role: 'MEMBER' as const,
+    agent_connected: true,
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(0))}
+        activities={query(none)}
+        work={query(noWork)}
+        members={[member('1'), member('2')]}
+        actorName={() => '시스템'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByRole('button', { name: /에이전트 연결\s*1 \/ 2/ }),
+  ).toBeInTheDocument()
 })
 
 it('비용을 모르는 호출이 있으면 요약 숫자에 그 건수를 붙인다', async () => {
@@ -377,7 +426,7 @@ it('할 일이 있는 칸을 앞에 두고 칸마다 보조 줄을 보인다', a
   expect(
     await screen.findByText('TASK-003 · 김동료의 에이전트 · 할 것 2'),
   ).toBeInTheDocument()
-  expect(screen.getByText('이팀장의 에이전트 연결 미확인')).toBeInTheDocument()
+  expect(screen.getByText('이팀장의 에이전트 연결 전')).toBeInTheDocument()
   expect(screen.getByText('추정 1.84 USD')).toBeInTheDocument()
   const cards = screen
     .getAllByRole('button')
@@ -446,11 +495,76 @@ it('최근 활동 줄을 누르면 그 화면으로 가고 성공 칩은 보이�
   )
   expect(await screen.findByText('통과')).toBeInTheDocument()
   expect(screen.queryByText('성공')).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: /VALIDATION_FINISHED/ }))
+  await user.click(screen.getByRole('button', { name: /계획 검증을 마쳤어요/ }))
   expect(useWorkspaceStore.getState()).toMatchObject({
     pane: 'tasks',
     focusId: '503',
   })
+})
+
+it('최근 활동은 유형을 한글로 보이고 위임은 팀원 목록의 새 팀장 이름을 넣는다', async () => {
+  const at = '2026-10-27T01:00:00Z'
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query({
+          items: [
+            {
+              id: '3',
+              type: 'LEADER_TRANSFERRED',
+              actor_type: 'HUMAN',
+              target_type: 'MEMBER',
+              target_id: '22',
+              result: 'SUCCESS',
+              created_at: at,
+            },
+            {
+              id: '2',
+              type: 'MEMBER_REMOVED',
+              actor_type: 'HUMAN',
+              target_type: 'MEMBER',
+              target_id: '25',
+              result: 'SUCCESS',
+              created_at: at,
+            },
+            {
+              id: '1',
+              type: 'BRAND_NEW_TYPE',
+              actor_type: 'HUMAN',
+              result: 'SUCCESS',
+              created_at: at,
+            },
+          ],
+          has_more: false,
+        })}
+        work={query(noWork)}
+        members={
+          [
+            { id: '22', name: '김동료' },
+            { id: '21', name: '이팀장' },
+          ] as never
+        }
+        actorName={() => '이팀장'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  const row = (text: string) => screen.getByText(text).closest('li')
+  expect(
+    await screen.findByText('김동료님에게 팀장을 넘겼어요'),
+  ).toBeInTheDocument()
+  expect(row('김동료님에게 팀장을 넘겼어요')).toHaveTextContent(
+    '이팀장님이 김동료님에게 팀장을 넘겼어요',
+  )
+  expect(row('팀원을 제외했어요')).toHaveTextContent(
+    '이팀장님이 팀원을 제외했어요',
+  )
+  expect(row('활동을 기록했어요')).toHaveTextContent(
+    '이팀장님이 활동을 기록했어요',
+  )
+  expect(screen.queryByText(/[A-Z]+_[A-Z]+/)).not.toBeInTheDocument()
 })
 
 it('에이전트 요약은 연결 상태와 사용량을 보이고, 서버가 나누지 않으면 사용량을 적지 않는다', async () => {
@@ -504,7 +618,7 @@ it('에이전트 요약은 연결 상태와 사용량을 보이고, 서버가 �
   expect(first).toHaveTextContent('10월 28일 보고')
   expect(first).toHaveTextContent('2회 · 0.5 USD')
   const second = screen.getByText('이팀장의 에이전트').closest('li')!
-  expect(second).toHaveTextContent('연결 미확인')
+  expect(second).toHaveTextContent('연결 전')
   expect(second).toHaveTextContent('0회')
   await user.click(screen.getByRole('button', { name: '연결 확인' }))
   expect(useWorkspaceStore.getState()).toMatchObject({
@@ -602,7 +716,7 @@ it.each([
   ['error', '—'],
   ['pending', '…'],
 ] as const)(
-  '팀원을 %s 상태면 연결 칸을 단정하지 않고 에이전트 줄은 연결 상태 미확인으로 보인다',
+  '팀원을 %s 상태면 연결 칸을 단정하지 않고 에이전트 줄은 연결 미확인으로 보인다',
   async (membersStatus, value) => {
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -627,7 +741,7 @@ it.each([
       }),
     ).toBeInTheDocument()
     expect(screen.queryByText('0 / 0')).not.toBeInTheDocument()
-    expect(screen.getByText('연결 상태 미확인')).toBeInTheDocument()
+    expect(screen.getByText('연결 미확인')).toBeInTheDocument()
     expect(screen.queryByText(/연결을 확인해요/)).not.toBeInTheDocument()
     expect(screen.getByText('보고된 작업 없음')).toBeInTheDocument()
   },

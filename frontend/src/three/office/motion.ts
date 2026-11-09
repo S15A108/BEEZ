@@ -130,3 +130,13 @@ export function smoothRoute(
   }
   return out
 }
+
+/**
+ * 비비 Wave(D35). 서 있는 비비에게 내가 2칸 안으로 다가오면 한 번 손을 흔든다. 3칸 밖으로 멀어져야 다시 흔들어,
+ * 경계에서 오가도 되풀이하지 않는다. 걷는 동안은 흔들지 않는다.
+ */
+export function bibiWave(distance: number, waved: boolean, walking: boolean) {
+  if (distance > 3) return { wave: false, waved: false }
+  const wave = !waved && !walking && distance < 2
+  return { wave, waved: waved || wave }
+}

@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { Button } from '@/components/ui/button'
 import type { Activity } from '@/api/contracts/common'
 import { activityChip } from '@/features/dashboard/labels'
+import { activityText } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useProposalActivities } from './useProposalActivities'
 import type { ActorFilter } from './useProposalActivities'
@@ -153,7 +154,7 @@ export function ProposalActivity({
                           )}
                         </p>
                         <p className="leading-[19px]">
-                          {typeLabels[item.type] ?? item.type}
+                          {typeLabels[item.type] ?? activityText(item)}
                         </p>
                         <time
                           dateTime={item.created_at}
