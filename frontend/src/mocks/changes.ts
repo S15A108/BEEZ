@@ -30,6 +30,7 @@ import { describeContent } from '../lib/display'
 import { copy, nextId, now } from './state'
 import type { MockProject } from './state'
 import type { ApprovalPreviewItem } from '../features/changes/schemas'
+import { draftRoutes, takeDraft } from './changeDrafts'
 
 function proposalView(
   context: MockContext,
@@ -159,7 +160,10 @@ function draftScenario() {
 }
 
 // 이 제안을 발행하면 영향을 받는 작업. 발행(publish)과 승인 미리 보기가 같은 기준을 쓴다.
-function affectedTasks(project: MockProject, proposal: ChangeProposal) {
+export function affectedTasks(
+  project: MockProject,
+  proposal: Pick<ChangeProposal, 'items' | 'documents'>,
+) {
   const itemIds = new Set(proposal.items.map((item) => item.design_item_id))
   const documentIds = new Set(
     proposal.documents.map((document) => document.document_id),
@@ -608,8 +612,17 @@ export function changeRoutes(
         },
       }
     }
+    case 'CHG-A16':
+    case 'CHG-A17':
+    case 'CHG-A18':
+    case 'CHG-A19':
+    case 'CHG-A20':
+      return draftRoutes(id, context)
     case 'CHG-A01': {
-      const input = changeProposalInputSchema.parse(body)
+      // 작성 중 제안으로 올리면 내용은 초안에서 오고, 제출 당시 검토 상태를 리비전에 남긴다(S15P31A108-218 수정안).
+      const fromDraft =
+        body.draft_id === undefined ? undefined : takeDraft(context)
+      const input = fromDraft?.input ?? changeProposalInputSchema.parse(body)
       if (!project.project.current_baseline)
         fail(409, 'baseline_missing', '먼저 첫 기준 설계를 만들어 주세요.')
       expectValue(
@@ -645,8 +658,10 @@ export function changeRoutes(
         requires_refresh: false,
         created_at: created,
         updated_at: created,
+        ...(fromDraft ? { pre_submit_review: fromDraft.preSubmitReview } : {}),
       }
       project.proposals.push(next)
+      fromDraft?.finish(next.id)
       activity(context, 'CHANGE_PROPOSED', { change_proposal_id: next.id })
       return { status: 201, data: next }
     }
@@ -770,18 +785,25 @@ export function changeRoutes(
       // 올린 제안은 잠기고 반려된 제안만 같은 번호로 다시 올린다(PR #46 CHG-A04, 사용자 결정 10-30).
       if (proposal!.status !== 'REJECTED')
         fail(409, 'proposal_locked', '반려된 제안만 고쳐 다시 올릴 수 있어요.')
-      const input = changeProposalInputSchema.parse(body)
+      // 반려된 제안을 보완한 초안으로 다시 올리면 내용은 초안에서 온다(S15P31A108-218 수정안).
+      const fromDraft =
+        body.draft_id === undefined ? undefined : takeDraft(context, proposal)
+      const input = fromDraft?.input ?? changeProposalInputSchema.parse(body)
       // 서버 PUT처럼 요청에 없는 선택 필드는 비운다. 옛 task_id·validation_id를 남기면 화면이 빠뜨린 것을 가린다
       // (PR #72 4차 조사 FOURTH-DOC-02).
       delete proposal!.task_id
       delete proposal!.validation_id
+      // 검토 상태는 리비전마다 새로 남는다. 초안 없이 다시 올린 리비전에는 없다.
+      delete proposal!.pre_submit_review
       Object.assign(
         proposal!,
         input,
         submit(context, input, proposal!.revision + 1),
         { status: 'PROPOSED', updated_at: now() },
+        fromDraft ? { pre_submit_review: fromDraft.preSubmitReview } : {},
       )
       delete proposal!.rejection_reason
+      fromDraft?.finish(proposal!.id)
       return { data: proposalView(context, proposal!) }
     }
     case 'CHG-A05':

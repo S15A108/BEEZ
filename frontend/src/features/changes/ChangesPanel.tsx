@@ -24,6 +24,7 @@ import {
 import type {
   ChangeImpact,
   ChangeProposal,
+  ChangeProposalInput,
   Comparison,
 } from '@/api/contracts/common'
 import { getApiErrorCode } from '@/api/error'
@@ -47,6 +48,7 @@ import { changedFields, foldDiff, lineDiff } from './lineDiff'
 import { ProposalForm } from './ProposalForm'
 import { ApprovalPreview } from './ApprovalPreview'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
+import { PreSubmitReviewCard } from './PreSubmitReviewCard'
 import { ProposeFlow } from './ProposeFlow'
 import { StatusTag } from './StatusTag'
 import { Tag } from './Tag'
@@ -419,58 +421,133 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       } else setMode({ kind: 'detail' })
     }
   }
-  const submitForm = async (
+  // 폼 값을 제안 입력으로 바꾼다. 새 제안·반려 후 재제출은 이 입력으로 작성 중 제안을 저장하고(ProposeFlow),
+  // 거둔 제안을 새 제안으로 다시 낼 때는 바로 올린다(초안 없이 올리는 기존 경로).
+  const toInput = (
     values: ProposalFormValues,
     source?: ChangeProposal,
     update?: boolean,
-  ) => {
-    const input = {
-      base_baseline_id: baseline.data!.id,
-      title: values.title,
-      reason: values.reason,
-      ...(values.task_id ? { task_id: values.task_id } : {}),
-      // 관련 작업이 그대로면 원래 제안의 검증 연결도 그대로 보낸다. 서버 PUT은 빠진 필드를 비우므로 빠뜨리면 제목만
-      // 고쳐도 연결이 끊긴다(PR #72 4차 조사 FOURTH-DOC-02). 작업을 바꾸거나 뺐으면 보내지 않는다.
-      ...(source?.validation_id &&
-      values.task_id &&
-      values.task_id === source.task_id
-        ? { validation_id: source.validation_id }
-        : {}),
-      // 거둔 제안을 다시 올리면 새 제안에 잇는다(PR #46 previous_proposal_id).
-      ...(source?.status === 'WITHDRAWN' && !update
-        ? { previous_proposal_id: source.id }
-        : {}),
-      // 설계 항목 변경은 에이전트·회의가 만든 것만 있고, 다시 낼 때 받은 그대로 보낸다.
-      items: source?.items ?? [],
-      // 폼은 문서 하나를 고치고, 원래 제안의 나머지 문서 변경(폼에서 지금 고치는 문서만 빼고)은 받은 값 그대로 보낸다.
-      // 기준이 바뀐 문서는 그대로 낼 수 없어 빼고(폼에 안내), 고친 문서의 기준 버전은 화면이 보여 준 원문의 버전이다.
-      documents: toDocumentChanges(
-        values,
-        values.base_version_id,
-        source?.documents.filter(
-          (change) => !isStaleDocument(change, currentVersionOf),
-        ),
+  ): ChangeProposalInput => ({
+    base_baseline_id: baseline.data!.id,
+    title: values.title,
+    reason: values.reason,
+    ...(values.task_id ? { task_id: values.task_id } : {}),
+    // 관련 작업이 그대로면 원래 제안의 검증 연결도 그대로 보낸다. 서버 PUT은 빠진 필드를 비우므로 빠뜨리면 제목만
+    // 고쳐도 연결이 끊긴다(PR #72 4차 조사 FOURTH-DOC-02). 작업을 바꾸거나 뺐으면 보내지 않는다.
+    ...(source?.validation_id &&
+    values.task_id &&
+    values.task_id === source.task_id
+      ? { validation_id: source.validation_id }
+      : {}),
+    // 거둔 제안을 다시 올리면 새 제안에 잇는다(PR #46 previous_proposal_id).
+    ...(source?.status === 'WITHDRAWN' && !update
+      ? { previous_proposal_id: source.id }
+      : {}),
+    // 설계 항목 변경은 에이전트·회의가 만든 것만 있고, 다시 낼 때 받은 그대로 보낸다.
+    items: source?.items ?? [],
+    // 폼은 문서 하나를 고치고, 원래 제안의 나머지 문서 변경(폼에서 지금 고치는 문서만 빼고)은 받은 값 그대로 보낸다.
+    // 기준이 바뀐 문서는 그대로 낼 수 없어 빼고(폼에 안내), 고친 문서의 기준 버전은 화면이 보여 준 원문의 버전이다.
+    documents: toDocumentChanges(
+      values,
+      values.base_version_id,
+      source?.documents.filter(
+        (change) => !isStaleDocument(change, currentVersionOf),
       ),
-    }
-    await action.run(
-      async () => {
-        if (update && source) {
-          await changesApi.update(projectId, source.id, {
-            ...input,
-            expected_revision: source.revision,
-            expected_snapshot_hash: source.snapshot_hash,
-          })
-          select(source.id)
-        } else {
-          const created = await changesApi.create(projectId, input)
-          select(created.id)
-        }
-      },
+    ),
+  })
+  const submitForm = (values: ProposalFormValues, source?: ChangeProposal) =>
+    action.run(async () => {
+      const created = await changesApi.create(
+        projectId,
+        toInput(values, source),
+      )
+      select(created.id)
+    }, '변경 제안을 올렸어요.')
+  // ProposeFlow가 CHG-A01·A04로 올린 뒤. 목록·상세를 새로 고치고 올린 제안을 연다.
+  const submitted = (proposal: ChangeProposal, update?: boolean) =>
+    void action.run(
+      async () => select(proposal.id),
       update
         ? '고친 내용을 올렸어요. 다시 검토 대기예요.'
         : '변경 제안을 올렸어요.',
     )
-  }
+
+  // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
+  const fetchDocumentContent = (documentId: string) =>
+    documentsApi.get(projectId, documentId).then((result) => ({
+      content: result.version.content ?? '',
+      versionId: result.version.id,
+    }))
+  // 반려·거둔 제안을 다시 낼 때 폼에 보일 것. 올린 제안(PROPOSED·IN_REVIEW)은 잠기고, 반려된 제안만 같은 번호로
+  // 고쳐 다시 올린다(CHG-A04, 사용자 결정 10-30).
+  const sourceForm = (source: ChangeProposal, update: boolean) => ({
+    sourceDocuments: source.documents.map((change) => ({
+      id: change.document_id,
+      title:
+        documentOptions.find((item) => item.id === change.document_id)?.title ??
+        '문서',
+      afterContent: change.after_content,
+      stale: isStaleDocument(change, currentVersionOf),
+    })),
+    baseChangedTo:
+      baseline.data && source.base_baseline_id !== baseline.data.id
+        ? baseline.data.version_no
+        : undefined,
+    fixedItems: source.items.map((item) => ({
+      label: `${operationLabel[item.operation]} · ${
+        item.operation === 'CREATE'
+          ? item.kind
+            ? kindLabel[item.kind]
+            : '설계 항목'
+          : itemKey(item.design_item_id)
+      }`,
+      detail:
+        item.operation === 'RETIRE'
+          ? undefined
+          : describeContent(item.proposed_content),
+    })),
+    heading: update ? '고쳐서 다시 올리기' : '새 제안으로 다시 올리기',
+    status: <StatusTag value={source.status} />,
+    description: update
+      ? `반려 사유: ${source.rejection_reason ?? ''} · 반려된 내용을 채웠어요. 고쳐서 비비 검토를 받은 뒤 같은 제안 번호로 다시 올리면 검토 대기가 되고, 이전 내용과 반려 사유는 이력에 남아요.`
+      : '거둔 제안 내용을 채웠어요. 올리면 새 제안이 되고 거둔 제안과 이어져요.',
+    comments: commentList.map((comment) => ({
+      id: comment.id,
+      author: nameOfAccount(comment.author_account_id),
+      body: comment.body,
+    })),
+    onShowComments: () => {
+      setMode({ kind: 'detail' })
+      setTab('comments')
+    },
+  })
+  const formDefaults = (
+    form: Extract<Mode, { kind: 'form' }>,
+  ): ProposalFormValues | undefined =>
+    form.source
+      ? {
+          title: form.source.title,
+          reason: form.source.reason,
+          task_id: form.source.task_id ?? '',
+          document_id: form.source.documents[0]?.document_id ?? '',
+          // 기준이 바뀐 문서는 옛 글 대신 새 기준 원문에서 다시 시작한다(옛 글은 폼에서 비교용으로 보여 준다).
+          after_content:
+            form.source.documents[0] &&
+            !isStaleDocument(form.source.documents[0], currentVersionOf)
+              ? form.source.documents[0].after_content
+              : '',
+          kept_items: form.source.items.length,
+        }
+      : form.documentId
+        ? {
+            title: '',
+            reason: '',
+            task_id: '',
+            document_id: form.documentId,
+            // 기준 원문은 폼이 받아서 채운다.
+            after_content: '',
+          }
+        : undefined
 
   return (
     <section className="space-y-4">
@@ -617,7 +694,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
           )}
         </div>
         <div className="min-w-0">
-          {mode.kind === 'form' && !mode.source ? (
+          {mode.kind === 'form' && (!mode.source || mode.update) ? (
+            // 새 제안과 반려 후 재제출은 작성 중 제안·비비 검토 흐름으로 올린다(S15P31A108-325).
             <ProposeFlow
               projectId={projectId}
               key={documents.isSuccess ? 'documents' : 'loading'}
@@ -631,140 +709,31 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                 approved.map((item) => [item.key, kindLabel[item.kind]]),
               )}
               tasks={taskList}
-              // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
-              fetchDocumentContent={(documentId) =>
-                documentsApi.get(projectId, documentId).then((result) => ({
-                  content: result.version.content ?? '',
-                  versionId: result.version.id,
-                }))
-              }
-              defaultValues={
-                mode.documentId
-                  ? {
-                      title: '',
-                      reason: '',
-                      task_id: '',
-                      document_id: mode.documentId,
-                      // 기준 원문은 폼이 받아서 채운다.
-                      after_content: '',
-                    }
-                  : undefined
-              }
+              fetchDocumentContent={fetchDocumentContent}
+              source={mode.source}
+              form={mode.source && sourceForm(mode.source, true)}
+              defaultValues={formDefaults(mode)}
+              toInput={(values) => toInput(values, mode.source, mode.update)}
               onCancel={() => setMode({ kind: 'detail' })}
-              onSubmit={(values) => submitForm(values)}
+              onSubmitted={(proposal) => submitted(proposal, mode.update)}
             />
-          ) : mode.kind === 'form' ? (
+          ) : mode.kind === 'form' && mode.source ? (
+            // 거둔 제안을 새 제안으로 다시 낼 때는 초안 없이 바로 올린다(CHG-A01 previous_proposal_id).
             <ProposalForm
               projectId={projectId}
               key={documents.isSuccess ? 'documents' : 'loading'}
               documents={documentOptions}
-              // 문서 목록 응답에는 본문이 없어(백엔드 DOC-A02) 고른 문서의 기준 원문을 따로 받는다.
-              fetchDocumentContent={(documentId) =>
-                documentsApi.get(projectId, documentId).then((result) => ({
-                  content: result.version.content ?? '',
-                  versionId: result.version.id,
-                }))
-              }
+              fetchDocumentContent={fetchDocumentContent}
               requestDraft={(input) =>
                 changesApi.generateDraft(projectId, input)
               }
               onDraftConflict={() => void documents.refetch()}
-              sourceDocuments={mode.source?.documents.map((change) => ({
-                id: change.document_id,
-                title:
-                  documentOptions.find((item) => item.id === change.document_id)
-                    ?.title ?? '문서',
-                afterContent: change.after_content,
-                stale: isStaleDocument(change, currentVersionOf),
-              }))}
-              baseChangedTo={
-                mode.source &&
-                baseline.data &&
-                mode.source.base_baseline_id !== baseline.data.id
-                  ? baseline.data.version_no
-                  : undefined
-              }
-              fixedItems={mode.source?.items.map((item) => ({
-                label: `${operationLabel[item.operation]} · ${
-                  item.operation === 'CREATE'
-                    ? item.kind
-                      ? kindLabel[item.kind]
-                      : '설계 항목'
-                    : itemKey(item.design_item_id)
-                }`,
-                detail:
-                  item.operation === 'RETIRE'
-                    ? undefined
-                    : describeContent(item.proposed_content),
-              }))}
-              // 올린 제안(PROPOSED·IN_REVIEW)은 잠기고, 반려된 제안만 같은 번호로 고쳐 다시 올린다(CHG-A04, 사용자 결정 10-30).
-              heading={
-                mode.update
-                  ? '고쳐서 다시 올리기'
-                  : mode.source
-                    ? '새 제안으로 다시 올리기'
-                    : '문서 수정 제안'
-              }
-              status={mode.source && <StatusTag value={mode.source.status} />}
-              description={
-                mode.update
-                  ? `반려 사유: ${mode.source?.rejection_reason ?? ''} · 반려된 내용을 채웠어요. 같은 제안 번호로 다시 올리면 검토 대기가 되고, 이전 내용과 반려 사유는 이력에 남아요.`
-                  : mode.source
-                    ? '거둔 제안 내용을 채웠어요. 올리면 새 제안이 되고 거둔 제안과 이어져요.'
-                    : undefined
-              }
-              footnote={
-                mode.update
-                  ? '올리면 다시 검토 대기가 되고 영향 분석을 다시 해요. 이전 제출과 의견은 이력으로 남아요.'
-                  : undefined
-              }
-              submitLabel={mode.update ? '다시 올리기' : '제안 올리기'}
+              {...sourceForm(mode.source, false)}
+              submitLabel="제안 올리기"
               tasks={taskList}
-              comments={
-                mode.source &&
-                commentList.map((comment) => ({
-                  id: comment.id,
-                  author: nameOfAccount(comment.author_account_id),
-                  body: comment.body,
-                }))
-              }
-              onShowComments={() => {
-                setMode({ kind: 'detail' })
-                setTab('comments')
-              }}
-              defaultValues={
-                mode.source
-                  ? {
-                      title: mode.source.title,
-                      reason: mode.source.reason,
-                      task_id: mode.source.task_id ?? '',
-                      document_id: mode.source.documents[0]?.document_id ?? '',
-                      // 기준이 바뀐 문서는 옛 글 대신 새 기준 원문에서 다시 시작한다(옛 글은 폼에서 비교용으로 보여 준다).
-                      after_content:
-                        mode.source.documents[0] &&
-                        !isStaleDocument(
-                          mode.source.documents[0],
-                          currentVersionOf,
-                        )
-                          ? mode.source.documents[0].after_content
-                          : '',
-                      kept_items: mode.source.items.length,
-                    }
-                  : mode.documentId
-                    ? {
-                        title: '',
-                        reason: '',
-                        task_id: '',
-                        document_id: mode.documentId,
-                        // 기준 원문은 폼이 받아서 채운다.
-                        after_content: '',
-                      }
-                    : undefined
-              }
+              defaultValues={formDefaults(mode)}
               onCancel={() => setMode({ kind: 'detail' })}
-              onSubmit={(values) =>
-                submitForm(values, mode.source, mode.update)
-              }
+              onSubmit={(values) => submitForm(values, mode.source)}
             />
           ) : !selectedId ? (
             <EmptyState>
@@ -1375,6 +1344,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               </div>
                             </section>
                           </div>
+                          <PreSubmitReviewCard
+                            review={current.pre_submit_review}
+                            className={cn(overviewCard, 'grid gap-2')}
+                          />
                           {current.task_id && (
                             <p className="text-xs text-muted-foreground">
                               관련 작업 {taskKey(current.task_id)}

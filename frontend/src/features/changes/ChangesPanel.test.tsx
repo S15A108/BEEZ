@@ -47,6 +47,19 @@ function renderPanel() {
   )
 }
 
+// 올리기 전 비비 검토가 생겨(S15P31A108-325) 새 제안과 반려 후 재제출은 ① 등록 → ② 변경점 → (검토 없이) → ④ 확인 표시 →
+// 올리기로 간다. 검토를 받지 않은 상태라 확인 표시를 켜야 올라간다(누르는 버튼만 바꿈, 사용자 승인 2026-11-09).
+async function submitWithoutReview(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  await user.click(
+    await screen.findByRole('button', { name: '검토 없이 다음' }),
+  )
+  await user.click(
+    screen.getByRole('checkbox', { name: '이 상태 그대로 올릴게요' }),
+  )
+  await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
+}
+
 it('알 수 없는 발행 후 상태는 상세를 유지하고 확인 필요로 표시한다', async () => {
   const base = await changesApi.get('101', '71')
   const payload = {
@@ -242,11 +255,24 @@ it('제안자는 검토 중인 제안을 고칠 수 없고, 반려되면 같은 
   expect(
     screen.getByRole('region', { name: '함께 올라가는 설계 항목 변경' }),
   ).toHaveTextContent('고치기 · REQ-001')
-  await user.click(screen.getByRole('button', { name: '다시 올리기' }))
+  const resubmit = vi.spyOn(changesApi, 'resubmitDraft')
+  await submitWithoutReview(user)
   expect(await screen.findByRole('status')).toHaveTextContent(
     '고친 내용을 올렸어요. 다시 검토 대기예요.',
   )
-  expect((await changesApi.get('101', '71')).proposal.status).toBe('PROPOSED')
+  const after = (await changesApi.get('101', '71')).proposal
+  expect(after.status).toBe('PROPOSED')
+  // 같은 제안 번호의 새 리비전이고, 제출 당시 검토 상태가 남는다(S15P31A108-325).
+  expect(after.revision).toBe(proposal.revision + 1)
+  expect(after.pre_submit_review).toMatchObject({
+    status: 'NOT_REQUESTED',
+    acknowledged: true,
+  })
+  expect(resubmit.mock.calls[0][2]).toMatchObject({
+    review_acknowledged: true,
+    expected_revision: proposal.revision,
+    expected_snapshot_hash: proposal.snapshot_hash,
+  })
 })
 
 // 공용 문서함 '고치기'(PNL-02 수정안 10-29): 그 문서가 골라진 새 제안 폼으로 들어와 고친 글만으로도 올린다.
@@ -270,10 +296,8 @@ it('문서함에서 고치기로 들어오면 그 문서를 고른 새 제안으
     '참여한 프로젝트가 없으면 안내가 필요해요.',
   )
   await user.type(text, '\nREQ-006 참여한 프로젝트가 없으면 만들기를 안내한다.')
-  // 새 제안은 세 단계로 올린다. 누르는 버튼만 바꾸고 기대값은 그대로 둔다(사용자 승인 2026-11-03).
-  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
-  await user.click(screen.getByRole('button', { name: '다음' }))
-  await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
+  // 새 제안은 단계를 지나 올린다. 누르는 버튼만 바꾸고 기대값은 그대로 둔다(사용자 승인 2026-11-03·11-09).
+  await submitWithoutReview(user)
   expect(await screen.findByRole('status')).toHaveTextContent(
     '변경 제안을 올렸어요.',
   )
@@ -417,7 +441,9 @@ it('반려된 제안을 다시 내면 설계 항목 변경을 원래 그대로 �
     expected_snapshot_hash: proposal.snapshot_hash,
   })
   await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-  const update = vi.spyOn(changesApi, 'update')
+  // 반려 후 재제출은 초안(CHG-A16)에 본문을 저장하고 CHG-A04에는 초안을 보낸다(S15P31A108-325, 사용자 승인 2026-11-09).
+  const createDraft = vi.spyOn(changesApi, 'createDraft')
+  const resubmit = vi.spyOn(changesApi, 'resubmitDraft')
   const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
@@ -429,11 +455,17 @@ it('반려된 제안을 다시 내면 설계 항목 변경을 원래 그대로 �
   await user.click(
     await screen.findByRole('button', { name: '고쳐서 다시 올리기' }),
   )
-  await user.click(screen.getByRole('button', { name: '다시 올리기' }))
+  await submitWithoutReview(user)
   expect(await screen.findByRole('status')).toHaveTextContent(
     '고친 내용을 올렸어요.',
   )
-  expect(update.mock.calls[0][2].items).toEqual(proposal.items)
+  expect(createDraft.mock.calls[0][1].items).toEqual(proposal.items)
+  expect(createDraft.mock.calls[0][1].source_proposal_id).toBe('71')
+  expect(resubmit.mock.calls[0][2]).toMatchObject({
+    draft_id: (await createDraft.mock.results[0].value).id,
+    expected_revision: proposal.revision,
+    expected_snapshot_hash: proposal.snapshot_hash,
+  })
   vi.restoreAllMocks()
 })
 
@@ -562,7 +594,7 @@ it('제목만 고쳐 다시 올려도 관련 작업이 그대로면 검증 연�
     await screen.findByRole('button', { name: '고쳐서 다시 올리기' }),
   )
   await user.type(screen.getByLabelText('제목 *'), ' (보완)')
-  await user.click(screen.getByRole('button', { name: '다시 올리기' }))
+  await submitWithoutReview(user)
   expect(await screen.findByRole('status')).toHaveTextContent(
     '고친 내용을 올렸어요.',
   )
@@ -895,11 +927,14 @@ it('승인 확인 화면에서는 공용 문서함에서 제안하기 버튼을 
   ).toBeInTheDocument()
 })
 
-// 문서 수정 제안 흐름: ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인.
-// ③에서 '팀장에게 올리기'를 누르기 전에는 제안을 만들지 않는다(등록해도 팀장에게 가지 않는다).
-it('새 문서 수정 제안은 세 단계를 지나 마지막에만 팀장에게 올린다', async () => {
+// 문서 수정 제안 흐름: ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 올리기 전 확인(S15P31A108-325).
+// ①은 팀장에게 가지 않는 작성 중 제안(CHG-A16)으로 저장하고, ④에서 '팀장에게 올리기'를 눌러야 제안을 만든다.
+// 비비 검토 단계가 생겨 제목·누르는 버튼과 본문을 검사하는 요청(CHG-A01 → CHG-A16)을 바꿨다(사용자 승인 2026-11-09).
+it('새 문서 수정 제안은 단계를 지나 마지막에만 팀장에게 올린다', async () => {
   const user = userEvent.setup()
   const create = vi.spyOn(changesApi, 'create')
+  const createDraft = vi.spyOn(changesApi, 'createDraft')
+  const submitDraft = vi.spyOn(changesApi, 'submitDraft')
   useWorkspaceStore.getState().openPane('changes', 'doc:203')
   renderPanel()
   const steps = () => screen.getByRole('list', { name: '문서 수정 제안 단계' })
@@ -918,7 +953,7 @@ it('새 문서 수정 제안은 세 단계를 지나 마지막에만 팀장에�
   )
   await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
   expect(
-    screen.getByRole('heading', { name: '바뀐 곳 1개를 찾았어요' }),
+    await screen.findByRole('heading', { name: '바뀐 곳 1개를 찾았어요' }),
   ).toBeInTheDocument()
   expect(screen.getByText('추가 1')).toBeInTheDocument()
   expect(screen.getByText('수정 0')).toBeInTheDocument()
@@ -929,14 +964,16 @@ it('새 문서 수정 제안은 세 단계를 지나 마지막에만 팀장에�
   await user.click(screen.getByRole('button', { name: '다시 고치기' }))
   expect(screen.getByLabelText('제목 *')).toHaveValue('빈 목록 안내 추가')
   await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
-  await user.click(screen.getByRole('button', { name: '다음' }))
+  await user.click(
+    await screen.findByRole('button', { name: '검토 없이 다음' }),
+  )
   expect(
     screen.getByRole('heading', { name: '올리기 전에 확인해요' }),
   ).toBeInTheDocument()
-  expect(create).not.toHaveBeenCalled()
-  await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
-  await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
-  expect(create.mock.calls[0][1]).toMatchObject({
+  expect(submitDraft).not.toHaveBeenCalled()
+  // 다시 고치기는 같은 초안을 고친다(CHG-A18).
+  expect(createDraft).toHaveBeenCalledTimes(1)
+  expect(createDraft.mock.calls[0][1]).toMatchObject({
     title: '빈 목록 안내 추가',
     items: [],
     documents: [
@@ -946,6 +983,18 @@ it('새 문서 수정 제안은 세 단계를 지나 마지막에만 팀장에�
       },
     ],
   })
+  await user.click(
+    screen.getByRole('checkbox', { name: '이 상태 그대로 올릴게요' }),
+  )
+  await user.click(screen.getByRole('button', { name: '팀장에게 올리기' }))
+  await waitFor(() => expect(submitDraft).toHaveBeenCalledTimes(1))
+  // 본문은 초안에서 오므로 CHG-A01에는 초안만 보낸다(본문을 같이 보내면 400).
+  expect(submitDraft.mock.calls[0][1]).toEqual({
+    draft_id: (await createDraft.mock.results[0].value).id,
+    expected_draft_revision: 2,
+    review_acknowledged: true,
+  })
+  expect(create).not.toHaveBeenCalled()
   expect(
     await screen.findByRole('heading', { name: /빈 목록 안내 추가/ }),
   ).toBeInTheDocument()
@@ -1203,4 +1252,51 @@ it('같은 제안의 승인 확인을 다시 열면 이전 미리 보기를 지�
   expect(
     screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
   ).toBeEnabled()
+})
+
+// S15P31A108-325: 팀장 상세 개요에 제출 당시 비비 검토 상태(pre_submit_review)를 보인다. 팀장은 작성 중 제안을 읽지
+// 못하므로 처리하지 않은 수정안과 넘긴 의견을 여기서 본다. 초안 없이 올린 리비전은 '올리기 전 검토 없음'이다.
+it('팀장 상세에 올리기 전 비비 검토 상태를 보이고 초안 없이 올린 제안은 검토 없음으로 보인다', async () => {
+  const user = userEvent.setup()
+  const baseline = await documentsApi.baseline('101')
+  const document = await documentsApi.get('101', '203')
+  const draft = await changesApi.createDraft('101', {
+    base_baseline_id: baseline.id,
+    title: '검토를 거친 제안',
+    reason: '빈 목록에서 멈춰요.',
+    items: [],
+    documents: [
+      {
+        document_id: '203',
+        base_document_version_id: document.version.id,
+        after_content: `${document.version.content ?? ''}\nREQ-006 받은 초대를 먼저 보여 준다.`,
+      },
+    ],
+  })
+  await changesApi.requestDraftReview('101', draft.id, { expected_revision: 1 })
+  const now = Date.now()
+  vi.spyOn(Date, 'now').mockReturnValue(now + 10_000)
+  const reviewed = await changesApi.getDraft('101', draft.id)
+  vi.restoreAllMocks()
+  await changesApi.submitDraft('101', {
+    draft_id: draft.id,
+    expected_draft_revision: 1,
+    review_acknowledged: true,
+    expected_review_state_hash: reviewed.review_state_hash,
+  })
+  renderPanel()
+  await screen.findByRole('heading', { name: /검토를 거친 제안/ })
+  const region = screen.getByRole('region', { name: '올리기 전 비비 검토' })
+  expect(region).toHaveTextContent(
+    '비비 검토를 마치고 올렸어요. 제안자가 이 상태를 확인하고 올렸어요.',
+  )
+  expect(region).toHaveTextContent('처리하지 않은 수정안 1')
+  expect(region).toHaveTextContent('넘긴 수정안·의견 1')
+  await user.click(
+    screen.getByRole('button', { name: /프로젝트 목록 빈 화면 안내/ }),
+  )
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  expect(
+    screen.getByRole('region', { name: '올리기 전 비비 검토' }),
+  ).toHaveTextContent('올리기 전 검토 없음')
 })

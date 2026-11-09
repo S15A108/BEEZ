@@ -537,6 +537,33 @@ export type ResolvedDocumentChange = z.infer<
   typeof resolvedDocumentChangeSchema
 >
 
+// 올리기 전 비비 검토의 수정안·의견을 제출 리비전에 복사한 것(S15P31A108-218 수정안, PR #176). 팀장 상세에서 본다.
+export const submittedReviewSuggestionSchema = z.object({
+  type: z.enum(['PATCH', 'COMMENT']),
+  document_id: idSchema.optional(),
+  design_item_key: z.string().optional(),
+  category: z.enum(['OMISSION', 'CONSISTENCY']).optional(),
+  explanation: z.string(),
+  original_text: z.string().optional(),
+  replacement_text: z.string().optional(),
+  sources: documentReviewSourceSchema.array().default([]),
+  decision: z.enum(['PENDING', 'SKIPPED']).optional(),
+})
+export type SubmittedReviewSuggestion = z.infer<
+  typeof submittedReviewSuggestionSchema
+>
+
+// 리비전을 초안으로 올릴 때의 검토 상태. 초안 없이 올린 리비전에는 없다('올리기 전 검토 없음').
+export const preSubmitReviewSchema = z.object({
+  status: z.enum(['NOT_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED']),
+  review_id: idSchema.optional(),
+  edited_after_review: z.boolean(),
+  pending_suggestions: submittedReviewSuggestionSchema.array(),
+  skipped_suggestions: submittedReviewSuggestionSchema.array(),
+  acknowledged: z.boolean(),
+})
+export type PreSubmitReview = z.infer<typeof preSubmitReviewSchema>
+
 export const changeProposalSchema = z.object({
   id: idSchema,
   key: z.string(),
@@ -572,6 +599,7 @@ export const changeProposalSchema = z.object({
   previous_proposal_id: idSchema.optional(),
   withdrawn_by: idSchema.optional(),
   withdrawn_at: timeSchema.optional(),
+  pre_submit_review: preSubmitReviewSchema.optional(),
 })
 export type ChangeProposal = z.infer<typeof changeProposalSchema>
 

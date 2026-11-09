@@ -47,6 +47,113 @@ export const changesApi = {
       },
       options,
     ),
+  // CHG-A01을 작성 중 제안으로 올린다. 본문은 초안에서 온다.
+  submitDraft: (
+    projectId: string,
+    input: schemas.SubmitDraftInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.createResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals`,
+        data: schemas.submitDraftInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  // CHG-A04를 반려된 제안을 보완한 초안으로 다시 올린다.
+  resubmitDraft: (
+    projectId: string,
+    proposalId: string,
+    input: schemas.ResubmitDraftInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.updateResponseSchema,
+      {
+        method: 'PUT',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposals/${encodeURIComponent(String(idSchema.parse(proposalId)))}`,
+        data: schemas.resubmitDraftInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  createDraft: (
+    projectId: string,
+    input: schemas.DraftInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.draftSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposal-drafts`,
+        data: schemas.draftInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  getDraft: (projectId: string, draftId: string, options?: RequestOptions) =>
+    callEndpoint(
+      schemas.draftSchema,
+      {
+        method: 'GET',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposal-drafts/${encodeURIComponent(String(idSchema.parse(draftId)))}`,
+      },
+      options,
+    ),
+  updateDraft: (
+    projectId: string,
+    draftId: string,
+    input: schemas.UpdateDraftInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.draftSchema,
+      {
+        method: 'PUT',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposal-drafts/${encodeURIComponent(String(idSchema.parse(draftId)))}`,
+        data: schemas.updateDraftInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  requestDraftReview: (
+    projectId: string,
+    draftId: string,
+    input: { expected_revision: number },
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.draftReviewSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposal-drafts/${encodeURIComponent(String(idSchema.parse(draftId)))}/bee-reviews`,
+        data: schemas.draftReviewInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
+  decideDraftSuggestion: (
+    projectId: string,
+    draftId: string,
+    reviewId: string,
+    suggestionId: string,
+    input: schemas.DraftDecisionInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.draftSchema,
+      {
+        method: 'PATCH',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/change-proposal-drafts/${encodeURIComponent(String(idSchema.parse(draftId)))}/bee-reviews/${encodeURIComponent(String(idSchema.parse(reviewId)))}/suggestions/${encodeURIComponent(String(idSchema.parse(suggestionId)))}`,
+        data: schemas.draftDecisionInputSchema.parse(input),
+        idempotent: true,
+      },
+      options,
+    ),
   list: (
     projectId: string,
     query?: schemas.ListQuery,
