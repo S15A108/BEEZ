@@ -3,9 +3,11 @@ package com.beez.backend.auth.recovery;
 import com.beez.backend.account.Account;
 import com.beez.backend.account.AccountRepository;
 import com.beez.backend.common.api.ApiException;
+import com.beez.backend.common.concurrent.LogThrottle;
 import com.beez.backend.common.mail.MailGateway;
 import com.beez.backend.common.mail.MailMessage;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -58,6 +60,8 @@ public class PasswordRecoveryService implements DisposableBean {
     private final PasswordRecoveryProperties props;
     /** 메일 발송용. SMTP 를 기다리는 동안 요청 스레드·DB 연결을 쥐지 않고, 응답 시간이 계정 유무로 달라지지 않게 한다 */
     private final ExecutorService mailSender = Executors.newVirtualThreadPerTaskExecutor();
+    /** 서버 전체 상한 도달 WARN 은 10분에 한 번만 (공격 중 요청마다 찍히지 않게, -273) */
+    private final LogThrottle globalLimitWarn = new LogThrottle(Duration.ofMinutes(10));
 
     public PasswordRecoveryService(TemporaryPasswordRepository temporaries, AccountRepository accounts,
                                    PasswordEncoder encoder, MailGateway mail, PlatformTransactionManager manager,
@@ -196,8 +200,11 @@ public class PasswordRecoveryService implements DisposableBean {
         }
         if (temporaries.countByAccountIdIsNotNullAndCreatedAtAfter(now.minus(props.sendLimitWindow()))
                 >= props.globalSendLimit()) {
-            log.warn("임시 비밀번호 메일 서버 전체 상한 도달: limit={} window={}", props.globalSendLimit(),
-                    props.sendLimitWindow());
+            long skipped = globalLimitWarn.tryPass(now);
+            if (skipped >= 0) {
+                log.warn("임시 비밀번호 메일 서버 전체 상한 도달: limit={} window={} suppressed_since_last={}",
+                        props.globalSendLimit(), props.sendLimitWindow(), skipped);
+            }
             throw rateLimited("지금은 요청이 많습니다. 잠시 뒤에 다시 시도하세요");
         }
     }
