@@ -107,6 +107,9 @@ const versionTone: Record<DocumentVersion['status'], string> = {
   SUPERSEDED: 'muted',
   REJECTED: 'muted',
 }
+// 버전 상태 이름은 이력과 버전 드롭다운이 같게 보인다. 채택되지 않은 버전은 '반려'가 아니라 '미채택'이다.
+const versionStatusLabel = (status: DocumentVersion['status']) =>
+  status === 'REJECTED' ? '미채택' : statusLabel(status)
 
 type View =
   | { name: 'list' }
@@ -1224,7 +1227,8 @@ function DocumentDetail({
                         key={version.id}
                         value={String(version.version_no)}
                       >
-                        v{version.version_no} · {statusLabel(version.status)}
+                        v{version.version_no} ·{' '}
+                        {versionStatusLabel(version.status)}
                         {version.id === base?.id ? ' (기준)' : ''}
                       </NativeSelectOption>
                     ))}
@@ -1257,9 +1261,7 @@ function DocumentDetail({
                         <span className="flex flex-wrap items-center gap-2">
                           <strong>v{version.version_no}</strong>
                           <Chip tone={versionTone[version.status]}>
-                            {version.status === 'REJECTED'
-                              ? '미채택'
-                              : statusLabel(version.status)}
+                            {versionStatusLabel(version.status)}
                           </Chip>
                           {(version.is_current_baseline === true ||
                             (!history.items.some(

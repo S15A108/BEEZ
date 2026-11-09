@@ -564,6 +564,22 @@ it('올린 사람이 구성원 목록에 없으면 팀원으로 보인다', asyn
   expect(await within(rows[0]).findByText(/· 팀원/)).toBeInTheDocument()
 })
 
+it('문서 내용 탭의 버전 드롭다운도 REJECTED를 미채택으로 보인다', async () => {
+  useWorkspaceStore.setState({ focusId: '2' })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [
+      { ...version, id: '32', version_no: 2, status: 'REJECTED' as const },
+      { ...version, id: '31', version_no: 1, status: 'DRAFT' as const },
+    ],
+    has_more: false,
+  })
+  mount()
+  expect(
+    await screen.findByRole('option', { name: /v2 · 미채택/ }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: /반려/ })).not.toBeInTheDocument()
+})
+
 it('버전 이력은 승인·이전 버전·초안·미채택을 구분해 보인다', async () => {
   const user = userEvent.setup()
   useWorkspaceStore.setState({ focusId: '2' })

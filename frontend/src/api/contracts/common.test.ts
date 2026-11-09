@@ -280,6 +280,8 @@ it('문서 버전은 올린 사람·현재 기준·변경 제안이 없어도 �
     is_current_baseline: false,
     change_proposal_id: '71',
   })
+})
+
 it('에이전트 작업 현황은 작업 상태가 DRAFT여도 응답 전체를 읽는다', () => {
   const page = agentWorkResponseSchema.parse({
     items: [{ member_id: '21', agent_session_id: '51', task_status: 'DRAFT' }],

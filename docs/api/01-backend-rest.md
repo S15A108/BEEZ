@@ -9040,7 +9040,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 - 원문·리비전·문서 연결·기존 결정은 삭제하지 않고 baseline·작업 상태를 바꾸지 않는다. WITHDRAWN은 종결 상태이며 다시 작성하려면 새 CHG-A01 요청에 previous_proposal_id를 지정한다. 반려 후 같은 번호 재제출과 구분한다.
 - 이전 제안에 귀속된 업로드 DRAFT를 새 제안으로 이동하지 않는다. 새 수정본을 업로드하거나 본문을 명시적으로 입력한다.
 - (S15P31A108-201) 거두면 그 제안에 귀속된 DRAFT 문서 버전은 REJECTED(미채택)로 닫는다. WITHDRAWN은 되살릴 수 없어 그 초안을 다시 쓸 수 없기 때문이다. 반려(REJECTED)된 제안의 초안은 재제출 전까지 DRAFT로 둔다.
-- 거두기는 알림 유형이 없다(계약 6.1). 활동 이벤트는 S15P31A108-237 TODO다. 직접 notification INSERT나 발송 성공 응답을 만들지 않는다.
+- 거두기는 알림 유형이 없다(계약 6.1). 활동 `CHANGE_PROPOSAL_WITHDRAWN`(키 `change-proposal:{id}:withdrawn`)은 같은 트랜잭션에서 저장하고 멱등 재생에서는 남기지 않는다(S15P31A108-310). 회의 끝내기 재시도가 앞선 시도의 제안을 정리해 거둘 때도 같은 활동이 남는다. 직접 notification INSERT나 발송 성공 응답을 만들지 않는다.
 - 화면 수정안의 expected_updated_at 대신 기존 195 검토 식별인 expected_revision/expected_snapshot_hash를 사용한다. FE 연동 시 이 두 필드를 맞춰야 한다. 응답은 A01·A04·A08·A10과 같은 래퍼 없는 ChangeProposal이다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
