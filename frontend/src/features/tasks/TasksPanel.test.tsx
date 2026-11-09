@@ -392,6 +392,94 @@ it('사람 검토가 아닌 분석 오류는 실행 재시도를 제공한다', 
   ).toBeInTheDocument()
 })
 
+// S15P31A108-150: 롤백 실패 뒤 서버가 실행을 회수하면 ERROR(validation_lease_expired)로 닫힌다(docs/design/11-validation-rollback.md 5절).
+it('롤백 실패로 서버가 회수한 검증 오류는 이유와 결과를 보이고 실행 재시도를 제공한다', async () => {
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      error_code: 'validation_lease_expired',
+      findings: [
+        {
+          id: '705',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message:
+            '분석 실행이 시간 안에 결과를 반영하지 못했습니다 (워커 중단·재배포)',
+          sources: [],
+          resolution: 'RETRY',
+          next_action: '같은 입력으로 다시 실행합니다 (VAL-A04)',
+          validation_run_id: '801',
+        },
+      ],
+    },
+  }
+  show(false)
+  expect(
+    await screen.findByText(
+      /서버가 실행을 회수했어요\. 이번 실행 결과는 반영하지 않았고 작업 상태도 그대로예요\./,
+    ),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '실행 재시도' })).toBeEnabled()
+})
+
+it('부딪힌 작업이 있는 문제는 협의할 작업과 담당자를 함께 보인다', async () => {
+  const other: TaskDetail = {
+    ...task,
+    id: '504',
+    key: 'TASK-004',
+    assignee_member_id: '22',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '514',
+      task_id: '504',
+      plan: {
+        ...task.current_plan_revision.plan,
+        title: '빈 목록 안내 API 문구',
+      },
+    },
+  }
+  vi.mocked(tasksApi.get).mockImplementation(async (_project, id) =>
+    id === '504' ? other : task,
+  )
+  task = {
+    ...task,
+    validation_status: 'NEEDS_REVIEW',
+    validation: {
+      ...task.validation!,
+      status: 'NEEDS_REVIEW',
+      findings: [
+        {
+          id: '706',
+          source: 'RULE',
+          kind: 'CONFLICT',
+          severity: 'BLOCKING',
+          message: '다른 진행 작업이 같은 설계 항목의 변경을 점유하고 있어요.',
+          related_task_id: '504',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+        },
+      ],
+    },
+  }
+  show(false)
+  expect(
+    await screen.findByText(
+      /TASK-004 빈 목록 안내 API 문구 · 담당자 다른 팀원/,
+    ),
+  ).toBeInTheDocument()
+})
+
+it('검증 결과에 BEEZ를 거치지 않은 작업은 검증하지 않는다고 적는다(AC-12)', async () => {
+  show(false)
+  expect(
+    await screen.findByText(/BEEZ를 거치지 않은 작업은 검증하지 않아요\./),
+  ).toBeInTheDocument()
+})
+
 it('완료 보고 재검증이 오류인데 새 계획 검증이 있으면 새 검증으로 재개하고 재검증 재시도도 따로 제공한다', async () => {
   const deltaError = {
     ...task.validation!,
