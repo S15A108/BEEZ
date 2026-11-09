@@ -9,8 +9,9 @@ package com.beez.backend.agenttoken;
  * 2시간: MCP 서버가 마지막 요청 후 1~2시간에 유휴 세션을 지우므로(McpServerConfig sessionSweepInterval) 그보다 오래 조용하면
  * 서버에 세션이 남아 있지 않다.
  *
- * <p>확인 필요(AGT-A05 status_check_required) = 연결됨이지만 보고 끊김 임계값({@code beez.task.stalled-after}, 기본 30분)
- * 넘게 통신이 없음. 팀장 CANCEL 의 "보고가 끊긴 작업"(TaskStateService, AC-14)과 같은 설정값을 써서 두 판정이 어긋나지 않는다 —
+ * <p>확인 필요(AGT-A05 status_check_required) = 연결됨 + 그 멤버가 맡은 IN_PROGRESS 작업이 있음 + 보고 끊김 임계값
+ * ({@code beez.task.stalled-after}, 기본 30분) 넘게 통신 없음. 팀장 CANCEL 의 "보고가 끊긴 작업"(TaskStateService, AC-14)과 같은 뜻·설정값이다.
+ * 할 일 없이 쉬는 에이전트는 요청을 보내지 않으므로 넣지 않는다 —
  * 조각은 {@link AgentConnectionQueryService} 에 있다(설정값을 파라미터로 받아야 해서 상수가 아니다).
  * 통신이 없다고 끊겼다고 단정하지 않고, 통신이 있다고 실행 중으로 단정하지도 않는다 (AGT-A05 처리 규칙).
  *

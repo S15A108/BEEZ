@@ -235,7 +235,7 @@ SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터�
 - 연결 기록을 읽는 곳 두 군데는 끝난 세션(`ended_at`)을 세지 않게 바꿨다.
   - 팀원 목록의 `agent_connected`: `ProjectMemberRepository.findAgentConnectedAccountIds`. **최근 2시간 안에 통신한 세션만** 연결로 본다 — DELETE 없이 꺼진 클라이언트·배포 재시작으로 사라진 세션은 끝남이 찍히지 않는데, SDK가 유휴 세션을 마지막 요청 후 1~2시간에 지우므로 그보다 오래 조용하면 세션이 남아 있지 않다.
   - 에이전트 작업 현황 MON-A05: `TaskStatusRepository.agentSessions`. -178에서는 시간 창을 걸지 않았고, -75에서 팀원 목록과 같은 2시간 창을 걸었다(아래 '남긴 것').
-  - (-75) 세 곳의 기준은 `AgentConnectionRule`의 SQL 조각 하나다. 연결 현황 AGT-A05(`AgentConnectionQueryService`)도 같은 조각을 쓰고, 보고 끊김 임계값(`beez.task.stalled-after`, 기본 30분) 넘게 조용하면 `status_check_required`로 표시한다.
+  - (-75) 세 곳의 기준은 `AgentConnectionRule`의 SQL 조각 하나다. 연결 현황 AGT-A05(`AgentConnectionQueryService`)도 같은 조각을 쓰고, IN_PROGRESS 작업을 맡은 채 보고 끊김 임계값(`beez.task.stalled-after`, 기본 30분) 넘게 조용하면 `status_check_required`로 표시한다. 할 일 없이 쉬는 연결은 표시하지 않는다.
 
 **남긴 것**
 
