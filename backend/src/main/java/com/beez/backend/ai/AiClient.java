@@ -26,23 +26,33 @@ public class AiClient {
     static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
 
+    /** 비비 대화(답변 모델 30초 + 문장 판정 모델 30초)보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
+    static final Duration DEFAULT_CHAT_READ_TIMEOUT = Duration.ofSeconds(70);
+
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
+    private final RestClient chatRest;
 
     public AiClient(BeezProperties props) {
-        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT);
+        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_CHAT_READ_TIMEOUT);
+    }
+
+    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout) {
+        this(props, questionReadTimeout, draftReadTimeout, DEFAULT_CHAT_READ_TIMEOUT);
     }
 
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
-                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout) {
+                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
+                    @Value("${beez.bee.chat-read-timeout:70s}") Duration chatReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
+        this.chatRest = client(ai, max(ai.readTimeout(), chatReadTimeout));
     }
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
@@ -136,6 +146,15 @@ public class AiClient {
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> assignmentRecommendations(java.util.Map<String, Object> input) {
         return questionRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /**
+     * AI-A05 비비 질문 답변 ({@code POST /v1/bee/chat}, S15P31A108-135 계약). 답변 모델과 문장 판정 모델을 차례로 부르므로
+     * 전용 읽기 제한({@code beez.bee.chat-read-timeout})을 쓴다. 실패 분류는 부르는 쪽이 한다.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> beeChat(java.util.Map<String, Object> input) {
+        return chatRest.post().uri("/v1/bee/chat").body(input).retrieve().body(java.util.Map.class);
     }
 
     @SuppressWarnings("unchecked")
