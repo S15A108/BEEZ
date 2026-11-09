@@ -166,7 +166,7 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
   await page.getByRole('button', { name: '대시보드', exact: true }).click()
   const dashboard = page.getByRole('dialog')
   await dashboard.getByRole('tab', { name: '활동 타임라인' }).click()
-  await dashboard.getByRole('button', { name: '변경 요청 #71' }).click()
+  await dashboard.getByRole('button', { name: '변경 요청 #71' }).first().click()
   await expect(
     page.getByRole('region', { name: '발행 후 분석 상태' }),
   ).toContainText('상태 확인 필요')
