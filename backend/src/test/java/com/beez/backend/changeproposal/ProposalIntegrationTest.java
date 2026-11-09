@@ -113,6 +113,9 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         Proposal second=commands.resubmit(author,project.projectId(),id,next,"retry");
         assertThat(second.id()).isEqualTo(first.id()); assertThat(second.revision()).isEqualTo(2);
         assertThat(commands.resubmit(author,project.projectId(),id,next,"retry")).isEqualTo(second);
+        // 화면은 재제출 때 본문만 보내 새 초안이 생긴다. 이전 리비전의 초안은 채택되지 않은 것으로 닫혀 초안이 겹쳐 남지 않는다.
+        assertThat(jdbc.queryForList("SELECT status FROM document_version WHERE change_proposal_id=? ORDER BY version_no",String.class,id))
+                .containsExactly("REJECTED","DRAFT");
         assertThat(queries.detail(author,project.projectId(),id,1).proposal().documents().getFirst().afterContent()).contains("수정");
         assertThat(queries.detail(author,project.projectId(),id,1).proposal().status()).isEqualTo("REJECTED");
         var history=queries.revisions(author,project.projectId(),id,null,20).items();
@@ -223,7 +226,10 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         assertThat(secondVersion).isNotBlank().isNotEqualTo(firstVersion);
         assertThat(queries.detail(author,project.projectId(),id,1).proposal().documents().getFirst().proposedDocumentVersionId()).isEqualTo(firstVersion);
         assertThat(storage.objects).hasSize(2);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_version WHERE change_proposal_id=? AND status='DRAFT'",Integer.class,id)).isEqualTo(2);
+        // 이전 리비전의 버전은 행·본문이 그대로 남고(위 단언), 새 리비전이 쓰지 않으므로 채택되지 않은 것(REJECTED)으로만 닫힌다.
+        assertThat(jdbc.queryForList("SELECT status FROM document_version WHERE change_proposal_id=? ORDER BY version_no",String.class,id))
+                .containsExactly("REJECTED","DRAFT");
+        assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE id=?",String.class,Long.parseLong(secondVersion))).isEqualTo("DRAFT");
     }
 
     @Test void invalidOrUnauthorizedTextIsRejectedBeforeAnyOriginalIsStored() {
@@ -478,6 +484,8 @@ class ProposalIntegrationTest extends IntegrationTestSupport {
         Proposal original=create("withdraw-base"); long id=Long.parseLong(original.id());
         Proposal withdrawn=commands.withdraw(author,project.projectId(),id,withdrawal(original),"withdraw");
         assertThat(withdrawn.status()).isEqualTo("WITHDRAWN");
+        // 거둔 제안은 되살릴 수 없으므로 귀속된 초안 문서 버전은 채택되지 않은 것(REJECTED)이 된다.
+        assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE change_proposal_id=?",String.class,id)).isEqualTo("REJECTED");
         assertThat(withdrawn.snapshotHash()).isEqualTo(original.snapshotHash());
         assertThat(withdrawn.revision()).isEqualTo(original.revision());
         assertThat(withdrawn.documents()).isEqualTo(original.documents());

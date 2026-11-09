@@ -247,7 +247,7 @@ SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터�
 - **요청마다 트랜잭션 하나 더**: 세션 확인이 토큰 검증과 따로 돈다. 둘을 한 트랜잭션으로 묶는 것은 후속이다.
 - **SDK의 없는 세션 404 본문**: SDK는 `McpError` 예외를 통째로 직렬화해 스택 트레이스까지 내보낸다. 기록이 있는 세션을 SDK가 이미 지웠을 때(배포 재시작·유휴 정리)만 이 응답이 나간다.
 - **`last_report_at`의 뜻**: -75에서 '마지막 **통신** 시각'으로 정하고 04-task-lifecycle §6을 그에 맞췄다. 칸을 나누지 않는다 — 쉬는 에이전트는 요청을 보내지 않아 통신이 곧 활동이고, 나누려면 마이그레이션과 요청 필터 수정이 필요하다.
-- **작업 상태 DRAFT**: `agent_session.current_task_id`를 쓰기 시작할 때 AgentWork와 FE `agentWorkSchema`의 `task_status`에 DRAFT를 넣는다(00-common AgentWork에 적음). 지금은 그 칸을 쓰는 코드가 없어 할 일이 없다(-75).
+- **작업 상태 DRAFT**: `agent_session.current_task_id`는 `report_task_state` START·RESUME 성공 때만 적혀(-336) DRAFT 작업을 가리키지 않는다. 계획 작성 중에도 적게 바꾸면 그때 AgentWork와 FE `agentWorkSchema`의 `task_status`에 DRAFT를 넣는다(00-common AgentWork에 적음).
 - **활동 기록의 세션**: `activity_event.agent_session_id`는 -333에서 채운다. 세션 필터가 확인한 연결 기록 ID를 요청 속성 → transport context → `CallerContext.agentSessionId`로 넘긴다. AGT-A04 연결 안내 REST API는 후속이다.
 
 시험: `AgentConnectionIntegrationTests`(실제 MCP 클라이언트).

@@ -222,6 +222,121 @@ class AccessAcceptanceAc11Ac14IntegrationTests extends IntegrationTestSupport {
         assertThat(TaskApiSupport.stringField(started.body(), "status")).isEqualTo("IN_PROGRESS");
     }
 
+    /**
+     * 깨지면: 에이전트가 MCP 로 계속 일하는데(요청마다 연결의 마지막 통신이 갱신됨) 상태 전이 없이 30분이 지나면 그 작업이 "보고가 끊긴 작업"
+     * 으로 판정돼 팀장이 되돌릴 수 없는 취소를 할 수 있거나, 에이전트 작업 현황(MON-A05)의 작업 칸이 늘 빈다 — START 가 그 연결에
+     * 현재 작업을 적지 않아 끊김 판정이 작업의 마지막 변경 시각만 본다 (AC-14, -336, 04-task-lifecycle §4.1).
+     */
+    @Test
+    void ac14_agentWorkingOverMcp_isNotStalled_whileItsConnectionKeepsTalking() {
+        long taskId = createTask(member, "AC14 MCP 로 일하는 작업", api.changesRef("API-01"));
+        long revisionId = currentRevision(taskId);
+        long pass = api.passValidation(taskId);
+        McpSyncClient memberMcp = mcp(memberToken);
+        JsonNode started = ok(start(memberMcp, taskId, revisionId, pass, "k-s1"));
+        assertThat(started.get("task").get("status").asString()).isEqualTo("IN_PROGRESS");
+        long sessionId = liveSessionOf(api.agentTokenId());
+
+        // START 한 연결에 현재 작업이 적히고, 에이전트 작업 현황의 작업 칸에 나온다
+        assertThat(currentTaskOf(sessionId)).isEqualTo(taskId);
+        HttpResponse<String> work = api.get("/api/projects/" + projectId + "/agents/work-status", leader);
+        assertThat(work.statusCode()).as(work.body()).isEqualTo(200);
+        JsonNode items = json.readTree(work.body()).get("items");
+        assertThat(items).filteredOn(n -> n.get("agent_session_id").asLong() == sessionId)
+                .singleElement()
+                .satisfies(n -> assertThat(n.get("current_task_id").asLong()).isEqualTo(taskId));
+
+        // 작업은 1시간 동안 바뀌지 않았지만 연결은 방금 통신했다 → 끊긴 작업이 아니라 팀장이 취소하지 못한다
+        api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", taskId).update();
+        HttpResponse<String> refused = report(taskId, "CANCEL", revisionId, null, leader);
+        assertThat(refused.statusCode()).as(refused.body()).isEqualTo(403);
+        assertThat(taskDetail(taskId).get("status").asString()).isEqualTo("IN_PROGRESS");
+
+        // 대조군: 연결의 통신도 1시간 전에 멈췄으면 끊긴 작업이라 팀장이 취소한다 — 위 거부가 다른 이유가 아니다
+        api.jdbc.sql("update agent_session set last_report_at = now() - interval '1 hour' where id = :s")
+                .param("s", sessionId).update();
+        HttpResponse<String> cancelled = report(taskId, "CANCEL", revisionId, null, leader);
+        assertThat(cancelled.statusCode()).as(cancelled.body()).isEqualTo(200);
+        assertThat(TaskApiSupport.stringField(cancelled.body(), "status")).isEqualTo("CANCELLED");
+    }
+
+    /**
+     * 깨지면: 담당자가 바뀐 뒤에도 이전 담당자의 연결이 그 작업을 현재 작업으로 가리킨 채 통신해, 새 담당자의 보고가 끊겨도 팀장이 취소하지
+     * 못한다 (AC-14, -336). 끊김 판정은 지금 담당자의 연결만 센다.
+     */
+    @Test
+    void ac14_previousAssigneesConnection_doesNotHideStall_afterHandover() {
+        // 팀장 에이전트가 시작한 작업을 member 에게 넘기고, member 에이전트가 다시 검증 PASS 로 이어 간다
+        long taskId = createTask(leader, "AC14 넘겨받은 작업", api.changesRef("API-01"));
+        long revisionId = currentRevision(taskId);
+        McpSyncClient leaderMcp = mcp(leaderToken);
+        ok(start(leaderMcp, taskId, revisionId, api.passValidation(taskId), "k-s2"));
+        long leaderSession = liveSessionOf(api.leaderAgentTokenId());
+        assertThat(currentTaskOf(leaderSession)).isEqualTo(taskId);
+
+        HttpResponse<String> moved = api.patch(tasksPath() + "/" + taskId + "/assignee",
+                "{\"assignee_member_id\":\"" + api.memberId("member@test") + "\",\"expected_lock_version\":"
+                        + lockVersion(taskId) + "}", leader);
+        assertThat(moved.statusCode()).as(moved.body()).isEqualTo(200);
+        McpSyncClient memberMcp = mcp(memberToken);
+        JsonNode resumed = ok(resume(memberMcp, taskId, revisionId, lockVersion(taskId), api.passValidation(taskId), "k-r4"));
+        assertThat(resumed.get("task").get("status").asString()).isEqualTo("IN_PROGRESS");
+        long memberSession = liveSessionOf(api.agentTokenId());
+        assertThat(currentTaskOf(memberSession)).isEqualTo(taskId);
+
+        // 작업은 1시간 전, 지금 담당자(member)의 연결은 방금 통신 → 끊긴 작업이 아니다
+        api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", taskId).update();
+        assertThat(report(taskId, "CANCEL", revisionId, null, leader).statusCode()).isEqualTo(403);
+
+        // member 의 연결도 1시간 전에 멈춤. 이전 담당자(팀장)의 연결은 아직 이 작업을 가리킨 채 방금 통신했지만 세지 않는다 → 취소된다
+        api.jdbc.sql("update agent_session set last_report_at = now() - interval '1 hour' where id = :s")
+                .param("s", memberSession).update();
+        api.jdbc.sql("update agent_session set last_report_at = now() where id = :s").param("s", leaderSession).update();
+        assertThat(currentTaskOf(leaderSession)).isEqualTo(taskId);
+        HttpResponse<String> cancelled = report(taskId, "CANCEL", revisionId, null, leader);
+        assertThat(cancelled.statusCode()).as(cancelled.body()).isEqualTo(200);
+    }
+
+    /**
+     * 깨지면: 에이전트를 다시 실행하면(Claude Code 는 실행마다 새로 연결하고, 진행 중 작업에 START 를 다시 보내지 않는다) 새 연결에 현재 작업이
+     * 없어 30분 뒤 다시 팀장 취소가 열리거나, 끝난·남에게 넘어간 작업을 새 연결이 가리킨다 (AC-14, -336 리뷰).
+     */
+    @Test
+    void ac14_reconnectedAgent_keepsItsCurrentTask_soStallIsJudgedOnTheNewConnection() {
+        long taskId = createTask(member, "AC14 재시작한 에이전트", api.changesRef("API-01"));
+        long revisionId = currentRevision(taskId);
+        // 첫 연결에서 시작하고 닫는다 (CLOSED)
+        McpSyncClient first = McpTestClient.connect(port(), memberToken);
+        first.initialize();
+        ok(start(first, taskId, revisionId, api.passValidation(taskId), "k-s3"));
+        long firstSession = liveSessionOf(api.agentTokenId());
+        first.closeGracefully();
+
+        // 닫힌 연결 뒤 새 연결 → 이어 받음. 그 연결을 닫지 않고 또 연결(밀려남, REPLACED) → 다시 이어 받음
+        mcp(memberToken);
+        long secondSession = liveSessionOf(api.agentTokenId());
+        assertThat(currentTaskOf(secondSession)).isEqualTo(taskId);
+        mcp(memberToken);
+        long thirdSession = liveSessionOf(api.agentTokenId());
+        assertThat(thirdSession).isNotEqualTo(secondSession);
+        assertThat(currentTaskOf(thirdSession)).isEqualTo(taskId);
+
+        // 작업과 이전 연결들은 1시간 전, 새 연결은 방금 통신 → 끊긴 작업이 아니다
+        api.jdbc.sql("update task set updated_at = now() - interval '1 hour' where id = :t").param("t", taskId).update();
+        api.jdbc.sql("update agent_session set last_report_at = now() - interval '1 hour' where id in (:a, :b)")
+                .param("a", firstSession).param("b", secondSession).update();
+        assertThat(report(taskId, "CANCEL", revisionId, null, leader).statusCode()).isEqualTo(403);
+
+        // 대조군: 새 연결도 1시간 전에 멈췄으면 취소된다
+        api.jdbc.sql("update agent_session set last_report_at = now() - interval '1 hour' where id = :s")
+                .param("s", thirdSession).update();
+        assertThat(report(taskId, "CANCEL", revisionId, null, leader).statusCode()).isEqualTo(200);
+
+        // 끝난(취소된) 작업은 다음 연결이 이어 받지 않는다
+        mcp(memberToken);
+        assertThat(currentTaskOf(liveSessionOf(api.agentTokenId()))).isNull();
+    }
+
     // ---- 끝난·잊힌 세션 회귀 ----
 
     /**
@@ -295,6 +410,24 @@ class AccessAcceptanceAc11Ac14IntegrationTests extends IntegrationTestSupport {
         return call(agent, "report_task_state", Map.of("task_id", String.valueOf(taskId), "event", "RESUME",
                 "plan_revision_id", String.valueOf(revisionId), "expected_lock_version", lock,
                 "validation_id", String.valueOf(validationId), "idempotency_key", key));
+    }
+
+    private CallToolResult start(McpSyncClient agent, long taskId, long revisionId, long validationId, String key) {
+        return call(agent, "report_task_state", Map.of("task_id", String.valueOf(taskId), "event", "START",
+                "plan_revision_id", String.valueOf(revisionId), "expected_lock_version", lockVersion(taskId),
+                "validation_id", String.valueOf(validationId), "idempotency_key", key));
+    }
+
+    /** 이 토큰의 살아 있는 연결 기록 (1인 1에이전트라 하나다) */
+    private long liveSessionOf(Long tokenId) {
+        return api.jdbc.sql("select id from agent_session where agent_token_id = :k and ended_at is null")
+                .param("k", tokenId).query(Long.class).single();
+    }
+
+    /** 연결이 가리키는 현재 작업. 없으면 null (single() 은 null 값을 받지 않아 행으로 읽는다) */
+    private Long currentTaskOf(long sessionId) {
+        return api.jdbc.sql("select current_task_id from agent_session where id = :s").param("s", sessionId)
+                .query((rs, i) -> rs.getObject(1, Long.class)).list().get(0);
     }
 
     private String write(McpSyncClient agent, long taskId, String kind, String visibility, String summary) {
