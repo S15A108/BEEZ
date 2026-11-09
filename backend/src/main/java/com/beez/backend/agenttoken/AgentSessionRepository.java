@@ -9,7 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface AgentSessionRepository extends JpaRepository<AgentSession, Long> {
 
-    /** /mcp 요청의 세션 확인. session_key 는 UNIQUE (V42) */
+    /** /mcp 요청의 세션 확인. session_key 는 UNIQUE (V41) */
     Optional<AgentSession> findBySessionKey(String sessionKey);
 
     /**

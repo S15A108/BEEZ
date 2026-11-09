@@ -216,7 +216,7 @@ SDK 클라이언트로 확인하는 방법은 `McpServerIntegrationTests.connect
 
 ## 9. 연결·식별·해제 (-178)
 
-SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터도 transport context만 받는다). 그래서 **토큰 검증(mcpChain) 뒤, MCP 서블릿 앞**에 `McpSessionFilter`를 두고, 기록은 `AgentSessionService`가 `agent_session`(V2 테이블에 V42로 칸 추가)에 쓴다.
+SDK 2.1.0에는 서버가 initialize를 받아 볼 훅이 없다(도구 필터도 transport context만 받는다). 그래서 **토큰 검증(mcpChain) 뒤, MCP 서블릿 앞**에 `McpSessionFilter`를 두고, 기록은 `AgentSessionService`가 `agent_session`(V2 테이블에 V41로 칸 추가)에 쓴다.
 
 | 요청 | 하는 일 |
 | --- | --- |
