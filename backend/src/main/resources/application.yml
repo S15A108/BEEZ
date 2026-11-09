@@ -60,6 +60,13 @@ spring:
       pool:
         size: ${SCHEDULING_POOL_SIZE:8}
 
+  # 종료 단계마다 기다리는 상한. 웹 graceful shutdown 의 진행 중 요청 대기도 이 값이다(기본 30초).
+  # 20초로 묶어, 그 뒤 보내던 메일 대기(beez.mail.shutdown-wait, 종료 시작부터 25초)가 최소 5초 남고
+  # 합쳐도 compose stop_grace_period(30초) 전에 끝나게 한다 (S15P31A108-334, PR #215 리뷰).
+  # 배포 순간 20초 넘게 걸리는 요청(AI 응답 대기 등)은 잘린다
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
   docker:
     compose:
       file: compose.yaml

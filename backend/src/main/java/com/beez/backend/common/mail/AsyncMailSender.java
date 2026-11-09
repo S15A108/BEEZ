@@ -27,7 +27,8 @@ import org.springframework.stereotype.Component;
  * <b>전</b>이다 — 발송 실패 처리(임시 비밀번호 행 닫기)가 DB 를 쓰고, 종료 직전까지 들어온 요청의 메일도 받아야 해서다.
  * <p>
  * 기다리는 시간은 <b>종료가 시작된 때(컨텍스트 닫기, SIGTERM)부터</b> {@code beez.mail.shutdown-wait}까지다. 웹 서버가 요청을
- * 기다리느라 쓴 시간을 빼므로, 둘을 합쳐도 docker 가 강제로 끄기(compose stop_grace_period 30초) 전에 끝나 WARN 이 남는다.
+ * 기다리느라 쓴 시간을 빼고, 웹 서버 대기는 {@code spring.lifecycle.timeout-per-shutdown-phase}(20초)로 묶여 있어
+ * 메일 대기가 최소 5초 남는다. 둘을 합쳐도 docker 가 강제로 끄기(compose stop_grace_period 30초) 전에 끝나 WARN 이 남는다.
  * <p>
  * 컨텍스트를 멈췄다 다시 켜면({@link #start}, 테스트 컨텍스트 캐시의 일시정지 등) 발송 스레드를 새로 만든다.
  */
