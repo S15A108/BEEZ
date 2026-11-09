@@ -14,7 +14,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * 실제 MCP SDK 클라이언트로 /mcp 도구를 부르는 시험 도우미. Bearer 토큰으로 붙는다.
- * McpToolsIntegrationTests·AgentConnectionIntegrationTests 에도 같은 도우미가 있다 — -178 머지 뒤 이 클래스로 모은다.
+ * McpToolsIntegrationTests 등 기존 MCP 시험에도 같은 도우미가 있다 — 그 시험을 고치는 -178 이 머지된 뒤 이 클래스로 모은다.
  */
 public final class McpTestClient {
 

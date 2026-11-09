@@ -84,7 +84,14 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
     @AfterEach
     void tearDown() {
         // 종료 DELETE 를 기다리지 않으면 다음 시험의 truncate 와 교착한다 (McpToolsIntegrationTests.tearDown 과 같은 이유)
-        opened.forEach(McpSyncClient::closeGracefully);
+        // 하나가 닫기에 실패해도(초기화 실패한 클라이언트 등) 나머지는 닫고, 시험 본래의 실패를 가리지 않는다
+        for (McpSyncClient client : opened) {
+            try {
+                client.closeGracefully();
+            } catch (RuntimeException e) {
+                System.err.println("MCP 클라이언트 닫기 실패: " + e);
+            }
+        }
     }
 
     // ---- REST: 상세 조회 ----
@@ -104,10 +111,12 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
         assertSameAsMissing(q + "/tasks/" + taskId + "/validations", q + "/tasks/" + MISSING + "/validations");
         assertSameAsMissing(q + "/validations/" + validationId, q + "/validations/" + MISSING);
 
-        // 대조군: 이 프로젝트 멤버는 같은 번호로 읽는다 — 위 404 가 번호 자체의 문제가 아니다
+        // 대조군: 이 프로젝트 멤버는 같은 번호로 읽는다 — 위 404 가 번호·경로 자체의 문제가 아니다
         String p = "/api/projects/" + projectId;
-        assertThat(api.get(p + "/tasks/" + taskId, member).statusCode()).isEqualTo(200);
-        assertThat(api.get(p + "/validations/" + validationId, member).statusCode()).isEqualTo(200);
+        assertOk(p + "/tasks/" + taskId);
+        assertOk(p + "/tasks/" + taskId + "/plan-revisions");
+        assertOk(p + "/tasks/" + taskId + "/validations");
+        assertOk(p + "/validations/" + validationId);
     }
 
     /** 깨지면: 다른 프로젝트 멤버가 자기 프로젝트 경로로 이 프로젝트의 승인 문서 원문·버전 목록을 읽는다 (AC-10 "원문", DOC-A03·A05). */
@@ -119,8 +128,9 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
         assertSameAsMissing(q + documentId + "?version_no=1", q + MISSING + "?version_no=1");
         assertSameAsMissing(q + documentId + "/versions", q + MISSING + "/versions");
 
-        HttpResponse<String> own = api.get("/api/projects/" + projectId + "/documents/" + documentId + "?version_no=1", member);
-        assertThat(own.statusCode()).as(own.body()).isEqualTo(200);
+        String p = "/api/projects/" + projectId + "/documents/";
+        assertOk(p + documentId + "?version_no=1");
+        assertOk(p + documentId + "/versions");
     }
 
     // ---- REST: 목록·요약 ----
@@ -233,6 +243,11 @@ class AccessAcceptanceAc10IntegrationTests extends IntegrationTestSupport {
         assertThat(foreign.statusCode()).as(foreignPath + " → " + foreign.body()).isEqualTo(404);
         assertThat(missing.statusCode()).as(missingPath).isEqualTo(404);
         assertThat(foreign.body()).as(foreignPath).isEqualTo(missing.body()).contains(AccessErrors.NOT_FOUND_MESSAGE);
+    }
+
+    /** 대조군: P 멤버는 같은 경로·번호로 200 */
+    private void assertOk(String path) {
+        okJson(path, member);
     }
 
     private JsonNode okJson(String path, Long account) {
