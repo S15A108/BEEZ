@@ -26,11 +26,13 @@ import type {
   TaskPlanRevision,
   Validation,
 } from '../api/contracts/common'
+import type { DraftJob } from '../features/planning/schemas'
 import { contractExamples } from './contract-examples'
 
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
 // v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
-export const MOCK_STORAGE_KEY = 'beez.mock.api.v10'
+// v11: 보완 질문 유형(선택·단답·서술)과 초안 후보(S15P31A108-202) 시드.
+export const MOCK_STORAGE_KEY = 'beez.mock.api.v11'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
 export const MOCK_NOTICE =
@@ -82,6 +84,8 @@ export interface MockProject {
   submissions: StoredSubmission[]
   items: DesignItemVersion[]
   questions: PlanningQuestion[]
+  /** 설계 초안 생성 작업과 그 후보(PLN-A05). 후보를 채택해야 설계 항목이 된다. */
+  draft_jobs?: DraftJob[]
   baselines: Baseline[]
   proposals: ChangeProposal[]
   comments: ChangeComment[]
@@ -323,15 +327,83 @@ function seededProject(
   state.questions.push({
     id: first ? '61' : '62',
     question: '프로젝트 삭제 권한은 인간 팀장만 가지나요?',
+    kind: 'CLARIFICATION',
+    question_type: 'SHORT_ANSWER',
+    answer_format: { type: 'SHORT_ANSWER', max_length: 200 },
+    status: approved ? 'ANSWERED' : 'OPEN',
+    evidence_status: 'REVIEW_CANDIDATE',
+    summary: '삭제할 수 있는 사람이 문서마다 달라요.',
     source: state.items[0].source,
     ...(approved
       ? {
           answer: '인간 팀장만 삭제합니다.',
+          answer_payload: {
+            type: 'SHORT_ANSWER' as const,
+            text: '인간 팀장만 삭제합니다.',
+          },
           answered_by: account.id,
           answered_at: created,
         }
       : {}),
   })
+  // 기준 발행 전 프로젝트에는 질문 유형별 예시(선택 단일·다중, 서술, 근거 미확인, 닫은 질문)를 더 둔다.
+  if (!approved)
+    state.questions.push(
+      {
+        id: '63',
+        question: '프로젝트 삭제는 누가 할 수 있나요?',
+        kind: 'MISSING_CANDIDATE',
+        question_type: 'CHOICE',
+        answer_format: {
+          type: 'CHOICE',
+          options: ['팀장만', '팀장과 팀원 모두'],
+          multiple: false,
+          allow_other: true,
+        },
+        status: 'OPEN',
+        evidence_status: 'REVIEW_CANDIDATE',
+        summary: '요구사항에는 삭제 기능만 있고 권한이 비어 있어요.',
+        source: state.items[0].source,
+      },
+      {
+        id: '64',
+        question: '알림은 어떤 방식으로 보낼까요?',
+        kind: 'CLARIFICATION',
+        question_type: 'CHOICE',
+        answer_format: {
+          type: 'CHOICE',
+          options: ['앱 안 알림', '이메일', '메신저'],
+          multiple: true,
+          allow_other: false,
+        },
+        status: 'OPEN',
+        evidence_status: 'REVIEW_CANDIDATE',
+        summary: '알림 수단이 문서마다 다르게 적혀 있어요.',
+        source: state.items[0].source,
+      },
+      {
+        id: '65',
+        question:
+          '기획서의 "팀원은 문서를 직접 승인한다"와 요구사항의 "승인은 팀장만 한다"가 달라요. 어느 쪽이 맞나요?',
+        kind: 'CONFLICT',
+        question_type: 'ESSAY',
+        answer_format: { type: 'ESSAY', max_length: 500 },
+        status: 'OPEN',
+        evidence_status: 'UNVERIFIED',
+        summary: '두 문서의 승인 권한이 서로 달라요.',
+        source: state.items[0].source,
+      },
+      {
+        id: '66',
+        question: '다국어를 지원할 계획이 있나요?',
+        kind: 'MISSING_CANDIDATE',
+        question_type: 'SHORT_ANSWER',
+        answer_format: { type: 'SHORT_ANSWER', max_length: 100 },
+        status: 'DISMISSED',
+        evidence_status: 'REVIEW_CANDIDATE',
+        source: state.items[0].source,
+      },
+    )
   if (!approved) return state
   const baseline: Baseline = {
     id: '401',

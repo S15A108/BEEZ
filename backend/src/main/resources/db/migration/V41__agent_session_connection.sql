@@ -1,0 +1,30 @@
+-- 에이전트 연결 세션 기록 (S15P31A108-178).
+-- 번호: dev 가 V40 까지라 다음 번호 V41 (11-09 확인). 열린 #148 도 V41 을 쓴다 — 같은 번호면 뒤에 머지되는 쪽이
+--       CI Flyway 단계에서 중복으로 바로 걸리므로, 건너뛴 번호(V42)로 먼저 들어가 배포 기동 실패로만 드러나는 것보다 낫다 (#182 기준, PR #205 리뷰).
+--
+-- agent_session 은 V2 부터 있었지만 쓰는 코드가 없었다. -178 부터 MCP initialize 가 성공할 때마다 한 행을 만든다.
+--   session_key    : MCP 세션 ID (Mcp-Session-Id). 계정·토큰과 다른 식별자다 (02-mcp-tools "연결과 인증")
+--   client_name·client_version : initialize 의 clientInfo — 어떤 클라이언트인지 (예: claude-code). 클라이언트가 보낸 값 그대로
+--   ended_at·end_reason : 연결이 끝난 시각과 이유. CLOSED = 클라이언트가 DELETE /mcp 로 닫음,
+--                         REPLACED = 같은 계정이 같은 프로젝트에 새로 연결해 밀려남 (1인 1에이전트, Q06)
+--   last_report_at : 마지막 통신 시각 (AgentConnection.last_report_at). 1분 단위로 갱신한다.
+--                    기본값 now() — 연결 기록은 만들 때 늘 채우고, 팀원 목록의 '연결됨'은 최근 2시간 통신으로 본다
+-- 지금까지 앱이 쓴 행이 없어 채울 값이 없다.
+
+ALTER TABLE agent_session
+  ADD COLUMN client_name    TEXT,
+  ADD COLUMN client_version TEXT,
+  ADD COLUMN ended_at       TIMESTAMPTZ,
+  ADD COLUMN end_reason     TEXT,
+  ADD CONSTRAINT ck_agent_session_end
+    CHECK ((ended_at IS NULL AND end_reason IS NULL)
+        OR (ended_at IS NOT NULL AND end_reason IN ('CLOSED', 'REPLACED')));
+
+ALTER TABLE agent_session ALTER COLUMN last_report_at SET DEFAULT now();
+
+-- 요청마다 세션 ID 로 찾는다. SDK 가 만드는 세션 ID 는 UUID 라 토큰을 넘어서도 겹치지 않는다.
+-- 기존 UNIQUE (agent_token_id, session_key) 는 그대로 둔다
+CREATE UNIQUE INDEX ux_agent_session_key ON agent_session (session_key);
+
+-- 계정·프로젝트의 살아 있는 세션을 찾을 때 (중복 연결 처리) 토큰 쪽에서 들어온다
+CREATE INDEX ix_agent_session_live ON agent_session (agent_token_id) WHERE ended_at IS NULL;

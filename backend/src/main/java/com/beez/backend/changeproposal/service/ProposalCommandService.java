@@ -2,6 +2,9 @@ package com.beez.backend.changeproposal.service;
 
 import static com.beez.backend.designitem.support.DesignJson.*;
 import static com.beez.backend.changeproposal.validation.ProposalValidator.requiredId;
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.changeproposal.dto.ProposalDtos.*;
 import com.beez.backend.changeproposal.repository.ProposalRepository;
 import com.beez.backend.changeproposal.validation.ProposalValidator;
@@ -40,10 +43,12 @@ public class ProposalCommandService {
     private final DocumentOriginalWriter originals;
     private final TransactionTemplate transaction;
     private final ChangeNotifications notifications;
+    private final ActivityRecorder activities;
     public ProposalCommandService(ProjectAccessChecker access, DesignProjectRepository projects, ProposalRepository repository,
             ProposalValidator validator, DesignContentValidator contents, DesignCommandService idempotency, ProposalQueryService queries,
             DocumentInputValidator documents, DocumentStorage storage, PlatformTransactionManager manager,
-            ChangeNotifications notifications) {
+            ChangeNotifications notifications, ActivityRecorder activities) {
+        this.activities=activities;
         this.access=access; this.projects=projects; this.repository=repository; this.validator=validator;
         this.notifications=notifications;
         this.contents=contents; this.idempotency=idempotency; this.queries=queries; this.documentInputs=documents;
@@ -97,10 +102,13 @@ public class ProposalCommandService {
             // 이미 승인·발행 단계로 간 제안은 되돌리지 않는다(그 경우 정리의 기준 문서가 바뀌어 종료가 먼저 막힌다).
             if (!Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(existing.status())) return existing;
             repository.withdraw(project, live.get(), caller.accountId());
+            recordActivity(caller, project, live.get(), "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
         }
         Snapshot snapshot = resolve(caller, project, null, input, stage, stored);
         long proposal = repository.create(project, caller, snapshot.input(), meeting);
         repository.saveRevision(project, proposal, 1, caller, snapshot, hash(snapshot));
+        // 알림은 회의 쪽이 보내지만 제안의 지나온 길은 여기서 시작한다. 재사용(위의 return)은 새로 만들지 않으므로 남기지 않는다.
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_SUBMITTED", "submitted:1");
         return queries.current(project, proposal);
     }
 
@@ -119,6 +127,7 @@ public class ProposalCommandService {
         var current = repository.proposal(project, proposal);
         if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
             repository.withdraw(project, proposal, caller.accountId());
+            recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
         }
     }
 
@@ -149,6 +158,7 @@ public class ProposalCommandService {
         var current = repository.proposal(project, live.get());
         if (Set.of("PROPOSED", "IN_REVIEW", "REJECTED").contains(current.get("status"))) {
             repository.withdraw(project, live.get(), caller.accountId());
+            recordActivity(caller, project, live.get(), "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
         }
     }
 
@@ -180,7 +190,7 @@ public class ProposalCommandService {
         idempotency.save(project, caller.accountId(), operation, key, input, response);
         // 멱등 재생은 위에서 반환해 여기까지 오지 않는다. 알림은 이 트랜잭션에서 저장해 제안과 함께 커밋·롤백된다.
         notifications.submitted(caller, project, proposal, 1, response.snapshotHash());
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_SUBMITTED, key change-proposal:{id}:submitted:1
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_SUBMITTED", "submitted:1");
         return response;
     }
 
@@ -212,7 +222,7 @@ public class ProposalCommandService {
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
         notifications.submitted(caller, project, proposal, revision, response.snapshotHash());
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_SUBMITTED, key change-proposal:{id}:submitted:{revision}
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_SUBMITTED", "submitted:" + revision);
         return response;
     }
 
@@ -321,7 +331,7 @@ public class ProposalCommandService {
         Proposal response = queries.current(project, proposal);
         idempotency.save(project, caller.accountId(), operation, key, input, response);
         // 거두기는 알림 유형이 없다(계약 6.1). 활동만 남는다.
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_WITHDRAWN, key change-proposal:{id}:withdrawn
+        recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_WITHDRAWN", "withdrawn");
         return response;
     }
 
@@ -372,10 +382,18 @@ public class ProposalCommandService {
         // 멱등 재생·리비전 충돌은 위에서 반환·예외로 끝난다. 반려만 제안자에게 알림이 가고 검토 시작은 알림이 없다.
         if ("reject".equals(command)) {
             notifications.rejected(caller, project, proposal, id(current, "proposer_account_id"), expectedRevision);
+            recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_REJECTED", "rejected:" + expectedRevision);
+        } else if ("review".equals(command) && !"IN_REVIEW".equals(current.get("status"))) {
+            // 이미 IN_REVIEW 인 검토 시작 재요청은 no-op 성공이라 남기지 않는다(current 는 apply 이전 상태).
+            recordActivity(caller, project, proposal, "CHANGE_PROPOSAL_REVIEW_STARTED", "review-started:" + expectedRevision);
         }
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_REVIEW_STARTED(key ...:review-started:{revision}),
-        //  CHANGE_PROPOSAL_REJECTED(key ...:rejected:{revision}). 이미 IN_REVIEW 인 검토 시작 재요청은 남기지 않는다.
         return response;
+    }
+
+    /** 계약 10 §6.2. 같은 트랜잭션에서 저장하고, 같은 키(대상·동작·리비전)는 입구가 한 건으로 합친다. */
+    private void recordActivity(CallerContext caller, long project, long proposal, String type, String keySuffix) {
+        activities.record(caller, ActivityEvent.of("change-proposal:" + proposal + ":" + keySuffix, project, type,
+                ActivityTargetType.CHANGE_PROPOSAL, proposal));
     }
 
     private static void requireDecidable(Map<String, Object> current, Set<String> allowed, String message) {
