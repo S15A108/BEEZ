@@ -6,15 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.beez.backend.common.auth.SecretTokens;
 import com.beez.backend.support.ApiClient;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.support.McpTestClient;
 import com.beez.backend.task.TaskApiSupport;
 import com.beez.backend.validation.worker.ValidationWorker;
-import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.McpHttpClientTransportAuthorizationException;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -586,28 +584,19 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
     }
 
     private McpSyncClient connect(String token) {
-        var transport = HttpClientStreamableHttpTransport
-                .builder("http://localhost:" + env.getRequiredProperty("local.server.port"))
-                .endpoint("/mcp")
-                .httpRequestCustomizer((builder, method, uri, body, context) ->
-                        builder.header("Authorization", "Bearer " + token))
-                .build();
-        return McpClient.sync(transport).requestTimeout(Duration.ofSeconds(10)).build();
+        return McpTestClient.connect(Integer.parseInt(env.getRequiredProperty("local.server.port")), token);
     }
 
     private static CallToolResult call(McpSyncClient client, String tool, Map<String, Object> args) {
-        return client.callTool(McpSchema.CallToolRequest.builder().name(tool).arguments(args).build());
+        return McpTestClient.call(client, tool, args);
     }
 
     /** 성공 결과의 payload. 실패면 오류 본문을 보이며 깨진다 */
     private JsonNode ok(CallToolResult result) {
-        assertThat(result.isError()).as("도구 실패: %s", ((McpSchema.TextContent) result.content().get(0)).text()).isFalse();
-        return json.valueToTree(result.structuredContent());
+        return McpTestClient.ok(json, result);
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> error(CallToolResult result) {
-        assertThat(result.isError()).isTrue();
-        return (Map<String, Object>) ((Map<String, Object>) result.structuredContent()).get("error");
+        return McpTestClient.error(result);
     }
 }
