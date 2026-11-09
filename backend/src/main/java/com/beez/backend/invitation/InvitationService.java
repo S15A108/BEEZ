@@ -9,6 +9,7 @@ import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.api.PageResponse;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.common.auth.SecretTokens;
+import com.beez.backend.common.mail.AsyncMailSender;
 import com.beez.backend.common.mail.MailDeliveryException;
 import com.beez.backend.common.mail.MailGateway;
 import com.beez.backend.common.mail.MailMessage;
@@ -29,11 +30,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -54,11 +52,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       팀장이 제외(REMOVED)한 멤버십은 되살리고, 스스로 나간(LEFT) 프로젝트의 초대는 대기로 둔다 — MEM-A05 로만 들어온다.</li>
  *   <li><b>메일 발송 실패</b>: 이메일 초대(MEM-A01)는 초대를 저장한 뒤 메일을 따로(비동기) 보내고, 실패해도 초대를 지우지 않는다.
  *       초대의 효력은 메일이 아니라 "그 이메일로 로그인하면 들어온다"에 있고, 팀장은 다시 보내기(MEM-A11)로 메일만 다시 보낼 수 있다.
- *       다시 보내기는 메일이 유일한 결과라 발송까지 한 트랜잭션에서 하고, 실패하면 503 으로 되돌린다 — 이전 링크가 그대로 산다.</li>
+ *       다시 보내기는 메일이 유일한 결과라 발송을 기다려 응답하고, 실패하면 503 이며 토큰을 바꾸지 않는다 — 이전 링크가 그대로 산다.</li>
+ *   <li><b>발송 한도</b> (Q05, -334): 초대한 계정마다 MEM-A01 새 초대와 MEM-A11 을 합쳐 센다 ({@link InvitationSendLimiter}).</li>
  * </ul>
  */
 @Service
-public class InvitationService implements DisposableBean {
+public class InvitationService {
 
     private static final Logger log = LoggerFactory.getLogger(InvitationService.class);
 
@@ -69,15 +68,18 @@ public class InvitationService implements DisposableBean {
     private final AccountRepository accounts;
     private final ProjectService projectService;
     private final ProjectActivities activities;
+    /** 다시 보내기(MEM-A11) — 발송 결과가 응답이라 기다린다 */
     private final MailGateway mail;
+    /** 이메일 초대(MEM-A01) — SMTP 를 기다리는 동안 요청 스레드·DB 연결을 쥐지 않는다 */
+    private final AsyncMailSender asyncMail;
+    private final InvitationSendLimiter sendLimiter;
     private final TransactionTemplate tx;
     private final BeezProperties.Invitation config;
-    /** 이메일 초대 메일 발송용. SMTP 를 기다리는 동안 요청 스레드·DB 연결을 쥐지 않는다 (임시 비밀번호 메일과 같은 방식) */
-    private final ExecutorService mailSender = Executors.newVirtualThreadPerTaskExecutor();
 
     public InvitationService(ProjectAccessChecker access, InvitationRepository invitations, ProjectRepository projects,
                              ProjectMemberRepository members, AccountRepository accounts, ProjectService projectService,
-                             ProjectActivities activities, MailGateway mail, PlatformTransactionManager manager,
+                             ProjectActivities activities, MailGateway mail, AsyncMailSender asyncMail,
+                             InvitationSendLimiter sendLimiter, PlatformTransactionManager manager,
                              BeezProperties properties) {
         this.access = access;
         this.invitations = invitations;
@@ -87,6 +89,8 @@ public class InvitationService implements DisposableBean {
         this.projectService = projectService;
         this.activities = activities;
         this.mail = mail;
+        this.asyncMail = asyncMail;
+        this.sendLimiter = sendLimiter;
         this.tx = new TransactionTemplate(manager);
         this.config = properties.invitation();
     }
@@ -125,6 +129,7 @@ public class InvitationService implements DisposableBean {
     /**
      * 이메일 초대 (-220). 프로젝트 행을 잠가 같은 프로젝트의 초대 요청을 한 줄로 세운다 — 같은 이메일을 동시에 초대해도
      * 대기 초대가 둘 생기지 않는다(뒤 요청은 ALREADY_INVITED). 메일은 커밋 뒤에 보낸다.
+     * 새로 초대할 이메일 수만큼 발송 한도를 한꺼번에 세고, 모자라면 아무것도 저장하지 않고 429 (Q05, -334).
      */
     private CreatedInvitationResponse inviteByEmails(CallerContext caller, long projectId, List<String> rawEmails,
                                                      String message) {
@@ -137,37 +142,64 @@ public class InvitationService implements DisposableBean {
         }
         record Saved(List<Result> results, List<Outgoing> outgoing, String projectName, String inviterName) {
         }
-        Saved saved = tx.execute(status -> {
-            ProjectActor actor = access.requireHumanLeader(caller, projectId);
-            Project project = projects.findForUpdate(projectId)
-                    .filter(p -> p.getArchivedAt() == null)
-                    .orElseThrow(() -> AccessErrors.notFound("project_archived project=" + projectId));
-            access.requireLeaderAfterLock(actor);   // 잠금을 기다리는 사이 팀장을 넘겼으면 거절 (팀원 관리와 같은 규칙)
-            List<Result> results = new ArrayList<>();
-            List<Outgoing> outgoing = new ArrayList<>();
-            for (String email : emails) {
-                if (isActiveMemberByEmail(projectId, email)) {
-                    results.add(Result.of(email, Status.ALREADY_MEMBER, null));
-                    continue;
+        record Acquired(long accountId, Instant at, int mails) {
+        }
+        Acquired[] acquired = {null};
+        Saved saved;
+        try {
+            saved = tx.execute(status -> {
+                ProjectActor actor = access.requireHumanLeader(caller, projectId);
+                Project project = projects.findForUpdate(projectId)
+                        .filter(p -> p.getArchivedAt() == null)
+                        .orElseThrow(() -> AccessErrors.notFound("project_archived project=" + projectId));
+                access.requireLeaderAfterLock(actor);   // 잠금을 기다리는 사이 팀장을 넘겼으면 거절 (팀원 관리와 같은 규칙)
+                // 결과 자리를 요청 순서대로 잡고, 새로 초대할 이메일은 한도를 센 뒤에 저장한다
+                List<String> ordered = new ArrayList<>(emails);
+                Result[] results = new Result[ordered.size()];
+                List<Integer> toInvite = new ArrayList<>();
+                for (int i = 0; i < ordered.size(); i++) {
+                    String email = ordered.get(i);
+                    if (isActiveMemberByEmail(projectId, email)) {
+                        results[i] = Result.of(email, Status.ALREADY_MEMBER, null);
+                        continue;
+                    }
+                    Optional<Invitation> pending = invitations
+                            .findFirstByProjectIdAndEmailAndAcceptedAtIsNullAndRevokedAtIsNullOrderByIdAsc(projectId, email);
+                    if (pending.isPresent()) {
+                        results[i] = Result.of(email, Status.ALREADY_INVITED, pending.get().getId());
+                        continue;
+                    }
+                    toInvite.add(i);
                 }
-                Optional<Invitation> pending = invitations
-                        .findFirstByProjectIdAndEmailAndAcceptedAtIsNullAndRevokedAtIsNullOrderByIdAsc(projectId, email);
-                if (pending.isPresent()) {
-                    results.add(Result.of(email, Status.ALREADY_INVITED, pending.get().getId()));
-                    continue;
+                if (!toInvite.isEmpty()) {
+                    acquired[0] = new Acquired(actor.accountId(),
+                            sendLimiter.acquire(actor.accountId(), toInvite.size()), toInvite.size());
                 }
-                String token = SecretTokens.generate();
-                Invitation invitation = invitations.save(
-                        Invitation.create(projectId, email, SecretTokens.hash(token), actor.accountId()));
-                results.add(Result.of(email, Status.INVITED, invitation.getId()));
-                outgoing.add(new Outgoing(email, token));
+                List<Outgoing> outgoing = new ArrayList<>();
+                for (int i : toInvite) {
+                    String email = ordered.get(i);
+                    String token = SecretTokens.generate();
+                    Invitation invitation = invitations.save(
+                            Invitation.create(projectId, email, SecretTokens.hash(token), actor.accountId()));
+                    results[i] = Result.of(email, Status.INVITED, invitation.getId());
+                    outgoing.add(new Outgoing(email, token));
+                }
+                String inviterName = accounts.findById(actor.accountId()).map(Account::getDisplayName).orElse(null);
+                return new Saved(List.of(results), outgoing, project.getName(), inviterName);
+            });
+        } catch (RuntimeException e) {
+            // 한도를 센 뒤 저장이 되돌려졌으면(커밋 실패 포함) 보내지 않은 메일이 한도를 쓰지 않게 돌려준다
+            if (acquired[0] != null) {
+                sendLimiter.release(acquired[0].accountId(), acquired[0].at(), acquired[0].mails());
             }
-            String inviterName = accounts.findById(actor.accountId()).map(Account::getDisplayName).orElse(null);
-            return new Saved(results, outgoing, project.getName(), inviterName);
-        });
+            throw e;
+        }
         for (Outgoing o : saved.outgoing()) {
             MailMessage m = inviteMail(o.email(), projectId, o.token(), saved.projectName(), saved.inviterName(), message);
-            mailSender.execute(() -> deliverAsync(projectId, m));
+            asyncMail.send(m, () -> log.info("초대 메일 발송: project_id={}", projectId),
+                    // 초대는 남긴다 — 그 이메일로 로그인하면 들어오고, 팀장은 MEM-A11 로 다시 보낼 수 있다
+                    e -> log.warn("초대 메일 발송 실패(초대는 유지): project_id={} exception_type={}", projectId,
+                            e.getClass().getSimpleName()));
         }
         return CreatedInvitationResponse.emails(saved.results());
     }
@@ -204,38 +236,74 @@ public class InvitationService implements DisposableBean {
     }
 
     /**
-     * MEM-A11. 새 토큰을 만들어 메일을 다시 보낸다. 토큰 해시를 바꾸므로 이전 링크는 바로 무효다.
-     * 초대 행을 잠근 채 메일까지 보낸다 — 발송이 실패하면 503 으로 트랜잭션이 되돌려져 이전 링크가 그대로 산다.
-     * (발송 중 그 초대의 수락·폐기가 SMTP 시간 제한만큼 기다릴 수 있다. 행 하나라 받아들인다.)
+     * MEM-A11. 새 토큰으로 메일을 다시 보낸다. 토큰 해시를 바꾸므로 이전 링크는 바로 무효다.
+     * <p>
+     * 초대 행 잠금을 쥔 채 SMTP 를 기다리지 않는다 (-334). 예전(-220)에는 잠근 채 보내고 실패하면 트랜잭션을 되돌려 이전 링크를 살렸는데,
+     * 그동안(SMTP 시간 제한, 최대 약 25초) 같은 이메일의 로그인 자동 참여와 제외·나가기가 기다렸다. 지금은
+     * <ol>
+     *   <li>짧은 트랜잭션에서 검사하고 발송 한도를 센다. 아무것도 바꾸지 않는다.</li>
+     *   <li>잠금 밖에서 새 토큰으로 보낸다. 실패하면 503 이고 토큰을 바꾸지 않아 이전 링크가 그대로 산다 (한도도 돌려준다).</li>
+     *   <li>보냈으면 다시 잠그고 아직 대기 중일 때만 토큰을 바꾼다. 그사이 수락·폐기됐으면 409 invitation_not_pending 이고
+     *       나간 메일의 링크는 무효다 — 수락됐으면 받은 사람은 이미 팀원이고, 폐기됐으면 무효가 맞다.
+     *       다시 보내기 둘이 겹치면 나중에 바꾼 쪽이 이긴다 — 메일함에서 가장 늦게 온 메일의 링크가 산다.</li>
+     * </ol>
+     * 보내는 사이 팀장이 바뀌어도 다시 묻지 않는다. 메일은 이미 나갔고, 토큰 교체는 권한을 넓히지 않는다.
      */
-    @Transactional
     public InvitationResponse resend(CallerContext caller, long projectId, long invitationId) {
-        ProjectActor actor = access.requireHumanLeader(caller, projectId);
-        Invitation invitation = invitations.findForUpdate(invitationId, projectId)
-                .orElseThrow(() -> AccessErrors.notFound("invitation_missing project=" + projectId
-                        + " invitation=" + invitationId));
-        if (invitation.getEmail() == null) {
-            // 링크 초대는 보낼 주소가 없다. 명세에 따로 정한 코드가 없어 다시 보낼 수 있는 초대가 없는 것으로 본다
-            throw AccessErrors.notFound("invitation_link_only invitation=" + invitationId);
+        record Prepared(long accountId, Instant acquiredAt, String email, String projectName, String inviterName) {
         }
-        if (!invitation.isPending()) {
-            throw new ApiException(HttpStatus.CONFLICT, "invitation_not_pending", "이미 수락·폐기된 초대");
-        }
+        Prepared prepared = tx.execute(status -> {
+            ProjectActor actor = access.requireHumanLeader(caller, projectId);
+            Invitation invitation = lockInvitation(projectId, invitationId);
+            if (invitation.getEmail() == null) {
+                // 링크 초대는 보낼 주소가 없다. 명세에 따로 정한 코드가 없어 다시 보낼 수 있는 초대가 없는 것으로 본다
+                throw AccessErrors.notFound("invitation_link_only invitation=" + invitationId);
+            }
+            requirePending(invitation);
+            Project project = projects.findById(projectId).orElseThrow();
+            String inviterName = accounts.findById(actor.accountId()).map(Account::getDisplayName).orElse(null);
+            Instant acquiredAt = sendLimiter.acquire(actor.accountId(), 1);   // 마지막에 센다 — 뒤에서 되돌려질 일이 없게
+            return new Prepared(actor.accountId(), acquiredAt, invitation.getEmail(), project.getName(), inviterName);
+        });
+
         String token = SecretTokens.generate();
-        invitation.rotateToken(SecretTokens.hash(token));
-        invitations.flush();   // 토큰 해시 UNIQUE 위반은 메일을 보내기 전에 드러나게 한다
-        Project project = projects.findById(projectId).orElseThrow();
-        String inviterName = accounts.findById(actor.accountId()).map(Account::getDisplayName).orElse(null);
         try {
-            mail.send(inviteMail(invitation.getEmail(), projectId, token, project.getName(), inviterName, null));
-        } catch (MailDeliveryException e) {
+            mail.send(inviteMail(prepared.email(), projectId, token, prepared.projectName(), prepared.inviterName(),
+                    null));
+        } catch (RuntimeException e) {
+            sendLimiter.release(prepared.accountId(), prepared.acquiredAt(), 1);
+            if (!(e instanceof MailDeliveryException)) {
+                throw e;
+            }
             log.warn("초대 메일 다시 보내기 실패: invitation_id={} exception_type={}", invitationId,
                     e.getClass().getSimpleName());
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "mail_send_failed",
                     "초대 메일을 보내지 못했습니다. 잠시 뒤에 다시 시도하세요");
         }
-        log.info("초대 메일 다시 보냄: invitation_id={}", invitationId);
-        return InvitationResponse.of(invitation);
+
+        return tx.execute(status -> {
+            Invitation invitation = lockInvitation(projectId, invitationId);
+            if (!invitation.isPending()) {
+                log.info("초대 메일을 다시 보내는 사이 수락·폐기됨(토큰 그대로): invitation_id={}", invitationId);
+            }
+            requirePending(invitation);
+            invitation.rotateToken(SecretTokens.hash(token));
+            invitations.flush();
+            log.info("초대 메일 다시 보냄: invitation_id={}", invitationId);
+            return InvitationResponse.of(invitation);
+        });
+    }
+
+    private Invitation lockInvitation(long projectId, long invitationId) {
+        return invitations.findForUpdate(invitationId, projectId)
+                .orElseThrow(() -> AccessErrors.notFound("invitation_missing project=" + projectId
+                        + " invitation=" + invitationId));
+    }
+
+    private static void requirePending(Invitation invitation) {
+        if (!invitation.isPending()) {
+            throw new ApiException(HttpStatus.CONFLICT, "invitation_not_pending", "이미 수락·폐기된 초대");
+        }
     }
 
     /**
@@ -474,17 +542,6 @@ public class InvitationService implements DisposableBean {
         }
     }
 
-    private void deliverAsync(long projectId, MailMessage message) {
-        try {
-            mail.send(message);
-            log.info("초대 메일 발송: project_id={}", projectId);
-        } catch (RuntimeException e) {
-            // 초대는 남긴다 — 그 이메일로 로그인하면 들어오고, 팀장은 MEM-A11 로 다시 보낼 수 있다
-            log.warn("초대 메일 발송 실패(초대는 유지): project_id={} exception_type={}", projectId,
-                    e.getClass().getSimpleName());
-        }
-    }
-
     private MailMessage inviteMail(String to, long projectId, String token, String projectName, String inviterName,
                                    String message) {
         String inviter = inviterName == null || inviterName.isBlank() ? "팀장" : inviterName;
@@ -512,10 +569,5 @@ public class InvitationService implements DisposableBean {
     private String baseUrl() {
         String base = config.baseUrl();
         return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-    }
-
-    @Override
-    public void destroy() {
-        mailSender.shutdown();
     }
 }

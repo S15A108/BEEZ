@@ -164,10 +164,15 @@ beez:
     read-timeout: ${AI_READ_TIMEOUT:20s}
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
+    # 초대 메일 발송 한도 (Q05 결정 2026-11-09, S15P31A108-334). 초대한 계정마다 MEM-A01 새 초대 + MEM-A11 다시 보내기를 합쳐 센다.
+    # 메모리 카운터(재시작하면 초기화). 넘으면 요청 전체 429 rate_limited
+    send-limit: ${INVITE_SEND_LIMIT:30}
+    send-limit-window: 1h
   mail:
     mode: ${MAIL_MODE:log}                         # smtp 면 실제로 보낸다. 로컬·테스트는 log (보내지 않음)
     from: ${MAIL_FROM:BEEZ <no-reply@beez.ai.kr>}
     log-body: false                                # 로그 구현이 본문(인증 코드)을 찍을지. local 프로필만 true
+    shutdown-wait: 20s                             # 종료 때 보내던 비동기 메일(초대·임시 비밀번호)을 기다리는 시간. compose stop_grace_period(30s) 안 (-334)
   # 가입 이메일 인증 (ACC-A11·A12). 코드 유효 5분만 명세 값이고 나머지는 Q04 가 정해지기 전 기본안이다
   email-verification:
     code-ttl: 5m
