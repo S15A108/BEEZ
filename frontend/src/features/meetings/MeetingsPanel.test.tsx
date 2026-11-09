@@ -304,6 +304,76 @@ it('정리하는 동안 올라온 대화도 정리한 뒤의 새 대화로 알�
   ).toBeInTheDocument()
 })
 
+// 서버 한도는 기록 본문·고칠 점 모두 4,000자다. 넘으면 요청 전에 칸 아래에서 안내한다.
+it('메시지와 수정 요청은 4,000자를 넘으면 칸 아래에서 안내하고 보내지 않는다', async () => {
+  const user = userEvent.setup()
+  const add = vi.spyOn(meetingsApi, 'addEntry')
+  renderPanel(true)
+  const log = await requestSummary(user)
+  expect(log).toBeInTheDocument()
+  const fix = screen.getByRole('textbox', { name: '비비에게 고칠 점' })
+  await user.click(fix)
+  await user.paste('가'.repeat(4001))
+  await user.click(screen.getByRole('button', { name: '수정 요청' }))
+  expect(
+    await screen.findByText(/4,000자까지 쓸 수 있어요/),
+  ).toBeInTheDocument()
+  expect(add).not.toHaveBeenCalled()
+  vi.restoreAllMocks()
+})
+
+// 정리 전용 오류 문구는 정리·수정 요청·끝내기에만 쓴다. 메시지 보내기 실패에는 붙지 않는다.
+it('메시지 보내기가 400으로 실패해도 정리 오류 문구를 보이지 않는다', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(meetingsApi, 'addEntry').mockRejectedValueOnce(
+    apiError(400, 'validation_failed'),
+  )
+  renderPanel(false)
+  await user.type(
+    await screen.findByRole('textbox', { name: '메시지' }),
+    '안녕',
+  )
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: '메시지' })).toHaveValue('안녕'),
+  )
+  expect(screen.queryByText(/제출 규칙에 맞지 않아요/)).not.toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+// 정리 뒤에 대화가 쌓여도 최신 정리는 '앞의 대화'로 접히지 않는다.
+it('정리 뒤에 대화가 여러 개 쌓여도 최신 정리 카드가 대화 칸에 보인다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  for (let index = 1; index <= 5; index++)
+    await meetingsApi.addEntry('101', '901', { text: `정리 뒤 ${index}` })
+  await client.invalidateQueries()
+  const log = await screen.findByRole('log', { name: '회의 대화' })
+  expect(await within(log).findByText('정리 뒤 5')).toBeInTheDocument()
+  expect(
+    within(log).getByRole('region', { name: '바뀔 문서' }),
+  ).toBeInTheDocument()
+})
+
+// 비비가 정리하는 동안에는 수정 요청을 보낼 수 없다(AI 가 두 번 불리지 않게).
+it('비비가 정리하는 동안에는 수정 요청 버튼이 막힌다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  const real = meetingsApi.summarize.bind(meetingsApi)
+  vi.spyOn(meetingsApi, 'summarize').mockImplementation(
+    (...args) =>
+      new Promise((resolve) => setTimeout(() => resolve(real(...args)), 300)),
+  )
+  await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
+  expect(screen.getByRole('button', { name: '수정 요청' })).toBeDisabled()
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '수정 요청' })).toBeEnabled(),
+  )
+  vi.restoreAllMocks()
+})
+
 // 다음 페이지 조회가 실패해도 자동으로 계속 다시 부르지 않고, 사람이 '다시 불러오기'를 눌러야 이어 간다.
 it('기록의 다음 페이지 조회가 실패하면 자동 재시도를 멈추고 다시 불러오기를 보인다', async () => {
   for (let index = 1; index <= 22; index++)

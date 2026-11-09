@@ -33,6 +33,7 @@ import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { meetingErrorMessage } from './meetingErrors'
+import { FEEDBACK_MAX } from './schemas'
 import { SummaryCard } from './SummaryCard'
 import { useMeetingList } from './useMeetingList'
 
@@ -64,7 +65,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     id: string
     focus: string | null
   } | null>(null)
-  const [ending, setEnding] = useState(false)
+  // 끝내기 확인 화면을 연 회의. 알림 등으로 다른 회의가 열리면 그 회의에서는 확인 화면이 뜨지 않는다.
+  const [endingId, setEndingId] = useState<string | null>(null)
   const [agendaOpen, setAgendaOpen] = useState(false)
   const [earlierOpen, setEarlierOpen] = useState(false)
   // 회의 정리·끝내기 오류는 회의가 열린 채 어떻게 이어 가면 되는지를 알려 준다(meetingErrors.ts).
@@ -87,6 +89,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     selection?.focus === focus
       ? selection.id
       : (focus ?? open[0]?.id ?? meetings[0]?.id)
+  const ending = !!selectedId && endingId === selectedId
+  const setEnding = (value: boolean) =>
+    setEndingId(value ? (selectedId ?? null) : null)
   const detail = useQuery({
     queryKey: ['projects', projectId, 'meeting', selectedId],
     queryFn: () => meetingsApi.get(projectId, selectedId!),
@@ -189,6 +194,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       .join(' · ')
   }
   // 실패하면 회의 전용 안내를 보이고 오류를 다시 던진다(입력줄이 입력을 지우지 않게).
+  // 정리·수정 요청·끝내기는 회의 정리 전용 문구를, 메시지·관련자 추가·빼기는 공용 문구(action.error)를 쓴다.
   const runWithNotice = async (
     operation: () => Promise<unknown>,
     message: string,
@@ -201,8 +207,15 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
       throw error
     }
   }
+  const runPlain = async (
+    operation: () => Promise<unknown>,
+    message: string,
+  ) => {
+    setNotice(null)
+    return action.run(operation, message)
+  }
   const perform = (operation: () => Promise<unknown>, message: string) => {
-    void runWithNotice(operation, message).catch(() => undefined)
+    void runPlain(operation, message).catch(() => undefined)
   }
   const remember = (meetingId: string, next: MeetingSummary) =>
     client.setQueryData(
@@ -507,9 +520,18 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                       )
                     const conversation = notes.toReversed()
                     // 비비 정리가 나오면 앞의 대화는 접고 마지막 두 메시지와 정리만 보인다(캔버스 PNL-06-v2-bibi-review).
+                    // 정리 뒤에 대화가 쌓여도 최신 정리와 그 앞 두 메시지는 항상 보이게, 정리 위치까지만 접는다.
+                    const reviewAt = review
+                      ? conversation.findIndex(
+                          (entry) => entry.id === review.id,
+                        )
+                      : -1
                     const folded =
                       review && !earlierOpen
-                        ? Math.max(0, conversation.length - 3)
+                        ? Math.max(
+                            0,
+                            Math.min(conversation.length - 3, reviewAt - 2),
+                          )
                         : 0
                     return (
                       <div className="flex min-h-0 min-w-0 flex-col gap-3">
@@ -844,7 +866,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             <p className="rounded-[10px] border border-dashed border-[#d6d1c4] bg-white px-3 py-2.5 text-[13px] text-muted-foreground">
                               끝난 회의라 메시지를 보낼 수 없어요.
                             </p>
-                          ) : isLeader && summary ? (
+                          ) : isLeader && !!participant && summary ? (
                             <div className="grid gap-1.5">
                               {talkedAfterSummary && (
                                 <p className="text-xs text-[#8a6a00]">
@@ -858,6 +880,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                 placeholder="정리에서 고칠 점을 비비에게 말해 주세요"
                                 submitLabel="수정 요청"
                                 outline
+                                busy={action.busy}
+                                max={FEEDBACK_MAX}
                                 onSubmit={async (text) => {
                                   await runWithNotice(async () => {
                                     remember(
@@ -879,8 +903,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               label="메시지"
                               placeholder="메시지 보내기"
                               submitLabel="보내기"
+                              max={ENTRY_MAX}
                               onSubmit={async (text) => {
-                                await runWithNotice(
+                                await runPlain(
                                   () =>
                                     meetingsApi.addEntry(
                                       projectId,
@@ -1166,18 +1191,23 @@ function Bubble({
 }
 
 // 창 아래에 고정한 한 줄 입력(캔버스 '메시지 보내기 · 보내기', '정리에서 고칠 점… · 수정 요청 · 회의 끝내기').
-const messageSchema = z.object({
-  text: z
-    .string()
-    .trim()
-    .min(1, '내용을 입력해 주세요.')
-    .max(10000, '10000자까지 쓸 수 있어요.'),
-})
+// 서버 한도(기록 본문·고칠 점 모두 4,000자, MTG-A06·A12)에 맞춘다.
+const ENTRY_MAX = 4000
+const messageSchema = (max: number) =>
+  z.object({
+    text: z
+      .string()
+      .trim()
+      .min(1, '내용을 입력해 주세요.')
+      .max(max, `${max.toLocaleString('ko-KR')}자까지 쓸 수 있어요.`),
+  })
 function InlineMessage({
   label,
   placeholder,
   submitLabel,
   outline,
+  busy,
+  max,
   onSubmit,
   children,
 }: {
@@ -1185,6 +1215,9 @@ function InlineMessage({
   placeholder: string
   submitLabel: string
   outline?: boolean
+  // 다른 요청(비비 정리 등)이 진행 중이면 보내지 못한다.
+  busy?: boolean
+  max: number
   onSubmit: (text: string) => Promise<void>
   children?: ReactNode
 }) {
@@ -1192,8 +1225,8 @@ function InlineMessage({
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<z.infer<typeof messageSchema>>({
-    resolver: zodResolver(messageSchema),
+  } = useForm<{ text: string }>({
+    resolver: zodResolver(messageSchema(max)),
     defaultValues: { text: '' },
   })
   return (
@@ -1216,7 +1249,7 @@ function InlineMessage({
           type="submit"
           variant={outline ? 'outline' : 'default'}
           className="h-10"
-          disabled={isSubmitting}
+          disabled={isSubmitting || busy}
         >
           {submitLabel}
         </Button>

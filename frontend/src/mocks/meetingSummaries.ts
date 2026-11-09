@@ -257,13 +257,7 @@ export function summaryRoutes(
         fail(400, 'validation_failed', '고칠 점은 4,000자까지 쓸 수 있어요.')
       return {
         status: 201,
-        data: summaryFor(
-          context,
-          meeting,
-          target,
-          feedback,
-          target.through_entry_id,
-        ),
+        data: summaryFor(context, meeting, target, feedback),
       }
     }
     case 'MTG-A13': {
@@ -343,8 +337,9 @@ export function summaryRoutes(
             ...new Set(
               (meeting.task_ids ?? []).flatMap((taskId) => {
                 const task = project.tasks.find((item) => item.id === taskId)
-                return task && task.assignee_member_id !== context.member!.id
-                  ? [task.assignee_member_id]
+                const assignee = task?.assignee_member_id
+                return assignee && assignee !== context.member!.id
+                  ? [assignee]
                   : []
               }),
             ),
