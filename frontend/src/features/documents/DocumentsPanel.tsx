@@ -99,12 +99,13 @@ function Chip({ tone, children }: { tone: string; children: ReactNode }) {
 }
 
 // 버전 이력의 상태 칩 색. 승인 = 현재 기준 후보, 초안 = 아직 쓸 수 있는 후보, 이전 버전 = 대체된 승인본,
-// 반려됨 = 채택되지 않았고 다시 쓸 수 없는 것(제안을 거뒀거나 다른 제안이 먼저 발행됨).
+// 미채택(REJECTED) = 채택되지 않았고 다시 쓸 수 없는 것(제안을 거뒀거나, 다시 제출했거나, 다른 제안이 먼저 발행됨,
+// 문서함 반려). 잘못이 아니라 결과라 이전 버전과 같은 회색 계열로 낮춘다.
 const versionTone: Record<DocumentVersion['status'], string> = {
   APPROVED: 'green',
   DRAFT: 'orange',
   SUPERSEDED: 'muted',
-  REJECTED: 'red',
+  REJECTED: 'muted',
 }
 
 type View =
@@ -1050,12 +1051,12 @@ function DocumentDetail({
   const action = useProjectAction(projectId)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const members = useQuery(membersQuery(projectId))
-  // 올린 계정 이름. 구성원에서 못 찾으면 표시하지 않는다.
+  // 올린 계정 이름. 구성원 목록이 온 뒤에도 못 찾으면(나간 사람 등) 다른 패널처럼 '팀원'으로 보인다.
   const uploaderName = (version: DocumentVersion) =>
-    version.created_by
-      ? members.data?.items.find(
+    version.created_by && members.data
+      ? (members.data.items.find(
           (item) => item.account_id === version.created_by,
-        )?.name
+        )?.name ?? '팀원')
       : undefined
   const [picked, setVersionNo] = useState<number>()
   const [tab, setTab] = useState<'content' | 'history'>('content')
@@ -1257,11 +1258,14 @@ function DocumentDetail({
                           <strong>v{version.version_no}</strong>
                           <Chip tone={versionTone[version.status]}>
                             {version.status === 'REJECTED'
-                              ? '반려됨'
+                              ? '미채택'
                               : statusLabel(version.status)}
                           </Chip>
-                          {(version.is_current_baseline ??
-                            version.id === base?.id) && (
+                          {(version.is_current_baseline === true ||
+                            (!history.items.some(
+                              (item) => item.is_current_baseline,
+                            ) &&
+                              version.id === base?.id)) && (
                             <Chip tone="muted">현재 기준</Chip>
                           )}
                           <span className="text-xs text-muted-foreground">

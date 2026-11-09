@@ -82,6 +82,9 @@ function submit(
         id: nextId(context.database),
         version_no: versionNo,
         status: 'DRAFT' as const,
+        // 기준 버전을 복사해도 현재 기준 표시와 올린 사람은 넘기지 않는다.
+        created_by: requireAccount(context).id,
+        is_current_baseline: false,
         content: after,
         content_hash: mockHash(after),
         created_at: now(),
@@ -426,7 +429,9 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
         }
     if (!change.proposed_document_version_id) project.versions.push(version)
     oldVersion.status = 'SUPERSEDED'
+    oldVersion.is_current_baseline = false
     version.status = 'APPROVED'
+    version.is_current_baseline = true
     document.approved_version = version
     if (document.latest_draft?.id === version.id) delete document.latest_draft
     baseline.documents = baseline.documents.map((reference) =>

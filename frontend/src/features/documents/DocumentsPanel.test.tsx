@@ -526,7 +526,45 @@ it('서버가 현재 기준 여부를 주면 그 값으로 칩을 정한다', as
   expect(screen.getAllByText('현재 기준')).toHaveLength(1)
 })
 
-it('버전 이력은 승인·이전 버전·초안·반려됨을 구분해 보인다', async () => {
+// 프로젝트 시작 전에는 서버가 모든 버전에 is_current_baseline=false 를 주므로 헤더(승인본)와 같은 버전에 칩을 단다.
+it('시작 전 문서는 서버 값이 모두 false여도 승인본에 현재 기준 칩을 보인다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  const approved = { ...version, id: '22', status: 'APPROVED' as const }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: { ...focusedDocument, approved_version: approved },
+    version,
+  })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [
+      { ...approved, version_no: 2, is_current_baseline: false },
+      { ...version, is_current_baseline: false },
+    ],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  const v2 = rows.find((row) => within(row).queryByText('v2'))!
+  expect(within(v2).getByText('현재 기준')).toBeInTheDocument()
+  expect(screen.getAllByText('현재 기준')).toHaveLength(1)
+})
+
+it('올린 사람이 구성원 목록에 없으면 팀원으로 보인다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  vi.spyOn(membersApi, 'list').mockResolvedValue({ items: [], has_more: false })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [{ ...version, created_by: '99' }],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  expect(await within(rows[0]).findByText(/· 팀원/)).toBeInTheDocument()
+})
+
+it('버전 이력은 승인·이전 버전·초안·미채택을 구분해 보인다', async () => {
   const user = userEvent.setup()
   useWorkspaceStore.setState({ focusId: '2' })
   const make = (
@@ -547,7 +585,7 @@ it('버전 이력은 승인·이전 버전·초안·반려됨을 구분해 보�
   const rows = await screen.findAllByRole('listitem')
   const row = (no: number) =>
     rows.find((item) => within(item).queryByText(`v${no}`))!
-  expect(within(row(4)).getByText('반려됨')).toBeInTheDocument()
+  expect(within(row(4)).getByText('미채택')).toBeInTheDocument()
   expect(within(row(3)).getByText('승인')).toBeInTheDocument()
   expect(within(row(2)).getByText('이전 버전')).toBeInTheDocument()
   expect(within(row(1)).getByText('초안')).toBeInTheDocument()
