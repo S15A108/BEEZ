@@ -361,6 +361,11 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [CHG-A13 변경 제안 의견 목록](01-backend-rest.md#chg-a13) | GET `/api/projects/{id}/change-proposals/{proposal_id}/comments` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A14 승인 미리 보기](01-backend-rest.md#chg-a14) | GET `/api/projects/{id}/change-proposals/{proposal_id}/approval-preview` | LEADER | 오서현 / 검증 영향: 변준성 | — | 오서현 |
 | [CHG-A15 변경 제안 거두기](01-backend-rest.md#chg-a15) | POST `/api/projects/{id}/change-proposals/{proposal_id}/withdraw` | MEMBER (제안자) | 오서현 | — | 오서현 |
+| [CHG-A16 작성 중 변경 제안 저장](01-backend-rest.md#chg-a16) | POST `/api/projects/{id}/change-proposal-drafts` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A17 작성 중 변경 제안 조회](01-backend-rest.md#chg-a17) | GET `/api/projects/{id}/change-proposal-drafts/{draft_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A18 작성 중 변경 제안 수정](01-backend-rest.md#chg-a18) | PUT `/api/projects/{id}/change-proposal-drafts/{draft_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
+| [CHG-A19 올리기 전 비비 검토 요청](01-backend-rest.md#chg-a19) | POST `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews` | MEMBER (작성 계정) | 오서현 | 박상은·양지훈 | 박민용 |
+| [CHG-A20 올리기 전 검토 수정안 반영·넘기기](01-backend-rest.md#chg-a20) | PATCH `/api/projects/{id}/change-proposal-drafts/{draft_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}` | MEMBER (작성 계정) | 오서현 | — | 박민용 |
 | [TSK-A01 작업 계획 등록](01-backend-rest.md#tsk-a01) | POST `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A02 작업 목록](01-backend-rest.md#tsk-a02) | GET `/api/projects/{id}/tasks` | MEMBER | 변준성 | — | 박민용 |
 | [TSK-A03 작업 상세](01-backend-rest.md#tsk-a03) | GET `/api/projects/{id}/tasks/{task_id}` | MEMBER | 변준성 | — | 박민용 |
@@ -981,6 +986,12 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안. 반려된 제안은 CHG-A04로 같은 번호에서 재제출한다. 수정안 요청 |
 | `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
 | `documents` | [DocumentChange[]](00-common.md#schema-documentchange) | Y | 원문 변경 |
+| `draft_id` | `ID` | N | (수정안 요청 · 11-06) 작성 중 제안으로 올릴 때(CHG-A01·A04). 보내면 본문 필드를 함께 보내지 않는다 |
+| `expected_draft_revision` | `integer` | N | (수정안 요청 · 11-05) `draft_id`와 함께 필수 |
+| `review_acknowledged` | `boolean` | N | (수정안 요청 · 11-06) `draft_id`와 함께. 검토 상태를 사용자가 확인했다는 표시 |
+| `expected_review_state_hash` | `string` | N | (수정안 요청 · 11-06) `review_acknowledged`=true이고 초안에 검토가 있을 때 필수. 사용자가 본 `review_state_hash` |
+
+(수정안 요청 · 11-06) `draft_id`를 보내면 위 필수 표시와 달리 `base_baseline_id`·`title`·`reason`·`items`·`documents`를 보내지 않는다. 값은 초안에서 온다.
 
 <a id="schema-changeproposal"></a>
 
@@ -1014,6 +1025,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `previous_proposal_id` | `ID` | N | 같은 작성자가 거둔 이전 제안. 반려 후 재제출과 구분 |
 | `withdrawn_by` | `ID` | N | WITHDRAWN일 때 거둔 계정 |
 | `withdrawn_at` | `Time` | N | WITHDRAWN일 때 거둔 시각 |
+| `pre_submit_review` | [PreSubmitReview](00-common.md#schema-presubmitreview) | N | (수정안 요청 · 11-06) 이 리비전을 초안으로 올릴 때의 비비 검토 상태 |
 
 <a id="schema-resolveddocumentchange"></a>
 
@@ -1085,6 +1097,103 @@ DocumentChange 입력을 해석한 응답이다. document_id, base_document_vers
 | `design_item_id` | `ID` | N | 후보 항목 |
 | `reason` | `string` | Y | 후보 근거 |
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
+
+<a id="schema-presubmitreview"></a>
+
+### PreSubmitReview
+
+(수정안 요청 · 11-06) 리비전을 올릴 때의 비비 검토 상태. 팀장 상세에 보이는 제출 리비전의 불변 스냅샷이다. 초안 없이 올린 리비전(기존 CHG-A01 경로, MCP-04, MTG-A13)에는 없고, 화면은 '올리기 전 검토 없음'으로 보인다. 팀장은 작성 중 제안과 그 검토를 읽지 못하므로 수정안을 여기에 복사해 둔다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `status` | `NOT_REQUESTED\|COMPLETED\|FAILED\|CANCELLED` | Y | 올릴 때의 최신 검토 상태. CANCELLED는 진행 중인 검토를 확인 후 끊고 올린 경우 |
+| `review_id` | `ID` | N | 그 검토의 기록용 ID. NOT_REQUESTED면 없음. 팀장이 이 ID로 읽는 API는 없다 |
+| `edited_after_review` | `boolean` | Y | 검토 뒤 글을 고쳤는지 |
+| `pending_suggestions` | [SubmittedReviewSuggestion[]](00-common.md#schema-submittedreviewsuggestion) | Y | 처리하지 않은 PATCH 수정안 |
+| `skipped_suggestions` | [SubmittedReviewSuggestion[]](00-common.md#schema-submittedreviewsuggestion) | Y | 넘긴 PATCH 수정안과 COMMENT 의견 |
+| `acknowledged` | `boolean` | Y | 사용자가 위 상태를 확인하고 올렸는지. 확인할 상태가 없었으면 false |
+
+<a id="schema-submittedreviewsuggestion"></a>
+
+### SubmittedReviewSuggestion
+
+(수정안 요청 · 11-06) 제출 리비전에 복사해 남기는 수정안과 의견. 개인 대화(`messages`)와 내부 실행 정보는 담지 않는다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `type` | `PATCH\|COMMENT` | Y | 수정안 또는 의견 |
+| `document_id` | `ID` | PATCH Y | 대상 문서 |
+| `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+| `category` | `OMISSION\|CONSISTENCY` | N | 빠진 부분 또는 충돌 |
+| `explanation` | `string` | Y | 이유 |
+| `original_text` | `string` | PATCH Y | 수정 전 문장 |
+| `replacement_text` | `string` | PATCH Y | 수정 후 문장 |
+| `sources` | `DocumentReviewSource[]` | Y | 근거. 없으면 [] |
+| `decision` | `PENDING\|SKIPPED` | PATCH Y | 올릴 때의 선택 상태. COMMENT는 없음 |
+
+<a id="schema-changeproposaldraft"></a>
+
+### ChangeProposalDraft
+
+(수정안 요청 · 11-06) 팀장에게 가지 않는 작성 중 변경 제안(CHG-A16~A18). 별도 자원이고 작성 계정만 본다. 제출하면 제안과 연결되고 수정할 수 없다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 초안 ID |
+| `project_id` | `ID` | Y | 프로젝트 |
+| `revision` | `integer` | Y | 저장·수정안 반영마다 1씩 오르는 리비전 |
+| `base_baseline_id` | `ID` | Y | 초안 기준 |
+| `title` | `string` | Y | 제안 제목 |
+| `reason` | `string` | Y | 변경 이유 |
+| `task_id` | `ID` | N | 관련 작업 |
+| `validation_id` | `ID` | N | 관련 검증 |
+| `previous_proposal_id` | `ID` | N | 거둔(WITHDRAWN) 제안을 다시 올릴 때 이전 제안 |
+| `items` | [ChangeItem[]](00-common.md#schema-changeitem) | Y | 항목 변경 |
+| `documents` | [ResolvedDocumentChange[]](00-common.md#schema-resolveddocumentchange) | Y | 원문 변경. 수정안을 반영하면 `after_content`가 바뀐다 |
+| `latest_review` | [ChangeDraftReview](00-common.md#schema-changedraftreview) | N | 가장 최근 올리기 전 비비 검토 |
+| `review_state_hash` | `string` | N | (수정안 요청 · 11-06) 검토 ID·상태·수정안 선택 상태를 합친 해시. 검토가 있을 때만. 올릴 때 `expected_review_state_hash`로 돌려보낸다 |
+| `source_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 반려된 제안을 보완하는 초안이면 그 제안 |
+| `submitted_proposal_id` | `ID` | N | (수정안 요청 · 11-06) 제출 뒤 연결된 제안. 있으면 수정할 수 없다 |
+| `created_at` | `Time` | Y | 생성 시각 |
+| `updated_at` | `Time` | Y | 최종 갱신 |
+
+<a id="schema-changedraftreview"></a>
+
+### ChangeDraftReview
+
+(수정안 요청 · 11-05) 올리기 전 비비 검토(CHG-A19). 화면 '3단계 / 4단계', '영향 작업 1 · 빠진 부분 1 · 충돌 1'을 그린다. 영향 결과는 `input_revision` 시점의 미리보기이고, 올린 뒤의 판단은 CHG-A05 결과를 따른다(11-06).
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 검토 ID |
+| `status` | `RUNNING\|COMPLETED\|FAILED\|CANCELLED` | Y | 검토 상태. CANCELLED는 진행 중에 확인 후 올려 끊긴 검토 |
+| `error_code` | `string` | N | FAILED일 때만. 제한 시간 초과는 `review_timeout` |
+| `input_revision` | `integer` | Y | 검토한 초안 리비전. `tasks_to_wait`·`validations_to_stale`·`ai_candidates`는 이 리비전 기준이다 |
+| `resolved_revision` | `integer` | Y | 이 검토의 수정안 반영을 포함한 리비전. 수정안 처리 확인용이고, 영향 결과가 이 리비전 기준이라는 뜻은 아니다 |
+| `steps` | `object[]` | Y | {key: READ_CHANGES\|FIND_RELATED\|AI_CANDIDATES\|GAPS_CONFLICTS, status: PENDING\|RUNNING\|DONE\|FAILED\|NOT_EVALUATED, count}. NOT_EVALUATED는 입력 계약이 없어 평가하지 않은 단계로, 모델 실패(FAILED)와 구분한다 |
+| `tasks_to_wait` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '대기 · 재검증'이 될 진행 중 작업. FIND_RELATED 단계가 DONE일 때만 유효하고, 아니면 빈 배열이며 화면은 0건으로 보이지 않는다 |
+| `validations_to_stale` | `object[]` | Y | CHG-A14와 같은 모양. 승인되면 '다시 검증 필요'가 될 검증. FIND_RELATED 단계가 DONE일 때만 유효하고, 아니면 빈 배열이며 화면은 0건으로 보이지 않는다 |
+| `ai_candidates` | `object[]` | N | {task_id, title, reason, evidence}. 평가하지 못하면 null(0건과 구분). 이유는 AI_CANDIDATES 단계의 `status`로 안다 |
+| `suggestions` | [ChangeDraftSuggestion[]](00-common.md#schema-changedraftsuggestion) | Y | 빠진 부분·충돌 수정안 |
+| `summary` | `string` | N | 검토 요약. COMPLETED일 때 |
+| `usage` | [Usage[]](00-common.md#schema-usage) | Y | 실제 모델 호출 사용량 |
+| `created_at` | `Time` | Y | 요청 시각 |
+| `completed_at` | `Time` | N | 끝난 시각 |
+
+<a id="schema-changedraftsuggestion"></a>
+
+### ChangeDraftSuggestion
+
+(수정안 요청 · 11-06) 올리기 전 비비 검토의 수정안. [DocumentReviewSuggestion](00-common.md#schema-documentreviewsuggestion)의 필드에 아래를 더한다. `category`는 OMISSION·CONSISTENCY를 쓴다. 초안은 문서를 여러 개 고칠 수 있어, 같은 글귀가 두 문서에 있어도 대상을 가릴 수 있게 한다.
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `document_id` | `ID` | PATCH Y | 고칠 문서. 초안 `documents` 중 하나 |
+| `base_document_version_id` | `ID` | PATCH Y | 그 문서의 기준 버전 |
+| `design_item_key` | `string` | N | 이어진 설계 항목 키 |
+| `reviewed_content_hash` | `string` | PATCH Y | (11-06) 검토 당시 대상 문서 고친 글의 해시. 어떤 글을 검토했는지 가리키며, 수정안을 반영해도 값은 그대로다 |
+
+PATCH는 문서 변경에만 쓴다. `original_text`는 대상 문서의 고친 글에서 유일한 구간이다. 설계 항목 변경에 대한 의견은 COMMENT로만 주고 이때 `document_id`는 생략한다.
 
 <a id="schema-changeimpact"></a>
 
