@@ -1,3 +1,4 @@
+import { REVIEW_POLL_MS } from '@/lib/pollIntervals'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
@@ -85,7 +86,7 @@ export function DocumentReview({
         data.owner_account_id !== session.data?.id &&
         data.status !== 'REJECTED' &&
         reviewStage(data).step === 1)
-        ? 3000
+        ? REVIEW_POLL_MS
         : false,
   })
   const current = copy.data

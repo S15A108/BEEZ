@@ -542,6 +542,97 @@ describe('활동 타임라인', () => {
     expect(screen.getByText('나간 토큰')).toBeInTheDocument()
     expect(screen.getByText('실패')).toBeInTheDocument()
   })
+
+  it('유형을 한글로 보이고 위임은 새 팀장 이름을, 제외는 대상 이름 없이 보인다', async () => {
+    vi.mocked(membersApi.list).mockResolvedValue({
+      items: [
+        {
+          id: '1',
+          account_id: '11',
+          name: '민수',
+          role: 'MEMBER',
+          agent_connected: false,
+        },
+        {
+          id: '2',
+          account_id: '12',
+          name: '지수',
+          role: 'LEADER',
+          agent_connected: false,
+        },
+      ],
+      has_more: false,
+    })
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [
+        activity('4', {
+          type: 'LEADER_TRANSFERRED',
+          target_type: 'MEMBER',
+          target_id: '2',
+        }),
+        // 새 팀장이 그 뒤 나가 팀원 목록에 없다
+        activity('3', {
+          type: 'LEADER_TRANSFERRED',
+          actor_account_id: '12',
+          target_type: 'MEMBER',
+          target_id: '9',
+        }),
+        activity('2', {
+          type: 'MEMBER_REMOVED',
+          target_type: 'MEMBER',
+          target_id: '2',
+        }),
+        activity('1', { type: 'TASK_CREATED', task_id: '8' }),
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    const rows = await screen.findAllByRole('listitem')
+    await waitFor(() =>
+      expect(rows[0]).toHaveTextContent('민수님이 지수님에게 팀장을 넘겼어요'),
+    )
+    expect(rows[1]).toHaveTextContent('지수님이 팀장을 넘겼어요')
+    expect(rows[2]).toHaveTextContent('민수님이 팀원을 제외했어요')
+    expect(rows[2]).not.toHaveTextContent('지수')
+    expect(rows[3]).toHaveTextContent('민수님이 작업을 만들었어요')
+    for (const row of rows) expect(row).not.toHaveTextContent(/[A-Z]+_[A-Z]+/)
+  })
+
+  it('비비·시스템·에이전트 행위자도 이름 뒤에 님이를 붙인다', async () => {
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [
+        activity('3', {
+          type: 'CHANGE_PROPOSAL_COMMENTED',
+          actor_type: 'BEE',
+          actor_account_id: undefined,
+        }),
+        activity('2', {
+          type: 'TASK_COMPLETED',
+          actor_type: 'SYSTEM',
+          actor_account_id: undefined,
+        }),
+        activity('1', {
+          type: 'TASK_STARTED',
+          actor_type: 'AGENT',
+          agent_session_id: '91',
+        }),
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    const rows = await screen.findAllByRole('listitem')
+    expect(rows[0]).toHaveTextContent('비비님이 변경 제안에 의견을 남겼어요')
+    expect(rows[1]).toHaveTextContent('시스템님이 작업을 완료했어요')
+    await waitFor(() =>
+      expect(rows[2]).toHaveTextContent(
+        '민수의 에이전트님이 작업을 시작했어요',
+      ),
+    )
+  })
 })
 
 describe('에이전트별 사용량', () => {

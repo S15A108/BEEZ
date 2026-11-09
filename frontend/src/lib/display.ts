@@ -66,6 +66,57 @@ export const statusLabel = (value: unknown) => {
   return statusLabels[key] ?? key
 }
 
+// 활동 문구(공통 계약 6.2). 행위자 이름과 조사 뒤에 붙는다: '이팀장님이 작업을 시작했어요'(PR #187 표기 안내).
+const activityLabels: Record<string, string> = {
+  TASK_CREATED: '작업을 만들었어요',
+  TASK_PLAN_REVISED: '작업 계획을 고쳤어요',
+  TASK_STARTED: '작업을 시작했어요',
+  TASK_RESUMED: '작업을 다시 시작했어요',
+  TASK_WAITING: '작업을 대기로 돌렸어요',
+  TASK_COMPLETION_REPORTED: '작업 완료를 보고하고 재검증을 기다려요',
+  TASK_COMPLETED: '작업을 완료했어요',
+  TASK_CANCELLED: '작업을 취소했어요',
+  TASK_ASSIGNEE_CHANGED: '작업 담당자를 바꿨어요',
+  VALIDATION_FINISHED: '계획 검증을 마쳤어요',
+  DOCUMENT_REGISTERED: '문서를 올렸어요',
+  DOCUMENT_APPROVED: '문서를 승인했어요',
+  DOCUMENT_REJECTED: '문서를 반려했어요',
+  BASELINE_CREATED: '기준 설계를 발행했어요',
+  CHANGE_PROPOSAL_SUBMITTED: '변경 제안을 올렸어요',
+  CHANGE_PROPOSAL_WITHDRAWN: '변경 제안을 거뒀어요',
+  CHANGE_PROPOSAL_REVIEW_STARTED: '변경 제안 검토를 시작했어요',
+  CHANGE_PROPOSAL_REVIEW_REQUESTED: '변경 제안 검토를 요청했어요',
+  CHANGE_PROPOSAL_COMMENTED: '변경 제안에 의견을 남겼어요',
+  CHANGE_PROPOSAL_APPROVED: '변경 제안을 승인했어요',
+  CHANGE_PROPOSAL_REJECTED: '변경 제안을 반려했어요',
+  CHANGE_PROPOSAL_PUBLISHED: '변경 제안을 발행했어요',
+  MEETING_CLOSED: '회의를 끝냈어요',
+  PROJECT_CREATED: '프로젝트를 만들었어요',
+  MEMBER_JOINED: '프로젝트에 참여했어요',
+  MEMBER_LEFT: '프로젝트에서 나갔어요',
+  // 제외된 사람의 이름은 남기지 않는다(PR #187 표기 안내)
+  MEMBER_REMOVED: '팀원을 제외했어요',
+  // 행위자가 대개 '○○의 에이전트'라 '에이전트'를 다시 쓰지 않는다
+  AGENT_CONNECTED: '연결됐어요',
+  AGENT_DISCONNECTED: '연결이 끊겼어요',
+  MOCK_PROJECT_PREPARED: '예시 프로젝트를 준비했어요',
+}
+
+// 위임(LEADER_TRANSFERRED)의 target_id는 새 팀장의 멤버 id다. 팀원 목록(활성 멤버만)에 없으면 이름 없이 쓴다.
+export function activityText(
+  item: { type: string; target_id?: string },
+  members: { id: string; name: string }[] = [],
+) {
+  if (item.type === 'LEADER_TRANSFERRED') {
+    const leader = members.find((member) => member.id === item.target_id)
+    return leader ? `${leader.name}님에게 팀장을 넘겼어요` : '팀장을 넘겼어요'
+  }
+  return activityLabels[item.type] ?? '활동을 기록했어요'
+}
+
+// 활동 행위자 이름 뒤 조사. 비비·시스템·에이전트도 사람처럼 '님이'다(사용자 결정 11-09): '비비님이', '시스템님이'.
+export const ACTOR_PARTICLE = '님이'
+
 // 받침이 있으면 '을', 없으면 '를'. 한글이 아니면 받침 없음으로 본다.
 export const objectParticle = (word: string) => {
   const code = word.trim().charCodeAt(word.trim().length - 1) - 0xac00

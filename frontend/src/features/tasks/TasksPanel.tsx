@@ -1,3 +1,4 @@
+import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import { useState } from 'react'
 import {
   useInfiniteQuery,
@@ -229,7 +230,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     // 다른 작업을 선택해도 검증과 완료 보고 재검증이 끝날 때 목록을 갱신한다.
     refetchInterval: (query) =>
       query.state.data?.pages.some((page) => page.items.some(settling))
-        ? 1500
+        ? ACTIVE_POLL_MS
         : false,
   })
   const members = useQuery(membersQuery(projectId))
@@ -257,7 +258,8 @@ export function TasksPanel({ projectId, isLeader }: Props) {
     queryKey: ['projects', projectId, 'task', selectedId],
     queryFn: () => tasksApi.get(projectId, selectedId!),
     enabled: !!selectedId,
-    refetchInterval: (query) => (settling(query.state.data) ? 1500 : false),
+    refetchInterval: (query) =>
+      settling(query.state.data) ? ACTIVE_POLL_MS : false,
   })
   const task = detail.data
   const approved = useInfiniteQuery({
