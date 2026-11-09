@@ -13,6 +13,30 @@ it('워크스페이스를 떠나면 열려 있던 창과 대상 id를 비운다'
   })
 })
 
+// PR #72 6차 UI-01: 프로젝트를 만든 뒤 부지 저장이 실패하면 생성 실패로 보여, 다시 누르면 프로젝트가 또 생겼다.
+it('브라우저 저장소에 쓰지 못해도 부지 배치는 예외 없이 바뀐다', () => {
+  const original = Storage.prototype.setItem
+  let writes = 0
+  Storage.prototype.setItem = () => {
+    writes++
+    throw new DOMException('가득 참', 'QuotaExceededError')
+  }
+  try {
+    expect(() =>
+      useWorkspaceStore
+        .getState()
+        .placeProjects('11', [{ id: '301', lot: 4, design: 'modern' }]),
+    ).not.toThrow()
+    expect(writes).toBeGreaterThan(0)
+    expect(useWorkspaceStore.getState().placements['11:301']).toEqual({
+      lot: 4,
+      design: 'modern',
+    })
+  } finally {
+    Storage.prototype.setItem = original
+  }
+})
+
 // 나의 도시는 마지막으로 연 프로젝트 건물을 가운데에 두고 시작한다(D33). 계정마다 따로 남긴다.
 it('마지막으로 연 프로젝트를 계정마다 따로 기억하고, 새로 열면 바꾼다', () => {
   const { visitProject } = useWorkspaceStore.getState()
