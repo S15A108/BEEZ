@@ -292,6 +292,18 @@ it('기록이 한 페이지를 넘어도 대화를 오래된 순으로 보이고
   ).toBeInTheDocument()
 })
 
+// 정리하는 동안 올라온 대화는 정리 결과 기록보다 ID 가 작아도 정리에 들어가지 않았으므로 새 대화로 알린다.
+it('정리하는 동안 올라온 대화도 정리한 뒤의 새 대화로 알린다', async () => {
+  await meetingsApi.addEntry('101', '901', { text: '정리에 들어갈 말' })
+  const first = (await meetingsApi.entries('101', '901', {})).items.at(-1)!
+  await meetingsApi.addEntry('101', '901', { text: '정리 중에 올라온 말' })
+  await meetingsApi.summarize('101', '901', { through_entry_id: first.id })
+  renderPanel(true)
+  expect(
+    await screen.findByText(/정리한 뒤에 새 대화가 있어요/),
+  ).toBeInTheDocument()
+})
+
 // 다음 페이지 조회가 실패해도 자동으로 계속 다시 부르지 않고, 사람이 '다시 불러오기'를 눌러야 이어 간다.
 it('기록의 다음 페이지 조회가 실패하면 자동 재시도를 멈추고 다시 불러오기를 보인다', async () => {
   for (let index = 1; index <= 22; index++)
@@ -312,6 +324,10 @@ it('기록의 다음 페이지 조회가 실패하면 자동 재시도를 멈추
   expect(
     await screen.findByRole('button', { name: '다시 불러오기' }),
   ).toBeInTheDocument()
+  // 기록을 다 읽지 못했으면 읽힌 곳까지만 정리하게 되므로 정리 요청을 막는다.
+  expect(
+    screen.getByRole('button', { name: '비비에게 정리 요청' }),
+  ).toBeDisabled()
   const calls = spy.mock.calls.length
   await new Promise((resolve) => setTimeout(resolve, 300))
   expect(spy.mock.calls.length).toBe(calls)

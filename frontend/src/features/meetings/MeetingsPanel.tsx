@@ -153,16 +153,21 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     review && summaryQuery.data?.entry.id === review.id
       ? summaryQuery.data
       : undefined
-  // 정리 뒤에 사람이 쓴 기록이 있으면 그 정리로는 끝낼 수 없다(서버가 409 summary_outdated 로 막는다).
+  // 정리에 쓴 마지막 기록(through_entry_id) 뒤에 사람이 쓴 기록이 있으면 그 정리로는 끝낼 수 없다(서버가 409
+  // summary_outdated 로 막는다). 결과 기록의 ID 가 아니라 이 값과 비교해야 비비가 정리하는 동안 올라온 대화도 잡는다.
+  const summaryThroughId = review?.through_entry_id ?? summary?.through_entry_id
   const talkedAfterSummary =
-    !!review &&
+    !!summaryThroughId &&
     notes.some(
-      (entry) => entry.kind === 'TEXT' && BigInt(entry.id) > BigInt(review.id),
+      (entry) =>
+        entry.kind === 'TEXT' && BigInt(entry.id) > BigInt(summaryThroughId),
     )
   // 정리에 쓸 마지막 기록: 사람 기록(TEXT)이나 비비가 연 첫 기록(CONFLICT_BRIEF)
   const throughEntry = notes.find(
     (entry) => entry.kind === 'TEXT' || entry.kind === 'CONFLICT_BRIEF',
   )
+  // 기록을 모두 읽기 전(남은 페이지가 있거나 조회가 실패한 상태)에는 정리를 요청할 수 없다. 읽힌 곳까지만 정리하게 되기 때문이다.
+  const allLoaded = !!entries.data && !hasNextPage && !isError
   const participant = detail.data?.participants.find(
     (item) => item.member_id === me?.id,
   )
@@ -443,7 +448,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             <div className="flex flex-wrap gap-2">
                               <Button
                                 variant="outline"
-                                disabled={action.busy || !throughEntry}
+                                disabled={
+                                  action.busy || !throughEntry || !allLoaded
+                                }
                                 onClick={() =>
                                   void requestSummary(
                                     meeting.id,
@@ -577,6 +584,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                                     !isLeader ||
                                     !participant ||
                                     !throughEntry ||
+                                    !allLoaded ||
                                     action.busy
                                   }
                                   onClick={() =>

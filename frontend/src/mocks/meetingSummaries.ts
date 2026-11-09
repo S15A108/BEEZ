@@ -87,10 +87,17 @@ function summaryFor(
   meeting: Meeting,
   previous?: MeetingSummary,
   feedback?: string,
+  throughId?: string,
 ): MeetingSummary {
   const project = requireProject(context)
   const entries = project.entries
-    .filter((item) => item.meeting_id === meeting.id && summarizable(item))
+    .filter(
+      (item) =>
+        item.meeting_id === meeting.id &&
+        summarizable(item) &&
+        // 서버처럼 요청한 마지막 기록까지만 정리한다(그 뒤에 올라온 대화는 정리에 들어가지 않는다).
+        (!throughId || ids(item.id) <= ids(throughId)),
+    )
     .sort((a, b) => Number(ids(a.id) - ids(b.id)))
   const through = entries.at(-1)
   if (!through) fail(400, 'validation_failed', '정리할 기록이 없어요.')
@@ -234,7 +241,10 @@ export function summaryRoutes(
           'validation_failed',
           '비비의 분석이나 정리 기록으로는 정리할 수 없어요.',
         )
-      return { status: 201, data: summaryFor(context, meeting) }
+      return {
+        status: 201,
+        data: summaryFor(context, meeting, undefined, undefined, through.id),
+      }
     }
     case 'MTG-A12': {
       leaderParticipant(context, meeting)
@@ -247,7 +257,13 @@ export function summaryRoutes(
         fail(400, 'validation_failed', '고칠 점은 4,000자까지 쓸 수 있어요.')
       return {
         status: 201,
-        data: summaryFor(context, meeting, target, feedback),
+        data: summaryFor(
+          context,
+          meeting,
+          target,
+          feedback,
+          target.through_entry_id,
+        ),
       }
     }
     case 'MTG-A13': {
