@@ -1215,6 +1215,8 @@ export const activitySchema = z.object({
   task_id: idSchema.optional(),
   change_proposal_id: idSchema.optional(),
   baseline_id: idSchema.optional(),
+  target_type: z.string().optional(),
+  target_id: idSchema.optional(),
   result: z.string(),
   created_at: timeSchema,
 })

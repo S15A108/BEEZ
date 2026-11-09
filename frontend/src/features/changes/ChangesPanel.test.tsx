@@ -1199,15 +1199,20 @@ async function runningPreview() {
 
 it('분석이 도는 동안은 미리 보기를 다시 읽어, 끝나면 승인 버튼이 풀린다', async () => {
   const running = await runningPreview()
+  const original = changesApi.approvalPreview.bind(changesApi)
+  let analysed = false
   const preview = vi
     .spyOn(changesApi, 'approvalPreview')
-    .mockResolvedValueOnce(running)
+    .mockImplementation(async (...args) =>
+      analysed ? original(...args) : running,
+    )
   await openApprove()
   const button = screen.getByRole('button', { name: '승인하고 기준 v2 발행' })
-  await waitFor(() => expect(preview).toHaveBeenCalledTimes(1))
+  // 분석이 도는 동안은 버튼을 막은 채로 미리 보기를 계속 다시 읽는다.
+  await waitFor(() => expect(preview.mock.calls.length).toBeGreaterThan(2))
   expect(button).toBeDisabled()
-  await waitFor(() => expect(button).toBeEnabled(), { timeout: 5000 })
-  expect(preview.mock.calls.length).toBeGreaterThanOrEqual(2)
+  analysed = true
+  await waitFor(() => expect(button).toBeEnabled())
 })
 
 it.each(['analysis_running', 'impact_not_confirmed'])(

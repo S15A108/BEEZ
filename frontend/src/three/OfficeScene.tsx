@@ -23,7 +23,11 @@ import {
   OutdoorStreetRenderer,
   walkableStreetSpawn,
 } from './office/OutdoorStreetRenderer'
-import { avatarAppearance, officeActors } from './office/office-actors'
+import {
+  avatarAppearance,
+  officeActors,
+  type BibiActivity,
+} from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
 import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
@@ -39,6 +43,8 @@ export interface OfficeSceneProps {
   design?: string
   /** 사무실 시간대(D39). 없으면 낮이다. */
   time?: OfficeTime
+  /** 비비 현재 상태(BEE-A04). 상태마다 자리를 옮긴다(D35). undefined는 아직 못 읽음, null은 없는 API다. */
+  bibiActivity?: BibiActivity | null
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -99,8 +105,9 @@ function OfficeRuntime(
         props.currentUserId ??
           agents.find((agent) => agent.kind === 'human')?.id,
         officeHomeSeats(floor, agents),
+        props.bibiActivity,
       ),
-    [floor, agents, phase, props.currentUserId],
+    [floor, agents, phase, props.currentUserId, props.bibiActivity],
   )
   const latest = useRef({ props, floor, actors, work, phase })
   const engine = useRef<OfficeRenderer3D | null>(null)
@@ -556,6 +563,7 @@ function OfficeRuntime(
       zoom: viewZoom,
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
+      playerId: me.id,
       work: state.work,
       time: state.props.time,
     })
@@ -569,6 +577,12 @@ function OfficeRuntime(
     }
     gl.domElement.setAttribute('data-player-x', me.x.toFixed(2))
     gl.domElement.setAttribute('data-player-y', me.y.toFixed(2))
+    // 내 위치처럼 비비 위치를 남겨 E2E가 걸음을 확인한다.
+    const bibi = residents.find((actor) => actor.appearance === 'bibi')
+    if (bibi) {
+      gl.domElement.setAttribute('data-bibi-x', bibi.x.toFixed(2))
+      gl.domElement.setAttribute('data-bibi-y', bibi.y.toFixed(2))
+    }
   }, 1)
   return null
 }

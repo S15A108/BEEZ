@@ -9,7 +9,12 @@ import { Button } from '@/components/ui/button'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
-import { countText, statusLabel } from '@/lib/display'
+import {
+  ACTOR_PARTICLE,
+  activityText,
+  countText,
+  statusLabel,
+} from '@/lib/display'
 import { formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -413,9 +418,10 @@ export function DashboardOverview({
                       <span className="truncate">
                         <strong className="font-semibold">
                           {actorName(item)}
-                        </strong>{' '}
+                        </strong>
+                        {ACTOR_PARTICLE}{' '}
                         <span className="text-[#57534e]">
-                          {statusLabel(item.type) || item.type}
+                          {activityText(item, members)}
                         </span>
                       </span>
                       {chip.notable ? (

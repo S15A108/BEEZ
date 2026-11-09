@@ -1,7 +1,6 @@
 import { expect, it } from 'vitest'
+import { ACTIVE_POLL_MS, WAITING_POLL_MS } from '@/lib/pollIntervals'
 import {
-  ACTIVE_POLL_MS,
-  WAITING_POLL_MS,
   generationOf,
   isGenerating,
   isQuestionTarget,
