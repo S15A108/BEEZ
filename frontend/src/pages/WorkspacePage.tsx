@@ -13,6 +13,7 @@ import { MeetingsPanel } from '@/features/meetings/MeetingsPanel'
 import { ActivityPanel } from '@/features/dashboard/ActivityPanel'
 import { InboxPanel } from '@/features/inbox/InboxPanel'
 import { BibiPanel } from '@/features/bee/BibiPanel'
+import { beeStatusQuery } from '@/features/bee/beeStatusQuery'
 import { ContextPanel } from '@/features/contexts/ContextPanel'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
@@ -95,6 +96,8 @@ function Workspace({ projectId }: { projectId: string }) {
   // 작업 현황(MON-A05)은 따로 30초마다 다시 부른다. 없거나 아직 못 받았으면 undefined라 연결 여부로 어림한다(D37).
   const agentWork =
     useQuery(agentWorkQuery(projectId, session.data?.id)).data ?? undefined
+  // 비비 현재 상태(BEE-A04). HUD 비비 줄과 같은 쿼리이고, 사무실 비비가 이 값으로 자리를 옮긴다(D35).
+  const beeStatus = useQuery(beeStatusQuery(projectId)).data
   // 들어갈 수 있는 프로젝트를 열었으면 이 계정의 마지막 방문으로 남긴다. 나의 도시가 그 건물을 가운데에 두고 시작한다(D33).
   const visitProject = useWorkspaceStore((state) => state.visitProject)
   const accountId = session.data?.id
@@ -184,6 +187,7 @@ function Workspace({ projectId }: { projectId: string }) {
                 project={data.project}
                 design={design}
                 time={officeTime}
+                bibiActivity={beeStatus && beeStatus.activity}
                 agents={sceneAgents}
                 tasks={sceneTasks}
                 currentUserId={

@@ -208,5 +208,9 @@ export const BRICK_PLAN: OfficePlan = {
   lounge: { x0: -13.533, z0: 1.143, x1: -7.467, z1: 8 },
   entrance: { x: -14, z: 2.743 },
   bibi: { x: -10.633, z: 5.6, ry: -0.6 },
+  bibiSpots: {
+    documents: { x: -10.5, z: -2.6, facing: 'up' }, // 구역 입구, 열람 테이블 남쪽. 테이블 동쪽 통로는 앉은 사람 옆을 지나야 한다
+    meeting: { x: -3.5, z: -3.3, facing: 'up' }, // 하이 테이블 남쪽. 칸반 옆은 나올 때 스툴 사이로 들어가 막힌다
+  },
   pieces: piecesOf(ROWS),
 }

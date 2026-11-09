@@ -201,5 +201,9 @@ export const TOWER_PLAN: OfficePlan = {
   lounge: { x0: -13.533, z0: 1.143, x1: -7.467, z1: 8 },
   entrance: { x: -14, z: 2.743 },
   bibi: { x: -10.974, z: 3.9, ry: -0.45 },
+  bibiSpots: {
+    documents: { x: -10.5, z: -2.6, facing: 'up' }, // 구역 입구, 열람 테이블 남쪽. 테이블 동쪽 통로는 앉은 사람 옆을 지나야 한다
+    meeting: { x: -6.6, z: -4.4, facing: 'right' }, // TV 옆, 테이블 서쪽. 동쪽 끝은 북쪽 자리로 가는 하나뿐인 길이다
+  },
   pieces: piecesOf(ROWS),
 }

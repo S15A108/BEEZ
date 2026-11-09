@@ -14,6 +14,20 @@ export function avatarAppearance(avatar?: string): OfficeAppearance {
   return key === 'robot' ? 'member-robot' : key
 }
 
+/** 비비 현재 상태(BEE-A04 activity) */
+export type BibiActivity = 'DOCUMENT_REVIEW' | 'MEETING' | 'IDLE'
+
+// 비비 상태 → 자리(D35). 문서 검토는 공용 문서함, 회의는 회의실이고, 그 밖(한가함·상태 없음·없는 API)은 라운지 가운데다.
+export function bibiSpot(floor: Floor, activity?: BibiActivity | null) {
+  const spot =
+    activity === 'DOCUMENT_REVIEW'
+      ? floor.bibiSpots?.documents
+      : activity === 'MEETING'
+        ? floor.bibiSpots?.meeting
+        : undefined
+  return spot ?? floor.seats.lead?.[0]
+}
+
 export function officeActors(
   floor: Floor,
   agents: Agent[],
@@ -23,23 +37,31 @@ export function officeActors(
     string,
     { x: number; y: number; facing: OfficeEntity3D['dir'] }
   >,
+  /** undefined는 아직 읽지 못한 것이고, null은 서버에 상태 API가 없는 것(404)이다. */
+  bibiActivity?: BibiActivity | null,
 ) {
-  const result: (OfficeEntity3D & { name: string; stationary?: boolean })[] = []
+  const result: (OfficeEntity3D & {
+    name: string
+    stationary?: boolean
+    standing?: boolean
+  })[] = []
   const lead = bibiOf(agents) ?? RECEPTIONIST
-  // 고정 사무실(D36)에서는 단계와 관계없이 라운지 가운데(lead 자리)에 서 있다(사용자 결정 '라운지 가운데에 세움').
-  const bibiSpot = floor.seats.lead?.[0]
+  const spot = bibiSpot(floor, phase < 3 ? undefined : bibiActivity)
+  // 고정 사무실(D36)에서 상태를 읽은 뒤에는 상태가 바뀔 때만 새 자리로 걸어가 머문다(D37 에이전트와 같은 방식). 'meeting'은
+  // 일하는 상태라 산책하지 않는다. 처음 자리는 걷지 않고 바로 선다.
+  const walks = phase >= 3 && !!floor.zoneSigns && bibiActivity !== undefined
   if (phase < 3 || !bibiOf(agents) || floor.zoneSigns)
     result.push({
       id: lead.id,
       name: '비비 · AI 팀장',
-      x: bibiSpot ? bibiSpot.x * 32 + 16 : 4.5 * 32,
-      y: bibiSpot ? bibiSpot.y * 32 + 27 : 3.5 * 32,
-      dir: 'down',
+      x: spot ? spot.x * 32 + 16 : 4.5 * 32,
+      y: spot ? spot.y * 32 + 27 : 3.5 * 32,
+      dir: spot?.facing ?? 'down',
       moving: false,
       floor: 1,
       color: '#d5ad42',
       appearance: 'bibi',
-      stationary: true,
+      ...(walks ? { status: 'meeting', standing: true } : { stationary: true }),
     })
   if (phase < 3) return result
   if (floor.zoneSigns)
