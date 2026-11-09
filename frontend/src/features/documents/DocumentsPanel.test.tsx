@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import { documentsApi } from '@/api/services/documents'
 import { planningApi } from '@/api/services/planning'
-import { authApi } from '@/api/services'
+import { authApi, membersApi } from '@/api/services'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { DocumentVersion } from '@/api/contracts/common'
 import { DocumentsPanel } from './DocumentsPanel'
@@ -425,4 +425,184 @@ it('분류 수정은 문서를 등록한 사람에게만 보이고 검토 요청
   expect(
     await screen.findByRole('button', { name: '분류 수정' }),
   ).toBeDisabled()
+})
+
+it('서버가 비었거나 UTF-8이 아닌 파일을 거절하면 파일 줄 아래에 안내한다', async () => {
+  const user = userEvent.setup()
+  vi.mocked(documentsApi.upload).mockRejectedValueOnce(
+    new AxiosError('rejected', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 400,
+      data: { error: { code: 'validation_failed' } },
+    } as never),
+  )
+  mount()
+  await user.click(await screen.findByRole('button', { name: '기획안 올리기' }))
+  await user.upload(
+    screen.getByLabelText(/원본 파일/),
+    new File(['# 기획안'], 'plan.md', { type: 'text/markdown' }),
+  )
+  await user.click(
+    screen.getByRole('button', { name: '등록하고 비비 검토 받기' }),
+  )
+  expect(
+    await screen.findByText(/비어 있지 않은 UTF-8 Markdown\(\.md\) 파일/),
+  ).toBeInTheDocument()
+  expect(screen.getByLabelText(/문서 제목/)).toHaveValue('기획안')
+})
+
+// 201: 버전 행에 올린 사람·서버가 알려 준 현재 기준·변경 제안 보기를 보인다.
+it('버전 이력은 올린 사람과 현재 기준을 보이고 변경 제안이 있는 버전만 제안으로 이동한다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  vi.spyOn(membersApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '5',
+        account_id: '12',
+        name: '김동료',
+        role: 'MEMBER',
+        agent_connected: false,
+      },
+    ],
+    has_more: false,
+  })
+  const first = {
+    ...version,
+    id: '21',
+    status: 'APPROVED' as const,
+    is_current_baseline: true,
+    created_by: '12',
+  }
+  const second = {
+    ...version,
+    id: '22',
+    version_no: 2,
+    is_current_baseline: false,
+    created_by: '12',
+    change_proposal_id: '71',
+  }
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [second, first],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  const v2 = rows.find((row) => within(row).queryByText('v2'))!
+  const v1 = rows.find((row) => within(row).queryByText('v1'))!
+  expect(await within(v2).findByText(/김동료/)).toBeInTheDocument()
+  expect(within(v1).getByText('현재 기준')).toBeInTheDocument()
+  expect(within(v2).queryByText('현재 기준')).not.toBeInTheDocument()
+  expect(
+    within(v1).queryByRole('button', { name: '변경 제안 보기' }),
+  ).not.toBeInTheDocument()
+  await user.click(within(v2).getByRole('button', { name: '변경 제안 보기' }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'changes',
+    focusId: '71',
+  })
+})
+
+it('서버가 현재 기준 여부를 주면 그 값으로 칩을 정한다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  const approved = { ...version, id: '22', status: 'APPROVED' as const }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: { ...focusedDocument, approved_version: approved },
+    version,
+  })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [
+      { ...approved, version_no: 2, is_current_baseline: false },
+      { ...version, is_current_baseline: true },
+    ],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  const v1 = rows.find((row) => within(row).queryByText('v1'))!
+  expect(within(v1).getByText('현재 기준')).toBeInTheDocument()
+  expect(screen.getAllByText('현재 기준')).toHaveLength(1)
+})
+
+// 프로젝트 시작 전에는 서버가 모든 버전에 is_current_baseline=false 를 주므로 헤더(승인본)와 같은 버전에 칩을 단다.
+it('시작 전 문서는 서버 값이 모두 false여도 승인본에 현재 기준 칩을 보인다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  const approved = { ...version, id: '22', status: 'APPROVED' as const }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: { ...focusedDocument, approved_version: approved },
+    version,
+  })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [
+      { ...approved, version_no: 2, is_current_baseline: false },
+      { ...version, is_current_baseline: false },
+    ],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  const v2 = rows.find((row) => within(row).queryByText('v2'))!
+  expect(within(v2).getByText('현재 기준')).toBeInTheDocument()
+  expect(screen.getAllByText('현재 기준')).toHaveLength(1)
+})
+
+it('올린 사람이 구성원 목록에 없으면 팀원으로 보인다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  vi.spyOn(membersApi, 'list').mockResolvedValue({ items: [], has_more: false })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [{ ...version, created_by: '99' }],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  expect(await within(rows[0]).findByText(/· 팀원/)).toBeInTheDocument()
+})
+
+it('문서 내용 탭의 버전 드롭다운도 REJECTED를 미채택으로 보인다', async () => {
+  useWorkspaceStore.setState({ focusId: '2' })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [
+      { ...version, id: '32', version_no: 2, status: 'REJECTED' as const },
+      { ...version, id: '31', version_no: 1, status: 'DRAFT' as const },
+    ],
+    has_more: false,
+  })
+  mount()
+  expect(
+    await screen.findByRole('option', { name: /v2 · 미채택/ }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: /반려/ })).not.toBeInTheDocument()
+})
+
+it('버전 이력은 승인·이전 버전·초안·미채택을 구분해 보인다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.setState({ focusId: '2' })
+  const make = (
+    no: number,
+    status: 'DRAFT' | 'APPROVED' | 'SUPERSEDED' | 'REJECTED',
+  ) => ({ ...version, id: String(30 + no), version_no: no, status })
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [
+      make(4, 'REJECTED'),
+      make(3, 'APPROVED'),
+      make(2, 'SUPERSEDED'),
+      make(1, 'DRAFT'),
+    ],
+    has_more: false,
+  })
+  mount()
+  await user.click(await screen.findByRole('tab', { name: /버전 이력/ }))
+  const rows = await screen.findAllByRole('listitem')
+  const row = (no: number) =>
+    rows.find((item) => within(item).queryByText(`v${no}`))!
+  expect(within(row(4)).getByText('미채택')).toBeInTheDocument()
+  expect(within(row(3)).getByText('승인')).toBeInTheDocument()
+  expect(within(row(2)).getByText('이전 버전')).toBeInTheDocument()
+  expect(within(row(1)).getByText('초안')).toBeInTheDocument()
 })

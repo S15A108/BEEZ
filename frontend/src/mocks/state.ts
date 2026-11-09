@@ -377,6 +377,8 @@ function seededProject(
       media_type: 'text/markdown',
       content_hash: `sha256:mock-${versionId}`,
       content,
+      created_by: account.id,
+      is_current_baseline: approved,
       created_at: created,
     }
     state.versions.push(version)
@@ -520,6 +522,9 @@ function seededProject(
     version_no: 2,
     status: 'DRAFT' as const,
     content: `${state.versions[0].content}\n미정: 초대 만료 안내 문구`,
+    created_by: '12',
+    is_current_baseline: false,
+    change_proposal_id: '71',
   }
   state.versions.push(draft)
   state.documents[0].latest_draft = draft
