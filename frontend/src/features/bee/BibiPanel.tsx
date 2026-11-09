@@ -6,7 +6,11 @@ import { z } from 'zod'
 import { BibiFace } from '@/components/BibiFace'
 import { beeApi } from '@/api/services'
 import type { Generation } from '@/api/contracts/common'
-import { getApiErrorMessage } from '@/api/error'
+import {
+  getApiErrorCode,
+  getApiErrorMessage,
+  getApiErrorStatus,
+} from '@/api/error'
 import { SourceLinks } from '@/components/SourceLinks'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,6 +34,24 @@ const questionSchema = z.object({
 type QuestionInput = z.infer<typeof questionSchema>
 
 type Ask = { question: string; scope: AskScope }
+
+function questionErrorMessage(error: unknown) {
+  const code = getApiErrorCode(error)
+  const status = getApiErrorStatus(error)
+  if (code === 'idempotency_conflict')
+    return '이미 사용한 요청이에요. 이전 답변은 다시 가져올 수 없어요. 다시 보내면 새 질문으로 처리되어 추가 호출이 발생할 수 있어요.'
+  if (code === 'draft_search_not_supported')
+    return '초안 포함 검색은 아직 지원하지 않아요. 승인된 문서를 선택해 다시 질문해 주세요.'
+  if (
+    error instanceof z.ZodError ||
+    code === 'ai_timeout' ||
+    code === 'ai_unavailable' ||
+    (error instanceof Error &&
+      (status === undefined || (status >= 500 && !code)))
+  )
+    return '이전 요청이 처리됐을 수 있어요. 답변을 확인할 수 없으며 다시 보내면 추가 호출이 발생할 수 있어요.'
+  return getApiErrorMessage(error)
+}
 
 // 단축 바 가운데 비비 버튼(B안)으로 여는 대화. 대화는 창을 연 동안만 보인다.
 export function BibiPanel({ projectId }: { projectId: string }) {
@@ -180,7 +202,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
           )}
           {mutation.error && (
             <p role="alert" className="text-sm text-destructive">
-              {getApiErrorMessage(mutation.error)}
+              {questionErrorMessage(mutation.error)}
             </p>
           )}
         </div>
@@ -201,7 +223,11 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               {...register('question')}
             />
             <Button type="submit" className="h-10 px-4" disabled={!!pending}>
-              {mutation.isError ? '다시 보내기' : '보내기'}
+              {getApiErrorCode(mutation.error) === 'idempotency_conflict'
+                ? '새 질문으로 다시 보내기'
+                : mutation.isError
+                  ? '다시 보내기'
+                  : '보내기'}
             </Button>
           </form>
           {errors.question && (

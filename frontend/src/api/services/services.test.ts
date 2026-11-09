@@ -98,6 +98,63 @@ describe('명세 REST 교환', () => {
     ).rejects.toBeInstanceOf(ZodError)
   })
 
+  it('비비 응답 유실 뒤 같은 키로 확인하고 409 뒤 명시적 재전송은 새 키를 쓴다', async () => {
+    const keys: string[] = []
+    api.defaults.adapter = async (config) => {
+      keys.push(String(config.headers.get('Idempotency-Key')))
+      if (keys.length === 1)
+        throw new AxiosError('response lost', 'ERR_NETWORK', config)
+      if (keys.length === 2)
+        throw new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+          config,
+          status: 409,
+          statusText: 'Conflict',
+          headers: new AxiosHeaders(),
+          data: { error: { code: 'idempotency_conflict' } },
+        })
+      return {
+        config,
+        data: { origin: 'MODEL', text: '답변', sources: [], unresolved: [] },
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders(),
+      }
+    }
+    const ask = () => beeApi.ask('101', { question: '유실된 질문 확인' })
+    await expect(ask()).rejects.toBeInstanceOf(AxiosError)
+    expect(keys).toHaveLength(1)
+    await expect(ask()).rejects.toBeInstanceOf(AxiosError)
+    expect(keys[1]).toBe(keys[0])
+    await expect(ask()).resolves.toMatchObject({ text: '답변' })
+    expect(keys[2]).not.toBe(keys[1])
+  })
+
+  it('비비가 시간 초과를 확정한 뒤 사용자의 재전송은 새 키를 쓴다', async () => {
+    const keys: string[] = []
+    api.defaults.adapter = async (config) => {
+      keys.push(String(config.headers.get('Idempotency-Key')))
+      if (keys.length === 1)
+        throw new AxiosError('timeout', 'ERR_BAD_RESPONSE', config, undefined, {
+          config,
+          status: 504,
+          statusText: 'Gateway Timeout',
+          headers: new AxiosHeaders(),
+          data: { error: { code: 'ai_timeout' } },
+        })
+      return {
+        config,
+        data: { origin: 'MODEL', text: '답변', sources: [], unresolved: [] },
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders(),
+      }
+    }
+    const ask = () => beeApi.ask('101', { question: '시간 초과 후 질문' })
+    await expect(ask()).rejects.toBeInstanceOf(AxiosError)
+    await expect(ask()).resolves.toMatchObject({ text: '답변' })
+    expect(keys[1]).not.toBe(keys[0])
+  })
+
   it('응답을 잃은 같은 동작의 재시도는 키를 유지하고 확인된 새 동작은 새 키를 쓴다', async () => {
     const keys: string[] = []
     api.defaults.adapter = async (config) => {
