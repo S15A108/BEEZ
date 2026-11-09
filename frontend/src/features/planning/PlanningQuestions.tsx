@@ -1,3 +1,4 @@
+import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
@@ -91,7 +92,7 @@ export function PlanningQuestions({
       planningApi.questions(projectId, { cursor: pageParam, limit: 100 }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
     // 질문을 만드는 동안에는 끝날 때까지 목록을 다시 불러온다.
-    refetchInterval: generating ? 1500 : false,
+    refetchInterval: generating ? ACTIVE_POLL_MS : false,
   })
   return (
     <Card>

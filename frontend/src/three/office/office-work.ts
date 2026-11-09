@@ -218,7 +218,7 @@ export function buildOfficeWork(
             : agent.status === 'blocked'
               ? '확인 필요'
               : agent.status === 'disconnected'
-                ? agentStatusLabels.none
+                ? agentStatusLabels.disconnected
                 : '자리 비움',
       tone: off
         ? 'idle'
