@@ -5,10 +5,12 @@ import com.beez.backend.account.AccountRepository;
 import com.beez.backend.auth.verification.EmailVerification.Outcome;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.SecretTokens;
+import com.beez.backend.common.concurrent.LogThrottle;
 import com.beez.backend.common.mail.MailDeliveryException;
 import com.beez.backend.common.mail.MailGateway;
 import com.beez.backend.common.mail.MailMessage;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import org.hibernate.exception.ConstraintViolationException;
@@ -44,6 +46,8 @@ public class EmailVerificationService {
     static final String TOKEN_PREFIX = "evt_";
     /** V25 이메일당 열린 코드 하나 */
     private static final String OPEN_UNIQUE = "ux_email_verification_open";
+    /** 서버 전체 상한 도달 WARN 은 10분에 한 번만 (공격 중 요청마다 찍히지 않게, -273) */
+    private final LogThrottle globalLimitWarn = new LogThrottle(Duration.ofMinutes(10));
 
     private final EmailVerificationRepository verifications;
     private final AccountRepository accounts;
@@ -177,8 +181,11 @@ public class EmailVerificationService {
         }
         // 이메일당 한도만으로는 주소를 바꿔 가며 무제한 보낼 수 있다. SMTP 계정 차단·일일 한도 소진을 막는 서버 전체 상한
         if (verifications.countByCreatedAtAfter(now.minus(props.sendLimitWindow())) >= props.globalSendLimit()) {
-            log.warn("가입 인증 메일 서버 전체 상한 도달: limit={} window={}", props.globalSendLimit(),
-                    props.sendLimitWindow());
+            long skipped = globalLimitWarn.tryPass(now);
+            if (skipped >= 0) {
+                log.warn("가입 인증 메일 서버 전체 상한 도달: limit={} window={} suppressed_since_last={}",
+                        props.globalSendLimit(), props.sendLimitWindow(), skipped);
+            }
             throw rateLimited("지금은 인증 메일 요청이 많습니다. 잠시 뒤에 다시 시도하세요");
         }
     }
