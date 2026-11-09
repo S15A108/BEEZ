@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.beez.backend.support.AccessFixtures;
 import com.beez.backend.support.IntegrationTestSupport;
+import com.beez.backend.support.RecordingMailGateway;
 import java.net.http.HttpResponse;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -32,10 +33,20 @@ class AuthGuardIntegrationTest extends IntegrationTestSupport {
     @Autowired
     JdbcTemplate db;
 
-    /** 문서용 대역(203.0.113.0/24)에서 시험마다 다른 주소. 같은 컨텍스트의 다른 시험과 카운터가 섞이지 않게 한다 */
-    private static String randomIp() {
+    @Autowired
+    RecordingMailGateway mail;
+
+    /**
+     * 실제 클라이언트 주소가 band(내부망이 아닌 대역) 안의 임의 값인 X-Forwarded-For. 앞의 203.0.113.x 는 클라이언트가 지어낸 값이고
+     * 맨 오른쪽이 Nginx 가 붙인 실제 주소다. 시험·용도마다 대역을 달리 줘서 같은 컨텍스트 안에서 주소가 겹치지 않게 한다.
+     */
+    private static String forwardedFor(String band) {
         ThreadLocalRandom r = ThreadLocalRandom.current();
-        return "203.0.113." + r.nextInt(1, 255) + "," + "198.51.100." + r.nextInt(1, 255);
+        return "203.0.113." + r.nextInt(1, 255) + "," + band + r.nextInt(1, 255);
+    }
+
+    private static String clientIpOf(String forwardedFor) {
+        return forwardedFor.substring(forwardedFor.indexOf(',') + 1);
     }
 
     private HttpResponse<String> sendCode(String email, String forwardedFor) {
@@ -56,8 +67,8 @@ class AuthGuardIntegrationTest extends IntegrationTestSupport {
     void 가입한_이메일_409도_세고_두_API가_한도를_같이_쓰고_넘으면_429() {
         String registered = fixtures().emailOf(fixtures().account());
         // Nginx 는 클라이언트가 보낸 값 뒤에 실제 주소를 붙인다 — Tomcat 은 맨 오른쪽의 내부망 아닌 주소를 쓴다
-        String header = randomIp();
-        String clientIp = header.substring(header.indexOf(',') + 1);
+        String header = forwardedFor("198.51.100.");
+        String clientIp = clientIpOf(header);
         Instant now = Instant.now();
 
         HttpResponse<String> conflict = sendCode(registered, header);
@@ -78,8 +89,27 @@ class AuthGuardIntegrationTest extends IntegrationTestSupport {
         assertThat(limitedForgot.statusCode()).isEqualTo(429);
         assertThat(limitedForgot.body()).contains("\"code\":\"rate_limited\"");
 
-        assertThat(sendCode(AccessFixtures.uniqueEmail(), randomIp()).statusCode()).as("다른 IP 는 따로 센다")
-                .isEqualTo(201);
+        assertThat(sendCode(AccessFixtures.uniqueEmail(), forwardedFor("192.0.2.")).statusCode())
+                .as("다른 IP 는 따로 센다").isEqualTo(201);
+    }
+
+    /**
+     * 깨지면: SMTP 가 끊긴 동안 다시 시도한 요청이 IP 한도를 써서, 메일이 돌아온 뒤에도 그 IP(같은 공유기 뒤 사용자 모두)가 한 시간 동안
+     * 가입 인증을 못 받는다. 명세 ACC-A11 503 "이 요청은 남지 않아 바로 다시 받을 수 있다".
+     */
+    @Test
+    void 메일_발송_실패_503은_IP_한도를_쓰지_않는다() {
+        String header = forwardedFor("198.18.0.");
+        String clientIp = clientIpOf(header);
+        String email = AccessFixtures.uniqueEmail();
+        mail.failNextTo(email);
+
+        HttpResponse<String> failed = sendCode(email, header);
+        assertThat(failed.statusCode()).as(failed.body()).isEqualTo(503);
+        assertThat(limiter.used(clientIp, Instant.now())).isZero();
+
+        assertThat(sendCode(email, header).statusCode()).isEqualTo(201);
+        assertThat(limiter.used(clientIp, Instant.now())).as("보낸 요청은 센다").isEqualTo(1);
     }
 
     private void insertVerification(String email, Instant createdAt, Instant codeExpiresAt, Instant tokenExpiresAt) {

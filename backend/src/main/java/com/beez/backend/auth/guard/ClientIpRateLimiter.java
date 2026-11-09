@@ -21,7 +21,9 @@ import org.springframework.stereotype.Component;
  *       한 시간에 몇 번이면 충분하다.</li>
  *   <li>컨트롤러가 서비스보다 먼저 부른다. 그래서 409 email_already_exists·이메일당 429·계정 없는 202 요청도 모두 센다 —
  *       가입 여부 조회와 bcrypt 계산을 IP 한도 안으로 묶으려는 것이다. 이 한도로 거부한 요청은 세지 않는다
- *       (같은 공유기 뒤 사용자가 한도가 풀린 뒤에도 계속 막히지 않게).</li>
+ *       (같은 공유기 뒤 사용자가 한도가 풀린 뒤에도 계속 막히지 않게). ACC-A11 메일 발송 실패(503)도 {@link #release}로
+ *       되돌린다 — 인증 행을 지우는 것과 같은 이유다. SMTP 가 받는 즉시 거부하는 주소는 그래서 IP 한도에 걸리지 않지만,
+ *       그 경로는 원래 이메일당·서버 전체 한도에도 세지 않던 경로라(-219) 이 PR 이 새로 연 구멍은 아니다.</li>
  *   <li>IP 는 {@code getRemoteAddr()} 다. {@code server.forward-headers-strategy=native} 라 Nginx 가 넘긴 X-Forwarded-For 에서
  *       Tomcat 이 실제 클라이언트 주소를 골라 넣는다 (내부망 주소만 프록시로 믿는다).</li>
  *   <li>메모리에만 센다 — 재시작하면 처음부터 다시 세고, 인스턴스가 둘 이상이면 따로 센다 (Q04: 서버 1대라 허용).
@@ -41,11 +43,13 @@ public class ClientIpRateLimiter {
         this.props = props;
     }
 
-    /** 한도 안이면 이번 요청을 세고, 넘었으면 429 rate_limited. */
-    public void acquire(String clientIp) {
+    /**
+     * 한도 안이면 이번 요청을 세고 센 시각을 돌려준다({@link #release}에 넘긴다). 넘었으면 429 rate_limited.
+     */
+    public Instant acquire(String clientIp) {
         Instant now = Instant.now();
         if (tryAcquire(clientIp, now)) {
-            return;
+            return now;
         }
         long skipped = warnThrottle.tryPass(now);
         if (skipped >= 0) {
@@ -68,6 +72,17 @@ public class ClientIpRateLimiter {
             return q;
         });
         return acquired[0];
+    }
+
+    /**
+     * {@link #acquire}로 센 한 번을 되돌린다. 서버 사정(메일 발송 실패 503)으로 처리하지 못한 요청이 한도를 쓰지 않게 한다 —
+     * SMTP 가 끊긴 동안 다시 시도한 사용자(같은 공유기 뒤 사용자 포함)가 한 시간 동안 막히지 않게.
+     */
+    public void release(String clientIp, Instant acquiredAt) {
+        hits.computeIfPresent(clientIp, (ip, times) -> {
+            times.removeLastOccurrence(acquiredAt);
+            return times.isEmpty() ? null : times;
+        });
     }
 
     /** 창 안에서 이 IP 가 쓴 횟수. 시험용. */
