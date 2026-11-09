@@ -7,7 +7,8 @@ import { documentsApi } from '@/api/services/documents'
 import { planningApi } from '@/api/services/planning'
 import { authApi } from '@/api/services'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import type { DocumentVersion } from '@/api/contracts/common'
+import type { DocumentVersion, Source } from '@/api/contracts/common'
+import { SourceLinks } from '@/components/SourceLinks'
 import { DocumentsPanel } from './DocumentsPanel'
 
 vi.mock('@/api/services/documents', () => ({
@@ -79,6 +80,76 @@ it('근거에서 이동한 문서가 첫 목록에 없어도 해당 문서를 �
   expect(documentsApi.get).toHaveBeenCalledWith('10', '2', {
     version_no: undefined,
   })
+})
+
+// PR #218 리뷰: 비비·회의·기획 답의 근거는 문서 ID만이 아니라 인용한 버전으로 문서함을 연다.
+async function openFromSource(source: Source) {
+  const links = render(<SourceLinks sources={[source]} />)
+  await userEvent.click(screen.getByRole('button', { name: /문서 2 v/ }))
+  links.unmount()
+  return mount()
+}
+
+it('근거의 초안을 누르면 승인본이 아니라 그 초안 버전을 연다', async () => {
+  const approved = { ...version, status: 'APPROVED' as const }
+  const draft = { ...version, id: '22', version_no: 2, content: '초안 본문' }
+  vi.mocked(documentsApi.get).mockImplementation(
+    async (_project, _document, options) => ({
+      document: { ...focusedDocument, approved_version: approved },
+      version: options?.version_no === 2 ? draft : approved,
+    }),
+  )
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [draft, approved],
+    has_more: false,
+  })
+  await openFromSource({
+    document_id: '2',
+    document_version_id: '22',
+    version_no: 2,
+    location: '기획안',
+  })
+  expect(await screen.findByText('초안 본문')).toBeInTheDocument()
+  expect(documentsApi.get).toHaveBeenCalledWith('10', '2', { version_no: 2 })
+  expect(documentsApi.get).not.toHaveBeenCalledWith('10', '2', {
+    version_no: undefined,
+  })
+})
+
+it('승인본 없이 초안만 있는 문서도 근거에서 그 초안으로 연다', async () => {
+  // 버전을 지정하지 않으면 서버는 승인본을 찾다가 404를 준다.
+  vi.mocked(documentsApi.get).mockImplementation(
+    async (_project, _document, options) => {
+      if (options?.version_no !== 1)
+        throw new Error('approved_version_not_found')
+      return { document: focusedDocument, version }
+    },
+  )
+  await openFromSource({
+    document_id: '2',
+    document_version_id: '21',
+    version_no: 1,
+    location: '같은 제목',
+  })
+  expect(await screen.findByText('선택한 문서의 본문')).toBeInTheDocument()
+  expect(screen.getByText(/승인 전/)).toBeInTheDocument()
+})
+
+it('승인본 근거는 지금처럼 그 승인본으로 연다', async () => {
+  const approved = { ...version, status: 'APPROVED' as const }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: { ...focusedDocument, approved_version: approved },
+    version: approved,
+  })
+  await openFromSource({
+    document_id: '2',
+    document_version_id: '21',
+    version_no: 1,
+    location: '같은 제목',
+  })
+  expect(await screen.findByText('선택한 문서의 본문')).toBeInTheDocument()
+  expect(screen.getByText(/현재 기준 v1/)).toBeInTheDocument()
+  expect(screen.queryByText(/를 보고 있어요/)).not.toBeInTheDocument()
 })
 
 // 수정안(PNL-02-m): 문서 상세는 보기 전용. '수정 초안 작성' 대신 새 .md를 올려 비비 검토·팀장 승인을 다시 거친다.
