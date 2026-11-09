@@ -476,6 +476,40 @@ test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 �
   expect(button.x + button.width).toBeLessThanOrEqual(dialog.x + dialog.width)
 })
 
+// S15P31A108-338: 도움말은 새 탭으로 열어 사무실과 설정 창(한 번만 보이는 토큰)을 그대로 둔다.
+test('설정 › 에이전트의 도움말 링크로 연결 단계와 오류 대처를 새 탭에서 본다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '설정', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: '설정 메뉴' })
+    .getByRole('button', { name: /에이전트/ })
+    .click()
+  const [help] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.getByRole('link', { name: '연결 도움말' }).click(),
+  ])
+  await expect(help).toHaveURL(/\/help\/agent-connection#check$/)
+  for (const step of [
+    '1. 토큰 발급 (웹)',
+    '2. Claude Code에 BEEZ 추가 (터미널)',
+    '3. CLAUDE.md에 작업 절차 붙여넣기',
+    '4. Claude Code 켜고 연결 확인',
+    '5. 연결 해제',
+  ])
+    await expect(help.getByRole('heading', { name: step })).toBeVisible()
+  const errors = help.getByRole('region', { name: '문제 해결' })
+  for (const code of [
+    'unauthenticated',
+    'token_revoked',
+    'agent_session_replaced',
+    'not_found',
+  ])
+    await expect(errors.getByText(code, { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog')).toBeVisible()
+})
+
 // 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인 → 팀장에게 올리기.
 test('문서 수정 제안을 세 단계로 등록하고 마지막에 팀장에게 올린다', async ({
   page,

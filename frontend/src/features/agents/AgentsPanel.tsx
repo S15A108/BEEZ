@@ -79,6 +79,21 @@ function CodeLine({
   )
 }
 
+// 연결 도움말(AGT-04)은 새 탭으로 연다. 같은 탭이면 사무실과 설정 창이 닫혀 한 번만 보이는 토큰을 잃는다(D43).
+function HelpLink({ section, label }: { section: string; label: string }) {
+  return (
+    <a
+      href={`/help/agent-connection#${section}`}
+      target="_blank"
+      rel="noreferrer"
+      className="shrink-0 text-[12.5px] font-semibold whitespace-nowrap underline underline-offset-3"
+    >
+      {label}
+      <span aria-hidden="true"> ↗</span>
+    </a>
+  )
+}
+
 const tokenSchema = z.object({
   label: z.string().trim().max(40, '40자 이하로 입력해 주세요.'),
 })
@@ -261,6 +276,13 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                             ? '상태를 다시 확인해 주세요.'
                             : '아래 단계를 마친 뒤 연결 확인을 눌러 주세요.'}
                 </span>
+                {!statusFailed &&
+                  (state === 'failed' || state === 'recheck') && (
+                    <HelpLink
+                      section={state === 'failed' ? 'troubleshooting' : 'check'}
+                      label="연결 도움말"
+                    />
+                  )}
                 {(statusReady || statusFailed) && (
                   <button
                     type="button"
@@ -287,6 +309,11 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   </button>
                 )}
               </div>
+              <p className="-mt-3 text-xs text-muted-foreground">
+                같은 계정의 연결은 프로젝트마다 하나만 살아 있어요. 다른 PC나
+                터미널에서 새로 연결하면 나중 연결이 이기고 먼저 붙어 있던
+                연결은 끊겨요.
+              </p>
               <ol className="grid gap-4">
                 <Step
                   number={1}
@@ -344,6 +371,11 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                     label="MCP 주소 복사"
                     disabled={!mcpUrl}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    명령은 등록만 하고 끝나요. 대화 창이 뜨지 않는 게
+                    정상이에요.{' '}
+                    <HelpLink section="add" label="자세한 연결 방법" />
+                  </p>
                   {mcpUrl && !fresh && (
                     <p className="text-xs text-muted-foreground">
                       &lt;에이전트 토큰&gt; 자리에 발급할 때 받은 토큰을 넣어요.
