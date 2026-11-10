@@ -175,6 +175,27 @@ test('사무실 화면은 실제 상태가 바뀔 때만 다시 그리고, 누�
     assert.deepStrictEqual(tv.hit().target, { type: 'pane', id: 'relations' })
     assert.match(tv.hit().detail, /아직 기준 설계가 없어요/)
     tv.dispose()
+    const monitor = new OfficeWorkSurface('monitor', 1, 0.7, 'desk/3/4')
+    monitor.update(undefined, {
+      owner: '박팀원',
+      agent: '박팀원의 에이전트',
+      status: '작업 중',
+      screen: 'working',
+      tone: 'working',
+      title: '로그인',
+      taskLabel: 'TASK-003 · 진행 중',
+      action: '테스트 실행',
+      files: ['src/login.tsx'],
+      detail: '',
+      at: null,
+      target: { type: 'task', id: 'TASK-003' },
+    })
+    assert.match(monitor.hit().title, /박팀원의 에이전트 · 작업 중/)
+    assert.deepStrictEqual(monitor.hit().target, {
+      type: 'task',
+      id: 'TASK-003',
+    })
+    monitor.dispose()
   } finally {
     if (previous) Object.defineProperty(globalThis, 'document', previous)
     else Reflect.deleteProperty(globalThis, 'document')

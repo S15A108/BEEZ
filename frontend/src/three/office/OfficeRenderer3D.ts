@@ -199,7 +199,8 @@ function kitPalette(material: THREE.MeshStandardMaterial) {
     material.depthWrite = false
   }
 }
-// 화면 가운데 높이·폭·높이·기울기(m). 모니터·TV는 Kit 모델 단위에 배율을 곱하고(캔버스 SCREEN), 노트북은 크기로 어림한다.
+// 화면 가운데 높이·폭·높이·기울기(m). Kit 모델의 화면 면(재질 metal) 꼭짓점을 잰 값에 배율을 곱한다. 모니터·노트북 화면은
+// 위가 뒤로 누워 있어, 세워 두면 아래쪽이 화면 면 뒤로 숨는다(S15P31A108-375에서 어두운 코딩 화면으로 바꾸며 드러남).
 type KitSpec = NonNullable<Furniture['kit']>
 const KIT_SCREEN: Record<
   string,
@@ -207,13 +208,17 @@ const KIT_SCREEN: Record<
 > = {
   computerScreen: (kit) => {
     const s = kit.s?.[0] ?? 1
-    return [kit.y + 0.177 * s, 0.36 * s, 0.2 * s, 0]
+    return [kit.y + 0.1715 * s, 0.379 * s, 0.233 * s, -0.138]
   },
   televisionModern: (kit) => {
     const s = kit.s?.[0] ?? 1
-    return [kit.y + 0.265 * s, 0.635 * s, 0.355 * s, 0]
+    return [kit.y + 0.262 * s, 0.668 * s, 0.368 * s, 0]
   },
-  laptop: (kit) => [kit.y + kit.h * 0.62, kit.w * 0.72, kit.h * 0.6, -0.3],
+  // 노트북 모델은 안에서 0.44배라 폭(kit.w = 모델 0.6)으로 배율을 구한다.
+  laptop: (kit) => {
+    const s = kit.w / 0.6
+    return [kit.y + 0.199 * s, 0.52 * s, 0.289 * s, -0.42]
+  },
 }
 // 캔버스 uiMake와 같은 칸반 그림(종이 메모). 메모 벽·관계 TV·대시보드는 실제 상태를 그리는 OfficeWorkSurface다(D47).
 function drawKanban(g: CanvasRenderingContext2D, w: number, h: number) {
@@ -802,7 +807,7 @@ export class OfficeRenderer3D {
     height: number,
     binding?: string,
   ) {
-    const surface = new OfficeWorkSurface(kind, width, height)
+    const surface = new OfficeWorkSurface(kind, width, height, binding)
     surface.mesh.position.set(x, y, z)
     parent.add(surface.mesh)
     this.workSurfaces.push({ surface, binding })

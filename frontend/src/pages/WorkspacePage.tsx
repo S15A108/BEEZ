@@ -177,6 +177,7 @@ function Workspace({ projectId }: { projectId: string }) {
     () =>
       (query.data?.tasks.items ?? []).map((task) => ({
         id: task.id,
+        key: task.key,
         title: task.current_plan_revision.plan.title,
         state: task.status,
         // 담당자 없는(미배정) 작업은 사무실에서 누구의 자리에도 두지 않는다.

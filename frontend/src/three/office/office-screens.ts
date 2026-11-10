@@ -1,6 +1,7 @@
 import { statusLabel } from '@/lib/display'
+import type { WorkMonitor } from './office-work'
 
-// 사무실 화면 소품(메모 벽·관계 TV·대시보드)에 그릴 값(D47). REST 응답 모양에 기대지 않게 필요한 필드만 받는다.
+// 사무실 화면 소품(메모 벽·관계 TV·대시보드·책상 모니터)에 그릴 값(D47). REST 응답 모양에 기대지 않게 필요한 필드만 받는다.
 
 export interface WallNote {
   id: string
@@ -167,4 +168,184 @@ export function progressRows(
     )
   }
   return rows
+}
+
+export type CodingApp =
+  'claude' | 'vscode' | 'intellij' | 'terminal' | 'browser'
+const CODING_APPS: readonly CodingApp[] = [
+  'claude',
+  'vscode',
+  'intellij',
+  'terminal',
+  'browser',
+]
+/** 창 제목줄에 쓰는 앱 이름. 로고·아이콘 그림은 그리지 않고 글자와 배치만 쓴다. */
+export const CODING_APP_NAMES: Record<CodingApp, string> = {
+  claude: 'Claude Code',
+  vscode: 'Visual Studio Code',
+  intellij: 'IntelliJ IDEA',
+  terminal: 'bash',
+  browser: 'BEEZ',
+}
+
+const fnv = (value: string) => {
+  let hash = 2166136261
+  for (const char of value)
+    hash = Math.imul(hash ^ char.charCodeAt(0), 16777619)
+  return hash >>> 0
+}
+/**
+ * 책상(모니터 묶음 키)마다 늘 같은 앱. 문자열 해시(FNV-1a)를 앱 수로 나눈 나머지다. 키 앞의 '42/'는 다섯 외관(D39)
+ * 사무실마다 다섯 앱이 모두 나오게 고른 값이다. 배치를 바꾸면 office-screens.test.ts가 알려 준다.
+ */
+export const codingAppOf = (binding: string): CodingApp =>
+  CODING_APPS[fnv(`42/${binding}`) % CODING_APPS.length]
+
+const LANGS: Record<string, string> = {
+  ts: 'TypeScript',
+  tsx: 'TypeScript JSX',
+  js: 'JavaScript',
+  jsx: 'JavaScript JSX',
+  java: 'Java',
+  kt: 'Kotlin',
+  py: 'Python',
+  md: 'Markdown',
+  json: 'JSON',
+  css: 'CSS',
+  sql: 'SQL',
+}
+
+export interface CodingScreen {
+  app: CodingApp
+  mode: 'working' | 'idle' | 'locked'
+  /** 상태 줄의 이름(에이전트, 팀원 자리가 아니면 주인)과 상태 */
+  who: string
+  state: string
+  /** 창 제목·첫 주석 줄: 작업 번호·상태·제목 */
+  title: string
+  /** 작업 번호(없으면 빈 문자열), 번호·상태 줄, 작업 제목 */
+  taskKey: string
+  label: string
+  task: string
+  /** 보고된 파일 */
+  files: string[]
+  /** 탭·파일 트리: 보고된 파일, 없으면 작업이 없거나 쉬는 화면만 자리 표시 파일(README.md) */
+  tree: string[]
+  /** 최근 실행 기록과 시각(한국시간 'HH:MM', 없으면 빈 문자열) */
+  activity: string
+  at: string
+  /** 경로의 마지막 폴더(~/beez/<area>), 첫 파일의 언어 */
+  area: string
+  lang: string
+  /** 할 일 줄: 계획 등록 → 작업 시작 → 완료 보고 중 지난 단계 */
+  steps: [string, boolean][]
+  project: string
+}
+
+export function codingScreen(
+  monitor: WorkMonitor,
+  binding: string,
+  project: string,
+): CodingScreen {
+  const mode = monitor.screen ?? 'idle'
+  const hasTask = monitor.target.type === 'task'
+  const at =
+    monitor.at && !Number.isNaN(Date.parse(monitor.at))
+      ? new Date(monitor.at).toLocaleTimeString('ko-KR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZone: 'Asia/Seoul',
+        })
+      : ''
+  const files = monitor.files
+  const tree = files.length
+    ? files
+    : mode !== 'working' || !hasTask
+      ? ['README.md']
+      : []
+  const first = tree[0] ?? ''
+  const started =
+    hasTask && ['working', 'review', 'done'].includes(monitor.tone)
+  return {
+    app: codingAppOf(binding),
+    mode,
+    who: monitor.agent ?? monitor.owner,
+    state: monitor.status,
+    title: hasTask ? `${monitor.taskLabel} · ${monitor.title}` : monitor.title,
+    taskKey:
+      monitor.target.type === 'task'
+        ? (monitor.taskKey ?? monitor.target.id)
+        : '',
+    label: hasTask ? monitor.taskLabel : '',
+    task: monitor.title,
+    files,
+    tree,
+    activity: monitor.action,
+    at,
+    area: first.includes('/') ? first.split('/')[0] : 'frontend',
+    lang: LANGS[first.split('.').pop() ?? ''] ?? '텍스트',
+    steps: [
+      ['계획 등록', hasTask],
+      ['작업 시작', started],
+      ['완료 보고', hasTask && monitor.tone === 'done'],
+    ],
+    project,
+  }
+}
+
+export type CodingTone =
+  | 'prompt'
+  | 'tool'
+  | 'muted'
+  | 'add'
+  | 'del'
+  | 'todo'
+  | 'accent'
+  | 'command'
+  | 'log'
+  | 'changed'
+/** 글자 위주 화면(Claude Code·터미널)의 본문 줄. 작업·파일·실행 기록은 실제 값이고 diff 두 줄만 장식이다. */
+export function codingLines(
+  screen: CodingScreen,
+): { text: string; tone: CodingTone }[] {
+  const lines: { text: string; tone: CodingTone }[] = []
+  const add = (text: string, tone: CodingTone) => lines.push({ text, tone })
+  const working = screen.mode === 'working'
+  const todo = screen.steps
+    .map(([step, done]) => `${done ? '☒' : '☐'} ${step}`)
+    .join('  ')
+  if (screen.app === 'claude') {
+    add(`> ${screen.title}`, 'prompt')
+    if (!working) {
+      add('  ⎿ 작업을 기다리고 있어요', 'muted')
+      add(todo, 'todo')
+      return lines
+    }
+    const [read, update = read] = screen.files
+    if (read) add(`⏺ Read(${read})`, 'tool')
+    add(`  ⎿ ${screen.activity}`, 'muted')
+    if (update) {
+      add(`⏺ Update(${update})`, 'tool')
+      add('+   const saved = await save(draft)', 'add')
+      add('-   const saved = save(draft)', 'del')
+    }
+    add(todo, 'todo')
+    add(`✻ ${screen.state}…`, 'accent')
+  } else if (screen.app === 'terminal') {
+    if (screen.taskKey) {
+      add('git log --oneline -1', 'command')
+      const hash = fnv(screen.taskKey).toString(16).padStart(8, '0')
+      add(`${hash.slice(0, 7)} ${screen.taskKey} ${screen.task}`, 'log')
+    }
+    if (!working) {
+      add(`# ${screen.state} · 작업을 기다리고 있어요`, 'muted')
+      return lines
+    }
+    add('git status --short', 'command')
+    for (const file of screen.files) add(` M ${file}`, 'changed')
+    add(`# 최근 실행: ${screen.activity}`, 'muted')
+    add(`[██████████░░░░░░] ${screen.state}`, 'accent')
+  }
+  return lines
 }

@@ -9,8 +9,13 @@ import {
   type WorkMonitor,
 } from './office-work'
 import {
+  CODING_APP_NAMES,
+  codingAppOf,
+  codingLines,
+  codingScreen,
   designBoard,
   proposalWall,
+  type CodingScreen,
   type DesignBoard,
   type OfficeScreens,
   type ProgressRow,
@@ -18,6 +23,7 @@ import {
 } from './office-screens'
 
 const FONT = '"Malgun Gothic", "Apple SD Gothic Neo", sans-serif'
+const MONO = '"Cascadia Mono", Consolas, "D2Coding", "Malgun Gothic", monospace'
 type HitRegion = {
   x: number
   y: number
@@ -36,6 +42,7 @@ const emptyMonitor: WorkMonitor = {
   detail: '',
   at: null,
   target: { type: 'zone', id: 'dev' },
+  screen: 'locked',
 }
 export type OfficeSurfaceKind =
   | 'monitor'
@@ -62,6 +69,7 @@ const SIZE: Record<OfficeSurfaceKind, [number, number]> = {
 }
 // 사무실 색(D47): 종이 보드·카드, 따뜻한 어두운 화면, 크림 글자, BEEZ 노랑, 작업 칸 색(WORK_COLORS)
 const PAPER = '#f8f3df',
+  CARD = '#fcfbf7',
   SCREEN = '#2c2a24',
   SCREEN_2 = '#3b3830',
   CREAM = '#f5f3ec',
@@ -86,7 +94,108 @@ const WALL_STATUSES = [
   'PUBLISHED',
   'REJECTED',
 ]
+// 코딩 화면의 장식 코드(작업 내용이 아니다). 0 키워드, 1 이름, 2 함수, 3 문자열, 4 타입·인자, 5 제어·주석어
+const CODE: [string, number][][] = [
+  [
+    ['import', 5],
+    [' { ', 1],
+    ['useQuery', 2],
+    [' } ', 1],
+    ['from', 5],
+    [" '@tanstack/react-query'", 3],
+  ],
+  [],
+  [
+    ['export ', 5],
+    ['function', 0],
+    [' useRows', 2],
+    ['(', 1],
+    ['id', 4],
+    [': ', 1],
+    ['string', 4],
+    [') {', 1],
+  ],
+  [
+    ['  const', 0],
+    [' rows = ', 1],
+    ['parse', 2],
+    ['(input)', 1],
+  ],
+  [
+    ['  if', 5],
+    [' (!rows.length) ', 1],
+    ['return', 5],
+    [' []', 1],
+  ],
+  [
+    ['  return', 5],
+    [' rows.', 1],
+    ['map', 2],
+    ['((', 1],
+    ['row', 4],
+    [') => ({ ...row, done: ', 1],
+    ['true', 0],
+    [' }))', 1],
+  ],
+  [['}', 1]],
+  [],
+  [
+    ['test', 2],
+    ["('saves the draft'", 3],
+    [', ', 1],
+    ['async', 0],
+    [' () => {', 1],
+  ],
+  [
+    ['  await', 5],
+    [' user.', 1],
+    ['click', 2],
+    ['(button)', 1],
+  ],
+  [
+    ['  expect', 2],
+    ['(saved).', 1],
+    ['toBe', 2],
+    ['(', 1],
+    ['true', 0],
+    [')', 1],
+  ],
+  [['})', 1]],
+]
+// 앱마다 실제 앱에 가까운 색(사용자 요청 "화려하고 다양하고 특징 잘 나타나게"). 순서는 CODE의 토큰 번호다.
+const VSCODE_CODE = [
+  '#569cd6',
+  '#9cdcfe',
+  '#dcdcaa',
+  '#ce9178',
+  '#4ec9b0',
+  '#c586c0',
+]
+const IDEA_CODE = [
+  '#cf8e6d',
+  '#bcbec4',
+  '#56a8f5',
+  '#6aab73',
+  '#c77dbb',
+  '#cf8e6d',
+]
+const fileTag = (file: string): [string, string] => {
+  const ext = file.split('.').pop() ?? ''
+  return ext === 'ts' || ext === 'tsx'
+    ? ['TS', '#4fc1ff']
+    : ext === 'js' || ext === 'jsx'
+      ? ['JS', '#cbcb41']
+      : ext === 'json'
+        ? ['{}', '#cbcb41']
+        : ext === 'md'
+          ? ['M↓', '#519aba']
+          : ['≡', '#c5c5c5']
+}
+const baseName = (file: string) => file.split('/').pop() || file
 const EMPTY_COUNTS = { todo: 0, working: 0, review: 0, done: 0 }
+/** 책상마다 다른 장식 코드 줄에서 시작한다. */
+const codeSeed = (binding: string) =>
+  [...binding].reduce((sum, char) => sum + char.charCodeAt(0), 0)
 
 /** One reusable texture per physical display; snapshots update pixels without rebuilding the room. */
 export class OfficeWorkSurface {
@@ -106,8 +215,16 @@ export class OfficeWorkSurface {
   }
 
   readonly kind: OfficeSurfaceKind
-  constructor(kind: OfficeSurfaceKind, width: number, height: number) {
+  /** 모니터가 놓인 책상(작업 자리 키). 책상마다 같은 코딩 앱을 고른다. */
+  private readonly binding: string
+  constructor(
+    kind: OfficeSurfaceKind,
+    width: number,
+    height: number,
+    binding = '',
+  ) {
     this.kind = kind
+    this.binding = binding
     ;[this.canvas.width, this.canvas.height] = SIZE[kind]
     this.ctx = this.canvas.getContext('2d')!
     this.texture = new THREE.CanvasTexture(this.canvas)
@@ -253,7 +370,17 @@ export class OfficeWorkSurface {
                       notes: work?.notes,
                       counts: work?.counts,
                     }
-                  : monitor,
+                  : this.kind === 'monitor'
+                    ? [
+                        monitor,
+                        work?.project,
+                        // 브라우저 화면만 작업 칸별 수와 프로젝트 주소를 그린다.
+                        codingAppOf(this.binding) === 'browser' && [
+                          work?.counts,
+                          work?.projectId,
+                        ],
+                      ]
+                    : monitor,
       ),
     )
     if (signature === this.signature) return
@@ -358,7 +485,7 @@ export class OfficeWorkSurface {
         this.text('팀의 작업과 실행 기록', 40, h - 28, w - 80, 25, '#8b9caa')
     } else {
       this.fallback = {
-        title: `${monitor.owner} · ${monitor.status}`,
+        title: `${monitor.agent ?? monitor.owner} · ${monitor.status}`,
         detail: [
           monitor.taskLabel,
           monitor.title,
@@ -382,64 +509,25 @@ export class OfficeWorkSurface {
         )
         this.lines(monitor.title, 28, 144, w - 56, 43, 3)
         this.text(monitor.owner, 28, h - 43, w - 56, 29, '#5d5950')
-      } else {
-        this.rect(0, 0, w, h, '#fcfbf7')
-        this.rect(0, 0, w, 90, '#2c2a24')
-        this.rect(26, 33, 20, 20, WORK_COLORS[monitor.tone], 10)
-        this.text(monitor.owner, 62, 59, w - 310, 31, '#b7b3a8', 700)
-        this.text(monitor.status, w - 240, 59, 216, 29, '#b7b3a8')
-        this.text(
-          monitor.taskLabel || '나의 작업',
-          32,
-          133,
-          w - 64,
-          25,
-          '#5d5950',
+      } else
+        this.drawCoding(
+          codingScreen(monitor, this.binding, work?.project ?? '우리 팀'),
+          work,
         )
-        this.lines(monitor.title, 32, 181, w - 64, 38, 2)
-        this.rect(22, 278, w - 44, 214, '#f5f3ec', 16)
-        this.text(
-          monitor.at ? '최근 실행 기록' : '실행 기록',
-          42,
-          317,
-          w - 84,
-          24,
-          '#5d5950',
-        )
-        this.text(monitor.action, 42, 363, w - 84, 32, '#3b3830', 700)
-        if (monitor.files.length)
-          monitor.files
-            .slice(0, 2)
-            .forEach((file, i) =>
-              this.text(file, 42, 408 + i * 37, w - 84, 28, '#3b3830'),
-            )
-        else
-          this.text(
-            monitor.detail || '대상 파일이 보고되면 여기에 표시돼요',
-            42,
-            416,
-            w - 84,
-            26,
-            '#5d5950',
-          )
-        const timestamp =
-          monitor.at && !Number.isNaN(Date.parse(monitor.at))
-            ? new Date(monitor.at).toLocaleTimeString('ko-KR', {
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            : ''
-        this.text(
-          timestamp ? `${timestamp} 기록 · 눌러서 자세히` : '눌러서 작업 보기',
-          32,
-          535,
-          w - 64,
-          23,
-          '#706c62',
-        )
-      }
     }
     this.texture.needsUpdate = true
+  }
+
+  private mono(
+    value: string,
+    x: number,
+    y: number,
+    size: number,
+    color: string,
+    width = this.canvas.width - x - 18,
+    weight = 500,
+  ) {
+    return this.text(value, x, y, width, size, color, weight, MONO)
   }
 
   // 변경 제안 메모 벽: 작업 보드와 같은 그림(종이, 상태 색 머리, 테이프 붙인 메모)으로 상태 칸마다 제안을 붙이고,
@@ -720,6 +808,414 @@ export class OfficeWorkSurface {
         .join(' · '),
       target: { type: 'pane', id: 'dashboard' },
     }
+  }
+
+  // 에이전트 책상 모니터: 책상마다 정한 코딩 앱 다섯 가지 중 하나(D47). 로고 그림 없이 배치와 글자로만 앱을 알아보게
+  // 하고, 작업 번호·제목·파일·상태·최근 실행·에이전트 이름은 실제 값을 그 앱의 제자리에 둔다. 연결 전이면 꺼진 화면이다.
+  private drawCoding(screen: CodingScreen, work?: OfficeWorkState) {
+    const w = this.canvas.width,
+      h = this.canvas.height
+    if (screen.mode === 'locked') {
+      this.rect(0, 0, w, h, '#0b0b0a')
+      this.centered(screen.who, w / 2, 262, w - 120, 28, '#3d3b36')
+      this.centered(screen.state, w / 2, 306, w - 120, 24, '#36342f', 600)
+    } else if (screen.app === 'claude') this.drawClaude(screen)
+    else if (screen.app === 'vscode') this.drawVscode(screen)
+    else if (screen.app === 'intellij') this.drawIdea(screen)
+    else if (screen.app === 'terminal') this.drawTerminal(screen)
+    else this.drawBrowser(screen, work)
+    // 모니터 테두리(베젤). 밝은 화면도 사무실 책상 위 모니터로 보이게 한다.
+    this.rect(0, 0, w, 10, '#0b0b0a')
+    this.rect(0, h - 10, w, 10, '#0b0b0a')
+    this.rect(0, 0, 10, h, '#0b0b0a')
+    this.rect(w - 10, 0, 10, h, '#0b0b0a')
+  }
+
+  private drawClaude(screen: CodingScreen) {
+    const w = this.canvas.width,
+      working = screen.mode === 'working'
+    this.rect(0, 0, w, this.canvas.height, '#1a1915')
+    this.rect(26, 24, w - 52, 66, '#d97757', 12)
+    this.rect(28, 26, w - 56, 62, '#1a1915', 10)
+    let x = 48 + this.mono('✻ ', 48, 66, 22, '#d97757')
+    x += this.mono(CODING_APP_NAMES.claude, x, 66, 22, '#f0eee6', 300, 700)
+    this.mono(` · ~/beez/${screen.area}`, x, 66, 20, '#9a958a')
+    let y = 134
+    for (const { text, tone } of codingLines(screen).slice(0, 8)) {
+      if (tone === 'add' || tone === 'del') {
+        this.rect(
+          30,
+          y - 24,
+          w - 60,
+          33,
+          tone === 'add' ? '#2e4a2b' : '#4a2b2b',
+        )
+        this.mono(text, 44, y, 19, tone === 'add' ? '#b6e3a8' : '#f0b0a8')
+      } else if (tone === 'tool') {
+        this.mono('⏺', 40, y, 19, working ? '#8fbf7f' : '#9a958a')
+        this.mono(text.slice(2), 66, y, 19, '#f0eee6')
+      } else if (tone === 'prompt') {
+        this.mono('>', 40, y, 20, '#9a958a')
+        this.mono(text.slice(2), 66, y, 20, '#f0eee6', undefined, 600)
+      } else
+        this.mono(
+          text,
+          40,
+          y,
+          19,
+          tone === 'accent'
+            ? '#d97757'
+            : tone === 'todo'
+              ? '#e0ddd2'
+              : '#9a958a',
+        )
+      y += 36
+    }
+    this.rect(26, 446, w - 52, 58, '#6b6862', 10)
+    this.rect(28, 448, w - 56, 54, '#1a1915', 9)
+    this.mono('>', 46, 484, 22, '#f0eee6')
+    this.rect(74, 462, 12, 28, working ? '#f0eee6' : '#6b6862')
+    this.mono(`${screen.who} · ${screen.state}`, 30, 532, 16, '#9a958a')
+  }
+
+  private drawVscode(screen: CodingScreen) {
+    const w = this.canvas.width,
+      h = this.canvas.height,
+      working = screen.mode === 'working'
+    const tabs = screen.tree.length ? screen.tree.slice(0, 3) : [screen.task]
+    this.rect(0, 0, w, h, '#1e1e1e')
+    this.rect(0, 0, w, 36, '#323233')
+    this.centered(
+      `${baseName(tabs[0])} — beez — ${CODING_APP_NAMES.vscode}`,
+      w / 2,
+      24,
+      w - 240,
+      15,
+      '#cccccc',
+      500,
+    )
+    this.text('—   ▢   ✕', w - 110, 24, 100, 15, '#cccccc')
+    this.rect(0, 36, 48, h - 64, '#333333')
+    ;['⧉', '⌕', '⑂', '▷', '⊞'].forEach((glyph, i) => {
+      if (!i) this.rect(0, 52, 3, 34, '#ffffff')
+      this.text(glyph, 13, 78 + i * 46, 30, 22, i ? '#858585' : '#ffffff')
+    })
+    this.rect(48, 36, 206, h - 64, '#252526')
+    this.text('탐색기', 64, 62, 180, 13, '#bbbbbb', 700)
+    this.text('⌄ BEEZ', 60, 90, 180, 14, '#cccccc', 700)
+    if (!screen.tree.length)
+      this.text('보고된 파일 없음', 72, 118, 170, 14, '#858585')
+    screen.tree.slice(0, 7).forEach((file, i) => {
+      const y = 118 + i * 28
+      if (!i) this.rect(48, y - 19, 206, 26, '#37373d')
+      const [tag, color] = fileTag(file)
+      this.text(tag, 72, y, 30, 12, color, 700)
+      this.text(baseName(file), 100, y, 146, 15, '#cccccc')
+    })
+    this.rect(254, 36, w - 254, 36, '#252526')
+    tabs.forEach((tab, i) => {
+      const x = 254 + i * 172
+      this.rect(x, 36, 170, 36, i ? '#2d2d2d' : '#1e1e1e')
+      if (!i) this.rect(x, 36, 170, 2, '#0078d4')
+      const [tag, color] = fileTag(tab)
+      this.text(tag, x + 12, 59, 26, 11, color, 700)
+      this.text(baseName(tab), x + 38, 59, 122, 14, i ? '#969696' : '#ffffff')
+    })
+    // 편집기: 첫 줄은 작업 번호·제목 주석, 나머지는 장식 코드. 쉬는 화면은 빈 편집기다.
+    const seed = codeSeed(this.binding)
+    if (working) this.rect(254, 81 + 4 * 24, w - 312, 24, '#2a2d2e')
+    for (let i = 0; i < (working ? 12 : 3); i++) {
+      const y = 98 + i * 24
+      this.text(String(i + 1), 266, y, 30, 14, '#858585', 500, MONO)
+      if (!i) this.mono(`// ${screen.title}`, 306, y, 15, '#6a9955', w - 380)
+      else if (working) {
+        let x = 306
+        for (const [token, tone] of CODE[(seed + i) % CODE.length])
+          x += this.mono(token, x, y, 15, VSCODE_CODE[tone], w - x - 64)
+      }
+    }
+    // 오른쪽 미니맵
+    for (let i = 0; i < (working ? 34 : 4); i++) {
+      const length = CODE[(seed + i) % CODE.length].reduce(
+        (sum, [token]) => sum + token.length,
+        0,
+      )
+      if (length)
+        this.rect(
+          w - 54,
+          80 + i * 7,
+          Math.min(40, length * 1.1),
+          3,
+          'rgba(160,160,160,0.35)',
+        )
+    }
+    this.rect(w - 58, 76, 48, 66, 'rgba(121,121,121,0.18)')
+    // 아래 터미널 칸: 최근 실행
+    this.rect(254, 386, w - 264, 1, '#3c3c3c')
+    this.text(
+      '문제    출력    디버그 콘솔    터미널',
+      268,
+      410,
+      w - 290,
+      13,
+      '#969696',
+    )
+    this.rect(445, 418, 44, 1, '#e7e7e7')
+    this.mono('›', 268, 450, 16, '#89d185')
+    if (working) this.mono(screen.activity, 290, 450, 15, '#cccccc', w - 310)
+    if (screen.at) this.mono(`${screen.at} 기록`, 268, 478, 13, '#8b8b8b')
+    // 상태 줄은 모니터 테두리(10px) 안쪽에 둔다.
+    this.rect(0, h - 38, w, 28, '#007acc')
+    const x =
+      14 +
+      this.text(
+        `⑂ ${screen.taskKey || 'main'}`,
+        14,
+        h - 19,
+        220,
+        14,
+        '#ffffff',
+        600,
+      )
+    this.text(
+      `${screen.who} · ${screen.state}`,
+      x + 24,
+      h - 19,
+      w - x - 160,
+      14,
+      '#ffffff',
+      600,
+    )
+    this.text(screen.lang, w - 130, h - 19, 120, 13, '#ffffff')
+  }
+
+  private drawIdea(screen: CodingScreen) {
+    const w = this.canvas.width,
+      h = this.canvas.height,
+      working = screen.mode === 'working'
+    const tabs = screen.tree.length ? screen.tree.slice(0, 3) : [screen.task]
+    this.rect(0, 0, w, h, '#1e1f22')
+    this.rect(0, 0, w, 44, '#2b2d30')
+    this.rect(16, 12, 22, 22, '#3574f0', 5)
+    this.text('b', 22, 29, 14, 14, '#ffffff', 700)
+    this.text('beez', 46, 29, 90, 15, '#dfe1e5', 700)
+    this.text(`⑂ ${screen.taskKey || 'main'} ▾`, 130, 29, 320, 15, '#dfe1e5')
+    this.text('▶', w - 128, 30, 24, 20, '#5fb865', 700)
+    this.text('⟳', w - 92, 30, 24, 19, '#ced0d6')
+    this.text('⋮', w - 54, 30, 24, 19, '#ced0d6')
+    this.rect(0, 44, 40, h - 70, '#2b2d30')
+    ;['▤', '⌕', '⑂', '◎'].forEach((glyph, i) => {
+      if (!i) this.rect(5, 58, 30, 28, '#3d3f43', 6)
+      this.text(glyph, 12, 78 + i * 40, 24, 16, '#ced0d6')
+    })
+    this.rect(40, 44, 210, h - 70, '#2b2d30')
+    this.rect(250, 44, 1, h - 70, '#1e1f22')
+    this.text('프로젝트 ⌄', 52, 70, 190, 14, '#dfe1e5', 700)
+    this.text('⌄  beez', 52, 98, 190, 14, '#dfe1e5')
+    if (!screen.tree.length)
+      this.text('보고된 파일 없음', 70, 124, 170, 14, '#8c8f94')
+    screen.tree.slice(0, 7).forEach((file, i) => {
+      const y = 124 + i * 26,
+        code = !file.endsWith('.md')
+      this.rect(70, y - 14, 18, 18, code ? '#3574f0' : '#8c8c8c', 9)
+      this.text(code ? 'c' : 'M', 75, y, 12, 12, '#ffffff', 700)
+      this.text(baseName(file), 96, y, 148, 14, '#dfe1e5')
+    })
+    this.rect(251, 44, w - 251, 38, '#1e1f22')
+    this.rect(251, 81, w - 251, 1, '#393b40')
+    tabs.forEach((tab, i) => {
+      const x = 251 + i * 172
+      this.rect(x + 12, 56, 14, 14, '#3574f0', 7)
+      this.text(baseName(tab), x + 34, 68, 128, 14, i ? '#9da0a8' : '#dfe1e5')
+      if (!i) this.rect(x, 78, 170, 3, '#3574f0')
+    })
+    // 거터: 줄 번호, 시험 줄의 초록 실행 삼각형, 확인 줄의 빨간 중단점
+    const seed = codeSeed(this.binding)
+    for (let i = 0; i < (working ? 12 : 3); i++) {
+      const y = 106 + i * 24
+      this.text(String(i + 1), 262, y, 26, 14, '#4b5059', 500, MONO)
+      if (!i) {
+        this.mono(`// ${screen.title}`, 312, y, 15, '#7a7e85', w - 330)
+        continue
+      }
+      if (!working) continue
+      const line = CODE[(seed + i) % CODE.length]
+      if (line[0]?.[0] === 'test')
+        this.text('▶', 290, y, 14, 12, '#5fb865', 700)
+      if (line[0]?.[0] === '  expect')
+        this.rect(291, y - 12, 12, 12, '#db5c5c', 6)
+      let x = 312
+      for (const [token, tone] of line)
+        x += this.mono(token, x, y, 15, IDEA_CODE[tone], w - x - 16)
+    }
+    this.rect(251, 386, w - 251, 110, '#2b2d30')
+    this.text(
+      `실행: ${screen.taskKey || 'beez'}`,
+      266,
+      410,
+      w - 290,
+      14,
+      '#dfe1e5',
+      600,
+    )
+    this.mono(
+      working ? `▶ ${screen.activity}` : '실행 대기 중',
+      266,
+      446,
+      15,
+      working ? '#5fb865' : '#8c8f94',
+      w - 290,
+    )
+    if (screen.at) this.mono(`${screen.at} 기록`, 266, 474, 13, '#8c8f94')
+    this.rect(0, h - 36, w, 26, '#2b2d30')
+    this.text(
+      `${screen.who} · ${screen.state}`,
+      14,
+      h - 18,
+      w - 300,
+      14,
+      '#9da0a8',
+    )
+    this.text(
+      `UTF-8 · LF · ${screen.lang}`,
+      w - 250,
+      h - 18,
+      240,
+      13,
+      '#9da0a8',
+    )
+  }
+
+  private drawTerminal(screen: CodingScreen) {
+    const w = this.canvas.width,
+      working = screen.mode === 'working'
+    this.rect(0, 0, w, this.canvas.height, '#0c0c0c')
+    this.rect(0, 0, w, 44, '#1f1f1f')
+    this.rect(12, 8, 300, 36, '#0c0c0c', 8)
+    this.text(
+      `${screen.who} — ${CODING_APP_NAMES.terminal}`,
+      28,
+      32,
+      250,
+      15,
+      '#cccccc',
+    )
+    this.text('✕', 288, 32, 20, 13, '#8a8a8a')
+    this.text('+   ⌄', 330, 32, 80, 16, '#cccccc')
+    let y = 82
+    const prompt = () => {
+      let x = 22 + this.mono('agent@beez', 22, y, 17, '#16c60c', 200, 700)
+      x += this.mono(':', x, y, 17, '#cccccc')
+      x += this.mono(`~/${screen.area}`, x, y, 17, '#3b78ff', 240, 700)
+      return x + this.mono('$ ', x, y, 17, '#cccccc')
+    }
+    for (const { text, tone } of codingLines(screen).slice(0, 13)) {
+      if (tone === 'command') this.mono(text, prompt(), y, 17, '#cccccc')
+      else if (tone === 'log') {
+        const x = 22 + this.mono(text.slice(0, 7), 22, y, 17, '#f9f1a5')
+        this.mono(text.slice(7), x, y, 17, '#cccccc')
+      } else if (tone === 'changed') {
+        const x = 22 + this.mono(' M', 22, y, 17, '#e74856')
+        this.mono(text.slice(2), x, y, 17, '#cccccc')
+      } else
+        this.mono(text, 22, y, 17, tone === 'accent' ? '#16c60c' : '#767676')
+      y += 30
+    }
+    this.rect(prompt(), y - 17, 11, 21, working ? '#cccccc' : '#5a5a5a')
+  }
+
+  private drawBrowser(screen: CodingScreen, work?: OfficeWorkState) {
+    const w = this.canvas.width,
+      h = this.canvas.height,
+      working = screen.mode === 'working'
+    this.rect(0, 0, w, h, '#ffffff')
+    this.rect(0, 0, w, 48, '#dee1e6')
+    this.rect(14, 10, 300, 38, '#ffffff', 10)
+    this.rect(14, 34, 300, 14, '#ffffff')
+    this.text(
+      `${CODING_APP_NAMES.browser} · 작업 현황`,
+      32,
+      35,
+      240,
+      15,
+      '#3c4043',
+      600,
+    )
+    this.text('✕', 290, 35, 20, 13, '#5f6368')
+    this.text('+', 332, 36, 20, 20, '#5f6368')
+    this.text('←   →   ⟳', 18, 80, 100, 18, '#5f6368')
+    this.rect(124, 58, w - 150, 32, '#f1f3f4', 16)
+    this.text(
+      `localhost:5173/projects/${work?.projectId ?? ''}`,
+      146,
+      80,
+      w - 200,
+      15,
+      '#202124',
+    )
+    this.rect(0, 97, w, 1, '#dadce0')
+    // 화면 본문: 사무실 작업 보드 타일(실제 칸별 수)과 이 에이전트의 작업
+    this.rect(0, 98, w, 330, PAPER)
+    this.text(screen.project, 28, 134, 480, 20, INK, 750)
+    this.rect(w - 300, 112, 272, 32, working ? YELLOW : WORK_COLORS.idle, 16)
+    this.centered(
+      `${screen.who} · ${screen.state}`,
+      w - 164,
+      134,
+      252,
+      14,
+      SCREEN_2,
+      600,
+    )
+    const counts = work?.counts ?? EMPTY_COUNTS
+    WORK_COLUMNS.forEach((column, i) => {
+      const x = 28 + i * 212
+      this.rect(x, 156, 196, 86, WORK_COLORS[column], 10)
+      this.text(WORK_COLUMN_LABELS[column], x + 14, 184, 170, 14, SCREEN_2, 600)
+      this.text(String(counts[column]), x + 14, 228, 170, 32, INK, 700)
+    })
+    this.rect(27, 259, w - 54, 154, '#e5dfc9', 13)
+    this.rect(28, 260, w - 56, 152, CARD, 12)
+    this.text(
+      screen.label || '배정된 작업 없음',
+      48,
+      292,
+      w - 96,
+      15,
+      INK_2,
+      600,
+    )
+    this.lines(screen.task, 48, 334, w - 96, 24, 2, INK)
+    this.text(screen.files.join(' · '), 48, 396, w - 96, 14, INK_2)
+    // 개발자 도구: 콘솔에 최근 실행
+    this.rect(0, 428, w, 1, '#cbcdd1')
+    this.text(
+      '요소      콘솔      네트워크      소스',
+      18,
+      454,
+      w - 40,
+      14,
+      '#5f6368',
+    )
+    this.rect(70, 462, 34, 2, '#1a73e8')
+    this.rect(0, 466, w, 1, '#f1f3f4')
+    this.mono(
+      `› ${working ? screen.activity : '대기 중'}`,
+      20,
+      494,
+      15,
+      '#202124',
+      w - 140,
+    )
+    if (screen.at) this.mono(screen.at, w - 90, 494, 14, '#5f6368')
+    this.mono(
+      `› ${screen.who} · ${screen.state}`,
+      20,
+      524,
+      14,
+      '#5f6368',
+      w - 40,
+    )
   }
 
   hit(u = 0.5, v = 0.5): OfficeWorkHit {

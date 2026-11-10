@@ -50,12 +50,18 @@ export interface WorkMonitor {
   tone: WorkColumn | 'blocked' | 'idle'
   title: string
   taskLabel: string
+  /** 사람이 보는 작업 번호. 작업이 없으면 없다. */
+  taskKey?: string
   action: string
   files: string[]
   detail: string
   at: string | null
   target: Selection
   agentId?: string
+  /** 이 컴퓨터를 쓰는 에이전트. 팀원 자리만 있다(사무실 컴퓨터는 모두 에이전트 자리, D47). */
+  agent?: string
+  /** 코딩 화면: 작업 중이면 켜진 화면, 연결됐지만 쉬면 대기 화면, 연결 전이면 잠금 화면 */
+  screen?: 'working' | 'idle' | 'locked'
 }
 export interface OfficeWorkState {
   project: string
@@ -171,7 +177,7 @@ export function buildOfficeWork(
       owner:
         snap.agents.find((agent) => agent.id === task.assignee_id)?.name ??
         '담당자 미배정',
-      label: `${task.id} · ${task.state_label ?? TASK_LABELS[task.status]}`,
+      label: `${task.key ?? task.id} · ${task.state_label ?? TASK_LABELS[task.status]}`,
       column: columnOf(task.status),
       blocked:
         task.status === 'changes_requested' || task.status === 'unverifiable',
@@ -234,8 +240,9 @@ export function buildOfficeWork(
               ? columnOf(task.status)
               : 'idle',
       title: task?.title ?? (action || '배정된 작업 없음'),
+      taskKey: task ? (task.key ?? task.id) : undefined,
       taskLabel: task
-        ? `${task.id} · ${task.state_label ?? TASK_LABELS[task.status]}`
+        ? `${task.key ?? task.id} · ${task.state_label ?? TASK_LABELS[task.status]}`
         : work
           ? '도구 실행 기록'
           : '배정된 작업 없음',
@@ -250,6 +257,28 @@ export function buildOfficeWork(
       target: task
         ? { type: 'task', id: task.id }
         : { type: 'agent', id: agent.id },
+      screen:
+        off || agent.status === 'disconnected'
+          ? 'locked'
+          : working
+            ? 'working'
+            : 'idle',
+    }
+    // 사무실 컴퓨터는 모두 에이전트 자리다(사용자 2026-11-10 "사람자리는 없어, 컴퓨터는 다 에이전트만 해", D47). 자리는
+    // 주인(팀원) 기준 그대로이고, 모니터에는 그 팀원 에이전트의 상태와 주인의 작업이 뜬다. 사무실에 없는 에이전트는 연결 전이다.
+    if (agent.id.startsWith('member:')) {
+      const helper = snap.agents.find(
+        (item) => item.hired_by && `member:${item.hired_by}` === agent.id,
+      )
+      const style = officeAgentStyle(helper?.status ?? 'offline')
+      monitor.agent = helper?.name ?? `${agent.name}의 에이전트`
+      monitor.status = style.label
+      monitor.screen =
+        style.look === 'working'
+          ? 'working'
+          : style.look === 'offline'
+            ? 'locked'
+            : 'idle'
     }
     // External agents can report real tool work before a formal task has been assigned.
     if (
@@ -305,7 +334,12 @@ export function buildOfficeWork(
     // Shared consoles show the active colleague first and name every occupant.
     if (current) {
       const primary = working && current.tone !== 'working' ? monitor : current
-      monitors[key] = { ...primary, owner: `${current.owner} · ${agent.name}` }
+      monitors[key] = {
+        ...primary,
+        owner: `${current.owner} · ${agent.name}`,
+        ...(current.agent &&
+          monitor.agent && { agent: `${current.agent} · ${monitor.agent}` }),
+      }
     } else monitors[key] = monitor
   }
   const counts = Object.fromEntries(
