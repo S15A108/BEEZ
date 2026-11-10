@@ -731,8 +731,8 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `original_text` | `string` | PATCH Y | 변경할 유일한 원문 구간. COMMENT는 null |
 | `replacement_text` | `string` | PATCH Y | 빈 문자열은 삭제. COMMENT는 null |
 | `decision` | `PENDING\|APPLIED\|SKIPPED` | PATCH Y | PATCH만 작성자 선택 필요. COMMENT는 null이며 제출을 막지 않음 |
-| `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
-| `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
+| `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. severity와 함께 저장·반환한다. 기존 미분류 제안은 null |
+| `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. category와 함께 저장·반환한다. 기존 미분류 제안은 null |
 | `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
 | `applied_replacement_text` | `string` | N | 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영했을 때 실제로 쓴 문장. S15P31A108-231 |
 | `sources` | `DocumentReviewSource[]` | Y | 검증된 참고 승인본 근거. BODY 및 과거 제안은 []. 아래 검토 전용 구조 사용 |

@@ -45,6 +45,8 @@ def make_case(count):
             "step": "BODY",
             "explanation": "보완",
             "sources": [],
+            "category": "READABILITY",
+            "severity": "MINOR",
             "original_text": marker,
             "replacement_text": "",
         }

@@ -21,6 +21,7 @@ class FakeProvider:
         refs = [item['reference_id'] for item in payload['references']]
         def patch(original, replacement):
             return {'type': 'PATCH', 'step': 'BODY', 'explanation': '수정', 'sources': [],
+                    'category': 'READABILITY', 'severity': 'MINOR',
                     'original_text': original, 'replacement_text': replacement}
         if 'E2E_PATCH_DELETE' in payload['content']:
             suggestions = [patch(payload['content'], '')]
@@ -31,7 +32,8 @@ class FakeProvider:
         elif 'E2E_BOM_PREFIX' in payload['content']:
             suggestions = [patch('\ufeff# E2E_BOM_PREFIX', '# updated'), patch('other-token', 'done-token')]
         else:
-            suggestions = [{'type': 'COMMENT', 'step': 'BODY', 'explanation': '본문 검토 의견', 'sources': []}]
+            suggestions = [{'type': 'COMMENT', 'step': 'BODY', 'explanation': '본문 검토 의견', 'sources': [],
+                            'category': 'READABILITY', 'severity': 'MINOR'}]
         output = {'summary': '검토 완료', 'body_reviewed': True,
                   'reviewed_reference_ids': refs, 'suggestions': suggestions}
         return ProviderResponse(json.dumps(output, ensure_ascii=False), request.model, 11, 7)
