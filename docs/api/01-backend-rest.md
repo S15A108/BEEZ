@@ -6062,7 +6062,8 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
   "status": "EDITING",
   "content": "# 기획안\n문서 내용을 보완한다.",
   "file_name": "plan.md",
-  "submissions": []
+  "submissions": [],
+  "review_stale": false
 }
 ```
 
@@ -6088,6 +6089,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 - 같은 프로젝트의 활성 사람 팀원이 작성 내용·마지막 검토·제출 이력을 조회한다. 다른 프로젝트 문서는 404다.
 - 작성 건 상태와 문서 버전 상태는 별개다. 아직 제출하지 않은 내용은 승인본이나 baseline으로 취급하지 않는다.
+- `review_stale`은 `latest_review`를 지금 쓸 수 있는지 서버가 알려 준다. 다른 문서가 승인돼 참고 승인본이 바뀌면 검토를 받은 뒤 본문이 그대로여도 true가 되어, 409를 받기 전에 다시 검토가 필요하다는 것을 화면이 먼저 보일 수 있다. 판정은 제안 처리·제출·직접 요청·대화의 409 `review_stale`과 같은 규칙이다. 제출(SUBMITTED)·승인(APPROVED) 뒤에는 false다. (S15P31A108-362)
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
