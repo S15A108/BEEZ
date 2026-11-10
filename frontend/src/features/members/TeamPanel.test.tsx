@@ -836,34 +836,6 @@ it('혼자 쓰는 프로젝트의 팀장에게는 팀장을 넘길 팀원이 없
   ).not.toBeInTheDocument()
 })
 
-it('팀장도 프로젝트 관리 맨 아래에서 프로젝트 나가기로 나가기 창을 연다', async () => {
-  const user = userEvent.setup()
-  const onViewChange = vi.fn()
-  useWorkspaceStore.setState({ placements: {} })
-  render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <TeamPanel
-          projectId="101"
-          isLeader
-          view="project"
-          onViewChange={onViewChange}
-        />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
-  expect(
-    await screen.findByText(
-      '팀장을 넘기고 나가거나, 이름을 입력해 프로젝트를 삭제할 수 있어요.',
-    ),
-  ).toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: '프로젝트 삭제' }),
-  ).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
-  expect(onViewChange).toHaveBeenCalledWith('remove')
-})
-
 // S15P31A108-378(사용자 보고 11-10): 표시 역할·담당 도메인이 무엇을 쓰는 칸인지 몰랐다. 팀원 한 명을 고칠 때 여는 수정 화면의
 // 두 칸 아래에 작은 글로 알린다. 팀 목록 위에 두었던 설명은 사용자 요청(11-10)으로 빼고 목록은 간단하게 둔다.
 // 3D 이름표는 이름(에이전트는 이름 · 상태)만 보여 두 칸이 나오지 않는다(office-actors.ts). 보이는 곳만 적는다.

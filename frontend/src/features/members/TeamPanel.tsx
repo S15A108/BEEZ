@@ -73,12 +73,10 @@ export function TeamPanel({
   projectId,
   isLeader,
   view = 'team',
-  onViewChange,
 }: {
   projectId: string
   isLeader: boolean
   view?: TeamView
-  onViewChange?: (view: TeamView) => void
 }) {
   const session = useSession()
   const navigate = useNavigate()
@@ -497,7 +495,7 @@ export function TeamPanel({
             </AsyncState>
           </div>
         )}
-      {/* S15P31A108-376: 프로젝트 관리 한 페이지. 위는 이름·소개·건물(PRJ-A04, 팀장만), 아래는 사무실 시간대(이 브라우저), 맨 아래는 나가기. */}
+      {/* S15P31A108-376: 프로젝트 관리 한 페이지. 위는 이름·소개·건물(PRJ-A04, 팀장만), 아래는 사무실 시간대(이 브라우저). 나가기는 사이드바에 따로 둔다. */}
       {view === 'project' && (
         <AsyncState query={project}>
           {(data) => (
@@ -597,23 +595,6 @@ export function TeamPanel({
                 </div>
               )}
               <OfficeTimeSettings />
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 p-4">
-                <span className="text-sm">
-                  <strong className="block">프로젝트 나가기</strong>
-                  {/* S15P31A108-377: 팀장도 '프로젝트 나가기'로 들어가 위임하고 나가기와 삭제(PRJ-A05) 중 고른다(MEM-A10 처리 규칙). */}
-                  <span className="text-muted-foreground">
-                    {isLeader
-                      ? '팀장을 넘기고 나가거나, 이름을 입력해 프로젝트를 삭제할 수 있어요.'
-                      : '나가면 이 프로젝트의 문서와 작업을 더 볼 수 없어요.'}
-                  </span>
-                </span>
-                <Button
-                  variant="destructive"
-                  onClick={() => onViewChange?.('remove')}
-                >
-                  프로젝트 나가기
-                </Button>
-              </div>
             </div>
           )}
         </AsyncState>

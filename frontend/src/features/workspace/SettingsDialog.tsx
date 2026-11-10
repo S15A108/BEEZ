@@ -14,7 +14,8 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 
 type Section = TeamView | 'agent'
 
-// 오른쪽 위 톱니로 여는 설정 창. 메뉴는 회원 설정 → 팀 관리 → 내 에이전트 관리 → 프로젝트 관리 순서다(S15P31A108-376).
+// 오른쪽 위 톱니로 여는 설정 창. 사이드바는 회원 설정 → 팀 관리 → 내 에이전트 관리 → 프로젝트 관리 → 프로젝트 나가기 순서다
+// (S15P31A108-376, 사용자 요청 11-10). 프로젝트 나가기는 위험한 동작이라 맨 아래에 따로 둔다.
 export function SettingsDialog({
   projectId,
   isLeader,
@@ -46,9 +47,7 @@ export function SettingsDialog({
   // 받을 화면이 없어 토큰을 잃는다(PR #72 재전수 SECOND-AMP-02). 창 닫기도 처리 중에는 막는다.
   const busy = pending > 0
   const item = (value: Section, label: string, extra?: string) => {
-    // 나가기 창(remove)은 프로젝트 관리 아래에서 연다.
-    const current =
-      section === value || (value === 'project' && section === 'remove')
+    const current = section === value
     return (
       <button
         type="button"
@@ -58,6 +57,7 @@ export function SettingsDialog({
         className={cn(
           'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
           current && 'bg-muted font-semibold',
+          value === 'remove' && 'text-destructive',
         )}
       >
         {label}
@@ -112,6 +112,10 @@ export function SettingsDialog({
             )}
             {item('project', '프로젝트 관리')}
           </div>
+          {/* S15P31A108-377: 팀장도 '프로젝트 나가기'다. 안에서 위임하고 나가기와 프로젝트 삭제를 따로 고른다. */}
+          <div className="grid gap-0.5 border-t pt-3">
+            {item('remove', '프로젝트 나가기')}
+          </div>
         </nav>
         <PaneSheetHost className="min-w-0 overflow-y-auto px-8 py-7">
           {section === 'agent' ? (
@@ -122,7 +126,6 @@ export function SettingsDialog({
               projectId={projectId}
               isLeader={isLeader}
               view={section}
-              onViewChange={go}
             />
           )}
         </PaneSheetHost>

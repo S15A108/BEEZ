@@ -203,11 +203,13 @@ function renderSettings(focus: string, isLeader = true) {
   return screen.findByRole('navigation', { name: '설정 메뉴' })
 }
 
-// S15P31A108-376(사용자 요청 11-10): 메뉴는 회원 설정 → 팀 관리 → 내 에이전트 관리 → 프로젝트 관리 순서다.
-it('설정 메뉴는 회원 설정·팀 관리·내 에이전트 관리·프로젝트 관리 순서로 보인다', async () => {
+// S15P31A108-376(사용자 요청 11-10): 사이드바는 회원 설정 → 팀 관리 → 내 에이전트 관리 → 프로젝트 관리 → 프로젝트 나가기다.
+// 기대값 변경(사용자 요청 11-10): 처음에는 나가기를 프로젝트 관리 안에 넣었는데, 내 에이전트 관리와 프로젝트 나가기는
+// 사이드바에 따로 남긴다. 팀장도 메뉴 이름은 '프로젝트 나가기'다(S15P31A108-377).
+it('설정 사이드바는 회원 설정·팀 관리·내 에이전트 관리·프로젝트 관리·프로젝트 나가기 순서로 보인다', async () => {
   const menu = await renderSettings('team')
   expect(menu).toHaveTextContent(
-    /회원 설정.*팀 관리.*내 에이전트 관리.*프로젝트 관리/,
+    /회원 설정.*팀 관리.*내 에이전트 관리.*프로젝트 관리.*프로젝트 나가기$/,
   )
   expect(within(menu).getByRole('link', { name: /회원 설정/ })).toHaveAttribute(
     'href',
@@ -215,6 +217,24 @@ it('설정 메뉴는 회원 설정·팀 관리·내 에이전트 관리·프로�
   )
   for (const old of ['프로젝트 정보', '사무실 화면', '프로젝트 제거'])
     expect(within(menu).queryByText(old)).not.toBeInTheDocument()
+})
+
+// 예전 링크(?settings=...)와 앱 안 링크가 여는 메뉴. office는 프로젝트 관리 아래쪽 시간대로 합쳤다.
+it.each([
+  ['team', '팀 관리'],
+  ['agent', /내 에이전트 관리/],
+  ['project', '프로젝트 관리'],
+  ['office', '프로젝트 관리'],
+  ['remove', '프로젝트 나가기'],
+])('%s 링크는 사이드바의 %s 메뉴를 연다', async (focus, name) => {
+  const menu = await renderSettings(focus)
+  expect(within(menu).getByRole('button', { name })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  expect(within(menu).getAllByRole('button', { current: 'page' })).toHaveLength(
+    1,
+  )
 })
 
 // S15P31A108-376: 프로젝트 관리 한 페이지에 이름·소개·건물 위, 낮·노을·밤 아래. 예전 'office' 링크도 이 화면을 연다.
@@ -251,20 +271,28 @@ it('팀원은 프로젝트 관리에서 이름·소개를 보기만 하고 시�
   expect(screen.getByRole('radio', { name: /^밤/ })).toBeInTheDocument()
 })
 
-// 나가기 창(remove)은 프로젝트 관리 아래에 있어 메뉴에서 프로젝트 관리가 켜진다. 예전 링크(?settings=remove)도 그대로 열린다.
-it('나가기 링크로 열면 프로젝트 관리 메뉴가 켜지고 프로젝트 관리에서 나가기 창으로 갈 수 있다', async () => {
+// 사용자 요청(11-10): 프로젝트 관리에는 이름·소개·건물과 시간대만 두고, 나가기·삭제는 사이드바의 프로젝트 나가기에서 한다.
+it('팀장의 프로젝트 관리에는 나가기·삭제가 없고 사이드바의 프로젝트 나가기에서 위임하고 나가기와 삭제를 고른다', async () => {
   const user = userEvent.setup()
-  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
-  const menu = await renderSettings('remove', false)
+  const menu = await renderSettings('project')
+  expect(await screen.findByLabelText(/프로젝트 이름/)).toBeInTheDocument()
   expect(
-    within(menu).getByRole('button', { name: '프로젝트 관리' }),
-  ).toHaveAttribute('aria-current', 'page')
+    screen.getAllByRole('button', { name: '프로젝트 나가기' }),
+  ).toHaveLength(1)
+  expect(
+    screen.queryByRole('button', { name: '프로젝트 삭제' }),
+  ).not.toBeInTheDocument()
+  await user.click(
+    within(menu).getByRole('button', { name: '프로젝트 나가기' }),
+  )
+  expect(useWorkspaceStore.getState().focusId).toBe('remove')
   expect(
     await screen.findByRole('heading', { name: '프로젝트 나가기', level: 2 }),
   ).toBeInTheDocument()
-  await user.click(within(menu).getByRole('button', { name: '프로젝트 관리' }))
-  await user.click(
-    await screen.findByRole('button', { name: '프로젝트 나가기' }),
-  )
-  expect(useWorkspaceStore.getState().focusId).toBe('remove')
+  expect(
+    await screen.findByRole('region', { name: '위임하고 나가기' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '프로젝트 삭제' }),
+  ).toBeInTheDocument()
 })
