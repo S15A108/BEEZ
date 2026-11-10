@@ -365,6 +365,19 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    void ask_aiConfigOrContractError_isNotRetried_andStillEndsWithTemplate() {
+        long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
+        publish(project.projectId(), project.leaderAccountId(), 1, doc);
+        // AI 스위치 꺼짐(503)·토큰(401)·요청 형식(422)은 다시 불러도 같은 결과다 — 한 번만 부르고 템플릿으로 끝낸다
+        when(gateway.chat(anyMap())).thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "x", null, false));
+
+        JsonNode body = ok(ask(member, project.projectId(), QUESTION));
+
+        verify(gateway, times(1)).chat(anyMap());
+        assertThat(body.get("origin").asText()).isEqualTo("TEMPLATE");
+    }
+
+    @Test
     void ask_aiTimeout_is504WithoutRetry() {
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);

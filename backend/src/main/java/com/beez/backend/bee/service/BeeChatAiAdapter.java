@@ -40,15 +40,17 @@ public class BeeChatAiAdapter implements BeeChatGateway {
             throw new AiCallException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", TIMEOUT, AiErrorBodies.usageIn(e));
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
-            if (status == 503 || status == 401 || status == 422) {
-                // 서버 설정(BEE_CHAT_ENABLED·GMS_KEY·내부 토큰)이나 BE 요청 계약 문제다. 본문에 요청 내용이 있을 수 있어 상태만 남긴다.
+            // 서버 설정(BEE_CHAT_ENABLED·GMS_KEY·내부 토큰)이나 BE 요청 계약 문제는 다시 불러도 같은 결과라 재시도하지 않는다.
+            boolean configOrContract = status == 503 || status == 401 || status == 422;
+            if (configOrContract) {
+                // 본문에 요청 내용이 있을 수 있어 상태만 남긴다.
                 log.error("AI-A05 rejected the request: status={} (503 이면 AI 서버의 BEE_CHAT_ENABLED·GMS_KEY 를 확인)", status);
             } else if (!e.getStatusCode().is5xxServerError() && status != 404) {
                 log.error("AI-A05 rejected the request: status={}", status);
             } else {
                 log.warn("AI-A05 failed: status={}", status);
             }
-            throw new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", UNAVAILABLE, AiErrorBodies.usageIn(e));
+            throw new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", UNAVAILABLE, AiErrorBodies.usageIn(e), !configOrContract);
         } catch (ResourceAccessException e) {
             Throwable cause = e.getCause();
             // JDK 의 연결 시간 초과(HttpConnectTimeoutException)는 HttpTimeoutException 을 상속하므로 먼저 걸러 연결 실패로 본다

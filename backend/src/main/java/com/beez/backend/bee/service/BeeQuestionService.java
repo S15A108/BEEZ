@@ -172,7 +172,7 @@ public class BeeQuestionService {
                 label = e.getCode();
                 recordFailedUsage(projectId, taskId, key, e, elapsedMillis(started));
                 failure = e;
-                if (!"ai_unavailable".equals(e.getCode())) break;
+                if (!"ai_unavailable".equals(e.getCode()) || !e.retryable()) break;
             } catch (BeeAnswerValidator.Rejected e) {
                 // 응답은 왔지만 허용 집합과 어긋남 — 사용량은 이미 기록했다. 사유 코드만 남기고 내용은 남기지 않는다.
                 label = "rejected";
