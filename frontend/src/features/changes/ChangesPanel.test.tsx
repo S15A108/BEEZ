@@ -437,27 +437,88 @@ it('반려된 제안을 다시 내면 설계 항목 변경을 원래 그대로 �
   vi.restoreAllMocks()
 })
 
-// PR #72 mock/live 전수 대조 DOC-LIVE-5: 검토 요청은 대상 팀원이 있어야 한다(서버 400).
-it('검토 요청을 고르고 대상 팀원을 고르지 않으면 보내지 않고 알린다', async () => {
+// S15P31A108-314: 검토 요청은 받을 팀원을 한 명 이상 골라야 보낼 수 있다(서버 400). 보내기 버튼이 막히고 이유를 알린다.
+it('검토 요청에서 받을 팀원을 고르지 않으면 보낼 수 없고 알린다', async () => {
   const user = userEvent.setup()
   const comment = vi.spyOn(changesApi, 'comment')
   renderPanel()
   await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
   await user.click(screen.getByRole('tab', { name: /^의견/ }))
-  await user.selectOptions(
-    await screen.findByLabelText('남길 종류'),
-    'REVIEW_REQUEST',
-  )
-  await user.type(screen.getByLabelText(/^내용/), '이 문장도 봐 주세요.')
-  await user.click(screen.getByRole('button', { name: '남기기' }))
+  await user.click(await screen.findByRole('tab', { name: '검토 요청' }))
+  await user.type(screen.getByLabelText('내용'), '이 문장도 봐 주세요.')
   expect(
-    await screen.findByText('검토를 요청할 팀원을 골라 주세요.'),
+    screen.getByText('받을 팀원을 한 명 이상 골라 주세요.'),
   ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '보내기' })).toBeDisabled()
   expect(comment).not.toHaveBeenCalled()
   await expect(
     changesApi.comment('101', '71', {
       body: '봐 주세요',
       kind: 'REVIEW_REQUEST',
+    }),
+  ).rejects.toMatchObject({ response: { status: 400 } })
+})
+
+// S15P31A108-314: 두 사람에게 같이 검토를 요청하면 mentioned_member_ids 에 두 ID 가 가고, 의견 목록에 받는 사람이 보인다.
+it('두 사람에게 같이 검토를 요청하면 받는 사람이 의견 목록에 보인다', async () => {
+  const user = userEvent.setup()
+  const comment = vi.spyOn(changesApi, 'comment')
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(screen.getByRole('tab', { name: /^의견/ }))
+  await user.click(await screen.findByRole('tab', { name: '검토 요청' }))
+  await user.click(screen.getByRole('button', { name: '+ 받을 팀원' }))
+  await user.click(await screen.findByRole('checkbox', { name: '최팀원' }))
+  await user.click(screen.getByRole('checkbox', { name: '박팀원' }))
+  await user.keyboard('{Escape}')
+  await user.type(screen.getByLabelText('내용'), '두 분이 같이 봐 주세요.')
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '2명에게 검토를 요청했어요.',
+  )
+  expect(comment).toHaveBeenCalledTimes(1)
+  const sent = comment.mock.calls[0][2]
+  expect(sent.kind).toBe('REVIEW_REQUEST')
+  expect(sent.mentioned_member_ids).toHaveLength(2)
+  expect(await screen.findByText(/→ 최팀원, 박팀원/)).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+it('의견 탭에서는 받을 팀원 없이 보낸다', async () => {
+  const user = userEvent.setup()
+  const comment = vi.spyOn(changesApi, 'comment')
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(screen.getByRole('tab', { name: /^의견/ }))
+  expect(
+    screen.queryByRole('button', { name: '+ 받을 팀원' }),
+  ).not.toBeInTheDocument()
+  await user.type(await screen.findByLabelText('내용'), '방향이 좋아요.')
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  await screen.findByText('방향이 좋아요.')
+  expect(comment.mock.calls[0][2]).toEqual({
+    body: '방향이 좋아요.',
+    kind: 'COMMENT',
+  })
+  vi.restoreAllMocks()
+})
+
+// 서버는 이 프로젝트의 멤버가 아닌 ID 가 하나라도 있거나 20명을 넘으면 전체를 거절한다(CHG-A12). mock 도 같다.
+it('mock 서버는 20명을 넘거나 멤버가 아닌 ID 가 섞인 검토 요청을 거절한다', async () => {
+  renderPanel()
+  const { proposal } = await changesApi.get('101', '71')
+  await expect(
+    changesApi.comment('101', proposal.id, {
+      body: '봐 주세요',
+      kind: 'REVIEW_REQUEST',
+      mentioned_member_ids: ['9999'],
+    }),
+  ).rejects.toMatchObject({ response: { status: 400 } })
+  await expect(
+    changesApi.comment('101', proposal.id, {
+      body: '봐 주세요',
+      kind: 'REVIEW_REQUEST',
+      mentioned_member_ids: Array.from({ length: 21 }, (_, i) => `${i + 1}`),
     }),
   ).rejects.toMatchObject({ response: { status: 400 } })
 })

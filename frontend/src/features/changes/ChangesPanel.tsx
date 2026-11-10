@@ -15,13 +15,7 @@ import {
   FolderOpen,
   Search,
 } from 'lucide-react'
-import {
-  changesApi,
-  documentsApi,
-  meetingsApi,
-  planningApi,
-  tasksApi,
-} from '@/api/services'
+import { changesApi, documentsApi, planningApi, tasksApi } from '@/api/services'
 import type {
   ChangeImpact,
   ChangeProposal,
@@ -33,7 +27,6 @@ import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { EmptyState } from '@/components/EmptyState'
-import { FormDialog } from '@/components/FormDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -45,13 +38,14 @@ import { describeContent, LIST_SELECTED } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
+import { ProposalCommentForm } from './ProposalCommentForm'
 import { ProposalForm } from './ProposalForm'
 import { ApprovalPreview } from './ApprovalPreview'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
 import { ProposeFlow } from './ProposeFlow'
 import { StatusTag } from './StatusTag'
 import { Tag } from './Tag'
-import { operationTone } from './tagTones'
+import { operationTone, statusTone } from './tagTones'
 import {
   isStaleDocument,
   kindLabel,
@@ -158,7 +152,6 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
       : { kind: 'detail' },
   )
-  const [discussing, setDiscussing] = useState(false)
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
   const queryClient = useQueryClient()
@@ -1555,15 +1548,31 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           {commentList.map((comment) => (
                             <article
                               key={comment.id}
-                              className="rounded-lg bg-muted/40 p-3"
+                              className="grid gap-0.5 rounded-xl border border-[#e7e9ee] px-3 py-[9px] text-[13px] leading-[19px]"
                             >
-                              <p className="mb-1 text-xs text-muted-foreground">
-                                {nameOfAccount(comment.author_account_id)} ·{' '}
-                                {comment.kind === 'REVIEW_REQUEST'
-                                  ? '검토 요청'
-                                  : '의견'}
+                              <p className="flex flex-wrap items-center gap-1.5">
+                                <strong className="font-semibold">
+                                  {nameOfAccount(comment.author_account_id)}
+                                </strong>
+                                {comment.kind === 'REVIEW_REQUEST' && (
+                                  <Tag tone={statusTone.IN_REVIEW}>
+                                    검토 요청
+                                  </Tag>
+                                )}
+                                {comment.mentioned_member_ids.length > 0 && (
+                                  <span className="text-xs leading-[18px] text-muted-foreground">
+                                    →{' '}
+                                    {comment.mentioned_member_ids
+                                      .map(nameOfMember)
+                                      .join(', ')}
+                                  </span>
+                                )}
+                                <span className="flex-1" />
+                                <span className="text-xs leading-[18px] text-muted-foreground">
+                                  {formatDate(comment.created_at)}
+                                </span>
                               </p>
-                              <p className="leading-6 whitespace-pre-wrap">
+                              <p className="whitespace-pre-wrap">
                                 {comment.body}
                               </p>
                             </article>
@@ -1585,80 +1594,36 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               끝난 제안이라 댓글을 달 수 없어요.
                             </p>
                           ) : (
-                            <ActionForm
-                              key={commentList.length}
-                              fields={[
-                                {
-                                  name: 'kind',
-                                  label: '남길 종류',
-                                  type: 'select',
-                                  value: 'COMMENT',
-                                  options: [
-                                    { value: 'COMMENT', label: '의견' },
-                                    {
-                                      value: 'REVIEW_REQUEST',
-                                      label: '검토 요청',
-                                    },
-                                  ],
-                                },
-                                {
-                                  name: 'member_id',
-                                  label: '검토를 요청할 팀원',
-                                  type: 'select',
-                                  // 서버는 대상이 없는 검토 요청을 400으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-5).
-                                  requiredWhen: (values) =>
-                                    values.kind === 'REVIEW_REQUEST',
-                                  options: [
-                                    { value: '', label: '고르지 않음' },
-                                    ...people.map((member) => ({
-                                      value: member.id,
-                                      label: member.name,
-                                    })),
-                                  ],
-                                },
-                                {
-                                  name: 'body',
-                                  label: '내용',
-                                  type: 'textarea',
-                                  required: true,
-                                  max: 2000,
-                                },
-                              ]}
-                              submitLabel="남기기"
-                              onSubmit={async (values) => {
-                                const review = values.kind === 'REVIEW_REQUEST'
-                                await action.run(
+                            // 서버는 대상이 없는 검토 요청을 400으로 거절하므로(DOC-LIVE-5) 폼이 한 명 이상 고르게 한다. 받을 팀원은 본인을 뺀다.
+                            <ProposalCommentForm
+                              members={people
+                                .filter(
+                                  (member) =>
+                                    member.account_id !== session.data?.id,
+                                )
+                                .map((member) => ({
+                                  id: member.id,
+                                  name: member.name,
+                                }))}
+                              onSubmit={({ kind, body, memberIds }) =>
+                                action.run(
                                   () =>
                                     changesApi.comment(projectId, current.id, {
-                                      body: values.body,
-                                      kind: review
-                                        ? 'REVIEW_REQUEST'
-                                        : 'COMMENT',
-                                      ...(review && values.member_id
-                                        ? {
-                                            mentioned_member_ids: [
-                                              values.member_id,
-                                            ],
-                                          }
+                                      body,
+                                      kind,
+                                      ...(memberIds.length
+                                        ? { mentioned_member_ids: memberIds }
                                         : {}),
                                     }),
-                                  review
-                                    ? '검토를 요청했어요.'
+                                  kind === 'REVIEW_REQUEST'
+                                    ? `${memberIds.length}명에게 검토를 요청했어요.`
                                     : '의견을 남겼어요.',
                                 )
-                              }}
+                              }
                             />
                           )}
                           <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             의견은 승인과 달라요. 승인은 팀장이 해요.
-                            {/* 열린 질문 Q5: 사람이 회의를 만들지 않는 결정과 부딪혀 '회의로 논의'는 그대로 둔다. */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setDiscussing(true)}
-                            >
-                              회의로 논의
-                            </Button>
                           </p>
                         </div>
                       )}
@@ -1764,46 +1729,6 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           승인하고 기준 v{nextVersion} 발행
                         </Button>
                       </div>
-                    )}
-                    {discussing && (
-                      <FormDialog
-                        title="변경 제안을 함께 논의하기"
-                        description="관련 팀원을 골라 회의를 만들어요. 전체 팀원을 자동으로 부르지 않아요."
-                        fields={[
-                          {
-                            name: 'title',
-                            label: '회의 제목',
-                            value: current.title,
-                            required: true,
-                          },
-                          {
-                            name: 'member_id',
-                            label: '함께 논의할 팀원',
-                            type: 'select',
-                            required: true,
-                            options: people.map((member) => ({
-                              value: member.id,
-                              label: member.name,
-                            })),
-                          },
-                        ]}
-                        submitLabel="회의 만들기"
-                        onClose={() => setDiscussing(false)}
-                        onSubmit={async (values) => {
-                          await action.run(async () => {
-                            const meeting = await meetingsApi.create(
-                              projectId,
-                              {
-                                title: values.title,
-                                change_proposal_id: current.id,
-                                participant_member_ids: [values.member_id],
-                              },
-                            )
-                            setDiscussing(false)
-                            openPane('meetings', meeting.id)
-                          }, '관련 팀원과 논의할 회의를 만들었어요.')
-                        }}
-                      />
                     )}
                   </div>
                 )
