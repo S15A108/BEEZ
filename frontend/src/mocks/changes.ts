@@ -952,13 +952,28 @@ export function changeRoutes(
           'invalid_transition',
           '발행되었거나 거둔 변경 제안에는 의견을 남길 수 없습니다',
         )
-      if (
-        body.kind === 'REVIEW_REQUEST' &&
-        !(
-          Array.isArray(body.mentioned_member_ids) &&
-          body.mentioned_member_ids.length
+      // 지정 멤버는 최대 20명이고, 이 프로젝트의 멤버가 아닌 ID가 하나라도 있으면 전체를 거절한다(CHG-A12).
+      // 같은 ID를 여러 번 보내도 한 번으로 합친다.
+      const mentioned = [
+        ...new Set(
+          Array.isArray(body.mentioned_member_ids)
+            ? body.mentioned_member_ids.map(String)
+            : [],
+        ),
+      ]
+      if (mentioned.length > 20)
+        fail(
+          400,
+          'validation_failed',
+          '검토를 요청할 팀원은 최대 20명까지 지정할 수 있습니다',
         )
-      )
+      if (mentioned.some((id) => !project.members.some((m) => m.id === id)))
+        fail(
+          400,
+          'validation_failed',
+          '이 프로젝트의 활성 멤버만 지정할 수 있습니다',
+        )
+      if (body.kind === 'REVIEW_REQUEST' && !mentioned.length)
         fail(
           400,
           'validation_failed',
@@ -967,9 +982,11 @@ export function changeRoutes(
       const comment = changeCommentSchema.parse({
         id: nextId(database),
         proposal_id: proposal!.id,
+        revision: proposal!.revision,
         author_account_id: requireAccount(context).id,
         kind: body.kind ?? 'COMMENT',
         body: requiredString(body, 'body'),
+        mentioned_member_ids: mentioned,
         created_at: now(),
       })
       project.comments.push(comment)

@@ -606,9 +606,13 @@ export type Approval = z.infer<typeof approvalSchema>
 export const changeCommentSchema = z.object({
   id: idSchema,
   proposal_id: idSchema,
+  // 의견을 쓸 때 제안의 제출 리비전(CHG-A12). 반려 뒤 재제출해도 이전 리비전의 의견은 그대로 남는다.
+  revision: z.number().int(),
   author_account_id: idSchema,
   kind: z.enum(['COMMENT', 'REVIEW_REQUEST']),
   body: z.string(),
+  // 지정한 멤버(멤버 ID). 지정하지 않았으면 빈 배열이다.
+  mentioned_member_ids: idSchema.array(),
   created_at: timeSchema,
 })
 export type ChangeComment = z.infer<typeof changeCommentSchema>
