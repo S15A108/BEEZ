@@ -497,6 +497,19 @@ test('숫자 키 1로 공용 문서함을 열어도 검색칸이 비어 있다',
   await expect(search).toHaveValue('')
 })
 
+// S15P31A108-364: 창이 '승인된 문서' 칩에 포커스를 줘서 비비를 열자마자 친 질문이 들어가지 않고 Enter도 보내지 않았다.
+test('단축 바로 비비를 열고 바로 질문을 치고 Enter를 누르면 보내진다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '비비와 대화', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByLabel('설계 질문')).toBeFocused()
+  await page.keyboard.type('로그인 요구사항의 근거는 무엇인가요?')
+  await page.keyboard.press('Enter')
+  await expect(dialog.getByRole('log')).toContainText('로그인 요구사항의 근거')
+})
+
 // S15P31A108-285: 2단계 명령 줄이 칸을 밀어내 '복사' 버튼이 창 밖으로 나갔다. 레이아웃이라 브라우저에서만 잡힌다.
 test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 안에 있다', async ({
   page,
