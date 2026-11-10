@@ -55,7 +55,7 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BEE_CHAT_ENABLED` | | | 기본 `false`. 비비에게 질문(#135, BEE-A01). 〃 | ai |
 | `ASSIGNMENT_RECOMMENDATION_ENABLED` | | | 기본 `false`. 역할 분담 추천(#136). BE 계약 합의 후에만 켭니다 | ai |
 | `IMPACT_LLM_MODEL` | | | 기본 빈 값(꺼짐). 변경 영향 분석(#188)이 부를 모델 이름. 〃 (-357) | ai |
-| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY` | | `API_KEY` 비밀 | 영향 분석용 주소·키. 기본은 `GMS_CHAT_ENDPOINT`·`GMS_KEY` 값이라 **GMS 를 쓰면 적지 않습니다** | ai |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY` | | `API_KEY` 비밀 | 영향 분석용 주소·키. 기본은 GMS 주소(`GMS_CHAT_ENDPOINT` 와 별개로 고정)·`GMS_KEY` 값이라 **GMS 를 쓰면 적지 않습니다**. 키를 따로 적었으면 GMS 키를 바꿀 때 같이 바꿉니다([5절](#값이-샜을-때)) | ai |
 | `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | | 기본 빈 값. 응답의 모델 이름이 요청과 달라 `invalid_output` 이 날 때만, 믿을 별칭을 쉼표로 적습니다 | ai |
 | `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
@@ -194,7 +194,8 @@ env 파일에 줄이 없으면 **모델을 부르기 전에 거절**되어 항�
 | `BEE_CHAT_ENABLED=true` | 비비에게 질문 | 503 `bee_chat_not_configured` | 답 없이 찾은 문서만 나오는 템플릿 응답 |
 | `IMPACT_LLM_MODEL=gpt-6-luna` | 변경 제안 영향 분석 | 502 `model_unavailable` | 영향 분석 `FAILED`·`model_unavailable` |
 
-- backend는 ai의 503·404를 모두 `ai_unavailable`로 바꿔 보여 줍니다. 어느 쪽인지는 ai 응답 코드로 가립니다.
+- 보완 질문·설계 초안·변경 초안은 backend가 ai의 503·404를 모두 `ai_unavailable`로 바꿔 보여 줍니다. 어느 쪽인지는
+  ai 응답 코드로 가립니다. 비비 질문은 오류 코드 없이 템플릿 응답으로 끝납니다.
 - `gpt-6-luna`는 영향 분석을 GMS로 한 번 호출해 본 조합입니다
   ([change_impact README](../../ai/app/services/change_impact/README.md)). 다른 모델로 바꾸면 응답 형식·모델 이름이
   맞는지 배포 뒤에 실제 호출로 확인합니다.
@@ -202,29 +203,36 @@ env 파일에 줄이 없으면 **모델을 부르기 전에 거절**되어 항�
   이 줄들이 없습니다.
 
 서버에서 넣습니다. 원본을 읽지 못하거나 중간에 실패하면 env 파일을 바꾸지 않습니다
-([cd.md GMS 키 넣기](cd.md#3-gms-키-넣기바꾸기)와 같은 방식). 켤 것만 남기고 줄을 지워서 씁니다.
+([cd.md GMS 키 넣기](cd.md#3-gms-키-넣기바꾸기)와 같은 방식). 바꿀 값은 맨 위 `vals`에만 적습니다.
 
 ```bash
 ( f=/opt/beez/.env.dev; umask 027
-  keys='PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL'
+  vals='PLANNING_QUESTIONS_ENABLED=true
+DESIGN_DRAFTS_ENABLED=true
+BEE_CHAT_ENABLED=true
+IMPACT_LLM_MODEL=gpt-6-luna'
+  printf '%s\n' "$vals" | grep -Evq '^(PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL)=[A-Za-z0-9._-]*$' \
+    && { echo "vals 형식이 다름(위 네 이름=값만) — 바꾸지 않음"; exit 1; }
+  keys=$(printf '%s\n' "$vals" | cut -d= -f1 | paste -sd'|')
+  [ -n "$keys" ] || { echo "vals 가 비었음 — 바꾸지 않음"; exit 1; }
   [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
   rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
   grep -Ev "^($keys)=" "$f" > "$f.new"; rc=$?
   if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
   if [ -n "$(tail -c1 "$f.new")" ]; then echo >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }; fi
-  printf '%s\n' \
-    'PLANNING_QUESTIONS_ENABLED=true' \
-    'DESIGN_DRAFTS_ENABLED=true' \
-    'BEE_CHAT_ENABLED=true' \
-    'IMPACT_LLM_MODEL=gpt-6-luna' >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+  printf '%s\n' "$vals" >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
   mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; }
-  grep -E "^($keys)=" "$f" && ls -l "$f" )
-sudo -u jenkins test -r /opt/beez/.env.dev && echo "jenkins can read"
+  grep -E "^($keys)=" "$f" && ls -l "$f" ) \
+&& sudo -u jenkins test -r /opt/beez/.env.dev && echo "jenkins can read"
 ```
 
-- 같은 이름의 옛 줄을 지우고 끝에 새로 씁니다. 여러 번 돌려도 줄이 겹치지 않습니다.
+- `vals`에 적은 이름만 옛 줄을 지우고 끝에 새로 씁니다. 적지 않은 스위치는 그대로 둡니다(이미 켠 기능을 빼고
+  돌려도 꺼지지 않습니다). 여러 번 돌려도 줄이 겹치지 않습니다.
+- `vals`에 네 이름 밖의 줄이나 따옴표·공백이 든 값이 있으면 아무것도 바꾸지 않습니다.
 - 원본이 개행 없이 끝나면 한 줄을 먼저 넣습니다. 그러지 않으면 새 줄이 마지막 줄 뒤에 붙어 두 값이 함께 깨집니다.
-- 끄려면 값을 `false`(모델은 빈 값)로 바꿔 같은 명령을 돌립니다.
+- 실패하면 `jenkins can read`를 찍지 않습니다. 이 줄이 보여야 반영된 것입니다.
+- 끄려면 그 줄의 값을 `false`(모델은 빈 값, `IMPACT_LLM_MODEL=`)로 바꿔 같은 명령을 돌립니다. 줄을 지우면 그
+  스위치는 건드리지 않습니다.
 - 넣은 값은 **다음 배포 때** ai 컨테이너가 다시 만들어지면서 적용됩니다. 바로 적용하려면 지금 떠 있는 SHA로
   [손으로 배포](cd.md#손으로-배포롤백)합니다(ai만 다시 만들어집니다).
 
@@ -475,7 +483,8 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 
 | 값 | 바꾸는 방법 |
 |---|---|
-| `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용 |
+| `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용. compose 가 같은 값을 `IMPACT_LLM_API_KEY` 로도 넣으므로 그쪽은 따로 할 일이 없습니다 |
+| `IMPACT_LLM_API_KEY` | env 파일에 **따로 적은 경우만** 해당합니다. 적힌 줄을 새 값으로 바꾸고(GMS 키라면 위와 함께) 재배포합니다. 줄을 지우면 `GMS_KEY` 를 씁니다 |
 | `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
 | `DOCUMENT_S3_*`·`SEAWEEDFS_*` | 새 키를 넣고 같은 SHA 로 다시 배포. **access key 와 secret key 를 함께** 바꿉니다 — [seaweedfs.md 키 교체](seaweedfs.md#키-교체) |
 | `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
