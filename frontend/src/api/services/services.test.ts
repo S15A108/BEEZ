@@ -336,11 +336,12 @@ describe('계약 경계', () => {
   // S15P31A108-290·284가 2개, S15P31A108-137이 선택 범위 조회·초안 2개,
   // S15P31A108-203이 승인 미리 보기(CHG-A14) 1개를 더해 125개,
   // S15P31A108-202가 비비 대화·직접 요청·검토 요청 취소(DOC-A22~A24) 3개를 더해 128개였고,
-  // 같은 티켓의 기획 쪽이 PLN-A05 아래의 초안 후보 조회·채택·폐기 3개를 더해 131개다.
-  it('131개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(131)
+  // 같은 티켓의 기획 쪽이 PLN-A05 아래의 초안 후보 조회·채택·폐기 3개를 더해 131개였고,
+  // S15P31A108-325가 올리기 전 비비 검토(CHG-A16~A20) 5개를 더해 136개다(기대값 변경 사용자 승인 2026-11-09).
+  it('136개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(136)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      131,
+      136,
     )
     expect(
       new Set(
@@ -348,7 +349,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(131)
+    ).toBe(136)
     expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
       expect.arrayContaining([
         'CHG-A07-SCOPED-BLOCKS',
@@ -357,6 +358,11 @@ describe('계약 경계', () => {
         'PLN-A05-LIST',
         'PLN-A05-ADOPT',
         'PLN-A05-DISCARD',
+        'CHG-A16',
+        'CHG-A17',
+        'CHG-A18',
+        'CHG-A19',
+        'CHG-A20',
       ]),
     )
     expect(

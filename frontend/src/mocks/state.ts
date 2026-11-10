@@ -27,7 +27,14 @@ import type {
   Validation,
 } from '../api/contracts/common'
 import type { DraftJob } from '../features/planning/schemas'
+import type { Draft, DraftReview } from '../features/changes/schemas'
 import { contractExamples } from './contract-examples'
+
+/** 응답의 latest_review·review_state_hash는 읽을 때 만든다. 검토는 오래된 것부터 쌓는다. */
+export type StoredChangeDraft = Omit<
+  Draft,
+  'latest_review' | 'review_state_hash'
+> & { owner_account_id: string; reviews: DraftReview[] }
 
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
 // v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
@@ -89,6 +96,8 @@ export interface MockProject {
   draft_jobs?: DraftJob[]
   baselines: Baseline[]
   proposals: ChangeProposal[]
+  /** 팀장에게 가지 않는 작성 중 변경 제안과 그 비비 검토(CHG-A16~A20). 없으면 아직 만든 적이 없다. */
+  change_drafts?: StoredChangeDraft[]
   comments: ChangeComment[]
   approvals: Approval[]
   tasks: TaskDetail[]

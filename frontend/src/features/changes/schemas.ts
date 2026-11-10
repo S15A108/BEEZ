@@ -314,3 +314,140 @@ export const approvalPreviewResponseSchema = z.object({
 export type ApprovalPreviewResponse = z.infer<
   typeof approvalPreviewResponseSchema
 >
+
+// 올리기 전 비비 검토(CHG-A16~A20, S15P31A108-218 수정안·PR #176). 팀장에게 가지 않는 작성 중 제안과 그 검토다.
+// 필드 이름은 명세 수정안대로이고 백엔드는 아직 없다(S15P31A108-325 기준). 실제 응답이 나오면 대조한다.
+export const draftInputSchema = common.changeProposalInputSchema.extend({
+  // 반려된 내 제안을 보완하는 초안이면 그 제안. 이 초안은 CHG-A04로 그 제안에만 올린다.
+  source_proposal_id: common.idSchema.optional(),
+})
+export type DraftInput = z.infer<typeof draftInputSchema>
+
+export const updateDraftInputSchema = draftInputSchema.extend({
+  expected_revision: z.number().int().positive(),
+})
+export type UpdateDraftInput = z.infer<typeof updateDraftInputSchema>
+
+export const draftReviewStepSchema = z.object({
+  key: z.enum([
+    'READ_CHANGES',
+    'FIND_RELATED',
+    'AI_CANDIDATES',
+    'GAPS_CONFLICTS',
+  ]),
+  // NOT_EVALUATED는 입력 계약이 없어 평가하지 않은 단계로, 모델 실패(FAILED)와 다르다.
+  status: z.enum(['PENDING', 'RUNNING', 'DONE', 'FAILED', 'NOT_EVALUATED']),
+  count: z.number().int().nonnegative().optional(),
+})
+export type DraftReviewStep = z.infer<typeof draftReviewStepSchema>
+
+// PATCH는 초안의 한 문서(document_id)를 고치는 수정안, COMMENT는 읽기 전용 의견이다.
+export const draftSuggestionSchema = z
+  .object({
+    id: common.idSchema,
+    type: z.enum(['PATCH', 'COMMENT']),
+    explanation: z.string(),
+    category: z.enum(['OMISSION', 'CONSISTENCY']).optional(),
+    design_item_key: z.string().optional(),
+    document_id: common.idSchema.optional(),
+    base_document_version_id: common.idSchema.optional(),
+    reviewed_content_hash: z.string().optional(),
+    original_text: z.string().optional(),
+    replacement_text: z.string().optional(),
+    decision: z.enum(['PENDING', 'APPLIED', 'SKIPPED']).optional(),
+    sources: common.documentReviewSourceSchema.array().default([]),
+  })
+  .refine(
+    (item) =>
+      item.type === 'COMMENT' ||
+      (item.document_id !== undefined &&
+        item.original_text !== undefined &&
+        item.replacement_text !== undefined &&
+        item.decision !== undefined),
+    'PATCH 수정안에는 문서·원문·바꿀 글·선택이 있어야 해요.',
+  )
+export type DraftSuggestion = z.infer<typeof draftSuggestionSchema>
+
+export const draftReviewSchema = z.object({
+  id: common.idSchema,
+  // CANCELLED는 진행 중에 확인하고 올려 끊긴 검토다.
+  status: z.enum(['RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']),
+  // FAILED일 때만. 접수 10분이 지나면 review_timeout
+  error_code: z.string().optional(),
+  // 영향 결과(tasks_to_wait·validations_to_stale·ai_candidates)는 이 리비전 기준의 미리 보기다.
+  input_revision: z.number().int().positive(),
+  // 이 검토의 수정안 반영까지 포함한 리비전. 초안 리비전과 다르면 검토 뒤 고친 것이다.
+  resolved_revision: z.number().int().positive(),
+  steps: draftReviewStepSchema.array(),
+  // CHG-A14와 같은 모양. FIND_RELATED가 DONE일 때만 뜻이 있고, 아니면 빈 배열이라 0건으로 보이지 않는다.
+  tasks_to_wait: approvalPreviewResponseSchema.shape.tasks_to_wait,
+  validations_to_stale:
+    approvalPreviewResponseSchema.shape.validations_to_stale,
+  // 평가하지 못하면 null(서버는 null을 빼고 보낸다). 0건과 다르다.
+  ai_candidates: z
+    .object({
+      task_id: common.idSchema,
+      title: z.string(),
+      reason: z.string(),
+      evidence: z.unknown().optional(),
+    })
+    .array()
+    .nullable()
+    .optional(),
+  suggestions: draftSuggestionSchema.array(),
+  summary: z.string().optional(),
+  // 화면에서 쓰지 않아 모양만 받는다(새 feature 값이 와도 막히지 않게).
+  usage: z.unknown().array(),
+  created_at: common.timeSchema,
+  completed_at: common.timeSchema.optional(),
+})
+export type DraftReview = z.infer<typeof draftReviewSchema>
+
+export const draftSchema = z.object({
+  id: common.idSchema,
+  project_id: common.idSchema,
+  revision: z.number().int().positive(),
+  base_baseline_id: common.idSchema,
+  title: z.string(),
+  reason: z.string(),
+  task_id: common.idSchema.optional(),
+  validation_id: common.idSchema.optional(),
+  previous_proposal_id: common.idSchema.optional(),
+  items: common.changeItemSchema.array(),
+  documents: common.resolvedDocumentChangeSchema.array(),
+  latest_review: draftReviewSchema.optional(),
+  // 검토 ID·상태·수정안 선택을 합친 해시. 올릴 때 expected_review_state_hash로 돌려보낸다.
+  review_state_hash: z.string().optional(),
+  source_proposal_id: common.idSchema.optional(),
+  submitted_proposal_id: common.idSchema.optional(),
+  created_at: common.timeSchema,
+  updated_at: common.timeSchema,
+})
+export type Draft = z.infer<typeof draftSchema>
+
+export const draftReviewInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+})
+
+export const draftDecisionInputSchema = z.object({
+  expected_revision: z.number().int().positive(),
+  // 반영하기·넘기기·되돌리기
+  decision: z.enum(['APPLIED', 'SKIPPED', 'PENDING']),
+})
+export type DraftDecisionInput = z.infer<typeof draftDecisionInputSchema>
+
+// CHG-A01·A04를 초안으로 올릴 때. 본문 필드는 초안에서 오므로 함께 보내지 않는다(보내면 400).
+const draftSubmission = {
+  draft_id: common.idSchema,
+  expected_draft_revision: z.number().int().positive(),
+  review_acknowledged: z.boolean(),
+  // review_acknowledged=true이고 초안에 검토가 있을 때 사용자가 본 review_state_hash
+  expected_review_state_hash: z.string().optional(),
+}
+export const submitDraftInputSchema = z.object(draftSubmission).strict()
+export type SubmitDraftInput = z.infer<typeof submitDraftInputSchema>
+
+export const resubmitDraftInputSchema = z
+  .object({ ...draftSubmission, ...expectedSubmission })
+  .strict()
+export type ResubmitDraftInput = z.infer<typeof resubmitDraftInputSchema>

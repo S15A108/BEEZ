@@ -533,8 +533,10 @@ test('설정 › 에이전트의 연결 실패 도움말 링크로 새 탭의 �
   await expect(page.getByRole('dialog')).toBeVisible()
 })
 
-// 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 올리기 전 확인 → 팀장에게 올리기.
-test('문서 수정 제안을 세 단계로 등록하고 마지막에 팀장에게 올린다', async ({
+// 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 올리기 전 확인 → 팀장에게 올리기.
+// S15P31A108-325: ② 변경점과 ④ 확인 사이에 비비 검토(권장)가 생겼다. 검토를 받아 수정안을 반영하고 올리며,
+// 팀장 상세에 제출 당시 검토 상태가 남는다(제목·단계 변경 사용자 승인 2026-11-09).
+test('문서 수정 제안을 등록하고 비비 검토를 거쳐 마지막에 팀장에게 올린다', async ({
   page,
 }) => {
   const errors: string[] = []
@@ -567,16 +569,38 @@ test('문서 수정 제안을 세 단계로 등록하고 마지막에 팀장에�
     dialog.getByRole('heading', { name: '바뀐 곳 1개를 찾았어요' }),
   ).toBeVisible()
   await shot('2-changes')
+  await dialog.getByRole('button', { name: '비비 검토 받기' }).click()
+  await expect(
+    dialog.getByRole('heading', { name: '비비가 바뀐 곳을 검토하고 있어요' }),
+  ).toBeVisible()
+  await shot('3-review-running')
+  await expect(
+    dialog.getByRole('heading', { name: '비비가 검토를 마쳤어요' }),
+  ).toBeVisible({ timeout: 20_000 })
+  // 평가하지 않은 AI 후보는 0건이 아니라 '확인하지 못함'이다.
+  await expect(dialog.getByText(/확인하지 못했어요/)).toBeVisible()
+  await dialog.getByRole('button', { name: '반영하기' }).click()
+  await expect(dialog.getByRole('button', { name: '되돌리기' })).toBeVisible()
+  await shot('3-review')
   await dialog.getByRole('button', { name: '다음', exact: true }).click()
   await expect(
     dialog.getByRole('heading', { name: '올리기 전에 확인해요' }),
   ).toBeVisible()
-  await shot('3-confirm')
+  // 반영한 수정안이 올라갈 내용(바뀌는 곳)에 들어 있다.
+  await expect(
+    dialog
+      .getByRole('region', { name: '바뀌는 곳' })
+      .getByText(/조건이 맞지 않으면 그 이유를/),
+  ).toBeVisible()
+  await shot('4-confirm')
   await dialog.getByRole('button', { name: '팀장에게 올리기' }).click()
   await expect(dialog.getByText('변경 제안을 올렸어요.')).toBeVisible()
   await expect(
     dialog.getByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ }),
   ).toBeVisible()
-  await shot('4-mine')
+  await expect(
+    dialog.getByRole('region', { name: '올리기 전 비비 검토' }),
+  ).toContainText('비비 검토를 마치고 올렸어요.')
+  await shot('5-mine')
   expect(errors).toEqual([])
 })
