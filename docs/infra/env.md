@@ -1,4 +1,3 @@
-| `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 # 환경변수와 비밀값
 
 BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 읽는 설정값을 한곳에 모은 문서입니다.
@@ -51,6 +50,13 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `AI_INTERNAL_TOKEN` | 필수 | 비밀 | backend ↔ ai 상호 인증. compose 가 같은 값을 양쪽에 넣습니다 | ai, backend |
 | `GMS_KEY` | | 비밀 | LLM·임베딩 API 키. 비워도 뜨지만 AI 호출이 502 입니다 | ai |
 | `GMS_CHAT_ENDPOINT` | | | 문서 검토 모델 주소. 기본 GMS 주소(`https://gms.ssafy.io/gmsapi/…/chat/completions`) | ai |
+| `PLANNING_QUESTIONS_ENABLED` | | | 기본 `false`. 기획 분석 보완 질문 생성(#133). **꺼져 있으면 그 기능이 항상 실패합니다** — [AI 기능 켜기](#ai-기능-켜기-서버) | ai |
+| `DESIGN_DRAFTS_ENABLED` | | | 기본 `false`. 답변으로 설계 초안 만들기(#134). 〃 | ai |
+| `BEE_CHAT_ENABLED` | | | 기본 `false`. 비비에게 질문(#135, BEE-A01). 〃 | ai |
+| `ASSIGNMENT_RECOMMENDATION_ENABLED` | | | 기본 `false`. 역할 분담 추천(#136). BE 계약 합의 후에만 켭니다 | ai |
+| `IMPACT_LLM_MODEL` | | | 기본 빈 값(꺼짐). 변경 영향 분석(#188)이 부를 모델 이름. 〃 (-357) | ai |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY` | | `API_KEY` 비밀 | 영향 분석용 주소·키. 기본은 `GMS_CHAT_ENDPOINT`·`GMS_KEY` 값이라 **GMS 를 쓰면 적지 않습니다** | ai |
+| `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | | 기본 빈 값. 응답의 모델 이름이 요청과 달라 `invalid_output` 이 날 때만, 믿을 별칭을 쉼표로 적습니다 | ai |
 | `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
 | `SWAGGER_ENABLED` | | | 기본 `false` | backend |
@@ -113,6 +119,7 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `SWAGGER_ENABLED` | | (local 은 켜짐) | `false` |
 | `SCHEDULING_POOL_SIZE` | | `8` (워커마다 스레드 하나: 문서 색인·원본 정리·검증·CDC 복구 스캔·기획 질문·설계 초안 등) | 기본값 |
 | `BEEZ_PLANNING_QUESTION_READ_TIMEOUT`·`BEEZ_PLANNING_DRAFT_READ_TIMEOUT` | | `40s`·`55s` | 기본값. AI 모델 제한(질문 30초·초안 45초)보다 길어야 하며, `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다 |
+| `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |
 | `VALIDATION_POLL_MILLIS` | | `2000` | 기본값 |
 | `VALIDATION_LEASE_SECONDS` | | `120`. `AI_READ_TIMEOUT` 보다 길게 | 기본값 |
@@ -142,7 +149,8 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 ### ai (FastAPI)
 
 `ai/app/core/config.py` 가 `ai/.env` 와 환경변수를 읽습니다(이름은 필드 이름의 대문자). 기본값과 허용 값의 정본은 이
-파일이고, 아래는 무엇이 있는지와 서버에서 어떻게 되는지만 적습니다. **서버 compose 는 앞의 셋만 넘깁니다.**
+파일이고, 아래는 무엇이 있는지와 서버에서 어떻게 되는지만 적습니다. **서버 compose 는 앞의 셋과, 아래에
+"compose 가 ai 에 전달한다"고 적힌 것만 넘깁니다.**
 
 | 이름 | 비밀 | 의미 |
 |---|---|---|
@@ -156,20 +164,82 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `DESIGN_DRAFTS_ENABLED`·`DESIGN_DRAFTS_*` | | 답변 반영 설계 초안(#134). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
 | `ASSIGNMENT_RECOMMENDATION_ENABLED` | | 역할 분담 추천(#136). 기본 `false`; BE 계약 합의 후에만 켠다. compose 가 ai 에 전달한다 |
 | `ASSIGNMENT_RECOMMENDATION_MAX_BODY_BYTES`·`ASSIGNMENT_RECOMMENDATION_TIMEOUT_SECONDS`·`ASSIGNMENT_RECOMMENDATION_OUTPUT_TOKEN_LIMIT` | | 역할 추천 요청 크기·모델 시간·출력 토큰 한도. 기본 2 MiB·15초·4096; 직접 실행 환경에서 설정한다 |
-| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 `model_unavailable` |
-| `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음 |
+| `BEE_CHAT_ENABLED`·`BEE_CHAT_*` | | 비비 질문(#135, BEE-A01). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 502 `model_unavailable`. compose 가 ai 에 전달한다 — 주소·키는 GMS 값이 기본이고 모델만 빈 값이다(-357) |
+| `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | 요청한 모델 이름 말고도 받아들일 응답 모델 이름(쉼표). 기본 빈 값. compose 가 ai 에 전달한다 |
+| `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음. compose 가 전달하지 않는다 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
 | `GMS_EMBEDDING_DIMENSION` | | 기본 `1024`. backend(1024)와 같아야 합니다 |
 | `BEE_DEFAULT_MODEL`·`BEE_COMPLEX_MODEL` | | 정해진 값만 허용 |
 | `TIKTOKEN_CACHE_DIR` | | 어휘 파일 위치. 이미지에는 `/app/.tiktoken` 으로 고정 |
 
 **서버에서는 위 기능 스위치가 기본값(꺼짐)입니다.** `PLANNING_QUESTIONS_ENABLED`·
-`DESIGN_DRAFTS_ENABLED`·`ASSIGNMENT_RECOMMENDATION_ENABLED`는 compose가 ai에
-전달하므로 서버 env 파일에서 명시적으로 켤 수 있습니다. compose는 `environment`에
-적힌 변수만 컨테이너에 넣으므로, 그 밖의 변수를 서버 env 파일에 적어도 전달되지
-않습니다. 추가로 전달하려면 `infra/compose.yaml`의 ai `environment`에 변수를 넣고
-배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은 [5절](#5-비밀값-규칙)을 따릅니다.
-어느 기능을 dev에서 켤지는 담당자와 정합니다.
+`DESIGN_DRAFTS_ENABLED`·`BEE_CHAT_ENABLED`·`ASSIGNMENT_RECOMMENDATION_ENABLED`와
+`IMPACT_LLM_MODEL`은 compose가 ai에 전달하므로 서버 env 파일에서 명시적으로 켤 수
+있습니다. compose는 `environment`에 적힌 변수만 컨테이너에 넣으므로, 그 밖의 변수를
+서버 env 파일에 적어도 전달되지 않습니다. 추가로 전달하려면 `infra/compose.yaml`의
+ai `environment`에 변수를 넣고 배포합니다. `IMPACT_LLM_API_KEY` 같은 비밀값은
+[5절](#5-비밀값-규칙)을 따릅니다. 어느 기능을 dev에서 켤지는 담당자와 정합니다.
+
+#### AI 기능 켜기 (서버)
+
+`GMS_KEY`만 넣은 서버에서는 문서 검토·작업 계획 검증·문서 색인만 됩니다. 아래 기능은
+env 파일에 줄이 없으면 **모델을 부르기 전에 거절**되어 항상 실패합니다. 키·호출 한도·시간
+초과가 아니므로 다시 시도해도 같습니다(2026-11-10 dev 실측, S15P31A108-357).
+
+| env 파일에 쓰는 줄 | 켜지는 기능 | 없을 때 ai 응답 | 화면·API에 보이는 것 |
+|---|---|---|---|
+| `PLANNING_QUESTIONS_ENABLED=true` | 기획 분석 보완 질문 생성 | 503 `planning_questions_not_configured` | 질문 생성 `FAILED`·`ai_unavailable` |
+| `DESIGN_DRAFTS_ENABLED=true` | 답변으로 설계 초안 만들기 | 503 `design_drafts_not_configured` | 초안 생성 `FAILED`·`ai_unavailable` (접수 뒤 1초 안에 실패) |
+| `BEE_CHAT_ENABLED=true` | 비비에게 질문 | 503 `bee_chat_not_configured` | 답 없이 찾은 문서만 나오는 템플릿 응답 |
+| `IMPACT_LLM_MODEL=gpt-6-luna` | 변경 제안 영향 분석 | 502 `model_unavailable` | 영향 분석 `FAILED`·`model_unavailable` |
+
+- backend는 ai의 503·404를 모두 `ai_unavailable`로 바꿔 보여 줍니다. 어느 쪽인지는 ai 응답 코드로 가립니다.
+- `gpt-6-luna`는 영향 분석을 GMS로 한 번 호출해 본 조합입니다
+  ([change_impact README](../../ai/app/services/change_impact/README.md)). 다른 모델로 바꾸면 응답 형식·모델 이름이
+  맞는지 배포 뒤에 실제 호출로 확인합니다.
+- **새 서버(운영·발표 환경)에도 같은 줄이 필요합니다.** [cd.md 서버 준비](cd.md#2-env-파일)의 명령이 만드는 파일에는
+  이 줄들이 없습니다.
+
+서버에서 넣습니다. 원본을 읽지 못하거나 중간에 실패하면 env 파일을 바꾸지 않습니다
+([cd.md GMS 키 넣기](cd.md#3-gms-키-넣기바꾸기)와 같은 방식). 켤 것만 남기고 줄을 지워서 씁니다.
+
+```bash
+( f=/opt/beez/.env.dev; umask 027
+  keys='PLANNING_QUESTIONS_ENABLED|DESIGN_DRAFTS_ENABLED|BEE_CHAT_ENABLED|IMPACT_LLM_MODEL'
+  [ -f "$f" ] && [ -r "$f" ] || { echo "$f 를 읽을 수 없음 — 바꾸지 않음"; exit 1; }
+  rm -f "$f.new" && : > "$f.new" || { echo "$f.new 를 새로 만들 수 없음 — 원본 그대로"; exit 1; }
+  grep -Ev "^($keys)=" "$f" > "$f.new"; rc=$?
+  if [ "$rc" -gt 1 ]; then rm -f "$f.new"; echo "$f 읽기 실패(grep $rc) — 원본 그대로"; exit 1; fi
+  if [ -n "$(tail -c1 "$f.new")" ]; then echo >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }; fi
+  printf '%s\n' \
+    'PLANNING_QUESTIONS_ENABLED=true' \
+    'DESIGN_DRAFTS_ENABLED=true' \
+    'BEE_CHAT_ENABLED=true' \
+    'IMPACT_LLM_MODEL=gpt-6-luna' >> "$f.new" || { rm -f "$f.new"; echo "새 파일 쓰기 실패 — 원본 그대로"; exit 1; }
+  mv "$f.new" "$f" || { rm -f "$f.new"; echo "바꿔 넣기 실패 — 원본 그대로"; exit 1; }
+  grep -E "^($keys)=" "$f" && ls -l "$f" )
+sudo -u jenkins test -r /opt/beez/.env.dev && echo "jenkins can read"
+```
+
+- 같은 이름의 옛 줄을 지우고 끝에 새로 씁니다. 여러 번 돌려도 줄이 겹치지 않습니다.
+- 원본이 개행 없이 끝나면 한 줄을 먼저 넣습니다. 그러지 않으면 새 줄이 마지막 줄 뒤에 붙어 두 값이 함께 깨집니다.
+- 끄려면 값을 `false`(모델은 빈 값)로 바꿔 같은 명령을 돌립니다.
+- 넣은 값은 **다음 배포 때** ai 컨테이너가 다시 만들어지면서 적용됩니다. 바로 적용하려면 지금 떠 있는 SHA로
+  [손으로 배포](cd.md#손으로-배포롤백)합니다(ai만 다시 만들어집니다).
+
+적용됐는지는 컨테이너의 값(비밀 아님)과 실제 호출로 봅니다.
+
+```bash
+docker exec beez-ai-1 env | grep -E '_ENABLED=|^IMPACT_LLM_MODEL=' | sort
+```
+
+화면에서는 기획 분석의 **보완 질문 만들기**, **답변으로 초안 만들기**, 비비 질문 한 번, 설계 항목을 바꾸는 변경
+제안의 영향 분석을 한 번씩 해 봅니다. 영향 분석이 `invalid_output`으로 실패하면 응답의 모델 이름이 요청과 다른
+것이므로 `IMPACT_LLM_ALLOWED_RESPONSE_MODELS`를 봅니다.
+
+변경 제안의 **비비에게 초안 받기**(CHG-A07 → AI-A06 `/v1/bee/draft`)는 스위치가 없습니다. 2026-11-10 현재 ai에 이
+경로가 없어 404이고 화면에는 `ai_unavailable`로 보입니다(env로 고칠 수 없음).
 
 **로컬 함정**: backend 를 `bootRun` 으로 띄우면 `AI_INTERNAL_TOKEN` 기본값이 `change-me` 입니다. `ai/.env.example` 을
 그대로 복사하면 빈 값이라 backend → ai 호출이 전부 401 입니다. 로컬에서는 `ai/.env` 에 `AI_INTERNAL_TOKEN=change-me`
@@ -217,6 +287,8 @@ CI(`ci.yml`)는 비밀값을 쓰지 않습니다. backend 테스트는 Testconta
 | backend, 임베딩 프로필 비어 있음 | 기동은 됨, 색인이 멈춤 | `embedding_profile_not_configured` |
 | ai, `AI_INTERNAL_TOKEN` 비었거나 backend 와 다름 | 기동은 됨(`/health` 200), 호출이 401 | `invalid_internal_token` |
 | ai, `GMS_KEY` 비어 있음 | 기동은 됨, 호출이 502 | `model_unavailable` |
+| ai, 기능 스위치(`PLANNING_QUESTIONS_ENABLED` 등) 없음 | 기동은 됨, 그 기능만 503 | ai `…_not_configured`, 화면은 `ai_unavailable` — [AI 기능 켜기](#ai-기능-켜기-서버) (2026-11-10 실측) |
+| ai, `IMPACT_LLM_MODEL` 없음 | 기동은 됨, 영향 분석만 502 | `model_unavailable` (〃) |
 | frontend, `VITE_API_MODE` 오타 | 조용히 `mock` | 없음 — 화면이 목데이터 |
 
 서버에서는 compose 가 먼저 걸러 주므로 backend 의 prod 검증까지 가는 일은 거의 없습니다. prod 검증은 compose 밖에서
