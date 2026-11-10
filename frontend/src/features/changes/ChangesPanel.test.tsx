@@ -1000,9 +1000,8 @@ it('새 문서 수정 제안은 단계를 지나 마지막에만 팀장에게 �
   ).toBeInTheDocument()
 })
 
-// PR #227 리뷰(오서현): 문서 A·B가 있는 초안에서 B에 비비 수정안을 반영한 뒤 A를 다시 고치기로 저장하면, B가 원래 제안의
-// 옛 본문으로 덮였다. 나머지 문서는 원래 제안이 아니라 지금 초안의 내용으로 저장해야 한다.
-it('다른 문서에 반영한 비비 수정안은 다시 고치기로 저장해도 남는다', async () => {
+// 문서 A·B를 고친 반려 제안을 다시 고치기로 열어 초안을 만들고, 비비 검토에서 B의 수정안을 반영한 데까지 간다.
+async function applySecondDocumentPatch() {
   const user = userEvent.setup()
   const [first, second] = (
     await documentsApi.list('101', { limit: 100 })
@@ -1072,6 +1071,13 @@ it('다른 문서에 반영한 비비 수정안은 다시 고치기로 저장해
     .find((item) => item.textContent?.includes(revised))!
   await user.click(within(patch).getByRole('button', { name: '반영하기' }))
   expect(await screen.findByText(/반영함/)).toBeInTheDocument()
+  return { user, second, revised }
+}
+
+// PR #227 리뷰(오서현): 문서 A·B가 있는 초안에서 B에 비비 수정안을 반영한 뒤 A를 다시 고치기로 저장하면, B가 원래 제안의
+// 옛 본문으로 덮였다. 나머지 문서는 원래 제안이 아니라 지금 초안의 내용으로 저장해야 한다.
+it('다른 문서에 반영한 비비 수정안은 다시 고치기로 저장해도 남는다', async () => {
+  const { user, second, revised } = await applySecondDocumentPatch()
   const updateDraft = vi.spyOn(changesApi, 'updateDraft')
   await user.click(screen.getByRole('button', { name: '다시 고치기' }))
   await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
@@ -1080,6 +1086,16 @@ it('다른 문서에 반영한 비비 수정안은 다시 고치기로 저장해
     updateDraft.mock.calls[0][2].documents.find(
       (change) => change.document_id === second.id,
     )?.after_content,
+  ).toContain(revised)
+})
+
+// 다시 고치기에서 고칠 문서를 B로 바꾸면 '고친 글'에 원래 제안의 옛 B가 들어가, 반영한 비비 수정안이 화면에서 사라졌다.
+it('다시 고치기에서 다른 문서를 고르면 비비 수정안을 반영한 초안의 글을 채운다', async () => {
+  const { user, second, revised } = await applySecondDocumentPatch()
+  await user.click(screen.getByRole('button', { name: '다시 고치기' }))
+  await user.selectOptions(screen.getByLabelText('고칠 문서'), second.id)
+  expect(
+    (screen.getByLabelText('고친 글') as HTMLTextAreaElement).value,
   ).toContain(revised)
 })
 

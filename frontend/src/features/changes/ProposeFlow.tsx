@@ -146,6 +146,18 @@ export function ProposeFlow({
       query.state.data?.latest_review?.status === 'RUNNING' ? 2000 : false,
   })
   const draft = draftQuery.data
+  // 아직 올리지 않은 초안. 다시 고쳐 저장하면 이 초안을 고친다.
+  const open = draft && !draft.submitted_proposal_id ? draft : undefined
+  // 다시 고치기에서 원래 제안의 다른 문서를 고르면 그 문서의 글은 원래 제안이 아니라 초안을 따른다(비비 수정안을
+  // 반영한 글, PR #227 리뷰). 승인본이 바뀐 문서는 지금처럼 새 기준 원문에서 다시 쓰고 반려된 글을 비교용으로 둔다.
+  const sourceDocuments = form?.sourceDocuments?.map((item) => {
+    const saved = open?.documents.find(
+      (change) => change.document_id === item.id,
+    )
+    return saved && !item.stale
+      ? { ...item, afterContent: saved.after_content }
+      : item
+  })
   // 창을 닫았다 다시 열었을 때 이어 볼 초안. 없거나 이미 올렸으면 보이지 않는다.
   const resumeQuery = useQuery({
     queryKey: ['projects', projectId, 'change-draft', stored],
@@ -436,12 +448,11 @@ export function ProposeFlow({
           requestDraft={requestDraft}
           onDraftConflict={onDraftConflict}
           {...form}
+          sourceDocuments={sourceDocuments}
           defaultValues={values ?? defaultValues}
           onCancel={onCancel}
           onSubmit={(entered) =>
             run(async () => {
-              const open =
-                draft && !draft.submitted_proposal_id ? draft : undefined
               const input = {
                 ...toInput(entered, open?.documents),
                 ...(source ? { source_proposal_id: source.id } : {}),
