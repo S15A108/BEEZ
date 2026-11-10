@@ -1893,13 +1893,34 @@ type DetailField =
   | 'unlinked'
   | 'no_contract_change'
 
+// '계약 변경 없음'은 고른 참조로 대부분 정해진다(S15P31A108-360). 서버 규칙(ValidationRules)이 이 둘을 맞춰 보기 때문이다.
+// - 계약 변경(CHANGES)으로 고른 항목이 있으면 계약을 바꾸는 작업이다 → false
+// - 그런 항목도, 설계에 없는 내용(unlinked)도 없으면 바꿀 계약이 없다 → true
+// - 설계에 없는 내용만 있으면 사용자가 정한다(체크 칸)
+// 체크 칸을 접힌 '더 자세히'에만 두고 기본값을 false 로 보내면, 필수 칸만 채운 웹 계획이 첫 검증에서 늘 막혔다.
+type ContractChoice = 'CHANGES' | 'NONE' | 'ASK'
+function contractChoice(
+  refs: { relation: string }[],
+  unlinked: { description: string }[],
+): ContractChoice {
+  if (refs.some((reference) => reference.relation === 'CHANGES'))
+    return 'CHANGES'
+  if (!unlinked.some((entry) => entry.description.trim())) return 'NONE'
+  return 'ASK'
+}
+function resolveNoContractChange(choice: ContractChoice, checked: boolean) {
+  if (choice === 'CHANGES') return false
+  if (choice === 'NONE') return true
+  return checked
+}
+
 // 검증 NEEDS_INPUT 메시지에서 빠진 칸을 찾는다. finding에 칸 이름(field)이 없어 문구로 고른다.
 const detailHints: [DetailField, RegExp][] = [
   ['included_scope', /포함 범위/],
   ['excluded_scope', /제외 범위/],
   ['approach', /접근 (방법|방식)/],
   ['dependency_task_ids', /선행 작업/],
-  ['unlinked', /연결하지 않은|미연결/],
+  ['unlinked', /연결하지 않은|미연결|설계에 없는 내용/],
   ['no_contract_change', /계약 변경/],
 ]
 function missingDetails(findings: { kind: string; message: string }[]) {
@@ -1956,8 +1977,7 @@ function PlanDialog({
         (plan.included_scope.length > 0 ||
           plan.excluded_scope.length > 0 ||
           plan.dependency_task_ids.length > 0 ||
-          plan.unlinked.length > 0 ||
-          plan.no_contract_change)),
+          plan.unlinked.length > 0)),
   )
   const flagged = (name: DetailField) =>
     missing.includes(name) &&
@@ -2001,6 +2021,8 @@ function PlanDialog({
     },
   })
   const refs = useWatch({ control, name: 'refs' })
+  const unlinkedValues = useWatch({ control, name: 'unlinked' })
+  const contract = contractChoice(refs, unlinkedValues)
   const unlinkedRows = useFieldArray({ control, name: 'unlinked' })
   const criteriaRows = useFieldArray({ control, name: 'completion_criteria' })
   const dependencyIds = useWatch({ control, name: 'dependency_task_ids' })
@@ -2078,6 +2100,10 @@ function PlanDialog({
                 .map((row) => row.text.trim())
                 .filter(Boolean),
               context_packet_id: values.context_packet_id || undefined,
+              no_contract_change: resolveNoContractChange(
+                contractChoice(values.refs, values.unlinked),
+                values.no_contract_change,
+              ),
               // 계획 수정은 기존 계획의 객체에서 시작해 고친 것만 바꾼다(PR #72 리뷰). 객체마다 원래 순번(source)으로
               // 짝을 맞춰, 설명이 그대로면 원래 객체를 두고 고쳤으면 다른 필드(method·path 등)는 두고 description만
               // 바꾼다. 여러 줄 설명도 한 객체로 남고, 설명이 같은 두 객체도 따로 지킨다(PR #72 재전수 R2-TC-01).
@@ -2532,15 +2558,23 @@ function PlanDialog({
               />
             </div>
             <div className={cn('grid gap-2', flagged('no_contract_change'))}>
-              <label className="flex items-start gap-3 rounded-lg bg-muted/50 p-3 text-sm leading-6">
-                <input
-                  type="checkbox"
-                  className="mt-1 size-4 accent-primary"
-                  disabled={isSubmitting}
-                  {...register('no_contract_change')}
-                />
-                승인된 계약을 변경하지 않는 작업입니다.
-              </label>
+              {contract === 'ASK' ? (
+                <label className="flex items-start gap-3 rounded-lg bg-muted/50 p-3 text-sm leading-6">
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 accent-primary"
+                    disabled={isSubmitting}
+                    {...register('no_contract_change')}
+                  />
+                  승인된 계약을 변경하지 않는 작업입니다.
+                </label>
+              ) : (
+                <p className="rounded-lg bg-muted/50 p-3 text-sm leading-6">
+                  {contract === 'CHANGES'
+                    ? '계약 변경으로 고른 설계 항목이 있어 계약을 바꾸는 작업으로 저장돼요.'
+                    : '계약 변경으로 고른 항목이 없어 승인된 계약을 바꾸지 않는 작업으로 저장돼요.'}
+                </p>
+              )}
               {flagNote('no_contract_change')}
             </div>
           </div>
