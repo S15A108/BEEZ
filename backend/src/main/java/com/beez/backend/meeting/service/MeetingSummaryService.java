@@ -37,6 +37,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.type.TypeReference;
 
@@ -101,7 +102,7 @@ public class MeetingSummaryService {
     private record Prepared(Built built, long throughEntryId, Long previousSummaryId, String feedback) { }
     private record Step(MeetingSummaryResponse replayed, Prepared prepared) { }
 
-    /** Latest structured summary, available to active project members. */
+    /** MTG-A15. 최신 구조화 정리. 프로젝트 멤버면 읽고(끝난 회의도), 정리가 아직 없으면 404. 새로 고친 화면이 summary_id 를 다시 받는 데 쓴다. */
     public MeetingSummaryResponse latest(CallerContext caller, long projectId, String meetingIdRaw) {
         access.requireMember(caller, projectId);
         long meetingId = Ids.parse(meetingIdRaw, "meeting_id");
@@ -257,7 +258,7 @@ public class MeetingSummaryService {
         SummaryResult result = JSON.readValue(row.result(), SummaryResult.class);
         MeetingGeneration generation = MeetingAssembler.generation(row.generation());
         MeetingEntryResponse entry = MeetingAssembler.toResponse(meetings.findEntry(projectId, row.entryId()).orElseThrow(),
-                Ids.str(row.throughEntryId()), generation);
+                Ids.str(row.id()), Ids.str(row.throughEntryId()), generation);
         return new MeetingSummaryResponse(Ids.str(row.id()), Ids.str(row.meetingId()), entry, Ids.str(row.throughEntryId()),
                 result.conflicts(), result.decisions(), result.documentChanges(), result.actionItems(),
                 Ids.str(row.previousSummaryId()), row.feedback(), generation, row.createdAt());
