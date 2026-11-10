@@ -288,6 +288,24 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(fresh.unavailableReferences()).doesNotContain("ERD");
     }
 
+    @Test void workingCopyMarksReviewStaleWhenApprovedReferencesChange() {
+        assertThat(copy().reviewStale()).isFalse();
+        review();
+        assertThat(copy().reviewStale()).isFalse();
+        long reference = upload("ERD");
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), reference);
+        assertThat(copy().reviewStale()).isTrue();
+        assertThat(copy().latestReview()).isNotNull();
+        var fresh = review();
+        assertThat(copy().reviewStale()).isFalse();
+        var submission = submit(fresh);
+        long other = upload("API_SPEC");
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), other);
+        assertThat(submission).isNotNull();
+        // 제출한 뒤에는 팀장 결정을 기다리는 건이라 참고 승인본이 바뀌어도 무효로 표시하지 않는다.
+        assertThat(copy().reviewStale()).isFalse();
+    }
+
     @Test void invalidAiResultIsNotCompletedAndFailureIsNotAutomaticallyReissued() {
         doReturn(Map.of("origin", "TEMPLATE", "result", Map.of(), "usage", List.of())).when(gateway).review(anyMap());
         code(() -> reviews.review(author, project.projectId(), document, 1, "invalid"), "invalid_ai_output");

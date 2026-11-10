@@ -701,6 +701,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `file_name` | `string` | Y | 작성 파일명 |
 | `latest_review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | N | 마지막 비비 검토 결과 |
 | `submissions` | [DocumentReviewSubmission[]](00-common.md#schema-documentreviewsubmission) | Y | 제출 이력, 최신 ID 순 |
+| `review_stale` | `boolean` | Y | `latest_review`를 지금 쓸 수 없으면 true. 검토 뒤 다른 문서가 승인돼 참고 승인본이 바뀌었거나, 본문 리비전이 달라졌거나, 216 이전 검토일 때다. 쓰기 API가 `review_stale`(409)로 막는 조건과 같다. `latest_review`가 없거나 `status`가 SUBMITTED·APPROVED면 false (S15P31A108-362) |
 
 <a id="schema-documentreviewreference"></a>
 

@@ -114,7 +114,8 @@ const messages: Record<string, string> = {
   change_proposal_required:
     '기준 설계 생성 이후 문서 수정은 변경 제안을 통해 요청해 주세요.',
   submission_locked: '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
-  review_stale: '본문이 바뀌어 비비 검토를 다시 받아야 해요.',
+  // 서버는 본문·참고 승인본이 바뀐 경우, 더 새로운 검토가 생긴 경우, 제안한 원문이 사라진 경우에 모두 이 코드를 준다.
+  review_stale: '이 비비 검토는 더 쓸 수 없어요. 비비 검토를 다시 받아 주세요.',
   review_decisions_pending:
     '처리하지 않은 보완 제안이 있어요. 반영하거나 넘겨 주세요.',
   submission_decided: '이미 결정한 검토 요청이에요.',
