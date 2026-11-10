@@ -494,6 +494,30 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(queue.body()).contains(submission.id());
     }
 
+    /** FE 스키마는 null 이 아니라 '없음'(키 생략)을 받는다. 실제 HTTP 응답에서 null 필드가 빠지는지 확인한다 (PR 리뷰). */
+    @Test void workingCopyHttpResponseOmitsNullReviewRequestFieldsInsteadOfSendingNull() throws Exception {
+        var authorClient = client().login(fixtures().emailOf(author.accountId()), AccessFixtures.PASSWORD);
+        String path = "/api/projects/" + project.projectId() + "/documents/" + document + "/working-copy";
+        var none = DesignJson.JSON.readTree(authorClient.get(path).body());
+        assertThat(none.has("bee_review_request")).as("요청이 없으면 키 자체가 없다").isFalse();
+        assertThat(none.toString()).doesNotContain(":null");
+
+        failWith(new org.springframework.web.client.ResourceAccessException("read", new java.net.http.HttpTimeoutException("slow")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "http-failed"), "review_timeout");
+        var failed = DesignJson.JSON.readTree(authorClient.get(path).body()).path("bee_review_request");
+        assertThat(failed.path("status").asText()).isEqualTo("FAILED");
+        assertThat(failed.path("error_code").asText()).isEqualTo("review_timeout");
+        assertThat(failed.has("updated_at")).isTrue();
+
+        reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "# 줄인 계획\n로그인한다.", "plan.md"));
+        doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
+        reviews.review(author, project.projectId(), document, 2, "http-ok");
+        var completed = DesignJson.JSON.readTree(authorClient.get(path).body()).path("bee_review_request");
+        assertThat(completed.path("status").asText()).isEqualTo("COMPLETED");
+        assertThat(completed.has("error_code")).as("실패가 아니면 error_code 키가 없다").isFalse();
+        assertThat(completed.toString()).doesNotContain(":null");
+    }
+
     @Test void reuploadedOriginalBytesSurviveSubmissionAndCleanupKeepsSubmittedFiles() throws Exception {
         byte[] original = "\uFEFF# 파일\r\n다시 올린 원본\r\n".getBytes(StandardCharsets.UTF_8);
         var edited = reviews.reupload(author, project.projectId(), document, 1, "new.md", original);

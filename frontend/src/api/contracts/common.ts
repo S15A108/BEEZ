@@ -411,7 +411,8 @@ export type DocumentBeeReview = z.infer<typeof documentBeeReviewSchema>
 export const beeReviewRequestSchema = z.object({
   status: z.enum(['RUNNING', 'FAILED', 'COMPLETED']),
   // FAILED일 때만: review_timeout(시간 초과)·review_unavailable·invalid_ai_output 등
-  error_code: z.string().optional(),
+  // 서버(non_null)는 null 필드를 빼고 보내지만, 설정이 바뀌어도 화면이 깨지지 않게 null 도 받는다.
+  error_code: z.string().nullish(),
   updated_at: timeSchema,
 })
 export type BeeReviewRequest = z.infer<typeof beeReviewRequestSchema>
@@ -428,7 +429,7 @@ export const documentWorkingCopySchema = z.object({
   // latest_review를 지금 쓸 수 없음(참고 승인본이 바뀜·본문 리비전 불일치). 서버가 판정하며 없으면 false로 본다(S15P31A108-362).
   review_stale: z.boolean().optional(),
   // 현재 작성 리비전의 가장 최근 비비 검토 요청. 고친 직후에는 새 요청이 생길 때까지 없다.
-  bee_review_request: beeReviewRequestSchema.optional(),
+  bee_review_request: beeReviewRequestSchema.nullish(),
 })
 export type DocumentWorkingCopy = z.infer<typeof documentWorkingCopySchema>
 
