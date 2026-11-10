@@ -803,3 +803,63 @@ it('추방이 작업 상태 변경으로 409면 다시 시도하라고 알리고
   expect(await screen.findByText(RETRY_MESSAGE)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '추방' })).toBeEnabled()
 })
+
+// S15P31A108-377(사용자 보고 11-10): 팀장에게 '프로젝트 나가기' 자리에 '프로젝트 삭제'·'프로젝트 제거'가 보였다.
+// MEM-A10은 팀장도 팀장을 넘기고 나가게 한다. 나가기 창 제목은 팀장도 '프로젝트 나가기'이고, 삭제는 그 안의 다른 길이다.
+it('팀장의 나가기 창 제목은 프로젝트 나가기이고 위임하고 나가기와 프로젝트 삭제를 따로 보인다', async () => {
+  renderRemoveView(true)
+  expect(
+    await screen.findByRole('heading', { name: '프로젝트 나가기', level: 2 }),
+  ).toBeInTheDocument()
+  expect(screen.queryByText('프로젝트 제거')).not.toBeInTheDocument()
+  expect(
+    await screen.findByRole('region', { name: '위임하고 나가기' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '프로젝트 삭제' }),
+  ).toBeInTheDocument()
+})
+
+it('혼자 쓰는 프로젝트의 팀장에게는 팀장을 넘길 팀원이 없어 나갈 수 없다고 알리고 삭제만 보인다', async () => {
+  const project = await projectsApi.create({ name: '혼자 프로젝트' })
+  renderRemoveView(true, project.id)
+  expect(
+    await screen.findByText(
+      '팀장을 넘길 팀원이 없어 지금은 나갈 수 없어요. 팀 관리에서 팀원을 초대하고 팀장을 넘기면 나갈 수 있어요.',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('region', { name: '프로젝트 삭제' }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('region', { name: '위임하고 나가기' }),
+  ).not.toBeInTheDocument()
+})
+
+it('팀장도 프로젝트 관리 맨 아래에서 프로젝트 나가기로 나가기 창을 연다', async () => {
+  const user = userEvent.setup()
+  const onViewChange = vi.fn()
+  useWorkspaceStore.setState({ placements: {} })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <TeamPanel
+          projectId="101"
+          isLeader
+          view="project"
+          onViewChange={onViewChange}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByText(
+      '팀장을 넘기고 나가거나, 이름을 입력해 프로젝트를 삭제할 수 있어요.',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '프로젝트 삭제' }),
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
+  expect(onViewChange).toHaveBeenCalledWith('remove')
+})

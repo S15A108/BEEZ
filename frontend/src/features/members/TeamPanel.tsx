@@ -215,9 +215,8 @@ export function TeamPanel({
     view === 'project'
       ? '프로젝트 관리'
       : view === 'remove'
-        ? isLeader
-          ? '프로젝트 제거'
-          : '프로젝트 나가기'
+        ? // S15P31A108-377: 팀장도 팀장을 넘기고 나갈 수 있어(MEM-A10) 제목은 '프로젝트 나가기'다. 삭제는 창 안의 다른 길이다.
+          '프로젝트 나가기'
         : '팀 관리'
   return (
     <section className="space-y-6">
@@ -600,13 +599,11 @@ export function TeamPanel({
               <OfficeTimeSettings />
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 p-4">
                 <span className="text-sm">
-                  <strong className="block">
-                    {isLeader ? '프로젝트 삭제' : '프로젝트 나가기'}
-                  </strong>
-                  {/* 11-04 사용자 결정: PRJ-A05는 팀원이 있어도 이름이 맞으면 지운다(SCR-06-v2-settings-project). */}
+                  <strong className="block">프로젝트 나가기</strong>
+                  {/* S15P31A108-377: 팀장도 '프로젝트 나가기'로 들어가 위임하고 나가기와 삭제(PRJ-A05) 중 고른다(MEM-A10 처리 규칙). */}
                   <span className="text-muted-foreground">
                     {isLeader
-                      ? '팀원이 있어도 삭제돼요. 권한은 모두 해제되고 기록은 보관돼요. 이름을 입력해야 삭제돼요.'
+                      ? '팀장을 넘기고 나가거나, 이름을 입력해 프로젝트를 삭제할 수 있어요.'
                       : '나가면 이 프로젝트의 문서와 작업을 더 볼 수 없어요.'}
                   </span>
                 </span>
@@ -614,7 +611,7 @@ export function TeamPanel({
                   variant="destructive"
                   onClick={() => onViewChange?.('remove')}
                 >
-                  {isLeader ? '프로젝트 삭제' : '프로젝트 나가기'}
+                  프로젝트 나가기
                 </Button>
               </div>
             </div>
@@ -746,12 +743,25 @@ export function TeamPanel({
                       </section>
                     </div>
                   ) : (
+                    // 팀장은 넘길 팀원이 없으면 나갈 수 없다(MEM-A10 leader_transfer_required). 나가는 방법을 알리고 삭제만 보인다.
                     <div className="space-y-4">
-                      <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
-                        혼자 쓰는 프로젝트예요. 삭제하면 문서와 작업에 다시
-                        들어올 수 없어요.
+                      <p className="text-sm text-muted-foreground">
+                        팀장을 넘길 팀원이 없어 지금은 나갈 수 없어요. 팀
+                        관리에서 팀원을 초대하고 팀장을 넘기면 나갈 수 있어요.
                       </p>
-                      {deleteForm}
+                      <section
+                        aria-label="프로젝트 삭제"
+                        className="space-y-4 border-t pt-6"
+                      >
+                        <h3 className="text-base font-semibold">
+                          프로젝트 삭제
+                        </h3>
+                        <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+                          혼자 쓰는 프로젝트예요. 삭제하면 문서와 작업에 다시
+                          들어올 수 없어요.
+                        </p>
+                        {deleteForm}
+                      </section>
                     </div>
                   )
                 }
