@@ -72,3 +72,49 @@ def test_invalid_limit_is_rejected_before_any_model_call(value):
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "document_review_not_configured"
     assert provider.timeouts == []
+
+
+def test_rejected_answer_logs_the_reason_without_document_text(caplog):
+    import logging
+
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    request = fixture["input"]
+    bad = {
+        "summary": "x",
+        "body_reviewed": True,
+        "reviewed_reference_ids": [],
+        "suggestions": [
+            {
+                "type": "PATCH",
+                "step": "BODY",
+                "explanation": "비밀 본문 문장",
+                "sources": [],
+                "original_text": "문서에 없는 문장",
+                "replacement_text": "대체",
+                "category": "READABILITY",
+                "severity": "MINOR",
+            }
+        ],
+    }
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, ai_internal_token="test-internal"
+    )
+    app.dependency_overrides[get_review_client] = lambda: LLMClient(
+        RecordingProvider(bad)
+    )
+    with (
+        caplog.at_level(logging.WARNING, logger="app.services.document_review"),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/document-reviews",
+            json=request,
+            headers={"Authorization": "Bearer test-internal"},
+        )
+    assert response.status_code == 502
+    text = " ".join(record.getMessage() for record in caplog.records)
+    assert "document review answer rejected" in text
+    assert "rule:" in text or "schema:" in text
+    assert "문서에 없는 문장" not in text and "비밀 본문 문장" not in text

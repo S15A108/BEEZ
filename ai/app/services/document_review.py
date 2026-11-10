@@ -1,6 +1,7 @@
 """Generate review proposals for a BE-authorized immutable snapshot."""
 
 import json
+import logging
 from typing import Literal
 from uuid import uuid4
 
@@ -178,6 +179,25 @@ def _validate_result(
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
+logger = logging.getLogger(__name__)
+
+
+def rejection_reason(exc: Exception) -> str:
+    """Why the model's answer was rejected, without any document or model text.
+
+    The 502 returned for a rejected answer carries no detail, so repeated failures
+    could not be told apart (S15P31A108-382). ValueError messages are fixed phrases
+    raised by this module; pydantic errors are reduced to field path and error type.
+    """
+    if isinstance(exc, ValidationError):
+        return "schema: " + ", ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}:{error['type']}"
+            for error in exc.errors()[:5]
+        )
+    if isinstance(exc, ValueError):
+        return f"rule: {exc}"[:120]
+    return type(exc).__name__
+
 
 async def analyze(
     body: DocumentReviewRequest,
@@ -283,7 +303,19 @@ async def analyze(
             > 1_048_576
         ):
             raise ValueError("result too large")
-    except (ValidationError, ValueError, TypeError, UnicodeError, AttributeError):
+    except (
+        ValidationError,
+        ValueError,
+        TypeError,
+        UnicodeError,
+        AttributeError,
+    ) as exc:
+        output_tokens = result.usage[-1].output_tokens if result.usage else None
+        logger.warning(
+            "document review answer rejected: %s (output_tokens=%s)",
+            rejection_reason(exc),
+            output_tokens,
+        )
         raise result.invalid_output_error() from None
     return {
         "origin": "MODEL",

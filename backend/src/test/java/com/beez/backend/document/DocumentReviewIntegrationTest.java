@@ -720,4 +720,24 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, "late-result")).isInstanceOf(ApiException.class);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
     }
+
+    @Test void reviewsOfDifferentDocumentsRunInParallelWithoutBlockingEachOther() throws Exception {
+        var ids = List.of(document, upload("REQUIREMENTS"), upload("ERD"), upload("API_SPEC"));
+        // 모델 호출을 0.8초 걸리게 한 대역. 직렬이면 3.2초 이상, 병렬이면 1초 안팎이다.
+        doAnswer(call -> {
+            Thread.sleep(800);
+            return result(call.getArgument(0), List.of());
+        }).when(gateway).review(anyMap());
+        var pool = Executors.newFixedThreadPool(ids.size());
+        try {
+            long start = System.nanoTime();
+            var futures = ids.stream().map(id -> pool.submit(() ->
+                    reviews.review(author, project.projectId(), id, 1, "parallel-" + id).id())).toList();
+            for (var future : futures) assertThat(future.get(10, TimeUnit.SECONDS)).isNotBlank();
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            assertThat(elapsedMs).as("서로 다른 문서의 검토가 직렬로 돌았다").isLessThan(2_400);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
 }
