@@ -213,6 +213,8 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               aria-label="설계 질문"
               placeholder="공용 문서에 대해 물어보세요"
               autoComplete="off"
+              // 창(Radix)은 열 때 첫 포커스 요소인 '찾는 범위' 칩에 포커스를 준다. 비비를 부르고 바로 묻게 입력칸을 먼저 잡는다(S15P31A108-364).
+              autoFocus
               aria-invalid={Boolean(errors.question)}
               aria-describedby={errors.question ? errorId : undefined}
               className="h-10"
