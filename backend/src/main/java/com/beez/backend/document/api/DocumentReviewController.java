@@ -99,6 +99,14 @@ public class DocumentReviewController {
         return reviews.withdraw(caller, projectId, documentId, submissionId, key);
     }
 
+    @PostMapping("/documents/{documentId}/discard")
+    @Operation(summary = "DOC-A25 문서 등록 취소 — 등록자·팀장, 승인된 적 없는 문서만, 이력은 보존")
+    public DocumentDiscardResponse discard(CallerContext caller, HttpServletRequest request, @PathVariable long projectId,
+            @PathVariable long documentId, @RequestHeader("Idempotency-Key") String key) {
+        origins.requireTrustedOrigin(request);
+        return reviews.discard(caller, projectId, documentId, key);
+    }
+
     @PostMapping("/documents/{documentId}/review-submissions")
     @Operation(summary = "팀장 검토 요청·재제출")
     @ResponseStatus(HttpStatus.CREATED)

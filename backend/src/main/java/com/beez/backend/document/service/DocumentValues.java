@@ -19,6 +19,7 @@ final class DocumentValues {
             case "analysis_not_failed" -> "실패한 분석만 재시도할 수 있습니다.";
             case "baseline_not_published" -> "아직 기준 설계가 생성되지 않았습니다.";
             case "index_not_ready" -> "문서 색인이 아직 준비되지 않았습니다. 분석 상태를 확인해 주세요.";
+            case "document_approved" -> "이미 승인된 적이 있는 문서는 등록을 취소할 수 없습니다.";
             case "baseline_changed" -> "기준 설계가 변경되었습니다. 최신 기준으로 다시 조회해 주세요.";
             default -> "현재 상태에서는 요청을 처리할 수 없습니다. 최신 상태를 확인해 주세요.";
         };
