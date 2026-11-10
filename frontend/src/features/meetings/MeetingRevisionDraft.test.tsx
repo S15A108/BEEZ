@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { changesApi, documentsApi, meetingsApi } from '@/api/services'
@@ -7,12 +7,12 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { getApiErrorMessage } from '@/api/error'
 import { MeetingRevisionDraft } from './MeetingRevisionDraft'
 import { revisionDraftInputSchema } from './schemas'
+import { rememberSummary } from './summaryCache'
 
 vi.mock('@/api/services', () => ({
   meetingsApi: {
     latestSummary: vi.fn(),
     latestRevisionDraft: vi.fn(),
-    summary: vi.fn(),
     revisionDraft: vi.fn(),
     entries: vi.fn(),
   },
@@ -242,7 +242,7 @@ it('정리 이후 새 발언이 있으면 다시 정리하도록 알리고 해�
   ).not.toBeInTheDocument()
 })
 
-it('모든 기록을 불러온 뒤 마지막 TEXT 또는 CONFLICT_BRIEF까지 정리한다', async () => {
+it('남은 기록이 있으면 더 보기를 누를 수 있고 모두 불러오면 오래된 정리 안내를 판단한다', async () => {
   const user = userEvent.setup()
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -277,18 +277,20 @@ it('모든 기록을 불러온 뒤 마지막 TEXT 또는 CONFLICT_BRIEF까지 �
     </QueryClientProvider>
   )
   const view = render(component(true))
-  const button = await screen.findByRole('button', {
-    name: '최신 대화로 다시 정리',
-  })
-  expect(button).toBeDisabled()
+  await screen.findByRole('checkbox', { name: '팀장이 관리한다' })
+  // 기록을 다 읽기 전에는 정리가 최신인지 알 수 없어 안내하지 않는다.
+  expect(screen.queryByText(/회의 정리 이후 새 기록이 있어요/)).toBeNull()
   await user.click(screen.getByRole('button', { name: '회의 기록 더 보기' }))
   expect(loadMore).toHaveBeenCalledOnce()
+  // 모두 읽었더니 마지막 기록(7)이 정리가 쓴 기록(3)보다 뒤라면 위에서 다시 정리하도록 안내한다.
   view.rerender(component(false))
-  vi.mocked(meetingsApi.summary).mockResolvedValue(
-    await meetingsApi.latestSummary('1', '2'),
-  )
-  await user.click(button)
-  expect(meetingsApi.summary).toHaveBeenCalledWith('1', '2', '7')
+  expect(
+    await screen.findByText(/회의 정리 이후 새 기록이 있어요/),
+  ).toBeInTheDocument()
+  // 정리는 여기서 만들지 않는다. 위의 '비비에게 정리 요청'을 쓴다.
+  expect(
+    screen.queryByRole('button', { name: /다시 정리|회의 정리 만들기/ }),
+  ).toBeNull()
 })
 
 it.each([
@@ -304,51 +306,45 @@ it.each([
     '섞인 순서',
     ['9007199254740993', '2', '99999999999999999', '9007199254740992'],
   ],
-])('%s로 전달돼도 정리 가능한 최대 ID로 정리한다', async (_, order) => {
-  const user = userEvent.setup()
-  const latest = '9007199254740993'
-  const summary = await meetingsApi.latestSummary('1', '2')
-  vi.mocked(meetingsApi.latestSummary).mockResolvedValue({
-    ...summary,
-    through_entry_id: latest,
-  })
-  vi.mocked(meetingsApi.summary).mockResolvedValue({
-    ...summary,
-    through_entry_id: latest,
-  })
-  const values = [
-    { id: '2', kind: 'TEXT' as const, text: '이전 발언' },
-    { id: '9007199254740992', kind: 'TEXT' as const, text: '이전 큰 ID' },
-    { id: latest, kind: 'CONFLICT_BRIEF' as const, text: '최신 충돌' },
-    { id: '99999999999999999', kind: 'SUMMARY' as const, text: '이전 정리' },
-  ]
-  const entries = order.map((id) => ({
-    ...values.find((entry) => entry.id === id)!,
-    meeting_id: '2',
-    created_at: '2026-11-06T00:00:00Z',
-  }))
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  render(
-    <QueryClientProvider client={client}>
-      <MeetingRevisionDraft
-        projectId="1"
-        meetingId="2"
-        entries={entries}
-        hasMore={false}
-        loadingMore={false}
-        loadMore={() => {}}
-      />
-    </QueryClientProvider>,
-  )
-  const button = await screen.findByRole('button', {
-    name: '최신 대화로 다시 정리',
-  })
-  expect(screen.queryByText(/회의 정리 이후 새 기록이 있어요/)).toBeNull()
-  await user.click(button)
-  expect(meetingsApi.summary).toHaveBeenCalledWith('1', '2', latest)
-})
+])(
+  '%s로 전달돼도 정리 가능한 최대 ID로 오래된 정리를 판단한다',
+  async (_, order) => {
+    const latest = '9007199254740993'
+    const summary = await meetingsApi.latestSummary('1', '2')
+    vi.mocked(meetingsApi.latestSummary).mockResolvedValue({
+      ...summary,
+      through_entry_id: latest,
+    })
+    const values = [
+      { id: '2', kind: 'TEXT' as const, text: '이전 발언' },
+      { id: '9007199254740992', kind: 'TEXT' as const, text: '이전 큰 ID' },
+      { id: latest, kind: 'CONFLICT_BRIEF' as const, text: '최신 충돌' },
+      { id: '99999999999999999', kind: 'SUMMARY' as const, text: '이전 정리' },
+    ]
+    const entries = order.map((id) => ({
+      ...values.find((entry) => entry.id === id)!,
+      meeting_id: '2',
+      created_at: '2026-11-06T00:00:00Z',
+    }))
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MeetingRevisionDraft
+          projectId="1"
+          meetingId="2"
+          entries={entries}
+          hasMore={false}
+          loadingMore={false}
+          loadMore={() => {}}
+        />
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('checkbox', { name: '팀장이 관리한다' })
+    expect(screen.queryByText(/회의 정리 이후 새 기록이 있어요/)).toBeNull()
+  },
+)
 
 it('역순 기록에서 정리 이후의 큰 ID 발언을 오래된 정리로 감지한다', async () => {
   const summary = await meetingsApi.latestSummary('1', '2')
@@ -395,7 +391,7 @@ it('역순 기록에서 정리 이후의 큰 ID 발언을 오래된 정리로 �
   expect(screen.queryByRole('checkbox', { name: '새 발언' })).toBeNull()
 })
 
-it('정리 가능한 기록이 없으면 정리 버튼을 사용할 수 없다', async () => {
+it('정리 가능한 기록이 없으면 대화를 남기라고 안내한다', async () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -420,10 +416,91 @@ it('정리 가능한 기록이 없으면 정리 버튼을 사용할 수 없다',
     </QueryClientProvider>,
   )
   expect(
-    await screen.findByRole('button', { name: '최신 대화로 다시 정리' }),
-  ).toBeDisabled()
-  expect(screen.getByText('먼저 회의 대화를 남겨 주세요.')).toBeInTheDocument()
-  expect(meetingsApi.summary).not.toHaveBeenCalled()
+    await screen.findByText('먼저 회의 대화를 남겨 주세요.'),
+  ).toBeInTheDocument()
+})
+
+// 정리는 위의 '비비에게 정리 요청'으로만 만든다. 정리가 아직 없으면 거기서 먼저 하라고 안내하고 여기에 정리 버튼을 두지 않는다.
+it('정리가 아직 없으면 위의 정리 요청을 안내하고 정리 버튼은 두지 않는다', async () => {
+  vi.mocked(meetingsApi.latestSummary).mockRejectedValue(
+    Object.assign(new Error('missing'), {
+      isAxiosError: true,
+      response: { status: 404 },
+    }),
+  )
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MeetingRevisionDraft
+        projectId="1"
+        meetingId="2"
+        entries={[
+          {
+            id: '3',
+            meeting_id: '2',
+            kind: 'TEXT',
+            text: '발언',
+            created_at: '2026-11-06T00:00:00Z',
+          },
+        ]}
+        hasMore={false}
+        loadingMore={false}
+        loadMore={() => {}}
+      />
+    </QueryClientProvider>,
+  )
+  expect(
+    await screen.findByText(/위의 '비비에게 정리 요청'/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: /정리 만들기|다시 정리/ }),
+  ).toBeNull()
+})
+
+// 위에서 정리를 다시 하면(같은 정리 캐시가 바뀌면) 이 화면이 새 정리를 보고, 이전 정리 기준의 선택을 비운다.
+it('위에서 정리를 다시 하면 새 정리를 보이고 이전 선택을 비운다', async () => {
+  const first = await meetingsApi.latestSummary('1', '2')
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MeetingRevisionDraft
+        projectId="1"
+        meetingId="2"
+        entries={[
+          {
+            id: '3',
+            meeting_id: '2',
+            kind: 'TEXT',
+            text: '발언',
+            created_at: '2026-11-06T00:00:00Z',
+          },
+        ]}
+        hasMore={false}
+        loadingMore={false}
+        loadMore={() => {}}
+      />
+    </QueryClientProvider>,
+  )
+  const decision = await screen.findByRole('checkbox', {
+    name: '팀장이 관리한다',
+  })
+  await userEvent.click(decision)
+  expect(decision).toBeChecked()
+  act(() =>
+    rememberSummary(client, '1', '2', {
+      ...first,
+      id: '10',
+      decisions: [{ text: '팀원이 관리한다' }],
+    }),
+  )
+  expect(
+    await screen.findByRole('checkbox', { name: '팀원이 관리한다' }),
+  ).not.toBeChecked()
+  expect(screen.queryByRole('checkbox', { name: '팀장이 관리한다' })).toBeNull()
 })
 
 async function showSavedDraft(hasMore = false) {

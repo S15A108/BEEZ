@@ -292,6 +292,30 @@ it('기록이 한 페이지를 넘어도 대화를 오래된 순으로 보이고
   ).toBeInTheDocument()
 })
 
+// 정리는 회의실의 '비비에게 정리 요청'으로만 만든다. 회의 수정 초안은 그 정리를 같은 캐시로 읽는다(정리가 두 개로 보이지 않는다).
+it('회의 수정 초안은 위에서 요청한 정리를 그대로 쓰고 다시 정리해도 어긋나지 않는다', async () => {
+  const user = userEvent.setup()
+  renderPanel(true)
+  await requestSummary(user)
+  await user.click(
+    screen.getByRole('button', { name: '회의 수정 초안 만들기' }),
+  )
+  const draft = await screen.findByRole('region', { name: '회의 수정 초안' })
+  // 위에서 만든 정리의 결정을 여기서 고를 수 있다. 여기에는 정리를 만드는 버튼이 없다.
+  expect(
+    (await within(draft).findAllByRole('checkbox')).length,
+  ).toBeGreaterThan(0)
+  expect(
+    within(draft).queryByRole('button', { name: /정리 만들기|다시 정리/ }),
+  ).toBeNull()
+  // 위에서 다시 정리하면 수정 초안도 새 정리를 보고, '정리 이후 새 기록' 안내가 뜨지 않는다.
+  await user.click(screen.getByRole('button', { name: '비비에게 정리 요청' }))
+  await screen.findByText('비비가 회의 내용을 정리했어요.')
+  expect(
+    within(draft).queryByText(/회의 정리 이후 새 기록이 있어요/),
+  ).toBeNull()
+})
+
 // 정리하는 동안 올라온 대화는 정리 결과 기록보다 ID 가 작아도 정리에 들어가지 않았으므로 새 대화로 알린다.
 it('정리하는 동안 올라온 대화도 정리한 뒤의 새 대화로 알린다', async () => {
   await meetingsApi.addEntry('101', '901', { text: '정리에 들어갈 말' })

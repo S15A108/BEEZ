@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { InfiniteData } from '@tanstack/react-query'
 import {
   useInfiniteQuery,
   useQuery,
@@ -39,7 +38,7 @@ import {
   staleSummaryCode,
 } from './meetingErrors'
 import { FEEDBACK_MAX } from './schemas'
-import type { EntriesResponse } from './schemas'
+import { latestSummaryKey, rememberSummary } from './summaryCache'
 import { SummaryCard } from './SummaryCard'
 import { useMeetingList } from './useMeetingList'
 import { MeetingRevisionDraft } from './MeetingRevisionDraft'
@@ -155,9 +154,8 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   // 비비 정리(MTG-A11): 가장 최근 SUMMARY 기록. 구조화한 정리(summary_id·바뀔 문서 등)는 최신 정리 조회(MTG-A15)로 받아서
   // 새로 고치거나 다른 기기에서 열어도 끝내기·수정 요청을 이어 갈 수 있다.
   const review = notes.find((entry) => entry.kind === 'SUMMARY')
-  const summaryKey = ['projects', projectId, 'meeting-summary', selectedId]
   const summaryQuery = useQuery({
-    queryKey: summaryKey,
+    queryKey: latestSummaryKey(projectId, selectedId ?? ''),
     queryFn: () => meetingsApi.latestSummary(projectId, selectedId!),
     enabled: !!selectedId && !!review,
     retry: false,
@@ -225,32 +223,9 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void runPlain(operation, message).catch(() => undefined)
   }
-  // 새 정리는 정리 캐시와 기록 목록 캐시에 함께 넣는다. 기록 목록만 재조회 전이면 정리 카드가 잠깐 글로 바뀌고 입력줄이 깜빡인다.
-  const remember = (meetingId: string, next: MeetingSummary) => {
-    client.setQueryData(
-      ['projects', projectId, 'meeting-summary', meetingId],
-      next,
-    )
-    client.setQueryData<InfiniteData<EntriesResponse>>(
-      ['projects', projectId, 'meeting-entries', meetingId],
-      (data) => {
-        if (
-          !data ||
-          data.pages.some((page) =>
-            page.items.some((item) => item.id === next.entry.id),
-          )
-        )
-          return data
-        const pages = data.pages.slice()
-        const last = pages.length - 1
-        pages[last] = {
-          ...pages[last],
-          items: [...pages[last].items, next.entry],
-        }
-        return { ...data, pages }
-      },
-    )
-  }
+  // 새 정리는 정리 캐시와 기록 목록 캐시에 함께 넣는다(회의 수정 초안도 같은 정리 캐시를 읽는다).
+  const remember = (meetingId: string, next: MeetingSummary) =>
+    rememberSummary(client, projectId, meetingId, next)
   // MTG-A11: 가장 최근 기록까지의 대화를 비비가 정리한다.
   const requestSummary = (meetingId: string, throughId: string) =>
     runWithNotice(async () => {
