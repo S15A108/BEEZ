@@ -864,20 +864,37 @@ it('팀장도 프로젝트 관리 맨 아래에서 프로젝트 나가기로 나
   expect(onViewChange).toHaveBeenCalledWith('remove')
 })
 
-// S15P31A108-378(사용자 보고 11-10): 표시 역할·담당 영역이 무엇을 쓰는 칸인지 몰랐다. 목록 위와 수정 칸 아래에 작은 글로 알린다.
+// S15P31A108-378(사용자 보고 11-10): 표시 역할·담당 도메인이 무엇을 쓰는 칸인지 몰랐다. 팀원 한 명을 고칠 때 여는 수정 화면의
+// 두 칸 아래에 작은 글로 알린다. 팀 목록 위에 두었던 설명은 사용자 요청(11-10)으로 빼고 목록은 간단하게 둔다.
 // 3D 이름표는 이름(에이전트는 이름 · 상태)만 보여 두 칸이 나오지 않는다(office-actors.ts). 보이는 곳만 적는다.
-const roleHint = '팀에서 맡은 역할 이름(예: 프론트엔드). 이름 아래에 보여요.'
+const roleHint =
+  '팀에서 맡은 역할 이름이에요(예: 프론트엔드). 팀 목록의 이름 아래에 보여요.'
 const domainHint =
-  '주로 맡는 기능(예: 게시판 작업). 사무실 팀원 목록에도 보여요.'
+  '주로 맡는 기능이에요(예: 게시판 작업). 팀 목록과 사무실 팀원 목록에 보여요.'
 
-it('팀 목록 위에 표시 역할과 담당 도메인이 무엇을 쓰는 칸인지 보인다', async () => {
+it('팀 목록 위에는 표시 역할·담당 도메인 설명을 두지 않는다', async () => {
   renderTeam()
   await screen.findByText('김동료')
-  const legend = screen.getByRole('group', { name: '표시 역할과 담당 도메인' })
-  expect(within(legend).getByText('표시 역할')).toBeInTheDocument()
-  expect(within(legend).getByText(roleHint)).toBeInTheDocument()
-  expect(within(legend).getByText('담당 도메인')).toBeInTheDocument()
-  expect(within(legend).getByText(domainHint)).toBeInTheDocument()
+  expect(
+    screen.queryByRole('group', { name: '표시 역할과 담당 도메인' }),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText(roleHint)).not.toBeInTheDocument()
+  expect(screen.queryByText(domainHint)).not.toBeInTheDocument()
+})
+
+it('팀원 줄 ⋯의 역할 수정 화면에서 표시 역할·담당 도메인 칸 아래에 뜻이 보인다', async () => {
+  const user = userEvent.setup()
+  renderTeam()
+  await screen.findByText('김동료')
+  await user.click(screen.getByRole('button', { name: '김동료 더보기' }))
+  await user.click(await screen.findByRole('menuitem', { name: '역할 수정' }))
+  const sheet = await screen.findByRole('dialog', {
+    name: '김동료 · 역할 수정',
+  })
+  expect(within(sheet).getByLabelText('표시 역할')).toBeInTheDocument()
+  expect(within(sheet).getByText(roleHint)).toBeInTheDocument()
+  expect(within(sheet).getByLabelText('담당 도메인')).toBeInTheDocument()
+  expect(within(sheet).getByText(domainHint)).toBeInTheDocument()
 })
 
 it('역할 수정 창의 표시 역할·담당 도메인 칸 아래에 짧은 설명이 보인다', async () => {

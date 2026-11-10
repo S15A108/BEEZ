@@ -261,26 +261,6 @@ export function TeamPanel({
         <AsyncState query={members}>
           {(data) => (
             <>
-              {/* S15P31A108-378: 두 칸이 무엇을 쓰는 칸인지 목록 위에 작게 알린다. 3D 이름표에는 나오지 않는다(office-actors.ts). */}
-              {/* 목록 줄(listitem)과 섞이지 않게 목록 대신 묶음으로 둔다. */}
-              <div
-                role="group"
-                aria-label="표시 역할과 담당 도메인"
-                className="mb-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2"
-              >
-                <p>
-                  <strong className="font-semibold text-foreground">
-                    표시 역할
-                  </strong>{' '}
-                  <span>{roleLabelHint}</span>
-                </p>
-                <p>
-                  <strong className="font-semibold text-foreground">
-                    담당 도메인
-                  </strong>{' '}
-                  <span>{domainHint}</span>
-                </p>
-              </div>
               <ul className="divide-y border-y">
                 {data.pages
                   .flatMap((page) => page.items)
@@ -934,11 +914,12 @@ export function TeamPanel({
   )
 }
 
-// 표시 역할·담당 영역 설명(S15P31A108-378). 표시 역할은 팀 목록의 이름 아래에, 담당 영역은 팀 목록과 사무실 HUD 팀원 목록에 보인다.
+// 표시 역할·담당 도메인 설명(S15P31A108-378). 팀원 한 명을 고치는 수정 화면의 두 칸 아래에만 둔다(사용자 요청 11-10).
+// 표시 역할은 팀 목록의 이름 아래에, 담당 도메인은 팀 목록과 사무실 HUD 팀원 목록에 보인다. 3D 이름표에는 나오지 않는다(office-actors.ts).
 const roleLabelHint =
-  '팀에서 맡은 역할 이름(예: 프론트엔드). 이름 아래에 보여요.'
+  '팀에서 맡은 역할 이름이에요(예: 프론트엔드). 팀 목록의 이름 아래에 보여요.'
 const domainHint =
-  '주로 맡는 기능(예: 게시판 작업). 사무실 팀원 목록에도 보여요.'
+  '주로 맡는 기능이에요(예: 게시판 작업). 팀 목록과 사무실 팀원 목록에 보여요.'
 
 // 프로젝트 이름·소개가 서버 값과 다른지. 앞뒤 공백은 서버가 빼므로(PRJ-A04) 바뀐 것으로 치지 않는다.
 function projectInfoChanged(
