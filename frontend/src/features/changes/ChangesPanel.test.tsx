@@ -1364,3 +1364,48 @@ it('항목과 문서가 함께 든 제안은 확인된 관계를 볼 수 있게 
   expect(screen.getByText(/미배정/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '다시 분석' })).toBeEnabled()
 })
+
+// S15P31A108-371 7: 회의가 만든 제안처럼 문서만 바꾸는 제안도 개요 숫자와 줄에 문서 변경이 보이고, 사유 줄바꿈이 남는다.
+it('문서만 바꾸는 제안의 개요는 문서 변경을 세고 줄로 보이며 사유 줄바꿈을 지킨다 (S15P31A108-371)', async () => {
+  const base = await changesApi.get('101', '71')
+  const { document } = await documentsApi.get('101', '203')
+  const reason = '회의에서 정한 내용이에요.\n\n충돌:\n- REQ-005 안내 문구'
+  vi.spyOn(changesApi, 'get').mockResolvedValue({
+    ...base,
+    proposal: {
+      ...base.proposal,
+      reason,
+      items: [],
+      documents: [
+        {
+          document_id: '203',
+          base_document_version_id: document.approved_version!.id,
+          proposed_document_version_id: '299',
+        },
+      ],
+    },
+  } as never)
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: /^바뀌는 내용 1/ }),
+  ).toHaveTextContent('문서 1')
+  expect(
+    await screen.findByText('요구사항 명세서 v1 → 새 버전'),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/공용 문서함 승인 흐름/)).not.toBeInTheDocument()
+  const paragraph = screen.getByText(/^회의에서 정한 내용이에요/)
+  expect(paragraph.textContent).toBe(reason)
+  expect(paragraph).toHaveClass('whitespace-pre-wrap')
+})
+
+it('항목과 문서가 함께 든 제안의 개요는 둘을 합쳐 세고 나눠 보인다 (S15P31A108-371)', async () => {
+  await stubDocumentProposal(true)
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: /^바뀌는 내용 2/ }),
+  ).toHaveTextContent('고치기 1 · 문서 1')
+  // 제안의 기준 버전이 지금 승인본과 다르면 버전 번호를 짐작하지 않는다.
+  expect(
+    await screen.findByText('요구사항 명세서 → 새 버전'),
+  ).toBeInTheDocument()
+})
