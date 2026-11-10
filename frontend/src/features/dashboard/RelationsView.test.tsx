@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { authApi, tasksApi } from '@/api/services'
+import { authApi, changesApi, tasksApi } from '@/api/services'
 import { dashboardApi } from '@/api/services/dashboard'
 import { statusLabel } from '@/lib/display'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -287,4 +287,56 @@ it('작업이 없을 때 기준 v1 안내는 기준이 아직 없을 때만 붙�
     </QueryClientProvider>,
   )
   expect(await screen.findByText(/기준 v1이 생기기 전에는/)).toBeVisible()
+})
+
+// PR #72 4차 TC-02: 진행 중 제안이 첫 50개 밖에 있으면 영향 경고가 사라졌다. 마지막 페이지까지 읽어 맞춘다.
+it('진행 중 제안이 첫 페이지 밖에 있어도 영향 경고를 띄운다', async () => {
+  vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>
+    query?.design_item_id
+      ? {
+          nodes: [
+            { id: '301', type: 'DESIGN_ITEM', label: 'REQ-001' },
+            { id: '71', type: 'CHANGE_PROPOSAL', label: '빈 화면 안내' },
+          ],
+          edges: [
+            {
+              from_id: '71',
+              from_type: 'CHANGE_PROPOSAL',
+              to_id: '301',
+              to_type: 'DESIGN_ITEM',
+              relation: 'UPDATE',
+              confirmed: true,
+            },
+          ],
+        }
+      : taskGraph,
+  )
+  const list = changesApi.list
+  const changes = vi
+    .spyOn(changesApi, 'list')
+    .mockImplementation(async (projectId, query) => {
+      const page = await list(projectId, { group: 'IN_PROGRESS' })
+      const later = page.items.filter((item) => item.id === '71')
+      expect(later).toHaveLength(1)
+      return query?.cursor === 'p2'
+        ? { items: later, has_more: false }
+        : {
+            items: page.items.filter((item) => item.id !== '71'),
+            has_more: true,
+            next_cursor: 'p2',
+          }
+    })
+  const user = userEvent.setup()
+  renderView()
+  await user.click(await screen.findByRole('button', { name: /TASK-001/ }))
+  expect(
+    await screen.findByText(
+      '검토 중인 변경 제안이 이 작업의 근거 설계를 고쳐요',
+    ),
+  ).toBeInTheDocument()
+  expect(changes).toHaveBeenCalledWith('101', {
+    group: 'IN_PROGRESS',
+    cursor: 'p2',
+    limit: 100,
+  })
 })

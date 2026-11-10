@@ -1882,3 +1882,44 @@ it('작업 기록 카드는 기록 목록을 열고, 기록 남기기로 기록 
   ).toBeInTheDocument()
   expect(screen.queryByRole('region', { name: '작업 기록' })).toBeNull()
 })
+
+// PR #72 5차 TC-03: 계획 이력이 100개를 넘으면 첫 페이지 밖의 이전 계획을 읽을 수 없었다.
+it('계획 이력이 한 페이지를 넘으면 다음 페이지 리비전까지 모두 보여 준다', async () => {
+  const older = {
+    ...task.current_plan_revision,
+    id: '510',
+    revision_no: 1,
+    plan: { ...task.current_plan_revision.plan, title: '첫 계획' },
+  }
+  const revisions = vi
+    .spyOn(tasksApi, 'planRevisions')
+    .mockImplementation(async (_project, _task, query) =>
+      query?.cursor === 'r2'
+        ? { items: [older], has_more: false }
+        : {
+            items: [task.current_plan_revision],
+            has_more: true,
+            next_cursor: 'r2',
+          },
+    )
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PaneSheetHost>
+        <TasksPanel projectId="101" isLeader={false} />
+      </PaneSheetHost>
+    </QueryClientProvider>,
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: /계획 이력 r2 · 2개/ }),
+  )
+  const sheet = screen.getByRole('region', { name: '계획 이력' })
+  expect(within(sheet).getByText(/r1 · 첫 계획/)).toBeInTheDocument()
+  expect(revisions).toHaveBeenCalledWith('101', '501', {
+    cursor: 'r2',
+    limit: 100,
+  })
+})

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { useIsMutating } from '@tanstack/react-query'
 import { Box, CheckCheck, LayoutGrid } from 'lucide-react'
 import { BibiFace } from '@/components/BibiFace'
 import { Button } from '@/components/ui/button'
@@ -209,6 +210,8 @@ export function TourGuide({
   // 환영 창은 그 창을 닫은 뒤로 미룬다. 아직 안 봤으니 봤다고 남기지 않는다.
   const pane = useWorkspaceStore((state) => state.pane)
   const mode = requested === 'welcome' && pane ? null : requested
+  const openPane = useWorkspaceStore((state) => state.openPane)
+  const busy = useIsMutating() > 0
   const [, setSize] = useState(0)
   useEffect(() => {
     const resize = () => setSize((value) => value + 1)
@@ -220,7 +223,13 @@ export function TourGuide({
           ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
       if (event.key === '?' && !typing) {
         event.preventDefault()
-        onChange(mode === 'map' ? null : 'map')
+        if (mode === 'map') onChange(null)
+        // 업무 창은 모달이라 그 위에 띄운 안내는 누를 수도 포커스할 수도 없다(PR #72 UI-1 남은 부분). 창을 닫고 연다.
+        // 요청이 처리 중이면 창을 닫으면 결과를 받을 화면이 없어지므로 열지 않는다(설정 창 메뉴 잠금과 같은 규칙).
+        else if (!pane || !busy) {
+          if (pane) openPane(null)
+          onChange('map')
+        }
       }
       if (event.key === 'Escape' && mode !== null) onChange(null)
     }
@@ -230,7 +239,7 @@ export function TourGuide({
       window.removeEventListener('resize', resize)
       window.removeEventListener('keydown', key)
     }
-  }, [mode, onChange])
+  }, [mode, onChange, pane, busy, openPane])
   const finish = () => {
     try {
       if (accountId) localStorage.setItem(`beez.tour.${accountId}`, 'seen')

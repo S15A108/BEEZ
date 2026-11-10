@@ -578,6 +578,27 @@ export function taskRoutes(
           )
         )
           fail(409, 'stale_validation', '현재 승인 근거로 다시 검증해 주세요.')
+        // 서버 StartGate G4: 이 계획이 CHANGES 하는 항목을 다른 IN_PROGRESS·WAITING 작업도 CHANGES 하면 시작할 수 없다.
+        // 두 작업이 둘 다 검증을 통과한 뒤에도 먼저 시작한 쪽만 들어간다(PR #72 4차 TC-01).
+        const changing = refs
+          .filter((reference) => reference.relation === 'CHANGES')
+          .map((reference) => reference.design_item_id)
+        const conflicts = project.tasks.filter(
+          (other) =>
+            other.id !== task!.id &&
+            ['IN_PROGRESS', 'WAITING'].includes(other.status) &&
+            other.current_plan_revision.plan.design_refs.some(
+              (reference) =>
+                reference.relation === 'CHANGES' &&
+                changing.includes(reference.design_item_id),
+            ),
+        )
+        if (conflicts.length)
+          fail(
+            409,
+            'task_conflict',
+            `같은 설계 항목을 변경 중인 작업이 있습니다: ${conflicts.map((other) => other.key).join(', ')}`,
+          )
         task!.status = 'IN_PROGRESS'
         task!.started_validation_id = input.validation_id
         delete task!.waiting_reason
