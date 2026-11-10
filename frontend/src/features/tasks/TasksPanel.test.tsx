@@ -1281,6 +1281,74 @@ it('검색칸에서 Enter를 눌러도 계획을 저장하지 않는다', async 
   expect(save).not.toHaveBeenCalled()
 })
 
+// S15P31A108-360: '계약 변경 없음' 체크가 접힌 칸에 꺼진 채 있어, 필수 칸만 채운 웹 계획이 첫 검증 규칙 검사에서 늘 막혔다.
+// 계약 변경으로 고른 항목도 설계에 없는 내용도 없으면 바꿀 계약이 없으므로 true 로 보낸다.
+it('계약 변경으로 고른 항목이 없으면 계약 변경 없음으로 저장한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: { ...task.current_plan_revision.plan, no_contract_change: false },
+    },
+  }
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.click(itemBox('API-001')!)
+  expect(
+    screen.queryByLabelText('승인된 계약을 변경하지 않는 작업입니다.'),
+  ).toBeNull()
+  expect(
+    screen.getByText(
+      '계약 변경으로 고른 항목이 없어 승인된 계약을 바꾸지 않는 작업으로 저장돼요.',
+    ),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({ no_contract_change: true })
+})
+
+it('계약 변경으로 고른 항목이 있으면 계약을 바꾸는 작업으로 저장한다', async () => {
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.click(itemBox('API-001')!)
+  await userEvent.selectOptions(
+    screen.getByLabelText('API-001의 참조 관계'),
+    'CHANGES',
+  )
+  expect(
+    screen.getByText(
+      '계약 변경으로 고른 설계 항목이 있어 계약을 바꾸는 작업으로 저장돼요.',
+    ),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({
+    no_contract_change: false,
+    design_refs: [expect.objectContaining({ relation: 'CHANGES' })],
+  })
+})
+
+it('설계에 없는 내용만 있으면 계약 변경 여부를 사용자가 정한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        no_contract_change: false,
+        unlinked: [{ description: '외부 결제 연동' }],
+      },
+    },
+  }
+  const save = await openPlanEditor()
+  const box = screen.getByLabelText('승인된 계약을 변경하지 않는 작업입니다.')
+  expect(box).not.toBeChecked()
+  await userEvent.click(box)
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({ no_contract_change: true })
+})
+
 it('찾는 설계 항목이 없으면 안내하고, 더 있으면 더 불러오는 버튼을 둔다', async () => {
   await openPlanEditor(designItems, true)
   await screen.findByLabelText(/^REQ-001 /)
