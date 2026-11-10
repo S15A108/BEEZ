@@ -863,3 +863,32 @@ it('팀장도 프로젝트 관리 맨 아래에서 프로젝트 나가기로 나
   await user.click(screen.getByRole('button', { name: '프로젝트 나가기' }))
   expect(onViewChange).toHaveBeenCalledWith('remove')
 })
+
+// S15P31A108-378(사용자 보고 11-10): 표시 역할·담당 영역이 무엇을 쓰는 칸인지 몰랐다. 목록 위와 수정 칸 아래에 작은 글로 알린다.
+// 3D 이름표는 이름(에이전트는 이름 · 상태)만 보여 두 칸이 나오지 않는다(office-actors.ts). 보이는 곳만 적는다.
+const roleHint = '팀에서 맡은 역할 이름(예: 프론트엔드). 이름 아래에 보여요.'
+const domainHint =
+  '주로 맡는 기능(예: 게시판 작업). 사무실 팀원 목록에도 보여요.'
+
+it('팀 목록 위에 표시 역할과 담당 영역이 무엇을 쓰는 칸인지 보인다', async () => {
+  renderTeam()
+  await screen.findByText('김동료')
+  const legend = screen.getByRole('group', { name: '표시 역할과 담당 영역' })
+  expect(within(legend).getByText('표시 역할')).toBeInTheDocument()
+  expect(within(legend).getByText(roleHint)).toBeInTheDocument()
+  expect(within(legend).getByText('담당 영역')).toBeInTheDocument()
+  expect(within(legend).getByText(domainHint)).toBeInTheDocument()
+})
+
+it('역할 수정 창의 표시 역할·담당 영역 칸 아래에 짧은 설명이 보인다', async () => {
+  const user = userEvent.setup()
+  renderTeam()
+  await user.click(
+    await screen.findByRole('button', { name: '역할·담당 영역' }),
+  )
+  const sheet = await screen.findByRole('dialog')
+  expect(within(sheet).getByLabelText('표시 역할')).toBeInTheDocument()
+  expect(within(sheet).getByText(roleHint)).toBeInTheDocument()
+  expect(within(sheet).getByText(domainHint)).toBeInTheDocument()
+  expect(within(sheet).queryByText(/3D 이름표/)).not.toBeInTheDocument()
+})

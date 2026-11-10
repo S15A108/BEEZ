@@ -261,6 +261,26 @@ export function TeamPanel({
         <AsyncState query={members}>
           {(data) => (
             <>
+              {/* S15P31A108-378: 두 칸이 무엇을 쓰는 칸인지 목록 위에 작게 알린다. 3D 이름표에는 나오지 않는다(office-actors.ts). */}
+              {/* 목록 줄(listitem)과 섞이지 않게 목록 대신 묶음으로 둔다. */}
+              <div
+                role="group"
+                aria-label="표시 역할과 담당 영역"
+                className="mb-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2"
+              >
+                <p>
+                  <strong className="font-semibold text-foreground">
+                    표시 역할
+                  </strong>{' '}
+                  <span>{roleLabelHint}</span>
+                </p>
+                <p>
+                  <strong className="font-semibold text-foreground">
+                    담당 영역
+                  </strong>{' '}
+                  <span>{domainHint}</span>
+                </p>
+              </div>
               <ul className="divide-y border-y">
                 {data.pages
                   .flatMap((page) => page.items)
@@ -835,19 +855,21 @@ export function TeamPanel({
         <FormDialog
           back="팀 관리"
           title={`${dialog.member.name} · 역할 수정`}
-          description="표시 역할과 담당 영역은 팀 목록과 3D 이름표에 보여요."
+          description="비운 칸은 지워져요."
           fields={[
             {
               name: 'role_label',
               label: '표시 역할',
               value: dialog.member.role_label,
               max: 50,
+              hint: roleLabelHint,
             },
             {
               name: 'domain',
               label: '담당 영역',
               value: dialog.member.domain,
               max: 50,
+              hint: domainHint,
             },
             {
               name: 'color',
@@ -911,6 +933,12 @@ export function TeamPanel({
     </section>
   )
 }
+
+// 표시 역할·담당 영역 설명(S15P31A108-378). 표시 역할은 팀 목록의 이름 아래에, 담당 영역은 팀 목록과 사무실 HUD 팀원 목록에 보인다.
+const roleLabelHint =
+  '팀에서 맡은 역할 이름(예: 프론트엔드). 이름 아래에 보여요.'
+const domainHint =
+  '주로 맡는 기능(예: 게시판 작업). 사무실 팀원 목록에도 보여요.'
 
 // 프로젝트 이름·소개가 서버 값과 다른지. 앞뒤 공백은 서버가 빼므로(PRJ-A04) 바뀐 것으로 치지 않는다.
 function projectInfoChanged(
