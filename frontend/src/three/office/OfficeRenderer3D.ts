@@ -3967,7 +3967,7 @@ ${note ?? ''}`
   private pickScene(
     screenX: number,
     screenY: number,
-  ): { target: OfficeAimTarget; outline: THREE.Object3D } | null {
+  ): { target: OfficeAimTarget; outline?: THREE.Object3D } | null {
     if (!this.floor) return null
     this.raycaster.setFromCamera(
       new THREE.Vector2(
@@ -4008,7 +4008,9 @@ ${note ?? ''}`
           entityId,
           label: '동료와 대화',
         },
-        outline: robot.body,
+        // 비비에는 윤곽을 그리지 않는다(S15P31A108-380, 사용자 요청). 가리키고 Enter를 누르면 비비 대화가
+        // 열리는 것은 그대로다.
+        outline: robot.appearance === 'bibi' ? undefined : robot.body,
       }
     }
     if (!workHit) return null
