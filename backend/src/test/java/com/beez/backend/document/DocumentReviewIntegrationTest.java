@@ -87,12 +87,12 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
 
     @Test void rejectionSelectsRerunAndPersistsClassificationsWithoutBreakingIdempotentReplay() {
         var calls = new ArrayList<Map<String, Object>>();
-        when(gateway.review(anyMap())).thenAnswer(call -> {
+        doAnswer(call -> {
             Map<String, Object> input = call.getArgument(0); calls.add(new HashMap<>(input));
             if (!"RERUN".equals(input.get("mode"))) return result(input, List.of());
             return result(input, List.of(Map.of("type", "COMMENT", "step", "BODY", "explanation", "사유 확인",
                     "category", "REJECTION_FIX", "severity", "MAJOR")));
-        });
+        }).when(gateway).review(anyMap());
         var initial = review();
         assertThat(calls.getFirst()).doesNotContainKey("mode");
         var submission = submit(initial);
