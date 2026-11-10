@@ -135,6 +135,7 @@ HTTP 200은 `origin: "MODEL"`, 실제 `model`, 호출별 `usage`,
 | 413 | `file_too_large` | 본문이 2 MiB 초과 |
 | 422 | `invalid_ai_input` | 버전 불일치, 원문·해시·프로필 오류, 선택 범위 등 의미상 입력 오류 |
 | 502 | `model_unavailable` | 모델 사용 불가 또는 모델 응답 검증 실패 |
+| 502 | `model_output_truncated` | 모델 답이 출력 토큰 상한(`finish_reason=length`)에서 끊겨 쓸 수 없음. 형식 오류와 구분한다(S15P31A108-382) |
 | 504 | `model_timeout` | 모델 호출 시간 초과 |
 
 모델 호출 후 실패했으면 오류에 실제 `usage`가 포함될 수 있다. 모델

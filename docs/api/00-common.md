@@ -122,7 +122,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 415 | 본문·파일 형식 불가 | unsupported_media_type |
 | 429 | 호출 제한 | rate_limited. 인증 코드를 여러 번 틀린 경우만 too_many_attempts(ACC-A12, 수정안 요청) |
 | 500 | 내부 오류 | internal |
-| 502 | AI·모델 실패 | ai_unavailable, model_unavailable |
+| 502 | AI·모델 실패 | ai_unavailable, model_unavailable, model_output_truncated(AI 내부, 출력 상한에 끊김), ai_output_too_long(기획 질문·설계 초안 작업 실패 코드. BE 가 위 코드를 이렇게 저장·노출, 재시도 가능) |
 | 503 | 처리 기반 이용 불가 | processing_unavailable |
 | 504 | 분석 시간 초과 | ai_timeout, model_timeout, review_timeout(문서 비비 검토 시간 초과, DOC-A16) |
 
