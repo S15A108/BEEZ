@@ -26,7 +26,12 @@ export const beeCitationSchema = z.object({
       end_line: z.number().int().positive(),
     })
     .refine((locator) => locator.end_line >= locator.start_line),
-  quote: z.string().min(1),
+  quote: z
+    .string()
+    .min(1)
+    .max(2000)
+    .refine((value) => [...value].length <= 1000)
+    .refine((value) => value.trim().length > 0 && value.trim() === value),
   section_title: z.string().min(1).optional(),
   claim: z.string().min(1).optional(),
 })

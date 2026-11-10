@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { parseCitationFocus } from '@/lib/citationTarget'
 import { BibiPanel } from './BibiPanel'
 
 const ask = vi.hoisted(() => vi.fn())
@@ -82,7 +83,17 @@ describe('비비 답변 근거', () => {
       within(panel).getByText(/답변의 의미는 직접 확인/),
     ).toBeInTheDocument()
     await user.click(within(panel).getByRole('button', { name: /문서 20 v2/ }))
-    expect(openPane).toHaveBeenCalledWith('documents', 'version:20:21')
+    expect(openPane).toHaveBeenCalledWith(
+      'documents',
+      expect.stringMatching(/^citation:/),
+    )
+    expect(parseCitationFocus(openPane.mock.calls[0][1])).toMatchObject({
+      document_id: '20',
+      document_version_id: '21',
+      start_line: 4,
+      end_line: 6,
+      quote: '초대는 한 번만 사용할 수 있다.',
+    })
   })
 
   it('근거 부족을 알리고 이전 답변의 번호를 누르면 그 답의 근거로 돌아간다', async () => {
