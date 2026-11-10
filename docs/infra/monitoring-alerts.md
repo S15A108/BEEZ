@@ -153,8 +153,10 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 `PENDING`이 있지만 선행 baseline 누락·미완료로 순서상 처리할 수 없는 프로젝트가 10분 넘게
 있습니다.
 
-- 볼 곳: 같은 시각의 `CdcFailedIntakes`·`CdcNotEvaluatedRequiresReview`. 선행 접수가
-  FAILED이거나 확인 필요 미평가면 자동으로 풀리지 않습니다(수동 재처리 API 없음).
+- 볼 곳: 같은 시각의 `CdcFailedIntakes`·`CdcNotEvaluatedRequiresReview`와 선행 접수의
+  상태·사유. FAILED와 `document_change_unavailable` 이외의 확인 필요 미평가는 후속 분석을
+  막을 수 있으며 자동 재처리되지 않습니다(수동 재처리 API 없음). `document_change_unavailable`은
+  후속 분석의 순서를 막지 않지만 해당 버전의 미평가 확인은 여전히 필요합니다.
 
 ### CdcFailedIntakes
 
@@ -169,7 +171,8 @@ backend 지표는 수집되는데(`up == 1`) 그 인스턴스에 CDC 필수 지�
 ### CdcNotEvaluatedRequiresReview
 
 최초 v1이나 명시적 과거 백필이 아닌 `NOT_EVALUATED`가 남아 있습니다. 모두 장애는 아니지만
-후속 분석을 막을 수 있습니다. 재통지는 24시간입니다.
+후속 분석을 막을 수 있습니다. 단, `document_change_unavailable`은 후속 분석을 막지 않아도
+해당 버전의 문서와 설계 항목을 포함한 영향 분석 전체가 미평가로 남습니다. 재통지는 24시간입니다.
 
 - 볼 곳: "확인 필요 미평가", "막힌 프로젝트". "미평가(예상된 것)"는 장애가 아닙니다.
 
