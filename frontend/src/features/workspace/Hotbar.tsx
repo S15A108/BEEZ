@@ -43,22 +43,26 @@ export function Hotbar({
 }) {
   const pane = useWorkspaceStore((state) => state.pane)
   const openPane = useWorkspaceStore((state) => state.openPane)
-  // 숫자 키 1~6으로 칸을 연다. 열린 창의 번호를 다시 누르면 닫는다(창 머리 'N 또는 Esc로 닫기'). 입력 중이면 무시한다.
+  // 숫자 키 1~6으로 칸을 연다. 업무 창이 열려 있으면 그 칸으로 바꾸고, 열린 창의 번호를 다시 누르면 닫는다
+  // (창 머리 'N 또는 Esc로 닫기'). 입력칸에 쓰는 중이면 무시한다(D46). 설정 창은 단축 바를 덮으므로 무시한다.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       if (
         shortcutsOff ||
+        pane === 'settings' ||
         event.repeat ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
-        target?.closest('input, textarea, select, [contenteditable="true"]')
+        target?.closest(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+        )
       )
         return
       const slot = hotbarSlots[Number(event.key) - 1]
-      if (pane) {
-        if (slot?.pane === pane) openPane(null)
+      if (slot && slot.pane === pane) {
+        openPane(null)
         return
       }
       if (slot && !locked.includes(slot.pane)) {
