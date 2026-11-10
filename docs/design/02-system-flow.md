@@ -81,13 +81,17 @@ sequenceDiagram
   S-->>C: {taskId, planRevision n}
 
   C->>M: validate_task_plan(taskId, planRevision n)
-  M->>S: validation 생성 · validation_design_ref(판정에 쓴 항목 버전) · validation_task_ref 저장. 근거 패킷은 리비전 → context_packet_id로 추적 (입력 스냅샷 해시로 설계 대조 결과 재사용)
-  S->>R: 동기 규칙 검사
+  M->>S: 검증 접수 · 현재 프로젝트 권한과 작업 담당자 확인
+  S->>R: 프로젝트 잠금 아래 현재 입력으로 동기 규칙 검사
   R->>DB: 필수 칸·항목 ID 확인 · 구조화 계약 대조 · 같은 항목 CHANGES인 열린 작업 조회
-  alt 규칙만으로 판정 끝남 (PASS / NEEDS_INPUT / NEEDS_REVIEW)
-    R-->>S: 판정 (최초 응답 전 완료)
-    S-->>C: {validationId, status}
+  R-->>S: 현재 규칙 판정
+  alt AGENT 요청 · 정책 분석 비활성 · 현재 규칙은 finding/추가 검사 없는 PASS · 작업의 최신 검증은 동일 리비전/기준/입력 해시/규칙 버전의 정상 완료 규칙 전용 PASS
+    S-->>C: 기존 {validationId, status: PASS, cache_hit: true}
+  else 규칙만으로 판정 끝남 (PASS / NEEDS_INPUT / NEEDS_REVIEW)
+    S->>DB: validation · validation_design_ref · validation_task_ref 저장
+    S-->>C: {validationId, status, cache_hit: false}
   else 신규·미연결 내용 → 의미 분석 필요
+    S->>DB: validation · validation_design_ref · validation_task_ref 저장
     S->>Q: enqueue(validationId)
     S-->>C: {validationId, status: RUNNING}
     Wk->>Q: 짧은 트랜잭션: SKIP LOCKED로 집어 LEASED + lease_until 커밋 (잠금 없이 AI 호출)
@@ -98,6 +102,7 @@ sequenceDiagram
     C->>M: get_validation(validationId) (폴링)
     M-->>C: {status, findings, 후속 경로}
   end
+  Note over S,DB: 근거 패킷은 리비전 → context_packet_id로 추적. 검색·모델 결과 재사용은 미구현
 
   alt NEEDS_REVIEW (예: 같은 API를 다른 작업이 다르게 바꾸려 함 — AC-04)
     C->>M: propose_design_change(…)  ⇒ F3으로
@@ -213,7 +218,7 @@ sequenceDiagram
 
 ## 비기능 흐름 메모
 
-- 검증 재사용: 입력 스냅샷(계획 리비전 + 참조 항목 버전 + 규칙·분석기 버전) 해시가 같으면 설계 대조 결과 재사용(AC-16). 다른 작업과의 겹침은 재요청·START 때 항상 재확인.
+- 검증 재사용: AC-16은 현재 권한·담당자 확인과 규칙 재실행 후, 작업의 최신 검증이 같은 현재 리비전·기준·입력 해시·규칙 버전의 정상 완료된 규칙 전용 PASS일 때만 재사용한다. 정책 분석·DELTA와 검색·모델 결과는 대상이 아니다. 재사용 접수 응답에 `cache_hit=true`를 표시한다. 재시도 중복 응답 재생과 동일 내용의 계획에 유효 검증을 잇는 처리는 별개다. 상세 현황과 제안은 [검증 평가·재사용 정책](validation-evaluation-reuse-S15P31A108-84.md) 참조.
 - 응답 유실: `report_task_state(START)` 는 같은 `(task_id, validation_id)` 재요청에 같은 결과를 돌려준다(AC-09).
 - 큐: `SKIP LOCKED` 는 경쟁 감소일 뿐 정확히 한 번 실행을 보장하지 않는다. lease 만료 회수 + attempt 조건부 반영으로 보완.
 - 보고 끊김: `agent_session.last_report_at` 임계값 초과 시 "상태 확인 필요"만. 자동 완료·해제 없음(AC-14).
