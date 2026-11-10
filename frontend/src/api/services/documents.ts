@@ -351,6 +351,21 @@ const service = {
       },
       options,
     ),
+  // DOC-A25: 승인된 적 없는 문서를 등록자·팀장이 취소한다. 지우지 않고 목록에서 치우며 같은 종류를 다시 올릴 수 있다.
+  discardDocument: (
+    projectId: string,
+    documentId: string,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.discardDocumentResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/documents/${encodeURIComponent(String(idSchema.parse(documentId)))}/discard`,
+        idempotent: true,
+      },
+      options,
+    ),
   cancelSubmission: (
     projectId: string,
     documentId: string,

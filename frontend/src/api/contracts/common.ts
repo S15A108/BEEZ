@@ -407,6 +407,15 @@ export const documentBeeReviewSchema = z.object({
 })
 export type DocumentBeeReview = z.infer<typeof documentBeeReviewSchema>
 
+// 최근 비비 검토 요청 상태(S15P31A108-382). 올린 사람이 아닌 팀원도 실패를 알고, 새로고침해도 유지된다.
+export const beeReviewRequestSchema = z.object({
+  status: z.enum(['RUNNING', 'FAILED', 'COMPLETED']),
+  // FAILED일 때만: review_timeout(시간 초과)·review_unavailable·invalid_ai_output 등
+  error_code: z.string().optional(),
+  updated_at: timeSchema,
+})
+export type BeeReviewRequest = z.infer<typeof beeReviewRequestSchema>
+
 export const documentWorkingCopySchema = z.object({
   document_id: idSchema,
   owner_account_id: idSchema,
@@ -418,6 +427,8 @@ export const documentWorkingCopySchema = z.object({
   submissions: documentReviewSubmissionSchema.array(),
   // latest_review를 지금 쓸 수 없음(참고 승인본이 바뀜·본문 리비전 불일치). 서버가 판정하며 없으면 false로 본다(S15P31A108-362).
   review_stale: z.boolean().optional(),
+  // 현재 작성 리비전의 가장 최근 비비 검토 요청. 고친 직후에는 새 요청이 생길 때까지 없다.
+  bee_review_request: beeReviewRequestSchema.optional(),
 })
 export type DocumentWorkingCopy = z.infer<typeof documentWorkingCopySchema>
 

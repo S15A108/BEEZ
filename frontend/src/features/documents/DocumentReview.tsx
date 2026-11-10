@@ -2,7 +2,11 @@ import { REVIEW_POLL_MS } from '@/lib/pollIntervals'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
-import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
+import {
+  getApiErrorCode,
+  getApiErrorMessage,
+  getErrorCodeMessage,
+} from '@/api/error'
 import { documentsApi } from '@/api/services/documents'
 import type { DocumentBeeReview } from '@/api/contracts/common'
 import { ActionForm } from '@/components/ActionForm'
@@ -19,6 +23,8 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { reviewStage, stepOutcome } from './reviewStage'
 import { CancelSubmission } from './CancelSubmission'
 import { DirectRequest } from './DirectRequest'
+import { DiscardDocument } from './DiscardDocument'
+import { WorkingCopyEditor } from './WorkingCopyEditor'
 import { PartialReviewNotice } from './PartialReviewNotice'
 import { SuggestionCard } from './SuggestionCard'
 import { SubmissionHistory } from './SubmissionHistory'
@@ -48,6 +54,7 @@ export function DocumentReview({
   locked = false,
   onClose,
   onApproved,
+  onDiscarded,
 }: {
   projectId: string
   documentId: string
@@ -59,11 +66,15 @@ export function DocumentReview({
   onClose: () => void
   /** 팀장이 승인하면 부르는 쪽이 목록으로 돌아가고 이 알림을 띄운다(사용자 요청 11-02). */
   onApproved?: (message: string) => void
+  /** 등록을 취소하면 부르는 쪽이 목록으로 돌아가고 이 알림을 띄운다(DOC-A25). 없으면 onClose 로 닫는다. */
+  onDiscarded?: (message: string) => void
 }) {
   const session = useSession()
   const openPane = useWorkspaceStore((state) => state.openPane)
   const action = useProjectAction(projectId)
   const [editing, setEditing] = useState(false)
+  // 비비 검토가 실패했을 때 앞 단계(파일 등록)로 돌아가 본문을 고치는 중
+  const [fixing, setFixing] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const client = useQueryClient()
   // 비비 검토(DOC-A16): 기준 v1 전에는 올리거나 고친 직후 화면이 바로 부른다. 누르는 버튼은 없고 실패했을 때만 다시 검토한다.
@@ -87,18 +98,27 @@ export function DocumentReview({
         data.owner_account_id !== session.data?.id &&
         data.status !== 'REJECTED' &&
         reviewStage(data).step === 1 &&
-        !reviewStage(data).stale)
+        !reviewStage(data).stale &&
+        // 실패한 검토는 기다려도 끝나지 않는다. 올린 사람이 다시 시도하거나 고칠 때까지 조회를 멈춘다(S15P31A108-382).
+        data.bee_review_request?.status !== 'FAILED')
         ? REVIEW_POLL_MS
         : false,
   })
   const current = copy.data
   const currentStage = current && reviewStage(current)
+  // 서버가 기억하는 이 리비전의 검토 실패(새로고침·다른 팀원 화면에서도 보인다). 고치면 비워진다.
+  const serverFailed =
+    current?.bee_review_request?.status === 'FAILED'
+      ? (current.bee_review_request.error_code ?? 'review_unavailable')
+      : undefined
   const reviewKey =
     current &&
     !locked &&
     current.owner_account_id === session.data?.id &&
     currentStage?.step === 1 &&
     !currentStage.stale &&
+    // 실패했다면 화면을 열 때마다 자동으로 다시 부르지 않는다(비용). 다시 검토하기를 눌러야 한다.
+    !serverFailed &&
     current.status !== 'SUBMITTED'
       ? `${projectId}:${documentId}:${current.revision}`
       : null
@@ -111,7 +131,13 @@ export function DocumentReview({
     started.current.add(reviewKey)
     startReview(Number(reviewKey.split(':')[2]))
   }, [reviewKey, startReview])
-  const failed = !!bee.error && !running
+  // 지금 이 문서의 비비 검토가 실패한 상태인지. 다시 부르는 중이거나 방금 성공했으면 아니다.
+  const failed =
+    !bee.isPending &&
+    !bee.isSuccess &&
+    ((!!bee.error && !running) || !!serverFailed)
+  const failedCode =
+    bee.error && !running ? getApiErrorCode(bee.error) : serverFailed
   const members = useQuery(membersQuery(projectId))
   const pending = copy.data?.submissions.find(
     (item) => item.status === 'SUBMITTED',
@@ -247,6 +273,42 @@ export function DocumentReview({
               }
             />
           )
+          // 기준 v1 전에 올린 사람만, 검토가 실패한 1단계에서 앞 단계로 돌아가 고칠 수 있다.
+          const canGoBack = owner && stage.step === 1 && !stage.stale && failed
+          // 등록 취소(DOC-A25)는 올린 사람과 팀장이, 승인된 적 없고 팀장 검토를 요청하지 않은 문서에만 한다.
+          const discard = !locked &&
+            (owner || isLeader) &&
+            data.status !== 'SUBMITTED' &&
+            data.status !== 'APPROVED' && (
+              <DiscardDocument
+                busy={action.busy}
+                onConfirm={() =>
+                  run(
+                    () => documentsApi.discardDocument(projectId, documentId),
+                    '문서 등록을 취소했어요. 같은 종류의 문서를 새로 올릴 수 있어요.',
+                    () =>
+                      (onDiscarded ?? (() => onClose()))(
+                        '문서 등록을 취소했어요. 같은 종류의 문서를 새로 올릴 수 있어요.',
+                      ),
+                  )
+                }
+              />
+            )
+          // 앞 단계로 돌아가 고친 내용을 저장한다. 리비전이 오르면 이전 실패는 지우고 비비 검토가 다시 시작된다.
+          const saveContent = async (content: string) => {
+            await action.run(
+              () =>
+                documentsApi.updateWorkingCopy(projectId, documentId, {
+                  expected_revision: data.revision,
+                  content,
+                  file_name: data.file_name,
+                }),
+              '고친 내용을 저장했어요. 비비가 다시 검토해요.',
+            )
+            bee.reset()
+            setFixing(false)
+            setEditing(false)
+          }
           return (
             <>
               <ol
@@ -263,8 +325,23 @@ export function DocumentReview({
                       index === stage.step && 'border-foreground font-semibold',
                     )}
                   >
-                    {index < stage.step ? '✓ ' : ''}
-                    {step}
+                    {index === 0 && canGoBack ? (
+                      // 비비 검토가 실패하면 앞 단계로 돌아가 문서를 고칠 수 있다.
+                      <button
+                        type="button"
+                        aria-label="이전 단계로 돌아가 문서 고치기"
+                        aria-pressed={fixing}
+                        className="underline underline-offset-2"
+                        onClick={() => setFixing((open) => !open)}
+                      >
+                        ← {step}
+                      </button>
+                    ) : (
+                      <>
+                        {index < stage.step ? '✓ ' : ''}
+                        {step}
+                      </>
+                    )}
                   </li>
                 ))}
               </ol>
@@ -288,21 +365,61 @@ export function DocumentReview({
               {stage.step === 1 && !stage.stale && (
                 <div className="grid gap-3">
                   <MarkdownView source={data.content} className="max-h-72" />
-                  {owner && failed ? (
+                  {owner && failed && fixing ? (
+                    <div className="grid gap-2">
+                      <strong className="text-sm">
+                        문서를 고친 뒤 저장하면 비비가 처음부터 다시 검토해요
+                      </strong>
+                      <WorkingCopyEditor
+                        content={data.content}
+                        onSave={saveContent}
+                        onCancel={() => setFixing(false)}
+                      />
+                    </div>
+                  ) : failed ? (
                     <div
                       role="alert"
                       className="grid gap-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm"
                     >
-                      <strong>비비 검토를 마치지 못했어요</strong>
-                      <span>{getApiErrorMessage(bee.error)}</span>
-                      <Button
-                        variant="outline"
-                        className="justify-self-start"
-                        disabled={bee.isPending}
-                        onClick={() => reReview(data.revision)}
-                      >
-                        다시 검토하기
-                      </Button>
+                      <strong>
+                        {failedCode === 'review_timeout'
+                          ? '비비 검토 시간이 초과됐어요'
+                          : failedCode === 'review_unavailable'
+                            ? '지금은 비비를 부를 수 없어요'
+                            : '비비 검토를 마치지 못했어요'}
+                      </strong>
+                      <span>
+                        {bee.error && !running
+                          ? getApiErrorMessage(bee.error)
+                          : (getErrorCodeMessage(failedCode) ??
+                            '비비 검토를 마치지 못했어요. 다시 시도해 주세요.')}
+                      </span>
+                      {owner ? (
+                        <>
+                          <span className="text-xs text-muted-foreground">
+                            위 단계의 &lsquo;파일 등록&rsquo;을 눌러 문서를
+                            고치거나, 그대로 다시 검토하거나, 등록을 취소할 수
+                            있어요.
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              variant="outline"
+                              disabled={bee.isPending || action.busy}
+                              onClick={() => reReview(data.revision)}
+                            >
+                              다시 검토하기
+                            </Button>
+                            {discard}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xs text-muted-foreground">
+                            올린 사람이 다시 검토하거나 문서를 고쳐야 해요.
+                          </span>
+                          {discard}
+                        </>
+                      )}
                     </div>
                   ) : owner ? (
                     <div
@@ -425,33 +542,9 @@ export function DocumentReview({
                       onStale={() => markStale(stage.review!.id)}
                     />
                     {editing ? (
-                      <ActionForm
-                        fields={[
-                          {
-                            name: 'content',
-                            label: '본문',
-                            type: 'textarea',
-                            required: true,
-                            value: data.content,
-                          },
-                        ]}
-                        submitLabel="고친 내용 저장"
-                        onSubmit={async (values) => {
-                          await action.run(
-                            () =>
-                              documentsApi.updateWorkingCopy(
-                                projectId,
-                                documentId,
-                                {
-                                  expected_revision: data.revision,
-                                  content: values.content,
-                                  file_name: data.file_name,
-                                },
-                              ),
-                            '고친 내용을 저장했어요. 비비가 다시 검토해요.',
-                          )
-                          setEditing(false)
-                        }}
+                      <WorkingCopyEditor
+                        content={data.content}
+                        onSave={saveContent}
                       />
                     ) : (
                       <MarkdownView

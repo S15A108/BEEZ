@@ -246,6 +246,11 @@ export function DocumentsPanel({
             setView({ name: 'list' })
             setNotice({ text: message })
           }}
+          // 등록을 취소하면 목록으로 돌아가 알린다. 같은 종류를 새로 올릴 수 있다(DOC-A25).
+          onDiscarded={(message) => {
+            setView({ name: 'list' })
+            setNotice({ text: message })
+          }}
         />
       </div>
     )
