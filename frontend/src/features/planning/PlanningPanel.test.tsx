@@ -101,7 +101,7 @@ it('하나만 고르는 선택형은 선택지나 기타 입력으로 답한다'
   await screen.findByText('전체 질문 5개')
   await user.click(cardOf('프로젝트 삭제는 누가 할 수 있나요?'))
   const dialog = await screen.findByRole('dialog')
-  await user.click(within(dialog).getByRole('button', { name: '저장' }))
+  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
   expect(
     await within(dialog).findByText('답변을 하나 이상 골라 주세요.'),
   ).toBeInTheDocument()
@@ -110,7 +110,7 @@ it('하나만 고르는 선택형은 선택지나 기타 입력으로 답한다'
     within(dialog).getByLabelText('기타 답변'),
     '팀장이 정한 사람',
   )
-  await user.click(within(dialog).getByRole('button', { name: '저장' }))
+  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
   expect(await screen.findByText('답변을 저장했어요.')).toBeInTheDocument()
   expect(
     within(cardOf('프로젝트 삭제는 누가 할 수 있나요?')).getByText(
@@ -127,7 +127,7 @@ it('여러 개 고르는 선택형은 기타 없이 선택지를 모두 보여 �
   expect(within(dialog).queryByLabelText('기타')).not.toBeInTheDocument()
   await user.click(within(dialog).getByLabelText('앱 안 알림'))
   await user.click(within(dialog).getByLabelText('이메일'))
-  await user.click(within(dialog).getByRole('button', { name: '저장' }))
+  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
   expect(
     await within(cardOf('알림은 어떤 방식으로 보낼까요?')).findByText(
       '앱 안 알림, 이메일',
@@ -299,9 +299,13 @@ it('후보가 낡았으면 그 후보만 막고 초안을 다시 만들게 안�
     await within(card).findByText(/후보를 만든 뒤 문서나 답변/),
   ).toBeInTheDocument()
   localStorage.removeItem('beez.mock.planDraft')
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
   await user.click(
     within(card).getByRole('button', { name: '초안 다시 만들기' }),
   )
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+  // 낡은 후보가 나온 문서만 다시 만든다
+  expect(generate.mock.calls[0][1].document_version_ids).toHaveLength(1)
   expect(
     await screen.findByText(
       '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
@@ -320,12 +324,30 @@ it('초안 작업이 실패하면 이유를 알리고 다시 만들 수 있다',
     screen.getAllByRole('button', { name: '다시 만들기' })[0],
   ).toBeEnabled()
   localStorage.removeItem('beez.mock.planDraft')
-  await user.click(screen.getAllByRole('button', { name: '다시 만들기' })[0])
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
+  const retries = screen.getAllByRole('button', { name: '다시 만들기' })
+  await user.click(retries[0])
   expect(
     await screen.findByText(
       '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
     ),
   ).toBeInTheDocument()
+  // 실패한 문서 하나만 다시 만든다. 문서마다 AI 를 한 번씩 부르므로 나머지까지 보내면 비용이 든다.
+  expect(generate).toHaveBeenCalledTimes(1)
+  expect(generate.mock.calls[0][1].document_version_ids).toHaveLength(1)
+})
+
+it('초안 만들기 버튼은 모든 문서를, 낡은 후보의 다시 만들기는 그 문서만 보낸다', async () => {
+  await prepareCandidates()
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
+  const user = renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+  )
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+  expect(generate.mock.calls[0][1].document_version_ids.length).toBeGreaterThan(
+    1,
+  )
 })
 
 it('팀원은 후보를 볼 수 있지만 채택·폐기·만들기는 할 수 없다', async () => {
