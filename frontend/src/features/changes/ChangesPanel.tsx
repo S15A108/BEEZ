@@ -1,5 +1,5 @@
 import { ACTIVE_POLL_MS, SLOW_POLL_MS } from '@/lib/pollIntervals'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   useInfiniteQuery,
@@ -98,6 +98,9 @@ const statusOrder: Record<ChangeStatus, number> = {
   WITHDRAWN: 5,
 }
 
+const IMPACT_STARTED = '영향 분석을 시작했어요.'
+const IMPACT_RETRIED = '다시 분석을 요청했어요.'
+const IMPACT_ACCEPTED: string[] = [IMPACT_STARTED, IMPACT_RETRIED]
 // 이전 결과가 보이는 동안 새 분석이 돌고 있으면(reanalysis) 이전 상태와 관계없이 분석 중이다(S15P31A108-241).
 const isImpactRunning = (impact: ChangeImpact) =>
   ['PENDING', 'RUNNING'].includes(impact.analysis_status) || !!impact.reanalysis
@@ -109,11 +112,25 @@ const hasCurrentImpact = (impact: ChangeImpact) =>
   impact.analysis_status === 'COMPLETED' &&
   impact.is_current !== false &&
   !impact.reanalysis
-function impactMessage(impact: ChangeImpact, editable: boolean) {
+// 서버는 문서 변경이 들어 있는 제안(문서만 · 항목과 함께)을 분석하지 않는다(document_change_unavailable).
+// 시작·다시 분석 버튼을 눌러도 같은 결과라 버튼과 '분석을 시작해 주세요' 안내를 두지 않는다(S15P31A108-359).
+const isImpactUnavailable = (impact: ChangeImpact, hasDocuments: boolean) =>
+  !impact.reanalysis &&
+  (impact.error_code === 'document_change_unavailable' ||
+    (hasDocuments && isImpactNotStarted(impact)))
+function impactMessage(
+  impact: ChangeImpact,
+  editable: boolean,
+  hasDocuments = false,
+) {
   if (isImpactRunning(impact))
     return impact.reanalysis
-      ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
+      ? impact.analysis_status === 'FAILED'
+        ? '다시 분석하는 중이에요. 이전 분석은 실패했어요.'
+        : '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
       : '분석하는 중이에요.'
+  if (isImpactUnavailable(impact, hasDocuments))
+    return '문서가 함께 바뀌는 제안은 영향 분석을 할 수 없어요. 영향을 직접 확인한 뒤 승인해 주세요.'
   if (isImpactNotStarted(impact))
     return editable
       ? '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
@@ -214,6 +231,19 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         ? ACTIVE_POLL_MS
         : false,
   })
+  // '영향 분석을 시작했어요'는 분석이 끝나면 지난 안내다. 실패·미평가로 끝난 뒤에도 남지 않게 지운다(S15P31A108-359).
+  const impactRunning = !!impact.data && isImpactRunning(impact.data)
+  const wasImpactRunning = useRef(false)
+  const { message: actionMessage, clearMessage } = action
+  useEffect(() => {
+    if (
+      wasImpactRunning.current &&
+      !impactRunning &&
+      IMPACT_ACCEPTED.includes(actionMessage)
+    )
+      clearMessage()
+    wasImpactRunning.current = impactRunning
+  }, [impactRunning, actionMessage, clearMessage])
   // 승인 확인 화면에서만, 팀장만 읽는다(CHG-A14는 LEADER 전용). 제안이 바뀌면(리비전·해시) 다시 읽는다.
   // 키를 ['projects', id] 밖에 둔다: 승인에 성공하면 프로젝트 전체를 새로 고치는데, 그때 이미 발행된 제안의
   // 미리 보기를 다시 불러 409 가 나기 때문이다(실제 BE 점검에서 확인). 화면이 열릴 때마다 새로 읽으므로 갱신은 잃지 않는다.
@@ -952,21 +982,26 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             사유를 남기고 승인할 수 있어요. 사유는 승인 이력에
                             남아요.
                           </p>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="justify-self-start"
-                            disabled={action.busy}
-                            onClick={() =>
-                              void perform(
-                                () =>
-                                  changesApi.retryImpact(projectId, current.id),
-                                '다시 분석을 요청했어요.',
-                              )
-                            }
-                          >
-                            영향 다시 분석
-                          </Button>
+                          {current.documents.length === 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="justify-self-start"
+                              disabled={action.busy}
+                              onClick={() =>
+                                void perform(
+                                  () =>
+                                    changesApi.retryImpact(
+                                      projectId,
+                                      current.id,
+                                    ),
+                                  IMPACT_RETRIED,
+                                )
+                              }
+                            >
+                              영향 다시 분석
+                            </Button>
+                          )}
                           <label
                             htmlFor="impact-override-reason"
                             className="text-sm font-semibold"
@@ -1344,7 +1379,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                   : impact.data && hasCurrentImpact(impact.data)
                                     ? `확인된 관계 ${impact.data.explicit.length} · AI 후보 ${impact.data.candidates.length}`
                                     : impact.data
-                                      ? impactMessage(impact.data, editable)
+                                      ? impactMessage(
+                                          impact.data,
+                                          editable,
+                                          current.documents.length > 0,
+                                        )
                                       : '영향 분석 상태를 확인하는 중이에요.'}
                               </p>
                             </section>
@@ -1454,6 +1493,10 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           {(result) => {
                             const running = isImpactRunning(result)
                             const notStarted = isImpactNotStarted(result)
+                            const unavailable = isImpactUnavailable(
+                              result,
+                              current.documents.length > 0,
+                            )
                             return (
                               <div className="grid gap-3 text-sm">
                                 {current.status === 'PUBLISHED' && (
@@ -1464,9 +1507,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                 )}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <p className="text-muted-foreground">
-                                    {impactMessage(result, editable)}
+                                    {impactMessage(
+                                      result,
+                                      editable,
+                                      current.documents.length > 0,
+                                    )}
                                   </p>
-                                  {editable && (
+                                  {editable && !unavailable && (
                                     <Button
                                       size="sm"
                                       variant="outline"
@@ -1479,8 +1526,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                               current.id,
                                             ),
                                           notStarted
-                                            ? '영향 분석을 시작했어요.'
-                                            : '다시 분석을 요청했어요.',
+                                            ? IMPACT_STARTED
+                                            : IMPACT_RETRIED,
                                         )
                                       }
                                     >

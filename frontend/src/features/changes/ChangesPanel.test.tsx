@@ -1270,3 +1270,45 @@ it('같은 제안의 승인 확인을 다시 열면 이전 미리 보기를 지�
     screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
   ).toBeEnabled()
 })
+
+it('실패한 분석 위에 다시 분석이 도는 중이면 이전 분석이 실패했다고 함께 알린다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.impact('101', '71')
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...base,
+    analysis_status: 'FAILED',
+    error_code: 'model_unavailable',
+    reanalysis: { run_id: '9' },
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText('다시 분석하는 중이에요. 이전 분석은 실패했어요.'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeDisabled()
+})
+
+it('문서 변경이라 분석할 수 없는 제안에는 다시 분석 버튼을 두지 않는다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.impact('101', '71')
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...base,
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'document_change_unavailable',
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText(
+      /문서가 함께 바뀌는 제안은 영향 분석을 할 수 없어요/,
+    ),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '다시 분석' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '영향 분석 시작' }),
+  ).not.toBeInTheDocument()
+})
