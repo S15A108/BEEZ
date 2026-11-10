@@ -112,16 +112,15 @@ const hasCurrentImpact = (impact: ChangeImpact) =>
   impact.analysis_status === 'COMPLETED' &&
   impact.is_current !== false &&
   !impact.reanalysis
-// 서버는 문서 변경이 들어 있는 제안(문서만 · 항목과 함께)을 분석하지 않는다(document_change_unavailable).
-// 시작·다시 분석 버튼을 눌러도 같은 결과라 버튼과 '분석을 시작해 주세요' 안내를 두지 않는다(S15P31A108-359).
-const isImpactUnavailable = (impact: ChangeImpact, hasDocuments: boolean) =>
-  !impact.reanalysis &&
-  (impact.error_code === 'document_change_unavailable' ||
-    (hasDocuments && isImpactNotStarted(impact)))
+// 문서만 든 제안은 분석할 설계 항목이 없어 서버가 아무것도 계산하지 않는다. 시작·다시 분석 버튼을 눌러도 같아 두지 않는다.
+// 항목과 문서가 함께 든 제안은 AI 호출만 건너뛰고(document_change_unavailable) 확인된 관계는 계산해 저장하므로
+// 버튼을 그대로 둔다(S15P31A108-359).
+const isDocumentOnly = (change: { items: unknown[]; documents: unknown[] }) =>
+  change.items.length === 0 && change.documents.length > 0
 function impactMessage(
   impact: ChangeImpact,
   editable: boolean,
-  hasDocuments = false,
+  documentOnly = false,
 ) {
   if (isImpactRunning(impact))
     return impact.reanalysis
@@ -129,8 +128,18 @@ function impactMessage(
         ? '다시 분석하는 중이에요. 이전 분석은 실패했어요.'
         : '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
       : '분석하는 중이에요.'
-  if (isImpactUnavailable(impact, hasDocuments))
-    return '문서가 함께 바뀌는 제안은 영향 분석을 할 수 없어요. 영향을 직접 확인한 뒤 승인해 주세요.'
+  if (documentOnly)
+    return '문서만 바꾸는 제안은 영향 분석 대상이 아니에요. 영향을 직접 확인한 뒤 승인해 주세요.'
+  if (isImpactNotStarted(impact))
+    return editable
+      ? '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
+      : '발행 전 영향 분석이 진행되지 않았어요.'
+  // 이전 리비전의 결과(is_current=false)는 아래 STALE 문구로 넘겨 다시 분석하게 한다.
+  if (
+    impact.error_code === 'document_change_unavailable' &&
+    impact.is_current !== false
+  )
+    return 'AI 후보는 볼 수 없지만 확인된 관계는 볼 수 있어요. 문서 변경은 직접 확인해 주세요.'
   if (isImpactNotStarted(impact))
     return editable
       ? '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
@@ -982,7 +991,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             사유를 남기고 승인할 수 있어요. 사유는 승인 이력에
                             남아요.
                           </p>
-                          {current.documents.length === 0 && (
+                          {!isDocumentOnly(current) && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1382,7 +1391,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                       ? impactMessage(
                                           impact.data,
                                           editable,
-                                          current.documents.length > 0,
+                                          isDocumentOnly(current),
                                         )
                                       : '영향 분석 상태를 확인하는 중이에요.'}
                               </p>
@@ -1493,10 +1502,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           {(result) => {
                             const running = isImpactRunning(result)
                             const notStarted = isImpactNotStarted(result)
-                            const unavailable = isImpactUnavailable(
-                              result,
-                              current.documents.length > 0,
-                            )
+                            const unavailable = isDocumentOnly(current)
                             return (
                               <div className="grid gap-3 text-sm">
                                 {current.status === 'PUBLISHED' && (
@@ -1510,7 +1516,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                     {impactMessage(
                                       result,
                                       editable,
-                                      current.documents.length > 0,
+                                      isDocumentOnly(current),
                                     )}
                                   </p>
                                   {editable && !unavailable && (
