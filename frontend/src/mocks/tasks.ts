@@ -816,7 +816,7 @@ export function taskRoutes(
                     .slice(0, 1)
                     .map((member) => ({
                       member_id: member.id,
-                      reason: '예시 대안입니다. 담당 영역을 확인해 주세요.',
+                      reason: '예시 대안입니다. 담당 도메인을 확인해 주세요.',
                     })),
                 },
               ]

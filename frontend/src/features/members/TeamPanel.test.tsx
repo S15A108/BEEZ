@@ -523,7 +523,7 @@ it('다시 보내는 중에는 그 줄의 버튼만 끈다', async () => {
 })
 
 // PR #72 재전수 SECOND-AMP-01: 역할·담당 영역은 서버가 팀장만 고치게 해서, 팀원에게는 본인 것도 고치기 버튼이 없다.
-it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 않고 mock도 403으로 거절한다', async () => {
+it('팀원에게는 본인 역할·담당 도메인 고치기 버튼을 보이지 않고 mock도 403으로 거절한다', async () => {
   await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
   render(
     <QueryClientProvider client={client}>
@@ -534,7 +534,7 @@ it('팀원에게는 본인 역할·담당 영역 고치기 버튼을 보이지 �
   )
   expect((await screen.findAllByText(/김동료/)).length).toBeGreaterThan(0)
   expect(
-    screen.queryByRole('button', { name: '역할·담당 영역' }),
+    screen.queryByRole('button', { name: '역할·담당 도메인' }),
   ).not.toBeInTheDocument()
   const account = await authApi.me()
   const me = (await membersApi.list('101')).items.find(
@@ -870,21 +870,21 @@ const roleHint = '팀에서 맡은 역할 이름(예: 프론트엔드). 이름 �
 const domainHint =
   '주로 맡는 기능(예: 게시판 작업). 사무실 팀원 목록에도 보여요.'
 
-it('팀 목록 위에 표시 역할과 담당 영역이 무엇을 쓰는 칸인지 보인다', async () => {
+it('팀 목록 위에 표시 역할과 담당 도메인이 무엇을 쓰는 칸인지 보인다', async () => {
   renderTeam()
   await screen.findByText('김동료')
-  const legend = screen.getByRole('group', { name: '표시 역할과 담당 영역' })
+  const legend = screen.getByRole('group', { name: '표시 역할과 담당 도메인' })
   expect(within(legend).getByText('표시 역할')).toBeInTheDocument()
   expect(within(legend).getByText(roleHint)).toBeInTheDocument()
-  expect(within(legend).getByText('담당 영역')).toBeInTheDocument()
+  expect(within(legend).getByText('담당 도메인')).toBeInTheDocument()
   expect(within(legend).getByText(domainHint)).toBeInTheDocument()
 })
 
-it('역할 수정 창의 표시 역할·담당 영역 칸 아래에 짧은 설명이 보인다', async () => {
+it('역할 수정 창의 표시 역할·담당 도메인 칸 아래에 짧은 설명이 보인다', async () => {
   const user = userEvent.setup()
   renderTeam()
   await user.click(
-    await screen.findByRole('button', { name: '역할·담당 영역' }),
+    await screen.findByRole('button', { name: '역할·담당 도메인' }),
   )
   const sheet = await screen.findByRole('dialog')
   expect(within(sheet).getByLabelText('표시 역할')).toBeInTheDocument()

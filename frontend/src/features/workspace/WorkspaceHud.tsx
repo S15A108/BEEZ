@@ -399,10 +399,10 @@ export function WorkspaceHud({
       done: true,
     },
     {
-      title: '내 담당 영역 확인',
+      title: '내 담당 도메인 확인',
       detail: me?.domain
         ? `${me.domain} (팀장이 정해요)`
-        : '담당 영역은 팀장이 정해요. 아직 정해지지 않았어요.',
+        : '담당 도메인은 팀장이 정해요. 아직 정해지지 않았어요.',
       done: Boolean(me?.domain),
     },
     {

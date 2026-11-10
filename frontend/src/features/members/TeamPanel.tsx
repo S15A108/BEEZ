@@ -265,7 +265,7 @@ export function TeamPanel({
               {/* 목록 줄(listitem)과 섞이지 않게 목록 대신 묶음으로 둔다. */}
               <div
                 role="group"
-                aria-label="표시 역할과 담당 영역"
+                aria-label="표시 역할과 담당 도메인"
                 className="mb-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2"
               >
                 <p>
@@ -276,7 +276,7 @@ export function TeamPanel({
                 </p>
                 <p>
                   <strong className="font-semibold text-foreground">
-                    담당 영역
+                    담당 도메인
                   </strong>{' '}
                   <span>{domainHint}</span>
                 </p>
@@ -323,7 +323,7 @@ export function TeamPanel({
                               : 'text-sm text-muted-foreground'
                           }
                         >
-                          {member.domain ?? '담당 영역 미등록'}
+                          {member.domain ?? '담당 도메인 미등록'}
                         </span>
                         <span className="inline-flex items-center gap-1.5 text-xs">
                           <span
@@ -383,7 +383,7 @@ export function TeamPanel({
                                 }
                               >
                                 <Pencil />
-                                역할·담당 영역
+                                역할·담당 도메인
                               </Button>
                             )
                           )}
@@ -866,7 +866,7 @@ export function TeamPanel({
             },
             {
               name: 'domain',
-              label: '담당 영역',
+              label: '담당 도메인',
               value: dialog.member.domain,
               max: 50,
               hint: domainHint,
@@ -888,7 +888,7 @@ export function TeamPanel({
                   domain: values.domain,
                   color: values.color,
                 }),
-              '역할과 담당 영역을 저장했어요.',
+              '역할과 담당 도메인을 저장했어요.',
             )
             setDialog(null)
           }}
