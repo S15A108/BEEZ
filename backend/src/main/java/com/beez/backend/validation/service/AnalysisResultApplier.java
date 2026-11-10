@@ -145,11 +145,11 @@ public class AnalysisResultApplier {
         RuleOutcome currentRules = reevaluateRules(v);
         boolean ruleDecided = "NEEDS_REVIEW".equals(currentRules.decidedStatus())
                 || "NEEDS_INPUT".equals(currentRules.decidedStatus());
-        if (!ruleDecided && contractViolation(request, response) == null && "COMPLETE".equals(result.get("analysis_status"))
-                && objects(result.get("findings")).stream().noneMatch(f -> "BLOCKING".equals(f.get("severity")))
-                && needsHumanCoverageReview(request)) {
+        if (!ruleDecided && !strings(request.get("unresolved")).isEmpty()
+                && contractViolation(request, response) == null && "COMPLETE".equals(result.get("analysis_status"))
+                && objects(result.get("findings")).stream().noneMatch(f -> "BLOCKING".equals(f.get("severity")))) {
             String model = response.get("model") instanceof String m ? m : null;
-            fail(lease, v, active.get().runId(), "ai_evidence_insufficient", "ERROR", "미해결 질문 또는 설계 구조에 추가 확인이 필요합니다",
+            fail(lease, v, active.get().runId(), "ai_evidence_insufficient", "ERROR", "미해결 질문에 추가 확인이 필요합니다",
                     "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", model, durationMs, diag);
             return;
         }
@@ -219,22 +219,6 @@ public class AnalysisResultApplier {
             }
         }
         return true;
-    }
-
-    private boolean needsHumanCoverageReview(Map<String, Object> request) {
-        Map<String, Object> plan = map(map(request.get("plan_revision")).get("plan"));
-        if (request.get("unresolved") instanceof List<?> unresolved && !unresolved.isEmpty()) return true;
-        Set<String> referenced = new HashSet<>();
-        for (var ref : objects(plan.get("design_refs"))) referenced.add(String.valueOf(ref.get("design_item_id")));
-        for (var item : objects(request.get("approved_items"))) {
-            if (referenced.contains(String.valueOf(item.get("design_item_id"))) && "API_CONTRACT".equals(item.get("kind"))) {
-                Map<String, Object> content = map(item.get("content"));
-                if (!(content.get("request_fields") instanceof List<?>)
-                        || !(content.get("responses") instanceof List<?> responses) || responses.isEmpty()) return true;
-                for (Object response : responses) if (!(response instanceof Map<?, ?> m) || !(m.get("fields") instanceof List<?>)) return true;
-            }
-        }
-        return false;
     }
 
     private boolean missingPoliciesSupported(Map<String, Object> request, Map<String, Object> result) {

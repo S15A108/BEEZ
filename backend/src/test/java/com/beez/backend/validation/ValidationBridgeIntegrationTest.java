@@ -237,8 +237,12 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("v", validation).query(String.class).single()).isEqualTo("BLOCKING");
     }
 
-    @Test void changesWithCompleteAnalysisAndNoBlockingFindingCanPass() throws Exception {
-        prepareCompleteApiForCoverage();
+    @Test void implementsApiWithCompleteAnalysisCanPassWithoutOptionalFieldArrays() throws Exception {
+        String plan = api.planJson("승인 계약 구현", api.implementsRef("API-01"), "[]");
+        assertEmptyCompleteResultPasses(plan);
+    }
+
+    @Test void changesApiWithCompleteAnalysisCanPassWithoutOptionalFieldArrays() throws Exception {
         String plan = api.planJson("계약 변경", api.changesRef("API-01"), "[]")
                 .replace("\"no_contract_change\": true", "\"no_contract_change\": false");
         assertEmptyCompleteResultPasses(plan);
@@ -429,8 +433,6 @@ class ValidationBridgeIntegrationTest extends IntegrationTestSupport {
                 .param("b", baseline).param("p", project).param("d", doc).param("v", docVersion).update();
         List<Long> versions = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
-            // A candidate API with incomplete structured content is left to the analyzer;
-            // only an explicitly referenced API has a mandatory structural coverage guard.
             long item = api.jdbc.sql("insert into design_item(project_id,key,kind) values (:p,:k,:kind) returning id")
                     .param("p", project).param("k", "REQ-CANDIDATE-" + i)
                     .param("kind", i == 0 ? "API_CONTRACT" : "REQUIREMENT").query(Long.class).single();
