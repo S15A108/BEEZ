@@ -69,7 +69,11 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         verify(ai).planningQuestions(sent.capture());
         assertThat(sent.getValue()).containsEntry("project_id", "" + project).containsEntry("kind", "PLAN")
                 .containsEntry("media_type", "text/markdown").containsEntry("parser_profile", "markdown-v1")
-                .containsEntry("text_hash", TEXT_HASH).containsEntry("content", CONTENT).containsEntry("mode", "MODEL");
+                .containsEntry("text_hash", TEXT_HASH).containsEntry("content_hash", CONTENT_HASH)
+                .containsEntry("content", CONTENT).containsEntry("mode", "MODEL");
+        // 저장 값은 sha256: 접두어가 붙지만 AI 스키마는 접두어 없는 hex 64자만 받는다(S15P31A108-373).
+        assertThat((String) sent.getValue().get("content_hash")).matches(HEX64);
+        assertThat((String) sent.getValue().get("text_hash")).matches(HEX64);
     }
 
     @Test void skipsDocumentsOnceAnInitialBaselineExists() {

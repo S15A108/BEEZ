@@ -64,6 +64,9 @@ public class DesignDraftRunner {
         var payload = new LinkedHashMap<String, Object>();
         payload.put("request_key", requestKey);
         payload.putAll(snapshot);
+        // 스냅샷에는 저장 형태(sha256: 접두어)가 남아 있다 — AI 계약에 맞게 보낼 때만 뗀다. 이미 접수된 작업도 같은 길로 살아난다.
+        payload.put("content_hash", AiHashes.wire(snapshot.get("content_hash")));
+        payload.put("text_hash", AiHashes.wire(snapshot.get("text_hash")));
         payload.put("project_id", Long.toString(project));
 
         long started = System.nanoTime();
@@ -122,7 +125,7 @@ public class DesignDraftRunner {
         if (!(result.get("document") instanceof Map<?, ?> doc)
                 || !document.get("document_id").equals(String.valueOf(doc.get("document_id")))
                 || !document.get("document_version_id").equals(String.valueOf(doc.get("document_version_id")))
-                || !snapshot.get("text_hash").equals(result.get("text_hash"))) {
+                || !AiHashes.same(snapshot.get("text_hash"), result.get("text_hash"))) {
             throw new IllegalArgumentException("다른 문서 버전의 결과");
         }
         if (!(result.get("items") instanceof List<?> itemList) || !(result.get("changes") instanceof List<?> changeList)) {
