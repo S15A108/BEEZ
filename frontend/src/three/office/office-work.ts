@@ -9,6 +9,7 @@ import type {
 } from '../types'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
 import type { Floor, Furniture, Seat } from './floors'
+import { officeAgentStyle } from './office-actors'
 import { isOfficeWorkingStatus } from './office-life'
 import { officeWorkZone } from './office-layout'
 
@@ -58,6 +59,9 @@ export interface WorkMonitor {
 }
 export interface OfficeWorkState {
   project: string
+  projectId: string
+  /** 사무실에 있는 팀원 에이전트(연결 전인 내 에이전트 포함) 중 연결된 수와 대기 중인 수. 에이전트가 없으면 없다. */
+  agents?: { connected: number; waiting: number }
   monitors: Record<string, WorkMonitor>
   notes: WorkNote[]
   counts: Record<WorkColumn, number>
@@ -326,7 +330,24 @@ export function buildOfficeWork(
     at: null,
     target: { type: 'zone', id: 'dev' },
   }
-  return { project: snap.project.name, monitors, notes, counts, summary }
+  const helpers = snap.agents.filter((agent) => agent.hired_by)
+  const agents = helpers.length
+    ? {
+        connected: helpers.filter(
+          (agent) => officeAgentStyle(agent.status).look !== 'offline',
+        ).length,
+        waiting: helpers.filter((agent) => agent.status === 'waiting').length,
+      }
+    : undefined
+  return {
+    project: snap.project.name,
+    projectId: snap.project.id ?? '',
+    agents,
+    monitors,
+    notes,
+    counts,
+    summary,
+  }
 }
 
 /** Same ordering and cap for the texture and hit testing; remaining items stay counted. */

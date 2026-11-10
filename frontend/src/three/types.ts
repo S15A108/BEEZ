@@ -134,6 +134,12 @@ export type Selection =
   | { type: 'task'; id: string }
   | { type: 'decision'; key: string }
   | { type: 'event'; id: number }
+  /** 사무실 화면(메모 벽·관계 TV·대시보드)을 누르면 여는 업무 창. focus는 그 창에서 고를 항목(변경 제안 ID) */
+  | {
+      type: 'pane'
+      id: 'changes' | 'relations' | 'dashboard' | 'tasks'
+      focus?: string
+    }
 export interface LeadEvent {
   id: number
   ts: string

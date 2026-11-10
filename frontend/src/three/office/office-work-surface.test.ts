@@ -108,3 +108,75 @@ test('display textures upload only on content changes, hit real tasks and releas
     else Reflect.deleteProperty(globalThis, 'document')
   }
 })
+
+test('사무실 화면은 실제 상태가 바뀔 때만 다시 그리고, 누르면 그 창을 연다', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  let paints = 0
+  const noop = () => {}
+  const ctx = {
+    clearRect: () => {
+      paints++
+    },
+    beginPath: noop,
+    roundRect: noop,
+    fill: noop,
+    fillText: noop,
+    fillRect: noop,
+    moveTo: noop,
+    lineTo: noop,
+    stroke: noop,
+    save: noop,
+    restore: noop,
+    translate: noop,
+    rotate: noop,
+    measureText: (text: string) => ({ width: [...text].length * 20 }),
+  }
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { createElement: () => ({ getContext: () => ctx }) },
+  })
+  try {
+    const wall = new OfficeWorkSurface('notes', 3.6, 1.6)
+    const screens = {
+      wall: [
+        {
+          label: '제안',
+          count: 4,
+          notes: [
+            { id: '41', key: 'CP-4', title: '로그인 정책', status: 'PROPOSED' },
+          ],
+        },
+        { label: '검토 중', count: 0, notes: [] },
+        { label: '승인', count: 0, notes: [] },
+        { label: '발행 완료', count: 0, notes: [] },
+        { label: '반려·거둠', count: 0, notes: [] },
+      ],
+      design: null,
+      progress: [],
+    }
+    wall.update(undefined, undefined, screens)
+    const count = paints
+    wall.update(undefined, undefined, structuredClone(screens))
+    assert.strictEqual(paints, count, '같은 상태면 다시 그리지 않는다')
+    // 첫 칸 첫 메모(왼쪽 위)를 누르면 그 제안을 연다.
+    assert.deepStrictEqual(wall.hit(0.08, 0.7).target, {
+      type: 'pane',
+      id: 'changes',
+      focus: '41',
+    })
+    assert.match(wall.hit(0.08, 0.7).title, /CP-4/)
+    assert.deepStrictEqual(wall.hit(0.9, 0.1).target, {
+      type: 'pane',
+      id: 'changes',
+    })
+    wall.dispose()
+    const tv = new OfficeWorkSurface('graph', 1.6, 0.9)
+    tv.update(undefined, undefined, screens)
+    assert.deepStrictEqual(tv.hit().target, { type: 'pane', id: 'relations' })
+    assert.match(tv.hit().detail, /아직 기준 설계가 없어요/)
+    tv.dispose()
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'document', previous)
+    else Reflect.deleteProperty(globalThis, 'document')
+  }
+})
