@@ -120,6 +120,7 @@ public class DocumentApplicationService {
         result.put("media_type", extension.equals("md") ? "text/markdown" : "text/plain");
         result.put("content_hash", row.get("content_hash")); result.put("created_at", time(row.get("created_at")));
         if (row.get("created_by") != null) result.put("created_by", row.get("created_by").toString());
+        if (row.get("change_proposal_id") != null) result.put("change_proposal_id", row.get("change_proposal_id").toString());
         result.put("is_current_baseline", currentBaseline.contains(number(row, "id")));
         if (content && row.get("content_text") != null) result.put("content", row.get("content_text"));
         return result;

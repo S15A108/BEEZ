@@ -97,6 +97,8 @@ class ProposalDecisionIntegrationTest extends IntegrationTestSupport {
         Proposal p=create("reject");
         Proposal rejected=commands.reject(leader,project.projectId(),id(p),rejection(p,"  근거를 보완해 주세요.  "),"rej");
         assertThat(rejected.status()).isEqualTo("REJECTED");
+        // 반려는 같은 제안의 새 리비전으로 다시 제출하므로 제안에 귀속된 초안 문서 버전은 DRAFT 로 남는다.
+        assertThat(jdbc.queryForObject("SELECT status FROM document_version WHERE change_proposal_id=?",String.class,id(p))).isEqualTo("DRAFT");
         assertThat(rejected.rejectionReason()).isEqualTo("근거를 보완해 주세요.");
         assertThat(rejected.revision()).isEqualTo(p.revision());
         assertThat(rejected.snapshotHash()).isEqualTo(p.snapshotHash());

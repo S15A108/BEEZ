@@ -2,10 +2,14 @@ package com.beez.backend.impactanalysis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.beez.backend.ai.AiClient;
+import com.beez.backend.cdc.observability.PublishedAnalysisMetricsReader;
 import com.beez.backend.changeproposal.dto.ProposalDtos;
+import com.beez.backend.changeproposal.dto.PublicationDtos.ApproveRequest;
 import com.beez.backend.changeproposal.service.ProposalCommandService;
+import com.beez.backend.changeproposal.service.ProposalPublicationService;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.support.IntegrationTestSupport;
 import com.beez.backend.task.TaskApiSupport;
@@ -150,6 +154,9 @@ class ImpactBackendFastApiE2ETest extends IntegrationTestSupport {
     @Autowired ImpactContextQuery contexts;
     @Autowired AiClient aiClient;
     @Autowired ProposalCommandService proposals;
+    @Autowired ProposalPublicationService publications;
+    @Autowired PublishedAnalysisProcessor publishedProcessor;
+    @Autowired PublishedAnalysisMetricsReader metricsReader;
     private TaskApiSupport api;
     private long projectId;
     private long member;
@@ -173,6 +180,71 @@ class ImpactBackendFastApiE2ETest extends IntegrationTestSupport {
                 null, null, List.of(item), List.of(), null, null, null);
         var submitted = proposals.create(CallerContext.human(member), projectId, request, key);
         return Long.parseLong(submitted.id());
+    }
+
+    /** Opt-in paid test: fixture v2 models the pre-existing unevaluated document change;
+     * v3 is actually published and processed through BE, FastAPI and real GMS. */
+    @Test
+    void publishedAnalysisAfterUnsupportedDocumentChangeUsesRealGms() {
+        assumeTrue(REAL_GMS, "This test requires the explicit real GMS opt-in");
+        long leader = api.accountId("leader@test");
+        var actor = CallerContext.human(leader);
+        long currentItem = api.currentVersionId("API-01");
+
+        // This initial row and v2 are synthetic history in the isolated PostgreSQL database.
+        api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status,finished_at) "
+                + "VALUES(:p,:b,'NOT_EVALUATED',clock_timestamp())")
+                .param("p", projectId).param("b", baseline).update();
+        long secondBaseline = api.publish(2, Map.of("API-01", currentItem));
+        // The legacy synthetic publisher hard-codes CP-2 while production keys use
+        // the allocated id. Reserve id 2 so the real v3 create does not reuse that key.
+        api.jdbc.sql("SELECT nextval(pg_get_serial_sequence('change_proposal','id'))")
+                .query(Long.class).single();
+        long predecessor = api.jdbc.sql("""
+                INSERT INTO published_change_analysis(project_id,published_baseline_id,change_proposal_id,status,
+                    evaluation_status,error_code,finished_at)
+                SELECT project_id,id,change_proposal_id,'NOT_EVALUATED','NOT_EVALUATED',
+                    'document_change_unavailable',clock_timestamp() FROM baseline WHERE id=:b RETURNING id
+                """).param("b", secondBaseline).query(Long.class).single();
+
+        assertThat(api.post("/api/projects/" + projectId + "/tasks",
+                api.planJson("Synthetic API compatibility review", api.readsRef("API-01"), "[]"), member)
+                .statusCode()).isEqualTo(201);
+        var item = new ProposalDtos.Item("UPDATE", Long.toString(api.designItemId("API-01")),
+                Long.toString(api.currentVersionId("API-01")), "API_CONTRACT", 1,
+                Map.of("description", "fictional user API path change", "method", "GET", "path", "/users/v3"));
+        var proposal = proposals.create(actor, projectId,
+                new ProposalDtos.Input(Long.toString(secondBaseline), "Synthetic API update", "fictional user API change",
+                        null, null, List.of(item), List.of(), null, null, null), "live-cdc-v3-create");
+        var approved = publications.approve(actor, projectId, Long.parseLong(proposal.id()),
+                new ApproveRequest(proposal.baseBaselineId(), proposal.revision(), proposal.snapshotHash(),
+                        "Synthetic live test of post-publication analysis"), "live-cdc-v3-approve");
+        long intake = api.jdbc.sql("SELECT id FROM published_change_analysis WHERE published_baseline_id=:b")
+                .param("b", Long.parseLong(approved.baseline().id())).query(Long.class).single();
+        assertThat(metricsReader.read().blockedProjects()).isZero();
+        assertThat(metricsReader.read().notEvaluatedRequiresReview()).isEqualTo(1);
+
+        publishedProcessor.process(intake);
+
+        var result = api.jdbc.sql("SELECT status,evaluation_status,error_code,usage_status FROM published_change_analysis WHERE id=:id")
+                .param("id", intake).query().singleRow();
+        assertThat(result).containsEntry("status", "COMPLETED").containsEntry("usage_status", "REPORTED");
+        assertThat(result.get("evaluation_status")).isIn("COMPLETED", "INSUFFICIENT_EVIDENCE");
+        var usage = api.jdbc.sql("SELECT origin,model,failed,tokens_known,input_tokens,output_tokens FROM llm_usage "
+                + "WHERE project_id=:p AND feature='CHANGE_IMPACT'")
+                .param("p", projectId).query().singleRow();
+        assertThat(usage).containsEntry("origin", "model").containsEntry("failed", false);
+        assertThat(usage.get("model").toString()).isNotBlank();
+        assertThat(api.jdbc.sql("SELECT status,evaluation_status,error_code FROM published_change_analysis WHERE id=:id")
+                .param("id", predecessor).query().singleRow())
+                .containsEntry("status", "NOT_EVALUATED").containsEntry("evaluation_status", "NOT_EVALUATED")
+                .containsEntry("error_code", "document_change_unavailable");
+        assertThat(metricsReader.read().notEvaluatedRequiresReview()).isEqualTo(1);
+        System.out.println("REAL_GMS_CDC_SMOKE lifecycle=" + result.get("status")
+                + " evaluation=" + result.get("evaluation_status") + " error_code=" + result.get("error_code")
+                + " usage_status=" + result.get("usage_status") + " model=" + usage.get("model")
+                + " tokens_known=" + usage.get("tokens_known") + " input_tokens=" + usage.get("input_tokens")
+                + " output_tokens=" + usage.get("output_tokens"));
     }
 
     @Test

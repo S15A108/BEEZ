@@ -92,8 +92,9 @@ jobs:
       - name: Unit & slice tests
         run: ./gradlew test --console=plain
 
+      # 러너(4 vCPU)는 build.gradle 기본값이 1개라 2개로 나눠 돌린다. fork 마다 Postgres 컨테이너가 따로 뜬다 (-354).
       - name: Integration tests (Testcontainers)
-        run: ./gradlew integrationTest --console=plain
+        run: ./gradlew integrationTest --console=plain -PintegrationTestForks=2
 
       - name: Upload test reports
         if: failure()

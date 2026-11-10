@@ -14,6 +14,7 @@ from app.core.config import Settings, get_settings
 from app.core.internal_auth import require_internal_token
 from app.schemas.document_review import DocumentReviewRequest
 from app.services.document_review import analyze
+from app.services.document_review_modes import analyze_mode
 from app.services.llm_client import LLMClient, LLMError, OpenAICompatibleProvider
 
 _MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -154,4 +155,6 @@ async def document_review(
             raise HTTPException(413, detail="file_too_large")
         raw.extend(chunk)
     body = DocumentReviewRequest.model_validate_json(bytes(raw))
+    if body.mode in ("DISCUSS", "REQUEST"):
+        return await analyze_mode(body, client, settings.bee_default_model)
     return await analyze(body, client, settings.bee_default_model)
