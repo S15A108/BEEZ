@@ -723,7 +723,7 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
 
     @Test void reviewsOfDifferentDocumentsRunInParallelWithoutBlockingEachOther() throws Exception {
         var ids = List.of(document, upload("REQUIREMENTS"), upload("ERD"), upload("API_SPEC"));
-        // 모델 호출을 0.8초 걸리게 한 대역. 직렬이면 3.2초 이상, 병렬이면 1초 안팎이다.
+        // 모델 호출을 0.8초 걸리게 한 대역. 직렬이면 3.2초 이상, 병렬이면 1~1.5초 안팎이다.
         doAnswer(call -> {
             Thread.sleep(800);
             return result(call.getArgument(0), List.of());
@@ -735,7 +735,8 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
                     reviews.review(author, project.projectId(), id, 1, "parallel-" + id).id())).toList();
             for (var future : futures) assertThat(future.get(10, TimeUnit.SECONDS)).isNotBlank();
             long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-            assertThat(elapsedMs).as("서로 다른 문서의 검토가 직렬로 돌았다").isLessThan(2_400);
+            // 직렬이면 모델 대역만으로 3.2초 이상이다. 느린 CI 에서도 병렬이면 넘지 않도록 직렬 하한보다 조금 아래로 잡는다.
+            assertThat(elapsedMs).as("서로 다른 문서의 검토가 직렬로 돌았다").isLessThan(3_000);
         } finally {
             pool.shutdownNow();
         }

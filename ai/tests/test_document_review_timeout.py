@@ -58,12 +58,13 @@ def call(settings_kwargs):
 def test_default_limit_is_thirty_seconds():
     assert Settings(_env_file=None).document_review_llm_timeout_seconds == "30"
     _, provider = call({})
-    assert provider.timeouts == [30.0]
+    # 모델에는 마감까지 남은 시간이 넘어가므로 설정값보다 마이크로초 단위로 작다. 정확히 같다고 비교하지 않는다.
+    assert provider.timeouts == pytest.approx([30.0], abs=0.5)
 
 
 def test_configured_limit_reaches_the_model_call():
     _, provider = call({"document_review_llm_timeout_seconds": "45"})
-    assert provider.timeouts == [45.0]
+    assert provider.timeouts == pytest.approx([45.0], abs=0.5)
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "121", "abc", "nan", "inf", ""])
