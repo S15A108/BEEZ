@@ -15,6 +15,7 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { Hotbar } from '@/features/workspace/Hotbar'
 import { ChangesPanel } from './ChangesPanel'
 import { getResponseSchema } from './schemas'
 
@@ -1408,4 +1409,70 @@ it('항목과 문서가 함께 든 제안의 개요는 둘을 합쳐 세고 나�
   expect(
     await screen.findByText('요구사항 명세서 → 새 버전'),
   ).toBeInTheDocument()
+})
+
+// PR #264 리뷰(D46): 제안 작성·승인·반려는 PaneSheet가 아니라 창 안 전체 화면이라 따로 세어 숫자 키를 막는다.
+// mode가 useState라 창이 바뀌면 쓰던 제안이 남지 않는다.
+function renderWithHotbar() {
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <Hotbar locked={[]} badges={{}} />
+        <ChangesPanel projectId="101" isLeader />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+// 입력칸 밖(빈 곳)에 포커스를 둔다. 입력칸에서는 원래부터 숫자가 글자로 들어간다.
+const blurInput = () => (document.activeElement as HTMLElement | null)?.blur()
+
+it('제안 작성 화면에서는 숫자 키로 창을 바꾸거나 닫지 않고, 작성을 그만두면 다시 바꾼다 (S15P31A108-371)', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.getState().openPane('changes', 'doc:203')
+  renderWithHotbar()
+  await waitFor(() =>
+    expect(
+      (screen.getByLabelText('고친 글') as HTMLTextAreaElement).value,
+    ).toContain('REQ-001'),
+  )
+  await user.type(screen.getByLabelText('제목 *'), '빈 목록 안내 추가')
+  blurInput()
+  await user.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await user.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  expect(screen.getByLabelText('제목 *')).toHaveValue('빈 목록 안내 추가')
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  blurInput()
+  await user.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('documents')
+})
+
+it('승인·반려 화면에서도 숫자 키로 창을 바꾸지 않고, 상세로 돌아오면 다시 바꾼다 (S15P31A108-371)', async () => {
+  const user = userEvent.setup()
+  renderWithHotbar()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(
+    screen.getByRole('heading', { name: '기준 v2 발행을 승인할까요?' }),
+  ).toBeInTheDocument()
+  blurInput()
+  await user.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  await user.click(await screen.findByRole('button', { name: '반려' }))
+  expect(
+    screen.getByRole('heading', { name: '제안을 반려할까요?' }),
+  ).toBeInTheDocument()
+  blurInput()
+  await user.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await user.click(
+    screen.getByRole('button', { name: /프로젝트 목록 빈 화면 안내/ }),
+  )
+  blurInput()
+  await user.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
 })

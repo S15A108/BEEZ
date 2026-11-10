@@ -178,6 +178,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
       : { kind: 'detail' },
   )
+  // 제안 작성·승인·반려는 PaneSheet가 아니라 창 안 전체 화면이지만, 쓰던 내용이 mode와 함께 사라지므로 하위 화면처럼
+  // 세어 단축 바 숫자 키를 막는다(D46, PR #264 리뷰). 창째 닫혀도 정리 함수가 돌아 수가 남지 않는다.
+  const holdsInput =
+    mode.kind === 'form' || mode.kind === 'approve' || mode.kind === 'reject'
+  const trackSheet = useWorkspaceStore((state) => state.trackSheet)
+  useEffect(() => {
+    if (!holdsInput) return
+    trackSheet(true)
+    return () => trackSheet(false)
+  }, [holdsInput, trackSheet])
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
   const queryClient = useQueryClient()
