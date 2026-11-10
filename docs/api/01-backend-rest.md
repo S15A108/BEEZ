@@ -6392,7 +6392,7 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 - AI 내부 경로·입출력은 담당자 합의 대기다. 이 절은 FE→BE의 현재 구현 계약이며 실제 AI 연결 완료를 뜻하지 않는다.
 - (수정안 요청) 기준 v1 전에는 화면이 DOC-A01·A12로 등록한 직후 이 API를 불러 검토를 시작한다. 검토 없이 DOC-A18로 제출할 수 없으므로 검토를 건너뛰는 경로는 없다. 기준 v1 뒤에는 이 API가 409 change_proposal_required이므로, DOC-A12로 올린 DRAFT는 등록 직후 검토하지 않고 변경 제안(CHG-A01 documents[].proposed_document_version_id)에 연결한다.
 - (수정안 요청) 검토 창은 'n단계 / 5단계'와 단계별 결과('문단 4개')를 보인다. DocumentBeeReview.steps로 받는다. 창을 닫아도 검토는 이어지고, 끝나면 등록자에게 알린다. 지금처럼 동기 호출이면 화면은 진행률 없이 기다림만 보인다(Q19).
-- (수정안 요청) 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 rejection_submission_id로 고른다. 그 rejection_reason과 함께 AI-A10에 mode=RERUN으로 넣고, 아니면 REVIEW다. 화면은 제출을 고르지 않는다. 비비가 사유와 이어진 문단을 찾아 category=REJECTION_FIX 제안을 만들고, 팀장은 문단을 고르지 않는다.
+- 반려된 뒤의 검토: 서버가 이 작성 건의 가장 최근 제출을 보고, 그 제출이 REJECTED이면 그 ID와 rejection_reason을 AI-A10에 mode=RERUN으로 넣고, 아니면 기존 REVIEW 요청을 보낸다. 화면은 제출을 고르지 않는다. 검토 중 최신 반려 맥락이 바뀌면 결과 저장을 거부한다. 제안의 category와 severity는 함께 검증·저장하며, 이전 모델의 두 필드가 모두 없는 결과도 기존 호환을 위해 허용한다. 실제 모델 연동과 FE 표시는 별도 확인이 필요하다.
 
 #### 216 검토 계약 v2 — BE 구현, 실제 AI 222 연결은 TODO
 
