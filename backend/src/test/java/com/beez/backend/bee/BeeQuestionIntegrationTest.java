@@ -49,6 +49,8 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
     JdbcTemplate db;
+    @Autowired
+    io.micrometer.core.instrument.MeterRegistry meters;
     @MockitoBean
     AiClient ai;
     @MockitoBean
@@ -180,6 +182,12 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
         return baseline;
     }
 
+    /** beez.bee.ask 지표의 outcome 태그별 누적 건수. 시험 전후 차이로 이번 질문이 어떤 결과로 세어졌는지 본다 */
+    private long asks(String outcome) {
+        var timer = meters.find("beez.bee.ask").tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
+    }
+
     private long answerCount(long projectId) {
         return db.queryForObject("select count(*) from bee_answer where project_id = ?", Long.class, projectId);
     }
@@ -203,6 +211,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void ask_answersFromApprovedDocuments_andIssuesAnswerIdThatFeedbackAccepts() {
+        long answeredBefore = asks("ANSWERED");
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         long baseline = publish(project.projectId(), project.leaderAccountId(), 1, doc);
         gatewayAnswers(r -> { });
@@ -211,6 +220,9 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
         assertThat(body.get("origin").asText()).isEqualTo("MODEL");
         assertThat(body.get("text").asText()).contains("[1]");
+        // 모델 답변의 outcome 태그는 answer_status(여기서는 ANSWERED)이고 "null" 이 아니다
+        assertThat(asks("ANSWERED")).isEqualTo(answeredBefore + 1);
+        assertThat(asks("null")).isZero();
         assertThat(body.get("grounded").asBoolean()).isTrue();
         assertThat(body.get("mode").asText()).isEqualTo("APPROVED");
         assertThat(body.get("baseline_id").asText()).isEqualTo(String.valueOf(baseline));
@@ -293,6 +305,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void ask_insufficientEvidenceIsAnOrdinaryAnswerNotAnError() {
+        long insufficientBefore = asks("INSUFFICIENT_EVIDENCE");
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
         gatewayAnswers(r -> {
@@ -309,6 +322,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
         assertThat(body.get("citations").size()).isZero();
         assertThat(body.get("origin").asText()).isEqualTo("MODEL");
         assertThat(body.get("text").asText()).startsWith("찾지 못했어요");
+        assertThat(asks("INSUFFICIENT_EVIDENCE")).isEqualTo(insufficientBefore + 1);
     }
 
     // ---- 권한 밖 근거 거부 (완료 조건 2) ------------------------------------------------------
@@ -349,6 +363,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void ask_aiUnavailableTwice_fallsBackToTemplateWithoutFakeUsage() {
+        long templateBefore = asks("TEMPLATE");
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
         when(gateway.chat(anyMap(), any())).thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "x", null));
@@ -358,6 +373,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
         verify(gateway, times(2)).chat(anyMap(), any());
         assertThat(body.get("origin").asText()).isEqualTo("TEMPLATE");
         assertThat(body.get("grounded").asBoolean()).isFalse();
+        assertThat(asks("TEMPLATE")).isEqualTo(templateBefore + 1);
         assertThat(body.get("sources").get(0).get("document_version_id").asText()).isEqualTo(String.valueOf(doc[1]));
         assertThat(body.get("answer_id").asText()).isNotBlank();
         // 실패한 호출도 "미확인" 사용량으로 남는다(토큰 수를 0 으로 단정하지 않는다)

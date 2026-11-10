@@ -103,6 +103,8 @@ public class BeeQuestionService {
     /** 한 번의 질문에서 단계별로 걸린 시간. dev 에서 실제 소요 시간을 재려고 로그·지표로 남긴다(질문·근거 원문은 담지 않는다) */
     private static final class Timing {
         long retrieveMillis;
+        /** 검증을 통과한 모델 답변의 answer_status(ANSWERED·INSUFFICIENT_EVIDENCE·OUT_OF_SCOPE). 응답 본문에는 이 키가 없어서 여기 따로 담는다 */
+        String answerStatus;
         int evidence;
         int approvedItems;
         final List<String> attempts = new ArrayList<>();
@@ -114,7 +116,7 @@ public class BeeQuestionService {
         String outcome = "ERROR";
         try {
             Map<String, Object> response = doAsk(caller, projectId, body, timing, started);
-            outcome = "TEMPLATE".equals(response.get("origin")) ? "TEMPLATE" : String.valueOf(response.get("answer_status"));
+            outcome = "TEMPLATE".equals(response.get("origin")) ? "TEMPLATE" : (timing.answerStatus != null ? timing.answerStatus : "UNKNOWN");
             return response;
         } catch (ApiException e) {
             outcome = "ERROR_" + e.getClass().getSimpleName();
@@ -195,6 +197,7 @@ public class BeeQuestionService {
                 time("beez.bee.chat", "result", String.valueOf(label), millis);
             }
         }
+        if (result != null) timing.answerStatus = String.valueOf(result.get("answer_status"));
         if (failure != null && !"ai_unavailable".equals(failure.getCode())) throw failure;
 
         // 호출 중 권한이 바뀌었는지, baseline 이 교체되었는지 마지막으로 확인한다. 예전 승인본으로 대신 답하지 않는다.
