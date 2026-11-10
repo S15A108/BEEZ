@@ -165,6 +165,18 @@ export function getApiErrorMessage(error: unknown): string {
     return '서버에 연결할 수 없습니다. 연결 상태를 확인해 주세요.'
   return '요청을 완료하지 못했습니다. 다시 시도해 주세요.'
 }
+// 입력 폼용: 서버가 400 validation_failed로 어느 값이 틀렸는지 알려 줬으면 그 문구를 그대로 보인다.
+// 전역 문구(getApiErrorMessage)는 바꾸지 않아 다른 화면에는 영향이 없다.
+export function getValidationMessage(error: unknown): string {
+  if (
+    getApiErrorStatus(error) === 400 &&
+    getApiErrorCode(error) === 'validation_failed'
+  ) {
+    const detail = getApiErrorDetail(error)?.trim()
+    if (detail) return detail
+  }
+  return getApiErrorMessage(error)
+}
 // 나가기·제외·탈퇴는 담당자를 넘기거나 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 전체가 되돌아간다(MEM-A09·A10, ACC-A10).
 // 계획을 고치는 화면과 달리 다시 확인할 내용이 없으므로 다시 시도하라고 알린다.
 export function getHandoverErrorMessage(error: unknown): string {

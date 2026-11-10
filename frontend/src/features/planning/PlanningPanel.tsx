@@ -5,7 +5,7 @@ import { FileCheck2, RefreshCw } from 'lucide-react'
 import { documentsApi, planningApi } from '@/api/services'
 import type { DesignItemVersion, DocumentVersion } from '@/api/contracts/common'
 import { structuredContentSchema } from '@/api/contracts/common'
-import { getApiErrorStatus } from '@/api/error'
+import { getApiErrorStatus, getValidationMessage } from '@/api/error'
 import { AsyncState } from '@/components/AsyncState'
 import { EmptyState } from '@/components/EmptyState'
 import { FormDialog } from '@/components/FormDialog'
@@ -20,6 +20,14 @@ import {
 } from '@/components/ui/card'
 import { DraftCandidates } from './DraftCandidates'
 import { hasActiveJob } from './draftJobs'
+import {
+  checkDesignContent,
+  DESIGN_CONTENT_EXAMPLES,
+  DESIGN_CONTENT_GUIDE,
+  DESIGN_CONTENT_PLACEHOLDER,
+  DESIGN_ITEM_SCHEMA_VERSION,
+  parseDesignContent,
+} from './parseDesignContent'
 import { PlanningQuestions } from './PlanningQuestions'
 import type { QuestionGenerationView } from './PlanningQuestions'
 import {
@@ -33,6 +41,11 @@ import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
 
+// 발행 창을 연 뒤 검토 내용이 바뀌어 지금은 발행할 수 없을 때. 글자를 틀린 것이 아니므로 따로 알린다.
+class StaleReviewError extends Error {}
+const STALE_REVIEW_MESSAGE =
+  '검토 후 내용이 바뀌었어요. 창을 닫고 최신 내용을 다시 검토해 주세요.'
+
 const DRAFT_ACCEPTED =
   '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.'
 
@@ -43,6 +56,15 @@ interface Props {
 
 export function PlanningPanel({ projectId, isLeader }: Props) {
   const action = useProjectAction(projectId)
+  // 입력 창 안에서 난 실패는 창이 원인을 알려 주므로, 위쪽 일반 오류 띠가 같은 실패를 틀린 안내로 또 보이지 않게 지운다.
+  const inForm = async <T,>(run: () => Promise<T>) => {
+    try {
+      return await run()
+    } catch (cause) {
+      action.reset()
+      throw cause
+    }
+  }
   const [editing, setEditing] = useState<DesignItemVersion | null>(null)
   const [publishing, setPublishing] = useState<{
     hash: string
@@ -541,22 +563,27 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               type: 'textarea',
               required: true,
               value: JSON.stringify(editing.content, null, 2),
+              check: checkDesignContent,
+              hint: DESIGN_CONTENT_GUIDE,
             },
           ]}
+          errorMessage={getValidationMessage}
           onClose={() => setEditing(null)}
           onSubmit={async (values) => {
             const content = structuredContentSchema.parse(
-              JSON.parse(values.content),
+              parseDesignContent(values.content),
             )
-            await action.run(
-              () =>
-                planningApi.updateItem(editing.design_item_id, {
-                  project_id: projectId,
-                  expected_version_id: editing.id,
-                  expected_content_hash: editing.content_hash!,
-                  content,
-                }),
-              '초안을 수정했어요.',
+            await inForm(() =>
+              action.run(
+                () =>
+                  planningApi.updateItem(editing.design_item_id, {
+                    project_id: projectId,
+                    expected_version_id: editing.id,
+                    expected_content_hash: editing.content_hash!,
+                    content,
+                  }),
+                '초안을 수정했어요.',
+              ),
             )
             setEditing(null)
           }}
@@ -581,36 +608,39 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               ],
             },
             {
-              name: 'schema_version',
-              label: '내용 구조 버전',
-              value: '1',
-              required: true,
-            },
-            {
               name: 'content',
               label: '설계 내용',
               type: 'textarea',
-              value: '{}',
+              placeholder: DESIGN_CONTENT_PLACEHOLDER,
               required: true,
+              check: checkDesignContent,
+              hint: DESIGN_CONTENT_GUIDE,
             },
           ]}
+          errorMessage={getValidationMessage}
           onClose={() => setAdding(false)}
           onSubmit={async (values) => {
             const content = structuredContentSchema.parse(
-              JSON.parse(values.content),
+              parseDesignContent(values.content),
             )
-            await action.run(
-              () =>
-                planningApi.createItem(projectId, {
-                  kind: values.kind as DesignItemVersion['kind'],
-                  schema_version: Number(values.schema_version),
-                  content,
-                }),
-              '초안을 추가했어요.',
+            await inForm(() =>
+              action.run(
+                () =>
+                  planningApi.createItem(projectId, {
+                    kind: values.kind as DesignItemVersion['kind'],
+                    schema_version: DESIGN_ITEM_SCHEMA_VERSION,
+                    content,
+                  }),
+                '초안을 추가했어요.',
+              ),
             )
             setAdding(false)
           }}
-        />
+        >
+          <pre className="rounded-lg bg-muted/50 p-3 text-xs break-all whitespace-pre-wrap text-muted-foreground">
+            {DESIGN_CONTENT_EXAMPLES}
+          </pre>
+        </FormDialog>
       )}
       {publishing && (
         <FormDialog
@@ -621,13 +651,19 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               name: 'confirmation',
               label: '검토를 마쳤다면 ‘승인’을 입력해 주세요.',
               required: true,
+              check: (value) =>
+                value.trim() === '승인' ? undefined : "'승인'을 입력해 주세요.",
             },
           ]}
           submitLabel="승인하고 기준 발행"
+          errorMessage={(cause) =>
+            cause instanceof StaleReviewError
+              ? STALE_REVIEW_MESSAGE
+              : getValidationMessage(cause)
+          }
           onClose={() => setPublishing(null)}
-          onSubmit={async (values) => {
+          onSubmit={async () => {
             if (
-              values.confirmation !== '승인' ||
               snapshotHash !== publishing.hash ||
               publishing.documents.length !== versions.length ||
               !versions.every((version) =>
@@ -635,16 +671,18 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
               ) ||
               !canPublish
             )
-              throw new Error('최신 검토 내용 확인 필요')
-            await action.run(
-              () =>
-                planningApi.publishBaseline({
-                  project_id: projectId,
-                  document_version_ids: publishing.documents,
-                  design_item_version_ids: publishing.items,
-                  draft_snapshot_hash: publishing.hash,
-                }),
-              '첫 기준 설계를 발행했어요.',
+              throw new StaleReviewError()
+            await inForm(() =>
+              action.run(
+                () =>
+                  planningApi.publishBaseline({
+                    project_id: projectId,
+                    document_version_ids: publishing.documents,
+                    design_item_version_ids: publishing.items,
+                    draft_snapshot_hash: publishing.hash,
+                  }),
+                '첫 기준 설계를 발행했어요.',
+              ),
             )
             setPublishing(null)
           }}
