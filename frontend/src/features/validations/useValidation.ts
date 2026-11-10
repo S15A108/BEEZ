@@ -1,3 +1,4 @@
+import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { validationsApi } from '@/api/services'
@@ -45,7 +46,7 @@ export function useValidationQuery(projectId: string, validationId?: string) {
     enabled: !!validationId,
     refetchInterval: (query) =>
       !query.state.error && query.state.data?.status === 'RUNNING'
-        ? 1500
+        ? ACTIVE_POLL_MS
         : false,
   })
 }

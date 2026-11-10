@@ -48,6 +48,10 @@ public class DocumentRequestOriginVerifier {
         return new Origin(normalizedScheme, uri.getHost().toLowerCase(Locale.ROOT), port);
     }
 
+    /**
+     * 요청 출처(CSRF) 검사 — 05 참고 2의 접근 거부(멤버십·소속·역할)가 아니라 요청 형식 거부다. 명세 고유 code(request_origin_rejected)라
+     * AccessErrors.forbidden(code forbidden)으로 바꾸지 않는다. REST 전용이라 MCP 감사와도 무관하다 (S15P31A108-322)
+     */
     private static ApiException rejected() {
         return new ApiException(HttpStatus.FORBIDDEN, "request_origin_rejected", "허용된 화면에서 변경 요청을 보내세요.");
     }

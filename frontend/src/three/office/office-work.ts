@@ -7,6 +7,7 @@ import type {
   TaskStatus,
   Zone,
 } from '../types'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
 import type { Floor, Furniture, Seat } from './floors'
 import { isOfficeWorkingStatus } from './office-life'
 import { officeWorkZone } from './office-layout'
@@ -217,7 +218,7 @@ export function buildOfficeWork(
             : agent.status === 'blocked'
               ? '확인 필요'
               : agent.status === 'disconnected'
-                ? '연결 끊김'
+                ? agentStatusLabels.disconnected
                 : '자리 비움',
       tone: off
         ? 'idle'

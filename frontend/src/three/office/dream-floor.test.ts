@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { ALL_KEYS, makeBuilding } from './building'
-import { officeFloorAt } from './dream-floor'
+import { makeDreamFloor, officeFloorAt } from './dream-floor'
+import { makeTeamOffice } from './office-layout'
 
 const base = () => makeBuilding(ALL_KEYS, 'glass', undefined, {}).floors[1]
 
@@ -19,4 +20,28 @@ it('시작 전 사무실에도 시작 뒤와 같은 자리에 엘리베이터가
   // 시작 전 바닥은 따로 그리도록 정적 키를 나눈다.
   expect(before.staticKey).toBe('dream-3')
   expect(after.staticKey).toBe('dream-4')
+})
+
+it.each(['brick', 'modern', 'tower', 'wood', 'glass'])(
+  '%s 사무실의 가구는 시작 뒤 바닥에서 하나도 빠지지 않는다',
+  (design) => {
+    const floor = makeTeamOffice(design)
+    expect(makeDreamFloor(floor, 4).furniture).toHaveLength(
+      floor.furniture.length,
+    )
+  },
+)
+
+// 단계 2에서는 x 1~10칸만 보인다. 가운데만 재면 숨겨진 칸 위로 가구가 튀어나온다(마지막 가구는 가운데가 10칸이다).
+it('덮는 칸이 숨겨진 가구는 빼고, 1 m보다 작아도 보이는 칸에 있으면 둔다', () => {
+  const piece = (x: number, w: number) =>
+    ({ kind: 'plant', x, y: 2, w, h: 1, solid: false }) as const
+  const floor = {
+    ...base(),
+    furniture: [piece(9.8, 2), piece(1.2, 0.3), piece(8, 2), piece(10, 1.5)],
+  }
+  expect(makeDreamFloor(floor, 2).furniture).toEqual([
+    piece(1.2, 0.3),
+    piece(8, 2),
+  ])
 })

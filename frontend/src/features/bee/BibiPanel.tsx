@@ -1,31 +1,81 @@
-import { useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { BibiFace } from '@/components/BibiFace'
+import { useBibiMessages } from './useBibiMessages'
 import { beeApi } from '@/api/services'
 import type { Generation } from '@/api/contracts/common'
 import { getApiErrorMessage } from '@/api/error'
-import { ActionForm } from '@/components/ActionForm'
 import { SourceLinks } from '@/components/SourceLinks'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+import type { AskScope } from './schemas'
+
+// 찾는 범위 칩(캔버스 PNL-12-v2-bibi-hotbar). 값은 BEE-A01 scope다.
+const scopes: { value: AskScope; label: string }[] = [
+  { value: 'APPROVED', label: '승인된 문서' },
+  { value: 'INCLUDE_DRAFTS', label: '초안 포함' },
+]
+
+const questionSchema = z.object({
+  question: z
+    .string()
+    .trim()
+    .min(1, '설계 질문을 입력해 주세요.')
+    .max(2000, '2000자 이하로 입력해 주세요.'),
+})
+type QuestionInput = z.infer<typeof questionSchema>
+
+type Ask = { question: string; scope: AskScope }
 
 // 단축 바 가운데 비비 버튼(B안)으로 여는 대화. 대화는 창을 연 동안만 보인다.
 export function BibiPanel({ projectId }: { projectId: string }) {
-  const [messages, setMessages] = useState<
-    { question: string; answer: Generation }[]
-  >([])
+  const scopeLabel = useId()
+  const errorId = useId()
+  const [scope, setScope] = useState<AskScope>('APPROVED')
+  const [messages, setMessages] = useBibiMessages<Ask & { answer: Generation }>(
+    projectId,
+  )
   const mutation = useMutation({
-    mutationFn: (question: string) => beeApi.ask(projectId, { question }),
-    onSuccess: (answer, question) =>
-      setMessages((previous) => [...previous, { question, answer }]),
+    mutationFn: (input: Ask) => beeApi.ask(projectId, input),
+    onSuccess: (answer, input) =>
+      setMessages((previous) => [...previous, { ...input, answer }]),
   })
-  const last = messages.at(-1)?.answer
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    getValues,
+    formState: { errors },
+  } = useForm<QuestionInput>({
+    resolver: zodResolver(questionSchema),
+    defaultValues: { question: '' },
+  })
+  // 보내면 입력칸을 바로 비우고, 실패하면 그사이 새로 쓴 글이 없을 때만 질문을 돌려준다.
+  const send = handleSubmit(({ question }) => {
+    setValue('question', '')
+    return mutation.mutateAsync({ question, scope }).catch(() => {
+      if (!getValues('question')) setValue('question', question)
+    })
+  })
+  const end = useRef<HTMLDivElement>(null)
+  // 새 질문·답이 붙으면 입력줄까지 내려 마지막 대화가 보이게 한다.
+  useEffect(() => {
+    end.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [messages.length, mutation.isPending])
+  const pending = mutation.isPending ? mutation.variables : undefined
+  const last = messages.at(-1)
   return (
     // 창 높이를 다 쓰고, 대화가 짧아도 질문 입력줄은 아래에 둔다.
     <div className="grid min-h-full gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
       <div className="flex min-w-0 flex-col gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <BibiFace className="size-12 shrink-0" />
-          <div>
+          <div className="min-w-0 flex-1">
             <h3 className="font-bold">
               비비{' '}
               <span className="text-sm font-medium text-muted-foreground">
@@ -34,8 +84,40 @@ export function BibiPanel({ projectId }: { projectId: string }) {
             </h3>
             <p className="text-xs text-muted-foreground">
               답마다 찾은 문서를 붙여요. 최종 설계는 인간 팀장이 승인해요.
-              {/* API 없음: 찾는 범위(승인된 문서 / 초안 포함) 파라미터가 생기면 여기에 고르는 칩을 둔다. */}
             </p>
+          </div>
+          <div
+            role="radiogroup"
+            aria-labelledby={scopeLabel}
+            className="flex items-center gap-1.5"
+          >
+            <span
+              id={scopeLabel}
+              className="mr-1 text-xs text-muted-foreground"
+            >
+              찾는 범위
+            </span>
+            {scopes.map((option) => (
+              <label
+                key={option.value}
+                className={cn(
+                  'cursor-pointer rounded-full px-3 py-1 text-xs font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
+                  scope === option.value
+                    ? 'bg-foreground text-background'
+                    : 'bg-muted text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <input
+                  type="radio"
+                  name={scopeLabel}
+                  value={option.value}
+                  checked={scope === option.value}
+                  onChange={() => setScope(option.value)}
+                  className="sr-only"
+                />
+                {option.label}
+              </label>
+            ))}
           </div>
         </div>
         <div
@@ -64,6 +146,10 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                 )}
                 <span className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                   찾은 문서 {message.answer.sources.length}개
+                  {/* 초안까지 찾은 답은 승인 전 내용이 섞였을 수 있다(명세: 미승인 검토임을 표시). */}
+                  {message.scope === 'INCLUDE_DRAFTS' && (
+                    <Badge variant="outline">초안 포함</Badge>
+                  )}
                   <Badge variant="outline">
                     {message.answer.origin === 'MODEL'
                       ? '모델 생성'
@@ -74,10 +160,15 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               </article>
             </div>
           ))}
-          {mutation.isPending && (
-            <p role="status" className="text-xs text-muted-foreground">
-              비비가 문서를 찾는 중…
-            </p>
+          {pending && (
+            <>
+              <p className="max-w-xl justify-self-end rounded-2xl rounded-br-sm bg-foreground px-3.5 py-2.5 text-sm whitespace-pre-wrap text-background">
+                {pending.question}
+              </p>
+              <p role="status" className="text-xs text-muted-foreground">
+                비비가 문서를 찾는 중…
+              </p>
+            </>
           )}
           {mutation.error && (
             <p role="alert" className="text-sm text-destructive">
@@ -85,25 +176,33 @@ export function BibiPanel({ projectId }: { projectId: string }) {
             </p>
           )}
         </div>
-        <ActionForm
-          key={messages.length}
-          fields={[
-            {
-              name: 'question',
-              label: '설계 질문',
-              required: true,
-              max: 2000,
-              placeholder: '공용 문서에 대해 물어보세요',
-            },
-          ]}
-          submitLabel="비비에게 질문하기"
-          onSubmit={(values) =>
-            mutation.mutateAsync(values.question).catch(() => undefined)
-          }
-        />
-        <p className="text-xs text-muted-foreground">
-          대화는 이 창을 연 동안만 보여요.
-        </p>
+        {/* 대화가 길어져도 입력줄은 창 아래에 붙어 있다. 업무 창의 아래 여백(최대 2rem)으로 흘러내린 대화는 그림자로 가린다. */}
+        <div className="sticky bottom-0 grid gap-2 border-t bg-background pt-3 shadow-[0_2rem_0_var(--background)]">
+          <form noValidate onSubmit={send} className="flex gap-2">
+            <Input
+              aria-label="설계 질문"
+              placeholder="공용 문서에 대해 물어보세요"
+              autoComplete="off"
+              aria-invalid={Boolean(errors.question)}
+              aria-describedby={errors.question ? errorId : undefined}
+              className="h-10"
+              {...register('question')}
+            />
+            <Button type="submit" className="h-10 px-4" disabled={!!pending}>
+              보내기
+            </Button>
+          </form>
+          {errors.question && (
+            <p id={errorId} role="alert" className="text-xs text-destructive">
+              {errors.question.message}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            대화는 새로 고침하면 지워져요.
+          </p>
+        </div>
+        {/* 입력줄이 본래 놓일 자리의 끝. 붙어 있는 입력줄 안에 두면 늘 보이는 것으로 쳐서 내려가지 않는다. */}
+        <div ref={end} aria-hidden className="-mt-4 scroll-mb-8" />
       </div>
       <aside
         aria-labelledby="bibi-sources"
@@ -115,16 +214,23 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         >
           이 답의 근거
           <span className="text-muted-foreground">
-            {last?.sources.length ?? 0}
+            {last?.answer.sources.length ?? 0}
           </span>
         </h3>
         {/* API 없음: 근거마다 문단 위치·인용 문장을 주면 번호와 칠한 문장으로 바꾼다. */}
-        {last?.sources.length ? (
-          <SourceLinks sources={last.sources} />
+        {last?.answer.sources.length ? (
+          <SourceLinks sources={last.answer.sources} />
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">
             질문하면 비비가 찾은 문서가 여기에 떠요. 근거를 못 찾으면 짐작하지
             않고 못 찾았다고 답해요.
+          </p>
+        )}
+        {last && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {last.scope === 'APPROVED'
+              ? "승인된 문서만 찾았어요. 초안까지 찾으려면 위에서 '초안 포함'을 고르세요."
+              : '초안까지 찾았어요. 초안은 아직 팀장이 승인하지 않은 내용이에요.'}
           </p>
         )}
       </aside>

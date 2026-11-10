@@ -98,6 +98,13 @@ const ALLOWED: Record<string, string[]> = {
   COMPLETED: [],
   CANCELLED: [],
 }
+const TASK_ACTIVITY: Record<string, string> = {
+  START: 'TASK_STARTED',
+  RESUME: 'TASK_RESUMED',
+  WAIT: 'TASK_WAITING',
+  COMPLETED: 'TASK_COMPLETED',
+  CANCEL: 'TASK_CANCELLED',
+}
 const IDEMPOTENT: Record<string, string[]> = {
   IN_PROGRESS: ['START'],
   COMPLETED: ['COMPLETED'],
@@ -152,7 +159,7 @@ function evaluate(context: MockContext, validation: Validation): void {
   const revision = findById(project.revisions, validation.plan_revision_id)
   if (revision.id !== task.current_plan_revision.id) {
     validation.status = 'STALE'
-    validation.stale_reason = '검증 중 작업 계획의 새 리비전이 저장됐어요.'
+    validation.stale_reason = 'PLAN_CHANGED'
     validation.finished_at = now()
     delete context.database.pending_validations[validation.id]
     return
@@ -241,7 +248,11 @@ function evaluate(context: MockContext, validation: Validation): void {
   validation.finished_at = now()
   delete context.database.pending_validations[validation.id]
   syncValidation(context, validation)
-  activity(context, 'TASK_VALIDATED', { task_id: task.id })
+  // 공통 계약 6.2: PASS만 SUCCESS, 나머지 끝 상태는 FAILURE
+  activity(context, 'VALIDATION_FINISHED', {
+    task_id: task.id,
+    result: validation.status === 'PASS' ? 'SUCCESS' : 'FAILURE',
+  })
 }
 
 function startValidation(context: MockContext, task: TaskDetail): MockReply {
@@ -591,7 +602,12 @@ export function taskRoutes(
       }
       task!.lock_version++
       task!.updated_at = now()
-      activity(context, `TASK_${input.event}`, { task_id: task!.id })
+      // 활동 유형은 실제 전이로 정한다(공통 계약 6.2 '작업 유형 정하기'). delta가 있는 완료는 재검증 대기다.
+      activity(
+        context,
+        accepted ? 'TASK_COMPLETION_REPORTED' : TASK_ACTIVITY[input.event],
+        { task_id: task!.id },
+      )
       return accepted ? { status: 202, data: task! } : { data: task! }
     }
     case 'CTX-A01':
@@ -664,19 +680,26 @@ export function taskRoutes(
       }
     case 'BEE-A01': {
       requiredString(body, 'question')
-      const approved = project.documents.filter(
-        (document) => document.approved_version,
-      )
+      // 초안 포함(INCLUDE_DRAFTS)이면 초안이 있는 문서는 승인본 대신 최신 초안에서 찾는다.
+      const drafts = body.scope === 'INCLUDE_DRAFTS'
+      const found = project.documents.flatMap((document) => {
+        const version =
+          (drafts && document.latest_draft) || document.approved_version
+        return version ? [{ title: document.title, version }] : []
+      })
+      const first = found[0]
       return {
         data: templateGeneration(
-          approved.length
-            ? `${approved[0].title}의 승인 원문을 확인해 주세요. ${approved[0].approved_version?.content?.slice(0, 250) ?? ''}`
-            : '현재 승인된 문서가 없어요. 공용 문서를 검토하고 기준 설계를 발행해 주세요.',
-          approved.slice(0, 1).map((document) => ({
-            document_id: document.id,
-            document_version_id: document.approved_version!.id,
-            version_no: document.approved_version!.version_no,
-            location: document.title,
+          first
+            ? `${first.title}의 ${first.version.status === 'DRAFT' ? `초안 v${first.version.version_no}를` : '승인 원문을'} 확인해 주세요. ${first.version.content?.slice(0, 250) ?? ''}`
+            : drafts
+              ? '찾을 문서가 없어요. 공용 문서함에 문서를 올려 주세요.'
+              : '현재 승인된 문서가 없어요. 공용 문서를 검토하고 기준 설계를 발행해 주세요.',
+          found.slice(0, 1).map(({ title, version }) => ({
+            document_id: version.document_id,
+            document_version_id: version.id,
+            version_no: version.version_no,
+            location: title,
           })),
         ),
       }
@@ -692,11 +715,28 @@ export function taskRoutes(
                 Array.isArray(body.task_ids) &&
                 body.task_ids.includes(item.id),
             )
-            .map((item) => ({
-              task_id: item.id,
-              member_id: item.assignee_member_id,
-              reason: '예시 추천입니다. 현재 담당자와 역할을 검토해 주세요.',
-            })),
+            .flatMap((item) => {
+              const primary =
+                project.members.find(
+                  (member) => member.id === item.assignee_member_id,
+                ) ?? project.members[0]
+              if (!primary) return []
+              return [
+                {
+                  task_id: item.id,
+                  member_id: primary.id,
+                  reason:
+                    '예시 추천입니다. 현재 담당자와 역할을 검토해 주세요.',
+                  alternatives: project.members
+                    .filter((member) => member.id !== primary.id)
+                    .slice(0, 1)
+                    .map((member) => ({
+                      member_id: member.id,
+                      reason: '예시 대안입니다. 담당 영역을 확인해 주세요.',
+                    })),
+                },
+              ]
+            }),
           generation: templateGeneration(
             '현재 담당자를 제안으로 표시했어요. 자동 배정하지 않아요.',
           ),

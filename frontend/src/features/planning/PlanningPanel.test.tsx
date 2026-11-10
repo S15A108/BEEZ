@@ -12,6 +12,7 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { WAITING_POLL_MS } from '@/lib/pollIntervals'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { PlanningPanel } from './PlanningPanel'
 
@@ -185,6 +186,20 @@ async function prepareCandidates() {
 }
 
 it('초안을 만드는 동안에는 진행 안내를 보이고 만들기 버튼을 끈다', async () => {
+  // 예시 어댑터는 조회할 때마다 작업을 한 단계씩 진행시킨다. 진행 중 응답을 고정해 끝나기 전 화면을 확인한다.
+  const original = planningApi.drafts.bind(planningApi)
+  let running: Awaited<ReturnType<typeof original>> | undefined
+  vi.spyOn(planningApi, 'drafts').mockImplementation(async (...args) => {
+    if (running) return running
+    const result = await original(...args)
+    if (
+      result.jobs.some(
+        (job) => job.status === 'PENDING' || job.status === 'RUNNING',
+      )
+    )
+      running = result
+    return result
+  })
   const user = renderPanel()
   await screen.findByText('전체 질문 5개')
   await user.click(screen.getByRole('button', { name: '답변으로 초안 만들기' }))
@@ -394,46 +409,54 @@ async function stubAnalyses(
 }
 
 it('분석 직후 질문 생성 행이 아직 없어도 기다렸다가 진행·완료를 따라가고 목록을 갱신한다', async () => {
-  // REQUIREMENTS: 처음 두 번은 question_generation 없음 → RUNNING → COMPLETED
-  const calls = await stubAnalyses((kind, call) =>
-    kind !== 'REQUIREMENTS' || call >= 4
+  // REQUIREMENTS: question_generation 없음(대기) → RUNNING → COMPLETED. 단계는 호출 횟수가 아니라 시험이 넘긴다.
+  // 폴링 주기가 짧아 호출 횟수로 넘기면 첫 안내를 확인하기 전에 완료까지 지나갈 수 있다.
+  let phase: 'waiting' | 'running' | 'done' = 'waiting'
+  const calls = await stubAnalyses((kind) =>
+    kind !== 'REQUIREMENTS' || phase === 'done'
       ? { status: 'COMPLETED' }
-      : call === 3
+      : phase === 'running'
         ? { status: 'RUNNING' }
         : undefined,
   )
-  let created = false
   const original = planningApi.questions
   vi.spyOn(planningApi, 'questions').mockImplementation(
     async (projectId, query, options) => {
       const result = await original(projectId, query, options)
-      return created ? result : { ...result, items: [], total_count: 0 }
+      return phase === 'done'
+        ? result
+        : { ...result, items: [], total_count: 0 }
     },
   )
   renderPanel()
   expect(
     await screen.findByText(/비비가 보완 질문을 만들고 있어요/),
   ).toBeInTheDocument()
-  created = true
-  await waitFor(() => expect(calls.REQUIREMENTS).toBeGreaterThanOrEqual(4), {
-    timeout: 9000,
-  })
-  await waitFor(
-    () =>
-      expect(
-        screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
-      ).not.toBeInTheDocument(),
-    { timeout: 9000 },
+  // 실행 행이 없는 동안에도, 진행 중일 때도 계속 다시 읽는다.
+  const waiting = calls.REQUIREMENTS
+  await waitFor(() => expect(calls.REQUIREMENTS).toBeGreaterThan(waiting + 1))
+  phase = 'running'
+  const running = calls.REQUIREMENTS
+  await waitFor(() => expect(calls.REQUIREMENTS).toBeGreaterThan(running + 1))
+  expect(
+    screen.getByText(/비비가 보완 질문을 만들고 있어요/),
+  ).toBeInTheDocument()
+  phase = 'done'
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
+    ).not.toBeInTheDocument(),
   )
   expect(await screen.findByText('전체 질문 5개')).toBeInTheDocument()
-}, 25_000)
+})
 
 it('한 문서의 질문 생성이 실패해도 다른 문서의 진행을 따라가고 끝나면 목록을 갱신한다', async () => {
-  const calls = await stubAnalyses((kind, call) =>
+  let erdDone = false
+  const calls = await stubAnalyses((kind) =>
     kind === 'PLAN'
       ? { status: 'FAILED', error_code: 'ai_unavailable', retryable: true }
       : kind === 'ERD'
-        ? call >= 3
+        ? erdDone
           ? { status: 'COMPLETED' }
           : { status: 'RUNNING' }
         : { status: 'COMPLETED' },
@@ -446,15 +469,13 @@ it('한 문서의 질문 생성이 실패해도 다른 문서의 진행을 따�
     screen.getByText(/비비가 보완 질문을 만들고 있어요/),
   ).toBeInTheDocument()
   // 실패한 문서가 있어도 진행 중인 문서(ERD)는 끝날 때까지 계속 읽는다.
-  await waitFor(() => expect(calls.ERD).toBeGreaterThanOrEqual(3), {
-    timeout: 9000,
-  })
-  await waitFor(
-    () =>
-      expect(
-        screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
-      ).not.toBeInTheDocument(),
-    { timeout: 9000 },
+  const before = calls.ERD
+  await waitFor(() => expect(calls.ERD).toBeGreaterThan(before + 1))
+  erdDone = true
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
+    ).not.toBeInTheDocument(),
   )
   // 실패 안내와 다시 만들기는 그대로 남는다.
   expect(
@@ -463,7 +484,7 @@ it('한 문서의 질문 생성이 실패해도 다른 문서의 진행을 따�
   expect(
     screen.getByRole('button', { name: '질문 다시 만들기' }),
   ).toBeInTheDocument()
-}, 25_000)
+})
 
 // 리뷰 반영: 서버 워커는 문서를 하나씩 처리해서 뒤 문서는 첫 AI 호출이 길면 한참 실행 행이 없다.
 // 대기 상태는 시간으로 끊지 않고, 나중에 실패·완료가 와도 새로고침 없이 따라간다.
@@ -519,6 +540,7 @@ it('기준 설계가 발행된 프로젝트는 질문 생성을 기다리지 않
     screen.queryByText(/비비가 보완 질문을 만들고 있어요/),
   ).not.toBeInTheDocument()
   const seen = { ...calls }
-  await new Promise((resolve) => setTimeout(resolve, 3_500))
+  // 대기 주기를 여러 번 지나도 다시 읽지 않는다.
+  await new Promise((resolve) => setTimeout(resolve, WAITING_POLL_MS * 5))
   expect(calls).toEqual(seen)
 })

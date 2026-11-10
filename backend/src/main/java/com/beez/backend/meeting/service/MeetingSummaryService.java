@@ -102,6 +102,15 @@ public class MeetingSummaryService {
     private record Prepared(Built built, long throughEntryId, Long previousSummaryId, String feedback) { }
     private record Step(MeetingSummaryResponse replayed, Prepared prepared) { }
 
+    /** MTG-A15. 최신 구조화 정리. 프로젝트 멤버면 읽고(끝난 회의도), 정리가 아직 없으면 404. 새로 고친 화면이 summary_id 를 다시 받는 데 쓴다. */
+    public MeetingSummaryResponse latest(CallerContext caller, long projectId, String meetingIdRaw) {
+        access.requireMember(caller, projectId);
+        long meetingId = Ids.parse(meetingIdRaw, "meeting_id");
+        meetings.findMeeting(projectId, meetingId).orElseThrow(() -> missing(projectId, meetingId));
+        return toResponse(projectId, summaries.findLatest(meetingId)
+                .orElseThrow(() -> AccessErrors.notFound("meeting_summary_missing meeting=" + meetingId)));
+    }
+
     /** MTG-A11 */
     public MeetingSummaryResponse summarize(CallerContext caller, long projectId, String meetingIdRaw, SummarizeRequest body, String key) {
         ProjectActor actor = requireLeader(caller, projectId);
@@ -277,20 +286,6 @@ public class MeetingSummaryService {
     }
 
     // ---- 확인 ----
-
-    /**
-     * MTG-A15. 회의의 최신 정리를 읽는다(구조화한 값 전부). 새로 고치거나 다른 기기·다른 팀장이 열어도 끝내기·수정 요청에 필요한
-     * summary_id 와 정리 내용을 다시 받을 수 있게 한다. 프로젝트 멤버면 읽고, 정리가 아직 없으면 404 다.
-     */
-    @Transactional(readOnly = true)
-    public MeetingSummaryResponse latest(CallerContext caller, long projectId, String meetingIdRaw) {
-        access.requireMember(caller, projectId);
-        requireBaseline(projectId);
-        long meetingId = Ids.parse(meetingIdRaw, "meeting_id");
-        meetings.findMeeting(projectId, meetingId).orElseThrow(() -> missing(projectId, meetingId));
-        return toResponse(projectId, summaries.findLatest(meetingId)
-                .orElseThrow(() -> AccessErrors.notFound("summary_missing project=" + projectId + " meeting=" + meetingId)));
-    }
 
     /** 팀장(사람)만. 팀원은 403 */
     private ProjectActor requireLeader(CallerContext caller, long projectId) {

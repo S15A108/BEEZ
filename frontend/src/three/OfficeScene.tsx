@@ -3,7 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { makeBuilding, ALL_KEYS } from './office/building'
 import { officeFloorAt } from './office/dream-floor'
 import { firstPersonMove } from './office/first-person'
-import { orbitMove } from './office/office-orbit'
+import {
+  OFFICE_ZOOM,
+  officeOrbitFrame,
+  orbitFocus,
+  orbitPan,
+} from './office/office-orbit'
 import {
   moveContinuous,
   movementInput,
@@ -18,7 +23,11 @@ import {
   OutdoorStreetRenderer,
   walkableStreetSpawn,
 } from './office/OutdoorStreetRenderer'
-import { avatarAppearance, officeActors } from './office/office-actors'
+import {
+  avatarAppearance,
+  officeActors,
+  type BibiActivity,
+} from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
 import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
@@ -34,6 +43,8 @@ export interface OfficeSceneProps {
   design?: string
   /** 사무실 시간대(D39). 없으면 낮이다. */
   time?: OfficeTime
+  /** 비비 현재 상태(BEE-A04). 상태마다 자리를 옮긴다(D35). undefined는 아직 못 읽음, null은 없는 API다. */
+  bibiActivity?: BibiActivity | null
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -94,8 +105,9 @@ function OfficeRuntime(
         props.currentUserId ??
           agents.find((agent) => agent.kind === 'human')?.id,
         officeHomeSeats(floor, agents),
+        props.bibiActivity,
       ),
-    [floor, agents, phase, props.currentUserId],
+    [floor, agents, phase, props.currentUserId, props.bibiActivity],
   )
   const latest = useRef({ props, floor, actors, work, phase })
   const engine = useRef<OfficeRenderer3D | null>(null)
@@ -116,8 +128,10 @@ function OfficeRuntime(
   const route = useRef<Point[]>([])
   const pendingExit = useRef(false)
   const keys = useRef(new Set<string>())
-  const zoom = useRef(1)
-  const focus = useRef({ x: 15 * 32, y: 9 * 32 })
+  const zoom = useRef(OFFICE_ZOOM.start)
+  const focus = useRef({ x: 14 * 32, y: 8 * 32 })
+  // 끌어서 옮긴 3인칭 초점(칸). 다시 걸으면 비우고 내 캐릭터를 따라간다.
+  const pan = useRef<{ x: number; y: number } | null>(null)
   const lastFloor = useRef<typeof floor | null>(null)
   const clearInput = useRef(() => {})
   const hint = useRef<string | null>(null)
@@ -216,12 +230,32 @@ function OfficeRuntime(
       )
         drag.moved = true
       if (drag.moved) {
-        if (latest.current.props.outdoor)
-          street.current?.look.drag(
-            event.clientX - drag.x,
-            event.clientY - drag.y,
+        const dx = event.clientX - drag.x,
+          dy = event.clientY - drag.y
+        if (latest.current.props.outdoor) street.current?.look.drag(dx, dy)
+        else if (latest.current.props.viewMode === 'first')
+          renderer.rotateView(dx, dy)
+        else {
+          const { floor } = latest.current
+          const rect = canvas.getBoundingClientRect()
+          const frame = officeOrbitFrame(
+            floor,
+            rect.width,
+            rect.height,
+            zoom.current,
           )
-        else renderer.rotateView(event.clientX - drag.x, event.clientY - drag.y)
+          const by = orbitPan(dx, dy, frame, rect.height)
+          const from = pan.current ?? {
+            x: focus.current.x / 32,
+            y: focus.current.y / 32,
+          }
+          pan.current = orbitFocus(
+            { x: from.x + by.x, y: from.y + by.y },
+            floor,
+            frame,
+            zoom.current,
+          )
+        }
       }
       drag.x = event.clientX
       drag.y = event.clientY
@@ -287,19 +321,16 @@ function OfficeRuntime(
       }
       if (event.key !== 'Enter' || event.repeat) return
       event.preventDefault()
+      // 사무실에서는 엘리베이터 근처라는 것만으로 Enter를 산책으로 쓰지 않는다. 엘리베이터 앞에서 시작하고 산책에서
+      // 돌아와도 그 자리에 서서, 안내가 안 보이는 3인칭에서 첫 Enter가 늘 '나가기'가 됐다(S15P31A108-345). 산책은
+      // 1인칭으로 엘리베이터를 가리켜 안내가 보일 때의 Enter, 엘리베이터 클릭, '산책' 버튼으로 나간다.
       if (latest.current.props.outdoor) {
         if (
           outdoorPlayer.current &&
           street.current?.nearDoor(outdoorPlayer.current)
         )
           latest.current.props.onOutdoorChange(false)
-      } else if (
-        // 시작 전에도 엘리베이터 앞에서 시작하므로, 산책 출구가 닫힌 동안에는 Enter를 비비·가리킨 대상에 넘긴다.
-        latest.current.phase >= 4 &&
-        nearOfficeExit(player.current, latest.current.floor.outdoorExit)
-      )
-        exit()
-      else if (latest.current.props.viewMode === 'first') {
+      } else if (latest.current.props.viewMode === 'first') {
         if (renderer.aimedTarget) activate(renderer.aimedTarget)
         // 가리킨 대상이 없으면 단축 바의 '비비 Enter'대로 비비를 연다.
         else latest.current.props.onAgentSelect('bibi')
@@ -323,8 +354,11 @@ function OfficeRuntime(
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
       zoom.current = Math.max(
-        0.7,
-        Math.min(2, zoom.current * (event.deltaY < 0 ? 1.1 : 1 / 1.1)),
+        OFFICE_ZOOM.min,
+        Math.min(
+          OFFICE_ZOOM.max,
+          zoom.current * (event.deltaY < 0 ? 1.1 : 1 / 1.1),
+        ),
       )
     }
     canvas.addEventListener('pointerdown', down)
@@ -467,7 +501,7 @@ function OfficeRuntime(
                 input,
                 renderer.isFirstPerson ? renderer.viewHeading : me.heading,
               )
-            : orbitMove(input, renderer.orbitYaw),
+            : input,
         speed = movementSpeed(105, keys.current) * dt
       if (direction.x || direction.y)
         step({ x: direction.x * speed, y: direction.y * speed })
@@ -502,30 +536,31 @@ function OfficeRuntime(
     if (state.props.viewMode === 'first' && renderer.isFirstPerson)
       me.heading = renderer.viewHeading
     else if (me.moving) me.heading = Math.atan2(dx, dy)
+    if (me.moving) pan.current = null
+    const viewZoom = [2.6, 2.1, 1.6, 1, 1][state.phase] * zoom.current
+    const aim = orbitFocus(
+      pan.current ?? { x: me.x / 32, y: me.y / 32 },
+      state.floor,
+      officeOrbitFrame(state.floor, size.width, size.height, viewZoom),
+      viewZoom,
+    )
     const target =
       state.phase >= 3
-        ? {
-            x: (state.floor.W / 2) * 32,
-            y: (bounds ? (bounds.back + bounds.front) / 2 : 9) * 32,
-          }
+        ? { x: aim.x * 32, y: aim.y * 32 }
         : [
             { x: 160, y: 128 },
             { x: 160, y: 128 },
             { x: 224, y: 256 },
-            { x: 352, y: 256 },
           ][state.phase]
-    const ease = 1 - Math.exp(-dt * 2)
+    const ease = 1 - Math.exp(-dt * 6)
     focus.current.x += (target.x - focus.current.x) * ease
     focus.current.y += (target.y - focus.current.y) * ease
     me.appearance = avatarAppearance(state.props.avatar)
     renderer.render(state.floor, [...residents, me], time, {
-      // 건물별 28 × 16 m 방(D39)도 폭 26칸 방과 같은 크기로 화면에 담는다.
-      zoom:
-        [2.6, 2.1, 1.6, 1.16, 1.16][state.phase] *
-        zoom.current *
-        Math.min(1, 26 / state.floor.W),
+      zoom: viewZoom,
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
+      playerId: me.id,
       work: state.work,
       time: state.props.time,
     })
@@ -539,6 +574,17 @@ function OfficeRuntime(
     }
     gl.domElement.setAttribute('data-player-x', me.x.toFixed(2))
     gl.domElement.setAttribute('data-player-y', me.y.toFixed(2))
+    // E2E가 '엘리베이터 앞에서 Enter' 회귀(S15P31A108-345)의 전제를 확인한다.
+    gl.domElement.setAttribute(
+      'data-near-exit',
+      String(nearOfficeExit(me, state.floor.outdoorExit)),
+    )
+    // 내 위치처럼 비비 위치를 남겨 E2E가 걸음을 확인한다.
+    const bibi = residents.find((actor) => actor.appearance === 'bibi')
+    if (bibi) {
+      gl.domElement.setAttribute('data-bibi-x', bibi.x.toFixed(2))
+      gl.domElement.setAttribute('data-bibi-y', bibi.y.toFixed(2))
+    }
   }, 1)
   return null
 }

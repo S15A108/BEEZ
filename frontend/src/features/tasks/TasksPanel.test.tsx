@@ -133,6 +133,21 @@ function show(isLeader: boolean) {
   return { ...view, client }
 }
 
+it('계획 PASS가 있어도 실제 코드 검증이나 테스트 통과로 표시하지 않는다', async () => {
+  task = { ...task, status: 'IN_PROGRESS' }
+  show(false)
+  const card = (
+    await screen.findByText('설계와 계획의 검증 결과')
+  ).closest<HTMLElement>('[data-slot="card"]')!
+  expect(within(card).getByText('계획 통과')).toBeInTheDocument()
+  expect(
+    within(card).getByText(
+      /계획 검증은 코드 품질이나 테스트 통과를 보장하지 않아요/,
+    ),
+  ).toBeInTheDocument()
+  expect(within(card).queryByText('구현 검증 완료')).not.toBeInTheDocument()
+})
+
 it('현재 담당자는 PASS에 연결된 계획·검증·잠금 번호로 시작한다', async () => {
   const state = vi.spyOn(tasksApi, 'state').mockImplementation(async () => {
     task = { ...task, status: 'IN_PROGRESS', lock_version: 8 }
@@ -536,11 +551,10 @@ it('검증이 끝나면 목록의 상태 칩도 다시 불러와 바뀐다', asy
   expect(within(entry).getByText('검증 중')).toBeInTheDocument()
 
   task = passed
-  await waitFor(
-    () => expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
-    { timeout: 4000 },
+  await waitFor(() =>
+    expect(within(entry).getByText('계획 통과')).toBeInTheDocument(),
   )
-}, 10000)
+})
 it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한다', async () => {
   const running = {
     ...task,
@@ -556,11 +570,7 @@ it('검증 중인 작업 목록을 다시 조회해 완료 상태를 표시한�
     await screen.findByRole('button', { name: /TASK-001.*검증 중/ }),
   ).toBeInTheDocument()
   expect(
-    await screen.findByRole(
-      'button',
-      { name: /TASK-001.*계획 통과/ },
-      { timeout: 4000 },
-    ),
+    await screen.findByRole('button', { name: /TASK-001.*계획 통과/ }),
   ).toBeInTheDocument()
 })
 
@@ -1026,6 +1036,222 @@ it('폐기된 설계 참조 때문에 저장이 막히면 그 줄에 알리고, 
   expect(save.mock.calls[1][2]).toMatchObject({ design_refs: [] })
 })
 
+// S15P31A108-319: 설계 항목 검색과 완료 기준 칸(캔버스 PNL-05-v2-plan)
+const designItem = (
+  id: string,
+  key: string,
+  kind: string,
+  description: string,
+) => ({
+  id: `${id}1`,
+  design_item_id: id,
+  key,
+  kind,
+  version_no: 1,
+  status: 'APPROVED',
+  schema_version: 1,
+  content: { description },
+})
+const designItems = [
+  designItem('301', 'REQ-001', 'REQUIREMENT', '참여 프로젝트를 조회한다.'),
+  designItem('302', 'API-001', 'API_CONTRACT', '주문을 만든다.'),
+  designItem('303', 'ENT-001', 'DATA_CONTRACT', '주문 테이블'),
+]
+async function openPlanEditor(items = designItems, hasMore = false) {
+  vi.spyOn(planningApi, 'items').mockResolvedValue({
+    items,
+    has_more: hasMore,
+    ...(hasMore ? { next_cursor: 'c2' } : {}),
+  } as never)
+  const save = vi
+    .spyOn(tasksApi, 'savePlan')
+    .mockImplementation(async () => task)
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: '계획 수정' }),
+  )
+  await screen.findByLabelText('어떻게 진행하나요?')
+  return save
+}
+const itemSearch = () =>
+  screen.getByRole('searchbox', { name: '설계 항목 검색' })
+const itemBox = (key: string) => screen.queryByLabelText(new RegExp(`^${key} `))
+
+it('설계 항목을 대소문자 없이 키와 설명으로 찾는다', async () => {
+  await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'api')
+  expect(itemBox('API-001')).toBeInTheDocument()
+  expect(itemBox('REQ-001')).toBeNull()
+  await userEvent.clear(itemSearch())
+  await userEvent.type(itemSearch(), '테이블')
+  expect(itemBox('ENT-001')).toBeInTheDocument()
+  expect(itemBox('API-001')).toBeNull()
+})
+
+// 서버의 데이터 계약 키는 ENT-지만 캔버스와 문서는 ERD라고 부른다.
+it('ERD로 찾으면 데이터 계약 항목이 나온다', async () => {
+  await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'ERD')
+  expect(itemBox('ENT-001')).toBeInTheDocument()
+  expect(itemBox('REQ-001')).toBeNull()
+})
+
+it('검색으로 찾아 고르고 관계를 정한 항목은 검색에 가려져도 함께 보낸다', async () => {
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'API')
+  await userEvent.click(itemBox('API-001')!)
+  await userEvent.selectOptions(
+    screen.getByLabelText('API-001의 참조 관계'),
+    'READS',
+  )
+  await userEvent.clear(itemSearch())
+  await userEvent.type(itemSearch(), 'REQ')
+  expect(itemBox('API-001')).toBeNull()
+  expect(screen.getByText(/^1개 선택/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({
+    design_refs: [
+      {
+        design_item_id: '302',
+        design_item_version_id: '3021',
+        relation: 'READS',
+      },
+    ],
+  })
+})
+
+it('검색칸에서 Enter를 눌러도 계획을 저장하지 않는다', async () => {
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), 'API{Enter}')
+  expect(itemBox('API-001')).toBeInTheDocument()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('찾는 설계 항목이 없으면 안내하고, 더 있으면 더 불러오는 버튼을 둔다', async () => {
+  await openPlanEditor(designItems, true)
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.type(itemSearch(), '없는 항목')
+  expect(
+    screen.getByText(/‘없는 항목’에 맞는 설계 항목이 없어요/),
+  ).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: '설계 항목 더 보기' }),
+  ).toBeVisible()
+})
+
+it('검색에 가려진 항목 때문에 저장이 막히면 검색을 풀어 그 줄의 안내를 보인다', async () => {
+  const save = await openPlanEditor()
+  save.mockRejectedValueOnce(
+    new AxiosError('bad request', '400', undefined, undefined, {
+      status: 400,
+      statusText: 'Bad Request',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {
+        error: {
+          code: 'validation_failed',
+          message: '현재 기준 설계에 없는 항목입니다 (design_item_id=302)',
+        },
+      },
+    }),
+  )
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.click(itemBox('API-001')!)
+  await userEvent.type(itemSearch(), 'REQ')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  expect(
+    await screen.findByText(
+      '이 항목 때문에 저장하지 못했어요. 현재 승인본으로 갱신하거나 빼 주세요.',
+    ),
+  ).toBeInTheDocument()
+  expect(itemSearch()).toHaveValue('')
+})
+
+it('완료 기준을 줄마다 더하면 빈 줄을 빼고 문자열 배열로 보낸다', async () => {
+  const save = await openPlanEditor()
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('응답 필드 확인')
+  await userEvent.click(screen.getByRole('button', { name: '기준 추가' }))
+  await userEvent.type(
+    screen.getByLabelText('완료 기준 2'),
+    '  오류 응답 확인 ',
+  )
+  await userEvent.click(screen.getByRole('button', { name: '기준 추가' }))
+  await userEvent.type(screen.getByLabelText('완료 기준 3'), '   ')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2].completion_criteria).toEqual([
+    '응답 필드 확인',
+    '오류 응답 확인',
+  ])
+})
+
+it('완료 기준 줄을 지우면 그 줄만 사라지고, 마지막 한 줄은 비운다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        completion_criteria: ['첫째 기준', '둘째 기준'],
+      },
+    },
+  }
+  await openPlanEditor()
+  await userEvent.click(
+    screen.getByRole('button', { name: '완료 기준 1 지우기' }),
+  )
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('둘째 기준')
+  expect(screen.queryByLabelText('완료 기준 2')).toBeNull()
+  await userEvent.click(
+    screen.getByRole('button', { name: '완료 기준 1 지우기' }),
+  )
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('')
+})
+
+it('완료 기준이 모두 비어 있으면 저장하지 않고 칸에 알린다', async () => {
+  const save = await openPlanEditor()
+  await userEvent.clear(screen.getByLabelText('완료 기준 1'))
+  await userEvent.click(screen.getByRole('button', { name: '기준 추가' }))
+  await userEvent.type(screen.getByLabelText('완료 기준 2'), '   ')
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  expect(await screen.findByText('내용을 입력해 주세요.')).toBeInTheDocument()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('완료 기준 칸에서 Enter를 누르면 저장하지 않고 다음 줄로 간다', async () => {
+  const save = await openPlanEditor()
+  await userEvent.type(screen.getByLabelText('완료 기준 1'), '{Enter}')
+  expect(screen.getByLabelText('완료 기준 2')).toHaveFocus()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('한글 조합을 끝내는 Enter로는 완료 기준 줄을 더하지 않는다', async () => {
+  await openPlanEditor()
+  fireEvent.keyDown(screen.getByLabelText('완료 기준 1'), {
+    key: 'Enter',
+    isComposing: true,
+  })
+  expect(screen.queryByLabelText('완료 기준 2')).toBeNull()
+})
+
+it('완료 기준이 없던 계획을 고칠 때도 빈 줄 하나로 시작한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: { ...task.current_plan_revision.plan, completion_criteria: [] },
+    },
+  }
+  await openPlanEditor()
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('')
+})
+
 // PR #88 리뷰(재현 경로): 계획을 고쳐 저장하는 동안 머리의 '+ 작업 계획'으로 새 폼을 열면,
 // 앞의 저장이 끝나며 새 폼과 입력이 사라졌다. 계획 폼이 열려 있거나 저장 중이면 머리 버튼을 숨긴다.
 it('계획 폼이 열려 있거나 저장 중이면 창 머리의 작업 계획 버튼을 숨긴다', async () => {
@@ -1229,4 +1455,430 @@ it('팀장이 담당자 없는 작업의 담당자를 정할 때는 첫 팀원�
       expected_lock_version: 7,
     }),
   )
+})
+
+// S15P31A108-340: 백엔드가 stale_reason에 쓰는 값 전부(ValidationStatusLookup·TaskHandoverService·TaskPlanService·
+// TaskStateService·AnalysisResultApplier·PublicationImpactAdapter)와 모르는 값.
+it.each([
+  ['ASSIGNEE_CHANGED', '새 담당자가 다시 검증받아야 해요'],
+  ['PLAN_CHANGED', '계획이 바뀌어 지금 계획으로 다시 검증해야 해요'],
+  ['RELATED_PLAN_CHANGED', '같은 설계 항목을 다루는 다른 작업이 바뀌어'],
+  ['INPUT_CHANGED', '분석하는 동안 기준 설계나 계획이 바뀌어'],
+  ['DESIGN_PUBLISHED', '참조한 설계가 새로 발행되어'],
+  ['TASK_RESUMED', '마치면 다시 완료 보고해 주세요'],
+  ['TASK_CANCELLED', '작업이 취소되어 이 검증은 더 쓰지 않아요'],
+  ['SOMETHING_NEW', '기준이 바뀌어 다시 검증해야 해요'],
+])(
+  '검증 무효 사유 %s는 코드 대신 바뀐 것과 할 일을 문장으로 보인다',
+  async (reason, sentence) => {
+    task = taskDetailSchema.parse({
+      ...task,
+      validation_status: 'STALE',
+      validation: {
+        ...task.validation!,
+        status: 'STALE',
+        stale_reason: reason,
+      },
+    })
+    show(false)
+    const card = (
+      await screen.findByText('설계와 계획의 검증 결과')
+    ).closest<HTMLElement>('[data-slot="card"]')!
+    expect(within(card).getByText(new RegExp(sentence))).toBeInTheDocument()
+    expect(screen.queryByText(reason)).not.toBeInTheDocument()
+  },
+)
+
+const attemptLimit = () => {
+  const config = { headers: new AxiosHeaders() }
+  return new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
+    status: 409,
+    statusText: 'Conflict',
+    headers: {},
+    config,
+    data: {
+      error: {
+        code: 'validation_attempt_limit',
+        message:
+          '같은 계획으로 분석을 3번 돌렸습니다. 계획을 고치거나 팀에 문의하세요',
+      },
+    },
+  })
+}
+
+it('분석 횟수를 다 써 재시도가 거절되면 재시도를 거두고 계획을 고치라고 알린다', async () => {
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      current_attempt: 3,
+      findings: [
+        {
+          id: '705',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message: '분석 시간 초과',
+          sources: [],
+          resolution: 'RETRY',
+        },
+      ],
+    },
+  }
+  const retry = vi
+    .spyOn(validationsApi, 'retry')
+    .mockRejectedValue(attemptLimit())
+  show(false)
+  fireEvent.click(await screen.findByRole('button', { name: '실행 재시도' }))
+  expect(
+    await screen.findByText(/같은 계획으로 분석할 수 있는 횟수를 모두 썼어요/),
+  ).toBeInTheDocument()
+  expect(retry).toHaveBeenCalledTimes(1)
+  expect(
+    screen.queryByRole('button', { name: '실행 재시도' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      '같은 계획으로는 다시 실행할 수 없어요. 계획을 고쳐 새로 검증해 주세요.',
+    ),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/요청을 처리하지 못했어요/)).not.toBeInTheDocument()
+})
+
+it('같은 계획의 새 검증이 횟수 제한에 걸려도 일반 오류 대신 계획을 고치라고 알린다', async () => {
+  vi.spyOn(validationsApi, 'create').mockRejectedValue(attemptLimit())
+  show(false)
+  fireEvent.click(await screen.findByRole('button', { name: '다시 검증' }))
+  expect(
+    await screen.findByText(/같은 계획으로 분석할 수 있는 횟수를 모두 썼어요/),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/요청을 처리하지 못했어요/)).not.toBeInTheDocument()
+})
+
+it('검증이 함께 비교한 작업을 키·제목·담당자로 보이고, 못 읽은 작업은 따로 알린다', async () => {
+  const related = taskDetailSchema.parse({
+    ...task,
+    id: '503',
+    key: 'TASK-003',
+    assignee_member_id: '22',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '513',
+      task_id: '503',
+      plan: {
+        ...task.current_plan_revision.plan,
+        title: '참여 프로젝트 목록 API 구현',
+      },
+    },
+  })
+  task = {
+    ...task,
+    validation: {
+      ...task.validation!,
+      related_task_refs: [
+        { task_id: '503', plan_revision_id: '513' },
+        { task_id: '599', plan_revision_id: '519' },
+      ],
+    },
+  }
+  const get = vi
+    .spyOn(tasksApi, 'get')
+    .mockImplementation(async (_project, id) => {
+      if (id === '503') return related
+      if (id === '599') throw new Error('not found')
+      return task
+    })
+  show(false)
+  const section = await screen.findByRole('region', {
+    name: '함께 비교한 작업',
+  })
+  expect(
+    await within(section).findByText('참여 프로젝트 목록 API 구현'),
+  ).toBeInTheDocument()
+  expect(within(section).getByText('TASK-003')).toBeInTheDocument()
+  expect(within(section).getByText(/담당자 다른 팀원/)).toBeInTheDocument()
+  expect(
+    await within(section).findByText('작업 정보를 불러오지 못했어요.'),
+  ).toBeInTheDocument()
+  expect(get).toHaveBeenCalledWith('101', '503')
+})
+
+// S15P31A108-313: 작업 현황 목록·상세를 캔버스 배치로(PNL-05-v2-tasks·blocked·history·record, 11-05 결정)
+const listed = (
+  id: string,
+  key: string,
+  status: TaskDetail['status'],
+  title: string,
+): TaskDetail => ({
+  ...task,
+  id,
+  key,
+  status,
+  current_plan_revision: {
+    ...task.current_plan_revision,
+    id: `${id}1`,
+    task_id: id,
+    plan: { ...task.current_plan_revision.plan, title },
+  },
+})
+
+it('상태 타일은 할 것·진행 중·대기·끝남으로 불러온 목록을 세고 목록을 상태별 머리글로 묶는다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [
+      listed('509', 'TASK-009', 'COMPLETED', '끝난 작업'),
+      listed('508', 'TASK-008', 'CANCELLED', '취소한 작업'),
+      listed('507', 'TASK-007', 'WAITING', '기다리는 작업'),
+      listed('506', 'TASK-006', 'IN_PROGRESS', '진행 중인 작업'),
+      listed('505', 'TASK-005', 'DRAFT', '초안 작업'),
+      task,
+    ],
+    has_more: false,
+  })
+  show(false)
+  const tiles = await screen.findByRole('list', { name: '상태별 작업 수' })
+  expect(
+    within(tiles)
+      .getAllByRole('listitem')
+      .map((tile) => tile.textContent),
+  ).toEqual(['2할 것', '1진행 중', '1대기', '2끝남'])
+  const todo = screen.getByRole('region', { name: '지금 할 것' })
+  expect(within(todo).getByText('초안 작업')).toBeInTheDocument()
+  expect(within(todo).getByText('사용자 프로필 구현')).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('region', { name: '진행 중' })).getByText(
+      '진행 중인 작업',
+    ),
+  ).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('region', { name: '대기' })).getByText(
+      '기다리는 작업',
+    ),
+  ).toBeInTheDocument()
+  const done = screen.getByRole('region', { name: '끝남' })
+  expect(within(done).getByText('끝난 작업')).toBeInTheDocument()
+  expect(within(done).getByText('취소한 작업')).toBeInTheDocument()
+})
+
+it('검색하면 키나 제목이 맞는 작업만 남기고, 없으면 안내한다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({
+    items: [task, listed('502', 'TASK-002', 'IN_PROGRESS', '로그인 화면')],
+    has_more: false,
+  })
+  show(false)
+  const search = await screen.findByRole('searchbox', { name: '작업 검색' })
+  await userEvent.type(search, '로그인')
+  expect(
+    screen.getByRole('button', { name: /로그인 화면/ }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /TASK-001/ })).toBeNull()
+  expect(screen.queryByRole('region', { name: '지금 할 것' })).toBeNull()
+  // 타일은 검색과 상관없이 탭의 작업 수를 센다.
+  expect(
+    within(screen.getByRole('list', { name: '상태별 작업 수' }))
+      .getAllByRole('listitem')
+      .map((tile) => tile.textContent),
+  ).toEqual(['1할 것', '1진행 중', '0대기', '0끝남'])
+  await userEvent.clear(search)
+  await userEvent.type(search, 'task-001')
+  expect(screen.getByRole('button', { name: /TASK-001/ })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /로그인 화면/ })).toBeNull()
+  await userEvent.clear(search)
+  await userEvent.type(search, '없는 작업')
+  expect(
+    screen.getByText('찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'),
+  ).toBeInTheDocument()
+})
+
+it('작업이 한 페이지(50개)를 넘으면 뒤 페이지까지 받아 타일을 세고 검색한다', async () => {
+  const first = [
+    task,
+    ...Array.from({ length: 49 }, (_, index) =>
+      listed(`6${index}`, `TASK-${100 + index}`, 'READY', `앞 페이지 ${index}`),
+    ),
+  ]
+  const list = vi
+    .spyOn(tasksApi, 'list')
+    .mockImplementation(async (_projectId, params) =>
+      params?.cursor === 'c2'
+        ? {
+            items: [listed('701', 'TASK-701', 'IN_PROGRESS', '뒤 페이지 작업')],
+            has_more: false,
+          }
+        : { items: first, has_more: true, next_cursor: 'c2' },
+    )
+  show(false)
+  const tiles = await screen.findByRole('list', { name: '상태별 작업 수' })
+  await waitFor(() =>
+    expect(
+      within(tiles)
+        .getAllByRole('listitem')
+        .map((tile) => tile.textContent),
+    ).toEqual(['50할 것', '1진행 중', '0대기', '0끝남']),
+  )
+  expect(list).toHaveBeenCalledWith('101', { cursor: 'c2', limit: 50 })
+  await userEvent.type(
+    screen.getByRole('searchbox', { name: '작업 검색' }),
+    'task-701',
+  )
+  expect(
+    screen.getByRole('button', { name: /뒤 페이지 작업/ }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('찾는 작업이 없어요. 다른 이름이나 번호로 찾아보세요.'),
+  ).toBeNull()
+})
+
+it('검증을 통과하면 검증 결과를 접어 두고 단계는 번호 원과 상태 글로 보인다', async () => {
+  show(false)
+  const steps = await screen.findByRole('list', { name: '작업 단계' })
+  expect(within(steps).getByText('완료')).toBeInTheDocument()
+  expect(within(steps).getByText('통과')).toBeInTheDocument()
+  expect(within(steps).getByText('지금')).toBeInTheDocument()
+  expect(screen.getByText('설계와 계획의 검증 결과')).toBeVisible()
+  expect(
+    await screen.findByText(/현재 계획과 입력에서 시작을 막는 항목을/),
+  ).not.toBeVisible()
+})
+
+it.each(['NEEDS_INPUT', 'NEEDS_REVIEW'] as const)(
+  '검증 결과가 %s이면 검증 결과를 펼쳐 막힌 항목을 보인다',
+  async (status) => {
+    task = {
+      ...task,
+      validation_status: status,
+      validation: {
+        ...task.validation!,
+        status,
+        findings: [
+          {
+            id: '701',
+            source: 'RULE',
+            kind: 'MISSING_INPUT',
+            severity: 'BLOCKING',
+            message: '포함 범위를 더 적어 주세요.',
+            sources: [],
+            resolution: 'FIX_PLAN',
+          },
+        ],
+      },
+    }
+    show(false)
+    expect(await screen.findByText('포함 범위를 더 적어 주세요.')).toBeVisible()
+  },
+)
+
+it('통과했어도 대기 이유가 있으면 검증 결과를 펼친다', async () => {
+  task = { ...task, status: 'WAITING', waiting_reason: 'INPUT' }
+  show(false)
+  expect(await screen.findByText(/대기 이유/)).toBeVisible()
+})
+
+it('계획 이력 카드는 리비전과 지금 계획의 당시 개발 맥락·작성자를 창 안 화면으로 연다', async () => {
+  const earlier = {
+    ...task.current_plan_revision,
+    id: '510',
+    revision_no: 1,
+    plan: { ...task.current_plan_revision.plan, title: '처음 계획' },
+  }
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: { ...task.current_plan_revision.plan, context_packet_id: '701' },
+    },
+  }
+  vi.spyOn(tasksApi, 'planRevisions').mockResolvedValue({
+    items: [task.current_plan_revision, earlier],
+    has_more: false,
+  })
+  vi.spyOn(contextsApi, 'packet').mockResolvedValue({
+    id: '701',
+    project_id: '101',
+    task_id: '501',
+    baseline_id: '401',
+    request: '프로필 응답을 붙여 주세요.',
+    design_items: [],
+    constraints: [],
+    unresolved: ['정렬 기준'],
+    related_tasks: [],
+    sources: [],
+    created_at: timestamp,
+    content_hash: 'sha256:0',
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PaneSheetHost>
+        <TasksPanel projectId="101" isLeader={false} />
+      </PaneSheetHost>
+    </QueryClientProvider>,
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: /계획 이력 r2 · 2개/ }),
+  )
+  const sheet = screen.getByRole('region', { name: '계획 이력' })
+  expect(within(sheet).getByText('r2 · 지금 계획')).toBeInTheDocument()
+  expect(within(sheet).getByText('r1 · 처음 계획')).toBeInTheDocument()
+  expect(
+    await within(sheet).findByText('프로필 응답을 붙여 주세요.'),
+  ).toBeInTheDocument()
+  expect(within(sheet).getByText('미정: 정렬 기준')).toBeInTheDocument()
+  expect(within(sheet).getAllByText(/담당자 · 2026/)).toHaveLength(2)
+  // 당시 개발 맥락은 지금 계획에만 있다(리비전별 맥락 API 없음).
+  expect(within(sheet).getAllByText('당시 개발 맥락')).toHaveLength(1)
+  await userEvent.click(
+    within(sheet).getByRole('button', { name: '계획 수정' }),
+  )
+  expect(await screen.findByLabelText('어떻게 진행하나요?')).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: '계획 이력' })).toBeNull()
+})
+
+it('작업 기록 카드는 기록 목록을 열고, 기록 남기기로 기록 폼을 연다', async () => {
+  vi.spyOn(contextsApi, 'list').mockResolvedValue({
+    items: [
+      {
+        id: '801',
+        root_id: '801',
+        revision_no: 1,
+        task_id: '501',
+        kind: 'PROGRESS',
+        summary: '응답 필드를 붙였어요.',
+        author_account_id: '11',
+        visibility: 'SHARED',
+        is_latest_revision: true,
+        references_current: true,
+        created_at: timestamp,
+      },
+    ],
+    has_more: false,
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <PaneSheetHost>
+        <TasksPanel projectId="101" isLeader={false} />
+      </PaneSheetHost>
+    </QueryClientProvider>,
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: /작업 기록 1개/ }),
+  )
+  const sheet = screen.getByRole('region', { name: '작업 기록' })
+  expect(within(sheet).getByText('응답 필드를 붙였어요.')).toBeInTheDocument()
+  expect(within(sheet).getByText('리비전 1 · 팀 공유')).toBeInTheDocument()
+  await userEvent.click(
+    within(sheet).getByRole('button', { name: '기록 남기기' }),
+  )
+  expect(
+    await screen.findByRole('region', { name: '작업 기록 남기기' }),
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: '작업 기록' })).toBeNull()
 })

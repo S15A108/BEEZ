@@ -20,6 +20,7 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { REVIEW_POLL_MS } from '@/lib/pollIntervals'
 import { DocumentReview } from './DocumentReview'
 
 let restore: () => void
@@ -273,7 +274,7 @@ it('올린 사람이 아니어도 비비 검토가 끝나면 창을 다시 열�
       await screen.findByText(/올린 문서는 비비가 바로 검토해요/),
     ).toBeInTheDocument()
     finished = true
-    await vi.advanceTimersByTimeAsync(3000)
+    await vi.advanceTimersByTimeAsync(REVIEW_POLL_MS)
     expect(
       await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
     ).toBeInTheDocument()

@@ -1,6 +1,83 @@
 // BEEZ REST v0.2 및 공통 v0.3: snake_case 응답을 그대로 검증한다.
 import { z } from 'zod'
 import * as common from '@/api/contracts/common'
+import { scopedDraftResponseSchema } from '@/features/changes/schemas'
+
+export const revisionDraftInputSchema = z
+  .object({
+    summary_id: common.idSchema,
+    document_id: common.idSchema,
+    base_document_version_id: common.idSchema,
+    selected_block_ids: z.array(z.string()).min(1).max(30),
+    instruction: z.string().trim().min(1).max(4000),
+    confirmed: z.literal(true),
+    decisions: z
+      .array(
+        z.object({
+          decision_index: z.number().int().nonnegative(),
+          evidence_entry_ids: common.idSchema.array().min(1).max(100),
+        }),
+      )
+      .min(1)
+      .max(30),
+  })
+  .superRefine((value, ctx) => {
+    const indices = new Set(
+      value.decisions.map((decision) => decision.decision_index),
+    )
+    const entries = value.decisions.flatMap(
+      (decision) => decision.evidence_entry_ids,
+    )
+    if (indices.size !== value.decisions.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['decisions'],
+        message: '같은 결정을 중복 선택할 수 없습니다.',
+      })
+    if (new Set(entries).size > 200)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['decisions'],
+        message: '근거 기록은 최대 200개입니다.',
+      })
+    value.decisions.forEach((decision, index) => {
+      if (
+        new Set(decision.evidence_entry_ids).size !==
+        decision.evidence_entry_ids.length
+      )
+        ctx.addIssue({
+          code: 'custom',
+          path: ['decisions', index, 'evidence_entry_ids'],
+          message: '같은 근거를 중복 선택할 수 없습니다.',
+        })
+    })
+  })
+export type RevisionDraftInput = z.infer<typeof revisionDraftInputSchema>
+
+export const revisionDraftResponseSchema = z.object({
+  draft_id: common.idSchema,
+  summary_id: common.idSchema,
+  document_id: common.idSchema,
+  base_document_version_id: common.idSchema,
+  meeting: z.object({
+    project_id: common.idSchema,
+    meeting_id: common.idSchema,
+    document_id: common.idSchema,
+    document_version_id: common.idSchema,
+    entries: z.array(
+      z.object({ id: common.idSchema, meeting_id: common.idSchema }),
+    ),
+    decisions: z.array(
+      z.object({
+        id: z.string(),
+        text: z.string(),
+        evidence_entry_ids: common.idSchema.array(),
+      }),
+    ),
+  }),
+  draft: scopedDraftResponseSchema,
+})
+export type RevisionDraftResponse = z.infer<typeof revisionDraftResponseSchema>
 
 // 회의 생성(MTG-A01)은 폐지 예정이다. 변경 제안 화면의 '회의로 논의'를 주석 처리해 지금은 부르는 화면이 없다(열린 질문 Q5).
 export const createInputSchema = z.object({

@@ -17,6 +17,8 @@ import {
   inboxApi,
 } from '@/api/services'
 import type { Member, TaskDetail } from '@/api/contracts/common'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import type { GetResponse as Project } from '@/features/projects/schemas'
 import type { OnboardingResponse } from '@/features/projects/schemas'
 import { useProjectStart } from '@/features/projects/useProjectStart'
@@ -34,11 +36,12 @@ import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
 import { Toast } from '@/components/Toast'
 import { BibiStatusRow } from './BibiStatusRow'
 import { Hotbar } from './Hotbar'
+import { leaderSetupStep } from './leaderSetupStep'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 import { Button } from '@/components/ui/button'
 import { countText, describeContent, statusLabel } from '@/lib/display'
-import { formatAgo } from '@/lib/formatDate'
+import { formatAgo, formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { WorkspacePane } from '@/stores/workspaceStore'
@@ -112,6 +115,8 @@ type Step = {
   required?: boolean
   /** 건너뛴 선택 단계: 완료로 세고 '건너뜀'과 다시 하기 링크를 둔다 */
   skipped?: boolean
+  /** 건너뛴 뒤 설정에서 다시 할 링크 */
+  links?: { label: string; focus: string }[]
   locked?: boolean
   optional?: boolean
   action?: {
@@ -151,6 +156,7 @@ export function WorkspaceHud({
   const setOutdoor = useWorkspaceStore((state) => state.setOutdoor)
   const isLeader = project.my_role === 'LEADER'
   const started = onboarding.baseline_published
+  const statusOf = useAgentStatusOf(project.id)
   // 집계는 따로 받는다. 하나가 실패해도(dev 백엔드에 작업 집계 API가 아직 없음) 다른 숫자와 시작 안내는 그대로 보인다
   // (PR #72 전수 리뷰 TC-5). 실패한 칸은 0 대신 '—'.
   const documentCounts = useQuery({
@@ -226,8 +232,12 @@ export function WorkspaceHud({
   const readKey = guideKey(project.id, 'baseline-read')
   // API 없음: 가이드 상태 저장 필드(시작 가이드 백엔드 메모 1). 건너뛴 초대는 브라우저에 둔다.
   const inviteSkipKey = guideKey(project.id, 'invite-skipped')
-  const invited = onboarding.member_count > 1
-  const inviteSkipped = !invited && readFlag(inviteSkipKey)
+  const setup = leaderSetupStep({
+    invited: onboarding.member_count > 1,
+    agentConnected: onboarding.my_agent_connected,
+    skipFlag: readFlag(inviteSkipKey),
+    started,
+  })
   const uploaded = onboarding.required_documents.filter(
     (item) => item.uploaded,
   ).length
@@ -260,16 +270,41 @@ export function WorkspaceHud({
   // 10-29: 팀원 초대(선택)를 1순위로, 건너뛸 수 있게. 시작 조건은 그대로 4종 승인.
   const leaderSteps: Step[] = [
     {
-      title: '팀원 초대하기',
-      detail: invited
-        ? '팀원이 들어왔어요.'
-        : inviteSkipped
-          ? '나중에 초대해도 돼요.'
-          : '선택 · 같이 일할 사람을 먼저 불러요. 건너뛰어도 문서는 올릴 수 있어요.',
-      done: invited || inviteSkipped,
-      skipped: inviteSkipped,
+      title: '팀원 초대 · 에이전트 연결',
+      detail: setup.detail,
+      done: setup.done,
+      skipped: setup.skipped,
+      links: setup.links,
       optional: true,
-      action: { label: '팀원 초대하기', pane: 'settings', focus: 'team' },
+      children: (
+        <ul aria-label="팀원 초대와 에이전트 연결" className="mt-2 grid gap-1">
+          {setup.rows.map((row) => (
+            <li
+              key={row.focus}
+              className="flex items-center justify-between rounded-lg bg-muted/50 px-2.5 py-1.5 text-xs"
+            >
+              <span className="flex items-center gap-1.5">
+                {row.done && <Check className="size-3.5 text-green-700" />}
+                {row.label}
+              </span>
+              {!row.done && (
+                <button
+                  type="button"
+                  className="font-semibold underline"
+                  aria-label={`${row.label} ${row.action}`}
+                  onClick={() => openPane('settings', row.focus)}
+                >
+                  {row.action}
+                </button>
+              )}
+            </li>
+          ))}
+          <li className="text-[11px] text-muted-foreground">
+            에이전트는 설정 › 에이전트에서 토큰을 발급하고 Claude Code에 BEEZ
+            MCP를 추가하면 연결돼요.
+          </li>
+        </ul>
+      ),
     },
     {
       title: '문서 초안 4종 올리기',
@@ -449,21 +484,38 @@ export function WorkspaceHud({
             task ? openPane('tasks', task.id) : openPane('settings', 'team'),
         }
       }),
-    // 에이전트 줄: 연결된 에이전트, 그리고 아직 연결하지 않은 내 에이전트(설정에서 연결)
+    // 에이전트 줄: 연결된 에이전트(연결 미확인 포함), 그리고 아직 연결하지 않은 내 에이전트(설정에서 연결).
+    // 연결은 사무실과 같은 연결 현황(AGT-A05)으로 본다. 첫 조회의 agent_connected는 연 뒤의 연결·끊김을 담지 못한다.
     ...members
-      .filter((member) => member.agent_connected || member.id === me?.id)
-      .map((member) => ({
-        key: `agent:${member.id}`,
-        initial: 'AI',
-        color: undefined,
-        name: `${member.name}의 에이전트`,
-        place: member.agent_connected ? '연결됨' : '연결 전',
-        detail: member.agent_connected ? '' : '설정에서 연결해요',
-        open: () =>
-          member.id === me?.id && !member.agent_connected
-            ? openPane('settings', 'agent')
-            : openPane('dashboard'),
-      })),
+      .map((member) => ({ member, ...statusOf(member) }))
+      .filter(
+        ({ member, status }) =>
+          status === 'connected' ||
+          status === 'recheck' ||
+          member.id === me?.id,
+      )
+      .map(({ member, status, lastReportAt }) => {
+        const mine = member.id === me?.id
+        return {
+          key: `agent:${member.id}`,
+          initial: 'AI',
+          color: undefined,
+          name: `${member.name}의 에이전트`,
+          place: agentStatusLabels[status],
+          detail:
+            status === 'recheck' && lastReportAt
+              ? `마지막 보고 ${formatShort(lastReportAt)}`
+              : status === 'disconnected' && lastReportAt
+                ? `마지막 통신 ${formatShort(lastReportAt)}`
+                : (status === 'none' || status === 'failed') && mine
+                  ? '설정에서 연결해요'
+                  : '',
+          open: () =>
+            mine && status !== 'connected'
+              ? openPane('settings', 'agent')
+              : openPane('dashboard'),
+        }
+      }),
   ]
   const approved =
     documentCounts.data?.by_kind.reduce(
@@ -850,6 +902,11 @@ export function WorkspaceHud({
                               필수
                             </span>
                           )}
+                          {step.optional && !step.done && (
+                            <span className="ml-1.5 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                              선택
+                            </span>
+                          )}
                           {step.done && !step.skipped && (
                             <span className="ml-1.5 text-[11px] font-semibold text-green-700">
                               완료
@@ -865,19 +922,26 @@ export function WorkspaceHud({
                           {step.detail}
                         </span>
                         {!step.done && !locked && step.children}
-                        {/* 건너뛴 초대: 시작 전에는 링크, 시작 뒤에는 노란 칸에 버튼을 다시 보여 준다(10-29). */}
-                        {step.skipped && step.action && (
-                          <span className="mt-1">
-                            <Button
-                              size="xs"
-                              variant={started ? 'default' : 'link'}
-                              className={started ? undefined : 'h-auto p-0'}
-                              onClick={() =>
-                                openPane(step.action!.pane!, step.action!.focus)
-                              }
-                            >
-                              {started ? step.action.label : '지금 초대하기'}
-                            </Button>
+                        {/* 건너뛴 1단계: 시작 전에는 링크, 시작 뒤에는 노란 칸에 버튼을 다시 보여 준다(10-29). */}
+                        {step.skipped && (
+                          <span className="mt-1 flex flex-wrap items-center gap-2">
+                            {step.links?.map((link, linkIndex) => (
+                              <Button
+                                key={link.focus}
+                                size="xs"
+                                variant={
+                                  !started
+                                    ? 'link'
+                                    : linkIndex === 0
+                                      ? 'default'
+                                      : 'outline'
+                                }
+                                className={started ? undefined : 'h-auto p-0'}
+                                onClick={() => openPane('settings', link.focus)}
+                              >
+                                {link.label}
+                              </Button>
+                            ))}
                           </span>
                         )}
                         {!step.done && !locked && (

@@ -57,6 +57,13 @@ public class PublicationRepository {
                 UPDATE document_version SET status='APPROVED',approved_by=:actor,approved_at=now(),updated_at=now(),
                   lock_version=lock_version+1 WHERE id=:id AND status='DRAFT'
                 """).param("actor", actor).param("id", after).update());
+        // 같은 문서에서 이전 승인본을 부모로 만든 다른 초안은 새 기준에 다시 연결할 수 없다(제출 때 부모가 현재 기준과 같아야 한다).
+        // 그 초안은 채택되지 않은 것(REJECTED)으로 닫는다. 제안 자체의 상태는 팀장이 CHG-A10으로 반려할 때까지 그대로 둔다.
+        jdbc.sql("""
+                UPDATE document_version SET status='REJECTED',updated_at=now(),lock_version=lock_version+1
+                WHERE document_id=(SELECT document_id FROM document_version WHERE id=:after)
+                  AND parent_version_id=:before AND id<>:after AND status='DRAFT'
+                """).param("before", before).param("after", after).update();
     }
     public long insertVersion(long item, int version, String title, int schema, Map<String, Object> content,
                               Long source, Object locator, String origin, long author) {

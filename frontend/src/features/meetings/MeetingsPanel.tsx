@@ -42,6 +42,7 @@ import { FEEDBACK_MAX } from './schemas'
 import type { EntriesResponse } from './schemas'
 import { SummaryCard } from './SummaryCard'
 import { useMeetingList } from './useMeetingList'
+import { MeetingRevisionDraft } from './MeetingRevisionDraft'
 
 interface Props {
   projectId: string
@@ -73,6 +74,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   } | null>(null)
   // 끝내기 확인 화면을 연 회의. 알림 등으로 다른 회의가 열리면 그 회의에서는 확인 화면이 뜨지 않는다.
   const [endingId, setEndingId] = useState<string | null>(null)
+  const [showRevision, setShowRevision] = useState(false)
   const [agendaOpen, setAgendaOpen] = useState(false)
   const [earlierOpen, setEarlierOpen] = useState(false)
   // 회의 정리·끝내기 오류는 회의가 열린 채 어떻게 이어 가면 되는지를 알려 준다(meetingErrors.ts).
@@ -270,6 +272,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const select = (id: string) => {
     setSelection({ id, focus })
     setEnding(false)
+    setShowRevision(false)
     setAgendaOpen(false)
     setEarlierOpen(false)
     setNotice(null)
@@ -840,6 +843,33 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               </ul>
                             </section>
                           ))}
+                        {isLeader &&
+                          participant?.status === 'JOINED' &&
+                          !closedMeeting && (
+                            <div className="grid gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                  setShowRevision((value) => !value)
+                                }
+                              >
+                                {showRevision
+                                  ? '회의 수정 초안 접기'
+                                  : '회의 수정 초안 만들기'}
+                              </Button>
+                              {showRevision && (
+                                <MeetingRevisionDraft
+                                  projectId={projectId}
+                                  meetingId={meeting.id}
+                                  entries={notes}
+                                  hasMore={!!entries.hasNextPage}
+                                  loadingMore={entries.isFetchingNextPage}
+                                  loadMore={() => void entries.fetchNextPage()}
+                                />
+                              )}
+                            </div>
+                          )}
                         {/* lg 미만은 창이 내용 높이로 늘어나므로 대화 칸 높이를 묶어 안에서 스크롤한다(새 메시지로 내리기). lg부터는 창 높이를 따른다. */}
                         <AsyncState query={entries}>
                           {() => (

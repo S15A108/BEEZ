@@ -28,6 +28,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Toast } from '@/components/Toast'
+import { agentStatusLabels } from '@/features/agents/agentStatus'
+import type { AgentStatus } from '@/features/agents/agentStatus'
+import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { useSession } from '@/features/auth/useSession'
 import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
 import { projectPlacements } from '@/features/projects/placements'
@@ -56,6 +59,15 @@ type DialogAction = { action: 'edit' | 'remove' | 'transfer'; member: Member }
 
 export type TeamView = 'team' | 'project' | 'remove'
 
+// 팀원 줄의 에이전트 상태 점(캔버스 SCR-06-v2-settings)
+const agentDots: Record<AgentStatus, string> = {
+  connected: 'bg-green-600',
+  recheck: 'bg-[#e0b400]',
+  failed: 'bg-[#c10007]',
+  disconnected: 'bg-[#c4c4c4]',
+  none: 'bg-[#c4c4c4]',
+}
+
 export function TeamPanel({
   projectId,
   isLeader,
@@ -71,6 +83,7 @@ export function TeamPanel({
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const action = useProjectAction(projectId)
+  const statusOf = useAgentStatusOf(projectId)
   // 팀장 넘기기 진행·결과. 끝나면 가운데 위 토스트를 띄우고 창은 팀원 권한으로 다시 그려진다.
   const [handoff, setHandoff] = useState<{
     busy?: boolean
@@ -81,9 +94,10 @@ export function TeamPanel({
   const placements = useWorkspaceStore((state) => state.placements)
   const placeProjects = useWorkspaceStore((state) => state.placeProjects)
   const accountId = session.data?.id ?? ''
-  const [design, setDesign] = useState<BuildingDesign>(
-    placements[placementKey(accountId, projectId)]?.design ?? 'modern',
-  )
+  const savedDesign =
+    placements[placementKey(accountId, projectId)]?.design ?? 'modern'
+  const [pickedDesign, setPickedDesign] = useState<BuildingDesign>()
+  const design = pickedDesign ?? savedDesign
   const [dialog, setDialog] = useState<DialogAction | null>(null)
   const project = useQuery({
     queryKey: ['projects', projectId, 'team-project'],
@@ -106,6 +120,8 @@ export function TeamPanel({
   const lot = cityProjects.data
     ? assigned.find((item) => item.id === projectId)?.lot
     : placements[placementKey(accountId, projectId)]?.lot
+  // 부지가 없으면 디자인을 저장할 자리가 없으니 바뀐 것으로 치지 않는다.
+  const designChanged = typeof lot === 'number' && design !== savedDesign
   const members = useInfiniteQuery({
     // 다른 창은 같은 팀원 목록을 useQuery로 ['projects', id, 'members']에 담는다. 모양이 달라 키를 나눈다.
     queryKey: ['projects', projectId, 'team-members'],
@@ -218,7 +234,13 @@ export function TeamPanel({
       </header>
       {view === 'team' && isLeader && <InviteForm projectId={projectId} />}
       {/* 결과는 화면 안 글 대신 오른쪽 위 토스트로 잠깐 보여 준다. */}
-      {action.message && <Toast>{action.message}</Toast>}
+      {action.message && (
+        <Toast>
+          <span className={view === 'project' ? 'text-green-700' : undefined}>
+            {action.message}
+          </span>
+        </Toast>
+      )}
       {handoff.done && (
         <Toast tone="success">
           <strong className="block">팀장을 넘겼어요</strong>
@@ -286,11 +308,9 @@ export function TeamPanel({
                         <span className="inline-flex items-center gap-1.5 text-xs">
                           <span
                             aria-hidden="true"
-                            className={`size-1.5 rounded-full ${member.agent_connected ? 'bg-green-600' : 'bg-primary'}`}
+                            className={`size-1.5 rounded-full ${agentDots[statusOf(member).status]}`}
                           />
-                          {member.agent_connected
-                            ? '에이전트 연결됨'
-                            : '에이전트 연결 미확인'}
+                          에이전트 {agentStatusLabels[statusOf(member).status]}
                         </span>
                         <span className="flex justify-end">
                           {isLeader && !mine && member.role !== 'LEADER' ? (
@@ -365,14 +385,15 @@ export function TeamPanel({
           )}
         </AsyncState>
       )}
-      {/* 초대가 하나도 없다고 확인되면 '초대 중' 칸을 숨긴다(캔버스 SCR-06-v2-settings). 목록을 불러오는 중이거나
+      {/* 초대가 하나도 없다고 확인되면 '초대 내역' 칸을 숨긴다(캔버스 SCR-06-v2-settings). 목록을 불러오는 중이거나
           실패했으면 칸을 두고 AsyncState로 오류·다시 시도를 보인다. */}
       {view === 'team' &&
         isLeader &&
         (!invitations.isSuccess ||
           invitations.data.pages.some((page) => page.items.length)) && (
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold">초대 중</h3>
+            {/* 참여함·취소됨 초대도 함께 보이므로 칸 이름은 '초대 내역'이다. 아직 참여 전인 줄에는 '초대 중' 배지가 붙는다(S15P31A108-346). */}
+            <h3 className="text-sm font-semibold">초대 내역</h3>
             {resend.isSuccess && (
               <Toast key={resend.submittedAt}>
                 {`${resend.variables.invited_email} · 초대 메일을 다시 보냈어요. 이전 링크는 이제 열리지 않아요.`}
@@ -483,7 +504,7 @@ export function TeamPanel({
               {/* API 없음: 건물 디자인은 이 브라우저에만 저장된다. Project에 design 필드가 생기면 수정 요청에 넣는다. */}
               <BuildingDesignPicker
                 value={design}
-                onChange={setDesign}
+                onChange={setPickedDesign}
                 small
                 note={
                   typeof lot === 'number' && (
@@ -497,6 +518,13 @@ export function TeamPanel({
                 }
               />
               <ActionForm
+                // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
+                key={`${data.name}\n${data.description ?? ''}`}
+                // 새로 그려진 폼은 제출 중 상태를 모르므로, 저장 처리가 끝날 때까지 끈다(PR #199 리뷰).
+                disabled={action.busy}
+                disableWhen={(values) =>
+                  !designChanged && !projectInfoChanged(values, data)
+                }
                 fields={[
                   {
                     name: 'name',
@@ -521,11 +549,14 @@ export function TeamPanel({
                 submitLabel="저장"
                 onSubmit={async (values) => {
                   await action.run(
-                    () =>
-                      projectsApi.update(projectId, {
-                        name: values.name,
-                        description: values.description,
-                      }),
+                    // 건물 디자인은 이 브라우저에만 저장하므로, 이름·소개가 그대로면 서버에 보내지 않는다.
+                    async () => {
+                      if (projectInfoChanged(values, data))
+                        await projectsApi.update(projectId, {
+                          name: values.name,
+                          description: values.description,
+                        })
+                    },
                     '프로젝트 정보를 저장했어요.',
                   )
                   // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
@@ -838,6 +869,17 @@ export function TeamPanel({
         </FormDialog>
       )}
     </section>
+  )
+}
+
+// 프로젝트 이름·소개가 서버 값과 다른지. 앞뒤 공백은 서버가 빼므로(PRJ-A04) 바뀐 것으로 치지 않는다.
+function projectInfoChanged(
+  values: Record<string, string | undefined>,
+  project: { name: string; description?: string },
+) {
+  return (
+    (values.name ?? '').trim() !== project.name.trim() ||
+    (values.description ?? '').trim() !== (project.description ?? '').trim()
   )
 }
 

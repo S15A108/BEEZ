@@ -25,7 +25,6 @@ export const beeApi = {
         method: 'POST',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/assignment-suggestions`,
         data: schemas.suggestAssignmentsInputSchema.parse(input),
-        idempotent: true,
       },
       options,
     ),

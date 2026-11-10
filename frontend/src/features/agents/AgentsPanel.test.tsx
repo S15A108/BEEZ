@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError, AxiosHeaders } from 'axios'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MISSING_API_MESSAGE } from '@/api/error'
@@ -13,10 +13,12 @@ import {
   resetMockApi,
   setupMockApi,
 } from '@/mocks/setup'
+import { useAgentCheckStore } from './agentCheckStore'
 import { AgentsPanel } from './AgentsPanel'
 
 let restore: () => void
 beforeEach(async () => {
+  useAgentCheckStore.setState({ checkedMemberId: null })
   Object.defineProperty(globalThis.crypto, 'subtle', {
     configurable: true,
     value: webcrypto.subtle,
@@ -113,6 +115,113 @@ it('연결 안내·연결 현황이 404여도 토큰을 발급하고 발급 응�
   vi.restoreAllMocks()
 })
 
+// PR #195 리뷰: refetch()는 실패해도 reject하지 않는다. 조회를 못 했으면 연결 실패가 아니라 확인하지 못한 것이다.
+const serverError = () =>
+  Promise.reject(
+    new AxiosError('Server Error', 'ERR_BAD_RESPONSE', undefined, undefined, {
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: { error: { code: 'internal_error', message: '서버 오류' } },
+    }),
+  )
+const notConnected = {
+  items: [
+    {
+      id: '51',
+      member_id: '21',
+      connected: false,
+      status_check_required: false,
+    },
+  ],
+  has_more: false,
+}
+const mountPanel = () =>
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <AgentsPanel projectId="101" />
+    </QueryClientProvider>,
+  )
+const checkButton = (name: string) => screen.findByRole('button', { name })
+
+it('첫 조회가 실패하면 확인하지 못했다고 알리고, 다시 확인해 성공하면 결과를 보인다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockImplementation(serverError)
+  const user = userEvent.setup()
+  mountPanel()
+  await screen.findByText('연결 상태를 확인하지 못했어요')
+  expect(useAgentCheckStore.getState().checkedMemberId).toBeNull()
+  list.mockResolvedValue(notConnected)
+  await user.click(await checkButton('다시 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
+  )
+  expect(useAgentCheckStore.getState().checkedMemberId).toBe('21')
+  vi.restoreAllMocks()
+})
+
+it('정상 조회 뒤 재조회만 실패하면 연결 실패로 저장하지 않고 앞선 결과도 지운다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockResolvedValue(notConnected)
+  const user = userEvent.setup()
+  mountPanel()
+  await user.click(await checkButton('연결 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 실패/),
+  )
+  list.mockImplementation(serverError)
+  await user.click(await checkButton('다시 확인'))
+  await screen.findByText('연결 상태를 확인하지 못했어요')
+  expect(screen.getByRole('status')).not.toHaveTextContent('연결 실패')
+  expect(useAgentCheckStore.getState().checkedMemberId).toBeNull()
+  vi.restoreAllMocks()
+})
+
+it('재조회가 실패한 뒤 다시 확인해 연결을 받으면 연결됨을 보인다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockResolvedValue(notConnected)
+  const user = userEvent.setup()
+  mountPanel()
+  await checkButton('연결 확인')
+  list.mockImplementation(serverError)
+  await user.click(await checkButton('연결 확인'))
+  await screen.findByText('연결 상태를 확인하지 못했어요')
+  list.mockResolvedValue({
+    items: [{ ...notConnected.items[0], connected: true }],
+    has_more: false,
+  })
+  await user.click(await checkButton('다시 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결됨/),
+  )
+  vi.restoreAllMocks()
+})
+
+it('연결 현황 API가 없으면(404) 준비 중으로 두고 확인 결과를 저장하지 않는다', async () => {
+  vi.spyOn(agentsApi, 'list').mockImplementation(() =>
+    Promise.reject(
+      new AxiosError('Not Found', 'ERR_BAD_REQUEST', undefined, undefined, {
+        status: 404,
+        statusText: 'Not Found',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: { error: { code: 'not_found', message: MISSING_API_MESSAGE } },
+      }),
+    ),
+  )
+  mountPanel()
+  expect(
+    await screen.findByText('연결 상태 확인은 준비 중이에요'),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('연결 상태를 확인하지 못했어요'),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /확인/ })).not.toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
 // PR #72 리뷰 7: MCP 연결 명령에 Authorization 헤더를 넣는다. 발급 직후에는 그 토큰, 모르면 자리표시자와 안내.
 it('MCP 연결 명령은 발급한 토큰을 Bearer 헤더로 넣고, 모르면 자리표시자와 안내를 보인다', async () => {
   const user = userEvent.setup()
@@ -141,5 +250,54 @@ it('MCP 연결 명령은 발급한 토큰을 Bearer 헤더로 넣고, 모르면 
     `--header "Authorization: Bearer ${token}"`,
   )
   expect(screen.queryByText(/<에이전트 토큰> 자리에/)).not.toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+// S15P31A108-338: 3단계 요약만으로는 처음 연결하는 팀원이 막혀 도움말 페이지로 잇는다. 같은 탭이면 설정 창이 닫힌다.
+it('연결 미확인·연결 실패 상태 줄과 2단계 명령 아래에 새 탭 도움말 링크와 한 연결 안내를 보여 준다', async () => {
+  const list = vi.spyOn(agentsApi, 'list').mockResolvedValue({
+    items: [
+      {
+        ...notConnected.items[0],
+        connected: true,
+        status_check_required: true,
+      },
+    ],
+    has_more: false,
+  })
+  const user = userEvent.setup()
+  mountPanel()
+  const help = await screen.findByRole('link', { name: '연결 도움말' })
+  expect(screen.getByRole('status')).toHaveTextContent(/^연결 미확인/)
+  expect(help).toHaveAttribute('href', '/help/agent-connection#check')
+  expect(help).toHaveAttribute('target', '_blank')
+  expect(
+    screen.getByText(/같은 계정의 연결은 프로젝트마다 하나만 살아 있어요/),
+  ).toHaveTextContent('나중 연결이 이기고')
+  expect(
+    screen.getByRole('link', { name: '자세한 연결 방법' }),
+  ).toHaveAttribute('href', '/help/agent-connection#add')
+  list.mockResolvedValue(notConnected)
+  await user.click(await checkButton('연결 확인'))
+  await waitFor(() =>
+    expect(screen.getByRole('link', { name: '연결 도움말' })).toHaveAttribute(
+      'href',
+      '/help/agent-connection#troubleshooting',
+    ),
+  )
+  vi.restoreAllMocks()
+})
+
+// PR #230 리뷰: #229로 생긴 연결 끊김(2시간 넘게 통신 없음·세션 종료)도 다시 연결하는 법을 문제 해결에서 찾는다.
+it('연결 끊김이면 상태 줄 도움말 링크가 문제 해결 절을 새 탭으로 연다', async () => {
+  vi.spyOn(agentsApi, 'list').mockResolvedValue(notConnected)
+  mountPanel()
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent(/^연결 끊김/),
+  )
+  expect(screen.getByRole('link', { name: '연결 도움말' })).toHaveAttribute(
+    'href',
+    '/help/agent-connection#troubleshooting',
+  )
   vi.restoreAllMocks()
 })

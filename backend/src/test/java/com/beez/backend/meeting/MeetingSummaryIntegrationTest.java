@@ -743,7 +743,7 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
     }
 
     // ---- S11 새로 고쳐도 이어지게: SUMMARY 기록의 summary_id 와 최신 정리 조회(MTG-A15) ----
-    HttpResponse<String> latest(Long who) { return api.get(base(), who); }
+    HttpResponse<String> latest(Long who) { return api.get(base() + "/latest", who); }
 
     @Test void theSummaryEntryCarriesTheSummaryIdSoTheLatestSummaryCanBeFoundAgainAfterAReload() throws Exception {
         var made = body(summarize(leader, e2, "k-id"));
@@ -786,5 +786,71 @@ class MeetingSummaryIntegrationTest extends IntegrationTestSupport {
         expect(latest(outsider), 404, "not_found");
         jdbc.update("UPDATE meeting SET status='CLOSED', closed_at=now(), closed_by=? WHERE id=?", leader, meeting);
         expect(latest(member), 200, null);
+    }
+
+    void mockMeetingRevision(boolean addEntryDuringCall) {
+        String blockId = "blk_" + "a".repeat(64);
+        doAnswer(call -> {
+            Map<?, ?> source = call.getArgument(0);
+            return Map.of("document_version_id", Long.toString(version), "text_hash", source.get("text_hash"),
+                    "parser_profile", source.get("parser_profile"), "normalization_version", "utf8-lf-v1", "parser_version", "v1",
+                    "blocks", List.of(Map.of("block_id", blockId, "block_type", "paragraph", "text", "초대는 3일 뒤 만료된다.\n",
+                            "locator", Map.of("type", "text_lines", "start_line", 2, "end_line", 2))));
+        }).when(ai).revisionBlocks(any());
+        doAnswer(call -> {
+            Map<?, ?> input = call.getArgument(0);
+            if (addEntryDuringCall) entry("호출 중 추가 발언");
+            var context = new LinkedHashMap<String,Object>();
+            for (String k : List.of("project_id", "meeting_id", "document_id", "document_version_id", "entries", "decisions"))
+                context.put(k, input.get(k));
+            Map<?, ?> source = (Map<?, ?>) input.get("source");
+            String after = ((String) source.get("content")).replace("초대는 3일 뒤 만료된다.", "초대는 7일 뒤 만료된다.");
+            var draft = Map.of("origin", "MODEL", "model", "test-model", "usage", List.of(), "result", Map.of(
+                    "document_version_id", Long.toString(version), "after_content", after,
+                    "changes", List.of(Map.of("block_id", blockId, "before", "초대는 3일 뒤 만료된다.\n",
+                            "after", "초대는 7일 뒤 만료된다.\n", "reason", "회의 결정", "evidence", List.of("7일"))),
+                    "unresolved", List.of()));
+            return Map.of("meeting", context, "draft", draft);
+        }).when(ai).meetingRevision(any());
+    }
+    String revisionPath() { return "/api/projects/" + project + "/meetings/" + meeting + "/revision-drafts"; }
+    String revisionBody(String summaryId) {
+        return json.writeValueAsString(Map.of("summary_id", summaryId, "document_id", "" + document,
+                "base_document_version_id", "" + version, "selected_block_ids", List.of("blk_" + "a".repeat(64)),
+                "instruction", "7일로 변경", "confirmed", true,
+                "decisions", List.of(Map.of("decision_index", 0, "evidence_entry_ids", List.of("" + e1, "" + e2)))));
+    }
+    @Test void meetingRevisionIsSavedAndReplayedWithoutSubmittingAProposal() throws Exception {
+        jdbc.update("UPDATE document_version SET content_text=?, content_hash=? WHERE id=?", TEXT.replace("\r\n", "\n"), "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(TEXT.replace("\r\n", "\n").getBytes(StandardCharsets.UTF_8))), version);
+        var summary = summarize(leader, e2, "summary-revision-test");
+        expect(summary, 201, null);
+        String summaryId = body(summary).path("id").asString();
+        mockMeetingRevision(false);
+        int proposals = count("SELECT count(*) FROM change_proposal WHERE project_id=?", project);
+        String request = revisionBody(summaryId);
+        var first = api.postWithHeaders(revisionPath(), request, leader, "Origin", ORIGIN, "Idempotency-Key", "revision-test");
+        expect(first, 201, null);
+        assertThat(body(first).path("draft").path("after_content").asString()).contains("7일");
+        assertThat(body(first).path("meeting").path("decisions").get(0).path("evidence_entry_ids").size()).isEqualTo(2);
+        var replay = api.postWithHeaders(revisionPath(), request, leader, "Origin", ORIGIN, "Idempotency-Key", "revision-test");
+        expect(replay, 201, null);
+        assertThat(body(replay)).isEqualTo(body(first));
+        var loaded = api.get(revisionPath() + "/latest", leader);
+        expect(loaded, 200, null);
+        assertThat(body(loaded)).isEqualTo(body(first));
+        expect(api.get(base() + "/latest", leader), 200, null);
+        assertThat(count("SELECT count(*) FROM meeting_revision_draft WHERE meeting_id=?", meeting)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM change_proposal WHERE project_id=?", project)).isEqualTo(proposals);
+        verify(ai, times(1)).meetingRevision(any());
+    }
+    @Test void meetingRevisionDiscardsResultIfNewEntryArrivesDuringAiCall() throws Exception {
+        jdbc.update("UPDATE document_version SET content_text=?, content_hash=? WHERE id=?", TEXT.replace("\r\n", "\n"), "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(TEXT.replace("\r\n", "\n").getBytes(StandardCharsets.UTF_8))), version);
+        var summary = summarize(leader, e2, "summary-stale-test");
+        expect(summary, 201, null);
+        mockMeetingRevision(true);
+        var result = api.postWithHeaders(revisionPath(), revisionBody(body(summary).path("id").asString()), leader,
+                "Origin", ORIGIN, "Idempotency-Key", "revision-stale-test");
+        expect(result, 409, "summary_outdated");
+        assertThat(count("SELECT count(*) FROM meeting_revision_draft WHERE meeting_id=?", meeting)).isZero();
     }
 }

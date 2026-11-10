@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authApi, tasksApi } from '@/api/services'
 import { dashboardApi } from '@/api/services/dashboard'
+import { statusLabel } from '@/lib/display'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import {
   DEMO_EMAIL,
@@ -25,7 +26,11 @@ beforeEach(async () => {
   restore = setupMockApi()
   await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
 })
-afterEach(() => restore())
+// 테스트가 실패해도 spy가 다음 테스트로 새지 않게 여기서 되돌린다.
+afterEach(() => {
+  restore()
+  vi.restoreAllMocks()
+})
 
 it('왼쪽에서 고른 작업 기준으로 확인된 관계와 검토할 후보를 나눠 보여 준다', async () => {
   const user = userEvent.setup()
@@ -46,6 +51,57 @@ it('왼쪽에서 고른 작업 기준으로 확인된 관계와 검토할 후보
   expect(
     within(list).getByText(/프로젝트 목록 빈 화면 안내 → REQ-001/),
   ).toHaveTextContent('검토할 후보 · 확정 아님')
+})
+
+it('위쪽에 고른 작업의 제목과 상태를 보여 주고 작업 현황으로 보낸다', async () => {
+  const user = userEvent.setup()
+  const { items } = await tasksApi.list('101', { limit: 100 })
+  const task = items.find((entry) => entry.key === 'TASK-002')!
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RelationsView projectId="101" />
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  const heading = await screen.findByRole('heading', {
+    name: new RegExp(task.current_plan_revision.plan.title),
+  })
+  expect(within(heading).getByText(statusLabel(task.status))).toBeVisible()
+  await user.click(screen.getByRole('button', { name: '작업 현황에서 보기' }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'tasks',
+    focusId: task.id,
+  })
+})
+
+it('그래프의 검증 상자를 누르면 고른 작업의 작업 현황을 연다', async () => {
+  const user = userEvent.setup()
+  const { items } = await tasksApi.list('101', { limit: 100 })
+  const task = items.find((entry) => entry.key === 'TASK-002')!
+  vi.spyOn(dashboardApi, 'relations').mockResolvedValue({
+    nodes: [{ id: '12', type: 'VALIDATION', label: '계획 검증 PASS' }],
+    edges: [],
+  })
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <RelationsView projectId="101" />
+    </QueryClientProvider>,
+  )
+  await user.click(await screen.findByRole('button', { name: /TASK-002/ }))
+  const svg = await screen.findByRole('img', { name: /관계 그래프/ })
+  await user.click(within(svg).getByText('계획 검증 PASS'))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'tasks',
+    focusId: task.id,
+  })
 })
 
 // PR #72 리뷰 8: 관계 목록에서 선행 작업을 누르면 지금 작업이 아니라 그 작업을 연다.
@@ -82,7 +138,6 @@ it('관계 목록의 작업 보기는 누른 작업을 연다', async () => {
     pane: 'tasks',
     focusId: '502',
   })
-  vi.restoreAllMocks()
 })
 
 // PR #72 mock/live 전수 대조 LA-TC-10: PROPOSED_FROM(이 작업에서 나온 제안)은 영향 경고가 아니다.
@@ -211,4 +266,25 @@ it('작업 100개를 넘어도 다음 페이지 작업을 찾아 고를 수 있�
   await waitFor(() =>
     expect(relations).toHaveBeenCalledWith('101', { task_id: '999' }),
   )
+})
+
+// S15P31A108-346: 기준 v2인 프로젝트에서도 '기준 v1이 생기기 전에는 올릴 수 없다'고 안내했다.
+it('작업이 없을 때 기준 v1 안내는 기준이 아직 없을 때만 붙인다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({ items: [], has_more: false })
+  const client = () =>
+    new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const { unmount } = render(
+    <QueryClientProvider client={client()}>
+      <RelationsView projectId="101" hasBaseline />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText('아직 그릴 관계가 없어요')).toBeVisible()
+  expect(screen.queryByText(/기준 v1이 생기기 전에는/)).not.toBeInTheDocument()
+  unmount()
+  render(
+    <QueryClientProvider client={client()}>
+      <RelationsView projectId="101" hasBaseline={false} />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText(/기준 v1이 생기기 전에는/)).toBeVisible()
 })

@@ -120,3 +120,10 @@ it('오류 본문의 details를 버리지 않고, 없으면 undefined다', () =>
     undefined,
   )
 })
+
+// S15P31A108-340: 같은 입력의 분석 횟수를 다 쓰면 재시도와 새 검증이 함께 막힌다(VAL-A01·A04 409).
+it('검증 횟수 제한은 같은 계획으로 다시 돌리지 말고 계획을 고치라고 안내한다', () => {
+  const message = getApiErrorMessage(failure('validation_attempt_limit'))
+  expect(message).toContain('횟수를 모두 썼어요')
+  expect(message).toContain('고쳐 새로 검증하거나 팀에 알려 주세요')
+})

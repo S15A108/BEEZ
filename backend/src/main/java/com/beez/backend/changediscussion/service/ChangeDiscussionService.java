@@ -1,5 +1,8 @@
 package com.beez.backend.changediscussion.service;
 
+import com.beez.backend.activity.ActivityEvent;
+import com.beez.backend.activity.ActivityRecorder;
+import com.beez.backend.activity.ActivityTargetType;
 import com.beez.backend.changediscussion.dto.ChangeCommentResponse;
 import com.beez.backend.changediscussion.dto.CreateChangeCommentRequest;
 import com.beez.backend.changediscussion.repository.ChangeCommentRepository;
@@ -46,10 +49,13 @@ public class ChangeDiscussionService {
     private final ChangeCommentRepository comments;
     private final DesignCommandService idempotency;
     private final ChangeNotifications notifications;
+    private final ActivityRecorder activities;
 
     public ChangeDiscussionService(ProjectAccessChecker access, ChangeCommentRepository comments,
-                                   DesignCommandService idempotency, ChangeNotifications notifications) {
+                                   DesignCommandService idempotency, ChangeNotifications notifications,
+                                   ActivityRecorder activities) {
         this.notifications = notifications;
+        this.activities = activities;
         this.access = access;
         this.comments = comments;
         this.idempotency = idempotency;
@@ -107,8 +113,11 @@ public class ChangeDiscussionService {
         // 멱등 재요청은 위에서 기존 응답을 돌려주므로 여기까지 오지 않는다. 지정한 멤버가 없으면 보낼 곳이 없다.
         // 알림은 의견과 같은 트랜잭션에 저장되고 행위자 본인은 빠진다. 의견 원문은 알림에 넣지 않는다.
         notifications.discussed(caller, projectId, proposalId, id, kind.equals(REVIEW_REQUEST), accounts.values());
-        // TODO(S15P31A108-237): ActivityRecorder.record CHANGE_PROPOSAL_COMMENTED (검토 요청은 CHANGE_PROPOSAL_REVIEW_REQUESTED),
-        //  key change-discussion:{commentId}:...
+        // 활동도 같은 트랜잭션에 남긴다. 의견 원문은 넣지 않는다(타임라인은 멤버 전원이 본다). 키는 의견 ID 로 정해진다.
+        boolean reviewRequest = kind.equals(REVIEW_REQUEST);
+        activities.record(caller, ActivityEvent.of("change-discussion:" + id + (reviewRequest ? ":review-requested" : ":commented"),
+                projectId, reviewRequest ? "CHANGE_PROPOSAL_REVIEW_REQUESTED" : "CHANGE_PROPOSAL_COMMENTED",
+                ActivityTargetType.CHANGE_PROPOSAL, proposalId));
         return response;
     }
 

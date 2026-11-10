@@ -37,7 +37,7 @@ public class MeetingSummaryController {
     }
 
     @Operation(summary = "회의의 최신 비비 정리 조회 (MTG-A15). 프로젝트 멤버, 정리가 없으면 404")
-    @GetMapping
+    @GetMapping("/latest")
     public MeetingSummaryResponse latest(CallerContext caller, @PathVariable("projectId") Long projectId,
                                          @PathVariable("meetingId") String meetingId) {
         return summaries.latest(caller, projectId, meetingId);

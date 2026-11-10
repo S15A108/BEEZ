@@ -224,6 +224,25 @@ class ProposalPublicationIntegrationTest extends IntegrationTestSupport {
         assertThat(result.evidence()).isEmpty();
         assertThat(result.unavailableVersionIds()).containsExactly(Long.toString(newItemVersion));
     }
+    @Test void publishingClosesOtherDraftsBuiltOnTheSupersededVersionOfTheSameDocument() {
+        Proposal winner=create(true,false,"winner"); ready(winner);
+        // 같은 기준 버전에서 갈라진 다른 제안의 초안과, 부모가 다른 초안(이미 새 기준에서 만든 것처럼)
+        long staleDraft=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,parent_version_id)
+                VALUES(?,(SELECT max(version_no)+1 FROM document_version WHERE document_id=?),'DRAFT','stale.md','stale-hash','낡은 초안',?,?) RETURNING id
+                """,Long.class,document,document,leader.accountId(),version);
+        long otherParent=jdbc.queryForObject("""
+                INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by,parent_version_id)
+                VALUES(?,(SELECT max(version_no)+1 FROM document_version WHERE document_id=?),'DRAFT','other.md','other-hash','다른 부모',?,?) RETURNING id
+                """,Long.class,document,document,leader.accountId(),staleDraft);
+        long winnerVersion=Long.parseLong(winner.documents().getFirst().proposedDocumentVersionId());
+        approve(winner,"winner-approve");
+        assertThat(status(winnerVersion)).isEqualTo("APPROVED");
+        assertThat(status(version)).isEqualTo("SUPERSEDED");
+        assertThat(status(staleDraft)).isEqualTo("REJECTED");
+        assertThat(status(otherParent)).isEqualTo("DRAFT");
+    }
+    String status(long id) { return jdbc.queryForObject("SELECT status FROM document_version WHERE id=?",String.class,id); }
     @Test void documentOnlyAndPublishedRetriesNeverRepublishEvenAfterAnotherBaseline() {
         Proposal p=create(true,false,"doc"); ready(p); clearInvocations(relations);
         var result=approve(p,"key"); assertThat(approve(p,"key")).isEqualTo(result);

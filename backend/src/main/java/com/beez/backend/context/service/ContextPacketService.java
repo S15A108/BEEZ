@@ -77,6 +77,8 @@ public class ContextPacketService {
             lookup.requireTaskInProject(projectId, taskId);
         }
         Long expectedBaselineId = Ids.parse(args.expectedBaselineId(), "expected_baseline_id");
+        // 업무 상태 404 — 멤버의 자기 프로젝트에 아직 기준이 발행되지 않았을 뿐 숨길 존재가 없다. 명세 고유 code(baseline_not_published)라
+        // AccessErrors(not_found 공통 문구)로 바꾸지 않는다. MCP 감사에는 ERROR + baseline_not_published 로 남는다 (S15P31A108-322)
         Long baselineId = lookup.lockCurrentBaselineId(projectId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "baseline_not_published", "현재 승인 기준 없음"));
         // The AI selected against this exact baseline. Membership alone cannot

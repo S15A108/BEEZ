@@ -33,6 +33,15 @@ public interface EmailVerificationRepository extends JpaRepository<EmailVerifica
     @Query("delete from EmailVerification v where v.email = :email")
     int deleteByEmail(@Param("email") String email);
 
+    /**
+     * 행 정리(-273, AuthRowCleanupJob): 코드·토큰이 모두 cutoff 전에 만료된 행을 지운다. 행은 늦어도 만료 시각에
+     * 끝나므로(닫힘·소비가 더 이를 수 있다) 만료 기준이면 끝난 행을 모두 덮는다. created_at 조건은 ix_email_verification_created 를 타게 한다.
+     */
+    @Modifying
+    @Query("delete from EmailVerification v where v.createdAt < :cutoff and v.codeExpiresAt < :cutoff"
+            + " and (v.tokenExpiresAt is null or v.tokenExpiresAt < :cutoff)")
+    int deleteEndedBefore(@Param("cutoff") Instant cutoff);
+
     /** 코드 확인: 같은 요청에 동시에 들어온 시도가 틀린 횟수를 함께 세도록 행을 잠그고 읽는다. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select v from EmailVerification v where v.publicId = :publicId")

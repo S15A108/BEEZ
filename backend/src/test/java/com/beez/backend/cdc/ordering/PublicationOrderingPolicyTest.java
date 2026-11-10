@@ -40,6 +40,17 @@ class PublicationOrderingPolicyTest {
         assertThat(decision.outcome()).isEqualTo(READY_FOR_ATOMIC_CLAIM);
     }
 
+    @Test void unsupportedDocumentChangeAllowsLaterWorkButIsNotItselfPending() {
+        var initial = row(1, NOT_EVALUATED, INITIAL_BASELINE);
+        var skipped = row(2, NOT_EVALUATED, DOCUMENT_CHANGE_UNAVAILABLE);
+        assertThat(PublicationOrderingPolicy.evaluate(PROJECT, 3, true,
+                List.of(initial, skipped, row(3, PENDING, NONE))).outcome()).isEqualTo(READY_FOR_ATOMIC_CLAIM);
+        assertThat(PublicationOrderingPolicy.evaluate(PROJECT, 2, true,
+                List.of(initial, skipped)).outcome()).isEqualTo(NOT_PENDING);
+        assertThatThrownBy(() -> row(2, FAILED, DOCUMENT_CHANGE_UNAVAILABLE))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test void earlierPendingRunningOrFailedBlocksTheNextVersion() {
         for (var state : List.of(PENDING, RUNNING, FAILED)) {
             var decision = PublicationOrderingPolicy.evaluate(PROJECT, 3, true,

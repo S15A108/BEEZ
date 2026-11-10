@@ -5,6 +5,7 @@ import com.beez.backend.task.entity.TaskStatus;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
@@ -18,6 +19,10 @@ public interface TaskRepository extends JpaRepository<Task, Long>, JpaSpecificat
     Optional<Task> findByIdAndProjectId(Long id, Long projectId);
 
     List<Task> findByProjectIdAndIdIn(Long projectId, List<Long> ids);
+
+    /** 추천 시 현재 업무량을 제한된 크기로 읽는다. 초과 여부를 보려고 호출자는 limit+1 을 요청한다. */
+    List<Task> findByProjectIdAndStatusInAndAssigneeMemberIdIsNotNullOrderByIdAsc(
+            Long projectId, Collection<TaskStatus> statuses, Pageable pageable);
 
     /** 이 멤버가 담당한 작업 중 statuses 에 든 것 (팀원 제외·나가기의 열린 작업 인계, TaskHandoverService). */
     List<Task> findByProjectIdAndAssigneeMemberIdAndStatusIn(Long projectId, Long assigneeMemberId,

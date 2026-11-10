@@ -1,7 +1,9 @@
+import { agentWorkResponseSchema } from '@/features/dashboard/schemas'
 import { expect, it } from 'vitest'
 import {
   comparisonSchema,
   documentBeeReviewSchema,
+  documentVersionSchema,
   meetingEntrySchema,
   notificationSchema,
   pageSchema,
@@ -67,6 +69,8 @@ it('사용량 합계와 항목별 비용도 숫자로 와도 읽는다', () => {
     ],
     by_task: [],
     by_validation: [],
+    by_agent: [],
+    by_day: [],
   })
   expect(summary.estimated_cost_amount).toBe('1.25')
   expect(summary.by_feature[0].estimated_cost_amount).toBe('1.25')
@@ -162,6 +166,8 @@ it('사용량의 미보고 호출 수를 버리지 않는다', () => {
     ],
     by_task: [],
     by_validation: [],
+    by_agent: [],
+    by_day: [],
   })
   expect(summary.tokens_unknown_call_count).toBe(1)
   expect(summary.cost_unknown_call_count).toBe(1)
@@ -248,4 +254,38 @@ it('기준 알림의 기준 버전 번호를 남긴다', () => {
       created_at: '2026-11-05T01:00:00Z',
     }),
   ).toMatchObject({ target_id: '900', baseline_version_no: 3 })
+})
+
+it('문서 버전은 올린 사람·현재 기준·변경 제안이 없어도 읽고 있으면 보존한다', () => {
+  const version = {
+    id: '21',
+    document_id: '2',
+    version_no: 2,
+    status: 'DRAFT',
+    file_name: 'plan.md',
+    media_type: 'text/markdown',
+    content_hash: 'hash',
+    created_at: '2026-11-05T01:00:00Z',
+  }
+  expect(documentVersionSchema.parse(version)).toEqual(version)
+  expect(
+    documentVersionSchema.parse({
+      ...version,
+      created_by: '12',
+      is_current_baseline: false,
+      change_proposal_id: '71',
+    }),
+  ).toMatchObject({
+    created_by: '12',
+    is_current_baseline: false,
+    change_proposal_id: '71',
+  })
+})
+
+it('에이전트 작업 현황은 작업 상태가 DRAFT여도 응답 전체를 읽는다', () => {
+  const page = agentWorkResponseSchema.parse({
+    items: [{ member_id: '21', agent_session_id: '51', task_status: 'DRAFT' }],
+    has_more: false,
+  })
+  expect(page.items[0].task_status).toBe('DRAFT')
 })

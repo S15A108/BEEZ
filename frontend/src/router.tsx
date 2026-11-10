@@ -1,10 +1,10 @@
 import { createBrowserRouter } from 'react-router'
-import App from './App'
+import DesktopGate from '@/features/desktop/DesktopGate'
 
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <App />,
+    element: <DesktopGate />,
     hydrateFallbackElement: (
       <p role="status" className="p-12 text-center">
         BEEZ를 준비하는 중…
@@ -57,6 +57,13 @@ export const router = createBrowserRouter([
         path: 'invite',
         lazy: async () => ({
           Component: (await import('@/pages/InvitationPage')).default,
+        }),
+      },
+      {
+        // 설정 › 에이전트에서 새 탭으로 연다(D43).
+        path: 'help/agent-connection',
+        lazy: async () => ({
+          Component: (await import('@/pages/AgentHelpPage')).default,
         }),
       },
       {

@@ -64,7 +64,7 @@ class AnalysisResultApplierConflictEventTest {
         applier = spy(new AnalysisResultApplier(validations, responses, designLookup, rules, revisions, designRefs,
                 mock(ValidationInputAssembler.class), mock(RelatedTaskCandidateFinder.class), mock(JdbcClient.class), false,
                 mock(DeltaCompletion.class), mock(TaskCompletionReportRepository.class), mock(ValidationStatusLookup.class),
-                publisher));
+                publisher, mock(ValidationActivities.class)));
         doReturn(null).when(applier).contractViolation(any(), any());   // 계약 검사는 AnalysisResultApplier*Test 가 본다
 
         TaskPlanRevision plan = mock(TaskPlanRevision.class);

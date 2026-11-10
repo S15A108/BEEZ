@@ -1528,7 +1528,7 @@ export const endpointRegistry = [
     id: 'MTG-A15',
     title: '회의 최신 정리 조회',
     method: 'GET',
-    path: '/projects/{id}/meetings/{meeting_id}/bee-summary',
+    path: '/projects/{id}/meetings/{meeting_id}/bee-summary/latest',
     auth: 'MEMBER',
     domain: 'meetings',
     operation: 'latestSummary',

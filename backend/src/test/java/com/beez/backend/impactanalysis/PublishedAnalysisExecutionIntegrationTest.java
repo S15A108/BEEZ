@@ -161,6 +161,37 @@ class PublishedAnalysisExecutionIntegrationTest extends IntegrationTestSupport {
         assertThat(metricsReader.read().notEvaluatedExpected()).isEqualTo(2);
     }
 
+    @Test void unsupportedDocumentChangeAllowsNextClaimButStillRequiresReview() {
+        long nextBaseline = api.jdbc.sql("INSERT INTO baseline(project_id,version_no,published_by) VALUES(:p,3,:a) RETURNING id")
+                .param("p", project).param("a", leader).query(Long.class).single();
+        long nextIntake = api.jdbc.sql("INSERT INTO published_change_analysis(project_id,published_baseline_id,status) "
+                + "VALUES(:p,:b,'PENDING') RETURNING id")
+                .param("p", project).param("b", nextBaseline).query(Long.class).single();
+
+        // Other failures and unexplained unevaluated results must still stop later work.
+        api.jdbc.sql("UPDATE published_change_analysis SET status='FAILED',error_code='document_change_unavailable' WHERE id=:id")
+                .param("id", intake).update();
+        assertThat(repository.claimNow(nextIntake, 60)).isEmpty();
+        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+        api.jdbc.sql("UPDATE published_change_analysis SET status='NOT_EVALUATED',evaluation_status='NOT_EVALUATED',"
+                + "error_code='change_content_unavailable' WHERE id=:id").param("id", intake).update();
+        assertThat(repository.claimNow(nextIntake, 60)).isEmpty();
+        assertThat(metricsReader.read().blockedProjects()).isEqualTo(1);
+        assertThat(metricsReader.read().notEvaluatedRequiresReview()).isEqualTo(1);
+
+        api.jdbc.sql("UPDATE published_change_analysis SET error_code='document_change_unavailable' WHERE id=:id")
+                .param("id", intake).update();
+        var metrics = metricsReader.read();
+        assertThat(metrics.blockedProjects()).isZero();
+        assertThat(metrics.notEvaluatedExpected()).isEqualTo(1);
+        assertThat(metrics.notEvaluatedRequiresReview()).isEqualTo(1);
+        assertThat(repository.claimNow(nextIntake, 60)).isPresent();
+        assertThat(api.jdbc.sql("SELECT status,evaluation_status,error_code FROM published_change_analysis WHERE id=:id")
+                .param("id", intake).query().singleRow())
+                .containsEntry("status", "NOT_EVALUATED").containsEntry("evaluation_status", "NOT_EVALUATED")
+                .containsEntry("error_code", "document_change_unavailable");
+    }
+
     @SuppressWarnings("unchecked")
     @Test void publicationEventRunsOnceWithHistoricalInputsAndExplicitInsufficientCoverage() {
         when(ai.changeImpact(any())).thenAnswer(call -> {

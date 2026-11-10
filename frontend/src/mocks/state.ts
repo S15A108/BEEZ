@@ -33,7 +33,8 @@ import { contractExamples } from './contract-examples'
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
 // v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
 // v11: 보완 질문 유형(선택·단답·서술)과 초안 후보(S15P31A108-202) 시드.
-export const MOCK_STORAGE_KEY = 'beez.mock.api.v11'
+// v13: 변경 제안 71 활동 이력(S15P31A108-303) 시드와 활동의 actor_type 필수화. dev 의 v12 를 이미 연 브라우저에는 이 시드가 없어 키를 올린다.
+export const MOCK_STORAGE_KEY = 'beez.mock.api.v13'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
 export const MOCK_NOTICE =
@@ -112,7 +113,8 @@ export interface MockProject {
 }
 
 export interface MockDatabase {
-  schema_version: 1
+  // 활동에 행위자 종류가 생겨 2로 올렸다. 옛 형식으로 저장된 예시 데이터는 새로 만든다.
+  schema_version: 2
   next_id: number
   session_account_id: string | null
   accounts: StoredAccount[]
@@ -129,6 +131,73 @@ export const now = () => new Date().toISOString()
 
 export function nextId(database: MockDatabase): string {
   return String(database.next_id++)
+}
+
+type TrailRow = [
+  type: string,
+  actor: Pick<Activity, 'actor_type' | 'actor_account_id' | 'actor_name'>,
+  at: string,
+]
+const trailPeople = {
+  proposer: {
+    actor_type: 'HUMAN',
+    actor_account_id: '12',
+    actor_name: '김동료',
+  },
+  leader: { actor_type: 'HUMAN', actor_account_id: '11', actor_name: '이팀장' },
+  agent: {
+    actor_type: 'AGENT',
+    actor_account_id: '13',
+    actor_name: '민수 에이전트',
+  },
+  bee: { actor_type: 'BEE' },
+  system: { actor_type: 'SYSTEM' },
+} as const
+function proposalTrail(): Activity[] {
+  const rows: TrailRow[] = [
+    ['CHANGE_PROPOSAL_SUBMITTED', trailPeople.proposer, '2026-10-30T03:00:00Z'],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.agent, '2026-10-30T03:05:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-30T03:10:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.leader, '2026-10-30T03:12:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_REQUESTED',
+      trailPeople.bee,
+      '2026-10-30T03:15:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.proposer, '2026-10-30T03:20:00Z'],
+    ['CHANGE_PROPOSAL_SUBMITTED', trailPeople.proposer, '2026-10-30T03:30:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-30T03:40:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.agent, '2026-10-30T03:45:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_REQUESTED',
+      trailPeople.system,
+      '2026-10-30T03:50:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.leader, '2026-10-30T03:55:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-30T04:00:00Z',
+    ],
+  ]
+  return rows.map(([type, actor, created_at], index) => ({
+    id: String(1030 + index),
+    type,
+    ...actor,
+    change_proposal_id: '71',
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: '71',
+    result: 'SUCCESS',
+    created_at,
+  }))
 }
 
 export function blankProject(
@@ -169,6 +238,72 @@ export function blankProject(
     agents: [],
     activities: [],
   }
+}
+
+// 활동 타임라인의 보기와 '이전 활동 더 보기'를 볼 수 있게 사람·에이전트·비비 활동을 한 쪽(20개)보다 많이 둔다.
+// 유형은 공통 계약 6.2의 작업·검증·문서·기준·변경 제안·회의·프로젝트·멤버·에이전트 활동을 섞는다.
+function seededActivities(account: Account, created: string): Activity[] {
+  const actors: Partial<Activity>[] = [
+    { actor_type: 'HUMAN', actor_account_id: '12', actor_name: '김동료' },
+    {
+      actor_type: 'AGENT',
+      actor_account_id: '12',
+      agent_session_id: '53',
+      actor_name: '김동료 노트북',
+    },
+    {
+      actor_type: 'AGENT',
+      actor_account_id: '14',
+      agent_session_id: '52',
+      actor_name: '박팀원 노트북',
+    },
+    {
+      actor_type: 'HUMAN',
+      actor_account_id: account.id,
+      actor_name: account.name,
+    },
+    { actor_type: 'BEE' },
+  ]
+  // 이 시드의 변경 제안 활동은 제안 71 링크를 달지 않는다. 제안 71 의 이력은 아래 proposalTrail()(303)이 따로 둔다.
+  // 둘 다 대시보드 타임라인에 나오므로 시각은 이 시드 마지막(2026-10-29T03:00Z)보다 뒤로 두었다.
+  const rows: [string, Partial<Activity>][] = [
+    ['MEMBER_JOINED', { target_type: 'MEMBER', target_id: '22' }],
+    ['AGENT_CONNECTED', { target_type: 'AGENT_SESSION', target_id: '53' }],
+    ['AGENT_CONNECTED', { target_type: 'AGENT_SESSION', target_id: '52' }],
+    ['TASK_CREATED', { task_id: '502' }],
+    ['CHANGE_PROPOSAL_SUBMITTED', {}],
+    ['TASK_PLAN_REVISED', { task_id: '502' }],
+    ['VALIDATION_FINISHED', { task_id: '502' }],
+    ['VALIDATION_FINISHED', { task_id: '503', result: 'FAILURE' }],
+    ['DOCUMENT_APPROVED', {}],
+    ['CHANGE_PROPOSAL_COMMENTED', {}],
+    ['TASK_ASSIGNEE_CHANGED', { task_id: '502' }],
+    ['TASK_STARTED', { task_id: '502' }],
+    ['TASK_WAITING', { task_id: '503' }],
+    ['BASELINE_CREATED', { baseline_id: '401' }],
+    ['CHANGE_PROPOSAL_REVIEW_REQUESTED', {}],
+    ['DOCUMENT_REGISTERED', {}],
+    ['TASK_COMPLETION_REPORTED', { task_id: '502' }],
+    ['TASK_RESUMED', { task_id: '503' }],
+    // 제외된 멤버(29)는 팀원 목록에 없다
+    ['MEMBER_REMOVED', { target_type: 'MEMBER', target_id: '29' }],
+    ['CHANGE_PROPOSAL_COMMENTED', {}],
+    ['LEADER_TRANSFERRED', { target_type: 'MEMBER', target_id: '21' }],
+    ['TASK_COMPLETED', { task_id: '502' }],
+    ['VALIDATION_FINISHED', { task_id: '503' }],
+    ['MEETING_CLOSED', {}],
+  ]
+  return rows.map(([type, extra], index) => ({
+    id: String(1002 + index),
+    type,
+    actor_type: 'SYSTEM',
+    ...actors[index % actors.length],
+    result: 'SUCCESS',
+    ...extra,
+    created_at: new Date(
+      Date.parse(created) + (index + 1) * 6 * 3_600_000,
+    ).toISOString(),
+  }))
 }
 
 function seededProject(
@@ -245,6 +380,8 @@ function seededProject(
       media_type: 'text/markdown',
       content_hash: `sha256:mock-${versionId}`,
       content,
+      created_by: account.id,
+      is_current_baseline: approved,
       created_at: created,
     }
     state.versions.push(version)
@@ -388,6 +525,9 @@ function seededProject(
     version_no: 2,
     status: 'DRAFT' as const,
     content: `${state.versions[0].content}\n미정: 초대 만료 안내 문구`,
+    created_by: '12',
+    is_current_baseline: false,
+    change_proposal_id: '71',
   }
   state.versions.push(draft)
   state.documents[0].latest_draft = draft
@@ -625,18 +765,20 @@ function seededProject(
     member_id: '21',
     connected: false,
     last_report_at: created,
-    status_check_required: true,
+    status_check_required: false,
   })
   // 팀원 예시 에이전트는 사무실 화면 확인용으로 연결됨을 두되(사용자 결정 2026-11-03, D37), 사용자가 mock에서 새로
-  // 발급한 토큰은 연결을 만들지 않는다. 박팀원(TASK-003 진행 중)·김동료(TASK-002 승인 대기)는 연결됨, 최팀원은 연결이
-  // 끊겨 작업 현황에 세션이 없고, 내 에이전트(51)는 연결 전이다(사무실 충전 자리에 보임).
+  // 발급한 토큰은 연결을 만들지 않는다. 상태는 AGT-A05(-75) 정의를 따른다(S15P31A108-341). 김동료(TASK-002 승인
+  // 대기)는 연결됨, 박팀원은 연결됐지만 진행 중 작업(TASK-003)을 맡은 채 30분 넘게 통신이 없어 연결 미확인이다.
+  // 최팀원과 내 에이전트(51)는 연결이 끊겨(connected=false) 작업 현황에 세션이 없고 사무실 충전 자리에 보인다.
+  // 서버는 끊긴 줄에 status_check_required를 주지 않는다.
   state.agents.push(
     {
       id: '52',
       member_id: '26',
       connected: true,
       last_report_at: '2026-10-28T05:20:00Z',
-      status_check_required: false,
+      status_check_required: true,
     },
     {
       id: '53',
@@ -650,7 +792,7 @@ function seededProject(
       member_id: '25',
       connected: false,
       last_report_at: '2026-10-27T09:00:00Z',
-      status_check_required: true,
+      status_check_required: false,
     },
   )
   for (const member of state.members)
@@ -659,10 +801,15 @@ function seededProject(
     {
       id: '1001',
       type: 'MOCK_PROJECT_PREPARED',
+      actor_type: 'HUMAN',
       actor_account_id: account.id,
+      actor_name: account.name,
       result: 'SUCCESS',
       created_at: created,
     },
+    // 변경 제안 71 의 지나온 길(303). 행위자 4종과 2페이지 이상이 보이게 한다.
+    ...proposalTrail(),
+    ...(first ? seededActivities(account, created) : []),
   ]
   return state
 }
@@ -676,7 +823,7 @@ export function createMockDatabase(): MockDatabase {
     created_at: '2026-10-23T03:00:00Z',
   }
   return {
-    schema_version: 1,
+    schema_version: 2,
     next_id: 2000,
     session_account_id: null,
     accounts: [
@@ -762,7 +909,7 @@ export function loadMockDatabase(): MockDatabase {
     if (stored) {
       const parsed = JSON.parse(stored) as MockDatabase
       if (
-        parsed.schema_version === 1 &&
+        parsed.schema_version === 2 &&
         Array.isArray(parsed.accounts) &&
         Array.isArray(parsed.projects)
       )

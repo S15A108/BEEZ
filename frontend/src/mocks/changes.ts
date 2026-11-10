@@ -82,6 +82,9 @@ function submit(
         id: nextId(context.database),
         version_no: versionNo,
         status: 'DRAFT' as const,
+        // 기준 버전을 복사해도 현재 기준 표시와 올린 사람은 넘기지 않는다.
+        created_by: requireAccount(context).id,
+        is_current_baseline: false,
         content: after,
         content_hash: mockHash(after),
         created_at: now(),
@@ -426,7 +429,9 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
         }
     if (!change.proposed_document_version_id) project.versions.push(version)
     oldVersion.status = 'SUPERSEDED'
+    oldVersion.is_current_baseline = false
     version.status = 'APPROVED'
+    version.is_current_baseline = true
     document.approved_version = version
     if (document.latest_draft?.id === version.id) delete document.latest_draft
     baseline.documents = baseline.documents.map((reference) =>
@@ -495,12 +500,12 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
         item.plan_revision_id === task.current_plan_revision.id,
     )) {
       validation.status = 'STALE'
-      validation.stale_reason = '참조한 승인 설계가 변경됐어요.'
+      validation.stale_reason = 'DESIGN_PUBLISHED'
       delete context.database.pending_validations[validation.id]
     }
     if (task.validation) {
       task.validation.status = 'STALE'
-      task.validation.stale_reason = '참조한 승인 설계가 변경됐어요.'
+      task.validation.stale_reason = 'DESIGN_PUBLISHED'
     }
     if (task.status === 'IN_PROGRESS') {
       task.status = 'WAITING'
@@ -508,9 +513,16 @@ function publish(context: MockContext, proposal: ChangeProposal): MockReply {
       task.lock_version++
     }
   }
-  activity(context, 'CHANGE_PUBLISHED', {
+  activity(context, 'CHANGE_PROPOSAL_APPROVED', {
+    change_proposal_id: proposal.id,
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: proposal.id,
+  })
+  activity(context, 'CHANGE_PROPOSAL_PUBLISHED', {
     change_proposal_id: proposal.id,
     baseline_id: baseline.id,
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: proposal.id,
   })
   notification(
     context,
@@ -647,7 +659,11 @@ export function changeRoutes(
         updated_at: created,
       }
       project.proposals.push(next)
-      activity(context, 'CHANGE_PROPOSED', { change_proposal_id: next.id })
+      activity(context, 'CHANGE_PROPOSAL_SUBMITTED', {
+        change_proposal_id: next.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: next.id,
+      })
       return { status: 201, data: next }
     }
     case 'CHG-A02': {
@@ -876,6 +892,11 @@ export function changeRoutes(
         )
       proposal!.status = 'IN_REVIEW'
       proposal!.updated_at = now()
+      activity(context, 'CHANGE_PROPOSAL_REVIEW_STARTED', {
+        change_proposal_id: proposal!.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: proposal!.id,
+      })
       return { data: proposalView(context, proposal!) }
     case 'CHG-A09':
       return publish(context, proposal!)
@@ -887,6 +908,11 @@ export function changeRoutes(
       proposal!.status = 'REJECTED'
       proposal!.rejection_reason = requiredString(body, 'reason')
       proposal!.updated_at = now()
+      activity(context, 'CHANGE_PROPOSAL_REJECTED', {
+        change_proposal_id: proposal!.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: proposal!.id,
+      })
       return { data: proposalView(context, proposal!) }
     case 'CHG-A14':
       return approvalPreview(context, proposal!)
@@ -903,6 +929,11 @@ export function changeRoutes(
         withdrawn_by: requireAccount(context).id,
         withdrawn_at: at,
         updated_at: at,
+      })
+      activity(context, 'CHANGE_PROPOSAL_WITHDRAWN', {
+        change_proposal_id: proposal!.id,
+        target_type: 'CHANGE_PROPOSAL',
+        target_id: proposal!.id,
       })
       return { data: proposalView(context, proposal!) }
     }
@@ -942,6 +973,17 @@ export function changeRoutes(
         created_at: now(),
       })
       project.comments.push(comment)
+      activity(
+        context,
+        comment.kind === 'REVIEW_REQUEST'
+          ? 'CHANGE_PROPOSAL_REVIEW_REQUESTED'
+          : 'CHANGE_PROPOSAL_COMMENTED',
+        {
+          change_proposal_id: proposal!.id,
+          target_type: 'CHANGE_PROPOSAL',
+          target_id: proposal!.id,
+        },
+      )
       return { status: 201, data: comment }
     }
     case 'CHG-A13':

@@ -2,13 +2,14 @@ import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 import type { Floor, Furniture, WallDecor } from './floors'
 import { stepDrop, type DropBody } from './drop-physics'
-import { OfficeOrbit, officeOrbitFrame } from './office-orbit'
+import { officeOrbitFrame } from './office-orbit'
 import {
   FIGURE_HEIGHT,
   FirstPersonLook,
   METER,
   firstPersonFrame,
 } from './first-person'
+import { bibiWave } from './motion'
 import { OfficeCity } from './office-city'
 import { WindowCityView } from './window-city-view'
 import {
@@ -97,14 +98,19 @@ interface Robot {
   phase: number
   lastX: number
   lastY: number
-  /** 뼈대 애니메이션이 든 GLB(비비): 서 있으면 Idle, 걸으면 Walk를 돌린다. 자세 코드 대신 쓴다. */
+  /** 뼈대 애니메이션이 든 GLB(비비): 서 있으면 Idle, 걸으면 Walk, 내가 다가오면 Wave를 한 번 돌린다. 자세 코드 대신 쓴다. */
   motion?: {
     mixer: THREE.AnimationMixer
     idle?: THREE.AnimationAction
     walk?: THREE.AnimationAction
+    wave?: THREE.AnimationAction
     playing?: THREE.AnimationAction
     /** 걸음이 끊겨도 이 시각(ms)까지는 Walk를 이어 프레임마다 바뀌지 않게 한다 */
     walkUntil: number
+    /** 이 시각(ms)까지 Wave를 돌린다 */
+    waveUntil: number
+    /** 이번에 다가왔을 때 이미 흔들었다(bibiWave) */
+    waved: boolean
   }
 }
 
@@ -437,7 +443,6 @@ export class OfficeRenderer3D {
   private floor: Floor | null = null
   private floorKey = ''
   private cameraKey = ''
-  private readonly orbit = new OfficeOrbit()
   private lastTime = 0
   private car: THREE.Group | null = null
   private carColor = ''
@@ -1226,7 +1231,10 @@ export class OfficeRenderer3D {
           return
         }
         const plane = new THREE.Mesh(
-          new THREE.PlaneGeometry(width, height),
+          this.geometry(
+            `ui${width},${height}`,
+            () => new THREE.PlaneGeometry(width, height),
+          ),
           this.kitUi(kit.ui!),
         )
         plane.position.set(0, y, z)
@@ -1277,7 +1285,10 @@ export class OfficeRenderer3D {
         0.01,
       )
       const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        this.geometry(
+          `ui${length - 0.06},${kit.h - 0.06}`,
+          () => new THREE.PlaneGeometry(length - 0.06, kit.h - 0.06),
+        ),
         this.kitUi(ui),
       )
       plane.position.set(0, kit.y + kit.h / 2, 0.026)
@@ -1299,7 +1310,10 @@ export class OfficeRenderer3D {
       0.005,
     )
     const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(length, panel),
+      this.geometry(
+        `ui${length},${panel}`,
+        () => new THREE.PlaneGeometry(length, panel),
+      ),
       this.kitUi(ui),
     )
     plane.position.set(0, bottom + panel / 2, 0.019)
@@ -1360,6 +1374,7 @@ export class OfficeRenderer3D {
   }
 
   private furniture(parent: THREE.Object3D, f: Furniture, index: number) {
+    if (f.firstPersonOnly) parent.userData.firstPersonOnly = true
     if (f.kit) {
       this.kitPiece(parent, f)
       return
@@ -1950,7 +1965,8 @@ export class OfficeRenderer3D {
     }
   }
 
-  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다.
+  // 외관(D39)이 바뀌면 재질이 모두 바뀌므로 바닥 칸·가구·벽을 지우고 다음 그리기에서 새로 놓는다. 지오메트리는
+  // this.geometry가 나눠 쓰고 dispose에서 한 번 정리하므로 여기서 지우지 않는다.
   private resetLook() {
     this.workSurfaces.forEach(({ surface }) => surface.dispose())
     this.workSurfaces.length = 0
@@ -3323,7 +3339,7 @@ export class OfficeRenderer3D {
         figure.getObjectByName('arm-right')?.rotation.set(0, 0, PERSON_ARMS)
         figure.getObjectByName('arm-left')?.rotation.set(0, 0, -PERSON_ARMS)
         attach(figure, (bibi ? BIBI_HEIGHT : FIGURE_HEIGHT) / model.size.y)
-        // 비비 GLB(D35)의 Idle·Walk 클립. Wave는 쓸 곳이 생길 때 붙인다.
+        // 비비 GLB(D35)의 Idle·Walk·Wave 클립. Wave는 한 번 돌고 끝 자세에서 Idle로 넘어간다.
         const clip = (name: string) =>
           model.animations.find((item) => item.name === name)
         if (bibi && clip('Idle')) {
@@ -3332,11 +3348,17 @@ export class OfficeRenderer3D {
             const found = clip(name)
             return found && mixer.clipAction(found)
           }
+          const wave = action('Wave')
+          wave?.setLoop(THREE.LoopOnce, 1)
+          if (wave) wave.clampWhenFinished = true
           robot.motion = {
             mixer,
             idle: action('Idle'),
             walk: action('Walk'),
+            wave,
             walkUntil: 0,
+            waveUntil: 0,
+            waved: false,
           }
         }
       })
@@ -3466,22 +3488,13 @@ ${note ?? ''}`
 
   rotateView(dx: number, dy: number) {
     if (this.firstPerson) this.firstLook.drag(dx, dy)
-    else this.orbit.drag(dx, dy)
   }
 
   get viewHeading() {
     return this.firstLook.yaw
   }
-  get orbitYaw() {
-    return this.orbit.yaw
-  }
   get isFirstPerson() {
     return this.firstPerson
-  }
-
-  resetView() {
-    if (this.firstPerson) this.firstLook.level()
-    else this.orbit.reset()
   }
 
   private updateCamera(
@@ -3521,20 +3534,10 @@ ${note ?? ''}`
     this.firstPerson = false
     this.camera = this.orbitCamera
     const camera = this.orbitCamera
-    this.orbit.step(elapsed)
-    const { yaw, pitch } = this.orbit
-    const cameraKey = `${floor.W}/${floor.H}/${this.width}/${this.height}/${zoom}/${focus?.x}/${focus?.y}/${yaw}/${pitch}`
+    const cameraKey = `${floor.W}/${floor.H}/${this.width}/${this.height}/${zoom}/${focus?.x}/${focus?.y}`
     if (cameraKey === this.cameraKey) return
     this.cameraKey = cameraKey
-    const frame = officeOrbitFrame(
-      floor.W,
-      floor.H,
-      this.width,
-      this.height,
-      zoom,
-      yaw,
-      pitch,
-    )
+    const frame = officeOrbitFrame(floor, this.width, this.height, zoom)
     const target = new THREE.Vector3(
       focus ? focus.x / TILE : floor.W / 2,
       1.3,
@@ -3611,6 +3614,8 @@ ${note ?? ''}`
       } | null
       decorMode?: boolean
       firstPersonId?: string
+      /** 내 캐릭터. 비비가 가까이 온 나에게 손을 흔든다(D35). */
+      playerId?: string
       work?: OfficeWorkState
       /** 사무실 시간대(D39). 없으면 낮이다. */
       time?: OfficeTime
@@ -3724,6 +3729,13 @@ ${note ?? ''}`
       this.ghost.position.set(ghost.x, 0, ghost.y)
     } else if (this.ghost) this.ghost.visible = false
     const present = new Set<string>()
+    const player = opts.playerId
+      ? entities.find((entity) => entity.id === opts.playerId)
+      : undefined
+    // 3인칭 이름표는 줌과 상관없이 화면에서 190px 폭으로 읽힌다(D42). 1인칭은 가까울수록 커지는 2.1 m 그대로다.
+    const tagWidth = this.firstPerson
+      ? 2.1
+      : (190 * (this.orbitCamera.top - this.orbitCamera.bottom)) / this.height
     for (const entity of entities) {
       present.add(entity.id)
       const look = entity.look as { top?: string } | undefined
@@ -3741,6 +3753,9 @@ ${note ?? ''}`
       }
       robot ??= this.figure(entity.id, appearance, shape, color, status)
       this.nameTag(robot, entity.tag, entity.note)
+      robot.tag?.sprite.scale.multiplyScalar(
+        tagWidth / robot.tag.sprite.scale.x,
+      )
       robot.root.visible =
         entity.floor === floor.id &&
         !entity.hidden &&
@@ -3774,11 +3789,14 @@ ${note ?? ''}`
       const breathing =
         !walking && entity.activity ? Math.sin(idleTime * 1.7) * 0.012 : 0
       robot.root.position.set(entity.x / TILE, 0, entity.y / TILE)
-      const direction =
-        entity.heading ??
-        { down: 0, left: -Math.PI / 2, up: Math.PI, right: Math.PI / 2 }[
-          entity.dir
-        ]
+      // 손을 흔드는 동안은 나를 본다(D35).
+      const waving = player && robot.motion && time < robot.motion.waveUntil
+      const direction = waving
+        ? Math.atan2(player.x - entity.x, player.y - entity.y)
+        : (entity.heading ??
+          { down: 0, left: -Math.PI / 2, up: Math.PI, right: Math.PI / 2 }[
+            entity.dir
+          ])
       let delta = direction - robot.body.rotation.y
       delta = Math.atan2(Math.sin(delta), Math.cos(delta))
       robot.body.rotation.y += delta * Math.min(1, elapsed * 14 || 1)
@@ -3791,8 +3809,22 @@ ${note ?? ''}`
       const motion = robot.motion
       if (motion) {
         if (walking) motion.walkUntil = time + 250
+        if (motion.wave && player) {
+          const near = bibiWave(
+            Math.hypot(player.x - entity.x, player.y - entity.y) / TILE,
+            motion.waved,
+            walking,
+          )
+          motion.waved = near.waved
+          if (near.wave)
+            motion.waveUntil = time + motion.wave.getClip().duration * 1000
+        }
         const next =
-          time < motion.walkUntil ? (motion.walk ?? motion.idle) : motion.idle
+          time < motion.walkUntil
+            ? (motion.walk ?? motion.idle)
+            : time < motion.waveUntil
+              ? motion.wave
+              : motion.idle
         if (next && next !== motion.playing) {
           next.reset().fadeIn(0.25).play()
           motion.playing?.fadeOut(0.25)

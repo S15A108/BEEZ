@@ -81,6 +81,8 @@ export interface Furniture {
     h: number
     tint: Record<string, string> | null
   }
+  /** 3인칭에서 숨기는 가구(D42). 남·동쪽 벽 가까이 선 화면과 보드가 뒷면으로 방을 가리지 않게 한다. */
+  firstPersonOnly?: boolean
 }
 
 export interface Seat {
@@ -144,6 +146,8 @@ export interface Floor {
   outdoorExit?: OfficeOutdoorExit
   /** 고정 사무실(D36)에 매다는 구역 표지(단축 바 1~6번 창 이름). 타일 단위 */
   zoneSigns?: { n: number; name: string; x: number; z: number }[]
+  /** 고정 사무실에서 비비가 문서를 검토하거나 회의를 여는 동안 서는 자리(D35) */
+  bibiSpots?: Record<'documents' | 'meeting', Seat>
 }
 
 export type Act =
