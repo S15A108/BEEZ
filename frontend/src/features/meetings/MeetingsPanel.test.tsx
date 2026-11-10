@@ -292,6 +292,49 @@ it('기록이 한 페이지를 넘어도 대화를 오래된 순으로 보이고
   ).toBeInTheDocument()
 })
 
+// 메시지를 쓰는 동안 남은 기록 페이지가 자동으로 붙어도 쓰던 글은 사라지지 않는다. 보내기에 성공하면 비우고, 실패하면 남긴다.
+it('쓰는 동안 기록 페이지가 더 붙어도 입력이 남고, 보내기에 성공해야 비워진다', async () => {
+  for (let index = 1; index <= 22; index++)
+    await meetingsApi.addEntry('101', '901', { text: `추가 의견 ${index}` })
+  const real = meetingsApi.entries.bind(meetingsApi)
+  vi.spyOn(meetingsApi, 'entries').mockImplementation(
+    (projectId, meetingId, query) =>
+      query?.cursor
+        ? // 다음 페이지가 늦게 도착해, 쓰는 도중에 붙게 한다
+          new Promise((resolve) =>
+            setTimeout(() => resolve(real(projectId, meetingId, query)), 300),
+          )
+        : real(projectId, meetingId, query),
+  )
+  const user = userEvent.setup()
+  renderPanel(true)
+  const box = await screen.findByRole('textbox', { name: '메시지' })
+  await user.type(box, '쓰는 중인 글')
+  // 다음 페이지가 붙어 마지막 기록이 보일 때까지 기다린다
+  const log = screen.getByRole('log', { name: '회의 대화' })
+  await within(log).findByText('추가 의견 22', {}, { timeout: 3000 })
+  expect(screen.getByRole('textbox', { name: '메시지' })).toHaveValue(
+    '쓰는 중인 글',
+  )
+  // 보내기에 실패하면 글이 남는다
+  vi.spyOn(meetingsApi, 'addEntry').mockRejectedValueOnce(
+    apiError(500, 'server_error'),
+  )
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: '메시지' })).toHaveValue(
+      '쓰는 중인 글',
+    ),
+  )
+  // 성공하면 비워진다
+  vi.mocked(meetingsApi.addEntry).mockRestore()
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: '메시지' })).toHaveValue(''),
+  )
+  vi.restoreAllMocks()
+})
+
 // 정리는 회의실의 '비비에게 정리 요청'으로만 만든다. 회의 수정 초안은 그 정리를 같은 캐시로 읽는다(정리가 두 개로 보이지 않는다).
 it('회의 수정 초안은 위에서 요청한 정리를 그대로 쓰고 다시 정리해도 어긋나지 않는다', async () => {
   const user = userEvent.setup()

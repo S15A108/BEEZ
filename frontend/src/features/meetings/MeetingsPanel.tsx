@@ -941,7 +941,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                             </div>
                           ) : participant?.status === 'JOINED' ? (
                             <InlineMessage
-                              key={`${meeting.id}:${notes.length}`}
+                              key={meeting.id}
                               label="메시지"
                               placeholder="메시지 보내기"
                               submitLabel="보내기"
@@ -1266,6 +1266,7 @@ function InlineMessage({
   const {
     register,
     handleSubmit,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<{ text: string }>({
     resolver: zodResolver(messageSchema(max)),
@@ -1275,9 +1276,15 @@ function InlineMessage({
     <form
       noValidate
       className="grid gap-1"
-      onSubmit={handleSubmit((values) =>
-        onSubmit(values.text).catch(() => undefined),
-      )}
+      // 보내기에 성공했을 때만 입력을 비운다. 실패하면 쓰던 글을 그대로 둔다(기록이 더 붙어도 폼을 다시 만들지 않는다).
+      onSubmit={handleSubmit(async (values) => {
+        try {
+          await onSubmit(values.text)
+          reset()
+        } catch {
+          // 오류 안내는 호출한 쪽이 이미 보였다.
+        }
+      })}
     >
       <div className="flex items-center gap-2">
         <Input
