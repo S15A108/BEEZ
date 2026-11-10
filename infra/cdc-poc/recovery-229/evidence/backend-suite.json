@@ -1,0 +1,14 @@
+{
+  "test": {
+    "failures": 0,
+    "errors": 0,
+    "tests": 456,
+    "skipped": 2
+  },
+  "integrationTest": {
+    "failures": 0,
+    "errors": 0,
+    "tests": 992,
+    "skipped": 25
+  }
+}

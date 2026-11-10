@@ -1,0 +1,611 @@
+{
+  "environment": "isolated local Docker Compose; synthetic DB fixtures; actual application jar, Kafka, Debezium, PostgreSQL, Prometheus, Alertmanager and Mattermost",
+  "started_at": "2026-11-10T00:58:20.850564+00:00",
+  "last_observed_at": "2026-11-10T01:51:36.160746+00:00",
+  "production_thresholds_unchanged": true,
+  "provenance": {
+    "jar_sha256": "43f72c257c0ab2e5e0a7b6da388a86ecdfe598985e4e29c07b54f83d5fa68fa7",
+    "rules_sha256": "37c55eb0aca03cf78e8f6b52ae60bfc174b52745b7592d9de99e35e98df4781d",
+    "production_thresholds_unchanged": true
+  },
+  "automated_scenarios_complete": false,
+  "expected_alerts": [
+    "CdcBlockedProjects",
+    "CdcConnectDown",
+    "CdcConnectorMissing",
+    "CdcConnectorNotRunning",
+    "CdcConsumerDown",
+    "CdcConsumerLagStuck",
+    "CdcExpiredLeases",
+    "CdcFailedIntakes",
+    "CdcKafkaReceiveFailures",
+    "CdcKafkaUnreachable",
+    "CdcPendingDelay",
+    "CdcSlotInactive",
+    "CdcSnapshotFailing"
+  ],
+  "execution_stopped_by_user": true,
+  "not_executed_by_user_request": [
+    "CdcConnectorMissing"
+  ],
+  "completed_alert_families": [
+    "CdcBlockedProjects",
+    "CdcConnectDown",
+    "CdcConnectorNotRunning",
+    "CdcConsumerDown",
+    "CdcConsumerLagStuck",
+    "CdcExpiredLeases",
+    "CdcFailedIntakes",
+    "CdcKafkaReceiveFailures",
+    "CdcKafkaUnreachable",
+    "CdcPendingDelay",
+    "CdcSlotInactive",
+    "CdcSnapshotFailing"
+  ],
+  "missing_firing_assertions": [
+    "CdcConnectorMissing"
+  ],
+  "missing_resolved_assertions": [
+    "CdcConnectorMissing"
+  ],
+  "alerts": {
+    "CdcDataUnavailable": {
+      "first_observed_pending": null,
+      "first_observed_firing": "2026-11-10T00:58:20.917084+00:00",
+      "last_observed_firing": "2026-11-10T01:42:25.073144+00:00",
+      "condition_active_at": "2026-11-10T00:57:16.611037945Z",
+      "observed_seconds_after_active": 64.3
+    },
+    "BackendScrapeDown": {
+      "first_observed_pending": "2026-11-10T00:58:20.917084+00:00",
+      "first_observed_firing": null,
+      "last_observed_firing": null
+    },
+    "CdcExpiredLeases": {
+      "first_observed_pending": "2026-11-10T00:59:17.226080+00:00",
+      "first_observed_firing": "2026-11-10T01:04:18.030909+00:00",
+      "last_observed_firing": "2026-11-10T01:25:18.859426+00:00",
+      "condition_active_at": "2026-11-10T00:59:01.611037945Z",
+      "observed_seconds_after_active": 316.4
+    },
+    "CdcBlockedProjects": {
+      "first_observed_pending": "2026-11-10T00:59:17.226080+00:00",
+      "first_observed_firing": "2026-11-10T01:09:18.623159+00:00",
+      "last_observed_firing": "2026-11-10T01:25:18.859426+00:00",
+      "condition_active_at": "2026-11-10T00:59:01.611037945Z",
+      "observed_seconds_after_active": 617.0
+    },
+    "CdcFailedIntakes": {
+      "first_observed_pending": null,
+      "first_observed_firing": "2026-11-10T00:59:17.226080+00:00",
+      "last_observed_firing": "2026-11-10T01:25:18.859426+00:00",
+      "condition_active_at": "2026-11-10T00:59:01.611037945Z",
+      "observed_seconds_after_active": 15.6
+    },
+    "CdcKafkaReceiveFailures": {
+      "first_observed_pending": null,
+      "first_observed_firing": "2026-11-10T00:59:17.226080+00:00",
+      "last_observed_firing": "2026-11-10T01:19:49.645625+00:00",
+      "condition_active_at": "2026-11-10T00:59:01.611037945Z",
+      "observed_seconds_after_active": 15.6
+    },
+    "CdcSlotInactive": {
+      "first_observed_pending": "2026-11-10T00:59:17.226080+00:00",
+      "first_observed_firing": "2026-11-10T01:09:18.623159+00:00",
+      "last_observed_firing": "2026-11-10T01:47:04.789728+00:00",
+      "condition_active_at": "2026-11-10T00:59:01.611037945Z",
+      "observed_seconds_after_active": 617.0
+    },
+    "CdcConnectorNotRunning": {
+      "first_observed_pending": "2026-11-10T00:59:17.226080+00:00",
+      "first_observed_firing": "2026-11-10T01:04:18.030909+00:00",
+      "last_observed_firing": "2026-11-10T01:14:47.048958+00:00",
+      "condition_active_at": "2026-11-10T00:59:01.611037945Z",
+      "observed_seconds_after_active": 316.4
+    },
+    "CdcConsumerLagStuck": {
+      "first_observed_pending": "2026-11-10T01:03:47.923758+00:00",
+      "first_observed_firing": "2026-11-10T01:08:48.544395+00:00",
+      "last_observed_firing": "2026-11-10T01:14:47.048958+00:00",
+      "condition_active_at": "2026-11-10T01:03:31.611037945Z",
+      "observed_seconds_after_active": 316.9
+    },
+    "CdcPendingDelay": {
+      "first_observed_pending": "2026-11-10T01:09:48.741586+00:00",
+      "first_observed_firing": "2026-11-10T01:14:47.048958+00:00",
+      "last_observed_firing": "2026-11-10T01:25:18.859426+00:00",
+      "condition_active_at": "2026-11-10T01:09:16.611037945Z",
+      "observed_seconds_after_active": 330.4
+    },
+    "CdcConsumerDown": {
+      "first_observed_pending": "2026-11-10T01:16:49.249325+00:00",
+      "first_observed_firing": "2026-11-10T01:21:49.847650+00:00",
+      "last_observed_firing": "2026-11-10T01:32:20.968061+00:00",
+      "condition_active_at": "2026-11-10T01:16:31.611037945Z",
+      "observed_seconds_after_active": 318.2
+    },
+    "CdcKafkaUnreachable": {
+      "first_observed_pending": "2026-11-10T01:16:49.249325+00:00",
+      "first_observed_firing": "2026-11-10T01:21:49.847650+00:00",
+      "last_observed_firing": "2026-11-10T01:31:18.872359+00:00",
+      "condition_active_at": "2026-11-10T01:16:31.611037945Z",
+      "observed_seconds_after_active": 318.2
+    },
+    "CdcConnectorMissing": {
+      "first_observed_pending": "2026-11-10T01:23:04.954579+00:00",
+      "first_observed_firing": null,
+      "last_observed_firing": null
+    },
+    "CdcConnectDown": {
+      "first_observed_pending": "2026-11-10T01:36:24.795342+00:00",
+      "first_observed_firing": "2026-11-10T01:41:25.943225+00:00",
+      "last_observed_firing": "2026-11-10T01:47:04.789728+00:00",
+      "condition_active_at": "2026-11-10T01:36:01.611037945Z",
+      "observed_seconds_after_active": 324.3
+    },
+    "CdcSnapshotFailing": {
+      "first_observed_pending": "2026-11-10T01:36:54.893118+00:00",
+      "first_observed_firing": "2026-11-10T01:41:54.583836+00:00",
+      "last_observed_firing": "2026-11-10T01:42:25.073144+00:00",
+      "condition_active_at": "2026-11-10T01:36:16.611037945Z",
+      "observed_seconds_after_active": 338.0
+    }
+  },
+  "assertions": [
+    {
+      "utc": "2026-11-10T01:14:57.067341+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_firing",
+      "names": [
+        "CdcBlockedProjects",
+        "CdcConnectorNotRunning",
+        "CdcConsumerLagStuck",
+        "CdcExpiredLeases",
+        "CdcFailedIntakes",
+        "CdcKafkaReceiveFailures",
+        "CdcPendingDelay",
+        "CdcSlotInactive"
+      ],
+      "mattermost_deliveries": 7.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:22:49.320671+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_firing",
+      "names": [
+        "CdcConsumerDown",
+        "CdcKafkaUnreachable"
+      ],
+      "mattermost_deliveries": 13.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:24:04.952869+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_resolved",
+      "names": [
+        "CdcConsumerDown",
+        "CdcKafkaUnreachable"
+      ],
+      "mattermost_deliveries": 13.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:31:18.884478+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_firing",
+      "names": [
+        "CdcConsumerDown",
+        "CdcKafkaUnreachable"
+      ],
+      "mattermost_deliveries": 23.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:35:52.673614+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_resolved",
+      "names": [
+        "CdcBlockedProjects",
+        "CdcConnectorNotRunning",
+        "CdcConsumerDown",
+        "CdcConsumerLagStuck",
+        "CdcExpiredLeases",
+        "CdcFailedIntakes",
+        "CdcKafkaReceiveFailures",
+        "CdcKafkaUnreachable",
+        "CdcPendingDelay",
+        "CdcSlotInactive"
+      ],
+      "mattermost_deliveries": 24.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:41:54.621847+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_firing",
+      "names": [
+        "CdcConnectDown",
+        "CdcSnapshotFailing"
+      ],
+      "mattermost_deliveries": 26.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:46:55.044058+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_firing",
+      "names": [
+        "CdcConnectDown",
+        "CdcSlotInactive"
+      ],
+      "mattermost_deliveries": 28.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    },
+    {
+      "utc": "2026-11-10T01:50:52.088173+00:00",
+      "event": "assertion_passed",
+      "assertion": "alerts_resolved",
+      "names": [
+        "CdcBlockedProjects",
+        "CdcConnectDown",
+        "CdcConnectorNotRunning",
+        "CdcConsumerDown",
+        "CdcConsumerLagStuck",
+        "CdcExpiredLeases",
+        "CdcFailedIntakes",
+        "CdcKafkaReceiveFailures",
+        "CdcKafkaUnreachable",
+        "CdcPendingDelay",
+        "CdcSlotInactive",
+        "CdcSnapshotFailing"
+      ],
+      "mattermost_deliveries": 30.0,
+      "mattermost_failures": 0.0,
+      "caveat": "Successful receiver requests are paired with separate actual-channel UI receipt verification"
+    }
+  ],
+  "lifecycle_events": [
+    {
+      "utc": "2026-11-10T00:58:20.850564+00:00",
+      "event": "initialized",
+      "connector": "beez-published-analysis-1",
+      "production_rules": true
+    },
+    {
+      "utc": "2026-11-10T00:58:47.011093+00:00",
+      "event": "phase_a_started",
+      "fixtures": [
+        "FAILED after retry budget",
+        "new PENDING blocked by predecessor",
+        "expired RUNNING blocked by predecessor"
+      ],
+      "actual_faults": [
+        "malformed Kafka record blocks partition",
+        "connector restarted against incompatible physical slot"
+      ],
+      "caveat": "DB rows model stored failure/lease states; these rows do not themselves prove a worker process crash or model retry execution"
+    },
+    {
+      "utc": "2026-11-10T01:05:20.460723+00:00",
+      "event": "failed_repeat_route_verified",
+      "receiver": "mattermost",
+      "repeat_interval": "24h",
+      "wall_clock_resend_tested": false
+    },
+    {
+      "utc": "2026-11-10T01:09:20.763530+00:00",
+      "event": "synthetic_publication_fixture_imported",
+      "source": "companion real-publication recovery test",
+      "production_data": false
+    },
+    {
+      "utc": "2026-11-10T01:15:48.650831+00:00",
+      "event": "phase_a_recovered",
+      "recovery": "fixture rows terminal, malformed isolated offset skipped with group stopped, valid connector restored"
+    },
+    {
+      "utc": "2026-11-10T01:15:48.924874+00:00",
+      "event": "broker_fault",
+      "mode": "pause"
+    },
+    {
+      "utc": "2026-11-10T01:16:12.629682+00:00",
+      "event": "backend_healthy_without_broker",
+      "mode": "pause"
+    },
+    {
+      "utc": "2026-11-10T01:16:49.187621+00:00",
+      "event": "valid_publication_completed_without_broker",
+      "mode": "pause",
+      "intake": "229005",
+      "state": "COMPLETED:INSUFFICIENT_EVIDENCE:1",
+      "attempt_records": 1,
+      "transport": "actual authenticated create/approve HTTP; actual recovery scheduler and database persistence",
+      "model": "deterministic HTTP fixture"
+    },
+    {
+      "utc": "2026-11-10T01:21:43.741331+00:00",
+      "event": "paused_broker_dns_resolved",
+      "hostname": "kafka",
+      "resolved": true,
+      "command": "docker compose exec -T backend getent hosts kafka"
+    },
+    {
+      "utc": "2026-11-10T01:22:49.787519+00:00",
+      "event": "broker_restored",
+      "mode": "pause"
+    },
+    {
+      "utc": "2026-11-10T01:23:04.847478+00:00",
+      "event": "consumer_reconnected_without_backend_restart",
+      "mode": "pause"
+    },
+    {
+      "utc": "2026-11-10T01:24:06.716048+00:00",
+      "event": "broker_fault",
+      "mode": "stop"
+    },
+    {
+      "utc": "2026-11-10T01:24:42.257113+00:00",
+      "event": "backend_healthy_without_broker",
+      "mode": "stop"
+    },
+    {
+      "utc": "2026-11-10T01:25:18.811096+00:00",
+      "event": "valid_publication_completed_without_broker",
+      "mode": "stop",
+      "intake": "229006",
+      "state": "COMPLETED:INSUFFICIENT_EVIDENCE:1",
+      "attempt_records": 1,
+      "transport": "actual authenticated create/approve HTTP; actual recovery scheduler and database persistence",
+      "model": "deterministic HTTP fixture"
+    },
+    {
+      "utc": "2026-11-10T01:28:51.644197+00:00",
+      "event": "publication_wal_fence",
+      "wal_lsn": "0/1FA4070",
+      "intakes": [
+        "229005",
+        "229006"
+      ],
+      "purpose": "must be acknowledged by logical slot after broker recovery before claiming CDC catch-up"
+    },
+    {
+      "utc": "2026-11-10T01:31:19.293493+00:00",
+      "event": "broker_restored",
+      "mode": "stop"
+    },
+    {
+      "utc": "2026-11-10T01:32:19.466288+00:00",
+      "event": "consumer_reconnected_without_backend_restart",
+      "mode": "stop"
+    },
+    {
+      "utc": "2026-11-10T01:32:20.815224+00:00",
+      "event": "orchestration_reloaded",
+      "reason": "use fresh source health assertions and finally restoration for remaining phases"
+    },
+    {
+      "utc": "2026-11-10T01:32:20.920635+00:00",
+      "event": "healthy_telemetry_verified",
+      "snapshot_age_seconds": [
+        3.253999948501587
+      ],
+      "backend": "UP",
+      "connector": "RUNNING",
+      "tasks": "RUNNING",
+      "kafka": "reachable",
+      "consumer": "UP"
+    },
+    {
+      "utc": "2026-11-10T01:34:43.533035+00:00",
+      "event": "verification_adjusted",
+      "reason": "Global WAL position includes unrelated writes beyond captured commits; verify actual new Kafka create/completion records and original group committed offset instead",
+      "production_failure": false
+    },
+    {
+      "utc": "2026-11-10T01:34:43.723614+00:00",
+      "event": "orchestration_reloaded",
+      "reason": "use fresh source health assertions and finally restoration for remaining phases"
+    },
+    {
+      "utc": "2026-11-10T01:34:43.850214+00:00",
+      "event": "healthy_telemetry_verified",
+      "snapshot_age_seconds": [
+        11.178999900817871
+      ],
+      "backend": "UP",
+      "connector": "RUNNING",
+      "tasks": "RUNNING",
+      "kafka": "reachable",
+      "consumer": "UP"
+    },
+    {
+      "utc": "2026-11-10T01:35:52.554376+00:00",
+      "event": "publications_still_complete_after_cdc_catchup",
+      "intakes": [
+        {
+          "intake": "229005",
+          "status": "COMPLETED",
+          "attempt": 1,
+          "attempt_records": 1
+        },
+        {
+          "intake": "229006",
+          "status": "COMPLETED",
+          "attempt": 1,
+          "attempt_records": 1
+        }
+      ],
+      "consumer_group_lag": 0,
+      "captured_kafka_records": {
+        "229006": [
+          [
+            "c",
+            "PENDING"
+          ],
+          [
+            "u",
+            "COMPLETED"
+          ],
+          [
+            "u",
+            "RUNNING"
+          ]
+        ],
+        "229005": [
+          [
+            "c",
+            "PENDING"
+          ],
+          [
+            "u",
+            "COMPLETED"
+          ],
+          [
+            "u",
+            "RUNNING"
+          ]
+        ]
+      },
+      "original_group_committed_offset_equals_log_end": true
+    },
+    {
+      "utc": "2026-11-10T01:35:52.663189+00:00",
+      "event": "healthy_telemetry_verified",
+      "snapshot_age_seconds": [
+        20.01200008392334
+      ],
+      "backend": "UP",
+      "connector": "RUNNING",
+      "tasks": "RUNNING",
+      "kafka": "reachable",
+      "consumer": "UP"
+    },
+    {
+      "utc": "2026-11-10T01:35:54.239438+00:00",
+      "event": "connect_stopped"
+    },
+    {
+      "utc": "2026-11-10T01:35:54.542499+00:00",
+      "event": "metrics_query_table_temporarily_unavailable"
+    },
+    {
+      "utc": "2026-11-10T01:41:54.925002+00:00",
+      "event": "metrics_query_table_restored"
+    },
+    {
+      "utc": "2026-11-10T01:46:55.602090+00:00",
+      "event": "connect_restart_requested"
+    },
+    {
+      "utc": "2026-11-10T01:47:04.702181+00:00",
+      "event": "connect_restarted"
+    },
+    {
+      "utc": "2026-11-10T01:49:10.178255+00:00",
+      "event": "loaded_production_rule_timing_verified",
+      "rules": {
+        "CdcPendingDelay": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 600
+        },
+        "CdcFailedIntakes": {
+          "for_seconds": 0,
+          "keep_firing_for_seconds": 600
+        },
+        "CdcBlockedProjects": {
+          "for_seconds": 600,
+          "keep_firing_for_seconds": 600
+        },
+        "CdcExpiredLeases": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 600
+        },
+        "CdcKafkaReceiveFailures": {
+          "for_seconds": 0,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcSlotInactive": {
+          "for_seconds": 600,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcConnectorNotRunning": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcConsumerLagStuck": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcConsumerDown": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcKafkaUnreachable": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcConnectDown": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcConnectorMissing": {
+          "for_seconds": 600,
+          "keep_firing_for_seconds": 0
+        },
+        "CdcSnapshotFailing": {
+          "for_seconds": 300,
+          "keep_firing_for_seconds": 0
+        }
+      }
+    },
+    {
+      "utc": "2026-11-10T01:50:51.876142+00:00",
+      "event": "user_requested_wrapup",
+      "stopped_driver": true,
+      "skipped": [
+        "CdcConnectorMissing"
+      ],
+      "reason": "User requested winding down; optional connector delete/recreate was cancelled before injection",
+      "outstanding_faults": false
+    },
+    {
+      "utc": "2026-11-10T01:50:52.053307+00:00",
+      "event": "healthy_telemetry_verified",
+      "snapshot_age_seconds": [
+        4.430999994277954
+      ],
+      "backend": "UP",
+      "connector": "RUNNING",
+      "tasks": "RUNNING",
+      "kafka": "reachable",
+      "consumer": "UP"
+    },
+    {
+      "utc": "2026-11-10T01:53:00.541966+00:00",
+      "event": "cleanup_completed",
+      "project": "beez-cdc-monitoring-229",
+      "remaining_containers": 0,
+      "scoped_anonymous_volumes_removed": true,
+      "shared_development_resources_changed": false
+    }
+  ],
+  "mattermost_receiver_requests": 30.0,
+  "mattermost_receiver_failures": 0.0,
+  "last_firing_alerts": [],
+  "limitations": [
+    "24-hour repeat route is loaded and inspected; no 24-hour wall-clock wait is claimed.",
+    "Phase-A failure/lease rows are persisted-state fixtures, separate from actual worker-crash/model-retry tests.",
+    "Receiver HTTP success must be paired with the separately recorded actual-channel receipt links."
+  ]
+}
