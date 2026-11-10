@@ -154,7 +154,9 @@ export function ActionForm({
     ),
   })
   const watched = useWatch({ control })
-  useEffect(() => onDirtyChange?.(isDirty), [isDirty, onDirtyChange])
+  useEffect(() => {
+    onDirtyChange?.(isDirty)
+  }, [isDirty, onDirtyChange])
   const submitDisabled = isSubmitting || disabled || disableWhen?.(watched)
   return (
     // 입력 칸은 안쪽 격자에 둔다. 창 안 하위 화면에서는 폼이 남은 높이를 채워 버튼 줄이 맨 아래로 간다.
