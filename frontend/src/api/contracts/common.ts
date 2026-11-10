@@ -118,6 +118,12 @@ export const documentVersionSchema = z.object({
   media_type: z.string(),
   content_hash: z.string(),
   content: z.string().optional(),
+  // 올린 계정. 과거 행은 없을 수 있다.
+  created_by: idSchema.optional(),
+  // 현재 기준에 들어 있는 버전인지.
+  is_current_baseline: z.boolean().optional(),
+  // 이 버전을 만든 변경 제안. 변경 제안으로 만든 버전에만 있다.
+  change_proposal_id: idSchema.optional(),
   created_at: timeSchema,
 })
 export type DocumentVersion = z.infer<typeof documentVersionSchema>

@@ -246,6 +246,11 @@ public class MeetingRepository {
     }
 
     /** 이미 참여 중인 계정은 건너뛴다. 새로 넣었으면 1 */
+    public boolean isJoinedParticipant(long meetingId, long accountId) {
+        return jdbc.sql("select exists (select 1 from meeting_participant where meeting_id = :m and account_id = :a and status = 'JOINED')")
+                .param("m", meetingId).param("a", accountId).query(Boolean.class).single();
+    }
+
     public int addParticipant(long meetingId, long accountId, String role, Long invitedByAccountId) {
         return jdbc.sql("""
                 insert into meeting_participant (meeting_id, account_id, status, role, invited_by)

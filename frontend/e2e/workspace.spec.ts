@@ -126,7 +126,7 @@ test('문서와 작업 검증, 비비의 근거 응답을 같은 사무실에서
   await dialog
     .getByLabel('설계 질문')
     .fill('로그인 요구사항의 근거는 무엇인가요?')
-  await dialog.getByRole('button', { name: '비비에게 질문하기' }).click()
+  await dialog.getByRole('button', { name: '보내기' }).click()
   await expect(dialog.getByText('템플릿 응답', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('log')).toContainText('로그인 요구사항의 근거')
   expect(errors).toEqual([])
@@ -166,10 +166,27 @@ test('발행한 제안에서 발행 후 분석 상태를 확인하고 발행 전
   await page.getByRole('button', { name: '대시보드', exact: true }).click()
   const dashboard = page.getByRole('dialog')
   await dashboard.getByRole('tab', { name: '활동 타임라인' }).click()
-  await dashboard.getByRole('button', { name: '변경 요청 #71' }).click()
+  await dashboard.getByRole('button', { name: '변경 요청 #71' }).first().click()
   await expect(
     page.getByRole('region', { name: '발행 후 분석 상태' }),
   ).toContainText('상태 확인 필요')
+})
+
+test('변경 제안의 활동 탭에서 행위자별로 거르고 더 보기로 이어 읽는다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '변경 제안', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('tab', { name: '활동' }).click()
+  const list = dialog.getByRole('list').last()
+  await expect(list.getByRole('listitem')).toHaveCount(10)
+  await dialog.getByRole('button', { name: '더 보기' }).click()
+  await expect(list.getByRole('listitem')).toHaveCount(12)
+  await expect(dialog.getByRole('button', { name: '더 보기' })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '에이전트', exact: true }).click()
+  await expect(list.getByRole('listitem')).toHaveCount(2)
+  await expect(list).toContainText('민수 에이전트')
 })
 
 // S15P31A108-202: 기획 분석에서 질문에 답하고, 초안 생성이 만든 후보를 채택하면 설계 항목 초안이 된다(예시 API).
@@ -474,6 +491,46 @@ test('설정 › 에이전트의 긴 명령 줄에서도 복사 버튼이 창 �
   const dialog = (await page.getByRole('dialog').boundingBox())!
   const button = (await copy.boundingBox())!
   expect(button.x + button.width).toBeLessThanOrEqual(dialog.x + dialog.width)
+})
+
+// S15P31A108-338: 도움말은 새 탭으로 열어 사무실과 설정 창(한 번만 보이는 토큰)을 그대로 둔다.
+// PR #230 리뷰: 라우트가 lazy라 새 탭 첫 로드에서 해시 절로 내려가지 않았다. 절이 화면 안에 있는지까지 본다.
+test('설정 › 에이전트의 연결 실패 도움말 링크로 새 탭의 문제 해결 절에 바로 가고 연결 단계도 본다', async ({
+  page,
+}) => {
+  await openWorkspace(page)
+  await page.getByRole('button', { name: '설정', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: '설정 메뉴' })
+    .getByRole('button', { name: /에이전트/ })
+    .click()
+  await page.getByRole('button', { name: '연결 확인' }).click()
+  await expect(
+    page.getByRole('status').filter({ hasText: '연결 실패' }),
+  ).toBeVisible()
+  const [help] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.getByRole('link', { name: '연결 도움말' }).click(),
+  ])
+  await expect(help).toHaveURL(/\/help\/agent-connection#troubleshooting$/)
+  const errors = help.getByRole('region', { name: '문제 해결' })
+  await expect(errors).toBeInViewport()
+  for (const step of [
+    '1. 토큰 발급 (웹)',
+    '2. Claude Code에 BEEZ 추가 (터미널)',
+    '3. CLAUDE.md에 작업 절차 붙여넣기',
+    '4. Claude Code 켜고 연결 확인',
+    '5. 연결 해제',
+  ])
+    await expect(help.getByRole('heading', { name: step })).toBeVisible()
+  for (const code of [
+    'unauthenticated',
+    'token_revoked',
+    'agent_session_replaced',
+    'not_found',
+  ])
+    await expect(errors.getByText(code, { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog')).toBeVisible()
 })
 
 // 캔버스 v491 문서 수정 제안: 문서함에서 '수정 제안하기' → ① 고친 문서 등록 → ② 변경점 확인 → ③ 비비 검토 → ④ 올리기 전 확인 → 팀장에게 올리기.

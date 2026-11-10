@@ -3853,7 +3853,23 @@ HTTP `200`.
       "media_type": "text/markdown",
       "content_hash": "sha256:example-document-hash",
       "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회한다.",
-      "created_at": "2026-10-23T03:00:00Z"
+      "created_at": "2026-10-23T03:00:00Z",
+      "created_by": "11",
+      "is_current_baseline": true
+    },
+    {
+      "id": "212",
+      "document_id": "201",
+      "version_no": 2,
+      "status": "DRAFT",
+      "file_name": "document-201-v2.md",
+      "media_type": "text/markdown",
+      "content_hash": "sha256:example-document-hash-2",
+      "content": "# 요구사항\n로그인한 사용자는 프로젝트를 조회하고 수정한다.",
+      "created_at": "2026-10-24T03:00:00Z",
+      "created_by": "12",
+      "is_current_baseline": false,
+      "change_proposal_id": "71"
     }
   ],
   "has_more": false
@@ -8438,6 +8454,7 @@ HTTP `200`.
 - 같은 발행 트랜잭션 안에서 알림을 저장한다(S15P31A108-217): 승인은 제안자(`CHANGE_PROPOSAL_APPROVED`), 발행은 직접 관련 작업 담당자(`CHANGE_PROPOSAL_PUBLISHED`, 행위자 제외), 재검증 대기가 된 작업은 그 담당자(`REVALIDATION_REQUIRED`, 본인 포함). 멱등 재생·이미 발행 분기에서는 요청하지 않는다. 활동도 같은 트랜잭션에서 `CHANGE_PROPOSAL_APPROVED`, `CHANGE_PROPOSAL_PUBLISHED` 순으로 저장하며(키 `change-proposal:{id}:approved`·`:published`, 발행에는 `baseline_id` 보조 참조) 멱등 재생·이미 발행 분기에서는 남기지 않는다(S15P31A108-310).
 - (수정안 요청) 아직 발행하지 않은 제안이 requires_refresh=true(검토 중 다른 제안이 먼저 발행돼 기준이 바뀜)면 409 baseline_conflict로 승인하지 않는다. 팀장은 CHG-A10으로 '기준이 바뀌어 반려'한다.
 - (수정안 요청) 제안에 연결한 문서 버전은 DOC-A12로 올릴 때, 또는 after_content로 제출할 때(CHG-A01·A04, MTG-A13 포함) 서버가 원문 저장과 청킹·임베딩 작업(document_processing)을 함께 만든다. 모든 문서 변경에 버전이 있으므로 색인 조건은 한 가지 규칙으로 확인한다. 승인 때 각 버전이 PLN-A10 처리 규칙 4번의 색인 조건(source_status/index_status=READY, attempt/text_hash·manifest·embedding profile 일치, 청크 수 일치)을 갖추지 못했으면 409 analysis_not_completed로 발행하지 않는다. 멈춘 실행은 lease 만료 뒤 자동으로 2번까지 다시 잡고, 실패(FAILED)는 팀장이 PLN-A02로 다시 시도한다. 예전 승인본으로 대신 발행하지 않는다.
+- (S15P31A108-201) 같은 트랜잭션에서 문서 버전 상태도 정리한다. 발행한 버전은 APPROVED, 이전 승인본은 SUPERSEDED가 되고, 같은 문서에서 이전 승인본을 부모로 한 다른 DRAFT는 다시 연결할 수 없으므로 REJECTED(미채택)가 된다. 부모가 다른 DRAFT는 건드리지 않는다. 그 DRAFT를 가진 다른 제안의 상태는 바뀌지 않으며, 기존대로 requires_refresh로 알리고 팀장이 CHG-A10으로 반려한다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -9022,6 +9039,7 @@ HTTP `200`. [ChangeProposal](00-common.md#schema-changeproposal)을 래퍼 없�
 - 상태와 행위자/시각, 24시간 멱등 응답을 한 트랜잭션으로 저장한다. 동일 키·입력은 현재 권한을 확인한 뒤 최초 응답을 재사용한다. 다른 키로 이미 거둔 제안을 다시 거두면 invalid_transition이다.
 - 원문·리비전·문서 연결·기존 결정은 삭제하지 않고 baseline·작업 상태를 바꾸지 않는다. WITHDRAWN은 종결 상태이며 다시 작성하려면 새 CHG-A01 요청에 previous_proposal_id를 지정한다. 반려 후 같은 번호 재제출과 구분한다.
 - 이전 제안에 귀속된 업로드 DRAFT를 새 제안으로 이동하지 않는다. 새 수정본을 업로드하거나 본문을 명시적으로 입력한다.
+- (S15P31A108-201) 거두면 그 제안에 귀속된 DRAFT 문서 버전은 REJECTED(미채택)로 닫는다. WITHDRAWN은 되살릴 수 없어 그 초안을 다시 쓸 수 없기 때문이다. 반려(REJECTED)된 제안의 초안은 재제출 전까지 DRAFT로 둔다.
 - 거두기는 알림 유형이 없다(계약 6.1). 활동 `CHANGE_PROPOSAL_WITHDRAWN`(키 `change-proposal:{id}:withdrawn`)은 같은 트랜잭션에서 저장하고 멱등 재생에서는 남기지 않는다(S15P31A108-310). 회의 끝내기 재시도가 앞선 시도의 제안을 정리해 거둘 때도 같은 활동이 남는다. 직접 notification INSERT나 발송 성공 응답을 만들지 않는다.
 - 화면 수정안의 expected_updated_at 대신 기존 195 검토 식별인 expected_revision/expected_snapshot_hash를 사용한다. FE 연동 시 이 두 필드를 맞춰야 한다. 응답은 A01·A04·A08·A10과 같은 래퍼 없는 ChangeProposal이다.
 
@@ -10391,7 +10409,7 @@ HTTP `202`.
 | `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
 | `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
 | `findings` | [Finding[]](00-common.md#schema-finding) | Y | 발견 항목 |
-| `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
+| `cache_hit` | `boolean` | Y | 접수 응답에서 기존 검증을 재사용했는지 여부. 현재는 규칙 전용 PASS만 대상이며 조회·재시도 응답은 false |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
@@ -10487,7 +10505,7 @@ HTTP `200`: 규칙 검사만으로 최초 응답 전에 종료한 경우. 최종
 - (BE 구현, -159) 의미 분석은 `unlinked`가 있거나, CHANGES·IMPLEMENTS 참조가 있거나, 같은 항목을 보는 열린 다른 작업이 있으면 접수한다. 검사 목록은 계획 완결성(unlinked가 있을 때) + CHANGES·IMPLEMENTS 항목마다 설계 정합성 + 관련 작업마다 계획 충돌이다. 설계 정합성은 관련 작업 유무와 상관없이 넣는다(구조화 계약 비교 전까지 승인 설계와의 대조를 의미 분석이 맡는다). READS만 참조하고 unlinked·관련 작업이 없으면 규칙으로 PASS다.
 - (BE 구현, -159) 접수 시 `current_attempt=1`의 실행(run)과 작업 큐(job)를 함께 만든다. 워커는 큐에서 꺼내 AI를 DB 트랜잭션 밖에서 부르고, 반영 직전 아직 RUNNING·같은 시도·같은 리스인지 확인해 아니면 결과를 버린다(실행 DISCARDED). 같은 리스라도 job의 리스 유효기간이 지났으면 결과를 받지 않고, 회수가 아직 안 됐어도 그 자리에서 만료(`validation_lease_expired`, RETRY)로 닫는다. 큐에서 기다리거나 AI가 도는 사이 분석 입력이 바뀌었으면 AI를 부르지 않거나 결과를 버리고 검증을 STALE로 닫는다 — 이 작업의 계획 리비전이 바뀌면 `PLAN_CHANGED`, 같은 항목을 보는 관련 작업이나 그 계획이 접수 때 고정한 것과 달라지면(계획 변경·새 관련 작업·관련 작업 종료) `RELATED_PLAN_CHANGED`. 반영은 프로젝트 행을 먼저 잠근 뒤(계획 변경·상태 보고와 같은 순서) 입력 확인부터 저장까지 한 트랜잭션으로 하므로, 그 사이 같은 프로젝트의 계획 변경·상태 전이·새 작업은 기다린다. 모델을 부른 실행은 결과를 버리든(DISCARDED) 만료·오류로 닫든 `validation_run.usage`(V16)에 그 호출의 사용량을 남기고, 회수로 이미 닫힌 실행에 늦게 온 응답의 사용량도 그 실행에 남기며(판정만 버린다), AI 의 HTTP 오류 본문(504 등)에 든 `usage`도 같이 남긴다. `usage` 가 객체 배열이 아니면 출력 계약 위반(`ai_invalid_output`)이고, 그 값은 저장하지 않는다(요약에 `usage_rejected` 원문만). 입력 변경으로 STALE 이 될 때는 요약에도 `model`·`usage`를 남긴다(비용 집계 -168 은 실행 기준, 후보는 남기지 않는다). 워커는 큐에서 꺼낸 직후에도 같은 규칙 재판정을 해, 기다리는 사이 규칙만으로 판정이 선 검증(관련 작업 시작으로 점유 충돌·참조 버전 낡음)은 모델을 부르지 않고 그 판정으로 닫는다(실행 DISCARDED, 작업 DONE). COMPLETE 결과를 저장하기 전에 접수 때와 같은 규칙을 지금의 관련 작업 상태·참조 버전으로 다시 판정해 규칙 발견 항목을 더한다 — 관련 작업의 계획은 그대로인데 상태만 바뀌어 같은 항목을 CHANGES 로 점유하게 된 경우는 NEEDS_REVIEW, 참조 버전이 그사이 낡은 경우는 NEEDS_INPUT 이다. 작업 취소·담당자 인계로 무효화되면 접수 때 만든 실행도 DISCARDED로 닫는다. AI 응답은 필수 배열·원소 타입, 검사 키 분할, 항목·버전·관련 작업 ID, 출처(요청의 승인 항목·규칙 finding·근거에 넣은 출처만), 근거 키(그 근거의 출처가 sources에 함께 있어야 함), MISSING_INPUT·MISSING_POLICY의 BLOCKING을 검사해 어긋나거나 본문이 비면 `ai_invalid_output`, PARTIAL은 미검사 사유별 코드로 ERROR다. AI의 STALE_REF는 현재 기준과 다시 대조해 정말 낡았으면 NEEDS_INPUT, 최신이면 사람 검토(BLOCKING이면 NEEDS_REVIEW)다. 승인 항목에는 원문 출처가 있으면 `source`를 넣어 보낸다. `checks`·`checked_keys`·`unassessed`·model·usage는 `validation.summary`에 남기고, PARTIAL·계약 위반처럼 모델을 부른 실패도 같은 값과 부분 후보(`partial_findings`)를 진단용으로 남긴다. 후보의 `check_key`·`evidence_ids`는 `validation_finding`(V16)에 남긴다. 워커는 한 번에 한 건씩 처리하고, 스케줄 스레드는 워커마다 하나다(`spring.task.scheduling.pool.size`). 리스가 만료된 작업(워커가 AI 호출 중 죽었거나 재배포로 내려감)은 워커가 주기마다 회수해 실행 ERROR·검증 ERROR(`validation_lease_expired`, RETRY)로 닫는다. 같은 검증의 재시도는 VAL-A04(-161)다. 승인 항목의 `source`는 위치를 만들 수 있는 출처만 넣는다 — 원문 위치의 `location`(앞뒤 공백 제거), 없으면 줄 범위(`text_lines`)로 `lines {시작}-{끝}`, 둘 다 없으면 source를 넣지 않는다(변경 영향 분석과 같은 규칙). AI가 404(검증 경로 없음)를 주면 `ai_unavailable`이다. AI 서버에 검증 경로가 붙기 전(-184)까지 개발 서버는 가짜 분석기(`beez.validation.fake-analyzer=true`, 환경변수 `VALIDATION_FAKE_ANALYZER`)를 켤 수 있다. 켜면 AI를 부르지 않고 요청한 검사를 모두 후보 없이 완료로 돌려줘, 의미 분석이 필요한 검증도 PASS가 된다(실제 설계 대조 없음, 운영에서는 끔). 이때 summary.model과 실행 기록의 분석기 버전은 `fake-analyzer`다. 가짜 분석기를 끈 서버에서는 실행 기록의 분석기 버전이 `fake-analyzer`인 PASS로 START·RESUME할 수 없다(시작 관문 G1, `validation_not_passed`). 실제 AI로 바꾼 뒤에는 검증을 다시 요청해야 한다.
 - (BE 구현, -159) `Idempotency-Key` 헤더는 다른 작업 변경 API(TSK-A04·A07)와 같이 Q12 확정 전이라 처리하지 않는다. MCP-11은 `idempotency_key`를 처리한다.
-- (BE 구현, -161) 횟수 제한: 의미 분석을 큐에 넣기 전에, 같은 작업·같은 입력(입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같음)으로 **실제 검증 AI를 부른** 실행 수를 센다. 새 검증 요청과 재시도(VAL-A04)를 합쳐 세며, 값이 `beez.validation.max-model-attempts`(기본 3, 환경변수 `VALIDATION_MAX_MODEL_ATTEMPTS`)에 닿았으면 409 `validation_attempt_limit`이다. 세는 실행(모델이 돌았거나, 요청이 AI에 닿았는데 결과를 확인하지 못한 실행): 도는 중(RUNNING), 실제 분석기로 끝까지 돈 실행(OK), 시간 초과(`ai_timeout` — 504든 읽기 시간 초과든 사용량이 없어도 센다), 출력 계약 위반(`ai_invalid_output` — AI가 응답을 돌려줬다), 그 밖에 모델 호출 사용량이 한 건 이상 남은 실패(부분 분석·오류 본문에 사용량을 실은 502 등). 세지 않는 실행: 가짜 분석기(`fake-analyzer`)로 끝난 실행 — 가짜 PASS는 시작에 쓸 수 없으니 실제 AI로 바꾼 뒤 같은 계획을 다시 검증할 수 있어야 한다, AI에 요청이 닿지 않았거나 AI가 모델을 부르지 않았다고 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502), 버린 실행(DISCARDED), 서버 쪽 중단(`validation_lease_expired`·`validation_worker_interrupted` — 늦게 온 응답의 사용량이 남아도 세지 않는다). 규칙만으로 끝나는 검증(200)과 서버가 접수하는 DELTA 검증의 첫 실행은 막지 않는다(DELTA를 사람이 다시 돌리는 재시도는 센다 — VAL-A04). 계획 내용·참조·관련 계획·컨텍스트 패킷이 바뀌면 다른 입력이라 처음부터 센다(제목만 바꾼 계획은 같은 입력이다). 같은 입력의 결과 재사용(AC-16)은 아직 없어 같은 입력의 새 요청도 매번 모델을 부르고 횟수에 들어간다.
+- (BE 구현, -161) 횟수 제한: 의미 분석을 큐에 넣기 전에, 같은 작업·같은 입력(입력 스냅샷 해시가 같고 검증한 계획의 컨텍스트 패킷도 같음)으로 **실제 검증 AI를 부른** 실행 수를 센다. 새 검증 요청과 재시도(VAL-A04)를 합쳐 세며, 값이 `beez.validation.max-model-attempts`(기본 3, 환경변수 `VALIDATION_MAX_MODEL_ATTEMPTS`)에 닿았으면 409 `validation_attempt_limit`이다. 세는 실행(모델이 돌았거나, 요청이 AI에 닿았는데 결과를 확인하지 못한 실행): 도는 중(RUNNING), 실제 분석기로 끝까지 돈 실행(OK), 시간 초과(`ai_timeout` — 504든 읽기 시간 초과든 사용량이 없어도 센다), 출력 계약 위반(`ai_invalid_output` — AI가 응답을 돌려줬다), 그 밖에 모델 호출 사용량이 한 건 이상 남은 실패(부분 분석·오류 본문에 사용량을 실은 502 등). 세지 않는 실행: 가짜 분석기(`fake-analyzer`)로 끝난 실행 — 가짜 PASS는 시작에 쓸 수 없으니 실제 AI로 바꾼 뒤 같은 계획을 다시 검증할 수 있어야 한다, AI에 요청이 닿지 않았거나 AI가 모델을 부르지 않았다고 답한 실패(근거 조회 실패·입력 불완전·연결 실패·연결 시간 초과·사용량 없는 404/502), 버린 실행(DISCARDED), 서버 쪽 중단(`validation_lease_expired`·`validation_worker_interrupted` — 늦게 온 응답의 사용량이 남아도 세지 않는다). 규칙만으로 끝나는 검증(200)과 서버가 접수하는 DELTA 검증의 첫 실행은 막지 않는다(DELTA를 사람이 다시 돌리는 재시도는 센다 — VAL-A04). 계획 내용·참조·관련 계획·컨텍스트 패킷이 바뀌면 다른 입력이라 처음부터 센다(제목만 바꾼 계획은 같은 입력이다). 같은 입력의 규칙만으로 확정된 같은 작업·리비전·기준의 PASS는 현재 규칙을 다시 확인한 뒤 재사용할 수 있다. 검색·모델을 사용한 결과는 재사용하지 않아 새 요청도 모델 호출 횟수 제한에 들어간다.
 - (BE 구현, -184) 의미 분석 입력은 접수자의 현재 접근 권한을 다시 확인한 뒤 승인 설계와 관련 작업을 검색하고 검증 가능한 원문 근거만 조립한다. 알려진 검색 누락이나 사용할 수 없는 원문은 AI의 빈 결과로 바꾸지 않고 사람 검토로 보류한다. 검색 후보는 확정 참조가 아니며, 검색 범위가 프로젝트 전체를 완전히 포함한다는 보장은 없다. 기존 대기 실행에 요청자 정보가 없으면 권한을 추측하지 않고 실패 처리한다. 실제 검색·원문과 모델을 함께 연결한 운영 검증은 별도로 필요하다.
 - (BE 구현, -186) 정책 분석이 완료되면 검증된 `policy_assessments`의 승인 내용 인용과 원문 근거가 가리키는 설계 버전만 `validation_policy_ref`에 저장한다. 계획 참조와는 별개이며 검색 범위에 있었지만 인용되지 않은 후보는 저장하지 않는다. 해당 항목이 수정·폐기되면 검증을 `STALE / DESIGN_PUBLISHED`로 만들고, 그 검증으로 시작한 진행 작업은 `WAITING / REVALIDATION`으로 전환한다. 작업 시작·재개 때도 인용 버전과 현재 기준을 비교하며, 같은 입력의 계획으로 검증을 이어 받을 때 이 참조도 복사한다. 새로운 정책 추가나 인용되지 않은 항목의 연관성까지 추적하는 것은 아니다. `VALIDATION_POLICY_ANALYSIS_ENABLED`와 `VALIDATION_FAKE_ANALYZER`를 동시에 켜면 설정 오류로 기동이 실패한다.
 - (BE 구현, -287) 활동: 검증이 끝 상태(PASS·NEEDS_INPUT·NEEDS_REVIEW·ERROR)가 되면 같은 트랜잭션에서 `VALIDATION_FINISHED`(대상 VALIDATION, `task_id` 포함, PASS만 `result=SUCCESS`)를 남긴다. 접수 때 규칙만으로 끝나면(200) 행위자는 요청자, 워커가 끝내면 SYSTEM이다. 설계 발행 뒤 서버가 다시 접수한 DELTA가 규칙으로 끝나도 SYSTEM이다(발행한 사람은 그 작업의 완료를 보고하지 않았다). 키는 `validation:{id}:finished:{시도 번호}`(규칙 확정은 0)라 재시도(VAL-A04)로 다시 끝나도 겹치지 않는다. STALE·늦게 와서 버린 결과는 남기지 않는다([공통 계약](../design/10-notification-activity-contract.md) 6.2).
@@ -10548,7 +10566,7 @@ HTTP `200`.
 | `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
 | `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
 | `findings` | [Finding[]](00-common.md#schema-finding) | Y | 발견 항목 |
-| `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
+| `cache_hit` | `boolean` | Y | 접수 응답에서 기존 검증을 재사용했는지 여부. 현재는 규칙 전용 PASS만 대상이며 조회·재시도 응답은 false |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
@@ -10711,7 +10729,7 @@ HTTP `200`.
 
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
 - (BE 구현, -159) 최신순(id 내림차순), 커서는 마지막 검증 ID. 다른 프로젝트 작업은 404다.
-- (BE 구현, -168 검증 실행 이력·성능·사용량 기록, VAL-05 범위 결정) 실행(시도)마다 남기는 것은 `validation_run` 의 검증 ID·시도 번호·분석기 버전(응답 model)·처리 시간(duration_ms, AI 호출 왕복)·상태·오류·`usage` 배열·`cache_hit` 이고, 입력 버전은 검증 행의 `input_snapshot_hash`·design_ref·task_ref 로 고정돼 있어 실행에 다시 적지 않는다. 실행을 닫을 때(정상·실패·버림·늦은 응답 모두) `usage` 의 항목을 공통 사용량 표 `llm_usage`(-79)에 실행·작업·프로젝트와 함께 한 줄씩 넣는다 — 같은 `request_key` 는 한 번만(유일 제약, 늦은 응답·재전송이 같은 키로 와도 두 번 합산하지 않음), `tokens_known=false` 면 토큰 칸은 NULL(0 으로 만들지 않음), `estimated_cost_amount` 는 `currency` 와 함께 있을 때만, 항목에 `model` 이 없으면 실행의 분석기 버전(회수로 닫힌 실행에 늦은 응답이 오면 그 응답의 model 로 분석기 버전을 채운 뒤 같은 규칙), `latency_ms` 가 없으면 실행 처리 시간, `failed` 는 AI 가 적은 그 호출의 실패 여부(실행 결과와 별개). `request_key` 가 없는 항목은 적지 않는다. 값이 틀려도 실행 종결을 막지 않는다 — 비용이 숫자가 아니거나 NUMERIC(12,6) 범위 밖이면 비용 칸만 비우고, 토큰·지연이 음수·정수 범위 밖·글자면 그 칸만 비우며, 그래도 DB 오류가 나면 그 항목만 되돌리고 경고를 남긴다(틀린 사용량 때문에 검증이 RUNNING 으로 남아 리스 회수까지 가는 일이 없게). 비용 조회(-169)는 `validation.summary` 가 아니라 `llm_usage` 를 읽는다. 같은 계획·근거 재요청 때 결과 재사용(AC-16)은 "입력 해시가 같고 그 검증이 아직 PASS 로 살아 있으면 새 실행 없이 그 검증을 돌려준다" 로 두되, 지금은 재사용하지 않고 `cache_hit` 은 항상 false — 재시도(-161)와 함께 넣는다.
+- (BE 구현, -168 검증 실행 이력·성능·사용량 기록, VAL-05 범위 결정) 실행(시도)마다 남기는 것은 `validation_run` 의 검증 ID·시도 번호·분석기 버전(응답 model)·처리 시간(duration_ms, AI 호출 왕복)·상태·오류·`usage` 배열·`cache_hit` 이고, 입력 버전은 검증 행의 `input_snapshot_hash`·design_ref·task_ref 로 고정돼 있어 실행에 다시 적지 않는다. 실행을 닫을 때(정상·실패·버림·늦은 응답 모두) `usage` 의 항목을 공통 사용량 표 `llm_usage`(-79)에 실행·작업·프로젝트와 함께 한 줄씩 넣는다 — 같은 `request_key` 는 한 번만(유일 제약, 늦은 응답·재전송이 같은 키로 와도 두 번 합산하지 않음), `tokens_known=false` 면 토큰 칸은 NULL(0 으로 만들지 않음), `estimated_cost_amount` 는 `currency` 와 함께 있을 때만, 항목에 `model` 이 없으면 실행의 분석기 버전(회수로 닫힌 실행에 늦은 응답이 오면 그 응답의 model 로 분석기 버전을 채운 뒤 같은 규칙), `latency_ms` 가 없으면 실행 처리 시간, `failed` 는 AI 가 적은 그 호출의 실패 여부(실행 결과와 별개). `request_key` 가 없는 항목은 적지 않는다. 값이 틀려도 실행 종결을 막지 않는다 — 비용이 숫자가 아니거나 NUMERIC(12,6) 범위 밖이면 비용 칸만 비우고, 토큰·지연이 음수·정수 범위 밖·글자면 그 칸만 비우며, 그래도 DB 오류가 나면 그 항목만 되돌리고 경고를 남긴다(틀린 사용량 때문에 검증이 RUNNING 으로 남아 리스 회수까지 가는 일이 없게). 비용 조회(-169)는 `validation.summary` 가 아니라 `llm_usage` 를 읽는다. 같은 작업·현재 계획 리비전·기준 및 입력 해시가 같은 규칙 전용 PASS는 현재 권한과 규칙을 다시 검사한 후 재사용한다. 이 접수 응답에만 `cache_hit=true`를 표시하며 새 검증 실행이나 사용량은 만들지 않는다. 검색·모델 의존성을 증명할 수 없는 AI 결과, 오류·STALE·DELTA는 재사용하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -10780,7 +10798,7 @@ HTTP `202`.
 | `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
 | `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
 | `findings` | [Finding[]](00-common.md#schema-finding) | Y | 발견 항목 |
-| `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
+| `cache_hit` | `boolean` | Y | 접수 응답에서 기존 검증을 재사용했는지 여부. 현재는 규칙 전용 PASS만 대상이며 조회·재시도 응답은 false |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](00-common.md#validation-execution-errors) |
@@ -11838,11 +11856,11 @@ HTTP `200`.
 
 관련 요구사항: BEE-02~04·07  
 담당: BE: 오서현(문서 조회·생성 연결) / AI: 박상은 / FE: 박상은  
-상태: 서버 연결 담당 검토 · 수정안 요청 반영
+상태: 구현 (S15P31A108-344). `scope=APPROVED`만 지원한다. `INCLUDE_DRAFTS`(초안 포함 검색)는 후속이다
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다. 사람 세션만 쓸 수 있다.
 
 #### Headers
 
@@ -11850,8 +11868,9 @@ HTTP `200`.
 | --- | --- |
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
+| Origin | 신뢰하는 출처여야 한다(쓰기 요청 공통) |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 받아도 쓰지 않는다. 대화 본문을 저장하지 않아(Q13) 응답을 다시 줄 수 없으므로 같은 요청을 다시 보내면 새 답변이 만들어진다 |
 
 #### Path Parameters
 
@@ -11867,9 +11886,9 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `question` | `string` | Y | 프로젝트 설계 질문 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 찾는 범위. 기본 APPROVED. INCLUDE_DRAFTS는 원문 RAG 확장의 DOCUMENT_REVIEW에 대응. 수정안 요청 |
+| `question` | `string` | Y | 프로젝트 설계 질문. 앞뒤 공백을 지운 뒤 1~2000자 |
+| `task_id` | `ID` | N | 관련 작업. 있으면 그 작업의 상태·계획도 답의 근거가 된다. 같은 프로젝트의 작업이어야 하며 없거나 다른 프로젝트 것이면 404 |
+| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 찾는 범위. 기본 APPROVED. `INCLUDE_DRAFTS`는 아직 지원하지 않아 400 `validation_failed`다(원문 RAG 확장의 DOCUMENT_REVIEW에 대응할 후속 범위) |
 
 ```json
 {
@@ -11890,9 +11909,14 @@ HTTP `200`.
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `unresolved` | `string[]` | Y | 미확정 사항 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
-| `answer_id` | `ID` | Y | 답변 ID. BEE-A03 피드백에 씀. 수정안 요청 |
+| `answer_id` | `ID` | Y | 답변 ID. BEE-A03 피드백에 씀. 템플릿 응답에도 발급한다. 수정안 요청 |
 | `citations` | [BeeCitation[]](00-common.md#schema-beecitation) | Y | 본문 [n]과 잇는 근거 문단. 없으면 []. 수정안 요청 |
-| `grounded` | `boolean` | Y | 근거를 하나 이상 찾았는지. 수정안 요청 |
+| `grounded` | `boolean` | Y | 검증된 근거(인용·승인 설계 항목·관련 작업)를 하나 이상 붙여 답했는지. 본문 내용의 정확성 보증은 아니다. 수정안 요청 |
+| `mode` | `APPROVED` | Y | 이 답이 쓴 범위. 원문 RAG 확장 |
+| `baseline_id` | `ID` | Y | 이 답이 쓴 현재 기준 설계. 원문 RAG 확장 |
+| `document_version_ids` | `ID[]` | Y | 검색을 허용한 문서 버전(현재 기준 설계의 문서). 원문 RAG 확장 |
+| `verification` | `{level, claims, model?}` | N | 본문을 근거와 어디까지 대조했는지. `level`은 `ENTAILMENT`(문장마다 판정 모델이 확인) / `TOKENS`(숫자·식별자만 확인) / `NONE`(고정 문구). 모델 답일 때만 온다 |
+| `notices` | `string[]` | N | 화면에 작게 보일 안내. 없으면 생략 |
 
 ```json
 {
@@ -11931,9 +11955,11 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 502 | `ai_unavailable` | 응답·폴백 모두 실패 |
-| 504 | `ai_timeout` | 시간 초과 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류. 질문이 비었거나 2000자 초과, `scope`가 `APPROVED`가 아님 |
+| 409 | `index_not_ready` | 현재 기준 설계가 없거나 그 문서의 색인이 아직 준비되지 않음. 예전 승인본으로 대신 답하지 않는다 |
+| 409 | `baseline_changed` | 답을 만드는 사이 기준 설계가 바뀜. 이번 답은 버리고 answer_id도 발급하지 않는다. 다시 질문한다 |
+| 502 | `ai_unavailable` | 응답·폴백 모두 실패(질문과 가까운 문서를 찾는 단계의 실패 포함) |
+| 504 | `ai_timeout` | 시간 초과. 다시 시도하지 않는다 |
 
 ```json
 {
@@ -11947,8 +11973,14 @@ HTTP `200`.
 #### 처리 규칙
 
 - 현재 승인 설계·관련 작업을 읽고 출처와 미확정 사항을 함께 응답한다.
-- 모델 장애 시 템플릿 응답은 origin=TEMPLATE다. 실제 사용량을 만든 것으로 표시하지 않는다.
-- 장기 대화 저장은 이 API 계약에 포함하지 않는다. 공유할 판단은 기록 API로 제출한다.
+- 찾는 문서 집합은 서버가 정한다: 프로젝트의 현재 기준 설계(`current_baseline_id`)에 담긴 문서 버전 중 색인이 준비된 것뿐이다. 사용자가 문서 목록을 넘길 수 없다. 검색은 이 집합을 먼저 제한한 뒤 그 안에서 가까운 순으로 고른다.
+- AI가 돌려준 답은 BE가 AI에 보낸 집합과 대조한다. 인용한 근거가 보낸 근거(문서·버전·청크·행 범위)가 아니거나, 인용문(`quote`)이 그 근거 원문의 정확한 부분 문자열이 아니거나, 출처(`sources`)가 허용한 문서 버전 밖이거나 그 버전의 문서 ID·버전 번호가 보낸 값과 다르거나, 참조한 설계 항목·작업이 보낸 것이 아니면 **일부만 지우지 않고 그 답 전체를 버린다**(본문 [n]·`grounded`와 어긋나므로). 새 request key로 1회 다시 부르고, 그래도 안 되면 템플릿 응답을 준다. 다만 AI의 설정·계약 오류(스위치 꺼짐 503, 내부 토큰 401, 요청 형식 422)는 다시 불러도 같은 결과라 재시도하지 않고 바로 템플릿 응답을 준다(서버 로그에 `AI-A05 rejected` 오류가 남는다). 배포 뒤 첫 응답의 `origin`이 `MODEL`인지 확인한다.
+- 응답의 `citations`(문서·버전·`title`·`locator`)와 `sources`는 AI 가 준 값을 그대로 쓰지 않고 BE 가 보낸 근거로 다시 만든다. 인용 한 건마다 출처 한 건(`location`은 `문서 제목 / L시작-L끝`)이고, 이어서 참조한 승인 항목의 저장 출처 중 현재 범위 안의 문서 버전이 붙는다. 인용문 `quote`는 보낸 청크 원문 안에 있음을 확인한 뒤 앞뒤 공백만 다듬어 쓴다. `section_title`은 BE 가 보내지 않으므로 내보내지 않는다.
+- 처리 시간: 질문 임베딩(읽기 제한 20초)과 답변·판정 모델 호출(AI 읽기 제한 `beez.bee.chat-read-timeout`, 기본 35초)을 기다린다. 전체를 서버 Nginx 기본 읽기 대기(60초)보다 짧은 55초(`beez.bee.answer-budget`)로 묶는다. 첫 AI 호출도 남은 예산 안에서만 시작하고 읽기 제한을 남은 시간으로 줄이며(검색이 느리면 35초보다 짧아진다), 남은 시간이 10초보다 적으면 AI를 부르지 않고 템플릿 응답을 준다. 재시도는 지금까지 걸린 시간에 AI 읽기 제한 전체를 더해도 예산 안일 때만 한다. AI 읽기 제한을 넘기면 504 `ai_timeout`이다(재시도 없음). 두 값은 서버 env `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET`으로 코드 배포 없이 조정한다. 실제 소요 시간은 로그 `BEE-A01 timing`과 지표 `beez_bee_ask_seconds`·`beez_bee_chat_seconds`·`beez_bee_retrieve_seconds`로 잰다(질문·근거 원문은 남기지 않는다).
+- 답을 돌려주기 직전에 멤버십과 현재 기준 설계를 다시 확인한다. 통과한 뒤에만 `answer_id`를 발급한다.
+- 정보 부족·프로젝트 밖 질문은 오류가 아니라 정상 답변이다(HTTP 200, `grounded=false`, `citations=[]`, 고정 문구).
+- 모델 장애 시 템플릿 응답은 origin=TEMPLATE다. 인용과 근거 판정이 없고 `grounded=false`, `usage`는 없다. `sources`는 질문과 가까운 허용 문서의 위치만 담는다. 실제 사용량을 만든 것으로 표시하지 않는다. 모델 호출은 호출마다 `BEE_CHAT` 사용량으로 남고, 실패한 호출도 남긴다.
+- 장기 대화 저장은 이 API 계약에 포함하지 않는다. 공유할 판단은 기록 API로 제출한다. 서버는 질문·답변 본문을 저장하지 않고 답변 발급 기록(`answer_id`, 근거 문서 버전, 기준 설계)만 남긴다.
 
 #### 원문 RAG 확장 — 2026-10-27
 
@@ -12092,7 +12124,7 @@ HTTP `200`.
 
 관련 요구사항: BEE-02 (화면 PNL-12-v2-bibi-hotbar)  
 담당: BE: 오서현 / AI: 박상은 / FE: 박상은  
-상태: 구현 (S15P31A108-234). 답변 발급(BEE-A01)은 135 계약 확정 뒤 연결
+상태: 구현 (S15P31A108-234). `answer_id`는 BEE-A01이 발급한다(S15P31A108-344)
 
 #### 인증
 

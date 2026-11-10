@@ -60,6 +60,13 @@ export const router = createBrowserRouter([
         }),
       },
       {
+        // 설정 › 에이전트에서 새 탭으로 연다(D43).
+        path: 'help/agent-connection',
+        lazy: async () => ({
+          Component: (await import('@/pages/AgentHelpPage')).default,
+        }),
+      },
+      {
         path: '*',
         lazy: async () => ({
           Component: (await import('@/pages/NotFoundPage')).default,

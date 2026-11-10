@@ -63,13 +63,14 @@ import {
 } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
 import { membersQuery } from '@/features/members/membersQuery'
+import { ProposalActivity } from './ProposalActivity'
 
 interface Props {
   projectId: string
   isLeader: boolean
 }
 type ChangeStatus = ChangeProposal['status']
-type Tab = 'overview' | 'diff' | 'impact' | 'comments'
+type Tab = 'overview' | 'diff' | 'impact' | 'comments' | 'activity'
 type Mode =
   | { kind: 'detail' }
   | { kind: 'approve' }
@@ -95,6 +96,7 @@ const tabs = [
   ['diff', '바뀌는 내용'],
   ['impact', '영향'],
   ['comments', '의견'],
+  ['activity', '활동'],
 ] as const
 const statusOrder: Record<ChangeStatus, number> = {
   IN_REVIEW: 0,
@@ -1642,6 +1644,14 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             </Button>
                           </p>
                         </div>
+                      )}
+                      {tab === 'activity' && (
+                        <ProposalActivity
+                          key={current.id}
+                          projectId={projectId}
+                          proposalId={current.id}
+                          onShowComments={() => setTab('comments')}
+                        />
                       )}
                     </div>
                     {/* 서버는 팀장이어도 작성자면 거두게 한다(PR #72 5차 조사 FIFTH-DOC-02). */}

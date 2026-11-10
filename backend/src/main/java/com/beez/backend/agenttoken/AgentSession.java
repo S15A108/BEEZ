@@ -13,7 +13,7 @@ import java.time.Instant;
  * 에이전트 연결 세션 (V2 agent_session, V41 칸 추가, S15P31A108-178). MCP initialize 가 성공할 때마다 한 행이다.
  * 사용자 계정·토큰·MCP 세션 ID 는 서로 다른 식별자다 (02-mcp-tools "연결과 인증") — 이 행이 셋을 잇는다.
  * 끝남·마지막 통신은 동시에 바뀔 수 있어 엔티티를 고쳐 저장하지 않고 {@link AgentSessionRepository} 의 조건부 UPDATE 로 바꾼다.
- * {@code current_task_id} 는 아직 쓰지 않아 매핑하지 않는다.
+ * {@code current_task_id}(이 연결이 지금 하는 작업)는 작업 START·RESUME 때 TaskStateService 가 SQL 로 적는다(-336). 엔티티로는 읽거나 쓰지 않아 매핑하지 않는다.
  */
 @Entity
 @Table(name = "agent_session")

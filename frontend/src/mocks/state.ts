@@ -39,7 +39,8 @@ export type StoredChangeDraft = Omit<
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
 // v10: 사무실 에이전트 상태 예시(D37) 시드. 키를 올려 이전 브라우저 저장값을 새 시드로 바꾼다.
 // v11: 보완 질문 유형(선택·단답·서술)과 초안 후보(S15P31A108-202) 시드.
-export const MOCK_STORAGE_KEY = 'beez.mock.api.v12'
+// v13: 변경 제안 71 활동 이력(S15P31A108-303) 시드와 활동의 actor_type 필수화. dev 의 v12 를 이미 연 브라우저에는 이 시드가 없어 키를 올린다.
+export const MOCK_STORAGE_KEY = 'beez.mock.api.v13'
 export const DEMO_EMAIL = 'demo@beez.local'
 export const DEMO_PASSWORD = 'beez-demo-2026'
 export const MOCK_NOTICE =
@@ -138,6 +139,73 @@ export function nextId(database: MockDatabase): string {
   return String(database.next_id++)
 }
 
+type TrailRow = [
+  type: string,
+  actor: Pick<Activity, 'actor_type' | 'actor_account_id' | 'actor_name'>,
+  at: string,
+]
+const trailPeople = {
+  proposer: {
+    actor_type: 'HUMAN',
+    actor_account_id: '12',
+    actor_name: '김동료',
+  },
+  leader: { actor_type: 'HUMAN', actor_account_id: '11', actor_name: '이팀장' },
+  agent: {
+    actor_type: 'AGENT',
+    actor_account_id: '13',
+    actor_name: '민수 에이전트',
+  },
+  bee: { actor_type: 'BEE' },
+  system: { actor_type: 'SYSTEM' },
+} as const
+function proposalTrail(): Activity[] {
+  const rows: TrailRow[] = [
+    ['CHANGE_PROPOSAL_SUBMITTED', trailPeople.proposer, '2026-10-30T03:00:00Z'],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.agent, '2026-10-30T03:05:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-30T03:10:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.leader, '2026-10-30T03:12:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_REQUESTED',
+      trailPeople.bee,
+      '2026-10-30T03:15:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.proposer, '2026-10-30T03:20:00Z'],
+    ['CHANGE_PROPOSAL_SUBMITTED', trailPeople.proposer, '2026-10-30T03:30:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-30T03:40:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.agent, '2026-10-30T03:45:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_REQUESTED',
+      trailPeople.system,
+      '2026-10-30T03:50:00Z',
+    ],
+    ['CHANGE_PROPOSAL_COMMENTED', trailPeople.leader, '2026-10-30T03:55:00Z'],
+    [
+      'CHANGE_PROPOSAL_REVIEW_STARTED',
+      trailPeople.leader,
+      '2026-10-30T04:00:00Z',
+    ],
+  ]
+  return rows.map(([type, actor, created_at], index) => ({
+    id: String(1030 + index),
+    type,
+    ...actor,
+    change_proposal_id: '71',
+    target_type: 'CHANGE_PROPOSAL',
+    target_id: '71',
+    result: 'SUCCESS',
+    created_at,
+  }))
+}
+
 export function blankProject(
   project: Project,
   account: Account,
@@ -202,7 +270,8 @@ function seededActivities(account: Account, created: string): Activity[] {
     },
     { actor_type: 'BEE' },
   ]
-  // 변경 제안 활동은 제안 71 링크를 달지 않는다(변경 제안 E2E가 '변경 요청 #71' 버튼 하나를 누른다).
+  // 이 시드의 변경 제안 활동은 제안 71 링크를 달지 않는다. 제안 71 의 이력은 아래 proposalTrail()(303)이 따로 둔다.
+  // 둘 다 대시보드 타임라인에 나오므로 시각은 이 시드 마지막(2026-10-29T03:00Z)보다 뒤로 두었다.
   const rows: [string, Partial<Activity>][] = [
     ['MEMBER_JOINED', { target_type: 'MEMBER', target_id: '22' }],
     ['AGENT_CONNECTED', { target_type: 'AGENT_SESSION', target_id: '53' }],
@@ -317,6 +386,8 @@ function seededProject(
       media_type: 'text/markdown',
       content_hash: `sha256:mock-${versionId}`,
       content,
+      created_by: account.id,
+      is_current_baseline: approved,
       created_at: created,
     }
     state.versions.push(version)
@@ -460,6 +531,9 @@ function seededProject(
     version_no: 2,
     status: 'DRAFT' as const,
     content: `${state.versions[0].content}\n미정: 초대 만료 안내 문구`,
+    created_by: '12',
+    is_current_baseline: false,
+    change_proposal_id: '71',
   }
   state.versions.push(draft)
   state.documents[0].latest_draft = draft
@@ -704,6 +778,8 @@ function seededProject(
       result: 'SUCCESS',
       created_at: created,
     },
+    // 변경 제안 71 의 지나온 길(303). 행위자 4종과 2페이지 이상이 보이게 한다.
+    ...proposalTrail(),
     ...(first ? seededActivities(account, created) : []),
   ]
   return state

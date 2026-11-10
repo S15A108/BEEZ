@@ -16,6 +16,7 @@ from app.routers import (
     health,
     impact,
     meeting_analysis,
+    meeting_revision,
     planning_questions,
     revision_blocks,
     validation,
@@ -51,6 +52,7 @@ app.include_router(design_recommendations.router)
 app.include_router(context_selection.router)
 app.include_router(impact.router)
 app.include_router(meeting_analysis.router)
+app.include_router(meeting_revision.router)
 app.include_router(planning_questions.router)
 app.include_router(design_drafts.router)
 app.include_router(bee_chat.router)

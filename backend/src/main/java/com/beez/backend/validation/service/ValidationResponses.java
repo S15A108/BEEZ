@@ -31,6 +31,11 @@ public class ValidationResponses {
     }
 
     public ValidationResponse toResponse(ValidationRow v) {
+        return toResponse(v, false);
+    }
+
+    /** cacheHit describes this response; subsequent reads do not claim another cache hit. */
+    public ValidationResponse toResponse(ValidationRow v, boolean cacheHit) {
         List<ValidationDesignRefResponse> designRefs = new ArrayList<>();
         for (Map<String, Object> r : repository.designRefs(v.id())) {
             designRefs.add(new ValidationDesignRefResponse(Ids.str(id(r.get("design_item_id"))),
@@ -57,7 +62,7 @@ public class ValidationResponses {
                 ? (Map<String, Object>) value : null;
         return new ValidationResponse(Ids.str(v.id()), Ids.str(v.taskId()), Ids.str(v.planRevisionId()),
                 Ids.str(responseBaseline(v)), v.status(), v.trigger(), v.staleReason(), v.currentAttempt(), designRefs, taskRefs,
-                findings, false,
+                findings, cacheHit,
                 v.requestedAt(), v.finishedAt(), errorCode, policyAnalysis);
     }
 

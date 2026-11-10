@@ -21,6 +21,7 @@ import com.beez.backend.validation.repository.ValidationRepository;
 import com.beez.backend.validation.service.AnalysisResultApplier;
 import com.beez.backend.validation.service.FakeValidationAnalyzer;
 import com.beez.backend.validation.service.ValidationAnalyzer;
+import com.beez.backend.validation.service.ValidationRules;
 import com.beez.backend.validation.worker.ValidationWorker;
 import java.net.http.HttpResponse;
 import java.sql.Types;
@@ -331,6 +332,79 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
                         + ",\"validation_id\":\"" + v.get("id").asText() + "\"}", member);
         assertThat(start.statusCode()).as(start.body()).isEqualTo(200);
         assertThat(TaskApiSupport.stringField(start.body(), "status")).isEqualTo("IN_PROGRESS");
+    }
+
+    @Test
+    void rulesOnlyPass_reusesOnlyCurrentSameTaskResultAfterAuthorization() throws Exception {
+        long[] t = createTask(planJson("A", "[]", true, null), member);
+        JsonNode first = body(accept(t, member), 200);
+        assertThat(first.get("status").asText()).isEqualTo("PASS");
+        assertThat(first.get("cache_hit").asBoolean()).isFalse();
+
+        JsonNode repeated = body(accept(t, member), 200);
+        assertThat(repeated.get("id").asText()).isEqualTo(first.get("id").asText());
+        assertThat(repeated.get("cache_hit").asBoolean()).isTrue();
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id=:t").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
+        assertThat(accept(t, outsider).statusCode()).isEqualTo(404);
+
+        long[] other = createTask(planJson("B", "[]", true, null), member);
+        JsonNode otherResult = body(accept(other, member), 200);
+        assertThat(otherResult.get("id").asText()).isNotEqualTo(first.get("id").asText());
+        assertThat(otherResult.get("cache_hit").asBoolean()).isFalse();
+
+        api.jdbc.sql("update validation set status='STALE', stale_reason='PLAN_CHANGED' where id=:v")
+                .param("v", first.get("id").asLong()).update();
+        JsonNode afterStale = body(accept(t, member), 200);
+        assertThat(afterStale.get("id").asText()).isNotEqualTo(first.get("id").asText());
+        assertThat(afterStale.get("cache_hit").asBoolean()).isFalse();
+    }
+
+    @Test
+    void modelBackedValidation_isNotReusedByRulesOnlyCache() throws Exception {
+        long[] t = createTask(planJson("A", api.implementsRef("API-01"), true, null), member);
+        JsonNode first = body(accept(t, member), 202);
+        JsonNode second = body(accept(t, member), 202);
+        assertThat(second.get("id").asText()).isNotEqualTo(first.get("id").asText());
+        assertThat(second.get("cache_hit").asBoolean()).isFalse();
+    }
+
+    @Test
+    void newerDeltaFailurePreventsReusingAnOlderPass() throws Exception {
+        long[] t = createTask(planJson("A", "[]", true, null), member);
+        JsonNode first = body(accept(t, member), 200);
+        long baseline = first.get("baseline_id").asLong();
+        repository.insertValidation(t[0], t[1], baseline, "ERROR", "DELTA", "test-delta-hash",
+                ValidationRules.RULE_VERSION, 1, Map.of("error_code", "validation_execution_failed"), true);
+        JsonNode current = body(accept(t, member), 200);
+        assertThat(current.get("id").asLong()).isGreaterThan(first.get("id").asLong());
+        assertThat(current.get("cache_hit").asBoolean()).isFalse();
+        JsonNode latest = body(api.get(tasksPath() + "/" + t[0], member), 200);
+        assertThat(latest.get("validation_status").asText()).isEqualTo("PASS");
+    }
+
+    @Test
+    void concurrentRulesOnlyRequestsCreateOneValidationAndReuseIt() throws Exception {
+        long[] t = createTask(planJson("A", "[]", true, null), member);
+        var gate = new CountDownLatch(1);
+        java.util.function.Supplier<HttpResponse<String>> request = () -> {
+            try {
+                if (!gate.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("request gate timed out");
+                return accept(t, member);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+        var first = CompletableFuture.supplyAsync(request);
+        var second = CompletableFuture.supplyAsync(request);
+        gate.countDown();
+        JsonNode a = body(first.get(20, TimeUnit.SECONDS), 200);
+        JsonNode b = body(second.get(20, TimeUnit.SECONDS), 200);
+        assertThat(a.get("id").asText()).isEqualTo(b.get("id").asText());
+        assertThat(List.of(a.get("cache_hit").asBoolean(), b.get("cache_hit").asBoolean()))
+                .containsExactlyInAnyOrder(false, true);
+        assertThat(api.jdbc.sql("select count(*) from validation where task_id=:t").param("t", t[0])
+                .query(Integer.class).single()).isEqualTo(1);
     }
 
     // ---- 의미 분석이 필요한 경우 (202 → 워커) ----
@@ -1399,6 +1473,9 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         List<Long> ids = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
             ids.add(body(accept(t, member), 200).get("id").asLong());
+            // Identical live rules-only PASS is now reused; stale earlier results to create history.
+            if (i < 2) api.jdbc.sql("update validation set status='STALE', stale_reason='PLAN_CHANGED' where id=:v")
+                    .param("v", ids.get(i)).update();
         }
         String history = tasksPath() + "/" + t[0] + "/validations";
         JsonNode first = body(api.get(history + "?limit=2", member), 200);

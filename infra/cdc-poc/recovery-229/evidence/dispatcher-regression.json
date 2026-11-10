@@ -1,0 +1,16 @@
+{
+  "returncode": 0,
+  "tests": {
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "passed": true,
+  "cases": [
+    "aFailedDurabilityCheckDoesNotDispatchOrAcknowledgeTheHint()",
+    "fullQueueResumesBeforeRejectedCandidateAndLaterRecoveryProcessesIt()",
+    "duplicateHintsDuringProcessingAreCheckedButStartOnlyOneLocalWorker()",
+    "failedWorkerCanBeDispatchedAgainByARecoveryScan()"
+  ]
+}

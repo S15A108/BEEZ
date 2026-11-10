@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>결속: 세션은 만든 토큰에만 쓸 수 있다. 다른 토큰이 남의 세션 ID 를 보내거나 기록이 없는 세션이면 없는 세션처럼 거부한다
  *       (-176 PR #103 메모)</li>
  *   <li>마지막 통신: 요청마다 last_report_at 을 1분 단위로 갱신한다. 연결 현황 조회는 -75</li>
+ *   <li>현재 작업: 작업 START·RESUME 이 연결에 적고(TaskStateService), 새 연결은 같은 사람의 바로 이전 연결이 하던 작업을 이어 받는다 (-336)</li>
  * </ul>
  * 토큰 폐기·멤버십 종료는 이 표가 아니라 토큰 검증({@link StoredAgentTokenVerifier})이 매 요청 401 로 막는다.
  */
@@ -89,6 +90,8 @@ public class AgentSessionService {
         int replaced = sessions.replaceLiveOfMember(principal.projectId(), principal.accountId(), now);
         AgentSession saved = sessions.save(
                 AgentSession.open(principal.agentTokenId(), sessionKey, clientName, clientVersion, now));
+        // 재시작한 에이전트가 하던 작업을 이어 가리킨다 — 팀장 취소의 보고 끊김 판정이 새 연결의 통신을 본다 (-336)
+        sessions.carryCurrentTask(saved.getId(), principal.projectId(), principal.accountId());
         log.info("mcp session connected agent_session={} project={} account={} token={} client={} replaced={}",
                 saved.getId(), principal.projectId(), principal.accountId(), principal.agentTokenId(),
                 saved.getClientName(), replaced);
