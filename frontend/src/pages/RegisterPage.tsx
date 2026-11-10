@@ -35,6 +35,8 @@ export default function RegisterPage() {
   const [needVerify, setNeedVerify] = useState(false)
   // 토큰이 만료·사용됐다는 가입 오류(email_not_verified) 뒤에 인증 칸을 처음 상태로 다시 그린다.
   const [verifyKey, setVerifyKey] = useState(0)
+  // 가입하기를 누른 횟수. 다른 칸 검사에 걸려 onSubmit이 불리지 않아도 이메일 칸을 같이 검사한다.
+  const [attempt, setAttempt] = useState(0)
   // 초대 화면에서 왔으면 초대 토큰과 메일 링크의 프로젝트 ID를 로그인까지 넘긴다.
   const login = `/login${invitationQuery(params)}`
   return (
@@ -47,7 +49,8 @@ export default function RegisterPage() {
         <h2 id="register-title" className="text-2xl font-bold">
           회원가입
         </h2>
-        <div className="mt-6">
+        {/* React의 submit은 부모로 전파돼, 폼 검사 결과와 상관없이 누를 때마다 센다. */}
+        <div className="mt-6" onSubmit={() => setAttempt((count) => count + 1)}>
           <ActionForm
             block
             auth
@@ -60,6 +63,7 @@ export default function RegisterPage() {
                   <EmailVerification
                     key={verifyKey}
                     needed={needVerify}
+                    attempt={attempt}
                     onVerified={setVerified}
                   />
                 ),
@@ -83,6 +87,8 @@ export default function RegisterPage() {
                 if (getApiErrorCode(cause) === 'email_not_verified') {
                   setVerified(null)
                   setVerifyKey((key) => key + 1)
+                  // 새로 그린 인증 칸이 지난 가입 시도로 '이메일을 입력해 주세요.'를 띄우지 않게 한다.
+                  setAttempt(0)
                 }
                 throw cause
               }
