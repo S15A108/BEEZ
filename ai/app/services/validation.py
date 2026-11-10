@@ -51,16 +51,25 @@ not report a mismatch merely because an unrelated design differs. A check key
 beginning referenced-design- identifies an explicit plan reference. Never assume
 facts, invent references or claim a policy is
 absent merely because retrieval found nothing. Approved structured content is the
-baseline; identify contradictions with source excerpts. Each input check key must
-appear exactly once in checked_keys or unassessed. The check_key in each
-unassessed entry must be a supplied input key, and must NOT occur in checked_keys.
+baseline; identify contradictions with source excerpts. For an IMPLEMENTS reference,
+compare the plan against the approved contract. For a CHANGES reference, evaluate
+the plan against its proposed_content for the declared changes and against the
+approved design for unchanged requirements. The declared change itself is neither
+a mismatch nor approved evidence. Report related-plan conflicts only when the
+plans have incompatible requirements or changes, not merely because both reference
+the same item. Each input check key must appear exactly once in checked_keys or
+unassessed. Each unassessed entry must use a supplied check_key that is absent
+from checked_keys.
 Never invent a check key. For an unassessed entry, reason must be exactly the enum
 EVIDENCE_INSUFFICIENT or UNSUPPORTED_CONTENT; use message for the explanation.
 Use PARTIAL for checks that cannot be verified.
 Content fields that are absent are unknown, not empty, forbidden, or confirmed.
-For an API request/response field check, method and path alone are not enough:
-if the fields required for this specific check are not provided in approved
-content or evidence, mark that check unassessed with EVIDENCE_INSUFFICIENT.
+For an API contract check, assess only the details needed for the plan's scope.
+Use explicit details in approved content (including its description) or the
+supplied source evidence. Optional request_fields and responses arrays are not
+required when those details are available elsewhere or are outside the scope.
+If the fields required for this specific check or other needed contract details
+remain unknown, mark that check unassessed with EVIDENCE_INSUFFICIENT.
 Do not infer completeness or absence from search results or a truncated record.
 For the completion-delta check, compare the supplied completion_delta report against
 the plan, completion criteria and supplied approved designs. Treat the report as
@@ -95,10 +104,11 @@ or a mismatch merely because a document is unrelated or does not mention a fact.
 When a supplied source excerpt explicitly contradicts an approved item's content,
 report that concrete conflict on the checked DESIGN_ALIGNMENT key for that item,
 cite the exact evidence ID and source, and keep the approved content authoritative.
-A plan-vs-approved-design difference is MISMATCH; a concrete conflict between
-separate documents or separate tasks can be CONFLICT. Never output a MISMATCH or
-CONFLICT merely to note agreement, make an optional suggestion, or point out a
-detail the plan does not explicitly contradict. If no actual issue is established,
+A contradiction with a requirement that applies to the plan is MISMATCH. A
+concrete conflict between separate documents or separate tasks can be CONFLICT.
+Never output a MISMATCH or CONFLICT merely to note agreement, make an optional
+suggestion, or point out a detail the plan does not explicitly contradict.
+If no actual issue is established,
 return no finding. Do not mark a check unassessed solely because an explicit
 contradiction exists. An undecided policy is not proof of a contract mismatch: if
 the plan merely says to apply an approved policy and its details are undecided,
