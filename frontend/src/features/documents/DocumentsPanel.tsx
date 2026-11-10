@@ -498,8 +498,7 @@ export function DocumentsPanel({
                                 {document.approved_version!.version_no}
                               </span>
                               <span className="block truncate text-xs text-muted-foreground">
-                                담당{' '}
-                                {document.domain || '공통'}
+                                담당 {document.domain || '공통'}
                               </span>
                             </span>
                           </span>
@@ -1152,8 +1151,7 @@ function DocumentDetail({
                     {data.document.title} v{data.version.version_no}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    담당{' '}
-                    {data.document.domain || '공통'} ·{' '}
+                    담당 {data.document.domain || '공통'} ·{' '}
                     {base ? `현재 기준 v${base.version_no}` : '승인 전'}
                   </p>
                 </div>
