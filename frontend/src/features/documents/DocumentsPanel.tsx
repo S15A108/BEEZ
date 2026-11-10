@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { useProjectStart } from '@/features/projects/useProjectStart'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useSession } from '@/features/auth/useSession'
+import { membersQuery } from '@/features/members/membersQuery'
 import type { DocumentVersion } from '@/api/contracts/common'
 import { DocumentReview } from './DocumentReview'
 import { reviewStage } from './reviewStage'
@@ -97,6 +98,19 @@ function Chip({ tone, children }: { tone: string; children: ReactNode }) {
   )
 }
 
+// 버전 이력의 상태 칩 색. 승인 = 현재 기준 후보, 초안 = 아직 쓸 수 있는 후보, 이전 버전 = 대체된 승인본,
+// 미채택(REJECTED) = 채택되지 않았고 다시 쓸 수 없는 것(제안을 거뒀거나, 다시 제출했거나, 다른 제안이 먼저 발행됨,
+// 문서함 반려). 잘못이 아니라 결과라 이전 버전과 같은 회색 계열로 낮춘다.
+const versionTone: Record<DocumentVersion['status'], string> = {
+  APPROVED: 'green',
+  DRAFT: 'orange',
+  SUPERSEDED: 'muted',
+  REJECTED: 'muted',
+}
+// 버전 상태 이름은 이력과 버전 드롭다운이 같게 보인다. 채택되지 않은 버전은 '반려'가 아니라 '미채택'이다.
+const versionStatusLabel = (status: DocumentVersion['status']) =>
+  status === 'REJECTED' ? '미채택' : statusLabel(status)
+
 type View =
   | { name: 'list' }
   // versionId: 기준 vN 문서 보기에서 연 그 기준의 문서 버전
@@ -125,6 +139,11 @@ export function DocumentsPanel({
     // HUD 비비 줄의 '문서 검토 중'은 'review:문서 ID'로 들어와 검토 화면을 연다. 승인 전 문서는 상세(DOC-A03)로 열 수 없다.
     if (focus?.startsWith('review:'))
       return { name: 'review', id: focus.slice(7) }
+    // 비비·회의·기획 답의 근거는 'version:문서 ID:버전 ID'로 들어와 인용한 그 버전(초안 포함)을 연다.
+    if (focus?.startsWith('version:')) {
+      const [id, versionId] = focus.slice(8).split(':')
+      return { name: 'detail', id, versionId }
+    }
     return focus ? { name: 'detail', id: focus } : { name: 'list' }
   })
   const [query, setQuery] = useState('')
@@ -692,6 +711,11 @@ const uploadFailure: Record<string, { file?: true; text: string }> = {
     file: true,
     text: '파일이 너무 커요. 1 MiB 이하 Markdown 파일만 올릴 수 있어요.',
   },
+  // 서버는 UTF-8이 아니거나 비어 있는 파일을 400으로 거절한다.
+  validation_failed: {
+    file: true,
+    text: '파일을 읽지 못했어요. 비어 있지 않은 UTF-8 Markdown(.md) 파일인지 확인해 주세요.',
+  },
   document_kind_exists: {
     text: '이 종류의 문서는 이미 있어요. 공용 문서함에서 그 칸을 눌러 열어 주세요.',
   },
@@ -1018,7 +1042,7 @@ function BaselineDocuments({
 }
 
 // 문서 상세 (F-20) · 보기 전용. 탭 두 개: 문서 내용 · 버전 이력. 버전 비교는 팀장 승인 화면의 '변경 내용'에서 본다.
-// versionId를 주면(기준 vN 문서에서 열면) 그 버전부터 보인다.
+// versionId를 주면(기준 vN 문서나 근거에서 열면) 그 버전부터 보인다.
 function DocumentDetail({
   projectId,
   documentId,
@@ -1033,6 +1057,15 @@ function DocumentDetail({
   onEdit: () => void
 }) {
   const action = useProjectAction(projectId)
+  const openPane = useWorkspaceStore((state) => state.openPane)
+  const members = useQuery(membersQuery(projectId))
+  // 올린 계정 이름. 구성원 목록이 온 뒤에도 못 찾으면(나간 사람 등) 다른 패널처럼 '팀원'으로 보인다.
+  const uploaderName = (version: DocumentVersion) =>
+    version.created_by && members.data
+      ? (members.data.items.find(
+          (item) => item.account_id === version.created_by,
+        )?.name ?? '팀원')
+      : undefined
   const [picked, setVersionNo] = useState<number>()
   const [tab, setTab] = useState<'content' | 'history'>('content')
   const [classification, setClassification] = useState(false)
@@ -1059,12 +1092,14 @@ function DocumentDetail({
     ? versions.data?.items.find((item) => item.id === versionId)?.version_no
     : undefined
   const versionNo = picked ?? pinned
+  // 버전을 지정해 열 때는 이력에서 그 버전 번호를 찾은 뒤에만 부른다.
+  // 이력 조회가 실패하거나 그 버전이 없을 때 번호 없이 부르면 승인본이 열린다(PR #218 리뷰).
+  const unresolved = !!versionId && versionNo === undefined
   const document = useQuery({
     queryKey: ['projects', projectId, 'document', documentId, versionNo],
     queryFn: () =>
       documentsApi.get(projectId, documentId, { version_no: versionNo }),
-    // 기준 버전으로 열 때는 이력에서 그 버전 번호를 찾은 뒤에 부른다.
-    enabled: !versionId || picked !== undefined || versions.isFetched,
+    enabled: !unresolved,
   })
   const download = async (version: DocumentVersion) => {
     await action.run(async () => {
@@ -1087,6 +1122,20 @@ function DocumentDetail({
       on
         ? 'border-primary font-semibold'
         : 'border-transparent text-muted-foreground',
+    )
+  if (unresolved)
+    // 이력을 읽는 중이면 불러오는 중, 실패하면 오류와 다시 불러오기를 AsyncState가 보인다.
+    return versions.isSuccess ? (
+      <p
+        role="alert"
+        className="rounded-xl border border-destructive/20 bg-destructive/5 p-5 text-sm"
+      >
+        열려던 버전을 버전 이력에서 찾을 수 없어요. 지워졌거나 볼 수 없는
+        버전이에요. 위의 &lsquo;현재 문서&rsquo;로 돌아가 문서를 다시 열어
+        주세요.
+      </p>
+    ) : (
+      <AsyncState query={versions}>{() => null}</AsyncState>
     )
   return (
     <AsyncState query={document}>
@@ -1199,7 +1248,8 @@ function DocumentDetail({
                         key={version.id}
                         value={String(version.version_no)}
                       >
-                        v{version.version_no} · {statusLabel(version.status)}
+                        v{version.version_no} ·{' '}
+                        {versionStatusLabel(version.status)}
                         {version.id === base?.id ? ' (기준)' : ''}
                       </NativeSelectOption>
                     ))}
@@ -1231,30 +1281,45 @@ function DocumentDetail({
                       >
                         <span className="flex flex-wrap items-center gap-2">
                           <strong>v{version.version_no}</strong>
-                          <Chip
-                            tone={
-                              version.status === 'APPROVED' ? 'green' : 'orange'
-                            }
-                          >
-                            {statusLabel(version.status)}
+                          <Chip tone={versionTone[version.status]}>
+                            {versionStatusLabel(version.status)}
                           </Chip>
-                          {version.id === base?.id && (
+                          {(version.is_current_baseline === true ||
+                            (!history.items.some(
+                              (item) => item.is_current_baseline,
+                            ) &&
+                              version.id === base?.id)) && (
                             <Chip tone="muted">현재 기준</Chip>
                           )}
                           <span className="text-xs text-muted-foreground">
                             {version.file_name} · {stamp(version.created_at)}
+                            {uploaderName(version) &&
+                              ` · ${uploaderName(version)}`}
                           </span>
                         </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setVersionNo(version.version_no)
-                            setTab('content')
-                          }}
-                        >
-                          보기
-                        </Button>
+                        <span className="flex flex-wrap gap-2">
+                          {version.change_proposal_id && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                openPane('changes', version.change_proposal_id)
+                              }
+                            >
+                              변경 제안 보기
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setVersionNo(version.version_no)
+                              setTab('content')
+                            }}
+                          >
+                            보기
+                          </Button>
+                        </span>
                       </li>
                     ))}
                   </ul>

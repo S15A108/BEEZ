@@ -66,6 +66,23 @@ public class ValidationRepository {
                 .param("v", validationId).param("p", projectId).query(ValidationRepository::validation).optional();
     }
 
+    /** Reuse only a completed, rules-only PASS for the exact task, revision and baseline. */
+    public Optional<ValidationRow> reusableRulesOnlyPass(long projectId, long taskId, long revisionId,
+                                                         long baselineId, String inputHash, String ruleVersion) {
+        return jdbc.sql(SELECT_VALIDATION + """
+                 where t.project_id = :p and v.task_id = :t and v.plan_revision_id = :r
+                   and v.baseline_id = :b and v.input_snapshot_hash = :h and v.rule_version = :rv
+                   and v.trigger = 'AGENT' and v.status = 'PASS' and v.current_attempt = 0
+                   and v.finished_at is not null and v.stale_reason is null
+                   and not exists (select 1 from validation_run run where run.validation_id = v.id)
+                   and not exists (select 1 from validation newer where newer.task_id = v.task_id and newer.id > v.id)
+                 order by v.id desc limit 1
+                """)
+                .param("p", projectId).param("t", taskId).param("r", revisionId).param("b", baselineId)
+                .param("h", inputHash).param("rv", ruleVersion)
+                .query(ValidationRepository::validation).optional();
+    }
+
     /** 검증이 속한 프로젝트. 잠그지 않는 읽기 — 워커가 프로젝트 행을 잠그기 전에 어느 프로젝트인지 알아내는 데 쓴다 */
     public Optional<Long> projectIdOf(long validationId) {
         return jdbc.sql("select t.project_id from validation v join task t on t.id = v.task_id where v.id = :v")

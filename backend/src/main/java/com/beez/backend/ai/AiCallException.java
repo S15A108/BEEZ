@@ -12,12 +12,24 @@ import org.springframework.http.HttpStatus;
  */
 public class AiCallException extends ApiException {
     private final List<Map<String, Object>> usage;
+    private final boolean retryable;
 
     /** @param usage 오류 본문의 usage 배열. 본문이 없거나 usage 가 없거나 읽을 수 없으면 null */
     public AiCallException(HttpStatus status, String code, String message, List<Map<String, Object>> usage) {
+        this(status, code, message, usage, true);
+    }
+
+    /**
+     * @param retryable 같은 요청을 다시 보내면 결과가 달라질 수 있는가. AI 의 설정·계약 오류(스위치 꺼짐 503, 토큰 401,
+     *                  요청 형식 422)는 다시 불러도 같으므로 false 다
+     */
+    public AiCallException(HttpStatus status, String code, String message, List<Map<String, Object>> usage, boolean retryable) {
         super(status, code, message);
         this.usage = usage;
+        this.retryable = retryable;
     }
 
     public List<Map<String, Object>> usage() { return usage; }
+
+    public boolean retryable() { return retryable; }
 }
