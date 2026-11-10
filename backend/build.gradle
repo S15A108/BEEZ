@@ -108,6 +108,12 @@ tasks.register('integrationTest', Test) {
         includeTags 'integration'
     }
     shouldRunAfter tasks.named('test')
+    // 클래스를 JVM 여러 개에 나눠 돌린다. fork 마다 Postgres 컨테이너를 따로 띄우므로 "DB 를 비우지 않고 공유" 전제는 fork 안에서 유지된다.
+    // fork 가 늘면 시험 하나하나가 CPU 경합으로 느려져서 코어 4개당 1개, 최대 4개로 둔다 (22코어 PC 585s → 381s, -354).
+    // CI 러너(4 vCPU)는 1개 그대로다. 바꿔 보려면 -PintegrationTestForks=N.
+    def forks = project.findProperty('integrationTestForks')
+    maxParallelForks = forks ? Integer.parseInt(forks.toString())
+            : Math.max(1, Math.min(4, Runtime.runtime.availableProcessors().intdiv(4)))
     testLogging {
         events 'passed', 'skipped', 'failed'
         exceptionFormat 'full'
