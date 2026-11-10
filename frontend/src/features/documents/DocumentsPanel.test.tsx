@@ -720,3 +720,36 @@ it('버전 이력은 승인·이전 버전·초안·미채택을 구분해 보�
   expect(within(row(2)).getByText('이전 버전')).toBeInTheDocument()
   expect(within(row(1)).getByText('초안')).toBeInTheDocument()
 })
+
+// S15P31A108-362: 참고 승인본이 바뀌어 서버가 검토를 쓸 수 없다고 알리면, 카드는 '팀장 검토 요청 전'이 아니라 다시 검토를 안내한다.
+it('시작 준비 카드는 서버가 검토를 쓸 수 없다고 알린 문서를 다시 검토 필요로 보인다', async () => {
+  vi.mocked(documentsApi.workingCopy).mockResolvedValue({
+    document_id: '1',
+    owner_account_id: '11',
+    revision: 1,
+    status: 'EDITING',
+    content: '',
+    file_name: 'requirements.md',
+    latest_review: {
+      id: '5',
+      input_revision: 1,
+      resolved_revision: 1,
+      reference_hash: 'sha256:old',
+      summary: '요약',
+      unavailable_references: ['ERD'],
+      references: [],
+      suggestions: [],
+      usage: [],
+      steps: [],
+      references_used: [],
+    },
+    submissions: [],
+    review_stale: true,
+  })
+  mount()
+  expect(await screen.findByText('다시 검토 필요')).toBeInTheDocument()
+  expect(
+    screen.getByText('참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'),
+  ).toBeInTheDocument()
+  expect(screen.queryByText('팀장 검토 요청 전')).not.toBeInTheDocument()
+})

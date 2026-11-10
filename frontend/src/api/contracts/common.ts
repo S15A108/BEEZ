@@ -416,6 +416,8 @@ export const documentWorkingCopySchema = z.object({
   file_name: z.string(),
   latest_review: documentBeeReviewSchema.optional(),
   submissions: documentReviewSubmissionSchema.array(),
+  // latest_review를 지금 쓸 수 없음(참고 승인본이 바뀜·본문 리비전 불일치). 서버가 판정하며 없으면 false로 본다(S15P31A108-362).
+  review_stale: z.boolean().optional(),
 })
 export type DocumentWorkingCopy = z.infer<typeof documentWorkingCopySchema>
 

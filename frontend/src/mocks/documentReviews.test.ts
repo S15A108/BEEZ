@@ -297,3 +297,56 @@ it('팀장이 먼저 결정했으면 취소는 submission_decided 로 막힌다'
     ),
   ).toBe('submission_decided')
 })
+
+// S15P31A108-362: 다른 문서가 승인돼 참고 승인본이 바뀌면 서버처럼 review_stale을 먼저 알리고, 쓰기는 409로 막는다.
+it('다른 문서가 승인되면 본문이 그대로여도 작업본이 review_stale을 알리고, 다시 검토하면 풀린다', async () => {
+  const stale = async (documentId: string) =>
+    (await documentsApi.workingCopy('102', documentId)).review_stale
+  const copy = await documentsApi.workingCopy('102', '221')
+  const review = await documentsApi.requestBeeReview('102', '221', {
+    expected_revision: copy.revision,
+  })
+  expect(await stale('221')).toBe(false)
+
+  // 223을 끝까지 검토해 승인한다.
+  const other = await documentsApi.workingCopy('102', '223')
+  const otherReview = await documentsApi.requestBeeReview('102', '223', {
+    expected_revision: other.revision,
+  })
+  let current = other
+  for (const suggestion of otherReview.suggestions)
+    current = await documentsApi.decideSuggestion(
+      '102',
+      '223',
+      otherReview.id,
+      suggestion.id,
+      { expected_revision: current.revision, decision: 'SKIP' },
+    )
+  const submission = await documentsApi.submitReview('102', '223', {
+    expected_revision: current.revision,
+    review_id: otherReview.id,
+  })
+  // 팀장 결정을 기다리는 동안에는 223 자신은 무효로 보이지 않는다.
+  expect(await stale('223')).toBe(false)
+  await documentsApi.decideSubmission('102', '223', submission.id, {
+    decision: 'APPROVE',
+  })
+
+  expect(await stale('221')).toBe(true)
+  expect(
+    await codeOf(
+      documentsApi.decideSuggestion(
+        '102',
+        '221',
+        review.id,
+        review.suggestions[0].id,
+        { expected_revision: copy.revision, decision: 'SKIP' },
+      ),
+    ),
+  ).toBe('review_stale')
+
+  await documentsApi.requestBeeReview('102', '221', {
+    expected_revision: copy.revision,
+  })
+  expect(await stale('221')).toBe(false)
+})
