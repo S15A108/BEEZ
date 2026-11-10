@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -7,7 +7,7 @@ import { BibiFace } from '@/components/BibiFace'
 import { useBibiMessages } from './useBibiMessages'
 import { beeApi } from '@/api/services'
 import type { Generation } from '@/api/contracts/common'
-import { getApiErrorMessage } from '@/api/error'
+import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { SourceLinks } from '@/components/SourceLinks'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,10 +16,24 @@ import { cn } from '@/lib/utils'
 import type { AskScope } from './schemas'
 
 // 찾는 범위 칩(캔버스 PNL-12-v2-bibi-hotbar). 값은 BEE-A01 scope다.
-const scopes: { value: AskScope; label: string }[] = [
+// soon이 있으면 칩을 보이되 고를 수 없게 막고 그 안내를 붙인다.
+const scopes: { value: AskScope; label: string; soon?: string }[] = [
   { value: 'APPROVED', label: '승인된 문서' },
-  { value: 'INCLUDE_DRAFTS', label: '초안 포함' },
+  // ponytail: BEE-A01(PR #252)은 아직 INCLUDE_DRAFTS를 400으로 거절한다. 서버가 받게 되면 soon만 지운다.
+  {
+    value: 'INCLUDE_DRAFTS',
+    label: '초안 포함',
+    soon: '초안 포함은 곧 지원해요',
+  },
 ]
+
+// BEE-A01의 409. baseline_changed는 변경 제안 API에서 뜻이 달라 공통 문구(api/error.ts)에 두지 않는다.
+const askErrors: Record<string, string> = {
+  // 현재 기준 설계가 없거나 그 문서의 색인이 아직 준비되지 않았다.
+  index_not_ready:
+    '답할 문서가 아직 준비되지 않았어요. 기준 설계가 만들어지고 문서 준비가 끝나면 다시 물어봐 주세요.',
+  baseline_changed: '답을 만드는 사이 기준이 바뀌었어요. 다시 질문해 주세요.',
+}
 
 const questionSchema = z.object({
   question: z
@@ -98,25 +112,40 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               찾는 범위
             </span>
             {scopes.map((option) => (
-              <label
-                key={option.value}
-                className={cn(
-                  'cursor-pointer rounded-full px-3 py-1 text-xs font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
-                  scope === option.value
-                    ? 'bg-foreground text-background'
-                    : 'bg-muted text-muted-foreground hover:text-foreground',
+              <Fragment key={option.value}>
+                <label
+                  className={cn(
+                    'cursor-pointer rounded-full px-3 py-1 text-xs font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
+                    scope === option.value
+                      ? 'bg-foreground text-background'
+                      : 'bg-muted text-muted-foreground hover:text-foreground',
+                    option.soon &&
+                      'cursor-not-allowed opacity-50 hover:text-muted-foreground',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={scopeLabel}
+                    value={option.value}
+                    checked={scope === option.value}
+                    onChange={() => setScope(option.value)}
+                    disabled={!!option.soon}
+                    aria-describedby={
+                      option.soon ? `${scopeLabel}-soon` : undefined
+                    }
+                    className="sr-only"
+                  />
+                  {option.label}
+                </label>
+                {option.soon && (
+                  <span
+                    id={`${scopeLabel}-soon`}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {option.soon}
+                  </span>
                 )}
-              >
-                <input
-                  type="radio"
-                  name={scopeLabel}
-                  value={option.value}
-                  checked={scope === option.value}
-                  onChange={() => setScope(option.value)}
-                  className="sr-only"
-                />
-                {option.label}
-              </label>
+              </Fragment>
             ))}
           </div>
         </div>
@@ -172,7 +201,8 @@ export function BibiPanel({ projectId }: { projectId: string }) {
           )}
           {mutation.error && (
             <p role="alert" className="text-sm text-destructive">
-              {getApiErrorMessage(mutation.error)}
+              {askErrors[getApiErrorCode(mutation.error) ?? ''] ??
+                getApiErrorMessage(mutation.error)}
             </p>
           )}
         </div>
@@ -229,7 +259,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         {last && (
           <p className="mt-3 text-xs text-muted-foreground">
             {last.scope === 'APPROVED'
-              ? "승인된 문서만 찾았어요. 초안까지 찾으려면 위에서 '초안 포함'을 고르세요."
+              ? '승인된 문서만 찾았어요.'
               : '초안까지 찾았어요. 초안은 아직 팀장이 승인하지 않은 내용이에요.'}
           </p>
         )}
