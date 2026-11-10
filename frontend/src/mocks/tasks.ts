@@ -153,6 +153,48 @@ export function reassignTask(
   task.updated_at = now()
 }
 
+// 개발 서버에서 검증 실행 실패 화면을 눈으로 보려는 스위치(목 전용, live 빌드에는 들어가지 않는다).
+// localStorage 'beez.mock.validation' = lease_expired(롤백 실패 뒤 서버가 실행을 회수) | worker_interrupted | timeout | partial.
+// 서버처럼 규칙 항목은 두고 현재 시도의 실행 오류 항목 하나를 더해 ERROR로 끝낸다(00-common 검증 실행 오류·상태 매핑).
+// 문구는 서버 AnalysisResultApplier와 docs/design/11-validation-rollback.md 수동 종결 SQL에서 가져왔다.
+const VALIDATION_FAILURES = {
+  lease_expired: {
+    error_code: 'validation_lease_expired',
+    message:
+      '분석 실행이 시간 안에 결과를 반영하지 못했습니다 (워커 중단·재배포)',
+    resolution: 'RETRY',
+    next_action: '같은 입력으로 다시 실행합니다 (VAL-A04)',
+  },
+  worker_interrupted: {
+    error_code: 'validation_worker_interrupted',
+    message: '워커 중단으로 운영자가 종결했습니다',
+    resolution: 'RETRY',
+    next_action: '같은 입력으로 다시 실행합니다 (VAL-A04)',
+  },
+  timeout: {
+    error_code: 'ai_timeout',
+    message: '분석 시간이 초과되었습니다',
+    resolution: 'RETRY',
+    next_action: '같은 입력으로 다시 실행합니다 (VAL-A04)',
+  },
+  partial: {
+    error_code: 'ai_evidence_insufficient',
+    message: '의미 분석을 일부 수행하지 못했습니다',
+    resolution: 'HUMAN_REVIEW',
+    next_action: '근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요',
+  },
+} as const
+function failureScenario() {
+  try {
+    const value = localStorage.getItem('beez.mock.validation') ?? ''
+    return Object.hasOwn(VALIDATION_FAILURES, value)
+      ? VALIDATION_FAILURES[value as keyof typeof VALIDATION_FAILURES]
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function evaluate(context: MockContext, validation: Validation): void {
   const project = requireProject(context)
   const task = findById(project.tasks, validation.task_id)
@@ -170,6 +212,7 @@ function evaluate(context: MockContext, validation: Validation): void {
     kind: Finding['kind'],
     message: string,
     resolution: Finding['resolution'] = 'FIX_PLAN',
+    relatedTaskId?: string,
   ) =>
     findings.push({
       id: nextId(context.database),
@@ -177,6 +220,7 @@ function evaluate(context: MockContext, validation: Validation): void {
       kind,
       severity: 'BLOCKING',
       message,
+      ...(relatedTaskId ? { related_task_id: relatedTaskId } : {}),
       sources: [],
       resolution,
       next_action: '계획과 승인 근거를 확인한 뒤 다시 검증해 주세요.',
@@ -210,9 +254,9 @@ function evaluate(context: MockContext, validation: Validation): void {
     )
     if (!current || current.status !== 'APPROVED')
       add('STALE_REF', '현재 승인되지 않은 설계 버전을 참조하고 있어요.')
-    if (
+    const occupant =
       reference.relation === 'CHANGES' &&
-      project.tasks.some(
+      project.tasks.find(
         (other) =>
           other.id !== task.id &&
           ['IN_PROGRESS', 'WAITING'].includes(other.status) &&
@@ -222,11 +266,13 @@ function evaluate(context: MockContext, validation: Validation): void {
               item.design_item_id === reference.design_item_id,
           ),
       )
-    )
+    // 서버처럼 부딪힌 작업을 related_task_id로 알려 화면이 협의할 작업과 담당자를 보여 준다.
+    if (occupant)
       add(
         'CONFLICT',
         '다른 진행 작업이 같은 설계 항목의 변경을 점유하고 있어요.',
         'HUMAN_REVIEW',
+        occupant.id,
       )
   }
   // The mock evaluates explicit rules only. Unlinked semantics require a real analysis provider.
@@ -236,15 +282,32 @@ function evaluate(context: MockContext, validation: Validation): void {
       '연결하지 않은 계약 변경은 사람의 검토가 필요해요. 예시 환경은 의미 분석을 실행하지 않아요.',
       'HUMAN_REVIEW',
     )
+  const failure = failureScenario()
+  if (failure) {
+    findings.push({
+      id: nextId(context.database),
+      source: 'MODEL',
+      kind: 'ERROR',
+      severity: 'BLOCKING',
+      message: failure.message,
+      sources: [],
+      resolution: failure.resolution,
+      next_action: failure.next_action,
+      validation_run_id: nextId(context.database),
+    })
+    validation.error_code = failure.error_code
+  }
   validation.findings = findings
-  validation.status = findings.some(
-    (finding) =>
-      finding.kind === 'MISSING_INPUT' || finding.kind === 'STALE_REF',
-  )
-    ? 'NEEDS_INPUT'
-    : findings.length
-      ? 'NEEDS_REVIEW'
-      : 'PASS'
+  validation.status = failure
+    ? 'ERROR'
+    : findings.some(
+          (finding) =>
+            finding.kind === 'MISSING_INPUT' || finding.kind === 'STALE_REF',
+        )
+      ? 'NEEDS_INPUT'
+      : findings.length
+        ? 'NEEDS_REVIEW'
+        : 'PASS'
   validation.finished_at = now()
   delete context.database.pending_validations[validation.id]
   syncValidation(context, validation)

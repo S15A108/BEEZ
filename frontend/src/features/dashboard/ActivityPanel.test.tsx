@@ -92,6 +92,21 @@ it('연결·대기 작업·통과한 계획을 분리하며 누락 비용을 0�
     await screen.findByText('미보고', { selector: 'dd' }),
   ).toBeInTheDocument()
 })
+// AC-12(S15P31A108-150): 보고하지 않은 일은 추정하지 않는다. 연결돼 있어도 보고된 작업이 없으면 통과로 보이지 않는다.
+it('연결된 에이전트가 작업을 보고하지 않으면 작업과 검증을 미보고로 보이고 통과로 보이지 않는다', async () => {
+  vi.mocked(dashboardApi.agentWork).mockResolvedValue({
+    items: [{ member_id: '1', agent_session_id: '51' }],
+    has_more: false,
+  })
+  const user = userEvent.setup()
+  mount()
+  await user.click(screen.getByRole('tab', { name: '에이전트 현황' }))
+  const row = (await screen.findByText('민수')).closest('tr')!
+  expect(within(row).getByText('연결됨')).toBeInTheDocument()
+  expect(within(row).getByText('보고된 작업 없음')).toBeInTheDocument()
+  expect(within(row).getAllByText('미보고')).toHaveLength(2)
+  expect(within(row).queryByText('통과')).not.toBeInTheDocument()
+})
 it('한국시간 날짜 범위를 UTC로 전달하고 역전된 기간은 조회하지 않는다', async () => {
   const user = userEvent.setup()
   mount()

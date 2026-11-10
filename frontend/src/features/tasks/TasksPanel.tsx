@@ -90,7 +90,9 @@ import {
   useValidationActions,
   useValidationQuery,
 } from '@/features/validations/useValidation'
+import { FindingRelatedTask } from './FindingRelatedTask'
 import { RelatedTaskRefs } from './RelatedTaskRefs'
+import { ValidationFailure } from './ValidationFailure'
 
 interface Props {
   projectId: string
@@ -1104,8 +1106,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                               )?.revision_no ??
                               current.current_plan_revision.revision_no
                             } 기준 · ${formatDate(result.finished_at ?? result.created_at)} · `}
+                          {/* AC-12: BEEZ를 거치지 않은 작업은 '검증 없음'이다. 검증했거나 막았다고 보이지 않는다. */}
                           계획 검증은 코드 품질이나 테스트 통과를 보장하지
-                          않아요.
+                          않아요. BEEZ를 거치지 않은 작업은 검증하지 않아요.
                         </CardDescription>
                       </CardHeader>
                     </summary>
@@ -1173,11 +1176,10 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                       )}
                       {result?.status === 'ERROR' && (
                         <div className="flex flex-wrap items-center gap-3">
-                          <p role="alert" className="text-sm text-destructive">
-                            {needsHumanReview
-                              ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
-                              : '분석을 완료하지 못했어요. 자동으로 통과 처리하지 않아요.'}
-                          </p>
+                          <ValidationFailure
+                            errorCode={result.error_code}
+                            needsHumanReview={!!needsHumanReview}
+                          />
                           {isOwner && !needsHumanReview && !retryLimited && (
                             <Button
                               size="sm"
@@ -1363,6 +1365,15 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                               )}
                             </p>
                           ))}
+                          {finding.related_task_id && (
+                            <FindingRelatedTask
+                              projectId={projectId}
+                              taskId={finding.related_task_id}
+                              onOpen={(id) =>
+                                setSelected({ id, focus: focusId })
+                              }
+                            />
+                          )}
                           <div className="mt-3">
                             {finding.resolution === 'FIX_PLAN' && isOwner ? (
                               <Button
