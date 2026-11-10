@@ -328,6 +328,89 @@ def test_provider_settings_missing_fail_without_creating_usage():
     assert "usage" not in response.json()
 
 
+GMS_CHAT = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions"
+
+
+def _post_with_key_settings(monkeypatch, **settings_values):
+    """Return (response, [(endpoint, api_key)]) for one /v1/impact call."""
+    from app.routers import impact
+
+    created = []
+
+    class Provider(FakeProvider):
+        def __init__(self, endpoint, api_key):
+            super().__init__()
+            created.append((endpoint, api_key))
+
+    monkeypatch.setattr(impact, "OpenAICompatibleProvider", Provider)
+    app = FastAPI()
+    app.include_router(router)
+    settings = Settings(
+        _env_file=None,
+        ai_internal_token="test-internal",
+        impact_llm_model="test-model",
+        **settings_values,
+    )
+    app.dependency_overrides[get_settings] = lambda: settings
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/impact", json=body(), headers={"Authorization": "Bearer test-internal"}
+        )
+    return response, created
+
+
+# PR #258 review: the shared GMS key is reused only for the GMS endpoint.
+def test_gms_endpoint_without_own_key_reuses_gms_key(monkeypatch):
+    response, created = _post_with_key_settings(
+        monkeypatch, impact_llm_endpoint=GMS_CHAT, gms_key="gms-shared-key"
+    )
+    assert response.status_code == 200
+    assert created == [(GMS_CHAT, "gms-shared-key")]
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://example.com/v1/chat/completions",
+        # Same host, different path: still not the exact GMS endpoint.
+        "https://gms.ssafy.io/gmsapi/other.example/v1/chat/completions",
+    ],
+)
+@pytest.mark.parametrize("own_key", [None, "  "])
+def test_other_endpoint_never_receives_gms_key(monkeypatch, endpoint, own_key):
+    values = {"impact_llm_endpoint": endpoint, "gms_key": "gms-shared-key"}
+    if own_key is not None:
+        values["impact_llm_api_key"] = own_key
+    response, created = _post_with_key_settings(monkeypatch, **values)
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "model_unavailable"
+    assert "usage" not in response.json()
+    assert created == []
+
+
+@pytest.mark.parametrize(
+    "endpoint", [GMS_CHAT, "https://example.com/v1/chat/completions"]
+)
+def test_own_key_is_used_for_any_endpoint(monkeypatch, endpoint):
+    response, created = _post_with_key_settings(
+        monkeypatch,
+        impact_llm_endpoint=endpoint,
+        impact_llm_api_key="impact-own-key",
+        gms_key="gms-shared-key",
+    )
+    assert response.status_code == 200
+    assert created == [(endpoint, "impact-own-key")]
+
+
+def test_gms_endpoint_without_any_key_fails_without_call(monkeypatch):
+    response, created = _post_with_key_settings(
+        monkeypatch, impact_llm_endpoint=GMS_CHAT, impact_llm_api_key=""
+    )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "model_unavailable"
+    assert created == []
+
+
 def test_provider_is_shared_then_closed_at_shutdown(monkeypatch):
     from app import main
     from app.routers import impact

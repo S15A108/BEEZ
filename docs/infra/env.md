@@ -55,7 +55,7 @@ compose 가 읽는 값입니다. **필수**는 compose 가 `${VAR:?}` 로 검사
 | `BEE_CHAT_ENABLED` | | | 기본 `false`. 비비에게 질문(#135, BEE-A01). 〃 | ai |
 | `ASSIGNMENT_RECOMMENDATION_ENABLED` | | | 기본 `false`. 역할 분담 추천(#136). BE 계약 합의 후에만 켭니다 | ai |
 | `IMPACT_LLM_MODEL` | | | 기본 빈 값(꺼짐). 변경 영향 분석(#188)이 부를 모델 이름. 〃 (-357) | ai |
-| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY` | | `API_KEY` 비밀 | 영향 분석용 주소·키. 기본은 GMS 주소(`GMS_CHAT_ENDPOINT` 와 별개로 고정)·`GMS_KEY` 값이라 **GMS 를 쓰면 적지 않습니다**. 키를 따로 적었으면 GMS 키를 바꿀 때 같이 바꿉니다([5절](#값이-샜을-때)) | ai |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY` | | `API_KEY` 비밀 | 영향 분석용 주소·키. 주소 기본은 GMS 주소(`GMS_CHAT_ENDPOINT` 와 별개로 고정)이고, 키가 비면 ai 가 **주소가 그 GMS 주소와 똑같을 때만** `GMS_KEY` 를 씁니다. 그래서 **GMS 를 쓰면 둘 다 적지 않습니다**. 다른 주소를 쓰면 전용 키를 꼭 적습니다 — 없으면 모델을 부르지 않고 502 `model_unavailable`(팀 공용 키가 다른 서버로 나가지 않게) | ai |
 | `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | | 기본 빈 값. 응답의 모델 이름이 요청과 달라 `invalid_output` 이 날 때만, 믿을 별칭을 쉼표로 적습니다 | ai |
 | `PUBLIC_ORIGIN` | 필수 | | 브라우저가 여는 주소. **끝에 `/` 없이** (`https://dev.beez.ai.kr`) | backend `CORS_ALLOWED_ORIGINS`·`INVITE_BASE_URL`·`MCP_URL`(+`/mcp`) |
 | `BACKEND_HOST_PORT` | 필수 | | backend 를 여는 `127.0.0.1` 포트. 서버는 `8081`, 로컬(`infra/local.env`)은 `18080` | backend 포트, Nginx `upstream beez_backend` 와 같아야 함 |
@@ -165,7 +165,7 @@ prod 필수값은 `application-prod.yml` 에 **`${X:}`(빈 기본값)** 으로 �
 | `ASSIGNMENT_RECOMMENDATION_ENABLED` | | 역할 분담 추천(#136). 기본 `false`; BE 계약 합의 후에만 켠다. compose 가 ai 에 전달한다 |
 | `ASSIGNMENT_RECOMMENDATION_MAX_BODY_BYTES`·`ASSIGNMENT_RECOMMENDATION_TIMEOUT_SECONDS`·`ASSIGNMENT_RECOMMENDATION_OUTPUT_TOKEN_LIMIT` | | 역할 추천 요청 크기·모델 시간·출력 토큰 한도. 기본 2 MiB·15초·4096; 직접 실행 환경에서 설정한다 |
 | `BEE_CHAT_ENABLED`·`BEE_CHAT_*` | | 비비 질문(#135, BEE-A01). 기본 `false`(꺼져 있으면 503). compose 가 ai 에 전달한다. 〃 |
-| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 502 `model_unavailable`. compose 가 ai 에 전달한다 — 주소·키는 GMS 값이 기본이고 모델만 빈 값이다(-357) |
+| `IMPACT_LLM_ENDPOINT`·`IMPACT_LLM_API_KEY`·`IMPACT_LLM_MODEL` | `API_KEY` 비밀 | 변경 영향 분석(#188) 전용 모델. **셋이 다 있어야** 호출하고, 하나라도 없으면 502 `model_unavailable`. compose 가 ai 에 전달한다 — 주소는 GMS 주소가 기본, 키·모델은 빈 값이다. 키가 비고 주소가 GMS 기본 주소와 똑같으면 `GMS_KEY` 를 쓰고, 다른 주소면 호출하지 않는다(-357) |
 | `IMPACT_LLM_ALLOWED_RESPONSE_MODELS` | | 요청한 모델 이름 말고도 받아들일 응답 모델 이름(쉼표). 기본 빈 값. compose 가 ai 에 전달한다 |
 | `IMPACT_LLM_*`·`IMPACT_MAX_*` (그 밖) | | 영향 분석 시간 제한·토큰 한도·요청 크기. 기본값 있음. compose 가 전달하지 않는다 |
 | `GMS_EMBEDDING_MODEL` | | `text-embedding-3-small` 만 허용 |
@@ -483,8 +483,8 @@ git fetch -q origin && git archive "origin/$REF" infra/compose.yaml infra/deploy
 
 | 값 | 바꾸는 방법 |
 |---|---|
-| `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용. compose 가 같은 값을 `IMPACT_LLM_API_KEY` 로도 넣으므로 그쪽은 따로 할 일이 없습니다 |
-| `IMPACT_LLM_API_KEY` | env 파일에 **따로 적은 경우만** 해당합니다. 적힌 줄을 새 값으로 바꾸고(GMS 키라면 위와 함께) 재배포합니다. 줄을 지우면 `GMS_KEY` 를 씁니다 |
+| `GMS_KEY` | 발급처에서 폐기·재발급 → [cd.md GMS 키 넣기·바꾸기](cd.md#3-gms-키-넣기바꾸기) → 다음 배포 때 적용. 영향 분석도 GMS 주소에서는 이 키를 쓰므로 따로 할 일이 없습니다 |
+| `IMPACT_LLM_API_KEY` | env 파일에 **따로 적은 경우만** 해당합니다. 적힌 줄을 새 값으로 바꾸고 재배포합니다. 줄을 지우면 GMS 주소에서는 `GMS_KEY` 를 쓰고, 다른 주소에서는 영향 분석이 멈춥니다 |
 | `AI_INTERNAL_TOKEN` | env 파일 값 교체 → 재배포(값이 바뀐 컨테이너만 다시 만들어짐). compose 가 ai·backend 양쪽에 같은 값을 넣습니다 |
 | `DOCUMENT_S3_*`·`SEAWEEDFS_*` | 새 키를 넣고 같은 SHA 로 다시 배포. **access key 와 secret key 를 함께** 바꿉니다 — [seaweedfs.md 키 교체](seaweedfs.md#키-교체) |
 | `DB_PASSWORD` | **env 파일만 바꾸면 backend 가 DB 에 접속하지 못합니다.** postgres 안의 비밀번호(`ALTER ROLE`)를 먼저 바꾸고 env 파일을 맞춥니다. 정리된 절차는 아직 없습니다 |
