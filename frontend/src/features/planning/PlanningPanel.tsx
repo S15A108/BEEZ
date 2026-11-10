@@ -296,7 +296,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                       />
                       {version && (
                         <p className="text-xs text-muted-foreground">
-                          원본 v{version.version_no} · {version.file_name}
+                          원본 v{version.version_no}
                         </p>
                       )}
                       {analysis?.error && (

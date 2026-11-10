@@ -343,9 +343,6 @@ export function DocumentsPanel({
                             : stage?.step === 3
                               ? '최종본을 확인하고 검토를 요청해요'
                               : '비비가 검토하고 있어요'
-                  const file =
-                    document?.latest_draft?.file_name ??
-                    document?.approved_version?.file_name
                   return (
                     <li
                       key={kind}
@@ -364,7 +361,7 @@ export function DocumentsPanel({
                           </p>
                           <p className="truncate text-xs text-muted-foreground">
                             {document
-                              ? `${file ?? document.title} · 담당 ${document.domain || '공통'}`
+                              ? `${document.title} · 담당 ${document.domain || '공통'}`
                               : '아직 올리지 않았어요'}
                           </p>
                         </div>
@@ -501,7 +498,7 @@ export function DocumentsPanel({
                                 {document.approved_version!.version_no}
                               </span>
                               <span className="block truncate text-xs text-muted-foreground">
-                                {document.approved_version!.file_name} · 담당{' '}
+                                담당{' '}
                                 {document.domain || '공통'}
                               </span>
                             </span>
@@ -1155,7 +1152,7 @@ function DocumentDetail({
                     {data.document.title} v{data.version.version_no}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    {data.version.file_name} · 담당{' '}
+                    담당{' '}
                     {data.document.domain || '공통'} ·{' '}
                     {base ? `현재 기준 v${base.version_no}` : '승인 전'}
                   </p>
@@ -1259,7 +1256,7 @@ function DocumentDetail({
                     ))}
                   </NativeSelect>
                   <span className="text-xs text-muted-foreground">
-                    {data.version.file_name} · {stamp(data.version.created_at)}
+                    {stamp(data.version.created_at)}
                   </span>
                 </div>
                 {data.version.content !== undefined ? (
@@ -1296,7 +1293,7 @@ function DocumentDetail({
                             <Chip tone="muted">현재 기준</Chip>
                           )}
                           <span className="text-xs text-muted-foreground">
-                            {version.file_name} · {stamp(version.created_at)}
+                            {stamp(version.created_at)}
                             {uploaderName(version) &&
                               ` · ${uploaderName(version)}`}
                           </span>

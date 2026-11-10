@@ -14621,7 +14621,7 @@ HTTP `200`.
 
 - 최소 하나의 기준 ID를 받아 기본 관계를 조회하는 계약이다. 둘 다 주면 두 결과를 합치고 같은 노드·간선은 한 번만 준다.
 - 명시 관계와 AI 후보는 confirmed로 구분한다. 과거 관계는 당시 계획·버전과 연결한다.
-- 기준이 작업이면: 현재 계획 리비전의 설계 참조(`READS`·`IMPLEMENTS`·`CHANGES`), 작업 간 선후(`BLOCKS`·`RELATES`), 현재 계획 리비전의 가장 최근 검증(`VALIDATED_BY`)과 그 검증이 본 설계 항목·대조한 작업(`COMPARED_WITH`), 이 작업에서 나온 변경 제안(`PROPOSED_FROM`).
+- 기준이 작업이면: 현재 계획 리비전의 설계 참조(`READS`·`IMPLEMENTS`·`CHANGES`), 작업 간 선후(`BLOCKS`·`RELATES`), 현재 계획 리비전의 가장 최근 검증(`VALIDATED_BY`)과 그 검증이 본 설계 항목(`CHECKED_AGAINST`, 검증 때 계획 참조 관계를 복사하지 않고 항상 이 값)·대조한 작업(`COMPARED_WITH`), 이 작업에서 나온 변경 제안(`PROPOSED_FROM`).
 - 기준이 설계 항목이면: 설계 의존(`DEPENDS_ON`, 확정·재확인 필요·후보), 현재 계획이 이 항목을 참조하는 작업, 이 항목을 바꾸려는 진행 중 변경 제안(`UPDATE`·`RETIRE`. 새 항목을 만드는 `CREATE`는 아직 항목 번호가 없어 나오지 않음).
 - 설계 의존 간선은 `status`를 함께 주고, `confirmed`는 `CONFIRMED`일 때만 true다. 계획·검증의 참조 간선은 그때 본 항목 버전을 `design_item_version_id`로 준다.
 - 다른 프로젝트 객체는 번호로도 노출하지 않는다. 관계 변경 이력은 [TRC-A02](#trc-a02)에서 본다.

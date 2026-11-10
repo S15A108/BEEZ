@@ -21,7 +21,7 @@ public class DocumentReviewRepository {
 
     public Optional<Map<String, Object>> workingCopy(long project, long document) {
         return rows("""
-                SELECT w.*,d.project_id,d.type FROM document_working_copy w JOIN document d ON d.id=w.document_id
+                SELECT w.*,d.project_id,d.type,d.title FROM document_working_copy w JOIN document d ON d.id=w.document_id
                 WHERE d.project_id=:project AND d.id=:document
                 """, Map.of("project", project, "document", document)).stream().findFirst();
     }

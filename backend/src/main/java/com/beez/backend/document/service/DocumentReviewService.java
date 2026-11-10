@@ -235,7 +235,7 @@ public class DocumentReviewService {
                 repository.recordUsage(project, actualUsage);
                 // 새 검토를 저장한 이 트랜잭션에서만 알린다. 완료된 요청의 재생은 위에서 반환해 여기까지 오지 않는다.
                 // 행위자가 비비라서 요청한 등록자 본인도 받는다(계약 6.1).
-                var done = NotificationMessages.documentBeeReviewDone(copy.get("file_name").toString());
+                var done = NotificationMessages.documentBeeReviewDone(copy.get("title").toString());
                 notifyDocument(project, document, latestVersion(copy), caller.accountId(),
                         "document-review:" + review + ":bee-review-done", "DOCUMENT_BEE_REVIEW_DONE", done);
                 return reviewView(repository.review(document, review).orElseThrow());
@@ -360,7 +360,7 @@ public class DocumentReviewService {
             long submission = repository.submit(copy, review, original.reference(), source.contentHash(), source.textHash());
             var saved = repository.submission(project, document, submission).orElseThrow();
             // 위의 replay 분기는 이미 반환했으므로 새 제출에서만 팀장에게 알린다. 팀장이 직접 제출하면 본인은 받지 않는다.
-            var requested = NotificationMessages.documentReviewRequested(copy.get("file_name").toString());
+            var requested = NotificationMessages.documentReviewRequested(copy.get("title").toString());
             repository.leaderAccount(project).filter(leader -> !leader.equals(caller.accountId()))
                     .ifPresent(leader -> notifyDocument(project, document, id(saved, "document_version_id"), leader,
                             "doc-submission:" + submission + ":review-requested", "DOCUMENT_REVIEW_REQUESTED", requested));
@@ -434,11 +434,11 @@ public class DocumentReviewService {
         long registrant = id(row, "submitted_by");
         if (registrant != caller.accountId()) {
             boolean approved = "APPROVED".equals(state);
-            String fileName = copy.get("file_name").toString();
+            String documentTitle = copy.get("title").toString();
             notifyDocument(project, document, id(row, "document_version_id"), registrant,
                     "doc-submission:" + submission + (approved ? ":approved" : ":rejected"),
                     approved ? "DOCUMENT_APPROVED" : "DOCUMENT_REJECTED",
-                    approved ? NotificationMessages.documentApproved(fileName) : NotificationMessages.documentRejected(fileName));
+                    approved ? NotificationMessages.documentApproved(documentTitle) : NotificationMessages.documentRejected(documentTitle));
         }
         // 활동은 알림과 달리 등록자 본인이 결정해도 남긴다. 반려 사유는 넣지 않는다(타임라인은 멤버 전원이 본다).
         activities.record(caller, ActivityEvent.of("doc-submission:" + submission + ("APPROVED".equals(state) ? ":approved" : ":rejected"),
