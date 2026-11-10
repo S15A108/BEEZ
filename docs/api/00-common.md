@@ -660,13 +660,14 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `id` | `ID` | Y | 문서 버전 ID |
 | `document_id` | `ID` | Y | 문서 ID |
 | `version_no` | `integer` | Y | 문서 내 버전 번호 |
-| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태. 문서함 반려는 버전을 REJECTED로 바꾸지 않고 제출(DocumentReviewSubmission.status)에 남긴다. REJECTED는 6절의 미채택이다 |
+| `status` | `DRAFT\|APPROVED\|SUPERSEDED\|REJECTED` | Y | 문서 버전 상태. REJECTED는 채택되지 않았고 다시 쓸 수 없는 버전(6절의 미채택)이다. 문서함 반려·취소는 버전을 REJECTED로 바꾸고 제출 결과는 DocumentReviewSubmission.status에 남긴다. 변경 제안으로 만든 DRAFT는 제안이 발행되면 APPROVED(이전 승인본은 SUPERSEDED), 제안을 거두면(WITHDRAWN) REJECTED가 된다. 제안이 반려(REJECTED)된 경우는 재제출 전까지 DRAFT로 남고, 같은 제안의 새 리비전을 제출할 때 새 리비전이 쓰지 않는 이전 DRAFT는 REJECTED가 된다(화면은 본문만 보내 문서마다 새 DRAFT가 생기므로 재제출마다 이전 초안이 닫힌다). 다른 제안이 먼저 발행되어 이전 승인본을 부모로 한 DRAFT는 다시 연결할 수 없으므로 그 발행 때 REJECTED가 된다(그 제안은 팀장이 CHG-A10으로 반려할 때까지 상태가 그대로이다). 이 상태 정리는 거두기·재제출·발행 시점에만 일어나며 이미 거둔 제안의 DRAFT는 자동으로 바뀌지 않는다 |
 | `file_name` | `string` | Y | document-{id}-v{version_no}.{md\|txt} 생성 다운로드명 |
 | `media_type` | `string` | Y | MIME |
 | `content_hash` | `string` | Y | 원본 해시 |
 | `content` | `string` | N | 텍스트 본문. 바이너리는 생략 |
 | `created_by` | `ID` | Y | 올린 계정 |
 | `is_current_baseline` | `boolean` | Y | 현재 기준에 들어 있는 버전. 수정안 요청 |
+| `change_proposal_id` | `ID` | N | 이 버전을 만든 변경 제안. 변경 제안으로 만든 버전에만 있다. 처음 올린 문서·문서별 승인 버전에는 없다 |
 | `created_at` | `Time` | Y | 생성 시각 |
 
 <a id="schema-document"></a>
@@ -1298,7 +1299,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `design_refs` | [ValidationDesignRef[]](00-common.md#schema-validationdesignref) | Y | 사용한 항목 버전 |
 | `related_task_refs` | [RelatedTaskRef[]](00-common.md#schema-relatedtaskref) | Y | 대조한 다른 계획 |
 | `findings` | [Finding[]](00-common.md#schema-finding) | Y | 발견 항목 |
-| `cache_hit` | `boolean` | Y | 설계 대조 재사용 |
+| `cache_hit` | `boolean` | Y | 접수 응답에서 기존 검증을 재사용했는지 여부. 현재는 규칙 전용 PASS만 대상이며 조회·재시도 응답은 false |
 | `created_at` | `Time` | Y | 접수 시각 |
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
@@ -1501,7 +1502,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `agent_name` | `string` | N | 토큰 label. 수정안 요청 |
 | `current_task_id` | `ID` | N | 명시 보고된 작업 |
 | `task_title` | `string` | N | 보고된 작업 제목. 수정안 요청 |
-| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태. 서버 작업 상태에는 DRAFT도 있다 — 세션의 현재 작업(`current_task_id`)을 쓰기 시작하면 에이전트가 계획을 쓰는 DRAFT 작업도 나오므로 그때 이 값과 FE `agentWorkSchema`에 DRAFT를 넣는다(지금은 그 칸을 쓰는 코드가 없다, -75) |
+| `task_status` | `READY\|IN_PROGRESS\|WAITING\|COMPLETED\|CANCELLED` | N | 보고된 작업 상태. 서버 작업 상태에는 DRAFT도 있다 — 세션의 현재 작업(`current_task_id`)은 START·RESUME 이 성공할 때만 적히므로(-336) DRAFT 작업은 나오지 않는다. 계획을 쓰는 중에도 적게 바꾸면 그때 이 값과 FE `agentWorkSchema`에 DRAFT를 넣는다 |
 | `validation_status` | `NOT_RUN\|RUNNING\|PASS\|NEEDS_INPUT\|NEEDS_REVIEW\|STALE\|ERROR` | N | 작업 검증 상태 |
 | `waiting_reason` | `string` | N | 대기 사유 |
 | `last_summary` | `string` | N | MCP-12 `summary` 원문. AI로 다시 요약하지 않음. 수정안 요청 |

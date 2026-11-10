@@ -10,9 +10,10 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
-from time import time_ns
+from time import perf_counter, time_ns
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -108,7 +109,7 @@ def configuration():
     return endpoint, model, key
 
 
-async def run(endpoint, model, key):
+async def run(endpoint, model, key, *, cases=None, assessor=assess):
     records = []
     provider = OpenAICompatibleProvider(endpoint=endpoint, api_key=key)
     previous_provider = validation_router.get_validation_client
@@ -128,7 +129,10 @@ async def run(endpoint, model, key):
             transport=httpx.ASGITransport(app=app), base_url="http://validation-test"
         ) as http:
             run_id = time_ns()
-            for index, case in enumerate(fixtures()):
+            for index, original_case in enumerate(
+                fixtures() if cases is None else cases
+            ):
+                case = deepcopy(original_case)
                 # Live calls must have distinct validation/usage keys across runs.
                 case["request"]["validation_id"] = str(run_id + index)
                 case["request"]["request_key"] = f"eval-{run_id}-{index}"
@@ -139,6 +143,7 @@ async def run(endpoint, model, key):
                     yield LLMClient(provider_capture)
 
                 validation_router.get_validation_client = injected_client
+                started = perf_counter()
                 try:
                     http_response = await http.post(
                         "/v1/validate",
@@ -157,7 +162,8 @@ async def run(endpoint, model, key):
                             "type": type(exc).__name__,
                         }
                     }
-                passed, criterion = assess(case["name"], response)
+                duration_ms = round((perf_counter() - started) * 1000)
+                passed, criterion = assessor(case["name"], response)
                 records.append(
                     {
                         "name": case["name"],
@@ -165,6 +171,7 @@ async def run(endpoint, model, key):
                         "criterion": criterion,
                         "passed": passed and status == 200,
                         "http_status": status,
+                        "duration_ms": duration_ms,
                         "response": response,
                         "raw_model_content": capture.content,
                     }
