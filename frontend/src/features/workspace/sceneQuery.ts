@@ -1,3 +1,4 @@
+import { BACKGROUND_POLL_MS } from '@/lib/pollIntervals'
 import { queryOptions } from '@tanstack/react-query'
 import { unlessMissing } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
@@ -65,6 +66,7 @@ export function agentWorkQuery(projectId: string, accountId?: string) {
           ),
         )
       )?.items ?? null,
-    refetchInterval: (query) => (query.state.data === null ? false : 30_000),
+    refetchInterval: (query) =>
+      query.state.data === null ? false : BACKGROUND_POLL_MS,
   })
 }

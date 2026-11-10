@@ -40,7 +40,8 @@ test('대시보드 네 탭에서 기간, 날짜별 호출, 보기 필터, 에이
   const rows = dashboard.locator('section ol > li')
   await expect(rows).toHaveCount(20)
   await dashboard.getByRole('button', { name: '이전 활동 더 보기' }).click()
-  await expect(rows).toHaveCount(25)
+  // 20 + 17: 프로젝트 101 의 시드 활동 25건에 제안 71 이력(303) 12건이 더해져 37건이다.
+  await expect(rows).toHaveCount(37)
   await expect(
     dashboard.getByRole('button', { name: '이전 활동 더 보기' }),
   ).toHaveCount(0)

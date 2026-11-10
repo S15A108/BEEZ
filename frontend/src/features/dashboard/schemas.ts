@@ -68,6 +68,8 @@ export type RelationsResponse = z.infer<typeof relationsResponseSchema>
 export const activitiesQuerySchema = z.object({
   type: z.string().optional(),
   actor_type: common.actorTypeSchema.optional(),
+  // 전역 DB id(숫자 문자열). 제안 key(CP-012)가 아니다. 변경 제안 화면(303)이 쓴다.
+  change_proposal_id: common.idSchema.optional(),
   agent_session_id: common.idSchema.optional(),
   cursor: z.string().optional(),
   limit: z.number().int().min(1).max(100).optional(),

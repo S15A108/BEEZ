@@ -55,3 +55,48 @@ it('계정 캐시가 있어도 /me가 401이면 로그인으로 보내고 캐시
   ).toBeInTheDocument()
   await waitFor(() => expect(client.getQueryData(['account'])).toBeUndefined())
 })
+
+// S15P31A108-343: 배포 중 /me가 502여도 받아 둔 계정이 있으면 보호 화면을 오류로 바꾸지 않는다(열린 창·입력 유지).
+it('계정 캐시가 있으면 /me가 5xx로 실패해도 보호 화면을 그대로 둔다', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['account'], {
+    id: '11',
+    email: 'demo@beez.local',
+    name: '이팀장',
+    created_at: '2026-10-23T00:00:00Z',
+  })
+  const me = vi.spyOn(authApi, 'me').mockRejectedValue(
+    new AxiosError('bad gateway', '502', undefined, undefined, {
+      status: 502,
+      statusText: 'Bad Gateway',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: '',
+    }),
+  )
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/projects/101']}>
+        <Routes>
+          <Route
+            path="/projects/:id"
+            element={
+              <RequireAccount>
+                <p>보호 화면</p>
+              </RequireAccount>
+            }
+          />
+          <Route path="/login" element={<LoginScreen />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await waitFor(() => expect(me).toHaveBeenCalled())
+  await waitFor(() =>
+    expect(client.getQueryState(['account'])?.status).toBe('error'),
+  )
+  expect(screen.getByText('보호 화면')).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})

@@ -1,3 +1,4 @@
+import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
 import { useState } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
 import { FileCheck2, RefreshCw } from 'lucide-react'
@@ -107,7 +108,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
     queryFn: () => planningApi.drafts(projectId),
     refetchInterval: (query) =>
       !query.state.error && hasActiveJob(query.state.data?.jobs ?? [])
-        ? 1500
+        ? ACTIVE_POLL_MS
         : false,
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []

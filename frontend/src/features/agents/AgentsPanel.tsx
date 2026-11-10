@@ -79,6 +79,21 @@ function CodeLine({
   )
 }
 
+// 연결 도움말(AGT-04)은 새 탭으로 연다. 같은 탭이면 사무실과 설정 창이 닫혀 한 번만 보이는 토큰을 잃는다(D43).
+function HelpLink({ section, label }: { section: string; label: string }) {
+  return (
+    <a
+      href={`/help/agent-connection#${section}`}
+      target="_blank"
+      rel="noreferrer"
+      className="shrink-0 text-[12.5px] font-semibold whitespace-nowrap underline underline-offset-3"
+    >
+      {label}
+      <span aria-hidden="true"> ↗</span>
+    </a>
+  )
+}
+
 const tokenSchema = z.object({
   label: z.string().trim().max(40, '40자 이하로 입력해 주세요.'),
 })
@@ -200,6 +215,8 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
             agent_connected: Boolean(me?.agent_connected),
           })
           const tone = statusFailed ? 'recheck' : state
+          // 연결 끊김은 연결 전과 같은 회색이다(사용자 결정 2026-11-09, S15P31A108-341).
+          const idle = tone === 'none' || tone === 'disconnected'
           const revokingToken = tokens.find((token) => token.id === revoking)
           return (
             <>
@@ -211,7 +228,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                     ? 'bg-emerald-50'
                     : tone === 'failed'
                       ? 'bg-[#fdecec]'
-                      : tone === 'none'
+                      : idle
                         ? 'bg-muted'
                         : 'bg-primary/14',
                 )}
@@ -224,7 +241,7 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                       ? 'bg-emerald-600'
                       : tone === 'failed'
                         ? 'bg-[#c10007]'
-                        : tone === 'none'
+                        : idle
                           ? 'bg-[#c4c4c4]'
                           : 'bg-[#e0b400]',
                   )}
@@ -246,9 +263,12 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   {!statusFailed &&
                     (state === 'failed'
                       ? '방금 확인 · '
-                      : (state === 'connected' || state === 'recheck') &&
-                        lastReportAt &&
-                        `최근 보고 ${formatDate(lastReportAt)} · `)}
+                      : state === 'disconnected'
+                        ? lastReportAt &&
+                          `마지막 통신 ${formatDate(lastReportAt)} · `
+                        : (state === 'connected' || state === 'recheck') &&
+                          lastReportAt &&
+                          `최근 보고 ${formatDate(lastReportAt)} · `)}
                   {statusFailed
                     ? '서버에서 연결 현황을 받지 못했어요. 잠시 뒤 다시 확인해 주세요.'
                     : !statusReady
@@ -259,8 +279,22 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                           ? '아직 보고가 오지 않았어요. 토큰과 MCP 주소를 확인하고 Claude Code를 다시 시작해 주세요.'
                           : state === 'recheck'
                             ? '상태를 다시 확인해 주세요.'
-                            : '아래 단계를 마친 뒤 연결 확인을 눌러 주세요.'}
+                            : state === 'disconnected'
+                              ? '2시간 넘게 통신이 없거나 세션이 끝났어요. Claude Code를 다시 시작한 뒤 연결 확인을 눌러 주세요.'
+                              : '아래 단계를 마친 뒤 연결 확인을 눌러 주세요.'}
                 </span>
+                {/* 연결 끊김은 다시 연결하는 법(404·409 등)이 문제 해결에 있다(PR #230 리뷰). */}
+                {!statusFailed &&
+                  (state === 'failed' ||
+                    state === 'recheck' ||
+                    state === 'disconnected') && (
+                    <HelpLink
+                      section={
+                        state === 'recheck' ? 'check' : 'troubleshooting'
+                      }
+                      label="연결 도움말"
+                    />
+                  )}
                 {(statusReady || statusFailed) && (
                   <button
                     type="button"
@@ -287,6 +321,11 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                   </button>
                 )}
               </div>
+              <p className="-mt-3 text-xs text-muted-foreground">
+                같은 계정의 연결은 프로젝트마다 하나만 살아 있어요. 다른 PC나
+                터미널에서 새로 연결하면 나중 연결이 이기고 먼저 붙어 있던
+                연결은 끊겨요.
+              </p>
               <ol className="grid gap-4">
                 <Step
                   number={1}
@@ -344,6 +383,11 @@ export function AgentsPanel({ projectId }: { projectId: string }) {
                     label="MCP 주소 복사"
                     disabled={!mcpUrl}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    명령은 등록만 하고 끝나요. 대화 창이 뜨지 않는 게
+                    정상이에요.{' '}
+                    <HelpLink section="add" label="자세한 연결 방법" />
+                  </p>
                   {mcpUrl && !fresh && (
                     <p className="text-xs text-muted-foreground">
                       &lt;에이전트 토큰&gt; 자리에 발급할 때 받은 토큰을 넣어요.

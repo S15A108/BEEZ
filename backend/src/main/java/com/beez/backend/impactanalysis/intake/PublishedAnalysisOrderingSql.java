@@ -10,7 +10,17 @@ public final class PublishedAnalysisOrderingSql {
                 + "OR %2$s.error_code='published_before_intake')").formatted(baselineAlias, intakeAlias);
     }
 
-    /** Mirrors the publication worker's rule, including the v1 and historical backfill exceptions. */
+    /**
+     * Document changes are still unevaluated and require review, but cannot be
+     * retried successfully until document analysis is supported. They must not
+     * prevent independent later publications from being analyzed.
+     */
+    private static String nonBlockingNotEvaluated(String baselineAlias, String intakeAlias) {
+        return "(%s OR %s.error_code='document_change_unavailable')"
+                .formatted(expectedNotEvaluated(baselineAlias, intakeAlias), intakeAlias);
+    }
+
+    /** Shared by the publication worker and the blocked-project metric. */
     public static final String PREDECESSORS_READY = """
             NOT EXISTS (SELECT 1 FROM baseline current
               CROSS JOIN LATERAL generate_series(1,current.version_no-1) required(version_no)
@@ -22,5 +32,5 @@ public final class PublishedAnalysisOrderingSql {
               WHERE eb.project_id=a.project_id AND eb.version_no<current.version_no
                 AND (earlier.id IS NULL OR NOT COALESCE(earlier.status='COMPLETED' OR
                   (earlier.status='NOT_EVALUATED' AND %s), false)))
-            """.formatted(expectedNotEvaluated("eb", "earlier"));
+            """.formatted(nonBlockingNotEvaluated("eb", "earlier"));
 }

@@ -165,14 +165,49 @@ it('비용·토큰을 모르는 호출이 섞이면 0원·전체 값처럼 보�
   expect(within(input).getByText('미보고 1건')).toBeInTheDocument()
   // 첫 보기는 에이전트별이라 기능별로 옮겨 본다(-312).
   await user.click(screen.getByRole('tab', { name: '기능별' }))
-  // 비용을 모르는 문서 분석 줄이 '0 USD'만으로 보이지 않는다
+  // 호출이 모두 미보고인 문서 분석 줄은 '0 토큰·0 USD'가 아니라 미보고로 보인다.
+  // 기대값 변경('0 USD + 미보고 1건' → '미보고')은 사용자 승인 2026-11-09(S15P31A108-346).
   const parse = screen.getByText('문서 분석').closest('li')!
+  expect(within(parse).getAllByText('미보고', { exact: true })).toHaveLength(2)
   expect(
-    within(within(parse).getByText('0 USD')).getByText('미보고 1건'),
-  ).toBeInTheDocument()
+    within(parse).queryByText(/\d 토큰|\d USD|미보고 \d+건/),
+  ).not.toBeInTheDocument()
   const validation = screen.getByText('작업 검증').closest('li')!
   expect(within(validation).getByText('0.01 USD')).toBeInTheDocument()
   expect(within(validation).queryByText(/미보고/)).not.toBeInTheDocument()
+})
+// S15P31A108-346: QA에서 문서 분석이 '0 토큰 · 미보고 4건'으로 보였다. 위쪽 합계 카드도 같은 규칙을 따른다.
+it('호출이 모두 미보고면 합계 카드의 토큰·비용을 0 대신 미보고로 보인다', async () => {
+  vi.mocked(dashboardApi.usage).mockResolvedValue({
+    from: '2026-10-20T00:00:00Z',
+    to: '2026-10-23T00:00:00Z',
+    input_tokens: 0,
+    output_tokens: 0,
+    call_count: 4,
+    estimated_cost_amount: '0',
+    currency: 'USD',
+    tokens_unknown_call_count: 4,
+    cost_unknown_call_count: 4,
+    by_feature: [],
+    by_task: [],
+    by_validation: [],
+    by_agent: [],
+    by_day: [],
+  })
+  const user = userEvent.setup()
+  mount()
+  await user.click(screen.getByRole('tab', { name: '사용량·비용' }))
+  const card = async (label: string) =>
+    (await screen.findByText(label, { selector: 'dt' }))
+      .nextElementSibling as HTMLElement
+  for (const label of ['입력 토큰', '출력 토큰', '추정 비용'])
+    expect(within(await card(label)).getByText(/^미보고/)).toBeInTheDocument()
+  expect(
+    within(await card('입력 토큰')).queryByText(/^0$|미보고 \d+건/),
+  ).not.toBeInTheDocument()
+  expect(
+    within(await card('추정 비용')).queryByText(/USD|미보고 \d+건/),
+  ).not.toBeInTheDocument()
 })
 it('호출이 없으면 비용을 미보고로 보이지 않고, 모든 기능이 0회면 빈 안내를 보인다', async () => {
   const empty = (key: string) => ({
@@ -526,6 +561,97 @@ describe('활동 타임라인', () => {
     expect(screen.getByText('시스템')).toBeInTheDocument()
     expect(screen.getByText('나간 토큰')).toBeInTheDocument()
     expect(screen.getByText('실패')).toBeInTheDocument()
+  })
+
+  it('유형을 한글로 보이고 위임은 새 팀장 이름을, 제외는 대상 이름 없이 보인다', async () => {
+    vi.mocked(membersApi.list).mockResolvedValue({
+      items: [
+        {
+          id: '1',
+          account_id: '11',
+          name: '민수',
+          role: 'MEMBER',
+          agent_connected: false,
+        },
+        {
+          id: '2',
+          account_id: '12',
+          name: '지수',
+          role: 'LEADER',
+          agent_connected: false,
+        },
+      ],
+      has_more: false,
+    })
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [
+        activity('4', {
+          type: 'LEADER_TRANSFERRED',
+          target_type: 'MEMBER',
+          target_id: '2',
+        }),
+        // 새 팀장이 그 뒤 나가 팀원 목록에 없다
+        activity('3', {
+          type: 'LEADER_TRANSFERRED',
+          actor_account_id: '12',
+          target_type: 'MEMBER',
+          target_id: '9',
+        }),
+        activity('2', {
+          type: 'MEMBER_REMOVED',
+          target_type: 'MEMBER',
+          target_id: '2',
+        }),
+        activity('1', { type: 'TASK_CREATED', task_id: '8' }),
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    const rows = await screen.findAllByRole('listitem')
+    await waitFor(() =>
+      expect(rows[0]).toHaveTextContent('민수님이 지수님에게 팀장을 넘겼어요'),
+    )
+    expect(rows[1]).toHaveTextContent('지수님이 팀장을 넘겼어요')
+    expect(rows[2]).toHaveTextContent('민수님이 팀원을 제외했어요')
+    expect(rows[2]).not.toHaveTextContent('지수')
+    expect(rows[3]).toHaveTextContent('민수님이 작업을 만들었어요')
+    for (const row of rows) expect(row).not.toHaveTextContent(/[A-Z]+_[A-Z]+/)
+  })
+
+  it('비비·시스템·에이전트 행위자도 이름 뒤에 님이를 붙인다', async () => {
+    vi.mocked(dashboardApi.activities).mockResolvedValue({
+      items: [
+        activity('3', {
+          type: 'CHANGE_PROPOSAL_COMMENTED',
+          actor_type: 'BEE',
+          actor_account_id: undefined,
+        }),
+        activity('2', {
+          type: 'TASK_COMPLETED',
+          actor_type: 'SYSTEM',
+          actor_account_id: undefined,
+        }),
+        activity('1', {
+          type: 'TASK_STARTED',
+          actor_type: 'AGENT',
+          agent_session_id: '91',
+        }),
+      ],
+      has_more: false,
+    })
+    const user = userEvent.setup()
+    mount()
+    await user.click(screen.getByRole('tab', { name: '활동 타임라인' }))
+    const rows = await screen.findAllByRole('listitem')
+    expect(rows[0]).toHaveTextContent('비비님이 변경 제안에 의견을 남겼어요')
+    expect(rows[1]).toHaveTextContent('시스템님이 작업을 완료했어요')
+    await waitFor(() =>
+      expect(rows[2]).toHaveTextContent(
+        '민수의 에이전트님이 작업을 시작했어요',
+      ),
+    )
   })
 })
 

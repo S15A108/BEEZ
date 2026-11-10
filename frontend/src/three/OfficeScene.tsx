@@ -23,7 +23,11 @@ import {
   OutdoorStreetRenderer,
   walkableStreetSpawn,
 } from './office/OutdoorStreetRenderer'
-import { avatarAppearance, officeActors } from './office/office-actors'
+import {
+  avatarAppearance,
+  officeActors,
+  type BibiActivity,
+} from './office/office-actors'
 import { nearOfficeExit } from './office/office-exit'
 import { officeLanding, officeWalkable } from './office/office-navigation'
 import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
@@ -39,6 +43,8 @@ export interface OfficeSceneProps {
   design?: string
   /** 사무실 시간대(D39). 없으면 낮이다. */
   time?: OfficeTime
+  /** 비비 현재 상태(BEE-A04). 상태마다 자리를 옮긴다(D35). undefined는 아직 못 읽음, null은 없는 API다. */
+  bibiActivity?: BibiActivity | null
   agents: readonly SceneAgent[]
   tasks: readonly SceneTask[]
   viewMode: 'first' | 'third'
@@ -99,8 +105,9 @@ function OfficeRuntime(
         props.currentUserId ??
           agents.find((agent) => agent.kind === 'human')?.id,
         officeHomeSeats(floor, agents),
+        props.bibiActivity,
       ),
-    [floor, agents, phase, props.currentUserId],
+    [floor, agents, phase, props.currentUserId, props.bibiActivity],
   )
   const latest = useRef({ props, floor, actors, work, phase })
   const engine = useRef<OfficeRenderer3D | null>(null)
@@ -314,19 +321,16 @@ function OfficeRuntime(
       }
       if (event.key !== 'Enter' || event.repeat) return
       event.preventDefault()
+      // 사무실에서는 엘리베이터 근처라는 것만으로 Enter를 산책으로 쓰지 않는다. 엘리베이터 앞에서 시작하고 산책에서
+      // 돌아와도 그 자리에 서서, 안내가 안 보이는 3인칭에서 첫 Enter가 늘 '나가기'가 됐다(S15P31A108-345). 산책은
+      // 1인칭으로 엘리베이터를 가리켜 안내가 보일 때의 Enter, 엘리베이터 클릭, '산책' 버튼으로 나간다.
       if (latest.current.props.outdoor) {
         if (
           outdoorPlayer.current &&
           street.current?.nearDoor(outdoorPlayer.current)
         )
           latest.current.props.onOutdoorChange(false)
-      } else if (
-        // 시작 전에도 엘리베이터 앞에서 시작하므로, 산책 출구가 닫힌 동안에는 Enter를 비비·가리킨 대상에 넘긴다.
-        latest.current.phase >= 4 &&
-        nearOfficeExit(player.current, latest.current.floor.outdoorExit)
-      )
-        exit()
-      else if (latest.current.props.viewMode === 'first') {
+      } else if (latest.current.props.viewMode === 'first') {
         if (renderer.aimedTarget) activate(renderer.aimedTarget)
         // 가리킨 대상이 없으면 단축 바의 '비비 Enter'대로 비비를 연다.
         else latest.current.props.onAgentSelect('bibi')
@@ -556,6 +560,7 @@ function OfficeRuntime(
       zoom: viewZoom,
       focus: focus.current,
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
+      playerId: me.id,
       work: state.work,
       time: state.props.time,
     })
@@ -569,6 +574,17 @@ function OfficeRuntime(
     }
     gl.domElement.setAttribute('data-player-x', me.x.toFixed(2))
     gl.domElement.setAttribute('data-player-y', me.y.toFixed(2))
+    // E2E가 '엘리베이터 앞에서 Enter' 회귀(S15P31A108-345)의 전제를 확인한다.
+    gl.domElement.setAttribute(
+      'data-near-exit',
+      String(nearOfficeExit(me, state.floor.outdoorExit)),
+    )
+    // 내 위치처럼 비비 위치를 남겨 E2E가 걸음을 확인한다.
+    const bibi = residents.find((actor) => actor.appearance === 'bibi')
+    if (bibi) {
+      gl.domElement.setAttribute('data-bibi-x', bibi.x.toFixed(2))
+      gl.domElement.setAttribute('data-bibi-y', bibi.y.toFixed(2))
+    }
   }, 1)
   return null
 }

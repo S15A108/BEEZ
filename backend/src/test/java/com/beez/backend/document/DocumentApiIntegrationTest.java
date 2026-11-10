@@ -801,8 +801,20 @@ class DocumentApiIntegrationTest {
             boolean isFirst = version.get("id").asLong() == first;
             assertThat(version.get("is_current_baseline").asBoolean()).isEqualTo(isFirst);
             assertThat(version.get("created_by").asText()).isEqualTo(Long.toString(isFirst ? leader : member));
+            assertThat(version.has("change_proposal_id")).isFalse();
         }
         assertThat(second).isNotEqualTo(first);
+
+        long baseline = jdbc.queryForObject("SELECT id FROM baseline WHERE project_id=? ORDER BY id LIMIT 1", Long.class, project);
+        long proposal = jdbc.queryForObject("""
+                INSERT INTO change_proposal(project_id,key,status,base_baseline_id,proposer_kind,proposer_account_id,reason)
+                VALUES (?,'CP-201','PROPOSED',?,'HUMAN',?,'버전 연결 확인') RETURNING id
+                """, Long.class, project, baseline, member);
+        jdbc.update("UPDATE document_version SET change_proposal_id=? WHERE id=?", proposal, second);
+        for (var version : JSON.readTree(send("GET", path + "/versions", null, false).body()).get("items")) {
+            if (version.get("id").asLong() == second) assertThat(version.get("change_proposal_id").asText()).isEqualTo(Long.toString(proposal));
+            else assertThat(version.has("change_proposal_id")).isFalse();
+        }
     }
 
     int originalCount() {

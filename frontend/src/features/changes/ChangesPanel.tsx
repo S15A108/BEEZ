@@ -1,3 +1,4 @@
+import { ACTIVE_POLL_MS, SLOW_POLL_MS } from '@/lib/pollIntervals'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -59,13 +60,14 @@ import {
 } from './proposalItems'
 import type { ProposalFormValues } from './proposalItems'
 import { membersQuery } from '@/features/members/membersQuery'
+import { ProposalActivity } from './ProposalActivity'
 
 interface Props {
   projectId: string
   isLeader: boolean
 }
 type ChangeStatus = ChangeProposal['status']
-type Tab = 'overview' | 'diff' | 'impact' | 'comments'
+type Tab = 'overview' | 'diff' | 'impact' | 'comments' | 'activity'
 type Mode =
   | { kind: 'detail' }
   | { kind: 'approve' }
@@ -91,6 +93,7 @@ const tabs = [
   ['diff', '바뀌는 내용'],
   ['impact', '영향'],
   ['comments', '의견'],
+  ['activity', '활동'],
 ] as const
 const statusOrder: Record<ChangeStatus, number> = {
   IN_REVIEW: 0,
@@ -181,7 +184,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ['PENDING', 'RUNNING'].includes(
         query.state.data?.published_analysis?.status ?? '',
       )
-        ? 15_000
+        ? SLOW_POLL_MS
         : false,
   })
   // 승인 확인창의 문서 새 버전 번호는 제안이 만든 문서 버전(proposed_document_version_id)을 버전 이력에서 찾는다.
@@ -214,7 +217,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     queryFn: () => changesApi.impact(projectId, selectedId!),
     enabled: !!selectedId,
     refetchInterval: (query) =>
-      query.state.data && isImpactRunning(query.state.data) ? 1500 : false,
+      query.state.data && isImpactRunning(query.state.data)
+        ? ACTIVE_POLL_MS
+        : false,
   })
   // 승인 확인 화면에서만, 팀장만 읽는다(CHG-A14는 LEADER 전용). 제안이 바뀌면(리비전·해시) 다시 읽는다.
   // 키를 ['projects', id] 밖에 둔다: 승인에 성공하면 프로젝트 전체를 새로 고치는데, 그때 이미 발행된 제안의
@@ -237,7 +242,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       const analysis = query.state.data?.unreviewed.ai_analysis
       return analysis &&
         (analysis.reanalysis_in_progress || analysis.status === 'RUNNING')
-        ? 1500
+        ? ACTIVE_POLL_MS
         : false
     },
   })
@@ -1656,6 +1661,14 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             </Button>
                           </p>
                         </div>
+                      )}
+                      {tab === 'activity' && (
+                        <ProposalActivity
+                          key={current.id}
+                          projectId={projectId}
+                          proposalId={current.id}
+                          onShowComments={() => setTab('comments')}
+                        />
                       )}
                     </div>
                     {/* 서버는 팀장이어도 작성자면 거두게 한다(PR #72 5차 조사 FIFTH-DOC-02). */}

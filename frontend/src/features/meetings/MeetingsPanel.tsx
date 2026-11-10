@@ -23,6 +23,7 @@ import { formatDate, formatShort, formatTime } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { useMeetingList } from './useMeetingList'
+import { MeetingRevisionDraft } from './MeetingRevisionDraft'
 
 interface Props {
   projectId: string
@@ -53,6 +54,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
     focus: string | null
   } | null>(null)
   const [ending, setEnding] = useState(false)
+  const [showRevision, setShowRevision] = useState(false)
   const [agendaOpen, setAgendaOpen] = useState(false)
   const [earlierOpen, setEarlierOpen] = useState(false)
   const list = useMeetingList(projectId)
@@ -130,6 +132,7 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
   const select = (id: string) => {
     setSelection({ id, focus })
     setEnding(false)
+    setShowRevision(false)
     setAgendaOpen(false)
     setEarlierOpen(false)
   }
@@ -586,6 +589,33 @@ export function MeetingsPanel({ projectId, isLeader }: Props) {
                               </ul>
                             </section>
                           ))}
+                        {isLeader &&
+                          participant?.status === 'JOINED' &&
+                          !closedMeeting && (
+                            <div className="grid gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                  setShowRevision((value) => !value)
+                                }
+                              >
+                                {showRevision
+                                  ? '회의 수정 초안 접기'
+                                  : '회의 수정 초안 만들기'}
+                              </Button>
+                              {showRevision && (
+                                <MeetingRevisionDraft
+                                  projectId={projectId}
+                                  meetingId={meeting.id}
+                                  entries={notes}
+                                  hasMore={!!entries.hasNextPage}
+                                  loadingMore={entries.isFetchingNextPage}
+                                  loadMore={() => void entries.fetchNextPage()}
+                                />
+                              )}
+                            </div>
+                          )}
                         {/* lg 미만은 창이 내용 높이로 늘어나므로 대화 칸 높이를 묶어 안에서 스크롤한다(새 메시지로 내리기). lg부터는 창 높이를 따른다. */}
                         <AsyncState query={entries}>
                           {() => (

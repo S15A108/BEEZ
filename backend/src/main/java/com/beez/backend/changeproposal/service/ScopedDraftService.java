@@ -88,15 +88,29 @@ public class ScopedDraftService {
         if (key == null || key.isBlank() || key.length() > 128 || key.chars().anyMatch(Character::isISOControl))
             throw invalid("Idempotency-Key는 제어 문자가 없는 1~128자입니다.");
         return flights.run(project + "|" + caller.accountId() + "|" + operation + "|" + key, hash(input),
-                () -> generateOnce(caller, project, input, key, operation));
+                () -> generateOnce(caller, project, input, key, operation, input, null));
+    }
+
+    /** Meeting context is constructed from verified server-side records by the meeting service. */
+    public Map<String, Object> generateMeeting(CallerContext caller, long project, ScopedRequest input, String key,
+                                               Map<String, Object> meetingContext) {
+        validate(input);
+        access.requireMember(caller, project);
+        if (key == null || key.isBlank() || key.length() > 128 || key.chars().anyMatch(Character::isISOControl))
+            throw invalid("Idempotency-Key는 제어 문자가 없는 1~128자입니다.");
+        String operation = "meeting-revision:" + meetingContext.get("meeting_id");
+        Object fingerprint = Map.of("request", input, "meeting", meetingContext);
+        return flights.run(project + "|" + caller.accountId() + "|" + operation + "|" + key, hash(fingerprint),
+                () -> generateOnce(caller, project, input, key, operation, fingerprint, meetingContext));
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> generateOnce(CallerContext caller, long project, ScopedRequest input, String key, String operation) {
+    private Map<String, Object> generateOnce(CallerContext caller, long project, ScopedRequest input, String key, String operation,
+            Object fingerprint, Map<String, Object> meetingContext) {
         Snapshot snapshot = tx.execute(status -> prepare(project, input.documentId(), input.baseDocumentVersionId(), input.taskId()));
         var previous = tx.execute(status -> {
             checkCurrent(caller, project, snapshot);
-            return idempotency.replay(project, caller.accountId(), operation, key, input, Map.class);
+            return idempotency.replay(project, caller.accountId(), operation, key, fingerprint, Map.class);
         });
         if (previous.isPresent()) return (Map<String, Object>) previous.get();
         Map<String, Span> spans = parseBlocks(snapshot, aiCall(() -> ai.revisionBlocks(snapshot.source())));
@@ -108,9 +122,22 @@ public class ScopedDraftService {
         if (input.agreements() != null) body.put("agreements", input.agreements());
         if (input.relatedProposals() != null) body.put("related_proposals", input.relatedProposals());
         body.put("request_key", requestKey);
+        if (meetingContext != null) {
+            body.remove("expected_document_version_id");
+            body.remove("agreements");
+            body.putAll(meetingContext);
+            body.putIfAbsent("related_proposals", List.of());
+        }
         long started = System.nanoTime();
         Map<String, Object> reply;
-        try { reply = aiCall(() -> ai.documentRevision(body)); }
+        boolean contextValid = true;
+        try {
+            Map<String, Object> raw = aiCall(() -> meetingContext == null ? ai.documentRevision(body) : ai.meetingRevision(body));
+            if (meetingContext != null) {
+                contextValid = raw != null && meetingContext.equals(raw.get("meeting"));
+                reply = raw != null && raw.get("draft") instanceof Map<?, ?> draft ? (Map<String, Object>) draft : null;
+            } else reply = raw;
+        }
         catch (AiCallException e) {
             long ms = (System.nanoTime() - started) / 1_000_000;
             int recorded = e.usage() == null ? 0 : usage.recordLines("BEE_DRAFT", project, snapshot.task(), requestKey, e.usage(), false, null, ms);
@@ -124,6 +151,10 @@ public class ScopedDraftService {
         }
         long ms = (System.nanoTime() - started) / 1_000_000;
         int recorded = reply == null ? 0 : usage.record("BEE_DRAFT", project, snapshot.task(), requestKey, reply, ms);
+        if (!contextValid) {
+            if (recorded == 0) usage.recordFailure("BEE_DRAFT", project, snapshot.task(), requestKey, ms);
+            throw unavailable();
+        }
         Map<String, Object> output;
         try { output = checkedOutput(snapshot, input, spans, reply); }
         catch (ApiException e) {
@@ -132,9 +163,9 @@ public class ScopedDraftService {
         }
         return tx.execute(status -> {
             checkCurrent(caller, project, snapshot);
-            var replay = idempotency.replay(project, caller.accountId(), operation, key, input, Map.class);
+            var replay = idempotency.replay(project, caller.accountId(), operation, key, fingerprint, Map.class);
             if (replay.isPresent()) return (Map<String, Object>) replay.get();
-            idempotency.save(project, caller.accountId(), operation, key, input, output);
+            idempotency.save(project, caller.accountId(), operation, key, fingerprint, output);
             return output;
         });
     }

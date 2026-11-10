@@ -9,7 +9,12 @@ import { Button } from '@/components/ui/button'
 import { agentStatusLabels } from '@/features/agents/agentStatus'
 import { useAgentStatusOf } from '@/features/agents/useAgentStatusOf'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
-import { countText, statusLabel } from '@/lib/display'
+import {
+  ACTOR_PARTICLE,
+  activityText,
+  countText,
+  statusLabel,
+} from '@/lib/display'
 import { formatShort } from '@/lib/formatDate'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -20,6 +25,7 @@ import {
   FEATURE_LABELS,
   activityChip,
   agentTokenSuffix,
+  allUnreported,
   callsText,
   costText,
   unknownText,
@@ -142,10 +148,14 @@ export function DashboardOverview({
     usage.data?.currency,
     usage.data?.cost_unknown_call_count,
     '비용 미보고',
+    usage.data?.call_count,
   )
   // 비용을 하나도 모르면 '추정'을 붙이지 않는다.
   const costNote =
-    usage.data?.estimated_cost_amount === undefined ? cost : `추정 ${cost}`
+    usage.data?.estimated_cost_amount === undefined ||
+    allUnreported(usage.data.call_count, usage.data.cost_unknown_call_count)
+      ? cost
+      : `추정 ${cost}`
   const metrics: {
     label: string
     value: string
@@ -346,17 +356,26 @@ export function DashboardOverview({
                         {row.call_count}회
                       </span>
                       <span className="text-right whitespace-nowrap text-muted-foreground tabular-nums">
-                        {costText(
-                          row.estimated_cost_amount,
-                          usage.data?.currency,
-                          0,
-                          '—',
-                        )}
-                        {/* 일부 호출의 비용을 모르면 전체 금액처럼 보이지 않게 건수를 값 아래에 붙인다. */}
-                        {unknownText(row.cost_unknown_call_count) && (
-                          <span className="block text-[11px]">
-                            {unknownText(row.cost_unknown_call_count)}
-                          </span>
+                        {/* 호출이 모두 비용 미보고면 '미보고'만, 일부만 모르면 전체 금액처럼 보이지 않게 건수를 값 아래에 붙인다. */}
+                        {allUnreported(
+                          row.call_count,
+                          row.cost_unknown_call_count,
+                        ) ? (
+                          '미보고'
+                        ) : (
+                          <>
+                            {costText(
+                              row.estimated_cost_amount,
+                              usage.data?.currency,
+                              0,
+                              '—',
+                            )}
+                            {unknownText(row.cost_unknown_call_count) && (
+                              <span className="block text-[11px]">
+                                {unknownText(row.cost_unknown_call_count)}
+                              </span>
+                            )}
+                          </>
                         )}
                       </span>
                     </li>
@@ -413,9 +432,10 @@ export function DashboardOverview({
                       <span className="truncate">
                         <strong className="font-semibold">
                           {actorName(item)}
-                        </strong>{' '}
+                        </strong>
+                        {ACTOR_PARTICLE}{' '}
                         <span className="text-[#57534e]">
-                          {statusLabel(item.type) || item.type}
+                          {activityText(item, members)}
                         </span>
                       </span>
                       {chip.notable ? (

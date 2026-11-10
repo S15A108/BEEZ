@@ -268,6 +268,27 @@ it('작업 100개를 넘어도 다음 페이지 작업을 찾아 고를 수 있�
   )
 })
 
+// S15P31A108-346: 기준 v2인 프로젝트에서도 '기준 v1이 생기기 전에는 올릴 수 없다'고 안내했다.
+it('작업이 없을 때 기준 v1 안내는 기준이 아직 없을 때만 붙인다', async () => {
+  vi.spyOn(tasksApi, 'list').mockResolvedValue({ items: [], has_more: false })
+  const client = () =>
+    new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const { unmount } = render(
+    <QueryClientProvider client={client()}>
+      <RelationsView projectId="101" hasBaseline />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText('아직 그릴 관계가 없어요')).toBeVisible()
+  expect(screen.queryByText(/기준 v1이 생기기 전에는/)).not.toBeInTheDocument()
+  unmount()
+  render(
+    <QueryClientProvider client={client()}>
+      <RelationsView projectId="101" hasBaseline={false} />
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByText(/기준 v1이 생기기 전에는/)).toBeVisible()
+})
+
 // PR #72 4차 TC-02: 진행 중 제안이 첫 50개 밖에 있으면 영향 경고가 사라졌다. 마지막 페이지까지 읽어 맞춘다.
 it('진행 중 제안이 첫 페이지 밖에 있어도 영향 경고를 띄운다', async () => {
   vi.spyOn(dashboardApi, 'relations').mockImplementation(async (_id, query) =>

@@ -90,6 +90,42 @@ def test_meeting_route_calls_model_and_returns_feature_usage(api):
     assert state["calls"][0].context.request_key == "meeting-review-1"
 
 
+def test_summary_route_accepts_backend_snapshot_and_returns_document_change(api):
+    client, state = api
+    body = request_body()
+    body.update(
+        mode="SUMMARY",
+        related_tasks=[],
+        documents=[
+            {"document_id": "201", "document_version_id": "211", "text": "원문\n"}
+        ],
+    )
+    state["output"].update(
+        conflicts=[],
+        document_changes=[
+            {
+                "document_id": "201",
+                "base_version_id": "211",
+                "locator": {"type": "text_lines", "start_line": 1, "end_line": 1},
+                "before": "원문\n",
+                "after": "수정 문안\n",
+                "evidence_entry_ids": ["911"],
+            }
+        ],
+    )
+    response = client.post(
+        "/v1/bee/meeting-analysis",
+        json=body,
+        headers={"Authorization": "Bearer internal"},
+    )
+    assert response.status_code == 200, response.text
+    assert (
+        response.json()["result"]["document_changes"]
+        == state["output"]["document_changes"]
+    )
+    assert response.json()["usage"][0]["failed"] is False
+
+
 def design_source(location):
     return {
         "id": "311",

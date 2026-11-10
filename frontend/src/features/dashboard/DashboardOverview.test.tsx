@@ -495,11 +495,76 @@ it('최근 활동 줄을 누르면 그 화면으로 가고 성공 칩은 보이�
   )
   expect(await screen.findByText('통과')).toBeInTheDocument()
   expect(screen.queryByText('성공')).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: /VALIDATION_FINISHED/ }))
+  await user.click(screen.getByRole('button', { name: /계획 검증을 마쳤어요/ }))
   expect(useWorkspaceStore.getState()).toMatchObject({
     pane: 'tasks',
     focusId: '503',
   })
+})
+
+it('최근 활동은 유형을 한글로 보이고 위임은 팀원 목록의 새 팀장 이름을 넣는다', async () => {
+  const at = '2026-10-27T01:00:00Z'
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DashboardOverview
+        projectId="10"
+        usage={query(usage(1))}
+        activities={query({
+          items: [
+            {
+              id: '3',
+              type: 'LEADER_TRANSFERRED',
+              actor_type: 'HUMAN',
+              target_type: 'MEMBER',
+              target_id: '22',
+              result: 'SUCCESS',
+              created_at: at,
+            },
+            {
+              id: '2',
+              type: 'MEMBER_REMOVED',
+              actor_type: 'HUMAN',
+              target_type: 'MEMBER',
+              target_id: '25',
+              result: 'SUCCESS',
+              created_at: at,
+            },
+            {
+              id: '1',
+              type: 'BRAND_NEW_TYPE',
+              actor_type: 'HUMAN',
+              result: 'SUCCESS',
+              created_at: at,
+            },
+          ],
+          has_more: false,
+        })}
+        work={query(noWork)}
+        members={
+          [
+            { id: '22', name: '김동료' },
+            { id: '21', name: '이팀장' },
+          ] as never
+        }
+        actorName={() => '이팀장'}
+        onTab={() => undefined}
+      />
+    </QueryClientProvider>,
+  )
+  const row = (text: string) => screen.getByText(text).closest('li')
+  expect(
+    await screen.findByText('김동료님에게 팀장을 넘겼어요'),
+  ).toBeInTheDocument()
+  expect(row('김동료님에게 팀장을 넘겼어요')).toHaveTextContent(
+    '이팀장님이 김동료님에게 팀장을 넘겼어요',
+  )
+  expect(row('팀원을 제외했어요')).toHaveTextContent(
+    '이팀장님이 팀원을 제외했어요',
+  )
+  expect(row('활동을 기록했어요')).toHaveTextContent(
+    '이팀장님이 활동을 기록했어요',
+  )
+  expect(screen.queryByText(/[A-Z]+_[A-Z]+/)).not.toBeInTheDocument()
 })
 
 it('에이전트 요약은 연결 상태와 사용량을 보이고, 서버가 나누지 않으면 사용량을 적지 않는다', async () => {
