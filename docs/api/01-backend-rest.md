@@ -11856,11 +11856,11 @@ HTTP `200`.
 
 관련 요구사항: BEE-02~04·07  
 담당: BE: 오서현(문서 조회·생성 연결) / AI: 박상은 / FE: 박상은  
-상태: 서버 연결 담당 검토 · 수정안 요청 반영
+상태: 구현 (S15P31A108-344). `scope=APPROVED`만 지원한다. `INCLUDE_DRAFTS`(초안 포함 검색)는 후속이다
 
 #### 인증
 
-`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다.
+`MEMBER`. 세션 인증과 역할·소유 조건을 검사한다. 프로젝트 객체는 활성 멤버십과 같은 프로젝트 소속이어야 한다. 사람 세션만 쓸 수 있다.
 
 #### Headers
 
@@ -11868,8 +11868,9 @@ HTTP `200`.
 | --- | --- |
 | Cookie | 로그인 시 발급된 세션 쿠키 |
 | Content-Type | application/json |
+| Origin | 신뢰하는 출처여야 한다(쓰기 요청 공통) |
 | X-Request-Id | 선택. 응답·서버 간 호출 추적 |
-| Idempotency-Key | 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Idempotency-Key | 받아도 쓰지 않는다. 대화 본문을 저장하지 않아(Q13) 응답을 다시 줄 수 없으므로 같은 요청을 다시 보내면 새 답변이 만들어진다 |
 
 #### Path Parameters
 
@@ -11885,9 +11886,9 @@ HTTP `200`.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `question` | `string` | Y | 프로젝트 설계 질문 |
-| `task_id` | `ID` | N | 관련 작업 |
-| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 찾는 범위. 기본 APPROVED. INCLUDE_DRAFTS는 원문 RAG 확장의 DOCUMENT_REVIEW에 대응. 수정안 요청 |
+| `question` | `string` | Y | 프로젝트 설계 질문. 앞뒤 공백을 지운 뒤 1~2000자 |
+| `task_id` | `ID` | N | 관련 작업. 있으면 그 작업의 상태·계획도 답의 근거가 된다. 같은 프로젝트의 작업이어야 하며 없거나 다른 프로젝트 것이면 404 |
+| `scope` | `APPROVED\|INCLUDE_DRAFTS` | N | 찾는 범위. 기본 APPROVED. `INCLUDE_DRAFTS`는 아직 지원하지 않아 400 `validation_failed`다(원문 RAG 확장의 DOCUMENT_REVIEW에 대응할 후속 범위) |
 
 ```json
 {
@@ -11908,9 +11909,14 @@ HTTP `200`.
 | `sources` | [Source[]](00-common.md#schema-source) | Y | 근거 |
 | `unresolved` | `string[]` | Y | 미확정 사항 |
 | `usage` | [Usage[]](00-common.md#schema-usage) | N | 실제 모델 호출 시 필수 |
-| `answer_id` | `ID` | Y | 답변 ID. BEE-A03 피드백에 씀. 수정안 요청 |
+| `answer_id` | `ID` | Y | 답변 ID. BEE-A03 피드백에 씀. 템플릿 응답에도 발급한다. 수정안 요청 |
 | `citations` | [BeeCitation[]](00-common.md#schema-beecitation) | Y | 본문 [n]과 잇는 근거 문단. 없으면 []. 수정안 요청 |
-| `grounded` | `boolean` | Y | 근거를 하나 이상 찾았는지. 수정안 요청 |
+| `grounded` | `boolean` | Y | 검증된 근거(인용·승인 설계 항목·관련 작업)를 하나 이상 붙여 답했는지. 본문 내용의 정확성 보증은 아니다. 수정안 요청 |
+| `mode` | `APPROVED` | Y | 이 답이 쓴 범위. 원문 RAG 확장 |
+| `baseline_id` | `ID` | Y | 이 답이 쓴 현재 기준 설계. 원문 RAG 확장 |
+| `document_version_ids` | `ID[]` | Y | 검색을 허용한 문서 버전(현재 기준 설계의 문서). 원문 RAG 확장 |
+| `verification` | `{level, claims, model?}` | N | 본문을 근거와 어디까지 대조했는지. `level`은 `ENTAILMENT`(문장마다 판정 모델이 확인) / `TOKENS`(숫자·식별자만 확인) / `NONE`(고정 문구). 모델 답일 때만 온다 |
+| `notices` | `string[]` | N | 화면에 작게 보일 안내. 없으면 생략 |
 
 ```json
 {
@@ -11949,9 +11955,11 @@ HTTP `200`.
 | --- | --- | --- |
 | 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
 | 404 | `not_found` | 리소스가 없거나 프로젝트 소속·접근 권한이 없음 |
-| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류 |
-| 502 | `ai_unavailable` | 응답·폴백 모두 실패 |
-| 504 | `ai_timeout` | 시간 초과 |
+| 400 | `validation_failed` | 필수 필드·타입·허용 값 오류. 질문이 비었거나 2000자 초과, `scope`가 `APPROVED`가 아님 |
+| 409 | `index_not_ready` | 현재 기준 설계가 없거나 그 문서의 색인이 아직 준비되지 않음. 예전 승인본으로 대신 답하지 않는다 |
+| 409 | `baseline_changed` | 답을 만드는 사이 기준 설계가 바뀜. 이번 답은 버리고 answer_id도 발급하지 않는다. 다시 질문한다 |
+| 502 | `ai_unavailable` | 응답·폴백 모두 실패(질문과 가까운 문서를 찾는 단계의 실패 포함) |
+| 504 | `ai_timeout` | 시간 초과. 다시 시도하지 않는다 |
 
 ```json
 {
@@ -11965,8 +11973,14 @@ HTTP `200`.
 #### 처리 규칙
 
 - 현재 승인 설계·관련 작업을 읽고 출처와 미확정 사항을 함께 응답한다.
-- 모델 장애 시 템플릿 응답은 origin=TEMPLATE다. 실제 사용량을 만든 것으로 표시하지 않는다.
-- 장기 대화 저장은 이 API 계약에 포함하지 않는다. 공유할 판단은 기록 API로 제출한다.
+- 찾는 문서 집합은 서버가 정한다: 프로젝트의 현재 기준 설계(`current_baseline_id`)에 담긴 문서 버전 중 색인이 준비된 것뿐이다. 사용자가 문서 목록을 넘길 수 없다. 검색은 이 집합을 먼저 제한한 뒤 그 안에서 가까운 순으로 고른다.
+- AI가 돌려준 답은 BE가 AI에 보낸 집합과 대조한다. 인용한 근거가 보낸 근거(문서·버전·청크·행 범위)가 아니거나, 인용문(`quote`)이 그 근거 원문의 정확한 부분 문자열이 아니거나, 출처(`sources`)가 허용한 문서 버전 밖이거나 그 버전의 문서 ID·버전 번호가 보낸 값과 다르거나, 참조한 설계 항목·작업이 보낸 것이 아니면 **일부만 지우지 않고 그 답 전체를 버린다**(본문 [n]·`grounded`와 어긋나므로). 새 request key로 1회 다시 부르고, 그래도 안 되면 템플릿 응답을 준다. 다만 AI의 설정·계약 오류(스위치 꺼짐 503, 내부 토큰 401, 요청 형식 422)는 다시 불러도 같은 결과라 재시도하지 않고 바로 템플릿 응답을 준다(서버 로그에 `AI-A05 rejected` 오류가 남는다). 배포 뒤 첫 응답의 `origin`이 `MODEL`인지 확인한다.
+- 응답의 `citations`(문서·버전·`title`·`locator`)와 `sources`는 AI 가 준 값을 그대로 쓰지 않고 BE 가 보낸 근거로 다시 만든다. 인용 한 건마다 출처 한 건(`location`은 `문서 제목 / L시작-L끝`)이고, 이어서 참조한 승인 항목의 저장 출처 중 현재 범위 안의 문서 버전이 붙는다. 인용문 `quote`는 보낸 청크 원문 안에 있음을 확인한 뒤 앞뒤 공백만 다듬어 쓴다. `section_title`은 BE 가 보내지 않으므로 내보내지 않는다.
+- 처리 시간: 질문 임베딩(읽기 제한 20초)과 답변·판정 모델 호출(AI 읽기 제한 `beez.bee.chat-read-timeout`, 기본 35초)을 기다린다. 전체를 서버 Nginx 기본 읽기 대기(60초)보다 짧은 55초(`beez.bee.answer-budget`)로 묶는다. 첫 AI 호출도 남은 예산 안에서만 시작하고 읽기 제한을 남은 시간으로 줄이며(검색이 느리면 35초보다 짧아진다), 남은 시간이 10초보다 적으면 AI를 부르지 않고 템플릿 응답을 준다. 재시도는 지금까지 걸린 시간에 AI 읽기 제한 전체를 더해도 예산 안일 때만 한다. AI 읽기 제한을 넘기면 504 `ai_timeout`이다(재시도 없음). 두 값은 서버 env `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET`으로 코드 배포 없이 조정한다. 실제 소요 시간은 로그 `BEE-A01 timing`과 지표 `beez_bee_ask_seconds`·`beez_bee_chat_seconds`·`beez_bee_retrieve_seconds`로 잰다(질문·근거 원문은 남기지 않는다).
+- 답을 돌려주기 직전에 멤버십과 현재 기준 설계를 다시 확인한다. 통과한 뒤에만 `answer_id`를 발급한다.
+- 정보 부족·프로젝트 밖 질문은 오류가 아니라 정상 답변이다(HTTP 200, `grounded=false`, `citations=[]`, 고정 문구).
+- 모델 장애 시 템플릿 응답은 origin=TEMPLATE다. 인용과 근거 판정이 없고 `grounded=false`, `usage`는 없다. `sources`는 질문과 가까운 허용 문서의 위치만 담는다. 실제 사용량을 만든 것으로 표시하지 않는다. 모델 호출은 호출마다 `BEE_CHAT` 사용량으로 남고, 실패한 호출도 남긴다.
+- 장기 대화 저장은 이 API 계약에 포함하지 않는다. 공유할 판단은 기록 API로 제출한다. 서버는 질문·답변 본문을 저장하지 않고 답변 발급 기록(`answer_id`, 근거 문서 버전, 기준 설계)만 남긴다.
 
 #### 원문 RAG 확장 — 2026-10-27
 
@@ -12110,7 +12124,7 @@ HTTP `200`.
 
 관련 요구사항: BEE-02 (화면 PNL-12-v2-bibi-hotbar)  
 담당: BE: 오서현 / AI: 박상은 / FE: 박상은  
-상태: 구현 (S15P31A108-234). 답변 발급(BEE-A01)은 135 계약 확정 뒤 연결
+상태: 구현 (S15P31A108-234). `answer_id`는 BEE-A01이 발급한다(S15P31A108-344)
 
 #### 인증
 

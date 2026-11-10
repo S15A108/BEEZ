@@ -29,6 +29,8 @@ public class AiClient {
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
+    private final BeezProperties.Ai chatAi;
+    private final HttpClient chatHttp;
 
     public AiClient(BeezProperties props) {
         this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT);
@@ -43,16 +45,26 @@ public class AiClient {
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
+        // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
+        this.chatAi = ai;
+        this.chatHttp = http(ai);
     }
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
 
-    private static RestClient client(BeezProperties.Ai ai, Duration readTimeout) {
+    private static HttpClient http(BeezProperties.Ai ai) {
         // Uvicorn uses HTTP/1.1; avoid h2c upgrades on streamed request bodies.
-        HttpClient http = HttpClient.newBuilder()
+        return HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(ai.connectTimeout())
                 .build();
+    }
+
+    private static RestClient client(BeezProperties.Ai ai, Duration readTimeout) {
+        return client(ai, http(ai), readTimeout);
+    }
+
+    private static RestClient client(BeezProperties.Ai ai, HttpClient http, Duration readTimeout) {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(readTimeout);
         return RestClient.builder()
@@ -136,6 +148,15 @@ public class AiClient {
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> assignmentRecommendations(java.util.Map<String, Object> input) {
         return questionRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    /**
+     * AI-A05 비비 질문 답변 ({@code POST /v1/bee/chat}, S15P31A108-135 계약). 답변 모델과 문장 판정 모델을 차례로 부르므로
+     * 읽기 제한을 호출마다 받는다(질문 한 건의 남은 시간 예산에서 정한다). 실패 분류는 부르는 쪽이 한다.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> beeChat(java.util.Map<String, Object> input, Duration readTimeout) {
+        return client(chatAi, chatHttp, readTimeout).post().uri("/v1/bee/chat").body(input).retrieve().body(java.util.Map.class);
     }
 
     @SuppressWarnings("unchecked")
