@@ -618,5 +618,5 @@ PR #186 브랜치 커밋 `d295ecef`를 올렸습니다. 순서: javaagent jar �
   셸마다 함수 정의를 함께 줍니다.
 - 리뷰 반영(lag 정체 알림에 offset 전진 조건) 뒤 모니터링만 `153f2c3f`로 다시 올렸습니다(15:34, cdc 폴더는 바뀐 것이 없어 `d295ecef`
   그대로). 규칙 34개 health ok, `CdcConsumerLagStuck`이 새 식으로 비활성, 수집 대상 일곱 job up, lag 0.
-- 머지 뒤 두 폴더를 dev 커밋으로 다시 올려 `REVISION`을 맞춥니다. 코드 리뷰로 더한 `CdcConsumerGroupMissing`(규칙 35개)은 그때
-  서버에 들어갑니다.
+- 머지 뒤(11-09) cdc·monitoring 두 폴더를 dev 커밋 `ed175d6e`로 다시 올려 `REVISION`을 맞췄습니다(connect 재생성 없음). 코드
+  리뷰로 더한 `CdcConsumerGroupMissing`이 이때 들어가 규칙 35개 health ok, 수집 대상 일곱 job up, `CdcConsumerGroupMissing` 비활성.
