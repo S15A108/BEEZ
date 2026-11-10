@@ -35,6 +35,7 @@ import { useSession } from '@/features/auth/useSession'
 import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
 import { projectPlacements } from '@/features/projects/placements'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
+import { OfficeTimeSettings } from '@/features/workspace/OfficeTimeSettings'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import {
   getApiErrorCode,
@@ -108,7 +109,7 @@ export function TeamPanel({
   const cityProjects = useQuery({
     queryKey: ['projects', 'placement-ids'],
     queryFn: () => projectsApi.list({ limit: 100 }),
-    enabled: view === 'project',
+    enabled: view === 'project' && isLeader,
   })
   const assigned = cityProjects.data
     ? projectPlacements(
@@ -212,12 +213,12 @@ export function TeamPanel({
   }
   const title =
     view === 'project'
-      ? '프로젝트 정보'
+      ? '프로젝트 관리'
       : view === 'remove'
         ? isLeader
           ? '프로젝트 제거'
           : '프로젝트 나가기'
-        : '팀'
+        : '팀 관리'
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -497,94 +498,123 @@ export function TeamPanel({
             </AsyncState>
           </div>
         )}
+      {/* S15P31A108-376: 프로젝트 관리 한 페이지. 위는 이름·소개·건물(PRJ-A04, 팀장만), 아래는 사무실 시간대(이 브라우저), 맨 아래는 나가기. */}
       {view === 'project' && (
         <AsyncState query={project}>
           {(data) => (
-            <div className="space-y-6">
-              {/* API 없음: 건물 디자인은 이 브라우저에만 저장된다. Project에 design 필드가 생기면 수정 요청에 넣는다. */}
-              <BuildingDesignPicker
-                value={design}
-                onChange={setPickedDesign}
-                small
-                note={
-                  typeof lot === 'number' && (
-                    <p className="grid justify-items-center gap-1 text-center text-xs leading-[17px] text-[#6b6658]">
-                      <span className="inline-flex h-[22px] items-center rounded-full bg-white px-2 font-semibold text-foreground">
-                        지금 부지 {lot + 1}
-                      </span>
-                      자리는 그대로예요. 건물 디자인은 이 브라우저에만 저장돼요.
-                    </p>
-                  )
-                }
-              />
-              <ActionForm
-                // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
-                key={`${data.name}\n${data.description ?? ''}`}
-                // 새로 그려진 폼은 제출 중 상태를 모르므로, 저장 처리가 끝날 때까지 끈다(PR #199 리뷰).
-                disabled={action.busy}
-                disableWhen={(values) =>
-                  !designChanged && !projectInfoChanged(values, data)
-                }
-                fields={[
-                  {
-                    name: 'name',
-                    label: '프로젝트 이름',
-                    required: true,
-                    max: 40,
-                    counter: true,
-                    value: data.name,
-                  },
-                  {
-                    name: 'description',
-                    label: '프로젝트 소개',
-                    type: 'textarea',
-                    column: 2,
-                    max: 300,
-                    counter: true,
-                    value: data.description,
-                  },
-                ]}
-                // 설정 창 높이(680)를 지키려고 이름·소개를 한 줄에 나란히 둔다(SCR-06-v2-settings-project 11-02).
-                columns
-                submitLabel="저장"
-                onSubmit={async (values) => {
-                  await action.run(
-                    // 건물 디자인은 이 브라우저에만 저장하므로, 이름·소개가 그대로면 서버에 보내지 않는다.
-                    async () => {
-                      if (projectInfoChanged(values, data))
-                        await projectsApi.update(projectId, {
-                          name: values.name,
-                          description: values.description,
-                        })
-                    },
-                    '프로젝트 정보를 저장했어요.',
-                  )
-                  // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
-                  // 도시와 같이 지금 보이는 칸을 함께 저장해, 당겨진 칸 번호로 다른 프로젝트와 순서가 뒤바뀌지 않는다(S15P31A108-256).
-                  if (typeof lot === 'number')
-                    placeProjects(accountId, [
-                      ...assigned,
-                      { id: projectId, lot, design },
-                    ])
-                  await queryClient.invalidateQueries({
-                    queryKey: ['projects'],
-                  })
-                }}
-              />
+            <div className="space-y-8">
+              {isLeader ? (
+                <div className="space-y-6">
+                  {/* API 없음: 건물 디자인은 이 브라우저에만 저장된다. Project에 design 필드가 생기면 수정 요청에 넣는다. */}
+                  <BuildingDesignPicker
+                    value={design}
+                    onChange={setPickedDesign}
+                    small
+                    note={
+                      typeof lot === 'number' && (
+                        <p className="grid justify-items-center gap-1 text-center text-xs leading-[17px] text-[#6b6658]">
+                          <span className="inline-flex h-[22px] items-center rounded-full bg-white px-2 font-semibold text-foreground">
+                            지금 부지 {lot + 1}
+                          </span>
+                          자리는 그대로예요. 건물 디자인은 이 브라우저에만
+                          저장돼요.
+                        </p>
+                      )
+                    }
+                  />
+                  <ActionForm
+                    // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
+                    key={`${data.name}\n${data.description ?? ''}`}
+                    // 새로 그려진 폼은 제출 중 상태를 모르므로, 저장 처리가 끝날 때까지 끈다(PR #199 리뷰).
+                    disabled={action.busy}
+                    disableWhen={(values) =>
+                      !designChanged && !projectInfoChanged(values, data)
+                    }
+                    fields={[
+                      {
+                        name: 'name',
+                        label: '프로젝트 이름',
+                        required: true,
+                        max: 40,
+                        counter: true,
+                        value: data.name,
+                      },
+                      {
+                        name: 'description',
+                        label: '프로젝트 소개',
+                        type: 'textarea',
+                        column: 2,
+                        max: 300,
+                        counter: true,
+                        value: data.description,
+                      },
+                    ]}
+                    // 설정 창 높이(680)를 지키려고 이름·소개를 한 줄에 나란히 둔다(SCR-06-v2-settings-project 11-02).
+                    columns
+                    submitLabel="저장"
+                    onSubmit={async (values) => {
+                      await action.run(
+                        // 건물 디자인은 이 브라우저에만 저장하므로, 이름·소개가 그대로면 서버에 보내지 않는다.
+                        async () => {
+                          if (projectInfoChanged(values, data))
+                            await projectsApi.update(projectId, {
+                              name: values.name,
+                              description: values.description,
+                            })
+                        },
+                        '프로젝트 정보를 저장했어요.',
+                      )
+                      // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                      // 도시와 같이 지금 보이는 칸을 함께 저장해, 당겨진 칸 번호로 다른 프로젝트와 순서가 뒤바뀌지 않는다(S15P31A108-256).
+                      if (typeof lot === 'number')
+                        placeProjects(accountId, [
+                          ...assigned,
+                          { id: projectId, lot, design },
+                        ])
+                      await queryClient.invalidateQueries({
+                        queryKey: ['projects'],
+                      })
+                    }}
+                  />
+                </div>
+              ) : (
+                // PRJ-A04는 팀장만 고친다. 팀원은 보기만 하고, 건물 디자인은 팀장 브라우저의 설정이라 보이지 않는다.
+                <div className="space-y-3">
+                  <dl className="grid gap-3 text-sm">
+                    <div className="grid gap-1">
+                      <dt className="font-medium">프로젝트 이름</dt>
+                      <dd>{data.name}</dd>
+                    </div>
+                    <div className="grid gap-1">
+                      <dt className="font-medium">프로젝트 소개</dt>
+                      <dd className="text-muted-foreground">
+                        {data.description || '소개가 없어요.'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-xs text-muted-foreground">
+                    프로젝트 이름·소개·건물은 팀장만 바꿀 수 있어요.
+                  </p>
+                </div>
+              )}
+              <OfficeTimeSettings />
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 p-4">
                 <span className="text-sm">
-                  <strong className="block">프로젝트 삭제</strong>
+                  <strong className="block">
+                    {isLeader ? '프로젝트 삭제' : '프로젝트 나가기'}
+                  </strong>
                   {/* 11-04 사용자 결정: PRJ-A05는 팀원이 있어도 이름이 맞으면 지운다(SCR-06-v2-settings-project). */}
                   <span className="text-muted-foreground">
-                    팀원이 있어도 삭제돼요. 권한은 모두 해제되고 기록은
-                    보관돼요. 이름을 입력해야 삭제돼요.
+                    {isLeader
+                      ? '팀원이 있어도 삭제돼요. 권한은 모두 해제되고 기록은 보관돼요. 이름을 입력해야 삭제돼요.'
+                      : '나가면 이 프로젝트의 문서와 작업을 더 볼 수 없어요.'}
                   </span>
                 </span>
                 <Button
                   variant="destructive"
                   onClick={() => onViewChange?.('remove')}
                 >
-                  프로젝트 삭제
+                  {isLeader ? '프로젝트 삭제' : '프로젝트 나가기'}
                 </Button>
               </div>
             </div>
@@ -793,7 +823,7 @@ export function TeamPanel({
       )}
       {typeof dialog === 'object' && dialog?.action === 'edit' && (
         <FormDialog
-          back="팀"
+          back="팀 관리"
           title={`${dialog.member.name} · 역할 수정`}
           description="표시 역할과 담당 영역은 팀 목록과 3D 이름표에 보여요."
           fields={[
@@ -834,7 +864,7 @@ export function TeamPanel({
       )}
       {typeof dialog === 'object' && dialog?.action === 'remove' && (
         <FormDialog
-          back="팀"
+          back="팀 관리"
           title={`${dialog.member.name} 추방`}
           description="프로젝트 접근과 토큰이 바로 해제돼요. 맡은 열린 작업은 넘겨받을 동료를 고르지 않으면 담당자만 비워져요."
           fields={[

@@ -11,11 +11,10 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { PaneSheetHost } from '@/components/PaneSheet'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { OfficeTimeSettings } from './OfficeTimeSettings'
 
-type Section = TeamView | 'agent' | 'office'
+type Section = TeamView | 'agent'
 
-// 오른쪽 위 톱니로 여는 설정 창. 팀 관리·에이전트·프로젝트 정보를 한곳에 모았다.
+// 오른쪽 위 톱니로 여는 설정 창. 메뉴는 회원 설정 → 팀 관리 → 내 에이전트 관리 → 프로젝트 관리 순서다(S15P31A108-376).
 export function SettingsDialog({
   projectId,
   isLeader,
@@ -35,36 +34,41 @@ export function SettingsDialog({
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
   const pending = useIsMutating()
+  // 예전 사무실 화면(office)은 프로젝트 관리 아래쪽 시간대로 합쳤다. 예전 링크도 프로젝트 관리를 연다.
   const section: Section =
-    focusId === 'project' && isLeader
+    focusId === 'project' || focusId === 'office'
       ? 'project'
-      : focusId === 'agent' || focusId === 'remove' || focusId === 'office'
+      : focusId === 'agent' || focusId === 'remove'
         ? focusId
         : 'team'
   const go = (next: Section) => openPane('settings', next)
   // 토큰 발급처럼 요청이 처리 중이면 다른 메뉴로 옮기지 않는다. 옮기면 발급이 끝나도 한 번만 보이는 평문 토큰을
   // 받을 화면이 없어 토큰을 잃는다(PR #72 재전수 SECOND-AMP-02). 창 닫기도 처리 중에는 막는다.
   const busy = pending > 0
-  const item = (value: Section, label: string, extra?: string) => (
-    <button
-      type="button"
-      aria-current={section === value ? 'page' : undefined}
-      disabled={busy && section !== value}
-      onClick={() => go(value)}
-      className={cn(
-        'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
-        section === value && 'bg-muted font-semibold',
-        value === 'remove' && 'text-destructive',
-      )}
-    >
-      {label}
-      {extra && (
-        <span className="text-[11px] font-semibold text-muted-foreground">
-          {extra}
-        </span>
-      )}
-    </button>
-  )
+  const item = (value: Section, label: string, extra?: string) => {
+    // 나가기 창(remove)은 프로젝트 관리 아래에서 연다.
+    const current =
+      section === value || (value === 'project' && section === 'remove')
+    return (
+      <button
+        type="button"
+        aria-current={current ? 'page' : undefined}
+        disabled={busy && !current}
+        onClick={() => go(value)}
+        className={cn(
+          'flex h-9 items-center justify-between rounded-lg px-3 text-left text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+          current && 'bg-muted font-semibold',
+        )}
+      >
+        {label}
+        {extra && (
+          <span className="text-[11px] font-semibold text-muted-foreground">
+            {extra}
+          </span>
+        )}
+      </button>
+    )
+  }
   return (
     <Dialog
       open={pane === 'settings'}
@@ -87,32 +91,7 @@ export function SettingsDialog({
             </p>
           )}
           <div className="grid gap-0.5">
-            <p className="mb-1 flex justify-between px-3 text-[11px] font-bold text-muted-foreground">
-              프로젝트 설정
-              {isLeader && <span className="font-semibold">팀장만</span>}
-            </p>
-            {isLeader && item('project', '프로젝트 정보')}
-            {item('team', '팀')}
-          </div>
-          <div className="grid gap-0.5">
-            <p className="mb-1 px-3 text-[11px] font-bold text-muted-foreground">
-              내 설정
-            </p>
-            {item(
-              'agent',
-              '에이전트',
-              agentStatusLabels[
-                statusOf({ id: memberId, agent_connected: agentConnected })
-                  .status
-              ],
-            )}
-            {item('office', '사무실 화면')}
-            {item('remove', isLeader ? '프로젝트 제거' : '프로젝트 나가기')}
-          </div>
-          <div className="grid gap-0.5">
-            <p className="mb-1 px-3 text-[11px] font-bold text-muted-foreground">
-              계정
-            </p>
+            {/* 회원 설정은 계정 전체에 걸린 화면(비밀번호 변경·탈퇴 하위 페이지 포함)이라 프로젝트 창에 넣지 않고 /account로 잇는다. */}
             <Link
               to="/account"
               aria-disabled={busy || undefined}
@@ -122,13 +101,21 @@ export function SettingsDialog({
               회원 설정
               <span className="text-[11px] text-muted-foreground">↗</span>
             </Link>
+            {item('team', '팀 관리')}
+            {item(
+              'agent',
+              '내 에이전트 관리',
+              agentStatusLabels[
+                statusOf({ id: memberId, agent_connected: agentConnected })
+                  .status
+              ],
+            )}
+            {item('project', '프로젝트 관리')}
           </div>
         </nav>
         <PaneSheetHost className="min-w-0 overflow-y-auto px-8 py-7">
           {section === 'agent' ? (
             <AgentsPanel projectId={projectId} />
-          ) : section === 'office' ? (
-            <OfficeTimeSettings />
           ) : (
             <TeamPanel
               key={section}
