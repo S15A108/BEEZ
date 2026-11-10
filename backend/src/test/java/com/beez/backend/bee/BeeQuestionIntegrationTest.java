@@ -1,6 +1,7 @@
 package com.beez.backend.bee;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -132,7 +133,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
     }
 
     void gatewayAnswers(Consumer<Map<String, Object>> mutate) {
-        when(gateway.chat(anyMap())).thenAnswer(invocation -> modelAnswer(invocation.getArgument(0), mutate));
+        when(gateway.chat(anyMap(), any())).thenAnswer(invocation -> modelAnswer(invocation.getArgument(0), mutate));
     }
 
     // ---- 데이터 ------------------------------------------------------------------------------
@@ -250,7 +251,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass(Map.class);
-        verify(gateway).chat(sent.capture());
+        verify(gateway).chat(sent.capture(), any());
         Map<String, Object> request = sent.getValue();
         @SuppressWarnings("unchecked")
         var evidence = (List<Map<String, Object>>) request.get("retrieved_evidence");
@@ -320,7 +321,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
         JsonNode body = ok(ask(member, project.projectId(), QUESTION));
 
-        verify(gateway, times(2)).chat(anyMap());
+        verify(gateway, times(2)).chat(anyMap(), any());
         assertThat(body.get("origin").asText()).isEqualTo("TEMPLATE");
         assertThat(body.get("grounded").asBoolean()).isFalse();
         assertThat(body.get("citations").size()).isZero();
@@ -350,11 +351,11 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
     void ask_aiUnavailableTwice_fallsBackToTemplateWithoutFakeUsage() {
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
-        when(gateway.chat(anyMap())).thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "x", null));
+        when(gateway.chat(anyMap(), any())).thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "x", null));
 
         JsonNode body = ok(ask(member, project.projectId(), QUESTION));
 
-        verify(gateway, times(2)).chat(anyMap());
+        verify(gateway, times(2)).chat(anyMap(), any());
         assertThat(body.get("origin").asText()).isEqualTo("TEMPLATE");
         assertThat(body.get("grounded").asBoolean()).isFalse();
         assertThat(body.get("sources").get(0).get("document_version_id").asText()).isEqualTo(String.valueOf(doc[1]));
@@ -369,11 +370,11 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
         // AI 스위치 꺼짐(503)·토큰(401)·요청 형식(422)은 다시 불러도 같은 결과다 — 한 번만 부르고 템플릿으로 끝낸다
-        when(gateway.chat(anyMap())).thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "x", null, false));
+        when(gateway.chat(anyMap(), any())).thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", "x", null, false));
 
         JsonNode body = ok(ask(member, project.projectId(), QUESTION));
 
-        verify(gateway, times(1)).chat(anyMap());
+        verify(gateway, times(1)).chat(anyMap(), any());
         assertThat(body.get("origin").asText()).isEqualTo("TEMPLATE");
     }
 
@@ -381,13 +382,13 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
     void ask_aiTimeout_is504WithoutRetry() {
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
-        when(gateway.chat(anyMap())).thenThrow(new AiCallException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", "x", null));
+        when(gateway.chat(anyMap(), any())).thenThrow(new AiCallException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", "x", null));
 
         HttpResponse<String> res = ask(member, project.projectId(), QUESTION);
 
         assertThat(res.statusCode()).isEqualTo(504);
         assertThat(error(res)).isEqualTo("ai_timeout");
-        verify(gateway, times(1)).chat(anyMap());
+        verify(gateway, times(1)).chat(anyMap(), any());
         assertThat(answerCount(project.projectId())).isZero();
     }
 
@@ -399,14 +400,14 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
         assertThat(res.statusCode()).isEqualTo(409);
         assertThat(error(res)).isEqualTo("index_not_ready");
-        verify(gateway, times(0)).chat(anyMap());
+        verify(gateway, times(0)).chat(anyMap(), any());
     }
 
     @Test
     void ask_baselineReplacedWhileAiRuns_is409BaselineChanged_andIssuesNoAnswer() {
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
-        when(gateway.chat(anyMap())).thenAnswer(invocation -> {
+        when(gateway.chat(anyMap(), any())).thenAnswer(invocation -> {
             publish(project.projectId(), project.leaderAccountId(), 2, doc);   // 호출 중 새 기준이 발행됨
             return modelAnswer(invocation.getArgument(0), r -> { });
         });
@@ -430,7 +431,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
 
         assertThat(ask(outsider, project.projectId(), QUESTION).statusCode()).isEqualTo(404);
         assertThat(ask(client(), project.projectId(), QUESTION).statusCode()).isEqualTo(401);
-        verify(gateway, times(0)).chat(anyMap());
+        verify(gateway, times(0)).chat(anyMap(), any());
         verify(ai, times(0)).documentEmbeddings(anyMap());
     }
 
@@ -440,7 +441,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
                 "Origin", "http://evil.example");
 
         assertThat(res.statusCode()).isGreaterThanOrEqualTo(400).isLessThan(500);
-        verify(gateway, times(0)).chat(anyMap());
+        verify(gateway, times(0)).chat(anyMap(), any());
     }
 
     @Test
@@ -451,7 +452,7 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
         assertThat(ask(member, project.projectId(), "{\"question\":\"q\",\"scope\":\"INCLUDE_DRAFTS\"}").statusCode()).isEqualTo(400);
         assertThat(ask(member, project.projectId(), "{\"question\":\"q\",\"scope\":\"ALL\"}").statusCode()).isEqualTo(400);
         assertThat(ask(member, project.projectId(), "{\"question\":\"q\",\"task_id\":\"abc\"}").statusCode()).isEqualTo(400);
-        verify(gateway, times(0)).chat(anyMap());
+        verify(gateway, times(0)).chat(anyMap(), any());
     }
 
     @Test
@@ -462,6 +463,6 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
         HttpResponse<String> res = ask(member, project.projectId(), "{\"question\":\"q\",\"task_id\":\"999999999\"}");
 
         assertThat(res.statusCode()).isEqualTo(404);
-        verify(gateway, times(0)).chat(anyMap());
+        verify(gateway, times(0)).chat(anyMap(), any());
     }
 }

@@ -32,9 +32,9 @@ public class BeeChatAiAdapter implements BeeChatGateway {
     public BeeChatAiAdapter(AiClient ai) { this.ai = ai; }
 
     @Override
-    public Map<String, Object> chat(Map<String, Object> input) {
+    public Map<String, Object> chat(Map<String, Object> input, java.time.Duration readTimeout) {
         try {
-            return ai.beeChat(input);
+            return ai.beeChat(input, readTimeout);
         } catch (HttpServerErrorException.GatewayTimeout e) {
             log.warn("AI-A05 timed out: {}", e.toString());
             throw new AiCallException(HttpStatus.GATEWAY_TIMEOUT, "ai_timeout", TIMEOUT, AiErrorBodies.usageIn(e));

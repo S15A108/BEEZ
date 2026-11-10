@@ -67,6 +67,8 @@ public class BeeQuestionService {
      * Nginx 기본 읽기 대기(60초)보다 짧아야 브라우저가 먼저 끊지 않는다 — 서버 Nginx 는 건드리지 않는다.
      */
     static final Duration DEFAULT_ANSWER_BUDGET = Duration.ofSeconds(55);
+    /** AI 호출을 시작하려면 최소로 남아 있어야 하는 시간 */
+    static final Duration MIN_CALL = Duration.ofSeconds(10);
     static final String TEMPLATE_TEXT = "지금은 비비가 답을 만들지 못했어요. 질문과 가까운 문서를 아래에 보여 드려요. 잠시 뒤 다시 질문해 주세요.";
     static final String TEMPLATE_TEXT_NO_SOURCE = "지금은 비비가 답을 만들지 못했어요. 승인된 문서에서 질문과 가까운 내용도 찾지 못했어요. 잠시 뒤 다시 질문해 주세요.";
 
@@ -159,11 +161,20 @@ public class BeeQuestionService {
                 timing.attempts.add("retry_skipped:0");
                 break;
             }
+            // 첫 호출도 남은 예산 안에서만 시작하고, 호출 자체도 남은 시간을 넘지 않게 읽기 제한을 줄인다.
+            // 검색·DB 가 오래 걸렸으면 AI 를 부르지 않고 템플릿으로 끝낸다(프록시가 먼저 끊지 않게).
+            Duration limit = callLimit(System.nanoTime() - askStarted, chatReadTimeout, answerBudget);
+            if (limit.isZero()) {
+                log.warn("BEE-A01 AI call skipped: time budget used up before the call (project {}, attempt {})", projectId, attempt);
+                timing.attempts.add("budget_exhausted:0");
+                failure = new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", BeeChatAiAdapter.UNAVAILABLE, null, false);
+                break;
+            }
             String key = requestKey + "-a" + attempt;
             long started = System.nanoTime();
             String label = "ok";
             try {
-                response = gateway.chat(payload(projectId, key, question, retrieval, sent, approved, relatedTasks));
+                response = gateway.chat(payload(projectId, key, question, retrieval, sent, approved, relatedTasks), limit);
                 recordUsage(projectId, taskId, key, response, elapsedMillis(started));
                 result = BeeAnswerValidator.validate(response, sent.validatorView(retrieval, search.embeddingProfile()));
                 failure = null;
@@ -197,6 +208,16 @@ public class BeeQuestionService {
     /** 소요 시간 지표. 분포(p95 등)를 볼 수 있게 히스토그램을 함께 낸다. 태그는 몇 가지 고정 값뿐이다 */
     private void time(String name, String tagKey, String tagValue, long millis) {
         Timer.builder(name).tag(tagKey, tagValue).publishPercentileHistogram().register(meters).record(Duration.ofMillis(millis));
+    }
+
+    /**
+     * 이 AI 호출에 줄 읽기 제한: 남은 예산과 설정한 읽기 제한 중 짧은 쪽. 남은 시간이 {@link #MIN_CALL} 보다 적으면 0 이고,
+     * 그때는 호출하지 않는다(모델이 답을 만들기에 너무 짧아 시간 초과만 나기 때문).
+     */
+    static Duration callLimit(long elapsedNanos, Duration chatReadTimeout, Duration budget) {
+        Duration remaining = budget.minusNanos(elapsedNanos);
+        if (remaining.compareTo(MIN_CALL) < 0) return Duration.ZERO;
+        return remaining.compareTo(chatReadTimeout) < 0 ? remaining : chatReadTimeout;
     }
 
     /** 지금까지 걸린 시간에 AI 읽기 제한을 더해도 전체 예산 안이면 재시도할 수 있다 */

@@ -1,5 +1,6 @@
 package com.beez.backend.bee.port;
 
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -8,5 +9,8 @@ import java.util.Map;
  * 응답은 믿지 않는다 — 부르는 쪽이 보낸 근거 집합과 대조한 뒤에만 쓴다.
  */
 public interface BeeChatGateway {
-    Map<String, Object> chat(Map<String, Object> input);
+    /**
+     * @param readTimeout 이 호출이 응답을 기다릴 최대 시간. 질문 하나의 남은 시간 예산에서 정해 주므로 호출이 예산을 넘기지 않는다
+     */
+    Map<String, Object> chat(Map<String, Object> input, Duration readTimeout);
 }

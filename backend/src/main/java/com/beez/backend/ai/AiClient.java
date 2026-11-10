@@ -26,46 +26,45 @@ public class AiClient {
     static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
 
-    /**
-     * 비비 대화 읽기 제한. 답변 모델 30초 + 문장 판정 모델 30초(AI 쪽 상한)를 모두 기다리지는 않는다 — 전체 처리를 Nginx 기본 60초 안에
-     * 두려고 35초로 끊는다(BeeQuestionService.DEFAULT_ANSWER_BUDGET). 정상 응답 시간은 dev 에서 재서 정한다(`BEE-A01 timing` 로그).
-     */
-    static final Duration DEFAULT_CHAT_READ_TIMEOUT = Duration.ofSeconds(35);
-
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
-    private final RestClient chatRest;
+    private final BeezProperties.Ai chatAi;
+    private final HttpClient chatHttp;
 
     public AiClient(BeezProperties props) {
-        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_CHAT_READ_TIMEOUT);
-    }
-
-    public AiClient(BeezProperties props, Duration questionReadTimeout, Duration draftReadTimeout) {
-        this(props, questionReadTimeout, draftReadTimeout, DEFAULT_CHAT_READ_TIMEOUT);
+        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT);
     }
 
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
-                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
-                    @Value("${beez.bee.chat-read-timeout:35s}") Duration chatReadTimeout) {
+                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
-        this.chatRest = client(ai, max(ai.readTimeout(), chatReadTimeout));
+        // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
+        this.chatAi = ai;
+        this.chatHttp = http(ai);
     }
 
     private static Duration max(Duration a, Duration b) { return a.compareTo(b) >= 0 ? a : b; }
 
-    private static RestClient client(BeezProperties.Ai ai, Duration readTimeout) {
+    private static HttpClient http(BeezProperties.Ai ai) {
         // Uvicorn uses HTTP/1.1; avoid h2c upgrades on streamed request bodies.
-        HttpClient http = HttpClient.newBuilder()
+        return HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(ai.connectTimeout())
                 .build();
+    }
+
+    private static RestClient client(BeezProperties.Ai ai, Duration readTimeout) {
+        return client(ai, http(ai), readTimeout);
+    }
+
+    private static RestClient client(BeezProperties.Ai ai, HttpClient http, Duration readTimeout) {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(readTimeout);
         return RestClient.builder()
@@ -153,11 +152,11 @@ public class AiClient {
 
     /**
      * AI-A05 비비 질문 답변 ({@code POST /v1/bee/chat}, S15P31A108-135 계약). 답변 모델과 문장 판정 모델을 차례로 부르므로
-     * 전용 읽기 제한({@code beez.bee.chat-read-timeout})을 쓴다. 실패 분류는 부르는 쪽이 한다.
+     * 읽기 제한을 호출마다 받는다(질문 한 건의 남은 시간 예산에서 정한다). 실패 분류는 부르는 쪽이 한다.
      */
     @SuppressWarnings("unchecked")
-    public java.util.Map<String, Object> beeChat(java.util.Map<String, Object> input) {
-        return chatRest.post().uri("/v1/bee/chat").body(input).retrieve().body(java.util.Map.class);
+    public java.util.Map<String, Object> beeChat(java.util.Map<String, Object> input, Duration readTimeout) {
+        return client(chatAi, chatHttp, readTimeout).post().uri("/v1/bee/chat").body(input).retrieve().body(java.util.Map.class);
     }
 
     @SuppressWarnings("unchecked")
