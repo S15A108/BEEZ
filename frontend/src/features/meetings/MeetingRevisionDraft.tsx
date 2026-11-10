@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { ScopedBlocksResponse } from '@/features/changes/schemas'
-import type { RevisionDraftResponse, SummaryResponse } from './schemas'
+import type { RevisionDraftResponse } from './schemas'
+import { latestSummaryKey } from './summaryCache'
 
 interface Props {
   projectId: string
@@ -33,15 +34,9 @@ function Editor({
   loadMore,
 }: Props) {
   const openPane = useWorkspaceStore((state) => state.openPane)
+  // 정리는 회의실의 '비비에게 정리 요청'으로만 만든다. 여기서는 그 최신 정리를 읽어 쓴다(같은 캐시).
   const savedSummary = useQuery({
-    queryKey: [
-      'projects',
-      projectId,
-      'meeting',
-      meetingId,
-      'summary',
-      'latest',
-    ],
+    queryKey: latestSummaryKey(projectId, meetingId),
     queryFn: () => meetingsApi.latestSummary(projectId, meetingId),
     retry: false,
     refetchOnWindowFocus: false,
@@ -65,7 +60,6 @@ function Editor({
       documentsApi.list(projectId, { limit: 100, cursor: pageParam }),
     getNextPageParam: (page) => (page.has_more ? page.next_cursor : undefined),
   })
-  const [newSummary, setNewSummary] = useState<SummaryResponse>()
   const [newDraft, setNewDraft] = useState<RevisionDraftResponse>()
   const [documentId, setDocumentId] = useState('')
   const [blocks, setBlocks] = useState<ScopedBlocksResponse>()
@@ -79,7 +73,17 @@ function Editor({
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState(false)
   const checkingDraft = useRef(false)
-  const summary = newSummary ?? savedSummary.data
+  const summary = savedSummary.data
+  // 위에서 정리를 다시 하면 이전 정리 기준의 선택(결정·근거·확인)을 비운다. 다른 정리의 결정 순서와 맞지 않는다.
+  const [seenSummaryId, setSeenSummaryId] = useState<string>()
+  if (summary && summary.id !== seenSummaryId) {
+    setSeenSummaryId(summary.id)
+    if (seenSummaryId) {
+      setSelectedDecisions({})
+      setConfirmed(false)
+      setNewDraft(undefined)
+    }
+  }
   const draft = newDraft ?? savedDraft.data
   // 서버는 승인 문서의 최신 버전이 아니라 현재 기준 설계의 문서 버전을 검사한다.
   const currentBaseline = useQuery({
@@ -124,7 +128,8 @@ function Editor({
     (!summary ||
       hasMore ||
       !latestEntry ||
-      (!newSummary && (savedSummary.isError || savedSummary.isFetching)) ||
+      savedSummary.isError ||
+      savedSummary.isFetching ||
       currentBaseline.isFetching ||
       !currentBaseline.isSuccess)
   const unavailable = (cause: unknown) =>
@@ -162,19 +167,6 @@ function Editor({
       setPending(false)
     }
   }
-  const createSummary = () =>
-    run(async () => {
-      if (!latestEntry || hasMore) return
-      const value = await meetingsApi.summary(
-        projectId,
-        meetingId,
-        latestEntry.id,
-      )
-      setNewSummary(value)
-      setSelectedDecisions({})
-      setConfirmed(false)
-      setNewDraft(undefined)
-    })
   const loadBlocks = () =>
     run(async () => {
       if (!versionId) return
@@ -287,7 +279,7 @@ function Editor({
           않아요.
         </p>
       </div>
-      {unavailable(savedSummary.error) && !newSummary && (
+      {unavailable(savedSummary.error) && (
         <p role="alert">저장된 회의 정리를 불러오지 못했어요.</p>
       )}
       {unavailable(savedDraft.error) && !newDraft && (
@@ -306,18 +298,17 @@ function Editor({
           </Button>
         </div>
       )}
-      <Button
-        type="button"
-        variant="outline"
-        disabled={pending || !latestEntry || hasMore}
-        onClick={() => void createSummary()}
-      >
-        {summary ? '최신 대화로 다시 정리' : '회의 정리 만들기'}
-      </Button>
+      {!summary && savedSummary.isError && !unavailable(savedSummary.error) && (
+        <p role="status">
+          회의 정리가 아직 없어요. 위의 '비비에게 정리 요청'으로 먼저 회의를
+          정리해 주세요.
+        </p>
+      )}
       {!latestEntry && !hasMore && <p>먼저 회의 대화를 남겨 주세요.</p>}
       {summaryOutdated && (
         <p role="status">
-          회의 정리 이후 새 기록이 있어요. 최신 대화로 다시 정리해 주세요.
+          회의 정리 이후 새 기록이 있어요. 위의 '비비에게 정리 요청'으로 다시
+          정리해 주세요.
         </p>
       )}
       {currentBaseline.isError && (

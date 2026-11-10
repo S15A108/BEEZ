@@ -33,8 +33,9 @@ const REVIEW_STEPS = [
   '수정 제안 정리',
 ]
 
-// 다른 문서가 승인돼 참고 승인본이 바뀌면 반영·넘기기·검토 요청이 409 review_stale로 막힌다. 응답에 낡은 검토라는
-// 표시가 없어, 한 번 받은 검토 id를 기억해 창을 다시 열어도 무효 안내와 '비비 검토 다시 받기'를 바로 보인다.
+// 다른 문서가 승인돼 참고 승인본이 바뀌면 반영·넘기기·검토 요청이 409 review_stale로 막힌다. 이 경우는 작업본 응답의
+// review_stale(S15P31A108-362)이 처음부터 알려 준다. 그 판정에 없는 경우(앞 제안을 반영해 다음 제안의 원문이 사라짐 등)는
+// 409를 받은 검토 id를 기억해 창을 다시 열어도 무효 안내와 '비비 검토 다시 받기'를 보인다.
 const staleReviews = new Set<string>()
 
 // 공용 문서함 · 문서별 검토 흐름(PNL-02-m): 비비 검토 → 수정 제안 반영 → 최종본 확인 → 팀장 승인·반려.
@@ -85,7 +86,8 @@ export function DocumentReview({
       (data &&
         data.owner_account_id !== session.data?.id &&
         data.status !== 'REJECTED' &&
-        reviewStage(data).step === 1)
+        reviewStage(data).step === 1 &&
+        !reviewStage(data).stale)
         ? REVIEW_POLL_MS
         : false,
   })
@@ -96,6 +98,7 @@ export function DocumentReview({
     !locked &&
     current.owner_account_id === session.data?.id &&
     currentStage?.step === 1 &&
+    !currentStage.stale &&
     current.status !== 'SUBMITTED'
       ? `${projectId}:${documentId}:${current.revision}`
       : null
@@ -125,6 +128,13 @@ export function DocumentReview({
   const [, rerender] = useReducer((count: number) => count + 1, 0)
   // 서버가 준 오류 코드별 안내(경합·잠김·AI 장애). 일반 오류 띠 대신 보인다.
   const [failure, setFailure] = useState('')
+  // '비비에게 직접 요청하기'에 쓰던 글. 검토가 무효가 돼 입력창이 사라져도 남겨, 새 검토가 나오면 이어서 보낸다.
+  const [requestDraft, setRequestDraft] = useState('')
+  // 다시 검토를 시작하면 앞선 실패 안내는 지운다(검토가 끝나도 이전 오류가 남지 않게).
+  const reReview = (revision: number) => {
+    setFailure('')
+    bee.mutate(revision)
+  }
   const markStale = (reviewId: string) => {
     staleReviews.add(reviewId)
     rerender()
@@ -141,14 +151,19 @@ export function DocumentReview({
       .catch((cause: unknown) => {
         const code = getApiErrorCode(cause)
         const reviewId = currentStage?.review?.id
-        if (code === 'review_stale' && reviewId) {
-          staleReviews.add(reviewId)
-          rerender()
+        if (code === 'review_stale') {
+          // 무효 카드가 안내하므로 일반 오류 띠는 지운다.
+          action.reset()
+          if (reviewId) {
+            staleReviews.add(reviewId)
+            rerender()
+          }
         }
+        // review_stale은 아래 '이 검토는 더 쓸 수 없어요' 카드가 안내한다. 띠로 또 띄우면 원인을 단정하는 문구가 겹친다.
         setFailure(
           code === 'submission_locked'
             ? `${getApiErrorMessage(cause)} 먼저 검토 요청을 취소한 뒤 고쳐 주세요.`
-            : code
+            : code && code !== 'review_stale'
               ? getApiErrorMessage(cause)
               : '',
         )
@@ -157,7 +172,7 @@ export function DocumentReview({
   const reviewStale =
     !!currentStage?.review &&
     current?.status !== 'SUBMITTED' &&
-    staleReviews.has(currentStage.review.id)
+    (currentStage.stale || staleReviews.has(currentStage.review.id))
   return (
     <section
       aria-label={`${title} 검토`}
@@ -270,7 +285,7 @@ export function DocumentReview({
                   </span>
                 </div>
               )}
-              {stage.step === 1 && (
+              {stage.step === 1 && !stage.stale && (
                 <div className="grid gap-3">
                   <MarkdownView source={data.content} className="max-h-72" />
                   {owner && failed ? (
@@ -284,7 +299,7 @@ export function DocumentReview({
                         variant="outline"
                         className="justify-self-start"
                         disabled={bee.isPending}
-                        onClick={() => bee.mutate(data.revision)}
+                        onClick={() => reReview(data.revision)}
                       >
                         다시 검토하기
                       </Button>
@@ -332,6 +347,12 @@ export function DocumentReview({
                     받으면 지금 본문과 승인본을 기준으로 수정 제안을 새로
                     받아요.
                   </span>
+                  {requestDraft.trim() && (
+                    <span className="text-xs text-muted-foreground">
+                      비비에게 쓰던 요청 글은 지우지 않았어요. 새 검토가 나오면
+                      이어서 보낼 수 있어요.
+                    </span>
+                  )}
                   {bee.error && !running && (
                     <span className="text-destructive">
                       {getApiErrorMessage(bee.error)}
@@ -342,7 +363,7 @@ export function DocumentReview({
                       variant="outline"
                       className="justify-self-start"
                       disabled={bee.isPending}
-                      onClick={() => bee.mutate(data.revision)}
+                      onClick={() => reReview(data.revision)}
                     >
                       {bee.isPending
                         ? '다시 검토하는 중…'
@@ -444,6 +465,8 @@ export function DocumentReview({
                         documentId={documentId}
                         reviewId={stage.review.id}
                         revision={data.revision}
+                        text={requestDraft}
+                        onTextChange={setRequestDraft}
                         onStale={() => markStale(stage.review!.id)}
                       />
                     )}

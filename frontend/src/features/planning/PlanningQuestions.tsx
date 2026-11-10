@@ -1,4 +1,4 @@
-import { ACTIVE_POLL_MS } from '@/lib/pollIntervals'
+import { ACTIVE_POLL_MS, SLOW_GENERATION_MS } from '@/lib/pollIntervals'
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
@@ -73,7 +73,20 @@ export function PlanningQuestions({
     .filter((item) => item.status !== 'FAILED')
     .map((item) => item.versionId)
   const generating = activeIds.length > 0
+  const activeLabels = generations
+    .filter((item) => item.status !== 'FAILED')
+    .map((item) => item.label)
   const queryClient = useQueryClient()
+  // 같은 문서들이 오래 만드는 중으로 남으면 끝없이 기다리지 않게 알리고 상태를 직접 새로 읽을 길을 준다(S15P31A108-359).
+  // 문서가 끝나거나 새로 시작해 대상이 바뀌면 다시 센다.
+  const [slowFor, setSlowFor] = useState('')
+  const slowKey = activeIds.join(',')
+  useEffect(() => {
+    if (!slowKey) return
+    const timer = setTimeout(() => setSlowFor(slowKey), SLOW_GENERATION_MS)
+    return () => clearTimeout(timer)
+  }, [slowKey])
+  const slow = !!slowKey && slowFor === slowKey
   // 문서 하나라도 질문 생성이 끝나는 순간에는 마지막 목록이 완료 직전 값일 수 있어, 그때 한 번 더 읽는다.
   const previousActive = useRef<string[]>([])
   const activeKey = activeIds.join(',')
@@ -136,6 +149,29 @@ export function PlanningQuestions({
             className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
           >
             <p>비비가 보완 질문을 만들고 있어요. 잠시만 기다려 주세요.</p>
+            <p className="mt-1 text-xs">
+              만드는 중인 문서: {activeLabels.join(', ')}
+            </p>
+            {slow && (
+              <div className="mt-2 grid justify-items-start gap-2">
+                <p>
+                  평소보다 오래 걸리고 있어요. 계속 같은 상태면 상태를 다시
+                  확인하거나 팀장에게 알려 주세요.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void queryClient.invalidateQueries({
+                      queryKey: ['projects', projectId, 'analysis'],
+                    })
+                  }
+                >
+                  <RefreshCw />
+                  상태 다시 확인
+                </Button>
+              </div>
+            )}
           </div>
         )}
         <AsyncState query={questions}>

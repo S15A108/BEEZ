@@ -503,7 +503,7 @@ describe('documented REST mock adapter', () => {
     )
   })
 
-  it('records meeting text, creates explicit template minutes and marks notifications read', async () => {
+  it('records meeting text, creates an explicit template summary and marks notifications read', async () => {
     await login()
     const meeting = await meetingsApi.create('101', {
       title: '화면 설계 검토',
@@ -512,12 +512,13 @@ describe('documented REST mock adapter', () => {
     const entry = await meetingsApi.addEntry('101', meeting.id, {
       text: '기존 계약을 유지하고 안내 문구를 보완해요.',
     })
-    const minutes = await meetingsApi.minutes('101', meeting.id, {
+    const summary = await meetingsApi.summarize('101', meeting.id, {
       through_entry_id: entry.id,
     })
-    expect(minutes.entry.kind).toBe('MINUTES')
-    expect(minutes.summary).toContain('기존 계약')
-    expect(minutes.entry.generation?.origin).toBe('TEMPLATE')
+    expect(summary.entry.kind).toBe('SUMMARY')
+    expect(summary.through_entry_id).toBe(entry.id)
+    expect(summary.decisions[0].text).toContain('기존 계약')
+    expect(summary.generation.origin).toBe('TEMPLATE')
     const record = await contextsApi.create('101', {
       kind: 'PROGRESS',
       visibility: 'SHARED',
@@ -536,7 +537,7 @@ describe('documented REST mock adapter', () => {
     ).toHaveLength(0)
     expect(
       loadMockDatabase().projects[0].entries.some(
-        (item) => item.id === minutes.entry.id,
+        (item) => item.id === summary.entry.id,
       ),
     ).toBe(true)
   })

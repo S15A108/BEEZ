@@ -164,6 +164,7 @@
 - [MTG-A12 회의 정리 수정 요청](#mtg-a12)
 - [MTG-A13 회의 끝내기](#mtg-a13)
 - [MTG-A14 회의 참여자 제외](#mtg-a14)
+- [MTG-A15 회의 최신 정리 조회](#mtg-a15)
 - [MON-D01 문서 승인 현황](#mon-d01)
 - [MON-C01 변경 제안 현황](#mon-c01)
 - [MON-T01 작업 상태 현황](#mon-t01)
@@ -4232,6 +4233,8 @@ HTTP `200`.
 
 2026-10-27 원문 RAG 구현: FAILED만 새 attempt로 재접수한다. PENDING/RUNNING은 409 analysis_running, 완료 실행은 409 analysis_not_failed다. 같은 멱등 키는 같은 응답이다. 원본·사람 수정·승인 항목은 변경하지 않는다. lease 만료/서버 재시작 복구는 새 attempt/lease로 늦은 응답을 차단한다. 모델 미설정은 embedding_profile_not_configured, AI/출력 검증 실패는 상태 error_code로 기록한다.
 
+2026-11-10 (S15P31A108-359): 분석이 COMPLETED이고 질문 생성만 FAILED여도 기준 설계가 이미 발행됐거나 문서 버전이 DRAFT·APPROVED가 아니면(BE 워커가 질문을 만들지 않는 버전) 409 `question_generation_unavailable`을 돌려주고 실행을 PENDING으로 되돌리지 않는다. 되돌리면 아무도 집지 않아 화면이 `만드는 중`으로 영원히 남는다.
+
 lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/analysis/retry`
@@ -6062,7 +6065,8 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
   "status": "EDITING",
   "content": "# 기획안\n문서 내용을 보완한다.",
   "file_name": "plan.md",
-  "submissions": []
+  "submissions": [],
+  "review_stale": false
 }
 ```
 
@@ -6088,6 +6092,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 - 같은 프로젝트의 활성 사람 팀원이 작성 내용·마지막 검토·제출 이력을 조회한다. 다른 프로젝트 문서는 404다.
 - 작성 건 상태와 문서 버전 상태는 별개다. 아직 제출하지 않은 내용은 승인본이나 baseline으로 취급하지 않는다.
+- `review_stale`은 `latest_review`를 지금 쓸 수 있는지 서버가 알려 준다. 다른 문서가 승인돼 참고 승인본이 바뀌면 검토를 받은 뒤 본문이 그대로여도 true가 되어, 409를 받기 전에 다시 검토가 필요하다는 것을 화면이 먼저 보일 수 있다. 판정은 제안 처리·제출·직접 요청·대화의 409 `review_stale`과 같은 규칙이다. 제출(SUBMITTED)·승인(APPROVED) 뒤에는 false다. (S15P31A108-362)
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13535,6 +13540,7 @@ HTTP `201`.
 - AI를 부르는 동안에는 트랜잭션과 회의 행 잠금을 잡지 않는다. 부른 뒤 회의 행을 잠그고 팀장·참여자·열림과 정리가 인용한 문서의 승인본이 지금도 기준의 승인본인지 다시 확인해, 바뀌었으면 저장하지 않고 409 `summary_outdated`로 응답한다. 호출 동안 새 기록이 들어온 것은 막지 않는다 — 정리는 `through_entry_id`까지만 본 것이고 그 뒤 기록이 있으면 회의 끝내기(MTG-A13)가 막는다.
 - 실패하면(AI 오류·쓸 수 없는 출력·호출 중 승인본 변경) SUMMARY 기록도 정리도 저장하지 않는다. 회의 기록은 그대로이고 AI 호출 사용량(`llm_usage`, feature `MEETING_ANALYSIS`)만 남는다. 오류 응답 본문의 `usage[]`는 그대로 남기고 없을 때만 미확인 한 줄을 남긴다(03-ai-internal 공통 규칙).
 - 같은 Idempotency-Key로 요청이 동시에 들어오면 먼저 온 요청 하나만 AI를 부르고 나머지는 그 결과(성공이든 실패든)를 받는다. 본문이 다르면 409 `idempotency_conflict`이다. 이 공유는 서버 프로세스 안에서만 이루어진다. 같은 키를 다시 보내면 정리가 끝난 회의에서도 처음 응답을 돌려준다(24시간).
+- (S15P31A108-206) SUMMARY 기록은 `summary_id`(정리 ID)도 싣는다. 새로 고친 화면은 기록 목록(MTG-A10)의 이 값과 최신 정리 조회([MTG-A15](#mtg-a15))로 구조화한 정리와 `summary_id`를 다시 받는다.
 - SUMMARY 기록의 `text`는 사람이 읽는 요약("회의 정리 / 충돌 / 결정 / 바뀔 문서 / 할 일", 4,000자 넘으면 "…")이고, 응답의 `entry`와 기록 목록(MTG-A10)의 SUMMARY 기록에 `through_entry_id`·`generation`이 실린다. 구조화된 값은 정리 응답에 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -13879,6 +13885,66 @@ HTTP `204`.
 - (수정안 요청) 비비가 부른 작업 담당자를 빼도, 회의를 끝낼 때 task_ids 담당자에게 가는 알림(MTG-A13)은 그대로 간다. 비비는 회의를 열 때만 참여자를 정하므로 뺀 사람을 같은 회의에 다시 부르지 않는다.
 - (수정안 요청) 끝난 회의는 409 meeting_closed이고, 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 - 구현(S15P31A108-205): 팀장만 호출한다(사람 세션). 잠금 뒤 팀장을 다시 확인하고, 회의 행 잠금으로 기록·참여자 추가와 직렬화한다. 실제로 빠진 사람에게 `MEETING_PARTICIPANT_REMOVED` 알림을 저장하고 멱등 204(이미 빠짐)에서는 남기지 않는다(S15P31A108-217). 활동으로는 남기지 않는다(S15P31A108-310 결정, MTG-A04와 같다).
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mtg-a15"></a>
+
+## MTG-A15. 회의 최신 정리 조회
+
+### GET `/api/projects/{id}/meetings/{meeting_id}/bee-summary/latest`
+
+회의의 가장 최근 비비 정리를 구조화한 값(충돌·결정·바뀔 문서·할 일)으로 읽는다. 화면을 새로 고치거나 다른 기기·다른 팀장이 회의를 열어도 회의 끝내기(MTG-A13)·정리 수정 요청(MTG-A12)에 필요한 `summary_id`와 정리 내용을 다시 받기 위한 읽기 API다.
+
+관련 요구사항: MTG-08·09 (화면 PNL-06-v2-bibi-review)  
+담당: BE: 오서현 / AI: — / FE: 오서현  
+상태: 구현됨(S15P31A108-206)
+
+#### 인증
+
+`MEMBER`. 프로젝트의 활성 멤버(팀원·팀장)가 읽는다. 회의 참여자일 필요는 없고, 끝난 회의도 읽는다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `meeting_id` | `ID` | Y | 회의 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`. [MeetingSummary](00-common.md#schema-meetingsummary) 반환. MTG-A11·A12 응답과 같은 모양이다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 회의가 없거나 프로젝트 소속·접근 권한이 없음, **이 회의에 정리가 아직 없음** |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+
+#### 처리 규칙
+
+- 회의의 최신 정리(가장 큰 정리 ID)를 돌려준다. 수정 요청(MTG-A12)으로 새 정리가 생기면 그것이 최신이고, 이전 정리는 `previous_summary_id`로 이어진다. 이전 정리 목록 조회는 두지 않는다(기록 목록 MTG-A10의 SUMMARY 기록으로 문장만 볼 수 있다).
+- 기록 목록(MTG-A10)의 SUMMARY 기록은 `summary_id`를 싣는다. 화면은 가장 최근 SUMMARY 기록이 있을 때만 이 API를 불러 구조화한 정리를 받는다.
+- 읽기만 한다. AI를 부르지 않고 아무것도 저장하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

@@ -114,7 +114,8 @@ const messages: Record<string, string> = {
   change_proposal_required:
     '기준 설계 생성 이후 문서 수정은 변경 제안을 통해 요청해 주세요.',
   submission_locked: '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
-  review_stale: '본문이 바뀌어 비비 검토를 다시 받아야 해요.',
+  // 서버는 본문·참고 승인본이 바뀐 경우, 더 새로운 검토가 생긴 경우, 제안한 원문이 사라진 경우에 모두 이 코드를 준다.
+  review_stale: '이 비비 검토는 더 쓸 수 없어요. 비비 검토를 다시 받아 주세요.',
   review_decisions_pending:
     '처리하지 않은 보완 제안이 있어요. 반영하거나 넘겨 주세요.',
   submission_decided: '이미 결정한 검토 요청이에요.',
@@ -163,6 +164,18 @@ export function getApiErrorMessage(error: unknown): string {
   if (isAxiosError(error) && !error.response)
     return '서버에 연결할 수 없습니다. 연결 상태를 확인해 주세요.'
   return '요청을 완료하지 못했습니다. 다시 시도해 주세요.'
+}
+// 입력 폼용: 서버가 400 validation_failed로 어느 값이 틀렸는지 알려 줬으면 그 문구를 그대로 보인다.
+// 전역 문구(getApiErrorMessage)는 바꾸지 않아 다른 화면에는 영향이 없다.
+export function getValidationMessage(error: unknown): string {
+  if (
+    getApiErrorStatus(error) === 400 &&
+    getApiErrorCode(error) === 'validation_failed'
+  ) {
+    const detail = getApiErrorDetail(error)?.trim()
+    if (detail) return detail
+  }
+  return getApiErrorMessage(error)
 }
 // 나가기·제외·탈퇴는 담당자를 넘기거나 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 전체가 되돌아간다(MEM-A09·A10, ACC-A10).
 // 계획을 고치는 화면과 달리 다시 확인할 내용이 없으므로 다시 시도하라고 알린다.

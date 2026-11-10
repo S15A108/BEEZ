@@ -316,29 +316,33 @@ export function DocumentsPanel({
                           'green',
                           `승인 v${document.approved_version!.version_no}`,
                         ] as const)
-                      : stage?.label === '팀장 승인 대기'
-                        ? (['orange', stage.label] as const)
-                        : stage?.label === '반려됨'
-                          ? (['red', stage.label] as const)
-                          : stage?.step === 2
-                            ? (['amber', stage.label] as const)
-                            : ([
-                                'blue',
-                                stage?.label ?? '비비 검토 중',
-                              ] as const)
+                      : stage?.stale
+                        ? (['amber', stage.label] as const)
+                        : stage?.label === '팀장 승인 대기'
+                          ? (['orange', stage.label] as const)
+                          : stage?.label === '반려됨'
+                            ? (['red', stage.label] as const)
+                            : stage?.step === 2
+                              ? (['amber', stage.label] as const)
+                              : ([
+                                  'blue',
+                                  stage?.label ?? '비비 검토 중',
+                                ] as const)
                   const next = approved
                     ? '현재 문서로 들어갔어요'
-                    : stage?.label === '팀장 승인 대기'
-                      ? isLeader
-                        ? '승인 검토하기'
-                        : '팀장 승인을 기다리고 있어요'
-                      : stage?.label === '반려됨'
-                        ? '반려 사유를 보고 다시 검토를 받아요'
-                        : stage?.step === 2
-                          ? '비비 제안을 확인하고 반영해 주세요'
-                          : stage?.step === 3
-                            ? '최종본을 확인하고 검토를 요청해요'
-                            : '비비가 검토하고 있어요'
+                    : stage?.stale
+                      ? '참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'
+                      : stage?.label === '팀장 승인 대기'
+                        ? isLeader
+                          ? '승인 검토하기'
+                          : '팀장 승인을 기다리고 있어요'
+                        : stage?.label === '반려됨'
+                          ? '반려 사유를 보고 다시 검토를 받아요'
+                          : stage?.step === 2
+                            ? '비비 제안을 확인하고 반영해 주세요'
+                            : stage?.step === 3
+                              ? '최종본을 확인하고 검토를 요청해요'
+                              : '비비가 검토하고 있어요'
                   const file =
                     document?.latest_draft?.file_name ??
                     document?.approved_version?.file_name

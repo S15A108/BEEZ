@@ -270,10 +270,15 @@ public class DocumentReviewService {
 
     Map<String, Object> currentReview(long project, long document, long review, long revision) {
         var row = repository.review(document, review).orElseThrow(() -> AccessErrors.notFound("document_review_missing"));
-        if (!Integer.valueOf(2).equals(object(row.get("result")).get("contract_version"))
-                || id(row, "resolved_revision") != revision
-                || !row.get("reference_hash").equals(referenceHash(references(project, document)))) throw conflict("review_stale");
+        if (!usable(row, project, document, revision)) throw conflict("review_stale");
         return row;
+    }
+
+    /** 검토를 지금 쓸 수 있는지. 쓰기 API의 review_stale 판정과 조회의 review_stale 표시가 같은 규칙을 쓴다. */
+    boolean usable(Map<String, Object> review, long project, long document, long revision) {
+        return Integer.valueOf(2).equals(object(review.get("result")).get("contract_version"))
+                && id(review, "resolved_revision") == revision
+                && review.get("reference_hash").equals(referenceHash(references(project, document)));
     }
 
     /** 화면에는 문서의 최신 검토만 보인다. 같은 본문으로 재검토가 끝났으면 이전 검토에 대화·요청을 남기지 않는다. */
@@ -458,11 +463,15 @@ public class DocumentReviewService {
     }
 
     DocumentWorkingCopyResponse view(Map<String, Object> row) {
-        long document = id(row, "document_id");
+        long document = id(row, "document_id"), project = id(row, "project_id");
+        var latest = repository.review(document, null);
+        // 팀장 결정을 기다리거나 끝난 작성 건은 제출 때 이미 통과한 검토라 무효로 표시하지 않는다.
+        boolean open = !Set.of("SUBMITTED", "APPROVED").contains(row.get("status").toString());
+        boolean stale = open && latest.isPresent() && !usable(latest.get(), project, document, id(row, "revision"));
         return new DocumentWorkingCopyResponse(Long.toString(document), row.get("owner_account_id").toString(), id(row, "revision"),
                 row.get("status").toString(), row.get("content_text").toString(), row.get("file_name").toString(),
-                repository.review(document, null).map(this::reviewView).orElse(null),
-                repository.submissions(id(row, "project_id"), document, null).stream().map(this::submissionView).toList());
+                latest.map(this::reviewView).orElse(null),
+                repository.submissions(project, document, null).stream().map(this::submissionView).toList(), stale);
     }
 
     @SuppressWarnings("unchecked")
