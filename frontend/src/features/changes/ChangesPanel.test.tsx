@@ -1000,6 +1000,89 @@ it('새 문서 수정 제안은 단계를 지나 마지막에만 팀장에게 �
   ).toBeInTheDocument()
 })
 
+// PR #227 리뷰(오서현): 문서 A·B가 있는 초안에서 B에 비비 수정안을 반영한 뒤 A를 다시 고치기로 저장하면, B가 원래 제안의
+// 옛 본문으로 덮였다. 나머지 문서는 원래 제안이 아니라 지금 초안의 내용으로 저장해야 한다.
+it('다른 문서에 반영한 비비 수정안은 다시 고치기로 저장해도 남는다', async () => {
+  const user = userEvent.setup()
+  const [first, second] = (
+    await documentsApi.list('101', { limit: 100 })
+  ).items.filter((item) => item.approved_version)
+  const [a, b] = await Promise.all(
+    [first, second].map(
+      async (item) => (await documentsApi.get('101', item.id)).version,
+    ),
+  )
+  const baseline = await documentsApi.baseline('101')
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  const proposal = await changesApi.create('101', {
+    base_baseline_id: baseline.id,
+    title: '두 문서 함께 고치기',
+    reason: '두 문서를 맞춰요.',
+    items: [],
+    documents: [
+      {
+        document_id: first.id,
+        base_document_version_id: a.id,
+        after_content: `${a.content ?? ''}\nREQ-101 첫 문서에 더한 줄이다.`,
+      },
+      {
+        document_id: second.id,
+        base_document_version_id: b.id,
+        after_content: `${b.content ?? ''}\nREQ-102 둘째 문서에 더한 줄이다.`,
+      },
+    ],
+  })
+  await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+  await changesApi.reject('101', proposal.id, {
+    reason: '두 문서를 다시 봐 주세요.',
+    expected_revision: proposal.revision,
+    expected_snapshot_hash: proposal.snapshot_hash,
+  })
+  await authApi.login({ email: 'member@beez.local', password: DEMO_PASSWORD })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <ChangesPanel projectId="101" isLeader={false} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await user.click(
+    await screen.findByRole('button', { name: /두 문서 함께 고치기/ }),
+  )
+  await user.click(
+    await screen.findByRole('button', { name: '고쳐서 다시 올리기' }),
+  )
+  await waitFor(() =>
+    expect(
+      screen.queryByText('기준 원문을 불러오는 중…'),
+    ).not.toBeInTheDocument(),
+  )
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  // 검토는 접수 시각부터 지난 시간으로 진행한다. 시계를 앞으로 돌려 바로 끝낸다.
+  const realNow = Date.now.bind(Date)
+  vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 10_000)
+  await user.click(
+    await screen.findByRole('button', { name: '비비 검토 받기' }),
+  )
+  await screen.findByRole('heading', { name: '비비가 검토를 마쳤어요' })
+  const revised =
+    'REQ-102 둘째 문서에 더한 줄이다. 조건이 맞지 않으면 그 이유를 함께 안내한다.'
+  const patch = screen
+    .getAllByRole('listitem')
+    .find((item) => item.textContent?.includes(revised))!
+  await user.click(within(patch).getByRole('button', { name: '반영하기' }))
+  expect(await screen.findByText(/반영함/)).toBeInTheDocument()
+  const updateDraft = vi.spyOn(changesApi, 'updateDraft')
+  await user.click(screen.getByRole('button', { name: '다시 고치기' }))
+  await user.click(screen.getByRole('button', { name: '등록하고 변경점 찾기' }))
+  await waitFor(() => expect(updateDraft).toHaveBeenCalledTimes(1))
+  expect(
+    updateDraft.mock.calls[0][2].documents.find(
+      (change) => change.document_id === second.id,
+    )?.after_content,
+  ).toContain(revised)
+})
+
 // S15P31A108-203·204: 승인 확인 화면은 CHG-A14 미리 보기로 승인하면 같이 바뀌는 것을 먼저 보여 준다.
 // 목 서버의 상태는 localStorage 'beez.mock.approvalPreview' 로 바꾼다(override·unevaluated·running·conflict).
 function useScenario(value: string) {

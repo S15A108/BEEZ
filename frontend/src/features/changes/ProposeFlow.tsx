@@ -88,8 +88,12 @@ interface Props extends FormProps {
   baselineVersion?: number
   /** 지금 기준에 승인된 설계 항목의 키 → 종류 이름 */
   itemKinds: Record<string, string>
-  /** 폼 값을 작성 중 제안 입력으로 바꾼다. 지금 기준·원래 제안의 나머지 변경을 묶는 일은 부모가 안다. */
-  toInput: (values: ProposalFormValues) => ChangeProposalInput
+  /** 폼 값을 작성 중 제안 입력으로 바꾼다. 지금 기준·원래 제안의 나머지 변경을 묶는 일은 부모가 안다.
+   * saved는 저장해 둔 초안의 문서 변경이고, 다시 저장할 때 나머지 문서의 글은 이것을 따른다(PR #227 리뷰). */
+  toInput: (
+    values: ProposalFormValues,
+    saved?: Draft['documents'],
+  ) => ChangeProposalInput
   /** 반려된 제안을 고쳐 다시 올릴 때 그 제안. 초안은 이 제안을 보완하고(source_proposal_id) CHG-A04로 올린다. */
   source?: ChangeProposal
   /** ① 폼에 그대로 넘길 것(반려 사유, 받은 의견, 함께 올라가는 변경 등) */
@@ -436,15 +440,17 @@ export function ProposeFlow({
           onCancel={onCancel}
           onSubmit={(entered) =>
             run(async () => {
+              const open =
+                draft && !draft.submitted_proposal_id ? draft : undefined
               const input = {
-                ...toInput(entered),
+                ...toInput(entered, open?.documents),
                 ...(source ? { source_proposal_id: source.id } : {}),
               }
               remember(
-                draft && !draft.submitted_proposal_id
-                  ? await changesApi.updateDraft(projectId, draft.id, {
+                open
+                  ? await changesApi.updateDraft(projectId, open.id, {
                       ...input,
-                      expected_revision: draft.revision,
+                      expected_revision: open.revision,
                     })
                   : await changesApi.createDraft(projectId, input),
               )

@@ -27,6 +27,7 @@ import type {
   ChangeProposal,
   ChangeProposalInput,
   Comparison,
+  ResolvedDocumentChange,
 } from '@/api/contracts/common'
 import { getApiErrorCode } from '@/api/error'
 import { readAllPages } from '@/api/readAllPages'
@@ -430,6 +431,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     values: ProposalFormValues,
     source?: ChangeProposal,
     update?: boolean,
+    saved?: ResolvedDocumentChange[],
   ): ChangeProposalInput => ({
     base_baseline_id: baseline.data!.id,
     title: values.title,
@@ -450,12 +452,18 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
     items: source?.items ?? [],
     // 폼은 문서 하나를 고치고, 원래 제안의 나머지 문서 변경(폼에서 지금 고치는 문서만 빼고)은 받은 값 그대로 보낸다.
     // 기준이 바뀐 문서는 그대로 낼 수 없어 빼고(폼에 안내), 고친 문서의 기준 버전은 화면이 보여 준 원문의 버전이다.
+    // 작성 중 제안을 다시 저장하면(saved) 나머지 문서는 원래 제안이 아니라 그 초안의 글로 보낸다. 비비 수정안을 반영한
+    // 문서가 원래 제안의 옛 글로 덮이지 않게 한다(PR #227 리뷰). 함께 올라가는 문서는 그대로 원래 제안이 정한다.
     documents: toDocumentChanges(
       values,
       values.base_version_id,
-      source?.documents.filter(
-        (change) => !isStaleDocument(change, currentVersionOf),
-      ),
+      source?.documents
+        .map(
+          (change) =>
+            saved?.find((item) => item.document_id === change.document_id) ??
+            change,
+        )
+        .filter((change) => !isStaleDocument(change, currentVersionOf)),
     ),
   })
   const submitForm = (values: ProposalFormValues, source?: ChangeProposal) =>
@@ -716,7 +724,9 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
               source={mode.source}
               form={mode.source && sourceForm(mode.source, true)}
               defaultValues={formDefaults(mode)}
-              toInput={(values) => toInput(values, mode.source, mode.update)}
+              toInput={(values, saved) =>
+                toInput(values, mode.source, mode.update, saved)
+              }
               onCancel={() => setMode({ kind: 'detail' })}
               onSubmitted={(proposal) => submitted(proposal, mode.update)}
             />
