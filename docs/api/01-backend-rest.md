@@ -4232,6 +4232,8 @@ HTTP `200`.
 
 2026-10-27 원문 RAG 구현: FAILED만 새 attempt로 재접수한다. PENDING/RUNNING은 409 analysis_running, 완료 실행은 409 analysis_not_failed다. 같은 멱등 키는 같은 응답이다. 원본·사람 수정·승인 항목은 변경하지 않는다. lease 만료/서버 재시작 복구는 새 attempt/lease로 늦은 응답을 차단한다. 모델 미설정은 embedding_profile_not_configured, AI/출력 검증 실패는 상태 error_code로 기록한다.
 
+2026-11-10 (S15P31A108-359): 분석이 COMPLETED이고 질문 생성만 FAILED여도 기준 설계가 이미 발행됐거나 문서 버전이 DRAFT·APPROVED가 아니면(BE 워커가 질문을 만들지 않는 버전) 409 `question_generation_unavailable`을 돌려주고 실행을 PENDING으로 되돌리지 않는다. 되돌리면 아무도 집지 않아 화면이 `만드는 중`으로 영원히 남는다.
+
 lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/analysis/retry`
