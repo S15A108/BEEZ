@@ -12,6 +12,8 @@ import com.beez.backend.common.api.Ids;
 import com.beez.backend.common.auth.CallerContext;
 import com.beez.backend.document.service.DocumentIndexWorker;
 import com.beez.backend.task.service.TaskQueryService;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -56,13 +58,15 @@ public class BeeQuestionService {
     static final int MAX_APPROVED_ITEMS = 500;
     static final int MAX_EVIDENCE_TEXT = 20_000;
     static final int MAX_TITLE = 500;
+    static final int MAX_CLAIM = 1000;
     /** 거부·502 일 때 새 request key 로 다시 부르는 횟수. 시간 초과는 다시 부르지 않는다 */
     static final int RETRIES = 1;
     /**
-     * 질문 하나를 처리하는 전체 시간의 목표 상한(검색 임베딩 최대 20초 + AI 호출 + 재시도). 이 값에 AI 읽기 제한을 더해도
-     * 넘지 않을 때만 재시도한다. Nginx 의 비비 질문 경로 proxy_read_timeout(180초)보다 짧아야 한다(infra/nginx).
+     * 질문 하나를 처리하는 전체 시간의 목표 상한 기본값(`beez.bee.answer-budget`). 검색 임베딩(최대 20초) + AI 호출(읽기 제한 35초)이
+     * 이 안에 들고, 지금까지 걸린 시간에 AI 읽기 제한을 더해도 넘지 않을 때만 재시도한다.
+     * Nginx 기본 읽기 대기(60초)보다 짧아야 브라우저가 먼저 끊지 않는다 — 서버 Nginx 는 건드리지 않는다.
      */
-    static final Duration ANSWER_BUDGET = Duration.ofSeconds(150);
+    static final Duration DEFAULT_ANSWER_BUDGET = Duration.ofSeconds(55);
     static final String TEMPLATE_TEXT = "지금은 비비가 답을 만들지 못했어요. 질문과 가까운 문서를 아래에 보여 드려요. 잠시 뒤 다시 질문해 주세요.";
     static final String TEMPLATE_TEXT_NO_SOURCE = "지금은 비비가 답을 만들지 못했어요. 승인된 문서에서 질문과 가까운 내용도 찾지 못했어요. 잠시 뒤 다시 질문해 주세요.";
 
@@ -74,10 +78,16 @@ public class BeeQuestionService {
     private final TaskQueryService tasks;
     private final ObjectMapper json;
     private final Duration chatReadTimeout;
+    private final Duration answerBudget;
+    private final MeterRegistry meters;
 
     public BeeQuestionService(ProjectAccessChecker access, DocumentIndexWorker search, BeeRepository repository,
                               BeeChatGateway gateway, AiUsageRecorder usage, TaskQueryService tasks, ObjectMapper json,
-                              @Value("${beez.bee.chat-read-timeout:70s}") Duration chatReadTimeout) {
+                              MeterRegistry meters,
+                              @Value("${beez.bee.chat-read-timeout:35s}") Duration chatReadTimeout,
+                              @Value("${beez.bee.answer-budget:55s}") Duration answerBudget) {
+        this.meters = meters;
+        this.answerBudget = answerBudget;
         this.chatReadTimeout = chatReadTimeout;
         this.access = access;
         this.search = search;
@@ -88,8 +98,35 @@ public class BeeQuestionService {
         this.json = json;
     }
 
+    /** 한 번의 질문에서 단계별로 걸린 시간. dev 에서 실제 소요 시간을 재려고 로그·지표로 남긴다(질문·근거 원문은 담지 않는다) */
+    private static final class Timing {
+        long retrieveMillis;
+        int evidence;
+        int approvedItems;
+        final List<String> attempts = new ArrayList<>();
+    }
+
     public Map<String, Object> ask(CallerContext caller, long projectId, BeeAskRequest body) {
-        long askStarted = System.nanoTime();
+        long started = System.nanoTime();
+        Timing timing = new Timing();
+        String outcome = "ERROR";
+        try {
+            Map<String, Object> response = doAsk(caller, projectId, body, timing, started);
+            outcome = "TEMPLATE".equals(response.get("origin")) ? "TEMPLATE" : String.valueOf(response.get("answer_status"));
+            return response;
+        } catch (ApiException e) {
+            outcome = "ERROR_" + e.getClass().getSimpleName();
+            throw e;
+        } finally {
+            long total = elapsedMillis(started);
+            time("beez.bee.ask", "outcome", outcome, total);
+            // 한 줄 요약: 단계별 소요 시간. attempts 는 "결과:밀리초" 목록이다
+            log.info("BEE-A01 timing project={} outcome={} total_ms={} retrieve_ms={} evidence={} approved_items={} attempts={}",
+                    projectId, outcome, total, timing.retrieveMillis, timing.evidence, timing.approvedItems, timing.attempts);
+        }
+    }
+
+    private Map<String, Object> doAsk(CallerContext caller, long projectId, BeeAskRequest body, Timing timing, long askStarted) {
         ProjectActor actor = access.requireMember(caller, projectId);
         actor.requireHuman();
         String question = question(body);
@@ -101,23 +138,30 @@ public class BeeQuestionService {
             relatedTasks.add(json.convertValue(tasks.getTask(caller, projectId, taskId), new TypeReference<Map<String, Object>>() { }));
         }
 
+        long retrieveStarted = System.nanoTime();
         DocumentIndexWorker.Retrieval retrieval = retrieve(projectId, question);
         List<Map<String, Object>> approved = repository.approvedItems(projectId, retrieval.baselineId(), MAX_APPROVED_ITEMS);
         Sent sent = Sent.of(retrieval, approved, relatedTasks, search.embeddingProfile());
+        timing.retrieveMillis = elapsedMillis(retrieveStarted);
+        timing.evidence = sent.evidence().size();
+        timing.approvedItems = approved.size();
+        time("beez.bee.retrieve", "outcome", "ok", timing.retrieveMillis);
 
         String requestKey = "bee-ask-" + UUID.randomUUID();
         Map<String, Object> result = null;
         Map<String, Object> response = null;
         AiCallException failure = null;
         for (int attempt = 1; attempt <= 1 + RETRIES; attempt++) {
-            // 다시 부르면 최악의 경우 AI 읽기 제한만큼 더 걸린다. 앞 단계(임베딩·첫 호출)가 오래 걸렸으면 예산을 넘기지 않게
-            // 재시도를 건너뛰고 템플릿으로 끝낸다. Nginx 읽기 대기(180초)가 이 예산보다 길어야 브라우저가 먼저 끊지 않는다.
-            if (attempt > 1 && !retryFits(System.nanoTime() - askStarted, chatReadTimeout)) {
+            // 다시 부르면 최악의 경우 AI 읽기 제한만큼 더 걸린다. 앞 단계(임베딩·첫 호출)가 오래 걸렸으면 전체 예산을 넘기지 않게
+            // 재시도를 건너뛰고 템플릿으로 끝낸다. 예산은 Nginx 기본 읽기 대기(60초)보다 짧다.
+            if (attempt > 1 && !retryFits(System.nanoTime() - askStarted, chatReadTimeout, answerBudget)) {
                 log.warn("BEE-A01 retry skipped: time budget (project {})", projectId);
+                timing.attempts.add("retry_skipped:0");
                 break;
             }
             String key = requestKey + "-a" + attempt;
             long started = System.nanoTime();
+            String label = "ok";
             try {
                 response = gateway.chat(payload(projectId, key, question, retrieval, sent, approved, relatedTasks));
                 recordUsage(projectId, taskId, key, response, elapsedMillis(started));
@@ -125,13 +169,19 @@ public class BeeQuestionService {
                 failure = null;
                 break;
             } catch (AiCallException e) {
+                label = e.getCode();
                 recordFailedUsage(projectId, taskId, key, e, elapsedMillis(started));
                 failure = e;
                 if (!"ai_unavailable".equals(e.getCode())) break;
             } catch (BeeAnswerValidator.Rejected e) {
                 // 응답은 왔지만 허용 집합과 어긋남 — 사용량은 이미 기록했다. 사유 코드만 남기고 내용은 남기지 않는다.
+                label = "rejected";
                 log.warn("BEE-A01 answer rejected (project {}, attempt {}): {}", projectId, attempt, e.getMessage());
                 failure = new AiCallException(HttpStatus.BAD_GATEWAY, "ai_unavailable", BeeChatAiAdapter.UNAVAILABLE, null);
+            } finally {
+                long millis = elapsedMillis(started);
+                timing.attempts.add(label + ":" + millis);
+                time("beez.bee.chat", "result", String.valueOf(label), millis);
             }
         }
         if (failure != null && !"ai_unavailable".equals(failure.getCode())) throw failure;
@@ -144,9 +194,14 @@ public class BeeQuestionService {
         return failure == null ? answer(actor, projectId, retrieval, sent, response, result) : template(actor, projectId, retrieval);
     }
 
+    /** 소요 시간 지표. 분포(p95 등)를 볼 수 있게 히스토그램을 함께 낸다. 태그는 몇 가지 고정 값뿐이다 */
+    private void time(String name, String tagKey, String tagValue, long millis) {
+        Timer.builder(name).tag(tagKey, tagValue).publishPercentileHistogram().register(meters).record(Duration.ofMillis(millis));
+    }
+
     /** 지금까지 걸린 시간에 AI 읽기 제한을 더해도 전체 예산 안이면 재시도할 수 있다 */
-    static boolean retryFits(long elapsedNanos, Duration chatReadTimeout) {
-        return elapsedNanos + chatReadTimeout.toNanos() <= ANSWER_BUDGET.toNanos();
+    static boolean retryFits(long elapsedNanos, Duration chatReadTimeout, Duration budget) {
+        return elapsedNanos + chatReadTimeout.toNanos() <= budget.toNanos();
     }
 
     // ---- 입력 --------------------------------------------------------------------------------
@@ -178,7 +233,7 @@ public class BeeQuestionService {
     /** AI 에 보낸 집합. 응답 대조와 템플릿·변환에 같은 값을 쓴다 */
     record Sent(List<Map<String, Object>> evidence, Map<String, BeeAnswerValidator.SentEvidence> byId,
                 Map<String, BeeAnswerValidator.SentSource> versionSources,
-                Map<String, String> approvedVersions, Set<String> taskIds) {
+                Map<String, String> approvedVersions, Map<String, Map<String, Object>> approvedSources, Set<String> taskIds) {
 
         static Sent of(DocumentIndexWorker.Retrieval retrieval, List<Map<String, Object>> approved,
                        List<Map<String, Object>> tasks, String profile) {
@@ -210,17 +265,25 @@ public class BeeQuestionService {
                         new BeeAnswerValidator.SentSource(item.get("document_id").toString(), chunk.versionNo()));
             }
             Map<String, String> approvedVersions = new LinkedHashMap<>();
+            Map<String, Map<String, Object>> approvedSources = new LinkedHashMap<>();
             for (Map<String, Object> item : approved) {
                 approvedVersions.put(item.get("id").toString(), item.get("design_item_id").toString());
-                // 승인 항목의 저장 출처도 우리가 보낸 값이다. 근거 청크가 없는 문서 버전의 출처는 여기서 확인한다
+                // 승인 항목의 저장 출처도 우리가 보낸 값이다. 근거 청크가 없는 문서 버전의 출처는 여기서 확인하고,
+                // 응답의 sources 는 AI 가 준 값 대신 이 값으로 다시 만든다
                 if (item.get("source") instanceof Map<?, ?> source && source.get("version_no") instanceof Number no) {
                     versionSources.putIfAbsent(String.valueOf(source.get("document_version_id")),
                             new BeeAnswerValidator.SentSource(String.valueOf(source.get("document_id")), no.intValue()));
+                    Map<String, Object> copy = new LinkedHashMap<>();
+                    copy.put("document_id", String.valueOf(source.get("document_id")));
+                    copy.put("document_version_id", String.valueOf(source.get("document_version_id")));
+                    copy.put("version_no", no.intValue());
+                    copy.put("location", String.valueOf(source.get("location")));
+                    approvedSources.put(item.get("id").toString(), copy);
                 }
             }
             Set<String> taskIds = new LinkedHashSet<>();
             for (Map<String, Object> task : tasks) taskIds.add(task.get("id").toString());
-            return new Sent(evidence, byId, versionSources, approvedVersions, taskIds);
+            return new Sent(evidence, byId, versionSources, approvedVersions, approvedSources, taskIds);
         }
 
         BeeAnswerValidator.Sent validatorView(DocumentIndexWorker.Retrieval retrieval, String profile) {
@@ -282,23 +345,26 @@ public class BeeQuestionService {
             out.put("document_id", known.documentId());
             out.put("document_version_id", known.documentVersionId());
             out.put("version_no", known.versionNo());
-            // 명세상 title 은 필수인데 AI 는 선택으로 준다 — 없으면 보낸 문서 제목으로 채운다
-            Object title = citation.get("title") instanceof String t && !t.isBlank() ? t : known.title();
-            out.put("title", title);
-            out.put("locator", citation.get("locator"));
-            out.put("quote", citation.get("quote"));
-            if (citation.get("section_title") != null) out.put("section_title", citation.get("section_title"));
-            if (citation.get("claim") != null) out.put("claim", citation.get("claim"));
+            // 식별·위치 값은 AI 가 돌려준 값이 아니라 BE 가 보낸 근거 값으로 채운다(검증기가 같음을 이미 확인했다).
+            // 명세상 title 은 필수라 보낸 문서 제목을 쓴다. section_title 은 BE 가 보내지 않은 값이라 내보내지 않는다.
+            out.put("title", known.title());
+            out.put("locator", known.locator());
+            // 인용문은 검증기가 보낸 청크 원문의 부분 문자열임을 확인했다. 앞뒤 공백만 다듬어 내보낸다.
+            out.put("quote", ((String) citation.get("quote")).strip());
+            if (citation.get("claim") instanceof String claim && !claim.isBlank()) {
+                out.put("claim", claim.length() > MAX_CLAIM ? claim.substring(0, MAX_CLAIM) : claim);
+            }
             citations.add(out);
             citedVersions.add(Long.parseLong(known.documentVersionId()));
         }
+        List<Map<String, Object>> sources = sources(retrieval, sent, result);
         long answerId = repository.issueAnswer(projectId, actor.accountId(), MODE, List.copyOf(citedVersions), retrieval.baselineId());
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("origin", "MODEL");
         if (response.get("model") != null) out.put("model", response.get("model"));
         out.put("text", result.get("text"));
-        out.put("sources", result.get("sources"));
+        out.put("sources", sources);
         out.put("unresolved", result.getOrDefault("unresolved", List.of()));
         if (response.get("usage") instanceof List<?> lines && !lines.isEmpty()) out.put("usage", lines);
         out.put("answer_id", Ids.str(answerId));
@@ -313,6 +379,36 @@ public class BeeQuestionService {
     }
 
     /**
+     * 응답의 출처(sources)는 AI 가 준 목록이 아니라 보낸 값으로 다시 만든다: 인용한 근거마다 한 건(문서·버전·위치),
+     * 이어서 참조한 승인 항목의 저장 출처 중 현재 범위 안의 문서 버전. AI 계약(#135)과 같은 규칙이며 중복은 합친다.
+     */
+    private static List<Map<String, Object>> sources(DocumentIndexWorker.Retrieval retrieval, Sent sent, Map<String, Object> result) {
+        Set<String> inScope = new HashSet<>();
+        for (Long id : retrieval.documentVersionIds()) inScope.add(Ids.str(id));
+        List<Map<String, Object>> sources = new ArrayList<>();
+        for (Object value : (List<?>) result.get("citations")) {
+            BeeAnswerValidator.SentEvidence known = sent.byId().get(((Map<?, ?>) value).get("evidence_id").toString());
+            Map<String, Object> source = new LinkedHashMap<>();
+            source.put("document_id", known.documentId());
+            source.put("document_version_id", known.documentVersionId());
+            source.put("version_no", known.versionNo());
+            source.put("location", location(known.title(), known.locator()));
+            if (!sources.contains(source)) sources.add(source);
+        }
+        for (Object value : (List<?>) result.get("design_refs")) {
+            Map<String, Object> source = sent.approvedSources().get(((Map<?, ?>) value).get("design_item_version_id").toString());
+            if (source != null && inScope.contains(source.get("document_version_id")) && !sources.contains(source)) sources.add(source);
+        }
+        return sources;
+    }
+
+    /** 출처 위치 표기: "문서 제목 / L시작-L끝" (제목이 없으면 행 범위만). 템플릿 응답과 같은 형식이다 */
+    static String location(String title, Map<String, Object> locator) {
+        String span = "L" + locator.get("start_line") + "-L" + locator.get("end_line");
+        return title == null || title.isBlank() ? span : title + " / " + span;
+    }
+
+    /**
      * 모델 답을 쓸 수 없을 때의 템플릿 안내(origin=TEMPLATE). 모델을 쓴 척하지 않는다: 인용·근거 판정이 없고 grounded=false,
      * 사용량 없음. 출처는 허용 집합에서 검색된 문서 위치만 보여 준다.
      */
@@ -320,8 +416,7 @@ public class BeeQuestionService {
         List<Map<String, Object>> sources = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (DocumentIndexWorker.ChunkEvidence chunk : retrieval.evidence()) {
-            String location = (chunk.title().isBlank() ? "" : chunk.title() + " / ") + "L" + chunk.locator().get("start_line")
-                    + "-L" + chunk.locator().get("end_line");
+            String location = location(chunk.title(), chunk.locator());
             if (!seen.add(chunk.documentVersionId() + ":" + location)) continue;
             Map<String, Object> source = new LinkedHashMap<>();
             source.put("document_id", Ids.str(chunk.documentId()));

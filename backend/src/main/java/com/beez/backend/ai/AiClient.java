@@ -26,8 +26,11 @@ public class AiClient {
     static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
 
-    /** 비비 대화(답변 모델 30초 + 문장 판정 모델 30초)보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
-    static final Duration DEFAULT_CHAT_READ_TIMEOUT = Duration.ofSeconds(70);
+    /**
+     * 비비 대화 읽기 제한. 답변 모델 30초 + 문장 판정 모델 30초(AI 쪽 상한)를 모두 기다리지는 않는다 — 전체 처리를 Nginx 기본 60초 안에
+     * 두려고 35초로 끊는다(BeeQuestionService.DEFAULT_ANSWER_BUDGET). 정상 응답 시간은 dev 에서 재서 정한다(`BEE-A01 timing` 로그).
+     */
+    static final Duration DEFAULT_CHAT_READ_TIMEOUT = Duration.ofSeconds(35);
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -46,7 +49,7 @@ public class AiClient {
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
                     @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
-                    @Value("${beez.bee.chat-read-timeout:70s}") Duration chatReadTimeout) {
+                    @Value("${beez.bee.chat-read-timeout:35s}") Duration chatReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.

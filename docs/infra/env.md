@@ -1,3 +1,4 @@
+| `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 # 환경변수와 비밀값
 
 BEEZ 의 서비스(backend·ai·frontend)와 배포(CI·CD·Jenkins·서버)가 읽는 설정값을 한곳에 모은 문서입니다.

@@ -264,6 +264,33 @@ class BeeQuestionIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void ask_buildsSourcesAndCitationFieldsFromWhatWasSent_notFromTheAiResponse() {
+        long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
+        publish(project.projectId(), project.leaderAccountId(), 1, doc);
+        gatewayAnswers(r -> {
+            // 식별 값은 검증기가 맞는지 확인하지만, 표시 값(제목·절 제목·출처 위치)은 AI 가 마음대로 지어낼 수 있는 자리다
+            Map<String, Object> citation = (Map<String, Object>) ((List<?>) r.get("citations")).get(0);
+            citation.put("title", "AI가 지어낸 제목");
+            citation.put("section_title", "AI가 지어낸 절");
+            Map<String, Object> source = new LinkedHashMap<>((Map<String, Object>) ((List<?>) r.get("sources")).get(0));
+            source.put("location", "AI가 지어낸 위치 / L9-L9");
+            r.put("sources", new ArrayList<>(List.of(source)));
+        });
+
+        JsonNode body = ok(ask(member, project.projectId(), QUESTION));
+
+        JsonNode citation = body.get("citations").get(0);
+        assertThat(citation.get("title").asText()).isEqualTo("예약 명세");
+        assertThat(citation.has("section_title")).isFalse();
+        assertThat(body.get("sources").size()).isEqualTo(1);
+        JsonNode source = body.get("sources").get(0);
+        assertThat(source.get("document_id").asText()).isEqualTo(String.valueOf(doc[0]));
+        assertThat(source.get("document_version_id").asText()).isEqualTo(String.valueOf(doc[1]));
+        assertThat(source.get("location").asText()).isEqualTo("예약 명세 / L1-L1");
+    }
+
+    @Test
     void ask_insufficientEvidenceIsAnOrdinaryAnswerNotAnError() {
         long[] doc = indexedDocument(project.projectId(), project.leaderAccountId(), "예약 명세", "같은 시간대 예약은 거절한다");
         publish(project.projectId(), project.leaderAccountId(), 1, doc);
