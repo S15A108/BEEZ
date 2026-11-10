@@ -347,6 +347,13 @@ export async function documentRoutes(
       }
     }
     case 'PLN-A07': {
+      // 서버(DesignContentValidator)처럼 모든 종류에 description 문자열이 필요하다.
+      const content = body.content as Record<string, unknown> | undefined
+      if (
+        typeof content?.description !== 'string' ||
+        !content.description.trim()
+      )
+        fail(400, 'validation_failed', 'description 문자열이 필요합니다.')
       const sourceVersion =
         typeof body.source_document_version_id === 'string'
           ? findById(project.versions, body.source_document_version_id)
