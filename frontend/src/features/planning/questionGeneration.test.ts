@@ -42,7 +42,7 @@ it('분석이 도는 중이면 질문 생성 여부와 상관없이 계속 읽�
 
 it('질문 생성 상태가 오면 그 값을 따르고, 대기·진행만 계속 읽는다', () => {
   for (const status of ['PENDING', 'RUNNING'])
-    expect(pollIntervalOf(completed({ status }), false)).toBe(ACTIVE_POLL_MS)
+    expect(pollIntervalOf(completed({ status }), true)).toBe(ACTIVE_POLL_MS)
   expect(pollIntervalOf(completed({ status: 'COMPLETED' }), true)).toBe(false)
   expect(
     generationOf(
@@ -56,4 +56,12 @@ it('질문 생성 상태가 오면 그 값을 따르고, 대기·진행만 계�
   ).toEqual({ status: 'FAILED', errorCode: 'ai_unavailable', retryable: true })
   // 실패한 문서는 더 읽지 않는다. 다른 문서의 진행은 문서마다 따로 판단한다.
   expect(pollIntervalOf(completed({ status: 'FAILED' }), true)).toBe(false)
+})
+
+it('서버가 질문을 만들지 않는 문서는 옛 실행 행이 남아 있어도 보이지 않는다 (S15P31A108-359)', () => {
+  // 기준 발행 뒤에는 FAILED·PENDING 행이 남아도 실패 카드·'질문 다시 만들기'·만드는 중 안내를 만들지 않는다.
+  for (const status of ['PENDING', 'RUNNING', 'FAILED']) {
+    expect(generationOf(completed({ status }), false)).toBeUndefined()
+    expect(pollIntervalOf(completed({ status }), false)).toBe(false)
+  }
 })

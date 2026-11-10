@@ -34,6 +34,9 @@ export function generationOf(
   target: boolean,
 ): DocumentGeneration | undefined {
   if (analysis?.status !== 'COMPLETED') return undefined
+  // 서버가 질문을 만들지 않는 문서(기준 발행 후, 다른 상태의 버전)는 옛 실행 행이 남아 있어도 보이지 않는다.
+  // 실패 카드와 '질문 다시 만들기'를 눌러도 서버 워커가 다시 잡지 않는다(S15P31A108-359).
+  if (!target) return undefined
   const run = analysis.question_generation
   if (run)
     return {
@@ -41,7 +44,7 @@ export function generationOf(
       errorCode: run.error_code,
       retryable: run.retryable,
     }
-  return target ? { status: 'WAITING' } : undefined
+  return { status: 'WAITING' }
 }
 
 export const isGenerating = (generation: DocumentGeneration | undefined) =>

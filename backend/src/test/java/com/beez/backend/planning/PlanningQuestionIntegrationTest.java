@@ -1,6 +1,7 @@
 package com.beez.backend.planning;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.beez.backend.ai.AiClient;
+import com.beez.backend.common.api.ApiException;
 import com.beez.backend.document.service.DocumentApplicationService;
 import com.beez.backend.planning.dto.AnswerRequest;
 import com.beez.backend.planning.service.PlanningQuestionGenerator;
@@ -97,6 +99,18 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(retried.get("question_generation")).isEqualTo(Map.of("status", "PENDING"));
         assertThat(generator.runOnce()).isTrue();
         assertThat(count("SELECT count(*) FROM planning_question WHERE document_version_id=?", version)).isEqualTo(3);
+    }
+
+    @Test void retryDoesNotRequeueFailedQuestionGenerationThatNoWorkerWillPick() {
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        assertThat(generator.runOnce()).isTrue();
+        publishBaseline();
+
+        // 기준이 발행된 뒤에는 워커가 질문을 만들지 않는다. PENDING 으로 되돌리면 화면이 '만드는 중'으로 영원히 남는다 (S15P31A108-359).
+        assertThatThrownBy(() -> documents.retry(leaderCaller, project, document, version, "retry-after-baseline"))
+                .isInstanceOfSatisfying(ApiException.class, error -> assertThat(error.getCode()).isEqualTo("question_generation_unavailable"));
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
+        assertThat(generator.runOnce()).isFalse();
     }
 
     @Test void rejectedRequestIsNotRetryableAndMismatchedOutputIsRejectedWholesale() {
