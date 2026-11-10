@@ -55,6 +55,7 @@ export function DocumentReview({
   onClose,
   onApproved,
   onDiscarded,
+  onReupload,
 }: {
   projectId: string
   documentId: string
@@ -68,13 +69,20 @@ export function DocumentReview({
   onApproved?: (message: string) => void
   /** 등록을 취소하면 부르는 쪽이 목록으로 돌아가고 이 알림을 띄운다(DOC-A25). 없으면 onClose 로 닫는다. */
   onDiscarded?: (message: string) => void
+  /**
+   * 비비 검토가 실패했을 때 '파일 등록' 단계로 돌아가는 길. 부르는 쪽이 처음 등록 화면을 같은 문서의 '파일 다시 올리기'로 열고,
+   * 지금 등록된 파일을 선택된 채로 보인다(S15P31A108-382). 없으면 단계 표시줄은 보기만 한다.
+   */
+  onReupload?: (current: {
+    fileName: string
+    content: string
+    revision: number
+  }) => void
 }) {
   const session = useSession()
   const openPane = useWorkspaceStore((state) => state.openPane)
   const action = useProjectAction(projectId)
   const [editing, setEditing] = useState(false)
-  // 비비 검토가 실패했을 때 앞 단계(파일 등록)로 돌아가 본문을 고치는 중
-  const [fixing, setFixing] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const client = useQueryClient()
   // 비비 검토(DOC-A16): 기준 v1 전에는 올리거나 고친 직후 화면이 바로 부른다. 누르는 버튼은 없고 실패했을 때만 다시 검토한다.
@@ -274,7 +282,8 @@ export function DocumentReview({
             />
           )
           // 기준 v1 전에 올린 사람만, 검토가 실패한 1단계에서 앞 단계로 돌아가 고칠 수 있다.
-          const canGoBack = owner && stage.step === 1 && !stage.stale && failed
+          const canGoBack =
+            owner && stage.step === 1 && !stage.stale && failed && !!onReupload
           // 등록 취소(DOC-A25)는 올린 사람과 팀장이, 승인된 적 없고 팀장 검토를 요청하지 않은 문서에만 한다.
           const discard = !locked &&
             (owner || isLeader) &&
@@ -306,7 +315,6 @@ export function DocumentReview({
               '고친 내용을 저장했어요. 비비가 다시 검토해요.',
             )
             bee.reset()
-            setFixing(false)
             setEditing(false)
           }
           return (
@@ -326,13 +334,18 @@ export function DocumentReview({
                     )}
                   >
                     {index === 0 && canGoBack ? (
-                      // 비비 검토가 실패하면 앞 단계로 돌아가 문서를 고칠 수 있다.
+                      // 비비 검토가 실패하면 처음 등록 화면으로 돌아가 파일을 다시 올릴 수 있다.
                       <button
                         type="button"
-                        aria-label="이전 단계로 돌아가 문서 고치기"
-                        aria-pressed={fixing}
+                        aria-label="이전 단계로 돌아가 파일 다시 올리기"
                         className="underline underline-offset-2"
-                        onClick={() => setFixing((open) => !open)}
+                        onClick={() =>
+                          onReupload?.({
+                            fileName: data.file_name,
+                            content: data.content,
+                            revision: data.revision,
+                          })
+                        }
                       >
                         ← {step}
                       </button>
@@ -365,18 +378,7 @@ export function DocumentReview({
               {stage.step === 1 && !stage.stale && (
                 <div className="grid gap-3">
                   <MarkdownView source={data.content} className="max-h-72" />
-                  {owner && failed && fixing ? (
-                    <div className="grid gap-2">
-                      <strong className="text-sm">
-                        문서를 고친 뒤 저장하면 비비가 처음부터 다시 검토해요
-                      </strong>
-                      <WorkingCopyEditor
-                        content={data.content}
-                        onSave={saveContent}
-                        onCancel={() => setFixing(false)}
-                      />
-                    </div>
-                  ) : failed ? (
+                  {failed ? (
                     <div
                       role="alert"
                       className="grid gap-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm"
@@ -397,8 +399,8 @@ export function DocumentReview({
                       {owner ? (
                         <>
                           <span className="text-xs text-muted-foreground">
-                            위 단계의 &lsquo;파일 등록&rsquo;을 눌러 문서를
-                            고치거나, 그대로 다시 검토하거나, 등록을 취소할 수
+                            위 단계의 &lsquo;파일 등록&rsquo;을 눌러 파일을 다시
+                            올리거나, 그대로 다시 검토하거나, 등록을 취소할 수
                             있어요.
                           </span>
                           <div className="flex flex-wrap gap-2">
@@ -494,6 +496,7 @@ export function DocumentReview({
                   projectId={projectId}
                   documentId={documentId}
                   review={stage.review}
+                  revision={data.revision}
                   owner={owner}
                   busy={action.busy}
                   onStale={() => markStale(stage.review!.id)}
@@ -533,10 +536,18 @@ export function DocumentReview({
                         ? '비비 제안을 반영한 최종본이에요. 팀장이 보게 될 화면과 같아요.'
                         : '반영한 제안 없이 지금 본문 그대로예요. 팀장이 보게 될 화면과 같아요.'}
                     </p>
+                    <ChangeHistory
+                      projectId={projectId}
+                      documentId={documentId}
+                      review={stage.review}
+                      revision={data.revision}
+                      onStale={() => markStale(stage.review!.id)}
+                    />
                     <ReviewNotes
                       projectId={projectId}
                       documentId={documentId}
                       review={stage.review}
+                      revision={data.revision}
                       owner={owner}
                       busy={action.busy}
                       onStale={() => markStale(stage.review!.id)}
@@ -730,6 +741,7 @@ function ReviewNotes({
   projectId,
   documentId,
   review,
+  revision,
   owner,
   busy,
   onStale,
@@ -737,6 +749,7 @@ function ReviewNotes({
   projectId: string
   documentId: string
   review: DocumentBeeReview
+  revision: number
   owner: boolean
   busy: boolean
   onStale: () => void
@@ -755,6 +768,7 @@ function ReviewNotes({
                 projectId={projectId}
                 documentId={documentId}
                 reviewId={review.id}
+                revision={revision}
                 suggestion={comment}
                 index={index}
                 owner={owner}
@@ -776,10 +790,57 @@ function ReviewNotes({
   )
 }
 
+// 최종본 확인 단계에서도 비비 제안을 어떻게 처리했는지(반영·넘김)와 고친 내용을 계속 볼 수 있게 한다.
+// 제안을 모두 처리하면 제안 목록이 사라져 무엇이 어떻게 바뀌었는지 알 수 없었다(S15P31A108-382).
+function ChangeHistory({
+  projectId,
+  documentId,
+  review,
+  revision,
+  onStale,
+}: {
+  projectId: string
+  documentId: string
+  review: DocumentBeeReview
+  revision: number
+  onStale: () => void
+}) {
+  const patches = review.suggestions.filter((item) => item.type === 'PATCH')
+  if (!patches.length) return null
+  const applied = patches.filter((item) => item.decision === 'APPLIED').length
+  return (
+    <details className="rounded-xl border p-3 text-sm">
+      <summary className="cursor-pointer font-semibold">
+        비비 제안 처리 내역 · 반영 {applied}개 · 넘김 {patches.length - applied}
+        개
+      </summary>
+      <ol aria-label="비비 제안 처리 내역" className="mt-2 grid gap-2">
+        {patches.map((suggestion, index) => (
+          <SuggestionCard
+            key={suggestion.id}
+            projectId={projectId}
+            documentId={documentId}
+            reviewId={review.id}
+            revision={revision}
+            suggestion={suggestion}
+            index={index}
+            owner={false}
+            stale={false}
+            busy={false}
+            onDecide={() => undefined}
+            onStale={onStale}
+          />
+        ))}
+      </ol>
+    </details>
+  )
+}
+
 function Suggestions({
   projectId,
   documentId,
   review,
+  revision,
   owner,
   busy,
   onDecide,
@@ -788,6 +849,7 @@ function Suggestions({
   projectId: string
   documentId: string
   review: DocumentBeeReview
+  revision: number
   owner: boolean
   busy: boolean
   onDecide: (
@@ -832,6 +894,7 @@ function Suggestions({
             projectId={projectId}
             documentId={documentId}
             reviewId={review.id}
+            revision={revision}
             suggestion={suggestion}
             index={index}
             owner={owner}

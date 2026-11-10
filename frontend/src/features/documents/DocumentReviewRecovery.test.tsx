@@ -31,7 +31,15 @@ afterEach(() => {
   restore()
 })
 
-function mount(handlers: { onClose?: () => void; onDiscarded?: () => void }) {
+function mount(handlers: {
+  onClose?: () => void
+  onDiscarded?: () => void
+  onReupload?: (current: {
+    fileName: string
+    content: string
+    revision: number
+  }) => void
+}) {
   render(
     <QueryClientProvider
       client={
@@ -46,6 +54,7 @@ function mount(handlers: { onClose?: () => void; onDiscarded?: () => void }) {
         isLeader
         onClose={handlers.onClose ?? vi.fn()}
         onDiscarded={handlers.onDiscarded}
+        onReupload={handlers.onReupload}
       />
     </QueryClientProvider>,
   )
@@ -90,46 +99,67 @@ it('실패한 뒤 다시 검토하기를 누르면 검토가 끝나 제안이 �
   ).not.toBeInTheDocument()
 })
 
-it('이전 단계(파일 등록)로 돌아가 문서를 고쳐 저장하면 실패 안내가 사라지고 비비가 다시 검토한다', async () => {
+it('이전 단계(파일 등록)를 누르면 지금 등록된 파일 정보를 넘겨 파일 다시 올리기를 연다', async () => {
   const user = userEvent.setup()
-  const update = vi.spyOn(documentsApi, 'updateWorkingCopy')
+  const onReupload = vi.fn()
   localStorage.setItem('beez.mock.reviewRun', 'timeout')
-  mount({})
+  mount({ onReupload })
   await screen.findByText('비비 검토 시간이 초과됐어요')
   await user.click(
-    screen.getByRole('button', { name: '이전 단계로 돌아가 문서 고치기' }),
+    screen.getByRole('button', { name: '이전 단계로 돌아가 파일 다시 올리기' }),
   )
-  expect(
-    screen.getByText('문서를 고친 뒤 저장하면 비비가 처음부터 다시 검토해요'),
-  ).toBeInTheDocument()
-  localStorage.removeItem('beez.mock.reviewRun')
-  const body = screen.getByLabelText(/본문/)
-  await user.clear(body)
-  await user.type(body, '# 줄인 계획')
-  await user.click(screen.getByRole('button', { name: '고친 내용 저장' }))
-  await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
-  expect(
-    await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/),
-  ).toBeInTheDocument()
-  expect(
-    screen.queryByText('비비 검토 시간이 초과됐어요'),
-  ).not.toBeInTheDocument()
-  update.mockRestore()
+  expect(onReupload).toHaveBeenCalledTimes(1)
+  expect(onReupload.mock.calls[0][0]).toEqual({
+    fileName: expect.any(String),
+    content: expect.stringMatching(/\S/),
+    revision: expect.any(Number),
+  })
 })
 
-it('앞 단계 고치기를 접으면 실패 안내로 돌아온다', async () => {
-  const user = userEvent.setup()
+it('파일 다시 올리기를 연결하지 않은 화면에서는 단계 표시줄이 보기만 한다', async () => {
   localStorage.setItem('beez.mock.reviewRun', 'timeout')
   mount({})
   await screen.findByText('비비 검토 시간이 초과됐어요')
-  const back = screen.getByRole('button', {
-    name: '이전 단계로 돌아가 문서 고치기',
-  })
-  await user.click(back)
-  await user.click(back)
   expect(
-    screen.getByRole('button', { name: '다시 검토하기' }),
-  ).toBeInTheDocument()
+    screen.queryByRole('button', {
+      name: '이전 단계로 돌아가 파일 다시 올리기',
+    }),
+  ).not.toBeInTheDocument()
+})
+
+it('의견 카드의 비비에게 요청하기는 그 의견으로 쓴 요청을 보내 새 제안을 받는다', async () => {
+  const user = userEvent.setup()
+  const request = vi.spyOn(documentsApi, 'requestBeeSuggestion')
+  mount({})
+  await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/)
+  await user.click(
+    screen.getAllByRole('button', { name: '비비에게 요청하기' })[0],
+  )
+  const box = await screen.findByRole('textbox', {
+    name: '비비에게 요청할 내용',
+  })
+  // 의견 내용이 미리 채워져 있고 고쳐 쓸 수 있다
+  expect((box as HTMLTextAreaElement).value).toContain(
+    '다음 비비 의견을 반영해 본문을 수정해 주세요.',
+  )
+  await user.click(screen.getByRole('button', { name: '요청 보내기' }))
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+  expect(request.mock.calls[0][3]).toEqual({
+    expected_revision: expect.any(Number),
+    text: expect.stringContaining('다음 비비 의견을 반영해'),
+  })
+  expect(await screen.findByText('직접 요청')).toBeInTheDocument()
+  request.mockRestore()
+})
+
+it('제안을 모두 처리한 뒤에도 반영·넘김 내역을 계속 볼 수 있다', async () => {
+  const user = userEvent.setup()
+  mount({})
+  await screen.findByText(/비비가 수정 제안 \d개를 남겼어요/)
+  while (screen.queryAllByRole('button', { name: '넘기기' }).length)
+    await user.click(screen.getAllByRole('button', { name: '넘기기' })[0])
+  expect(await screen.findByText(/비비 제안 처리 내역/)).toBeInTheDocument()
+  expect(screen.getByText(/넘김 \d+개/)).toBeInTheDocument()
 })
 
 it('등록 취소는 확인 뒤에만 부르고, 성공하면 알림과 함께 목록으로 돌려보낸다', async () => {

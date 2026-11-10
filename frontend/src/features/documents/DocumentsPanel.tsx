@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
@@ -118,6 +118,17 @@ type View =
   | { name: 'baseline'; versionNo: number }
   | { name: 'upload'; kind: Kind }
   | { name: 'review'; id: string }
+  // 비비 검토가 실패해 '파일 등록' 단계로 돌아온 화면. 지금 등록된 파일을 선택된 채로 보이고 새 파일로 바꿔 올린다(DOC-A15).
+  | {
+      name: 'reupload'
+      id: string
+      kind: Kind
+      title: string
+      domain?: string
+      fileName: string
+      content: string
+      revision: number
+    }
 
 export function DocumentsPanel({
   projectId,
@@ -209,6 +220,23 @@ export function DocumentsPanel({
     </Button>
   )
 
+  if (view.name === 'reupload')
+    return (
+      <UploadDocument
+        projectId={projectId}
+        kind={view.kind}
+        replace={view}
+        onCancel={() => setView({ name: 'review', id: view.id })}
+        onDone={(id, title) => {
+          // 파일을 바꿔 올리면 리비전이 올라 비비 검토가 처음부터 다시 시작한다.
+          setView({ name: 'review', id })
+          setNotice({
+            title: '파일을 다시 올렸어요',
+            text: `${title} · 비비가 다시 검토하고 있어요. 창을 닫아도 검토는 이어져요.`,
+          })
+        }}
+      />
+    )
   if (view.name === 'upload')
     return (
       <UploadDocument
@@ -251,6 +279,17 @@ export function DocumentsPanel({
             setView({ name: 'list' })
             setNotice({ text: message })
           }}
+          // 검토가 실패하면 처음 등록 화면으로 돌아가 파일을 다시 올린다(S15P31A108-382).
+          onReupload={(current) =>
+            setView({
+              name: 'reupload',
+              id: view.id,
+              kind: (document?.kind ?? 'PLAN') as Kind,
+              title: document?.title ?? '',
+              domain: document?.domain,
+              ...current,
+            })
+          }
         />
       </div>
     )
@@ -735,11 +774,21 @@ const uploadFailure: Record<string, { file?: true; text: string }> = {
 function UploadDocument({
   projectId,
   kind,
+  replace,
   onCancel,
   onDone,
 }: {
   projectId: string
   kind: Kind
+  /** 이미 등록된 문서의 파일을 바꿔 올리는 모드. 지금 등록된 파일을 선택된 채로 보인다(S15P31A108-382). */
+  replace?: {
+    id: string
+    title: string
+    domain?: string
+    fileName: string
+    content: string
+    revision: number
+  }
   onCancel: () => void
   onDone: (id: string, title: string) => void
 }) {
@@ -748,6 +797,14 @@ function UploadDocument({
   const [failure, setFailure] = useState<string>()
   const [proposalRequired, setProposalRequired] = useState(false)
   const label = statusLabel(kind)
+  // 지금 등록된 파일. 같은 파일 그대로는 다시 올릴 이유가 없어 새 파일을 고르기 전에는 올릴 수 없다.
+  const [registered] = useState(() =>
+    replace
+      ? new File([replace.content], replace.fileName || `${label}.md`, {
+          type: 'text/markdown',
+        })
+      : undefined,
+  )
   const {
     register,
     handleSubmit,
@@ -757,21 +814,38 @@ function UploadDocument({
     formState: { errors, isSubmitting },
   } = useForm<UploadValues>({
     resolver: zodResolver(uploadSchema),
-    defaultValues: { title: label, domain: '' },
+    defaultValues: {
+      title: replace?.title ?? label,
+      domain: replace?.domain ?? '',
+      file: registered,
+    },
   })
+  const pickedFile = useWatch({ control, name: 'file' })
+  const unchanged = !!registered && pickedFile === registered
   const submit = handleSubmit(async (values) => {
     setFailure(undefined)
     setProposalRequired(false)
     try {
       let documentId: string | undefined
-      await action.run(async () => {
-        const result = await documentsApi.upload(projectId, {
-          ...values,
-          kind,
-          domain: values.domain.trim() || undefined,
-        })
-        documentId = result.document.id
-      }, '문서를 등록했어요.')
+      await action.run(
+        async () => {
+          if (replace) {
+            await documentsApi.reuploadWorkingCopy(projectId, replace.id, {
+              expected_revision: replace.revision,
+              file: values.file,
+            })
+            documentId = replace.id
+            return
+          }
+          const result = await documentsApi.upload(projectId, {
+            ...values,
+            kind,
+            domain: values.domain.trim() || undefined,
+          })
+          documentId = result.document.id
+        },
+        replace ? '파일을 다시 올렸어요.' : '문서를 등록했어요.',
+      )
       if (documentId) onDone(documentId, values.title.trim())
     } catch (cause) {
       // 고른 파일과 입력값을 그대로 두고 원인을 알린다.
@@ -803,9 +877,13 @@ function UploadDocument({
           <ChevronLeft />
         </Button>
         <div>
-          <h3 className="font-semibold">{label} 등록</h3>
+          <h3 className="font-semibold">
+            {label} {replace ? '파일 다시 올리기' : '등록'}
+          </h3>
           <p className="text-xs text-muted-foreground">
-            필수 문서 · 유형 {label} · 등록 → 비비 검토 → 팀장 승인
+            {replace
+              ? `유형 ${label} · 새 파일을 올리면 비비가 처음부터 다시 검토해요`
+              : `필수 문서 · 유형 ${label} · 등록 → 비비 검토 → 팀장 승인`}
           </p>
         </div>
       </div>
@@ -903,7 +981,11 @@ function UploadDocument({
                         {field.value.name}
                       </span>
                       {!errors.file && (
-                        <span className="text-xs text-green-700">선택됨</span>
+                        <span className="text-xs text-green-700">
+                          {field.value === registered
+                            ? '지금 등록된 파일'
+                            : '선택됨'}
+                        </span>
                       )}
                       <Button
                         type="button"
@@ -933,7 +1015,7 @@ function UploadDocument({
             <Input
               id="document-title"
               {...register('title')}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !!replace}
               aria-invalid={!!errors.title}
             />
             {errors.title && (
@@ -948,14 +1030,16 @@ function UploadDocument({
               id="document-domain"
               placeholder="예: 인증"
               {...register('domain')}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !!replace}
             />
             <p className="text-xs text-muted-foreground">
               목록과 검색에서 담당 영역별로 모아 볼 수 있어요.
             </p>
           </div>
           <p className="rounded-xl bg-muted/50 px-4 py-3 text-xs text-muted-foreground">
-            등록하면 비비가 먼저 검토하고, 팀장이 승인해요.
+            {replace
+              ? '제목과 담당 영역은 그대로예요. 파일만 바꿔 올리면 비비가 처음부터 다시 검토해요.'
+              : '등록하면 비비가 먼저 검토하고, 팀장이 승인해요.'}
           </p>
         </div>
       </div>
@@ -986,8 +1070,17 @@ function UploadDocument({
         >
           취소
         </Button>
-        <Button type="submit" disabled={isSubmitting || !!errors.file}>
-          {isSubmitting ? '등록 중…' : '등록하고 비비 검토 받기'}
+        <Button
+          type="submit"
+          disabled={isSubmitting || !!errors.file || unchanged}
+        >
+          {isSubmitting
+            ? replace
+              ? '올리는 중…'
+              : '등록 중…'
+            : replace
+              ? '다시 올리고 비비 검토 받기'
+              : '등록하고 비비 검토 받기'}
         </Button>
       </div>
     </form>
