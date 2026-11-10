@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
+import { PaneSheet, PaneSheetHost } from '@/components/PaneSheet'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { Hotbar } from './Hotbar'
 
@@ -157,4 +159,39 @@ it('강조한 칸이 열려 있어도 글자와 번호를 검정으로 보인다
   expect(button).not.toHaveClass('text-white')
   expect(screen.getByText('1')).not.toHaveClass('text-white/85')
   expect(screen.getByText('여기부터 시작')).toBeInTheDocument()
+})
+
+// S15P31A108-371(사용자 결정 11-10, PR #264 리뷰): 하위 화면에 쓰던 내용을 숫자 키 한 번에 잃지 않게 한다.
+it('업무 창의 하위 화면이 열려 있으면 숫자 키로 창을 바꾸거나 닫지 않고, 하위 화면을 닫으면 다시 바꾼다', async () => {
+  function Pane() {
+    const [open, setOpen] = useState(false)
+    return (
+      <PaneSheetHost>
+        <button type="button" onClick={() => setOpen(true)}>
+          대기 보고
+        </button>
+        {open && (
+          <PaneSheet title="대기로 보고" onClose={() => setOpen(false)}>
+            <p>지금 상황</p>
+          </PaneSheet>
+        )}
+      </PaneSheetHost>
+    )
+  }
+  useWorkspaceStore.setState({ pane: 'tasks' })
+  const user = userEvent.setup()
+  render(
+    <>
+      <Hotbar locked={[]} badges={{}} />
+      <Pane />
+    </>,
+  )
+  await user.click(screen.getByRole('button', { name: '대기 보고' }))
+  await user.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  await user.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+  await user.click(screen.getByRole('button', { name: '뒤로' }))
+  await user.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
 })
