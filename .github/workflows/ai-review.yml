@@ -47,14 +47,22 @@ jobs:
           ref: dev
           fetch-depth: 0
 
+      # 이 워크플로를 처음 도입하는 PR처럼 dev 에 아직 review.py 가 없으면 리뷰를 건너뛴다(실패로 표시하지 않는다).
+      - name: Skip when script is not on dev yet
+        if: hashFiles('.github/ai-review/review.py') == ''
+        run: echo "::notice::review.py is not on dev yet, so this run is skipped. Reviews start after this workflow is merged."
+
       - uses: actions/setup-node@v5
+        if: hashFiles('.github/ai-review/review.py') != ''
         with:
           node-version: '22'
 
       - name: Install Claude Code
+        if: hashFiles('.github/ai-review/review.py') != ''
         run: npm install -g @anthropic-ai/claude-code@2.1.319
 
       - name: Review
+        if: hashFiles('.github/ai-review/review.py') != ''
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
