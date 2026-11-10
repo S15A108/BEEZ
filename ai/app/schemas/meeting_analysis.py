@@ -82,19 +82,56 @@ class MeetingEntry(ContractModel):
         return self
 
 
+class SummaryDocument(ContractModel):
+    document_id: TextId
+    document_version_id: TextId
+    text: str
+
+    @model_validator(mode="after")
+    def normalized_text(self) -> Self:
+        if self.text.startswith("\ufeff") or "\r" in self.text:
+            raise ValueError("document must use utf8-lf-v1")
+        if len(self.text.encode("utf-8")) > 300_000:
+            raise ValueError("document exceeds size limit")
+        return self
+
+
 class MeetingAnalysisRequest(ContractModel):
     project_id: TextId
     request_key: TextId
-    # SUMMARY is a proposed contract, not the currently agreed MVP format.
     mode: Literal["QUESTIONS", "MINUTES", "SUMMARY"]
     entries: list[MeetingEntry] = Field(min_length=1, max_length=200)
     approved_items: list[DesignItemVersion] = Field(max_length=100)
     change_proposal: dict[str, Any] | None = None
+    related_tasks: list[dict[str, Any]] | None = None
+    documents: list[SummaryDocument] | None = Field(default=None, max_length=10)
+    previous_summary: dict[str, Any] | None = None
+    feedback: ShortText | None = None
 
     @model_validator(mode="after")
     def validate_context(self) -> Self:
         if self.mode == "SUMMARY":
-            raise ValueError("SUMMARY contract is not agreed")
+            if self.related_tasks is None or self.documents is None:
+                raise ValueError("SUMMARY requires related_tasks and documents")
+            if (self.previous_summary is None) != (self.feedback is None):
+                raise ValueError(
+                    "previous_summary and feedback must be supplied together"
+                )
+            if self.feedback is not None and not self.feedback.strip():
+                raise ValueError("feedback is blank")
+            ids = [document.document_id for document in self.documents]
+            if len(ids) != len(set(ids)):
+                raise ValueError("duplicate document")
+        elif any(
+            value is not None
+            for value in (
+                self.related_tasks,
+                self.documents,
+                self.previous_summary,
+                self.feedback,
+            )
+        ):
+            raise ValueError("summary context requires SUMMARY mode")
         entry_ids = [entry.id for entry in self.entries]
         meeting_ids = {entry.meeting_id for entry in self.entries}
         version_ids = [item.id for item in self.approved_items]
@@ -141,4 +178,38 @@ class MeetingAnalysisResult(ContractModel):
             not item.strip() for item in [*self.decisions, *self.unresolved]
         ):
             raise ValueError("meeting result contains blank text")
+        return self
+
+
+class SummaryLocator(ContractModel):
+    type: Literal["text_lines"]
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+
+class SummaryDocumentChange(ContractModel):
+    document_id: TextId
+    base_version_id: TextId
+    locator: SummaryLocator
+    before: Annotated[str, StringConstraints(max_length=300_000)]
+    after: Annotated[str, StringConstraints(max_length=100_000)]
+    evidence_entry_ids: list[TextId] = Field(min_length=1, max_length=200)
+
+
+class MeetingSummaryResult(ContractModel):
+    text: Annotated[str, StringConstraints(min_length=1, max_length=4_000)]
+    conflicts: list[ShortText] = Field(max_length=100)
+    decisions: list[ShortText] = Field(max_length=100)
+    unresolved: list[ShortText] = Field(max_length=100)
+    document_changes: list[SummaryDocumentChange] = Field(max_length=100)
+    action_items: list[MeetingActionItem] = Field(max_length=100)
+    sources: list[Source] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def no_blank_text(self) -> Self:
+        if not self.text.strip() or any(
+            not item.strip()
+            for item in [*self.conflicts, *self.decisions, *self.unresolved]
+        ):
+            raise ValueError("meeting summary contains blank text")
         return self

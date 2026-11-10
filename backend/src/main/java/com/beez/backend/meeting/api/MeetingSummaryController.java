@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -33,6 +34,12 @@ public class MeetingSummaryController {
     public MeetingSummaryController(MeetingSummaryService summaries, DocumentRequestOriginVerifier origins) {
         this.summaries = summaries;
         this.origins = origins;
+    }
+
+    @GetMapping("/latest")
+    public MeetingSummaryResponse latest(CallerContext caller, @PathVariable("projectId") Long projectId,
+                                         @PathVariable("meetingId") String meetingId) {
+        return summaries.latest(caller, projectId, meetingId);
     }
 
     @Operation(summary = "비비 회의 정리 (MTG-A11). 팀장·회의 참여자, Idempotency-Key 필수")
