@@ -764,21 +764,21 @@ export function taskRoutes(
       }
     case 'BEE-A01': {
       requiredString(body, 'question')
-      // 초안 포함(INCLUDE_DRAFTS)이면 초안이 있는 문서는 승인본 대신 최신 초안에서 찾는다.
-      const drafts = body.scope === 'INCLUDE_DRAFTS'
-      const found = project.documents.flatMap((document) => {
-        const version =
-          (drafts && document.latest_draft) || document.approved_version
-        return version ? [{ title: document.title, version }] : []
-      })
+      // 서버(PR #252)처럼 승인된 문서만 찾는다. 초안 포함(INCLUDE_DRAFTS)은 아직 400이다.
+      if (body.scope !== undefined && body.scope !== 'APPROVED')
+        fail(400, 'validation_failed', 'scope 는 APPROVED 만 지원합니다')
+      // 현재 기준 설계가 없으면 예전 승인본으로 대신 답하지 않는다.
+      if (!project.project.current_baseline)
+        fail(409, 'index_not_ready', '문서 색인이 아직 준비되지 않았습니다.')
+      const found = project.documents.flatMap(({ title, approved_version }) =>
+        approved_version ? [{ title, version: approved_version }] : [],
+      )
       const first = found[0]
       return {
         data: templateGeneration(
           first
-            ? `${first.title}의 ${first.version.status === 'DRAFT' ? `초안 v${first.version.version_no}를` : '승인 원문을'} 확인해 주세요. ${first.version.content?.slice(0, 250) ?? ''}`
-            : drafts
-              ? '찾을 문서가 없어요. 공용 문서함에 문서를 올려 주세요.'
-              : '현재 승인된 문서가 없어요. 공용 문서를 검토하고 기준 설계를 발행해 주세요.',
+            ? `${first.title}의 승인 원문을 확인해 주세요. ${first.version.content?.slice(0, 250) ?? ''}`
+            : '현재 승인된 문서가 없어요. 공용 문서를 검토하고 기준 설계를 발행해 주세요.',
           found.slice(0, 1).map(({ title, version }) => ({
             document_id: version.document_id,
             document_version_id: version.id,
