@@ -574,3 +574,23 @@ it('보완 질문을 오래 만드는 중이면 만드는 문서를 알리고 �
     screen.getByRole('button', { name: '질문 다시 만들기' }),
   ).toBeInTheDocument()
 })
+
+it('보완 질문 생성이 전부 실패한 상태에서도 초안 만들기를 누르면 접수 안내가 보인다 (S15P31A108-359)', async () => {
+  await stubAnalyses(() => ({
+    status: 'FAILED',
+    error_code: 'ai_unavailable',
+    retryable: true,
+  }))
+  const user = renderPanel()
+  expect(
+    (await screen.findAllByText(/보완 질문을 만들지 못했어요/)).length,
+  ).toBe(4)
+  await user.click(
+    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+  )
+  expect(
+    await screen.findByText(
+      '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
+    ),
+  ).toBeInTheDocument()
+})

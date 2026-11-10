@@ -187,14 +187,6 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       isQuestionTarget(version, hasBaseline),
     ),
   }))
-  // 보완 질문이 문서 전부에서 실패했으면 '초안 만들기를 접수했어요' 안내는 이미 지난 일이라 남기지 않는다(S15P31A108-359).
-  const known = documentGenerations.flatMap(({ generation }) =>
-    generation ? [generation] : [],
-  )
-  const staleDraftNotice =
-    action.message === DRAFT_ACCEPTED &&
-    known.length > 0 &&
-    known.every((generation) => generation.status === 'FAILED')
   const generations: QuestionGenerationView[] = documentGenerations.flatMap(
     ({ version, generation }) =>
       generation && (isGenerating(generation) || generation.status === 'FAILED')
@@ -238,7 +230,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           공용 문서함
         </Button>
       </header>
-      {action.message && !staleDraftNotice && (
+      {action.message && (
         <p role="status" className="rounded-lg bg-primary/5 p-3 text-sm">
           {action.message}
         </p>
