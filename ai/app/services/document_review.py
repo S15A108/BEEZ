@@ -176,7 +176,15 @@ def _validate_result(
     validate_patch_sequence(body.content, patches)
 
 
-async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) -> dict:
+DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
+async def analyze(
+    body: DocumentReviewRequest,
+    client: LLMClient,
+    model: str,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict:
     steps, used = _steps(body)
     # Send only comparison references that the BE will consider reviewed.
     payload = {
@@ -217,7 +225,7 @@ async def analyze(body: DocumentReviewRequest, client: LLMClient, model: str) ->
                 request_key=body.request_key,
             ),
             call_keys=(call_key,),
-            timeout_seconds=15.0,
+            timeout_seconds=timeout_seconds,
             response_format={"type": "json_object"},
         )
     )

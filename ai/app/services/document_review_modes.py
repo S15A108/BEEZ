@@ -107,7 +107,10 @@ def _validate_request(parsed: RequestOutput, body: DocumentReviewRequest) -> dic
 
 
 async def analyze_mode(
-    body: DocumentReviewRequest, client: LLMClient, model: str
+    body: DocumentReviewRequest,
+    client: LLMClient,
+    model: str,
+    timeout_seconds: float = 30.0,
 ) -> dict:
     """Run one mode against the immutable BE input and return its v2 echo."""
     if body.mode not in {"DISCUSS", "REQUEST"}:
@@ -148,7 +151,7 @@ async def analyze_mode(
                 request_key=body.request_key,
             ),
             call_keys=(call_key,),
-            timeout_seconds=15.0,
+            timeout_seconds=timeout_seconds,
             response_format={"type": "json_object"},
         )
     )
