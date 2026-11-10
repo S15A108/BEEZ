@@ -53,7 +53,7 @@ class MeetingAssembler {
         return toResponses(projectId, List.of(row)).get(0);
     }
 
-    /** 기록 응답 한 건. SUMMARY 이면 정리에 쓴 마지막 기록과 생성 근거를 싣는다 */
+    /** 기록 응답 한 건. SUMMARY 이면 정리 ID, 정리에 쓴 마지막 기록과 생성 근거를 싣는다 */
     MeetingEntryResponse toEntryResponse(EntryRow row) {
         return toEntryResponses(List.of(row)).get(0);
     }
@@ -65,8 +65,8 @@ class MeetingAssembler {
         List<MeetingEntryResponse> out = new ArrayList<>();
         for (EntryRow row : rows) {
             EntrySummaryMeta m = meta.get(row.id());
-            out.add(m == null ? toResponse(row, null, null)
-                    : toResponse(row, Ids.str(m.throughEntryId()), generation(m.generation())));
+            out.add(m == null ? toResponse(row, null, null, null)
+                    : toResponse(row, Ids.str(m.summaryId()), Ids.str(m.throughEntryId()), generation(m.generation())));
         }
         return out;
     }
@@ -75,11 +75,11 @@ class MeetingAssembler {
         return DesignJson.JSON.readValue(json, MeetingGeneration.class);
     }
 
-    static MeetingEntryResponse toResponse(EntryRow row, String throughEntryId, MeetingGeneration generation) {
+    static MeetingEntryResponse toResponse(EntryRow row, String summaryId, String throughEntryId, MeetingGeneration generation) {
         List<MeetingRef> refs = row.refs() == null ? null
                 : DesignJson.JSON.readValue(row.refs(), new TypeReference<List<MeetingRef>>() { });
         return new MeetingEntryResponse(Ids.str(row.id()), Ids.str(row.meetingId()), row.kind(), row.body(),
                 row.authorKind(), Ids.str(row.authorAccountId()), Ids.str(row.authorMemberId()), row.authorName(),
-                refs, throughEntryId, generation, row.createdAt());
+                refs, summaryId, throughEntryId, generation, row.createdAt());
     }
 }

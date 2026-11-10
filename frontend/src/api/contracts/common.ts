@@ -1106,6 +1106,9 @@ export type SearchHit = z.infer<typeof searchHitSchema>
 export const participantSchema = z.object({
   member_id: idSchema,
   status: z.enum(['INVITED', 'JOINED', 'DECLINED']),
+  // 비비가 부른 이유(화면 '팀장 · TASK-001')와 관련자 추가(MTG-A04)로 부른 멤버(화면 '이팀장이 추가'). 명세 Participant
+  role: z.enum(['LEADER', 'TASK_OWNER', 'DOMAIN_OWNER']).optional(),
+  added_by_member_id: idSchema.optional(),
 })
 export type Participant = z.infer<typeof participantSchema>
 
@@ -1121,7 +1124,21 @@ export const meetingEntrySchema = z.object({
     'SUMMARY',
   ]),
   text: z.string(),
+  author_kind: z.enum(['HUMAN', 'BEE']).optional(),
   author_account_id: idSchema.optional(),
+  author_member_id: idSchema.optional(),
+  author_name: z.string().optional(),
+  // 비비 기록이 가리키는 대상(화면은 칩으로 보인다). 명세 MeetingEntry.refs
+  refs: z
+    .object({
+      type: z.enum(['TASK', 'DESIGN_ITEM', 'DOCUMENT_VERSION']),
+      id: idSchema,
+      label: z.string(),
+    })
+    .array()
+    .optional(),
+  // kind=SUMMARY 기록에만 실린다(S15P31A108-235·206): 정리 ID, 정리에 쓴 마지막 기록
+  summary_id: idSchema.optional(),
   through_entry_id: idSchema.optional(),
   generation: generationSchema.optional(),
   created_at: timeSchema,
@@ -1151,14 +1168,40 @@ export const actionItemSchema = z.object({
 })
 export type ActionItem = z.infer<typeof actionItemSchema>
 
-export const meetingMinutesSchema = z.object({
-  entry: meetingEntrySchema,
-  summary: z.string(),
-  decisions: z.string().array(),
-  action_items: actionItemSchema.array(),
-  unresolved: z.string().array(),
+// MTG-A11·A12 비비 회의 정리의 바뀔 문서 한 건. locator 의 줄 번호는 utf8-lf-v1 정규화 원문 기준이고 before 는 그 줄들의
+// 원문(각 줄의 LF 포함), after 는 회의를 끝낼 때 만들어지는 변경 제안(MTG-A13)에 들어갈 문장이다.
+export const meetingDocumentChangeSchema = z.object({
+  document_id: idSchema,
+  base_version_id: idSchema,
+  locator: z.object({
+    type: z.literal('text_lines'),
+    start_line: z.number().int(),
+    end_line: z.number().int(),
+  }),
+  before: z.string(),
+  after: z.string(),
+  // 근거 발언: 이 회의의 실제 기록 ID
+  evidence_entry_ids: idSchema.array(),
 })
-export type MeetingMinutes = z.infer<typeof meetingMinutesSchema>
+export type MeetingDocumentChange = z.infer<typeof meetingDocumentChangeSchema>
+
+export const meetingSummarySchema = z.object({
+  id: idSchema,
+  meeting_id: idSchema,
+  entry: meetingEntrySchema,
+  through_entry_id: idSchema,
+  conflicts: z.string().array(),
+  decisions: z
+    .object({ text: z.string(), decided_by_member_id: idSchema.optional() })
+    .array(),
+  document_changes: meetingDocumentChangeSchema.array(),
+  action_items: actionItemSchema.array(),
+  previous_summary_id: idSchema.optional(),
+  feedback: z.string().optional(),
+  generation: generationSchema,
+  created_at: timeSchema,
+})
+export type MeetingSummary = z.infer<typeof meetingSummarySchema>
 
 export const assignmentSuggestionSchema = z.object({
   task_id: idSchema,

@@ -219,7 +219,7 @@ test('기획 분석에서 질문에 답하고 초안 후보를 채택한다', as
   expect(errors).toEqual([])
 })
 
-test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장한다', async ({
+test('비비가 연 회의에서 대화하고 비비 정리를 받아 회의를 끝내면 변경 제안이 올라간다', async ({
   page,
 }) => {
   await openWorkspace(page)
@@ -227,8 +227,12 @@ test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장
   await expect(
     page.getByRole('heading', { name: '초대 안내 문구 검토', exact: true }),
   ).toBeVisible()
+  // 회의는 사람이 만들지 않고, 참여 응답 버튼도 없다.
   await expect(
     page.getByRole('button', { name: '회의 만들기', exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: '참여하기', exact: true }),
   ).toHaveCount(0)
   const log = page.getByRole('log', { name: '회의 대화' })
   await page
@@ -240,21 +244,38 @@ test('비비가 연 회의에서 대화하고 비비 정리를 목 API로 저장
       exact: true,
     }),
   ).toBeVisible()
+  // 정리가 없으면 회의를 끝낼 수 없다.
+  await expect(
+    page.getByRole('button', { name: '회의 끝내기', exact: true }),
+  ).toHaveCount(0)
   await page
     .getByRole('button', { name: '비비에게 정리 요청', exact: true })
     .click()
-  await expect(page.getByRole('status')).toHaveText(
-    '비비가 회의 내용을 정리했어요.',
-  )
-  await expect(log.getByText(/회의 내용을 정리했어요 · 메시지/)).toBeVisible()
+  await expect(log.getByRole('region', { name: '바뀔 문서' })).toBeVisible()
+  // 새로 고쳐도 최신 정리를 서버(MTG-A15)에서 다시 받아 이어 간다.
   await page.reload()
   await page.getByRole('button', { name: '회의실', exact: true }).click()
   await expect(
     page
       .getByRole('log', { name: '회의 대화' })
-      .getByText('3D 부지 선택을 유지하고 API 계약을 프론트에서 준비합니다.', {
-        exact: true,
-      }),
+      .getByRole('region', { name: '바뀔 문서' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '회의 끝내기', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: '회의를 끝낼까요?' }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: '회의 끝내고 변경 제안 만들기' })
+    .click()
+  await expect(
+    page.getByRole('region', { name: '회의 끝낸 결과' }),
+  ).toContainText('변경 제안을 올렸어요')
+  // 끝난 회의는 읽기만 하고, 변경 제안으로 이동할 수 있다.
+  await expect(
+    page.getByText('끝난 회의라 메시지를 보낼 수 없어요.'),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '변경 제안 보기', exact: true }),
   ).toBeVisible()
 })
 
