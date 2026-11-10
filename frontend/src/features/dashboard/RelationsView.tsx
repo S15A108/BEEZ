@@ -18,7 +18,14 @@ import { RelationGraph } from './RelationGraph'
 
 // 작업·설계 관계 · 단축 바 5번 단독 창. 왼쪽에서 작업을 고르면 그 작업 기준으로 설계 항목·검증·변경 제안 관계를 그린다.
 // 관계 API(MON-A03)는 기준 작업이나 설계 항목이 있어야 조회돼서 작업 목록에서 골라 그린다(백엔드 메모 4).
-export function RelationsView({ projectId }: { projectId: string }) {
+export function RelationsView({
+  projectId,
+  hasBaseline,
+}: {
+  projectId: string
+  /** 기준 설계가 발행됐는지. 모르면(undefined) 기준 안내를 붙이지 않는다. */
+  hasBaseline?: boolean
+}) {
   const openPane = useWorkspaceStore((state) => state.openPane)
   const [search, setSearch] = useState('')
   const [picked, setPicked] = useState<string | null>(null)
@@ -44,11 +51,18 @@ export function RelationsView({ projectId }: { projectId: string }) {
     queryFn: () => dashboardApi.relations(projectId, { task_id: selected! }),
     enabled: !!selected,
   })
-  // 관계 응답에는 변경 제안 상태가 없어 진행 중 제안 목록과 맞춰 경고 띠를 띄운다.
+  // 관계 응답에는 변경 제안 상태가 없어 진행 중 제안 목록과 맞춰 경고 띠를 띄운다. 마지막 페이지까지 읽는다.
+  // 첫 50개만 보면 그 밖의 제안이 바꾸는 설계 항목의 경고가 사라졌다(PR #72 4차 TC-02).
   const open = useQuery({
     queryKey: ['projects', projectId, 'relation-changes'],
     queryFn: () =>
-      changesApi.list(projectId, { group: 'IN_PROGRESS', limit: 50 }),
+      readAllPages((cursor) =>
+        changesApi.list(projectId, {
+          group: 'IN_PROGRESS',
+          cursor,
+          limit: 100,
+        }),
+      ),
   })
   // 영향 경고: 진행 중 제안이 이 작업이 참조하는 설계 항목을 바꿀 때만 띄운다. 작업 기준 응답의
   // PROPOSED_FROM(제안 → 작업)은 '이 작업에서 나온 제안'이라 영향이 아니다. 서버는 제안 → 설계 항목(UPDATE·RETIRE)을
@@ -166,8 +180,10 @@ export function RelationsView({ projectId }: { projectId: string }) {
               아직 그릴 관계가 없어요
             </strong>
             작업 계획을 올리면 그 작업이 쓰는 설계 항목, 계획 검증, 관련 변경
-            제안을 이어서 그려요. 기준 v1이 생기기 전에는 작업 계획을 올릴 수
-            없어요.
+            제안을 이어서 그려요.
+            {/* 기준이 이미 있으면 이 안내는 틀린 말이라 기준이 없을 때만 붙인다(S15P31A108-346). */}
+            {hasBaseline === false &&
+              ' 기준 v1이 생기기 전에는 작업 계획을 올릴 수 없어요.'}
             <Button size="sm" onClick={() => openPane('tasks')}>
               작업 계획 등록
             </Button>

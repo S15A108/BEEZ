@@ -25,7 +25,11 @@ export function sceneQuery(projectId: string, accountId?: string) {
         readAllPages((cursor) =>
           membersApi.list(projectId, { cursor, limit: 100 }),
         ),
-        tasksApi.list(projectId, { limit: 100 }),
+        // 작업도 마지막 페이지까지 읽는다. 최신 100개만 쓰면 그 밖에 있는 내 시작 대기 작업이 HUD에서 빠진다
+        // (PR #72 5차 UI-01).
+        readAllPages((cursor) =>
+          tasksApi.list(projectId, { cursor, limit: 100 }),
+        ),
         unlessMissing(projectsApi.onboarding(projectId)),
       ])
       return {

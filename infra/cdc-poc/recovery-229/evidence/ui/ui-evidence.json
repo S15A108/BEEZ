@@ -1,0 +1,35 @@
+{
+  "startedAt": "2026-11-10T01:21:48.916Z",
+  "mode": "live",
+  "backend": "http://127.0.0.1:60061",
+  "checks": [
+    {
+      "name": "actual-api-access-boundary",
+      "unauthenticated": 401,
+      "outsider": 404
+    },
+    {
+      "name": "actual-proposal-api",
+      "status": "COMPLETED",
+      "evaluationStatus": "INSUFFICIENT_EVIDENCE"
+    },
+    {
+      "name": "live-ui-and-refresh",
+      "text": "근거 확인 필요",
+      "apiResponses": [
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "pre-publication-impact-kept-separate",
+      "passed": true
+    }
+  ],
+  "finishedAt": "2026-11-10T01:21:57.901Z",
+  "passed": true
+}

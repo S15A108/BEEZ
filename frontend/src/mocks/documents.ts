@@ -137,6 +137,8 @@ async function upload(
     media_type: file.type || 'text/markdown',
     content_hash: `sha256:mock-${context.database.next_id}`,
     content,
+    created_by: requireAccount(context).id,
+    is_current_baseline: false,
     created_at: now(),
   })
   project.versions.push(version)

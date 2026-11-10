@@ -67,6 +67,8 @@ const messages: Record<string, string> = {
     '이메일 인증이 만료됐거나 이미 사용됐어요. 이메일을 다시 인증해 주세요.',
   validation_failed: '입력 내용을 확인해 주세요.',
   version_conflict: '설계가 변경되었습니다. 최신 내용을 확인해 주세요.',
+  summary_outdated:
+    '회의 정리 또는 기준 문서가 바뀌었어요. 최신 내용을 확인한 뒤 다시 시도해 주세요.',
   revision_conflict: '작업 계획이 변경되었습니다. 다시 확인해 주세요.',
   baseline_conflict:
     '기준 설계가 변경되었습니다. 최신 기준으로 다시 검토해 주세요.',

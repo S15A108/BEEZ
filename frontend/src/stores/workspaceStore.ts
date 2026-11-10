@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import { officeTimeAt, type OfficeTime } from '@/three/office/officeLook'
 
 // 단축 바 1~6(documents, changes, meetings, tasks, relations, dashboard)과 가운데 비비(chat),
@@ -76,6 +76,19 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     }),
     {
       name: 'beez.scene.preferences.v1',
+      // 저장소가 가득 찼거나 막혀도 화면 상태는 바꾼다. 쓰기 예외가 그대로 나가면 프로젝트를 만든 뒤 부지 저장에서
+      // 생성 실패로 보여, 다시 누르면 프로젝트가 또 생겼다(PR #72 6차 UI-01). 못 남긴 설정은 이 탭에서만 유지된다.
+      storage: createJSONStorage(() => ({
+        getItem: (key) => localStorage.getItem(key),
+        setItem: (key, value) => {
+          try {
+            localStorage.setItem(key, value)
+          } catch {
+            /* 다음 변경 때 다시 써 본다. */
+          }
+        },
+        removeItem: (key) => localStorage.removeItem(key),
+      })),
       partialize: (state) => ({
         placements: state.placements,
         lastVisited: state.lastVisited,

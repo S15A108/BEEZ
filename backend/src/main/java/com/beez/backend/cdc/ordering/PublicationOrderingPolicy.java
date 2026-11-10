@@ -19,7 +19,7 @@ public final class PublicationOrderingPolicy {
     public enum State { PENDING, RUNNING, COMPLETED, FAILED, NOT_EVALUATED, UNKNOWN }
 
     /** Evidence verified by the adapter against the actual #197 contract. */
-    public enum SkipEvidence { NONE, INITIAL_BASELINE, PRE_197_BACKFILL }
+    public enum SkipEvidence { NONE, INITIAL_BASELINE, PRE_197_BACKFILL, DOCUMENT_CHANGE_UNAVAILABLE }
 
     public enum Outcome { READY_FOR_ATOMIC_CLAIM, WAITING_FOR_PREDECESSOR, REQUIRES_RECONCILIATION, NOT_PENDING }
 
@@ -49,7 +49,9 @@ public final class PublicationOrderingPolicy {
      *     current, project-scoped view; final claim must still be atomic with it
      * @param versions version records at or before targetVersion
      * @return READY only when target is PENDING and every earlier published
-     *     version is complete or explicitly verified as v1/pre-197 skipped
+     *     version is complete or explicitly verified as v1/pre-197 skipped or
+     *     unevaluated because document changes are unsupported. The latter
+     *     remains an incomplete analysis requiring review.
      */
     public static Decision evaluate(long projectId, int targetVersion, boolean authoritativeSnapshot,
                                     List<PublishedVersion> versions) {

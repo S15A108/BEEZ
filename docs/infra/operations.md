@@ -172,52 +172,33 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    ```
 
    로컬 PC(Git Bash, `python` 필요)에서 되돌릴 SHA의 마이그레이션 파일과 DB 적용 이력을 **버전마다 checksum·설명·유형으로**
-   대조합니다(Flyway 검증이 셋 다 봅니다). DB 이력은 `ssh beez`로 조회만 합니다.
+   대조합니다(Flyway 검증이 셋 다 봅니다). 스크립트가 `git fetch`한 뒤 DB 이력을 `ssh beez`로 조회만 합니다.
+   스크립트의 판정은 `infra/deploy/test_check_rollback_migrations.py`로 고정돼 있습니다(고치면 로컬에서 돌립니다).
 
    ```bash
-   OLD=<되돌릴 SHA>; DIR=backend/src/main/resources/db/migration; JDIR=backend/src/main/java/db/migration
-   g() { git -C /c/git/BEEZ "$@"; }; T=$(mktemp -d)
-   # Flyway checksum = BOM 과 줄바꿈 문자(\r·\n)를 뺀 UTF-8 내용의 CRC32 를 부호 있는 32비트로 (2026-11-06 서버 V10·V13·V37 과 일치 확인)
-   sum='import sys,zlib; t=sys.stdin.buffer.read().decode("utf-8").lstrip(chr(0xfeff)); c=zlib.crc32(t.replace("\r","").replace("\n","").encode()); print(c-(1<<32) if c>=1<<31 else c)'
-   if ! python -c "$sum" < /dev/null > /dev/null; then echo "python 을 실행하지 못함 — 중단"
-   elif ! g fetch -q origin || ! g cat-file -e "$OLD^{commit}" 2> /dev/null; then echo "fetch 실패 또는 없는 SHA — 중단"
-   elif ! ssh beez "docker compose -p beez exec -T postgres sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -AtF \"|\" -c \"select version, checksum, success, type, description from flyway_schema_history where version is not null order by installed_rank\"'" > "$T/db" || [ ! -s "$T/db" ]; then
-     echo "DB 이력을 받지 못함 — 중단"
-   else
-     g ls-tree -r --name-only "$OLD" -- "$DIR/" "$JDIR/" | grep -E '/V[0-9][0-9_]*__' | while read -r f; do
-       v=${f##*/V}; v=${v%%__*}; v=${v//_/.}   # V1_1__ 은 DB 에 1.1 로 기록된다
-       s=${f#*__}; s=${s%.*}; s=${s//_/ }       # 설명 = 파일 이름의 __ 뒤에서 확장자를 빼고 _ 를 공백으로
-       case $f in *.sql) echo "$v|$(g show "$OLD:$f" | python -c "$sum")|SQL|$s" ;; *) echo "$v||JDBC|$s" ;; esac   # Java 마이그레이션은 checksum 이 없다(DB 에도 빈 값)
-     done > "$T/old"
-     # Flyway 기본 검증(outOfOrder 꺼짐, *:future 만 무시)으로 예전 backend 가 어떻게 되는지 번호마다 가른다.
-     # 번호의 높낮이는 수로 비교하므로 정수 번호(V1, V2 …)만 맞다. 점 버전(V1_10 과 V1_9)은 순서가 틀릴 수 있다
-     awk -F'|' 'NR == FNR { o[$1] = $2; ot[$1] = $3; od[$1] = $4; if ($1 + 0 > om) om = $1 + 0; next }
-          $4 != "SQL" && $4 != "JDBC" { next }   # 스키마 생성·baseline 같은 Flyway 기록용 행은 마이그레이션이 아니다
-          { d[$1] = 1; if ($1 + 0 > dm) dm = $1 + 0 }
-          $3 != "t" { print "V" $1 ": 실패한 마이그레이션 — 어느 backend도 기동 못 함. 되돌리기 전에 스키마 상태부터 확인"; next }
-          !($1 in o) && $1 + 0 > om { print "V" $1 ": 되돌릴 SHA가 모르는 상위 번호 — 판단 대상 (DB checksum " $2 ")"; next }
-          !($1 in o) { print "V" $1 ": DB에만 있는데 되돌릴 SHA의 최신 번호보다 낮음 — 되돌리면 예전 backend 기동 실패"; next }
-          { m = "" }
-          o[$1] != $2 { m = m " checksum(DB " $2 ", 되돌릴 SHA " o[$1] ")" }
-          ot[$1] != $4 { m = m " 유형(DB " $4 ", 되돌릴 SHA " ot[$1] ")" }
-          od[$1] != $5 { m = m " 설명(DB \"" $5 "\", 되돌릴 SHA \"" od[$1] "\")" }
-          m != "" { print "V" $1 ": 기록 다름 —" m " — 되돌리면 예전 backend 기동 실패" }
-          END { for (v in o) if (!(v in d)) print "V" v ": 되돌릴 SHA에만 있고 DB에 없음 — " \
-                  (v + 0 < dm ? "되돌리면 예전 backend 기동 실패" : "되돌리는 순간 이 마이그레이션이 실행됨. 판단 대상과 같이 읽음") }' \
-       "$T/old" "$T/db" | sort -n -k1.2
-     echo "대조 끝 (DB $(grep -cE '^([^|]*\|){3}(SQL|JDBC)\|' "$T/db")개, 되돌릴 SHA $(wc -l < "$T/old")개)"
-   fi; rm -rf "$T"
+   cd /c/git/BEEZ   # 저장소 루트. 스크립트는 자기가 든 저장소를 읽는다
+   bash infra/deploy/check-rollback-migrations.sh <되돌릴 SHA>
    ```
 
+   이 체크아웃이 최신 dev여야 합니다. 스크립트가 없는 브랜치(-328 전)에서는 돌지 않고, 옛 판이면 옛 판정을 씁니다.
+   작업 중이라 브랜치를 바꿀 수 없으면 `git -C /c/git/BEEZ worktree add /c/git/BEEZ-rollback origin/dev`로 따로 받아
+   그 안에서 돌립니다(쓴 뒤 `git -C /c/git/BEEZ worktree remove /c/git/BEEZ-rollback`).
+
+   결과는 번호마다 한 줄이고, 마지막에 `대조 끝 (DB <N>개, 되돌릴 SHA <M>개)`가 붙습니다. `… — 중단`으로 끝나면
+   (python 없음·fetch 실패·없는 SHA·DB 이력 못 받음·빈 응답) 대조하지 못한 것이니 원인을 고친 뒤 다시 돌립니다.
+   `flyway repair`가 지움 처리한(`type=DELETE`) 번호는 DB에 없는 것으로 보고, baseline(`type=BASELINE`) 번호 이하는
+   Flyway처럼 적용된 것으로 보아 검사하지 않습니다.
+
    - **`대조 끝` 줄만 나오면** DB에 들어간 마이그레이션이 모두 되돌릴 SHA의 파일과 같습니다. 스키마 걱정 없이 되돌릴 수 있습니다.
-   - 마이그레이션은 SQL(`$DIR`)과 Java(`$JDIR`, 예: `V21__backfill_llm_usage.java`)가 같은 번호 체계를 씁니다. Java는
+   - 마이그레이션은 SQL(`backend/src/main/resources/db/migration`)과 Java(`backend/src/main/java/db/migration`,
+     예: `V21__backfill_llm_usage.java`)가 같은 번호 체계를 씁니다. Java는
      checksum이 없어 번호·설명·유형만 대조하므로, 같은 번호의 Java 내용이 바뀐 것은 이 대조로 알 수 없습니다. 판단 대상이 Java면
      그 파일을 직접 읽습니다(아래 의심 줄 grep·판 찾기는 SQL만 봅니다).
    - **`기동 실패`가 하나라도 있으면 되돌리지 않습니다.** 예전 backend의 Flyway가 기본 검증(설정에서 바꾸지 않음)에서
-     멈춥니다. 경우는 셋입니다. 되돌릴 SHA도 아는 번호인데 DB에 다른 판이 들어감(`기록 다름` — checksum·설명·유형 중
+     멈춥니다. 경우는 넷입니다. 되돌릴 SHA에 같은 번호 파일이 둘 이상(Flyway가 중복 번호로 거절), 되돌릴 SHA도 아는 번호인데 DB에 다른 판이 들어감(`기록 다름` — checksum·설명·유형 중
      하나라도 다름. 작업 브랜치에서 같은 번호 파일의 내용이나 이름을 고쳐 손 배포 등), DB에만 있는 번호가 되돌릴 SHA의
      최신 번호보다 낮음(Flyway가 "적용됐는데 로컬에 없음"으로 봄), 되돌릴 SHA에만 있는 번호가 DB 최신 번호보다 낮음(`outOfOrder`가 꺼져 있어 적용하지 않고 멈춤).
-     앞의 둘은 그 번호를 아는 다음 dev 배포도 막을 수 있으니 팀 채널에 알려 정리합니다.
+     `기록 다름`과 DB에만 있는 낮은 번호는 그 번호를 아는 다음 dev 배포도 막을 수 있으니 팀 채널에 알려 정리합니다.
    - **`실패한 마이그레이션`이 있으면** 지금 backend도 다시 켜지지 않습니다. 되돌리기보다 그 버전의 스키마 상태 확인이 먼저입니다.
    - **`되돌리는 순간 이 마이그레이션이 실행됨`은** 되돌릴 SHA에만 있는 번호가 DB 최신보다 높은 경우입니다. 되돌리면서
      스키마를 바꾸므로 되돌릴 SHA의 그 파일(`git show "$OLD:<경로>"`)을 판단 대상과 같은 기준으로 읽습니다.
@@ -239,29 +220,26 @@ Nginx 경유 확인 실패, 배포는 성공했는데 기능이 망가짐)에 �
    의심 줄 grep (로컬 PC, dev에 있는 파일 기준. 판단 대상이 dev 판일 때 씁니다):
 
    ```bash
+   OLD=<되돌릴 SHA>; DIR=backend/src/main/resources/db/migration
    git -C /c/git/BEEZ diff --name-status "$OLD" origin/dev -- "$DIR"
    git -C /c/git/BEEZ diff "$OLD" origin/dev -- "$DIR" \
      | grep -inE '^\+ *(update|delete|insert) |^\+.*(drop |rename |alter (column )?[^ ]+ (set data )?type |not null|primary key|unique|references|foreign key|check *\(|trigger)'
    ```
 
    **실제 적용된 판 찾기.** 판단 대상 번호마다 dev 판과, 저장소 이력(브랜치·원격)에 있던 그 번호 파일의 모든 판의
-   checksum을 찍어, 대조 결과의 `DB checksum`과 같은 줄을 찾습니다. 위 대조 블록을 실행한 같은 셸에서 이어 칩니다(`sum`·`g`·`DIR`).
+   checksum을 찍어, 대조 결과의 `DB checksum`과 같은 줄을 찾습니다.
 
    ```bash
-   V=<번호>; F=${V//./_}   # 대조 결과의 번호 그대로. 점 버전 1.1 은 파일 이름 V1_1__ 로 찾는다
-   f=$(g ls-tree -r --name-only origin/dev -- "$DIR/" | grep "/V${F}__"); [ -n "$f" ] && echo "dev 판: $(g show "origin/dev:$f" | python -c "$sum") ${f##*/}"
-   g log --branches --remotes --format=%h -- ":(glob)$DIR/**/V${F}__*" | while read -r c; do
-     g ls-tree -r --name-only "$c" -- "$DIR/" | grep "/V${F}__" | while read -r f; do
-       echo "$(g show "$c:$f" | python -c "$sum") $c ${f##*/}"
-     done
-   done | sort -u -k1,1
-   # 출력: dev 판: <checksum> <파일 이름> / 그 아래 <checksum> <그 판이 있던 커밋> <파일 이름>
+   bash infra/deploy/check-rollback-migrations.sh find <번호>   # 대조 결과의 번호 그대로(V40 도 됨. 점 버전 1.1 은 파일 V1_1__ 로 찾음)
+   # 출력: dev 판: <checksum> <파일 이름> (같은 번호 파일이 둘이면 두 줄) / 그 아래 <checksum> <그 판이 있던 커밋> <파일 이름>
    ```
+
+   어디에도 없으면 `V<번호> 파일 없음`이 나옵니다. checksum 자리에 `읽지못함`이 찍힌 줄은 그 판을 확인하지 못한 것입니다.
 
    - `DB checksum`이 `dev 판`과 같으면 dev 파일로(위 의심 줄 grep 포함) 판단합니다.
    - 다르면 같은 checksum의 줄에 찍힌 커밋의 파일을 읽고 판단합니다. dev 파일로 판단하지 않습니다.
-   - 같은 줄이 없으면(push하지 않은 브랜치를 손 배포 등) 손 배포한 사람에게 그 파일을 받아 같은 방식으로 checksum을
-     맞춰 본 뒤 판단합니다. **확인하지 못하면 되돌리지 않습니다.**
+   - 같은 줄이 없으면(push하지 않은 브랜치를 손 배포 등) 손 배포한 사람에게 그 파일을 받아
+     `bash infra/deploy/check-rollback-migrations.sh checksum <파일>`로 checksum을 맞춰 본 뒤 판단합니다. **확인하지 못하면 되돌리지 않습니다.**
 3. **팀 채널에 알립니다.** "dev 서버 되돌림: `<지금 SHA 7자>` → `<되돌릴 SHA 7자>`, 원인 PR #번호, 그동안 dev 머지 보류".
    되돌린 뒤 누가 dev에 머지하면 그 머지가 자동 배포되면서 문제 커밋까지 다시 올라갑니다.
 4. **Jenkins로 배포합니다.** [화면에서 배포·롤백](cd.md#화면에서-배포롤백) 그대로 예전 SHA를 넣습니다.

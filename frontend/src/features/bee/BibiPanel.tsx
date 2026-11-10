@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { BeeAnswerEvidence } from './BeeAnswerEvidence'
 import type { AskResponse, AskScope } from './schemas'
+import { useBibiMessages } from './useBibiMessages'
 
 // 찾는 범위 칩(캔버스 PNL-12-v2-bibi-hotbar). 값은 BEE-A01 scope다.
 const scopes: { value: AskScope; label: string }[] = [
@@ -46,16 +47,16 @@ function questionErrorMessage(error: unknown) {
   return getApiErrorMessage(error)
 }
 
-// 단축 바 가운데 비비 버튼(B안)으로 여는 대화. 대화는 창을 연 동안만 보인다.
+// 단축 바 가운데 비비 버튼(B안)으로 여는 대화.
 export function BibiPanel({ projectId }: { projectId: string }) {
   const scopeLabel = useId()
   const errorId = useId()
   const sourcesId = useId()
   const sourcesRef = useRef<HTMLElement>(null)
   const [scope, setScope] = useState<AskScope>('APPROVED')
-  const [messages, setMessages] = useState<(Ask & { answer: AskResponse })[]>(
-    [],
-  )
+  const [messages, setMessages] = useBibiMessages<
+    Ask & { answer: AskResponse }
+  >(projectId)
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   // 상태가 다시 그려지기 전에 이어진 제출도 하나의 요청으로 묶는다.
   const sending = useRef<Promise<void> | null>(null)
@@ -280,7 +281,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            대화는 이 창을 연 동안만 보여요.
+            대화는 새로 고침하면 지워져요.
           </p>
         </div>
         {/* 입력줄이 본래 놓일 자리의 끝. 붙어 있는 입력줄 안에 두면 늘 보이는 것으로 쳐서 내려가지 않는다. */}

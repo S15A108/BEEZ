@@ -80,15 +80,22 @@ export function agentTokenSuffix(
 export const UNSPLIT_USAGE_NOTICE =
   '에이전트별로 나눈 기록이 없어요. 사용량·비용 탭의 기능별 보기에서 전체 호출을 볼 수 있어요.'
 
-// 추정 비용 표시. 비용이 하나도 보고되지 않으면 missing을, 일부 호출의 비용을 모르면
-// 그 건수를 붙여 0원·전체 금액처럼 보이지 않게 한다.
+// 호출이 모두 토큰·비용을 보고하지 않았는지. 이때 서버 합계(0)는 '0 토큰·0원'이 아니라 모르는 값이다
+// (S15P31A108-346). 호출이 없으면 미보고가 아니라 비어 있음이다.
+export function allUnreported(calls = 0, unknownCalls = 0) {
+  return calls > 0 && unknownCalls >= calls
+}
+
+// 추정 비용 표시. 비용이 하나도 보고되지 않으면(금액 생략 또는 호출 전부 미보고) missing을, 일부 호출의
+// 비용을 모르면 그 건수를 붙여 0원·전체 금액처럼 보이지 않게 한다. calls를 모르면 전부 미보고 판정은 건너뛴다.
 export function costText(
   amount: string | undefined,
   currency: string | undefined,
   unknownCalls = 0,
   missing = '미보고',
+  calls?: number,
 ) {
-  if (amount === undefined) return missing
+  if (amount === undefined || allUnreported(calls, unknownCalls)) return missing
   const known = `${amount} ${currency ?? ''}`.trim()
   const unknown = unknownText(unknownCalls)
   return unknown ? `${known} + ${unknown}` : known
@@ -105,7 +112,7 @@ export function callsText(
 ) {
   const calls = `${row.call_count.toLocaleString('ko-KR')}회`
   return row.call_count
-    ? `${calls} · ${costText(row.estimated_cost_amount, currency, row.cost_unknown_call_count, '비용 미보고')}`
+    ? `${calls} · ${costText(row.estimated_cost_amount, currency, row.cost_unknown_call_count, '비용 미보고', row.call_count)}`
     : calls
 }
 

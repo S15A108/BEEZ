@@ -69,6 +69,49 @@ async function startedTask() {
 }
 
 describe('mock 작업 규칙은 서버와 같다', () => {
+  // PR #72 4차 TC-01: 서버 StartGate G4. 두 작업이 둘 다 검증을 통과해도 먼저 시작한 작업이 같은 설계 항목을
+  // CHANGES로 점유하면, 뒤 작업의 START는 409 task_conflict다.
+  it('같은 설계 항목을 바꾸는 작업이 진행 중이면 다른 작업은 START에서 409 task_conflict', async () => {
+    await login()
+    const changes = plan({
+      no_contract_change: false,
+      design_refs: [
+        {
+          design_item_id: '301',
+          design_item_version_id: '311',
+          relation: 'CHANGES' as const,
+          proposed_content: { title: '프로젝트 목록 정렬 추가' },
+        },
+      ],
+    })
+    const validated = async () => {
+      const task = await tasksApi.create('101', changes)
+      const validation = await validationsApi.create('101', task.id, {
+        plan_revision_id: task.current_plan_revision.id,
+        expected_lock_version: task.lock_version,
+      })
+      await validationsApi.get('101', validation.id)
+      expect((await validationsApi.get('101', validation.id)).status).toBe(
+        'PASS',
+      )
+      return {
+        start: () =>
+          tasksApi.state('101', task.id, {
+            event: 'START',
+            plan_revision_id: task.current_plan_revision.id,
+            expected_lock_version: task.lock_version,
+            validation_id: validation.id,
+          }),
+      }
+    }
+    const first = await validated()
+    const second = await validated()
+    expect((await first.start()).status).toBe('IN_PROGRESS')
+    await expect(second.start()).rejects.toMatchObject({
+      response: { status: 409, data: { error: { code: 'task_conflict' } } },
+    })
+  })
+
   it('진행 중 계획을 고치면 WAITING(REVALIDATION)이 되고 이전 검증은 무효가 된다', async () => {
     await login()
     const task = await startedTask()

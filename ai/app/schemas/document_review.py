@@ -2,9 +2,10 @@
 
 import hashlib
 import json
+import unicodedata
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 KINDS = ("API_SPEC", "ERD", "REQ_SPEC")
 ID = r"^[1-9][0-9]{0,18}$"
@@ -61,6 +62,80 @@ def reference_hash(references: list[Reference]) -> str:
     return text_hash(canonical)
 
 
+def _bounded_text(value: str, limit: int, *, nonblank: bool = True) -> str:
+    # Match Java String.length() and reject malformed lone surrogate codepoints.
+    try:
+        length = len(value.encode("utf-16-le")) // 2
+    except UnicodeEncodeError as exc:
+        raise ValueError("invalid Unicode text") from exc
+
+    # Java String.isBlank() uses Character.isWhitespace, which intentionally
+    # excludes non-breaking spaces that Python's str.strip() considers blank.
+    def java_whitespace(char: str) -> bool:
+        code = ord(char)
+        return (
+            0x09 <= code <= 0x0D
+            or 0x1C <= code <= 0x1F
+            or (
+                unicodedata.category(char) in {"Zs", "Zl", "Zp"}
+                and code not in {0x00A0, 0x2007, 0x202F}
+            )
+        )
+
+    if length > limit or (nonblank and all(map(java_whitespace, value))):
+        raise ValueError("invalid text length")
+    return value
+
+
+class ReviewSuggestionContext(BaseModel):
+    """The already stored suggestion provided by the BE to DISCUSS."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: str = Field(pattern=ID)
+    type: Literal["PATCH", "COMMENT"]
+    step: Literal["BODY", "API_SPEC", "ERD", "REQ_SPEC"]
+    explanation: str
+    original_text: str | None = None
+    replacement_text: str | None = None
+    decision: Literal["PENDING", "APPLIED", "SKIPPED"] | None = None
+
+    @model_validator(mode="after")
+    def validate_suggestion(self):
+        _bounded_text(self.explanation, 10000)
+        if self.type == "PATCH":
+            if self.original_text is None or self.replacement_text is None:
+                raise ValueError("PATCH requires original and replacement text")
+            # An empty replacement is a valid deletion. Original must be nonempty,
+            # but whitespace may itself be the exact target span.
+            if not self.original_text:
+                raise ValueError("PATCH original must not be empty")
+            _bounded_text(self.original_text, 100000, nonblank=False)
+            _bounded_text(self.replacement_text, 100000, nonblank=False)
+        elif (
+            self.original_text is not None
+            or self.replacement_text is not None
+            or self.decision is not None
+        ):
+            raise ValueError("COMMENT has no patch or decision")
+        return self
+
+
+class ReviewChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    author_kind: Literal["HUMAN", "BEE"]
+    text: str
+    proposed_text: str | None = None
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        _bounded_text(self.text, 5000 if self.author_kind == "HUMAN" else 10000)
+        if self.proposed_text is not None:
+            _bounded_text(self.proposed_text, 100000, nonblank=False)
+        return self
+
+
 class DocumentReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -77,6 +152,28 @@ class DocumentReviewRequest(BaseModel):
         max_length=3
     )
     references: list[Reference] = Field(max_length=100)
+    mode: Literal["REVIEW", "RERUN", "DISCUSS", "REQUEST"] | None = None
+    suggestion: ReviewSuggestionContext | None = None
+    messages: list[ReviewChatMessage] | None = Field(default=None, max_length=40)
+    request_text: str | None = None
+    rejection_submission_id: str | None = Field(default=None, pattern=ID)
+    rejection_reason: str | None = None
+
+    @field_validator("request_text")
+    @classmethod
+    def validate_request_text(cls, value: str | None):
+        if value is not None:
+            _bounded_text(value, 5000)
+        return value
+
+    @field_validator("rejection_reason")
+    @classmethod
+    def validate_rejection_reason(cls, value: str | None):
+        if value is not None:
+            _bounded_text(value, 10000)
+            if "\x00" in value:
+                raise ValueError("invalid rejection reason")
+        return value
 
     @model_validator(mode="after")
     def validate_snapshot(self):
@@ -100,4 +197,38 @@ class DocumentReviewRequest(BaseModel):
             or self.reference_hash != reference_hash(self.references)
         ):
             raise ValueError("invalid snapshot")
+        if self.mode == "RERUN":
+            if (
+                self.rejection_submission_id is None
+                or self.rejection_reason is None
+                or self.suggestion is not None
+                or self.messages is not None
+                or self.request_text is not None
+            ):
+                raise ValueError("invalid RERUN context")
+        elif (
+            self.rejection_submission_id is not None
+            or self.rejection_reason is not None
+        ):
+            raise ValueError("rejection context requires RERUN")
+        elif self.mode == "DISCUSS":
+            if (
+                self.suggestion is None
+                or not self.messages
+                or self.messages[-1].author_kind != "HUMAN"
+                or self.request_text is not None
+            ):
+                raise ValueError("invalid DISCUSS context")
+        elif self.mode == "REQUEST":
+            if (
+                self.request_text is None
+                or self.suggestion is not None
+                or self.messages is not None
+            ):
+                raise ValueError("invalid REQUEST context")
+        elif any(
+            value is not None
+            for value in (self.suggestion, self.messages, self.request_text)
+        ):
+            raise ValueError("review mode does not accept chat context")
         return self
