@@ -468,10 +468,13 @@ public class DocumentReviewService {
         // 팀장 결정을 기다리거나 끝난 작성 건은 제출 때 이미 통과한 검토라 무효로 표시하지 않는다.
         boolean open = !Set.of("SUBMITTED", "APPROVED").contains(row.get("status").toString());
         boolean stale = open && latest.isPresent() && !usable(latest.get(), project, document, id(row, "revision"));
+        // 팀장 검토 중·승인된 작성 건에는 새 검토를 부르지 않으므로 실패도 알리지 않는다.
+        var failure = open ? repository.latestReviewFailure(document)
+                .map(f -> new DocumentReviewFailureResponse((String) f.get("error_code"), time(f.get("created_at")))).orElse(null) : null;
         return new DocumentWorkingCopyResponse(Long.toString(document), row.get("owner_account_id").toString(), id(row, "revision"),
                 row.get("status").toString(), row.get("content_text").toString(), row.get("file_name").toString(),
                 latest.map(this::reviewView).orElse(null),
-                repository.submissions(project, document, null).stream().map(this::submissionView).toList(), stale);
+                repository.submissions(project, document, null).stream().map(this::submissionView).toList(), stale, failure);
     }
 
     @SuppressWarnings("unchecked")

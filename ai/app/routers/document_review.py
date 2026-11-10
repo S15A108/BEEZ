@@ -1,5 +1,6 @@
 """Internal document review endpoint; authorization and persistence belong to BE."""
 
+import math
 import re
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -115,6 +116,17 @@ async def get_review_client(
         yield LLMClient(provider)
 
 
+def _review_timeout(settings: Settings) -> float:
+    """Model time per call; a bad value fails the route instead of the call."""
+    try:
+        timeout = float(settings.document_review_llm_timeout_seconds)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(503, detail="document_review_not_configured") from None
+    if not math.isfinite(timeout) or not 0 < timeout <= 120:
+        raise HTTPException(503, detail="document_review_not_configured")
+    return timeout
+
+
 def _request_openapi_schema():
     # The request is read as a stream to enforce the body limit.  Since FastAPI
     # does not register its model automatically, inline Pydantic's definitions:
@@ -149,6 +161,7 @@ async def document_review(
     settings: Annotated[Settings, Depends(get_settings)],
     client: Annotated[LLMClient, Depends(get_review_client)],
 ):
+    timeout = _review_timeout(settings)
     raw = bytearray()
     async for chunk in request.stream():
         if len(raw) + len(chunk) > _MAX_BODY_BYTES:
@@ -156,5 +169,9 @@ async def document_review(
         raw.extend(chunk)
     body = DocumentReviewRequest.model_validate_json(bytes(raw))
     if body.mode in ("DISCUSS", "REQUEST"):
-        return await analyze_mode(body, client, settings.bee_default_model)
-    return await analyze(body, client, settings.bee_default_model)
+        return await analyze_mode(
+            body, client, settings.bee_default_model, timeout_seconds=timeout
+        )
+    return await analyze(
+        body, client, settings.bee_default_model, timeout_seconds=timeout
+    )

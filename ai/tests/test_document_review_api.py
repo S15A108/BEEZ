@@ -31,9 +31,11 @@ class FakeProvider:
         }
         self.raw = None
         self.failure = None
+        self.timeouts = []
 
     async def complete(self, request, *, timeout_seconds):
         self.requests.append(request)
+        self.timeouts.append(timeout_seconds)
         if self.failure:
             raise self.failure
         content = (
@@ -613,3 +615,51 @@ def test_valid_patches_exceeding_be_result_limit_fail_with_usage(api):
     assert response.status_code == 502, response.text[:1000]
     assert response.json()["usage"][0]["failed"] is True
     assert "result" not in response.json()
+
+
+# S15P31A108-383: dev measured 20-38s for a 6,800-character API spec, so the
+# fixed 15s failed every review of that document. The setting must reach the call.
+@pytest.mark.parametrize("mode", [None, "REQUEST"])
+def test_configured_review_timeout_reaches_model_call(api, mode):
+    api[0].app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None,
+        ai_internal_token="test-internal",
+        document_review_llm_timeout_seconds="42",
+    )
+    payload = fixture("review-contract-partial.json")["input"]
+    if mode == "REQUEST":
+        payload.update(mode="REQUEST", request_text="표현을 다듬어 주세요.")
+        api[1].output = {"suggestions": []}
+    post(api, payload)
+    assert api[1].timeouts == [42.0]
+
+
+@pytest.mark.parametrize("value", ["0", "121", "nan", "slow"])
+def test_invalid_review_timeout_fails_before_model(api, value):
+    api[0].app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None,
+        ai_internal_token="test-internal",
+        document_review_llm_timeout_seconds=value,
+    )
+    response = post(api, fixture("review-contract-partial.json")["input"])
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "document_review_not_configured"
+    assert not api[1].requests
+
+
+# S15P31A108-383: the model cited one reference twice with different quotes and
+# the whole review was discarded. One verifiable source per reference is kept.
+def test_repeated_source_for_one_reference_keeps_the_verifiable_quote(api):
+    sample = fixture("review-contract-complete.json")
+    suggestion = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
+    suggestion.update(category="CONSISTENCY", severity="MAJOR")
+    valid = suggestion["sources"][0]
+    suggestion["sources"] = [
+        {"reference_id": valid["reference_id"], "quote": "없는 내용"},
+        valid,
+        {"reference_id": valid["reference_id"]},
+    ]
+    api[1].output["suggestions"] = [suggestion]
+    response = post(api, sample["input"])
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["suggestions"][0]["sources"] == [valid]

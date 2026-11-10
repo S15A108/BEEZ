@@ -2228,6 +2228,8 @@ result 필드:
 - original_text로 위치를 잡고 행 번호를 쓰지 않는다. 앞 제안을 반영해도 뒤 제안이 어긋나지 않는다(DOC-A17 APPLY 규칙). replacement_text는 그 원문을 그대로 바꿀 문장이다. 반영·저장·승인은 BE와 사람이 한다.
 - 표·문단 옮기기는 옮길 부분부터 도착 위치까지를 한 original_text로 잡고 순서를 바꾼 문장을 replacement_text로 낸다.
 - (수정안 요청) evidence는 입력 references 안의 버전만 쓴다. quote가 그 버전 content에 없으면 잘못된 출력이다. BE는 references의 document_id·version_no를 붙이고 quote를 location에 넣어 DocumentReviewSuggestion.sources로 옮긴다.
+- 제안 하나의 sources는 reference_id마다 하나다(BE 검증). 모델이 같은 참고 문서를 인용문만 바꿔 여러 번 붙이면 AI가 돌려주기 전에 하나로 합친다 — 인용문이 그 버전 content에 있는 첫 출처를 남기고, 맞는 인용문이 없으면 첫 출처를 남겨 위 quote 규칙대로 거절한다(S15P31A108-383).
+- 모델 호출 시간 제한은 `DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS`(기본 60초, 0 초과 120 이하, 값이 잘못되면 503 `document_review_not_configured`)이고 DISCUSS·REQUEST도 같다. BE는 이 호출에만 그보다 긴 읽기 제한 `beez.document.review-read-timeout`(기본 75초)을 쓴다. 6,800자 API 명세서에 승인본 2개를 붙인 검토가 20~38초 걸려 예전 고정 15초로는 늘 시간 초과였다(S15P31A108-383).
 - BE는 제안의 category·severity를 한 쌍으로 검증해 저장·반환한다. 과거 미분류 제안은 null이다. evidence와 화면 표시는 별도 연동이 필요하다.
 - (수정안 요청) mode별 결과: REVIEW·RERUN은 suggestions 목록, REQUEST는 suggestions 1개다. DISCUSS는 reply가 필수이고 suggestions는 []다. 네 mode 모두 result의 식별값 4개와 summary를 돌려준다.
 - (수정안 요청) steps는 BE가 DOC-A16의 단계 표시(DocumentBeeReview.steps)에 쓴다. REVIEW 기본: 문서 읽기 → 승인된 API 명세서와 비교 → ERD와 맞춰 보기 → 요구사항과 비교 → 수정 제안 정리. RERUN: 반려 사유 읽기 → 관련 문단 찾기 → ERD와 맞춰 보기 → 수정 제안 정리. 비교할 승인본이 없는 단계는 result에 그 사유를 쓴다.

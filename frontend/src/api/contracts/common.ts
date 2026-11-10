@@ -418,6 +418,10 @@ export const documentWorkingCopySchema = z.object({
   submissions: documentReviewSubmissionSchema.array(),
   // latest_review를 지금 쓸 수 없음(참고 승인본이 바뀜·본문 리비전 불일치). 서버가 판정하며 없으면 false로 본다(S15P31A108-362).
   review_stale: z.boolean().optional(),
+  // 지금 본문에 대한 마지막 비비 검토 요청이 실패함. 새 검토가 끝나거나 본문이 바뀌면 서버가 보내지 않는다(S15P31A108-383).
+  review_failure: z
+    .object({ error_code: z.string(), failed_at: z.string() })
+    .optional(),
 })
 export type DocumentWorkingCopy = z.infer<typeof documentWorkingCopySchema>
 

@@ -87,7 +87,8 @@ export function DocumentReview({
         data.owner_account_id !== session.data?.id &&
         data.status !== 'REJECTED' &&
         reviewStage(data).step === 1 &&
-        !reviewStage(data).stale)
+        !reviewStage(data).stale &&
+        !reviewStage(data).failed)
         ? REVIEW_POLL_MS
         : false,
   })
@@ -99,6 +100,8 @@ export function DocumentReview({
     current.owner_account_id === session.data?.id &&
     currentStage?.step === 1 &&
     !currentStage.stale &&
+    // 지난 검토가 실패했으면 창을 다시 열어도 자동으로 되풀이하지 않는다(S15P31A108-383). '다시 검토하기'로만 부른다.
+    !currentStage.failed &&
     current.status !== 'SUBMITTED'
       ? `${projectId}:${documentId}:${current.revision}`
       : null
@@ -288,13 +291,17 @@ export function DocumentReview({
               {stage.step === 1 && !stage.stale && (
                 <div className="grid gap-3">
                   <MarkdownView source={data.content} className="max-h-72" />
-                  {owner && failed ? (
+                  {owner && (failed || (stage.failed && !bee.isPending)) ? (
                     <div
                       role="alert"
                       className="grid gap-2 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm"
                     >
                       <strong>비비 검토를 마치지 못했어요</strong>
-                      <span>{getApiErrorMessage(bee.error)}</span>
+                      <span>
+                        {failed
+                          ? getApiErrorMessage(bee.error)
+                          : '지난 검토가 끝나지 못했어요. 다시 검토해 주세요.'}
+                      </span>
                       <Button
                         variant="outline"
                         className="justify-self-start"
@@ -325,6 +332,11 @@ export function DocumentReview({
                         창을 닫아도 검토는 이어져요.
                       </span>
                     </div>
+                  ) : stage.failed ? (
+                    <p role="status" className="text-sm text-muted-foreground">
+                      비비 검토를 마치지 못했어요. 올린 사람이 다시 검토하면
+                      여기서 수정 제안을 볼 수 있어요.
+                    </p>
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       올린 문서는 비비가 바로 검토해요. 검토가 끝나면 여기서

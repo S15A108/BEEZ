@@ -440,6 +440,41 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         verify(gateway, times(2)).review(anyMap());
     }
 
+    // S15P31A108-383: 실패한 검토를 작업본이 알리지 않아 팀원 화면은 '비비 검토 중'에 머물고,
+    // 올린 사람 화면은 창을 열 때마다 같은 실패를 되풀이했다. 실패는 새 검토가 끝나거나 본문이 바뀌면 사라진다.
+    @Test void workingCopyReportsFailedReviewToEveryMemberUntilANewReviewOrEdit() {
+        doThrow(new org.springframework.web.client.RestClientResponseException(
+                "AI timeout", 504, "Gateway Timeout", org.springframework.http.HttpHeaders.EMPTY,
+                new byte[0], StandardCharsets.UTF_8)).when(gateway).review(anyMap());
+        assertThat(copy().reviewFailure()).isNull();
+        code(() -> reviews.review(author, project.projectId(), document, 1, "timeout"), "review_unavailable");
+        var failure = reviews.get(leader, project.projectId(), document).reviewFailure();
+        assertThat(failure).isNotNull();
+        assertThat(failure.errorCode()).isEqualTo("review_unavailable");
+        assertThat(failure.failedAt()).isNotBlank();
+
+        doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
+        review();
+        assertThat(copy().reviewFailure()).isNull();
+
+        doThrow(new IllegalStateException("model down")).when(gateway).review(anyMap());
+        code(() -> review(), "review_unavailable");
+        assertThat(copy().reviewFailure()).isNotNull();
+        reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(copy().revision(), "고친 내용", "plan.md"));
+        assertThat(copy().reviewFailure()).isNull();
+
+        // 응답 없이 10분 넘게 진행 중인 요청도 실패로 알린다(서버가 검토 도중 내려간 경우).
+        long other = upload("ERD");
+        jdbc.update("UPDATE document_working_copy SET updated_at=now()-interval '20 minutes' WHERE document_id=?", other);
+        jdbc.update("""
+                INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status,created_at)
+                VALUES(?,?,'stuck','fp','RUNNING',now()-interval '5 minutes')
+                """, other, author.accountId());
+        assertThat(reviews.get(author, project.projectId(), other).reviewFailure()).isNull();
+        jdbc.update("UPDATE document_bee_review_request SET created_at=now()-interval '11 minutes' WHERE document_id=?", other);
+        assertThat(reviews.get(author, project.projectId(), other).reviewFailure().errorCode()).isEqualTo("review_timeout");
+    }
+
     @Test void submittedBytesAndHistoryAreProtectedInDatabaseAndReviewDecisionsCannotBeOverwritten() {
         var submission = submit(review());
         assertThatThrownBy(() -> jdbc.update("UPDATE document_version SET content_text='changed' WHERE id=?", Long.parseLong(submission.documentVersionId()))).isInstanceOf(RuntimeException.class);

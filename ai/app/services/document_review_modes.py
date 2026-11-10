@@ -10,7 +10,12 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.schemas.document_review import DocumentReviewRequest
-from app.services.document_review import Suggestion, _length, _nonblank
+from app.services.document_review import (
+    REVIEW_TIMEOUT_SECONDS,
+    Suggestion,
+    _length,
+    _nonblank,
+)
 from app.services.document_review_patches import validate_patch_sequence
 from app.services.llm_client import LLMClient, LLMContext, LLMMessage, LLMRequest
 
@@ -107,7 +112,11 @@ def _validate_request(parsed: RequestOutput, body: DocumentReviewRequest) -> dic
 
 
 async def analyze_mode(
-    body: DocumentReviewRequest, client: LLMClient, model: str
+    body: DocumentReviewRequest,
+    client: LLMClient,
+    model: str,
+    *,
+    timeout_seconds: float = REVIEW_TIMEOUT_SECONDS,
 ) -> dict:
     """Run one mode against the immutable BE input and return its v2 echo."""
     if body.mode not in {"DISCUSS", "REQUEST"}:
@@ -148,7 +157,7 @@ async def analyze_mode(
                 request_key=body.request_key,
             ),
             call_keys=(call_key,),
-            timeout_seconds=15.0,
+            timeout_seconds=timeout_seconds,
             response_format={"type": "json_object"},
         )
     )

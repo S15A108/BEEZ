@@ -253,6 +253,21 @@ public class DocumentReviewRepository {
                 Map.of("document", document, "account", account, "key", key)).stream().findFirst();
     }
 
+    /**
+     * 지금 본문(마지막 수정 이후)에 대한 가장 최근 검토 요청이 실패했으면 그 요청. 그 뒤에 저장된 검토가 있거나 새 요청이 진행 중이면 없다.
+     * 10분 넘게 RUNNING 인 요청은 {@link #reviewRequest}가 같은 키로 다시 부를 때 FAILED 로 바꾸는 것과 같은 기준으로 실패로 본다.
+     */
+    public Optional<Map<String, Object>> latestReviewFailure(long document) {
+        return rows("""
+                SELECT CASE WHEN r.status='FAILED' THEN r.error_code ELSE 'review_timeout' END AS error_code,r.created_at
+                FROM document_bee_review_request r JOIN document_working_copy w ON w.document_id=r.document_id
+                WHERE r.document_id=:document AND r.created_at>=w.updated_at
+                  AND (r.status='FAILED' OR (r.status='RUNNING' AND r.created_at<now()-interval '10 minutes'))
+                  AND NOT EXISTS (SELECT 1 FROM document_bee_review_request n WHERE n.document_id=r.document_id AND n.created_at>r.created_at)
+                  AND NOT EXISTS (SELECT 1 FROM document_bee_review b WHERE b.document_id=r.document_id AND b.created_at>r.created_at)
+                """, Map.of("document", document)).stream().findFirst();
+    }
+
     public void startReview(long document, long account, String key, String fingerprint) {
         jdbc.sql("INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status) VALUES(:document,:account,:key,:fingerprint,'RUNNING')")
                 .params(Map.of("document", document, "account", account, "key", key, "fingerprint", fingerprint)).update();
