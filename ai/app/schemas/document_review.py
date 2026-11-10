@@ -152,16 +152,27 @@ class DocumentReviewRequest(BaseModel):
         max_length=3
     )
     references: list[Reference] = Field(max_length=100)
-    mode: Literal["REVIEW", "DISCUSS", "REQUEST"] | None = None
+    mode: Literal["REVIEW", "RERUN", "DISCUSS", "REQUEST"] | None = None
     suggestion: ReviewSuggestionContext | None = None
     messages: list[ReviewChatMessage] | None = Field(default=None, max_length=40)
     request_text: str | None = None
+    rejection_submission_id: str | None = Field(default=None, pattern=ID)
+    rejection_reason: str | None = None
 
     @field_validator("request_text")
     @classmethod
     def validate_request_text(cls, value: str | None):
         if value is not None:
             _bounded_text(value, 5000)
+        return value
+
+    @field_validator("rejection_reason")
+    @classmethod
+    def validate_rejection_reason(cls, value: str | None):
+        if value is not None:
+            _bounded_text(value, 10000)
+            if "\x00" in value:
+                raise ValueError("invalid rejection reason")
         return value
 
     @model_validator(mode="after")
@@ -186,7 +197,21 @@ class DocumentReviewRequest(BaseModel):
             or self.reference_hash != reference_hash(self.references)
         ):
             raise ValueError("invalid snapshot")
-        if self.mode == "DISCUSS":
+        if self.mode == "RERUN":
+            if (
+                self.rejection_submission_id is None
+                or self.rejection_reason is None
+                or self.suggestion is not None
+                or self.messages is not None
+                or self.request_text is not None
+            ):
+                raise ValueError("invalid RERUN context")
+        elif (
+            self.rejection_submission_id is not None
+            or self.rejection_reason is not None
+        ):
+            raise ValueError("rejection context requires RERUN")
+        elif self.mode == "DISCUSS":
             if (
                 self.suggestion is None
                 or not self.messages

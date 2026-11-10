@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it } from 'vitest'
@@ -6,15 +7,22 @@ import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { TourGuide } from './TourGuide'
 import type { TourMode } from './TourGuide'
 
-function Harness({ initial = null }: { initial?: TourMode }) {
+function Harness({
+  initial = null,
+  client: given,
+}: {
+  initial?: TourMode
+  client?: QueryClient
+}) {
   const [mode, setMode] = useState<TourMode>(initial)
+  const [client] = useState(() => given ?? new QueryClient())
   return (
-    <>
+    <QueryClientProvider client={client}>
       {['office', 'card', 'hotbar', 'todo', 'top', 'bibi'].map((target) => (
         <div key={target} data-tour={target} />
       ))}
       <TourGuide accountId="11" mode={mode} onChange={setMode} />
-    </>
+    </QueryClientProvider>
   )
 }
 
@@ -59,6 +67,31 @@ it('? 키로 화면 안내를 열고 처음부터 둘러보기 6단계를 마치
   await user.click(screen.getByRole('button', { name: '시작하기' }))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   expect(localStorage.getItem('beez.tour.11')).toBe('seen')
+})
+
+// PR #72 UI-1 남은 부분: 업무 창은 모달이라, 그 위에 띄운 화면 안내는 누를 수도 포커스할 수도 없었다.
+it('업무 창이 열린 채 ?를 누르면 창을 닫고 화면 안내를 연다', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.getState().openPane('tasks', '501')
+  render(<Harness />)
+  await user.keyboard('?')
+  expect(useWorkspaceStore.getState().pane).toBeNull()
+  expect(screen.getByRole('dialog', { name: '화면 안내' })).toBeInTheDocument()
+})
+
+// 처리 중인 요청이 있으면 업무 창을 닫지 않는다(한 번만 받는 결과를 잃지 않게). 그동안은 안내도 열지 않는다.
+it('요청을 처리하는 중이면 ?를 눌러도 업무 창을 닫지 않는다', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient()
+  void client
+    .getMutationCache()
+    .build(client, { mutationFn: () => new Promise(() => undefined) })
+    .execute(undefined)
+  useWorkspaceStore.getState().openPane('settings', 'agent')
+  render(<Harness client={client} />)
+  await user.keyboard('?')
+  expect(useWorkspaceStore.getState().pane).toBe('settings')
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
 it('입력 칸에서 ?를 치면 안내를 열지 않고 Esc로 닫는다', async () => {

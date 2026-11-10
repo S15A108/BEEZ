@@ -433,6 +433,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MCP-13](02-mcp-tools.md#mcp-13) | `get_validation` | 전진(도구) / 변준성(조회) | — |
 | [MCP-14](02-mcp-tools.md#mcp-14) | `retry_validation` | 전진(도구) / 변준성(재시도) | 양지훈(실패 정보) |
 | [MCP-12](02-mcp-tools.md#mcp-12) | `report_task_state` | 전진(도구) / 변준성(전이·점유) | — |
+| [MCP-15](02-mcp-tools.md#mcp-15) | `check_connection` | 전진(도구) | — |
 | [MCP-16](02-mcp-tools.md#mcp-16) | `get_task` | 전진(도구) / 변준성(조회, TSK-A03과 같음) | — |
 
 ### AI Internal
@@ -731,8 +732,8 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `original_text` | `string` | PATCH Y | 변경할 유일한 원문 구간. COMMENT는 null |
 | `replacement_text` | `string` | PATCH Y | 빈 문자열은 삭제. COMMENT는 null |
 | `decision` | `PENDING\|APPLIED\|SKIPPED` | PATCH Y | PATCH만 작성자 선택 필요. COMMENT는 null이며 제출을 막지 않음 |
-| `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. 화면의 '비비 제안 · 누락'. 수정안 요청 |
-| `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. 수정안 요청 |
+| `category` | `OMISSION\|CONSISTENCY\|READABILITY\|REJECTION_FIX` | N | 누락·일관성·가독성·반려 사유 반영. severity와 함께 저장·반환한다. 기존 미분류 제안은 null |
+| `severity` | `MAJOR\|MINOR` | N | 요약의 Major·Minor 수. category와 함께 저장·반환한다. 기존 미분류 제안은 null |
 | `origin` | `REVIEW\|DIRECT_REQUEST` | N | 검토 결과 또는 '비비에게 직접 요청하기'(DOC-A23). 수정안 요청 |
 | `applied_replacement_text` | `string` | N | 대화(DOC-A22)에서 비비가 낸 다른 대체문으로 반영했을 때 실제로 쓴 문장. S15P31A108-231 |
 | `sources` | `DocumentReviewSource[]` | Y | 검증된 참고 승인본 근거. BODY 및 과거 제안은 []. 아래 검토 전용 구조 사용 |

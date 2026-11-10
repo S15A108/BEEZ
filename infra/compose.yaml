@@ -74,6 +74,8 @@ services:
       DESIGN_DRAFTS_ENABLED: ${DESIGN_DRAFTS_ENABLED:-false}
       # 역할 추천(#136)은 BE 계약 합의 전 기본 비활성이다.
       ASSIGNMENT_RECOMMENDATION_ENABLED: ${ASSIGNMENT_RECOMMENDATION_ENABLED:-false}
+      # 비비 대화(#135, BEE-A01). 기본 꺼짐이라 켜지 않으면 /v1/bee/chat 이 503 이다. GMS_KEY 도 필요하다.
+      BEE_CHAT_ENABLED: ${BEE_CHAT_ENABLED:-false}
     healthcheck:
       # slim 이미지에는 curl 이 없어 파이썬 표준 라이브러리로 확인한다.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
@@ -115,6 +117,9 @@ services:
       # 차원은 백엔드(1024)·AI 기본값이 같으므로 여기서 바꾸지 않는다.
       DOCUMENT_EMBEDDING_PROFILE: ${DOCUMENT_EMBEDDING_PROFILE:-gms-small-1024-v1}
       DOCUMENT_EMBEDDING_MODEL: ${DOCUMENT_EMBEDDING_MODEL:-text-embedding-3-small}
+      # 비비 질문(BEE-A01) 시간 설정. 기본 AI 호출 35초·전체 예산 55초(서버 Nginx 기본 60초보다 짧게). 서버 env 파일로 조정한다 (S15P31A108-344)
+      BEEZ_BEE_CHAT_READ_TIMEOUT: ${BEEZ_BEE_CHAT_READ_TIMEOUT:-35s}
+      BEEZ_BEE_ANSWER_BUDGET: ${BEEZ_BEE_ANSWER_BUDGET:-55s}
       # 공개 주소 셋. prod 프로필은 기본값이 없어 빠지면 기동이 실패한다
       CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
       INVITE_BASE_URL: ${PUBLIC_ORIGIN}

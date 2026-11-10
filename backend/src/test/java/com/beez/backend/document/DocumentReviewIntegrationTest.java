@@ -85,6 +85,35 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThatThrownBy(call).isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo(code));
     }
 
+    @Test void rejectionSelectsRerunAndPersistsClassificationsWithoutBreakingIdempotentReplay() {
+        var calls = new ArrayList<Map<String, Object>>();
+        doAnswer(call -> {
+            Map<String, Object> input = call.getArgument(0); calls.add(new HashMap<>(input));
+            if (!"RERUN".equals(input.get("mode"))) return result(input, List.of());
+            return result(input, List.of(Map.of("type", "COMMENT", "step", "BODY", "explanation", "사유 확인",
+                    "category", "REJECTION_FIX", "severity", "MAJOR")));
+        }).when(gateway).review(anyMap());
+        var initial = review();
+        assertThat(calls.getFirst()).doesNotContainKey("mode");
+        var submission = submit(initial);
+        reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()),
+                new DocumentDecisionRequest("REJECT", "누락 항목을 추가해 주세요."));
+        long revision = copy().revision();
+        var rerun = reviews.review(author, project.projectId(), document, revision, "rerun-once");
+        assertThat(calls).hasSize(2);
+        assertThat(calls.getLast()).containsEntry("mode", "RERUN")
+                .containsEntry("rejection_submission_id", submission.id())
+                .containsEntry("rejection_reason", "누락 항목을 추가해 주세요.");
+        assertThat(rerun.suggestions()).singleElement().satisfies(suggestion -> {
+            assertThat(suggestion.category()).isEqualTo("REJECTION_FIX");
+            assertThat(suggestion.severity()).isEqualTo("MAJOR");
+        });
+        assertThat(jdbc.queryForMap("SELECT category,severity FROM document_bee_suggestion WHERE review_id=?", Long.parseLong(rerun.id())))
+                .containsEntry("category", "REJECTION_FIX").containsEntry("severity", "MAJOR");
+        assertThat(reviews.review(author, project.projectId(), document, revision, "rerun-once")).isEqualTo(rerun);
+        assertThat(calls).hasSize(2);
+    }
+
     @Test void authorReviewsAppliesSubmitsAndLeaderRejectsWithDurableReasonThenSameCaseResubmits() {
         doAnswer(call -> result(call.getArgument(0), List.of(
                 Map.of("explanation", "권한 조건을 보완하세요.", "original_text", "로그인한다.", "replacement_text", "팀원만 로그인한다."))))

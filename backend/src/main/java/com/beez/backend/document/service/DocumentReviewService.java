@@ -151,6 +151,16 @@ public class DocumentReviewService {
         return input;
     }
 
+    static String reviewFingerprint(long expected, String referenceHash, Object contentHash, Map<String, Object> context) {
+        var components = new ArrayList<Object>(List.of("document-review-v2", expected, referenceHash, contentHash));
+        if (!context.isEmpty()) {
+            components.add(context.get("mode"));
+            components.add(context.get("rejection_submission_id"));
+            components.add(context.get("rejection_reason"));
+        }
+        return hash(components);
+    }
+
     void key(String key) {
         if (key == null || key.isBlank() || key.length() > 128 || key.chars().anyMatch(Character::isISOControl)) {
             throw invalid("Idempotency-Key는 제어 문자가 없는 1~128자입니다.");
@@ -164,8 +174,9 @@ public class DocumentReviewService {
             lock(caller, project, false);
             var copy = owned(caller, project, document);
             var refs = references(project, document);
-            String fingerprint = hash(List.of("document-review-v2", expected, referenceHash(refs),
-                    DocumentReviewReferenceHasher.textHash(copy.get("content_text").toString())));
+            var reviewContext = ReviewRerunPolicy.context(repository.latestSubmission(project, document).stream().toList());
+            String fingerprint = reviewFingerprint(expected, referenceHash(refs),
+                    DocumentReviewReferenceHasher.textHash(copy.get("content_text").toString()), reviewContext);
             var previous = repository.reviewRequest(document, caller.accountId(), key);
             if (previous.isPresent()) {
                 var old = previous.get();
@@ -178,7 +189,7 @@ public class DocumentReviewService {
                     // Applying a PATCH changes the working copy, not the input of a completed request.
                     completedReplay = original.get("content_hash") == null
                             ? legacyFingerprint.equals(old.get("fingerprint"))
-                            : hash(List.of("document-review-v2", expected, referenceHash(refs), original.get("content_hash")))
+                            : reviewFingerprint(expected, referenceHash(refs), original.get("content_hash"), ReviewRerunPolicy.fromInput(original))
                                     .equals(old.get("fingerprint"));
                 }
                 if (!fingerprint.equals(old.get("fingerprint")) && !completedReplay) throw conflict("idempotency_conflict");
@@ -189,7 +200,9 @@ public class DocumentReviewService {
             editable(copy, expected);
             initialWorkflow(project);
             repository.startReview(document, caller.accountId(), key, fingerprint);
-            return reviewInput(copy, refs, "document-review-" + document + "-" + UUID.randomUUID());
+            var input = reviewInput(copy, refs, "document-review-" + document + "-" + UUID.randomUUID());
+            input.putAll(reviewContext);
+            return input;
         });
         if (prepared.containsKey("replay")) return tx.execute(status -> {
             member(caller, project);
@@ -210,6 +223,9 @@ public class DocumentReviewService {
                 editable(copy, expected);
                 initialWorkflow(project);
                 if (!prepared.get("reference_hash").equals(referenceHash(references(project, document)))) throw conflict("review_stale");
+                if (!ReviewRerunPolicy.fromInput(prepared).equals(ReviewRerunPolicy.context(repository.latestSubmission(project, document).stream().toList()))) {
+                    throw conflict("review_stale");
+                }
                 long review = repository.saveReview(document, expected, prepared.get("reference_hash").toString(), prepared, result, actualUsage);
                 for (Object entry : (List<?>) result.get("suggestions")) {
                     var suggestion = (Map<?, ?>) entry;
@@ -479,7 +495,8 @@ public class DocumentReviewService {
                 (String) s.get("original_text"), (String) s.get("replacement_text"), (String) s.get("decision"),
                 s.get("type").toString(), (String) s.get("step"),
                 Arrays.asList(JSON.readValue(s.get("sources").toString(), DocumentReviewSourceResponse[].class)),
-                (String) s.get("origin"), (String) s.get("applied_replacement_text"), messages);
+                (String) s.get("origin"), (String) s.get("applied_replacement_text"), messages,
+                (String) s.get("category"), (String) s.get("severity"));
     }
 
     static DocumentMessageResponse messageView(Map<String, Object> m) {

@@ -310,8 +310,11 @@ export function TasksPanel({ projectId, isLeader }: Props) {
   })
   const revisions = useQuery({
     queryKey: ['projects', projectId, 'task-revisions', selectedId],
+    // 계획 이력은 마지막 페이지까지 읽는다. 100개만 읽으면 그 이전 계획을 볼 수 없었다(PR #72 5차 TC-03).
     queryFn: () =>
-      tasksApi.planRevisions(projectId, selectedId!, { limit: 100 }),
+      readAllPages((cursor) =>
+        tasksApi.planRevisions(projectId, selectedId!, { cursor, limit: 100 }),
+      ),
     enabled: !!selectedId,
   })
   // 서버 작업 상세의 validation 은 현재 계획의 가장 최근 검증이다(완료 보고 재검증 DELTA 가 가장 최근이면 그것).

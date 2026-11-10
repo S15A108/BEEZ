@@ -286,6 +286,65 @@ public class DocumentIndexWorker {
         result.put("elapsed_ms", (System.nanoTime() - start) / 1_000_000); return result;
     }
 
+    /** 비비 질문(BEE-A01)용 근거 청크 한 건. 모두 현재 baseline 의 문서 버전에서 나온다 */
+    public record ChunkEvidence(long chunkId, long documentId, long documentVersionId, int versionNo, String chunkKey,
+                                String text, Map<String, Object> locator, String title) {
+    }
+
+    /** 허용 집합(현재 baseline 의 문서 버전)과 그 안에서 질문과 가까운 청크 */
+    public record Retrieval(long baselineId, List<Long> documentVersionIds, List<ChunkEvidence> evidence) {
+    }
+
+    /** 문서 색인에 쓴 활성 임베딩 프로필. 질문 검색도 같은 프로필만 쓴다 */
+    public String embeddingProfile() { return properties.embeddingProfile(); }
+
+    /**
+     * 비비 질문용 검색. {@link #search} 와 같은 규칙이다: 현재 baseline 의 문서 + READY 색인 + 활성 프로필을 먼저 제한한 뒤
+     * 그 안에서 거리 순 top-k 를 구한다(전역 top-k 후 사후 필터가 아니다). 사용자가 문서 집합을 고르지 못한다.
+     * baseline 이 없거나 색인이 덜 끝났으면 409 index_not_ready, 검색 중 baseline 이 바뀌면 409 baseline_changed.
+     * 정상 0건은 빈 목록이다.
+     */
+    public Retrieval retrieveEvidence(long project, String query, int limit) {
+        configured();
+        Long baseline = jdbc.sql("SELECT current_baseline_id FROM project WHERE id=:project").param("project", project).query(Long.class).optional().orElse(null);
+        if (baseline == null) throw conflict("index_not_ready");
+        requireReadyIndex(baseline);
+        List<Long> versions = jdbc.sql("""
+                SELECT b.document_version_id FROM baseline_document b
+                JOIN document d ON d.id=b.document_id AND d.project_id=:project
+                WHERE b.baseline_id=:baseline ORDER BY b.document_version_id
+                """).param("project", project).param("baseline", baseline).query(Long.class).list();
+        var queryInput = Map.<String, Object>of("project_id", Long.toString(project), "request_key", "bee-query-" + UUID.randomUUID(),
+                "embedding_profile_id", properties.embeddingProfile(), "purpose", "QUERY", "model", properties.embeddingModel(),
+                "dimension", properties.embeddingDimension(), "texts", List.of(Map.of("key", "query", "text", query)));
+        var embeddings = vectors(call(Map.of("project_id", project), queryInput, true), "QUERY");
+        if (!embeddings.keySet().equals(Set.of("query"))) throw invalid("invalid_embedding_keys");
+        var found = rows("""
+                WITH allowed_chunks AS MATERIALIZED (
+                SELECT c.id,c.text,c.locator::text AS locator,c.chunk_key,c.embedding,d.title,d.id AS document_id,v.id AS document_version_id,v.version_no
+                FROM baseline_document b
+                JOIN document d ON d.id=b.document_id AND d.project_id=:project
+                JOIN document_version v ON v.id=b.document_version_id AND v.document_id=d.id
+                JOIN document_index_manifest m ON m.document_version_id=v.id AND m.embedding_profile_id=:profile
+                JOIN document_chunk c ON c.document_version_id=v.id
+                WHERE b.baseline_id=:baseline AND c.chunk_key IS NOT NULL )
+                SELECT a.id,a.text,a.locator,a.chunk_key,a.title,a.document_id,a.document_version_id,a.version_no
+                FROM allowed_chunks a ORDER BY a.embedding <=> cast(:vector AS vector),a.id LIMIT :limit
+                """, Map.of("project", project, "baseline", baseline, "profile", properties.embeddingProfile(),
+                "vector", embeddings.get("query"), "limit", limit));
+        Long finalBaseline = jdbc.sql("SELECT current_baseline_id FROM project WHERE id=:project").param("project", project).query(Long.class).single();
+        if (!baseline.equals(finalBaseline)) throw conflict("baseline_changed");
+        List<ChunkEvidence> evidence = new ArrayList<>();
+        for (var row : found) {
+            Map<String, Object> locator = new LinkedHashMap<>(object(JSON.readValue(row.get("locator").toString(), Map.class)));
+            locator.putIfAbsent("type", "text_lines");
+            evidence.add(new ChunkEvidence(((Number) row.get("id")).longValue(), ((Number) row.get("document_id")).longValue(),
+                    ((Number) row.get("document_version_id")).longValue(), ((Number) row.get("version_no")).intValue(),
+                    row.get("chunk_key").toString(), row.get("text").toString(), locator, Objects.toString(row.get("title"), "")));
+        }
+        return new Retrieval(baseline, versions, evidence);
+    }
+
     private void requireReadyIndex(long baseline) {
         if (baselines.countDocumentsWithoutReadyIndex(baseline, properties.embeddingProfile()) > 0) throw conflict("index_not_ready");
     }
