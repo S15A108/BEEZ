@@ -1,15 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { useForm } from 'react-hook-form'
+import { isAxiosError } from 'axios'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { BibiFace } from '@/components/BibiFace'
 import { beeApi } from '@/api/services'
-import {
-  getApiErrorCode,
-  getApiErrorMessage,
-  getApiErrorStatus,
-} from '@/api/error'
+import { getApiErrorCode, getApiErrorMessage } from '@/api/error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,20 +32,17 @@ type QuestionInput = z.infer<typeof questionSchema>
 type Ask = { question: string; scope: AskScope }
 
 function questionErrorMessage(error: unknown) {
-  const code = getApiErrorCode(error)
-  const status = getApiErrorStatus(error)
-  if (code === 'idempotency_conflict')
-    return '이미 사용한 요청이에요. 이전 답변은 다시 가져올 수 없어요. 다시 보내면 새 질문으로 처리되어 추가 호출이 발생할 수 있어요.'
-  if (code === 'draft_search_not_supported')
-    return '초안 포함 검색은 아직 지원하지 않아요. 승인된 문서를 선택해 다시 질문해 주세요.'
-  if (
-    error instanceof z.ZodError ||
-    code === 'ai_timeout' ||
-    code === 'ai_unavailable' ||
-    (error instanceof Error &&
-      (status === undefined || (status >= 500 && !code)))
-  )
-    return '이전 요청이 처리됐을 수 있어요. 답변을 확인할 수 없으며 다시 보내면 추가 호출이 발생할 수 있어요.'
+  if (isAxiosError(error)) {
+    const status = error.response?.status
+    if (
+      status === undefined ||
+      (status >= 500 &&
+        status < 600 &&
+        status !== 501 &&
+        getApiErrorCode(error) === undefined)
+    )
+      return '이전 요청이 처리됐을 수 있어요. 답변을 확인할 수 없으며 다시 보내면 추가 호출이 발생할 수 있어요.'
+  }
   return getApiErrorMessage(error)
 }
 
@@ -73,6 +67,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
     },
   })
   const {
+    control,
     register,
     handleSubmit,
     setValue,
@@ -82,6 +77,11 @@ export function BibiPanel({ projectId }: { projectId: string }) {
     resolver: zodResolver(questionSchema),
     defaultValues: { question: '' },
   })
+  const question = useWatch({ control, name: 'question' })
+  const isRetry =
+    mutation.isError &&
+    question.trim() === mutation.variables.question &&
+    scope === mutation.variables.scope
   // 보내면 입력칸을 바로 비우고, 실패하면 그사이 새로 쓴 글이 없을 때만 질문을 돌려준다.
   const send = ({ question }: QuestionInput) => {
     if (sending.current) return sending.current
@@ -271,11 +271,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               {...register('question')}
             />
             <Button type="submit" className="h-10 px-4" disabled={!!pending}>
-              {getApiErrorCode(mutation.error) === 'idempotency_conflict'
-                ? '새 질문으로 다시 보내기'
-                : mutation.isError
-                  ? '다시 보내기'
-                  : '보내기'}
+              {isRetry ? '다시 보내기' : '보내기'}
             </Button>
           </form>
           {errors.question && (
