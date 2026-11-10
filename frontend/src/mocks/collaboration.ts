@@ -1,3 +1,4 @@
+import { statusLabels } from '../lib/display'
 import { meetingSchema } from '../api/contracts/common'
 import type { MeetingEntry, Participant } from '../api/contracts/common'
 import {
@@ -306,7 +307,7 @@ export function collaborationRoutes(
               .map((task) => ({
                 id: task.validation!.id,
                 type: 'VALIDATION',
-                label: `계획 검증 ${task.validation!.status}`,
+                label: `검증 (${statusLabels[task.validation!.status] ?? task.validation!.status})`,
               })),
             ...[
               ...proposals,

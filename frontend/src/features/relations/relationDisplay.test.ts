@@ -49,6 +49,7 @@ describe('relationLabel', () => {
     ['BLOCKS', '선행'],
     ['RELATES', '관련'],
     ['COMPARED_WITH', '대조'],
+    ['CHECKED_AGAINST', '검증 기준'],
     ['DEPENDS_ON', '의존'],
     ['DEPENDENCY', '의존'],
     ['PROPOSED_FROM', '이 작업에서 나온 제안'],

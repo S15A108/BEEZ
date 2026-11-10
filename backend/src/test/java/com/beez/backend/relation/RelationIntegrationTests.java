@@ -420,7 +420,8 @@ class RelationIntegrationTests extends IntegrationTestSupport {
         List<String> edges = edges(byTask);
         assertThat(edges).contains("TASK:" + taskId + ">DESIGN_ITEM:" + api01 + ":READS:true",
                 "TASK:" + taskId + ">VALIDATION:" + validationId + ":VALIDATED_BY:true",
-                "VALIDATION:" + validationId + ">DESIGN_ITEM:" + api01 + ":READS:true");
+                "VALIDATION:" + validationId + ">DESIGN_ITEM:" + api01 + ":CHECKED_AGAINST:true");
+        assertThat(byTask.get("nodes").toString()).contains("검증 " + validationId + " (계획 통과)");
         assertThat(byTask.get("edges").get(0).get("design_item_version_id").asLong()).isEqualTo(api.currentVersionId("API-01"));
         assertThat(labels(byTask)).contains("T-1 로그인 화면", "API-01 GET /users");
 

@@ -204,6 +204,8 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
             assertThat(row.get("recipient_account_id")).isEqualTo(author.accountId());
             assertThat(row.get("ref_kind")).isEqualTo("DOCUMENT_VERSION");
             assertThat(row.get("document_id")).isEqualTo(document);
+            // 파일명이 아니라 문서 제목으로 알리고 해요체로 쓴다 (S15P31A108-370)
+            assertThat(row.get("title").toString()).startsWith("비비의 문서 검토가 끝났어요: ").doesNotContain(".md");
             assertThat(row.get("dedupe_key")).isEqualTo("document-review:" + review.id() + ":bee-review-done:to:" + author.accountId());
         });
 

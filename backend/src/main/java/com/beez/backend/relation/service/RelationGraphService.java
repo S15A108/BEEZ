@@ -48,6 +48,13 @@ public class RelationGraphService {
     static final String DESIGN_ITEM = "DESIGN_ITEM";
     static final String VALIDATION = "VALIDATION";
     static final String CHANGE_PROPOSAL = "CHANGE_PROPOSAL";
+    /** 검증 → 설계 항목. 검증 때 복사된 계획 참조 관계(구현·참고 등)는 검증이 한 일이 아니라서 쓰지 않는다 */
+    static final String CHECKED_AGAINST = "CHECKED_AGAINST";
+
+    /** 검증 상태 코드의 화면 용어. 프론트 statusLabels 와 같은 표다. 모르는 코드는 그대로 둔다 */
+    private static final Map<String, String> VALIDATION_STATUS_LABELS = Map.of(
+            "NOT_RUN", "검증 전", "RUNNING", "검증 중", "PASS", "계획 통과", "NEEDS_INPUT", "보완 필요",
+            "NEEDS_REVIEW", "합의 필요", "STALE", "재검증 필요", "ERROR", "검증 오류");
 
     private final ProjectAccessChecker access;
     private final RelationGraphRepository graph;
@@ -96,7 +103,7 @@ public class RelationGraphService {
                 for (Map<String, Object> ref : graph.validationDesignRefs(projectId, validationId)) {
                     long item = id(ref.get("design_item_id"));
                     g.node(DESIGN_ITEM, item);
-                    g.edge(VALIDATION, validationId, DESIGN_ITEM, item, (String) ref.get("relation"), true, null,
+                    g.edge(VALIDATION, validationId, DESIGN_ITEM, item, CHECKED_AGAINST, true, null,
                             id(ref.get("design_item_version_id")));
                 }
                 for (Map<String, Object> ref : graph.validationTaskRefs(projectId, validationId)) {
@@ -174,7 +181,7 @@ public class RelationGraphService {
         }
 
         void validationNode(long id, String status) {
-            nodes.put(VALIDATION + ":" + id, new RelationNodeResponse(Ids.str(id), VALIDATION, "검증 " + id + " (" + status + ")"));
+            nodes.put(VALIDATION + ":" + id, new RelationNodeResponse(Ids.str(id), VALIDATION, "검증 " + id + " (" + VALIDATION_STATUS_LABELS.getOrDefault(status, status) + ")"));
         }
 
         void proposalNode(long id, String key) {
