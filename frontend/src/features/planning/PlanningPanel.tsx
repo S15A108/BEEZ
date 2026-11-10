@@ -46,6 +46,9 @@ class StaleReviewError extends Error {}
 const STALE_REVIEW_MESSAGE =
   '검토 후 내용이 바뀌었어요. 창을 닫고 최신 내용을 다시 검토해 주세요.'
 
+const DRAFT_ACCEPTED =
+  '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.'
+
 interface Props {
   projectId: string
   isLeader: boolean
@@ -193,7 +196,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         planningApi.generateDrafts(projectId, {
           document_version_ids: versions.map((version) => version.id),
         }),
-      '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
+      DRAFT_ACCEPTED,
     )
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)

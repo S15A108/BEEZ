@@ -1270,3 +1270,97 @@ it('같은 제안의 승인 확인을 다시 열면 이전 미리 보기를 지�
     screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
   ).toBeEnabled()
 })
+
+it('실패한 분석 위에 다시 분석이 도는 중이면 이전 분석이 실패했다고 함께 알린다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.impact('101', '71')
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...base,
+    analysis_status: 'FAILED',
+    error_code: 'model_unavailable',
+    reanalysis: { run_id: '9' },
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText('다시 분석하는 중이에요. 이전 분석은 실패했어요.'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeDisabled()
+})
+
+async function stubDocumentProposal(keepItems: boolean) {
+  const base = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'get').mockResolvedValue({
+    ...base,
+    proposal: {
+      ...base.proposal,
+      items: keepItems ? base.proposal.items : [],
+      documents: [
+        {
+          document_id: '203',
+          base_document_version_id: '1',
+          proposed_document_version_id: '2',
+        },
+      ],
+    },
+  } as never)
+  return changesApi.impact('101', '71')
+}
+
+it('문서만 바꾸는 제안에는 영향 분석 버튼을 두지 않는다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await stubDocumentProposal(false)
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...base,
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'analysis_not_started',
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText(/문서만 바꾸는 제안은 영향 분석 대상이 아니에요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '영향 분석 시작' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '다시 분석' }),
+  ).not.toBeInTheDocument()
+})
+
+it('항목과 문서가 함께 든 제안은 확인된 관계를 볼 수 있게 분석 버튼을 둔다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await stubDocumentProposal(true)
+  const impact = vi.spyOn(changesApi, 'impact')
+  impact.mockResolvedValue({
+    ...base,
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'analysis_not_started',
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByRole('button', { name: '영향 분석 시작' }),
+  ).toBeEnabled()
+  // 분석 뒤: AI 후보는 없어도 확인된 관계는 보이고, 다시 분석도 할 수 있다.
+  impact.mockResolvedValue({
+    ...base,
+    explicit: [{ task_id: '501', design_item_id: '211' }],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'document_change_unavailable',
+    is_current: true,
+  })
+  await client.invalidateQueries({ queryKey: ['projects', '101', 'impact'] })
+  expect(
+    await screen.findByText(
+      /AI 후보는 볼 수 없지만 확인된 관계는 볼 수 있어요/,
+    ),
+  ).toBeInTheDocument()
+  expect(screen.getByText(/미배정/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeEnabled()
+})

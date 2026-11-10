@@ -377,6 +377,11 @@ public class DocumentApplicationService {
         var previous = replay(caller, project, operation, key, fp); if (previous.isPresent()) return previous.get();
         var run = one("SELECT * FROM document_processing WHERE document_version_id=:id FOR UPDATE", Map.of("id", version));
         if (List.of("PENDING", "RUNNING").contains(run.get("status"))) throw conflict("analysis_running");
+        // 서버 워커(PlanningQuestionRepository.nextRunnable)는 기준 설계가 있거나 버전이 DRAFT·APPROVED 가 아니면 질문을 만들지 않는다.
+        // 그런 버전의 실패한 실행을 PENDING 으로 되돌리면 아무도 집지 않아 화면이 '만드는 중'으로 영원히 남으므로 되돌리지 않는다.
+        if ("COMPLETED".equals(run.get("status")) && !questionGenerationAvailable(version)
+                && jdbc.sql("SELECT EXISTS(SELECT 1 FROM planning_question_run WHERE document_version_id=:id AND status='FAILED')")
+                        .param("id", version).query(Boolean.class).single()) throw conflict("question_generation_unavailable");
         // 분석은 끝났는데 질문 생성만 실패했다면 질문 생성만 다시 대기시킨다.
         if ("COMPLETED".equals(run.get("status")) && jdbc.sql("UPDATE planning_question_run SET status='PENDING',error_code=null,retryable=false,lease_until=null,updated_at=now() WHERE document_version_id=:id AND status='FAILED'")
                 .param("id", version).update() == 1) {
@@ -386,6 +391,14 @@ public class DocumentApplicationService {
         jdbc.sql("UPDATE document_processing SET attempt=attempt+1,automatic_recoveries=0,status='PENDING',source_status='PENDING',index_status='PENDING',error_code=null,lease_token=null,lease_until=null,updated_at=now() WHERE document_version_id=:id")
                 .param("id", version).update();
         return remember(caller, project, operation, key, fp, analysis(caller, project, id, version));
+    }
+
+    /** 워커가 이 문서 버전의 보완 질문을 만들 수 있는지. nextRunnable 의 대상 조건(기준 설계 없음, 버전 DRAFT·APPROVED, 보관 안 됨)과 같다. */
+    private boolean questionGenerationAvailable(long version) {
+        return jdbc.sql("""
+                SELECT EXISTS(SELECT 1 FROM document_version v JOIN document d ON d.id=v.document_id JOIN project p ON p.id=d.project_id
+                               WHERE v.id=:id AND v.status IN ('DRAFT','APPROVED') AND p.archived_at IS NULL AND p.current_baseline_id IS NULL)
+                """).param("id", version).query(Boolean.class).single();
     }
 
     public Map<String, Object> search(CallerContext caller, long project, String query, String mode, String domain,

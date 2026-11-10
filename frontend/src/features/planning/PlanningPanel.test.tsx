@@ -601,3 +601,53 @@ it('서버가 내용을 거절하면 서버 문구를 폼에만 보이고 위쪽
   ).toBeVisible()
   expect(screen.queryByText(/최신 상태와 권한을 확인해 주세요/)).toBeNull()
 })
+
+it('보완 질문을 오래 만드는 중이면 만드는 문서를 알리고 상태를 다시 확인할 길을 준다 (S15P31A108-359)', async () => {
+  const calls = await stubAnalyses((kind) =>
+    kind === 'PLAN'
+      ? { status: 'FAILED', error_code: 'ai_unavailable', retryable: true }
+      : kind === 'ERD'
+        ? undefined
+        : { status: 'COMPLETED' },
+  )
+  renderPanel()
+  expect(
+    await screen.findByText(/기획안 v1 보완 질문을 만들지 못했어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '질문 다시 만들기' }),
+  ).toBeInTheDocument()
+  expect(
+    await screen.findByText(/만드는 중인 문서: ERD v1/),
+  ).toBeInTheDocument()
+  // 처음에는 오래 걸린다는 안내가 없고, 같은 상태가 이어지면 안내와 확인 버튼이 생긴다.
+  expect(screen.queryByText(/평소보다 오래 걸리고 있어요/)).toBeNull()
+  const button = await screen.findByRole('button', { name: '상태 다시 확인' })
+  const before = calls.ERD
+  await userEvent.click(button)
+  await waitFor(() => expect(calls.ERD).toBeGreaterThan(before))
+  // 실패한 문서의 다시 만들기는 그대로 남는다.
+  expect(
+    screen.getByRole('button', { name: '질문 다시 만들기' }),
+  ).toBeInTheDocument()
+})
+
+it('보완 질문 생성이 전부 실패한 상태에서도 초안 만들기를 누르면 접수 안내가 보인다 (S15P31A108-359)', async () => {
+  await stubAnalyses(() => ({
+    status: 'FAILED',
+    error_code: 'ai_unavailable',
+    retryable: true,
+  }))
+  const user = renderPanel()
+  expect(
+    (await screen.findAllByText(/보완 질문을 만들지 못했어요/)).length,
+  ).toBe(4)
+  await user.click(
+    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+  )
+  expect(
+    await screen.findByText(
+      '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
+    ),
+  ).toBeInTheDocument()
+})
