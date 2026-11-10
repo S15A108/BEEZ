@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
@@ -150,6 +150,142 @@ it('승인본 근거는 지금처럼 그 승인본으로 연다', async () => {
   expect(await screen.findByText('선택한 문서의 본문')).toBeInTheDocument()
   expect(screen.getByText(/현재 기준 v1/)).toBeInTheDocument()
   expect(screen.queryByText(/를 보고 있어요/)).not.toBeInTheDocument()
+})
+
+it('인용을 누르면 지정 버전의 확인된 원문을 강조하고 그 위치로 이동한다', async () => {
+  const cited = {
+    ...version,
+    content: '첫 줄\n두 번째 줄\n정확한 인용 문장\n마지막 줄',
+  }
+  const approved = {
+    ...version,
+    id: '22',
+    version_no: 2,
+    status: 'APPROVED' as const,
+    content: '현재 승인본',
+  }
+  vi.mocked(documentsApi.get).mockImplementation(
+    async (_project, _document, options) => ({
+      document: { ...focusedDocument, approved_version: approved },
+      version: options?.version_no === 1 ? cited : approved,
+    }),
+  )
+  vi.mocked(documentsApi.versions).mockResolvedValue({
+    items: [approved, cited],
+    has_more: false,
+  })
+  const original = HTMLElement.prototype.scrollIntoView
+  const scroll = vi.fn()
+  HTMLElement.prototype.scrollIntoView = scroll
+  try {
+    const links = render(
+      <SourceLinks
+        sources={[
+          {
+            document_id: '2',
+            document_version_id: '21',
+            version_no: 1,
+            location: '2~4행',
+          },
+        ]}
+        citation={{
+          document_id: '2',
+          document_version_id: '21',
+          start_line: 2,
+          end_line: 4,
+          quote: '정확한 인용 문장',
+        }}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+    links.unmount()
+    mount()
+    const excerpt = await screen.findByRole('region', {
+      name: '확인된 인용 원문',
+    })
+    expect(within(excerpt).getByText('정확한 인용 문장').tagName).toBe('MARK')
+    expect(excerpt).toHaveTextContent('3~3행')
+    expect(excerpt).toHaveTextContent('첫 줄')
+    expect(excerpt).toHaveTextContent('마지막 줄')
+    expect(scroll).toHaveBeenCalledWith({ block: 'center' })
+    await userEvent.click(
+      within(excerpt).getByRole('button', { name: '형식 적용 본문 보기' }),
+    )
+    expect(
+      within(excerpt).queryByText('정확한 인용 문장', { selector: 'mark' }),
+    ).not.toBeInTheDocument()
+    await userEvent.click(
+      within(excerpt).getByRole('button', { name: '원문과 인용 보기' }),
+    )
+    expect(within(excerpt).getByText('정확한 인용 문장').tagName).toBe('MARK')
+    expect(documentsApi.get).toHaveBeenCalledWith('10', '2', { version_no: 1 })
+    await userEvent.selectOptions(screen.getByLabelText('열람할 버전'), '2')
+    expect(await screen.findByText('현재 승인본')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('region', { name: '확인된 인용 원문' }),
+    ).not.toBeInTheDocument()
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original
+  }
+})
+
+it('인용 범위 안에 같은 문장이 둘이면 위치를 추측하거나 강조하지 않는다', async () => {
+  const ambiguous = { ...version, content: '첫 줄\n같은 문장\n같은 문장' }
+  vi.mocked(documentsApi.get).mockResolvedValue({
+    document: focusedDocument,
+    version: ambiguous,
+  })
+  const links = render(
+    <SourceLinks
+      sources={[
+        {
+          document_id: '2',
+          document_version_id: '21',
+          version_no: 1,
+          location: '2~3행',
+        },
+      ]}
+      citation={{
+        document_id: '2',
+        document_version_id: '21',
+        start_line: 2,
+        end_line: 3,
+        quote: '같은 문장',
+      }}
+    />,
+  )
+  await userEvent.click(screen.getByRole('button', { name: /문서 2 v1/ }))
+  links.unmount()
+  mount()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '하나로 확인할 수 없어요',
+  )
+  expect(
+    screen.queryByRole('region', { name: '확인된 인용 원문' }),
+  ).not.toBeInTheDocument()
+})
+
+it('인용과 다른 문서 버전으로 연결되는 버튼은 열 수 없다', () => {
+  render(
+    <SourceLinks
+      sources={[
+        {
+          document_id: '2',
+          document_version_id: '22',
+          version_no: 2,
+          location: '1행',
+        },
+      ]}
+      citation={{
+        document_id: '2',
+        document_version_id: '21',
+        start_line: 1,
+        end_line: 1,
+        quote: '원문',
+      }}
+    />,
+  )
+  expect(screen.getByRole('button', { name: /문서 2 v2/ })).toBeDisabled()
 })
 
 // PR #218 리뷰: 인용한 버전 번호를 찾기 전에는 문서를 부르지 않는다(승인본으로 넘어가지 않는다).
