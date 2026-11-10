@@ -144,8 +144,8 @@ public class PlanningQuestionGenerator {
         payload.put("kind", new DocumentKindMapper().convertToEntityAttribute(job.get("type").toString()).name());
         payload.put("media_type", job.get("storage_key").toString().endsWith(".md") ? "text/markdown" : "text/plain");
         payload.put("content", job.get("content_text"));
-        payload.put("content_hash", job.get("content_hash"));
-        payload.put("text_hash", job.get("text_hash"));
+        payload.put("content_hash", AiHashes.wire(job.get("content_hash")));
+        payload.put("text_hash", AiHashes.wire(job.get("text_hash")));
         payload.put("normalization_version", "utf8-lf-v1");
         payload.put("parser_profile", job.get("storage_key").toString().endsWith(".md") ? "markdown-v1" : "plain-v1");
         payload.put("mode", "MODEL");
@@ -166,7 +166,7 @@ public class PlanningQuestionGenerator {
         if (!(result.get("document") instanceof Map<?, ?> doc)
                 || !job.get("document_id").toString().equals(String.valueOf(doc.get("document_id")))
                 || !job.get("document_version_id").toString().equals(String.valueOf(doc.get("document_version_id")))
-                || !job.get("text_hash").equals(result.get("text_hash"))) {
+                || !AiHashes.same(job.get("text_hash"), result.get("text_hash"))) {
             throw new IllegalArgumentException("다른 문서 버전의 결과");
         }
         if (!(result.get("candidates") instanceof List<?> candidateList) || !(result.get("questions") instanceof List<?> questionList)) {

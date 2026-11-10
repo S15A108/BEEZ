@@ -174,7 +174,10 @@ class DesignDraftIntegrationTest extends PlanningTestSupport {
 
         ArgumentCaptor<Map<String, Object>> sent = captor();
         verify(ai).designDrafts(sent.capture());
-        assertThat(sent.getValue()).containsEntry("project_id", "" + project).containsEntry("text_hash", TEXT_HASH).containsKey("request_key");
+        assertThat(sent.getValue()).containsEntry("project_id", "" + project).containsEntry("text_hash", TEXT_HASH).containsEntry("content_hash", CONTENT_HASH).containsKey("request_key");
+        // 저장·스냅샷은 sha256: 접두어 형태지만 AI 스키마는 접두어 없는 hex 64자만 받는다(S15P31A108-373).
+        assertThat((String) sent.getValue().get("content_hash")).matches(HEX64);
+        assertThat((String) sent.getValue().get("text_hash")).matches(HEX64);
         assertThat((List<?>) sent.getValue().get("existing_items")).hasSize(1);
         assertThat(count("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND NOT failed", project)).isEqualTo(1);
 
