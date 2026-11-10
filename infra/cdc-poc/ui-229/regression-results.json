@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-10",
+  "timezone": "Asia/Seoul",
+  "frontend_check": {
+    "command": "npm run check",
+    "lint": "passed",
+    "format": "passed",
+    "test_files": 124,
+    "tests_passed": 1002,
+    "typescript_and_vite_build": "passed",
+    "log_sha256": "11671b0b7db2d90fec977314ad12c883ede1c01a0bd6c6ba916216898a535ee5"
+  },
+  "browser_regression": {
+    "command": "BEEZ_E2E_PORT=5199 npm run test:e2e",
+    "browser": "chromium",
+    "tests_passed": 34,
+    "api": "existing mock fixtures; live backend evidence is recorded separately",
+    "log_sha256": "6bc0afce046676f85857042c74ea0e8c9a27a8d6155d1d5bdd4c3f53887e2a6b"
+  },
+  "prometheus_rule_regression": {
+    "command": "promtool test rules beez_test.yml",
+    "image": "repository-pinned Prometheus image from infra/monitoring/compose.yaml",
+    "result": "SUCCESS",
+    "log_sha256": "97155500dfaeb03dbcded24ae1575a3347e64600777edd46154817c2a56ae07b"
+  }
+}

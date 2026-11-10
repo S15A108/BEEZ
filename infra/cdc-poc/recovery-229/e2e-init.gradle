@@ -1,0 +1,5 @@
+gradle.beforeProject { p ->
+    p.plugins.withId('java') {
+        p.sourceSets.test.java.srcDir(System.getenv('BEEZ_229_TEST_SOURCE'))
+    }
+}

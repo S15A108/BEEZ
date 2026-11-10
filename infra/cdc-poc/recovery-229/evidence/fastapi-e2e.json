@@ -1,0 +1,11 @@
+{
+  "mode": "fastapi",
+  "returncode": 0,
+  "tests": {
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "provider_observations": []
+}

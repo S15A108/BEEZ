@@ -60,6 +60,7 @@ class PublishedAnalysisDispatcherTest {
     @Test void failedWorkerCanBeDispatchedAgainByARecoveryScan() throws Exception {
         var failed = new CountDownLatch(1);
         var retried = new CountDownLatch(1);
+        var releaseRetry = new CountDownLatch(1);
         var calls = new AtomicInteger();
         doAnswer(call -> {
             if (calls.incrementAndGet() == 1) {
@@ -67,22 +68,28 @@ class PublishedAnalysisDispatcherTest {
                 throw new IllegalStateException("temporary processing failure");
             }
             retried.countDown();
+            if (!releaseRetry.await(5, TimeUnit.SECONDS)) throw new AssertionError("retry worker was not released");
             return null;
         }).when(processor).process(7L);
         when(repository.databaseTime()).thenReturn(NOW);
         when(repository.findCandidates(NOW, 32, null))
                 .thenReturn(new IntakeRecoveryScanPort.Page(List.of(candidate(7)), null));
 
-        dispatcher.ensureSafeToAcknowledge("7");
-        assertThat(failed.await(5, TimeUnit.SECONDS)).isTrue();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        // The first worker may still be unwinding. Repeated scans model the scheduler.
-        while (retried.getCount() != 0 && System.nanoTime() < deadline) {
-            dispatcher.recover();
-            retried.await(20, TimeUnit.MILLISECONDS);
+        try {
+            dispatcher.ensureSafeToAcknowledge("7");
+            assertThat(failed.await(5, TimeUnit.SECONDS)).isTrue();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            // Keep the retry in flight until verification, so a scan racing with its
+            // completion cannot start a third worker against the repeated fixture row.
+            while (retried.getCount() != 0 && System.nanoTime() < deadline) {
+                dispatcher.recover();
+                retried.await(20, TimeUnit.MILLISECONDS);
+            }
+            assertThat(retried.getCount()).isZero();
+            verify(processor, times(2)).process(7L);
+        } finally {
+            releaseRetry.countDown();
         }
-        assertThat(retried.getCount()).isZero();
-        verify(processor, times(2)).process(7L);
     }
 
     @Test void fullQueueResumesBeforeRejectedCandidateAndLaterRecoveryProcessesIt() throws Exception {
