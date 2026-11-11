@@ -7,6 +7,7 @@ import type {
   ContextRecord,
   Finding,
   TaskDetail,
+  TaskPlanInput,
   Validation,
 } from '../api/contracts/common'
 import {
@@ -151,6 +152,42 @@ export function reassignTask(
   task.assignee_member_id = memberId
   task.lock_version++
   task.updated_at = now()
+}
+
+function createTask(
+  context: MockContext,
+  plan: TaskPlanInput,
+  assigneeMemberId: string | undefined,
+): TaskDetail {
+  const project = requireProject(context)
+  const { database } = context
+  if (plan.context_packet_id) findById(project.packets, plan.context_packet_id)
+  checkPlanRefs(context, plan)
+  const taskId = nextId(database)
+  const revision = {
+    id: nextId(database),
+    task_id: taskId,
+    revision_no: 1,
+    plan,
+    created_at: now(),
+    created_by: requireAccount(context).id,
+  }
+  const task: TaskDetail = {
+    id: taskId,
+    key: `TASK-${String(project.tasks.length + 1).padStart(3, '0')}`,
+    project_id: project.project.id,
+    assignee_member_id: assigneeMemberId,
+    status: 'READY',
+    lock_version: 1,
+    current_plan_revision: revision,
+    validation_status: 'NOT_RUN',
+    created_at: now(),
+    updated_at: now(),
+  }
+  project.tasks.push(task)
+  project.revisions.push(copy(revision))
+  activity(context, 'TASK_CREATED', { task_id: taskId })
+  return task
 }
 
 // 개발 서버에서 검증 실행 실패 화면을 눈으로 보려는 스위치(목 전용, live 빌드에는 들어가지 않는다).
@@ -379,36 +416,88 @@ export function taskRoutes(
     ? findById(project.validations, params.validation_id)
     : undefined
   switch (id) {
-    case 'TSK-A01': {
-      const plan = taskPlanInputSchema.parse(body)
-      const taskId = nextId(database)
-      const revision = {
-        id: nextId(database),
-        task_id: taskId,
-        revision_no: 1,
-        plan,
-        created_at: now(),
-        created_by: requireAccount(context).id,
+    case 'TSK-A01':
+      return {
+        status: 201,
+        data: createTask(
+          context,
+          taskPlanInputSchema.parse(body),
+          context.member!.id,
+        ),
       }
-      const next: TaskDetail = {
-        id: taskId,
-        key: `TASK-${String(project.tasks.length + 1).padStart(3, '0')}`,
-        project_id: project.project.id,
-        assignee_member_id: context.member!.id,
-        status: 'READY',
-        lock_version: 1,
-        current_plan_revision: revision,
-        validation_status: 'NOT_RUN',
-        created_at: now(),
-        updated_at: now(),
+    case 'TSK-A09': {
+      if (!project.task_breakdown) {
+        const baseline = project.baselines.at(-1)
+        if (!baseline)
+          fail(409, 'baseline_missing', '먼저 첫 기준 설계를 만들어 주세요.')
+        const items = baseline.items.map((ref) =>
+          findById(project.items, ref.design_item_version_id),
+        )
+        if (!items.length)
+          fail(409, 'baseline_missing', '승인된 설계 항목이 필요해요.')
+        const taskIds = items.slice(0, 8).map((item) => {
+          const role = item.kind === 'REQUIREMENT' ? '프론트엔드' : '백엔드'
+          const member = project.members.find(
+            (entry) => entry.role_label === role,
+          )
+          const subject =
+            typeof item.content.title === 'string'
+              ? item.content.title
+              : item.key
+          const title = `${subject} 구현`
+          const task = createTask(
+            context,
+            {
+              title,
+              goal: `${subject}의 승인된 설계를 구현한다.`,
+              approach: '참조한 설계의 조건을 확인하고 구현한다.',
+              included_scope: [subject],
+              excluded_scope: [],
+              completion_criteria: ['승인 설계와 동작이 일치하는지 검증한다.'],
+              design_refs: [
+                {
+                  design_item_id: item.design_item_id,
+                  design_item_version_id: item.id,
+                  relation: 'IMPLEMENTS',
+                },
+              ],
+              dependency_task_ids: [],
+              unlinked: [],
+              no_contract_change: true,
+            },
+            member?.id,
+          )
+          if (member && member.id !== context.member?.id) {
+            database.notifications.push({
+              id: nextId(database),
+              account_id: member.account_id,
+              project_id: project.project.id,
+              type: 'TASK_ASSIGNED',
+              title: '새 작업을 맡았어요.',
+              body: title,
+              target_type: 'TASK',
+              target_id: task.id,
+              created_at: now(),
+            })
+          }
+          return task.id
+        })
+        project.task_breakdown = { baseline_id: baseline.id, task_ids: taskIds }
       }
-      if (plan.context_packet_id)
-        findById(project.packets, plan.context_packet_id)
-      checkPlanRefs(context, plan)
-      project.tasks.push(next)
-      project.revisions.push(copy(revision))
-      activity(context, 'TASK_CREATED', { task_id: taskId })
-      return { status: 201, data: next }
+      return {
+        data: {
+          baseline_id: project.task_breakdown.baseline_id,
+          tasks: project.task_breakdown.task_ids.map((taskId) => {
+            const task = findById(project.tasks, taskId)
+            return {
+              id: task.id,
+              key: task.key,
+              title: task.current_plan_revision.plan.title,
+              assignee_member_id: task.assignee_member_id,
+            }
+          }),
+        },
+      }
     }
     case 'TSK-A02': {
       // 11-04 사용자 결정: status는 여러 번 주면 그중 하나, unassigned=true면 담당자 없는 작업만. 둘 다 AND다.

@@ -367,6 +367,16 @@ export function DocumentsPanel({
       {/* 머리 줄(상태 칩·설명·'변경 제안 쓰기')은 두지 않는다. 시작 전에는 필수 문서 빈 칸으로 등록하고,
           시작 뒤에는 문서를 열어 '수정 제안하기'로 간다(PNL-02-v2 10-29). 검색칸은 사용자 결정으로 둔다. */}
       <SearchBar value={query} onSearch={setQuery} />
+      {started && isLeader && !query && (
+        <Button
+          className="justify-self-start"
+          variant="outline"
+          onClick={() => openPane('planning')}
+        >
+          <Sparkles />
+          작업 분해·배정
+        </Button>
+      )}
       {query ? (
         <SearchResults
           projectId={projectId}

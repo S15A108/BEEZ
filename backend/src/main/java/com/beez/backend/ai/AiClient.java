@@ -171,6 +171,11 @@ public class AiClient {
         return assignmentRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
     }
 
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> taskBreakdown(java.util.Map<String, Object> input) {
+        return draftRest.post().uri("/v1/bee/task-breakdown").body(input).retrieve().body(java.util.Map.class);
+    }
+
     /**
      * AI-A05 비비 질문 답변 ({@code POST /v1/bee/chat}, S15P31A108-135 계약). 답변 모델과 문장 판정 모델을 차례로 부르므로
      * 읽기 제한을 호출마다 받는다(질문 한 건의 남은 시간 예산에서 정한다). 실패 분류는 부르는 쪽이 한다.
