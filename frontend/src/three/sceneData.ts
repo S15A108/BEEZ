@@ -64,6 +64,7 @@ export function officeSceneSnapshot(
     events: [],
     tasks: tasks.map((task) => ({
       id: task.id,
+      key: task.key,
       title: task.title,
       description: task.description ?? '',
       scope: '',

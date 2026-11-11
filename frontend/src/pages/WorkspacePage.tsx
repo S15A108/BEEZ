@@ -22,6 +22,7 @@ import { usePresenceReporter } from '@/features/presence/usePresenceReporter'
 import { WorkspaceHud } from '@/features/workspace/WorkspaceHud'
 import { SettingsDialog } from '@/features/workspace/SettingsDialog'
 import { agentWorkQuery, sceneQuery } from '@/features/workspace/sceneQuery'
+import { useOfficeScreens } from '@/features/workspace/useOfficeScreens'
 import {
   agentConnectionsQuery,
   useAgentStatusOf,
@@ -123,6 +124,12 @@ function Workspace({ projectId }: { projectId: string }) {
   // (S15P31A108-341). 없는 API이거나 아직 못 받았으면 작업 현황의 세션으로 어림한다.
   const statusOf = useAgentStatusOf(projectId)
   const connectionsKnown = !!useQuery(agentConnectionsQuery(projectId)).data
+  // 사무실 메모 벽·관계 TV·대시보드에 그릴 프로젝트 상태(D47). 업무 창이 열린 동안은 새로 부르지 않는다.
+  const screens = useOfficeScreens(
+    projectId,
+    query.data?.project.current_baseline?.version_no,
+    pane === null,
+  )
   const sceneAgents = useMemo<SceneAgent[]>(
     () => [
       { id: 'bibi', name: '비비', kind: 'lead', color: '#f5b800' },
@@ -181,6 +188,7 @@ function Workspace({ projectId }: { projectId: string }) {
     () =>
       (query.data?.tasks.items ?? []).map((task) => ({
         id: task.id,
+        key: task.key,
         title: task.current_plan_revision.plan.title,
         state: task.status,
         // 담당자 없는(미배정) 작업은 사무실에서 누구의 자리에도 두지 않는다.
@@ -249,6 +257,8 @@ function Workspace({ projectId }: { projectId: string }) {
                     : openPane('settings', 'team')
                 }
                 onTaskSelect={(id) => openPane('tasks', id)}
+                onPaneSelect={openPane}
+                screens={screens}
                 className="absolute inset-0 h-full w-full"
               />
             </Suspense>

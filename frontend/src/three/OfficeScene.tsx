@@ -34,8 +34,9 @@ import { keepsSpace, OfficeLifeSimulation } from './office/office-life'
 import { buildOfficeWork, officeHomeSeats } from './office/office-work'
 import { findPath } from './office/path'
 import { officeDesignOf, type OfficeTime } from './office/officeLook'
+import type { OfficeScreens } from './office/office-screens'
 import { officeSceneAgents, officeSceneSnapshot } from './sceneData'
-import type { SceneAgent, SceneProject, SceneTask } from './types'
+import type { SceneAgent, SceneProject, SceneTask, Selection } from './types'
 
 export interface OfficeSceneProps {
   project: Pick<SceneProject, 'name' | 'id'>
@@ -51,6 +52,13 @@ export interface OfficeSceneProps {
   outdoor: boolean
   onAgentSelect: (id: string) => void
   onTaskSelect: (id: string) => void
+  /** 메모 벽·관계 TV·대시보드를 누르면 그 업무 창을 연다(focus는 고를 항목) */
+  onPaneSelect?: (
+    pane: Extract<Selection, { type: 'pane' }>['id'],
+    focus?: string,
+  ) => void
+  /** 사무실 화면 소품에 그릴 프로젝트 상태(D47) */
+  screens?: OfficeScreens
   onOutdoorChange?: (outdoor: boolean) => void
   onHintChange?: (hint: string | null) => void
   phase?: 0 | 1 | 2 | 3 | 4
@@ -201,6 +209,16 @@ function OfficeRuntime(
       }
       if (hit.workHit?.target.type === 'task') {
         latest.current.props.onTaskSelect(hit.workHit.target.id)
+        return true
+      }
+      if (
+        hit.workHit?.target.type === 'pane' &&
+        latest.current.props.onPaneSelect
+      ) {
+        latest.current.props.onPaneSelect(
+          hit.workHit.target.id,
+          hit.workHit.target.focus,
+        )
         return true
       }
       return false
@@ -567,6 +585,7 @@ function OfficeRuntime(
       firstPersonId: state.props.viewMode === 'first' ? me.id : undefined,
       playerId: me.id,
       work: state.work,
+      screens: state.props.screens,
       time: state.props.time,
     })
     const nextHint =
