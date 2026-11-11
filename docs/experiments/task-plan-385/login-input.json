@@ -1,0 +1,160 @@
+{
+  "task": {
+    "title": "로그인",
+    "memo": null
+  },
+  "excerpts": [
+    {
+      "excerpt_id": "c257",
+      "document_type": "API_SPEC",
+      "version_no": 1,
+      "location": "API 명세서 · 34~48행",
+      "text": "| 메서드 | URI | 설명 | 인증 | 요구사항 |\n| --- | --- | --- | --- | --- |\n| POST | /auth/guest | 게스트 로그인 | X | FR-USR-01 |\n| POST | /auth/refresh | 토큰 재발급 | Refresh | FR-USR-04 |\n| POST | /auth/logout | 로그아웃 (Refresh 삭제) | O | FR-USR-04 |\n| GET | /users/me | 내 정보 · 전적 요약 | O | FR-USR-03 |\n| GET | /users/me/matches?mode=&page=&size= | 내 최근 경기 | O | FR-REC-01 |\n| POST | /matches | 싱글 · vs AI 경기 시작 (matchId, 시드 발급) | O | FR-SOL-01, FR-AI-04 |\n| POST | /matches/{matchId}/result | 싱글 · vs AI 결과 저장 | O | FR-SOL-02, FR-AI-05 |\n| GET | /matches/{matchId} | 경기 상세 (결과 화면) | O | FR-REC-02 |\n| GET | /rankings/solo?limit=10 | 싱글 랭킹 TOP N + 내 순위 | O | FR-SOL-03 |\n| POST | /rooms | 방 생성 (게임 코드 · 초대 URL) | O | FR-ROM-01 |\n| GET | /rooms/{roomCode} | 방 조회 (입장 전 확인) | O | FR-ROM-02 |\n| POST | /rooms/{roomCode}/join | 방 입장 | O | FR-ROM-02 |\n| POST | /rooms/{roomCode}/leave | 방 퇴장 (방장이면 방 삭제) | O | FR-ROM-03 |\n"
+    },
+    {
+      "excerpt_id": "c180",
+      "document_type": "REQUIREMENTS",
+      "version_no": 1,
+      "location": "요구사항 명세서 · 11~17행",
+      "text": "| ID | 요구사항 | 상세 | 우선순위 | 담당 |\n| --- | --- | --- | --- | --- |\n| FR-USR-01 | 게스트 로그인 | 닉네임(2\\~10자, 한글 · 영문 · 숫자)만 입력하면 게스트 계정을 만들고 Access Token을 발급한다 | Must | BE |\n| FR-USR-02 | 닉네임 식별 | 닉네임 중복을 허용하고 표시용 4자리 태그(#0421)를 붙인다. 태그는 동일 닉네임 내에서 고유해야 하며, 생성 시 중복 여부를 확인하고 이미 사용 중인 태그와 충돌하면 재생성한다 | Must | BE |\n| FR-USR-03 | 내 정보 조회 | 닉네임, 태그, 최고 점수, vs AI 및 친구 대전의 모드별 승패를 조회한다. 승패가 없는 싱글 모드는 승패 집계에서 제외한다 | Must | BE |\n| FR-USR-04 | 토큰 재발급 | Access 1시간, Refresh 7일(Redis 보관) | Should | BE |\n| FR-USR-05 | 소셜 로그인 | 카카오 OAuth 연동, 게스트 기록을 연동 계정으로 이전 | Could | BE · FE |\n"
+    },
+    {
+      "excerpt_id": "c179",
+      "document_type": "REQUIREMENTS",
+      "version_no": 1,
+      "location": "요구사항 명세서 · 9~9행",
+      "text": "### 계정 (USR)\n"
+    },
+    {
+      "excerpt_id": "c211",
+      "document_type": "ERD",
+      "version_no": 1,
+      "location": "ERD · 13~22행",
+      "text": "| 컨럼 | 타입 | 제약 | 설명 |\n| --- | --- | --- | --- |\n| id | BIGINT | PK, AUTO\\_INCREMENT | 회원 ID |\n| nickname | VARCHAR(20) | NOT NULL | 닉네임 (2\\~10자, 애플리케이션 검증: 한글·영문·숫자만 허용) |\n| tag | CHAR(4) | NOT NULL, UQ(nickname, tag) | 동명이인 구분 태그 (예: 0421) |\n| user\\_type | ENUM('GUEST','MEMBER') | NOT NULL, DEFAULT 'GUEST' | 계정 종류 |\n| provider | VARCHAR(20) | NULL | 소셜 제공자 (KAKAO), 게스트는 NULL |\n| provider\\_id | VARCHAR(100) | NULL, UQ(provider, provider\\_id) | 제공자 측 사용자 ID |\n| created\\_at | DATETIME(6) | NOT NULL | 가입 시각 |\n| last\\_login\\_at | DATETIME(6) | NULL | 마지막 로그인 |\n"
+    },
+    {
+      "excerpt_id": "c261",
+      "document_type": "API_SPEC",
+      "version_no": 1,
+      "location": "API 명세서 · 59~69행",
+      "text": "### POST /auth/guest — 게스트 로그인\n```json\n// Request\n{ \"nickname\": \"오션\" }\n// Response 201\n{ \"userId\": 12, \"nickname\": \"오션\", \"tag\": \"0421\",\n  \"accessToken\": \"eyJ...\", \"refreshToken\": \"eyJ...\", \"expiresIn\": 3600 }\n```\n오류: `INVALID_NICKNAME`(400) — 2\\~10자, 한글 · 영문 · 숫자가 아닐 때\n"
+    },
+    {
+      "excerpt_id": "c155",
+      "document_type": "PLAN",
+      "version_no": 1,
+      "location": "기획안 · 124~130행",
+      "text": "| 구분 | 3일 안에 (Must) | 이후 (Should · Could) |\n| --- | --- | --- |\n| 계정 | 게스트 닉네임 로그인 (JWT) | 소셜 로그인, 마이페이지 |\n| 싱글 | 마라톤, 점수 기록, 랭킹 TOP 10 | 추가 모드(40줄 스프린트 등) |\n| vs AI | 휴리스틱 AI 3단계 | 강화학습 모델 |\n| 친구 대전 | 게임 코드 · URL 초대, 단판, 공격 · 방해 줄, 승패 저장 | 3판 2선승, 재연결 복구, 관전 |\n| 운영 | EC2 1대 + docker-compose, 자동 배포 | 모니터링, 부하 테스트, 스케일 아웃 |\n"
+    },
+    {
+      "excerpt_id": "c136",
+      "document_type": "PLAN",
+      "version_no": 1,
+      "location": "기획안 · 26~28행",
+      "text": "- 회원가입 없이 닉네임만으로 게스트 플레이, 원하면 소셜 계정 연동\n- 휴리스틱 AI의 탐색 깊이와 실수 확률로 난이도를 나눠 '사람 같은' AI 상대 제공\n- 같은 시드의 7-bag으로 두 플레이어가 같은 블록 순서를 받아 공정한 대전\n"
+    },
+    {
+      "excerpt_id": "c210",
+      "document_type": "ERD",
+      "version_no": 1,
+      "location": "ERD · 11~11행",
+      "text": "## 1. users — 회원 (게스트 포함)\n"
+    },
+    {
+      "excerpt_id": "c147",
+      "document_type": "PLAN",
+      "version_no": 1,
+      "location": "기획안 · 84~94행",
+      "text": "| 화면 | 주요 요소 |\n| --- | --- |\n| 닉네임 · 로그인 | 닉네임 입력(게스트), 소셜 로그인 버튼 |\n| 로비 | 모드 선택 3개, 게임 코드 입력창, 내 전적 요약, 싱글 랭킹 TOP 10 |\n| AI 난이도 선택 | EASY / NORMAL / HARD 카드, 난이도별 내 전적 |\n| 대기실 | 코드 · URL 복사 버튼, 참가자 슬롯 2개, 준비 버튼, 라운드 설정(단판; 3판 2선승은 이후 범위) |\n| 게임 (싱글) | 보드, 홀드, 다음 블록 5개, 점수 · 레벨 · 라인, 일시정지 |\n| 게임 (대전) | 내 보드 + 상대(AI/친구) 보드, 받을 공격 게이지, 연결 상태 표시 |\n| 결과 | 승패, 점수 · APM · 보낸 공격, 재대결, 로비로 |\n| 마이페이지 | 모드별 전적, 최고 점수, 최근 경기, 계정 연동 |\n| 설정 | 키 바인딩, DAS · ARR, 효과음 · BGM 볼륨 |\n"
+    },
+    {
+      "excerpt_id": "c259",
+      "document_type": "API_SPEC",
+      "version_no": 1,
+      "location": "API 명세서 · 52~55행",
+      "text": "| 메서드 | URI | 설명 | 인증 | 요구사항 |\n| --- | --- | --- | --- | --- |\n| POST | /ai/v1/move | 다음 수 계산 | O | FR-AI-01, FR-AI-02 |\n| GET | /ai/v1/health | 상태 확인 | X | - |\n"
+    },
+    {
+      "excerpt_id": "c212",
+      "document_type": "ERD",
+      "version_no": 1,
+      "location": "ERD · 24~26행",
+      "text": "## 2. user\\_stats — 회원별 누적 전적\n경기 종료 시 갱신해 로비 · 마이페이지 조회를 빠르게 한다.\n"
+    },
+    {
+      "excerpt_id": "c152",
+      "document_type": "PLAN",
+      "version_no": 1,
+      "location": "기획안 · 110~116행",
+      "text": "| 영역 | 기술 |\n| --- | --- |\n| FE | React 18, TypeScript, Vite, Canvas 2D, @stomp/stompjs, Zustand |\n| BE | Java 17, Spring Boot 3, Spring WebSocket(STOMP), Spring Data JPA, Spring Security + JWT |\n| AI | Python 3.11, FastAPI, NumPy |\n| 데이터 | MySQL 8 (회원 · 경기 · 기록), Redis 7 (방 상태 · 게임 코드 · 랭킹) |\n| 인프라 | AWS EC2, Docker Compose, Nginx, GitHub Actions |\n"
+    }
+  ],
+  "design_items": [
+    {
+      "design_item_id": "11",
+      "kind": "CONSTRAINT",
+      "key": "CON-001",
+      "summary": "FRIEND 경기의 round_no는 해당 game_rooms 행의 round_count 범위 안에 있어야 하며, 같은 방에서 round_no를 중복 사용할 수 없다. — FRIEND 경기의 round_no는 해당 game_rooms 행의 round_count 범위 안에 있어야 하며, 같은 방에서 round_no를 중복 사용할 수 없다."
+    },
+    {
+      "design_item_id": "17",
+      "kind": "CONSTRAINT",
+      "key": "CON-002",
+      "summary": "상대 보드 반영 지연은 서버가 상대 클라이언트에 보드 갱신을 전송한 시점부터 해당 클라이언트가 갱신을 화면에 반영한 시점까지로 측정한다. 배포 구성과 같은 EC2 단일 서버 환경에서 데스크톱 브라우저 클라이언트 2개로 1:1 대전을 수행하고, 클라이언트와 서버의 시계를 동기화한 상태로 갱신 1,000건을 수집해 p95를 계산한다. 목표는 100ms 이하이다. — 상대 보드 반영 지연은 서버가 상대 클라이언트에 보드 갱신을 전송한 시점부터 해당 클라이언트가 갱신을 화면에 반영한 시점까지로 측정한다. 배포 구성과 같은 EC2 단일 서버"
+    },
+    {
+      "design_item_id": "10",
+      "kind": "POLICY",
+      "key": "POL-001",
+      "summary": "상태가 ABORTED인 경기는 회원별 누적 전적 집계에서 제외한다. — 상태가 ABORTED인 경기는 회원별 누적 전적 집계에서 제외한다."
+    },
+    {
+      "design_item_id": "18",
+      "kind": "POLICY",
+      "key": "POL-002",
+      "summary": "AI 난이도는 매 수마다 후보 수를 탐색한 뒤 최선 수가 아닌 합법적인 배치 중 하나를 무작위로 선택하는 실수 확률로 구분한다. EASY는 탐색 깊이 1, 실수 확률 30%; NORMAL은 탐색 깊이 2, 실수 확률 10%; HARD는 탐색 깊이 3, 실수 확률 0%로 설정한다. — AI 난이도는 매 수마다 후보 수를 탐색한 뒤 최선 수가 아닌 합법적인 배치 중 하나를 무작위로 선택하는 실수 확률로 구분한다. EASY는 탐색 깊이 1, 실수 확률 30%; NORMAL은 탐색 깊이 2, 실수 확률 10%; HARD는 탐색 깊이 3, "
+    },
+    {
+      "design_item_id": "12",
+      "kind": "REQUIREMENT",
+      "key": "REQ-001",
+      "summary": "vs AI 및 친구 대전은 마라톤과 동일하게 10줄을 삭제할 때마다 레벨을 1단계 올린다. — vs AI 및 친구 대전은 마라톤과 동일하게 10줄을 삭제할 때마다 레벨을 1단계 올린다."
+    },
+    {
+      "design_item_id": "13",
+      "kind": "REQUIREMENT",
+      "key": "REQ-002",
+      "summary": "친구 대전에서 연결이 끊긴 플레이어가 10초 이내에 재접속하면 기존 경기와 보드를 복구한다. 10초가 지나면 기권패 처리 기준을 적용한다. — 친구 대전에서 연결이 끊긴 플레이어가 10초 이내에 재접속하면 기존 경기와 보드를 복구한다. 10초가 지나면 기권패 처리 기준을 적용한다."
+    },
+    {
+      "design_item_id": "14",
+      "kind": "REQUIREMENT",
+      "key": "REQ-003",
+      "summary": "T-Spin 판정은 3-corner 규칙을 적용하며 Must 우선순위로 구현한다. — T-Spin 판정은 3-corner 규칙을 적용하며 Must 우선순위로 구현한다."
+    },
+    {
+      "design_item_id": "15",
+      "kind": "REQUIREMENT",
+      "key": "REQ-004",
+      "summary": "친구 대전에서 두 플레이어가 동시에 게임오버되면 무승부로 처리한다. — 친구 대전에서 두 플레이어가 동시에 게임오버되면 무승부로 처리한다."
+    },
+    {
+      "design_item_id": "16",
+      "kind": "REQUIREMENT",
+      "key": "REQ-005",
+      "summary": "친구 대전에서 양쪽 플레이어가 동시에 게임오버되면 해당 경기 결과를 무승부로 판정한다. — 친구 대전에서 양쪽 플레이어가 동시에 게임오버되면 해당 경기 결과를 무승부로 판정한다."
+    },
+    {
+      "design_item_id": "19",
+      "kind": "REQUIREMENT",
+      "key": "REQ-006",
+      "summary": "HARD AI 검증은 팀원 4명과 각각 5판씩, 총 20판 진행한다. 5개 고정 시드와 동일한 게임 규칙·속도 설정을 사용하고, AI의 승률을 (AI 승리 수 + 무승부 수 × 0.5) ÷ 전체 판수로 계산한다. AI 승률 55% 이상을 팀원 평균 실력 달성 기준으로 삼되, 표본이 적으므로 결과는 참고용으로 해석한다. — HARD AI 검증은 팀원 4명과 각각 5판씩, 총 20판 진행한다. 5개 고정 시드와 동일한 게임 규칙·속도 설정을 사용하고, AI의 승률을 (AI 승리 수 + 무승부 수 × 0.5) ÷ 전체 판수로 계산한다. "
+    },
+    {
+      "design_item_id": "20",
+      "kind": "REQUIREMENT",
+      "key": "REQ-007",
+      "summary": "10초 재연결 유예와 재접속 시 보드 스냅샷을 이용한 대전 복구를 3일 MVP 범위에 포함한다. — 10초 재연결 유예와 재접속 시 보드 스냅샷을 이용한 대전 복구를 3일 MVP 범위에 포함한다."
+    }
+  ]
+}
