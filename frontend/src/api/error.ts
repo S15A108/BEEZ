@@ -92,6 +92,9 @@ const messages: Record<string, string> = {
   task_conflict: '같은 설계를 변경하는 작업을 확인해 주세요.',
   ai_unavailable: '분석을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   ai_timeout: '분석 시간이 초과되었습니다. 다시 시도해 주세요.',
+  // AI 가 답을 쓰다가 출력 길이 상한에 닿아 끊김. 같은 문서로는 다시 해도 같을 수 있다 (S15P31A108-382).
+  ai_output_too_long:
+    'AI가 답을 쓰다가 출력 길이 상한에 걸려 끊겼어요. 문서가 길거나 질문이 많을 때 생겨요. 다시 시도해도 같다면 문서를 나누거나 담당자에게 알려 주세요.',
   recommendation_stale: '작업이나 팀원 정보가 바뀌었어요. 다시 추천해 주세요.',
   rate_limited: '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
   file_too_large: '파일 용량이 허용 범위를 초과했습니다.',
@@ -114,7 +117,8 @@ const messages: Record<string, string> = {
   change_proposal_required:
     '기준 설계 생성 이후 문서 수정은 변경 제안을 통해 요청해 주세요.',
   submission_locked: '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
-  review_stale: '본문이 바뀌어 비비 검토를 다시 받아야 해요.',
+  // 서버는 본문·참고 승인본이 바뀐 경우, 더 새로운 검토가 생긴 경우, 제안한 원문이 사라진 경우에 모두 이 코드를 준다.
+  review_stale: '이 비비 검토는 더 쓸 수 없어요. 비비 검토를 다시 받아 주세요.',
   review_decisions_pending:
     '처리하지 않은 보완 제안이 있어요. 반영하거나 넘겨 주세요.',
   submission_decided: '이미 결정한 검토 요청이에요.',
@@ -125,6 +129,10 @@ const messages: Record<string, string> = {
     '비비가 이 문서를 검토하고 있어요. 잠시 뒤 다시 확인해 주세요.',
   review_unavailable:
     '지금은 비비를 부를 수 없어요. 잠시 뒤 다시 시도해 주세요.',
+  // 문서가 길 때 생긴다. 같은 문서로 다시 해도 또 걸릴 수 있어 줄이거나 나눠 고치라고 안내한다(S15P31A108-382).
+  review_timeout:
+    '비비가 검토하는 데 시간이 너무 오래 걸렸어요. 문서가 길어서일 수 있어요. 다시 검토하거나, 문서를 줄이거나 나눠서 고쳐 주세요.',
+  document_approved: '이미 승인된 적이 있는 문서는 등록을 취소할 수 없어요.',
   invalid_ai_output: '비비의 답을 확인하지 못했어요. 다시 시도해 주세요.',
   review_chat_limit:
     '이 검토에서 비비와 나눌 수 있는 대화를 모두 썼어요. 직접 고치거나 비비 검토를 다시 받아 주세요.',
@@ -163,6 +171,18 @@ export function getApiErrorMessage(error: unknown): string {
   if (isAxiosError(error) && !error.response)
     return '서버에 연결할 수 없습니다. 연결 상태를 확인해 주세요.'
   return '요청을 완료하지 못했습니다. 다시 시도해 주세요.'
+}
+// 입력 폼용: 서버가 400 validation_failed로 어느 값이 틀렸는지 알려 줬으면 그 문구를 그대로 보인다.
+// 전역 문구(getApiErrorMessage)는 바꾸지 않아 다른 화면에는 영향이 없다.
+export function getValidationMessage(error: unknown): string {
+  if (
+    getApiErrorStatus(error) === 400 &&
+    getApiErrorCode(error) === 'validation_failed'
+  ) {
+    const detail = getApiErrorDetail(error)?.trim()
+    if (detail) return detail
+  }
+  return getApiErrorMessage(error)
 }
 // 나가기·제외·탈퇴는 담당자를 넘기거나 비우는 동안 그 작업 상태가 바뀌면 409 revision_conflict로 전체가 되돌아간다(MEM-A09·A10, ACC-A10).
 // 계획을 고치는 화면과 달리 다시 확인할 내용이 없으므로 다시 시도하라고 알린다.

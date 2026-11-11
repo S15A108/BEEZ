@@ -204,6 +204,8 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
             assertThat(row.get("recipient_account_id")).isEqualTo(author.accountId());
             assertThat(row.get("ref_kind")).isEqualTo("DOCUMENT_VERSION");
             assertThat(row.get("document_id")).isEqualTo(document);
+            // 파일명이 아니라 문서 제목으로 알리고 해요체로 쓴다 (S15P31A108-370)
+            assertThat(row.get("title").toString()).startsWith("비비의 문서 검토가 끝났어요: ").doesNotContain(".md");
             assertThat(row.get("dedupe_key")).isEqualTo("document-review:" + review.id() + ":bee-review-done:to:" + author.accountId());
         });
 
@@ -286,6 +288,24 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         var fresh = review();
         assertThat(fresh.referenceHash()).isNotEqualTo(old.referenceHash());
         assertThat(fresh.unavailableReferences()).doesNotContain("ERD");
+    }
+
+    @Test void workingCopyMarksReviewStaleWhenApprovedReferencesChange() {
+        assertThat(copy().reviewStale()).isFalse();
+        review();
+        assertThat(copy().reviewStale()).isFalse();
+        long reference = upload("ERD");
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), reference);
+        assertThat(copy().reviewStale()).isTrue();
+        assertThat(copy().latestReview()).isNotNull();
+        var fresh = review();
+        assertThat(copy().reviewStale()).isFalse();
+        var submission = submit(fresh);
+        long other = upload("API_SPEC");
+        jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leader.accountId(), other);
+        assertThat(submission).isNotNull();
+        // 제출한 뒤에는 팀장 결정을 기다리는 건이라 참고 승인본이 바뀌어도 무효로 표시하지 않는다.
+        assertThat(copy().reviewStale()).isFalse();
     }
 
     @Test void invalidAiResultIsNotCompletedAndFailureIsNotAutomaticallyReissued() {
@@ -474,6 +494,30 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(queue.body()).contains(submission.id());
     }
 
+    /** FE 스키마는 null 이 아니라 '없음'(키 생략)을 받는다. 실제 HTTP 응답에서 null 필드가 빠지는지 확인한다 (PR 리뷰). */
+    @Test void workingCopyHttpResponseOmitsNullReviewRequestFieldsInsteadOfSendingNull() throws Exception {
+        var authorClient = client().login(fixtures().emailOf(author.accountId()), AccessFixtures.PASSWORD);
+        String path = "/api/projects/" + project.projectId() + "/documents/" + document + "/working-copy";
+        var none = DesignJson.JSON.readTree(authorClient.get(path).body());
+        assertThat(none.has("bee_review_request")).as("요청이 없으면 키 자체가 없다").isFalse();
+        assertThat(none.toString()).doesNotContain(":null");
+
+        failWith(new org.springframework.web.client.ResourceAccessException("read", new java.net.http.HttpTimeoutException("slow")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "http-failed"), "review_timeout");
+        var failed = DesignJson.JSON.readTree(authorClient.get(path).body()).path("bee_review_request");
+        assertThat(failed.path("status").asText()).isEqualTo("FAILED");
+        assertThat(failed.path("error_code").asText()).isEqualTo("review_timeout");
+        assertThat(failed.has("updated_at")).isTrue();
+
+        reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "# 줄인 계획\n로그인한다.", "plan.md"));
+        doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
+        reviews.review(author, project.projectId(), document, 2, "http-ok");
+        var completed = DesignJson.JSON.readTree(authorClient.get(path).body()).path("bee_review_request");
+        assertThat(completed.path("status").asText()).isEqualTo("COMPLETED");
+        assertThat(completed.has("error_code")).as("실패가 아니면 error_code 키가 없다").isFalse();
+        assertThat(completed.toString()).doesNotContain(":null");
+    }
+
     @Test void reuploadedOriginalBytesSurviveSubmissionAndCleanupKeepsSubmittedFiles() throws Exception {
         byte[] original = "\uFEFF# 파일\r\n다시 올린 원본\r\n".getBytes(StandardCharsets.UTF_8);
         var edited = reviews.reupload(author, project.projectId(), document, 1, "new.md", original);
@@ -548,5 +592,177 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         code(() -> reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "우회 변경", "plan.md")), "change_proposal_required");
         assertThat(reviews.decide(leader, project.projectId(), Long.parseLong(last.documentId()), Long.parseLong(last.id()),
                 new DocumentDecisionRequest("APPROVE", null)).status()).isEqualTo("APPROVED");
+    }
+
+    // ---- S15P31A108-382: 시간 초과 구분, 실패 상태 노출, 문서 등록 취소 ----
+
+    void failWith(Throwable failure) {
+        if (failure instanceof RuntimeException runtime) doThrow(runtime).when(gateway).review(anyMap());
+    }
+
+    void timeoutOf(org.springframework.web.client.RestClientResponseException failure, String key) {
+        failWith(failure);
+        assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, key))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("review_timeout");
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.GATEWAY_TIMEOUT);
+                });
+    }
+
+    @Test void aiTimeoutIsReportedAsReviewTimeoutWhileOtherFailuresStayUnavailable() {
+        timeoutOf(new org.springframework.web.client.RestClientResponseException("timeout", 504, "Gateway Timeout",
+                org.springframework.http.HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8), "t-504");
+        assertThat(jdbc.queryForObject("SELECT error_code FROM document_bee_review_request WHERE document_id=? AND request_key='t-504'",
+                String.class, document)).isEqualTo("review_timeout");
+        // 같은 키로 다시 부르면 AI 를 부르지 않고 같은 시간 초과 코드로 답한다.
+        assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, "t-504"))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("review_timeout"));
+        verify(gateway, times(1)).review(anyMap());
+        // model_timeout 코드는 상태가 504 가 아니어도 시간 초과다. 502 model_unavailable 은 장애다.
+        timeoutOf(new org.springframework.web.client.RestClientResponseException("timeout", 502, "Bad Gateway",
+                org.springframework.http.HttpHeaders.EMPTY, "{\"error\":{\"code\":\"model_timeout\"}}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8), "t-body");
+        failWith(new org.springframework.web.client.RestClientResponseException("down", 502, "Bad Gateway",
+                org.springframework.http.HttpHeaders.EMPTY, "{\"error\":{\"code\":\"model_unavailable\"}}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "t-502"), "review_unavailable");
+    }
+
+    @Test void readTimeoutIsReviewTimeoutButConnectTimeoutIsUnavailable() {
+        failWith(new org.springframework.web.client.ResourceAccessException("read",
+                new java.net.http.HttpTimeoutException("request timed out")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "read"), "review_timeout");
+        failWith(new org.springframework.web.client.ResourceAccessException("connect",
+                new java.net.http.HttpConnectTimeoutException("connect timed out")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "connect"), "review_unavailable");
+        failWith(new org.springframework.web.client.ResourceAccessException("refused", new java.net.ConnectException("refused")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "refused"), "review_unavailable");
+    }
+
+    @Test void failedReviewRequestIsVisibleToEveryoneUntilTheDocumentChanges() {
+        assertThat(copy().beeReviewRequest()).isNull();
+        failWith(new org.springframework.web.client.ResourceAccessException("read",
+                new java.net.SocketTimeoutException("Read timed out")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "visible"), "review_timeout");
+        // 올린 사람이 아닌 팀원(팀장)도 같은 상태를 읽는다
+        var seen = reviews.get(leader, project.projectId(), document).beeReviewRequest();
+        assertThat(seen.status()).isEqualTo("FAILED");
+        assertThat(seen.errorCode()).isEqualTo("review_timeout");
+        // 고치면 새 리비전의 요청이 아직 없으므로 비어 보인다
+        reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "# 줄인 계획\n로그인한다.", "plan.md"));
+        assertThat(copy().beeReviewRequest()).isNull();
+        doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
+        reviews.review(author, project.projectId(), document, 2, "after-edit");
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("COMPLETED");
+        // 10분 넘게 도는 요청은 끝없이 기다리지 않게 실패로 보인다
+        jdbc.update("UPDATE document_bee_review_request SET status='RUNNING',error_code=NULL,created_at=now()+interval '1 second' WHERE document_id=?", document);
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("RUNNING");
+        jdbc.update("UPDATE document_working_copy SET updated_at=now()-interval '1 hour' WHERE document_id=?", document);
+        jdbc.update("UPDATE document_bee_review_request SET created_at=now()-interval '11 minutes' WHERE document_id=?", document);
+        var stuck = copy().beeReviewRequest();
+        assertThat(stuck.status()).isEqualTo("FAILED");
+        assertThat(stuck.errorCode()).isEqualTo("review_timeout");
+    }
+
+    long member() {
+        long account = fixtures().account();
+        fixtures().member(project.projectId(), account, ProjectRole.MEMBER);
+        return account;
+    }
+
+    @Test void authorDiscardsFailedDocumentAndTheSameKindCanBeRegisteredAgain() {
+        var other = CallerContext.human(member());
+        failWith(new org.springframework.web.client.ResourceAccessException("read", new java.net.http.HttpTimeoutException("slow")));
+        code(() -> reviews.review(author, project.projectId(), document, 1, "slow"), "review_timeout");
+        // 올린 사람도 팀장도 아닌 팀원은 취소할 수 없다
+        code(() -> reviews.discard(other, project.projectId(), document, "other"), "forbidden");
+        var discarded = reviews.discard(author, project.projectId(), document, "discard-1");
+        assertThat(discarded.discarded()).isTrue();
+        assertThat(reviews.discard(author, project.projectId(), document, "discard-1")).isEqualTo(discarded);
+        // 다른 키로 다시 취소해도 같은 결과(멱등)이고 활동은 한 번만 남는다
+        assertThat(reviews.discard(leader, project.projectId(), document, "discard-2")).isEqualTo(discarded);
+        assertThat(activities("DOCUMENT_DISCARDED")).hasSize(1);
+        // 폐기된 문서는 목록에서 사라지고 편집·검토·조회는 없는 문서처럼 막힌다. 이력(행)은 남는다
+        assertThat(documents.list(author, project.projectId(), null, null, null, null, 20).get("items")).asList().isEmpty();
+        code(() -> reviews.get(author, project.projectId(), document), "not_found");
+        code(() -> reviews.edit(author, project.projectId(), document, new WorkingCopyUpdateRequest(1, "x", "plan.md")), "not_found");
+        assertThat(jdbc.queryForObject("SELECT discarded_at IS NOT NULL FROM document WHERE id=?", Boolean.class, document)).isTrue();
+        assertThat(jdbc.queryForList("SELECT status FROM document_version WHERE document_id=?", String.class, document)).containsOnly("REJECTED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review_request WHERE document_id=? AND status='RUNNING'", Integer.class, document)).isZero();
+        // 같은 종류를 새로 올릴 수 있다
+        long again = upload("PLAN");
+        assertThat(again).isNotEqualTo(document);
+        assertThat(reviews.get(author, project.projectId(), again).status()).isEqualTo("EDITING");
+    }
+
+    @Test void leaderCanDiscardAnotherMembersDocument() {
+        assertThat(reviews.discard(leader, project.projectId(), document, "leader").discarded()).isTrue();
+        assertThat(activities("DOCUMENT_DISCARDED")).singleElement().satisfies(row -> assertThat(row.get("actor_id")).isEqualTo(leader.accountId()));
+    }
+
+    @Test void submittedOrApprovedDocumentCannotBeDiscardedAndSubmissionIsKept() {
+        var submission = submit(review());
+        code(() -> reviews.discard(author, project.projectId(), document, "locked"), "submission_locked");
+        reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), new DocumentDecisionRequest("APPROVE", null));
+        code(() -> reviews.discard(author, project.projectId(), document, "approved"), "document_approved");
+        code(() -> reviews.discard(leader, project.projectId(), document, "approved-leader"), "document_approved");
+        assertThat(jdbc.queryForObject("SELECT discarded_at IS NULL FROM document WHERE id=?", Boolean.class, document)).isTrue();
+        assertThat(activities("DOCUMENT_DISCARDED")).isEmpty();
+    }
+
+    @Test void rejectedDocumentCanBeDiscardedAfterWithdrawnOrRejected() {
+        var submission = submit(review());
+        reviews.decide(leader, project.projectId(), document, Long.parseLong(submission.id()), new DocumentDecisionRequest("REJECT", "다시 써 주세요."));
+        assertThat(reviews.discard(author, project.projectId(), document, "after-reject").discarded()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_review_submission WHERE document_id=?", Integer.class, document)).isOne();
+    }
+
+    @Test void discardIsRefusedAfterTheFirstBaselineAndNeverHidesTheWorkingCopyOfOthers() {
+        long baseline = jdbc.queryForObject("INSERT INTO baseline(project_id,version_no,published_by) VALUES(?,1,?) RETURNING id",
+                Long.class, project.projectId(), leader.accountId());
+        jdbc.update("UPDATE project SET current_baseline_id=? WHERE id=?", baseline, project.projectId());
+        code(() -> reviews.discard(author, project.projectId(), document, "late"), "change_proposal_required");
+        assertThat(reviews.get(author, project.projectId(), document).status()).isEqualTo("EDITING");
+    }
+
+    @Autowired com.beez.backend.designitem.repository.BaselineRepository baselineRepository;
+
+    @Test void discardedDocumentNoLongerBlocksTheBaselineReadiness() {
+        long second = upload("REQUIREMENTS");
+        assertThat(baselineRepository.hasUnapprovedWorkingCopies(project.projectId())).isTrue();
+        reviews.discard(author, project.projectId(), document, "d1");
+        reviews.discard(author, project.projectId(), second, "d2");
+        assertThat(baselineRepository.hasUnapprovedWorkingCopies(project.projectId())).isFalse();
+        assertThat(baselineRepository.workingCopyStates(project.projectId())).isEmpty();
+    }
+
+    @Test void reviewResultThatArrivesAfterDiscardIsNotAdopted() {
+        doAnswer(call -> {
+            reviews.discard(author, project.projectId(), document, "mid-review");
+            return result(call.<Map<String, Object>>getArgument(0), List.of());
+        }).when(gateway).review(anyMap());
+        assertThatThrownBy(() -> reviews.review(author, project.projectId(), document, 1, "late-result")).isInstanceOf(ApiException.class);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
+    }
+
+    @Test void reviewsOfDifferentDocumentsRunInParallelWithoutBlockingEachOther() throws Exception {
+        var ids = List.of(document, upload("REQUIREMENTS"), upload("ERD"), upload("API_SPEC"));
+        // 모델 호출을 0.8초 걸리게 한 대역. 직렬이면 3.2초 이상, 병렬이면 1~1.5초 안팎이다.
+        doAnswer(call -> {
+            Thread.sleep(800);
+            return result(call.getArgument(0), List.of());
+        }).when(gateway).review(anyMap());
+        var pool = Executors.newFixedThreadPool(ids.size());
+        try {
+            long start = System.nanoTime();
+            var futures = ids.stream().map(id -> pool.submit(() ->
+                    reviews.review(author, project.projectId(), id, 1, "parallel-" + id).id())).toList();
+            for (var future : futures) assertThat(future.get(10, TimeUnit.SECONDS)).isNotBlank();
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            // 직렬이면 모델 대역만으로 3.2초 이상이다. 느린 CI 에서도 병렬이면 넘지 않도록 직렬 하한보다 조금 아래로 잡는다.
+            assertThat(elapsedMs).as("서로 다른 문서의 검토가 직렬로 돌았다").isLessThan(3_000);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 }

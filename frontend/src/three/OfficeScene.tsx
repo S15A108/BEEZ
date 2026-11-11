@@ -606,8 +606,9 @@ export default function OfficeScene(props: OfficeSceneProps) {
           stencil: true,
           powerPreference: 'high-performance',
         }}
+        // 대체 문구는 <canvas> 안에 늘 들어 있어 접근성 트리에 남는다. 알림(alert)이면 3D가 잘 떠도 오류로 읽힌다.
         fallback={
-          <p role="alert">
+          <p>
             3D 공간을 표시하지 못했어요. 프로젝트 메뉴에서 업무를 이어 갈 수
             있어요.
           </p>

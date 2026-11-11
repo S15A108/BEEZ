@@ -23,14 +23,15 @@ function verificationText(answer: AskResponse) {
 }
 
 export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
-  // 인용에서 이미 표시한 출처와 별개로 설계 항목에 연결된 출처도 보여 준다.
+  // BEE-A01은 인용마다 문서 제목과 행 범위로 sources.location을 만든다.
+  // 인용에 쓰인 출처만 빼고 승인 설계 항목 등에 연결된 다른 위치는 남긴다.
   const citedSources = new Set(
-    (answer.citations ?? []).map((citation) =>
+    answer.citations.map((citation) =>
       JSON.stringify([
         citation.document_id,
         citation.document_version_id,
-        citation.section_title
-          ? `${citation.section_title} / L${citation.locator.start_line}-L${citation.locator.end_line}`
+        citation.title.trim()
+          ? `${citation.title} / L${citation.locator.start_line}-L${citation.locator.end_line}`
           : `L${citation.locator.start_line}-L${citation.locator.end_line}`,
       ]),
     ),
@@ -50,7 +51,7 @@ export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
       <p className="text-xs text-muted-foreground">
         {verificationText(answer)}
       </p>
-      {answer.citations?.map((citation) => (
+      {answer.citations.map((citation) => (
         <section
           key={citation.n}
           aria-label={`인용 ${citation.n}번`}
@@ -83,35 +84,13 @@ export function BeeAnswerEvidence({ answer }: { answer: AskResponse }) {
           />
         </section>
       ))}
-      {!!answer.design_refs?.length && (
-        <div>
-          <p className="font-medium">참고한 설계 항목</p>
-          <ul className="mt-1 list-inside list-disc text-xs">
-            {answer.design_refs.map((item) => (
-              <li key={item.design_item_version_id}>
-                {item.key} · v{item.version_no}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {!!answer.task_refs?.length && (
-        <div>
-          <p className="font-medium">참고한 작업</p>
-          <ul className="mt-1 list-inside list-disc text-xs">
-            {answer.task_refs.map((task) => (
-              <li key={task.task_id}>{task.key}</li>
-            ))}
-          </ul>
-        </div>
-      )}
       {!!otherSources.length && (
         <div>
           <p className="font-medium">참고 문서</p>
           <SourceLinks sources={otherSources} />
         </div>
       )}
-      {!!answer.citations?.length && (
+      {!!answer.citations.length && (
         <p className="text-xs text-muted-foreground">
           문서를 열면 인용한 버전과 확인된 원문 위치로 이동해요. 원문이 일치하지
           않으면 위치를 표시하지 않아요.

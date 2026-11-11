@@ -122,9 +122,9 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 415 | 본문·파일 형식 불가 | unsupported_media_type |
 | 429 | 호출 제한 | rate_limited. 인증 코드를 여러 번 틀린 경우만 too_many_attempts(ACC-A12, 수정안 요청) |
 | 500 | 내부 오류 | internal |
-| 502 | AI·모델 실패 | ai_unavailable, model_unavailable |
+| 502 | AI·모델 실패 | ai_unavailable, model_unavailable, model_output_truncated(AI 내부, 출력 상한에 끊김), ai_output_too_long(기획 질문·설계 초안 작업 실패 코드. BE 가 위 코드를 이렇게 저장·노출, 재시도 가능) |
 | 503 | 처리 기반 이용 불가 | processing_unavailable |
-| 504 | 분석 시간 초과 | ai_timeout, model_timeout |
+| 504 | 분석 시간 초과 | ai_timeout, model_timeout, review_timeout(문서 비비 검토 시간 초과, DOC-A16) |
 
 현재 backend의 공통 오류 응답과 snake_case 설정을 따른다. 신규 업무 code·페이지·문자열 ID는 구현 시 이 계약과 맞춘다. 검증이 NEEDS_INPUT/NEEDS_REVIEW/ERROR로 저장된 경우는 HTTP 전송 실패와 구분한다. 409 뒤에는 최신 리소스를 다시 조회한다.
 
@@ -144,7 +144,7 @@ BEEZ의 웹 REST, MCP 도구, AI 내부 호출이 공유하는 규약·권한·�
 | 대상 | 값·주요 조건 |
 | --- | --- |
 | 문서·설계 항목 | DRAFT → APPROVED → SUPERSEDED. REJECTED는 미채택. 승인 본문은 불변 |
-| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토. 팀장 결정 전에 등록자가 취소하면(DOC-A24) 제출은 WITHDRAWN으로 종결하고 작성 건은 EDITING으로 돌아간다 |
+| 문서 작성 건 | EDITING → SUBMITTED → APPROVED/REJECTED. SUBMITTED는 본문 잠금, 반려 후 같은 건에서 새 제출로 재검토. 문서 등록 취소(DOC-A25)는 작성 건을 지우지 않고 문서를 폐기 표시한다(승인된 적 없는 EDITING·REJECTED 건만). 팀장 결정 전에 등록자가 취소하면(DOC-A24) 제출은 WITHDRAWN으로 종결하고 작성 건은 EDITING으로 돌아간다 |
 | 변경 제안 | PROPOSED → IN_REVIEW → 승인·발행 → PUBLISHED 또는 REJECTED. APPROVED는 승인 처리 단계. 제출 후 잠금, REJECTED만 같은 제안의 새 리비전으로 PROPOSED 재제출. PROPOSED/IN_REVIEW/REJECTED는 작성자가 WITHDRAWN으로 거둘 수 있음 |
 | 작업 | DRAFT, READY, IN_PROGRESS, WAITING, COMPLETED, CANCELLED. READY는 계획 저장이며 PASS 보증 아님 |
 | 검증 | NOT_RUN, RUNNING, PASS, NEEDS_INPUT, NEEDS_REVIEW, STALE, ERROR. NOT_RUN은 검증 부재 표시도 가능 |
@@ -344,6 +344,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [DOC-A22 보완 제안에 대해 비비와 대화](01-backend-rest.md#doc-a22) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/suggestions/{suggestion_id}/messages` | HUMAN MEMBER (등록자) | 오서현 | 양지훈 | 오서현 |
 | [DOC-A23 비비에게 직접 보완 요청](01-backend-rest.md#doc-a23) | POST `/api/projects/{id}/documents/{document_id}/bee-reviews/{review_id}/requests` | HUMAN MEMBER (등록자) | 오서현 | 양지훈 | 오서현 |
 | [DOC-A24 팀장 검토 요청 취소](01-backend-rest.md#doc-a24) | POST `/api/projects/{id}/documents/{document_id}/review-submissions/{submission_id}/withdraw` | HUMAN MEMBER (등록자) | 오서현 | — | 오서현 |
+| [DOC-A25 문서 등록 취소](01-backend-rest.md#doc-a25) | POST `/api/projects/{id}/documents/{document_id}/discard` | HUMAN MEMBER (등록자 또는 팀장) | 오서현 | — | 오서현 |
 | [CHG-A01 설계 변경 제안 생성](01-backend-rest.md#chg-a01) | POST `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A02 설계 변경 제안 목록](01-backend-rest.md#chg-a02) | GET `/api/projects/{id}/change-proposals` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
 | [CHG-A03 설계 변경 제안 상세·비교](01-backend-rest.md#chg-a03) | GET `/api/projects/{id}/change-proposals/{proposal_id}` | MEMBER | 오서현 | 양지훈·박상은 | 오서현 |
@@ -401,6 +402,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MTG-A12 회의 정리 수정 요청](01-backend-rest.md#mtg-a12) | POST `/api/projects/{id}/meetings/{meeting_id}/bee-summary/{summary_id}/revise` | LEADER (회의 참여자) | 오서현 | 양지훈 | 오서현 |
 | [MTG-A13 회의 끝내기](01-backend-rest.md#mtg-a13) | POST `/api/projects/{id}/meetings/{meeting_id}/close` | LEADER (회의 참여자) | 오서현 | — (문안은 MTG-A11 정리) | 오서현 |
 | [MTG-A14 회의 참여자 제외](01-backend-rest.md#mtg-a14) | DELETE `/api/projects/{id}/meetings/{meeting_id}/participants/{member_id}` | LEADER (회의 참여자. 수정안 요청) | 오서현 | — | 오서현 |
+| [MTG-A15 회의 최신 정리 조회](01-backend-rest.md#mtg-a15) | GET `/api/projects/{id}/meetings/{meeting_id}/bee-summary/latest` | MEMBER | 오서현 | — | 오서현 |
 | [MON-D01 문서 승인 현황](01-backend-rest.md#mon-d01) | GET `/api/projects/{id}/documents/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-C01 변경 제안 현황](01-backend-rest.md#mon-c01) | GET `/api/projects/{id}/change-proposals/summary` | MEMBER | 오서현 | — | 박민용 |
 | [MON-T01 작업 상태 현황](01-backend-rest.md#mon-t01) | GET `/api/projects/{id}/tasks/summary` | MEMBER | 변준성 | — | 박민용 |
@@ -700,6 +702,8 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `file_name` | `string` | Y | 작성 파일명 |
 | `latest_review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | N | 마지막 비비 검토 결과 |
 | `submissions` | [DocumentReviewSubmission[]](00-common.md#schema-documentreviewsubmission) | Y | 제출 이력, 최신 ID 순 |
+| `bee_review_request` | `object` | N | 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청 `{status: RUNNING\|FAILED\|COMPLETED, error_code?, updated_at}`. 고치면 새 요청이 생길 때까지 없다. 10분 넘게 RUNNING이면 `FAILED`·`review_timeout`으로 보인다. 올린 사람이 아닌 팀원도 실패를 알고 새로고침 뒤에도 유지된다 (S15P31A108-382) |
+| `review_stale` | `boolean` | Y | `latest_review`를 지금 쓸 수 없으면 true. 검토 뒤 다른 문서가 승인돼 참고 승인본이 바뀌었거나, 본문 리비전이 달라졌거나, 216 이전 검토일 때다. 쓰기 API가 `review_stale`(409)로 막는 조건과 같다. `latest_review`가 없거나 `status`가 SUBMITTED·APPROVED면 false (S15P31A108-362) |
 
 <a id="schema-documentreviewreference"></a>
 
@@ -1580,6 +1584,7 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `author_member_id` | `ID` | N | HUMAN이면 작성 멤버. 수정안 요청 |
 | `author_name` | `string` | N | HUMAN이면 표시 이름. 수정안 요청 |
 | `refs` | `object[]` | N | 비비 기록이 가리키는 대상 [{type: TASK\|DESIGN_ITEM\|DOCUMENT_VERSION, id, label}]. 화면은 칩으로 보임. 수정안 요청 |
+| `summary_id` | `ID` | N | 이 기록이 남긴 정리 ID. kind=SUMMARY일 때만 실린다. 새로 고친 화면도 이 값으로 회의 끝내기(MTG-A13)·정리 수정 요청(MTG-A12)을 하고, 구조화한 정리는 최신 정리 조회(MTG-A15)로 읽는다(S15P31A108-206) |
 | `through_entry_id` | `ID` | N | 분석 마지막 입력 기록. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
 | `generation` | [Generation](00-common.md#schema-generation) | N | AI 생성 근거. kind=SUMMARY일 때만 실린다(S15P31A108-235) |
 | `created_at` | `Time` | Y | 작성 시각 |

@@ -61,7 +61,7 @@ afterEach(() => {
 })
 
 describe('명세 REST 교환', () => {
-  it('비비 질문을 멱등 키와 함께 보내고 근거가 포함된 응답을 검증한다', async () => {
+  it('비비 질문에는 멱등 키를 보내지 않고 필수 응답 계약을 검증한다', async () => {
     const answer = {
       origin: 'MODEL',
       text: '승인된 문서의 내용입니다.',
@@ -74,23 +74,23 @@ describe('명세 REST 교환', () => {
         },
       ],
       unresolved: [],
+      answer_id: '31',
+      citations: [],
+      grounded: false,
+      mode: 'APPROVED',
+      baseline_id: '10',
+      document_version_ids: ['301'],
     }
     respond(answer)
     await expect(
-      beeApi.ask(
-        '101',
-        { question: '인증 정책은 무엇인가요?' },
-        { idempotencyKey: 'bee-question-once' },
-      ),
+      beeApi.ask('101', { question: '인증 정책은 무엇인가요?' }),
     ).resolves.toEqual(answer)
     expect(lastRequest?.method).toBe('post')
     expect(lastRequest?.url).toBe('/projects/101/bee/questions')
     expect(JSON.parse(String(lastRequest?.data))).toEqual({
       question: '인증 정책은 무엇인가요?',
     })
-    expect(lastRequest?.headers.get('Idempotency-Key')).toBe(
-      'bee-question-once',
-    )
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBeUndefined()
 
     respond({ ...answer, sources: [{ ...answer.sources[0], version_no: '2' }] })
     await expect(
@@ -98,61 +98,40 @@ describe('명세 REST 교환', () => {
     ).rejects.toBeInstanceOf(ZodError)
   })
 
-  it('비비 응답 유실 뒤 같은 키로 확인하고 409 뒤 명시적 재전송은 새 키를 쓴다', async () => {
-    const keys: string[] = []
+  it('비비 질문은 자동 재호출하지 않고 명시적 재전송마다 새 답변을 받는다', async () => {
+    let requests = 0
+    const keys: unknown[] = []
     api.defaults.adapter = async (config) => {
-      keys.push(String(config.headers.get('Idempotency-Key')))
-      if (keys.length === 1)
+      requests++
+      keys.push(config.headers.get('Idempotency-Key'))
+      if (requests === 1)
         throw new AxiosError('response lost', 'ERR_NETWORK', config)
-      if (keys.length === 2)
-        throw new AxiosError('conflict', 'ERR_BAD_REQUEST', config, undefined, {
-          config,
-          status: 409,
-          statusText: 'Conflict',
-          headers: new AxiosHeaders(),
-          data: { error: { code: 'idempotency_conflict' } },
-        })
       return {
         config,
-        data: { origin: 'MODEL', text: '답변', sources: [], unresolved: [] },
+        data: {
+          origin: 'TEMPLATE',
+          text: '답변',
+          sources: [],
+          unresolved: [],
+          answer_id: String(30 + requests),
+          citations: [],
+          grounded: false,
+          mode: 'APPROVED',
+          baseline_id: '10',
+          document_version_ids: [],
+        },
         status: 200,
         statusText: 'OK',
         headers: new AxiosHeaders(),
       }
     }
-    const ask = () => beeApi.ask('101', { question: '유실된 질문 확인' })
+    const ask = () => beeApi.ask('101', { question: '다시 보낼 질문' })
     await expect(ask()).rejects.toBeInstanceOf(AxiosError)
-    expect(keys).toHaveLength(1)
-    await expect(ask()).rejects.toBeInstanceOf(AxiosError)
-    expect(keys[1]).toBe(keys[0])
-    await expect(ask()).resolves.toMatchObject({ text: '답변' })
-    expect(keys[2]).not.toBe(keys[1])
-  })
-
-  it('비비가 시간 초과를 확정한 뒤 사용자의 재전송은 새 키를 쓴다', async () => {
-    const keys: string[] = []
-    api.defaults.adapter = async (config) => {
-      keys.push(String(config.headers.get('Idempotency-Key')))
-      if (keys.length === 1)
-        throw new AxiosError('timeout', 'ERR_BAD_RESPONSE', config, undefined, {
-          config,
-          status: 504,
-          statusText: 'Gateway Timeout',
-          headers: new AxiosHeaders(),
-          data: { error: { code: 'ai_timeout' } },
-        })
-      return {
-        config,
-        data: { origin: 'MODEL', text: '답변', sources: [], unresolved: [] },
-        status: 200,
-        statusText: 'OK',
-        headers: new AxiosHeaders(),
-      }
-    }
-    const ask = () => beeApi.ask('101', { question: '시간 초과 후 질문' })
-    await expect(ask()).rejects.toBeInstanceOf(AxiosError)
-    await expect(ask()).resolves.toMatchObject({ text: '답변' })
-    expect(keys[1]).not.toBe(keys[0])
+    expect(requests).toBe(1)
+    await expect(ask()).resolves.toMatchObject({ answer_id: '32' })
+    await expect(ask()).resolves.toMatchObject({ answer_id: '33' })
+    expect(requests).toBe(3)
+    expect(keys).toEqual([undefined, undefined, undefined])
   })
 
   it('응답을 잃은 같은 동작의 재시도는 키를 유지하고 확인된 새 동작은 새 키를 쓴다', async () => {
@@ -431,11 +410,12 @@ describe('계약 경계', () => {
   // S15P31A108-290·284가 2개, S15P31A108-137이 선택 범위 조회·초안 2개,
   // S15P31A108-203이 승인 미리 보기(CHG-A14) 1개를 더해 125개,
   // S15P31A108-202가 비비 대화·직접 요청·검토 요청 취소(DOC-A22~A24) 3개를 더해 128개였고,
-  // 같은 티켓의 기획 쪽이 PLN-A05 아래의 초안 후보 조회·채택·폐기 3개를 더해 131개다.
+  // 같은 티켓의 기획 쪽이 PLN-A05 아래의 초안 후보 조회·채택·폐기 3개를 더해 131개였고,
+  // S15P31A108-206이 폐지된 회의 API 4개(A05·A07~A09)를 빼고 비비 정리·수정 요청·끝내기·최신 정리 조회(A11~A13·A15) 4개를 더해 그대로 131개다.
   it('131개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(131)
+    expect(endpointRegistry).toHaveLength(132)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      131,
+      132,
     )
     expect(
       new Set(
@@ -443,7 +423,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(131)
+    ).toBe(132)
     expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
       expect.arrayContaining([
         'CHG-A07-SCOPED-BLOCKS',

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { parseCitationFocus } from '@/lib/citationTarget'
 import { BibiPanel } from './BibiPanel'
+import { askResponseSchema } from './schemas'
 
 const ask = vi.hoisted(() => vi.fn())
 vi.mock('@/api/services', () => ({ beeApi: { ask } }))
@@ -20,13 +21,15 @@ const cited = {
       document_id: '20',
       document_version_id: '21',
       version_no: 2,
-      location: '초대 / L4-L6',
+      location: '접근 정책 / L4-L6',
     },
   ],
   unresolved: [],
   answer_id: '30',
-  answer_status: 'ANSWERED',
   grounded: true,
+  mode: 'APPROVED',
+  baseline_id: '10',
+  document_version_ids: ['21'],
   verification: { level: 'TOKENS', claims: 1 },
   citations: [
     {
@@ -36,12 +39,9 @@ const cited = {
       version_no: 2,
       title: '접근 정책',
       locator: { type: 'text_lines', start_line: 4, end_line: 6 },
-      section_title: '초대',
       quote: '초대는 한 번만 사용할 수 있다.',
     },
   ],
-  design_refs: [],
-  task_refs: [],
 }
 
 function renderPanel() {
@@ -82,6 +82,10 @@ describe('비비 답변 근거', () => {
     expect(
       within(panel).getByText(/답변의 의미는 직접 확인/),
     ).toBeInTheDocument()
+    expect(within(panel).queryByText('참고 문서')).not.toBeInTheDocument()
+    expect(
+      within(panel).getAllByRole('button', { name: /문서 20 v2/ }),
+    ).toHaveLength(1)
     await user.click(within(panel).getByRole('button', { name: /문서 20 v2/ }))
     expect(openPane).toHaveBeenCalledWith(
       'documents',
@@ -102,7 +106,10 @@ describe('비비 답변 근거', () => {
       text: '찾지 못했어요.',
       sources: [],
       unresolved: [],
-      answer_status: 'INSUFFICIENT_EVIDENCE',
+      answer_id: '31',
+      mode: 'APPROVED',
+      baseline_id: '10',
+      document_version_ids: ['21'],
       grounded: false,
       citations: [],
       verification: { level: 'NONE', claims: 0 },
@@ -131,19 +138,59 @@ describe('비비 답변 근거', () => {
     ).toBeInTheDocument()
   })
 
-  it('구버전 응답은 검증 수준을 추측하지 않는다', async () => {
+  it('인용과 같은 문서의 다른 출처 위치는 참고 문서에 남긴다', async () => {
     ask.mockResolvedValue({
-      origin: 'MODEL',
-      text: '이전 응답',
-      sources: [],
-      unresolved: [],
+      ...cited,
+      sources: [
+        ...cited.sources,
+        { ...cited.sources[0], location: '승인 설계 / API-01' },
+      ],
+      notices: ['확인한 근거의 범위 안에서만 답했어요.'],
     })
     renderPanel()
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('설계 질문'), '질문')
     await user.click(screen.getByRole('button', { name: '보내기' }))
     expect(
-      await screen.findByText('근거 확인 수준은 제공되지 않았어요.'),
+      await screen.findByText('확인한 근거의 범위 안에서만 답했어요.'),
     ).toBeInTheDocument()
+    const panel = screen.getByRole('complementary')
+    expect(within(panel).getByText('참고 문서')).toBeInTheDocument()
+    expect(
+      within(panel).getByRole('button', { name: /승인 설계 \/ API-01/ }),
+    ).toBeInTheDocument()
+    expect(
+      within(panel).getAllByRole('button', { name: /문서 20 v2/ }),
+    ).toHaveLength(2)
+  })
+
+  it('인용과 사용량이 없는 템플릿 답을 검증된 모델 답으로 표시하지 않는다', async () => {
+    ask.mockResolvedValue(
+      askResponseSchema.parse({
+        origin: 'TEMPLATE',
+        text: '문서의 원문을 직접 확인해 주세요.',
+        sources: cited.sources,
+        unresolved: [],
+        answer_id: '32',
+        grounded: false,
+        citations: [],
+        mode: 'APPROVED',
+        baseline_id: '10',
+        document_version_ids: ['21'],
+      }),
+    )
+    renderPanel()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('설계 질문'), '질문')
+    await user.click(screen.getByRole('button', { name: '보내기' }))
+    expect(await screen.findByText('템플릿 응답')).toBeInTheDocument()
+    expect(
+      screen.getByText('이 답변에서 확인된 근거가 없어요.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('참고 문서')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /인용 \d+번 근거 보기/ }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('모델 생성')).not.toBeInTheDocument()
   })
 })

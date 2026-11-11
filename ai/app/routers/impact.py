@@ -70,6 +70,24 @@ class ImpactRoute(APIRoute):
 
 router = APIRouter(route_class=ImpactRoute)
 
+# The shared GMS key may be reused only for this exact endpoint. Any other
+# endpoint needs its own IMPACT_LLM_API_KEY so the team key never leaves GMS.
+_GMS_CHAT = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions"
+
+
+def _impact_api_key(settings: Settings, endpoint: str) -> str | None:
+    own = settings.impact_llm_api_key
+    if own is not None and own.get_secret_value().strip():
+        return own.get_secret_value()
+    shared = settings.gms_key
+    if (
+        endpoint == _GMS_CHAT
+        and shared is not None
+        and shared.get_secret_value().strip()
+    ):
+        return shared.get_secret_value()
+    return None
+
 
 async def get_impact_client(
     request: Request, settings: Annotated[Settings, Depends(get_settings)]
@@ -78,17 +96,14 @@ async def get_impact_client(
     client = getattr(request.app.state, "impact_client", None)
     if client is not None:
         return client
-    endpoint, key, model = (
-        settings.impact_llm_endpoint,
-        settings.impact_llm_api_key,
-        settings.impact_llm_model,
-    )
-    if not endpoint or key is None or not model or not model.strip():
+    endpoint, model = settings.impact_llm_endpoint, settings.impact_llm_model
+    if not endpoint or not model or not model.strip():
+        raise HTTPException(502, detail="model_unavailable")
+    key = _impact_api_key(settings, endpoint)
+    if key is None:
         raise HTTPException(502, detail="model_unavailable")
     try:
-        provider = OpenAICompatibleProvider(
-            endpoint=endpoint, api_key=key.get_secret_value()
-        )
+        provider = OpenAICompatibleProvider(endpoint=endpoint, api_key=key)
     except (TypeError, ValueError):
         raise HTTPException(502, detail="model_unavailable") from None
     client = LLMClient(provider)

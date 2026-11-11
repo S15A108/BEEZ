@@ -25,7 +25,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 abstract class PlanningTestSupport extends IntegrationTestSupport {
     static final String ORIGIN = "http://localhost:5173";
     static final String TEXT_HASH = "f8e265adf8d8be5ee57309613f5bbe84035e3aa6af5fd98c7dc4bc4bc1be1dd8";
-    static final String CONTENT = "# 기획서\n\n삭제 권한은 아직 정하지 않았다.\n\n로그인은 이메일로 한다.\n";
+    static final String CONTENT_HASH = "c".repeat(64);
+    /** DB 에는 실제 업로드 경로처럼 sha256: 접두어를 붙여 저장한다. AI 계약(133·134)에는 접두어 없는 hex 64자만 오간다(S15P31A108-373). */
+    static final String STORED_PREFIX = "sha256:";
+    static final String HEX64 = "^[0-9a-f]{64}$";
+    static final String CONTENT ="# 기획서\n\n삭제 권한은 아직 정하지 않았다.\n\n로그인은 이메일로 한다.\n";
 
     @Autowired JdbcTemplate jdbc;
     long project, leader, member, document, version;
@@ -52,11 +56,11 @@ abstract class PlanningTestSupport extends IntegrationTestSupport {
         long v = jdbc.queryForObject("""
                 INSERT INTO document_version(document_id,version_no,status,storage_key,content_hash,content_text,created_by)
                 VALUES(?,?,'DRAFT','fixture.md',?,?,?) RETURNING id
-                """, Long.class, doc, no, "c".repeat(64), text, leader);
+                """, Long.class, doc, no, STORED_PREFIX + CONTENT_HASH, text, leader);
         jdbc.update("""
                 INSERT INTO document_processing(document_version_id,attempt,status,source_status,index_status,text_hash)
                 VALUES(?,1,'COMPLETED','READY','READY',?)
-                """, v, TEXT_HASH);
+                """, v, STORED_PREFIX + TEXT_HASH);
         return v;
     }
 

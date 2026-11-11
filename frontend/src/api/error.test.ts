@@ -4,6 +4,7 @@ import {
   getApiErrorCode,
   getApiErrorDetails,
   getApiErrorMessage,
+  getValidationMessage,
   isMissingApi,
   MISSING_API_MESSAGE,
   shouldRetryQuery,
@@ -126,4 +127,39 @@ it('검증 횟수 제한은 같은 계획으로 다시 돌리지 말고 계획�
   const message = getApiErrorMessage(failure('validation_attempt_limit'))
   expect(message).toContain('횟수를 모두 썼어요')
   expect(message).toContain('고쳐 새로 검증하거나 팀에 알려 주세요')
+})
+
+const badRequest = (code: string, message?: string) =>
+  new AxiosError('bad', 'ERR_BAD_REQUEST', undefined, undefined, {
+    status: 400,
+    statusText: 'Bad Request',
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+    data: { error: { code, ...(message ? { message } : {}) } },
+  })
+
+it('입력 폼은 400 validation_failed의 서버 문구를 그대로 보인다', () => {
+  expect(
+    getValidationMessage(
+      badRequest('validation_failed', 'description 문자열이 필요합니다.'),
+    ),
+  ).toBe('description 문자열이 필요합니다.')
+})
+
+it('서버 문구가 없거나 다른 오류면 공통 문구를 보인다', () => {
+  expect(getValidationMessage(badRequest('validation_failed'))).toBe(
+    '입력 내용을 확인해 주세요.',
+  )
+  expect(getValidationMessage(failure('version_conflict'))).toBe(
+    getApiErrorMessage(failure('version_conflict')),
+  )
+  expect(getValidationMessage(new Error('x'))).toBe(
+    '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
+  )
+})
+
+it('AI 출력 상한에 걸려 끊긴 실패는 일반 장애가 아니라 상한 때문임을 알려 준다', () => {
+  const message = getApiErrorMessage(failure('ai_output_too_long'))
+  expect(message).toContain('출력 길이 상한')
+  expect(message).not.toBe(getApiErrorMessage(failure('ai_unavailable')))
 })

@@ -11,6 +11,19 @@ import org.springframework.web.client.RestClientResponseException;
 public final class AiErrorBodies {
     private AiErrorBodies() { }
 
+    /** 오류 본문의 {@code error.code}. 본문이 JSON 객체가 아니거나 코드가 문자열이 아니면 null. */
+    public static String codeIn(RestClientResponseException e) {
+        String body = e.getResponseBodyAsString();
+        if (body == null || body.isBlank()) return null;
+        try {
+            return JSON.readValue(body, Object.class) instanceof Map<?, ?> map
+                    && map.get("error") instanceof Map<?, ?> error
+                    && error.get("code") instanceof String code ? code : null;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
     /**
      * 오류 본문의 usage 배열. 본문이 JSON 객체가 아니거나 usage 가 객체 배열이 아니면 null — 오류 분류는 그대로 두고
      * 사용량만 "미확인"으로 남기게 한다(알 수 없는 값을 0 으로 단정하지 않는다).

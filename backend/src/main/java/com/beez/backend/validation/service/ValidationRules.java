@@ -87,14 +87,14 @@ public class ValidationRules {
         boolean unlinkedEmpty = plan.getUnlinked() == null || plan.getUnlinked().isEmpty();
         if (plan.isNoContractChange() && hasChanges) {
             findings.add(FindingRow.rule("MISSING_INPUT", "BLOCKING", null, null, null,
-                    "계약 변경 없음(no_contract_change)으로 선언했는데 CHANGES 참조가 있습니다", "FIX_PLAN",
-                    "선언을 false 로 바꾸거나 CHANGES 참조를 READS·IMPLEMENTS 로 바꾸세요"));
+                    "계약 변경 없음(no_contract_change)이라고 했는데 계약 변경(CHANGES)으로 고른 설계 항목이 있습니다", "FIX_PLAN",
+                    "계약을 바꾸는 작업이면 계약 변경 없음을 끄고, 아니면 그 항목을 구현·참고만(IMPLEMENTS·READS)으로 바꾸세요"));
             needsInput = true;
         }
         if (!plan.isNoContractChange() && !hasChanges && unlinkedEmpty) {
             findings.add(FindingRow.rule("MISSING_INPUT", "BLOCKING", null, null, null,
-                    "계약을 바꾼다고 했는데 바꿀 항목(CHANGES)도 미연결 내용(unlinked)도 없습니다", "FIX_PLAN",
-                    "바꿀 항목을 CHANGES 로 참조하거나, 아직 설계에 없는 내용이면 unlinked 에 적으세요"));
+                    "계약을 바꾼다고 했는데(no_contract_change=false) 계약 변경(CHANGES)으로 고른 설계 항목도, 설계에 없는 내용(unlinked)도 없습니다", "FIX_PLAN",
+                    "계약을 바꾸지 않는 작업이면 계약 변경 없음을 켜고, 바꾸는 작업이면 바꿀 항목을 계약 변경(CHANGES)으로 고르거나 설계에 없는 내용(unlinked)에 적으세요"));
             needsInput = true;
         }
 

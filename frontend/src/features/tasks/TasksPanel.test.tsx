@@ -407,6 +407,154 @@ it('사람 검토가 아닌 분석 오류는 실행 재시도를 제공한다', 
   ).toBeInTheDocument()
 })
 
+// S15P31A108-150: 롤백 실패 뒤 서버가 실행을 회수하면 ERROR(validation_lease_expired)로 닫힌다(docs/design/11-validation-rollback.md 5절).
+it('롤백 실패로 서버가 회수한 검증 오류는 이유와 결과를 보이고 실행 재시도를 제공한다', async () => {
+  task = {
+    ...task,
+    validation_status: 'ERROR',
+    validation: {
+      ...task.validation!,
+      status: 'ERROR',
+      error_code: 'validation_lease_expired',
+      findings: [
+        {
+          id: '705',
+          source: 'MODEL',
+          kind: 'ERROR',
+          severity: 'BLOCKING',
+          message:
+            '분석 실행이 시간 안에 결과를 반영하지 못했습니다 (워커 중단·재배포)',
+          sources: [],
+          resolution: 'RETRY',
+          next_action: '같은 입력으로 다시 실행합니다 (VAL-A04)',
+          validation_run_id: '801',
+        },
+      ],
+    },
+  }
+  show(false)
+  expect(
+    await screen.findByText(
+      /서버가 실행을 회수했어요\. 이번 실행 결과는 반영하지 않았고 작업 상태도 그대로예요\./,
+    ),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '실행 재시도' })).toBeEnabled()
+})
+
+it('부딪힌 작업이 있는 문제는 협의할 작업과 담당자를 함께 보인다', async () => {
+  const other: TaskDetail = {
+    ...task,
+    id: '504',
+    key: 'TASK-004',
+    assignee_member_id: '22',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '514',
+      task_id: '504',
+      plan: {
+        ...task.current_plan_revision.plan,
+        title: '빈 목록 안내 API 문구',
+      },
+    },
+  }
+  vi.mocked(tasksApi.get).mockImplementation(async (_project, id) =>
+    id === '504' ? other : task,
+  )
+  task = {
+    ...task,
+    validation_status: 'NEEDS_REVIEW',
+    validation: {
+      ...task.validation!,
+      status: 'NEEDS_REVIEW',
+      findings: [
+        {
+          id: '706',
+          source: 'RULE',
+          kind: 'CONFLICT',
+          severity: 'BLOCKING',
+          message: '다른 진행 작업이 같은 설계 항목의 변경을 점유하고 있어요.',
+          related_task_id: '504',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+        },
+      ],
+    },
+  }
+  show(false)
+  expect(
+    await screen.findByText(
+      /TASK-004 빈 목록 안내 API 문구 · 담당자 다른 팀원/,
+    ),
+  ).toBeInTheDocument()
+})
+
+// PR #231 리뷰: 작업 A로 연 작업 현황에서 B를 고르면 focusId는 A 그대로라, A로 openPane해도 선택이 B에 남았다.
+it('작업 A로 연 뒤 B를 고르고 B의 협의할 작업 A에서 작업 보기를 누르면 A가 선택된다', async () => {
+  const first = task
+  const second: TaskDetail = {
+    ...task,
+    id: '504',
+    key: 'TASK-004',
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      id: '514',
+      task_id: '504',
+      plan: {
+        ...task.current_plan_revision.plan,
+        title: '빈 목록 안내 API 문구',
+      },
+    },
+    validation_status: 'NEEDS_REVIEW',
+    validation: {
+      ...task.validation!,
+      id: '604',
+      task_id: '504',
+      plan_revision_id: '514',
+      status: 'NEEDS_REVIEW',
+      findings: [
+        {
+          id: '707',
+          source: 'RULE',
+          kind: 'CONFLICT',
+          severity: 'BLOCKING',
+          message: '다른 진행 작업이 같은 설계 항목의 변경을 점유하고 있어요.',
+          related_task_id: '501',
+          sources: [],
+          resolution: 'HUMAN_REVIEW',
+        },
+      ],
+    },
+  }
+  const byId: Record<string, TaskDetail> = { '501': first, '504': second }
+  vi.mocked(tasksApi.list).mockImplementation(async () => ({
+    items: [first, second],
+    has_more: false,
+  }))
+  vi.mocked(tasksApi.get).mockImplementation(async (_project, id) => byId[id])
+  vi.mocked(validationsApi.get).mockImplementation(
+    async (_project, id) => (id === '604' ? second : first).validation!,
+  )
+  show(false)
+  await userEvent.click(await screen.findByRole('button', { name: /TASK-004/ }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: '작업 보기' }),
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /TASK-001/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    ),
+  )
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
+})
+
+it('검증 결과에 BEEZ를 거치지 않은 작업은 검증하지 않는다고 적는다(AC-12)', async () => {
+  show(false)
+  expect(
+    await screen.findByText(/BEEZ를 거치지 않은 작업은 검증하지 않아요\./),
+  ).toBeInTheDocument()
+})
+
 it('완료 보고 재검증이 오류인데 새 계획 검증이 있으면 새 검증으로 재개하고 재검증 재시도도 따로 제공한다', async () => {
   const deltaError = {
     ...task.validation!,
@@ -1131,6 +1279,74 @@ it('검색칸에서 Enter를 눌러도 계획을 저장하지 않는다', async 
   await userEvent.type(itemSearch(), 'API{Enter}')
   expect(itemBox('API-001')).toBeInTheDocument()
   expect(save).not.toHaveBeenCalled()
+})
+
+// S15P31A108-360: '계약 변경 없음' 체크가 접힌 칸에 꺼진 채 있어, 필수 칸만 채운 웹 계획이 첫 검증 규칙 검사에서 늘 막혔다.
+// 계약 변경으로 고른 항목도 설계에 없는 내용도 없으면 바꿀 계약이 없으므로 true 로 보낸다.
+it('계약 변경으로 고른 항목이 없으면 계약 변경 없음으로 저장한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: { ...task.current_plan_revision.plan, no_contract_change: false },
+    },
+  }
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.click(itemBox('API-001')!)
+  expect(
+    screen.queryByLabelText('승인된 계약을 변경하지 않는 작업입니다.'),
+  ).toBeNull()
+  expect(
+    screen.getByText(
+      '계약 변경으로 고른 항목이 없어 승인된 계약을 바꾸지 않는 작업으로 저장돼요.',
+    ),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({ no_contract_change: true })
+})
+
+it('계약 변경으로 고른 항목이 있으면 계약을 바꾸는 작업으로 저장한다', async () => {
+  const save = await openPlanEditor()
+  await screen.findByLabelText(/^REQ-001 /)
+  await userEvent.click(itemBox('API-001')!)
+  await userEvent.selectOptions(
+    screen.getByLabelText('API-001의 참조 관계'),
+    'CHANGES',
+  )
+  expect(
+    screen.getByText(
+      '계약 변경으로 고른 설계 항목이 있어 계약을 바꾸는 작업으로 저장돼요.',
+    ),
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({
+    no_contract_change: false,
+    design_refs: [expect.objectContaining({ relation: 'CHANGES' })],
+  })
+})
+
+it('설계에 없는 내용만 있으면 계약 변경 여부를 사용자가 정한다', async () => {
+  task = {
+    ...task,
+    current_plan_revision: {
+      ...task.current_plan_revision,
+      plan: {
+        ...task.current_plan_revision.plan,
+        no_contract_change: false,
+        unlinked: [{ description: '외부 결제 연동' }],
+      },
+    },
+  }
+  const save = await openPlanEditor()
+  const box = screen.getByLabelText('승인된 계약을 변경하지 않는 작업입니다.')
+  expect(box).not.toBeChecked()
+  await userEvent.click(box)
+  fireEvent.click(screen.getByRole('button', { name: '계획 저장' }))
+  await waitFor(() => expect(save).toHaveBeenCalled())
+  expect(save.mock.calls[0][2]).toMatchObject({ no_contract_change: true })
 })
 
 it('찾는 설계 항목이 없으면 안내하고, 더 있으면 더 불러오는 버튼을 둔다', async () => {

@@ -33,6 +33,7 @@ const RELATION_LABELS = new Map([
   ['BLOCKS', '선행'],
   ['RELATES', '관련'],
   ['COMPARED_WITH', '대조'],
+  ['CHECKED_AGAINST', '검증 기준'],
   ['DEPENDS_ON', '의존'],
 ])
 

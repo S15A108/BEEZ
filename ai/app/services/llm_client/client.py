@@ -36,7 +36,9 @@ FEATURES = frozenset(
 )
 _ROLES = frozenset({"system", "developer", "user", "assistant"})
 _RESERVED_OPTIONS = frozenset({"model", "messages", "stream", "response_format"})
-_PROVIDER_CODES = frozenset({"model_timeout", "model_unavailable", "invalid_output"})
+_PROVIDER_CODES = frozenset(
+    {"model_timeout", "model_unavailable", "invalid_output", "output_truncated"}
+)
 _MAX_DB_INT = 2_147_483_647
 _MAX_DB_COST = Decimal("999999.999999")
 _COST_QUANTUM = Decimal("0.000001")

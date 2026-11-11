@@ -135,6 +135,7 @@ HTTP 200은 `origin: "MODEL"`, 실제 `model`, 호출별 `usage`,
 | 413 | `file_too_large` | 본문이 2 MiB 초과 |
 | 422 | `invalid_ai_input` | 버전 불일치, 원문·해시·프로필 오류, 선택 범위 등 의미상 입력 오류 |
 | 502 | `model_unavailable` | 모델 사용 불가 또는 모델 응답 검증 실패 |
+| 502 | `model_output_truncated` | 모델 답이 출력 토큰 상한(`finish_reason=length`)에서 끊겨 쓸 수 없음. 형식 오류와 구분한다(S15P31A108-382) |
 | 504 | `model_timeout` | 모델 호출 시간 초과 |
 
 모델 호출 후 실패했으면 오류에 실제 `usage`가 포함될 수 있다. 모델
@@ -2036,7 +2037,7 @@ BE는 v2 요청 필드(contract_version=2, 지금 본문, content_hash, referenc
 RERUN은 양의 문자열 `rejection_submission_id`와 비어 있지 않은 `rejection_reason`(Java UTF-16 기준 최대 10,000자)을 필수로 받아 반려 사유를 데이터로 모델에 제공한다. RERUN 및 mode를 생략한 기존 호출을 포함한 REVIEW의 모든 제안에 category·severity를 요구하고 열거형을 검증한다. `REJECTION_FIX`는 반려 맥락이 있는 RERUN에만 허용하며, 해결된 반려 사유에 대해 제안을 강제로 만들지 않는다. BE는 가장 최근 제출이 REJECTED인 경우 이 필드를 전달하고, 제안의 분류 쌍을 검증·저장·반환한다. 기존 모델과 과거 제안에는 두 필드를 모두 생략할 수 있다. FE 표시와 실제 모델 연동 및 계약 합의는 별도 확인이 필요하다.
 
 
-222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 15초이며, 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
+222 구현은 내부 토큰 인증과 최대 8 MiB 요청 본문을 적용하고, 입력 해시와 참고 자료 집합을 검증한 뒤 공통 LLM 클라이언트로 모델을 호출한다. AI 호출 제한은 설정값 `document_review_llm_timeout_seconds`(기본 30초, 0 초과 120 이하, 잘못된 값은 503 `document_review_not_configured`)다. BE 읽기 40초, nginx `/api/` 60초보다 짧게 유지한다(S15P31A108-382). 오류와 사용량은 공통 클라이언트 계약을 따른다. 문서 내용은 모델에 데이터로 전달하고, 검토 범위 확인과 응답의 출처·PATCH·저장 크기를 검증한다. BE/DB와 AI HTTP 경계는 가짜 모델을 사용하는 opt-in 통합 테스트로 검증한다. 2026-11-02 합성 문서로 실제 GMS COMPLETE·PARTIAL 호출과 BE → AI → GMS → 임시 DB의 COMPLETE 저장 및 사용량 기록을 확인했다. 배포 환경 연동, timeout/한도 합의 및 PARTIAL 제출 정책 확정은 별도 확인이 필요하다.
 
 각 PATCH의 적용·건너뛰기와 적용 순서에 따른 중간 문서는 BE와 같은 UTF-8 1 MiB, 정규화 후 100,000 코드포인트, 비어 있지 않은 텍스트 및 제어 문자 기준을 지켜야 한다. 업로드 후에도 선두 BOM이 남아 있을 수 있으며, 이 경우 BE와 같이 PATCH 적용마다 선두 BOM을 최대 하나 제거해 결과와 남은 원문의 유일성을 검증한다. 검증 작업량이 상한을 넘거나, 선두 BOM이 새로 노출되거나 PATCH 경계를 가로지르는 CRLF 정규화로 적용 결과가 달라질 수 있어 안전성을 확인할 수 없으면 전체 응답을 `invalid_output`으로 거절하고 사용량은 실패 기록에 남긴다.
 

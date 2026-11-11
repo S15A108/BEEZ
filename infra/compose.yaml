@@ -76,6 +76,18 @@ services:
       ASSIGNMENT_RECOMMENDATION_ENABLED: ${ASSIGNMENT_RECOMMENDATION_ENABLED:-false}
       # 비비 대화(#135, BEE-A01). 기본 꺼짐이라 켜지 않으면 /v1/bee/chat 이 503 이다. GMS_KEY 도 필요하다.
       BEE_CHAT_ENABLED: ${BEE_CHAT_ENABLED:-false}
+      # 문서 비비 검토(AI-A10) 모델 호출 제한(초). backend DOCUMENT_REVIEW_READ_TIMEOUT 보다 짧게, nginx /api/ 대기보다 짧게 둔다 (S15P31A108-382)
+      DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS: ${DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS:-30}
+      # 변경 영향 분석(#188, AI-A03 /v1/impact). 모델 이름이 있고 키를 구할 수 있어야(전용 키, 또는 GMS 주소 + GMS_KEY) 호출한다. 아니면 모델을 부르지 않고 502 model_unavailable 이다.
+      # 기본은 꺼짐(모델 이름이 빈 값)이다. 켜려면 서버 env 파일에 IMPACT_LLM_MODEL 한 줄을 쓴다 — 주소를 따로 주지 않으면 GMS 주소를 쓴다.
+      # 주소는 GMS_CHAT_ENDPOINT(문서 검토)를 따라가지 않게 따로 고정한다. 문서 검토 주소를 바꿔도 영향 분석은 그대로다.
+      # 키는 여기서 GMS_KEY 로 채우지 않는다. 전용 키가 비면 ai 가 주소가 GMS 기본 주소와 똑같을 때만 GMS_KEY 를 쓰고,
+      # 다른 주소면 모델을 부르지 않는다(팀 공용 키가 다른 서버로 나가지 않게, PR #258 리뷰).
+      # 응답의 모델 이름이 요청과 다르게 오면 invalid_output 으로 거절되므로, 그때만 믿을 별칭을 ALLOWED_RESPONSE_MODELS 에 쉼표로 적는다 (S15P31A108-357)
+      IMPACT_LLM_ENDPOINT: ${IMPACT_LLM_ENDPOINT:-https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions}
+      IMPACT_LLM_API_KEY: ${IMPACT_LLM_API_KEY:-}
+      IMPACT_LLM_MODEL: ${IMPACT_LLM_MODEL:-}
+      IMPACT_LLM_ALLOWED_RESPONSE_MODELS: ${IMPACT_LLM_ALLOWED_RESPONSE_MODELS:-}
     healthcheck:
       # slim 이미지에는 curl 이 없어 파이썬 표준 라이브러리로 확인한다.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
@@ -120,6 +132,8 @@ services:
       # 비비 질문(BEE-A01) 시간 설정. 기본 AI 호출 35초·전체 예산 55초(서버 Nginx 기본 60초보다 짧게). 서버 env 파일로 조정한다 (S15P31A108-344)
       BEEZ_BEE_CHAT_READ_TIMEOUT: ${BEEZ_BEE_CHAT_READ_TIMEOUT:-35s}
       BEEZ_BEE_ANSWER_BUDGET: ${BEEZ_BEE_ANSWER_BUDGET:-55s}
+      # 문서 비비 검토 AI 호출 읽기 제한. AI DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS(30초)보다 길게, nginx /api/ 대기(60초)보다 짧게 (S15P31A108-382)
+      DOCUMENT_REVIEW_READ_TIMEOUT: ${DOCUMENT_REVIEW_READ_TIMEOUT:-40s}
       # 공개 주소 셋. prod 프로필은 기본값이 없어 빠지면 기동이 실패한다
       CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
       INVITE_BASE_URL: ${PUBLIC_ORIGIN}

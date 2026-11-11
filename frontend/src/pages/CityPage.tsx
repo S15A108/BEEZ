@@ -31,6 +31,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -115,6 +116,14 @@ function City() {
   const startCreate = (lot: number | null) => {
     setDesign('modern')
     setCreatingAt(lot)
+  }
+  // 이름·소개를 쓰던 중이면 Esc·바깥 클릭·닫기·취소로 바로 닫지 않고 한 번 묻는다(S15P31A108-371).
+  const [dirty, setDirty] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const closeCreate = () => {
+    if (create.isPending) return
+    if (dirty) setConfirmClose(true)
+    else setCreatingAt(null)
   }
   return (
     // 아래쪽 여백: 마지막 줄 카드의 호버 카드가 카드 아래로 내려와도 문서 높이가 그대로라 스크롤바가 생겼다 사라지지 않는다.
@@ -354,12 +363,7 @@ function City() {
         )}
       </AsyncState>
       {creatingAt !== null && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open && !create.isPending) setCreatingAt(null)
-          }}
-        >
+        <Dialog open onOpenChange={(open) => !open && closeCreate()}>
           <DialogContent className="max-h-[90dvh] gap-5 overflow-y-auto rounded-[22px] p-7 sm:max-w-[760px]">
             <DialogHeader>
               <DialogTitle className="text-xl font-bold">
@@ -401,7 +405,8 @@ function City() {
                 </p>
               }
               submitLabel="프로젝트 만들기"
-              onCancel={() => setCreatingAt(null)}
+              onCancel={closeCreate}
+              onDirtyChange={setDirty}
               onSubmit={async (values) => {
                 const project = await create.mutateAsync({
                   name: values.name.trim(),
@@ -417,6 +422,35 @@ function City() {
                 navigate(`/projects/${project.id}`)
               }}
             />
+            {confirmClose && (
+              <Dialog open onOpenChange={(open) => setConfirmClose(open)}>
+                <DialogContent className="sm:max-w-[420px]">
+                  <DialogHeader>
+                    <DialogTitle>만들던 프로젝트를 닫을까요?</DialogTitle>
+                    <DialogDescription>
+                      쓴 이름과 소개는 저장되지 않아요.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setConfirmClose(false)}
+                    >
+                      계속 쓰기
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => {
+                        setConfirmClose(false)
+                        setCreatingAt(null)
+                      }}
+                    >
+                      버리고 닫기
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
           </DialogContent>
         </Dialog>
       )}

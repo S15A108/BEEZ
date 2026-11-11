@@ -130,6 +130,9 @@ sudo chgrp beez-deploy /opt/beez && sudo chmod 2750 /opt/beez && ls -ld /opt/bee
   씁니다. Nginx `upstream beez_backend`의 포트와 같아야 합니다.
 - 변수마다의 의미·필수 여부, 빠졌을 때의 문구, 배포 전 점검 명령은
   [환경변수와 비밀값](env.md)에 있습니다.
+- 이 파일에는 AI 기능 스위치가 없습니다. GMS 키만 넣으면 보완 질문·설계
+  초안·비비 질문·영향 분석은 꺼진 채라 항상 실패합니다. 켜는 줄과 명령은
+  [AI 기능 켜기](env.md#ai-기능-켜기-서버)에 있습니다(S15P31A108-357).
 
 ### 3. GMS 키 넣기·바꾸기
 

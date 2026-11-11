@@ -23,7 +23,7 @@ public class BaselineRepository {
                 SELECT DISTINCT ON (d.id) d.id AS document_id,d.type,v.id,v.version_no,v.status,
                        v.content_hash,v.content_text,v.parent_version_id
                   FROM document d JOIN document_version v ON v.document_id=d.id
-                 WHERE d.project_id=:project AND v.status IN ('DRAFT','APPROVED')
+                 WHERE d.project_id=:project AND d.discarded_at IS NULL AND v.status IN ('DRAFT','APPROVED')
                    AND (NOT EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id)
                         OR EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id AND w.initial_version_id=v.id)
                         OR EXISTS (SELECT 1 FROM document_review_submission s WHERE s.document_version_id=v.id))
@@ -37,12 +37,12 @@ public class BaselineRepository {
     }
 
     public List<Map<String, Object>> workingCopyStates(long project) {
-        return jdbc.sql("SELECT w.document_id,w.revision,w.status FROM document_working_copy w JOIN document d ON d.id=w.document_id WHERE d.project_id=:project ORDER BY w.document_id")
+        return jdbc.sql("SELECT w.document_id,w.revision,w.status FROM document_working_copy w JOIN document d ON d.id=w.document_id WHERE d.project_id=:project AND d.discarded_at IS NULL ORDER BY w.document_id")
                 .param("project", project).query().listOfRows();
     }
 
     public boolean hasUnapprovedWorkingCopies(long project) {
-        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM document_working_copy w JOIN document d ON d.id=w.document_id WHERE d.project_id=:project AND w.status<>'APPROVED')")
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM document_working_copy w JOIN document d ON d.id=w.document_id WHERE d.project_id=:project AND d.discarded_at IS NULL AND w.status<>'APPROVED')")
                 .param("project", project).query(Boolean.class).single();
     }
 

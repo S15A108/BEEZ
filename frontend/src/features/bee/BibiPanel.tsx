@@ -1,5 +1,9 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
+import {
+  useMutation,
+  useMutationState,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -16,10 +20,24 @@ import type { AskResponse, AskScope } from './schemas'
 import { useBibiMessages } from './useBibiMessages'
 
 // 찾는 범위 칩(캔버스 PNL-12-v2-bibi-hotbar). 값은 BEE-A01 scope다.
-const scopes: { value: AskScope; label: string }[] = [
+// soon이 있으면 칩을 보이되 고를 수 없게 막고 그 안내를 붙인다.
+const scopes: { value: AskScope; label: string; soon?: string }[] = [
   { value: 'APPROVED', label: '승인된 문서' },
-  { value: 'INCLUDE_DRAFTS', label: '초안 포함' },
+  // ponytail: BEE-A01(PR #252)은 아직 INCLUDE_DRAFTS를 400으로 거절한다. 서버가 받게 되면 soon만 지운다.
+  {
+    value: 'INCLUDE_DRAFTS',
+    label: '초안 포함',
+    soon: '초안 포함은 곧 지원해요',
+  },
 ]
+
+// BEE-A01의 409. baseline_changed는 변경 제안 API에서 뜻이 달라 공통 문구(api/error.ts)에 두지 않는다.
+const askErrors: Record<string, string> = {
+  // 현재 기준 설계가 없거나 그 문서의 색인이 아직 준비되지 않았다.
+  index_not_ready:
+    '답할 문서가 아직 준비되지 않았어요. 기준 설계가 만들어지고 문서 준비가 끝나면 다시 물어봐 주세요.',
+  baseline_changed: '답을 만드는 사이 기준이 바뀌었어요. 다시 질문해 주세요.',
+}
 
 const questionSchema = z.object({
   question: z
@@ -36,13 +54,13 @@ function questionErrorMessage(error: unknown) {
   if (isAxiosError(error)) {
     const status = error.response?.status
     if (
-      status === undefined ||
-      (status >= 500 &&
-        status < 600 &&
-        status !== 501 &&
-        getApiErrorCode(error) === undefined)
+      status !== undefined &&
+      status >= 500 &&
+      status < 600 &&
+      status !== 501 &&
+      getApiErrorCode(error) === undefined
     )
-      return '이전 요청이 처리됐을 수 있어요. 답변을 확인할 수 없으며 다시 보내면 추가 호출이 발생할 수 있어요.'
+      return '답변을 받지 못했어요. 다시 보내면 새로 답을 만들어요.'
   }
   return getApiErrorMessage(error)
 }
@@ -58,9 +76,27 @@ export function BibiPanel({ projectId }: { projectId: string }) {
     Ask & { answer: AskResponse }
   >(projectId)
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
-  // 상태가 다시 그려지기 전에 이어진 제출도 하나의 요청으로 묶는다.
-  const sending = useRef<Promise<void> | null>(null)
+  const client = useQueryClient()
+  const mutationKey = ['projects', projectId, 'bibi-ask'] as const
+  // 요청 상태는 창 밖의 캐시에 남아, 근거 문서를 보고 돌아와도 이어진다.
+  const attempts = useMutationState({
+    filters: { mutationKey, exact: true },
+    select: (attempt) => ({
+      id: attempt.mutationId,
+      status: attempt.state.status,
+      input: attempt.state.variables as Ask | undefined,
+      error: attempt.state.error,
+    }),
+  })
+  const latest = attempts.at(-1)
+  const pending = attempts.findLast(
+    (attempt) => attempt.status === 'pending',
+  )?.input
+  const failed = latest?.status === 'error' ? latest : undefined
   const mutation = useMutation({
+    mutationKey,
+    gcTime: Infinity,
+    retry: false,
     mutationFn: (input: Ask) => beeApi.ask(projectId, input),
     onSuccess: (answer, input) => {
       setMessages((previous) => [...previous, { ...input, answer }])
@@ -80,38 +116,35 @@ export function BibiPanel({ projectId }: { projectId: string }) {
   })
   const question = useWatch({ control, name: 'question' })
   const isRetry =
-    mutation.isError &&
-    question.trim() === mutation.variables.question &&
-    scope === mutation.variables.scope
+    !!failed?.input &&
+    question.trim() === failed.input.question &&
+    scope === failed.input.scope
+  const restoredFailure = useRef<number | null>(null)
+  useEffect(() => {
+    if (!failed?.input || restoredFailure.current === failed.id) return
+    restoredFailure.current = failed.id
+    if (!getValues('question')) setValue('question', failed.input.question)
+  }, [failed, getValues, setValue])
   // 보내면 입력칸을 바로 비우고, 실패하면 그사이 새로 쓴 글이 없을 때만 질문을 돌려준다.
   const send = ({ question }: QuestionInput) => {
-    if (sending.current) return sending.current
+    // mutateAsync는 캐시의 pending 상태를 동기로 세운다. 연속 제출과 새로 열린 창 모두
+    // React 렌더링을 기다리지 않고 실제 대기 요청을 검사한다.
+    if (client.isMutating({ mutationKey, exact: true })) return
     setValue('question', '')
-    const request = mutation
+    return mutation
       .mutateAsync({ question, scope })
       .then(() => undefined)
-      .catch(() => {
-        if (!getValues('question')) setValue('question', question)
-      })
-      .finally(() => {
-        sending.current = null
-      })
-    sending.current = request
-    return request
+      .catch(() => undefined)
   }
   const end = useRef<HTMLDivElement>(null)
   // 새 질문·답이 붙으면 입력줄까지 내려 마지막 대화가 보이게 한다.
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [messages.length, mutation.isPending])
-  const pending = mutation.isPending ? mutation.variables : undefined
+  }, [messages.length, pending])
   const selected =
     selectedIndex === null ? messages.at(-1) : messages[selectedIndex]
   const referenceCount = selected
-    ? (selected.answer.citations?.length ?? 0) +
-        (selected.answer.design_refs?.length ?? 0) +
-        (selected.answer.task_refs?.length ?? 0) ||
-      selected.answer.sources.length
+    ? selected.answer.citations.length || selected.answer.sources.length
     : 0
   return (
     // 창 높이를 다 쓰고, 대화가 짧아도 질문 입력줄은 아래에 둔다.
@@ -142,25 +175,40 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               찾는 범위
             </span>
             {scopes.map((option) => (
-              <label
-                key={option.value}
-                className={cn(
-                  'cursor-pointer rounded-full px-3 py-1 text-xs font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
-                  scope === option.value
-                    ? 'bg-foreground text-background'
-                    : 'bg-muted text-muted-foreground hover:text-foreground',
+              <Fragment key={option.value}>
+                <label
+                  className={cn(
+                    'cursor-pointer rounded-full px-3 py-1 text-xs font-semibold has-focus-visible:ring-2 has-focus-visible:ring-ring',
+                    scope === option.value
+                      ? 'bg-foreground text-background'
+                      : 'bg-muted text-muted-foreground hover:text-foreground',
+                    option.soon &&
+                      'cursor-not-allowed opacity-50 hover:text-muted-foreground',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={scopeLabel}
+                    value={option.value}
+                    checked={scope === option.value}
+                    onChange={() => setScope(option.value)}
+                    disabled={!!option.soon}
+                    aria-describedby={
+                      option.soon ? `${scopeLabel}-soon` : undefined
+                    }
+                    className="sr-only"
+                  />
+                  {option.label}
+                </label>
+                {option.soon && (
+                  <span
+                    id={`${scopeLabel}-soon`}
+                    className="text-xs text-muted-foreground"
+                  >
+                    {option.soon}
+                  </span>
                 )}
-              >
-                <input
-                  type="radio"
-                  name={scopeLabel}
-                  value={option.value}
-                  checked={scope === option.value}
-                  onChange={() => setScope(option.value)}
-                  className="sr-only"
-                />
-                {option.label}
-              </label>
+              </Fragment>
             ))}
           </div>
         </div>
@@ -182,7 +230,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                   {message.answer.text
                     .split(/(\[\d+\])/g)
                     .map((part, partIndex) => {
-                      const citation = message.answer.citations?.find(
+                      const citation = message.answer.citations.find(
                         (item) => part === `[${item.n}]`,
                       )
                       return citation ? (
@@ -208,6 +256,16 @@ export function BibiPanel({ projectId }: { projectId: string }) {
                   <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
                     {message.answer.unresolved.map((item) => (
                       <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                )}
+                {!!message.answer.notices?.length && (
+                  <ul
+                    aria-label="답변 안내"
+                    className="mt-2 text-xs text-muted-foreground"
+                  >
+                    {message.answer.notices.map((notice, index) => (
+                      <li key={index}>{notice}</li>
                     ))}
                   </ul>
                 )}
@@ -249,9 +307,10 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               </p>
             </>
           )}
-          {mutation.error && (
+          {failed && (
             <p role="alert" className="text-sm text-destructive">
-              {questionErrorMessage(mutation.error)}
+              {askErrors[getApiErrorCode(failed.error) ?? ''] ??
+                questionErrorMessage(failed.error)}
             </p>
           )}
         </div>
@@ -266,6 +325,8 @@ export function BibiPanel({ projectId }: { projectId: string }) {
               aria-label="설계 질문"
               placeholder="공용 문서에 대해 물어보세요"
               autoComplete="off"
+              // 창(Radix)은 열 때 첫 포커스 요소인 '찾는 범위' 칩에 포커스를 준다. 비비를 부르고 바로 묻게 입력칸을 먼저 잡는다(S15P31A108-364).
+              autoFocus
               aria-invalid={Boolean(errors.question)}
               aria-describedby={errors.question ? errorId : undefined}
               className="h-10"
@@ -309,7 +370,7 @@ export function BibiPanel({ projectId }: { projectId: string }) {
         {selected && (
           <p className="mt-3 text-xs text-muted-foreground">
             {selected.scope === 'APPROVED'
-              ? "승인된 문서만 찾았어요. 초안까지 찾으려면 위에서 '초안 포함'을 고르세요."
+              ? '승인된 문서만 찾았어요.'
               : '초안까지 찾았어요. 초안은 아직 팀장이 승인하지 않은 내용이에요.'}
           </p>
         )}

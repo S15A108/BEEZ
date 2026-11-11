@@ -15,6 +15,7 @@ import {
   setupMockApi,
 } from '@/mocks/setup'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { Hotbar } from '@/features/workspace/Hotbar'
 import { ChangesPanel } from './ChangesPanel'
 import { getResponseSchema } from './schemas'
 
@@ -437,27 +438,88 @@ it('반려된 제안을 다시 내면 설계 항목 변경을 원래 그대로 �
   vi.restoreAllMocks()
 })
 
-// PR #72 mock/live 전수 대조 DOC-LIVE-5: 검토 요청은 대상 팀원이 있어야 한다(서버 400).
-it('검토 요청을 고르고 대상 팀원을 고르지 않으면 보내지 않고 알린다', async () => {
+// S15P31A108-314: 검토 요청은 받을 팀원을 한 명 이상 골라야 보낼 수 있다(서버 400). 보내기 버튼이 막히고 이유를 알린다.
+it('검토 요청에서 받을 팀원을 고르지 않으면 보낼 수 없고 알린다', async () => {
   const user = userEvent.setup()
   const comment = vi.spyOn(changesApi, 'comment')
   renderPanel()
   await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
   await user.click(screen.getByRole('tab', { name: /^의견/ }))
-  await user.selectOptions(
-    await screen.findByLabelText('남길 종류'),
-    'REVIEW_REQUEST',
-  )
-  await user.type(screen.getByLabelText(/^내용/), '이 문장도 봐 주세요.')
-  await user.click(screen.getByRole('button', { name: '남기기' }))
+  await user.click(await screen.findByRole('tab', { name: '검토 요청' }))
+  await user.type(screen.getByLabelText('내용'), '이 문장도 봐 주세요.')
   expect(
-    await screen.findByText('검토를 요청할 팀원을 골라 주세요.'),
+    screen.getByText('받을 팀원을 한 명 이상 골라 주세요.'),
   ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '보내기' })).toBeDisabled()
   expect(comment).not.toHaveBeenCalled()
   await expect(
     changesApi.comment('101', '71', {
       body: '봐 주세요',
       kind: 'REVIEW_REQUEST',
+    }),
+  ).rejects.toMatchObject({ response: { status: 400 } })
+})
+
+// S15P31A108-314: 두 사람에게 같이 검토를 요청하면 mentioned_member_ids 에 두 ID 가 가고, 의견 목록에 받는 사람이 보인다.
+it('두 사람에게 같이 검토를 요청하면 받는 사람이 의견 목록에 보인다', async () => {
+  const user = userEvent.setup()
+  const comment = vi.spyOn(changesApi, 'comment')
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(screen.getByRole('tab', { name: /^의견/ }))
+  await user.click(await screen.findByRole('tab', { name: '검토 요청' }))
+  await user.click(screen.getByRole('button', { name: '+ 받을 팀원' }))
+  await user.click(await screen.findByRole('checkbox', { name: '최팀원' }))
+  await user.click(screen.getByRole('checkbox', { name: '박팀원' }))
+  await user.keyboard('{Escape}')
+  await user.type(screen.getByLabelText('내용'), '두 분이 같이 봐 주세요.')
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    '2명에게 검토를 요청했어요.',
+  )
+  expect(comment).toHaveBeenCalledTimes(1)
+  const sent = comment.mock.calls[0][2]
+  expect(sent.kind).toBe('REVIEW_REQUEST')
+  expect(sent.mentioned_member_ids).toHaveLength(2)
+  expect(await screen.findByText(/→ 최팀원, 박팀원/)).toBeInTheDocument()
+  vi.restoreAllMocks()
+})
+
+it('의견 탭에서는 받을 팀원 없이 보낸다', async () => {
+  const user = userEvent.setup()
+  const comment = vi.spyOn(changesApi, 'comment')
+  renderPanel()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(screen.getByRole('tab', { name: /^의견/ }))
+  expect(
+    screen.queryByRole('button', { name: '+ 받을 팀원' }),
+  ).not.toBeInTheDocument()
+  await user.type(await screen.findByLabelText('내용'), '방향이 좋아요.')
+  await user.click(screen.getByRole('button', { name: '보내기' }))
+  await screen.findByText('방향이 좋아요.')
+  expect(comment.mock.calls[0][2]).toEqual({
+    body: '방향이 좋아요.',
+    kind: 'COMMENT',
+  })
+  vi.restoreAllMocks()
+})
+
+// 서버는 이 프로젝트의 멤버가 아닌 ID 가 하나라도 있거나 20명을 넘으면 전체를 거절한다(CHG-A12). mock 도 같다.
+it('mock 서버는 20명을 넘거나 멤버가 아닌 ID 가 섞인 검토 요청을 거절한다', async () => {
+  renderPanel()
+  const { proposal } = await changesApi.get('101', '71')
+  await expect(
+    changesApi.comment('101', proposal.id, {
+      body: '봐 주세요',
+      kind: 'REVIEW_REQUEST',
+      mentioned_member_ids: ['9999'],
+    }),
+  ).rejects.toMatchObject({ response: { status: 400 } })
+  await expect(
+    changesApi.comment('101', proposal.id, {
+      body: '봐 주세요',
+      kind: 'REVIEW_REQUEST',
+      mentioned_member_ids: Array.from({ length: 21 }, (_, i) => `${i + 1}`),
     }),
   ).rejects.toMatchObject({ response: { status: 400 } })
 })
@@ -1208,4 +1270,209 @@ it('같은 제안의 승인 확인을 다시 열면 이전 미리 보기를 지�
   expect(
     screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
   ).toBeEnabled()
+})
+
+it('실패한 분석 위에 다시 분석이 도는 중이면 이전 분석이 실패했다고 함께 알린다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await changesApi.impact('101', '71')
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...base,
+    analysis_status: 'FAILED',
+    error_code: 'model_unavailable',
+    reanalysis: { run_id: '9' },
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText('다시 분석하는 중이에요. 이전 분석은 실패했어요.'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeDisabled()
+})
+
+async function stubDocumentProposal(keepItems: boolean) {
+  const base = await changesApi.get('101', '71')
+  vi.spyOn(changesApi, 'get').mockResolvedValue({
+    ...base,
+    proposal: {
+      ...base.proposal,
+      items: keepItems ? base.proposal.items : [],
+      documents: [
+        {
+          document_id: '203',
+          base_document_version_id: '1',
+          proposed_document_version_id: '2',
+        },
+      ],
+    },
+  } as never)
+  return changesApi.impact('101', '71')
+}
+
+it('문서만 바꾸는 제안에는 영향 분석 버튼을 두지 않는다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await stubDocumentProposal(false)
+  vi.spyOn(changesApi, 'impact').mockResolvedValue({
+    ...base,
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'analysis_not_started',
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByText(/문서만 바꾸는 제안은 영향 분석 대상이 아니에요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '영향 분석 시작' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '다시 분석' }),
+  ).not.toBeInTheDocument()
+})
+
+it('항목과 문서가 함께 든 제안은 확인된 관계를 볼 수 있게 분석 버튼을 둔다 (S15P31A108-359)', async () => {
+  const user = userEvent.setup()
+  const base = await stubDocumentProposal(true)
+  const impact = vi.spyOn(changesApi, 'impact')
+  impact.mockResolvedValue({
+    ...base,
+    explicit: [],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'analysis_not_started',
+  })
+  renderPanel()
+  await user.click(await screen.findByRole('tab', { name: /^영향/ }))
+  expect(
+    await screen.findByRole('button', { name: '영향 분석 시작' }),
+  ).toBeEnabled()
+  // 분석 뒤: AI 후보는 없어도 확인된 관계는 보이고, 다시 분석도 할 수 있다.
+  impact.mockResolvedValue({
+    ...base,
+    explicit: [{ task_id: '501', design_item_id: '211' }],
+    candidates: [],
+    analysis_status: 'NOT_EVALUATED',
+    error_code: 'document_change_unavailable',
+    is_current: true,
+  })
+  await client.invalidateQueries({ queryKey: ['projects', '101', 'impact'] })
+  expect(
+    await screen.findByText(
+      /AI 후보는 볼 수 없지만 확인된 관계는 볼 수 있어요/,
+    ),
+  ).toBeInTheDocument()
+  expect(screen.getByText(/미배정/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '다시 분석' })).toBeEnabled()
+})
+
+// S15P31A108-371 7: 회의가 만든 제안처럼 문서만 바꾸는 제안도 개요 숫자와 줄에 문서 변경이 보이고, 사유 줄바꿈이 남는다.
+it('문서만 바꾸는 제안의 개요는 문서 변경을 세고 줄로 보이며 사유 줄바꿈을 지킨다 (S15P31A108-371)', async () => {
+  const base = await changesApi.get('101', '71')
+  const { document } = await documentsApi.get('101', '203')
+  const reason = '회의에서 정한 내용이에요.\n\n충돌:\n- REQ-005 안내 문구'
+  vi.spyOn(changesApi, 'get').mockResolvedValue({
+    ...base,
+    proposal: {
+      ...base.proposal,
+      reason,
+      items: [],
+      documents: [
+        {
+          document_id: '203',
+          base_document_version_id: document.approved_version!.id,
+          proposed_document_version_id: '299',
+        },
+      ],
+    },
+  } as never)
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: /^바뀌는 내용 1/ }),
+  ).toHaveTextContent('문서 1')
+  expect(
+    await screen.findByText('요구사항 명세서 v1 → 새 버전'),
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/공용 문서함 승인 흐름/)).not.toBeInTheDocument()
+  const paragraph = screen.getByText(/^회의에서 정한 내용이에요/)
+  expect(paragraph.textContent).toBe(reason)
+  expect(paragraph).toHaveClass('whitespace-pre-wrap')
+})
+
+it('항목과 문서가 함께 든 제안의 개요는 둘을 합쳐 세고 나눠 보인다 (S15P31A108-371)', async () => {
+  await stubDocumentProposal(true)
+  renderPanel()
+  expect(
+    await screen.findByRole('heading', { name: /^바뀌는 내용 2/ }),
+  ).toHaveTextContent('고치기 1 · 문서 1')
+  // 제안의 기준 버전이 지금 승인본과 다르면 버전 번호를 짐작하지 않는다.
+  expect(
+    await screen.findByText('요구사항 명세서 → 새 버전'),
+  ).toBeInTheDocument()
+})
+
+// PR #264 리뷰(D46): 제안 작성·승인·반려는 PaneSheet가 아니라 창 안 전체 화면이라 따로 세어 숫자 키를 막는다.
+// mode가 useState라 창이 바뀌면 쓰던 제안이 남지 않는다.
+function renderWithHotbar() {
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <Hotbar locked={[]} badges={{}} />
+        <ChangesPanel projectId="101" isLeader />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+// 입력칸 밖(빈 곳)에 포커스를 둔다. 입력칸에서는 원래부터 숫자가 글자로 들어간다.
+const blurInput = () => (document.activeElement as HTMLElement | null)?.blur()
+
+it('제안 작성 화면에서는 숫자 키로 창을 바꾸거나 닫지 않고, 작성을 그만두면 다시 바꾼다 (S15P31A108-371)', async () => {
+  const user = userEvent.setup()
+  useWorkspaceStore.getState().openPane('changes', 'doc:203')
+  renderWithHotbar()
+  await waitFor(() =>
+    expect(
+      (screen.getByLabelText('고친 글') as HTMLTextAreaElement).value,
+    ).toContain('REQ-001'),
+  )
+  await user.type(screen.getByLabelText('제목 *'), '빈 목록 안내 추가')
+  blurInput()
+  await user.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await user.keyboard('2')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  expect(screen.getByLabelText('제목 *')).toHaveValue('빈 목록 안내 추가')
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  blurInput()
+  await user.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('documents')
+})
+
+it('승인·반려 화면에서도 숫자 키로 창을 바꾸지 않고, 상세로 돌아오면 다시 바꾼다 (S15P31A108-371)', async () => {
+  const user = userEvent.setup()
+  renderWithHotbar()
+  await screen.findByRole('heading', { name: /프로젝트 목록 빈 화면 안내/ })
+  await user.click(
+    screen.getByRole('button', { name: '승인하고 기준 v2 발행' }),
+  )
+  expect(
+    screen.getByRole('heading', { name: '기준 v2 발행을 승인할까요?' }),
+  ).toBeInTheDocument()
+  blurInput()
+  await user.keyboard('1')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await user.click(screen.getByRole('button', { name: '취소' }))
+  await user.click(await screen.findByRole('button', { name: '반려' }))
+  expect(
+    screen.getByRole('heading', { name: '제안을 반려할까요?' }),
+  ).toBeInTheDocument()
+  blurInput()
+  await user.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('changes')
+  await user.click(
+    screen.getByRole('button', { name: /프로젝트 목록 빈 화면 안내/ }),
+  )
+  blurInput()
+  await user.keyboard('4')
+  expect(useWorkspaceStore.getState().pane).toBe('tasks')
 })

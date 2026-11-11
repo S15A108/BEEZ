@@ -25,12 +25,40 @@ const strip = ({ content, review, ...submission }: StoredSubmission) => {
   return submission
 }
 
+// 서버의 reference_hash 대역: 이 문서를 뺀 승인본 집합(문서 id와 승인 버전)이 같으면 같은 값이다.
+function referenceHash(project: MockProject, documentId: string) {
+  const approved = project.documents
+    .filter((item) => item.id !== documentId && item.approved_version)
+    .map((item) => `${item.id}:${item.approved_version!.version_no}`)
+    .sort()
+  return `sha256:mock-reference-${approved.join(',')}`
+}
+
+// 서버의 usable() 대역: 본문(revision)과 참고 승인본이 검토 때와 같을 때만 그 검토를 쓴다.
+function usable(
+  project: MockProject,
+  target: StoredWorkingCopy,
+  review: DocumentBeeReview,
+) {
+  return (
+    review.resolved_revision === target.revision &&
+    review.reference_hash === referenceHash(project, target.document_id)
+  )
+}
+
 function view(
   project: MockProject,
   copyOf: StoredWorkingCopy,
 ): DocumentWorkingCopy {
+  const review = copyOf.latest_review
   return {
     ...copy(copyOf),
+    // 팀장 결정을 기다리거나 끝난 건은 제출 때 통과한 검토라 무효로 표시하지 않는다.
+    review_stale:
+      !!review &&
+      copyOf.status !== 'SUBMITTED' &&
+      copyOf.status !== 'APPROVED' &&
+      !usable(project, copyOf, review),
     submissions: project.submissions
       .filter((item) => item.document_id === copyOf.document_id)
       .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? 1 : -1))
@@ -88,15 +116,52 @@ function guardAi() {
     fail(502, 'invalid_ai_output', '비비 결과를 확인하지 못했어요.')
 }
 
+// 비비 검토 시작(DOC-A16)의 실패 장면 스위치(목 전용). localStorage 'beez.mock.reviewRun' = timeout(504) | unavailable(503).
+// 대화·직접 요청의 스위치(beez.mock.review)와 따로 둔다. 실패한 요청도 작업본에 남겨(서버 bee_review_request 대역)
+// 새로고침·다른 팀원 화면에서 보이게 한다.
+function guardReview(target: StoredWorkingCopy) {
+  let scenario: string | null
+  try {
+    scenario = localStorage.getItem('beez.mock.reviewRun')
+  } catch {
+    scenario = null
+  }
+  const failure =
+    scenario === 'timeout'
+      ? {
+          status: 504,
+          code: 'review_timeout',
+          message: '비비 검토 시간이 초과됐어요.',
+        }
+      : scenario === 'unavailable'
+        ? {
+            status: 503,
+            code: 'review_unavailable',
+            message: '비비를 부를 수 없어요.',
+          }
+        : undefined
+  if (!failure) return
+  target.bee_review_request = {
+    status: 'FAILED',
+    error_code: failure.code,
+    updated_at: now(),
+  }
+  fail(failure.status, failure.code, failure.message)
+}
+
 // 대화·직접 요청은 지금 작성 내용의 최신 검토에서만 쓴다(DOC-A22·A23).
-function latestReview(target: StoredWorkingCopy, reviewId: string) {
+function latestReview(
+  project: MockProject,
+  target: StoredWorkingCopy,
+  reviewId: string,
+) {
   const review = target.latest_review
   // 직접 고치거나 다시 올리면 이전 검토가 사라지므로, 검토 id가 낡았을 때는 review_stale이다.
   if (!review) fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
   if (review.id !== reviewId)
     fail(404, 'not_found', '비비 검토를 찾을 수 없어요.')
-  if (review.resolved_revision !== target.revision)
-    fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
+  if (!usable(project, target, review))
+    fail(409, 'review_stale', '이 검토는 더 쓸 수 없어요.')
   return review
 }
 
@@ -151,8 +216,9 @@ async function editWith(
   target.file_name = fileName
   target.revision += 1
   target.status = 'EDITING'
-  // 직접 고치면 이전 비비 검토는 무효가 된다.
+  // 직접 고치면 이전 비비 검토는 무효가 되고 새 검토 요청이 생길 때까지 요청 상태도 비어 보인다.
   delete target.latest_review
+  delete target.bee_review_request
   return { data: view(project, target) }
 }
 
@@ -198,6 +264,7 @@ export async function reviewRoutes(
     case 'DOC-A16': {
       const target = workingCopy(project, params.document_id)
       guardOwner(context, project, target, body.expected_revision)
+      guardReview(target)
       const document = findById(project.documents, target.document_id)
       const others = project.documents.filter((item) => item.id !== document.id)
       const approvedFirst = others.find((item) => item.approved_version)
@@ -269,7 +336,7 @@ export async function reviewRoutes(
         id: nextId(database),
         input_revision: target.revision,
         resolved_revision: target.revision,
-        reference_hash: `sha256:mock-reference-${target.document_id}-${target.revision}`,
+        reference_hash: referenceHash(project, target.document_id),
         summary:
           '예시 검토 · 실제 AI 호출 없음. 문서의 목적과 예외 상황을 보완하자고 제안했어요.',
         unavailable_references: unavailable,
@@ -295,6 +362,7 @@ export async function reviewRoutes(
           : {}),
       }
       target.latest_review = review
+      target.bee_review_request = { status: 'COMPLETED', updated_at: now() }
       return { status: 201, data: review }
     }
     case 'DOC-A17': {
@@ -303,8 +371,8 @@ export async function reviewRoutes(
       const review = target.latest_review
       if (!review || review.id !== params.review_id)
         fail(404, 'not_found', '비비 검토를 찾을 수 없어요.')
-      if (review.resolved_revision !== target.revision)
-        fail(409, 'review_stale', '본문이 바뀌어 다시 검토해야 해요.')
+      if (!usable(project, target, review))
+        fail(409, 'review_stale', '이 검토는 더 쓸 수 없어요.')
       const suggestion = findById(review.suggestions, params.suggestion_id)
       const { original_text: original, replacement_text: replacement } =
         suggestion
@@ -340,7 +408,7 @@ export async function reviewRoutes(
       if (
         !review ||
         review.id !== body.review_id ||
-        review.resolved_revision !== target.revision
+        !usable(project, target, review)
       )
         fail(409, 'review_stale', '최신 본문으로 비비 검토를 먼저 받아 주세요.')
       if (review.suggestions.some((item) => item.decision === 'PENDING'))
@@ -477,7 +545,7 @@ export async function reviewRoutes(
           'submission_locked',
           '팀장 검토를 요청한 뒤에는 고칠 수 없어요.',
         )
-      const review = latestReview(target, params.review_id)
+      const review = latestReview(project, target, params.review_id)
       const suggestion = findById(review.suggestions, params.suggestion_id)
       const text = requiredString(body, 'text').trim()
       if (!text)
@@ -518,7 +586,7 @@ export async function reviewRoutes(
     case 'DOC-A23': {
       const target = workingCopy(project, params.document_id)
       guardOwner(context, project, target, body.expected_revision)
-      const review = latestReview(target, params.review_id)
+      const review = latestReview(project, target, params.review_id)
       const text = requiredString(body, 'text').trim()
       if (!text) fail(400, 'validation_failed', '요청 내용을 적어 주세요.')
       if (
@@ -573,6 +641,34 @@ export async function reviewRoutes(
       target.revision += 1
       delete target.latest_review
       return { data: view(project, target) }
+    }
+    case 'DOC-A25': {
+      const target = workingCopy(project, params.document_id)
+      const document = findById(project.documents, target.document_id)
+      const caller = requireAccount(context)
+      const leader = project.members.find(
+        (member) => member.account_id === caller.id,
+      )?.role
+      if (caller.id !== target.owner_account_id && leader !== 'LEADER')
+        fail(403, 'forbidden', '등록한 사람이나 팀장만 취소할 수 있어요.')
+      if (target.status === 'SUBMITTED')
+        fail(409, 'submission_locked', '먼저 팀장 검토 요청을 취소해 주세요.')
+      if (target.status === 'APPROVED' || document.approved_version)
+        fail(409, 'document_approved', '승인된 적이 있는 문서예요.')
+      if (project.project.current_baseline)
+        fail(
+          409,
+          'change_proposal_required',
+          '기준 설계가 생긴 뒤에는 변경 제안으로 바꿔 주세요.',
+        )
+      // 서버는 삭제하지 않고 폐기 표시만 하지만, 예시에서는 목록에서 치워 같은 효과를 낸다.
+      project.documents = project.documents.filter(
+        (item) => item.id !== document.id,
+      )
+      project.working_copies = project.working_copies.filter(
+        (item) => item.document_id !== document.id,
+      )
+      return { data: { document_id: document.id, discarded: true } }
     }
     default:
       return undefined

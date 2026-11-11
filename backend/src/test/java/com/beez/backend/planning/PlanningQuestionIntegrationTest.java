@@ -1,6 +1,7 @@
 package com.beez.backend.planning;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.beez.backend.ai.AiClient;
+import com.beez.backend.common.api.ApiException;
 import com.beez.backend.document.service.DocumentApplicationService;
 import com.beez.backend.planning.dto.AnswerRequest;
 import com.beez.backend.planning.service.PlanningQuestionGenerator;
@@ -67,7 +69,11 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         verify(ai).planningQuestions(sent.capture());
         assertThat(sent.getValue()).containsEntry("project_id", "" + project).containsEntry("kind", "PLAN")
                 .containsEntry("media_type", "text/markdown").containsEntry("parser_profile", "markdown-v1")
-                .containsEntry("text_hash", TEXT_HASH).containsEntry("content", CONTENT).containsEntry("mode", "MODEL");
+                .containsEntry("text_hash", TEXT_HASH).containsEntry("content_hash", CONTENT_HASH)
+                .containsEntry("content", CONTENT).containsEntry("mode", "MODEL");
+        // 저장 값은 sha256: 접두어가 붙지만 AI 스키마는 접두어 없는 hex 64자만 받는다(S15P31A108-373).
+        assertThat((String) sent.getValue().get("content_hash")).matches(HEX64);
+        assertThat((String) sent.getValue().get("text_hash")).matches(HEX64);
     }
 
     @Test void skipsDocumentsOnceAnInitialBaselineExists() {
@@ -97,6 +103,34 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(retried.get("question_generation")).isEqualTo(Map.of("status", "PENDING"));
         assertThat(generator.runOnce()).isTrue();
         assertThat(count("SELECT count(*) FROM planning_question WHERE document_version_id=?", version)).isEqualTo(3);
+    }
+
+    @Test void retryDoesNotRequeueFailedQuestionGenerationThatNoWorkerWillPick() {
+        doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
+        assertThat(generator.runOnce()).isTrue();
+        publishBaseline();
+
+        // 기준이 발행된 뒤에는 워커가 질문을 만들지 않는다. PENDING 으로 되돌리면 화면이 '만드는 중'으로 영원히 남는다 (S15P31A108-359).
+        assertThatThrownBy(() -> documents.retry(leaderCaller, project, document, version, "retry-after-baseline"))
+                .isInstanceOfSatisfying(ApiException.class, error -> assertThat(error.getCode()).isEqualTo("question_generation_unavailable"));
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("FAILED");
+        assertThat(generator.runOnce()).isFalse();
+    }
+
+    @Test void outputCapTruncationIsReportedAsItsOwnCodeAndStaysRetryable() {
+        // AI 가 모델 답이 출력 상한에서 끊겼다고 알리면 일반 장애(ai_unavailable)가 아니라 상한 문제로 남긴다 (S15P31A108-382).
+        doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "cut", org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error\":{\"code\":\"model_output_truncated\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
+        assertThat(generator.runOnce()).isTrue();
+        assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
+                .containsEntry("status", "FAILED").containsEntry("error_code", "ai_output_too_long").containsEntry("retryable", true);
+        // 형식 오류로 거절된 같은 502 는 그대로 일반 장애다.
+        jdbc.update("DELETE FROM planning_question_run");
+        doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "bad", org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error\":{\"code\":\"model_unavailable\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT error_code FROM planning_question_run WHERE document_version_id=?", String.class, version))
+                .isEqualTo("ai_unavailable");
     }
 
     @Test void rejectedRequestIsNotRetryableAndMismatchedOutputIsRejectedWholesale() {

@@ -25,26 +25,31 @@ public class AiClient {
     /** 질문 생성(30초)·초안 생성(45초) 모델 제한보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
     static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
     static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
+    /** 문서 검토 모델 제한(30초)보다 길고 nginx(60초)보다 짧아야 한다 (S15P31A108-382). */
+    static final Duration DEFAULT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(40);
 
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
+    private final RestClient reviewRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
 
     public AiClient(BeezProperties props) {
-        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT);
+        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_REVIEW_READ_TIMEOUT);
     }
 
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
-                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout) {
+                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
+                    @Value("${beez.document-review.read-timeout:40s}") Duration reviewReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
+        this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
         this.chatHttp = http(ai);
@@ -119,7 +124,7 @@ public class AiClient {
     /** BE adapter contract; AI feature implementation belongs to the AI owner. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> documentReview(java.util.Map<String, Object> input) {
-        return rest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
+        return reviewRest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
     }
 
     /** 기획 보완 질문 생성(AI 모델 제한 30초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */

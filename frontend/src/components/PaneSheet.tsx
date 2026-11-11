@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { PaneSheetBody, PaneSheetContext } from './paneSheetContext'
 
 /**
@@ -74,11 +75,17 @@ export function PaneSheet({
   const context = use(PaneSheetContext)
   const host = context?.host
   const track = context?.track
+  const trackSheet = useWorkspaceStore((state) => state.trackSheet)
   useEffect(() => {
     if (!host || !track) return
     track(true)
-    return () => track(false)
-  }, [host, track])
+    // 창 밖의 단축 바도 알 수 있게 센다. 창째 닫혀도 정리 함수가 돌아 수가 남지 않는다.
+    trackSheet(true)
+    return () => {
+      track(false)
+      trackSheet(false)
+    }
+  }, [host, track, trackSheet])
   useEffect(() => {
     if (!host) return
     // Esc는 창 전체가 아니라 이 하위 화면만 닫는다.
@@ -158,12 +165,15 @@ export function SheetSubmit({
   disabled,
   destructive,
   className,
+  leading,
 }: {
   children: ReactNode
   disabled?: boolean
   destructive?: boolean
   /** 작은 창일 때 버튼 자리 */
   className?: string
+  /** 아래 줄 왼쪽에 둘 보조 버튼(예: 이전·다음) */
+  leading?: ReactNode
 }) {
   const sheet = use(PaneSheetBody)
   const submit = (
@@ -176,9 +186,20 @@ export function SheetSubmit({
       {children}
     </Button>
   )
-  if (!sheet) return submit
+  if (!sheet)
+    return leading ? (
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">{leading}</div>
+        {submit}
+      </div>
+    ) : (
+      submit
+    )
   return (
     <div className="sticky -bottom-5 z-10 col-span-full -mx-6 mt-auto -mb-5 flex items-center justify-end gap-2 rounded-b-2xl border-t bg-card px-6 pt-3.5 pb-5">
+      {leading && (
+        <div className="mr-auto flex items-center gap-1">{leading}</div>
+      )}
       <Button
         type="button"
         variant="outline"

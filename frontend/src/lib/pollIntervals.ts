@@ -17,3 +17,9 @@ export const REVIEW_POLL_MS = inTest ? 40 : 3000
 export const SLOW_POLL_MS = 15_000
 /** 비비 상태·사무실 장면처럼 계속 띄워 두는 화면을 새로 맞추는 주기. */
 export const BACKGROUND_POLL_MS = 30_000
+
+/**
+ * 보완 질문 생성이 이만큼 이어지면 '평소보다 오래 걸려요'를 덧붙인다. 서버 워커는 문서를 한 번에 하나씩 처리해
+ * 시간으로 끊지 않지만(S15P31A108-202), 사용자가 끝없이 기다리지 않게 상태를 직접 새로 확인할 길을 준다.
+ */
+export const SLOW_GENERATION_MS = inTest ? 150 : 90_000

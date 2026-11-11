@@ -1,5 +1,5 @@
 import { ACTIVE_POLL_MS, SLOW_POLL_MS } from '@/lib/pollIntervals'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   useInfiniteQuery,
@@ -15,13 +15,7 @@ import {
   FolderOpen,
   Search,
 } from 'lucide-react'
-import {
-  changesApi,
-  documentsApi,
-  meetingsApi,
-  planningApi,
-  tasksApi,
-} from '@/api/services'
+import { changesApi, documentsApi, planningApi, tasksApi } from '@/api/services'
 import type {
   ChangeImpact,
   ChangeProposal,
@@ -33,7 +27,6 @@ import { ActionForm } from '@/components/ActionForm'
 import { AsyncState } from '@/components/AsyncState'
 import { PaneHeaderAction } from '@/components/PaneHeaderAction'
 import { EmptyState } from '@/components/EmptyState'
-import { FormDialog } from '@/components/FormDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -45,13 +38,14 @@ import { describeContent, LIST_SELECTED } from '@/lib/display'
 import { cn } from '@/lib/utils'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { changedFields, foldDiff, lineDiff } from './lineDiff'
+import { ProposalCommentForm } from './ProposalCommentForm'
 import { ProposalForm } from './ProposalForm'
 import { ApprovalPreview } from './ApprovalPreview'
 import { PublishedAnalysisStatus } from './PublishedAnalysisStatus'
 import { ProposeFlow } from './ProposeFlow'
 import { StatusTag } from './StatusTag'
 import { Tag } from './Tag'
-import { operationTone } from './tagTones'
+import { operationTone, statusTone } from './tagTones'
 import {
   isStaleDocument,
   kindLabel,
@@ -104,6 +98,9 @@ const statusOrder: Record<ChangeStatus, number> = {
   WITHDRAWN: 5,
 }
 
+const IMPACT_STARTED = '영향 분석을 시작했어요.'
+const IMPACT_RETRIED = '다시 분석을 요청했어요.'
+const IMPACT_ACCEPTED: string[] = [IMPACT_STARTED, IMPACT_RETRIED]
 // 이전 결과가 보이는 동안 새 분석이 돌고 있으면(reanalysis) 이전 상태와 관계없이 분석 중이다(S15P31A108-241).
 const isImpactRunning = (impact: ChangeImpact) =>
   ['PENDING', 'RUNNING'].includes(impact.analysis_status) || !!impact.reanalysis
@@ -115,11 +112,34 @@ const hasCurrentImpact = (impact: ChangeImpact) =>
   impact.analysis_status === 'COMPLETED' &&
   impact.is_current !== false &&
   !impact.reanalysis
-function impactMessage(impact: ChangeImpact, editable: boolean) {
+// 문서만 든 제안은 분석할 설계 항목이 없어 서버가 아무것도 계산하지 않는다. 시작·다시 분석 버튼을 눌러도 같아 두지 않는다.
+// 항목과 문서가 함께 든 제안은 AI 호출만 건너뛰고(document_change_unavailable) 확인된 관계는 계산해 저장하므로
+// 버튼을 그대로 둔다(S15P31A108-359).
+const isDocumentOnly = (change: { items: unknown[]; documents: unknown[] }) =>
+  change.items.length === 0 && change.documents.length > 0
+function impactMessage(
+  impact: ChangeImpact,
+  editable: boolean,
+  documentOnly = false,
+) {
   if (isImpactRunning(impact))
     return impact.reanalysis
-      ? '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
+      ? impact.analysis_status === 'FAILED'
+        ? '다시 분석하는 중이에요. 이전 분석은 실패했어요.'
+        : '다시 분석하는 중이에요. 이전 결과는 흐리게 보여요.'
       : '분석하는 중이에요.'
+  if (documentOnly)
+    return '문서만 바꾸는 제안은 영향 분석 대상이 아니에요. 영향을 직접 확인한 뒤 승인해 주세요.'
+  if (isImpactNotStarted(impact))
+    return editable
+      ? '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
+      : '발행 전 영향 분석이 진행되지 않았어요.'
+  // 이전 리비전의 결과(is_current=false)는 아래 STALE 문구로 넘겨 다시 분석하게 한다.
+  if (
+    impact.error_code === 'document_change_unavailable' &&
+    impact.is_current !== false
+  )
+    return 'AI 후보는 볼 수 없지만 확인된 관계는 볼 수 있어요. 문서 변경은 직접 확인해 주세요.'
   if (isImpactNotStarted(impact))
     return editable
       ? '아직 영향 분석을 하지 않았어요. 승인하기 전에 분석을 시작해 주세요.'
@@ -158,7 +178,16 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
       ? { kind: 'form', documentId: focus.slice(4) || undefined }
       : { kind: 'detail' },
   )
-  const [discussing, setDiscussing] = useState(false)
+  // 제안 작성·승인·반려는 PaneSheet가 아니라 창 안 전체 화면이지만, 쓰던 내용이 mode와 함께 사라지므로 하위 화면처럼
+  // 세어 단축 바 숫자 키를 막는다(D46, PR #264 리뷰). 창째 닫혀도 정리 함수가 돌아 수가 남지 않는다.
+  const holdsInput =
+    mode.kind === 'form' || mode.kind === 'approve' || mode.kind === 'reject'
+  const trackSheet = useWorkspaceStore((state) => state.trackSheet)
+  useEffect(() => {
+    if (!holdsInput) return
+    trackSheet(true)
+    return () => trackSheet(false)
+  }, [holdsInput, trackSheet])
   const [withdrawing, setWithdrawing] = useState(false)
   const action = useProjectAction(projectId)
   const queryClient = useQueryClient()
@@ -221,6 +250,19 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
         ? ACTIVE_POLL_MS
         : false,
   })
+  // '영향 분석을 시작했어요'는 분석이 끝나면 지난 안내다. 실패·미평가로 끝난 뒤에도 남지 않게 지운다(S15P31A108-359).
+  const impactRunning = !!impact.data && isImpactRunning(impact.data)
+  const wasImpactRunning = useRef(false)
+  const { message: actionMessage, clearMessage } = action
+  useEffect(() => {
+    if (
+      wasImpactRunning.current &&
+      !impactRunning &&
+      IMPACT_ACCEPTED.includes(actionMessage)
+    )
+      clearMessage()
+    wasImpactRunning.current = impactRunning
+  }, [impactRunning, actionMessage, clearMessage])
   // 승인 확인 화면에서만, 팀장만 읽는다(CHG-A14는 LEADER 전용). 제안이 바뀌면(리비전·해시) 다시 읽는다.
   // 키를 ['projects', id] 밖에 둔다: 승인에 성공하면 프로젝트 전체를 새로 고치는데, 그때 이미 발행된 제안의
   // 미리 보기를 다시 불러 409 가 나기 때문이다(실제 BE 점검에서 확인). 화면이 열릴 때마다 새로 읽으므로 갱신은 잃지 않는다.
@@ -959,21 +1001,26 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                             사유를 남기고 승인할 수 있어요. 사유는 승인 이력에
                             남아요.
                           </p>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="justify-self-start"
-                            disabled={action.busy}
-                            onClick={() =>
-                              void perform(
-                                () =>
-                                  changesApi.retryImpact(projectId, current.id),
-                                '다시 분석을 요청했어요.',
-                              )
-                            }
-                          >
-                            영향 다시 분석
-                          </Button>
+                          {!isDocumentOnly(current) && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="justify-self-start"
+                              disabled={action.busy}
+                              onClick={() =>
+                                void perform(
+                                  () =>
+                                    changesApi.retryImpact(
+                                      projectId,
+                                      current.id,
+                                    ),
+                                  IMPACT_RETRIED,
+                                )
+                              }
+                            >
+                              영향 다시 분석
+                            </Button>
+                          )}
                           <label
                             htmlFor="impact-override-reason"
                             className="text-sm font-semibold"
@@ -1267,11 +1314,15 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                     <div role="tabpanel" className="min-h-40">
                       {tab === 'overview' && (
                         <div className="grid gap-3 text-sm">
-                          <p className="leading-[21px]">{current.reason}</p>
+                          <p className="leading-[21px] whitespace-pre-wrap">
+                            {current.reason}
+                          </p>
                           {/* 캔버스 PNL-04-v2 개요: 모서리 14px·안쪽 16/18px 카드, 15px·700 머리와 노란 글자 이동 버튼 */}
+                          {/* 문서 변경도 승인하면 새 문서 버전으로 발행되므로 같이 센다(S15P31A108-371). */}
                           <section className={overviewCard}>
                             <h4 className={overviewHead}>
-                              바뀌는 내용 {current.items.length}
+                              바뀌는 내용{' '}
+                              {current.items.length + current.documents.length}
                               <span className="flex items-center gap-2 font-medium">
                                 <span className="text-xs text-muted-foreground">
                                   {(['UPDATE', 'CREATE', 'RETIRE'] as const)
@@ -1289,6 +1340,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                     .map(
                                       ([operation, count]) =>
                                         `${operationLabel[operation]} ${count}`,
+                                    )
+                                    .concat(
+                                      current.documents.length
+                                        ? [`문서 ${current.documents.length}`]
+                                        : [],
                                     )
                                     .join(' · ')}
                                 </span>
@@ -1324,12 +1380,33 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                   </span>
                                 </li>
                               ))}
-                              {current.documents.length > 0 && (
-                                <li className="py-[7px] text-[13px] text-muted-foreground">
-                                  문서 변경 {current.documents.length}건은 공용
-                                  문서함 승인 흐름에서 다뤄요.
-                                </li>
-                              )}
+                              {current.documents.map((change) => {
+                                const document = documentOptions.find(
+                                  (item) => item.id === change.document_id,
+                                )
+                                // 승인 확인창처럼 '문서 vN → 새 버전'. 제안의 기준이 지금 승인본과 다르면 번호를 짐작하지 않는다.
+                                const from =
+                                  document?.versionId ===
+                                  change.base_document_version_id
+                                    ? ` v${document.versionNo}`
+                                    : ''
+                                return (
+                                  <li
+                                    key={change.document_id}
+                                    className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-2 border-b py-[7px] text-[13px] last:border-0"
+                                  >
+                                    <Tag tone={operationTone.UPDATE}>
+                                      {operationLabel.UPDATE}
+                                    </Tag>
+                                    <strong className="truncate font-semibold">
+                                      문서
+                                    </strong>
+                                    <span className="truncate">
+                                      {`${document?.title ?? '문서'}${from} → 새 버전`}
+                                    </span>
+                                  </li>
+                                )
+                              })}
                             </ul>
                           </section>
                           <div className="grid gap-3 sm:grid-cols-2">
@@ -1351,7 +1428,11 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                   : impact.data && hasCurrentImpact(impact.data)
                                     ? `확인된 관계 ${impact.data.explicit.length} · AI 후보 ${impact.data.candidates.length}`
                                     : impact.data
-                                      ? impactMessage(impact.data, editable)
+                                      ? impactMessage(
+                                          impact.data,
+                                          editable,
+                                          isDocumentOnly(current),
+                                        )
                                       : '영향 분석 상태를 확인하는 중이에요.'}
                               </p>
                             </section>
@@ -1461,6 +1542,7 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           {(result) => {
                             const running = isImpactRunning(result)
                             const notStarted = isImpactNotStarted(result)
+                            const unavailable = isDocumentOnly(current)
                             return (
                               <div className="grid gap-3 text-sm">
                                 {current.status === 'PUBLISHED' && (
@@ -1471,9 +1553,13 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                 )}
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <p className="text-muted-foreground">
-                                    {impactMessage(result, editable)}
+                                    {impactMessage(
+                                      result,
+                                      editable,
+                                      isDocumentOnly(current),
+                                    )}
                                   </p>
-                                  {editable && (
+                                  {editable && !unavailable && (
                                     <Button
                                       size="sm"
                                       variant="outline"
@@ -1486,8 +1572,8 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                                               current.id,
                                             ),
                                           notStarted
-                                            ? '영향 분석을 시작했어요.'
-                                            : '다시 분석을 요청했어요.',
+                                            ? IMPACT_STARTED
+                                            : IMPACT_RETRIED,
                                         )
                                       }
                                     >
@@ -1555,15 +1641,31 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           {commentList.map((comment) => (
                             <article
                               key={comment.id}
-                              className="rounded-lg bg-muted/40 p-3"
+                              className="grid gap-0.5 rounded-xl border border-[#e7e9ee] px-3 py-[9px] text-[13px] leading-[19px]"
                             >
-                              <p className="mb-1 text-xs text-muted-foreground">
-                                {nameOfAccount(comment.author_account_id)} ·{' '}
-                                {comment.kind === 'REVIEW_REQUEST'
-                                  ? '검토 요청'
-                                  : '의견'}
+                              <p className="flex flex-wrap items-center gap-1.5">
+                                <strong className="font-semibold">
+                                  {nameOfAccount(comment.author_account_id)}
+                                </strong>
+                                {comment.kind === 'REVIEW_REQUEST' && (
+                                  <Tag tone={statusTone.IN_REVIEW}>
+                                    검토 요청
+                                  </Tag>
+                                )}
+                                {comment.mentioned_member_ids.length > 0 && (
+                                  <span className="text-xs leading-[18px] text-muted-foreground">
+                                    →{' '}
+                                    {comment.mentioned_member_ids
+                                      .map(nameOfMember)
+                                      .join(', ')}
+                                  </span>
+                                )}
+                                <span className="flex-1" />
+                                <span className="text-xs leading-[18px] text-muted-foreground">
+                                  {formatDate(comment.created_at)}
+                                </span>
                               </p>
-                              <p className="leading-6 whitespace-pre-wrap">
+                              <p className="whitespace-pre-wrap">
                                 {comment.body}
                               </p>
                             </article>
@@ -1585,80 +1687,36 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                               끝난 제안이라 댓글을 달 수 없어요.
                             </p>
                           ) : (
-                            <ActionForm
-                              key={commentList.length}
-                              fields={[
-                                {
-                                  name: 'kind',
-                                  label: '남길 종류',
-                                  type: 'select',
-                                  value: 'COMMENT',
-                                  options: [
-                                    { value: 'COMMENT', label: '의견' },
-                                    {
-                                      value: 'REVIEW_REQUEST',
-                                      label: '검토 요청',
-                                    },
-                                  ],
-                                },
-                                {
-                                  name: 'member_id',
-                                  label: '검토를 요청할 팀원',
-                                  type: 'select',
-                                  // 서버는 대상이 없는 검토 요청을 400으로 거절한다(PR #72 mock/live 전수 대조 DOC-LIVE-5).
-                                  requiredWhen: (values) =>
-                                    values.kind === 'REVIEW_REQUEST',
-                                  options: [
-                                    { value: '', label: '고르지 않음' },
-                                    ...people.map((member) => ({
-                                      value: member.id,
-                                      label: member.name,
-                                    })),
-                                  ],
-                                },
-                                {
-                                  name: 'body',
-                                  label: '내용',
-                                  type: 'textarea',
-                                  required: true,
-                                  max: 2000,
-                                },
-                              ]}
-                              submitLabel="남기기"
-                              onSubmit={async (values) => {
-                                const review = values.kind === 'REVIEW_REQUEST'
-                                await action.run(
+                            // 서버는 대상이 없는 검토 요청을 400으로 거절하므로(DOC-LIVE-5) 폼이 한 명 이상 고르게 한다. 받을 팀원은 본인을 뺀다.
+                            <ProposalCommentForm
+                              members={people
+                                .filter(
+                                  (member) =>
+                                    member.account_id !== session.data?.id,
+                                )
+                                .map((member) => ({
+                                  id: member.id,
+                                  name: member.name,
+                                }))}
+                              onSubmit={({ kind, body, memberIds }) =>
+                                action.run(
                                   () =>
                                     changesApi.comment(projectId, current.id, {
-                                      body: values.body,
-                                      kind: review
-                                        ? 'REVIEW_REQUEST'
-                                        : 'COMMENT',
-                                      ...(review && values.member_id
-                                        ? {
-                                            mentioned_member_ids: [
-                                              values.member_id,
-                                            ],
-                                          }
+                                      body,
+                                      kind,
+                                      ...(memberIds.length
+                                        ? { mentioned_member_ids: memberIds }
                                         : {}),
                                     }),
-                                  review
-                                    ? '검토를 요청했어요.'
+                                  kind === 'REVIEW_REQUEST'
+                                    ? `${memberIds.length}명에게 검토를 요청했어요.`
                                     : '의견을 남겼어요.',
                                 )
-                              }}
+                              }
                             />
                           )}
                           <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             의견은 승인과 달라요. 승인은 팀장이 해요.
-                            {/* 열린 질문 Q5: 사람이 회의를 만들지 않는 결정과 부딪혀 '회의로 논의'는 그대로 둔다. */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setDiscussing(true)}
-                            >
-                              회의로 논의
-                            </Button>
                           </p>
                         </div>
                       )}
@@ -1764,46 +1822,6 @@ export function ChangesPanel({ projectId, isLeader }: Props) {
                           승인하고 기준 v{nextVersion} 발행
                         </Button>
                       </div>
-                    )}
-                    {discussing && (
-                      <FormDialog
-                        title="변경 제안을 함께 논의하기"
-                        description="관련 팀원을 골라 회의를 만들어요. 전체 팀원을 자동으로 부르지 않아요."
-                        fields={[
-                          {
-                            name: 'title',
-                            label: '회의 제목',
-                            value: current.title,
-                            required: true,
-                          },
-                          {
-                            name: 'member_id',
-                            label: '함께 논의할 팀원',
-                            type: 'select',
-                            required: true,
-                            options: people.map((member) => ({
-                              value: member.id,
-                              label: member.name,
-                            })),
-                          },
-                        ]}
-                        submitLabel="회의 만들기"
-                        onClose={() => setDiscussing(false)}
-                        onSubmit={async (values) => {
-                          await action.run(async () => {
-                            const meeting = await meetingsApi.create(
-                              projectId,
-                              {
-                                title: values.title,
-                                change_proposal_id: current.id,
-                                participant_member_ids: [values.member_id],
-                              },
-                            )
-                            setDiscussing(false)
-                            openPane('meetings', meeting.id)
-                          }, '관련 팀원과 논의할 회의를 만들었어요.')
-                        }}
-                      />
                     )}
                   </div>
                 )

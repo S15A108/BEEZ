@@ -108,6 +108,7 @@
 - [DOC-A22 보완 제안에 대해 비비와 대화](#doc-a22)
 - [DOC-A23 비비에게 직접 보완 요청](#doc-a23)
 - [DOC-A24 팀장 검토 요청 취소](#doc-a24)
+- [DOC-A25 문서 등록 취소](#doc-a25)
 - [CHG-A01 설계 변경 제안 생성](#chg-a01)
 - [CHG-A02 설계 변경 제안 목록](#chg-a02)
 - [CHG-A03 설계 변경 제안 상세·비교](#chg-a03)
@@ -164,6 +165,7 @@
 - [MTG-A12 회의 정리 수정 요청](#mtg-a12)
 - [MTG-A13 회의 끝내기](#mtg-a13)
 - [MTG-A14 회의 참여자 제외](#mtg-a14)
+- [MTG-A15 회의 최신 정리 조회](#mtg-a15)
 - [MON-D01 문서 승인 현황](#mon-d01)
 - [MON-C01 변경 제안 현황](#mon-c01)
 - [MON-T01 작업 상태 현황](#mon-t01)
@@ -4232,6 +4234,8 @@ HTTP `200`.
 
 2026-10-27 원문 RAG 구현: FAILED만 새 attempt로 재접수한다. PENDING/RUNNING은 409 analysis_running, 완료 실행은 409 analysis_not_failed다. 같은 멱등 키는 같은 응답이다. 원본·사람 수정·승인 항목은 변경하지 않는다. lease 만료/서버 재시작 복구는 새 attempt/lease로 늦은 응답을 차단한다. 모델 미설정은 embedding_profile_not_configured, AI/출력 검증 실패는 상태 error_code로 기록한다.
 
+2026-11-10 (S15P31A108-359): 분석이 COMPLETED이고 질문 생성만 FAILED여도 기준 설계가 이미 발행됐거나 문서 버전이 DRAFT·APPROVED가 아니면(BE 워커가 질문을 만들지 않는 버전) 409 `question_generation_unavailable`을 돌려주고 실행을 PENDING으로 되돌리지 않는다. 되돌리면 아무도 집지 않아 화면이 `만드는 중`으로 영원히 남는다.
+
 lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/analysis/retry`
@@ -6062,7 +6066,13 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
   "status": "EDITING",
   "content": "# 기획안\n문서 내용을 보완한다.",
   "file_name": "plan.md",
-  "submissions": []
+  "submissions": [],
+  "review_stale": false,
+  "bee_review_request": {
+    "status": "FAILED",
+    "error_code": "review_timeout",
+    "updated_at": "2026-11-10T09:00:00Z"
+  }
 }
 ```
 
@@ -6088,6 +6098,7 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 
 - 같은 프로젝트의 활성 사람 팀원이 작성 내용·마지막 검토·제출 이력을 조회한다. 다른 프로젝트 문서는 404다.
 - 작성 건 상태와 문서 버전 상태는 별개다. 아직 제출하지 않은 내용은 승인본이나 baseline으로 취급하지 않는다.
+- `review_stale`은 `latest_review`를 지금 쓸 수 있는지 서버가 알려 준다. 다른 문서가 승인돼 참고 승인본이 바뀌면 검토를 받은 뒤 본문이 그대로여도 true가 되어, 409를 받기 전에 다시 검토가 필요하다는 것을 화면이 먼저 보일 수 있다. 판정은 제안 처리·제출·직접 요청·대화의 409 `review_stale`과 같은 규칙이다. 제출(SUBMITTED)·승인(APPROVED) 뒤에는 false다. (S15P31A108-362)
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -6387,7 +6398,8 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 | 409 | `idempotency_conflict` | 같은 요청 키로 다른 입력을 보냄 |
 | 409 | `review_stale` | 본문 또는 참고 승인본 변경, 제안 원문 불일치 |
 | 502 | `invalid_ai_output` | 비비 결과·식별값·실제 호출 사용량 검증 실패 |
-| 503 | `review_unavailable` | 비비 호출 장애 또는 실패한 요청 키 |
+| 504 | `review_timeout` | 비비 검토가 시간 안에 끝나지 않음(AI 모델 시간 초과 또는 BE 읽기 시간 초과). 같은 문서가 길수록 잘 생긴다 |
+| 503 | `review_unavailable` | 비비 호출 장애(AI 502·연결 실패) 또는 시간 초과가 아닌 사유로 실패한 요청 키 |
 
 ```json
 {
@@ -6403,6 +6415,7 @@ HTTP `201`. [DocumentBeeReview](00-common.md#schema-documentbeereview) 반환.
 - 등록자가 작성 내용에 대한 검토를 요청한다. 원문 읽기와 승인 API 명세서·ERD·요구사항의 비교·보완 제안 생성은 AI 담당 영역이다.
 - BE는 대상 본문/revision과 같은 프로젝트의 현재 문서별 승인 버전을 전달한다. 기존 자기 문서의 승인본도 참고할 수 있다. 자료가 없으면 unavailable_references에 표시한다.
 - 모델 호출 중 DB 잠금을 유지하지 않는다. 반환 후 현재 권한·작성 revision·참고 승인본을 다시 확인하고 늦은 결과를 채택하지 않는다.
+- (S15P31A108-382) 시간 제한은 AI 모델 호출 30초(설정값) < BE 읽기 40초 < nginx `/api/` 60초 순서로 안쪽이 짧다. AI 504(`model_timeout`)·BE 읽기 시간 초과는 504 `review_timeout`, 연결 시간 초과·AI 502·그 밖은 503 `review_unavailable`이다. 분류한 코드를 실행 기록 `error_code`에도 남기며 같은 키로 다시 부르면 같은 코드로 답한다. 사용량은 시간 초과도 실패 호출로 기록한다.
 - 문서/account/요청 키의 실행 기록을 저장한다. 같은 입력·완료 키는 결과를 재사용하고 실행 중이면 review_in_progress다. 실패한 키는 자동 재호출하지 않고 새 키로 재시도한다. 10분 지난 실행은 다음 같은 키 요청에서 실패 처리한다.
 - 실제 MODEL 결과·usage·대상 식별값을 검증한다. 색인 완료나 템플릿 결과를 검토 완료로 대신하지 않는다.
 - AI 내부 경로·입출력은 담당자 합의 대기다. 이 절은 FE→BE의 현재 구현 계약이며 실제 AI 연결 완료를 뜻하지 않는다.
@@ -7266,6 +7279,91 @@ HTTP `200`. [DocumentWorkingCopy](00-common.md#schema-documentworkingcopy) 반�
 - (구현) 등록자(제출한 사람)만 취소할 수 있다. 제출은 지우지 않고 `WITHDRAWN`으로 종결하며 제출 당시 본문·비비 검토·제안·대화는 그대로 조회된다(DOC-A20). 작성 건은 `EDITING`으로 돌아가고 revision이 올라 이전 검토는 `review_stale`이 된다 — 반려 뒤 재작성과 같게 고친 뒤 비비 검토를 다시 받아 재제출한다(새 제출·새 문서 버전이 만들어지고 이전 `WITHDRAWN` 제출은 그대로 남는다).
 - 팀장의 결정(DOC-A21)과 같은 프로젝트 잠금을 잡아 승인·반려와 취소가 동시에 와도 하나만 성립한다. 결정이 먼저면 409 `submission_decided`, 취소가 먼저면 DOC-A21이 409 `submission_withdrawn`이다. 같은 제출을 다시 취소하면 같은 결과(멱등), 다른 사람은 403, 다른 문서·제출은 404. 기준 설계 이후에는 변경 제안 경로라 쓰지 않는다.
 - 취소한 제출의 문서 버전은 반려와 같이 REJECTED로 두고 제출 이력의 상태(WITHDRAWN)로 구분한다. 취소 알림은 217/237 이후.
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="doc-a25"></a>
+
+## DOC-A25. 문서 등록 취소
+
+### POST `/api/projects/{id}/documents/{document_id}/discard`
+
+등록한 문서를 취소해 목록에서 치우고, 같은 종류의 문서를 다시 올릴 수 있게 한다. 비비 검토가 실패했거나 마음이 바뀐 경우에 쓴다.
+
+관련 요구사항: DOC-01 (비비 검토 실패 후 복구)
+담당: BE: 오서현 / FE: 오서현
+상태: 구현됨(S15P31A108-382)
+
+#### 인증
+
+`MEMBER (사람)` 중 **등록자 또는 팀장**. 현재 프로젝트의 활성 멤버십과 객체 소속을 검사한다. 다른 팀원은 403이다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| Content-Type | application/json |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+| Idempotency-Key | 필수. 변경 요청 재시도 시 같은 키. 공통 5절 |
+| Origin 또는 Referer | 기존 허용 출처 검사 적용 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `document_id` | `ID` | Y | 문서 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`.
+
+```json
+{
+  "document_id": "301",
+  "discarded": true
+}
+```
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증 무효 |
+| 403 | `forbidden` | 사람이 아니거나 등록자·팀장이 아님 |
+| 403 | `request_origin_rejected` | 요청 출처 누락·불일치 |
+| 404 | `not_found` | 프로젝트 접근 불가 또는 문서 소속 불일치 |
+| 409 | `submission_locked` | 팀장 검토를 요청한 상태. 먼저 DOC-A24로 요청을 취소한다 |
+| 409 | `document_approved` | 승인된 적이 있는 문서 |
+| 409 | `change_proposal_required` | 기준 설계 v1 이후. 변경 제안 경로를 쓴다 |
+
+```json
+{
+  "error": {
+    "code": "document_approved",
+    "message": "이미 승인된 적이 있는 문서는 등록을 취소할 수 없습니다."
+  }
+}
+```
+
+#### 처리 규칙
+
+- 기준 설계 v1 전에, 한 번도 승인되지 않았고 팀장 검토 요청 중이 아닌(EDITING·REJECTED) 문서만 취소한다. 이미 취소한 문서를 다시 취소하면 같은 결과(멱등)를 돌려준다.
+- 삭제하지 않는다. `document.discarded_at`을 남기고 아직 채택되지 않은 버전(DRAFT)은 미채택(REJECTED)으로 닫는다. 제출·검토·대화 이력은 그대로다. 원본 파일도 지우지 않는다.
+- 취소한 문서는 문서 목록·상세·검토·편집에서 없는 문서처럼 404이고, 기준 설계 생성의 필수 문서·승인 판단에서 빠진다. 프로젝트당 문서 종류 유일 규칙은 취소하지 않은 문서에만 적용하므로 같은 종류를 새로 올릴 수 있다(DOC-A01).
+- 도는 중인 비비 검토 요청은 실패로 닫고, 이후 도착한 AI 결과는 채택하지 않는다(DOC-A16의 작성 건 재확인).
+- 활동 `DOCUMENT_DISCARDED`를 취소한 사람 기준으로 한 번 남긴다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -13535,6 +13633,7 @@ HTTP `201`.
 - AI를 부르는 동안에는 트랜잭션과 회의 행 잠금을 잡지 않는다. 부른 뒤 회의 행을 잠그고 팀장·참여자·열림과 정리가 인용한 문서의 승인본이 지금도 기준의 승인본인지 다시 확인해, 바뀌었으면 저장하지 않고 409 `summary_outdated`로 응답한다. 호출 동안 새 기록이 들어온 것은 막지 않는다 — 정리는 `through_entry_id`까지만 본 것이고 그 뒤 기록이 있으면 회의 끝내기(MTG-A13)가 막는다.
 - 실패하면(AI 오류·쓸 수 없는 출력·호출 중 승인본 변경) SUMMARY 기록도 정리도 저장하지 않는다. 회의 기록은 그대로이고 AI 호출 사용량(`llm_usage`, feature `MEETING_ANALYSIS`)만 남는다. 오류 응답 본문의 `usage[]`는 그대로 남기고 없을 때만 미확인 한 줄을 남긴다(03-ai-internal 공통 규칙).
 - 같은 Idempotency-Key로 요청이 동시에 들어오면 먼저 온 요청 하나만 AI를 부르고 나머지는 그 결과(성공이든 실패든)를 받는다. 본문이 다르면 409 `idempotency_conflict`이다. 이 공유는 서버 프로세스 안에서만 이루어진다. 같은 키를 다시 보내면 정리가 끝난 회의에서도 처음 응답을 돌려준다(24시간).
+- (S15P31A108-206) SUMMARY 기록은 `summary_id`(정리 ID)도 싣는다. 새로 고친 화면은 기록 목록(MTG-A10)의 이 값과 최신 정리 조회([MTG-A15](#mtg-a15))로 구조화한 정리와 `summary_id`를 다시 받는다.
 - SUMMARY 기록의 `text`는 사람이 읽는 요약("회의 정리 / 충돌 / 결정 / 바뀔 문서 / 할 일", 4,000자 넘으면 "…")이고, 응답의 `entry`와 기록 목록(MTG-A10)의 SUMMARY 기록에 `through_entry_id`·`generation`이 실린다. 구조화된 값은 정리 응답에 있다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
@@ -13879,6 +13978,66 @@ HTTP `204`.
 - (수정안 요청) 비비가 부른 작업 담당자를 빼도, 회의를 끝낼 때 task_ids 담당자에게 가는 알림(MTG-A13)은 그대로 간다. 비비는 회의를 열 때만 참여자를 정하므로 뺀 사람을 같은 회의에 다시 부르지 않는다.
 - (수정안 요청) 끝난 회의는 409 meeting_closed이고, 기준 v1 전에는 회의실이 닫혀 있어 409 baseline_missing이다.
 - 구현(S15P31A108-205): 팀장만 호출한다(사람 세션). 잠금 뒤 팀장을 다시 확인하고, 회의 행 잠금으로 기록·참여자 추가와 직렬화한다. 실제로 빠진 사람에게 `MEETING_PARTICIPANT_REMOVED` 알림을 저장하고 멱등 204(이미 빠짐)에서는 남기지 않는다(S15P31A108-217). 활동으로는 남기지 않는다(S15P31A108-310 결정, MTG-A04와 같다).
+
+[공통 규약·권한·담당자 목록](00-common.md)
+
+---
+
+<a id="mtg-a15"></a>
+
+## MTG-A15. 회의 최신 정리 조회
+
+### GET `/api/projects/{id}/meetings/{meeting_id}/bee-summary/latest`
+
+회의의 가장 최근 비비 정리를 구조화한 값(충돌·결정·바뀔 문서·할 일)으로 읽는다. 화면을 새로 고치거나 다른 기기·다른 팀장이 회의를 열어도 회의 끝내기(MTG-A13)·정리 수정 요청(MTG-A12)에 필요한 `summary_id`와 정리 내용을 다시 받기 위한 읽기 API다.
+
+관련 요구사항: MTG-08·09 (화면 PNL-06-v2-bibi-review)  
+담당: BE: 오서현 / AI: — / FE: 오서현  
+상태: 구현됨(S15P31A108-206)
+
+#### 인증
+
+`MEMBER`. 프로젝트의 활성 멤버(팀원·팀장)가 읽는다. 회의 참여자일 필요는 없고, 끝난 회의도 읽는다.
+
+#### Headers
+
+| 헤더 | 값·설명 |
+| --- | --- |
+| Cookie | 로그인 시 발급된 세션 쿠키 |
+| X-Request-Id | 선택. 응답·서버 간 호출 추적 |
+
+#### Path Parameters
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `id` | `ID` | Y | 프로젝트 ID |
+| `meeting_id` | `ID` | Y | 회의 ID |
+
+#### Query Parameters
+
+없음.
+
+#### Request
+
+없음.
+
+#### Response
+
+HTTP `200`. [MeetingSummary](00-common.md#schema-meetingsummary) 반환. MTG-A11·A12 응답과 같은 모양이다.
+
+#### Error
+
+| HTTP | code | 상황 |
+| --- | --- | --- |
+| 401 | `unauthenticated` | 세션 인증이 유효하지 않음 |
+| 404 | `not_found` | 회의가 없거나 프로젝트 소속·접근 권한이 없음, **이 회의에 정리가 아직 없음** |
+| 409 | `baseline_missing` | 기준 v1 전. 회의실이 닫혀 있음 |
+
+#### 처리 규칙
+
+- 회의의 최신 정리(가장 큰 정리 ID)를 돌려준다. 수정 요청(MTG-A12)으로 새 정리가 생기면 그것이 최신이고, 이전 정리는 `previous_summary_id`로 이어진다. 이전 정리 목록 조회는 두지 않는다(기록 목록 MTG-A10의 SUMMARY 기록으로 문장만 볼 수 있다).
+- 기록 목록(MTG-A10)의 SUMMARY 기록은 `summary_id`를 싣는다. 화면은 가장 최근 SUMMARY 기록이 있을 때만 이 API를 불러 구조화한 정리를 받는다.
+- 읽기만 한다. AI를 부르지 않고 아무것도 저장하지 않는다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 
@@ -14555,7 +14714,7 @@ HTTP `200`.
 
 - 최소 하나의 기준 ID를 받아 기본 관계를 조회하는 계약이다. 둘 다 주면 두 결과를 합치고 같은 노드·간선은 한 번만 준다.
 - 명시 관계와 AI 후보는 confirmed로 구분한다. 과거 관계는 당시 계획·버전과 연결한다.
-- 기준이 작업이면: 현재 계획 리비전의 설계 참조(`READS`·`IMPLEMENTS`·`CHANGES`), 작업 간 선후(`BLOCKS`·`RELATES`), 현재 계획 리비전의 가장 최근 검증(`VALIDATED_BY`)과 그 검증이 본 설계 항목·대조한 작업(`COMPARED_WITH`), 이 작업에서 나온 변경 제안(`PROPOSED_FROM`).
+- 기준이 작업이면: 현재 계획 리비전의 설계 참조(`READS`·`IMPLEMENTS`·`CHANGES`), 작업 간 선후(`BLOCKS`·`RELATES`), 현재 계획 리비전의 가장 최근 검증(`VALIDATED_BY`)과 그 검증이 본 설계 항목(`CHECKED_AGAINST`, 검증 때 계획 참조 관계를 복사하지 않고 항상 이 값)·대조한 작업(`COMPARED_WITH`), 이 작업에서 나온 변경 제안(`PROPOSED_FROM`).
 - 기준이 설계 항목이면: 설계 의존(`DEPENDS_ON`, 확정·재확인 필요·후보), 현재 계획이 이 항목을 참조하는 작업, 이 항목을 바꾸려는 진행 중 변경 제안(`UPDATE`·`RETIRE`. 새 항목을 만드는 `CREATE`는 아직 항목 번호가 없어 나오지 않음).
 - 설계 의존 간선은 `status`를 함께 주고, `confirmed`는 `CONFIRMED`일 때만 true다. 계획·검증의 참조 간선은 그때 본 항목 버전을 `design_item_version_id`로 준다.
 - 다른 프로젝트 객체는 번호로도 노출하지 않는다. 관계 변경 이력은 [TRC-A02](#trc-a02)에서 본다.

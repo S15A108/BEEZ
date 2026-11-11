@@ -1,5 +1,6 @@
 """Internal document review endpoint; authorization and persistence belong to BE."""
 
+import math
 import re
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -69,6 +70,17 @@ class DocumentReviewRoute(APIRoute):
 
 
 router = APIRouter(route_class=DocumentReviewRoute)
+
+
+def _model_timeout_seconds(settings: Settings) -> float:
+    """Model-call limit from settings; a bad value is a configuration error, not a model failure."""
+    try:
+        value = float(settings.document_review_llm_timeout_seconds)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(503, detail="document_review_not_configured") from None
+    if not math.isfinite(value) or not 0 < value <= 120:
+        raise HTTPException(503, detail="document_review_not_configured")
+    return value
 
 
 def _valid_gms_endpoint(endpoint: str) -> bool:
@@ -155,6 +167,9 @@ async def document_review(
             raise HTTPException(413, detail="file_too_large")
         raw.extend(chunk)
     body = DocumentReviewRequest.model_validate_json(bytes(raw))
+    timeout_seconds = _model_timeout_seconds(settings)
     if body.mode in ("DISCUSS", "REQUEST"):
-        return await analyze_mode(body, client, settings.bee_default_model)
-    return await analyze(body, client, settings.bee_default_model)
+        return await analyze_mode(
+            body, client, settings.bee_default_model, timeout_seconds
+        )
+    return await analyze(body, client, settings.bee_default_model, timeout_seconds)

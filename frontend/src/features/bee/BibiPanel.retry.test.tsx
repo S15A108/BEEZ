@@ -25,6 +25,12 @@ const answer = {
   text: '승인된 문서를 확인했어요.',
   sources: [],
   unresolved: [],
+  answer_id: '30',
+  grounded: false,
+  citations: [],
+  mode: 'APPROVED',
+  baseline_id: '10',
+  document_version_ids: [],
 }
 
 function httpError(status: number, code?: string) {
@@ -81,7 +87,7 @@ describe('비비 질문 전송과 재시도', () => {
     expect(ask).toHaveBeenCalledTimes(2)
   })
 
-  it('실패 시 새 입력을 보존하고 같은 질문과 범위일 때만 다시 보내기를 표시한다', async () => {
+  it('실패 시 새 입력을 보존하고 같은 질문일 때만 다시 보내기를 표시한다', async () => {
     let reject!: (error: Error) => void
     ask.mockReturnValue(new Promise((_resolve, fail) => (reject = fail)))
     renderPanel()
@@ -99,37 +105,30 @@ describe('비비 질문 전송과 재시도', () => {
     await user.type(input, '먼저 보낸 질문')
     expect(screen.getByRole('button', { name: '다시 보내기' })).toBeEnabled()
 
-    await user.click(screen.getByRole('radio', { name: '초안 포함' }))
+    await user.type(input, ' 다른 질문')
     expect(screen.getByRole('button', { name: '보내기' })).toBeEnabled()
   })
 
-  it('응답 유실과 다른 입력에 사용한 키를 구분하고 자동으로 재호출하지 않는다', async () => {
+  it('연결 오류를 알리고 사용자가 다시 보내기 전에는 재호출하지 않는다', async () => {
     ask
-      .mockRejectedValueOnce(new AxiosError('response lost', 'ERR_NETWORK'))
-      .mockRejectedValueOnce(httpError(409, 'idempotency_conflict'))
+      .mockRejectedValueOnce(new AxiosError('offline', 'ERR_NETWORK'))
       .mockResolvedValueOnce(answer)
     renderPanel()
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('설계 질문'), '요청 확인')
     await user.click(screen.getByRole('button', { name: '보내기' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('처리됐을 수')
-    expect(screen.getByRole('alert')).toHaveTextContent('추가 호출')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '서버에 연결할 수 없습니다.',
+    )
     expect(ask).toHaveBeenCalledTimes(1)
 
     await user.click(screen.getByRole('button', { name: '다시 보내기' }))
-    await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        '같은 요청이 다른 내용으로 이미 처리됐어요.',
-      ),
-    )
-    expect(ask).toHaveBeenCalledTimes(2)
-    await user.click(screen.getByRole('button', { name: '다시 보내기' }))
     expect(await screen.findByText(answer.text)).toBeInTheDocument()
-    expect(ask).toHaveBeenCalledTimes(3)
+    expect(ask).toHaveBeenCalledTimes(2)
   })
 
   it.each([
-    ['본문 없는 502', httpError(502), '이전 요청이 처리됐을 수 있어요.'],
+    ['본문 없는 502', httpError(502), '다시 보내면 새로 답을 만들어요.'],
     ['501', httpError(501), '이 기능은 서버에서 아직 준비 중이에요.'],
     [
       '서버가 알려 준 분석 시간 초과',
@@ -138,7 +137,7 @@ describe('비비 질문 전송과 재시도', () => {
     ],
     [
       '서버가 알려 준 분석 실패',
-      httpError(503, 'ai_unavailable'),
+      httpError(502, 'ai_unavailable'),
       '분석을 완료하지 못했습니다.',
     ],
     [
@@ -147,9 +146,9 @@ describe('비비 질문 전송과 재시도', () => {
       '서버 응답 형식이 API 계약과 다릅니다.',
     ],
     [
-      '명세에 없는 오류 코드',
-      httpError(409, 'draft_search_not_supported'),
-      '요청을 완료하지 못했습니다.',
+      '초안 범위 등의 입력 오류',
+      httpError(400, 'validation_failed'),
+      '입력 내용을 확인해 주세요.',
     ],
   ])('%s에 맞는 문구를 표시한다', async (_scenario, error, message) => {
     ask.mockRejectedValueOnce(error)

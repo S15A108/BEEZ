@@ -5,6 +5,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authApi, documentsApi, planningApi } from '@/api/services'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { vi } from 'vitest'
 import {
   DEMO_EMAIL,
@@ -100,7 +101,7 @@ it('하나만 고르는 선택형은 선택지나 기타 입력으로 답한다'
   await screen.findByText('전체 질문 5개')
   await user.click(cardOf('프로젝트 삭제는 누가 할 수 있나요?'))
   const dialog = await screen.findByRole('dialog')
-  await user.click(within(dialog).getByRole('button', { name: '저장' }))
+  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
   expect(
     await within(dialog).findByText('답변을 하나 이상 골라 주세요.'),
   ).toBeInTheDocument()
@@ -109,7 +110,7 @@ it('하나만 고르는 선택형은 선택지나 기타 입력으로 답한다'
     within(dialog).getByLabelText('기타 답변'),
     '팀장이 정한 사람',
   )
-  await user.click(within(dialog).getByRole('button', { name: '저장' }))
+  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
   expect(await screen.findByText('답변을 저장했어요.')).toBeInTheDocument()
   expect(
     within(cardOf('프로젝트 삭제는 누가 할 수 있나요?')).getByText(
@@ -126,7 +127,7 @@ it('여러 개 고르는 선택형은 기타 없이 선택지를 모두 보여 �
   expect(within(dialog).queryByLabelText('기타')).not.toBeInTheDocument()
   await user.click(within(dialog).getByLabelText('앱 안 알림'))
   await user.click(within(dialog).getByLabelText('이메일'))
-  await user.click(within(dialog).getByRole('button', { name: '저장' }))
+  await user.click(within(dialog).getByRole('button', { name: /^저장/ }))
   expect(
     await within(cardOf('알림은 어떤 방식으로 보낼까요?')).findByText(
       '앱 안 알림, 이메일',
@@ -298,9 +299,13 @@ it('후보가 낡았으면 그 후보만 막고 초안을 다시 만들게 안�
     await within(card).findByText(/후보를 만든 뒤 문서나 답변/),
   ).toBeInTheDocument()
   localStorage.removeItem('beez.mock.planDraft')
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
   await user.click(
     within(card).getByRole('button', { name: '초안 다시 만들기' }),
   )
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+  // 낡은 후보가 나온 문서만 다시 만든다
+  expect(generate.mock.calls[0][1].document_version_ids).toHaveLength(1)
   expect(
     await screen.findByText(
       '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
@@ -319,12 +324,30 @@ it('초안 작업이 실패하면 이유를 알리고 다시 만들 수 있다',
     screen.getAllByRole('button', { name: '다시 만들기' })[0],
   ).toBeEnabled()
   localStorage.removeItem('beez.mock.planDraft')
-  await user.click(screen.getAllByRole('button', { name: '다시 만들기' })[0])
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
+  const retries = screen.getAllByRole('button', { name: '다시 만들기' })
+  await user.click(retries[0])
   expect(
     await screen.findByText(
       '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
     ),
   ).toBeInTheDocument()
+  // 실패한 문서 하나만 다시 만든다. 문서마다 AI 를 한 번씩 부르므로 나머지까지 보내면 비용이 든다.
+  expect(generate).toHaveBeenCalledTimes(1)
+  expect(generate.mock.calls[0][1].document_version_ids).toHaveLength(1)
+})
+
+it('초안 만들기 버튼은 모든 문서를, 낡은 후보의 다시 만들기는 그 문서만 보낸다', async () => {
+  await prepareCandidates()
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
+  const user = renderPanel()
+  await user.click(
+    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+  )
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
+  expect(generate.mock.calls[0][1].document_version_ids.length).toBeGreaterThan(
+    1,
+  )
 })
 
 it('팀원은 후보를 볼 수 있지만 채택·폐기·만들기는 할 수 없다', async () => {
@@ -543,4 +566,110 @@ it('기준 설계가 발행된 프로젝트는 질문 생성을 기다리지 않
   // 대기 주기를 여러 번 지나도 다시 읽지 않는다.
   await new Promise((resolve) => setTimeout(resolve, WAITING_POLL_MS * 5))
   expect(calls).toEqual(seen)
+})
+
+// S15P31A108-363: 항목 추가 폼은 JSON 구조를 안내하고, 틀린 이유를 원인대로 알린다.
+it('항목 추가 폼은 내용 구조 버전 칸 없이 안내와 예시를 보이고 버전 1로 저장한다', async () => {
+  const create = vi.spyOn(planningApi, 'createItem')
+  const user = renderPanel()
+  await user.click(await screen.findByRole('button', { name: '항목 추가' }))
+  expect(screen.queryByLabelText(/내용 구조 버전/)).toBeNull()
+  expect(screen.getByText(/API 계약은 description·method·path/)).toBeVisible()
+  expect(screen.getByText(/"method": "GET"/)).toBeVisible()
+  await user.click(screen.getByLabelText(/설계 내용/))
+  await user.paste('{"description":"직접 추가한 요구사항"}')
+  await user.click(screen.getByRole('button', { name: '저장' }))
+  expect(await screen.findByText('초안을 추가했어요.')).toBeInTheDocument()
+  expect(create).toHaveBeenCalledWith(
+    '102',
+    expect.objectContaining({ schema_version: 1 }),
+  )
+})
+
+it('항목 추가 폼에 일반 글을 쓰면 JSON 형식 안내를 보이고 저장하지 않는다', async () => {
+  const create = vi.spyOn(planningApi, 'createItem')
+  const user = renderPanel()
+  await user.click(await screen.findByRole('button', { name: '항목 추가' }))
+  await user.click(screen.getByLabelText(/설계 내용/))
+  await user.paste('로그인할 수 있어야 한다')
+  await user.click(screen.getByRole('button', { name: '저장' }))
+  expect(await screen.findByText(/JSON 형식으로 입력해 주세요/)).toBeVisible()
+  expect(create).not.toHaveBeenCalled()
+})
+
+it('서버가 내용을 거절하면 서버 문구를 폼에만 보이고 위쪽에 틀린 안내를 띄우지 않는다', async () => {
+  const user = renderPanel()
+  await user.click(await screen.findByRole('button', { name: '항목 추가' }))
+  await user.click(screen.getByLabelText(/설계 내용/))
+  // 폼 검사를 통과해 서버까지 가는 경우(종류별 필수 키 누락)를 만들려고 서버 응답을 거절로 바꾼다.
+  vi.spyOn(planningApi, 'createItem').mockRejectedValue(
+    new AxiosError('bad', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 400,
+      statusText: 'Bad Request',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {
+        error: {
+          code: 'validation_failed',
+          message: 'API method는 대문자 HTTP 메서드입니다.',
+        },
+      },
+    }),
+  )
+  await user.paste('{"description":"API"}')
+  await user.click(screen.getByRole('button', { name: '저장' }))
+  expect(
+    await screen.findByText('API method는 대문자 HTTP 메서드입니다.'),
+  ).toBeVisible()
+  expect(screen.queryByText(/최신 상태와 권한을 확인해 주세요/)).toBeNull()
+})
+
+it('보완 질문을 오래 만드는 중이면 만드는 문서를 알리고 상태를 다시 확인할 길을 준다 (S15P31A108-359)', async () => {
+  const calls = await stubAnalyses((kind) =>
+    kind === 'PLAN'
+      ? { status: 'FAILED', error_code: 'ai_unavailable', retryable: true }
+      : kind === 'ERD'
+        ? undefined
+        : { status: 'COMPLETED' },
+  )
+  renderPanel()
+  expect(
+    await screen.findByText(/기획안 v1 보완 질문을 만들지 못했어요/),
+  ).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: '질문 다시 만들기' }),
+  ).toBeInTheDocument()
+  expect(
+    await screen.findByText(/만드는 중인 문서: ERD v1/),
+  ).toBeInTheDocument()
+  // 처음에는 오래 걸린다는 안내가 없고, 같은 상태가 이어지면 안내와 확인 버튼이 생긴다.
+  expect(screen.queryByText(/평소보다 오래 걸리고 있어요/)).toBeNull()
+  const button = await screen.findByRole('button', { name: '상태 다시 확인' })
+  const before = calls.ERD
+  await userEvent.click(button)
+  await waitFor(() => expect(calls.ERD).toBeGreaterThan(before))
+  // 실패한 문서의 다시 만들기는 그대로 남는다.
+  expect(
+    screen.getByRole('button', { name: '질문 다시 만들기' }),
+  ).toBeInTheDocument()
+})
+
+it('보완 질문 생성이 전부 실패한 상태에서도 초안 만들기를 누르면 접수 안내가 보인다 (S15P31A108-359)', async () => {
+  await stubAnalyses(() => ({
+    status: 'FAILED',
+    error_code: 'ai_unavailable',
+    retryable: true,
+  }))
+  const user = renderPanel()
+  expect(
+    (await screen.findAllByText(/보완 질문을 만들지 못했어요/)).length,
+  ).toBe(4)
+  await user.click(
+    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+  )
+  expect(
+    await screen.findByText(
+      '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
+    ),
+  ).toBeInTheDocument()
 })

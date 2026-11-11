@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import * as common from '@/api/contracts/common'
 
-// BEE-A01 찾는 범위. 빠지면 서버가 APPROVED로 본다(명세 수정안 요청, dev 서버에 아직 없음).
+// BEE-A01 찾는 범위. 기본 APPROVED. INCLUDE_DRAFTS는 아직 서버가 400으로 거절한다.
 export const askScopeSchema = z.enum(['APPROVED', 'INCLUDE_DRAFTS'])
 export type AskScope = z.infer<typeof askScopeSchema>
 
@@ -37,28 +37,6 @@ export const beeCitationSchema = z.object({
 })
 export type BeeCitation = z.infer<typeof beeCitationSchema>
 
-const beeDesignRefSchema = z.object({
-  design_item_id: common.idSchema,
-  design_item_version_id: common.idSchema,
-  key: z.string().min(1),
-  kind: z.string().min(1),
-  version_no: z.number().int().positive(),
-  source: common.sourceSchema.optional(),
-})
-
-const beeTaskRefSchema = z.object({
-  task_id: common.idSchema,
-  key: z.string().min(1),
-  status: z.enum([
-    'DRAFT',
-    'READY',
-    'IN_PROGRESS',
-    'WAITING',
-    'COMPLETED',
-    'CANCELLED',
-  ]),
-})
-
 export const askResponseSchema = z
   .object({
     origin: z.enum(['MODEL', 'TEMPLATE']),
@@ -67,32 +45,30 @@ export const askResponseSchema = z
     sources: common.sourceSchema.array(),
     unresolved: z.string().array(),
     usage: common.usageSchema.array().optional(),
-    // 기존 서버 응답과 호환하며, 제공되는 경우에만 근거 확인 수준을 표시한다.
-    answer_id: common.idSchema.optional(),
-    citations: beeCitationSchema.array().max(20).optional(),
-    answer_status: z
-      .enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE', 'OUT_OF_SCOPE'])
-      .optional(),
-    grounded: z.boolean().optional(),
+    answer_id: common.idSchema,
+    citations: beeCitationSchema.array().max(20),
+    grounded: z.boolean(),
+    mode: z.literal('APPROVED'),
+    baseline_id: common.idSchema,
+    document_version_ids: common.idSchema.array(),
     verification: z
       .object({
         level: z.enum(['NONE', 'TOKENS', 'ENTAILMENT']),
         claims: z.number().int().nonnegative(),
-        model: z.string().min(1).optional(),
+        model: z.string().min(1).nullish(),
       })
       .optional(),
-    design_refs: beeDesignRefSchema.array().optional(),
-    task_refs: beeTaskRefSchema.array().optional(),
+    notices: z.string().array().optional(),
   })
   .superRefine((answer, context) => {
-    if (answer.citations?.some((citation, index) => citation.n !== index + 1)) {
+    if (answer.citations.some((citation, index) => citation.n !== index + 1)) {
       context.addIssue({
         code: 'custom',
         path: ['citations'],
         message: '인용 번호가 올바르지 않습니다.',
       })
     }
-    if (answer.grounded === false && answer.citations?.length) {
+    if (answer.grounded === false && answer.citations.length) {
       context.addIssue({
         code: 'custom',
         path: ['grounded'],

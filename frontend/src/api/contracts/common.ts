@@ -407,6 +407,16 @@ export const documentBeeReviewSchema = z.object({
 })
 export type DocumentBeeReview = z.infer<typeof documentBeeReviewSchema>
 
+// 최근 비비 검토 요청 상태(S15P31A108-382). 올린 사람이 아닌 팀원도 실패를 알고, 새로고침해도 유지된다.
+export const beeReviewRequestSchema = z.object({
+  status: z.enum(['RUNNING', 'FAILED', 'COMPLETED']),
+  // FAILED일 때만: review_timeout(시간 초과)·review_unavailable·invalid_ai_output 등
+  // 서버(non_null)는 null 필드를 빼고 보내지만, 설정이 바뀌어도 화면이 깨지지 않게 null 도 받는다.
+  error_code: z.string().nullish(),
+  updated_at: timeSchema,
+})
+export type BeeReviewRequest = z.infer<typeof beeReviewRequestSchema>
+
 export const documentWorkingCopySchema = z.object({
   document_id: idSchema,
   owner_account_id: idSchema,
@@ -416,6 +426,10 @@ export const documentWorkingCopySchema = z.object({
   file_name: z.string(),
   latest_review: documentBeeReviewSchema.optional(),
   submissions: documentReviewSubmissionSchema.array(),
+  // latest_review를 지금 쓸 수 없음(참고 승인본이 바뀜·본문 리비전 불일치). 서버가 판정하며 없으면 false로 본다(S15P31A108-362).
+  review_stale: z.boolean().optional(),
+  // 현재 작성 리비전의 가장 최근 비비 검토 요청. 고친 직후에는 새 요청이 생길 때까지 없다.
+  bee_review_request: beeReviewRequestSchema.nullish(),
 })
 export type DocumentWorkingCopy = z.infer<typeof documentWorkingCopySchema>
 
@@ -606,9 +620,13 @@ export type Approval = z.infer<typeof approvalSchema>
 export const changeCommentSchema = z.object({
   id: idSchema,
   proposal_id: idSchema,
+  // 의견을 쓸 때 제안의 제출 리비전(CHG-A12). 반려 뒤 재제출해도 이전 리비전의 의견은 그대로 남는다.
+  revision: z.number().int(),
   author_account_id: idSchema,
   kind: z.enum(['COMMENT', 'REVIEW_REQUEST']),
   body: z.string(),
+  // 지정한 멤버(멤버 ID). 지정하지 않았으면 빈 배열이다.
+  mentioned_member_ids: idSchema.array(),
   created_at: timeSchema,
 })
 export type ChangeComment = z.infer<typeof changeCommentSchema>
@@ -1102,6 +1120,9 @@ export type SearchHit = z.infer<typeof searchHitSchema>
 export const participantSchema = z.object({
   member_id: idSchema,
   status: z.enum(['INVITED', 'JOINED', 'DECLINED']),
+  // 비비가 부른 이유(화면 '팀장 · TASK-001')와 관련자 추가(MTG-A04)로 부른 멤버(화면 '이팀장이 추가'). 명세 Participant
+  role: z.enum(['LEADER', 'TASK_OWNER', 'DOMAIN_OWNER']).optional(),
+  added_by_member_id: idSchema.optional(),
 })
 export type Participant = z.infer<typeof participantSchema>
 
@@ -1117,7 +1138,21 @@ export const meetingEntrySchema = z.object({
     'SUMMARY',
   ]),
   text: z.string(),
+  author_kind: z.enum(['HUMAN', 'BEE']).optional(),
   author_account_id: idSchema.optional(),
+  author_member_id: idSchema.optional(),
+  author_name: z.string().optional(),
+  // 비비 기록이 가리키는 대상(화면은 칩으로 보인다). 명세 MeetingEntry.refs
+  refs: z
+    .object({
+      type: z.enum(['TASK', 'DESIGN_ITEM', 'DOCUMENT_VERSION']),
+      id: idSchema,
+      label: z.string(),
+    })
+    .array()
+    .optional(),
+  // kind=SUMMARY 기록에만 실린다(S15P31A108-235·206): 정리 ID, 정리에 쓴 마지막 기록
+  summary_id: idSchema.optional(),
   through_entry_id: idSchema.optional(),
   generation: generationSchema.optional(),
   created_at: timeSchema,
@@ -1147,14 +1182,40 @@ export const actionItemSchema = z.object({
 })
 export type ActionItem = z.infer<typeof actionItemSchema>
 
-export const meetingMinutesSchema = z.object({
-  entry: meetingEntrySchema,
-  summary: z.string(),
-  decisions: z.string().array(),
-  action_items: actionItemSchema.array(),
-  unresolved: z.string().array(),
+// MTG-A11·A12 비비 회의 정리의 바뀔 문서 한 건. locator 의 줄 번호는 utf8-lf-v1 정규화 원문 기준이고 before 는 그 줄들의
+// 원문(각 줄의 LF 포함), after 는 회의를 끝낼 때 만들어지는 변경 제안(MTG-A13)에 들어갈 문장이다.
+export const meetingDocumentChangeSchema = z.object({
+  document_id: idSchema,
+  base_version_id: idSchema,
+  locator: z.object({
+    type: z.literal('text_lines'),
+    start_line: z.number().int(),
+    end_line: z.number().int(),
+  }),
+  before: z.string(),
+  after: z.string(),
+  // 근거 발언: 이 회의의 실제 기록 ID
+  evidence_entry_ids: idSchema.array(),
 })
-export type MeetingMinutes = z.infer<typeof meetingMinutesSchema>
+export type MeetingDocumentChange = z.infer<typeof meetingDocumentChangeSchema>
+
+export const meetingSummarySchema = z.object({
+  id: idSchema,
+  meeting_id: idSchema,
+  entry: meetingEntrySchema,
+  through_entry_id: idSchema,
+  conflicts: z.string().array(),
+  decisions: z
+    .object({ text: z.string(), decided_by_member_id: idSchema.optional() })
+    .array(),
+  document_changes: meetingDocumentChangeSchema.array(),
+  action_items: actionItemSchema.array(),
+  previous_summary_id: idSchema.optional(),
+  feedback: z.string().optional(),
+  generation: generationSchema,
+  created_at: timeSchema,
+})
+export type MeetingSummary = z.infer<typeof meetingSummarySchema>
 
 export const assignmentSuggestionSchema = z.object({
   task_id: idSchema,
