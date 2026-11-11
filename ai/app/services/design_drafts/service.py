@@ -29,7 +29,12 @@ from app.schemas.design_drafts import (
 )
 from app.schemas.documents import SourceDocument
 from app.schemas.planning_questions import EvidenceItem
-from app.services.design_drafts.proposer import DraftProposal, DraftProposer, ModelItem
+from app.services.design_drafts.proposer import (
+    DraftProposal,
+    DraftProposer,
+    ModelItem,
+    scope_block_ids,
+)
 from app.services.document_parsing.pipeline import parse_source, resolve_source
 from app.services.llm_client import LLMUsage
 from app.services.planning_questions.rules import block_location, clip, heading_titles
@@ -205,6 +210,7 @@ def verify_item(
     *,
     existing: dict[str, ExistingDesignItem],
     answered: frozenset[str],
+    allowed_blocks: frozenset[str] | None = None,
 ) -> DraftItem:
     """Fold the proposals for one item into a draft.
 
@@ -248,6 +254,7 @@ def verify_item(
         quote = source.quote.strip()
         if (
             block is None
+            or (allowed_blocks is not None and block.block_id not in allowed_blocks)
             or not quote
             or quote not in resolve_source(document, block.locator)
             or (block.block_id, quote) in seen
@@ -305,11 +312,17 @@ def compose_result(
         for entry in request.questions
         if entry.status == "ANSWERED"
     )
+    allowed_blocks = scope_block_ids(document, request)
     pairs: list[tuple[DraftItem, DraftChange]] = []
     seen_keys: set[str] = set()
     for group in group_proposals(proposal.items):
         item = verify_item(
-            document, request, group, existing=existing, answered=answered
+            document,
+            request,
+            group,
+            existing=existing,
+            answered=answered,
+            allowed_blocks=allowed_blocks,
         )
         base_id = item.base_design_item_version_id
         if base_id is not None:
@@ -380,6 +393,12 @@ async def generate_design_drafts(
 ) -> DesignDraftOutcome:
     """Parse, propose, verify and diff; raise parser and LLM errors as is."""
     document = parse_source(request.to_source_input())
+    if scope_block_ids(document, request) == frozenset():
+        # Nothing to read in this range (blank lines): no model call, no draft.
+        proposal = DraftProposal((), (), "none", ())
+        return DesignDraftOutcome(
+            compose_result(request, document, proposal), "MODEL", "none", ()
+        )
     proposal = await proposer.propose(request, document)
     try:
         result = compose_result(request, document, proposal)

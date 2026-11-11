@@ -5,6 +5,8 @@ from hashlib import sha256
 
 import pytest
 
+from pydantic import ValidationError
+
 from app.schemas.design_drafts import DesignDraftRequest
 from app.services.design_drafts import (
     DraftProposal,
@@ -774,3 +776,107 @@ async def test_free_form_fields_on_other_kinds_are_accepted_and_preserved():
     with pytest.raises(LLMError) as error:
         await generate_design_drafts(body, FakeProposer(broken))
     assert error.value.code == "invalid_output"
+
+
+# ---- S15P31A108-389: 문서 단독 모드와 범위 지정 ----
+
+LONG_DOC = (
+    "# 업로드\n\n단일 파일 한도는 30 MB이다.\n\n"
+    "## 권한\n\n발행은 리더만 수행한다.\n\n"
+    "## 보관\n\n파일은 90일 보관한다.\n"
+)
+
+
+def document_only(content=LONG_DOC, **overrides):
+    return request(
+        content, mode="DOCUMENT_ONLY", existing_items=[], questions=[], **overrides
+    )
+
+
+def test_document_only_rejects_existing_items_and_questions():
+    with pytest.raises(ValidationError):
+        request(mode="DOCUMENT_ONLY")
+
+
+def test_scope_must_stay_inside_the_document():
+    with pytest.raises(ValidationError):
+        document_only(scope={"start_line": 1, "end_line": 99})
+    with pytest.raises(ValidationError):
+        document_only(scope={"start_line": 5, "end_line": 2})
+
+
+@pytest.mark.asyncio
+async def test_document_only_creates_items_supported_by_the_document():
+    proposer = FakeProposer(
+        item(
+            "CONSTRAINT",
+            "단일 파일 한도는 30 MB이다.",
+            sources=[{"line": 3, "quote": "단일 파일 한도는 30 MB이다."}],
+        )
+    )
+    outcome = await generate_design_drafts(document_only(), proposer)
+    [only] = outcome.result.items
+    assert only.support == "DOCUMENT"
+    assert [change.change for change in outcome.result.changes] == ["CREATE"]
+
+
+@pytest.mark.asyncio
+async def test_document_only_rejects_an_update_of_an_unknown_item():
+    proposer = FakeProposer(item("CONSTRAINT", "수정", base="1101"))
+    with pytest.raises(LLMError):
+        await generate_design_drafts(document_only(), proposer)
+
+
+@pytest.mark.asyncio
+async def test_scope_drops_quotes_from_blocks_outside_the_range():
+    # 7행은 '권한' 절. 범위는 1~5행이라 그 인용은 근거로 남지 않는다.
+    proposer = FakeProposer(
+        item(
+            "POLICY",
+            "발행은 리더만 수행한다.",
+            sources=[
+                {"line": 3, "quote": "단일 파일 한도는 30 MB이다."},
+                {"line": 7, "quote": "발행은 리더만 수행한다."},
+            ],
+        )
+    )
+    outcome = await generate_design_drafts(
+        document_only(scope={"start_line": 1, "end_line": 5}), proposer
+    )
+    [only] = outcome.result.items
+    assert [source.quote for source in only.sources] == ["단일 파일 한도는 30 MB이다."]
+
+
+@pytest.mark.asyncio
+async def test_scope_with_only_outside_quotes_has_no_support():
+    proposer = FakeProposer(
+        item(
+            "POLICY",
+            "발행은 리더만 수행한다.",
+            sources=[{"line": 7, "quote": "발행은 리더만 수행한다."}],
+        )
+    )
+    outcome = await generate_design_drafts(
+        document_only(scope={"start_line": 1, "end_line": 5}), proposer
+    )
+    assert outcome.result.items[0].support == "NONE"
+
+
+def test_model_payload_only_carries_blocks_inside_the_scope():
+    from app.services.design_drafts.proposer import draft_payload
+    from app.services.document_parsing.pipeline import parse_source
+
+    req = document_only(scope={"start_line": 7, "end_line": 9})
+    payload = json.loads(draft_payload(req, parse_source(req.to_source_input())))
+    texts = " ".join(block["text"] for block in payload["blocks"])
+    assert "발행은 리더만" in texts
+    assert "단일 파일" not in texts and "90일" not in texts
+
+
+@pytest.mark.asyncio
+async def test_blank_scope_makes_no_model_call():
+    proposer = FakeProposer(item("POLICY", "x"))
+    outcome = await generate_design_drafts(
+        document_only(scope={"start_line": 2, "end_line": 2}), proposer
+    )
+    assert outcome.result.items == () and proposer.calls == []
