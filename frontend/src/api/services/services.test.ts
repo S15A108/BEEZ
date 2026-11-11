@@ -23,6 +23,7 @@ import {
 } from '@/api/error'
 import {
   authApi,
+  beeApi,
   changesApi,
   documentsApi,
   projectsApi,
@@ -60,6 +61,79 @@ afterEach(() => {
 })
 
 describe('명세 REST 교환', () => {
+  it('비비 질문에는 멱등 키를 보내지 않고 필수 응답 계약을 검증한다', async () => {
+    const answer = {
+      origin: 'MODEL',
+      text: '승인된 문서의 내용입니다.',
+      sources: [
+        {
+          document_id: '201',
+          document_version_id: '301',
+          version_no: 2,
+          location: '인증 정책',
+        },
+      ],
+      unresolved: [],
+      answer_id: '31',
+      citations: [],
+      grounded: false,
+      mode: 'APPROVED',
+      baseline_id: '10',
+      document_version_ids: ['301'],
+    }
+    respond(answer)
+    await expect(
+      beeApi.ask('101', { question: '인증 정책은 무엇인가요?' }),
+    ).resolves.toEqual(answer)
+    expect(lastRequest?.method).toBe('post')
+    expect(lastRequest?.url).toBe('/projects/101/bee/questions')
+    expect(JSON.parse(String(lastRequest?.data))).toEqual({
+      question: '인증 정책은 무엇인가요?',
+    })
+    expect(lastRequest?.headers.get('Idempotency-Key')).toBeUndefined()
+
+    respond({ ...answer, sources: [{ ...answer.sources[0], version_no: '2' }] })
+    await expect(
+      beeApi.ask('101', { question: '인증 정책은 무엇인가요?' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('비비 질문은 자동 재호출하지 않고 명시적 재전송마다 새 답변을 받는다', async () => {
+    let requests = 0
+    const keys: unknown[] = []
+    api.defaults.adapter = async (config) => {
+      requests++
+      keys.push(config.headers.get('Idempotency-Key'))
+      if (requests === 1)
+        throw new AxiosError('response lost', 'ERR_NETWORK', config)
+      return {
+        config,
+        data: {
+          origin: 'TEMPLATE',
+          text: '답변',
+          sources: [],
+          unresolved: [],
+          answer_id: String(30 + requests),
+          citations: [],
+          grounded: false,
+          mode: 'APPROVED',
+          baseline_id: '10',
+          document_version_ids: [],
+        },
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders(),
+      }
+    }
+    const ask = () => beeApi.ask('101', { question: '다시 보낼 질문' })
+    await expect(ask()).rejects.toBeInstanceOf(AxiosError)
+    expect(requests).toBe(1)
+    await expect(ask()).resolves.toMatchObject({ answer_id: '32' })
+    await expect(ask()).resolves.toMatchObject({ answer_id: '33' })
+    expect(requests).toBe(3)
+    expect(keys).toEqual([undefined, undefined, undefined])
+  })
+
   it('응답을 잃은 같은 동작의 재시도는 키를 유지하고 확인된 새 동작은 새 키를 쓴다', async () => {
     const keys: string[] = []
     api.defaults.adapter = async (config) => {

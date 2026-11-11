@@ -1392,7 +1392,7 @@ export const endpointRegistry = [
     multipart: false,
     binary: false,
     noContent: false,
-    idempotent: true,
+    idempotent: false,
   },
   {
     id: 'BEE-A02',
