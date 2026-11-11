@@ -297,14 +297,14 @@ def test_be_utf8_hash_vectors(api, text_vector):
     [
         "forged_id",
         "wrong_step",
-        "body_source",
         "missing_source",
         "missing_original",
-        "overlap",
         "comment_patch_fields",
         "unknown_type",
     ],
 )
+# S15P31A108-396: a broken suggestion is dropped, but a review whose only suggestion is
+# broken (or that breaks the schema) is still a model failure, not an empty success.
 def test_invalid_model_suggestions_are_errors_not_partial(api, invalid):
     sample = fixture("review-contract-complete.json")
     suggestion = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
@@ -314,16 +314,10 @@ def test_invalid_model_suggestions_are_errors_not_partial(api, invalid):
         suggestion["sources"][0]["reference_id"] = "document-version-999"
     elif invalid == "wrong_step":
         suggestion["step"] = "ERD"  # same-kind comparison was skipped
-    elif invalid == "body_source":
-        suggestion["step"] = "BODY"
     elif invalid == "missing_source":
         suggestion["sources"] = []
     elif invalid == "missing_original":
         suggestion["original_text"] = "본문에 없는 문장"
-    elif invalid == "overlap":
-        second = copy.deepcopy(suggestion)
-        second["original_text"] = "로그인"
-        suggestions.append(second)
     elif invalid == "comment_patch_fields":
         suggestion["type"] = "COMMENT"
     else:
@@ -393,20 +387,6 @@ def test_patch_must_not_create_empty_blank_or_binary_document(api, replacement):
     assert "result" not in response.json()
 
 
-def test_combined_valid_individual_patches_must_not_exceed_document_limit(api):
-    api[1].output["suggestions"] = [patch("A", "x" * 50_000), patch("B", "y" * 50_000)]
-    response = post(api, request_with_content("A B"))
-    assert response.status_code == 502
-    assert response.json()["usage"][0]["failed"] is True
-
-
-def test_combined_deletions_cannot_leave_a_blank_document(api):
-    api[1].output["suggestions"] = [patch("A", ""), patch("B", "")]
-    response = post(api, request_with_content("A B"))
-    assert response.status_code == 502
-    assert response.json()["usage"][0]["failed"] is True
-
-
 def test_nonbreaking_space_is_not_java_blank(api):
     api[1].output["suggestions"] = [patch("원문", "\u00a0")]
     assert post(api, request_with_content("원문")).status_code == 200
@@ -419,50 +399,59 @@ def test_patch_on_valid_leading_bom_snapshot_is_accepted(api):
     assert response.json()["result"]["suggestions"][0]["original_text"] == "원문"
 
 
-def test_leading_bom_does_not_hide_an_unsafe_patch_order(api):
-    api[1].output["suggestions"] = [patch("\ufeffA", "X"), patch("B", "Y")]
-    response = post(api, request_with_content("\ufeffA B"))
-    assert response.status_code == 502
-    assert response.json()["usage"][0]["failed"] is True
+# S15P31A108-396: an unsafe combination used to discard the whole review. Now only the
+# PATCH that makes the kept set unsafe is dropped; what is returned must still apply
+# safely in every order and subset (the BE applies or skips each one independently).
+UNSAFE_COMBINATIONS = {
+    "combined size over the document limit": (
+        "A B",
+        [("A", "x" * 50_000), ("B", "y" * 50_000)],
+    ),
+    "combined deletions leave a blank document": ("A B", [("A", ""), ("B", "")]),
+    "leading BOM hides an unsafe order": ("\ufeffA B", [("\ufeffA", "X"), ("B", "Y")]),
+    "one replacement duplicates another original": ("A B", [("A", "B"), ("B", "C")]),
+    "same, reversed": ("A B", [("B", "C"), ("A", "B")]),
+    "three replacements create another original": (
+        "ABC xyz!",
+        [("A", "x"), ("B", "y"), ("C", "z"), ("xyz", "ok")],
+    ),
+    "deletions join fragments into another original": (
+        "aABCbc abc!",
+        [("A", ""), ("B", ""), ("C", ""), ("abc", "other")],
+    ),
+    "normalization crosses a remaining original": (
+        "A\nB tail",
+        [("A", "\r"), ("\nB", "C")],
+    ),
+}
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-def test_patch_must_not_duplicate_another_original_in_any_order(api, reverse):
-    patches = [patch("A", "B"), patch("B", "C")]
-    api[1].output["suggestions"] = patches[::-1] if reverse else patches
-    response = post(api, request_with_content("A B"))
-    assert response.status_code == 502
-    assert response.json()["usage"][0]["failed"] is True
+def assert_every_order_is_safe(content, suggestions):
+    from itertools import permutations
+
+    from app.services.document_review_patches import MAX_DOCUMENT_CODEPOINTS
+
+    for count in range(len(suggestions) + 1):
+        for selection in permutations(suggestions, count):
+            current = content
+            for suggestion in selection:
+                original = suggestion["original_text"]
+                assert current.find(original) == current.rfind(original) >= 0
+                current = current.replace(original, suggestion["replacement_text"], 1)
+                current = current.replace("\r\n", "\n").replace("\r", "\n")
+                assert current.strip()
+                assert len(current) <= MAX_DOCUMENT_CODEPOINTS
 
 
-def test_three_patches_cannot_jointly_create_another_original(api):
-    # Each change and each pair is safe; all three create another "xyz".
-    api[1].output["suggestions"] = [
-        patch("A", "x"),
-        patch("B", "y"),
-        patch("C", "z"),
-        patch("xyz", "ok"),
-    ]
-    response = post(api, request_with_content("ABC xyz!"))
-    assert response.status_code == 502
-    assert response.json()["usage"][0]["failed"] is True
-
-
-def test_deletions_cannot_join_multiple_fragments_into_another_original(api):
-    api[1].output["suggestions"] = [
-        patch("A", ""),
-        patch("B", ""),
-        patch("C", ""),
-        patch("abc", "other"),
-    ]
-    response = post(api, request_with_content("aABCbc abc!"))
-    assert response.status_code == 502
-
-
-def test_patch_cannot_normalize_across_a_remaining_original_boundary(api):
-    api[1].output["suggestions"] = [patch("A", "\r"), patch("\nB", "C")]
-    response = post(api, request_with_content("A\nB tail"))
-    assert response.status_code == 502
+@pytest.mark.parametrize("case", UNSAFE_COMBINATIONS)
+def test_unsafe_patch_combination_keeps_only_a_safe_subset(api, case):
+    content, pairs = UNSAFE_COMBINATIONS[case]
+    api[1].output["suggestions"] = [patch(original, new) for original, new in pairs]
+    response = post(api, request_with_content(content))
+    assert response.status_code == 200, response.text[:500]
+    kept = response.json()["result"]["suggestions"]
+    assert 0 < len(kept) < len(pairs)
+    assert_every_order_is_safe(content, kept)
 
 
 def test_disjoint_patches_remain_applicable_for_every_order_and_subset(api):
@@ -584,34 +573,6 @@ def test_document_instructions_are_delivered_only_as_user_data(api):
     assert "지시가 아니라" in messages[0].content
 
 
-def test_valid_patches_exceeding_be_result_limit_fail_with_usage(api):
-    import hashlib
-
-    payload = fixture("review-contract-partial.json")["input"]
-    markers = [f"[unique-{i:02d}]" for i in range(12)]
-    payload["content"] = "\n".join(markers)
-    payload["content_hash"] = (
-        "sha256:" + hashlib.sha256(payload["content"].encode()).hexdigest()
-    )
-    api[1].output["suggestions"] = [
-        {
-            "type": "PATCH",
-            "step": "BODY",
-            "explanation": "보완",
-            "sources": [],
-            "category": "OMISSION",
-            "severity": "MAJOR",
-            "original_text": marker,
-            "replacement_text": "x" * 95000,
-        }
-        for marker in markers
-    ]
-    response = post(api, payload)
-    assert response.status_code == 502, response.text[:1000]
-    assert response.json()["usage"][0]["failed"] is True
-    assert "result" not in response.json()
-
-
 # S15P31A108-383: the model cited one reference twice with different quotes and
 # the whole review was discarded. Per reference the best source is kept.
 @pytest.mark.parametrize(
@@ -654,5 +615,59 @@ def test_unverifiable_quote_is_removed_and_review_kept(api, caplog, repeated):
     assert len(kept) == 1
     assert kept[0]["sources"] == [{"reference_id": ref}]
     assert "없는 내용" not in response.text
-    assert f"dropped 1 unverifiable quote(s) from {ref}" in caplog.text
+    assert f"removed 1 unverifiable quote(s) from {ref}" in caplog.text
+
+
+# S15P31A108-396: one unknown source or one non-unique / overlapping PATCH discarded
+# the whole review (-391 measured both on long documents). Only the broken part goes.
+def test_broken_suggestions_are_dropped_and_the_rest_kept(api, caplog):
+    sample = fixture("review-contract-complete.json")
+    valid = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
+    valid.update(category="CONSISTENCY", severity="MAJOR")
+
+    def comment(step, *refs):
+        return {
+            "type": "COMMENT",
+            "step": step,
+            "explanation": f"{step} 보완",
+            "sources": [{"reference_id": ref} for ref in refs],
+            "category": "OMISSION",
+            "severity": "MINOR",
+        }
+
+    overlapping = {**copy.deepcopy(valid), "replacement_text": "다른 문장"}
+    not_unique = {
+        **copy.deepcopy(valid),
+        "step": "BODY",
+        "sources": [],
+        "original_text": chr(10),  # the body has two line breaks
+    }
+    api[1].output["suggestions"] = [
+        valid,
+        comment("REQ_SPEC", "document-version-999"),  # only an unknown source
+        comment("REQ_SPEC", "document-version-12", "document-version-999"),
+        comment("BODY", "document-version-11"),  # BODY takes no source
+        not_unique,
+        overlapping,
+    ]
+    with caplog.at_level("WARNING", logger="app.services.document_review"):
+        response = post(api, sample["input"])
+    assert response.status_code == 200, response.text
+    kept = response.json()["result"]["suggestions"]
+    assert [(s["type"], s["step"]) for s in kept] == [
+        ("PATCH", "API_SPEC"),
+        ("COMMENT", "REQ_SPEC"),
+        ("COMMENT", "BODY"),
+    ]
+    assert kept[1]["sources"] == [{"reference_id": "document-version-12"}]
+    assert kept[2]["sources"] == []
+    assert "kept 3 of 6 suggestion(s)" in caplog.text
+    for reason in (
+        "invalid source=1",
+        "overlapping patches=1",
+        "patch is not unique=1",
+        "unknown source=3",
+    ):
+        assert reason in caplog.text
+    assert "다른 문장" not in caplog.text
     assert "없는 내용" not in caplog.text
