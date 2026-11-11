@@ -95,6 +95,29 @@ class AiClientTest {
                 .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
     }
 
+    /** 작업 계획 문서 초안도 공통 읽기 제한보다 긴 전용 제한을 쓰고, 경로·본문은 AI 계약 그대로 보낸다 (S15P31A108-385). */
+    @Test void taskPlanDraftsUsesItsOwnLongerReadTimeoutThanOtherCalls() throws Exception {
+        server.removeContext("/");
+        AtomicReference<String> seenPath = new AtomicReference<>();
+        server.createContext("/", exchange -> {
+            seenPath.set(exchange.getRequestURI().getPath());
+            try { Thread.sleep(800); } catch (InterruptedException ignored) { }
+            byte[] bytes = "{\"origin\":\"MODEL\",\"result\":{},\"usage\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        var slow = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
+                "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
+                Duration.ofMillis(500), Duration.ofMillis(300)), null),
+                Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofSeconds(3));
+        var input = Map.<String, Object>of("request_key", "task-plan-draft-1");
+        assertThat(slow.taskPlanDrafts(input)).containsEntry("origin", "MODEL");
+        assertThat(seenPath.get()).isEqualTo("/v1/task-plan-drafts");
+        assertThatThrownBy(() -> slow.documentChunks(input))
+                .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {404, 503})
     void unavailableReviewEndpointPreservesHttpFailure(int errorStatus) {
