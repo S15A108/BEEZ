@@ -404,6 +404,52 @@ it('4종이 승인됐어도 설계 초안이 없으면 기획 분석으로 보�
   expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeDisabled()
 })
 
+// S15P31A108-389: 설계 초안이 하나라도 있어도 채택하지 않은 후보가 남았으면 기획 분석으로 돌아갈 길이 남는다.
+it('설계 초안이 있어도 채택하지 않은 후보가 있으면 후보 검토 버튼을 보이고 시작은 막지 않는다', async () => {
+  const user = userEvent.setup()
+  const approved = { ...version, status: 'APPROVED' as const }
+  vi.mocked(documentsApi.list).mockResolvedValue({
+    items: (['PLAN', 'ERD', 'REQUIREMENTS', 'API_SPEC'] as const).map(
+      (kind, index) => ({
+        ...listedDocument,
+        id: String(index + 1),
+        kind,
+        approved_version: approved,
+      }),
+    ),
+    has_more: false,
+  })
+  vi.spyOn(planningApi, 'items').mockResolvedValue({
+    items: [{ id: '901' } as never],
+    has_more: false,
+    draft_snapshot_hash: 'sha256:one',
+  })
+  vi.spyOn(planningApi, 'drafts').mockResolvedValue({
+    jobs: [
+      {
+        id: '1',
+        document_version_id: '11',
+        status: 'COMPLETED',
+        mode: 'DOCUMENT_ONLY',
+        candidates: [
+          { id: '21', status: 'PENDING' },
+          { id: '22', status: 'ADOPTED' },
+        ],
+      },
+    ],
+  } as never)
+  mount()
+  expect(
+    await screen.findByText(/채택하지 않은 후보 1개이 남아 있어요/),
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: '후보 1개 검토하기' }))
+  expect(useWorkspaceStore.getState().pane).toBe('planning')
+  expect(
+    screen.queryByRole('button', { name: '기획 분석에서 초안 만들기' }),
+  ).toBeNull()
+  expect(screen.getByRole('button', { name: '프로젝트 시작' })).toBeEnabled()
+})
+
 // PR #72 재전수 ROUND2-DOC-03: 버전 이력은 다음 페이지까지 읽어 가장 오래된 v1도 고를 수 있다.
 it('버전 이력은 다음 페이지까지 읽어 v1까지 보인다', async () => {
   const user = userEvent.setup()
