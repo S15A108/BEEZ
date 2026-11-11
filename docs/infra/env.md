@@ -120,6 +120,7 @@ compose 가 채우므로 env 파일에 직접 쓰는 것은 위 표뿐입니다.
 | `SCHEDULING_POOL_SIZE` | | `10` (워커마다 스레드 하나: 문서 색인·원본 정리·문서 비비 검토·검증·CDC 복구 스캔·기획 질문·설계 초안 등, S15P31A108-391에서 8→10) | 기본값 |
 | `BEEZ_PLANNING_QUESTION_READ_TIMEOUT`·`BEEZ_PLANNING_DRAFT_READ_TIMEOUT` | | `40s`·`55s` | 기본값. AI 모델 제한(질문 30초·초안 45초)보다 길어야 하며, `AI_READ_TIMEOUT` 보다 짧게 두어도 그 값을 쓴다 |
 | `DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_WORKER_READ_TIMEOUT` | | `110`·`120s` | 기본값. 문서 비비 검토(DOC-A16, AI-A10) 첫 검토·재검토의 AI 모델 호출 제한(초, ai 컨테이너, 상한 120)과 backend 검토 워커의 AI 읽기 제한. 검토는 접수 뒤 backend 워커가 HTTP 요청 밖에서 하므로 **nginx 와 무관하게 모델 호출 < 워커 읽기** 만 지킨다. 워커 lease 는 워커 읽기 + 1분이다(S15P31A108-391). 서버 env 파일에 옛 값(`DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS=50`)이 남아 있으면 그 값이 이기므로 지우거나 고친다 |
+| `DOCUMENT_REVIEW_WORKER_CONCURRENCY` | | `4` | 기본값. 문서 비비 검토를 동시에 처리하는 backend 워커 스레드 수(S15P31A108-391). 스케줄 풀과 별도다 |
 | `DOCUMENT_REVIEW_CHAT_LLM_TIMEOUT_SECONDS`·`DOCUMENT_REVIEW_READ_TIMEOUT` | | `50`·`55s` | 기본값. 문서 비비 검토의 제안 대화·직접 요청(DISCUSS·REQUEST)은 사용자 요청 안에서 기다린다. **대기 시간 사슬: 모델 호출 < backend 읽기 < nginx `/api/` 읽기 대기(60초)** 를 지킨다. nginx 값은 env 가 아니라 서버의 `dev.beez.ai.kr.conf` 의 `proxy_read_timeout` 이다(S15P31A108-382·-391) |
 | `BEEZ_BEE_CHAT_READ_TIMEOUT`·`BEEZ_BEE_ANSWER_BUDGET` | | `35s`·`55s` | 기본값. 비비 질문(BEE-A01)의 AI 호출 읽기 제한과 질문 한 건의 전체 처리 목표 시간. 서버 Nginx `/api/` 기본 읽기 대기(60초)보다 예산을 짧게 둔다. `infra/compose.yaml`이 backend 컨테이너로 전달하므로 서버 env 파일에 넣고 재배포하면 반영된다. 실제 소요 시간은 로그 `BEE-A01 timing`으로 재서 조정한다(S15P31A108-344) |
 | `VALIDATION_WORKER_ENABLED` | | `true` | 기본값 |

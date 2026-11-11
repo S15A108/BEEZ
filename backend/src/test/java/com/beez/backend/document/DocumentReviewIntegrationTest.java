@@ -734,6 +734,39 @@ class DocumentReviewIntegrationTest extends IntegrationTestSupport {
         assertThat(jdbc.queryForObject("SELECT status FROM document_bee_review_request WHERE document_id=?", String.class, document)).isEqualTo("FAILED");
     }
 
+    @Test void shutdownInterruptLeavesTheRequestForTheNextWorkerInsteadOfFailingIt() {
+        // 배포 재시작으로 워커 스레드가 interrupt 되면 JDK HttpClient 는 IOException 으로 감싸 던진다.
+        doThrow(new org.springframework.web.client.ResourceAccessException("interrupted",
+                new java.io.IOException("Request was interrupted", new InterruptedException()))).when(gateway).review(anyMap());
+        reviews.review(author, project.projectId(), document, 1, "deploy");
+        String acceptedAt = jdbc.queryForObject("SELECT updated_at::text FROM document_bee_review_request WHERE document_id=?", String.class, document);
+        assertThat(reviews.runNextReview()).isTrue();
+        assertThat(Thread.interrupted()).as("시험 스레드의 interrupt 표시를 남기지 않는다").isFalse();
+        assertThat(copy().beeReviewRequest().status()).as("실패로 남기지 않는다").isEqualTo("RUNNING");
+        // 워커가 잡아도 접수 시각(updated_at)은 그대로라 화면의 경과 시간이 0으로 돌아가지 않는다.
+        assertThat(jdbc.queryForObject("SELECT updated_at::text FROM document_bee_review_request WHERE document_id=?", String.class, document))
+                .isEqualTo(acceptedAt);
+        // 새 서버의 워커가 lease 가 지난 뒤 이어서 끝낸다.
+        jdbc.update("UPDATE document_bee_review_request SET lease_until=now()-interval '1 second' WHERE document_id=?", document);
+        doAnswer(call -> result(call.getArgument(0), List.of())).when(gateway).review(anyMap());
+        assertThat(reviews.runNextReview()).isTrue();
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("COMPLETED");
+    }
+
+    @Test void requestHeldByAWorkerIsNotFailedByTheTenMinuteRule() {
+        reviews.review(author, project.projectId(), document, 1, "held");
+        jdbc.update("UPDATE document_working_copy SET updated_at=now()-interval '1 hour' WHERE document_id=?", document);
+        jdbc.update("""
+                UPDATE document_bee_review_request SET created_at=now()-interval '11 minutes',attempts=1,
+                  lease_token=gen_random_uuid(),lease_until=now()+interval '1 minute' WHERE document_id=?
+                """, document);
+        // 워커가 아직 붙잡고 있으면 같은 키 재요청·화면 표시 모두 도는 중이다(끝나면 결과를 저장할 수 있어야 한다).
+        assertThat(reviews.review(author, project.projectId(), document, 1, "held").request().status()).isEqualTo("RUNNING");
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("RUNNING");
+        jdbc.update("UPDATE document_bee_review_request SET lease_until=now()-interval '1 second' WHERE document_id=?", document);
+        assertThat(copy().beeReviewRequest().status()).isEqualTo("FAILED");
+    }
+
     @Test void legacyRunningRequestWithoutInputIsNeverSentToAi() {
         jdbc.update("""
                 INSERT INTO document_bee_review_request(document_id,account_id,request_key,fingerprint,status)

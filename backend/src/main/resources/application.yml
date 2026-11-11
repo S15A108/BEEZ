@@ -178,6 +178,8 @@ beez:
     # 검토 워커의 AI 읽기 제한. AI 검토 모델 제한(DOCUMENT_REVIEW_LLM_TIMEOUT_SECONDS 110초, 상한 120초)보다 길게 둔다.
     # 워커 lease 는 이 값 + 1분이라, 정상 처리 중에는 다른 워커가 이어받지 않는다(S15P31A108-391)
     worker-read-timeout: ${DOCUMENT_REVIEW_WORKER_READ_TIMEOUT:120s}
+    # 검토를 동시에 처리하는 워커 스레드 수. 필수 문서 4종을 연달아 올려도 줄 서지 않게 4(S15P31A108-391)
+    worker-concurrency: ${DOCUMENT_REVIEW_WORKER_CONCURRENCY:4}
   invitation:
     base-url: ${INVITE_BASE_URL:http://localhost:5173}   # 링크 초대 = {base-url}/invite?token=…, 초대 메일 = {base-url}/projects/{id}?invite=…
     # 초대 메일 발송 한도 (Q05 결정 2026-11-09, S15P31A108-334). 초대한 계정마다 MEM-A01 새 초대 + MEM-A11 다시 보내기를 합쳐 센다.

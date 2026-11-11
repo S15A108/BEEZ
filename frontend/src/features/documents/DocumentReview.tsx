@@ -146,7 +146,9 @@ export function DocumentReview({
   const current = copy.data
   const currentStage = current && reviewStage(current)
   // 지금 비비 검토가 도는 중인지: 작업본이 RUNNING이거나, 접수 뒤 작업본을 아직 새로 읽지 못했다(S15P31A108-391).
-  const awaitingCopy = acceptedAt > 0 && copy.dataUpdatedAt <= acceptedAt
+  // 다시 읽기가 실패하면(조회 오류) 기다림을 풀어 붙잡혀 있지 않게 한다. 오류 때는 다시 읽기도 멈춘다(S15P31A108-391).
+  const awaitingCopy =
+    acceptedAt > 0 && copy.dataUpdatedAt <= acceptedAt && !copy.isError
   const reviewRunning =
     awaitingCopy || current?.bee_review_request?.status === 'RUNNING'
   // 서버가 기억하는 이 리비전의 검토 실패(새로고침·다른 팀원 화면에서도 보인다). 고치면 비워진다.

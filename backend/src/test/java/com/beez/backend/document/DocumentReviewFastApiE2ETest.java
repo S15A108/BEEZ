@@ -143,7 +143,8 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
     @Test void timeoutIsNotStoredAsPartialAndFailureUsageSurvives() {
         long document = upload("# E2E_TIMEOUT\n");
         assertThatThrownBy(() -> reviewNow(author, projectId, document, 1, "timeout-e2e"))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_timeout"));
+        // AI 모델 시간 초과(model_timeout)는 -382부터 review_unavailable 이 아니라 review_timeout 이다(DOC-A16 명세). 이 opt-in 시험만 옛 값이었다.
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=true", Integer.class, projectId)).isEqualTo(1);
     }

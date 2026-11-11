@@ -229,6 +229,21 @@ public class DocumentReviewService {
         });
     }
 
+    /**
+     * 서버 종료로 워커 스레드가 interrupt 되어 끊긴 호출인지. JDK HttpClient 는 interrupt 를 IOException 으로 감싸 던지고
+     * 플래그를 다시 세우지만, 감싸는 방식이 바뀌어도 알아보도록 원인 사슬도 본다.
+     */
+    static boolean interrupted(Throwable failure) {
+        if (Thread.currentThread().isInterrupted()) return true;
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof InterruptedException || cause instanceof java.io.InterruptedIOException
+                    && !(cause instanceof java.net.SocketTimeoutException) || cause instanceof java.nio.channels.ClosedByInterruptException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 워커가 잡은 작업이 다른 워커에게 넘어갔을 때(lease 만료 뒤 이어받음). 저장하지 않고 조용히 손을 뗀다. */
     private static final class LeaseLost extends RuntimeException {
         LeaseLost() { super(null, null, false, false); }
@@ -288,6 +303,12 @@ public class DocumentReviewService {
             var actualUsage = usage;
             tx.executeWithoutResult(status -> repository.recordUsage(project, actualUsage));
         } catch (RuntimeException failure) {
+            if (interrupted(failure)) {
+                // 서버 종료(배포 재시작)로 끊겼다. 실패로 남기지 않고 lease 가 지나면 다른 워커가 이어서 하게 둔다.
+                // 이 호출의 사용량은 알 수 없다(모델 응답을 받지 못했다).
+                log.info("문서 검토 워커가 종료로 중단됨 document={} 재시도 대기", document);
+                return true;
+            }
             if (failure instanceof org.springframework.web.client.RestClientResponseException responseError) {
                 try {
                     var errorBody = responseError.getResponseBodyAsString();
@@ -550,14 +571,17 @@ public class DocumentReviewService {
     }
 
     /**
-     * 도는 중으로 10분이 넘은 요청은 서버가 같은 키 요청 때 실패 처리하는 것과 같게 실패로 보여, 팀원 화면이 끝없이 기다리지 않게 한다.
-     * 워커 재시도(최대 {@value #MAX_ATTEMPTS}회 × lease)는 이 10분 안에 끝난다.
+     * 도는 중으로 {@link DocumentReviewRepository#STALE_MINUTES}분이 넘은 요청은 서버가 같은 키 요청 때 실패 처리하는 것과 같게
+     * 실패로 보여, 팀원 화면이 끝없이 기다리지 않게 한다. 워커가 지금 붙잡고 있는(lease 가 살아 있는) 요청은 끝날 때까지 도는 중이다.
      */
     BeeReviewRequestResponse requestView(Map<String, Object> row) {
         String status = row.get("status").toString(), error = (String) row.get("error_code");
         String created = DocumentValues.time(row.get("created_at"));
         String at = row.get("updated_at") == null ? created : DocumentValues.time(row.get("updated_at"));
-        if ("RUNNING".equals(status) && java.time.Instant.parse(created).isBefore(java.time.Instant.now().minus(java.time.Duration.ofMinutes(10)))) {
+        var now = java.time.Instant.now();
+        boolean held = row.get("lease_until") != null && java.time.Instant.parse(DocumentValues.time(row.get("lease_until"))).isAfter(now);
+        if ("RUNNING".equals(status) && !held
+                && java.time.Instant.parse(created).isBefore(now.minus(java.time.Duration.ofMinutes(DocumentReviewRepository.STALE_MINUTES)))) {
             status = "FAILED"; error = "review_timeout";
         }
         return new BeeReviewRequestResponse(status, error, at);

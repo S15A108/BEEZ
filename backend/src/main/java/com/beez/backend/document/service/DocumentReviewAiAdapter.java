@@ -19,6 +19,7 @@ public class DocumentReviewAiAdapter implements DocumentReviewGateway {
 
     @Override
     public Map<String, Object> review(Map<String, Object> input) {
-        return CHAT_MODES.contains(input.get("mode")) ? ai.documentReviewChat(input) : ai.documentReview(input);
+        // 첫 검토에는 mode 가 없다. Set.of(...).contains(null) 은 NPE 라서 문자열일 때만 확인한다.
+        return input.get("mode") instanceof String mode && CHAT_MODES.contains(mode) ? ai.documentReviewChat(input) : ai.documentReview(input);
     }
 }
