@@ -90,6 +90,8 @@ export type AnswerQuestionResponse = z.infer<
 
 export const generateDraftsInputSchema = z.object({
   document_version_ids: common.idSchema.array(),
+  // DOCUMENT_ONLY: 질문·답변 없이 문서만으로 후보를 만든다(실패한 부분만 다시 만들기 포함). 없으면 답변을 반영한다.
+  mode: z.enum(['WITH_ANSWERS', 'DOCUMENT_ONLY']).optional(),
 })
 export type GenerateDraftsInput = z.infer<typeof generateDraftsInputSchema>
 
@@ -124,6 +126,13 @@ export const draftFieldChangeSchema = z.object({
 })
 export type DraftFieldChange = z.infer<typeof draftFieldChangeSchema>
 
+// 이미 있는 항목·이미 채택한 후보·이미 폐기한 후보와 같은 후보는 겹침으로 구분해 보여 준다.
+export const draftCandidateOverlapSchema = z.object({
+  kind: z.enum(['EXISTING_ITEM', 'ADOPTED_CANDIDATE', 'DISCARDED_CANDIDATE']),
+  ref_id: common.idSchema,
+})
+export type DraftCandidateOverlap = z.infer<typeof draftCandidateOverlapSchema>
+
 export const draftCandidateSchema = z.object({
   id: common.idSchema,
   job_id: common.idSchema.optional(),
@@ -141,6 +150,7 @@ export const draftCandidateSchema = z.object({
   answer_refs: z.string().array().default([]),
   support: z.enum(['DOCUMENT', 'ANSWER', 'DOCUMENT_AND_ANSWER', 'NONE']),
   rationale: z.string().optional(),
+  overlap: draftCandidateOverlapSchema.optional(),
   adopted_design_item_version_id: common.idSchema.optional(),
 })
 export type DraftCandidate = z.infer<typeof draftCandidateSchema>
@@ -151,6 +161,20 @@ export const draftJobSchema = z.object({
   status: z.enum(['PENDING', 'RUNNING', 'COMPLETED', 'FAILED']),
   error_code: z.string().optional(),
   retryable: z.boolean().optional(),
+  // 문서에서 뽑은 후보(DOCUMENT_ONLY)와 질문·답변으로 보완한 후보(WITH_ANSWERS)를 구분한다. 예전 서버는 mode 를 주지 않는다.
+  mode: z.enum(['WITH_ANSWERS', 'DOCUMENT_ONLY']).default('WITH_ANSWERS'),
+  trigger: z.enum(['AUTO', 'MANUAL']).optional(),
+  attempt_no: z.number().int().optional(),
+  max_attempts: z.number().int().optional(),
+  // 긴 문서는 부분으로 나눠 만든다. 실패한 부분만 다시 만든다.
+  parts: z
+    .object({
+      total: z.number().int(),
+      completed: z.number().int(),
+      failed: z.number().int(),
+      failed_error_codes: z.string().array().default([]),
+    })
+    .optional(),
   created_at: common.timeSchema.optional(),
   updated_at: common.timeSchema.optional(),
   unresolved: z.string().array().optional(),
@@ -182,6 +206,38 @@ export const adoptCandidateResponseSchema = draftCandidateSchema.safeExtend({
 })
 export type AdoptCandidateResponse = z.infer<
   typeof adoptCandidateResponseSchema
+>
+
+// 후보 여러 개를 한 번에 채택·폐기. 건별 결과가 오며 일부가 실패해도 나머지는 처리된다.
+export const batchCandidatesInputSchema = z.object({
+  items: z
+    .object({
+      candidate_id: common.idSchema,
+      confirm_no_evidence: z.boolean().optional(),
+      resolved_fields: z.string().array().optional(),
+    })
+    .array()
+    .min(1)
+    .max(50),
+})
+export type BatchCandidatesInput = z.infer<typeof batchCandidatesInputSchema>
+
+export const batchCandidateResultSchema = z.object({
+  candidate_id: common.idSchema,
+  result: z.enum(['ADOPTED', 'DISCARDED', 'FAILED']),
+  design_item_version_id: common.idSchema.optional(),
+  error_code: z.string().optional(),
+  message: z.string().optional(),
+})
+export type BatchCandidateResult = z.infer<typeof batchCandidateResultSchema>
+
+export const batchCandidatesResponseSchema = z.object({
+  results: batchCandidateResultSchema.array(),
+  succeeded: z.number().int(),
+  failed: z.number().int(),
+})
+export type BatchCandidatesResponse = z.infer<
+  typeof batchCandidatesResponseSchema
 >
 
 export const discardCandidateResponseSchema = draftCandidateSchema

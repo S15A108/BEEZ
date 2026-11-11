@@ -18,8 +18,11 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { DocumentCandidates } from './DocumentCandidates'
+import { publishNotice } from './draftJobs'
 import { DraftCandidates } from './DraftCandidates'
 import { hasActiveJob } from './draftJobs'
+import { useShowMore } from './useShowMore'
 import {
   checkDesignContent,
   DESIGN_CONTENT_EXAMPLES,
@@ -36,7 +39,7 @@ import {
   isQuestionTarget,
   pollIntervalOf,
 } from './questionGeneration'
-import type { AnalysisResponse } from './schemas'
+import type { AnalysisResponse, BatchCandidatesResponse } from './schemas'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
@@ -137,6 +140,8 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
         : false,
   })
   const items = drafts.data?.pages.flatMap((page) => page.items) ?? []
+  // 설계 항목 초안은 10개씩 보인다. 발행 조건과 스냅샷 해시는 받아 둔 전체 초안을 기준으로 한다.
+  const itemList = useShowMore(items, 10)
   const snapshotHash = drafts.data?.pages[0]?.draft_snapshot_hash
   const snapshotConsistent =
     !!snapshotHash &&
@@ -200,6 +205,16 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
             versionIds ?? versions.map((version) => version.id),
         }),
       DRAFT_ACCEPTED,
+    )
+  // 문서에서 뽑은 후보 중 실패한 문서 하나의 실패한 부분만 다시 만든다(서버가 실패한 부분만 되돌려 돌린다).
+  const retryDocumentDrafts = (versionId: string) =>
+    perform(
+      () =>
+        planningApi.generateDrafts(projectId, {
+          document_version_ids: [versionId],
+          mode: 'DOCUMENT_ONLY',
+        }),
+      '실패한 부분만 다시 만들도록 접수했어요.',
     )
   const perform = (operation: () => Promise<unknown>, message: string) => {
     void action.run(operation, message).catch(() => undefined)
@@ -364,32 +379,53 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
           {!baseline.isPending && !baseline.data && (
             <AsyncState query={draftJobs}>
               {(data) => (
-                <DraftCandidates
-                  jobs={data.jobs}
-                  labelOfVersion={labelOfVersion}
-                  isLeader={isLeader}
-                  busy={action.busy}
-                  canGenerate={analysesReady}
-                  onGenerate={generate}
-                  onAdopt={(candidate, input) =>
-                    action.run(
-                      () =>
-                        planningApi.adoptCandidate(
-                          projectId,
-                          candidate.id,
-                          input,
-                        ),
-                      '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
-                    )
-                  }
-                  onDiscard={(candidate) =>
-                    action.run(
-                      () =>
-                        planningApi.discardCandidate(projectId, candidate.id),
-                      '후보를 폐기했어요.',
-                    )
-                  }
-                />
+                <>
+                  <DocumentCandidates
+                    jobs={data.jobs}
+                    labelOfVersion={labelOfVersion}
+                    isLeader={isLeader}
+                    busy={action.busy}
+                    onRetry={retryDocumentDrafts}
+                    onAdopt={async (input) =>
+                      (await action.run(
+                        () => planningApi.adoptCandidates(projectId, input),
+                        '고른 후보를 처리했어요.',
+                      )) as BatchCandidatesResponse
+                    }
+                    onDiscard={async (input) =>
+                      (await action.run(
+                        () => planningApi.discardCandidates(projectId, input),
+                        '고른 후보를 폐기 처리했어요.',
+                      )) as BatchCandidatesResponse
+                    }
+                  />
+                  <DraftCandidates
+                    jobs={data.jobs}
+                    labelOfVersion={labelOfVersion}
+                    isLeader={isLeader}
+                    busy={action.busy}
+                    canGenerate={analysesReady}
+                    onGenerate={generate}
+                    onAdopt={(candidate, input) =>
+                      action.run(
+                        () =>
+                          planningApi.adoptCandidate(
+                            projectId,
+                            candidate.id,
+                            input,
+                          ),
+                        '후보를 채택했어요. 설계 항목 초안에 반영했어요.',
+                      )
+                    }
+                    onDiscard={(candidate) =>
+                      action.run(
+                        () =>
+                          planningApi.discardCandidate(projectId, candidate.id),
+                        '후보를 폐기했어요.',
+                      )
+                    }
+                  />
+                </>
               )}
             </AsyncState>
           )}
@@ -418,7 +454,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                 {() => (
                   <div className="space-y-3">
                     {items.length ? (
-                      items.map((item) => (
+                      itemList.shown.map((item) => (
                         <article
                           key={item.id}
                           className="rounded-lg border p-4"
@@ -479,13 +515,20 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
                         문서 분석을 완료하면 설계 항목 초안을 만들 수 있어요.
                       </EmptyState>
                     )}
-                    {drafts.hasNextPage && (
+                    {(itemList.hidden > 0 || drafts.hasNextPage) && (
                       <Button
                         variant="outline"
                         disabled={drafts.isFetchingNextPage}
-                        onClick={() => void drafts.fetchNextPage()}
+                        onClick={() => {
+                          itemList.more()
+                          if (itemList.hidden === 0 && drafts.hasNextPage)
+                            void drafts.fetchNextPage()
+                        }}
                       >
                         다음 항목 검토
+                        {itemList.hidden > 0
+                          ? ` (${itemList.hidden}개 남음)`
+                          : ''}
                       </Button>
                     )}
                   </div>
@@ -648,7 +691,7 @@ export function PlanningPanel({ projectId, isLeader }: Props) {
       {publishing && (
         <FormDialog
           title="최초 기준 설계 승인·발행"
-          description={`문서 ${publishing.documents.length}개와 검토한 항목 ${publishing.items.length}개를 함께 승인해요. 승인할 원본·항목·초안이 달라지면 최신 내용을 다시 검토해야 해요.`}
+          description={`문서 ${publishing.documents.length}개와 검토한 항목 ${publishing.items.length}개를 함께 승인해요. 승인할 원본·항목·초안이 달라지면 최신 내용을 다시 검토해야 해요.${publishNotice(draftJobs.data?.jobs ?? [])}`}
           fields={[
             {
               name: 'confirmation',

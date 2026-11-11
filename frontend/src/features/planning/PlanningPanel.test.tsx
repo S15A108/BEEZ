@@ -203,12 +203,14 @@ it('초안을 만드는 동안에는 진행 안내를 보이고 만들기 버튼
   })
   const user = renderPanel()
   await screen.findByText('전체 질문 5개')
-  await user.click(screen.getByRole('button', { name: '답변으로 초안 만들기' }))
+  await user.click(
+    screen.getByRole('button', { name: '답변으로 보완 초안 만들기' }),
+  )
   expect(
     (await screen.findAllByText(/초안을 만들고 있어요/)).length,
   ).toBeGreaterThan(0)
   expect(
-    screen.getByRole('button', { name: '답변으로 초안 만들기' }),
+    screen.getByRole('button', { name: '답변으로 보완 초안 만들기' }),
   ).toBeDisabled()
 })
 
@@ -342,7 +344,7 @@ it('초안 만들기 버튼은 모든 문서를, 낡은 후보의 다시 만들�
   const generate = vi.spyOn(planningApi, 'generateDrafts')
   const user = renderPanel()
   await user.click(
-    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+    await screen.findByRole('button', { name: '답변으로 보완 초안 만들기' }),
   )
   await waitFor(() => expect(generate).toHaveBeenCalledTimes(1))
   expect(generate.mock.calls[0][1].document_version_ids.length).toBeGreaterThan(
@@ -357,7 +359,7 @@ it('팀원은 후보를 볼 수 있지만 채택·폐기·만들기는 할 수 �
   expect(screen.queryByRole('button', { name: '채택' })).toBeNull()
   expect(screen.queryByRole('button', { name: '폐기' })).toBeNull()
   expect(
-    screen.queryByRole('button', { name: '답변으로 초안 만들기' }),
+    screen.queryByRole('button', { name: '답변으로 보완 초안 만들기' }),
   ).toBeNull()
 })
 
@@ -665,11 +667,66 @@ it('보완 질문 생성이 전부 실패한 상태에서도 초안 만들기를
     (await screen.findAllByText(/보완 질문을 만들지 못했어요/)).length,
   ).toBe(4)
   await user.click(
-    await screen.findByRole('button', { name: '답변으로 초안 만들기' }),
+    await screen.findByRole('button', { name: '답변으로 보완 초안 만들기' }),
   )
   expect(
     await screen.findByText(
       '초안 만들기를 접수했어요. 후보가 만들어지면 확인해 주세요.',
     ),
   ).toBeInTheDocument()
+})
+
+// S15P31A108-389: 문서에서 뽑은 후보는 질문·답변 보완과 따로 보이고, 고른 후보만 설계 항목 초안이 된다.
+async function prepareDocumentCandidates() {
+  const documents = await documentsApi.list('102')
+  await planningApi.generateDrafts('102', {
+    document_version_ids: documents.items.map((item) => item.latest_draft!.id),
+    mode: 'DOCUMENT_ONLY',
+  })
+  await planningApi.drafts('102')
+  await planningApi.drafts('102')
+}
+
+it('문서에서 뽑은 후보를 골라 채택하면 고른 것만 설계 항목 초안이 된다', async () => {
+  await prepareDocumentCandidates()
+  const before = (await planningApi.items('102')).items.length
+  const user = renderPanel()
+  const first = (
+    await screen.findAllByRole('checkbox', {
+      name: '문서에서 뽑은 예시 1 선택',
+    })
+  )[0]
+  expect(screen.getByText('문서에서 뽑은 후보')).toBeInTheDocument()
+  expect(screen.getByText('질문·답변으로 보완한 후보')).toBeInTheDocument()
+  await user.click(first)
+  await user.click(screen.getByRole('button', { name: '선택한 항목 채택' }))
+  expect(
+    await screen.findByText(/1개를 설계 항목 초안으로 채택했어요/),
+  ).toBeInTheDocument()
+  await waitFor(async () =>
+    expect((await planningApi.items('102')).items.length).toBe(before + 1),
+  )
+})
+
+it('문서에서 뽑은 작업이 실패하면 출력 상한 안내를 보이고 실패한 부분만 다시 접수한다', async () => {
+  localStorage.setItem('beez.mock.planDraft', 'failed')
+  await prepareDocumentCandidates()
+  const generate = vi.spyOn(planningApi, 'generateDrafts')
+  const user = renderPanel()
+  expect(
+    (await screen.findAllByRole('alert')).some((alert) =>
+      alert.textContent?.includes('출력 길이 상한'),
+    ),
+  ).toBe(true)
+  localStorage.removeItem('beez.mock.planDraft')
+  await user.click(
+    screen.getAllByRole('button', { name: '실패한 부분만 다시 시도' })[0],
+  )
+  await waitFor(() =>
+    expect(generate).toHaveBeenCalledWith(
+      '102',
+      expect.objectContaining({ mode: 'DOCUMENT_ONLY' }),
+    ),
+  )
+  expect(generate.mock.calls[0][1].document_version_ids).toHaveLength(1)
 })

@@ -108,6 +108,34 @@ export const planningApi = {
       },
       options,
     ),
+  adoptCandidates: (
+    projectId: string,
+    input: schemas.BatchCandidatesInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.batchCandidatesResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/design-draft-candidates/adopt`,
+        data: schemas.batchCandidatesInputSchema.parse(input),
+      },
+      options,
+    ),
+  discardCandidates: (
+    projectId: string,
+    input: schemas.BatchCandidatesInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.batchCandidatesResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/design-draft-candidates/discard`,
+        data: schemas.batchCandidatesInputSchema.parse(input),
+      },
+      options,
+    ),
   discardCandidate: (
     projectId: string,
     candidateId: string,
