@@ -15,6 +15,7 @@ import com.beez.backend.designitem.repository.BaselineRepository;
 import com.beez.backend.planning.dto.DraftDtos.BatchItem;
 import com.beez.backend.planning.dto.DraftDtos.BatchRequest;
 import com.beez.backend.planning.dto.DraftDtos.CreateRequest;
+import com.beez.backend.planning.repository.DesignDraftRepository;
 import com.beez.backend.planning.service.AutoDraftIntake;
 import com.beez.backend.planning.service.DesignDraftAdoptionService;
 import com.beez.backend.planning.service.DesignDraftRunner;
@@ -46,6 +47,7 @@ class DocumentOnlyDraftIntegrationTest extends PlanningTestSupport {
     @Autowired DesignDraftService drafts;
     @Autowired DesignDraftRunner runner;
     @Autowired AutoDraftIntake intake;
+    @Autowired DesignDraftRepository repository;
     @Autowired DesignDraftAdoptionService batches;
     @MockitoBean AiClient ai;
     @MockitoSpyBean BaselineRepository baselines;
@@ -276,6 +278,66 @@ class DocumentOnlyDraftIntegrationTest extends PlanningTestSupport {
         manual("m2", v2);
         runner.runOnce();
         assertThat(count("SELECT count(*) FROM design_draft_candidate WHERE project_id=? AND overlap_kind='DISCARDED_CANDIDATE' AND overlap_ref=?", project, first)).isGreaterThanOrEqualTo(1);
+    }
+
+    // ---- 리뷰 반영 (S15P31A108-389) ----
+
+    @Test void aCandidateLikeAnotherDocumentsUndecidedCandidateIsMarkedAndAdoptingBothMakesOneItem() {
+        // 두 문서가 같은 내용의 후보를 하나씩 만든다(첫 부분이 둘 다 같은 설명으로 나온다).
+        manual("m1", longVersion, version);
+        while (runner.runOnce()) { /* 접수된 작업을 모두 처리한다 */ }
+        String description = "절 시작 1 규칙은 이렇게 동작해야 한다.";
+        var same = jdbc.queryForList("SELECT id,overlap_kind,overlap_ref FROM design_draft_candidate WHERE project_id=? AND proposed_after->>'description'=? ORDER BY id", project, description);
+        assertThat(same).hasSize(2);
+        assertThat(same.get(0).get("overlap_kind")).isNull();                                   // 먼저 저장된 쪽은 새 후보
+        assertThat(same.get(1)).containsEntry("overlap_kind", "PENDING_CANDIDATE");             // 뒤 문서의 같은 후보는 겹침으로 표시
+        assertThat(((Number) same.get(1).get("overlap_ref")).longValue()).isEqualTo(((Number) same.get(0).get("id")).longValue());
+
+        // 겹침으로 표시된 쪽까지 일괄로 채택해도 같은 설계 항목은 하나만 생긴다.
+        var result = batches.adopt(leaderCaller, project, new BatchRequest(List.of(
+                new BatchItem(same.get(0).get("id").toString(), null, null), new BatchItem(same.get(1).get("id").toString(), null, null))));
+        @SuppressWarnings("unchecked") var results = (List<Map<String, Object>>) result.get("results");
+        assertThat(results.get(0)).containsEntry("result", "ADOPTED");
+        assertThat(results.get(1)).containsEntry("result", "FAILED").containsEntry("error_code", "candidate_duplicate");
+        assertThat(count("SELECT count(*) FROM design_item_version v JOIN design_item i ON i.id=v.design_item_id WHERE i.project_id=? AND v.content->>'description'=?", project, description)).isEqualTo(1);
+    }
+
+    @Test void aSecondAdoptionOfTheSameContentIsRefusedEvenWhenNothingMarkedIt() {
+        manual("m1", longVersion, version);
+        while (runner.runOnce()) { /* 모두 처리한다 */ }
+        String description = "절 시작 1 규칙은 이렇게 동작해야 한다.";
+        var ids = jdbc.queryForList("SELECT id FROM design_draft_candidate WHERE project_id=? AND proposed_after->>'description'=? ORDER BY id", Long.class, project, description);
+        // 겹침 표시가 없었던 것처럼 되돌려(다른 인스턴스가 동시에 저장한 경우) 채택 직전 확인만으로 막히는지 본다.
+        jdbc.update("ALTER TABLE design_draft_candidate DISABLE TRIGGER trg_design_draft_candidate_immutable");
+        jdbc.update("UPDATE design_draft_candidate SET overlap_kind=NULL,overlap_ref=NULL WHERE id=?", ids.get(1));
+        jdbc.update("ALTER TABLE design_draft_candidate ENABLE TRIGGER trg_design_draft_candidate_immutable");
+        drafts.adopt(leaderCaller, project, ids.get(0), null);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> drafts.adopt(leaderCaller, project, ids.get(1), null))
+                .hasMessageContaining("같은 설계 항목");
+    }
+
+    @Test void autoIntakeDoesNotAddAJobToAVersionTheLeaderAlreadyCreatedByHand() {
+        fourApproved();
+        manual("m1", longVersion);
+        intake.runOnce();
+        assertThat(jobs("AND document_version_id=? AND mode='DOCUMENT_ONLY'", longVersion)).isEqualTo(1);
+        assertThat(jobs("AND document_version_id=? AND trigger_kind='AUTO'", longVersion)).isZero();
+        assertThat(jobs("AND trigger_kind='AUTO'")).isEqualTo(3);          // 손으로 만들지 않은 나머지 문서만 자동 접수
+    }
+
+    @Test void autoTargetsSkipProjectsApprovedBeforeTheCutoffAndAreReadFromTheCursorOn() {
+        fourApproved();
+        var now = java.time.Instant.now();
+        assertThat(repository.autoTargetProjects(0, 10, null)).contains(project);
+        assertThat(repository.autoTargetProjects(0, 10, now.minusSeconds(3600))).contains(project);
+        assertThat(repository.autoTargetProjects(0, 10, now.plusSeconds(3600))).doesNotContain(project);   // 켜기 전에 이미 갖춰진 프로젝트는 소급하지 않는다
+        assertThat(repository.autoTargetProjects(project, 10, null)).doesNotContain(project);              // 커서 뒤부터 본다
+    }
+
+    @Test void documentOnlyIntakeDoesNotReadExistingItemsSoManyOfThemDoNotBlockIt() {
+        for (int i = 1; i <= 501; i++) draftItem(String.format("REQ-%03d", i), "REQUIREMENT", "이미 있는 항목 " + i);
+        manual("m1", longVersion);                                                  // 기존 항목이 500개를 넘어도 접수된다
+        assertThat(jobs("AND document_version_id=? AND mode='DOCUMENT_ONLY'", longVersion)).isEqualTo(1);
     }
 
     // ---- 일괄 채택 ----

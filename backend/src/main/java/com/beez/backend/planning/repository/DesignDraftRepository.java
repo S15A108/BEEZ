@@ -195,6 +195,14 @@ public class DesignDraftRepository {
                 """).param("project", project).query().listOfRows();
     }
 
+    /** 다른 작업에서 아직 결정하지 않은(PENDING) 후보의 지문. 문서끼리 같은 후보를 겹침으로 표시하는 데 쓴다. */
+    public List<Map<String, Object>> pendingFingerprints(long project, long exceptJob) {
+        return jdbc.sql("""
+                SELECT id,fingerprint FROM design_draft_candidate
+                 WHERE project_id=:project AND job_id<>:job AND fingerprint IS NOT NULL AND status='PENDING' ORDER BY id
+                """).param("project", project).param("job", exceptJob).query().listOfRows();
+    }
+
     /** 이미 채택하거나 폐기한 후보의 지문. */
     public List<Map<String, Object>> decidedFingerprints(long project) {
         return jdbc.sql("""
@@ -203,22 +211,33 @@ public class DesignDraftRepository {
                 """).param("project", project).query().listOfRows();
     }
 
-    /** 자동 접수 대상: 기준이 없고 4종 문서가 모두 최신 승인본(작성 중 사본 없음)인 프로젝트의, 아직 자동 접수 안 된 버전. */
-    public List<Map<String, Object>> autoTargets(int limit) {
+    /**
+     * 자동 접수 대상 프로젝트 id: 기준이 없고 팀장이 있으며 4종 문서가 모두 최신 승인본(작성 중 사본 없음)인 프로젝트 중,
+     * 문서 단독 작업이 아직 없는 버전이 하나라도 있는 프로젝트. {@code afterProject} 보다 큰 id 부터 {@code limit} 개씩 돌려준다
+     * (준비가 덜 된 프로젝트가 앞자리를 계속 차지하지 않게 호출한 쪽이 마지막 id 를 기억해 돌려 가며 본다).
+     * {@code approvedAfter} 가 있으면 4종이 모두 갖춰진 시점(최신 승인본 중 가장 늦은 승인 시각)이 그 뒤인 프로젝트만 본다.
+     */
+    public List<Long> autoTargetProjects(long afterProject, int limit, java.time.Instant approvedAfter) {
         return jdbc.sql("""
                 WITH latest AS (
-                  SELECT DISTINCT ON (d.id) d.project_id,d.id AS document_id,d.type,v.id AS version_id
+                  SELECT DISTINCT ON (d.id) d.project_id,d.id AS document_id,d.type,v.id AS version_id,v.approved_at
                     FROM document d JOIN document_version v ON v.document_id=d.id
                    WHERE d.discarded_at IS NULL AND v.status='APPROVED'
                      AND NOT EXISTS (SELECT 1 FROM document_working_copy w WHERE w.document_id=d.id AND w.status<>'APPROVED')
                    ORDER BY d.id,v.version_no DESC)
-                SELECT l.project_id,l.version_id,l.type FROM latest l JOIN project p ON p.id=l.project_id
-                 WHERE p.current_baseline_id IS NULL AND p.archived_at IS NULL
+                SELECT DISTINCT l.project_id FROM latest l JOIN project p ON p.id=l.project_id
+                 WHERE l.project_id>:after AND p.current_baseline_id IS NULL AND p.archived_at IS NULL
+                   AND EXISTS (SELECT 1 FROM project_member m JOIN account a ON a.id=m.account_id
+                                WHERE m.project_id=l.project_id AND m.role='LEADER' AND m.active=true AND a.deleted_at IS NULL)
                    AND (SELECT count(DISTINCT x.type) FROM latest x WHERE x.project_id=l.project_id
                          AND x.type IN ('PLAN','REQ_SPEC','ERD','API_SPEC'))=4
-                   AND NOT EXISTS (SELECT 1 FROM design_draft_job j WHERE j.document_version_id=l.version_id AND j.trigger_kind='AUTO')
-                 ORDER BY l.project_id,l.version_id LIMIT :limit
-                """).param("limit", limit).query().listOfRows();
+                   AND (cast(:since AS timestamptz) IS NULL
+                        OR (SELECT max(x.approved_at) FROM latest x WHERE x.project_id=l.project_id) >= cast(:since AS timestamptz))
+                   AND NOT EXISTS (SELECT 1 FROM design_draft_job j WHERE j.document_version_id=l.version_id AND j.mode='DOCUMENT_ONLY')
+                 ORDER BY l.project_id LIMIT :limit
+                """).param("after", afterProject).param("limit", limit)
+                .param("since", approvedAfter == null ? null : java.time.OffsetDateTime.ofInstant(approvedAfter, java.time.ZoneOffset.UTC), java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
+                .query(Long.class).list();
     }
 
     public Optional<Long> firstLeader(long project) {
@@ -243,8 +262,9 @@ public class DesignDraftRepository {
                 """).param("project", project).query().listOfRows();
     }
 
-    public boolean autoJobExists(long version) {
-        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM design_draft_job WHERE document_version_id=:version AND trigger_kind='AUTO')")
+    /** 이 문서 버전에 문서 단독 작업이 이미 있는지(자동·수동 구분 없이). 자동 접수가 팀장이 수동으로 만든 버전에 중복 접수하지 않게 한다. */
+    public boolean documentOnlyJobExists(long version) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM design_draft_job WHERE document_version_id=:version AND mode='DOCUMENT_ONLY')")
                 .param("version", version).query(Boolean.class).single();
     }
 

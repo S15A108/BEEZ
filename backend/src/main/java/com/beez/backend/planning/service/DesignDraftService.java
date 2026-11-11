@@ -137,9 +137,8 @@ public class DesignDraftService {
      * 입력 스냅샷에는 기존 항목·질문을 넣지 않고, 본문을 줄 범위 부분으로 나눠 부분 행을 만든다. AI 는 부르지 않는다.
      */
     long intakeDocumentOnly(long project, Map<String, Object> doc, long account, String key, String trigger) {
-        var snapshot = snapshot(project, doc);
-        snapshot.put("existing_items", List.of());
-        snapshot.put("questions", List.of());
+        // 문서 단독 모드는 기존 항목·질문을 쓰지 않으므로 읽지도 않는다(기존 항목이 많아 draft_too_large 로 접수가 막히지 않게).
+        var snapshot = snapshot(project, doc, false);
         long version = ((Number) doc.get("document_version_id")).longValue();
         long job = drafts.insertDocumentOnlyJob(project, version, account, key, snapshot, hash(snapshot), trigger);
         int no = 1;
@@ -149,6 +148,10 @@ public class DesignDraftService {
 
     /** AI 에 보낼 입력(요청 키 제외)을 접수 시점의 값으로 고정한다. */
     private Map<String, Object> snapshot(long project, Map<String, Object> doc) {
+        return snapshot(project, doc, true);
+    }
+
+    private Map<String, Object> snapshot(long project, Map<String, Object> doc, boolean withContext) {
         long version = ((Number) doc.get("document_version_id")).longValue();
         boolean markdown = doc.get("storage_key").toString().endsWith(".md");
         var documentRef = new LinkedHashMap<String, Object>();
@@ -165,6 +168,11 @@ public class DesignDraftService {
         snapshot.put("text_hash", doc.get("text_hash"));
         snapshot.put("normalization_version", "utf8-lf-v1");
         snapshot.put("parser_profile", markdown ? "markdown-v1" : "plain-v1");
+        if (!withContext) {
+            snapshot.put("existing_items", List.of());
+            snapshot.put("questions", List.of());
+            return snapshot;
+        }
         var existing = new ArrayList<Map<String, Object>>();
         for (var row : drafts.existingItems(project, version)) existing.add(itemView(row));
         if (existing.size() > MAX_ITEMS) throw conflict("draft_too_large", "기존 설계 항목이 너무 많아 한 번에 처리할 수 없습니다.");
@@ -349,6 +357,11 @@ public class DesignDraftService {
 
         String kind = c.get("kind").toString();
         Map<String, Object> after = json(c.get("proposed_after"));
+        // 문서끼리 같은 후보를 한꺼번에 채택해도 같은 설계 항목이 두 번 생기지 않게, 채택 직전에 지금 있는 항목과 지문을 다시 비교한다.
+        if ("CREATE".equals(c.get("change_kind")) && c.get("fingerprint") != null
+                && DraftOverlap.liveFingerprints(drafts, project).containsKey(c.get("fingerprint").toString())) {
+            throw conflict("candidate_duplicate", "이미 같은 설계 항목이 있어요. 이 후보는 폐기해 주세요.");
+        }
         String title = content.validate(kind, 1, after);
         String contentJson = canonical(after);
         long itemVersion;

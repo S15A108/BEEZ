@@ -5,7 +5,6 @@ import com.beez.backend.designitem.repository.DesignProjectRepository;
 import com.beez.backend.document.config.DocumentProperties;
 import com.beez.backend.planning.repository.DesignDraftRepository;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -33,28 +32,32 @@ public class AutoDraftIntake {
     private final BaselineRepository baselines;
     private final DocumentProperties properties;
     private final TransactionTemplate tx;
+    private final java.time.Instant approvedAfter;
+    /** 마지막으로 본 프로젝트 id. 접수하지 못한(분석 실패·색인 미완 등) 프로젝트가 앞자리를 막지 않도록 돌려 가며 본다. */
+    private volatile long cursor = 0;
 
     public AutoDraftIntake(DesignDraftRepository drafts, DesignDraftService service, DesignProjectRepository projects,
-                           BaselineRepository baselines, DocumentProperties properties, PlatformTransactionManager manager) {
+                           BaselineRepository baselines, DocumentProperties properties, PlatformTransactionManager manager,
+                           @org.springframework.beans.factory.annotation.Value("${beez.planning.auto-draft-approved-after:}") String approvedAfter) {
         this.drafts = drafts; this.service = service; this.projects = projects; this.baselines = baselines; this.properties = properties;
         this.tx = new TransactionTemplate(manager);
+        this.approvedAfter = approvedAfter == null || approvedAfter.isBlank() ? null : java.time.Instant.parse(approvedAfter.trim());
     }
 
     /** 이번에 새로 접수한 작업 수. */
     public int runOnce() {
-        var byProject = new LinkedHashMap<Long, List<Long>>();
-        for (var row : drafts.autoTargets(BATCH * 4)) {
-            byProject.computeIfAbsent(((Number) row.get("project_id")).longValue(), k -> new ArrayList<>()).add(((Number) row.get("version_id")).longValue());
-        }
+        var targets = drafts.autoTargetProjects(cursor, BATCH, approvedAfter);
+        // 끝까지 봤으면 다음 틱은 처음부터 다시 본다.
+        cursor = targets.size() < BATCH ? 0 : targets.getLast();
         int submitted = 0;
-        for (var entry : byProject.entrySet()) {
+        for (long project : targets) {
             try {
-                Integer n = tx.execute(status -> intake(entry.getKey()));
+                Integer n = tx.execute(status -> intake(project));
                 if (n != null) submitted += n;
             } catch (DuplicateKeyException e) {
                 // 다른 인스턴스가 먼저 접수했다 — 정상이다.
             } catch (RuntimeException e) {
-                log.error("자동 설계 항목 후보 접수 실패 project={} 예외 종류={}", entry.getKey(), e.getClass().getSimpleName());
+                log.error("자동 설계 항목 후보 접수 실패 project={} 예외 종류={}", project, e.getClass().getSimpleName());
             }
         }
         return submitted;
@@ -81,7 +84,7 @@ public class AutoDraftIntake {
         int submitted = 0;
         for (var doc : docs) {
             long version = ((Number) doc.get("document_version_id")).longValue();
-            if (drafts.autoJobExists(version) || drafts.activeJobExists(version)) continue;
+            if (drafts.documentOnlyJobExists(version) || drafts.activeJobExists(version)) continue;
             String textHash = String.valueOf(doc.get("text_hash"));
             String key = "auto-" + version + "-" + textHash.substring(Math.max(0, textHash.length() - 12));
             service.intakeDocumentOnly(project, doc, leader.get(), key, "AUTO");

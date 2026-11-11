@@ -29,7 +29,7 @@ CREATE TABLE design_draft_job_part (
 ALTER TABLE design_draft_candidate
   ADD COLUMN part_no      INT,
   ADD COLUMN fingerprint  TEXT,
-  ADD COLUMN overlap_kind TEXT CHECK (overlap_kind IN ('EXISTING_ITEM','ADOPTED_CANDIDATE','DISCARDED_CANDIDATE')),
+  ADD COLUMN overlap_kind TEXT CHECK (overlap_kind IN ('EXISTING_ITEM','ADOPTED_CANDIDATE','DISCARDED_CANDIDATE','PENDING_CANDIDATE')),
   ADD COLUMN overlap_ref  BIGINT,
   ADD CHECK ((overlap_kind IS NULL) = (overlap_ref IS NULL));
 CREATE INDEX ix_design_draft_candidate_fingerprint ON design_draft_candidate(project_id, fingerprint) WHERE fingerprint IS NOT NULL;
