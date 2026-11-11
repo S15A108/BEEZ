@@ -266,3 +266,49 @@ def test_provider_failure_propagates_reported_usage():
         asyncio.run(analyze_mode(body(), LLMClient(provider), "test-model"))
     assert exc.value.code == "model_timeout"
     assert exc.value.usage[0].failed is True
+
+
+def test_request_with_nothing_to_change_is_a_normal_answer_with_a_reason():
+    request = body()
+    result, _ = call(
+        request,
+        {
+            "outcome": "NO_CHANGE",
+            "suggestions": [],
+            "summary": "요청한 속도가 이미 3.2절에 있어요.",
+        },
+    )
+    assert result["result"]["outcome"] == "NO_CHANGE"
+    assert result["result"]["suggestions"] == []
+    assert result["result"]["summary"] == "요청한 속도가 이미 3.2절에 있어요."
+    assert result["result"]["content_hash"] == request.content_hash
+    # 정상 답이라 실패 사용량으로 세지 않는다.
+    assert all(not usage.get("failed") for usage in result["usage"])
+
+
+def test_request_without_outcome_still_reads_an_empty_answer_with_reason_as_no_change():
+    result, _ = call(body(), {"suggestions": [], "summary": "이미 반영돼 있어요."})
+    assert result["result"]["outcome"] == "NO_CHANGE"
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        {"outcome": "NO_CHANGE", "suggestions": []},
+        {"outcome": "NO_CHANGE", "suggestions": [], "summary": " "},
+        {"outcome": "NO_CHANGE", "suggestions": [], "summary": "이유\x00"},
+        {"outcome": "SUGGESTION", "suggestions": [], "summary": "이유"},
+        {"outcome": "NO_CHANGE", "suggestions": [patch()], "summary": "이유"},
+    ],
+)
+def test_request_rejects_no_change_without_a_usable_reason_or_with_a_patch(output):
+    provider = FakeProvider(output)
+    with pytest.raises(LLMError) as exc:
+        asyncio.run(analyze_mode(body(), LLMClient(provider), "test-model"))
+    assert exc.value.code == "invalid_output"
+    assert exc.value.usage[0].failed is True
+
+
+def test_request_patch_answer_carries_the_suggestion_outcome():
+    result, _ = call(body(), {"suggestions": [patch()]})
+    assert result["result"]["outcome"] == "SUGGESTION"
