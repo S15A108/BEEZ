@@ -44,7 +44,7 @@ export function AssignmentRecommendations({
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">
-          담당 영역, 현재 업무량과 선행 작업을 참고해요. 추천만 표시하며
+          담당 도메인, 현재 업무량과 선행 작업을 참고해요. 추천만 표시하며
           담당자를 자동으로 바꾸지 않아요.
         </p>
         {recommendation.isPending && (

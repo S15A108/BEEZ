@@ -301,7 +301,7 @@ export const endpointRegistry = [
   },
   {
     id: 'MEM-A07',
-    title: '팀원 담당 영역·표시 수정',
+    title: '팀원 담당 도메인·표시 수정',
     method: 'PATCH',
     path: '/projects/{id}/members/{member_id}',
     auth: 'LEADER',

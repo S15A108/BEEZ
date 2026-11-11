@@ -1074,7 +1074,7 @@ function UploadDocument({
             )}
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="document-domain">담당 영역 (선택)</Label>
+            <Label htmlFor="document-domain">담당 도메인 (선택)</Label>
             <Input
               id="document-domain"
               placeholder="예: 인증"
@@ -1082,7 +1082,7 @@ function UploadDocument({
               disabled={isSubmitting || !!replace}
             />
             <p className="text-xs text-muted-foreground">
-              목록과 검색에서 담당 영역별로 모아 볼 수 있어요.
+              목록과 검색에서 담당 도메인별로 모아 볼 수 있어요.
             </p>
           </div>
           <p className="rounded-xl bg-muted/50 px-4 py-3 text-xs text-muted-foreground">
@@ -1500,7 +1500,7 @@ function DocumentDetail({
                 fields={[
                   {
                     name: 'domain',
-                    label: '담당 영역',
+                    label: '담당 도메인',
                     value: data.document.domain ?? '',
                   },
                 ]}
@@ -1511,7 +1511,7 @@ function DocumentDetail({
                       documentsApi.update(projectId, documentId, {
                         domain: values.domain.trim(),
                       }),
-                    '담당 영역을 저장했어요.',
+                    '담당 도메인을 저장했어요.',
                   )
                   setClassification(false)
                 }}
