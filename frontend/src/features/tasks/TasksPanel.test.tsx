@@ -2184,10 +2184,10 @@ const documentDraft = (): PlanDraft =>
     design_ref_candidates: [
       {
         design_item_id: '302',
-        design_item_version_id: '312',
+        design_item_version_id: '3021',
         key: 'API-001',
         kind: 'API_CONTRACT',
-        title: '주문을 만든다.',
+        title: '주문 생성 API',
         reason: '주문 생성 API라서',
       },
     ],
@@ -2212,11 +2212,11 @@ const documentDraft = (): PlanDraft =>
     baseline_id: '401',
   })
 
-async function openNewPlan() {
+async function openNewPlan(items = designItems) {
   vi.spyOn(planningApi, 'items').mockResolvedValue({
-    items: [],
+    items,
     has_more: false,
-  })
+  } as never)
   show(false)
   await userEvent.click(
     await screen.findByRole('button', { name: '작업 계획' }),
@@ -2327,7 +2327,7 @@ it('연결 후보는 체크해야 계획에 연결되고 설계에 없는 내용
     ),
   ).toBeInTheDocument()
   const candidate = screen.getByRole('checkbox', {
-    name: /API-001 · 주문을 만든다\./,
+    name: /API-001 · 주문 생성 API/,
   })
   expect(candidate).not.toBeChecked()
   await userEvent.click(candidate)
@@ -2344,6 +2344,47 @@ it('연결 후보는 체크해야 계획에 연결되고 설계에 없는 내용
     '주문은 10분 안에 취소할 수 있다',
   )
   expect(screen.getByRole('button', { name: '추가했어요' })).toBeDisabled()
+})
+
+it('후보로 연결한 항목을 계약 변경으로 바꾸면 제목이 아니라 항목 내용이 바꿀 계약 문장에 채워진다', async () => {
+  vi.spyOn(tasksApi, 'draftPlan').mockResolvedValue(documentDraft())
+  const title = await openNewPlan()
+  await userEvent.type(title, '주문 생성 API')
+  await userEvent.click(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  )
+  // 후보 패널의 체크 칸과 아래 '관련 설계 항목' 목록의 같은 항목이 모두 보이므로 패널 쪽을 고른다.
+  const panel = await screen.findByRole('region', { name: '문서 초안' })
+  await userEvent.click(
+    within(panel).getByRole('checkbox', { name: /API-001 · 주문 생성 API/ }),
+  )
+  await userEvent.selectOptions(
+    screen.getByLabelText('API-001의 참조 관계'),
+    'CHANGES',
+  )
+  // 후보 제목('주문 생성 API')이 아니라 승인된 항목의 내용이다.
+  expect(screen.getByLabelText('바꿀 계약 문장')).toHaveValue('주문을 만든다.')
+})
+
+it('아직 불러오지 않은 항목을 후보로 연결하면 목록 밖 참조로 보이고 빼기를 할 수 있다', async () => {
+  vi.spyOn(tasksApi, 'draftPlan').mockResolvedValue(documentDraft())
+  // 후보 항목(302)이 불러온 승인 목록에 없다.
+  const title = await openNewPlan([designItems[0]])
+  await userEvent.type(title, '주문 생성 API')
+  await userEvent.click(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  )
+  const panel = await screen.findByRole('region', { name: '문서 초안' })
+  await userEvent.click(
+    within(panel).getByRole('checkbox', { name: /API-001 · 주문 생성 API/ }),
+  )
+  expect(
+    screen.getByText(/설계 항목 302 · 폐기된 설계예요/),
+  ).toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('button', { name: '설계 항목 302 빼기' }),
+  )
+  expect(screen.queryByText(/설계 항목 302 ·/)).toBeNull()
 })
 
 const draftError = (status: number, code: string) => {

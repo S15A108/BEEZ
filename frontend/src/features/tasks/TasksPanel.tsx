@@ -2273,7 +2273,14 @@ function PlanDialog({
                       design_item_id: candidate.design_item_id,
                       design_item_version_id: candidate.design_item_version_id,
                       relation: 'IMPLEMENTS',
-                      proposed_content: candidate.title,
+                      // 직접 고르는 길과 같게 승인 항목의 내용을 채운다. '계약 변경'으로 바꿔도 제목이 아니라
+                      // 항목 내용이 '바꿀 계약 문장'에 보인다. 아직 불러오지 않은 항목일 때만 제목을 쓴다.
+                      proposed_content: describeContent(
+                        items.find(
+                          (item) =>
+                            item.design_item_id === candidate.design_item_id,
+                        )?.content ?? candidate.title,
+                      ),
                     },
                   ]
                 : refs.filter(
