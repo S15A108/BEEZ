@@ -35,6 +35,7 @@ import { useSession } from '@/features/auth/useSession'
 import { BuildingDesignPicker } from '@/features/projects/BuildingDesignPicker'
 import { projectPlacements } from '@/features/projects/placements'
 import { openTaskCount, openTasksQuery } from '@/features/tasks/openTasksQuery'
+import { OfficeTimeSettings } from '@/features/workspace/OfficeTimeSettings'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import {
   getApiErrorCode,
@@ -72,12 +73,10 @@ export function TeamPanel({
   projectId,
   isLeader,
   view = 'team',
-  onViewChange,
 }: {
   projectId: string
   isLeader: boolean
   view?: TeamView
-  onViewChange?: (view: TeamView) => void
 }) {
   const session = useSession()
   const navigate = useNavigate()
@@ -108,7 +107,7 @@ export function TeamPanel({
   const cityProjects = useQuery({
     queryKey: ['projects', 'placement-ids'],
     queryFn: () => projectsApi.list({ limit: 100 }),
-    enabled: view === 'project',
+    enabled: view === 'project' && isLeader,
   })
   const assigned = cityProjects.data
     ? projectPlacements(
@@ -212,12 +211,11 @@ export function TeamPanel({
   }
   const title =
     view === 'project'
-      ? '프로젝트 정보'
+      ? '프로젝트 관리'
       : view === 'remove'
-        ? isLeader
-          ? '프로젝트 제거'
-          : '프로젝트 나가기'
-        : '팀'
+        ? // S15P31A108-377: 팀장도 팀장을 넘기고 나갈 수 있어(MEM-A10) 제목은 '프로젝트 나가기'다. 삭제는 창 안의 다른 길이다.
+          '프로젝트 나가기'
+        : '팀 관리'
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -303,7 +301,7 @@ export function TeamPanel({
                               : 'text-sm text-muted-foreground'
                           }
                         >
-                          {member.domain ?? '담당 영역 미등록'}
+                          {member.domain ?? '담당 도메인 미등록'}
                         </span>
                         <span className="inline-flex items-center gap-1.5 text-xs">
                           <span
@@ -363,7 +361,7 @@ export function TeamPanel({
                                 }
                               >
                                 <Pencil />
-                                역할·담당 영역
+                                역할·담당 도메인
                               </Button>
                             )
                           )}
@@ -497,96 +495,106 @@ export function TeamPanel({
             </AsyncState>
           </div>
         )}
+      {/* S15P31A108-376: 프로젝트 관리 한 페이지. 위는 이름·소개·건물(PRJ-A04, 팀장만), 아래는 사무실 시간대(이 브라우저). 나가기는 사이드바에 따로 둔다. */}
       {view === 'project' && (
         <AsyncState query={project}>
           {(data) => (
-            <div className="space-y-6">
-              {/* API 없음: 건물 디자인은 이 브라우저에만 저장된다. Project에 design 필드가 생기면 수정 요청에 넣는다. */}
-              <BuildingDesignPicker
-                value={design}
-                onChange={setPickedDesign}
-                small
-                note={
-                  typeof lot === 'number' && (
-                    <p className="grid justify-items-center gap-1 text-center text-xs leading-[17px] text-[#6b6658]">
-                      <span className="inline-flex h-[22px] items-center rounded-full bg-white px-2 font-semibold text-foreground">
-                        지금 부지 {lot + 1}
-                      </span>
-                      자리는 그대로예요. 건물 디자인은 이 브라우저에만 저장돼요.
-                    </p>
-                  )
-                }
-              />
-              <ActionForm
-                // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
-                key={`${data.name}\n${data.description ?? ''}`}
-                // 새로 그려진 폼은 제출 중 상태를 모르므로, 저장 처리가 끝날 때까지 끈다(PR #199 리뷰).
-                disabled={action.busy}
-                disableWhen={(values) =>
-                  !designChanged && !projectInfoChanged(values, data)
-                }
-                fields={[
-                  {
-                    name: 'name',
-                    label: '프로젝트 이름',
-                    required: true,
-                    max: 40,
-                    counter: true,
-                    value: data.name,
-                  },
-                  {
-                    name: 'description',
-                    label: '프로젝트 소개',
-                    type: 'textarea',
-                    column: 2,
-                    max: 300,
-                    counter: true,
-                    value: data.description,
-                  },
-                ]}
-                // 설정 창 높이(680)를 지키려고 이름·소개를 한 줄에 나란히 둔다(SCR-06-v2-settings-project 11-02).
-                columns
-                submitLabel="저장"
-                onSubmit={async (values) => {
-                  await action.run(
-                    // 건물 디자인은 이 브라우저에만 저장하므로, 이름·소개가 그대로면 서버에 보내지 않는다.
-                    async () => {
-                      if (projectInfoChanged(values, data))
-                        await projectsApi.update(projectId, {
-                          name: values.name,
-                          description: values.description,
-                        })
-                    },
-                    '프로젝트 정보를 저장했어요.',
-                  )
-                  // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
-                  // 도시와 같이 지금 보이는 칸을 함께 저장해, 당겨진 칸 번호로 다른 프로젝트와 순서가 뒤바뀌지 않는다(S15P31A108-256).
-                  if (typeof lot === 'number')
-                    placeProjects(accountId, [
-                      ...assigned,
-                      { id: projectId, lot, design },
-                    ])
-                  await queryClient.invalidateQueries({
-                    queryKey: ['projects'],
-                  })
-                }}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 p-4">
-                <span className="text-sm">
-                  <strong className="block">프로젝트 삭제</strong>
-                  {/* 11-04 사용자 결정: PRJ-A05는 팀원이 있어도 이름이 맞으면 지운다(SCR-06-v2-settings-project). */}
-                  <span className="text-muted-foreground">
-                    팀원이 있어도 삭제돼요. 권한은 모두 해제되고 기록은
-                    보관돼요. 이름을 입력해야 삭제돼요.
-                  </span>
-                </span>
-                <Button
-                  variant="destructive"
-                  onClick={() => onViewChange?.('remove')}
-                >
-                  프로젝트 삭제
-                </Button>
-              </div>
+            <div className="space-y-8">
+              {isLeader ? (
+                <div className="space-y-6">
+                  {/* API 없음: 건물 디자인은 이 브라우저에만 저장된다. Project에 design 필드가 생기면 수정 요청에 넣는다. */}
+                  <BuildingDesignPicker
+                    value={design}
+                    onChange={setPickedDesign}
+                    small
+                    note={
+                      typeof lot === 'number' && (
+                        <p className="grid justify-items-center gap-1 text-center text-xs leading-[17px] text-[#6b6658]">
+                          <span className="inline-flex h-[22px] items-center rounded-full bg-white px-2 font-semibold text-foreground">
+                            지금 부지 {lot + 1}
+                          </span>
+                          자리는 그대로예요. 건물 디자인은 이 브라우저에만
+                          저장돼요.
+                        </p>
+                      )
+                    }
+                  />
+                  <ActionForm
+                    // 서버 값이 바뀌면 폼을 그 값으로 다시 채운다. 다른 곳에서 고친 사이 쓰던 내용은 사라진다.
+                    key={`${data.name}\n${data.description ?? ''}`}
+                    // 새로 그려진 폼은 제출 중 상태를 모르므로, 저장 처리가 끝날 때까지 끈다(PR #199 리뷰).
+                    disabled={action.busy}
+                    disableWhen={(values) =>
+                      !designChanged && !projectInfoChanged(values, data)
+                    }
+                    fields={[
+                      {
+                        name: 'name',
+                        label: '프로젝트 이름',
+                        required: true,
+                        max: 40,
+                        counter: true,
+                        value: data.name,
+                      },
+                      {
+                        name: 'description',
+                        label: '프로젝트 소개',
+                        type: 'textarea',
+                        column: 2,
+                        max: 300,
+                        counter: true,
+                        value: data.description,
+                      },
+                    ]}
+                    // 설정 창 높이(680)를 지키려고 이름·소개를 한 줄에 나란히 둔다(SCR-06-v2-settings-project 11-02).
+                    columns
+                    submitLabel="저장"
+                    onSubmit={async (values) => {
+                      await action.run(
+                        // 건물 디자인은 이 브라우저에만 저장하므로, 이름·소개가 그대로면 서버에 보내지 않는다.
+                        async () => {
+                          if (projectInfoChanged(values, data))
+                            await projectsApi.update(projectId, {
+                              name: values.name,
+                              description: values.description,
+                            })
+                        },
+                        '프로젝트 정보를 저장했어요.',
+                      )
+                      // 도시 부지 12칸 밖(13번째 이후) 프로젝트는 3D 도시에 없어 디자인을 둘 자리가 없다.
+                      // 도시와 같이 지금 보이는 칸을 함께 저장해, 당겨진 칸 번호로 다른 프로젝트와 순서가 뒤바뀌지 않는다(S15P31A108-256).
+                      if (typeof lot === 'number')
+                        placeProjects(accountId, [
+                          ...assigned,
+                          { id: projectId, lot, design },
+                        ])
+                      await queryClient.invalidateQueries({
+                        queryKey: ['projects'],
+                      })
+                    }}
+                  />
+                </div>
+              ) : (
+                // PRJ-A04는 팀장만 고친다. 팀원은 보기만 하고, 건물 디자인은 팀장 브라우저의 설정이라 보이지 않는다.
+                <div className="space-y-3">
+                  <dl className="grid gap-3 text-sm">
+                    <div className="grid gap-1">
+                      <dt className="font-medium">프로젝트 이름</dt>
+                      <dd>{data.name}</dd>
+                    </div>
+                    <div className="grid gap-1">
+                      <dt className="font-medium">프로젝트 소개</dt>
+                      <dd className="text-muted-foreground">
+                        {data.description || '소개가 없어요.'}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-xs text-muted-foreground">
+                    프로젝트 이름·소개·건물은 팀장만 바꿀 수 있어요.
+                  </p>
+                </div>
+              )}
+              <OfficeTimeSettings />
             </div>
           )}
         </AsyncState>
@@ -716,12 +724,25 @@ export function TeamPanel({
                       </section>
                     </div>
                   ) : (
+                    // 팀장은 넘길 팀원이 없으면 나갈 수 없다(MEM-A10 leader_transfer_required). 나가는 방법을 알리고 삭제만 보인다.
                     <div className="space-y-4">
-                      <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
-                        혼자 쓰는 프로젝트예요. 삭제하면 문서와 작업에 다시
-                        들어올 수 없어요.
+                      <p className="text-sm text-muted-foreground">
+                        팀장을 넘길 팀원이 없어 지금은 나갈 수 없어요. 팀
+                        관리에서 팀원을 초대하고 팀장을 넘기면 나갈 수 있어요.
                       </p>
-                      {deleteForm}
+                      <section
+                        aria-label="프로젝트 삭제"
+                        className="space-y-4 border-t pt-6"
+                      >
+                        <h3 className="text-base font-semibold">
+                          프로젝트 삭제
+                        </h3>
+                        <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+                          혼자 쓰는 프로젝트예요. 삭제하면 문서와 작업에 다시
+                          들어올 수 없어요.
+                        </p>
+                        {deleteForm}
+                      </section>
                     </div>
                   )
                 }
@@ -793,21 +814,23 @@ export function TeamPanel({
       )}
       {typeof dialog === 'object' && dialog?.action === 'edit' && (
         <FormDialog
-          back="팀"
+          back="팀 관리"
           title={`${dialog.member.name} · 역할 수정`}
-          description="표시 역할과 담당 영역은 팀 목록과 3D 이름표에 보여요."
+          description="비운 칸은 지워져요."
           fields={[
             {
               name: 'role_label',
               label: '표시 역할',
               value: dialog.member.role_label,
               max: 50,
+              hint: roleLabelHint,
             },
             {
               name: 'domain',
-              label: '담당 영역',
+              label: '담당 도메인',
               value: dialog.member.domain,
               max: 50,
+              hint: domainHint,
             },
             {
               name: 'color',
@@ -826,7 +849,7 @@ export function TeamPanel({
                   domain: values.domain,
                   color: values.color,
                 }),
-              '역할과 담당 영역을 저장했어요.',
+              '역할과 담당 도메인을 저장했어요.',
             )
             setDialog(null)
           }}
@@ -834,7 +857,7 @@ export function TeamPanel({
       )}
       {typeof dialog === 'object' && dialog?.action === 'remove' && (
         <FormDialog
-          back="팀"
+          back="팀 관리"
           title={`${dialog.member.name} 추방`}
           description="프로젝트 접근과 토큰이 바로 해제돼요. 맡은 열린 작업은 넘겨받을 동료를 고르지 않으면 담당자만 비워져요."
           fields={[
@@ -871,6 +894,13 @@ export function TeamPanel({
     </section>
   )
 }
+
+// 표시 역할·담당 도메인 설명(S15P31A108-378). 팀원 한 명을 고치는 수정 화면의 두 칸 아래에만 둔다(사용자 요청 11-10).
+// 표시 역할은 팀 목록의 이름 아래에, 담당 도메인은 팀 목록과 사무실 HUD 팀원 목록에 보인다. 3D 이름표에는 나오지 않는다(office-actors.ts).
+const roleLabelHint =
+  '팀에서 맡은 역할 이름이에요(예: 프론트엔드). 팀 목록의 이름 아래에 보여요.'
+const domainHint =
+  '주로 맡는 기능이에요(예: 게시판 작업). 팀 목록과 사무실 팀원 목록에 보여요.'
 
 // 프로젝트 이름·소개가 서버 값과 다른지. 앞뒤 공백은 서버가 빼므로(PRJ-A04) 바뀐 것으로 치지 않는다.
 function projectInfoChanged(

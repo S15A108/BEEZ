@@ -30,6 +30,7 @@ import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -79,7 +80,16 @@ public class TaskPlanService {
     // ------------------------------------------------------------------
     @Transactional
     public TaskDetailResponse createTask(CallerContext caller, Long projectId, TaskPlanInput input) {
-        ProjectActor actor = access.requireMember(caller, projectId);
+        return createTask(caller, projectId, input, true);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public TaskDetailResponse createTaskForBreakdown(CallerContext caller, Long projectId, TaskPlanInput input) {
+        return createTask(caller, projectId, input, false);
+    }
+
+    private TaskDetailResponse createTask(CallerContext caller, Long projectId, TaskPlanInput input, boolean assignToCreator) {
+        ProjectActor actor = assignToCreator ? access.requireMember(caller, projectId) : access.requireHumanLeader(caller, projectId);
         PlanCommand plan = PlanCommand.from(input); // 문자열 ID → Long (형식 오류 400)
 
         // 1) 프로젝트 행 잠금 → 표시 키 발급이 겹치지 않게. UNIQUE(project_id, key) 가 최후 방어.
@@ -89,7 +99,9 @@ public class TaskPlanService {
         }
         // 팀원 제외·나가기(MEM-A09·A10)도 이 행을 잠근다. 잠그기 전에 그쪽이 커밋됐으면 호출자는 이미 멤버가 아니다 —
         // 그대로 만들면 나간 사람이 담당인 열린 작업이 남는다
-        if (!access.isActiveMember(actor.memberId(), projectId)) {
+        if (!assignToCreator) {
+            access.requireLeaderAfterLock(actor);
+        } else if (!access.isActiveMember(actor.memberId(), projectId)) {
             throw AccessErrors.notFound("member_left project=" + projectId + " member=" + actor.memberId());
         }
         String key = nextTaskKey(projectId);
@@ -100,8 +112,8 @@ public class TaskPlanService {
             packetLookup.requireBelongsTo(plan.contextPacketId(), projectId, null);
         }
 
-        // 3) 작업 저장 (DRAFT). 담당자 = 호출자의 멤버 번호 (명세 TSK-A01)
-        Task task = tasks.save(Task.create(projectId, key, plan.title(), actor.memberId()));
+        // 수동 등록(TSK-A01)은 작성자에게 배정한다. 일괄 생성은 같은 트랜잭션에서 담당자를 정한다.
+        Task task = tasks.save(Task.create(projectId, key, plan.title(), assignToCreator ? actor.memberId() : null));
 
         // 4) 선행 작업 검증은 task id 가 생긴 뒤에 (자기 자신 검사 때문)
         validateDependencies(projectId, task.getId(), plan.dependencyTaskIds());

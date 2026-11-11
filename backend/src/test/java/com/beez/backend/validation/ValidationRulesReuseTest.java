@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import tools.jackson.databind.json.JsonMapper;
 
 class ValidationRulesReuseTest {
@@ -49,7 +50,7 @@ class ValidationRulesReuseTest {
     private final TaskPlanRevision plan = mock(TaskPlanRevision.class);
     private final CallerContext caller = CallerContext.human(1L);
     private final ValidationAcceptService service = new ValidationAcceptService(access, design, tasks, revisions, refs,
-            validations, rules, responses, JsonMapper.builder().build(), properties, activities);
+            validations, rules, responses, JsonMapper.builder().build(), properties, activities, mock(ApplicationEventPublisher.class));
 
     @BeforeEach void setUp() {
         when(access.requireMember(caller, 10L)).thenReturn(new ProjectActor(1, 2, 10, ProjectRole.MEMBER, ActorType.HUMAN, null));

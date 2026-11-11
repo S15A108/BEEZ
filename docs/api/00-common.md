@@ -380,6 +380,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [VAL-A03 작업 검증 이력](01-backend-rest.md#val-a03) | GET `/api/projects/{id}/tasks/{task_id}/validations` | MEMBER | 변준성 | 양지훈 | 박민용 |
 | [VAL-A04 검증 실행 재시도](01-backend-rest.md#val-a04) | POST `/api/projects/{id}/validations/{validation_id}/retry` | MEMBER + TASK_OWNER | 변준성 | 양지훈 | 박민용 |
 | [TSK-A07 작업 상태 보고](01-backend-rest.md#tsk-a07) | POST `/api/projects/{id}/tasks/{task_id}/state-events` | MEMBER + TASK_OWNER | 변준성 | — | 박민용 |
+| [TSK-A09 승인 설계로 작업 생성·배정](01-backend-rest.md#tsk-a09) | POST·GET `/api/projects/{id}/task-breakdown` | LEADER (사람 세션) | 생성 접수·조회와 일괄 배정 (S15P31A108-390·397) | 작업 분해 | 기획·작업 화면 |
 | [CTX-A01 개발 컨텍스트 패킷 조회](01-backend-rest.md#ctx-a01) | GET `/api/projects/{id}/context-packets/{packet_id}` | MEMBER | 변준성 | — | 박민용 |
 | [CTX-A02 공유 작업 기록 검색](01-backend-rest.md#ctx-a02) | GET `/api/projects/{id}/context-records` | MEMBER | 변준성 | — | 박민용 |
 | [CTX-A03 작업 기록 상세](01-backend-rest.md#ctx-a03) | GET `/api/projects/{id}/context-records/{record_id}` | MEMBER / RECORD_AUTHOR | 변준성 | — | 박민용 |
@@ -438,6 +439,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | [MCP-12](02-mcp-tools.md#mcp-12) | `report_task_state` | 전진(도구) / 변준성(전이·점유) | — |
 | [MCP-15](02-mcp-tools.md#mcp-15) | `check_connection` | 전진(도구) | — |
 | [MCP-16](02-mcp-tools.md#mcp-16) | `get_task` | 전진(도구) / 변준성(조회, TSK-A03과 같음) | — |
+| [MCP-17](02-mcp-tools.md#mcp-17) | `list_my_tasks` | AGENT. 토큰의 현재 프로젝트 멤버에게 배정된 열린 작업만 조회 | — |
 
 ### AI Internal
 
@@ -489,8 +491,8 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | Q14 | 문서 승인 경로 | 오서현 / 팀 전체 | 정함(2026-10-29, dev 기준): 기준 v1 전에는 공용 문서함(DOC-A13~A21)에서 검토·승인하고, 기준 v1 뒤의 문서 변경은 모두 변경 제안(CHG-A01 → CHG-A08 → CHG-A09)으로 간다. 기준 뒤 DOC-A14~A18·A21은 409 change_proposal_required다. 남은 것: 변경 제안 보드끼리 어긋난다. 머리의 '공용 문서함에서 제안하기', 빈 화면의 '팀원이 공용 문서함에서 문서를 추가·수정·삭제하자고 제안하면 여기에 모여요', 반려·기준 바뀜의 '공용 문서함에서 다시 올리기·고치기'와 새 변경 제안·반려 확인 화면의 '설계 항목만, 문서는 공용 문서함에서'를 변경 제안으로 문서를 올리는 흐름에 맞춰야 한다 |
 | Q15 | 최초 기준 설계 항목 | 오서현·박상은 | 최초 기준은 PR #37대로 필수 4종의 승인·색인이 끝난 뒤 팀장이 PLN-A10(화면의 '기준 만들기')으로 만든다. 문서 승인과 기준 확정을 나누는 것이 목적이다. 수동 설계 항목이 1개 이상 필요한데 수정안에는 기획 분석·설계 항목 화면이 없어, 항목을 어느 화면에서 보고 고칠지 정해야 한다. 승인 이력 화면은 기준 v1을 '문서 4 · 설계 항목 2'로 보인다 |
 | Q16 | 기준 이후 문서 반영 | 오서현·변준성·양지훈 | 정함(2026-10-29, dev 기준): 기준 v1 뒤 문서 변경은 변경 제안 승인(CHG-A09)으로만 반영되고 승인마다 기준 v2, v3이 생긴다. 재검증·영향 분석도 CHG-A09 규칙 그대로다. 회의 결과도 회의 끝내기(MTG-A13)가 변경 제안을 만들 뿐 문서를 바로 바꾸지 않는다. 잘못 반영된 결과는 새 변경 제안으로 되돌린다 |
-| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김). 구현됨(S15P31A108-205): 내부 개설 서비스(`MeetingOpenService.openForConflict`)만 있고 HTTP 로 노출하지 않는다. 충돌 감지 연결(S15P31A108-248): 검증 결과가 저장돼 커밋된 뒤(AFTER_COMMIT) `source=MODEL`·`kind=CONFLICT`·`severity=BLOCKING`·`related_task_id` 가 있는 발견 항목마다, 두 작업의 담당자가 다르고 둘 다 COMPLETED·CANCELLED 가 아니면 쌍마다 회의를 연다(같은 작업 묶음에 OPEN 회의가 있으면 새로 열지 않는다). 첫 기록(CONFLICT_BRIEF)은 같은 작업 쌍을 가리키는 BLOCKING 충돌 발견 항목의 message 를 모두 담는다(한 건이면 그 message 그대로, 여러 건이면 첫 줄에 "(N가지)" 를 쓰고 번호를 붙여 나열하며 같은 문구는 한 번만, 하나도 없으면 템플릿 문구). 참여자는 팀장과 두 작업 담당자. 실패 전파: 개설은 검증 결과 저장과 별개의 새 트랜잭션이라 실패해도 검증 결과는 롤백되지 않고 서버 로그만 남으며 다음 재검증에서 다시 시도된다. 충돌한 설계 항목의 담당 영역 팀원 계산과 AI 가 만드는 브리핑은 후속이다 |
-| Q18 | 접속·위치 공개 | 전진·박민용 | 사람의 위치를 '사무실 안 자리'까지만 보일지 열어 둔 메뉴까지 보일지, 보고 주기·TTL, 폴링·SSE·WebSocket 중 전송 수단(NTF-07 확장 후보와 함께) |
+| Q17 | 회의 자동 개설 | 오서현·양지훈·변준성 | 비비가 회의를 여는 기준(기본안: 담당자가 다른 활성 작업 사이의 BLOCKING CONFLICT), 중복 방지 범위, AI 후보만으로 사람을 부르지 않는다는 AI-A03 원칙과의 관계, 변경 제안의 '회의로 논의' 버튼을 남길지. 정함: 기준 v1 전에는 회의를 열지 않는다(작업이 기준 뒤에만 생김). 구현됨(S15P31A108-205): 내부 개설 서비스(`MeetingOpenService.openForConflict`)만 있고 HTTP 로 노출하지 않는다. 충돌 감지 연결(S15P31A108-248, S15P31A108-390): `RULE` 또는 `MODEL` 출처의 발견 항목에 `kind=CONFLICT`, `severity=BLOCKING`과 `related_task_id`가 있으면 검증 결과 커밋 후(AFTER_COMMIT) 관련 작업 쌍을 확인한다. 두 작업이 모두 열려 있고 각 담당자가 다르면 쌍마다 회의를 연다. 같은 작업 묶음의 OPEN 회의는 재사용한다. 시작·재개가 `task_conflict`로 차단되면 에이전트는 현재 작업을 다시 읽고 새 멱등 키로 검증을 요청한다. 첫 기록(CONFLICT_BRIEF)은 같은 작업 쌍을 가리키는 BLOCKING 충돌 발견 항목의 message 를 모두 담는다(한 건이면 그 message 그대로, 여러 건이면 첫 줄에 "(N가지)" 를 쓰고 번호를 붙여 나열하며 같은 문구는 한 번만, 하나도 없으면 템플릿 문구). 참여자는 팀장과 두 작업 담당자. 실패 전파: 개설은 검증 결과 저장과 별개의 새 트랜잭션이라 실패해도 검증 결과는 롤백되지 않고 서버 로그만 남으며 다음 재검증에서 다시 시도된다. 충돌한 설계 항목의 담당 영역 팀원 계산과 AI 가 만드는 브리핑은 후속이다 |
+| Q18 | 접속·위치 공개 | 전진·박민용 | 정함(2026-11-11, S15P31A108-386, FE 합의 대기): 보고 15초마다, TTL 45초, (계정, 프로젝트)당 30초에 10회까지(넘으면 429). 공개 범위는 같은 프로젝트 팀원에게 zone·seat·panel 모두 보인다. `zone` 은 FE `Zone` 9개, `panel` 은 FE `WorkspacePane` 값만 받는다. activity(지금 하는 일)는 MVP 에서 저장하지 않고 TSK-A02·MON-A05 로 프론트가 합친다. 전송은 폴링이고 SSE·WebSocket 은 후속 티켓이다. 값은 서버 메모리에만 두어 재시작하면 '접속한 적 없음'으로 돌아간다(서버 1대 기준) |
 | Q19 | 비비 문서 검토 운영 | 박상은·오서현·양지훈 | PR #37 DOC-A16의 검토 정책(승인본만 참고, 참고 자료가 없어 비교하지 못한 단계는 사유를 보이고 제출 허용, 모델 실패는 새 요청 키로 재시도)을 따른다. 남은 것: 단계 이름과 목표 소요 시간, 단계 진행을 보이려면 검토를 동기 호출로 둘지 접수 후 조회로 바꿀지, 업로드마다 드는 AI 비용 상한 |
 | Q20 | 같은 종류 문서 여러 개 | 오서현·박상은 | DOC-A01 확정 정책은 종류마다 문서 1개다. 수정안 예시('알림 API 명세서'를 두 번째 API 명세서로 등록)는 복수 등록이 필요하다. 허용하면 필수 4종 충족은 '그 종류에 승인 문서가 하나 이상'으로 판정한다 |
 | Q21 | 대시보드 비용·집계 | 변준성·전진 | 비용을 팀장만 볼지(지금 MEMBER), 에이전트를 토큰별로 셀지 팀원별로 묶을지, 프로젝트 전체 관계 그래프가 필요한지 |
@@ -704,7 +706,7 @@ S15P31A108-186의 `POLICY_ALIGNMENT`는 선택적 기능으로, `key=policy-gap-
 | `file_name` | `string` | Y | 작성 파일명 |
 | `latest_review` | [DocumentBeeReview](00-common.md#schema-documentbeereview) | N | 마지막 비비 검토 결과 |
 | `submissions` | [DocumentReviewSubmission[]](00-common.md#schema-documentreviewsubmission) | Y | 제출 이력, 최신 ID 순 |
-| `bee_review_request` | `object` | N | 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청 `{status: RUNNING\|FAILED\|COMPLETED, error_code?, updated_at}`. 고치면 새 요청이 생길 때까지 없다. 10분 넘게 RUNNING이면 `FAILED`·`review_timeout`으로 보인다. 올린 사람이 아닌 팀원도 실패를 알고 새로고침 뒤에도 유지된다 (S15P31A108-382) |
+| `bee_review_request` | `object` | N | 현재 작성 리비전에서 시작한 가장 최근 비비 검토 요청 `{status: RUNNING\|FAILED\|COMPLETED, error_code?, updated_at}`. 고치면 새 요청이 생길 때까지 없다. 10분 넘게 RUNNING이면 `FAILED`·`review_timeout`으로 보인다. 올린 사람이 아닌 팀원도 실패를 알고 새로고침 뒤에도 유지된다 (S15P31A108-382). 검토는 서버 워커가 하므로 화면은 RUNNING 동안 이 값을 다시 읽어 끝을 기다린다. DOC-A16 202 응답도 같은 모양이다 (S15P31A108-391) |
 | `review_stale` | `boolean` | Y | `latest_review`를 지금 쓸 수 없으면 true. 검토 뒤 다른 문서가 승인돼 참고 승인본이 바뀌었거나, 본문 리비전이 달라졌거나, 216 이전 검토일 때다. 쓰기 API가 `review_stale`(409)로 막는 조건과 같다. `latest_review`가 없거나 `status`가 SUBMITTED·APPROVED면 false (S15P31A108-362) |
 
 <a id="schema-documentreviewreference"></a>
@@ -1823,17 +1825,18 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 
 ### Presence
 
-수정안 요청. 워크스페이스 HUD의 팀원 접속 상태다.
+구현 반영안(S15P31A108-386). 워크스페이스 HUD의 팀원 접속 상태다.
 
 | 필드 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `member_id` | `ID` | Y | 멤버 |
-| `online` | `boolean` | Y | TTL 안에 보고가 있었는지 |
-| `last_seen_at` | `Time` | N | 마지막 보고 시각 |
-| `zone` | `string` | N | 사무실 안 위치. 예: desk, meeting_room, lounge |
-| `seat` | `string` | N | 자리 식별값 |
-| `panel` | `string` | N | 열어 둔 메뉴. 공개 범위는 Q18 |
-| `activity` | `object` | N | 지금 하는 일 {action: VIEWING\|EDITING, target_type, target_id, label}. 화면 예: '변경 제안 검토 중', 'TASK-002 계획 작성 중'. 오프라인이면 마지막 값 |
+| `online` | `boolean` | Y | 마지막 보고가 TTL(45초) 안인지. 접속한 적 없으면 false |
+| `last_seen_at` | `Time` | N | 마지막 보고 시각. 접속한 적 없으면 없음 |
+| `zone` | `string` | N | 사무실 안 위치. `meeting`, `lead`, `dev`, `review`, `board`, `lobby`, `humandesk`, `control`, `hr`. 오프라인이면 마지막 값 |
+| `seat` | `string` | N | 자리 식별값. 오프라인이면 마지막 값 |
+| `panel` | `string` | N | 열어 둔 메뉴(FE `WorkspacePane`). 같은 프로젝트 팀원에게 보인다. 오프라인이면 마지막 값 |
+
+하는 일(activity)은 이 객체에 두지 않는다. TSK-A02(작업)·MON-A05(에이전트)로 프론트가 합친다.
 
 <a id="schema-blockedproject"></a>
 

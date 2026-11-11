@@ -1,7 +1,11 @@
 """Answer-informed design item drafts for one fixed document version (#134)."""
 
 from .proposer import (
+    DEFAULT_OUTPUT_TOKEN_LIMIT,
+    DEFAULT_TIMEOUT_SECONDS,
+    MAX_OUTPUT_TOKEN_LIMIT,
     MAX_PAYLOAD_BYTES,
+    MAX_TIMEOUT_SECONDS,
     DraftProposal,
     DraftProposer,
     LLMDraftProposer,
@@ -25,7 +29,11 @@ from .service import (
 )
 
 __all__ = [
+    "DEFAULT_OUTPUT_TOKEN_LIMIT",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "MAX_OUTPUT_TOKEN_LIMIT",
     "MAX_PAYLOAD_BYTES",
+    "MAX_TIMEOUT_SECONDS",
     "DesignDraftOutcome",
     "DraftProposal",
     "DraftProposer",

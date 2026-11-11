@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { authApi, documentsApi, planningApi } from '@/api/services'
+import { authApi, documentsApi, planningApi, tasksApi } from '@/api/services'
 import { AxiosError, AxiosHeaders } from 'axios'
 import { vi } from 'vitest'
 import {
@@ -50,6 +50,28 @@ const CONFLICT_QUESTION =
   '기획서의 "팀원은 문서를 직접 승인한다"와 요구사항의 "승인은 팀장만 한다"가 달라요. 어느 쪽이 맞나요?'
 const cardOf = (text: string) =>
   screen.getByText(text).closest('article') as HTMLElement
+
+it('승인 설계에서 배정 작업을 만들고 같은 요청의 작업을 다시 사용한다', async () => {
+  const user = renderPanel(true, '101')
+  const create = await screen.findByRole('button', {
+    name: '작업 만들고 배정하기',
+  })
+  await user.click(create)
+  expect(await screen.findByText(/작업 \d+건을 준비했어요/)).toBeInTheDocument()
+  const batch = await tasksApi.breakdownStatus('101')
+  if (batch?.status !== 'COMPLETED') throw new Error('Expected completed job')
+  expect(batch.tasks).toHaveLength(1)
+  expect(batch.tasks.some((task) => task.assignee_member_id)).toBe(true)
+  expect(await tasksApi.generateBreakdown('101')).toEqual(batch)
+  const task = await tasksApi.get('101', batch.tasks[0].id)
+  expect(task.current_plan_revision.plan.design_refs).toHaveLength(1)
+
+  await user.click(screen.getByRole('button', { name: '팀 전체 작업 보기' }))
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    pane: 'tasks',
+    initialTaskTab: 'team',
+  })
+})
 
 // PR #72 6차 조사 SIXTH-DOC-02: 서버는 문서 4종이 모두 팀장 승인을 받아야 기준을 만든다(409 document_not_approved).
 // 승인 전에는 발행 버튼을 끄고 이유와 공용 문서함으로 가는 길을 보인다.

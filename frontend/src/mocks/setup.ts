@@ -20,6 +20,7 @@ import {
   resetMockDatabase,
   saveMockDatabase,
 } from './state'
+import { presenceRoutes, resetMockPresence } from './presence'
 import { taskRoutes } from './tasks'
 
 export {
@@ -143,6 +144,7 @@ async function dispatch(
       fail(404, 'not_found', '프로젝트를 찾을 수 없어요.')
     if (route.endpoint.auth === 'LEADER' && member?.role !== 'LEADER')
       fail(403, 'forbidden', '인간 팀장이 진행할 수 있어요.')
+    const key = config.headers.get('Idempotency-Key')
     const context: MockContext = {
       database,
       ...input,
@@ -151,10 +153,14 @@ async function dispatch(
       account,
       project,
       member,
+      idempotencyKey: key ? String(key) : undefined,
     }
-    const key = config.headers.get('Idempotency-Key')
+    // 비비 검토(DOC-A16)는 같은 키여도 접수(202) 뒤 끝났으면 결과(201)를 돌려줘야 해서 처리기가 키를 직접 본다(S15P31A108-391).
     const scope =
-      key && !route.endpoint.multipart && route.endpoint.id !== 'AGT-A01'
+      key &&
+      !route.endpoint.multipart &&
+      route.endpoint.id !== 'AGT-A01' &&
+      route.endpoint.id !== 'DOC-A16'
         ? `${account?.id ?? 'public'}:${projectId ?? ''}:${route.endpoint.id}:${String(key)}`
         : ''
     const fingerprint = JSON.stringify(input.body)
@@ -173,6 +179,7 @@ async function dispatch(
       (await documentRoutes(route.endpoint.id, context)) ??
       changeRoutes(route.endpoint.id, context) ??
       taskRoutes(route.endpoint.id, context) ??
+      presenceRoutes(route.endpoint.id, context) ??
       collaborationRoutes(route.endpoint.id, context)
     if (!reply)
       fail(
@@ -253,5 +260,6 @@ export function setupMockApi(): () => void {
 export function resetMockApi(): void {
   idempotency.clear()
   resetEmailVerifications()
+  resetMockPresence()
   resetMockDatabase()
 }

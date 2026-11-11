@@ -40,7 +40,8 @@ test('끊긴 에이전트는 HUD·설정 메뉴·에이전트 화면·팀 목록
   const status = page.getByRole('status')
   await expect(status).toHaveText(/^연결 끊김/)
   await expect(status).toContainText('마지막 통신')
-  await menu.getByRole('button', { name: '팀', exact: true }).click()
+  // 메뉴 이름 변경(S15P31A108-376): '팀' → '팀 관리'
+  await menu.getByRole('button', { name: '팀 관리', exact: true }).click()
   const settings = page.getByRole('dialog')
   await expect(
     settings.getByText('에이전트 연결 끊김', { exact: true }),

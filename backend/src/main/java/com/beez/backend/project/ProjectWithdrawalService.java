@@ -1,5 +1,6 @@
 package com.beez.backend.project;
 
+import com.beez.backend.presence.PresenceStore;
 import com.beez.backend.agenttoken.AgentTokenRepository;
 import com.beez.backend.common.api.ApiException;
 import com.beez.backend.common.auth.CallerContext;
@@ -36,16 +37,19 @@ public class ProjectWithdrawalService {
     private final TaskHandoverService handover;
     private final ProjectActivities activities;
     private final EntityManager em;
+    private final PresenceStore presence;
 
     public ProjectWithdrawalService(ProjectMemberRepository members, ProjectRepository projects,
                                     AgentTokenRepository tokens, TaskHandoverService handover,
-                                    ProjectActivities activities, EntityManager em) {
+                                    ProjectActivities activities, EntityManager em,
+                                    PresenceStore presence) {
         this.members = members;
         this.projects = projects;
         this.tokens = tokens;
         this.handover = handover;
         this.activities = activities;
         this.em = em;
+        this.presence = presence;
     }
 
     /** ACC-A13. 탈퇴를 막는 프로젝트. 참고용이라 잠그지 않는다 — 최종 판정은 {@link #leaveAll} 이 잠근 뒤 다시 한다. */
@@ -89,6 +93,7 @@ public class ProjectWithdrawalService {
             if (row.soloLeader()) {
                 projects.findById(row.projectId()).ifPresent(p -> p.archive(now));
                 tokens.revokeAllInProject(row.projectId(), now);
+                presence.removeProjectAfterCommit(row.projectId());
             } else {
                 // 팀 프로젝트의 팀장은 위에서 막혔으니 여기는 팀원뿐이다. 나가기(ProjectMemberService.end)와 같이
                 // 담당자 비우기(작업 flush·활동) → 멤버십 종료 순서다
@@ -96,6 +101,7 @@ public class ProjectWithdrawalService {
             }
             member.end(MembershipEndReason.LEFT, now);
             members.saveAndFlush(member);
+            presence.removeMemberAfterCommit(row.projectId(), member.getId());   // MON-A06 위치 정보 정리 (커밋 뒤)
             if (!row.soloLeader()) {
                 activities.membershipEnded(caller, member, MembershipEndReason.LEFT);
             }

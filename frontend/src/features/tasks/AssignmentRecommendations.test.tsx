@@ -12,7 +12,7 @@ it('후보와 대안의 이유를 표시하고 담당자 변경은 호출하지 
       {
         task_id: '501',
         member_id: '21',
-        reason: '백엔드 담당 영역을 참고했어요.',
+        reason: '백엔드 담당 도메인을 참고했어요.',
         alternatives: [
           { member_id: '22', reason: '현재 업무량을 참고했어요.' },
         ],
@@ -59,7 +59,9 @@ it('후보와 대안의 이유를 표시하고 담당자 변경은 호출하지 
   expect(await screen.findByText('우선 후보 · 상은')).toBeInTheDocument()
   expect(screen.getByText('모델 추천')).toBeInTheDocument()
   expect(screen.getByText('제안')).toBeInTheDocument()
-  expect(screen.getByText('백엔드 담당 영역을 참고했어요.')).toBeInTheDocument()
+  expect(
+    screen.getByText('백엔드 담당 도메인을 참고했어요.'),
+  ).toBeInTheDocument()
   expect(screen.getByText('대안 · 팀원')).toBeInTheDocument()
   expect(screen.getByText('현재 업무량을 참고했어요.')).toBeInTheDocument()
   expect(screen.getByText('선행 작업을 확인해 주세요.')).toBeInTheDocument()
@@ -83,7 +85,7 @@ it('템플릿 추천의 출처와 확인이 필요한 사항을 표시한다', a
       origin: 'TEMPLATE',
       text: '기본 규칙으로 만든 추천입니다.',
       sources: [],
-      unresolved: ['담당 영역을 확인해 주세요.'],
+      unresolved: ['담당 도메인을 확인해 주세요.'],
     },
   })
   render(
@@ -94,7 +96,7 @@ it('템플릿 추천의 출처와 확인이 필요한 사항을 표시한다', a
   fireEvent.click(screen.getByRole('button', { name: '후보 추천받기' }))
   expect(await screen.findByText('템플릿 추천')).toBeInTheDocument()
   expect(screen.getByText('기본 규칙으로 만든 추천입니다.')).toBeInTheDocument()
-  expect(screen.getByText('담당 영역을 확인해 주세요.')).toBeInTheDocument()
+  expect(screen.getByText('담당 도메인을 확인해 주세요.')).toBeInTheDocument()
   expect(screen.getByText('우선 후보 · 팀원 확인 필요')).toBeInTheDocument()
 })
 

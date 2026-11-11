@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { authApi, documentsApi } from '@/api/services'
 import { getApiErrorCode } from '@/api/error'
 import { DEMO_EMAIL, DEMO_PASSWORD, resetMockApi, setupMockApi } from './setup'
+import { reviewDocument } from '@/test/beeReview'
 
 let restore: () => void
 beforeEach(async () => {
@@ -27,9 +28,7 @@ it('비비 검토 → 제안 반영·넘기기 → 팀장 검토 요청 → 승�
   const documentId = '221'
   const copy = await documentsApi.workingCopy('102', documentId)
   expect(copy.status).toBe('EDITING')
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   expect(review.suggestions.length).toBeGreaterThan(0)
   expect(
     await codeOf(
@@ -86,12 +85,50 @@ it('비비 검토 → 제안 반영·넘기기 → 팀장 검토 요청 → 승�
   expect(document.approved_version?.id).toBe(submission.document_version_id)
 })
 
+// S15P31A108-391: 서버는 검토를 접수(202)만 하고 워커가 검토한다. 같은 키로 다시 부르면 도는 중이면 202,
+// 끝났으면 그 검토(201), 실패했으면 그 오류를 준다. 예시가 이 계약과 어긋나면 화면 시험이 다른 서버를 상대하게 된다.
+it('비비 검토는 접수만 하고 작업본을 읽을 때 끝나며, 같은 키로 다시 부르면 끝난 검토를 준다', async () => {
+  const copy = await documentsApi.workingCopy('102', '221')
+  const input = { expected_revision: copy.revision }
+  const options = { idempotencyKey: 'review-key-done' }
+  await expect(
+    documentsApi.requestBeeReview('102', '221', input, options),
+  ).resolves.toMatchObject({ status: 'RUNNING' })
+  await expect(
+    documentsApi.requestBeeReview('102', '221', input, options),
+  ).resolves.toMatchObject({ status: 'RUNNING' })
+  const done = await documentsApi.workingCopy('102', '221')
+  expect(done.bee_review_request?.status).toBe('COMPLETED')
+  expect(done.latest_review).toBeDefined()
+  await expect(
+    documentsApi.requestBeeReview('102', '221', input, options),
+  ).resolves.toEqual(done.latest_review)
+})
+
+it('실패로 끝난 비비 검토는 작업본에 FAILED로 남고, 같은 키로 다시 부르면 그 오류를 준다', async () => {
+  localStorage.setItem('beez.mock.reviewRun', 'timeout')
+  try {
+    const copy = await documentsApi.workingCopy('102', '221')
+    const input = { expected_revision: copy.revision }
+    const options = { idempotencyKey: 'review-key-failed' }
+    await documentsApi.requestBeeReview('102', '221', input, options)
+    const failed = await documentsApi.workingCopy('102', '221')
+    expect(failed.bee_review_request).toMatchObject({
+      status: 'FAILED',
+      error_code: 'review_timeout',
+    })
+    expect(
+      await codeOf(documentsApi.requestBeeReview('102', '221', input, options)),
+    ).toBe('review_timeout')
+  } finally {
+    localStorage.removeItem('beez.mock.reviewRun')
+  }
+})
+
 it('반려하면 같은 작성 건을 다시 열고, 기준이 생긴 프로젝트는 변경 제안으로 보낸다', async () => {
   const documentId = '222'
   const copy = await documentsApi.workingCopy('102', documentId)
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   let current = copy
   for (const suggestion of review.suggestions)
     current = await documentsApi.decideSuggestion(
@@ -129,9 +166,7 @@ it('반려하면 같은 작성 건을 다시 열고, 기준이 생긴 프로젝�
 it('비비와 대화하면 내 말과 비비 답이 제안에 남고, 비비의 다른 대체문으로 반영할 수 있다', async () => {
   const documentId = '221'
   const copy = await documentsApi.workingCopy('102', documentId)
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   const [first] = review.suggestions
   const chat = await documentsApi.discussSuggestion(
     '102',
@@ -182,9 +217,7 @@ it('비비와 대화하면 내 말과 비비 답이 제안에 남고, 비비의 
 it('직접 요청하면 DIRECT_REQUEST 제안이 붙고, 팀장 검토 요청 중에는 대화·요청이 잠긴다', async () => {
   const documentId = '222'
   const copy = await documentsApi.workingCopy('102', documentId)
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   const added = await documentsApi.requestBeeSuggestion(
     '102',
     documentId,
@@ -231,9 +264,7 @@ it('직접 요청하면 DIRECT_REQUEST 제안이 붙고, 팀장 검토 요청 �
 it('검토 요청을 취소하면 작성 건이 다시 열리고 이력에 WITHDRAWN 으로 남으며, 팀장 결정은 막힌다', async () => {
   const documentId = '223'
   const copy = await documentsApi.workingCopy('102', documentId)
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   let current = copy
   for (const suggestion of review.suggestions)
     current = await documentsApi.decideSuggestion(
@@ -272,9 +303,7 @@ it('검토 요청을 취소하면 작성 건이 다시 열리고 이력에 WITHD
 it('팀장이 먼저 결정했으면 취소는 submission_decided 로 막힌다', async () => {
   const documentId = '224'
   const copy = await documentsApi.workingCopy('102', documentId)
-  const review = await documentsApi.requestBeeReview('102', documentId, {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', documentId, copy.revision)
   let current = copy
   for (const suggestion of review.suggestions)
     current = await documentsApi.decideSuggestion(
@@ -303,16 +332,12 @@ it('다른 문서가 승인되면 본문이 그대로여도 작업본이 review_
   const stale = async (documentId: string) =>
     (await documentsApi.workingCopy('102', documentId)).review_stale
   const copy = await documentsApi.workingCopy('102', '221')
-  const review = await documentsApi.requestBeeReview('102', '221', {
-    expected_revision: copy.revision,
-  })
+  const review = await reviewDocument('102', '221', copy.revision)
   expect(await stale('221')).toBe(false)
 
   // 223을 끝까지 검토해 승인한다.
   const other = await documentsApi.workingCopy('102', '223')
-  const otherReview = await documentsApi.requestBeeReview('102', '223', {
-    expected_revision: other.revision,
-  })
+  const otherReview = await reviewDocument('102', '223', other.revision)
   let current = other
   for (const suggestion of otherReview.suggestions)
     current = await documentsApi.decideSuggestion(

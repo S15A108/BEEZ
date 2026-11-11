@@ -33,6 +33,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
 import { statusLabel } from '@/lib/display'
 import { cn } from '@/lib/utils'
+import { parseCitationFocus, type CitationTarget } from '@/lib/citationTarget'
 import { useProjectStart } from '@/features/projects/useProjectStart'
 import { useProjectAction } from '@/features/workspace/useProjectAction'
 import { useSession } from '@/features/auth/useSession'
@@ -40,6 +41,7 @@ import { membersQuery } from '@/features/members/membersQuery'
 import type { DocumentVersion } from '@/api/contracts/common'
 import { DocumentReview } from './DocumentReview'
 import { reviewStage } from './reviewStage'
+import { VerifiedCitation } from './VerifiedCitation'
 
 // 공용 문서함 수정안(PNL-02 모달안 + 10-29 프로젝트 시작 보드): 목록 · 상세 · 등록 · 검토를 같은 창 안에서 바꿔 보여 준다.
 // 시작 전에는 필수 문서 4종 칸과 '프로젝트 시작'(PLN-A10), 시작 뒤에는 현재 문서만 두고 문서 수정은 변경 제안으로 보낸다.
@@ -62,6 +64,18 @@ const stamp = (value: string) =>
     timeStyle: 'short',
     timeZone: 'Asia/Seoul',
   }).format(new Date(value))
+
+// 시작 준비 카드: 마지막 비비 검토가 실패한 문서의 다음 할 일. 실패를 '비비가 검토하고 있어요'로 보여
+// 끝없이 기다리게 했다(S15P31A108-383). 다시 검토는 올린 사람만, 등록 취소는 올린 사람과 팀장이 한다(DOC-A25).
+function failedReviewHint(rejected: boolean, owner: boolean, leader: boolean) {
+  const what = rejected
+    ? '반려 뒤 비비 검토를 마치지 못했어요.'
+    : '비비 검토를 마치지 못했어요.'
+  if (owner) return `${what} 열어서 다시 검토해 주세요`
+  if (leader)
+    return `${what} 올린 사람이 다시 검토하거나, 열어서 등록을 취소할 수 있어요`
+  return `${what} 올린 사람이 다시 검토해요`
+}
 
 function KindTile({ kind }: { kind: string }) {
   const [Icon, color] = kindIcon[kind as Kind] ?? kindIcon.PLAN
@@ -114,7 +128,13 @@ const versionStatusLabel = (status: DocumentVersion['status']) =>
 type View =
   | { name: 'list' }
   // versionId: 기준 vN 문서 보기에서 연 그 기준의 문서 버전
-  | { name: 'detail'; id: string; versionId?: string }
+  | {
+      name: 'detail'
+      id: string
+      versionId?: string
+      citation?: CitationTarget
+    }
+  | { name: 'invalidCitation' }
   | { name: 'baseline'; versionNo: number }
   | { name: 'upload'; kind: Kind }
   | { name: 'review'; id: string }
@@ -138,9 +158,21 @@ export function DocumentsPanel({
   isLeader: boolean
 }) {
   const openPane = useWorkspaceStore((state) => state.openPane)
+  const session = useSession()
   // 알림·근거·가이드에서 들어오면 그 문서(또는 'upload:종류' 등록 화면)를 바로 연다.
   const [view, setView] = useState<View>(() => {
     const focus = useWorkspaceStore.getState().focusId
+    if (focus?.startsWith('citation:')) {
+      const citation = parseCitationFocus(focus)
+      return citation
+        ? {
+            name: 'detail',
+            id: citation.document_id,
+            versionId: citation.document_version_id,
+            citation,
+          }
+        : { name: 'invalidCitation' }
+    }
     // 시작 가이드의 '올리기'는 'upload:종류'로 들어온다. 종류는 그 칸으로 고정한다.
     if (focus?.startsWith('upload:') && KINDS.includes(focus.slice(7) as Kind))
       return { name: 'upload', kind: focus.slice(7) as Kind }
@@ -219,6 +251,14 @@ export function DocumentsPanel({
       {started ? '현재 문서' : '공용 문서함'}
     </Button>
   )
+
+  if (view.name === 'invalidCitation')
+    return (
+      <div className="grid gap-4">
+        {back}
+        <p role="alert">인용 위치가 올바르지 않아 문서를 열지 않았어요.</p>
+      </div>
+    )
 
   if (view.name === 'reupload')
     return (
@@ -315,6 +355,7 @@ export function DocumentsPanel({
           projectId={projectId}
           documentId={view.id}
           versionId={view.versionId}
+          citation={view.citation}
           started={started}
           onEdit={() => openPane('changes', `doc:${view.id}`)}
         />
@@ -326,6 +367,16 @@ export function DocumentsPanel({
       {/* 머리 줄(상태 칩·설명·'변경 제안 쓰기')은 두지 않는다. 시작 전에는 필수 문서 빈 칸으로 등록하고,
           시작 뒤에는 문서를 열어 '수정 제안하기'로 간다(PNL-02-v2 10-29). 검색칸은 사용자 결정으로 둔다. */}
       <SearchBar value={query} onSearch={setQuery} />
+      {started && isLeader && !query && (
+        <Button
+          className="justify-self-start"
+          variant="outline"
+          onClick={() => openPane('planning')}
+        >
+          <Sparkles />
+          작업 분해·배정
+        </Button>
+      )}
       {query ? (
         <SearchResults
           projectId={projectId}
@@ -362,31 +413,39 @@ export function DocumentsPanel({
                         ] as const)
                       : stage?.stale
                         ? (['amber', stage.label] as const)
-                        : stage?.label === '팀장 승인 대기'
-                          ? (['orange', stage.label] as const)
-                          : stage?.label === '반려됨'
-                            ? (['red', stage.label] as const)
-                            : stage?.step === 2
-                              ? (['amber', stage.label] as const)
-                              : ([
-                                  'blue',
-                                  stage?.label ?? '비비 검토 중',
-                                ] as const)
+                        : stage?.failed
+                          ? (['red', stage.label] as const)
+                          : stage?.label === '팀장 승인 대기'
+                            ? (['orange', stage.label] as const)
+                            : stage?.label === '반려됨'
+                              ? (['red', stage.label] as const)
+                              : stage?.step === 2
+                                ? (['amber', stage.label] as const)
+                                : ([
+                                    'blue',
+                                    stage?.label ?? '비비 검토 중',
+                                  ] as const)
                   const next = approved
                     ? '현재 문서로 들어갔어요'
                     : stage?.stale
                       ? '참고 문서가 바뀌었어요. 비비 검토를 다시 받아 주세요'
-                      : stage?.label === '팀장 승인 대기'
-                        ? isLeader
-                          ? '승인 검토하기'
-                          : '팀장 승인을 기다리고 있어요'
-                        : stage?.label === '반려됨'
-                          ? '반려 사유를 보고 다시 검토를 받아요'
-                          : stage?.step === 2
-                            ? '비비 제안을 확인하고 반영해 주세요'
-                            : stage?.step === 3
-                              ? '최종본을 확인하고 검토를 요청해요'
-                              : '비비가 검토하고 있어요'
+                      : stage?.failed && copy
+                        ? failedReviewHint(
+                            copy.status === 'REJECTED',
+                            copy.owner_account_id === session.data?.id,
+                            isLeader,
+                          )
+                        : stage?.label === '팀장 승인 대기'
+                          ? isLeader
+                            ? '승인 검토하기'
+                            : '팀장 승인을 기다리고 있어요'
+                          : stage?.label === '반려됨'
+                            ? '반려 사유를 보고 다시 검토를 받아요'
+                            : stage?.step === 2
+                              ? '비비 제안을 확인하고 반영해 주세요'
+                              : stage?.step === 3
+                                ? '최종본을 확인하고 검토를 요청해요'
+                                : '비비가 검토하고 있어요'
                   return (
                     <li
                       key={kind}
@@ -1025,7 +1084,7 @@ function UploadDocument({
             )}
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="document-domain">담당 영역 (선택)</Label>
+            <Label htmlFor="document-domain">담당 도메인 (선택)</Label>
             <Input
               id="document-domain"
               placeholder="예: 인증"
@@ -1033,7 +1092,7 @@ function UploadDocument({
               disabled={isSubmitting || !!replace}
             />
             <p className="text-xs text-muted-foreground">
-              목록과 검색에서 담당 영역별로 모아 볼 수 있어요.
+              목록과 검색에서 담당 도메인별로 모아 볼 수 있어요.
             </p>
           </div>
           <p className="rounded-xl bg-muted/50 px-4 py-3 text-xs text-muted-foreground">
@@ -1145,12 +1204,14 @@ function DocumentDetail({
   projectId,
   documentId,
   versionId,
+  citation,
   started,
   onEdit,
 }: {
   projectId: string
   documentId: string
   versionId?: string
+  citation?: CitationTarget
   started: boolean
   onEdit: () => void
 }) {
@@ -1355,16 +1416,31 @@ function DocumentDetail({
                     {stamp(data.version.created_at)}
                   </span>
                 </div>
-                {data.version.content !== undefined ? (
-                  <MarkdownView
-                    source={data.version.content}
-                    className="max-h-[32rem]"
+                {citation &&
+                data.version.id === citation.document_version_id ? (
+                  <VerifiedCitation
+                    content={data.version.content}
+                    target={citation}
                   />
                 ) : (
-                  <EmptyState>
-                    이 파일은 본문 미리보기를 제공하지 않아요. 원본 파일을
-                    내려받아 확인해 주세요.
-                  </EmptyState>
+                  <>
+                    {citation && (
+                      <p className="text-xs text-muted-foreground">
+                        인용한 버전이 아니므로 인용 위치를 표시하지 않아요.
+                      </p>
+                    )}
+                    {data.version.content !== undefined ? (
+                      <MarkdownView
+                        source={data.version.content}
+                        className="max-h-[32rem]"
+                      />
+                    ) : (
+                      <EmptyState>
+                        이 파일은 본문 미리보기를 제공하지 않아요. 원본 파일을
+                        내려받아 확인해 주세요.
+                      </EmptyState>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
@@ -1434,7 +1510,7 @@ function DocumentDetail({
                 fields={[
                   {
                     name: 'domain',
-                    label: '담당 영역',
+                    label: '담당 도메인',
                     value: data.document.domain ?? '',
                   },
                 ]}
@@ -1445,7 +1521,7 @@ function DocumentDetail({
                       documentsApi.update(projectId, documentId, {
                         domain: values.domain.trim(),
                       }),
-                    '담당 영역을 저장했어요.',
+                    '담당 도메인을 저장했어요.',
                   )
                   setClassification(false)
                 }}

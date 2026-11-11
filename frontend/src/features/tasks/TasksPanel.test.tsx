@@ -134,6 +134,23 @@ function show(isLeader: boolean) {
   return { ...view, client }
 }
 
+it('내 작업의 실제 ID와 기존 검증 절차를 에이전트 지시로 복사한다', async () => {
+  const user = userEvent.setup()
+  show(false)
+  await user.click(
+    await screen.findByRole('button', {
+      name: '에이전트용 작업 지시 복사',
+    }),
+  )
+  expect(
+    await screen.findByText(/연결한 에이전트에 붙여 넣으세요/),
+  ).toBeInTheDocument()
+  const instructions = await navigator.clipboard.readText()
+  expect(instructions).toContain('작업 ID 501')
+  expect(instructions).toContain('같은 작업 ID로 upsert_task_plan')
+  expect(instructions).toContain('validate_task_plan')
+})
+
 it('계획 PASS가 있어도 실제 코드 검증이나 테스트 통과로 표시하지 않는다', async () => {
   task = { ...task, status: 'IN_PROGRESS' }
   show(false)

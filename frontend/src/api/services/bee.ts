@@ -3,14 +3,18 @@ import { idSchema } from '@/api/contracts/common'
 import { callEndpoint, type RequestOptions } from './request'
 
 export const beeApi = {
-  ask: (projectId: string, input: schemas.AskInput, options?: RequestOptions) =>
+  ask: (
+    projectId: string,
+    input: schemas.AskInput,
+    options?: Pick<RequestOptions, 'signal'>,
+  ) =>
     callEndpoint(
       schemas.askResponseSchema,
       {
         method: 'POST',
         url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/bee/questions`,
         data: schemas.askInputSchema.parse(input),
-        idempotent: true,
+        // BEE-A01은 멱등 키를 사용하지 않는다. 명시적으로 다시 보내면 새 답변을 만든다.
       },
       options,
     ),

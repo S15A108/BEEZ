@@ -115,7 +115,7 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
 
     @Test void reviewAndUsageAreStoredAcrossRealHttp() {
         long document = upload("# 계획\n로그인한다.\n");
-        var result = reviews.review(author, projectId, document, 1, "review-e2e");
+        var result = reviewNow(author, projectId, document, 1, "review-e2e");
         assertThat(result.contractVersion()).isEqualTo(2);
         assertThat(result.reviewStatus()).isEqualTo("PARTIAL");
         assertThat(result.steps()).hasSize(4);
@@ -131,7 +131,7 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
             long reference = upload(kind, "# " + kind + "\n승인된 참고 내용\n");
             jdbc.update("UPDATE document_version SET status='APPROVED',approved_at=now(),approved_by=? WHERE document_id=?", leaderId, reference);
         }
-        var result = reviews.review(author, projectId, document, 1, "complete-e2e");
+        var result = reviewNow(author, projectId, document, 1, "complete-e2e");
         assertThat(result.reviewStatus()).isEqualTo("COMPLETE");
         assertThat(result.unavailableReferences()).isEmpty();
         assertThat(result.steps()).hasSize(4);
@@ -142,8 +142,9 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
 
     @Test void timeoutIsNotStoredAsPartialAndFailureUsageSurvives() {
         long document = upload("# E2E_TIMEOUT\n");
-        assertThatThrownBy(() -> reviews.review(author, projectId, document, 1, "timeout-e2e"))
-                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
+        assertThatThrownBy(() -> reviewNow(author, projectId, document, 1, "timeout-e2e"))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_timeout"));
+        // AI 모델 시간 초과(model_timeout)는 -382부터 review_unavailable 이 아니라 review_timeout 이다(DOC-A16 명세). 이 opt-in 시험만 옛 값이었다.
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=true", Integer.class, projectId)).isEqualTo(1);
     }
@@ -151,7 +152,7 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
     @Test void invalidDeletionAndConflictingPatchesFailBeforeSavingReviewAndPreserveUsage() {
         for (String content : List.of("# E2E_PATCH_DELETE\n", "# E2E_PATCH_CONFLICT\nfirst-token second-token\n")) {
             long document = upload(content.contains("E2E_PATCH_DELETE") ? "PLAN" : "API_SPEC", content);
-            assertThatThrownBy(() -> reviews.review(author, projectId, document, 1, UUID.randomUUID().toString()))
+            assertThatThrownBy(() -> reviewNow(author, projectId, document, 1, UUID.randomUUID().toString()))
                     .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
             assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         }
@@ -160,7 +161,7 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
 
     @Test void independentPatchesCanBeAppliedThroughBackendInReverseOrder() {
         long document = upload("# E2E_PATCH_VALID\nred-item blue-item\n");
-        var review = reviews.review(author, projectId, document, 1, "patch-order-e2e");
+        var review = reviewNow(author, projectId, document, 1, "patch-order-e2e");
         assertThat(review.suggestions()).hasSize(2);
         var second = review.suggestions().get(1);
         var first = review.suggestions().getFirst();
@@ -175,7 +176,7 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
     @Test void uploadedDoubleBomCanBeReviewedAndPatched() {
         long document = upload("\uFEFF\uFEFF# E2E_PATCH_VALID\nred-item blue-item\n");
         assertThat(reviews.get(author, projectId, document).content()).startsWith("\uFEFF#");
-        var review = reviews.review(author, projectId, document, 1, "bom-patch-e2e");
+        var review = reviewNow(author, projectId, document, 1, "bom-patch-e2e");
         assertThat(review.suggestions()).hasSize(2);
         var first = reviews.decideSuggestion(author, projectId, document, Long.parseLong(review.id()),
                 Long.parseLong(review.suggestions().getFirst().id()), new SuggestionDecisionRequest(1, "APPLY"));
@@ -188,9 +189,15 @@ class DocumentReviewFastApiE2ETest extends IntegrationTestSupport {
     @Test void bomRemovalCannotInvalidateAnotherPendingPatch() {
         long document = upload("\uFEFF\uFEFF# E2E_BOM_PREFIX\nother-token\n");
         assertThat(reviews.get(author, projectId, document).content()).startsWith("\uFEFF#");
-        assertThatThrownBy(() -> reviews.review(author, projectId, document, 1, "bom-conflict-e2e"))
+        assertThatThrownBy(() -> reviewNow(author, projectId, document, 1, "bom-conflict-e2e"))
                 .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getCode()).isEqualTo("review_unavailable"));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM document_bee_review WHERE document_id=?", Integer.class, document)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='BEE_DRAFT' AND failed=true", Integer.class, projectId)).isEqualTo(1);
+    }
+
+    /** 접수 + 워커 처리(S15P31A108-391). 동기 호출이던 때와 같은 결과·오류 코드를 돌려준다. */
+    com.beez.backend.document.dto.DocumentBeeReviewResponse reviewNow(com.beez.backend.common.auth.CallerContext caller,
+            long projectId, long documentId, long revision, String key) {
+        return com.beez.backend.document.support.DocumentReviewFixtures.reviewNow(reviews, jdbc, caller, projectId, documentId, revision, key);
     }
 }

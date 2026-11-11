@@ -51,13 +51,13 @@ it('건너뛴 채로 시작하면 아까 건너뛰었다고 알리고 남은 쪽
   const skipped = { ...base, skipFlag: true, started: true }
   const both = leaderSetupStep(skipped)
   expect(both.detail).toBe(
-    '아까 건너뛰었어요 · 팀원을 부르면 같이 작업 계획을 올릴 수 있어요. 에이전트는 설정 › 에이전트에서 연결해요.',
+    '아까 건너뛰었어요 · 팀원을 부르면 같이 작업 계획을 올릴 수 있어요. 에이전트는 설정 › 내 에이전트 관리에서 연결해요.',
   )
   expect(links(both)).toEqual(['팀원 초대하기', '에이전트 연결하기'])
 
   const invited = leaderSetupStep({ ...skipped, invited: true })
   expect(invited.detail).toBe(
-    '아까 건너뛰었어요 · 에이전트는 설정 › 에이전트에서 연결해요.',
+    '아까 건너뛰었어요 · 에이전트는 설정 › 내 에이전트 관리에서 연결해요.',
   )
   expect(links(invited)).toEqual(['에이전트 연결하기'])
 

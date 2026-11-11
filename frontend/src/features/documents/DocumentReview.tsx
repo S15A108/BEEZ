@@ -1,4 +1,8 @@
-import { REVIEW_POLL_MS } from '@/lib/pollIntervals'
+import {
+  FAILED_REVIEW_FOLLOW_MS,
+  REVIEW_POLL_MS,
+  SLOW_POLL_MS,
+} from '@/lib/pollIntervals'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, LoaderCircle } from 'lucide-react'
@@ -85,35 +89,68 @@ export function DocumentReview({
   const [editing, setEditing] = useState(false)
   const [rejecting, setRejecting] = useState(false)
   const client = useQueryClient()
+  // 검토를 접수(202)받았거나 옛 서버가 409 review_in_progress를 준 시각. 그 뒤 새로 읽은 작업본이 오기 전까지는
+  // 작업본이 아직 RUNNING을 보이지 않아도 검토 중으로 본다(S15P31A108-391).
+  const [acceptedAt, setAcceptedAt] = useState(0)
   // 비비 검토(DOC-A16): 기준 v1 전에는 올리거나 고친 직후 화면이 바로 부른다. 누르는 버튼은 없고 실패했을 때만 다시 검토한다.
+  // 서버는 접수만 하고(202) 워커가 검토한다. 끝나면 작업본의 latest_review·bee_review_request로 알 수 있다(S15P31A108-391).
   const bee = useMutation({
     mutationFn: (revision: number) =>
       documentsApi.requestBeeReview(projectId, documentId, {
         expected_revision: revision,
       }),
+    onSuccess: (result) => {
+      // 검토 결과(201)는 바로 반영되고, 요청 상태(202)면 작업본을 다시 읽어 끝을 기다린다.
+      if (!('id' in result)) setAcceptedAt(Date.now())
+    },
+    onError: (cause) => {
+      if (getApiErrorCode(cause) === 'review_in_progress')
+        setAcceptedAt(Date.now())
+    },
     onSettled: () =>
       client.invalidateQueries({ queryKey: ['projects', projectId] }),
   })
-  const running = getApiErrorCode(bee.error) === 'review_in_progress'
+  // 옛 서버의 409 review_in_progress는 실패가 아니라 검토 중이다(S15P31A108-391).
+  const inProgress = getApiErrorCode(bee.error) === 'review_in_progress'
   const copy = useQuery({
     queryKey: ['projects', projectId, 'working-copy', documentId],
     queryFn: () => documentsApi.workingCopy(projectId, documentId),
-    // 다른 창에서 이미 검토 중이면 끝날 때까지 다시 읽는다. 올린 사람이 아닌 팀원은 검토를 부르지 않아
-    // review_in_progress를 받지 못하므로, 작업본이 비비 검토 단계(1단계, 반려 아님)면 끝날 때까지 다시 읽는다(PR #142 리뷰).
-    refetchInterval: ({ state: { data } }) =>
-      running ||
-      (data &&
-        data.owner_account_id !== session.data?.id &&
-        data.status !== 'REJECTED' &&
-        reviewStage(data).step === 1 &&
-        !reviewStage(data).stale &&
-        // 실패한 검토는 기다려도 끝나지 않는다. 올린 사람이 다시 시도하거나 고칠 때까지 조회를 멈춘다(S15P31A108-382).
-        data.bee_review_request?.status !== 'FAILED')
-        ? REVIEW_POLL_MS
-        : false,
+    // 검토가 도는 동안(RUNNING)은 올린 사람이든 팀원이든 끝날 때까지 다시 읽는다(S15P31A108-391).
+    // 올린 사람이 아닌 팀원은 검토를 부르지 않으므로, 작업본이 비비 검토 단계(1단계, 반려 아님)면 끝날 때까지 다시 읽는다(PR #142 리뷰).
+    refetchInterval: ({ state: { data, status, dataUpdatedAt } }) => {
+      // 조회가 실패하면(등록 취소로 404 등) 마지막 결과를 붙잡고 계속 부르지 않는다(S15P31A108-383).
+      if (status === 'error') return false
+      if (
+        (acceptedAt > 0 && dataUpdatedAt <= acceptedAt) ||
+        data?.bee_review_request?.status === 'RUNNING'
+      )
+        return REVIEW_POLL_MS
+      // 올린 사람은 검토가 끝났거나 실패하면 멈춘다. 실패한 검토는 다시 검토하기를 눌러야 다시 돈다.
+      if (!data || data.owner_account_id === session.data?.id) return false
+      const stage = reviewStage(data)
+      if (stage.step !== 1 || stage.stale) return false
+      if (!stage.failed) {
+        // 반려된 문서는 올린 사람이 다시 열 때까지 검토가 돌지 않으므로, 반려 사유로 다시 검토하는 중(RUNNING, 위에서 따라감)일
+        // 때만 따라간다. 예전에는 반려면 무조건 멈춰, 재검토가 실패했다가 성공해도 팀원 창이 따라가지 못했다(S15P31A108-383).
+        return data.status !== 'REJECTED' ? REVIEW_POLL_MS : false
+      }
+      // 실패한 검토는 기다려도 끝나지 않는다(S15P31A108-382). 다만 올린 사람이 다시 검토하면 결과가 생기므로
+      // 실패 뒤 얼마 동안은 가끔 확인한다. 멈추면 팀원 창은 다시 열 때까지 '검토 실패'에 머물렀다(S15P31A108-383).
+      // 오래 지난 실패는 열어 둔 창이 끝없이 부르지 않게 멈춘다(창을 다시 보면 새로 읽는다).
+      const failedAt = Date.parse(data.bee_review_request?.updated_at ?? '')
+      return Date.now() - failedAt < FAILED_REVIEW_FOLLOW_MS
+        ? SLOW_POLL_MS
+        : false
+    },
   })
   const current = copy.data
   const currentStage = current && reviewStage(current)
+  // 지금 비비 검토가 도는 중인지: 작업본이 RUNNING이거나, 접수 뒤 작업본을 아직 새로 읽지 못했다(S15P31A108-391).
+  // 다시 읽기가 실패하면(조회 오류) 기다림을 풀어 붙잡혀 있지 않게 한다. 오류 때는 다시 읽기도 멈춘다(S15P31A108-391).
+  const awaitingCopy =
+    acceptedAt > 0 && copy.dataUpdatedAt <= acceptedAt && !copy.isError
+  const reviewRunning =
+    awaitingCopy || current?.bee_review_request?.status === 'RUNNING'
   // 서버가 기억하는 이 리비전의 검토 실패(새로고침·다른 팀원 화면에서도 보인다). 고치면 비워진다.
   const serverFailed =
     current?.bee_review_request?.status === 'FAILED'
@@ -127,11 +164,13 @@ export function DocumentReview({
     !currentStage.stale &&
     // 실패했다면 화면을 열 때마다 자동으로 다시 부르지 않는다(비용). 다시 검토하기를 눌러야 한다.
     !serverFailed &&
+    // 이미 도는 검토(다른 창·다시 연 화면)는 다시 부르지 않고 끝나기를 기다린다(S15P31A108-391).
+    !reviewRunning &&
     current.status !== 'SUBMITTED'
       ? `${projectId}:${documentId}:${current.revision}`
       : null
   // 같은 작성 리비전으로 두 번 부르지 않는다(다시 그리기). 창을 다시 열거나 새로고침해
-  // 이미 검토 중이면 서버가 review_in_progress로 알려 주고, 끝났으면 1단계가 아니라 부르지 않는다.
+  // 이미 검토 중이면 작업본이 RUNNING이라 부르지 않고, 끝났으면 1단계가 아니라 부르지 않는다.
   const started = useRef(new Set<string>())
   const startReview = bee.mutate
   useEffect(() => {
@@ -139,13 +178,16 @@ export function DocumentReview({
     started.current.add(reviewKey)
     startReview(Number(reviewKey.split(':')[2]))
   }, [reviewKey, startReview])
-  // 지금 이 문서의 비비 검토가 실패한 상태인지. 다시 부르는 중이거나 방금 성공했으면 아니다.
+  // 지금 이 문서의 비비 검토가 실패한 상태인지. 다시 부르는 중이거나 도는 중이거나 방금 검토를 받았으면 아니다.
+  // 접수(202)는 성공이어도 검토가 끝난 게 아니라서, 그 뒤 작업본이 FAILED면 실패로 본다(S15P31A108-391).
+  const reviewed = !!bee.data && 'id' in bee.data
   const failed =
     !bee.isPending &&
-    !bee.isSuccess &&
-    ((!!bee.error && !running) || !!serverFailed)
+    !awaitingCopy &&
+    !reviewed &&
+    ((!!bee.error && !inProgress) || !!serverFailed)
   const failedCode =
-    bee.error && !running ? getApiErrorCode(bee.error) : serverFailed
+    bee.error && !inProgress ? getApiErrorCode(bee.error) : serverFailed
   const members = useQuery(membersQuery(projectId))
   const pending = copy.data?.submissions.find(
     (item) => item.status === 'SUBMITTED',
@@ -391,7 +433,7 @@ export function DocumentReview({
                             : '비비 검토를 마치지 못했어요'}
                       </strong>
                       <span>
-                        {bee.error && !running
+                        {bee.error && !inProgress
                           ? getApiErrorMessage(bee.error)
                           : (getErrorCodeMessage(failedCode) ??
                             '비비 검토를 마치지 못했어요. 다시 시도해 주세요.')}
@@ -440,9 +482,13 @@ export function DocumentReview({
                           <li key={step}>{step}</li>
                         ))}
                       </ol>
-                      <span className="text-xs text-muted-foreground">
-                        창을 닫아도 검토는 이어져요.
-                      </span>
+                      <ReviewWaiting
+                        since={
+                          data.bee_review_request?.status === 'RUNNING'
+                            ? data.bee_review_request.updated_at
+                            : undefined
+                        }
+                      />
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">
@@ -472,7 +518,7 @@ export function DocumentReview({
                       이어서 보낼 수 있어요.
                     </span>
                   )}
-                  {bee.error && !running && (
+                  {bee.error && !inProgress && (
                     <span className="text-destructive">
                       {getApiErrorMessage(bee.error)}
                     </span>
@@ -481,10 +527,10 @@ export function DocumentReview({
                     <Button
                       variant="outline"
                       className="justify-self-start"
-                      disabled={bee.isPending}
+                      disabled={bee.isPending || reviewRunning}
                       onClick={() => reReview(data.revision)}
                     >
-                      {bee.isPending
+                      {bee.isPending || reviewRunning
                         ? '다시 검토하는 중…'
                         : '비비 검토 다시 받기'}
                     </Button>
@@ -733,6 +779,35 @@ export function DocumentReview({
 
 const unavailableText = (review: DocumentBeeReview) =>
   `승인본이 없어 비교하지 못한 문서: ${review.unavailable_references.map(statusLabel).join(', ')}`
+
+// 비비 검토를 기다리는 동안 지난 시간과 안내. 검토는 서버 워커가 하므로 화면을 떠나도 이어진다(S15P31A108-391).
+// since는 서버가 검토를 접수한 시각이다. 아직 모르면 이 안내가 처음 보인 때부터 센다.
+function ReviewWaiting({ since }: { since?: string }) {
+  const [shownAt] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const startedAt = since ? Date.parse(since) : Number.NaN
+  // 서버와 이 기기의 시계가 조금 달라도 음수로 보이지 않게 한다.
+  const seconds = Math.max(
+    0,
+    Math.floor((now - (Number.isNaN(startedAt) ? shownAt : startedAt)) / 1000),
+  )
+  const elapsed =
+    seconds < 60
+      ? `${seconds}초`
+      : `${Math.floor(seconds / 60)}분 ${seconds % 60}초`
+  return (
+    <div className="grid gap-1 text-xs text-muted-foreground">
+      <span>{elapsed} 지났어요.</span>
+      {/* 서버 워커가 AI 답을 최대 120초 기다린다. */}
+      {seconds >= 60 && <span>문서가 길면 2분까지 걸릴 수 있어요.</span>}
+      <span>이 화면을 떠나도 검토가 끝나면 알림으로 알려 드려요.</span>
+    </div>
+  )
+}
 
 // 처리할 수정 제안이 없으면 최종본 단계로 바로 넘어가므로, 그 단계에서도 비비 의견(COMMENT)과
 // 비교하지 못한 문서를 읽기 전용으로 보여 준다. 의견만 온 검토도 여기서 보인다(PR #89 리뷰).

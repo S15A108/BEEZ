@@ -128,8 +128,8 @@ export default function AgentHelpPage() {
         <ol className="grid list-decimal gap-1 pl-[22px]">
           <li>웹에 로그인하고 연결할 프로젝트로 들어가요.</li>
           <li>
-            <strong>설정 → 내 설정 → 에이전트</strong>로 가요. 프로젝트 주소
-            끝에 <Code>?settings=agent</Code>를 붙여도 열려요.
+            <strong>설정 → 내 에이전트 관리</strong>로 가요. 프로젝트 주소 끝에{' '}
+            <Code>?settings=agent</Code>를 붙여도 열려요.
           </li>
           <li>
             <strong>1 토큰 발급</strong>에서 토큰 이름(기본{' '}
@@ -201,15 +201,15 @@ export default function AgentHelpPage() {
             </p>
           </li>
           <li>
-            웹 설정 왼쪽 메뉴 <strong>에이전트</strong> 옆 표시가{' '}
+            웹 설정 왼쪽 메뉴 <strong>내 에이전트 관리</strong> 옆 표시가{' '}
             <strong>{agentStatusLabels.connected}</strong>이면 돼요(최근 2시간
             안에 통신한 살아 있는 연결이 있다는 뜻이에요).
           </li>
         </ol>
         <p>
-          설정 → 에이전트 위쪽 상태 줄의 뜻은 아래와 같아요. 상태 줄에 "연결
-          상태 확인은 준비 중이에요"가 나오면 서버가 아직 연결 현황을 주지 않는
-          것이니 왼쪽 메뉴 표시로 봐요.
+          설정 → 내 에이전트 관리 위쪽 상태 줄의 뜻은 아래와 같아요. 상태 줄에
+          "연결 상태 확인은 준비 중이에요"가 나오면 서버가 아직 연결 현황을 주지
+          않는 것이니 왼쪽 메뉴 표시로 봐요.
         </p>
         <Table
           head={['표시', '뜻']}
@@ -250,7 +250,7 @@ export default function AgentHelpPage() {
           </li>
           <li className="space-y-2">
             <p>
-              <strong>토큰을 더 쓰지 않을 때</strong>: 설정 → 에이전트 →{' '}
+              <strong>토큰을 더 쓰지 않을 때</strong>: 설정 → 내 에이전트 관리 →{' '}
               <strong>내 토큰</strong>에서 그 토큰을 <strong>폐기</strong>해요.
               열려 있던 연결도 다음 호출부터 거부돼요. 로컬 등록도 지워요.
             </p>

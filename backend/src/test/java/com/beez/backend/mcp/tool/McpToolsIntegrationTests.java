@@ -31,10 +31,11 @@ import tools.jackson.databind.ObjectMapper;
  */
 class McpToolsIntegrationTests extends IntegrationTestSupport {
 
-    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 (-179, MCP-14 retry_validation 은 -271, MCP-15 check_connection 은 -178, MCP-16 get_task 는 -335) */
+    /** 02-mcp-tools 의 도구 중 서버에 붙인 것 */
     private static final List<String> TOOLS = List.of("get_development_context", "get_document", "get_design_changes",
             "propose_design_change", "find_context", "read_context", "write_context", "upsert_task_plan",
-            "validate_task_plan", "get_validation", "retry_validation", "report_task_state", "check_connection", "get_task");
+            "validate_task_plan", "get_validation", "retry_validation", "report_task_state", "check_connection", "get_task",
+            "list_my_tasks");
 
     @Autowired
     DataSource dataSource;
@@ -87,6 +88,32 @@ class McpToolsIntegrationTests extends IntegrationTestSupport {
 
         assertThat(tools).extracting(McpSchema.Tool::name).containsExactlyInAnyOrderElementsOf(TOOLS);
         assertThat(tools).allSatisfy(t -> assertThat(t.inputSchema()).containsEntry("additionalProperties", false));
+    }
+
+    @Test
+    void listMyTasks_returnsOnlyOpenTasksAssignedToTheConnectedMember() {
+        JsonNode first = ok(call(member, "upsert_task_plan", Map.of("plan", plan("첫 작업"), "idempotency_key", "mine-1")));
+        JsonNode second = ok(call(member, "upsert_task_plan", Map.of("plan", plan("다음 작업"), "idempotency_key", "mine-2")));
+        JsonNode closed = ok(call(member, "upsert_task_plan", Map.of("plan", plan("취소 작업"), "idempotency_key", "mine-3")));
+        api.jdbc.sql("update task set status = 'CANCELLED' where id = :id")
+                .param("id", closed.get("id").asLong()).update();
+        var leaderTask = api.post("/api/projects/" + projectId + "/tasks",
+                api.planJson("다른 담당자 작업", api.readsRef("API-01"), "[]"), api.accountId("leader@test"));
+        assertThat(leaderTask.statusCode()).as(leaderTask.body()).isEqualTo(201);
+
+        JsonNode page = ok(call(member, "list_my_tasks", Map.of("limit", 1)));
+        assertThat(page.get("items")).hasSize(1);
+        assertThat(page.get("items").get(0).get("id").asString()).isEqualTo(second.get("id").asString());
+        assertThat(page.get("has_more").asBoolean()).isTrue();
+
+        JsonNode next = ok(call(member, "list_my_tasks", Map.of("limit", 1, "cursor", page.get("next_cursor").asString())));
+        assertThat(next.get("items")).hasSize(1);
+        String taskId = next.get("items").get(0).get("id").asString();
+        assertThat(taskId).isEqualTo(first.get("id").asString());
+        assertThat(next.get("has_more").asBoolean()).isFalse();
+        assertThat(ok(call(member, "get_task", Map.of("task_id", taskId))).get("id").asString()).isEqualTo(taskId);
+        assertThat(error(call(member, "list_my_tasks", Map.of("assignee_member_id", "1"))))
+                .containsEntry("code", "validation_failed");
     }
 
     /**

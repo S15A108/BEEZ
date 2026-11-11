@@ -22,7 +22,12 @@ from app.core.config import Settings, get_settings
 from app.core.internal_auth import require_internal_token
 from app.core.openapi import inline_request_schema
 from app.schemas.design_drafts import DesignDraftRequest
-from app.services.design_drafts import LLMDraftProposer, generate_design_drafts
+from app.services.design_drafts import (
+    MAX_OUTPUT_TOKEN_LIMIT,
+    MAX_TIMEOUT_SECONDS,
+    LLMDraftProposer,
+    generate_design_drafts,
+)
 from app.services.document_parsing.errors import SourceParsingError
 from app.services.llm_client import (
     LLMClient,
@@ -127,8 +132,8 @@ def require_design_draft_config(
     if (
         not 1024 <= max_body_bytes <= 4_194_304
         or not math.isfinite(timeout_seconds)
-        or not 0 < timeout_seconds <= 120
-        or not 1 <= output_token_limit <= 4096
+        or not 0 < timeout_seconds <= MAX_TIMEOUT_SECONDS
+        or not 1 <= output_token_limit <= MAX_OUTPUT_TOKEN_LIMIT
         or output_token_parameter not in {"max_completion_tokens", "max_tokens"}
     ):
         raise HTTPException(503, detail="design_drafts_not_configured")
