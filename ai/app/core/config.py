@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     design_drafts_llm_output_token_parameter: str = "max_completion_tokens"
 
     # Task generation runs in the BE worker. Keep its read timeout longer than the model budget.
-    task_breakdown_llm_timeout_seconds: str = "75"
+    task_breakdown_llm_timeout_seconds: str = "90"
     task_breakdown_llm_output_token_limit: str = "16384"
 
     # Provisional #135 transport is disabled until explicitly configured; the

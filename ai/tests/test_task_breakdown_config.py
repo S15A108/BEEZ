@@ -15,7 +15,7 @@ def test_task_breakdown_uses_its_own_environment_limits(monkeypatch):
     monkeypatch.delenv("TASK_BREAKDOWN_LLM_OUTPUT_TOKEN_LIMIT", raising=False)
     assert require_task_breakdown_config(
         Settings(_env_file=None)
-    ) == TaskBreakdownConfig(75, 16_384)
+    ) == TaskBreakdownConfig(90, 16_384)
 
     monkeypatch.setenv("TASK_BREAKDOWN_LLM_TIMEOUT_SECONDS", "47.5")
     monkeypatch.setenv("TASK_BREAKDOWN_LLM_OUTPUT_TOKEN_LIMIT", "18000")

@@ -69,7 +69,7 @@ public class TaskBreakdownService {
     public TaskBreakdownService(ProjectAccessChecker access, ProjectDesignLookup designLookup, TaskPlanService plans,
                                 TaskAssigneeService assignees, AiClient ai, AiUsageRecorder usage, JdbcClient jdbc,
                                 TaskBreakdownJobRepository jobs, PlatformTransactionManager transactionManager,
-                                @Value("${beez.task-breakdown.read-timeout:85s}") Duration readTimeout) {
+                                @Value("${beez.task-breakdown.read-timeout:105s}") Duration readTimeout) {
         this.access = access;
         this.designLookup = designLookup;
         this.plans = plans;
