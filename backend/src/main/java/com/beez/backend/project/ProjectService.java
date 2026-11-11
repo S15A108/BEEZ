@@ -1,5 +1,6 @@
 package com.beez.backend.project;
 
+import com.beez.backend.presence.PresenceStore;
 import com.beez.backend.account.Account;
 import com.beez.backend.agenttoken.AgentTokenRepository;
 import com.beez.backend.common.access.AccessErrors;
@@ -46,10 +47,12 @@ public class ProjectService {
     private final ApplicationEventPublisher events;
     private final JdbcClient jdbc;
     private final ProjectActivities activities;
+    private final PresenceStore presence;
 
     public ProjectService(ProjectAccessChecker access, ProjectRepository projects, ProjectMemberRepository members,
                           AgentTokenRepository tokens, StatusRepository documentStatus,
-                          ApplicationEventPublisher events, JdbcClient jdbc, ProjectActivities activities) {
+                          ApplicationEventPublisher events, JdbcClient jdbc, ProjectActivities activities,
+                          PresenceStore presence) {
         this.access = access;
         this.projects = projects;
         this.members = members;
@@ -58,6 +61,7 @@ public class ProjectService {
         this.events = events;
         this.jdbc = jdbc;
         this.activities = activities;
+        this.presence = presence;
     }
 
     /** PRJ-A01. 프로젝트와 생성자의 LEADER 멤버십을 한 트랜잭션에서 만들고 PROJECT_CREATED 활동을 남긴다(-289). 생성자의 참여 활동은 따로 없다. */
@@ -176,6 +180,7 @@ public class ProjectService {
         Instant now = Instant.now();
         project.archive(now);
         tokens.revokeAllInProject(projectId, now);
+        presence.removeProjectAfterCommit(projectId);   // MON-A06 위치 정보 정리 (커밋 뒤)
     }
 
     /**
