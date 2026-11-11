@@ -22,11 +22,13 @@ public class PlanningQuestionRepository {
     /**
      * 질문을 만들 차례인 문서 버전 하나. 분석이 끝났고(COMPLETED) 기준 설계가 아직 없으며, 아직 생성하지 않았거나 분석이
      * 다시 돌았거나(attempt·text_hash 가 달라짐) 멈춘 실행(lease 만료)이다. FAILED 실행은 PLN-A02 가 PENDING 으로 되돌릴 때만 다시 잡는다.
+     * error_code 가 남은 PENDING 은 재시도 가능한 실패 뒤 자동으로 한 번 더 도는 실행이다(auto_retry, S15P31A108-396).
      */
     public Optional<Map<String, Object>> nextRunnable() {
         return jdbc.sql("""
                 SELECT dp.document_version_id,dp.attempt,dp.text_hash,v.content_text,v.content_hash,v.storage_key,v.version_no,
-                       d.id AS document_id,d.project_id,d.type
+                       d.id AS document_id,d.project_id,d.type,
+                       (r.status='PENDING' AND r.error_code IS NOT NULL) AS auto_retry
                   FROM document_processing dp
                   JOIN document_version v ON v.id=dp.document_version_id
                   JOIN document d ON d.id=v.document_id
@@ -60,6 +62,10 @@ public class PlanningQuestionRepository {
                 """).param("version", version).param("key", requestKey).param("hash", textHash).query(Boolean.class).single();
     }
 
+    /**
+     * 실행을 끝낸다. status=PENDING 은 재시도 가능한 첫 실패를 자동 재시도로 돌릴 때만 쓰며, error_code·retryable 을 남겨
+     * 다음 실행이 자동 재시도임을 nextRunnable 이 알게 한다. startRun 이 둘을 지운다.
+     */
     public boolean finishRun(long version, String requestKey, String status, String errorCode, boolean retryable) {
         return jdbc.sql("""
                 UPDATE planning_question_run SET status=:status,error_code=:error,retryable=:retryable,lease_until=null,updated_at=now()

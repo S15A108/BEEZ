@@ -4236,6 +4236,8 @@ HTTP `200`.
 
 2026-11-10 (S15P31A108-359): 분석이 COMPLETED이고 질문 생성만 FAILED여도 기준 설계가 이미 발행됐거나 문서 버전이 DRAFT·APPROVED가 아니면(BE 워커가 질문을 만들지 않는 버전) 409 `question_generation_unavailable`을 돌려주고 실행을 PENDING으로 되돌리지 않는다. 되돌리면 아무도 집지 않아 화면이 `만드는 중`으로 영원히 남는다.
 
+2026-11-11 (S15P31A108-396): 재시도 가능한(`retryable`) 질문 생성 실패는 FAILED로 끝내기 전에 BE가 자동으로 한 번 더 돌린다. 기다리는 동안 `question_generation`은 오류 필드 없이 `PENDING`이고, 자동 재시도도 실패해야 FAILED가 된다. PLN-A02로 되돌린 실행도 같은 규칙을 따른다.
+
 lease 자동 복구는 최초 실행 이후 최대 2회(총 3회 실행)다. 예산 소진 후 다시 만료되면 FAILED / lease_recovery_exhausted로 종료하고 lease를 해제한다. 명시적 재시도는 자동 복구 횟수를 0으로 초기화하며 attempt는 계속 증가시킨다.
 
 ### POST `/api/projects/{id}/documents/{document_id}/analysis/retry`
@@ -4432,7 +4434,7 @@ HTTP `200`.
 - 조회·변경 대상의 현재 프로젝트 소속과 권한을 검사한다.
 - 목록은 `id` 순, 곧 만들어진 순서다(한 문서를 처음 분석할 때는 우선순위 `rank` 순으로 넣으므로 그 문서 안에서는 처음에 우선순위 순). 재분석이 기존 질문의 `rank`를 고쳐도 목록 자리는 바뀌지 않고, 쪽을 넘기는 사이 어느 문서에서든 새로 생긴 질문은 `id`가 더 커서 목록 끝에서 이어서 나온다. 전체 문서 목록에서는 문서 버전별로 묶여 있지 않다(각 항목의 `source`로 구분). `number`는 그 목록 안의 표시용 순번이다. 같은 문서를 다시 분석하면 새 결과로 바뀌므로 질문 식별에는 `id`를 쓴다. `number`는 쪽마다 다시 세는 표시용 순번이고 쪽 경계는 커서의 정렬 키(바뀌지 않는 값)로 정하므로, 쪽을 넘기는 사이 질문이 새로 생기거나 SUPERSEDED 되거나 `rank`가 바뀌어도 질문이 겹치거나 빠지지 않는다(그때는 뒤 쪽의 `number`와 `total_count`만 달라진다). `limit` 범위(1~100)와 `cursor` 형식이 틀리면 400 `validation_failed`다.
 - 목록에는 재분석으로 대체된 질문(`SUPERSEDED`)을 내지 않는다. 답변되거나 닫은 질문은 재분석해도 문구·답변이 바뀌지 않고 남는다. 새 결과에 없는 미답변 질문만 목록에서 사라진다.
-- 질문 생성은 문서 분석(PLN-A01)이 `COMPLETED`가 된 뒤 BE가 자동으로 한 번 실행한다(기준 설계 발행 전만). 생성이 실패해도 분석 `status`는 그대로이고, PLN-A01 응답의 `question_generation`(`status`·`error_code`·`retryable`)에만 드러난다. PLN-A02가 질문 생성만 다시 대기시킨다.
+- 질문 생성은 문서 분석(PLN-A01)이 `COMPLETED`가 된 뒤 BE가 자동으로 한 번 실행한다(기준 설계 발행 전만). 생성이 실패해도 분석 `status`는 그대로이고, PLN-A01 응답의 `question_generation`(`status`·`error_code`·`retryable`)에만 드러난다. 재시도 가능한 실패는 FAILED 전에 자동으로 한 번 더 돌고(그동안 `PENDING`, 오류 필드 없음, S15P31A108-396), 그래도 실패하면 PLN-A02가 질문 생성만 다시 대기시킨다.
 
 [공통 규약·권한·담당자 목록](00-common.md)
 

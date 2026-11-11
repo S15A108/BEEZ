@@ -123,14 +123,19 @@ def _quote_ok(source: Source, contents: dict[str, str]) -> bool:
 
 def _merge_sources(
     parsed: ClassifiedReview, body: DocumentReviewRequest
-) -> ClassifiedReview:
-    """Keep one source per reference in each suggestion.
+) -> tuple[ClassifiedReview, list[str]]:
+    """Keep one source per reference in each suggestion, with only verified quotes.
 
     The model sometimes cites the same reference several times with different
     quotes. The BE stores one source per reference and rejects repeats, so one
     repeat used to discard the whole review (S15P31A108-383). Per reference the
-    best source is kept: a verified quote, then no quote, then the first
-    unverifiable quote, which the quote check below still rejects as forged.
+    best source is kept: a verified quote, then no quote, then an unverifiable one.
+
+    A quote is optional evidence. One that is not an exact substring of its
+    reference used to discard the whole review too, and a review compared with two
+    references failed three times in a row on it (S15P31A108-396). Such a quote is
+    now removed while the source and the suggestion stay. The reference IDs of the
+    removed quotes are returned for logging, never the quoted text.
     """
     contents = {ref.reference_id: ref.content for ref in body.references}
 
@@ -139,6 +144,7 @@ def _merge_sources(
             return 1
         return 2 if _quote_ok(source, contents) else 0
 
+    dropped: list[str] = []
     suggestions = []
     for suggestion in parsed.suggestions:
         best: dict[str, Source] = {}
@@ -146,10 +152,14 @@ def _merge_sources(
             kept = best.get(source.reference_id)
             if kept is None or rank(source) > rank(kept):
                 best[source.reference_id] = source
-        suggestions.append(
-            suggestion.model_copy(update={"sources": list(best.values())})
-        )
-    return parsed.model_copy(update={"suggestions": suggestions})
+        sources = []
+        for source in best.values():
+            if rank(source) == 0:
+                dropped.append(source.reference_id)
+                source = source.model_copy(update={"quote": None})
+            sources.append(source)
+        suggestions.append(suggestion.model_copy(update={"sources": sources}))
+    return parsed.model_copy(update={"suggestions": suggestions}), dropped
 
 
 def _validate_result(
@@ -291,7 +301,15 @@ async def analyze(
         )
     )
     try:
-        parsed = _merge_sources(ClassifiedReview.model_validate(result.result), body)
+        parsed, dropped = _merge_sources(
+            ClassifiedReview.model_validate(result.result), body
+        )
+        if dropped:
+            logger.warning(
+                "document review dropped %d unverifiable quote(s) from %s",
+                len(dropped),
+                ", ".join(sorted(set(dropped))),
+            )
         _validate_result(parsed, body, steps)
         response = {
             "document_id": body.document_id,

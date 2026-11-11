@@ -2018,7 +2018,7 @@ SOURCE 성공과 INDEX 성공은 분리한다. BE는 청크·벡터 전체를 �
 | 응답 식별 | document_id/revision/**content_hash**/reference_hash/request_key echo 필수. BE가 저장 결과에 contract_version=2 부여 |
 | 단계 | steps에 BODY/API_SPEC/ERD/REQ_SPEC 각각 1개. `{step,status,reason,reference_ids}`. BODY=COMPLETE/REVIEWED/[]; 동일 종류 비교=SKIPPED/SAME_KIND/[]; 승인본 없는 나머지 비교=PARTIAL 또는 SKIPPED/REFERENCE_UNAVAILABLE/[]; 승인본 있는 비교=COMPLETE/REVIEWED/해당 종류의 입력 ID 전체 |
 | 전체 | 같은 종류 제외 후 자료 부족 단계가 하나라도 있으면 review_status=PARTIAL, 아니면 COMPLETE. references_used는 실제 비교 reference_ids 합집합. BE가 재계산·대조 |
-| 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증 |
+| 제안 | type=PATCH/COMMENT, step, explanation, sources[] 필수. sources는 `{reference_id,quote?}`. BODY는 [], 비교 제안은 해당 단계 승인본 1개 이상. BE가 버전 메타데이터를 입력에서 조립하며 인용은 해당 본문에서 검증. 해당 본문에 그대로 없는 quote는 AI가 떼고 출처·제안은 남긴다(뗀 개수·참고 ID만 로그, S15P31A108-396) |
 | PATCH | original_text는 입력 본문에서 유일한 비어 있지 않은 구간. replacement_text는 빈 문자열 삭제 허용. 원문 구간 간 겹침, 적용 후 빈 문서·제어 문자·크기 초과 또는 다른 제안의 원문이 중복되는 결과는 전체 거절 |
 | COMMENT | original_text/replacement_text/decision 없음 또는 null. 자동 적용/선택하지 않음. 미검토 단계의 제안은 허용하지 않음 |
 | 실패/사용량 | origin=MODEL 및 유효한 성공 호출 usage 필요. 모델 실패·잘린 응답·스키마 위반을 PARTIAL 성공으로 반환하지 않음. 현재 feature=BEE_DRAFT, 전용 feature 전환은 별도 TODO |

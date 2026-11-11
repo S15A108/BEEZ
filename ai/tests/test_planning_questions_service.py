@@ -515,6 +515,20 @@ async def test_structurally_invalid_model_output_keeps_failed_usage(bad_output):
     assert error.value.usage[0].failed and error.value.usage[0].input_tokens == 12
 
 
+# S15P31A108-396: a rejected answer left no trace in the log, so two failures on
+# dev could not be explained. The reason is logged without any model text.
+@pytest.mark.asyncio
+async def test_rejected_model_output_logs_the_reason_without_its_text(caplog):
+    bad = {"candidates": [{"kind": "CLARIFICATION", "summary": "비밀 원문"}]}
+    with (
+        caplog.at_level("WARNING", logger=proposer_module.__name__),
+        pytest.raises(LLMError),
+    ):
+        await llm_proposer(FakeProvider(bad)).propose(document())
+    assert "planning questions answer rejected: schema: candidates.0." in caplog.text
+    assert "비밀 원문" not in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_scope_mismatch_and_oversized_document_never_reach_the_provider(
     monkeypatch,

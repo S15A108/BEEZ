@@ -86,12 +86,17 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
         assertThat(generator.runOnce()).isTrue();
 
+        // 재시도 가능한 첫 실패는 FAILED 전에 한 번 더 돈다. 기다리는 동안 화면에는 오류 없이 PENDING 이다 (S15P31A108-396).
+        assertThat(jdbc.queryForObject("SELECT status FROM planning_question_run WHERE document_version_id=?", String.class, version)).isEqualTo("PENDING");
+        assertThat(documents.analysis(leaderCaller, project, document, version).get("question_generation")).isEqualTo(Map.of("status", "PENDING"));
+        assertThat(generator.runOnce()).as("자동 재시도").isTrue();
+
         assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
                 .containsEntry("status", "FAILED").containsEntry("error_code", "ai_timeout").containsEntry("retryable", true);
         assertThat(jdbc.queryForObject("SELECT status FROM document_processing WHERE document_version_id=?", String.class, version)).isEqualTo("COMPLETED");
         assertThat(count("SELECT count(*) FROM planning_question WHERE document_version_id=?", version)).isZero();
-        assertThat(count("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='DOCUMENT_PARSE' AND failed", project)).isEqualTo(1);
-        assertThat(generator.runOnce()).as("실패한 실행은 저절로 다시 돌지 않는다").isFalse();
+        assertThat(count("SELECT count(*) FROM llm_usage WHERE project_id=? AND feature='DOCUMENT_PARSE' AND failed", project)).isEqualTo(2);
+        assertThat(generator.runOnce()).as("자동 재시도는 한 번뿐이다").isFalse();
 
         var status = documents.analysis(leaderCaller, project, document, version);
         assertThat(status).containsEntry("status", "COMPLETED");
@@ -108,6 +113,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
     @Test void retryDoesNotRequeueFailedQuestionGenerationThatNoWorkerWillPick() {
         doThrow(new ResourceAccessException("down", new SocketTimeoutException("slow"))).when(ai).planningQuestions(any());
         assertThat(generator.runOnce()).isTrue();
+        assertThat(generator.runOnce()).as("자동 재시도까지 실패").isTrue();
         publishBaseline();
 
         // 기준이 발행된 뒤에는 워커가 질문을 만들지 않는다. PENDING 으로 되돌리면 화면이 '만드는 중'으로 영원히 남는다 (S15P31A108-359).
@@ -122,6 +128,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "cut", org.springframework.http.HttpHeaders.EMPTY,
                 "{\"error\":{\"code\":\"model_output_truncated\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
         assertThat(generator.runOnce()).isTrue();
+        assertThat(generator.runOnce()).as("자동 재시도까지 실패").isTrue();
         assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
                 .containsEntry("status", "FAILED").containsEntry("error_code", "ai_output_too_long").containsEntry("retryable", true);
         // 형식 오류로 거절된 같은 502 는 그대로 일반 장애다.
@@ -146,6 +153,7 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
             ((Map<String, Object>) response.get("result")).put("text_hash", "0".repeat(64));
             return response;
         }).when(ai).planningQuestions(any());
+        generator.runOnce();
         generator.runOnce();
         assertThat(jdbc.queryForMap("SELECT status,error_code FROM planning_question_run WHERE document_version_id=?", version))
                 .containsEntry("status", "FAILED").containsEntry("error_code", "invalid_ai_output");

@@ -361,7 +361,8 @@ public class DocumentApplicationService {
                 .query().listOfRows().stream().findFirst().ifPresent(q -> {
                     var questionRun = new LinkedHashMap<String, Object>();
                     questionRun.put("status", q.get("status"));
-                    if (q.get("error_code") != null) { questionRun.put("error_code", q.get("error_code")); questionRun.put("retryable", q.get("retryable")); }
+                    // 자동 재시도를 기다리는 PENDING 에도 error_code 가 남지만(S15P31A108-396) 오류는 FAILED 일 때만 보인다.
+                    if ("FAILED".equals(q.get("status")) && q.get("error_code") != null) { questionRun.put("error_code", q.get("error_code")); questionRun.put("retryable", q.get("retryable")); }
                     response.put("question_generation", questionRun);
                 });
         response.put("message", switch (run.get("status").toString()) {

@@ -296,7 +296,6 @@ def test_be_utf8_hash_vectors(api, text_vector):
     "invalid",
     [
         "forged_id",
-        "forged_quote",
         "wrong_step",
         "body_source",
         "missing_source",
@@ -313,8 +312,6 @@ def test_invalid_model_suggestions_are_errors_not_partial(api, invalid):
     suggestions = [suggestion]
     if invalid == "forged_id":
         suggestion["sources"][0]["reference_id"] = "document-version-999"
-    elif invalid == "forged_quote":
-        suggestion["sources"][0]["quote"] = "없는 내용"
     elif invalid == "wrong_step":
         suggestion["step"] = "ERD"  # same-kind comparison was skipped
     elif invalid == "body_source":
@@ -637,15 +634,25 @@ def test_repeated_source_for_one_reference_keeps_the_verified_quote(api, order):
     assert response.json()["result"]["suggestions"][0]["sources"] == [valid]
 
 
-def test_repeated_source_with_only_forged_quotes_is_still_rejected(api):
+# S15P31A108-396: one unverifiable quote discarded the whole review, and a review
+# compared with two references failed three times in a row on it. The quote is
+# optional evidence, so only the quote is removed; the source and suggestion stay.
+@pytest.mark.parametrize("repeated", [False, True])
+def test_unverifiable_quote_is_removed_and_review_kept(api, caplog, repeated):
     sample = fixture("review-contract-complete.json")
     suggestion = copy.deepcopy(sample["response"]["result"]["suggestions"][0])
     suggestion.update(category="CONSISTENCY", severity="MAJOR")
     ref = suggestion["sources"][0]["reference_id"]
-    suggestion["sources"] = [
-        {"reference_id": ref, "quote": "없는 내용"},
-        {"reference_id": ref, "quote": "또 없는 내용"},
-    ]
+    suggestion["sources"] = [{"reference_id": ref, "quote": "없는 내용"}]
+    if repeated:
+        suggestion["sources"].append({"reference_id": ref, "quote": "또 없는 내용"})
     api[1].output["suggestions"] = [suggestion]
-    response = post(api, sample["input"])
-    assert response.status_code == 502, response.text
+    with caplog.at_level("WARNING", logger="app.services.document_review"):
+        response = post(api, sample["input"])
+    assert response.status_code == 200, response.text
+    kept = response.json()["result"]["suggestions"]
+    assert len(kept) == 1
+    assert kept[0]["sources"] == [{"reference_id": ref}]
+    assert "없는 내용" not in response.text
+    assert f"dropped 1 unverifiable quote(s) from {ref}" in caplog.text
+    assert "없는 내용" not in caplog.text
