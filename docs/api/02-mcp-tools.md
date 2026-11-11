@@ -55,6 +55,7 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 - [report_task_state](#mcp-12)
 - [check_connection](#mcp-15)
 - [get_task](#mcp-16)
+- [list_my_tasks](#mcp-17)
 
 ---
 
@@ -1826,3 +1827,15 @@ Claude Code가 backend의 `/mcp`에 연결해 호출하는 도구를 정의한�
 [공통 규약·권한·담당자 목록](00-common.md)
 
 ---
+
+<a id="mcp-17"></a>
+
+## MCP-17. 내 작업 목록
+
+`list_my_tasks`는 토큰이 연결된 프로젝트에서 현재 멤버가 담당하는 열린 작업을 조회한다. 대상 상태는 DRAFT, READY, IN_PROGRESS, WAITING이다. 프로젝트나 담당자 ID를 인수로 받지 않는다.
+
+인수는 선택적인 `cursor`와 `limit`이다. 응답은 `items`에 [TaskDetail](00-common.md#schema-taskdetail) 목록을 담고, `has_more`와 선택적 `next_cursor`를 반환한다.
+
+목록에서 선택한 작업의 `id`로 `get_task`를 호출한다. 구현 계획을 보완할 때 `upsert_task_plan`에 같은 `task_id`와 현재 리비전·잠금 번호를 넣는다. `validate_task_plan`에서 PASS를 받은 뒤 시작하거나 재개한다.
+
+시작 또는 재개가 `task_conflict`로 차단되면 현재 작업을 다시 읽고 새 `idempotency_key`로 검증을 요청한다. 검증에서 저장한 차단 충돌은 기존 충돌 회의 흐름으로 이어진다.

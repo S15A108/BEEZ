@@ -39,6 +39,7 @@ public class AiClient {
      * 31~38초 걸려 처음 값(모델 30초·읽기 40초)으로는 실패했다(S15P31A108-383).
      */
     static final Duration DEFAULT_REVIEW_READ_TIMEOUT = Duration.ofSeconds(55);
+    static final Duration DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT = Duration.ofSeconds(55);
 
     private final RestClient rest;
     private final RestClient questionRest;
@@ -46,18 +47,21 @@ public class AiClient {
     private final RestClient assignmentRest;
     private final RestClient meetingRevisionRest;
     private final RestClient reviewRest;
+    private final RestClient taskBreakdownRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
 
     public AiClient(BeezProperties props) {
-        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_REVIEW_READ_TIMEOUT);
+        this(props, DEFAULT_QUESTION_READ_TIMEOUT, DEFAULT_DRAFT_READ_TIMEOUT, DEFAULT_REVIEW_READ_TIMEOUT,
+                DEFAULT_TASK_BREAKDOWN_READ_TIMEOUT);
     }
 
     @Autowired
     public AiClient(BeezProperties props,
                     @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
                     @Value("${beez.planning.draft-read-timeout:170s}") Duration draftReadTimeout,
-                    @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout) {
+                    @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout,
+                    @Value("${beez.task-breakdown.read-timeout:55s}") Duration taskBreakdownReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
@@ -66,6 +70,11 @@ public class AiClient {
         this.assignmentRest = client(ai, max(ai.readTimeout(), ASSIGNMENT_READ_TIMEOUT));
         this.meetingRevisionRest = client(ai, max(ai.readTimeout(), MEETING_REVISION_READ_TIMEOUT));
         this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
+        // 작업 분해는 화면이 응답을 기다리므로 비동기 설계 초안의 대기 시간을 공유하지 않는다.
+        if (taskBreakdownReadTimeout.isZero() || taskBreakdownReadTimeout.isNegative()) {
+            throw new IllegalArgumentException("beez.task-breakdown.read-timeout must be positive");
+        }
+        this.taskBreakdownRest = client(ai, taskBreakdownReadTimeout);
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
         this.chatHttp = http(ai);
@@ -169,6 +178,11 @@ public class AiClient {
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> assignmentRecommendations(java.util.Map<String, Object> input) {
         return assignmentRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public java.util.Map<String, Object> taskBreakdown(java.util.Map<String, Object> input) {
+        return taskBreakdownRest.post().uri("/v1/bee/task-breakdown").body(input).retrieve().body(java.util.Map.class);
     }
 
     /**

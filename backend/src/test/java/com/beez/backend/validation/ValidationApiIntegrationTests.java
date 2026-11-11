@@ -295,7 +295,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
-    void rules_changesOccupiedByRunningTask_isNeedsReview() throws Exception {
+    void rules_changesOccupiedByRunningTask_isNeedsReviewAndOpensOneMeeting() throws Exception {
         // 작업 A 가 API-01 을 CHANGES 로 점유하고 시작한 상태
         long[] a = createTask(planJson("A", api.changesRef("API-01"), false, null), member);
         long passA = api.passValidation(a[0]);
@@ -304,14 +304,24 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
                         + ",\"validation_id\":\"" + passA + "\"}", member);
         assertThat(start.statusCode()).as(start.body()).isEqualTo(200);
         // 작업 B 도 같은 항목을 CHANGES
-        long[] b = createTask(planJson("B", api.changesRef("API-01"), false, null), member);
-        JsonNode v = body(accept(b, member), 200);
+        long[] b = createTask(planJson("B", api.changesRef("API-01"), false, null), leader);
+        JsonNode v = body(accept(b, leader), 200);
         assertThat(v.get("status").asText()).isEqualTo("NEEDS_REVIEW");
         assertThat(kinds(v.get("findings"))).containsExactly("CONFLICT");
         assertThat(v.get("findings").get(0).get("related_task_id").asLong()).isEqualTo(a[0]);
         assertThat(v.get("findings").get(0).get("resolution").asText()).isEqualTo("HUMAN_REVIEW");
         assertThat(v.get("related_task_refs").get(0).get("task_id").asLong()).isEqualTo(a[0]);
         assertThat(v.get("related_task_refs").get(0).get("plan_revision_id").asLong()).isEqualTo(a[1]);
+        assertThat(start(b, v.get("id").asLong(), leader).statusCode()).isEqualTo(409);
+        body(accept(b, leader), 200);
+        assertRuleConflictMeeting();
+    }
+
+    private void assertRuleConflictMeeting() {
+        assertThat(count("select count(*) from meeting")).isEqualTo(1);
+        assertThat(api.jdbc.sql("select body from meeting_entry where kind = 'CONFLICT_BRIEF'").query(String.class).single())
+                .isEqualTo("같은 설계 항목을 다른 진행 중 작업이 이미 바꾸고 있습니다");
+        assertThat(count("select count(*) from notification where type = 'MEETING_OPENED'")).isEqualTo(2);
     }
 
     @Test
@@ -1077,13 +1087,13 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
     @Test
     void relatedTaskStartedDuringAnalysis_isNeedsReview_byRulesReevaluatedAtApply() throws Exception {
         // B 는 같은 항목을 CHANGES 하지만 아직 READY 라 접수 때는 점유 충돌이 아니다 → 의미 분석으로 넘어간다
-        long[] b = createTask(planJson("B", api.changesRef("API-01"), false, null), member);
+        long[] b = createTask(planJson("B", api.changesRef("API-01"), false, null), leader);
         long[] a = createTask(planJson("A", api.changesRef("API-01"), false, null), member);
         long id = body(accept(a, member), 202).get("id").asLong();
         doAnswer(inv -> {
             // AI 가 도는 동안 B 가 시작한다 — 계획 리비전은 그대로고 상태만 READY → IN_PROGRESS
             long passB = api.passValidation(b[0]);
-            assertThat(start(b, passB, member).statusCode()).isEqualTo(200);
+            assertThat(start(b, passB, leader).statusCode()).isEqualTo(200);
             return aiResponse(inv.getArgument(0), List.of(), List.of());
         }).when(analyzer).analyze(any());
         worker.runOnce();
@@ -1097,16 +1107,17 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(v.get("findings").get(0).get("related_task_id").asLong()).isEqualTo(b[0]);
         assertThat(column("validation_run", "status", id(id, "validation_run"))).isEqualTo("OK");
         assertThat(start(a, id, member).statusCode()).isEqualTo(409);
+        assertRuleConflictMeeting();
     }
 
     @Test
     void relatedTaskStartedWhileQueued_isDecidedByRules_withoutCallingAi() throws Exception {
-        long[] b = createTask(planJson("B", api.changesRef("API-01"), false, null), member);
+        long[] b = createTask(planJson("B", api.changesRef("API-01"), false, null), leader);
         long[] a = createTask(planJson("A", api.changesRef("API-01"), false, null), member);
         long id = body(accept(a, member), 202).get("id").asLong();
         // 워커가 꺼내기 전에 B 가 시작한다 — 이제 규칙만으로 점유 충돌이 확정된다
         long passB = api.passValidation(b[0]);
-        assertThat(start(b, passB, member).statusCode()).isEqualTo(200);
+        assertThat(start(b, passB, leader).statusCode()).isEqualTo(200);
         AtomicReference<Boolean> called = new AtomicReference<>(false);
         doAnswer(inv -> {
             called.set(true);
@@ -1123,6 +1134,7 @@ class ValidationApiIntegrationTests extends IntegrationTestSupport {
         assertThat(column("validation_run", "usage", id(id, "validation_run"))).isNull();
         assertThat(column("validation_job", "status", id(id, "validation_job"))).isEqualTo("DONE");
         assertThat(worker.runOnce()).isFalse();
+        assertRuleConflictMeeting();
     }
 
     @Test

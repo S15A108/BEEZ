@@ -77,6 +77,13 @@ const messages: Record<string, string> = {
   invalid_transition:
     '이미 처리했거나 지금은 할 수 없는 상태예요. 목록을 새로고침해 주세요.',
   baseline_missing: '먼저 첫 기준 설계를 만들어 주세요.',
+  design_items_missing: '승인된 설계 항목이 있어야 작업을 만들 수 있어요.',
+  task_breakdown_stale:
+    '승인 기준이 바뀌었어요. 최신 기준으로 다시 시도해 주세요.',
+  task_breakdown_input_limit:
+    '한 번에 작업으로 나눌 수 있는 설계 항목은 80개까지예요.',
+  ai_invalid_output:
+    '비비가 만든 작업을 확인하지 못했어요. 다시 시도해 주세요.',
   analysis_running: '영향 분석이 진행 중이에요. 끝난 뒤 다시 승인해 주세요.',
   impact_not_confirmed:
     '영향 분석이 완료되지 않았어요. 영향을 직접 확인했다면 사유를 남기고 승인해 주세요.',
