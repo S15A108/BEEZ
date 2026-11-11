@@ -337,11 +337,12 @@ describe('계약 경계', () => {
   // S15P31A108-203이 승인 미리 보기(CHG-A14) 1개를 더해 125개,
   // S15P31A108-202가 비비 대화·직접 요청·검토 요청 취소(DOC-A22~A24) 3개를 더해 128개였고,
   // 같은 티켓의 기획 쪽이 PLN-A05 아래의 초안 후보 조회·채택·폐기 3개를 더해 131개였고,
-  // S15P31A108-206이 폐지된 회의 API 4개(A05·A07~A09)를 빼고 비비 정리·수정 요청·끝내기·최신 정리 조회(A11~A13·A15) 4개를 더해 그대로 131개다.
-  it('131개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(132)
+  // S15P31A108-206이 폐지된 회의 API 4개(A05·A07~A09)를 빼고 비비 정리·수정 요청·끝내기·최신 정리 조회(A11~A13·A15) 4개를 더해 그대로 131개였고,
+  // S15P31A108-385가 작업 계획 문서 초안(TSK-A08) 1개를 더해 132개가 되었다. 아래 시험의 이름과 개수는 앞선 주석과 한 칸씩 어긋나 있어 133개로 바로잡았다.
+  it('133개 REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
+    expect(endpointRegistry).toHaveLength(133)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      132,
+      133,
     )
     expect(
       new Set(
@@ -349,7 +350,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(132)
+    ).toBe(133)
     expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
       expect.arrayContaining([
         'CHG-A07-SCOPED-BLOCKS',

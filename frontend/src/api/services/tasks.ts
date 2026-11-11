@@ -34,6 +34,21 @@ export const tasksApi = {
       },
       options,
     ),
+  // TSK-A08: 승인 문서로 계획 초안을 받는다. 저장하지 않으므로 멱등 키가 없고 사람이 누를 때만 부른다.
+  draftPlan: (
+    projectId: string,
+    input: schemas.PlanDraftInput,
+    options?: RequestOptions,
+  ) =>
+    callEndpoint(
+      schemas.planDraftResponseSchema,
+      {
+        method: 'POST',
+        url: `/projects/${encodeURIComponent(String(idSchema.parse(projectId)))}/task-plan-drafts`,
+        data: schemas.planDraftInputSchema.parse(input),
+      },
+      options,
+    ),
   get: (projectId: string, taskId: string, options?: RequestOptions) =>
     callEndpoint(
       schemas.getResponseSchema,

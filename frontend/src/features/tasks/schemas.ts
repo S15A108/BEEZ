@@ -102,3 +102,74 @@ export type StateInput = z.infer<typeof stateInputSchema>
 
 export const stateResponseSchema = common.taskDetailSchema
 export type StateResponse = z.infer<typeof stateResponseSchema>
+
+// TSK-A08(S15P31A108-385): 승인 문서로 계획 칸 초안을 받는다. 저장하지 않고 응답으로만 돌려준다.
+// 제목만 있어도 된다. 메모는 칸이 없어 이미 적은 목표를 보낸다.
+export const planDraftInputSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  memo: z.string().trim().max(2000).optional(),
+})
+export type PlanDraftInput = z.infer<typeof planDraftInputSchema>
+
+export const planDraftFieldSchema = z.enum([
+  'goal',
+  'included_scope',
+  'excluded_scope',
+  'approach',
+  'completion_criteria',
+])
+export type PlanDraftField = z.infer<typeof planDraftFieldSchema>
+
+const documentTypeSchema = z.enum(['PLAN', 'REQUIREMENTS', 'API_SPEC', 'ERD'])
+const designKindSchema = z.enum([
+  'REQUIREMENT',
+  'API_CONTRACT',
+  'DATA_CONTRACT',
+  'POLICY',
+  'CONSTRAINT',
+])
+const draftSourceSchema = z.object({
+  document_id: common.idSchema,
+  document_type: documentTypeSchema,
+  document_version_id: common.idSchema,
+  version_no: z.number().int().min(1),
+  location: z.string(),
+  quote: z.string(),
+})
+
+export const planDraftResponseSchema = z.object({
+  status: z.enum(['DRAFTED', 'INSUFFICIENT']),
+  plan: z.object({
+    goal: z.string(),
+    included_scope: z.string().array(),
+    excluded_scope: z.string().array(),
+    approach: z.string(),
+    completion_criteria: z.string().array(),
+  }),
+  evidence: draftSourceSchema.extend({ field: planDraftFieldSchema }).array(),
+  // 글은 있지만 원문에서 확인된 인용이 없는 칸
+  unsupported_fields: planDraftFieldSchema.array(),
+  // 현재 기준의 승인 항목만 온다. 버전 ID 는 저장할 때 그대로 design_refs 에 쓴다.
+  design_ref_candidates: z
+    .object({
+      design_item_id: common.idSchema,
+      design_item_version_id: common.idSchema,
+      key: z.string(),
+      kind: designKindSchema,
+      title: z.string(),
+      reason: z.string(),
+    })
+    .array(),
+  // 문서에는 있으나 승인된 설계 항목에 없는 내용. 변경 제안(CREATE)으로 넘길 수 있다.
+  new_design_item_candidates: z
+    .object({
+      kind: designKindSchema,
+      content: common.structuredContentSchema,
+      rationale: z.string(),
+      evidence: draftSourceSchema.array(),
+    })
+    .array(),
+  unlinked: z.object({ text: z.string() }).array(),
+  baseline_id: common.idSchema,
+})
+export type PlanDraft = z.infer<typeof planDraftResponseSchema>

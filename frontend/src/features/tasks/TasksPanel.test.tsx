@@ -19,6 +19,7 @@ import {
   validationsApi,
 } from '@/api/services'
 import { taskDetailSchema, type TaskDetail } from '@/api/contracts/common'
+import { planDraftResponseSchema, type PlanDraft } from './schemas'
 import { PaneHeaderSlot } from '@/components/paneHeaderSlot'
 import { PaneSheetHost } from '@/components/PaneSheet'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
@@ -2138,4 +2139,253 @@ it('계획 이력이 한 페이지를 넘으면 다음 페이지 리비전까지
     cursor: 'r2',
     limit: 100,
   })
+})
+
+// S15P31A108-385: 새 작업 계획 폼의 '문서로 초안 받기'. 저장하지 않고 빈 칸만 채우며 연결 후보는 사람이 체크한다.
+const documentDraft = (): PlanDraft =>
+  planDraftResponseSchema.parse({
+    status: 'DRAFTED',
+    plan: {
+      goal: '고객이 고른 메뉴로 주문을 만든다.',
+      included_scope: ['주문 생성', '번호 발급'],
+      excluded_scope: ['환불'],
+      approach: '주문을 저장하고 번호를 발급한다.',
+      completion_criteria: ['번호가 응답된다', '없는 메뉴는 거절된다'],
+    },
+    evidence: [
+      {
+        field: 'goal',
+        document_id: '201',
+        document_type: 'REQUIREMENTS',
+        document_version_id: '211',
+        version_no: 2,
+        location: '12~14행',
+        quote: '메뉴를 고르고 결제하면 주문 번호를 받는다',
+      },
+    ],
+    unsupported_fields: ['approach'],
+    design_ref_candidates: [
+      {
+        design_item_id: '302',
+        design_item_version_id: '312',
+        key: 'API-001',
+        kind: 'API_CONTRACT',
+        title: '주문을 만든다.',
+        reason: '주문 생성 API라서',
+      },
+    ],
+    new_design_item_candidates: [
+      {
+        kind: 'POLICY',
+        content: { description: '주문은 10분 안에 취소할 수 있다' },
+        rationale: '요구사항 명세서에 있어요.',
+        evidence: [
+          {
+            document_id: '201',
+            document_type: 'REQUIREMENTS',
+            document_version_id: '211',
+            version_no: 2,
+            location: '20~21행',
+            quote: '10분 안에 취소',
+          },
+        ],
+      },
+    ],
+    unlinked: [],
+    baseline_id: '401',
+  })
+
+async function openNewPlan() {
+  vi.spyOn(planningApi, 'items').mockResolvedValue({
+    items: [],
+    has_more: false,
+  })
+  show(false)
+  await userEvent.click(
+    await screen.findByRole('button', { name: '작업 계획' }),
+  )
+  return screen.findByLabelText('작업 제목')
+}
+
+it('문서로 초안 받기는 제목만으로 빈 칸을 채우고 저장하지 않으며 근거와 후보를 보여 준다', async () => {
+  const draft = vi
+    .spyOn(tasksApi, 'draftPlan')
+    .mockResolvedValue(documentDraft())
+  const create = vi.spyOn(tasksApi, 'create')
+  const title = await openNewPlan()
+  const button = screen.getByRole('button', { name: '문서로 초안 받기' })
+  expect(button).toBeDisabled()
+  await userEvent.type(title, '주문 생성 API')
+  expect(button).toBeEnabled()
+  await userEvent.click(button)
+  await waitFor(() =>
+    expect(draft).toHaveBeenCalledWith('101', { title: '주문 생성 API' }),
+  )
+  expect(await screen.findByLabelText('이번 작업의 목표')).toHaveValue(
+    '고객이 고른 메뉴로 주문을 만든다.',
+  )
+  expect(screen.getByLabelText('어떻게 진행하나요?')).toHaveValue(
+    '주문을 저장하고 번호를 발급한다.',
+  )
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('번호가 응답된다')
+  expect(screen.getByLabelText('완료 기준 2')).toHaveValue(
+    '없는 메뉴는 거절된다',
+  )
+  expect(screen.getByLabelText(/포함 범위/)).toHaveValue('주문 생성\n번호 발급')
+  // 초안 그대로인 칸만 노란 배경이다.
+  expect(screen.getByLabelText('이번 작업의 목표')).toHaveClass('bg-primary/10')
+  expect(screen.getByText(/빈 칸 5개를 채웠어요/)).toBeInTheDocument()
+  expect(screen.getByText(/요구사항 명세서 v2 · 12~14행/)).toBeInTheDocument()
+  expect(screen.getByText(/원문 근거 없이 정리한 글이에요/)).toBeInTheDocument()
+  // 같은 입력으로는 다시 받을 수 없다.
+  expect(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  ).toBeDisabled()
+  expect(create).not.toHaveBeenCalled()
+})
+
+it('문서 초안은 이미 적은 칸을 덮어쓰지 않고 그 목표를 메모로 보낸다', async () => {
+  const draft = vi
+    .spyOn(tasksApi, 'draftPlan')
+    .mockResolvedValue(documentDraft())
+  const title = await openNewPlan()
+  await userEvent.type(title, '주문 생성 API')
+  await userEvent.type(
+    screen.getByLabelText('이번 작업의 목표'),
+    '내가 쓴 목표',
+  )
+  await userEvent.click(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  )
+  await waitFor(() =>
+    expect(draft).toHaveBeenCalledWith('101', {
+      title: '주문 생성 API',
+      memo: '내가 쓴 목표',
+    }),
+  )
+  expect(await screen.findByText(/빈 칸 4개를 채웠어요/)).toBeInTheDocument()
+  expect(screen.getByLabelText('이번 작업의 목표')).toHaveValue('내가 쓴 목표')
+  expect(screen.getByLabelText('이번 작업의 목표')).not.toHaveClass(
+    'bg-primary/10',
+  )
+  expect(screen.getByLabelText('어떻게 진행하나요?')).toHaveValue(
+    '주문을 저장하고 번호를 발급한다.',
+  )
+})
+
+it('되돌리기는 채운 칸을 이전 값으로 돌리고 고친 칸은 노란 배경을 거둔다', async () => {
+  vi.spyOn(tasksApi, 'draftPlan').mockResolvedValue(documentDraft())
+  const title = await openNewPlan()
+  await userEvent.type(title, '주문 생성 API')
+  await userEvent.click(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  )
+  const approach = await screen.findByLabelText('어떻게 진행하나요?')
+  expect(approach).toHaveClass('bg-primary/10')
+  await userEvent.type(approach, ' 추가')
+  expect(approach).not.toHaveClass('bg-primary/10')
+  await userEvent.click(screen.getByRole('button', { name: '되돌리기' }))
+  // 그대로인 칸은 돌아가고, 채운 뒤 직접 고친 접근 방법은 남는다.
+  expect(screen.getByLabelText('이번 작업의 목표')).toHaveValue('')
+  expect(screen.getByLabelText('어떻게 진행하나요?')).toHaveValue(
+    '주문을 저장하고 번호를 발급한다. 추가',
+  )
+  expect(screen.getByLabelText('완료 기준 1')).toHaveValue('')
+  expect(screen.queryByRole('button', { name: '되돌리기' })).toBeNull()
+  expect(
+    screen.getByText(/직접 고친 칸 1개\(접근 방법\)는 그대로 두었어요/),
+  ).toBeInTheDocument()
+})
+
+it('연결 후보는 체크해야 계획에 연결되고 설계에 없는 내용은 연결하지 못한 내용에 더한다', async () => {
+  vi.spyOn(tasksApi, 'draftPlan').mockResolvedValue(documentDraft())
+  const title = await openNewPlan()
+  await userEvent.type(title, '주문 생성 API')
+  await userEvent.click(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  )
+  expect(
+    await screen.findByText(
+      /연결된 설계 항목이 없으면 이 작업은 충돌 감지에 잡히지 않아요/,
+    ),
+  ).toBeInTheDocument()
+  const candidate = screen.getByRole('checkbox', {
+    name: /API-001 · 주문을 만든다\./,
+  })
+  expect(candidate).not.toBeChecked()
+  await userEvent.click(candidate)
+  expect(candidate).toBeChecked()
+  expect(
+    screen.queryByText(/연결된 설계 항목이 없으면 이 작업은 충돌 감지에/),
+  ).toBeNull()
+  await userEvent.click(candidate)
+  expect(candidate).not.toBeChecked()
+  await userEvent.click(
+    screen.getByRole('button', { name: '연결하지 못한 내용에 추가' }),
+  )
+  expect(screen.getByLabelText('연결하지 못한 내용 1')).toHaveValue(
+    '주문은 10분 안에 취소할 수 있다',
+  )
+  expect(screen.getByRole('button', { name: '추가했어요' })).toBeDisabled()
+})
+
+const draftError = (status: number, code: string) => {
+  const config = { headers: new AxiosHeaders() }
+  return new AxiosError('failed', 'ERR_BAD_RESPONSE', config, undefined, {
+    status,
+    statusText: 'error',
+    headers: {},
+    config,
+    data: { error: { code, message: code } },
+  })
+}
+
+it.each([
+  ['ai_timeout', 504, /시간이 너무 오래 걸렸어요/],
+  ['ai_unavailable', 502, /지금은 비비를 부를 수 없어요/],
+  ['ai_output_too_long', 502, /응답 생성 한도에 도달해/],
+])(
+  '문서 초안 실패 %s는 서로 다른 안내와 오른쪽 다시 받기를 보인다',
+  async (code, status, text) => {
+    const draft = vi
+      .spyOn(tasksApi, 'draftPlan')
+      .mockRejectedValueOnce(draftError(status, code))
+      .mockResolvedValue(documentDraft())
+    const title = await openNewPlan()
+    await userEvent.type(title, '주문 생성 API')
+    await userEvent.click(
+      screen.getByRole('button', { name: '문서로 초안 받기' }),
+    )
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(text)
+    // 실패는 같은 입력으로 다시 받을 수 있다.
+    await userEvent.click(
+      within(alert).getByRole('button', { name: '다시 받기' }),
+    )
+    await waitFor(() => expect(draft).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText(/빈 칸 5개를 채웠어요/)).toBeInTheDocument()
+  },
+)
+
+it('초안 횟수를 다 쓰면 안내하고 버튼을 비활성으로 둔다', async () => {
+  vi.spyOn(tasksApi, 'draftPlan').mockRejectedValue(
+    draftError(429, 'draft_limit_exceeded'),
+  )
+  const title = await openNewPlan()
+  await userEvent.type(title, '주문 생성 API')
+  await userEvent.click(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  )
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    /초안 횟수를 모두 썼어요/,
+  )
+  expect(screen.queryByRole('button', { name: '다시 받기' })).toBeNull()
+  expect(
+    screen.getByRole('button', { name: '문서로 초안 받기' }),
+  ).toBeDisabled()
+})
+
+it('계획 수정에는 문서로 초안 받기를 두지 않는다', async () => {
+  await openPlanEditor()
+  expect(screen.queryByRole('button', { name: '문서로 초안 받기' })).toBeNull()
 })
