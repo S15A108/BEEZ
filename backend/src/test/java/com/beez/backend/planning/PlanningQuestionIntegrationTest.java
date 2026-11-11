@@ -117,6 +117,22 @@ class PlanningQuestionIntegrationTest extends PlanningTestSupport {
         assertThat(generator.runOnce()).isFalse();
     }
 
+    @Test void outputCapTruncationIsReportedAsItsOwnCodeAndStaysRetryable() {
+        // AI 가 모델 답이 출력 상한에서 끊겼다고 알리면 일반 장애(ai_unavailable)가 아니라 상한 문제로 남긴다 (S15P31A108-382).
+        doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "cut", org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error\":{\"code\":\"model_output_truncated\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
+        assertThat(generator.runOnce()).isTrue();
+        assertThat(jdbc.queryForMap("SELECT status,error_code,retryable FROM planning_question_run WHERE document_version_id=?", version))
+                .containsEntry("status", "FAILED").containsEntry("error_code", "ai_output_too_long").containsEntry("retryable", true);
+        // 형식 오류로 거절된 같은 502 는 그대로 일반 장애다.
+        jdbc.update("DELETE FROM planning_question_run");
+        doThrow(org.springframework.web.client.HttpServerErrorException.create(HttpStatus.BAD_GATEWAY, "bad", org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error\":{\"code\":\"model_unavailable\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());
+        generator.runOnce();
+        assertThat(jdbc.queryForObject("SELECT error_code FROM planning_question_run WHERE document_version_id=?", String.class, version))
+                .isEqualTo("ai_unavailable");
+    }
+
     @Test void rejectedRequestIsNotRetryableAndMismatchedOutputIsRejectedWholesale() {
         doThrow(HttpClientErrorException.create(HttpStatus.UNPROCESSABLE_ENTITY, "bad", org.springframework.http.HttpHeaders.EMPTY,
                 "{\"error\":{\"code\":\"invalid_ai_input\"}}".getBytes(), java.nio.charset.StandardCharsets.UTF_8)).when(ai).planningQuestions(any());

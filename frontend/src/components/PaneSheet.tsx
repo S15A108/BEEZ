@@ -158,12 +158,15 @@ export function SheetSubmit({
   disabled,
   destructive,
   className,
+  leading,
 }: {
   children: ReactNode
   disabled?: boolean
   destructive?: boolean
   /** 작은 창일 때 버튼 자리 */
   className?: string
+  /** 아래 줄 왼쪽에 둘 보조 버튼(예: 이전·다음) */
+  leading?: ReactNode
 }) {
   const sheet = use(PaneSheetBody)
   const submit = (
@@ -176,9 +179,20 @@ export function SheetSubmit({
       {children}
     </Button>
   )
-  if (!sheet) return submit
+  if (!sheet)
+    return leading ? (
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">{leading}</div>
+        {submit}
+      </div>
+    ) : (
+      submit
+    )
   return (
     <div className="sticky -bottom-5 z-10 col-span-full -mx-6 mt-auto -mb-5 flex items-center justify-end gap-2 rounded-b-2xl border-t bg-card px-6 pt-3.5 pb-5">
+      {leading && (
+        <div className="mr-auto flex items-center gap-1">{leading}</div>
+      )}
       <Button
         type="button"
         variant="outline"

@@ -323,7 +323,8 @@ export function DraftCandidates({
   isLeader: boolean
   busy: boolean
   canGenerate: boolean
-  onGenerate: () => void
+  /** versionIds 가 없으면 모든 문서, 있으면 그 문서만 초안을 만든다 */
+  onGenerate: (versionIds?: string[]) => void
   onAdopt: (
     candidate: DraftCandidate,
     input: AdoptCandidateInput,
@@ -333,6 +334,16 @@ export function DraftCandidates({
   const latest = latestJobs(jobs)
   const active = latest.some(isActiveJob)
   const candidates = candidateJobs(jobs).flatMap((job) => job.candidates)
+  // 후보가 어느 문서에서 나왔는지. 낡은 후보를 다시 만들 때 그 문서만 다시 만든다.
+  const versionOfCandidate = new Map(
+    candidateJobs(jobs).flatMap((job) =>
+      job.candidates.map((item) => [item.id, job.document_version_id] as const),
+    ),
+  )
+  const regenerate = (candidate: DraftCandidate) => {
+    const versionId = versionOfCandidate.get(candidate.id)
+    onGenerate(versionId ? [versionId] : undefined)
+  }
   const waiting = candidates.filter(
     (candidate) => candidate.status === 'PENDING',
   )
@@ -346,7 +357,7 @@ export function DraftCandidates({
             <Button
               size="sm"
               disabled={busy || active || !canGenerate}
-              onClick={onGenerate}
+              onClick={() => onGenerate()}
             >
               <Sparkles />
               답변으로 초안 만들기
@@ -387,8 +398,9 @@ export function DraftCandidates({
                     className="mt-2"
                     size="sm"
                     variant="outline"
-                    disabled={busy || active}
-                    onClick={onGenerate}
+                    // 실패한 이 문서만 다시 만든다. 다른 문서가 만드는 중이어도 이 문서는 다시 요청할 수 있다.
+                    disabled={busy}
+                    onClick={() => onGenerate([job.document_version_id])}
                   >
                     <RefreshCw />
                     다시 만들기
@@ -422,7 +434,7 @@ export function DraftCandidates({
             busy={busy}
             onAdopt={(input) => onAdopt(candidate, input)}
             onDiscard={() => onDiscard(candidate)}
-            onRegenerate={onGenerate}
+            onRegenerate={() => regenerate(candidate)}
           />
         ))}
         {done.length > 0 && (
@@ -439,7 +451,7 @@ export function DraftCandidates({
                   busy={busy}
                   onAdopt={(input) => onAdopt(candidate, input)}
                   onDiscard={() => onDiscard(candidate)}
-                  onRegenerate={onGenerate}
+                  onRegenerate={() => regenerate(candidate)}
                 />
               ))}
             </div>

@@ -820,7 +820,9 @@ def test_truncated_http_output_is_failure_even_if_content_is_valid_json():
             )
         )
 
-    assert caught.value.code == "invalid_output"
+    # 형식 오류(invalid_output)가 아니라 출력 상한 때문에 끊겼음을 알린다(S15P31A108-382).
+    assert caught.value.code == "output_truncated"
+    assert caught.value.to_api_dict()["error"]["code"] == "model_output_truncated"
     assert len(caught.value.usage) == 1
     assert caught.value.usage[0].failed is True
     assert caught.value.usage[0].tokens_known is True

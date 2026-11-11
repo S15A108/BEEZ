@@ -75,6 +75,26 @@ class AiClientTest {
         assertThat(result).containsEntry("origin", "MODEL").containsKeys("result", "usage");
     }
 
+    /** 문서 검토는 공통 읽기 제한(여기서는 0.3초)보다 긴 전용 제한을 쓴다 (S15P31A108-382). */
+    @Test void documentReviewUsesItsOwnLongerReadTimeoutThanOtherCalls() throws Exception {
+        server.removeContext("/");
+        server.createContext("/", exchange -> {
+            try { Thread.sleep(800); } catch (InterruptedException ignored) { }
+            byte[] bytes = "{\"origin\":\"MODEL\",\"result\":{},\"usage\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        var slow = new AiClient(new BeezProperties(null, new BeezProperties.Ai(
+                "http://127.0.0.1:" + server.getAddress().getPort(), "fixture-token",
+                Duration.ofMillis(500), Duration.ofMillis(300)), null),
+                Duration.ofMillis(300), Duration.ofMillis(300), Duration.ofSeconds(3));
+        var input = Map.<String, Object>of("document_id", "382");
+        assertThat(slow.documentReview(input)).containsEntry("origin", "MODEL");
+        assertThatThrownBy(() -> slow.documentChunks(input))
+                .isInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {404, 503})
     void unavailableReviewEndpointPreservesHttpFailure(int errorStatus) {
