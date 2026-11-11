@@ -61,6 +61,19 @@ afterEach(() => {
 })
 
 describe('명세 REST 교환', () => {
+  it('작업 분해 접수와 상태 조회는 같은 경로의 상태 객체를 읽는다', async () => {
+    const accepted = { id: '41', baseline_id: '10', status: 'PENDING' }
+    respond(accepted, 202)
+    expect(await tasksApi.generateBreakdown('101')).toEqual(accepted)
+    expect(lastRequest?.method).toBe('post')
+    expect(lastRequest?.url).toBe('/projects/101/task-breakdown')
+
+    respond(null)
+    expect(await tasksApi.breakdownStatus('101')).toBeNull()
+    expect(lastRequest?.method).toBe('get')
+    expect(lastRequest?.url).toBe('/projects/101/task-breakdown')
+  })
+
   it('비비 질문에는 멱등 키를 보내지 않고 필수 응답 계약을 검증한다', async () => {
     const answer = {
       origin: 'MODEL',
@@ -412,12 +425,13 @@ describe('계약 경계', () => {
   // S15P31A108-202가 비비 대화·직접 요청·검토 요청 취소(DOC-A22~A24) 3개를 더해 128개였고,
   // 같은 티켓의 기획 쪽이 PLN-A05 아래의 초안 후보 조회·채택·폐기 3개를 더해 131개였고,
   // S15P31A108-206이 폐지된 회의 API 4개(A05·A07~A09)를 빼고 비비 정리·수정 요청·끝내기·최신 정리 조회(A11~A13·A15) 4개를 더해 그대로 131개였고,
-  // 그 뒤 다른 티켓들이 2개를 더해 133개였고, S15P31A108-386이 접속 상태 보고·현황(MON-A06·A07) 2개를 더해 135개다.
-  // S15P31A108-389가 후보 여러 개 채택·폐기 2개를 더해 137개다.
+  // 그 뒤 다른 티켓들이 2개를 더해 133개였고, S15P31A108-386이 접속 상태 보고·현황(MON-A06·A07) 2개를 더해 135개였다.
+  // S15P31A108-397의 작업 생성 상태 조회(TSK-A09-STATUS)를 더해 136개였다.
+  // S15P31A108-389가 후보 여러 개 채택·폐기 2개를 더해 138개다.
   it('REST 계약은 중복 없이 기록하고 확장 미결 기능에는 실행 경로를 만들지 않는다', () => {
-    expect(endpointRegistry).toHaveLength(137)
+    expect(endpointRegistry).toHaveLength(138)
     expect(new Set(endpointRegistry.map((endpoint) => endpoint.id)).size).toBe(
-      137,
+      138,
     )
     expect(
       new Set(
@@ -425,7 +439,7 @@ describe('계약 경계', () => {
           (endpoint) => `${endpoint.method} ${endpoint.path}`,
         ),
       ).size,
-    ).toBe(137)
+    ).toBe(138)
     expect(endpointRegistry.map((endpoint) => endpoint.id)).toEqual(
       expect.arrayContaining([
         'CHG-A07-SCOPED-BLOCKS',
@@ -437,6 +451,7 @@ describe('계약 경계', () => {
         'PLN-A05-ADOPT-BATCH',
         'PLN-A05-DISCARD-BATCH',
         'TSK-A09',
+        'TSK-A09-STATUS',
       ]),
     )
     expect(

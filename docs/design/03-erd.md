@@ -58,6 +58,14 @@ V6은 working copy, 비비 실행/결과/제안, 제출, 작성 원본 정리 �
 | `task_breakdown_batch` | `project_id` BIGINT PK, `baseline_id` BIGINT NOT NULL | 프로젝트당 최초 생성 묶음 하나. `(baseline_id, project_id)` → `baseline(id, project_id)` 복합 FK로 같은 프로젝트의 승인 기준을 참조한다. |
 | `task_breakdown_task` | `project_id` BIGINT NOT NULL, `task_id` BIGINT NOT NULL UNIQUE, `position` INTEGER NOT NULL 및 `CHECK (position > 0)`, PK `(project_id, position)` | `project_id` → `task_breakdown_batch(project_id)` FK. `(task_id, project_id)` → `task(id, project_id)` 복합 FK로 같은 프로젝트의 생성 작업을 연결한다. |
 
+### V47 승인 설계 작업 생성 실행 (S15P31A108-397)
+
+`task_breakdown_job`은 실행 ID, 프로젝트, 승인 기준, 요청한 계정, 상태와 시각을 저장한다. `(baseline_id, project_id)` 복합 FK는 같은 프로젝트의 기준을 참조한다. V45에서 이미 생성한 프로젝트는 당시 기준의 `COMPLETED` 실행을 채운다.
+
+접수한 실행은 모델 입력을 `input_snapshot`에 보관한다. 워커가 실행을 가져갈 때 시도 횟수와 리스 만료 시각, 리스 토큰을 기록한다. 유효한 리스를 가진 워커가 남은 티켓·담당자·알림과 완료 상태를 한 트랜잭션에 저장한다. 완료나 실패 시 입력과 리스를 비운다.
+
+부분 유일 인덱스로 프로젝트마다 `PENDING`, `RUNNING`, `COMPLETED` 중 하나의 실행만 허용한다. `FAILED` 이력에는 원인과 재요청 가능 여부를 남긴다.
+
 ## 0. v0.2 → v1.0 에서 바뀐 것
 
 | 리뷰 지적 | 결정 |
@@ -114,7 +122,7 @@ API 명세(`docs/api`)와 다르게 나온 컬럼 이름·값을 명세 쪽에 �
 | B. 설계 의존관계·이력 | design_item_dependency, design_item_dependency_history (V9), design_relation_set (V9) | 변준성 (진입점은 오서현, #40 합의) |
 | B. 수동 항목·최초 발행 명령 | design_http_command (V6, 프로젝트·사용자·동작·요청 키 복합 PK, fingerprint·응답·24시간 만료) | 오서현 |
 | B. 변경·승인·협의 | change_proposal, change_proposal_item, change_comment, change_comment_target (V12), approval, meeting, meeting_participant, meeting_entry, meeting_summary (V34) | 오서현 |
-| C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding, task_breakdown_batch (V45), task_breakdown_task (V45) | 변준성 |
+| C. 작업·계획·검증 | task, task_plan_revision, task_plan_design_ref, task_dependency, task_completion_report, validation, validation_design_ref, validation_task_ref, validation_run, validation_job, validation_finding, task_breakdown_batch (V45), task_breakdown_task (V45), task_breakdown_job (V47) | 변준성 |
 | C'. 개발 컨텍스트 | dev_context_packet, dev_context_packet_ref, context_record, context_record_ref, document_chunk | 박상은 (MCP-05~07 도구 계약은 전진 주관) |
 | C'. 조회 이력·비용 | context_access_log, llm_usage | 변준성 (llm_usage 기록은 각 AI 기능) |
 | D. 운영 공통 | notification, activity_event, mcp_audit_log | 전진 |
@@ -350,7 +358,7 @@ erDiagram
 | `baseline_document.document_version_id` | 그 문서의 버전 |
 | `task.current_plan_revision_id`, `task.started_validation_id` | 그 작업의 리비전·검증 |
 | `task.assignee_member_id`, `task_dependency` | 같은 프로젝트 |
-| `task_breakdown_batch.baseline_id`, `task_breakdown_task.task_id` | 최초 생성 묶음의 기준 설계와 작업은 같은 프로젝트 |
+| `task_breakdown_job.baseline_id`, `task_breakdown_batch.baseline_id`, `task_breakdown_task.task_id` | 실행과 최초 생성 묶음의 기준 설계와 작업은 같은 프로젝트 |
 | `agent_token (project_id, account_id)` | 그 프로젝트의 멤버 |
 | `validation.plan_revision_id`, `task_completion_report` | 그 작업의 리비전 |
 | `*_ref.design_item_version_id` | 그 행의 항목 소속 버전 |

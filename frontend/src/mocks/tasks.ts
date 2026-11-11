@@ -425,16 +425,46 @@ export function taskRoutes(
           context.member!.id,
         ),
       }
-    case 'TSK-A09': {
+    case 'TSK-A09':
+    case 'TSK-A09-STATUS': {
       if (!project.task_breakdown) {
+        const existing = project.task_breakdown_job
         const baseline = project.baselines.at(-1)
-        if (!baseline)
-          fail(409, 'baseline_missing', '먼저 첫 기준 설계를 만들어 주세요.')
+        if (id === 'TSK-A09') {
+          if (existing?.status === 'PENDING' || existing?.status === 'RUNNING')
+            return { status: 202, data: existing }
+          if (!baseline)
+            fail(409, 'baseline_missing', '먼저 첫 기준 설계를 만들어 주세요.')
+          if (!baseline.items.length)
+            fail(409, 'design_items_missing', '승인된 설계 항목이 필요해요.')
+          const job = {
+            id: nextId(database),
+            baseline_id: baseline.id,
+            status: 'PENDING' as const,
+          }
+          project.task_breakdown_job = job
+          return { status: 202, data: job }
+        }
+        if (!existing || existing.status === 'FAILED')
+          return { data: existing ?? null }
+        if (existing.status === 'PENDING') {
+          const running = { ...existing, status: 'RUNNING' as const }
+          project.task_breakdown_job = running
+          return { data: running }
+        }
+        if (!baseline || existing.baseline_id !== baseline.id) {
+          const failed = {
+            ...existing,
+            status: 'FAILED' as const,
+            error_code: 'task_breakdown_stale',
+            retryable: true,
+          }
+          project.task_breakdown_job = failed
+          return { data: failed }
+        }
         const items = baseline.items.map((ref) =>
           findById(project.items, ref.design_item_version_id),
         )
-        if (!items.length)
-          fail(409, 'baseline_missing', '승인된 설계 항목이 필요해요.')
         const taskIds = items.slice(0, 8).map((item) => {
           const role = item.kind === 'REQUIREMENT' ? '프론트엔드' : '백엔드'
           const member = project.members.find(
@@ -482,11 +512,18 @@ export function taskRoutes(
           }
           return task.id
         })
-        project.task_breakdown = { baseline_id: baseline.id, task_ids: taskIds }
+        project.task_breakdown = {
+          id: existing.id,
+          baseline_id: baseline.id,
+          task_ids: taskIds,
+        }
+        delete project.task_breakdown_job
       }
       return {
         data: {
+          id: project.task_breakdown.id ?? project.task_breakdown.baseline_id,
           baseline_id: project.task_breakdown.baseline_id,
+          status: 'COMPLETED',
           tasks: project.task_breakdown.task_ids.map((taskId) => {
             const task = findById(project.tasks, taskId)
             return {
