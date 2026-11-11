@@ -464,7 +464,7 @@ async def test_llm_proposer_sends_blocks_and_returns_structured_candidates():
     assert payload["blocks"][1]["location"] == "업로드 / L3-L3"
     assert {"block_id", "type", "location", "text"} == set(payload["blocks"][0])
     assert llm_request.response_format == {"type": "json_object"}
-    assert llm_request.model_options == {"max_completion_tokens": 2048}
+    assert llm_request.model_options == {"max_completion_tokens": 8192}
     assert llm_request.context.feature == "DOCUMENT_PARSE"
 
 

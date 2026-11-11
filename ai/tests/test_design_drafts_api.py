@@ -190,3 +190,16 @@ def test_published_examples_match_the_http_contract():
     for name, payload in build_examples().items():
         published = json.loads((EXAMPLES / name).read_text(encoding="utf-8"))
         assert published == payload, name
+
+
+# S15P31A108-388: the settings defaults (strings) and the proposer defaults are
+# written in two places; real documents needed up to 8,825 tokens and 77 s.
+def test_default_settings_match_the_measured_limits():
+    from app.routers.design_drafts import require_design_draft_config
+    from app.services import design_drafts
+
+    config = require_design_draft_config(
+        Settings(_env_file=None, design_drafts_enabled=True)
+    )
+    assert config.output_token_limit == design_drafts.DEFAULT_OUTPUT_TOKEN_LIMIT
+    assert config.timeout_seconds == design_drafts.DEFAULT_TIMEOUT_SECONDS

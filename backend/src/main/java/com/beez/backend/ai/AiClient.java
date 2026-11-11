@@ -22,9 +22,18 @@ public class AiClient {
 
     private static final Logger log = LoggerFactory.getLogger(AiClient.class);
 
-    /** 질문 생성(30초)·초안 생성(45초) 모델 제한보다 길어야 정상 처리 중에 먼저 끊지 않는다. */
-    static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(40);
-    static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(55);
+    /**
+     * 기획 보완 질문(AI 모델 제한 90초)·설계 초안(150초)보다 길어야 정상 처리 중에 먼저 끊지 않는다. 둘 다 비동기 작업이라
+     * nginx 를 거치지 않고, 작업 리스(300초)보다는 짧아야 한다. 실제 문서에서 질문 39초·초안 77초까지 걸렸다(S15P31A108-388).
+     */
+    static final Duration DEFAULT_QUESTION_READ_TIMEOUT = Duration.ofSeconds(105);
+    static final Duration DEFAULT_DRAFT_READ_TIMEOUT = Duration.ofSeconds(170);
+    /**
+     * 담당 추천(AI 15초)·회의 수정본은 화면이 기다리는 동기 호출이라 기획 분석 제한을 따라 늘리지 않는다.
+     * 예전에 기획 분석 기본값(40초·55초)을 같이 쓰던 값을 그대로 둔다(S15P31A108-388).
+     */
+    static final Duration ASSIGNMENT_READ_TIMEOUT = Duration.ofSeconds(40);
+    static final Duration MEETING_REVISION_READ_TIMEOUT = Duration.ofSeconds(55);
     /**
      * 문서 검토 모델 제한(50초)보다 길고 nginx(60초)보다 짧아야 한다 (S15P31A108-382). 6,800자 API 명세서 검토가
      * 31~38초 걸려 처음 값(모델 30초·읽기 40초)으로는 실패했다(S15P31A108-383).
@@ -34,6 +43,8 @@ public class AiClient {
     private final RestClient rest;
     private final RestClient questionRest;
     private final RestClient draftRest;
+    private final RestClient assignmentRest;
+    private final RestClient meetingRevisionRest;
     private final RestClient reviewRest;
     private final BeezProperties.Ai chatAi;
     private final HttpClient chatHttp;
@@ -44,14 +55,16 @@ public class AiClient {
 
     @Autowired
     public AiClient(BeezProperties props,
-                    @Value("${beez.planning.question-read-timeout:40s}") Duration questionReadTimeout,
-                    @Value("${beez.planning.draft-read-timeout:55s}") Duration draftReadTimeout,
+                    @Value("${beez.planning.question-read-timeout:105s}") Duration questionReadTimeout,
+                    @Value("${beez.planning.draft-read-timeout:170s}") Duration draftReadTimeout,
                     @Value("${beez.document-review.read-timeout:55s}") Duration reviewReadTimeout) {
         BeezProperties.Ai ai = props.ai();
         this.rest = client(ai, ai.readTimeout());
         // 기본 읽기 제한보다 짧게 설정되어도 공통 호출보다 먼저 끊기지 않게 한다.
         this.questionRest = client(ai, max(ai.readTimeout(), questionReadTimeout));
         this.draftRest = client(ai, max(ai.readTimeout(), draftReadTimeout));
+        this.assignmentRest = client(ai, max(ai.readTimeout(), ASSIGNMENT_READ_TIMEOUT));
+        this.meetingRevisionRest = client(ai, max(ai.readTimeout(), MEETING_REVISION_READ_TIMEOUT));
         this.reviewRest = client(ai, max(ai.readTimeout(), reviewReadTimeout));
         // 비비 대화는 호출마다 읽기 제한이 다르다(질문 한 건의 남은 시간 예산). HttpClient 만 하나를 공유한다.
         this.chatAi = ai;
@@ -130,7 +143,7 @@ public class AiClient {
         return reviewRest.post().uri("/v1/document-reviews").body(input).retrieve().body(java.util.Map.class);
     }
 
-    /** 기획 보완 질문 생성(AI 모델 제한 30초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */
+    /** 기획 보완 질문 생성(AI 모델 제한 90초). 공통 읽기 제한(20초)보다 긴 전용 제한을 쓴다. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> planningQuestions(java.util.Map<String, Object> input) {
         return questionRest.post().uri("/v1/planning-questions").body(input).retrieve().body(java.util.Map.class);
@@ -155,7 +168,7 @@ public class AiClient {
     /** AI-A07: 추천만 반환한다. AI의 15초 제한보다 긴 전용 읽기 제한을 사용한다. */
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> assignmentRecommendations(java.util.Map<String, Object> input) {
-        return questionRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
+        return assignmentRest.post().uri("/v1/bee/assignments").body(input).retrieve().body(java.util.Map.class);
     }
 
     /**
@@ -179,7 +192,7 @@ public class AiClient {
 
     @SuppressWarnings("unchecked")
     public java.util.Map<String, Object> meetingRevision(java.util.Map<String, Object> input) {
-        return draftRest.post().uri("/v1/meeting-revisions").body(input).retrieve().body(java.util.Map.class);
+        return meetingRevisionRest.post().uri("/v1/meeting-revisions").body(input).retrieve().body(java.util.Map.class);
     }
 
     /**
