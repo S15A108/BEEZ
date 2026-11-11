@@ -6,6 +6,7 @@ import {
 import {
   planDraftInputSchema,
   planDraftResponseSchema,
+  planRevisionProposalSchema,
 } from '../features/tasks/schemas'
 import type {
   ContextRecord,
@@ -224,16 +225,29 @@ const VALIDATION_FAILURES = {
     resolution: 'HUMAN_REVIEW',
     next_action: '근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요',
   },
+  evidence_collection: {
+    error_code: 'evidence_collection_failed',
+    message: '원문 근거를 가져오지 못했어요.',
+    resolution: 'RETRY',
+    next_action: '근거 수집을 다시 시도해 주세요.',
+  },
 } as const
-function failureScenario() {
+function validationScenario(): string {
   try {
-    const value = localStorage.getItem('beez.mock.validation') ?? ''
-    return Object.hasOwn(VALIDATION_FAILURES, value)
-      ? VALIDATION_FAILURES[value as keyof typeof VALIDATION_FAILURES]
-      : undefined
+    return (
+      localStorage.getItem('beez.mock.validation') ??
+      import.meta.env.VITE_MOCK_VALIDATION_SCENARIO ??
+      ''
+    )
   } catch {
-    return undefined
+    return import.meta.env.VITE_MOCK_VALIDATION_SCENARIO ?? ''
   }
+}
+function failureScenario() {
+  const value = validationScenario()
+  return Object.hasOwn(VALIDATION_FAILURES, value)
+    ? VALIDATION_FAILURES[value as keyof typeof VALIDATION_FAILURES]
+    : undefined
 }
 
 function evaluate(context: MockContext, validation: Validation): void {
@@ -277,6 +291,14 @@ function evaluate(context: MockContext, validation: Validation): void {
       'MISSING_INPUT',
       '목표·포함 범위·접근 방법·완료 기준을 모두 작성해 주세요.',
     )
+  // 브라우저 QA: 기존 TASK-001에서 fix_plan을 켜고 검증하면 수정안 승인 흐름을 확인할 수 있다.
+  if (
+    validationScenario() === 'fix_plan' &&
+    !plan.completion_criteria.includes(
+      '참여 프로젝트가 없으면 빈 목록 안내를 표시한다.',
+    )
+  )
+    add('MISSING_INPUT', '빈 목록 안내의 완료 기준이 빠져 있어요.')
   const changes = plan.design_refs.filter(
     (reference) => reference.relation === 'CHANGES',
   )
@@ -337,6 +359,13 @@ function evaluate(context: MockContext, validation: Validation): void {
       validation_run_id: nextId(context.database),
     })
     validation.error_code = failure.error_code
+    if (failure.error_code === 'evidence_collection_failed')
+      validation.execution_failure = {
+        type: 'EVIDENCE_COLLECTION_FAILED',
+        reason_codes: ['source_evidence_unavailable'],
+        retryable: true,
+        message: failure.message,
+      }
   }
   validation.findings = findings
   validation.status = failure
@@ -636,6 +665,129 @@ export function taskRoutes(
     }
     case 'TSK-A03':
       return { data: task! }
+    case 'TSK-A10': {
+      taskOwner(context, task!)
+      const source = task!.validation
+      if (
+        !source ||
+        source.trigger === 'DELTA' ||
+        !['NEEDS_INPUT', 'NEEDS_REVIEW'].includes(source.status) ||
+        !source.findings.some((finding) => finding.resolution === 'FIX_PLAN')
+      )
+        fail(409, 'proposal_not_needed', '수정할 검증 항목이 없어요.')
+      const before = copy(task!.current_plan_revision.plan)
+      const proposed = {
+        ...before,
+        goal:
+          before.goal ||
+          '승인된 요구사항대로 참여 프로젝트와 빈 목록 안내를 표시한다.',
+        included_scope: before.included_scope.length
+          ? before.included_scope
+          : ['참여 프로젝트와 빈 목록 안내'],
+        approach: before.approach || '승인된 요구사항에 맞춰 구현한다.',
+        completion_criteria: [
+          ...new Set([
+            ...before.completion_criteria,
+            '참여 프로젝트가 없으면 빈 목록 안내를 표시한다.',
+          ]),
+        ],
+      }
+      const fields = [
+        'goal',
+        'included_scope',
+        'approach',
+        'completion_criteria',
+      ] as const
+      const changed = fields.filter(
+        (field) =>
+          JSON.stringify(before[field]) !== JSON.stringify(proposed[field]),
+      )
+      if (!changed.length)
+        fail(409, 'proposal_not_needed', '수정할 계획 항목이 없어요.')
+      const proposal = planRevisionProposalSchema.parse({
+        id: nextId(database),
+        baseline_id: project.baselines.at(-1)!.id,
+        source_validation_id: source.id,
+        expected_revision_no: task!.current_plan_revision.revision_no,
+        expected_lock_version: task!.lock_version,
+        before_plan: before,
+        proposed_plan: proposed,
+        changes: changed.map((field) => ({
+          field,
+          reason: '검증에서 빠진 입력과 빈 목록 조건을 보완해요.',
+          finding_ids: source.findings
+            .filter((finding) => finding.resolution === 'FIX_PLAN')
+            .map((finding) => finding.id),
+        })),
+        evidence: changed.map((field) => ({
+          field,
+          document_id: '201',
+          document_type: 'REQUIREMENTS',
+          document_version_id: '211',
+          version_no: 1,
+          location: '참여 프로젝트 목록',
+          quote: '참여한 프로젝트가 없으면 빈 목록을 안내한다.',
+        })),
+        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      })
+      ;(project.plan_revision_proposals ??= []).push({
+        ...proposal,
+        task_id: task!.id,
+      })
+      return { data: proposal }
+    }
+    case 'TSK-A11': {
+      taskOwner(context, task!)
+      const proposal = findById(
+        project.plan_revision_proposals ?? [],
+        params.plan_revision_proposal_id,
+      )
+      if (proposal.task_id !== task!.id)
+        fail(404, 'not_found', '수정안을 찾지 못했어요.')
+      if (proposal.applied_validation_id)
+        return {
+          data: {
+            task: task!,
+            validation: findById(
+              project.validations,
+              proposal.applied_validation_id,
+            ),
+          },
+        }
+      if (
+        proposal.expected_revision_no !==
+          task!.current_plan_revision.revision_no ||
+        proposal.expected_lock_version !== task!.lock_version ||
+        proposal.baseline_id !== project.baselines.at(-1)?.id ||
+        proposal.source_validation_id !== task!.validation?.id ||
+        !['NEEDS_INPUT', 'NEEDS_REVIEW'].includes(
+          task!.validation?.status ?? '',
+        ) ||
+        Date.parse(proposal.expires_at) <= Date.now()
+      )
+        fail(409, 'proposal_stale', '최신 내용으로 수정안을 다시 받아 주세요.')
+      taskRoutes('TSK-A04', {
+        ...context,
+        body: {
+          ...proposal.proposed_plan,
+          expected_revision_no: proposal.expected_revision_no,
+          expected_lock_version: proposal.expected_lock_version,
+        },
+      })
+      const accepted = startValidation(
+        {
+          ...context,
+          body: {
+            plan_revision_id: task!.current_plan_revision.id,
+            expected_lock_version: task!.lock_version,
+          },
+        },
+        task!,
+      )
+      const validation = accepted.data as Validation
+      proposal.applied_validation_id = validation.id
+      return { data: { task: task!, validation } }
+    }
     case 'TSK-A04': {
       taskOwner(context, task!)
       if (['COMPLETED', 'CANCELLED'].includes(task!.status))
@@ -761,6 +913,7 @@ export function taskRoutes(
       validation!.status = 'RUNNING'
       validation!.current_attempt++
       delete validation!.error_code
+      delete validation!.execution_failure
       delete validation!.finished_at
       database.pending_validations[validation!.id] = 0
       syncValidation(context, validation!)

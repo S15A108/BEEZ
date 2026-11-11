@@ -573,7 +573,9 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         // 시도 1: 근거 검색 장애 — AI 를 부르지 않았다
         searchFails();
         assertThat(worker.runOnce()).isTrue();
-        assertThat(validation(id).get("error_code").asText()).isEqualTo("evidence_fetch_failed");
+        assertThat(validation(id).get("error_code").asText()).isEqualTo("evidence_collection_failed");
+        assertThat(validation(id).at("/execution_failure/type").asText()).isEqualTo("EVIDENCE_COLLECTION_FAILED");
+        assertThat(validation(id).at("/execution_failure/reason_codes/0").asText()).isEqualTo("evidence_fetch_failed");
         searchWorks();
         // 시도 2·3·4: AI 서버에 연결하지 못함(요청이 닿지 않음), 사용량 없음
         doAnswer(inv -> {
@@ -581,11 +583,33 @@ class ValidationRetryIntegrationTests extends IntegrationTestSupport {
         }).when(analyzer).analyze(any());
         for (int attempt = 1; attempt <= 3; attempt++) {
             body(retry(id, attempt, member), 202);
+            assertThat(validation(id).has("execution_failure")).isFalse();
             assertThat(worker.runOnce()).isTrue();
             assertThat(validation(id).get("error_code").asText()).isEqualTo("ai_unavailable");
         }
         // 아직 한 번도 세지 않았으므로 다시 돌릴 수 있다
         assertThat(body(retry(id, 4, member), 202).get("current_attempt").asInt()).isEqualTo(5);
+    }
+
+    @Test
+    void incompleteSearchHasTypedCauseAndRetriesWithoutAskingForPlanEdits() throws Exception {
+        long[] t = passableTask("A");
+        long id = body(accept(t, member), 202).get("id").asLong();
+        doAnswer(inv -> new HybridDocumentCandidateSearch.Result(
+                api.jdbc.sql("select current_baseline_id from project where id=:id").param("id", projectId).query(Long.class).single().toString(),
+                List.of(), true, false)).when(search).search(any(), org.mockito.ArgumentMatchers.eq(projectId), any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(100));
+        assertThat(worker.runOnce()).isTrue();
+        var failed = validation(id);
+        assertThat(failed.get("error_code").asText()).isEqualTo("evidence_collection_failed");
+        assertThat(failed.at("/execution_failure/reason_codes").toString()).contains("search_results_truncated");
+        assertThat(failed.at("/findings/0/resolution").asText()).isEqualTo("RETRY");
+        org.mockito.Mockito.verifyNoInteractions(analyzer);
+        assertThat(api.jdbc.sql("select current_plan_revision_id from task where id=:t").param("t", t[0]).query(Long.class).single()).isEqualTo(t[1]);
+        searchWorks();
+        var retry = body(retry(id, 1, member), 202);
+        assertThat(retry.has("execution_failure")).isFalse();
+        assertThat(retry.get("status").asText()).isEqualTo("RUNNING");
     }
 
     @Test

@@ -29,9 +29,11 @@
 
 실패는 HTTP 오류가 아니라 검증 결과로 돌려준다. 검증이 `ERROR`가 되고 `error_code`와 오류 항목(`kind=ERROR`)이 붙는다. 코드표와 처리 방법(`resolution`)은 [00-common 6절](../api/00-common.md#validation-execution-errors)이 기준이다.
 
-- `RETRY`: 같은 입력으로 다시 돌리면 나아질 수 있는 실패다. `ai_timeout`·`ai_unavailable`·`ai_invalid_output`·`evidence_fetch_failed`·`validation_lease_expired`·`validation_worker_interrupted`·`validation_execution_failed`가 여기에 든다. 재시도 버튼이 보인다.
+- `RETRY`: 같은 입력으로 다시 돌리면 나아질 수 있는 실패다. `ai_timeout`·`ai_unavailable`·`ai_invalid_output`·`evidence_fetch_failed`·`evidence_collection_failed`·`validation_lease_expired`·`validation_worker_interrupted`·`validation_execution_failed`가 여기에 든다. 재시도 버튼이 보인다.
 - `HUMAN_REVIEW`: 근거 부족·지원하지 않는 내용(부분 분석)이다. 사람이 보완한 뒤 새 검증을 요청해야 하고, 재시도는 거절한다.
 - 서버도 AI도 스스로 재시도하지 않는다. 같은 입력으로 실제 검증 AI를 부르는 횟수는 새 검증과 재시도를 합쳐 3번까지다(VAL-A01 처리 규칙).
+
+S15P31A108-400: 모델을 부르기 전 검색 범위·원문 확보가 불완전한 실패는 `evidence_collection_failed`와 `execution_failure` 원인 목록을 반환한다. 화면은 원인 안내와 재시도를 제공하며 계획 수정이나 사람 검토를 요구하지 않는다. 과거 `ai_evidence_insufficient` 결과 중 정확한 수집 실패 문구로 식별되는 것만 같은 재시도 경로로 호환한다. 실제 모델의 부분 분석 `HUMAN_REVIEW` 결과는 그대로 유지한다. [계획 수정안·수집 실패 분리](task-plan-revision-proposals-S15P31A108-400.md)를 참고한다.
 - AI 응답(성공·오류 본문)으로 사용량을 받으면 그 실행에 남긴다(비용 조회에 잡힌다). 판정을 버린 늦은 결과도 같다. 응답을 받지 못하면 모델이 이미 돌았어도 사용량을 받을 수 없어 비용 조회에서 빠진다. 횟수 제한에 세는지는 오류 종류로 갈린다(`AiValidationAnalyzer` 분류 → `ValidationRepository.countedModelAttempts`).
   - 읽기 시간 초과(`SocketTimeoutException`·`HttpTimeoutException`) → `ai_timeout`, 실행 `TIMEOUT` → 사용량이 없어도 **센다**(요청이 AI에 닿았다고 본다).
   - 그 밖의 통신 오류(연결 거부·연결 시간 초과, 응답을 기다리다 끊김 같은 `SocketException` 등) → `ai_unavailable`, 실행 `ERROR` → 사용량이 없으면 **세지 않는다**. 요청이 AI에 닿은 뒤 끊긴 경우도 연결 실패와 구분할 수 없어 같이 빠진다(4절).

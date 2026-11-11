@@ -34,7 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <ol>
  *   <li>작업 담당자(TASK_OWNER). 아니면 403</li>
  *   <li>expected_attempt 가 현재 시도와 같음. 현재 - 1 이면 위의 재전송, 그 밖에는 409 revision_conflict</li>
- *   <li>검증이 ERROR 이고, 현재 시도의 실행 오류 항목이 하나 이상이며 모두 RETRY. 하나라도 HUMAN_REVIEW 면 거부 — 근거를 보완해 새 검증.
+ *   <li>검증이 ERROR 이고, 현재 시도의 실행 오류 항목이 하나 이상이며 모두 RETRY. HUMAN_REVIEW 는 과거 수집 실패의 정확한
+ *       코드·문구가 확인되는 호환 경로만 예외로 허용한다. 그 밖에는 근거를 보완해 새 검증.
  *       작업이 끝났거나(완료·취소) 그 작업에 같은 갈래(DELTA / 계획 검증)의 더 최근 검증이 있어도 거부. 모두 409 invalid_transition</li>
  *   <li>입력이 그대로: 계획 내용·관련 작업의 계획({@link AnalysisResultApplier#inputChange}), 참조한 설계 항목 버전이 지금 기준과 같음.
  *       바뀌었으면 409 revision_conflict — 새 검증을 요청한다 (STALE 이 될 입력을 재시도로 되살리지 않는다)</li>
@@ -55,7 +56,8 @@ public class ValidationRetryService {
      */
     private static final List<String> ATTEMPT_KEYS = List.of(
             ValidationResponses.SUMMARY_ERROR_CODE, "analysis_status", "checked_keys", "unassessed", "partial_findings",
-            "model", "usage", "usage_rejected", "analysis_baseline_id", "analysis_input_snapshot_hash", "policy_analysis");
+            "model", "usage", "usage_rejected", "analysis_baseline_id", "analysis_input_snapshot_hash", "policy_analysis",
+            EvidenceCollectionFailure.KEY);
 
     private final ProjectAccessChecker access;
     private final ProjectDesignLookup designLookup;
@@ -114,7 +116,10 @@ public class ValidationRetryService {
                     "실패한 검증만 다시 실행할 수 있습니다 (현재 " + v.status() + ")");
         }
         List<String> resolutions = validations.currentErrorResolutions(v.id());
-        if (resolutions.isEmpty() || resolutions.stream().anyMatch(r -> !"RETRY".equals(r))) {
+        boolean legacyCollectionFailure = EvidenceCollectionFailure.legacy(
+                String.valueOf(responses.summary(v.summary()).get(ValidationResponses.SUMMARY_ERROR_CODE)),
+                validations.findings(v.id()).stream().filter(f -> "ERROR".equals(f.kind())).map(f -> f.message()).toList());
+        if (!legacyCollectionFailure && (resolutions.isEmpty() || resolutions.stream().anyMatch(r -> !"RETRY".equals(r)))) {
             throw new ApiException(HttpStatus.CONFLICT, "invalid_transition",
                     "이 실패는 다시 실행해도 해결되지 않습니다. 근거·지원 범위를 보완한 뒤 새 검증을 요청하세요");
         }

@@ -2447,3 +2447,65 @@ it('계획 수정에는 문서로 초안 받기를 두지 않는다', async () =
   await openPlanEditor()
   expect(screen.queryByRole('button', { name: '문서로 초안 받기' })).toBeNull()
 })
+
+it.each(['typed', 'legacy'] as const)(
+  '%s 근거 수집 실패는 계획 보완 대신 같은 검증을 재시도한다',
+  async (mode) => {
+    const failed = {
+      ...task.validation!,
+      status: 'ERROR' as const,
+      error_code:
+        mode === 'typed'
+          ? 'evidence_collection_failed'
+          : 'ai_evidence_insufficient',
+      findings: [
+        {
+          id: '701',
+          source: 'MODEL' as const,
+          kind: 'ERROR' as const,
+          severity: 'BLOCKING' as const,
+          message: '분석 후보 검색 또는 원문 근거 범위가 불완전합니다',
+          sources: [],
+          resolution: 'HUMAN_REVIEW' as const,
+          next_action: '근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요',
+        },
+      ],
+      ...(mode === 'typed'
+        ? {
+            execution_failure: {
+              type: 'EVIDENCE_COLLECTION_FAILED' as const,
+              message: '원문을 가져오지 못했어요.',
+              reason_codes: ['source_evidence_unavailable'],
+              retryable: true,
+            },
+          }
+        : {}),
+    }
+    task = { ...task, validation_status: 'ERROR', validation: failed }
+    const retry = vi
+      .spyOn(validationsApi, 'retry')
+      .mockResolvedValue({ ...failed, status: 'RUNNING' })
+    const save = vi.spyOn(tasksApi, 'savePlan')
+    const proposal = vi.spyOn(tasksApi, 'proposePlanRevision')
+    show(false)
+    const button = await screen.findByRole('button', {
+      name: '근거 수집 재시도',
+    })
+    expect(screen.queryByText(/보완한 뒤 새 검증/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '계획 보완' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'AI 계획 수정안 받기' }),
+    ).not.toBeInTheDocument()
+    await userEvent.click(button)
+    expect(retry).toHaveBeenCalledWith(
+      '101',
+      '601',
+      { expected_attempt: 1 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(save).not.toHaveBeenCalled()
+    expect(proposal).not.toHaveBeenCalled()
+  },
+)

@@ -137,6 +137,8 @@
 - [TSK-A05 작업 계획 리비전 이력](#tsk-a05)
 - [TSK-A06 작업 담당자 변경](#tsk-a06)
 - [TSK-A09 승인 설계로 작업 생성·배정](#tsk-a09)
+- [TSK-A10 AI 계획 수정안 생성](#tsk-a10)
+- [TSK-A11 AI 계획 수정안 승인](#tsk-a11)
 - [VAL-A01 작업 검증 접수](#val-a01)
 - [VAL-A02 검증 결과 조회](#val-a02)
 - [VAL-A03 작업 검증 이력](#val-a03)
@@ -15651,3 +15653,44 @@ HTTP `200`.
 [공통 규약·권한·담당자 목록](00-common.md)
 
 ---
+
+<a id="tsk-a10"></a>
+
+## TSK-A10. AI 계획 수정안 생성
+
+S15P31A108-400. 현재 작업 담당자인 사람만 호출한다. 작업·계획·검증은 서버가 조회하며 클라이언트가 수정된 계획을 보내지 않는다. 세션 인증과 일반 웹 CSRF 규칙을 따른다.
+
+### POST `/api/projects/{id}/tasks/{task_id}/plan-revision-proposals`
+
+요청 본문 `{}`. 현재 계획의 `NEEDS_INPUT` 또는 `NEEDS_REVIEW` 검증에 `FIX_PLAN` 항목이 있어야 한다. `DELTA`와 실행 오류는 대상이 아니다. 승인 문서를 검색하고 내부 [AI-A15](03-ai-internal.md#ai-a15)를 호출하여 **계획과 분리된 제안만 저장**한다.
+
+HTTP `200` 응답:
+
+| 필드 | 설명 |
+| --- | --- |
+| `id` | 저장된 제안 ID |
+| `baseline_id`, `source_validation_id` | 제안이 근거로 삼은 기준 설계와 검증 |
+| `expected_revision_no`, `expected_lock_version` | 원본 계획 번호와 작업 잠금 버전 |
+| `before_plan`, `proposed_plan` | 전체 `TaskPlanInput`. 목표·범위·접근 방법·완료 기준 이외 필드는 동일 |
+| `changes` | `{field, reason, finding_ids[]}`. 실제 변경된 칸을 빠짐없이 설명 |
+| `evidence` | `{field, document_id, document_type, document_version_id, version_no, location, quote}` 배열. 저장 원문과 대조한 인용 |
+| `expires_at` | 생성 시점부터 30분 뒤의 만료 시각 |
+
+초안 생성(TSK-A08)의 동시 호출·시간당 횟수 제한을 공유한다. 제안 생성 후 원본이나 기준이 바뀌었으면 저장하지 않고 `409 proposal_stale`을 반환한다. 변경할 내용이 없으면 `409 proposal_not_needed`, 문서가 부족하면 `409 insufficient_documents`, 변경 이유·인용 검증 실패는 `502 ai_invalid_output`이다. 문서 검색 및 AI 연결 오류는 기존 초안 생성 오류 계약을 따른다.
+
+<a id="tsk-a11"></a>
+
+## TSK-A11. AI 계획 수정안 승인
+
+### POST `/api/projects/{id}/tasks/{task_id}/plan-revision-proposals/{proposal_id}/apply`
+
+요청 본문 `{}`. 화면에서 변경 전후를 보여 주고 **승인하고 재검증**을 명시적으로 누른 때 호출한다. 서버가 저장한 제안만 적용할 수 있다.
+
+HTTP `200` 응답은 `{task: TaskDetail, validation: Validation}`이다. 새 리비전과 재검증 접수를 한 트랜잭션으로 처리하며, 접수 실패 시 리비전도 저장하지 않는다. 검증 결과는 `RUNNING`이거나 규칙 검사로 즉시 결정된 상태일 수 있다.
+
+- 현재 담당자이며 제안을 생성한 계정만 승인할 수 있다.
+- 원본 계획, 작업 잠금 버전, 현재 검증 및 검증 잠금 버전, 기준 설계가 같고 유효기간 안이어야 한다. 불일치·만료는 `409 proposal_stale`이다.
+- 같은 제안에 대한 반복 승인은 이미 접수한 검증을 반환한다. 응답을 잃었을 때 같은 제안 ID로 재시도한다.
+- 취소는 호출하지 않는다. 유효기간이 지난 미적용 제안은 적용할 수 없다.
+
+구현 경계와 근거 수집 오류의 별도 경로는 [설계 문서](../design/task-plan-revision-proposals-S15P31A108-400.md)를 참고한다.

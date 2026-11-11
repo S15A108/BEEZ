@@ -395,7 +395,12 @@ function Workspace({ projectId }: { projectId: string }) {
                     {pane === 'documents' && <DocumentsPanel {...panelProps} />}
                     {pane === 'planning' && <PlanningPanel {...panelProps} />}
                     {pane === 'changes' && <ChangesPanel {...panelProps} />}
-                    {pane === 'tasks' && <TasksPanel {...panelProps} />}
+                    {pane === 'tasks' && (
+                      <TasksPanel
+                        {...panelProps}
+                        baselineId={data.project.current_baseline?.id}
+                      />
+                    )}
                     {pane === 'meetings' && <MeetingsPanel {...panelProps} />}
                     {pane === 'relations' && (
                       <ActivityPanel

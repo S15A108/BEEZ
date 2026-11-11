@@ -103,10 +103,17 @@ public class AnalysisResultApplier {
     /** An incomplete search cannot establish PASS, even when the model was never called. */
     @Transactional
     public void applyInputIncomplete(JobLease lease, String message, long durationMs) {
+        applyInputIncomplete(lease, List.of(), durationMs);
+    }
+
+    @Transactional
+    public void applyInputIncomplete(JobLease lease, List<String> reasonCodes, long durationMs) {
         Optional<Current> active = current(lease, Mode.RESULT, Map.of(), durationMs);
         if (active.isEmpty()) return;
-        fail(lease, active.get().validation(), active.get().runId(), "ai_evidence_insufficient", "ERROR", message,
-                "HUMAN_REVIEW", "근거와 검사 범위를 보완한 뒤 새 검증을 요청하세요", null, durationMs, Map.of());
+        var detail = EvidenceCollectionFailure.detail(reasonCodes);
+        fail(lease, active.get().validation(), active.get().runId(), EvidenceCollectionFailure.CODE, "ERROR",
+                (String) detail.get("message"), "RETRY", "검색·문서 준비 상태를 확인하고 근거 수집부터 다시 시도해 주세요.",
+                null, durationMs, Map.of(EvidenceCollectionFailure.KEY, detail));
     }
 
     /** Recheck searched inputs under the project lock before applying model output. */
@@ -580,6 +587,12 @@ public class AnalysisResultApplier {
      */
     private void fail(JobLease lease, ValidationRow v, long runId, String errorCode, String runStatus, String message,
                       String resolution, String nextAction, String model, long durationMs, Map<String, Object> diagnostics) {
+        if ("evidence_fetch_failed".equals(errorCode)) {
+            errorCode = EvidenceCollectionFailure.CODE;
+            var classified = new LinkedHashMap<>(diagnostics);
+            classified.put(EvidenceCollectionFailure.KEY, EvidenceCollectionFailure.detail(List.of("evidence_fetch_failed")));
+            diagnostics = classified;
+        }
         validations.finishRun(runId, runStatus, errorCode + ": " + message, model, durationMs, diagnostics.get("usage"));
         validations.insertFinding(v.id(), FindingRow.error(runId, message, resolution, nextAction));
         Map<String, Object> summary = responses.summary(v.summary());

@@ -28,7 +28,10 @@ import type {
   Validation,
 } from '../api/contracts/common'
 import type { DraftJob } from '../features/planning/schemas'
-import type { BreakdownJob } from '../features/tasks/schemas'
+import type {
+  BreakdownJob,
+  PlanRevisionProposal,
+} from '../features/tasks/schemas'
 import { contractExamples } from './contract-examples'
 
 // 예시 데이터를 바꾸면 버전을 올려 브라우저에 남은 예전 데이터 대신 새 예시를 불러온다.
@@ -96,6 +99,10 @@ export interface MockProject {
   tasks: TaskDetail[]
   task_breakdown?: { id?: string; baseline_id: string; task_ids: string[] }
   task_breakdown_job?: Exclude<BreakdownJob, { status: 'COMPLETED' }>
+  plan_revision_proposals?: (PlanRevisionProposal & {
+    task_id: string
+    applied_validation_id?: string
+  })[]
   revisions: TaskPlanRevision[]
   validations: Validation[]
   packets: ContextPacket[]

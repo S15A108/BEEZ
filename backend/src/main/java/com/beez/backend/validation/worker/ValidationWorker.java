@@ -133,7 +133,7 @@ public class ValidationWorker {
                 // An unrelated publication need not invalidate the accepted plan. The assembler
                 // uses the current baseline; result application rechecks that exact search snapshot.
                 if (!searchInput.searchComplete()) {
-                    applier.applyInputIncomplete(lease, "검색 또는 원문 근거 범위가 불완전합니다", System.currentTimeMillis() - started);
+                    applier.applyInputIncomplete(lease, searchInput.searchIncompleteReasons(), System.currentTimeMillis() - started);
                     return true;
                 }
                 request = searchInput.request();

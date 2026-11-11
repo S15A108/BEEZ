@@ -235,6 +235,7 @@ backend 워커는 attempt·lease 소유권을 확인해 RUNNING 결과만 반영
 | `ai_unavailable` | AI HTTP 502·호출 실패 | RETRY |
 | `ai_invalid_output` | BE가 직접 확인한 잘린 응답·형식·검사 키·ID·근거 등 출력 계약 위반 | RETRY |
 | `evidence_fetch_failed` | BE 원문·검색 조회 장애 | RETRY |
+| `evidence_collection_failed` | 검색 범위·원문 근거 수집이 불완전하여 내용 판정을 수행하지 못함(S15P31A108-400) | RETRY |
 | `validation_worker_interrupted` | 복구 주체가 확인한 워커 중단 | RETRY |
 | `validation_lease_expired` | 현재 실행 lease 만료 회수 | RETRY |
 | `validation_execution_failed` | 위 항목으로 분류되지 않는 BE 실행 오류 | RETRY |
@@ -1314,6 +1315,9 @@ kind=ERROR finding은 source=MODEL·severity=BLOCKING이며 해당 validation과
 | `finished_at` | `Time` | N | 완료 시각 |
 | `error_code` | `string` | N | ERROR일 때 필수, 그 외 생략. 현재 실패 attempt의 [검증 실행 오류 코드](#validation-execution-errors) |
 | `policy_analysis` | `object` | N | 정책 검사의 검증된 `policy_assessments`, `policy_assessments_truncated`와 해당 시 `no_policy_requirements_reason`, `no_policy_requirements_evidence`. 부분 분석도 진단으로 노출한다. |
+| `execution_failure` | `object` | N | 근거 수집 실패일 때 `{type: EVIDENCE_COLLECTION_FAILED, reason_codes: string[], retryable: true, message: string}`. 계획 보완 요청 대신 원인 안내·재시도로 표시한다. 원인 코드는 `search_query_too_long`, `search_query_limit`, `search_results_truncated`, `design_candidate_limit`, `related_task_limit`, `source_evidence_unavailable`, `evidence_fetch_failed`로 한정한다. |
+
+S15P31A108-400 호환 처리: 과거 `evidence_fetch_failed` 또는 `ai_evidence_insufficient` 중 ERROR 발견 항목의 문구가 모두 정확한 검색·원문 수집 실패 문구인 경우에만 `execution_failure`를 추가하고 재시도를 허용한다. 일반적인 내용 근거 부족·`HUMAN_REVIEW` 판정에는 적용하지 않는다. 과거 저장 결과에 상세 원인이 없으면 `evidence_fetch_failed`로 안내하고 구체 원인을 추측하지 않는다.
 
 검증 대기 중 무관한 발행이 있으면 실행 시 현재 기준을 다시 검색하고 결과 반영 전에 기준·참조·근거를 재확인한다. 접수 시점의 기준과 접수 입력 해시는 내부 이력에 보존하며, 완료된 의미 분석의 실제 기준과 분석 입력 해시도 별도로 기록한다. 직접 참조가 바뀌거나 분석 중 기준이 다시 발행되면 기존 분석 결과를 유효한 결과로 반영하지 않는다.
 

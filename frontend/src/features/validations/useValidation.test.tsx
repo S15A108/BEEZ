@@ -199,3 +199,36 @@ it('preserves findings and evidence while deriving retryability', () => {
   expect(view.needsHumanReview).toBe(true)
   expect(view.retryable).toBe(false)
 })
+
+it('과거 수집 오류와 의미 분석의 근거 부족이 섞이면 사람 검토를 유지한다', () => {
+  const findings = [
+    {
+      id: '1',
+      source: 'MODEL' as const,
+      kind: 'ERROR' as const,
+      severity: 'BLOCKING' as const,
+      message: '분석 후보 검색 또는 원문 근거 범위가 불완전합니다',
+      sources: [],
+      resolution: 'HUMAN_REVIEW' as const,
+    },
+    {
+      id: '2',
+      source: 'MODEL' as const,
+      kind: 'ERROR' as const,
+      severity: 'BLOCKING' as const,
+      message: '정책을 판단할 근거가 부족합니다',
+      sources: [],
+      resolution: 'HUMAN_REVIEW' as const,
+    },
+  ]
+  const view = toValidationView({
+    ...validation,
+    status: 'ERROR',
+    error_code: 'ai_evidence_insufficient',
+    findings,
+  })
+  expect(view.collectionFailure).toBeUndefined()
+  expect(view.findings).toEqual(findings)
+  expect(view.needsHumanReview).toBe(true)
+  expect(view.retryable).toBe(false)
+})

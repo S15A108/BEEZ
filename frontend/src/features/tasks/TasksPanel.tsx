@@ -98,10 +98,12 @@ import {
 import { FindingRelatedTask } from './FindingRelatedTask'
 import { RelatedTaskRefs } from './RelatedTaskRefs'
 import { ValidationFailure } from './ValidationFailure'
+import { PlanRevisionProposal } from './PlanRevisionProposal'
 
 interface Props {
   projectId: string
   isLeader: boolean
+  baselineId?: string
 }
 type StateEvent = TaskStateInput['event']
 const relationLabel = {
@@ -229,7 +231,7 @@ function ClaimDialog({
   )
 }
 
-export function TasksPanel({ projectId, isLeader }: Props) {
+export function TasksPanel({ projectId, isLeader, baselineId }: Props) {
   const session = useSession()
   const focusId = useWorkspaceStore((state) => state.focusId)
   const openPane = useWorkspaceStore((state) => state.openPane)
@@ -422,11 +424,13 @@ export function TasksPanel({ projectId, isLeader }: Props) {
         : result?.status === 'STALE'
           ? staleReasonText(result.stale_reason)
           : result?.status === 'ERROR'
-            ? needsHumanReview
-              ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
-              : retryLimited
-                ? '같은 계획으로는 다시 실행할 수 없어요. 계획을 고쳐 새로 검증해 주세요.'
-                : '검증을 마치지 못했어요. 다시 실행해 주세요.'
+            ? view?.collectionFailure
+              ? '근거를 수집하지 못했어요. 수집을 재시도한 뒤 검증 결과를 확인해 주세요.'
+              : needsHumanReview
+                ? '근거를 확인하고 보완한 뒤 새 검증을 요청해 주세요.'
+                : retryLimited
+                  ? '같은 계획으로는 다시 실행할 수 없어요. 계획을 고쳐 새로 검증해 주세요.'
+                  : '검증을 마치지 못했어요. 다시 실행해 주세요.'
             : result?.status === 'PASS'
               ? '지금 계획으로 다시 검증해 주세요.'
               : '계획 검증을 통과해야 시작할 수 있어요.'
@@ -779,6 +783,32 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           계획 수정
                         </Button>
                       )}
+                      {isOwner &&
+                        active &&
+                        result &&
+                        result.trigger !== 'DELTA' &&
+                        result.plan_revision_id ===
+                          current.current_plan_revision.id &&
+                        ['NEEDS_INPUT', 'NEEDS_REVIEW'].includes(
+                          result.status,
+                        ) &&
+                        result.findings.some(
+                          (finding) => finding.resolution === 'FIX_PLAN',
+                        ) && (
+                          <PlanRevisionProposal
+                            key={current.id}
+                            projectId={projectId}
+                            task={current}
+                            validation={result}
+                            baselineId={baselineId}
+                            disabled={
+                              action.busy ||
+                              validationActions.busy ||
+                              !!validation.error
+                            }
+                            onOpenDocument={(id) => openPane('documents', id)}
+                          />
+                        )}
                       {isOwner && active && (
                         <Button
                           variant={primary === 'validate' ? 'default' : 'link'}
@@ -1188,8 +1218,9 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           <ValidationFailure
                             errorCode={result.error_code}
                             needsHumanReview={!!needsHumanReview}
+                            collectionFailure={view?.collectionFailure}
                           />
-                          {isOwner && !needsHumanReview && !retryLimited && (
+                          {isOwner && view?.retryable && !retryLimited && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -1206,14 +1237,18 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                               }
                             >
                               <RefreshCw />
-                              실행 재시도
+                              {view.collectionFailure
+                                ? '근거 수집 재시도'
+                                : '실행 재시도'}
                             </Button>
                           )}
                         </div>
                       )}
                       {attemptLimitReached && (
                         <p role="alert" className="text-sm text-destructive">
-                          {getErrorCodeMessage('validation_attempt_limit')}
+                          {view?.collectionFailure
+                            ? '근거 수집 재시도 횟수를 모두 썼어요. 수집 상태를 팀에 알려 주세요.'
+                            : getErrorCodeMessage('validation_attempt_limit')}
                         </p>
                       )}
                       {delta && (
@@ -1415,7 +1450,7 @@ export function TasksPanel({ projectId, isLeader }: Props) {
                           </div>
                         </article>
                       ))}
-                      {!view?.findings.length && (
+                      {!view?.findings.length && !view?.collectionFailure && (
                         <p className="text-sm text-muted-foreground">
                           {result?.status === 'PASS'
                             ? '현재 계획과 입력에서 시작을 막는 항목을 찾지 못했어요. 시작 직전에 서버가 참조와 선행 작업을 다시 확인해요.'

@@ -41,3 +41,30 @@ it('모르는 오류 코드나 코드가 없으면 코드를 보이지 않고 �
   rerender(<ValidationFailure needsHumanReview={false} />)
   expect(screen.getByText(outcome)).toBeInTheDocument()
 })
+
+it('근거 수집 실패는 구체적인 원인과 재시도를 안내하고 계획 보완을 요구하지 않는다', () => {
+  render(
+    <ValidationFailure
+      errorCode="evidence_collection_failed"
+      needsHumanReview={false}
+      collectionFailure={{
+        message: '근거 수집을 완료하지 못했어요.',
+        retryable: true,
+        reason_codes: [
+          'search_results_truncated',
+          'source_evidence_unavailable',
+          'unknown_code',
+        ],
+      }}
+    />,
+  )
+  expect(
+    screen.getByRole('list', { name: '근거 수집 실패 원인' }),
+  ).toHaveTextContent('검색 결과가 많아 일부 근거가 빠졌어요.')
+  expect(screen.getByRole('list')).toHaveTextContent(
+    '문서 원문에서 확인할 근거를 가져오지 못했어요.',
+  )
+  expect(screen.getByText(/근거 수집을 다시 시도해 주세요/)).toBeInTheDocument()
+  expect(screen.queryByText(/보완한 뒤/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/unknown_code/)).not.toBeInTheDocument()
+})

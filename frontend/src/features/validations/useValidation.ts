@@ -4,13 +4,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { validationsApi } from '@/api/services'
 import type { Validation } from '@/api/contracts/common'
 import type { CreateInput, RetryInput } from './schemas'
+import { evidenceCollectionFailure } from './evidenceCollectionFailure'
 
 /** 상태와 근거를 화면에서 일관되게 소비하기 위한 표현. 원본 ID와 근거는 보존한다. */
 export function toValidationView(validation: Validation) {
-  const needsHumanReview = validation.findings.some(
-    (finding) =>
-      finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
-  )
+  const collectionFailure = evidenceCollectionFailure(validation)
+  const needsHumanReview =
+    !collectionFailure &&
+    validation.findings.some(
+      (finding) =>
+        finding.kind === 'ERROR' && finding.resolution === 'HUMAN_REVIEW',
+    )
   const phase =
     validation.status === 'NOT_RUN'
       ? 'idle'
@@ -22,12 +26,16 @@ export function toValidationView(validation: Validation) {
   return {
     phase,
     status: validation.status,
-    findings: validation.findings,
+    // 수집을 완료한 뒤 나온 검증 결과로 보완 항목을 안내한다. 실행 실패 화면에서는 원인과 재시도만 보여 준다.
+    findings: collectionFailure ? [] : validation.findings,
     policyAnalysis: validation.policy_analysis,
     designRefs: validation.design_refs,
     relatedTaskRefs: validation.related_task_refs,
     needsHumanReview,
-    retryable: validation.status === 'ERROR' && !needsHumanReview,
+    collectionFailure,
+    retryable:
+      validation.status === 'ERROR' &&
+      (collectionFailure ? collectionFailure.retryable : !needsHumanReview),
   } as const
 }
 
